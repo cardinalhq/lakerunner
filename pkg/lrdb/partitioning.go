@@ -20,7 +20,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/cardinalhq/nestbox/dbase"
+	"github.com/cardinalhq/lakerunner/pkg/dbase"
 )
 
 func (q *Queries) ensureLogFPPartition(ctx context.Context, parent string, org_id uuid.UUID, dateint int32) error {

@@ -11,7 +11,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.17.82
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.82.0
 	github.com/aws/aws-sdk-go-v2/service/sts v1.34.0
-	github.com/cardinalhq/nestbox v0.3.0
 	github.com/cardinalhq/oteltools v0.29.0
 	github.com/deckarep/golang-set/v2 v2.8.0
 	github.com/golang-migrate/migrate/v4 v4.18.3
@@ -555,7 +554,4 @@ tool (
 	github.com/sqlc-dev/sqlc/cmd/sqlc
 )
 
-replace (
-	github.com/cardinalhq/nestbox => ../nestbox
-	github.com/sqlc-dev/sqlc => github.com/skandragon/sqlc v0.0.0-20250401203326-567d8bd92eb4
-)
+replace github.com/sqlc-dev/sqlc => github.com/skandragon/sqlc v0.0.0-20250401203326-567d8bd92eb4

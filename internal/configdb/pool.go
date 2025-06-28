@@ -12,31 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package dbopen
+package configdb
 
 import (
 	"context"
-	"errors"
-	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-
-	"github.com/cardinalhq/lakerunner/internal/configdb"
+	"github.com/pgx-contrib/pgxotel"
 )
 
-func ConnectToConfigDB(ctx context.Context) (*pgxpool.Pool, error) {
-	connectionString, err := getDatabaseURLFromEnv("CONFIGDB")
-	if err != nil {
-		return nil, errors.Join(ErrDatabaseNotConfigured, fmt.Errorf("failed to get CONFIGDB connection string: %w", err))
-	}
-	return configdb.NewConnectionPool(ctx, connectionString)
-}
-
-func ConfigDBStore(ctx context.Context) (configdb.QuerierFull, error) {
-	pool, err := ConnectToConfigDB(ctx)
+// NewConnectionPool creates a new connection pool
+// using the PostgreSQL connection string provided, and
+// using pgx v5.
+func NewConnectionPool(ctx context.Context, url string) (*pgxpool.Pool, error) {
+	cfg, err := pgxpool.ParseConfig(url)
 	if err != nil {
 		return nil, err
 	}
-	configStore := configdb.NewStore(pool)
-	return configStore, nil
+
+	cfg.ConnConfig.Tracer = &pgxotel.QueryTracer{
+		Name: "configdb",
+	}
+
+	return pgxpool.NewWithConfig(ctx, cfg)
 }

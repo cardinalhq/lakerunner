@@ -19,7 +19,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/cardinalhq/nestbox/dbase/configdb"
+	"github.com/cardinalhq/lakerunner/internal/configdb"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 )

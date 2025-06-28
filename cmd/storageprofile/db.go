@@ -17,7 +17,7 @@ package storageprofile
 import (
 	"context"
 
-	"github.com/cardinalhq/nestbox/dbase/configdb"
+	"github.com/cardinalhq/lakerunner/internal/configdb"
 	"github.com/google/uuid"
 )
 
