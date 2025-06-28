@@ -1,0 +1,1 @@
+-- 1751058910_initial_settings.down.sql

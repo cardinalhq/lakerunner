@@ -1,0 +1,34 @@
+header:
+  license:
+    spdx-id: Apache-2.0
+    copyright-owner: CardinalHQ, Inc
+    copyright-year: 2025
+
+  paths-ignore:
+    - 'bin'
+    - 'buildtime'
+    - '**/*.md'
+    - 'NOTICE'
+    - 'LICENSE'
+    - .gitignore
+    - .dockerignore
+    - .github
+    - .licenserc.yaml
+    - '**/*.yaml'
+    - '**/*.yml'
+    - '**/*.json'
+    - go.sum
+    - go.mod
+    - go.work
+    - go.work.sum
+    - '**/testdata/**'
+    - .idea
+    - '**/*.sql.go'
+    - '**/*.sql'
+    - pkg/*db/batch.go
+    - pkg/*db/db.go
+    - pkg/*db/models.go
+    - pkg/*db/querier.go
+    - pkg/*db/copyfrom.go
+
+  comment: on-failure
