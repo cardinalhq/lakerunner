@@ -41,8 +41,8 @@ dockers:
     dockerfile: Dockerfile
     use: buildx
     image_templates:
-      - "033263751764.dkr.ecr.us-east-2.amazonaws.com/cardinalhq/lakerunner:v{{ .Version }}-amd64"
-      - "033263751764.dkr.ecr.us-east-2.amazonaws.com/cardinalhq/lakerunner:latest-dev-amd64"
+      - "public.ecr.aws/cardinalhq.io/lakerunner:v{{ .Version }}-amd64"
+      - "public.ecr.aws/cardinalhq.io/lakerunner:latest-dev-amd64"
     build_flag_templates:
       - --pull
       - --platform=linux/amd64
@@ -56,8 +56,8 @@ dockers:
     dockerfile: Dockerfile
     use: buildx
     image_templates:
-      - "033263751764.dkr.ecr.us-east-2.amazonaws.com/cardinalhq/lakerunner:v{{ .Version }}-arm64"
-      - "033263751764.dkr.ecr.us-east-2.amazonaws.com/cardinalhq/lakerunner:latest-dev-arm64"
+      - "public.ecr.aws/cardinalhq.io/lakerunner:v{{ .Version }}-arm64"
+      - "public.ecr.aws/cardinalhq.io/lakerunner:latest-dev-arm64"
     build_flag_templates:
       - --pull
       - --platform=linux/arm64
@@ -67,11 +67,11 @@ dockers:
       - --label=org.opencontainers.image.version={{.Version}}
       - --label=org.opencontainers.image.source={{.GitURL}}
 docker_manifests:
-  - name_template: "033263751764.dkr.ecr.us-east-2.amazonaws.com/cardinalhq/lakerunner:v{{ .Version }}"
+  - name_template: "public.ecr.aws/cardinalhq.io/lakerunner:v{{ .Version }}"
     image_templates:
-      - "033263751764.dkr.ecr.us-east-2.amazonaws.com/cardinalhq/lakerunner:v{{ .Version }}-amd64"
-      - "033263751764.dkr.ecr.us-east-2.amazonaws.com/cardinalhq/lakerunner:v{{ .Version }}-arm64"
-  - name_template: "033263751764.dkr.ecr.us-east-2.amazonaws.com/cardinalhq/lakerunner:latest-dev"
+      - "public.ecr.aws/cardinalhq.io/lakerunner:v{{ .Version }}-amd64"
+      - "public.ecr.aws/cardinalhq.io/lakerunner:v{{ .Version }}-arm64"
+  - name_template: "public.ecr.aws/cardinalhq.io/lakerunner:latest-dev"
     image_templates:
-      - "033263751764.dkr.ecr.us-east-2.amazonaws.com/cardinalhq/lakerunner:latest-dev-amd64"
-      - "033263751764.dkr.ecr.us-east-2.amazonaws.com/cardinalhq/lakerunner:latest-dev-arm64"
+      - "public.ecr.aws/cardinalhq.io/lakerunner:latest-dev-amd64"
+      - "public.ecr.aws/cardinalhq.io/lakerunner:latest-dev-arm64"
