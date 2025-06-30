@@ -31,11 +31,11 @@ func init() {
 
 	rootCmd.AddCommand(cmd)
 
-	listenCmd := &cobra.Command{
-		Use:   "listen",
-		Short: "listen on one or more pubsub sources",
+	httpListenCmd := &cobra.Command{
+		Use:   "http",
+		Short: "listen on one or more http pubsub sources",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			servicename := "pubsub"
+			servicename := "pubsub-http"
 			doneCtx, doneFx, err := setupTelemetry(servicename)
 			if err != nil {
 				return fmt.Errorf("failed to setup telemetry: %w", err)
@@ -52,6 +52,28 @@ func init() {
 			return cmd.Run(doneCtx)
 		},
 	}
+	cmd.AddCommand(httpListenCmd)
 
-	cmd.AddCommand(listenCmd)
+	sqsListenCmd := &cobra.Command{
+		Use:   "sqs",
+		Short: "listen on one or more http pubsub sources",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			servicename := "pubsub-sqs"
+			doneCtx, doneFx, err := setupTelemetry(servicename)
+			if err != nil {
+				return fmt.Errorf("failed to setup telemetry: %w", err)
+			}
+			defer func() {
+				if err := doneFx(); err != nil {
+					slog.Error("Error shutting down telemetry", slog.Any("error", err))
+				}
+			}()
+			cmd, err := pubsub.New()
+			if err != nil {
+				return fmt.Errorf("failed to create pubsub command: %w", err)
+			}
+			return cmd.Run(doneCtx)
+		},
+	}
+	cmd.AddCommand(sqsListenCmd)
 }
