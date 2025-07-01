@@ -26,6 +26,7 @@ require (
 	github.com/sony/sonyflake v1.2.1
 	github.com/spf13/cobra v1.9.1
 	github.com/stretchr/testify v1.10.0
+	go.opentelemetry.io/collector/pdata v1.33.0
 	go.opentelemetry.io/contrib/bridges/otelslog v0.12.0
 	go.opentelemetry.io/contrib/instrumentation/github.com/aws/aws-sdk-go-v2/otelaws v0.62.0
 	go.opentelemetry.io/otel v1.37.0
@@ -323,6 +324,7 @@ require (
 	github.com/jjti/go-spancheck v0.6.4 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
+	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/julz/importas v0.2.0 // indirect
 	github.com/karamaru-alpha/copyloopvar v1.2.1 // indirect
 	github.com/kevinburke/ssh_config v1.2.0 // indirect
@@ -362,6 +364,8 @@ require (
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
+	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
+	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/moricho/tparallel v0.3.2 // indirect
 	github.com/mr-tron/base58 v1.2.0 // indirect
 	github.com/muesli/ansi v0.0.0-20230316100256-276c6243b2f6 // indirect
