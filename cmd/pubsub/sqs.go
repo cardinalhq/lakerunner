@@ -149,7 +149,6 @@ func (ps *sqsPubsubCmd) pollSQS(doneCtx context.Context, sqsClient *awsclient.SQ
 				err := handleMessage(context.Background(), []byte(*message.Body), ps.sp, ps.mdb)
 				if err != nil {
 					slog.Error("Failed to handle S3 event", slog.Any("error", err))
-					continue
 				}
 			}
 			_, err := sqsClient.Client.DeleteMessage(context.Background(), &sqs.DeleteMessageInput{
