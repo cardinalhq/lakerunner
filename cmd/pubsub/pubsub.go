@@ -124,14 +124,14 @@ func (ps *pubsubCmd) Process(ctx context.Context) {
 			ctx, span = ps.tracer.Start(ctx, "pubsubCmd.Process")
 			defer span.End()
 
-			if err := ps.handleMessage(ctx, msg); err != nil {
+			if err := handleMessage(ctx, msg, ps.sp, ps.mdb); err != nil {
 				slog.Error("Failed to handle message", slog.Any("error", err))
 			}
 		}()
 	}
 }
 
-func (ps *pubsubCmd) handleMessage(ctx context.Context, msg []byte) error {
+func handleMessage(ctx context.Context, msg []byte, sp storageprofile.StorageProfileProvider, mdb InqueueInserter) error {
 	if len(msg) == 0 {
 		return fmt.Errorf("empty message received")
 	}
@@ -142,19 +142,19 @@ func (ps *pubsubCmd) handleMessage(ctx context.Context, msg []byte) error {
 	}
 
 	for _, item := range items {
-		sp, err := ps.sp.GetByCollectorName(ctx, item.OrganizationID, item.CollectorName)
+		profile, err := sp.GetByCollectorName(ctx, item.OrganizationID, item.CollectorName)
 		if err != nil {
 			slog.Error("Failed to get storage profile", slog.Any("error", err), slog.Any("organization_id", item.OrganizationID), slog.String("collector_name", item.CollectorName))
 			continue
 		}
-		item.InstanceNum = sp.InstanceNum
-		slog.Info("Processing item", slog.String("bucket", sp.Bucket), slog.String("object_id", item.ObjectID), slog.String("telemetry_type", item.TelemetryType))
+		item.InstanceNum = profile.InstanceNum
+		slog.Info("Processing item", slog.String("bucket", profile.Bucket), slog.String("object_id", item.ObjectID), slog.String("telemetry_type", item.TelemetryType))
 
-		err = ps.mdb.PutInqueueWork(ctx, lrdb.PutInqueueWorkParams{
+		err = mdb.PutInqueueWork(ctx, lrdb.PutInqueueWorkParams{
 			OrganizationID: item.OrganizationID,
 			CollectorName:  item.CollectorName,
 			InstanceNum:    item.InstanceNum,
-			Bucket:         sp.Bucket,
+			Bucket:         profile.Bucket,
 			ObjectID:       item.ObjectID,
 			TelemetryType:  item.TelemetryType,
 			Priority:       0,

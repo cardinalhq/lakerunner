@@ -1,0 +1,49 @@
+name: goreleaser-main-buildonly
+
+on:
+  push:
+    branches:
+      - "main"
+
+permissions:
+  contents: read
+
+jobs:
+  goreleaser:
+    runs-on:
+      group: larger-runners
+    steps:
+      - name: Checkout
+        id: checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        # no cache here intentionally
+        id: go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: go-cache-paths
+        id: go-cache-paths
+        run: |
+          echo "go-build=$(go env GOCACHE)" >> $GITHUB_OUTPUT
+          echo "go-mod=$(go env GOMODCACHE)" >> $GITHUB_OUTPUT
+
+      - name: Go Build Cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.go-cache-paths.outputs.go-build }}
+          key: ${{ runner.os }}-${{ runner.arch }}-go-build
+
+      - name: Run GoReleaser
+        id: goreleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "nightly"
+          args: release --clean --snapshot -f .goreleaser-buildonly.yaml
+        env:
+          GITHUB_TOKEN: dummy
