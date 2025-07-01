@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -27,12 +26,16 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/cardinalhq/lakerunner/cmd/dbopen"
+	"github.com/cardinalhq/lakerunner/cmd/storageprofile"
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 )
 
 type sqsPubsubCmd struct {
 	tracer trace.Tracer
 	awsMgr *awsclient.Manager
+	sp     storageprofile.StorageProfileProvider
+	mdb    InqueueInserter
 }
 
 func NewSQS() (*sqsPubsubCmd, error) {
@@ -44,9 +47,23 @@ func NewSQS() (*sqsPubsubCmd, error) {
 		return nil, fmt.Errorf("failed to create AWS manager: %w", err)
 	}
 
+	sp, err := storageprofile.SetupStorageProfiles()
+	if err != nil {
+		slog.Error("Failed to setup storage profiles", slog.Any("error", err))
+		return nil, fmt.Errorf("failed to setup storage profiles: %w", err)
+	}
+
+	mdb, err := dbopen.LRDBStore(context.Background())
+	if err != nil {
+		slog.Error("Failed to connect to lr database", slog.Any("error", err))
+		return nil, fmt.Errorf("failed to connect to lr database: %w", err)
+	}
+
 	return &sqsPubsubCmd{
 		tracer: otel.Tracer("github.com/cardinalhq/lakerunner/cmd/pubsub/sqs"),
 		awsMgr: awsMgr,
+		sp:     sp,
+		mdb:    mdb,
 	}, nil
 }
 
@@ -129,13 +146,12 @@ func (ps *sqsPubsubCmd) pollSQS(doneCtx context.Context, sqsClient *awsclient.SQ
 		// Process received messages
 		for _, message := range result.Messages {
 			if message.Body != nil {
-				err := ps.handleS3Event(*message.Body)
+				err := handleMessage(context.Background(), []byte(*message.Body), ps.sp, ps.mdb)
 				if err != nil {
 					slog.Error("Failed to handle S3 event", slog.Any("error", err))
-					continue // Do not delete the message
+					continue
 				}
 			}
-			// Delete message only if processing succeeded
 			_, err := sqsClient.Client.DeleteMessage(context.Background(), &sqs.DeleteMessageInput{
 				QueueUrl:      aws.String(queueURL),
 				ReceiptHandle: message.ReceiptHandle,
@@ -146,32 +162,4 @@ func (ps *sqsPubsubCmd) pollSQS(doneCtx context.Context, sqsClient *awsclient.SQ
 			}
 		}
 	}
-}
-
-func (ps *sqsPubsubCmd) handleS3Event(messageBody string) error {
-	// Parse S3 event using existing function
-	items, err := parseS3LikeEvents([]byte(messageBody))
-	if err != nil {
-		slog.Error("Failed to parse S3 event", slog.Any("error", err))
-		return err
-	}
-
-	// Process each S3 event record
-	for _, item := range items {
-		// URL decode the object key (like the Scala code does)
-		decodedObjectID := strings.ReplaceAll(item.ObjectID, "%3D", "=")
-
-		slog.Info("Processed S3 event",
-			slog.String("bucket", item.Bucket),
-			slog.String("object_id", decodedObjectID),
-			slog.String("telemetry_type", item.TelemetryType),
-			slog.String("collector_name", item.CollectorName),
-			slog.String("organization_id", item.OrganizationID.String()),
-		)
-
-		fmt.Printf("S3 Event: Bucket=%s, Object=%s, Type=%s, Collector=%s\n",
-			item.Bucket, decodedObjectID, item.TelemetryType, item.CollectorName)
-	}
-
-	return nil
 }
