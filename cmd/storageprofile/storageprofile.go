@@ -33,6 +33,7 @@ type StorageProfile struct {
 	Role           string    `json:"role,omitempty" yaml:"role,omitempty"`
 	Bucket         string    `json:"bucket" yaml:"bucket"`
 	Hosted         bool      `json:"hosted,omitempty" yaml:"hosted,omitempty"`
+	Trusted        bool      `json:"trusted,omitempty" yaml:"trusted,omitempty"`
 	Endpoint       string    `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
 	InsecureTLS    bool      `json:"insecure_tls,omitempty" yaml:"insecure_tls,omitempty"`
 	UsePathStyle   bool      `json:"use_path_style,omitempty" yaml:"use_path_style,omitempty"`
