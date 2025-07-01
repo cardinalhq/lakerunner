@@ -1,0 +1,14 @@
+kind: Service
+apiVersion: v1
+metadata:
+  name: query-worker
+  labels:
+    app: query-worker
+  annotations:
+    fluentbit.io/parser: java
+spec:
+  selector:
+    app: query-worker
+  ports:
+    - port: 7101
+      name: http

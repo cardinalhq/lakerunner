@@ -1,0 +1,35 @@
+apiVersion: objectbucket.io/v1alpha1
+kind: ObjectBucketClaim
+metadata:
+  name: datalake-bucket-claim
+  labels:
+    app.kubernetes.io/name: lakerunner
+    app.kubernetes.io/component: lakerunner-objectsstore
+    app.kubernetes.io/part-of: lakerunner
+    bucket-notification-datalake-bucket-notification: datalake-bucket-notification
+spec:
+  generateBucketName: datalake
+  storageClassName: ceph-bucket
+  additionalConfig:
+    bucketLifecycle: |
+      {
+        "Rules": [
+          {
+            "ID": "AbortIncompleteMultipartUploads",
+            "Status": "Enabled",
+            "Prefix": "",
+            "AbortIncompleteMultipartUpload": {
+              "DaysAfterInitiation": 1
+            }
+          },
+          {
+            "ID": "ExpireAfter30Days",
+            "Status": "Enabled",
+            "Prefix": "otel-raw/",
+            "Expiration": {
+              "Days": 30
+            }
+          }
+        ]
+      }
+    bucketOwner: "rgw-user"

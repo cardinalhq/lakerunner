@@ -1,0 +1,92 @@
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: query-api
+  labels:
+    tags.datadoghq.com/service: "query-api"
+spec:
+  selector:
+    matchLabels:
+      app: query-api
+  serviceName: "query-api"
+  replicas: 1
+  minReadySeconds: 10
+  template:
+    metadata:
+      labels:
+        app: query-api
+      annotations:
+        instrumentation.opentelemetry.io/inject-java: "opentelemetry-operator/auto-instrumentation"
+    spec:
+      serviceAccountName: query-api-sa
+      terminationGracePeriodSeconds: 10
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 2000
+        runAsGroup: 2000
+        fsGroup: 2000
+      containers:
+        - name: query-api
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          image: query-api-image
+          imagePullPolicy: Always
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 7101
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: 8Gi
+              cpu: 2000m
+            limits:
+              memory: 8Gi
+              cpu: 2000m
+          env:
+            - name: HOST_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: HOME
+              value: "/tmp"
+            - name: OTEL_SERVICE_NAME
+              value: "query-api"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://$(HOST_IP):4318"
+            - name: JAVA_TOOL_OPTIONS
+              value: "-Xmx6g -Xms6g -Xdebug -Dspring.profiles.active=aws"
+            - name: METRICS_PREFIX
+              value: query-api
+            - name: AWS_REGION
+              value: "us-west-2"
+            - name: STORAGE_PROFILE_FILE
+              value: "/app/config/storage_profiles.yaml"
+          envFrom:
+            - secretRef:
+                name: postgresql-credentials
+            - secretRef:
+                name: datalake-bucket-claim
+            - configMapRef:
+                name: query-api-config-common
+            - configMapRef:
+                name: query-api-config
+          volumeMounts:
+            - name: lakerunner-storage-profiles
+              mountPath: /app/config/storage_profiles.yaml
+              readOnly: true
+              subPath: storage_profiles.yaml
+      volumes:
+        - name: lakerunner-storage-profiles
+          configMap:
+            name: lakerunner-storage-profiles

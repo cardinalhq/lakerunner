@@ -1,0 +1,97 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: query-worker
+  labels:
+    app: query-worker
+    tags.datadoghq.com/service: "query-worker"
+  annotations:
+    fluentbit.io/parser: java
+spec:
+  #replicas: 1 # managed by query-api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: query-worker
+  template:
+    metadata:
+      labels:
+        app: query-worker
+      annotations:
+        instrumentation.opentelemetry.io/inject-java: "opentelemetry-operator/auto-instrumentation"
+    spec:
+      serviceAccountName: lakerunner
+      tolerations:
+        - key: "k8s.cardinalhq.io/query-worker"
+          operator: "Equal"
+          value: "true"
+          effect: "NoSchedule"
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 2000
+        runAsGroup: 2000
+        fsGroup: 2000
+      containers:
+        - name: query-worker
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          image: query-worker-image
+          imagePullPolicy: Always
+          resources:
+            requests:
+              memory: 12Gi
+              cpu: 3500m
+            limits:
+              memory: 12Gi
+              cpu: 3500m
+          env:
+            - name: HOST_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: HOME
+              value: "/tmp"
+            - name: OTEL_SERVICE_NAME
+              value: "query-worker"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://$(HOST_IP):4318"
+            - name: JAVA_TOOL_OPTIONS
+              value: "-Xmx2g -Xms2g -Dlogging.level.com.cardinal=DEBUG -Dspring.profiles.active=aws"
+            - name: METRICS_PREFIX
+              value: query-worker
+            - name: AWS_REGION
+              value: "us-west-2"
+            - name: STORAGE_PROFILE_FILE
+              value: "/app/config/storage_profiles.yaml"
+          envFrom:
+            - secretRef:
+                name: postgresql-credentials
+            - secretRef:
+                name: datalake-bucket-claim
+          volumeMounts:
+            - name: lakerunner-scratch
+              mountPath: /db
+            - name: lakerunner-storage-profiles
+              mountPath: /app/config/storage_profiles.yaml
+              readOnly: true
+              subPath: storage_profiles.yaml
+      volumes:
+        - name: lakerunner-storage-profiles
+          configMap:
+            name: lakerunner-storage-profiles
+        - name: lakerunner-scratch
+          ephemeral:
+            volumeClaimTemplate:
+              spec:
+                accessModes: ["ReadWriteOnce"]
+                resources:
+                  requests:
+                    storage: 20Gi

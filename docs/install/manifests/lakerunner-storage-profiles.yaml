@@ -1,0 +1,9 @@
+- organization_id: b932c6f0-b968-4ff9-ae8f-365873c552f0
+  instance_num: 1
+  collector_name: "kubepi"
+  cloud_provider: "ceph"
+  region: "ceph-objectstore"
+  bucket: "datalake-4f7ca22b-9726-4c41-8658-e11bdcbb502b"
+  endpoint: "http://rook-ceph-rgw-ceph-objectstore.rook-ceph.svc.cluster.local:80"
+  insecure_tls: false
+  use_path_style: true

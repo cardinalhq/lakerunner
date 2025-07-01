@@ -1,0 +1,16 @@
+apiVersion: ceph.rook.io/v1
+kind: CephBucketNotification
+metadata:
+  name: datalake-bucket-notification
+  labels:
+    app.kubernetes.io/name: lakerunner
+    app.kubernetes.io/component: lakerunner-objectsstore
+    app.kubernetes.io/part-of: lakerunner
+spec:
+  topic: datalake-bucket-topic
+  filter:
+    keyFilters:
+      - name: prefix
+        value: otel-raw/
+  events:
+    - s3:ObjectCreated:*

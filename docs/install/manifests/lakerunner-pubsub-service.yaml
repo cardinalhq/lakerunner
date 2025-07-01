@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: lakerunner-pubsub
+  namespace: cardinalhq-datalake
+  labels:
+    app.kubernetes.io/name: lakerunner-pubsub
+    app.kubernetes.io/component: lakerunner-pubsub
+    app.kubernetes.io/part-of: lakerunner
+spec:
+  ports:
+  - name: http
+    port: 8080
+  selector:
+    app.kubernetes.io/name: lakerunner-pubsub
+    app.kubernetes.io/component: lakerunner-pubsub
+    app.kubernetes.io/part-of: lakerunner

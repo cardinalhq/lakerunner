@@ -1,0 +1,15 @@
+kind: Service
+apiVersion: v1
+metadata:
+  name: query-api
+  labels:
+    app: query-api
+spec:
+  selector:
+    app: query-api
+  ports:
+    - port: 7101
+      name: http
+      targetPort: 7101
+      protocol: TCP
+  clusterIP: None

@@ -1,0 +1,20 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: lakerunner
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: 'ssh://git@github.com/skandragon/kubernetes-clusters.git'
+    path: clusters/kubepi/cardinalhq-datalake
+    targetRevision: main
+  destination:
+    namespace: cardinalhq-datalake
+    name: kubepi
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: false
+    syncOptions:
+      - CreateNamespace=true

@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: query-api-config
+data:
+  NUM_MIN_QUERY_WORKERS: "3"
+  NUM_MAX_QUERY_WORKERS: "3"
+  QUERY_WORKER_IMAGE: "public.ecr.aws/cardinalhq.io//query-worker:latest"
+  CARDINALHQ_ENVIRONMENT: "test"

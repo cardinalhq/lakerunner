@@ -1,0 +1,43 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: cardinalhq-datalake
+resources:
+  - ceph
+  - lakerunner-compact-logs-hpa.yaml
+  - lakerunner-compact-logs.yaml
+  - lakerunner-compact-metrics-hpa.yaml
+  - lakerunner-compact-metrics.yaml
+  - lakerunner-ingest-logs-hpa.yaml
+  - lakerunner-ingest-logs.yaml
+  - lakerunner-ingest-metrics-hpa.yaml
+  - lakerunner-ingest-metrics.yaml
+  - lakerunner-pubsub-deployment.yaml
+  - lakerunner-pubsub-service.yaml
+  - lakerunner-rollup-metrics-hpa.yaml
+  - lakerunner-rollup-metrics.yaml
+  - lakerunner-serviceaccount.yaml
+  - lakerunner-sweeper.yaml
+  - namespace.yaml
+  - postgresql-credentials.yaml
+  - query-api-config-common.yaml
+  - query-api-config.yaml
+  - query-api-rbac.yaml
+  - query-api-service.yaml
+  - query-api-serviceaccount.yaml
+  - query-api-statefulset.yaml
+  - query-worker-deployment.yaml
+  - query-worker-service.yaml
+images:
+  - name: cardinalhq-lakerunner
+    newName: docker.flame.org/library/cardinalhq-lakerunner
+    newTag: latest-dev
+  - name: query-api-image
+    newName: docker.flame.org/library/query-api
+    newTag: latest-dev
+  - name: query-worker-image
+    newName: docker.flame.org/library/query-worker
+    newTag: latest-dev
+configMapGenerator:
+  - name: lakerunner-storage-profiles
+    files:
+      - storage_profiles.yaml=lakerunner-storage-profiles.yaml

@@ -1,0 +1,25 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: deployment-scaler-role
+rules:
+  - apiGroups: [ "apps" ]
+    resources: [ "deployments" ]
+    resourceNames: [ "query-worker" ]
+    verbs: [ "get", "list", "watch", "patch", "update" ]
+  - apiGroups: [ "" ]
+    resources: [ "pods" ]
+    verbs: [ "get", "list", "watch", "update" ]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: deployment-scaler-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: deployment-scaler-role
+subjects:
+  - kind: ServiceAccount
+    name: query-api-sa
+    namespace: cardinalhq-datalake # TODO: needs to change if the namespace changes

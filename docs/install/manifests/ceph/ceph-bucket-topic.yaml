@@ -1,0 +1,15 @@
+apiVersion: ceph.rook.io/v1
+kind: CephBucketTopic
+metadata:
+  name: datalake-bucket-topic
+  labels:
+    app.kubernetes.io/name: lakerunner
+    app.kubernetes.io/component: lakerunner-objectsstore
+    app.kubernetes.io/part-of: lakerunner
+spec:
+  objectStoreName: ceph-objectstore
+  objectStoreNamespace: rook-ceph
+  persistent: true
+  endpoint:
+    http:
+      uri: http://lakerunner-pubsub.cardinalhq-datalake.svc.cluster.local:8080
