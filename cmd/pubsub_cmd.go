@@ -56,7 +56,7 @@ func init() {
 
 	sqsListenCmd := &cobra.Command{
 		Use:   "sqs",
-		Short: "listen on one or more http pubsub sources",
+		Short: "listen on one or more SQS pubsub sources",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			servicename := "pubsub-sqs"
 			doneCtx, doneFx, err := setupTelemetry(servicename)
@@ -68,9 +68,9 @@ func init() {
 					slog.Error("Error shutting down telemetry", slog.Any("error", err))
 				}
 			}()
-			cmd, err := pubsub.New()
+			cmd, err := pubsub.NewSQS()
 			if err != nil {
-				return fmt.Errorf("failed to create pubsub command: %w", err)
+				return fmt.Errorf("failed to create SQS pubsub command: %w", err)
 			}
 			return cmd.Run(doneCtx)
 		},
