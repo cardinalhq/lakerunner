@@ -88,23 +88,10 @@ func (ps *sqsPubsubCmd) Run(doneCtx context.Context) error {
 	// Get role ARN from environment (optional)
 	roleARN := os.Getenv("SQS_ROLE_ARN")
 
-	// Create SQS client
-	var sqsClient *awsclient.SQSClient
-	var err error
-
-	if roleARN != "" {
-		// Use role assumption
-		sqsClient, err = ps.awsMgr.GetSQS(context.Background(),
-			awsclient.WithSQSRole(roleARN),
-			awsclient.WithSQSRegion(region),
-		)
-	} else {
-		// Use default credentials
-		sqsClient, err = ps.awsMgr.GetSQS(context.Background(),
-			awsclient.WithSQSRegion(region),
-		)
-	}
-
+	sqsClient, err := ps.awsMgr.GetSQS(context.Background(),
+		awsclient.WithSQSRole(roleARN),
+		awsclient.WithSQSRegion(region),
+	)
 	if err != nil {
 		slog.Error("Failed to create SQS client", slog.Any("error", err))
 		return fmt.Errorf("failed to create SQS client: %w", err)
@@ -134,12 +121,11 @@ func (ps *sqsPubsubCmd) pollSQS(doneCtx context.Context, sqsClient *awsclient.SQ
 		result, err := sqsClient.Client.ReceiveMessage(context.Background(), &sqs.ReceiveMessageInput{
 			QueueUrl:            aws.String(queueURL),
 			MaxNumberOfMessages: 10,
-			WaitTimeSeconds:     20, // Long polling
+			WaitTimeSeconds:     20,
 		})
-
 		if err != nil {
 			slog.Error("Failed to receive messages from SQS", slog.Any("error", err))
-			time.Sleep(5 * time.Second) // Wait before retrying
+			time.Sleep(5 * time.Second)
 			continue
 		}
 
@@ -155,7 +141,6 @@ func (ps *sqsPubsubCmd) pollSQS(doneCtx context.Context, sqsClient *awsclient.SQ
 				QueueUrl:      aws.String(queueURL),
 				ReceiptHandle: message.ReceiptHandle,
 			})
-
 			if err != nil {
 				slog.Error("Failed to delete SQS message", slog.Any("error", err))
 			}

@@ -17,6 +17,7 @@ header:
     - '**/*.yaml'
     - '**/*.yml'
     - '**/*.json'
+    - '**/*.mermaid'
     - go.sum
     - go.mod
     - go.work
@@ -30,5 +31,10 @@ header:
     - pkg/*db/models.go
     - pkg/*db/querier.go
     - pkg/*db/copyfrom.go
+    - internal/configdb/batch.go
+    - internal/configdb/db.go
+    - internal/configdb/models.go
+    - internal/configdb/querier.go
+    - internal/configdb/copyfrom.go
 
   comment: on-failure
