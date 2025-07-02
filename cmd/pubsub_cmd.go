@@ -45,7 +45,7 @@ func init() {
 					slog.Error("Error shutting down telemetry", slog.Any("error", err))
 				}
 			}()
-			cmd, err := pubsub.New()
+			cmd, err := pubsub.NewHTTPListener()
 			if err != nil {
 				return fmt.Errorf("failed to create pubsub command: %w", err)
 			}

@@ -41,7 +41,7 @@ type InqueueInserter interface {
 	PutInqueueWork(ctx context.Context, arg lrdb.PutInqueueWorkParams) error
 }
 
-func New() (*pubsubCmd, error) {
+func NewHTTPListener() (*pubsubCmd, error) {
 	sp, err := storageprofile.SetupStorageProfiles()
 	if err != nil {
 		slog.Error("Failed to setup storage profiles", slog.Any("error", err))

@@ -70,47 +70,31 @@ func NewSQS() (*sqsPubsubCmd, error) {
 func (ps *sqsPubsubCmd) Run(doneCtx context.Context) error {
 	slog.Info("Starting SQS pubsub service for S3 events")
 
-	// Get SQS queue URL from environment
 	queueURL := os.Getenv("SQS_QUEUE_URL")
 	if queueURL == "" {
 		return fmt.Errorf("SQS_QUEUE_URL environment variable is required")
 	}
 
-	// Get region from environment or use default
 	region := os.Getenv("SQS_REGION")
 	if region == "" {
 		region = os.Getenv("AWS_REGION")
 		if region == "" {
-			region = "us-west-2" // Default fallback
+			region = "us-west-2"
 		}
 	}
 
 	// Get role ARN from environment (optional)
 	roleARN := os.Getenv("SQS_ROLE_ARN")
 
-	// Create SQS client
-	var sqsClient *awsclient.SQSClient
-	var err error
-
-	if roleARN != "" {
-		// Use role assumption
-		sqsClient, err = ps.awsMgr.GetSQS(context.Background(),
-			awsclient.WithSQSRole(roleARN),
-			awsclient.WithSQSRegion(region),
-		)
-	} else {
-		// Use default credentials
-		sqsClient, err = ps.awsMgr.GetSQS(context.Background(),
-			awsclient.WithSQSRegion(region),
-		)
-	}
-
+	sqsClient, err := ps.awsMgr.GetSQS(context.Background(),
+		awsclient.WithSQSRole(roleARN),
+		awsclient.WithSQSRegion(region),
+	)
 	if err != nil {
 		slog.Error("Failed to create SQS client", slog.Any("error", err))
 		return fmt.Errorf("failed to create SQS client: %w", err)
 	}
 
-	// Start SQS polling loop
 	go ps.pollSQS(doneCtx, sqsClient, queueURL)
 
 	<-doneCtx.Done()
@@ -130,20 +114,17 @@ func (ps *sqsPubsubCmd) pollSQS(doneCtx context.Context, sqsClient *awsclient.SQ
 		default:
 		}
 
-		// Receive messages from SQS
-		result, err := sqsClient.Client.ReceiveMessage(context.Background(), &sqs.ReceiveMessageInput{
+		result, err := sqsClient.Client.ReceiveMessage(doneCtx, &sqs.ReceiveMessageInput{
 			QueueUrl:            aws.String(queueURL),
 			MaxNumberOfMessages: 10,
-			WaitTimeSeconds:     20, // Long polling
+			WaitTimeSeconds:     20,
 		})
-
 		if err != nil {
 			slog.Error("Failed to receive messages from SQS", slog.Any("error", err))
-			time.Sleep(5 * time.Second) // Wait before retrying
+			time.Sleep(5 * time.Second)
 			continue
 		}
 
-		// Process received messages
 		for _, message := range result.Messages {
 			if message.Body != nil {
 				err := handleMessage(context.Background(), []byte(*message.Body), ps.sp, ps.mdb)
@@ -155,7 +136,6 @@ func (ps *sqsPubsubCmd) pollSQS(doneCtx context.Context, sqsClient *awsclient.SQ
 				QueueUrl:      aws.String(queueURL),
 				ReceiptHandle: message.ReceiptHandle,
 			})
-
 			if err != nil {
 				slog.Error("Failed to delete SQS message", slog.Any("error", err))
 			}
