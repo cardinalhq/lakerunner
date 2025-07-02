@@ -37,7 +37,7 @@ spec:
           image: cardinalhq-lakerunner
           imagePullPolicy: Always
           command:
-            - /app/bin/cardinalhq-lakerunner
+            - /app/bin/lakerunner
             - sweeper
           envFrom:
             - secretRef:
