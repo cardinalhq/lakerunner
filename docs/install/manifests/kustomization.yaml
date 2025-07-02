@@ -29,13 +29,13 @@ resources:
   - query-worker-service.yaml
 images:
   - name: cardinalhq-lakerunner
-    newName: docker.flame.org/library/cardinalhq-lakerunner
+    newName: public.ecr.aws/cardinalhq.io/lakerunner
     newTag: latest-dev
   - name: query-api-image
-    newName: docker.flame.org/library/query-api
+    newName: public.ecr.aws/cardinalhq.io/lakeside-query-api
     newTag: latest-dev
   - name: query-worker-image
-    newName: docker.flame.org/library/query-worker
+    newName: public.ecr.aws/cardinalhq.io/lakeside-query-worker
     newTag: latest-dev
 configMapGenerator:
   - name: lakerunner-storage-profiles
