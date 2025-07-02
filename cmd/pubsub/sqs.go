@@ -70,18 +70,16 @@ func NewSQS() (*sqsPubsubCmd, error) {
 func (ps *sqsPubsubCmd) Run(doneCtx context.Context) error {
 	slog.Info("Starting SQS pubsub service for S3 events")
 
-	// Get SQS queue URL from environment
 	queueURL := os.Getenv("SQS_QUEUE_URL")
 	if queueURL == "" {
 		return fmt.Errorf("SQS_QUEUE_URL environment variable is required")
 	}
 
-	// Get region from environment or use default
 	region := os.Getenv("SQS_REGION")
 	if region == "" {
 		region = os.Getenv("AWS_REGION")
 		if region == "" {
-			region = "us-west-2" // Default fallback
+			region = "us-west-2"
 		}
 	}
 
@@ -97,7 +95,6 @@ func (ps *sqsPubsubCmd) Run(doneCtx context.Context) error {
 		return fmt.Errorf("failed to create SQS client: %w", err)
 	}
 
-	// Start SQS polling loop
 	go ps.pollSQS(doneCtx, sqsClient, queueURL)
 
 	<-doneCtx.Done()
@@ -117,8 +114,7 @@ func (ps *sqsPubsubCmd) pollSQS(doneCtx context.Context, sqsClient *awsclient.SQ
 		default:
 		}
 
-		// Receive messages from SQS
-		result, err := sqsClient.Client.ReceiveMessage(context.Background(), &sqs.ReceiveMessageInput{
+		result, err := sqsClient.Client.ReceiveMessage(doneCtx, &sqs.ReceiveMessageInput{
 			QueueUrl:            aws.String(queueURL),
 			MaxNumberOfMessages: 10,
 			WaitTimeSeconds:     20,
@@ -129,7 +125,6 @@ func (ps *sqsPubsubCmd) pollSQS(doneCtx context.Context, sqsClient *awsclient.SQ
 			continue
 		}
 
-		// Process received messages
 		for _, message := range result.Messages {
 			if message.Body != nil {
 				err := handleMessage(context.Background(), []byte(*message.Body), ps.sp, ps.mdb)
