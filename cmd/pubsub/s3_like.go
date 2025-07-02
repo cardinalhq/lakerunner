@@ -17,6 +17,8 @@ package pubsub
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"net/url"
 	"strings"
 
 	"github.com/google/uuid"
@@ -47,9 +49,15 @@ func parseS3LikeEvents(raw []byte) ([]lrdb.Inqueue, error) {
 	out := make([]lrdb.Inqueue, 0, len(evt.Records))
 	for _, rec := range evt.Records {
 		key := rec.S3.Object.Key
+		key, err := url.QueryUnescape(key)
+		if err != nil {
+			slog.Error("Failed to unescape key", slog.Any("error", err))
+			continue
+		}
 		parts := strings.Split(key, "/")
 		if len(parts) < 4 || parts[0] != "otel-raw" {
-			return nil, fmt.Errorf("unexpected key format: %q", key)
+			slog.Error("Unexpected key format", slog.String("key", key))
+			continue
 		}
 
 		orgID, err := uuid.Parse(parts[1])
