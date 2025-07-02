@@ -1,0 +1,1 @@
+-- 1751057788_initial_extensions.down.sql
