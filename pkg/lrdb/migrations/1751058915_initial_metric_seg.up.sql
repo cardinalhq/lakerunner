@@ -23,7 +23,7 @@ PARTITION BY LIST (organization_id);
 
 CREATE INDEX IF NOT EXISTS metric_seg_tsrange_gist ON metric_seg USING gist (ts_range);
 
-CREATE INDEX IF NOT EXISTS metric_seg_ingest_dateint_idx ON log_seg (ingest_dateint);
+CREATE INDEX IF NOT EXISTS metric_seg_ingest_dateint_idx ON metric_seg (ingest_dateint);
 
 CREATE INDEX IF NOT EXISTS idx_queryapi_lookup
   ON metric_seg (organization_id, dateint, frequency_ms)
