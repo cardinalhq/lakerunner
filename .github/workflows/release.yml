@@ -73,6 +73,6 @@ jobs:
         with:
           distribution: goreleaser
           version: "nightly"
-          args: release --clean
+          args: release --clean --config .goreleaser-release.yaml
         env:
           GITHUB_TOKEN: dummy

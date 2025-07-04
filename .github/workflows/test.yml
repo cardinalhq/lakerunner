@@ -15,8 +15,8 @@ jobs:
       uses: actions/setup-go@v5
       with:
         go-version: ${{ matrix.go-version }}
-    - name: install ragel
-      run: sudo apt install -y ragel protoc-gen-go
+    # - name: install ragel
+    #   run: sudo apt install -y ragel protoc-gen-go
     - uses: actions/cache@v4
       with:
         path: |
