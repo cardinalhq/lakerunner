@@ -69,12 +69,6 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 	slog.Info("Starting sweeper", slog.Int64("instanceID", cmd.instanceID))
 
 	for {
-		select {
-		case <-doneCtx.Done():
-			return doneCtx.Err()
-		default:
-		}
-
 		err := sweep(ctx, slog.Default(), cmd.sp, mdb, awsmanager)
 		if err != nil {
 			return err
