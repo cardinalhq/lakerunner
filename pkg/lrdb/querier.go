@@ -15,6 +15,7 @@ type Querier interface {
 	BatchInsertMetricSegs(ctx context.Context, arg []BatchInsertMetricSegsParams) *BatchInsertMetricSegsBatchResults
 	BatchMarkMetricSegsRolledup(ctx context.Context, arg []BatchMarkMetricSegsRolledupParams) *BatchMarkMetricSegsRolledupBatchResults
 	ClaimInqueueWork(ctx context.Context, arg ClaimInqueueWorkParams) (Inqueue, error)
+	CleanupInqueueWork(ctx context.Context) error
 	CompactLogSegments(ctx context.Context, arg CompactLogSegmentsParams) error
 	DeleteInqueueWork(ctx context.Context, arg DeleteInqueueWorkParams) error
 	GetLogSegmentsForCompaction(ctx context.Context, arg GetLogSegmentsForCompactionParams) ([]GetLogSegmentsForCompactionRow, error)

@@ -75,46 +75,44 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 		default:
 		}
 
-		didWork, err := sweep(ctx, slog.Default(), cmd.sp, mdb, awsmanager)
+		err := sweep(ctx, slog.Default(), cmd.sp, mdb, awsmanager)
 		if err != nil {
 			return err
 		}
 
-		if !didWork {
-			select {
-			case <-doneCtx.Done():
-				return doneCtx.Err()
-			case <-time.After(1 * time.Minute):
-			}
+		select {
+		case <-doneCtx.Done():
+			return doneCtx.Err()
+		case <-time.After(1 * time.Minute):
 		}
 	}
 }
 
-func sweep(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, awsmanager *awsclient.Manager) (bool, error) {
-	cleanerDidWork, err := runObjCleaner(ctx, ll, sp, mdb, awsmanager)
+func sweep(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, awsmanager *awsclient.Manager) error {
+	err := runObjCleaner(ctx, ll, sp, mdb, awsmanager)
 	if err != nil {
 		ll.Error("Failed to run object cleaner", slog.Any("error", err))
-		return false, err
+		return err
 	}
 
-	expiryDidWork, err := runExpiry(ctx, ll, mdb)
+	err = runWorkqueueExpiry(ctx, ll, mdb)
 	if err != nil {
 		ll.Error("Failed to run expiry", slog.Any("error", err))
-		return false, err
+		return err
 	}
-	return cleanerDidWork || expiryDidWork, nil
+	return nil
 }
 
-func runObjCleaner(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, awsmanager *awsclient.Manager) (bool, error) {
+func runObjCleaner(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, awsmanager *awsclient.Manager) error {
 	objs, err := mdb.ObjectCleanupGet(ctx)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return false, nil
+			return nil
 		}
-		return false, err
+		return err
 	}
 	if len(objs) == 0 {
-		return false, nil
+		return nil
 	}
 
 	var wg sync.WaitGroup
@@ -125,7 +123,7 @@ func runObjCleaner(ctx context.Context, ll *slog.Logger, sp storageprofile.Stora
 	}
 	wg.Wait()
 
-	return true, nil
+	return nil
 }
 
 func cleanupObj(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, awsmanager *awsclient.Manager, obj lrdb.ObjectCleanupGetRow, wg *sync.WaitGroup) {
@@ -175,23 +173,36 @@ func failWork(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull, id uuid.
 	}
 }
 
-func runExpiry(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull) (bool, error) {
+func runWorkqueueExpiry(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull) error {
 	expired, err := mdb.WorkQueueCleanup(ctx)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return false, nil
+			return nil
 		}
 		ll.Error("Failed to expire objects", slog.Any("error", err))
-		return false, err
+		return err
 	}
 
 	if len(expired) == 0 {
-		return false, nil
+		return nil
 	}
 
 	for _, obj := range expired {
 		ll.Info("Expired work/lock", slog.Any("work", obj))
 	}
 
-	return true, nil
+	return nil
+}
+
+func runInqueueExpiry(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull) error {
+	err := mdb.CleanupInqueueWork(ctx)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		ll.Error("Failed to expire objects", slog.Any("error", err))
+		return err
+	}
+
+	return nil
 }

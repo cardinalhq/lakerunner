@@ -19,8 +19,7 @@ SET
 WHERE i.id = (
   SELECT ii.id
   FROM inqueue ii
-  WHERE (ii.claimed_at IS NULL
-         OR ii.claimed_at < NOW() - INTERVAL '20 minutes')
+  WHERE ii.claimed_at IS NULL
     AND ii.telemetry_type = $2
   ORDER BY ii.priority DESC, ii.queue_ts
   LIMIT 1
@@ -52,6 +51,18 @@ func (q *Queries) ClaimInqueueWork(ctx context.Context, arg ClaimInqueueWorkPara
 		&i.ClaimedAt,
 	)
 	return i, err
+}
+
+const cleanupInqueueWork = `-- name: CleanupInqueueWork :exec
+UPDATE inqueue
+SET claimed_by = -1, claimed_at = NULL
+WHERE claimed_at IS NOT NULL
+  AND claimed_at < NOW() - INTERVAL '5 minutes'
+`
+
+func (q *Queries) CleanupInqueueWork(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, cleanupInqueueWork)
+	return err
 }
 
 const deleteInqueueWork = `-- name: DeleteInqueueWork :exec
