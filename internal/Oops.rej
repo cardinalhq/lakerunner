@@ -1,0 +1,14 @@
+@@ -33,3 +33,13 @@
+ 	args := m.Called(ctx, params)
+ 	return args.Get(0).(configdb.GetStorageProfileByCollectorNameRow), args.Error(1)
+ }
++
++func (m *MockConfigDB) GetStorageProfilesByBucketNameUncached(ctx context.Context, bucketName string) ([]configdb.GetStorageProfilesByBucketNameRow, error) {
++	args := m.Called(ctx, bucketName)
++	return args.Get(0).([]configdb.GetStorageProfilesByBucketNameRow), args.Error(1)
++}
++
++func (m *MockConfigDB) GetStorageProfilesByBucketName(ctx context.Context, bucketName string) ([]configdb.GetStorageProfilesByBucketNameRow, error) {
++	args := m.Called(ctx, bucketName)
++	return args.Get(0).([]configdb.GetStorageProfilesByBucketNameRow), args.Error(1)
++}

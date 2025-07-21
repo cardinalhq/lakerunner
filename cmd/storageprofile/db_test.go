@@ -51,6 +51,22 @@ func (m *mockConfigDBStoreageProfileFetcher) GetStorageProfileByCollectorName(ct
 	}, nil
 }
 
+func (m *mockConfigDBStoreageProfileFetcher) GetStorageProfilesByBucketName(ctx context.Context, bucketName string) ([]configdb.GetStorageProfilesByBucketNameRow, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return []configdb.GetStorageProfilesByBucketNameRow{
+		{
+			OrganizationID: m.profile.OrganizationID,
+			ExternalID:     m.profile.ExternalID,
+			CloudProvider:  m.profile.CloudProvider,
+			Region:         m.profile.Region,
+			Bucket:         m.profile.Bucket,
+			Role:           m.profile.Role,
+		},
+	}, nil
+}
+
 func TestDatabaseProvider_Get_SuccessWithRole(t *testing.T) {
 	orgID := uuid.New()
 	role := "admin"

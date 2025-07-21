@@ -20,6 +20,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -29,9 +32,12 @@ import (
 	"github.com/cardinalhq/lakerunner/cmd/storageprofile"
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
+	"github.com/cardinalhq/lakerunner/internal/buffet"
 	"github.com/cardinalhq/lakerunner/internal/filecrunch"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/logcrunch"
+	"github.com/cardinalhq/lakerunner/pkg/fileconv/rawparquet"
+	"github.com/cardinalhq/lakerunner/pkg/fileconv/translate"
 	"github.com/cardinalhq/lakerunner/pkg/lrdb"
 )
 
@@ -118,83 +124,181 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, sp storageprofile.Stora
 	}
 	ll.Info("Downloaded source file")
 
-	fh, err := filecrunch.LoadSchemaForFile(tmpfilename)
-	if err != nil {
-		ll.Error("Failed to load schema for file", slog.Any("error", err))
-		return err
-	}
-	defer func() {
-		_ = fh.Close()
-	}()
-	splitResults, err := logcrunch.ProcessAndSplit(ll, fh, tmpdir, ingest_dateint)
-	if err != nil {
-		ll.Error("Failed to fingerprint file", slog.Any("error", err))
-		return err
-	}
+	filenames := []string{tmpfilename}
 
-	for key, split := range splitResults {
-		segmentID := s3helper.GenerateID()
-		dbObjectID := helpers.MakeDBObjectID(inf.OrganizationID, inf.CollectorName, key.DateInt, s3helper.HourFromMillis(split.FirstTS), segmentID, "logs")
-
-		if err := s3helper.UploadS3Object(ctx, s3client, inf.Bucket, dbObjectID, split.FileName); err != nil {
-			ll.Error("Failed to upload S3 object", slog.Any("error", err))
-			return err
+	// If the file is not in our `otel-raw` prefix, convert it from generic parquet to raw parquet.
+	if !strings.HasPrefix(inf.ObjectID, "otel-raw/") {
+		if !strings.HasSuffix(inf.ObjectID, ".parquet") {
+			ll.Warn("Object ID does not end with .parquet, skipping", slog.String("objectID", inf.ObjectID))
+			return nil
 		}
-		ll.Info("Uploaded log segment",
-			slog.String("bucket", inf.Bucket),
-			slog.String("objectID", dbObjectID),
-			slog.Int64("segmentID", segmentID),
-			slog.Any("key", key),
-			slog.Int64("firstTS", split.FirstTS),
-			slog.Int64("lastTS", split.LastTS),
-			slog.Int64("recordCount", split.RecordCount),
-			slog.Int64("fileSize", split.FileSize))
-		_ = os.Remove(split.FileName)
+		if strings.HasPrefix(inf.ObjectID, "db/") {
+			return nil
+		}
+		if fnames, err := convertRawParquet(tmpfilename, tmpdir, inf.Bucket, inf.ObjectID); err != nil {
+			ll.Error("Failed to convert raw parquet", slog.Any("error", err))
+			return err
+		} else {
+			filenames = fnames
+			ll.Info("Converted raw parquet file", slog.String("filename", tmpfilename))
+		}
+	}
 
-		attrs := attribute.NewSet(
-			attribute.String("signal", "logs"),
-			attribute.String("action", "ingest"),
-		)
-
-		fps := split.Fingerprints.ToSlice()
-		t0 := time.Now()
-		split.LastTS++ // end is exclusive, so we need to increment it by 1ms
-		err = mdb.InsertLogSegment(ctx, lrdb.InsertLogSegmentParams{
-			OrganizationID: inf.OrganizationID,
-			Dateint:        key.DateInt,
-			IngestDateint:  ingest_dateint,
-			SegmentID:      segmentID,
-			InstanceNum:    inf.InstanceNum,
-			StartTs:        split.FirstTS,
-			EndTs:          split.LastTS,
-			RecordCount:    split.RecordCount,
-			FileSize:       split.FileSize,
-			Fingerprints:   fps,
-		})
-		dbExecDuration.Record(ctx, time.Since(t0).Milliseconds(),
-			metric.WithAttributeSet(commonAttributes),
-			metric.WithAttributeSet(attrs),
-			metric.WithAttributes(
-				attribute.Bool("hasError", err != nil),
-				attribute.String("queryName", "InsertLogSegment"),
-			))
+	for _, fname := range filenames {
+		fh, err := filecrunch.LoadSchemaForFile(fname)
 		if err != nil {
-			ll.Error("Failed to insert log segments", slog.Any("error", err))
+			ll.Error("Failed to load schema for file", slog.Any("error", err))
+			return err
+		}
+		defer func() {
+			_ = fh.Close()
+		}()
+		splitResults, err := logcrunch.ProcessAndSplit(ll, fh, tmpdir, ingest_dateint)
+		if err != nil {
+			ll.Error("Failed to fingerprint file", slog.Any("error", err))
 			return err
 		}
 
-		ll.Info("Inserted log segment",
-			slog.Int64("segmentID", segmentID),
-			slog.Any("key", key),
-			slog.Int("fingerprintCount", split.Fingerprints.Cardinality()),
-			slog.Int64("recordCount", split.RecordCount),
-			slog.Int64("fileSize", split.FileSize))
+		for key, split := range splitResults {
+			segmentID := s3helper.GenerateID()
+			dbObjectID := helpers.MakeDBObjectID(inf.OrganizationID, inf.CollectorName, key.DateInt, s3helper.HourFromMillis(split.FirstTS), segmentID, "logs")
 
-		// TODO this can be done just once per dateint.
-		if err := queueLogCompaction(ctx, mdb, qmcFromInqueue(inf, -1, split.FirstTS)); err != nil {
-			return err
+			if err := s3helper.UploadS3Object(ctx, s3client, inf.Bucket, dbObjectID, split.FileName); err != nil {
+				ll.Error("Failed to upload S3 object", slog.Any("error", err))
+				return err
+			}
+			ll.Info("Uploaded log segment",
+				slog.String("bucket", inf.Bucket),
+				slog.String("objectID", dbObjectID),
+				slog.Int64("segmentID", segmentID),
+				slog.Any("key", key),
+				slog.Int64("firstTS", split.FirstTS),
+				slog.Int64("lastTS", split.LastTS),
+				slog.Int64("recordCount", split.RecordCount),
+				slog.Int64("fileSize", split.FileSize))
+			_ = os.Remove(split.FileName)
+
+			attrs := attribute.NewSet(
+				attribute.String("signal", "logs"),
+				attribute.String("action", "ingest"),
+			)
+
+			fps := split.Fingerprints.ToSlice()
+			t0 := time.Now()
+			split.LastTS++ // end is exclusive, so we need to increment it by 1ms
+			err = mdb.InsertLogSegment(ctx, lrdb.InsertLogSegmentParams{
+				OrganizationID: inf.OrganizationID,
+				Dateint:        key.DateInt,
+				IngestDateint:  ingest_dateint,
+				SegmentID:      segmentID,
+				InstanceNum:    inf.InstanceNum,
+				StartTs:        split.FirstTS,
+				EndTs:          split.LastTS,
+				RecordCount:    split.RecordCount,
+				FileSize:       split.FileSize,
+				Fingerprints:   fps,
+			})
+			dbExecDuration.Record(ctx, time.Since(t0).Milliseconds(),
+				metric.WithAttributeSet(commonAttributes),
+				metric.WithAttributeSet(attrs),
+				metric.WithAttributes(
+					attribute.Bool("hasError", err != nil),
+					attribute.String("queryName", "InsertLogSegment"),
+				))
+			if err != nil {
+				ll.Error("Failed to insert log segments", slog.Any("error", err))
+				return err
+			}
+
+			ll.Info("Inserted log segment",
+				slog.Int64("segmentID", segmentID),
+				slog.Any("key", key),
+				slog.Int("fingerprintCount", split.Fingerprints.Cardinality()),
+				slog.Int64("recordCount", split.RecordCount),
+				slog.Int64("fileSize", split.FileSize))
+
+			// TODO this can be done just once per dateint.
+			if err := queueLogCompaction(ctx, mdb, qmcFromInqueue(inf, -1, split.FirstTS)); err != nil {
+				return err
+			}
 		}
 	}
 
 	return nil
+}
+
+func convertRawParquet(tmpfilename, tmpdir, bucket, objectID string) ([]string, error) {
+	r, err := rawparquet.NewRawParquetReader(tmpfilename, translate.NewMapper(), nil)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+
+	nodes, err := r.Nodes()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get nodes: %w", err)
+	}
+
+	w, err := buffet.NewWriter("fileconv", tmpdir, nodes, 0, 0)
+	defer func() {
+		_, err := w.Close()
+		if err != buffet.ErrAlreadyClosed {
+			if err != nil {
+				slog.Error("Failed to close writer", slog.Any("error", err))
+			}
+		}
+	}()
+
+	baseitems := map[string]string{
+		"resource.bucket.name": bucket,
+		"resource.file.name":   "./" + objectID,
+		"resource.file.type":   getFileType(objectID),
+	}
+
+	for {
+		row, done, err := r.GetRow()
+		if err != nil {
+			return nil, err
+		}
+		if done {
+			break
+		}
+		for k, v := range baseitems {
+			row[k] = v
+		}
+		if err := w.Write(row); err != nil {
+			return nil, fmt.Errorf("failed to write row: %w", err)
+		}
+	}
+
+	result, err := w.Close()
+	if err != nil {
+		return nil, fmt.Errorf("failed to close writer: %w", err)
+	}
+	if len(result) == 0 {
+		return nil, fmt.Errorf("no records written to file")
+	}
+
+	var fnames []string
+	for _, res := range result {
+		fnames = append(fnames, res.FileName)
+	}
+	return fnames, nil
+}
+
+var nonLetter = regexp.MustCompile(`[^a-zA-Z]`)
+
+// getFileType extracts the “base” of the filename (everything before the last dot),
+// then strips out any non‑letter characters.
+func getFileType(p string) string {
+	// equivalent of Scala’s path.split("/").lastOption.getOrElse("")
+	fileName := path.Base(p)
+
+	// find last “.”; if none, use whole filename
+	if idx := strings.LastIndex(fileName, "."); idx != -1 {
+		fileName = fileName[:idx]
+	}
+
+	// strip out anything that isn’t A–Z or a–z
+	return nonLetter.ReplaceAllString(fileName, "")
 }

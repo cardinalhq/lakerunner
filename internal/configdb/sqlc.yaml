@@ -17,6 +17,8 @@ sql:
           GetStorageProfileUncachedParams: GetStorageProfileParams
           GetStorageProfileByCollectorNameUncachedRow: GetStorageProfileByCollectorNameRow
           GetStorageProfileByCollectorNameUncachedParams: GetStorageProfileByCollectorNameParams
+          GetStorageProfilesByBucketNameUncachedRow: GetStorageProfilesByBucketNameRow
+          GetStorageProfilesByBucketNameUncachedParams: GetStorageProfilesByBucketNameParams
         overrides:
           - {db_type: "jsonb", go_type: {type: "map[string]any"}}
           - {db_type: "timestamptz", go_type: {type: "time.Time"}}

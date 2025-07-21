@@ -40,6 +40,7 @@ type StorageProfile struct {
 
 type StorageProfileProvider interface {
 	Get(ctx context.Context, organizationID uuid.UUID, instanceNum int16) (StorageProfile, error)
+	GetStorageProfilesByBucketName(ctx context.Context, bucketName string) ([]StorageProfile, error)
 	GetByCollectorName(ctx context.Context, organizationID uuid.UUID, collectorName string) (StorageProfile, error)
 }
 

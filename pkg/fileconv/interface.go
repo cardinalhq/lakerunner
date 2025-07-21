@@ -12,13 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package configdb
+package fileconv
 
-import "context"
+type Reader interface {
+	// Returns the next row of data.  It will return (nil, true, nil) when there are no more rows.
+	// row and done are only valid if err is nil.
+	GetRow() (row map[string]any, done bool, err error)
+	Close() error
+}
 
-type QuerierFull interface {
-	Querier
-	GetStorageProfile(ctx context.Context, arg GetStorageProfileParams) (GetStorageProfileRow, error)
-	GetStorageProfileByCollectorName(ctx context.Context, arg GetStorageProfileByCollectorNameParams) (GetStorageProfileByCollectorNameRow, error)
-	GetStorageProfilesByBucketName(ctx context.Context, bucketName string) ([]GetStorageProfilesByBucketNameRow, error)
+type Writer interface {
+	// WriteRow writes a row of data.  It returns an error if the write fails.
+	WriteRow(row map[string]any) error
+	Close() error
 }

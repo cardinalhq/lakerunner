@@ -30,6 +30,7 @@ var _ StorageProfileProvider = (*databaseProvider)(nil)
 type ConfigDBStoreageProfileFetcher interface {
 	GetStorageProfile(ctx context.Context, params configdb.GetStorageProfileParams) (configdb.GetStorageProfileRow, error)
 	GetStorageProfileByCollectorName(ctx context.Context, params configdb.GetStorageProfileByCollectorNameParams) (configdb.GetStorageProfileByCollectorNameRow, error)
+	GetStorageProfilesByBucketName(ctx context.Context, bucketName string) ([]configdb.GetStorageProfilesByBucketNameRow, error)
 }
 
 func NewDatabaseProvider(cdb ConfigDBStoreageProfileFetcher) StorageProfileProvider {
@@ -80,6 +81,29 @@ func (p *databaseProvider) GetByCollectorName(ctx context.Context, organizationI
 	}
 	if profile.Role != nil {
 		ret.Role = *profile.Role
+	}
+	return ret, nil
+}
+
+func (p *databaseProvider) GetStorageProfilesByBucketName(ctx context.Context, bucketName string) ([]StorageProfile, error) {
+	profiles, err := p.cdb.GetStorageProfilesByBucketName(ctx, bucketName)
+	if err != nil {
+		return nil, err
+	}
+	ret := make([]StorageProfile, len(profiles))
+	for i, p := range profiles {
+		ret[i] = StorageProfile{
+			OrganizationID: p.OrganizationID,
+			InstanceNum:    p.InstanceNum,
+			CollectorName:  p.ExternalID,
+			CloudProvider:  p.CloudProvider,
+			Region:         p.Region,
+			Bucket:         p.Bucket,
+			Hosted:         p.Hosted,
+		}
+		if p.Role != nil {
+			ret[i].Role = *p.Role
+		}
 	}
 	return ret, nil
 }

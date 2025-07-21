@@ -112,3 +112,61 @@ func (q *Queries) GetStorageProfileUncached(ctx context.Context, arg GetStorageP
 	)
 	return i, err
 }
+
+const getStorageProfilesByBucketNameUncached = `-- name: GetStorageProfilesByBucketNameUncached :many
+SELECT
+  sp.cloud_provider AS cloud_provider,
+  sp.region AS region,
+  sp.role AS role,
+  sp.hosted AS hosted,
+  sp.bucket AS bucket,
+  c.instance_num::SMALLINT AS instance_num,
+  c.organization_id::UUID AS organization_id,
+  c.external_id::TEXT AS external_id
+FROM
+  c_storage_profiles sp
+  LEFT OUTER JOIN c_collectors c ON c.storage_profile_id = sp.id
+WHERE
+  c.deleted_at IS NULL
+  AND sp.bucket = $1
+`
+
+type GetStorageProfilesByBucketNameRow struct {
+	CloudProvider  string    `json:"cloud_provider"`
+	Region         string    `json:"region"`
+	Role           *string   `json:"role"`
+	Hosted         bool      `json:"hosted"`
+	Bucket         string    `json:"bucket"`
+	InstanceNum    int16     `json:"instance_num"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+	ExternalID     string    `json:"external_id"`
+}
+
+func (q *Queries) GetStorageProfilesByBucketNameUncached(ctx context.Context, bucketName string) ([]GetStorageProfilesByBucketNameRow, error) {
+	rows, err := q.db.Query(ctx, getStorageProfilesByBucketNameUncached, bucketName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetStorageProfilesByBucketNameRow
+	for rows.Next() {
+		var i GetStorageProfilesByBucketNameRow
+		if err := rows.Scan(
+			&i.CloudProvider,
+			&i.Region,
+			&i.Role,
+			&i.Hosted,
+			&i.Bucket,
+			&i.InstanceNum,
+			&i.OrganizationID,
+			&i.ExternalID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
