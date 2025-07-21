@@ -63,7 +63,7 @@ func setupTelemetry(servicename string) (context.Context, func() error, error) {
 		attribute.Int64("instanceID", myInstanceID),
 	)
 
-	if os.Getenv("OTEL_SERVICE_NAME") != "" {
+	if os.Getenv("OTEL_SERVICE_NAME") != "" && os.Getenv("ENABLE_OTLP_TELEMETRY") != "" {
 		slog.Info("OpenTelemetry exporting enabled")
 		slog.SetDefault(slog.New(slogmulti.Fanout(
 			slog.NewTextHandler(os.Stdout, nil),
