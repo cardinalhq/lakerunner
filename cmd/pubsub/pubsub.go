@@ -21,6 +21,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
@@ -142,10 +143,32 @@ func handleMessage(ctx context.Context, msg []byte, sp storageprofile.StoragePro
 	}
 
 	for _, item := range items {
-		profile, err := sp.GetByCollectorName(ctx, item.OrganizationID, item.CollectorName)
-		if err != nil {
-			slog.Error("Failed to get storage profile", slog.Any("error", err), slog.Any("organization_id", item.OrganizationID), slog.String("collector_name", item.CollectorName))
+		var profile storageprofile.StorageProfile
+		var err error
+		if strings.HasPrefix(item.ObjectID, "otel-raw/") {
+			profile, err = sp.Get(ctx, item.OrganizationID, item.InstanceNum)
+			if err != nil {
+				slog.Error("Failed to get storage profile", slog.Any("error", err), slog.Any("organization_id", item.OrganizationID), slog.Int("instance_num", int(item.InstanceNum)))
+				continue
+			}
+		} else if strings.HasPrefix(item.ObjectID, "db/") {
+			// Skip database files
+			slog.Info("Skipping database file", slog.String("objectID", item.ObjectID))
 			continue
+		} else {
+			profiles, err := sp.GetStorageProfilesByBucketName(ctx, item.Bucket)
+			if err != nil {
+				slog.Error("Failed to get storage profile", slog.Any("error", err), slog.String("bucket", item.Bucket))
+				continue
+			}
+			if len(profiles) != 1 {
+				slog.Error("Expected exactly one storage profile for bucket", slog.String("bucket", item.Bucket), slog.Int("found", len(profiles)))
+				continue
+			}
+			profile = profiles[0]
+			item.OrganizationID = profile.OrganizationID
+			item.CollectorName = profile.CollectorName
+			item.TelemetryType = string(lrdb.SignalEnumLogs)
 		}
 		item.InstanceNum = profile.InstanceNum
 		slog.Info("Processing item", slog.String("bucket", profile.Bucket), slog.String("object_id", item.ObjectID), slog.String("telemetry_type", item.TelemetryType))

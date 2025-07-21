@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path"
+	"regexp"
 	"strings"
 	"time"
 
@@ -126,6 +128,13 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, sp storageprofile.Stora
 
 	// If the file is not in our `otel-raw` prefix, convert it from generic parquet to raw parquet.
 	if !strings.HasPrefix(inf.ObjectID, "otel-raw/") {
+		if !strings.HasSuffix(inf.ObjectID, ".parquet") {
+			ll.Warn("Object ID does not end with .parquet, skipping", slog.String("objectID", inf.ObjectID))
+			return nil
+		}
+		if strings.HasPrefix(inf.ObjectID, "db/") {
+			return nil
+		}
 		if fnames, err := convertRawParquet(tmpfilename, tmpdir, inf.Bucket, inf.ObjectID); err != nil {
 			ll.Error("Failed to convert raw parquet", slog.Any("error", err))
 			return err
@@ -240,6 +249,12 @@ func convertRawParquet(tmpfilename, tmpdir, bucket, objectID string) ([]string, 
 		}
 	}()
 
+	baseitems := map[string]string{
+		"resource.bucket.name": bucket,
+		"resource.file.name":   "./" + objectID,
+		"resource.file.type":   getFileType(objectID),
+	}
+
 	for {
 		row, done, err := r.GetRow()
 		if err != nil {
@@ -247,6 +262,9 @@ func convertRawParquet(tmpfilename, tmpdir, bucket, objectID string) ([]string, 
 		}
 		if done {
 			break
+		}
+		for k, v := range baseitems {
+			row[k] = v
 		}
 		if err := w.Write(row); err != nil {
 			return nil, fmt.Errorf("failed to write row: %w", err)
@@ -266,4 +284,21 @@ func convertRawParquet(tmpfilename, tmpdir, bucket, objectID string) ([]string, 
 		fnames = append(fnames, res.FileName)
 	}
 	return fnames, nil
+}
+
+var nonLetter = regexp.MustCompile(`[^a-zA-Z]`)
+
+// getFileType extracts the “base” of the filename (everything before the last dot),
+// then strips out any non‑letter characters.
+func getFileType(p string) string {
+	// equivalent of Scala’s path.split("/").lastOption.getOrElse("")
+	fileName := path.Base(p)
+
+	// find last “.”; if none, use whole filename
+	if idx := strings.LastIndex(fileName, "."); idx != -1 {
+		fileName = fileName[:idx]
+	}
+
+	// strip out anything that isn’t A–Z or a–z
+	return nonLetter.ReplaceAllString(fileName, "")
 }

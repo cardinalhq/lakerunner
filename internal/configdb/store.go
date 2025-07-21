@@ -27,6 +27,7 @@ type Store struct {
 	connPool                           *pgxpool.Pool
 	storageProfileCache                *ttlcache.Cache[GetStorageProfileParams, StorageProfileCacheValue]
 	storageProfileByCollectorNameCache *ttlcache.Cache[GetStorageProfileByCollectorNameParams, StorageProfileByNameCacheValue]
+	storageProfilesByBucketNameCache   *ttlcache.Cache[string, StorageProfilesByBucketNameCacheValue]
 }
 
 func NewEmptyStore() *Store {

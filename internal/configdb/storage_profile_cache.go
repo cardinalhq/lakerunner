@@ -66,3 +66,26 @@ func (store *Store) GetStorageProfileByCollectorName(ctx context.Context, params
 	}
 	return GetStorageProfileByCollectorNameRow{}, errors.New("failed to get storage profile by collector name from cache")
 }
+
+type StorageProfilesByBucketNameCacheValue struct {
+	rows []GetStorageProfilesByBucketNameRow
+	err  error
+}
+
+func (store *Store) GetStorageProfilesByBucketName(ctx context.Context, bucketName string) ([]GetStorageProfilesByBucketNameRow, error) {
+	loader := ttlcache.LoaderFunc[string, StorageProfilesByBucketNameCacheValue](
+		func(cache *ttlcache.Cache[string, StorageProfilesByBucketNameCacheValue], key string) *ttlcache.Item[string, StorageProfilesByBucketNameCacheValue] {
+			rows, err := store.Queries.GetStorageProfilesByBucketNameUncached(ctx, key)
+			item := cache.Set(key, StorageProfilesByBucketNameCacheValue{
+				rows: rows,
+				err:  err,
+			}, ttlcache.DefaultTTL)
+			return item
+		},
+	)
+	v := store.storageProfilesByBucketNameCache.Get(bucketName, ttlcache.WithLoader(loader))
+	if v != nil {
+		return v.Value().rows, v.Value().err
+	}
+	return nil, errors.New("failed to get storage profiles by bucket name from cache")
+}

@@ -75,3 +75,13 @@ func (p *fileProvider) GetByCollectorName(ctx context.Context, organizationID uu
 	}
 	return StorageProfile{}, fmt.Errorf("storage profile not found for organization %s and collector name %s", organizationID, collectorName)
 }
+
+func (p *fileProvider) GetStorageProfilesByBucketName(ctx context.Context, bucketName string) ([]StorageProfile, error) {
+	ret := []StorageProfile{}
+	for _, profile := range p.profiles {
+		if profile.Bucket == bucketName {
+			ret = append(ret, profile)
+		}
+	}
+	return ret, fmt.Errorf("storage profile not found for bucket %s", bucketName)
+}

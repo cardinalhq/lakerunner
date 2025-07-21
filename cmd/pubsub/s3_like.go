@@ -55,21 +55,28 @@ func parseS3LikeEvents(raw []byte) ([]lrdb.Inqueue, error) {
 			continue
 		}
 		parts := strings.Split(key, "/")
-		if len(parts) < 4 || parts[0] != "otel-raw" {
-			slog.Error("Unexpected key format", slog.String("key", key))
-			continue
+		if parts[0] == "db" {
+			continue // Skip database files
 		}
+		var orgID uuid.UUID
+		var telem, collector string
+		if parts[0] == "otel-raw" {
+			if len(parts) < 4 {
+				slog.Error("Unexpected key format", slog.String("key", key))
+				continue
+			}
 
-		orgID, err := uuid.Parse(parts[1])
-		if err != nil {
-			return nil, fmt.Errorf("invalid organization_id %q: %w", parts[1], err)
-		}
-		collector := parts[2]
+			orgID, err = uuid.Parse(parts[1])
+			if err != nil {
+				return nil, fmt.Errorf("invalid organization_id %q: %w", parts[1], err)
+			}
+			collector = parts[2]
 
-		fname := parts[len(parts)-1]
-		telem := fname
-		if idx := strings.Index(fname, "_"); idx != -1 {
-			telem = fname[:idx]
+			fname := parts[len(parts)-1]
+			telem = fname
+			if idx := strings.Index(fname, "_"); idx != -1 {
+				telem = fname[:idx]
+			}
 		}
 
 		iq := lrdb.Inqueue{
