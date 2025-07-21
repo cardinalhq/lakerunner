@@ -120,7 +120,7 @@ func (r *RawParquetReader) GetRow() (row map[string]any, done bool, err error) {
 	}
 	ret["_cardinalhq.name"] = "log.events"
 	ret["_cardinalhq.telemetry_type"] = "logs"
-	ret["_cardinalhq.value"] = int64(1)
+	ret["_cardinalhq.value"] = float64(1)
 
 	for k, v := range r.tags {
 		ret[k] = v
