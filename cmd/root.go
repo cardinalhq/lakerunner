@@ -19,6 +19,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/cardinalhq/lakerunner/cmd/fileconvcmd"
 )
 
 const (
@@ -32,6 +34,10 @@ var rootCmd = &cobra.Command{
 	Use:   "lakerunner",
 	Short: "Process s3 signal storage",
 	Long:  `Read and process signals written to s3 by the CardinalHQ Open Telemetry Collector's S3 exporter.`,
+}
+
+func init() {
+	rootCmd.AddCommand(fileconvcmd.Cmd)
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.

@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 
 	"github.com/cardinalhq/lakerunner/internal/filecrunch"
 	"github.com/cardinalhq/lakerunner/pkg/fileconv"
@@ -71,6 +72,14 @@ func (r *RawParquetReader) Close() error {
 	return err
 }
 
+func (r *RawParquetReader) Nodes() (map[string]parquet.Node, error) {
+	if r.fh == nil {
+		return nil, fmt.Errorf("parquet file is not initialized")
+	}
+	nodes := r.fh.Nodes
+	return nodes, nil
+}
+
 func (r *RawParquetReader) GetRow() (row map[string]any, done bool, err error) {
 	if r.pfr == nil {
 		return nil, true, fmt.Errorf("parquet file reader is not initialized")
@@ -102,8 +111,13 @@ func (r *RawParquetReader) GetRow() (row map[string]any, done bool, err error) {
 	for k, v := range parsedRow.RecordAttributes {
 		ret["log."+k] = v
 	}
-	ret["_cardinalhq.timestamp"] = parsedRow.Timestamp / 1000 // Convert to milliseconds
-	ret["_cardinalhq.message"] = parsedRow.Body
+	maps.Copy(ret, parsedRow.RawAttributes)
+	if _, ok := ret["_cardinalhq.timestamp"]; !ok && parsedRow.Timestamp > 0 {
+		ret["_cardinalhq.timestamp"] = parsedRow.Timestamp / 1000 // Convert to milliseconds
+	}
+	if _, ok := ret["_cardinalhq.message"]; !ok && parsedRow.Body != "" {
+		ret["_cardinalhq.message"] = parsedRow.Body
+	}
 	ret["_cardinalhq.name"] = "log.events"
 	ret["_cardinalhq.telemetry_type"] = "logs"
 	ret["_cardinalhq.value"] = int64(1)

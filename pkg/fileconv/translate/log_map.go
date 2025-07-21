@@ -30,6 +30,7 @@ type TranslatedLog struct {
 	ResourceAttributes map[string]string
 	ScopeAttributes    map[string]string
 	RecordAttributes   map[string]string
+	RawAttributes      map[string]any
 }
 
 func ParseLogRow(mapper *Mapper, input map[string]any) TranslatedLog {
@@ -40,6 +41,7 @@ func ParseLogRow(mapper *Mapper, input map[string]any) TranslatedLog {
 	resAttrs := make(map[string]string)
 	scopeAttrs := make(map[string]string)
 	recAttrs := make(map[string]string)
+	rawAttrs := make(map[string]any)
 
 	for rawKey, rawVal := range input {
 		if rawVal == nil {
@@ -62,13 +64,21 @@ func ParseLogRow(mapper *Mapper, input map[string]any) TranslatedLog {
 			continue
 		}
 
+		if strings.HasPrefix(lc, "_") {
+			rawAttrs[lc] = rawVal
+			continue
+		}
+
 		// Decide promotion target maps for this top-level key.
 		target := recAttrs
-		if slices.Contains(mapper.ResourceColumns, lc) {
+		if slices.Contains(mapper.ResourceColumns, lc) || strings.HasPrefix(lc, "resource.") {
+			lc = strings.TrimPrefix(lc, "resource.")
 			target = resAttrs
-		} else if slices.Contains(mapper.ScopeColumns, lc) {
+		} else if slices.Contains(mapper.ScopeColumns, lc) || strings.HasPrefix(lc, "scope.") {
+			lc = strings.TrimPrefix(lc, "scope.")
 			target = scopeAttrs
 		}
+		lc = strings.TrimPrefix(lc, "log.")
 
 		// Flatten (may produce multiple keys). Base prefix is lowercased top-level key.
 		flattenValue(lc, rawVal, target)
@@ -84,6 +94,7 @@ func ParseLogRow(mapper *Mapper, input map[string]any) TranslatedLog {
 		ResourceAttributes: resAttrs,
 		ScopeAttributes:    scopeAttrs,
 		RecordAttributes:   recAttrs,
+		RawAttributes:      rawAttrs,
 	}
 }
 
