@@ -239,7 +239,20 @@ func convertRawParquet(tmpfilename, tmpdir, bucket, objectID string) ([]string, 
 		return nil, fmt.Errorf("failed to get nodes: %w", err)
 	}
 
-	w, err := buffet.NewWriter("fileconv", tmpdir, nodes, 0, 0)
+	// add our new nodes to the list of nodes we will write out
+	nmb := buffet.NewNodeMapBuilder()
+	if err := nmb.AddNodes(nodes); err != nil {
+		return nil, fmt.Errorf("failed to add nodes: %w", err)
+	}
+	if err := nmb.Add(map[string]any{
+		"resource.bucket.name": "bucket",
+		"resource.file.name":   "object",
+		"resource.file.type":   "filetype",
+	}); err != nil {
+		return nil, fmt.Errorf("failed to add resource nodes: %w", err)
+	}
+
+	w, err := buffet.NewWriter("fileconv", tmpdir, nmb.Build(), 0, 0)
 	defer func() {
 		_, err := w.Close()
 		if err != buffet.ErrAlreadyClosed {
