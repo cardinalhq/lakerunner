@@ -83,5 +83,5 @@ func (p *fileProvider) GetStorageProfilesByBucketName(ctx context.Context, bucke
 			ret = append(ret, profile)
 		}
 	}
-	return ret, fmt.Errorf("storage profile not found for bucket %s", bucketName)
+	return ret, nil
 }
