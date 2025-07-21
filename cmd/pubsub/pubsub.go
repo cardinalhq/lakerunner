@@ -146,7 +146,7 @@ func handleMessage(ctx context.Context, msg []byte, sp storageprofile.StoragePro
 		var profile storageprofile.StorageProfile
 		var err error
 		if strings.HasPrefix(item.ObjectID, "otel-raw/") {
-			profile, err = sp.Get(ctx, item.OrganizationID, item.InstanceNum)
+			profile, err = sp.GetByCollectorName(ctx, item.OrganizationID, item.CollectorName)
 			if err != nil {
 				slog.Error("Failed to get storage profile", slog.Any("error", err), slog.Any("organization_id", item.OrganizationID), slog.Int("instance_num", int(item.InstanceNum)))
 				continue
