@@ -228,7 +228,13 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, sp storageprofile.Stora
 }
 
 func convertRawParquet(tmpfilename, tmpdir, bucket, objectID string) ([]string, error) {
-	r, err := rawparquet.NewRawParquetReader(tmpfilename, translate.NewMapper(), nil)
+	baseitems := map[string]string{
+		"resource.bucket.name": bucket,
+		"resource.file.name":   "./" + objectID,
+		"resource.file.type":   getFileType(objectID),
+	}
+
+	r, err := rawparquet.NewRawParquetReader(tmpfilename, translate.NewMapper(), baseitems)
 	if err != nil {
 		return nil, err
 	}
@@ -238,22 +244,7 @@ func convertRawParquet(tmpfilename, tmpdir, bucket, objectID string) ([]string, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to get nodes: %w", err)
 	}
-	slog.Info("nodes", slog.Any("nodes", nodes))
-
-	// add our new nodes to the list of nodes we will write out
-	nmb := buffet.NewNodeMapBuilder()
-	if err := nmb.AddNodes(nodes); err != nil {
-		return nil, fmt.Errorf("failed to add nodes: %w", err)
-	}
-	if err := nmb.Add(map[string]any{
-		"resource.bucket.name": "bucket",
-		"resource.file.name":   "object",
-		"resource.file.type":   "filetype",
-	}); err != nil {
-		return nil, fmt.Errorf("failed to add resource nodes: %w", err)
-	}
-
-	w, err := buffet.NewWriter("fileconv", tmpdir, nmb.Build(), 0, 0)
+	w, err := buffet.NewWriter("fileconv", tmpdir, nodes, 0, 0)
 	defer func() {
 		_, err := w.Close()
 		if err != buffet.ErrAlreadyClosed {
@@ -262,12 +253,6 @@ func convertRawParquet(tmpfilename, tmpdir, bucket, objectID string) ([]string, 
 			}
 		}
 	}()
-
-	baseitems := map[string]string{
-		"resource.bucket.name": bucket,
-		"resource.file.name":   "./" + objectID,
-		"resource.file.type":   getFileType(objectID),
-	}
 
 	for {
 		row, done, err := r.GetRow()
@@ -305,14 +290,9 @@ var nonLetter = regexp.MustCompile(`[^a-zA-Z]`)
 // getFileType extracts the “base” of the filename (everything before the last dot),
 // then strips out any non‑letter characters.
 func getFileType(p string) string {
-	// equivalent of Scala’s path.split("/").lastOption.getOrElse("")
 	fileName := path.Base(p)
-
-	// find last “.”; if none, use whole filename
 	if idx := strings.LastIndex(fileName, "."); idx != -1 {
 		fileName = fileName[:idx]
 	}
-
-	// strip out anything that isn’t A–Z or a–z
 	return nonLetter.ReplaceAllString(fileName, "")
 }

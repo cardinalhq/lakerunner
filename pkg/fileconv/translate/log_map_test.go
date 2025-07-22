@@ -154,6 +154,16 @@ func TestFlattenValue(t *testing.T) {
 				"nest.foo[1].baz": "1",
 			},
 		},
+		{
+			name:   "UPPerCase",
+			prefix: "UPPER",
+			input: map[string]any{
+				"UPPER": "case",
+			},
+			want: map[string]string{
+				"UPPER.UPPER": "case",
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -428,6 +438,24 @@ func TestTranslateLogRow(t *testing.T) {
 				ResourceAttributes: map[string]string{},
 				ScopeAttributes:    map[string]string{},
 				RecordAttributes:   map[string]string{},
+			},
+		},
+		{
+			name: "uppsercase keys",
+			input: map[string]any{
+				"Bob": "Alice",
+				"Ts":  now,
+			},
+			mapper: mapper,
+			want: TranslatedLog{
+				ResourceAttributes: map[string]string{},
+				ScopeAttributes:    map[string]string{},
+				RecordAttributes: map[string]string{
+					"bob": "Alice",
+				},
+				RawAttributes: map[string]any{},
+				Timestamp:     nowNano,
+				Body:          "",
 			},
 		},
 		{
