@@ -21,6 +21,7 @@ import (
 	"maps"
 	"strings"
 
+	"github.com/cardinalhq/lakerunner/internal/buffet"
 	"github.com/cardinalhq/lakerunner/internal/filecrunch"
 	"github.com/cardinalhq/lakerunner/pkg/fileconv"
 	"github.com/cardinalhq/lakerunner/pkg/fileconv/translate"
@@ -78,8 +79,21 @@ func (r *RawParquetReader) Nodes() (map[string]parquet.Node, error) {
 		return nil, fmt.Errorf("parquet file is not initialized")
 	}
 
-	nn := make(map[string]parquet.Node, len(r.fh.Nodes))
-	for k, v := range r.fh.Nodes {
+	nb := buffet.NewNodeMapBuilder()
+	if err := nb.AddNodes(r.fh.Nodes); err != nil {
+		return nil, fmt.Errorf("failed to add nodes: %w", err)
+	}
+	tags := make(map[string]any, len(r.tags))
+	for k, v := range r.tags {
+		tags[k] = v
+	}
+	if err := nb.Add(tags); err != nil {
+		return nil, fmt.Errorf("failed to add tags: %w", err)
+	}
+	nodes := nb.Build()
+
+	nn := make(map[string]parquet.Node, len(nodes))
+	for k, v := range nodes {
 		nn[strings.ToLower(k)] = v
 	}
 	return nn, nil
