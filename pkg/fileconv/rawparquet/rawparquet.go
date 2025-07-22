@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"strings"
 
 	"github.com/cardinalhq/lakerunner/internal/filecrunch"
 	"github.com/cardinalhq/lakerunner/pkg/fileconv"
@@ -76,8 +77,12 @@ func (r *RawParquetReader) Nodes() (map[string]parquet.Node, error) {
 	if r.fh == nil {
 		return nil, fmt.Errorf("parquet file is not initialized")
 	}
-	nodes := r.fh.Nodes
-	return nodes, nil
+
+	nn := make(map[string]parquet.Node, len(r.fh.Nodes))
+	for k, v := range r.fh.Nodes {
+		nn[strings.ToLower(k)] = v
+	}
+	return nn, nil
 }
 
 func (r *RawParquetReader) GetRow() (row map[string]any, done bool, err error) {
