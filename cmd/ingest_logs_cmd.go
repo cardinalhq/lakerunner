@@ -36,6 +36,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/filecrunch"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/logcrunch"
+	"github.com/cardinalhq/lakerunner/pkg/fileconv/jsongz"
 	"github.com/cardinalhq/lakerunner/pkg/fileconv/rawparquet"
 	"github.com/cardinalhq/lakerunner/pkg/fileconv/translate"
 	"github.com/cardinalhq/lakerunner/pkg/lrdb"
@@ -322,8 +323,89 @@ func convertFileIfSupported(ll *slog.Logger, tmpfilename, tmpdir, bucket, object
 	switch {
 	case strings.HasSuffix(objectID, ".parquet"):
 		return convertRawParquet(tmpfilename, tmpdir, bucket, objectID)
+	case strings.HasSuffix(objectID, ".json.gz"):
+		return convertJSONGzFile(tmpfilename, tmpdir, bucket, objectID)
 	default:
 		ll.Warn("Unsupported file type, skipping", slog.String("objectID", objectID))
 		return nil, nil
 	}
+}
+
+// convertJSONGzFile converts a JSON.gz file to the standardized format
+func convertJSONGzFile(tmpfilename, tmpdir, bucket, objectID string) ([]string, error) {
+	r, err := jsongz.NewJSONGzReader(tmpfilename, translate.NewMapper(), nil)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+
+	nmb := buffet.NewNodeMapBuilder()
+
+	baseitems := map[string]string{
+		"resource.bucket.name": bucket,
+		"resource.file.name":   "./" + objectID,
+		"resource.file.type":   getFileType(objectID),
+	}
+
+	// First pass: read all rows to build complete schema
+	allRows := make([]map[string]any, 0)
+	for {
+		row, done, err := r.GetRow()
+		if err != nil {
+			return nil, err
+		}
+		if done {
+			break
+		}
+
+		// Add base items to the row
+		for k, v := range baseitems {
+			row[k] = v
+		}
+
+		// Add row to schema builder
+		if err := nmb.Add(row); err != nil {
+			return nil, fmt.Errorf("failed to add row to schema: %w", err)
+		}
+
+		allRows = append(allRows, row)
+	}
+
+	if len(allRows) == 0 {
+		return nil, fmt.Errorf("no rows processed")
+	}
+
+	// Create writer with complete schema
+	w, err := buffet.NewWriter("fileconv", tmpdir, nmb.Build(), 0, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() {
+		_, err := w.Close()
+		if err != buffet.ErrAlreadyClosed && err != nil {
+			slog.Error("Failed to close writer", slog.Any("error", err))
+		}
+	}()
+
+	// Second pass: write all rows
+	for _, row := range allRows {
+		if err := w.Write(row); err != nil {
+			return nil, fmt.Errorf("failed to write row: %w", err)
+		}
+	}
+
+	result, err := w.Close()
+	if err != nil {
+		return nil, fmt.Errorf("failed to close writer: %w", err)
+	}
+	if len(result) == 0 {
+		return nil, fmt.Errorf("no records written to file")
+	}
+
+	var fnames []string
+	for _, res := range result {
+		fnames = append(fnames, res.FileName)
+	}
+	return fnames, nil
 }
