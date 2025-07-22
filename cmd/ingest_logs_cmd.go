@@ -126,21 +126,20 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, sp storageprofile.Stora
 
 	filenames := []string{tmpfilename}
 
-	// If the file is not in our `otel-raw` prefix, convert it from generic parquet to raw parquet.
+	// If the file is not in our `otel-raw` prefix, check if we can convert it
 	if !strings.HasPrefix(inf.ObjectID, "otel-raw/") {
-		if !strings.HasSuffix(inf.ObjectID, ".parquet") {
-			ll.Warn("Object ID does not end with .parquet, skipping", slog.String("objectID", inf.ObjectID))
-			return nil
-		}
+		// Skip database files (these are processed outputs, not inputs)
 		if strings.HasPrefix(inf.ObjectID, "db/") {
 			return nil
 		}
-		if fnames, err := convertRawParquet(tmpfilename, tmpdir, inf.Bucket, inf.ObjectID); err != nil {
-			ll.Error("Failed to convert raw parquet", slog.Any("error", err))
+
+		// Check file type and convert if supported
+		if fnames, err := convertFileIfSupported(ll, tmpfilename, tmpdir, inf.Bucket, inf.ObjectID); err != nil {
+			ll.Error("Failed to convert file", slog.Any("error", err))
 			return err
-		} else {
+		} else if fnames != nil {
 			filenames = fnames
-			ll.Info("Converted raw parquet file", slog.String("filename", tmpfilename))
+			ll.Info("Converted file", slog.String("filename", tmpfilename), slog.String("objectID", inf.ObjectID))
 		}
 	}
 
@@ -315,4 +314,16 @@ func getFileType(p string) string {
 
 	// strip out anything that isn’t A–Z or a–z
 	return nonLetter.ReplaceAllString(fileName, "")
+}
+
+// convertFileIfSupported checks the file type and converts it if supported.
+// Returns nil if the file type is not supported (file will be skipped).
+func convertFileIfSupported(ll *slog.Logger, tmpfilename, tmpdir, bucket, objectID string) ([]string, error) {
+	switch {
+	case strings.HasSuffix(objectID, ".parquet"):
+		return convertRawParquet(tmpfilename, tmpdir, bucket, objectID)
+	default:
+		ll.Warn("Unsupported file type, skipping", slog.String("objectID", objectID))
+		return nil, nil
+	}
 }
