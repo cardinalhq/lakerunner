@@ -238,6 +238,7 @@ func convertRawParquet(tmpfilename, tmpdir, bucket, objectID string) ([]string, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to get nodes: %w", err)
 	}
+	slog.Info("nodes", slog.Any("nodes", nodes))
 
 	// add our new nodes to the list of nodes we will write out
 	nmb := buffet.NewNodeMapBuilder()
