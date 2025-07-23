@@ -256,7 +256,7 @@ func convertRawParquet(tmpfilename, tmpdir, bucket, objectID string) ([]string, 
 	w, err := buffet.NewWriter("fileconv", tmpdir, nmb.Build(), 0, 0)
 	defer func() {
 		_, err := w.Close()
-		if err != buffet.ErrAlreadyClosed {
+		if errors.Is(err, buffet.ErrAlreadyClosed) {
 			if err != nil {
 				slog.Error("Failed to close writer", slog.Any("error", err))
 			}
