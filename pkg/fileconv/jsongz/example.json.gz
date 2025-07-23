@@ -1,3 +1,0 @@
-{"timestamp": 1640995200000, "message": "Example log message", "level": "INFO", "service": "web-server"}
-{"timestamp": 1640995260000, "message": "Another example", "level": "ERROR", "service": "database"}
-{"timestamp": 1640995320000, "message": "Third example", "level": "WARN", "service": "cache"} 
