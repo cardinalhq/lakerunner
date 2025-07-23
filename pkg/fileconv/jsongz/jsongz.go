@@ -182,7 +182,7 @@ func (r *JSONGzReader) GetRow() (row map[string]any, done bool, err error) {
 	}
 
 	if _, ok := ret["_cardinalhq.timestamp"]; !ok && parsedRow.Timestamp > 0 {
-		ret["_cardinalhq.timestamp"] = parsedRow.Timestamp / 1000
+		ret["_cardinalhq.timestamp"] = parsedRow.Timestamp / 1000000 // Convert nanoseconds to milliseconds
 	}
 	if _, ok := ret["_cardinalhq.message"]; !ok && parsedRow.Body != "" {
 		ret["_cardinalhq.message"] = parsedRow.Body

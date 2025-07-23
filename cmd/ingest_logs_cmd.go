@@ -333,7 +333,13 @@ func convertFileIfSupported(ll *slog.Logger, tmpfilename, tmpdir, bucket, object
 
 // convertJSONGzFile converts a JSON.gz file to the standardized format
 func convertJSONGzFile(tmpfilename, tmpdir, bucket, objectID string) ([]string, error) {
-	r, err := jsongz.NewJSONGzReader(tmpfilename, translate.NewMapper(), nil)
+	// Create a mapper that recognizes "date" as a timestamp field
+	mapper := translate.NewMapper(
+		translate.WithTimestampColumn("date"),
+		translate.WithTimeFormat(time.RFC3339Nano),
+	)
+
+	r, err := jsongz.NewJSONGzReader(tmpfilename, mapper, nil)
 	if err != nil {
 		return nil, err
 	}
