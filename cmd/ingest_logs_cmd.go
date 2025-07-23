@@ -342,9 +342,10 @@ func convertJSONGzFile(tmpfilename, tmpdir, bucket, objectID string) ([]string, 
 	nmb := buffet.NewNodeMapBuilder()
 
 	baseitems := map[string]string{
-		"resource.bucket.name": bucket,
-		"resource.file.name":   "./" + objectID,
-		"resource.file.type":   getFileType(objectID),
+		"resource.bucket.name":  bucket,
+		"resource.file.name":    "./" + objectID,
+		"resource.file.type":    getFileType(objectID),
+		"resource.service.name": "", // Always include service name field in schema
 	}
 
 	// First pass: read all rows to build complete schema

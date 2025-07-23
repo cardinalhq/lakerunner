@@ -106,6 +106,31 @@ func (r *JSONGzReader) GetRow() (row map[string]any, done bool, err error) {
 		return nil, false, fmt.Errorf("failed to parse JSON line %d: %w", r.rowIndex+1, err)
 	}
 
+	// Extract service name from various possible fields
+	serviceName := ""
+	serviceFields := []string{"service.name", "service_name", "servicename", "service", "app.name", "app_name", "appname", "app", "name", "component", "service.component", "service_component"}
+
+	// Check direct fields first
+	for _, field := range serviceFields {
+		if value, exists := jsonData[field]; exists && value != nil {
+			if str, ok := value.(string); ok && str != "" {
+				serviceName = str
+				break
+			}
+		}
+	}
+
+	// Check nested fields if not found
+	if serviceName == "" {
+		if resource, ok := jsonData["resource"].(map[string]any); ok {
+			if service, ok := resource["service"].(map[string]any); ok {
+				if name, ok := service["name"].(string); ok && name != "" {
+					serviceName = name
+				}
+			}
+		}
+	}
+
 	if tags, ok := jsonData["tags"].([]any); ok {
 		for _, tag := range tags {
 			if tagStr, ok := tag.(string); ok && strings.Contains(tagStr, ":") {
@@ -113,6 +138,17 @@ func (r *JSONGzReader) GetRow() (row map[string]any, done bool, err error) {
 				if len(parts) == 2 {
 					key := strings.TrimSpace(parts[0])
 					value := strings.TrimSpace(parts[1])
+
+					// Check if this tag contains service name
+					if serviceName == "" {
+						keyLower := strings.ToLower(key)
+						for _, serviceField := range serviceFields {
+							if strings.Contains(keyLower, strings.ToLower(serviceField)) {
+								serviceName = value
+								break
+							}
+						}
+					}
 
 					if isResourceAttribute(key) {
 						jsonData["resource."+key] = value
@@ -124,6 +160,9 @@ func (r *JSONGzReader) GetRow() (row map[string]any, done bool, err error) {
 		}
 		delete(jsonData, "tags")
 	}
+
+	// Always add resource.service.name, even if empty
+	jsonData["resource.service.name"] = serviceName
 
 	parsedRow := translate.ParseLogRow(r.mapper, jsonData)
 
