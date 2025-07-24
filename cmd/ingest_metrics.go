@@ -23,6 +23,7 @@ import (
 	"maps"
 	"os"
 	"slices"
+	"strings"
 
 	"github.com/DataDog/sketches-go/ddsketch"
 	"github.com/parquet-go/parquet-go"
@@ -34,6 +35,8 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/buffet"
 	"github.com/cardinalhq/lakerunner/internal/filecrunch"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/pkg/fileconv/proto"
+	"github.com/cardinalhq/lakerunner/pkg/fileconv/translate"
 	"github.com/cardinalhq/lakerunner/pkg/lrdb"
 )
 
@@ -119,18 +122,39 @@ func metricIngestItem(ctx context.Context, ll *slog.Logger, sp storageprofile.St
 		return err
 	}
 
-	fh, err := filecrunch.LoadSchemaForFile(tmpfilename)
-	if err != nil {
-		ll.Error("Failed to load schema for file", slog.Any("error", err))
-		return err
-	}
-	defer func() {
-		_ = fh.Close()
-	}()
+	filenames := []string{tmpfilename}
 
-	if err := crunchMetricFile(ctx, ll, tmpdir, fh, inf, s3client, mdb, ingest_dateint); err != nil {
-		ll.Error("Failed to crunch metric file", slog.Any("error", err), slog.String("file", tmpfilename))
-		return err
+	// If the file is not in our `otel-raw` prefix, check if we can convert it
+	if !strings.HasPrefix(inf.ObjectID, "otel-raw/") {
+		// Skip database files (these are processed outputs, not inputs)
+		if strings.HasPrefix(inf.ObjectID, "db/") {
+			return nil
+		}
+
+		// Check file type and convert if supported
+		if fnames, err := convertMetricsFileIfSupported(ll, tmpfilename, tmpdir, inf.Bucket, inf.ObjectID); err != nil {
+			ll.Error("Failed to convert file", slog.Any("error", err))
+			return err
+		} else if fnames != nil {
+			filenames = fnames
+			ll.Info("Converted file", slog.String("filename", tmpfilename), slog.String("objectID", inf.ObjectID))
+		}
+	}
+
+	for _, fname := range filenames {
+		fh, err := filecrunch.LoadSchemaForFile(fname)
+		if err != nil {
+			ll.Error("Failed to load schema for file", slog.Any("error", err))
+			return err
+		}
+		defer func() {
+			_ = fh.Close()
+		}()
+
+		if err := crunchMetricFile(ctx, ll, tmpdir, fh, inf, s3client, mdb, ingest_dateint); err != nil {
+			ll.Error("Failed to crunch metric file", slog.Any("error", err), slog.String("file", fname))
+			return err
+		}
 	}
 
 	return nil
@@ -527,4 +551,98 @@ func handleHistogram(bucketCounts []float64, bucketBounds []float64) (counts, va
 		}
 	}
 	return counts, values
+}
+
+// convertMetricsFileIfSupported checks the file type and converts it if supported.
+// Returns nil if the file type is not supported (file will be skipped).
+func convertMetricsFileIfSupported(ll *slog.Logger, tmpfilename, tmpdir, bucket, objectID string) ([]string, error) {
+	switch {
+	case strings.HasSuffix(objectID, ".binpb"):
+		return convertMetricsProtoFile(tmpfilename, tmpdir, bucket, objectID)
+	default:
+		ll.Warn("Unsupported file type for metrics, skipping", slog.String("objectID", objectID))
+		return nil, nil
+	}
+}
+
+// convertMetricsProtoFile converts a protobuf file to the standardized format
+func convertMetricsProtoFile(tmpfilename, tmpdir, bucket, objectID string) ([]string, error) {
+	// Create a mapper for protobuf files
+	mapper := translate.NewMapper()
+
+	r, err := proto.NewMetricsProtoReader(tmpfilename, mapper, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+
+	nmb := buffet.NewNodeMapBuilder()
+
+	baseitems := map[string]string{
+		"resource.bucket.name": bucket,
+		"resource.file.name":   "./" + objectID,
+		"resource.file.type":   getFileType(objectID),
+	}
+
+	// First pass: read all rows to build complete schema
+	allRows := make([]map[string]any, 0)
+	for {
+		row, done, err := r.GetRow()
+		if err != nil {
+			return nil, err
+		}
+		if done {
+			break
+		}
+
+		// Add base items to the row
+		for k, v := range baseitems {
+			row[k] = v
+		}
+
+		// Add row to schema builder
+		if err := nmb.Add(row); err != nil {
+			return nil, fmt.Errorf("failed to add row to schema: %w", err)
+		}
+
+		allRows = append(allRows, row)
+	}
+
+	if len(allRows) == 0 {
+		return nil, fmt.Errorf("no rows processed")
+	}
+
+	// Create writer with complete schema
+	w, err := buffet.NewWriter("fileconv", tmpdir, nmb.Build(), 0, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() {
+		_, err := w.Close()
+		if err != buffet.ErrAlreadyClosed && err != nil {
+			slog.Error("Failed to close writer", slog.Any("error", err))
+		}
+	}()
+
+	// Second pass: write all rows
+	for _, row := range allRows {
+		if err := w.Write(row); err != nil {
+			return nil, fmt.Errorf("failed to write row: %w", err)
+		}
+	}
+
+	result, err := w.Close()
+	if err != nil {
+		return nil, fmt.Errorf("failed to close writer: %w", err)
+	}
+	if len(result) == 0 {
+		return nil, fmt.Errorf("no records written to file")
+	}
+
+	var fnames []string
+	for _, res := range result {
+		fnames = append(fnames, res.FileName)
+	}
+	return fnames, nil
 }
