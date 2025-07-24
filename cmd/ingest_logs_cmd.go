@@ -354,7 +354,6 @@ func convertJSONGzFile(tmpfilename, tmpdir, bucket, objectID string) ([]string, 
 		"resource.bucket.name":  bucket,
 		"resource.file.name":    "./" + objectID,
 		"resource.file.type":    getFileType(objectID),
-		"resource.service.name": "", // Always include service name field in schema
 	}
 
 	// First pass: read all rows to build complete schema
@@ -437,7 +436,6 @@ func convertProtoFile(tmpfilename, tmpdir, bucket, objectID string) ([]string, e
 		"resource.bucket.name":  bucket,
 		"resource.file.name":    "./" + objectID,
 		"resource.file.type":    getFileType(objectID),
-		"resource.service.name": "", // Always include service name field in schema
 	}
 
 	// First pass: read all rows to build complete schema
