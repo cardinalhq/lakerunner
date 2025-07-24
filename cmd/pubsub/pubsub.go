@@ -168,7 +168,19 @@ func handleMessage(ctx context.Context, msg []byte, sp storageprofile.StoragePro
 			profile = profiles[0]
 			item.OrganizationID = profile.OrganizationID
 			item.CollectorName = profile.CollectorName
-			item.TelemetryType = string(lrdb.SignalEnumLogs)
+
+			// Auto-detect telemetry type based on prefix
+			switch {
+			case strings.HasPrefix(item.ObjectID, "logs-raw/"):
+				item.TelemetryType = string(lrdb.SignalEnumLogs)
+			case strings.HasPrefix(item.ObjectID, "metrics-raw/"):
+				item.TelemetryType = string(lrdb.SignalEnumMetrics)
+			case strings.HasPrefix(item.ObjectID, "traces-raw/"):
+				item.TelemetryType = string(lrdb.SignalEnumTraces)
+			default:
+				// Default to logs for backward compatibility
+				item.TelemetryType = string(lrdb.SignalEnumLogs)
+			}
 		}
 		item.InstanceNum = profile.InstanceNum
 		slog.Info("Processing item", slog.String("bucket", profile.Bucket), slog.String("object_id", item.ObjectID), slog.String("telemetry_type", item.TelemetryType))
