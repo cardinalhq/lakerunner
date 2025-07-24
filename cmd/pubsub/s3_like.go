@@ -77,6 +77,12 @@ func parseS3LikeEvents(raw []byte) ([]lrdb.Inqueue, error) {
 			if idx := strings.Index(fname, "_"); idx != -1 {
 				telem = fname[:idx]
 			}
+		} else if parts[0] == "logs-raw" {
+			telem = "logs"
+		} else if parts[0] == "metrics-raw" {
+			telem = "metrics"
+		} else if parts[0] == "traces-raw" {
+			telem = "traces"
 		}
 
 		iq := lrdb.Inqueue{
