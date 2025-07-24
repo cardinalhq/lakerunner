@@ -37,6 +37,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/logcrunch"
 	"github.com/cardinalhq/lakerunner/pkg/fileconv/jsongz"
+	protoconv "github.com/cardinalhq/lakerunner/pkg/fileconv/proto"
 	"github.com/cardinalhq/lakerunner/pkg/fileconv/rawparquet"
 	"github.com/cardinalhq/lakerunner/pkg/fileconv/translate"
 	"github.com/cardinalhq/lakerunner/pkg/lrdb"
@@ -325,6 +326,8 @@ func convertFileIfSupported(ll *slog.Logger, tmpfilename, tmpdir, bucket, object
 		return convertRawParquet(tmpfilename, tmpdir, bucket, objectID)
 	case strings.HasSuffix(objectID, ".json.gz"):
 		return convertJSONGzFile(tmpfilename, tmpdir, bucket, objectID)
+	case strings.HasSuffix(objectID, ".binpb"):
+		return convertProtoFile(tmpfilename, tmpdir, bucket, objectID)
 	default:
 		ll.Warn("Unsupported file type, skipping", slog.String("objectID", objectID))
 		return nil, nil
@@ -400,6 +403,75 @@ func convertJSONGzFile(tmpfilename, tmpdir, bucket, objectID string) ([]string, 
 		if err := w.Write(row); err != nil {
 			return nil, fmt.Errorf("failed to write row: %w", err)
 		}
+	}
+
+	result, err := w.Close()
+	if err != nil {
+		return nil, fmt.Errorf("failed to close writer: %w", err)
+	}
+	if len(result) == 0 {
+		return nil, fmt.Errorf("no records written to file")
+	}
+
+	var fnames []string
+	for _, res := range result {
+		fnames = append(fnames, res.FileName)
+	}
+	return fnames, nil
+}
+
+// convertProtoFile converts a protobuf file to the standardized format
+func convertProtoFile(tmpfilename, tmpdir, bucket, objectID string) ([]string, error) {
+	mapper := translate.NewMapper()
+
+	r, err := protoconv.NewProtoReader(tmpfilename, mapper, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+
+	// Create writer with predefined schema (since translator standardizes format)
+	w, err := buffet.NewWriter("fileconv", tmpdir, nil, 0, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() {
+		_, err := w.Close()
+		if err != buffet.ErrAlreadyClosed && err != nil {
+			slog.Error("Failed to close writer", slog.Any("error", err))
+		}
+	}()
+
+	baseitems := map[string]string{
+		"resource.bucket.name": bucket,
+		"resource.file.name":   "./" + objectID,
+		"resource.file.type":   getFileType(objectID),
+	}
+
+	rowCount := 0
+	for {
+		row, done, err := r.GetRow()
+		if err != nil {
+			return nil, err
+		}
+		if done {
+			break
+		}
+
+		for k, v := range baseitems {
+			row[k] = v
+		}
+
+		if err := w.Write(row); err != nil {
+			return nil, fmt.Errorf("failed to write row: %w", err)
+		}
+
+		rowCount++
+	}
+
+	if rowCount == 0 {
+		return nil, fmt.Errorf("no rows processed")
 	}
 
 	result, err := w.Close()
