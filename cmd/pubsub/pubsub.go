@@ -171,7 +171,13 @@ func handleMessage(ctx context.Context, msg []byte, sp storageprofile.StoragePro
 
 		}
 		item.InstanceNum = profile.InstanceNum
-		slog.Info("Processing item", slog.String("bucket", profile.Bucket), slog.String("object_id", item.ObjectID), slog.String("telemetry_type", item.TelemetryType))
+
+		// Log the telemetry type that will be inserted
+		slog.Info("Processing item",
+			slog.String("bucket", profile.Bucket),
+			slog.String("object_id", item.ObjectID),
+			slog.String("telemetry_type", item.TelemetryType),
+			slog.String("prefix", strings.Split(item.ObjectID, "/")[0]))
 
 		err = mdb.PutInqueueWork(ctx, lrdb.PutInqueueWorkParams{
 			OrganizationID: item.OrganizationID,

@@ -79,10 +79,15 @@ func parseS3LikeEvents(raw []byte) ([]lrdb.Inqueue, error) {
 			}
 		} else if parts[0] == "logs-raw" {
 			telem = "logs"
+			slog.Info("Setting telemetry type for logs-raw", slog.String("key", key), slog.String("telem", telem))
 		} else if parts[0] == "metrics-raw" {
 			telem = "metrics"
+			slog.Info("Setting telemetry type for metrics-raw", slog.String("key", key), slog.String("telem", telem))
 		} else if parts[0] == "traces-raw" {
 			telem = "traces"
+			slog.Info("Setting telemetry type for traces-raw", slog.String("key", key), slog.String("telem", telem))
+		} else {
+			slog.Info("No telemetry type set for prefix", slog.String("key", key), slog.String("prefix", parts[0]), slog.String("telem", telem))
 		}
 
 		iq := lrdb.Inqueue{
@@ -93,6 +98,7 @@ func parseS3LikeEvents(raw []byte) ([]lrdb.Inqueue, error) {
 			TelemetryType:  telem,
 			CollectorName:  collector,
 		}
+		slog.Info("Created inqueue item", slog.String("object_id", key), slog.String("telemetry_type", telem))
 		out = append(out, iq)
 	}
 	return out, nil
