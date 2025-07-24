@@ -422,6 +422,7 @@ func convertJSONGzFile(tmpfilename, tmpdir, bucket, objectID string) ([]string, 
 
 // convertProtoFile converts a protobuf file to the standardized format
 func convertProtoFile(tmpfilename, tmpdir, bucket, objectID string) ([]string, error) {
+	// Create a mapper for protobuf files
 	mapper := translate.NewMapper()
 
 	r, err := protoconv.NewProtoReader(tmpfilename, mapper, nil)
@@ -430,8 +431,45 @@ func convertProtoFile(tmpfilename, tmpdir, bucket, objectID string) ([]string, e
 	}
 	defer r.Close()
 
-	// Create writer with predefined schema (since translator standardizes format)
-	w, err := buffet.NewWriter("fileconv", tmpdir, nil, 0, 0)
+	nmb := buffet.NewNodeMapBuilder()
+
+	baseitems := map[string]string{
+		"resource.bucket.name":  bucket,
+		"resource.file.name":    "./" + objectID,
+		"resource.file.type":    getFileType(objectID),
+		"resource.service.name": "", // Always include service name field in schema
+	}
+
+	// First pass: read all rows to build complete schema
+	allRows := make([]map[string]any, 0)
+	for {
+		row, done, err := r.GetRow()
+		if err != nil {
+			return nil, err
+		}
+		if done {
+			break
+		}
+
+		// Add base items to the row
+		for k, v := range baseitems {
+			row[k] = v
+		}
+
+		// Add row to schema builder
+		if err := nmb.Add(row); err != nil {
+			return nil, fmt.Errorf("failed to add row to schema: %w", err)
+		}
+
+		allRows = append(allRows, row)
+	}
+
+	if len(allRows) == 0 {
+		return nil, fmt.Errorf("no rows processed")
+	}
+
+	// Create writer with complete schema
+	w, err := buffet.NewWriter("fileconv", tmpdir, nmb.Build(), 0, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -443,35 +481,11 @@ func convertProtoFile(tmpfilename, tmpdir, bucket, objectID string) ([]string, e
 		}
 	}()
 
-	baseitems := map[string]string{
-		"resource.bucket.name": bucket,
-		"resource.file.name":   "./" + objectID,
-		"resource.file.type":   getFileType(objectID),
-	}
-
-	rowCount := 0
-	for {
-		row, done, err := r.GetRow()
-		if err != nil {
-			return nil, err
-		}
-		if done {
-			break
-		}
-
-		for k, v := range baseitems {
-			row[k] = v
-		}
-
+	// Second pass: write all rows
+	for _, row := range allRows {
 		if err := w.Write(row); err != nil {
 			return nil, fmt.Errorf("failed to write row: %w", err)
 		}
-
-		rowCount++
-	}
-
-	if rowCount == 0 {
-		return nil, fmt.Errorf("no rows processed")
 	}
 
 	result, err := w.Close()
