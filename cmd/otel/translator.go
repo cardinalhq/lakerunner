@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/cardinalhq/oteltools/pkg/authenv"
-	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
 	"github.com/cardinalhq/oteltools/pkg/translate"
 )
 
@@ -79,10 +78,6 @@ func (l *TableTranslator) LogsFromOtel(ol *plog.Logs, environment authenv.Enviro
 				// If number and text are not set, try to infer it from the log body
 				if log.SeverityNumber() != plog.SeverityNumberUnspecified {
 					log.SetSeverityText(SeverityNumberToText(log.SeverityNumber()))
-				} else if log.SeverityText() == "" || log.SeverityText() == plog.SeverityNumberUnspecified.String() {
-					fp := fingerprinter.NewFingerprinter()
-					_, level, _ := fp.Tokenize(log.Body().AsString())
-					log.SetSeverityText(strings.ToUpper(level))
 				}
 				ret[translate.CardinalFieldLevel] = log.SeverityText()
 				log.Attributes().PutStr(translate.CardinalFieldLevel, log.SeverityText())
