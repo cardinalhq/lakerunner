@@ -28,6 +28,25 @@ func NewTableTranslator() *TableTranslator {
 	}
 }
 
+func SeverityNumberToText(severityNumber plog.SeverityNumber) string {
+	switch {
+	case severityNumber >= 1 && severityNumber <= 4:
+		return "TRACE"
+	case severityNumber >= 5 && severityNumber <= 8:
+		return "DEBUG"
+	case severityNumber >= 9 && severityNumber <= 12:
+		return "INFO"
+	case severityNumber >= 13 && severityNumber <= 16:
+		return "WARN"
+	case severityNumber >= 17 && severityNumber <= 20:
+		return "ERROR"
+	case severityNumber >= 21 && severityNumber <= 24:
+		return "FATAL"
+	default:
+		return "UNSPECIFIED"
+	}
+}
+
 func (l *TableTranslator) LogsFromOtel(ol *plog.Logs, environment authenv.Environment) ([]map[string]any, error) {
 	var rets []map[string]any
 
@@ -52,6 +71,12 @@ func (l *TableTranslator) LogsFromOtel(ol *plog.Logs, environment authenv.Enviro
 					for k, v := range environment.Tags() {
 						ret["env."+k] = v
 					}
+				}
+
+				if log.SeverityNumber() != plog.SeverityNumberUnspecified {
+					logLevelText := SeverityNumberToText(log.SeverityNumber())
+					log.SetSeverityText(logLevelText)
+					log.Attributes().PutStr(translate.CardinalFieldLevel, logLevelText)
 				}
 				ensureExpectedKeysLogs(ret)
 				rets = append(rets, ret)
