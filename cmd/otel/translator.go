@@ -72,12 +72,17 @@ func (l *TableTranslator) LogsFromOtel(ol *plog.Logs, environment authenv.Enviro
 						ret["env."+k] = v
 					}
 				}
-
-				if log.SeverityNumber() != plog.SeverityNumberUnspecified {
-					logLevelText := SeverityNumberToText(log.SeverityNumber())
-					log.SetSeverityText(logLevelText)
-					log.Attributes().PutStr(translate.CardinalFieldLevel, logLevelText)
+				logLevelText := "INFO"
+				level := log.SeverityText()
+				if level == "" {
+					if log.SeverityNumber() != plog.SeverityNumberUnspecified {
+						logLevelText = SeverityNumberToText(log.SeverityNumber())
+						log.SetSeverityText(logLevelText)
+					}
+				} else {
+					logLevelText = log.SeverityText()
 				}
+				log.Attributes().PutStr(translate.CardinalFieldLevel, logLevelText)
 				ensureExpectedKeysLogs(ret)
 				rets = append(rets, ret)
 			}
