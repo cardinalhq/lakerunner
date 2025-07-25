@@ -75,9 +75,10 @@ func (l *TableTranslator) LogsFromOtel(ol *plog.Logs, environment authenv.Enviro
 				}
 
 				// If severity number is set, use it to set log level
-				// If number and text are not set, try to infer it from the log body
 				if log.SeverityNumber() != plog.SeverityNumberUnspecified {
 					log.SetSeverityText(SeverityNumberToText(log.SeverityNumber()))
+				} else if log.SeverityText() == "" || log.SeverityText() == plog.SeverityNumberUnspecified.String() {
+					log.SetSeverityText("INFO")
 				}
 				ret[translate.CardinalFieldLevel] = log.SeverityText()
 				log.Attributes().PutStr(translate.CardinalFieldLevel, log.SeverityText())
