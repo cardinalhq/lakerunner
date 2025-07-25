@@ -2,12 +2,13 @@ package otel
 
 import (
 	"encoding/json"
+	"maps"
+
 	"github.com/DataDog/sketches-go/ddsketch"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/pmetric"
-	"maps"
 
 	"log/slog"
 	"math"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/cardinalhq/oteltools/pkg/authenv"
+	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
 	"github.com/cardinalhq/oteltools/pkg/translate"
 )
 
@@ -72,17 +74,18 @@ func (l *TableTranslator) LogsFromOtel(ol *plog.Logs, environment authenv.Enviro
 						ret["env."+k] = v
 					}
 				}
-				logLevelText := "INFO"
-				level := log.SeverityText()
-				if level == "" {
-					if log.SeverityNumber() != plog.SeverityNumberUnspecified {
-						logLevelText = SeverityNumberToText(log.SeverityNumber())
-						log.SetSeverityText(logLevelText)
-					}
-				} else {
-					logLevelText = log.SeverityText()
+
+				// If severity number is set, use it to set log level
+				// If number and text are not set, try to infer it from the log body
+				if log.SeverityNumber() != plog.SeverityNumberUnspecified {
+					log.SetSeverityText(SeverityNumberToText(log.SeverityNumber()))
+				} else if log.SeverityText() == "" || log.SeverityText() == plog.SeverityNumberUnspecified.String() {
+					fp := fingerprinter.NewFingerprinter()
+					_, level, _ := fp.Tokenize(log.Body().AsString())
+					log.SetSeverityText(strings.ToUpper(level))
 				}
-				log.Attributes().PutStr(translate.CardinalFieldLevel, logLevelText)
+				ret[translate.CardinalFieldLevel] = log.SeverityText()
+				log.Attributes().PutStr(translate.CardinalFieldLevel, log.SeverityText())
 				ensureExpectedKeysLogs(ret)
 				rets = append(rets, ret)
 			}
