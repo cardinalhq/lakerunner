@@ -168,7 +168,6 @@ func handleMessage(ctx context.Context, msg []byte, sp storageprofile.StoragePro
 			profile = profiles[0]
 			item.OrganizationID = profile.OrganizationID
 			item.CollectorName = profile.CollectorName
-
 		}
 		item.InstanceNum = profile.InstanceNum
 		slog.Info("Processing item", slog.String("bucket", profile.Bucket), slog.String("object_id", item.ObjectID), slog.String("telemetry_type", item.TelemetryType))
