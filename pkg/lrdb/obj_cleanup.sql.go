@@ -53,7 +53,8 @@ func (q *Queries) ObjectCleanupComplete(ctx context.Context, id uuid.UUID) error
 
 const objectCleanupFail = `-- name: ObjectCleanupFail :exec
 UPDATE obj_cleanup
-SET tries = tries + 1
+SET tries = tries + 1,
+    delete_at = NOW() + INTERVAL '5 minutes'
 WHERE id = $1
 `
 
@@ -63,21 +64,16 @@ func (q *Queries) ObjectCleanupFail(ctx context.Context, id uuid.UUID) error {
 }
 
 const objectCleanupGet = `-- name: ObjectCleanupGet :many
-UPDATE obj_cleanup
-SET delete_at = NOW() + INTERVAL '30 minutes'
-WHERE id IN (
-  SELECT id
-  FROM obj_cleanup
-  WHERE tries < 10
-  ORDER BY delete_at DESC
-  LIMIT 20
-)
-RETURNING
+SELECT
   id,
   organization_id,
   instance_num,
   bucket_id,
   object_id
+FROM obj_cleanup
+WHERE delete_at < NOW()
+  AND tries < 10
+ORDER BY delete_at ASC
 `
 
 type ObjectCleanupGetRow struct {

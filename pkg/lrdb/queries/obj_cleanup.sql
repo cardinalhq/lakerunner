@@ -15,23 +15,19 @@ INSERT INTO obj_cleanup (
 DELETE FROM obj_cleanup WHERE id = @id;
 
 -- name: ObjectCleanupGet :many
-UPDATE obj_cleanup
-SET delete_at = NOW() + INTERVAL '30 minutes'
-WHERE id IN (
-  SELECT id
-  FROM obj_cleanup
-  WHERE tries < 10
-  ORDER BY delete_at DESC
-  LIMIT 20
-)
-RETURNING
+SELECT
   id,
   organization_id,
   instance_num,
   bucket_id,
-  object_id;
+  object_id
+FROM obj_cleanup
+WHERE delete_at < NOW()
+  AND tries < 10
+ORDER BY delete_at ASC;
 
 -- name: ObjectCleanupFail :exec
 UPDATE obj_cleanup
-SET tries = tries + 1
+SET tries = tries + 1,
+    delete_at = NOW() + INTERVAL '5 minutes'
 WHERE id = @id;
