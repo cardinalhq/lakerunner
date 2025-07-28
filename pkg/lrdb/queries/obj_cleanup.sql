@@ -30,5 +30,5 @@ LIMIT 1000;
 -- name: ObjectCleanupFail :exec
 UPDATE obj_cleanup
 SET tries = tries + 1,
-    delete_at = NOW() + INTERVAL '5 minutes'
+    delete_at = NOW() + INTERVAL '1 minute'
 WHERE id = @id;

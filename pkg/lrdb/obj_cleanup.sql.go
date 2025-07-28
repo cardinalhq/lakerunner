@@ -54,7 +54,7 @@ func (q *Queries) ObjectCleanupComplete(ctx context.Context, id uuid.UUID) error
 const objectCleanupFail = `-- name: ObjectCleanupFail :exec
 UPDATE obj_cleanup
 SET tries = tries + 1,
-    delete_at = NOW() + INTERVAL '5 minutes'
+    delete_at = NOW() + INTERVAL '1 minute'
 WHERE id = $1
 `
 
