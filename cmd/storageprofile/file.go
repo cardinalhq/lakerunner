@@ -15,13 +15,14 @@
 package storageprofile
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/stretchr/testify/assert/yaml"
+	"gopkg.in/yaml.v3"
 )
 
 type fileProvider struct {
@@ -50,7 +51,10 @@ func NewFileProvider(filename string) (StorageProfileProvider, error) {
 
 func newFileProviderFromContents(filename string, contents []byte) (StorageProfileProvider, error) {
 	var profiles []StorageProfile
-	if err := yaml.Unmarshal(contents, &profiles); err != nil {
+
+	dec := yaml.NewDecoder(bytes.NewReader(contents))
+	dec.KnownFields(true)
+	if err := dec.Decode(&profiles); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal storage profiles from file %s: %w", filename, err)
 	}
 
