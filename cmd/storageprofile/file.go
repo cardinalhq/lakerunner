@@ -38,7 +38,7 @@ func NewFileProvider(filename string) (StorageProfileProvider, error) {
 		if contents == "" {
 			return nil, fmt.Errorf("environment variable %s is not set", envVar)
 		}
-		return newFileProviderFromContents(envVar, []byte(contents))
+		return newFileProviderFromContents(filename, []byte(contents))
 	}
 
 	contents, err := os.ReadFile(filename)
