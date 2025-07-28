@@ -49,7 +49,16 @@ func init() {
 			fmt.Fprintf(os.Stderr, "failed to set maxprocs using package go.uber.org/automaxprocs/maxprocs: %v\n", err)
 		}
 	}
-	_, err := memlimit.SetGoMemLimitWithOpts(memlimit.WithRatio(0.8), memlimit.WithLogger(slog.Default()))
+	_, err := memlimit.SetGoMemLimitWithOpts(
+		memlimit.WithRatio(0.8),
+		memlimit.WithLogger(slog.Default()),
+		memlimit.WithProvider(
+			memlimit.ApplyFallback(
+				memlimit.FromCgroup,
+				memlimit.FromSystem,
+			),
+		),
+	)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to set memory limit using package github.com/KimMachineGun/automemlimit/memlimit: %v\n", err)
 	}
