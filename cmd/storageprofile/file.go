@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert/yaml"
@@ -30,6 +31,15 @@ type fileProvider struct {
 var _ StorageProfileProvider = (*fileProvider)(nil)
 
 func NewFileProvider(filename string) (StorageProfileProvider, error) {
+	if after, ok := strings.CutPrefix(filename, "env:"); ok {
+		envVar := after
+		contents := os.Getenv(envVar)
+		if contents == "" {
+			return nil, fmt.Errorf("environment variable %s is not set", envVar)
+		}
+		return newFileProviderFromContents(envVar, []byte(contents))
+	}
+
 	contents, err := os.ReadFile(filename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read storage profiles from file %s: %w", filename, err)
