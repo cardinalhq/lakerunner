@@ -17,15 +17,16 @@ package storageprofile
 import (
 	"context"
 	"fmt"
+	"os"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
-func Test_newFileProviderFromContents_Success(t *testing.T) {
-	orgID := uuid.New()
-	yamlContent := fmt.Sprintf(`
+var (
+	orgID       = uuid.New()
+	yamlContent = fmt.Sprintf(`
 - organization_id: %s
   instance_num: 1
   collector_name: "ext-123"
@@ -34,7 +35,9 @@ func Test_newFileProviderFromContents_Success(t *testing.T) {
   role: "role-arn"
   bucket: "my-bucket"
 `, orgID.String())
+)
 
+func Test_newFileProviderFromContents_Success(t *testing.T) {
 	provider, err := newFileProviderFromContents("test.yaml", []byte(yamlContent))
 	require.NoError(t, err)
 	require.NotNil(t, provider)
@@ -65,4 +68,11 @@ func Test_newFileProviderFromContents_UnmarshalError(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, provider)
 	require.Contains(t, err.Error(), "failed to unmarshal storage profiles from file bad.yaml")
+}
+
+func Test_NewFileProvider_env(t *testing.T) {
+	os.Setenv("TEST_STORAGE_PROFILES", yamlContent)
+	provider, err := NewFileProvider("env:TEST_STORAGE_PROFILES")
+	require.NoError(t, err)
+	require.NotNil(t, provider)
 }
