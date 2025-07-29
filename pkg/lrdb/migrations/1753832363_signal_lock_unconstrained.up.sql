@@ -1,0 +1,4 @@
+-- 1753832363_signal_lock_unconstrained.up.sql
+
+ALTER TABLE signal_locks
+  DROP CONSTRAINT IF EXISTS signal_locks_organization_id_instance_num_dateint_frequency_key;
