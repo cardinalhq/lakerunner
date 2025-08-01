@@ -6,7 +6,7 @@
 <h3 align="center">Real-Time Telemetry, Straight From Your S3 Bucket</h3>
 
 <p align="center">
-  <strong> LakeRunner </strong> is an event-driven ingestion engine that watches S3-compatible object stores and transforms raw telemetry data — such as OpenTelemetry/DataDog logs/metrics — into structured records stored in PostgreSQL. It powers real-time ingestion pipelines for debugging, monitoring, and analytics use cases.
+<strong>LakeRunner</strong> is an event-driven ingestion engine that turns your S3-compatible object store into a blazing-fast observability backend. It watches for structured telemetry (CSV, Parquet, JSON.gz), transforms it into optimized Apache Parquet, then handles indexing, aggregation, and compaction, all in real time. Paired with our Grafana plugin, your bucket becomes instantly queryable — no black boxes, no vendor lock-in.
 </p>
 
 ---
@@ -14,10 +14,9 @@
 ## 🚀 Features
 
 - 📥 Automatic ingestion from S3 on object creation
-- 🔗 Webhook-driven event processing
+- 🔗 Event-driven Architecture enabled by S3 Object Notifications. 
 - 📊 Native support for OpenTelemetry log/metric proto files
 - 📦 Seamless ingestion of `.json.gz` logs — works with DataDog, FluentBit, or your custom source!
-- 🐘 PostgreSQL-backed storage and querying
 - 🎛️ Helm-deployable for local or cloud environments
 - 👀 `docker-compose` support <em> coming soon! </em>
 
