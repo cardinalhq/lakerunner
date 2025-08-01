@@ -3,10 +3,10 @@
 </p>
 
 <h1 align="center">LakeRunner</h1>
-<h3 align="center">Event-Driven Data Lake Ingestion Engine</h3>
+<h3 align="center">Real-Time Telemetry, Straight From Your S3 Bucket</h3>
 
 <p align="center">
-  <strong> LakeRunner </strong> is an event-driven ingestion engine that watches S3-compatible object stores, reacts to file uploads via webhooks, and transforms raw telemetry data — such as OpenTelemetry/DataDog logs/metrics — into structured records stored in PostgreSQL. It powers real-time ingestion pipelines for debugging, monitoring, and analytics use cases.
+  <strong> LakeRunner </strong> is an event-driven ingestion engine that watches S3-compatible object stores and transforms raw telemetry data — such as OpenTelemetry/DataDog logs/metrics — into structured records stored in PostgreSQL. It powers real-time ingestion pipelines for debugging, monitoring, and analytics use cases.
 </p>
 
 ---
@@ -205,4 +205,99 @@ Next, grant that Google Service Account access to the subscription:
     --member=serviceAccount:lakerunner@profound-ship-384422.iam.gserviceaccount.com
 ```
 
-### 
+### S3 Event Setup 
+
+To configure Lakerunner with S3, you need to create a iam user and assign it permissions to read the bucket and it's content, which would look something like the following:
+
+```
+{
+    "Version": "xxx",
+    "Statement": [
+        {
+            "Sid": "AllowReadWriteAccessToLakerunner",
+            "Effect": "Allow",
+            "Principal": {
+                "AWS": "arn:aws:iam::<ACCOUNT_ID>:user/<LAKERUNNER_USER>"
+            },
+            "Action": [
+                "s3:GetObject",
+                "s3:PutObject",
+                "s3:DeleteObject",
+                "s3:ListBucket"
+            ],
+            "Resource": [
+                "arn:aws:s3:::<BUCKET_NAME>",
+                "arn:aws:s3:::<BUCKET_NAME>/*"
+            ]
+        }
+    ]
+}
+```
+
+You will also need to create an SQS queue that receives notifications from the bucket, and grant both S3 and LakeRunner permissions to send and read messages from it. Here's an example queue policy:
+
+```
+{
+  "Version": "xxx",
+  "Statement": [
+    {
+      "Sid": "AllowS3ToSendMessages",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "s3.amazonaws.com"
+      },
+      "Action": "SQS:SendMessage",
+      "Resource": "arn:aws:sqs:<REGION>:<ACCOUNT_ID>:<QUEUE_NAME>",
+      "Condition": {
+        "ArnLike": {
+          "aws:SourceArn": "arn:aws:s3:::<BUCKET_NAME>"
+        }
+      }
+    },
+    {
+      "Sid": "AllowLakerunnerToReadMessages",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::<ACCOUNT_ID>:user/<LAKERUNNER_USER>"
+      },
+      "Action": [
+        "SQS:ReceiveMessage",
+        "SQS:DeleteMessage",
+        "SQS:ChangeMessageVisibility"
+      ],
+      "Resource": "arn:aws:sqs:<REGION>:<ACCOUNT_ID>:<QUEUE_NAME>"
+    }
+  ]
+}
+
+```
+
+The final step would be to create an event notification from the S3 bucket to the SQS queue, with the prefix `otel-raw`
+
+
+### Next Steps
+
+Once you have Lakerunner installed, you are ready to explore the data! You can use the grafana plugin that is bundled in the helm chart, and optionally setup the [Lakerunner CLI](https://github.com/cardinalhq/lakerunner-cli) from either the [releases page](https://github.com/cardinalhq/lakerunner-cli/releases), or with brew
+
+
+```
+brew tap cardinalhq/lakerunner-cli
+brew install lakerunner-cli
+```
+
+You just need to set the `LAKERUNNER_QUERY_URL` and `LAKERUNNER_API_KEY` urls in the env, and you should be able to explore logs from the CLI!
+
+
+### Running the demo
+
+If you want to install the lakerunner demo, just get the install script and follow the default values. It will install both the OTel Demo Apps and Lakerunner, and write OTel telemetry to a local minio bucket under the `logs-raw/` prefix, from which Lakerunner picks up logs/metrics files. More details can be found on our [Website](https://docs.cardinalhq.io/lakerunner)
+
+```
+curl -sSL -o install.sh https://raw.githubusercontent.com/cardinalhq/lakerunner-cli/main/scripts/install.sh
+chmod +x install.sh
+./install.sh
+```
+
+
+## Developer Guide
+
