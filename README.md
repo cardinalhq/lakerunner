@@ -13,12 +13,12 @@
 
 ## 🚀 Features
 
-- 📥 Automatic ingestion from S3 on object creation
-- 🔗 Event-driven Architecture enabled by S3 Object Notifications. 
-- 📊 Native support for OpenTelemetry log/metric proto files
-- 📦 Seamless ingestion for `OTEL Proto`, `CSV` or `.json.gz` formats.
+- Automatic ingestion from S3 on object creation
+- Event-driven Architecture enabled by S3 Object Notifications. 
+- Native support for OpenTelemetry log/metric proto files
+- Seamless ingestion for `OTEL Proto`, `CSV` or `.json.gz` formats.
 - Works with DataDog, FluentBit, or your custom source!
-- 🎛️ Helm-deployable for local or cloud environments
+- Helm-deployable for local or cloud environments
 - 👀 `docker-compose` support <em> coming soon! </em>
 
 ---
