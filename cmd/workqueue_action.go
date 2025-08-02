@@ -157,7 +157,7 @@ func workqueueProcess(
 
 	t0 := time.Now()
 	inf, err := wqm.RequestWork()
-	workqueueFetchDuration.Record(ctx, time.Since(t0).Milliseconds(),
+	workqueueFetchDuration.Record(ctx, time.Since(t0).Seconds(),
 		metric.WithAttributeSet(commonAttributes),
 		metric.WithAttributeSet(attrs),
 		metric.WithAttributes(
@@ -181,7 +181,7 @@ func workqueueProcess(
 	)
 
 	workLag := max(time.Since(inf.RunnableAt()), 0)
-	workqueueLag.Record(ctx, workLag.Milliseconds(),
+	workqueueLag.Record(ctx, workLag.Seconds(),
 		metric.WithAttributeSet(commonAttributes),
 		metric.WithAttributeSet(attrs),
 		metric.WithAttributeSet(orgAttrs),
@@ -202,7 +202,7 @@ func workqueueProcess(
 	estBytesPerRecord := est.Get(inf.OrganizationID(), inf.InstanceNum(), inf.Signal()).AvgBytesPerRecord
 	t0 = time.Now()
 	result, err := pfx(ctx, ll, awsmanager, sp, mdb, inf, estBytesPerRecord)
-	workqueueDuration.Record(ctx, time.Since(t0).Milliseconds(),
+	workqueueDuration.Record(ctx, time.Since(t0).Seconds(),
 		metric.WithAttributeSet(commonAttributes),
 		metric.WithAttributeSet(attrs),
 		metric.WithAttributeSet(orgAttrs),

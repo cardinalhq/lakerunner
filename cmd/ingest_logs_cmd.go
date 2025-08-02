@@ -199,7 +199,7 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, sp storageprofile.Stora
 				FileSize:       split.FileSize,
 				Fingerprints:   fps,
 			})
-			dbExecDuration.Record(ctx, time.Since(t0).Milliseconds(),
+			dbExecDuration.Record(ctx, time.Since(t0).Seconds(),
 				metric.WithAttributeSet(commonAttributes),
 				metric.WithAttributeSet(attrs),
 				metric.WithAttributes(
@@ -351,9 +351,9 @@ func convertJSONGzFile(tmpfilename, tmpdir, bucket, objectID string) ([]string, 
 	nmb := buffet.NewNodeMapBuilder()
 
 	baseitems := map[string]string{
-		"resource.bucket.name":  bucket,
-		"resource.file.name":    "./" + objectID,
-		"resource.file.type":    getFileType(objectID),
+		"resource.bucket.name": bucket,
+		"resource.file.name":   "./" + objectID,
+		"resource.file.type":   getFileType(objectID),
 	}
 
 	// First pass: read all rows to build complete schema
@@ -433,9 +433,9 @@ func convertProtoFile(tmpfilename, tmpdir, bucket, objectID string) ([]string, e
 	nmb := buffet.NewNodeMapBuilder()
 
 	baseitems := map[string]string{
-		"resource.bucket.name":  bucket,
-		"resource.file.name":    "./" + objectID,
-		"resource.file.type":    getFileType(objectID),
+		"resource.bucket.name": bucket,
+		"resource.file.name":   "./" + objectID,
+		"resource.file.type":   getFileType(objectID),
 	}
 
 	// First pass: read all rows to build complete schema

@@ -110,7 +110,7 @@ func ingestFiles(
 		ClaimedBy:     myInstanceID,
 		TelemetryType: signalType,
 	})
-	inqueueFetchDuration.Record(ctx, time.Since(t0).Milliseconds(),
+	inqueueFetchDuration.Record(ctx, time.Since(t0).Seconds(),
 		metric.WithAttributeSet(commonAttributes),
 		metric.WithAttributeSet(attrs),
 		metric.WithAttributes(
@@ -152,7 +152,7 @@ func ingestFiles(
 
 	t0 = time.Now()
 	err = processFx(ctx, ll, sp, mdb, awsmanager, inf, ingestDateint)
-	inqueueDuration.Record(ctx, time.Since(t0).Milliseconds(),
+	inqueueDuration.Record(ctx, time.Since(t0).Seconds(),
 		metric.WithAttributeSet(commonAttributes),
 		metric.WithAttributeSet(attrs),
 		metric.WithAttributes(
