@@ -15,6 +15,7 @@
 package translate
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strconv"
@@ -61,6 +62,49 @@ func ParseLogRow(mapper *Mapper, input map[string]any) TranslatedLog {
 		// Message?
 		if body == "" && slices.Contains(mapper.MessageColumns, lc) {
 			body = toString(rawVal)
+
+			// If the message is a nested structure, also flatten it into attributes
+			if _, isMap := rawVal.(map[string]any); isMap {
+				flattenValue(lc, rawVal, recAttrs)
+			} else if strVal, isString := rawVal.(string); isString {
+				// If message is a string but has "{" and "}", try to parse it as json
+				// We start at the first "{" and parse until we find the matching }, then repeat as long as there are more "{"
+				if strings.Contains(strVal, "{") && strings.Contains(strVal, "}") {
+					start := 0
+					for start < len(strVal) {
+						jsonStart := strings.Index(strVal[start:], "{")
+						if jsonStart == -1 {
+							break
+						}
+						// offset from start to get the actual index
+						jsonStart += start
+						braceCount := 0
+						jsonEnd := -1
+						for i := jsonStart; i < len(strVal); i++ {
+							if strVal[i] == '{' {
+								braceCount++
+							} else if strVal[i] == '}' {
+								braceCount--
+								if braceCount == 0 {
+									jsonEnd = i + 1
+									break
+								}
+							}
+						}
+						if jsonEnd > jsonStart {
+							jsonPart := strVal[jsonStart:jsonEnd]
+							var jsonData map[string]any
+							if err := json.Unmarshal([]byte(jsonPart), &jsonData); err == nil {
+								flattenValue(lc, jsonData, recAttrs)
+							}
+							start = jsonEnd
+						} else {
+							// No matching closing brace found, break to avoid infinite loop
+							break
+						}
+					}
+				}
+			}
 			continue
 		}
 
