@@ -74,6 +74,7 @@ FROM obj_cleanup
 WHERE delete_at < NOW()
   AND tries < 10
 ORDER BY delete_at ASC
+LIMIT 100
 `
 
 type ObjectCleanupGetRow struct {
