@@ -76,7 +76,7 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 
 		nextTime := 1 * time.Minute
 		if didWork {
-			nextTime = 10 * time.Second
+			nextTime = 1 * time.Second
 		}
 
 		select {
