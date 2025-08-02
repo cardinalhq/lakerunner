@@ -69,44 +69,49 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 	slog.Info("Starting sweeper", slog.Int64("instanceID", cmd.instanceID))
 
 	for {
-		err := sweep(ctx, slog.Default(), cmd.sp, mdb, awsmanager)
+		didWork, err := sweep(ctx, slog.Default(), cmd.sp, mdb, awsmanager)
 		if err != nil {
 			return err
+		}
+
+		nextTime := 1 * time.Minute
+		if didWork {
+			nextTime = 10 * time.Second
 		}
 
 		select {
 		case <-doneCtx.Done():
 			return doneCtx.Err()
-		case <-time.After(1 * time.Minute):
+		case <-time.After(nextTime):
 		}
 	}
 }
 
-func sweep(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, awsmanager *awsclient.Manager) error {
-	err := runObjCleaner(ctx, ll, sp, mdb, awsmanager)
+func sweep(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, awsmanager *awsclient.Manager) (bool, error) {
+	didWork, err := runObjCleaner(ctx, ll, sp, mdb, awsmanager)
 	if err != nil {
 		ll.Error("Failed to run object cleaner", slog.Any("error", err))
-		return err
+		return false, err
 	}
 
 	err = runWorkqueueExpiry(ctx, ll, mdb)
 	if err != nil {
 		ll.Error("Failed to run expiry", slog.Any("error", err))
-		return err
+		return false, err
 	}
-	return nil
+	return didWork, nil
 }
 
-func runObjCleaner(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, awsmanager *awsclient.Manager) error {
+func runObjCleaner(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, awsmanager *awsclient.Manager) (bool, error) {
 	objs, err := mdb.ObjectCleanupGet(ctx)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil
+			return false, nil
 		}
-		return err
+		return false, err
 	}
 	if len(objs) == 0 {
-		return nil
+		return false, nil
 	}
 
 	var wg sync.WaitGroup
@@ -117,7 +122,7 @@ func runObjCleaner(ctx context.Context, ll *slog.Logger, sp storageprofile.Stora
 	}
 	wg.Wait()
 
-	return nil
+	return true, nil
 }
 
 func cleanupObj(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, awsmanager *awsclient.Manager, obj lrdb.ObjectCleanupGetRow, wg *sync.WaitGroup) {
