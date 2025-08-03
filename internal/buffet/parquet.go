@@ -27,6 +27,7 @@ func WriterOptions(tmpdir string, schema *parquet.Schema) []parquet.WriterOption
 		parquet.PageBufferSize(32 * 1024),
 		parquet.ColumnIndexSizeLimit(1024),
 		parquet.MaxRowsPerRowGroup(80_000),
+		parquet.DataPageStatistics(true),
 		parquet.ColumnPageBuffers(
 			parquet.NewFileBufferPool(tmpdir, "buffers.*"),
 		),
