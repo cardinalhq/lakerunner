@@ -19,6 +19,7 @@ import (
 	"log/slog"
 
 	"github.com/spf13/cobra"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/cardinalhq/lakerunner/cmd/pubsub"
 )
@@ -40,15 +41,28 @@ func init() {
 			if err != nil {
 				return fmt.Errorf("failed to setup telemetry: %w", err)
 			}
+
 			defer func() {
 				if err := doneFx(); err != nil {
 					slog.Error("Error shutting down telemetry", slog.Any("error", err))
 				}
 			}()
+
+			addlAttrs := attribute.NewSet(
+				attribute.String("action", "pubsub-http"),
+			)
+			iter := attribute.NewMergeIterator(&commonAttributes, &addlAttrs)
+			attrs := []attribute.KeyValue{}
+			for iter.Next() {
+				attrs = append(attrs, iter.Attribute())
+			}
+			commonAttributes = attribute.NewSet(attrs...)
+
 			cmd, err := pubsub.NewHTTPListener()
 			if err != nil {
 				return fmt.Errorf("failed to create pubsub command: %w", err)
 			}
+
 			return cmd.Run(doneCtx)
 		},
 	}
@@ -63,11 +77,23 @@ func init() {
 			if err != nil {
 				return fmt.Errorf("failed to setup telemetry: %w", err)
 			}
+
 			defer func() {
 				if err := doneFx(); err != nil {
 					slog.Error("Error shutting down telemetry", slog.Any("error", err))
 				}
 			}()
+
+			addlAttrs := attribute.NewSet(
+				attribute.String("action", "pubsub-sqs"),
+			)
+			iter := attribute.NewMergeIterator(&commonAttributes, &addlAttrs)
+			attrs := []attribute.KeyValue{}
+			for iter.Next() {
+				attrs = append(attrs, iter.Attribute())
+			}
+			commonAttributes = attribute.NewSet(attrs...)
+
 			cmd, err := pubsub.NewSQS()
 			if err != nil {
 				return fmt.Errorf("failed to create SQS pubsub command: %w", err)

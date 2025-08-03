@@ -19,6 +19,7 @@ import (
 	"log/slog"
 
 	"github.com/spf13/cobra"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/cardinalhq/lakerunner/cmd/sweeper"
 )
@@ -39,6 +40,16 @@ func init() {
 					slog.Error("Error shutting down telemetry", slog.Any("error", err))
 				}
 			}()
+
+			addlAttrs := attribute.NewSet(
+				attribute.String("action", "sweep"),
+			)
+			iter := attribute.NewMergeIterator(&commonAttributes, &addlAttrs)
+			attrs := []attribute.KeyValue{}
+			for iter.Next() {
+				attrs = append(attrs, iter.Attribute())
+			}
+			commonAttributes = attribute.NewSet(attrs...)
 
 			cmd := sweeper.New(myInstanceID, servicename)
 			return cmd.Run(doneCtx)

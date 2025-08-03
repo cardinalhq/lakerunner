@@ -96,13 +96,7 @@ func ingestFiles(
 	signalType string,
 	processFx InqueueProcessingFunction,
 ) (bool, bool, error) {
-	attrs := attribute.NewSet(
-		attribute.String("signal", signalType),
-		attribute.String("action", "ingest"),
-	)
-
-	ctx, span := tracer.Start(ctx, "ingest", trace.WithAttributes(
-		append(commonAttributes.ToSlice(), attrs.ToSlice()...)...))
+	ctx, span := tracer.Start(ctx, "ingest", trace.WithAttributes(commonAttributes.ToSlice()...))
 	defer span.End()
 
 	t0 := time.Now()
@@ -112,7 +106,6 @@ func ingestFiles(
 	})
 	inqueueFetchDuration.Record(ctx, time.Since(t0).Seconds(),
 		metric.WithAttributeSet(commonAttributes),
-		metric.WithAttributeSet(attrs),
 		metric.WithAttributes(
 			attribute.Bool("hasError", err != nil && !errors.Is(err, pgx.ErrNoRows)),
 			attribute.Bool("noRows", errors.Is(err, pgx.ErrNoRows)),
@@ -154,7 +147,6 @@ func ingestFiles(
 	err = processFx(ctx, ll, sp, mdb, awsmanager, inf, ingestDateint)
 	inqueueDuration.Record(ctx, time.Since(t0).Seconds(),
 		metric.WithAttributeSet(commonAttributes),
-		metric.WithAttributeSet(attrs),
 		metric.WithAttributes(
 			attribute.String("organizationID", inf.OrganizationID.String()),
 			attribute.String("collectorName", inf.CollectorName),

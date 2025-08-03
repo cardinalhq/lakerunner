@@ -80,7 +80,6 @@ func RunqueueLoop(doneCtx context.Context, sp storageprofile.StorageProfileProvi
 
 	ll := slog.Default().With(
 		slog.String("signal", signal),
-		slog.String("action", "ingest"),
 	)
 
 	for {
@@ -145,21 +144,15 @@ func workqueueProcess(
 	awsmanager *awsclient.Manager,
 	est estimator.Estimator,
 	pfx RunqueueProcessingFunction) (bool, bool, error) {
-	attrs := attribute.NewSet(
-		attribute.String("signal", signal),
-		attribute.String("action", action),
-	)
 
 	ctx, span := tracer.Start(ctx, "workqueueProcess",
-		trace.WithAttributes(
-			append(commonAttributes.ToSlice(), attrs.ToSlice()...)...))
+		trace.WithAttributes(commonAttributes.ToSlice()...))
 	defer span.End()
 
 	t0 := time.Now()
 	inf, err := wqm.RequestWork()
 	workqueueFetchDuration.Record(ctx, time.Since(t0).Seconds(),
 		metric.WithAttributeSet(commonAttributes),
-		metric.WithAttributeSet(attrs),
 		metric.WithAttributes(
 			attribute.Bool("hasError", err != nil && !errors.Is(err, pgx.ErrNoRows)),
 			attribute.Bool("errorIsNoRows", errors.Is(err, pgx.ErrNoRows)),
@@ -183,7 +176,6 @@ func workqueueProcess(
 	workLag := max(time.Since(inf.RunnableAt()), 0)
 	workqueueLag.Record(ctx, workLag.Seconds(),
 		metric.WithAttributeSet(commonAttributes),
-		metric.WithAttributeSet(attrs),
 		metric.WithAttributeSet(orgAttrs),
 	)
 
@@ -204,7 +196,6 @@ func workqueueProcess(
 	result, err := pfx(ctx, ll, awsmanager, sp, mdb, inf, estBytesPerRecord)
 	workqueueDuration.Record(ctx, time.Since(t0).Seconds(),
 		metric.WithAttributeSet(commonAttributes),
-		metric.WithAttributeSet(attrs),
 		metric.WithAttributeSet(orgAttrs),
 		metric.WithAttributes(
 			attribute.Bool("hasError", err != nil),

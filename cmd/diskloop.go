@@ -20,10 +20,54 @@ import (
 	"os"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric"
+
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 )
 
+var (
+	spaceMeter = otel.Meter("github.com/cardinalhq/lakerunner/scratchspace")
+
+	totalBytes metric.Int64Gauge
+	freeBytes  metric.Int64Gauge
+	usedBytes  metric.Int64Gauge
+
+	failcount    = 0
+	hasSucceeded = false
+)
+
 func diskUsageLoop(ctx context.Context) {
+	m, err := spaceMeter.Int64Gauge("scratchspace.total_bytes",
+		metric.WithDescription("Total bytes total in the scratch space"),
+		metric.WithUnit("By"),
+	)
+	if err != nil {
+		slog.Error("Failed to create available bytes gauge", slog.Any("error", err))
+		return
+	}
+	totalBytes = m
+
+	m, err = spaceMeter.Int64Gauge("scratchspace.free_bytes",
+		metric.WithDescription("Free bytes in the scratch space"),
+		metric.WithUnit("By"),
+	)
+	if err != nil {
+		slog.Error("Failed to create free bytes gauge", slog.Any("error", err))
+		return
+	}
+	freeBytes = m
+
+	m, err = spaceMeter.Int64Gauge("scratchspace.used_bytes",
+		metric.WithDescription("Used bytes in the scratch space"),
+		metric.WithUnit("By"),
+	)
+	if err != nil {
+		slog.Error("Failed to create used bytes gauge", slog.Any("error", err))
+		return
+	}
+	usedBytes = m
+
 	diskUsage()
 	for {
 		select {
@@ -34,13 +78,24 @@ func diskUsageLoop(ctx context.Context) {
 		}
 	}
 }
+
 func diskUsage() {
-	diskstats, err := helpers.DiskUsage(os.TempDir())
-	if err != nil {
-		// Log the error but continue the loop
-		slog.Error("Failed to get disk usage stats", "error", err)
+	if !hasSucceeded && failcount > 10 {
 		return
 	}
+
+	diskstats, err := helpers.DiskUsage(os.TempDir())
+	if err != nil {
+		failcount++
+		if failcount > 10 && !hasSucceeded {
+			slog.Error("Failed to get disk usage stats multiple times, stopping further attempts", slog.Int("failcount", failcount))
+			return
+		}
+		slog.Error("Failed to get disk usage stats", "error", err, "failcount", failcount)
+		return
+	}
+	hasSucceeded = true
+
 	slog.Info("Disk usage stats",
 		"totalBytes", diskstats.TotalBytes,
 		"freeBytes", diskstats.FreeBytes,
@@ -51,4 +106,8 @@ func diskUsage() {
 		"usedInodes", diskstats.UsedInodes,
 		"freeInodesPercent", float64(diskstats.FreeInodes)/float64(diskstats.TotalInodes)*100,
 	)
+
+	totalBytes.Record(context.Background(), int64(diskstats.TotalBytes))
+	freeBytes.Record(context.Background(), int64(diskstats.FreeBytes))
+	usedBytes.Record(context.Background(), int64(diskstats.UsedBytes))
 }

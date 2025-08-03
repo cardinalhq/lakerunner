@@ -60,6 +60,17 @@ func init() {
 				}
 			}()
 
+			addlAttrs := attribute.NewSet(
+				attribute.String("signal", "logs"),
+				attribute.String("action", "ingest"),
+			)
+			iter := attribute.NewMergeIterator(&commonAttributes, &addlAttrs)
+			attrs := []attribute.KeyValue{}
+			for iter.Next() {
+				attrs = append(attrs, iter.Attribute())
+			}
+			commonAttributes = attribute.NewSet(attrs...)
+
 			go diskUsageLoop(doneCtx)
 
 			sp, err := storageprofile.SetupStorageProfiles()
@@ -183,11 +194,6 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, sp storageprofile.Stora
 				slog.Int64("fileSize", split.FileSize))
 			_ = os.Remove(split.FileName)
 
-			attrs := attribute.NewSet(
-				attribute.String("signal", "logs"),
-				attribute.String("action", "ingest"),
-			)
-
 			fps := split.Fingerprints.ToSlice()
 			t0 := time.Now()
 			split.LastTS++ // end is exclusive, so we need to increment it by 1ms
@@ -205,7 +211,6 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, sp storageprofile.Stora
 			})
 			dbExecDuration.Record(ctx, time.Since(t0).Seconds(),
 				metric.WithAttributeSet(commonAttributes),
-				metric.WithAttributeSet(attrs),
 				metric.WithAttributes(
 					attribute.Bool("hasError", err != nil),
 					attribute.String("queryName", "InsertLogSegment"),

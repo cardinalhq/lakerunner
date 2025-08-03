@@ -21,6 +21,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"go.opentelemetry.io/otel/attribute"
 	_ "modernc.org/sqlite"
 
 	"github.com/cardinalhq/lakerunner/cmd/storageprofile"
@@ -47,6 +48,17 @@ func init() {
 					slog.Error("Error shutting down telemetry", slog.Any("error", err))
 				}
 			}()
+
+			addlAttrs := attribute.NewSet(
+				attribute.String("signal", "metrics"),
+				attribute.String("action", "rollup"),
+			)
+			iter := attribute.NewMergeIterator(&commonAttributes, &addlAttrs)
+			attrs := []attribute.KeyValue{}
+			for iter.Next() {
+				attrs = append(attrs, iter.Attribute())
+			}
+			commonAttributes = attribute.NewSet(attrs...)
 
 			go diskUsageLoop(doneCtx)
 
