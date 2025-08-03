@@ -99,6 +99,13 @@ func sweep(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageProfil
 		ll.Error("Failed to run expiry", slog.Any("error", err))
 		return false, err
 	}
+
+	err = runInqueueExpiry(ctx, ll, mdb)
+	if err != nil {
+		ll.Error("Failed to run inqueue expiry", slog.Any("error", err))
+		return false, err
+	}
+
 	return didWork, nil
 }
 
