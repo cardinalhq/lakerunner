@@ -118,9 +118,11 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, sp storageprofile.Stora
 	tmpfilename, _, err := s3helper.DownloadS3Object(ctx, tmpdir, s3client, inf.Bucket, inf.ObjectID)
 	if err != nil {
 		if s3helper.S3ErrorIs404(err) {
+			// TODO add counter for missing files
 			ll.Info("S3 object not found, deleting inqueue work item", slog.String("bucket", inf.Bucket), slog.String("objectID", inf.ObjectID))
 			return nil
 		}
+		// TODO add counter for download errors
 		ll.Error("Failed to download S3 object", slog.Any("error", err))
 		return err
 	}
@@ -132,12 +134,14 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, sp storageprofile.Stora
 	if !strings.HasPrefix(inf.ObjectID, "otel-raw/") {
 		// Skip database files (these are processed outputs, not inputs)
 		if strings.HasPrefix(inf.ObjectID, "db/") {
+			// TODO add counter for skipped files in the db prefix
 			return nil
 		}
 
 		// Check file type and convert if supported
 		if fnames, err := convertFileIfSupported(ll, tmpfilename, tmpdir, inf.Bucket, inf.ObjectID); err != nil {
 			ll.Error("Failed to convert file", slog.Any("error", err))
+			// TODO add counter for failure to convert, probably in each convert function
 			return err
 		} else if fnames != nil {
 			filenames = fnames
@@ -306,7 +310,6 @@ var nonLetter = regexp.MustCompile(`[^a-zA-Z]`)
 // getFileType extracts the “base” of the filename (everything before the last dot),
 // then strips out any non‑letter characters.
 func getFileType(p string) string {
-	// equivalent of Scala’s path.split("/").lastOption.getOrElse("")
 	fileName := path.Base(p)
 
 	// find last “.”; if none, use whole filename
@@ -321,6 +324,8 @@ func getFileType(p string) string {
 // convertFileIfSupported checks the file type and converts it if supported.
 // Returns nil if the file type is not supported (file will be skipped).
 func convertFileIfSupported(ll *slog.Logger, tmpfilename, tmpdir, bucket, objectID string) ([]string, error) {
+	// TODO add a counter for each type we process, and a counter for unsupported types
+	// Include the signal type in the attributes, as well as the converter used, and the extension found.
 	switch {
 	case strings.HasSuffix(objectID, ".parquet"):
 		return convertRawParquet(tmpfilename, tmpdir, bucket, objectID)
