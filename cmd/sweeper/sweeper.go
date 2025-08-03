@@ -121,20 +121,27 @@ func runObjCleaner(ctx context.Context, ll *slog.Logger, sp storageprofile.Stora
 		return false, nil
 	}
 
+	jobs := make(chan lrdb.ObjectCleanupGetRow)
 	var wg sync.WaitGroup
-
-	for _, obj := range objs {
+	for range 10 {
 		wg.Add(1)
-		go cleanupObj(ctx, ll, sp, mdb, awsmanager, obj, &wg)
+		go func() {
+			defer wg.Done()
+			for obj := range jobs {
+				cleanupObj(ctx, ll, sp, mdb, awsmanager, obj)
+			}
+		}()
 	}
+	for _, obj := range objs {
+		jobs <- obj
+	}
+	close(jobs)
 	wg.Wait()
 
 	return true, nil
 }
 
-func cleanupObj(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, awsmanager *awsclient.Manager, obj lrdb.ObjectCleanupGetRow, wg *sync.WaitGroup) {
-	defer wg.Done()
-
+func cleanupObj(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, awsmanager *awsclient.Manager, obj lrdb.ObjectCleanupGetRow) {
 	profile, err := sp.Get(ctx, obj.OrganizationID, obj.InstanceNum)
 	if err != nil {
 		ll.Error("Failed to get storage profile", slog.Any("error", err), slog.String("objectID", obj.ObjectID))
