@@ -58,12 +58,12 @@ func NewRawParquetReader(fname string, mapper *translate.Mapper, tags map[string
 func (r *RawParquetReader) Close() error {
 	var err error
 	if r.pfr != nil {
-		if err := r.pfr.Close(); err != nil {
+		if err = r.pfr.Close(); err != nil {
 			err = errors.Join(err, fmt.Errorf("failed to close parquet reader: %w", err))
 		}
 	}
 	if r.fh != nil {
-		if err := r.fh.Close(); err != nil {
+		if err = r.fh.Close(); err != nil {
 			err = errors.Join(err, fmt.Errorf("failed to close file handle: %w", err))
 		}
 	}

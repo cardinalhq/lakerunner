@@ -68,7 +68,7 @@ func NewJSONGzReader(fname string, mapper *translate.Mapper, tags map[string]str
 func (r *JSONGzReader) Close() error {
 	var err error
 	if r.gzReader != nil {
-		if err := r.gzReader.Close(); err != nil {
+		if err = r.gzReader.Close(); err != nil {
 			err = fmt.Errorf("failed to close gzip reader: %w", err)
 		}
 	}

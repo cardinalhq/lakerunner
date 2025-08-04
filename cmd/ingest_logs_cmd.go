@@ -264,6 +264,9 @@ func convertRawParquet(tmpfilename, tmpdir, bucket, objectID string) ([]string, 
 	}
 
 	w, err := buffet.NewWriter("fileconv", tmpdir, nmb.Build(), 0, 0)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to create writer: %w", err)
+	}
 	defer func() {
 		_, err := w.Close()
 		if errors.Is(err, buffet.ErrAlreadyClosed) {
