@@ -30,13 +30,13 @@ var Cmd = &cobra.Command{
 
 func init() {
 	Cmd.Flags().StringP("input", "i", "", "Input file path")
-	Cmd.MarkFlagRequired("input")
+	_ = Cmd.MarkFlagRequired("input")
 
 	Cmd.Flags().StringP("output", "o", "", "Output file path")
-	Cmd.MarkFlagRequired("output")
+	_ = Cmd.MarkFlagRequired("output")
 
 	Cmd.Flags().StringP("format", "f", "parquet", "Input format (e.g., parquet, csv)")
-	Cmd.MarkFlagRequired("format")
+	_ = Cmd.MarkFlagRequired("format")
 }
 
 func run(cmd *cobra.Command, args []string) error {
