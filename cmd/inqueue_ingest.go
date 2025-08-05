@@ -128,6 +128,12 @@ func ingestFiles(
 
 	h := NewInqueueHandler(ctx, ll, mdb, inf)
 
+	if inf.Tries > 10 {
+		ll.Warn("Too many tries, deleting")
+		h.CompleteWork()
+		return false, true, nil
+	}
+
 	isNew, err := h.IsNewWork()
 	if err != nil {
 		h.RetryWork()

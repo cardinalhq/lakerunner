@@ -54,6 +54,11 @@ func parseS3LikeEvents(raw []byte) ([]lrdb.Inqueue, error) {
 			slog.Error("Failed to unescape key", slog.Any("error", err))
 			continue
 		}
+
+		if strings.HasSuffix(key, "/") {
+			continue // Skip "directory" keys
+		}
+
 		parts := strings.Split(key, "/")
 		if parts[0] == "db" {
 			continue // Skip database files
