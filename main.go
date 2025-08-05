@@ -71,6 +71,10 @@ func init() {
 }
 
 func main() {
+	// This is a hack to try to make thigs work on ECS Fargate.
+	tmp := os.TempDir()
+	os.Setenv("TMPDIR", tmp+"/lakerunner")
+
 	_ = CleanTempDir()
 
 	cmd.Execute()
@@ -78,6 +82,9 @@ func main() {
 
 func CleanTempDir() error {
 	temp := os.TempDir()
+	if err := os.MkdirAll(temp, 0755); err != nil {
+		slog.Error("Failed to create temp dir path (ignoring)", slog.String("path", temp), slog.Any("error", err))
+	}
 
 	entries, err := os.ReadDir(temp)
 	if err != nil {
