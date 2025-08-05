@@ -15,8 +15,7 @@
 FROM alpine:latest AS certs
 RUN apk --update add ca-certificates
 
-# pull in geoip database
-FROM scratch
+# FROM scratch
 
 ARG USER_UID=2000
 USER ${USER_UID}:${USER_UID}
