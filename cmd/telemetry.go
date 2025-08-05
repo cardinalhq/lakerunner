@@ -80,7 +80,7 @@ func setupTelemetry(servicename string) (context.Context, func() error, error) {
 			return doneCtx, nil, fmt.Errorf("failed to setup OpenTelemetry SDK: %w", err)
 		}
 
-		if err := runtime.Start(runtime.WithMinimumReadMemStatsInterval(time.Second)); err != nil {
+		if err := runtime.Start(runtime.WithMinimumReadMemStatsInterval(time.Second * 10)); err != nil {
 			slog.Warn("failed to start runtime metrics", "error", err.Error())
 		}
 
