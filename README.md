@@ -207,17 +207,66 @@ Next, grant that Google Service Account access to the subscription:
 
 ### S3 Event Setup 
 
-To configure Lakerunner with S3, you need to create a iam user and assign it permissions to read the bucket and it's content, which would look something like the following:
+To configure Lakerunner with S3 and SQS, you need the following:
+
+1. A S3 bucket
+2. SQS queue
+3. An IAM user
+
+For the permissions part, you need to configure the following:
+1. The user should have permission to access the S3 bucket and SQS queue
+2. The S3 bucket should allow the user to access it's contents, and should send event notifications to the queue
+3. The SQS queue should allow the bucket to send events to it, and allow the user to access the queue.
+
+For reference, the settings below should be a good reference to set these things up:
+
+1. Create a policy to allow access to the S3 bucket and SQS queue. Attach this to a group, and add the IAM user you create to this group
 
 ```
 {
-    "Version": "xxx",
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "AllowS3Access",
+            "Effect": "Allow",
+            "Action": [
+                "s3:GetObject",
+                "s3:PutObject",
+                "s3:DeleteObject",
+                "s3:ListBucket"
+            ],
+            "Resource": [
+                "arn:aws:s3:::<bucket_name>",
+                "arn:aws:s3:::<bucket_name>/*"
+            ]
+        },
+        {
+            "Sid": "AllowSQSAccess",
+            "Effect": "Allow",
+            "Action": [
+                "sqs:ReceiveMessage",
+                "sqs:DeleteMessage",
+                "sqs:ChangeMessageVisibility"
+            ],
+            "Resource": "<sqs_arn>"
+        }
+    ]
+}
+```
+
+2. S3 bucket configuration
+
+You need to create a bucket and add event notifications for the following prefixes to the SQS queue: `otel-raw`, `logs-raw`, and `metrics-raw`. The policy for the bucket should allow the IAM user to access it's contents
+
+```
+{
+    "Version": "2012-10-17",
     "Statement": [
         {
             "Sid": "AllowReadWriteAccessToLakerunner",
             "Effect": "Allow",
             "Principal": {
-                "AWS": "arn:aws:iam::<ACCOUNT_ID>:user/<LAKERUNNER_USER>"
+                "AWS": "<IAM user ARN>"
             },
             "Action": [
                 "s3:GetObject",
@@ -226,20 +275,19 @@ To configure Lakerunner with S3, you need to create a iam user and assign it per
                 "s3:ListBucket"
             ],
             "Resource": [
-                "arn:aws:s3:::<BUCKET_NAME>",
-                "arn:aws:s3:::<BUCKET_NAME>/*"
+                "arn:aws:s3:::<bucket_name>",
+                "arn:aws:s3:::<bucket_name>/*"
             ]
         }
     ]
 }
 ```
 
-You will also need to create an SQS queue that receives notifications from the bucket, and grant both S3 and LakeRunner permissions to send and read messages from it. Here's an example queue policy:
+3. SQS configuration
+
+The SQS queue that you create should two extra statements - one to let S3 send messages and the other to let the user access the queue:
 
 ```
-{
-  "Version": "xxx",
-  "Statement": [
     {
       "Sid": "AllowS3ToSendMessages",
       "Effect": "Allow",
@@ -247,10 +295,10 @@ You will also need to create an SQS queue that receives notifications from the b
         "Service": "s3.amazonaws.com"
       },
       "Action": "SQS:SendMessage",
-      "Resource": "arn:aws:sqs:<REGION>:<ACCOUNT_ID>:<QUEUE_NAME>",
+      "Resource": "<queue ARN>",
       "Condition": {
         "ArnLike": {
-          "aws:SourceArn": "arn:aws:s3:::<BUCKET_NAME>"
+          "aws:SourceArn": "arn:aws:s3:::<bucket_name>"
         }
       }
     },
@@ -258,22 +306,16 @@ You will also need to create an SQS queue that receives notifications from the b
       "Sid": "AllowLakerunnerToReadMessages",
       "Effect": "Allow",
       "Principal": {
-        "AWS": "arn:aws:iam::<ACCOUNT_ID>:user/<LAKERUNNER_USER>"
+        "AWS": "<IAM user ARN>"
       },
       "Action": [
         "SQS:ReceiveMessage",
         "SQS:DeleteMessage",
         "SQS:ChangeMessageVisibility"
       ],
-      "Resource": "arn:aws:sqs:<REGION>:<ACCOUNT_ID>:<QUEUE_NAME>"
+      "Resource": "<queue ARN>"
     }
-  ]
-}
-
 ```
-
-The final step would be to create an event notification from the S3 bucket to the SQS queue, with the prefix `otel-raw`
-
 
 ### Next Steps
 
