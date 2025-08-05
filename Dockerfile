@@ -20,6 +20,6 @@ RUN apk --update add ca-certificates
 ARG USER_UID=2000
 USER ${USER_UID}:${USER_UID}
 
-COPY --from=certs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+#COPY --from=certs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY lakerunner /app/bin/lakerunner
 CMD ["/app/bin/lakerunner"]
