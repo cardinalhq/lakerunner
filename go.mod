@@ -30,6 +30,8 @@ require (
 	go.opentelemetry.io/collector/pdata v1.34.0
 	go.opentelemetry.io/contrib/bridges/otelslog v0.12.0
 	go.opentelemetry.io/contrib/instrumentation/github.com/aws/aws-sdk-go-v2/otelaws v0.62.0
+	go.opentelemetry.io/contrib/instrumentation/host v0.62.0
+	go.opentelemetry.io/contrib/instrumentation/runtime v0.62.0
 	go.opentelemetry.io/otel v1.37.0
 	go.opentelemetry.io/otel/metric v1.37.0
 	go.opentelemetry.io/otel/trace v1.37.0
@@ -196,6 +198,7 @@ require (
 	github.com/docker/go-connections v0.5.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/ebitengine/purego v0.8.4 // indirect
 	github.com/elliotchance/orderedmap/v2 v2.7.0 // indirect
 	github.com/emirpasic/gods v1.18.1 // indirect
 	github.com/envoyproxy/go-control-plane/envoy v1.32.4 // indirect
@@ -221,6 +224,7 @@ require (
 	github.com/go-jose/go-jose/v4 v4.0.5 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
+	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/go-openapi/analysis v0.23.0 // indirect
 	github.com/go-openapi/errors v0.22.0 // indirect
 	github.com/go-openapi/jsonpointer v0.21.0 // indirect
@@ -347,6 +351,7 @@ require (
 	github.com/letsencrypt/boulder v0.0.0-20240620165639-de9c06129bec // indirect
 	github.com/lib/pq v1.10.9 // indirect
 	github.com/lucasb-eyer/go-colorful v1.2.0 // indirect
+	github.com/lufia/plan9stats v0.0.0-20250317134145-8bc96cf8fc35 // indirect
 	github.com/macabu/inamedparam v0.1.3 // indirect
 	github.com/magiconair/properties v1.8.10 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
@@ -408,6 +413,7 @@ require (
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/polydawn/refmt v0.89.1-0.20221221234430-40501e09de1f // indirect
 	github.com/polyfloyd/go-errorlint v1.7.1 // indirect
+	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
 	github.com/prometheus/client_golang v1.22.0 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.64.0 // indirect
@@ -438,6 +444,7 @@ require (
 	github.com/secure-systems-lab/go-securesystemslib v0.8.0 // indirect
 	github.com/securego/gosec/v2 v2.22.2 // indirect
 	github.com/sergi/go-diff v1.3.2-0.20230802210424-5b0b94c5c0d3 // indirect
+	github.com/shirou/gopsutil/v4 v4.25.5 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/sigstore/cosign/v2 v2.4.1 // indirect
 	github.com/sigstore/protobuf-specs v0.3.2 // indirect
@@ -470,6 +477,8 @@ require (
 	github.com/timakin/bodyclose v0.0.0-20241017074812-ed6a65f985e3 // indirect
 	github.com/timonwong/loggercheck v0.10.1 // indirect
 	github.com/titanous/rocacheck v0.0.0-20171023193734-afe73141d399 // indirect
+	github.com/tklauser/go-sysconf v0.3.15 // indirect
+	github.com/tklauser/numcpus v0.10.0 // indirect
 	github.com/tomarrell/wrapcheck/v2 v2.10.0 // indirect
 	github.com/tommy-muehle/go-mnd/v2 v2.5.1 // indirect
 	github.com/tomnomnom/linkheader v0.0.0-20180905144013-02ca5825eb80 // indirect
@@ -491,6 +500,7 @@ require (
 	github.com/yagipy/maintidx v1.0.0 // indirect
 	github.com/yeya24/promlinter v0.3.0 // indirect
 	github.com/ykadowak/zerologlint v0.1.5 // indirect
+	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	github.com/zeebo/errs v1.4.0 // indirect
 	gitlab.com/bosi/decorder v0.4.2 // indirect
 	gitlab.com/digitalxero/go-conventional-commit v1.0.7 // indirect
@@ -517,7 +527,7 @@ require (
 	go.opentelemetry.io/otel/log v0.13.0 // indirect
 	go.opentelemetry.io/otel/sdk v1.37.0 // indirect
 	go.opentelemetry.io/otel/sdk/log v0.12.2 // indirect
-	go.opentelemetry.io/otel/sdk/metric v1.36.0 // indirect
+	go.opentelemetry.io/otel/sdk/metric v1.37.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.6.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect

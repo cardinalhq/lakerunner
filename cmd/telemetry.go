@@ -25,6 +25,8 @@ import (
 	"github.com/cardinalhq/oteltools/pkg/telemetry"
 	slogmulti "github.com/samber/slog-multi"
 	"go.opentelemetry.io/contrib/bridges/otelslog"
+	"go.opentelemetry.io/contrib/instrumentation/host"
+	"go.opentelemetry.io/contrib/instrumentation/runtime"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -76,6 +78,14 @@ func setupTelemetry(servicename string) (context.Context, func() error, error) {
 		otelShutdown, err := telemetry.SetupOTelSDK(doneCtx)
 		if err != nil {
 			return doneCtx, nil, fmt.Errorf("failed to setup OpenTelemetry SDK: %w", err)
+		}
+
+		if err := runtime.Start(runtime.WithMinimumReadMemStatsInterval(time.Second)); err != nil {
+			slog.Warn("failed to start runtime metrics", "error", err.Error())
+		}
+
+		if err := host.Start(); err != nil {
+			slog.Warn("failed to start host metrics", "error", err.Error())
 		}
 
 		f = func() error {
