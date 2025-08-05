@@ -47,14 +47,24 @@ func stressTestTempFiles() error {
 				return fmt.Errorf("failed to create temp file #%d: %w", i, err)
 			}
 
-			_, err = f.WriteString("hello world")
+			n, err := f.WriteString("hello world")
 			if err != nil {
-				f.Close()
+				if err2 := f.Close(); err2 != nil {
+					log.Printf("warning: failed to close file %s: %v", f.Name(), err2)
+				}
 				return fmt.Errorf("failed to write to file %s: %w", f.Name(), err)
+			}
+			if n != len("hello world") {
+				if err2 := f.Close(); err2 != nil {
+					log.Printf("warning: failed to close file %s: %v", f.Name(), err2)
+				}
+				return fmt.Errorf("short write to file %s: wrote %d bytes, expected %d", f.Name(), n, len("hello world"))
 			}
 
 			filePaths = append(filePaths, f.Name())
-			f.Close()
+			if err2 := f.Close(); err2 != nil {
+				log.Printf("warning: failed to close file %s: %v", f.Name(), err2)
+			}
 		}
 
 		for i, path := range filePaths {
@@ -71,7 +81,9 @@ func stressTestTempFiles() error {
 		}
 
 		for _, path := range filePaths {
-			_ = os.Remove(path)
+			if err := os.Remove(path); err != nil {
+				log.Printf("warning: failed to remove file %s: %v", path, err)
+			}
 		}
 	}
 	return nil
