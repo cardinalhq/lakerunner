@@ -18,7 +18,7 @@
 - Native support for OpenTelemetry log/metric proto files
 - Seamless ingestion for `OTEL Proto`, `CSV` or `.json.gz` formats.
 - Works with DataDog, FluentBit, or your custom source!
-- Helm-deployable for local or cloud environments
+- Get started locally in <5 mins with the install script
 - 👀 `docker-compose` support <em> coming soon! </em>
 
 ---
@@ -26,42 +26,93 @@
 ## 📚 Table of Contents
 
 - [End User Guide](#end-user-guide)
-  - [Installation](#installation)
-  - [Configuration](#configuration)
+  - [Demo Setup](#demo)
   - [S3 Event Setup](#s3-event-setup)
   - [Next Steps - Get the CLI and Grafana Plugin!](#next-steps)
-  - [Running the Demo](#running-the-demo)
-- [Developer Guide](#developer-guide)
-  - [Architecture Overview](#architecture-overview)
-  - [Local Development](#local-development)
-  - [Contributing](#contributing)
+  - [Configuration](#configuration)
 - [License](#license)
 
 
 ## End User Guide
 
-### Installation
+### Demo setup
 
-As of today, we provide a helm chart to deploy lakerunner - so deploying it should be as simple as defining a `values-local.yaml` file and running:
+#### Prerequisites
 
+1. [Docker Desktop](https://docs.docker.com/desktop/), [Rancher Desktop](https://docs.rancherdesktop.io/getting-started/installation/), or equivalent
+2. [kind](https://kind.sigs.k8s.io/docs/user/quick-start/#installation), [minikube](https://minikube.sigs.k8s.io/docs/start/), or equivalent (`brew install kind` or `brew install minikube`)
+3. [kubectl](https://kubernetes.io/docs/tasks/tools/#kubectl) (`brew install kubectl`)
+4. [Helm](https://helm.sh/docs/intro/install/) 3.14+ (`brew install helm`)
+
+#### Install LakeRunner
+
+1. Create a local cluster using `kind` or `minikube`
+
+```bash copy
+kind create cluster
 ```
-    helm install lakerunner oci://public.ecr.aws/cardinalhq.io/lakerunner \
-        --version 0.2.27 \
-        --values values-local.yaml \
-        --namespace lakerunner
+
+2. Ensure that your `kubectl` context is set to the local cluster.
+
+```bash copy
+kubectl config use-context kind-kind
 ```
+
+3. Download and run the LakeRunner install script.
+
+```bash copy
+curl -sSL -o install.sh https://raw.githubusercontent.com/cardinalhq/lakerunner-cli/main/scripts/install.sh
+chmod +x install.sh
+./install.sh
+```
+
+4. Follow the on-screen prompts until the installation is complete.
+
+_(We recommend using the default values for all prompts during a local install for the fastest and most seamless experience.)_
+
+##### Explore Data in Grafana
+
+The LakeRunner install script also installs a local [Grafana](https://grafana.com/oss/grafana/), bundled with a preconfigured Cardinal LakeRunner Datasource plugin.
+
+Wait for ~5 minutes for the OpenTelemetry Demo apps to generate some sample telemetry data. Then, access Grafana at `http://localhost:3000` and login with the default credentials:
+
+- Username: `admin`
+- Password: `admin`
+
+Navigate to the `Explore` tab, select the `Cardinal` datasource, and try running some queries to explore logs and metrics.
+
+1. [Docker Desktop](https://docs.docker.com/desktop/), [Rancher Desktop](https://docs.rancherdesktop.io/getting-started/installation/), or equivalent
+2. [kind](https://kind.sigs.k8s.io/docs/user/quick-start/#installation), [minikube](https://minikube.sigs.k8s.io/docs/start/), or equivalent (`brew install kind` or `brew install minikube`)
+3. [kubectl](https://kubernetes.io/docs/tasks/tools/#kubectl) (`brew install kubectl`)
+4. [Helm](https://helm.sh/docs/intro/install/) 3.14+ (`brew install helm`)
+
 
 We will discuss configuration options in the next section
 
 > **ℹ️ Note:**  
-> We have packaged all LakeRunner components into a Helm chart to make it easy to deploy, maintain, and scale individual components.  
->  
-> All components are available as public images on AWS ECR. You can browse the [Helm charts](https://github.com/cardinalhq/charts/tree/main/lakerunner) to build your own Docker Compose setup or deploy LakeRunner to any cloud service (like ECS/EKS/GKE/GCE etc...) That said, a `docker-compose` setup is coming soon!  
->  
 > Need help? Join the [LakeRunner community on Slack](https://join.slack.com/t/birdhousebycardinalhq/shared_invite/zt-34ds8vt2t-YhGFtoG5NjJX238cMXdLGw) or email us at **support@cardinalhq.io**.  
 >  
-> 💼 **CardinalHQ also offers managed LakeRunner deployments.**
+> 💼 **CardinalHQ  offers managed LakeRunner deployments.**
 
+
+### Next Steps
+
+Once you have Lakerunner installed, you are ready to explore the data! You can use the grafana plugin that is bundled in the helm chart, and optionally setup the [Lakerunner CLI](https://github.com/cardinalhq/lakerunner-cli) from either the [releases page](https://github.com/cardinalhq/lakerunner-cli/releases), or with brew
+
+
+```
+brew tap cardinalhq/lakerunner-cli
+brew install lakerunner-cli
+```
+
+You just need to set the `LAKERUNNER_QUERY_URL` and `LAKERUNNER_API_KEY` urls in the env, and you should be able to explore logs from the CLI!
+
+For a local demo installation with default values, you can run:
+
+```bash copy
+export LAKERUNNER_QUERY_URL="http://localhost:7101"
+export LAKERUNNER_API_KEY="test-key"
+```
 
 
 ### Configuration
@@ -317,29 +368,8 @@ The SQS queue that you create should two extra statements - one to let S3 send m
     }
 ```
 
-### Next Steps
-
-Once you have Lakerunner installed, you are ready to explore the data! You can use the grafana plugin that is bundled in the helm chart, and optionally setup the [Lakerunner CLI](https://github.com/cardinalhq/lakerunner-cli) from either the [releases page](https://github.com/cardinalhq/lakerunner-cli/releases), or with brew
 
 
-```
-brew tap cardinalhq/lakerunner-cli
-brew install lakerunner-cli
-```
+## LICENSE
 
-You just need to set the `LAKERUNNER_QUERY_URL` and `LAKERUNNER_API_KEY` urls in the env, and you should be able to explore logs from the CLI!
-
-
-### Running the demo
-
-If you want to install the lakerunner demo, just get the install script and follow the default values. It will install both the OTel Demo Apps and Lakerunner, and write OTel telemetry to a local minio bucket under the `logs-raw/` prefix, from which Lakerunner picks up logs/metrics files. More details can be found on our [Website](https://docs.cardinalhq.io/lakerunner)
-
-```
-curl -sSL -o install.sh https://raw.githubusercontent.com/cardinalhq/lakerunner-cli/main/scripts/install.sh
-chmod +x install.sh
-./install.sh
-```
-
-
-## Developer Guide
-
+This project is licensed under the [GNU Affero General Public License v3.0](./LICENSE).
