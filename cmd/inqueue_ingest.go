@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -36,6 +37,7 @@ import (
 type InqueueProcessingFunction func(
 	ctx context.Context,
 	ll *slog.Logger,
+	tmpdir string,
 	sp storageprofile.StorageProfileProvider,
 	mdb lrdb.StoreFull,
 	awsmanager *awsclient.Manager,
@@ -149,8 +151,24 @@ func ingestFiles(
 
 	ingestDateint, _ := helpers.MSToDateintHour(time.Now().UTC().UnixMilli())
 
+	// Create a temporary directory for processing
+	tmpdir, err := os.MkdirTemp("", "lakerunner-ingest-*")
+	if err != nil {
+		ll.Error("Failed to create temporary directory", slog.Any("error", err))
+		h.RetryWork()
+		return true, false, fmt.Errorf("failed to create temporary directory: %w", err)
+	}
+	ll.Info("Created temporary directory", slog.String("path", tmpdir))
+	defer func() {
+		if err := os.RemoveAll(tmpdir); err != nil {
+			ll.Error("Failed to remove temporary directory", slog.String("path", tmpdir), slog.Any("error", err))
+		} else {
+			ll.Info("Removed temporary directory", slog.String("path", tmpdir))
+		}
+	}()
+
 	t0 = time.Now()
-	err = processFx(ctx, ll, sp, mdb, awsmanager, inf, ingestDateint)
+	err = processFx(ctx, ll, tmpdir, sp, mdb, awsmanager, inf, ingestDateint)
 	inqueueDuration.Record(ctx, time.Since(t0).Seconds(),
 		metric.WithAttributeSet(commonAttributes),
 		metric.WithAttributes(

@@ -85,19 +85,8 @@ func init() {
 	rootCmd.AddCommand(cmd)
 }
 
-func logIngestItem(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
+func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
 	awsmanager *awsclient.Manager, inf lrdb.Inqueue, ingest_dateint int32) error {
-	tmpdir, err := os.MkdirTemp("", "lakerunner-ingest-logs-*")
-	if err != nil {
-		ll.Error("Failed to create temp directory", slog.Any("error", err))
-		return err
-	}
-	defer func() {
-		if err := os.RemoveAll(tmpdir); err != nil {
-			ll.Error("Failed to remove temp directory", slog.Any("error", err))
-		}
-	}()
-
 	profile, err := sp.Get(ctx, inf.OrganizationID, inf.InstanceNum)
 	if err != nil {
 		ll.Error("Failed to get storage profile", slog.Any("error", err))

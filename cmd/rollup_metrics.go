@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
@@ -77,6 +76,7 @@ func init() {
 func metricRollupItem(
 	ctx context.Context,
 	ll *slog.Logger,
+	tmpdir string,
 	awsmanager *awsclient.Manager,
 	sp storageprofile.StorageProfileProvider,
 	mdb lrdb.StoreFull,
@@ -112,13 +112,14 @@ func metricRollupItem(
 	}
 
 	ll.Info("Processing rollup item", slog.Int("previousFrequency", int(previousFrequency)), slog.Any("workItem", inf.AsMap()), slog.Float64("estBytesPerRecord", estBytesPerRecord))
-	return metricRollupItemDo(ctx, ll, mdb, inf, profile, s3client, previousFrequency, estBytesPerRecord)
+	return metricRollupItemDo(ctx, ll, mdb, tmpdir, inf, profile, s3client, previousFrequency, estBytesPerRecord)
 }
 
 func metricRollupItemDo(
 	ctx context.Context,
 	ll *slog.Logger,
 	mdb lrdb.StoreFull,
+	tmpdir string,
 	inf lockmgr.Workable,
 	profile storageprofile.StorageProfile,
 	s3client *awsclient.S3Client,
@@ -159,7 +160,7 @@ func metricRollupItemDo(
 		return WorkResultTryAgainLater, err
 	}
 
-	err = rollupInterval(ctx, ll, mdb, inf, profile, s3client, sourceRows, currentRows, estBytesPerRecord)
+	err = rollupInterval(ctx, ll, mdb, tmpdir, inf, profile, s3client, sourceRows, currentRows, estBytesPerRecord)
 	if err != nil {
 		ll.Error("Failed to rollup interval", slog.Any("error", err))
 		return WorkResultTryAgainLater, err
@@ -173,6 +174,7 @@ func rollupInterval(
 	ctx context.Context,
 	ll *slog.Logger,
 	mdb lrdb.StoreFull,
+	tmpdir string,
 	inf lockmgr.Workable,
 	profile storageprofile.StorageProfile,
 	s3client *awsclient.S3Client,
@@ -183,17 +185,6 @@ func rollupInterval(
 	if len(sourceRows) == 0 {
 		return nil
 	}
-
-	tmpdir, err := os.MkdirTemp("", "rollup-metrics-")
-	if err != nil {
-		ll.Error("Failed to create temporary directory", slog.Any("error", err))
-		return fmt.Errorf("creating temporary directory: %w", err)
-	}
-	defer func() {
-		if err := os.RemoveAll(tmpdir); err != nil {
-			ll.Error("Failed to remove temporary directory", slog.String("dir", tmpdir), slog.Any("error", err))
-		}
-	}()
 
 	ingest_dateint := int32(0)
 	files := make([]string, 0, len(sourceRows))

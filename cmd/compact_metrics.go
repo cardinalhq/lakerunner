@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
-	"os"
 
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
@@ -77,6 +76,7 @@ func init() {
 func compactRollupItem(
 	ctx context.Context,
 	ll *slog.Logger,
+	tmpdir string,
 	awsmanager *awsclient.Manager,
 	sp storageprofile.StorageProfileProvider,
 	mdb lrdb.StoreFull,
@@ -107,13 +107,14 @@ func compactRollupItem(
 	}
 
 	ll.Info("Processing metric compression item", slog.Any("workItem", inf))
-	return metricCompactItemDo(ctx, ll, mdb, inf, profile, s3client, estBytesPerRecord)
+	return metricCompactItemDo(ctx, ll, mdb, tmpdir, inf, profile, s3client, estBytesPerRecord)
 }
 
 func metricCompactItemDo(
 	ctx context.Context,
 	ll *slog.Logger,
 	mdb lrdb.StoreFull,
+	tmpdir string,
 	inf lockmgr.Workable,
 	profile storageprofile.StorageProfile,
 	s3client *awsclient.S3Client,
@@ -147,7 +148,7 @@ func metricCompactItemDo(
 		return WorkResultSuccess, nil
 	}
 
-	err = compactInterval(ctx, ll, mdb, inf, profile, s3client, inRows, estBytesPerRecord)
+	err = compactInterval(ctx, ll, mdb, tmpdir, inf, profile, s3client, inRows, estBytesPerRecord)
 	if err != nil {
 		ll.Error("Failed to compact interval", slog.Any("error", err))
 		return WorkResultTryAgainLater, err
@@ -203,6 +204,7 @@ func compactInterval(
 	ctx context.Context,
 	ll *slog.Logger,
 	mdb lrdb.StoreFull,
+	tmpdir string,
 	inf lockmgr.Workable,
 	profile storageprofile.StorageProfile,
 	s3client *awsclient.S3Client,
@@ -213,17 +215,6 @@ func compactInterval(
 		ll.Error("Invalid time range in work item", slog.Any("tsRange", inf.TsRange()))
 		return fmt.Errorf("invalid time range in work item: %v", inf.TsRange())
 	}
-
-	tmpdir, err := os.MkdirTemp("", "rollup-metrics-")
-	if err != nil {
-		ll.Error("Failed to create temporary directory", slog.Any("error", err))
-		return fmt.Errorf("creating temporary directory: %w", err)
-	}
-	defer func() {
-		if err := os.RemoveAll(tmpdir); err != nil {
-			ll.Error("Failed to remove temporary directory", slog.String("dir", tmpdir), slog.Any("error", err))
-		}
-	}()
 
 	files := make([]string, 0, len(rows))
 	for _, row := range rows {

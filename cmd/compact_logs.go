@@ -85,6 +85,7 @@ var compactLogsDoneCtx context.Context
 func compactLogsFor(
 	ctx context.Context,
 	ll *slog.Logger,
+	tmpdir string,
 	awsmanager *awsclient.Manager,
 	sp storageprofile.StorageProfileProvider,
 	mdb lrdb.StoreFull,
@@ -110,13 +111,14 @@ func compactLogsFor(
 	}
 
 	ll.Info("Processing log compression item", slog.Any("workItem", inf.AsMap()))
-	return logCompactItemDo(ctx, ll, mdb, inf, profile, s3client, estBytesPerRecord)
+	return logCompactItemDo(ctx, ll, mdb, tmpdir, inf, profile, s3client, estBytesPerRecord)
 }
 
 func logCompactItemDo(
 	ctx context.Context,
 	ll *slog.Logger,
 	mdb lrdb.StoreFull,
+	tmpdir string,
 	inf lockmgr.Workable,
 	sp storageprofile.StorageProfile,
 	s3client *awsclient.S3Client,
@@ -195,7 +197,7 @@ func logCompactItemDo(
 
 	for i, group := range packed {
 		ll := ll.With(slog.Int("groupIndex", i))
-		err = packSegment(ctx, ll, s3client, mdb, group, sp, stdi)
+		err = packSegment(ctx, ll, tmpdir, s3client, mdb, group, sp, stdi)
 		if err != nil {
 			break
 		}
@@ -226,7 +228,7 @@ var dropFieldNames = []string{
 	"year",
 }
 
-func packSegment(ctx context.Context, ll *slog.Logger, s3Client *awsclient.S3Client, mdb lrdb.StoreFull, group []lrdb.GetLogSegmentsForCompactionRow, sp storageprofile.StorageProfile, dateint int32) error {
+func packSegment(ctx context.Context, ll *slog.Logger, tmpdir string, s3Client *awsclient.S3Client, mdb lrdb.StoreFull, group []lrdb.GetLogSegmentsForCompactionRow, sp storageprofile.StorageProfile, dateint int32) error {
 	groupSize := int64(0)
 	recordCount := int64(0)
 	for _, segment := range group {
@@ -237,17 +239,6 @@ func packSegment(ctx context.Context, ll *slog.Logger, s3Client *awsclient.S3Cli
 	if len(group) < 2 {
 		return nil
 	}
-
-	tmpdir, err := os.MkdirTemp("", "lakerunner-compact-logs")
-	if err != nil {
-		ll.Error("Failed to create temporary directory", slog.Any("error", err))
-		return err
-	}
-	defer func() {
-		if err := os.RemoveAll(tmpdir); err != nil {
-			ll.Error("Error removing temporary directory", slog.String("error", err.Error()))
-		}
-	}()
 
 	ll.Info("Packing segment group",
 		slog.Int("groupSize", int(groupSize)),

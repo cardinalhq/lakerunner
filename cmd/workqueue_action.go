@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"os"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -38,6 +39,7 @@ import (
 type RunqueueProcessingFunction func(
 	ctx context.Context,
 	ll *slog.Logger,
+	tmpdir string,
 	awsmanager *awsclient.Manager,
 	sp storageprofile.StorageProfileProvider,
 	mdb lrdb.StoreFull,
@@ -191,9 +193,23 @@ func workqueueProcess(
 		slog.Int("priority", int(inf.Priority())),
 		slog.Int("frequencyMs", int(inf.FrequencyMs())))
 
+	tmpdir, err := os.MkdirTemp("", "lakerunner-workqueue-*")
+	if err != nil {
+		ll.Error("Failed to create temporary directory", slog.Any("error", err))
+		return true, false, fmt.Errorf("failed to create temporary directory: %w", err)
+	}
+	ll.Info("Created temporary directory", slog.String("path", tmpdir))
+	defer func() {
+		if err := os.RemoveAll(tmpdir); err != nil {
+			ll.Error("Failed to remove temporary directory", slog.String("path", tmpdir), slog.Any("error", err))
+		} else {
+			ll.Info("Removed temporary directory", slog.String("path", tmpdir))
+		}
+	}()
+
 	estBytesPerRecord := est.Get(inf.OrganizationID(), inf.InstanceNum(), inf.Signal()).AvgBytesPerRecord
 	t0 = time.Now()
-	result, err := pfx(ctx, ll, awsmanager, sp, mdb, inf, estBytesPerRecord)
+	result, err := pfx(ctx, ll, tmpdir, awsmanager, sp, mdb, inf, estBytesPerRecord)
 	workqueueDuration.Record(ctx, time.Since(t0).Seconds(),
 		metric.WithAttributeSet(commonAttributes),
 		metric.WithAttributeSet(orgAttrs),
