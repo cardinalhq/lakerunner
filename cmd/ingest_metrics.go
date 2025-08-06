@@ -47,6 +47,8 @@ func init() {
 		Use:   "ingest-metrics",
 		Short: "Ingest metrics from the inqueue table",
 		RunE: func(_ *cobra.Command, _ []string) error {
+			helpers.CleanTempDir()
+
 			servicename := "lakerunner-ingest-metrics"
 			doneCtx, doneFx, err := setupTelemetry(servicename)
 			if err != nil {

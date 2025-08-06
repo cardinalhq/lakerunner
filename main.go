@@ -29,15 +29,13 @@ import (
 	"github.com/cardinalhq/lakerunner/cmd"
 )
 
-func init() {
-	time.Local = time.UTC // Ensure all time operations are in UTC
-}
-
 func simpleLogger(msg string, args ...any) {
 	fmt.Fprintf(os.Stderr, msg+"\n", args...)
 }
 
 func init() {
+	time.Local = time.UTC // Ensure all time operations are in UTC
+
 	if gomaxecs.IsECS() {
 		_, err := gomaxecs.Set(gomaxecs.WithLogger(simpleLogger))
 		if err != nil {
@@ -71,7 +69,6 @@ func init() {
 }
 
 func main() {
-	// This is a hack to try to make thigs work on ECS Fargate.
 	tmp := os.TempDir()
 	tmp = filepath.Join(tmp, "lakerunner")
 	if err := os.MkdirAll(tmp, 0755); err != nil {
@@ -85,24 +82,7 @@ func main() {
 		slog.Info("Set TMPDIR environment variable", slog.String("path", tmp))
 	}
 
-	_ = CleanTempDir()
-
 	slog.Info("Using temp dir", "path", os.TempDir())
 
 	cmd.Execute()
-}
-
-func CleanTempDir() error {
-	temp := os.TempDir()
-	entries, err := os.ReadDir(temp)
-	if err != nil {
-		return fmt.Errorf("reading temp dir: %w", err)
-	}
-
-	for _, entry := range entries {
-		path := filepath.Join(temp, entry.Name())
-		_ = os.RemoveAll(path)
-	}
-
-	return nil
 }

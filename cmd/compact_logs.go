@@ -43,6 +43,8 @@ func init() {
 		Use:   "compact-logs",
 		Short: "Compact logs into optimally sized files",
 		RunE: func(_ *cobra.Command, _ []string) error {
+			helpers.CleanTempDir()
+
 			servicename := "lakerunner-compact-logs"
 			doneCtx, doneFx, err := setupTelemetry(servicename)
 			if err != nil {

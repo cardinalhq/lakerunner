@@ -36,6 +36,8 @@ func init() {
 		Use:   "rollup-metrics",
 		Short: "Roll up metrics",
 		RunE: func(_ *cobra.Command, _ []string) error {
+			helpers.CleanTempDir()
+
 			servicename := "lakerunner-rollup-metrics"
 			doneCtx, doneFx, err := setupTelemetry(servicename)
 			if err != nil {
