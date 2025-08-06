@@ -35,14 +35,13 @@ func init() {
 }
 
 func stressTestTempFiles() error {
-	fmt.Printf("Running disk stress test, tmpdir is %q\n", os.TempDir())
-
 	for loop := range 1000 {
 		log.Printf("Iteration %d...", loop+1)
 		var filePaths []string
 
 		for i := range 1000 {
-			f, err := os.CreateTemp("", "stress-test-*")
+			fname := fmt.Sprintf("stress-test-%d-%d", loop+1, i+1)
+			f, err := os.Create(fname)
 			if err != nil {
 				return fmt.Errorf("failed to create temp file #%d: %w", i, err)
 			}
