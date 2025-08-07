@@ -58,7 +58,6 @@ func run(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		if done {
-			cmd.Println("No rows to process.")
 			return nil
 		}
 		cmd.Printf("Read row: %+v\n", row)

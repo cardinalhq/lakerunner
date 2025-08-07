@@ -20,7 +20,7 @@ require (
 	github.com/jackc/pgx/v5 v5.7.5
 	github.com/jellydator/ttlcache/v3 v3.4.0
 	github.com/oklog/ulid/v2 v2.1.1
-	github.com/parquet-go/parquet-go v0.25.1
+	github.com/parquet-go/parquet-go v0.0.0-20250722183444-5d5656ef2734
 	github.com/pgx-contrib/pgxotel v0.0.0-20250625223024-cb5ea1c4aa0b
 	github.com/rdforte/gomaxecs v1.1.1
 	github.com/samber/slog-multi v1.4.1
