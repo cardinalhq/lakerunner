@@ -31,6 +31,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
+	"github.com/cardinalhq/lakerunner/cmd/ingestlogs"
 	"github.com/cardinalhq/lakerunner/cmd/storageprofile"
 	"github.com/cardinalhq/lakerunner/fileconv/proto"
 	"github.com/cardinalhq/lakerunner/fileconv/translate"
@@ -592,7 +593,7 @@ func convertMetricsProtoFile(tmpfilename, tmpdir, bucket, objectID string) ([]st
 	baseitems := map[string]string{
 		"resource.bucket.name": bucket,
 		"resource.file.name":   "./" + objectID,
-		"resource.file.type":   getFileType(objectID),
+		"resource.file.type":   ingestlogs.GetFileType(objectID),
 	}
 
 	// First pass: read all rows to build complete schema

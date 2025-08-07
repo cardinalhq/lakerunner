@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package cmd
+package ingestlogs
 
 import (
 	"testing"
@@ -43,7 +43,7 @@ func TestGetFileType(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got := getFileType(tt.input)
+		got := GetFileType(tt.input)
 		if got != tt.expected {
 			t.Errorf("getFileType(%q) = %q; want %q", tt.input, got, tt.expected)
 		}

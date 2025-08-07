@@ -20,8 +20,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path"
-	"regexp"
 	"strings"
 	"time"
 
@@ -29,10 +27,10 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
+	"github.com/cardinalhq/lakerunner/cmd/ingestlogs"
 	"github.com/cardinalhq/lakerunner/cmd/storageprofile"
 	"github.com/cardinalhq/lakerunner/fileconv/jsongz"
 	protoconv "github.com/cardinalhq/lakerunner/fileconv/proto"
-	"github.com/cardinalhq/lakerunner/fileconv/rawparquet"
 	"github.com/cardinalhq/lakerunner/fileconv/translate"
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
@@ -228,111 +226,6 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp stora
 	return nil
 }
 
-func convertRawParquet(tmpfilename, tmpdir, bucket, objectID string) ([]string, error) {
-	r, err := rawparquet.NewRawParquetReader(tmpfilename, translate.NewMapper(), nil)
-	if err != nil {
-		return nil, err
-	}
-	defer r.Close()
-
-	nodes, err := r.Nodes()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get nodes: %w", err)
-	}
-	slog.Info("nodes", slog.Any("nodes", nodes))
-
-	// add our new nodes to the list of nodes we will write out
-	nmb := buffet.NewNodeMapBuilder()
-	if err := nmb.AddNodes(nodes); err != nil {
-		return nil, fmt.Errorf("failed to add nodes: %w", err)
-	}
-	if err := nmb.Add(map[string]any{
-		"resource.bucket.name": "bucket",
-		"resource.file.name":   "object",
-		"resource.file.type":   "filetype",
-		"resource.file":        "file",
-	}); err != nil {
-		return nil, fmt.Errorf("failed to add resource nodes: %w", err)
-	}
-
-	w, err := buffet.NewWriter("fileconv", tmpdir, nmb.Build(), 0, 0)
-	if err != nil {
-		return nil, fmt.Errorf("Failed to create writer: %w", err)
-	}
-	defer func() {
-		_, err := w.Close()
-		if errors.Is(err, buffet.ErrAlreadyClosed) {
-			if err != nil {
-				slog.Error("Failed to close writer", slog.Any("error", err))
-			}
-		}
-	}()
-
-	baseitems := map[string]string{
-		"resource.bucket.name": bucket,
-		"resource.file.name":   "./" + objectID,
-		"resource.file.type":   getFileType(objectID),
-		"resource.file":        getResourceFile(objectID),
-	}
-
-	for {
-		row, done, err := r.GetRow()
-		if err != nil {
-			return nil, err
-		}
-		if done {
-			break
-		}
-		for k, v := range baseitems {
-			row[k] = v
-		}
-		if err := w.Write(row); err != nil {
-			return nil, fmt.Errorf("failed to write row: %w", err)
-		}
-	}
-
-	result, err := w.Close()
-	if err != nil {
-		return nil, fmt.Errorf("failed to close writer: %w", err)
-	}
-	if len(result) == 0 {
-		return nil, fmt.Errorf("no records written to file")
-	}
-
-	var fnames []string
-	for _, res := range result {
-		fnames = append(fnames, res.FileName)
-	}
-	return fnames, nil
-}
-
-func getResourceFile(objectID string) string {
-	// find the /Support path element, and return the next element
-	parts := strings.Split(objectID, "/")
-	for i, part := range parts {
-		if part == "Support" && i+1 < len(parts) {
-			return parts[i+1]
-		}
-	}
-	return ""
-}
-
-var nonLetter = regexp.MustCompile(`[^a-zA-Z]`)
-
-// getFileType extracts the “base” of the filename (everything before the last dot),
-// then strips out any non‑letter characters.
-func getFileType(p string) string {
-	fileName := path.Base(p)
-
-	// find last “.”; if none, use whole filename
-	if idx := strings.LastIndex(fileName, "."); idx != -1 {
-		fileName = fileName[:idx]
-	}
-
-	// strip out anything that isn’t A–Z or a–z
-	return nonLetter.ReplaceAllString(fileName, "")
-}
-
 // convertFileIfSupported checks the file type and converts it if supported.
 // Returns nil if the file type is not supported (file will be skipped).
 func convertFileIfSupported(ll *slog.Logger, tmpfilename, tmpdir, bucket, objectID string) ([]string, error) {
@@ -340,7 +233,7 @@ func convertFileIfSupported(ll *slog.Logger, tmpfilename, tmpdir, bucket, object
 	// Include the signal type in the attributes, as well as the converter used, and the extension found.
 	switch {
 	case strings.HasSuffix(objectID, ".parquet"):
-		return convertRawParquet(tmpfilename, tmpdir, bucket, objectID)
+		return ingestlogs.ConvertRawParquet(tmpfilename, tmpdir, bucket, objectID)
 	case strings.HasSuffix(objectID, ".json.gz"):
 		return convertJSONGzFile(tmpfilename, tmpdir, bucket, objectID)
 	case strings.HasSuffix(objectID, ".binpb"):
@@ -370,7 +263,7 @@ func convertJSONGzFile(tmpfilename, tmpdir, bucket, objectID string) ([]string, 
 	baseitems := map[string]string{
 		"resource.bucket.name": bucket,
 		"resource.file.name":   "./" + objectID,
-		"resource.file.type":   getFileType(objectID),
+		"resource.file.type":   ingestlogs.GetFileType(objectID),
 	}
 
 	// First pass: read all rows to build complete schema
@@ -407,10 +300,13 @@ func convertJSONGzFile(tmpfilename, tmpdir, bucket, objectID string) ([]string, 
 		return nil, err
 	}
 
+	var closed bool
 	defer func() {
-		_, err := w.Close()
-		if err != buffet.ErrAlreadyClosed && err != nil {
-			slog.Error("Failed to close writer", slog.Any("error", err))
+		if !closed {
+			_, err := w.Close()
+			if err != buffet.ErrAlreadyClosed && err != nil {
+				slog.Error("Failed to close writer", slog.Any("error", err))
+			}
 		}
 	}()
 
@@ -425,6 +321,7 @@ func convertJSONGzFile(tmpfilename, tmpdir, bucket, objectID string) ([]string, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to close writer: %w", err)
 	}
+	closed = true
 	if len(result) == 0 {
 		return nil, fmt.Errorf("no records written to file")
 	}
@@ -452,7 +349,7 @@ func convertProtoFile(tmpfilename, tmpdir, bucket, objectID string) ([]string, e
 	baseitems := map[string]string{
 		"resource.bucket.name": bucket,
 		"resource.file.name":   "./" + objectID,
-		"resource.file.type":   getFileType(objectID),
+		"resource.file.type":   ingestlogs.GetFileType(objectID),
 	}
 
 	// First pass: read all rows to build complete schema

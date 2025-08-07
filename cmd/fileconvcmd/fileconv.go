@@ -15,10 +15,11 @@
 package fileconvcmd
 
 import (
+	"os"
+
 	"github.com/spf13/cobra"
 
-	"github.com/cardinalhq/lakerunner/fileconv/rawparquet"
-	"github.com/cardinalhq/lakerunner/fileconv/translate"
+	"github.com/cardinalhq/lakerunner/cmd/ingestlogs"
 )
 
 var Cmd = &cobra.Command{
@@ -31,35 +32,21 @@ var Cmd = &cobra.Command{
 func init() {
 	Cmd.Flags().StringP("input", "i", "", "Input file path")
 	_ = Cmd.MarkFlagRequired("input")
-
-	Cmd.Flags().StringP("output", "o", "", "Output file path")
-	_ = Cmd.MarkFlagRequired("output")
-
-	Cmd.Flags().StringP("format", "f", "parquet", "Input format (e.g., parquet, csv)")
-	_ = Cmd.MarkFlagRequired("format")
 }
 
 func run(cmd *cobra.Command, args []string) error {
 	input, _ := cmd.Flags().GetString("input")
-	output, _ := cmd.Flags().GetString("output")
-	format, _ := cmd.Flags().GetString("format")
 
-	cmd.Printf("Converting file from %s to %s in %s format...\n", input, output, format)
-
-	r, err := rawparquet.NewRawParquetReader(input, translate.NewMapper(), nil)
+	tmpdir, err := os.MkdirTemp("", "fileconv-*")
 	if err != nil {
 		return err
 	}
-	defer r.Close()
 
-	for {
-		row, done, err := r.GetRow()
-		if err != nil {
-			return err
-		}
-		if done {
-			return nil
-		}
-		cmd.Printf("Read row: %+v\n", row)
+	files, err := ingestlogs.ConvertRawParquet(input, tmpdir, "default-bucket", "default-object-id")
+	if err != nil {
+		return err
 	}
+
+	cmd.Printf("Conversion complete. Output files: %v\n", files)
+	return nil
 }

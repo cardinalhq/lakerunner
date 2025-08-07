@@ -26,15 +26,10 @@ header:
     - .idea
     - '**/*.sql.go'
     - '**/*.sql'
-    - pkg/*db/batch.go
-    - pkg/*db/db.go
-    - pkg/*db/models.go
-    - pkg/*db/querier.go
-    - pkg/*db/copyfrom.go
-    - internal/configdb/batch.go
-    - internal/configdb/db.go
-    - internal/configdb/models.go
-    - internal/configdb/querier.go
-    - internal/configdb/copyfrom.go
+    - '**/*db/batch.go'
+    - '**/*db/db.go'
+    - '**/*db/models.go'
+    - '**/*db/querier.go'
+    - '**/*db/copyfrom.go'
 
   comment: on-failure
