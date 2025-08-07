@@ -38,6 +38,9 @@ func NewEmptyStore() *Store {
 		storageProfileByCollectorNameCache: ttlcache.New(
 			ttlcache.WithTTL[GetStorageProfileByCollectorNameParams, StorageProfileByNameCacheValue](5 * time.Minute),
 		),
+		storageProfilesByBucketNameCache: ttlcache.New(
+			ttlcache.WithTTL[string, StorageProfilesByBucketNameCacheValue](5 * time.Minute),
+		),
 	}
 	go store.storageProfileCache.Start()
 	go store.storageProfileByCollectorNameCache.Start()
