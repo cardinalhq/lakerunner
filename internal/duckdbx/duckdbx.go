@@ -14,155 +14,155 @@
 
 package duckdbx
 
-import (
-	"context"
-	"database/sql"
-	"fmt"
-	"time"
+// import (
+// 	"context"
+// 	"database/sql"
+// 	"fmt"
+// 	"time"
 
-	_ "github.com/marcboeker/go-duckdb/v2"
-)
+// 	_ "github.com/marcboeker/go-duckdb/v2"
+// )
 
-type option func(*Config)
+// type option func(*Config)
 
-type Config struct {
-	MemoryLimitMB int64
-	Extensions    []ExtensionConfig
-	Metrics       bool
-	MetricsPeriod time.Duration
-	SetupFx       SetupFunction
+// type Config struct {
+// 	MemoryLimitMB int64
+// 	Extensions    []ExtensionConfig
+// 	Metrics       bool
+// 	MetricsPeriod time.Duration
+// 	SetupFx       SetupFunction
 
-	pollerContext context.Context
-}
+// 	pollerContext context.Context
+// }
 
-type ExtensionConfig struct {
-	Name     string
-	LoadPath string
-}
+// type ExtensionConfig struct {
+// 	Name     string
+// 	LoadPath string
+// }
 
-type SetupFunction func(context.Context, *sql.Conn) error
+// type SetupFunction func(context.Context, *sql.Conn) error
 
-// WithSetupFunction sets a function to be called on each connection
-// returned by db.Conn().
-func WithSetupFunction(f SetupFunction) option {
-	return func(c *Config) {
-		c.SetupFx = f
-	}
-}
+// // WithSetupFunction sets a function to be called on each connection
+// // returned by db.Conn().
+// func WithSetupFunction(f SetupFunction) option {
+// 	return func(c *Config) {
+// 		c.SetupFx = f
+// 	}
+// }
 
-// WithMemoryLimitMB sets a memory limit for DuckDB in megabytes.
-func WithMemoryLimitMB(limit int64) option {
-	return func(c *Config) {
-		c.MemoryLimitMB = limit
-	}
-}
+// // WithMemoryLimitMB sets a memory limit for DuckDB in megabytes.
+// func WithMemoryLimitMB(limit int64) option {
+// 	return func(c *Config) {
+// 		c.MemoryLimitMB = limit
+// 	}
+// }
 
-// WithExtension specifies a DuckDB extension to install and load on connection setup.
-// The loadpath can be an empty string to use the default load path, which will
-// load from the network if not already installed.
-func WithExtension(ext string, loadpath string) option {
-	return func(c *Config) {
-		c.Extensions = append(c.Extensions, ExtensionConfig{
-			Name:     ext,
-			LoadPath: loadpath,
-		})
-	}
-}
+// // WithExtension specifies a DuckDB extension to install and load on connection setup.
+// // The loadpath can be an empty string to use the default load path, which will
+// // load from the network if not already installed.
+// func WithExtension(ext string, loadpath string) option {
+// 	return func(c *Config) {
+// 		c.Extensions = append(c.Extensions, ExtensionConfig{
+// 			Name:     ext,
+// 			LoadPath: loadpath,
+// 		})
+// 	}
+// }
 
-// WithMetrics enables periodic polling of DuckDB memory metrics.
-// The period argument specifies how often to poll the metrics.
-// The context can be set with WithMetricsContext, which is recommended to allow
-// for graceful shutdown of the polling goroutine.
-func WithMetrics(period time.Duration) option {
-	return func(c *Config) {
-		c.Metrics = true
-		c.MetricsPeriod = period
-	}
-}
+// // WithMetrics enables periodic polling of DuckDB memory metrics.
+// // The period argument specifies how often to poll the metrics.
+// // The context can be set with WithMetricsContext, which is recommended to allow
+// // for graceful shutdown of the polling goroutine.
+// func WithMetrics(period time.Duration) option {
+// 	return func(c *Config) {
+// 		c.Metrics = true
+// 		c.MetricsPeriod = period
+// 	}
+// }
 
-// WithMetricsContext sets the context used for metrics polling.
-// If the context is cancelled, metrics polling will stop.
-func WithMetricsContext(ctx context.Context) option {
-	return func(c *Config) {
-		c.pollerContext = ctx
-	}
-}
+// // WithMetricsContext sets the context used for metrics polling.
+// // If the context is cancelled, metrics polling will stop.
+// func WithMetricsContext(ctx context.Context) option {
+// 	return func(c *Config) {
+// 		c.pollerContext = ctx
+// 	}
+// }
 
-type DB struct {
-	db     *sql.DB
-	config Config
-}
+// type DB struct {
+// 	db     *sql.DB
+// 	config Config
+// }
 
-// Open opens a DuckDB database with the given data source name and options.
-// this is generally called once, and the returned DB is shared and used to
-// create connections.
-func Open(dataSourceName string, opts ...option) (*DB, error) {
-	db, err := sql.Open("duckdb", dataSourceName)
-	if err != nil {
-		return nil, err
-	}
+// // Open opens a DuckDB database with the given data source name and options.
+// // this is generally called once, and the returned DB is shared and used to
+// // create connections.
+// func Open(dataSourceName string, opts ...option) (*DB, error) {
+// 	db, err := sql.Open("duckdb", dataSourceName)
+// 	if err != nil {
+// 		return nil, err
+// 	}
 
-	config := Config{
-		MetricsPeriod: 10 * time.Second,
-		pollerContext: context.Background(),
-	}
+// 	config := Config{
+// 		MetricsPeriod: 10 * time.Second,
+// 		pollerContext: context.Background(),
+// 	}
 
-	for _, opt := range opts {
-		opt(&config)
-	}
+// 	for _, opt := range opts {
+// 		opt(&config)
+// 	}
 
-	d := &DB{db: db, config: config}
+// 	d := &DB{db: db, config: config}
 
-	if config.Metrics {
-		go d.pollMemoryMetrics(config.pollerContext)
-	}
+// 	if config.Metrics {
+// 		go d.pollMemoryMetrics(config.pollerContext)
+// 	}
 
-	return d, nil
-}
+// 	return d, nil
+// }
 
-// Conn returns a new connection to the database, with any setup
-// (such as setting memory limits and loading extensions) already performed.
-func (d *DB) Conn(ctx context.Context) (*sql.Conn, error) {
-	conn, err := d.db.Conn(ctx)
-	if err != nil {
-		return nil, err
-	}
+// // Conn returns a new connection to the database, with any setup
+// // (such as setting memory limits and loading extensions) already performed.
+// func (d *DB) Conn(ctx context.Context) (*sql.Conn, error) {
+// 	conn, err := d.db.Conn(ctx)
+// 	if err != nil {
+// 		return nil, err
+// 	}
 
-	if err := d.setupConn(ctx, conn); err != nil {
-		conn.Close()
-		return nil, err
-	}
+// 	if err := d.setupConn(ctx, conn); err != nil {
+// 		conn.Close()
+// 		return nil, err
+// 	}
 
-	return conn, nil
-}
+// 	return conn, nil
+// }
 
-func (d *DB) setupConn(ctx context.Context, conn *sql.Conn) error {
-	if d.config.MemoryLimitMB > 0 {
-		stmt := fmt.Sprintf("SET memory_limit='%dMB';", d.config.MemoryLimitMB)
-		if _, err := conn.ExecContext(ctx, stmt); err != nil {
-			return fmt.Errorf("failed to set memory limit: %w", err)
-		}
-	}
-	for _, ext := range d.config.Extensions {
-		stmt := fmt.Sprintf("INSTALL %s", ext.Name)
-		if _, err := conn.ExecContext(ctx, stmt); err != nil {
-			return fmt.Errorf("failed to install extension '%s': %w", ext.Name, err)
-		}
-		if _, err := conn.ExecContext(ctx, fmt.Sprintf("LOAD %s;", ext.Name)); err != nil {
-			return fmt.Errorf("failed to load extension '%s': %w", ext.Name, err)
-		}
-	}
-	return nil
-}
+// func (d *DB) setupConn(ctx context.Context, conn *sql.Conn) error {
+// 	if d.config.MemoryLimitMB > 0 {
+// 		stmt := fmt.Sprintf("SET memory_limit='%dMB';", d.config.MemoryLimitMB)
+// 		if _, err := conn.ExecContext(ctx, stmt); err != nil {
+// 			return fmt.Errorf("failed to set memory limit: %w", err)
+// 		}
+// 	}
+// 	for _, ext := range d.config.Extensions {
+// 		stmt := fmt.Sprintf("INSTALL %s", ext.Name)
+// 		if _, err := conn.ExecContext(ctx, stmt); err != nil {
+// 			return fmt.Errorf("failed to install extension '%s': %w", ext.Name, err)
+// 		}
+// 		if _, err := conn.ExecContext(ctx, fmt.Sprintf("LOAD %s;", ext.Name)); err != nil {
+// 			return fmt.Errorf("failed to load extension '%s': %w", ext.Name, err)
+// 		}
+// 	}
+// 	return nil
+// }
 
-func (d *DB) SetMaxOpenConns(n int) {
-	d.db.SetMaxOpenConns(n)
-}
+// func (d *DB) SetMaxOpenConns(n int) {
+// 	d.db.SetMaxOpenConns(n)
+// }
 
-func (d *DB) SetMaxIdleConns(n int) {
-	d.db.SetMaxIdleConns(n)
-}
+// func (d *DB) SetMaxIdleConns(n int) {
+// 	d.db.SetMaxIdleConns(n)
+// }
 
-func (d *DB) Close() error {
-	return d.db.Close()
-}
+// func (d *DB) Close() error {
+// 	return d.db.Close()
+// }

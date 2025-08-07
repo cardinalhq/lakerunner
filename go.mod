@@ -19,7 +19,6 @@ require (
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/jackc/pgx/v5 v5.7.5
 	github.com/jellydator/ttlcache/v3 v3.4.0
-	github.com/marcboeker/go-duckdb/v2 v2.3.4
 	github.com/oklog/ulid/v2 v2.1.1
 	github.com/parquet-go/parquet-go v0.25.1
 	github.com/pgx-contrib/pgxotel v0.0.0-20250625223024-cb5ea1c4aa0b
@@ -109,7 +108,6 @@ require (
 	github.com/anchore/quill v0.5.1 // indirect
 	github.com/andybalholm/brotli v1.2.0 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
-	github.com/apache/arrow-go/v18 v18.4.0 // indirect
 	github.com/apache/skywalking-eyes v0.7.0 // indirect
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 // indirect
 	github.com/ashanbrown/forbidigo v1.6.0 // indirect
@@ -199,12 +197,6 @@ require (
 	github.com/docker/docker-credential-helpers v0.8.2 // indirect
 	github.com/docker/go-connections v0.5.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
-	github.com/duckdb/duckdb-go-bindings v0.1.17 // indirect
-	github.com/duckdb/duckdb-go-bindings/darwin-amd64 v0.1.12 // indirect
-	github.com/duckdb/duckdb-go-bindings/darwin-arm64 v0.1.12 // indirect
-	github.com/duckdb/duckdb-go-bindings/linux-amd64 v0.1.12 // indirect
-	github.com/duckdb/duckdb-go-bindings/linux-arm64 v0.1.12 // indirect
-	github.com/duckdb/duckdb-go-bindings/windows-amd64 v0.1.12 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/ebitengine/purego v0.8.4 // indirect
 	github.com/elliotchance/orderedmap/v2 v2.7.0 // indirect
@@ -256,7 +248,6 @@ require (
 	github.com/go-viper/mapstructure/v2 v2.3.0 // indirect
 	github.com/go-xmlfmt/xmlfmt v1.1.3 // indirect
 	github.com/gobwas/glob v0.2.3 // indirect
-	github.com/goccy/go-json v0.10.5 // indirect
 	github.com/gofrs/flock v0.12.1 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang-jwt/jwt/v4 v4.5.2 // indirect
@@ -271,7 +262,6 @@ require (
 	github.com/golangci/revgrep v0.8.0 // indirect
 	github.com/golangci/unconvert v0.0.0-20240309020433-c5143eacb3ed // indirect
 	github.com/google/cel-go v0.26.0 // indirect
-	github.com/google/flatbuffers v25.2.10+incompatible // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/go-containerregistry v0.20.3 // indirect
 	github.com/google/go-github/v33 v33.0.0 // indirect
@@ -367,8 +357,6 @@ require (
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/maratori/testableexamples v1.0.0 // indirect
 	github.com/maratori/testpackage v1.1.1 // indirect
-	github.com/marcboeker/go-duckdb/arrowmapping v0.0.10 // indirect
-	github.com/marcboeker/go-duckdb/mapping v0.0.11 // indirect
 	github.com/matoous/godox v1.1.0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
@@ -514,7 +502,6 @@ require (
 	github.com/ykadowak/zerologlint v0.1.5 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	github.com/zeebo/errs v1.4.0 // indirect
-	github.com/zeebo/xxh3 v1.0.2 // indirect
 	gitlab.com/bosi/decorder v0.4.2 // indirect
 	gitlab.com/digitalxero/go-conventional-commit v1.0.7 // indirect
 	gitlab.com/gitlab-org/api/client-go v0.128.0 // indirect
