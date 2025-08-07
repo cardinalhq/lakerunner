@@ -27,30 +27,56 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/buffet"
 )
 
-func ConvertRawParquet(sourcefile, tmpdir, bucket, objectID string) ([]string, error) {
+func getSchema(sourcefile string) (map[string]any, error) {
+	schema := make(map[string]any)
 	r, err := rawparquet.NewRawParquetReader(sourcefile, translate.NewMapper(), nil)
 	if err != nil {
 		return nil, err
 	}
 	defer r.Close()
 
-	nodes, err := r.Nodes()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get nodes: %w", err)
+	for {
+		row, done, err := r.GetRow()
+		if err != nil {
+			return nil, err
+		}
+		if done {
+			break
+		}
+		for k, v := range row {
+			if _, ok := schema[k]; !ok {
+				schema[k] = v
+			} else {
+				if fmt.Sprintf("%T", schema[k]) != fmt.Sprintf("%T", v) {
+					return nil, fmt.Errorf("type mismatch for key %s: %T vs %T", k, schema[k], v)
+				}
+			}
+		}
 	}
-	slog.Info("nodes", slog.Any("nodes", nodes))
+
+	return schema, nil
+}
+
+func ConvertRawParquet(sourcefile, tmpdir, bucket, objectID string) ([]string, error) {
+	schemanodes, err := getSchema(sourcefile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get schema: %w", err)
+	}
+
+	r, err := rawparquet.NewRawParquetReader(sourcefile, translate.NewMapper(), nil)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
 
 	// add our new nodes to the list of nodes we will write out
+	schemanodes["resource.bucket.name"] = "bucket"
+	schemanodes["resource.file.name"] = "object"
+	schemanodes["resource.file.type"] = "filename"
+	schemanodes["resource.file"] = "file"
+
 	nmb := buffet.NewNodeMapBuilder()
-	if err := nmb.AddNodes(nodes); err != nil {
-		return nil, fmt.Errorf("failed to add nodes: %w", err)
-	}
-	if err := nmb.Add(map[string]any{
-		"resource.bucket.name": "bucket",
-		"resource.file.name":   "object",
-		"resource.file.type":   "filetype",
-		"resource.file":        "file",
-	}); err != nil {
+	if err := nmb.Add(schemanodes); err != nil {
 		return nil, fmt.Errorf("failed to add resource nodes: %w", err)
 	}
 
@@ -58,11 +84,15 @@ func ConvertRawParquet(sourcefile, tmpdir, bucket, objectID string) ([]string, e
 	if err != nil {
 		return nil, fmt.Errorf("Failed to create writer: %w", err)
 	}
+
+	closed := false
 	defer func() {
-		_, err := w.Close()
-		if errors.Is(err, buffet.ErrAlreadyClosed) {
-			if err != nil {
-				slog.Error("Failed to close writer", slog.Any("error", err))
+		if !closed {
+			_, err := w.Close()
+			if errors.Is(err, buffet.ErrAlreadyClosed) {
+				if err != nil {
+					slog.Error("Failed to close writer", slog.Any("error", err))
+				}
 			}
 		}
 	}()
@@ -94,6 +124,7 @@ func ConvertRawParquet(sourcefile, tmpdir, bucket, objectID string) ([]string, e
 	if err != nil {
 		return nil, fmt.Errorf("failed to close writer: %w", err)
 	}
+	closed = true
 	if len(result) == 0 {
 		return nil, fmt.Errorf("no records written to file")
 	}

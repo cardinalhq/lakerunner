@@ -73,14 +73,6 @@ func (r *RawParquetReader) Close() error {
 	return err
 }
 
-func (r *RawParquetReader) Nodes() (map[string]parquet.Node, error) {
-	if r.fh == nil {
-		return nil, fmt.Errorf("parquet file is not initialized")
-	}
-	nodes := r.fh.Nodes
-	return nodes, nil
-}
-
 func (r *RawParquetReader) GetRow() (row map[string]any, done bool, err error) {
 	if r.pfr == nil {
 		return nil, true, fmt.Errorf("parquet file reader is not initialized")
