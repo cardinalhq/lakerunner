@@ -293,7 +293,7 @@ func packSegment(ctx context.Context, ll *slog.Logger, tmpdir string, s3Client *
 			delete(fh.Nodes, fieldName)
 		}
 		handles = append(handles, fh)
-		ll.Debug("Downloaded file", slog.String("file", tmpname), slog.String("objectID", objectID))
+		//ll.Debug("Downloaded file", slog.String("file", tmpname), slog.String("objectID", objectID))
 	}
 
 	nodes := map[string]parquet.Node{}
@@ -313,8 +313,7 @@ func packSegment(ctx context.Context, ll *slog.Logger, tmpdir string, s3Client *
 		_, _ = w.Close()
 	}()
 
-	for i, handle := range handles {
-		group := group[i]
+	for _, handle := range handles {
 		reader := parquet.NewReader(handle.File, handle.Schema)
 		defer reader.Close()
 		rcount := 0
@@ -350,7 +349,7 @@ func packSegment(ctx context.Context, ll *slog.Logger, tmpdir string, s3Client *
 			}
 			rcount++
 		}
-		ll.Debug("Wrote records from", slog.String("file", handle.File.Name()), slog.Int("recordCount", rcount), slog.Int("expectedCount", int(group.RecordCount)))
+		//ll.Debug("Wrote records from", slog.String("file", handle.File.Name()), slog.Int("recordCount", rcount), slog.Int("expectedCount", int(group.RecordCount)))
 	}
 
 	writeResults, err := w.Close()

@@ -73,7 +73,7 @@ func parseS3LikeEvents(raw []byte) ([]lrdb.Inqueue, error) {
 
 			orgID, err = uuid.Parse(parts[1])
 			if err != nil {
-				return nil, fmt.Errorf("invalid organization_id %q: %w", parts[1], err)
+				return nil, fmt.Errorf("invalid organization_id %q (key=%q): %w", parts[1], key, err)
 			}
 			collector = parts[2]
 
