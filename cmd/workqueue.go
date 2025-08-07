@@ -23,8 +23,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/cardinalhq/lakerunner/internal/helpers"
-	"github.com/cardinalhq/lakerunner/pkg/lockmgr"
-	"github.com/cardinalhq/lakerunner/pkg/lrdb"
+	"github.com/cardinalhq/lakerunner/lockmgr"
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 type qmc struct {

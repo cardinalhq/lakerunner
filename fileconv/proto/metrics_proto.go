@@ -20,9 +20,9 @@ import (
 	"os"
 
 	"github.com/cardinalhq/lakerunner/cmd/otel"
+	"github.com/cardinalhq/lakerunner/fileconv"
+	"github.com/cardinalhq/lakerunner/fileconv/translate"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
-	"github.com/cardinalhq/lakerunner/pkg/fileconv"
-	"github.com/cardinalhq/lakerunner/pkg/fileconv/translate"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 )
 

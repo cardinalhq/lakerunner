@@ -28,7 +28,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/cmd/storageprofile"
-	"github.com/cardinalhq/lakerunner/pkg/lrdb"
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 type pubsubCmd struct {

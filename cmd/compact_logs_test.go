@@ -17,7 +17,7 @@ package cmd
 import (
 	"testing"
 
-	"github.com/cardinalhq/lakerunner/pkg/lrdb"
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 func TestFirstFromGroup(t *testing.T) {

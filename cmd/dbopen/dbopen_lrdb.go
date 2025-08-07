@@ -21,7 +21,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/cardinalhq/lakerunner/pkg/lrdb"
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 func ConnectTolrdb(ctx context.Context) (*pgxpool.Pool, error) {

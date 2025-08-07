@@ -21,7 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/cardinalhq/lakerunner/pkg/lrdb"
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 // helper to extract SegmentIDs for comparison

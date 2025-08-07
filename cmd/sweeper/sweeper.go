@@ -29,7 +29,7 @@ import (
 	"github.com/cardinalhq/lakerunner/cmd/storageprofile"
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
-	"github.com/cardinalhq/lakerunner/pkg/lrdb"
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 type sweeper struct {

@@ -18,14 +18,13 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
-	"slices"
-
 	"github.com/jackc/pgx/v5"
 
-	"github.com/cardinalhq/lakerunner/pkg/lrdb"
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 // wqManager drives fetching items from the DB and heartbeating them.

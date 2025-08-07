@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/cardinalhq/lakerunner/pkg/lrdb"
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 // PackSegments groups segments into packs whose total estimated size

@@ -19,7 +19,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/cardinalhq/lakerunner/pkg/fileconv/translate"
+	"github.com/cardinalhq/lakerunner/fileconv/translate"
 	"github.com/stretchr/testify/assert"
 )
 

@@ -23,8 +23,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/cardinalhq/lakerunner/pkg/fileconv"
-	"github.com/cardinalhq/lakerunner/pkg/fileconv/translate"
+	"github.com/cardinalhq/lakerunner/fileconv"
+	"github.com/cardinalhq/lakerunner/fileconv/translate"
 )
 
 type JSONGzReader struct {

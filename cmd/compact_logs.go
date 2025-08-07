@@ -34,8 +34,8 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/filecrunch"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/logcrunch"
-	"github.com/cardinalhq/lakerunner/pkg/lockmgr"
-	"github.com/cardinalhq/lakerunner/pkg/lrdb"
+	"github.com/cardinalhq/lakerunner/lockmgr"
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 func init() {

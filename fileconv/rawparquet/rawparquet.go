@@ -20,10 +20,11 @@ import (
 	"io"
 	"maps"
 
-	"github.com/cardinalhq/lakerunner/internal/filecrunch"
-	"github.com/cardinalhq/lakerunner/pkg/fileconv"
-	"github.com/cardinalhq/lakerunner/pkg/fileconv/translate"
 	"github.com/parquet-go/parquet-go"
+
+	"github.com/cardinalhq/lakerunner/fileconv"
+	"github.com/cardinalhq/lakerunner/fileconv/translate"
+	"github.com/cardinalhq/lakerunner/internal/filecrunch"
 )
 
 type RawParquetReader struct {

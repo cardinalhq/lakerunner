@@ -32,8 +32,8 @@ import (
 	"github.com/cardinalhq/lakerunner/cmd/storageprofile"
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/estimator"
-	"github.com/cardinalhq/lakerunner/pkg/lockmgr"
-	"github.com/cardinalhq/lakerunner/pkg/lrdb"
+	"github.com/cardinalhq/lakerunner/lockmgr"
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 type RunqueueProcessingFunction func(

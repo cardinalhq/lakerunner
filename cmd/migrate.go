@@ -22,7 +22,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
-	mdbmigrations "github.com/cardinalhq/lakerunner/pkg/lrdb/migrations"
+	mdbmigrations "github.com/cardinalhq/lakerunner/lrdb/migrations"
 )
 
 func init() {

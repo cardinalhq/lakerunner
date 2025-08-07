@@ -17,8 +17,9 @@ package rawparquet
 import (
 	"testing"
 
-	"github.com/cardinalhq/lakerunner/pkg/fileconv/translate"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/cardinalhq/lakerunner/fileconv/translate"
 )
 
 func TestGetRow_ActualParquetFile(t *testing.T) {

@@ -17,12 +17,12 @@ package proto
 import (
 	"testing"
 
-	"github.com/cardinalhq/lakerunner/pkg/fileconv/translate"
+	"github.com/cardinalhq/lakerunner/fileconv/translate"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewMetricsProtoReader(t *testing.T) {
+func TestNewProtoReader(t *testing.T) {
 	tests := []struct {
 		name        string
 		fname       string
@@ -31,8 +31,8 @@ func TestNewMetricsProtoReader(t *testing.T) {
 		expectError bool
 	}{
 		{
-			name:        "valid metrics proto file",
-			fname:       "testdata/metrics_449638969.binpb",
+			name:        "valid proto file",
+			fname:       "testdata/logs_160396104.binpb",
 			mapper:      translate.NewMapper(),
 			tags:        map[string]string{"test": "value"},
 			expectError: false,
@@ -48,7 +48,7 @@ func TestNewMetricsProtoReader(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			reader, err := NewMetricsProtoReader(tt.fname, tt.mapper, tt.tags)
+			reader, err := NewProtoReader(tt.fname, tt.mapper, tt.tags)
 			if tt.expectError {
 				assert.Error(t, err)
 				assert.Nil(t, reader)
@@ -61,8 +61,8 @@ func TestNewMetricsProtoReader(t *testing.T) {
 	}
 }
 
-func TestMetricsProtoReader_GetRow(t *testing.T) {
-	reader, err := NewMetricsProtoReader("testdata/metrics_449638969.binpb", translate.NewMapper(), map[string]string{
+func TestProtoReader_GetRow(t *testing.T) {
+	reader, err := NewProtoReader("testdata/logs_160396104.binpb", translate.NewMapper(), map[string]string{
 		"test_tag": "test_value",
 		"env":      "test",
 	})
@@ -91,27 +91,26 @@ func TestMetricsProtoReader_GetRow(t *testing.T) {
 
 		// Check that required cardinalhq fields are present
 		assert.Contains(t, row, "_cardinalhq.telemetry_type", "Should have telemetry type")
-		assert.Equal(t, "metrics", row["_cardinalhq.telemetry_type"], "Telemetry type should be metrics")
+		assert.Equal(t, "logs", row["_cardinalhq.telemetry_type"], "Telemetry type should be logs")
 
 		assert.Contains(t, row, "_cardinalhq.name", "Should have name field")
-		assert.NotEmpty(t, row["_cardinalhq.name"], "Name should not be empty")
+		assert.Equal(t, "log.events", row["_cardinalhq.name"], "Name should be log.events")
 
-		assert.Contains(t, row, "_cardinalhq.metric_type", "Should have metric type field")
-		metricType := row["_cardinalhq.metric_type"]
-		assert.Contains(t, []string{"gauge", "count", "histogram", "exponential_histogram"}, metricType, "Metric type should be valid")
+		assert.Contains(t, row, "_cardinalhq.value", "Should have value field")
+		assert.Equal(t, float64(1), row["_cardinalhq.value"], "Value should be 1")
 
-		// Check that we have either value or timestamp
-		hasValue := false
+		// Check that we have either message or timestamp
+		hasMessage := false
 		hasTimestamp := false
 		for k, v := range row {
-			if k == "_cardinalhq.value" && v != nil {
-				hasValue = true
+			if k == "_cardinalhq.message" && v != "" {
+				hasMessage = true
 			}
 			if k == "_cardinalhq.timestamp" && v != nil {
 				hasTimestamp = true
 			}
 		}
-		assert.True(t, hasValue || hasTimestamp, "Row should have either value or timestamp")
+		assert.True(t, hasMessage || hasTimestamp, "Row should have either message or timestamp")
 
 		rowCount++
 		if rowCount >= maxRows {
@@ -122,8 +121,8 @@ func TestMetricsProtoReader_GetRow(t *testing.T) {
 	assert.Greater(t, rowCount, 0, "Should have read at least one row")
 }
 
-func TestMetricsProtoReader_Close(t *testing.T) {
-	reader, err := NewMetricsProtoReader("testdata/metrics_449638969.binpb", translate.NewMapper(), nil)
+func TestProtoReader_Close(t *testing.T) {
+	reader, err := NewProtoReader("testdata/logs_160396104.binpb", translate.NewMapper(), nil)
 	require.NoError(t, err)
 
 	// Test that close doesn't error
@@ -135,42 +134,9 @@ func TestMetricsProtoReader_Close(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestMetricsProtoReader_EmptyFile(t *testing.T) {
+func TestProtoReader_EmptyFile(t *testing.T) {
 	// Test with a file that doesn't exist
-	reader, err := NewMetricsProtoReader("testdata/nonexistent.binpb", translate.NewMapper(), nil)
+	reader, err := NewProtoReader("testdata/nonexistent.binpb", translate.NewMapper(), nil)
 	assert.Error(t, err)
 	assert.Nil(t, reader)
-}
-
-func TestMetricsProtoReader_DifferentMetricTypes(t *testing.T) {
-	reader, err := NewMetricsProtoReader("testdata/metrics_449638969.binpb", translate.NewMapper(), nil)
-	require.NoError(t, err)
-	defer reader.Close()
-
-	metricTypes := make(map[string]bool)
-	rowCount := 0
-	maxRows := 50 // Read more rows to find different metric types
-
-	for {
-		row, done, err := reader.GetRow()
-		if err != nil {
-			t.Fatalf("Error reading row: %v", err)
-		}
-		if done {
-			break
-		}
-
-		if metricType, ok := row["_cardinalhq.metric_type"].(string); ok {
-			metricTypes[metricType] = true
-		}
-
-		rowCount++
-		if rowCount >= maxRows {
-			break
-		}
-	}
-
-	// Check that we found at least one metric type
-	assert.Greater(t, len(metricTypes), 0, "Should have found at least one metric type")
-	t.Logf("Found metric types: %v", metricTypes)
 }

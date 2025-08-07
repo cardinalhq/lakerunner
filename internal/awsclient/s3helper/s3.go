@@ -29,7 +29,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
-	"github.com/cardinalhq/lakerunner/pkg/lrdb"
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 func S3ErrorIs404(err error) bool {

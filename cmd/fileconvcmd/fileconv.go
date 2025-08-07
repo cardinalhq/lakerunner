@@ -17,8 +17,8 @@ package fileconvcmd
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/cardinalhq/lakerunner/pkg/fileconv/rawparquet"
-	"github.com/cardinalhq/lakerunner/pkg/fileconv/translate"
+	"github.com/cardinalhq/lakerunner/fileconv/rawparquet"
+	"github.com/cardinalhq/lakerunner/fileconv/translate"
 )
 
 var Cmd = &cobra.Command{

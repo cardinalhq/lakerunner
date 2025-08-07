@@ -37,7 +37,7 @@ IMAGE_TARGETS = lakerunner
 # Due to the way we build, we will make the universe no matter which files
 # actually change.  With the many targets, this is just so much easier,
 # and it also ensures the Docker images have identical timestamp-based tags.
-all_deps := $(shell find main.go cmd pkg internal -name '*.go' | grep -v _test) Makefile
+all_deps := $(shell find . -name '*.go' | grep -v _test) Makefile
 
 #
 # Default target.
