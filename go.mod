@@ -12,7 +12,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.82.0
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.38.8
 	github.com/aws/aws-sdk-go-v2/service/sts v1.34.0
-	github.com/cardinalhq/oteltools v0.30.19
+	github.com/cardinalhq/oteltools v0.30.20
 	github.com/deckarep/golang-set/v2 v2.8.0
 	github.com/golang-migrate/migrate/v4 v4.18.3
 	github.com/google/uuid v1.6.0
