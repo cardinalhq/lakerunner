@@ -250,6 +250,7 @@ func convertRawParquet(tmpfilename, tmpdir, bucket, objectID string) ([]string, 
 		"resource.bucket.name": "bucket",
 		"resource.file.name":   "object",
 		"resource.file.type":   "filetype",
+		"resource.file":        "file",
 	}); err != nil {
 		return nil, fmt.Errorf("failed to add resource nodes: %w", err)
 	}
@@ -271,6 +272,7 @@ func convertRawParquet(tmpfilename, tmpdir, bucket, objectID string) ([]string, 
 		"resource.bucket.name": bucket,
 		"resource.file.name":   "./" + objectID,
 		"resource.file.type":   getFileType(objectID),
+		"resource.file":        getResourceFile(objectID),
 	}
 
 	for {
@@ -302,6 +304,17 @@ func convertRawParquet(tmpfilename, tmpdir, bucket, objectID string) ([]string, 
 		fnames = append(fnames, res.FileName)
 	}
 	return fnames, nil
+}
+
+func getResourceFile(objectID string) string {
+	// find the /Support path element, and return the next element
+	parts := strings.Split(objectID, "/")
+	for i, part := range parts {
+		if part == "Support" && i+1 < len(parts) {
+			return parts[i+1]
+		}
+	}
+	return ""
 }
 
 var nonLetter = regexp.MustCompile(`[^a-zA-Z]`)
