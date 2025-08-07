@@ -17,6 +17,10 @@ RUN apk --update add ca-certificates
 
 # FROM scratch
 
+RUN mkdir -p /apps/libs && \
+    curl -fsSL "https://extensions.duckdb.org/v1.3.2/${TARGETOS}_${TARGETARCH}/httpfs.duckdb_extension.gz" \
+    | gunzip -c > /app/libs/httpfs.duckdb_extension
+
 ARG USER_UID=2000
 USER ${USER_UID}:${USER_UID}
 
