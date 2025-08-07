@@ -78,7 +78,19 @@ func init() {
 				return fmt.Errorf("failed to setup storage profiles: %w", err)
 			}
 
-			return IngestLoop(doneCtx, sp, "logs", servicename, logIngestItem)
+			for {
+				select {
+				case <-doneCtx.Done():
+					slog.Info("Ingest logs command done")
+					return nil
+				default:
+				}
+
+				err := IngestLoop(doneCtx, sp, "logs", servicename, logIngestItem)
+				if err != nil {
+					slog.Error("Error in ingest loop", slog.Any("error", err))
+				}
+			}
 		},
 	}
 
