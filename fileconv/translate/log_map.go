@@ -23,7 +23,7 @@ import (
 )
 
 type TranslatedLog struct {
-	// Nanoseconds since Unix epoch.
+	// Milliseconds since Unix epoch.
 	Timestamp int64
 	Body      string
 	// Attributes partitioned by destination.
@@ -98,11 +98,10 @@ func ParseLogRow(mapper *Mapper, input map[string]any) TranslatedLog {
 	}
 }
 
-// coerceToUnixNanos interprets various input representations and normalizes to nanoseconds.
+// coerceToUnixMillis interprets various input representations and normalizes to Unix milliseconds.
 func coerceToUnixMillis(v any, tformat string) (int64, bool) {
 	switch t := v.(type) {
 	case time.Time:
-		// Go 1.17+: UnixMilli returns ms directly
 		return t.UnixMilli(), true
 
 	case *time.Time:

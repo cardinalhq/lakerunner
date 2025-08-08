@@ -113,7 +113,7 @@ func (r *RawParquetReader) GetRow() (row map[string]any, done bool, err error) {
 	}
 	maps.Copy(ret, parsedRow.RawAttributes)
 	if _, ok := ret["_cardinalhq.timestamp"]; !ok && parsedRow.Timestamp > 0 {
-		ret["_cardinalhq.timestamp"] = parsedRow.Timestamp / 1000 // Convert to milliseconds
+		ret["_cardinalhq.timestamp"] = parsedRow.Timestamp
 	}
 	if _, ok := ret["_cardinalhq.message"]; !ok && parsedRow.Body != "" {
 		ret["_cardinalhq.message"] = parsedRow.Body
