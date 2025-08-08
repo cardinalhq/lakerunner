@@ -108,6 +108,8 @@ func RunqueueLoop(doneCtx context.Context, sp storageprofile.StorageProfileProvi
 			case <-time.After(workSleepTime):
 			}
 		}
+
+		gc()
 	}
 }
 

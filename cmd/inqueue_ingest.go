@@ -86,6 +86,8 @@ func IngestLoop(doneCtx context.Context, sp storageprofile.StorageProfileProvide
 			case <-time.After(workSleepTime):
 			}
 		}
+
+		gc()
 	}
 }
 

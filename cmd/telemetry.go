@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"runtime"
 	"time"
 
 	"github.com/cardinalhq/lakerunner/internal/idgen"
@@ -26,7 +27,7 @@ import (
 	slogmulti "github.com/samber/slog-multi"
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/contrib/instrumentation/host"
-	"go.opentelemetry.io/contrib/instrumentation/runtime"
+	iruntime "go.opentelemetry.io/contrib/instrumentation/runtime"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -46,6 +47,7 @@ var (
 	workqueueDuration      metric.Float64Histogram
 	workqueueFetchDuration metric.Float64Histogram
 	workqueueLag           metric.Float64Histogram
+	manualGCHistogram      metric.Float64Histogram
 )
 
 func setupTelemetry(servicename string) (context.Context, func() error, error) {
@@ -80,7 +82,7 @@ func setupTelemetry(servicename string) (context.Context, func() error, error) {
 			return doneCtx, nil, fmt.Errorf("failed to setup OpenTelemetry SDK: %w", err)
 		}
 
-		if err := runtime.Start(runtime.WithMinimumReadMemStatsInterval(time.Second * 10)); err != nil {
+		if err := iruntime.Start(iruntime.WithMinimumReadMemStatsInterval(time.Second * 10)); err != nil {
 			slog.Warn("failed to start runtime metrics", "error", err.Error())
 		}
 
@@ -160,4 +162,20 @@ func setupGlobalMetrics() {
 		panic(fmt.Errorf("failed to create workqueue.lag histogram: %w", err))
 	}
 	workqueueLag = m
+
+	m, err = meter.Float64Histogram(
+		"lakerunner.manual_gc.duration",
+		metric.WithDescription("Duration of manual garbage collection in seconds"),
+		metric.WithUnit("s"),
+	)
+	if err != nil {
+		panic(fmt.Errorf("failed to create manual_gc.duration histogram: %w", err))
+	}
+	manualGCHistogram = m
+}
+
+func gc() {
+	n := time.Now()
+	runtime.GC()
+	manualGCHistogram.Record(context.Background(), time.Since(n).Seconds(), metric.WithAttributeSet(commonAttributes))
 }
