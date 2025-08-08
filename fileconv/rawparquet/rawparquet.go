@@ -82,7 +82,7 @@ func (r *RawParquetReader) GetRow() (row map[string]any, done bool, err error) {
 	rows[0] = make(map[string]any)
 
 	n, err := r.pfr.Read(rows)
-	if err != nil {
+	if n == 0 && err != nil {
 		if errors.Is(err, io.EOF) {
 			return nil, true, nil
 		}

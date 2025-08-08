@@ -43,5 +43,5 @@ func TestGetRow_ActualParquetFile(t *testing.T) {
 		assert.NotNil(t, row)
 		count++
 	}
-	assert.Equal(t, 1025, count, "Expected to read 1000 rows from the parquet file")
+	assert.Equal(t, 1026, count, "Expected to read 1026 rows from the parquet file")
 }
