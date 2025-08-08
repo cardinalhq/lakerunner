@@ -310,7 +310,7 @@ func TestCoerceToUnixMillis(t *testing.T) {
 
 func TestTranslateLogRow(t *testing.T) {
 	now := time.Date(2024, 6, 1, 12, 34, 56, 789000000, time.UTC)
-	nowNano := now.UnixNano()
+	nowNano := now.UnixMilli()
 
 	mapper := &Mapper{
 		TimestampColumns: []string{"ts", "timestamp"},
