@@ -28,8 +28,8 @@ import (
 )
 
 type EstimationQuerier interface {
-	MetricSegEstimator(ctx context.Context) ([]lrdb.MetricSegEstimatorRow, error)
-	LogSegEstimator(ctx context.Context) ([]lrdb.LogSegEstimatorRow, error)
+	MetricSegEstimator(ctx context.Context, params lrdb.MetricSegEstimatorParams) ([]lrdb.MetricSegEstimatorRow, error)
+	LogSegEstimator(ctx context.Context, params lrdb.LogSegEstimatorParams) ([]lrdb.LogSegEstimatorRow, error)
 }
 
 type Estimator interface {
@@ -111,14 +111,33 @@ func (e *estimator) run(doneCtx context.Context, mdb EstimationQuerier) {
 }
 
 func (e *estimator) updateEstimates(mdb EstimationQuerier) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	metricRows, err := mdb.MetricSegEstimator(ctx)
+	now := time.Now().UTC()
+
+	// Look back 6 hours for estimates.
+	lowTime := now.Add(-6 * time.Hour)
+	mp := lrdb.MetricSegEstimatorParams{
+		DateintLow:  int32(lowTime.Year()*10000 + int(lowTime.Month())*100 + lowTime.Day()),
+		DateintHigh: int32(now.Year()*10000 + int(now.Month())*100 + now.Day()),
+		MsLow:       lowTime.UnixMilli(),
+		MsHigh:      now.UnixMilli(),
+	}
+
+	metricRows, err := mdb.MetricSegEstimator(ctx, mp)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
-	logRows, err := mdb.LogSegEstimator(ctx)
+
+	lp := lrdb.LogSegEstimatorParams{
+		DateintLow:  int32(lowTime.Year()*10000 + int(lowTime.Month())*100 + lowTime.Day()),
+		DateintHigh: int32(now.Year()*10000 + int(now.Month())*100 + now.Day()),
+		MsLow:       lowTime.UnixMilli(),
+		MsHigh:      now.UnixMilli(),
+	}
+
+	logRows, err := mdb.LogSegEstimator(ctx, lp)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
