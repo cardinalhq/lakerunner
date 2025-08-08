@@ -34,7 +34,7 @@ type TranslatedLog struct {
 }
 
 func ParseLogRow(mapper *Mapper, input map[string]any) TranslatedLog {
-	now := time.Now().UnixNano()
+	now := time.Now().UnixMilli()
 	var ts int64 = -1
 	var body string
 
@@ -52,7 +52,7 @@ func ParseLogRow(mapper *Mapper, input map[string]any) TranslatedLog {
 
 		// Timestamp?
 		if ts <= 0 && slices.Contains(mapper.TimestampColumns, lc) {
-			if parsed, ok := coerceToUnixNanos(rawVal, mapper.TimeFormat); ok {
+			if parsed, ok := coerceToUnixMillis(rawVal, mapper.TimeFormat); ok {
 				ts = parsed
 			}
 			continue
@@ -99,66 +99,75 @@ func ParseLogRow(mapper *Mapper, input map[string]any) TranslatedLog {
 }
 
 // coerceToUnixNanos interprets various input representations and normalizes to nanoseconds.
-func coerceToUnixNanos(v any, tformat string) (int64, bool) {
+func coerceToUnixMillis(v any, tformat string) (int64, bool) {
 	switch t := v.(type) {
 	case time.Time:
-		return t.UnixNano(), true
+		// Go 1.17+: UnixMilli returns ms directly
+		return t.UnixMilli(), true
+
 	case *time.Time:
 		if t == nil {
 			return 0, false
 		}
-		return t.UnixNano(), true
+		return t.UnixMilli(), true
+
 	case int64:
-		return normalizeEpochNumber(t)
+		return normalizeEpochToMillis(t)
 	case int:
-		return normalizeEpochNumber(int64(t))
+		return normalizeEpochToMillis(int64(t))
 	case uint64:
-		return normalizeEpochNumber(int64(t))
+		return normalizeEpochToMillis(int64(t))
 	case uint:
-		return normalizeEpochNumber(int64(t))
+		return normalizeEpochToMillis(int64(t))
 	case float64:
-		return normalizeEpochNumber(int64(t))
+		return normalizeEpochToMillis(int64(t))
+
 	case string:
-		// Try parse integer (allow trimming spaces)
 		s := strings.TrimSpace(t)
 		if s == "" {
 			return 0, false
 		}
+		// integer string?
 		if n, err := strconv.ParseInt(s, 10, 64); err == nil {
-			return normalizeEpochNumber(n)
+			return normalizeEpochToMillis(n)
 		}
+		// formatted timestamp?
 		if tformat != "" {
 			if ts, err := time.Parse(tformat, s); err == nil {
-				return ts.UnixNano(), true
+				return ts.UnixMilli(), true
 			}
 		}
 	}
+
 	return 0, false
 }
 
 const (
-	// Chosen to keep any multiplication within int64 limits:
-	// 4,000,000,000 seconds * 1e9 = 4e18 < 9.22e18 (safe)
-	secondsUpper      = int64(4_000_000_000)     // ~ year 2100
-	millisecondsUpper = secondsUpper * 1_000     // 4e12
-	microsecondsUpper = secondsUpper * 1_000_000 // 4e15
+	// same thresholds as before, in their original units:
+	secondsUpper      = int64(4_000_000_000)     // ~ year 2100 in seconds
+	millisecondsUpper = secondsUpper * 1_000     // in milliseconds
+	microsecondsUpper = secondsUpper * 1_000_000 // in microseconds
 )
 
-// normalizeEpochNumber guesses the unit (s, ms, µs, ns) and returns ns.
-// Returns (0, false) if the input is negative or cannot be normalized.
-func normalizeEpochNumber(n int64) (int64, bool) {
+// normalizeEpochToMillis guesses the input unit (s, ms, µs, ns) based on magnitude
+// and returns milliseconds. Precision finer than 1 ms is truncated.
+func normalizeEpochToMillis(n int64) (int64, bool) {
 	if n < 0 {
 		return 0, false
 	}
 	switch {
 	case n < secondsUpper:
-		return n * int64(time.Second), true // seconds -> ns
+		// seconds → ms
+		return n * 1_000, true
 	case n < millisecondsUpper:
-		return n * int64(time.Millisecond), true // ms -> ns
+		// already in ms
+		return n, true
 	case n < microsecondsUpper:
-		return n * int64(time.Microsecond), true // µs -> ns
+		// µs → ms (drop sub-ms)
+		return n / 1_000, true
 	default:
-		return n, true // assume already ns
+		// assume ns → ms (drop sub-ms)
+		return n / 1_000_000, true
 	}
 }
 

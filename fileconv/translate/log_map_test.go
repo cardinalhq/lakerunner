@@ -172,7 +172,7 @@ func TestFlattenValue(t *testing.T) {
 	}
 }
 
-func TestNormalizeEpochNumber(t *testing.T) {
+func TestNormalizeEpochToMillis(t *testing.T) {
 	type tc struct {
 		name   string
 		input  int64
@@ -188,26 +188,26 @@ func TestNormalizeEpochNumber(t *testing.T) {
 		},
 		{
 			name:   "seconds typical (now-ish seconds)",
-			input:  1_725_000_000, // a plausible 2025 era seconds timestamp
-			want:   1_725_000_000 * int64(time.Second),
+			input:  1_725_000_000,
+			want:   1_725_000_000 * 1_000, // seconds → ms
 			wantOK: true,
 		},
 		{
 			name:   "milliseconds typical",
-			input:  1_725_000_000_123, // ms
-			want:   1_725_000_000_123 * int64(time.Millisecond),
+			input:  1_725_000_000_123,
+			want:   1_725_000_000_123, // ms → ms
 			wantOK: true,
 		},
 		{
 			name:   "microseconds typical",
-			input:  1_725_000_000_123_456, // µs
-			want:   1_725_000_000_123_456 * int64(time.Microsecond),
+			input:  1_725_000_000_123_456,
+			want:   1_725_000_000_123_456 / 1_000, // µs → ms
 			wantOK: true,
 		},
 		{
 			name:   "nanoseconds typical",
-			input:  1_725_000_000_123_456_789, // ns
-			want:   1_725_000_000_123_456_789,
+			input:  1_725_000_000_123_456_789,
+			want:   1_725_000_000_123_456_789 / 1_000_000, // ns → ms
 			wantOK: true,
 		},
 		{
@@ -219,179 +219,90 @@ func TestNormalizeEpochNumber(t *testing.T) {
 		{
 			name:   "just below seconds upper bound",
 			input:  secondsUpper - 1,
-			want:   (secondsUpper - 1) * int64(time.Second),
+			want:   (secondsUpper - 1) * 1_000,
 			wantOK: true,
 		},
 		{
-			name:   "at seconds threshold -> milliseconds domain",
+			name:   "at seconds threshold -> ms domain",
 			input:  secondsUpper,
-			want:   secondsUpper * int64(time.Millisecond),
+			want:   secondsUpper,
 			wantOK: true,
 		},
 		{
-			name:   "just below milliseconds upper bound",
+			name:   "just below ms upper bound",
 			input:  millisecondsUpper - 1,
-			want:   (millisecondsUpper - 1) * int64(time.Millisecond),
+			want:   millisecondsUpper - 1,
 			wantOK: true,
 		},
 		{
-			name:   "at milliseconds threshold -> microseconds domain",
+			name:   "at ms threshold -> µs domain",
 			input:  millisecondsUpper,
-			want:   millisecondsUpper * int64(time.Microsecond),
+			want:   millisecondsUpper / 1_000,
 			wantOK: true,
 		},
 		{
-			name:   "just below microseconds upper bound",
+			name:   "just below µs upper bound",
 			input:  microsecondsUpper - 1,
-			want:   (microsecondsUpper - 1) * int64(time.Microsecond),
+			want:   (microsecondsUpper - 1) / 1_000,
 			wantOK: true,
 		},
 		{
-			name:   "at microseconds threshold -> nanoseconds domain",
+			name:   "at µs threshold -> ns domain",
 			input:  microsecondsUpper,
-			want:   microsecondsUpper,
+			want:   microsecondsUpper / 1_000_000,
 			wantOK: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := normalizeEpochNumber(tt.input)
+			got, ok := normalizeEpochToMillis(tt.input)
 			if got != tt.want || ok != tt.wantOK {
-				t.Fatalf("normalizeEpochNumber(%d) = (%d,%v) want (%d,%v)",
+				t.Fatalf("normalizeEpochToMillis(%d) = (%d, %v), want (%d, %v)",
 					tt.input, got, ok, tt.want, tt.wantOK)
 			}
 		})
 	}
 }
 
-func TestCoerceToUnixNanos(t *testing.T) {
+func TestCoerceToUnixMillis(t *testing.T) {
 	now := time.Date(2024, 6, 1, 12, 34, 56, 789000000, time.UTC)
-	nowNano := now.UnixNano()
+	nowMs := now.UnixMilli()
 	nowPtr := &now
 
 	type tc struct {
-		name  string
-		input any
-		want  int64
-		ok    bool
+		name   string
+		input  any
+		want   int64
+		wantOK bool
 	}
 	tests := []tc{
-		{
-			name:  "time.Time",
-			input: now,
-			want:  nowNano,
-			ok:    true,
-		},
-		{
-			name:  "*time.Time",
-			input: nowPtr,
-			want:  nowNano,
-			ok:    true,
-		},
-		{
-			name:  "nil *time.Time",
-			input: (*time.Time)(nil),
-			want:  0,
-			ok:    false,
-		},
-		{
-			name:  "int64 seconds",
-			input: int64(1_725_000_000),
-			want:  1_725_000_000 * int64(time.Second),
-			ok:    true,
-		},
-		{
-			name:  "int milliseconds",
-			input: int(1_725_000_000_123),
-			want:  1_725_000_000_123 * int64(time.Millisecond),
-			ok:    true,
-		},
-		{
-			name:  "uint64 microseconds",
-			input: uint64(1_725_000_000_123_456),
-			want:  1_725_000_000_123_456 * int64(time.Microsecond),
-			ok:    true,
-		},
-		{
-			name:  "uint nanoseconds",
-			input: uint(1_725_000_000_123_456_789),
-			want:  1_725_000_000_123_456_789,
-			ok:    true,
-		},
-		{
-			name:  "float64 seconds",
-			input: float64(1_725_000_000),
-			want:  1_725_000_000 * int64(time.Second),
-			ok:    true,
-		},
-		{
-			name:  "string seconds",
-			input: "1725000000",
-			want:  1_725_000_000 * int64(time.Second),
-			ok:    true,
-		},
-		{
-			name:  "string milliseconds",
-			input: "1725000000123",
-			want:  1_725_000_000_123 * int64(time.Millisecond),
-			ok:    true,
-		},
-		{
-			name:  "string microseconds",
-			input: "1725000000123456",
-			want:  1_725_000_000_123_456 * int64(time.Microsecond),
-			ok:    true,
-		},
-		{
-			name:  "string nanoseconds",
-			input: "1725000000123456789",
-			want:  1_725_000_000_123_456_789,
-			ok:    true,
-		},
-		{
-			name:  "string RFC3339Nano",
-			input: now.Format(time.RFC3339Nano),
-			want:  nowNano,
-			ok:    true,
-		},
-		{
-			name:  "string with spaces",
-			input: " 1725000000 ",
-			want:  1_725_000_000 * int64(time.Second),
-			ok:    true,
-		},
-		{
-			name:  "empty string",
-			input: "",
-			want:  0,
-			ok:    false,
-		},
-		{
-			name:  "invalid string",
-			input: "not-a-timestamp",
-			want:  0,
-			ok:    false,
-		},
-		{
-			name:  "negative int64",
-			input: int64(-1),
-			want:  0,
-			ok:    false,
-		},
-		{
-			name:  "unsupported type",
-			input: struct{}{},
-			want:  0,
-			ok:    false,
-		},
+		{"time.Time", now, nowMs, true},
+		{"*time.Time", nowPtr, nowMs, true},
+		{"nil *time.Time", (*time.Time)(nil), 0, false},
+		{"int64 seconds", int64(1_725_000_000), 1_725_000_000 * 1_000, true},
+		{"int milliseconds", int(1_725_000_000_123), 1_725_000_000_123, true},
+		{"uint64 microseconds", uint64(1_725_000_000_123_456), 1_725_000_000_123_456 / 1_000, true},
+		{"uint nanoseconds", uint(1_725_000_000_123_456_789), 1_725_000_000_123_456_789 / 1_000_000, true},
+		{"float64 seconds", float64(1_725_000_000), 1_725_000_000 * 1_000, true},
+		{"string seconds", "1725000000", 1_725_000_000 * 1_000, true},
+		{"string ms", "1725000000123", 1_725_000_000_123, true},
+		{"string µs", "1725000000123456", 1_725_000_000_123_456 / 1_000, true},
+		{"string ns", "1725000000123456789", 1_725_000_000_123_456_789 / 1_000_000, true},
+		{"string RFC3339Nano", now.Format(time.RFC3339Nano), nowMs, true},
+		{"string with spaces", " 1725000000 ", 1_725_000_000 * 1_000, true},
+		{"empty string", "", 0, false},
+		{"invalid string", "not-a-timestamp", 0, false},
+		{"negative int64", int64(-1), 0, false},
+		{"unsupported type", struct{}{}, 0, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := coerceToUnixNanos(tt.input, time.RFC3339Nano)
-			if got != tt.want || ok != tt.ok {
-				t.Errorf("coerceToUnixNanos(%#v) = (%d,%v), want (%d,%v)", tt.input, got, ok, tt.want, tt.ok)
+			got, ok := coerceToUnixMillis(tt.input, time.RFC3339Nano)
+			if got != tt.want || ok != tt.wantOK {
+				t.Errorf("coerceToUnixMillis(%#v) = (%d, %v), want (%d, %v)",
+					tt.input, got, ok, tt.want, tt.wantOK)
 			}
 		})
 	}
