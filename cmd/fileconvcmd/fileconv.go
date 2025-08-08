@@ -46,6 +46,10 @@ func run(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if len(files) == 0 {
+		cmd.Println("Input contained no rows")
+		return nil
+	}
 
 	cmd.Printf("Conversion complete. Output files: %v\n", files)
 	return nil

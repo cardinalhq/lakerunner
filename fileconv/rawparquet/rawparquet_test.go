@@ -31,6 +31,8 @@ func TestGetRow_ActualParquetFile(t *testing.T) {
 	assert.NoError(t, err)
 	defer reader.Close()
 
+	assert.Equal(t, int64(1026), reader.NumRows())
+
 	count := 0
 	for {
 		row, done, err := reader.GetRow()

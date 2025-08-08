@@ -27,18 +27,23 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/buffet"
 )
 
-func getSchema(sourcefile string) (map[string]any, error) {
+func getSchema(sourcefile string) (map[string]any, int64, error) {
 	schema := make(map[string]any)
 	r, err := rawparquet.NewRawParquetReader(sourcefile, translate.NewMapper(), nil)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer r.Close()
+
+	nRows := r.NumRows()
+	if nRows == 0 {
+		return nil, 0, nil
+	}
 
 	for {
 		row, done, err := r.GetRow()
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		if done {
 			break
@@ -48,19 +53,22 @@ func getSchema(sourcefile string) (map[string]any, error) {
 				schema[k] = v
 			} else {
 				if fmt.Sprintf("%T", schema[k]) != fmt.Sprintf("%T", v) {
-					return nil, fmt.Errorf("type mismatch for key %s: %T vs %T", k, schema[k], v)
+					return nil, 0, fmt.Errorf("type mismatch for key %s: %T vs %T", k, schema[k], v)
 				}
 			}
 		}
 	}
 
-	return schema, nil
+	return schema, nRows, nil
 }
 
 func ConvertRawParquet(sourcefile, tmpdir, bucket, objectID string) ([]string, error) {
-	schemanodes, err := getSchema(sourcefile)
+	schemanodes, nRows, err := getSchema(sourcefile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get schema: %w", err)
+	}
+	if nRows == 0 {
+		return nil, nil
 	}
 
 	r, err := rawparquet.NewRawParquetReader(sourcefile, translate.NewMapper(), nil)

@@ -155,6 +155,9 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp stora
 			ll.Error("Failed to convert file", slog.Any("error", err))
 			// TODO add counter for failure to convert, probably in each convert function
 			return err
+		} else if len(fnames) == 0 {
+			ll.Info("Empty source file, skipping", slog.String("objectID", inf.ObjectID))
+			return nil
 		} else if fnames != nil {
 			filenames = fnames
 			ll.Info("Converted file", slog.String("filename", tmpfilename), slog.String("objectID", inf.ObjectID))
