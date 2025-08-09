@@ -49,8 +49,19 @@ type genericMapReaderAdapter struct {
 	r *parquet.GenericReader[map[string]any]
 }
 
-func (g genericMapReaderAdapter) Read(batch []map[string]any) (int, error) { return g.r.Read(batch) }
-func (g genericMapReaderAdapter) Close() error                             { return g.r.Close() }
+func (g genericMapReaderAdapter) Read(batch []map[string]any) (int, error) {
+	for i := range batch {
+		batch[i] = make(map[string]any)
+	}
+	for i := range batch {
+		for k := range batch[i] {
+			delete(batch[i], k)
+		}
+	}
+	return g.r.Read(batch)
+}
+
+func (g genericMapReaderAdapter) Close() error { return g.r.Close() }
 
 func (fileOpenerAdapter) NewGenericMapReader(f *os.File, schema *parquet.Schema) (GenericMapReader, error) {
 	// If your parquet-go requires options/schema here, thread them in as needed.
