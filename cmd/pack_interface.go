@@ -24,7 +24,7 @@ import (
 )
 
 type ObjectFetcher interface {
-	Download(ctx context.Context, bucket, key, tmpdir string) (tmpfile string, size int64, err error)
+	Download(ctx context.Context, bucket, key, tmpdir string) (tmpfile string, size int64, notFound bool, err error)
 }
 
 type GenericMapReader interface {

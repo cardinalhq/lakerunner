@@ -200,14 +200,14 @@ func rollupInterval(
 		}
 		dateint, hour := helpers.MSToDateintHour(rst.Int64)
 		objectID := helpers.MakeDBObjectID(inf.OrganizationID(), profile.CollectorName, dateint, hour, row.SegmentID, "metrics")
-		fn, downloadedSize, err := s3helper.DownloadS3Object(ctx, tmpdir, s3client, profile.Bucket, objectID)
+		fn, downloadedSize, is404, err := s3helper.DownloadS3Object(ctx, tmpdir, s3client, profile.Bucket, objectID)
 		if err != nil {
-			if s3helper.S3ErrorIs404(err) {
-				ll.Info("S3 object not found, skipping", slog.String("objectID", objectID))
-				continue
-			}
 			ll.Error("Failed to download S3 object", slog.String("objectID", objectID), slog.Any("error", err))
 			return err
+		}
+		if is404 {
+			ll.Info("S3 object not found, skipping", slog.String("objectID", objectID))
+			continue
 		}
 		ll.Info("Downloaded S3 SOURCE", slog.String("objectID", objectID), slog.String("bucket", profile.Bucket), slog.Int64("rowFileSize", row.FileSize), slog.Int64("s3FileSize", downloadedSize))
 		files = append(files, fn)

@@ -101,9 +101,12 @@ func runS3Cat(bucketID string, objectID string, region string, role string) erro
 	}
 	defer os.RemoveAll(tmpdir)
 
-	fn, size, err := s3helper.DownloadS3Object(ctx, tmpdir, s3client, bucketID, objectID)
+	fn, size, is404, err := s3helper.DownloadS3Object(ctx, tmpdir, s3client, bucketID, objectID)
 	if err != nil {
 		return fmt.Errorf("failed to download S3 object: %w", err)
+	}
+	if is404 {
+		return fmt.Errorf("object %s/%s not found", bucketID, objectID)
 	}
 	fmt.Printf("Downloaded %s (%d bytes) to %s\n", objectID, size, fn)
 

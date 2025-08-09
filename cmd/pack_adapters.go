@@ -31,7 +31,7 @@ type objectFetcherAdapter struct {
 
 var _ ObjectFetcher = (*objectFetcherAdapter)(nil)
 
-func (a objectFetcherAdapter) Download(ctx context.Context, bucket, key, tmpdir string) (string, int64, error) {
+func (a objectFetcherAdapter) Download(ctx context.Context, bucket, key, tmpdir string) (string, int64, bool, error) {
 	return s3helper.DownloadS3Object(ctx, tmpdir, a.s3Client, bucket, key)
 }
 

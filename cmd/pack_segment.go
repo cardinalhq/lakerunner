@@ -32,29 +32,21 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
+var is404 = s3helper.S3ErrorIs404
+
 // chooseObjectID returns the preferred object key (good or bad) that exists, or "" if neither.
-func chooseObjectID(
-	ctx context.Context,
-	fetcher ObjectFetcher,
-	bucket string,
-	good, bad string,
-	tmpdir string,
-) (objectID, tmpfile string, size int64, err error) {
-	tmp, sz, err := fetcher.Download(ctx, bucket, good, tmpdir)
-	if err == nil {
+func chooseObjectID(ctx context.Context, fetcher ObjectFetcher, bucket, good, bad, tmpdir string) (string, string, int64, error) {
+	if tmp, sz, nf, err := fetcher.Download(ctx, bucket, good, tmpdir); err != nil {
+		return "", "", 0, err
+	} else if !nf {
 		return good, tmp, sz, nil
 	}
-	if s3helper.S3ErrorIs404(err) {
-		tmp2, sz2, err2 := fetcher.Download(ctx, bucket, bad, tmpdir)
-		if err2 == nil {
-			return bad, tmp2, sz2, nil
-		}
-		if s3helper.S3ErrorIs404(err2) {
-			return "", "", 0, nil // neither exists → caller may skip this segment
-		}
-		return "", "", 0, err2
+	if tmp, sz, nf, err := fetcher.Download(ctx, bucket, bad, tmpdir); err != nil {
+		return "", "", 0, err
+	} else if !nf {
+		return bad, tmp, sz, nil
 	}
-	return "", "", 0, err
+	return "", "", 0, nil
 }
 
 type openedSegment struct {
@@ -108,8 +100,17 @@ func downloadAndOpen(
 
 // mergeNodes merges schemas from opened handles.
 func mergeNodes(handles []*filecrunch.FileHandle) (map[string]parquet.Node, error) {
-	nodes := map[string]parquet.Node{}
+	cap := 0
 	for _, h := range handles {
+		if h != nil {
+			cap += len(h.Nodes)
+		}
+	}
+	nodes := make(map[string]parquet.Node, cap)
+	for _, h := range handles {
+		if h == nil || h.Nodes == nil {
+			continue
+		}
 		if err := filecrunch.MergeNodes(h, nodes); err != nil {
 			return nil, err
 		}
@@ -166,6 +167,8 @@ func copyAll(
 			return total, err
 		}
 
+		dropSet := computeDropSet(h.Nodes)
+
 		r, err := open.NewGenericMapReader(h.File, h.Schema)
 		if err != nil {
 			return total, err
@@ -182,8 +185,8 @@ func copyAll(
 			n, err := r.Read(batch)
 			if n > 0 {
 				// Normalize and write each record in the batch.
-				for i := 0; i < n; i++ {
-					rec, nerr := normalizeRecord(batch[i], computeDropSet(h.Nodes))
+				for i := range n {
+					rec, nerr := normalizeRecord(batch[i], dropSet)
 					if nerr != nil {
 						_ = r.Close()
 						return total, nerr
@@ -255,7 +258,6 @@ func packSegment(
 		return nil
 	}
 
-	// Adapters for testability
 	fetcher := objectFetcherAdapter{s3Client: s3Client}
 	open := fileOpenerAdapter{}
 	wf := writerFactoryAdapter{}

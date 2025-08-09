@@ -37,31 +37,43 @@ func S3ErrorIs404(err error) bool {
 	return errors.As(err, &noKeyErr)
 }
 
-func DownloadS3Object(ctx context.Context, dir string, s3client *awsclient.S3Client, bucketID, objectID string) (string, int64, error) {
+func DownloadS3Object(
+	ctx context.Context,
+	dir string,
+	s3client *awsclient.S3Client,
+	bucketID, objectID string,
+) (tmpfile string, size int64, notFound bool, err error) {
 	downloader := manager.NewDownloader(s3client.Client)
-	tmpfile, err := os.CreateTemp(dir, "s3-*.parquet")
-	if err != nil {
-		return "", 0, fmt.Errorf("failed to create temporary file: %w", err)
-	}
-	defer tmpfile.Close()
 
-	var span trace.Span
-	ctx, span = s3client.Tracer.Start(ctx, "s3helper.DownloadS3Object",
+	f, err := os.CreateTemp(dir, "s3-*.parquet")
+	if err != nil {
+		return "", 0, false, fmt.Errorf("create temp file: %w", err)
+	}
+
+	ctx, span := s3client.Tracer.Start(ctx, "s3helper.DownloadS3Object",
 		trace.WithAttributes(
 			attribute.String("bucketID", bucketID),
+			attribute.String("objectID", objectID),
 		),
 	)
 	defer span.End()
 
-	fileSize, err := downloader.Download(ctx, tmpfile, &s3.GetObjectInput{
+	size, err = downloader.Download(ctx, f, &s3.GetObjectInput{
 		Bucket: aws.String(bucketID),
 		Key:    aws.String(objectID),
 	})
 	if err != nil {
-		_ = os.Remove(tmpfile.Name())
-		return "", 0, fmt.Errorf("failed to download S3 object: %w", err)
+		_ = f.Close()
+		_ = os.Remove(f.Name())
+		if S3ErrorIs404(err) {
+			return "", 0, true, nil
+		}
+		return "", 0, false, fmt.Errorf("download %s/%s: %w", bucketID, objectID, err)
 	}
-	return tmpfile.Name(), fileSize, nil
+
+	// close on success; ignore close error because the bytes are already flushed by the SDK
+	_ = f.Close()
+	return f.Name(), size, false, nil
 }
 
 func UploadS3Object(ctx context.Context, s3client *awsclient.S3Client, bucketID, objectID string, sourceFilename string) error {
