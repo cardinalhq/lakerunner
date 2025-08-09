@@ -51,11 +51,12 @@ type genericMapReaderAdapter struct {
 
 func (g genericMapReaderAdapter) Read(batch []map[string]any) (int, error) {
 	for i := range batch {
-		batch[i] = make(map[string]any)
-	}
-	for i := range batch {
-		for k := range batch[i] {
-			delete(batch[i], k)
+		if batch[i] == nil {
+			batch[i] = make(map[string]any)
+		} else {
+			for k := range batch[i] {
+				delete(batch[i], k)
+			}
 		}
 	}
 	return g.r.Read(batch)
