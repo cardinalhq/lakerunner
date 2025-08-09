@@ -12,3 +12,9 @@ ALTER TABLE public.work_queue
        autovacuum_analyze_scale_factor = 0.02,
        autovacuum_vacuum_threshold = 1000,
        autovacuum_analyze_threshold = 1000);
+
+-- for GC'ing old work queue items
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_wq_gc_runnable_at
+  ON public.work_queue (runnable_at, id)
+  WHERE claimed_by = -1
+    AND NOT needs_run;

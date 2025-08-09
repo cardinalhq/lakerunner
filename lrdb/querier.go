@@ -45,6 +45,7 @@ type Querier interface {
 	WorkQueueCleanupDirect(ctx context.Context) ([]WorkQueueCleanupRow, error)
 	WorkQueueCompleteDirect(ctx context.Context, arg WorkQueueCompleteParams) error
 	WorkQueueFailDirect(ctx context.Context, arg WorkQueueFailParams) error
+	WorkQueueGC(ctx context.Context, arg WorkQueueGCParams) (int32, error)
 	WorkQueueGlobalLock(ctx context.Context) error
 	// 1) heart-beat the work_queue
 	WorkQueueHeartbeatDirect(ctx context.Context, arg WorkQueueHeartbeatParams) error

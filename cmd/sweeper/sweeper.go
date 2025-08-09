@@ -18,6 +18,13 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
+const (
+	gcBatchLimit int32         = 1000
+	gcBatchDelay time.Duration = 500 * time.Millisecond
+	gcPeriod     time.Duration = time.Hour
+	gcCutoffAge  time.Duration = 10 * 24 * time.Hour
+)
+
 type sweeper struct {
 	instanceID            int64
 	assumeRoleSessionName string
@@ -57,7 +64,7 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 	var wg sync.WaitGroup
 	errCh := make(chan error, 3)
 
-	// 1) Aggressive object delete loop
+	// Aggressive object delete loop
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -66,7 +73,7 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 		}
 	}()
 
-	// 2) Periodic: workqueue expiry (<= once/min)
+	// Periodic: workqueue expiry
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -77,13 +84,22 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 		}
 	}()
 
-	// 3) Periodic: inqueue expiry (<= once/min)
+	// Periodic: inqueue expiry
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		if err := periodicLoop(ctx, time.Minute, func(c context.Context) error {
 			return runInqueueExpiry(c, slog.Default(), mdb)
 		}); err != nil && !errors.Is(err, context.Canceled) {
+			errCh <- err
+		}
+	}()
+
+	// Periodic: workqueue GC
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := workqueueGCLoop(ctx, slog.Default(), mdb); err != nil && !errors.Is(err, context.Canceled) {
 			errCh <- err
 		}
 	}()
@@ -103,7 +119,6 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 
 // Runs f immediately, then on a ticker every period. Never more than once per period.
 func periodicLoop(ctx context.Context, period time.Duration, f func(context.Context) error) error {
-	// Run once immediately
 	if err := f(ctx); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		slog.Error("periodic task error", slog.Any("error", err))
 	}
@@ -169,8 +184,6 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 		return false
 	}
 }
-
-// ==== unchanged task bodies (minor cleanup only) ====
 
 func runObjCleaner(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, awsmanager *awsclient.Manager) (bool, error) {
 	objs, err := mdb.ObjectCleanupGet(ctx)
@@ -268,4 +281,53 @@ func runInqueueExpiry(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull) 
 		return err
 	}
 	return nil
+}
+
+func workqueueGCLoop(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull) error {
+	runOnce := func() {
+		cutoff := time.Now().Add(-gcCutoffAge).UTC()
+
+		for {
+			if ctx.Err() != nil {
+				return
+			}
+
+			deleted, err := mdb.WorkQueueGC(ctx, lrdb.WorkQueueGCParams{
+				Cutoff:  cutoff,
+				Maxrows: gcBatchLimit,
+			})
+			if err != nil {
+				ll.Error("WorkQueueGC failed", slog.Any("error", err))
+				return
+			}
+
+			if deleted == 0 {
+				return
+			}
+
+			ll.Info("WorkQueueGC deleted rows", slog.Int("deleted", int(deleted)))
+
+			if deleted < gcBatchLimit {
+				return
+			}
+
+			if sleepCtx(ctx, gcBatchDelay) {
+				return
+			}
+		}
+	}
+
+	runOnce()
+
+	t := time.NewTicker(gcPeriod)
+	defer t.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-t.C:
+			runOnce()
+		}
+	}
 }

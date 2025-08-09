@@ -231,6 +231,39 @@ func (q *Queries) WorkQueueFailDirect(ctx context.Context, arg WorkQueueFailPara
 	return err
 }
 
+const workQueueGC = `-- name: WorkQueueGC :one
+WITH doomed AS (
+  SELECT w.id
+  FROM public.work_queue AS w
+  WHERE w.claimed_by = -1
+    AND NOT w.needs_run
+    AND w.runnable_at < $1
+  ORDER BY w.runnable_at
+  LIMIT $2
+  FOR UPDATE SKIP LOCKED
+),
+del_wq AS (
+  DELETE FROM public.work_queue AS w
+  USING doomed AS d
+  WHERE w.id = d.id
+  RETURNING 1
+)
+SELECT COALESCE(COUNT(*), 0)::int AS deleted
+FROM del_wq
+`
+
+type WorkQueueGCParams struct {
+	Cutoff  time.Time `json:"cutoff"`
+	Maxrows int32     `json:"maxrows"`
+}
+
+func (q *Queries) WorkQueueGC(ctx context.Context, arg WorkQueueGCParams) (int32, error) {
+	row := q.db.QueryRow(ctx, workQueueGC, arg.Cutoff, arg.Maxrows)
+	var deleted int32
+	err := row.Scan(&deleted)
+	return deleted, err
+}
+
 const workQueueGlobalLock = `-- name: WorkQueueGlobalLock :exec
 SELECT pg_advisory_xact_lock(hashtext('work_queue_global')::bigint)
 `

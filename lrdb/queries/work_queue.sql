@@ -139,3 +139,24 @@ SELECT
   e.*,
   (SELECT COUNT(*) FROM deleted_locks) AS locks_removed
 FROM expired e;
+
+
+-- name: WorkQueueGC :one
+WITH doomed AS (
+  SELECT w.id
+  FROM public.work_queue AS w
+  WHERE w.claimed_by = -1
+    AND NOT w.needs_run
+    AND w.runnable_at < @cutoff
+  ORDER BY w.runnable_at
+  LIMIT @maxrows
+  FOR UPDATE SKIP LOCKED
+),
+del_wq AS (
+  DELETE FROM public.work_queue AS w
+  USING doomed AS d
+  WHERE w.id = d.id
+  RETURNING 1
+)
+SELECT COALESCE(COUNT(*), 0)::int AS deleted
+FROM del_wq;
