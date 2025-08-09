@@ -132,7 +132,7 @@ type LogSeg struct {
 	FileSize       int64                     `json:"file_size"`
 	IngestDateint  int32                     `json:"ingest_dateint"`
 	TsRange        pgtype.Range[pgtype.Int8] `json:"ts_range"`
-	CreatedBy      pgtype.Text               `json:"created_by"`
+	CreatedBy      int16                     `json:"created_by"`
 }
 
 type MetricSeg struct {
@@ -150,7 +150,7 @@ type MetricSeg struct {
 	Published      bool                      `json:"published"`
 	Rolledup       bool                      `json:"rolledup"`
 	CreatedAt      time.Time                 `json:"created_at"`
-	CreatedBy      pgtype.Text               `json:"created_by"`
+	CreatedBy      int16                     `json:"created_by"`
 }
 
 type ObjCleanup struct {
