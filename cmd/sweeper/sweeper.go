@@ -1,17 +1,3 @@
-// Copyright (C) 2025 CardinalHQ, Inc
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Affero General Public License as
-// published by the Free Software Foundation, version 3.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU Affero General Public License for more details.
-//
-// You should have received a copy of the GNU Affero General Public License
-// along with this program. If not, see <http://www.gnu.org/licenses/>.
-
 package sweeper
 
 import (
@@ -52,13 +38,13 @@ func New(instanceID int64, assumeRoleSessionName string) *sweeper {
 }
 
 func (cmd *sweeper) Run(doneCtx context.Context) error {
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(doneCtx)
+	defer cancel()
 
 	mdb, err := dbopen.LRDBStore(ctx)
 	if err != nil {
 		return err
 	}
-
 	awsmanager, err := awsclient.NewManager(ctx,
 		awsclient.WithAssumeRoleSessionName(cmd.assumeRoleSessionName),
 	)
@@ -68,46 +54,123 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 
 	slog.Info("Starting sweeper", slog.Int64("instanceID", cmd.instanceID))
 
+	var wg sync.WaitGroup
+	errCh := make(chan error, 3)
+
+	// 1) Aggressive object delete loop
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := objectCleanerLoop(ctx, slog.Default(), cmd.sp, mdb, awsmanager); err != nil && !errors.Is(err, context.Canceled) {
+			errCh <- err
+		}
+	}()
+
+	// 2) Periodic: workqueue expiry (<= once/min)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := periodicLoop(ctx, time.Minute, func(c context.Context) error {
+			return runWorkqueueExpiry(c, slog.Default(), mdb)
+		}); err != nil && !errors.Is(err, context.Canceled) {
+			errCh <- err
+		}
+	}()
+
+	// 3) Periodic: inqueue expiry (<= once/min)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := periodicLoop(ctx, time.Minute, func(c context.Context) error {
+			return runInqueueExpiry(c, slog.Default(), mdb)
+		}); err != nil && !errors.Is(err, context.Canceled) {
+			errCh <- err
+		}
+	}()
+
+	// Wait for cancellation or the first hard error
+	select {
+	case <-ctx.Done():
+		// graceful shutdown
+	case err := <-errCh:
+		cancel()
+		wg.Wait()
+		return err
+	}
+	wg.Wait()
+	return ctx.Err()
+}
+
+// Runs f immediately, then on a ticker every period. Never more than once per period.
+func periodicLoop(ctx context.Context, period time.Duration, f func(context.Context) error) error {
+	// Run once immediately
+	if err := f(ctx); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		slog.Error("periodic task error", slog.Any("error", err))
+	}
+
+	t := time.NewTicker(period)
+	defer t.Stop()
+
 	for {
-		didWork, err := sweep(ctx, slog.Default(), cmd.sp, mdb, awsmanager)
-		if err != nil {
-			return err
-		}
-
-		nextTime := 1 * time.Minute
-		if didWork {
-			nextTime = 1 * time.Second
-		}
-
 		select {
-		case <-doneCtx.Done():
-			return doneCtx.Err()
-		case <-time.After(nextTime):
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-t.C:
+			if err := f(ctx); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				slog.Error("periodic task error", slog.Any("error", err))
+				// keep going; periodic tasks should be resilient
+			}
 		}
 	}
 }
 
-func sweep(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, awsmanager *awsclient.Manager) (bool, error) {
-	didWork, err := runObjCleaner(ctx, ll, sp, mdb, awsmanager)
-	if err != nil {
-		ll.Error("Failed to run object cleaner", slog.Any("error", err))
-		return false, err
-	}
+// Aggressive loop for object cleanup.
+// If work was done: tiny delay; else a slightly longer pause. Errors are logged and retried.
+func objectCleanerLoop(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, awsmanager *awsclient.Manager) error {
+	const (
+		delayIfDidWork = 250 * time.Millisecond
+		delayIfNoWork  = 5 * time.Second
+		delayIfError   = 5 * time.Second
+	)
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
 
-	err = runWorkqueueExpiry(ctx, ll, mdb)
-	if err != nil {
-		ll.Error("Failed to run expiry", slog.Any("error", err))
-		return false, err
+		didWork, err := runObjCleaner(ctx, ll, sp, mdb, awsmanager)
+		switch {
+		case err != nil:
+			ll.Error("Failed to run object cleaner", slog.Any("error", err))
+			if stop := sleepCtx(ctx, delayIfError); stop {
+				return ctx.Err()
+			}
+		case didWork:
+			// be very aggressive when there’s a backlog
+			if stop := sleepCtx(ctx, delayIfDidWork); stop {
+				return ctx.Err()
+			}
+		default:
+			if stop := sleepCtx(ctx, delayIfNoWork); stop {
+				return ctx.Err()
+			}
+		}
 	}
-
-	err = runInqueueExpiry(ctx, ll, mdb)
-	if err != nil {
-		ll.Error("Failed to run inqueue expiry", slog.Any("error", err))
-		return false, err
-	}
-
-	return didWork, nil
 }
+
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return true
+	case <-t.C:
+		return false
+	}
+}
+
+// ==== unchanged task bodies (minor cleanup only) ====
 
 func runObjCleaner(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, awsmanager *awsclient.Manager) (bool, error) {
 	objs, err := mdb.ObjectCleanupGet(ctx)
@@ -121,7 +184,7 @@ func runObjCleaner(ctx context.Context, ll *slog.Logger, sp storageprofile.Stora
 		return false, nil
 	}
 
-	jobs := make(chan lrdb.ObjectCleanupGetRow)
+	jobs := make(chan lrdb.ObjectCleanupGetRow, len(objs))
 	var wg sync.WaitGroup
 	for range 10 {
 		wg.Add(1)
@@ -148,13 +211,10 @@ func cleanupObj(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageP
 		failWork(ctx, ll, mdb, obj.ID)
 		return
 	}
-
-	if profile.Role == "" {
-		if !profile.Hosted {
-			ll.Error("No role on non-hosted profile")
-			failWork(ctx, ll, mdb, obj.ID)
-			return
-		}
+	if profile.Role == "" && !profile.Hosted {
+		ll.Error("No role on non-hosted profile", slog.String("objectID", obj.ObjectID))
+		failWork(ctx, ll, mdb, obj.ID)
+		return
 	}
 
 	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
@@ -164,15 +224,13 @@ func cleanupObj(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageP
 		return
 	}
 
-	err = s3helper.DeleteS3Object(ctx, s3client, profile.Bucket, obj.ObjectID)
-	if err != nil {
+	if err := s3helper.DeleteS3Object(ctx, s3client, profile.Bucket, obj.ObjectID); err != nil {
 		ll.Error("Failed to delete S3 object", slog.Any("error", err), slog.String("objectID", obj.ObjectID))
 		failWork(ctx, ll, mdb, obj.ID)
 		return
 	}
 
-	err = mdb.ObjectCleanupComplete(ctx, obj.ID)
-	if err != nil {
+	if err := mdb.ObjectCleanupComplete(ctx, obj.ID); err != nil {
 		ll.Error("Failed to mark object cleanup complete", slog.Any("error", err), slog.String("objectID", obj.ObjectID))
 		failWork(ctx, ll, mdb, obj.ID)
 		return
@@ -195,27 +253,19 @@ func runWorkqueueExpiry(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull
 		ll.Error("Failed to expire objects", slog.Any("error", err))
 		return err
 	}
-
-	if len(expired) == 0 {
-		return nil
-	}
-
 	for _, obj := range expired {
 		ll.Info("Expired work/lock", slog.Any("work", obj))
 	}
-
 	return nil
 }
 
 func runInqueueExpiry(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull) error {
-	err := mdb.CleanupInqueueWork(ctx)
-	if err != nil {
+	if err := mdb.CleanupInqueueWork(ctx); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
 		ll.Error("Failed to expire objects", slog.Any("error", err))
 		return err
 	}
-
 	return nil
 }
