@@ -19,7 +19,7 @@ WITH
      WHERE organization_id = $1
        AND dateint        = $2
        AND instance_num   = $5
-       AND segment_id     = ANY($10::bigint[])
+       AND segment_id     = ANY($11::bigint[])
   ),
   fingerprint_array AS (
     SELECT coalesce(
@@ -33,7 +33,7 @@ WITH
      WHERE organization_id = $1
        AND dateint        = $2
        AND instance_num   = $5
-       AND segment_id     = ANY($10::bigint[])
+       AND segment_id     = ANY($11::bigint[])
   )
 INSERT INTO log_seg (
   organization_id,
@@ -44,6 +44,7 @@ INSERT INTO log_seg (
   record_count,
   file_size,
   ts_range,
+  created_by,
   fingerprints
 )
 SELECT
@@ -55,6 +56,7 @@ SELECT
   $6,
   $7,
   int8range($8, $9, '[)'),
+  $10,
   fa.fingerprints
 FROM fingerprint_array AS fa
 `
@@ -69,6 +71,7 @@ type CompactLogSegmentsParams struct {
 	NewFileSize    int64     `json:"new_file_size"`
 	NewStartTs     int64     `json:"new_start_ts"`
 	NewEndTs       int64     `json:"new_end_ts"`
+	CreatedBy      CreatedBy `json:"created_by"`
 	OldSegmentIds  []int64   `json:"old_segment_ids"`
 }
 
@@ -83,6 +86,7 @@ func (q *Queries) CompactLogSegments(ctx context.Context, arg CompactLogSegments
 		arg.NewFileSize,
 		arg.NewStartTs,
 		arg.NewEndTs,
+		arg.CreatedBy,
 		arg.OldSegmentIds,
 	)
 	return err
@@ -157,6 +161,7 @@ INSERT INTO log_seg (
   ts_range,
   record_count,
   file_size,
+  created_by,
   fingerprints
 )
 VALUES (
@@ -168,7 +173,8 @@ VALUES (
   int8range($6, $7, '[)'),
   $8,
   $9,
-  $10::bigint[]
+  $10,
+  $11::bigint[]
 )
 `
 
@@ -182,6 +188,7 @@ type InsertLogSegmentParams struct {
 	EndTs          int64     `json:"end_ts"`
 	RecordCount    int64     `json:"record_count"`
 	FileSize       int64     `json:"file_size"`
+	CreatedBy      CreatedBy `json:"created_by"`
 	Fingerprints   []int64   `json:"fingerprints"`
 }
 
@@ -196,6 +203,7 @@ func (q *Queries) InsertLogSegmentDirect(ctx context.Context, arg InsertLogSegme
 		arg.EndTs,
 		arg.RecordCount,
 		arg.FileSize,
+		arg.CreatedBy,
 		arg.Fingerprints,
 	)
 	return err

@@ -363,6 +363,7 @@ func packSegment(
 		NewFileSize:    fi.Size(),
 		NewRecordCount: writeResult.RecordCount,
 		OldSegmentIds:  segmentIDsFrom(usedSegs),
+		CreatedBy:      lrdb.CreatedByCompact,
 	}); err != nil {
 		return err
 	}

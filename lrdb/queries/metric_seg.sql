@@ -11,6 +11,7 @@ INSERT INTO metric_seg (
   record_count,
   file_size,
   tid_count,
+  created_by,
   published
 )
 VALUES (
@@ -25,6 +26,7 @@ VALUES (
   @record_count,
   @file_size,
   @tid_count,
+  @created_by,
   @published
 );
 
@@ -58,6 +60,7 @@ INSERT INTO metric_seg (
   file_size,
   tid_count,
   published,
+  created_by,
   rolledup
 )
 VALUES (
@@ -73,6 +76,7 @@ VALUES (
   @file_size,
   @tid_count,
   @published,
+  @created_by,
   @rolledup
 );
 

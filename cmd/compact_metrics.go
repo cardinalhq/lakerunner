@@ -285,6 +285,7 @@ func compactInterval(
 		FrequencyMs:    inf.FrequencyMs(),
 		Published:      true,
 		Rolledup:       allRolledUp(rows),
+		CreatedBy:      lrdb.CreatedByCompact,
 	}
 
 	for _, row := range rows {

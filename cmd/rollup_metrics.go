@@ -251,6 +251,7 @@ func rollupInterval(
 		FrequencyMs:    inf.FrequencyMs(),
 		Published:      true,
 		Rolledup:       false,
+		CreatedBy:      lrdb.CreateByRollup,
 	}
 
 	for _, row := range existingRowsForThisRollup {

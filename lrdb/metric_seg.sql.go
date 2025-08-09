@@ -93,6 +93,7 @@ INSERT INTO metric_seg (
   record_count,
   file_size,
   tid_count,
+  created_by,
   published
 )
 VALUES (
@@ -107,7 +108,8 @@ VALUES (
   $10,
   $11,
   $12,
-  $13
+  $13,
+  $14
 )
 `
 
@@ -124,6 +126,7 @@ type InsertMetricSegmentParams struct {
 	RecordCount    int64     `json:"record_count"`
 	FileSize       int64     `json:"file_size"`
 	TidCount       int32     `json:"tid_count"`
+	CreatedBy      CreatedBy `json:"created_by"`
 	Published      bool      `json:"published"`
 }
 
@@ -141,6 +144,7 @@ func (q *Queries) InsertMetricSegmentDirect(ctx context.Context, arg InsertMetri
 		arg.RecordCount,
 		arg.FileSize,
 		arg.TidCount,
+		arg.CreatedBy,
 		arg.Published,
 	)
 	return err

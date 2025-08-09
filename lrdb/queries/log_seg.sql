@@ -8,6 +8,7 @@ INSERT INTO log_seg (
   ts_range,
   record_count,
   file_size,
+  created_by,
   fingerprints
 )
 VALUES (
@@ -19,6 +20,7 @@ VALUES (
   int8range(@start_ts, @end_ts, '[)'),
   @record_count,
   @file_size,
+  @created_by,
   @fingerprints::bigint[]
 );
 
@@ -71,6 +73,7 @@ INSERT INTO log_seg (
   record_count,
   file_size,
   ts_range,
+  created_by,
   fingerprints
 )
 SELECT
@@ -82,5 +85,6 @@ SELECT
   @new_record_count,
   @new_file_size,
   int8range(@new_start_ts, @new_end_ts, '[)'),
+  @created_by,
   fa.fingerprints
 FROM fingerprint_array AS fa;

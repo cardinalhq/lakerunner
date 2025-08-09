@@ -212,6 +212,7 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp stora
 				EndTs:          split.LastTS,
 				RecordCount:    split.RecordCount,
 				FileSize:       split.FileSize,
+				CreatedBy:      lrdb.CreatedByIngest,
 				Fingerprints:   fps,
 			})
 			dbExecDuration.Record(ctx, time.Since(t0).Seconds(),

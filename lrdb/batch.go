@@ -94,6 +94,7 @@ INSERT INTO metric_seg (
   file_size,
   tid_count,
   published,
+  created_by,
   rolledup
 )
 VALUES (
@@ -109,7 +110,8 @@ VALUES (
   $11,
   $12,
   $13,
-  $14
+  $14,
+  $15
 )
 `
 
@@ -133,6 +135,7 @@ type BatchInsertMetricSegsParams struct {
 	FileSize       int64     `json:"file_size"`
 	TidCount       int32     `json:"tid_count"`
 	Published      bool      `json:"published"`
+	CreatedBy      CreatedBy `json:"created_by"`
 	Rolledup       bool      `json:"rolledup"`
 }
 
@@ -153,6 +156,7 @@ func (q *Queries) BatchInsertMetricSegs(ctx context.Context, arg []BatchInsertMe
 			a.FileSize,
 			a.TidCount,
 			a.Published,
+			a.CreatedBy,
 			a.Rolledup,
 		}
 		batch.Queue(batchInsertMetricSegs, vals...)
