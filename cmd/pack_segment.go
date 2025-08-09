@@ -27,32 +27,10 @@ import (
 	"github.com/cardinalhq/lakerunner/cmd/storageprofile"
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
-	"github.com/cardinalhq/lakerunner/internal/buffet"
 	"github.com/cardinalhq/lakerunner/internal/filecrunch"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
-
-// Minimal S3 interface so you can mock in tests.
-type ObjectFetcher interface {
-	Download(ctx context.Context, bucket, key, tmpdir string) (tmpfile string, size int64, err error)
-}
-
-// File-to-parquet schema/reader factory seams.
-type FileOpener interface {
-	LoadSchemaForFile(path string) (*filecrunch.FileHandle, error)
-	NewParquetReader(f *os.File, schema *parquet.Schema) *parquet.Reader
-}
-
-// Buffet writer seam.
-type Writer interface {
-	Write(map[string]any) error
-	Close() ([]buffet.Result, error)
-}
-
-type WriterFactory interface {
-	NewWriter(kind, tmpdir string, nodes map[string]parquet.Node, targetRowGroup int64) (Writer, error)
-}
 
 // chooseObjectID returns the preferred object key (good or bad) that exists, or "" if neither.
 func chooseObjectID(
@@ -139,10 +117,22 @@ func mergeNodes(handles []*filecrunch.FileHandle) (map[string]parquet.Node, erro
 	return nodes, nil
 }
 
+func computeDropSet(nodes map[string]parquet.Node) map[string]struct{} {
+	drop := map[string]struct{}{}
+	for _, name := range dropFieldNames {
+		if _, ok := nodes[name]; ok {
+			drop[name] = struct{}{}
+		}
+	}
+	return drop
+}
+
 // normalizeRecord drops fields and coerces _cardinalhq.timestamp to int64.
-func normalizeRecord(rec map[string]any) (map[string]any, error) {
-	for _, fn := range dropFieldNames {
-		delete(rec, fn)
+func normalizeRecord(rec map[string]any, drop map[string]struct{}) (map[string]any, error) {
+	if len(drop) != 0 {
+		for k := range drop {
+			delete(rec, k)
+		}
 	}
 	v, ok := rec["_cardinalhq.timestamp"]
 	if !ok {
@@ -169,38 +159,53 @@ func copyAll(
 	handles []*filecrunch.FileHandle,
 ) (int64, error) {
 	var total int64
+	const batchSize = 4096
+
 	for _, h := range handles {
 		if err := ctx.Err(); err != nil {
 			return total, err
 		}
-		reader := open.NewParquetReader(h.File, h.Schema)
-		count := int64(0)
+
+		r, err := open.NewGenericMapReader(h.File, h.Schema)
+		if err != nil {
+			return total, err
+		}
+
+		// Reuse the slice; GenericReader fills positions [0:n)
+		batch := make([]map[string]any, batchSize)
+
 		for {
 			if err := ctx.Err(); err != nil {
-				_ = reader.Close()
+				_ = r.Close()
 				return total, err
 			}
-			rec := map[string]any{}
-			if err := reader.Read(&rec); err != nil {
-				if err == io.EOF {
-					break
+			n, err := r.Read(batch)
+			if n > 0 {
+				// Normalize and write each record in the batch.
+				for i := 0; i < n; i++ {
+					rec, nerr := normalizeRecord(batch[i], computeDropSet(h.Nodes))
+					if nerr != nil {
+						_ = r.Close()
+						return total, nerr
+					}
+					if werr := writer.Write(rec); werr != nil {
+						_ = r.Close()
+						return total, werr
+					}
 				}
-				_ = reader.Close()
-				return total, err
+				total += int64(n)
 			}
-			rec, err := normalizeRecord(rec)
+			if err == io.EOF {
+				break
+			}
 			if err != nil {
-				_ = reader.Close()
+				_ = r.Close()
 				return total, err
 			}
-			if err := writer.Write(rec); err != nil {
-				_ = reader.Close()
-				return total, err
-			}
-			count++
 		}
-		_ = reader.Close()
-		total += count
+		if cerr := r.Close(); cerr != nil {
+			// non-fatal
+		}
 	}
 	return total, nil
 }

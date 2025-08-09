@@ -35,6 +35,8 @@ func (a objectFetcherAdapter) Download(ctx context.Context, bucket, key, tmpdir 
 	return s3helper.DownloadS3Object(ctx, tmpdir, a.s3Client, bucket, key)
 }
 
+// In pack_adapters.go
+
 type fileOpenerAdapter struct{}
 
 var _ FileOpener = (*fileOpenerAdapter)(nil)
@@ -43,8 +45,17 @@ func (fileOpenerAdapter) LoadSchemaForFile(path string) (*filecrunch.FileHandle,
 	return filecrunch.LoadSchemaForFile(path)
 }
 
-func (fileOpenerAdapter) NewParquetReader(f *os.File, schema *parquet.Schema) *parquet.Reader {
-	return parquet.NewReader(f, schema)
+type genericMapReaderAdapter struct {
+	r *parquet.GenericReader[map[string]any]
+}
+
+func (g genericMapReaderAdapter) Read(batch []map[string]any) (int, error) { return g.r.Read(batch) }
+func (g genericMapReaderAdapter) Close() error                             { return g.r.Close() }
+
+func (fileOpenerAdapter) NewGenericMapReader(f *os.File, schema *parquet.Schema) (GenericMapReader, error) {
+	// If your parquet-go requires options/schema here, thread them in as needed.
+	gr := parquet.NewGenericReader[map[string]any](f)
+	return genericMapReaderAdapter{r: gr}, nil
 }
 
 type writerFactoryAdapter struct{}
