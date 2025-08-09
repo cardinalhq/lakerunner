@@ -44,7 +44,7 @@ type RunqueueProcessingFunction func(
 	sp storageprofile.StorageProfileProvider,
 	mdb lrdb.StoreFull,
 	inf lockmgr.Workable,
-	estBytesPerRecord float64,
+	rpf_estimate int64,
 ) (WorkResult, error)
 
 type WorkResult int
@@ -209,7 +209,7 @@ func workqueueProcess(
 		}
 	}()
 
-	estBytesPerRecord := est.Get(inf.OrganizationID(), inf.InstanceNum(), inf.Signal()).AvgBytesPerRecord
+	estBytesPerRecord := est.Get(inf.OrganizationID(), inf.InstanceNum(), inf.Signal()).EstimatedRecordCount
 	t0 = time.Now()
 	result, err := pfx(ctx, ll, tmpdir, awsmanager, sp, mdb, inf, estBytesPerRecord)
 	workqueueDuration.Record(ctx, time.Since(t0).Seconds(),

@@ -1,0 +1,370 @@
+// Copyright (C) 2025 CardinalHQ, Inc
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as
+// published by the Free Software Foundation, version 3.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program. If not, see <http://www.gnu.org/licenses/>.
+
+package cmd
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"os"
+
+	"github.com/parquet-go/parquet-go"
+
+	"github.com/cardinalhq/lakerunner/cmd/storageprofile"
+	"github.com/cardinalhq/lakerunner/internal/awsclient"
+	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
+	"github.com/cardinalhq/lakerunner/internal/buffet"
+	"github.com/cardinalhq/lakerunner/internal/filecrunch"
+	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/lrdb"
+)
+
+// Minimal S3 interface so you can mock in tests.
+type ObjectFetcher interface {
+	Download(ctx context.Context, bucket, key, tmpdir string) (tmpfile string, size int64, err error)
+}
+
+// File-to-parquet schema/reader factory seams.
+type FileOpener interface {
+	LoadSchemaForFile(path string) (*filecrunch.FileHandle, error)
+	NewParquetReader(f *os.File, schema *parquet.Schema) *parquet.Reader
+}
+
+// Buffet writer seam.
+type Writer interface {
+	Write(map[string]any) error
+	Close() ([]buffet.Result, error)
+}
+
+type WriterFactory interface {
+	NewWriter(kind, tmpdir string, nodes map[string]parquet.Node, targetRowGroup int64) (Writer, error)
+}
+
+// chooseObjectID returns the preferred object key (good or bad) that exists, or "" if neither.
+func chooseObjectID(
+	ctx context.Context,
+	fetcher ObjectFetcher,
+	bucket string,
+	good, bad string,
+	tmpdir string,
+) (objectID, tmpfile string, size int64, err error) {
+	tmp, sz, err := fetcher.Download(ctx, bucket, good, tmpdir)
+	if err == nil {
+		return good, tmp, sz, nil
+	}
+	if s3helper.S3ErrorIs404(err) {
+		tmp2, sz2, err2 := fetcher.Download(ctx, bucket, bad, tmpdir)
+		if err2 == nil {
+			return bad, tmp2, sz2, nil
+		}
+		if s3helper.S3ErrorIs404(err2) {
+			return "", "", 0, nil // neither exists → caller may skip this segment
+		}
+		return "", "", 0, err2
+	}
+	return "", "", 0, err
+}
+
+type openedSegment struct {
+	Seg      lrdb.GetLogSegmentsForCompactionRow
+	Handle   *filecrunch.FileHandle
+	ObjectID string
+}
+
+// downloadAndOpen segments; returns only those that exist and opened successfully.
+func downloadAndOpen(
+	ctx context.Context,
+	sp storageprofile.StorageProfile,
+	dateint int32,
+	group []lrdb.GetLogSegmentsForCompactionRow,
+	tmpdir string,
+	bucket string,
+	fetcher ObjectFetcher,
+	open FileOpener,
+) ([]openedSegment, error) {
+	out := make([]openedSegment, 0, len(group))
+	for _, seg := range group {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
+		good := helpers.MakeDBObjectID(sp.OrganizationID, sp.CollectorName, dateint, s3helper.HourFromMillis(seg.StartTs), seg.SegmentID, "logs")
+		bad := helpers.MakeDBObjectIDbad(sp.OrganizationID, sp.CollectorName, dateint, s3helper.HourFromMillis(seg.StartTs), seg.SegmentID, "logs")
+
+		objectID, tmpfile, _, err := chooseObjectID(ctx, fetcher, bucket, good, bad, tmpdir)
+		if err != nil {
+			return nil, fmt.Errorf("download: %w", err)
+		}
+		if objectID == "" {
+			continue
+		}
+
+		fh, err := open.LoadSchemaForFile(tmpfile)
+		if err != nil {
+			return nil, fmt.Errorf("open schema: %w", err)
+		}
+		// Normalize timestamp
+		fh.Nodes["_cardinalhq.timestamp"] = filecrunch.NodeTypeMap["INT64"]
+		for _, fn := range dropFieldNames {
+			delete(fh.Nodes, fn)
+		}
+
+		out = append(out, openedSegment{Seg: seg, Handle: fh, ObjectID: objectID})
+	}
+	return out, nil
+}
+
+// mergeNodes merges schemas from opened handles.
+func mergeNodes(handles []*filecrunch.FileHandle) (map[string]parquet.Node, error) {
+	nodes := map[string]parquet.Node{}
+	for _, h := range handles {
+		if err := filecrunch.MergeNodes(h, nodes); err != nil {
+			return nil, err
+		}
+	}
+	return nodes, nil
+}
+
+// normalizeRecord drops fields and coerces _cardinalhq.timestamp to int64.
+func normalizeRecord(rec map[string]any) (map[string]any, error) {
+	for _, fn := range dropFieldNames {
+		delete(rec, fn)
+	}
+	v, ok := rec["_cardinalhq.timestamp"]
+	if !ok {
+		return nil, errors.New("missing _cardinalhq.timestamp")
+	}
+	switch t := v.(type) {
+	case int64:
+		// ok
+	case int32:
+		rec["_cardinalhq.timestamp"] = int64(t)
+	case float64:
+		rec["_cardinalhq.timestamp"] = int64(t)
+	default:
+		return nil, fmt.Errorf("unexpected _cardinalhq.timestamp type %T", v)
+	}
+	return rec, nil
+}
+
+// copyAll writes all rows from each handle to writer; returns total written rows.
+func copyAll(
+	ctx context.Context,
+	open FileOpener,
+	writer Writer,
+	handles []*filecrunch.FileHandle,
+) (int64, error) {
+	var total int64
+	for _, h := range handles {
+		if err := ctx.Err(); err != nil {
+			return total, err
+		}
+		reader := open.NewParquetReader(h.File, h.Schema)
+		count := int64(0)
+		for {
+			if err := ctx.Err(); err != nil {
+				_ = reader.Close()
+				return total, err
+			}
+			rec := map[string]any{}
+			if err := reader.Read(&rec); err != nil {
+				if err == io.EOF {
+					break
+				}
+				_ = reader.Close()
+				return total, err
+			}
+			rec, err := normalizeRecord(rec)
+			if err != nil {
+				_ = reader.Close()
+				return total, err
+			}
+			if err := writer.Write(rec); err != nil {
+				_ = reader.Close()
+				return total, err
+			}
+			count++
+		}
+		_ = reader.Close()
+		total += count
+	}
+	return total, nil
+}
+
+// basic stats from used segments
+type usedStats struct {
+	CountRecords int64
+	SizeBytes    int64
+	FirstTS      int64
+	LastTS       int64
+	IngestDate   int32
+}
+
+func statsFor(used []lrdb.GetLogSegmentsForCompactionRow) usedStats {
+	var s usedStats
+	if len(used) == 0 {
+		return s
+	}
+	s.FirstTS = used[0].StartTs
+	for _, seg := range used {
+		s.CountRecords += seg.RecordCount
+		s.SizeBytes += seg.FileSize
+		if seg.StartTs < s.FirstTS {
+			s.FirstTS = seg.StartTs
+		}
+		if seg.EndTs > s.LastTS {
+			s.LastTS = seg.EndTs
+		}
+		if seg.IngestDateint > s.IngestDate {
+			s.IngestDate = seg.IngestDateint
+		}
+	}
+	return s
+}
+
+func packSegment(
+	ctx context.Context,
+	ll *slog.Logger,
+	tmpdir string,
+	s3Client *awsclient.S3Client,
+	mdb lrdb.StoreFull,
+	group []lrdb.GetLogSegmentsForCompactionRow,
+	sp storageprofile.StorageProfile,
+	dateint int32,
+) error {
+	if len(group) < 2 {
+		return nil
+	}
+
+	// Adapters for testability
+	fetcher := objectFetcherAdapter{s3Client: s3Client}
+	open := fileOpenerAdapter{}
+	wf := writerFactoryAdapter{}
+
+	opened, err := downloadAndOpen(ctx, sp, dateint, group, tmpdir, sp.Bucket, fetcher, open)
+	if err != nil {
+		return err
+	}
+
+	if len(opened) < 2 {
+		ll.Info("Group has fewer than 2 usable segments; skipping",
+			slog.Int("requestedGroupSize", len(group)),
+			slog.Int("usableSegments", len(opened)))
+		return nil
+	}
+
+	handles := make([]*filecrunch.FileHandle, 0, len(opened))
+	usedSegs := make([]lrdb.GetLogSegmentsForCompactionRow, 0, len(opened))
+	objectIDs := make([]string, 0, len(opened))
+	for _, o := range opened {
+		handles = append(handles, o.Handle)
+		usedSegs = append(usedSegs, o.Seg)
+		objectIDs = append(objectIDs, o.ObjectID)
+	}
+
+	defer func() {
+		for _, h := range handles {
+			_ = h.Close()
+			_ = os.Remove(h.File.Name())
+		}
+	}()
+
+	nodes, err := mergeNodes(handles)
+	if err != nil {
+		ll.Error("Error merging nodes", slog.String("error", err.Error()))
+		return err
+	}
+
+	w, err := wf.NewWriter("logcompact", tmpdir, nodes, 0)
+	if err != nil {
+		return err
+	}
+	writerClosed := false
+	defer func() {
+		if !writerClosed {
+			_, _ = w.Close()
+		}
+	}()
+
+	_, err = copyAll(ctx, open, w, handles)
+	if err != nil {
+		return err
+	}
+
+	writeResults, err := w.Close()
+	writerClosed = true
+	if err != nil {
+		return err
+	}
+	if len(writeResults) == 0 {
+		ll.Info("No records written, skipping upload")
+		return nil
+	}
+	writeResult := writeResults[0]
+
+	stats := statsFor(usedSegs)
+	if writeResult.RecordCount != stats.CountRecords {
+		return fmt.Errorf("record count mismatch: expected=%d actual=%d", stats.CountRecords, writeResult.RecordCount)
+	}
+
+	fi, err := os.Stat(writeResult.FileName)
+	if err != nil {
+		return err
+	}
+
+	newSegmentID := s3helper.GenerateID()
+	newObjectID := helpers.MakeDBObjectID(
+		sp.OrganizationID, sp.CollectorName, dateint, s3helper.HourFromMillis(stats.FirstTS), newSegmentID, "logs",
+	)
+
+	ll.Info("Uploading new file to S3",
+		slog.Int64("size", fi.Size()),
+		slog.String("objectID", newObjectID),
+		slog.Int64("segmentID", newSegmentID),
+		slog.Int64("firstTS", stats.FirstTS),
+		slog.Int64("lastTS", stats.LastTS),
+		slog.Int64("recordCount", writeResult.RecordCount),
+		slog.Int64("fileSize", fi.Size()),
+	)
+
+	if err := s3helper.UploadS3Object(ctx, s3Client, sp.Bucket, newObjectID, writeResult.FileName); err != nil {
+		return err
+	}
+
+	if err := mdb.CompactLogSegments(ctx, lrdb.CompactLogSegmentsParams{
+		OrganizationID: sp.OrganizationID,
+		Dateint:        dateint,
+		IngestDateint:  stats.IngestDate,
+		InstanceNum:    sp.InstanceNum,
+		NewStartTs:     stats.FirstTS,
+		NewEndTs:       stats.LastTS, // already half-open
+		NewSegmentID:   newSegmentID,
+		NewFileSize:    fi.Size(),
+		NewRecordCount: writeResult.RecordCount,
+		OldSegmentIds:  segmentIDsFrom(usedSegs),
+	}); err != nil {
+		return err
+	}
+
+	for _, oid := range objectIDs {
+		if err := s3helper.ScheduleS3Delete(ctx, mdb, sp.OrganizationID, sp.InstanceNum, sp.Bucket, oid); err != nil {
+			ll.Error("scheduleS3Delete", slog.String("error", err.Error()))
+		}
+	}
+	ll.Info("Scheduled old segments for deletion", slog.Int("count", len(objectIDs)))
+	return nil
+}

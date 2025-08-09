@@ -32,17 +32,20 @@ var Cmd = &cobra.Command{
 func init() {
 	Cmd.Flags().StringP("input", "i", "", "Input file path")
 	_ = Cmd.MarkFlagRequired("input")
+
+	Cmd.Flags().Int64("rows-per-file", 40_000, "Target number of rows per output file")
 }
 
 func run(cmd *cobra.Command, args []string) error {
 	input, _ := cmd.Flags().GetString("input")
+	rpf, _ := cmd.Flags().GetInt64("rows-per-file")
 
 	tmpdir, err := os.MkdirTemp("", "fileconv-*")
 	if err != nil {
 		return err
 	}
 
-	files, err := ingestlogs.ConvertRawParquet(input, tmpdir, "default-bucket", "default-object-id")
+	files, err := ingestlogs.ConvertRawParquet(input, tmpdir, "default-bucket", "default-object-id", rpf)
 	if err != nil {
 		return err
 	}

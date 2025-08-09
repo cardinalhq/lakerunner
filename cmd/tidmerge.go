@@ -38,14 +38,13 @@ type MergeStats struct {
 }
 
 type TIDMerger struct {
-	files        []string
-	tmpdir       string
-	nodes        map[string]parquet.Node
-	targetSize   int64
-	sizeEstimate int64
-	interval     int32
-	startTS      int64
-	endTS        int64
+	files       []string
+	tmpdir      string
+	nodes       map[string]parquet.Node
+	rowEstimate int64
+	interval    int32
+	startTS     int64
+	endTS       int64
 
 	stats MergeStats
 }
@@ -61,20 +60,19 @@ type WriteResult struct {
 // the interval must be exactly one interval between startTS and endTS.
 // startTS and endTS are used to determine the timestamp of the merged rows.
 // StartTS is inclusive, endTS is exclusive.0
-func NewTIDMerger(tmpdir string, files []string, interval int32, targetSize int64, sizeEstimate int64, startTS int64, endTS int64) (*TIDMerger, error) {
+func NewTIDMerger(tmpdir string, files []string, interval int32, rowEstimate int64, startTS int64, endTS int64) (*TIDMerger, error) {
 	tslen := endTS - startTS
 	if tslen%int64(interval) != 0 {
 		return nil, fmt.Errorf("startTS %d and endTS %d must be aligned with interval %d", startTS, endTS, interval)
 	}
 	return &TIDMerger{
-		files:        files,
-		interval:     interval,
-		targetSize:   targetSize,
-		sizeEstimate: sizeEstimate,
-		tmpdir:       tmpdir,
-		nodes:        make(map[string]parquet.Node),
-		startTS:      startTS,
-		endTS:        endTS,
+		files:       files,
+		interval:    interval,
+		rowEstimate: rowEstimate,
+		tmpdir:      tmpdir,
+		nodes:       make(map[string]parquet.Node),
+		startTS:     startTS,
+		endTS:       endTS,
 	}, nil
 }
 
@@ -225,7 +223,7 @@ func (m *TIDMerger) Merge() ([]WriteResult, MergeStats, error) {
 
 	m.nodes = nodeBuilder.Build()
 
-	writer, err := buffet.NewWriter("tid-merger-*", m.tmpdir, m.nodes, m.targetSize, m.sizeEstimate,
+	writer, err := buffet.NewWriter("tid-merger-*", m.tmpdir, m.nodes, m.rowEstimate,
 		buffet.WithGroupFunc(GroupTIDGroupFunc),
 		buffet.WithStatsProvider(&TidAccumulatorProvider{}),
 	)

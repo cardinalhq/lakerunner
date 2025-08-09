@@ -62,7 +62,7 @@ func getSchema(sourcefile string) (map[string]any, int64, error) {
 	return schema, nRows, nil
 }
 
-func ConvertRawParquet(sourcefile, tmpdir, bucket, objectID string) ([]string, error) {
+func ConvertRawParquet(sourcefile, tmpdir, bucket, objectID string, rpf_estimate int64) ([]string, error) {
 	schemanodes, nRows, err := getSchema(sourcefile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get schema: %w", err)
@@ -88,7 +88,7 @@ func ConvertRawParquet(sourcefile, tmpdir, bucket, objectID string) ([]string, e
 		return nil, fmt.Errorf("failed to add resource nodes: %w", err)
 	}
 
-	w, err := buffet.NewWriter("fileconv", tmpdir, nmb.Build(), 0, 0)
+	w, err := buffet.NewWriter("fileconv", tmpdir, nmb.Build(), rpf_estimate)
 	if err != nil {
 		return nil, fmt.Errorf("Failed to create writer: %w", err)
 	}

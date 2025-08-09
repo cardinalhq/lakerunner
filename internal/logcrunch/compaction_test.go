@@ -39,8 +39,7 @@ func SegmentIDsOf(groups [][]lrdb.GetLogSegmentsForCompactionRow) [][]int64 {
 
 const (
 	targetSize        = 1_000_000 // 1 MB
-	bytesPerRecord    = 100.0     // estimate
-	targetRecordCount = int64(targetSize / int64(bytesPerRecord))
+	targetRecordCount = 40_000    // 40k records
 )
 
 func TestPackSegments_NoSplit(t *testing.T) {
@@ -51,7 +50,7 @@ func TestPackSegments_NoSplit(t *testing.T) {
 		{SegmentID: 3, StartTs: 21, EndTs: 30, RecordCount: 2000},
 	}
 
-	groups, err := PackSegments(segments, targetSize, bytesPerRecord)
+	groups, err := PackSegments(segments, 40_000)
 	require.NoError(t, err)
 
 	expected := [][]int64{{1, 2, 3}}
@@ -68,7 +67,7 @@ func TestPackSegments_SplitByRecords(t *testing.T) {
 		{SegmentID: 3, StartTs: 21, EndTs: 30, RecordCount: 3000},
 	}
 
-	groups, err := PackSegments(segments, targetSize, bytesPerRecord)
+	groups, err := PackSegments(segments, 10_000)
 	require.NoError(t, err)
 
 	expected := [][]int64{{1}, {2, 3}}
@@ -86,7 +85,7 @@ func TestPackSegments_MultiGroup(t *testing.T) {
 		{SegmentID: 4, StartTs: 31, EndTs: 40, RecordCount: 3000},
 	}
 
-	groups, err := PackSegments(segments, targetSize, bytesPerRecord)
+	groups, err := PackSegments(segments, 10_000)
 	require.NoError(t, err)
 
 	expected := [][]int64{{1, 2, 3}, {4}}
@@ -102,7 +101,7 @@ func TestPackSegments_ExactThreshold(t *testing.T) {
 	}
 
 	// first two sum to 5k+5k=10k, then 10k on its own
-	groups, err := PackSegments(segments, targetSize, bytesPerRecord)
+	groups, err := PackSegments(segments, targetRecordCount)
 	require.NoError(t, err)
 
 	expected := [][]int64{

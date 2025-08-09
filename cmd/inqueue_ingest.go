@@ -30,6 +30,7 @@ import (
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/cmd/storageprofile"
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
+	"github.com/cardinalhq/lakerunner/internal/estimator"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -42,14 +43,20 @@ type InqueueProcessingFunction func(
 	mdb lrdb.StoreFull,
 	awsmanager *awsclient.Manager,
 	inf lrdb.Inqueue,
-	ingest_dateint int32) error
+	ingest_dateint int32,
+	rpf_estimate int64) error
 
 func IngestLoop(doneCtx context.Context, sp storageprofile.StorageProfileProvider, signal string, assumeRoleSessionName string, processingFx InqueueProcessingFunction) error {
 	ctx := context.Background()
 
-	metadataStore, err := dbopen.LRDBStore(ctx)
+	mdb, err := dbopen.LRDBStore(ctx)
 	if err != nil {
 		return err
+	}
+
+	est, err := estimator.NewEstimator(doneCtx, mdb)
+	if err != nil {
+		return fmt.Errorf("failed to create estimator: %w", err)
 	}
 
 	awsmanager, err := awsclient.NewManager(ctx, awsclient.WithAssumeRoleSessionName(assumeRoleSessionName))
@@ -70,7 +77,7 @@ func IngestLoop(doneCtx context.Context, sp storageprofile.StorageProfileProvide
 		}
 
 		t0 := time.Now()
-		shouldBackoff, didWork, err := ingestFiles(ctx, ll, sp, metadataStore, awsmanager, signal, processingFx)
+		shouldBackoff, didWork, err := ingestFiles(ctx, ll, sp, mdb, awsmanager, signal, processingFx, est)
 		if err != nil {
 			return err
 		}
@@ -99,6 +106,7 @@ func ingestFiles(
 	awsmanager *awsclient.Manager,
 	signalType string,
 	processFx InqueueProcessingFunction,
+	est estimator.Estimator,
 ) (bool, bool, error) {
 	ctx, span := tracer.Start(ctx, "ingest", trace.WithAttributes(commonAttributes.ToSlice()...))
 	defer span.End()
@@ -169,8 +177,9 @@ func ingestFiles(
 		}
 	}()
 
+	rpf_estimate := est.Get(inf.OrganizationID, inf.InstanceNum, lrdb.SignalEnum(inf.TelemetryType)).EstimatedRecordCount
 	t0 = time.Now()
-	err = processFx(ctx, ll, tmpdir, sp, mdb, awsmanager, inf, ingestDateint)
+	err = processFx(ctx, ll, tmpdir, sp, mdb, awsmanager, inf, ingestDateint, rpf_estimate)
 	inqueueDuration.Record(ctx, time.Since(t0).Seconds(),
 		metric.WithAttributeSet(commonAttributes),
 		metric.WithAttributes(

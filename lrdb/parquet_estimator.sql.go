@@ -12,21 +12,27 @@ import (
 )
 
 const logSegEstimator = `-- name: LogSegEstimator :many
+WITH params AS (
+  SELECT 1_000_000::float8 AS target_bytes
+),
+bpr AS (
+  SELECT
+    organization_id,
+    instance_num,
+    (sum(file_size)::float8 / NULLIF(sum(record_count), 0))::float8 AS avg_bpr
+  FROM log_seg
+  WHERE
+      record_count > 100
+      AND dateint IN ($1, $2)
+      AND ts_range && int8range($3, $4, '[)')
+  GROUP BY organization_id, instance_num
+)
 SELECT
-  organization_id,
-  instance_num,
-  (sum(file_size)::float8 / sum(record_count))::float8 AS avg_bpr
-FROM log_seg
-WHERE
-  record_count > 100
-  AND dateint IN ($1, $2)
-  AND ts_range && int8range($3, $4, '[)')
-GROUP BY
-  organization_id,
-  instance_num
-ORDER BY
-  organization_id,
-  instance_num
+  b.organization_id,
+  b.instance_num,
+  CEIL(p.target_bytes / NULLIF(b.avg_bpr, 0))::bigint AS estimated_records
+FROM bpr b
+CROSS JOIN params p
 `
 
 type LogSegEstimatorParams struct {
@@ -37,9 +43,9 @@ type LogSegEstimatorParams struct {
 }
 
 type LogSegEstimatorRow struct {
-	OrganizationID uuid.UUID `json:"organization_id"`
-	InstanceNum    int16     `json:"instance_num"`
-	AvgBpr         float64   `json:"avg_bpr"`
+	OrganizationID   uuid.UUID `json:"organization_id"`
+	InstanceNum      int16     `json:"instance_num"`
+	EstimatedRecords int64     `json:"estimated_records"`
 }
 
 // Returns an estimate of the number of log segments, average bytes, average records,
@@ -59,7 +65,7 @@ func (q *Queries) LogSegEstimator(ctx context.Context, arg LogSegEstimatorParams
 	var items []LogSegEstimatorRow
 	for rows.Next() {
 		var i LogSegEstimatorRow
-		if err := rows.Scan(&i.OrganizationID, &i.InstanceNum, &i.AvgBpr); err != nil {
+		if err := rows.Scan(&i.OrganizationID, &i.InstanceNum, &i.EstimatedRecords); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -71,21 +77,27 @@ func (q *Queries) LogSegEstimator(ctx context.Context, arg LogSegEstimatorParams
 }
 
 const metricSegEstimator = `-- name: MetricSegEstimator :many
+WITH params AS (
+  SELECT 1_000_000::float8 AS target_bytes
+),
+bpr AS (
+  SELECT
+    organization_id,
+    instance_num,
+    (sum(file_size)::float8 / NULLIF(sum(record_count), 0))::float8 AS avg_bpr
+  FROM metric_seg
+  WHERE
+      record_count > 100
+      AND dateint IN ($1, $2)
+      AND ts_range && int8range($3, $4, '[)')
+  GROUP BY organization_id, instance_num
+)
 SELECT
-  organization_id,
-  instance_num,
-  (sum(file_size)::float8 / sum(record_count))::float8 AS avg_bpr
-FROM metric_seg
-WHERE
-  record_count > 100
-  AND dateint IN ($1, $2)
-  AND ts_range && int8range($3, $4, '[)')
-GROUP BY
-  organization_id,
-  instance_num
-ORDER BY
-  organization_id,
-  instance_num
+  b.organization_id,
+  b.instance_num,
+  CEIL(p.target_bytes / NULLIF(b.avg_bpr, 0))::bigint AS estimated_records
+FROM bpr b
+CROSS JOIN params p
 `
 
 type MetricSegEstimatorParams struct {
@@ -96,9 +108,9 @@ type MetricSegEstimatorParams struct {
 }
 
 type MetricSegEstimatorRow struct {
-	OrganizationID uuid.UUID `json:"organization_id"`
-	InstanceNum    int16     `json:"instance_num"`
-	AvgBpr         float64   `json:"avg_bpr"`
+	OrganizationID   uuid.UUID `json:"organization_id"`
+	InstanceNum      int16     `json:"instance_num"`
+	EstimatedRecords int64     `json:"estimated_records"`
 }
 
 // Returns an estimate of the number of metric segments, average bytes, average records,
@@ -118,7 +130,7 @@ func (q *Queries) MetricSegEstimator(ctx context.Context, arg MetricSegEstimator
 	var items []MetricSegEstimatorRow
 	for rows.Next() {
 		var i MetricSegEstimatorRow
-		if err := rows.Scan(&i.OrganizationID, &i.InstanceNum, &i.AvgBpr); err != nil {
+		if err := rows.Scan(&i.OrganizationID, &i.InstanceNum, &i.EstimatedRecords); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

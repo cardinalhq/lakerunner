@@ -66,17 +66,16 @@ type Writer struct {
 	// state for gob spill
 	count int64
 	// for schema and parquet output
-	baseName                string
-	schemaNodes             map[string]parquet.Node
-	tmpdir                  string
-	targetSize              int64
-	estimatedBytesPerRecord int64
-	groupFunc               GroupFunc
-	closed                  bool
-	seenCols                map[string]bool
-	keepCols                []string
-	statsProv               StatsProvider
-	currentAcc              StatsAccumulator
+	baseName    string
+	schemaNodes map[string]parquet.Node
+	tmpdir      string
+	rowsPerFile int64
+	groupFunc   GroupFunc
+	closed      bool
+	seenCols    map[string]bool
+	keepCols    []string
+	statsProv   StatsProvider
+	currentAcc  StatsAccumulator
 }
 
 type Result struct {
@@ -126,20 +125,21 @@ func (o *statsProviderOption) apply(w *Writer) {
 // WithStatsAccumulator is a convenience function to use a StatsProvider with a single accumulator.
 // NewWriter sets up a new spill file and remembers your base schema.
 // baseName is used as the “row group name” in NewSchema (for metadata).
-// maxRowsPerFile controls how many rows to write per Parquet file. If <= 0, all rows go into a single file.
-// groupFunc can be nil; if non-nil, it is used to force rows into the same file even if maxRowsPerFile is reached.
-// Writers are not concurrency-safe.
+//
+// rowsPerFile controls how many rows to write per Parquet file. If <= 0, all rows go into a single file.
+// groupFunc can be nil; if non-nil, it is used to force rows into the same file even if rowsPerFile is reached.
 //
 // All files are created in tmpdir, and this directory must be cleaned up by the caller.
 // Files will remain in tmpdir both after Close() and if an error occurs.
 // The common pattern is to create a per-work-item tmpdir, use it, and remove the
 // entire tmpdir when all files are no longer needed.
+//
+// Writers are not concurrency-safe.
 func NewWriter(
 	baseName string,
 	tmpdir string,
 	schemaNodes map[string]parquet.Node,
-	targetSize int64,
-	estimatedBytesPerRecord int64,
+	rowsPerfile int64,
 	opts ...WriterOption,
 ) (*Writer, error) {
 	tmp, err := os.CreateTemp(tmpdir, "buffet-*.gob")
@@ -157,14 +157,13 @@ func NewWriter(
 	}
 
 	writer := &Writer{
-		tmp:                     tmp,
-		encoder:                 gob.NewEncoder(tmp),
-		baseName:                baseName,
-		schemaNodes:             schemaNodes,
-		tmpdir:                  tmpdir,
-		targetSize:              targetSize,
-		estimatedBytesPerRecord: estimatedBytesPerRecord,
-		seenCols:                make(map[string]bool),
+		tmp:         tmp,
+		encoder:     gob.NewEncoder(tmp),
+		baseName:    baseName,
+		schemaNodes: schemaNodes,
+		tmpdir:      tmpdir,
+		rowsPerFile: rowsPerfile,
+		seenCols:    make(map[string]bool),
 	}
 
 	for _, opt := range opts {
@@ -294,11 +293,6 @@ func (w *Writer) Close() ([]Result, error) {
 	var results []Result
 	var prevRow map[string]any
 
-	var maxRowsPerFile int64
-	if w.targetSize > 0 && w.estimatedBytesPerRecord > 0 {
-		maxRowsPerFile = max(w.targetSize/w.estimatedBytesPerRecord, 1)
-	}
-
 	for {
 		var row map[string]any
 		if err := decoder.Decode(&row); err != nil {
@@ -315,7 +309,7 @@ func (w *Writer) Close() ([]Result, error) {
 			}
 		}
 
-		if maxRowsPerFile > 0 && rowsInFile >= maxRowsPerFile &&
+		if w.rowsPerFile > 0 && rowsInFile >= w.rowsPerFile &&
 			!(w.groupFunc != nil && prevRow != nil && w.groupFunc(prevRow, row)) {
 			closeCurrent()
 			results = append(results, Result{

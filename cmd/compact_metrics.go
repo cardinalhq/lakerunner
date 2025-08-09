@@ -83,7 +83,7 @@ func compactRollupItem(
 	sp storageprofile.StorageProfileProvider,
 	mdb lrdb.StoreFull,
 	inf lockmgr.Workable,
-	estBytesPerRecord float64,
+	rpf_estimate int64,
 ) (WorkResult, error) {
 	if !isWantedFrequency(inf.FrequencyMs()) {
 		ll.Info("Skipping compaction for unwanted frequency", slog.Int("frequencyMs", int(inf.FrequencyMs())))
@@ -109,7 +109,7 @@ func compactRollupItem(
 	}
 
 	ll.Info("Processing metric compression item", slog.Any("workItem", inf))
-	return metricCompactItemDo(ctx, ll, mdb, tmpdir, inf, profile, s3client, estBytesPerRecord)
+	return metricCompactItemDo(ctx, ll, mdb, tmpdir, inf, profile, s3client, rpf_estimate)
 }
 
 func metricCompactItemDo(
@@ -120,7 +120,7 @@ func metricCompactItemDo(
 	inf lockmgr.Workable,
 	profile storageprofile.StorageProfile,
 	s3client *awsclient.S3Client,
-	estBytesPerRecord float64,
+	rpf_estimate int64,
 ) (WorkResult, error) {
 	st, et, ok := RangeBounds(inf.TsRange())
 	if !ok {
@@ -150,7 +150,7 @@ func metricCompactItemDo(
 		return WorkResultSuccess, nil
 	}
 
-	err = compactInterval(ctx, ll, mdb, tmpdir, inf, profile, s3client, inRows, estBytesPerRecord)
+	err = compactInterval(ctx, ll, mdb, tmpdir, inf, profile, s3client, inRows, rpf_estimate)
 	if err != nil {
 		ll.Error("Failed to compact interval", slog.Any("error", err))
 		return WorkResultTryAgainLater, err
@@ -211,7 +211,7 @@ func compactInterval(
 	profile storageprofile.StorageProfile,
 	s3client *awsclient.S3Client,
 	rows []lrdb.MetricSeg,
-	estBytesPerRecord float64) error {
+	rpf_estimate int64) error {
 	st, _, ok := RangeBounds(inf.TsRange())
 	if !ok {
 		ll.Error("Invalid time range in work item", slog.Any("tsRange", inf.TsRange()))
@@ -246,7 +246,7 @@ func compactInterval(
 		return fmt.Errorf("invalid time range in work item: %v", inf.TsRange())
 	}
 
-	merger, err := NewTIDMerger(tmpdir, files, inf.FrequencyMs(), targetFileSize, int64(estBytesPerRecord), startTS.Time.UTC().UnixMilli(), endTS.Time.UTC().UnixMilli())
+	merger, err := NewTIDMerger(tmpdir, files, inf.FrequencyMs(), rpf_estimate, startTS.Time.UTC().UnixMilli(), endTS.Time.UTC().UnixMilli())
 	if err != nil {
 		ll.Error("Failed to create TIDMerger", slog.Any("error", err))
 		return fmt.Errorf("creating TIDMerger: %w", err)
@@ -260,7 +260,7 @@ func compactInterval(
 		ll.Error("Failed to merge files", slog.Any("error", err))
 		return fmt.Errorf("merging files: %w", err)
 	}
-	ll.Info("Merge results", slog.Any("sourceFiles", files), slog.Any("mergeResult", mergeResult), slog.Float64("estBytesPerRecord", estBytesPerRecord))
+	ll.Info("Merge results", slog.Any("sourceFiles", files), slog.Any("mergeResult", mergeResult), slog.Int64("estimatedRowCount", rpf_estimate))
 
 	startingFileCount := len(files)
 	endingFileCount := len(mergeResult)

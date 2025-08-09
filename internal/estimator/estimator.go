@@ -37,7 +37,7 @@ type Estimator interface {
 }
 
 type Estimate struct {
-	AvgBytesPerRecord float64
+	EstimatedRecordCount int64
 }
 
 type estimatorKey struct {
@@ -83,17 +83,15 @@ func (e *estimator) Get(organizationID uuid.UUID, instanceNum int16, signal lrdb
 	if len(e.currentMetricEstimates) > 0 {
 		estimate := Estimate{}
 		for _, estimate := range e.currentMetricEstimates {
-			estimate.AvgBytesPerRecord += estimate.AvgBytesPerRecord
+			estimate.EstimatedRecordCount += estimate.EstimatedRecordCount
 		}
-		div := float64(len(e.currentMetricEstimates))
-		estimate.AvgBytesPerRecord /= div
+		div := len(e.currentMetricEstimates)
+		estimate.EstimatedRecordCount /= int64(div)
 		return estimate
 	}
 
 	// If we have no estimates at all, return a best guess.
-	guess := Estimate{
-		AvgBytesPerRecord: 100,
-	}
+	guess := Estimate{EstimatedRecordCount: 40_000}
 	return guess
 }
 
@@ -159,9 +157,7 @@ func (e *estimator) updateEstimates(mdb EstimationQuerier) error {
 			InstanceNum:    row.InstanceNum,
 			Signal:         lrdb.SignalEnumMetrics,
 		}
-		e.currentMetricEstimates[key] = Estimate{
-			AvgBytesPerRecord: row.AvgBpr,
-		}
+		e.currentMetricEstimates[key] = Estimate{EstimatedRecordCount: row.EstimatedRecords}
 	}
 
 	for _, row := range logRows {
@@ -170,9 +166,7 @@ func (e *estimator) updateEstimates(mdb EstimationQuerier) error {
 			InstanceNum:    row.InstanceNum,
 			Signal:         lrdb.SignalEnumLogs,
 		}
-		e.currentMetricEstimates[key] = Estimate{
-			AvgBytesPerRecord: row.AvgBpr,
-		}
+		e.currentMetricEstimates[key] = Estimate{EstimatedRecordCount: row.EstimatedRecords}
 	}
 
 	return nil

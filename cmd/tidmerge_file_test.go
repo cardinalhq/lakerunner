@@ -176,11 +176,9 @@ func TestTIDMergeWithRows(t *testing.T) {
 			tmpdir + "/test3.parquet",
 		},
 		10000,
-		1000000,
-		100,
+		10_000,
 		1749505552/10000*10000,
-		1749505552/10000*10000+20000,
-	)
+		1749505552/10000*10000+20000)
 	require.NoError(t, err)
 
 	results, stats, err := tm.Merge()

@@ -83,7 +83,7 @@ func metricRollupItem(
 	sp storageprofile.StorageProfileProvider,
 	mdb lrdb.StoreFull,
 	inf lockmgr.Workable,
-	estBytesPerRecord float64,
+	rpf_estimate int64,
 ) (WorkResult, error) {
 	previousFrequency, ok := rollupSources[inf.FrequencyMs()]
 	if !ok {
@@ -113,8 +113,8 @@ func metricRollupItem(
 		return 0, err
 	}
 
-	ll.Info("Processing rollup item", slog.Int("previousFrequency", int(previousFrequency)), slog.Any("workItem", inf.AsMap()), slog.Float64("estBytesPerRecord", estBytesPerRecord))
-	return metricRollupItemDo(ctx, ll, mdb, tmpdir, inf, profile, s3client, previousFrequency, estBytesPerRecord)
+	ll.Info("Processing rollup item", slog.Int("previousFrequency", int(previousFrequency)), slog.Any("workItem", inf.AsMap()), slog.Int64("estimatedRowsPerFile", rpf_estimate))
+	return metricRollupItemDo(ctx, ll, mdb, tmpdir, inf, profile, s3client, previousFrequency, rpf_estimate)
 }
 
 func metricRollupItemDo(
@@ -126,7 +126,7 @@ func metricRollupItemDo(
 	profile storageprofile.StorageProfile,
 	s3client *awsclient.S3Client,
 	previousFrequency int32,
-	estBytesPerRecord float64,
+	rpf_estimate int64,
 ) (WorkResult, error) {
 	st, et, ok := RangeBounds(inf.TsRange())
 	if !ok {
@@ -162,7 +162,7 @@ func metricRollupItemDo(
 		return WorkResultTryAgainLater, err
 	}
 
-	err = rollupInterval(ctx, ll, mdb, tmpdir, inf, profile, s3client, sourceRows, currentRows, estBytesPerRecord)
+	err = rollupInterval(ctx, ll, mdb, tmpdir, inf, profile, s3client, sourceRows, currentRows, rpf_estimate)
 	if err != nil {
 		ll.Error("Failed to rollup interval", slog.Any("error", err))
 		return WorkResultTryAgainLater, err
@@ -182,7 +182,7 @@ func rollupInterval(
 	s3client *awsclient.S3Client,
 	sourceRows []lrdb.MetricSeg,
 	existingRowsForThisRollup []lrdb.MetricSeg,
-	estBytesPerRecord float64,
+	rpf_estimate int64,
 ) error {
 	if len(sourceRows) == 0 {
 		return nil
@@ -225,7 +225,7 @@ func rollupInterval(
 	}
 
 	ll.Info("Rolling up files", slog.Int("fileCount", len(files)), slog.Int("frequency", int(inf.FrequencyMs())), slog.Int64("startTS", startTS.Time.UTC().UnixMilli()), slog.Int64("endTS", endTS.Time.UTC().UnixMilli()))
-	merger, err := NewTIDMerger(tmpdir, files, inf.FrequencyMs(), targetFileSize, int64(estBytesPerRecord), startTS.Time.UTC().UnixMilli(), endTS.Time.UTC().UnixMilli())
+	merger, err := NewTIDMerger(tmpdir, files, inf.FrequencyMs(), rpf_estimate, startTS.Time.UTC().UnixMilli(), endTS.Time.UTC().UnixMilli())
 	if err != nil {
 		ll.Error("Failed to create TIDMerger", slog.Any("error", err))
 		return fmt.Errorf("creating TIDMerger: %w", err)

@@ -77,14 +77,14 @@ func TestLastFromGroup(t *testing.T) {
 		{
 			name:     "EmptyGroup",
 			group:    nil,
-			expected: 1, // last = 0, so returns 0+1
+			expected: 0,
 		},
 		{
 			name: "SingleElement",
 			group: []lrdb.GetLogSegmentsForCompactionRow{
 				{EndTs: 12345},
 			},
-			expected: 12346,
+			expected: 12345,
 		},
 		{
 			name: "MultipleElements",
@@ -93,7 +93,7 @@ func TestLastFromGroup(t *testing.T) {
 				{EndTs: 100},
 				{EndTs: 200},
 			},
-			expected: 301,
+			expected: 300,
 		},
 		{
 			name: "DuplicateMax",
@@ -102,7 +102,7 @@ func TestLastFromGroup(t *testing.T) {
 				{EndTs: 50},
 				{EndTs: 10},
 			},
-			expected: 51,
+			expected: 50,
 		},
 	}
 
