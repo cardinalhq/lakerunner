@@ -12,7 +12,7 @@ import (
 )
 
 const getMetricSegs = `-- name: GetMetricSegs :many
-SELECT organization_id, dateint, frequency_ms, segment_id, instance_num, tid_partition, ts_range, record_count, file_size, tid_count, ingest_dateint, published, rolledup, created_at
+SELECT organization_id, dateint, frequency_ms, segment_id, instance_num, tid_partition, ts_range, record_count, file_size, tid_count, ingest_dateint, published, rolledup, created_at, created_by
 FROM metric_seg
 WHERE
   organization_id = $1 AND
@@ -68,6 +68,7 @@ func (q *Queries) GetMetricSegs(ctx context.Context, arg GetMetricSegsParams) ([
 			&i.Published,
 			&i.Rolledup,
 			&i.CreatedAt,
+			&i.CreatedBy,
 		); err != nil {
 			return nil, err
 		}

@@ -54,7 +54,7 @@ func (g genericMapReaderAdapter) Close() error                             { ret
 
 func (fileOpenerAdapter) NewGenericMapReader(f *os.File, schema *parquet.Schema) (GenericMapReader, error) {
 	// If your parquet-go requires options/schema here, thread them in as needed.
-	gr := parquet.NewGenericReader[map[string]any](f)
+	gr := parquet.NewGenericReader[map[string]any](f, schema)
 	return genericMapReaderAdapter{r: gr}, nil
 }
 

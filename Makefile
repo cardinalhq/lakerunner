@@ -126,8 +126,8 @@ really-clean: clean
 new-migration:
 	@if [ -z "$$name" ]; then echo "Usage: make new-migration name=migration_name"; exit 1; fi; \
 	ts=$$(date +%s); \
-	up_file="pkg/lrdb/migrations/$${ts}_$${name}.up.sql"; \
-	down_file="pkg/lrdb/migrations/$${ts}_$${name}.down.sql"; \
+	up_file="lrdb/migrations/$${ts}_$${name}.up.sql"; \
+	down_file="lrdb/migrations/$${ts}_$${name}.down.sql"; \
 	touch "$$up_file" "$$down_file"; \
 	echo "-- $${ts}_$${name}.up.sql" > "$$up_file"; \
 	echo "-- $${ts}_$${name}.down.sql" > "$$down_file"; \
