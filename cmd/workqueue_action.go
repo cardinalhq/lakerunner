@@ -44,7 +44,7 @@ type RunqueueProcessingFunction func(
 	sp storageprofile.StorageProfileProvider,
 	mdb lrdb.StoreFull,
 	inf lockmgr.Workable,
-	rpf_estimate int64,
+	rpfEstimate int64,
 ) (WorkResult, error)
 
 type WorkResult int

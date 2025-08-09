@@ -98,7 +98,7 @@ func init() {
 }
 
 func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
-	awsmanager *awsclient.Manager, inf lrdb.Inqueue, ingest_dateint int32, rpf_estimate int64) error {
+	awsmanager *awsclient.Manager, inf lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64) error {
 	profile, err := sp.Get(ctx, inf.OrganizationID, inf.InstanceNum)
 	if err != nil {
 		ll.Error("Failed to get storage profile", slog.Any("error", err))
@@ -152,7 +152,7 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp stora
 		}
 
 		// Check file type and convert if supported
-		if fnames, err := convertFileIfSupported(ll, tmpfilename, tmpdir, inf.Bucket, inf.ObjectID, rpf_estimate); err != nil {
+		if fnames, err := convertFileIfSupported(ll, tmpfilename, tmpdir, inf.Bucket, inf.ObjectID, rpfEstimate); err != nil {
 			ll.Error("Failed to convert file", slog.Any("error", err))
 			// TODO add counter for failure to convert, probably in each convert function
 			return err
@@ -174,7 +174,7 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp stora
 		defer func() {
 			_ = fh.Close()
 		}()
-		splitResults, err := logcrunch.ProcessAndSplit(ll, fh, tmpdir, ingest_dateint, rpf_estimate)
+		splitResults, err := logcrunch.ProcessAndSplit(ll, fh, tmpdir, ingest_dateint, rpfEstimate)
 		if err != nil {
 			ll.Error("Failed to fingerprint file", slog.Any("error", err))
 			return err
@@ -244,16 +244,16 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp stora
 
 // convertFileIfSupported checks the file type and converts it if supported.
 // Returns nil if the file type is not supported (file will be skipped).
-func convertFileIfSupported(ll *slog.Logger, tmpfilename, tmpdir, bucket, objectID string, rpf_estimate int64) ([]string, error) {
+func convertFileIfSupported(ll *slog.Logger, tmpfilename, tmpdir, bucket, objectID string, rpfEstimate int64) ([]string, error) {
 	// TODO add a counter for each type we process, and a counter for unsupported types
 	// Include the signal type in the attributes, as well as the converter used, and the extension found.
 	switch {
 	case strings.HasSuffix(objectID, ".parquet"):
-		return ingestlogs.ConvertRawParquet(tmpfilename, tmpdir, bucket, objectID, rpf_estimate)
+		return ingestlogs.ConvertRawParquet(tmpfilename, tmpdir, bucket, objectID, rpfEstimate)
 	case strings.HasSuffix(objectID, ".json.gz"):
-		return convertJSONGzFile(tmpfilename, tmpdir, bucket, objectID, rpf_estimate)
+		return convertJSONGzFile(tmpfilename, tmpdir, bucket, objectID, rpfEstimate)
 	case strings.HasSuffix(objectID, ".binpb"):
-		return convertProtoFile(tmpfilename, tmpdir, bucket, objectID, rpf_estimate)
+		return convertProtoFile(tmpfilename, tmpdir, bucket, objectID, rpfEstimate)
 	default:
 		ll.Warn("Unsupported file type, skipping", slog.String("objectID", objectID))
 		return nil, nil
@@ -261,7 +261,7 @@ func convertFileIfSupported(ll *slog.Logger, tmpfilename, tmpdir, bucket, object
 }
 
 // convertJSONGzFile converts a JSON.gz file to the standardized format
-func convertJSONGzFile(tmpfilename, tmpdir, bucket, objectID string, rpf_estimate int64) ([]string, error) {
+func convertJSONGzFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate int64) ([]string, error) {
 	// Create a mapper that recognizes "date" as a timestamp field
 	mapper := translate.NewMapper(
 		translate.WithTimestampColumn("date"),
@@ -311,7 +311,7 @@ func convertJSONGzFile(tmpfilename, tmpdir, bucket, objectID string, rpf_estimat
 	}
 
 	// Create writer with complete schema
-	w, err := buffet.NewWriter("fileconv", tmpdir, nmb.Build(), rpf_estimate)
+	w, err := buffet.NewWriter("fileconv", tmpdir, nmb.Build(), rpfEstimate)
 	if err != nil {
 		return nil, err
 	}
@@ -350,7 +350,7 @@ func convertJSONGzFile(tmpfilename, tmpdir, bucket, objectID string, rpf_estimat
 }
 
 // convertProtoFile converts a protobuf file to the standardized format
-func convertProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpf_estimate int64) ([]string, error) {
+func convertProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate int64) ([]string, error) {
 	// Create a mapper for protobuf files
 	mapper := translate.NewMapper()
 
@@ -397,7 +397,7 @@ func convertProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpf_estimate
 	}
 
 	// Create writer with complete schema
-	w, err := buffet.NewWriter("fileconv", tmpdir, nmb.Build(), rpf_estimate)
+	w, err := buffet.NewWriter("fileconv", tmpdir, nmb.Build(), rpfEstimate)
 	if err != nil {
 		return nil, err
 	}

@@ -88,7 +88,7 @@ func init() {
 }
 
 func metricIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
-	awsmanager *awsclient.Manager, inf lrdb.Inqueue, ingest_dateint int32, rpf_estimate int64) error {
+	awsmanager *awsclient.Manager, inf lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64) error {
 	profile, err := sp.Get(ctx, inf.OrganizationID, inf.InstanceNum)
 	if err != nil {
 		ll.Error("Failed to get storage profile", slog.Any("error", err))
@@ -137,7 +137,7 @@ func metricIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp st
 		}
 
 		// Check file type and convert if supported
-		if fnames, err := convertMetricsFileIfSupported(ll, tmpfilename, tmpdir, inf.Bucket, inf.ObjectID, rpf_estimate); err != nil {
+		if fnames, err := convertMetricsFileIfSupported(ll, tmpfilename, tmpdir, inf.Bucket, inf.ObjectID, rpfEstimate); err != nil {
 			ll.Error("Failed to convert file", slog.Any("error", err))
 			return err
 		} else if fnames != nil {
@@ -156,7 +156,7 @@ func metricIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp st
 			_ = fh.Close()
 		}()
 
-		if err := crunchMetricFile(ctx, ll, tmpdir, fh, inf, s3client, mdb, ingest_dateint, rpf_estimate); err != nil {
+		if err := crunchMetricFile(ctx, ll, tmpdir, fh, inf, s3client, mdb, ingest_dateint, rpfEstimate); err != nil {
 			ll.Error("Failed to crunch metric file", slog.Any("error", err), slog.String("file", fname))
 			return err
 		}
@@ -180,7 +180,7 @@ type TagSketch struct {
 }
 
 // crunchMetricFile processes the metric file and generates sketches or other
-func crunchMetricFile(ctx context.Context, ll *slog.Logger, tmpdir string, fh *filecrunch.FileHandle, inf lrdb.Inqueue, s3client *awsclient.S3Client, mdb lrdb.StoreFull, ingest_dateint int32, rpf_estimate int64) error {
+func crunchMetricFile(ctx context.Context, ll *slog.Logger, tmpdir string, fh *filecrunch.FileHandle, inf lrdb.Inqueue, s3client *awsclient.S3Client, mdb lrdb.StoreFull, ingest_dateint int32, rpfEstimate int64) error {
 	reader := parquet.NewReader(fh.File, fh.Schema)
 	defer reader.Close()
 
@@ -334,7 +334,7 @@ func crunchMetricFile(ctx context.Context, ll *slog.Logger, tmpdir string, fh *f
 			slog.Int64("endTS", (block.Block+1)*int64(block.FrequencyMS)-1),
 		)
 
-		err := writeMetricSketchParquet(ctx, tmpdir, blocknum, block, inf, s3client, ll, mdb, ingest_dateint, rpf_estimate)
+		err := writeMetricSketchParquet(ctx, tmpdir, blocknum, block, inf, s3client, ll, mdb, ingest_dateint, rpfEstimate)
 		if err != nil {
 			return fmt.Errorf("writing metric sketch parquet: %w", err)
 		}
@@ -343,7 +343,7 @@ func crunchMetricFile(ctx context.Context, ll *slog.Logger, tmpdir string, fh *f
 	return nil
 }
 
-func writeMetricSketchParquet(ctx context.Context, tmpdir string, blocknum int64, block *TimeBlock, inf lrdb.Inqueue, s3client *awsclient.S3Client, ll *slog.Logger, mdb lrdb.StoreFull, ingest_dateint int32, rpf_estimate int64) error {
+func writeMetricSketchParquet(ctx context.Context, tmpdir string, blocknum int64, block *TimeBlock, inf lrdb.Inqueue, s3client *awsclient.S3Client, ll *slog.Logger, mdb lrdb.StoreFull, ingest_dateint int32, rpfEstimate int64) error {
 	addedNodes := map[string]any{
 		"_cardinalhq.timestamp":      int64(1),
 		"_cardinalhq.name":           "x",
@@ -370,7 +370,7 @@ func writeMetricSketchParquet(ctx context.Context, tmpdir string, blocknum int64
 		return fmt.Errorf("adding nodes to node builder: %w", err)
 	}
 	nodes := block.nodebuilder.Build()
-	pw, err := buffet.NewWriter("metrics", tmpdir, nodes, rpf_estimate)
+	pw, err := buffet.NewWriter("metrics", tmpdir, nodes, rpfEstimate)
 	if err != nil {
 		return fmt.Errorf("creating buffet writer: %w", err)
 	}
@@ -567,10 +567,10 @@ func handleHistogram(bucketCounts []float64, bucketBounds []float64) (counts, va
 
 // convertMetricsFileIfSupported checks the file type and converts it if supported.
 // Returns nil if the file type is not supported (file will be skipped).
-func convertMetricsFileIfSupported(ll *slog.Logger, tmpfilename, tmpdir, bucket, objectID string, rpf_estimate int64) ([]string, error) {
+func convertMetricsFileIfSupported(ll *slog.Logger, tmpfilename, tmpdir, bucket, objectID string, rpfEstimate int64) ([]string, error) {
 	switch {
 	case strings.HasSuffix(objectID, ".binpb"):
-		return convertMetricsProtoFile(tmpfilename, tmpdir, bucket, objectID, rpf_estimate)
+		return convertMetricsProtoFile(tmpfilename, tmpdir, bucket, objectID, rpfEstimate)
 	default:
 		ll.Warn("Unsupported file type for metrics, skipping", slog.String("objectID", objectID))
 		return nil, nil
@@ -578,7 +578,7 @@ func convertMetricsFileIfSupported(ll *slog.Logger, tmpfilename, tmpdir, bucket,
 }
 
 // convertMetricsProtoFile converts a protobuf file to the standardized format
-func convertMetricsProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpf_estimate int64) ([]string, error) {
+func convertMetricsProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate int64) ([]string, error) {
 	// Create a mapper for protobuf files
 	mapper := translate.NewMapper()
 
@@ -625,7 +625,7 @@ func convertMetricsProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpf_e
 	}
 
 	// Create writer with complete schema
-	w, err := buffet.NewWriter("fileconv", tmpdir, nmb.Build(), rpf_estimate)
+	w, err := buffet.NewWriter("fileconv", tmpdir, nmb.Build(), rpfEstimate)
 	if err != nil {
 		return nil, err
 	}

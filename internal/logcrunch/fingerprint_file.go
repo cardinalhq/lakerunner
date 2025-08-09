@@ -46,7 +46,7 @@ type HourlyResult struct {
 // ProcessAndSplit reads every record from fh, groups rows by dateint,
 // fingerprints them, buffers each group to disk (so we never buffer in RAM),
 // then does a second pass to derive a minimal schema and write Parquet files.
-func ProcessAndSplit(ll *slog.Logger, fh *filecrunch.FileHandle, tmpdir string, ingestDateint int32, rpf_estimate int64) (map[SplitKey]HourlyResult, error) {
+func ProcessAndSplit(ll *slog.Logger, fh *filecrunch.FileHandle, tmpdir string, ingestDateint int32, rpfEstimate int64) (map[SplitKey]HourlyResult, error) {
 	type gs struct {
 		writer  *buffet.Writer
 		prints  mapset.Set[int64]
@@ -86,7 +86,7 @@ func ProcessAndSplit(ll *slog.Logger, fh *filecrunch.FileHandle, tmpdir string, 
 
 		st, exists := groups[key]
 		if !exists {
-			w, err := buffet.NewWriter(fh.File.Name(), tmpdir, fh.Nodes, rpf_estimate)
+			w, err := buffet.NewWriter(fh.File.Name(), tmpdir, fh.Nodes, rpfEstimate)
 			if err != nil {
 				return nil, err
 			}

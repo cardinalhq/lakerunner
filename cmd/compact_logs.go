@@ -86,7 +86,7 @@ func compactLogsFor(
 	sp storageprofile.StorageProfileProvider,
 	mdb lrdb.StoreFull,
 	inf lockmgr.Workable,
-	rpf_estimate int64,
+	rpfEstimate int64,
 ) (WorkResult, error) {
 	profile, err := sp.Get(ctx, inf.OrganizationID(), inf.InstanceNum())
 	if err != nil {
@@ -107,7 +107,7 @@ func compactLogsFor(
 	}
 
 	ll.Info("Processing log compression item", slog.Any("workItem", inf.AsMap()))
-	return logCompactItemDo(ctx, ll, mdb, tmpdir, inf, profile, s3client, rpf_estimate)
+	return logCompactItemDo(ctx, ll, mdb, tmpdir, inf, profile, s3client, rpfEstimate)
 }
 
 func logCompactItemDo(
@@ -118,7 +118,7 @@ func logCompactItemDo(
 	inf lockmgr.Workable,
 	sp storageprofile.StorageProfile,
 	s3client *awsclient.S3Client,
-	rpf_estimate int64,
+	rpfEstimate int64,
 ) (WorkResult, error) {
 	st, et, ok := RangeBounds(inf.TsRange())
 	if !ok {
@@ -153,7 +153,7 @@ func logCompactItemDo(
 		return WorkResultSuccess, nil
 	}
 
-	packed, err := logcrunch.PackSegments(segments, rpf_estimate)
+	packed, err := logcrunch.PackSegments(segments, rpfEstimate)
 	if err != nil {
 		ll.Error("Error packing segments", slog.String("error", err.Error()))
 		return WorkResultTryAgainLater, err

@@ -44,7 +44,7 @@ type InqueueProcessingFunction func(
 	awsmanager *awsclient.Manager,
 	inf lrdb.Inqueue,
 	ingest_dateint int32,
-	rpf_estimate int64) error
+	rpfEstimate int64) error
 
 func IngestLoop(doneCtx context.Context, sp storageprofile.StorageProfileProvider, signal string, assumeRoleSessionName string, processingFx InqueueProcessingFunction) error {
 	ctx := context.Background()
@@ -177,9 +177,9 @@ func ingestFiles(
 		}
 	}()
 
-	rpf_estimate := est.Get(inf.OrganizationID, inf.InstanceNum, lrdb.SignalEnum(inf.TelemetryType)).EstimatedRecordCount
+	rpfEstimate := est.Get(inf.OrganizationID, inf.InstanceNum, lrdb.SignalEnum(inf.TelemetryType)).EstimatedRecordCount
 	t0 = time.Now()
-	err = processFx(ctx, ll, tmpdir, sp, mdb, awsmanager, inf, ingestDateint, rpf_estimate)
+	err = processFx(ctx, ll, tmpdir, sp, mdb, awsmanager, inf, ingestDateint, rpfEstimate)
 	inqueueDuration.Record(ctx, time.Since(t0).Seconds(),
 		metric.WithAttributeSet(commonAttributes),
 		metric.WithAttributes(

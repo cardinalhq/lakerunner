@@ -18,7 +18,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"path"
+	"reflect"
 	"regexp"
 	"strings"
 
@@ -27,8 +29,32 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/buffet"
 )
 
+// getSchema scans a raw Parquet file and infers a flattened schema.
+//
+// It returns a map from fully-qualified field names to a representative sample
+// value (used only to convey the field’s Go type), along with the total number
+// of rows in the file.
+//
+// Why this is needed: nested/complex Parquet fields (maps, structs, arrays) are
+// flattened into multiple dynamically named columns by the translator, so we
+// must discover the *actual* emitted column set before building the writer.
+//
+// Behavior:
+//   - If the file has zero rows, it returns (nil, 0, nil).
+//   - If the same flattened column appears with conflicting Go types across rows,
+//     the function returns an error.
+//   - Only one representative value per column is stored; callers should rely on
+//     its dynamic type, not its contents.
+//
+// Returns:
+//
+//	schema: map[columnName]sampleValue
+//	nRows : total number of rows in the file
+//	err   : non-nil on I/O or schema conflicts
 func getSchema(sourcefile string) (map[string]any, int64, error) {
 	schema := make(map[string]any)
+	types := make(map[string]reflect.Type)
+
 	r, err := rawparquet.NewRawParquetReader(sourcefile, translate.NewMapper(), nil)
 	if err != nil {
 		return nil, 0, err
@@ -49,12 +75,13 @@ func getSchema(sourcefile string) (map[string]any, int64, error) {
 			break
 		}
 		for k, v := range row {
-			if _, ok := schema[k]; !ok {
+			t := reflect.TypeOf(v)
+			if prev, ok := types[k]; !ok {
+				types[k] = t
 				schema[k] = v
-			} else {
-				if fmt.Sprintf("%T", schema[k]) != fmt.Sprintf("%T", v) {
-					return nil, 0, fmt.Errorf("type mismatch for key %s: %T vs %T", k, schema[k], v)
-				}
+			} else if t != prev {
+				// TODO: coerce numeric types here instead of failing
+				return nil, 0, fmt.Errorf("type mismatch for key %q: %v vs %v", k, prev, t)
 			}
 		}
 	}
@@ -62,7 +89,7 @@ func getSchema(sourcefile string) (map[string]any, int64, error) {
 	return schema, nRows, nil
 }
 
-func ConvertRawParquet(sourcefile, tmpdir, bucket, objectID string, rpf_estimate int64) ([]string, error) {
+func ConvertRawParquet(sourcefile, tmpdir, bucket, objectID string, rpfEstimate int64) ([]string, error) {
 	schemanodes, nRows, err := getSchema(sourcefile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get schema: %w", err)
@@ -88,7 +115,7 @@ func ConvertRawParquet(sourcefile, tmpdir, bucket, objectID string, rpf_estimate
 		return nil, fmt.Errorf("failed to add resource nodes: %w", err)
 	}
 
-	w, err := buffet.NewWriter("fileconv", tmpdir, nmb.Build(), rpf_estimate)
+	w, err := buffet.NewWriter("fileconv", tmpdir, nmb.Build(), rpfEstimate)
 	if err != nil {
 		return nil, fmt.Errorf("Failed to create writer: %w", err)
 	}
@@ -96,16 +123,13 @@ func ConvertRawParquet(sourcefile, tmpdir, bucket, objectID string, rpf_estimate
 	closed := false
 	defer func() {
 		if !closed {
-			_, err := w.Close()
-			if errors.Is(err, buffet.ErrAlreadyClosed) {
-				if err != nil {
-					slog.Error("Failed to close writer", slog.Any("error", err))
-				}
+			if _, err := w.Close(); err != nil && !errors.Is(err, buffet.ErrAlreadyClosed) {
+				slog.Error("failed to close writer", slog.Any("error", err))
 			}
 		}
 	}()
 
-	baseitems := map[string]string{
+	baseitems := map[string]any{
 		"resource.bucket.name": bucket,
 		"resource.file.name":   "./" + objectID,
 		"resource.file.type":   GetFileType(objectID),
@@ -120,19 +144,19 @@ func ConvertRawParquet(sourcefile, tmpdir, bucket, objectID string, rpf_estimate
 		if done {
 			break
 		}
-		for k, v := range baseitems {
-			row[k] = v
-		}
-		if err := w.Write(row); err != nil {
+		rowCopy := make(map[string]any, len(row)+len(baseitems))
+		maps.Copy(rowCopy, row)
+		maps.Copy(rowCopy, baseitems) // will overwrite any existing keys
+		if err := w.Write(rowCopy); err != nil {
 			return nil, fmt.Errorf("failed to write row: %w", err)
 		}
 	}
 
 	result, err := w.Close()
+	closed = true
 	if err != nil {
 		return nil, fmt.Errorf("failed to close writer: %w", err)
 	}
-	closed = true
 	if len(result) == 0 {
 		return nil, fmt.Errorf("no records written to file")
 	}
