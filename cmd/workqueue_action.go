@@ -149,8 +149,7 @@ func workqueueProcess(
 	est estimator.Estimator,
 	pfx RunqueueProcessingFunction) (bool, bool, error) {
 
-	ctx, span := tracer.Start(ctx, "workqueueProcess",
-		trace.WithAttributes(commonAttributes.ToSlice()...))
+	ctx, span := tracer.Start(ctx, "workqueueProcess", trace.WithAttributes(commonAttributes.ToSlice()...))
 	defer span.End()
 
 	t0 := time.Now()
@@ -187,13 +186,18 @@ func workqueueProcess(
 		slog.Int64("workQueueID", inf.ID()),
 		slog.Int("tries", int(inf.Tries())),
 		slog.String("organizationID", inf.OrganizationID().String()),
-		slog.Int("instanceNum", int(inf.InstanceNum())))
+		slog.Int("instanceNum", int(inf.InstanceNum())),
+	)
 
 	ll.Info("Processing work queue item",
 		slog.String("signal", signal),
 		slog.String("action", action),
 		slog.Int("priority", int(inf.Priority())),
-		slog.Int("frequencyMs", int(inf.FrequencyMs())))
+		slog.Int("frequencyMs", int(inf.FrequencyMs())),
+		slog.Int("dateint", int(inf.Dateint())),
+		slog.Time("runnableAt", inf.RunnableAt()),
+		slog.Duration("workLag", workLag),
+	)
 
 	tmpdir, err := os.MkdirTemp("", "lakerunner-workqueue-*")
 	if err != nil {
