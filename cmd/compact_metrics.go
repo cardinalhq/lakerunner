@@ -39,7 +39,11 @@ func init() {
 			helpers.CleanTempDir()
 
 			servicename := "lakerunner-compact-metrics"
-			doneCtx, doneFx, err := setupTelemetry(servicename)
+			addlAttrs := attribute.NewSet(
+				attribute.String("signal", "metrics"),
+				attribute.String("action", "compact"),
+			)
+			doneCtx, doneFx, err := setupTelemetry(servicename, &addlAttrs)
 			if err != nil {
 				return fmt.Errorf("failed to setup telemetry: %w", err)
 			}
@@ -49,17 +53,6 @@ func init() {
 					slog.Error("Error shutting down telemetry", slog.Any("error", err))
 				}
 			}()
-
-			addlAttrs := attribute.NewSet(
-				attribute.String("signal", "metrics"),
-				attribute.String("action", "compact"),
-			)
-			iter := attribute.NewMergeIterator(&commonAttributes, &addlAttrs)
-			attrs := []attribute.KeyValue{}
-			for iter.Next() {
-				attrs = append(attrs, iter.Attribute())
-			}
-			commonAttributes = attribute.NewSet(attrs...)
 
 			go diskUsageLoop(doneCtx)
 

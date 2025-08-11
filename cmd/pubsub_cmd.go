@@ -37,7 +37,10 @@ func init() {
 		Short: "listen on one or more http pubsub sources",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			servicename := "pubsub-http"
-			doneCtx, doneFx, err := setupTelemetry(servicename)
+			addlAttrs := attribute.NewSet(
+				attribute.String("action", "pubsub-http"),
+			)
+			doneCtx, doneFx, err := setupTelemetry(servicename, &addlAttrs)
 			if err != nil {
 				return fmt.Errorf("failed to setup telemetry: %w", err)
 			}
@@ -47,16 +50,6 @@ func init() {
 					slog.Error("Error shutting down telemetry", slog.Any("error", err))
 				}
 			}()
-
-			addlAttrs := attribute.NewSet(
-				attribute.String("action", "pubsub-http"),
-			)
-			iter := attribute.NewMergeIterator(&commonAttributes, &addlAttrs)
-			attrs := []attribute.KeyValue{}
-			for iter.Next() {
-				attrs = append(attrs, iter.Attribute())
-			}
-			commonAttributes = attribute.NewSet(attrs...)
 
 			cmd, err := pubsub.NewHTTPListener()
 			if err != nil {
@@ -73,7 +66,10 @@ func init() {
 		Short: "listen on one or more SQS pubsub sources",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			servicename := "pubsub-sqs"
-			doneCtx, doneFx, err := setupTelemetry(servicename)
+			addlAttrs := attribute.NewSet(
+				attribute.String("action", "pubsub-sqs"),
+			)
+			doneCtx, doneFx, err := setupTelemetry(servicename, &addlAttrs)
 			if err != nil {
 				return fmt.Errorf("failed to setup telemetry: %w", err)
 			}
@@ -83,16 +79,6 @@ func init() {
 					slog.Error("Error shutting down telemetry", slog.Any("error", err))
 				}
 			}()
-
-			addlAttrs := attribute.NewSet(
-				attribute.String("action", "pubsub-sqs"),
-			)
-			iter := attribute.NewMergeIterator(&commonAttributes, &addlAttrs)
-			attrs := []attribute.KeyValue{}
-			for iter.Next() {
-				attrs = append(attrs, iter.Attribute())
-			}
-			commonAttributes = attribute.NewSet(attrs...)
 
 			cmd, err := pubsub.NewSQS()
 			if err != nil {

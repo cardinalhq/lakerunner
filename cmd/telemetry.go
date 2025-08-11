@@ -54,7 +54,7 @@ var (
 	existsGauge metric.Int64Gauge
 )
 
-func setupTelemetry(servicename string) (context.Context, func() error, error) {
+func setupTelemetry(servicename string, addlAttrs *attribute.Set) (context.Context, func() error, error) {
 	myInstanceID = idgen.DefaultFlakeGenerator.NextID()
 
 	// Catch signals to stop the process as gracefully as possible.
@@ -67,9 +67,16 @@ func setupTelemetry(servicename string) (context.Context, func() error, error) {
 	// make all the counters, gauges, etc that everyone is likely to use.
 	setupGlobalMetrics()
 
-	commonAttributes = attribute.NewSet(
+	attrs := []attribute.KeyValue{
 		attribute.Int64("instanceID", myInstanceID),
-	)
+	}
+	if addlAttrs != nil {
+		iter := addlAttrs.Iter()
+		for iter.Next() {
+			attrs = append(attrs, iter.Attribute())
+		}
+	}
+	commonAttributes = attribute.NewSet(attrs...)
 
 	if os.Getenv("OTEL_SERVICE_NAME") != "" && os.Getenv("ENABLE_OTLP_TELEMETRY") == "true" {
 		slog.Info("OpenTelemetry exporting enabled")

@@ -30,7 +30,10 @@ func init() {
 		Short: "Do general cleanup tasks",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			servicename := "lakerunner-sweeper"
-			doneCtx, doneFx, err := setupTelemetry(servicename)
+			addlAttrs := attribute.NewSet(
+				attribute.String("action", "sweep"),
+			)
+			doneCtx, doneFx, err := setupTelemetry(servicename, &addlAttrs)
 			if err != nil {
 				return fmt.Errorf("failed to setup telemetry: %w", err)
 			}
@@ -40,16 +43,6 @@ func init() {
 					slog.Error("Error shutting down telemetry", slog.Any("error", err))
 				}
 			}()
-
-			addlAttrs := attribute.NewSet(
-				attribute.String("action", "sweep"),
-			)
-			iter := attribute.NewMergeIterator(&commonAttributes, &addlAttrs)
-			attrs := []attribute.KeyValue{}
-			for iter.Next() {
-				attrs = append(attrs, iter.Attribute())
-			}
-			commonAttributes = attribute.NewSet(attrs...)
 
 			cmd := sweeper.New(myInstanceID, servicename)
 			return cmd.Run(doneCtx)
