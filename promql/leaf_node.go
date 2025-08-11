@@ -5,6 +5,7 @@ import (
 	"github.com/DataDog/sketches-go/ddsketch"
 	"github.com/DataDog/sketches-go/ddsketch/pb/sketchpb"
 	"github.com/axiomhq/hyperloglog"
+	"github.com/gogo/protobuf/proto"
 	"github.com/prometheus/common/model"
 	"log/slog"
 	"math"
