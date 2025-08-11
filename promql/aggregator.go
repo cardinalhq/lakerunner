@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/DataDog/sketches-go/ddsketch/mapping"
 	"github.com/DataDog/sketches-go/ddsketch/store"
-	"lakequery/promql/planner"
 	"maps"
 	"slices"
 	"strings"
@@ -13,16 +12,6 @@ import (
 
 	"github.com/DataDog/sketches-go/ddsketch"
 	"github.com/axiomhq/hyperloglog"
-)
-
-// ---- Helpers you likely already have elsewhere ----
-
-// SUM/COUNT/MIN/MAX keys for MAP sketches:
-const (
-	SUM   = "sum"
-	COUNT = "count"
-	MIN   = "min"
-	MAX   = "max"
 )
 
 // If you already have encode/decode utilities, use those and delete these.
@@ -76,34 +65,34 @@ func tagsKey(m map[string]any) string {
 // ---- Mergers ----
 
 type sketchMerger interface {
-	merge(planner.SketchInput, mapping.IndexMapping)
-	dataPoints() []planner.SketchInput
+	merge(SketchInput, mapping.IndexMapping)
+	dataPoints() []SketchInput
 }
 
 type simpleSketchMerger struct {
-	init planner.SketchInput
+	init SketchInput
 	// merged state
 	hll *hyperloglog.Sketch
 	dds *ddsketch.DDSketch
 	agg map[string]float64
 }
 
-func newSimpleSketchMerger(init planner.SketchInput, mapping mapping.IndexMapping) *simpleSketchMerger {
+func newSimpleSketchMerger(init SketchInput, mapping mapping.IndexMapping) *simpleSketchMerger {
 	sm := &simpleSketchMerger{init: init}
 	switch init.SketchTags.SketchType {
-	case planner.SketchHLL:
+	case SketchHLL:
 		if len(init.SketchTags.Bytes) > 0 {
 			if h, err := decodeHLL(init.SketchTags.Bytes); err == nil {
 				sm.hll = h
 			}
 		}
-	case planner.SketchDDS:
+	case SketchDDS:
 		if len(init.SketchTags.Bytes) > 0 {
 			if d, err := decodeDDS(init.SketchTags.Bytes, mapping); err == nil {
 				sm.dds = d
 			}
 		}
-	case planner.SketchMAP:
+	case SketchMAP:
 		cp := make(map[string]float64, len(init.SketchTags.Agg))
 		for k, v := range init.SketchTags.Agg {
 			cp[k] = v
@@ -113,9 +102,9 @@ func newSimpleSketchMerger(init planner.SketchInput, mapping mapping.IndexMappin
 	return sm
 }
 
-func (m *simpleSketchMerger) merge(si planner.SketchInput, indexMapping mapping.IndexMapping) {
+func (m *simpleSketchMerger) merge(si SketchInput, indexMapping mapping.IndexMapping) {
 	switch si.SketchTags.SketchType {
-	case planner.SketchHLL:
+	case SketchHLL:
 		in, err := decodeHLL(si.SketchTags.Bytes)
 		if err != nil || in == nil {
 			return
@@ -125,7 +114,7 @@ func (m *simpleSketchMerger) merge(si planner.SketchInput, indexMapping mapping.
 		}
 		_ = m.hll.Merge(in)
 
-	case planner.SketchDDS:
+	case SketchDDS:
 		in, err := decodeDDS(si.SketchTags.Bytes, indexMapping)
 		if err != nil || in == nil {
 			return
@@ -139,7 +128,7 @@ func (m *simpleSketchMerger) merge(si planner.SketchInput, indexMapping mapping.
 		}
 		_ = m.dds.MergeWith(in)
 
-	case planner.SketchMAP:
+	case SketchMAP:
 		if m.agg == nil {
 			m.agg = map[string]float64{}
 		}
@@ -162,25 +151,25 @@ func (m *simpleSketchMerger) merge(si planner.SketchInput, indexMapping mapping.
 	}
 }
 
-func (m *simpleSketchMerger) dataPoints() []planner.SketchInput {
+func (m *simpleSketchMerger) dataPoints() []SketchInput {
 	out := m.init // copy
 	switch m.init.SketchTags.SketchType {
-	case planner.SketchHLL:
+	case SketchHLL:
 		if m.hll != nil {
 			if b, err := encodeHLL(m.hll); err == nil {
 				out.SketchTags.Bytes = b
 			}
 		}
-	case planner.SketchDDS:
+	case SketchDDS:
 		if m.dds != nil {
 			out.SketchTags.Bytes = encodeDDS(m.dds)
 		}
-	case planner.SketchMAP:
+	case SketchMAP:
 		if m.agg != nil {
 			out.SketchTags.Agg = maps.Clone(m.agg)
 		}
 	}
-	return []planner.SketchInput{out}
+	return []SketchInput{out}
 }
 
 type groupBySketchMerger struct {
@@ -191,7 +180,7 @@ func newGroupBySketchMerger() *groupBySketchMerger {
 	return &groupBySketchMerger{byTags: map[string]*simpleSketchMerger{}}
 }
 
-func (g *groupBySketchMerger) merge(si planner.SketchInput, indexMapping mapping.IndexMapping) {
+func (g *groupBySketchMerger) merge(si SketchInput, indexMapping mapping.IndexMapping) {
 	key := tagsKey(si.SketchTags.Tags)
 	if acc, ok := g.byTags[key]; ok {
 		acc.merge(si, indexMapping)
@@ -201,8 +190,8 @@ func (g *groupBySketchMerger) merge(si planner.SketchInput, indexMapping mapping
 	g.byTags[key] = acc
 }
 
-func (g *groupBySketchMerger) dataPoints() []planner.SketchInput {
-	var out []planner.SketchInput
+func (g *groupBySketchMerger) dataPoints() []SketchInput {
+	var out []SketchInput
 	for _, acc := range g.byTags {
 		out = append(out, acc.dataPoints()...)
 	}
@@ -211,7 +200,7 @@ func (g *groupBySketchMerger) dataPoints() []planner.SketchInput {
 
 // ---- TimeGroupedSketchAggregator ----
 
-type BaseExprLookup func(si planner.SketchInput) (planner.BaseExpr, bool)
+type BaseExprLookup func(si SketchInput) (BaseExpr, bool)
 
 // TimeGroupedSketchAggregator groups by timestamp across a small ring of buffers,
 // and within each time bucket it groups by BaseExpr.ID, merging compatible sketches.
@@ -264,11 +253,11 @@ func (a *TimeGroupedSketchAggregator) findBuffer(t int64) int {
 	return -minIdx - 1
 }
 
-func (a *TimeGroupedSketchAggregator) flush(i int) planner.SketchGroup {
+func (a *TimeGroupedSketchAggregator) flush(i int) SketchGroup {
 	t := a.timestamps[i]
-	grp := planner.SketchGroup{
+	grp := SketchGroup{
 		Timestamp: t,
-		Group:     map[string][]planner.SketchInput{},
+		Group:     map[string][]SketchInput{},
 	}
 	for beid, merger := range a.buffers[i] {
 		grp.Group[beid] = merger.dataPoints()
@@ -281,7 +270,7 @@ func (a *TimeGroupedSketchAggregator) flush(i int) planner.SketchGroup {
 
 // AddBatch ingests a batch and returns any completed time-groups that got flushed.
 // You can call this repeatedly as you stream data in order.
-func (a *TimeGroupedSketchAggregator) AddBatch(in []planner.SketchInput) (out []planner.SketchGroup) {
+func (a *TimeGroupedSketchAggregator) AddBatch(in []SketchInput) (out []SketchGroup) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -312,7 +301,7 @@ func (a *TimeGroupedSketchAggregator) AddBatch(in []planner.SketchInput) (out []
 }
 
 // FlushAll flushes all non-empty buffers (end-of-stream).
-func (a *TimeGroupedSketchAggregator) FlushAll() (out []planner.SketchGroup) {
+func (a *TimeGroupedSketchAggregator) FlushAll() (out []SketchGroup) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -322,7 +311,7 @@ func (a *TimeGroupedSketchAggregator) FlushAll() (out []planner.SketchGroup) {
 		}
 	}
 	// Keep a deterministic order
-	slices.SortFunc(out, func(x, y planner.SketchGroup) int {
+	slices.SortFunc(out, func(x, y SketchGroup) int {
 		switch {
 		case x.Timestamp < y.Timestamp:
 			return -1
@@ -335,7 +324,7 @@ func (a *TimeGroupedSketchAggregator) FlushAll() (out []planner.SketchGroup) {
 	return out
 }
 
-func (a *TimeGroupedSketchAggregator) aggregate(i int, si planner.SketchInput) {
+func (a *TimeGroupedSketchAggregator) aggregate(i int, si SketchInput) {
 	be, ok := a.lookup(si)
 	if !ok {
 		// unknown base expr → drop or log

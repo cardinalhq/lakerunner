@@ -14,20 +14,6 @@ type QuerierService struct {
 	mdb *lrdb.Store
 }
 
-type SegmentInfo struct {
-	DateInt     int    `json:"dateInt"`
-	Hour        string `json:"hour"`
-	SegmentID   string `json:"segmentId"`
-	StartTs     int64  `json:"startTs"`
-	EndTs       int64  `json:"endTs"`
-	ExprID      string `json:"exprId"`
-	Dataset     string `json:"dataset"`
-	BucketName  string `json:"bucketName"`
-	CustomerID  string `json:"customerId"`
-	CollectorID string `json:"collectorId"`
-	Frequency   int64  `json:"frequency"`
-}
-
 func (q *QuerierService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	orgID := r.URL.Query().Get("orgId")
 	if orgID == "" {
