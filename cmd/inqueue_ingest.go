@@ -63,7 +63,7 @@ func NewIngestLoopContext(ctx context.Context, signal string, sp storageprofile.
 		return nil, fmt.Errorf("failed to open LRDB store: %w", err)
 	}
 
-	awsmanager, err := awsclient.NewManager(ctx)
+	awsmanager, err := awsclient.NewManager(ctx, awsclient.WithAssumeRoleSessionName(assumeRoleSessionName))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create AWS manager: %w", err)
 	}
