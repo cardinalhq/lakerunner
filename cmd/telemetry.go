@@ -48,6 +48,10 @@ var (
 	workqueueFetchDuration metric.Float64Histogram
 	workqueueLag           metric.Float64Histogram
 	manualGCHistogram      metric.Float64Histogram
+
+	// existsGauge is a gauge that indicates if the service is running (1) or not (0).
+	// It is set to 1, and never changes.
+	existsGauge metric.Int64Gauge
 )
 
 func setupTelemetry(servicename string) (context.Context, func() error, error) {
@@ -172,6 +176,16 @@ func setupGlobalMetrics() {
 		panic(fmt.Errorf("failed to create manual_gc.duration histogram: %w", err))
 	}
 	manualGCHistogram = m
+
+	mg, err := meter.Int64Gauge(
+		"lakerunner.exists",
+		metric.WithDescription("Indicates if the service is running (1) or not (0)"),
+	)
+	if err != nil {
+		panic(fmt.Errorf("failed to create exists.gauge: %w", err))
+	}
+	existsGauge = mg
+	mg.Record(context.Background(), 1, metric.WithAttributeSet(commonAttributes))
 }
 
 func gc() {
