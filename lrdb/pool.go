@@ -36,7 +36,7 @@ func NewConnectionPool(ctx context.Context, url string) (*pgxpool.Pool, error) {
 	}
 
 	// Pool sizing
-	cfg.MaxConns = 10
+	cfg.MaxConns = 15
 	cfg.MinConns = 1
 	cfg.MinIdleConns = 1
 
