@@ -167,6 +167,32 @@ func TestComputeReplayBatches_ClampsToQueryBounds(t *testing.T) {
 	}
 }
 
+func TestNoDuplicationAcrossGroups(t *testing.T) {
+	// Segment covers [0m, 4m), query splits into two groups of 2m each
+	seg := SegmentInfo{
+		SegmentID: "fileA",
+		ExprID:    "expr1",
+		StartTs:   ts(time.Unix(0, 0), 0),
+		EndTs:     ts(time.Unix(0, 0), 4*time.Minute),
+	}
+	step := time.Minute
+	batches := ComputeReplayBatchesWithWorkers(
+		[]SegmentInfo{seg}, step,
+		ts(time.Unix(0, 0), 0), ts(time.Unix(0, 0), 4*time.Minute),
+		2, false,
+	)
+
+	seen := map[string]int{}
+	for _, b := range batches {
+		for _, s := range b.Segments {
+			seen[s.SegmentID]++
+		}
+	}
+	if seen["fileA"] > 1 {
+		t.Fatalf("segment duplicated across groups: %+v", seen)
+	}
+}
+
 // tiny sprintf helper for ids
 func idf(format string, args ...any) string {
 	return fmt.Sprintf(format, args...)
