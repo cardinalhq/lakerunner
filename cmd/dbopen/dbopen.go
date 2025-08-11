@@ -87,6 +87,28 @@ func getDatabaseURLFromEnv(prefix string) (string, error) {
 	if sslmode != "" {
 		q.Set("sslmode", sslmode)
 	}
+
+	// if envar OTEL_SERVICE_NAME is set, add it as the application_name
+	// query parameter unless it's already set.  We will ensure it has only
+	// alphanumeric, -, and _ characters.
+	if appName := os.Getenv("OTEL_SERVICE_NAME"); appName != "" {
+		if q.Get("application_name") == "" {
+			appName = strings.Map(func(r rune) rune {
+				if (r >= 'a' && r <= 'z') ||
+					(r >= 'A' && r <= 'Z') ||
+					(r >= '0' && r <= '9') ||
+					r == '-' || r == '_' {
+					return r
+				}
+				return '_'
+			}, appName)
+			if len(appName) > 63 {
+				appName = appName[:63]
+			}
+			q.Set("application_name", appName)
+		}
+	}
+
 	u.RawQuery = q.Encode()
 
 	return u.String(), nil
