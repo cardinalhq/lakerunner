@@ -7,6 +7,7 @@ import (
 	"github.com/cardinalhq/oteltools/pkg/dateutils"
 	"github.com/google/uuid"
 	"net/http"
+	"sort"
 	"time"
 )
 
@@ -134,14 +135,11 @@ func toDateInt(t time.Time) int {
 	return y*10000 + int(m)*100 + d
 }
 
-// dateIntHoursRange reproduces the Scala toDateHours behavior.
-// It iterates hour-by-hour from start..end (inclusive of end+1h boundary),
-// grouping hours per dateInt.
+// dateIntHoursRange: given a time range produces the date int hours, in reverse order of date ints, and hours are reverse as well.
 func dateIntHoursRange(startMs, endMs int64, loc *time.Location) []DateIntHours {
 	if loc == nil {
 		loc = time.UTC
 	}
-	// Align to the hour like the Scala code’s hour stepping.
 	start := time.UnixMilli(startMs).In(loc).Truncate(time.Hour)
 	end := time.UnixMilli(endMs).In(loc).Truncate(time.Hour)
 
@@ -153,19 +151,12 @@ func dateIntHoursRange(startMs, endMs int64, loc *time.Location) []DateIntHours 
 		if curDateInt == 0 || len(hoursSet) == 0 {
 			return
 		}
-		// stable order
 		hh := make([]string, 0, len(hoursSet))
 		for h := range hoursSet {
 			hh = append(hh, h)
 		}
-		// simple lexicographic sort works for "00".."23"
-		for i := 0; i < len(hh)-1; i++ {
-			for j := i + 1; j < len(hh); j++ {
-				if hh[j] < hh[i] {
-					hh[i], hh[j] = hh[j], hh[i]
-				}
-			}
-		}
+		// reverse hour order "23".."00"
+		sort.Sort(sort.Reverse(sort.StringSlice(hh)))
 		out = append(out, DateIntHours{DateInt: curDateInt, Hours: hh})
 		hoursSet = make(map[string]struct{})
 	}
@@ -180,5 +171,11 @@ func dateIntHoursRange(startMs, endMs int64, loc *time.Location) []DateIntHours 
 		hoursSet[zeroFilledHour(t.Hour())] = struct{}{}
 	}
 	flush()
+
+	// reverse dateInt order (latest → earliest)
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+
 	return out
 }
