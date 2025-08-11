@@ -74,7 +74,7 @@ FROM obj_cleanup
 WHERE delete_at < NOW()
   AND tries < 10
 ORDER BY delete_at ASC
-LIMIT 1000
+LIMIT $1
 `
 
 type ObjectCleanupGetRow struct {
@@ -85,8 +85,8 @@ type ObjectCleanupGetRow struct {
 	ObjectID       string    `json:"object_id"`
 }
 
-func (q *Queries) ObjectCleanupGet(ctx context.Context) ([]ObjectCleanupGetRow, error) {
-	rows, err := q.db.Query(ctx, objectCleanupGet)
+func (q *Queries) ObjectCleanupGet(ctx context.Context, maxrows int32) ([]ObjectCleanupGetRow, error) {
+	rows, err := q.db.Query(ctx, objectCleanupGet, maxrows)
 	if err != nil {
 		return nil, err
 	}

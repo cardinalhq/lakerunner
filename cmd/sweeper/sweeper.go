@@ -157,9 +157,8 @@ func periodicLoop(ctx context.Context, period time.Duration, f func(context.Cont
 // If work was done: tiny delay; else a slightly longer pause. Errors are logged and retried.
 func objectCleanerLoop(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, awsmanager *awsclient.Manager) error {
 	const (
-		delayIfDidWork = 250 * time.Millisecond
-		delayIfNoWork  = 5 * time.Second
-		delayIfError   = 5 * time.Second
+		delayIfNoWork = 5 * time.Second
+		delayIfError  = 5 * time.Second
 	)
 	for {
 		select {
@@ -176,9 +175,11 @@ func objectCleanerLoop(ctx context.Context, ll *slog.Logger, sp storageprofile.S
 				return ctx.Err()
 			}
 		case didWork:
-			// be very aggressive when there’s a backlog
-			if stop := sleepCtx(ctx, delayIfDidWork); stop {
+			// run right away again
+			select {
+			case <-ctx.Done():
 				return ctx.Err()
+			default:
 			}
 		default:
 			if stop := sleepCtx(ctx, delayIfNoWork); stop {
@@ -200,7 +201,8 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 }
 
 func runObjCleaner(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, awsmanager *awsclient.Manager) (bool, error) {
-	objs, err := mdb.ObjectCleanupGet(ctx)
+	const maxrows = 1000
+	objs, err := mdb.ObjectCleanupGet(ctx, maxrows)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return false, nil
@@ -210,6 +212,8 @@ func runObjCleaner(ctx context.Context, ll *slog.Logger, sp storageprofile.Stora
 	if len(objs) == 0 {
 		return false, nil
 	}
+
+	didwork := len(objs) == maxrows
 
 	jobs := make(chan lrdb.ObjectCleanupGetRow, len(objs))
 	var wg sync.WaitGroup
@@ -228,7 +232,7 @@ func runObjCleaner(ctx context.Context, ll *slog.Logger, sp storageprofile.Stora
 	close(jobs)
 	wg.Wait()
 
-	return true, nil
+	return didwork, nil
 }
 
 func cleanupObj(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, awsmanager *awsclient.Manager, obj lrdb.ObjectCleanupGetRow) {

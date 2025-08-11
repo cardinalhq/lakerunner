@@ -35,7 +35,7 @@ type Querier interface {
 	ObjectCleanupAdd(ctx context.Context, arg ObjectCleanupAddParams) error
 	ObjectCleanupComplete(ctx context.Context, id uuid.UUID) error
 	ObjectCleanupFail(ctx context.Context, id uuid.UUID) error
-	ObjectCleanupGet(ctx context.Context) ([]ObjectCleanupGetRow, error)
+	ObjectCleanupGet(ctx context.Context, maxrows int32) ([]ObjectCleanupGetRow, error)
 	PutInqueueWork(ctx context.Context, arg PutInqueueWorkParams) error
 	ReleaseInqueueWork(ctx context.Context, arg ReleaseInqueueWorkParams) error
 	SignalLockCleanup(ctx context.Context) (int32, error)
