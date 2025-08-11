@@ -69,6 +69,9 @@ func init() {
 			go diskUsageLoop(doneCtx)
 
 			loop, err := NewIngestLoopContext(doneCtx, "metrics", servicename)
+			if err != nil {
+				return fmt.Errorf("failed to create ingest loop context: %w", err)
+			}
 
 			return IngestLoop(loop, metricIngestItem)
 		},

@@ -48,7 +48,7 @@ func (f *fakeFetcher) Download(ctx context.Context, bucket, key, tmpdir string) 
 
 func buildNodes(fields map[string]any) map[string]parquet.Node {
 	b := buffet.NewNodeMapBuilder()
-	b.Add(fields)
+	_ = b.Add(fields)
 	return b.Build()
 }
 

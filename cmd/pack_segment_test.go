@@ -23,14 +23,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/parquet-go/parquet-go"
+	"github.com/stretchr/testify/assert"
+
 	"github.com/cardinalhq/lakerunner/cmd/storageprofile"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/buffet"
 	"github.com/cardinalhq/lakerunner/internal/filecrunch"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/lrdb"
-	"github.com/google/uuid"
-	"github.com/parquet-go/parquet-go"
 )
 
 //
@@ -205,19 +207,20 @@ func TestDownloadAndOpen_BasicAndLegacyBadFallback(t *testing.T) {
 
 	// Provide nodes that include some droppable fields to verify they get removed,
 	// plus unrelated dynamic fields we want to keep.
-	opener := func() fakeOpener {
-
+	opener := func(t *testing.T) fakeOpener {
 		builder := buffet.NewNodeMapBuilder()
-		builder.Add(
+		err := builder.Add(
 			map[string]any{
 				"_cardinalhq.timestamp": int64(0), // will be forced to INT64
 				"resource.foo":          "bar",    // should be kept
 				"minute":                int32(0), // should be dropped
 			})
+		assert.NoError(t, err)
+
 		return fakeOpener{
 			nodes: builder.Build(),
 		}
-	}()
+	}(t)
 
 	group := []lrdb.GetLogSegmentsForCompactionRow{s1, s2}
 
@@ -381,9 +384,10 @@ func TestDownloadAndOpen_PrefersGoodWhenBothExist(t *testing.T) {
 
 	// Build minimal nodes using the builder (stable across parquet-go versions).
 	builder := buffet.NewNodeMapBuilder()
-	builder.Add(map[string]any{
+	err := builder.Add(map[string]any{
 		"_cardinalhq.timestamp": int64(0),
 	})
+	assert.NoError(t, err)
 	opener := fakeOpener{nodes: builder.Build()}
 
 	got, err := downloadAndOpen(ctx, sp, dateint, []lrdb.GetLogSegmentsForCompactionRow{s}, tmpdir, "bkt", fetch, opener)
@@ -426,10 +430,11 @@ func TestDownloadAndOpen_BadReturnsNon404ErrorBubbles(t *testing.T) {
 	}
 
 	builder := buffet.NewNodeMapBuilder()
-	builder.Add(map[string]any{"_cardinalhq.timestamp": int64(0)})
+	err := builder.Add(map[string]any{"_cardinalhq.timestamp": int64(0)})
+	assert.NoError(t, err)
 	opener := fakeOpener{nodes: builder.Build()}
 
-	_, err := downloadAndOpen(ctx, sp, dateint, []lrdb.GetLogSegmentsForCompactionRow{s}, tmpdir, "bkt", fetch, opener)
+	_, err = downloadAndOpen(ctx, sp, dateint, []lrdb.GetLogSegmentsForCompactionRow{s}, tmpdir, "bkt", fetch, opener)
 	if err == nil || err.Error() != "download: network boom" && err.Error() != someErr.Error() {
 		// depending on your wrapping ("download: %w"), accept either exact wrap or raw
 		t.Fatalf("want bubbled non-404 error, got %v", err)
@@ -462,15 +467,12 @@ func TestDownloadAndOpen_AddsTimestampWhenMissing(t *testing.T) {
 
 	// Build nodes WITHOUT _cardinalhq.timestamp; downloadAndOpen should insert it.
 	builder := buffet.NewNodeMapBuilder()
-	builder.Add(map[string]any{
-		"resource.any": "x",
-	})
+	err := builder.Add(map[string]any{"resource.any": "x"})
+	assert.NoError(t, err)
 	opener := fakeOpener{nodes: builder.Build()}
 
 	got, err := downloadAndOpen(ctx, sp, dateint, []lrdb.GetLogSegmentsForCompactionRow{s}, tmpdir, "bkt", fetch, opener)
-	if err != nil {
-		t.Fatalf("unexpected err: %v", err)
-	}
+	assert.NoError(t, err)
 	if len(got) != 1 {
 		t.Fatalf("want 1 opened segment, got %d", len(got))
 	}
@@ -509,16 +511,15 @@ func TestDownloadAndOpen_NoDropFields_NoOp(t *testing.T) {
 
 	// Nodes that have nothing in dropFieldNames
 	builder := buffet.NewNodeMapBuilder()
-	builder.Add(map[string]any{
+	err := builder.Add(map[string]any{
 		"_cardinalhq.timestamp": int64(0),
 		"scope.x":               "y",
 	})
+	assert.NoError(t, err)
 	opener := fakeOpener{nodes: builder.Build()}
 
 	got, err := downloadAndOpen(ctx, sp, dateint, []lrdb.GetLogSegmentsForCompactionRow{s}, tmpdir, "bkt", fetch, opener)
-	if err != nil {
-		t.Fatalf("unexpected err: %v", err)
-	}
+	assert.NoError(t, err)
 	if len(got) != 1 {
 		t.Fatalf("want 1 opened segment, got %d", len(got))
 	}
@@ -644,7 +645,7 @@ func TestComputeDropSet_AllPresent(t *testing.T) {
 		"year":                  int32(0),
 		"resource.foo":          "x", // should be ignored by drop set
 	}
-	b.Add(fields)
+	assert.NoError(t, b.Add(fields))
 	nodes := b.Build()
 
 	got := computeDropSet(nodes)
@@ -660,11 +661,12 @@ func TestComputeDropSet_AllPresent(t *testing.T) {
 
 func TestComputeDropSet_SomePresent(t *testing.T) {
 	b := buffet.NewNodeMapBuilder()
-	b.Add(map[string]any{
+	err := b.Add(map[string]any{
 		"hour":         int32(0),
 		"year":         int32(0),
 		"resource.bar": "y",
 	})
+	assert.NoError(t, err)
 	nodes := b.Build()
 
 	got := computeDropSet(nodes)
@@ -680,11 +682,12 @@ func TestComputeDropSet_SomePresent(t *testing.T) {
 
 func TestComputeDropSet_NonePresent(t *testing.T) {
 	b := buffet.NewNodeMapBuilder()
-	b.Add(map[string]any{
+	err := b.Add(map[string]any{
 		"_cardinalhq.timestamp": int64(0),
 		"resource.foo":          "x",
 		"scope.bar":             "z",
 	})
+	assert.NoError(t, err)
 	nodes := b.Build()
 
 	got := computeDropSet(nodes)
@@ -707,9 +710,10 @@ func TestComputeDropSet_EmptyOrNilNodes(t *testing.T) {
 
 func TestComputeDropSet_CaseSensitive_NoFalsePositives(t *testing.T) {
 	b := buffet.NewNodeMapBuilder()
-	b.Add(map[string]any{
+	err := b.Add(map[string]any{
 		"Minute": int32(0), // different case; should NOT match
 	})
+	assert.NoError(t, err)
 	nodes := b.Build()
 
 	got := computeDropSet(nodes)
@@ -720,10 +724,11 @@ func TestComputeDropSet_CaseSensitive_NoFalsePositives(t *testing.T) {
 
 func TestComputeDropSet_DoesNotMutateInput(t *testing.T) {
 	b := buffet.NewNodeMapBuilder()
-	b.Add(map[string]any{
+	err := b.Add(map[string]any{
 		"minute": int32(0),
 		"keep":   "v",
 	})
+	assert.NoError(t, err)
 	nodes := b.Build()
 
 	_ = computeDropSet(nodes)
@@ -853,12 +858,13 @@ func TestCopyAll_WritesAndNormalizes(t *testing.T) {
 
 	// Build a nodes map that includes droppable fields so computeDropSet() finds them.
 	builder := buffet.NewNodeMapBuilder()
-	builder.Add(map[string]any{
+	err := builder.Add(map[string]any{
 		"_cardinalhq.timestamp": int64(0),
 		"minute":                int32(0),
 		"hour":                  int32(0),
 		"scope.keep":            "x",
 	})
+	assert.NoError(t, err)
 	nodes := builder.Build()
 
 	handles := []*filecrunch.FileHandle{

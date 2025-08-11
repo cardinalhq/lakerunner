@@ -50,7 +50,9 @@ var (
 	manualGCHistogram      metric.Float64Histogram
 
 	// existsGauge is a gauge that indicates if the service is running (1) or not (0).
-	// It is set to 1, and never changes.
+	// It is set to 1, and never changes.  This is unused, but is here to ensure
+	// that the counter is not murdered by the garbage collector.
+	// nolint:unused
 	existsGauge metric.Int64Gauge
 )
 

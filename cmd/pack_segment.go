@@ -32,8 +32,6 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-var is404 = s3helper.S3ErrorIs404
-
 // chooseObjectID returns the preferred object key (good or bad) that exists, or "" if neither.
 func chooseObjectID(ctx context.Context, fetcher ObjectFetcher, bucket, good, bad, tmpdir string) (string, string, int64, error) {
 	if tmp, sz, nf, err := fetcher.Download(ctx, bucket, good, tmpdir); err != nil {
@@ -206,9 +204,8 @@ func copyAll(
 				return total, err
 			}
 		}
-		if cerr := r.Close(); cerr != nil {
-			// non-fatal
-		}
+		// non-fatal close
+		_ = r.Close()
 	}
 	return total, nil
 }
