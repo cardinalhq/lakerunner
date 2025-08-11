@@ -16,6 +16,7 @@ package lrdb
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgx-contrib/pgxotel"
@@ -33,6 +34,17 @@ func NewConnectionPool(ctx context.Context, url string) (*pgxpool.Pool, error) {
 	cfg.ConnConfig.Tracer = &pgxotel.QueryTracer{
 		Name: "lrdb",
 	}
+
+	// Pool sizing
+	cfg.MaxConns = 10
+	cfg.MinConns = 1
+	cfg.MinIdleConns = 1
+
+	// Lifetimes & health
+	cfg.MaxConnIdleTime = 2 * time.Minute
+	cfg.MaxConnLifetime = 30 * time.Minute
+	cfg.MaxConnLifetimeJitter = 5 * time.Minute
+	cfg.HealthCheckPeriod = 30 * time.Second
 
 	return pgxpool.NewWithConfig(ctx, cfg)
 }
