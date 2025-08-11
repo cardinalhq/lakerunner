@@ -46,49 +46,72 @@ type InqueueProcessingFunction func(
 	ingest_dateint int32,
 	rpfEstimate int64) error
 
-func IngestLoop(doneCtx context.Context, sp storageprofile.StorageProfileProvider, signal string, assumeRoleSessionName string, processingFx InqueueProcessingFunction) error {
-	ctx := context.Background()
+type IngestLoopContext struct {
+	ctx                   context.Context
+	mdb                   lrdb.StoreFull
+	sp                    storageprofile.StorageProfileProvider
+	awsmanager            *awsclient.Manager
+	estimator             estimator.Estimator
+	signal                string
+	assumeRoleSessionName string
+	ll                    *slog.Logger
+}
 
+func NewIngestLoopContext(ctx context.Context, signal string, sp storageprofile.StorageProfileProvider, assumeRoleSessionName string) (*IngestLoopContext, error) {
 	mdb, err := dbopen.LRDBStore(ctx)
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("failed to open LRDB store: %w", err)
 	}
 
-	est, err := estimator.NewEstimator(doneCtx, mdb)
+	awsmanager, err := awsclient.NewManager(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to create estimator: %w", err)
+		return nil, fmt.Errorf("failed to create AWS manager: %w", err)
 	}
 
-	awsmanager, err := awsclient.NewManager(ctx, awsclient.WithAssumeRoleSessionName(assumeRoleSessionName))
+	est, err := estimator.NewEstimator(ctx, mdb)
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("failed to create estimator: %w", err)
 	}
 
-	ll := slog.Default().With(
-		slog.String("signal", signal),
+	return &IngestLoopContext{
+		ctx:                   ctx,
+		mdb:                   mdb,
+		sp:                    sp,
+		awsmanager:            awsmanager,
+		estimator:             est,
+		signal:                signal,
+		assumeRoleSessionName: assumeRoleSessionName,
+	}, nil
+}
+
+func IngestLoop(loop *IngestLoopContext, processingFx InqueueProcessingFunction) error {
+	ctx := context.Background()
+
+	loop.ll = slog.Default().With(
+		slog.String("signal", loop.signal),
 		slog.String("action", "ingest"),
 	)
 
 	for {
 		select {
-		case <-doneCtx.Done():
-			return doneCtx.Err()
+		case <-loop.ctx.Done():
+			return loop.ctx.Err()
 		default:
 		}
 
 		t0 := time.Now()
-		shouldBackoff, didWork, err := ingestFiles(ctx, ll, sp, mdb, awsmanager, signal, processingFx, est)
+		shouldBackoff, didWork, err := ingestFiles(ctx, loop, processingFx)
 		if err != nil {
 			return err
 		}
 
 		if didWork {
-			ll.Info("Ingested file", slog.Duration("elapsed", time.Since(t0)))
+			loop.ll.Info("Ingested file", slog.Duration("elapsed", time.Since(t0)))
 		}
 
 		if shouldBackoff {
 			select {
-			case <-doneCtx.Done():
+			case <-loop.ctx.Done():
 				return nil
 			case <-time.After(workSleepTime):
 			}
@@ -100,21 +123,16 @@ func IngestLoop(doneCtx context.Context, sp storageprofile.StorageProfileProvide
 
 func ingestFiles(
 	ctx context.Context,
-	ll *slog.Logger,
-	sp storageprofile.StorageProfileProvider,
-	mdb lrdb.StoreFull,
-	awsmanager *awsclient.Manager,
-	signalType string,
+	loop *IngestLoopContext,
 	processFx InqueueProcessingFunction,
-	est estimator.Estimator,
 ) (bool, bool, error) {
 	ctx, span := tracer.Start(ctx, "ingest", trace.WithAttributes(commonAttributes.ToSlice()...))
 	defer span.End()
 
 	t0 := time.Now()
-	inf, err := mdb.ClaimInqueueWork(ctx, lrdb.ClaimInqueueWorkParams{
+	inf, err := loop.mdb.ClaimInqueueWork(ctx, lrdb.ClaimInqueueWorkParams{
 		ClaimedBy:     myInstanceID,
-		TelemetryType: signalType,
+		TelemetryType: loop.signal,
 	})
 	inqueueFetchDuration.Record(ctx, time.Since(t0).Seconds(),
 		metric.WithAttributeSet(commonAttributes),
@@ -129,7 +147,7 @@ func ingestFiles(
 		return true, false, fmt.Errorf("failed to claim inqueue work: %w", err)
 	}
 
-	ll = ll.With(
+	ll := loop.ll.With(
 		slog.String("id", inf.ID.String()),
 		slog.Int("tries", int(inf.Tries)),
 		slog.String("collectorName", inf.CollectorName),
@@ -138,7 +156,7 @@ func ingestFiles(
 		slog.String("bucket", inf.Bucket),
 		slog.String("objectID", inf.ObjectID))
 
-	h := NewInqueueHandler(ctx, ll, mdb, inf)
+	h := NewInqueueHandler(ctx, ll, loop.mdb, inf)
 
 	if inf.Tries > 10 {
 		ll.Warn("Too many tries, deleting")
@@ -177,9 +195,9 @@ func ingestFiles(
 		}
 	}()
 
-	rpfEstimate := est.Get(inf.OrganizationID, inf.InstanceNum, lrdb.SignalEnum(inf.TelemetryType)).EstimatedRecordCount
+	rpfEstimate := loop.estimator.Get(inf.OrganizationID, inf.InstanceNum, lrdb.SignalEnum(inf.TelemetryType)).EstimatedRecordCount
 	t0 = time.Now()
-	err = processFx(ctx, ll, tmpdir, sp, mdb, awsmanager, inf, ingestDateint, rpfEstimate)
+	err = processFx(ctx, ll, tmpdir, loop.sp, loop.mdb, loop.awsmanager, inf, ingestDateint, rpfEstimate)
 	inqueueDuration.Record(ctx, time.Since(t0).Seconds(),
 		metric.WithAttributeSet(commonAttributes),
 		metric.WithAttributes(

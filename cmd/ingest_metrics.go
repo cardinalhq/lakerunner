@@ -80,7 +80,9 @@ func init() {
 				return fmt.Errorf("failed to setup storage profiles: %w", err)
 			}
 
-			return IngestLoop(doneCtx, sp, "metrics", servicename, metricIngestItem)
+			loop, err := NewIngestLoopContext(doneCtx, "metrics", sp, servicename)
+
+			return IngestLoop(loop, metricIngestItem)
 		},
 	}
 

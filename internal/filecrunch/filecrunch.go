@@ -92,7 +92,7 @@ func loadSchema(fh *FileHandle) error {
 		}
 		if currentNode, ok := fh.Nodes[schema.Name]; ok {
 			if !parquet.EqualNodes(currentNode, stype) {
-				return fmt.Errorf("schema mismatch: %s", schema.Name)
+				return fmt.Errorf("schema mismatch: %s (%s vs %s)", schema.Name, currentNode.String(), stype.String())
 			}
 		} else {
 			fh.Nodes[schema.Name] = stype
