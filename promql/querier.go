@@ -161,7 +161,6 @@ func dateIntHoursRange(startMs, endMs int64, loc *time.Location) []DateIntHours 
 		hoursSet = make(map[string]struct{})
 	}
 
-	// Walk hours, inclusive of end + 1h like Scala (<= end.plusHours(1))
 	for t := start; !t.After(end.Add(time.Hour)); t = t.Add(time.Hour) {
 		di := toDateInt(t)
 		if curDateInt != 0 && di != curDateInt {
@@ -172,7 +171,6 @@ func dateIntHoursRange(startMs, endMs int64, loc *time.Location) []DateIntHours 
 	}
 	flush()
 
-	// reverse dateInt order (latest → earliest)
 	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
 		out[i], out[j] = out[j], out[i]
 	}
