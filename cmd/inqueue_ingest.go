@@ -47,17 +47,21 @@ type InqueueProcessingFunction func(
 	rpfEstimate int64) error
 
 type IngestLoopContext struct {
-	ctx                   context.Context
-	mdb                   lrdb.StoreFull
-	sp                    storageprofile.StorageProfileProvider
-	awsmanager            *awsclient.Manager
-	estimator             estimator.Estimator
-	signal                string
-	assumeRoleSessionName string
-	ll                    *slog.Logger
+	ctx        context.Context
+	mdb        lrdb.StoreFull
+	sp         storageprofile.StorageProfileProvider
+	awsmanager *awsclient.Manager
+	estimator  estimator.Estimator
+	signal     string
+	ll         *slog.Logger
 }
 
-func NewIngestLoopContext(ctx context.Context, signal string, sp storageprofile.StorageProfileProvider, assumeRoleSessionName string) (*IngestLoopContext, error) {
+func NewIngestLoopContext(ctx context.Context, signal string, assumeRoleSessionName string) (*IngestLoopContext, error) {
+	ll := slog.Default().With(
+		slog.String("signal", signal),
+		slog.String("action", "ingest"),
+	)
+
 	mdb, err := dbopen.LRDBStore(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open LRDB store: %w", err)
@@ -73,24 +77,24 @@ func NewIngestLoopContext(ctx context.Context, signal string, sp storageprofile.
 		return nil, fmt.Errorf("failed to create estimator: %w", err)
 	}
 
+	sp, err := storageprofile.SetupStorageProfiles()
+	if err != nil {
+		return nil, fmt.Errorf("failed to setup storage profiles: %w", err)
+	}
+
 	return &IngestLoopContext{
-		ctx:                   ctx,
-		mdb:                   mdb,
-		sp:                    sp,
-		awsmanager:            awsmanager,
-		estimator:             est,
-		signal:                signal,
-		assumeRoleSessionName: assumeRoleSessionName,
+		ctx:        ctx,
+		mdb:        mdb,
+		sp:         sp,
+		awsmanager: awsmanager,
+		estimator:  est,
+		signal:     signal,
+		ll:         ll,
 	}, nil
 }
 
 func IngestLoop(loop *IngestLoopContext, processingFx InqueueProcessingFunction) error {
 	ctx := context.Background()
-
-	loop.ll = slog.Default().With(
-		slog.String("signal", loop.signal),
-		slog.String("action", "ingest"),
-	)
 
 	for {
 		select {

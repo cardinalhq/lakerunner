@@ -63,12 +63,12 @@ func init() {
 
 			go diskUsageLoop(doneCtx)
 
-			sp, err := storageprofile.SetupStorageProfiles()
+			loop, err := NewRunqueueLoopContext(doneCtx, "metrics", "rollup", servicename)
 			if err != nil {
-				return fmt.Errorf("failed to setup storage profiles: %w", err)
+				return fmt.Errorf("failed to create runqueue loop context: %w", err)
 			}
 
-			return RunqueueLoop(doneCtx, sp, "metrics", "rollup", servicename, metricRollupItem)
+			return RunqueueLoop(loop, metricRollupItem)
 		},
 	}
 

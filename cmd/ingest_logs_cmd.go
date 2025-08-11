@@ -73,12 +73,7 @@ func init() {
 
 			go diskUsageLoop(doneCtx)
 
-			sp, err := storageprofile.SetupStorageProfiles()
-			if err != nil {
-				return fmt.Errorf("failed to setup storage profiles: %w", err)
-			}
-
-			loop, err := NewIngestLoopContext(doneCtx, "logs", sp, servicename)
+			loop, err := NewIngestLoopContext(doneCtx, "logs", servicename)
 
 			for {
 				select {
