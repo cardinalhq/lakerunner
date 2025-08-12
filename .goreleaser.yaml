@@ -26,7 +26,7 @@ archives:
       - binary
 
 builds:
-  - id: lakerunner-arm64
+  - id: lakerunner
     main: ./main.go
     mod_timestamp: "{{ .CommitTimestamp }}"
     goos:
@@ -37,7 +37,7 @@ builds:
     env:
       - CGO_ENABLED=1
     ldflags:
-      - -extldflags "-lc -lrt -lpthread --static"
+      #- -extldflags "-lc -lrt -lpthread --static"
       - -X main.commit={{ .Commit }}
       - -X main.version={{ .Version }}
     flags:
