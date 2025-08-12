@@ -13,4 +13,4 @@ COPY sdk/linux_${TARGET}/etc /etc
 # Optional: if you want headers to be present for other stages/artifacts, you can include them too:
 # COPY sdk/linux_${TARGET}/usr/local/include /usr/local/include
 
-ENTRYPOINT ["/app/lakerunner"]
+CMD ["/app/lakerunner"]
