@@ -1,4 +1,4 @@
-package promql
+package planner
 
 import (
 	"math"
@@ -79,7 +79,6 @@ func applyUnary(fn string, x float64) float64 {
 		}
 		return 0
 	default:
-		// Unknown func -> NaN (shouldn't happen if planner is correct)
 		return math.NaN()
 	}
 }

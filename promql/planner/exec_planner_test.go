@@ -1,14 +1,15 @@
-package promql
+package planner
 
 import (
+	"github.com/cardinalhq/lakerunner/promql"
 	"reflect"
 	"sort"
 	"testing"
 )
 
-func mustParse(t *testing.T, q string) Expr {
+func mustParse(t *testing.T, q string) promql.Expr {
 	t.Helper()
-	e, err := FromPromQL(q)
+	e, err := promql.FromPromQL(q)
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
@@ -35,7 +36,7 @@ func TestCompile_TopK_Then_OuterSum(t *testing.T) {
 	if !ok {
 		t.Fatalf("root not AggNode, got %T", res.Root)
 	}
-	if agg.Op != AggSum {
+	if agg.Op != promql.AggSum {
 		t.Fatalf("root agg op = %v, want sum", agg.Op)
 	}
 	if !reflect.DeepEqual(agg.By, []string{"job"}) {
@@ -56,7 +57,7 @@ func TestCompile_TopK_Then_OuterSum(t *testing.T) {
 	if !ok {
 		t.Fatalf("topk child not AggNode, got %T", topkNode.Child)
 	}
-	if innerAgg.Op != AggSum {
+	if innerAgg.Op != promql.AggSum {
 		t.Fatalf("inner agg op = %v, want sum", innerAgg.Op)
 	}
 	if !reflect.DeepEqual(sorted(innerAgg.By), []string{"endpoint", "job"}) {
@@ -108,7 +109,7 @@ func TestCompile_SimpleRateSumBy(t *testing.T) {
 	if !ok {
 		t.Fatalf("root not AggNode, got %T", res.Root)
 	}
-	if agg.Op != AggSum {
+	if agg.Op != promql.AggSum {
 		t.Fatalf("agg op = %v, want sum", agg.Op)
 	}
 	if !reflect.DeepEqual(agg.By, []string{"job"}) {
@@ -132,7 +133,7 @@ func TestCompile_SimpleRateSumBy(t *testing.T) {
 	// status=~"5.."
 	found := false
 	for _, m := range be.Matchers {
-		if m.Label == "status" && m.Op == MatchRe && m.Value == "5.." {
+		if m.Label == "status" && m.Op == promql.MatchRe && m.Value == "5.." {
 			found = true
 			break
 		}
@@ -211,7 +212,7 @@ func TestCompile_CountHint(t *testing.T) {
 	if !ok {
 		t.Fatalf("root not AggNode, got %T", res.Root)
 	}
-	if agg.Op != AggCount {
+	if agg.Op != promql.AggCount {
 		t.Fatalf("agg op = %v, want count", agg.Op)
 	}
 	leaf, ok := agg.Child.(*LeafNode)
@@ -228,7 +229,7 @@ func TestCompile_CountHint(t *testing.T) {
 	// instance="i1" matcher present
 	found := false
 	for _, m := range leaf.BE.Matchers {
-		if m.Label == "instance" && m.Op == MatchEq && m.Value == "i1" {
+		if m.Label == "instance" && m.Op == promql.MatchEq && m.Value == "i1" {
 			found = true
 			break
 		}
@@ -262,7 +263,7 @@ func TestCompile_OuterCount(t *testing.T) {
 	if !ok {
 		t.Fatalf("root not AggNode, got %T", res.Root)
 	}
-	if aggCnt.Op != AggCount {
+	if aggCnt.Op != promql.AggCount {
 		t.Fatalf("agg op = %v, want count", aggCnt.Op)
 	}
 
@@ -312,7 +313,7 @@ func TestCompile_BinaryWithClampMin(t *testing.T) {
 	if !ok {
 		t.Fatalf("root not BinaryNode, got %T", res.Root)
 	}
-	if bin.Op != OpDiv {
+	if bin.Op != promql.OpDiv {
 		t.Fatalf("bin op = %v, want /", bin.Op)
 	}
 	// Left subtree should boil down to a Leaf under an Agg
@@ -369,7 +370,7 @@ func TestCompile_BinaryScalarTimesVector(t *testing.T) {
 	if !ok {
 		t.Fatalf("root not BinaryNode, got %T", res.Root)
 	}
-	if bin.Op != OpMul {
+	if bin.Op != promql.OpMul {
 		t.Fatalf("bin op = %v, want *", bin.Op)
 	}
 
@@ -379,7 +380,7 @@ func TestCompile_BinaryScalarTimesVector(t *testing.T) {
 	if !ok {
 		t.Fatalf("RHS not AggNode, got %T", bin.RHS)
 	}
-	if rAgg.Op != AggSum {
+	if rAgg.Op != promql.AggSum {
 		t.Fatalf("RHS agg op = %v, want sum", rAgg.Op)
 	}
 	rLeaf, ok := rAgg.Child.(*LeafNode)
@@ -421,7 +422,7 @@ func TestCompile_ScalarOf_Vector(t *testing.T) {
 	if !ok {
 		t.Fatalf("scalar child not AggNode, got %T", sc.Child)
 	}
-	if agg.Op != AggSum {
+	if agg.Op != promql.AggSum {
 		t.Fatalf("agg op = %v, want sum", agg.Op)
 	}
 
@@ -506,7 +507,7 @@ func TestCompile_TopK_HistogramQuantile(t *testing.T) {
 	if !ok {
 		t.Fatalf("quantile child not AggNode, got %T", qnode.Child)
 	}
-	if innerAgg.Op != AggSum {
+	if innerAgg.Op != promql.AggSum {
 		t.Fatalf("inner agg op = %v, want sum", innerAgg.Op)
 	}
 	wantBy := []string{"le", "service"}
@@ -566,7 +567,7 @@ func TestCompile_UnaryMathFuncs(t *testing.T) {
 			if !ok {
 				t.Fatalf("unary child not AggNode, got %T", un.Child)
 			}
-			if agg.Op != AggSum {
+			if agg.Op != promql.AggSum {
 				t.Fatalf("agg op = %v, want sum", agg.Op)
 			}
 
@@ -621,7 +622,7 @@ func TestCompile_CountByInstance_Grouped(t *testing.T) {
 	if !ok {
 		t.Fatalf("root not AggNode, got %T", res.Root)
 	}
-	if agg.Op != AggCount {
+	if agg.Op != promql.AggCount {
 		t.Fatalf("agg op = %v, want count", agg.Op)
 	}
 	if !reflect.DeepEqual(agg.By, []string{"instance"}) {
@@ -648,7 +649,7 @@ func TestCompile_CountByInstance_Grouped(t *testing.T) {
 	// Matcher job="api" should be present
 	found := false
 	for _, m := range be.Matchers {
-		if m.Label == "job" && m.Op == MatchEq && m.Value == "api" {
+		if m.Label == "job" && m.Op == promql.MatchEq && m.Value == "api" {
 			found = true
 			break
 		}

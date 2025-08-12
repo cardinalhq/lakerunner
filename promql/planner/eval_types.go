@@ -1,4 +1,4 @@
-package promql
+package planner
 
 import (
 	"github.com/DataDog/sketches-go/ddsketch"

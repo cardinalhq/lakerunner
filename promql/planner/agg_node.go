@@ -1,9 +1,10 @@
-package promql
+package planner
 
 import (
 	"fmt"
 	"github.com/DataDog/sketches-go/ddsketch"
 	"github.com/axiomhq/hyperloglog"
+	"github.com/cardinalhq/lakerunner/promql"
 	"log/slog"
 	"math"
 	"sort"
@@ -13,7 +14,7 @@ import (
 
 // AggNode wraps a child and performs sum/avg/min/max/count with by/without.
 type AggNode struct {
-	Op      AggOp
+	Op      promql.AggOp
 	By      []string
 	Without []string
 	Child   ExecNode
@@ -179,7 +180,7 @@ func (n *AggNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalResult
 
 		out := make(map[string]EvalResult, len(accs))
 		for k, a := range accs {
-			if n.Op == AggCount {
+			if n.Op == promql.AggCount {
 				// Cardinality estimate → scalar number result
 				est := a.h.Estimate()
 				out[k] = EvalResult{
@@ -240,19 +241,19 @@ func (n *AggNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalResult
 		for k, a := range aggs {
 			var v float64
 			switch n.Op {
-			case AggSum:
+			case promql.AggSum:
 				v = a.sum
-			case AggAvg:
+			case promql.AggAvg:
 				if a.count == 0 {
 					v = math.NaN()
 				} else {
 					v = a.sum / float64(a.count)
 				}
-			case AggMin:
+			case promql.AggMin:
 				v = a.min
-			case AggMax:
+			case promql.AggMax:
 				v = a.max
-			case AggCount:
+			case promql.AggCount:
 				v = float64(a.count)
 			default:
 				v = math.NaN()

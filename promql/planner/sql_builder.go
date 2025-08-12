@@ -1,7 +1,8 @@
-package promql
+package planner
 
 import (
 	"fmt"
+	"github.com/cardinalhq/lakerunner/promql"
 	"math"
 	"sort"
 	"strings"
@@ -349,13 +350,13 @@ func whereFor(be *BaseExpr) string {
 	}
 	for _, m := range be.Matchers {
 		switch m.Op {
-		case MatchEq:
+		case promql.MatchEq:
 			parts = append(parts, fmt.Sprintf("%s = %s", m.Label, sqlLit(m.Value)))
-		case MatchNe:
+		case promql.MatchNe:
 			parts = append(parts, fmt.Sprintf("%s <> %s", m.Label, sqlLit(m.Value)))
-		case MatchRe:
+		case promql.MatchRe:
 			parts = append(parts, fmt.Sprintf("%s ~ %s", m.Label, sqlLit(m.Value)))
-		case MatchNre:
+		case promql.MatchNre:
 			parts = append(parts, fmt.Sprintf("%s !~ %s", m.Label, sqlLit(m.Value)))
 		}
 	}

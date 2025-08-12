@@ -1,7 +1,8 @@
-package promql
+package planner
 
 import (
 	"fmt"
+	"github.com/cardinalhq/lakerunner/promql"
 	"math"
 	"sort"
 	"strings"
@@ -10,10 +11,10 @@ import (
 
 // BinaryNode : arithmetic (+ - * /) with vector matching (on-only).
 type BinaryNode struct {
-	Op    BinOp
+	Op    promql.BinOp
 	LHS   ExecNode
 	RHS   ExecNode
-	Match *VectorMatch // Only On []string is used
+	Match *promql.VectorMatch // Only On []string is used
 }
 
 func (n *BinaryNode) Hints() ExecHints {
@@ -89,13 +90,13 @@ func (n *BinaryNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalRes
 		a, b := l.Value.Num, rr.res.Value.Num
 		var v float64
 		switch n.Op {
-		case OpAdd:
+		case promql.OpAdd:
 			v = a + b
-		case OpSub:
+		case promql.OpSub:
 			v = a - b
-		case OpMul:
+		case promql.OpMul:
 			v = a * b
-		case OpDiv:
+		case promql.OpDiv:
 			if b == 0 {
 				v = math.NaN()
 			} else {

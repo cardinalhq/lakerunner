@@ -1,9 +1,10 @@
-package promql
+package planner
 
 import (
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
+	"github.com/cardinalhq/lakerunner/promql"
 	"sort"
 	"strings"
 	"time"
@@ -12,12 +13,12 @@ import (
 // ---------- Exec nodes & plumbing (planning-time only) ----------
 
 type BaseExpr struct {
-	ID           string       `json:"id"`
-	Metric       string       `json:"metric,omitempty"`
-	Matchers     []LabelMatch `json:"matchers,omitempty"`
-	Range        string       `json:"range,omitempty"`
-	SubqueryStep string       `json:"subqueryStep,omitempty"`
-	Offset       string       `json:"offset,omitempty"`
+	ID           string              `json:"id"`
+	Metric       string              `json:"metric,omitempty"`
+	Matchers     []promql.LabelMatch `json:"matchers,omitempty"`
+	Range        string              `json:"range,omitempty"`
+	SubqueryStep string              `json:"subqueryStep,omitempty"`
+	Offset       string              `json:"offset,omitempty"`
 
 	// Final result grouping the worker should aggregate to for this leaf
 	GroupBy []string `json:"groupBy,omitempty"`
@@ -57,8 +58,8 @@ type CompileResult struct {
 }
 
 // nearestAggInfo returns info if the expr is *immediately* an Agg node.
-func nearestAggInfo(e Expr) (AggOp, []string, []string, bool) {
-	if e.Kind == KindAgg && e.Agg != nil {
+func nearestAggInfo(e promql.Expr) (promql.AggOp, []string, []string, bool) {
+	if e.Kind == promql.KindAgg && e.Agg != nil {
 		return e.Agg.Op, e.Agg.By, e.Agg.Without, true
 	}
 	return "", nil, nil, false
@@ -81,11 +82,11 @@ func keepsAll(parentKeep, childID []string) bool {
 	return true
 }
 
-func Compile(root Expr) (CompileResult, error) {
+func Compile(root promql.Expr) (CompileResult, error) {
 	var leaves []BaseExpr
 
 	type ctx struct {
-		rng      *RangeExpr
+		rng      *promql.RangeExpr
 		funcName string
 
 		// “current” child grouping (identity of the immediate child agg, if any)
@@ -108,10 +109,10 @@ func Compile(root Expr) (CompileResult, error) {
 		wantBottomK bool
 	}
 
-	buildLeaf := func(sel Selector, c ctx) (*LeafNode, BaseExpr) {
+	buildLeaf := func(sel promql.Selector, c ctx) (*LeafNode, BaseExpr) {
 		be := BaseExpr{
 			Metric:      sel.Metric,
-			Matchers:    append([]LabelMatch(nil), sel.Matchers...),
+			Matchers:    append([]promql.LabelMatch(nil), sel.Matchers...),
 			Offset:      sel.Offset,
 			FuncName:    c.funcName,
 			WantTopK:    c.wantTopK,
@@ -146,21 +147,21 @@ func Compile(root Expr) (CompileResult, error) {
 		return &LeafNode{BE: be}, be
 	}
 
-	var compile func(e Expr, c ctx) (ExecNode, error)
+	var compile func(e promql.Expr, c ctx) (ExecNode, error)
 
-	compile = func(e Expr, c ctx) (ExecNode, error) {
+	compile = func(e promql.Expr, c ctx) (ExecNode, error) {
 		switch e.Kind {
-		case KindSelector:
+		case promql.KindSelector:
 			n, be := buildLeaf(*e.Selector, c)
 			leaves = append(leaves, be)
 			return n, nil
 
-		case KindRange:
+		case promql.KindRange:
 			c2 := c
 			c2.rng = e.Range
 			return compile(e.Range.Expr, c2)
 
-		case KindFunc:
+		case promql.KindFunc:
 			c2 := c
 
 			switch e.Func.Name {
@@ -212,7 +213,7 @@ func Compile(root Expr) (CompileResult, error) {
 				return nil, fmt.Errorf("unsupported function: %s", e.Func.Name)
 			}
 
-		case KindAgg:
+		case promql.KindAgg:
 			c2 := c
 			// Parent output grouping
 			if len(e.Agg.By) > 0 {
@@ -234,7 +235,7 @@ func Compile(root Expr) (CompileResult, error) {
 				c2.curGroup, c2.curWO = nil, nil
 			}
 
-			if e.Agg.Op == AggCount {
+			if e.Agg.Op == promql.AggCount {
 				c2.wantCount = true
 				// parent keep-set: from `count by (...)`
 				c2.countParentBy = append([]string(nil), c2.outGroup...)
@@ -256,7 +257,7 @@ func Compile(root Expr) (CompileResult, error) {
 			}
 			return &AggNode{Op: e.Agg.Op, By: c2.outGroup, Without: c2.outWO, Child: child}, nil
 
-		case KindTopK:
+		case promql.KindTopK:
 			c2 := c
 			// Inspect the immediate child for identity
 			var childBy []string
@@ -282,7 +283,7 @@ func Compile(root Expr) (CompileResult, error) {
 			}
 			return &TopKNode{K: e.TopK.K, Child: child}, nil
 
-		case KindBottomK:
+		case promql.KindBottomK:
 			c2 := c
 			// For symmetry; same rule as TopK
 			var childBy []string
@@ -305,7 +306,7 @@ func Compile(root Expr) (CompileResult, error) {
 			}
 			return &BottomKNode{K: e.BottomK.K, Child: child}, nil
 
-		case KindHistogramQuantile:
+		case promql.KindHistogramQuantile:
 			c2 := c
 			c2.wantDDS = true
 			child, err := compile(e.HistQuant.Expr, c2)
@@ -314,21 +315,21 @@ func Compile(root Expr) (CompileResult, error) {
 			}
 			return &QuantileNode{Q: e.HistQuant.Q, Child: child}, nil
 
-		case KindClampMin:
+		case promql.KindClampMin:
 			child, err := compile(e.ClampMin.Expr, c)
 			if err != nil {
 				return nil, err
 			}
 			return &ClampMinNode{Min: e.ClampMin.Min, Child: child}, nil
 
-		case KindClampMax:
+		case promql.KindClampMax:
 			child, err := compile(e.ClampMax.Expr, c)
 			if err != nil {
 				return nil, err
 			}
 			return &ClampMaxNode{Max: e.ClampMax.Max, Child: child}, nil
 
-		case KindBinary:
+		case promql.KindBinary:
 			lhs, err := compile(e.BinOp.LHS, c)
 			if err != nil {
 				return nil, err
@@ -402,7 +403,7 @@ func baseExprID(b BaseExpr) string {
 	writeCSV("countOnBy=", b.CountOnBy)
 
 	if len(b.Matchers) > 0 {
-		cp := append([]LabelMatch(nil), b.Matchers...)
+		cp := append([]promql.LabelMatch(nil), b.Matchers...)
 		sort.Slice(cp, func(i, j int) bool {
 			if cp[i].Label != cp[j].Label {
 				return cp[i].Label < cp[j].Label

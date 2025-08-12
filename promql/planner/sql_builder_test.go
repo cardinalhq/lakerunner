@@ -1,6 +1,7 @@
-package promql
+package planner
 
 import (
+	"github.com/cardinalhq/lakerunner/promql"
 	"testing"
 	"time"
 )
@@ -9,7 +10,7 @@ func TestSQLBuilder_SumRate(t *testing.T) {
 	q := `sum(rate(http_request_duration_seconds_bucket[5m]))`
 
 	// Parse PromQL → our AST
-	root, err := FromPromQL(q)
+	root, err := promql.FromPromQL(q)
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
@@ -41,7 +42,7 @@ func TestSQLBuilder_SumRate(t *testing.T) {
 func TestSQLBuilder_SumRate_ByJob(t *testing.T) {
 	q := `sum by (job) (rate(http_request_duration_seconds_bucket[5m]))`
 
-	root, err := FromPromQL(q)
+	root, err := promql.FromPromQL(q)
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
