@@ -23,13 +23,12 @@ type PushDownRequest struct {
 // and returns a single chronologically merged stream of SketchInput.
 // The merged stream’s timestamps are aligned to the evaluation window.
 func (q *QuerierService) Evaluate(
+	ctx context.Context,
 	orgID uuid.UUID,
 	startTs, endTs int64,
 	queryPlan QueryPlan,
 	reverseSort bool,
 ) (<-chan map[string]EvalResult, error) {
-
-	ctx := context.Background()
 	workers := GetWorkers()
 	if len(workers) == 0 {
 		slog.Error("no workers available")

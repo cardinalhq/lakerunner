@@ -15,9 +15,12 @@
 package promql
 
 import (
+	"encoding/json"
+	"fmt"
 	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/cardinalhq/oteltools/pkg/dateutils"
 	"github.com/google/uuid"
+	"log/slog"
 	"net/http"
 )
 
@@ -66,12 +69,79 @@ func (q *QuerierService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	queryPlan, err := Compile(promExpr)
+	plan, err := Compile(promExpr)
 	if err != nil {
 		http.Error(w, "compile error: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	q.Evaluate(orgUUID, startTs, endTs, queryPlan, true)
+	// Kick off evaluation; reverseSort can be toggled if you add a query param.
+	resultsCh, err := q.Evaluate(r.Context(), orgUUID, startTs, endTs, plan, true)
+	if err != nil {
+		http.Error(w, "evaluate error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 
+	// SSE setup
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	// Disable proxy buffering if behind nginx etc.
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	writeSSE := func(event string, v any) error {
+		// Marshal payload (if any) to a single JSON line.
+		var data []byte
+		var err error
+		if v != nil {
+			data, err = json.Marshal(v)
+			if err != nil {
+				return err
+			}
+		} else {
+			data = []byte(`null`)
+		}
+		// Write SSE frame
+		if _, err := fmt.Fprintf(w, "event: %s\n", event); err != nil {
+			return err
+		}
+		if _, err := w.Write([]byte("data: ")); err != nil {
+			return err
+		}
+		if _, err := w.Write(data); err != nil {
+			return err
+		}
+		if _, err := w.Write([]byte("\n\n")); err != nil {
+			return err
+		}
+		flusher.Flush()
+		return nil
+	}
+
+	// Stream results until channel closes or client disconnects.
+	notify := r.Context().Done()
+	for {
+		select {
+		case <-notify:
+			// client went away; stop work
+			slog.Info("client disconnected; stopping stream")
+			return
+		case res, ok := <-resultsCh:
+			if !ok {
+				// End of stream: send a final "done" event.
+				_ = writeSSE("done", map[string]string{"status": "ok"})
+				return
+			}
+			// Stream one result tick
+			if err := writeSSE("result", res); err != nil {
+				slog.Error("write SSE failed", "error", err)
+				return
+			}
+		}
+	}
 }
