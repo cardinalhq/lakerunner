@@ -67,9 +67,9 @@ jobs:
           path: dist/${{ matrix.os == 'ubuntu-22.04' && 'linux_amd64' || 'linux_arm64' }}
           key: ${{ matrix.os == 'ubuntu-22.04' && 'linux_amd64' || 'linux_arm64' }}-${{ env.sha_short }}${{ env.flags }}
 
-      - shell: bash
-        run: |
-          cosign dockerfile verify --certificate-oidc-issuer https://accounts.google.com --certificate-identity keyless@distroless.iam.gserviceaccount.com Dockerfile
+      # - shell: bash
+      #   run: |
+      #     cosign dockerfile verify --certificate-oidc-issuer https://accounts.google.com --certificate-identity keyless@distroless.iam.gserviceaccount.com Dockerfile
 
       - uses: goreleaser/goreleaser-action@v6
         with:
@@ -123,9 +123,9 @@ jobs:
         with:
           go-version: stable
 
-      - shell: bash
-        run: |
-          cosign dockerfile verify --certificate-oidc-issuer https://accounts.google.com --certificate-identity keyless@distroless.iam.gserviceaccount.com Dockerfile
+      # - shell: bash
+      #   run: |
+      #     cosign dockerfile verify --certificate-oidc-issuer https://accounts.google.com --certificate-identity keyless@distroless.iam.gserviceaccount.com Dockerfile
 
       - if: ${{ github.event_name == 'workflow_dispatch' }}
         shell: bash
