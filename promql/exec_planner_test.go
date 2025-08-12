@@ -329,7 +329,7 @@ func TestCompile_BinaryWithClampMin(t *testing.T) {
 		t.Fatalf("RHS not ClampMinNode, got %T", bin.RHS)
 	}
 	if rClamp.Min != 1 {
-		t.Fatalf("ClampMin.Min=%v, want 1", rClamp.Min)
+		t.Fatalf("ClampMin.Max=%v, want 1", rClamp.Min)
 	}
 	rAgg, ok := rClamp.Child.(*AggNode)
 	if !ok {

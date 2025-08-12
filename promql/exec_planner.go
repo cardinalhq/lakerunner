@@ -321,6 +321,13 @@ func Compile(root Expr) (CompileResult, error) {
 			}
 			return &ClampMinNode{Min: e.ClampMin.Min, Child: child}, nil
 
+		case KindClampMax:
+			child, err := compile(e.ClampMax.Expr, c)
+			if err != nil {
+				return nil, err
+			}
+			return &ClampMaxNode{Max: e.ClampMax.Max, Child: child}, nil
+
 		case KindBinary:
 			lhs, err := compile(e.BinOp.LHS, c)
 			if err != nil {
