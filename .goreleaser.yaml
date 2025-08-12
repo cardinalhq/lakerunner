@@ -1,5 +1,7 @@
 version: 2
 
+project_name: lakerunner
+
 # before:
 #   hooks:
 #     - make generate
@@ -7,6 +9,9 @@ version: 2
 
 partial:
   by: target
+
+checksum:
+  name_template: "checksums.txt"
 
 release:
   disable: true
@@ -23,7 +28,7 @@ archives:
 builds:
   - id: lakerunner-arm64
     main: ./main.go
-    binary: lakerunner
+    mod_timestamp: "{{ .CommitTimestamp }}"
     goos:
       - linux
     goarch:
