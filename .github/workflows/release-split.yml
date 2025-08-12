@@ -70,7 +70,7 @@ jobs:
       - uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser-pro
-          version: latest
+          version: "~> v2"
           args: release --clean --split ${{ env.flags }}
         env:
           GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
@@ -145,7 +145,7 @@ jobs:
         if: steps.cache_linux_amd64.outputs.cache-hit != 'true' && steps.cache_linux_arm64.outputs.cache-hit != 'true'
         with:
           distribution: goreleaser-pro
-          version: latest
+          version: "~> v2"
           args: continue --merge
         env:
           GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
