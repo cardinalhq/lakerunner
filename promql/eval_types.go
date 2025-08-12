@@ -1,4 +1,18 @@
-package planner
+// Copyright (C) 2025 CardinalHQ, Inc
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as
+// published by the Free Software Foundation, version 3.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program. If not, see <http://www.gnu.org/licenses/>.
+
+package promql
 
 import (
 	"github.com/DataDog/sketches-go/ddsketch"
@@ -36,11 +50,14 @@ func (t *SketchTags) getAggValue(name string) float64 {
 }
 
 type SketchInput struct {
-	OrganizationID string
-	Timestamp      int64
-	Frequency      int64
-	SketchTags     SketchTags
+	ExprID         string     `json:"exprID"`
+	OrganizationID string     `json:"organizationID"`
+	Timestamp      int64      `json:"timestamp"`
+	Frequency      int64      `json:"frequency"` // in seconds
+	SketchTags     SketchTags `json:"sketchTags"`
 }
+
+func (si SketchInput) GetTimestamp() int64 { return si.Timestamp }
 
 type SketchGroup struct {
 	Timestamp int64

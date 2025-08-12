@@ -1,8 +1,21 @@
-package planner
+// Copyright (C) 2025 CardinalHQ, Inc
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as
+// published by the Free Software Foundation, version 3.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program. If not, see <http://www.gnu.org/licenses/>.
+
+package promql
 
 import (
 	"fmt"
-	"github.com/cardinalhq/lakerunner/promql"
 	"math"
 	"sort"
 	"strings"
@@ -11,10 +24,10 @@ import (
 
 // BinaryNode : arithmetic (+ - * /) with vector matching (on-only).
 type BinaryNode struct {
-	Op    promql.BinOp
+	Op    BinOp
 	LHS   ExecNode
 	RHS   ExecNode
-	Match *promql.VectorMatch // Only On []string is used
+	Match *VectorMatch // Only On []string is used
 }
 
 func (n *BinaryNode) Hints() ExecHints {
@@ -90,13 +103,13 @@ func (n *BinaryNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalRes
 		a, b := l.Value.Num, rr.res.Value.Num
 		var v float64
 		switch n.Op {
-		case promql.OpAdd:
+		case OpAdd:
 			v = a + b
-		case promql.OpSub:
+		case OpSub:
 			v = a - b
-		case promql.OpMul:
+		case OpMul:
 			v = a * b
-		case promql.OpDiv:
+		case OpDiv:
 			if b == 0 {
 				v = math.NaN()
 			} else {

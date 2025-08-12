@@ -1,0 +1,110 @@
+package promql
+
+import (
+	"context"
+	"time"
+)
+
+// EvalFlowOptions tunes buffering / aggregation behavior.
+type EvalFlowOptions struct {
+	// NumBuffers is the number of time-buckets the aggregator keeps before flushing
+	// (small ring buffer). 3 is a good default.
+	NumBuffers int
+	// OutBuffer is the channel buffer size for result maps.
+	OutBuffer int
+}
+
+// EvalFlow connects a stream of SketchInput -> aggregator -> root.Eval,
+// and returns a channel of evaluated results (one map per flushed time-bucket).
+type EvalFlow struct {
+	root ExecNode
+	step time.Duration
+	agg  *TimeGroupedSketchAggregator
+
+	outBuf int
+}
+
+// NewEvalFlow builds a flow for a compiled plan.
+// `leaves` are used to build a BaseExpr lookup by ID for the aggregator.
+func NewEvalFlow(
+	root ExecNode,
+	leaves []BaseExpr,
+	step time.Duration,
+	opts EvalFlowOptions,
+) *EvalFlow {
+	if opts.NumBuffers <= 0 {
+		opts.NumBuffers = 3
+	}
+	if opts.OutBuffer <= 0 {
+		opts.OutBuffer = 256
+	}
+
+	// Map BaseExpr.ID -> BaseExpr for fast lookup from SketchInput.
+	beByID := make(map[string]BaseExpr, len(leaves))
+	for _, be := range leaves {
+		beByID[be.ID] = be
+	}
+
+	lookup := func(si SketchInput) (BaseExpr, bool) {
+		// We expect workers to set si.ExprID (or similar). If your field is named
+		// differently, adjust here.
+		if be, ok := beByID[si.ExprID]; ok {
+			return be, true
+		}
+		return BaseExpr{}, false
+	}
+
+	return &EvalFlow{
+		root:   root,
+		step:   step,
+		agg:    NewTimeGroupedSketchAggregator(opts.NumBuffers, lookup),
+		outBuf: opts.OutBuffer,
+	}
+}
+
+// Run consumes a globally merged time-sorted stream of SketchInput and produces
+// a channel of evaluated results (one per flushed time-bucket).
+func (f *EvalFlow) Run(
+	ctx context.Context,
+	in <-chan SketchInput,
+) <-chan map[string]EvalResult {
+	out := make(chan map[string]EvalResult, f.outBuf)
+
+	go func() {
+		defer close(out)
+
+		for {
+			select {
+			case <-ctx.Done():
+				// Flush what we have and exit.
+				f.flushAll(out)
+				return
+
+			case si, ok := <-in:
+				if !ok {
+					// End of input: flush remaining buckets.
+					f.flushAll(out)
+					return
+				}
+				// Add this single item; aggregator may return completed buckets.
+				for _, sg := range f.agg.AddBatch([]SketchInput{si}) {
+					res := f.root.Eval(sg, f.step)
+					if len(res) > 0 {
+						out <- res
+					}
+				}
+			}
+		}
+	}()
+
+	return out
+}
+
+func (f *EvalFlow) flushAll(out chan<- map[string]EvalResult) {
+	for _, sg := range f.agg.FlushAll() {
+		res := f.root.Eval(sg, f.step)
+		if len(res) > 0 {
+			out <- res
+		}
+	}
+}

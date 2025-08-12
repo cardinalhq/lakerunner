@@ -1,10 +1,23 @@
-package planner
+// Copyright (C) 2025 CardinalHQ, Inc
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as
+// published by the Free Software Foundation, version 3.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program. If not, see <http://www.gnu.org/licenses/>.
+
+package promql
 
 import (
 	"fmt"
 	"github.com/DataDog/sketches-go/ddsketch"
 	"github.com/axiomhq/hyperloglog"
-	"github.com/cardinalhq/lakerunner/promql"
 	"log/slog"
 	"math"
 	"sort"
@@ -14,7 +27,7 @@ import (
 
 // AggNode wraps a child and performs sum/avg/min/max/count with by/without.
 type AggNode struct {
-	Op      promql.AggOp
+	Op      AggOp
 	By      []string
 	Without []string
 	Child   ExecNode
@@ -180,7 +193,7 @@ func (n *AggNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalResult
 
 		out := make(map[string]EvalResult, len(accs))
 		for k, a := range accs {
-			if n.Op == promql.AggCount {
+			if n.Op == AggCount {
 				// Cardinality estimate → scalar number result
 				est := a.h.Estimate()
 				out[k] = EvalResult{
@@ -241,19 +254,19 @@ func (n *AggNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalResult
 		for k, a := range aggs {
 			var v float64
 			switch n.Op {
-			case promql.AggSum:
+			case AggSum:
 				v = a.sum
-			case promql.AggAvg:
+			case AggAvg:
 				if a.count == 0 {
 					v = math.NaN()
 				} else {
 					v = a.sum / float64(a.count)
 				}
-			case promql.AggMin:
+			case AggMin:
 				v = a.min
-			case promql.AggMax:
+			case AggMax:
 				v = a.max
-			case promql.AggCount:
+			case AggCount:
 				v = float64(a.count)
 			default:
 				v = math.NaN()
