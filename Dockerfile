@@ -12,10 +12,10 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-FROM gcr.io/distroless/base-debian12:latest
+FROM gcr.io/distroless/cc-debian12:nonroot
 
-ARG USER_UID=2000
-USER ${USER_UID}:${USER_UID}
+# ARG USER_UID=2000
+# USER ${USER_UID}:${USER_UID}
 
 COPY lakerunner /app/bin/lakerunner
 CMD ["/app/bin/lakerunner"]
