@@ -39,7 +39,6 @@ func runDDB(ctx context.Context, _ []string) error {
 	ddb, err := duckdbx.Open("",
 		duckdbx.WithMemoryLimitMB(2048),
 		duckdbx.WithExtension("httpfs", ""),
-		duckdbx.WithMetrics(10),
 	)
 	if err != nil {
 		return err
