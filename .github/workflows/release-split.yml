@@ -1,0 +1,141 @@
+name: goreleaser
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+      - "!v*-*"
+
+permissions:
+  contents: write
+  id-token: write
+  packages: write
+
+jobs:
+  prepare:
+    strategy:
+      matrix:
+        os:
+          - ubuntu-22.04
+          - ubuntu-22.04-arm
+    runs-on: ${{ matrix.os }}
+    env:
+      DOCKER_CLI_EXPERIMENTAL: "enabled"
+      flags: ""
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Configure AWS credentials
+        id: aws-credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          audience: sts.amazonaws.com
+          role-to-assume: arn:aws:iam::${{ secrets.ECR_ACCOUNT_ID }}:role/${{ secrets.ECR_ROLE_NAME }}
+          aws-region: ${{ secrets.ECR_REGISTRY_REGION }}
+          role-session-name: GitHubActions
+
+      - name: Login to PUBLIC Amazon ECR
+        id: login-ecr-public
+        env:
+          AWS_REGION: us-east-1
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registry-type: public
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - if: ${{ github.event_name == 'workflow_dispatch' }}
+        shell: bash
+        run: |
+          echo "flags=--nightly" >> $GITHUB_ENV
+
+      - shell: bash
+        run: |
+          echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+
+      - uses: actions/cache@v4
+        with:
+          path: dist/linux
+          key: linux-${{ env.sha_short }}${{ env.flags }}
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser-pro
+          version: latest
+          args: release --clean --split ${{ env.flags }}
+        env:
+          GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
+
+  release:
+    runs-on: ubuntu-22.04
+    needs: prepare
+    env:
+      DOCKER_CLI_EXPERIMENTAL: "enabled"
+      flags: ""
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: sigstore/cosign-installer@v3.9.2
+
+      - uses: anchore/sbom-action/download-syft@v0.20.4
+
+      - name: Configure AWS credentials
+        id: aws-credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          audience: sts.amazonaws.com
+          role-to-assume: arn:aws:iam::${{ secrets.ECR_ACCOUNT_ID }}:role/${{ secrets.ECR_ROLE_NAME }}
+          aws-region: ${{ secrets.ECR_REGISTRY_REGION }}
+          role-session-name: GitHubActions
+
+      - name: Login to PUBLIC Amazon ECR
+        id: login-ecr-public
+        env:
+          AWS_REGION: us-east-1
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registry-type: public
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      # copy the cashes from prepare
+      - if: ${{ github.event_name == 'workflow_dispatch' }}
+        shell: bash
+        run: |
+          echo "flags=--nightly" >> $GITHUB_ENV
+
+      - shell: bash
+        run: |
+          echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+
+      - uses: actions/cache@v4
+        with:
+          path: dist/linux
+          key: linux-${{ env.sha_short }}${{ env.flags }}
+
+      # release
+      - uses: goreleaser/goreleaser-action@v6
+        if: steps.cache.outputs.cache-hit != 'true' # do not run if cache hit
+        with:
+          distribution: goreleaser-pro
+          version: latest
+          args: continue --merge
+        env:
+          GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
