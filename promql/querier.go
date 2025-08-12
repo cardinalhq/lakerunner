@@ -63,6 +63,12 @@ func (q *QuerierService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	reverse := r.URL.Query().Get("reverse")
+	reverseSort := true
+	if reverse != "" {
+		reverseSort = reverse == "true"
+	}
+
 	promExpr, err := FromPromQL(prom)
 	if err != nil {
 		http.Error(w, "invalid query expression: "+err.Error(), http.StatusBadRequest)
@@ -76,7 +82,7 @@ func (q *QuerierService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Kick off evaluation; reverseSort can be toggled if you add a query param.
-	resultsCh, err := q.Evaluate(r.Context(), orgUUID, startTs, endTs, plan, true)
+	resultsCh, err := q.Evaluate(r.Context(), orgUUID, startTs, endTs, plan, reverseSort)
 	if err != nil {
 		http.Error(w, "evaluate error: "+err.Error(), http.StatusInternalServerError)
 		return
