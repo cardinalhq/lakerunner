@@ -1,0 +1,16 @@
+# Dockerfile.runtime
+FROM scratch
+ARG TARGET
+
+# App binary
+COPY dist/lakerunner_linux_${TARGET}/lakerunner /app/lakerunner
+
+# DuckDB SDK bits for runtime (libs + loader + CA)
+COPY sdk/linux_${TARGET}/usr/local /usr/local
+COPY sdk/linux_${TARGET}/lib /lib
+COPY sdk/linux_${TARGET}/etc /etc
+
+# Optional: if you want headers to be present for other stages/artifacts, you can include them too:
+# COPY sdk/linux_${TARGET}/usr/local/include /usr/local/include
+
+ENTRYPOINT ["/app/lakerunner"]

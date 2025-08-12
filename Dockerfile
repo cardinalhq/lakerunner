@@ -13,7 +13,7 @@
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 FROM alpine:latest AS certs
-RUN apk --update add ca-certificates
+#RUN apk --update add ca-certificates
 
 # FROM scratch
 
