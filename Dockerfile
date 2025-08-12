@@ -12,18 +12,10 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-FROM alpine:latest AS certs
-#RUN apk --update add ca-certificates
-
-# FROM scratch
-
-# RUN mkdir -p /apps/libs && \
-#     curl -fsSL "https://extensions.duckdb.org/v1.3.2/${TARGETOS}_${TARGETARCH}/httpfs.duckdb_extension.gz" \
-#     | gunzip -c > /app/libs/httpfs.duckdb_extension
+FROM gcr.io/distroless/base-debian12:latest
 
 ARG USER_UID=2000
 USER ${USER_UID}:${USER_UID}
 
-#COPY --from=certs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY lakerunner /app/bin/lakerunner
 CMD ["/app/bin/lakerunner"]

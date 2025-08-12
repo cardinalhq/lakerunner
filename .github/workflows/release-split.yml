@@ -142,7 +142,7 @@ jobs:
 
       # release
       - uses: goreleaser/goreleaser-action@v6
-        if: steps.cache_linux_amd64.outputs.cache-hit != 'true' || steps.cache_linux_arm64.outputs.cache-hit != 'true'
+        if: steps.cache_linux_amd64.outputs.cache-hit != 'true' && steps.cache_linux_arm64.outputs.cache-hit != 'true'
         with:
           distribution: goreleaser-pro
           version: latest
