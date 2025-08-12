@@ -2,10 +2,10 @@ name: build-split
 
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - "v*"
-      - "!v*-*"
+  # push:
+  #   tags:
+  #     - "v*"
+  #     - "!v*-*"
 
 permissions:
   contents: write
@@ -64,8 +64,8 @@ jobs:
 
       - uses: actions/cache@v4
         with:
-          path: dist/linux
-          key: linux-${{ env.sha_short }}${{ env.flags }}
+          path: dist/${{ matrix.os == 'ubuntu-22.04' && 'linux_amd64' || 'linux_arm64' }}
+          key: ${{ matrix.os == 'ubuntu-22.04' && 'linux_amd64' || 'linux_arm64' }}-${{ env.sha_short }}${{ env.flags }}
 
       - uses: goreleaser/goreleaser-action@v6
         with:
@@ -130,8 +130,13 @@ jobs:
 
       - uses: actions/cache@v4
         with:
-          path: dist/linux
-          key: linux-${{ env.sha_short }}${{ env.flags }}
+          path: dist/linux_amd64
+          key: linux_amd64-${{ env.sha_short }}${{ env.flags }}
+
+      - uses: actions/cache@v4
+        with:
+          path: dist/linux_arm64
+          key: linux_arm64-${{ env.sha_short }}${{ env.flags }}
 
       # release
       - uses: goreleaser/goreleaser-action@v6
