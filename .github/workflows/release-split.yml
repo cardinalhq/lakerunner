@@ -75,6 +75,9 @@ jobs:
         env:
           GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
 
+      - shell: bash
+        run: |
+          ls -lR dist
   release:
     runs-on: ubuntu-22.04
     needs: prepare
