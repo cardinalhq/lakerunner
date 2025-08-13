@@ -2,10 +2,10 @@ version: 2
 
 project_name: lakerunner
 
-# before:
-#   hooks:
-#     - make generate
-#     - go test -race ./...
+before:
+  hooks:
+    - make generate
+    - go test -race ./...
 
 partial:
   by: target

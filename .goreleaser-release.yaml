@@ -1,9 +1,17 @@
 version: 2
 
+project_name: lakerunner
+
 before:
   hooks:
     - make generate
     - go test -race ./...
+
+partial:
+  by: target
+
+checksum:
+  name_template: "checksums.txt"
 
 release:
   disable: true
@@ -20,7 +28,7 @@ archives:
 builds:
   - id: lakerunner
     main: ./main.go
-    binary: lakerunner
+    mod_timestamp: "{{ .CommitTimestamp }}"
     goos:
       - linux
     goarch:
@@ -29,6 +37,7 @@ builds:
     env:
       - CGO_ENABLED=1
     ldflags:
+      #- -extldflags "-lc -lrt -lpthread --static"
       - -X main.commit={{ .Commit }}
       - -X main.version={{ .Version }}
     flags:
