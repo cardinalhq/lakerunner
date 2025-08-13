@@ -1,4 +1,4 @@
-name: build-split
+name: dev
 
 on:
   workflow_dispatch:

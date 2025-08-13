@@ -1,4 +1,4 @@
-name: build-split
+name: release
 
 on:
   workflow_dispatch:
