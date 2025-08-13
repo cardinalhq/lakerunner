@@ -98,6 +98,46 @@ func (ns NullSignalEnum) Value() (driver.Value, error) {
 	return string(ns.SignalEnum), nil
 }
 
+type ExemplarLog struct {
+	CreatedAt           time.Time      `json:"created_at"`
+	UpdatedAt           time.Time      `json:"updated_at"`
+	OrganizationID      uuid.UUID      `json:"organization_id"`
+	CollectorID         uuid.UUID      `json:"collector_id"`
+	ProcessorID         uuid.UUID      `json:"processor_id"`
+	ServiceIdentifierID uuid.UUID      `json:"service_identifier_id"`
+	Attributes          map[string]any `json:"attributes"`
+	Exemplar            map[string]any `json:"exemplar"`
+	Fingerprint         int64          `json:"fingerprint"`
+	RelatedFingerprints []int64        `json:"related_fingerprints"`
+}
+
+type ExemplarMetric struct {
+	CreatedAt           time.Time      `json:"created_at"`
+	UpdatedAt           time.Time      `json:"updated_at"`
+	OrganizationID      uuid.UUID      `json:"organization_id"`
+	CollectorID         uuid.UUID      `json:"collector_id"`
+	ProcessorID         uuid.UUID      `json:"processor_id"`
+	ServiceIdentifierID uuid.UUID      `json:"service_identifier_id"`
+	Attributes          map[string]any `json:"attributes"`
+	Exemplar            map[string]any `json:"exemplar"`
+	MetricName          string         `json:"metric_name"`
+	MetricType          string         `json:"metric_type"`
+}
+
+type ExemplarTrace struct {
+	CreatedAt           time.Time      `json:"created_at"`
+	UpdatedAt           time.Time      `json:"updated_at"`
+	OrganizationID      uuid.UUID      `json:"organization_id"`
+	CollectorID         uuid.UUID      `json:"collector_id"`
+	ProcessorID         uuid.UUID      `json:"processor_id"`
+	ServiceIdentifierID uuid.UUID      `json:"service_identifier_id"`
+	Attributes          map[string]any `json:"attributes"`
+	Exemplar            map[string]any `json:"exemplar"`
+	Fingerprint         int64          `json:"fingerprint"`
+	SpanName            string         `json:"span_name"`
+	SpanKind            int32          `json:"span_kind"`
+}
+
 type Inqueue struct {
 	ID             uuid.UUID  `json:"id"`
 	QueueTs        time.Time  `json:"queue_ts"`
@@ -161,6 +201,16 @@ type ObjCleanup struct {
 	BucketID       string    `json:"bucket_id"`
 	ObjectID       string    `json:"object_id"`
 	Tries          int32     `json:"tries"`
+}
+
+type ServiceIdentifier struct {
+	ID             uuid.UUID `json:"id"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+	ServiceName    string    `json:"service_name"`
+	ClusterName    string    `json:"cluster_name"`
+	Namespace      string    `json:"namespace"`
 }
 
 type Setting struct {
