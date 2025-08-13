@@ -15,11 +15,15 @@
 package logcrunch
 
 import (
+	"container/heap"
+	"encoding/gob"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"slices"
+	"sort"
 
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/parquet-go/parquet-go"
@@ -28,6 +32,8 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/filecrunch"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 )
+
+const maxRowsSortBuffer = 5000
 
 type SplitKey struct {
 	DateInt       int32
@@ -43,19 +49,22 @@ type HourlyResult struct {
 	LastTS       int64
 }
 
+type gs struct {
+	chunks  []string
+	buf     []map[string]any
+	prints  mapset.Set[int64]
+	firstTS int64
+	lastTS  int64
+}
+
 // ProcessAndSplit reads every record from fh, groups rows by dateint,
-// fingerprints them, buffers each group to disk (so we never buffer in RAM),
-// then does a second pass to derive a minimal schema and write Parquet files.
+// fingerprints them, buffers each group to disk, sorts each buffer by
+// `_cardinalhq.timestamp`, and finally merge-sorts the buffers into Parquet
+// files in time order.
 func ProcessAndSplit(ll *slog.Logger, fh *filecrunch.FileHandle, tmpdir string, ingestDateint int32, rpfEstimate int64) (map[SplitKey]HourlyResult, error) {
-	type gs struct {
-		writer  *buffet.Writer
-		prints  mapset.Set[int64]
-		firstTS int64
-		lastTS  int64
-	}
 	groups := make(map[SplitKey]*gs)
 
-	// 1st pass: read input and feed buffet writers
+	// 1st pass: read input and write sorted chunks to disk per group.
 	reader := parquet.NewReader(fh.File, fh.Schema)
 	defer reader.Close()
 	for {
@@ -71,58 +80,63 @@ func ProcessAndSplit(ll *slog.Logger, fh *filecrunch.FileHandle, tmpdir string, 
 			ll.Warn("Skipping record without timestamp", slog.Any("record", rec))
 			continue
 		}
-		var ms int64
-		switch v := tsRaw.(type) {
-		case int64:
-			ms = v
-		case float64:
-			ms = int64(v)
-		default:
-			ll.Warn("Skipping record with non-int64/float64 timestamp", slog.Any("record", rec))
-			continue
-		}
+		ms := getMS(tsRaw)
 		dateint, _ := helpers.MSToDateintHour(ms)
 		key := SplitKey{DateInt: dateint, IngestDateint: ingestDateint}
 
 		st, exists := groups[key]
 		if !exists {
-			w, err := buffet.NewWriter(fh.File.Name(), tmpdir, fh.Nodes, rpfEstimate)
-			if err != nil {
-				return nil, err
-			}
 			st = &gs{
-				writer: w,
+				buf:    make([]map[string]any, 0, maxRowsSortBuffer),
 				prints: mapset.NewSet[int64](),
 			}
 			groups[key] = st
 		}
-		if st.firstTS == 0 {
-			st.firstTS = ms
+		// copy row for buffering
+		row := make(map[string]any, len(rec))
+		for k, v := range rec {
+			row[k] = v
 		}
-		if ms < st.firstTS {
+		st.buf = append(st.buf, row)
+		if len(st.buf) >= maxRowsSortBuffer {
+			if err := flushChunk(st, tmpdir); err != nil {
+				return nil, err
+			}
+		}
+		if st.firstTS == 0 || ms < st.firstTS {
 			st.firstTS = ms
 		}
 		if ms > st.lastTS {
 			st.lastTS = ms
 		}
 
-		// feed the row
-		if err := st.writer.Write(rec); err != nil {
-			return nil, err
-		}
-
-		addfp(fh.Schema, rec, st.prints)
+		addfp(fh.Schema, row, st.prints)
 	}
 
-	// 2nd pass: close each buffet.Writer → get parquet + metadata
+	// flush remaining buffers
+	for _, st := range groups {
+		if len(st.buf) > 0 {
+			if err := flushChunk(st, tmpdir); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	// 2nd pass: merge chunks into Parquet files.
 	results := make(map[SplitKey]HourlyResult, len(groups))
 	for key, st := range groups {
-		res, err := st.writer.Close()
+		if len(st.chunks) == 0 {
+			continue
+		}
+		w, err := buffet.NewWriter(fh.File.Name(), tmpdir, fh.Nodes, rpfEstimate)
+		if err != nil {
+			return nil, err
+		}
+		res, err := mergeChunks(w, st.chunks)
 		if err != nil {
 			return nil, err
 		}
 		if len(res) == 0 {
-			// No records for this key, skip it
 			continue
 		}
 		results[key] = HourlyResult{
@@ -135,6 +149,128 @@ func ProcessAndSplit(ll *slog.Logger, fh *filecrunch.FileHandle, tmpdir string, 
 		}
 	}
 	return results, nil
+}
+
+func getMS(v any) int64 {
+	switch ts := v.(type) {
+	case int64:
+		return ts
+	case float64:
+		return int64(ts)
+	default:
+		return 0
+	}
+}
+
+func flushChunk(st *gs, tmpdir string) error {
+	sort.Slice(st.buf, func(i, j int) bool {
+		return getMS(st.buf[i]["_cardinalhq.timestamp"]) < getMS(st.buf[j]["_cardinalhq.timestamp"])
+	})
+	f, err := os.CreateTemp(tmpdir, "tschunk-*.gob")
+	if err != nil {
+		return err
+	}
+	enc := gob.NewEncoder(f)
+	for _, r := range st.buf {
+		if err := enc.Encode(r); err != nil {
+			_ = f.Close()
+			return err
+		}
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	st.chunks = append(st.chunks, f.Name())
+	st.buf = st.buf[:0]
+	return nil
+}
+
+type chunkReader struct {
+	f   *os.File
+	dec *gob.Decoder
+	row map[string]any
+}
+
+func newChunkReader(path string) (*chunkReader, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	cr := &chunkReader{f: f, dec: gob.NewDecoder(f)}
+	if err := cr.next(); err != nil {
+		if errors.Is(err, io.EOF) {
+			_ = f.Close()
+			return nil, nil
+		}
+		_ = f.Close()
+		return nil, err
+	}
+	return cr, nil
+}
+
+func (c *chunkReader) next() error {
+	var m map[string]any
+	if err := c.dec.Decode(&m); err != nil {
+		return err
+	}
+	c.row = m
+	return nil
+}
+
+func (c *chunkReader) Close() error { return c.f.Close() }
+
+type chunkHeap []*chunkReader
+
+func (h chunkHeap) Len() int { return len(h) }
+func (h chunkHeap) Less(i, j int) bool {
+	return getMS(h[i].row["_cardinalhq.timestamp"]) < getMS(h[j].row["_cardinalhq.timestamp"])
+}
+func (h chunkHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
+
+func (h *chunkHeap) Push(x any) {
+	*h = append(*h, x.(*chunkReader))
+}
+
+func (h *chunkHeap) Pop() any {
+	old := *h
+	n := len(old)
+	x := old[n-1]
+	*h = old[:n-1]
+	return x
+}
+
+func mergeChunks(w *buffet.Writer, paths []string) ([]buffet.Result, error) {
+	h := &chunkHeap{}
+	for _, p := range paths {
+		cr, err := newChunkReader(p)
+		if err != nil {
+			return nil, err
+		}
+		if cr != nil {
+			heap.Push(h, cr)
+		}
+	}
+	for h.Len() > 0 {
+		cr := heap.Pop(h).(*chunkReader)
+		if err := w.Write(cr.row); err != nil {
+			_ = cr.Close()
+			return nil, err
+		}
+		if err := cr.next(); err != nil {
+			if !errors.Is(err, io.EOF) {
+				_ = cr.Close()
+				return nil, err
+			}
+			_ = cr.Close()
+		} else {
+			heap.Push(h, cr)
+		}
+	}
+	res, err := w.Close()
+	for _, p := range paths {
+		_ = os.Remove(p)
+	}
+	return res, err
 }
 
 func addfp(schema *parquet.Schema, row map[string]any, accum mapset.Set[int64]) {
