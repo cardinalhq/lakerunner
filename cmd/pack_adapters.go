@@ -17,6 +17,7 @@ package cmd
 import (
 	"context"
 	"os"
+	"sync"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
@@ -49,14 +50,12 @@ type genericMapReaderAdapter struct {
 	r *parquet.GenericReader[map[string]any]
 }
 
+var mapPool = sync.Pool{New: func() any { return make(map[string]any) }}
+
 func (g genericMapReaderAdapter) Read(batch []map[string]any) (int, error) {
-	for i := range batch {
-		if batch[i] == nil {
-			batch[i] = make(map[string]any)
-		} else {
-			for k := range batch[i] {
-				delete(batch[i], k)
-			}
+	if len(batch) > 0 && batch[0] == nil {
+		for i := range batch {
+			batch[i] = mapPool.Get().(map[string]any)
 		}
 	}
 	return g.r.Read(batch)
