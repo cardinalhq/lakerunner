@@ -77,13 +77,14 @@ func PackSegments(segments []lrdb.GetLogSegmentsForCompactionRow, estimatedRecor
 }
 
 func filterSegments(segs []lrdb.GetLogSegmentsForCompactionRow) []lrdb.GetLogSegmentsForCompactionRow {
-	out := make([]lrdb.GetLogSegmentsForCompactionRow, 0, len(segs))
+	j := 0
 	for _, s := range segs {
 		if s.RecordCount > 0 {
-			out = append(out, s)
+			segs[j] = s
+			j++
 		}
 	}
-	return out
+	return segs[:j]
 }
 
 const msPerDay int64 = 86_400_000
