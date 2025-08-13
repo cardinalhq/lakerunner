@@ -159,6 +159,15 @@ func copyAll(
 ) (int64, error) {
 	var total int64
 	const batchSize = 4096
+	batch := make([]map[string]any, batchSize)
+	for i := range batch {
+		batch[i] = mapPool.Get().(map[string]any)
+	}
+	defer func() {
+		for i := range batch {
+			mapPool.Put(batch[i])
+		}
+	}()
 
 	for _, h := range handles {
 		if err := ctx.Err(); err != nil {
@@ -171,9 +180,6 @@ func copyAll(
 		if err != nil {
 			return total, err
 		}
-
-		// Reuse the slice; GenericReader fills positions [0:n)
-		batch := make([]map[string]any, batchSize)
 
 		for {
 			if err := ctx.Err(); err != nil {
@@ -192,6 +198,9 @@ func copyAll(
 					if werr := writer.Write(rec); werr != nil {
 						_ = r.Close()
 						return total, werr
+					}
+					for k := range batch[i] {
+						delete(batch[i], k)
 					}
 				}
 				total += int64(n)
