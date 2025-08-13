@@ -16,7 +16,6 @@ package logcrunch
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -87,8 +86,8 @@ func filterSegments(segs []lrdb.GetLogSegmentsForCompactionRow) []lrdb.GetLogSeg
 	return out
 }
 
-func dayFromMillis(millis int64) time.Time {
-	// Normalize to midnight UTC of that day
-	t := time.UnixMilli(millis).UTC()
-	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+const msPerDay int64 = 86_400_000
+
+func dayFromMillis(millis int64) int64 {
+	return millis / msPerDay
 }

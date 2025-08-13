@@ -16,7 +16,6 @@ package logcrunch
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -117,13 +116,13 @@ func TestDayFromMillis(t *testing.T) {
 	tests := []struct {
 		name     string
 		millis   int64
-		expected time.Time
+		expected int64
 	}{
-		{"Epoch", 0, time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)},
-		{"Start of 2023 UTC", 1672531200000, time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC)},
-		{"Middle of day", 1672574400123, time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC)},
-		{"End of day", 1672617599999, time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC)},
-		{"Next day", 1672617600000, time.Date(2023, 1, 2, 0, 0, 0, 0, time.UTC)},
+		{"Epoch", 0, 0},
+		{"Start of 2023 UTC", 1672531200000, 19358},
+		{"Middle of day", 1672574400123, 19358},
+		{"End of day", 1672617599999, 19358},
+		{"Next day", 1672617600000, 19359},
 	}
 
 	for _, tt := range tests {
