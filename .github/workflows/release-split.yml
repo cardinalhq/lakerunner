@@ -2,10 +2,10 @@ name: build-split
 
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - "v*"
-      - "!v*-*"
+  # push:
+  #   tags:
+  #     - "v*"
+  #     - "!v*-*"
 
 permissions:
   contents: write
@@ -64,16 +64,24 @@ jobs:
 
       - uses: actions/cache@v4
         with:
-          path: dist/linux
-          key: linux-${{ env.sha_short }}${{ env.flags }}
+          path: dist/${{ matrix.os == 'ubuntu-22.04' && 'linux_amd64' || 'linux_arm64' }}
+          key: ${{ matrix.os == 'ubuntu-22.04' && 'linux_amd64' || 'linux_arm64' }}-${{ env.sha_short }}${{ env.flags }}
+
+      # - shell: bash
+      #   run: |
+      #     cosign dockerfile verify --certificate-oidc-issuer https://accounts.google.com --certificate-identity keyless@distroless.iam.gserviceaccount.com Dockerfile
 
       - uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser-pro
-          version: latest
+          version: "~> v2"
           args: release --clean --split ${{ env.flags }}
         env:
           GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
+
+      - shell: bash
+        run: |
+          ls -lR dist
 
   release:
     runs-on: ubuntu-22.04
@@ -115,7 +123,10 @@ jobs:
         with:
           go-version: stable
 
-      # copy the cashes from prepare
+      # - shell: bash
+      #   run: |
+      #     cosign dockerfile verify --certificate-oidc-issuer https://accounts.google.com --certificate-identity keyless@distroless.iam.gserviceaccount.com Dockerfile
+
       - if: ${{ github.event_name == 'workflow_dispatch' }}
         shell: bash
         run: |
@@ -126,16 +137,24 @@ jobs:
           echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
 
       - uses: actions/cache@v4
+        id: cache_linux_amd64
         with:
-          path: dist/linux
-          key: linux-${{ env.sha_short }}${{ env.flags }}
+          path: dist/linux_amd64
+          key: linux_amd64-${{ env.sha_short }}${{ env.flags }}
+          fail-on-cache-miss: true
+
+      - uses: actions/cache@v4
+        id: cache_linux_arm64
+        with:
+          path: dist/linux_arm64
+          key: linux_arm64-${{ env.sha_short }}${{ env.flags }}
+          fail-on-cache-miss: true
 
       # release
       - uses: goreleaser/goreleaser-action@v6
-        if: steps.cache.outputs.cache-hit != 'true' # do not run if cache hit
         with:
           distribution: goreleaser-pro
-          version: latest
+          version: "~> v2"
           args: continue --merge
         env:
           GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
