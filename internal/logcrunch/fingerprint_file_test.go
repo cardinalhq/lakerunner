@@ -15,12 +15,18 @@
 package logcrunch
 
 import (
+	"fmt"
+	"io"
+	"log/slog"
+	"math"
+	"os"
 	"testing"
 
 	"github.com/cardinalhq/lakerunner/internal/filecrunch"
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/parquet-go/parquet-go"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestAddfp(t *testing.T) {
@@ -155,4 +161,51 @@ func TestAddfp_ComplexRow(t *testing.T) {
 		ComputeFingerprint("resource.file", "REDACTED"),
 		ComputeFingerprint("resource.file", ExistsRegex),
 	}, sa)
+}
+
+func TestProcessAndSplitSortsByTimestamp(t *testing.T) {
+	tmpDir := t.TempDir()
+	nodes := map[string]parquet.Node{
+		"_cardinalhq.timestamp": parquet.Int(64),
+		"msg":                   parquet.String(),
+	}
+	schema := filecrunch.SchemaFromNodes(nodes)
+	inputFile, err := os.CreateTemp(tmpDir, "unsorted-*.parquet")
+	require.NoError(t, err)
+	defer os.Remove(inputFile.Name())
+	pw := parquet.NewWriter(inputFile, schema)
+	base := int64(1_700_000_000_000)
+	for i := 0; i < maxRowsSortBuffer+1000; i++ {
+		ts := base - int64(i)
+		row := map[string]any{
+			"_cardinalhq.timestamp": ts,
+			"msg":                   fmt.Sprintf("m%d", i),
+		}
+		require.NoError(t, pw.Write(row))
+	}
+	require.NoError(t, pw.Close())
+	require.NoError(t, inputFile.Close())
+
+	fh, err := filecrunch.LoadSchemaForFile(inputFile.Name())
+	require.NoError(t, err)
+	defer fh.Close()
+	ll := slog.New(slog.NewTextHandler(io.Discard, nil))
+	res, err := ProcessAndSplit(ll, fh, tmpDir, 0, 0)
+	require.NoError(t, err)
+	require.Len(t, res, 1)
+	for _, hr := range res {
+		f, err := os.Open(hr.FileName)
+		require.NoError(t, err)
+		pr := parquet.NewReader(f, schema)
+		var prev int64 = math.MinInt64
+		for j := int64(0); j < hr.RecordCount; j++ {
+			row := map[string]any{}
+			require.NoError(t, pr.Read(&row))
+			ts := row["_cardinalhq.timestamp"].(int64)
+			require.GreaterOrEqual(t, ts, prev)
+			prev = ts
+		}
+		require.NoError(t, pr.Close())
+		require.NoError(t, f.Close())
+	}
 }
