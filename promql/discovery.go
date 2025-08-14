@@ -14,13 +14,14 @@
 
 package promql
 
-type Worker struct {
-	IP   string
-	Port int
-}
+import (
+	"context"
+	"github.com/google/uuid"
+)
 
-func GetWorkers() []Worker {
-	// This function should return a list of Worker instances.
-	// For now, we return an empty slice as a placeholder.
-	return []Worker{}
+type WorkerDiscovery interface {
+	Start(ctx context.Context) error
+	Stop() error
+	GetWorkersForSegments(organizationID uuid.UUID, segmentIDs []string) ([]SegmentWorkerMapping, error)
+	GetAllWorkers() ([]Worker, error)
 }

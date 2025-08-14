@@ -38,6 +38,7 @@ var rootCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(fileconvcmd.Cmd)
+	rootCmd.AddCommand(debugCmd)
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.

@@ -29,14 +29,6 @@ func (q *QuerierService) Evaluate(
 	queryPlan QueryPlan,
 	reverseSort bool,
 ) (<-chan map[string]EvalResult, error) {
-	workers := GetWorkers()
-	if len(workers) == 0 {
-		slog.Error("no workers available")
-		ch := make(chan SketchInput)
-		close(ch)
-		return nil, fmt.Errorf("no workers available")
-	}
-
 	stepDuration := stepForQueryDuration(startTs, endTs)
 
 	var allLeafChans []<-chan SketchInput
@@ -56,8 +48,6 @@ func (q *QuerierService) Evaluate(
 		// Partition by dateInt hours for storage listing.
 		dateIntHours := dateIntHoursRange(effStart, effEnd, time.UTC)
 
-		rr := 0
-
 		for _, dateIntHour := range dateIntHours {
 			segments, err := q.lookupSegments(ctx, dateIntHour, effStart, effEnd, stepDuration, orgID)
 			if err != nil {
@@ -69,27 +59,45 @@ func (q *QuerierService) Evaluate(
 				segments[i].ExprID = leaf.ID
 			}
 
-			// Form time-contiguous batches sized for the number of workers.
-			groups := ComputeReplayBatchesWithWorkers(segments, stepDuration, effStart, effEnd, len(workers), true)
-			if len(groups) == 0 {
+			if len(segments) == 0 {
 				continue
 			}
 
-			for _, sg := range groups {
-				w := workers[rr%len(workers)]
-				rr++
+			// Collect all segment IDs for worker assignment
+			segmentIDs := make([]string, 0, len(segments))
+			segmentMap := make(map[string][]SegmentInfo)
+			for _, segment := range segments {
+				segmentIDs = append(segmentIDs, segment.SegmentID)
+				segmentMap[segment.SegmentID] = append(segmentMap[segment.SegmentID], segment)
+			}
 
+			// Get worker assignments for all segments
+			mappings, err := q.workerDiscovery.GetWorkersForSegments(orgID, segmentIDs)
+			if err != nil {
+				slog.Error("failed to get worker assignments", "err", err)
+				continue
+			}
+
+			// Group segments by assigned worker
+			workerGroups := make(map[Worker][]SegmentInfo)
+			for _, mapping := range mappings {
+				segs := segmentMap[mapping.SegmentID]
+				workerGroups[mapping.Worker] = append(workerGroups[mapping.Worker], segs...)
+			}
+
+			// Create pushdown requests for each worker
+			for worker, workerSegments := range workerGroups {
 				req := PushDownRequest{
 					BaseExpr: leaf,
-					StartTs:  sg.StartTs,
-					EndTs:    sg.EndTs,
-					Segments: sg.Segments,
+					StartTs:  effStart,
+					EndTs:    effEnd,
+					Segments: workerSegments,
 				}
 
 				// Push down to worker; get its stream back.
-				ch, err := q.pushDown(ctx, w, req)
+				ch, err := q.pushDown(ctx, worker, req)
 				if err != nil {
-					slog.Error("pushdown failed", "worker", w, "err", err)
+					slog.Error("pushdown failed", "worker", worker, "err", err)
 					continue
 				}
 

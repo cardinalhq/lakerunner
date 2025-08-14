@@ -27,13 +27,15 @@ import (
 )
 
 type QuerierService struct {
-	mdb lrdb.StoreFull
+	mdb             lrdb.StoreFull
+	workerDiscovery WorkerDiscovery
 }
 
-// NewQuerierService creates a new QuerierService with the given database store.
-func NewQuerierService(mdb lrdb.StoreFull) *QuerierService {
+// NewQuerierService creates a new QuerierService with the given database store and worker discovery.
+func NewQuerierService(mdb lrdb.StoreFull, workerDiscovery WorkerDiscovery) *QuerierService {
 	return &QuerierService{
-		mdb: mdb,
+		mdb:             mdb,
+		workerDiscovery: workerDiscovery,
 	}
 }
 

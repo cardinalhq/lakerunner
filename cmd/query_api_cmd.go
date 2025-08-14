@@ -17,11 +17,15 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"os"
+	"strconv"
+	"time"
+
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/promql"
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
-	"log/slog"
 )
 
 func init() {
@@ -54,13 +58,60 @@ func init() {
 				slog.Error("Failed to connect to lr database", slog.Any("error", err))
 				return fmt.Errorf("failed to connect to lr database: %w", err)
 			}
-			querier := promql.NewQuerierService(mdb)
+
+			// Create and start worker discovery
+			workerDiscovery, err := createWorkerDiscovery()
 			if err != nil {
-				return fmt.Errorf("failed to create pubsub command: %w", err)
+				slog.Error("Failed to create worker discovery", slog.Any("error", err))
+				return fmt.Errorf("failed to create worker discovery: %w", err)
 			}
+
+			if err := workerDiscovery.Start(doneCtx); err != nil {
+				slog.Error("Failed to start worker discovery", slog.Any("error", err))
+				return fmt.Errorf("failed to start worker discovery: %w", err)
+			}
+			defer func() {
+				if err := workerDiscovery.Stop(); err != nil {
+					slog.Error("Failed to stop worker discovery", slog.Any("error", err))
+				}
+			}()
+
+			querier := promql.NewQuerierService(mdb, workerDiscovery)
 
 			return querier.Run(doneCtx)
 		},
 	}
 	cmd.AddCommand(queryApiCmd)
+}
+
+func createWorkerDiscovery() (promql.WorkerDiscovery, error) {
+	// Get required environment variables
+	namespace := os.Getenv("POD_NAMESPACE")
+	if namespace == "" {
+		return nil, fmt.Errorf("POD_NAMESPACE environment variable is required")
+	}
+
+	workerLabelSelector := os.Getenv("WORKER_POD_LABEL_SELECTOR")
+	if workerLabelSelector == "" {
+		return nil, fmt.Errorf("WORKER_POD_LABEL_SELECTOR environment variable is required")
+	}
+
+	workerPortStr := os.Getenv("QUERY_WORKER_PORT")
+	if workerPortStr == "" {
+		return nil, fmt.Errorf("QUERY_WORKER_PORT environment variable is required")
+	}
+
+	workerPort, err := strconv.Atoi(workerPortStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid QUERY_WORKER_PORT: %w", err)
+	}
+
+	config := promql.KubernetesWorkerDiscoveryConfig{
+		Namespace:           namespace,
+		WorkerLabelSelector: workerLabelSelector,
+		WorkerPort:          workerPort,
+		RebuildDebounce:     200 * time.Millisecond,
+	}
+
+	return promql.NewKubernetesWorkerDiscovery(config)
 }
