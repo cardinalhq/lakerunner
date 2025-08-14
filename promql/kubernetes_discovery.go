@@ -66,10 +66,9 @@ type KubernetesWorkerDiscovery struct {
 var _ WorkerDiscovery = (*KubernetesWorkerDiscovery)(nil)
 
 type KubernetesWorkerDiscoveryConfig struct {
-	Namespace           string        // REQUIRED (or via POD_NAMESPACE)
-	WorkerLabelSelector string        // REQUIRED, selector applied to Services
-	WorkerPort          int           // Fallback when no port found on ES/Service; defaults to 8080
-	RebuildDebounce     time.Duration // Optional; default 200ms
+	Namespace           string // REQUIRED (or via POD_NAMESPACE)
+	WorkerLabelSelector string // REQUIRED, selector applied to Services
+	WorkerPort          int    // Fallback when no port found on ES/Service; defaults to 8080
 	// If true, include IPv6 endpoints as well.
 	AllowIPv6 bool
 }
@@ -88,9 +87,6 @@ func NewKubernetesWorkerDiscovery(cfg KubernetesWorkerDiscoveryConfig) (*Kuberne
 	}
 	if cfg.WorkerPort == 0 {
 		cfg.WorkerPort = 8080
-	}
-	if cfg.RebuildDebounce <= 0 {
-		cfg.RebuildDebounce = 200 * time.Millisecond
 	}
 
 	// Prefer in-cluster; fallback to kubeconfig for local dev
@@ -126,7 +122,6 @@ func NewKubernetesWorkerDiscovery(cfg KubernetesWorkerDiscoveryConfig) (*Kuberne
 		esInf:               esInf,
 		svcList:             svcInf.Lister(),
 		esList:              esInf.Lister(),
-		debounceDelay:       cfg.RebuildDebounce,
 	}, nil
 }
 

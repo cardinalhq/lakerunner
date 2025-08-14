@@ -82,7 +82,6 @@ func runKubernetesDiscovery(cmd *cobra.Command, args []string) error {
 		Namespace:           podNamespace,
 		WorkerLabelSelector: workerLabelSelector,
 		WorkerPort:          queryWorkerPort,
-		RebuildDebounce:     100 * time.Millisecond, // Fast for debugging
 	}
 
 	discovery, err := promql.NewKubernetesWorkerDiscovery(config)
@@ -149,7 +148,7 @@ func runKubernetesDiscovery(cmd *cobra.Command, args []string) error {
 		consistent := true
 		for i, mapping := range mappings {
 			if mapping.Worker.IP != mappings2[i].Worker.IP {
-				fmt.Printf("  ❌ Segment %s: %s != %s (INCONSISTENT)\n", 
+				fmt.Printf("  ❌ Segment %s: %s != %s (INCONSISTENT)\n",
 					mapping.SegmentID, mapping.Worker.IP, mappings2[i].Worker.IP)
 				consistent = false
 			} else {

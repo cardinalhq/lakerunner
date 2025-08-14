@@ -20,7 +20,6 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
-	"time"
 
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/promql"
@@ -110,7 +109,6 @@ func createWorkerDiscovery() (promql.WorkerDiscovery, error) {
 		Namespace:           namespace,
 		WorkerLabelSelector: workerLabelSelector,
 		WorkerPort:          workerPort,
-		RebuildDebounce:     200 * time.Millisecond,
 	}
 
 	return promql.NewKubernetesWorkerDiscovery(config)
