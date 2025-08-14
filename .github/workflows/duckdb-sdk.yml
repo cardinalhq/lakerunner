@@ -1,0 +1,105 @@
+name: Build DuckDB SDK Images
+
+on:
+  workflow_dispatch:
+    inputs:
+      duckdb_version:
+        description: 'DuckDB version to build (e.g., v1.3.2)'
+        required: true
+        default: 'v1.3.2'
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+  packages: write
+
+jobs:
+  build-duckdb-sdk:
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            platform: linux/amd64
+            arch: amd64
+          - runner: ubuntu-22.04-arm
+            platform: linux/arm64
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    env:
+      DOCKER_CLI_EXPERIMENTAL: "enabled"
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          audience: sts.amazonaws.com
+          role-to-assume: arn:aws:iam::${{ secrets.ECR_ACCOUNT_ID }}:role/${{ secrets.ECR_ROLE_NAME }}
+          aws-region: ${{ secrets.ECR_REGISTRY_REGION }}
+          role-session-name: GitHubActions
+
+      - name: Login to PUBLIC Amazon ECR
+        env:
+          AWS_REGION: us-east-1
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registry-type: public
+
+      - name: Build and push DuckDB SDK
+        uses: docker/build-push-action@v6
+        with:
+          context: ./duckdb-images
+          file: ./duckdb-images/Dockerfile
+          platforms: ${{ matrix.platform }}
+          push: true
+          build-args: |
+            DUCKDB_VERSION=${{ inputs.duckdb_version }}
+          tags: |
+            public.ecr.aws/cardinalhq.io/duckdb-sdk:${{ inputs.duckdb_version }}-${{ matrix.arch }}
+            public.ecr.aws/cardinalhq.io/duckdb-sdk:latest-${{ matrix.arch }}
+          labels: |
+            org.opencontainers.image.created=${{ github.event.repository.updated_at }}
+            org.opencontainers.image.name=duckdb-sdk
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ inputs.duckdb_version }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+
+  create-manifest:
+    runs-on: ubuntu-22.04
+    needs: build-duckdb-sdk
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          audience: sts.amazonaws.com
+          role-to-assume: arn:aws:iam::${{ secrets.ECR_ACCOUNT_ID }}:role/${{ secrets.ECR_ROLE_NAME }}
+          aws-region: ${{ secrets.ECR_REGISTRY_REGION }}
+          role-session-name: GitHubActions
+
+      - name: Login to PUBLIC Amazon ECR
+        env:
+          AWS_REGION: us-east-1
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registry-type: public
+
+      - name: Create and push multi-arch manifest
+        run: |
+          # Create and push versioned manifest
+          docker manifest create \
+            public.ecr.aws/cardinalhq.io/duckdb-sdk:${{ inputs.duckdb_version }} \
+            public.ecr.aws/cardinalhq.io/duckdb-sdk:${{ inputs.duckdb_version }}-amd64 \
+            public.ecr.aws/cardinalhq.io/duckdb-sdk:${{ inputs.duckdb_version }}-arm64
+          docker manifest push public.ecr.aws/cardinalhq.io/duckdb-sdk:${{ inputs.duckdb_version }}
+          
+          # Create and push latest manifest
+          docker manifest create \
+            public.ecr.aws/cardinalhq.io/duckdb-sdk:latest \
+            public.ecr.aws/cardinalhq.io/duckdb-sdk:latest-amd64 \
+            public.ecr.aws/cardinalhq.io/duckdb-sdk:latest-arm64
+          docker manifest push public.ecr.aws/cardinalhq.io/duckdb-sdk:latest

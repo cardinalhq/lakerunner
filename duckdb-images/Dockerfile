@@ -71,3 +71,4 @@ COPY --from=collect /usr/local/lib     /usr/local/lib
 COPY --from=collect /rootfs /
 
 # This image is just a SDK/runtime; no entrypoint
+# Multi-arch build targets same final image

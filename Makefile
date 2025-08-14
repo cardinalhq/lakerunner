@@ -132,3 +132,28 @@ new-migration:
 	echo "-- $${ts}_$${name}.up.sql" > "$$up_file"; \
 	echo "-- $${ts}_$${name}.down.sql" > "$$down_file"; \
 	echo "Created: $$up_file $$down_file"
+
+#
+# DuckDB SDK management
+#
+
+.PHONY: duckdb-sdk-local
+duckdb-sdk-local:
+	@echo "Building DuckDB SDK locally..."
+	$(call with_builder, docker buildx build --pull --load --platform linux/amd64 --tag ${IMAGE_PREFIX}duckdb-sdk:latest-amd64 --tag ${IMAGE_PREFIX}duckdb-sdk:v1.3.2-amd64 --build-arg DUCKDB_VERSION=v1.3.2 ./duckdb-images)
+	$(call with_builder, docker buildx build --pull --load --platform linux/arm64 --tag ${IMAGE_PREFIX}duckdb-sdk:latest-arm64 --tag ${IMAGE_PREFIX}duckdb-sdk:v1.3.2-arm64 --build-arg DUCKDB_VERSION=v1.3.2 ./duckdb-images)
+	@echo "Creating multi-arch manifests..."
+	@docker manifest create ${IMAGE_PREFIX}duckdb-sdk:latest ${IMAGE_PREFIX}duckdb-sdk:latest-amd64 ${IMAGE_PREFIX}duckdb-sdk:latest-arm64 2>/dev/null || true
+	@docker manifest create ${IMAGE_PREFIX}duckdb-sdk:v1.3.2 ${IMAGE_PREFIX}duckdb-sdk:v1.3.2-amd64 ${IMAGE_PREFIX}duckdb-sdk:v1.3.2-arm64 2>/dev/null || true
+
+.PHONY: docker-with-duckdb
+docker-with-duckdb: duckdb-sdk-local
+	@echo "Building lakerunner with custom DuckDB..."
+	$(call with_builder, docker buildx build --load --platform linux/amd64 --tag ${IMAGE_PREFIX}lakerunner:latest-local-amd64 --build-arg DUCKDB_SDK_VERSION=latest --build-arg TARGETARCH=amd64 --build-arg LDFLAGS="-X main.version=local" .)
+	@docker tag ${IMAGE_PREFIX}lakerunner:latest-local-amd64 ${IMAGE_PREFIX}lakerunner:latest-local
+
+.PHONY: test-air-gapped
+test-air-gapped: docker-with-duckdb
+	@echo "Testing air-gapped container..."
+	@echo "Starting container without network access..."
+	docker run --rm --network none ${IMAGE_PREFIX}lakerunner:latest-local --help

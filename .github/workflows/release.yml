@@ -78,6 +78,7 @@ jobs:
           args: release --clean --config .goreleaser-release.yaml --split ${{ env.flags }}
         env:
           GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
+          DUCKDB_SDK_VERSION: v1.3.2
 
       - shell: bash
         run: |
@@ -158,3 +159,4 @@ jobs:
           args: continue --config .goreleaser-release.yaml --merge
         env:
           GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
+          DUCKDB_SDK_VERSION: v1.3.2

@@ -12,10 +12,59 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 
+# Build arguments
+ARG DUCKDB_SDK_VERSION=latest
+ARG TARGETARCH
+
+# ========= Stage 1: Extract DuckDB SDK =========
+FROM public.ecr.aws/cardinalhq.io/duckdb-sdk:${DUCKDB_SDK_VERSION}-${TARGETARCH} AS duckdb-sdk
+
+# ========= Stage 2: Build Go Application =========
+FROM golang:1.24-bookworm AS builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy DuckDB SDK files
+COPY --from=duckdb-sdk /usr/local /usr/local
+COPY --from=duckdb-sdk /lib /lib
+COPY --from=duckdb-sdk /etc/ssl /etc/ssl
+
+# Update library cache
+RUN ldconfig
+
+# Set working directory
+WORKDIR /workspace
+
+# Copy Go modules and download dependencies
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build the binary with CGO enabled and custom DuckDB
+ENV CGO_ENABLED=1
+ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig
+
+# Build binary (goreleaser will override this during real builds)
+ARG LDFLAGS=""
+RUN go build -ldflags="${LDFLAGS}" -o lakerunner main.go
+
+# ========= Stage 3: Runtime Image =========
 FROM gcr.io/distroless/cc-debian12:nonroot
 
-# ARG USER_UID=2000
-# USER ${USER_UID}:${USER_UID}
+# Copy DuckDB runtime libraries and dependencies
+COPY --from=duckdb-sdk /usr/local/lib/libduckdb.so /usr/local/lib/
+COPY --from=duckdb-sdk /lib /lib
+COPY --from=duckdb-sdk /etc/ssl /etc/ssl
 
-COPY lakerunner /app/bin/lakerunner
+# Copy the binary
+COPY --from=builder /workspace/lakerunner /app/bin/lakerunner
+
+# Set library path
+ENV LD_LIBRARY_PATH=/usr/local/lib
+
 CMD ["/app/bin/lakerunner"]

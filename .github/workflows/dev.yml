@@ -77,6 +77,7 @@ jobs:
           args: release --clean --split ${{ env.flags }}
         env:
           GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
+          DUCKDB_SDK_VERSION: latest
 
       - shell: bash
         run: |
@@ -157,3 +158,4 @@ jobs:
           args: continue --merge
         env:
           GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
+          DUCKDB_SDK_VERSION: latest
