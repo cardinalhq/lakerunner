@@ -15,7 +15,9 @@
 package promql
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/cardinalhq/oteltools/pkg/dateutils"
@@ -25,7 +27,14 @@ import (
 )
 
 type QuerierService struct {
-	mdb *lrdb.Store
+	mdb lrdb.StoreFull
+}
+
+// NewQuerierService creates a new QuerierService with the given database store.
+func NewQuerierService(mdb lrdb.StoreFull) *QuerierService {
+	return &QuerierService{
+		mdb: mdb,
+	}
 }
 
 func (q *QuerierService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -97,11 +106,8 @@ func (q *QuerierService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	// Disable proxy buffering if behind nginx etc.
-	w.Header().Set("X-Accel-Buffering", "no")
 
 	writeSSE := func(event string, v any) error {
-		// Marshal payload (if any) to a single JSON line.
 		var data []byte
 		var err error
 		if v != nil {
@@ -150,4 +156,29 @@ func (q *QuerierService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
+
+func (q *QuerierService) Run(doneCtx context.Context) error {
+	slog.Info("Starting querier service")
+
+	srv := &http.Server{
+		Addr:    ":8080",
+		Handler: q,
+	}
+
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("Failed to start HTTP server", slog.Any("error", err))
+		}
+	}()
+
+	<-doneCtx.Done()
+
+	slog.Info("Shutting down querier service")
+	if err := srv.Shutdown(context.Background()); err != nil {
+		slog.Error("Failed to shutdown HTTP server", slog.Any("error", err))
+		return fmt.Errorf("failed to shutdown HTTP server: %w", err)
+	}
+
+	return nil
 }

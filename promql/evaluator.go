@@ -127,6 +127,12 @@ func (q *QuerierService) Evaluate(
 func (q *QuerierService) pushDown(ctx context.Context, worker Worker, request PushDownRequest) (<-chan SketchInput, error) {
 	// TODO: implement: POST http://{worker.IP}:{worker.Port}/pushdown, stream response -> decode -> chan SketchInput
 	// Return a channel that closes when the stream ends or ctx is canceled.
+
+	// List Of Segments:
+	// Execute sub-batches of segments, and then calling "MergeSorted" on the n-channels.
+	// while(resultSet.next) {
+	// --> send to channel
+	// }
 	return nil, fmt.Errorf("pushDown not implemented")
 }
 
