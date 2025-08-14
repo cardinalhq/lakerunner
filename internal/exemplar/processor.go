@@ -9,33 +9,85 @@ import (
 	"go.opentelemetry.io/collector/pdata/pmetric"
 )
 
+// TelemetryType represents the type of telemetry being processed
+type TelemetryType string
+
+const (
+	TelemetryTypeLogs    TelemetryType = "logs"
+	TelemetryTypeMetrics TelemetryType = "metrics"
+	TelemetryTypeTraces  TelemetryType = "traces"
+)
+
 // Tenant holds the caches for each telemetry type for a specific organization
 type Tenant struct {
 	metricCache *LRUCache[pmetric.Metrics]
+	// logCache and traceCache will be added when those telemetry types are implemented
 }
 
-// Processor handles exemplar generation from metrics using tenant-based LRU caches
+// Processor handles exemplar generation from different telemetry types using tenant-based LRU caches
 type Processor struct {
-	tenants        sync.Map // organizationID -> *Tenant
-	logger         *slog.Logger
-	mu             sync.RWMutex
-	cacheSize      int
-	expiry         time.Duration
-	reportInterval time.Duration
-	// Function to send exemplars to the database (important: this will be set by caller)
-	sendExemplars func(ctx context.Context, organizationID string, exemplars []*ExemplarData) error
-	metricsMarshaller pmetric.Marshaler
+	tenants       sync.Map // organizationID -> *Tenant
+	logger        *slog.Logger
+	mu            sync.RWMutex
+	telemetryType TelemetryType
+
+	// Callback for metrics exemplars (logs and traces not implemented yet)
+	sendMetricsExemplars func(ctx context.Context, organizationID string, exemplars []*ExemplarData) error
+
+	// Type-specific configurations
+	config Config
 }
 
-func NewProcessor(cacheSize int, expiry, reportInterval time.Duration, logger *slog.Logger, sendExemplars func(ctx context.Context, organizationID string, exemplars []*ExemplarData) error) *Processor {
+// Config holds configuration for different telemetry types
+type Config struct {
+	Logs    TelemetryConfig
+	Metrics TelemetryConfig
+	Traces  TelemetryConfig
+}
+
+// TelemetryConfig holds configuration for a specific telemetry type
+type TelemetryConfig struct {
+	Enabled        bool
+	CacheSize      int
+	Expiry         time.Duration
+	ReportInterval time.Duration
+	BatchSize      int
+}
+
+// DefaultConfig returns a default configuration
+func DefaultConfig() Config {
+	return Config{
+		Logs: TelemetryConfig{
+			Enabled:        false,
+			CacheSize:      1000,
+			Expiry:         5 * time.Minute,
+			ReportInterval: 1 * time.Minute,
+			BatchSize:      100,
+		},
+		Metrics: TelemetryConfig{
+			Enabled:        true,
+			CacheSize:      1000,
+			Expiry:         5 * time.Minute,
+			ReportInterval: 1 * time.Minute,
+			BatchSize:      100,
+		},
+		Traces: TelemetryConfig{
+			Enabled:        false,
+			CacheSize:      1000,
+			Expiry:         5 * time.Minute,
+			ReportInterval: 1 * time.Minute,
+			BatchSize:      100,
+		},
+	}
+}
+
+// NewProcessor creates a new processor for a specific telemetry type
+func NewProcessor(telemetryType TelemetryType, config Config, logger *slog.Logger) *Processor {
 	return &Processor{
-		tenants:           sync.Map{},
-		logger:            logger,
-		cacheSize:         cacheSize,
-		expiry:            expiry,
-		reportInterval:    reportInterval,
-		sendExemplars:     sendExemplars,
-		metricsMarshaller: &pmetric.JSONMarshaler{},
+		tenants:       sync.Map{},
+		logger:        logger,
+		telemetryType: telemetryType,
+		config:        config,
 	}
 }
 
@@ -47,11 +99,23 @@ func (p *Processor) getTenant(organizationID string) *Tenant {
 	p.logger.Info("Creating new tenant", slog.String("organization_id", organizationID))
 	tenant := &Tenant{}
 
-	tenant.metricCache = NewLRUCache(
-		p.cacheSize,
-		p.expiry,
-		p.reportInterval,
-		p.createMetricsCallback(organizationID))
+	// Create cache based on processor type
+	switch p.telemetryType {
+	case TelemetryTypeLogs:
+		// Logs not implemented yet
+		p.logger.Debug("Logs processing not implemented yet")
+	case TelemetryTypeMetrics:
+		if p.config.Metrics.Enabled {
+			tenant.metricCache = NewLRUCache(
+				p.config.Metrics.CacheSize,
+				p.config.Metrics.Expiry,
+				p.config.Metrics.ReportInterval,
+				p.createMetricsCallback(organizationID))
+		}
+	case TelemetryTypeTraces:
+		// Traces not implemented yet
+		p.logger.Debug("Traces processing not implemented yet")
+	}
 
 	p.tenants.Store(organizationID, tenant)
 	return tenant
@@ -90,8 +154,8 @@ func (p *Processor) createMetricsCallback(organizationID string) func([]*Entry[p
 			return
 		}
 
-		if p.sendExemplars != nil {
-			if err := p.sendExemplars(context.Background(), organizationID, exemplarData); err != nil {
+		if p.sendMetricsExemplars != nil {
+			if err := p.sendMetricsExemplars(context.Background(), organizationID, exemplarData); err != nil {
 				p.logger.Error("Failed to send exemplars to database", slog.Any("error", err))
 			}
 		}
@@ -100,15 +164,20 @@ func (p *Processor) createMetricsCallback(organizationID string) func([]*Entry[p
 
 // pmetric.Metrics -> JSON string
 func (p *Processor) marshalMetrics(md pmetric.Metrics) (string, error) {
-	bytes, err := p.metricsMarshaller.MarshalMetrics(md)
+	marshaller := &pmetric.JSONMarshaler{}
+	bytes, err := marshaller.MarshalMetrics(md)
 	if err != nil {
 		return "", err
 	}
 	return string(bytes), nil
 }
 
-// generate exemplars for a specific organization
+// ProcessMetrics processes metrics and generates exemplars for a specific organization
 func (p *Processor) ProcessMetrics(ctx context.Context, md pmetric.Metrics, organizationID string) error {
+	if !p.config.Metrics.Enabled {
+		return nil
+	}
+
 	tenant := p.getTenant(organizationID)
 	if tenant.metricCache == nil {
 		return nil
@@ -151,13 +220,19 @@ func (p *Processor) Close() error {
 				tenant.metricCache.FlushPending()
 				tenant.metricCache.Close()
 			}
+			// logCache and traceCache will be handled when those telemetry types are implemented
 		}
 		return true
 	})
 	return nil
 }
 
-// SetCallback updates the sendExemplars callback function
-func (p *Processor) SetCallback(callback func(ctx context.Context, organizationID string, exemplars []*ExemplarData) error) {
-	p.sendExemplars = callback
+// SetMetricsCallback updates the sendMetricsExemplars callback function
+func (p *Processor) SetMetricsCallback(callback func(ctx context.Context, organizationID string, exemplars []*ExemplarData) error) {
+	p.sendMetricsExemplars = callback
+}
+
+// NewMetricsProcessor creates a new processor specifically for metrics
+func NewMetricsProcessor(config Config, logger *slog.Logger) *Processor {
+	return NewProcessor(TelemetryTypeMetrics, config, logger)
 }

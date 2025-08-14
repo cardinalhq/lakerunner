@@ -85,20 +85,28 @@ func NewIngestLoopContext(ctx context.Context, signal string, assumeRoleSessionN
 		return nil, fmt.Errorf("failed to setup storage profiles: %w", err)
 	}
 
-	// Create exemplar processor optimized for batch processing
-	// - Large cache size for cross-file deduplication
-	// - Longer expiry to catch duplicates across files
-	// - Frequent cleanup to prevent memory explosion
-	exemplarProcessor := exemplar.NewProcessor(
-		100000,         // cache size - large enough for cross-file deduplication
-		10*time.Minute, // expiry - long enough to catch duplicates across files
-		30*time.Second, // report interval - frequent cleanup for testing
-		ll,             // logger
-		func(ctx context.Context, organizationID string, exemplars []*exemplar.ExemplarData) error {
-			// No-op callback - will be replaced by service-specific callbacks
-			return nil
+	config := exemplar.Config{
+		Metrics: exemplar.TelemetryConfig{
+			Enabled:        true,
+			CacheSize:      10000, 
+			Expiry:         10 * time.Minute,
+			ReportInterval: 30 * time.Second,
+			BatchSize:      100,
 		},
-	)
+		Logs: exemplar.TelemetryConfig{
+			Enabled: false, // Logs not implemented yet
+		},
+		Traces: exemplar.TelemetryConfig{
+			Enabled: false, // Traces not implemented yet
+		},
+	}
+
+	exemplarProcessor := exemplar.NewMetricsProcessor(config, ll)
+
+	// Set a no-op callback - will be replaced by service-specific callbacks
+	exemplarProcessor.SetMetricsCallback(func(ctx context.Context, organizationID string, exemplars []*exemplar.ExemplarData) error {
+		return nil
+	})
 
 	return &IngestLoopContext{
 		ctx:               ctx,
