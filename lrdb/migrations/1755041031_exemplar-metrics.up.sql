@@ -1,7 +1,7 @@
 -- 1755041031_exemplar-metrics.up.sql
 
 CREATE TABLE IF NOT EXISTS service_identifiers (
-    id UUID NOT NULL DEFAULT uuid_generate_v4(),
+    id UUID NOT NULL DEFAULT gen_random_uuid(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     organization_id UUID,
