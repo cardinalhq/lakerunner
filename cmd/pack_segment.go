@@ -24,7 +24,7 @@ import (
 
 	"github.com/parquet-go/parquet-go"
 
-	"github.com/cardinalhq/lakerunner/cmd/storageprofile"
+	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/filecrunch"

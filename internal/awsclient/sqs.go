@@ -22,7 +22,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/cardinalhq/lakerunner/cmd/storageprofile"
+	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
 type SQSClient struct {

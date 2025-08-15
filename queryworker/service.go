@@ -24,7 +24,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/cardinalhq/lakerunner/cmd/storageprofile"
+	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 )
 
