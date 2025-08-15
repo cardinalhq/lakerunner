@@ -36,7 +36,6 @@ import (
 	"encoding/json"
 
 	"github.com/cardinalhq/lakerunner/cmd/ingestlogs"
-	"github.com/cardinalhq/lakerunner/cmd/storageprofile"
 	"github.com/cardinalhq/lakerunner/fileconv/proto"
 	"github.com/cardinalhq/lakerunner/fileconv/translate"
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
@@ -45,6 +44,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"github.com/cardinalhq/lakerunner/internal/filecrunch"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"

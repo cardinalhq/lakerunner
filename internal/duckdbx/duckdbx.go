@@ -166,3 +166,23 @@ func (d *DB) SetMaxIdleConns(n int) {
 func (d *DB) Close() error {
 	return d.db.Close()
 }
+
+// Query executes a SQL query using a new DuckDB connection and returns the result set.
+// The caller is responsible for calling rows.Close() after iteration.
+func (d *DB) Query(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	conn, err := d.Conn(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get duckdb connection: %w", err)
+	}
+
+	rows, err := conn.QueryContext(ctx, query, args...)
+	if err != nil {
+		closeErr := conn.Close()
+		if closeErr != nil {
+			return nil, fmt.Errorf("query failed, and closing connection also failed: %v; %v", err, closeErr)
+		}
+		return nil, fmt.Errorf("query execution failed: %w", err)
+	}
+
+	return rows, nil
+}

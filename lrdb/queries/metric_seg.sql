@@ -100,3 +100,16 @@ DELETE FROM public.metric_seg
    AND instance_num    = @instance_num
    AND tid_partition   = @tid_partition
 ;
+
+-- name: ListSegmentsForQuery :many
+SELECT
+    instance_num,
+    segment_id,
+    lower(ts_range)::bigint AS start_ts,
+    (upper(ts_range) - 1)::bigint AS end_ts
+FROM metric_seg
+WHERE ts_range && int8range($1, $2, '[)')
+  AND dateint = $3
+  AND frequency_ms = $4
+  AND organization_id = $5
+  AND published = true;

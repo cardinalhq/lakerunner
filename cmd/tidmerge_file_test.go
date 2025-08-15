@@ -21,10 +21,11 @@ import (
 	"testing"
 
 	"github.com/DataDog/sketches-go/ddsketch"
-	"github.com/cardinalhq/lakerunner/internal/buffet"
 	"github.com/parquet-go/parquet-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/cardinalhq/lakerunner/internal/buffet"
 )
 
 func sketchOf(t *testing.T, values ...float64) []byte {

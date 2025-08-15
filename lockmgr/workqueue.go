@@ -27,10 +27,21 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
+// WorkQueueDB defines the database operations needed by the work queue manager.
+type WorkQueueDB interface {
+	WorkQueueClaim(ctx context.Context, params lrdb.WorkQueueClaimParams) (lrdb.WorkQueueClaimRow, error)
+	WorkQueueComplete(ctx context.Context, params lrdb.WorkQueueCompleteParams) error
+	WorkQueueFail(ctx context.Context, params lrdb.WorkQueueFailParams) error
+	WorkQueueHeartbeat(ctx context.Context, params lrdb.WorkQueueHeartbeatParams) error
+}
+
+// Ensure lrdb.StoreFull satisfies WorkQueueDB interface.
+var _ WorkQueueDB = (lrdb.StoreFull)(nil)
+
 // wqManager drives fetching items from the DB and heartbeating them.
 type wqManager struct {
 	// constructor parameters
-	mdb             lrdb.StoreFull
+	db              WorkQueueDB
 	workerID        int64
 	signal          lrdb.SignalEnum
 	action          lrdb.ActionEnum
@@ -60,7 +71,7 @@ func (m *wqManager) completeWorkItem(ctx context.Context, w *WorkItem) error {
 		return id == w.id
 	})
 
-	err := m.mdb.WorkQueueComplete(ctx, lrdb.WorkQueueCompleteParams{
+	err := m.db.WorkQueueComplete(ctx, lrdb.WorkQueueCompleteParams{
 		ID:       w.id,
 		WorkerID: m.workerID,
 	})
@@ -76,7 +87,7 @@ func (m *wqManager) failWorkItem(ctx context.Context, w *WorkItem) error {
 	m.acquiredIDs = slices.DeleteFunc(m.acquiredIDs, func(id int64) bool {
 		return id == w.id
 	})
-	err := m.mdb.WorkQueueFail(ctx, lrdb.WorkQueueFailParams{
+	err := m.db.WorkQueueFail(ctx, lrdb.WorkQueueFailParams{
 		ID:       w.id,
 		WorkerID: m.workerID,
 	})
@@ -86,7 +97,7 @@ func (m *wqManager) failWorkItem(ctx context.Context, w *WorkItem) error {
 // NewWorkQueueManager constructs a manager to manage obtaining and completing work items.
 // The work items are automatically heartbeated to retain ownership of the work items.
 func NewWorkQueueManager(
-	mdb lrdb.StoreFull,
+	db WorkQueueDB,
 	workerID int64,
 	sig lrdb.SignalEnum,
 	act lrdb.ActionEnum,
@@ -95,7 +106,7 @@ func NewWorkQueueManager(
 	opts ...Options,
 ) WorkQueueManager {
 	m := &wqManager{
-		mdb:               mdb,
+		db:                db,
 		workerID:          workerID,
 		signal:            sig,
 		action:            act,
@@ -159,7 +170,7 @@ func (m *wqManager) runLoop(ctx context.Context) {
 
 // GetWork queries the DB for the next row and records its ID in acquiredIDs.
 func (m *wqManager) getWorkItem(ctx context.Context) (*WorkItem, error) {
-	row, err := m.mdb.WorkQueueClaim(ctx, lrdb.WorkQueueClaimParams{
+	row, err := m.db.WorkQueueClaim(ctx, lrdb.WorkQueueClaimParams{
 		WorkerID:    m.workerID,
 		Signal:      m.signal,
 		Action:      m.action,
@@ -196,7 +207,7 @@ func (m *wqManager) getWorkItem(ctx context.Context) (*WorkItem, error) {
 }
 
 func (m *wqManager) heartbeat(ctx context.Context) {
-	err := m.mdb.WorkQueueHeartbeat(ctx, lrdb.WorkQueueHeartbeatParams{
+	err := m.db.WorkQueueHeartbeat(ctx, lrdb.WorkQueueHeartbeatParams{
 		Ids:      m.acquiredIDs,
 		WorkerID: m.workerID,
 	})

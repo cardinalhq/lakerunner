@@ -21,9 +21,10 @@ import (
 	"maps"
 	"os"
 
+	"github.com/parquet-go/parquet-go"
+
 	"github.com/cardinalhq/lakerunner/internal/buffet"
 	"github.com/cardinalhq/lakerunner/internal/filecrunch"
-	"github.com/parquet-go/parquet-go"
 )
 
 type fakeFetcher struct {

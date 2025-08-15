@@ -24,9 +24,10 @@ import (
 	"slices"
 
 	"github.com/DataDog/sketches-go/ddsketch"
+	"github.com/parquet-go/parquet-go"
+
 	"github.com/cardinalhq/lakerunner/internal/buffet"
 	"github.com/cardinalhq/lakerunner/internal/filecrunch"
-	"github.com/parquet-go/parquet-go"
 )
 
 // TIDMerger rolls up multiple Parquet files into multiple files.

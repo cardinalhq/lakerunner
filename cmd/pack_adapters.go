@@ -19,11 +19,12 @@ import (
 	"os"
 	"sync"
 
+	"github.com/parquet-go/parquet-go"
+
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/buffet"
 	"github.com/cardinalhq/lakerunner/internal/filecrunch"
-	"github.com/parquet-go/parquet-go"
 )
 
 type objectFetcherAdapter struct {

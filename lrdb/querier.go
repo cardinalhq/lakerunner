@@ -42,6 +42,7 @@ type Querier interface {
 	InqueueJournalUpsert(ctx context.Context, arg InqueueJournalUpsertParams) (bool, error)
 	InsertLogSegmentDirect(ctx context.Context, arg InsertLogSegmentParams) error
 	InsertMetricSegmentDirect(ctx context.Context, arg InsertMetricSegmentParams) error
+	ListSegmentsForQuery(ctx context.Context, arg ListSegmentsForQueryParams) ([]ListSegmentsForQueryRow, error)
 	// Returns an estimate of the number of log segments, average bytes, average records,
 	// and average bytes per record for log segments in the last hour per organization and instance.
 	// This query is basically identical to the MetricSegEstimator, but for log segments.

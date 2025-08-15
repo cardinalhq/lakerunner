@@ -21,7 +21,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
 
-	"github.com/cardinalhq/lakerunner/cmd/pubsub"
+	"github.com/cardinalhq/lakerunner/internal/pubsub"
 )
 
 func init() {
@@ -51,12 +51,12 @@ func init() {
 				}
 			}()
 
-			cmd, err := pubsub.NewHTTPListener()
+			service, err := pubsub.NewHTTPService()
 			if err != nil {
-				return fmt.Errorf("failed to create pubsub command: %w", err)
+				return fmt.Errorf("failed to create HTTP pubsub service: %w", err)
 			}
 
-			return cmd.Run(doneCtx)
+			return service.Run(doneCtx)
 		},
 	}
 	cmd.AddCommand(httpListenCmd)
@@ -80,11 +80,11 @@ func init() {
 				}
 			}()
 
-			cmd, err := pubsub.NewSQS()
+			service, err := pubsub.NewSQSService()
 			if err != nil {
-				return fmt.Errorf("failed to create SQS pubsub command: %w", err)
+				return fmt.Errorf("failed to create SQS pubsub service: %w", err)
 			}
-			return cmd.Run(doneCtx)
+			return service.Run(doneCtx)
 		},
 	}
 	cmd.AddCommand(sqsListenCmd)

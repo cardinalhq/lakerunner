@@ -17,6 +17,8 @@ package translate
 import (
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestToString(t *testing.T) {
@@ -475,6 +477,314 @@ func TestTranslateLogRow(t *testing.T) {
 			compareMaps(got.ResourceAttributes, tt.want.ResourceAttributes, "ResourceAttributes")
 			compareMaps(got.ScopeAttributes, tt.want.ScopeAttributes, "ScopeAttributes")
 			compareMaps(got.RecordAttributes, tt.want.RecordAttributes, "RecordAttributes")
+		})
+	}
+}
+
+func TestNewMapper(t *testing.T) {
+	tests := []struct {
+		name     string
+		opts     []MapperOption
+		expected *Mapper
+	}{
+		{
+			name: "default mapper",
+			opts: nil,
+			expected: &Mapper{
+				TimestampColumns: []string{"timestamp", "time", "ts"},
+				MessageColumns:   []string{"message", "msg"},
+				ResourceColumns:  nil,
+				ScopeColumns:     nil,
+				TimeFormat:       time.RFC3339Nano,
+			},
+		},
+		{
+			name: "with timestamp column",
+			opts: []MapperOption{WithTimestampColumn("date")},
+			expected: &Mapper{
+				TimestampColumns: []string{"date"},
+				MessageColumns:   []string{"message", "msg"},
+				ResourceColumns:  nil,
+				ScopeColumns:     nil,
+				TimeFormat:       time.RFC3339Nano,
+			},
+		},
+		{
+			name: "with message column",
+			opts: []MapperOption{WithMessageColumn("body")},
+			expected: &Mapper{
+				TimestampColumns: []string{"timestamp", "time", "ts"},
+				MessageColumns:   []string{"body"},
+				ResourceColumns:  nil,
+				ScopeColumns:     nil,
+				TimeFormat:       time.RFC3339Nano,
+			},
+		},
+		{
+			name: "with resource columns",
+			opts: []MapperOption{WithResourceColumns([]string{"host", "service"})},
+			expected: &Mapper{
+				TimestampColumns: []string{"timestamp", "time", "ts"},
+				MessageColumns:   []string{"message", "msg"},
+				ResourceColumns:  []string{"host", "service"},
+				ScopeColumns:     nil,
+				TimeFormat:       time.RFC3339Nano,
+			},
+		},
+		{
+			name: "with scope columns",
+			opts: []MapperOption{WithScopeColumn([]string{"env", "team"})},
+			expected: &Mapper{
+				TimestampColumns: []string{"timestamp", "time", "ts"},
+				MessageColumns:   []string{"message", "msg"},
+				ResourceColumns:  nil,
+				ScopeColumns:     []string{"env", "team"},
+				TimeFormat:       time.RFC3339Nano,
+			},
+		},
+		{
+			name: "with time format",
+			opts: []MapperOption{WithTimeFormat(time.RFC3339)},
+			expected: &Mapper{
+				TimestampColumns: []string{"timestamp", "time", "ts"},
+				MessageColumns:   []string{"message", "msg"},
+				ResourceColumns:  nil,
+				ScopeColumns:     nil,
+				TimeFormat:       time.RFC3339,
+			},
+		},
+		{
+			name: "multiple options combined",
+			opts: []MapperOption{
+				WithTimestampColumn("created_at"),
+				WithMessageColumn("log_message"),
+				WithResourceColumns([]string{"region", "zone"}),
+				WithScopeColumn([]string{"service"}),
+				WithTimeFormat("2006-01-02 15:04:05"),
+			},
+			expected: &Mapper{
+				TimestampColumns: []string{"created_at"},
+				MessageColumns:   []string{"log_message"},
+				ResourceColumns:  []string{"region", "zone"},
+				ScopeColumns:     []string{"service"},
+				TimeFormat:       "2006-01-02 15:04:05",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mapper := NewMapper(tt.opts...)
+			assert.Equal(t, tt.expected.TimestampColumns, mapper.TimestampColumns)
+			assert.Equal(t, tt.expected.MessageColumns, mapper.MessageColumns)
+			assert.Equal(t, tt.expected.ResourceColumns, mapper.ResourceColumns)
+			assert.Equal(t, tt.expected.ScopeColumns, mapper.ScopeColumns)
+			assert.Equal(t, tt.expected.TimeFormat, mapper.TimeFormat)
+		})
+	}
+}
+
+func TestWithTimestampColumn(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected []string
+	}{
+		{
+			name:     "simple column name",
+			input:    "timestamp",
+			expected: []string{"timestamp"},
+		},
+		{
+			name:     "uppercase converted to lowercase",
+			input:    "TIMESTAMP",
+			expected: []string{"timestamp"},
+		},
+		{
+			name:     "mixed case converted to lowercase",
+			input:    "CreatedAt",
+			expected: []string{"createdat"},
+		},
+		{
+			name:     "column with underscores",
+			input:    "created_at",
+			expected: []string{"created_at"},
+		},
+		{
+			name:     "empty string",
+			input:    "",
+			expected: []string{""},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mapper := NewMapper(WithTimestampColumn(tt.input))
+			assert.Equal(t, tt.expected, mapper.TimestampColumns)
+		})
+	}
+}
+
+func TestWithMessageColumn(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected []string
+	}{
+		{
+			name:     "simple column name",
+			input:    "message",
+			expected: []string{"message"},
+		},
+		{
+			name:     "uppercase converted to lowercase",
+			input:    "MESSAGE",
+			expected: []string{"message"},
+		},
+		{
+			name:     "mixed case converted to lowercase",
+			input:    "LogMessage",
+			expected: []string{"logmessage"},
+		},
+		{
+			name:     "column with underscores",
+			input:    "log_message",
+			expected: []string{"log_message"},
+		},
+		{
+			name:     "empty string",
+			input:    "",
+			expected: []string{""},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mapper := NewMapper(WithMessageColumn(tt.input))
+			assert.Equal(t, tt.expected, mapper.MessageColumns)
+		})
+	}
+}
+
+func TestWithResourceColumns(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    []string
+		expected []string
+	}{
+		{
+			name:     "single column",
+			input:    []string{"host"},
+			expected: []string{"host"},
+		},
+		{
+			name:     "multiple columns",
+			input:    []string{"host", "service", "region"},
+			expected: []string{"host", "service", "region"},
+		},
+		{
+			name:     "empty slice",
+			input:    []string{},
+			expected: []string{},
+		},
+		{
+			name:     "nil slice",
+			input:    nil,
+			expected: nil,
+		},
+		{
+			name:     "columns with various formats",
+			input:    []string{"host.name", "service_id", "region-zone"},
+			expected: []string{"host.name", "service_id", "region-zone"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mapper := NewMapper(WithResourceColumns(tt.input))
+			assert.Equal(t, tt.expected, mapper.ResourceColumns)
+		})
+	}
+}
+
+func TestWithScopeColumn(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    []string
+		expected []string
+	}{
+		{
+			name:     "single column",
+			input:    []string{"scope"},
+			expected: []string{"scope"},
+		},
+		{
+			name:     "multiple columns",
+			input:    []string{"env", "team", "service"},
+			expected: []string{"env", "team", "service"},
+		},
+		{
+			name:     "empty slice",
+			input:    []string{},
+			expected: []string{},
+		},
+		{
+			name:     "nil slice",
+			input:    nil,
+			expected: nil,
+		},
+		{
+			name:     "columns with various formats",
+			input:    []string{"env.name", "team_id", "service-version"},
+			expected: []string{"env.name", "team_id", "service-version"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mapper := NewMapper(WithScopeColumn(tt.input))
+			assert.Equal(t, tt.expected, mapper.ScopeColumns)
+		})
+	}
+}
+
+func TestWithTimeFormat(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "RFC3339 format",
+			input:    time.RFC3339,
+			expected: time.RFC3339,
+		},
+		{
+			name:     "RFC3339Nano format",
+			input:    time.RFC3339Nano,
+			expected: time.RFC3339Nano,
+		},
+		{
+			name:     "custom format",
+			input:    "2006-01-02 15:04:05",
+			expected: "2006-01-02 15:04:05",
+		},
+		{
+			name:     "epoch format",
+			input:    "epoch",
+			expected: "epoch",
+		},
+		{
+			name:     "empty string",
+			input:    "",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mapper := NewMapper(WithTimeFormat(tt.input))
+			assert.Equal(t, tt.expected, mapper.TimeFormat)
 		})
 	}
 }

@@ -28,7 +28,6 @@ import (
 	"go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/cmd/ingestlogs"
-	"github.com/cardinalhq/lakerunner/cmd/storageprofile"
 	"github.com/cardinalhq/lakerunner/fileconv/jsongz"
 	protoconv "github.com/cardinalhq/lakerunner/fileconv/proto"
 	"github.com/cardinalhq/lakerunner/fileconv/translate"
@@ -38,6 +37,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/filecrunch"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/logcrunch"
+	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -348,7 +348,7 @@ func convertProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate 
 	// Create a mapper for protobuf files
 	mapper := translate.NewMapper()
 
-	r, err := protoconv.NewProtoReader(tmpfilename, mapper, nil)
+	r, err := protoconv.NewLogsProtoReader(tmpfilename, mapper, nil)
 	if err != nil {
 		return nil, err
 	}
