@@ -122,9 +122,6 @@ func metricIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp st
 		return err
 	}
 
-	// Setup exemplar processing using the processor from the loop context
-	loop.SetupMetricsExemplarCallback(inf.OrganizationID.String())
-
 	tmpfilename, _, is404, err := s3helper.DownloadS3Object(ctx, tmpdir, s3client, inf.Bucket, inf.ObjectID)
 	if err != nil {
 		ll.Error("Failed to download S3 object", slog.Any("error", err))
@@ -171,17 +168,6 @@ func metricIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp st
 	}
 
 	return nil
-}
-
-// SetupMetricsExemplarCallback configures the exemplar processor callback for metrics processing
-func (loop *IngestLoopContext) SetupMetricsExemplarCallback(organizationID string) {
-	// Create a callback function that has access to the current inqueue info
-	callback := func(ctx context.Context, orgID string, exemplars []*exemplar.ExemplarData) error {
-		return processMetricsExemplarsDirect(ctx, orgID, exemplars, loop.mdb)
-	}
-
-	// Replace the callback in the processor for this organization
-	loop.exemplarProcessor.SetMetricsCallback(callback)
 }
 
 type TimeBlock struct {

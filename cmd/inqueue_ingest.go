@@ -88,7 +88,7 @@ func NewIngestLoopContext(ctx context.Context, signal string, assumeRoleSessionN
 	config := exemplar.Config{
 		Metrics: exemplar.TelemetryConfig{
 			Enabled:        true,
-			CacheSize:      10000, 
+			CacheSize:      10000,
 			Expiry:         10 * time.Minute,
 			ReportInterval: 30 * time.Second,
 			BatchSize:      100,
@@ -103,9 +103,8 @@ func NewIngestLoopContext(ctx context.Context, signal string, assumeRoleSessionN
 
 	exemplarProcessor := exemplar.NewMetricsProcessor(config, ll)
 
-	// Set a no-op callback - will be replaced by service-specific callbacks
 	exemplarProcessor.SetMetricsCallback(func(ctx context.Context, organizationID string, exemplars []*exemplar.ExemplarData) error {
-		return nil
+		return processMetricsExemplarsDirect(ctx, organizationID, exemplars, mdb)
 	})
 
 	return &IngestLoopContext{
