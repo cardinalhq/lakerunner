@@ -24,8 +24,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
+	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
 type Service struct {
@@ -34,10 +34,10 @@ type Service struct {
 }
 
 type Config struct {
-	Port               int
-	CacheDirectory     string
-	CacheMaxSizeMB     int64
-	EnableLocalCache   bool
+	Port             int
+	CacheDirectory   string
+	CacheMaxSizeMB   int64
+	EnableLocalCache bool
 }
 
 func NewService() (*Service, error) {
@@ -139,9 +139,9 @@ func loadConfig() (Config, error) {
 	enableCache := enableCacheStr != "false" // default to true
 
 	return Config{
-		Port:               port,
-		CacheDirectory:     cacheDir,
-		CacheMaxSizeMB:     cacheSize,
-		EnableLocalCache:   enableCache,
+		Port:             port,
+		CacheDirectory:   cacheDir,
+		CacheMaxSizeMB:   cacheSize,
+		EnableLocalCache: enableCache,
 	}, nil
 }

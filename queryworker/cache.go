@@ -26,17 +26,17 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
+	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/google/uuid"
 )
 
 type ParquetCache struct {
-	cacheDir         string
-	maxSizeMB        int64
-	awsManager       *awsclient.Manager
-	storageProfiler  storageprofile.StorageProfileProvider
-	enableCache      bool
+	cacheDir        string
+	maxSizeMB       int64
+	awsManager      *awsclient.Manager
+	storageProfiler storageprofile.StorageProfileProvider
+	enableCache     bool
 
 	mu          sync.RWMutex
 	cacheIndex  map[string]*CacheEntry

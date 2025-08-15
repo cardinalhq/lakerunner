@@ -37,7 +37,7 @@ func (s *Service) handlePushdown(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	slog.Info("Received pushdown request", 
+	slog.Info("Received pushdown request",
 		"exprID", request.BaseExpr.ID,
 		"startTs", request.StartTs,
 		"endTs", request.EndTs,
@@ -61,7 +61,7 @@ func (s *Service) handlePushdown(w http.ResponseWriter, r *http.Request) {
 	// Process segments in a goroutine
 	go func() {
 		defer close(resultsCh)
-		
+
 		if err := s.processSegments(ctx, request, resultsCh); err != nil {
 			slog.Error("Failed to process segments", "error", err)
 			// Send error event

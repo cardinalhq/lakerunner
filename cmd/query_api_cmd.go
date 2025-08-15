@@ -18,8 +18,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
-	"strconv"
 
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/promql"
@@ -59,7 +57,7 @@ func init() {
 			}
 
 			// Create and start worker discovery
-			workerDiscovery, err := createWorkerDiscovery()
+			workerDiscovery, err := promql.CreateWorkerDiscovery()
 			if err != nil {
 				slog.Error("Failed to create worker discovery", slog.Any("error", err))
 				return fmt.Errorf("failed to create worker discovery: %w", err)
@@ -85,39 +83,4 @@ func init() {
 		},
 	}
 	cmd.AddCommand(queryApiCmd)
-}
-
-func createWorkerDiscovery() (promql.WorkerDiscovery, error) {
-	// Get required environment variables
-	if promql.IsLocalDev() {
-		slog.Info("Running in local development mode; using local worker discovery")
-		return promql.NewLocalDevDiscovery(), nil
-	}
-	namespace := os.Getenv("POD_NAMESPACE")
-	if namespace == "" {
-		return nil, fmt.Errorf("POD_NAMESPACE environment variable is required")
-	}
-
-	workerLabelSelector := os.Getenv("WORKER_POD_LABEL_SELECTOR")
-	if workerLabelSelector == "" {
-		return nil, fmt.Errorf("WORKER_POD_LABEL_SELECTOR environment variable is required")
-	}
-
-	workerPortStr := os.Getenv("QUERY_WORKER_PORT")
-	if workerPortStr == "" {
-		return nil, fmt.Errorf("QUERY_WORKER_PORT environment variable is required")
-	}
-
-	workerPort, err := strconv.Atoi(workerPortStr)
-	if err != nil {
-		return nil, fmt.Errorf("invalid QUERY_WORKER_PORT: %w", err)
-	}
-
-	config := promql.KubernetesWorkerDiscoveryConfig{
-		Namespace:           namespace,
-		WorkerLabelSelector: workerLabelSelector,
-		WorkerPort:          workerPort,
-	}
-
-	return promql.NewKubernetesWorkerDiscovery(config)
 }
