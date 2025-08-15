@@ -226,7 +226,7 @@ func TestFileProvider_GetStorageProfilesByBucketName(t *testing.T) {
 			got, err := provider.GetStorageProfilesByBucketName(context.Background(), tt.bucketName)
 			require.NoError(t, err)
 			require.Len(t, got, tt.wantCount)
-			
+
 			for _, profile := range got {
 				require.Equal(t, tt.wantBucket, profile.Bucket)
 			}

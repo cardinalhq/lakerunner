@@ -234,11 +234,11 @@ func TestDatabaseProvider_GetByCollectorName(t *testing.T) {
 
 func TestDatabaseProvider_GetStorageProfilesByBucketName(t *testing.T) {
 	tests := []struct {
-		name        string
-		bucketName  string
-		mockErr     error
-		wantCount   int
-		wantErr     bool
+		name       string
+		bucketName string
+		mockErr    error
+		wantCount  int
+		wantErr    bool
 	}{
 		{
 			name:       "success with multiple profiles",

@@ -221,16 +221,16 @@ func TestComputeTID(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tid1 := ComputeTID(tt.metricName, tt.tags)
-			
+
 			// TID should be deterministic
 			tid2 := ComputeTID(tt.metricName, tt.tags)
 			assert.Equal(t, tid1, tid2, "TID should be deterministic")
-			
+
 			if tt.expectSame && tt.sameTags != nil {
 				tidSame := ComputeTID(tt.metricName, tt.sameTags)
 				assert.Equal(t, tid1, tidSame, "TIDs should be the same")
 			}
-			
+
 			// Different metric names should produce different TIDs
 			if tt.metricName != "" {
 				differentTID := ComputeTID(tt.metricName+"_different", tt.tags)

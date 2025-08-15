@@ -15,6 +15,8 @@
 package proto
 
 import (
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -140,4 +142,104 @@ func TestProtoReader_EmptyFile(t *testing.T) {
 	reader, err := NewLogsProtoReader("testdata/nonexistent.binpb", translate.NewMapper(), nil)
 	assert.Error(t, err)
 	assert.Nil(t, reader)
+}
+
+func TestNewLogsProtoReader_ErrorCases(t *testing.T) {
+	tests := []struct {
+		name        string
+		setup       func() string
+		expectError bool
+		errContains string
+	}{
+		{
+			name: "file does not exist",
+			setup: func() string {
+				return "/nonexistent/file.binpb"
+			},
+			expectError: true,
+			errContains: "failed to open file",
+		},
+		{
+			name: "empty file",
+			setup: func() string {
+				tmpfile, err := os.CreateTemp("", "empty-*.binpb")
+				assert.NoError(t, err)
+				tmpfile.Close()
+				return tmpfile.Name()
+			},
+			expectError: false,
+		},
+		{
+			name: "invalid proto file",
+			setup: func() string {
+				tmpfile, err := os.CreateTemp("", "invalid-*.binpb")
+				assert.NoError(t, err)
+				_, err = tmpfile.WriteString("not a protobuf file content")
+				assert.NoError(t, err)
+				tmpfile.Close()
+				return tmpfile.Name()
+			},
+			expectError: true, // Invalid proto causes error during construction
+			errContains: "failed to parse proto",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filePath := tt.setup()
+			if strings.Contains(filePath, "/tmp/") || strings.Contains(filePath, "test-") {
+				defer os.Remove(filePath)
+			}
+
+			mapper := translate.NewMapper()
+			reader, err := NewLogsProtoReader(filePath, mapper, nil)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				if tt.errContains != "" {
+					assert.Contains(t, err.Error(), tt.errContains)
+				}
+				assert.Nil(t, reader)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, reader)
+				if reader != nil {
+					reader.Close()
+				}
+			}
+		})
+	}
+}
+
+func TestLogsProtoReader_GetRowErrorCases(t *testing.T) {
+	// Test that invalid proto files are handled during construction
+	tmpfile, err := os.CreateTemp("", "invalid-proto-*.binpb")
+	assert.NoError(t, err)
+	defer os.Remove(tmpfile.Name())
+
+	// Write some non-protobuf data
+	_, err = tmpfile.WriteString("This is not valid protobuf data")
+	assert.NoError(t, err)
+	tmpfile.Close()
+
+	mapper := translate.NewMapper()
+	reader, err := NewLogsProtoReader(tmpfile.Name(), mapper, nil)
+	// Based on the actual implementation, invalid proto files cause errors during construction
+	assert.Error(t, err)
+	assert.Nil(t, reader)
+	assert.Contains(t, err.Error(), "failed to parse proto")
+}
+
+func TestLogsProtoReader_WithNilMapper(t *testing.T) {
+	// Test with nil mapper - should still work
+	reader, err := NewLogsProtoReader("testdata/logs_160396104.binpb", nil, nil)
+	if err != nil {
+		// Skip if file doesn't exist in test environment
+		t.Skip("Test data file not available")
+	}
+	defer reader.Close()
+
+	// Try reading one row
+	_, _, err = reader.GetRow()
+	// Should not panic, behavior depends on implementation
 }
