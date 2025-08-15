@@ -44,7 +44,7 @@ all_deps := $(shell find . -name '*.go' | grep -v _test) Makefile
 #
 
 .PHONY: all
-all: ${TARGETS}
+all: gofmt ${TARGETS}
 
 # name of the buildx builder we’ll always (re)create
 BUILDER := lakerunner-builder
@@ -67,7 +67,7 @@ generate:
 #
 # Run pre-commit checks
 #
-check: test license-check imports-check lint
+check: test license-check fmt lint
 
 license-check:
 	go tool license-eye header check
@@ -86,6 +86,14 @@ imports-check:
 imports-fix:
 	@echo "Fixing import organization (excluding *.pb.go files)..."
 	@find . -name '*.go' -not -name '*.pb.go' -exec go tool goimports -local github.com/cardinalhq/lakerunner -w {} \;
+
+fmt: imports-fix
+	@echo "Running gofmt to fix formatting..."
+	@gofmt -w -s .
+
+gofmt:
+	@echo "Running gofmt to fix formatting..."
+	@gofmt -w -s .
 
 lint:
 	go tool golangci-lint run --timeout 15m --config .golangci.yaml

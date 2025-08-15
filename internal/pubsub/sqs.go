@@ -31,14 +31,14 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
-type sqsPubsubCmd struct {
+type SQSService struct {
 	tracer trace.Tracer
 	awsMgr *awsclient.Manager
 	sp     storageprofile.StorageProfileProvider
 	mdb    InqueueInserter
 }
 
-func NewSQS() (*sqsPubsubCmd, error) {
+func NewSQSService() (*SQSService, error) {
 	awsMgr, err := awsclient.NewManager(context.Background(),
 		awsclient.WithAssumeRoleSessionName("pubsub-sqs"),
 	)
@@ -59,15 +59,15 @@ func NewSQS() (*sqsPubsubCmd, error) {
 		return nil, fmt.Errorf("failed to connect to lr database: %w", err)
 	}
 
-	return &sqsPubsubCmd{
-		tracer: otel.Tracer("github.com/cardinalhq/lakerunner/cmd/pubsub/sqs"),
+	return &SQSService{
+		tracer: otel.Tracer("github.com/cardinalhq/lakerunner/internal/pubsub/sqs"),
 		awsMgr: awsMgr,
 		sp:     sp,
 		mdb:    mdb,
 	}, nil
 }
 
-func (ps *sqsPubsubCmd) Run(doneCtx context.Context) error {
+func (ps *SQSService) Run(doneCtx context.Context) error {
 	slog.Info("Starting SQS pubsub service for S3 events")
 
 	queueURL := os.Getenv("SQS_QUEUE_URL")
@@ -103,7 +103,7 @@ func (ps *sqsPubsubCmd) Run(doneCtx context.Context) error {
 	return nil
 }
 
-func (ps *sqsPubsubCmd) pollSQS(doneCtx context.Context, sqsClient *awsclient.SQSClient, queueURL string) {
+func (ps *SQSService) pollSQS(doneCtx context.Context, sqsClient *awsclient.SQSClient, queueURL string) {
 	slog.Info("Starting SQS polling loop", slog.String("queueURL", queueURL))
 
 	for {
