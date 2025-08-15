@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const upsertServiceIdentifier = `-- name: UpsertServiceIdentifier :one
@@ -22,10 +23,10 @@ INSERT INTO service_identifiers
 `
 
 type UpsertServiceIdentifierParams struct {
-	OrganizationID uuid.UUID `json:"organization_id"`
-	ServiceName    string    `json:"service_name"`
-	ClusterName    string    `json:"cluster_name"`
-	Namespace      string    `json:"namespace"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	ServiceName    pgtype.Text `json:"service_name"`
+	ClusterName    pgtype.Text `json:"cluster_name"`
+	Namespace      pgtype.Text `json:"namespace"`
 }
 
 type UpsertServiceIdentifierRow struct {

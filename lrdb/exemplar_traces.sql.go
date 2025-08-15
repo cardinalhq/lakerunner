@@ -13,7 +13,7 @@ import (
 )
 
 const getExemplarTracesByFingerprint = `-- name: GetExemplarTracesByFingerprint :one
-SELECT created_at, updated_at, organization_id, collector_id, processor_id, service_identifier_id, attributes, exemplar, fingerprint, span_name, span_kind FROM exemplar_traces 
+SELECT created_at, updated_at, organization_id, service_identifier_id, attributes, exemplar, fingerprint, span_name, span_kind FROM exemplar_traces 
 WHERE organization_id = $1 
   AND fingerprint = $2
 LIMIT 1
@@ -31,8 +31,6 @@ func (q *Queries) GetExemplarTracesByFingerprint(ctx context.Context, arg GetExe
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.OrganizationID,
-		&i.CollectorID,
-		&i.ProcessorID,
 		&i.ServiceIdentifierID,
 		&i.Attributes,
 		&i.Exemplar,
@@ -44,7 +42,7 @@ func (q *Queries) GetExemplarTracesByFingerprint(ctx context.Context, arg GetExe
 }
 
 const getExemplarTracesByService = `-- name: GetExemplarTracesByService :many
-SELECT created_at, updated_at, organization_id, collector_id, processor_id, service_identifier_id, attributes, exemplar, fingerprint, span_name, span_kind FROM exemplar_traces 
+SELECT created_at, updated_at, organization_id, service_identifier_id, attributes, exemplar, fingerprint, span_name, span_kind FROM exemplar_traces 
 WHERE organization_id = $1 
   AND service_identifier_id = $2
 ORDER BY created_at DESC
@@ -68,8 +66,6 @@ func (q *Queries) GetExemplarTracesByService(ctx context.Context, arg GetExempla
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.OrganizationID,
-			&i.CollectorID,
-			&i.ProcessorID,
 			&i.ServiceIdentifierID,
 			&i.Attributes,
 			&i.Exemplar,
@@ -88,7 +84,7 @@ func (q *Queries) GetExemplarTracesByService(ctx context.Context, arg GetExempla
 }
 
 const getExemplarTracesCreatedAfter = `-- name: GetExemplarTracesCreatedAfter :many
-SELECT created_at, updated_at, organization_id, collector_id, processor_id, service_identifier_id, attributes, exemplar, fingerprint, span_name, span_kind FROM exemplar_traces WHERE created_at > $1
+SELECT created_at, updated_at, organization_id, service_identifier_id, attributes, exemplar, fingerprint, span_name, span_kind FROM exemplar_traces WHERE created_at > $1
 `
 
 func (q *Queries) GetExemplarTracesCreatedAfter(ctx context.Context, ts time.Time) ([]ExemplarTrace, error) {
@@ -104,8 +100,6 @@ func (q *Queries) GetExemplarTracesCreatedAfter(ctx context.Context, ts time.Tim
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.OrganizationID,
-			&i.CollectorID,
-			&i.ProcessorID,
 			&i.ServiceIdentifierID,
 			&i.Attributes,
 			&i.Exemplar,

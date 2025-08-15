@@ -5,9 +5,9 @@
 -- an existing record, not changing it to the new one.
 -- The return value is a boolean indicating if the record is new.
 INSERT INTO exemplar_logs
-            ( organization_id,  collector_id,  processor_id,  service_identifier_id,  fingerprint,  attributes,  exemplar)
-VALUES      (@organization_id, @collector_id, @processor_id, @service_identifier_id, @fingerprint, @attributes, @exemplar)
-ON CONFLICT ( organization_id,  collector_id,  processor_id,  service_identifier_id,  fingerprint)
+            ( organization_id,  service_identifier_id,  fingerprint,  attributes,  exemplar)
+VALUES      (@organization_id, @service_identifier_id, @fingerprint, @attributes, @exemplar)
+ON CONFLICT ( organization_id,  service_identifier_id,  fingerprint)
 DO UPDATE SET
   attributes = EXCLUDED.attributes,
   exemplar   = EXCLUDED.exemplar,

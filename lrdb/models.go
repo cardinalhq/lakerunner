@@ -102,8 +102,6 @@ type ExemplarLog struct {
 	CreatedAt           time.Time      `json:"created_at"`
 	UpdatedAt           time.Time      `json:"updated_at"`
 	OrganizationID      uuid.UUID      `json:"organization_id"`
-	CollectorID         uuid.UUID      `json:"collector_id"`
-	ProcessorID         uuid.UUID      `json:"processor_id"`
 	ServiceIdentifierID uuid.UUID      `json:"service_identifier_id"`
 	Attributes          map[string]any `json:"attributes"`
 	Exemplar            map[string]any `json:"exemplar"`
@@ -115,8 +113,6 @@ type ExemplarMetric struct {
 	CreatedAt           time.Time      `json:"created_at"`
 	UpdatedAt           time.Time      `json:"updated_at"`
 	OrganizationID      uuid.UUID      `json:"organization_id"`
-	CollectorID         uuid.UUID      `json:"collector_id"`
-	ProcessorID         uuid.UUID      `json:"processor_id"`
 	ServiceIdentifierID uuid.UUID      `json:"service_identifier_id"`
 	Attributes          map[string]any `json:"attributes"`
 	Exemplar            map[string]any `json:"exemplar"`
@@ -128,8 +124,6 @@ type ExemplarTrace struct {
 	CreatedAt           time.Time      `json:"created_at"`
 	UpdatedAt           time.Time      `json:"updated_at"`
 	OrganizationID      uuid.UUID      `json:"organization_id"`
-	CollectorID         uuid.UUID      `json:"collector_id"`
-	ProcessorID         uuid.UUID      `json:"processor_id"`
 	ServiceIdentifierID uuid.UUID      `json:"service_identifier_id"`
 	Attributes          map[string]any `json:"attributes"`
 	Exemplar            map[string]any `json:"exemplar"`
@@ -204,13 +198,13 @@ type ObjCleanup struct {
 }
 
 type ServiceIdentifier struct {
-	ID             uuid.UUID `json:"id"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
-	OrganizationID uuid.UUID `json:"organization_id"`
-	ServiceName    string    `json:"service_name"`
-	ClusterName    string    `json:"cluster_name"`
-	Namespace      string    `json:"namespace"`
+	ID             uuid.UUID   `json:"id"`
+	CreatedAt      time.Time   `json:"created_at"`
+	UpdatedAt      time.Time   `json:"updated_at"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	ServiceName    pgtype.Text `json:"service_name"`
+	ClusterName    pgtype.Text `json:"cluster_name"`
+	Namespace      pgtype.Text `json:"namespace"`
 }
 
 type Setting struct {

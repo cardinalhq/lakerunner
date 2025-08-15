@@ -252,17 +252,17 @@ func (b *BatchMarkMetricSegsRolledupBatchResults) Close() error {
 
 const batchUpsertExemplarLogs = `-- name: BatchUpsertExemplarLogs :batchone
 INSERT INTO exemplar_logs
-            ( organization_id,  collector_id,  processor_id,  service_identifier_id,  fingerprint,  attributes,  exemplar)
-VALUES      ($1, $2, $3, $4, $5, $6, $7)
-ON CONFLICT ( organization_id,  collector_id,  processor_id,  service_identifier_id,  fingerprint)
+            ( organization_id,  service_identifier_id,  fingerprint,  attributes,  exemplar)
+VALUES      ($1, $2, $3, $4, $5)
+ON CONFLICT ( organization_id,  service_identifier_id,  fingerprint)
 DO UPDATE SET
   attributes = EXCLUDED.attributes,
   exemplar   = EXCLUDED.exemplar,
   updated_at = now(),
   related_fingerprints = CASE
-    WHEN $8::BIGINT != 0
-      AND $5 != $8
-      THEN add_to_bigint_list(exemplar_logs.related_fingerprints, $8, 100)
+    WHEN $6::BIGINT != 0
+      AND $3 != $6
+      THEN add_to_bigint_list(exemplar_logs.related_fingerprints, $6, 100)
     ELSE exemplar_logs.related_fingerprints
   END
 RETURNING (created_at = updated_at) as is_new
@@ -276,8 +276,6 @@ type BatchUpsertExemplarLogsBatchResults struct {
 
 type BatchUpsertExemplarLogsParams struct {
 	OrganizationID      uuid.UUID      `json:"organization_id"`
-	CollectorID         uuid.UUID      `json:"collector_id"`
-	ProcessorID         uuid.UUID      `json:"processor_id"`
 	ServiceIdentifierID uuid.UUID      `json:"service_identifier_id"`
 	Fingerprint         int64          `json:"fingerprint"`
 	Attributes          map[string]any `json:"attributes"`
@@ -295,8 +293,6 @@ func (q *Queries) BatchUpsertExemplarLogs(ctx context.Context, arg []BatchUpsert
 	for _, a := range arg {
 		vals := []interface{}{
 			a.OrganizationID,
-			a.CollectorID,
-			a.ProcessorID,
 			a.ServiceIdentifierID,
 			a.Fingerprint,
 			a.Attributes,
@@ -334,9 +330,9 @@ func (b *BatchUpsertExemplarLogsBatchResults) Close() error {
 
 const batchUpsertExemplarMetrics = `-- name: BatchUpsertExemplarMetrics :batchone
 INSERT INTO exemplar_metrics
-            ( organization_id,  collector_id,  processor_id,  service_identifier_id,  metric_name,  metric_type,  attributes,  exemplar)
-VALUES      ($1, $2, $3, $4, $5, $6, $7, $8)
-ON CONFLICT ( organization_id,  collector_id,  processor_id,  service_identifier_id,  metric_name,  metric_type)
+            ( organization_id,  service_identifier_id,  metric_name,  metric_type,  attributes,  exemplar)
+VALUES      ($1, $2, $3, $4, $5, $6)
+ON CONFLICT ( organization_id,  service_identifier_id,  metric_name,  metric_type)
 DO UPDATE SET
   attributes = EXCLUDED.attributes,
   exemplar = EXCLUDED.exemplar,
@@ -352,8 +348,6 @@ type BatchUpsertExemplarMetricsBatchResults struct {
 
 type BatchUpsertExemplarMetricsParams struct {
 	OrganizationID      uuid.UUID      `json:"organization_id"`
-	CollectorID         uuid.UUID      `json:"collector_id"`
-	ProcessorID         uuid.UUID      `json:"processor_id"`
 	ServiceIdentifierID uuid.UUID      `json:"service_identifier_id"`
 	MetricName          string         `json:"metric_name"`
 	MetricType          string         `json:"metric_type"`
@@ -366,8 +360,6 @@ func (q *Queries) BatchUpsertExemplarMetrics(ctx context.Context, arg []BatchUps
 	for _, a := range arg {
 		vals := []interface{}{
 			a.OrganizationID,
-			a.CollectorID,
-			a.ProcessorID,
 			a.ServiceIdentifierID,
 			a.MetricName,
 			a.MetricType,
@@ -406,8 +398,6 @@ func (b *BatchUpsertExemplarMetricsBatchResults) Close() error {
 const batchUpsertExemplarTraces = `-- name: BatchUpsertExemplarTraces :batchone
 INSERT INTO exemplar_traces
 ( organization_id
-, collector_id
-, processor_id
 , service_identifier_id
 , fingerprint
 , attributes
@@ -422,12 +412,8 @@ VALUES      ( $1
             , $5
             , $6
             , $7
-            , $8
-            , $9
             )
     ON CONFLICT ( organization_id
-            , collector_id
-            , processor_id
             , service_identifier_id
             , fingerprint
             )
@@ -448,8 +434,6 @@ type BatchUpsertExemplarTracesBatchResults struct {
 
 type BatchUpsertExemplarTracesParams struct {
 	OrganizationID      uuid.UUID      `json:"organization_id"`
-	CollectorID         uuid.UUID      `json:"collector_id"`
-	ProcessorID         uuid.UUID      `json:"processor_id"`
 	ServiceIdentifierID uuid.UUID      `json:"service_identifier_id"`
 	Fingerprint         int64          `json:"fingerprint"`
 	Attributes          map[string]any `json:"attributes"`
@@ -463,8 +447,6 @@ func (q *Queries) BatchUpsertExemplarTraces(ctx context.Context, arg []BatchUpse
 	for _, a := range arg {
 		vals := []interface{}{
 			a.OrganizationID,
-			a.CollectorID,
-			a.ProcessorID,
 			a.ServiceIdentifierID,
 			a.Fingerprint,
 			a.Attributes,

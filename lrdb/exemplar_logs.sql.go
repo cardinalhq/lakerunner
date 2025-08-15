@@ -13,7 +13,7 @@ import (
 )
 
 const getExemplarLogsByFingerprint = `-- name: GetExemplarLogsByFingerprint :one
-SELECT created_at, updated_at, organization_id, collector_id, processor_id, service_identifier_id, attributes, exemplar, fingerprint, related_fingerprints FROM exemplar_logs 
+SELECT created_at, updated_at, organization_id, service_identifier_id, attributes, exemplar, fingerprint, related_fingerprints FROM exemplar_logs 
 WHERE organization_id = $1 
   AND fingerprint = $2
 LIMIT 1
@@ -31,8 +31,6 @@ func (q *Queries) GetExemplarLogsByFingerprint(ctx context.Context, arg GetExemp
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.OrganizationID,
-		&i.CollectorID,
-		&i.ProcessorID,
 		&i.ServiceIdentifierID,
 		&i.Attributes,
 		&i.Exemplar,
@@ -43,7 +41,7 @@ func (q *Queries) GetExemplarLogsByFingerprint(ctx context.Context, arg GetExemp
 }
 
 const getExemplarLogsByService = `-- name: GetExemplarLogsByService :many
-SELECT created_at, updated_at, organization_id, collector_id, processor_id, service_identifier_id, attributes, exemplar, fingerprint, related_fingerprints FROM exemplar_logs 
+SELECT created_at, updated_at, organization_id, service_identifier_id, attributes, exemplar, fingerprint, related_fingerprints FROM exemplar_logs 
 WHERE organization_id = $1 
   AND service_identifier_id = $2
 ORDER BY created_at DESC
@@ -67,8 +65,6 @@ func (q *Queries) GetExemplarLogsByService(ctx context.Context, arg GetExemplarL
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.OrganizationID,
-			&i.CollectorID,
-			&i.ProcessorID,
 			&i.ServiceIdentifierID,
 			&i.Attributes,
 			&i.Exemplar,
@@ -86,7 +82,7 @@ func (q *Queries) GetExemplarLogsByService(ctx context.Context, arg GetExemplarL
 }
 
 const getExemplarLogsCreatedAfter = `-- name: GetExemplarLogsCreatedAfter :many
-SELECT created_at, updated_at, organization_id, collector_id, processor_id, service_identifier_id, attributes, exemplar, fingerprint, related_fingerprints FROM exemplar_logs WHERE created_at > $1
+SELECT created_at, updated_at, organization_id, service_identifier_id, attributes, exemplar, fingerprint, related_fingerprints FROM exemplar_logs WHERE created_at > $1
 `
 
 func (q *Queries) GetExemplarLogsCreatedAfter(ctx context.Context, ts time.Time) ([]ExemplarLog, error) {
@@ -102,8 +98,6 @@ func (q *Queries) GetExemplarLogsCreatedAfter(ctx context.Context, ts time.Time)
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.OrganizationID,
-			&i.CollectorID,
-			&i.ProcessorID,
 			&i.ServiceIdentifierID,
 			&i.Attributes,
 			&i.Exemplar,

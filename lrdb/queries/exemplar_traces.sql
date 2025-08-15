@@ -1,8 +1,6 @@
 -- name: BatchUpsertExemplarTraces :batchone
 INSERT INTO exemplar_traces
 ( organization_id
-, collector_id
-, processor_id
 , service_identifier_id
 , fingerprint
 , attributes
@@ -11,8 +9,6 @@ INSERT INTO exemplar_traces
 , span_kind
 )
 VALUES      ( @organization_id
-            , @collector_id
-            , @processor_id
             , @service_identifier_id
             , @fingerprint
             , @attributes
@@ -21,8 +17,6 @@ VALUES      ( @organization_id
             , @span_kind
             )
     ON CONFLICT ( organization_id
-            , collector_id
-            , processor_id
             , service_identifier_id
             , fingerprint
             )

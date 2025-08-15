@@ -13,7 +13,7 @@ import (
 )
 
 const getExemplarMetricsByService = `-- name: GetExemplarMetricsByService :many
-SELECT created_at, updated_at, organization_id, collector_id, processor_id, service_identifier_id, attributes, exemplar, metric_name, metric_type FROM exemplar_metrics 
+SELECT created_at, updated_at, organization_id, service_identifier_id, attributes, exemplar, metric_name, metric_type FROM exemplar_metrics 
 WHERE organization_id = $1 
   AND service_identifier_id = $2
 ORDER BY created_at DESC
@@ -37,8 +37,6 @@ func (q *Queries) GetExemplarMetricsByService(ctx context.Context, arg GetExempl
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.OrganizationID,
-			&i.CollectorID,
-			&i.ProcessorID,
 			&i.ServiceIdentifierID,
 			&i.Attributes,
 			&i.Exemplar,
@@ -56,7 +54,7 @@ func (q *Queries) GetExemplarMetricsByService(ctx context.Context, arg GetExempl
 }
 
 const getExemplarMetricsCreatedAfter = `-- name: GetExemplarMetricsCreatedAfter :many
-SELECT created_at, updated_at, organization_id, collector_id, processor_id, service_identifier_id, attributes, exemplar, metric_name, metric_type FROM exemplar_metrics WHERE created_at > $1
+SELECT created_at, updated_at, organization_id, service_identifier_id, attributes, exemplar, metric_name, metric_type FROM exemplar_metrics WHERE created_at > $1
 `
 
 func (q *Queries) GetExemplarMetricsCreatedAfter(ctx context.Context, ts time.Time) ([]ExemplarMetric, error) {
@@ -72,8 +70,6 @@ func (q *Queries) GetExemplarMetricsCreatedAfter(ctx context.Context, ts time.Ti
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.OrganizationID,
-			&i.CollectorID,
-			&i.ProcessorID,
 			&i.ServiceIdentifierID,
 			&i.Attributes,
 			&i.Exemplar,
