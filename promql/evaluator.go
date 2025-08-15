@@ -135,7 +135,7 @@ func (q *QuerierService) Evaluate(
 	}
 
 	// Merge all worker streams by timestamp (ascending).
-	merged := MergeSorted[SketchInput](ctx, reverseSort, 1024, allLeafChans...)
+	merged := MergeSorted(ctx, reverseSort, 1024, allLeafChans...)
 	// Pipe through EvalFlow (aggregator -> root.Eval)
 	flow := NewEvalFlow(queryPlan.Root, queryPlan.Leaves, stepDuration, EvalFlowOptions{
 		NumBuffers: 2,
