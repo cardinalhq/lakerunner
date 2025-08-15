@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS exemplar_metrics (
     metric_name TEXT NOT NULL,
     metric_type TEXT NOT NULL,
     PRIMARY KEY (organization_id, service_identifier_id, metric_name, metric_type)
-) PARTITION BY LIST (organization_id);
+);
 
 CREATE INDEX IF NOT EXISTS idx_exemplar_metrics_organization_id 
     ON exemplar_metrics (organization_id);

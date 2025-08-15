@@ -47,6 +47,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 )
 
@@ -791,10 +792,10 @@ func processMetricsExemplarsDirect(ctx context.Context, organizationID string, e
 // upsertServiceIdentifierDirect creates or retrieves a service identifier
 func upsertServiceIdentifierDirect(ctx context.Context, mdb lrdb.StoreFull, orgID uuid.UUID, serviceName, clusterName, namespaceName string) (uuid.UUID, error) {
 	params := lrdb.UpsertServiceIdentifierParams{
-		OrganizationID: orgID,
-		ServiceName:    serviceName,
-		ClusterName:    clusterName,
-		Namespace:      namespaceName,
+		OrganizationID: pgtype.UUID{Bytes: orgID, Valid: true},
+		ServiceName:    pgtype.Text{String: serviceName, Valid: true},
+		ClusterName:    pgtype.Text{String: clusterName, Valid: true},
+		Namespace:      pgtype.Text{String: namespaceName, Valid: true},
 	}
 
 	result, err := mdb.UpsertServiceIdentifier(ctx, params)
