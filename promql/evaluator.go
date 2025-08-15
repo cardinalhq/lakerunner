@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/cardinalhq/lakerunner/lrdb"
@@ -13,10 +15,12 @@ import (
 
 // PushDownRequest is sent to a worker.
 type PushDownRequest struct {
-	BaseExpr BaseExpr      `json:"baseExpr"`
-	StartTs  int64         `json:"startTs"`
-	EndTs    int64         `json:"endTs"`
-	Segments []SegmentInfo `json:"segments"`
+	OrganizationID uuid.UUID     `json:"orgId"`
+	BaseExpr       BaseExpr      `json:"baseExpr"`
+	StartTs        int64         `json:"startTs"`
+	EndTs          int64         `json:"endTs"`
+	Step           time.Duration `json:"step"`
+	Segments       []SegmentInfo `json:"segments"`
 }
 
 // Evaluate plans pushdowns, fans requests out to workers, merges their streams,
@@ -88,6 +92,7 @@ func (q *QuerierService) Evaluate(
 			// Create pushdown requests for each worker
 			for worker, workerSegments := range workerGroups {
 				req := PushDownRequest{
+					OrganizationID: orgID,
 					BaseExpr: leaf,
 					StartTs:  effStart,
 					EndTs:    effEnd,
@@ -133,15 +138,114 @@ func (q *QuerierService) Evaluate(
 // decoded from the worker’s SSE (or chunked JSON) stream. You can keep your existing stub here.
 // Implement the HTTP/SSE client and decoding where you wire up workers.
 func (q *QuerierService) pushDown(ctx context.Context, worker Worker, request PushDownRequest) (<-chan SketchInput, error) {
-	// TODO: implement: POST http://{worker.IP}:{worker.Port}/pushdown, stream response -> decode -> chan SketchInput
-	// Return a channel that closes when the stream ends or ctx is canceled.
+	sql := request.BaseExpr.ToWorkerSQL(request.Step)
+	if sql == "" {
+		return nil, fmt.Errorf("no SQL generated for expression")
+	}
 
-	// List Of Segments:
-	// Execute sub-batches of segments, and then calling "MergeSorted" on the n-channels.
-	// while(resultSet.next) {
-	// --> send to channel
-	// }
-	return nil, fmt.Errorf("pushDown not implemented")
+	if q.isLocalDev() {
+		sql = strings.ReplaceAll(sql, "{start}", fmt.Sprintf("%d", 0))
+		sql = strings.ReplaceAll(sql, "{end}", fmt.Sprintf("%d", time.Now().UnixMilli()))
+		sql = strings.ReplaceAll(sql, "{table}", fmt.Sprintf("%s", "read_parquet('./db/*.parquet')"))
+	} else {
+		sql = strings.ReplaceAll(sql, "{start}", fmt.Sprintf("%d", request.StartTs))
+		sql = strings.ReplaceAll(sql, "{end}", fmt.Sprintf("%d", request.EndTs))
+		sql = strings.ReplaceAll(sql, "{table}", fmt.Sprintf("'%s'", "worker.ParquetPath"))
+	}
+	slog.Info("Executing SQL on worker", "sql", sql)
+
+	rows, err := q.ddb.Query(ctx, sql)
+	if err != nil {
+		slog.Error("failed to query worker", "worker", worker, "err", err.Error())
+		return nil, fmt.Errorf("failed to query worker %w", err)
+	}
+
+	out := make(chan SketchInput, 1024)
+	go func() {
+		defer close(out)
+		defer rows.Close()
+
+		cols, err := rows.Columns()
+		if err != nil {
+			slog.Error("failed to get columns", "err", err)
+			return
+		}
+
+		for rows.Next() {
+			vals := make([]interface{}, len(cols))
+			ptrs := make([]interface{}, len(cols))
+			for i := range vals {
+				ptrs[i] = &vals[i]
+			}
+
+			if err := rows.Scan(ptrs...); err != nil {
+				slog.Error("failed to scan row", "err", err)
+				continue
+			}
+
+			var ts int64
+			agg := map[string]float64{}
+			tags := map[string]any{}
+
+			for i, col := range cols {
+				switch col {
+				case "bucket_ts":
+					switch v := vals[i].(type) {
+					case int64:
+						ts = v / 1000
+					case int32:
+						ts = int64(v) / 1000
+					case int:
+						ts = int64(v) / 1000
+					default:
+						slog.Error("unexpected type for bucket_ts", "value", vals[i])
+						continue
+					}
+				case SUM, COUNT, MIN, MAX:
+					if vals[i] == nil {
+						continue
+					}
+					switch v := vals[i].(type) {
+					case float64:
+						agg[col] = v
+					case float32:
+						agg[col] = float64(v)
+					case int64:
+						agg[col] = float64(v)
+					case int32:
+						agg[col] = float64(v)
+					case int:
+						agg[col] = float64(v)
+					default:
+						slog.Warn("unexpected numeric type in agg", "col", col, "value", vals[i])
+					}
+				default:
+					if vals[i] != nil {
+						tags[col] = vals[i]
+					}
+				}
+			}
+
+			slog.Info("making sketch input")
+			out <- SketchInput{
+				ExprID:         request.BaseExpr.ID,
+				OrganizationID: request.OrganizationID.String(),
+				Timestamp:      ts,
+				Frequency:      int64(request.Step.Seconds()),
+				SketchTags: SketchTags{
+					Tags:       tags,
+					SketchType: SketchMAP,
+					Agg:        agg,
+				},
+			}
+		}
+
+		if err := rows.Err(); err != nil {
+			slog.Error("row iteration error", "err", err)
+		}
+	}()
+
+	return out, nil
 }
 
 // shiftTimestamps returns a channel that forwards every SketchInput from `in`
@@ -183,7 +287,6 @@ func parseOffsetMs(offset string) (int64, error) {
 	return int64(time.Duration(d) / time.Millisecond), nil
 }
 
-// lookupSegments is unchanged from your version.
 func (q *QuerierService) lookupSegments(ctx context.Context,
 	dih DateIntHours,
 	startTs int64, endTs int64,
@@ -191,6 +294,34 @@ func (q *QuerierService) lookupSegments(ctx context.Context,
 	orgUUID uuid.UUID) ([]SegmentInfo, error) {
 
 	var allSegments []SegmentInfo
+
+	// 🔍 LOCAL_DEV mode
+	if q.isLocalDev() {
+		files, err := os.ReadDir("./db")
+		if err != nil {
+			return nil, fmt.Errorf("failed to read local db dir: %w", err)
+		}
+		for _, f := range files {
+			if f.IsDir() || !strings.HasSuffix(f.Name(), ".parquet") {
+				continue
+			}
+
+			allSegments = append(allSegments, SegmentInfo{
+				DateInt:     20250814,
+				Hour:        "19",
+				SegmentID:   f.Name(),
+				StartTs:     startTs,
+				EndTs:       endTs,
+				Dataset:     "metrics",
+				BucketName:  "local",
+				CustomerID:  orgUUID.String(),
+				CollectorID: "dev",
+				Frequency:   stepDuration.Milliseconds(),
+			})
+		}
+		return allSegments, nil
+	}
+
 	rows, err := q.mdb.ListSegmentsForQuery(ctx, lrdb.ListSegmentsForQueryParams{
 		Int8range:      startTs,
 		Int8range_2:    endTs,
@@ -209,7 +340,6 @@ func (q *QuerierService) lookupSegments(ctx context.Context,
 			SegmentID:   fmt.Sprintf("tbl_%d", row.SegmentID),
 			StartTs:     row.StartTs,
 			EndTs:       row.EndTs,
-			ExprID:      "",
 			Dataset:     "metrics",
 			BucketName:  "bucket",
 			CustomerID:  orgUUID.String(),
@@ -217,5 +347,10 @@ func (q *QuerierService) lookupSegments(ctx context.Context,
 			Frequency:   stepDuration.Milliseconds(),
 		})
 	}
+
 	return allSegments, nil
+}
+
+func (q *QuerierService) isLocalDev() bool {
+	return os.Getenv("LOCAL_DEV") != ""
 }

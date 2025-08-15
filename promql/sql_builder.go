@@ -79,8 +79,8 @@ func (be *BaseExpr) ToWorkerSQL(step time.Duration) string {
 	// Raw/instant—just step bucket aggregates (no sliding window)
 	case "":
 		return buildStepOnly(be, []proj{
-			{"SUM(value)", "sum"},
-			{"COUNT(value)", "count"},
+			{"SUM(rollup_sum)", "sum"},
+			{"COUNT(rollup_count)", "count"},
 		}, step)
 
 	default:
@@ -98,8 +98,6 @@ const (
 	timePredicate = "\"_cardinalhq.timestamp\" >= {start} AND \"_cardinalhq.timestamp\" < {end}"
 )
 
-// --- Builders ---------------------------------------------------------------
-
 // buildStepOnly: densify to one row per step (+ per group), join step aggregates.
 func buildStepOnly(be *BaseExpr, projs []proj, step time.Duration) string {
 	stepMs := step.Milliseconds()
@@ -108,14 +106,11 @@ func buildStepOnly(be *BaseExpr, projs []proj, step time.Duration) string {
 	where := whereFor(be)
 	timeWhere := withTime(where)
 
-	// CTE: buckets (one row per step)
 	buckets := fmt.Sprintf("buckets AS (SELECT range AS bucket_ts FROM range({start}, {end}, %d))", stepMs)
 
 	var groupsCTE, gridCTE, gridFrom string
 	if len(be.GroupBy) > 0 {
-		// Distinct groups present in the time range
 		groupsCTE = "groups AS (SELECT DISTINCT " + strings.Join(be.GroupBy, ", ") + " FROM {table}" + timeWhere + ")"
-		// Cross join to produce full grid of (bucket, group)
 		gridCTE = "grid AS (SELECT bucket_ts, " + strings.Join(be.GroupBy, ", ") + " FROM buckets CROSS JOIN groups)"
 		gridFrom = "grid g"
 	} else {
@@ -124,7 +119,6 @@ func buildStepOnly(be *BaseExpr, projs []proj, step time.Duration) string {
 
 	// Step aggregates
 	stepCols := []string{bucketExpr + " AS bucket_ts"}
-	// Only sum/count are used by step-only currently
 	needSum, needCount := false, false
 	for _, p := range projs {
 		switch p.alias {
@@ -135,10 +129,10 @@ func buildStepOnly(be *BaseExpr, projs []proj, step time.Duration) string {
 		}
 	}
 	if needSum {
-		stepCols = append(stepCols, "SUM(value) AS step_sum")
+		stepCols = append(stepCols, "SUM(rollup_sum) AS step_sum")
 	}
 	if needCount {
-		stepCols = append(stepCols, "COUNT(value) AS step_count")
+		stepCols = append(stepCols, "COUNT(rollup_count) AS step_count")
 	}
 	if len(be.GroupBy) > 0 {
 		stepCols = append(stepCols, strings.Join(be.GroupBy, ", "))
@@ -160,7 +154,6 @@ func buildStepOnly(be *BaseExpr, projs []proj, step time.Duration) string {
 		case "count":
 			outCols = append(outCols, "COALESCE(sa.step_count, 0) AS count")
 		default:
-			// (not expected in step-only path)
 			outCols = append(outCols, fmt.Sprintf("%s AS %s", p.expr, p.alias))
 		}
 	}
@@ -181,9 +174,13 @@ func buildStepOnly(be *BaseExpr, projs []proj, step time.Duration) string {
 	sql := "WITH " + strings.Join(withs, ", ") +
 		" SELECT " + strings.Join(outCols, ", ") +
 		" FROM " + gridFrom +
-		" LEFT JOIN step_aggr sa " + joinKeys +
-		" ORDER BY bucket_ts ASC"
+		" LEFT JOIN step_aggr sa " + joinKeys
 
+	if len(be.GroupBy) == 0 {
+		sql += " WHERE EXISTS (SELECT 1 FROM step_aggr)"
+	}
+
+	sql += " ORDER BY bucket_ts ASC"
 	return sql
 }
 
@@ -211,16 +208,16 @@ func buildWindowed(be *BaseExpr, need need, step time.Duration) string {
 	// Step aggregates (per step + group)
 	stepCols := []string{bucketExpr + " AS bucket_ts"}
 	if need.sum {
-		stepCols = append(stepCols, "SUM(value) AS step_sum")
+		stepCols = append(stepCols, "SUM(rollup_sum) AS step_sum")
 	}
 	if need.count {
-		stepCols = append(stepCols, "COUNT(value) AS step_count")
+		stepCols = append(stepCols, "COUNT(rollup_count) AS step_count")
 	}
 	if need.min {
-		stepCols = append(stepCols, "MIN(value) AS step_min")
+		stepCols = append(stepCols, "MIN(rollup_min) AS step_min")
 	}
 	if need.max {
-		stepCols = append(stepCols, "MAX(value) AS step_max")
+		stepCols = append(stepCols, "MAX(rollup_max) AS step_max")
 	}
 	if len(be.GroupBy) > 0 {
 		stepCols = append(stepCols, strings.Join(be.GroupBy, ", "))
@@ -296,9 +293,14 @@ func buildWindowed(be *BaseExpr, need need, step time.Duration) string {
 	sql := "WITH " + strings.Join(withs, ", ") +
 		" SELECT " + strings.Join(outCols, ", ") +
 		" FROM (SELECT " + strings.Join(baseCols, ", ") + " FROM " + gridFrom +
-		" LEFT JOIN step_aggr sa " + joinKeys + ") " +
-		" ORDER BY bucket_ts ASC"
+		" LEFT JOIN step_aggr sa " + joinKeys + ")"
 
+	// Suppress densified zero rows when nothing matched at all.
+	if len(be.GroupBy) == 0 {
+		sql += " WHERE EXISTS (SELECT 1 FROM step_aggr)"
+	}
+
+	sql += " ORDER BY bucket_ts ASC"
 	return sql
 }
 
@@ -359,7 +361,7 @@ func equalStringSets(a, b []string) bool {
 func whereFor(be *BaseExpr) string {
 	var parts []string
 	if be.Metric != "" {
-		parts = append(parts, fmt.Sprintf("metric = %s", sqlLit(be.Metric)))
+		parts = append(parts, fmt.Sprintf("\"_cardinalhq.name\" = %s", sqlLit(be.Metric)))
 	}
 	for _, m := range be.Matchers {
 		switch m.Op {

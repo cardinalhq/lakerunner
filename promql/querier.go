@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/cardinalhq/lakerunner/internal/duckdbx"
 	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/cardinalhq/oteltools/pkg/dateutils"
 	"github.com/google/uuid"
@@ -27,14 +28,26 @@ import (
 )
 
 type QuerierService struct {
-	mdb             lrdb.StoreFull
+	mdb lrdb.StoreFull
+	ddb *duckdbx.DB
 	workerDiscovery WorkerDiscovery
 }
+
+// NewQuerierService creates a new QuerierService with the given database store.
+func NewQuerierService(mdb lrdb.StoreFull) (*QuerierService, error) {
+	ddb, err := duckdbx.Open("",
+		duckdbx.WithMemoryLimitMB(2048),
+		duckdbx.WithExtension("httpfs", ""),
+	)
+	if err != nil {
+		return nil, err
+	}
 
 // NewQuerierService creates a new QuerierService with the given database store and worker discovery.
 func NewQuerierService(mdb lrdb.StoreFull, workerDiscovery WorkerDiscovery) *QuerierService {
 	return &QuerierService{
 		mdb:             mdb,
+		ddb: ddb,
 		workerDiscovery: workerDiscovery,
 	}
 }
@@ -163,9 +176,13 @@ func (q *QuerierService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (q *QuerierService) Run(doneCtx context.Context) error {
 	slog.Info("Starting querier service")
 
+	mux := http.NewServeMux()
+
+	mux.Handle("/api/v1/query", q)
+
 	srv := &http.Server{
 		Addr:    ":8080",
-		Handler: q,
+		Handler: mux, // use mux instead of q directly
 	}
 
 	go func() {

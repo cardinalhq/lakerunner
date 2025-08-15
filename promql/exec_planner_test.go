@@ -35,6 +35,19 @@ func sorted(ss []string) []string {
 	return cp
 }
 
+func TestForDots(t *testing.T) {
+	q := `sum by ("resource.service.name") ( topk(5, sum by ("resource.service.name", endpoint) (rate({"http.requests.total"}[5m]))) )`
+	root := mustParse(t, q)
+	res, err := Compile(root)
+	if err != nil {
+		t.Fatalf("Compile error: %v", err)
+	}
+	_, ok := res.Root.(*AggNode)
+	if !ok {
+		t.Fatalf("root not AggNode, got %T", res.Root)
+	}
+}
+
 func TestCompile_TopK_Then_OuterSum(t *testing.T) {
 	q := `sum by (job) ( topk(5, sum by (job, endpoint) (rate(http_requests_total[5m]))) )`
 	root := mustParse(t, q)
