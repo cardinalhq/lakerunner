@@ -85,11 +85,10 @@ func (q *QuerierService) Evaluate(
 			// Group segments by assigned worker
 			workerGroups := make(map[Worker][]SegmentInfo)
 			for _, mapping := range mappings {
-				segs := segmentMap[mapping.SegmentID]
-				workerGroups[mapping.Worker] = append(workerGroups[mapping.Worker], segs...)
+				segmentList := segmentMap[mapping.SegmentID]
+				workerGroups[mapping.Worker] = append(workerGroups[mapping.Worker], segmentList...)
 			}
 
-			// Create pushdown requests for each worker
 			for worker, workerSegments := range workerGroups {
 				req := PushDownRequest{
 					OrganizationID: orgID,
@@ -97,6 +96,7 @@ func (q *QuerierService) Evaluate(
 					StartTs:        effStart,
 					EndTs:          effEnd,
 					Segments:       workerSegments,
+					Step:           stepDuration,
 				}
 
 				// Push down to worker; get its stream back.
@@ -192,11 +192,11 @@ func (q *QuerierService) pushDown(ctx context.Context, worker Worker, request Pu
 				case "bucket_ts":
 					switch v := vals[i].(type) {
 					case int64:
-						ts = v / 1000
+						ts = v
 					case int32:
-						ts = int64(v) / 1000
+						ts = int64(v)
 					case int:
-						ts = int64(v) / 1000
+						ts = int64(v)
 					default:
 						slog.Error("unexpected type for bucket_ts", "value", vals[i])
 						continue
