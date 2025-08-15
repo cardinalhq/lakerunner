@@ -348,7 +348,7 @@ func convertProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate 
 	// Create a mapper for protobuf files
 	mapper := translate.NewMapper()
 
-	r, err := protoconv.NewProtoReader(tmpfilename, mapper, nil)
+	r, err := protoconv.NewLogsProtoReader(tmpfilename, mapper, nil)
 	if err != nil {
 		return nil, err
 	}

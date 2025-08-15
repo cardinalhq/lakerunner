@@ -27,7 +27,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/idgen"
 )
 
-type ProtoReader struct {
+type LogsProtoReader struct {
 	fname string
 	file  *os.File
 	logs  *plog.Logs
@@ -41,9 +41,9 @@ type ProtoReader struct {
 	idg                  idgen.IDGenerator
 }
 
-var _ fileconv.Reader = (*ProtoReader)(nil)
+var _ fileconv.Reader = (*LogsProtoReader)(nil)
 
-func NewProtoReader(fname string, mapper *translate.Mapper, tags map[string]string) (*ProtoReader, error) {
+func NewLogsProtoReader(fname string, mapper *translate.Mapper, tags map[string]string) (*LogsProtoReader, error) {
 	file, err := os.Open(fname)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open file %s: %w", fname, err)
@@ -58,7 +58,7 @@ func NewProtoReader(fname string, mapper *translate.Mapper, tags map[string]stri
 	translator := otel.NewTableTranslator()
 	idg := idgen.NewULIDGenerator()
 
-	return &ProtoReader{
+	return &LogsProtoReader{
 		fname:                fname,
 		file:                 nil, // File is closed after parsing
 		logs:                 logs,
@@ -72,12 +72,12 @@ func NewProtoReader(fname string, mapper *translate.Mapper, tags map[string]stri
 	}, nil
 }
 
-func (r *ProtoReader) Close() error {
+func (r *LogsProtoReader) Close() error {
 	r.logs = nil
 	return nil
 }
 
-func (r *ProtoReader) GetRow() (row map[string]any, done bool, err error) {
+func (r *LogsProtoReader) GetRow() (row map[string]any, done bool, err error) {
 	if r.logs == nil {
 		return nil, true, fmt.Errorf("proto logs are not initialized")
 	}
@@ -100,7 +100,7 @@ func (r *ProtoReader) GetRow() (row map[string]any, done bool, err error) {
 }
 
 // loadNextResourceLog loads the next resource log and populates the queue
-func (r *ProtoReader) loadNextResourceLog() bool {
+func (r *LogsProtoReader) loadNextResourceLog() bool {
 	if r.currentResourceIndex >= r.logs.ResourceLogs().Len() {
 		return false
 	}

@@ -49,7 +49,7 @@ func TestNewProtoReader(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			reader, err := NewProtoReader(tt.fname, tt.mapper, tt.tags)
+			reader, err := NewLogsProtoReader(tt.fname, tt.mapper, tt.tags)
 			if tt.expectError {
 				assert.Error(t, err)
 				assert.Nil(t, reader)
@@ -63,7 +63,7 @@ func TestNewProtoReader(t *testing.T) {
 }
 
 func TestProtoReader_GetRow(t *testing.T) {
-	reader, err := NewProtoReader("testdata/logs_160396104.binpb", translate.NewMapper(), map[string]string{
+	reader, err := NewLogsProtoReader("testdata/logs_160396104.binpb", translate.NewMapper(), map[string]string{
 		"test_tag": "test_value",
 		"env":      "test",
 	})
@@ -123,7 +123,7 @@ func TestProtoReader_GetRow(t *testing.T) {
 }
 
 func TestProtoReader_Close(t *testing.T) {
-	reader, err := NewProtoReader("testdata/logs_160396104.binpb", translate.NewMapper(), nil)
+	reader, err := NewLogsProtoReader("testdata/logs_160396104.binpb", translate.NewMapper(), nil)
 	require.NoError(t, err)
 
 	// Test that close doesn't error
@@ -137,7 +137,7 @@ func TestProtoReader_Close(t *testing.T) {
 
 func TestProtoReader_EmptyFile(t *testing.T) {
 	// Test with a file that doesn't exist
-	reader, err := NewProtoReader("testdata/nonexistent.binpb", translate.NewMapper(), nil)
+	reader, err := NewLogsProtoReader("testdata/nonexistent.binpb", translate.NewMapper(), nil)
 	assert.Error(t, err)
 	assert.Nil(t, reader)
 }
