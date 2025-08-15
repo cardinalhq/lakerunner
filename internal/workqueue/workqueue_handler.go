@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package cmd
+package workqueue
 
 import (
 	"context"
@@ -22,35 +22,50 @@ import (
 )
 
 type WorkqueueHandler struct {
-	ctx context.Context
-	ll  *slog.Logger
-	mdb lrdb.StoreFull
-	inf lrdb.WorkQueueClaimRow
+	ctx          context.Context
+	logger       *slog.Logger
+	store        Store
+	workItem     lrdb.WorkQueueClaimRow
+	myInstanceID int64
 }
 
 func NewWorkqueueHandler(
 	ctx context.Context,
-	ll *slog.Logger,
-	mdb lrdb.StoreFull,
-	inf lrdb.WorkQueueClaimRow,
+	store Store,
+	workItem lrdb.WorkQueueClaimRow,
+	myInstanceID int64,
+	opts ...HandlerOption,
 ) *WorkqueueHandler {
-	return &WorkqueueHandler{ctx, ll, mdb, inf}
+	options := &handlerOptions{
+		logger: slog.Default(),
+	}
+	for _, opt := range opts {
+		opt(options)
+	}
+
+	return &WorkqueueHandler{
+		ctx:          ctx,
+		logger:       options.logger,
+		store:        store,
+		workItem:     workItem,
+		myInstanceID: myInstanceID,
+	}
 }
 
 func (h *WorkqueueHandler) CompleteWork() {
-	if err := h.mdb.WorkQueueComplete(h.ctx, lrdb.WorkQueueCompleteParams{
-		ID:       h.inf.ID,
-		WorkerID: myInstanceID,
+	if err := h.store.WorkQueueComplete(h.ctx, lrdb.WorkQueueCompleteParams{
+		ID:       h.workItem.ID,
+		WorkerID: h.myInstanceID,
 	}); err != nil {
-		h.ll.Error("WorkQueueComplete failed", slog.Any("error", err))
+		h.logger.Error("WorkQueueComplete failed", slog.Any("error", err))
 	}
 }
 
 func (h *WorkqueueHandler) RetryWork() {
-	if err := h.mdb.WorkQueueFail(h.ctx, lrdb.WorkQueueFailParams{
-		ID:       h.inf.ID,
-		WorkerID: myInstanceID,
+	if err := h.store.WorkQueueFail(h.ctx, lrdb.WorkQueueFailParams{
+		ID:       h.workItem.ID,
+		WorkerID: h.myInstanceID,
 	}); err != nil {
-		h.ll.Error("WorkQueueFail failed", slog.Any("error", err))
+		h.logger.Error("WorkQueueFail failed", slog.Any("error", err))
 	}
 }

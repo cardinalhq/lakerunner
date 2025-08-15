@@ -28,6 +28,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
+	"github.com/cardinalhq/lakerunner/internal/workqueue"
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/estimator"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
@@ -160,7 +161,7 @@ func ingestFiles(
 		slog.String("bucket", inf.Bucket),
 		slog.String("objectID", inf.ObjectID))
 
-	h := NewInqueueHandler(ctx, ll, loop.mdb, inf)
+	h := workqueue.NewInqueueHandler(ctx, loop.mdb, inf, maxWorkRetries, workqueue.WithLogger(ll))
 
 	if inf.Tries > 10 {
 		ll.Warn("Too many tries, deleting")
