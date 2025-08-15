@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package fileconvcmd
+package debug
 
 import (
 	"os"
@@ -22,21 +22,23 @@ import (
 	"github.com/cardinalhq/lakerunner/cmd/ingestlogs"
 )
 
-var Cmd = &cobra.Command{
-	Use:   "fileconv",
-	Short: "File conversion utilities",
-	Long:  `Utilities for converting files from various formats to a common format for processing.`,
-	RunE:  run,
+func GetFileConvCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "fileconv",
+		Short: "File conversion utilities",
+		Long:  `Utilities for converting files from various formats to a common format for processing.`,
+		RunE:  runFileConv,
+	}
+
+	cmd.Flags().StringP("input", "i", "", "Input file path")
+	_ = cmd.MarkFlagRequired("input")
+
+	cmd.Flags().Int64("rows-per-file", 40_000, "Target number of rows per output file")
+
+	return cmd
 }
 
-func init() {
-	Cmd.Flags().StringP("input", "i", "", "Input file path")
-	_ = Cmd.MarkFlagRequired("input")
-
-	Cmd.Flags().Int64("rows-per-file", 40_000, "Target number of rows per output file")
-}
-
-func run(cmd *cobra.Command, args []string) error {
+func runFileConv(cmd *cobra.Command, args []string) error {
 	input, _ := cmd.Flags().GetString("input")
 	rpf, _ := cmd.Flags().GetInt64("rows-per-file")
 

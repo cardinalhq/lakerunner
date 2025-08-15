@@ -15,34 +15,23 @@
 package cmd
 
 import (
-	"os"
-	"time"
-
 	"github.com/spf13/cobra"
+
+	debugcmd "github.com/cardinalhq/lakerunner/cmd/debug"
 )
 
-const (
-	workSleepTime  = 2 * time.Second
-	maxWorkRetries = 100
-	targetFileSize = 1_100_000
-)
-
-// rootCmd represents the base command when called without any subcommands
-var rootCmd = &cobra.Command{
-	Use:   "lakerunner",
-	Short: "Process s3 signal storage",
-	Long:  `Read and process signals written to s3 by the CardinalHQ Open Telemetry Collector's S3 exporter.`,
+var debugCmd = &cobra.Command{
+	Use:   "debug",
+	Short: "Debug commands for troubleshooting",
+	Long:  `Debug commands for troubleshooting various components of lakerunner.`,
 }
 
 func init() {
-	rootCmd.AddCommand(debugCmd)
-}
-
-// Execute adds all child commands to the root command and sets flags appropriately.
-// This is called by main.main(). It only needs to happen once to the rootCmd.
-func Execute() {
-	err := rootCmd.Execute()
-	if err != nil {
-		os.Exit(1)
-	}
+	debugCmd.AddCommand(debugcmd.GetKubernetesDiscoveryCmd())
+	debugCmd.AddCommand(debugcmd.GetS3CatCmd())
+	debugCmd.AddCommand(debugcmd.GetS3LSCmd())
+	debugCmd.AddCommand(debugcmd.GetDDBCmd())
+	debugCmd.AddCommand(debugcmd.GetParquetSchemaCmd())
+	debugCmd.AddCommand(debugcmd.GetSQLiteCmd())
+	debugCmd.AddCommand(debugcmd.GetFileConvCmd())
 }

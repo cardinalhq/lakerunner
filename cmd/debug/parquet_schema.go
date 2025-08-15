@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package cmd
+package debug
 
 import (
 	"fmt"
@@ -21,7 +21,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func init() {
+func GetParquetSchemaCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "parquet-schema",
 		Short: "Print out the schema of a Parquet file",
@@ -35,12 +35,12 @@ func init() {
 		},
 	}
 
-	rootCmd.AddCommand(cmd)
-
 	cmd.Flags().String("file", "", "Parquet file to read")
 	if err := cmd.MarkFlagRequired("file"); err != nil {
 		panic(fmt.Errorf("failed to mark file flag as required: %w", err))
 	}
+
+	return cmd
 }
 
 func runParquetSchema(filename string) error {

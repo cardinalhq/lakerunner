@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package cmd
+package debug
 
 import (
 	"context"
@@ -26,9 +26,9 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 )
 
-func init() {
+func GetS3CatCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "s3-cat",
+		Use:   "s3cat",
 		Short: "return Base64 for an S3 file",
 		RunE: func(c *cobra.Command, _ []string) error {
 			bucketID, err := c.Flags().GetString("bucket")
@@ -52,8 +52,6 @@ func init() {
 		},
 	}
 
-	rootCmd.AddCommand(cmd)
-
 	cmd.Flags().String("bucket", "", "S3 bucket")
 	if err := cmd.MarkFlagRequired("bucket"); err != nil {
 		panic(fmt.Errorf("failed to mark bucket flag as required: %w", err))
@@ -70,6 +68,8 @@ func init() {
 	}
 
 	cmd.Flags().String("role", "", "AWS IAM role to assume for S3 access")
+
+	return cmd
 }
 
 func runS3Cat(bucketID string, objectID string, region string, role string) error {
