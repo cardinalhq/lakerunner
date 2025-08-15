@@ -240,6 +240,6 @@ func TestLogsProtoReader_WithNilMapper(t *testing.T) {
 	defer reader.Close()
 
 	// Try reading one row
-	_, _, err = reader.GetRow()
+	_, _, _ = reader.GetRow()
 	// Should not panic, behavior depends on implementation
 }

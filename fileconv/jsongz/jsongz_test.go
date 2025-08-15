@@ -443,7 +443,7 @@ func TestJSONGzReader_Close(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Test double close - this may return an error about file already closed, which is acceptable
-	err = reader.Close()
+	_ = reader.Close()
 	// Don't assert NoError here since double close behavior is implementation dependent
 }
 

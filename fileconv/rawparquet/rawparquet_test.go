@@ -128,7 +128,7 @@ func TestRawParquetReader_Close(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Test double close (should not panic)
-	err = reader.Close()
+	_ = reader.Close()
 	// Don't assert NoError here since double close behavior is implementation dependent
 }
 
