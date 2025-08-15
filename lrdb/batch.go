@@ -249,3 +249,236 @@ func (b *BatchMarkMetricSegsRolledupBatchResults) Close() error {
 	b.closed = true
 	return b.br.Close()
 }
+
+const batchUpsertExemplarLogs = `-- name: BatchUpsertExemplarLogs :batchone
+INSERT INTO exemplar_logs
+            ( organization_id,  service_identifier_id,  fingerprint,  attributes,  exemplar)
+VALUES      ($1, $2, $3, $4, $5)
+ON CONFLICT ( organization_id,  service_identifier_id,  fingerprint)
+DO UPDATE SET
+  attributes = EXCLUDED.attributes,
+  exemplar   = EXCLUDED.exemplar,
+  updated_at = now(),
+  related_fingerprints = CASE
+    WHEN $6::BIGINT != 0
+      AND $3 != $6
+      THEN add_to_bigint_list(exemplar_logs.related_fingerprints, $6, 100)
+    ELSE exemplar_logs.related_fingerprints
+  END
+RETURNING (created_at = updated_at) as is_new
+`
+
+type BatchUpsertExemplarLogsBatchResults struct {
+	br     pgx.BatchResults
+	tot    int
+	closed bool
+}
+
+type BatchUpsertExemplarLogsParams struct {
+	OrganizationID      uuid.UUID      `json:"organization_id"`
+	ServiceIdentifierID uuid.UUID      `json:"service_identifier_id"`
+	Fingerprint         int64          `json:"fingerprint"`
+	Attributes          map[string]any `json:"attributes"`
+	Exemplar            map[string]any `json:"exemplar"`
+	OldFingerprint      int64          `json:"old_fingerprint"`
+}
+
+// This will upsert a new log exemplar. Attributes, exemplar, and updated_at are always updated
+// to the provided values. If old_fingerprint is not 0, it is added to the list of related
+// fingerprints. This means the "old" fingerprint should be fingerprint, so it always updates
+// an existing record, not changing it to the new one.
+// The return value is a boolean indicating if the record is new.
+func (q *Queries) BatchUpsertExemplarLogs(ctx context.Context, arg []BatchUpsertExemplarLogsParams) *BatchUpsertExemplarLogsBatchResults {
+	batch := &pgx.Batch{}
+	for _, a := range arg {
+		vals := []interface{}{
+			a.OrganizationID,
+			a.ServiceIdentifierID,
+			a.Fingerprint,
+			a.Attributes,
+			a.Exemplar,
+			a.OldFingerprint,
+		}
+		batch.Queue(batchUpsertExemplarLogs, vals...)
+	}
+	br := q.db.SendBatch(ctx, batch)
+	return &BatchUpsertExemplarLogsBatchResults{br, len(arg), false}
+}
+
+func (b *BatchUpsertExemplarLogsBatchResults) QueryRow(f func(int, bool, error)) {
+	defer b.br.Close()
+	for t := 0; t < b.tot; t++ {
+		var is_new bool
+		if b.closed {
+			if f != nil {
+				f(t, is_new, ErrBatchAlreadyClosed)
+			}
+			continue
+		}
+		row := b.br.QueryRow()
+		err := row.Scan(&is_new)
+		if f != nil {
+			f(t, is_new, err)
+		}
+	}
+}
+
+func (b *BatchUpsertExemplarLogsBatchResults) Close() error {
+	b.closed = true
+	return b.br.Close()
+}
+
+const batchUpsertExemplarMetrics = `-- name: BatchUpsertExemplarMetrics :batchone
+INSERT INTO exemplar_metrics
+            ( organization_id,  service_identifier_id,  metric_name,  metric_type,  attributes,  exemplar)
+VALUES      ($1, $2, $3, $4, $5, $6)
+ON CONFLICT ( organization_id,  service_identifier_id,  metric_name,  metric_type)
+DO UPDATE SET
+  attributes = EXCLUDED.attributes,
+  exemplar = EXCLUDED.exemplar,
+  updated_at = now()
+RETURNING (created_at = updated_at) as is_new
+`
+
+type BatchUpsertExemplarMetricsBatchResults struct {
+	br     pgx.BatchResults
+	tot    int
+	closed bool
+}
+
+type BatchUpsertExemplarMetricsParams struct {
+	OrganizationID      uuid.UUID      `json:"organization_id"`
+	ServiceIdentifierID uuid.UUID      `json:"service_identifier_id"`
+	MetricName          string         `json:"metric_name"`
+	MetricType          string         `json:"metric_type"`
+	Attributes          map[string]any `json:"attributes"`
+	Exemplar            map[string]any `json:"exemplar"`
+}
+
+func (q *Queries) BatchUpsertExemplarMetrics(ctx context.Context, arg []BatchUpsertExemplarMetricsParams) *BatchUpsertExemplarMetricsBatchResults {
+	batch := &pgx.Batch{}
+	for _, a := range arg {
+		vals := []interface{}{
+			a.OrganizationID,
+			a.ServiceIdentifierID,
+			a.MetricName,
+			a.MetricType,
+			a.Attributes,
+			a.Exemplar,
+		}
+		batch.Queue(batchUpsertExemplarMetrics, vals...)
+	}
+	br := q.db.SendBatch(ctx, batch)
+	return &BatchUpsertExemplarMetricsBatchResults{br, len(arg), false}
+}
+
+func (b *BatchUpsertExemplarMetricsBatchResults) QueryRow(f func(int, bool, error)) {
+	defer b.br.Close()
+	for t := 0; t < b.tot; t++ {
+		var is_new bool
+		if b.closed {
+			if f != nil {
+				f(t, is_new, ErrBatchAlreadyClosed)
+			}
+			continue
+		}
+		row := b.br.QueryRow()
+		err := row.Scan(&is_new)
+		if f != nil {
+			f(t, is_new, err)
+		}
+	}
+}
+
+func (b *BatchUpsertExemplarMetricsBatchResults) Close() error {
+	b.closed = true
+	return b.br.Close()
+}
+
+const batchUpsertExemplarTraces = `-- name: BatchUpsertExemplarTraces :batchone
+INSERT INTO exemplar_traces
+( organization_id
+, service_identifier_id
+, fingerprint
+, attributes
+, exemplar
+, span_name
+, span_kind
+)
+VALUES      ( $1
+            , $2
+            , $3
+            , $4
+            , $5
+            , $6
+            , $7
+            )
+    ON CONFLICT ( organization_id
+            , service_identifier_id
+            , fingerprint
+            )
+DO UPDATE SET
+           attributes        = EXCLUDED.attributes,
+           exemplar          = EXCLUDED.exemplar,
+           span_name         = EXCLUDED.span_name,
+           span_kind         = EXCLUDED.span_kind,
+           updated_at        = now()
+RETURNING (created_at = updated_at) AS is_new
+`
+
+type BatchUpsertExemplarTracesBatchResults struct {
+	br     pgx.BatchResults
+	tot    int
+	closed bool
+}
+
+type BatchUpsertExemplarTracesParams struct {
+	OrganizationID      uuid.UUID      `json:"organization_id"`
+	ServiceIdentifierID uuid.UUID      `json:"service_identifier_id"`
+	Fingerprint         int64          `json:"fingerprint"`
+	Attributes          map[string]any `json:"attributes"`
+	Exemplar            map[string]any `json:"exemplar"`
+	SpanName            string         `json:"span_name"`
+	SpanKind            int32          `json:"span_kind"`
+}
+
+func (q *Queries) BatchUpsertExemplarTraces(ctx context.Context, arg []BatchUpsertExemplarTracesParams) *BatchUpsertExemplarTracesBatchResults {
+	batch := &pgx.Batch{}
+	for _, a := range arg {
+		vals := []interface{}{
+			a.OrganizationID,
+			a.ServiceIdentifierID,
+			a.Fingerprint,
+			a.Attributes,
+			a.Exemplar,
+			a.SpanName,
+			a.SpanKind,
+		}
+		batch.Queue(batchUpsertExemplarTraces, vals...)
+	}
+	br := q.db.SendBatch(ctx, batch)
+	return &BatchUpsertExemplarTracesBatchResults{br, len(arg), false}
+}
+
+func (b *BatchUpsertExemplarTracesBatchResults) QueryRow(f func(int, bool, error)) {
+	defer b.br.Close()
+	for t := 0; t < b.tot; t++ {
+		var is_new bool
+		if b.closed {
+			if f != nil {
+				f(t, is_new, ErrBatchAlreadyClosed)
+			}
+			continue
+		}
+		row := b.br.QueryRow()
+		err := row.Scan(&is_new)
+		if f != nil {
+			f(t, is_new, err)
+		}
+	}
+}
+
+func (b *BatchUpsertExemplarTracesBatchResults) Close() error {
+	b.closed = true
+	return b.br.Close()
+}

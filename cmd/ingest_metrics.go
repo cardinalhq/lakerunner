@@ -16,18 +16,23 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"maps"
+	"os"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/DataDog/sketches-go/ddsketch"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/parquet-go/parquet-go"
 	"github.com/spf13/cobra"
+	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
@@ -37,6 +42,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/buffet"
+	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"github.com/cardinalhq/lakerunner/internal/filecrunch"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
@@ -72,6 +78,11 @@ func init() {
 			if err != nil {
 				return fmt.Errorf("failed to create ingest loop context: %w", err)
 			}
+			defer func() {
+				if err := loop.Close(); err != nil {
+					slog.Error("Error closing ingest loop context", slog.Any("error", err))
+				}
+			}()
 
 			return IngestLoop(loop, metricIngestItem)
 		},
@@ -81,7 +92,7 @@ func init() {
 }
 
 func metricIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
-	awsmanager *awsclient.Manager, inf lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64) error {
+	awsmanager *awsclient.Manager, inf lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
 	profile, err := sp.Get(ctx, inf.OrganizationID, inf.InstanceNum)
 	if err != nil {
 		ll.Error("Failed to get storage profile", slog.Any("error", err))
@@ -130,7 +141,7 @@ func metricIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp st
 		}
 
 		// Check file type and convert if supported
-		if fnames, err := convertMetricsFileIfSupported(ll, tmpfilename, tmpdir, inf.Bucket, inf.ObjectID, rpfEstimate); err != nil {
+		if fnames, err := convertMetricsFileIfSupported(ll, tmpfilename, tmpdir, inf.Bucket, inf.ObjectID, rpfEstimate, loop.exemplarProcessor, inf.OrganizationID.String()); err != nil {
 			ll.Error("Failed to convert file", slog.Any("error", err))
 			return err
 		} else if fnames != nil {
@@ -561,10 +572,10 @@ func handleHistogram(bucketCounts []float64, bucketBounds []float64) (counts, va
 
 // convertMetricsFileIfSupported checks the file type and converts it if supported.
 // Returns nil if the file type is not supported (file will be skipped).
-func convertMetricsFileIfSupported(ll *slog.Logger, tmpfilename, tmpdir, bucket, objectID string, rpfEstimate int64) ([]string, error) {
+func convertMetricsFileIfSupported(ll *slog.Logger, tmpfilename, tmpdir, bucket, objectID string, rpfEstimate int64, exemplarProcessor *exemplar.Processor, customerID string) ([]string, error) {
 	switch {
 	case strings.HasSuffix(objectID, ".binpb"):
-		return convertMetricsProtoFile(tmpfilename, tmpdir, bucket, objectID, rpfEstimate)
+		return convertMetricsProtoFile(ll, tmpfilename, tmpdir, bucket, objectID, rpfEstimate, exemplarProcessor, customerID)
 	default:
 		ll.Warn("Unsupported file type for metrics, skipping", slog.String("objectID", objectID))
 		return nil, nil
@@ -572,11 +583,37 @@ func convertMetricsFileIfSupported(ll *slog.Logger, tmpfilename, tmpdir, bucket,
 }
 
 // convertMetricsProtoFile converts a protobuf file to the standardized format
-func convertMetricsProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate int64) ([]string, error) {
-	// Create a mapper for protobuf files
+func convertMetricsProtoFile(ll *slog.Logger, tmpfilename, tmpdir, bucket, objectID string, rpfEstimate int64, exemplarProcessor *exemplar.Processor, customerID string) ([]string, error) {
+	data, err := os.ReadFile(tmpfilename)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read protobuf file: %w", err)
+	}
+
+	// Parse protobuf data once
+	unmarshaler := &pmetric.ProtoUnmarshaler{}
+	metrics, err := unmarshaler.UnmarshalMetrics(data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal protobuf metrics: %w", err)
+	}
+
+	// Process exemplars from the parsed metrics if processor is available
+	if exemplarProcessor != nil {
+		ll.Info("Processing exemplars from OTEL protobuf file",
+			slog.String("file", tmpfilename),
+			slog.String("customer_id", customerID))
+
+		if err := processExemplarsFromMetrics(&metrics, exemplarProcessor, customerID); err != nil {
+			ll.Warn("Failed to process exemplars from parsed metrics",
+				slog.String("file", tmpfilename),
+				slog.Any("error", err))
+			// Don't fail the entire conversion if exemplar processing fails
+		}
+	}
+
 	mapper := translate.NewMapper()
 
-	r, err := proto.NewMetricsProtoReader(tmpfilename, mapper, nil)
+	// Use the parsed metrics directly
+	r, err := proto.NewMetricsProtoReaderFromMetrics(&metrics, mapper, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -651,4 +688,114 @@ func convertMetricsProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpfEs
 		fnames = append(fnames, res.FileName)
 	}
 	return fnames, nil
+}
+
+// processExemplarsFromMetrics processes exemplars from parsed pmetric.Metrics
+func processExemplarsFromMetrics(metrics *pmetric.Metrics, processor *exemplar.Processor, customerID string) error {
+	ctx := context.Background()
+	if err := processor.ProcessMetrics(ctx, *metrics, customerID); err != nil {
+		return fmt.Errorf("failed to process metrics exemplars: %w", err)
+	}
+
+	return nil
+}
+
+// processMetricsExemplarsDirect processes metrics exemplars and writes them directly to the database
+func processMetricsExemplarsDirect(ctx context.Context, organizationID string, exemplars []*exemplar.ExemplarData, mdb lrdb.StoreFull) error {
+	orgID, err := uuid.Parse(organizationID)
+	if err != nil {
+		return fmt.Errorf("invalid organization ID: %w", err)
+	}
+
+	slog.Info("Processing metrics exemplars",
+		"num_exemplars", len(exemplars),
+		"organization_id", organizationID)
+
+	records := make([]lrdb.BatchUpsertExemplarMetricsParams, 0, len(exemplars))
+
+	for _, exemplar := range exemplars {
+		serviceName := exemplar.Attributes["service.name"]
+		clusterName := exemplar.Attributes["k8s.cluster.name"]
+		namespaceName := exemplar.Attributes["k8s.namespace.name"]
+		metricName := exemplar.Attributes["metric.name"]
+		metricType := exemplar.Attributes["metric.type"]
+
+		if metricName == "" || metricType == "" {
+			slog.Warn("Missing metric name or type", "metric_name", metricName, "metric_type", metricType)
+			continue
+		}
+
+		var exemplarData any
+		if err := json.Unmarshal([]byte(exemplar.Payload), &exemplarData); err != nil {
+			slog.Error("Failed to parse exemplar payload", "error", err)
+			continue
+		}
+
+		serviceIdentifierID, err := upsertServiceIdentifierDirect(ctx, mdb, orgID, serviceName, clusterName, namespaceName)
+		if err != nil {
+			slog.Error("Failed to upsert service identifier", "error", err)
+			continue
+		}
+
+		attributesAny := make(map[string]any)
+		for k, v := range exemplar.Attributes {
+			attributesAny[k] = v
+		}
+
+		var exemplarMap map[string]any
+		if exemplarDataMap, ok := exemplarData.(map[string]any); ok {
+			exemplarMap = exemplarDataMap
+		} else {
+			exemplarBytes, err := json.Marshal(exemplarData)
+			if err != nil {
+				slog.Error("Failed to marshal exemplar data", "error", err)
+				continue
+			}
+			if err := json.Unmarshal(exemplarBytes, &exemplarMap); err != nil {
+				slog.Error("Failed to convert exemplar data to map", "error", err)
+				continue
+			}
+		}
+
+		record := lrdb.BatchUpsertExemplarMetricsParams{
+			OrganizationID:      orgID,
+			ServiceIdentifierID: serviceIdentifierID,
+			MetricName:          metricName,
+			MetricType:          metricType,
+			Attributes:          attributesAny,
+			Exemplar:            exemplarMap,
+		}
+		records = append(records, record)
+	}
+
+	if len(records) == 0 {
+		return nil
+	}
+
+	batchResults := mdb.BatchUpsertExemplarMetrics(ctx, records)
+	batchResults.QueryRow(func(i int, isNew bool, err error) {
+		if err != nil {
+			slog.Error("Failed to upsert exemplar metric", "error", err, "index", i)
+		}
+	})
+
+	slog.Info("Processed metrics exemplars", "count", len(records))
+	return nil
+}
+
+// upsertServiceIdentifierDirect creates or retrieves a service identifier
+func upsertServiceIdentifierDirect(ctx context.Context, mdb lrdb.StoreFull, orgID uuid.UUID, serviceName, clusterName, namespaceName string) (uuid.UUID, error) {
+	params := lrdb.UpsertServiceIdentifierParams{
+		OrganizationID: pgtype.UUID{Bytes: orgID, Valid: true},
+		ServiceName:    pgtype.Text{String: serviceName, Valid: true},
+		ClusterName:    pgtype.Text{String: clusterName, Valid: true},
+		Namespace:      pgtype.Text{String: namespaceName, Valid: true},
+	}
+
+	result, err := mdb.UpsertServiceIdentifier(ctx, params)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("failed to upsert service identifier: %w", err)
+	}
+
+	return result.ID, nil
 }

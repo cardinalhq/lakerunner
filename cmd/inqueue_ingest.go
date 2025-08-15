@@ -30,6 +30,7 @@ import (
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/estimator"
+	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/internal/workqueue"
@@ -45,16 +46,18 @@ type InqueueProcessingFunction func(
 	awsmanager *awsclient.Manager,
 	inf lrdb.Inqueue,
 	ingest_dateint int32,
-	rpfEstimate int64) error
+	rpfEstimate int64,
+	loop *IngestLoopContext) error
 
 type IngestLoopContext struct {
-	ctx        context.Context
-	mdb        lrdb.StoreFull
-	sp         storageprofile.StorageProfileProvider
-	awsmanager *awsclient.Manager
-	estimator  estimator.Estimator
-	signal     string
-	ll         *slog.Logger
+	ctx               context.Context
+	mdb               lrdb.StoreFull
+	sp                storageprofile.StorageProfileProvider
+	awsmanager        *awsclient.Manager
+	estimator         estimator.Estimator
+	signal            string
+	ll                *slog.Logger
+	exemplarProcessor *exemplar.Processor
 }
 
 func NewIngestLoopContext(ctx context.Context, signal string, assumeRoleSessionName string) (*IngestLoopContext, error) {
@@ -83,15 +86,46 @@ func NewIngestLoopContext(ctx context.Context, signal string, assumeRoleSessionN
 		return nil, fmt.Errorf("failed to setup storage profiles: %w", err)
 	}
 
+	config := exemplar.Config{
+		Metrics: exemplar.TelemetryConfig{
+			Enabled:        true,
+			CacheSize:      10000,
+			Expiry:         15 * time.Minute,
+			ReportInterval: 5 * time.Minute,
+			BatchSize:      100,
+		},
+		Logs: exemplar.TelemetryConfig{
+			Enabled: false, // Logs not implemented yet
+		},
+		Traces: exemplar.TelemetryConfig{
+			Enabled: false, // Traces not implemented yet
+		},
+	}
+
+	exemplarProcessor := exemplar.NewMetricsProcessor(config, ll)
+
+	exemplarProcessor.SetMetricsCallback(func(ctx context.Context, organizationID string, exemplars []*exemplar.ExemplarData) error {
+		return processMetricsExemplarsDirect(ctx, organizationID, exemplars, mdb)
+	})
+
 	return &IngestLoopContext{
-		ctx:        ctx,
-		mdb:        mdb,
-		sp:         sp,
-		awsmanager: awsmanager,
-		estimator:  est,
-		signal:     signal,
-		ll:         ll,
+		ctx:               ctx,
+		mdb:               mdb,
+		sp:                sp,
+		awsmanager:        awsmanager,
+		estimator:         est,
+		signal:            signal,
+		ll:                ll,
+		exemplarProcessor: exemplarProcessor,
 	}, nil
+}
+
+// Close cleans up resources
+func (loop *IngestLoopContext) Close() error {
+	if loop.exemplarProcessor != nil {
+		return loop.exemplarProcessor.Close()
+	}
+	return nil
 }
 
 func IngestLoop(loop *IngestLoopContext, processingFx InqueueProcessingFunction) error {
@@ -210,7 +244,7 @@ func ingestFiles(
 
 	rpfEstimate := loop.estimator.Get(inf.OrganizationID, inf.InstanceNum, lrdb.SignalEnum(inf.TelemetryType)).EstimatedRecordCount
 	t0 = time.Now()
-	err = processFx(ctx, ll, tmpdir, loop.sp, loop.mdb, loop.awsmanager, inf, ingestDateint, rpfEstimate)
+	err = processFx(ctx, ll, tmpdir, loop.sp, loop.mdb, loop.awsmanager, inf, ingestDateint, rpfEstimate, loop)
 	inqueueDuration.Record(ctx, time.Since(t0).Seconds(),
 		metric.WithAttributeSet(commonAttributes),
 		metric.WithAttributes(

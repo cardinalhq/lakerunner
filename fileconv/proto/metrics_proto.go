@@ -16,8 +16,6 @@ package proto
 
 import (
 	"fmt"
-	"io"
-	"os"
 
 	"go.opentelemetry.io/collector/pdata/pmetric"
 
@@ -28,8 +26,6 @@ import (
 )
 
 type MetricsProtoReader struct {
-	fname   string
-	file    *os.File
 	metrics *pmetric.Metrics
 	// Streaming state
 	currentResourceIndex int
@@ -43,24 +39,20 @@ type MetricsProtoReader struct {
 
 var _ fileconv.Reader = (*MetricsProtoReader)(nil)
 
-func NewMetricsProtoReader(fname string, mapper *translate.Mapper, tags map[string]string) (*MetricsProtoReader, error) {
-	file, err := os.Open(fname)
+func NewMetricsProtoReader(data []byte, mapper *translate.Mapper, tags map[string]string) (*MetricsProtoReader, error) {
+	metrics, err := parseProtoToOtelMetricsFromBytes(data)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open file %s: %w", fname, err)
-	}
-
-	metrics, err := parseProtoToOtelMetrics(file)
-	if err != nil {
-		file.Close()
 		return nil, fmt.Errorf("failed to parse proto to OTEL metrics: %w", err)
 	}
 
+	return NewMetricsProtoReaderFromMetrics(metrics, mapper, tags)
+}
+
+func NewMetricsProtoReaderFromMetrics(metrics *pmetric.Metrics, mapper *translate.Mapper, tags map[string]string) (*MetricsProtoReader, error) {
 	translator := otel.NewTableTranslator()
 	idg := idgen.NewULIDGenerator()
 
 	return &MetricsProtoReader{
-		fname:                fname,
-		file:                 nil, // File is closed after parsing
 		metrics:              metrics,
 		currentResourceIndex: 0,
 		metricQueue:          nil,
@@ -125,14 +117,8 @@ func (r *MetricsProtoReader) loadNextResourceMetric() bool {
 	return true
 }
 
-// parseProtoToOtelMetrics parses protobuf data into OpenTelemetry metrics format
-func parseProtoToOtelMetrics(file *os.File) (*pmetric.Metrics, error) {
+func parseProtoToOtelMetricsFromBytes(data []byte) (*pmetric.Metrics, error) {
 	unmarshaler := &pmetric.ProtoUnmarshaler{}
-
-	data, err := io.ReadAll(file)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read file: %w", err)
-	}
 
 	metrics, err := unmarshaler.UnmarshalMetrics(data)
 	if err != nil {

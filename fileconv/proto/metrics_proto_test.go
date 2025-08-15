@@ -21,6 +21,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/collector/pdata/pmetric"
 
 	"github.com/cardinalhq/lakerunner/fileconv/translate"
 )
@@ -51,21 +52,26 @@ func TestNewMetricsProtoReader(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			reader, err := NewMetricsProtoReader(tt.fname, tt.mapper, tt.tags)
+			data, err := os.ReadFile(tt.fname)
 			if tt.expectError {
 				assert.Error(t, err)
-				assert.Nil(t, reader)
-			} else {
-				assert.NoError(t, err)
-				assert.NotNil(t, reader)
-				defer reader.Close()
+				return
 			}
+			require.NoError(t, err)
+
+			reader, err := NewMetricsProtoReader(data, tt.mapper, tt.tags)
+			assert.NoError(t, err)
+			assert.NotNil(t, reader)
+			defer reader.Close()
 		})
 	}
 }
 
 func TestMetricsProtoReader_GetRow(t *testing.T) {
-	reader, err := NewMetricsProtoReader("testdata/metrics_449638969.binpb", translate.NewMapper(), map[string]string{
+	data, err := os.ReadFile("testdata/metrics_449638969.binpb")
+	require.NoError(t, err)
+
+	reader, err := NewMetricsProtoReader(data, translate.NewMapper(), map[string]string{
 		"test_tag": "test_value",
 		"env":      "test",
 	})
@@ -126,7 +132,10 @@ func TestMetricsProtoReader_GetRow(t *testing.T) {
 }
 
 func TestMetricsProtoReader_Close(t *testing.T) {
-	reader, err := NewMetricsProtoReader("testdata/metrics_449638969.binpb", translate.NewMapper(), nil)
+	data, err := os.ReadFile("testdata/metrics_449638969.binpb")
+	require.NoError(t, err)
+
+	reader, err := NewMetricsProtoReader(data, translate.NewMapper(), nil)
 	require.NoError(t, err)
 
 	// Test that close doesn't error
@@ -140,13 +149,23 @@ func TestMetricsProtoReader_Close(t *testing.T) {
 
 func TestMetricsProtoReader_EmptyFile(t *testing.T) {
 	// Test with a file that doesn't exist
-	reader, err := NewMetricsProtoReader("testdata/nonexistent.binpb", translate.NewMapper(), nil)
+	_, err := os.ReadFile("testdata/nonexistent.binpb")
 	assert.Error(t, err)
-	assert.Nil(t, reader)
+
+	// Test with empty data - this actually succeeds with an empty metrics object
+	reader, err := NewMetricsProtoReader([]byte{}, translate.NewMapper(), nil)
+	assert.NoError(t, err)
+	assert.NotNil(t, reader)
+	if reader != nil {
+		reader.Close()
+	}
 }
 
 func TestMetricsProtoReader_DifferentMetricTypes(t *testing.T) {
-	reader, err := NewMetricsProtoReader("testdata/metrics_449638969.binpb", translate.NewMapper(), nil)
+	data, err := os.ReadFile("testdata/metrics_449638969.binpb")
+	require.NoError(t, err)
+
+	reader, err := NewMetricsProtoReader(data, translate.NewMapper(), nil)
 	require.NoError(t, err)
 	defer reader.Close()
 
@@ -181,37 +200,41 @@ func TestMetricsProtoReader_DifferentMetricTypes(t *testing.T) {
 func TestNewMetricsProtoReader_ErrorCases(t *testing.T) {
 	tests := []struct {
 		name        string
-		setup       func() string
+		setup       func() ([]byte, string)
 		expectError bool
 		errContains string
 	}{
 		{
-			name: "file does not exist",
-			setup: func() string {
-				return "/nonexistent/file.binpb"
+			name: "empty data slice",
+			setup: func() ([]byte, string) {
+				// Test with nil data - this should work (creates empty metrics)
+				return nil, "/nonexistent/file.binpb"
 			},
-			expectError: true,
-			errContains: "failed to open file",
+			expectError: false,
+			errContains: "",
 		},
 		{
 			name: "empty file",
-			setup: func() string {
+			setup: func() ([]byte, string) {
 				tmpfile, err := os.CreateTemp("", "empty-metrics-*.binpb")
 				assert.NoError(t, err)
 				tmpfile.Close()
-				return tmpfile.Name()
+				data, _ := os.ReadFile(tmpfile.Name())
+				return data, tmpfile.Name()
 			},
-			expectError: false,
+			expectError: false, // Empty data creates empty metrics
+			errContains: "",
 		},
 		{
 			name: "invalid proto file",
-			setup: func() string {
+			setup: func() ([]byte, string) {
 				tmpfile, err := os.CreateTemp("", "invalid-metrics-*.binpb")
 				assert.NoError(t, err)
 				_, err = tmpfile.WriteString("not a protobuf file content for metrics")
 				assert.NoError(t, err)
 				tmpfile.Close()
-				return tmpfile.Name()
+				data, _ := os.ReadFile(tmpfile.Name())
+				return data, tmpfile.Name()
 			},
 			expectError: true, // Invalid proto causes error during construction
 			errContains: "failed to parse proto",
@@ -220,17 +243,17 @@ func TestNewMetricsProtoReader_ErrorCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			filePath := tt.setup()
+			data, filePath := tt.setup()
 			if strings.Contains(filePath, "/tmp/") || strings.Contains(filePath, "test-") {
 				defer os.Remove(filePath)
 			}
 
 			mapper := translate.NewMapper()
-			reader, err := NewMetricsProtoReader(filePath, mapper, nil)
+			reader, err := NewMetricsProtoReader(data, mapper, nil)
 
 			if tt.expectError {
 				assert.Error(t, err)
-				if tt.errContains != "" {
+				if tt.errContains != "" && err != nil {
 					assert.Contains(t, err.Error(), tt.errContains)
 				}
 				assert.Nil(t, reader)
@@ -256,8 +279,11 @@ func TestMetricsProtoReader_GetRowErrorCases(t *testing.T) {
 	assert.NoError(t, err)
 	tmpfile.Close()
 
+	data, err := os.ReadFile(tmpfile.Name())
+	assert.NoError(t, err)
+
 	mapper := translate.NewMapper()
-	reader, err := NewMetricsProtoReader(tmpfile.Name(), mapper, nil)
+	reader, err := NewMetricsProtoReader(data, mapper, nil)
 	// Based on the actual implementation, invalid proto files cause errors during construction
 	assert.Error(t, err)
 	assert.Nil(t, reader)
@@ -266,7 +292,10 @@ func TestMetricsProtoReader_GetRowErrorCases(t *testing.T) {
 
 func TestMetricsProtoReader_WithNilMapper(t *testing.T) {
 	// Test with nil mapper - should still work
-	reader, err := NewMetricsProtoReader("testdata/metrics_449638969.binpb", nil, nil)
+	data, err := os.ReadFile("testdata/metrics_449638969.binpb")
+	require.NoError(t, err)
+
+	reader, err := NewMetricsProtoReader(data, nil, nil)
 	if err != nil {
 		// Skip if file doesn't exist in test environment
 		t.Skip("Test data file not available")
@@ -276,4 +305,29 @@ func TestMetricsProtoReader_WithNilMapper(t *testing.T) {
 	// Try reading one row
 	_, _, _ = reader.GetRow()
 	// Should not panic, behavior depends on implementation
+}
+
+func TestNewMetricsProtoReaderFromMetrics(t *testing.T) {
+	// Test the new constructor that accepts parsed metrics directly
+	data, err := os.ReadFile("testdata/metrics_449638969.binpb")
+	require.NoError(t, err)
+
+	// Parse metrics once
+	unmarshaler := &pmetric.ProtoUnmarshaler{}
+	metrics, err := unmarshaler.UnmarshalMetrics(data)
+	require.NoError(t, err)
+
+	// Create reader from parsed metrics
+	reader, err := NewMetricsProtoReaderFromMetrics(&metrics, translate.NewMapper(), nil)
+	require.NoError(t, err)
+	assert.NotNil(t, reader)
+	defer reader.Close()
+
+	// Verify we can read rows
+	row, done, err := reader.GetRow()
+	require.NoError(t, err)
+	if !done {
+		assert.NotNil(t, row)
+		assert.Greater(t, len(row), 0)
+	}
 }
