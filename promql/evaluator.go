@@ -37,6 +37,12 @@ func (q *QuerierService) Evaluate(
 
 	var allLeafChans []<-chan SketchInput
 
+	workers, err := q.workerDiscovery.GetAllWorkers()
+	if err != nil {
+		slog.Error("failed to get all workers", "err", err)
+		return nil, fmt.Errorf("failed to get all workers: %w", err)
+	}
+
 	// For each leaf/base-expr, compute effective window (offset-aware), then push down per grouped segments.
 	for _, leaf := range queryPlan.Leaves {
 		offMs, err := parseOffsetMs(leaf.Offset)
@@ -68,12 +74,6 @@ func (q *QuerierService) Evaluate(
 			}
 
 			// Form time-contiguous batches sized for the number of workers.
-			workers, err := q.workerDiscovery.GetAllWorkers()
-			if err != nil {
-				slog.Error("failed to get all workers", "err", err)
-				continue
-			}
-
 			groups := ComputeReplayBatchesWithWorkers(segments, stepDuration, effStart, effEnd, len(workers), true)
 
 			for _, group := range groups {
