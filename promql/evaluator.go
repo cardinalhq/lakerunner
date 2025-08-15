@@ -306,16 +306,11 @@ func (q *QuerierService) lookupSegments(ctx context.Context,
 			}
 
 			allSegments = append(allSegments, SegmentInfo{
-				DateInt:     20250814,
-				Hour:        "19",
-				SegmentID:   f.Name(),
-				StartTs:     startTs,
-				EndTs:       endTs,
-				Dataset:     "metrics",
-				BucketName:  "local",
-				CustomerID:  orgUUID.String(),
-				CollectorID: "dev",
-				Frequency:   stepDuration.Milliseconds(),
+				SegmentID:  f.Name(),
+				StartTs:    startTs,
+				EndTs:      endTs,
+				CustomerID: orgUUID.String(),
+				Frequency:  stepDuration.Milliseconds(),
 			})
 		}
 		return allSegments, nil
