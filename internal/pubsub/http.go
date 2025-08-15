@@ -21,28 +21,22 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"strings"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
-	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-type pubsubCmd struct {
+type HTTPService struct {
 	sp       storageprofile.StorageProfileProvider
 	workChan chan []byte
 	tracer   trace.Tracer
 	mdb      InqueueInserter
 }
 
-type InqueueInserter interface {
-	PutInqueueWork(ctx context.Context, arg lrdb.PutInqueueWorkParams) error
-}
-
-func NewHTTPListener() (*pubsubCmd, error) {
+func NewHTTPService() (*HTTPService, error) {
 	sp, err := storageprofile.SetupStorageProfiles()
 	if err != nil {
 		slog.Error("Failed to setup storage profiles", slog.Any("error", err))
@@ -55,15 +49,15 @@ func NewHTTPListener() (*pubsubCmd, error) {
 		return nil, fmt.Errorf("failed to connect to lr database: %w", err)
 	}
 
-	return &pubsubCmd{
+	return &HTTPService{
 		sp:       sp,
 		mdb:      mdb,
 		workChan: make(chan []byte, 100), // Buffered channel to handle incoming requests
-		tracer:   otel.Tracer("github.com/cardinalhq/lakerunner/cmd/pubsub"),
+		tracer:   otel.Tracer("github.com/cardinalhq/lakerunner/internal/pubsub"),
 	}, nil
 }
 
-func (ps *pubsubCmd) Run(doneCtx context.Context) error {
+func (ps *HTTPService) Run(doneCtx context.Context) error {
 	slog.Info("Starting pubsub service")
 
 	srv := &http.Server{
@@ -92,7 +86,7 @@ func (ps *pubsubCmd) Run(doneCtx context.Context) error {
 	return nil
 }
 
-func (ps *pubsubCmd) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (ps *HTTPService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -116,13 +110,13 @@ func (ps *pubsubCmd) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func (ps *pubsubCmd) Process(ctx context.Context) {
+func (ps *HTTPService) Process(ctx context.Context) {
 	slog.Info("Starting worker to process incoming messages")
 
 	for msg := range ps.workChan {
 		func() { // Use a closure to ensure the span is closed
 			var span trace.Span
-			ctx, span = ps.tracer.Start(ctx, "pubsubCmd.Process")
+			ctx, span = ps.tracer.Start(ctx, "HTTPService.Process")
 			defer span.End()
 
 			if err := handleMessage(ctx, msg, ps.sp, ps.mdb); err != nil {
@@ -130,61 +124,4 @@ func (ps *pubsubCmd) Process(ctx context.Context) {
 			}
 		}()
 	}
-}
-
-func handleMessage(ctx context.Context, msg []byte, sp storageprofile.StorageProfileProvider, mdb InqueueInserter) error {
-	if len(msg) == 0 {
-		return fmt.Errorf("empty message received")
-	}
-
-	items, err := parseS3LikeEvents(msg)
-	if err != nil {
-		return fmt.Errorf("failed to parse S3-like events: %w", err)
-	}
-
-	for _, item := range items {
-		var profile storageprofile.StorageProfile
-		var err error
-		if strings.HasPrefix(item.ObjectID, "otel-raw/") {
-			profile, err = sp.GetByCollectorName(ctx, item.OrganizationID, item.CollectorName)
-			if err != nil {
-				slog.Error("Failed to get storage profile", slog.Any("error", err), slog.Any("organization_id", item.OrganizationID), slog.Int("instance_num", int(item.InstanceNum)))
-				continue
-			}
-		} else if strings.HasPrefix(item.ObjectID, "db/") {
-			// Skip database files
-			slog.Info("Skipping database file", slog.String("objectID", item.ObjectID))
-			continue
-		} else {
-			profiles, err := sp.GetStorageProfilesByBucketName(ctx, item.Bucket)
-			if err != nil {
-				slog.Error("Failed to get storage profile", slog.Any("error", err), slog.String("bucket", item.Bucket))
-				continue
-			}
-			if len(profiles) != 1 {
-				slog.Error("Expected exactly one storage profile for bucket", slog.String("bucket", item.Bucket), slog.Int("found", len(profiles)))
-				continue
-			}
-			profile = profiles[0]
-			item.OrganizationID = profile.OrganizationID
-			item.CollectorName = profile.CollectorName
-		}
-		item.InstanceNum = profile.InstanceNum
-		slog.Info("Processing item", slog.String("bucket", profile.Bucket), slog.String("object_id", item.ObjectID), slog.String("telemetry_type", item.TelemetryType))
-
-		err = mdb.PutInqueueWork(ctx, lrdb.PutInqueueWorkParams{
-			OrganizationID: item.OrganizationID,
-			CollectorName:  item.CollectorName,
-			InstanceNum:    item.InstanceNum,
-			Bucket:         profile.Bucket,
-			ObjectID:       item.ObjectID,
-			TelemetryType:  item.TelemetryType,
-			Priority:       0,
-		})
-		if err != nil {
-			return fmt.Errorf("failed to insert inqueue work: %w", err)
-		}
-	}
-
-	return nil
 }

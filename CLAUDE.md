@@ -9,6 +9,7 @@ LakeRunner is a real-time telemetry ingestion engine that transforms S3-compatib
 ## Development Commands
 
 ### Building and Testing
+
 - `make local` - Build binary locally (outputs to bin/lakerunner)
 - `make test` - Run full test suite with code generation
 - `make test-only` - Run tests without regenerating code
@@ -16,13 +17,18 @@ LakeRunner is a real-time telemetry ingestion engine that transforms S3-compatib
 - `make generate` - Generate code using `go generate ./...`
 
 ### Linting and Quality
+
 - `make lint` - Run golangci-lint with 15m timeout
 - `make license-check` - Validate license headers using license-eye tool
+- `make imports-fix` - ensure the imports statements are sane
+- Run gofmt to ensure there are no trailing whitespace or other issues.
 
 ### Database Migrations
+
 - `make new-migration name=migration_name` - Create new database migration files
 
 ### Docker and Release
+
 - `make images` - Build multi-architecture Docker images using goreleaser
 - `make promote-to-prod` - Promote dev images to production
 
@@ -31,17 +37,20 @@ LakeRunner is a real-time telemetry ingestion engine that transforms S3-compatib
 LakeRunner follows an event-driven architecture with these core components:
 
 ### Data Flow Pipeline
+
 1. **PubSub Handler** - Receives S3 notifications via SQS or HTTP webhooks
 2. **Ingestion** - Processes raw files into cooked Parquet format
 3. **Processing** - Handles compaction, rollups, and cleanup operations
 4. **Query** - Serves data through API and worker nodes
 
 ### Key Databases
+
 - **lrdb** - Main LakeRunner database for segment indexing and work queues
 - **configdb** - Configuration and storage profile management
 - Uses PostgreSQL with migrations in `lrdb/migrations/`
 
 ### Major Components
+
 - **cmd/pubsub/** - S3 event notification handling (SQS, webhooks)
 - **cmd/ingest_*/** - File ingestion and format conversion
 - **cmd/compact_*/** - Data compaction for logs and metrics
@@ -53,6 +62,7 @@ LakeRunner follows an event-driven architecture with these core components:
 - **lockmgr/** - Distributed work coordination
 
 ### Storage Architecture
+
 - **Raw files** - Stored in S3 under `otel-raw/`, `logs-raw/`, `metrics-raw/` prefixes
 - **Cooked files** - Optimized Parquet files stored back to S3
 - **Segment indexing** - PostgreSQL tables track data segments for query optimization
@@ -60,17 +70,20 @@ LakeRunner follows an event-driven architecture with these core components:
 ## Code Conventions
 
 ### Go Standards
+
 - Uses Go 1.24+ features (e.g., range over integers)
 - All source files require AGPL v3 license headers
 - Code generation via `go generate` for SQL queries (using sqlc)
 
 ### Testing Approach
+
 - Table-driven tests for simple functions
 - Individual tests for complex setup/inspection scenarios
 - Test files must accompany changes to existing tested functions
 - New public methods require Go documentation
 
 ### Database Schema
+
 - Uses sqlc for type-safe SQL query generation
 - Migration files in `lrdb/migrations/` and `internal/configdb/static-schema/`
 - Database connections managed through connection pools
@@ -85,11 +98,13 @@ LakeRunner follows an event-driven architecture with these core components:
 ## Storage Profiles and Configuration
 
 LakeRunner uses YAML-based configuration for:
+
 - **Storage Profiles** - Map S3 buckets to organizations and collectors
 - **API Keys** - Authentication for query API access
 - **Cloud Provider Settings** - AWS/GCP/Azure integration parameters
 
 Key environment variables:
+
 - `AWS_ACCESS_KEY`, `AWS_SECRET_KEY` - S3 credentials
 - `S3_BUCKET` - Target bucket name
 - `S3_PROVIDER` - Cloud provider (aws, gcp)
@@ -98,6 +113,7 @@ Key environment variables:
 ## Query Architecture
 
 The query system consists of:
+
 - **Query API** - REST API for data access
 - **Query Workers** - Scalable processing nodes
 - **Segment Index** - PostgreSQL-based metadata for efficient data location
