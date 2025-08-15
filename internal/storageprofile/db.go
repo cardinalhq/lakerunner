@@ -34,6 +34,8 @@ type ConfigDBStoreageProfileFetcher interface {
 	GetStorageProfilesByBucketName(ctx context.Context, bucketName string) ([]configdb.GetStorageProfilesByBucketNameRow, error)
 }
 
+var _ ConfigDBStoreageProfileFetcher = (*configdb.Store)(nil)
+
 func NewDatabaseProvider(cdb ConfigDBStoreageProfileFetcher) StorageProfileProvider {
 	return &databaseProvider{
 		cdb: cdb,
