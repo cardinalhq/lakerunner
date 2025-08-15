@@ -17,8 +17,9 @@ package storageprofile
 import (
 	"context"
 
-	"github.com/cardinalhq/lakerunner/internal/configdb"
 	"github.com/google/uuid"
+
+	"github.com/cardinalhq/lakerunner/internal/configdb"
 )
 
 type databaseProvider struct {

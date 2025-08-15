@@ -22,11 +22,12 @@ import (
 	"os"
 	"testing"
 
-	"github.com/cardinalhq/lakerunner/internal/filecrunch"
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/parquet-go/parquet-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/cardinalhq/lakerunner/internal/filecrunch"
 )
 
 func TestAddfp(t *testing.T) {

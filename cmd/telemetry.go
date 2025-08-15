@@ -22,7 +22,6 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/oteltools/pkg/telemetry"
 	slogmulti "github.com/samber/slog-multi"
 	"go.opentelemetry.io/contrib/bridges/otelslog"
@@ -31,6 +30,8 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
+
+	"github.com/cardinalhq/lakerunner/internal/idgen"
 )
 
 var (

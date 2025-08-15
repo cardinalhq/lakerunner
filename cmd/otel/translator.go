@@ -19,10 +19,11 @@ import (
 	"maps"
 
 	"github.com/DataDog/sketches-go/ddsketch"
-	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/pmetric"
+
+	"github.com/cardinalhq/lakerunner/internal/idgen"
 
 	"log/slog"
 	"math"

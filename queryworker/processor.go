@@ -21,8 +21,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/cardinalhq/lakerunner/promql"
 	"github.com/google/uuid"
+
+	"github.com/cardinalhq/lakerunner/promql"
 )
 
 func (s *Service) processSegments(ctx context.Context, request promql.PushDownRequest, resultsCh chan<- promql.SketchInput) error {

@@ -20,8 +20,9 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/google/uuid"
+
+	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 )
 
 type StorageProfile struct {

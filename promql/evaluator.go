@@ -22,9 +22,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/google/uuid"
 	"github.com/prometheus/common/model"
+
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 // PushDownRequest is sent to a worker.

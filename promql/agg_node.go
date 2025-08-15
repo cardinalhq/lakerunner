@@ -16,13 +16,14 @@ package promql
 
 import (
 	"fmt"
-	"github.com/DataDog/sketches-go/ddsketch"
-	"github.com/axiomhq/hyperloglog"
 	"log/slog"
 	"math"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/DataDog/sketches-go/ddsketch"
+	"github.com/axiomhq/hyperloglog"
 )
 
 // AggNode wraps a child and performs sum/avg/min/max/count with by/without.

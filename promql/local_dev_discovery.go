@@ -16,8 +16,9 @@ package promql
 
 import (
 	"context"
-	"github.com/google/uuid"
 	"log/slog"
+
+	"github.com/google/uuid"
 )
 
 type LocalDevDiscovery struct {

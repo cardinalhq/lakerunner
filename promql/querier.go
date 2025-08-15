@@ -19,12 +19,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/cardinalhq/lakerunner/internal/duckdbx"
-	"github.com/cardinalhq/lakerunner/lrdb"
-	"github.com/cardinalhq/oteltools/pkg/dateutils"
-	"github.com/google/uuid"
 	"log/slog"
 	"net/http"
+
+	"github.com/cardinalhq/oteltools/pkg/dateutils"
+	"github.com/google/uuid"
+
+	"github.com/cardinalhq/lakerunner/internal/duckdbx"
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 type QuerierService struct {

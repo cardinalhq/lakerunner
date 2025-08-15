@@ -18,9 +18,10 @@ import (
 	"context"
 	"os"
 
+	"github.com/parquet-go/parquet-go"
+
 	"github.com/cardinalhq/lakerunner/internal/buffet"
 	"github.com/cardinalhq/lakerunner/internal/filecrunch"
-	"github.com/parquet-go/parquet-go"
 )
 
 type ObjectFetcher interface {

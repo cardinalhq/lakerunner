@@ -19,11 +19,12 @@ import (
 	"io"
 	"os"
 
+	"go.opentelemetry.io/collector/pdata/pmetric"
+
 	"github.com/cardinalhq/lakerunner/cmd/otel"
 	"github.com/cardinalhq/lakerunner/fileconv"
 	"github.com/cardinalhq/lakerunner/fileconv/translate"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
-	"go.opentelemetry.io/collector/pdata/pmetric"
 )
 
 type MetricsProtoReader struct {

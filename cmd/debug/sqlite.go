@@ -23,9 +23,10 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/cardinalhq/lakerunner/internal/filecrunch"
 	"github.com/parquet-go/parquet-go"
 	"github.com/spf13/cobra"
+
+	"github.com/cardinalhq/lakerunner/internal/filecrunch"
 
 	_ "modernc.org/sqlite" // Import SQLite driver
 )

@@ -17,8 +17,9 @@ package debug
 import (
 	"fmt"
 
-	"github.com/cardinalhq/lakerunner/internal/filecrunch"
 	"github.com/spf13/cobra"
+
+	"github.com/cardinalhq/lakerunner/internal/filecrunch"
 )
 
 func GetParquetSchemaCmd() *cobra.Command {

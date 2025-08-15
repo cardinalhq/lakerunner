@@ -16,15 +16,16 @@ package promql
 
 import (
 	"fmt"
+	"log/slog"
+	"math"
+	"strings"
+	"time"
+
 	"github.com/DataDog/sketches-go/ddsketch"
 	"github.com/DataDog/sketches-go/ddsketch/pb/sketchpb"
 	"github.com/axiomhq/hyperloglog"
 	"github.com/gogo/protobuf/proto"
 	"github.com/prometheus/common/model"
-	"log/slog"
-	"math"
-	"strings"
-	"time"
 )
 
 // LeafNode corresponds to one BaseExpr pushdown (one worker stream).

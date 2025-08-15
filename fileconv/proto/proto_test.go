@@ -17,9 +17,10 @@ package proto
 import (
 	"testing"
 
-	"github.com/cardinalhq/lakerunner/fileconv/translate"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/cardinalhq/lakerunner/fileconv/translate"
 )
 
 func TestNewProtoReader(t *testing.T) {

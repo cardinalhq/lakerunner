@@ -15,8 +15,9 @@
 package cmd
 
 import (
-	"github.com/cardinalhq/lakerunner/internal/buffet"
 	mapset "github.com/deckarep/golang-set/v2"
+
+	"github.com/cardinalhq/lakerunner/internal/buffet"
 )
 
 type TidAccumulatorProvider struct{}

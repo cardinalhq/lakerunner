@@ -17,12 +17,13 @@ package promql
 import (
 	"errors"
 	"fmt"
-	"github.com/DataDog/sketches-go/ddsketch/mapping"
-	"github.com/DataDog/sketches-go/ddsketch/store"
 	"maps"
 	"slices"
 	"strings"
 	"sync"
+
+	"github.com/DataDog/sketches-go/ddsketch/mapping"
+	"github.com/DataDog/sketches-go/ddsketch/store"
 
 	"github.com/DataDog/sketches-go/ddsketch"
 	"github.com/axiomhq/hyperloglog"

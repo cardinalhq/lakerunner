@@ -19,10 +19,11 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/cardinalhq/lakerunner/cmd/dbopen"
-	"github.com/cardinalhq/lakerunner/promql"
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/cardinalhq/lakerunner/cmd/dbopen"
+	"github.com/cardinalhq/lakerunner/promql"
 )
 
 func init() {

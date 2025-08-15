@@ -537,4 +537,3 @@ type unsupportedError struct{ what, name string }
 func (e unsupportedError) Error() string { return "unsupported " + e.what + ": " + e.name }
 
 func errUnsupported(what, name string) error { return unsupportedError{what, name} }
-

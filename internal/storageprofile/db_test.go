@@ -19,9 +19,10 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/cardinalhq/lakerunner/internal/configdb"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/cardinalhq/lakerunner/internal/configdb"
 )
 
 // mockConfigDBStoreageProfileFetcher implements ConfigDBStoreageProfileFetcher for testing

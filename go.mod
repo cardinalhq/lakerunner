@@ -609,6 +609,7 @@ tool (
 	github.com/golangci/golangci-lint/cmd/golangci-lint
 	github.com/goreleaser/goreleaser/v2
 	github.com/sqlc-dev/sqlc/cmd/sqlc
+	golang.org/x/tools/cmd/goimports
 )
 
 replace github.com/sqlc-dev/sqlc => github.com/skandragon/sqlc v0.0.0-20250803050355-7a2d750dd096

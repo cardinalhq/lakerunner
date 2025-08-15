@@ -18,8 +18,9 @@ import (
 	"math"
 	"time"
 
-	"github.com/DataDog/sketches-go/ddsketch"
 	"log/slog"
+
+	"github.com/DataDog/sketches-go/ddsketch"
 )
 
 // QuantileNode computes value-at-quantile from DDSketch child (e.g. histogram_quantile).

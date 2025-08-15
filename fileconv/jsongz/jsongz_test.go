@@ -19,8 +19,9 @@ import (
 	"os"
 	"testing"
 
-	"github.com/cardinalhq/lakerunner/fileconv/translate"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/cardinalhq/lakerunner/fileconv/translate"
 )
 
 func TestJSONGzReader_ActualFile(t *testing.T) {

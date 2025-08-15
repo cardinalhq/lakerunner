@@ -18,9 +18,10 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/cardinalhq/lakerunner/queryworker"
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/cardinalhq/lakerunner/queryworker"
 )
 
 func init() {
