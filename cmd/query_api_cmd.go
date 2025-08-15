@@ -60,7 +60,6 @@ func init() {
 
 			// Create and start worker discovery
 			workerDiscovery, err := createWorkerDiscovery()
-			querier, err := promql.NewQuerierService(mdb)
 			if err != nil {
 				slog.Error("Failed to create worker discovery", slog.Any("error", err))
 				return fmt.Errorf("failed to create worker discovery: %w", err)
@@ -76,7 +75,11 @@ func init() {
 				}
 			}()
 
-			querier := promql.NewQuerierService(mdb, workerDiscovery)
+			querier, err := promql.NewQuerierService(mdb, workerDiscovery)
+			if err != nil {
+				slog.Error("Failed to create querier service", slog.Any("error", err))
+				return fmt.Errorf("failed to create querier service: %w", err)
+			}
 
 			return querier.Run(doneCtx)
 		},
@@ -86,6 +89,10 @@ func init() {
 
 func createWorkerDiscovery() (promql.WorkerDiscovery, error) {
 	// Get required environment variables
+	if promql.IsLocalDev() {
+		slog.Info("Running in local development mode; using local worker discovery")
+		return promql.NewLocalDevDiscovery(), nil
+	}
 	namespace := os.Getenv("POD_NAMESPACE")
 	if namespace == "" {
 		return nil, fmt.Errorf("POD_NAMESPACE environment variable is required")

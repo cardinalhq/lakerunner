@@ -93,10 +93,10 @@ func (q *QuerierService) Evaluate(
 			for worker, workerSegments := range workerGroups {
 				req := PushDownRequest{
 					OrganizationID: orgID,
-					BaseExpr: leaf,
-					StartTs:  effStart,
-					EndTs:    effEnd,
-					Segments: workerSegments,
+					BaseExpr:       leaf,
+					StartTs:        effStart,
+					EndTs:          effEnd,
+					Segments:       workerSegments,
 				}
 
 				// Push down to worker; get its stream back.
@@ -143,7 +143,7 @@ func (q *QuerierService) pushDown(ctx context.Context, worker Worker, request Pu
 		return nil, fmt.Errorf("no SQL generated for expression")
 	}
 
-	if q.isLocalDev() {
+	if IsLocalDev() {
 		sql = strings.ReplaceAll(sql, "{start}", fmt.Sprintf("%d", 0))
 		sql = strings.ReplaceAll(sql, "{end}", fmt.Sprintf("%d", time.Now().UnixMilli()))
 		sql = strings.ReplaceAll(sql, "{table}", fmt.Sprintf("%s", "read_parquet('./db/*.parquet')"))
@@ -295,8 +295,7 @@ func (q *QuerierService) lookupSegments(ctx context.Context,
 
 	var allSegments []SegmentInfo
 
-	// 🔍 LOCAL_DEV mode
-	if q.isLocalDev() {
+	if IsLocalDev() {
 		files, err := os.ReadDir("./db")
 		if err != nil {
 			return nil, fmt.Errorf("failed to read local db dir: %w", err)
@@ -349,8 +348,4 @@ func (q *QuerierService) lookupSegments(ctx context.Context,
 	}
 
 	return allSegments, nil
-}
-
-func (q *QuerierService) isLocalDev() bool {
-	return os.Getenv("LOCAL_DEV") != ""
 }

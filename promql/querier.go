@@ -28,13 +28,13 @@ import (
 )
 
 type QuerierService struct {
-	mdb lrdb.StoreFull
-	ddb *duckdbx.DB
+	mdb             lrdb.StoreFull
+	ddb             *duckdbx.DB
 	workerDiscovery WorkerDiscovery
 }
 
-// NewQuerierService creates a new QuerierService with the given database store.
-func NewQuerierService(mdb lrdb.StoreFull) (*QuerierService, error) {
+// NewQuerierService creates a new QuerierService with the given database store and worker discovery.
+func NewQuerierService(mdb lrdb.StoreFull, workerDiscovery WorkerDiscovery) (*QuerierService, error) {
 	ddb, err := duckdbx.Open("",
 		duckdbx.WithMemoryLimitMB(2048),
 		duckdbx.WithExtension("httpfs", ""),
@@ -42,14 +42,11 @@ func NewQuerierService(mdb lrdb.StoreFull) (*QuerierService, error) {
 	if err != nil {
 		return nil, err
 	}
-
-// NewQuerierService creates a new QuerierService with the given database store and worker discovery.
-func NewQuerierService(mdb lrdb.StoreFull, workerDiscovery WorkerDiscovery) *QuerierService {
 	return &QuerierService{
 		mdb:             mdb,
-		ddb: ddb,
+		ddb:             ddb,
 		workerDiscovery: workerDiscovery,
-	}
+	}, nil
 }
 
 func (q *QuerierService) ServeHTTP(w http.ResponseWriter, r *http.Request) {

@@ -17,6 +17,7 @@ package promql
 import (
 	"context"
 	"github.com/google/uuid"
+	"os"
 )
 
 type WorkerDiscovery interface {
@@ -24,4 +25,8 @@ type WorkerDiscovery interface {
 	Stop() error
 	GetWorkersForSegments(organizationID uuid.UUID, segmentIDs []string) ([]SegmentWorkerMapping, error)
 	GetAllWorkers() ([]Worker, error)
+}
+
+func IsLocalDev() bool {
+	return os.Getenv("LOCAL_DEV") != ""
 }

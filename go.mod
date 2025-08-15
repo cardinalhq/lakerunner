@@ -14,6 +14,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.37.0
 	github.com/axiomhq/hyperloglog v0.2.5
 	github.com/cardinalhq/oteltools v0.30.20
+	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/deckarep/golang-set/v2 v2.8.0
 	github.com/gogo/protobuf v1.3.2
 	github.com/golang-migrate/migrate/v4 v4.18.3
@@ -44,6 +45,7 @@ require (
 	golang.org/x/exp v0.0.0-20250813145105-42675adae3e6
 	golang.org/x/sys v0.35.0
 	gopkg.in/yaml.v3 v3.0.1
+	k8s.io/api v0.33.4
 	k8s.io/apimachinery v0.33.4
 	k8s.io/client-go v0.33.4
 	modernc.org/sqlite v1.38.2
@@ -171,7 +173,6 @@ require (
 	github.com/ccojocar/zxcvbn-go v1.0.2 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.2 // indirect
-	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/charithe/durationcheck v0.0.10 // indirect
 	github.com/charmbracelet/bubbletea v1.3.0 // indirect
 	github.com/charmbracelet/colorprofile v0.2.3-0.20250311203215-f60798e515dc // indirect
@@ -586,7 +587,6 @@ require (
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	honnef.co/go/tools v0.6.1 // indirect
-	k8s.io/api v0.33.4 // indirect
 	k8s.io/klog/v2 v2.130.1 // indirect
 	k8s.io/kube-openapi v0.0.0-20250318190949-c8a335a9a2ff // indirect
 	k8s.io/utils v0.0.0-20241104100929-3ea5e8cea738 // indirect
