@@ -67,10 +67,21 @@ generate:
 #
 # Run pre-commit checks
 #
-check: test license-check lint
+check: test license-check imports-check lint
 
 license-check:
 	go tool license-eye header check
+
+imports-check:
+	@echo "Checking import organization..."
+	@go tool goimports -local github.com/cardinalhq/lakerunner -l . | tee /tmp/goimports-check.out
+	@if [ -s /tmp/goimports-check.out ]; then \
+		echo "Import organization check failed. Files with incorrect imports:"; \
+		cat /tmp/goimports-check.out; \
+		echo "Run 'go tool goimports -local github.com/cardinalhq/lakerunner -w .' to fix"; \
+		exit 1; \
+	fi
+	@echo "Import organization check passed"
 
 lint:
 	go tool golangci-lint run --timeout 15m --config .golangci.yaml
