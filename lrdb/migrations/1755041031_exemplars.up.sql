@@ -1,4 +1,4 @@
--- 1755041031_exemplar-metrics.up.sql
+-- 1755041031_exemplars.up.sql
 
 CREATE TABLE IF NOT EXISTS service_identifiers (
     id UUID NOT NULL DEFAULT gen_random_uuid(),
