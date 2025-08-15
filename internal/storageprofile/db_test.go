@@ -44,11 +44,13 @@ func (m *mockConfigDBStoreageProfileFetcher) GetStorageProfileByCollectorName(ct
 	}
 	return configdb.GetStorageProfileByCollectorNameRow{
 		OrganizationID: m.profile.OrganizationID,
+		InstanceNum:    m.profile.InstanceNum,
 		ExternalID:     m.profile.ExternalID,
 		CloudProvider:  m.profile.CloudProvider,
 		Region:         m.profile.Region,
 		Bucket:         m.profile.Bucket,
 		Role:           m.profile.Role,
+		Hosted:         m.profile.Hosted,
 	}, nil
 }
 
@@ -59,11 +61,13 @@ func (m *mockConfigDBStoreageProfileFetcher) GetStorageProfilesByBucketName(ctx 
 	return []configdb.GetStorageProfilesByBucketNameRow{
 		{
 			OrganizationID: m.profile.OrganizationID,
+			InstanceNum:    m.profile.InstanceNum,
 			ExternalID:     m.profile.ExternalID,
 			CloudProvider:  m.profile.CloudProvider,
 			Region:         m.profile.Region,
 			Bucket:         m.profile.Bucket,
 			Role:           m.profile.Role,
+			Hosted:         m.profile.Hosted,
 		},
 	}, nil
 }
@@ -128,4 +132,169 @@ func TestDatabaseProvider_Get_Error(t *testing.T) {
 
 	_, err := provider.Get(context.TODO(), orgID, 3)
 	assert.Error(t, err)
+}
+
+func TestDatabaseProvider_GetByCollectorName(t *testing.T) {
+	tests := []struct {
+		name           string
+		organizationID uuid.UUID
+		collectorName  string
+		mockProfile    configdb.GetStorageProfileRow
+		mockErr        error
+		wantProfile    StorageProfile
+		wantErr        bool
+	}{
+		{
+			name:           "success with role",
+			organizationID: uuid.New(),
+			collectorName:  "collector-123",
+			mockProfile: configdb.GetStorageProfileRow{
+				OrganizationID: uuid.New(),
+				InstanceNum:    1,
+				ExternalID:     "collector-123",
+				CloudProvider:  "aws",
+				Region:         "us-west-2",
+				Bucket:         "test-bucket",
+				Role:           stringPtr("admin-role"),
+				Hosted:         false,
+			},
+			wantProfile: StorageProfile{
+				OrganizationID: uuid.New(),
+				InstanceNum:    1,
+				CollectorName:  "collector-123",
+				CloudProvider:  "aws",
+				Region:         "us-west-2",
+				Bucket:         "test-bucket",
+				Role:           "admin-role",
+				Hosted:         false,
+			},
+			wantErr: false,
+		},
+		{
+			name:           "success without role",
+			organizationID: uuid.New(),
+			collectorName:  "collector-456",
+			mockProfile: configdb.GetStorageProfileRow{
+				OrganizationID: uuid.New(),
+				InstanceNum:    2,
+				ExternalID:     "collector-456",
+				CloudProvider:  "gcp",
+				Region:         "europe-west1",
+				Bucket:         "test-bucket-2",
+				Role:           nil,
+				Hosted:         true,
+			},
+			wantProfile: StorageProfile{
+				OrganizationID: uuid.New(),
+				InstanceNum:    2,
+				CollectorName:  "collector-456",
+				CloudProvider:  "gcp",
+				Region:         "europe-west1",
+				Bucket:         "test-bucket-2",
+				Role:           "",
+				Hosted:         true,
+			},
+			wantErr: false,
+		},
+		{
+			name:           "database error",
+			organizationID: uuid.New(),
+			collectorName:  "collector-error",
+			mockErr:        errors.New("database connection failed"),
+			wantErr:        true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Set up the expected profile organization ID to match
+			if !tt.wantErr {
+				tt.mockProfile.OrganizationID = tt.organizationID
+				tt.wantProfile.OrganizationID = tt.organizationID
+			}
+
+			mockFetcher := &mockConfigDBStoreageProfileFetcher{
+				profile: tt.mockProfile,
+				err:     tt.mockErr,
+			}
+			provider := NewDatabaseProvider(mockFetcher)
+
+			got, err := provider.GetByCollectorName(context.Background(), tt.organizationID, tt.collectorName)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+
+			assert.NoError(t, err)
+			assert.Equal(t, tt.wantProfile, got)
+		})
+	}
+}
+
+func TestDatabaseProvider_GetStorageProfilesByBucketName(t *testing.T) {
+	tests := []struct {
+		name        string
+		bucketName  string
+		mockErr     error
+		wantCount   int
+		wantErr     bool
+	}{
+		{
+			name:       "success with multiple profiles",
+			bucketName: "shared-bucket",
+			wantCount:  1, // mock returns 1 profile
+			wantErr:    false,
+		},
+		{
+			name:       "database error",
+			bucketName: "error-bucket",
+			mockErr:    errors.New("database query failed"),
+			wantErr:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			orgID := uuid.New()
+			mockProfile := configdb.GetStorageProfileRow{
+				OrganizationID: orgID,
+				InstanceNum:    1,
+				ExternalID:     "test-collector",
+				CloudProvider:  "aws",
+				Region:         "us-west-2",
+				Bucket:         tt.bucketName,
+				Role:           stringPtr("test-role"),
+				Hosted:         false,
+			}
+
+			mockFetcher := &mockConfigDBStoreageProfileFetcher{
+				profile: mockProfile,
+				err:     tt.mockErr,
+			}
+			provider := NewDatabaseProvider(mockFetcher)
+
+			got, err := provider.GetStorageProfilesByBucketName(context.Background(), tt.bucketName)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Nil(t, got)
+				return
+			}
+
+			assert.NoError(t, err)
+			assert.Len(t, got, tt.wantCount)
+			if tt.wantCount > 0 {
+				assert.Equal(t, tt.bucketName, got[0].Bucket)
+				assert.Equal(t, orgID, got[0].OrganizationID)
+				assert.Equal(t, "test-collector", got[0].CollectorName)
+				assert.Equal(t, "test-role", got[0].Role)
+			}
+		})
+	}
+}
+
+// Helper function to create string pointers
+func stringPtr(s string) *string {
+	return &s
 }
