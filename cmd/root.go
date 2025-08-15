@@ -19,8 +19,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-
-	"github.com/cardinalhq/lakerunner/cmd/fileconvcmd"
 )
 
 const (
@@ -37,7 +35,6 @@ var rootCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(fileconvcmd.Cmd)
 	rootCmd.AddCommand(debugCmd)
 }
 

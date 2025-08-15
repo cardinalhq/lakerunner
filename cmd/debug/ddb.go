@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package cmd
+package debug
 
 import (
 	"context"
@@ -22,7 +22,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/duckdbx"
 )
 
-func init() {
+func GetDDBCmd() *cobra.Command {
 	ddbCmd := &cobra.Command{
 		Use:   "ddb",
 		Short: "Run a DuckDB SQL test",
@@ -31,7 +31,7 @@ func init() {
 		},
 	}
 
-	rootCmd.AddCommand(ddbCmd)
+	return ddbCmd
 }
 
 // runDDB runs a DuckDB SQL test.

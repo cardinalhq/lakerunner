@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package cmd
+package debug
 
 import (
 	"database/sql"
@@ -30,12 +30,7 @@ import (
 	_ "modernc.org/sqlite" // Import SQLite driver
 )
 
-var (
-	sqliteFilename  string
-	parquetFilename string
-)
-
-func init() {
+func GetSQLiteCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sqlite",
 		Short: "SQLite database management commands",
@@ -43,17 +38,17 @@ func init() {
 		RunE:  runSqlite,
 	}
 
-	cmd.Flags().StringVar(&sqliteFilename, "sqlite", "", "SQLite database filename")
-	if err := cobra.MarkFlagRequired(cmd.Flags(), "sqlite"); err != nil {
+	cmd.Flags().String("sqlite", "", "SQLite database filename")
+	if err := cmd.MarkFlagRequired("sqlite"); err != nil {
 		panic(err)
 	}
 
-	cmd.Flags().StringVar(&parquetFilename, "parquet", "", "Parquet filename")
-	if err := cobra.MarkFlagRequired(cmd.Flags(), "parquet"); err != nil {
+	cmd.Flags().String("parquet", "", "Parquet filename")
+	if err := cmd.MarkFlagRequired("parquet"); err != nil {
 		panic(err)
 	}
 
-	rootCmd.AddCommand(cmd)
+	return cmd
 }
 
 type CardinalHQFields struct {
@@ -339,6 +334,16 @@ func insertItem(db *sql.DB, item Item) error {
 }
 
 func runSqlite(cmd *cobra.Command, args []string) error {
+	parquetFilename, err := cmd.Flags().GetString("parquet")
+	if err != nil {
+		return fmt.Errorf("failed to get parquet flag: %w", err)
+	}
+
+	sqliteFilename, err := cmd.Flags().GetString("sqlite")
+	if err != nil {
+		return fmt.Errorf("failed to get sqlite flag: %w", err)
+	}
+
 	fh, err := filecrunch.LoadSchemaForFile(parquetFilename)
 	if err != nil {
 		slog.Error("Failed to load schema for file", slog.Any("error", err))
