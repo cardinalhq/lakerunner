@@ -67,50 +67,61 @@ func (q *QuerierService) Evaluate(
 				continue
 			}
 
-			// Collect all segment IDs for worker assignment
-			segmentIDs := make([]string, 0, len(segments))
-			segmentMap := make(map[string][]SegmentInfo)
-			for _, segment := range segments {
-				segmentIDs = append(segmentIDs, segment.SegmentID)
-				segmentMap[segment.SegmentID] = append(segmentMap[segment.SegmentID], segment)
-			}
-
-			// Get worker assignments for all segments
-			mappings, err := q.workerDiscovery.GetWorkersForSegments(orgID, segmentIDs)
+			// Form time-contiguous batches sized for the number of workers.
+			workers, err := q.workerDiscovery.GetAllWorkers()
 			if err != nil {
-				slog.Error("failed to get worker assignments", "err", err)
+				slog.Error("failed to get all workers", "err", err)
 				continue
 			}
 
-			// Group segments by assigned worker
-			workerGroups := make(map[Worker][]SegmentInfo)
-			for _, mapping := range mappings {
-				segmentList := segmentMap[mapping.SegmentID]
-				workerGroups[mapping.Worker] = append(workerGroups[mapping.Worker], segmentList...)
-			}
+			groups := ComputeReplayBatchesWithWorkers(segments, stepDuration, effStart, effEnd, len(workers), true)
 
-			for worker, workerSegments := range workerGroups {
-				req := PushDownRequest{
-					OrganizationID: orgID,
-					BaseExpr:       leaf,
-					StartTs:        effStart,
-					EndTs:          effEnd,
-					Segments:       workerSegments,
-					Step:           stepDuration,
+			for _, group := range groups {
+				// Collect all segment IDs for worker assignment
+				segmentIDs := make([]string, 0, len(group.Segments))
+				segmentMap := make(map[string][]SegmentInfo)
+				for _, segment := range segments {
+					segmentIDs = append(segmentIDs, segment.SegmentID)
+					segmentMap[segment.SegmentID] = append(segmentMap[segment.SegmentID], segment)
 				}
 
-				// Push down to worker; get its stream back.
-				ch, err := q.pushDown(ctx, worker, req)
+				// Get worker assignments for all segments
+				mappings, err := q.workerDiscovery.GetWorkersForSegments(orgID, segmentIDs)
 				if err != nil {
-					slog.Error("pushdown failed", "worker", worker, "err", err)
+					slog.Error("failed to get worker assignments", "err", err)
 					continue
 				}
 
-				if offMs != 0 {
-					ch = shiftTimestamps(ctx, ch, offMs, 256)
+				// Group segments by assigned worker
+				workerGroups := make(map[Worker][]SegmentInfo)
+				for _, mapping := range mappings {
+					segmentList := segmentMap[mapping.SegmentID]
+					workerGroups[mapping.Worker] = append(workerGroups[mapping.Worker], segmentList...)
 				}
 
-				allLeafChans = append(allLeafChans, ch)
+				for worker, workerSegments := range workerGroups {
+					req := PushDownRequest{
+						OrganizationID: orgID,
+						BaseExpr:       leaf,
+						StartTs:        group.StartTs,
+						EndTs:          group.EndTs,
+						Segments:       workerSegments,
+						Step:           stepDuration,
+					}
+
+					// Push down to worker; get its stream back.
+					ch, err := q.pushDown(ctx, worker, req)
+					if err != nil {
+						slog.Error("pushdown failed", "worker", worker, "err", err)
+						continue
+					}
+
+					if offMs != 0 {
+						ch = shiftTimestamps(ctx, ch, offMs, 256)
+					}
+
+					allLeafChans = append(allLeafChans, ch)
+				}
 			}
 		}
 	}
@@ -226,7 +237,7 @@ func (q *QuerierService) pushDown(ctx context.Context, worker Worker, request Pu
 				}
 			}
 
-			slog.Info("making sketch input")
+			slog.Info("making sketch input", "ts", ts)
 			out <- SketchInput{
 				ExprID:         request.BaseExpr.ID,
 				OrganizationID: request.OrganizationID.String(),
