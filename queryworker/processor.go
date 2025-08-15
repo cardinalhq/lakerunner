@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -93,32 +94,109 @@ func (s *Service) buildS3Key(segment promql.SegmentInfo) string {
 }
 
 func (s *Service) queryParquetFile(ctx context.Context, filePath string, request promql.PushDownRequest, segment promql.SegmentInfo, resultsCh chan<- promql.SketchInput) error {
-	// TODO: Implement actual Parquet querying logic
-	// This would typically involve:
-	// 1. Opening the Parquet file
-	// 2. Applying filters based on request.StartTs, request.EndTs
-	// 3. Evaluating the BaseExpr against the data
-	// 4. Streaming results to resultsCh
+	// Generate SQL from the BaseExpr
+	sql := request.BaseExpr.ToWorkerSQL(request.Step)
+	if sql == "" {
+		return fmt.Errorf("no SQL generated for expression")
+	}
 
-	slog.Info("Querying parquet file",
+	// Replace template placeholders with actual values
+	sql = strings.ReplaceAll(sql, "{start}", fmt.Sprintf("%d", request.StartTs))
+	sql = strings.ReplaceAll(sql, "{end}", fmt.Sprintf("%d", request.EndTs))
+	sql = strings.ReplaceAll(sql, "{table}", fmt.Sprintf("read_parquet('%s')", filePath))
+
+	slog.Info("Executing SQL on parquet file",
 		"filePath", filePath,
 		"segmentID", segment.SegmentID,
-		"exprID", request.BaseExpr.ID)
+		"exprID", request.BaseExpr.ID,
+		"sql", sql)
 
-	// Placeholder implementation - generate mock data
-	// In real implementation, this would read and process the Parquet file
-	for i := range 10 {
+	// Execute the SQL query
+	rows, err := s.ddb.Query(ctx, sql)
+	if err != nil {
+		slog.Error("failed to query parquet file", "segmentID", segment.SegmentID, "err", err.Error())
+		return fmt.Errorf("failed to query parquet file: %w", err)
+	}
+	defer rows.Close()
+
+	// Get column information
+	cols, err := rows.Columns()
+	if err != nil {
+		return fmt.Errorf("failed to get columns: %w", err)
+	}
+
+	// Process query results
+	for rows.Next() {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 
-		// Mock result
+		vals := make([]any, len(cols))
+		ptrs := make([]any, len(cols))
+		for i := range vals {
+			ptrs[i] = &vals[i]
+		}
+
+		if err := rows.Scan(ptrs...); err != nil {
+			slog.Error("failed to scan row", "err", err)
+			continue
+		}
+
+		var ts int64
+		agg := map[string]float64{}
+		tags := map[string]any{}
+
+		// Parse columns similar to how evaluator.go does it
+		for i, col := range cols {
+			switch col {
+			case "bucket_ts":
+				switch v := vals[i].(type) {
+				case int64:
+					ts = v
+				case int32:
+					ts = int64(v)
+				case int:
+					ts = int64(v)
+				default:
+					slog.Error("unexpected type for bucket_ts", "value", vals[i])
+					continue
+				}
+			case promql.SUM, promql.COUNT, promql.MIN, promql.MAX:
+				if vals[i] == nil {
+					continue
+				}
+				switch v := vals[i].(type) {
+				case float64:
+					agg[col] = v
+				case float32:
+					agg[col] = float64(v)
+				case int64:
+					agg[col] = float64(v)
+				case int32:
+					agg[col] = float64(v)
+				case int:
+					agg[col] = float64(v)
+				default:
+					slog.Warn("unexpected numeric type in agg", "col", col, "value", vals[i])
+				}
+			default:
+				if vals[i] != nil {
+					tags[col] = vals[i]
+				}
+			}
+		}
+
+		// Create and send result
 		result := promql.SketchInput{
 			ExprID:         request.BaseExpr.ID,
 			OrganizationID: segment.CustomerID,
-			Timestamp:      request.StartTs + int64(i*1000), // 1 second intervals
-			Frequency:      segment.Frequency / 1000,        // Convert ms to seconds
-			SketchTags:     promql.SketchTags{},             // Empty for now
+			Timestamp:      ts,
+			Frequency:      int64(request.Step.Seconds()),
+			SketchTags: promql.SketchTags{
+				Tags:       tags,
+				SketchType: promql.SketchMAP,
+				Agg:        agg,
+			},
 		}
 
 		select {
@@ -126,6 +204,10 @@ func (s *Service) queryParquetFile(ctx context.Context, filePath string, request
 			return ctx.Err()
 		case resultsCh <- result:
 		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("row iteration error: %w", err)
 	}
 
 	slog.Debug("Completed querying parquet file", "segmentID", segment.SegmentID)

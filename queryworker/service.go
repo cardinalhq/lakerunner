@@ -30,6 +30,7 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
+	"github.com/cardinalhq/lakerunner/internal/duckdbx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/queryproto"
 )
@@ -40,6 +41,7 @@ type Service struct {
 	grpcPort    int
 	cache       *ParquetCache
 	healthCheck *health.Server
+	ddb         *duckdbx.DB
 }
 
 type Config struct {
@@ -79,6 +81,15 @@ func NewService() (*Service, error) {
 		return nil, fmt.Errorf("failed to create cache: %w", err)
 	}
 
+	// Initialize DuckDB
+	ddb, err := duckdbx.Open("",
+		duckdbx.WithMemoryLimitMB(2048),
+		duckdbx.WithExtension("httpfs", ""),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create DuckDB: %w", err)
+	}
+
 	// Create health check server
 	healthCheck := health.NewServer()
 
@@ -87,6 +98,7 @@ func NewService() (*Service, error) {
 		grpcPort:    config.GRPCPort,
 		cache:       cache,
 		healthCheck: healthCheck,
+		ddb:         ddb,
 	}, nil
 }
 
@@ -110,15 +122,24 @@ func (s *Service) Run(doneCtx context.Context) error {
 		if err := s.cache.Close(); err != nil {
 			slog.Error("Failed to close cache", slog.Any("error", err))
 		}
+		if err := s.ddb.Close(); err != nil {
+			slog.Error("Failed to close DuckDB", slog.Any("error", err))
+		}
 		return nil
 	case err := <-grpcErrCh:
 		if cacheErr := s.cache.Close(); cacheErr != nil {
 			slog.Error("Failed to close cache", slog.Any("error", cacheErr))
 		}
+		if ddbErr := s.ddb.Close(); ddbErr != nil {
+			slog.Error("Failed to close DuckDB", slog.Any("error", ddbErr))
+		}
 		return fmt.Errorf("GRPC server error: %w", err)
 	case err := <-httpErrCh:
 		if cacheErr := s.cache.Close(); cacheErr != nil {
 			slog.Error("Failed to close cache", slog.Any("error", cacheErr))
+		}
+		if ddbErr := s.ddb.Close(); ddbErr != nil {
+			slog.Error("Failed to close DuckDB", slog.Any("error", ddbErr))
 		}
 		return fmt.Errorf("HTTP health server error: %w", err)
 	}
