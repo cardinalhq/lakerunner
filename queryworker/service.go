@@ -19,22 +19,32 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
 	"time"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/health"
+	"google.golang.org/grpc/health/grpc_health_v1"
+
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
+	"github.com/cardinalhq/lakerunner/queryproto"
 )
 
 type Service struct {
-	port  int
-	cache *ParquetCache
+	queryproto.UnimplementedQueryWorkerServer
+	port        int
+	grpcPort    int
+	cache       *ParquetCache
+	healthCheck *health.Server
 }
 
 type Config struct {
 	Port             int
+	GRPCPort         int
 	CacheDirectory   string
 	CacheMaxSizeMB   int64
 	EnableLocalCache bool
@@ -69,18 +79,93 @@ func NewService() (*Service, error) {
 		return nil, fmt.Errorf("failed to create cache: %w", err)
 	}
 
+	// Create health check server
+	healthCheck := health.NewServer()
+
 	return &Service{
-		port:  config.Port,
-		cache: cache,
+		port:        config.Port,
+		grpcPort:    config.GRPCPort,
+		cache:       cache,
+		healthCheck: healthCheck,
 	}, nil
 }
 
 func (s *Service) Run(doneCtx context.Context) error {
-	slog.Info("Starting query worker service", "port", s.port)
+	// Always run GRPC for main functionality
+	grpcErrCh := make(chan error, 1)
+	go func() {
+		grpcErrCh <- s.runGRPC(doneCtx)
+	}()
+
+	// Always run HTTP server for /healthz endpoint only
+	httpErrCh := make(chan error, 1)
+	go func() {
+		httpErrCh <- s.runHealthHTTP(doneCtx)
+	}()
+
+	// Wait for either service to fail or context to be done
+	select {
+	case <-doneCtx.Done():
+		slog.Info("Shutting down query worker service")
+		if err := s.cache.Close(); err != nil {
+			slog.Error("Failed to close cache", slog.Any("error", err))
+		}
+		return nil
+	case err := <-grpcErrCh:
+		if cacheErr := s.cache.Close(); cacheErr != nil {
+			slog.Error("Failed to close cache", slog.Any("error", cacheErr))
+		}
+		return fmt.Errorf("GRPC server error: %w", err)
+	case err := <-httpErrCh:
+		if cacheErr := s.cache.Close(); cacheErr != nil {
+			slog.Error("Failed to close cache", slog.Any("error", cacheErr))
+		}
+		return fmt.Errorf("HTTP health server error: %w", err)
+	}
+}
+
+func (s *Service) runGRPC(doneCtx context.Context) error {
+	slog.Info("Starting query worker GRPC service", "port", s.grpcPort)
+
+	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", s.grpcPort))
+	if err != nil {
+		return fmt.Errorf("failed to listen on port %d: %w", s.grpcPort, err)
+	}
+
+	grpcServer := grpc.NewServer()
+	queryproto.RegisterQueryWorkerServer(grpcServer, s)
+	
+	// Register the standard GRPC health check service
+	grpc_health_v1.RegisterHealthServer(grpcServer, s.healthCheck)
+	
+	// Set initial health status for the query worker service
+	s.healthCheck.SetServingStatus("queryworker.QueryWorker", grpc_health_v1.HealthCheckResponse_SERVING)
+	s.healthCheck.SetServingStatus("", grpc_health_v1.HealthCheckResponse_SERVING) // Overall health
+
+	go func() {
+		if err := grpcServer.Serve(lis); err != nil {
+			slog.Error("Failed to start GRPC server", slog.Any("error", err))
+		}
+	}()
+
+	<-doneCtx.Done()
+
+	slog.Info("Shutting down query worker GRPC service")
+	
+	// Mark services as not serving before shutdown
+	s.healthCheck.SetServingStatus("queryworker.QueryWorker", grpc_health_v1.HealthCheckResponse_NOT_SERVING)
+	s.healthCheck.SetServingStatus("", grpc_health_v1.HealthCheckResponse_NOT_SERVING)
+	
+	grpcServer.GracefulStop()
+
+	return nil
+}
+
+func (s *Service) runHealthHTTP(doneCtx context.Context) error {
+	slog.Info("Starting query worker HTTP health service", "port", s.port)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/pushdown", s.handlePushdown)
-	mux.HandleFunc("/health", s.handleHealth)
+	mux.HandleFunc("/healthz", s.handleHealth)
 
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%d", s.port),
@@ -89,23 +174,19 @@ func (s *Service) Run(doneCtx context.Context) error {
 
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			slog.Error("Failed to start HTTP server", slog.Any("error", err))
+			slog.Error("Failed to start HTTP health server", slog.Any("error", err))
 		}
 	}()
 
 	<-doneCtx.Done()
 
-	slog.Info("Shutting down query worker service")
+	slog.Info("Shutting down query worker HTTP health service")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		slog.Error("Failed to shutdown HTTP server", slog.Any("error", err))
-		return fmt.Errorf("failed to shutdown HTTP server: %w", err)
-	}
-
-	if err := s.cache.Close(); err != nil {
-		slog.Error("Failed to close cache", slog.Any("error", err))
+		slog.Error("Failed to shutdown HTTP health server", slog.Any("error", err))
+		return fmt.Errorf("failed to shutdown HTTP health server: %w", err)
 	}
 
 	return nil
@@ -120,6 +201,16 @@ func loadConfig() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("invalid QUERY_WORKER_PORT: %w", err)
 	}
+
+	grpcPortStr := os.Getenv("QUERY_WORKER_GRPC_PORT")
+	if grpcPortStr == "" {
+		grpcPortStr = "9090"
+	}
+	grpcPort, err := strconv.Atoi(grpcPortStr)
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid QUERY_WORKER_GRPC_PORT: %w", err)
+	}
+
 
 	cacheDir := os.Getenv("CACHE_DIRECTORY")
 	if cacheDir == "" {
@@ -140,8 +231,21 @@ func loadConfig() (Config, error) {
 
 	return Config{
 		Port:             port,
+		GRPCPort:         grpcPort,
 		CacheDirectory:   cacheDir,
 		CacheMaxSizeMB:   cacheSize,
 		EnableLocalCache: enableCache,
 	}, nil
+}
+
+// UpdateHealthStatus updates the GRPC health check status
+func (s *Service) UpdateHealthStatus(service string, status grpc_health_v1.HealthCheckResponse_ServingStatus) {
+	s.healthCheck.SetServingStatus(service, status)
+}
+
+// IsHealthy returns true if the overall service is healthy
+func (s *Service) IsHealthy() bool {
+	// This could be enhanced to check actual service health
+	// For now, we check if the cache is available
+	return s.cache != nil
 }
