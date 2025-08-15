@@ -111,7 +111,7 @@ func runSysinfo() error {
 		if buildInfo.Main.Version != "" {
 			fmt.Printf("  Main version:   %s\n", buildInfo.Main.Version)
 		}
-		
+
 		// Print build settings
 		for _, setting := range buildInfo.Settings {
 			switch setting.Key {
