@@ -30,13 +30,6 @@ func init() {
 	cmd := &cobra.Command{
 		Use:   "query-api",
 		Short: "start query-api server",
-	}
-
-	rootCmd.AddCommand(cmd)
-
-	queryApiCmd := &cobra.Command{
-		Use:   "http",
-		Short: "listen on one or more http endpoints",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			servicename := "query-api"
 			addlAttrs := attribute.NewSet()
@@ -83,5 +76,6 @@ func init() {
 			return querier.Run(doneCtx)
 		},
 	}
-	cmd.AddCommand(queryApiCmd)
+
+	rootCmd.AddCommand(cmd)
 }

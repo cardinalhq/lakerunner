@@ -74,14 +74,18 @@ license-check:
 
 imports-check:
 	@echo "Checking import organization..."
-	@go tool goimports -local github.com/cardinalhq/lakerunner -l . | tee /tmp/goimports-check.out
+	@go tool goimports -local github.com/cardinalhq/lakerunner -l . | grep -v '\.pb\.go' | tee /tmp/goimports-check.out
 	@if [ -s /tmp/goimports-check.out ]; then \
 		echo "Import organization check failed. Files with incorrect imports:"; \
 		cat /tmp/goimports-check.out; \
-		echo "Run 'go tool goimports -local github.com/cardinalhq/lakerunner -w .' to fix"; \
+		echo "Run 'make imports-fix' to fix import organization"; \
 		exit 1; \
 	fi
 	@echo "Import organization check passed"
+
+imports-fix:
+	@echo "Fixing import organization (excluding *.pb.go files)..."
+	@find . -name '*.go' -not -name '*.pb.go' -exec go tool goimports -local github.com/cardinalhq/lakerunner -w {} \;
 
 lint:
 	go tool golangci-lint run --timeout 15m --config .golangci.yaml
