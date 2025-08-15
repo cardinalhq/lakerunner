@@ -17,23 +17,17 @@ package workqueue
 import (
 	"context"
 	"log/slog"
-
-	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 type WorkqueueHandler struct {
-	ctx          context.Context
-	logger       *slog.Logger
-	store        Store
-	workItem     lrdb.WorkQueueClaimRow
-	myInstanceID int64
+	logger   *slog.Logger
+	store    WorkQueueStore
+	workItem WorkItem
 }
 
 func NewWorkqueueHandler(
-	ctx context.Context,
-	store Store,
-	workItem lrdb.WorkQueueClaimRow,
-	myInstanceID int64,
+	workItem WorkItem,
+	store WorkQueueStore,
 	opts ...HandlerOption,
 ) *WorkqueueHandler {
 	options := &handlerOptions{
@@ -44,28 +38,24 @@ func NewWorkqueueHandler(
 	}
 
 	return &WorkqueueHandler{
-		ctx:          ctx,
-		logger:       options.logger,
-		store:        store,
-		workItem:     workItem,
-		myInstanceID: myInstanceID,
+		logger:   options.logger,
+		store:    store,
+		workItem: workItem,
 	}
 }
 
-func (h *WorkqueueHandler) CompleteWork() {
-	if err := h.store.WorkQueueComplete(h.ctx, lrdb.WorkQueueCompleteParams{
-		ID:       h.workItem.ID,
-		WorkerID: h.myInstanceID,
-	}); err != nil {
-		h.logger.Error("WorkQueueComplete failed", slog.Any("error", err))
+func (h *WorkqueueHandler) CompleteWork(ctx context.Context) error {
+	if err := h.store.CompleteWork(ctx, h.workItem.ID, h.workItem.WorkerID); err != nil {
+		h.logger.Error("CompleteWork failed", slog.Any("error", err))
+		return err
 	}
+	return nil
 }
 
-func (h *WorkqueueHandler) RetryWork() {
-	if err := h.store.WorkQueueFail(h.ctx, lrdb.WorkQueueFailParams{
-		ID:       h.workItem.ID,
-		WorkerID: h.myInstanceID,
-	}); err != nil {
-		h.logger.Error("WorkQueueFail failed", slog.Any("error", err))
+func (h *WorkqueueHandler) RetryWork(ctx context.Context) error {
+	if err := h.store.FailWork(ctx, h.workItem.ID, h.workItem.WorkerID); err != nil {
+		h.logger.Error("FailWork failed", slog.Any("error", err))
+		return err
 	}
+	return nil
 }

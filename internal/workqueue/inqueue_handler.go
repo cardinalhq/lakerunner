@@ -18,22 +18,18 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-
-	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 type InqueueHandler struct {
-	ctx            context.Context
 	logger         *slog.Logger
-	store          Store
-	workItem       lrdb.Inqueue
+	store          InqueueStore
+	workItem       InqueueItem
 	maxWorkRetries int
 }
 
 func NewInqueueHandler(
-	ctx context.Context,
-	store Store,
-	workItem lrdb.Inqueue,
+	workItem InqueueItem,
+	store InqueueStore,
 	maxWorkRetries int,
 	opts ...HandlerOption,
 ) *InqueueHandler {
@@ -45,7 +41,6 @@ func NewInqueueHandler(
 	}
 
 	return &InqueueHandler{
-		ctx:            ctx,
 		logger:         options.logger,
 		store:          store,
 		workItem:       workItem,
@@ -53,55 +48,50 @@ func NewInqueueHandler(
 	}
 }
 
-func (h *InqueueHandler) retryWork() {
-	if err := h.store.ReleaseInqueueWork(h.ctx, lrdb.ReleaseInqueueWorkParams{
-		ID:        h.workItem.ID,
-		ClaimedBy: h.workItem.ClaimedBy,
-	}); err != nil {
+func (h *InqueueHandler) retryWork(ctx context.Context) error {
+	if err := h.store.ReleaseWork(ctx, h.workItem.ID, h.workItem.ClaimedBy); err != nil {
 		h.logger.Error("release failed", slog.Any("error", err))
+		return err
 	}
+	return nil
 }
 
-func (h *InqueueHandler) deleteWork() {
-	if err := h.store.DeleteInqueueWork(h.ctx, lrdb.DeleteInqueueWorkParams{
-		ID:        h.workItem.ID,
-		ClaimedBy: h.workItem.ClaimedBy,
-	}); err != nil {
+func (h *InqueueHandler) deleteWork(ctx context.Context) error {
+	if err := h.store.DeleteWork(ctx, h.workItem.ID, h.workItem.ClaimedBy); err != nil {
 		h.logger.Error("delete failed", slog.Any("error", err))
+		return err
 	}
+	return nil
 }
 
-func (h *InqueueHandler) CompleteWork() {
-	h.deleteWork()
+func (h *InqueueHandler) CompleteWork(ctx context.Context) error {
+	return h.deleteWork(ctx)
 }
 
-func (h *InqueueHandler) RetryWork() {
-	h.deleteJournal()
+func (h *InqueueHandler) RetryWork(ctx context.Context) error {
+	if err := h.deleteJournal(ctx); err != nil {
+		return err
+	}
+
 	if h.workItem.Tries+1 > int32(h.maxWorkRetries) {
 		h.logger.Info("too many retries, deleting", slog.Int("newTries", int(h.workItem.Tries+1)))
-		h.deleteWork()
+		return h.deleteWork(ctx)
 	} else {
-		h.retryWork()
+		return h.retryWork(ctx)
 	}
 }
 
-func (h *InqueueHandler) deleteJournal() {
-	if err := h.store.InqueueJournalDelete(h.ctx, lrdb.InqueueJournalDeleteParams{
-		OrganizationID: h.workItem.OrganizationID,
-		Bucket:         h.workItem.Bucket,
-		ObjectID:       h.workItem.ObjectID,
-	}); err != nil {
+func (h *InqueueHandler) deleteJournal(ctx context.Context) error {
+	if err := h.store.DeleteJournal(ctx, h.workItem.OrganizationID, h.workItem.Bucket, h.workItem.ObjectID); err != nil {
 		h.logger.Error("journal delete failed", slog.Any("error", err))
+		return err
 	}
+	return nil
 }
 
 // IsNewWork returns true if the row is new.
-func (h *InqueueHandler) IsNewWork() (isNew bool, err error) {
-	isNew, err = h.store.InqueueJournalUpsert(h.ctx, lrdb.InqueueJournalUpsertParams{
-		OrganizationID: h.workItem.OrganizationID,
-		Bucket:         h.workItem.Bucket,
-		ObjectID:       h.workItem.ObjectID,
-	})
+func (h *InqueueHandler) IsNewWork(ctx context.Context) (isNew bool, err error) {
+	isNew, err = h.store.UpsertJournal(ctx, h.workItem.OrganizationID, h.workItem.Bucket, h.workItem.ObjectID)
 	if err != nil {
 		return false, fmt.Errorf("upsert journal failed: %w", err)
 	}

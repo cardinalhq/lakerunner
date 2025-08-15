@@ -16,31 +16,20 @@ package workqueue
 
 import (
 	"context"
-	"log/slog"
+
+	"github.com/google/uuid"
 )
 
-// Handler defines the common interface for work handlers
-type Handler interface {
-	CompleteWork(ctx context.Context) error
-	RetryWork(ctx context.Context) error
+// WorkQueueStore defines operations for work queue management
+type WorkQueueStore interface {
+	CompleteWork(ctx context.Context, id, workerID int64) error
+	FailWork(ctx context.Context, id, workerID int64) error
 }
 
-// Config holds configuration values for workqueue handlers
-type Config struct {
-	MaxWorkRetries int
-	MyInstanceID   int64
-}
-
-// HandlerOption configures a handler
-type HandlerOption func(*handlerOptions)
-
-type handlerOptions struct {
-	logger *slog.Logger
-}
-
-// WithLogger sets the logger for handlers
-func WithLogger(logger *slog.Logger) HandlerOption {
-	return func(opts *handlerOptions) {
-		opts.logger = logger
-	}
+// InqueueStore defines operations for inqueue management
+type InqueueStore interface {
+	ReleaseWork(ctx context.Context, id uuid.UUID, claimedBy int64) error
+	DeleteWork(ctx context.Context, id uuid.UUID, claimedBy int64) error
+	DeleteJournal(ctx context.Context, orgID uuid.UUID, bucket, objectID string) error
+	UpsertJournal(ctx context.Context, orgID uuid.UUID, bucket, objectID string) (bool, error)
 }

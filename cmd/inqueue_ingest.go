@@ -28,11 +28,11 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
-	"github.com/cardinalhq/lakerunner/internal/workqueue"
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/estimator"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
+	"github.com/cardinalhq/lakerunner/internal/workqueue"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -161,22 +161,28 @@ func ingestFiles(
 		slog.String("bucket", inf.Bucket),
 		slog.String("objectID", inf.ObjectID))
 
-	h := workqueue.NewInqueueHandler(ctx, loop.mdb, inf, maxWorkRetries, workqueue.WithLogger(ll))
+	h := workqueue.NewInqueueHandlerFromLRDB(inf, loop.mdb, maxWorkRetries, workqueue.WithLogger(ll))
 
 	if inf.Tries > 10 {
 		ll.Warn("Too many tries, deleting")
-		h.CompleteWork()
+		if err := h.CompleteWork(ctx); err != nil {
+			ll.Error("Failed to complete work", slog.Any("error", err))
+		}
 		return false, true, nil
 	}
 
-	isNew, err := h.IsNewWork()
+	isNew, err := h.IsNewWork(ctx)
 	if err != nil {
-		h.RetryWork()
+		if retryErr := h.RetryWork(ctx); retryErr != nil {
+			ll.Error("Failed to retry work", slog.Any("error", retryErr))
+		}
 		return true, false, err
 	}
 	if !isNew {
 		ll.Warn("already processed, releasing")
-		h.CompleteWork()
+		if err := h.CompleteWork(ctx); err != nil {
+			ll.Error("Failed to complete work", slog.Any("error", err))
+		}
 		return true, true, nil
 	}
 
@@ -188,7 +194,9 @@ func ingestFiles(
 	tmpdir, err := os.MkdirTemp("", "lakerunner-ingest-*")
 	if err != nil {
 		ll.Error("Failed to create temporary directory", slog.Any("error", err))
-		h.RetryWork()
+		if retryErr := h.RetryWork(ctx); retryErr != nil {
+			ll.Error("Failed to retry work", slog.Any("error", retryErr))
+		}
 		return true, false, fmt.Errorf("failed to create temporary directory: %w", err)
 	}
 	ll.Info("Created temporary directory", slog.String("path", tmpdir))
@@ -212,10 +220,14 @@ func ingestFiles(
 			attribute.String("bucket", inf.Bucket),
 		))
 	if err != nil {
-		h.RetryWork()
+		if retryErr := h.RetryWork(ctx); retryErr != nil {
+			ll.Error("Failed to retry work", slog.Any("error", retryErr))
+		}
 		return true, false, fmt.Errorf("Processing failed: %w", err)
 	}
 
-	h.CompleteWork()
+	if err := h.CompleteWork(ctx); err != nil {
+		ll.Error("Failed to complete work", slog.Any("error", err))
+	}
 	return false, true, nil
 }

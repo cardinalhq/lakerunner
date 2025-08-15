@@ -14,33 +14,21 @@
 
 package workqueue
 
-import (
-	"context"
-	"log/slog"
-)
+import "github.com/google/uuid"
 
-// Handler defines the common interface for work handlers
-type Handler interface {
-	CompleteWork(ctx context.Context) error
-	RetryWork(ctx context.Context) error
+// WorkItem represents a work queue item independent of database schema
+type WorkItem struct {
+	ID       int64
+	WorkerID int64
 }
 
-// Config holds configuration values for workqueue handlers
-type Config struct {
-	MaxWorkRetries int
-	MyInstanceID   int64
-}
-
-// HandlerOption configures a handler
-type HandlerOption func(*handlerOptions)
-
-type handlerOptions struct {
-	logger *slog.Logger
-}
-
-// WithLogger sets the logger for handlers
-func WithLogger(logger *slog.Logger) HandlerOption {
-	return func(opts *handlerOptions) {
-		opts.logger = logger
-	}
+// InqueueItem represents an inqueue work item independent of database schema
+type InqueueItem struct {
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	Bucket         string
+	ObjectID       string
+	ClaimedBy      int64
+	Tries          int32
+	InstanceNum    int16
 }
