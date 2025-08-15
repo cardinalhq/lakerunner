@@ -1,6 +1,6 @@
 module github.com/cardinalhq/lakerunner
 
-go 1.24.3
+go 1.25
 
 require (
 	github.com/DataDog/sketches-go v1.4.7
@@ -27,13 +27,13 @@ require (
 	github.com/parquet-go/parquet-go v0.0.0-20250722183444-5d5656ef2734
 	github.com/pgx-contrib/pgxotel v0.0.0-20250625223024-cb5ea1c4aa0b
 	github.com/prometheus/common v0.65.0
-	github.com/prometheus/prometheus v0.302.1
+	github.com/prometheus/prometheus v0.305.0
 	github.com/rdforte/gomaxecs v1.1.1
 	github.com/samber/slog-multi v1.4.1
 	github.com/sony/sonyflake v1.3.0
 	github.com/spf13/cobra v1.9.1
 	github.com/stretchr/testify v1.10.0
-	go.opentelemetry.io/collector/pdata v1.34.0
+	go.opentelemetry.io/collector/pdata v1.38.0
 	go.opentelemetry.io/contrib/bridges/otelslog v0.12.0
 	go.opentelemetry.io/contrib/instrumentation/github.com/aws/aws-sdk-go-v2/otelaws v0.62.0
 	go.opentelemetry.io/contrib/instrumentation/host v0.62.0
@@ -45,7 +45,7 @@ require (
 	golang.org/x/exp v0.0.0-20250813145105-42675adae3e6
 	golang.org/x/sys v0.35.0
 	google.golang.org/grpc v1.74.2
-	google.golang.org/protobuf v1.36.6
+	google.golang.org/protobuf v1.36.7
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.33.4
 	k8s.io/apimachinery v0.33.4
@@ -399,9 +399,9 @@ require (
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
-	github.com/moby/sys/atomicwriter v0.1.0 // indirect
+	github.com/moby/sys/sequential v0.6.0 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
-	github.com/modern-go/reflect2 v1.0.2 // indirect
+	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
 	github.com/moricho/tparallel v0.3.2 // indirect
 	github.com/mr-tron/base58 v1.2.0 // indirect
 	github.com/muesli/ansi v0.0.0-20230316100256-276c6243b2f6 // indirect

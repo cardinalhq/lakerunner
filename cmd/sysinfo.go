@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 
@@ -50,12 +51,15 @@ func runSysinfo() error {
 	}
 
 	fmt.Println("=== Go Runtime ===")
+	fmt.Printf("  Go version:     %s\n", runtime.Version())
 	fmt.Printf("  GOOS:           %s\n", runtime.GOOS)
 	fmt.Printf("  GOARCH:         %s\n", runtime.GOARCH)
+	fmt.Printf("  Compiler:       %s\n", runtime.Compiler)
 	fmt.Printf("  NumCPU (host):  %d\n", numHost)
 	fmt.Printf("  GOMAXPROCS:     %d\n", gomax)
 	fmt.Printf("  GOGC:           %s\n", gogc)
 	fmt.Printf("  GOMEMLIMIT:     %s\n", gomem)
+	fmt.Printf("  NumGoroutine:   %d\n", runtime.NumGoroutine())
 
 	// 2) cgroup CPU quota
 	quotaCores, rawQuota, err := getCPUQuotaCores()
@@ -98,6 +102,36 @@ func runSysinfo() error {
 	fmt.Printf("  StackInuse:%6d\n", ms.StackInuse/1024/1024)
 	fmt.Printf("  Sys:        %6d\n", ms.Sys/1024/1024)
 	fmt.Printf("  NumGC:      %6d\n", ms.NumGC)
+
+	// 5) Go build info and additional environment
+	fmt.Println("\n=== Go Build Info ===")
+	if buildInfo, ok := debug.ReadBuildInfo(); ok {
+		fmt.Printf("  Go version:     %s\n", buildInfo.GoVersion)
+		fmt.Printf("  Main module:    %s\n", buildInfo.Main.Path)
+		if buildInfo.Main.Version != "" {
+			fmt.Printf("  Main version:   %s\n", buildInfo.Main.Version)
+		}
+		
+		// Print build settings
+		for _, setting := range buildInfo.Settings {
+			switch setting.Key {
+			case "CGO_ENABLED", "GOAMD64", "GOARM", "GOMIPS", "GOMIPS64", "GOPPC64", "GOWASM":
+				fmt.Printf("  %s: %s\n", setting.Key, setting.Value)
+			}
+		}
+	}
+
+	// 6) Additional Go environment variables
+	fmt.Println("\n=== Go Environment ===")
+	goEnvVars := []string{
+		"GOROOT", "GOPATH", "GOCACHE", "GOMODCACHE", "GOTMPDIR",
+		"CGO_ENABLED", "GO111MODULE", "GOPROXY", "GOSUMDB", "GONOPROXY", "GONOSUMDB", "GOPRIVATE",
+	}
+	for _, envVar := range goEnvVars {
+		if value := os.Getenv(envVar); value != "" {
+			fmt.Printf("  %s: %s\n", envVar, value)
+		}
+	}
 
 	return nil
 }
