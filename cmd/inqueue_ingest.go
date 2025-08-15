@@ -89,8 +89,8 @@ func NewIngestLoopContext(ctx context.Context, signal string, assumeRoleSessionN
 		Metrics: exemplar.TelemetryConfig{
 			Enabled:        true,
 			CacheSize:      10000,
-			Expiry:         10 * time.Minute,
-			ReportInterval: 30 * time.Second,
+			Expiry:         15 * time.Minute,
+			ReportInterval: 5 * time.Minute,
 			BatchSize:      100,
 		},
 		Logs: exemplar.TelemetryConfig{
