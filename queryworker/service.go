@@ -134,10 +134,10 @@ func (s *Service) runGRPC(doneCtx context.Context) error {
 
 	grpcServer := grpc.NewServer()
 	queryproto.RegisterQueryWorkerServer(grpcServer, s)
-	
+
 	// Register the standard GRPC health check service
 	grpc_health_v1.RegisterHealthServer(grpcServer, s.healthCheck)
-	
+
 	// Set initial health status for the query worker service
 	s.healthCheck.SetServingStatus("queryworker.QueryWorker", grpc_health_v1.HealthCheckResponse_SERVING)
 	s.healthCheck.SetServingStatus("", grpc_health_v1.HealthCheckResponse_SERVING) // Overall health
@@ -151,11 +151,11 @@ func (s *Service) runGRPC(doneCtx context.Context) error {
 	<-doneCtx.Done()
 
 	slog.Info("Shutting down query worker GRPC service")
-	
+
 	// Mark services as not serving before shutdown
 	s.healthCheck.SetServingStatus("queryworker.QueryWorker", grpc_health_v1.HealthCheckResponse_NOT_SERVING)
 	s.healthCheck.SetServingStatus("", grpc_health_v1.HealthCheckResponse_NOT_SERVING)
-	
+
 	grpcServer.GracefulStop()
 
 	return nil
@@ -210,7 +210,6 @@ func loadConfig() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("invalid QUERY_WORKER_GRPC_PORT: %w", err)
 	}
-
 
 	cacheDir := os.Getenv("CACHE_DIRECTORY")
 	if cacheDir == "" {

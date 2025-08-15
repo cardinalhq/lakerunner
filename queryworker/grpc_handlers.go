@@ -159,7 +159,7 @@ func (s *Service) convertPushDownRequest(req *queryproto.PushDownRequest) (promq
 		baseExpr.Matchers = append(baseExpr.Matchers, promql.LabelMatch{
 			Label: matcher.Name,
 			Value: matcher.Value,
-			// TODO: Convert matcher.Type string to promql.MatchOp 
+			// TODO: Convert matcher.Type string to promql.MatchOp
 			// For now, using a simple conversion - this may need refinement
 			Op: promql.MatchOp(matcher.Type),
 		})
