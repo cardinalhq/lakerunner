@@ -16,24 +16,25 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"maps"
+	"os"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/DataDog/sketches-go/ddsketch"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/parquet-go/parquet-go"
 	"github.com/spf13/cobra"
+	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
-
-	"os"
-
-	"encoding/json"
 
 	"github.com/cardinalhq/lakerunner/cmd/ingestlogs"
 	"github.com/cardinalhq/lakerunner/fileconv/proto"
@@ -46,9 +47,6 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
-	"go.opentelemetry.io/collector/pdata/pmetric"
 )
 
 func init() {
@@ -586,23 +584,27 @@ func convertMetricsFileIfSupported(ll *slog.Logger, tmpfilename, tmpdir, bucket,
 
 // convertMetricsProtoFile converts a protobuf file to the standardized format
 func convertMetricsProtoFile(ll *slog.Logger, tmpfilename, tmpdir, bucket, objectID string, rpfEstimate int64, exemplarProcessor *exemplar.Processor, customerID string) ([]string, error) {
+	data, err := os.ReadFile(tmpfilename)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read protobuf file: %w", err)
+	}
+
 	if exemplarProcessor != nil {
 		ll.Info("Processing exemplars from OTEL protobuf file",
 			slog.String("file", tmpfilename),
 			slog.String("customer_id", customerID))
 
-		if err := processExemplarsFromProtoFile(tmpfilename, exemplarProcessor, customerID); err != nil {
-			ll.Warn("Failed to process exemplars from protobuf file",
+		if err := processExemplarsFromProtoBytes(data, exemplarProcessor, customerID); err != nil {
+			ll.Warn("Failed to process exemplars from protobuf bytes",
 				slog.String("file", tmpfilename),
 				slog.Any("error", err))
 			// Don't fail the entire conversion if exemplar processing fails
 		}
 	}
 
-	// Create a mapper for protobuf files
 	mapper := translate.NewMapper()
 
-	r, err := proto.NewMetricsProtoReader(tmpfilename, mapper, nil)
+	r, err := proto.NewMetricsProtoReader(data, mapper, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -679,19 +681,9 @@ func convertMetricsProtoFile(ll *slog.Logger, tmpfilename, tmpdir, bucket, objec
 	return fnames, nil
 }
 
-// processExemplarsFromProtoFile reads a protobuf file and processes exemplars from the OTEL metrics
-func processExemplarsFromProtoFile(filename string, processor *exemplar.Processor, customerID string) error {
-	file, err := os.Open(filename)
-	if err != nil {
-		return fmt.Errorf("failed to open protobuf file: %w", err)
-	}
-	defer file.Close()
-
+// processExemplarsFromProtoBytes processes exemplars from protobuf bytes
+func processExemplarsFromProtoBytes(data []byte, processor *exemplar.Processor, customerID string) error {
 	unmarshaler := &pmetric.ProtoUnmarshaler{}
-	data, err := io.ReadAll(file)
-	if err != nil {
-		return fmt.Errorf("failed to read protobuf file: %w", err)
-	}
 
 	metrics, err := unmarshaler.UnmarshalMetrics(data)
 	if err != nil {
