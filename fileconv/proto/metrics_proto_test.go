@@ -21,6 +21,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/collector/pdata/pmetric"
 
 	"github.com/cardinalhq/lakerunner/fileconv/translate"
 )
@@ -304,4 +305,29 @@ func TestMetricsProtoReader_WithNilMapper(t *testing.T) {
 	// Try reading one row
 	_, _, _ = reader.GetRow()
 	// Should not panic, behavior depends on implementation
+}
+
+func TestNewMetricsProtoReaderFromMetrics(t *testing.T) {
+	// Test the new constructor that accepts parsed metrics directly
+	data, err := os.ReadFile("testdata/metrics_449638969.binpb")
+	require.NoError(t, err)
+
+	// Parse metrics once
+	unmarshaler := &pmetric.ProtoUnmarshaler{}
+	metrics, err := unmarshaler.UnmarshalMetrics(data)
+	require.NoError(t, err)
+
+	// Create reader from parsed metrics
+	reader, err := NewMetricsProtoReaderFromMetrics(&metrics, translate.NewMapper(), nil)
+	require.NoError(t, err)
+	assert.NotNil(t, reader)
+	defer reader.Close()
+
+	// Verify we can read rows
+	row, done, err := reader.GetRow()
+	require.NoError(t, err)
+	if !done {
+		assert.NotNil(t, row)
+		assert.Greater(t, len(row), 0)
+	}
 }

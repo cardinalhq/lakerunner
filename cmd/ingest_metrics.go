@@ -589,13 +589,21 @@ func convertMetricsProtoFile(ll *slog.Logger, tmpfilename, tmpdir, bucket, objec
 		return nil, fmt.Errorf("failed to read protobuf file: %w", err)
 	}
 
+	// Parse protobuf data once
+	unmarshaler := &pmetric.ProtoUnmarshaler{}
+	metrics, err := unmarshaler.UnmarshalMetrics(data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal protobuf metrics: %w", err)
+	}
+
+	// Process exemplars from the parsed metrics if processor is available
 	if exemplarProcessor != nil {
 		ll.Info("Processing exemplars from OTEL protobuf file",
 			slog.String("file", tmpfilename),
 			slog.String("customer_id", customerID))
 
-		if err := processExemplarsFromProtoBytes(data, exemplarProcessor, customerID); err != nil {
-			ll.Warn("Failed to process exemplars from protobuf bytes",
+		if err := processExemplarsFromMetrics(&metrics, exemplarProcessor, customerID); err != nil {
+			ll.Warn("Failed to process exemplars from parsed metrics",
 				slog.String("file", tmpfilename),
 				slog.Any("error", err))
 			// Don't fail the entire conversion if exemplar processing fails
@@ -604,7 +612,8 @@ func convertMetricsProtoFile(ll *slog.Logger, tmpfilename, tmpdir, bucket, objec
 
 	mapper := translate.NewMapper()
 
-	r, err := proto.NewMetricsProtoReader(data, mapper, nil)
+	// Use the parsed metrics directly
+	r, err := proto.NewMetricsProtoReaderFromMetrics(&metrics, mapper, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -681,17 +690,10 @@ func convertMetricsProtoFile(ll *slog.Logger, tmpfilename, tmpdir, bucket, objec
 	return fnames, nil
 }
 
-// processExemplarsFromProtoBytes processes exemplars from protobuf bytes
-func processExemplarsFromProtoBytes(data []byte, processor *exemplar.Processor, customerID string) error {
-	unmarshaler := &pmetric.ProtoUnmarshaler{}
-
-	metrics, err := unmarshaler.UnmarshalMetrics(data)
-	if err != nil {
-		return fmt.Errorf("failed to unmarshal protobuf metrics: %w", err)
-	}
-
+// processExemplarsFromMetrics processes exemplars from parsed pmetric.Metrics
+func processExemplarsFromMetrics(metrics *pmetric.Metrics, processor *exemplar.Processor, customerID string) error {
 	ctx := context.Background()
-	if err := processor.ProcessMetrics(ctx, metrics, customerID); err != nil {
+	if err := processor.ProcessMetrics(ctx, *metrics, customerID); err != nil {
 		return fmt.Errorf("failed to process metrics exemplars: %w", err)
 	}
 

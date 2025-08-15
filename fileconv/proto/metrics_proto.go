@@ -45,6 +45,10 @@ func NewMetricsProtoReader(data []byte, mapper *translate.Mapper, tags map[strin
 		return nil, fmt.Errorf("failed to parse proto to OTEL metrics: %w", err)
 	}
 
+	return NewMetricsProtoReaderFromMetrics(metrics, mapper, tags)
+}
+
+func NewMetricsProtoReaderFromMetrics(metrics *pmetric.Metrics, mapper *translate.Mapper, tags map[string]string) (*MetricsProtoReader, error) {
 	translator := otel.NewTableTranslator()
 	idg := idgen.NewULIDGenerator()
 
