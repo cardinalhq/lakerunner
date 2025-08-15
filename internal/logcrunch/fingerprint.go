@@ -16,6 +16,7 @@ package logcrunch
 
 import (
 	"slices"
+	"unicode/utf8"
 
 	mapset "github.com/deckarep/golang-set/v2"
 )
@@ -74,14 +75,28 @@ func ToFingerprints(tagValuesByName map[string]mapset.Set[string]) mapset.Set[in
 
 // ToTrigrams builds the set of 3-character substrings plus the wildcard.
 func ToTrigrams(str string) []string {
-	ngrams := mapset.NewSet[string]()
-	runes := []rune(str)
-	for i := 0; i+3 <= len(runes); i++ {
-		ngram := string(runes[i : i+3])
-		ngrams.Add(ngram)
+	ngrams := make(map[string]struct{})
+	for i := 0; i < len(str); {
+		j, cnt := i, 0
+		for j < len(str) && cnt < 3 {
+			_, size := utf8.DecodeRuneInString(str[j:])
+			j += size
+			cnt++
+		}
+		if cnt < 3 {
+			break
+		}
+		ngrams[str[i:j]] = struct{}{}
+		_, size := utf8.DecodeRuneInString(str[i:])
+		i += size
 	}
-	ngrams.Add(ExistsRegex)
-	return ngrams.ToSlice()
+
+	res := make([]string, 0, len(ngrams)+1)
+	for ngram := range ngrams {
+		res = append(res, ngram)
+	}
+	res = append(res, ExistsRegex)
+	return res
 }
 
 // ComputeFingerprint combines fieldName and trigram and hashes them.
