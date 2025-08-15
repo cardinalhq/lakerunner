@@ -15,7 +15,6 @@
 package promql
 
 import (
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -539,8 +538,3 @@ func (e unsupportedError) Error() string { return "unsupported " + e.what + ": "
 
 func errUnsupported(what, name string) error { return unsupportedError{what, name} }
 
-// Pretty-print any AST node (handy while testing)
-func toJSON(v any) string {
-	b, _ := json.MarshalIndent(v, "", "  ")
-	return string(b)
-}

@@ -171,7 +171,7 @@ func (q *QuerierService) pushDown(ctx context.Context, worker Worker, request Pu
 	if IsLocalDev() {
 		sql = strings.ReplaceAll(sql, "{start}", fmt.Sprintf("%d", 0))
 		sql = strings.ReplaceAll(sql, "{end}", fmt.Sprintf("%d", time.Now().UnixMilli()))
-		sql = strings.ReplaceAll(sql, "{table}", fmt.Sprintf("%s", "read_parquet('./db/*.parquet')"))
+		sql = strings.ReplaceAll(sql, "{table}", "read_parquet('./db/*.parquet')")
 	} else {
 		sql = strings.ReplaceAll(sql, "{start}", fmt.Sprintf("%d", request.StartTs))
 		sql = strings.ReplaceAll(sql, "{end}", fmt.Sprintf("%d", request.EndTs))

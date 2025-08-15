@@ -65,7 +65,9 @@ func (s *Service) handlePushdown(w http.ResponseWriter, r *http.Request) {
 		if err := s.processSegments(ctx, request, resultsCh); err != nil {
 			slog.Error("Failed to process segments", "error", err)
 			// Send error event
-			s.writeSSE(w, flusher, "error", map[string]string{"error": err.Error()})
+			if writeErr := s.writeSSE(w, flusher, "error", map[string]string{"error": err.Error()}); writeErr != nil {
+				slog.Error("Failed to write error SSE", "error", writeErr)
+			}
 			return
 		}
 	}()
@@ -79,7 +81,9 @@ func (s *Service) handlePushdown(w http.ResponseWriter, r *http.Request) {
 		case result, ok := <-resultsCh:
 			if !ok {
 				// End of stream
-				s.writeSSE(w, flusher, "done", map[string]string{"status": "complete"})
+				if writeErr := s.writeSSE(w, flusher, "done", map[string]string{"status": "complete"}); writeErr != nil {
+					slog.Error("Failed to write done SSE", "error", writeErr)
+				}
 				return
 			}
 			if err := s.writeSSE(w, flusher, "data", result); err != nil {
@@ -97,7 +101,10 @@ func (s *Service) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"timestamp": time.Now().Unix(),
 		"service":   "query-worker",
 	}
-	json.NewEncoder(w).Encode(response)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		slog.Error("Failed to encode health response", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+	}
 }
 
 func (s *Service) writeSSE(w http.ResponseWriter, flusher http.Flusher, event string, data interface{}) error {

@@ -38,7 +38,6 @@ var (
 	workerLabelSelector string
 	queryWorkerPort     int
 	organizationIDStr   string
-	segmentIDs          []string
 	testSegments        string
 )
 
@@ -49,9 +48,15 @@ func init() {
 	kubernetesDiscoveryCmd.Flags().StringVar(&organizationIDStr, "organization-id", "550e8400-e29b-41d4-a716-446655440000", "Organization ID (UUID) for segment mapping")
 	kubernetesDiscoveryCmd.Flags().StringVar(&testSegments, "test-segments", "tbl_1,tbl_2,tbl_3,tbl_4,tbl_5", "Comma-separated list of segment IDs to test mapping")
 
-	kubernetesDiscoveryCmd.MarkFlagRequired("pod-namespace")
-	kubernetesDiscoveryCmd.MarkFlagRequired("worker-pod-label-selector")
-	kubernetesDiscoveryCmd.MarkFlagRequired("query-worker-port")
+	if err := kubernetesDiscoveryCmd.MarkFlagRequired("pod-namespace"); err != nil {
+		panic(fmt.Errorf("failed to mark pod-namespace as required: %w", err))
+	}
+	if err := kubernetesDiscoveryCmd.MarkFlagRequired("worker-pod-label-selector"); err != nil {
+		panic(fmt.Errorf("failed to mark worker-pod-label-selector as required: %w", err))
+	}
+	if err := kubernetesDiscoveryCmd.MarkFlagRequired("query-worker-port"); err != nil {
+		panic(fmt.Errorf("failed to mark query-worker-port as required: %w", err))
+	}
 }
 
 func runKubernetesDiscovery(cmd *cobra.Command, args []string) error {
@@ -97,7 +102,11 @@ func runKubernetesDiscovery(cmd *cobra.Command, args []string) error {
 	if err := discovery.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start worker discovery: %w", err)
 	}
-	defer discovery.Stop()
+	defer func() {
+		if err := discovery.Stop(); err != nil {
+			fmt.Printf("⚠️  Error stopping discovery: %v\n", err)
+		}
+	}()
 	fmt.Printf("✅ Worker discovery service started successfully\n")
 
 	// Give the informers a moment to settle

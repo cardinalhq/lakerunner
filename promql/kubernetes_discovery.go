@@ -158,8 +158,12 @@ func (k *KubernetesWorkerDiscovery) Start(ctx context.Context) error {
 		UpdateFunc: func(any, any) { k.scheduleRebuild() },
 		DeleteFunc: func(any) { k.scheduleRebuild() },
 	}
-	k.svcInf.Informer().AddEventHandler(handler)
-	k.esInf.Informer().AddEventHandler(handler)
+	if _, err := k.svcInf.Informer().AddEventHandler(handler); err != nil {
+		return fmt.Errorf("failed to add event handler to service informer: %w", err)
+	}
+	if _, err := k.esInf.Informer().AddEventHandler(handler); err != nil {
+		return fmt.Errorf("failed to add event handler to endpoint informer: %w", err)
+	}
 
 	runCtx, cancel := context.WithCancel(ctx)
 	k.cancelFunc = cancel
@@ -173,7 +177,9 @@ func (k *KubernetesWorkerDiscovery) Start(ctx context.Context) error {
 		k.svcInf.Informer().HasSynced,
 		k.esInf.Informer().HasSynced,
 	); !ok {
-		k.Stop()
+		if err := k.Stop(); err != nil {
+			slog.Error("failed to stop during cache sync failure", "error", err)
+		}
 		return fmt.Errorf("informer cache sync failed")
 	}
 
