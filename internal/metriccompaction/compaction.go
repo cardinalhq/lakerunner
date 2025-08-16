@@ -119,8 +119,8 @@ func doCompactItem(
 			StartTs:         st.Time.UTC().UnixMilli(),
 			EndTs:           et.Time.UTC().UnixMilli(),
 			MaxFileSize:     targetFileSize * 9 / 10, // Only include files < 90% of target (larger files are fine as-is)
-			CursorCreatedAt: cursorCreatedAt,          // Cursor for pagination
-			Maxrows:         maxRowsLimit,             // Safety limit for compaction batch
+			CursorCreatedAt: cursorCreatedAt,         // Cursor for pagination
+			Maxrows:         maxRowsLimit,            // Safety limit for compaction batch
 		})
 		if err != nil {
 			ll.Error("Failed to get current metric segments", slog.Any("error", err))
