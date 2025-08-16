@@ -16,6 +16,8 @@ package debug
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -45,26 +47,110 @@ func runDDB(ctx context.Context, _ []string) error {
 	}
 	defer ddb.Close()
 
-	for range 10 {
-		c, err := ddb.Conn(ctx)
-		if err != nil {
+	c, err := ddb.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+
+	rows, err := c.QueryContext(ctx, "SELECT extension_name, loaded, installed, install_path, extension_version, install_mode, installed_from FROM duckdb_extensions();")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	cols, err := rows.Columns()
+	if err != nil {
+		return err
+	}
+
+	// Collect all data first to calculate column widths
+	var allRows [][]string
+	values := make([]any, len(cols))
+	scanArgs := make([]any, len(values))
+	for i := range values {
+		scanArgs[i] = &values[i]
+	}
+
+	for rows.Next() {
+		if err := rows.Scan(scanArgs...); err != nil {
 			return err
 		}
-		defer c.Close()
 
-		rows, err := c.QueryContext(ctx, "SELECT 42;")
-		if err != nil {
-			return err
-		}
-
-		for rows.Next() {
-			var answer int
-			if err := rows.Scan(&answer); err != nil {
-				return err
+		row := make([]string, len(cols))
+		for i, val := range values {
+			if val == nil {
+				row[i] = "<NULL>"
+			} else {
+				row[i] = fmt.Sprintf("%v", val)
 			}
-			println("The answer is", answer)
+		}
+		allRows = append(allRows, row)
+	}
+
+	// Calculate column widths
+	colWidths := make([]int, len(cols))
+	for i, col := range cols {
+		colWidths[i] = len(col)
+	}
+	for _, row := range allRows {
+		for i, cell := range row {
+			if len(cell) > colWidths[i] {
+				colWidths[i] = len(cell)
+			}
 		}
 	}
+
+	// Print header
+	fmt.Print("┌")
+	for i, width := range colWidths {
+		if i > 0 {
+			fmt.Print("┬")
+		}
+		fmt.Print(strings.Repeat("─", width+2))
+	}
+	fmt.Println("┐")
+
+	fmt.Print("│")
+	for i, col := range cols {
+		if i > 0 {
+			fmt.Print("│")
+		}
+		fmt.Printf(" %-*s ", colWidths[i], col)
+	}
+	fmt.Println("│")
+
+	// Print separator
+	fmt.Print("├")
+	for i, width := range colWidths {
+		if i > 0 {
+			fmt.Print("┼")
+		}
+		fmt.Print(strings.Repeat("─", width+2))
+	}
+	fmt.Println("┤")
+
+	// Print rows
+	for _, row := range allRows {
+		fmt.Print("│")
+		for i, cell := range row {
+			if i > 0 {
+				fmt.Print("│")
+			}
+			fmt.Printf(" %-*s ", colWidths[i], cell)
+		}
+		fmt.Println("│")
+	}
+
+	// Print bottom border
+	fmt.Print("└")
+	for i, width := range colWidths {
+		if i > 0 {
+			fmt.Print("┴")
+		}
+		fmt.Print(strings.Repeat("─", width+2))
+	}
+	fmt.Println("┘")
 
 	return nil
 }
