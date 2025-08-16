@@ -48,6 +48,7 @@ dockers:
   - goos: linux
     goarch: amd64
     dockerfile: Dockerfile
+    context: .
     use: buildx
     image_templates:
       - "public.ecr.aws/cardinalhq.io/lakerunner:v{{ .Version }}-amd64"
@@ -65,6 +66,7 @@ dockers:
   - goos: linux
     goarch: arm64
     dockerfile: Dockerfile
+    context: .
     use: buildx
     image_templates:
       - "public.ecr.aws/cardinalhq.io/lakerunner:v{{ .Version }}-arm64"
