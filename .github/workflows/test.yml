@@ -11,12 +11,12 @@ jobs:
         os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
     - name: Install Go
       uses: actions/setup-go@v5
       with:
         go-version: ${{ matrix.go-version }}
-    - name: Checkout code
-      uses: actions/checkout@v4
     - name: Install protoc
       uses: arduino/setup-protoc@v3
       with:
