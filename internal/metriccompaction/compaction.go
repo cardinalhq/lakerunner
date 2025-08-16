@@ -118,7 +118,7 @@ func doCompactItem(
 			FrequencyMs:     inf.FrequencyMs(),
 			StartTs:         st.Time.UTC().UnixMilli(),
 			EndTs:           et.Time.UTC().UnixMilli(),
-			MaxFileSize:     targetFileSize * 19 / 10, // Filter out files larger than 1.9x target (won't be compacted)
+			MaxFileSize:     targetFileSize * 9 / 10, // Only include files < 90% of target (larger files are fine as-is)
 			CursorCreatedAt: cursorCreatedAt,          // Cursor for pagination
 			Maxrows:         maxRowsLimit,             // Safety limit for compaction batch
 		})
