@@ -138,6 +138,52 @@ func TestToWorkerSQL_DDS_Dispatch(t *testing.T) {
 	mustNotContain(t, sql, `WITH grid AS`)
 }
 
+func TestBuildCountHLLHash_NoGroup_SingleIdentity(t *testing.T) {
+	be := &BaseExpr{
+		ID:        "leaf-hll",
+		Metric:    "http_requests_total",
+		CountOnBy: []string{"instance"},
+	}
+	sql := buildCountHLLHash(be, 10*time.Second)
+
+	mustContain(t, sql, `("_cardinalhq.timestamp" - ("_cardinalhq.timestamp" % 10000)) AS bucket_ts`)
+	mustContain(t, sql, `"_cardinalhq.timestamp" >= ({start} - ({start} % 10000)) AND "_cardinalhq.timestamp" < (({end} - 1) - (({end} - 1) % 10000) + 10000)`)
+
+	mustContain(t, sql, "hash(COALESCE(instance, '\x00')) AS id_hash")
+
+	mustContain(t, sql, `GROUP BY bucket_ts, id_hash`)
+	mustContain(t, sql, `ORDER BY bucket_ts ASC`)
+}
+
+func TestBuildCountHLLHash_WithGroup_MultiIdentity(t *testing.T) {
+	be := &BaseExpr{
+		ID:        "leaf-hll",
+		Metric:    "http_requests_total",
+		GroupBy:   []string{"job"},
+		CountOnBy: []string{"instance", "pod"},
+	}
+
+	sql := buildCountHLLHash(be, 5*time.Second)
+
+	// bucket expression uses 5000ms step
+	mustContain(t, sql, `("_cardinalhq.timestamp" - ("_cardinalhq.timestamp" % 5000)) AS bucket_ts`)
+
+	// aligned, end-exclusive time window for 5000ms step
+	mustContain(t, sql, `"_cardinalhq.timestamp" >= ({start} - ({start} % 5000)) AND "_cardinalhq.timestamp" < (({end} - 1) - (({end} - 1) % 5000) + 5000)`)
+
+	// id_hash uses both identity columns with NULL sentinels
+	mustContain(t, sql, "hash(COALESCE(instance, '\x00'), COALESCE(pod, '\x00')) AS id_hash")
+
+	// SELECT projects bucket_ts, group-by, id_hash
+	mustContain(t, sql, `SELECT ("_cardinalhq.timestamp" - ("_cardinalhq.timestamp" % 5000)) AS bucket_ts, job, hash`)
+
+	// GROUP BY includes bucket_ts, group-by columns, and id_hash (order matters in string match)
+	mustContain(t, sql, `GROUP BY bucket_ts, job, id_hash`)
+
+	// Ordered output
+	mustContain(t, sql, `ORDER BY bucket_ts ASC`)
+}
+
 func mustContain(t *testing.T, s, sub string) {
 	t.Helper()
 	if !strings.Contains(s, sub) {
