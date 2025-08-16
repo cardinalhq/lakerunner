@@ -167,6 +167,7 @@ type LogSeg struct {
 	IngestDateint  int32                     `json:"ingest_dateint"`
 	TsRange        pgtype.Range[pgtype.Int8] `json:"ts_range"`
 	CreatedBy      CreatedBy                 `json:"created_by"`
+	CreatedAt      time.Time                 `json:"created_at"`
 }
 
 type MetricSeg struct {

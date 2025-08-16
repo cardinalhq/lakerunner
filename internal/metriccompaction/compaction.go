@@ -95,6 +95,7 @@ func doCompactItem(
 	totalBatchesProcessed := 0
 	totalSegmentsProcessed := 0
 	cursorCreatedAt := time.Time{} // Start from beginning (zero time)
+	cursorSegmentID := int64(0)    // Start from beginning (zero ID)
 
 	// Loop until we've processed all available segments
 	for {
@@ -109,18 +110,20 @@ func doCompactItem(
 
 		ll.Info("Querying for metric segments to compact",
 			slog.Int("batch", totalBatchesProcessed+1),
-			slog.Time("cursorCreatedAt", cursorCreatedAt))
+			slog.Time("cursorCreatedAt", cursorCreatedAt),
+			slog.Int64("cursorSegmentID", cursorSegmentID))
 
 		inRows, err := mdb.GetMetricSegsForCompaction(ctx, lrdb.GetMetricSegsForCompactionParams{
-			OrganizationID:  inf.OrganizationID(),
-			InstanceNum:     inf.InstanceNum(),
-			Dateint:         inf.Dateint(),
-			FrequencyMs:     inf.FrequencyMs(),
-			StartTs:         st.Time.UTC().UnixMilli(),
-			EndTs:           et.Time.UTC().UnixMilli(),
-			MaxFileSize:     targetFileSize * 9 / 10, // Only include files < 90% of target (larger files are fine as-is)
-			CursorCreatedAt: cursorCreatedAt,         // Cursor for pagination
-			Maxrows:         maxRowsLimit,            // Safety limit for compaction batch
+			OrganizationID:    inf.OrganizationID(),
+			InstanceNum:       inf.InstanceNum(),
+			Dateint:           inf.Dateint(),
+			FrequencyMs:       inf.FrequencyMs(),
+			StartTs:           st.Time.UTC().UnixMilli(),
+			EndTs:             et.Time.UTC().UnixMilli(),
+			MaxFileSize:       targetFileSize * 9 / 10, // Only include files < 90% of target (larger files are fine as-is)
+			CursorCreatedAt:   cursorCreatedAt,         // Cursor for pagination
+			CursorSegmentID:   cursorSegmentID,         // Cursor for pagination
+			Maxrows:           maxRowsLimit,            // Safety limit for compaction batch
 		})
 		if err != nil {
 			ll.Error("Failed to get current metric segments", slog.Any("error", err))
@@ -143,9 +146,11 @@ func doCompactItem(
 			slog.Int("segmentCount", len(inRows)),
 			slog.Int("batch", totalBatchesProcessed+1))
 
-		// Update cursor to last created_at in this batch to ensure forward progress
+		// Update cursor to last (created_at, segment_id) in this batch to ensure forward progress
 		if len(inRows) > 0 {
-			cursorCreatedAt = inRows[len(inRows)-1].CreatedAt
+			lastRow := inRows[len(inRows)-1]
+			cursorCreatedAt = lastRow.CreatedAt
+			cursorSegmentID = lastRow.SegmentID
 		}
 
 		// Check if this batch needs compaction
@@ -185,7 +190,8 @@ func doCompactItem(
 		// Continue to next batch - cursor already advanced
 		ll.Info("Batch completed, checking for more segments",
 			slog.Int("processedSegments", len(inRows)),
-			slog.Time("nextCursor", cursorCreatedAt))
+			slog.Time("nextCursorCreatedAt", cursorCreatedAt),
+			slog.Int64("nextCursorSegmentID", cursorSegmentID))
 	}
 }
 

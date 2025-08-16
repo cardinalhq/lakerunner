@@ -40,9 +40,9 @@ WHERE
   instance_num = @instance_num
   AND ts_range && int8range(@start_ts, @end_ts, '[)')
   AND file_size <= @max_file_size
-  AND created_at > @cursor_created_at
+  AND (created_at, segment_id) > (@cursor_created_at, @cursor_segment_id::bigint)
 ORDER BY
-  created_at
+  created_at, segment_id
 LIMIT @maxrows;
 
 -- name: GetMetricSegsForRollup :many
