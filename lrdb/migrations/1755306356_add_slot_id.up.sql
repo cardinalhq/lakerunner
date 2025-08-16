@@ -1,5 +1,9 @@
 -- 1755306356_add_slot_id.up.sql
 
+-- Pre-lock tables to prevent deadlocks during migration
+LOCK TABLE public.work_queue IN ACCESS EXCLUSIVE MODE;
+LOCK TABLE public.signal_locks IN ACCESS EXCLUSIVE MODE;
+
 -- Add slot_id column to work_queue table
 ALTER TABLE public.work_queue ADD COLUMN IF NOT EXISTS slot_id INTEGER NOT NULL DEFAULT 0;
 
