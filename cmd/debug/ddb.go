@@ -17,6 +17,8 @@ package debug
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -72,7 +74,7 @@ func runExtensions(ctx context.Context) error {
 	}
 	defer c.Close()
 
-	rows, err := c.QueryContext(ctx, "SELECT extension_name, loaded, installed, install_path, extension_version, install_mode, installed_from FROM duckdb_extensions();")
+	rows, err := c.QueryContext(ctx, "SELECT extension_name, loaded, installed, extension_version, install_mode FROM duckdb_extensions();")
 	if err != nil {
 		return err
 	}
@@ -101,11 +103,45 @@ func runExtensions(ctx context.Context) error {
 			if val == nil {
 				row[i] = "<NULL>"
 			} else {
-				row[i] = fmt.Sprintf("%v", val)
+				// Special handling for loaded/installed columns to show availability
+				if i == 1 { // loaded column
+					loaded := fmt.Sprintf("%v", val) == "true"
+					if loaded {
+						row[i] = "loaded"
+					} else {
+						// Check if installed (column 2)
+						if i+1 < len(values) && fmt.Sprintf("%v", values[i+1]) == "true" {
+							row[i] = "available"
+						} else {
+							row[i] = "not available"
+						}
+					}
+				} else if i == 2 { // installed column - skip since we handle it in loaded column
+					continue
+				} else {
+					row[i] = fmt.Sprintf("%v", val)
+				}
 			}
+		}
+		// Remove the installed column from the row since we merged it with loaded
+		if len(row) > 2 {
+			row = append(row[:2], row[3:]...)
 		}
 		allRows = append(allRows, row)
 	}
+
+	// Update column headers to remove installed and rename loaded to availability
+	newCols := make([]string, 0, len(cols)-1)
+	for i, col := range cols {
+		if i == 1 { // loaded column
+			newCols = append(newCols, "availability")
+		} else if i == 2 { // installed column - skip
+			continue
+		} else {
+			newCols = append(newCols, col)
+		}
+	}
+	cols = newCols
 
 	// Calculate column widths
 	colWidths := make([]int, len(cols))
@@ -206,6 +242,52 @@ func runVersion(ctx context.Context) error {
 	// DuckDB version string is like "v1.3.2 af7bcaf"
 	if !strings.Contains(version, expectedVersion) {
 		return fmt.Errorf("DuckDB version mismatch: expected %s, got %s", expectedVersion, version)
+	}
+
+	// Show LAKERUNNER environment variables
+	extensionsPath := os.Getenv("LAKERUNNER_EXTENSIONS_PATH")
+	httpfsPath := os.Getenv("LAKERUNNER_HTTPFS_EXTENSION")
+
+	// Only show environment variables section if any are set
+	if extensionsPath != "" || httpfsPath != "" {
+		fmt.Println("\nLAKERUNNER Environment Variables:")
+		if extensionsPath != "" {
+			fmt.Printf("  LAKERUNNER_EXTENSIONS_PATH: %s\n", extensionsPath)
+		}
+		if httpfsPath != "" {
+			fmt.Printf("  LAKERUNNER_HTTPFS_EXTENSION: %s\n", httpfsPath)
+		}
+	}
+
+	// Show mode
+	fmt.Println("\nMode:")
+	if extensionsPath != "" {
+		fmt.Println("  Air-gapped (extensions loaded from local files)")
+	} else {
+		fmt.Println("  Not air-gapped, network access available")
+	}
+
+	// Check expected extensions availability only in air-gapped mode
+	if extensionsPath != "" {
+		fmt.Println("\nExpected Extensions:")
+		expectedExtensions := []string{"httpfs"}
+
+		for _, extName := range expectedExtensions {
+			fmt.Printf("  %s: ", extName)
+
+			// Air-gapped mode: check file existence
+			specificEnvVar := fmt.Sprintf("LAKERUNNER_%s_EXTENSION", strings.ToUpper(extName))
+			extPath := os.Getenv(specificEnvVar)
+			if extPath == "" {
+				extPath = filepath.Join(extensionsPath, extName+".duckdb_extension")
+			}
+
+			if _, err := os.Stat(extPath); err == nil {
+				fmt.Println("available")
+			} else {
+				fmt.Println("NOT FOUND")
+			}
+		}
 	}
 
 	return nil

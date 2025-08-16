@@ -41,7 +41,7 @@ COPY lakerunner /app/bin/lakerunner
 COPY --from=extensions /app/extensions/httpfs.duckdb_extension /app/extensions/httpfs.duckdb_extension
 
 # Set environment variable for extension location
-ENV DUCKDB_HTTPFS_EXTENSION=/app/extensions/httpfs.duckdb_extension
+ENV LAKERUNNER_HTTPFS_EXTENSION=/app/extensions/httpfs.duckdb_extension
 
 # Run as specified user
 USER ${USER_UID}:${USER_UID}

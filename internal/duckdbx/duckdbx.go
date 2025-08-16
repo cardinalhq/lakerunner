@@ -18,6 +18,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	_ "github.com/marcboeker/go-duckdb/v2"
@@ -36,8 +39,7 @@ type Config struct {
 }
 
 type ExtensionConfig struct {
-	Name     string
-	LoadPath string
+	Name string
 }
 
 type SetupFunction func(context.Context, *sql.Conn) error
@@ -58,14 +60,28 @@ func WithMemoryLimitMB(limit int64) option {
 }
 
 // WithExtension specifies a DuckDB extension to install and load on connection setup.
-// The loadpath can be an empty string to use the default load path, which will
-// load from the network if not already installed.
-func WithExtension(ext string, loadpath string) option {
+// In air-gapped mode (when LAKERUNNER_EXTENSIONS_PATH is set), extensions are loaded from
+// pre-installed files. In development mode, extensions are downloaded from the network.
+func WithExtension(ext string) option {
 	return func(c *Config) {
 		c.Extensions = append(c.Extensions, ExtensionConfig{
-			Name:     ext,
-			LoadPath: loadpath,
+			Name: ext,
 		})
+	}
+}
+
+// WithoutExtension removes an extension from the list of extensions to load.
+// This is useful for removing default extensions like httpfs if not needed.
+// If the extension is not in the list, this is a no-op.
+func WithoutExtension(ext string) option {
+	return func(c *Config) {
+		for i, existing := range c.Extensions {
+			if existing.Name == ext {
+				// Remove the extension by slicing around it
+				c.Extensions = append(c.Extensions[:i], c.Extensions[i+1:]...)
+				return
+			}
+		}
 	}
 }
 
@@ -95,7 +111,7 @@ type DB struct {
 
 // Open opens a DuckDB database with the given data source name and options.
 // this is generally called once, and the returned DB is shared and used to
-// create connections.
+// create connections. By default, httpfs extension is loaded automatically.
 func Open(dataSourceName string, opts ...option) (*DB, error) {
 	db, err := sql.Open("duckdb", dataSourceName)
 	if err != nil {
@@ -105,6 +121,10 @@ func Open(dataSourceName string, opts ...option) (*DB, error) {
 	config := Config{
 		MetricsPeriod: 10 * time.Second,
 		pollerContext: context.Background(),
+		// Default extensions - httpfs is commonly needed for S3 access
+		Extensions: []ExtensionConfig{
+			{Name: "httpfs"},
+		},
 	}
 
 	for _, opt := range opts {
@@ -144,17 +164,8 @@ func (d *DB) setupConn(ctx context.Context, conn *sql.Conn) error {
 		}
 	}
 	for _, ext := range d.config.Extensions {
-		// Try to load the extension first (works for both static and installed extensions)
-		if _, err := conn.ExecContext(ctx, fmt.Sprintf("LOAD %s;", ext.Name)); err != nil {
-			// If load fails, try to install first (for non-static extensions)
-			stmt := fmt.Sprintf("INSTALL %s", ext.Name)
-			if _, err := conn.ExecContext(ctx, stmt); err != nil {
-				return fmt.Errorf("failed to install extension '%s': %w", ext.Name, err)
-			}
-			// Then try to load again
-			if _, err := conn.ExecContext(ctx, fmt.Sprintf("LOAD %s;", ext.Name)); err != nil {
-				return fmt.Errorf("failed to load extension '%s': %w", ext.Name, err)
-			}
+		if err := d.loadExtension(ctx, conn, ext.Name); err != nil {
+			return fmt.Errorf("failed to load extension '%s': %w", ext.Name, err)
 		}
 	}
 	return nil
@@ -170,6 +181,62 @@ func (d *DB) SetMaxIdleConns(n int) {
 
 func (d *DB) Close() error {
 	return d.db.Close()
+}
+
+// loadExtension handles air-gapped extension loading with fallback to network
+func (d *DB) loadExtension(ctx context.Context, conn *sql.Conn, extensionName string) error {
+	// Check if we're in air-gapped mode (Docker) or development mode (local)
+	extensionsBasePath := os.Getenv("LAKERUNNER_EXTENSIONS_PATH")
+
+	if extensionsBasePath != "" {
+		// Air-gapped mode: only load pre-installed extensions
+		return d.loadAirGappedExtension(ctx, conn, extensionName, extensionsBasePath)
+	}
+
+	// Development mode: allow network downloads
+	return d.loadNetworkExtension(ctx, conn, extensionName)
+}
+
+// loadAirGappedExtension loads extensions from pre-installed files only
+func (d *DB) loadAirGappedExtension(ctx context.Context, conn *sql.Conn, extensionName, basePath string) error {
+	// First check for specific environment variable for this extension
+	specificEnvVar := fmt.Sprintf("LAKERUNNER_%s_EXTENSION", strings.ToUpper(extensionName))
+	extensionPath := os.Getenv(specificEnvVar)
+
+	if extensionPath == "" {
+		// Fall back to naming convention: basePath/extensionName.duckdb_extension
+		extensionPath = filepath.Join(basePath, extensionName+".duckdb_extension")
+	}
+
+	// Verify the file exists
+	if _, err := os.Stat(extensionPath); os.IsNotExist(err) {
+		return fmt.Errorf("extension '%s' not found at %s (air-gapped mode)", extensionName, extensionPath)
+	}
+
+	// Load the extension from the specific file path
+	stmt := fmt.Sprintf("LOAD '%s';", extensionPath)
+	if _, err := conn.ExecContext(ctx, stmt); err != nil {
+		return fmt.Errorf("failed to load extension from %s: %w", extensionPath, err)
+	}
+
+	return nil
+}
+
+// loadNetworkExtension loads extensions with network access (development mode)
+func (d *DB) loadNetworkExtension(ctx context.Context, conn *sql.Conn, extensionName string) error {
+	// Try to load the extension first (works for both static and installed extensions)
+	if _, err := conn.ExecContext(ctx, fmt.Sprintf("LOAD %s;", extensionName)); err != nil {
+		// If load fails, try to install first (for non-static extensions)
+		stmt := fmt.Sprintf("INSTALL %s", extensionName)
+		if _, err := conn.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("failed to install extension: %w", err)
+		}
+		// Then try to load again
+		if _, err := conn.ExecContext(ctx, fmt.Sprintf("LOAD %s;", extensionName)); err != nil {
+			return fmt.Errorf("failed to load extension after install: %w", err)
+		}
+	}
+	return nil
 }
 
 // Query executes a SQL query using a new DuckDB connection and returns the result set.
