@@ -95,6 +95,12 @@ LakeRunner follows an event-driven architecture with these core components:
 3. **Quality Checks** - `make check` must pass before PR submission
 4. **License Compliance** - All new source files need AGPL v3 headers
 
+## Commit Message Guidelines
+
+- **NEVER** include Claude Code advertising, "Generated with Claude Code", or similar promotional text
+- Keep commit messages clean and focused on the technical changes
+- Use conventional commit format when appropriate
+
 ## Storage Profiles and Configuration
 
 LakeRunner uses YAML-based configuration for:
