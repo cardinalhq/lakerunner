@@ -58,14 +58,14 @@ func isSortedAsc(xs []tsItem) bool {
 	return true
 }
 
-func isSortedDesc(xs []tsItem) bool {
-	for i := 1; i < len(xs); i++ {
-		if xs[i-1].ts < xs[i].ts {
-			return false
-		}
-	}
-	return true
-}
+// func isSortedDesc(xs []tsItem) bool {
+// 	for i := 1; i < len(xs); i++ {
+// 		if xs[i-1].ts < xs[i].ts {
+// 			return false
+// 		}
+// 	}
+// 	return true
+// }
 
 // --- tests ---
 

@@ -36,7 +36,8 @@ type Querier interface {
 	GetExemplarTracesByService(ctx context.Context, arg GetExemplarTracesByServiceParams) ([]ExemplarTrace, error)
 	GetExemplarTracesCreatedAfter(ctx context.Context, ts time.Time) ([]ExemplarTrace, error)
 	GetLogSegmentsForCompaction(ctx context.Context, arg GetLogSegmentsForCompactionParams) ([]GetLogSegmentsForCompactionRow, error)
-	GetMetricSegs(ctx context.Context, arg GetMetricSegsParams) ([]MetricSeg, error)
+	GetMetricSegsForCompaction(ctx context.Context, arg GetMetricSegsForCompactionParams) ([]MetricSeg, error)
+	GetMetricSegsForRollup(ctx context.Context, arg GetMetricSegsForRollupParams) ([]MetricSeg, error)
 	GetSpanInfoByFingerprint(ctx context.Context, arg GetSpanInfoByFingerprintParams) (GetSpanInfoByFingerprintRow, error)
 	InqueueJournalDelete(ctx context.Context, arg InqueueJournalDeleteParams) error
 	InqueueJournalUpsert(ctx context.Context, arg InqueueJournalUpsertParams) (bool, error)
