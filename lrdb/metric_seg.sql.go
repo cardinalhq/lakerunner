@@ -19,11 +19,7 @@ WHERE
   dateint = $2 AND
   frequency_ms = $3 AND
   instance_num = $4
-  AND (
-    ($5::BIGINT = 0 AND $6::BIGINT = 0)
-    OR
-    (ts_range && int8range($5, $6, '[)'))
-  )
+  AND ts_range && int8range($5, $6, '[)')
 ORDER BY
   ts_range
 `

@@ -38,11 +38,7 @@ WHERE
   dateint = @dateint AND
   frequency_ms = @frequency_ms AND
   instance_num = @instance_num
-  AND (
-    (@start_ts::BIGINT = 0 AND @end_ts::BIGINT = 0)
-    OR
-    (ts_range && int8range(@start_ts, @end_ts, '[)'))
-  )
+  AND ts_range && int8range(@start_ts, @end_ts, '[)')
 ORDER BY
   ts_range;
 
