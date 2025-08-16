@@ -43,6 +43,9 @@ dockers:
       - fileconv/
       - lockmgr/
       - lrdb/
+      - dbase/
+      - queryworker/
+      - queryproto/
     use: buildx
     image_templates:
       - "public.ecr.aws/cardinalhq.io/lakerunner:v{{ .Version }}-amd64"
@@ -70,6 +73,9 @@ dockers:
       - fileconv/
       - lockmgr/
       - lrdb/
+      - dbase/
+      - queryworker/
+      - queryproto/
     use: buildx
     image_templates:
       - "public.ecr.aws/cardinalhq.io/lakerunner:v{{ .Version }}-arm64"
