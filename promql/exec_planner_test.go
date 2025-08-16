@@ -177,6 +177,52 @@ func TestCompile_SimpleRateSumBy(t *testing.T) {
 	}
 }
 
+func TestCountHintOnSumRate(t *testing.T) {
+	q := `count by (job)(sum by (job)(rate(http_requests_total[5m])))`
+	root := mustParse(t, q)
+
+	res, err := Compile(root)
+	if err != nil {
+		t.Fatalf("Compile error: %v", err)
+	}
+	if len(res.Leaves) != 1 {
+		t.Fatalf("want 1 leaf, got %d", len(res.Leaves))
+	}
+
+	aggCnt, ok := res.Root.(*AggNode)
+	if !ok {
+		t.Fatalf("root not AggNode, got %T", res.Root)
+	}
+	if !reflect.DeepEqual(aggCnt.By, []string{"job"}) {
+		t.Fatalf("agg by = %#v, want [job]", aggCnt.By)
+	}
+
+	innerAgg, ok := aggCnt.Child.(*AggNode)
+	if !ok {
+		t.Fatalf("count child not AggNode, got %T", aggCnt.Child)
+	}
+	if innerAgg.Op != AggSum {
+		t.Fatalf("inner agg op = %v, want sum", innerAgg.Op)
+	}
+	if !reflect.DeepEqual(innerAgg.By, []string{"job"}) {
+		t.Fatalf("inner agg by = %#v, want [job]", innerAgg.By)
+	}
+
+	leaf, ok := innerAgg.Child.(*LeafNode)
+	if !ok {
+		t.Fatalf("inner agg child not LeafNode, got %T", innerAgg.Child)
+	}
+
+	be := leaf.BE
+	if be.FuncName != "rate" || be.Range != "5m" || be.Metric != "http_requests_total" {
+		t.Fatalf("leaf wrong func/range/metric: %+v", be)
+	}
+	if !be.WantCount {
+		t.Fatalf("WantCount should be true on leaf")
+	}
+
+}
+
 func TestCompile_TopKHint(t *testing.T) {
 	q := `topk(3, sum by (svc)(rate(http_requests_total[5m])))`
 	root := mustParse(t, q)

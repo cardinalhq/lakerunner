@@ -52,12 +52,11 @@ func (be *BaseExpr) ToWorkerSQL(step time.Duration) string {
 
 	// COUNT fast-path: COUNT-by-group with no identity collapse → simple raw bucketing
 	if be.WantCount && equalStringSets(be.CountOnBy, be.GroupBy) {
-		be.WantCount = false
 		return buildStepOnly(be, []proj{{"COUNT(*)", "count"}}, step)
 	}
 	// Identity collapse (distinct series counting) → HLL/sketch path
 	if be.WantCount && !equalStringSets(be.CountOnBy, be.GroupBy) {
-		return ""
+		return buildCountHLLHash(be, step)
 	}
 
 	switch be.FuncName {
@@ -157,6 +156,55 @@ func buildRawSimple(be *BaseExpr, projs []proj, step time.Duration) string {
 	sql := "SELECT " + strings.Join(cols, ", ") +
 		" FROM {table}" + where +
 		groupByClause(be.GroupBy, "bucket_ts") +
+		" ORDER BY bucket_ts ASC"
+	return sql
+}
+
+// buildCountHLLHash: per (bucket_ts, GroupBy..., identity) emit one row with an id_hash.
+// Worker merges rows into one HLL per (bucket_ts, GroupBy...).
+func buildCountHLLHash(be *BaseExpr, step time.Duration) string {
+	stepMs := step.Milliseconds()
+	bucket := fmt.Sprintf("(\"_cardinalhq.timestamp\" - (\"_cardinalhq.timestamp\" %% %d))", stepMs)
+
+	// Align [start, end) to step, as elsewhere
+	alignedStart := fmt.Sprintf("({start} - ({start} %% %d))", stepMs)
+	alignedEndEx := fmt.Sprintf("(({end} - 1) - (({end} - 1) %% %d) + %d)", stepMs, stepMs)
+
+	base := whereFor(be)
+	timeWhere := func() string {
+		tc := fmt.Sprintf("\"_cardinalhq.timestamp\" >= %s AND \"_cardinalhq.timestamp\" < %s", alignedStart, alignedEndEx)
+		if base == "" {
+			return " WHERE " + tc
+		}
+		return base + " AND " + tc
+	}()
+
+	// Build a stable hash over CountOnBy labels.
+	// Use a sentinel for NULLs so NULL != "" (Prom labels never include 0x00).
+	// DuckDB’s hash(...) returns BIGINT; we can cast to unsigned in Go.
+	var idExprParts []string
+	for _, c := range be.CountOnBy {
+		idExprParts = append(idExprParts, fmt.Sprintf("COALESCE(%s, '\x00')", c))
+	}
+	idHashExpr := "hash(" + strings.Join(idExprParts, ", ") + ")"
+
+	// SELECT bucket_ts, <GroupBy...>, id_hash
+	sel := []string{bucket + " AS bucket_ts"}
+	if len(be.GroupBy) > 0 {
+		sel = append(sel, strings.Join(be.GroupBy, ", "))
+	}
+	sel = append(sel, idHashExpr+" AS id_hash")
+
+	// GROUP BY bucket_ts, GroupBy..., id_hash -> one row per identity per bucket
+	gb := []string{"bucket_ts"}
+	if len(be.GroupBy) > 0 {
+		gb = append(gb, be.GroupBy...)
+	}
+	gb = append(gb, "id_hash")
+
+	sql := "SELECT " + strings.Join(sel, ", ") +
+		" FROM {table}" + timeWhere +
+		" GROUP BY " + strings.Join(gb, ", ") +
 		" ORDER BY bucket_ts ASC"
 	return sql
 }

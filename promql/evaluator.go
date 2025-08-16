@@ -212,6 +212,13 @@ func (q *QuerierService) pushDown(ctx context.Context, worker Worker, request Pu
 			agg := map[string]float64{}
 			tags := map[string]any{}
 
+			tags["name"] = request.BaseExpr.Metric
+			for _, matcher := range request.BaseExpr.Matchers {
+				if matcher.Op == MatchEq {
+					tags[matcher.Label] = matcher.Value
+				}
+			}
+
 			for i, col := range cols {
 				switch col {
 				case "bucket_ts":
