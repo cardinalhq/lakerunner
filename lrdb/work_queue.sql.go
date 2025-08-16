@@ -23,7 +23,8 @@ SELECT public.work_queue_add(
   $6      :: action_enum,
   $7    :: TSTZRANGE,
   $8 :: TIMESTAMPTZ,
-  $9    :: INTEGER
+  $9    :: INTEGER,
+  $10     :: INTEGER
 )
 `
 
@@ -37,6 +38,7 @@ type WorkQueueAddParams struct {
 	TsRange    pgtype.Range[pgtype.Timestamptz] `json:"ts_range"`
 	RunnableAt time.Time                        `json:"runnable_at"`
 	Priority   int32                            `json:"priority"`
+	SlotID     int32                            `json:"slot_id"`
 }
 
 func (q *Queries) WorkQueueAddDirect(ctx context.Context, arg WorkQueueAddParams) error {
@@ -50,6 +52,7 @@ func (q *Queries) WorkQueueAddDirect(ctx context.Context, arg WorkQueueAddParams
 		arg.TsRange,
 		arg.RunnableAt,
 		arg.Priority,
+		arg.SlotID,
 	)
 	return err
 }
@@ -73,7 +76,7 @@ expired AS (
   WHERE
     w.claimed_by <> -1
     AND w.heartbeated_at < params.v_now - params.dead_ttl
-  RETURNING w.id, w.priority, w.runnable_at, w.organization_id, w.instance_num, w.dateint, w.frequency_ms, w.signal, w.action, w.needs_run, w.tries, w.ts_range, w.claimed_by, w.claimed_at, w.heartbeated_at
+  RETURNING w.id, w.priority, w.runnable_at, w.organization_id, w.instance_num, w.dateint, w.frequency_ms, w.signal, w.action, w.needs_run, w.tries, w.ts_range, w.claimed_by, w.claimed_at, w.heartbeated_at, w.slot_id
 ),
 deleted_locks AS (
   DELETE FROM public.signal_locks sl
@@ -82,7 +85,7 @@ deleted_locks AS (
   RETURNING sl.id
 )
 SELECT
-  e.id, e.priority, e.runnable_at, e.organization_id, e.instance_num, e.dateint, e.frequency_ms, e.signal, e.action, e.needs_run, e.tries, e.ts_range, e.claimed_by, e.claimed_at, e.heartbeated_at,
+  e.id, e.priority, e.runnable_at, e.organization_id, e.instance_num, e.dateint, e.frequency_ms, e.signal, e.action, e.needs_run, e.tries, e.ts_range, e.claimed_by, e.claimed_at, e.heartbeated_at, e.slot_id,
   (SELECT COUNT(*) FROM deleted_locks) AS locks_removed
 FROM expired e
 `
@@ -103,6 +106,7 @@ type WorkQueueCleanupRow struct {
 	ClaimedBy      int64                            `json:"claimed_by"`
 	ClaimedAt      *time.Time                       `json:"claimed_at"`
 	HeartbeatedAt  time.Time                        `json:"heartbeated_at"`
+	SlotID         int32                            `json:"slot_id"`
 	LocksRemoved   int64                            `json:"locks_removed"`
 }
 
@@ -131,6 +135,7 @@ func (q *Queries) WorkQueueCleanupDirect(ctx context.Context) ([]WorkQueueCleanu
 			&i.ClaimedBy,
 			&i.ClaimedAt,
 			&i.HeartbeatedAt,
+			&i.SlotID,
 			&i.LocksRemoved,
 		); err != nil {
 			return nil, err

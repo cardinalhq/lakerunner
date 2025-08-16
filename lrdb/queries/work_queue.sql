@@ -11,7 +11,8 @@ SELECT public.work_queue_add(
   @action      :: action_enum,
   @ts_range    :: TSTZRANGE,
   @runnable_at :: TIMESTAMPTZ,
-  @priority    :: INTEGER
+  @priority    :: INTEGER,
+  @slot_id     :: INTEGER
 );
 
 
