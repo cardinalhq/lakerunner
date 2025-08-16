@@ -15,6 +15,7 @@
 package translate
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strconv"
@@ -61,6 +62,17 @@ func ParseLogRow(mapper *Mapper, input map[string]any) TranslatedLog {
 		// Message?
 		if body == "" && slices.Contains(mapper.MessageColumns, lc) {
 			body = toString(rawVal)
+
+			// If the message is a nested structure, also flatten it into attributes
+			if _, isMap := rawVal.(map[string]any); isMap {
+				flattenValue(lc, rawVal, recAttrs)
+			} else if strVal, isString := rawVal.(string); isString {
+				// Extract and flatten any JSON objects embedded in the string
+				extractedAttrs := extractJSONFromString(strVal, lc)
+				for k, v := range extractedAttrs {
+					recAttrs[k] = v
+				}
+			}
 			continue
 		}
 
@@ -219,6 +231,54 @@ func flattenValue(prefix string, v any, out map[string]string) {
 	default:
 		out[prefix] = toString(val)
 	}
+}
+
+// extractJSONFromString extracts JSON objects from a string and returns flattened key-value pairs
+func extractJSONFromString(input string, prefix string) map[string]string {
+	result := make(map[string]string)
+
+	// If the string doesn't contain JSON-like content, return early
+	if !strings.Contains(input, "{") || !strings.Contains(input, "}") {
+		return result
+	}
+
+	start := 0
+	for start < len(input) {
+		jsonStart := strings.Index(input[start:], "{")
+		if jsonStart == -1 {
+			break
+		}
+		// offset from start to get the actual index
+		jsonStart += start
+
+		braceCount := 0
+		jsonEnd := -1
+		for i := jsonStart; i < len(input); i++ {
+			if input[i] == '{' {
+				braceCount++
+			} else if input[i] == '}' {
+				braceCount--
+				if braceCount == 0 {
+					jsonEnd = i + 1
+					break
+				}
+			}
+		}
+
+		if jsonEnd > jsonStart {
+			jsonPart := input[jsonStart:jsonEnd]
+			var jsonData map[string]any
+			if err := json.Unmarshal([]byte(jsonPart), &jsonData); err == nil {
+				flattenValue(prefix, jsonData, result)
+			}
+			start = jsonEnd
+		} else {
+			// No matching closing brace found, break to avoid infinite loop
+			break
+		}
+	}
+
+	return result
 }
 
 // toString renders supported scalar types to string (attributes stored as strings).
