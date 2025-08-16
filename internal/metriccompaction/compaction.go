@@ -20,12 +20,12 @@ import (
 	"log/slog"
 	"math"
 
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
+	"github.com/cardinalhq/lakerunner/internal/tidprocessing"
 	"github.com/cardinalhq/lakerunner/lockmgr"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -39,38 +39,6 @@ const (
 	WorkResultTryAgainLater
 )
 
-type TIDMerger interface {
-	Merge() ([]MergeResult, MergeStats, error)
-}
-
-type MergeResult struct {
-	FileName    string
-	RecordCount int64
-	FileSize    int64
-	TidCount    int64
-}
-
-type MergeStats struct {
-	DatapointsOutOfRange int64
-}
-
-type TIDMergerFactory func(tmpdir string, files []string, frequencyMs int32, rpfEstimate int64, startTs, endTs int64) (TIDMerger, error)
-
-var NewTIDMerger TIDMergerFactory
-
-type RangeBoundsTimestamptz func(tsRange pgtype.Range[pgtype.Timestamptz]) (start, end pgtype.Timestamptz, ok bool)
-type RangeBoundsInt8 func(tsRange pgtype.Range[pgtype.Int8]) (start, end pgtype.Int8, ok bool)
-
-var GetRangeBoundsTimestamptz RangeBoundsTimestamptz
-var GetRangeBoundsInt8 RangeBoundsInt8
-
-type FrequencyChecker func(frequencyMs int32) bool
-
-var IsWantedFrequency FrequencyChecker
-
-type RolledUpChecker func(rows []lrdb.MetricSeg) bool
-
-var AllRolledUp RolledUpChecker
 
 func ProcessItem(
 	ctx context.Context,
@@ -82,7 +50,7 @@ func ProcessItem(
 	inf lockmgr.Workable,
 	rpfEstimate int64,
 ) (WorkResult, error) {
-	if !IsWantedFrequency(inf.FrequencyMs()) {
+	if !helpers.IsWantedFrequency(inf.FrequencyMs()) {
 		ll.Info("Skipping compaction for unwanted frequency", slog.Int("frequencyMs", int(inf.FrequencyMs())))
 		return WorkResultSuccess, nil
 	}
@@ -119,7 +87,7 @@ func doCompactItem(
 	s3client *awsclient.S3Client,
 	rpfEstimate int64,
 ) (WorkResult, error) {
-	st, et, ok := GetRangeBoundsTimestamptz(inf.TsRange())
+	st, et, ok := helpers.RangeBounds(inf.TsRange())
 	if !ok {
 		return WorkResultSuccess, fmt.Errorf("invalid time range in work item: %v", inf.TsRange())
 	}
@@ -208,8 +176,9 @@ func compactInterval(
 	profile storageprofile.StorageProfile,
 	s3client *awsclient.S3Client,
 	rows []lrdb.MetricSeg,
-	rpfEstimate int64) error {
-	st, _, ok := GetRangeBoundsTimestamptz(inf.TsRange())
+	rpfEstimate int64,
+) error {
+	st, _, ok := helpers.RangeBounds(inf.TsRange())
 	if !ok {
 		ll.Error("Invalid time range in work item", slog.Any("tsRange", inf.TsRange()))
 		return fmt.Errorf("invalid time range in work item: %v", inf.TsRange())
@@ -238,13 +207,13 @@ func compactInterval(
 		return nil
 	}
 
-	startTS, endTS, ok := GetRangeBoundsTimestamptz(inf.TsRange())
+	startTS, endTS, ok := helpers.RangeBounds(inf.TsRange())
 	if !ok {
 		ll.Error("Invalid time range in work item", slog.Any("tsRange", inf.TsRange()))
 		return fmt.Errorf("invalid time range in work item: %v", inf.TsRange())
 	}
 
-	merger, err := NewTIDMerger(tmpdir, files, inf.FrequencyMs(), rpfEstimate, startTS.Time.UTC().UnixMilli(), endTS.Time.UTC().UnixMilli())
+	merger, err := tidprocessing.NewTIDMerger(tmpdir, files, inf.FrequencyMs(), rpfEstimate, startTS.Time.UTC().UnixMilli(), endTS.Time.UTC().UnixMilli())
 	if err != nil {
 		ll.Error("Failed to create TIDMerger", slog.Any("error", err))
 		return fmt.Errorf("creating TIDMerger: %w", err)
@@ -281,7 +250,7 @@ func compactInterval(
 		InstanceNum:    inf.InstanceNum(),
 		FrequencyMs:    inf.FrequencyMs(),
 		Published:      true,
-		Rolledup:       AllRolledUp(rows),
+		Rolledup:       helpers.AllRolledUp(rows),
 		CreatedBy:      lrdb.CreatedByCompact,
 	}
 
@@ -311,7 +280,7 @@ func compactInterval(
 			EndTs:        endTs,
 			RecordCount:  result.RecordCount,
 			FileSize:     result.FileSize,
-			TidCount:     int32(result.TidCount),
+			TidCount:     result.TidCount,
 		})
 	}
 
@@ -322,7 +291,7 @@ func compactInterval(
 	ll.Info("Replaced metric segments")
 
 	for _, row := range rows {
-		rst, _, ok := GetRangeBoundsInt8(row.TsRange)
+		rst, _, ok := helpers.RangeBounds(row.TsRange)
 		if !ok {
 			ll.Error("Invalid time range in row", slog.Any("tsRange", row.TsRange))
 			return fmt.Errorf("invalid time range in row: %v", row.TsRange)

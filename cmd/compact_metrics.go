@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
 
@@ -56,51 +55,16 @@ func init() {
 
 			go diskUsageLoop(doneCtx)
 
-			metriccompaction.NewTIDMerger = func(tmpdir string, files []string, frequencyMs int32, rpfEstimate int64, startTs, endTs int64) (metriccompaction.TIDMerger, error) {
-				merger, err := NewTIDMerger(tmpdir, files, frequencyMs, rpfEstimate, startTs, endTs)
-				if err != nil {
-					return nil, err
-				}
-				return &tidMergerAdapter{merger: merger}, nil
-			}
-			metriccompaction.GetRangeBoundsTimestamptz = RangeBounds[pgtype.Timestamptz]
-			metriccompaction.GetRangeBoundsInt8 = RangeBounds[pgtype.Int8]
-			metriccompaction.IsWantedFrequency = isWantedFrequency
-			metriccompaction.AllRolledUp = allRolledUp
-
 			loop, err := NewRunqueueLoopContext(doneCtx, "metrics", "compact", servicename)
 			if err != nil {
 				return fmt.Errorf("failed to create runqueue loop context: %w", err)
 			}
 
-			return RunqueueLoop(loop, compactRollupItem)
+			return RunqueueLoop(loop, compactRollupItem, nil)
 		},
 	}
 
 	rootCmd.AddCommand(cmd)
-}
-
-type tidMergerAdapter struct {
-	merger *TIDMerger
-}
-
-func (t *tidMergerAdapter) Merge() ([]metriccompaction.MergeResult, metriccompaction.MergeStats, error) {
-	results, stats, err := t.merger.Merge()
-	if err != nil {
-		return nil, metriccompaction.MergeStats{DatapointsOutOfRange: stats.DatapointsOutOfRange}, err
-	}
-
-	converted := make([]metriccompaction.MergeResult, len(results))
-	for i, result := range results {
-		converted[i] = metriccompaction.MergeResult{
-			FileName:    result.FileName,
-			RecordCount: result.RecordCount,
-			FileSize:    result.FileSize,
-			TidCount:    int64(result.TidCount),
-		}
-	}
-
-	return converted, metriccompaction.MergeStats{DatapointsOutOfRange: stats.DatapointsOutOfRange}, nil
 }
 
 func compactRollupItem(
@@ -112,6 +76,7 @@ func compactRollupItem(
 	mdb lrdb.StoreFull,
 	inf lockmgr.Workable,
 	rpfEstimate int64,
+	args any,
 ) (WorkResult, error) {
 	result, err := metriccompaction.ProcessItem(ctx, ll, tmpdir, awsmanager, sp, mdb, inf, rpfEstimate)
 	if err != nil {

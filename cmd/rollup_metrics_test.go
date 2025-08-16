@@ -18,6 +18,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/cardinalhq/lakerunner/internal/tidprocessing"
 )
 
 func TestBoxesForRange(t *testing.T) {
@@ -176,7 +178,7 @@ func TestCalculateTargetRecordsPerFile(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := calculateTargetRecordsPerFile(tt.recordCount, tt.estimatedBytesPerRecord, tt.targetFileSize)
+			got := tidprocessing.CalculateTargetRecordsPerFile(tt.recordCount, tt.estimatedBytesPerRecord, tt.targetFileSize)
 			assert.Equal(t, tt.want, got)
 		})
 	}

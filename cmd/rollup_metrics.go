@@ -27,6 +27,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
+	"github.com/cardinalhq/lakerunner/internal/tidprocessing"
 	"github.com/cardinalhq/lakerunner/lockmgr"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -61,7 +62,7 @@ func init() {
 				return fmt.Errorf("failed to create runqueue loop context: %w", err)
 			}
 
-			return RunqueueLoop(loop, metricRollupItem)
+			return RunqueueLoop(loop, metricRollupItem, nil)
 		},
 	}
 
@@ -77,13 +78,14 @@ func metricRollupItem(
 	mdb lrdb.StoreFull,
 	inf lockmgr.Workable,
 	rpfEstimate int64,
+	_ any,
 ) (WorkResult, error) {
-	previousFrequency, ok := rollupSources[inf.FrequencyMs()]
+	previousFrequency, ok := helpers.RollupSources[inf.FrequencyMs()]
 	if !ok {
 		ll.Error("Unknown parent frequency, dropping rollup request", slog.Int("frequencyMs", int(inf.FrequencyMs())))
 		return WorkResultSuccess, nil
 	}
-	if !isWantedFrequency(inf.FrequencyMs()) || !isWantedFrequency(previousFrequency) {
+	if !helpers.IsWantedFrequency(inf.FrequencyMs()) || !helpers.IsWantedFrequency(previousFrequency) {
 		ll.Info("Skipping rollup for unwanted frequency", slog.Int("frequencyMs", int(inf.FrequencyMs())), slog.Int("previousFrequency", int(previousFrequency)))
 		return WorkResultSuccess, nil
 	}
@@ -121,7 +123,7 @@ func metricRollupItemDo(
 	previousFrequency int32,
 	rpfEstimate int64,
 ) (WorkResult, error) {
-	st, et, ok := RangeBounds(inf.TsRange())
+	st, et, ok := helpers.RangeBounds(inf.TsRange())
 	if !ok {
 		return WorkResultSuccess, fmt.Errorf("invalid time range in work item: %v", inf.TsRange())
 	}
@@ -138,7 +140,7 @@ func metricRollupItemDo(
 		return WorkResultTryAgainLater, err
 	}
 
-	if allRolledUp(sourceRows) {
+	if helpers.AllRolledUp(sourceRows) {
 		return WorkResultSuccess, nil
 	}
 
@@ -184,7 +186,7 @@ func rollupInterval(
 	ingest_dateint := int32(0)
 	files := make([]string, 0, len(sourceRows))
 	for _, row := range sourceRows {
-		rst, _, ok := RangeBounds(row.TsRange)
+		rst, _, ok := helpers.RangeBounds(row.TsRange)
 		rts_dateint, _ := helpers.MSToDateintHour(rst.Int64)
 		ingest_dateint = max(ingest_dateint, rts_dateint)
 		if !ok {
@@ -211,14 +213,14 @@ func rollupInterval(
 		return nil
 	}
 
-	startTS, endTS, ok := RangeBounds(inf.TsRange())
+	startTS, endTS, ok := helpers.RangeBounds(inf.TsRange())
 	if !ok {
 		ll.Error("Invalid time range in work item", slog.Any("tsRange", inf.TsRange()))
 		return fmt.Errorf("invalid time range in work item: %v", inf.TsRange())
 	}
 
 	ll.Info("Rolling up files", slog.Int("fileCount", len(files)), slog.Int("frequency", int(inf.FrequencyMs())), slog.Int64("startTS", startTS.Time.UTC().UnixMilli()), slog.Int64("endTS", endTS.Time.UTC().UnixMilli()))
-	merger, err := NewTIDMerger(tmpdir, files, inf.FrequencyMs(), rpfEstimate, startTS.Time.UTC().UnixMilli(), endTS.Time.UTC().UnixMilli())
+	merger, err := tidprocessing.NewTIDMerger(tmpdir, files, inf.FrequencyMs(), rpfEstimate, startTS.Time.UTC().UnixMilli(), endTS.Time.UTC().UnixMilli())
 	if err != nil {
 		ll.Error("Failed to create TIDMerger", slog.Any("error", err))
 		return fmt.Errorf("creating TIDMerger: %w", err)
@@ -255,7 +257,7 @@ func rollupInterval(
 		})
 	}
 
-	st, et, ok := RangeBounds(inf.TsRange())
+	st, et, ok := helpers.RangeBounds(inf.TsRange())
 	if !ok {
 		return fmt.Errorf("invalid time range in work item: %v", inf.TsRange())
 	}
@@ -320,7 +322,7 @@ func rollupInterval(
 
 	// now delete the old files from S3.
 	for _, row := range existingRowsForThisRollup {
-		rst, _, ok := RangeBounds(row.TsRange)
+		rst, _, ok := helpers.RangeBounds(row.TsRange)
 		if !ok {
 			ll.Error("Invalid time range in existing row", slog.Any("tsRange", row.TsRange))
 			continue
