@@ -127,7 +127,7 @@ func metricRollupItemDo(
 	if !ok {
 		return WorkResultSuccess, fmt.Errorf("invalid time range in work item: %v", inf.TsRange())
 	}
-	sourceRows, err := mdb.GetMetricSegs(ctx, lrdb.GetMetricSegsParams{
+	sourceRows, err := mdb.GetMetricSegsForRollup(ctx, lrdb.GetMetricSegsForRollupParams{
 		OrganizationID: inf.OrganizationID(),
 		InstanceNum:    inf.InstanceNum(),
 		Dateint:        inf.Dateint(),
@@ -144,7 +144,7 @@ func metricRollupItemDo(
 		return WorkResultSuccess, nil
 	}
 
-	currentRows, err := mdb.GetMetricSegs(ctx, lrdb.GetMetricSegsParams{
+	currentRows, err := mdb.GetMetricSegsForRollup(ctx, lrdb.GetMetricSegsForRollupParams{
 		OrganizationID: inf.OrganizationID(),
 		InstanceNum:    inf.InstanceNum(),
 		Dateint:        inf.Dateint(),

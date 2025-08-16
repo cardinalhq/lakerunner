@@ -30,7 +30,7 @@ VALUES (
   @published
 );
 
--- name: GetMetricSegs :many
+-- name: GetMetricSegsForCompaction :many
 SELECT *
 FROM metric_seg
 WHERE
@@ -38,11 +38,22 @@ WHERE
   dateint = @dateint AND
   frequency_ms = @frequency_ms AND
   instance_num = @instance_num
-  AND (
-    (@start_ts::BIGINT = 0 AND @end_ts::BIGINT = 0)
-    OR
-    (ts_range && int8range(@start_ts, @end_ts, '[)'))
-  )
+  AND ts_range && int8range(@start_ts, @end_ts, '[)')
+  AND file_size <= @max_file_size
+  AND created_at > @cursor_created_at
+ORDER BY
+  created_at
+LIMIT @maxrows;
+
+-- name: GetMetricSegsForRollup :many
+SELECT *
+FROM metric_seg
+WHERE
+  organization_id = @organization_id AND
+  dateint = @dateint AND
+  frequency_ms = @frequency_ms AND
+  instance_num = @instance_num
+  AND ts_range && int8range(@start_ts, @end_ts, '[)')
 ORDER BY
   ts_range;
 

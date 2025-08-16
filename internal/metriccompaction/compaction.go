@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"time"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
@@ -90,36 +91,102 @@ func doCompactItem(
 		return WorkResultSuccess, fmt.Errorf("invalid time range in work item: %v", inf.TsRange())
 	}
 
-	inRows, err := mdb.GetMetricSegs(ctx, lrdb.GetMetricSegsParams{
-		OrganizationID: inf.OrganizationID(),
-		InstanceNum:    inf.InstanceNum(),
-		Dateint:        inf.Dateint(),
-		FrequencyMs:    inf.FrequencyMs(),
-		StartTs:        st.Time.UTC().UnixMilli(),
-		EndTs:          et.Time.UTC().UnixMilli(),
-	})
-	if err != nil {
-		ll.Error("Failed to get current metric segments", slog.Any("error", err))
-		return WorkResultTryAgainLater, err
-	}
+	const maxRowsLimit = 1000
+	totalBatchesProcessed := 0
+	totalSegmentsProcessed := 0
+	cursorCreatedAt := time.Time{} // Start from beginning (zero time)
 
-	if len(inRows) == 0 {
-		ll.Info("No input rows to compact, skipping work item")
-		return WorkResultSuccess, nil
-	}
+	// Loop until we've processed all available segments
+	for {
+		// Check if context is cancelled before starting next batch
+		if ctx.Err() != nil {
+			ll.Info("Context cancelled, stopping compaction loop - will retry to continue",
+				slog.Int("processedBatches", totalBatchesProcessed),
+				slog.Int("processedSegments", totalSegmentsProcessed),
+				slog.Any("error", ctx.Err()))
+			return WorkResultTryAgainLater, nil
+		}
 
-	if !ShouldCompactMetrics(inRows) {
-		ll.Info("No need to compact metrics, skipping work item", slog.Int("rowCount", len(inRows)))
-		return WorkResultSuccess, nil
-	}
+		ll.Info("Querying for metric segments to compact",
+			slog.Int("batch", totalBatchesProcessed+1),
+			slog.Time("cursorCreatedAt", cursorCreatedAt))
 
-	err = compactInterval(ctx, ll, mdb, tmpdir, inf, profile, s3client, inRows, rpfEstimate)
-	if err != nil {
-		ll.Error("Failed to compact interval", slog.Any("error", err))
-		return WorkResultTryAgainLater, err
-	}
+		inRows, err := mdb.GetMetricSegsForCompaction(ctx, lrdb.GetMetricSegsForCompactionParams{
+			OrganizationID:  inf.OrganizationID(),
+			InstanceNum:     inf.InstanceNum(),
+			Dateint:         inf.Dateint(),
+			FrequencyMs:     inf.FrequencyMs(),
+			StartTs:         st.Time.UTC().UnixMilli(),
+			EndTs:           et.Time.UTC().UnixMilli(),
+			MaxFileSize:     targetFileSize * 9 / 10, // Only include files < 90% of target (larger files are fine as-is)
+			CursorCreatedAt: cursorCreatedAt,          // Cursor for pagination
+			Maxrows:         maxRowsLimit,             // Safety limit for compaction batch
+		})
+		if err != nil {
+			ll.Error("Failed to get current metric segments", slog.Any("error", err))
+			return WorkResultTryAgainLater, err
+		}
 
-	return WorkResultSuccess, nil
+		// No more segments to process
+		if len(inRows) == 0 {
+			if totalBatchesProcessed == 0 {
+				ll.Info("No input rows to compact, skipping work item")
+			} else {
+				ll.Info("Finished processing all compaction batches",
+					slog.Int("totalBatches", totalBatchesProcessed),
+					slog.Int("totalSegments", totalSegmentsProcessed))
+			}
+			return WorkResultSuccess, nil
+		}
+
+		ll.Info("Processing compaction batch",
+			slog.Int("segmentCount", len(inRows)),
+			slog.Int("batch", totalBatchesProcessed+1))
+
+		// Update cursor to last created_at in this batch to ensure forward progress
+		if len(inRows) > 0 {
+			cursorCreatedAt = inRows[len(inRows)-1].CreatedAt
+		}
+
+		// Check if this batch needs compaction
+		if !ShouldCompactMetrics(inRows) {
+			ll.Info("No need to compact metrics in this batch", slog.Int("rowCount", len(inRows)))
+
+			// If we didn't hit the limit, we've seen all segments
+			if len(inRows) < maxRowsLimit {
+				if totalBatchesProcessed == 0 {
+					ll.Info("No segments need compaction")
+				}
+				return WorkResultSuccess, nil
+			}
+			// Continue to next batch without processing - cursor already advanced
+			totalBatchesProcessed++
+			continue
+		}
+
+		// Process this batch
+		err = compactInterval(ctx, ll, mdb, tmpdir, inf, profile, s3client, inRows, rpfEstimate)
+		if err != nil {
+			ll.Error("Failed to compact interval", slog.Any("error", err))
+			return WorkResultTryAgainLater, err
+		}
+
+		totalBatchesProcessed++
+		totalSegmentsProcessed += len(inRows)
+
+		// If we didn't hit the limit, we've processed all available segments
+		if len(inRows) < maxRowsLimit {
+			ll.Info("Completed all compaction batches",
+				slog.Int("totalBatches", totalBatchesProcessed),
+				slog.Int("totalSegments", totalSegmentsProcessed))
+			return WorkResultSuccess, nil
+		}
+
+		// Continue to next batch - cursor already advanced
+		ll.Info("Batch completed, checking for more segments",
+			slog.Int("processedSegments", len(inRows)),
+			slog.Time("nextCursor", cursorCreatedAt))
+	}
 }
 
 func ShouldCompactMetrics(rows []lrdb.MetricSeg) bool {
