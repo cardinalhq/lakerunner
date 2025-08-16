@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package cmd
+package metriccompaction
 
 import (
 	"math"
@@ -102,7 +102,7 @@ func TestShouldCompactMetrics(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := shouldCompactMetrics(tt.rows)
+			result := ShouldCompactMetrics(tt.rows)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -171,7 +171,7 @@ func TestGetStartEndTimes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotStart, gotEnd := getStartEndTimes(tt.rows)
+			gotStart, gotEnd := GetStartEndTimes(tt.rows)
 			assert.Equal(t, tt.wantStart, gotStart)
 			assert.Equal(t, tt.wantEnd, gotEnd)
 		})
