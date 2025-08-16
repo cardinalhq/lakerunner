@@ -22,10 +22,10 @@ WHERE
   instance_num = $4
   AND ts_range && int8range($5, $6, '[)')
   AND file_size <= $7
-  AND created_at > $8
+  AND (created_at, segment_id) > ($8, $9::bigint)
 ORDER BY
-  created_at
-LIMIT $9
+  created_at, segment_id
+LIMIT $10
 `
 
 type GetMetricSegsForCompactionParams struct {
@@ -37,6 +37,7 @@ type GetMetricSegsForCompactionParams struct {
 	EndTs           int64     `json:"end_ts"`
 	MaxFileSize     int64     `json:"max_file_size"`
 	CursorCreatedAt time.Time `json:"cursor_created_at"`
+	CursorSegmentID int64     `json:"cursor_segment_id"`
 	Maxrows         int32     `json:"maxrows"`
 }
 
@@ -50,6 +51,7 @@ func (q *Queries) GetMetricSegsForCompaction(ctx context.Context, arg GetMetricS
 		arg.EndTs,
 		arg.MaxFileSize,
 		arg.CursorCreatedAt,
+		arg.CursorSegmentID,
 		arg.Maxrows,
 	)
 	if err != nil {

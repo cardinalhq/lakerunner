@@ -130,68 +130,137 @@ func logCompactItemDo(
 		return WorkResultTryAgainLater, errors.New("range bounds are not the same dateint")
 	}
 
-	segments, err := mdb.GetLogSegmentsForCompaction(ctx, lrdb.GetLogSegmentsForCompactionParams{
-		OrganizationID: sp.OrganizationID,
-		Dateint:        stdi,
-		InstanceNum:    sp.InstanceNum,
-	})
-	if err != nil {
-		ll.Error("Error getting log segments for compaction", slog.String("error", err.Error()))
-		return WorkResultTryAgainLater, err
-	}
-	ll.Info("Got log segments for compaction",
-		slog.Int("segmentCount", len(segments)))
+	const maxRowsLimit = 1000
+	totalBatchesProcessed := 0
+	totalSegmentsProcessed := 0
+	cursorCreatedAt := time.Time{} // Start from beginning (zero time)
+	cursorSegmentID := int64(0)    // Start from beginning (zero ID)
 
-	if len(segments) == 0 {
-		ll.Info("No segments to compact")
-		return WorkResultSuccess, nil
-	}
-
-	packed, err := logcrunch.PackSegments(segments, rpfEstimate)
-	if err != nil {
-		ll.Error("Error packing segments", slog.String("error", err.Error()))
-		return WorkResultTryAgainLater, err
-	}
-
-	lastGroupSmall := false
-	if len(packed) > 0 {
-		// if the last packed segment is smaller than half our target size, drop it.
-		bytecount := int64(0)
-		lastGroup := packed[len(packed)-1]
-		for _, segment := range lastGroup {
-			bytecount += segment.FileSize
+	// Loop until we've processed all available segments
+	for {
+		// Check if context is cancelled before starting next batch
+		if ctx.Err() != nil {
+			ll.Info("Context cancelled, stopping compaction loop - will retry to continue",
+				slog.Int("processedBatches", totalBatchesProcessed),
+				slog.Int("processedSegments", totalSegmentsProcessed),
+				slog.Any("error", ctx.Err()))
+			return WorkResultTryAgainLater, nil
 		}
-		if bytecount < targetFileSize/2 {
-			packed = packed[:len(packed)-1]
-			lastGroupSmall = true
-		}
-	}
 
-	if len(packed) == 0 {
-		ll.Info("No segments to compact")
-		return WorkResultSuccess, nil
-	}
+		ll.Info("Querying for log segments to compact",
+			slog.Int("batch", totalBatchesProcessed+1),
+			slog.Time("cursorCreatedAt", cursorCreatedAt),
+			slog.Int64("cursorSegmentID", cursorSegmentID))
 
-	ll.Info("counts", slog.Int("currentSegments", len(segments)), slog.Int("packGroups", len(packed)), slog.Bool("lastGroupSmall", lastGroupSmall))
-
-	for i, group := range packed {
-		ll := ll.With(slog.Int("groupIndex", i))
-		err = packSegment(ctx, ll, tmpdir, s3client, mdb, group, sp, stdi)
+		segments, err := mdb.GetLogSegmentsForCompaction(ctx, lrdb.GetLogSegmentsForCompactionParams{
+			OrganizationID:  sp.OrganizationID,
+			Dateint:         stdi,
+			InstanceNum:     sp.InstanceNum,
+			MaxFileSize:     targetFileSize * 9 / 10, // Only include files < 90% of target (larger files are fine as-is)
+			CursorCreatedAt: cursorCreatedAt,         // Cursor for pagination
+			CursorSegmentID: cursorSegmentID,         // Cursor for pagination
+			Maxrows:         maxRowsLimit,            // Safety limit for compaction batch
+		})
 		if err != nil {
-			break
+			ll.Error("Error getting log segments for compaction", slog.String("error", err.Error()))
+			return WorkResultTryAgainLater, err
 		}
-		select {
-		case <-compactLogsDoneCtx.Done():
-			return WorkResultTryAgainLater, errors.New("Asked to shut down, will retry work")
-		default:
-		}
-	}
 
-	if err != nil {
-		return WorkResultTryAgainLater, err
+		// No more segments to process
+		if len(segments) == 0 {
+			if totalBatchesProcessed == 0 {
+				ll.Info("No segments to compact")
+			} else {
+				ll.Info("Finished processing all compaction batches",
+					slog.Int("totalBatches", totalBatchesProcessed),
+					slog.Int("totalSegments", totalSegmentsProcessed))
+			}
+			return WorkResultSuccess, nil
+		}
+
+		ll.Info("Processing compaction batch",
+			slog.Int("segmentCount", len(segments)),
+			slog.Int("batch", totalBatchesProcessed+1))
+
+		// Update cursor to last (created_at, segment_id) in this batch to ensure forward progress
+		if len(segments) > 0 {
+			lastSeg := segments[len(segments)-1]
+			cursorCreatedAt = lastSeg.CreatedAt
+			cursorSegmentID = lastSeg.SegmentID
+		}
+
+		packed, err := logcrunch.PackSegments(segments, rpfEstimate)
+		if err != nil {
+			ll.Error("Error packing segments", slog.String("error", err.Error()))
+			return WorkResultTryAgainLater, err
+		}
+
+		lastGroupSmall := false
+		if len(packed) > 0 {
+			// if the last packed segment is smaller than half our target size, drop it.
+			bytecount := int64(0)
+			lastGroup := packed[len(packed)-1]
+			for _, segment := range lastGroup {
+				bytecount += segment.FileSize
+			}
+			if bytecount < targetFileSize/2 {
+				packed = packed[:len(packed)-1]
+				lastGroupSmall = true
+			}
+		}
+
+		if len(packed) == 0 {
+			ll.Info("No segments to compact in this batch")
+			// If we didn't hit the limit, we've seen all segments
+			if len(segments) < maxRowsLimit {
+				if totalBatchesProcessed == 0 {
+					ll.Info("No segments need compaction")
+				}
+				return WorkResultSuccess, nil
+			}
+			// Continue to next batch without processing - cursor already advanced
+			totalBatchesProcessed++
+			continue
+		}
+
+		ll.Info("counts", slog.Int("currentSegments", len(segments)), slog.Int("packGroups", len(packed)), slog.Bool("lastGroupSmall", lastGroupSmall))
+
+		for i, group := range packed {
+			ll := ll.With(slog.Int("groupIndex", i))
+			err = packSegment(ctx, ll, tmpdir, s3client, mdb, group, sp, stdi)
+			if err != nil {
+				break
+			}
+			select {
+			case <-compactLogsDoneCtx.Done():
+				return WorkResultTryAgainLater, errors.New("Asked to shut down, will retry work")
+			default:
+			}
+		}
+
+		if err != nil {
+			return WorkResultTryAgainLater, err
+		}
+
+		totalBatchesProcessed++
+		totalSegmentsProcessed += len(segments)
+
+		ll.Info("Successfully packed segments in batch", slog.Int("groupCount", len(packed)))
+
+		// If we didn't hit the limit, we've processed all available segments
+		if len(segments) < maxRowsLimit {
+			ll.Info("Completed all compaction batches",
+				slog.Int("totalBatches", totalBatchesProcessed),
+				slog.Int("totalSegments", totalSegmentsProcessed))
+			return WorkResultSuccess, nil
+		}
+
+		// Continue to next batch - cursor already advanced
+		ll.Info("Batch completed, checking for more segments",
+			slog.Int("processedSegments", len(segments)),
+			slog.Time("nextCursorCreatedAt", cursorCreatedAt),
+			slog.Int64("nextCursorSegmentID", cursorSegmentID))
 	}
-	ll.Info("Successfully packed segments", slog.Int("groupCount", len(packed)))
-	return WorkResultSuccess, nil
 }
 
 // timeToDateint computes the dateint for the current time.  This is YYYYMMDD as an int32.

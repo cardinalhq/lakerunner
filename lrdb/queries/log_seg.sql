@@ -31,14 +31,18 @@ SELECT
   upper(ts_range)::bigint AS end_ts,
   file_size,
   record_count,
-  ingest_dateint
+  ingest_dateint,
+  created_at
 FROM log_seg
 WHERE organization_id = @organization_id
   AND dateint         = @dateint
   AND instance_num    = @instance_num
   AND file_size > 0
   AND record_count > 0
-ORDER BY lower(ts_range);
+  AND file_size <= @max_file_size
+  AND (created_at, segment_id) > (@cursor_created_at, @cursor_segment_id::bigint)
+ORDER BY created_at, segment_id
+LIMIT @maxrows;
 
 -- name: CompactLogSegments :exec
 WITH

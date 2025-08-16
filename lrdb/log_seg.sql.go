@@ -7,6 +7,7 @@ package lrdb
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -99,33 +100,50 @@ SELECT
   upper(ts_range)::bigint AS end_ts,
   file_size,
   record_count,
-  ingest_dateint
+  ingest_dateint,
+  created_at
 FROM log_seg
 WHERE organization_id = $1
   AND dateint         = $2
   AND instance_num    = $3
   AND file_size > 0
   AND record_count > 0
-ORDER BY lower(ts_range)
+  AND file_size <= $4
+  AND (created_at, segment_id) > ($5, $6::bigint)
+ORDER BY created_at, segment_id
+LIMIT $7
 `
 
 type GetLogSegmentsForCompactionParams struct {
-	OrganizationID uuid.UUID `json:"organization_id"`
-	Dateint        int32     `json:"dateint"`
-	InstanceNum    int16     `json:"instance_num"`
+	OrganizationID  uuid.UUID `json:"organization_id"`
+	Dateint         int32     `json:"dateint"`
+	InstanceNum     int16     `json:"instance_num"`
+	MaxFileSize     int64     `json:"max_file_size"`
+	CursorCreatedAt time.Time `json:"cursor_created_at"`
+	CursorSegmentID int64     `json:"cursor_segment_id"`
+	Maxrows         int32     `json:"maxrows"`
 }
 
 type GetLogSegmentsForCompactionRow struct {
-	SegmentID     int64 `json:"segment_id"`
-	StartTs       int64 `json:"start_ts"`
-	EndTs         int64 `json:"end_ts"`
-	FileSize      int64 `json:"file_size"`
-	RecordCount   int64 `json:"record_count"`
-	IngestDateint int32 `json:"ingest_dateint"`
+	SegmentID     int64     `json:"segment_id"`
+	StartTs       int64     `json:"start_ts"`
+	EndTs         int64     `json:"end_ts"`
+	FileSize      int64     `json:"file_size"`
+	RecordCount   int64     `json:"record_count"`
+	IngestDateint int32     `json:"ingest_dateint"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 func (q *Queries) GetLogSegmentsForCompaction(ctx context.Context, arg GetLogSegmentsForCompactionParams) ([]GetLogSegmentsForCompactionRow, error) {
-	rows, err := q.db.Query(ctx, getLogSegmentsForCompaction, arg.OrganizationID, arg.Dateint, arg.InstanceNum)
+	rows, err := q.db.Query(ctx, getLogSegmentsForCompaction,
+		arg.OrganizationID,
+		arg.Dateint,
+		arg.InstanceNum,
+		arg.MaxFileSize,
+		arg.CursorCreatedAt,
+		arg.CursorSegmentID,
+		arg.Maxrows,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -140,6 +158,7 @@ func (q *Queries) GetLogSegmentsForCompaction(ctx context.Context, arg GetLogSeg
 			&i.FileSize,
 			&i.RecordCount,
 			&i.IngestDateint,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
