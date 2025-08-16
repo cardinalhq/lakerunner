@@ -29,11 +29,9 @@ RUN apt-get update && apt-get install -y \
 
 # Copy DuckDB SDK files
 COPY --from=duckdb-sdk /usr/local /usr/local
-COPY --from=duckdb-sdk /lib /lib
 COPY --from=duckdb-sdk /etc/ssl /etc/ssl
 
-# Update library cache
-RUN ldconfig
+# No shared libraries to cache for static linking
 
 # Set working directory
 WORKDIR /workspace
