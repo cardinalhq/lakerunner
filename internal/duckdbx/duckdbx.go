@@ -144,12 +144,17 @@ func (d *DB) setupConn(ctx context.Context, conn *sql.Conn) error {
 		}
 	}
 	for _, ext := range d.config.Extensions {
-		stmt := fmt.Sprintf("INSTALL %s", ext.Name)
-		if _, err := conn.ExecContext(ctx, stmt); err != nil {
-			return fmt.Errorf("failed to install extension '%s': %w", ext.Name, err)
-		}
+		// Try to load the extension first (works for both static and installed extensions)
 		if _, err := conn.ExecContext(ctx, fmt.Sprintf("LOAD %s;", ext.Name)); err != nil {
-			return fmt.Errorf("failed to load extension '%s': %w", ext.Name, err)
+			// If load fails, try to install first (for non-static extensions)
+			stmt := fmt.Sprintf("INSTALL %s", ext.Name)
+			if _, err := conn.ExecContext(ctx, stmt); err != nil {
+				return fmt.Errorf("failed to install extension '%s': %w", ext.Name, err)
+			}
+			// Then try to load again
+			if _, err := conn.ExecContext(ctx, fmt.Sprintf("LOAD %s;", ext.Name)); err != nil {
+				return fmt.Errorf("failed to load extension '%s': %w", ext.Name, err)
+			}
 		}
 	}
 	return nil
