@@ -26,22 +26,7 @@ archives:
       - binary
 
 builds:
-  - id: lakerunner
-    main: ./main.go
-    mod_timestamp: "{{ .CommitTimestamp }}"
-    goos:
-      - linux
-    goarch:
-      - amd64
-      - arm64
-    env:
-      - CGO_ENABLED=1
-    ldflags:
-      #- -extldflags "-lc -lrt -lpthread --static"
-      - -X main.commit={{ .Commit }}
-      - -X main.version={{ .Version }}
-    flags:
-      - -trimpath
+  - skip: true
 
 # Define how to build/push Docker images.
 dockers:
@@ -51,18 +36,13 @@ dockers:
     extra_files:
       - go.mod
       - go.sum
-      - "**/*.go"
-      - "**/*.sql"
-      - "**/*.yaml"
-      - "**/*.yml"
-      - "main.go"
-      - "cmd/"
-      - "internal/"
-      - "pkg/"
-      - "promql/"
-      - "fileconv/"
-      - "lockmgr/"
-      - "lrdb/"
+      - main.go
+      - cmd/
+      - internal/
+      - promql/
+      - fileconv/
+      - lockmgr/
+      - lrdb/
     use: buildx
     image_templates:
       - "public.ecr.aws/cardinalhq.io/lakerunner:v{{ .Version }}-amd64"
@@ -83,18 +63,13 @@ dockers:
     extra_files:
       - go.mod
       - go.sum
-      - "**/*.go"
-      - "**/*.sql"
-      - "**/*.yaml"
-      - "**/*.yml"
-      - "main.go"
-      - "cmd/"
-      - "internal/"
-      - "pkg/"
-      - "promql/"
-      - "fileconv/"
-      - "lockmgr/"
-      - "lrdb/"
+      - main.go
+      - cmd/
+      - internal/
+      - promql/
+      - fileconv/
+      - lockmgr/
+      - lrdb/
     use: buildx
     image_templates:
       - "public.ecr.aws/cardinalhq.io/lakerunner:v{{ .Version }}-arm64"
