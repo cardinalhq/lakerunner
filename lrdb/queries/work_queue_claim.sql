@@ -1,8 +1,7 @@
 -- name: WorkQueueClaimDirect :one
-WITH params AS (
-    SELECT
-      NOW() AS v_now,
-      (SELECT value::interval FROM public.settings WHERE key = 'lock_ttl') AS v_lock_ttl
+WITH
+  v_now AS (
+    SELECT NOW() AS ts
   ),
 
   target_freqs AS (
@@ -22,10 +21,9 @@ WITH params AS (
     FROM public.signal_locks sl
     WHERE
       sl.signal       = @signal
+      AND sl.slot_id  = @slot_id
       AND sl.frequency_ms = ANY (
-        -- the “own” frequencies
         ARRAY(SELECT freq FROM target_freqs)
-        -- plus, if rollup, the child freqs
         || COALESCE(
              (SELECT array_agg(child_freq_ms)
               FROM rollup_sources
@@ -36,27 +34,29 @@ WITH params AS (
       )
   ),
 
-candidate AS (
-  SELECT w.*
-  FROM public.work_queue w
-  LEFT JOIN sl_small sl
-    ON sl.organization_id = w.organization_id
-   AND sl.instance_num    = w.instance_num
-   AND sl.signal          = w.signal
-   AND sl.ts_range && w.ts_range
-   AND sl.work_id <> w.id
-  WHERE
-    w.frequency_ms = ANY (SELECT freq FROM target_freqs)
-    AND w.priority >= @min_priority
-    AND w.signal     = @signal
-    AND w.action     = @action
-    AND w.runnable_at <= (SELECT v_now FROM params)
-    AND sl.id IS NULL
-    AND w.needs_run
-  ORDER BY w.needs_run DESC, w.priority DESC, w.runnable_at, w.id
-  LIMIT 1
-  FOR UPDATE SKIP LOCKED
-),
+  candidate AS (
+    SELECT w.*
+    FROM public.work_queue w
+    LEFT JOIN sl_small sl
+      ON sl.organization_id = w.organization_id
+     AND sl.instance_num    = w.instance_num
+     AND sl.signal          = w.signal
+     AND sl.slot_id         = w.slot_id
+     AND sl.ts_range && w.ts_range
+     AND sl.work_id <> w.id
+    WHERE
+      w.frequency_ms = ANY (SELECT freq FROM target_freqs)
+      AND w.priority >= @min_priority
+      AND w.signal     = @signal
+      AND w.action     = @action
+      AND w.slot_id    = @slot_id
+      AND w.runnable_at <= (SELECT ts FROM v_now)
+      AND sl.id IS NULL
+      AND w.needs_run
+    ORDER BY w.needs_run DESC, w.priority DESC, w.runnable_at, w.id
+    LIMIT 1
+    FOR UPDATE SKIP LOCKED
+  ),
 
   lock_map AS (
     -- always insert a lock at the candidate’s own frequency
@@ -83,7 +83,8 @@ candidate AS (
     INSERT INTO public.signal_locks (
       organization_id, instance_num, dateint,
       frequency_ms,    signal,       claimed_by,
-      claimed_at,      ts_range,     work_id
+      claimed_at,      ts_range,     work_id,
+      slot_id
     )
     SELECT
       c.organization_id,
@@ -92,9 +93,10 @@ candidate AS (
       lm.lock_freq_ms,
       c.signal,
       @worker_id,
-      (SELECT v_now FROM params),
+      (SELECT ts FROM v_now),
       c.ts_range,
-      c.id
+      c.id,
+      c.slot_id
     FROM candidate c
     CROSS JOIN lock_map lm
     ORDER BY lm.lock_freq_ms
@@ -104,8 +106,8 @@ candidate AS (
     UPDATE public.work_queue w
     SET
       claimed_by     = @worker_id,
-      claimed_at     = (SELECT v_now FROM params),
-      heartbeated_at = (SELECT v_now FROM params),
+      claimed_at     = (SELECT ts FROM v_now),
+      heartbeated_at = (SELECT ts FROM v_now),
       needs_run      = FALSE,
       tries          = w.tries + 1
     FROM candidate c

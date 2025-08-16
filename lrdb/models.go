@@ -224,6 +224,7 @@ type SignalLock struct {
 	ClaimedBy      int64                            `json:"claimed_by"`
 	ClaimedAt      *time.Time                       `json:"claimed_at"`
 	HeartbeatedAt  time.Time                        `json:"heartbeated_at"`
+	SlotID         int32                            `json:"slot_id"`
 }
 
 type WorkQueue struct {
@@ -242,4 +243,5 @@ type WorkQueue struct {
 	ClaimedBy      int64                            `json:"claimed_by"`
 	ClaimedAt      *time.Time                       `json:"claimed_at"`
 	HeartbeatedAt  time.Time                        `json:"heartbeated_at"`
+	SlotID         int32                            `json:"slot_id"`
 }

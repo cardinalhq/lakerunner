@@ -37,6 +37,7 @@ type WorkItem struct {
 	tsRange     pgtype.Range[pgtype.Timestamptz]
 	priority    int32
 	runnableAt  time.Time
+	slotId      int32
 
 	closed bool
 	mgr    *wqManager
@@ -55,6 +56,7 @@ type Workable interface {
 	Action() lrdb.ActionEnum
 	TsRange() pgtype.Range[pgtype.Timestamptz]
 	Priority() int32
+	SlotId() int32
 	AsMap() map[string]any
 	RunnableAt() time.Time
 }
@@ -156,6 +158,11 @@ func (w *WorkItem) RunnableAt() time.Time {
 	return w.runnableAt
 }
 
+// SlotId returns the slot ID for the work item.
+func (w *WorkItem) SlotId() int32 {
+	return w.slotId
+}
+
 // AsMap converts the work item to a map representation.
 func (w *WorkItem) AsMap() map[string]any {
 	return map[string]any{
@@ -170,5 +177,6 @@ func (w *WorkItem) AsMap() map[string]any {
 		"tsRange":     w.tsRange,
 		"priority":    w.priority,
 		"runnableAt":  w.runnableAt,
+		"slotId":      w.slotId,
 	}
 }

@@ -33,38 +33,41 @@ WITH params AS (
   ),
 
   sl_small AS MATERIALIZED (
-    SELECT id, work_id, organization_id, instance_num, dateint, frequency_ms, signal, ts_range, claimed_by, claimed_at, heartbeated_at
+    SELECT id, work_id, organization_id, instance_num, dateint, frequency_ms, signal, ts_range, claimed_by, claimed_at, heartbeated_at, slot_id
     FROM public.signal_locks sl
     WHERE
       sl.signal       = $2
+      AND sl.slot_id  = $3
       AND sl.frequency_ms = ANY (
-        -- the “own” frequencies
+        -- the "own" frequencies
         ARRAY(SELECT freq FROM target_freqs)
         -- plus, if rollup, the child freqs
         || COALESCE(
              (SELECT array_agg(child_freq_ms)
               FROM rollup_sources
               WHERE parent_freq_ms = ANY(SELECT freq FROM target_freqs)
-                AND $3::action_enum = 'rollup'),
+                AND $4::action_enum = 'rollup'),
              '{}'
            )
       )
   ),
 
 candidate AS (
-  SELECT w.id, w.priority, w.runnable_at, w.organization_id, w.instance_num, w.dateint, w.frequency_ms, w.signal, w.action, w.needs_run, w.tries, w.ts_range, w.claimed_by, w.claimed_at, w.heartbeated_at
+  SELECT w.id, w.priority, w.runnable_at, w.organization_id, w.instance_num, w.dateint, w.frequency_ms, w.signal, w.action, w.needs_run, w.tries, w.ts_range, w.claimed_by, w.claimed_at, w.heartbeated_at, w.slot_id
   FROM public.work_queue w
   LEFT JOIN sl_small sl
     ON sl.organization_id = w.organization_id
    AND sl.instance_num    = w.instance_num
    AND sl.signal          = w.signal
+   AND sl.slot_id         = w.slot_id
    AND sl.ts_range && w.ts_range
    AND sl.work_id <> w.id
   WHERE
     w.frequency_ms = ANY (SELECT freq FROM target_freqs)
-    AND w.priority >= $4
+    AND w.priority >= $5
     AND w.signal     = $2
-    AND w.action     = $3
+    AND w.action     = $4
+    AND w.slot_id    = $3
     AND w.runnable_at <= (SELECT v_now FROM params)
     AND sl.id IS NULL
     AND w.needs_run
@@ -85,7 +88,7 @@ candidate AS (
     FROM candidate c
     JOIN rollup_sources rs
       ON c.frequency_ms = rs.parent_freq_ms
-    WHERE $3 = 'rollup'
+    WHERE $4 = 'rollup'
   ),
 
   cleanup_locks AS (
@@ -98,7 +101,8 @@ candidate AS (
     INSERT INTO public.signal_locks (
       organization_id, instance_num, dateint,
       frequency_ms,    signal,       claimed_by,
-      claimed_at,      ts_range,     work_id
+      claimed_at,      ts_range,     work_id,
+      slot_id
     )
     SELECT
       c.organization_id,
@@ -106,10 +110,11 @@ candidate AS (
       c.dateint,
       lm.lock_freq_ms,
       c.signal,
-      $5,
+      $6,
       (SELECT v_now FROM params),
       c.ts_range,
-      c.id
+      c.id,
+      c.slot_id
     FROM candidate c
     CROSS JOIN lock_map lm
     ORDER BY lm.lock_freq_ms
@@ -118,22 +123,23 @@ candidate AS (
   updated AS (
     UPDATE public.work_queue w
     SET
-      claimed_by     = $5,
+      claimed_by     = $6,
       claimed_at     = (SELECT v_now FROM params),
       heartbeated_at = (SELECT v_now FROM params),
       needs_run      = FALSE,
       tries          = w.tries + 1
     FROM candidate c
     WHERE w.id = c.id
-    RETURNING w.id, w.priority, w.runnable_at, w.organization_id, w.instance_num, w.dateint, w.frequency_ms, w.signal, w.action, w.needs_run, w.tries, w.ts_range, w.claimed_by, w.claimed_at, w.heartbeated_at
+    RETURNING w.id, w.priority, w.runnable_at, w.organization_id, w.instance_num, w.dateint, w.frequency_ms, w.signal, w.action, w.needs_run, w.tries, w.ts_range, w.claimed_by, w.claimed_at, w.heartbeated_at, w.slot_id
   )
 
-SELECT id, priority, runnable_at, organization_id, instance_num, dateint, frequency_ms, signal, action, needs_run, tries, ts_range, claimed_by, claimed_at, heartbeated_at FROM updated
+SELECT id, priority, runnable_at, organization_id, instance_num, dateint, frequency_ms, signal, action, needs_run, tries, ts_range, claimed_by, claimed_at, heartbeated_at, slot_id FROM updated
 `
 
 type WorkQueueClaimParams struct {
 	TargetFreqs []int32    `json:"target_freqs"`
 	Signal      SignalEnum `json:"signal"`
+	SlotID      int32      `json:"slot_id"`
 	Action      ActionEnum `json:"action"`
 	MinPriority int32      `json:"min_priority"`
 	WorkerID    int64      `json:"worker_id"`
@@ -155,12 +161,14 @@ type WorkQueueClaimRow struct {
 	ClaimedBy      int64                            `json:"claimed_by"`
 	ClaimedAt      *time.Time                       `json:"claimed_at"`
 	HeartbeatedAt  time.Time                        `json:"heartbeated_at"`
+	SlotID         int32                            `json:"slot_id"`
 }
 
 func (q *Queries) WorkQueueClaimDirect(ctx context.Context, arg WorkQueueClaimParams) (WorkQueueClaimRow, error) {
 	row := q.db.QueryRow(ctx, workQueueClaimDirect,
 		arg.TargetFreqs,
 		arg.Signal,
+		arg.SlotID,
 		arg.Action,
 		arg.MinPriority,
 		arg.WorkerID,
@@ -182,6 +190,7 @@ func (q *Queries) WorkQueueClaimDirect(ctx context.Context, arg WorkQueueClaimPa
 		&i.ClaimedBy,
 		&i.ClaimedAt,
 		&i.HeartbeatedAt,
+		&i.SlotID,
 	)
 	return i, err
 }
