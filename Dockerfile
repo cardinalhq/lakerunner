@@ -56,15 +56,12 @@ RUN go build -ldflags="${LDFLAGS}" -o lakerunner main.go
 # ========= Stage 3: Runtime Image =========
 FROM gcr.io/distroless/cc-debian12:nonroot
 
-# Copy DuckDB runtime libraries and dependencies
-COPY --from=duckdb-sdk /usr/local/lib/libduckdb.so /usr/local/lib/
-COPY --from=duckdb-sdk /lib /lib
+# Copy SSL certificates for HTTPS support (statically linked binary needs no DuckDB libs)
 COPY --from=duckdb-sdk /etc/ssl /etc/ssl
 
 # Copy the binary
 COPY --from=builder /workspace/lakerunner /app/bin/lakerunner
 
-# Set library path
-ENV LD_LIBRARY_PATH=/usr/local/lib
+# No library path needed for statically linked binary
 
 CMD ["/app/bin/lakerunner"]

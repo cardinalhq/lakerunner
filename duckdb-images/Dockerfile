@@ -20,7 +20,7 @@ FROM debian:bookworm-slim AS build
 # and GEN=ninja to the make command below.
 
 RUN apt-get update && apt-get install -y \
-    git g++ cmake libssl-dev python3 ca-certificates \
+    git g++ cmake libssl-dev python3 ca-certificates pkg-config \
  && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /workdir && chown 1000:1000 /workdir
@@ -31,7 +31,14 @@ ARG DUCKDB_VERSION=v1.3.2
 RUN git clone --branch ${DUCKDB_VERSION} https://github.com/duckdb/duckdb.git
 WORKDIR /workdir/duckdb
 
-RUN BUILD_SHELL=0 CORE_EXTENSIONS='parquet;httpfs;json' GEN= make
+RUN mkdir -p build && cd build && \
+    cmake -DCMAKE_BUILD_TYPE=Release \
+          -DBUILD_SHELL=0 \
+          -DBUILD_HTTPFS_EXTENSION=1 \
+          -DBUILD_JSON_EXTENSION=1 \
+          -DBUILD_PARQUET_EXTENSION=1 \
+          .. && \
+    make -j$(nproc)
 
 FROM build AS collect
 USER root
@@ -41,24 +48,17 @@ RUN mkdir -p ${INSTALL_PREFIX}/include ${INSTALL_PREFIX}/lib
 
 # Copy SDK headers and libs
 RUN cp -r /workdir/duckdb/src/include/duckdb ${INSTALL_PREFIX}/include/
-RUN cp /workdir/duckdb/build/release/src/libduckdb.so \
-       /workdir/duckdb/build/release/src/libduckdb_static.a \
+RUN cp /workdir/duckdb/build/src/libduckdb_static.a \
        ${INSTALL_PREFIX}/lib/
 
 # pkg-config file for easier linking
 RUN mkdir -p ${INSTALL_PREFIX}/lib/pkgconfig && \
-    printf 'prefix=%s\nexec_prefix=${prefix}\nlibdir=${exec_prefix}/lib\nincludedir=${prefix}/include\n\nName: duckdb\nDescription: DuckDB\nVersion: %s\nLibs: -L${libdir} -lduckdb\nCflags: -I${includedir}\n' \
+    printf 'prefix=%s\nexec_prefix=${prefix}\nlibdir=${exec_prefix}/lib\nincludedir=${prefix}/include\n\nName: duckdb\nDescription: DuckDB\nVersion: %s\nLibs: -L${libdir} -lduckdb_static\nCflags: -I${includedir}\n' \
       "${INSTALL_PREFIX}" "${DUCKDB_VERSION}" > ${INSTALL_PREFIX}/lib/pkgconfig/duckdb.pc
 
-# Collect runtime shared libs & dynamic loader into /rootfs with original absolute paths
-RUN set -eux; \
-    mkdir -p /rootfs; \
-    so=${INSTALL_PREFIX}/lib/libduckdb.so; \
-    ldd "$so" | awk '/=> \//{print $3} /ld-linux/{print $1}' \
-      | xargs -I '{}' cp -v --parents '{}' /rootfs; \
-    # also bring CA bundle for httpfs/SSL
+# For static linking, we only need CA bundle for HTTPS/SSL
+RUN mkdir -p /rootfs/etc/ssl/certs; \
     if [ -f /etc/ssl/certs/ca-certificates.crt ]; then \
-      mkdir -p /rootfs/etc/ssl/certs; \
       cp -v /etc/ssl/certs/ca-certificates.crt /rootfs/etc/ssl/certs/; \
     fi
 
