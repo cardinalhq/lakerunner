@@ -788,3 +788,130 @@ func TestWithTimeFormat(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractJSONFromString(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		prefix string
+		want   map[string]string
+	}{
+		{
+			name:   "no JSON content",
+			input:  "This is just a plain text message",
+			prefix: "message",
+			want:   map[string]string{},
+		},
+		{
+			name:   "single JSON object",
+			input:  `Processing request {"user": "jason", "action": "login"}`,
+			prefix: "message",
+			want: map[string]string{
+				"message.user":   "jason",
+				"message.action": "login",
+			},
+		},
+		{
+			name:   "multiple JSON objects",
+			input:  `Processing request {"user": "jason", "action": "login"} {"status": "success", "code": 200}`,
+			prefix: "message",
+			want: map[string]string{
+				"message.user":   "jason",
+				"message.action": "login",
+				"message.status": "success",
+				"message.code":   "200",
+			},
+		},
+		{
+			name:   "nested JSON structure",
+			input:  `User data {"profile": {"name": "Alice", "age": 30, "active": true}}`,
+			prefix: "user",
+			want: map[string]string{
+				"user.profile.name":   "Alice",
+				"user.profile.age":    "30",
+				"user.profile.active": "true",
+			},
+		},
+		{
+			name:   "JSON with arrays",
+			input:  `Event data {"tags": ["error", "critical"], "counts": [1, 2, 3]}`,
+			prefix: "event",
+			want: map[string]string{
+				"event.tags[0]":   "error",
+				"event.tags[1]":   "critical",
+				"event.counts[0]": "1",
+				"event.counts[1]": "2",
+				"event.counts[2]": "3",
+			},
+		},
+		{
+			name:   "malformed JSON should be skipped",
+			input:  `Processing {"valid": "json"} and {invalid json} and {"another": "valid"}`,
+			prefix: "log",
+			want: map[string]string{
+				"log.valid":   "json",
+				"log.another": "valid",
+			},
+		},
+		{
+			name:   "unmatched braces should not cause infinite loop",
+			input:  `Processing {"valid": "json"} and {unmatched braces`,
+			prefix: "log",
+			want: map[string]string{
+				"log.valid": "json",
+			},
+		},
+		{
+			name:   "empty JSON object",
+			input:  `Processing {} and {"data": "value"}`,
+			prefix: "log",
+			want: map[string]string{
+				"log.data": "value",
+			},
+		},
+		{
+			name:   "JSON with different data types",
+			input:  `Data {"string": "text", "number": 42, "boolean": true, "null": null}`,
+			prefix: "data",
+			want: map[string]string{
+				"data.string":  "text",
+				"data.number":  "42",
+				"data.boolean": "true",
+				"data.null":    "<nil>",
+			},
+		},
+		{
+			name:   "custom prefix",
+			input:  `{"user": "admin", "role": "superuser"}`,
+			prefix: "auth",
+			want: map[string]string{
+				"auth.user": "admin",
+				"auth.role": "superuser",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractJSONFromString(tt.input, tt.prefix)
+
+			if len(got) != len(tt.want) {
+				t.Errorf("extractJSONFromString() returned %d items, want %d", len(got), len(tt.want))
+			}
+
+			for key, wantValue := range tt.want {
+				if gotValue, exists := got[key]; !exists {
+					t.Errorf("extractJSONFromString() missing key %q", key)
+				} else if gotValue != wantValue {
+					t.Errorf("extractJSONFromString()[%q] = %q, want %q", key, gotValue, wantValue)
+				}
+			}
+
+			for key := range got {
+				if _, exists := tt.want[key]; !exists {
+					t.Errorf("extractJSONFromString() returned unexpected key %q with value %q", key, got[key])
+				}
+			}
+		})
+	}
+}

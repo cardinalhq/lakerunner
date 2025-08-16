@@ -20,7 +20,6 @@ import (
 	"log/slog"
 	"math"
 
-
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
@@ -38,7 +37,6 @@ const (
 	WorkResultSuccess WorkResult = iota
 	WorkResultTryAgainLater
 )
-
 
 func ProcessItem(
 	ctx context.Context,
