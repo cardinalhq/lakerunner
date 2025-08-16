@@ -42,32 +42,6 @@ func (n *AggNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalResult
 		return map[string]EvalResult{}
 	}
 
-	buildGroupedTags := func(tags map[string]any) map[string]any {
-		if len(n.By) > 0 {
-			out := make(map[string]any, len(n.By))
-			for _, l := range n.By {
-				if v, ok := tags[l]; ok {
-					out[l] = v
-				}
-			}
-			return out
-		}
-		if len(n.Without) > 0 {
-			drop := make(map[string]struct{}, len(n.Without))
-			for _, l := range n.Without {
-				drop[l] = struct{}{}
-			}
-			out := make(map[string]any, len(tags))
-			for k, v := range tags {
-				if _, skip := drop[k]; !skip {
-					out[k] = v
-				}
-			}
-			return out
-		}
-		return map[string]any{} // global agg
-	}
-
 	makeKey := func(tags map[string]any) string {
 		if len(n.By) > 0 {
 			parts := make([]string, 0, len(n.By))
@@ -136,12 +110,12 @@ func (n *AggNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalResult
 				if err != nil {
 					slog.Error("dds fromproto (clone) failed", "err", err)
 					if d2, e2 := ddsketch.NewDefaultDDSketch(0.01); e2 == nil {
-						a = &dacc{d: d2, ts: sg.Timestamp, tags: buildGroupedTags(r.Tags)}
+						a = &dacc{d: d2, ts: sg.Timestamp, tags: r.Tags}
 					} else {
 						continue
 					}
 				} else {
-					a = &dacc{d: d, ts: sg.Timestamp, tags: buildGroupedTags(r.Tags)}
+					a = &dacc{d: d, ts: sg.Timestamp, tags: r.Tags}
 				}
 				accs[k] = a
 			}
@@ -185,7 +159,7 @@ func (n *AggNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalResult
 				a = &hacc{
 					h:    acc,
 					ts:   sg.Timestamp,
-					tags: buildGroupedTags(r.Tags),
+					tags: r.Tags,
 				}
 				accs[k] = a
 			}
@@ -233,10 +207,12 @@ func (n *AggNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalResult
 			a := aggs[k]
 			if a == nil {
 				a = &acc{
-					min:  math.Inf(1),
-					max:  math.Inf(-1),
-					ts:   sg.Timestamp,
-					tags: buildGroupedTags(r.Tags),
+					sum:   0,
+					count: 0,
+					min:   math.Inf(1),
+					max:   math.Inf(-1),
+					ts:    sg.Timestamp,
+					tags:  r.Tags,
 				}
 				aggs[k] = a
 			}

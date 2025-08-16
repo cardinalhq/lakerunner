@@ -38,8 +38,8 @@ var supportedFuncs = map[string]bool{
 }
 
 // ToWorkerSQL builds a per-step, per-group SQL (DuckDB).
-// We always bucket to `step`; for *_over_time/rate/increase we apply a ROWS
-// window of K-1 PRECEDING, where K = ceil(range/step). Output is 1 row per step bucket.
+// - For *_over_time / rate / increase: densify to one row per step, then window (ROWS K-1 PRECEDING).
+// - For raw/instant (no range): you could use buildRawSimple; for your test you’re driving everything through buildWindowed.
 func (be *BaseExpr) ToWorkerSQL(step time.Duration) string {
 	// Sketch-required paths → worker should return sketches
 	if be.WantDDS {
@@ -50,17 +50,18 @@ func (be *BaseExpr) ToWorkerSQL(step time.Duration) string {
 		return ""
 	}
 
-	// COUNT fast-path: COUNT-by-group with no identity collapse → pure SQL
+	// COUNT fast-path: COUNT-by-group with no identity collapse → simple raw bucketing
 	if be.WantCount && equalStringSets(be.CountOnBy, be.GroupBy) {
+		// If you want to keep everything windowed for tests, you can also use buildStepOnly here.
 		return buildStepOnly(be, []proj{{"COUNT(*)", "count"}}, step)
 	}
-	// Identity collapse (distinct series counting) → HLL path
+	// Identity collapse (distinct series counting) → HLL/sketch path
 	if be.WantCount && !equalStringSets(be.CountOnBy, be.GroupBy) {
 		return ""
 	}
 
 	switch be.FuncName {
-	// Sliding-window functions (need range)
+	// Sliding-window functions (need range + densify)
 	case "sum_over_time":
 		return buildWindowed(be, need{sum: true}, step)
 	case "avg_over_time":
@@ -70,18 +71,23 @@ func (be *BaseExpr) ToWorkerSQL(step time.Duration) string {
 	case "max_over_time":
 		return buildWindowed(be, need{max: true}, step)
 	case "rate", "irate":
-		// rate = sum_over_time / range_seconds. We push sum window; API can divide by range.
+		// rate = sum_over_time / range_seconds → push SUM window; parent divides by range.
 		return buildWindowed(be, need{sum: true}, step)
 	case "increase":
-		// increase = sum_over_time (over counter deltas). Same windowed SUM; API uses as-is.
+		// increase = sum_over_time over counter deltas → same windowed SUM, no divide.
 		return buildWindowed(be, need{sum: true}, step)
 
-	// Raw/instant—just step bucket aggregates (no sliding window)
+	// Raw/instant — for your current experiment you’re also using the windowed path.
 	case "":
-		return buildStepOnly(be, []proj{
-			{"SUM(rollup_sum)", "sum"},
-			{"COUNT(rollup_count)", "count"},
-		}, step)
+		if be.Range == "" {
+			return buildRawSimple(be, []proj{
+				{"MIN(rollup_min)", "min"},
+				{"MAX(rollup_max)", "max"},
+				{"SUM(rollup_sum)", "sum"},
+				{"COUNT(rollup_count)", "count"},
+			}, step)
+		}
+		return buildWindowed(be, need{sum: true, count: true}, step)
 
 	default:
 		return ""
@@ -98,26 +104,61 @@ const (
 	timePredicate = "\"_cardinalhq.timestamp\" >= {start} AND \"_cardinalhq.timestamp\" < {end}"
 )
 
-// buildStepOnly: densify to one row per step (+ per group), join step aggregates.
+// --- (optional) Raw bucketing (no densify) -----------------------------------
+
+// buildRawSimple: bucket by ms and aggregate real rows only.
+// Kept here if you want to switch raw/instant back to simple GROUP BY later.
+func buildRawSimple(be *BaseExpr, projs []proj, step time.Duration) string {
+	stepMs := step.Milliseconds()
+	bucket := fmt.Sprintf("(\"_cardinalhq.timestamp\" - (\"_cardinalhq.timestamp\" %% %d))", stepMs)
+
+	where := withTime(whereFor(be))
+
+	cols := make([]string, 0, 1+len(projs)+len(be.GroupBy))
+	cols = append(cols, bucket+" AS bucket_ts")
+	for _, p := range projs {
+		cols = append(cols, fmt.Sprintf("%s AS %s", p.expr, p.alias))
+	}
+	if len(be.GroupBy) > 0 {
+		cols = append(cols, strings.Join(be.GroupBy, ", "))
+	}
+
+	sql := "SELECT " + strings.Join(cols, ", ") +
+		" FROM {table}" + where +
+		groupByClause(be.GroupBy, "bucket_ts") +
+		" ORDER BY bucket_ts ASC"
+	return sql
+}
+
+// --- Densified step aggregation (no window) ----------------------------------
+
+// buildStepOnly: densify to one row per step (+ per group), then left-join step aggregates.
+// COALESCE turns missing buckets into zeros so holes appear as 0s.
 func buildStepOnly(be *BaseExpr, projs []proj, step time.Duration) string {
 	stepMs := step.Milliseconds()
 	bucketExpr := fmt.Sprintf("(\"_cardinalhq.timestamp\" - (\"_cardinalhq.timestamp\" %% %d))", stepMs)
 
-	where := whereFor(be)
-	timeWhere := withTime(where)
+	where := withTime(whereFor(be))
 
-	buckets := fmt.Sprintf("buckets AS (SELECT range AS bucket_ts FROM range({start}, {end}, %d))", stepMs)
+	// Densify buckets for the whole query span:
+	// start_aligned = floor(start/step)*step
+	// end_exclusive = floor((end-1)/step)*step + step
+	alignedStart := fmt.Sprintf("({start} - ({start} %% %d))", stepMs)
+	alignedEndExclusive := fmt.Sprintf("(({end} - 1) - (({end} - 1) %% %d) + %d)", stepMs, stepMs)
+	buckets := fmt.Sprintf("buckets AS (SELECT range AS bucket_ts FROM range(%s, %s, %d))",
+		alignedStart, alignedEndExclusive, stepMs)
 
+	// Optional groups grid (if grouping).
 	var groupsCTE, gridCTE, gridFrom string
 	if len(be.GroupBy) > 0 {
-		groupsCTE = "groups AS (SELECT DISTINCT " + strings.Join(be.GroupBy, ", ") + " FROM {table}" + timeWhere + ")"
+		groupsCTE = "groups AS (SELECT DISTINCT " + strings.Join(be.GroupBy, ", ") + " FROM {table}" + where + ")"
 		gridCTE = "grid AS (SELECT bucket_ts, " + strings.Join(be.GroupBy, ", ") + " FROM buckets CROSS JOIN groups)"
 		gridFrom = "grid g"
 	} else {
 		gridFrom = "buckets b"
 	}
 
-	// Step aggregates
+	// Step aggregates per bucket (+ group).
 	stepCols := []string{bucketExpr + " AS bucket_ts"}
 	needSum, needCount := false, false
 	for _, p := range projs {
@@ -138,10 +179,10 @@ func buildStepOnly(be *BaseExpr, projs []proj, step time.Duration) string {
 		stepCols = append(stepCols, strings.Join(be.GroupBy, ", "))
 	}
 	stepAgg := "step_aggr AS (SELECT " + strings.Join(stepCols, ", ") +
-		" FROM {table}" + timeWhere +
+		" FROM {table}" + where +
 		groupByClause(be.GroupBy, "bucket_ts") + ")"
 
-	// Final select: join grid with step aggregates; COALESCE sums/counts to 0
+	// Final select: densified grid LEFT JOIN step_aggr; COALESCE to 0 for gaps.
 	var outCols []string
 	outCols = append(outCols, "bucket_ts")
 	if len(be.GroupBy) > 0 {
@@ -174,133 +215,91 @@ func buildStepOnly(be *BaseExpr, projs []proj, step time.Duration) string {
 	sql := "WITH " + strings.Join(withs, ", ") +
 		" SELECT " + strings.Join(outCols, ", ") +
 		" FROM " + gridFrom +
-		" LEFT JOIN step_aggr sa " + joinKeys
+		" LEFT JOIN step_aggr sa " + joinKeys +
+		" ORDER BY bucket_ts ASC"
 
-	if len(be.GroupBy) == 0 {
-		sql += " WHERE EXISTS (SELECT 1 FROM step_aggr)"
-	}
-
-	sql += " ORDER BY bucket_ts ASC"
 	return sql
 }
 
-// buildWindowed: densify grid then window over step aggregates.
 func buildWindowed(be *BaseExpr, need need, step time.Duration) string {
 	stepMs := step.Milliseconds()
-	bucketExpr := fmt.Sprintf("(\"_cardinalhq.timestamp\" - (\"_cardinalhq.timestamp\" %% %d))", stepMs)
 
-	where := whereFor(be)
-	timeWhere := withTime(where)
+	// Aligned grid bounds
+	alignedStart := fmt.Sprintf("CAST(({start} - ({start} %% %d)) AS BIGINT)", stepMs)
+	alignedEndEx := fmt.Sprintf("CAST((({end}-1) - (({end}-1) %% %d) + %d) AS BIGINT)", stepMs, stepMs)
 
-	// CTE: buckets
-	buckets := fmt.Sprintf("buckets AS (SELECT range AS bucket_ts FROM range({start}, {end}, %d))", stepMs)
+	timeWhere := withTime(whereFor(be))
 
-	// Optional groups/grid CTEs
-	var groupsCTE, gridCTE, gridFrom string
-	if len(be.GroupBy) > 0 {
-		groupsCTE = "groups AS (SELECT DISTINCT " + strings.Join(be.GroupBy, ", ") + " FROM {table}" + timeWhere + ")"
-		gridCTE = "grid AS (SELECT bucket_ts, " + strings.Join(be.GroupBy, ", ") + " FROM buckets CROSS JOIN groups)"
-		gridFrom = "grid g"
-	} else {
-		gridFrom = "buckets b"
-	}
+	// grid (no groups here; add back if needed)
+	grid := fmt.Sprintf(
+		"grid AS (SELECT CAST(range AS BIGINT) AS step_idx FROM range(%s, %s, %d))",
+		alignedStart, alignedEndEx, stepMs,
+	)
 
-	// Step aggregates (per step + group)
-	stepCols := []string{bucketExpr + " AS bucket_ts"}
+	// step_aggr: same modulo bucketing, force BIGINT
+	bucketExpr := fmt.Sprintf(
+		"(CAST(\"_cardinalhq.timestamp\" AS BIGINT) - (CAST(\"_cardinalhq.timestamp\" AS BIGINT) %% %d))",
+		stepMs,
+	)
+	stepCols := []string{bucketExpr + " AS step_idx"}
 	if need.sum {
 		stepCols = append(stepCols, "SUM(rollup_sum) AS step_sum")
 	}
 	if need.count {
-		stepCols = append(stepCols, "COUNT(rollup_count) AS step_count")
+		stepCols = append(stepCols, "SUM(COALESCE(rollup_count, 0)) AS step_count")
 	}
-	if need.min {
-		stepCols = append(stepCols, "MIN(rollup_min) AS step_min")
-	}
-	if need.max {
-		stepCols = append(stepCols, "MAX(rollup_max) AS step_max")
-	}
-	if len(be.GroupBy) > 0 {
-		stepCols = append(stepCols, strings.Join(be.GroupBy, ", "))
-	}
+
 	stepAgg := "step_aggr AS (SELECT " + strings.Join(stepCols, ", ") +
-		" FROM {table}" + timeWhere +
-		groupByClause(be.GroupBy, "bucket_ts") + ")"
+		" FROM {table}" + timeWhere + " GROUP BY step_idx)"
 
-	// Window frame size
+	// base (explicit ON join)
+	base := "SELECT " +
+		"CAST(g.step_idx AS BIGINT) AS bucket_ts" +
+		func() string {
+			var cols []string
+			if need.sum {
+				cols = append(cols, ", COALESCE(sa.step_sum, 0) AS w_step_sum")
+			}
+			if need.count {
+				cols = append(cols, ", COALESCE(sa.step_count, 0) AS w_step_count")
+			}
+			if need.min {
+				cols = append(cols, ", COALESCE(MIN(rollup_min), 0) AS w_step_min")
+			}
+			if need.max {
+				cols = append(cols, ", COALESCE(MAX(rollup_max), 0) AS w_step_max")
+			}
+			return strings.Join(cols, "")
+		}() +
+		" FROM grid g LEFT JOIN step_aggr sa ON g.step_idx = sa.step_idx"
+
+	// window
 	kMinus1 := rowsPreceding(be.Range, step)
-
-	// Final select: join grid with step_aggr; COALESCE sum/count to 0 before windowing
-	var baseCols []string
-	baseCols = append(baseCols, "bucket_ts")
-	if len(be.GroupBy) > 0 {
-		baseCols = append(baseCols, strings.Join(be.GroupBy, ", "))
-	}
-	if need.sum {
-		baseCols = append(baseCols, "COALESCE(sa.step_sum, 0) AS w_step_sum")
-	}
-	if need.count {
-		baseCols = append(baseCols, "COALESCE(sa.step_count, 0) AS w_step_count")
-	}
-	if need.min {
-		// min/max: leave NULLs; window MIN/MAX of NULLs stays NULL until a value appears
-		baseCols = append(baseCols, "sa.step_min AS w_step_min")
-	}
-	if need.max {
-		baseCols = append(baseCols, "sa.step_max AS w_step_max")
-	}
-
-	var part string
-	if len(be.GroupBy) > 0 {
-		part = "PARTITION BY " + strings.Join(be.GroupBy, ", ")
-	}
-
 	order := " ORDER BY bucket_ts"
 	var outCols []string
 	outCols = append(outCols, "bucket_ts")
-	if len(be.GroupBy) > 0 {
-		outCols = append(outCols, strings.Join(be.GroupBy, ", "))
-	}
 	if need.sum {
 		outCols = append(outCols,
-			fmt.Sprintf("SUM(w_step_sum) OVER (%s%s ROWS BETWEEN %d PRECEDING AND CURRENT ROW) AS sum", part, order, kMinus1))
+			fmt.Sprintf("CAST(SUM(w_step_sum) OVER (%s ROWS BETWEEN %d PRECEDING AND CURRENT ROW) AS DOUBLE) AS sum", order, kMinus1))
 	}
 	if need.count {
 		outCols = append(outCols,
-			fmt.Sprintf("SUM(w_step_count) OVER (%s%s ROWS BETWEEN %d PRECEDING AND CURRENT ROW) AS count", part, order, kMinus1))
+			fmt.Sprintf("CAST(SUM(w_step_count) OVER (%s ROWS BETWEEN %d PRECEDING AND CURRENT ROW) AS DOUBLE) AS count", order, kMinus1))
 	}
+
 	if need.min {
 		outCols = append(outCols,
-			fmt.Sprintf("MIN(w_step_min) OVER (%s%s ROWS BETWEEN %d PRECEDING AND CURRENT ROW) AS min", part, order, kMinus1))
+			fmt.Sprintf("CAST(MIN(w_step_min) OVER (%s ROWS BETWEEN %d PRECEDING AND CURRENT ROW) AS DOUBLE) AS min", order, kMinus1))
 	}
 	if need.max {
 		outCols = append(outCols,
-			fmt.Sprintf("MAX(w_step_max) OVER (%s%s ROWS BETWEEN %d PRECEDING AND CURRENT ROW) AS max", part, order, kMinus1))
+			fmt.Sprintf("CAST(MAX(w_step_max) OVER (%s ROWS BETWEEN %d PRECEDING AND CURRENT ROW) AS DOUBLE) AS max", order, kMinus1))
 	}
 
-	var joinKeys string
-	if len(be.GroupBy) > 0 {
-		joinKeys = "USING (bucket_ts, " + strings.Join(be.GroupBy, ", ") + ")"
-	} else {
-		joinKeys = "USING (bucket_ts)"
-	}
-
-	withs := []string{buckets}
-	if groupsCTE != "" {
-		withs = append(withs, groupsCTE, gridCTE)
-	}
-	withs = append(withs, stepAgg)
-
-	sql := "WITH " + strings.Join(withs, ", ") +
+	sql := "WITH " + grid + ", " + stepAgg +
 		" SELECT " + strings.Join(outCols, ", ") +
-		" FROM (SELECT " + strings.Join(baseCols, ", ") + " FROM " + gridFrom +
-		" LEFT JOIN step_aggr sa " + joinKeys + ")"
-
-	// Suppress densified zero rows when nothing matched at all.
-	if len(be.GroupBy) == 0 {
-		sql += " WHERE EXISTS (SELECT 1 FROM step_aggr)"
-	}
-
-	sql += " ORDER BY bucket_ts ASC"
+		" FROM (" + base + ")" +
+		" ORDER BY bucket_ts ASC"
 	return sql
 }
 

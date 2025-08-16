@@ -26,6 +26,7 @@ const (
 	SketchMAP SketchType = "map" // pre-aggregated (sum, count, min, max, etc.)
 	SketchDDS SketchType = "dds" // distinct count sketch
 	SUM                  = "sum"
+	STEP_SUM             = "step_sum"
 	COUNT                = "count"
 	MIN                  = "min"
 	MAX                  = "max"
@@ -73,14 +74,14 @@ const (
 )
 
 type Value struct {
-	Kind ValueKind
-	Num  float64
-	HLL  *hyperloglog.Sketch
-	DDS  *ddsketch.DDSketch
+	Kind ValueKind           `json:"-"`
+	Num  float64             `json:"num"`
+	HLL  *hyperloglog.Sketch `json:"hll,omitempty"`
+	DDS  *ddsketch.DDSketch  `json:"dds,omitempty"`
 }
 
 type EvalResult struct {
-	Timestamp int64
-	Tags      map[string]any
-	Value     Value
+	Timestamp int64          `json:"timestamp"`
+	Tags      map[string]any `json:"tags"`
+	Value     Value          `json:"value,omitempty"`
 }

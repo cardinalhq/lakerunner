@@ -19,8 +19,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/cardinalhq/oteltools/pkg/dateutils"
 	"github.com/google/uuid"
@@ -51,19 +53,73 @@ func NewQuerierService(mdb lrdb.StoreFull, workerDiscovery WorkerDiscovery) (*Qu
 	}, nil
 }
 
+// queryPayload is accepted for POST application/json bodies.
+type queryPayload struct {
+	OrgID   string `json:"orgId"`
+	S       string `json:"s"`       // start
+	E       string `json:"e"`       // end
+	Q       string `json:"q"`       // promql
+	Reverse *bool  `json:"reverse"` // optional; defaults to true
+}
+
 func (q *QuerierService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Defaults / fallbacks (GET-compatible)
 	orgID := r.URL.Query().Get("orgId")
+	s := r.URL.Query().Get("s")
+	e := r.URL.Query().Get("e")
+	prom := r.URL.Query().Get("q")
+
+	// Allow POST with body (JSON or text/plain)
+	if r.Method == http.MethodPost {
+		ct := r.Header.Get("Content-Type")
+		body, _ := io.ReadAll(r.Body)
+		defer r.Body.Close()
+
+		switch {
+		case strings.HasPrefix(ct, "application/json"):
+			var p queryPayload
+			if err := json.Unmarshal(body, &p); err != nil {
+				http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			// Body values override query params when provided
+			if p.OrgID != "" {
+				orgID = p.OrgID
+			}
+			if p.S != "" {
+				s = p.S
+			}
+			if p.E != "" {
+				e = p.E
+			}
+			if p.Q != "" {
+				prom = p.Q
+			}
+
+		case strings.HasPrefix(ct, "text/plain"):
+			// Treat entire body as the PromQL expression; other fields can still
+			// come via query params (or you can pass them in JSON if you prefer).
+			if len(body) > 0 {
+				prom = strings.TrimSpace(string(body))
+			}
+
+		default:
+			// Best-effort: if body is non-empty, try to use it as PromQL.
+			if len(body) > 0 && prom == "" {
+				prom = strings.TrimSpace(string(body))
+			}
+		}
+	}
+
+	// Validate inputs
 	if orgID == "" {
 		http.Error(w, "missing orgId", http.StatusBadRequest)
 		return
 	}
-	s := r.URL.Query().Get("s")
-	e := r.URL.Query().Get("e")
 	if s == "" || e == "" {
 		http.Error(w, "missing s/e", http.StatusBadRequest)
 		return
 	}
-
 	startTs, endTs, err := dateutils.ToStartEnd(s, e)
 	if err != nil {
 		http.Error(w, "invalid s/e: "+err.Error(), http.StatusBadRequest)
@@ -73,45 +129,36 @@ func (q *QuerierService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "start must be < end", http.StatusBadRequest)
 		return
 	}
-
+	if prom == "" {
+		http.Error(w, "missing query expression (q)", http.StatusBadRequest)
+		return
+	}
 	orgUUID, err := uuid.Parse(orgID)
 	if err != nil {
 		http.Error(w, "invalid orgId: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	prom := r.URL.Query().Get("q")
-	if prom == "" {
-		http.Error(w, "missing query expression", http.StatusBadRequest)
-		return
-	}
-
-	reverse := r.URL.Query().Get("reverse")
-	reverseSort := true
-	if reverse != "" {
-		reverseSort = reverse == "true"
-	}
-
+	// Parse & compile PromQL
 	promExpr, err := FromPromQL(prom)
 	if err != nil {
 		http.Error(w, "invalid query expression: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-
 	plan, err := Compile(promExpr)
 	if err != nil {
 		http.Error(w, "compile error: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	// Kick off evaluation; reverseSort can be toggled if you add a query param.
-	resultsCh, err := q.Evaluate(r.Context(), orgUUID, startTs, endTs, plan, reverseSort)
+	// Kick off evaluation; reverseSort can be toggled via input
+	resultsCh, err := q.Evaluate(r.Context(), orgUUID, startTs, endTs, plan)
 	if err != nil {
 		http.Error(w, "evaluate error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// SSE setup
+	// SSE setup (same response shape for GET and POST)
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
@@ -122,18 +169,14 @@ func (q *QuerierService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 
 	writeSSE := func(event string, v any) error {
-		var data []byte
-		var err error
-		if v != nil {
-			data, err = json.Marshal(v)
-			if err != nil {
-				return err
-			}
-		} else {
-			data = []byte(`null`)
+		type envelope struct {
+			Type string `json:"type"`
+			Data any    `json:"data,omitempty"`
 		}
-		// Write SSE frame
-		if _, err := fmt.Fprintf(w, "event: %s\n", event); err != nil {
+		env := envelope{Type: event, Data: v}
+
+		data, err := json.Marshal(env)
+		if err != nil {
 			return err
 		}
 		if _, err := w.Write([]byte("data: ")); err != nil {
@@ -154,16 +197,13 @@ func (q *QuerierService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case <-notify:
-			// client went away; stop work
 			slog.Info("client disconnected; stopping stream")
 			return
 		case res, ok := <-resultsCh:
 			if !ok {
-				// End of stream: send a final "done" event.
 				_ = writeSSE("done", map[string]string{"status": "ok"})
 				return
 			}
-			// Stream one result tick
 			if err := writeSSE("result", res); err != nil {
 				slog.Error("write SSE failed", "error", err)
 				return
@@ -176,12 +216,11 @@ func (q *QuerierService) Run(doneCtx context.Context) error {
 	slog.Info("Starting querier service")
 
 	mux := http.NewServeMux()
-
-	mux.Handle("/api/v1/query", q)
+	mux.Handle("/api/v1/query", q) // supports GET + POST
 
 	srv := &http.Server{
 		Addr:    ":8080",
-		Handler: mux, // use mux instead of q directly
+		Handler: mux,
 	}
 
 	go func() {

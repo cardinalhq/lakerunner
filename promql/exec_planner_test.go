@@ -36,7 +36,7 @@ func sorted(ss []string) []string {
 }
 
 func TestForDots(t *testing.T) {
-	q := `sum by ("resource.service.name") ( topk(5, sum by ("resource.service.name", endpoint) (rate({"http.requests.total"}[5m]))) )`
+	q := `sum(rate(traefik_service_responses_bytes_total[5m]))`
 	root := mustParse(t, q)
 	res, err := Compile(root)
 	if err != nil {

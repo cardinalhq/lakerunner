@@ -77,7 +77,7 @@ func TestMergeSorted_Ascending_TwoInputs(t *testing.T) {
 	ch1 := chFromSlice(ctx, 0, a)
 	ch2 := chFromSlice(ctx, 0, b)
 
-	out := MergeSorted[tsItem](ctx, false /*ascending*/, 8 /*outBuf*/, ch1, ch2)
+	out := MergeSorted[tsItem](ctx /*ascending*/, 8 /*outBuf*/, ch1, ch2)
 	got := toSlice(out)
 
 	if len(got) != len(a)+len(b) {
@@ -85,27 +85,6 @@ func TestMergeSorted_Ascending_TwoInputs(t *testing.T) {
 	}
 	if !isSortedAsc(got) {
 		t.Fatalf("not sorted ascending: %#v", got)
-	}
-}
-
-func TestMergeSorted_Descending_ThreeInputs(t *testing.T) {
-	ctx := context.Background()
-
-	a := []tsItem{{9}, {7}, {5}, {3}}
-	b := []tsItem{{10}, {6}, {2}}
-	c := []tsItem{{8}, {4}, {1}}
-	ch1 := chFromSlice(ctx, 2, a)
-	ch2 := chFromSlice(ctx, 2, b)
-	ch3 := chFromSlice(ctx, 2, c)
-
-	out := MergeSorted[tsItem](ctx, true /*descending*/, 4 /*outBuf*/, ch1, ch2, ch3)
-	got := toSlice(out)
-
-	if len(got) != len(a)+len(b)+len(c) {
-		t.Fatalf("len mismatch: got=%d want=%d", len(got), len(a)+len(b)+len(c))
-	}
-	if !isSortedDesc(got) {
-		t.Fatalf("not sorted descending: %#v", got)
 	}
 }
 
@@ -118,7 +97,7 @@ func TestMergeSorted_Ascending_WithDuplicates(t *testing.T) {
 	ch1 := chFromSlice(ctx, 0, a)
 	ch2 := chFromSlice(ctx, 0, b)
 
-	out := MergeSorted[tsItem](ctx, false, 2, ch1, ch2)
+	out := MergeSorted[tsItem](ctx, 2, ch1, ch2)
 	got := toSlice(out)
 
 	if !isSortedAsc(got) {
@@ -135,7 +114,7 @@ func TestMergeSorted_HandlesEmptyInputs(t *testing.T) {
 	c2 := chFromSlice(ctx, 0, full)
 	c3 := chFromSlice(ctx, 0, empty)
 
-	out := MergeSorted[tsItem](ctx, false, 1, c1, c2, c3)
+	out := MergeSorted[tsItem](ctx, 1, c1, c2, c3)
 	got := toSlice(out)
 
 	if len(got) != len(full) {
@@ -148,7 +127,7 @@ func TestMergeSorted_HandlesEmptyInputs(t *testing.T) {
 
 func TestMergeSorted_NoInputs(t *testing.T) {
 	ctx := context.Background()
-	out := MergeSorted[tsItem](ctx, false, 1 /*outBuf*/)
+	out := MergeSorted[tsItem](ctx, 1 /*outBuf*/)
 	got := toSlice(out)
 	if len(got) != 0 {
 		t.Fatalf("expected empty, got: %#v", got)
@@ -166,7 +145,7 @@ func TestMergeSorted_Cancellation(t *testing.T) {
 	}
 	ch := chFromSlice(ctx, 0, long)
 
-	out := MergeSorted[tsItem](ctx, false, 32, ch)
+	out := MergeSorted[tsItem](ctx, 32, ch)
 
 	// Consume a few, then cancel and ensure the channel closes.
 	for i := 0; i < 10; i++ {

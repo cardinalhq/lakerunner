@@ -30,7 +30,6 @@ type Timestamped interface {
 // Each input must be sorted in the same direction as `reverse`.
 func MergeSorted[T Timestamped](
 	ctx context.Context,
-	reverse bool,
 	outBuf int,
 	chans ...<-chan T,
 ) <-chan T {
@@ -94,7 +93,7 @@ func MergeSorted[T Timestamped](
 			}
 		}()
 
-		h := &headHeap[T]{reverse: reverse}
+		h := &headHeap[T]{}
 		heap.Init(h)
 
 		open := make([]bool, len(chans))          // source still open (not finalized)
@@ -257,17 +256,13 @@ type head[T Timestamped] struct {
 }
 
 type headHeap[T Timestamped] struct {
-	data    []head[T]
-	reverse bool
+	data []head[T]
 }
 
 func (h *headHeap[T]) Len() int { return len(h.data) }
 func (h *headHeap[T]) Less(i, j int) bool {
 	ti := h.data[i].val.GetTimestamp()
 	tj := h.data[j].val.GetTimestamp()
-	if h.reverse {
-		return ti > tj // Pop will return the "smallest", i.e., the largest timestamp here.
-	}
 	return ti < tj
 }
 func (h *headHeap[T]) Swap(i, j int) { h.data[i], h.data[j] = h.data[j], h.data[i] }

@@ -46,7 +46,6 @@ func (q *QuerierService) Evaluate(
 	orgID uuid.UUID,
 	startTs, endTs int64,
 	queryPlan QueryPlan,
-	reverseSort bool,
 ) (<-chan map[string]EvalResult, error) {
 	stepDuration := stepForQueryDuration(startTs, endTs)
 
@@ -150,7 +149,7 @@ func (q *QuerierService) Evaluate(
 	}
 
 	// Merge all worker streams by timestamp (ascending).
-	merged := MergeSorted(ctx, reverseSort, 1024, allLeafChans...)
+	merged := MergeSorted(ctx, 1024, allLeafChans...)
 	// Pipe through EvalFlow (aggregator -> root.Eval)
 	flow := NewEvalFlow(queryPlan.Root, queryPlan.Leaves, stepDuration, EvalFlowOptions{
 		NumBuffers: 2,
@@ -170,9 +169,9 @@ func (q *QuerierService) pushDown(ctx context.Context, worker Worker, request Pu
 	}
 
 	if IsLocalDev() {
-		sql = strings.ReplaceAll(sql, "{start}", fmt.Sprintf("%d", 0))
+		sql = strings.ReplaceAll(sql, "{start}", fmt.Sprintf("%d", 1755137842000))
 		sql = strings.ReplaceAll(sql, "{end}", fmt.Sprintf("%d", time.Now().UnixMilli()))
-		sql = strings.ReplaceAll(sql, "{table}", "read_parquet('./db/*.parquet')")
+		sql = strings.ReplaceAll(sql, "{table}", "read_parquet('./db/*.parquet', union_by_name=True)")
 	} else {
 		sql = strings.ReplaceAll(sql, "{start}", fmt.Sprintf("%d", request.StartTs))
 		sql = strings.ReplaceAll(sql, "{end}", fmt.Sprintf("%d", request.EndTs))
@@ -231,19 +230,8 @@ func (q *QuerierService) pushDown(ctx context.Context, worker Worker, request Pu
 					if vals[i] == nil {
 						continue
 					}
-					switch v := vals[i].(type) {
-					case float64:
-						agg[col] = v
-					case float32:
-						agg[col] = float64(v)
-					case int64:
-						agg[col] = float64(v)
-					case int32:
-						agg[col] = float64(v)
-					case int:
-						agg[col] = float64(v)
-					default:
-						slog.Warn("unexpected numeric type in agg", "col", col, "value", vals[i])
+					if f, ok := toFloat64(vals[i]); ok {
+						agg[col] = f
 					}
 				default:
 					if vals[i] != nil {
@@ -252,7 +240,7 @@ func (q *QuerierService) pushDown(ctx context.Context, worker Worker, request Pu
 				}
 			}
 
-			slog.Info("making sketch input", "ts", ts)
+			//slog.Info("making sketch input", "ts", ts)
 			out <- SketchInput{
 				ExprID:         request.BaseExpr.ID,
 				OrganizationID: request.OrganizationID.String(),
@@ -369,4 +357,28 @@ func (q *QuerierService) lookupSegments(ctx context.Context,
 	}
 
 	return allSegments, nil
+}
+
+func toFloat64(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case int32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case uint64:
+		return float64(n), true
+	case uint32:
+		return float64(n), true
+	case uint:
+		return float64(n), true
+	default:
+		slog.Error("unexpected type for numeric value", "value", v, "type", fmt.Sprintf("%T", v))
+		return 0, false
+	}
 }

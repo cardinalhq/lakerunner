@@ -145,7 +145,8 @@ func evalLeafValueWithSecs(be BaseExpr, in SketchInput, secs float64) float64 {
 		if secs <= 0 {
 			return math.NaN()
 		}
-		return in.SketchTags.getAggValue(SUM) / rngSecs
+		sumValue := in.SketchTags.getAggValue(SUM)
+		return sumValue / rngSecs
 	case "increase", "sum_over_time", "":
 		return in.SketchTags.getAggValue(SUM)
 	case "avg_over_time":
