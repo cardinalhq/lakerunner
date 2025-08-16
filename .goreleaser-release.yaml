@@ -48,7 +48,21 @@ dockers:
   - goos: linux
     goarch: amd64
     dockerfile: Dockerfile
-    context: .
+    extra_files:
+      - go.mod
+      - go.sum
+      - "**/*.go"
+      - "**/*.sql"
+      - "**/*.yaml"
+      - "**/*.yml"
+      - "main.go"
+      - "cmd/"
+      - "internal/"
+      - "pkg/"
+      - "promql/"
+      - "fileconv/"
+      - "lockmgr/"
+      - "lrdb/"
     use: buildx
     image_templates:
       - "public.ecr.aws/cardinalhq.io/lakerunner:v{{ .Version }}-amd64"
@@ -66,7 +80,21 @@ dockers:
   - goos: linux
     goarch: arm64
     dockerfile: Dockerfile
-    context: .
+    extra_files:
+      - go.mod
+      - go.sum
+      - "**/*.go"
+      - "**/*.sql"
+      - "**/*.yaml"
+      - "**/*.yml"
+      - "main.go"
+      - "cmd/"
+      - "internal/"
+      - "pkg/"
+      - "promql/"
+      - "fileconv/"
+      - "lockmgr/"
+      - "lrdb/"
     use: buildx
     image_templates:
       - "public.ecr.aws/cardinalhq.io/lakerunner:v{{ .Version }}-arm64"
