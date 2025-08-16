@@ -31,6 +31,7 @@ import (
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/estimator"
+	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lockmgr"
 	"github.com/cardinalhq/lakerunner/lrdb"
@@ -45,6 +46,7 @@ type RunqueueProcessingFunction func(
 	mdb lrdb.StoreFull,
 	inf lockmgr.Workable,
 	rpfEstimate int64,
+	args any,
 ) (WorkResult, error)
 
 type WorkResult int
@@ -113,7 +115,7 @@ func NewRunqueueLoopContext(ctx context.Context, signal string, action string, a
 	}, nil
 }
 
-func RunqueueLoop(loop *RunqueueLoopContext, pfx RunqueueProcessingFunction) error {
+func RunqueueLoop(loop *RunqueueLoopContext, pfx RunqueueProcessingFunction, args any) error {
 	ctx := context.Background()
 
 	for {
@@ -124,7 +126,7 @@ func RunqueueLoop(loop *RunqueueLoopContext, pfx RunqueueProcessingFunction) err
 		}
 
 		t0 := time.Now()
-		shouldBackoff, didWork, err := workqueueProcess(ctx, loop, pfx)
+		shouldBackoff, didWork, err := workqueueProcess(ctx, loop, pfx, args)
 		if err != nil {
 			return err
 		}
@@ -155,10 +157,10 @@ func frequenciesToRequest(signal, action string) ([]int32, error) {
 	case "metrics":
 		switch action {
 		case "compact":
-			return acceptedMetricFrequencies, nil
+			return helpers.AcceptedMetricFrequencies, nil
 		case "rollup":
-			freqs := make([]int32, 0, len(rollupSources))
-			for k := range rollupSources {
+			freqs := make([]int32, 0, len(helpers.RollupSources))
+			for k := range helpers.RollupSources {
 				freqs = append(freqs, k)
 			}
 			return freqs, nil
@@ -172,7 +174,8 @@ func frequenciesToRequest(signal, action string) ([]int32, error) {
 func workqueueProcess(
 	ctx context.Context,
 	loop *RunqueueLoopContext,
-	pfx RunqueueProcessingFunction) (bool, bool, error) {
+	pfx RunqueueProcessingFunction,
+	args any) (bool, bool, error) {
 
 	ctx, span := tracer.Start(ctx, "workqueueProcess", trace.WithAttributes(commonAttributes.ToSlice()...))
 	defer span.End()
@@ -238,7 +241,7 @@ func workqueueProcess(
 
 	estBytesPerRecord := loop.estimator.Get(inf.OrganizationID(), inf.InstanceNum(), inf.Signal()).EstimatedRecordCount
 	t0 = time.Now()
-	result, err := pfx(ctx, ll, tmpdir, loop.awsmanager, loop.sp, loop.mdb, inf, estBytesPerRecord)
+	result, err := pfx(ctx, ll, tmpdir, loop.awsmanager, loop.sp, loop.mdb, inf, estBytesPerRecord, args)
 	workqueueDuration.Record(ctx, time.Since(t0).Seconds(),
 		metric.WithAttributeSet(commonAttributes),
 		metric.WithAttributeSet(orgAttrs),

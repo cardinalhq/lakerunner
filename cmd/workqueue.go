@@ -93,14 +93,14 @@ func priorityForFrequencyForRollup(f int32) int32 {
 
 func queueMetricCompaction(ctx context.Context, mdb lrdb.StoreFull, inf qmc) error {
 	// compaction will lock the upstream's frequency's worth of data, so find the upstream frequency.
-	upstreamFrequency, ok := rollupNotifications[inf.FrequencyMs]
+	upstreamFrequency, ok := helpers.RollupNotifications[inf.FrequencyMs]
 	if !ok {
 		return nil
 		// slog.Warn("unknown frequency for compaction", "frequency_ms", inf.FrequencyMs)
 		// upstreamFrequency = inf.FrequencyMs
 	}
 
-	startTS, _, ok := RangeBounds(inf.TsRange)
+	startTS, _, ok := helpers.RangeBounds(inf.TsRange)
 	if !ok {
 		slog.Error("invalid time range for metric compaction", "ts_range", inf.TsRange)
 		return nil // invalid range, nothing to do
@@ -136,13 +136,13 @@ func queueMetricCompaction(ctx context.Context, mdb lrdb.StoreFull, inf qmc) err
 // queueMetricRollup queues a metric rollup job for the given frequency and time range.
 func queueMetricRollup(ctx context.Context, mdb lrdb.StoreFull, inf qmc) error {
 	// rollups end when the last frequency is processed.
-	upstreamFrequency, ok := rollupNotifications[inf.FrequencyMs]
+	upstreamFrequency, ok := helpers.RollupNotifications[inf.FrequencyMs]
 	if !ok {
 		slog.Warn("unknown frequency for rollup", "frequency_ms", inf.FrequencyMs)
 		return nil
 	}
 
-	startTS, _, ok := RangeBounds(inf.TsRange)
+	startTS, _, ok := helpers.RangeBounds(inf.TsRange)
 	if !ok {
 		slog.Error("invalid time range for metric rollup", "ts_range", inf.TsRange)
 		return nil // invalid range, nothing to do
@@ -178,7 +178,7 @@ func queueMetricRollup(ctx context.Context, mdb lrdb.StoreFull, inf qmc) error {
 // queueLogCompaction queues a log compaction job for the entire dateint
 func queueLogCompaction(ctx context.Context, mdb lrdb.StoreFull, inf qmc) error {
 	upstreamDur := 24 * time.Hour
-	startTS, _, ok := RangeBounds(inf.TsRange)
+	startTS, _, ok := helpers.RangeBounds(inf.TsRange)
 	if !ok {
 		slog.Error("invalid time range for log compaction notification", "ts_range", inf.TsRange)
 		return nil // invalid range, nothing to do

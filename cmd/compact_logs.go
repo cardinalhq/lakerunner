@@ -63,7 +63,7 @@ func init() {
 				return fmt.Errorf("failed to create runqueue loop context: %w", err)
 			}
 
-			return RunqueueLoop(loop, compactLogsFor)
+			return RunqueueLoop(loop, compactLogsFor, nil)
 		},
 	}
 	rootCmd.AddCommand(cmd)
@@ -80,6 +80,7 @@ func compactLogsFor(
 	mdb lrdb.StoreFull,
 	inf lockmgr.Workable,
 	rpfEstimate int64,
+	_ any,
 ) (WorkResult, error) {
 	profile, err := sp.Get(ctx, inf.OrganizationID(), inf.InstanceNum())
 	if err != nil {
@@ -113,7 +114,7 @@ func logCompactItemDo(
 	s3client *awsclient.S3Client,
 	rpfEstimate int64,
 ) (WorkResult, error) {
-	st, et, ok := RangeBounds(inf.TsRange())
+	st, et, ok := helpers.RangeBounds(inf.TsRange())
 	if !ok {
 		return WorkResultSuccess, errors.New("error getting range bounds")
 	}

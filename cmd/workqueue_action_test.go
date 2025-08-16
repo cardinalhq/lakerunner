@@ -19,6 +19,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/cardinalhq/lakerunner/internal/helpers"
 )
 
 func TestFrequenciesToRequest_Logs(t *testing.T) {
@@ -46,7 +48,7 @@ func TestFrequenciesToRequest_Logs(t *testing.T) {
 			name:      "metrics compact",
 			signal:    "metrics",
 			action:    "compact",
-			want:      acceptedMetricFrequencies,
+			want:      helpers.AcceptedMetricFrequencies,
 			wantError: false,
 		},
 		{

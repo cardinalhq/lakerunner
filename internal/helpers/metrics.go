@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package cmd
+package helpers
 
 import (
 	"slices"
@@ -25,7 +25,7 @@ import (
 
 var (
 	// Map the current frequency into the ones we feed to.
-	rollupNotifications = map[int32]int32{
+	RollupNotifications = map[int32]int32{
 		10_000:    60_000,    // 10 seconds feeds 1m
 		60_000:    300_000,   // 1 minute feeds 5m
 		300_000:   1_200_000, // 5 minutes feeds 15m
@@ -33,14 +33,14 @@ var (
 	}
 
 	// Map our current frequency into the one we feed from.
-	rollupSources = map[int32]int32{
+	RollupSources = map[int32]int32{
 		60_000:    10_000,    // 1 minute is from 10 seconds
 		300_000:   60_000,    // 5 minutes is from 1 minute
 		1_200_000: 300_000,   // 20 minutes is from 5 minutes
 		3_600_000: 1_200_000, // 1 hour is from 20 minutes
 	}
 
-	acceptedMetricFrequencies = []int32{
+	AcceptedMetricFrequencies = []int32{
 		10_000,    // 10 seconds
 		60_000,    // 1 minute
 		300_000,   // 5 minutes
@@ -49,13 +49,13 @@ var (
 	}
 )
 
-func isWantedFrequency(frequency int32) bool {
-	return slices.Contains(acceptedMetricFrequencies, frequency)
+func IsWantedFrequency(frequency int32) bool {
+	return slices.Contains(AcceptedMetricFrequencies, frequency)
 }
 
-// allRolledUp returns true all rows are rolledup.
+// AllRolledUp returns true all rows are rolledup.
 // If the slice is empty, the return value is junk.
-func allRolledUp(rows []lrdb.MetricSeg) bool {
+func AllRolledUp(rows []lrdb.MetricSeg) bool {
 	for _, row := range rows {
 		if !row.Rolledup {
 			return false
@@ -64,8 +64,8 @@ func allRolledUp(rows []lrdb.MetricSeg) bool {
 	return true
 }
 
-// Return the bounds of the given range.  The returned start time is inclusive
-// and the end time is exclusive.  If the range is unbounded, or cannot be converted
+// RangeBounds returns the bounds of the given range. The returned start time is inclusive
+// and the end time is exclusive. If the range is unbounded, or cannot be converted
 // to concrete bounds, the function returns ok=false and the bounds are invalid.
 func RangeBounds[T int | int16 | int32 | int64 | pgtype.Int8 | time.Time | pgtype.Timestamptz](r pgtype.Range[T]) (lower, upper T, ok bool) {
 	if r.LowerType != pgtype.Inclusive && r.LowerType != pgtype.Exclusive {

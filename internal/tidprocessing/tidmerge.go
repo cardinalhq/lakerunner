@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package cmd
+package tidprocessing
 
 import (
 	"errors"
@@ -492,7 +492,7 @@ func GroupTIDGroupFunc(prev, current map[string]any) bool {
 	return ptid == ctid
 }
 
-func calculateTargetRecordsPerFile(recordCount int, estimatedBytesPerRecord int, targetFileSize int64) int64 {
+func CalculateTargetRecordsPerFile(recordCount int, estimatedBytesPerRecord int, targetFileSize int64) int64 {
 	if recordCount <= 0 || estimatedBytesPerRecord <= 0 || targetFileSize <= 0 {
 		return 0
 	}

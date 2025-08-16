@@ -12,16 +12,14 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package cmd
+package metriccompaction
 
 import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 
-	"github.com/spf13/cobra"
-	"go.opentelemetry.io/otel/attribute"
-	_ "modernc.org/sqlite"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
@@ -32,44 +30,17 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-func init() {
-	cmd := &cobra.Command{
-		Use:   "rollup-metrics",
-		Short: "Roll up metrics",
-		RunE: func(_ *cobra.Command, _ []string) error {
-			helpers.CleanTempDir()
+const targetFileSize = int64(1_100_000)
 
-			servicename := "lakerunner-rollup-metrics"
-			addlAttrs := attribute.NewSet(
-				attribute.String("signal", "metrics"),
-				attribute.String("action", "rollup"),
-			)
-			doneCtx, doneFx, err := setupTelemetry(servicename, &addlAttrs)
-			if err != nil {
-				return fmt.Errorf("failed to setup telemetry: %w", err)
-			}
+type WorkResult int
 
-			defer func() {
-				if err := doneFx(); err != nil {
-					slog.Error("Error shutting down telemetry", slog.Any("error", err))
-				}
-			}()
+const (
+	WorkResultSuccess WorkResult = iota
+	WorkResultTryAgainLater
+)
 
-			go diskUsageLoop(doneCtx)
 
-			loop, err := NewRunqueueLoopContext(doneCtx, "metrics", "rollup", servicename)
-			if err != nil {
-				return fmt.Errorf("failed to create runqueue loop context: %w", err)
-			}
-
-			return RunqueueLoop(loop, metricRollupItem, nil)
-		},
-	}
-
-	rootCmd.AddCommand(cmd)
-}
-
-func metricRollupItem(
+func ProcessItem(
 	ctx context.Context,
 	ll *slog.Logger,
 	tmpdir string,
@@ -78,15 +49,9 @@ func metricRollupItem(
 	mdb lrdb.StoreFull,
 	inf lockmgr.Workable,
 	rpfEstimate int64,
-	_ any,
 ) (WorkResult, error) {
-	previousFrequency, ok := helpers.RollupSources[inf.FrequencyMs()]
-	if !ok {
-		ll.Error("Unknown parent frequency, dropping rollup request", slog.Int("frequencyMs", int(inf.FrequencyMs())))
-		return WorkResultSuccess, nil
-	}
-	if !helpers.IsWantedFrequency(inf.FrequencyMs()) || !helpers.IsWantedFrequency(previousFrequency) {
-		ll.Info("Skipping rollup for unwanted frequency", slog.Int("frequencyMs", int(inf.FrequencyMs())), slog.Int("previousFrequency", int(previousFrequency)))
+	if !helpers.IsWantedFrequency(inf.FrequencyMs()) {
+		ll.Info("Skipping compaction for unwanted frequency", slog.Int("frequencyMs", int(inf.FrequencyMs())))
 		return WorkResultSuccess, nil
 	}
 
@@ -105,14 +70,14 @@ func metricRollupItem(
 	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
 	if err != nil {
 		ll.Error("Failed to get S3 client", slog.Any("error", err))
-		return 0, err
+		return WorkResultTryAgainLater, err
 	}
 
-	ll.Info("Processing rollup item", slog.Int("previousFrequency", int(previousFrequency)), slog.Any("workItem", inf.AsMap()), slog.Int64("estimatedRowsPerFile", rpfEstimate))
-	return metricRollupItemDo(ctx, ll, mdb, tmpdir, inf, profile, s3client, previousFrequency, rpfEstimate)
+	ll.Info("Processing metric compression item", slog.Any("workItem", inf))
+	return doCompactItem(ctx, ll, mdb, tmpdir, inf, profile, s3client, rpfEstimate)
 }
 
-func metricRollupItemDo(
+func doCompactItem(
 	ctx context.Context,
 	ll *slog.Logger,
 	mdb lrdb.StoreFull,
@@ -120,31 +85,14 @@ func metricRollupItemDo(
 	inf lockmgr.Workable,
 	profile storageprofile.StorageProfile,
 	s3client *awsclient.S3Client,
-	previousFrequency int32,
 	rpfEstimate int64,
 ) (WorkResult, error) {
 	st, et, ok := helpers.RangeBounds(inf.TsRange())
 	if !ok {
 		return WorkResultSuccess, fmt.Errorf("invalid time range in work item: %v", inf.TsRange())
 	}
-	sourceRows, err := mdb.GetMetricSegs(ctx, lrdb.GetMetricSegsParams{
-		OrganizationID: inf.OrganizationID(),
-		InstanceNum:    inf.InstanceNum(),
-		Dateint:        inf.Dateint(),
-		FrequencyMs:    previousFrequency,
-		StartTs:        st.Time.UTC().UnixMilli(),
-		EndTs:          et.Time.UTC().UnixMilli(),
-	})
-	if err != nil {
-		ll.Error("Failed to get previous metric segments", slog.Any("error", err))
-		return WorkResultTryAgainLater, err
-	}
 
-	if helpers.AllRolledUp(sourceRows) {
-		return WorkResultSuccess, nil
-	}
-
-	currentRows, err := mdb.GetMetricSegs(ctx, lrdb.GetMetricSegsParams{
+	inRows, err := mdb.GetMetricSegs(ctx, lrdb.GetMetricSegsParams{
 		OrganizationID: inf.OrganizationID(),
 		InstanceNum:    inf.InstanceNum(),
 		Dateint:        inf.Dateint(),
@@ -153,21 +101,73 @@ func metricRollupItemDo(
 		EndTs:          et.Time.UTC().UnixMilli(),
 	})
 	if err != nil {
-		ll.Error("Failed to get metric segments", slog.Any("error", err))
+		ll.Error("Failed to get current metric segments", slog.Any("error", err))
 		return WorkResultTryAgainLater, err
 	}
 
-	err = rollupInterval(ctx, ll, mdb, tmpdir, inf, profile, s3client, sourceRows, currentRows, rpfEstimate)
+	if len(inRows) == 0 {
+		ll.Info("No input rows to compact, skipping work item")
+		return WorkResultSuccess, nil
+	}
+
+	if !ShouldCompactMetrics(inRows) {
+		ll.Info("No need to compact metrics, skipping work item", slog.Int("rowCount", len(inRows)))
+		return WorkResultSuccess, nil
+	}
+
+	err = compactInterval(ctx, ll, mdb, tmpdir, inf, profile, s3client, inRows, rpfEstimate)
 	if err != nil {
-		ll.Error("Failed to rollup interval", slog.Any("error", err))
+		ll.Error("Failed to compact interval", slog.Any("error", err))
 		return WorkResultTryAgainLater, err
 	}
 
 	return WorkResultSuccess, nil
 }
 
-// rollupInterval rolls up the metric segments for a given timebox.
-func rollupInterval(
+func ShouldCompactMetrics(rows []lrdb.MetricSeg) bool {
+	if len(rows) < 2 {
+		return false
+	}
+
+	const smallThreshold = int64(targetFileSize) * 3 / 10
+
+	var totalSize int64
+	for _, row := range rows {
+		totalSize += row.FileSize
+		if row.FileSize > targetFileSize*2 || row.FileSize < smallThreshold {
+			return true
+		}
+	}
+
+	estimatedFileCount := (totalSize + targetFileSize - 1) / targetFileSize
+	compact := estimatedFileCount < int64(len(rows))-3 // TODO this feels hacky
+	return compact
+}
+
+func GetStartEndTimes(rows []lrdb.MetricSeg) (int64, int64) {
+	startTs := int64(math.MaxInt64)
+	endTs := int64(math.MinInt64)
+	for _, row := range rows {
+		rowStartTs := row.TsRange.Lower.Int64
+		rowEndTs := row.TsRange.Upper.Int64
+		startTs = min(startTs, rowStartTs)
+		endTs = max(endTs, rowEndTs)
+	}
+	return startTs, endTs
+}
+
+func getIngestDateint(rows []lrdb.MetricSeg) int32 {
+	if len(rows) == 0 {
+		return 0
+	}
+	ingest_dateint := int32(0)
+	for _, row := range rows {
+		ingest_dateint = max(ingest_dateint, row.IngestDateint)
+	}
+	return ingest_dateint
+}
+
+func compactInterval(
 	ctx context.Context,
 	ll *slog.Logger,
 	mdb lrdb.StoreFull,
@@ -175,25 +175,18 @@ func rollupInterval(
 	inf lockmgr.Workable,
 	profile storageprofile.StorageProfile,
 	s3client *awsclient.S3Client,
-	sourceRows []lrdb.MetricSeg,
-	existingRowsForThisRollup []lrdb.MetricSeg,
+	rows []lrdb.MetricSeg,
 	rpfEstimate int64,
 ) error {
-	if len(sourceRows) == 0 {
-		return nil
+	st, _, ok := helpers.RangeBounds(inf.TsRange())
+	if !ok {
+		ll.Error("Invalid time range in work item", slog.Any("tsRange", inf.TsRange()))
+		return fmt.Errorf("invalid time range in work item: %v", inf.TsRange())
 	}
 
-	ingest_dateint := int32(0)
-	files := make([]string, 0, len(sourceRows))
-	for _, row := range sourceRows {
-		rst, _, ok := helpers.RangeBounds(row.TsRange)
-		rts_dateint, _ := helpers.MSToDateintHour(rst.Int64)
-		ingest_dateint = max(ingest_dateint, rts_dateint)
-		if !ok {
-			ll.Error("Invalid time range in source row", slog.Any("tsRange", row.TsRange))
-			return fmt.Errorf("invalid time range in source row: %v", row.TsRange)
-		}
-		dateint, hour := helpers.MSToDateintHour(rst.Int64)
+	files := make([]string, 0, len(rows))
+	for _, row := range rows {
+		dateint, hour := helpers.MSToDateintHour(st.Time.UTC().UnixMilli())
 		objectID := helpers.MakeDBObjectID(inf.OrganizationID(), profile.CollectorName, dateint, hour, row.SegmentID, "metrics")
 		fn, downloadedSize, is404, err := s3helper.DownloadS3Object(ctx, tmpdir, s3client, profile.Bucket, objectID)
 		if err != nil {
@@ -201,15 +194,16 @@ func rollupInterval(
 			return err
 		}
 		if is404 {
-			ll.Info("S3 object not found, skipping", slog.String("objectID", objectID))
+			ll.Info("S3 object not found, skipping", slog.String("bucket", profile.Bucket), slog.String("objectID", objectID))
 			continue
 		}
+
 		ll.Info("Downloaded S3 SOURCE", slog.String("objectID", objectID), slog.String("bucket", profile.Bucket), slog.Int64("rowFileSize", row.FileSize), slog.Int64("s3FileSize", downloadedSize))
 		files = append(files, fn)
 	}
 
 	if len(files) == 0 {
-		ll.Info("No files to roll up, skipping")
+		ll.Info("No files to compact, skipping work item")
 		return nil
 	}
 
@@ -219,7 +213,6 @@ func rollupInterval(
 		return fmt.Errorf("invalid time range in work item: %v", inf.TsRange())
 	}
 
-	ll.Info("Rolling up files", slog.Int("fileCount", len(files)), slog.Int("frequency", int(inf.FrequencyMs())), slog.Int64("startTS", startTS.Time.UTC().UnixMilli()), slog.Int64("endTS", endTS.Time.UTC().UnixMilli()))
 	merger, err := tidprocessing.NewTIDMerger(tmpdir, files, inf.FrequencyMs(), rpfEstimate, startTS.Time.UTC().UnixMilli(), endTS.Time.UTC().UnixMilli())
 	if err != nil {
 		ll.Error("Failed to create TIDMerger", slog.Any("error", err))
@@ -234,7 +227,19 @@ func rollupInterval(
 		ll.Error("Failed to merge files", slog.Any("error", err))
 		return fmt.Errorf("merging files: %w", err)
 	}
-	ll.Info("Merge results", slog.Any("sourceFiles", files), slog.Any("mergeResult", mergeResult))
+	ll.Info("Merge results", slog.Any("sourceFiles", files), slog.Any("mergeResult", mergeResult), slog.Int64("estimatedRowCount", rpfEstimate))
+
+	startingFileCount := len(files)
+	endingFileCount := len(mergeResult)
+	ll.Info("Compaction results",
+		slog.Int("startingFileCount", startingFileCount),
+		slog.Int("endingFileCount", endingFileCount),
+		slog.Int("percentFileCountReduction", (startingFileCount-endingFileCount)*100/startingFileCount),
+	)
+
+	// Find the starTs and endTs of this new group of files.
+	startTs, endTs := GetStartEndTimes(rows)
+	ingest_dateint := getIngestDateint(rows)
 
 	// now we need to update the source items to mark them as having been rolled up,
 	// add our new file to the database, and remove any previous files for this timebox.
@@ -245,11 +250,11 @@ func rollupInterval(
 		InstanceNum:    inf.InstanceNum(),
 		FrequencyMs:    inf.FrequencyMs(),
 		Published:      true,
-		Rolledup:       false,
-		CreatedBy:      lrdb.CreateByRollup,
+		Rolledup:       helpers.AllRolledUp(rows),
+		CreatedBy:      lrdb.CreatedByCompact,
 	}
 
-	for _, row := range existingRowsForThisRollup {
+	for _, row := range rows {
 		ll.Info("removing old metric segment", slog.Int("tidPartition", int(row.TidPartition)), slog.Int64("segmentID", row.SegmentID))
 		params.OldRecords = append(params.OldRecords, lrdb.ReplaceMetricSegsOld{
 			TidPartition: row.TidPartition,
@@ -257,12 +262,7 @@ func rollupInterval(
 		})
 	}
 
-	st, et, ok := helpers.RangeBounds(inf.TsRange())
-	if !ok {
-		return fmt.Errorf("invalid time range in work item: %v", inf.TsRange())
-	}
-
-	dateint, hour := helpers.MSToDateintHour(st.Time.UTC().UnixMilli())
+	dateint, hour := helpers.MSToDateintHour(startTs)
 	for tidPartition, result := range mergeResult {
 		segmentID := s3helper.GenerateID()
 		newObjectID := helpers.MakeDBObjectID(inf.OrganizationID(), profile.CollectorName, dateint, hour, segmentID, "metrics")
@@ -276,10 +276,11 @@ func rollupInterval(
 		params.NewRecords = append(params.NewRecords, lrdb.ReplaceMetricSegsNew{
 			TidPartition: int16(tidPartition),
 			SegmentID:    segmentID,
-			StartTs:      st.Time.UTC().UnixMilli(),
-			EndTs:        et.Time.UTC().UnixMilli(),
+			StartTs:      startTs,
+			EndTs:        endTs,
 			RecordCount:  result.RecordCount,
 			FileSize:     result.FileSize,
+			TidCount:     result.TidCount,
 		})
 	}
 
@@ -289,66 +290,18 @@ func rollupInterval(
 	}
 	ll.Info("Replaced metric segments")
 
-	// mark the input rows as having been rolled up.
-	newlyRolled := []lrdb.BatchMarkMetricSegsRolledupParams{}
-	for _, row := range sourceRows {
-		if row.Rolledup {
-			continue
-		}
-		newlyRolled = append(newlyRolled, lrdb.BatchMarkMetricSegsRolledupParams{
-			OrganizationID: row.OrganizationID,
-			Dateint:        row.Dateint,
-			FrequencyMs:    row.FrequencyMs,
-			SegmentID:      row.SegmentID,
-			InstanceNum:    row.InstanceNum,
-			TidPartition:   row.TidPartition,
-		})
-	}
-	if len(newlyRolled) > 0 {
-		result := mdb.BatchMarkMetricSegsRolledup(ctx, newlyRolled)
-		result.Exec(func(i int, err error) {
-			if err != nil {
-				ll.Error("Failed to mark metric segments as rolled up", slog.Int("index", i), slog.Any("error", err), slog.Any("record", newlyRolled[i]))
-			}
-		})
-	}
-
-	if err := queueMetricCompaction(ctx, mdb, qmcFromWorkable(inf)); err != nil {
-		return fmt.Errorf("queueing metric compaction: %w", err)
-	}
-	if err := queueMetricRollup(ctx, mdb, qmcFromWorkable(inf)); err != nil {
-		return fmt.Errorf("queueing metric rollup: %w", err)
-	}
-
-	// now delete the old files from S3.
-	for _, row := range existingRowsForThisRollup {
+	for _, row := range rows {
 		rst, _, ok := helpers.RangeBounds(row.TsRange)
 		if !ok {
-			ll.Error("Invalid time range in existing row", slog.Any("tsRange", row.TsRange))
-			continue
+			ll.Error("Invalid time range in row", slog.Any("tsRange", row.TsRange))
+			return fmt.Errorf("invalid time range in row: %v", row.TsRange)
 		}
 		dateint, hour := helpers.MSToDateintHour(rst.Int64)
 		oid := helpers.MakeDBObjectID(inf.OrganizationID(), profile.CollectorName, dateint, hour, row.SegmentID, "metrics")
-		ll.Info("Deleting old S3 object", slog.String("objectID", oid))
 		if err := s3helper.ScheduleS3Delete(ctx, mdb, profile.OrganizationID, profile.InstanceNum, profile.Bucket, oid); err != nil {
 			ll.Error("scheduleS3Delete", slog.String("error", err.Error()))
 		}
 	}
 
 	return nil
-}
-
-// boxesForRange returns a list of timebox IDs for the given start and end timestamps and frequency.
-func boxesForRange(startTs, endTs int64, frequencyMs int32) []int64 {
-	if startTs > endTs || frequencyMs <= 0 {
-		return []int64{}
-	}
-	firstBox := startTs / int64(frequencyMs)
-	lastBox := endTs / int64(frequencyMs)
-	nBoxes := lastBox - firstBox + 1
-	boxes := make([]int64, nBoxes)
-	for n := range nBoxes {
-		boxes[n] = firstBox + n
-	}
-	return boxes
 }
