@@ -124,3 +124,5 @@ The query system consists of:
 - **Query Workers** - Scalable processing nodes
 - **Segment Index** - PostgreSQL-based metadata for efficient data location
 - **DuckDB Integration** - High-performance analytical queries on Parquet data
+
+- Do not ever edit generated files, which have either an in-file marker or are suspected generated files like *.pb.go, and in general *.something.go (with exceptions of course, nothing is ever perfect.  If you doubt, ask!)  This also includes SQLC generated files when so marked.
