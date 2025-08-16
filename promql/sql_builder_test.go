@@ -49,12 +49,12 @@ func TestSQLBuilder_SumRate(t *testing.T) {
 	//   - inner SELECT that joins buckets to step_aggr (COALESCE to 0)
 	//   - WHERE EXISTS (SELECT 1 FROM step_aggr) guard
 	//   - ORDER BY bucket_ts ASC
-	want := `WITH buckets AS (SELECT range AS bucket_ts FROM range({start}, {end}, 10000)), ` +
-		`step_aggr AS (SELECT ("_cardinalhq.timestamp" - ("_cardinalhq.timestamp" % 10000)) AS bucket_ts, SUM(rollup_sum) AS step_sum FROM {table} ` +
-		`WHERE "_cardinalhq.name" = 'http_request_duration_seconds_bucket' AND "_cardinalhq.timestamp" >= {start} AND "_cardinalhq.timestamp" < {end} GROUP BY bucket_ts) ` +
-		`SELECT bucket_ts, SUM(w_step_sum) OVER ( ORDER BY bucket_ts ROWS BETWEEN 29 PRECEDING AND CURRENT ROW) AS sum ` +
-		`FROM (SELECT bucket_ts, COALESCE(sa.step_sum, 0) AS w_step_sum FROM buckets b LEFT JOIN step_aggr sa USING (bucket_ts)) ` +
-		`WHERE EXISTS (SELECT 1 FROM step_aggr) ORDER BY bucket_ts ASC`
+	want := `WITH grid AS (SELECT CAST(range AS BIGINT) AS step_idx FROM range(CAST(({start} - ({start} % 10000)) AS BIGINT), CAST((({end}-1) - (({end}-1) % 10000) + 10000) AS BIGINT), 10000)), ` +
+		`step_aggr AS (SELECT (CAST("_cardinalhq.timestamp" AS BIGINT) - (CAST("_cardinalhq.timestamp" AS BIGINT) % 10000)) AS step_idx, SUM(rollup_sum) AS step_sum FROM {table} ` +
+		`WHERE "_cardinalhq.name" = 'http_request_duration_seconds_bucket' AND "_cardinalhq.timestamp" >= {start} AND "_cardinalhq.timestamp" < {end} GROUP BY step_idx) ` +
+		`SELECT bucket_ts, CAST(SUM(w_step_sum) OVER ( ORDER BY bucket_ts ROWS BETWEEN 29 PRECEDING AND CURRENT ROW) AS DOUBLE) AS sum ` +
+		`FROM (SELECT CAST(g.step_idx AS BIGINT) AS bucket_ts, COALESCE(sa.step_sum, 0) AS w_step_sum FROM grid g LEFT JOIN step_aggr sa ON g.step_idx = sa.step_idx) ` +
+		`ORDER BY bucket_ts ASC`
 
 	if sql != want {
 		t.Fatalf("unexpected SQL.\n got: %s\nwant: %s", sql, want)
@@ -86,13 +86,11 @@ func TestSQLBuilder_SumRate_ByJob(t *testing.T) {
 	//   - inner SELECT that joins grid to step_aggr (COALESCE to 0)
 	//   - PARTITION BY job in the window
 	//   - ORDER BY bucket_ts ASC
-	want := `WITH buckets AS (SELECT range AS bucket_ts FROM range({start}, {end}, 10000)), ` +
-		`groups AS (SELECT DISTINCT job FROM {table} WHERE "_cardinalhq.name" = 'http_request_duration_seconds_bucket' AND "_cardinalhq.timestamp" >= {start} AND "_cardinalhq.timestamp" < {end}), ` +
-		`grid AS (SELECT bucket_ts, job FROM buckets CROSS JOIN groups), ` +
-		`step_aggr AS (SELECT ("_cardinalhq.timestamp" - ("_cardinalhq.timestamp" % 10000)) AS bucket_ts, SUM(rollup_sum) AS step_sum, job FROM {table} ` +
-		`WHERE "_cardinalhq.name" = 'http_request_duration_seconds_bucket' AND "_cardinalhq.timestamp" >= {start} AND "_cardinalhq.timestamp" < {end} GROUP BY bucket_ts, job) ` +
-		`SELECT bucket_ts, job, SUM(w_step_sum) OVER (PARTITION BY job ORDER BY bucket_ts ROWS BETWEEN 29 PRECEDING AND CURRENT ROW) AS sum ` +
-		`FROM (SELECT bucket_ts, job, COALESCE(sa.step_sum, 0) AS w_step_sum FROM grid g LEFT JOIN step_aggr sa USING (bucket_ts, job)) ` +
+	want := `WITH grid AS (SELECT CAST(range AS BIGINT) AS step_idx FROM range(CAST(({start} - ({start} % 10000)) AS BIGINT), CAST((({end}-1) - (({end}-1) % 10000) + 10000) AS BIGINT), 10000)), ` +
+		`step_aggr AS (SELECT (CAST("_cardinalhq.timestamp" AS BIGINT) - (CAST("_cardinalhq.timestamp" AS BIGINT) % 10000)) AS step_idx, SUM(rollup_sum) AS step_sum FROM {table} ` +
+		`WHERE "_cardinalhq.name" = 'http_request_duration_seconds_bucket' AND "_cardinalhq.timestamp" >= {start} AND "_cardinalhq.timestamp" < {end} GROUP BY step_idx) ` +
+		`SELECT bucket_ts, CAST(SUM(w_step_sum) OVER ( ORDER BY bucket_ts ROWS BETWEEN 29 PRECEDING AND CURRENT ROW) AS DOUBLE) AS sum ` +
+		`FROM (SELECT CAST(g.step_idx AS BIGINT) AS bucket_ts, COALESCE(sa.step_sum, 0) AS w_step_sum FROM grid g LEFT JOIN step_aggr sa ON g.step_idx = sa.step_idx) ` +
 		`ORDER BY bucket_ts ASC`
 
 	if sql != want {
