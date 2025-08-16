@@ -43,7 +43,7 @@ var supportedFuncs = map[string]bool{
 func (be *BaseExpr) ToWorkerSQL(step time.Duration) string {
 	// Sketch-required paths → worker should return sketches
 	if be.WantDDS {
-		return ""
+		return buildDDS(be, step)
 	}
 	// If func not supported and it's not a topk/bottomk child, skip SQL
 	if !supportedFuncs[be.FuncName] && !(be.WantTopK || be.WantBottomK) {
@@ -52,7 +52,7 @@ func (be *BaseExpr) ToWorkerSQL(step time.Duration) string {
 
 	// COUNT fast-path: COUNT-by-group with no identity collapse → simple raw bucketing
 	if be.WantCount && equalStringSets(be.CountOnBy, be.GroupBy) {
-		// If you want to keep everything windowed for tests, you can also use buildStepOnly here.
+		be.WantCount = false
 		return buildStepOnly(be, []proj{{"COUNT(*)", "count"}}, step)
 	}
 	// Identity collapse (distinct series counting) → HLL/sketch path
@@ -92,6 +92,37 @@ func (be *BaseExpr) ToWorkerSQL(step time.Duration) string {
 	default:
 		return ""
 	}
+}
+
+// buildDDS: bucket timestamps, project group-by labels + sketch
+func buildDDS(be *BaseExpr, step time.Duration) string {
+	stepMs := step.Milliseconds()
+	bucket := fmt.Sprintf("(\"_cardinalhq.timestamp\" - (\"_cardinalhq.timestamp\" %% %d))", stepMs)
+
+	// Use aligned, end-exclusive time like the numeric paths
+	alignedStart := fmt.Sprintf("({start} - ({start} %% %d))", stepMs)
+	alignedEndEx := fmt.Sprintf("(({end} - 1) - (({end} - 1) %% %d) + %d)", stepMs, stepMs)
+
+	base := whereFor(be)
+	timeWhere := func() string {
+		tc := fmt.Sprintf("\"_cardinalhq.timestamp\" >= %s AND \"_cardinalhq.timestamp\" < %s", alignedStart, alignedEndEx)
+		if base == "" {
+			return " WHERE " + tc
+		}
+		return base + " AND " + tc
+	}()
+
+	cols := []string{bucket + " AS bucket_ts"}
+	if len(be.GroupBy) > 0 {
+		cols = append(cols, strings.Join(be.GroupBy, ", "))
+	}
+	cols = append(cols, "sketch")
+
+	// One row per stored sample; we’ll merge per (bucket_ts, groupkey) in Go.
+	sql := "SELECT " + strings.Join(cols, ", ") +
+		" FROM {table}" + timeWhere +
+		" ORDER BY bucket_ts ASC"
+	return sql
 }
 
 type proj struct{ expr, alias string }
