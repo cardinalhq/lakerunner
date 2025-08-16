@@ -57,7 +57,6 @@ dockers:
       - --platform=linux/amd64
       - --build-arg=DUCKDB_SDK_VERSION={{ if .Env.DUCKDB_SDK_VERSION }}{{ .Env.DUCKDB_SDK_VERSION }}{{ else }}latest{{ end }}
       - --build-arg=TARGETARCH=amd64
-      - --build-arg=LDFLAGS={{ if .Env.LDFLAGS }}{{ .Env.LDFLAGS }}{{ else }}{{ end }}
       - --label=org.opencontainers.image.created={{.Date}}
       - --label=org.opencontainers.image.name={{.ProjectName}}
       - --label=org.opencontainers.image.revision={{.FullCommit}}
@@ -75,7 +74,6 @@ dockers:
       - --platform=linux/arm64
       - --build-arg=DUCKDB_SDK_VERSION={{ if .Env.DUCKDB_SDK_VERSION }}{{ .Env.DUCKDB_SDK_VERSION }}{{ else }}latest{{ end }}
       - --build-arg=TARGETARCH=arm64
-      - --build-arg=LDFLAGS={{ if .Env.LDFLAGS }}{{ .Env.LDFLAGS }}{{ else }}{{ end }}
       - --label=org.opencontainers.image.created={{.Date}}
       - --label=org.opencontainers.image.name={{.ProjectName}}
       - --label=org.opencontainers.image.revision={{.FullCommit}}
