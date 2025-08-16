@@ -114,16 +114,16 @@ func doCompactItem(
 			slog.Int64("cursorSegmentID", cursorSegmentID))
 
 		inRows, err := mdb.GetMetricSegsForCompaction(ctx, lrdb.GetMetricSegsForCompactionParams{
-			OrganizationID:    inf.OrganizationID(),
-			InstanceNum:       inf.InstanceNum(),
-			Dateint:           inf.Dateint(),
-			FrequencyMs:       inf.FrequencyMs(),
-			StartTs:           st.Time.UTC().UnixMilli(),
-			EndTs:             et.Time.UTC().UnixMilli(),
-			MaxFileSize:       targetFileSize * 9 / 10, // Only include files < 90% of target (larger files are fine as-is)
-			CursorCreatedAt:   cursorCreatedAt,         // Cursor for pagination
-			CursorSegmentID:   cursorSegmentID,         // Cursor for pagination
-			Maxrows:           maxRowsLimit,            // Safety limit for compaction batch
+			OrganizationID:  inf.OrganizationID(),
+			InstanceNum:     inf.InstanceNum(),
+			Dateint:         inf.Dateint(),
+			FrequencyMs:     inf.FrequencyMs(),
+			StartTs:         st.Time.UTC().UnixMilli(),
+			EndTs:           et.Time.UTC().UnixMilli(),
+			MaxFileSize:     targetFileSize * 9 / 10, // Only include files < 90% of target (larger files are fine as-is)
+			CursorCreatedAt: cursorCreatedAt,         // Cursor for pagination
+			CursorSegmentID: cursorSegmentID,         // Cursor for pagination
+			Maxrows:         maxRowsLimit,            // Safety limit for compaction batch
 		})
 		if err != nil {
 			ll.Error("Failed to get current metric segments", slog.Any("error", err))
