@@ -42,7 +42,6 @@ type Tenant struct {
 type Processor struct {
 	tenants       sync.Map // organizationID -> *Tenant
 	logger        *slog.Logger
-	mu            sync.RWMutex
 	telemetryType TelemetryType
 
 	// Callback for metrics exemplars (logs and traces not implemented yet)
