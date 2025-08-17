@@ -13,53 +13,33 @@
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 # Build arguments
-ARG DUCKDB_SDK_VERSION=latest
 ARG TARGETARCH
+ARG DUCKDB_VERSION=v1.3.2
 
-# ========= Stage 1: Extract DuckDB SDK =========
-FROM public.ecr.aws/cardinalhq.io/duckdb-sdk:${DUCKDB_SDK_VERSION}-${TARGETARCH} AS duckdb-sdk
+# ========= Extension Download Stage =========
+FROM debian:bookworm-slim AS extensions
 
-# ========= Stage 2: Build Go Application =========
-FROM golang:1.24-bookworm AS builder
+ARG TARGETARCH
+ARG DUCKDB_VERSION
 
-# Install build dependencies
-RUN apt-get update && apt-get install -y \
-    pkg-config \
-    && rm -rf /var/lib/apt/lists/*
+# Install curl for downloading extensions
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 
-# Copy DuckDB SDK files
-COPY --from=duckdb-sdk /usr/local /usr/local
-COPY --from=duckdb-sdk /etc/ssl /etc/ssl
+# Download httpfs extension
+RUN mkdir -p /app/extensions && \
+    curl -fsSL "https://extensions.duckdb.org/${DUCKDB_VERSION}/linux_${TARGETARCH}/httpfs.duckdb_extension.gz" \
+    | gunzip -c > /app/extensions/httpfs.duckdb_extension
 
-# No shared libraries to cache for static linking
-
-# Set working directory
-WORKDIR /workspace
-
-# Copy Go modules and download dependencies
-COPY go.mod go.sum ./
-RUN go mod download
-
-# Copy source code
-COPY . .
-
-# Build the binary with CGO enabled and custom DuckDB
-ENV CGO_ENABLED=1
-ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig
-
-# Build binary (goreleaser will override this during real builds)
-ARG LDFLAGS=""
-RUN go build -ldflags="${LDFLAGS}" -o lakerunner main.go
-
-# ========= Stage 3: Runtime Image =========
+# ========= Runtime Image =========
 FROM gcr.io/distroless/cc-debian12:nonroot
 
-# Copy SSL certificates for HTTPS support (statically linked binary needs no DuckDB libs)
-COPY --from=duckdb-sdk /etc/ssl /etc/ssl
+# Copy the pre-built binary from goreleaser
+COPY --chmod=755 lakerunner /app/bin/lakerunner
 
-# Copy the binary
-COPY --from=builder /workspace/lakerunner /app/bin/lakerunner
+# Copy httpfs extension
+COPY --from=extensions /app/extensions/httpfs.duckdb_extension /app/extensions/httpfs.duckdb_extension
 
-# No library path needed for statically linked binary
+# Set environment variable for extension location
+ENV LAKERUNNER_HTTPFS_EXTENSION=/app/extensions/httpfs.duckdb_extension
 
 CMD ["/app/bin/lakerunner"]

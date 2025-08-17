@@ -26,26 +26,29 @@ archives:
       - binary
 
 builds:
-  - skip: true
+  - id: lakerunner
+    main: ./main.go
+    binary: lakerunner
+    env:
+      - CGO_ENABLED=1
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
 
 # Define how to build/push Docker images.
 dockers:
   - goos: linux
     goarch: amd64
     dockerfile: Dockerfile
-    extra_files:
-      - go.mod
-      - go.sum
-      - main.go
-      - cmd/
-      - internal/
-      - promql/
-      - fileconv/
-      - lockmgr/
-      - lrdb/
-      - dbase/
-      - queryworker/
-      - queryproto/
     use: buildx
     image_templates:
       - "public.ecr.aws/cardinalhq.io/lakerunner:v{{ .Version }}-amd64"
@@ -53,8 +56,8 @@ dockers:
     build_flag_templates:
       - --pull
       - --platform=linux/amd64
-      - --build-arg=DUCKDB_SDK_VERSION={{ if .Env.DUCKDB_SDK_VERSION }}{{ .Env.DUCKDB_SDK_VERSION }}{{ else }}latest{{ end }}
       - --build-arg=TARGETARCH=amd64
+      - --build-arg=DUCKDB_VERSION=v1.3.2
       - --label=org.opencontainers.image.created={{.Date}}
       - --label=org.opencontainers.image.name={{.ProjectName}}
       - --label=org.opencontainers.image.revision={{.FullCommit}}
@@ -63,19 +66,6 @@ dockers:
   - goos: linux
     goarch: arm64
     dockerfile: Dockerfile
-    extra_files:
-      - go.mod
-      - go.sum
-      - main.go
-      - cmd/
-      - internal/
-      - promql/
-      - fileconv/
-      - lockmgr/
-      - lrdb/
-      - dbase/
-      - queryworker/
-      - queryproto/
     use: buildx
     image_templates:
       - "public.ecr.aws/cardinalhq.io/lakerunner:v{{ .Version }}-arm64"
@@ -83,8 +73,8 @@ dockers:
     build_flag_templates:
       - --pull
       - --platform=linux/arm64
-      - --build-arg=DUCKDB_SDK_VERSION={{ if .Env.DUCKDB_SDK_VERSION }}{{ .Env.DUCKDB_SDK_VERSION }}{{ else }}latest{{ end }}
       - --build-arg=TARGETARCH=arm64
+      - --build-arg=DUCKDB_VERSION=v1.3.2
       - --label=org.opencontainers.image.created={{.Date}}
       - --label=org.opencontainers.image.name={{.ProjectName}}
       - --label=org.opencontainers.image.revision={{.FullCommit}}

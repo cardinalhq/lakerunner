@@ -41,7 +41,6 @@ type QuerierService struct {
 func NewQuerierService(mdb lrdb.StoreFull, workerDiscovery WorkerDiscovery) (*QuerierService, error) {
 	ddb, err := duckdbx.Open("",
 		duckdbx.WithMemoryLimitMB(2048),
-		duckdbx.WithExtension("httpfs", ""),
 	)
 	if err != nil {
 		return nil, err

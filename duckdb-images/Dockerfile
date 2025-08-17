@@ -31,14 +31,7 @@ ARG DUCKDB_VERSION=v1.3.2
 RUN git clone --branch ${DUCKDB_VERSION} https://github.com/duckdb/duckdb.git
 WORKDIR /workdir/duckdb
 
-RUN mkdir -p build && cd build && \
-    cmake -DCMAKE_BUILD_TYPE=Release \
-          -DBUILD_SHELL=0 \
-          -DBUILD_HTTPFS_EXTENSION=1 \
-          -DBUILD_JSON_EXTENSION=1 \
-          -DBUILD_PARQUET_EXTENSION=1 \
-          .. && \
-    make -j$(nproc)
+RUN GEN= EXTENSIONS="httpfs,json,parquet" make bundle-library -j2
 
 FROM build AS collect
 USER root
@@ -48,8 +41,10 @@ RUN mkdir -p ${INSTALL_PREFIX}/include ${INSTALL_PREFIX}/lib
 
 # Copy SDK headers and libs
 RUN cp -r /workdir/duckdb/src/include/duckdb ${INSTALL_PREFIX}/include/
-RUN cp /workdir/duckdb/build/src/libduckdb_static.a \
-       ${INSTALL_PREFIX}/lib/
+RUN cp /workdir/duckdb/build/release/libduckdb_bundle.a \
+       ${INSTALL_PREFIX}/lib/ && \
+    cp /workdir/duckdb/build/release/src/libduckdb_static.a \
+       ${INSTALL_PREFIX}/lib/ 2>/dev/null || true
 
 # pkg-config file for easier linking
 RUN mkdir -p ${INSTALL_PREFIX}/lib/pkgconfig && \

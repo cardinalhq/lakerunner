@@ -12,7 +12,7 @@ permissions:
   packages: write
 
 jobs:
-  prepare:
+  partials:
     strategy:
       matrix:
         os:
@@ -94,9 +94,9 @@ jobs:
         run: |
           ls -lR dist
 
-  release:
+  merge:
     runs-on: ubuntu-22.04
-    needs: prepare
+    needs: partials
     env:
       DOCKER_CLI_EXPERIMENTAL: "enabled"
       flags: ""
@@ -130,20 +130,20 @@ jobs:
         with:
           registry-type: public
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version: stable
+      # - uses: actions/setup-go@v5
+      #   with:
+      #     go-version: stable
 
-      - name: Install protoc
-        uses: arduino/setup-protoc@v3
-        with:
-          version: "29.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      # - name: Install protoc
+      #   uses: arduino/setup-protoc@v3
+      #   with:
+      #     version: "29.x"
+      #     repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install protoc Go plugins
-        run: |
-          go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+      # - name: Install protoc Go plugins
+      #   run: |
+      #     go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+      #     go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
 
       # - shell: bash
       #   run: |
@@ -158,13 +158,7 @@ jobs:
         run: |
           echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
 
-      - uses: actions/cache@v4
-        id: cache_linux_amd64
-        with:
-          path: dist/linux_amd64
-          key: linux_amd64-${{ env.sha_short }}${{ env.flags }}
-          fail-on-cache-miss: true
-
+      # Pull in the partial build artifacts for arm64
       - uses: actions/cache@v4
         id: cache_linux_arm64
         with:
@@ -172,7 +166,15 @@ jobs:
           key: linux_arm64-${{ env.sha_short }}${{ env.flags }}
           fail-on-cache-miss: true
 
-      # release
+      # Pull in the partial build artifacts for amd64
+      - uses: actions/cache@v4
+        id: cache_linux_amd64
+        with:
+          path: dist/linux_amd64
+          key: linux_amd64-${{ env.sha_short }}${{ env.flags }}
+          fail-on-cache-miss: true
+
+      # merge the two architectures into a single multi-arch image
       - uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser-pro
