@@ -14,7 +14,6 @@
 
 # Build arguments
 ARG TARGETARCH
-ARG USER_UID=2000
 ARG DUCKDB_VERSION=v1.3.2
 
 # ========= Extension Download Stage =========
@@ -43,7 +42,6 @@ COPY --from=extensions /app/extensions/httpfs.duckdb_extension /app/extensions/h
 # Set environment variable for extension location
 ENV LAKERUNNER_HTTPFS_EXTENSION=/app/extensions/httpfs.duckdb_extension
 
-# Run as specified user
-USER ${USER_UID}:${USER_UID}
+USER 2000:2000
 
 CMD ["/app/bin/lakerunner"]
