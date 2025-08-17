@@ -28,6 +28,7 @@ archives:
 builds:
   - id: lakerunner
     main: ./main.go
+    binary: lakerunner
     env:
       - CGO_ENABLED=1
     goos:
@@ -35,9 +36,8 @@ builds:
     goarch:
       - amd64
       - arm64
-    # Partial build - compile to object files, don't link yet
     flags:
-      - -buildmode=c-archive
+      - -trimpath
     ldflags:
       - -s -w
       - -X main.version={{.Version}}

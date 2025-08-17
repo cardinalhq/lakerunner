@@ -126,3 +126,4 @@ The query system consists of:
 - **DuckDB Integration** - High-performance analytical queries on Parquet data
 
 - Do not ever edit generated files, which have either an in-file marker or are suspected generated files like *.pb.go, and in general *.something.go (with exceptions of course, nothing is ever perfect.  If you doubt, ask!)  This also includes SQLC generated files when so marked.
+- in our builds in github, we use "partial builds" which requires a `partial:` section in the goreleaser yaml config. Do not remove it.  this is a feature in the "pro" version, local developer machines will not have access to.
