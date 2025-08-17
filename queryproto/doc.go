@@ -15,5 +15,5 @@
 // Package queryproto contains the shared protocol buffer definitions
 // for the query worker service.
 //
-//go:generate protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative queryworker.proto
+//go:generate sh -c "cd .. && PATH=\"./bin:$PATH\" ./bin/buf generate"
 package queryproto

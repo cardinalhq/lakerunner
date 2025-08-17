@@ -61,8 +61,11 @@ endef
 # Generate all the things.
 #
 .PHONY: generate
-generate:
+generate: bin/buf
 	go generate ./...
+
+bin/buf:
+	./scripts/install-proto-tools.sh
 
 #
 # Run pre-commit checks
