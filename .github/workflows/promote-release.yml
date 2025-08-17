@@ -8,8 +8,8 @@ on:
         required: true
         type: string
       final_version:
-        description: 'Final version to create (e.g., v1.2.3)'
-        required: true
+        description: 'Final version to create (leave empty to auto-derive from RC)'
+        required: false
         type: string
 
 permissions:
@@ -24,50 +24,62 @@ jobs:
       major: ${{ steps.parse.outputs.major }}
       minor: ${{ steps.parse.outputs.minor }}
       patch: ${{ steps.parse.outputs.patch }}
+      final_version: ${{ steps.derive.outputs.final_version }}
     steps:
-      - name: Validate inputs
+      - name: Validate inputs and auto-derive final version
+        id: derive
         run: |
-          echo "Validating promotion from ${{ inputs.rc_version }} to ${{ inputs.final_version }}"
-          
+          echo "Processing RC version: ${{ inputs.rc_version }}"
+
           # Validate RC format (v1.2.3-suffix)
           if [[ ! "${{ inputs.rc_version }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-[a-zA-Z0-9]+$ ]]; then
             echo "ERROR: RC version must follow format: v1.2.3-suffix (e.g., v1.2.3-rc1, v1.2.3-beta1)"
             exit 1
           fi
-          
-          # Validate final format (v1.2.3)
-          if [[ ! "${{ inputs.final_version }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "ERROR: Final version must follow format: v1.2.3"
-            exit 1
+
+          # Auto-derive final version from RC if not provided
+          RC_BASE=$(echo "${{ inputs.rc_version }}" | sed 's/-[a-zA-Z0-9]*$//')
+
+          if [[ -n "${{ inputs.final_version }}" ]]; then
+            # User provided final version - validate it
+            FINAL_VERSION="${{ inputs.final_version }}"
+            if [[ ! "$FINAL_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "ERROR: Final version must follow format: v1.2.3"
+              exit 1
+            fi
+
+            if [[ "$RC_BASE" != "$FINAL_VERSION" ]]; then
+              echo "ERROR: RC base version ($RC_BASE) must match final version ($FINAL_VERSION)"
+              exit 1
+            fi
+            echo "Using provided final version: $FINAL_VERSION"
+          else
+            # Auto-derive final version
+            FINAL_VERSION="$RC_BASE"
+            echo "Auto-derived final version: $FINAL_VERSION"
           fi
-          
-          # Extract base versions for comparison
-          RC_BASE=$(echo "${{ inputs.rc_version }}" | sed 's/-rc[0-9]*$//')
-          FINAL_VERSION="${{ inputs.final_version }}"
-          
-          if [[ "$RC_BASE" != "$FINAL_VERSION" ]]; then
-            echo "ERROR: RC base version ($RC_BASE) must match final version ($FINAL_VERSION)"
-            exit 1
-          fi
-          
+
+          # Set for later steps and output
+          echo "FINAL_VERSION=$FINAL_VERSION" >> $GITHUB_ENV
+          echo "final_version=$FINAL_VERSION" >> $GITHUB_OUTPUT
           echo "Validation passed"
 
       - name: Parse version components
         id: parse
         run: |
-          VERSION="${{ inputs.final_version }}"
+          VERSION="$FINAL_VERSION"
           # Remove 'v' prefix
           VERSION_NUM=$(echo $VERSION | sed 's/^v//')
-          
+
           # Split into components
           MAJOR=$(echo $VERSION_NUM | cut -d. -f1)
           MINOR=$(echo $VERSION_NUM | cut -d. -f2)
           PATCH=$(echo $VERSION_NUM | cut -d. -f3)
-          
+
           echo "major=$MAJOR" >> $GITHUB_OUTPUT
           echo "minor=$MINOR" >> $GITHUB_OUTPUT
           echo "patch=$PATCH" >> $GITHUB_OUTPUT
-          
+
           echo "Version components: $MAJOR.$MINOR.$PATCH"
 
   promote:
@@ -100,52 +112,59 @@ jobs:
       - name: Promote RC to production tags
         run: |
           echo "Promoting ${{ inputs.rc_version }} to production tags..."
-          
+
           RC_IMAGE="public.ecr.aws/cardinalhq.io/lakerunner:${{ inputs.rc_version }}"
-          
+
           # Tag with exact version
-          FINAL_TAG="public.ecr.aws/cardinalhq.io/lakerunner:${{ inputs.final_version }}"
+          FINAL_TAG="public.ecr.aws/cardinalhq.io/lakerunner:${{ needs.validate.outputs.final_version }}"
           echo "Creating tag: $FINAL_TAG"
           docker buildx imagetools create --tag $FINAL_TAG $RC_IMAGE
-          
+
           # Tag with minor version (v1.2)
           MINOR_TAG="public.ecr.aws/cardinalhq.io/lakerunner:v${{ needs.validate.outputs.major }}.${{ needs.validate.outputs.minor }}"
           echo "Creating tag: $MINOR_TAG"
           docker buildx imagetools create --tag $MINOR_TAG $RC_IMAGE
-          
+
           # Tag with major version (v1)
           MAJOR_TAG="public.ecr.aws/cardinalhq.io/lakerunner:v${{ needs.validate.outputs.major }}"
           echo "Creating tag: $MAJOR_TAG"
           docker buildx imagetools create --tag $MAJOR_TAG $RC_IMAGE
 
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
       - name: Create Git tag
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-          # Use privileged token that can bypass tag protection
-          token: ${{ secrets.RELEASE_TOKEN }}
+          # Use GitHub App token that can bypass tag protection
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Create and push Git tag
         run: |
-          echo "Creating Git tag for ${{ inputs.final_version }}"
-          
+          echo "Creating Git tag for ${{ needs.validate.outputs.final_version }}"
+
           # Configure git
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          
+
           # Create tag
-          git tag ${{ inputs.final_version }}
-          git push origin ${{ inputs.final_version }}
-          
+          git tag ${{ needs.validate.outputs.final_version }}
+          git push origin ${{ needs.validate.outputs.final_version }}
+
           echo "Git tag created and pushed"
 
       - name: Update stable tag
         run: |
-          echo "Updating stable tag to point to ${{ inputs.final_version }}"
-          
+          echo "Updating stable tag to point to ${{ needs.validate.outputs.final_version }}"
+
           STABLE_TAG="public.ecr.aws/cardinalhq.io/lakerunner:stable"
           RC_IMAGE="public.ecr.aws/cardinalhq.io/lakerunner:${{ inputs.rc_version }}"
-          
+
           docker buildx imagetools create --tag $STABLE_TAG $RC_IMAGE
           echo "Stable tag updated"
 
@@ -154,11 +173,11 @@ jobs:
           echo "Release promotion completed successfully!"
           echo ""
           echo "Available tags:"
-          echo "  • public.ecr.aws/cardinalhq.io/lakerunner:${{ inputs.final_version }}"
+          echo "  • public.ecr.aws/cardinalhq.io/lakerunner:${{ needs.validate.outputs.final_version }}"
           echo "  • public.ecr.aws/cardinalhq.io/lakerunner:v${{ needs.validate.outputs.major }}.${{ needs.validate.outputs.minor }}"
           echo "  • public.ecr.aws/cardinalhq.io/lakerunner:v${{ needs.validate.outputs.major }}"
           echo "  • public.ecr.aws/cardinalhq.io/lakerunner:stable"
           echo ""
-          echo "Git tag: ${{ inputs.final_version }}"
+          echo "Git tag: ${{ needs.validate.outputs.final_version }}"
           echo ""
           echo "Ready for production deployment!"
