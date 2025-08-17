@@ -9,13 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Record Count Estimation**: Refactored estimator architecture with signal-specific implementations
-  - Split estimator into dedicated `MetricEstimator` and `LogEstimator` types
-  - Improved frequency-aware estimation for metrics using `frequency_ms` column
-  - Optimized database index `(frequency_ms, instance_num)` based on cardinality analysis
-  - Flattened API to return `int64` directly instead of wrapper struct
-  - Added shared update loop infrastructure for both estimator types
-  - Enhanced metrics estimation with 10-second default frequency during ingest
+- **Record Count Estimation**: Split estimator into signal-specific `MetricEstimator` and `LogEstimator` types with frequency-aware metrics estimation
+- **Database Index**: Updated metric_seg index to `(frequency_ms, instance_num)` for improved query performance
 - **Build Process**: Improved promotion pipeline for production releases
 
 ## [v1.1.0-rc3] - 2025-08-17
