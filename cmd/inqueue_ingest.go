@@ -54,7 +54,8 @@ type IngestLoopContext struct {
 	mdb               lrdb.StoreFull
 	sp                storageprofile.StorageProfileProvider
 	awsmanager        *awsclient.Manager
-	estimator         estimator.Estimator
+	metricEstimator   estimator.MetricEstimator
+	logEstimator      estimator.LogEstimator
 	signal            string
 	ll                *slog.Logger
 	exemplarProcessor *exemplar.Processor
@@ -76,9 +77,14 @@ func NewIngestLoopContext(ctx context.Context, signal string, assumeRoleSessionN
 		return nil, fmt.Errorf("failed to create AWS manager: %w", err)
 	}
 
-	est, err := estimator.NewEstimator(ctx, mdb)
+	metricEst, err := estimator.NewMetricEstimator(ctx, mdb)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create estimator: %w", err)
+		return nil, fmt.Errorf("failed to create metric estimator: %w", err)
+	}
+
+	logEst, err := estimator.NewLogEstimator(ctx, mdb)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create log estimator: %w", err)
 	}
 
 	sp, err := storageprofile.SetupStorageProfiles()
@@ -113,7 +119,8 @@ func NewIngestLoopContext(ctx context.Context, signal string, assumeRoleSessionN
 		mdb:               mdb,
 		sp:                sp,
 		awsmanager:        awsmanager,
-		estimator:         est,
+		metricEstimator:   metricEst,
+		logEstimator:      logEst,
 		signal:            signal,
 		ll:                ll,
 		exemplarProcessor: exemplarProcessor,
@@ -242,7 +249,15 @@ func ingestFiles(
 		}
 	}()
 
-	rpfEstimate := loop.estimator.Get(inf.OrganizationID, inf.InstanceNum, lrdb.SignalEnum(inf.TelemetryType)).EstimatedRecordCount
+	var rpfEstimate int64
+	switch lrdb.SignalEnum(inf.TelemetryType) {
+	case lrdb.SignalEnumMetrics:
+		rpfEstimate = loop.metricEstimator.Get(inf.OrganizationID, inf.InstanceNum, 10_000)
+	case lrdb.SignalEnumLogs:
+		rpfEstimate = loop.logEstimator.Get(inf.OrganizationID, inf.InstanceNum)
+	default:
+		rpfEstimate = 40_000 // Default fallback
+	}
 	t0 = time.Now()
 	err = processFx(ctx, ll, tmpdir, loop.sp, loop.mdb, loop.awsmanager, inf, ingestDateint, rpfEstimate, loop)
 	inqueueDuration.Record(ctx, time.Since(t0).Seconds(),

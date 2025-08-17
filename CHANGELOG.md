@@ -7,7 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Record Count Estimation**: Split estimator into signal-specific `MetricEstimator` and `LogEstimator` types with frequency-aware metrics estimation
+- **Database Index**: Updated metric_seg index to `(frequency_ms, instance_num)` for improved query performance
+- **Build Process**: Improved promotion pipeline for production releases
+
+## [v1.1.0-rc3] - 2025-08-17
+
 ### Added
+
 - **DuckDB Extension Management**: Added air-gapped extension loading system with `LAKERUNNER_EXTENSIONS_PATH` and `LAKERUNNER_HTTPFS_EXTENSION` environment variables
 - **Auto-loading Extensions**: httpfs extension now loads automatically by default in `duckdbx.Open()`
 - **Extension Configuration Options**: Added `WithoutExtension()` option to remove default extensions when not needed
@@ -22,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **JSON Message Parsing**: Added support for parsing JSON from SQS message bodies
 
 ### Changed
+
 - **Command Structure Refactoring**: Major reorganization of CLI commands for better usability
 - **Multi-stage Docker Builds**: Updated to CGO=1 builds with optimized Docker images
 - **Build System**: Updated to use goreleaser for multi-architecture builds with partial compilation support
@@ -31,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Database Operations**: Enhanced segment operations with query size limits and unbounded query protections
 
 ### Fixed
+
 - **Migration Safety**: Fixed database migration deadlocks with proper table locking
 - **Query Bounds**: Fixed unbounded SQL queries in metric segment operations
 - **Memory Leaks**: Improved memory management and garbage collection in processing pipelines
@@ -38,6 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Lint Compliance**: Fixed various linting issues and added import order checking
 
 ### Security
+
 - **License Compliance**: Added AGPL v3 license headers to all source files
 - **Air-gapped Deployments**: Implemented secure extension loading for air-gapped environments
 - **Environment Variable Namespacing**: Prefixed internal environment variables with `LAKERUNNER_` to avoid conflicts
@@ -45,11 +57,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [v1.0.1] - 2025-08-05
 
 ### Added
+
 - Initial stable release with core telemetry ingestion functionality
 - S3-compatible object store integration
 - Basic log and metric processing capabilities
 - PostgreSQL-based segment indexing
 - Docker container support
 
-[Unreleased]: https://github.com/cardinalhq/lakerunner/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/cardinalhq/lakerunner/compare/v1.1.0-rc3...HEAD
+[v1.1.0-rc3]: https://github.com/cardinalhq/lakerunner/compare/v1.0.1...v1.1.0-rc3
 [v1.0.1]: https://github.com/cardinalhq/lakerunner/releases/tag/v1.0.1

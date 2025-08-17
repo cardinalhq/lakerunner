@@ -57,15 +57,16 @@ const (
 )
 
 type RunqueueLoopContext struct {
-	ctx        context.Context
-	wqm        lockmgr.WorkQueueManager
-	mdb        lrdb.StoreFull
-	sp         storageprofile.StorageProfileProvider
-	awsmanager *awsclient.Manager
-	estimator  estimator.Estimator
-	signal     string
-	action     string
-	ll         *slog.Logger
+	ctx             context.Context
+	wqm             lockmgr.WorkQueueManager
+	mdb             lrdb.StoreFull
+	sp              storageprofile.StorageProfileProvider
+	awsmanager      *awsclient.Manager
+	metricEstimator estimator.MetricEstimator
+	logEstimator    estimator.LogEstimator
+	signal          string
+	action          string
+	ll              *slog.Logger
 }
 
 func NewRunqueueLoopContext(ctx context.Context, signal string, action string, assumeRoleSessionName string) (*RunqueueLoopContext, error) {
@@ -84,9 +85,14 @@ func NewRunqueueLoopContext(ctx context.Context, signal string, action string, a
 		return nil, fmt.Errorf("failed to create AWS manager: %w", err)
 	}
 
-	est, err := estimator.NewEstimator(ctx, mdb)
+	metricEst, err := estimator.NewMetricEstimator(ctx, mdb)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create estimator: %w", err)
+		return nil, fmt.Errorf("failed to create metric estimator: %w", err)
+	}
+
+	logEst, err := estimator.NewLogEstimator(ctx, mdb)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create log estimator: %w", err)
 	}
 
 	sp, err := storageprofile.SetupStorageProfiles()
@@ -103,15 +109,16 @@ func NewRunqueueLoopContext(ctx context.Context, signal string, action string, a
 	go wqm.Run(ctx)
 
 	return &RunqueueLoopContext{
-		ctx:        ctx,
-		wqm:        wqm,
-		mdb:        mdb,
-		sp:         sp,
-		awsmanager: awsmanager,
-		estimator:  est,
-		signal:     signal,
-		action:     action,
-		ll:         ll,
+		ctx:             ctx,
+		wqm:             wqm,
+		mdb:             mdb,
+		sp:              sp,
+		awsmanager:      awsmanager,
+		metricEstimator: metricEst,
+		logEstimator:    logEst,
+		signal:          signal,
+		action:          action,
+		ll:              ll,
 	}, nil
 }
 
@@ -239,7 +246,15 @@ func workqueueProcess(
 		}
 	}()
 
-	estBytesPerRecord := loop.estimator.Get(inf.OrganizationID(), inf.InstanceNum(), inf.Signal()).EstimatedRecordCount
+	var estBytesPerRecord int64
+	switch inf.Signal() {
+	case lrdb.SignalEnumMetrics:
+		estBytesPerRecord = loop.metricEstimator.Get(inf.OrganizationID(), inf.InstanceNum(), inf.FrequencyMs())
+	case lrdb.SignalEnumLogs:
+		estBytesPerRecord = loop.logEstimator.Get(inf.OrganizationID(), inf.InstanceNum())
+	default:
+		estBytesPerRecord = 40_000 // Default fallback
+	}
 	t0 = time.Now()
 	result, err := pfx(ctx, ll, tmpdir, loop.awsmanager, loop.sp, loop.mdb, inf, estBytesPerRecord, args)
 	workqueueDuration.Record(ctx, time.Since(t0).Seconds(),

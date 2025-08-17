@@ -49,8 +49,8 @@ type Querier interface {
 	// This query is basically identical to the MetricSegEstimator, but for log segments.
 	LogSegEstimator(ctx context.Context, arg LogSegEstimatorParams) ([]LogSegEstimatorRow, error)
 	// Returns an estimate of the number of metric segments, average bytes, average records,
-	// and average bytes per record for metric segments in the last hour per organization and instance.
-	// This query is basically identical to the LogSegEstimator, but for metric segments.
+	// and average bytes per record for metric segments in the last hour per organization, instance, and frequency.
+	// Uses frequency_ms to provide more accurate estimates based on collection frequency.
 	MetricSegEstimator(ctx context.Context, arg MetricSegEstimatorParams) ([]MetricSegEstimatorRow, error)
 	ObjectCleanupAdd(ctx context.Context, arg ObjectCleanupAddParams) error
 	ObjectCleanupComplete(ctx context.Context, id uuid.UUID) error
