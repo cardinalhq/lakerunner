@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Record Count Estimation**: Split estimator into signal-specific `MetricEstimator` and `LogEstimator` types with frequency-aware metrics estimation
 - **Database Index**: Updated metric_seg index to `(frequency_ms, instance_num)` for improved query performance
 - **Build Process**: Improved promotion pipeline for production releases
+- **Logging**: Removed confusing CONFIGDB fallback message when database is not configured
 
 ## [v1.1.0-rc3] - 2025-08-17
 
