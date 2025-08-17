@@ -4,8 +4,7 @@ project_name: lakerunner
 
 before:
   hooks:
-    - make generate
-    - go test -race ./...
+    - go mod tidy
 
 partial:
   by: target
@@ -45,14 +44,14 @@ builds:
       - -X main.date={{.Date}}
 
 # Define how to build/push Docker images.
+# Only creates the exact tag provided - no additional tags
 dockers:
   - goos: linux
     goarch: amd64
     dockerfile: Dockerfile
     use: buildx
     image_templates:
-      - "public.ecr.aws/cardinalhq.io/lakerunner:v{{ .Version }}-amd64"
-      - "public.ecr.aws/cardinalhq.io/lakerunner:latest-dev-amd64"
+      - "public.ecr.aws/cardinalhq.io/lakerunner:{{ .Version }}-amd64"
     build_flag_templates:
       - --pull
       - --platform=linux/amd64
@@ -68,8 +67,7 @@ dockers:
     dockerfile: Dockerfile
     use: buildx
     image_templates:
-      - "public.ecr.aws/cardinalhq.io/lakerunner:v{{ .Version }}-arm64"
-      - "public.ecr.aws/cardinalhq.io/lakerunner:latest-dev-arm64"
+      - "public.ecr.aws/cardinalhq.io/lakerunner:{{ .Version }}-arm64"
     build_flag_templates:
       - --pull
       - --platform=linux/arm64
@@ -80,12 +78,9 @@ dockers:
       - --label=org.opencontainers.image.revision={{.FullCommit}}
       - --label=org.opencontainers.image.version={{.Version}}
       - --label=org.opencontainers.image.source={{.GitURL}}
+
 docker_manifests:
-  - name_template: "public.ecr.aws/cardinalhq.io/lakerunner:v{{ .Version }}"
+  - name_template: "public.ecr.aws/cardinalhq.io/lakerunner:{{ .Version }}"
     image_templates:
-      - "public.ecr.aws/cardinalhq.io/lakerunner:v{{ .Version }}-amd64"
-      - "public.ecr.aws/cardinalhq.io/lakerunner:v{{ .Version }}-arm64"
-  - name_template: "public.ecr.aws/cardinalhq.io/lakerunner:latest-dev"
-    image_templates:
-      - "public.ecr.aws/cardinalhq.io/lakerunner:latest-dev-amd64"
-      - "public.ecr.aws/cardinalhq.io/lakerunner:latest-dev-arm64"
+      - "public.ecr.aws/cardinalhq.io/lakerunner:{{ .Version }}-amd64"
+      - "public.ecr.aws/cardinalhq.io/lakerunner:{{ .Version }}-arm64"

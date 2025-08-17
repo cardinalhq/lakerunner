@@ -175,9 +175,9 @@ func queueMetricRollup(ctx context.Context, mdb lrdb.StoreFull, inf qmc) error {
 	return mdb.WorkQueueAdd(ctx, rp)
 }
 
-// queueLogCompaction queues a log compaction job for the entire dateint
+// queueLogCompaction queues a log compaction job for the entire hour
 func queueLogCompaction(ctx context.Context, mdb lrdb.StoreFull, inf qmc) error {
-	upstreamDur := 24 * time.Hour
+	upstreamDur := 1 * time.Hour
 	startTS, _, ok := helpers.RangeBounds(inf.TsRange)
 	if !ok {
 		slog.Error("invalid time range for log compaction notification", "ts_range", inf.TsRange)

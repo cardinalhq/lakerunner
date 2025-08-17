@@ -61,7 +61,6 @@ jobs:
             DUCKDB_VERSION=${{ inputs.duckdb_version }}
           tags: |
             public.ecr.aws/cardinalhq.io/duckdb-sdk:${{ inputs.duckdb_version }}-${{ matrix.arch }}
-            public.ecr.aws/cardinalhq.io/duckdb-sdk:latest-${{ matrix.arch }}
           labels: |
             org.opencontainers.image.created=${{ github.event.repository.updated_at }}
             org.opencontainers.image.name=duckdb-sdk
@@ -95,7 +94,9 @@ jobs:
             --tag public.ecr.aws/cardinalhq.io/duckdb-sdk:${{ inputs.duckdb_version }} \
             public.ecr.aws/cardinalhq.io/duckdb-sdk:${{ inputs.duckdb_version }}-amd64 \
             public.ecr.aws/cardinalhq.io/duckdb-sdk:${{ inputs.duckdb_version }}-arm64
+          # Create minor version tag (e.g., v1.3 from v1.3.2)
+          MINOR_TAG=$(echo "${{ inputs.duckdb_version }}" | sed -E 's/^v([0-9]+\.[0-9]+)\.[0-9]+.*/v\1/')
           docker buildx imagetools create \
-            --tag public.ecr.aws/cardinalhq.io/duckdb-sdk:latest \
-            public.ecr.aws/cardinalhq.io/duckdb-sdk:latest-amd64 \
-            public.ecr.aws/cardinalhq.io/duckdb-sdk:latest-arm64
+            --tag public.ecr.aws/cardinalhq.io/duckdb-sdk:${MINOR_TAG} \
+            public.ecr.aws/cardinalhq.io/duckdb-sdk:${{ inputs.duckdb_version }}-amd64 \
+            public.ecr.aws/cardinalhq.io/duckdb-sdk:${{ inputs.duckdb_version }}-arm64

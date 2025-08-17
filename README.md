@@ -11,7 +11,7 @@
 
 ---
 
-## 🚀 Features
+## Features
 
 - Automatic ingestion from S3 on object creation
 - Event-driven Architecture enabled by S3 Object Notifications. 
@@ -19,11 +19,11 @@
 - Seamless ingestion for `OTEL Proto`, `CSV` or `.json.gz` formats.
 - Works with DataDog, FluentBit, or your custom source!
 - Get started locally in <5 mins with the install script
-- 👀 `docker-compose` support <em> coming soon! </em>
+- `docker-compose` support <em> coming soon! </em>
 
 ---
 
-## 📚 Table of Contents
+## Table of Contents
 
 - [End User Guide](#end-user-guide)
   - [Demo Setup](#demo)
@@ -89,10 +89,10 @@ Navigate to the `Explore` tab, select the `Cardinal` datasource, and try running
 
 We will discuss configuration options in the next section
 
-> **ℹ️ Note:**  
+> **Note:**  
 > Need help? Join the [LakeRunner community on Slack](https://join.slack.com/t/birdhousebycardinalhq/shared_invite/zt-34ds8vt2t-YhGFtoG5NjJX238cMXdLGw) or email us at **support@cardinalhq.io**.  
 >  
-> 💼 **CardinalHQ  offers managed LakeRunner deployments.**
+> **CardinalHQ offers managed LakeRunner deployments.**
 
 
 ### Next Steps
