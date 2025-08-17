@@ -34,14 +34,12 @@ RUN mkdir -p /app/extensions && \
 FROM gcr.io/distroless/cc-debian12:nonroot
 
 # Copy the pre-built binary from goreleaser
-COPY lakerunner /app/bin/lakerunner
+COPY --chmod=755 lakerunner /app/bin/lakerunner
 
 # Copy httpfs extension
 COPY --from=extensions /app/extensions/httpfs.duckdb_extension /app/extensions/httpfs.duckdb_extension
 
 # Set environment variable for extension location
 ENV LAKERUNNER_HTTPFS_EXTENSION=/app/extensions/httpfs.duckdb_extension
-
-USER 2000:2000
 
 CMD ["/app/bin/lakerunner"]
