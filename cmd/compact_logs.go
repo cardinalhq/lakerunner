@@ -118,16 +118,18 @@ func logCompactItemDo(
 	if !ok {
 		return WorkResultSuccess, errors.New("error getting range bounds")
 	}
-	stdi := timeToDateint(st.Time)
-	etdi := timeToDateint(et.Time.Add(-time.Millisecond)) // end dateint is inclusive, so subtract 1ms
-	if stdi != etdi {
-		ll.Error("Range bounds are not the same dateint",
+	stdi, sth := helpers.MSToDateintHour(st.Time.UnixMilli())
+	etdi, eth := helpers.MSToDateintHour(et.Time.Add(-time.Millisecond).UnixMilli()) // end time is exclusive, so subtract 1ms to get last included time
+	if stdi != etdi || sth != eth {
+		ll.Error("Range bounds are not the same dateint-hour",
 			slog.Int("startDateint", int(stdi)),
+			slog.Int("startHour", int(sth)),
 			slog.Time("st", st.Time),
 			slog.Int("endDateint", int(etdi)),
+			slog.Int("endHour", int(eth)),
 			slog.Time("et", et.Time),
 		)
-		return WorkResultTryAgainLater, errors.New("range bounds are not the same dateint")
+		return WorkResultTryAgainLater, errors.New("range bounds are not the same dateint-hour")
 	}
 
 	const maxRowsLimit = 1000
@@ -261,11 +263,6 @@ func logCompactItemDo(
 			slog.Time("nextCursorCreatedAt", cursorCreatedAt),
 			slog.Int64("nextCursorSegmentID", cursorSegmentID))
 	}
-}
-
-// timeToDateint computes the dateint for the current time.  This is YYYYMMDD as an int32.
-func timeToDateint(t time.Time) int32 {
-	return int32(t.Year()*10000 + int(t.Month())*100 + t.Day())
 }
 
 var dropFieldNames = []string{

@@ -37,6 +37,7 @@ const maxRowsSortBuffer = 5000
 
 type SplitKey struct {
 	DateInt       int32
+	Hour          int16
 	IngestDateint int32
 }
 
@@ -81,8 +82,8 @@ func ProcessAndSplit(ll *slog.Logger, fh *filecrunch.FileHandle, tmpdir string, 
 			continue
 		}
 		ms := getMS(tsRaw)
-		dateint, _ := helpers.MSToDateintHour(ms)
-		key := SplitKey{DateInt: dateint, IngestDateint: ingestDateint}
+		dateint, hour := helpers.MSToDateintHour(ms)
+		key := SplitKey{DateInt: dateint, Hour: hour, IngestDateint: ingestDateint}
 
 		st, exists := groups[key]
 		if !exists {
