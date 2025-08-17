@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       rc_version:
-        description: 'Release candidate to promote (e.g., v1.2.3-rc1)'
+        description: 'Release candidate to promote (e.g., v1.2.3-rc1, v1.2.3-beta1, v1.2.3-hotfix)'
         required: true
         type: string
       final_version:
@@ -29,9 +29,9 @@ jobs:
         run: |
           echo "Validating promotion from ${{ inputs.rc_version }} to ${{ inputs.final_version }}"
           
-          # Validate RC format (v1.2.3-rc1)
-          if [[ ! "${{ inputs.rc_version }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc[0-9]+$ ]]; then
-            echo "ERROR: RC version must follow format: v1.2.3-rc1"
+          # Validate RC format (v1.2.3-suffix)
+          if [[ ! "${{ inputs.rc_version }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-[a-zA-Z0-9]+$ ]]; then
+            echo "ERROR: RC version must follow format: v1.2.3-suffix (e.g., v1.2.3-rc1, v1.2.3-beta1)"
             exit 1
           fi
           

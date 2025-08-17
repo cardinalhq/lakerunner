@@ -3,7 +3,7 @@ name: Build Release Candidate
 on:
   push:
     tags:
-      - "v*.*.*-rc*"
+      - "v*.*.*-*"
 
 permissions:
   contents: write
