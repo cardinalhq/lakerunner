@@ -28,7 +28,6 @@ archives:
 builds:
   - id: lakerunner
     main: ./main.go
-    binary: lakerunner
     env:
       - CGO_ENABLED=1
     goos:
