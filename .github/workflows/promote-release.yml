@@ -168,6 +168,31 @@ jobs:
           docker buildx imagetools create --tag $STABLE_TAG $RC_IMAGE
           echo "Stable tag updated"
 
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          echo "Creating GitHub release for ${{ needs.validate.outputs.final_version }}"
+
+          # Generate release notes from commits since last release
+          LAST_RELEASE=$(gh release list --limit 1 --exclude-pre-releases --json tagName --jq '.[0].tagName' || echo "")
+
+          if [ -n "$LAST_RELEASE" ]; then
+            RELEASE_NOTES="## Changes since $LAST_RELEASE"$'\n\n'
+            RELEASE_NOTES+=$(git log --oneline ${LAST_RELEASE}..HEAD --no-merges | sed 's/^/* /')
+          else
+            RELEASE_NOTES="## Changes"$'\n\n'
+            RELEASE_NOTES+=$(git log --oneline --no-merges | head -10 | sed 's/^/* /')
+          fi
+
+          # Create the release
+          gh release create ${{ needs.validate.outputs.final_version }} \
+            --title "Release ${{ needs.validate.outputs.final_version }}" \
+            --notes "$RELEASE_NOTES" \
+            --latest
+
+          echo "GitHub release created: ${{ needs.validate.outputs.final_version }}"
+
       - name: Summary
         run: |
           echo "Release promotion completed successfully!"
@@ -179,5 +204,6 @@ jobs:
           echo "  • public.ecr.aws/cardinalhq.io/lakerunner:stable"
           echo ""
           echo "Git tag: ${{ needs.validate.outputs.final_version }}"
+          echo "GitHub release: https://github.com/${{ github.repository }}/releases/tag/${{ needs.validate.outputs.final_version }}"
           echo ""
           echo "Ready for production deployment!"
