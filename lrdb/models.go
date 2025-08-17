@@ -223,6 +223,19 @@ type SignalLock struct {
 	SlotID         int32                            `json:"slot_id"`
 }
 
+type TraceSeg struct {
+	OrganizationID uuid.UUID                 `json:"organization_id"`
+	Dateint        int32                     `json:"dateint"`
+	SegmentID      int64                     `json:"segment_id"`
+	InstanceNum    int16                     `json:"instance_num"`
+	Fingerprints   []int64                   `json:"fingerprints"`
+	RecordCount    int64                     `json:"record_count"`
+	FileSize       int64                     `json:"file_size"`
+	IngestDateint  int32                     `json:"ingest_dateint"`
+	TsRange        pgtype.Range[pgtype.Int8] `json:"ts_range"`
+	CreatedBy      int16                     `json:"created_by"`
+}
+
 type WorkQueue struct {
 	ID             int64                            `json:"id"`
 	Priority       int32                            `json:"priority"`

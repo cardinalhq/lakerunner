@@ -45,7 +45,8 @@ func determineSlot(traceID string, dateint int32, orgID string) int {
 	return int(binary.BigEndian.Uint16(h[:])) % NumTracePartitions
 }
 
-func ConvertProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate int64, dateint int32, orgID string) ([]string, error) {
+// ConvertProtoFile converts a protobuf file to the standardized format
+func ConvertProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate int64, dateint int32, orgID string) ([]TraceFileResult, error) {
 	// Create a mapper for protobuf files
 	mapper := translate.NewMapper()
 
@@ -149,7 +150,7 @@ func ConvertProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate 
 	}
 
 	// Close all writers and collect results
-	var allResults []string
+	var allResults []TraceFileResult
 	for slot, writer := range writers {
 		result, err := writer.Close()
 		if err != nil {
@@ -158,7 +159,12 @@ func ConvertProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate 
 
 		// Add all files from this slot to results
 		for _, res := range result {
-			allResults = append(allResults, res.FileName)
+			allResults = append(allResults, TraceFileResult{
+				FileName:    res.FileName,
+				RecordCount: res.RecordCount,
+				FileSize:    res.FileSize,
+				SlotID:      slot,
+			})
 		}
 	}
 
@@ -167,4 +173,12 @@ func ConvertProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate 
 	}
 
 	return allResults, nil
+}
+
+// TraceFileResult contains information about a converted trace file
+type TraceFileResult struct {
+	FileName    string
+	RecordCount int64
+	FileSize    int64
+	SlotID      int
 }

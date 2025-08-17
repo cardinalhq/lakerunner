@@ -39,6 +39,22 @@ func (q *Queries) ensureLogFPPartition(ctx context.Context, parent string, org_i
 	return nil
 }
 
+func (q *Queries) ensureTraceFPPartition(ctx context.Context, parent string, org_id uuid.UUID, dateint int32) error {
+	partitionTableName := parent + "_" + dbase.UUIDToBase36(org_id)
+	key := fmt.Sprintf("%s_%d", partitionTableName, dateint)
+	if IsPartitionTableRemembered(key) {
+		return nil
+	}
+	sql := fmt.Sprintf(`SELECT create_tracefpseg_partition('%s', '%s', '%s', %d, %d)`,
+		parent, partitionTableName, org_id.String(), dateint, dateint+1)
+	_, err := q.db.Exec(ctx, sql)
+	if err != nil {
+		return fmt.Errorf("failed to create partition %s for table %s: %w", partitionTableName, parent, err)
+	}
+	RememberPartitionTable(key)
+	return nil
+}
+
 func (q *Queries) ensureMetricSegmentPartition(ctx context.Context, org_id uuid.UUID, dateint int32) error {
 	partitionTableName := "mseg_" + dbase.UUIDToBase36(org_id)
 	key := fmt.Sprintf("%s_%d", partitionTableName, dateint)

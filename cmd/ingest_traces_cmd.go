@@ -19,17 +19,18 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/cardinalhq/lakerunner/cmd/ingesttraces"
-	"github.com/cardinalhq/lakerunner/cmd/storageprofile"
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -83,7 +84,7 @@ func init() {
 }
 
 func traceIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
-	awsmanager *awsclient.Manager, inf lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64) error {
+	awsmanager *awsclient.Manager, inf lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
 	profile, err := sp.Get(ctx, inf.OrganizationID, inf.InstanceNum)
 	if err != nil {
 		ll.Error("Failed to get storage profile", slog.Any("error", err))
@@ -127,37 +128,27 @@ func traceIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp sto
 		}
 
 		// Check file type and convert if supported
-		if fnames, err := convertTracesFileIfSupported(ll, tmpfilename, tmpdir, inf.Bucket, inf.ObjectID, rpfEstimate, ingest_dateint, inf.OrganizationID.String()); err != nil {
+		if traceResults, err := convertTracesFileIfSupported(ll, tmpfilename, tmpdir, inf.Bucket, inf.ObjectID, rpfEstimate, ingest_dateint, inf.OrganizationID.String()); err != nil {
 			ll.Error("Failed to convert file", slog.Any("error", err))
 			// TODO add counter for failure to convert, probably in each convert function
 			return err
-		} else if len(fnames) == 0 {
+		} else if len(traceResults) == 0 {
 			ll.Info("Empty source file, skipping", slog.String("objectID", inf.ObjectID))
 			return nil
-		} else if fnames != nil {
+		} else if traceResults != nil {
 			ll.Info("Converted file", slog.String("filename", tmpfilename), slog.String("objectID", inf.ObjectID))
 
 			// Process each converted file - upload to S3 and insert into database
-			for _, fname := range fnames {
-				// Generate unique segment ID
+			for _, result := range traceResults {
 				segmentID := s3helper.GenerateID()
-
-				// Extract slot information from filename (e.g., "slot_0/random.parquet")
-				// The filename should be in format: tmpdir/slot_X/random.parquet
-				slotDir := filepath.Dir(fname)
-				slotName := filepath.Base(slotDir)
-				slotID := -1
-				if strings.HasPrefix(slotName, "slot_") {
-					fmt.Sscanf(slotName, "slot_%d", &slotID)
-				}
 
 				// Create S3 object ID for traces
 				// Format: db/<org-id>/<collector-id>/<dateint>/traces/<slot_number>/<filename>.parquet
 				dbObjectID := fmt.Sprintf("db/%s/%s/%d/traces/%d/%d.parquet",
-					inf.OrganizationID.String(), inf.CollectorName, ingest_dateint, slotID, segmentID)
+					inf.OrganizationID.String(), inf.CollectorName, ingest_dateint, result.SlotID, segmentID)
 
 				// Upload to S3
-				if err := s3helper.UploadS3Object(ctx, s3client, inf.Bucket, dbObjectID, fname); err != nil {
+				if err := s3helper.UploadS3Object(ctx, s3client, inf.Bucket, dbObjectID, result.FileName); err != nil {
 					ll.Error("Failed to upload S3 object", slog.Any("error", err))
 					return err
 				}
@@ -166,19 +157,42 @@ func traceIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp sto
 					slog.String("bucket", inf.Bucket),
 					slog.String("objectID", dbObjectID),
 					slog.Int64("segmentID", segmentID),
-					slog.Int("slotID", slotID),
+					slog.Int("slotID", result.SlotID),
 					slog.String("dateint", fmt.Sprintf("%d", ingest_dateint)))
 
 				// Clean up local file
-				_ = os.Remove(fname)
+				_ = os.Remove(result.FileName)
 
-				// TODO: Insert trace segment into database
-				// TODO: Queue trace compaction work
-				// For now, just log success
-				ll.Info("Successfully processed trace segment",
+				// Insert trace segment into database
+				err = mdb.InsertTraceSegment(ctx, lrdb.InsertTraceSegmentDirectParams{
+					OrganizationID: inf.OrganizationID,
+					Dateint:        ingest_dateint,
+					IngestDateint:  ingest_dateint,
+					SegmentID:      segmentID,
+					InstanceNum:    inf.InstanceNum,
+					StartTs:        0, // Time doesn't matter for slot-based traces compaction
+					EndTs:          1, // Time doesn't matter for slot-based traces compaction
+					RecordCount:    result.RecordCount,
+					FileSize:       result.FileSize,
+					CreatedBy:      int16(lrdb.CreatedByIngest),
+					Fingerprints:   []int64{}, // TODO: Extract fingerprints
+				})
+				if err != nil {
+					ll.Error("Failed to insert trace segment", slog.Any("error", err))
+					return err
+				}
+
+				ll.Info("Inserted trace segment",
 					slog.Int64("segmentID", segmentID),
-					slog.Int("slotID", slotID),
-					slog.String("s3Path", dbObjectID))
+					slog.Int("slotID", result.SlotID),
+					slog.Int64("recordCount", result.RecordCount),
+					slog.Int64("fileSize", result.FileSize))
+
+				// Queue trace compaction work for this specific slot
+				if err := queueTraceCompactionForSlot(ctx, mdb, inf, result.SlotID, ingest_dateint); err != nil {
+					ll.Error("Failed to queue trace compaction for slot", slog.Int("slotID", result.SlotID), slog.Any("error", err))
+					return err
+				}
 			}
 		}
 	}
@@ -188,7 +202,7 @@ func traceIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp sto
 	return nil
 }
 
-func convertTracesFileIfSupported(ll *slog.Logger, tmpfilename, tmpdir, bucket, objectID string, rpfEstimate int64, ingest_dateint int32, orgID string) ([]string, error) {
+func convertTracesFileIfSupported(ll *slog.Logger, tmpfilename, tmpdir, bucket, objectID string, rpfEstimate int64, ingest_dateint int32, orgID string) ([]ingesttraces.TraceFileResult, error) {
 	// TODO add a counter for each type we process, and a counter for unsupported types
 	// Include the signal type in the attributes, as well as the converter used, and the extension found.
 	switch {
@@ -198,4 +212,25 @@ func convertTracesFileIfSupported(ll *slog.Logger, tmpfilename, tmpdir, bucket, 
 		ll.Warn("Unsupported file type, skipping", slog.String("objectID", objectID))
 		return nil, nil
 	}
+}
+
+// queueTraceCompactionForSlot queues a trace compaction job for a specific slot
+func queueTraceCompactionForSlot(ctx context.Context, mdb lrdb.StoreFull, inf lrdb.Inqueue, slotID int, dateint int32) error {
+	return mdb.WorkQueueAdd(ctx, lrdb.WorkQueueAddParams{
+		OrgID:     inf.OrganizationID,
+		Instance:  inf.InstanceNum,
+		Signal:    lrdb.SignalEnumTraces,
+		Action:    lrdb.ActionEnumCompact,
+		Dateint:   dateint,
+		Frequency: -1,
+		SlotID:    int32(slotID),
+		TsRange: pgtype.Range[pgtype.Timestamptz]{
+			LowerType: pgtype.Inclusive,
+			UpperType: pgtype.Exclusive,
+			Lower:     pgtype.Timestamptz{Time: time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC), Valid: true}, // Time doesn't matter for slot-based traces compaction
+			Upper:     pgtype.Timestamptz{Time: time.Date(1970, 1, 1, 0, 0, 1, 0, time.UTC), Valid: true}, // Time doesn't matter for slot-based traces compaction
+			Valid:     true,
+		},
+		RunnableAt: time.Now().UTC().Add(5 * time.Minute),
+	})
 }
