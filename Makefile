@@ -16,7 +16,7 @@ TARGETS=test local
 PLATFORM=linux/amd64,linux/arm64
 BUILDX=docker buildx build --pull --platform ${PLATFORM}
 IMAGE_PREFIX=public.ecr.aws/cardinalhq.io/
-IMAGE_TAG=latest-dev
+IMAGE_TAG=dev-$(shell date +%Y%m%d-%H%M%S)-$(shell git rev-parse --short HEAD)
 
 #
 # Build targets.  Adding to these will cause magic to occur.
@@ -159,7 +159,10 @@ coverage-serve: coverage-html
 
 .PHONY: promote-to-prod
 promote-to-prod:
-	crane cp ${IMAGE_PREFIX}lakerunner:${IMAGE_TAG} ${IMAGE_PREFIX}lakerunner:latest
+	@echo "ERROR: promote-to-prod target removed - use semantic versioning tags instead"
+	@echo "To promote a version, update the 'stable' tag manually:"
+	@echo "  crane cp ${IMAGE_PREFIX}lakerunner:v1.2.3 ${IMAGE_PREFIX}lakerunner:stable"
+	@exit 1
 
 #
 # Clean the world.
@@ -189,20 +192,20 @@ new-migration:
 .PHONY: duckdb-sdk-local
 duckdb-sdk-local:
 	@echo "Building DuckDB SDK locally..."
-	$(call with_builder, docker buildx build --pull --load --platform linux/amd64 --tag ${IMAGE_PREFIX}duckdb-sdk:latest-amd64 --tag ${IMAGE_PREFIX}duckdb-sdk:v1.3.2-amd64 --build-arg DUCKDB_VERSION=v1.3.2 ./duckdb-images)
-	$(call with_builder, docker buildx build --pull --load --platform linux/arm64 --tag ${IMAGE_PREFIX}duckdb-sdk:latest-arm64 --tag ${IMAGE_PREFIX}duckdb-sdk:v1.3.2-arm64 --build-arg DUCKDB_VERSION=v1.3.2 ./duckdb-images)
+	$(call with_builder, docker buildx build --pull --load --platform linux/amd64 --tag ${IMAGE_PREFIX}duckdb-sdk:v1.3.2-amd64 --build-arg DUCKDB_VERSION=v1.3.2 ./duckdb-images)
+	$(call with_builder, docker buildx build --pull --load --platform linux/arm64 --tag ${IMAGE_PREFIX}duckdb-sdk:v1.3.2-arm64 --build-arg DUCKDB_VERSION=v1.3.2 ./duckdb-images)
 	@echo "Creating multi-arch manifests..."
-	@docker manifest create ${IMAGE_PREFIX}duckdb-sdk:latest ${IMAGE_PREFIX}duckdb-sdk:latest-amd64 ${IMAGE_PREFIX}duckdb-sdk:latest-arm64 2>/dev/null || true
+	@docker manifest create ${IMAGE_PREFIX}duckdb-sdk:v1.3 ${IMAGE_PREFIX}duckdb-sdk:v1.3.2-amd64 ${IMAGE_PREFIX}duckdb-sdk:v1.3.2-arm64 2>/dev/null || true
 	@docker manifest create ${IMAGE_PREFIX}duckdb-sdk:v1.3.2 ${IMAGE_PREFIX}duckdb-sdk:v1.3.2-amd64 ${IMAGE_PREFIX}duckdb-sdk:v1.3.2-arm64 2>/dev/null || true
 
 .PHONY: docker-with-duckdb
 docker-with-duckdb: duckdb-sdk-local
 	@echo "Building lakerunner with custom DuckDB..."
-	$(call with_builder, docker buildx build --load --platform linux/amd64 --tag ${IMAGE_PREFIX}lakerunner:latest-local-amd64 --build-arg DUCKDB_SDK_VERSION=latest --build-arg TARGETARCH=amd64 --build-arg LDFLAGS="-X main.version=local" .)
-	@docker tag ${IMAGE_PREFIX}lakerunner:latest-local-amd64 ${IMAGE_PREFIX}lakerunner:latest-local
+	$(call with_builder, docker buildx build --load --platform linux/amd64 --tag ${IMAGE_PREFIX}lakerunner:local-$(shell date +%Y%m%d-%H%M%S)-amd64 --build-arg DUCKDB_SDK_VERSION=v1.3.2 --build-arg TARGETARCH=amd64 --build-arg LDFLAGS="-X main.version=local" .)
+	@docker tag ${IMAGE_PREFIX}lakerunner:local-$(shell date +%Y%m%d-%H%M%S)-amd64 ${IMAGE_PREFIX}lakerunner:local
 
 .PHONY: test-air-gapped
 test-air-gapped: docker-with-duckdb
 	@echo "Testing air-gapped container..."
 	@echo "Starting container without network access..."
-	docker run --rm --network none ${IMAGE_PREFIX}lakerunner:latest-local --help
+	docker run --rm --network none ${IMAGE_PREFIX}lakerunner:local --help

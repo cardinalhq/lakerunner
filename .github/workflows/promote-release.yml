@@ -1,0 +1,164 @@
+name: Promote Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      rc_version:
+        description: 'Release candidate to promote (e.g., v1.2.3-rc1)'
+        required: true
+        type: string
+      final_version:
+        description: 'Final version to create (e.g., v1.2.3)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+  packages: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-22.04
+    outputs:
+      major: ${{ steps.parse.outputs.major }}
+      minor: ${{ steps.parse.outputs.minor }}
+      patch: ${{ steps.parse.outputs.patch }}
+    steps:
+      - name: Validate inputs
+        run: |
+          echo "Validating promotion from ${{ inputs.rc_version }} to ${{ inputs.final_version }}"
+          
+          # Validate RC format (v1.2.3-rc1)
+          if [[ ! "${{ inputs.rc_version }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc[0-9]+$ ]]; then
+            echo "ERROR: RC version must follow format: v1.2.3-rc1"
+            exit 1
+          fi
+          
+          # Validate final format (v1.2.3)
+          if [[ ! "${{ inputs.final_version }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "ERROR: Final version must follow format: v1.2.3"
+            exit 1
+          fi
+          
+          # Extract base versions for comparison
+          RC_BASE=$(echo "${{ inputs.rc_version }}" | sed 's/-rc[0-9]*$//')
+          FINAL_VERSION="${{ inputs.final_version }}"
+          
+          if [[ "$RC_BASE" != "$FINAL_VERSION" ]]; then
+            echo "ERROR: RC base version ($RC_BASE) must match final version ($FINAL_VERSION)"
+            exit 1
+          fi
+          
+          echo "Validation passed"
+
+      - name: Parse version components
+        id: parse
+        run: |
+          VERSION="${{ inputs.final_version }}"
+          # Remove 'v' prefix
+          VERSION_NUM=$(echo $VERSION | sed 's/^v//')
+          
+          # Split into components
+          MAJOR=$(echo $VERSION_NUM | cut -d. -f1)
+          MINOR=$(echo $VERSION_NUM | cut -d. -f2)
+          PATCH=$(echo $VERSION_NUM | cut -d. -f3)
+          
+          echo "major=$MAJOR" >> $GITHUB_OUTPUT
+          echo "minor=$MINOR" >> $GITHUB_OUTPUT
+          echo "patch=$PATCH" >> $GITHUB_OUTPUT
+          
+          echo "Version components: $MAJOR.$MINOR.$PATCH"
+
+  promote:
+    runs-on: ubuntu-22.04
+    needs: validate
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          audience: sts.amazonaws.com
+          role-to-assume: arn:aws:iam::${{ secrets.ECR_ACCOUNT_ID }}:role/${{ secrets.ECR_ROLE_NAME }}
+          aws-region: ${{ secrets.ECR_REGISTRY_REGION }}
+          role-session-name: GitHubActions
+
+      - name: Login to PUBLIC Amazon ECR
+        env:
+          AWS_REGION: us-east-1
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registry-type: public
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Verify RC image exists
+        run: |
+          echo "Verifying RC image exists..."
+          docker buildx imagetools inspect public.ecr.aws/cardinalhq.io/lakerunner:${{ inputs.rc_version }}
+          echo "RC image found"
+
+      - name: Promote RC to production tags
+        run: |
+          echo "Promoting ${{ inputs.rc_version }} to production tags..."
+          
+          RC_IMAGE="public.ecr.aws/cardinalhq.io/lakerunner:${{ inputs.rc_version }}"
+          
+          # Tag with exact version
+          FINAL_TAG="public.ecr.aws/cardinalhq.io/lakerunner:${{ inputs.final_version }}"
+          echo "Creating tag: $FINAL_TAG"
+          docker buildx imagetools create --tag $FINAL_TAG $RC_IMAGE
+          
+          # Tag with minor version (v1.2)
+          MINOR_TAG="public.ecr.aws/cardinalhq.io/lakerunner:v${{ needs.validate.outputs.major }}.${{ needs.validate.outputs.minor }}"
+          echo "Creating tag: $MINOR_TAG"
+          docker buildx imagetools create --tag $MINOR_TAG $RC_IMAGE
+          
+          # Tag with major version (v1)
+          MAJOR_TAG="public.ecr.aws/cardinalhq.io/lakerunner:v${{ needs.validate.outputs.major }}"
+          echo "Creating tag: $MAJOR_TAG"
+          docker buildx imagetools create --tag $MAJOR_TAG $RC_IMAGE
+
+      - name: Create Git tag
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          # Use privileged token that can bypass tag protection
+          token: ${{ secrets.RELEASE_TOKEN }}
+
+      - name: Create and push Git tag
+        run: |
+          echo "Creating Git tag for ${{ inputs.final_version }}"
+          
+          # Configure git
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Create tag
+          git tag ${{ inputs.final_version }}
+          git push origin ${{ inputs.final_version }}
+          
+          echo "Git tag created and pushed"
+
+      - name: Update stable tag
+        run: |
+          echo "Updating stable tag to point to ${{ inputs.final_version }}"
+          
+          STABLE_TAG="public.ecr.aws/cardinalhq.io/lakerunner:stable"
+          RC_IMAGE="public.ecr.aws/cardinalhq.io/lakerunner:${{ inputs.rc_version }}"
+          
+          docker buildx imagetools create --tag $STABLE_TAG $RC_IMAGE
+          echo "Stable tag updated"
+
+      - name: Summary
+        run: |
+          echo "Release promotion completed successfully!"
+          echo ""
+          echo "Available tags:"
+          echo "  • public.ecr.aws/cardinalhq.io/lakerunner:${{ inputs.final_version }}"
+          echo "  • public.ecr.aws/cardinalhq.io/lakerunner:v${{ needs.validate.outputs.major }}.${{ needs.validate.outputs.minor }}"
+          echo "  • public.ecr.aws/cardinalhq.io/lakerunner:v${{ needs.validate.outputs.major }}"
+          echo "  • public.ecr.aws/cardinalhq.io/lakerunner:stable"
+          echo ""
+          echo "Git tag: ${{ inputs.final_version }}"
+          echo ""
+          echo "Ready for production deployment!"

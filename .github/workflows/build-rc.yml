@@ -1,10 +1,9 @@
-name: dev
+name: Build Release Candidate
 
 on:
-  workflow_dispatch:
   push:
     tags:
-      - "v*-*"
+      - "v*.*.*-rc*"
 
 permissions:
   contents: write
@@ -21,7 +20,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       DOCKER_CLI_EXPERIMENTAL: "enabled"
-      flags: ""
     steps:
       - uses: actions/checkout@v5
         with:
@@ -32,7 +30,6 @@ jobs:
       - uses: docker/setup-buildx-action@v3
 
       - name: Configure AWS credentials
-        id: aws-credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           audience: sts.amazonaws.com
@@ -41,7 +38,6 @@ jobs:
           role-session-name: GitHubActions
 
       - name: Login to PUBLIC Amazon ECR
-        id: login-ecr-public
         env:
           AWS_REGION: us-east-1
         uses: aws-actions/amazon-ecr-login@v2
@@ -52,21 +48,15 @@ jobs:
         with:
           go-version: stable
 
-      - name: Install protoc
-        uses: arduino/setup-protoc@v3
-        with:
-          version: "29.x"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Install protoc Go plugins
+      - name: Run pre-flight checks
         run: |
-          go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
-
-      - if: ${{ github.event_name == 'workflow_dispatch' }}
-        shell: bash
-        run: |
-          echo "flags=--nightly" >> $GITHUB_ENV
+          echo "Running pre-flight checks (no code generation)..."
+          go test -race ./...
+          go tool license-eye header check
+          echo "Checking formatting..."
+          test -z "$(gofmt -l . | grep -v '\.pb\.go$')" || (echo "Files need formatting:" && gofmt -l . | grep -v '\.pb\.go$' && exit 1)
+          echo "Running linter..."
+          go tool golangci-lint run --timeout 15m --config .golangci.yaml
 
       - shell: bash
         run: |
@@ -75,20 +65,16 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: dist/${{ matrix.os == 'ubuntu-22.04' && 'linux_amd64' || 'linux_arm64' }}
-          key: ${{ matrix.os == 'ubuntu-22.04' && 'linux_amd64' || 'linux_arm64' }}-${{ env.sha_short }}${{ env.flags }}
-
-      # - shell: bash
-      #   run: |
-      #     cosign dockerfile verify --certificate-oidc-issuer https://accounts.google.com --certificate-identity keyless@distroless.iam.gserviceaccount.com Dockerfile
+          key: ${{ matrix.os == 'ubuntu-22.04' && 'linux_amd64' || 'linux_arm64' }}-${{ env.sha_short }}
 
       - uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser-pro
           version: "~> v2"
-          args: release --clean --split ${{ env.flags }}
+          args: release --clean --split
         env:
           GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
-          DUCKDB_SDK_VERSION: latest
+          DUCKDB_SDK_VERSION: v1.3.2
 
       - shell: bash
         run: |
@@ -99,7 +85,6 @@ jobs:
     needs: partials
     env:
       DOCKER_CLI_EXPERIMENTAL: "enabled"
-      flags: ""
     steps:
       - uses: actions/checkout@v5
         with:
@@ -114,7 +99,6 @@ jobs:
       - uses: anchore/sbom-action/download-syft@v0.20.4
 
       - name: Configure AWS credentials
-        id: aws-credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           audience: sts.amazonaws.com
@@ -123,58 +107,28 @@ jobs:
           role-session-name: GitHubActions
 
       - name: Login to PUBLIC Amazon ECR
-        id: login-ecr-public
         env:
           AWS_REGION: us-east-1
         uses: aws-actions/amazon-ecr-login@v2
         with:
           registry-type: public
 
-      # - uses: actions/setup-go@v5
-      #   with:
-      #     go-version: stable
-
-      # - name: Install protoc
-      #   uses: arduino/setup-protoc@v3
-      #   with:
-      #     version: "29.x"
-      #     repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      # - name: Install protoc Go plugins
-      #   run: |
-      #     go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-      #     go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
-
-      # - shell: bash
-      #   run: |
-      #     cosign dockerfile verify --certificate-oidc-issuer https://accounts.google.com --certificate-identity keyless@distroless.iam.gserviceaccount.com Dockerfile
-
-      - if: ${{ github.event_name == 'workflow_dispatch' }}
-        shell: bash
-        run: |
-          echo "flags=--nightly" >> $GITHUB_ENV
-
       - shell: bash
         run: |
           echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
 
-      # Pull in the partial build artifacts for arm64
       - uses: actions/cache@v4
-        id: cache_linux_arm64
-        with:
-          path: dist/linux_arm64
-          key: linux_arm64-${{ env.sha_short }}${{ env.flags }}
-          fail-on-cache-miss: true
-
-      # Pull in the partial build artifacts for amd64
-      - uses: actions/cache@v4
-        id: cache_linux_amd64
         with:
           path: dist/linux_amd64
-          key: linux_amd64-${{ env.sha_short }}${{ env.flags }}
+          key: linux_amd64-${{ env.sha_short }}
           fail-on-cache-miss: true
 
-      # merge the two architectures into a single multi-arch image
+      - uses: actions/cache@v4
+        with:
+          path: dist/linux_arm64
+          key: linux_arm64-${{ env.sha_short }}
+          fail-on-cache-miss: true
+
       - uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser-pro
@@ -182,4 +136,16 @@ jobs:
           args: continue --merge
         env:
           GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
-          DUCKDB_SDK_VERSION: latest
+          DUCKDB_SDK_VERSION: v1.3.2
+
+      - name: Output built images
+        run: |
+          echo "Release Candidate built successfully!"
+          echo "Image: public.ecr.aws/cardinalhq.io/lakerunner:${{ github.ref_name }}"
+          echo ""
+          echo "Testing this RC before promotion:"
+          echo "  1. Deploy to staging environment"
+          echo "  2. Run integration tests"
+          echo "  3. Validate functionality"
+          echo ""
+          echo "To promote to production, use the 'Promote Release' workflow"
