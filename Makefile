@@ -126,6 +126,32 @@ test: generate test-only
 test-only:
 	go test -race ./...
 
+#
+# Coverage targets
+#
+
+.PHONY: coverage
+coverage: generate
+	@echo "Generating test coverage report..."
+	go test -race -coverprofile=coverage.out -covermode=atomic ./...
+	@echo "Total coverage:"
+	go tool cover -func=coverage.out | grep total
+
+.PHONY: coverage-html
+coverage-html: generate
+	@echo "Generating HTML test coverage report..."
+	go test -race -coverprofile=coverage.out -covermode=atomic ./...
+	go tool cover -html=coverage.out -o coverage.html
+	@echo "Coverage report generated: coverage.html"
+	@echo "Open in browser: open coverage.html"
+
+.PHONY: coverage-serve
+coverage-serve: coverage-html
+	@echo "Starting HTTP server for coverage report..."
+	@echo "Open http://localhost:8080/coverage.html in your browser"
+	@echo "Press Ctrl+C to stop the server"
+	@python3 -m http.server 8080 2>/dev/null || python -m SimpleHTTPServer 8080
+
 
 #
 # promode to prod
