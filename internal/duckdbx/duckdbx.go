@@ -186,3 +186,57 @@ func (d *DB) Query(ctx context.Context, query string, args ...any) (*sql.Rows, e
 
 	return rows, nil
 }
+
+func (d *DB) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	conn, err := d.Conn(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get duckdb connection: %w", err)
+	}
+
+	result, err := conn.ExecContext(ctx, query, args...)
+	if err != nil {
+		closeErr := conn.Close()
+		if closeErr != nil {
+			return nil, fmt.Errorf("exec failed, and closing connection also failed: %v; %v", err, closeErr)
+		}
+		return nil, fmt.Errorf("exec execution failed: %w", err)
+	}
+
+	return result, nil
+}
+
+func (d *DB) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	conn, err := d.Conn(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get duckdb connection: %w", err)
+	}
+
+	rows, err := conn.QueryContext(ctx, query, args...)
+	if err != nil {
+		closeErr := conn.Close()
+		if closeErr != nil {
+			return nil, fmt.Errorf("query failed, and closing connection also failed: %v; %v", err, closeErr)
+		}
+		return nil, fmt.Errorf("query execution failed: %w", err)
+	}
+
+	return rows, nil
+}
+
+func (d *DB) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error) {
+	conn, err := d.Conn(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get duckdb connection: %w", err)
+	}
+
+	tx, err := conn.BeginTx(ctx, opts)
+	if err != nil {
+		closeErr := conn.Close()
+		if closeErr != nil {
+			return nil, fmt.Errorf("begin transaction failed, and closing connection also failed: %v; %v", err, closeErr)
+		}
+		return nil, fmt.Errorf("begin transaction execution failed: %w", err)
+	}
+
+	return tx, nil
+}

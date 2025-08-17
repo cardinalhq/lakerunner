@@ -48,7 +48,6 @@ type BaseExpr struct {
 
 	// Identity hints for COUNT (what to keep from the parent's "by")
 	CountOnBy []string `json:"countOnBy,omitempty"`
-	WorkerSQL string   `json:"workerSql,omitempty"`
 }
 
 type ExecHints struct {
