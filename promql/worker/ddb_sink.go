@@ -108,7 +108,7 @@ func (s *Sink) RowCount() int64 { return s.totalRows.Load() }
 // - Inserts each file with its own short txn.
 // - Populates segment_id per file.
 // - Forces anchor timestamp into `ts BIGINT` (errors if no recognizable ts).
-func (s *Sink) IngestParquetBatch(ctx context.Context, parquetPaths, segmentIDs []string) error {
+func (s *Sink) IngestParquetBatch(ctx context.Context, parquetPaths []string, segmentIDs []int64) error {
 	if len(parquetPaths) == 0 {
 		return nil
 	}
@@ -124,7 +124,7 @@ func (s *Sink) IngestParquetBatch(ctx context.Context, parquetPaths, segmentIDs 
 	if err != nil {
 		return fmt.Errorf("probe batch schema: %w", err)
 	}
-	// Require the anchor column to exist in the files (no 'ts' column in table).
+	// Require the anchor column to exist in the files.
 	if _, ok := unionAll["_cardinalhq.timestamp"]; !ok {
 		return fmt.Errorf("batch missing required column _cardinalhq.timestamp")
 	}
@@ -174,7 +174,7 @@ func (s *Sink) IngestParquetBatch(ctx context.Context, parquetPaths, segmentIDs 
 		// 3b) VALUES mapping from absolute file path → segment_id
 		vals := make([]string, len(pathsChunk))
 		for i := range pathsChunk {
-			vals[i] = fmt.Sprintf("('%s','%s')", escape(pathsChunk[i]), escape(idsChunk[i]))
+			vals[i] = fmt.Sprintf("('%s','%d')", escape(pathsChunk[i]), idsChunk[i])
 		}
 		mapping := " (VALUES " + strings.Join(vals, ", ") + ") AS m(path, segment_id) "
 
@@ -231,7 +231,7 @@ JOIN %s ON f.filename = m.path;
 // DeleteSegments removes all rows for the given segment IDs.
 // Returns number of affected rows. Serialized by writeMu.
 // Maintains totalRows by subtracting RowsAffected().
-func (s *Sink) DeleteSegments(ctx context.Context, segmentIDs []string) (int64, error) {
+func (s *Sink) DeleteSegments(ctx context.Context, segmentIDs []int64) (int64, error) {
 	if len(segmentIDs) == 0 {
 		return 0, nil
 	}
@@ -269,7 +269,7 @@ func (s *Sink) ensureSegmentIDColumn(ctx context.Context) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
-	stmt := fmt.Sprintf(`ALTER TABLE %s ADD COLUMN IF NOT EXISTS segment_id VARCHAR;`, ident(s.table))
+	stmt := fmt.Sprintf(`ALTER TABLE %s ADD COLUMN IF NOT EXISTS segment_id BIGINT;`, ident(s.table))
 	if _, err := s.db.ExecContext(ctx, stmt); err != nil {
 		return err
 	}

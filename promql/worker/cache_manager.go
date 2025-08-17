@@ -4,8 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -16,19 +20,18 @@ type DownloadBatchFunc func(ctx context.Context, paths []string) error
 // RowMapper turns the current row into a T.
 type RowMapper[T any] func(*sql.Rows) (T, error)
 
-// CacheWrapper coordinates downloads, batch-ingest, queries, and LRU evictions.
+// CacheManager coordinates downloads, batch-ingest, queries, and LRU evictions.
 // Eviction is periodic (cron-style), not triggered.
-type CacheWrapper struct {
+type CacheManager struct {
 	sink       *Sink
 	maxRows    int64
 	downloader DownloadBatchFunc
 
 	// in-memory presence + LRU tracking
-	mu            sync.Mutex
-	present       map[string]struct{}        // segmentID -> exists in cache
-	lastAccess    map[string]time.Time       // segmentID -> last access
-	localPathByID map[string]string          // segmentID -> local file path
-	inflight      map[string]*sync.WaitGroup // singleflight per segmentID
+	mu         sync.Mutex
+	present    map[int64]struct{}        // segmentID -> exists in cache
+	lastAccess map[int64]time.Time       // segmentID -> last access
+	inflight   map[int64]*sync.WaitGroup // singleflight per segmentID
 
 	// eviction cron
 	interval  time.Duration
@@ -36,21 +39,20 @@ type CacheWrapper struct {
 	evictWG   sync.WaitGroup
 }
 
-// NewCacheWrapper constructs a wrapper and starts the periodic evictor.
+// NewCacheManager constructs a wrapper and starts the periodic evictor.
 // If interval <= 0, a default of 30s is used. maxRows <= 0 disables eviction.
-func NewCacheWrapper(sink *Sink, maxRows int64, dl DownloadBatchFunc, interval time.Duration) *CacheWrapper {
+func NewCacheManager(sink *Sink, maxRows int64, dl DownloadBatchFunc, interval time.Duration) *CacheManager {
 	if interval <= 0 {
 		interval = 30 * time.Second
 	}
-	w := &CacheWrapper{
-		sink:          sink,
-		maxRows:       maxRows,
-		downloader:    dl,
-		present:       make(map[string]struct{}, 1024),
-		lastAccess:    make(map[string]time.Time, 1024),
-		localPathByID: make(map[string]string, 1024),
-		inflight:      make(map[string]*sync.WaitGroup, 1024),
-		interval:      interval,
+	w := &CacheManager{
+		sink:       sink,
+		maxRows:    maxRows,
+		downloader: dl,
+		present:    make(map[int64]struct{}, 1024),
+		lastAccess: make(map[int64]time.Time, 1024),
+		inflight:   make(map[int64]*sync.WaitGroup, 1024),
+		interval:   interval,
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	w.stopEvict = cancel
@@ -60,7 +62,7 @@ func NewCacheWrapper(sink *Sink, maxRows int64, dl DownloadBatchFunc, interval t
 }
 
 // Close stops the evictor goroutine.
-func (w *CacheWrapper) Close() {
+func (w *CacheManager) Close() {
 	if w.stopEvict != nil {
 		w.stopEvict()
 	}
@@ -72,21 +74,20 @@ func (w *CacheWrapper) Close() {
 // A separate error channel returns a single terminal error (if any).
 func EnsureAndQuery[T any](
 	ctx context.Context,
-	w *CacheWrapper,
-	segmentPaths []string, // local file paths
-	segmentIDs []string, // must match cache table segment_id
+	w *CacheManager,
+	segmentPaths []string,
 	sqlQuery string,
 	args []any,
 	mapper RowMapper[T],
 ) (<-chan T, <-chan error) {
-	outCh := make(chan T, 256)
+	outCh := make(chan T, 1024)
 	errCh := make(chan error, 1)
 
 	// validate
-	if len(segmentPaths) != len(segmentIDs) {
+	if len(segmentPaths) == 0 {
 		defer close(outCh)
 		defer close(errCh)
-		errCh <- errors.New("segmentPaths and segmentIDs length mismatch")
+		errCh <- errors.New("no segment paths")
 		return outCh, errCh
 	}
 	if mapper == nil {
@@ -100,21 +101,29 @@ func EnsureAndQuery[T any](
 		defer close(outCh)
 		defer close(errCh)
 
+		// Derive segment IDs from paths (tbl_{num}.parquet).
+		derivedIDs := make([]int64, len(segmentPaths))
+		for i, p := range segmentPaths {
+			n, derr := deriveSegmentIDFromPath(p)
+			if derr != nil {
+				errCh <- derr
+				return
+			}
+			derivedIDs[i] = n
+		}
+
 		now := time.Now()
 
 		// Lists we "own" for this call (we'll download/ingest them).
 		var ownedPaths []string
-		var ownedIDs []string
+		var ownedIDs []int64
 
 		// Wait groups for segments already in-flight by other goroutines.
 		waitSet := make(map[*sync.WaitGroup]struct{})
 
 		// Split present vs missing; stamp access; record local paths.
 		w.mu.Lock()
-		for i, id := range segmentIDs {
-			// Remember local path (used for eviction cleanup).
-			w.localPathByID[id] = segmentPaths[i]
-
+		for i, id := range derivedIDs {
 			if _, ok := w.present[id]; !ok {
 				if wg, inflight := w.inflight[id]; inflight {
 					waitSet[wg] = struct{}{}
@@ -166,6 +175,9 @@ func EnsureAndQuery[T any](
 				return
 			}
 			// Mark present + release in-flight
+			for _, p := range ownedPaths {
+				_ = os.Remove(p) // best-effort; ignore errors
+			}
 			w.mu.Lock()
 			for _, id := range ownedIDs {
 				w.present[id] = struct{}{}
@@ -183,7 +195,7 @@ func EnsureAndQuery[T any](
 			errCh <- err
 			return
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 
 		for rows.Next() {
 			select {
@@ -207,7 +219,7 @@ func EnsureAndQuery[T any](
 		// Refresh access time for all segments used by this query.
 		now2 := time.Now()
 		w.mu.Lock()
-		for _, id := range segmentIDs {
+		for _, id := range derivedIDs {
 			w.lastAccess[id] = now2
 		}
 		w.mu.Unlock()
@@ -218,7 +230,7 @@ func EnsureAndQuery[T any](
 
 // -------------------- Eviction (periodic cron) --------------------
 
-func (w *CacheWrapper) evictorCron(ctx context.Context) {
+func (w *CacheManager) evictorCron(ctx context.Context) {
 	defer w.evictWG.Done()
 	t := time.NewTicker(w.interval)
 	defer t.Stop()
@@ -233,7 +245,7 @@ func (w *CacheWrapper) evictorCron(ctx context.Context) {
 	}
 }
 
-func (w *CacheWrapper) maybeEvictOnce(ctx context.Context) {
+func (w *CacheManager) maybeEvictOnce(ctx context.Context) {
 	if w.maxRows <= 0 {
 		return
 	}
@@ -243,7 +255,7 @@ func (w *CacheWrapper) maybeEvictOnce(ctx context.Context) {
 	}
 
 	type ent struct {
-		id string
+		id int64
 		at time.Time
 	}
 	w.mu.Lock()
@@ -259,7 +271,7 @@ func (w *CacheWrapper) maybeEvictOnce(ctx context.Context) {
 	sort.Slice(lru, func(i, j int) bool { return lru[i].at.Before(lru[j].at) })
 
 	const batchSize = 64
-	batch := make([]string, 0, batchSize)
+	batch := make([]int64, 0, batchSize)
 
 	for _, e := range lru {
 		if w.sink.RowCount() <= w.maxRows {
@@ -276,18 +288,38 @@ func (w *CacheWrapper) maybeEvictOnce(ctx context.Context) {
 	}
 }
 
-func (w *CacheWrapper) dropSegments(ctx context.Context, segIDs []string) {
+func (w *CacheManager) dropSegments(ctx context.Context, segIDs []int64) {
 	_, _ = w.sink.DeleteSegments(ctx, segIDs)
 
 	w.mu.Lock()
 	for _, id := range segIDs {
-		// best-effort remove local file
-		if p, ok := w.localPathByID[id]; ok {
-			_ = os.Remove(p)
-			delete(w.localPathByID, id)
-		}
 		delete(w.present, id)
 		delete(w.lastAccess, id)
 	}
 	w.mu.Unlock()
+}
+
+// deriveSegmentIDFromPath extracts the numeric {num} from a basename like
+// "tbl_{num}.parquet". Returns an error if the pattern doesn't match or if {num}
+// isn't a valid int64.
+func deriveSegmentIDFromPath(p string) (int64, error) {
+	base := filepath.Base(p)
+	if !strings.HasSuffix(base, ".parquet") {
+		return 0, fmt.Errorf("segment path %q: not a parquet file", p)
+	}
+	name := strings.TrimSuffix(base, ".parquet")
+	// Expect prefix "tbl_" and numeric suffix
+	const pref = "tbl_"
+	if !strings.HasPrefix(name, pref) {
+		return 0, fmt.Errorf("segment basename %q: expected prefix %q", base, pref)
+	}
+	numStr := strings.TrimPrefix(name, pref)
+	if numStr == "" {
+		return 0, fmt.Errorf("segment basename %q: missing numeric id", base)
+	}
+	n, err := strconv.ParseInt(numStr, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("segment basename %q: invalid numeric id %q: %w", base, numStr, err)
+	}
+	return n, nil
 }
