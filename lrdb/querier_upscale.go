@@ -16,6 +16,8 @@ package lrdb
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type LogSegmentUpserter interface {
@@ -37,7 +39,7 @@ type WorkQueueQuerier interface {
 	WorkQueueFail(ctx context.Context, params WorkQueueFailParams) error
 	WorkQueueComplete(ctx context.Context, params WorkQueueCompleteParams) error
 	WorkQueueHeartbeat(ctx context.Context, params WorkQueueHeartbeatParams) error
-	WorkQueueCleanup(ctx context.Context) ([]WorkQueueCleanupRow, error)
+	WorkQueueCleanup(ctx context.Context, lockTtlDead pgtype.Interval) ([]WorkQueueCleanupRow, error)
 	WorkQueueClaim(ctx context.Context, params WorkQueueClaimParams) (WorkQueueClaimRow, error)
 }
 

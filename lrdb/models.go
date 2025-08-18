@@ -208,11 +208,6 @@ type ServiceIdentifier struct {
 	Namespace      pgtype.Text `json:"namespace"`
 }
 
-type Setting struct {
-	Key   string `json:"key"`
-	Value string `json:"value"`
-}
-
 type SignalLock struct {
 	ID             int64                            `json:"id"`
 	WorkID         *int64                           `json:"work_id"`

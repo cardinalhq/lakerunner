@@ -20,9 +20,7 @@ SELECT public.work_queue_add(
 WITH params AS (
   SELECT
     NOW()                                         AS v_now,
-    (SELECT value::interval
-       FROM public.settings
-      WHERE key = 'work_fail_requeue_ttl')        AS requeue_ttl,
+    @requeue_ttl::INTERVAL                        AS requeue_ttl,
     @max_retries::INTEGER                         AS max_retries
 ),
 old AS (
@@ -86,9 +84,7 @@ WHERE sl.work_id    = u.id
 WITH params AS (
   SELECT
     NOW() AS v_now,
-    (SELECT value::interval
-       FROM public.settings
-      WHERE key = 'lock_ttl') AS lock_ttl
+    @lock_ttl::INTERVAL AS lock_ttl
 )
 -- 1) heart-beat the work_queue
 UPDATE public.work_queue w
@@ -111,9 +107,7 @@ WHERE sl.work_id     = ANY(@ids::BIGINT[])
 WITH params AS (
   SELECT
     NOW() AS v_now,
-    (SELECT value::interval
-       FROM public.settings
-      WHERE key = 'lock_ttl_dead') AS dead_ttl
+    @lock_ttl_dead::INTERVAL AS dead_ttl
 ),
 expired AS (
   UPDATE public.work_queue w

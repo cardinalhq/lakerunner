@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Querier interface {
@@ -64,7 +65,7 @@ type Querier interface {
 	UpsertServiceIdentifier(ctx context.Context, arg UpsertServiceIdentifierParams) (UpsertServiceIdentifierRow, error)
 	WorkQueueAddDirect(ctx context.Context, arg WorkQueueAddParams) error
 	WorkQueueClaimDirect(ctx context.Context, arg WorkQueueClaimParams) (WorkQueueClaimRow, error)
-	WorkQueueCleanupDirect(ctx context.Context) ([]WorkQueueCleanupRow, error)
+	WorkQueueCleanupDirect(ctx context.Context, lockTtlDead pgtype.Interval) ([]WorkQueueCleanupRow, error)
 	WorkQueueCompleteDirect(ctx context.Context, arg WorkQueueCompleteParams) error
 	WorkQueueFailDirect(ctx context.Context, arg WorkQueueFailParams) error
 	WorkQueueGC(ctx context.Context, arg WorkQueueGCParams) (int32, error)

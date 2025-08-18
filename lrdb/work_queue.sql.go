@@ -61,9 +61,7 @@ const workQueueCleanupDirect = `-- name: WorkQueueCleanupDirect :many
 WITH params AS (
   SELECT
     NOW() AS v_now,
-    (SELECT value::interval
-       FROM public.settings
-      WHERE key = 'lock_ttl_dead') AS dead_ttl
+    $1::INTERVAL AS dead_ttl
 ),
 expired AS (
   UPDATE public.work_queue w
@@ -111,8 +109,8 @@ type WorkQueueCleanupRow struct {
 	LocksRemoved   int64                            `json:"locks_removed"`
 }
 
-func (q *Queries) WorkQueueCleanupDirect(ctx context.Context) ([]WorkQueueCleanupRow, error) {
-	rows, err := q.db.Query(ctx, workQueueCleanupDirect)
+func (q *Queries) WorkQueueCleanupDirect(ctx context.Context, lockTtlDead pgtype.Interval) ([]WorkQueueCleanupRow, error) {
+	rows, err := q.db.Query(ctx, workQueueCleanupDirect, lockTtlDead)
 	if err != nil {
 		return nil, err
 	}
@@ -183,10 +181,8 @@ const workQueueFailDirect = `-- name: WorkQueueFailDirect :exec
 WITH params AS (
   SELECT
     NOW()                                         AS v_now,
-    (SELECT value::interval
-       FROM public.settings
-      WHERE key = 'work_fail_requeue_ttl')        AS requeue_ttl,
-    $3::INTEGER                         AS max_retries
+    $3::INTERVAL                        AS requeue_ttl,
+    $4::INTEGER                         AS max_retries
 ),
 old AS (
   SELECT w.tries
@@ -226,13 +222,19 @@ WHERE sl.work_id    = $1::BIGINT
 `
 
 type WorkQueueFailParams struct {
-	ID         int64 `json:"id"`
-	WorkerID   int64 `json:"worker_id"`
-	MaxRetries int32 `json:"max_retries"`
+	ID         int64           `json:"id"`
+	WorkerID   int64           `json:"worker_id"`
+	RequeueTtl pgtype.Interval `json:"requeue_ttl"`
+	MaxRetries int32           `json:"max_retries"`
 }
 
 func (q *Queries) WorkQueueFailDirect(ctx context.Context, arg WorkQueueFailParams) error {
-	_, err := q.db.Exec(ctx, workQueueFailDirect, arg.ID, arg.WorkerID, arg.MaxRetries)
+	_, err := q.db.Exec(ctx, workQueueFailDirect,
+		arg.ID,
+		arg.WorkerID,
+		arg.RequeueTtl,
+		arg.MaxRetries,
+	)
 	return err
 }
 
@@ -282,9 +284,7 @@ const workQueueHeartbeatDirect = `-- name: WorkQueueHeartbeatDirect :exec
 WITH params AS (
   SELECT
     NOW() AS v_now,
-    (SELECT value::interval
-       FROM public.settings
-      WHERE key = 'lock_ttl') AS lock_ttl
+    $3::INTERVAL AS lock_ttl
 )
 UPDATE public.work_queue w
 SET heartbeated_at = p.v_now
@@ -295,13 +295,14 @@ WHERE w.id            = ANY($1::BIGINT[])
 `
 
 type WorkQueueHeartbeatParams struct {
-	Ids      []int64 `json:"ids"`
-	WorkerID int64   `json:"worker_id"`
+	Ids      []int64         `json:"ids"`
+	WorkerID int64           `json:"worker_id"`
+	LockTtl  pgtype.Interval `json:"lock_ttl"`
 }
 
 // 1) heart-beat the work_queue
 func (q *Queries) WorkQueueHeartbeatDirect(ctx context.Context, arg WorkQueueHeartbeatParams) error {
-	_, err := q.db.Exec(ctx, workQueueHeartbeatDirect, arg.Ids, arg.WorkerID)
+	_, err := q.db.Exec(ctx, workQueueHeartbeatDirect, arg.Ids, arg.WorkerID, arg.LockTtl)
 	return err
 }
 

@@ -17,6 +17,7 @@ package workqueue
 import (
 	"context"
 	"log/slog"
+	"time"
 )
 
 type WorkqueueHandler struct {
@@ -33,7 +34,12 @@ func NewWorkqueueHandler(
 ) *WorkqueueHandler {
 	options := &handlerOptions{
 		logger: slog.Default(),
-		config: &Config{MaxWorkRetries: 10}, // default value
+		config: &Config{
+			MaxWorkRetries:     10,
+			WorkFailRequeueTTL: 1 * time.Minute,
+			LockTTL:            5 * time.Minute,
+			LockTTLDead:        20 * time.Minute,
+		}, // default values
 	}
 	for _, opt := range opts {
 		opt(options)
@@ -56,7 +62,7 @@ func (h *WorkqueueHandler) CompleteWork(ctx context.Context) error {
 }
 
 func (h *WorkqueueHandler) RetryWork(ctx context.Context) error {
-	if err := h.store.FailWork(ctx, h.workItem.ID, h.workItem.WorkerID, int32(h.config.MaxWorkRetries)); err != nil {
+	if err := h.store.FailWork(ctx, h.workItem.ID, h.workItem.WorkerID, int32(h.config.MaxWorkRetries), h.config.WorkFailRequeueTTL); err != nil {
 		h.logger.Error("FailWork failed", slog.Any("error", err))
 		return err
 	}

@@ -16,8 +16,10 @@ package workqueue
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -38,10 +40,11 @@ func (a *LRDBWorkQueueAdapter) CompleteWork(ctx context.Context, id, workerID in
 	})
 }
 
-func (a *LRDBWorkQueueAdapter) FailWork(ctx context.Context, id, workerID int64, maxRetries int32) error {
+func (a *LRDBWorkQueueAdapter) FailWork(ctx context.Context, id, workerID int64, maxRetries int32, requeueTTL time.Duration) error {
 	return a.db.WorkQueueFail(ctx, lrdb.WorkQueueFailParams{
 		ID:         id,
 		WorkerID:   workerID,
+		RequeueTtl: pgtype.Interval{Microseconds: requeueTTL.Microseconds(), Valid: true},
 		MaxRetries: maxRetries,
 	})
 }
