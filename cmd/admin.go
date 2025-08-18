@@ -18,19 +18,22 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 
 	"github.com/cardinalhq/lakerunner/admin"
 	"github.com/cardinalhq/lakerunner/adminproto"
 )
 
 var (
-	adminAddr string
+	adminAddr   string
+	adminAPIKey string
 )
 
 func init() {
@@ -60,13 +63,11 @@ func init() {
 		Use:   "ping",
 		Short: "Ping the admin service",
 		RunE: func(_ *cobra.Command, args []string) error {
-			conn, err := grpc.NewClient(adminAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+			client, cleanup, err := createAdminClient()
 			if err != nil {
-				return fmt.Errorf("failed to connect to admin service: %w", err)
+				return err
 			}
-			defer conn.Close()
-
-			client := adminproto.NewAdminServiceClient(conn)
+			defer cleanup()
 
 			message := ""
 			if len(args) > 0 {
@@ -75,6 +76,7 @@ func init() {
 
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
+			ctx = createAuthContext(ctx)
 
 			resp, err := client.Ping(ctx, &adminproto.PingRequest{Message: message})
 			if err != nil {
@@ -126,20 +128,51 @@ func init() {
 	adminCmd.AddCommand(pingCmd)
 	adminCmd.AddCommand(workqueueCmd)
 	adminCmd.AddCommand(inqueueCmdAdmin)
+	// Set API key from environment variable if not provided via flag
+	adminCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
+		if adminAPIKey == "" {
+			adminAPIKey = os.Getenv("ADMIN_API_KEY")
+		}
+	}
+
+	// Add API key flag to admin command and all subcommands
+	adminCmd.PersistentFlags().StringVar(&adminAPIKey, "api-key", "", "Admin API key (can also be set via ADMIN_API_KEY environment variable)")
+
 	rootCmd.AddCommand(adminCmd)
 }
 
-func runAdminWorkQueueStatus() error {
+func createAdminClient() (adminproto.AdminServiceClient, func(), error) {
 	conn, err := grpc.NewClient(adminAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		return fmt.Errorf("failed to connect to admin service: %w", err)
+		return nil, nil, fmt.Errorf("failed to connect to admin service: %w", err)
 	}
-	defer conn.Close()
+
+	cleanup := func() {
+		conn.Close()
+	}
 
 	client := adminproto.NewAdminServiceClient(conn)
+	return client, cleanup, nil
+}
+
+func createAuthContext(ctx context.Context) context.Context {
+	if adminAPIKey != "" {
+		md := metadata.Pairs("authorization", "Bearer "+adminAPIKey)
+		ctx = metadata.NewOutgoingContext(ctx, md)
+	}
+	return ctx
+}
+
+func runAdminWorkQueueStatus() error {
+	client, cleanup, err := createAdminClient()
+	if err != nil {
+		return err
+	}
+	defer cleanup()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	ctx = createAuthContext(ctx)
 
 	resp, err := client.WorkQueueStatus(ctx, &adminproto.WorkQueueStatusRequest{})
 	if err != nil {
@@ -209,16 +242,15 @@ func runAdminWorkQueueStatus() error {
 }
 
 func runAdminInQueueStatus() error {
-	conn, err := grpc.NewClient(adminAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	client, cleanup, err := createAdminClient()
 	if err != nil {
-		return fmt.Errorf("failed to connect to admin service: %w", err)
+		return err
 	}
-	defer conn.Close()
-
-	client := adminproto.NewAdminServiceClient(conn)
+	defer cleanup()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	ctx = createAuthContext(ctx)
 
 	resp, err := client.InQueueStatus(ctx, &adminproto.InQueueStatusRequest{})
 	if err != nil {

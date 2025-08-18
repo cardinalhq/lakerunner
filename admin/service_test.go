@@ -24,6 +24,7 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/cardinalhq/lakerunner/adminproto"
+	"github.com/cardinalhq/lakerunner/internal/adminconfig"
 )
 
 const bufSize = 1024 * 1024
@@ -37,7 +38,17 @@ func bufDialer(ctx context.Context, address string) (net.Conn, error) {
 func setupTestServer(t *testing.T) (adminproto.AdminServiceClient, func()) {
 	lis = bufconn.Listen(bufSize)
 
-	server := grpc.NewServer()
+	// Create mock config provider for backward compatibility (no auth required)
+	configProvider := &mockAdminConfigProvider{
+		validKeys: map[string]*adminconfig.AdminAPIKey{},
+	}
+
+	// Create auth interceptor with empty config (allows all requests)
+	authInterceptor := newAuthInterceptor(configProvider)
+
+	server := grpc.NewServer(
+		grpc.UnaryInterceptor(authInterceptor.unaryInterceptor),
+	)
 
 	// Create our admin service
 	adminService := &Service{

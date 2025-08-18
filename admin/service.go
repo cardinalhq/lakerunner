@@ -26,6 +26,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/adminproto"
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
+	"github.com/cardinalhq/lakerunner/internal/adminconfig"
 )
 
 type Service struct {
@@ -46,7 +47,19 @@ func NewService(addr string) (*Service, error) {
 		return nil, fmt.Errorf("failed to listen on %s: %w", addr, err)
 	}
 
-	server := grpc.NewServer()
+	// Setup admin configuration
+	configProvider, err := adminconfig.SetupAdminConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to setup admin config: %w", err)
+	}
+
+	// Create auth interceptor
+	authInterceptor := newAuthInterceptor(configProvider)
+
+	// Create GRPC server with auth interceptor
+	server := grpc.NewServer(
+		grpc.UnaryInterceptor(authInterceptor.unaryInterceptor),
+	)
 
 	hostname, _ := os.Hostname()
 	serverID := fmt.Sprintf("%s-%d", hostname, time.Now().Unix())
