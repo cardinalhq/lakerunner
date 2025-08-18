@@ -24,6 +24,14 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
+// durationToPGInterval converts a Go time.Duration to pgtype.Interval
+func durationToPGInterval(d time.Duration) pgtype.Interval {
+	return pgtype.Interval{
+		Microseconds: d.Microseconds(),
+		Valid:        true,
+	}
+}
+
 // LRDBWorkQueueAdapter implements WorkQueueStore using lrdb.StoreFull
 type LRDBWorkQueueAdapter struct {
 	db lrdb.StoreFull
@@ -44,7 +52,7 @@ func (a *LRDBWorkQueueAdapter) FailWork(ctx context.Context, id, workerID int64,
 	return a.db.WorkQueueFail(ctx, lrdb.WorkQueueFailParams{
 		ID:         id,
 		WorkerID:   workerID,
-		RequeueTtl: pgtype.Interval{Microseconds: requeueTTL.Microseconds(), Valid: true},
+		RequeueTtl: durationToPGInterval(requeueTTL),
 		MaxRetries: maxRetries,
 	})
 }
