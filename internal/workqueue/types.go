@@ -17,6 +17,7 @@ package workqueue
 import (
 	"context"
 	"log/slog"
+	"time"
 )
 
 // Handler defines the common interface for work handlers
@@ -27,8 +28,11 @@ type Handler interface {
 
 // Config holds configuration values for workqueue handlers
 type Config struct {
-	MaxWorkRetries int
-	MyInstanceID   int64
+	MaxWorkRetries     int
+	WorkFailRequeueTTL time.Duration
+	LockTTL            time.Duration
+	LockTTLDead        time.Duration
+	MyInstanceID       int64
 }
 
 // HandlerOption configures a handler

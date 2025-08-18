@@ -13,7 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Database Index**: Updated metric_seg index to `(frequency_ms, instance_num)` for improved query performance
 - **Build Process**: Improved promotion pipeline for production releases
 - **Logging**: Removed confusing CONFIGDB fallback message when database is not configured
-- **Work Queue Retry Logic**: Changed retry count to be passed as parameter from Go code instead of database settings lookup
+- **Work Queue Configuration**: Converted all settings from database table to Go parameters (retry count, timeouts, TTLs)
+
+### Removed
+
+- **Settings Table**: Dropped database settings table as all configuration moved to Go code parameters
+- **Settings Dependencies**: Updated database functions to use hardcoded defaults instead of settings table lookups
 
 ### Fixed
 

@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 // MockWorkQueueStore is a test double for WorkQueueStore
@@ -38,7 +39,7 @@ func (m *MockWorkQueueStore) CompleteWork(ctx context.Context, id, workerID int6
 	return m.CompleteWorkError
 }
 
-func (m *MockWorkQueueStore) FailWork(ctx context.Context, id, workerID int64, maxRetries int32) error {
+func (m *MockWorkQueueStore) FailWork(ctx context.Context, id, workerID int64, maxRetries int32, requeueTTL time.Duration) error {
 	m.FailWorkCalled = true
 	m.LastID = id
 	m.LastWorkerID = workerID

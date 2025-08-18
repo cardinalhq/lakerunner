@@ -24,6 +24,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
@@ -276,7 +277,9 @@ func failWork(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull, id uuid.
 }
 
 func runWorkqueueExpiry(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull) error {
-	expired, err := mdb.WorkQueueCleanup(ctx)
+	// Use default of 20 minutes for lock_ttl_dead
+	lockTtlDead := pgtype.Interval{Microseconds: (20 * time.Minute).Microseconds(), Valid: true}
+	expired, err := mdb.WorkQueueCleanup(ctx, lockTtlDead)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil

@@ -16,6 +16,8 @@ package lrdb
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func (q *Store) WorkQueueAdd(ctx context.Context, params WorkQueueAddParams) error {
@@ -54,14 +56,14 @@ func (q *Store) WorkQueueHeartbeat(ctx context.Context, params WorkQueueHeartbea
 	})
 }
 
-func (q *Store) WorkQueueCleanup(ctx context.Context) ([]WorkQueueCleanupRow, error) {
+func (q *Store) WorkQueueCleanup(ctx context.Context, lockTtlDead pgtype.Interval) ([]WorkQueueCleanupRow, error) {
 	var result []WorkQueueCleanupRow
 	err := q.execTx(ctx, func(s *Store) error {
 		if err := s.WorkQueueGlobalLock(ctx); err != nil {
 			return err
 		}
 		var err error
-		result, err = s.WorkQueueCleanupDirect(ctx)
+		result, err = s.WorkQueueCleanupDirect(ctx, lockTtlDead)
 		return err
 	})
 	return result, err
