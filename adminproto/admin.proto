@@ -1,0 +1,67 @@
+// Copyright (C) 2025 CardinalHQ, Inc
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as
+// published by the Free Software Foundation, version 3.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program. If not, see <http://www.gnu.org/licenses/>.
+
+syntax = "proto3";
+
+package adminproto;
+
+option go_package = "github.com/cardinalhq/lakerunner/adminproto";
+
+service AdminService {
+  // Ping endpoint for connectivity testing
+  rpc Ping(PingRequest) returns (PingResponse);
+
+  // Get workqueue status/summary
+  rpc WorkQueueStatus(WorkQueueStatusRequest) returns (WorkQueueStatusResponse);
+
+  // Get inqueue status/summary
+  rpc InQueueStatus(InQueueStatusRequest) returns (InQueueStatusResponse);
+}
+
+message PingRequest {
+  string message = 1;
+}
+
+message PingResponse {
+  string message = 1;
+  int64 timestamp = 2;
+  string server_id = 3;
+}
+
+message WorkQueueStatusRequest {
+  // Empty for now, can be extended
+}
+
+message WorkQueueStatusResponse {
+  repeated WorkQueueItem items = 1;
+}
+
+message WorkQueueItem {
+  int64 count = 1;
+  string signal = 2;
+  string action = 3;
+}
+
+message InQueueStatusRequest {
+  // Empty for now, can be extended
+}
+
+message InQueueStatusResponse {
+  repeated InQueueItem items = 1;
+}
+
+message InQueueItem {
+  int64 count = 1;
+  string telemetry_type = 2;
+}
