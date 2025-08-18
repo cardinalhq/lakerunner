@@ -7,9 +7,168 @@ package lrdb
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
+
+const compactTraceSegments = `-- name: CompactTraceSegments :exec
+WITH
+  all_fp AS (
+    SELECT unnest(fingerprints) AS fp
+      FROM trace_seg
+     WHERE organization_id = $1
+       AND dateint        = $2
+       AND instance_num   = $5
+       AND segment_id     = ANY($11::bigint[])
+  ),
+  fingerprint_array AS (
+    SELECT coalesce(
+      array_agg(DISTINCT fp ORDER BY fp),
+      '{}'::bigint[]
+    ) AS fingerprints
+    FROM all_fp
+  ),
+  deleted_seg AS (
+    DELETE FROM trace_seg
+     WHERE organization_id = $1
+       AND dateint        = $2
+       AND instance_num   = $5
+       AND segment_id     = ANY($11::bigint[])
+  )
+INSERT INTO trace_seg (
+  organization_id,
+  dateint,
+  ingest_dateint,
+  segment_id,
+  instance_num,
+  record_count,
+  file_size,
+  ts_range,
+  created_by,
+  fingerprints
+)
+SELECT
+  $1,
+  $2,
+  $3,
+  $4,
+  $5,
+  $6,
+  $7,
+  int8range($8, $9, '[)'),
+  $10,
+  fa.fingerprints
+FROM fingerprint_array AS fa
+`
+
+type CompactTraceSegmentsParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Dateint        int32     `json:"dateint"`
+	IngestDateint  int32     `json:"ingest_dateint"`
+	NewSegmentID   int64     `json:"new_segment_id"`
+	InstanceNum    int16     `json:"instance_num"`
+	NewRecordCount int64     `json:"new_record_count"`
+	NewFileSize    int64     `json:"new_file_size"`
+	NewStartTs     int64     `json:"new_start_ts"`
+	NewEndTs       int64     `json:"new_end_ts"`
+	CreatedBy      int16     `json:"created_by"`
+	OldSegmentIds  []int64   `json:"old_segment_ids"`
+}
+
+func (q *Queries) CompactTraceSegments(ctx context.Context, arg CompactTraceSegmentsParams) error {
+	_, err := q.db.Exec(ctx, compactTraceSegments,
+		arg.OrganizationID,
+		arg.Dateint,
+		arg.IngestDateint,
+		arg.NewSegmentID,
+		arg.InstanceNum,
+		arg.NewRecordCount,
+		arg.NewFileSize,
+		arg.NewStartTs,
+		arg.NewEndTs,
+		arg.CreatedBy,
+		arg.OldSegmentIds,
+	)
+	return err
+}
+
+const getTraceSegmentsForCompaction = `-- name: GetTraceSegmentsForCompaction :many
+SELECT
+  segment_id,
+  lower(ts_range)::bigint AS start_ts,
+  upper(ts_range)::bigint AS end_ts,
+  file_size,
+  record_count,
+  ingest_dateint,
+  created_at
+FROM trace_seg
+WHERE organization_id = $1
+  AND dateint         = $2
+  AND instance_num    = $3
+  AND file_size > 0
+  AND record_count > 0
+  AND file_size <= $4
+  AND (created_at, segment_id) > ($5, $6::bigint)
+ORDER BY created_at, segment_id
+LIMIT $7
+`
+
+type GetTraceSegmentsForCompactionParams struct {
+	OrganizationID  uuid.UUID `json:"organization_id"`
+	Dateint         int32     `json:"dateint"`
+	InstanceNum     int16     `json:"instance_num"`
+	MaxFileSize     int64     `json:"max_file_size"`
+	CursorCreatedAt time.Time `json:"cursor_created_at"`
+	CursorSegmentID int64     `json:"cursor_segment_id"`
+	Maxrows         int32     `json:"maxrows"`
+}
+
+type GetTraceSegmentsForCompactionRow struct {
+	SegmentID     int64     `json:"segment_id"`
+	StartTs       int64     `json:"start_ts"`
+	EndTs         int64     `json:"end_ts"`
+	FileSize      int64     `json:"file_size"`
+	RecordCount   int64     `json:"record_count"`
+	IngestDateint int32     `json:"ingest_dateint"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+func (q *Queries) GetTraceSegmentsForCompaction(ctx context.Context, arg GetTraceSegmentsForCompactionParams) ([]GetTraceSegmentsForCompactionRow, error) {
+	rows, err := q.db.Query(ctx, getTraceSegmentsForCompaction,
+		arg.OrganizationID,
+		arg.Dateint,
+		arg.InstanceNum,
+		arg.MaxFileSize,
+		arg.CursorCreatedAt,
+		arg.CursorSegmentID,
+		arg.Maxrows,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetTraceSegmentsForCompactionRow
+	for rows.Next() {
+		var i GetTraceSegmentsForCompactionRow
+		if err := rows.Scan(
+			&i.SegmentID,
+			&i.StartTs,
+			&i.EndTs,
+			&i.FileSize,
+			&i.RecordCount,
+			&i.IngestDateint,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
 
 const insertTraceSegmentDirect = `-- name: InsertTraceSegmentDirect :exec
 INSERT INTO trace_seg (
