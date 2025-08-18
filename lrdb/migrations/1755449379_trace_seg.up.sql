@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS trace_seg (
   dateint           INTEGER     NOT NULL,
   segment_id        BIGINT      NOT NULL,
   instance_num      SMALLINT    NOT NULL,
+  slot_id           INTEGER     NOT NULL,
   fingerprints      BIGINT[]    NOT NULL DEFAULT '{}',
   record_count      BIGINT      NOT NULL,
   file_size         BIGINT      NOT NULL,
