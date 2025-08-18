@@ -5,6 +5,7 @@ INSERT INTO trace_seg (
   ingest_dateint,
   segment_id,
   instance_num,
+  slot_id,
   ts_range,
   record_count,
   file_size,
@@ -17,6 +18,7 @@ VALUES (
   @ingest_dateint,
   @segment_id,
   @instance_num,
+  @slot_id,
   int8range(@start_ts, @end_ts, '[)'),
   @record_count,
   @file_size,
@@ -38,7 +40,7 @@ FROM trace_seg
 WHERE organization_id = @organization_id
   AND dateint         = @dateint
   AND instance_num    = @instance_num
-  AND slot_id         = @slot_id
+  AND slot_id BETWEEN 1 AND 16  -- For slot-based work (traces) - slots 1-16
   AND file_size > 0
   AND record_count > 0
   AND file_size <= @max_file_size
@@ -54,7 +56,7 @@ WITH
      WHERE organization_id = @organization_id
        AND dateint        = @dateint
        AND instance_num   = @instance_num
-       AND slot_id        = @slot_id
+       AND slot_id BETWEEN 1 AND 16  -- For slot-based work (traces) - slots 1-16
        AND segment_id     = ANY(@old_segment_ids::bigint[])
   ),
   fingerprint_array AS (
