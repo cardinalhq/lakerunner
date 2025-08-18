@@ -148,35 +148,20 @@ func packTraceSegment(
 	dateint int32,
 	slotID int32,
 ) error {
-	ll.Info("DEBUG: packTraceSegment started",
-		slog.Int("groupSize", len(group)),
-		slog.String("tmpdir", tmpdir),
-		slog.Int("slotID", int(slotID)),
-		slog.Int("dateint", int(dateint)))
 
 	if len(group) < 2 {
-		ll.Info("DEBUG: Group too small, skipping", slog.Int("groupSize", len(group)))
 		return nil
 	}
 
-	ll.Info("DEBUG: Creating object fetcher and file opener")
 	fetcher := objectFetcherAdapter{s3Client: s3Client}
 	open := fileOpenerAdapter{}
 	wf := writerFactoryAdapter{}
 
-	ll.Info("DEBUG: About to download and open trace segments",
-		slog.Int("segmentCount", len(group)),
-		slog.String("bucket", sp.Bucket))
-
 	opened, err := downloadAndOpenTraceSegments(ctx, sp, dateint, slotID, group, tmpdir, sp.Bucket, fetcher, open)
 	if err != nil {
-		ll.Error("DEBUG: Failed to download and open trace segments", slog.String("error", err.Error()))
+		ll.Error("Failed to download and open trace segments", slog.String("error", err.Error()))
 		return err
 	}
-
-	ll.Info("DEBUG: Downloaded and opened segments",
-		slog.Int("requestedCount", len(group)),
-		slog.Int("openedCount", len(opened)))
 
 	if len(opened) < 2 {
 		ll.Info("DEBUG: Group has fewer than 2 usable segments; skipping",
@@ -201,102 +186,69 @@ func packTraceSegment(
 		}
 	}()
 
-	ll.Info("DEBUG: About to merge nodes from opened files", slog.Int("fileCount", len(handles)))
 	nodes, err := mergeNodes(handles)
 	if err != nil {
-		ll.Error("DEBUG: Error merging nodes", slog.String("error", err.Error()))
+		ll.Error("Error merging nodes", slog.String("error", err.Error()))
 		return err
 	}
-	ll.Info("DEBUG: Successfully merged nodes", slog.Int("nodeCount", len(nodes)))
 
-	ll.Info("DEBUG: Creating new writer", slog.String("tmpdir", tmpdir))
 	w, err := wf.NewWriter("tracecompact", tmpdir, nodes, 0)
 	if err != nil {
-		ll.Error("DEBUG: Failed to create writer", slog.String("error", err.Error()))
+		ll.Error("Failed to create writer", slog.String("error", err.Error()))
 		return err
 	}
-	ll.Info("DEBUG: Successfully created writer")
 
 	writerClosed := false
 	defer func() {
 		if !writerClosed {
-			ll.Info("DEBUG: Closing writer in defer")
 			_, _ = w.Close()
 		}
 	}()
 
-	ll.Info("DEBUG: About to copy data from handles to writer", slog.Int("handleCount", len(handles)))
 	_, err = copyAll(ctx, open, w, handles)
 	if err != nil {
-		ll.Error("DEBUG: Failed to copy data", slog.String("error", err.Error()))
+		ll.Error("Failed to copy data", slog.String("error", err.Error()))
 		return err
 	}
-	ll.Info("DEBUG: Successfully copied data to writer")
 
-	ll.Info("DEBUG: About to close writer and get results")
 	writeResults, err := w.Close()
 	writerClosed = true
 	if err != nil {
-		ll.Error("DEBUG: Failed to close writer", slog.String("error", err.Error()))
+		ll.Error("Failed to close writer", slog.String("error", err.Error()))
 		return err
 	}
-	ll.Info("DEBUG: Writer closed successfully", slog.Int("resultCount", len(writeResults)))
 
 	if len(writeResults) == 0 {
-		ll.Info("DEBUG: No records written, skipping upload")
 		return nil
 	}
 	writeResult := writeResults[0]
-	ll.Info("DEBUG: Got write result",
-		slog.String("fileName", writeResult.FileName),
-		slog.Int64("recordCount", writeResult.RecordCount))
 
 	stats := statsForTraceSegments(usedSegs)
-	ll.Info("DEBUG: Calculated stats for trace segments",
-		slog.Int64("expectedRecords", stats.CountRecords),
-		slog.Int64("actualRecords", writeResult.RecordCount),
-		slog.Int64("firstTS", stats.FirstTS),
-		slog.Int64("lastTS", stats.LastTS))
 
 	if writeResult.RecordCount != stats.CountRecords {
-		ll.Error("DEBUG: Record count mismatch",
+		ll.Error("Record count mismatch",
 			slog.Int64("expected", stats.CountRecords),
 			slog.Int64("actual", writeResult.RecordCount))
 		return fmt.Errorf("record count mismatch: expected=%d actual=%d", stats.CountRecords, writeResult.RecordCount)
 	}
 
-	ll.Info("DEBUG: About to get file stats", slog.String("fileName", writeResult.FileName))
 	fi, err := os.Stat(writeResult.FileName)
 	if err != nil {
-		ll.Error("DEBUG: Failed to get file stats", slog.String("error", err.Error()))
+		ll.Error("Failed to get file stats", slog.String("error", err.Error()))
 		return err
 	}
-	ll.Info("DEBUG: Got file stats",
-		slog.Int64("fileSize", fi.Size()),
-		slog.String("fileName", fi.Name()))
 
 	newSegmentID := s3helper.GenerateID()
-	ll.Info("DEBUG: Generated new segment ID", slog.Int64("segmentID", newSegmentID))
 
 	// Create S3 object ID for the new consolidated trace file
 	newObjectID := fmt.Sprintf("db/%s/%s/%d/traces/%d/%d.parquet",
 		sp.OrganizationID, sp.CollectorName, dateint, slotID, newSegmentID)
 
-	ll.Info("DEBUG: Created S3 object ID", slog.String("objectID", newObjectID))
-
-	ll.Info("DEBUG: About to upload to S3",
-		slog.String("bucket", sp.Bucket),
-		slog.String("objectID", newObjectID),
-		slog.String("localFile", writeResult.FileName),
-		slog.Int64("fileSize", fi.Size()))
-
 	if err := s3helper.UploadS3Object(ctx, s3Client, sp.Bucket, newObjectID, writeResult.FileName); err != nil {
-		ll.Error("DEBUG: S3 upload failed", slog.String("error", err.Error()))
+		ll.Error("S3 upload failed", slog.String("error", err.Error()))
 		return err
 	}
-	ll.Info("DEBUG: S3 upload completed successfully")
 
-	ll.Info("DEBUG: About to update database with new segment info")
 	// Update the database to replace old segments with the new consolidated one
 	if err := mdb.CompactTraceSegments(ctx, lrdb.CompactTraceSegmentsParams{
 		OrganizationID: sp.OrganizationID,
@@ -312,25 +264,18 @@ func packTraceSegment(
 		CreatedBy:      lrdb.CreatedByCompact,
 		OldSegmentIds:  segmentIDsFromTraceSegments(usedSegs),
 	}); err != nil {
-		ll.Error("DEBUG: Database update failed", slog.String("error", err.Error()))
+		ll.Error("Database update failed", slog.String("error", err.Error()))
 		return err
 	}
-	ll.Info("DEBUG: Database updated successfully")
 
 	// Schedule old segments for deletion
-	ll.Info("DEBUG: About to schedule old segments for deletion", slog.Int("segmentCount", len(objectIDs)))
 	for _, oid := range objectIDs {
 		if err := s3helper.ScheduleS3Delete(ctx, mdb, sp.OrganizationID, sp.InstanceNum, sp.Bucket, oid); err != nil {
-			ll.Error("DEBUG: Failed to schedule segment deletion",
+			ll.Error("Failed to schedule segment deletion",
 				slog.String("objectID", oid),
 				slog.String("error", err.Error()))
 		}
 	}
-	ll.Info("DEBUG: Successfully scheduled old trace segments for deletion", slog.Int("count", len(objectIDs)))
 
-	ll.Info("DEBUG: packTraceSegment completed successfully",
-		slog.Int64("newSegmentID", newSegmentID),
-		slog.Int64("fileSize", fi.Size()),
-		slog.Int64("recordCount", writeResult.RecordCount))
 	return nil
 }

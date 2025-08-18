@@ -171,37 +171,11 @@ func compactTracesFor(
 		}
 
 		// Pack segments into groups for compaction
-		ll.Info("DEBUG: About to call PackTraceSegments",
-			slog.Int("segmentCount", len(segments)),
-			slog.Int64("targetFileSize", targetFileSize),
-			slog.Int64("firstSegmentSize", segments[0].FileSize),
-			slog.Int64("lastSegmentSize", segments[len(segments)-1].FileSize))
 
 		packed, err := tracecompaction.PackTraceSegments(segments, targetFileSize)
 		if err != nil {
 			ll.Error("Error packing trace segments", slog.String("error", err.Error()))
 			return WorkResultTryAgainLater, err
-		}
-
-		ll.Info("DEBUG: PackTraceSegments completed successfully",
-			slog.Int("inputSegments", len(segments)),
-			slog.Int("outputGroups", len(packed)))
-
-		// Log details about each packed group
-		for i, group := range packed {
-			var groupSize int64
-			var groupRecords int64
-			for _, seg := range group {
-				groupSize += seg.FileSize
-				groupRecords += seg.RecordCount
-			}
-			ll.Info("DEBUG: Packed group details",
-				slog.Int("groupIndex", i),
-				slog.Int("segmentCount", len(group)),
-				slog.Int64("totalSize", groupSize),
-				slog.Int64("totalRecords", groupRecords),
-				slog.Float64("sizeMB", float64(groupSize)/1024/1024),
-				slog.Bool("withinTarget", groupSize <= targetFileSize))
 		}
 
 		// Check if the last group is too small (similar to logs compaction)
@@ -236,35 +210,22 @@ func compactTracesFor(
 		ll.Info("counts", slog.Int("currentSegments", len(segments)), slog.Int("packGroups", len(packed)), slog.Bool("lastGroupSmall", lastGroupSmall))
 
 		// Process each group for actual compaction
-		ll.Info("DEBUG: Starting to process packed groups",
-			slog.Int("totalGroups", len(packed)),
-			slog.String("tmpdir", tmpdir))
 
 		for i, group := range packed {
 			ll := ll.With(slog.Int("groupIndex", i))
 
-			ll.Info("DEBUG: About to process group",
-				slog.Int("groupIndex", i),
-				slog.Int("segmentCount", len(group)),
-				slog.String("tmpdir", tmpdir))
-
 			// Call packTraceSegment for each group
 			err = packTraceSegment(ctx, ll, tmpdir, s3client, mdb, group, profile, inf.Dateint(), slotID)
 			if err != nil {
-				ll.Error("DEBUG: packTraceSegment failed",
+				ll.Error("packTraceSegment failed",
 					slog.Int("groupIndex", i),
-					slog.String("error", err.Error()),
-					slog.String("tmpdir", tmpdir))
+					slog.String("error", err.Error()))
 				break
 			}
 
-			ll.Info("DEBUG: packTraceSegment completed successfully",
-				slog.Int("groupIndex", i))
-
-			// Add shutdown check similar to logs compaction
 			select {
 			case <-compactTracesDoneCtx.Done():
-				ll.Info("DEBUG: Shutdown requested, stopping group processing")
+				ll.Info("Shutdown requested, stopping group processing")
 				return WorkResultTryAgainLater, errors.New("Asked to shut down, will retry work")
 			default:
 			}

@@ -20,7 +20,7 @@ WITH
      WHERE organization_id = $1
        AND dateint        = $2
        AND instance_num   = $5
-       AND slot_id        = $6
+       AND slot_id = $6
        AND segment_id     = ANY($12::bigint[])
   ),
   fingerprint_array AS (
@@ -112,7 +112,7 @@ FROM trace_seg
 WHERE organization_id = $1
   AND dateint         = $2
   AND instance_num    = $3
-  AND slot_id         = $4
+  AND slot_id = $4
   AND file_size > 0
   AND record_count > 0
   AND file_size <= $5
