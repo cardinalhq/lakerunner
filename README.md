@@ -115,6 +115,6 @@ export LAKERUNNER_API_KEY="test-key"
 
 ## Production Deployment
 
-We are actively working on a production deployment for LakeRunner and will soon be rolling out CloudFormation templates for AWS, Azure Resource Manager (ARM) Templates for Azure, and Google IaC Templates for GCP. Stay tuned!
+We are actively working on a production deployment for LakeRunner and will soon be rolling out `CloudFormation` templates for AWS, `Azure Resource Manager` (ARM) Templates for Azure, and Google `IaC` Templates for GCP. Stay tuned!
 
 
