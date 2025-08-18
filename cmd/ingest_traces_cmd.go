@@ -170,6 +170,7 @@ func traceIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp sto
 					IngestDateint:  ingest_dateint,
 					SegmentID:      segmentID,
 					InstanceNum:    inf.InstanceNum,
+					SlotID:         int32(result.SlotID),
 					StartTs:        0, // Time doesn't matter for slot-based traces compaction
 					EndTs:          1, // Time doesn't matter for slot-based traces compaction
 					RecordCount:    result.RecordCount,
