@@ -38,10 +38,11 @@ func (a *LRDBWorkQueueAdapter) CompleteWork(ctx context.Context, id, workerID in
 	})
 }
 
-func (a *LRDBWorkQueueAdapter) FailWork(ctx context.Context, id, workerID int64) error {
+func (a *LRDBWorkQueueAdapter) FailWork(ctx context.Context, id, workerID int64, maxRetries int32) error {
 	return a.db.WorkQueueFail(ctx, lrdb.WorkQueueFailParams{
-		ID:       id,
-		WorkerID: workerID,
+		ID:         id,
+		WorkerID:   workerID,
+		MaxRetries: maxRetries,
 	})
 }
 

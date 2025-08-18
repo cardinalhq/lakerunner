@@ -36,11 +36,19 @@ type HandlerOption func(*handlerOptions)
 
 type handlerOptions struct {
 	logger *slog.Logger
+	config *Config
 }
 
 // WithLogger sets the logger for handlers
 func WithLogger(logger *slog.Logger) HandlerOption {
 	return func(opts *handlerOptions) {
 		opts.logger = logger
+	}
+}
+
+// WithConfig sets the configuration for handlers
+func WithConfig(config *Config) HandlerOption {
+	return func(opts *handlerOptions) {
+		opts.config = config
 	}
 }

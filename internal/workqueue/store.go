@@ -23,7 +23,7 @@ import (
 // WorkQueueStore defines operations for work queue management
 type WorkQueueStore interface {
 	CompleteWork(ctx context.Context, id, workerID int64) error
-	FailWork(ctx context.Context, id, workerID int64) error
+	FailWork(ctx context.Context, id, workerID int64, maxRetries int32) error
 }
 
 // InqueueStore defines operations for inqueue management

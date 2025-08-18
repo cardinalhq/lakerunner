@@ -71,7 +71,8 @@ expired AS (
     claimed_by     = -1,
     claimed_at     = NULL,
     heartbeated_at = params.v_now,
-    needs_run      = TRUE
+    needs_run      = TRUE,
+    tries          = 0
   FROM params
   WHERE
     w.claimed_by <> -1
@@ -185,9 +186,7 @@ WITH params AS (
     (SELECT value::interval
        FROM public.settings
       WHERE key = 'work_fail_requeue_ttl')        AS requeue_ttl,
-    (SELECT value::int
-       FROM public.settings
-      WHERE key = 'max_retries')                  AS max_retries
+    $3::INTEGER                         AS max_retries
 ),
 old AS (
   SELECT w.tries
@@ -227,12 +226,13 @@ WHERE sl.work_id    = $1::BIGINT
 `
 
 type WorkQueueFailParams struct {
-	ID       int64 `json:"id"`
-	WorkerID int64 `json:"worker_id"`
+	ID         int64 `json:"id"`
+	WorkerID   int64 `json:"worker_id"`
+	MaxRetries int32 `json:"max_retries"`
 }
 
 func (q *Queries) WorkQueueFailDirect(ctx context.Context, arg WorkQueueFailParams) error {
-	_, err := q.db.Exec(ctx, workQueueFailDirect, arg.ID, arg.WorkerID)
+	_, err := q.db.Exec(ctx, workQueueFailDirect, arg.ID, arg.WorkerID, arg.MaxRetries)
 	return err
 }
 
