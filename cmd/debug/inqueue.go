@@ -30,22 +30,22 @@ func GetInqueueCmd() *cobra.Command {
 		Short: "Inqueue debugging commands",
 	}
 
-	inqueueCmdx.AddCommand(getInqueueSummaryCmd())
+	inqueueCmdx.AddCommand(getInqueueStatusCmd())
 
 	return inqueueCmdx
 }
 
-func getInqueueSummaryCmd() *cobra.Command {
+func getInqueueStatusCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "summary",
-		Short: "Show summary of unclaimed inqueue items by telemetry type",
+		Use:   "status",
+		Short: "Show status of unclaimed inqueue items by telemetry type",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runInqueueSummary(cmd.Context())
+			return runInqueueStatus(cmd.Context())
 		},
 	}
 }
 
-func runInqueueSummary(ctx context.Context) error {
+func runInqueueStatus(ctx context.Context) error {
 	store, err := dbopen.LRDBStore(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to connect to lrdb: %w", err)

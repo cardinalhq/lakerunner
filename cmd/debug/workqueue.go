@@ -30,22 +30,22 @@ func GetWorkQueueCmd() *cobra.Command {
 		Short: "Work queue debugging commands",
 	}
 
-	workQueueCmd.AddCommand(getSummaryCmd())
+	workQueueCmd.AddCommand(getStatusCmd())
 
 	return workQueueCmd
 }
 
-func getSummaryCmd() *cobra.Command {
+func getStatusCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "summary",
-		Short: "Show summary of runnable work queue items by signal and action",
+		Use:   "status",
+		Short: "Show status of runnable work queue items by signal and action",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSummary(cmd.Context())
+			return runStatus(cmd.Context())
 		},
 	}
 }
 
-func runSummary(ctx context.Context) error {
+func runStatus(ctx context.Context) error {
 	store, err := dbopen.LRDBStore(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to connect to lrdb: %w", err)
