@@ -41,6 +41,7 @@ type Querier interface {
 	GetSpanInfoByFingerprint(ctx context.Context, arg GetSpanInfoByFingerprintParams) (GetSpanInfoByFingerprintRow, error)
 	InqueueJournalDelete(ctx context.Context, arg InqueueJournalDeleteParams) error
 	InqueueJournalUpsert(ctx context.Context, arg InqueueJournalUpsertParams) (bool, error)
+	InqueueSummary(ctx context.Context) ([]InqueueSummaryRow, error)
 	InsertLogSegmentDirect(ctx context.Context, arg InsertLogSegmentParams) error
 	InsertMetricSegmentDirect(ctx context.Context, arg InsertMetricSegmentParams) error
 	ListSegmentsForQuery(ctx context.Context, arg ListSegmentsForQueryParams) ([]ListSegmentsForQueryRow, error)
@@ -70,6 +71,7 @@ type Querier interface {
 	WorkQueueGlobalLock(ctx context.Context) error
 	// 1) heart-beat the work_queue
 	WorkQueueHeartbeatDirect(ctx context.Context, arg WorkQueueHeartbeatParams) error
+	WorkQueueSummary(ctx context.Context) ([]WorkQueueSummaryRow, error)
 }
 
 var _ Querier = (*Queries)(nil)

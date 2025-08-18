@@ -304,3 +304,37 @@ func (q *Queries) WorkQueueHeartbeatDirect(ctx context.Context, arg WorkQueueHea
 	_, err := q.db.Exec(ctx, workQueueHeartbeatDirect, arg.Ids, arg.WorkerID)
 	return err
 }
+
+const workQueueSummary = `-- name: WorkQueueSummary :many
+SELECT count(*) AS count, signal, action
+FROM work_queue
+WHERE needs_run = true AND runnable_at <= now()
+GROUP BY signal, action
+ORDER BY signal, action
+`
+
+type WorkQueueSummaryRow struct {
+	Count  int64      `json:"count"`
+	Signal SignalEnum `json:"signal"`
+	Action ActionEnum `json:"action"`
+}
+
+func (q *Queries) WorkQueueSummary(ctx context.Context) ([]WorkQueueSummaryRow, error) {
+	rows, err := q.db.Query(ctx, workQueueSummary)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []WorkQueueSummaryRow
+	for rows.Next() {
+		var i WorkQueueSummaryRow
+		if err := rows.Scan(&i.Count, &i.Signal, &i.Action); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
