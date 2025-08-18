@@ -173,6 +173,47 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp stora
 			return err
 		}
 
+		// First, validate that all split results have proper hour boundaries
+		// and collect unique dateint/hour combinations for work queue creation
+		hourlyTriggers := make(map[helpers.HourBoundary]int64) // maps hour boundary to earliest FirstTS
+
+		for key, split := range splitResults {
+			// Validate that this split doesn't cross hour boundaries - this would be a bug in split logic
+			splitTimeRange := helpers.TimeRange{
+				Start: helpers.UnixMillisToTime(split.FirstTS),
+				End:   helpers.UnixMillisToTime(split.LastTS + 1), // +1 because end is exclusive in our ranges
+			}
+
+			if !helpers.IsSameDateintHour(splitTimeRange) {
+				ll.Error("Split result crosses hour boundaries - this is a bug in split logic",
+					slog.Any("key", key),
+					slog.Int64("firstTS", split.FirstTS),
+					slog.Int64("lastTS", split.LastTS),
+					slog.Time("firstTime", splitTimeRange.Start),
+					slog.Time("lastTime", splitTimeRange.End))
+				return fmt.Errorf("split result for key %v crosses hour boundaries: %d to %d", key, split.FirstTS, split.LastTS)
+			}
+
+			// Verify the key's dateint/hour matches the actual time range
+			expectedDateint, expectedHour := helpers.MSToDateintHour(split.FirstTS)
+			if key.DateInt != expectedDateint || key.Hour != expectedHour {
+				ll.Error("Split key doesn't match actual time range - this is a bug in split logic",
+					slog.Any("key", key),
+					slog.Int("expectedDateint", int(expectedDateint)),
+					slog.Int("expectedHour", int(expectedHour)),
+					slog.Int64("firstTS", split.FirstTS))
+				return fmt.Errorf("split key dateint/hour (%d/%d) doesn't match time range dateint/hour (%d/%d)",
+					key.DateInt, key.Hour, expectedDateint, expectedHour)
+			}
+
+			// Collect unique hour boundaries for work queue creation
+			hourBoundary := helpers.HourBoundary{DateInt: key.DateInt, Hour: key.Hour}
+			if existingTS, exists := hourlyTriggers[hourBoundary]; !exists || split.FirstTS < existingTS {
+				hourlyTriggers[hourBoundary] = split.FirstTS
+			}
+		}
+
+		// Process each split result - upload files and insert into database
 		for key, split := range splitResults {
 			segmentID := s3helper.GenerateID()
 			dbObjectID := helpers.MakeDBObjectID(inf.OrganizationID, inf.CollectorName, key.DateInt, s3helper.HourFromMillis(split.FirstTS), segmentID, "logs")
@@ -225,9 +266,23 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp stora
 				slog.Int("fingerprintCount", split.Fingerprints.Cardinality()),
 				slog.Int64("recordCount", split.RecordCount),
 				slog.Int64("fileSize", split.FileSize))
+		}
 
-			// TODO this can be done just once per dateint.
-			if err := queueLogCompaction(ctx, mdb, qmcFromInqueue(inf, -1, split.FirstTS)); err != nil {
+		// Create work queue items - one per unique dateint/hour combination
+		// This ensures we don't create duplicate work items when multiple files exist for the same hour
+		for hourBoundary, earliestTS := range hourlyTriggers {
+			ll.Info("Queueing log compaction for hour",
+				slog.Int("dateint", int(hourBoundary.DateInt)),
+				slog.Int("hour", int(hourBoundary.Hour)),
+				slog.Int64("triggerTS", earliestTS))
+
+			// Create hour-aligned timestamp for the work queue
+			hourAlignedTS := helpers.TruncateToHour(helpers.UnixMillisToTime(earliestTS)).UnixMilli()
+			if err := queueLogCompaction(ctx, mdb, qmcFromInqueue(inf, 3600000, hourAlignedTS)); err != nil {
+				ll.Error("Failed to queue log compaction",
+					slog.Any("hourBoundary", hourBoundary),
+					slog.Int64("triggerTS", earliestTS),
+					slog.Any("error", err))
 				return err
 			}
 		}

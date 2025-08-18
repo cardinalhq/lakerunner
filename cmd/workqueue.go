@@ -44,16 +44,14 @@ func qmcFromWorkable(inf lockmgr.Workable) qmc {
 }
 
 func qmcFromInqueue(inf lrdb.Inqueue, frequency int32, startTS int64) qmc {
+	startTime := time.UnixMilli(startTS).UTC()
+	endTime := startTime.Add(time.Duration(frequency) * time.Millisecond)
+
 	return qmc{
 		OrganizationID: inf.OrganizationID,
 		InstanceNum:    inf.InstanceNum,
 		FrequencyMs:    frequency,
-		TsRange: pgtype.Range[pgtype.Timestamptz]{
-			LowerType: pgtype.Inclusive,
-			UpperType: pgtype.Exclusive,
-			Lower:     pgtype.Timestamptz{Time: time.UnixMilli(startTS).UTC(), Valid: true},
-			Upper:     pgtype.Timestamptz{Time: time.UnixMilli(startTS).UTC().Add(time.Duration(frequency) * time.Millisecond), Valid: true},
-		},
+		TsRange:        helpers.TimeRange{Start: startTime, End: endTime}.ToPgRange(),
 	}
 }
 
@@ -177,31 +175,31 @@ func queueMetricRollup(ctx context.Context, mdb lrdb.StoreFull, inf qmc) error {
 
 // queueLogCompaction queues a log compaction job for the entire hour
 func queueLogCompaction(ctx context.Context, mdb lrdb.StoreFull, inf qmc) error {
-	upstreamDur := 1 * time.Hour
-	startTS, _, ok := helpers.RangeBounds(inf.TsRange)
+	// Extract the hour range - should already be properly aligned from qmcFromInqueue
+	hourRange, ok := helpers.NewTimeRangeFromPgRange(inf.TsRange)
 	if !ok {
-		slog.Error("invalid time range for log compaction notification", "ts_range", inf.TsRange)
+		slog.Error("invalid time range for log compaction", "ts_range", inf.TsRange)
 		return nil // invalid range, nothing to do
 	}
 
-	parentStart := startTS.Time.UTC().Truncate(upstreamDur)
-	parentEnd := parentStart.Add(upstreamDur)
-	dateint, _ := helpers.MSToDateintHour(parentStart.UTC().UnixMilli())
+	// Verify the range is properly hour-aligned (should be, but double-check)
+	if !helpers.IsHourAligned(hourRange) {
+		slog.Error("received non-hour-aligned range for log compaction",
+			"hour_range", hourRange)
+		return nil
+	}
+
+	// Get the dateint for the hour boundary
+	boundary := helpers.TimeToHourBoundary(hourRange.Start)
 
 	return mdb.WorkQueueAdd(ctx, lrdb.WorkQueueAddParams{
-		OrgID:     inf.OrganizationID,
-		Instance:  inf.InstanceNum,
-		Signal:    lrdb.SignalEnumLogs,
-		Action:    lrdb.ActionEnumCompact,
-		Dateint:   dateint,
-		Frequency: -1,
-		TsRange: pgtype.Range[pgtype.Timestamptz]{
-			LowerType: pgtype.Inclusive,
-			UpperType: pgtype.Exclusive,
-			Lower:     pgtype.Timestamptz{Time: parentStart, Valid: true},
-			Upper:     pgtype.Timestamptz{Time: parentEnd, Valid: true},
-			Valid:     true,
-		},
+		OrgID:      inf.OrganizationID,
+		Instance:   inf.InstanceNum,
+		Signal:     lrdb.SignalEnumLogs,
+		Action:     lrdb.ActionEnumCompact,
+		Dateint:    boundary.DateInt,
+		Frequency:  -1,
+		TsRange:    inf.TsRange,                           // Use the already-computed hour range
 		RunnableAt: time.Now().UTC().Add(5 * time.Minute), // give it a little time to settle
 	})
 }
