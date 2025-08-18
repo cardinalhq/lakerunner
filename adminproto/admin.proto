@@ -21,10 +21,10 @@ option go_package = "github.com/cardinalhq/lakerunner/adminproto";
 service AdminService {
   // Ping endpoint for connectivity testing
   rpc Ping(PingRequest) returns (PingResponse);
-  
+
   // Get workqueue status/summary
   rpc WorkQueueStatus(WorkQueueStatusRequest) returns (WorkQueueStatusResponse);
-  
+
   // Get inqueue status/summary
   rpc InQueueStatus(InQueueStatusRequest) returns (InQueueStatusResponse);
 }
