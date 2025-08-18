@@ -23,9 +23,7 @@ WITH params AS (
     (SELECT value::interval
        FROM public.settings
       WHERE key = 'work_fail_requeue_ttl')        AS requeue_ttl,
-    (SELECT value::int
-       FROM public.settings
-      WHERE key = 'max_retries')                  AS max_retries
+    @max_retries::INTEGER                         AS max_retries
 ),
 old AS (
   SELECT w.tries
@@ -123,7 +121,8 @@ expired AS (
     claimed_by     = -1,
     claimed_at     = NULL,
     heartbeated_at = params.v_now,
-    needs_run      = TRUE
+    needs_run      = TRUE,
+    tries          = 0
   FROM params
   WHERE
     w.claimed_by <> -1

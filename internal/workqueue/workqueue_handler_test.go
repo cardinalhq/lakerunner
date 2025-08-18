@@ -38,7 +38,7 @@ func (m *MockWorkQueueStore) CompleteWork(ctx context.Context, id, workerID int6
 	return m.CompleteWorkError
 }
 
-func (m *MockWorkQueueStore) FailWork(ctx context.Context, id, workerID int64) error {
+func (m *MockWorkQueueStore) FailWork(ctx context.Context, id, workerID int64, maxRetries int32) error {
 	m.FailWorkCalled = true
 	m.LastID = id
 	m.LastWorkerID = workerID
