@@ -384,26 +384,32 @@ func TestSplitKey_HourField(t *testing.T) {
 	}{
 		{
 			name:     "Same dateint and hour",
-			key1:     SplitKey{DateInt: 20230101, Hour: 5, IngestDateint: 20230101},
-			key2:     SplitKey{DateInt: 20230101, Hour: 5, IngestDateint: 20230101},
+			key1:     SplitKey{DateInt: 20230101, Hour: 5, IngestDateint: 20230101, FileIndex: 0},
+			key2:     SplitKey{DateInt: 20230101, Hour: 5, IngestDateint: 20230101, FileIndex: 0},
 			areEqual: true,
 		},
 		{
 			name:     "Same dateint, different hour",
-			key1:     SplitKey{DateInt: 20230101, Hour: 5, IngestDateint: 20230101},
-			key2:     SplitKey{DateInt: 20230101, Hour: 6, IngestDateint: 20230101},
+			key1:     SplitKey{DateInt: 20230101, Hour: 5, IngestDateint: 20230101, FileIndex: 0},
+			key2:     SplitKey{DateInt: 20230101, Hour: 6, IngestDateint: 20230101, FileIndex: 0},
 			areEqual: false,
 		},
 		{
 			name:     "Different dateint, same hour",
-			key1:     SplitKey{DateInt: 20230101, Hour: 5, IngestDateint: 20230101},
-			key2:     SplitKey{DateInt: 20230102, Hour: 5, IngestDateint: 20230101},
+			key1:     SplitKey{DateInt: 20230101, Hour: 5, IngestDateint: 20230101, FileIndex: 0},
+			key2:     SplitKey{DateInt: 20230102, Hour: 5, IngestDateint: 20230101, FileIndex: 0},
 			areEqual: false,
 		},
 		{
 			name:     "Different ingest dateint",
-			key1:     SplitKey{DateInt: 20230101, Hour: 5, IngestDateint: 20230101},
-			key2:     SplitKey{DateInt: 20230101, Hour: 5, IngestDateint: 20230102},
+			key1:     SplitKey{DateInt: 20230101, Hour: 5, IngestDateint: 20230101, FileIndex: 0},
+			key2:     SplitKey{DateInt: 20230101, Hour: 5, IngestDateint: 20230102, FileIndex: 0},
+			areEqual: false,
+		},
+		{
+			name:     "Different file index",
+			key1:     SplitKey{DateInt: 20230101, Hour: 5, IngestDateint: 20230101, FileIndex: 0},
+			key2:     SplitKey{DateInt: 20230101, Hour: 5, IngestDateint: 20230101, FileIndex: 1},
 			areEqual: false,
 		},
 	}
@@ -423,9 +429,9 @@ func TestSplitKey_AsMapKey(t *testing.T) {
 	// Test that SplitKey works correctly as a map key
 	results := make(map[SplitKey]string)
 
-	key1 := SplitKey{DateInt: 20230101, Hour: 5, IngestDateint: 20230101}
-	key2 := SplitKey{DateInt: 20230101, Hour: 6, IngestDateint: 20230101}
-	key3 := SplitKey{DateInt: 20230101, Hour: 5, IngestDateint: 20230101} // Same as key1
+	key1 := SplitKey{DateInt: 20230101, Hour: 5, IngestDateint: 20230101, FileIndex: 0}
+	key2 := SplitKey{DateInt: 20230101, Hour: 6, IngestDateint: 20230101, FileIndex: 0}
+	key3 := SplitKey{DateInt: 20230101, Hour: 5, IngestDateint: 20230101, FileIndex: 0} // Same as key1
 
 	results[key1] = "hour5"
 	results[key2] = "hour6"

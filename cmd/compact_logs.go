@@ -114,23 +114,29 @@ func logCompactItemDo(
 	s3client *awsclient.S3Client,
 	rpfEstimate int64,
 ) (WorkResult, error) {
-	st, et, ok := helpers.RangeBounds(inf.TsRange())
+	// Extract the time range using our normalized helper functions
+	timeRange, ok := helpers.NewTimeRangeFromPgRange(inf.TsRange())
 	if !ok {
 		return WorkResultSuccess, errors.New("error getting range bounds")
 	}
-	stdi, sth := helpers.MSToDateintHour(st.Time.UnixMilli())
-	etdi, eth := helpers.MSToDateintHour(et.Time.Add(-time.Millisecond).UnixMilli()) // end time is exclusive, so subtract 1ms to get last included time
-	if stdi != etdi || sth != eth {
+
+	// Validate that the time range falls entirely within one dateint-hour
+	if !helpers.IsSameDateintHour(timeRange) {
+		startBoundary, endBoundary := helpers.TimeRangeToHourBoundaries(timeRange)
 		ll.Error("Range bounds are not the same dateint-hour",
-			slog.Int("startDateint", int(stdi)),
-			slog.Int("startHour", int(sth)),
-			slog.Time("st", st.Time),
-			slog.Int("endDateint", int(etdi)),
-			slog.Int("endHour", int(eth)),
-			slog.Time("et", et.Time),
+			slog.Int("startDateint", int(startBoundary.DateInt)),
+			slog.Int("startHour", int(startBoundary.Hour)),
+			slog.Time("rangeStart", timeRange.Start),
+			slog.Int("endDateint", int(endBoundary.DateInt)),
+			slog.Int("endHour", int(endBoundary.Hour)),
+			slog.Time("rangeEnd", timeRange.End),
 		)
 		return WorkResultTryAgainLater, errors.New("range bounds are not the same dateint-hour")
 	}
+
+	// Get the dateint for database queries (both boundaries should be the same now)
+	startBoundary, _ := helpers.TimeRangeToHourBoundaries(timeRange)
+	stdi := startBoundary.DateInt
 
 	const maxRowsLimit = 1000
 	totalBatchesProcessed := 0
