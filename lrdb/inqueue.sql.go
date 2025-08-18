@@ -82,6 +82,39 @@ func (q *Queries) DeleteInqueueWork(ctx context.Context, arg DeleteInqueueWorkPa
 	return err
 }
 
+const inqueueSummary = `-- name: InqueueSummary :many
+SELECT count(*) AS count, telemetry_type
+FROM inqueue
+WHERE claimed_at IS NULL
+GROUP BY telemetry_type
+ORDER BY telemetry_type
+`
+
+type InqueueSummaryRow struct {
+	Count         int64  `json:"count"`
+	TelemetryType string `json:"telemetry_type"`
+}
+
+func (q *Queries) InqueueSummary(ctx context.Context) ([]InqueueSummaryRow, error) {
+	rows, err := q.db.Query(ctx, inqueueSummary)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []InqueueSummaryRow
+	for rows.Next() {
+		var i InqueueSummaryRow
+		if err := rows.Scan(&i.Count, &i.TelemetryType); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const putInqueueWork = `-- name: PutInqueueWork :exec
 INSERT INTO inqueue (organization_id, collector_name, instance_num, bucket, object_id, telemetry_type, priority)
 VALUES ($1, $2, $3, $4, $5, $6, $7)

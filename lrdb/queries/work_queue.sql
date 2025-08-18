@@ -161,3 +161,11 @@ del_wq AS (
 )
 SELECT COALESCE(COUNT(*), 0)::int AS deleted
 FROM del_wq;
+
+
+-- name: WorkQueueSummary :many
+SELECT count(*) AS count, signal, action
+FROM work_queue
+WHERE needs_run = true AND runnable_at <= now()
+GROUP BY signal, action
+ORDER BY signal, action;
