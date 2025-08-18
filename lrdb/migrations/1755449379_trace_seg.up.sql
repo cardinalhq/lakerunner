@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS trace_seg (
   ingest_dateint    INTEGER     NOT NULL DEFAULT to_char(current_date, 'YYYYMMDD')::INTEGER,
   ts_range          int8range   NOT NULL,
   created_by        SMALLINT    NOT NULL DEFAULT -1,
+  created_at        TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (organization_id, dateint, segment_id, instance_num),
   CONSTRAINT trace_seg_tsrange_not_empty CHECK (NOT isempty(ts_range)),
   CONSTRAINT trace_seg_ingest_dateint_check CHECK (ingest_dateint > 0)

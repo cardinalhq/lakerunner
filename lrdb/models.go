@@ -234,6 +234,7 @@ type TraceSeg struct {
 	IngestDateint  int32                     `json:"ingest_dateint"`
 	TsRange        pgtype.Range[pgtype.Int8] `json:"ts_range"`
 	CreatedBy      int16                     `json:"created_by"`
+	CreatedAt      time.Time                 `json:"created_at"`
 }
 
 type WorkQueue struct {
