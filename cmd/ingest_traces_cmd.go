@@ -175,7 +175,7 @@ func traceIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp sto
 					EndTs:          1, // Time doesn't matter for slot-based traces compaction
 					RecordCount:    result.RecordCount,
 					FileSize:       result.FileSize,
-					CreatedBy:      int16(lrdb.CreatedByIngest),
+					CreatedBy:      lrdb.CreatedByIngest,
 					Fingerprints:   []int64{}, // TODO: Extract fingerprints
 				})
 				if err != nil {
