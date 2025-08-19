@@ -32,10 +32,7 @@
   - [Configuration](#configuration)
 - [License](#license)
 
-
-## End User Guide
-
-### Demo setup
+## Demo setup
 
 #### Prerequisites
 
