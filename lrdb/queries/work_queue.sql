@@ -156,6 +156,11 @@ SELECT COALESCE(COUNT(*), 0)::int AS deleted
 FROM del_wq;
 
 
+-- name: WorkQueueDeleteDirect :exec
+DELETE FROM public.work_queue
+WHERE id = @id::BIGINT
+  AND claimed_by = @worker_id;
+
 -- name: WorkQueueSummary :many
 SELECT count(*) AS count, signal, action
 FROM work_queue
