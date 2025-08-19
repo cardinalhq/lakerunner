@@ -203,10 +203,23 @@ func logCompactItemDo(
 			cursorSegmentID = lastSeg.SegmentID
 		}
 
+		originalSegmentCount := len(segments)
 		packed, err := logcrunch.PackSegments(segments, rpfEstimate)
 		if err != nil {
 			ll.Error("Error packing segments", slog.String("error", err.Error()))
 			return WorkResultTryAgainLater, err
+		}
+
+		// Log if any segments were filtered out during packing
+		packedSegmentCount := 0
+		for _, group := range packed {
+			packedSegmentCount += len(group)
+		}
+		if packedSegmentCount < originalSegmentCount {
+			ll.Info("Some segments were filtered out during packing",
+				slog.Int("originalCount", originalSegmentCount),
+				slog.Int("packedCount", packedSegmentCount),
+				slog.Int("filteredOut", originalSegmentCount-packedSegmentCount))
 		}
 
 		lastGroupSmall := false

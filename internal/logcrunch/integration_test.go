@@ -113,15 +113,18 @@ func TestHourBasedProcessing_EndToEnd(t *testing.T) {
 		})
 	}
 
-	// Step 4: Test that segments from different hours cannot be packed together
+	// Step 4: Test that segments from different hours are filtered to keep only the first hour
 	mixedHourSegments := []lrdb.GetLogSegmentsForCompactionRow{
 		{SegmentID: 1, StartTs: 1672531200000, EndTs: 1672534800000, RecordCount: 2, FileSize: 1000}, // Hour 0
 		{SegmentID: 2, StartTs: 1672534800000, EndTs: 1672538400000, RecordCount: 2, FileSize: 1000}, // Hour 1
 	}
 
-	_, err = PackSegments(mixedHourSegments, 1000)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "segments must be from the same UTC hour")
+	groups, err := PackSegments(mixedHourSegments, 1000)
+	assert.NoError(t, err)
+	// Should only include the first segment (hour 0), second segment (hour 1) should be filtered out
+	assert.Len(t, groups, 1)
+	assert.Len(t, groups[0], 1)
+	assert.Equal(t, int64(1), groups[0][0].SegmentID)
 }
 
 func TestHourBasedProcessing_TransitionPeriod(t *testing.T) {
@@ -151,10 +154,11 @@ func TestHourBasedProcessing_TransitionPeriod(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, groups2, 1)
 
-	// Test that mixing segments from different hours fails
-	_, err = PackSegments([]lrdb.GetLogSegmentsForCompactionRow{segments[0], segments[1]}, 1000)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "segments must be from the same UTC hour")
+	// Test that mixing segments from different hours filters to keep only the first hour
+	mixedGroups, err := PackSegments([]lrdb.GetLogSegmentsForCompactionRow{segments[0], segments[1]}, 1000)
+	assert.NoError(t, err)
+	assert.Len(t, mixedGroups, 1)                          // Should only keep segment from first hour
+	assert.Equal(t, int64(1), mixedGroups[0][0].SegmentID) // Only segment 1 (hour 0) should remain
 
 	// Test that the transition segments get filtered out in mixed scenarios
 	mixedSegments := []lrdb.GetLogSegmentsForCompactionRow{segments[0], segments[2]} // hour 0 + cross-boundary
@@ -191,14 +195,14 @@ func TestHourBasedProcessing_EdgeCases(t *testing.T) {
 			segments: []lrdb.GetLogSegmentsForCompactionRow{
 				{SegmentID: 1, StartTs: 1672531200000, EndTs: 1672531200000, RecordCount: 100, FileSize: 1000}, // Same start/end but has records
 			},
-			wantErr: true, // Invalid time range
+			wantErr: false, // Invalid time range is filtered out, returns empty result
 		},
 		{
 			name: "Segment with end before start",
 			segments: []lrdb.GetLogSegmentsForCompactionRow{
 				{SegmentID: 1, StartTs: 1672534800000, EndTs: 1672531200000, RecordCount: 100, FileSize: 1000}, // End before start
 			},
-			wantErr: true, // Invalid time range
+			wantErr: false, // Invalid time range is filtered out, returns empty result
 		},
 	}
 

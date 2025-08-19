@@ -118,13 +118,12 @@ func TestPackSegments_HourBoundaryViolations(t *testing.T) {
 		errorContains string
 	}{
 		{
-			name: "Segments from different hours should error",
+			name: "Segments from different hours should filter and keep first hour only",
 			segments: []lrdb.GetLogSegmentsForCompactionRow{
 				{SegmentID: 1, StartTs: 1672531200000, EndTs: 1672532400000, RecordCount: 100}, // Hour 0: 2023-01-01 00:00:00 - 00:20:00
 				{SegmentID: 2, StartTs: 1672534800000, EndTs: 1672536000000, RecordCount: 200}, // Hour 1: 2023-01-01 01:00:00 - 01:20:00
 			},
-			expectError:   true,
-			errorContains: "segments must be from the same UTC hour",
+			expectError: false, // Should filter out segment 2 and continue with segment 1
 		},
 		{
 			name: "Single segment crossing hour boundary should be filtered out",
@@ -149,12 +148,11 @@ func TestPackSegments_HourBoundaryViolations(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name: "Invalid time range should error",
+			name: "Invalid time range should be filtered out",
 			segments: []lrdb.GetLogSegmentsForCompactionRow{
 				{SegmentID: 1, StartTs: 1672532400000, EndTs: 1672531200000, RecordCount: 100}, // End before start (both in same hour to pass filtering)
 			},
-			expectError:   true,
-			errorContains: "invalid segment time range",
+			expectError: false, // Should filter out invalid segment and return empty result
 		},
 	}
 
