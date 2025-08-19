@@ -123,7 +123,7 @@ func logCompactItemDo(
 	// Validate that the time range falls entirely within one dateint-hour
 	if !helpers.IsSameDateintHour(timeRange) {
 		startBoundary, endBoundary := helpers.TimeRangeToHourBoundaries(timeRange)
-		ll.Error("Range bounds are not the same dateint-hour",
+		ll.Warn("Deleting stale work item with multi-hour range - likely from old queueing logic",
 			slog.Int("startDateint", int(startBoundary.DateInt)),
 			slog.Int("startHour", int(startBoundary.Hour)),
 			slog.Time("rangeStart", timeRange.Start),
@@ -131,7 +131,13 @@ func logCompactItemDo(
 			slog.Int("endHour", int(endBoundary.Hour)),
 			slog.Time("rangeEnd", timeRange.End),
 		)
-		return WorkResultTryAgainLater, errors.New("range bounds are not the same dateint-hour")
+		// This is likely stale data from before hour-aligned compaction was implemented
+		// Delete it entirely from the work queue
+		if err := inf.Delete(); err != nil {
+			ll.Error("Failed to delete stale work item", slog.Any("error", err))
+			return WorkResultTryAgainLater, err
+		}
+		return WorkResultSuccess, nil
 	}
 
 	// Get the dateint for database queries (both boundaries should be the same now)

@@ -177,6 +177,22 @@ func (q *Queries) WorkQueueCompleteDirect(ctx context.Context, arg WorkQueueComp
 	return err
 }
 
+const workQueueDeleteDirect = `-- name: WorkQueueDeleteDirect :exec
+DELETE FROM public.work_queue
+WHERE id = $1::BIGINT
+  AND claimed_by = $2
+`
+
+type WorkQueueDeleteParams struct {
+	ID       int64 `json:"id"`
+	WorkerID int64 `json:"worker_id"`
+}
+
+func (q *Queries) WorkQueueDeleteDirect(ctx context.Context, arg WorkQueueDeleteParams) error {
+	_, err := q.db.Exec(ctx, workQueueDeleteDirect, arg.ID, arg.WorkerID)
+	return err
+}
+
 const workQueueFailDirect = `-- name: WorkQueueFailDirect :exec
 WITH params AS (
   SELECT

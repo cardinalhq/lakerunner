@@ -46,6 +46,7 @@ type WorkItem struct {
 type Workable interface {
 	Complete() error
 	Fail() error
+	Delete() error
 	ID() int64
 	OrganizationID() uuid.UUID
 	InstanceNum() int16
@@ -98,6 +99,25 @@ func (w *WorkItem) Fail() error {
 		resp:     make(chan error, 1),
 	}
 	w.mgr.failWork <- req
+	return <-req.resp
+}
+
+// Delete removes the work item entirely from the queue database.
+func (w *WorkItem) Delete() error {
+	if w.closed {
+		return nil
+	}
+	w.closed = true
+
+	if w.mgr == nil {
+		return errors.New("work item manager is nil")
+	}
+
+	req := &workDeleteRequest{
+		WorkItem: w,
+		resp:     make(chan error, 1),
+	}
+	w.mgr.deleteWork <- req
 	return <-req.resp
 }
 
