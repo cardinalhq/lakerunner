@@ -9,23 +9,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type BucketConfiguration struct {
-	ID            uuid.UUID `json:"id"`
-	BucketName    string    `json:"bucket_name"`
-	CloudProvider string    `json:"cloud_provider"`
-	Region        string    `json:"region"`
-	Endpoint      *string   `json:"endpoint"`
-	Role          *string   `json:"role"`
-}
-
-type BucketPrefixMapping struct {
-	ID             uuid.UUID `json:"id"`
-	BucketID       uuid.UUID `json:"bucket_id"`
-	OrganizationID uuid.UUID `json:"organization_id"`
-	PathPrefix     string    `json:"path_prefix"`
-	Signal         string    `json:"signal"`
-}
-
 type CCollector struct {
 	ID               uuid.UUID          `json:"id"`
 	DeletedAt        pgtype.Timestamptz `json:"deleted_at"`
@@ -45,7 +28,46 @@ type CStorageProfile struct {
 	Role           *string   `json:"role"`
 }
 
-type OrganizationBucket struct {
+type LrconfigAdminApiKey struct {
+	ID          uuid.UUID          `json:"id"`
+	KeyHash     string             `json:"key_hash"`
+	Name        string             `json:"name"`
+	Description *string            `json:"description"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type LrconfigBucketConfiguration struct {
+	ID            uuid.UUID `json:"id"`
+	BucketName    string    `json:"bucket_name"`
+	CloudProvider string    `json:"cloud_provider"`
+	Region        string    `json:"region"`
+	Endpoint      *string   `json:"endpoint"`
+	Role          *string   `json:"role"`
+}
+
+type LrconfigBucketPrefixMapping struct {
+	ID             uuid.UUID `json:"id"`
+	BucketID       uuid.UUID `json:"bucket_id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+	PathPrefix     string    `json:"path_prefix"`
+	Signal         string    `json:"signal"`
+}
+
+type LrconfigOrganizationApiKey struct {
+	ID          uuid.UUID          `json:"id"`
+	KeyHash     string             `json:"key_hash"`
+	Name        string             `json:"name"`
+	Description *string            `json:"description"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type LrconfigOrganizationApiKeyMapping struct {
+	ID             uuid.UUID `json:"id"`
+	ApiKeyID       uuid.UUID `json:"api_key_id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+}
+
+type LrconfigOrganizationBucket struct {
 	ID             uuid.UUID `json:"id"`
 	OrganizationID uuid.UUID `json:"organization_id"`
 	BucketID       uuid.UUID `json:"bucket_id"`

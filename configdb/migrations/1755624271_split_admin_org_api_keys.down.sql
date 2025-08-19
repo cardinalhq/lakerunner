@@ -1,0 +1,18 @@
+-- 1755624271_split_admin_org_api_keys.down.sql
+
+-- Drop admin API keys table
+DROP INDEX IF EXISTS idx_admin_api_keys_hash;
+DROP TABLE IF EXISTS lrconfig_admin_api_keys;
+
+-- Revert organization API key table names back to original
+DROP INDEX IF EXISTS idx_org_api_keys_hash;
+DROP INDEX IF EXISTS idx_org_api_key_mappings_key;
+DROP INDEX IF EXISTS idx_org_api_key_mappings_org;
+
+ALTER TABLE lrconfig_organization_api_key_mappings RENAME TO lrconfig_api_key_organizations;
+ALTER TABLE lrconfig_organization_api_keys RENAME TO lrconfig_api_keys;
+
+-- Restore original indexes
+CREATE INDEX idx_api_keys_hash ON lrconfig_api_keys(key_hash);
+CREATE INDEX idx_api_key_orgs_key ON lrconfig_api_key_organizations(api_key_id);
+CREATE INDEX idx_api_key_orgs_org ON lrconfig_api_key_organizations(organization_id);

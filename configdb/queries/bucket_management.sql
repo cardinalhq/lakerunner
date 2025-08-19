@@ -1,22 +1,22 @@
 -- name: GetBucketConfiguration :one
-SELECT * FROM bucket_configurations WHERE bucket_name = @bucket_name;
+SELECT * FROM lrconfig_bucket_configurations WHERE bucket_name = @bucket_name;
 
 -- name: GetOrganizationsByBucket :many
 SELECT ob.organization_id 
-FROM organization_buckets ob
-JOIN bucket_configurations bc ON ob.bucket_id = bc.id
+FROM lrconfig_organization_buckets ob
+JOIN lrconfig_bucket_configurations bc ON ob.bucket_id = bc.id
 WHERE bc.bucket_name = @bucket_name;
 
 -- name: CheckOrgBucketAccess :one
 SELECT COUNT(*) > 0 as has_access
-FROM organization_buckets ob
-JOIN bucket_configurations bc ON ob.bucket_id = bc.id
+FROM lrconfig_organization_buckets ob
+JOIN lrconfig_bucket_configurations bc ON ob.bucket_id = bc.id
 WHERE ob.organization_id = @org_id AND bc.bucket_name = @bucket_name;
 
 -- name: GetLongestPrefixMatch :one
 SELECT bpm.organization_id
-FROM bucket_prefix_mappings bpm
-JOIN bucket_configurations bc ON bpm.bucket_id = bc.id
+FROM lrconfig_bucket_prefix_mappings bpm
+JOIN lrconfig_bucket_configurations bc ON bpm.bucket_id = bc.id
 WHERE bc.bucket_name = @bucket_name 
   AND bpm.signal = @signal
   AND @object_path LIKE bpm.path_prefix || '%'
@@ -24,21 +24,21 @@ ORDER BY LENGTH(bpm.path_prefix) DESC
 LIMIT 1;
 
 -- name: CreateBucketConfiguration :one
-INSERT INTO bucket_configurations (
+INSERT INTO lrconfig_bucket_configurations (
   bucket_name, cloud_provider, region, endpoint, role
 ) VALUES (
   @bucket_name, @cloud_provider, @region, @endpoint, @role
 ) RETURNING *;
 
 -- name: CreateOrganizationBucket :one
-INSERT INTO organization_buckets (
+INSERT INTO lrconfig_organization_buckets (
   organization_id, bucket_id
 ) VALUES (
   @organization_id, @bucket_id
 ) RETURNING *;
 
 -- name: CreateBucketPrefixMapping :one
-INSERT INTO bucket_prefix_mappings (
+INSERT INTO lrconfig_bucket_prefix_mappings (
   bucket_id, organization_id, path_prefix, signal
 ) VALUES (
   @bucket_id, @organization_id, @path_prefix, @signal
@@ -58,16 +58,16 @@ LEFT OUTER JOIN c_collectors c ON c.storage_profile_id = sp.id
 WHERE c.deleted_at IS NULL;
 
 -- name: ClearBucketPrefixMappings :exec
-DELETE FROM bucket_prefix_mappings;
+DELETE FROM lrconfig_bucket_prefix_mappings;
 
 -- name: ClearOrganizationBuckets :exec
-DELETE FROM organization_buckets;
+DELETE FROM lrconfig_organization_buckets;
 
 -- name: ClearBucketConfigurations :exec
-DELETE FROM bucket_configurations;
+DELETE FROM lrconfig_bucket_configurations;
 
 -- name: UpsertBucketConfiguration :one
-INSERT INTO bucket_configurations (
+INSERT INTO lrconfig_bucket_configurations (
   bucket_name, cloud_provider, region, endpoint, role
 ) VALUES (
   @bucket_name, @cloud_provider, @region, @endpoint, @role
@@ -79,7 +79,7 @@ INSERT INTO bucket_configurations (
 RETURNING *;
 
 -- name: UpsertOrganizationBucket :exec
-INSERT INTO organization_buckets (
+INSERT INTO lrconfig_organization_buckets (
   organization_id, bucket_id
 ) VALUES (
   @organization_id, @bucket_id
@@ -88,6 +88,6 @@ INSERT INTO organization_buckets (
 
 -- name: GetBucketByOrganization :one
 SELECT bc.bucket_name
-FROM organization_buckets ob
-JOIN bucket_configurations bc ON ob.bucket_id = bc.id
+FROM lrconfig_organization_buckets ob
+JOIN lrconfig_bucket_configurations bc ON ob.bucket_id = bc.id
 WHERE ob.organization_id = @organization_id;

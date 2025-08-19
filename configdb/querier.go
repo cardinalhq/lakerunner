@@ -12,22 +12,38 @@ import (
 
 type Querier interface {
 	CheckOrgBucketAccess(ctx context.Context, arg CheckOrgBucketAccessParams) (bool, error)
+	ClearAdminAPIKeys(ctx context.Context) error
 	ClearBucketConfigurations(ctx context.Context) error
 	ClearBucketPrefixMappings(ctx context.Context) error
+	ClearOrganizationAPIKeyMappings(ctx context.Context) error
+	ClearOrganizationAPIKeys(ctx context.Context) error
 	ClearOrganizationBuckets(ctx context.Context) error
-	CreateBucketConfiguration(ctx context.Context, arg CreateBucketConfigurationParams) (BucketConfiguration, error)
-	CreateBucketPrefixMapping(ctx context.Context, arg CreateBucketPrefixMappingParams) (BucketPrefixMapping, error)
-	CreateOrganizationBucket(ctx context.Context, arg CreateOrganizationBucketParams) (OrganizationBucket, error)
+	CreateAdminAPIKey(ctx context.Context, arg CreateAdminAPIKeyParams) (LrconfigAdminApiKey, error)
+	CreateBucketConfiguration(ctx context.Context, arg CreateBucketConfigurationParams) (LrconfigBucketConfiguration, error)
+	CreateBucketPrefixMapping(ctx context.Context, arg CreateBucketPrefixMappingParams) (LrconfigBucketPrefixMapping, error)
+	CreateOrganizationAPIKey(ctx context.Context, arg CreateOrganizationAPIKeyParams) (LrconfigOrganizationApiKey, error)
+	CreateOrganizationAPIKeyMapping(ctx context.Context, arg CreateOrganizationAPIKeyMappingParams) (LrconfigOrganizationApiKeyMapping, error)
+	CreateOrganizationBucket(ctx context.Context, arg CreateOrganizationBucketParams) (LrconfigOrganizationBucket, error)
+	DeleteAdminAPIKey(ctx context.Context, apiKeyID uuid.UUID) error
+	GetAdminAPIKeyByHash(ctx context.Context, keyHash string) (LrconfigAdminApiKey, error)
+	GetAdminAPIKeyByID(ctx context.Context, apiKeyID uuid.UUID) (LrconfigAdminApiKey, error)
+	GetAllAdminAPIKeys(ctx context.Context) ([]LrconfigAdminApiKey, error)
 	// Legacy table sync operations
 	GetAllCStorageProfilesForSync(ctx context.Context) ([]GetAllCStorageProfilesForSyncRow, error)
+	GetAllOrganizationAPIKeys(ctx context.Context) ([]GetAllOrganizationAPIKeysRow, error)
 	GetBucketByOrganization(ctx context.Context, organizationID uuid.UUID) (string, error)
-	GetBucketConfiguration(ctx context.Context, bucketName string) (BucketConfiguration, error)
+	GetBucketConfiguration(ctx context.Context, bucketName string) (LrconfigBucketConfiguration, error)
 	GetLongestPrefixMatch(ctx context.Context, arg GetLongestPrefixMatchParams) (uuid.UUID, error)
+	GetOrganizationAPIKeyByHash(ctx context.Context, keyHash string) (GetOrganizationAPIKeyByHashRow, error)
+	GetOrganizationAPIKeyByID(ctx context.Context, apiKeyID uuid.UUID) (GetOrganizationAPIKeyByIDRow, error)
 	GetOrganizationsByBucket(ctx context.Context, bucketName string) ([]uuid.UUID, error)
 	GetStorageProfileByCollectorNameUncached(ctx context.Context, arg GetStorageProfileByCollectorNameParams) (GetStorageProfileByCollectorNameRow, error)
 	GetStorageProfileUncached(ctx context.Context, arg GetStorageProfileParams) (GetStorageProfileRow, error)
 	GetStorageProfilesByBucketNameUncached(ctx context.Context, bucketName string) ([]GetStorageProfilesByBucketNameRow, error)
-	UpsertBucketConfiguration(ctx context.Context, arg UpsertBucketConfigurationParams) (BucketConfiguration, error)
+	UpsertAdminAPIKey(ctx context.Context, arg UpsertAdminAPIKeyParams) (LrconfigAdminApiKey, error)
+	UpsertBucketConfiguration(ctx context.Context, arg UpsertBucketConfigurationParams) (LrconfigBucketConfiguration, error)
+	UpsertOrganizationAPIKey(ctx context.Context, arg UpsertOrganizationAPIKeyParams) (LrconfigOrganizationApiKey, error)
+	UpsertOrganizationAPIKeyMapping(ctx context.Context, arg UpsertOrganizationAPIKeyMappingParams) error
 	UpsertOrganizationBucket(ctx context.Context, arg UpsertOrganizationBucketParams) error
 }
 

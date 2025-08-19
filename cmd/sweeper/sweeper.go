@@ -29,9 +29,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
+	"github.com/cardinalhq/lakerunner/configdb"
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
-	"github.com/cardinalhq/lakerunner/configdb"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -509,6 +509,10 @@ func runLegacyTablesSync(ctx context.Context, ll *slog.Logger, cdb configdb.Quer
 			slog.String("bucket", bucketName),
 			slog.Int("orgCount", len(orgs)))
 	}
+
+	// Note: API keys are now managed separately:
+	// - Admin API keys: stored only in lrconfig_admin_api_keys (no file sync)
+	// - Organization API keys: imported via bootstrap command or managed directly in DB
 
 	// Commit the transaction
 	if err := tx.Commit(ctx); err != nil {

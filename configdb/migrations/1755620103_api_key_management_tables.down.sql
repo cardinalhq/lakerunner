@@ -1,0 +1,5 @@
+-- 1755620103_api_key_management_tables.down.sql
+
+-- Drop tables in reverse order (respecting foreign key dependencies)
+DROP TABLE IF EXISTS lrconfig_api_key_organizations;
+DROP TABLE IF EXISTS lrconfig_api_keys;

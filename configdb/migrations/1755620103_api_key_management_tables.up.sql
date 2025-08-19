@@ -1,0 +1,24 @@
+-- 1755620103_api_key_management_tables.up.sql
+
+-- API keys table - stores API key metadata and hashed keys
+CREATE TABLE lrconfig_api_keys (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  key_hash TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  description TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Index for key hash lookups (primary access pattern)
+CREATE INDEX idx_api_keys_hash ON lrconfig_api_keys(key_hash);
+
+-- Organization to API key mapping - each API key belongs to one organization
+CREATE TABLE lrconfig_api_key_organizations (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  api_key_id UUID NOT NULL UNIQUE REFERENCES lrconfig_api_keys(id) ON DELETE CASCADE,
+  organization_id UUID NOT NULL
+);
+
+-- Indexes for API key and organization lookups
+CREATE INDEX idx_api_key_orgs_key ON lrconfig_api_key_organizations(api_key_id);
+CREATE INDEX idx_api_key_orgs_org ON lrconfig_api_key_organizations(organization_id);
