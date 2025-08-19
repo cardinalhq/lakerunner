@@ -85,9 +85,11 @@ buckets:
       - "%s"
     prefix_mappings:
       - organization_id: "%s"
-        prefix: "org1-data/"
+        prefix: "/metrics/org1-data/"
+        signal: "metrics"
       - organization_id: "%s"
-        prefix: "org2-data/"
+        prefix: "/metrics/org2-data/"
+        signal: "metrics"
   - name: "dedicated-bucket"
     cloud_provider: "gcp"
     region: "us-central1"
@@ -104,8 +106,8 @@ buckets:
 	require.NoError(t, err)
 	require.Equal(t, orgID1, orgID)
 
-	// Test ResolveOrganization with prefix matching
-	orgID, err = provider.ResolveOrganization(context.Background(), "shared-bucket", "org1-data/some/file.json")
+	// Test ResolveOrganization with prefix matching (now requires signal)
+	orgID, err = provider.ResolveOrganization(context.Background(), "shared-bucket", "/metrics/org1-data/some/file.json")
 	require.NoError(t, err)
 	require.Equal(t, orgID1, orgID)
 

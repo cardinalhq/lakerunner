@@ -16,9 +16,8 @@ CREATE INDEX idx_bucket_configs_name ON bucket_configurations(bucket_name);
 -- Organization to bucket mappings - permissions table
 CREATE TABLE organization_buckets (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  organization_id UUID NOT NULL,
-  bucket_id UUID NOT NULL REFERENCES bucket_configurations(id) ON DELETE CASCADE,
-  UNIQUE(organization_id, bucket_id)
+  organization_id UUID NOT NULL UNIQUE, -- Each org can only be in one bucket
+  bucket_id UUID NOT NULL REFERENCES bucket_configurations(id) ON DELETE CASCADE
 );
 
 -- Indexes for organization and bucket lookups
@@ -31,11 +30,12 @@ CREATE TABLE bucket_prefix_mappings (
   bucket_id UUID NOT NULL REFERENCES bucket_configurations(id) ON DELETE CASCADE,
   organization_id UUID NOT NULL,
   path_prefix TEXT NOT NULL,
-  UNIQUE(bucket_id, path_prefix)
+  signal TEXT NOT NULL CHECK (signal IN ('logs', 'metrics', 'traces')),
+  UNIQUE(bucket_id, path_prefix, signal)
 );
 
 -- Index for prefix matching (order by length for longest match)
-CREATE INDEX idx_prefix_bucket_prefix ON bucket_prefix_mappings(bucket_id, path_prefix text_pattern_ops);
+CREATE INDEX idx_prefix_bucket_prefix_signal ON bucket_prefix_mappings(bucket_id, signal, path_prefix text_pattern_ops);
 -- Index for organization lookups
 CREATE INDEX idx_prefix_org ON bucket_prefix_mappings(organization_id);
 

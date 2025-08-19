@@ -68,26 +68,33 @@ func (q *Queries) CreateBucketConfiguration(ctx context.Context, arg CreateBucke
 
 const createBucketPrefixMapping = `-- name: CreateBucketPrefixMapping :one
 INSERT INTO bucket_prefix_mappings (
-  bucket_id, organization_id, path_prefix
+  bucket_id, organization_id, path_prefix, signal
 ) VALUES (
-  $1, $2, $3
-) RETURNING id, bucket_id, organization_id, path_prefix
+  $1, $2, $3, $4
+) RETURNING id, bucket_id, organization_id, path_prefix, signal
 `
 
 type CreateBucketPrefixMappingParams struct {
 	BucketID       uuid.UUID `json:"bucket_id"`
 	OrganizationID uuid.UUID `json:"organization_id"`
 	PathPrefix     string    `json:"path_prefix"`
+	Signal         string    `json:"signal"`
 }
 
 func (q *Queries) CreateBucketPrefixMapping(ctx context.Context, arg CreateBucketPrefixMappingParams) (BucketPrefixMapping, error) {
-	row := q.db.QueryRow(ctx, createBucketPrefixMapping, arg.BucketID, arg.OrganizationID, arg.PathPrefix)
+	row := q.db.QueryRow(ctx, createBucketPrefixMapping,
+		arg.BucketID,
+		arg.OrganizationID,
+		arg.PathPrefix,
+		arg.Signal,
+	)
 	var i BucketPrefixMapping
 	err := row.Scan(
 		&i.ID,
 		&i.BucketID,
 		&i.OrganizationID,
 		&i.PathPrefix,
+		&i.Signal,
 	)
 	return i, err
 }
@@ -135,18 +142,20 @@ SELECT bpm.organization_id
 FROM bucket_prefix_mappings bpm
 JOIN bucket_configurations bc ON bpm.bucket_id = bc.id
 WHERE bc.bucket_name = $1 
-  AND $2 LIKE bpm.path_prefix || '%'
+  AND bpm.signal = $2
+  AND $3 LIKE bpm.path_prefix || '%'
 ORDER BY LENGTH(bpm.path_prefix) DESC
 LIMIT 1
 `
 
 type GetLongestPrefixMatchParams struct {
 	BucketName string `json:"bucket_name"`
+	Signal     string `json:"signal"`
 	ObjectPath string `json:"object_path"`
 }
 
 func (q *Queries) GetLongestPrefixMatch(ctx context.Context, arg GetLongestPrefixMatchParams) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, getLongestPrefixMatch, arg.BucketName, arg.ObjectPath)
+	row := q.db.QueryRow(ctx, getLongestPrefixMatch, arg.BucketName, arg.Signal, arg.ObjectPath)
 	var organization_id uuid.UUID
 	err := row.Scan(&organization_id)
 	return organization_id, err

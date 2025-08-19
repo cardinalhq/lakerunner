@@ -43,7 +43,6 @@ type ConfigDBStoreageProfileFetcher interface {
 
 var _ ConfigDBStoreageProfileFetcher = (*configdb.Store)(nil)
 
-
 func NewDatabaseProvider(cdb ConfigDBStoreageProfileFetcher) StorageProfileProvider {
 	return &databaseProvider{
 		cdb: cdb,
@@ -132,8 +131,22 @@ func (p *databaseProvider) ResolveOrganization(ctx context.Context, bucketName, 
 	}
 
 	// New resolution logic using the new tables
-	// 1. Try to extract UUID from second path segment (foo/UUID)
 	pathParts := strings.Split(strings.Trim(objectPath, "/"), "/")
+
+	// Extract signal from first path segment
+	var signal string
+	if len(pathParts) >= 1 {
+		switch pathParts[0] {
+		case "logs", "metrics", "traces":
+			signal = pathParts[0]
+		default:
+			signal = "metrics" // Default fallback
+		}
+	} else {
+		signal = "metrics" // Default fallback
+	}
+
+	// 1. Try to extract UUID from second path segment (signal/UUID)
 	if len(pathParts) >= 2 {
 		if orgID, err := uuid.Parse(pathParts[1]); err == nil {
 			// Verify this org has access to the bucket
@@ -151,9 +164,10 @@ func (p *databaseProvider) ResolveOrganization(ctx context.Context, bucketName, 
 		}
 	}
 
-	// 2. Try longest prefix match
+	// 2. Try longest prefix match with signal
 	orgID, err := p.cdb.GetLongestPrefixMatch(ctx, configdb.GetLongestPrefixMatchParams{
 		BucketName: bucketName,
+		Signal:     signal,
 		ObjectPath: objectPath,
 	})
 	if err == nil {

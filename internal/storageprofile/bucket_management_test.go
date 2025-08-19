@@ -36,6 +36,8 @@ type mockBucketManagementFetcher struct {
 	hasAccessErr    error
 	prefixMatch     uuid.UUID
 	prefixMatchErr  error
+	// For validation
+	lastPrefixMatchParams *configdb.GetLongestPrefixMatchParams
 }
 
 func (m *mockBucketManagementFetcher) GetStorageProfile(ctx context.Context, params configdb.GetStorageProfileParams) (configdb.GetStorageProfileRow, error) {
@@ -63,6 +65,8 @@ func (m *mockBucketManagementFetcher) CheckOrgBucketAccess(ctx context.Context, 
 }
 
 func (m *mockBucketManagementFetcher) GetLongestPrefixMatch(ctx context.Context, arg configdb.GetLongestPrefixMatchParams) (uuid.UUID, error) {
+	// Store parameters for validation
+	m.lastPrefixMatchParams = &arg
 	return m.prefixMatch, m.prefixMatchErr
 }
 
@@ -464,6 +468,150 @@ func TestSimplifiedPathParsing(t *testing.T) {
 				if len(pathParts) >= 2 {
 					assert.Error(t, parseErr, "Should fail to parse UUID or UUID should be invalid")
 				}
+			}
+		})
+	}
+}
+
+func TestSignalExtraction(t *testing.T) {
+	tests := []struct {
+		name           string
+		objectPath     string
+		expectedSignal string
+	}{
+		{
+			name:           "metrics path",
+			objectPath:     "/metrics/12345678-1234-1234-1234-123456789abc/data.parquet",
+			expectedSignal: "metrics",
+		},
+		{
+			name:           "logs path",
+			objectPath:     "/logs/12345678-1234-1234-1234-123456789abc/data.parquet",
+			expectedSignal: "logs",
+		},
+		{
+			name:           "traces path",
+			objectPath:     "/traces/12345678-1234-1234-1234-123456789abc/data.parquet",
+			expectedSignal: "traces",
+		},
+		{
+			name:           "unknown signal defaults to metrics",
+			objectPath:     "/unknown-signal/12345678-1234-1234-1234-123456789abc/data.parquet",
+			expectedSignal: "metrics",
+		},
+		{
+			name:           "empty path defaults to metrics",
+			objectPath:     "",
+			expectedSignal: "metrics",
+		},
+		{
+			name:           "only one segment defaults to metrics",
+			objectPath:     "/single",
+			expectedSignal: "metrics",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Simulate the signal extraction logic from the implementation
+			pathParts := strings.Split(strings.Trim(tt.objectPath, "/"), "/")
+
+			var signal string
+			if len(pathParts) >= 1 {
+				switch pathParts[0] {
+				case "logs", "metrics", "traces":
+					signal = pathParts[0]
+				default:
+					signal = "metrics" // Default fallback
+				}
+			} else {
+				signal = "metrics" // Default fallback
+			}
+
+			assert.Equal(t, tt.expectedSignal, signal)
+		})
+	}
+}
+
+func TestDatabaseProvider_ResolveOrganization_SignalBasedPrefixMatching(t *testing.T) {
+	orgID := uuid.New()
+
+	tests := []struct {
+		name              string
+		bucketName        string
+		objectPath        string
+		mockPrefixMatch   uuid.UUID
+		mockPrefixErr     error
+		expectedSignalArg string // What signal should be passed to the query
+		wantOrgID         uuid.UUID
+		wantErr           bool
+	}{
+		{
+			name:              "metrics prefix match",
+			bucketName:        "shared-bucket",
+			objectPath:        "/metrics/org1-data/file.parquet",
+			mockPrefixMatch:   orgID,
+			mockPrefixErr:     nil,
+			expectedSignalArg: "metrics",
+			wantOrgID:         orgID,
+			wantErr:           false,
+		},
+		{
+			name:              "logs prefix match",
+			bucketName:        "shared-bucket",
+			objectPath:        "/logs/org1-data/file.parquet",
+			mockPrefixMatch:   orgID,
+			mockPrefixErr:     nil,
+			expectedSignalArg: "logs",
+			wantOrgID:         orgID,
+			wantErr:           false,
+		},
+		{
+			name:              "traces prefix match",
+			bucketName:        "shared-bucket",
+			objectPath:        "/traces/org1-data/file.parquet",
+			mockPrefixMatch:   orgID,
+			mockPrefixErr:     nil,
+			expectedSignalArg: "traces",
+			wantOrgID:         orgID,
+			wantErr:           false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a mock that validates the signal parameter
+			mock := &mockBucketManagementFetcher{
+				bucketConfig: configdb.BucketConfiguration{
+					ID:            uuid.New(),
+					BucketName:    tt.bucketName,
+					CloudProvider: "aws",
+					Region:        "us-west-2",
+				},
+				bucketErr:       nil,
+				prefixMatch:     tt.mockPrefixMatch,
+				prefixMatchErr:  tt.mockPrefixErr,
+				orgsByBucket:    []uuid.UUID{}, // Empty to trigger error for single-org fallback
+				orgsByBucketErr: errors.New("no orgs found"),
+			}
+
+			provider := NewDatabaseProvider(mock)
+
+			gotOrgID, err := provider.ResolveOrganization(context.Background(), tt.bucketName, tt.objectPath)
+
+			// Validate the parameters that were passed to GetLongestPrefixMatch
+			if mock.lastPrefixMatchParams != nil {
+				assert.Equal(t, tt.expectedSignalArg, mock.lastPrefixMatchParams.Signal, "Expected signal to match extracted signal")
+				assert.Equal(t, tt.bucketName, mock.lastPrefixMatchParams.BucketName)
+				assert.Equal(t, tt.objectPath, mock.lastPrefixMatchParams.ObjectPath)
+			}
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Equal(t, uuid.Nil, gotOrgID)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.wantOrgID, gotOrgID)
 			}
 		})
 	}

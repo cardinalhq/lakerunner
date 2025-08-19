@@ -23,6 +23,7 @@ type BucketPrefixMapping struct {
 	BucketID       uuid.UUID `json:"bucket_id"`
 	OrganizationID uuid.UUID `json:"organization_id"`
 	PathPrefix     string    `json:"path_prefix"`
+	Signal         string    `json:"signal"`
 }
 
 type CCollector struct {

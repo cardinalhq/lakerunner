@@ -18,6 +18,7 @@ SELECT bpm.organization_id
 FROM bucket_prefix_mappings bpm
 JOIN bucket_configurations bc ON bpm.bucket_id = bc.id
 WHERE bc.bucket_name = @bucket_name 
+  AND bpm.signal = @signal
   AND @object_path LIKE bpm.path_prefix || '%'
 ORDER BY LENGTH(bpm.path_prefix) DESC
 LIMIT 1;
@@ -38,7 +39,7 @@ INSERT INTO organization_buckets (
 
 -- name: CreateBucketPrefixMapping :one
 INSERT INTO bucket_prefix_mappings (
-  bucket_id, organization_id, path_prefix
+  bucket_id, organization_id, path_prefix, signal
 ) VALUES (
-  @bucket_id, @organization_id, @path_prefix
+  @bucket_id, @organization_id, @path_prefix, @signal
 ) RETURNING *;
