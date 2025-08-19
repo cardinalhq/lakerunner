@@ -43,3 +43,45 @@ INSERT INTO bucket_prefix_mappings (
 ) VALUES (
   @bucket_id, @organization_id, @path_prefix, @signal
 ) RETURNING *;
+
+-- Legacy table sync operations
+
+-- name: GetAllCStorageProfilesForSync :many
+SELECT DISTINCT
+  sp.bucket AS bucket_name,
+  sp.cloud_provider,
+  sp.region,
+  sp.role,
+  c.organization_id
+FROM c_storage_profiles sp
+LEFT OUTER JOIN c_collectors c ON c.storage_profile_id = sp.id
+WHERE c.deleted_at IS NULL;
+
+-- name: ClearBucketPrefixMappings :exec
+DELETE FROM bucket_prefix_mappings;
+
+-- name: ClearOrganizationBuckets :exec
+DELETE FROM organization_buckets;
+
+-- name: ClearBucketConfigurations :exec
+DELETE FROM bucket_configurations;
+
+-- name: UpsertBucketConfiguration :one
+INSERT INTO bucket_configurations (
+  bucket_name, cloud_provider, region, endpoint, role
+) VALUES (
+  @bucket_name, @cloud_provider, @region, @endpoint, @role
+) ON CONFLICT (bucket_name) DO UPDATE SET
+  cloud_provider = EXCLUDED.cloud_provider,
+  region = EXCLUDED.region,
+  endpoint = EXCLUDED.endpoint,
+  role = EXCLUDED.role
+RETURNING *;
+
+-- name: UpsertOrganizationBucket :exec
+INSERT INTO organization_buckets (
+  organization_id, bucket_id
+) VALUES (
+  @organization_id, @bucket_id
+) ON CONFLICT (organization_id) DO UPDATE SET
+  bucket_id = EXCLUDED.bucket_id;

@@ -9,6 +9,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const checkOrgBucketAccess = `-- name: CheckOrgBucketAccess :one
@@ -28,6 +29,33 @@ func (q *Queries) CheckOrgBucketAccess(ctx context.Context, arg CheckOrgBucketAc
 	var has_access bool
 	err := row.Scan(&has_access)
 	return has_access, err
+}
+
+const clearBucketConfigurations = `-- name: ClearBucketConfigurations :exec
+DELETE FROM bucket_configurations
+`
+
+func (q *Queries) ClearBucketConfigurations(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, clearBucketConfigurations)
+	return err
+}
+
+const clearBucketPrefixMappings = `-- name: ClearBucketPrefixMappings :exec
+DELETE FROM bucket_prefix_mappings
+`
+
+func (q *Queries) ClearBucketPrefixMappings(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, clearBucketPrefixMappings)
+	return err
+}
+
+const clearOrganizationBuckets = `-- name: ClearOrganizationBuckets :exec
+DELETE FROM organization_buckets
+`
+
+func (q *Queries) ClearOrganizationBuckets(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, clearOrganizationBuckets)
+	return err
 }
 
 const createBucketConfiguration = `-- name: CreateBucketConfiguration :one
@@ -119,6 +147,54 @@ func (q *Queries) CreateOrganizationBucket(ctx context.Context, arg CreateOrgani
 	return i, err
 }
 
+const getAllCStorageProfilesForSync = `-- name: GetAllCStorageProfilesForSync :many
+
+SELECT DISTINCT
+  sp.bucket AS bucket_name,
+  sp.cloud_provider,
+  sp.region,
+  sp.role,
+  c.organization_id
+FROM c_storage_profiles sp
+LEFT OUTER JOIN c_collectors c ON c.storage_profile_id = sp.id
+WHERE c.deleted_at IS NULL
+`
+
+type GetAllCStorageProfilesForSyncRow struct {
+	BucketName     string      `json:"bucket_name"`
+	CloudProvider  string      `json:"cloud_provider"`
+	Region         string      `json:"region"`
+	Role           *string     `json:"role"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+// Legacy table sync operations
+func (q *Queries) GetAllCStorageProfilesForSync(ctx context.Context) ([]GetAllCStorageProfilesForSyncRow, error) {
+	rows, err := q.db.Query(ctx, getAllCStorageProfilesForSync)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetAllCStorageProfilesForSyncRow
+	for rows.Next() {
+		var i GetAllCStorageProfilesForSyncRow
+		if err := rows.Scan(
+			&i.BucketName,
+			&i.CloudProvider,
+			&i.Region,
+			&i.Role,
+			&i.OrganizationID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getBucketConfiguration = `-- name: GetBucketConfiguration :one
 SELECT id, bucket_name, cloud_provider, region, endpoint, role FROM bucket_configurations WHERE bucket_name = $1
 `
@@ -186,4 +262,64 @@ func (q *Queries) GetOrganizationsByBucket(ctx context.Context, bucketName strin
 		return nil, err
 	}
 	return items, nil
+}
+
+const upsertBucketConfiguration = `-- name: UpsertBucketConfiguration :one
+INSERT INTO bucket_configurations (
+  bucket_name, cloud_provider, region, endpoint, role
+) VALUES (
+  $1, $2, $3, $4, $5
+) ON CONFLICT (bucket_name) DO UPDATE SET
+  cloud_provider = EXCLUDED.cloud_provider,
+  region = EXCLUDED.region,
+  endpoint = EXCLUDED.endpoint,
+  role = EXCLUDED.role
+RETURNING id, bucket_name, cloud_provider, region, endpoint, role
+`
+
+type UpsertBucketConfigurationParams struct {
+	BucketName    string  `json:"bucket_name"`
+	CloudProvider string  `json:"cloud_provider"`
+	Region        string  `json:"region"`
+	Endpoint      *string `json:"endpoint"`
+	Role          *string `json:"role"`
+}
+
+func (q *Queries) UpsertBucketConfiguration(ctx context.Context, arg UpsertBucketConfigurationParams) (BucketConfiguration, error) {
+	row := q.db.QueryRow(ctx, upsertBucketConfiguration,
+		arg.BucketName,
+		arg.CloudProvider,
+		arg.Region,
+		arg.Endpoint,
+		arg.Role,
+	)
+	var i BucketConfiguration
+	err := row.Scan(
+		&i.ID,
+		&i.BucketName,
+		&i.CloudProvider,
+		&i.Region,
+		&i.Endpoint,
+		&i.Role,
+	)
+	return i, err
+}
+
+const upsertOrganizationBucket = `-- name: UpsertOrganizationBucket :exec
+INSERT INTO organization_buckets (
+  organization_id, bucket_id
+) VALUES (
+  $1, $2
+) ON CONFLICT (organization_id) DO UPDATE SET
+  bucket_id = EXCLUDED.bucket_id
+`
+
+type UpsertOrganizationBucketParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	BucketID       uuid.UUID `json:"bucket_id"`
+}
+
+func (q *Queries) UpsertOrganizationBucket(ctx context.Context, arg UpsertOrganizationBucketParams) error {
+	_, err := q.db.Exec(ctx, upsertOrganizationBucket, arg.OrganizationID, arg.BucketID)
+	return err
 }

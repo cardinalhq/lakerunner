@@ -19,43 +19,59 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
+	"github.com/cardinalhq/lakerunner/internal/configdb"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 const (
-	gcBatchLimit int32         = 1000
-	gcBatchDelay time.Duration = 500 * time.Millisecond
-	gcPeriod     time.Duration = time.Hour
-	gcCutoffAge  time.Duration = 10 * 24 * time.Hour
+	gcBatchLimit           int32         = 1000
+	gcBatchDelay           time.Duration = 500 * time.Millisecond
+	gcPeriod               time.Duration = time.Hour
+	gcCutoffAge            time.Duration = 10 * 24 * time.Hour
+	legacyTablesSyncPeriod time.Duration = 5 * time.Minute
 )
 
 type sweeper struct {
 	instanceID            int64
 	assumeRoleSessionName string
 	sp                    storageprofile.StorageProfileProvider
+	syncLegacyTables      bool
 }
 
-func New(instanceID int64, assumeRoleSessionName string) *sweeper {
+func New(instanceID int64, assumeRoleSessionName string, syncLegacyTables bool) *sweeper {
 	sp, err := storageprofile.SetupStorageProfiles()
 	if err != nil {
 		slog.Error("Failed to setup storage profiles", slog.Any("error", err))
 		os.Exit(1)
 	}
+
+	// Check environment variable if flag is not set
+	if !syncLegacyTables {
+		if envVal, exists := os.LookupEnv("SYNC_LEGACY_TABLES"); exists {
+			if parsed, err := strconv.ParseBool(envVal); err == nil {
+				syncLegacyTables = parsed
+			}
+		}
+	}
+
 	return &sweeper{
 		instanceID:            instanceID,
 		assumeRoleSessionName: assumeRoleSessionName,
 		sp:                    sp,
+		syncLegacyTables:      syncLegacyTables,
 	}
 }
 
@@ -67,6 +83,20 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 	if err != nil {
 		return err
 	}
+
+	var cdb configdb.QuerierFull
+	var cdbPool *pgxpool.Pool
+	if cmd.syncLegacyTables {
+		cdb, err = dbopen.ConfigDBStore(ctx)
+		if err != nil {
+			return err
+		}
+		cdbPool, err = dbopen.ConnectToConfigDB(ctx)
+		if err != nil {
+			return err
+		}
+	}
+
 	awsmanager, err := awsclient.NewManager(ctx,
 		awsclient.WithAssumeRoleSessionName(cmd.assumeRoleSessionName),
 	)
@@ -74,10 +104,12 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 		return err
 	}
 
-	slog.Info("Starting sweeper", slog.Int64("instanceID", cmd.instanceID))
+	slog.Info("Starting sweeper",
+		slog.Int64("instanceID", cmd.instanceID),
+		slog.Bool("syncLegacyTables", cmd.syncLegacyTables))
 
 	var wg sync.WaitGroup
-	errCh := make(chan error, 3)
+	errCh := make(chan error, 4)
 
 	// Aggressive object delete loop
 	wg.Add(1)
@@ -118,6 +150,19 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 			errCh <- err
 		}
 	}()
+
+	// Periodic: legacy table sync if enabled
+	if cmd.syncLegacyTables {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := periodicLoop(ctx, legacyTablesSyncPeriod, func(c context.Context) error {
+				return runLegacyTablesSync(c, slog.Default(), cdb, cdbPool)
+			}); err != nil && !errors.Is(err, context.Canceled) {
+				errCh <- err
+			}
+		}()
+	}
 
 	// Wait for cancellation or the first hard error
 	select {
@@ -356,4 +401,124 @@ func workqueueGCLoop(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull) e
 			runOnce()
 		}
 	}
+}
+
+func runLegacyTablesSync(ctx context.Context, ll *slog.Logger, cdb configdb.QuerierFull, cdbPool *pgxpool.Pool) error {
+	ll.Info("Starting legacy table sync")
+
+	// Get all storage profiles from c_ tables
+	profiles, err := cdb.GetAllCStorageProfilesForSync(ctx)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			ll.Info("No legacy storage profiles found")
+			return nil
+		}
+		return err
+	}
+
+	if len(profiles) == 0 {
+		ll.Info("No legacy storage profiles to sync")
+		return nil
+	}
+
+	ll.Info("Found legacy storage profiles to sync", slog.Int("count", len(profiles)))
+
+	// Start a transaction for atomic sync
+	closed := false
+	tx, err := cdbPool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if !closed {
+			if rbErr := tx.Rollback(ctx); rbErr != nil {
+				ll.Warn("Failed to rollback transaction", slog.Any("error", rbErr))
+			}
+		}
+	}()
+
+	qtx := configdb.New(tx)
+
+	// Clear existing bucket management tables (mirror mode)
+	if err := qtx.ClearBucketPrefixMappings(ctx); err != nil {
+		return err
+	}
+	if err := qtx.ClearOrganizationBuckets(ctx); err != nil {
+		return err
+	}
+	if err := qtx.ClearBucketConfigurations(ctx); err != nil {
+		return err
+	}
+
+	// Group profiles by bucket to ensure 1:1 mapping
+	bucketToProfile := make(map[string]configdb.GetAllCStorageProfilesForSyncRow)
+	bucketToOrgs := make(map[string][]uuid.UUID)
+
+	for _, profile := range profiles {
+		if !profile.OrganizationID.Valid {
+			ll.Warn("Skipping profile with invalid organization ID", slog.String("bucket", profile.BucketName))
+			continue
+		}
+
+		orgID := profile.OrganizationID.Bytes
+		orgUUID, err := uuid.FromBytes(orgID[:])
+		if err != nil {
+			ll.Warn("Skipping profile with invalid organization UUID", slog.String("bucket", profile.BucketName), slog.Any("error", err))
+			continue
+		}
+
+		// Use first profile found for each bucket (1:1 mapping enforced)
+		if _, exists := bucketToProfile[profile.BucketName]; !exists {
+			bucketToProfile[profile.BucketName] = profile
+		}
+
+		bucketToOrgs[profile.BucketName] = append(bucketToOrgs[profile.BucketName], orgUUID)
+	}
+
+	// Create bucket configurations and organization mappings
+	for bucketName, profile := range bucketToProfile {
+		// Create/update bucket configuration
+		bucketConfig, err := qtx.UpsertBucketConfiguration(ctx, configdb.UpsertBucketConfigurationParams{
+			BucketName:    bucketName,
+			CloudProvider: profile.CloudProvider,
+			Region:        profile.Region,
+			Endpoint:      nil,
+			Role:          profile.Role,
+		})
+		if err != nil {
+			return err
+		}
+
+		ll.Info("Synced bucket configuration",
+			slog.String("bucket", bucketName),
+			slog.String("provider", profile.CloudProvider),
+			slog.String("region", profile.Region))
+
+		// Create organization mappings
+		orgs := bucketToOrgs[bucketName]
+		for _, orgID := range orgs {
+			if err := qtx.UpsertOrganizationBucket(ctx, configdb.UpsertOrganizationBucketParams{
+				OrganizationID: orgID,
+				BucketID:       bucketConfig.ID,
+			}); err != nil {
+				return err
+			}
+		}
+
+		ll.Info("Synced organization mappings",
+			slog.String("bucket", bucketName),
+			slog.Int("orgCount", len(orgs)))
+	}
+
+	// Commit the transaction
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	closed = true
+
+	ll.Info("Legacy table sync completed successfully",
+		slog.Int("bucketsSync", len(bucketToProfile)),
+		slog.Int("totalProfiles", len(profiles)))
+
+	return nil
 }
