@@ -17,7 +17,7 @@ package storageprofile
 import (
 	"context"
 	"fmt"
-	"regexp"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -43,8 +43,6 @@ type ConfigDBStoreageProfileFetcher interface {
 
 var _ ConfigDBStoreageProfileFetcher = (*configdb.Store)(nil)
 
-// UUID regex for path parsing
-var dbUuidRegex = regexp.MustCompile(`^/[^/]+/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/`)
 
 func NewDatabaseProvider(cdb ConfigDBStoreageProfileFetcher) StorageProfileProvider {
 	return &databaseProvider{
@@ -134,25 +132,23 @@ func (p *databaseProvider) ResolveOrganization(ctx context.Context, bucketName, 
 	}
 
 	// New resolution logic using the new tables
-	// 1. Try to extract UUID from path
-	if matches := dbUuidRegex.FindStringSubmatch(objectPath); len(matches) > 1 {
-		orgID, err := uuid.Parse(matches[1])
-		if err != nil {
-			return uuid.Nil, fmt.Errorf("invalid UUID in path: %w", err)
+	// 1. Try to extract UUID from second path segment (foo/UUID)
+	pathParts := strings.Split(strings.Trim(objectPath, "/"), "/")
+	if len(pathParts) >= 2 {
+		if orgID, err := uuid.Parse(pathParts[1]); err == nil {
+			// Verify this org has access to the bucket
+			hasAccess, err := p.cdb.CheckOrgBucketAccess(ctx, configdb.CheckOrgBucketAccessParams{
+				OrgID:      orgID,
+				BucketName: bucketName,
+			})
+			if err != nil {
+				return uuid.Nil, fmt.Errorf("failed to check org bucket access: %w", err)
+			}
+			if hasAccess {
+				return orgID, nil
+			}
+			// If UUID is valid but org doesn't have access, continue to prefix matching
 		}
-
-		// Verify this org has access to the bucket
-		hasAccess, err := p.cdb.CheckOrgBucketAccess(ctx, configdb.CheckOrgBucketAccessParams{
-			OrgID:      orgID,
-			BucketName: bucketName,
-		})
-		if err != nil {
-			return uuid.Nil, fmt.Errorf("failed to check org bucket access: %w", err)
-		}
-		if !hasAccess {
-			return uuid.Nil, fmt.Errorf("organization %s does not have access to bucket %s", orgID, bucketName)
-		}
-		return orgID, nil
 	}
 
 	// 2. Try longest prefix match

@@ -19,7 +19,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"regexp"
 	"strings"
 
 	"github.com/google/uuid"
@@ -59,8 +58,6 @@ type fileProvider struct {
 
 var _ StorageProfileProvider = (*fileProvider)(nil)
 
-// UUID regex for path parsing
-var uuidRegex = regexp.MustCompile(`^/[^/]+/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/`)
 
 func NewFileProvider(filename string) (StorageProfileProvider, error) {
 	if after, ok := strings.CutPrefix(filename, "env:"); ok {
@@ -240,20 +237,18 @@ func (p *fileProvider) ResolveOrganization(ctx context.Context, bucketName, obje
 		return uuid.Nil, fmt.Errorf("bucket %s not found in configuration", bucketName)
 	}
 
-	// 1. Try to extract UUID from path
-	if matches := uuidRegex.FindStringSubmatch(objectPath); len(matches) > 1 {
-		orgID, err := uuid.Parse(matches[1])
-		if err != nil {
-			return uuid.Nil, fmt.Errorf("invalid UUID in path: %w", err)
-		}
-
-		// Verify this org has access to the bucket
-		for _, validOrgID := range bucket.Organizations {
-			if orgID == validOrgID {
-				return orgID, nil
+	// 1. Try to extract UUID from second path segment (foo/UUID)
+	pathParts := strings.Split(strings.Trim(objectPath, "/"), "/")
+	if len(pathParts) >= 2 {
+		if orgID, err := uuid.Parse(pathParts[1]); err == nil {
+			// Verify this org has access to the bucket
+			for _, validOrgID := range bucket.Organizations {
+				if orgID == validOrgID {
+					return orgID, nil
+				}
 			}
+			// If UUID is valid but org doesn't have access, continue to prefix matching
 		}
-		return uuid.Nil, fmt.Errorf("organization %s does not have access to bucket %s", orgID, bucketName)
 	}
 
 	// 2. Try longest prefix match
