@@ -42,7 +42,7 @@ func RunMigrationsUp(ctx context.Context, pool *pgxpool.Pool) error {
 	}()
 
 	dbDriver, err := pgx.WithInstance(sqlDB, &pgx.Config{
-		MigrationsTable: "gomigrate_configdb",
+		MigrationsTable: "gomigrate_lrconfigdb",
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create pgx driver: %w", err)
