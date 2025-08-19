@@ -73,6 +73,7 @@ type Querier interface {
 	WorkQueueGlobalLock(ctx context.Context) error
 	// 1) heart-beat the work_queue
 	WorkQueueHeartbeatDirect(ctx context.Context, arg WorkQueueHeartbeatParams) error
+	WorkQueueOrphanedSignalLockCleanup(ctx context.Context, maxrows int32) (int32, error)
 	WorkQueueSummary(ctx context.Context) ([]WorkQueueSummaryRow, error)
 }
 
