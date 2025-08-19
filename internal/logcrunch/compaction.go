@@ -43,21 +43,45 @@ func PackSegments(segments []lrdb.GetLogSegmentsForCompactionRow, estimatedRecor
 		return [][]lrdb.GetLogSegmentsForCompactionRow{}, nil
 	}
 
-	// 3) Validate same-hour and basic time sanity.
-	hour := hourFromMillis(segments[0].StartTs)
+	// 3) Filter out segments with invalid time ranges and ensure hour conformity.
+	validSegments := make([]lrdb.GetLogSegmentsForCompactionRow, 0, len(segments))
+	var hour int64 = -1
+
 	for _, seg := range segments {
+		// Skip segments with invalid time ranges
 		if seg.StartTs >= seg.EndTs {
-			return nil, fmt.Errorf("invalid segment time range: [%d,%d)", seg.StartTs, seg.EndTs)
+			continue
 		}
+		// Guard against MinInt64
+		if seg.EndTs == -9223372036854775808 { // math.MinInt64, inline to avoid import
+			continue
+		}
+
 		// Use end-1 to keep [start,end) semantics in the same hour
 		endMinusOne := seg.EndTs - 1
-		// Guard (very defensive)
-		if seg.EndTs == -9223372036854775808 { // math.MinInt64, inline to avoid import
-			return nil, fmt.Errorf("invalid EndTs (MinInt64) for segment starting at %d", seg.StartTs)
+		segStartHour := hourFromMillis(seg.StartTs)
+		segEndHour := hourFromMillis(endMinusOne)
+
+		// Skip segments that cross hour boundaries
+		if segStartHour != segEndHour {
+			continue
 		}
-		if hourFromMillis(seg.StartTs) != hour || hourFromMillis(endMinusOne) != hour {
-			return nil, fmt.Errorf("segments must be from the same UTC hour; offending start=%d end=%d", seg.StartTs, seg.EndTs)
+
+		// Set hour from first valid segment, then ensure all subsequent segments are in same hour
+		if hour == -1 {
+			hour = segStartHour
+		} else if segStartHour != hour {
+			// Skip segments from different hours
+			continue
 		}
+
+		validSegments = append(validSegments, seg)
+	}
+
+	// Update segments to only include valid ones
+	segments = validSegments
+	if len(segments) == 0 {
+		return [][]lrdb.GetLogSegmentsForCompactionRow{}, nil
 	}
 
 	// 4) Greedy packing by record count threshold.
