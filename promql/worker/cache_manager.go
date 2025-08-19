@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -28,7 +29,7 @@ type CacheManager struct {
 	downloader DownloadBatchFunc
 
 	// in-memory presence + LRU tracking
-	mu         sync.Mutex
+	mu         sync.RWMutex
 	present    map[int64]struct{}        // segmentID -> exists in cache
 	lastAccess map[int64]time.Time       // segmentID -> last access
 	inflight   map[int64]*sync.WaitGroup // singleflight per segmentID
@@ -37,6 +38,15 @@ type CacheManager struct {
 	interval  time.Duration
 	stopEvict context.CancelFunc
 	evictWG   sync.WaitGroup
+
+	ingestQ    chan ingestJob
+	stopIngest context.CancelFunc
+	ingestWG   sync.WaitGroup
+}
+
+type ingestJob struct {
+	paths []string
+	ids   []int64
 }
 
 // NewCacheManager constructs a wrapper and starts the periodic evictor.
@@ -53,179 +63,336 @@ func NewCacheManager(sink *Sink, maxRows int64, dl DownloadBatchFunc, interval t
 		lastAccess: make(map[int64]time.Time, 1024),
 		inflight:   make(map[int64]*sync.WaitGroup, 1024),
 		interval:   interval,
+		ingestQ:    make(chan ingestJob, 64),
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	w.stopEvict = cancel
 	w.evictWG.Add(1)
 	go w.evictorCron(ctx)
+
+	ingCtx, ingCancel := context.WithCancel(context.Background())
+	w.stopIngest = ingCancel
+	w.ingestWG.Add(1)
+	go w.ingestLoop(ingCtx)
 	return w
 }
 
-// Close stops the evictor goroutine.
 func (w *CacheManager) Close() {
 	if w.stopEvict != nil {
 		w.stopEvict()
 	}
+	if w.stopIngest != nil {
+		w.stopIngest()
+	}
 	w.evictWG.Wait()
+	w.ingestWG.Wait()
 }
 
-// EnsureAndQuery ensures segments are present (download + batch-ingest),
-// then executes the query and streams mapper(row) -> T over a typed channel.
-// A separate error channel returns a single terminal error (if any).
-func EnsureAndQuery[T any](
+func Query[T any](
 	ctx context.Context,
 	w *CacheManager,
 	segmentPaths []string,
-	sqlQuery string,
-	args []any,
+	userSQL string,
+	bucket string,
+	s3GlobSize int,
 	mapper RowMapper[T],
-) (<-chan T, <-chan error) {
-	outCh := make(chan T, 1024)
-	errCh := make(chan error, 1)
-
-	// validate
+) ([]<-chan T, error) {
 	if len(segmentPaths) == 0 {
-		defer close(outCh)
-		defer close(errCh)
-		errCh <- errors.New("no segment paths")
-		return outCh, errCh
+		return nil, errors.New("no segment paths")
 	}
 	if mapper == nil {
-		defer close(outCh)
-		defer close(errCh)
-		errCh <- errors.New("nil RowMapper")
-		return outCh, errCh
+		return nil, errors.New("nil RowMapper")
+	}
+	if !strings.Contains(userSQL, "{table}") {
+		return nil, errors.New(`userSQL must contain "{table}" placeholder`)
+	}
+	if s3GlobSize <= 0 {
+		s3GlobSize = 64
 	}
 
-	go func() {
-		defer close(outCh)
-		defer close(errCh)
+	// Split into cached vs S3 (derive IDs outside of locks; only presence check needs the lock).
+	var s3URIs []string
+	var s3LocalPaths []string
+	var s3IDs []int64
+	var cachedIDs []int64
 
-		// Derive segment IDs from paths (tbl_{num}.parquet).
-		derivedIDs := make([]int64, len(segmentPaths))
-		for i, p := range segmentPaths {
-			n, derr := deriveSegmentIDFromPath(p)
-			if derr != nil {
-				errCh <- derr
-				return
-			}
-			derivedIDs[i] = n
+	for _, p := range segmentPaths {
+		id, derr := deriveSegmentIDFromPath(p)
+		if derr != nil {
+			return nil, fmt.Errorf("derive segment id for %q: %w", p, derr)
 		}
 
-		now := time.Now()
+		w.mu.RLock()
+		_, inCache := w.present[id]
+		w.mu.RUnlock()
 
-		// Lists we "own" for this call (we'll download/ingest them).
-		var ownedPaths []string
-		var ownedIDs []int64
+		if inCache {
+			cachedIDs = append(cachedIDs, id)
+		} else {
+			key := strings.TrimLeft(p, "/")
+			s3URIs = append(s3URIs, "s3://"+bucket+"/"+key)
+			s3LocalPaths = append(s3LocalPaths, p)
+			s3IDs = append(s3IDs, id)
+		}
+	}
 
-		// Wait groups for segments already in-flight by other goroutines.
-		waitSet := make(map[*sync.WaitGroup]struct{})
+	outs := make([]<-chan T, 0)
 
-		// Split present vs missing; stamp access; record local paths.
+	// Stream uncached segments directly from S3 (one channel per glob).
+	s3Channels, err := streamFromS3(ctx, w, s3URIs, s3GlobSize, userSQL, mapper)
+	if err != nil {
+		return nil, fmt.Errorf("stream from S3: %w", err)
+	}
+	outs = append(outs, s3Channels...)
+
+	// If we have uncached segments, enqueue them for download + batch-ingest.
+	if len(s3LocalPaths) > 0 {
+		w.enqueueIngest(s3LocalPaths, s3IDs)
+	}
+
+	// If we have cached segments, stream them from the cache.
+	cachedChannels := streamCached(ctx, w, cachedIDs, userSQL, mapper)
+	outs = append(outs, cachedChannels...)
+
+	return outs, nil
+}
+
+func streamCached[T any](ctx context.Context, w *CacheManager,
+	cachedIDs []int64,
+	userSQL string, mapper RowMapper[T]) []<-chan T {
+	outs := make([]<-chan T, 0)
+
+	if len(cachedIDs) > 0 {
+		out := make(chan T, 256)
+		outs = append(outs, out)
+
+		// Touch lastAccess for cached segments
 		w.mu.Lock()
-		for i, id := range derivedIDs {
-			if _, ok := w.present[id]; !ok {
-				if wg, inflight := w.inflight[id]; inflight {
-					waitSet[wg] = struct{}{}
-				} else {
-					wg := &sync.WaitGroup{}
-					wg.Add(1)
-					w.inflight[id] = wg
-					ownedPaths = append(ownedPaths, segmentPaths[i])
-					ownedIDs = append(ownedIDs, id)
-				}
-			}
+		now := time.Now()
+		for _, id := range cachedIDs {
 			w.lastAccess[id] = now
 		}
 		w.mu.Unlock()
 
-		// Wait for any segments being ingested by others.
-		for wg := range waitSet {
-			wg.Wait()
-		}
+		go func(ids []int64, out chan<- T) {
+			defer close(out)
 
-		// Download and ingest the segments we own.
-		if len(ownedPaths) > 0 {
+			// Build IN-list: 123,456,...
+			idLits := make([]string, len(ids))
+			for i, id := range ids {
+				idLits[i] = strconv.FormatInt(id, 10)
+			}
+			inList := strings.Join(idLits, ",")
+
+			// Replace {table} with cached table; replace sentinel "AND true" with segment filter.
+			cacheSQL := strings.Replace(userSQL, "{table}", w.sink.table, 1)
+			cacheSQL = strings.Replace(cacheSQL, "AND true", "AND segment_id IN ("+inList+")", 1)
+
+			rows, err := w.sink.db.QueryContext(ctx, cacheSQL)
+			if err != nil {
+				return
+			}
+			defer func(rows *sql.Rows) {
+				err := rows.Close()
+				if err != nil {
+					slog.Error("Error closing rows", slog.Any("error", err))
+				}
+			}(rows)
+
+			for rows.Next() {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+				v, mErr := mapper(rows)
+				if mErr != nil {
+					return
+				}
+				out <- v
+			}
+			_ = rows.Err()
+		}(cachedIDs, out)
+	}
+	return outs
+}
+
+func streamFromS3[T any](
+	ctx context.Context,
+	w *CacheManager,
+	s3URIs []string,
+	s3GlobSize int,
+	userSQL string,
+	mapper RowMapper[T],
+) ([]<-chan T, error) {
+	if len(s3URIs) == 0 {
+		return []<-chan T{}, nil
+	}
+
+	batches := chunkStrings(s3URIs, s3GlobSize)
+	outs := make([]<-chan T, 0, len(batches))
+
+	for _, uris := range batches {
+		out := make(chan T, 256)
+		outs = append(outs, out)
+
+		go func(uris []string, out chan<- T) {
+			defer close(out)
+
+			quoted := make([]string, len(uris))
+			for i := range uris {
+				quoted[i] = "'" + escapeSQL(uris[i]) + "'"
+			}
+			array := "[" + strings.Join(quoted, ", ") + "]"
+			src := fmt.Sprintf(`read_parquet(%s, union_by_name=true)`, array)
+			sqlReplaced := strings.Replace(userSQL, "{table}", src, 1)
+
+			rows, err := w.sink.db.QueryContext(ctx, sqlReplaced)
+			if err != nil {
+				return
+			}
+			defer func(rows *sql.Rows) {
+				err := rows.Close()
+				if err != nil {
+					slog.Error("Error closing rows", slog.Any("error", err))
+				}
+			}(rows)
+
+			for rows.Next() {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+				v, mErr := mapper(rows)
+				if mErr != nil {
+					return
+				}
+				out <- v
+			}
+			_ = rows.Err()
+		}(uris, out)
+	}
+
+	// enqueue is done in Query(...) after ids/paths are known
+	return outs, nil
+}
+
+// enqueueIngest filters out present/in-flight, marks new IDs in-flight, and queues one job.
+func (w *CacheManager) enqueueIngest(paths []string, ids []int64) {
+	if len(paths) == 0 || len(paths) != len(ids) {
+		return
+	}
+
+	// Filter + mark in-flight under lock
+	var todoPaths []string
+	var todoIDs []int64
+	w.mu.Lock()
+	for i, id := range ids {
+		if _, ok := w.present[id]; ok {
+			continue // already cached
+		}
+		if _, in := w.inflight[id]; in {
+			continue // someone else is already ingesting
+		}
+		wg := &sync.WaitGroup{}
+		wg.Add(1)
+		w.inflight[id] = wg
+		todoPaths = append(todoPaths, paths[i])
+		todoIDs = append(todoIDs, id)
+		w.lastAccess[id] = time.Now()
+	}
+	w.mu.Unlock()
+
+	if len(todoPaths) == 0 {
+		return
+	}
+
+	// Non-blocking enqueue; fallback to blocking if buffer full
+	select {
+	default:
+		w.ingestQ <- ingestJob{paths: todoPaths, ids: todoIDs}
+	}
+}
+
+func (w *CacheManager) ingestLoop(ctx context.Context) {
+	defer w.ingestWG.Done()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case job := <-w.ingestQ:
+			if len(job.paths) == 0 {
+				continue
+			}
+
+			// Download (if provided), then ingest; best-effort and per-batch.
 			if w.downloader != nil {
-				if err := w.downloader(ctx, ownedPaths); err != nil {
-					// release in-flight to avoid deadlocks
+				if err := w.downloader(ctx, job.paths); err != nil {
+					// release inflight on failure
 					w.mu.Lock()
-					for _, id := range ownedIDs {
+					for _, id := range job.ids {
 						if wg := w.inflight[id]; wg != nil {
 							wg.Done()
 							delete(w.inflight, id)
 						}
 					}
 					w.mu.Unlock()
-					errCh <- err
-					return
+					continue
 				}
 			}
-			if err := w.sink.IngestParquetBatch(ctx, ownedPaths, ownedIDs); err != nil {
-				// release in-flight to avoid deadlocks
+
+			if err := w.sink.IngestParquetBatch(ctx, job.paths, job.ids); err != nil {
+				// release inflight on failure
 				w.mu.Lock()
-				for _, id := range ownedIDs {
+				for _, id := range job.ids {
 					if wg := w.inflight[id]; wg != nil {
 						wg.Done()
 						delete(w.inflight, id)
 					}
 				}
 				w.mu.Unlock()
-				errCh <- err
-				return
+				continue
 			}
-			// Mark present + release in-flight
-			for _, p := range ownedPaths {
-				_ = os.Remove(p) // best-effort; ignore errors
-			}
+
+			// Mark present, update lastAccess, release inflight, and delete local files
+			now := time.Now()
 			w.mu.Lock()
-			for _, id := range ownedIDs {
+			for _, id := range job.ids {
 				w.present[id] = struct{}{}
+				w.lastAccess[id] = now
 				if wg := w.inflight[id]; wg != nil {
 					wg.Done()
 					delete(w.inflight, id)
 				}
 			}
 			w.mu.Unlock()
-		}
 
-		// Run the query and stream results.
-		rows, err := w.sink.db.QueryContext(ctx, sqlQuery, args...)
-		if err != nil {
-			errCh <- err
-			return
-		}
-		defer func() { _ = rows.Close() }()
-
-		for rows.Next() {
-			select {
-			case <-ctx.Done():
-				errCh <- ctx.Err()
-				return
-			default:
+			for _, p := range job.paths {
+				_ = os.Remove(p) // best-effort cleanup
 			}
-			v, mErr := mapper(rows)
-			if mErr != nil {
-				errCh <- mErr
-				return
-			}
-			outCh <- v
 		}
-		if rowsErr := rows.Err(); rowsErr != nil {
-			errCh <- rowsErr
-			return
-		}
+	}
+}
 
-		// Refresh access time for all segments used by this query.
-		now2 := time.Now()
-		w.mu.Lock()
-		for _, id := range derivedIDs {
-			w.lastAccess[id] = now2
+func chunkStrings(xs []string, size int) [][]string {
+	if size <= 0 || len(xs) == 0 {
+		return nil
+	}
+	var out [][]string
+	for i := 0; i < len(xs); i += size {
+		j := i + size
+		if j > len(xs) {
+			j = len(xs)
 		}
-		w.mu.Unlock()
-	}()
+		out = append(out, xs[i:j])
+	}
+	return out
+}
 
-	return outCh, errCh
+func escapeSQL(s string) string {
+	return strings.ReplaceAll(s, `'`, `''`)
 }
 
 // -------------------- Eviction (periodic cron) --------------------
