@@ -37,7 +37,7 @@ func init() {
 		Use:   "compact-logs",
 		Short: "Compact logs into optimally sized files",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			helpers.CleanTempDir()
+			helpers.SetupTempDir()
 
 			servicename := "lakerunner-compact-logs"
 			addlAttrs := attribute.NewSet(

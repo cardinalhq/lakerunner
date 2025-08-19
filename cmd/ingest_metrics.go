@@ -55,7 +55,7 @@ func init() {
 		Use:   "ingest-metrics",
 		Short: "Ingest metrics from the inqueue table",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			helpers.CleanTempDir()
+			helpers.SetupTempDir()
 
 			servicename := "lakerunner-ingest-metrics"
 			addlAttrs := attribute.NewSet(

@@ -81,10 +81,16 @@ func setupTelemetry(servicename string, addlAttrs *attribute.Set) (context.Conte
 	}
 	commonAttributes = attribute.NewSet(attrs...)
 
+	// Configure slog level based on DEBUG environment variables
+	var opts *slog.HandlerOptions
+	if os.Getenv("DEBUG") != "" || os.Getenv("LAKERUNNER_DEBUG") != "" {
+		opts = &slog.HandlerOptions{Level: slog.LevelDebug}
+	}
+
 	if os.Getenv("OTEL_SERVICE_NAME") != "" && os.Getenv("ENABLE_OTLP_TELEMETRY") == "true" {
 		slog.Info("OpenTelemetry exporting enabled")
 		slog.SetDefault(slog.New(slogmulti.Fanout(
-			slog.NewTextHandler(os.Stdout, nil),
+			slog.NewTextHandler(os.Stdout, opts),
 			otelslog.NewHandler(servicename),
 		)).With(
 			slog.String("service", servicename),
@@ -111,6 +117,12 @@ func setupTelemetry(servicename string, addlAttrs *attribute.Set) (context.Conte
 			defer cancel()
 			return otelShutdown(ctx)
 		}
+	} else {
+		// Configure slog even when OTEL is disabled
+		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, opts)).With(
+			slog.String("service", servicename),
+			slog.Int64("instanceID", myInstanceID),
+		))
 	}
 
 	return doneCtx, f, nil

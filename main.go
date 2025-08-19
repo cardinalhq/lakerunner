@@ -16,9 +16,7 @@ package main
 
 import (
 	"fmt"
-	"log/slog"
 	"os"
-	"path/filepath"
 	"runtime/debug"
 	"time"
 
@@ -29,8 +27,13 @@ import (
 	"github.com/cardinalhq/lakerunner/cmd"
 )
 
+var debugEnabled = os.Getenv("DEBUG") != "" || os.Getenv("LAKERUNNER_DEBUG") != ""
+
 func simpleLogger(msg string, args ...any) {
-	fmt.Fprintf(os.Stderr, msg+"\n", args...)
+	// Only log if debug logging is enabled
+	if debugEnabled {
+		fmt.Fprintf(os.Stderr, msg+"\n", args...)
+	}
 }
 
 func init() {
@@ -49,7 +52,6 @@ func init() {
 	}
 	_, err := memlimit.SetGoMemLimitWithOpts(
 		memlimit.WithRatio(0.8),
-		memlimit.WithLogger(slog.Default()),
 		memlimit.WithProvider(
 			memlimit.ApplyFallback(
 				memlimit.FromCgroup,
@@ -62,27 +64,14 @@ func init() {
 	}
 
 	if os.Getenv("GOGC") == "" {
-		fmt.Fprintf(os.Stderr, "GOGC is not set, setting it to 50%%\n")
+		if debugEnabled {
+			fmt.Fprintf(os.Stderr, "GOGC is not set, setting it to 50%%\n")
+		}
 		debug.SetGCPercent(50)
 		os.Setenv("GOGC", "50")
 	}
 }
 
 func main() {
-	tmp := os.TempDir()
-	tmp = filepath.Join(tmp, "lakerunner")
-	if err := os.MkdirAll(tmp, 0755); err != nil {
-		slog.Error("Failed to create temp dir path (ignoring)", slog.String("path", tmp), slog.Any("error", err))
-	} else {
-		slog.Info("Created temp dir path", slog.String("path", tmp))
-	}
-	if err := os.Setenv("TMPDIR", tmp); err != nil {
-		slog.Error("Failed to set TMPDIR environment variable", slog.String("path", tmp), slog.Any("error", err))
-	} else {
-		slog.Info("Set TMPDIR environment variable", slog.String("path", tmp))
-	}
-
-	slog.Info("Using temp dir", "path", os.TempDir())
-
 	cmd.Execute()
 }

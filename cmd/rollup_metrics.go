@@ -38,7 +38,7 @@ func init() {
 		Use:   "rollup-metrics",
 		Short: "Roll up metrics",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			helpers.CleanTempDir()
+			helpers.SetupTempDir()
 
 			servicename := "lakerunner-rollup-metrics"
 			addlAttrs := attribute.NewSet(
