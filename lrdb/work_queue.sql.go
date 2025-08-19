@@ -322,6 +322,35 @@ func (q *Queries) WorkQueueHeartbeatDirect(ctx context.Context, arg WorkQueueHea
 	return err
 }
 
+const workQueueOrphanedSignalLockCleanup = `-- name: WorkQueueOrphanedSignalLockCleanup :one
+WITH params AS (
+  SELECT pg_advisory_xact_lock(hashtext('work_queue_global')::bigint) AS locked
+),
+orphaned AS (
+  SELECT sl.id
+  FROM public.signal_locks sl
+  LEFT JOIN public.work_queue wq ON sl.work_id = wq.id
+  WHERE wq.id IS NULL
+  ORDER BY sl.id
+  LIMIT $1
+),
+deleted AS (
+  DELETE FROM public.signal_locks sl
+  USING orphaned o
+  WHERE sl.id = o.id
+  RETURNING 1
+)
+SELECT COALESCE(COUNT(*), 0)::int AS deleted
+FROM deleted
+`
+
+func (q *Queries) WorkQueueOrphanedSignalLockCleanup(ctx context.Context, maxrows int32) (int32, error) {
+	row := q.db.QueryRow(ctx, workQueueOrphanedSignalLockCleanup, maxrows)
+	var deleted int32
+	err := row.Scan(&deleted)
+	return deleted, err
+}
+
 const workQueueSummary = `-- name: WorkQueueSummary :many
 SELECT count(*) AS count, signal, action
 FROM work_queue

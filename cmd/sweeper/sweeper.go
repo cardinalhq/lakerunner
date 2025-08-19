@@ -290,6 +290,17 @@ func runWorkqueueExpiry(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull
 	for _, obj := range expired {
 		ll.Info("Expired work/lock", slog.Any("work", obj))
 	}
+
+	// Clean up orphaned signal locks
+	deleted, err := mdb.WorkQueueOrphanedSignalLockCleanup(ctx, 1000)
+	if err != nil {
+		ll.Error("Failed to cleanup orphaned signal locks", slog.Any("error", err))
+		return err
+	}
+	if deleted > 0 {
+		ll.Info("Cleaned up orphaned signal locks", slog.Int("deleted", int(deleted)))
+	}
+
 	return nil
 }
 
