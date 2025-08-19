@@ -67,7 +67,58 @@ func Test_newFileProviderFromContents_UnmarshalError(t *testing.T) {
 	provider, err := newFileProviderFromContents("bad.yaml", invalidYAML)
 	require.Error(t, err)
 	require.Nil(t, provider)
-	require.Contains(t, err.Error(), "failed to unmarshal storage profiles from file bad.yaml")
+	require.Contains(t, err.Error(), "failed to unmarshal v1 storage profiles from file bad.yaml")
+}
+
+func Test_newFileProviderFromContents_V2YAML(t *testing.T) {
+	orgID1 := uuid.New()
+	orgID2 := uuid.New()
+
+	v2YAMLContent := fmt.Sprintf(`version: 2
+buckets:
+  - name: "shared-bucket"
+    cloud_provider: "aws"
+    region: "us-west-2"
+    role: "arn:aws:iam::123456789012:role/LakeRunner"
+    organizations:
+      - "%s"
+      - "%s"
+    prefix_mappings:
+      - organization_id: "%s"
+        prefix: "org1-data/"
+      - organization_id: "%s"
+        prefix: "org2-data/"
+  - name: "dedicated-bucket"
+    cloud_provider: "gcp"
+    region: "us-central1"
+    organizations:
+      - "%s"
+`, orgID1.String(), orgID2.String(), orgID1.String(), orgID2.String(), orgID1.String())
+
+	provider, err := newFileProviderFromContents("test-v2.yaml", []byte(v2YAMLContent))
+	require.NoError(t, err)
+	require.NotNil(t, provider)
+
+	// Test ResolveOrganization with UUID in path
+	orgID, err := provider.ResolveOrganization(context.Background(), "shared-bucket", "/logs-raw/"+orgID1.String()+"/some/file.json")
+	require.NoError(t, err)
+	require.Equal(t, orgID1, orgID)
+
+	// Test ResolveOrganization with prefix matching
+	orgID, err = provider.ResolveOrganization(context.Background(), "shared-bucket", "org1-data/some/file.json")
+	require.NoError(t, err)
+	require.Equal(t, orgID1, orgID)
+
+	// Test single org bucket
+	orgID, err = provider.ResolveOrganization(context.Background(), "dedicated-bucket", "any/path/file.json")
+	require.NoError(t, err)
+	require.Equal(t, orgID1, orgID)
+
+	// Test Get method with v2 (should work for backwards compatibility)
+	profile, err := provider.Get(context.Background(), orgID1, 1)
+	require.NoError(t, err)
+	require.Equal(t, orgID1, profile.OrganizationID)
+	require.Equal(t, "shared-bucket", profile.Bucket) // Returns first bucket
 }
 
 func Test_NewFileProvider_env(t *testing.T) {
@@ -136,7 +187,6 @@ func TestFileProvider_GetByCollectorName(t *testing.T) {
 				CloudProvider:  "gcp",
 				Region:         "europe-west1",
 				Bucket:         "bucket-2",
-				Hosted:         true, // no role, so hosted=true
 			},
 			wantErr: false,
 		},
@@ -272,37 +322,4 @@ func TestNewFileProvider_ErrorCases(t *testing.T) {
 			require.Contains(t, err.Error(), tt.wantErr)
 		})
 	}
-}
-
-func TestFileProvider_HostedFlag(t *testing.T) {
-	yamlContentNoRole := fmt.Sprintf(`
-- organization_id: %s
-  instance_num: 1
-  collector_name: "collector-no-role"
-  cloud_provider: "aws"
-  region: "us-west-2"
-  bucket: "bucket-1"
-- organization_id: %s
-  instance_num: 2
-  collector_name: "collector-with-role"
-  cloud_provider: "aws"
-  region: "us-west-2"
-  role: "some-role"
-  bucket: "bucket-2"
-`, orgID.String(), orgID.String())
-
-	provider, err := newFileProviderFromContents("test.yaml", []byte(yamlContentNoRole))
-	require.NoError(t, err)
-
-	// Profile without role should have hosted=true
-	profile1, err := provider.Get(context.Background(), orgID, 1)
-	require.NoError(t, err)
-	require.True(t, profile1.Hosted)
-	require.Empty(t, profile1.Role)
-
-	// Profile with role should have hosted=false
-	profile2, err := provider.Get(context.Background(), orgID, 2)
-	require.NoError(t, err)
-	require.False(t, profile2.Hosted)
-	require.Equal(t, "some-role", profile2.Role)
 }

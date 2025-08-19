@@ -50,7 +50,6 @@ func (m *mockConfigDBStoreageProfileFetcher) GetStorageProfileByCollectorName(ct
 		Region:         m.profile.Region,
 		Bucket:         m.profile.Bucket,
 		Role:           m.profile.Role,
-		Hosted:         m.profile.Hosted,
 	}, nil
 }
 
@@ -67,9 +66,38 @@ func (m *mockConfigDBStoreageProfileFetcher) GetStorageProfilesByBucketName(ctx 
 			Region:         m.profile.Region,
 			Bucket:         m.profile.Bucket,
 			Role:           m.profile.Role,
-			Hosted:         m.profile.Hosted,
 		},
 	}, nil
+}
+
+// New methods for bucket management (stub implementations for testing)
+func (m *mockConfigDBStoreageProfileFetcher) GetBucketConfiguration(ctx context.Context, bucketName string) (configdb.BucketConfiguration, error) {
+	if m.err != nil {
+		return configdb.BucketConfiguration{}, m.err
+	}
+	// Return empty config to trigger fallback to old logic
+	return configdb.BucketConfiguration{}, errors.New("bucket not found")
+}
+
+func (m *mockConfigDBStoreageProfileFetcher) GetOrganizationsByBucket(ctx context.Context, bucketName string) ([]uuid.UUID, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return []uuid.UUID{m.profile.OrganizationID}, nil
+}
+
+func (m *mockConfigDBStoreageProfileFetcher) CheckOrgBucketAccess(ctx context.Context, arg configdb.CheckOrgBucketAccessParams) (bool, error) {
+	if m.err != nil {
+		return false, m.err
+	}
+	return arg.OrgID == m.profile.OrganizationID, nil
+}
+
+func (m *mockConfigDBStoreageProfileFetcher) GetLongestPrefixMatch(ctx context.Context, arg configdb.GetLongestPrefixMatchParams) (uuid.UUID, error) {
+	if m.err != nil {
+		return uuid.Nil, m.err
+	}
+	return uuid.Nil, errors.New("no prefix match found")
 }
 
 func TestDatabaseProvider_Get_SuccessWithRole(t *testing.T) {
@@ -156,7 +184,6 @@ func TestDatabaseProvider_GetByCollectorName(t *testing.T) {
 				Region:         "us-west-2",
 				Bucket:         "test-bucket",
 				Role:           stringPtr("admin-role"),
-				Hosted:         false,
 			},
 			wantProfile: StorageProfile{
 				OrganizationID: uuid.New(),
@@ -166,7 +193,6 @@ func TestDatabaseProvider_GetByCollectorName(t *testing.T) {
 				Region:         "us-west-2",
 				Bucket:         "test-bucket",
 				Role:           "admin-role",
-				Hosted:         false,
 			},
 			wantErr: false,
 		},
@@ -182,7 +208,6 @@ func TestDatabaseProvider_GetByCollectorName(t *testing.T) {
 				Region:         "europe-west1",
 				Bucket:         "test-bucket-2",
 				Role:           nil,
-				Hosted:         true,
 			},
 			wantProfile: StorageProfile{
 				OrganizationID: uuid.New(),
@@ -192,7 +217,6 @@ func TestDatabaseProvider_GetByCollectorName(t *testing.T) {
 				Region:         "europe-west1",
 				Bucket:         "test-bucket-2",
 				Role:           "",
-				Hosted:         true,
 			},
 			wantErr: false,
 		},
@@ -265,7 +289,6 @@ func TestDatabaseProvider_GetStorageProfilesByBucketName(t *testing.T) {
 				Region:         "us-west-2",
 				Bucket:         tt.bucketName,
 				Role:           stringPtr("test-role"),
-				Hosted:         false,
 			}
 
 			mockFetcher := &mockConfigDBStoreageProfileFetcher{

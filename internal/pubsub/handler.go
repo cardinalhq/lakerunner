@@ -20,9 +20,39 @@ import (
 	"log/slog"
 	"strings"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
+
+var (
+	itemsProcessed metric.Int64Counter
+	itemsSkipped   metric.Int64Counter
+)
+
+func init() {
+	meter := otel.Meter("github.com/cardinalhq/lakerunner/internal/pubsub")
+
+	var err error
+	itemsProcessed, err = meter.Int64Counter(
+		"pubsub_items_processed_total",
+		metric.WithDescription("Total number of pubsub items processed successfully"),
+	)
+	if err != nil {
+		panic(fmt.Errorf("failed to create itemsProcessed counter: %w", err))
+	}
+
+	itemsSkipped, err = meter.Int64Counter(
+		"pubsub_items_skipped_total",
+		metric.WithDescription("Total number of pubsub items skipped"),
+	)
+	if err != nil {
+		panic(fmt.Errorf("failed to create itemsSkipped counter: %w", err))
+	}
+}
 
 func handleMessage(ctx context.Context, msg []byte, sp storageprofile.StorageProfileProvider, mdb InqueueInserter) error {
 	if len(msg) == 0 {
@@ -35,45 +65,53 @@ func handleMessage(ctx context.Context, msg []byte, sp storageprofile.StoragePro
 	}
 
 	for _, item := range items {
-		var profile storageprofile.StorageProfile
-		var err error
-		if strings.HasPrefix(item.ObjectID, "otel-raw/") {
-			profile, err = sp.GetByCollectorName(ctx, item.OrganizationID, item.CollectorName)
-			if err != nil {
-				slog.Error("Failed to get storage profile", slog.Any("error", err), slog.Any("organization_id", item.OrganizationID), slog.Int("instance_num", int(item.InstanceNum)))
-				continue
-			}
-		} else if strings.HasPrefix(item.ObjectID, "db/") {
-			// Skip database files
+		// Skip database files
+		if strings.HasPrefix(item.ObjectID, "db/") {
 			slog.Info("Skipping database file", slog.String("objectID", item.ObjectID))
+			itemsSkipped.Add(ctx, 1, metric.WithAttributes(
+				attribute.String("reason", "database_file"),
+				attribute.String("bucket", item.Bucket),
+			))
 			continue
-		} else {
-			profiles, err := sp.GetStorageProfilesByBucketName(ctx, item.Bucket)
-			if err != nil {
-				slog.Error("Failed to get storage profile", slog.Any("error", err), slog.String("bucket", item.Bucket))
-				continue
-			}
-			if len(profiles) != 1 {
-				slog.Error("Expected exactly one storage profile for bucket", slog.String("bucket", item.Bucket), slog.Int("found", len(profiles)))
-				continue
-			}
-			profile = profiles[0]
-			item.OrganizationID = profile.OrganizationID
-			item.CollectorName = profile.CollectorName
 		}
-		item.InstanceNum = profile.InstanceNum
-		slog.Info("Starting pubsub item",
-			slog.String("bucket", profile.Bucket),
-			slog.String("objectID", item.ObjectID),
-			slog.String("telemetryType", item.TelemetryType),
-			slog.String("organizationID", item.OrganizationID.String()),
-			slog.Int("instanceNum", int(item.InstanceNum)))
+
+		// Use new organization resolution logic
+		orgID, err := sp.ResolveOrganization(ctx, item.Bucket, item.ObjectID)
+		if err != nil {
+			slog.Error("Failed to resolve organization",
+				slog.Any("error", err),
+				slog.String("bucket", item.Bucket),
+				slog.String("object_id", item.ObjectID))
+			itemsSkipped.Add(ctx, 1, metric.WithAttributes(
+				attribute.String("reason", "resolve_org_failed"),
+				attribute.String("bucket", item.Bucket),
+			))
+			continue
+		}
+
+		// For otel-raw paths, org and collector were already extracted in parser
+		// For other paths, we now have the resolved org
+		if !strings.HasPrefix(item.ObjectID, "otel-raw/") {
+			item.OrganizationID = orgID
+			item.CollectorName = "" // Not used in v2
+		}
+
+		// Set default instance num for v2
+		if item.InstanceNum == -1 {
+			item.InstanceNum = 1
+		}
+
+		slog.Info("Processing item",
+			slog.String("bucket", item.Bucket),
+			slog.String("object_id", item.ObjectID),
+			slog.String("telemetry_type", item.TelemetryType),
+			slog.String("organization_id", item.OrganizationID.String()))
 
 		err = mdb.PutInqueueWork(ctx, lrdb.PutInqueueWorkParams{
 			OrganizationID: item.OrganizationID,
 			CollectorName:  item.CollectorName,
 			InstanceNum:    item.InstanceNum,
-			Bucket:         profile.Bucket,
+			Bucket:         item.Bucket,
 			ObjectID:       item.ObjectID,
 			TelemetryType:  item.TelemetryType,
 			Priority:       0,
@@ -81,6 +119,11 @@ func handleMessage(ctx context.Context, msg []byte, sp storageprofile.StoragePro
 		if err != nil {
 			return fmt.Errorf("failed to insert inqueue work: %w", err)
 		}
+
+		itemsProcessed.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("bucket", item.Bucket),
+			attribute.String("telemetry_type", item.TelemetryType),
+		))
 	}
 
 	return nil

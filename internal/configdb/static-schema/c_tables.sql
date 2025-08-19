@@ -14,7 +14,5 @@ CREATE TABLE c_storage_profiles (
   cloud_provider TEXT NOT NULL,
   bucket TEXT NOT NULL,
   region TEXT NOT NULL,
-  hosted BOOLEAN NOT NULL,
-  properties JSONB NOT NULL,
   role TEXT
 );

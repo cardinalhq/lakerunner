@@ -16,6 +16,8 @@ package storageprofile
 
 import (
 	"context"
+	"fmt"
+	"regexp"
 
 	"github.com/google/uuid"
 
@@ -32,9 +34,17 @@ type ConfigDBStoreageProfileFetcher interface {
 	GetStorageProfile(ctx context.Context, params configdb.GetStorageProfileParams) (configdb.GetStorageProfileRow, error)
 	GetStorageProfileByCollectorName(ctx context.Context, params configdb.GetStorageProfileByCollectorNameParams) (configdb.GetStorageProfileByCollectorNameRow, error)
 	GetStorageProfilesByBucketName(ctx context.Context, bucketName string) ([]configdb.GetStorageProfilesByBucketNameRow, error)
+	// New methods for bucket management
+	GetBucketConfiguration(ctx context.Context, bucketName string) (configdb.BucketConfiguration, error)
+	GetOrganizationsByBucket(ctx context.Context, bucketName string) ([]uuid.UUID, error)
+	CheckOrgBucketAccess(ctx context.Context, arg configdb.CheckOrgBucketAccessParams) (bool, error)
+	GetLongestPrefixMatch(ctx context.Context, arg configdb.GetLongestPrefixMatchParams) (uuid.UUID, error)
 }
 
 var _ ConfigDBStoreageProfileFetcher = (*configdb.Store)(nil)
+
+// UUID regex for path parsing
+var dbUuidRegex = regexp.MustCompile(`^/[^/]+/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/`)
 
 func NewDatabaseProvider(cdb ConfigDBStoreageProfileFetcher) StorageProfileProvider {
 	return &databaseProvider{
@@ -57,7 +67,6 @@ func (p *databaseProvider) Get(ctx context.Context, organizationID uuid.UUID, in
 		CloudProvider:  profile.CloudProvider,
 		Region:         profile.Region,
 		Bucket:         profile.Bucket,
-		Hosted:         profile.Hosted,
 	}
 	if profile.Role != nil {
 		ret.Role = *profile.Role
@@ -80,7 +89,6 @@ func (p *databaseProvider) GetByCollectorName(ctx context.Context, organizationI
 		CloudProvider:  profile.CloudProvider,
 		Region:         profile.Region,
 		Bucket:         profile.Bucket,
-		Hosted:         profile.Hosted,
 	}
 	if profile.Role != nil {
 		ret.Role = *profile.Role
@@ -102,11 +110,68 @@ func (p *databaseProvider) GetStorageProfilesByBucketName(ctx context.Context, b
 			CloudProvider:  p.CloudProvider,
 			Region:         p.Region,
 			Bucket:         p.Bucket,
-			Hosted:         p.Hosted,
 		}
 		if p.Role != nil {
 			ret[i].Role = *p.Role
 		}
 	}
 	return ret, nil
+}
+
+func (p *databaseProvider) ResolveOrganization(ctx context.Context, bucketName, objectPath string) (uuid.UUID, error) {
+	// First check if the new bucket management tables exist by trying to get bucket config
+	_, err := p.cdb.GetBucketConfiguration(ctx, bucketName)
+	if err != nil {
+		// If the new tables don't exist yet, fall back to old logic
+		profiles, err := p.GetStorageProfilesByBucketName(ctx, bucketName)
+		if err != nil {
+			return uuid.Nil, err
+		}
+		if len(profiles) != 1 {
+			return uuid.Nil, fmt.Errorf("expected exactly one storage profile for bucket %s, found %d", bucketName, len(profiles))
+		}
+		return profiles[0].OrganizationID, nil
+	}
+
+	// New resolution logic using the new tables
+	// 1. Try to extract UUID from path
+	if matches := dbUuidRegex.FindStringSubmatch(objectPath); len(matches) > 1 {
+		orgID, err := uuid.Parse(matches[1])
+		if err != nil {
+			return uuid.Nil, fmt.Errorf("invalid UUID in path: %w", err)
+		}
+
+		// Verify this org has access to the bucket
+		hasAccess, err := p.cdb.CheckOrgBucketAccess(ctx, configdb.CheckOrgBucketAccessParams{
+			OrgID:      orgID,
+			BucketName: bucketName,
+		})
+		if err != nil {
+			return uuid.Nil, fmt.Errorf("failed to check org bucket access: %w", err)
+		}
+		if !hasAccess {
+			return uuid.Nil, fmt.Errorf("organization %s does not have access to bucket %s", orgID, bucketName)
+		}
+		return orgID, nil
+	}
+
+	// 2. Try longest prefix match
+	orgID, err := p.cdb.GetLongestPrefixMatch(ctx, configdb.GetLongestPrefixMatchParams{
+		BucketName: bucketName,
+		ObjectPath: objectPath,
+	})
+	if err == nil {
+		return orgID, nil
+	}
+
+	// 3. If single org owns the bucket, use that
+	orgs, err := p.cdb.GetOrganizationsByBucket(ctx, bucketName)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("failed to get organizations for bucket: %w", err)
+	}
+	if len(orgs) == 1 {
+		return orgs[0], nil
+	}
+
+	return uuid.Nil, fmt.Errorf("unable to resolve organization for path %s in bucket %s: %d organizations found", objectPath, bucketName, len(orgs))
 }

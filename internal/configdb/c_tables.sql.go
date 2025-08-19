@@ -16,7 +16,6 @@ SELECT
   sp.cloud_provider AS cloud_provider,
   sp.region AS region,
   sp.role AS role,
-  sp.hosted AS hosted,
   sp.bucket AS bucket,
   c.instance_num::SMALLINT AS instance_num,
   c.organization_id::UUID AS organization_id,
@@ -39,7 +38,6 @@ type GetStorageProfileByCollectorNameRow struct {
 	CloudProvider  string    `json:"cloud_provider"`
 	Region         string    `json:"region"`
 	Role           *string   `json:"role"`
-	Hosted         bool      `json:"hosted"`
 	Bucket         string    `json:"bucket"`
 	InstanceNum    int16     `json:"instance_num"`
 	OrganizationID uuid.UUID `json:"organization_id"`
@@ -53,7 +51,6 @@ func (q *Queries) GetStorageProfileByCollectorNameUncached(ctx context.Context, 
 		&i.CloudProvider,
 		&i.Region,
 		&i.Role,
-		&i.Hosted,
 		&i.Bucket,
 		&i.InstanceNum,
 		&i.OrganizationID,
@@ -67,7 +64,6 @@ SELECT
   sp.cloud_provider AS cloud_provider,
   sp.region AS region,
   sp.role AS role,
-  sp.hosted AS hosted,
   sp.bucket AS bucket,
   c.instance_num::SMALLINT AS instance_num,
   c.organization_id::UUID AS organization_id,
@@ -90,7 +86,6 @@ type GetStorageProfileRow struct {
 	CloudProvider  string    `json:"cloud_provider"`
 	Region         string    `json:"region"`
 	Role           *string   `json:"role"`
-	Hosted         bool      `json:"hosted"`
 	Bucket         string    `json:"bucket"`
 	InstanceNum    int16     `json:"instance_num"`
 	OrganizationID uuid.UUID `json:"organization_id"`
@@ -104,7 +99,6 @@ func (q *Queries) GetStorageProfileUncached(ctx context.Context, arg GetStorageP
 		&i.CloudProvider,
 		&i.Region,
 		&i.Role,
-		&i.Hosted,
 		&i.Bucket,
 		&i.InstanceNum,
 		&i.OrganizationID,
@@ -118,7 +112,6 @@ SELECT
   sp.cloud_provider AS cloud_provider,
   sp.region AS region,
   sp.role AS role,
-  sp.hosted AS hosted,
   sp.bucket AS bucket,
   c.instance_num::SMALLINT AS instance_num,
   c.organization_id::UUID AS organization_id,
@@ -135,7 +128,6 @@ type GetStorageProfilesByBucketNameRow struct {
 	CloudProvider  string    `json:"cloud_provider"`
 	Region         string    `json:"region"`
 	Role           *string   `json:"role"`
-	Hosted         bool      `json:"hosted"`
 	Bucket         string    `json:"bucket"`
 	InstanceNum    int16     `json:"instance_num"`
 	OrganizationID uuid.UUID `json:"organization_id"`
@@ -155,7 +147,6 @@ func (q *Queries) GetStorageProfilesByBucketNameUncached(ctx context.Context, bu
 			&i.CloudProvider,
 			&i.Region,
 			&i.Role,
-			&i.Hosted,
 			&i.Bucket,
 			&i.InstanceNum,
 			&i.OrganizationID,

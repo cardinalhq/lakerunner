@@ -149,7 +149,7 @@ func TestSetupStorageProfiles_FileErrors(t *testing.T) {
 			cleanup: func() {
 				os.Unsetenv("STORAGE_PROFILE_FILE")
 			},
-			wantErr: "failed to unmarshal storage profiles from file",
+			wantErr: "failed to unmarshal v1 storage profiles from file",
 		},
 		{
 			name: "env variable not set",

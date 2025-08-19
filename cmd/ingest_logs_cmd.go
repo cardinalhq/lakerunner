@@ -112,21 +112,9 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp stora
 		logCompletion("error")
 		return err
 	}
-	if profile.Role == "" {
-		if !profile.Hosted {
-			ll.Error("No role on non-hosted profile")
-			return err
-		}
-	}
 	if profile.Bucket != inf.Bucket {
 		ll.Error("Bucket ID mismatch", slog.String("expected", profile.Bucket), slog.String("actual", inf.Bucket))
 		return errors.New("bucket ID mismatch")
-	}
-	if profile.Role == "" {
-		if !profile.Hosted {
-			ll.Info("No role on non-hosted profile")
-			return err
-		}
 	}
 
 	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)

@@ -6,9 +6,18 @@ package configdb
 
 import (
 	"context"
+
+	"github.com/google/uuid"
 )
 
 type Querier interface {
+	CheckOrgBucketAccess(ctx context.Context, arg CheckOrgBucketAccessParams) (bool, error)
+	CreateBucketConfiguration(ctx context.Context, arg CreateBucketConfigurationParams) (BucketConfiguration, error)
+	CreateBucketPrefixMapping(ctx context.Context, arg CreateBucketPrefixMappingParams) (BucketPrefixMapping, error)
+	CreateOrganizationBucket(ctx context.Context, arg CreateOrganizationBucketParams) (OrganizationBucket, error)
+	GetBucketConfiguration(ctx context.Context, bucketName string) (BucketConfiguration, error)
+	GetLongestPrefixMatch(ctx context.Context, arg GetLongestPrefixMatchParams) (uuid.UUID, error)
+	GetOrganizationsByBucket(ctx context.Context, bucketName string) ([]uuid.UUID, error)
 	GetStorageProfileByCollectorNameUncached(ctx context.Context, arg GetStorageProfileByCollectorNameParams) (GetStorageProfileByCollectorNameRow, error)
 	GetStorageProfileUncached(ctx context.Context, arg GetStorageProfileParams) (GetStorageProfileRow, error)
 	GetStorageProfilesByBucketNameUncached(ctx context.Context, bucketName string) ([]GetStorageProfilesByBucketNameRow, error)

@@ -243,11 +243,6 @@ func cleanupObj(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageP
 		failWork(ctx, ll, mdb, obj.ID)
 		return
 	}
-	if profile.Role == "" && !profile.Hosted {
-		ll.Error("No role on non-hosted profile", slog.String("objectID", obj.ObjectID))
-		failWork(ctx, ll, mdb, obj.ID)
-		return
-	}
 
 	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
 	if err != nil {

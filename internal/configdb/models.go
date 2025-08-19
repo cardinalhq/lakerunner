@@ -9,6 +9,22 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type BucketConfiguration struct {
+	ID            uuid.UUID `json:"id"`
+	BucketName    string    `json:"bucket_name"`
+	CloudProvider string    `json:"cloud_provider"`
+	Region        string    `json:"region"`
+	Endpoint      *string   `json:"endpoint"`
+	Role          *string   `json:"role"`
+}
+
+type BucketPrefixMapping struct {
+	ID             uuid.UUID `json:"id"`
+	BucketID       uuid.UUID `json:"bucket_id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+	PathPrefix     string    `json:"path_prefix"`
+}
+
 type CCollector struct {
 	ID               uuid.UUID          `json:"id"`
 	DeletedAt        pgtype.Timestamptz `json:"deleted_at"`
@@ -20,12 +36,16 @@ type CCollector struct {
 }
 
 type CStorageProfile struct {
-	ID             uuid.UUID      `json:"id"`
-	OrganizationID uuid.UUID      `json:"organization_id"`
-	CloudProvider  string         `json:"cloud_provider"`
-	Bucket         string         `json:"bucket"`
-	Region         string         `json:"region"`
-	Hosted         bool           `json:"hosted"`
-	Properties     map[string]any `json:"properties"`
-	Role           *string        `json:"role"`
+	ID             uuid.UUID `json:"id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+	CloudProvider  string    `json:"cloud_provider"`
+	Bucket         string    `json:"bucket"`
+	Region         string    `json:"region"`
+	Role           *string   `json:"role"`
+}
+
+type OrganizationBucket struct {
+	ID             uuid.UUID `json:"id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+	BucketID       uuid.UUID `json:"bucket_id"`
 }

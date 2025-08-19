@@ -188,6 +188,16 @@ new-migration:
 	echo "-- $${ts}_$${name}.down.sql" > "$$down_file"; \
 	echo "Created: $$up_file $$down_file"
 
+new-configdb-migration:
+	@if [ -z "$$name" ]; then echo "Usage: make new-configdb-migration name=migration_name"; exit 1; fi; \
+	ts=$$(date +%s); \
+	up_file="internal/configdb/migrations/$${ts}_$${name}.up.sql"; \
+	down_file="internal/configdb/migrations/$${ts}_$${name}.down.sql"; \
+	touch "$$up_file" "$$down_file"; \
+	echo "-- $${ts}_$${name}.up.sql" > "$$up_file"; \
+	echo "-- $${ts}_$${name}.down.sql" > "$$down_file"; \
+	echo "Created: $$up_file $$down_file"
+
 #
 # DuckDB SDK management
 #

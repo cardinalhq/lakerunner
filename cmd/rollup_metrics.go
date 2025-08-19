@@ -96,12 +96,6 @@ func metricRollupItem(
 		ll.Error("Failed to get storage profile", slog.Any("error", err))
 		return WorkResultTryAgainLater, err
 	}
-	if profile.Role == "" {
-		if !profile.Hosted {
-			ll.Error("No role on non-hosted profile")
-			return WorkResultTryAgainLater, err
-		}
-	}
 
 	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
 	if err != nil {

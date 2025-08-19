@@ -33,7 +33,6 @@ type StorageProfile struct {
 	Region         string    `json:"region" yaml:"region"`
 	Role           string    `json:"role,omitempty" yaml:"role,omitempty"`
 	Bucket         string    `json:"bucket" yaml:"bucket"`
-	Hosted         bool      `json:"hosted,omitempty" yaml:"hosted,omitempty"`
 	Endpoint       string    `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
 	InsecureTLS    bool      `json:"insecure_tls,omitempty" yaml:"insecure_tls,omitempty"`
 	UsePathStyle   bool      `json:"use_path_style,omitempty" yaml:"use_path_style,omitempty"`
@@ -44,6 +43,7 @@ type StorageProfileProvider interface {
 	Get(ctx context.Context, organizationID uuid.UUID, instanceNum int16) (StorageProfile, error)
 	GetStorageProfilesByBucketName(ctx context.Context, bucketName string) ([]StorageProfile, error)
 	GetByCollectorName(ctx context.Context, organizationID uuid.UUID, collectorName string) (StorageProfile, error)
+	ResolveOrganization(ctx context.Context, bucketName, objectPath string) (uuid.UUID, error)
 }
 
 func SetupStorageProfiles() (StorageProfileProvider, error) {

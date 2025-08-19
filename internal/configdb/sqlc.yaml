@@ -3,7 +3,7 @@ version: "2"
 sql:
   - engine: "postgresql"
     queries: "queries"
-    schema: ["static-schema"]
+    schema: ["static-schema", "migrations"]
     gen:
       go:
         emit_json_tags: true
