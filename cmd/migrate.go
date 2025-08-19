@@ -25,7 +25,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
-	configdbmigrations "github.com/cardinalhq/lakerunner/internal/configdb/migrations"
+	configdbmigrations "github.com/cardinalhq/lakerunner/configdb/migrations"
 	mdbmigrations "github.com/cardinalhq/lakerunner/lrdb/migrations"
 )
 

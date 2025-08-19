@@ -23,7 +23,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/cardinalhq/lakerunner/internal/configdb"
+	"github.com/cardinalhq/lakerunner/configdb"
 )
 
 // Mock for new bucket management queries

@@ -113,7 +113,7 @@ It ingests structured telemetry data (CSV, Parquet, JSON.gz) from sources like O
 
 - Type-safe SQL via sqlc.
 - `lrdb/migrations/` for schema changes.
-- `internal/configdb/static-schema/` contains fixed schema snapshots (no migrations allowed).
+- `configdb/static-schema/` contains fixed schema snapshots (no migrations allowed).
 - Connections are pooled for performance.
 
 Rules:
