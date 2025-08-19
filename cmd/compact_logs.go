@@ -82,7 +82,7 @@ func compactLogsFor(
 	rpfEstimate int64,
 	_ any,
 ) (WorkResult, error) {
-	profile, err := sp.Get(ctx, inf.OrganizationID(), inf.InstanceNum())
+	profile, err := sp.GetStorageProfileForOrganization(ctx, inf.OrganizationID())
 	if err != nil {
 		ll.Error("Failed to get storage profile", slog.Any("error", err))
 		return WorkResultTryAgainLater, err
@@ -187,7 +187,6 @@ func logCompactItemDo(
 		segments, err := mdb.GetLogSegmentsForCompaction(ctx, lrdb.GetLogSegmentsForCompactionParams{
 			OrganizationID:  sp.OrganizationID,
 			Dateint:         stdi,
-			InstanceNum:     sp.InstanceNum,
 			MaxFileSize:     targetFileSize * 9 / 10, // Only include files < 90% of target (larger files are fine as-is)
 			CursorCreatedAt: cursorCreatedAt,         // Cursor for pagination
 			CursorSegmentID: cursorSegmentID,         // Cursor for pagination

@@ -70,6 +70,10 @@ func (m *mockBucketManagementFetcher) GetLongestPrefixMatch(ctx context.Context,
 	return m.prefixMatch, m.prefixMatchErr
 }
 
+func (m *mockBucketManagementFetcher) GetBucketByOrganization(ctx context.Context, organizationID uuid.UUID) (string, error) {
+	return m.bucketConfig.BucketName, m.bucketErr
+}
+
 func TestDatabaseProvider_ResolveOrganization_UUIDExtraction(t *testing.T) {
 	orgID := uuid.New()
 
@@ -364,15 +368,18 @@ func TestDatabaseProvider_ResolveOrganization_SingleOrgFallback(t *testing.T) {
 
 func TestDatabaseProvider_ResolveOrganization_BucketNotFound(t *testing.T) {
 	mock := &mockBucketManagementFetcher{
-		bucketErr: errors.New("bucket configuration not found"),
+		bucketErr:       errors.New("bucket configuration not found"),
+		orgsByBucketErr: errors.New("bucket not found"),
+		prefixMatchErr:  errors.New("no prefix match"),
 	}
 
 	provider := NewDatabaseProvider(mock)
 
 	_, err := provider.ResolveOrganization(context.Background(), "nonexistent-bucket", "/any/path/file.parquet")
 
-	// Should trigger fallback to old logic, which will also fail since we don't implement the old methods
+	// Should return error since bucket is not found
 	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "bucket not found")
 }
 
 func TestBucketConfiguration_RoleBasedBehavior(t *testing.T) {

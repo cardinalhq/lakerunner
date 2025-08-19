@@ -33,8 +33,6 @@ func TestSetupStorageProfiles(t *testing.T) {
 	orgID := uuid.New()
 	yamlContent := fmt.Sprintf(`
 - organization_id: %s
-  instance_num: 1
-  collector_name: "test-collector"
   cloud_provider: "aws"
   region: "us-west-2"
   role: "test-role"

@@ -96,11 +96,6 @@ func handleMessage(ctx context.Context, msg []byte, sp storageprofile.StoragePro
 			item.CollectorName = "" // Not used in v2
 		}
 
-		// Set default instance num for v2
-		if item.InstanceNum == -1 {
-			item.InstanceNum = 1
-		}
-
 		slog.Info("Processing item",
 			slog.String("bucket", item.Bucket),
 			slog.String("object_id", item.ObjectID),
@@ -110,7 +105,6 @@ func handleMessage(ctx context.Context, msg []byte, sp storageprofile.StoragePro
 		err = mdb.PutInqueueWork(ctx, lrdb.PutInqueueWorkParams{
 			OrganizationID: item.OrganizationID,
 			CollectorName:  item.CollectorName,
-			InstanceNum:    item.InstanceNum,
 			Bucket:         item.Bucket,
 			ObjectID:       item.ObjectID,
 			TelemetryType:  item.TelemetryType,

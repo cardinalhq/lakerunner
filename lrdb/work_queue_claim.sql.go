@@ -60,7 +60,6 @@ WITH
     FROM public.work_queue w
     LEFT JOIN sl_small sl
       ON sl.organization_id = w.organization_id
-     AND sl.instance_num    = w.instance_num
      AND sl.signal          = w.signal
      AND sl.slot_id         = w.slot_id
      AND sl.ts_range        && w.ts_range

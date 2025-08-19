@@ -92,24 +92,9 @@ func init() {
 
 func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
 	awsmanager *awsclient.Manager, inf lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
-	ll.Info("Starting log ingest",
-		slog.String("organizationID", inf.OrganizationID.String()),
-		slog.Int("instanceNum", int(inf.InstanceNum)),
-		slog.String("bucket", inf.Bucket),
-		slog.String("objectID", inf.ObjectID),
-		slog.String("inqueueID", inf.ID.String()))
-
-	t0 := time.Now()
-	logCompletion := func(result string) {
-		ll.Info("Log ingest completed",
-			slog.String("result", result),
-			slog.String("inqueueID", inf.ID.String()),
-			slog.Duration("elapsed", time.Since(t0)))
-	}
-	profile, err := sp.Get(ctx, inf.OrganizationID, inf.InstanceNum)
+	profile, err := sp.GetStorageProfileForBucket(ctx, inf.OrganizationID, inf.Bucket)
 	if err != nil {
 		ll.Error("Failed to get storage profile", slog.Any("error", err))
-		logCompletion("error")
 		return err
 	}
 	if profile.Bucket != inf.Bucket {
@@ -232,7 +217,6 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp stora
 				Dateint:        key.DateInt,
 				IngestDateint:  ingest_dateint,
 				SegmentID:      segmentID,
-				InstanceNum:    inf.InstanceNum,
 				StartTs:        split.FirstTS,
 				EndTs:          split.LastTS,
 				RecordCount:    split.RecordCount,
@@ -268,13 +252,11 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp stora
 					slog.Any("hourBoundary", hourBoundary),
 					slog.Int64("triggerTS", earliestTS),
 					slog.Any("error", err))
-				logCompletion("error")
 				return err
 			}
 		}
 	}
 
-	logCompletion("success")
 	return nil
 }
 

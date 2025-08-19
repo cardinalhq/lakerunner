@@ -8,7 +8,6 @@ WITH params AS (
 bpr AS (
   SELECT
     organization_id,
-    instance_num,
     frequency_ms,
     (sum(file_size)::float8 / NULLIF(sum(record_count), 0))::float8 AS avg_bpr
   FROM metric_seg
@@ -16,11 +15,10 @@ bpr AS (
       record_count > 100
       AND dateint IN (@dateint_low, @dateint_high)
       AND ts_range && int8range(@ms_low, @ms_high, '[)')
-  GROUP BY organization_id, instance_num, frequency_ms
+  GROUP BY organization_id, frequency_ms
 )
 SELECT
   b.organization_id,
-  b.instance_num,
   b.frequency_ms,
   CEIL(p.target_bytes / NULLIF(b.avg_bpr, 0))::bigint AS estimated_records
 FROM bpr b
@@ -36,18 +34,16 @@ WITH params AS (
 bpr AS (
   SELECT
     organization_id,
-    instance_num,
     (sum(file_size)::float8 / NULLIF(sum(record_count), 0))::float8 AS avg_bpr
   FROM log_seg
   WHERE
       record_count > 100
       AND dateint IN (@dateint_low, @dateint_high)
       AND ts_range && int8range(@ms_low, @ms_high, '[)')
-  GROUP BY organization_id, instance_num
+  GROUP BY organization_id
 )
 SELECT
   b.organization_id,
-  b.instance_num,
   CEIL(p.target_bytes / NULLIF(b.avg_bpr, 0))::bigint AS estimated_records
 FROM bpr b
 CROSS JOIN params p;

@@ -58,7 +58,7 @@ func TestLogEstimator_Get_ExactMatch(t *testing.T) {
 	orgA, _ := mk()
 	e := newBareLogEstimator()
 
-	key := logEstimatorKey{OrganizationID: orgA, InstanceNum: 1}
+	key := logEstimatorKey{OrganizationID: orgA}
 	e.currentEstimates[key] = 123
 
 	got := e.Get(orgA, 1)
@@ -73,8 +73,7 @@ func TestLogEstimator_Get_FallbackTiers(t *testing.T) {
 	// Test exact match takes priority
 	t.Run("ExactMatch", func(t *testing.T) {
 		e := newBareLogEstimator()
-		e.currentEstimates[logEstimatorKey{orgA, 1}] = 100
-		e.currentEstimates[logEstimatorKey{orgA, 2}] = 200
+		e.currentEstimates[logEstimatorKey{orgA}] = 100
 
 		got := e.Get(orgA, 1)
 		if got != 100 {
@@ -86,12 +85,11 @@ func TestLogEstimator_Get_FallbackTiers(t *testing.T) {
 	t.Run("OrgAverage", func(t *testing.T) {
 		e := newBareLogEstimator()
 		// Same org but different instances
-		e.currentEstimates[logEstimatorKey{orgA, 2}] = 100
-		e.currentEstimates[logEstimatorKey{orgA, 3}] = 200
+		e.currentEstimates[logEstimatorKey{orgA}] = 100
 
-		// Query for non-existing instance but same org
+		// Query should return the estimate for orgA
 		got := e.Get(orgA, 1)
-		expected := (100 + 200) / 2
+		expected := int64(100)
 		if got != int64(expected) {
 			t.Fatalf("org average: want %d, got %d", expected, got)
 		}
@@ -101,12 +99,11 @@ func TestLogEstimator_Get_FallbackTiers(t *testing.T) {
 	t.Run("GlobalAverage", func(t *testing.T) {
 		e := newBareLogEstimator()
 		// Different orgs and instances
-		e.currentEstimates[logEstimatorKey{orgB, 5}] = 600
-		e.currentEstimates[logEstimatorKey{orgB, 6}] = 800
+		e.currentEstimates[logEstimatorKey{orgB}] = 700
 
 		// Query for non-existing org
 		got := e.Get(orgA, 1)
-		expected := (600 + 800) / 2
+		expected := int64(700)
 		if got != int64(expected) {
 			t.Fatalf("global average: want %d, got %d", expected, got)
 		}
@@ -126,14 +123,12 @@ func TestLogEstimator_Get_FallbackTiers(t *testing.T) {
 	t.Run("IgnoreNonPositive", func(t *testing.T) {
 		e := newBareLogEstimator()
 		// Mix of positive and non-positive estimates
-		e.currentEstimates[logEstimatorKey{orgA, 1}] = 0    // ignored
-		e.currentEstimates[logEstimatorKey{orgA, 2}] = -100 // ignored
-		e.currentEstimates[logEstimatorKey{orgA, 3}] = 300  // used
-		e.currentEstimates[logEstimatorKey{orgA, 4}] = 500  // used
+		e.currentEstimates[logEstimatorKey{orgA}] = 300 // used
+		e.currentEstimates[logEstimatorKey{orgB}] = 500 // used for global average
 
-		// Should average only the positive values (300 + 500) / 2 = 400
-		got := e.Get(orgA, 9) // Different instance to trigger averaging
-		if got != 400 {
+		// Should return the orgA value directly
+		got := e.Get(orgA, 9)
+		if got != 300 {
 			t.Fatalf("should ignore non-positive: want 400, got %d", got)
 		}
 	})
@@ -182,13 +177,13 @@ func TestLogEstimator_UpdateEstimates_CornerCases(t *testing.T) {
 	t.Run("AllEstimatesNonPositive", func(t *testing.T) {
 		fq := &fakeLogQuerier{
 			logRows: []lrdb.LogSegEstimatorRow{
-				{OrganizationID: orgA, InstanceNum: 1, EstimatedRecords: 0},
-				{OrganizationID: orgB, InstanceNum: 2, EstimatedRecords: -50},
+				{OrganizationID: orgA, EstimatedRecords: 0},
+				{OrganizationID: orgB, EstimatedRecords: -50},
 			},
 		}
 		e := newBareLogEstimator()
 		// Add some existing data that should be preserved
-		e.currentEstimates[logEstimatorKey{orgA, 5}] = 999
+		e.currentEstimates[logEstimatorKey{orgA}] = 999
 
 		err := e.updateEstimates(context.Background(), fq)
 		if err != nil {
@@ -199,7 +194,7 @@ func TestLogEstimator_UpdateEstimates_CornerCases(t *testing.T) {
 		if len(e.currentEstimates) != 1 {
 			t.Fatalf("should preserve existing estimates when all new ones are non-positive, got %d", len(e.currentEstimates))
 		}
-		key := logEstimatorKey{orgA, 5}
+		key := logEstimatorKey{orgA}
 		if est, ok := e.currentEstimates[key]; !ok || est != 999 {
 			t.Fatalf("existing estimate should be preserved")
 		}
@@ -209,9 +204,9 @@ func TestLogEstimator_UpdateEstimates_CornerCases(t *testing.T) {
 	t.Run("MixedPositiveNonPositive", func(t *testing.T) {
 		fq := &fakeLogQuerier{
 			logRows: []lrdb.LogSegEstimatorRow{
-				{OrganizationID: orgA, InstanceNum: 1, EstimatedRecords: -25}, // dropped
-				{OrganizationID: orgB, InstanceNum: 1, EstimatedRecords: 300}, // kept
-				{OrganizationID: orgA, InstanceNum: 2, EstimatedRecords: 0},   // dropped
+				{OrganizationID: orgA, EstimatedRecords: -25}, // dropped
+				{OrganizationID: orgB, EstimatedRecords: 300}, // kept
+				{OrganizationID: orgA, EstimatedRecords: 0},   // dropped (second org A will overwrite first)
 			},
 		}
 		e := newBareLogEstimator()
@@ -227,7 +222,7 @@ func TestLogEstimator_UpdateEstimates_CornerCases(t *testing.T) {
 		}
 
 		// Check log estimate
-		logKey := logEstimatorKey{orgB, 1}
+		logKey := logEstimatorKey{orgB}
 		if est, ok := e.currentEstimates[logKey]; !ok || est != 300 {
 			t.Fatalf("positive log estimate not found or incorrect")
 		}
@@ -238,7 +233,7 @@ func TestNewLogEstimator(t *testing.T) {
 	orgA, _ := mk()
 	fq := &fakeLogQuerier{
 		logRows: []lrdb.LogSegEstimatorRow{
-			{OrganizationID: orgA, InstanceNum: 5, EstimatedRecords: 555},
+			{OrganizationID: orgA, EstimatedRecords: 555},
 		},
 	}
 	ctx, cancel := context.WithCancel(context.Background())

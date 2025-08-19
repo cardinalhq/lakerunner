@@ -94,7 +94,7 @@ func init() {
 
 func metricIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
 	awsmanager *awsclient.Manager, inf lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
-	profile, err := sp.Get(ctx, inf.OrganizationID, inf.InstanceNum)
+	profile, err := sp.GetStorageProfileForBucket(ctx, inf.OrganizationID, inf.Bucket)
 	if err != nil {
 		ll.Error("Failed to get storage profile", slog.Any("error", err))
 		return err
@@ -468,7 +468,6 @@ func writeMetricSketchParquet(ctx context.Context, tmpdir string, blocknum int64
 			IngestDateint:  ingest_dateint,
 			TidPartition:   0,
 			SegmentID:      segmentID,
-			InstanceNum:    inf.InstanceNum,
 			StartTs:        startTS,
 			EndTs:          endTS,
 			RecordCount:    stat.RecordCount,

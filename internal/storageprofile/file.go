@@ -143,46 +143,43 @@ func parseV2Config(filename string, contents []byte) (StorageProfileProvider, er
 	}, nil
 }
 
-func (p *fileProvider) Get(ctx context.Context, organizationID uuid.UUID, instanceNum int16) (StorageProfile, error) {
+func (p *fileProvider) GetStorageProfileForBucket(ctx context.Context, organizationID uuid.UUID, bucketName string) (StorageProfile, error) {
 	if p.version == 1 {
 		for _, profile := range p.profiles {
-			if profile.OrganizationID == organizationID && profile.InstanceNum == instanceNum {
+			if profile.OrganizationID == organizationID && profile.Bucket == bucketName {
 				return profile, nil
 			}
 		}
-		return StorageProfile{}, fmt.Errorf("storage profile not found for organization %s and instance %d", organizationID, instanceNum)
+		return StorageProfile{}, fmt.Errorf("storage profile not found for organization %s and bucket %s", organizationID, bucketName)
 	}
 
-	// V2: For backwards compatibility, return first bucket for the org
-	if buckets, ok := p.orgToBuckets[organizationID]; ok && len(buckets) > 0 {
-		bucketName := buckets[0]
-		if bucket, exists := p.bucketConfigs[bucketName]; exists {
-			return StorageProfile{
-				OrganizationID: organizationID,
-				InstanceNum:    1, // Default instance for v2
-				CloudProvider:  bucket.CloudProvider,
-				Region:         bucket.Region,
-				Role:           bucket.Role,
-				Bucket:         bucket.Name,
-				Endpoint:       bucket.Endpoint,
-			}, nil
+	// V2: Check if org has access to this bucket
+	bucket, exists := p.bucketConfigs[bucketName]
+	if !exists {
+		return StorageProfile{}, fmt.Errorf("bucket %s not found in configuration", bucketName)
+	}
+
+	// Check if organization is in the bucket's organizations list
+	hasAccess := false
+	for _, orgID := range bucket.Organizations {
+		if orgID == organizationID {
+			hasAccess = true
+			break
 		}
 	}
-	return StorageProfile{}, fmt.Errorf("storage profile not found for organization %s", organizationID)
-}
 
-func (p *fileProvider) GetByCollectorName(ctx context.Context, organizationID uuid.UUID, collectorName string) (StorageProfile, error) {
-	if p.version == 1 {
-		for _, profile := range p.profiles {
-			if profile.OrganizationID == organizationID && profile.CollectorName == collectorName {
-				return profile, nil
-			}
-		}
-		return StorageProfile{}, fmt.Errorf("storage profile not found for organization %s and collector name %s", organizationID, collectorName)
+	if !hasAccess {
+		return StorageProfile{}, fmt.Errorf("organization %s does not have access to bucket %s", organizationID, bucketName)
 	}
 
-	// V2: Collector names are not used, fall back to first bucket
-	return p.Get(ctx, organizationID, 1)
+	return StorageProfile{
+		OrganizationID: organizationID,
+		CloudProvider:  bucket.CloudProvider,
+		Region:         bucket.Region,
+		Role:           bucket.Role,
+		Bucket:         bucket.Name,
+		Endpoint:       bucket.Endpoint,
+	}, nil
 }
 
 func (p *fileProvider) GetStorageProfilesByBucketName(ctx context.Context, bucketName string) ([]StorageProfile, error) {
@@ -206,7 +203,6 @@ func (p *fileProvider) GetStorageProfilesByBucketName(ctx context.Context, bucke
 	for _, orgID := range bucket.Organizations {
 		profile := StorageProfile{
 			OrganizationID: orgID,
-			InstanceNum:    1,
 			CloudProvider:  bucket.CloudProvider,
 			Region:         bucket.Region,
 			Role:           bucket.Role,
@@ -216,6 +212,26 @@ func (p *fileProvider) GetStorageProfilesByBucketName(ctx context.Context, bucke
 		ret = append(ret, profile)
 	}
 	return ret, nil
+}
+
+func (p *fileProvider) GetStorageProfileForOrganization(ctx context.Context, organizationID uuid.UUID) (StorageProfile, error) {
+	if p.version == 1 {
+		// V1: Find the first profile for this organization
+		for _, profile := range p.profiles {
+			if profile.OrganizationID == organizationID {
+				return profile, nil
+			}
+		}
+		return StorageProfile{}, fmt.Errorf("storage profile not found for organization %s", organizationID)
+	}
+
+	// V2: Find the first bucket for this organization
+	if buckets, ok := p.orgToBuckets[organizationID]; ok && len(buckets) > 0 {
+		bucketName := buckets[0]
+		return p.GetStorageProfileForBucket(ctx, organizationID, bucketName)
+	}
+
+	return StorageProfile{}, fmt.Errorf("no bucket found for organization %s", organizationID)
 }
 
 func (p *fileProvider) ResolveOrganization(ctx context.Context, bucketName, objectPath string) (uuid.UUID, error) {

@@ -35,7 +35,6 @@ type MetricEstimator interface {
 
 type metricEstimatorKey struct {
 	OrganizationID uuid.UUID
-	InstanceNum    int16
 	FrequencyMs    int32
 }
 
@@ -85,9 +84,9 @@ func (e *metricEstimator) Get(org uuid.UUID, inst int16, frequencyMs int32) int6
 }
 
 func (e *metricEstimator) getFrequencySpecificEstimate(snap map[metricEstimatorKey]int64, org uuid.UUID, inst int16, frequencyMs int32) int64 {
-	key := metricEstimatorKey{org, inst, frequencyMs}
+	key := metricEstimatorKey{org, frequencyMs}
 
-	// 1. Try exact match for this organization + instance + frequency.
+	// 1. Try exact match for this organization + frequency.
 	if est, ok := snap[key]; ok && est > 0 {
 		return est
 	}
@@ -196,10 +195,10 @@ func (e *metricEstimator) updateEstimates(parent context.Context, querier Estima
 	for _, r := range metricRows {
 		if r.EstimatedRecords <= 0 {
 			dropped++
-			slog.Warn("dropping non-positive metric estimate", "org", r.OrganizationID, "inst", r.InstanceNum, "freq", r.FrequencyMs, "est", r.EstimatedRecords)
+			slog.Warn("dropping non-positive metric estimate", "org", r.OrganizationID, "freq", r.FrequencyMs, "est", r.EstimatedRecords)
 			continue
 		}
-		next[metricEstimatorKey{r.OrganizationID, r.InstanceNum, r.FrequencyMs}] = r.EstimatedRecords
+		next[metricEstimatorKey{r.OrganizationID, r.FrequencyMs}] = r.EstimatedRecords
 		kept++
 	}
 

@@ -20,6 +20,7 @@ type Querier interface {
 	CreateOrganizationBucket(ctx context.Context, arg CreateOrganizationBucketParams) (OrganizationBucket, error)
 	// Legacy table sync operations
 	GetAllCStorageProfilesForSync(ctx context.Context) ([]GetAllCStorageProfilesForSyncRow, error)
+	GetBucketByOrganization(ctx context.Context, organizationID uuid.UUID) (string, error)
 	GetBucketConfiguration(ctx context.Context, bucketName string) (BucketConfiguration, error)
 	GetLongestPrefixMatch(ctx context.Context, arg GetLongestPrefixMatchParams) (uuid.UUID, error)
 	GetOrganizationsByBucket(ctx context.Context, bucketName string) ([]uuid.UUID, error)

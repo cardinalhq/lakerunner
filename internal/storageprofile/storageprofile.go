@@ -27,8 +27,6 @@ import (
 
 type StorageProfile struct {
 	OrganizationID uuid.UUID `json:"organization_id" yaml:"organization_id"`
-	InstanceNum    int16     `json:"instance_num" yaml:"instance_num"`
-	CollectorName  string    `json:"collector_name" yaml:"collector_name"`
 	CloudProvider  string    `json:"cloud_provider" yaml:"cloud_provider"`
 	Region         string    `json:"region" yaml:"region"`
 	Role           string    `json:"role,omitempty" yaml:"role,omitempty"`
@@ -40,9 +38,9 @@ type StorageProfile struct {
 }
 
 type StorageProfileProvider interface {
-	Get(ctx context.Context, organizationID uuid.UUID, instanceNum int16) (StorageProfile, error)
+	GetStorageProfileForBucket(ctx context.Context, organizationID uuid.UUID, bucketName string) (StorageProfile, error)
 	GetStorageProfilesByBucketName(ctx context.Context, bucketName string) ([]StorageProfile, error)
-	GetByCollectorName(ctx context.Context, organizationID uuid.UUID, collectorName string) (StorageProfile, error)
+	GetStorageProfileForOrganization(ctx context.Context, organizationID uuid.UUID) (StorageProfile, error)
 	ResolveOrganization(ctx context.Context, bucketName, objectPath string) (uuid.UUID, error)
 }
 

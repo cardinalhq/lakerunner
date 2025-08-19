@@ -85,3 +85,9 @@ INSERT INTO organization_buckets (
   @organization_id, @bucket_id
 ) ON CONFLICT (organization_id) DO UPDATE SET
   bucket_id = EXCLUDED.bucket_id;
+
+-- name: GetBucketByOrganization :one
+SELECT bc.bucket_name
+FROM organization_buckets ob
+JOIN bucket_configurations bc ON ob.bucket_id = bc.id
+WHERE ob.organization_id = @organization_id;

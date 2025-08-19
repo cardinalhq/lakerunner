@@ -195,6 +195,20 @@ func (q *Queries) GetAllCStorageProfilesForSync(ctx context.Context) ([]GetAllCS
 	return items, nil
 }
 
+const getBucketByOrganization = `-- name: GetBucketByOrganization :one
+SELECT bc.bucket_name
+FROM organization_buckets ob
+JOIN bucket_configurations bc ON ob.bucket_id = bc.id
+WHERE ob.organization_id = $1
+`
+
+func (q *Queries) GetBucketByOrganization(ctx context.Context, organizationID uuid.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, getBucketByOrganization, organizationID)
+	var bucket_name string
+	err := row.Scan(&bucket_name)
+	return bucket_name, err
+}
+
 const getBucketConfiguration = `-- name: GetBucketConfiguration :one
 SELECT id, bucket_name, cloud_provider, region, endpoint, role FROM bucket_configurations WHERE bucket_name = $1
 `

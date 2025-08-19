@@ -282,7 +282,7 @@ func runObjCleaner(ctx context.Context, ll *slog.Logger, sp storageprofile.Stora
 }
 
 func cleanupObj(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, awsmanager *awsclient.Manager, obj lrdb.ObjectCleanupGetRow) {
-	profile, err := sp.Get(ctx, obj.OrganizationID, obj.InstanceNum)
+	profile, err := sp.GetStorageProfileForBucket(ctx, obj.OrganizationID, obj.BucketID)
 	if err != nil {
 		ll.Error("Failed to get storage profile", slog.Any("error", err), slog.String("objectID", obj.ObjectID))
 		failWork(ctx, ll, mdb, obj.ID)

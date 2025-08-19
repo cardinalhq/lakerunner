@@ -28,8 +28,6 @@ var (
 	orgID       = uuid.New()
 	yamlContent = fmt.Sprintf(`
 - organization_id: %s
-  instance_num: 1
-  collector_name: "ext-123"
   cloud_provider: "aws"
   region: "us-west-2"
   role: "role-arn"
@@ -47,19 +45,16 @@ func Test_newFileProviderFromContents_Success(t *testing.T) {
 	require.Len(t, fp.profiles, 1)
 	profile := fp.profiles[0]
 	require.Equal(t, orgID, profile.OrganizationID)
-	require.Equal(t, int16(1), profile.InstanceNum)
-	require.Equal(t, "ext-123", profile.CollectorName)
+	// Note: InstanceNum and CollectorName no longer exist in StorageProfile
 	require.Equal(t, "aws", profile.CloudProvider)
 	require.Equal(t, "us-west-2", profile.Region)
 	require.Equal(t, "role-arn", profile.Role)
 	require.Equal(t, "my-bucket", profile.Bucket)
 
-	item, err := provider.Get(context.TODO(), orgID, 1)
+	// Note: Get method was removed, using GetStorageProfileForOrganization instead
+	item, err := provider.GetStorageProfileForOrganization(context.TODO(), orgID)
 	require.NoError(t, err)
-	require.Equal(t, profile, item)
-
-	_, err = provider.Get(context.TODO(), orgID, 2)
-	require.Error(t, err)
+	require.Equal(t, profile.OrganizationID, item.OrganizationID)
 }
 
 func Test_newFileProviderFromContents_UnmarshalError(t *testing.T) {
@@ -116,8 +111,8 @@ buckets:
 	require.NoError(t, err)
 	require.Equal(t, orgID1, orgID)
 
-	// Test Get method with v2 (should work for backwards compatibility)
-	profile, err := provider.Get(context.Background(), orgID1, 1)
+	// Test GetStorageProfileForOrganization method with v2
+	profile, err := provider.GetStorageProfileForOrganization(context.Background(), orgID1)
 	require.NoError(t, err)
 	require.Equal(t, orgID1, profile.OrganizationID)
 	require.Equal(t, "shared-bucket", profile.Bucket) // Returns first bucket
@@ -130,116 +125,20 @@ func Test_NewFileProvider_env(t *testing.T) {
 	require.NotNil(t, provider)
 }
 
-func TestFileProvider_GetByCollectorName(t *testing.T) {
-	multiYamlContent := fmt.Sprintf(`
-- organization_id: %s
-  instance_num: 1
-  collector_name: "collector-1"
-  cloud_provider: "aws"
-  region: "us-west-2"
-  role: "role-arn"
-  bucket: "bucket-1"
-- organization_id: %s
-  instance_num: 2
-  collector_name: "collector-2"
-  cloud_provider: "gcp"
-  region: "europe-west1"
-  bucket: "bucket-2"
-- organization_id: %s
-  instance_num: 3
-  collector_name: "collector-3"
-  cloud_provider: "aws"
-  region: "us-east-1"
-  bucket: "bucket-3"
-`, orgID.String(), orgID.String(), uuid.New().String())
-
-	provider, err := newFileProviderFromContents("test.yaml", []byte(multiYamlContent))
-	require.NoError(t, err)
-
-	tests := []struct {
-		name           string
-		organizationID uuid.UUID
-		collectorName  string
-		want           StorageProfile
-		wantErr        bool
-	}{
-		{
-			name:           "found collector-1",
-			organizationID: orgID,
-			collectorName:  "collector-1",
-			want: StorageProfile{
-				OrganizationID: orgID,
-				InstanceNum:    1,
-				CollectorName:  "collector-1",
-				CloudProvider:  "aws",
-				Region:         "us-west-2",
-				Role:           "role-arn",
-				Bucket:         "bucket-1",
-			},
-			wantErr: false,
-		},
-		{
-			name:           "found collector-2",
-			organizationID: orgID,
-			collectorName:  "collector-2",
-			want: StorageProfile{
-				OrganizationID: orgID,
-				InstanceNum:    2,
-				CollectorName:  "collector-2",
-				CloudProvider:  "gcp",
-				Region:         "europe-west1",
-				Bucket:         "bucket-2",
-			},
-			wantErr: false,
-		},
-		{
-			name:           "collector not found",
-			organizationID: orgID,
-			collectorName:  "nonexistent",
-			want:           StorageProfile{},
-			wantErr:        true,
-		},
-		{
-			name:           "wrong organization",
-			organizationID: uuid.New(),
-			collectorName:  "collector-1",
-			want:           StorageProfile{},
-			wantErr:        true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := provider.GetByCollectorName(context.Background(), tt.organizationID, tt.collectorName)
-			if tt.wantErr {
-				require.Error(t, err)
-				require.Contains(t, err.Error(), "storage profile not found")
-				return
-			}
-			require.NoError(t, err)
-			require.Equal(t, tt.want, got)
-		})
-	}
-}
+// Test removed - GetByCollectorName method was removed
 
 func TestFileProvider_GetStorageProfilesByBucketName(t *testing.T) {
 	multiYamlContent := fmt.Sprintf(`
 - organization_id: %s
-  instance_num: 1
-  collector_name: "collector-1"
   cloud_provider: "aws"
   region: "us-west-2"
   role: "role-arn"
   bucket: "shared-bucket"
 - organization_id: %s
-  instance_num: 2
-  collector_name: "collector-2"
   cloud_provider: "gcp"
   region: "europe-west1"
   bucket: "unique-bucket"
 - organization_id: %s
-  instance_num: 3
-  collector_name: "collector-3"
   cloud_provider: "aws"
   region: "us-east-1"
   bucket: "shared-bucket"
