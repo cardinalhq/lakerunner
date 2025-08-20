@@ -32,8 +32,10 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/cardinalhq/lakerunner/cmd/ingestlogs"
 	"github.com/cardinalhq/lakerunner/fileconv/proto"

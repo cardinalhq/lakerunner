@@ -239,7 +239,10 @@ func normalizeAndMerge(g SegmentGroup, qStart, qEnd int64) SegmentGroup {
 		return SegmentGroup{}
 	}
 
-	type key struct{ sid, eid string }
+	type key struct {
+		sid int64
+		eid string
+	}
 	merged := map[key]SegmentInfo{}
 
 	for _, s := range g.Segments {
