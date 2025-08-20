@@ -16,30 +16,44 @@
 
 set -euo pipefail
 
-# Check migration file integrity against base branch
+# Check migration file integrity against branch point
 # Allows comment and whitespace changes, but blocks substantive changes
-BASE_BRANCH="${1:-main}"
 
-echo "🔍 Checking migration file integrity against $BASE_BRANCH..."
-echo "   Allowing comment and whitespace changes only"
+# Find the merge-base (branch point) automatically
+# First try to find the remote tracking branch, fall back to main/master
+if [ -n "${1:-}" ]; then
+    # Use provided base branch
+    BASE_REF="$1"
+elif git rev-parse --verify @{upstream} >/dev/null 2>&1; then
+    # Use upstream tracking branch
+    BASE_REF="@{upstream}"
+elif git rev-parse --verify origin/main >/dev/null 2>&1; then
+    # Fall back to origin/main
+    BASE_REF="origin/main"
+elif git rev-parse --verify origin/master >/dev/null 2>&1; then
+    # Fall back to origin/master
+    BASE_REF="origin/master"
+else
+    echo "Error: Cannot determine base branch. Please specify one as an argument."
+    exit 1
+fi
 
-# Fetch the base branch
-git fetch origin "$BASE_BRANCH"
+# Find the actual merge-base commit
+MERGE_BASE=$(git merge-base HEAD "$BASE_REF")
 
-# Get list of existing migrations in base branch (these are the "protected" migrations)
-EXISTING_MIGRATIONS=$(git ls-tree -r --name-only "origin/$BASE_BRANCH" -- lrdb/migrations/ configdb/migrations/ | grep '\.sql$' || true)
+# Silently check migration file integrity against merge-base
+# Only output on violations
+
+# No need to fetch - we're working with the merge-base
+
+# Get list of existing migrations at merge-base (these are the "protected" migrations)
+EXISTING_MIGRATIONS=$(git ls-tree -r --name-only "$MERGE_BASE" -- lrdb/migrations/ configdb/migrations/ | grep '\.sql$' || true)
 
 # Get list of new migrations created in current branch (these can be freely modified)
-NEW_MIGRATIONS=$(git diff --name-only --diff-filter=A "origin/$BASE_BRANCH..HEAD" -- lrdb/migrations/ configdb/migrations/ | grep '\.sql$' || true)
+NEW_MIGRATIONS=$(git diff --name-only --diff-filter=A "$MERGE_BASE..HEAD" -- lrdb/migrations/ configdb/migrations/ | grep '\.sql$' || true)
 
 if [ -z "$EXISTING_MIGRATIONS" ]; then
-    echo "ℹ️ No existing migrations found in base branch."
-    if [ ! -z "$NEW_MIGRATIONS" ]; then
-        echo "📝 New migration files in this branch (can be freely modified):"
-        while IFS= read -r migration; do
-            echo "   ✨ $migration"
-        done <<< "$NEW_MIGRATIONS"
-    fi
+    # No existing migrations to check - silently succeed
     exit 0
 fi
 
@@ -63,24 +77,22 @@ normalize_sql() {
 
 VIOLATIONS_FOUND=false
 
-echo "📋 Checking existing migration files (protected - only comment/whitespace changes allowed)..."
 while IFS= read -r migration; do
     # Skip if this migration is new in the current branch (can be freely modified)
     if echo "$NEW_MIGRATIONS" | grep -q "^$migration$"; then
-        echo "🆕 $migration is new in this branch (can be freely modified)"
         continue
     fi
     
     if [ -f "$migration" ]; then
         # Get normalized content from both versions
-        BASE_CONTENT=$(git show "origin/$BASE_BRANCH:$migration")
+        BASE_CONTENT=$(git show "$MERGE_BASE:$migration")
         CURRENT_CONTENT=$(cat "$migration")
         
         BASE_NORMALIZED=$(normalize_sql "$BASE_CONTENT")
         CURRENT_NORMALIZED=$(normalize_sql "$CURRENT_CONTENT")
         
         if [ "$BASE_NORMALIZED" != "$CURRENT_NORMALIZED" ]; then
-            echo "❌ VIOLATION: $migration has substantive changes beyond comments/whitespace"
+            echo "VIOLATION: $migration has substantive changes beyond comments/whitespace"
             echo "   This migration existed before your branch and cannot be substantially modified."
             echo ""
             echo "   Diff of normalized content:"
@@ -88,20 +100,10 @@ while IFS= read -r migration; do
             diff -u <(echo "$BASE_NORMALIZED") <(echo "$CURRENT_NORMALIZED") || true
             echo ""
             VIOLATIONS_FOUND=true
-        else
-            # Check if there were any changes at all
-            BASE_HASH=$(echo "$BASE_CONTENT" | sha256sum | cut -d' ' -f1)
-            CURRENT_HASH=$(echo "$CURRENT_CONTENT" | sha256sum | cut -d' ' -f1)
-            
-            if [ "$BASE_HASH" != "$CURRENT_HASH" ]; then
-                echo "✅ $migration has comment/whitespace changes only (allowed)"
-            else
-                echo "✅ $migration unchanged"
-            fi
         fi
     else
         # File was deleted
-        echo "❌ VIOLATION: $migration has been deleted"
+        echo "VIOLATION: $migration has been deleted"
         echo "   This migration existed before your branch and cannot be deleted."
         VIOLATIONS_FOUND=true
     fi
@@ -109,7 +111,7 @@ done <<< "$EXISTING_MIGRATIONS"
 
 if [ "$VIOLATIONS_FOUND" = true ]; then
     echo ""
-    echo "🚫 Migration integrity check FAILED!"
+    echo "Migration integrity check FAILED!"
     echo "   Existing migration files must not have substantive changes."
     echo "   Only comment and whitespace changes are allowed."
     echo "   This prevents database schema inconsistencies in deployed environments."
@@ -117,14 +119,4 @@ if [ "$VIOLATIONS_FOUND" = true ]; then
     exit 1
 fi
 
-# Summary of new migrations (if any weren't already shown above)
-if [ ! -z "$NEW_MIGRATIONS" ]; then
-    echo ""
-    echo "📝 Summary: New migration files in this branch (can be freely modified):"
-    while IFS= read -r migration; do
-        echo "   ✨ $migration"
-    done <<< "$NEW_MIGRATIONS"
-fi
-
-echo ""
-echo "✅ Migration integrity check PASSED!"
+echo "Migration integrity check passed."

@@ -104,15 +104,15 @@ func runKubernetesDiscovery(cmd *cobra.Command, args []string) error {
 	}
 	defer func() {
 		if err := discovery.Stop(); err != nil {
-			fmt.Printf("⚠️  Error stopping discovery: %v\n", err)
+			fmt.Printf("WARNING: Error stopping discovery: %v\n", err)
 		}
 	}()
-	fmt.Printf("✅ Worker discovery service started successfully\n")
+	fmt.Printf("Worker discovery service started successfully\n")
 
 	// Give the informers a moment to settle
 	fmt.Printf("Waiting for initial worker discovery...\n")
 	time.Sleep(500 * time.Millisecond)
-	fmt.Printf("✅ Ready to test\n")
+	fmt.Printf("Ready to test\n")
 
 	// Get all workers
 	fmt.Printf("Discovering workers...\n")
@@ -157,18 +157,18 @@ func runKubernetesDiscovery(cmd *cobra.Command, args []string) error {
 		consistent := true
 		for i, mapping := range mappings {
 			if mapping.Worker.IP != mappings2[i].Worker.IP {
-				fmt.Printf("  ❌ Segment %s: %s != %s (INCONSISTENT)\n",
+				fmt.Printf("  INCONSISTENT Segment %s: %s != %s\n",
 					mapping.SegmentID, mapping.Worker.IP, mappings2[i].Worker.IP)
 				consistent = false
 			} else {
-				fmt.Printf("  ✅ Segment %s: %s (consistent)\n", mapping.SegmentID, mapping.Worker.IP)
+				fmt.Printf("  Segment %s: %s (consistent)\n", mapping.SegmentID, mapping.Worker.IP)
 			}
 		}
 
 		if consistent {
-			fmt.Printf("\n✅ All segment mappings are consistent!\n")
+			fmt.Printf("\nAll segment mappings are consistent!\n")
 		} else {
-			fmt.Printf("\n❌ Some segment mappings are inconsistent!\n")
+			fmt.Printf("\nSome segment mappings are inconsistent!\n")
 		}
 	}
 

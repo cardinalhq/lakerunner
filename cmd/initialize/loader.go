@@ -30,6 +30,12 @@ import (
 
 // InitializeConfig loads and imports storage profiles and API keys
 func InitializeConfig(ctx context.Context, storageProfileFile, apiKeysFile string, qtx *configdb.Queries, logger *slog.Logger, replace bool) error {
+	// First sync organizations from c_organizations table
+	if err := qtx.SyncOrganizations(ctx); err != nil {
+		return fmt.Errorf("failed to sync organizations: %w", err)
+	}
+	logger.Info("Synced organizations from c_organizations table")
+
 	// Load and import storage profiles
 	if err := loadAndImportStorageProfiles(ctx, storageProfileFile, qtx, logger, replace); err != nil {
 		return fmt.Errorf("failed to import storage profiles: %w", err)
@@ -165,6 +171,11 @@ func importStorageProfiles(ctx context.Context, contents []byte, qtx *configdb.Q
 }
 
 func importAPIKeys(ctx context.Context, apiKeysConfig APIKeysConfig, qtx *configdb.Queries, logger *slog.Logger, replace bool) error {
+	// Sync organizations again in case they weren't synced yet or have changed
+	if err := qtx.SyncOrganizations(ctx); err != nil {
+		return fmt.Errorf("failed to sync organizations before API key import: %w", err)
+	}
+
 	// In replace mode, clear existing API keys first (mirror sync like sweeper)
 	if replace {
 		if err := qtx.ClearOrganizationAPIKeyMappings(ctx); err != nil {
