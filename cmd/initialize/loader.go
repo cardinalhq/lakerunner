@@ -52,11 +52,11 @@ type DatabaseQueries interface {
 	ClearBucketPrefixMappings(ctx context.Context) error
 	ClearOrganizationBuckets(ctx context.Context) error
 	ClearBucketConfigurations(ctx context.Context) error
-	UpsertBucketConfiguration(ctx context.Context, arg configdb.UpsertBucketConfigurationParams) (configdb.LrconfigBucketConfiguration, error)
+	UpsertBucketConfiguration(ctx context.Context, arg configdb.UpsertBucketConfigurationParams) (configdb.BucketConfiguration, error)
 	UpsertOrganizationBucket(ctx context.Context, arg configdb.UpsertOrganizationBucketParams) error
 	ClearOrganizationAPIKeyMappings(ctx context.Context) error
 	ClearOrganizationAPIKeys(ctx context.Context) error
-	UpsertOrganizationAPIKey(ctx context.Context, arg configdb.UpsertOrganizationAPIKeyParams) (configdb.LrconfigOrganizationApiKey, error)
+	UpsertOrganizationAPIKey(ctx context.Context, arg configdb.UpsertOrganizationAPIKeyParams) (configdb.OrganizationApiKey, error)
 	GetOrganizationAPIKeyByHash(ctx context.Context, keyHash string) (configdb.GetOrganizationAPIKeyByHashRow, error)
 	UpsertOrganizationAPIKeyMapping(ctx context.Context, arg configdb.UpsertOrganizationAPIKeyMappingParams) error
 }

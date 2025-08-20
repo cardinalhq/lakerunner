@@ -12,7 +12,7 @@ import (
 )
 
 const clearAdminAPIKeys = `-- name: ClearAdminAPIKeys :exec
-DELETE FROM lrconfig_admin_api_keys
+DELETE FROM admin_api_keys
 `
 
 func (q *Queries) ClearAdminAPIKeys(ctx context.Context) error {
@@ -21,7 +21,7 @@ func (q *Queries) ClearAdminAPIKeys(ctx context.Context) error {
 }
 
 const createAdminAPIKey = `-- name: CreateAdminAPIKey :one
-INSERT INTO lrconfig_admin_api_keys (
+INSERT INTO admin_api_keys (
   key_hash, name, description
 ) VALUES (
   $1, $2, $3
@@ -34,9 +34,9 @@ type CreateAdminAPIKeyParams struct {
 	Description *string `json:"description"`
 }
 
-func (q *Queries) CreateAdminAPIKey(ctx context.Context, arg CreateAdminAPIKeyParams) (LrconfigAdminApiKey, error) {
+func (q *Queries) CreateAdminAPIKey(ctx context.Context, arg CreateAdminAPIKeyParams) (AdminApiKey, error) {
 	row := q.db.QueryRow(ctx, createAdminAPIKey, arg.KeyHash, arg.Name, arg.Description)
-	var i LrconfigAdminApiKey
+	var i AdminApiKey
 	err := row.Scan(
 		&i.ID,
 		&i.KeyHash,
@@ -48,7 +48,7 @@ func (q *Queries) CreateAdminAPIKey(ctx context.Context, arg CreateAdminAPIKeyPa
 }
 
 const deleteAdminAPIKey = `-- name: DeleteAdminAPIKey :exec
-DELETE FROM lrconfig_admin_api_keys WHERE id = $1
+DELETE FROM admin_api_keys WHERE id = $1
 `
 
 func (q *Queries) DeleteAdminAPIKey(ctx context.Context, apiKeyID uuid.UUID) error {
@@ -57,12 +57,12 @@ func (q *Queries) DeleteAdminAPIKey(ctx context.Context, apiKeyID uuid.UUID) err
 }
 
 const getAdminAPIKeyByHash = `-- name: GetAdminAPIKeyByHash :one
-SELECT id, key_hash, name, description, created_at FROM lrconfig_admin_api_keys WHERE key_hash = $1
+SELECT id, key_hash, name, description, created_at FROM admin_api_keys WHERE key_hash = $1
 `
 
-func (q *Queries) GetAdminAPIKeyByHash(ctx context.Context, keyHash string) (LrconfigAdminApiKey, error) {
+func (q *Queries) GetAdminAPIKeyByHash(ctx context.Context, keyHash string) (AdminApiKey, error) {
 	row := q.db.QueryRow(ctx, getAdminAPIKeyByHash, keyHash)
-	var i LrconfigAdminApiKey
+	var i AdminApiKey
 	err := row.Scan(
 		&i.ID,
 		&i.KeyHash,
@@ -74,12 +74,12 @@ func (q *Queries) GetAdminAPIKeyByHash(ctx context.Context, keyHash string) (Lrc
 }
 
 const getAdminAPIKeyByID = `-- name: GetAdminAPIKeyByID :one
-SELECT id, key_hash, name, description, created_at FROM lrconfig_admin_api_keys WHERE id = $1
+SELECT id, key_hash, name, description, created_at FROM admin_api_keys WHERE id = $1
 `
 
-func (q *Queries) GetAdminAPIKeyByID(ctx context.Context, apiKeyID uuid.UUID) (LrconfigAdminApiKey, error) {
+func (q *Queries) GetAdminAPIKeyByID(ctx context.Context, apiKeyID uuid.UUID) (AdminApiKey, error) {
 	row := q.db.QueryRow(ctx, getAdminAPIKeyByID, apiKeyID)
-	var i LrconfigAdminApiKey
+	var i AdminApiKey
 	err := row.Scan(
 		&i.ID,
 		&i.KeyHash,
@@ -91,18 +91,18 @@ func (q *Queries) GetAdminAPIKeyByID(ctx context.Context, apiKeyID uuid.UUID) (L
 }
 
 const getAllAdminAPIKeys = `-- name: GetAllAdminAPIKeys :many
-SELECT id, key_hash, name, description, created_at FROM lrconfig_admin_api_keys ORDER BY created_at DESC
+SELECT id, key_hash, name, description, created_at FROM admin_api_keys ORDER BY created_at DESC
 `
 
-func (q *Queries) GetAllAdminAPIKeys(ctx context.Context) ([]LrconfigAdminApiKey, error) {
+func (q *Queries) GetAllAdminAPIKeys(ctx context.Context) ([]AdminApiKey, error) {
 	rows, err := q.db.Query(ctx, getAllAdminAPIKeys)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []LrconfigAdminApiKey
+	var items []AdminApiKey
 	for rows.Next() {
-		var i LrconfigAdminApiKey
+		var i AdminApiKey
 		if err := rows.Scan(
 			&i.ID,
 			&i.KeyHash,
@@ -121,7 +121,7 @@ func (q *Queries) GetAllAdminAPIKeys(ctx context.Context) ([]LrconfigAdminApiKey
 }
 
 const upsertAdminAPIKey = `-- name: UpsertAdminAPIKey :one
-INSERT INTO lrconfig_admin_api_keys (
+INSERT INTO admin_api_keys (
   key_hash, name, description
 ) VALUES (
   $1, $2, $3
@@ -137,9 +137,9 @@ type UpsertAdminAPIKeyParams struct {
 	Description *string `json:"description"`
 }
 
-func (q *Queries) UpsertAdminAPIKey(ctx context.Context, arg UpsertAdminAPIKeyParams) (LrconfigAdminApiKey, error) {
+func (q *Queries) UpsertAdminAPIKey(ctx context.Context, arg UpsertAdminAPIKeyParams) (AdminApiKey, error) {
 	row := q.db.QueryRow(ctx, upsertAdminAPIKey, arg.KeyHash, arg.Name, arg.Description)
-	var i LrconfigAdminApiKey
+	var i AdminApiKey
 	err := row.Scan(
 		&i.ID,
 		&i.KeyHash,

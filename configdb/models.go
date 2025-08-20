@@ -11,6 +11,33 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AdminApiKey struct {
+	ID          uuid.UUID  `json:"id"`
+	KeyHash     string     `json:"key_hash"`
+	Name        string     `json:"name"`
+	Description *string    `json:"description"`
+	CreatedAt   *time.Time `json:"created_at"`
+}
+
+type BucketConfiguration struct {
+	ID            uuid.UUID `json:"id"`
+	BucketName    string    `json:"bucket_name"`
+	CloudProvider string    `json:"cloud_provider"`
+	Region        string    `json:"region"`
+	Endpoint      *string   `json:"endpoint"`
+	Role          *string   `json:"role"`
+	UsePathStyle  bool      `json:"use_path_style"`
+	InsecureTls   bool      `json:"insecure_tls"`
+}
+
+type BucketPrefixMapping struct {
+	ID             uuid.UUID `json:"id"`
+	BucketID       uuid.UUID `json:"bucket_id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+	PathPrefix     string    `json:"path_prefix"`
+	Signal         string    `json:"signal"`
+}
+
 type CCollector struct {
 	ID               uuid.UUID  `json:"id"`
 	DeletedAt        *time.Time `json:"deleted_at"`
@@ -56,34 +83,7 @@ type CStorageProfile struct {
 	Role           *string   `json:"role"`
 }
 
-type LrconfigAdminApiKey struct {
-	ID          uuid.UUID  `json:"id"`
-	KeyHash     string     `json:"key_hash"`
-	Name        string     `json:"name"`
-	Description *string    `json:"description"`
-	CreatedAt   *time.Time `json:"created_at"`
-}
-
-type LrconfigBucketConfiguration struct {
-	ID            uuid.UUID `json:"id"`
-	BucketName    string    `json:"bucket_name"`
-	CloudProvider string    `json:"cloud_provider"`
-	Region        string    `json:"region"`
-	Endpoint      *string   `json:"endpoint"`
-	Role          *string   `json:"role"`
-	UsePathStyle  bool      `json:"use_path_style"`
-	InsecureTls   bool      `json:"insecure_tls"`
-}
-
-type LrconfigBucketPrefixMapping struct {
-	ID             uuid.UUID `json:"id"`
-	BucketID       uuid.UUID `json:"bucket_id"`
-	OrganizationID uuid.UUID `json:"organization_id"`
-	PathPrefix     string    `json:"path_prefix"`
-	Signal         string    `json:"signal"`
-}
-
-type LrconfigOrganization struct {
+type Organization struct {
 	ID        uuid.UUID  `json:"id"`
 	Name      string     `json:"name"`
 	Enabled   bool       `json:"enabled"`
@@ -91,7 +91,7 @@ type LrconfigOrganization struct {
 	SyncedAt  *time.Time `json:"synced_at"`
 }
 
-type LrconfigOrganizationApiKey struct {
+type OrganizationApiKey struct {
 	ID          uuid.UUID  `json:"id"`
 	KeyHash     string     `json:"key_hash"`
 	Name        string     `json:"name"`
@@ -99,13 +99,13 @@ type LrconfigOrganizationApiKey struct {
 	CreatedAt   *time.Time `json:"created_at"`
 }
 
-type LrconfigOrganizationApiKeyMapping struct {
+type OrganizationApiKeyMapping struct {
 	ID             uuid.UUID `json:"id"`
 	ApiKeyID       uuid.UUID `json:"api_key_id"`
 	OrganizationID uuid.UUID `json:"organization_id"`
 }
 
-type LrconfigOrganizationBucket struct {
+type OrganizationBucket struct {
 	ID             uuid.UUID `json:"id"`
 	OrganizationID uuid.UUID `json:"organization_id"`
 	BucketID       uuid.UUID `json:"bucket_id"`

@@ -157,3 +157,5 @@ Configuration is YAML-based:
 - Image tag management handled automatically.
 - CI uses **partial builds** (`partial:` section in goreleaser).
 - Developers cannot use `partial:` locally, but must keep it in config.
+
+- "make check" is required to pass before any work is considered complete.

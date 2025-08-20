@@ -14,7 +14,7 @@ import (
 )
 
 const clearOrganizationAPIKeyMappings = `-- name: ClearOrganizationAPIKeyMappings :exec
-DELETE FROM lrconfig_organization_api_key_mappings
+DELETE FROM organization_api_key_mappings
 `
 
 func (q *Queries) ClearOrganizationAPIKeyMappings(ctx context.Context) error {
@@ -23,7 +23,7 @@ func (q *Queries) ClearOrganizationAPIKeyMappings(ctx context.Context) error {
 }
 
 const clearOrganizationAPIKeys = `-- name: ClearOrganizationAPIKeys :exec
-DELETE FROM lrconfig_organization_api_keys
+DELETE FROM organization_api_keys
 `
 
 func (q *Queries) ClearOrganizationAPIKeys(ctx context.Context) error {
@@ -32,7 +32,7 @@ func (q *Queries) ClearOrganizationAPIKeys(ctx context.Context) error {
 }
 
 const createOrganizationAPIKey = `-- name: CreateOrganizationAPIKey :one
-INSERT INTO lrconfig_organization_api_keys (
+INSERT INTO organization_api_keys (
   key_hash, name, description
 ) VALUES (
   $1, $2, $3
@@ -45,9 +45,9 @@ type CreateOrganizationAPIKeyParams struct {
 	Description *string `json:"description"`
 }
 
-func (q *Queries) CreateOrganizationAPIKey(ctx context.Context, arg CreateOrganizationAPIKeyParams) (LrconfigOrganizationApiKey, error) {
+func (q *Queries) CreateOrganizationAPIKey(ctx context.Context, arg CreateOrganizationAPIKeyParams) (OrganizationApiKey, error) {
 	row := q.db.QueryRow(ctx, createOrganizationAPIKey, arg.KeyHash, arg.Name, arg.Description)
-	var i LrconfigOrganizationApiKey
+	var i OrganizationApiKey
 	err := row.Scan(
 		&i.ID,
 		&i.KeyHash,
@@ -59,7 +59,7 @@ func (q *Queries) CreateOrganizationAPIKey(ctx context.Context, arg CreateOrgani
 }
 
 const createOrganizationAPIKeyMapping = `-- name: CreateOrganizationAPIKeyMapping :one
-INSERT INTO lrconfig_organization_api_key_mappings (
+INSERT INTO organization_api_key_mappings (
   api_key_id, organization_id
 ) VALUES (
   $1, $2
@@ -71,9 +71,9 @@ type CreateOrganizationAPIKeyMappingParams struct {
 	OrganizationID uuid.UUID `json:"organization_id"`
 }
 
-func (q *Queries) CreateOrganizationAPIKeyMapping(ctx context.Context, arg CreateOrganizationAPIKeyMappingParams) (LrconfigOrganizationApiKeyMapping, error) {
+func (q *Queries) CreateOrganizationAPIKeyMapping(ctx context.Context, arg CreateOrganizationAPIKeyMappingParams) (OrganizationApiKeyMapping, error) {
 	row := q.db.QueryRow(ctx, createOrganizationAPIKeyMapping, arg.ApiKeyID, arg.OrganizationID)
-	var i LrconfigOrganizationApiKeyMapping
+	var i OrganizationApiKeyMapping
 	err := row.Scan(&i.ID, &i.ApiKeyID, &i.OrganizationID)
 	return i, err
 }
@@ -118,8 +118,8 @@ func (q *Queries) GetAllCOrganizationAPIKeysForSync(ctx context.Context) ([]GetA
 
 const getAllOrganizationAPIKeys = `-- name: GetAllOrganizationAPIKeys :many
 SELECT ak.id, ak.key_hash, ak.name, ak.description, ak.created_at, ako.organization_id
-FROM lrconfig_organization_api_keys ak
-JOIN lrconfig_organization_api_key_mappings ako ON ak.id = ako.api_key_id
+FROM organization_api_keys ak
+JOIN organization_api_key_mappings ako ON ak.id = ako.api_key_id
 `
 
 type GetAllOrganizationAPIKeysRow struct {
@@ -160,8 +160,8 @@ func (q *Queries) GetAllOrganizationAPIKeys(ctx context.Context) ([]GetAllOrgani
 
 const getOrganizationAPIKeyByHash = `-- name: GetOrganizationAPIKeyByHash :one
 SELECT ak.id, ak.key_hash, ak.name, ak.description, ak.created_at, ako.organization_id
-FROM lrconfig_organization_api_keys ak
-JOIN lrconfig_organization_api_key_mappings ako ON ak.id = ako.api_key_id
+FROM organization_api_keys ak
+JOIN organization_api_key_mappings ako ON ak.id = ako.api_key_id
 WHERE ak.key_hash = $1
 `
 
@@ -190,8 +190,8 @@ func (q *Queries) GetOrganizationAPIKeyByHash(ctx context.Context, keyHash strin
 
 const getOrganizationAPIKeyByID = `-- name: GetOrganizationAPIKeyByID :one
 SELECT ak.id, ak.key_hash, ak.name, ak.description, ak.created_at, ako.organization_id
-FROM lrconfig_organization_api_keys ak
-JOIN lrconfig_organization_api_key_mappings ako ON ak.id = ako.api_key_id
+FROM organization_api_keys ak
+JOIN organization_api_key_mappings ako ON ak.id = ako.api_key_id
 WHERE ak.id = $1
 `
 
@@ -219,7 +219,7 @@ func (q *Queries) GetOrganizationAPIKeyByID(ctx context.Context, apiKeyID uuid.U
 }
 
 const upsertOrganizationAPIKey = `-- name: UpsertOrganizationAPIKey :one
-INSERT INTO lrconfig_organization_api_keys (
+INSERT INTO organization_api_keys (
   key_hash, name, description
 ) VALUES (
   $1, $2, $3
@@ -235,9 +235,9 @@ type UpsertOrganizationAPIKeyParams struct {
 	Description *string `json:"description"`
 }
 
-func (q *Queries) UpsertOrganizationAPIKey(ctx context.Context, arg UpsertOrganizationAPIKeyParams) (LrconfigOrganizationApiKey, error) {
+func (q *Queries) UpsertOrganizationAPIKey(ctx context.Context, arg UpsertOrganizationAPIKeyParams) (OrganizationApiKey, error) {
 	row := q.db.QueryRow(ctx, upsertOrganizationAPIKey, arg.KeyHash, arg.Name, arg.Description)
-	var i LrconfigOrganizationApiKey
+	var i OrganizationApiKey
 	err := row.Scan(
 		&i.ID,
 		&i.KeyHash,
@@ -249,7 +249,7 @@ func (q *Queries) UpsertOrganizationAPIKey(ctx context.Context, arg UpsertOrgani
 }
 
 const upsertOrganizationAPIKeyMapping = `-- name: UpsertOrganizationAPIKeyMapping :exec
-INSERT INTO lrconfig_organization_api_key_mappings (
+INSERT INTO organization_api_key_mappings (
   api_key_id, organization_id
 ) VALUES (
   $1, $2

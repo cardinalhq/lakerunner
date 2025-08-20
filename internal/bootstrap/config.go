@@ -29,7 +29,7 @@ type BootstrapConfig struct {
 	OrganizationAPIKeyMapping []OrganizationAPIKeyMapping `yaml:"organization_api_key_mappings,omitempty" json:"organization_api_key_mappings,omitempty"`
 }
 
-// BucketConfiguration matches lrconfig_bucket_configurations table
+// BucketConfiguration matches bucket_configurations table
 type BucketConfiguration struct {
 	ID            *uuid.UUID `yaml:"id,omitempty" json:"id,omitempty"`
 	BucketName    string     `yaml:"bucket_name" json:"bucket_name"`
@@ -39,14 +39,14 @@ type BucketConfiguration struct {
 	Role          *string    `yaml:"role,omitempty" json:"role,omitempty"`
 }
 
-// OrganizationBucket matches lrconfig_organization_buckets table
+// OrganizationBucket matches organization_buckets table
 type OrganizationBucket struct {
 	ID             *uuid.UUID `yaml:"id,omitempty" json:"id,omitempty"`
 	OrganizationID uuid.UUID  `yaml:"organization_id" json:"organization_id"`
 	BucketID       uuid.UUID  `yaml:"bucket_id" json:"bucket_id"`
 }
 
-// BucketPrefixMapping matches lrconfig_bucket_prefix_mappings table
+// BucketPrefixMapping matches bucket_prefix_mappings table
 type BucketPrefixMapping struct {
 	ID             *uuid.UUID `yaml:"id,omitempty" json:"id,omitempty"`
 	BucketID       uuid.UUID  `yaml:"bucket_id" json:"bucket_id"`
@@ -55,7 +55,7 @@ type BucketPrefixMapping struct {
 	Signal         string     `yaml:"signal" json:"signal"` // logs, metrics, traces
 }
 
-// AdminAPIKey matches lrconfig_admin_api_keys table
+// AdminAPIKey matches admin_api_keys table
 type AdminAPIKey struct {
 	ID          *uuid.UUID `yaml:"id,omitempty" json:"id,omitempty"`
 	KeyHash     *string    `yaml:"key_hash,omitempty" json:"key_hash,omitempty"` // Will be computed from Key
@@ -64,7 +64,7 @@ type AdminAPIKey struct {
 	Description *string    `yaml:"description,omitempty" json:"description,omitempty"`
 }
 
-// OrganizationAPIKey matches lrconfig_organization_api_keys table
+// OrganizationAPIKey matches organization_api_keys table
 type OrganizationAPIKey struct {
 	ID          *uuid.UUID `yaml:"id,omitempty" json:"id,omitempty"`
 	KeyHash     *string    `yaml:"key_hash,omitempty" json:"key_hash,omitempty"` // Will be computed from Key
@@ -73,7 +73,7 @@ type OrganizationAPIKey struct {
 	Description *string    `yaml:"description,omitempty" json:"description,omitempty"`
 }
 
-// OrganizationAPIKeyMapping matches lrconfig_organization_api_key_mappings table
+// OrganizationAPIKeyMapping matches organization_api_key_mappings table
 type OrganizationAPIKeyMapping struct {
 	ID             *uuid.UUID `yaml:"id,omitempty" json:"id,omitempty"`
 	APIKeyID       uuid.UUID  `yaml:"api_key_id" json:"api_key_id"`

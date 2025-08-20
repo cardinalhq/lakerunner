@@ -1,5 +1,5 @@
 -- name: UpsertOrganization :one
-INSERT INTO lrconfig_organizations (
+INSERT INTO organizations (
   id, name, enabled, synced_at
 ) VALUES (
   @id, @name, @enabled, NOW()
@@ -10,26 +10,26 @@ INSERT INTO lrconfig_organizations (
 RETURNING *;
 
 -- name: GetOrganization :one
-SELECT * FROM lrconfig_organizations 
+SELECT * FROM organizations 
 WHERE id = @id;
 
 -- name: GetOrganizationByName :one
-SELECT * FROM lrconfig_organizations 
+SELECT * FROM organizations 
 WHERE name = @name;
 
 -- name: ListOrganizations :many
-SELECT * FROM lrconfig_organizations
+SELECT * FROM organizations
 ORDER BY name;
 
 -- name: ListEnabledOrganizations :many
-SELECT * FROM lrconfig_organizations
+SELECT * FROM organizations
 WHERE enabled = true
 ORDER BY name;
 
 -- name: DeleteOrganization :exec
-DELETE FROM lrconfig_organizations 
+DELETE FROM organizations 
 WHERE id = @id;
 
 -- name: ClearOrganizations :exec
-DELETE FROM lrconfig_organizations;
+DELETE FROM organizations;
 

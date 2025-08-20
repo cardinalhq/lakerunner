@@ -14,8 +14,8 @@ import (
 
 const checkOrgBucketAccess = `-- name: CheckOrgBucketAccess :one
 SELECT COUNT(*) > 0 as has_access
-FROM lrconfig_organization_buckets ob
-JOIN lrconfig_bucket_configurations bc ON ob.bucket_id = bc.id
+FROM organization_buckets ob
+JOIN bucket_configurations bc ON ob.bucket_id = bc.id
 WHERE ob.organization_id = $1 AND bc.bucket_name = $2
 `
 
@@ -32,7 +32,7 @@ func (q *Queries) CheckOrgBucketAccess(ctx context.Context, arg CheckOrgBucketAc
 }
 
 const clearBucketConfigurations = `-- name: ClearBucketConfigurations :exec
-DELETE FROM lrconfig_bucket_configurations
+DELETE FROM bucket_configurations
 `
 
 func (q *Queries) ClearBucketConfigurations(ctx context.Context) error {
@@ -41,7 +41,7 @@ func (q *Queries) ClearBucketConfigurations(ctx context.Context) error {
 }
 
 const clearBucketPrefixMappings = `-- name: ClearBucketPrefixMappings :exec
-DELETE FROM lrconfig_bucket_prefix_mappings
+DELETE FROM bucket_prefix_mappings
 `
 
 func (q *Queries) ClearBucketPrefixMappings(ctx context.Context) error {
@@ -50,7 +50,7 @@ func (q *Queries) ClearBucketPrefixMappings(ctx context.Context) error {
 }
 
 const clearOrganizationBuckets = `-- name: ClearOrganizationBuckets :exec
-DELETE FROM lrconfig_organization_buckets
+DELETE FROM organization_buckets
 `
 
 func (q *Queries) ClearOrganizationBuckets(ctx context.Context) error {
@@ -59,7 +59,7 @@ func (q *Queries) ClearOrganizationBuckets(ctx context.Context) error {
 }
 
 const createBucketConfiguration = `-- name: CreateBucketConfiguration :one
-INSERT INTO lrconfig_bucket_configurations (
+INSERT INTO bucket_configurations (
   bucket_name, cloud_provider, region, endpoint, role, use_path_style, insecure_tls
 ) VALUES (
   $1, $2, $3, $4, $5, $6, $7
@@ -76,7 +76,7 @@ type CreateBucketConfigurationParams struct {
 	InsecureTls   bool    `json:"insecure_tls"`
 }
 
-func (q *Queries) CreateBucketConfiguration(ctx context.Context, arg CreateBucketConfigurationParams) (LrconfigBucketConfiguration, error) {
+func (q *Queries) CreateBucketConfiguration(ctx context.Context, arg CreateBucketConfigurationParams) (BucketConfiguration, error) {
 	row := q.db.QueryRow(ctx, createBucketConfiguration,
 		arg.BucketName,
 		arg.CloudProvider,
@@ -86,7 +86,7 @@ func (q *Queries) CreateBucketConfiguration(ctx context.Context, arg CreateBucke
 		arg.UsePathStyle,
 		arg.InsecureTls,
 	)
-	var i LrconfigBucketConfiguration
+	var i BucketConfiguration
 	err := row.Scan(
 		&i.ID,
 		&i.BucketName,
@@ -101,7 +101,7 @@ func (q *Queries) CreateBucketConfiguration(ctx context.Context, arg CreateBucke
 }
 
 const createBucketPrefixMapping = `-- name: CreateBucketPrefixMapping :one
-INSERT INTO lrconfig_bucket_prefix_mappings (
+INSERT INTO bucket_prefix_mappings (
   bucket_id, organization_id, path_prefix, signal
 ) VALUES (
   $1, $2, $3, $4
@@ -115,14 +115,14 @@ type CreateBucketPrefixMappingParams struct {
 	Signal         string    `json:"signal"`
 }
 
-func (q *Queries) CreateBucketPrefixMapping(ctx context.Context, arg CreateBucketPrefixMappingParams) (LrconfigBucketPrefixMapping, error) {
+func (q *Queries) CreateBucketPrefixMapping(ctx context.Context, arg CreateBucketPrefixMappingParams) (BucketPrefixMapping, error) {
 	row := q.db.QueryRow(ctx, createBucketPrefixMapping,
 		arg.BucketID,
 		arg.OrganizationID,
 		arg.PathPrefix,
 		arg.Signal,
 	)
-	var i LrconfigBucketPrefixMapping
+	var i BucketPrefixMapping
 	err := row.Scan(
 		&i.ID,
 		&i.BucketID,
@@ -134,7 +134,7 @@ func (q *Queries) CreateBucketPrefixMapping(ctx context.Context, arg CreateBucke
 }
 
 const createOrganizationBucket = `-- name: CreateOrganizationBucket :one
-INSERT INTO lrconfig_organization_buckets (
+INSERT INTO organization_buckets (
   organization_id, bucket_id
 ) VALUES (
   $1, $2
@@ -146,9 +146,9 @@ type CreateOrganizationBucketParams struct {
 	BucketID       uuid.UUID `json:"bucket_id"`
 }
 
-func (q *Queries) CreateOrganizationBucket(ctx context.Context, arg CreateOrganizationBucketParams) (LrconfigOrganizationBucket, error) {
+func (q *Queries) CreateOrganizationBucket(ctx context.Context, arg CreateOrganizationBucketParams) (OrganizationBucket, error) {
 	row := q.db.QueryRow(ctx, createOrganizationBucket, arg.OrganizationID, arg.BucketID)
-	var i LrconfigOrganizationBucket
+	var i OrganizationBucket
 	err := row.Scan(&i.ID, &i.OrganizationID, &i.BucketID)
 	return i, err
 }
@@ -203,8 +203,8 @@ func (q *Queries) GetAllCStorageProfilesForSync(ctx context.Context) ([]GetAllCS
 
 const getBucketByOrganization = `-- name: GetBucketByOrganization :one
 SELECT bc.bucket_name
-FROM lrconfig_organization_buckets ob
-JOIN lrconfig_bucket_configurations bc ON ob.bucket_id = bc.id
+FROM organization_buckets ob
+JOIN bucket_configurations bc ON ob.bucket_id = bc.id
 WHERE ob.organization_id = $1
 `
 
@@ -216,12 +216,12 @@ func (q *Queries) GetBucketByOrganization(ctx context.Context, organizationID uu
 }
 
 const getBucketConfiguration = `-- name: GetBucketConfiguration :one
-SELECT id, bucket_name, cloud_provider, region, endpoint, role, use_path_style, insecure_tls FROM lrconfig_bucket_configurations WHERE bucket_name = $1
+SELECT id, bucket_name, cloud_provider, region, endpoint, role, use_path_style, insecure_tls FROM bucket_configurations WHERE bucket_name = $1
 `
 
-func (q *Queries) GetBucketConfiguration(ctx context.Context, bucketName string) (LrconfigBucketConfiguration, error) {
+func (q *Queries) GetBucketConfiguration(ctx context.Context, bucketName string) (BucketConfiguration, error) {
 	row := q.db.QueryRow(ctx, getBucketConfiguration, bucketName)
-	var i LrconfigBucketConfiguration
+	var i BucketConfiguration
 	err := row.Scan(
 		&i.ID,
 		&i.BucketName,
@@ -237,8 +237,8 @@ func (q *Queries) GetBucketConfiguration(ctx context.Context, bucketName string)
 
 const getLongestPrefixMatch = `-- name: GetLongestPrefixMatch :one
 SELECT bpm.organization_id
-FROM lrconfig_bucket_prefix_mappings bpm
-JOIN lrconfig_bucket_configurations bc ON bpm.bucket_id = bc.id
+FROM bucket_prefix_mappings bpm
+JOIN bucket_configurations bc ON bpm.bucket_id = bc.id
 WHERE bc.bucket_name = $1 
   AND bpm.signal = $2
   AND $3 LIKE bpm.path_prefix || '%'
@@ -261,8 +261,8 @@ func (q *Queries) GetLongestPrefixMatch(ctx context.Context, arg GetLongestPrefi
 
 const getOrganizationsByBucket = `-- name: GetOrganizationsByBucket :many
 SELECT ob.organization_id 
-FROM lrconfig_organization_buckets ob
-JOIN lrconfig_bucket_configurations bc ON ob.bucket_id = bc.id
+FROM organization_buckets ob
+JOIN bucket_configurations bc ON ob.bucket_id = bc.id
 WHERE bc.bucket_name = $1
 `
 
@@ -288,7 +288,7 @@ func (q *Queries) GetOrganizationsByBucket(ctx context.Context, bucketName strin
 
 const hasExistingStorageProfiles = `-- name: HasExistingStorageProfiles :one
 SELECT COUNT(*) > 0 as has_profiles
-FROM lrconfig_bucket_configurations
+FROM bucket_configurations
 `
 
 func (q *Queries) HasExistingStorageProfiles(ctx context.Context) (bool, error) {
@@ -299,7 +299,7 @@ func (q *Queries) HasExistingStorageProfiles(ctx context.Context) (bool, error) 
 }
 
 const upsertBucketConfiguration = `-- name: UpsertBucketConfiguration :one
-INSERT INTO lrconfig_bucket_configurations (
+INSERT INTO bucket_configurations (
   bucket_name, cloud_provider, region, endpoint, role, use_path_style, insecure_tls
 ) VALUES (
   $1, $2, $3, $4, $5, $6, $7
@@ -323,7 +323,7 @@ type UpsertBucketConfigurationParams struct {
 	InsecureTls   bool    `json:"insecure_tls"`
 }
 
-func (q *Queries) UpsertBucketConfiguration(ctx context.Context, arg UpsertBucketConfigurationParams) (LrconfigBucketConfiguration, error) {
+func (q *Queries) UpsertBucketConfiguration(ctx context.Context, arg UpsertBucketConfigurationParams) (BucketConfiguration, error) {
 	row := q.db.QueryRow(ctx, upsertBucketConfiguration,
 		arg.BucketName,
 		arg.CloudProvider,
@@ -333,7 +333,7 @@ func (q *Queries) UpsertBucketConfiguration(ctx context.Context, arg UpsertBucke
 		arg.UsePathStyle,
 		arg.InsecureTls,
 	)
-	var i LrconfigBucketConfiguration
+	var i BucketConfiguration
 	err := row.Scan(
 		&i.ID,
 		&i.BucketName,
@@ -348,7 +348,7 @@ func (q *Queries) UpsertBucketConfiguration(ctx context.Context, arg UpsertBucke
 }
 
 const upsertOrganizationBucket = `-- name: UpsertOrganizationBucket :exec
-INSERT INTO lrconfig_organization_buckets (
+INSERT INTO organization_buckets (
   organization_id, bucket_id
 ) VALUES (
   $1, $2

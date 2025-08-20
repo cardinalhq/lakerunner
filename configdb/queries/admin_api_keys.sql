@@ -1,18 +1,18 @@
 -- name: GetAdminAPIKeyByHash :one
-SELECT * FROM lrconfig_admin_api_keys WHERE key_hash = @key_hash;
+SELECT * FROM admin_api_keys WHERE key_hash = @key_hash;
 
 -- name: GetAdminAPIKeyByID :one  
-SELECT * FROM lrconfig_admin_api_keys WHERE id = @api_key_id;
+SELECT * FROM admin_api_keys WHERE id = @api_key_id;
 
 -- name: CreateAdminAPIKey :one
-INSERT INTO lrconfig_admin_api_keys (
+INSERT INTO admin_api_keys (
   key_hash, name, description
 ) VALUES (
   @key_hash, @name, @description
 ) RETURNING *;
 
 -- name: UpsertAdminAPIKey :one
-INSERT INTO lrconfig_admin_api_keys (
+INSERT INTO admin_api_keys (
   key_hash, name, description
 ) VALUES (
   @key_hash, @name, @description
@@ -22,10 +22,10 @@ INSERT INTO lrconfig_admin_api_keys (
 RETURNING *;
 
 -- name: DeleteAdminAPIKey :exec
-DELETE FROM lrconfig_admin_api_keys WHERE id = @api_key_id;
+DELETE FROM admin_api_keys WHERE id = @api_key_id;
 
 -- name: GetAllAdminAPIKeys :many
-SELECT * FROM lrconfig_admin_api_keys ORDER BY created_at DESC;
+SELECT * FROM admin_api_keys ORDER BY created_at DESC;
 
 -- name: ClearAdminAPIKeys :exec
-DELETE FROM lrconfig_admin_api_keys;
+DELETE FROM admin_api_keys;

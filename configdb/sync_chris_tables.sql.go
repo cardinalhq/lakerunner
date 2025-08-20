@@ -11,7 +11,7 @@ import (
 
 const syncOrganizations = `-- name: SyncOrganizations :exec
 
-INSERT INTO lrconfig_organizations (id, name, enabled, created_at, synced_at)
+INSERT INTO organizations (id, name, enabled, created_at, synced_at)
 SELECT id, name, COALESCE(enabled, true), COALESCE(created_at, NOW()), NOW()
 FROM c_organizations
 ON CONFLICT (id) DO UPDATE SET
@@ -21,7 +21,7 @@ ON CONFLICT (id) DO UPDATE SET
 `
 
 // This file contains queries for syncing data from legacy c_ tables (managed externally)
-// to our own lrconfig_ tables that we control.
+// to our own tables that we control.
 func (q *Queries) SyncOrganizations(ctx context.Context) error {
 	_, err := q.db.Exec(ctx, syncOrganizations)
 	return err

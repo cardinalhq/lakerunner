@@ -73,9 +73,9 @@ func (m *MockDatabaseQueries) ClearBucketConfigurations(ctx context.Context) err
 	return args.Error(0)
 }
 
-func (m *MockDatabaseQueries) UpsertBucketConfiguration(ctx context.Context, arg configdb.UpsertBucketConfigurationParams) (configdb.LrconfigBucketConfiguration, error) {
+func (m *MockDatabaseQueries) UpsertBucketConfiguration(ctx context.Context, arg configdb.UpsertBucketConfigurationParams) (configdb.BucketConfiguration, error) {
 	args := m.Called(ctx, arg)
-	return args.Get(0).(configdb.LrconfigBucketConfiguration), args.Error(1)
+	return args.Get(0).(configdb.BucketConfiguration), args.Error(1)
 }
 
 func (m *MockDatabaseQueries) UpsertOrganizationBucket(ctx context.Context, arg configdb.UpsertOrganizationBucketParams) error {
@@ -93,9 +93,9 @@ func (m *MockDatabaseQueries) ClearOrganizationAPIKeys(ctx context.Context) erro
 	return args.Error(0)
 }
 
-func (m *MockDatabaseQueries) UpsertOrganizationAPIKey(ctx context.Context, arg configdb.UpsertOrganizationAPIKeyParams) (configdb.LrconfigOrganizationApiKey, error) {
+func (m *MockDatabaseQueries) UpsertOrganizationAPIKey(ctx context.Context, arg configdb.UpsertOrganizationAPIKeyParams) (configdb.OrganizationApiKey, error) {
 	args := m.Called(ctx, arg)
-	return args.Get(0).(configdb.LrconfigOrganizationApiKey), args.Error(1)
+	return args.Get(0).(configdb.OrganizationApiKey), args.Error(1)
 }
 
 func (m *MockDatabaseQueries) GetOrganizationAPIKeyByHash(ctx context.Context, keyHash string) (configdb.GetOrganizationAPIKeyByHashRow, error) {
@@ -176,7 +176,7 @@ func TestImportStorageProfiles_Success(t *testing.T) {
   role: test-role
 `, orgID.String())
 
-	bucketConfig := configdb.LrconfigBucketConfiguration{
+	bucketConfig := configdb.BucketConfiguration{
 		ID:            bucketID,
 		BucketName:    "test-bucket",
 		CloudProvider: "aws",
@@ -220,7 +220,7 @@ func TestImportStorageProfiles_WithReplace(t *testing.T) {
 	mockDB.On("ClearOrganizationBuckets", ctx).Return(nil)
 	mockDB.On("ClearBucketConfigurations", ctx).Return(nil)
 
-	bucketConfig := configdb.LrconfigBucketConfiguration{
+	bucketConfig := configdb.BucketConfiguration{
 		ID:            bucketID,
 		BucketName:    "test-bucket-gcp",
 		CloudProvider: "gcp",
@@ -288,7 +288,7 @@ func TestImportAPIKeys_Success(t *testing.T) {
 		Name:    "imported-key-test-api",
 	}
 
-	upsertAPIKeyRow := configdb.LrconfigOrganizationApiKey{
+	upsertAPIKeyRow := configdb.OrganizationApiKey{
 		ID:      apiKeyID,
 		KeyHash: expectedKeyHash,
 		Name:    "imported-key-test-api",
@@ -365,7 +365,7 @@ func TestInitializeConfigWithDependencies_Success(t *testing.T) {
 	// Mock database calls
 	mockDB.On("SyncOrganizations", ctx).Return(nil)
 
-	bucketConfig := configdb.LrconfigBucketConfiguration{
+	bucketConfig := configdb.BucketConfiguration{
 		ID:            bucketID,
 		BucketName:    "integration-test-bucket",
 		CloudProvider: "aws",
@@ -383,7 +383,7 @@ func TestInitializeConfigWithDependencies_Success(t *testing.T) {
 		Name:    "imported-key-integrat",
 	}
 
-	upsertAPIKeyRow2 := configdb.LrconfigOrganizationApiKey{
+	upsertAPIKeyRow2 := configdb.OrganizationApiKey{
 		ID:      apiKeyID,
 		KeyHash: hashAPIKey("integration-test-key-123"),
 		Name:    "imported-key-integrat",
@@ -438,7 +438,7 @@ func TestImportStorageProfiles_MultipleProfiles(t *testing.T) {
   role: role2
 `, orgID1.String(), orgID2.String())
 
-	bucketConfig := configdb.LrconfigBucketConfiguration{
+	bucketConfig := configdb.BucketConfiguration{
 		ID:            bucketID,
 		BucketName:    "shared-bucket",
 		CloudProvider: "aws",
@@ -489,7 +489,7 @@ func TestImportAPIKeys_MultipleKeys(t *testing.T) {
 	mockDB.On("SyncOrganizations", ctx).Return(nil)
 
 	// First API key
-	upsertAPIKeyRow1 := configdb.LrconfigOrganizationApiKey{
+	upsertAPIKeyRow1 := configdb.OrganizationApiKey{
 		ID:      apiKeyID1,
 		KeyHash: expectedKeyHash1,
 		Name:    "imported-key-test-api",
@@ -512,7 +512,7 @@ func TestImportAPIKeys_MultipleKeys(t *testing.T) {
 	})).Return(nil)
 
 	// Second API key
-	upsertAPIKeyRow2 := configdb.LrconfigOrganizationApiKey{
+	upsertAPIKeyRow2 := configdb.OrganizationApiKey{
 		ID:      apiKeyID2,
 		KeyHash: expectedKeyHash2,
 		Name:    "imported-key-test-api",

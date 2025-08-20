@@ -1,31 +1,31 @@
 -- name: GetOrganizationAPIKeyByHash :one
 SELECT ak.*, ako.organization_id
-FROM lrconfig_organization_api_keys ak
-JOIN lrconfig_organization_api_key_mappings ako ON ak.id = ako.api_key_id
+FROM organization_api_keys ak
+JOIN organization_api_key_mappings ako ON ak.id = ako.api_key_id
 WHERE ak.key_hash = @key_hash;
 
 -- name: GetOrganizationAPIKeyByID :one
 SELECT ak.*, ako.organization_id
-FROM lrconfig_organization_api_keys ak
-JOIN lrconfig_organization_api_key_mappings ako ON ak.id = ako.api_key_id
+FROM organization_api_keys ak
+JOIN organization_api_key_mappings ako ON ak.id = ako.api_key_id
 WHERE ak.id = @api_key_id;
 
 -- name: CreateOrganizationAPIKey :one
-INSERT INTO lrconfig_organization_api_keys (
+INSERT INTO organization_api_keys (
   key_hash, name, description
 ) VALUES (
   @key_hash, @name, @description
 ) RETURNING *;
 
 -- name: CreateOrganizationAPIKeyMapping :one
-INSERT INTO lrconfig_organization_api_key_mappings (
+INSERT INTO organization_api_key_mappings (
   api_key_id, organization_id
 ) VALUES (
   @api_key_id, @organization_id
 ) RETURNING *;
 
 -- name: UpsertOrganizationAPIKey :one
-INSERT INTO lrconfig_organization_api_keys (
+INSERT INTO organization_api_keys (
   key_hash, name, description
 ) VALUES (
   @key_hash, @name, @description
@@ -35,7 +35,7 @@ INSERT INTO lrconfig_organization_api_keys (
 RETURNING *;
 
 -- name: UpsertOrganizationAPIKeyMapping :exec
-INSERT INTO lrconfig_organization_api_key_mappings (
+INSERT INTO organization_api_key_mappings (
   api_key_id, organization_id
 ) VALUES (
   @api_key_id, @organization_id
@@ -43,15 +43,15 @@ INSERT INTO lrconfig_organization_api_key_mappings (
   organization_id = EXCLUDED.organization_id;
 
 -- name: ClearOrganizationAPIKeyMappings :exec
-DELETE FROM lrconfig_organization_api_key_mappings;
+DELETE FROM organization_api_key_mappings;
 
 -- name: ClearOrganizationAPIKeys :exec
-DELETE FROM lrconfig_organization_api_keys;
+DELETE FROM organization_api_keys;
 
 -- name: GetAllOrganizationAPIKeys :many
 SELECT ak.*, ako.organization_id
-FROM lrconfig_organization_api_keys ak
-JOIN lrconfig_organization_api_key_mappings ako ON ak.id = ako.api_key_id;
+FROM organization_api_keys ak
+JOIN organization_api_key_mappings ako ON ak.id = ako.api_key_id;
 
 -- name: GetAllCOrganizationAPIKeysForSync :many
 SELECT organization_id, api_key, name, enabled

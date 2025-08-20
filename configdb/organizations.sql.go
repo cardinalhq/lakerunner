@@ -12,7 +12,7 @@ import (
 )
 
 const clearOrganizations = `-- name: ClearOrganizations :exec
-DELETE FROM lrconfig_organizations
+DELETE FROM organizations
 `
 
 func (q *Queries) ClearOrganizations(ctx context.Context) error {
@@ -21,7 +21,7 @@ func (q *Queries) ClearOrganizations(ctx context.Context) error {
 }
 
 const deleteOrganization = `-- name: DeleteOrganization :exec
-DELETE FROM lrconfig_organizations 
+DELETE FROM organizations 
 WHERE id = $1
 `
 
@@ -31,13 +31,13 @@ func (q *Queries) DeleteOrganization(ctx context.Context, id uuid.UUID) error {
 }
 
 const getOrganization = `-- name: GetOrganization :one
-SELECT id, name, enabled, created_at, synced_at FROM lrconfig_organizations 
+SELECT id, name, enabled, created_at, synced_at FROM organizations 
 WHERE id = $1
 `
 
-func (q *Queries) GetOrganization(ctx context.Context, id uuid.UUID) (LrconfigOrganization, error) {
+func (q *Queries) GetOrganization(ctx context.Context, id uuid.UUID) (Organization, error) {
 	row := q.db.QueryRow(ctx, getOrganization, id)
-	var i LrconfigOrganization
+	var i Organization
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
@@ -49,13 +49,13 @@ func (q *Queries) GetOrganization(ctx context.Context, id uuid.UUID) (LrconfigOr
 }
 
 const getOrganizationByName = `-- name: GetOrganizationByName :one
-SELECT id, name, enabled, created_at, synced_at FROM lrconfig_organizations 
+SELECT id, name, enabled, created_at, synced_at FROM organizations 
 WHERE name = $1
 `
 
-func (q *Queries) GetOrganizationByName(ctx context.Context, name string) (LrconfigOrganization, error) {
+func (q *Queries) GetOrganizationByName(ctx context.Context, name string) (Organization, error) {
 	row := q.db.QueryRow(ctx, getOrganizationByName, name)
-	var i LrconfigOrganization
+	var i Organization
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
@@ -67,20 +67,20 @@ func (q *Queries) GetOrganizationByName(ctx context.Context, name string) (Lrcon
 }
 
 const listEnabledOrganizations = `-- name: ListEnabledOrganizations :many
-SELECT id, name, enabled, created_at, synced_at FROM lrconfig_organizations
+SELECT id, name, enabled, created_at, synced_at FROM organizations
 WHERE enabled = true
 ORDER BY name
 `
 
-func (q *Queries) ListEnabledOrganizations(ctx context.Context) ([]LrconfigOrganization, error) {
+func (q *Queries) ListEnabledOrganizations(ctx context.Context) ([]Organization, error) {
 	rows, err := q.db.Query(ctx, listEnabledOrganizations)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []LrconfigOrganization
+	var items []Organization
 	for rows.Next() {
-		var i LrconfigOrganization
+		var i Organization
 		if err := rows.Scan(
 			&i.ID,
 			&i.Name,
@@ -99,19 +99,19 @@ func (q *Queries) ListEnabledOrganizations(ctx context.Context) ([]LrconfigOrgan
 }
 
 const listOrganizations = `-- name: ListOrganizations :many
-SELECT id, name, enabled, created_at, synced_at FROM lrconfig_organizations
+SELECT id, name, enabled, created_at, synced_at FROM organizations
 ORDER BY name
 `
 
-func (q *Queries) ListOrganizations(ctx context.Context) ([]LrconfigOrganization, error) {
+func (q *Queries) ListOrganizations(ctx context.Context) ([]Organization, error) {
 	rows, err := q.db.Query(ctx, listOrganizations)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []LrconfigOrganization
+	var items []Organization
 	for rows.Next() {
-		var i LrconfigOrganization
+		var i Organization
 		if err := rows.Scan(
 			&i.ID,
 			&i.Name,
@@ -130,7 +130,7 @@ func (q *Queries) ListOrganizations(ctx context.Context) ([]LrconfigOrganization
 }
 
 const upsertOrganization = `-- name: UpsertOrganization :one
-INSERT INTO lrconfig_organizations (
+INSERT INTO organizations (
   id, name, enabled, synced_at
 ) VALUES (
   $1, $2, $3, NOW()
@@ -147,9 +147,9 @@ type UpsertOrganizationParams struct {
 	Enabled bool      `json:"enabled"`
 }
 
-func (q *Queries) UpsertOrganization(ctx context.Context, arg UpsertOrganizationParams) (LrconfigOrganization, error) {
+func (q *Queries) UpsertOrganization(ctx context.Context, arg UpsertOrganizationParams) (Organization, error) {
 	row := q.db.QueryRow(ctx, upsertOrganization, arg.ID, arg.Name, arg.Enabled)
-	var i LrconfigOrganization
+	var i Organization
 	err := row.Scan(
 		&i.ID,
 		&i.Name,

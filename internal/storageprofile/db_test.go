@@ -71,12 +71,12 @@ func (m *mockConfigDBStoreageProfileFetcher) GetStorageProfilesByBucketName(ctx 
 }
 
 // New methods for bucket management (stub implementations for testing)
-func (m *mockConfigDBStoreageProfileFetcher) GetBucketConfiguration(ctx context.Context, bucketName string) (configdb.LrconfigBucketConfiguration, error) {
+func (m *mockConfigDBStoreageProfileFetcher) GetBucketConfiguration(ctx context.Context, bucketName string) (configdb.BucketConfiguration, error) {
 	if m.err != nil {
-		return configdb.LrconfigBucketConfiguration{}, m.err
+		return configdb.BucketConfiguration{}, m.err
 	}
 	// Return a valid bucket configuration for testing
-	config := configdb.LrconfigBucketConfiguration{
+	config := configdb.BucketConfiguration{
 		ID:            uuid.New(),
 		BucketName:    m.profile.Bucket,
 		CloudProvider: m.profile.CloudProvider,

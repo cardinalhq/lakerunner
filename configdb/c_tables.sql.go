@@ -27,7 +27,7 @@ WHERE
   c.deleted_at IS NULL
   AND c.organization_id = $1
   AND c.external_id = $2
-  AND EXISTS (SELECT 1 FROM lrconfig_organizations o WHERE o.id = c.organization_id AND o.enabled = true)
+  AND EXISTS (SELECT 1 FROM organizations o WHERE o.id = c.organization_id AND o.enabled = true)
 `
 
 type GetStorageProfileByCollectorNameParams struct {
@@ -76,7 +76,7 @@ WHERE
   c.deleted_at IS NULL
   AND c.organization_id = $1
   AND c.instance_num = $2
-  AND EXISTS (SELECT 1 FROM lrconfig_organizations o WHERE o.id = c.organization_id AND o.enabled = true)
+  AND EXISTS (SELECT 1 FROM organizations o WHERE o.id = c.organization_id AND o.enabled = true)
 `
 
 type GetStorageProfileParams struct {
@@ -124,7 +124,7 @@ FROM
 WHERE
   c.deleted_at IS NULL
   AND sp.bucket = $1
-  AND EXISTS (SELECT 1 FROM lrconfig_organizations o WHERE o.id = c.organization_id AND o.enabled = true)
+  AND EXISTS (SELECT 1 FROM organizations o WHERE o.id = c.organization_id AND o.enabled = true)
 `
 
 type GetStorageProfilesByBucketNameRow struct {

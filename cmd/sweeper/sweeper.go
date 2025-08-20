@@ -515,7 +515,7 @@ func runLegacyTablesSync(ctx context.Context, ll *slog.Logger, cdb configdb.Quer
 			slog.Int("orgCount", len(orgs)))
 	}
 
-	// Sync organization API keys from c_organization_api_keys to lrconfig_* tables
+	// Sync organization API keys from c_organization_api_keys to our organization tables
 	if err := syncOrganizationAPIKeys(ctx, ll, qtx); err != nil {
 		return err
 	}

@@ -28,7 +28,7 @@ import (
 
 // Mock for new bucket management queries
 type mockBucketManagementFetcher struct {
-	bucketConfig    configdb.LrconfigBucketConfiguration
+	bucketConfig    configdb.BucketConfiguration
 	bucketErr       error
 	orgsByBucket    []uuid.UUID
 	orgsByBucketErr error
@@ -52,7 +52,7 @@ func (m *mockBucketManagementFetcher) GetStorageProfilesByBucketName(ctx context
 	return nil, errors.New("not implemented")
 }
 
-func (m *mockBucketManagementFetcher) GetBucketConfiguration(ctx context.Context, bucketName string) (configdb.LrconfigBucketConfiguration, error) {
+func (m *mockBucketManagementFetcher) GetBucketConfiguration(ctx context.Context, bucketName string) (configdb.BucketConfiguration, error) {
 	return m.bucketConfig, m.bucketErr
 }
 
@@ -93,7 +93,7 @@ func TestDatabaseProvider_ResolveOrganization_UUIDExtraction(t *testing.T) {
 			name:       "valid UUID in path with access",
 			bucketName: "test-bucket",
 			objectPath: "/metrics/" + orgID.String() + "/data.parquet",
-			mockConfig: configdb.LrconfigBucketConfiguration{
+			mockConfig: configdb.BucketConfiguration{
 				ID:            uuid.New(),
 				BucketName:    "test-bucket",
 				CloudProvider: "aws",
@@ -109,7 +109,7 @@ func TestDatabaseProvider_ResolveOrganization_UUIDExtraction(t *testing.T) {
 			name:       "valid UUID in path but no access continues to prefix matching",
 			bucketName: "test-bucket",
 			objectPath: "/metrics/" + orgID.String() + "/data.parquet",
-			mockConfig: configdb.LrconfigBucketConfiguration{
+			mockConfig: configdb.BucketConfiguration{
 				ID:            uuid.New(),
 				BucketName:    "test-bucket",
 				CloudProvider: "aws",
@@ -126,7 +126,7 @@ func TestDatabaseProvider_ResolveOrganization_UUIDExtraction(t *testing.T) {
 			name:       "nil UUID in path without access",
 			bucketName: "test-bucket",
 			objectPath: "/metrics/00000000-0000-0000-0000-000000000000/data.parquet", // Nil UUID
-			mockConfig: configdb.LrconfigBucketConfiguration{
+			mockConfig: configdb.BucketConfiguration{
 				ID:            uuid.New(),
 				BucketName:    "test-bucket",
 				CloudProvider: "aws",
@@ -143,7 +143,7 @@ func TestDatabaseProvider_ResolveOrganization_UUIDExtraction(t *testing.T) {
 			name:       "invalid UUID in path",
 			bucketName: "test-bucket",
 			objectPath: "/metrics/invalid-uuid/data.parquet",
-			mockConfig: configdb.LrconfigBucketConfiguration{
+			mockConfig: configdb.BucketConfiguration{
 				ID:            uuid.New(),
 				BucketName:    "test-bucket",
 				CloudProvider: "aws",
@@ -158,7 +158,7 @@ func TestDatabaseProvider_ResolveOrganization_UUIDExtraction(t *testing.T) {
 			name:       "no UUID in path",
 			bucketName: "test-bucket",
 			objectPath: "/metrics/some-other-path/data.parquet",
-			mockConfig: configdb.LrconfigBucketConfiguration{
+			mockConfig: configdb.BucketConfiguration{
 				ID:            uuid.New(),
 				BucketName:    "test-bucket",
 				CloudProvider: "aws",
@@ -173,7 +173,7 @@ func TestDatabaseProvider_ResolveOrganization_UUIDExtraction(t *testing.T) {
 			name:       "deeper nested UUID not extracted",
 			bucketName: "test-bucket",
 			objectPath: "/metrics/nested/" + orgID.String() + "/data.parquet", // UUID in 3rd segment, not 2nd
-			mockConfig: configdb.LrconfigBucketConfiguration{
+			mockConfig: configdb.BucketConfiguration{
 				ID:            uuid.New(),
 				BucketName:    "test-bucket",
 				CloudProvider: "aws",
