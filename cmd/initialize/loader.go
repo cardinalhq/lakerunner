@@ -28,8 +28,47 @@ import (
 	"github.com/cardinalhq/lakerunner/configdb"
 )
 
+// FileReader interface for testable file operations
+type FileReader interface {
+	ReadFile(filename string) ([]byte, error)
+	Getenv(key string) string
+}
+
+// OSFileReader implements FileReader using OS operations
+type OSFileReader struct{}
+
+func (r OSFileReader) ReadFile(filename string) ([]byte, error) {
+	return os.ReadFile(filename)
+}
+
+func (r OSFileReader) Getenv(key string) string {
+	return os.Getenv(key)
+}
+
+// DatabaseQueries interface for testable database operations
+type DatabaseQueries interface {
+	SyncOrganizations(ctx context.Context) error
+	HasExistingStorageProfiles(ctx context.Context) (bool, error)
+	ClearBucketPrefixMappings(ctx context.Context) error
+	ClearOrganizationBuckets(ctx context.Context) error
+	ClearBucketConfigurations(ctx context.Context) error
+	UpsertBucketConfiguration(ctx context.Context, arg configdb.UpsertBucketConfigurationParams) (configdb.LrconfigBucketConfiguration, error)
+	UpsertOrganizationBucket(ctx context.Context, arg configdb.UpsertOrganizationBucketParams) error
+	ClearOrganizationAPIKeyMappings(ctx context.Context) error
+	ClearOrganizationAPIKeys(ctx context.Context) error
+	UpsertOrganizationAPIKey(ctx context.Context, arg configdb.UpsertOrganizationAPIKeyParams) (configdb.LrconfigOrganizationApiKey, error)
+	GetOrganizationAPIKeyByHash(ctx context.Context, keyHash string) (configdb.GetOrganizationAPIKeyByHashRow, error)
+	UpsertOrganizationAPIKeyMapping(ctx context.Context, arg configdb.UpsertOrganizationAPIKeyMappingParams) error
+}
+
 // InitializeConfig loads and imports storage profiles and API keys
 func InitializeConfig(ctx context.Context, storageProfileFile, apiKeysFile string, qtx *configdb.Queries, logger *slog.Logger, replace bool) error {
+	fileReader := OSFileReader{}
+	return InitializeConfigWithDependencies(ctx, storageProfileFile, apiKeysFile, qtx, fileReader, logger, replace)
+}
+
+// InitializeConfigWithDependencies loads and imports with injectable dependencies for testing
+func InitializeConfigWithDependencies(ctx context.Context, storageProfileFile, apiKeysFile string, qtx DatabaseQueries, fileReader FileReader, logger *slog.Logger, replace bool) error {
 	// First sync organizations from c_organizations table
 	if err := qtx.SyncOrganizations(ctx); err != nil {
 		return fmt.Errorf("failed to sync organizations: %w", err)
@@ -37,13 +76,13 @@ func InitializeConfig(ctx context.Context, storageProfileFile, apiKeysFile strin
 	logger.Info("Synced organizations from c_organizations table")
 
 	// Load and import storage profiles
-	if err := loadAndImportStorageProfiles(ctx, storageProfileFile, qtx, logger, replace); err != nil {
+	if err := loadAndImportStorageProfilesWithReader(ctx, storageProfileFile, qtx, fileReader, logger, replace); err != nil {
 		return fmt.Errorf("failed to import storage profiles: %w", err)
 	}
 
 	// Load and import API keys if provided
 	if apiKeysFile != "" {
-		if err := loadAndImportAPIKeys(ctx, apiKeysFile, qtx, logger, replace); err != nil {
+		if err := loadAndImportAPIKeysWithReader(ctx, apiKeysFile, qtx, fileReader, logger, replace); err != nil {
 			return fmt.Errorf("failed to import API keys: %w", err)
 		}
 	}
@@ -51,8 +90,8 @@ func InitializeConfig(ctx context.Context, storageProfileFile, apiKeysFile strin
 	return nil
 }
 
-func loadAndImportStorageProfiles(ctx context.Context, filename string, qtx *configdb.Queries, logger *slog.Logger, replace bool) error {
-	contents, err := loadFileContents(filename)
+func loadAndImportStorageProfilesWithReader(ctx context.Context, filename string, qtx DatabaseQueries, fileReader FileReader, logger *slog.Logger, replace bool) error {
+	contents, err := loadFileContentsWithReader(filename, fileReader)
 	if err != nil {
 		return err
 	}
@@ -60,8 +99,8 @@ func loadAndImportStorageProfiles(ctx context.Context, filename string, qtx *con
 	return importStorageProfiles(ctx, contents, qtx, logger, replace)
 }
 
-func loadAndImportAPIKeys(ctx context.Context, filename string, qtx *configdb.Queries, logger *slog.Logger, replace bool) error {
-	contents, err := loadFileContents(filename)
+func loadAndImportAPIKeysWithReader(ctx context.Context, filename string, qtx DatabaseQueries, fileReader FileReader, logger *slog.Logger, replace bool) error {
+	contents, err := loadFileContentsWithReader(filename, fileReader)
 	if err != nil {
 		return err
 	}
@@ -78,25 +117,25 @@ func loadAndImportAPIKeys(ctx context.Context, filename string, qtx *configdb.Qu
 	return importAPIKeys(ctx, apiKeysConfig, qtx, logger, replace)
 }
 
-func loadFileContents(filename string) ([]byte, error) {
+func loadFileContentsWithReader(filename string, fileReader FileReader) ([]byte, error) {
 	// Handle env: prefix for environment variables
 	if after, ok := strings.CutPrefix(filename, "env:"); ok {
 		envVar := after
-		envContents := os.Getenv(envVar)
+		envContents := fileReader.Getenv(envVar)
 		if envContents == "" {
 			return nil, fmt.Errorf("environment variable %s is not set", envVar)
 		}
 		return []byte(envContents), nil
 	}
 
-	contents, err := os.ReadFile(filename)
+	contents, err := fileReader.ReadFile(filename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read file %s: %w", filename, err)
 	}
 	return contents, nil
 }
 
-func importStorageProfiles(ctx context.Context, contents []byte, qtx *configdb.Queries, logger *slog.Logger, replace bool) error {
+func importStorageProfiles(ctx context.Context, contents []byte, qtx DatabaseQueries, logger *slog.Logger, replace bool) error {
 	var profiles []StorageProfile
 	dec := yaml.NewDecoder(bytes.NewReader(contents))
 	dec.KnownFields(true)
@@ -170,7 +209,7 @@ func importStorageProfiles(ctx context.Context, contents []byte, qtx *configdb.Q
 	return nil
 }
 
-func importAPIKeys(ctx context.Context, apiKeysConfig APIKeysConfig, qtx *configdb.Queries, logger *slog.Logger, replace bool) error {
+func importAPIKeys(ctx context.Context, apiKeysConfig APIKeysConfig, qtx DatabaseQueries, logger *slog.Logger, replace bool) error {
 	// Sync organizations again in case they weren't synced yet or have changed
 	if err := qtx.SyncOrganizations(ctx); err != nil {
 		return fmt.Errorf("failed to sync organizations before API key import: %w", err)
