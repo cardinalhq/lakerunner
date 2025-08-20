@@ -41,7 +41,7 @@ type PushDownRequest struct {
 	OrganizationID uuid.UUID            `json:"orgId"`
 	BaseExpr       promql.BaseExpr      `json:"baseExpr"`
 	StartTs        int64                `json:"startTs"`
-	EndTs          int64         `json:"endTs"`
+	EndTs          int64                `json:"endTs"`
 	Step           time.Duration        `json:"step"`
 	Segments       []promql.SegmentInfo `json:"segments"`
 }
@@ -400,28 +400,4 @@ func (q *QuerierService) lookupSegments(ctx context.Context,
 	}
 
 	return allSegments, nil
-}
-
-func toFloat64(v any) (float64, bool) {
-	switch n := v.(type) {
-	case float64:
-		return n, true
-	case float32:
-		return float64(n), true
-	case int64:
-		return float64(n), true
-	case int32:
-		return float64(n), true
-	case int:
-		return float64(n), true
-	case uint64:
-		return float64(n), true
-	case uint32:
-		return float64(n), true
-	case uint:
-		return float64(n), true
-	default:
-		slog.Error("unexpected type for numeric value", "value", v, "type", fmt.Sprintf("%T", v))
-		return 0, false
-	}
 }
