@@ -310,7 +310,7 @@ func (ws *WorkerService) Run(doneCtx context.Context) error {
 	mux.Handle("/api/v1/pushDown", ws) // supports GET + POST
 
 	srv := &http.Server{
-		Addr:    ":8080",
+		Addr:    ":8081",
 		Handler: mux,
 	}
 
