@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package promql
+package queryapi
 
 import (
 	"bufio"
@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/cardinalhq/lakerunner/promql"
 	"io"
 	"log/slog"
 	"net/http"
@@ -37,12 +38,12 @@ import (
 
 // PushDownRequest is sent to a worker.
 type PushDownRequest struct {
-	OrganizationID uuid.UUID     `json:"orgId"`
-	BaseExpr       BaseExpr      `json:"baseExpr"`
-	StartTs        int64         `json:"startTs"`
+	OrganizationID uuid.UUID            `json:"orgId"`
+	BaseExpr       promql.BaseExpr      `json:"baseExpr"`
+	StartTs        int64                `json:"startTs"`
 	EndTs          int64         `json:"endTs"`
-	Step           time.Duration `json:"step"`
-	Segments       []SegmentInfo `json:"segments"`
+	Step           time.Duration        `json:"step"`
+	Segments       []promql.SegmentInfo `json:"segments"`
 }
 
 // Evaluate plans pushdowns, fans requests out to workers, merges their streams,
@@ -52,11 +53,11 @@ func (q *QuerierService) Evaluate(
 	ctx context.Context,
 	orgID uuid.UUID,
 	startTs, endTs int64,
-	queryPlan QueryPlan,
-) (<-chan map[string]EvalResult, error) {
-	stepDuration := stepForQueryDuration(startTs, endTs)
+	queryPlan promql.QueryPlan,
+) (<-chan map[string]promql.EvalResult, error) {
+	stepDuration := StepForQueryDuration(startTs, endTs)
 
-	var allLeafChans []<-chan SketchInput
+	var allLeafChans []<-chan promql.SketchInput
 
 	workers, err := q.workerDiscovery.GetAllWorkers()
 	if err != nil {
@@ -95,12 +96,12 @@ func (q *QuerierService) Evaluate(
 			}
 
 			// Form time-contiguous batches sized for the number of workers.
-			groups := ComputeReplayBatchesWithWorkers(segments, stepDuration, effStart, effEnd, len(workers), true)
+			groups := promql.ComputeReplayBatchesWithWorkers(segments, stepDuration, effStart, effEnd, len(workers), true)
 
 			for _, group := range groups {
 				// Collect all segment IDs for worker assignment
 				segmentIDs := make([]int64, 0, len(group.Segments))
-				segmentMap := make(map[int64][]SegmentInfo)
+				segmentMap := make(map[int64][]promql.SegmentInfo)
 				for _, segment := range segments {
 					segmentIDs = append(segmentIDs, segment.SegmentID)
 					segmentMap[segment.SegmentID] = append(segmentMap[segment.SegmentID], segment)
@@ -114,7 +115,7 @@ func (q *QuerierService) Evaluate(
 				}
 
 				// Group segments by assigned worker
-				workerGroups := make(map[Worker][]SegmentInfo)
+				workerGroups := make(map[Worker][]promql.SegmentInfo)
 				for _, mapping := range mappings {
 					segmentList := segmentMap[mapping.SegmentID]
 					workerGroups[mapping.Worker] = append(workerGroups[mapping.Worker], segmentList...)
@@ -150,13 +151,13 @@ func (q *QuerierService) Evaluate(
 	// Nothing to merge → return closed chan.
 	if len(allLeafChans) == 0 {
 		slog.Info("no pushdowns produced any channels")
-		out := make(chan SketchInput)
+		out := make(chan promql.SketchInput)
 		close(out)
 		return nil, fmt.Errorf("no pushdowns produced any channels")
 	}
 
 	// Merge all worker streams by timestamp (ascending).
-	merged := MergeSorted(ctx, 1024, allLeafChans...)
+	merged := promql.MergeSorted(ctx, 1024, allLeafChans...)
 	// Pipe through EvalFlow (aggregator -> root.Eval)
 	flow := NewEvalFlow(queryPlan.Root, queryPlan.Leaves, stepDuration, EvalFlowOptions{
 		NumBuffers: 2,
@@ -173,7 +174,7 @@ func (q *QuerierService) pushDown(
 	ctx context.Context,
 	worker Worker,
 	request PushDownRequest,
-) (<-chan SketchInput, error) {
+) (<-chan promql.SketchInput, error) {
 	// --- Build request ---
 	u := fmt.Sprintf("http://%s:%d/api/v1/pushDown", worker.IP, worker.Port)
 
@@ -205,7 +206,7 @@ func (q *QuerierService) pushDown(
 		return nil, fmt.Errorf("worker returned %s", resp.Status)
 	}
 
-	out := make(chan SketchInput, 1024)
+	out := make(chan promql.SketchInput, 1024)
 
 	go func() {
 		defer close(out)
@@ -241,7 +242,7 @@ func (q *QuerierService) pushDown(
 
 			switch env.Type {
 			case "result":
-				var si SketchInput
+				var si promql.SketchInput
 				if err := json.Unmarshal(env.Data, &si); err != nil {
 					slog.Error("SSE data unmarshal failed", "err", err)
 					return false
@@ -301,8 +302,8 @@ func (q *QuerierService) pushDown(
 
 // shiftTimestamps returns a channel that forwards every SketchInput from `in`
 // with its Timestamp shifted by +deltaMs. Non-blocking via buffered output.
-func shiftTimestamps(ctx context.Context, in <-chan SketchInput, deltaMs int64, outBuf int) <-chan SketchInput {
-	out := make(chan SketchInput, outBuf)
+func shiftTimestamps(ctx context.Context, in <-chan promql.SketchInput, deltaMs int64, outBuf int) <-chan promql.SketchInput {
+	out := make(chan promql.SketchInput, outBuf)
 	go func() {
 		defer close(out)
 		for {
@@ -342,9 +343,9 @@ func (q *QuerierService) lookupSegments(ctx context.Context,
 	dih DateIntHours,
 	startTs int64, endTs int64,
 	stepDuration time.Duration,
-	orgUUID uuid.UUID) ([]SegmentInfo, error) {
+	orgUUID uuid.UUID) ([]promql.SegmentInfo, error) {
 
-	var allSegments []SegmentInfo
+	var allSegments []promql.SegmentInfo
 
 	if IsLocalDev() {
 		files, err := os.ReadDir("./db")
@@ -361,7 +362,7 @@ func (q *QuerierService) lookupSegments(ctx context.Context,
 				slog.Error("failed to parse segment ID from filename", "filename", f.Name(), "err", err)
 				continue
 			}
-			allSegments = append(allSegments, SegmentInfo{
+			allSegments = append(allSegments, promql.SegmentInfo{
 				SegmentID:      segmentID,
 				StartTs:        startTs,
 				EndTs:          endTs,
@@ -385,7 +386,7 @@ func (q *QuerierService) lookupSegments(ctx context.Context,
 	}
 	for _, row := range rows {
 		endHour := zeroFilledHour(time.UnixMilli(row.EndTs).UTC().Hour())
-		allSegments = append(allSegments, SegmentInfo{
+		allSegments = append(allSegments, promql.SegmentInfo{
 			DateInt:        dih.DateInt,
 			Hour:           endHour,
 			SegmentID:      row.SegmentID,

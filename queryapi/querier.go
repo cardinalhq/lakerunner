@@ -12,13 +12,14 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package promql
+package queryapi
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/cardinalhq/lakerunner/promql"
 	"io"
 	"log/slog"
 	"net/http"
@@ -130,12 +131,12 @@ func (q *QuerierService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Parse & compile PromQL
-	promExpr, err := FromPromQL(prom)
+	promExpr, err := promql.FromPromQL(prom)
 	if err != nil {
 		http.Error(w, "invalid query expression: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	plan, err := Compile(promExpr)
+	plan, err := promql.Compile(promExpr)
 	if err != nil {
 		http.Error(w, "compile error: "+err.Error(), http.StatusBadRequest)
 		return

@@ -1,4 +1,18 @@
-package query_worker
+// Copyright (C) 2025 CardinalHQ, Inc
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as
+// published by the Free Software Foundation, version 3.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program. If not, see <http://www.gnu.org/licenses/>.
+
+package queryworker
 
 import (
 	"context"
@@ -7,6 +21,7 @@ import (
 	"fmt"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/promql"
+	"github.com/cardinalhq/lakerunner/queryapi"
 	"github.com/google/uuid"
 	"log/slog"
 	"os"
@@ -21,7 +36,7 @@ import (
 type DownloadBatchFunc func(ctx context.Context, storageProfile storageprofile.StorageProfile, keys []string) error
 
 // RowMapper turns the current row into a T.
-type RowMapper[T promql.Timestamped] func(promql.PushDownRequest, []string, *sql.Rows) (T, error)
+type RowMapper[T promql.Timestamped] func(queryapi.PushDownRequest, []string, *sql.Rows) (T, error)
 
 type ingestJob struct {
 	profile storageprofile.StorageProfile
@@ -85,7 +100,7 @@ func (w *CacheManager) Close() {
 func EvaluatePushDown[T promql.Timestamped](
 	ctx context.Context,
 	w *CacheManager,
-	request promql.PushDownRequest,
+	request queryapi.PushDownRequest,
 	userSQL string,
 	s3GlobSize int,
 	mapper RowMapper[T],
@@ -145,7 +160,7 @@ func EvaluatePushDown[T promql.Timestamped](
 				} else {
 					bucket := profile.Bucket
 					prefix := "s3://" + bucket + "/"
-					if promql.IsLocalDev() {
+					if queryapi.IsLocalDev() {
 						prefix = "./"
 					}
 					s3URIs = append(s3URIs, prefix+objectId)
@@ -176,7 +191,7 @@ func EvaluatePushDown[T promql.Timestamped](
 }
 
 func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
-	request promql.PushDownRequest,
+	request queryapi.PushDownRequest,
 	cachedIDs []int64,
 	userSQL string, mapper RowMapper[T]) []<-chan T {
 	outs := make([]<-chan T, 0)
@@ -245,7 +260,7 @@ func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
 func streamFromS3[T promql.Timestamped](
 	ctx context.Context,
 	w *CacheManager,
-	request promql.PushDownRequest,
+	request queryapi.PushDownRequest,
 	s3URIs []string,
 	s3GlobSize int,
 	userSQL string,

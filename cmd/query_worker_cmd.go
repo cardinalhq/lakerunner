@@ -15,19 +15,21 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
+	"github.com/cardinalhq/lakerunner/internal/awsclient"
+	"github.com/cardinalhq/lakerunner/internal/storageprofile"
+	"github.com/cardinalhq/lakerunner/queryworker"
 	"log/slog"
 
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
-
-	"github.com/cardinalhq/lakerunner/queryworker"
 )
 
 func init() {
 	cmd := &cobra.Command{
 		Use:   "query-worker",
-		Short: "start query-worker service",
+		Short: "start query-worker server",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			servicename := "query-worker"
 			addlAttrs := attribute.NewSet()
@@ -42,13 +44,23 @@ func init() {
 				}
 			}()
 
-			service, err := queryworker.NewService()
+			sp, err := storageprofile.SetupStorageProfiles()
 			if err != nil {
-				slog.Error("Failed to create query worker service", slog.Any("error", err))
-				return fmt.Errorf("failed to create query worker service: %w", err)
+				return fmt.Errorf("failed to setup storage profiles: %w", err)
 			}
 
-			return service.Run(doneCtx)
+			if err != nil {
+				slog.Error("Failed to create querier service", slog.Any("error", err))
+				return fmt.Errorf("failed to create querier service: %w", err)
+			}
+
+			awsmanager, err := awsclient.NewManager(context.Background(), awsclient.WithAssumeRoleSessionName("query-worker"))
+			if err != nil {
+				return fmt.Errorf("failed to create AWS manager: %w", err)
+			}
+
+			worker := queryworker.NewWorkerService(3, 12, sp, awsmanager)
+			return worker.Run(doneCtx)
 		},
 	}
 

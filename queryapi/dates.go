@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package promql
+package queryapi
 
 import (
 	"fmt"
@@ -20,7 +20,7 @@ import (
 	"time"
 )
 
-func stepForQueryDuration(startMs, endMs int64) time.Duration {
+func StepForQueryDuration(startMs, endMs int64) time.Duration {
 	oneHourish := int64(1 * 65 * 60 * 1000)
 	twelveHours := int64(12 * 60 * 60 * 1000)
 	oneDay := int64(24 * 60 * 60 * 1000)

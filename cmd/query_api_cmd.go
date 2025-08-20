@@ -17,13 +17,12 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"github.com/cardinalhq/lakerunner/cmd/dbopen"
+	"github.com/cardinalhq/lakerunner/queryapi"
 	"log/slog"
 
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
-
-	"github.com/cardinalhq/lakerunner/cmd/dbopen"
-	"github.com/cardinalhq/lakerunner/promql"
 )
 
 func init() {
@@ -51,7 +50,7 @@ func init() {
 			}
 
 			// Create and start worker discovery
-			workerDiscovery, err := promql.CreateWorkerDiscovery()
+			workerDiscovery, err := queryapi.CreateWorkerDiscovery()
 			if err != nil {
 				slog.Error("Failed to create worker discovery", slog.Any("error", err))
 				return fmt.Errorf("failed to create worker discovery: %w", err)
@@ -67,7 +66,7 @@ func init() {
 				}
 			}()
 
-			querier, err := promql.NewQuerierService(mdb, workerDiscovery)
+			querier, err := queryapi.NewQuerierService(mdb, workerDiscovery)
 			if err != nil {
 				slog.Error("Failed to create querier service", slog.Any("error", err))
 				return fmt.Errorf("failed to create querier service: %w", err)

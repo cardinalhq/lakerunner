@@ -17,13 +17,12 @@ package debug
 import (
 	"context"
 	"fmt"
+	"github.com/cardinalhq/lakerunner/queryapi"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
-
-	"github.com/cardinalhq/lakerunner/promql"
 )
 
 var kubernetesDiscoveryCmd = &cobra.Command{
@@ -83,13 +82,13 @@ func runKubernetesDiscovery(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	config := promql.KubernetesWorkerDiscoveryConfig{
+	config := queryapi.KubernetesWorkerDiscoveryConfig{
 		Namespace:           podNamespace,
 		WorkerLabelSelector: workerLabelSelector,
 		WorkerPort:          queryWorkerPort,
 	}
 
-	discovery, err := promql.NewKubernetesWorkerDiscovery(config)
+	discovery, err := queryapi.NewKubernetesWorkerDiscovery(config)
 	if err != nil {
 		return fmt.Errorf("failed to create Kubernetes worker discovery: %w", err)
 	}

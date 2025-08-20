@@ -1,4 +1,18 @@
-package query_worker
+// Copyright (C) 2025 CardinalHQ, Inc
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as
+// published by the Free Software Foundation, version 3.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program. If not, see <http://www.gnu.org/licenses/>.
+
+package queryworker
 
 import (
 	"context"
@@ -10,6 +24,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/promql"
+	"github.com/cardinalhq/lakerunner/queryapi"
 	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
 	"log/slog"
@@ -104,7 +119,7 @@ func NewWorkerService(
 	}
 }
 
-func sketchInputMapper(request promql.PushDownRequest, cols []string, row *sql.Rows) (promql.SketchInput, error) {
+func sketchInputMapper(request queryapi.PushDownRequest, cols []string, row *sql.Rows) (promql.SketchInput, error) {
 	vals := make([]interface{}, len(cols))
 	ptrs := make([]interface{}, len(cols))
 	for i := range vals {
@@ -168,9 +183,9 @@ func sketchInputMapper(request promql.PushDownRequest, cols []string, row *sql.R
 	}, nil
 }
 
-// PushDownHandler serves SSE with merged, sorted points from cache+S3.
-func (ws *WorkerService) PushDownHandler(w http.ResponseWriter, r *http.Request) {
-	var req promql.PushDownRequest
+// ServeHttp serves SSE with merged, sorted points from cache+S3.
+func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	var req queryapi.PushDownRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
 		return
@@ -262,7 +277,6 @@ func (ws *WorkerService) PushDownHandler(w http.ResponseWriter, r *http.Request)
 			}
 		}
 	}
-
 }
 
 func toFloat64(v any) (float64, bool) {
@@ -287,4 +301,32 @@ func toFloat64(v any) (float64, bool) {
 		slog.Error("unexpected type for numeric value", "value", v, "type", fmt.Sprintf("%T", v))
 		return 0, false
 	}
+}
+
+func (ws *WorkerService) Run(doneCtx context.Context) error {
+	slog.Info("Starting query-worker service")
+
+	mux := http.NewServeMux()
+	mux.Handle("/api/v1/pushDown", ws) // supports GET + POST
+
+	srv := &http.Server{
+		Addr:    ":8080",
+		Handler: mux,
+	}
+
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("Failed to start HTTP server", slog.Any("error", err))
+		}
+	}()
+
+	<-doneCtx.Done()
+
+	slog.Info("Shutting down querier service")
+	if err := srv.Shutdown(context.Background()); err != nil {
+		slog.Error("Failed to shutdown HTTP server", slog.Any("error", err))
+		return fmt.Errorf("failed to shutdown HTTP server: %w", err)
+	}
+
+	return nil
 }
