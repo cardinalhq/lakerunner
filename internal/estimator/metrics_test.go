@@ -52,7 +52,7 @@ func TestMetricEstimator_Get_ExactMatch(t *testing.T) {
 	orgA, _ := mk()
 	e := newBareMetricEstimator()
 
-	key := metricEstimatorKey{OrganizationID: orgA, InstanceNum: 1, FrequencyMs: 60000}
+	key := metricEstimatorKey{OrganizationID: orgA, FrequencyMs: 60000}
 	e.currentEstimates[key] = 123
 
 	got := e.Get(orgA, 1, 60000)
@@ -67,7 +67,7 @@ func TestMetricEstimator_Get_AllPaths(t *testing.T) {
 	// Test Path 1: Exact match (org + instance + frequency)
 	t.Run("ExactMatch", func(t *testing.T) {
 		e := newBareMetricEstimator()
-		e.currentEstimates[metricEstimatorKey{orgA, 1, 60000}] = 1234
+		e.currentEstimates[metricEstimatorKey{orgA, 60000}] = 1234
 
 		got := e.Get(orgA, 1, 60000)
 		if got != 1234 {
@@ -78,13 +78,12 @@ func TestMetricEstimator_Get_AllPaths(t *testing.T) {
 	// Test Path 2: Org + frequency average (across instances)
 	t.Run("OrgFrequencyAverage", func(t *testing.T) {
 		e := newBareMetricEstimator()
-		// Same org, frequency but different instances
-		e.currentEstimates[metricEstimatorKey{orgA, 2, 60000}] = 100
-		e.currentEstimates[metricEstimatorKey{orgA, 3, 60000}] = 200
+		// Same org/frequency - there's only one estimate per org+frequency now
+		e.currentEstimates[metricEstimatorKey{orgA, 60000}] = 150
 
-		// Query for non-existing instance but same org/frequency
+		// Query should return the exact estimate
 		got := e.Get(orgA, 1, 60000)
-		expected := (100 + 200) / 2
+		expected := int64(150)
 		if got != int64(expected) {
 			t.Fatalf("org+frequency average: want %d, got %d", expected, got)
 		}
@@ -94,8 +93,8 @@ func TestMetricEstimator_Get_AllPaths(t *testing.T) {
 	t.Run("OrgAverage", func(t *testing.T) {
 		e := newBareMetricEstimator()
 		// Same org but different instances and frequencies
-		e.currentEstimates[metricEstimatorKey{orgA, 2, 120000}] = 300
-		e.currentEstimates[metricEstimatorKey{orgA, 3, 180000}] = 500
+		e.currentEstimates[metricEstimatorKey{orgA, 120000}] = 300
+		e.currentEstimates[metricEstimatorKey{orgA, 180000}] = 500
 
 		// Query for non-existing instance and frequency but same org
 		got := e.Get(orgA, 1, 60000)
@@ -108,13 +107,12 @@ func TestMetricEstimator_Get_AllPaths(t *testing.T) {
 	// Test Path 4: Frequency average (across organizations and instances)
 	t.Run("FrequencyAverage", func(t *testing.T) {
 		e := newBareMetricEstimator()
-		// Same frequency but different orgs and instances
-		e.currentEstimates[metricEstimatorKey{orgB, 5, 60000}] = 600
-		e.currentEstimates[metricEstimatorKey{orgB, 6, 60000}] = 800
+		// Same frequency but different orgs
+		e.currentEstimates[metricEstimatorKey{orgB, 60000}] = 700
 
 		// Query for non-existing org but same frequency
 		got := e.Get(orgA, 1, 60000)
-		expected := (600 + 800) / 2
+		expected := int64(700)
 		if got != int64(expected) {
 			t.Fatalf("frequency average: want %d, got %d", expected, got)
 		}
@@ -135,7 +133,7 @@ func TestMetricEstimator_Get_AllPaths(t *testing.T) {
 	t.Run("InvalidFrequency", func(t *testing.T) {
 		e := newBareMetricEstimator()
 		// Set up some data for fallback
-		e.currentEstimates[metricEstimatorKey{orgA, 1, 60000}] = 1000
+		e.currentEstimates[metricEstimatorKey{orgA, 60000}] = 1000
 
 		// Test invalid frequency (0 and negative)
 		got1 := e.Get(orgA, 1, 0)
@@ -194,13 +192,13 @@ func TestMetricEstimator_UpdateEstimates_CornerCases(t *testing.T) {
 	t.Run("AllEstimatesNonPositive", func(t *testing.T) {
 		fq := &fakeMetricQuerier{
 			metricRows: []lrdb.MetricSegEstimatorRow{
-				{OrganizationID: orgA, InstanceNum: 1, FrequencyMs: 60000, EstimatedRecords: 0},
-				{OrganizationID: orgB, InstanceNum: 2, FrequencyMs: 60000, EstimatedRecords: -100},
+				{OrganizationID: orgA, FrequencyMs: 60000, EstimatedRecords: 0},
+				{OrganizationID: orgB, FrequencyMs: 60000, EstimatedRecords: -100},
 			},
 		}
 		e := newBareMetricEstimator()
 		// Add some existing data that should be preserved
-		e.currentEstimates[metricEstimatorKey{orgA, 5, 30000}] = 999
+		e.currentEstimates[metricEstimatorKey{orgA, 30000}] = 999
 
 		err := e.updateEstimates(context.Background(), fq)
 		if err != nil {
@@ -211,7 +209,7 @@ func TestMetricEstimator_UpdateEstimates_CornerCases(t *testing.T) {
 		if len(e.currentEstimates) != 1 {
 			t.Fatalf("should preserve existing estimates when all new ones are non-positive, got %d", len(e.currentEstimates))
 		}
-		key := metricEstimatorKey{orgA, 5, 30000}
+		key := metricEstimatorKey{orgA, 30000}
 		if est, ok := e.currentEstimates[key]; !ok || est != 999 {
 			t.Fatalf("existing estimate should be preserved")
 		}
@@ -221,9 +219,9 @@ func TestMetricEstimator_UpdateEstimates_CornerCases(t *testing.T) {
 	t.Run("MixedPositiveNonPositive", func(t *testing.T) {
 		fq := &fakeMetricQuerier{
 			metricRows: []lrdb.MetricSegEstimatorRow{
-				{OrganizationID: orgA, InstanceNum: 1, FrequencyMs: 60000, EstimatedRecords: 0},    // dropped
-				{OrganizationID: orgA, InstanceNum: 2, FrequencyMs: 60000, EstimatedRecords: 500},  // kept
-				{OrganizationID: orgB, InstanceNum: 1, FrequencyMs: 60000, EstimatedRecords: -100}, // dropped
+				{OrganizationID: orgA, FrequencyMs: 60000, EstimatedRecords: 0},    // dropped
+				{OrganizationID: orgB, FrequencyMs: 60000, EstimatedRecords: 500},  // kept (changed to orgB to avoid duplicate)
+				{OrganizationID: orgB, FrequencyMs: 30000, EstimatedRecords: -100}, // dropped
 			},
 		}
 		e := newBareMetricEstimator()
@@ -238,8 +236,8 @@ func TestMetricEstimator_UpdateEstimates_CornerCases(t *testing.T) {
 			t.Fatalf("should have 1 positive estimate, got %d", len(e.currentEstimates))
 		}
 
-		// Check metric estimate
-		metricKey := metricEstimatorKey{orgA, 2, 60000}
+		// Check metric estimate - should be orgB, 60000 now
+		metricKey := metricEstimatorKey{orgB, 60000}
 		if est, ok := e.currentEstimates[metricKey]; !ok || est != 500 {
 			t.Fatalf("positive metric estimate not found or incorrect")
 		}
@@ -250,7 +248,7 @@ func TestNewMetricEstimator(t *testing.T) {
 	orgA, _ := mk()
 	fq := &fakeMetricQuerier{
 		metricRows: []lrdb.MetricSegEstimatorRow{
-			{OrganizationID: orgA, InstanceNum: 5, FrequencyMs: 60000, EstimatedRecords: 555},
+			{OrganizationID: orgA, FrequencyMs: 60000, EstimatedRecords: 555},
 		},
 	}
 	ctx, cancel := context.WithCancel(context.Background())

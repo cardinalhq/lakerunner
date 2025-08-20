@@ -19,6 +19,7 @@ import (
 	"maps"
 
 	"github.com/DataDog/sketches-go/ddsketch"
+	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/pmetric"
@@ -36,12 +37,14 @@ import (
 )
 
 type TableTranslator struct {
-	idg idgen.IDGenerator
+	idg                idgen.IDGenerator
+	trieClusterManager *fingerprinter.TrieClusterManager
 }
 
 func NewTableTranslator() *TableTranslator {
 	return &TableTranslator{
-		idg: idgen.NewULIDGenerator(),
+		idg:                idgen.NewULIDGenerator(),
+		trieClusterManager: fingerprinter.NewTrieClusterManager(0.5),
 	}
 }
 
@@ -77,7 +80,16 @@ func (l *TableTranslator) LogsFromOtel(ol *plog.Logs, environment authenv.Enviro
 				addAttributes(ret, rl.Resource().Attributes(), "resource")
 				addAttributes(ret, ill.Scope().Attributes(), "scope")
 				addAttributes(ret, log.Attributes(), "log")
-				ret[translate.CardinalFieldMessage] = log.Body().AsString()
+				stringBody := log.Body().AsString()
+				ret[translate.CardinalFieldMessage] = stringBody
+				fingerprint, levelFromFingerprinter, _, err := fingerprinter.Fingerprint(stringBody, l.trieClusterManager)
+				if err != nil {
+					slog.Error("Error fingerprinting log", slog.String("message", stringBody), slog.Any("error", err))
+					continue
+				}
+				if fingerprint != 0 {
+					ret[translate.CardinalFieldFingerprint] = fingerprint
+				}
 				ts := log.Timestamp().AsTime().UnixMilli()
 				if ts == 0 {
 					ts = log.ObservedTimestamp().AsTime().UnixMilli()
@@ -90,9 +102,11 @@ func (l *TableTranslator) LogsFromOtel(ol *plog.Logs, environment authenv.Enviro
 					}
 				}
 
-				// If severity number is set, use it to set log level
+				// If severity number is set, use it to set log levelFromFingerprinter
 				if log.SeverityNumber() != plog.SeverityNumberUnspecified {
 					log.SetSeverityText(SeverityNumberToText(log.SeverityNumber()))
+				} else if levelFromFingerprinter != "" {
+					log.SetSeverityText(strings.ToUpper(levelFromFingerprinter))
 				} else if log.SeverityText() == "" || log.SeverityText() == plog.SeverityNumberUnspecified.String() {
 					log.SetSeverityText("INFO")
 				}

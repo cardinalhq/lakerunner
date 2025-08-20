@@ -29,6 +29,7 @@ import (
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
+	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/queryproto"
@@ -63,10 +64,11 @@ func NewService() (*Service, error) {
 	}
 
 	// Initialize storage profile provider
-	storageProfiler, err := storageprofile.SetupStorageProfiles()
+	cdb, err := dbopen.ConfigDBStore(context.Background())
 	if err != nil {
-		return nil, fmt.Errorf("failed to setup storage profiles: %w", err)
+		return nil, fmt.Errorf("failed to connect to configdb: %w", err)
 	}
+	storageProfiler := storageprofile.NewStorageProfileProvider(cdb)
 
 	cache, err := NewParquetCache(ParquetCacheConfig{
 		CacheDir:        config.CacheDirectory,

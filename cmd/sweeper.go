@@ -25,6 +25,8 @@ import (
 )
 
 func init() {
+	var syncLegacyTables bool
+
 	cmd := &cobra.Command{
 		Use:   "sweeper",
 		Short: "Do general cleanup tasks",
@@ -44,10 +46,12 @@ func init() {
 				}
 			}()
 
-			cmd := sweeper.New(myInstanceID, servicename)
+			cmd := sweeper.New(myInstanceID, servicename, syncLegacyTables)
 			return cmd.Run(doneCtx)
 		},
 	}
+
+	cmd.Flags().BoolVar(&syncLegacyTables, "sync-legacy-tables", false, "Enable periodic sync from c_ tables to bucket management tables")
 
 	rootCmd.AddCommand(cmd)
 }

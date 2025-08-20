@@ -29,6 +29,8 @@ import (
 
 	"github.com/cardinalhq/lakerunner/admin"
 	"github.com/cardinalhq/lakerunner/adminproto"
+	"github.com/cardinalhq/lakerunner/cmd/dbopen"
+	"github.com/cardinalhq/lakerunner/internal/bootstrap"
 )
 
 var (
@@ -121,6 +123,36 @@ func init() {
 	}
 	inqueueStatusCmd.Flags().StringVar(&adminAddr, "addr", ":9091", "Address of the admin service")
 
+	bootstrapCmd := &cobra.Command{
+		Use:   "bootstrap",
+		Short: "Bootstrap configuration management",
+	}
+
+	var bootstrapFile string
+	bootstrapImportCmd := &cobra.Command{
+		Use:   "import",
+		Short: "Import configuration from YAML file (one-time bootstrap)",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			// Connect to configdb
+			configDBPool, err := dbopen.ConnectToConfigDB(ctx)
+			if err != nil {
+				return fmt.Errorf("failed to connect to configdb: %w", err)
+			}
+			defer configDBPool.Close()
+
+			// Run import
+			return bootstrap.ImportFromYAML(ctx, bootstrapFile, configDBPool, slog.Default())
+		},
+	}
+	bootstrapImportCmd.Flags().StringVar(&bootstrapFile, "file", "", "YAML file to import (required)")
+	if err := bootstrapImportCmd.MarkFlagRequired("file"); err != nil {
+		panic(fmt.Sprintf("failed to mark flag as required: %v", err))
+	}
+
+	bootstrapCmd.AddCommand(bootstrapImportCmd)
 	workqueueCmd.AddCommand(workqueueStatusCmd)
 	inqueueCmdAdmin.AddCommand(inqueueStatusCmd)
 
@@ -128,6 +160,7 @@ func init() {
 	adminCmd.AddCommand(pingCmd)
 	adminCmd.AddCommand(workqueueCmd)
 	adminCmd.AddCommand(inqueueCmdAdmin)
+	adminCmd.AddCommand(bootstrapCmd)
 	// Set API key from environment variable if not provided via flag
 	adminCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
 		if adminAPIKey == "" {

@@ -19,26 +19,20 @@ INSERT INTO obj_cleanup (
   object_id
 ) VALUES (
   $1,
+  1,
   $2,
-  $3,
-  $4
+  $3
 ) ON CONFLICT (organization_id, instance_num, bucket_id, object_id) DO NOTHING
 `
 
 type ObjectCleanupAddParams struct {
 	OrganizationID uuid.UUID `json:"organization_id"`
-	InstanceNum    int16     `json:"instance_num"`
 	BucketID       string    `json:"bucket_id"`
 	ObjectID       string    `json:"object_id"`
 }
 
 func (q *Queries) ObjectCleanupAdd(ctx context.Context, arg ObjectCleanupAddParams) error {
-	_, err := q.db.Exec(ctx, objectCleanupAdd,
-		arg.OrganizationID,
-		arg.InstanceNum,
-		arg.BucketID,
-		arg.ObjectID,
-	)
+	_, err := q.db.Exec(ctx, objectCleanupAdd, arg.OrganizationID, arg.BucketID, arg.ObjectID)
 	return err
 }
 

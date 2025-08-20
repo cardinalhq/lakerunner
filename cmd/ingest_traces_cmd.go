@@ -39,7 +39,7 @@ func init() {
 		Use:   "ingest-traces",
 		Short: "Ingest traces from the inqueue table",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			helpers.CleanTempDir()
+			helpers.SetupTempDir()
 
 			servicename := "lakerunner-ingest-traces"
 			addlAttrs := attribute.NewSet(
@@ -85,16 +85,10 @@ func init() {
 
 func traceIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
 	awsmanager *awsclient.Manager, inf lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
-	profile, err := sp.Get(ctx, inf.OrganizationID, inf.InstanceNum)
+	profile, err := sp.GetStorageProfileForBucket(ctx, inf.OrganizationID, inf.Bucket)
 	if err != nil {
 		ll.Error("Failed to get storage profile", slog.Any("error", err))
 		return err
-	}
-	if profile.Role == "" {
-		if !profile.Hosted {
-			ll.Error("No role on non-hosted profile")
-			return err
-		}
 	}
 	if profile.Bucket != inf.Bucket {
 		ll.Error("Bucket ID mismatch", slog.String("expected", profile.Bucket), slog.String("actual", inf.Bucket))
@@ -143,9 +137,9 @@ func traceIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp sto
 				segmentID := s3helper.GenerateID()
 
 				// Create S3 object ID for traces
-				// Format: db/<org-id>/<collector-id>/<dateint>/traces/<slot_number>/<filename>.parquet
-				dbObjectID := fmt.Sprintf("db/%s/%s/%d/traces/%d/%d.parquet",
-					inf.OrganizationID.String(), inf.CollectorName, ingest_dateint, result.SlotID, segmentID)
+				// Format: db/<org-id>/<dateint>/traces/<filename>.parquet
+				dbObjectID := fmt.Sprintf("db/%s/%d/traces/%d.parquet",
+					inf.OrganizationID.String(), ingest_dateint, segmentID)
 
 				// Upload to S3
 				if err := s3helper.UploadS3Object(ctx, s3client, inf.Bucket, dbObjectID, result.FileName); err != nil {
@@ -169,7 +163,6 @@ func traceIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp sto
 					Dateint:        ingest_dateint,
 					IngestDateint:  ingest_dateint,
 					SegmentID:      segmentID,
-					InstanceNum:    inf.InstanceNum,
 					SlotID:         int32(result.SlotID),
 					StartTs:        0, // Time doesn't matter for slot-based traces compaction
 					EndTs:          1, // Time doesn't matter for slot-based traces compaction
@@ -219,7 +212,6 @@ func convertTracesFileIfSupported(ll *slog.Logger, tmpfilename, tmpdir, bucket, 
 func queueTraceCompactionForSlot(ctx context.Context, mdb lrdb.StoreFull, inf lrdb.Inqueue, slotID int, dateint int32) error {
 	return mdb.WorkQueueAdd(ctx, lrdb.WorkQueueAddParams{
 		OrgID:     inf.OrganizationID,
-		Instance:  inf.InstanceNum,
 		Signal:    lrdb.SignalEnumTraces,
 		Action:    lrdb.ActionEnumCompact,
 		Dateint:   dateint,

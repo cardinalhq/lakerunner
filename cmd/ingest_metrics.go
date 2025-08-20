@@ -55,7 +55,7 @@ func init() {
 		Use:   "ingest-metrics",
 		Short: "Ingest metrics from the inqueue table",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			helpers.CleanTempDir()
+			helpers.SetupTempDir()
 
 			servicename := "lakerunner-ingest-metrics"
 			addlAttrs := attribute.NewSet(
@@ -94,26 +94,14 @@ func init() {
 
 func metricIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
 	awsmanager *awsclient.Manager, inf lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
-	profile, err := sp.Get(ctx, inf.OrganizationID, inf.InstanceNum)
+	profile, err := sp.GetStorageProfileForBucket(ctx, inf.OrganizationID, inf.Bucket)
 	if err != nil {
 		ll.Error("Failed to get storage profile", slog.Any("error", err))
 		return err
 	}
-	if profile.Role == "" {
-		if !profile.Hosted {
-			ll.Error("No role on non-hosted profile")
-			return err
-		}
-	}
 	if profile.Bucket != inf.Bucket {
 		ll.Error("Bucket ID mismatch", slog.String("expected", profile.Bucket), slog.String("actual", inf.Bucket))
 		return errors.New("bucket ID mismatch")
-	}
-	if profile.Role == "" {
-		if !profile.Hosted {
-			ll.Info("No role on non-hosted profile")
-			return err
-		}
 	}
 
 	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
@@ -480,7 +468,6 @@ func writeMetricSketchParquet(ctx context.Context, tmpdir string, blocknum int64
 			IngestDateint:  ingest_dateint,
 			TidPartition:   0,
 			SegmentID:      segmentID,
-			InstanceNum:    inf.InstanceNum,
 			StartTs:        startTS,
 			EndTs:          endTS,
 			RecordCount:    stat.RecordCount,

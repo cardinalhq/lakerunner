@@ -18,18 +18,16 @@ WITH params AS (
 bpr AS (
   SELECT
     organization_id,
-    instance_num,
     (sum(file_size)::float8 / NULLIF(sum(record_count), 0))::float8 AS avg_bpr
   FROM log_seg
   WHERE
       record_count > 100
       AND dateint IN ($1, $2)
       AND ts_range && int8range($3, $4, '[)')
-  GROUP BY organization_id, instance_num
+  GROUP BY organization_id
 )
 SELECT
   b.organization_id,
-  b.instance_num,
   CEIL(p.target_bytes / NULLIF(b.avg_bpr, 0))::bigint AS estimated_records
 FROM bpr b
 CROSS JOIN params p
@@ -44,7 +42,6 @@ type LogSegEstimatorParams struct {
 
 type LogSegEstimatorRow struct {
 	OrganizationID   uuid.UUID `json:"organization_id"`
-	InstanceNum      int16     `json:"instance_num"`
 	EstimatedRecords int64     `json:"estimated_records"`
 }
 
@@ -65,7 +62,7 @@ func (q *Queries) LogSegEstimator(ctx context.Context, arg LogSegEstimatorParams
 	var items []LogSegEstimatorRow
 	for rows.Next() {
 		var i LogSegEstimatorRow
-		if err := rows.Scan(&i.OrganizationID, &i.InstanceNum, &i.EstimatedRecords); err != nil {
+		if err := rows.Scan(&i.OrganizationID, &i.EstimatedRecords); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -83,7 +80,6 @@ WITH params AS (
 bpr AS (
   SELECT
     organization_id,
-    instance_num,
     frequency_ms,
     (sum(file_size)::float8 / NULLIF(sum(record_count), 0))::float8 AS avg_bpr
   FROM metric_seg
@@ -91,11 +87,10 @@ bpr AS (
       record_count > 100
       AND dateint IN ($1, $2)
       AND ts_range && int8range($3, $4, '[)')
-  GROUP BY organization_id, instance_num, frequency_ms
+  GROUP BY organization_id, frequency_ms
 )
 SELECT
   b.organization_id,
-  b.instance_num,
   b.frequency_ms,
   CEIL(p.target_bytes / NULLIF(b.avg_bpr, 0))::bigint AS estimated_records
 FROM bpr b
@@ -111,7 +106,6 @@ type MetricSegEstimatorParams struct {
 
 type MetricSegEstimatorRow struct {
 	OrganizationID   uuid.UUID `json:"organization_id"`
-	InstanceNum      int16     `json:"instance_num"`
 	FrequencyMs      int32     `json:"frequency_ms"`
 	EstimatedRecords int64     `json:"estimated_records"`
 }
@@ -133,12 +127,7 @@ func (q *Queries) MetricSegEstimator(ctx context.Context, arg MetricSegEstimator
 	var items []MetricSegEstimatorRow
 	for rows.Next() {
 		var i MetricSegEstimatorRow
-		if err := rows.Scan(
-			&i.OrganizationID,
-			&i.InstanceNum,
-			&i.FrequencyMs,
-			&i.EstimatedRecords,
-		); err != nil {
+		if err := rows.Scan(&i.OrganizationID, &i.FrequencyMs, &i.EstimatedRecords); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

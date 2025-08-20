@@ -73,20 +73,20 @@ func runSysinfo() error {
 	// 3a) CPU vs GOMAXPROCS
 	if quotaCores > 0 {
 		if gomax == numHost {
-			fmt.Printf("⚠️  GOMAXPROCS=%d equals host NumCPU=%d; quota not applied\n", gomax, numHost)
+			fmt.Printf("WARNING: GOMAXPROCS=%d equals host NumCPU=%d; quota not applied\n", gomax, numHost)
 		} else if float64(gomax) > quotaCores {
-			fmt.Printf("⚠️  GOMAXPROCS=%d exceeds container quota of %.2f cores\n", gomax, quotaCores)
+			fmt.Printf("WARNING: GOMAXPROCS=%d exceeds container quota of %.2f cores\n", gomax, quotaCores)
 		}
 	}
 
 	// 3b) GOGC set?
 	if gogc == "<unset>" {
-		fmt.Println("⚠️  GOGC is unset; using default=100 (you may want GOGC=50 or lower)")
+		fmt.Println("WARNING: GOGC is unset; using default=100 (you may want GOGC=50 or lower)")
 	}
 
 	// 3c) GOMEMLIMIT set?
 	if gomem == "<unset>" {
-		fmt.Println("⚠️  GOMEMLIMIT is unset; no heap cap (you may want to set this below your pod memory limit)")
+		fmt.Println("WARNING: GOMEMLIMIT is unset; no heap cap (you may want to set this below your pod memory limit)")
 	}
 
 	// 4) Go memory snapshot

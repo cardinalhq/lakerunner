@@ -159,24 +159,16 @@ func (c *ParquetCache) downloadToTemp(ctx context.Context, organizationID uuid.U
 	return tempPath, nil
 }
 
-// GetLowestInstanceStorageProfile gets the storage profile with the lowest instance number for an organization
-func (c *ParquetCache) getLowestInstanceStorageProfile(ctx context.Context, organizationID uuid.UUID) (storageprofile.StorageProfile, error) {
-	// Try instance 0 first (most common case)
-	profile, err := c.storageProfiler.Get(ctx, organizationID, 0)
-	if err == nil {
-		return profile, nil
-	}
-
-	// If instance 0 doesn't exist, we'd need a different approach
-	// For now, return an error and let the user know we need a new query
-	return storageprofile.StorageProfile{}, fmt.Errorf("no storage profile found for organization %s with instance 0. Query worker needs a method to get lowest instance number", organizationID)
+// getStorageProfile gets the storage profile for an organization
+func (c *ParquetCache) getStorageProfile(ctx context.Context, organizationID uuid.UUID) (storageprofile.StorageProfile, error) {
+	return c.storageProfiler.GetStorageProfileForOrganization(ctx, organizationID)
 }
 
 func (c *ParquetCache) downloadFile(ctx context.Context, organizationID uuid.UUID, s3Key, localPath string) error {
 	slog.Debug("Downloading file", "s3Key", s3Key, "localPath", localPath)
 
 	// Get storage profile for this organization
-	profile, err := c.getLowestInstanceStorageProfile(ctx, organizationID)
+	profile, err := c.getStorageProfile(ctx, organizationID)
 	if err != nil {
 		return fmt.Errorf("failed to get storage profile: %w", err)
 	}

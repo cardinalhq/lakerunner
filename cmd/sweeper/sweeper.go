@@ -16,17 +16,22 @@ package sweeper
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
+	"github.com/cardinalhq/lakerunner/configdb"
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
@@ -34,28 +39,42 @@ import (
 )
 
 const (
-	gcBatchLimit int32         = 1000
-	gcBatchDelay time.Duration = 500 * time.Millisecond
-	gcPeriod     time.Duration = time.Hour
-	gcCutoffAge  time.Duration = 10 * 24 * time.Hour
+	gcBatchLimit           int32         = 1000
+	gcBatchDelay           time.Duration = 500 * time.Millisecond
+	gcPeriod               time.Duration = time.Hour
+	gcCutoffAge            time.Duration = 10 * 24 * time.Hour
+	legacyTablesSyncPeriod time.Duration = 5 * time.Minute
 )
 
 type sweeper struct {
 	instanceID            int64
 	assumeRoleSessionName string
 	sp                    storageprofile.StorageProfileProvider
+	syncLegacyTables      bool
 }
 
-func New(instanceID int64, assumeRoleSessionName string) *sweeper {
-	sp, err := storageprofile.SetupStorageProfiles()
+func New(instanceID int64, assumeRoleSessionName string, syncLegacyTables bool) *sweeper {
+	cdb, err := dbopen.ConfigDBStore(context.Background())
 	if err != nil {
-		slog.Error("Failed to setup storage profiles", slog.Any("error", err))
+		slog.Error("Failed to connect to configdb", slog.Any("error", err))
 		os.Exit(1)
 	}
+	sp := storageprofile.NewStorageProfileProvider(cdb)
+
+	// Check environment variable if flag is not set
+	if !syncLegacyTables {
+		if envVal, exists := os.LookupEnv("SYNC_LEGACY_TABLES"); exists {
+			if parsed, err := strconv.ParseBool(envVal); err == nil {
+				syncLegacyTables = parsed
+			}
+		}
+	}
+
 	return &sweeper{
 		instanceID:            instanceID,
 		assumeRoleSessionName: assumeRoleSessionName,
 		sp:                    sp,
+		syncLegacyTables:      syncLegacyTables,
 	}
 }
 
@@ -67,6 +86,20 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 	if err != nil {
 		return err
 	}
+
+	var cdb configdb.QuerierFull
+	var cdbPool *pgxpool.Pool
+	if cmd.syncLegacyTables {
+		cdb, err = dbopen.ConfigDBStore(ctx)
+		if err != nil {
+			return err
+		}
+		cdbPool, err = dbopen.ConnectToConfigDB(ctx)
+		if err != nil {
+			return err
+		}
+	}
+
 	awsmanager, err := awsclient.NewManager(ctx,
 		awsclient.WithAssumeRoleSessionName(cmd.assumeRoleSessionName),
 	)
@@ -74,10 +107,12 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 		return err
 	}
 
-	slog.Info("Starting sweeper", slog.Int64("instanceID", cmd.instanceID))
+	slog.Info("Starting sweeper",
+		slog.Int64("instanceID", cmd.instanceID),
+		slog.Bool("syncLegacyTables", cmd.syncLegacyTables))
 
 	var wg sync.WaitGroup
-	errCh := make(chan error, 3)
+	errCh := make(chan error, 4)
 
 	// Aggressive object delete loop
 	wg.Add(1)
@@ -118,6 +153,19 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 			errCh <- err
 		}
 	}()
+
+	// Periodic: legacy table sync if enabled
+	if cmd.syncLegacyTables {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := periodicLoop(ctx, legacyTablesSyncPeriod, func(c context.Context) error {
+				return runLegacyTablesSync(c, slog.Default(), cdb, cdbPool)
+			}); err != nil && !errors.Is(err, context.Canceled) {
+				errCh <- err
+			}
+		}()
+	}
 
 	// Wait for cancellation or the first hard error
 	select {
@@ -237,14 +285,9 @@ func runObjCleaner(ctx context.Context, ll *slog.Logger, sp storageprofile.Stora
 }
 
 func cleanupObj(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, awsmanager *awsclient.Manager, obj lrdb.ObjectCleanupGetRow) {
-	profile, err := sp.Get(ctx, obj.OrganizationID, obj.InstanceNum)
+	profile, err := sp.GetStorageProfileForBucket(ctx, obj.OrganizationID, obj.BucketID)
 	if err != nil {
 		ll.Error("Failed to get storage profile", slog.Any("error", err), slog.String("objectID", obj.ObjectID))
-		failWork(ctx, ll, mdb, obj.ID)
-		return
-	}
-	if profile.Role == "" && !profile.Hosted {
-		ll.Error("No role on non-hosted profile", slog.String("objectID", obj.ObjectID))
 		failWork(ctx, ll, mdb, obj.ID)
 		return
 	}
@@ -361,4 +404,217 @@ func workqueueGCLoop(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull) e
 			runOnce()
 		}
 	}
+}
+
+func runLegacyTablesSync(ctx context.Context, ll *slog.Logger, cdb configdb.QuerierFull, cdbPool *pgxpool.Pool) error {
+	ll.Info("Starting legacy table sync")
+
+	// Get all storage profiles from c_ tables
+	profiles, err := cdb.GetAllCStorageProfilesForSync(ctx)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			ll.Info("No legacy storage profiles found")
+			return nil
+		}
+		return err
+	}
+
+	if len(profiles) == 0 {
+		ll.Info("No legacy storage profiles to sync")
+		return nil
+	}
+
+	ll.Info("Found legacy storage profiles to sync", slog.Int("count", len(profiles)))
+
+	// Start a transaction for atomic sync
+	closed := false
+	tx, err := cdbPool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if !closed {
+			if rbErr := tx.Rollback(ctx); rbErr != nil {
+				ll.Warn("Failed to rollback transaction", slog.Any("error", rbErr))
+			}
+		}
+	}()
+
+	qtx := configdb.New(tx)
+
+	// Clear existing bucket management tables (mirror mode)
+	if err := qtx.ClearBucketPrefixMappings(ctx); err != nil {
+		return err
+	}
+	if err := qtx.ClearOrganizationBuckets(ctx); err != nil {
+		return err
+	}
+	if err := qtx.ClearBucketConfigurations(ctx); err != nil {
+		return err
+	}
+
+	// Group profiles by bucket to ensure 1:1 mapping
+	bucketToProfile := make(map[string]configdb.GetAllCStorageProfilesForSyncRow)
+	bucketToOrgs := make(map[string][]uuid.UUID)
+
+	for _, profile := range profiles {
+		if !profile.OrganizationID.Valid {
+			ll.Warn("Skipping profile with invalid organization ID", slog.String("bucket", profile.BucketName))
+			continue
+		}
+
+		orgID := profile.OrganizationID.Bytes
+		orgUUID, err := uuid.FromBytes(orgID[:])
+		if err != nil {
+			ll.Warn("Skipping profile with invalid organization UUID", slog.String("bucket", profile.BucketName), slog.Any("error", err))
+			continue
+		}
+
+		// Use first profile found for each bucket (1:1 mapping enforced)
+		if _, exists := bucketToProfile[profile.BucketName]; !exists {
+			bucketToProfile[profile.BucketName] = profile
+		}
+
+		bucketToOrgs[profile.BucketName] = append(bucketToOrgs[profile.BucketName], orgUUID)
+	}
+
+	// Create bucket configurations and organization mappings
+	for bucketName, profile := range bucketToProfile {
+		// Create/update bucket configuration
+		bucketConfig, err := qtx.UpsertBucketConfiguration(ctx, configdb.UpsertBucketConfigurationParams{
+			BucketName:    bucketName,
+			CloudProvider: profile.CloudProvider,
+			Region:        profile.Region,
+			Endpoint:      nil,
+			Role:          profile.Role,
+			UsePathStyle:  true,
+			InsecureTls:   false,
+		})
+		if err != nil {
+			return err
+		}
+
+		ll.Info("Synced bucket configuration",
+			slog.String("bucket", bucketName),
+			slog.String("provider", profile.CloudProvider),
+			slog.String("region", profile.Region))
+
+		// Create organization mappings
+		orgs := bucketToOrgs[bucketName]
+		for _, orgID := range orgs {
+			if err := qtx.UpsertOrganizationBucket(ctx, configdb.UpsertOrganizationBucketParams{
+				OrganizationID: orgID,
+				BucketID:       bucketConfig.ID,
+			}); err != nil {
+				return err
+			}
+		}
+
+		ll.Info("Synced organization mappings",
+			slog.String("bucket", bucketName),
+			slog.Int("orgCount", len(orgs)))
+	}
+
+	// Sync organization API keys from c_organization_api_keys to our organization tables
+	if err := syncOrganizationAPIKeys(ctx, ll, qtx); err != nil {
+		return err
+	}
+
+	// Commit the transaction
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	closed = true
+
+	ll.Info("Legacy table sync completed successfully",
+		slog.Int("bucketsSync", len(bucketToProfile)),
+		slog.Int("totalProfiles", len(profiles)))
+
+	return nil
+}
+
+func syncOrganizationAPIKeys(ctx context.Context, ll *slog.Logger, qtx *configdb.Queries) error {
+	ll.Info("Starting organization API keys sync")
+
+	// Get all organization API keys from c_ table
+	cAPIKeys, err := qtx.GetAllCOrganizationAPIKeysForSync(ctx)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			ll.Info("No legacy organization API keys found")
+			return nil
+		}
+		return err
+	}
+
+	if len(cAPIKeys) == 0 {
+		ll.Info("No legacy organization API keys to sync")
+		return nil
+	}
+
+	ll.Info("Found legacy organization API keys to sync", slog.Int("count", len(cAPIKeys)))
+
+	// Clear existing organization API key tables (mirror mode)
+	if err := qtx.ClearOrganizationAPIKeyMappings(ctx); err != nil {
+		return err
+	}
+	if err := qtx.ClearOrganizationAPIKeys(ctx); err != nil {
+		return err
+	}
+
+	// Sync API keys
+	for _, cAPIKey := range cAPIKeys {
+		if !cAPIKey.OrganizationID.Valid || cAPIKey.ApiKey == nil {
+			ll.Warn("Skipping API key with invalid data",
+				slog.Bool("hasOrgID", cAPIKey.OrganizationID.Valid),
+				slog.Bool("hasAPIKey", cAPIKey.ApiKey != nil))
+			continue
+		}
+
+		orgID := cAPIKey.OrganizationID.Bytes
+		orgUUID, err := uuid.FromBytes(orgID[:])
+		if err != nil {
+			ll.Warn("Skipping API key with invalid organization UUID", slog.Any("error", err))
+			continue
+		}
+
+		apiKey := *cAPIKey.ApiKey
+		keyHash := hashAPIKey(apiKey)
+
+		// Create organization API key
+		var name string
+		if cAPIKey.Name != nil && *cAPIKey.Name != "" {
+			name = *cAPIKey.Name
+		} else {
+			name = fmt.Sprintf("synced-key-%s", apiKey[:min(8, len(apiKey))])
+		}
+
+		apiKeyRow, err := qtx.UpsertOrganizationAPIKey(ctx, configdb.UpsertOrganizationAPIKeyParams{
+			KeyHash:     keyHash,
+			Name:        name,
+			Description: nil,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to sync organization API key for %s: %w", orgUUID, err)
+		}
+
+		// Create organization API key mapping
+		if err := qtx.UpsertOrganizationAPIKeyMapping(ctx, configdb.UpsertOrganizationAPIKeyMappingParams{
+			ApiKeyID:       apiKeyRow.ID,
+			OrganizationID: orgUUID,
+		}); err != nil {
+			return fmt.Errorf("failed to create API key mapping: %w", err)
+		}
+
+		ll.Info("Synced organization API key",
+			slog.String("org_id", orgUUID.String()),
+			slog.String("key_name", name))
+	}
+
+	ll.Info("Organization API keys sync completed successfully", slog.Int("keysSync", len(cAPIKeys)))
+	return nil
+}
+
+func hashAPIKey(apiKey string) string {
+	h := sha256.Sum256([]byte(apiKey))
+	return fmt.Sprintf("%x", h)
 }

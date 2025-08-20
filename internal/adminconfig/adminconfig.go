@@ -17,12 +17,15 @@ package adminconfig
 import (
 	"context"
 	"os"
+
+	"github.com/google/uuid"
 )
 
 type AdminAPIKey struct {
-	Name        string `json:"name" yaml:"name"`
-	Key         string `json:"key" yaml:"key"`
-	Description string `json:"description,omitempty" yaml:"description,omitempty"`
+	Name           string     `json:"name" yaml:"name"`
+	Key            string     `json:"key" yaml:"key"`
+	Description    string     `json:"description,omitempty" yaml:"description,omitempty"`
+	OrganizationID *uuid.UUID `json:"organization_id,omitempty" yaml:"organization_id,omitempty"`
 }
 
 type AdminConfig struct {
@@ -35,6 +38,9 @@ type AdminConfigProvider interface {
 }
 
 func SetupAdminConfig() (AdminConfigProvider, error) {
+	// TODO: Check USE_DB_API_KEYS environment variable and use database provider when available
+
+	// Default to file-based provider
 	adminConfigPath := os.Getenv("ADMIN_CONFIG_FILE")
 	if adminConfigPath == "" {
 		adminConfigPath = "/app/config/admin.yaml"
