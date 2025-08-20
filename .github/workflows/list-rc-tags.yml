@@ -26,7 +26,7 @@ jobs:
             base_version=$(echo "$tag" | sed 's/-[a-zA-Z0-9]*$//')
             
             # Check if this tag has Docker images
-            echo "📦 $tag"
+            echo "Package: $tag"
             echo "   → Would promote to: $base_version"
             echo "   → Command: Use 'Promote Release' workflow with:"
             echo "     - RC version: $tag"

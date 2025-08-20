@@ -25,11 +25,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-type fileProvider struct {
+type FileProvider struct {
 	config AdminConfig
 }
 
-var _ AdminConfigProvider = (*fileProvider)(nil)
+var _ AdminConfigProvider = (*FileProvider)(nil)
 
 func NewFileProvider(filename string) (AdminConfigProvider, error) {
 	if after, ok := strings.CutPrefix(filename, "env:"); ok {
@@ -45,7 +45,7 @@ func NewFileProvider(filename string) (AdminConfigProvider, error) {
 	if err != nil {
 		// If the file doesn't exist, create an empty provider for backward compatibility
 		if os.IsNotExist(err) {
-			return &fileProvider{config: AdminConfig{}}, nil
+			return &FileProvider{config: AdminConfig{}}, nil
 		}
 		return nil, fmt.Errorf("failed to read admin config from file %s: %w", filename, err)
 	}
@@ -62,14 +62,14 @@ func newFileProviderFromContents(filename string, contents []byte) (AdminConfigP
 		return nil, fmt.Errorf("failed to unmarshal admin config from file %s: %w", filename, err)
 	}
 
-	p := &fileProvider{
+	p := &FileProvider{
 		config: config,
 	}
 
 	return p, nil
 }
 
-func (p *fileProvider) ValidateAPIKey(ctx context.Context, apiKey string) (bool, error) {
+func (p *FileProvider) ValidateAPIKey(ctx context.Context, apiKey string) (bool, error) {
 	if len(p.config.APIKeys) == 0 {
 		// If no API keys are configured, allow access for backward compatibility
 		return true, nil
@@ -83,7 +83,7 @@ func (p *fileProvider) ValidateAPIKey(ctx context.Context, apiKey string) (bool,
 	return false, nil
 }
 
-func (p *fileProvider) GetAPIKeyInfo(ctx context.Context, apiKey string) (*AdminAPIKey, error) {
+func (p *FileProvider) GetAPIKeyInfo(ctx context.Context, apiKey string) (*AdminAPIKey, error) {
 	for _, key := range p.config.APIKeys {
 		if subtle.ConstantTimeCompare([]byte(key.Key), []byte(apiKey)) == 1 {
 			// Return a copy without the actual key for security
@@ -94,4 +94,8 @@ func (p *fileProvider) GetAPIKeyInfo(ctx context.Context, apiKey string) (*Admin
 		}
 	}
 	return nil, fmt.Errorf("API key not found")
+}
+
+func (p *FileProvider) GetConfig() AdminConfig {
+	return p.config
 }

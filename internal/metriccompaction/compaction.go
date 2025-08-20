@@ -54,16 +54,10 @@ func ProcessItem(
 		return WorkResultSuccess, nil
 	}
 
-	profile, err := sp.Get(ctx, inf.OrganizationID(), inf.InstanceNum())
+	profile, err := sp.GetStorageProfileForOrganization(ctx, inf.OrganizationID())
 	if err != nil {
 		ll.Error("Failed to get storage profile", slog.Any("error", err))
 		return WorkResultTryAgainLater, err
-	}
-	if profile.Role == "" {
-		if !profile.Hosted {
-			ll.Error("No role on non-hosted profile")
-			return WorkResultTryAgainLater, err
-		}
 	}
 
 	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
@@ -140,7 +134,6 @@ func doCompactItem(
 
 		inRows, err := mdb.GetMetricSegsForCompaction(ctx, lrdb.GetMetricSegsForCompactionParams{
 			OrganizationID:  inf.OrganizationID(),
-			InstanceNum:     inf.InstanceNum(),
 			Dateint:         inf.Dateint(),
 			FrequencyMs:     inf.FrequencyMs(),
 			StartTs:         st.Time.UTC().UnixMilli(),
@@ -283,7 +276,7 @@ func compactInterval(
 	files := make([]string, 0, len(rows))
 	for _, row := range rows {
 		dateint, hour := helpers.MSToDateintHour(st.Time.UTC().UnixMilli())
-		objectID := helpers.MakeDBObjectID(inf.OrganizationID(), profile.CollectorName, dateint, hour, row.SegmentID, "metrics")
+		objectID := helpers.MakeDBObjectID(inf.OrganizationID(), "default", dateint, hour, row.SegmentID, "metrics")
 		fn, _, is404, err := s3helper.DownloadS3Object(ctx, tmpdir, s3client, profile.Bucket, objectID)
 		if err != nil {
 			ll.Error("Failed to download S3 object", slog.String("objectID", objectID), slog.Any("error", err))
@@ -342,7 +335,6 @@ func compactInterval(
 		OrganizationID: inf.OrganizationID(),
 		Dateint:        inf.Dateint(),
 		IngestDateint:  ingest_dateint,
-		InstanceNum:    inf.InstanceNum(),
 		FrequencyMs:    inf.FrequencyMs(),
 		Published:      true,
 		Rolledup:       helpers.AllRolledUp(rows),
@@ -359,7 +351,8 @@ func compactInterval(
 	dateint, hour := helpers.MSToDateintHour(startTs)
 	for tidPartition, result := range mergeResult {
 		segmentID := s3helper.GenerateID()
-		newObjectID := helpers.MakeDBObjectID(inf.OrganizationID(), profile.CollectorName, dateint, hour, segmentID, "metrics")
+		newObjectID := helpers.MakeDBObjectID(inf.OrganizationID(), "default", dateint, hour, segmentID, "metrics")
+		ll.Info("Uploading to S3", slog.String("objectID", newObjectID), slog.String("bucket", profile.Bucket))
 		err = s3helper.UploadS3Object(ctx, s3client, profile.Bucket, newObjectID, result.FileName)
 		if err != nil {
 			ll.Error("Failed to upload new S3 object", slog.String("objectID", newObjectID), slog.Any("error", err))
@@ -388,8 +381,8 @@ func compactInterval(
 			return fmt.Errorf("invalid time range in row: %v", row.TsRange)
 		}
 		dateint, hour := helpers.MSToDateintHour(rst.Int64)
-		oid := helpers.MakeDBObjectID(inf.OrganizationID(), profile.CollectorName, dateint, hour, row.SegmentID, "metrics")
-		if err := s3helper.ScheduleS3Delete(ctx, mdb, profile.OrganizationID, profile.InstanceNum, profile.Bucket, oid); err != nil {
+		oid := helpers.MakeDBObjectID(inf.OrganizationID(), "default", dateint, hour, row.SegmentID, "metrics")
+		if err := s3helper.ScheduleS3Delete(ctx, mdb, profile.OrganizationID, profile.Bucket, oid); err != nil {
 			ll.Error("scheduleS3Delete", slog.String("error", err.Error()))
 		}
 	}

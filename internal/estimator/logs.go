@@ -35,7 +35,6 @@ type LogEstimator interface {
 
 type logEstimatorKey struct {
 	OrganizationID uuid.UUID
-	InstanceNum    int16
 }
 
 type logEstimator struct {
@@ -67,9 +66,9 @@ func (e *logEstimator) Get(org uuid.UUID, inst int16) int64 {
 	snap := e.currentEstimates
 	e.RUnlock()
 
-	key := logEstimatorKey{org, inst}
+	key := logEstimatorKey{org}
 
-	// 1. Try exact match for this organization + instance.
+	// 1. Try exact match for this organization.
 	if est, ok := snap[key]; ok && est > 0 {
 		return est
 	}
@@ -137,10 +136,10 @@ func (e *logEstimator) updateEstimates(parent context.Context, querier Estimatio
 	for _, r := range logRows {
 		if r.EstimatedRecords <= 0 {
 			dropped++
-			slog.Warn("dropping non-positive log estimate", "org", r.OrganizationID, "inst", r.InstanceNum, "est", r.EstimatedRecords)
+			slog.Warn("dropping non-positive log estimate", "org", r.OrganizationID, "est", r.EstimatedRecords)
 			continue
 		}
-		next[logEstimatorKey{r.OrganizationID, r.InstanceNum}] = r.EstimatedRecords
+		next[logEstimatorKey{r.OrganizationID}] = r.EstimatedRecords
 		kept++
 	}
 

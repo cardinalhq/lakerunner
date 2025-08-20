@@ -70,8 +70,8 @@ func downloadAndOpen(
 			return nil, err
 		}
 
-		good := helpers.MakeDBObjectID(sp.OrganizationID, sp.CollectorName, dateint, s3helper.HourFromMillis(seg.StartTs), seg.SegmentID, "logs")
-		bad := helpers.MakeDBObjectIDbad(sp.OrganizationID, sp.CollectorName, dateint, s3helper.HourFromMillis(seg.StartTs), seg.SegmentID, "logs")
+		good := helpers.MakeDBObjectID(sp.OrganizationID, "default", dateint, s3helper.HourFromMillis(seg.StartTs), seg.SegmentID, "logs")
+		bad := helpers.MakeDBObjectIDbad(sp.OrganizationID, "default", dateint, s3helper.HourFromMillis(seg.StartTs), seg.SegmentID, "logs")
 
 		objectID, tmpfile, _, err := chooseObjectID(ctx, fetcher, bucket, good, bad, tmpdir)
 		if err != nil {
@@ -341,7 +341,7 @@ func packSegment(
 
 	newSegmentID := s3helper.GenerateID()
 	newObjectID := helpers.MakeDBObjectID(
-		sp.OrganizationID, sp.CollectorName, dateint, s3helper.HourFromMillis(stats.FirstTS), newSegmentID, "logs",
+		sp.OrganizationID, "default", dateint, s3helper.HourFromMillis(stats.FirstTS), newSegmentID, "logs",
 	)
 
 	ll.Info("Uploading new file to S3",
@@ -362,7 +362,6 @@ func packSegment(
 		OrganizationID: sp.OrganizationID,
 		Dateint:        dateint,
 		IngestDateint:  stats.IngestDate,
-		InstanceNum:    sp.InstanceNum,
 		NewStartTs:     stats.FirstTS,
 		NewEndTs:       stats.LastTS, // already half-open
 		NewSegmentID:   newSegmentID,
@@ -375,7 +374,7 @@ func packSegment(
 	}
 
 	for _, oid := range objectIDs {
-		if err := s3helper.ScheduleS3Delete(ctx, mdb, sp.OrganizationID, sp.InstanceNum, sp.Bucket, oid); err != nil {
+		if err := s3helper.ScheduleS3Delete(ctx, mdb, sp.OrganizationID, sp.Bucket, oid); err != nil {
 			ll.Error("scheduleS3Delete", slog.String("error", err.Error()))
 		}
 	}

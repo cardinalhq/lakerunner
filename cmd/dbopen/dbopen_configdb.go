@@ -21,7 +21,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/cardinalhq/lakerunner/internal/configdb"
+	"github.com/cardinalhq/lakerunner/configdb"
 )
 
 func ConnectToConfigDB(ctx context.Context) (*pgxpool.Pool, error) {

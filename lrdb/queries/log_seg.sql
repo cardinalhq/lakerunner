@@ -16,7 +16,7 @@ VALUES (
   @dateint,
   @ingest_dateint,
   @segment_id,
-  @instance_num,
+  1,
   int8range(@start_ts, @end_ts, '[)'),
   @record_count,
   @file_size,
@@ -36,7 +36,6 @@ SELECT
 FROM log_seg
 WHERE organization_id = @organization_id
   AND dateint         = @dateint
-  AND instance_num    = @instance_num
   AND file_size > 0
   AND record_count > 0
   AND file_size <= @max_file_size
@@ -51,7 +50,6 @@ WITH
       FROM log_seg
      WHERE organization_id = @organization_id
        AND dateint        = @dateint
-       AND instance_num   = @instance_num
        AND segment_id     = ANY(@old_segment_ids::bigint[])
   ),
   fingerprint_array AS (
@@ -65,7 +63,6 @@ WITH
     DELETE FROM log_seg
      WHERE organization_id = @organization_id
        AND dateint        = @dateint
-       AND instance_num   = @instance_num
        AND segment_id     = ANY(@old_segment_ids::bigint[])
   )
 INSERT INTO log_seg (
@@ -85,7 +82,7 @@ SELECT
   @dateint,
   @ingest_dateint,
   @new_segment_id,
-  @instance_num,
+  1,
   @new_record_count,
   @new_file_size,
   int8range(@new_start_ts, @new_end_ts, '[)'),

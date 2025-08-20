@@ -170,10 +170,10 @@ func mkSeg(segID int64, startMs int64) lrdb.GetLogSegmentsForCompactionRow {
 }
 
 func goodKey(sp storageprofile.StorageProfile, dateint int32, seg lrdb.GetLogSegmentsForCompactionRow) string {
-	return helpers.MakeDBObjectID(sp.OrganizationID, sp.CollectorName, dateint, s3helper.HourFromMillis(seg.StartTs), seg.SegmentID, "logs")
+	return helpers.MakeDBObjectID(sp.OrganizationID, "default", dateint, s3helper.HourFromMillis(seg.StartTs), seg.SegmentID, "logs")
 }
 func badKey(sp storageprofile.StorageProfile, dateint int32, seg lrdb.GetLogSegmentsForCompactionRow) string {
-	return helpers.MakeDBObjectIDbad(sp.OrganizationID, sp.CollectorName, dateint, s3helper.HourFromMillis(seg.StartTs), seg.SegmentID, "logs")
+	return helpers.MakeDBObjectIDbad(sp.OrganizationID, "default", dateint, s3helper.HourFromMillis(seg.StartTs), seg.SegmentID, "logs")
 }
 
 // --- tests ---
@@ -184,7 +184,6 @@ func TestDownloadAndOpen_BasicAndLegacyBadFallback(t *testing.T) {
 
 	sp := storageprofile.StorageProfile{
 		OrganizationID: uuid.MustParse("00000000-0000-0000-0000-000000000001"),
-		CollectorName:  "collectorA",
 	}
 	dateint := int32(20250102)
 
@@ -262,7 +261,7 @@ func TestDownloadAndOpen_BasicAndLegacyBadFallback(t *testing.T) {
 func TestDownloadAndOpen_BothMissingSkips(t *testing.T) {
 	ctx := context.Background()
 	tmpdir := t.TempDir()
-	sp := storageprofile.StorageProfile{OrganizationID: uuid.MustParse("7e2b1c8e-4f3a-4b2e-9c1a-2e7d8b6f5a1c"), CollectorName: "c"}
+	sp := storageprofile.StorageProfile{OrganizationID: uuid.MustParse("7e2b1c8e-4f3a-4b2e-9c1a-2e7d8b6f5a1c")}
 	dateint := int32(20250103)
 
 	s := mkSeg(2001, mustParseMs("2025-01-03T02:00:00Z"))
@@ -292,7 +291,7 @@ func TestDownloadAndOpen_BothMissingSkips(t *testing.T) {
 func TestDownloadAndOpen_OpenSchemaError(t *testing.T) {
 	ctx := context.Background()
 	tmpdir := t.TempDir()
-	sp := storageprofile.StorageProfile{OrganizationID: uuid.MustParse("7e2b1c8e-4f3a-4b2e-9c1a-2e7d8b6f5a1c"), CollectorName: "c"}
+	sp := storageprofile.StorageProfile{OrganizationID: uuid.MustParse("7e2b1c8e-4f3a-4b2e-9c1a-2e7d8b6f5a1c")}
 	dateint := int32(20250104)
 
 	s := mkSeg(3001, mustParseMs("2025-01-04T03:00:00Z"))
@@ -325,7 +324,7 @@ func TestDownloadAndOpen_ContextCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
 	tmpdir := t.TempDir()
-	sp := storageprofile.StorageProfile{OrganizationID: uuid.MustParse("7e2b1c8e-4f3a-4b2e-9c1a-2e7d8b6f5a1c"), CollectorName: "c"}
+	sp := storageprofile.StorageProfile{OrganizationID: uuid.MustParse("7e2b1c8e-4f3a-4b2e-9c1a-2e7d8b6f5a1c")}
 	dateint := int32(20250105)
 
 	s := mkSeg(4001, mustParseMs("2025-01-05T04:00:00Z"))
@@ -362,7 +361,6 @@ func TestDownloadAndOpen_PrefersGoodWhenBothExist(t *testing.T) {
 
 	sp := storageprofile.StorageProfile{
 		OrganizationID: uuid.MustParse("00000000-0000-0000-0000-0000000000aa"),
-		CollectorName:  "collectorA",
 	}
 	dateint := int32(20250106)
 
@@ -408,7 +406,6 @@ func TestDownloadAndOpen_BadReturnsNon404ErrorBubbles(t *testing.T) {
 
 	sp := storageprofile.StorageProfile{
 		OrganizationID: uuid.MustParse("00000000-0000-0000-0000-0000000000bb"),
-		CollectorName:  "collectorB",
 	}
 	dateint := int32(20250107)
 
@@ -447,7 +444,6 @@ func TestDownloadAndOpen_AddsTimestampWhenMissing(t *testing.T) {
 
 	sp := storageprofile.StorageProfile{
 		OrganizationID: uuid.MustParse("00000000-0000-0000-0000-0000000000cc"),
-		CollectorName:  "collectorC",
 	}
 	dateint := int32(20250108)
 
@@ -491,7 +487,6 @@ func TestDownloadAndOpen_NoDropFields_NoOp(t *testing.T) {
 
 	sp := storageprofile.StorageProfile{
 		OrganizationID: uuid.MustParse("00000000-0000-0000-0000-0000000000dd"),
-		CollectorName:  "collectorD",
 	}
 	dateint := int32(20250109)
 

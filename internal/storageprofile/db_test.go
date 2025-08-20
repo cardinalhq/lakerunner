@@ -22,7 +22,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/cardinalhq/lakerunner/internal/configdb"
+	"github.com/cardinalhq/lakerunner/configdb"
 )
 
 // mockConfigDBStoreageProfileFetcher implements ConfigDBStoreageProfileFetcher for testing
@@ -50,7 +50,6 @@ func (m *mockConfigDBStoreageProfileFetcher) GetStorageProfileByCollectorName(ct
 		Region:         m.profile.Region,
 		Bucket:         m.profile.Bucket,
 		Role:           m.profile.Role,
-		Hosted:         m.profile.Hosted,
 	}, nil
 }
 
@@ -67,9 +66,56 @@ func (m *mockConfigDBStoreageProfileFetcher) GetStorageProfilesByBucketName(ctx 
 			Region:         m.profile.Region,
 			Bucket:         m.profile.Bucket,
 			Role:           m.profile.Role,
-			Hosted:         m.profile.Hosted,
 		},
 	}, nil
+}
+
+// New methods for bucket management (stub implementations for testing)
+func (m *mockConfigDBStoreageProfileFetcher) GetBucketConfiguration(ctx context.Context, bucketName string) (configdb.BucketConfiguration, error) {
+	if m.err != nil {
+		return configdb.BucketConfiguration{}, m.err
+	}
+	// Return a valid bucket configuration for testing
+	config := configdb.BucketConfiguration{
+		ID:            uuid.New(),
+		BucketName:    m.profile.Bucket,
+		CloudProvider: m.profile.CloudProvider,
+		Region:        m.profile.Region,
+		UsePathStyle:  true,  // Default for testing
+		InsecureTls:   false, // Default for testing
+	}
+	if m.profile.Role != nil {
+		config.Role = m.profile.Role
+	}
+	return config, nil
+}
+
+func (m *mockConfigDBStoreageProfileFetcher) GetOrganizationsByBucket(ctx context.Context, bucketName string) ([]uuid.UUID, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return []uuid.UUID{m.profile.OrganizationID}, nil
+}
+
+func (m *mockConfigDBStoreageProfileFetcher) CheckOrgBucketAccess(ctx context.Context, arg configdb.CheckOrgBucketAccessParams) (bool, error) {
+	if m.err != nil {
+		return false, m.err
+	}
+	return arg.OrgID == m.profile.OrganizationID, nil
+}
+
+func (m *mockConfigDBStoreageProfileFetcher) GetLongestPrefixMatch(ctx context.Context, arg configdb.GetLongestPrefixMatchParams) (uuid.UUID, error) {
+	if m.err != nil {
+		return uuid.Nil, m.err
+	}
+	return uuid.Nil, errors.New("no prefix match found")
+}
+
+func (m *mockConfigDBStoreageProfileFetcher) GetBucketByOrganization(ctx context.Context, organizationID uuid.UUID) (string, error) {
+	if m.err != nil {
+		return "", m.err
+	}
+	return m.profile.Bucket, nil
 }
 
 func TestDatabaseProvider_Get_SuccessWithRole(t *testing.T) {
@@ -87,11 +133,10 @@ func TestDatabaseProvider_Get_SuccessWithRole(t *testing.T) {
 	mockFetcher := &mockConfigDBStoreageProfileFetcher{profile: mockProfile}
 	provider := NewDatabaseProvider(mockFetcher)
 
-	got, err := provider.Get(context.Background(), orgID, 1)
+	// Test new GetStorageProfileForOrganization method instead
+	got, err := provider.GetStorageProfileForOrganization(context.Background(), orgID)
 	assert.NoError(t, err)
 	assert.Equal(t, orgID, got.OrganizationID)
-	assert.Equal(t, int16(1), got.InstanceNum)
-	assert.Equal(t, "ext-123", got.CollectorName)
 	assert.Equal(t, "aws", got.CloudProvider)
 	assert.Equal(t, "us-west-2", got.Region)
 	assert.Equal(t, "bucket-1", got.Bucket)
@@ -112,125 +157,28 @@ func TestDatabaseProvider_Get_SuccessWithoutRole(t *testing.T) {
 	mockFetcher := &mockConfigDBStoreageProfileFetcher{profile: mockProfile}
 	provider := NewDatabaseProvider(mockFetcher)
 
-	got, err := provider.Get(context.Background(), orgID, 2)
+	// Test new GetStorageProfileForOrganization method instead
+	got, err := provider.GetStorageProfileForOrganization(context.Background(), orgID)
 	assert.NoError(t, err)
 	assert.Equal(t, orgID, got.OrganizationID)
-	assert.Equal(t, int16(2), got.InstanceNum)
-	assert.Equal(t, "ext-456", got.CollectorName)
 	assert.Equal(t, "gcp", got.CloudProvider)
 	assert.Equal(t, "europe-west1", got.Region)
 	assert.Equal(t, "bucket-2", got.Bucket)
 	assert.Equal(t, "", got.Role)
 }
 
-func TestDatabaseProvider_Get_Error(t *testing.T) {
+func TestDatabaseProvider_GetStorageProfileForOrganization_Error(t *testing.T) {
 	orgID := uuid.New()
 	mockFetcher := &mockConfigDBStoreageProfileFetcher{
 		err: errors.New("db error"),
 	}
 	provider := NewDatabaseProvider(mockFetcher)
 
-	_, err := provider.Get(context.TODO(), orgID, 3)
+	_, err := provider.GetStorageProfileForOrganization(context.TODO(), orgID)
 	assert.Error(t, err)
 }
 
-func TestDatabaseProvider_GetByCollectorName(t *testing.T) {
-	tests := []struct {
-		name           string
-		organizationID uuid.UUID
-		collectorName  string
-		mockProfile    configdb.GetStorageProfileRow
-		mockErr        error
-		wantProfile    StorageProfile
-		wantErr        bool
-	}{
-		{
-			name:           "success with role",
-			organizationID: uuid.New(),
-			collectorName:  "collector-123",
-			mockProfile: configdb.GetStorageProfileRow{
-				OrganizationID: uuid.New(),
-				InstanceNum:    1,
-				ExternalID:     "collector-123",
-				CloudProvider:  "aws",
-				Region:         "us-west-2",
-				Bucket:         "test-bucket",
-				Role:           stringPtr("admin-role"),
-				Hosted:         false,
-			},
-			wantProfile: StorageProfile{
-				OrganizationID: uuid.New(),
-				InstanceNum:    1,
-				CollectorName:  "collector-123",
-				CloudProvider:  "aws",
-				Region:         "us-west-2",
-				Bucket:         "test-bucket",
-				Role:           "admin-role",
-				Hosted:         false,
-			},
-			wantErr: false,
-		},
-		{
-			name:           "success without role",
-			organizationID: uuid.New(),
-			collectorName:  "collector-456",
-			mockProfile: configdb.GetStorageProfileRow{
-				OrganizationID: uuid.New(),
-				InstanceNum:    2,
-				ExternalID:     "collector-456",
-				CloudProvider:  "gcp",
-				Region:         "europe-west1",
-				Bucket:         "test-bucket-2",
-				Role:           nil,
-				Hosted:         true,
-			},
-			wantProfile: StorageProfile{
-				OrganizationID: uuid.New(),
-				InstanceNum:    2,
-				CollectorName:  "collector-456",
-				CloudProvider:  "gcp",
-				Region:         "europe-west1",
-				Bucket:         "test-bucket-2",
-				Role:           "",
-				Hosted:         true,
-			},
-			wantErr: false,
-		},
-		{
-			name:           "database error",
-			organizationID: uuid.New(),
-			collectorName:  "collector-error",
-			mockErr:        errors.New("database connection failed"),
-			wantErr:        true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Set up the expected profile organization ID to match
-			if !tt.wantErr {
-				tt.mockProfile.OrganizationID = tt.organizationID
-				tt.wantProfile.OrganizationID = tt.organizationID
-			}
-
-			mockFetcher := &mockConfigDBStoreageProfileFetcher{
-				profile: tt.mockProfile,
-				err:     tt.mockErr,
-			}
-			provider := NewDatabaseProvider(mockFetcher)
-
-			got, err := provider.GetByCollectorName(context.Background(), tt.organizationID, tt.collectorName)
-
-			if tt.wantErr {
-				assert.Error(t, err)
-				return
-			}
-
-			assert.NoError(t, err)
-			assert.Equal(t, tt.wantProfile, got)
-		})
-	}
-}
+// Test removed - GetByCollectorName method was removed
 
 func TestDatabaseProvider_GetStorageProfilesByBucketName(t *testing.T) {
 	tests := []struct {
@@ -257,6 +205,7 @@ func TestDatabaseProvider_GetStorageProfilesByBucketName(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			orgID := uuid.New()
+			role := "test-role"
 			mockProfile := configdb.GetStorageProfileRow{
 				OrganizationID: orgID,
 				InstanceNum:    1,
@@ -264,8 +213,7 @@ func TestDatabaseProvider_GetStorageProfilesByBucketName(t *testing.T) {
 				CloudProvider:  "aws",
 				Region:         "us-west-2",
 				Bucket:         tt.bucketName,
-				Role:           stringPtr("test-role"),
-				Hosted:         false,
+				Role:           &role,
 			}
 
 			mockFetcher := &mockConfigDBStoreageProfileFetcher{
@@ -287,7 +235,6 @@ func TestDatabaseProvider_GetStorageProfilesByBucketName(t *testing.T) {
 			if tt.wantCount > 0 {
 				assert.Equal(t, tt.bucketName, got[0].Bucket)
 				assert.Equal(t, orgID, got[0].OrganizationID)
-				assert.Equal(t, "test-collector", got[0].CollectorName)
 				assert.Equal(t, "test-role", got[0].Role)
 			}
 		})

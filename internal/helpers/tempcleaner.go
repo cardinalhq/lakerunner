@@ -20,12 +20,29 @@ import (
 	"path/filepath"
 )
 
-func CleanTempDir() {
-	slog.Info("Cleaning temp dir", "path", os.TempDir())
+// SetupTempDir creates a lakerunner-specific temp directory, sets TMPDIR, and cleans it
+func SetupTempDir() {
+	tmp := os.TempDir()
+	tmp = filepath.Join(tmp, "lakerunner")
+	if err := os.MkdirAll(tmp, 0755); err != nil {
+		slog.Error("Failed to create temp dir path (ignoring)", slog.String("path", tmp), slog.Any("error", err))
+	} else {
+		slog.Debug("Created temp dir path", slog.String("path", tmp))
+	}
+	if err := os.Setenv("TMPDIR", tmp); err != nil {
+		slog.Error("Failed to set TMPDIR environment variable", slog.String("path", tmp), slog.Any("error", err))
+	} else {
+		slog.Debug("Set TMPDIR environment variable", slog.String("path", tmp))
+	}
+
+	slog.Debug("Using temp dir", "path", os.TempDir())
+
+	// Clean the temp directory
+	slog.Debug("Cleaning temp dir", "path", os.TempDir())
 	temp := os.TempDir()
 	entries, err := os.ReadDir(temp)
 	if err != nil {
-		slog.Info("Failed to read temp dir (ignoring)", slog.String("path", temp), slog.Any("error", err))
+		slog.Debug("Failed to read temp dir (ignoring)", slog.String("path", temp), slog.Any("error", err))
 		return
 	}
 

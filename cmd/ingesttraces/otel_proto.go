@@ -37,11 +37,12 @@ import (
 	"path/filepath"
 	"strconv"
 
+	oteltranslate "github.com/cardinalhq/oteltools/pkg/translate"
+
 	"github.com/cardinalhq/lakerunner/cmd/ingestlogs"
 	"github.com/cardinalhq/lakerunner/fileconv/proto"
 	"github.com/cardinalhq/lakerunner/fileconv/translate"
 	"github.com/cardinalhq/lakerunner/internal/buffet"
-	oteltranslate "github.com/cardinalhq/oteltools/pkg/translate"
 )
 
 // NumTracePartitions is the number of partitions/slots for trace processing.

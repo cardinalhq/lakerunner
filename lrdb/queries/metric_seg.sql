@@ -20,7 +20,7 @@ VALUES (
   @ingest_dateint,
   @frequency_ms,
   @segment_id,
-  @instance_num,
+  1,
   @tid_partition,
   int8range(@start_ts, @end_ts, '[)'),
   @record_count,
@@ -37,10 +37,9 @@ WHERE
   organization_id = @organization_id AND
   dateint = @dateint AND
   frequency_ms = @frequency_ms AND
-  instance_num = @instance_num
-  AND ts_range && int8range(@start_ts, @end_ts, '[)')
-  AND file_size <= @max_file_size
-  AND (created_at, segment_id) > (@cursor_created_at, @cursor_segment_id::bigint)
+  ts_range && int8range(@start_ts, @end_ts, '[)') AND
+  file_size <= @max_file_size AND
+  (created_at, segment_id) > (@cursor_created_at, @cursor_segment_id::bigint)
 ORDER BY
   created_at, segment_id
 LIMIT @maxrows;
@@ -52,8 +51,7 @@ WHERE
   organization_id = @organization_id AND
   dateint = @dateint AND
   frequency_ms = @frequency_ms AND
-  instance_num = @instance_num
-  AND ts_range && int8range(@start_ts, @end_ts, '[)')
+  ts_range && int8range(@start_ts, @end_ts, '[)')
 ORDER BY
   ts_range;
 
@@ -80,7 +78,7 @@ VALUES (
   @ingest_dateint,
   @frequency_ms,
   @segment_id,
-  @instance_num,
+  1,
   @tid_partition,
   int8range(@start_ts, @end_ts, '[)'),
   @record_count,
@@ -98,7 +96,6 @@ UPDATE public.metric_seg
    AND dateint         = @dateint
    AND frequency_ms    = @frequency_ms
    AND segment_id      = @segment_id
-   AND instance_num    = @instance_num
    AND tid_partition   = @tid_partition
 ;
 
@@ -108,7 +105,6 @@ DELETE FROM public.metric_seg
    AND dateint         = @dateint
    AND frequency_ms    = @frequency_ms
    AND segment_id      = @segment_id
-   AND instance_num    = @instance_num
    AND tid_partition   = @tid_partition
 ;
 

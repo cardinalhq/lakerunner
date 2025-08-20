@@ -19,8 +19,7 @@ WITH
       FROM log_seg
      WHERE organization_id = $1
        AND dateint        = $2
-       AND instance_num   = $5
-       AND segment_id     = ANY($11::bigint[])
+       AND segment_id     = ANY($10::bigint[])
   ),
   fingerprint_array AS (
     SELECT coalesce(
@@ -33,8 +32,7 @@ WITH
     DELETE FROM log_seg
      WHERE organization_id = $1
        AND dateint        = $2
-       AND instance_num   = $5
-       AND segment_id     = ANY($11::bigint[])
+       AND segment_id     = ANY($10::bigint[])
   )
 INSERT INTO log_seg (
   organization_id,
@@ -53,11 +51,11 @@ SELECT
   $2,
   $3,
   $4,
+  1,
   $5,
   $6,
-  $7,
-  int8range($8, $9, '[)'),
-  $10,
+  int8range($7, $8, '[)'),
+  $9,
   fa.fingerprints
 FROM fingerprint_array AS fa
 `
@@ -67,7 +65,6 @@ type CompactLogSegmentsParams struct {
 	Dateint        int32     `json:"dateint"`
 	IngestDateint  int32     `json:"ingest_dateint"`
 	NewSegmentID   int64     `json:"new_segment_id"`
-	InstanceNum    int16     `json:"instance_num"`
 	NewRecordCount int64     `json:"new_record_count"`
 	NewFileSize    int64     `json:"new_file_size"`
 	NewStartTs     int64     `json:"new_start_ts"`
@@ -82,7 +79,6 @@ func (q *Queries) CompactLogSegments(ctx context.Context, arg CompactLogSegments
 		arg.Dateint,
 		arg.IngestDateint,
 		arg.NewSegmentID,
-		arg.InstanceNum,
 		arg.NewRecordCount,
 		arg.NewFileSize,
 		arg.NewStartTs,
@@ -105,19 +101,17 @@ SELECT
 FROM log_seg
 WHERE organization_id = $1
   AND dateint         = $2
-  AND instance_num    = $3
   AND file_size > 0
   AND record_count > 0
-  AND file_size <= $4
-  AND (created_at, segment_id) > ($5, $6::bigint)
+  AND file_size <= $3
+  AND (created_at, segment_id) > ($4, $5::bigint)
 ORDER BY created_at, segment_id
-LIMIT $7
+LIMIT $6
 `
 
 type GetLogSegmentsForCompactionParams struct {
 	OrganizationID  uuid.UUID `json:"organization_id"`
 	Dateint         int32     `json:"dateint"`
-	InstanceNum     int16     `json:"instance_num"`
 	MaxFileSize     int64     `json:"max_file_size"`
 	CursorCreatedAt time.Time `json:"cursor_created_at"`
 	CursorSegmentID int64     `json:"cursor_segment_id"`
@@ -138,7 +132,6 @@ func (q *Queries) GetLogSegmentsForCompaction(ctx context.Context, arg GetLogSeg
 	rows, err := q.db.Query(ctx, getLogSegmentsForCompaction,
 		arg.OrganizationID,
 		arg.Dateint,
-		arg.InstanceNum,
 		arg.MaxFileSize,
 		arg.CursorCreatedAt,
 		arg.CursorSegmentID,
@@ -188,12 +181,12 @@ VALUES (
   $2,
   $3,
   $4,
-  $5,
-  int8range($6, $7, '[)'),
+  1,
+  int8range($5, $6, '[)'),
+  $7,
   $8,
   $9,
-  $10,
-  $11::bigint[]
+  $10::bigint[]
 )
 `
 
@@ -202,7 +195,6 @@ type InsertLogSegmentParams struct {
 	Dateint        int32     `json:"dateint"`
 	IngestDateint  int32     `json:"ingest_dateint"`
 	SegmentID      int64     `json:"segment_id"`
-	InstanceNum    int16     `json:"instance_num"`
 	StartTs        int64     `json:"start_ts"`
 	EndTs          int64     `json:"end_ts"`
 	RecordCount    int64     `json:"record_count"`
@@ -217,7 +209,6 @@ func (q *Queries) InsertLogSegmentDirect(ctx context.Context, arg InsertLogSegme
 		arg.Dateint,
 		arg.IngestDateint,
 		arg.SegmentID,
-		arg.InstanceNum,
 		arg.StartTs,
 		arg.EndTs,
 		arg.RecordCount,

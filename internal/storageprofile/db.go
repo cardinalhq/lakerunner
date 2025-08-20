@@ -16,10 +16,12 @@ package storageprofile
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 
-	"github.com/cardinalhq/lakerunner/internal/configdb"
+	"github.com/cardinalhq/lakerunner/configdb"
 )
 
 type databaseProvider struct {
@@ -29,9 +31,11 @@ type databaseProvider struct {
 var _ StorageProfileProvider = (*databaseProvider)(nil)
 
 type ConfigDBStoreageProfileFetcher interface {
-	GetStorageProfile(ctx context.Context, params configdb.GetStorageProfileParams) (configdb.GetStorageProfileRow, error)
-	GetStorageProfileByCollectorName(ctx context.Context, params configdb.GetStorageProfileByCollectorNameParams) (configdb.GetStorageProfileByCollectorNameRow, error)
-	GetStorageProfilesByBucketName(ctx context.Context, bucketName string) ([]configdb.GetStorageProfilesByBucketNameRow, error)
+	GetBucketConfiguration(ctx context.Context, bucketName string) (configdb.BucketConfiguration, error)
+	GetOrganizationsByBucket(ctx context.Context, bucketName string) ([]uuid.UUID, error)
+	CheckOrgBucketAccess(ctx context.Context, arg configdb.CheckOrgBucketAccessParams) (bool, error)
+	GetLongestPrefixMatch(ctx context.Context, arg configdb.GetLongestPrefixMatchParams) (uuid.UUID, error)
+	GetBucketByOrganization(ctx context.Context, organizationID uuid.UUID) (string, error)
 }
 
 var _ ConfigDBStoreageProfileFetcher = (*configdb.Store)(nil)
@@ -42,71 +46,144 @@ func NewDatabaseProvider(cdb ConfigDBStoreageProfileFetcher) StorageProfileProvi
 	}
 }
 
-func (p *databaseProvider) Get(ctx context.Context, organizationID uuid.UUID, instanceNum int16) (StorageProfile, error) {
-	profile, err := p.cdb.GetStorageProfile(ctx, configdb.GetStorageProfileParams{
-		OrganizationID: organizationID,
-		InstanceNum:    instanceNum,
+func (p *databaseProvider) GetStorageProfileForBucket(ctx context.Context, organizationID uuid.UUID, bucketName string) (StorageProfile, error) {
+	// Verify the organization has access to this bucket
+	hasAccess, err := p.cdb.CheckOrgBucketAccess(ctx, configdb.CheckOrgBucketAccessParams{
+		OrgID:      organizationID,
+		BucketName: bucketName,
 	})
 	if err != nil {
-		return StorageProfile{}, err
+		return StorageProfile{}, fmt.Errorf("failed to check org bucket access: %w", err)
 	}
+	if !hasAccess {
+		return StorageProfile{}, fmt.Errorf("organization %s does not have access to bucket %s", organizationID, bucketName)
+	}
+
+	// Get the bucket configuration
+	bucketConfig, err := p.cdb.GetBucketConfiguration(ctx, bucketName)
+	if err != nil {
+		return StorageProfile{}, fmt.Errorf("failed to get bucket configuration: %w", err)
+	}
+
+	// Create storage profile from bucket configuration
 	ret := StorageProfile{
-		OrganizationID: profile.OrganizationID,
-		InstanceNum:    profile.InstanceNum,
-		CollectorName:  profile.ExternalID,
-		CloudProvider:  profile.CloudProvider,
-		Region:         profile.Region,
-		Bucket:         profile.Bucket,
-		Hosted:         profile.Hosted,
+		OrganizationID: organizationID,
+		CloudProvider:  bucketConfig.CloudProvider,
+		Region:         bucketConfig.Region,
+		Bucket:         bucketConfig.BucketName,
+		UsePathStyle:   bucketConfig.UsePathStyle,
+		InsecureTLS:    bucketConfig.InsecureTls,
 	}
-	if profile.Role != nil {
-		ret.Role = *profile.Role
+
+	if bucketConfig.Role != nil {
+		ret.Role = *bucketConfig.Role
 	}
+	if bucketConfig.Endpoint != nil {
+		ret.Endpoint = *bucketConfig.Endpoint
+	}
+
 	return ret, nil
 }
 
-func (p *databaseProvider) GetByCollectorName(ctx context.Context, organizationID uuid.UUID, collectorName string) (StorageProfile, error) {
-	profile, err := p.cdb.GetStorageProfileByCollectorName(ctx, configdb.GetStorageProfileByCollectorNameParams{
-		OrganizationID: organizationID,
-		CollectorName:  collectorName,
-	})
+func (p *databaseProvider) GetStorageProfileForOrganization(ctx context.Context, organizationID uuid.UUID) (StorageProfile, error) {
+	// Get the bucket for this organization
+	bucketName, err := p.cdb.GetBucketByOrganization(ctx, organizationID)
 	if err != nil {
-		return StorageProfile{}, err
+		return StorageProfile{}, fmt.Errorf("failed to get bucket for organization %s: %w", organizationID, err)
 	}
-	ret := StorageProfile{
-		OrganizationID: profile.OrganizationID,
-		InstanceNum:    profile.InstanceNum,
-		CollectorName:  profile.ExternalID,
-		CloudProvider:  profile.CloudProvider,
-		Region:         profile.Region,
-		Bucket:         profile.Bucket,
-		Hosted:         profile.Hosted,
-	}
-	if profile.Role != nil {
-		ret.Role = *profile.Role
-	}
-	return ret, nil
+
+	// Get the storage profile for this organization and bucket
+	return p.GetStorageProfileForBucket(ctx, organizationID, bucketName)
 }
 
 func (p *databaseProvider) GetStorageProfilesByBucketName(ctx context.Context, bucketName string) ([]StorageProfile, error) {
-	profiles, err := p.cdb.GetStorageProfilesByBucketName(ctx, bucketName)
+	// Get bucket configuration
+	bucketConfig, err := p.cdb.GetBucketConfiguration(ctx, bucketName)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get bucket configuration: %w", err)
 	}
-	ret := make([]StorageProfile, len(profiles))
-	for i, p := range profiles {
+
+	// Get all organizations with access to this bucket
+	orgs, err := p.cdb.GetOrganizationsByBucket(ctx, bucketName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get organizations for bucket: %w", err)
+	}
+
+	// Create storage profiles for each organization
+	ret := make([]StorageProfile, len(orgs))
+	for i, orgID := range orgs {
 		ret[i] = StorageProfile{
-			OrganizationID: p.OrganizationID,
-			InstanceNum:    p.InstanceNum,
-			CollectorName:  p.ExternalID,
-			CloudProvider:  p.CloudProvider,
-			Region:         p.Region,
-			Bucket:         p.Bucket,
-			Hosted:         p.Hosted,
+			OrganizationID: orgID,
+			CloudProvider:  bucketConfig.CloudProvider,
+			Region:         bucketConfig.Region,
+			Bucket:         bucketConfig.BucketName,
+			UsePathStyle:   bucketConfig.UsePathStyle,
+			InsecureTLS:    bucketConfig.InsecureTls,
 		}
-		if p.Role != nil {
-			ret[i].Role = *p.Role
+
+		if bucketConfig.Role != nil {
+			ret[i].Role = *bucketConfig.Role
+		}
+		if bucketConfig.Endpoint != nil {
+			ret[i].Endpoint = *bucketConfig.Endpoint
 		}
 	}
+
 	return ret, nil
+}
+
+func (p *databaseProvider) ResolveOrganization(ctx context.Context, bucketName, objectPath string) (uuid.UUID, error) {
+	pathParts := strings.Split(strings.Trim(objectPath, "/"), "/")
+
+	// Extract signal from first path segment
+	var signal string
+	if len(pathParts) >= 1 {
+		switch pathParts[0] {
+		case "logs", "metrics", "traces":
+			signal = pathParts[0]
+		default:
+			signal = "metrics" // Default fallback
+		}
+	} else {
+		signal = "metrics" // Default fallback
+	}
+
+	// 1. Try to extract UUID from second path segment (signal/UUID)
+	if len(pathParts) >= 2 {
+		if orgID, err := uuid.Parse(pathParts[1]); err == nil {
+			// Verify this org has access to the bucket
+			hasAccess, err := p.cdb.CheckOrgBucketAccess(ctx, configdb.CheckOrgBucketAccessParams{
+				OrgID:      orgID,
+				BucketName: bucketName,
+			})
+			if err != nil {
+				return uuid.Nil, fmt.Errorf("failed to check org bucket access: %w", err)
+			}
+			if hasAccess {
+				return orgID, nil
+			}
+			// If UUID is valid but org doesn't have access, continue to prefix matching
+		}
+	}
+
+	// 2. Try longest prefix match with signal
+	orgID, err := p.cdb.GetLongestPrefixMatch(ctx, configdb.GetLongestPrefixMatchParams{
+		BucketName: bucketName,
+		Signal:     signal,
+		ObjectPath: objectPath,
+	})
+	if err == nil {
+		return orgID, nil
+	}
+
+	// 3. If single org owns the bucket, use that
+	orgs, err := p.cdb.GetOrganizationsByBucket(ctx, bucketName)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("failed to get organizations for bucket: %w", err)
+	}
+	if len(orgs) == 1 {
+		return orgs[0], nil
+	}
+
+	return uuid.Nil, fmt.Errorf("unable to resolve organization for path %s in bucket %s: %d organizations found", objectPath, bucketName, len(orgs))
 }
