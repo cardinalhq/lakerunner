@@ -7,6 +7,7 @@ package configdb
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -122,12 +123,12 @@ JOIN lrconfig_organization_api_key_mappings ako ON ak.id = ako.api_key_id
 `
 
 type GetAllOrganizationAPIKeysRow struct {
-	ID             uuid.UUID          `json:"id"`
-	KeyHash        string             `json:"key_hash"`
-	Name           string             `json:"name"`
-	Description    *string            `json:"description"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	OrganizationID uuid.UUID          `json:"organization_id"`
+	ID             uuid.UUID  `json:"id"`
+	KeyHash        string     `json:"key_hash"`
+	Name           string     `json:"name"`
+	Description    *string    `json:"description"`
+	CreatedAt      *time.Time `json:"created_at"`
+	OrganizationID uuid.UUID  `json:"organization_id"`
 }
 
 func (q *Queries) GetAllOrganizationAPIKeys(ctx context.Context) ([]GetAllOrganizationAPIKeysRow, error) {
@@ -165,12 +166,12 @@ WHERE ak.key_hash = $1
 `
 
 type GetOrganizationAPIKeyByHashRow struct {
-	ID             uuid.UUID          `json:"id"`
-	KeyHash        string             `json:"key_hash"`
-	Name           string             `json:"name"`
-	Description    *string            `json:"description"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	OrganizationID uuid.UUID          `json:"organization_id"`
+	ID             uuid.UUID  `json:"id"`
+	KeyHash        string     `json:"key_hash"`
+	Name           string     `json:"name"`
+	Description    *string    `json:"description"`
+	CreatedAt      *time.Time `json:"created_at"`
+	OrganizationID uuid.UUID  `json:"organization_id"`
 }
 
 func (q *Queries) GetOrganizationAPIKeyByHash(ctx context.Context, keyHash string) (GetOrganizationAPIKeyByHashRow, error) {
@@ -195,12 +196,12 @@ WHERE ak.id = $1
 `
 
 type GetOrganizationAPIKeyByIDRow struct {
-	ID             uuid.UUID          `json:"id"`
-	KeyHash        string             `json:"key_hash"`
-	Name           string             `json:"name"`
-	Description    *string            `json:"description"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	OrganizationID uuid.UUID          `json:"organization_id"`
+	ID             uuid.UUID  `json:"id"`
+	KeyHash        string     `json:"key_hash"`
+	Name           string     `json:"name"`
+	Description    *string    `json:"description"`
+	CreatedAt      *time.Time `json:"created_at"`
+	OrganizationID uuid.UUID  `json:"organization_id"`
 }
 
 func (q *Queries) GetOrganizationAPIKeyByID(ctx context.Context, apiKeyID uuid.UUID) (GetOrganizationAPIKeyByIDRow, error) {

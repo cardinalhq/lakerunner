@@ -5,18 +5,34 @@
 package configdb
 
 import (
+	"time"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type CCollector struct {
-	ID               uuid.UUID          `json:"id"`
-	DeletedAt        pgtype.Timestamptz `json:"deleted_at"`
-	OrganizationID   uuid.UUID          `json:"organization_id"`
-	StorageProfileID uuid.UUID          `json:"storage_profile_id"`
-	InstanceNum      int16              `json:"instance_num"`
-	ExternalID       string             `json:"external_id"`
-	Type             int32              `json:"type"`
+	ID               uuid.UUID  `json:"id"`
+	DeletedAt        *time.Time `json:"deleted_at"`
+	OrganizationID   uuid.UUID  `json:"organization_id"`
+	StorageProfileID uuid.UUID  `json:"storage_profile_id"`
+	InstanceNum      int16      `json:"instance_num"`
+	ExternalID       string     `json:"external_id"`
+	Type             int32      `json:"type"`
+}
+
+type COrganization struct {
+	ID                           uuid.UUID        `json:"id"`
+	CreatedAt                    pgtype.Timestamp `json:"created_at"`
+	UpdatedAt                    pgtype.Timestamp `json:"updated_at"`
+	CreatedBy                    *string          `json:"created_by"`
+	UpdatedBy                    *string          `json:"updated_by"`
+	Name                         *string          `json:"name"`
+	Enabled                      pgtype.Bool      `json:"enabled"`
+	NotificationSlack            *string          `json:"notification_slack"`
+	NotificationEmail            *string          `json:"notification_email"`
+	NotificationPagerDutyService *string          `json:"notification_pager_duty_service"`
+	Features                     map[string]any   `json:"features"`
 }
 
 type COrganizationApiKey struct {
@@ -41,11 +57,11 @@ type CStorageProfile struct {
 }
 
 type LrconfigAdminApiKey struct {
-	ID          uuid.UUID          `json:"id"`
-	KeyHash     string             `json:"key_hash"`
-	Name        string             `json:"name"`
-	Description *string            `json:"description"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	ID          uuid.UUID  `json:"id"`
+	KeyHash     string     `json:"key_hash"`
+	Name        string     `json:"name"`
+	Description *string    `json:"description"`
+	CreatedAt   *time.Time `json:"created_at"`
 }
 
 type LrconfigBucketConfiguration struct {
@@ -65,12 +81,20 @@ type LrconfigBucketPrefixMapping struct {
 	Signal         string    `json:"signal"`
 }
 
+type LrconfigOrganization struct {
+	ID        uuid.UUID  `json:"id"`
+	Name      string     `json:"name"`
+	Enabled   bool       `json:"enabled"`
+	CreatedAt time.Time  `json:"created_at"`
+	SyncedAt  *time.Time `json:"synced_at"`
+}
+
 type LrconfigOrganizationApiKey struct {
-	ID          uuid.UUID          `json:"id"`
-	KeyHash     string             `json:"key_hash"`
-	Name        string             `json:"name"`
-	Description *string            `json:"description"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	ID          uuid.UUID  `json:"id"`
+	KeyHash     string     `json:"key_hash"`
+	Name        string     `json:"name"`
+	Description *string    `json:"description"`
+	CreatedAt   *time.Time `json:"created_at"`
 }
 
 type LrconfigOrganizationApiKeyMapping struct {

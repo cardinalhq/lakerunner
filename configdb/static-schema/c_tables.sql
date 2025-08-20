@@ -1,3 +1,17 @@
+CREATE TABLE c_organizations (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  created_at TIMESTAMP WITHOUT TIME ZONE,
+  updated_at TIMESTAMP WITHOUT TIME ZONE,
+  created_by TEXT,
+  updated_by TEXT,
+  name TEXT,
+  enabled BOOLEAN,
+  notification_slack TEXT,
+  notification_email TEXT,
+  notification_pager_duty_service TEXT,
+  features JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+
 CREATE TABLE c_collectors (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   deleted_at TIMESTAMP WITH TIME ZONE,
