@@ -132,14 +132,9 @@ func RunqueueLoop(loop *RunqueueLoopContext, pfx RunqueueProcessingFunction, arg
 		default:
 		}
 
-		t0 := time.Now()
-		shouldBackoff, didWork, err := workqueueProcess(ctx, loop, pfx, args)
+		shouldBackoff, _, err := workqueueProcess(ctx, loop, pfx, args)
 		if err != nil {
 			return err
-		}
-
-		if didWork {
-			loop.ll.Info("Completed work", slog.Duration("elapsed", time.Since(t0)))
 		}
 
 		if shouldBackoff {
@@ -224,7 +219,7 @@ func workqueueProcess(
 		slog.Int("instanceNum", int(inf.InstanceNum())),
 	)
 
-	ll.Info("Processing work queue item",
+	ll.Info("Starting work queue item",
 		slog.Int("priority", int(inf.Priority())),
 		slog.Int("frequencyMs", int(inf.FrequencyMs())),
 		slog.Int("dateint", int(inf.Dateint())),
@@ -237,12 +232,9 @@ func workqueueProcess(
 		ll.Error("Failed to create temporary directory", slog.Any("error", err))
 		return true, false, fmt.Errorf("failed to create temporary directory: %w", err)
 	}
-	ll.Info("Created temporary directory", slog.String("path", tmpdir))
 	defer func() {
 		if err := os.RemoveAll(tmpdir); err != nil {
 			ll.Error("Failed to remove temporary directory", slog.String("path", tmpdir), slog.Any("error", err))
-		} else {
-			ll.Info("Removed temporary directory", slog.String("path", tmpdir))
 		}
 	}()
 

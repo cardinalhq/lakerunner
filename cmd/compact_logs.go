@@ -100,8 +100,32 @@ func compactLogsFor(
 		return WorkResultTryAgainLater, err
 	}
 
-	ll.Info("Processing log compression item", slog.Any("workItem", inf.AsMap()))
-	return logCompactItemDo(ctx, ll, mdb, tmpdir, inf, profile, s3client, rpfEstimate)
+	ll.Info("Starting log compaction",
+		slog.String("organizationID", inf.OrganizationID().String()),
+		slog.Int("instanceNum", int(inf.InstanceNum())),
+		slog.Int("dateint", int(inf.Dateint())),
+		slog.Int64("workQueueID", inf.ID()))
+
+	t0 := time.Now()
+	result, err := logCompactItemDo(ctx, ll, mdb, tmpdir, inf, profile, s3client, rpfEstimate)
+
+	if err != nil {
+		ll.Info("Log compaction completed",
+			slog.String("result", "error"),
+			slog.Int64("workQueueID", inf.ID()),
+			slog.Duration("elapsed", time.Since(t0)))
+	} else {
+		resultStr := "success"
+		if result == WorkResultTryAgainLater {
+			resultStr = "try_again_later"
+		}
+		ll.Info("Log compaction completed",
+			slog.String("result", resultStr),
+			slog.Int64("workQueueID", inf.ID()),
+			slog.Duration("elapsed", time.Since(t0)))
+	}
+
+	return result, err
 }
 
 func logCompactItemDo(

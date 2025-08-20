@@ -72,8 +72,33 @@ func ProcessItem(
 		return WorkResultTryAgainLater, err
 	}
 
-	ll.Info("Processing metric compression item", slog.Any("workItem", inf))
-	return doCompactItem(ctx, ll, mdb, tmpdir, inf, profile, s3client, rpfEstimate)
+	ll.Info("Starting metric compaction",
+		slog.String("organizationID", inf.OrganizationID().String()),
+		slog.Int("instanceNum", int(inf.InstanceNum())),
+		slog.Int("dateint", int(inf.Dateint())),
+		slog.Int("frequencyMs", int(inf.FrequencyMs())),
+		slog.Int64("workQueueID", inf.ID()))
+
+	t0 := time.Now()
+	result, err := doCompactItem(ctx, ll, mdb, tmpdir, inf, profile, s3client, rpfEstimate)
+
+	if err != nil {
+		ll.Info("Metric compaction completed",
+			slog.String("result", "error"),
+			slog.Int64("workQueueID", inf.ID()),
+			slog.Duration("elapsed", time.Since(t0)))
+	} else {
+		resultStr := "success"
+		if result == WorkResultTryAgainLater {
+			resultStr = "try_again_later"
+		}
+		ll.Info("Metric compaction completed",
+			slog.String("result", resultStr),
+			slog.Int64("workQueueID", inf.ID()),
+			slog.Duration("elapsed", time.Since(t0)))
+	}
+
+	return result, err
 }
 
 func doCompactItem(
@@ -259,7 +284,7 @@ func compactInterval(
 	for _, row := range rows {
 		dateint, hour := helpers.MSToDateintHour(st.Time.UTC().UnixMilli())
 		objectID := helpers.MakeDBObjectID(inf.OrganizationID(), profile.CollectorName, dateint, hour, row.SegmentID, "metrics")
-		fn, downloadedSize, is404, err := s3helper.DownloadS3Object(ctx, tmpdir, s3client, profile.Bucket, objectID)
+		fn, _, is404, err := s3helper.DownloadS3Object(ctx, tmpdir, s3client, profile.Bucket, objectID)
 		if err != nil {
 			ll.Error("Failed to download S3 object", slog.String("objectID", objectID), slog.Any("error", err))
 			return err
@@ -269,7 +294,6 @@ func compactInterval(
 			continue
 		}
 
-		ll.Info("Downloaded S3 SOURCE", slog.String("objectID", objectID), slog.String("bucket", profile.Bucket), slog.Int64("rowFileSize", row.FileSize), slog.Int64("s3FileSize", downloadedSize))
 		files = append(files, fn)
 	}
 
@@ -326,7 +350,6 @@ func compactInterval(
 	}
 
 	for _, row := range rows {
-		ll.Info("removing old metric segment", slog.Int("tidPartition", int(row.TidPartition)), slog.Int64("segmentID", row.SegmentID))
 		params.OldRecords = append(params.OldRecords, lrdb.ReplaceMetricSegsOld{
 			TidPartition: row.TidPartition,
 			SegmentID:    row.SegmentID,
@@ -337,13 +360,11 @@ func compactInterval(
 	for tidPartition, result := range mergeResult {
 		segmentID := s3helper.GenerateID()
 		newObjectID := helpers.MakeDBObjectID(inf.OrganizationID(), profile.CollectorName, dateint, hour, segmentID, "metrics")
-		ll.Info("Uploading to S3", slog.String("objectID", newObjectID), slog.String("bucket", profile.Bucket))
 		err = s3helper.UploadS3Object(ctx, s3client, profile.Bucket, newObjectID, result.FileName)
 		if err != nil {
 			ll.Error("Failed to upload new S3 object", slog.String("objectID", newObjectID), slog.Any("error", err))
 			return fmt.Errorf("uploading new S3 object: %w", err)
 		}
-		ll.Info("adding new metric segment", slog.Int("tidPartition", int(tidPartition)), slog.Int64("segmentID", segmentID))
 		params.NewRecords = append(params.NewRecords, lrdb.ReplaceMetricSegsNew{
 			TidPartition: int16(tidPartition),
 			SegmentID:    segmentID,
@@ -359,7 +380,6 @@ func compactInterval(
 		ll.Error("Failed to replace metric segments", slog.Any("error", err))
 		return fmt.Errorf("replacing metric segments: %w", err)
 	}
-	ll.Info("Replaced metric segments")
 
 	for _, row := range rows {
 		rst, _, ok := helpers.RangeBounds(row.TsRange)

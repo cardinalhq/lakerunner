@@ -267,7 +267,6 @@ func cleanupObj(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageP
 		failWork(ctx, ll, mdb, obj.ID)
 		return
 	}
-	ll.Info("Successfully cleaned up object", slog.Any("request", obj))
 }
 
 func failWork(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull, id uuid.UUID) {

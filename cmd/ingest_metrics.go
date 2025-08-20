@@ -147,7 +147,6 @@ func metricIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp st
 			return err
 		} else if fnames != nil {
 			filenames = fnames
-			ll.Info("Converted file", slog.String("filename", tmpfilename), slog.String("objectID", inf.ObjectID))
 		}
 	}
 
