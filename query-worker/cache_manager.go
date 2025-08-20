@@ -1,4 +1,4 @@
-package worker
+package query_worker
 
 import (
 	"context"

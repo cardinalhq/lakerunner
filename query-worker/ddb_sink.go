@@ -1,4 +1,4 @@
-package worker
+package query_worker
 
 import (
 	"context"
@@ -56,7 +56,7 @@ func NewDDBSink(ctx context.Context) (*DDBSink, error) {
 
 	db, err := duckdbx.Open(dbPath,
 		duckdbx.WithMemoryLimitMB(2048),
-		duckdbx.WithExtension("httpfs", ""),
+		duckdbx.WithExtension("httpfs"),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("open duckdb: %w", err)
