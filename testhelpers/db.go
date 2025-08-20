@@ -48,7 +48,13 @@ func SetupTestLRDB(t *testing.T) *pgxpool.Pool {
 	baseDB := getEnvOrDefault("LRDB_DBNAME", "claude_lrdb")
 
 	// Connect to base database to create test database
-	baseConnStr := fmt.Sprintf("postgresql://%s@%s:%s/%s", user, host, port, baseDB)
+	password := os.Getenv("LRDB_PASSWORD")
+	var baseConnStr string
+	if password != "" {
+		baseConnStr = fmt.Sprintf("postgresql://%s:%s@%s:%s/%s?sslmode=disable", user, password, host, port, baseDB)
+	} else {
+		baseConnStr = fmt.Sprintf("postgresql://%s@%s:%s/%s", user, host, port, baseDB)
+	}
 	basePool, err := pgxpool.New(ctx, baseConnStr)
 	if err != nil {
 		t.Fatalf("Failed to connect to base database: %v", err)
@@ -62,7 +68,12 @@ func SetupTestLRDB(t *testing.T) *pgxpool.Pool {
 	}
 
 	// Connect to test database
-	testConnStr := fmt.Sprintf("postgresql://%s@%s:%s/%s", user, host, port, dbName)
+	var testConnStr string
+	if password != "" {
+		testConnStr = fmt.Sprintf("postgresql://%s:%s@%s:%s/%s?sslmode=disable", user, password, host, port, dbName)
+	} else {
+		testConnStr = fmt.Sprintf("postgresql://%s@%s:%s/%s", user, host, port, dbName)
+	}
 	testPool, err := pgxpool.New(ctx, testConnStr)
 	if err != nil {
 		t.Fatalf("Failed to connect to test database: %v", err)
@@ -104,7 +115,13 @@ func SetupTestConfigDB(t *testing.T) *pgxpool.Pool {
 	baseDB := getEnvOrDefault("CONFIGDB_DBNAME", "claude_configdb")
 
 	// Connect to base database to create test database
-	baseConnStr := fmt.Sprintf("postgresql://%s@%s:%s/%s", user, host, port, baseDB)
+	password := os.Getenv("CONFIGDB_PASSWORD")
+	var baseConnStr string
+	if password != "" {
+		baseConnStr = fmt.Sprintf("postgresql://%s:%s@%s:%s/%s?sslmode=disable", user, password, host, port, baseDB)
+	} else {
+		baseConnStr = fmt.Sprintf("postgresql://%s@%s:%s/%s", user, host, port, baseDB)
+	}
 	basePool, err := pgxpool.New(ctx, baseConnStr)
 	if err != nil {
 		t.Fatalf("Failed to connect to base configdb: %v", err)
@@ -118,7 +135,12 @@ func SetupTestConfigDB(t *testing.T) *pgxpool.Pool {
 	}
 
 	// Connect to test database
-	testConnStr := fmt.Sprintf("postgresql://%s@%s:%s/%s", user, host, port, dbName)
+	var testConnStr string
+	if password != "" {
+		testConnStr = fmt.Sprintf("postgresql://%s:%s@%s:%s/%s?sslmode=disable", user, password, host, port, dbName)
+	} else {
+		testConnStr = fmt.Sprintf("postgresql://%s@%s:%s/%s", user, host, port, dbName)
+	}
 	testPool, err := pgxpool.New(ctx, testConnStr)
 	if err != nil {
 		t.Fatalf("Failed to connect to test configdb: %v", err)
