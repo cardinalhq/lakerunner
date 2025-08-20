@@ -37,13 +37,13 @@ import (
 )
 
 type TableTranslator struct {
-	idg                 idgen.IDGenerator
+	idg                idgen.IDGenerator
 	trieClusterManager *fingerprinter.TrieClusterManager
 }
 
 func NewTableTranslator() *TableTranslator {
 	return &TableTranslator{
-		idg: idgen.NewULIDGenerator(),
+		idg:                idgen.NewULIDGenerator(),
 		trieClusterManager: fingerprinter.NewTrieClusterManager(0.5),
 	}
 }
@@ -105,10 +105,10 @@ func (l *TableTranslator) LogsFromOtel(ol *plog.Logs, environment authenv.Enviro
 				// If severity number is set, use it to set log levelFromFingerprinter
 				if log.SeverityNumber() != plog.SeverityNumberUnspecified {
 					log.SetSeverityText(SeverityNumberToText(log.SeverityNumber()))
-				} else if log.SeverityText() == "" || log.SeverityText() == plog.SeverityNumberUnspecified.String() {
-					log.SetSeverityText("INFO")
 				} else if levelFromFingerprinter != "" {
 					log.SetSeverityText(strings.ToUpper(levelFromFingerprinter))
+				} else if log.SeverityText() == "" || log.SeverityText() == plog.SeverityNumberUnspecified.String() {
+					log.SetSeverityText("INFO")
 				}
 				ret[translate.CardinalFieldLevel] = log.SeverityText()
 				log.Attributes().PutStr(translate.CardinalFieldLevel, log.SeverityText())
