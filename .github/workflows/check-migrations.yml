@@ -1,0 +1,90 @@
+name: Migration Integrity Check
+
+on:
+  pull_request:
+    paths:
+      - 'lrdb/migrations/**'
+      - 'configdb/migrations/**'
+    types: [opened, synchronize, reopened]
+
+jobs:
+  check-migration-integrity:
+    runs-on: ubuntu-latest
+    name: Check Migration File Integrity
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch full history to compare against base branch
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Make script executable
+        run: chmod +x scripts/check-migration-integrity.sh
+
+      - name: Run migration integrity check
+        run: ./scripts/check-migration-integrity.sh "${{ github.base_ref }}"
+        env:
+          # Ensure we have access to git operations
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Comment on PR (on failure)
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## Migration Integrity Check Failed
+
+            This PR modifies existing migration files (from the base branch) in a way that goes beyond comments and whitespace changes.
+
+            **For migrations that existed in the base branch:**
+            - **NOT ALLOWED:** Changing SQL statements, table names, column names, constraints, etc.
+            - **NOT ALLOWED:** Deleting migration files  
+            - **NOT ALLOWED:** Any substantive changes to migration logic
+            - **ALLOWED:** Adding comments (-- style)
+            - **ALLOWED:** Changing whitespace/formatting
+            - **ALLOWED:** Adding blank lines
+
+            **For migrations created in this branch:**
+            - **ALLOWED:** Any changes during development
+
+            **To fix this:**
+            1. Revert changes to existing migration files
+            2. Create a new migration file instead using:
+               - \`make new-migration name=your_migration_name\` (for lrdb)
+               - \`make new-configdb-migration name=your_migration_name\` (for configdb)
+
+            This check exists to prevent database schema inconsistencies in deployed environments where migrations may have already been applied.`
+            })
+
+      - name: Comment on PR (on success with changes)
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Only comment if there were migration changes
+            const { execSync } = require('child_process');
+            try {
+              const output = execSync(`git diff --name-only origin/${{ github.base_ref }}..HEAD -- lrdb/migrations/ configdb/migrations/ | grep '\\.sql$' || true`, { encoding: 'utf8' });
+              if (output.trim()) {
+                github.rest.issues.createComment({
+                  issue_number: context.issue.number,
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  body: `## Migration Integrity Check Passed
+
+            This PR's migration changes have been validated:
+            - New migrations are allowed
+            - Existing migration changes are limited to comments/whitespace only
+            - No migration files were deleted
+
+            The migration integrity is maintained and this PR is safe to merge from a database schema perspective.`
+                });
+              }
+            } catch (error) {
+              // If the command fails, don't comment
+              console.log('No migration changes detected or error occurred');
+            }
