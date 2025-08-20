@@ -29,6 +29,10 @@ type MetricSegmentInserter interface {
 	InsertMetricSegment(ctx context.Context, params InsertMetricSegmentParams) error
 }
 
+type TraceSegmentInserter interface {
+	InsertTraceSegment(ctx context.Context, params InsertTraceSegmentDirectParams) error
+}
+
 type QuerierFull interface {
 	Querier
 	ReplaceMetricSegs(ctx context.Context, args ReplaceMetricSegsParams) error
@@ -48,5 +52,6 @@ type StoreFull interface {
 	QuerierFull
 	LogSegmentUpserter
 	MetricSegmentInserter
+	TraceSegmentInserter
 	WorkQueueQuerier
 }

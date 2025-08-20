@@ -222,6 +222,7 @@ func (m *wqManager) getWorkItem(ctx context.Context) (*WorkItem, error) {
 		priority:    row.Priority,
 		runnableAt:  row.RunnableAt,
 		mgr:         m,
+		slotId:      row.SlotID,
 	}
 
 	m.acquiredIDs = append(m.acquiredIDs, work.id)

@@ -156,6 +156,11 @@ func frequenciesToRequest(signal, action string) ([]int32, error) {
 			return []int32{-1}, nil
 		}
 		return nil, errors.New("unknown action for logs signal: " + action)
+	case "traces":
+		if action == "compact" {
+			return []int32{-1}, nil
+		}
+		return nil, errors.New("unknown action for traces signal: " + action)
 	case "metrics":
 		switch action {
 		case "compact":

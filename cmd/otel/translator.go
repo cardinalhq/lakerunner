@@ -22,6 +22,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/pmetric"
+	"go.opentelemetry.io/collector/pdata/ptrace"
 
 	"github.com/cardinalhq/lakerunner/internal/idgen"
 
@@ -354,4 +355,78 @@ type DDWrapper struct {
 	StartTimestamp time.Time
 	Timestamp      time.Time
 	Attributes     map[string]any
+}
+
+func (l *TableTranslator) TracesFromOtel(ot *ptrace.Traces, environment authenv.Environment) ([]map[string]any, error) {
+	var rets []map[string]any
+
+	for i := 0; i < ot.ResourceSpans().Len(); i++ {
+		rs := ot.ResourceSpans().At(i)
+		for j := 0; j < rs.ScopeSpans().Len(); j++ {
+			ss := rs.ScopeSpans().At(j)
+			for k := 0; k < ss.Spans().Len(); k++ {
+				span := ss.Spans().At(k)
+				ret := map[string]any{translate.CardinalFieldTelemetryType: "traces"}
+				addAttributes(ret, rs.Resource().Attributes(), "resource")
+				addAttributes(ret, ss.Scope().Attributes(), "scope")
+				addAttributes(ret, span.Attributes(), "span")
+
+				// Add span-specific fields
+				ret[translate.CardinalFieldName] = span.Name()
+				ret[translate.CardinalFieldSpanTraceID] = span.TraceID().String()
+				ret[translate.CardinalFieldSpanSpanID] = span.SpanID().String()
+				if span.ParentSpanID().IsEmpty() {
+					ret["span.parent_span_id"] = ""
+				} else {
+					ret["span.parent_span_id"] = span.ParentSpanID().String()
+				}
+				ret["span.kind"] = span.Kind().String()
+				ret["span.status.code"] = span.Status().Code().String()
+				ret["span.status.message"] = span.Status().Message()
+
+				// Add timestamps
+				startTS := span.StartTimestamp().AsTime().UnixMilli()
+				endTS := span.EndTimestamp().AsTime().UnixMilli()
+				ret[translate.CardinalFieldTimestamp] = startTS
+				ret["span.start_timestamp"] = startTS
+				ret["span.end_timestamp"] = endTS
+				ret["span.duration_ms"] = endTS - startTS
+
+				ret[translate.CardinalFieldID] = l.idg.Make(time.Now())
+				if environment != nil {
+					for k, v := range environment.Tags() {
+						ret["env."+k] = v
+					}
+				}
+
+				ensureExpectedKeysTraces(ret)
+				rets = append(rets, ret)
+			}
+		}
+	}
+
+	return rets, nil
+}
+
+func ensureExpectedKeysTraces(m map[string]any) {
+	keys := map[string]any{
+		translate.CardinalFieldFingerprint: int64(0),
+		translate.CardinalFieldValue:       float64(1),
+		translate.CardinalFieldName:        "span.events",
+		"span.trace_id":                    "",
+		"span.span_id":                     "",
+		"span.parent_span_id":              "",
+		"span.kind":                        "",
+		"span.status.code":                 "",
+		"span.status.message":              "",
+		"span.start_timestamp":             int64(0),
+		"span.end_timestamp":               int64(0),
+		"span.duration_ms":                 int64(0),
+	}
+
+	for key, val := range keys {
+		if _, ok := m[key]; !ok {
+			m[key] = val
+		}
+	}
 }
