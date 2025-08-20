@@ -26,6 +26,15 @@ import (
 )
 
 func TestSetupStorageProfiles(t *testing.T) {
+	// Save original database environment variables
+	originalConfigDBVars := map[string]string{
+		"CONFIGDB_HOST":     os.Getenv("CONFIGDB_HOST"),
+		"CONFIGDB_USER":     os.Getenv("CONFIGDB_USER"),
+		"CONFIGDB_PASSWORD": os.Getenv("CONFIGDB_PASSWORD"),
+		"CONFIGDB_DBNAME":   os.Getenv("CONFIGDB_DBNAME"),
+		"CONFIGDB_URL":      os.Getenv("CONFIGDB_URL"),
+	}
+
 	// Create a temporary file for testing file provider
 	tempDir := t.TempDir()
 	tempFile := filepath.Join(tempDir, "test_profiles.yaml")
@@ -54,9 +63,23 @@ func TestSetupStorageProfiles(t *testing.T) {
 			setup: func() {
 				// Set the storage profile file path
 				os.Setenv("STORAGE_PROFILE_FILE", tempFile)
+				// Temporarily unset database environment variables to force file provider
+				os.Unsetenv("CONFIGDB_HOST")
+				os.Unsetenv("CONFIGDB_USER")
+				os.Unsetenv("CONFIGDB_PASSWORD")
+				os.Unsetenv("CONFIGDB_DBNAME")
+				os.Unsetenv("CONFIGDB_URL")
 			},
 			cleanup: func() {
 				os.Unsetenv("STORAGE_PROFILE_FILE")
+				// Restore database environment variables
+				for key, value := range originalConfigDBVars {
+					if value != "" {
+						os.Setenv(key, value)
+					} else {
+						os.Unsetenv(key)
+					}
+				}
 			},
 			wantType: "*storageprofile.fileProvider",
 			wantErr:  false,
@@ -66,8 +89,23 @@ func TestSetupStorageProfiles(t *testing.T) {
 			setup: func() {
 				// Unset the env var to test default path
 				os.Unsetenv("STORAGE_PROFILE_FILE")
+				// Temporarily unset database environment variables to force file provider
+				os.Unsetenv("CONFIGDB_HOST")
+				os.Unsetenv("CONFIGDB_USER")
+				os.Unsetenv("CONFIGDB_PASSWORD")
+				os.Unsetenv("CONFIGDB_DBNAME")
+				os.Unsetenv("CONFIGDB_URL")
 			},
-			cleanup: func() {},
+			cleanup: func() {
+				// Restore database environment variables
+				for key, value := range originalConfigDBVars {
+					if value != "" {
+						os.Setenv(key, value)
+					} else {
+						os.Unsetenv(key)
+					}
+				}
+			},
 			// This will fail since /app/config/storage_profiles.yaml doesn't exist
 			wantErr: true,
 		},
@@ -77,10 +115,24 @@ func TestSetupStorageProfiles(t *testing.T) {
 				// Test env: prefix
 				os.Setenv("TEST_STORAGE_PROFILES_CONTENT", yamlContent)
 				os.Setenv("STORAGE_PROFILE_FILE", "env:TEST_STORAGE_PROFILES_CONTENT")
+				// Temporarily unset database environment variables to force file provider
+				os.Unsetenv("CONFIGDB_HOST")
+				os.Unsetenv("CONFIGDB_USER")
+				os.Unsetenv("CONFIGDB_PASSWORD")
+				os.Unsetenv("CONFIGDB_DBNAME")
+				os.Unsetenv("CONFIGDB_URL")
 			},
 			cleanup: func() {
 				os.Unsetenv("TEST_STORAGE_PROFILES_CONTENT")
 				os.Unsetenv("STORAGE_PROFILE_FILE")
+				// Restore database environment variables
+				for key, value := range originalConfigDBVars {
+					if value != "" {
+						os.Setenv(key, value)
+					} else {
+						os.Unsetenv(key)
+					}
+				}
 			},
 			wantType: "*storageprofile.fileProvider",
 			wantErr:  false,
@@ -119,6 +171,15 @@ func TestSetupStorageProfiles(t *testing.T) {
 }
 
 func TestSetupStorageProfiles_FileErrors(t *testing.T) {
+	// Save original database environment variables
+	originalConfigDBVars := map[string]string{
+		"CONFIGDB_HOST":     os.Getenv("CONFIGDB_HOST"),
+		"CONFIGDB_USER":     os.Getenv("CONFIGDB_USER"),
+		"CONFIGDB_PASSWORD": os.Getenv("CONFIGDB_PASSWORD"),
+		"CONFIGDB_DBNAME":   os.Getenv("CONFIGDB_DBNAME"),
+		"CONFIGDB_URL":      os.Getenv("CONFIGDB_URL"),
+	}
+
 	tests := []struct {
 		name    string
 		setup   func()
@@ -129,9 +190,23 @@ func TestSetupStorageProfiles_FileErrors(t *testing.T) {
 			name: "file not found",
 			setup: func() {
 				os.Setenv("STORAGE_PROFILE_FILE", "/nonexistent/path/file.yaml")
+				// Temporarily unset database environment variables to force file provider
+				os.Unsetenv("CONFIGDB_HOST")
+				os.Unsetenv("CONFIGDB_USER")
+				os.Unsetenv("CONFIGDB_PASSWORD")
+				os.Unsetenv("CONFIGDB_DBNAME")
+				os.Unsetenv("CONFIGDB_URL")
 			},
 			cleanup: func() {
 				os.Unsetenv("STORAGE_PROFILE_FILE")
+				// Restore database environment variables
+				for key, value := range originalConfigDBVars {
+					if value != "" {
+						os.Setenv(key, value)
+					} else {
+						os.Unsetenv(key)
+					}
+				}
 			},
 			wantErr: "failed to read storage profiles from file",
 		},

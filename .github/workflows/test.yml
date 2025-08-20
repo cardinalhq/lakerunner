@@ -76,8 +76,8 @@ jobs:
 
     - name: Create test databases
       run: |
-        PGPASSWORD=postgres createdb -h localhost -p 5432 -U postgres lrdb
-        PGPASSWORD=postgres createdb -h localhost -p 5432 -U postgres configdb
+        PGPASSWORD=postgres createdb -h localhost -p 5432 -U postgres testing_lrdb
+        PGPASSWORD=postgres createdb -h localhost -p 5432 -U postgres testing_configdb
 
     - name: Run database migrations
       env:
@@ -85,12 +85,12 @@ jobs:
         LRDB_PORT: 5432
         LRDB_USER: postgres
         LRDB_PASSWORD: postgres
-        LRDB_DBNAME: lrdb
+        LRDB_DBNAME: testing_lrdb
         CONFIGDB_HOST: localhost
         CONFIGDB_PORT: 5432
         CONFIGDB_USER: postgres
         CONFIGDB_PASSWORD: postgres
-        CONFIGDB_DBNAME: configdb
+        CONFIGDB_DBNAME: testing_configdb
       run: |
         # Build the binary first
         make local
@@ -106,10 +106,10 @@ jobs:
         LRDB_HOST: localhost
         LRDB_USER: postgres
         LRDB_PASSWORD: postgres
-        LRDB_DBNAME: lrdb
+        LRDB_DBNAME: testing_lrdb
         CONFIGDB_HOST: localhost
         CONFIGDB_USER: postgres
         CONFIGDB_PASSWORD: postgres
-        CONFIGDB_DBNAME: configdb
+        CONFIGDB_DBNAME: testing_configdb
       run: |
         make test-integration

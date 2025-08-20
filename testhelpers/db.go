@@ -45,7 +45,7 @@ func SetupTestLRDB(t *testing.T) *pgxpool.Pool {
 	host := getEnvOrDefault("LRDB_HOST", "localhost")
 	port := getEnvOrDefault("LRDB_PORT", "5432")
 	user := getEnvOrDefault("LRDB_USER", os.Getenv("USER"))
-	baseDB := getEnvOrDefault("LRDB_DBNAME", "claude_lrdb")
+	baseDB := getEnvOrDefault("LRDB_DBNAME", "testing_lrdb")
 
 	// Connect to base database to create test database
 	password := os.Getenv("LRDB_PASSWORD")
@@ -112,7 +112,7 @@ func SetupTestConfigDB(t *testing.T) *pgxpool.Pool {
 	host := getEnvOrDefault("CONFIGDB_HOST", "localhost")
 	port := getEnvOrDefault("CONFIGDB_PORT", "5432")
 	user := getEnvOrDefault("CONFIGDB_USER", os.Getenv("USER"))
-	baseDB := getEnvOrDefault("CONFIGDB_DBNAME", "claude_configdb")
+	baseDB := getEnvOrDefault("CONFIGDB_DBNAME", "testing_configdb")
 
 	// Connect to base database to create test database
 	password := os.Getenv("CONFIGDB_PASSWORD")
