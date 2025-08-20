@@ -19,6 +19,7 @@ type Querier interface {
 	ClearOrganizationAPIKeys(ctx context.Context) error
 	ClearOrganizationBuckets(ctx context.Context) error
 	ClearOrganizations(ctx context.Context) error
+	CountOrganizations(ctx context.Context) (int64, error)
 	CreateAdminAPIKey(ctx context.Context, arg CreateAdminAPIKeyParams) (AdminApiKey, error)
 	CreateBucketConfiguration(ctx context.Context, arg CreateBucketConfigurationParams) (BucketConfiguration, error)
 	CreateBucketPrefixMapping(ctx context.Context, arg CreateBucketPrefixMappingParams) (BucketPrefixMapping, error)
