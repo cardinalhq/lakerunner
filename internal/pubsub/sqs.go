@@ -47,11 +47,12 @@ func NewSQSService() (*SQSService, error) {
 		return nil, fmt.Errorf("failed to create AWS manager: %w", err)
 	}
 
-	sp, err := storageprofile.SetupStorageProfiles()
+	cdb, err := dbopen.ConfigDBStore(context.Background())
 	if err != nil {
-		slog.Error("Failed to setup storage profiles", slog.Any("error", err))
-		return nil, fmt.Errorf("failed to setup storage profiles: %w", err)
+		slog.Error("Failed to connect to configdb", slog.Any("error", err))
+		return nil, fmt.Errorf("failed to connect to configdb: %w", err)
 	}
+	sp := storageprofile.NewStorageProfileProvider(cdb)
 
 	mdb, err := dbopen.LRDBStore(context.Background())
 	if err != nil {

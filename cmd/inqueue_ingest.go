@@ -87,10 +87,11 @@ func NewIngestLoopContext(ctx context.Context, signal string, assumeRoleSessionN
 		return nil, fmt.Errorf("failed to create log estimator: %w", err)
 	}
 
-	sp, err := storageprofile.SetupStorageProfiles()
+	cdb, err := dbopen.ConfigDBStore(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to setup storage profiles: %w", err)
+		return nil, fmt.Errorf("failed to connect to configdb: %w", err)
 	}
+	sp := storageprofile.NewStorageProfileProvider(cdb)
 
 	config := exemplar.Config{
 		Metrics: exemplar.TelemetryConfig{

@@ -115,6 +115,7 @@ It ingests structured telemetry data (CSV, Parquet, JSON.gz) from sources like O
 - `lrdb/migrations/` for schema changes.
 - `configdb/static-schema/` contains fixed schema snapshots (no migrations allowed).
 - Connections are pooled for performance.
+- Two local databasees are available, `testing_configdb` and `testing_lrdb`.  To access them on the command line, the command `psql-17` shoudl be used.
 
 Rules:
 

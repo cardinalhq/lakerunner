@@ -52,11 +52,12 @@ type sweeper struct {
 }
 
 func New(instanceID int64, assumeRoleSessionName string, syncLegacyTables bool) *sweeper {
-	sp, err := storageprofile.SetupStorageProfiles()
+	cdb, err := dbopen.ConfigDBStore(context.Background())
 	if err != nil {
-		slog.Error("Failed to setup storage profiles", slog.Any("error", err))
+		slog.Error("Failed to connect to configdb", slog.Any("error", err))
 		os.Exit(1)
 	}
+	sp := storageprofile.NewStorageProfileProvider(cdb)
 
 	// Check environment variable if flag is not set
 	if !syncLegacyTables {
