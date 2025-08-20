@@ -39,7 +39,7 @@ type AdminConfigProvider interface {
 
 func SetupAdminConfig() (AdminConfigProvider, error) {
 	// TODO: Check USE_DB_API_KEYS environment variable and use database provider when available
-	
+
 	// Default to file-based provider
 	adminConfigPath := os.Getenv("ADMIN_CONFIG_FILE")
 	if adminConfigPath == "" {

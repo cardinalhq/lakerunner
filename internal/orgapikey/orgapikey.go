@@ -31,7 +31,7 @@ type OrganizationAPIKey struct {
 type OrganizationAPIKeyProvider interface {
 	// ValidateAPIKey validates an API key and returns the associated organization ID
 	ValidateAPIKey(ctx context.Context, apiKey string) (*uuid.UUID, error)
-	
+
 	// GetAPIKeyInfo returns metadata for a valid API key
 	GetAPIKeyInfo(ctx context.Context, apiKey string) (*OrganizationAPIKey, error)
 }

@@ -277,7 +277,7 @@ func compactInterval(
 	for _, row := range rows {
 		dateint, hour := helpers.MSToDateintHour(st.Time.UTC().UnixMilli())
 		objectID := helpers.MakeDBObjectID(inf.OrganizationID(), "default", dateint, hour, row.SegmentID, "metrics")
-		fn, downloadedSize, is404, err := s3helper.DownloadS3Object(ctx, tmpdir, s3client, profile.Bucket, objectID)
+		fn, _, is404, err := s3helper.DownloadS3Object(ctx, tmpdir, s3client, profile.Bucket, objectID)
 		if err != nil {
 			ll.Error("Failed to download S3 object", slog.String("objectID", objectID), slog.Any("error", err))
 			return err

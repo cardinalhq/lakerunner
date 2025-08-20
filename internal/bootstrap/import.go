@@ -33,7 +33,7 @@ const SupportedVersion = 2
 // ImportFromYAML imports configuration from a YAML file into the database
 func ImportFromYAML(ctx context.Context, filePath string, configDBPool *pgxpool.Pool, logger *slog.Logger) error {
 	logger.Info("Starting bootstrap import from YAML", slog.String("file", filePath))
-	
+
 	// Read and parse YAML file
 	config, err := loadConfig(filePath)
 	if err != nil {
@@ -144,7 +144,7 @@ func importOrganizationBuckets(ctx context.Context, mappings []OrganizationBucke
 			OrganizationID: mapping.OrganizationID,
 			BucketID:       mapping.BucketID,
 		}); err != nil {
-			return fmt.Errorf("failed to import organization bucket mapping %s->%s: %w", 
+			return fmt.Errorf("failed to import organization bucket mapping %s->%s: %w",
 				mapping.OrganizationID, mapping.BucketID, err)
 		}
 		logger.Info("Imported organization bucket mapping",

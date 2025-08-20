@@ -20,13 +20,13 @@ import (
 
 // BootstrapConfig represents the YAML structure for one-time import
 type BootstrapConfig struct {
-	Version                   int                          `yaml:"version" json:"version"`
-	BucketConfigurations      []BucketConfiguration        `yaml:"bucket_configurations,omitempty" json:"bucket_configurations,omitempty"`
-	OrganizationBuckets       []OrganizationBucket         `yaml:"organization_buckets,omitempty" json:"organization_buckets,omitempty"`
-	BucketPrefixMappings      []BucketPrefixMapping        `yaml:"bucket_prefix_mappings,omitempty" json:"bucket_prefix_mappings,omitempty"`
-	AdminAPIKeys              []AdminAPIKey                `yaml:"admin_api_keys,omitempty" json:"admin_api_keys,omitempty"`
-	OrganizationAPIKeys       []OrganizationAPIKey         `yaml:"organization_api_keys,omitempty" json:"organization_api_keys,omitempty"`
-	OrganizationAPIKeyMapping []OrganizationAPIKeyMapping  `yaml:"organization_api_key_mappings,omitempty" json:"organization_api_key_mappings,omitempty"`
+	Version                   int                         `yaml:"version" json:"version"`
+	BucketConfigurations      []BucketConfiguration       `yaml:"bucket_configurations,omitempty" json:"bucket_configurations,omitempty"`
+	OrganizationBuckets       []OrganizationBucket        `yaml:"organization_buckets,omitempty" json:"organization_buckets,omitempty"`
+	BucketPrefixMappings      []BucketPrefixMapping       `yaml:"bucket_prefix_mappings,omitempty" json:"bucket_prefix_mappings,omitempty"`
+	AdminAPIKeys              []AdminAPIKey               `yaml:"admin_api_keys,omitempty" json:"admin_api_keys,omitempty"`
+	OrganizationAPIKeys       []OrganizationAPIKey        `yaml:"organization_api_keys,omitempty" json:"organization_api_keys,omitempty"`
+	OrganizationAPIKeyMapping []OrganizationAPIKeyMapping `yaml:"organization_api_key_mappings,omitempty" json:"organization_api_key_mappings,omitempty"`
 }
 
 // BucketConfiguration matches lrconfig_bucket_configurations table

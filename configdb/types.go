@@ -24,6 +24,6 @@ type BucketPrefixMapping = LrconfigBucketPrefixMapping
 // Admin API key types
 type AdminAPIKey = LrconfigAdminApiKey
 
-// Organization API key types  
+// Organization API key types
 type OrganizationAPIKey = LrconfigOrganizationApiKey
 type OrganizationAPIKeyMapping = LrconfigOrganizationApiKeyMapping

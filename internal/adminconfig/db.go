@@ -40,12 +40,12 @@ func (p *dbProvider) ValidateAPIKey(ctx context.Context, apiKey string) (bool, e
 	}
 
 	keyHash := hashAPIKey(apiKey)
-	
+
 	_, err := p.db.GetAdminAPIKeyByHash(ctx, keyHash)
 	if err != nil {
 		return false, nil
 	}
-	
+
 	return true, nil
 }
 
@@ -55,7 +55,7 @@ func (p *dbProvider) GetAPIKeyInfo(ctx context.Context, apiKey string) (*AdminAP
 	}
 
 	keyHash := hashAPIKey(apiKey)
-	
+
 	row, err := p.db.GetAdminAPIKeyByHash(ctx, keyHash)
 	if err != nil {
 		return nil, fmt.Errorf("API key not found")

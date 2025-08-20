@@ -19,8 +19,9 @@ import (
 	"crypto/sha256"
 	"fmt"
 
-	"github.com/cardinalhq/lakerunner/configdb"
 	"github.com/google/uuid"
+
+	"github.com/cardinalhq/lakerunner/configdb"
 )
 
 type dbProvider struct {
@@ -41,12 +42,12 @@ func (p *dbProvider) ValidateAPIKey(ctx context.Context, apiKey string) (*uuid.U
 	}
 
 	keyHash := hashAPIKey(apiKey)
-	
+
 	row, err := p.db.GetOrganizationAPIKeyByHash(ctx, keyHash)
 	if err != nil {
 		return nil, fmt.Errorf("organization API key not found")
 	}
-	
+
 	return &row.OrganizationID, nil
 }
 
@@ -56,7 +57,7 @@ func (p *dbProvider) GetAPIKeyInfo(ctx context.Context, apiKey string) (*Organiz
 	}
 
 	keyHash := hashAPIKey(apiKey)
-	
+
 	row, err := p.db.GetOrganizationAPIKeyByHash(ctx, keyHash)
 	if err != nil {
 		return nil, fmt.Errorf("organization API key not found")
