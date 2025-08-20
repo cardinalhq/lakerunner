@@ -27,28 +27,18 @@ import (
 	"github.com/cardinalhq/oteltools/pkg/dateutils"
 	"github.com/google/uuid"
 
-	"github.com/cardinalhq/lakerunner/internal/duckdbx"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 type QuerierService struct {
 	mdb             lrdb.StoreFull
-	ddb             *duckdbx.DB
 	workerDiscovery WorkerDiscovery
 }
 
 // NewQuerierService creates a new QuerierService with the given database store and worker discovery.
 func NewQuerierService(mdb lrdb.StoreFull, workerDiscovery WorkerDiscovery) (*QuerierService, error) {
-	ddb, err := duckdbx.Open("",
-		duckdbx.WithMemoryLimitMB(2048),
-		duckdbx.WithExtension("httpfs", ""),
-	)
-	if err != nil {
-		return nil, err
-	}
 	return &QuerierService{
 		mdb:             mdb,
-		ddb:             ddb,
 		workerDiscovery: workerDiscovery,
 	}, nil
 }

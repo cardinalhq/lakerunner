@@ -26,7 +26,7 @@ import (
 type WorkerDiscovery interface {
 	Start(ctx context.Context) error
 	Stop() error
-	GetWorkersForSegments(organizationID uuid.UUID, segmentIDs []string) ([]SegmentWorkerMapping, error)
+	GetWorkersForSegments(organizationID uuid.UUID, segmentIDs []int64) ([]SegmentWorkerMapping, error)
 	GetAllWorkers() ([]Worker, error)
 }
 

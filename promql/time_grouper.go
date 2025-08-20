@@ -15,23 +15,23 @@
 package promql
 
 import (
+	"github.com/google/uuid"
 	"math"
 	"sort"
 	"time"
 )
 
 type SegmentInfo struct {
-	DateInt     int    `json:"dateInt"`
-	Hour        string `json:"hour"`
-	SegmentID   string `json:"segmentId"`
-	StartTs     int64  `json:"startTs"`
-	EndTs       int64  `json:"endTs"`
-	ExprID      string `json:"exprId"`
-	Dataset     string `json:"dataset"`
-	BucketName  string `json:"bucketName"`
-	CustomerID  string `json:"customerId"`
-	CollectorID string `json:"collectorId"`
-	Frequency   int64  `json:"frequency"`
+	DateInt        int       `json:"dateInt"`
+	Hour           string    `json:"hour"`
+	SegmentID      int64     `json:"segmentId"`
+	StartTs        int64     `json:"startTs"`
+	EndTs          int64     `json:"endTs"`
+	ExprID         string    `json:"exprId"`
+	Dataset        string    `json:"dataset"`
+	OrganizationID uuid.UUID `json:"organizationID"`
+	InstanceNum    int16     `json:"instanceNum"`
+	Frequency      int64     `json:"frequency"`
 }
 
 type SegmentGroup struct {

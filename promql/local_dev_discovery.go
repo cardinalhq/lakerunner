@@ -38,7 +38,7 @@ func (d *LocalDevDiscovery) Stop() error {
 	return nil
 }
 
-func (d *LocalDevDiscovery) GetWorkersForSegments(organizationID uuid.UUID, segmentIDs []string) ([]SegmentWorkerMapping, error) {
+func (d *LocalDevDiscovery) GetWorkersForSegments(organizationID uuid.UUID, segmentIDs []int64) ([]SegmentWorkerMapping, error) {
 	mappings := make([]SegmentWorkerMapping, len(segmentIDs))
 	for i, segmentID := range segmentIDs {
 		mappings[i] = SegmentWorkerMapping{

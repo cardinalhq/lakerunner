@@ -13,7 +13,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/duckdbx"
 )
 
-type Sink struct {
+type DDBSink struct {
 	db    *duckdbx.DB
 	table string
 
@@ -24,7 +24,7 @@ type Sink struct {
 	// serialize all writes (ALTER/INSERT/DELETE)
 	writeMu sync.Mutex
 
-	// running row count for the cache table (no per-query COUNT(*))
+	// running row count for the cache table
 	totalRows atomic.Int64
 }
 
@@ -38,22 +38,21 @@ type colDef struct {
 	Type string // DuckDB logical type
 }
 
-// New opens/creates the DuckDB database at dbPath and ensures `table` exists.
+// NewDDBSink opens/creates the DuckDB database at dbPath and ensures `table` exists.
 // Clean slate: if dbPath looks like a file (not ":memory:"), we delete it first.
 // It also ensures a `segment_id VARCHAR` column is present (idempotent ALTER)
 // and loads the schema cache.
-func New(ctx context.Context, dbPath, table string) (*Sink, error) {
-	if dbPath == "" || table == "" {
-		return nil, fmt.Errorf("dbPath and table are required")
-	}
+func NewDDBSink(ctx context.Context) (*DDBSink, error) {
+	dbPath := "./db/cached.ddb"
+
+	// Best-effort remove previous DB file.
+	_ = os.Remove(dbPath)
 
 	// Clean slate: remove any existing file.
 	// Ensure parent directory exists.
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
 		return nil, fmt.Errorf("mkdir %s: %w", filepath.Dir(dbPath), err)
 	}
-	// Best-effort remove previous DB file.
-	_ = os.Remove(dbPath)
 
 	db, err := duckdbx.Open(dbPath,
 		duckdbx.WithMemoryLimitMB(2048),
@@ -63,9 +62,9 @@ func New(ctx context.Context, dbPath, table string) (*Sink, error) {
 		return nil, fmt.Errorf("open duckdb: %w", err)
 	}
 
-	s := &Sink{
+	s := &DDBSink{
 		db:    db,
-		table: table,
+		table: "cached",
 		schema: schemaCache{
 			index: make(map[string]int),
 		},
@@ -73,7 +72,7 @@ func New(ctx context.Context, dbPath, table string) (*Sink, error) {
 
 	// Create table (idempotent). Keep minimal schema for compatibility.
 	if _, err := s.db.ExecContext(ctx,
-		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (ts BIGINT);`, ident(table)),
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (ts BIGINT);`, ident("cached")),
 	); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("create table: %w", err)
@@ -98,17 +97,17 @@ func New(ctx context.Context, dbPath, table string) (*Sink, error) {
 }
 
 // Close closes the underlying DuckDB connection.
-func (s *Sink) Close() error { return s.db.Close() }
+func (s *DDBSink) Close() error { return s.db.Close() }
 
 // RowCount returns the current cached idea of row count (no DB call).
-func (s *Sink) RowCount() int64 { return s.totalRows.Load() }
+func (s *DDBSink) RowCount() int64 { return s.totalRows.Load() }
 
 // IngestParquetBatch ingests multiple parquet files.
 // - Widens schema once using the union schema (single DDL txn).
 // - Inserts each file with its own short txn.
 // - Populates segment_id per file.
 // - Forces anchor timestamp into `ts BIGINT` (errors if no recognizable ts).
-func (s *Sink) IngestParquetBatch(ctx context.Context, parquetPaths []string, segmentIDs []int64) error {
+func (s *DDBSink) IngestParquetBatch(ctx context.Context, parquetPaths []string, segmentIDs []int64) error {
 	if len(parquetPaths) == 0 {
 		return nil
 	}
@@ -231,7 +230,7 @@ JOIN %s ON f.filename = m.path;
 // DeleteSegments removes all rows for the given segment IDs.
 // Returns number of affected rows. Serialized by writeMu.
 // Maintains totalRows by subtracting RowsAffected().
-func (s *Sink) DeleteSegments(ctx context.Context, segmentIDs []int64) (int64, error) {
+func (s *DDBSink) DeleteSegments(ctx context.Context, segmentIDs []int64) (int64, error) {
 	if len(segmentIDs) == 0 {
 		return 0, nil
 	}
@@ -265,7 +264,7 @@ WHERE segment_id IN (
 
 // ------------------------- internal: schema handling --------------------------
 
-func (s *Sink) ensureSegmentIDColumn(ctx context.Context) error {
+func (s *DDBSink) ensureSegmentIDColumn(ctx context.Context) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
@@ -276,7 +275,7 @@ func (s *Sink) ensureSegmentIDColumn(ctx context.Context) error {
 	return nil
 }
 
-func (s *Sink) reloadSchema(ctx context.Context) error {
+func (s *DDBSink) reloadSchema(ctx context.Context) error {
 	const q = `
 SELECT column_name, data_type
 FROM duckdb_columns
@@ -312,7 +311,7 @@ ORDER BY column_index;
 	return nil
 }
 
-func (s *Sink) diffMissing(incoming map[string]string) map[string]string {
+func (s *DDBSink) diffMissing(incoming map[string]string) map[string]string {
 	s.schemaMu.RLock()
 	defer s.schemaMu.RUnlock()
 
@@ -329,7 +328,7 @@ func (s *Sink) diffMissing(incoming map[string]string) map[string]string {
 }
 
 // applyAltersLocked assumes writeMu is already held.
-func (s *Sink) applyAltersLocked(ctx context.Context, missing map[string]string) error {
+func (s *DDBSink) applyAltersLocked(ctx context.Context, missing map[string]string) error {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{})
 	if err != nil {
 		return err
@@ -350,7 +349,7 @@ func (s *Sink) applyAltersLocked(ctx context.Context, missing map[string]string)
 }
 
 // Non-locked variant for callers that don’t hold writeMu (kept for completeness).
-func (s *Sink) applyAlters(ctx context.Context, missing map[string]string) error {
+func (s *DDBSink) applyAlters(ctx context.Context, missing map[string]string) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	return s.applyAltersLocked(ctx, missing)

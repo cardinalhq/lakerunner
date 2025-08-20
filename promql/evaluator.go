@@ -15,10 +15,17 @@
 package promql
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -92,8 +99,8 @@ func (q *QuerierService) Evaluate(
 
 			for _, group := range groups {
 				// Collect all segment IDs for worker assignment
-				segmentIDs := make([]string, 0, len(group.Segments))
-				segmentMap := make(map[string][]SegmentInfo)
+				segmentIDs := make([]int64, 0, len(group.Segments))
+				segmentMap := make(map[int64][]SegmentInfo)
 				for _, segment := range segments {
 					segmentIDs = append(segmentIDs, segment.SegmentID)
 					segmentMap[segment.SegmentID] = append(segmentMap[segment.SegmentID], segment)
@@ -162,107 +169,130 @@ func (q *QuerierService) Evaluate(
 // pushDown should POST req to the worker’s /pushdown and return a channel that yields SketchInput
 // decoded from the worker’s SSE (or chunked JSON) stream. You can keep your existing stub here.
 // Implement the HTTP/SSE client and decoding where you wire up workers.
-func (q *QuerierService) pushDown(ctx context.Context, worker Worker, request PushDownRequest) (<-chan SketchInput, error) {
-	sql := request.BaseExpr.ToWorkerSQL(request.Step)
-	if sql == "" {
-		return nil, fmt.Errorf("no SQL generated for expression")
-	}
+func (q *QuerierService) pushDown(
+	ctx context.Context,
+	worker Worker,
+	request PushDownRequest,
+) (<-chan SketchInput, error) {
+	// --- Build request ---
+	u := fmt.Sprintf("http://%s:%d/api/v1/pushDown", worker.IP, worker.Port)
 
-	if IsLocalDev() {
-		sql = strings.ReplaceAll(sql, "{start}", fmt.Sprintf("%d", 1755137842000))
-		sql = strings.ReplaceAll(sql, "{end}", fmt.Sprintf("%d", time.Now().UnixMilli()))
-		sql = strings.ReplaceAll(sql, "{table}", "read_parquet('./db/*.parquet', union_by_name=True)")
-	} else {
-		sql = strings.ReplaceAll(sql, "{start}", fmt.Sprintf("%d", request.StartTs))
-		sql = strings.ReplaceAll(sql, "{end}", fmt.Sprintf("%d", request.EndTs))
-		sql = strings.ReplaceAll(sql, "{table}", fmt.Sprintf("'%s'", "worker.ParquetPath"))
-	}
-	slog.Info("Executing SQL on worker", "sql", sql)
-
-	rows, err := q.ddb.Query(ctx, sql)
+	body, err := json.Marshal(request)
 	if err != nil {
-		slog.Error("failed to query worker", "worker", worker, "err", err.Error())
-		return nil, fmt.Errorf("failed to query worker %w", err)
+		return nil, fmt.Errorf("marshal PushDownRequest: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("new request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+
+	// Use a client you already have if available (e.g., q.httpClient)
+	client := http.DefaultClient
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("worker request failed: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		defer func(Body io.ReadCloser) {
+			err := Body.Close()
+			if err != nil {
+				slog.Error("failed to close response body", "err", err)
+			}
+		}(resp.Body)
+		return nil, fmt.Errorf("worker returned %s", resp.Status)
 	}
 
 	out := make(chan SketchInput, 1024)
+
 	go func() {
 		defer close(out)
-		defer rows.Close()
+		defer func(Body io.ReadCloser) {
+			err := Body.Close()
+			if err != nil {
+				slog.Error("failed to close response body", "err", err)
+			}
+		}(resp.Body)
 
-		cols, err := rows.Columns()
-		if err != nil {
-			slog.Error("failed to get columns", "err", err)
-			return
+		type envelope struct {
+			Type string          `json:"type"`
+			Data json.RawMessage `json:"data"`
 		}
 
-		for rows.Next() {
-			vals := make([]interface{}, len(cols))
-			ptrs := make([]interface{}, len(cols))
-			for i := range vals {
-				ptrs[i] = &vals[i]
+		sc := bufio.NewScanner(resp.Body)
+		sc.Buffer(make([]byte, 0, 64*1024), 2*1024*1024) // grow if needed
+
+		var dataBuf strings.Builder
+
+		flush := func() bool {
+			if dataBuf.Len() == 0 {
+				return true
+			}
+			payload := dataBuf.String()
+			dataBuf.Reset()
+
+			var env envelope
+			if err := json.Unmarshal([]byte(payload), &env); err != nil {
+				slog.Error("SSE json unmarshal failed", "err", err)
+				return false
 			}
 
-			if err := rows.Scan(ptrs...); err != nil {
-				slog.Error("failed to scan row", "err", err)
+			switch env.Type {
+			case "result":
+				var si SketchInput
+				if err := json.Unmarshal(env.Data, &si); err != nil {
+					slog.Error("SSE data unmarshal failed", "err", err)
+					return false
+				}
+				select {
+				case <-ctx.Done():
+					return false
+				case out <- si:
+				}
+			case "done":
+				return false
+			default:
+				// ignore unknown types
+			}
+			return true
+		}
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
+			if !sc.Scan() {
+				// Scanner ended (EOF or error). Flush any pending data once.
+				_ = flush()
+				if err := sc.Err(); err != nil && !errors.Is(err, io.EOF) {
+					slog.Error("SSE scanner error", "err", err)
+				}
+				return
+			}
+
+			line := sc.Text()
+			if line == "" {
+				// blank line → event boundary
+				if !flush() {
+					return
+				}
 				continue
 			}
 
-			var ts int64
-			agg := map[string]float64{}
-			tags := map[string]any{}
-
-			tags["name"] = request.BaseExpr.Metric
-			for _, matcher := range request.BaseExpr.Matchers {
-				if matcher.Op == MatchEq {
-					tags[matcher.Label] = matcher.Value
+			// Only collect "data:" lines (ignore other SSE fields)
+			if strings.HasPrefix(line, "data:") {
+				// Trim "data:" prefix & space
+				chunk := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+				if dataBuf.Len() > 0 {
+					dataBuf.WriteByte('\n')
 				}
+				dataBuf.WriteString(chunk)
 			}
-
-			for i, col := range cols {
-				switch col {
-				case "bucket_ts":
-					switch v := vals[i].(type) {
-					case int64:
-						ts = v
-					case int32:
-						ts = int64(v)
-					case int:
-						ts = int64(v)
-					default:
-						slog.Error("unexpected type for bucket_ts", "value", vals[i])
-						continue
-					}
-				case SUM, COUNT, MIN, MAX:
-					if vals[i] == nil {
-						continue
-					}
-					if f, ok := toFloat64(vals[i]); ok {
-						agg[col] = f
-					}
-				default:
-					if vals[i] != nil {
-						tags[col] = vals[i]
-					}
-				}
-			}
-
-			//slog.Info("making sketch input", "ts", ts)
-			out <- SketchInput{
-				ExprID:         request.BaseExpr.ID,
-				OrganizationID: request.OrganizationID.String(),
-				Timestamp:      ts,
-				Frequency:      int64(request.Step.Seconds()),
-				SketchTags: SketchTags{
-					Tags:       tags,
-					SketchType: SketchMAP,
-					Agg:        agg,
-				},
-			}
-		}
-
-		if err := rows.Err(); err != nil {
-			slog.Error("row iteration error", "err", err)
 		}
 	}()
 
@@ -325,13 +355,19 @@ func (q *QuerierService) lookupSegments(ctx context.Context,
 			if f.IsDir() || !strings.HasSuffix(f.Name(), ".parquet") {
 				continue
 			}
-
+			numericSegmentId := strings.Replace(strings.Replace(f.Name(), ".parquet", "", 1), "tbl_", "", 1)
+			segmentID, err := strconv.ParseInt(numericSegmentId, 10, 64)
+			if err != nil {
+				slog.Error("failed to parse segment ID from filename", "filename", f.Name(), "err", err)
+				continue
+			}
 			allSegments = append(allSegments, SegmentInfo{
-				SegmentID:  f.Name(),
-				StartTs:    startTs,
-				EndTs:      endTs,
-				CustomerID: orgUUID.String(),
-				Frequency:  stepDuration.Milliseconds(),
+				SegmentID:      segmentID,
+				StartTs:        startTs,
+				EndTs:          endTs,
+				OrganizationID: orgUUID,
+				InstanceNum:    0,
+				Frequency:      stepDuration.Milliseconds(),
 			})
 		}
 		return allSegments, nil
@@ -350,16 +386,15 @@ func (q *QuerierService) lookupSegments(ctx context.Context,
 	for _, row := range rows {
 		endHour := zeroFilledHour(time.UnixMilli(row.EndTs).UTC().Hour())
 		allSegments = append(allSegments, SegmentInfo{
-			DateInt:     dih.DateInt,
-			Hour:        endHour,
-			SegmentID:   fmt.Sprintf("tbl_%d", row.SegmentID),
-			StartTs:     row.StartTs,
-			EndTs:       row.EndTs,
-			Dataset:     "metrics",
-			BucketName:  "bucket",
-			CustomerID:  orgUUID.String(),
-			CollectorID: "collectorId",
-			Frequency:   stepDuration.Milliseconds(),
+			DateInt:        dih.DateInt,
+			Hour:           endHour,
+			SegmentID:      row.SegmentID,
+			StartTs:        row.StartTs,
+			EndTs:          row.EndTs,
+			Dataset:        "metrics",
+			OrganizationID: orgUUID,
+			InstanceNum:    row.InstanceNum,
+			Frequency:      stepDuration.Milliseconds(),
 		})
 	}
 

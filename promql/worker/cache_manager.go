@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/cardinalhq/lakerunner/internal/storageprofile"
+	"github.com/cardinalhq/lakerunner/promql"
+	"github.com/google/uuid"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -16,59 +18,55 @@ import (
 )
 
 // DownloadBatchFunc downloads ALL given paths to their target local paths.
-type DownloadBatchFunc func(ctx context.Context, paths []string) error
+type DownloadBatchFunc func(ctx context.Context, storageProfile storageprofile.StorageProfile, keys []string) error
 
 // RowMapper turns the current row into a T.
-type RowMapper[T any] func(*sql.Rows) (T, error)
+type RowMapper[T promql.Timestamped] func(promql.PushDownRequest, []string, *sql.Rows) (T, error)
+
+type ingestJob struct {
+	profile storageprofile.StorageProfile
+	paths   []string
+	ids     []int64
+}
 
 // CacheManager coordinates downloads, batch-ingest, queries, and LRU evictions.
-// Eviction is periodic (cron-style), not triggered.
 type CacheManager struct {
-	sink       *Sink
-	maxRows    int64
-	downloader DownloadBatchFunc
+	sink                   *DDBSink
+	maxRows                int64
+	downloader             DownloadBatchFunc
+	storageProfileProvider storageprofile.StorageProfileProvider
 
 	// in-memory presence + LRU tracking
 	mu         sync.RWMutex
-	present    map[int64]struct{}        // segmentID -> exists in cache
-	lastAccess map[int64]time.Time       // segmentID -> last access
-	inflight   map[int64]*sync.WaitGroup // singleflight per segmentID
-
-	// eviction cron
-	interval  time.Duration
-	stopEvict context.CancelFunc
-	evictWG   sync.WaitGroup
+	present    map[int64]struct{}  // segmentID -> exists in cache
+	lastAccess map[int64]time.Time // segmentID -> last access
+	inflight   map[int64]*struct{} // singleflight per segmentID
 
 	ingestQ    chan ingestJob
 	stopIngest context.CancelFunc
 	ingestWG   sync.WaitGroup
 }
 
-type ingestJob struct {
-	paths []string
-	ids   []int64
-}
+const (
+	MaxRowsDefault = 1000000
+)
 
-// NewCacheManager constructs a wrapper and starts the periodic evictor.
-// If interval <= 0, a default of 30s is used. maxRows <= 0 disables eviction.
-func NewCacheManager(sink *Sink, maxRows int64, dl DownloadBatchFunc, interval time.Duration) *CacheManager {
-	if interval <= 0 {
-		interval = 30 * time.Second
+func NewCacheManager(dl DownloadBatchFunc, storageProfileProvider storageprofile.StorageProfileProvider) *CacheManager {
+	ddb, err := NewDDBSink(context.Background())
+	if err != nil {
+		slog.Error("Failed to create DuckDB sink", slog.Any("error", err))
+		return nil
 	}
 	w := &CacheManager{
-		sink:       sink,
-		maxRows:    maxRows,
-		downloader: dl,
-		present:    make(map[int64]struct{}, 1024),
-		lastAccess: make(map[int64]time.Time, 1024),
-		inflight:   make(map[int64]*sync.WaitGroup, 1024),
-		interval:   interval,
-		ingestQ:    make(chan ingestJob, 64),
+		sink:                   ddb,
+		storageProfileProvider: storageProfileProvider,
+		maxRows:                MaxRowsDefault,
+		downloader:             dl,
+		present:                make(map[int64]struct{}, 1024),
+		lastAccess:             make(map[int64]time.Time, 1024),
+		inflight:               make(map[int64]*struct{}, 1024),
+		ingestQ:                make(chan ingestJob, 64),
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	w.stopEvict = cancel
-	w.evictWG.Add(1)
-	go w.evictorCron(ctx)
 
 	ingCtx, ingCancel := context.WithCancel(context.Background())
 	w.stopIngest = ingCancel
@@ -78,26 +76,21 @@ func NewCacheManager(sink *Sink, maxRows int64, dl DownloadBatchFunc, interval t
 }
 
 func (w *CacheManager) Close() {
-	if w.stopEvict != nil {
-		w.stopEvict()
-	}
 	if w.stopIngest != nil {
 		w.stopIngest()
 	}
-	w.evictWG.Wait()
 	w.ingestWG.Wait()
 }
 
-func Query[T any](
+func EvaluatePushDown[T promql.Timestamped](
 	ctx context.Context,
 	w *CacheManager,
-	segmentPaths []string,
+	request promql.PushDownRequest,
 	userSQL string,
-	bucket string,
 	s3GlobSize int,
 	mapper RowMapper[T],
-) ([]<-chan T, error) {
-	if len(segmentPaths) == 0 {
+) (<-chan T, error) {
+	if len(request.Segments) == 0 {
 		return nil, errors.New("no segment paths")
 	}
 	if mapper == nil {
@@ -106,58 +99,84 @@ func Query[T any](
 	if !strings.Contains(userSQL, "{table}") {
 		return nil, errors.New(`userSQL must contain "{table}" placeholder`)
 	}
-	if s3GlobSize <= 0 {
-		s3GlobSize = 64
-	}
 
-	// Split into cached vs S3 (derive IDs outside of locks; only presence check needs the lock).
-	var s3URIs []string
-	var s3LocalPaths []string
-	var s3IDs []int64
-	var cachedIDs []int64
-
-	for _, p := range segmentPaths {
-		id, derr := deriveSegmentIDFromPath(p)
-		if derr != nil {
-			return nil, fmt.Errorf("derive segment id for %q: %w", p, derr)
+	// Group segments by orgId/instanceNum
+	segmentsByOrg := make(map[uuid.UUID]map[int16][]promql.SegmentInfo)
+	for _, seg := range request.Segments {
+		if _, ok := segmentsByOrg[seg.OrganizationID]; !ok {
+			segmentsByOrg[seg.OrganizationID] = make(map[int16][]promql.SegmentInfo)
 		}
-
-		w.mu.RLock()
-		_, inCache := w.present[id]
-		w.mu.RUnlock()
-
-		if inCache {
-			cachedIDs = append(cachedIDs, id)
-		} else {
-			key := strings.TrimLeft(p, "/")
-			s3URIs = append(s3URIs, "s3://"+bucket+"/"+key)
-			s3LocalPaths = append(s3LocalPaths, p)
-			s3IDs = append(s3IDs, id)
+		if _, ok := segmentsByOrg[seg.OrganizationID][seg.InstanceNum]; !ok {
+			segmentsByOrg[seg.OrganizationID][seg.InstanceNum] = []promql.SegmentInfo{}
 		}
+		segmentsByOrg[seg.OrganizationID][seg.InstanceNum] = append(segmentsByOrg[seg.OrganizationID][seg.InstanceNum], seg)
 	}
 
 	outs := make([]<-chan T, 0)
 
-	// Stream uncached segments directly from S3 (one channel per glob).
-	s3Channels, err := streamFromS3(ctx, w, s3URIs, s3GlobSize, userSQL, mapper)
-	if err != nil {
-		return nil, fmt.Errorf("stream from S3: %w", err)
+	// Now start putting channels together for every orgId/instanceNum.
+	for orgId, instances := range segmentsByOrg {
+		for instanceNum, segments := range instances {
+			profile, err := w.storageProfileProvider.Get(ctx, orgId, instanceNum)
+			if err != nil {
+				slog.Error("Failed to get storage profile for organization",
+					slog.String("orgId", orgId.String()),
+					slog.Int("instanceNum", int(instanceNum)),
+					slog.Any("error", err))
+
+				return nil, fmt.Errorf("get storage profile for org %s instance %d: %w", orgId.String(), instanceNum, err)
+			}
+
+			// Split into cached vs S3
+			var s3URIs []string
+			var s3LocalPaths []string
+			var s3IDs []int64
+			var cachedIDs []int64
+
+			for _, seg := range segments {
+				objectId := fmt.Sprintf("db/%s/%s/%d/metrics/%s", orgId.String(), profile.CollectorName, seg.DateInt, seg.Hour)
+
+				w.mu.RLock()
+				_, inCache := w.present[seg.SegmentID]
+				w.mu.RUnlock()
+
+				if inCache {
+					cachedIDs = append(cachedIDs, seg.SegmentID)
+				} else {
+					bucket := profile.Bucket
+					prefix := "s3://" + bucket + "/"
+					if promql.IsLocalDev() {
+						prefix = "./"
+					}
+					s3URIs = append(s3URIs, prefix+objectId)
+					s3LocalPaths = append(s3LocalPaths, objectId)
+					s3IDs = append(s3IDs, seg.SegmentID)
+				}
+			}
+
+			// Stream uncached segments directly from S3 (one channel per glob).
+			s3Channels, err := streamFromS3(ctx, w, request, s3URIs, s3GlobSize, userSQL, mapper)
+			if err != nil {
+				return nil, fmt.Errorf("stream from S3: %w", err)
+			}
+			outs = append(outs, s3Channels...)
+
+			// If we have uncached segments, enqueue them for download + batch-ingest.
+			if len(s3LocalPaths) > 0 {
+				w.enqueueIngest(profile, s3LocalPaths, s3IDs)
+			}
+
+			// If we have cached segments, stream them from the cache.
+			cachedChannels := streamCached(ctx, w, request, cachedIDs, userSQL, mapper)
+			outs = append(outs, cachedChannels...)
+		}
 	}
-	outs = append(outs, s3Channels...)
 
-	// If we have uncached segments, enqueue them for download + batch-ingest.
-	if len(s3LocalPaths) > 0 {
-		w.enqueueIngest(s3LocalPaths, s3IDs)
-	}
-
-	// If we have cached segments, stream them from the cache.
-	cachedChannels := streamCached(ctx, w, cachedIDs, userSQL, mapper)
-	outs = append(outs, cachedChannels...)
-
-	return outs, nil
+	return promql.MergeSorted(ctx, 1024, outs...), nil
 }
 
-func streamCached[T any](ctx context.Context, w *CacheManager,
+func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
+	request promql.PushDownRequest,
 	cachedIDs []int64,
 	userSQL string, mapper RowMapper[T]) []<-chan T {
 	outs := make([]<-chan T, 0)
@@ -199,13 +218,19 @@ func streamCached[T any](ctx context.Context, w *CacheManager,
 				}
 			}(rows)
 
+			cols, err := rows.Columns()
+			if err != nil {
+				slog.Error("failed to get columns", "err", err)
+				return
+			}
+
 			for rows.Next() {
 				select {
 				case <-ctx.Done():
 					return
 				default:
 				}
-				v, mErr := mapper(rows)
+				v, mErr := mapper(request, cols, rows)
 				if mErr != nil {
 					return
 				}
@@ -217,9 +242,10 @@ func streamCached[T any](ctx context.Context, w *CacheManager,
 	return outs
 }
 
-func streamFromS3[T any](
+func streamFromS3[T promql.Timestamped](
 	ctx context.Context,
 	w *CacheManager,
+	request promql.PushDownRequest,
 	s3URIs []string,
 	s3GlobSize int,
 	userSQL string,
@@ -248,6 +274,7 @@ func streamFromS3[T any](
 			sqlReplaced := strings.Replace(userSQL, "{table}", src, 1)
 
 			rows, err := w.sink.db.QueryContext(ctx, sqlReplaced)
+
 			if err != nil {
 				return
 			}
@@ -258,13 +285,19 @@ func streamFromS3[T any](
 				}
 			}(rows)
 
+			cols, err := rows.Columns()
+			if err != nil {
+				slog.Error("failed to get columns", "err", err)
+				return
+			}
+
 			for rows.Next() {
 				select {
 				case <-ctx.Done():
 					return
 				default:
 				}
-				v, mErr := mapper(rows)
+				v, mErr := mapper(request, cols, rows)
 				if mErr != nil {
 					return
 				}
@@ -274,12 +307,12 @@ func streamFromS3[T any](
 		}(uris, out)
 	}
 
-	// enqueue is done in Query(...) after ids/paths are known
+	// enqueue is done in EvaluatePushDown(...) after ids/paths are known
 	return outs, nil
 }
 
 // enqueueIngest filters out present/in-flight, marks new IDs in-flight, and queues one job.
-func (w *CacheManager) enqueueIngest(paths []string, ids []int64) {
+func (w *CacheManager) enqueueIngest(storageProfile storageprofile.StorageProfile, paths []string, ids []int64) {
 	if len(paths) == 0 || len(paths) != len(ids) {
 		return
 	}
@@ -295,9 +328,7 @@ func (w *CacheManager) enqueueIngest(paths []string, ids []int64) {
 		if _, in := w.inflight[id]; in {
 			continue // someone else is already ingesting
 		}
-		wg := &sync.WaitGroup{}
-		wg.Add(1)
-		w.inflight[id] = wg
+		w.inflight[id] = &struct{}{}
 		todoPaths = append(todoPaths, paths[i])
 		todoIDs = append(todoIDs, id)
 		w.lastAccess[id] = time.Now()
@@ -311,7 +342,7 @@ func (w *CacheManager) enqueueIngest(paths []string, ids []int64) {
 	// Non-blocking enqueue; fallback to blocking if buffer full
 	select {
 	default:
-		w.ingestQ <- ingestJob{paths: todoPaths, ids: todoIDs}
+		w.ingestQ <- ingestJob{profile: storageProfile, paths: todoPaths, ids: todoIDs}
 	}
 }
 
@@ -329,12 +360,11 @@ func (w *CacheManager) ingestLoop(ctx context.Context) {
 
 			// Download (if provided), then ingest; best-effort and per-batch.
 			if w.downloader != nil {
-				if err := w.downloader(ctx, job.paths); err != nil {
+				if err := w.downloader(ctx, job.profile, job.paths); err != nil {
 					// release inflight on failure
 					w.mu.Lock()
 					for _, id := range job.ids {
 						if wg := w.inflight[id]; wg != nil {
-							wg.Done()
 							delete(w.inflight, id)
 						}
 					}
@@ -348,7 +378,6 @@ func (w *CacheManager) ingestLoop(ctx context.Context) {
 				w.mu.Lock()
 				for _, id := range job.ids {
 					if wg := w.inflight[id]; wg != nil {
-						wg.Done()
 						delete(w.inflight, id)
 					}
 				}
@@ -363,7 +392,6 @@ func (w *CacheManager) ingestLoop(ctx context.Context) {
 				w.present[id] = struct{}{}
 				w.lastAccess[id] = now
 				if wg := w.inflight[id]; wg != nil {
-					wg.Done()
 					delete(w.inflight, id)
 				}
 			}
@@ -372,6 +400,8 @@ func (w *CacheManager) ingestLoop(ctx context.Context) {
 			for _, p := range job.paths {
 				_ = os.Remove(p) // best-effort cleanup
 			}
+
+			w.maybeEvictOnce(ctx)
 		}
 	}
 }
@@ -393,23 +423,6 @@ func chunkStrings(xs []string, size int) [][]string {
 
 func escapeSQL(s string) string {
 	return strings.ReplaceAll(s, `'`, `''`)
-}
-
-// -------------------- Eviction (periodic cron) --------------------
-
-func (w *CacheManager) evictorCron(ctx context.Context) {
-	defer w.evictWG.Done()
-	t := time.NewTicker(w.interval)
-	defer t.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			w.maybeEvictOnce(ctx)
-		}
-	}
 }
 
 func (w *CacheManager) maybeEvictOnce(ctx context.Context) {
@@ -464,29 +477,4 @@ func (w *CacheManager) dropSegments(ctx context.Context, segIDs []int64) {
 		delete(w.lastAccess, id)
 	}
 	w.mu.Unlock()
-}
-
-// deriveSegmentIDFromPath extracts the numeric {num} from a basename like
-// "tbl_{num}.parquet". Returns an error if the pattern doesn't match or if {num}
-// isn't a valid int64.
-func deriveSegmentIDFromPath(p string) (int64, error) {
-	base := filepath.Base(p)
-	if !strings.HasSuffix(base, ".parquet") {
-		return 0, fmt.Errorf("segment path %q: not a parquet file", p)
-	}
-	name := strings.TrimSuffix(base, ".parquet")
-	// Expect prefix "tbl_" and numeric suffix
-	const pref = "tbl_"
-	if !strings.HasPrefix(name, pref) {
-		return 0, fmt.Errorf("segment basename %q: expected prefix %q", base, pref)
-	}
-	numStr := strings.TrimPrefix(name, pref)
-	if numStr == "" {
-		return 0, fmt.Errorf("segment basename %q: missing numeric id", base)
-	}
-	n, err := strconv.ParseInt(numStr, 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("segment basename %q: invalid numeric id %q: %w", base, numStr, err)
-	}
-	return n, nil
 }
