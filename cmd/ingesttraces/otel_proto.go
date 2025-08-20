@@ -42,9 +42,21 @@ import (
 	oteltranslate "github.com/cardinalhq/oteltools/pkg/translate"
 )
 
-// NumTracePartitions is the number of partitions for trace processing.
-// Change this value to adjust the number of parallel BuffetWriters.
-const NumTracePartitions = 16
+// NumTracePartitions is the number of partitions/slots for trace processing.
+// Can be configured via LAKERUNNER_TRACE_PARTITIONS environment variable, defaults to 16.
+// Compaction compacts all files in a slot - so increase this to increase parallelism.
+// However, more slots means more individual files, so for smaller customers it's better to keep it low.
+var NumTracePartitions = func() int {
+	if partitionsStr := os.Getenv("LAKERUNNER_TRACE_PARTITIONS"); partitionsStr != "" {
+		if partitions, err := strconv.Atoi(partitionsStr); err == nil && partitions > 0 {
+			return partitions
+		}
+		// Log warning if invalid value, fall back to default
+		slog.Warn("Invalid LAKERUNNER_TRACE_PARTITIONS value, using default",
+			"value", partitionsStr, "default", 16)
+	}
+	return 16
+}()
 
 // determineSlot determines which partition slot a trace should go to.
 // This ensures that the same trace ID always goes to the same slot for consistency.
