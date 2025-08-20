@@ -45,7 +45,7 @@ func (d *LocalDevDiscovery) GetWorkersForSegments(organizationID uuid.UUID, segm
 			SegmentID: segmentID,
 			Worker: Worker{
 				IP:   "127.0.0.1",
-				Port: 8080,
+				Port: 8081,
 			},
 		}
 	}
