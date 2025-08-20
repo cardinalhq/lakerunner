@@ -54,17 +54,17 @@ func TestWorkQueueDeadlockTorture(t *testing.T) {
 
 	// Metrics tracking
 	var (
-		totalOps      int64
-		successOps    int64
-		deadlockOps   int64
-		timeoutOps    int64
-		errorOps      int64
+		totalOps    int64
+		successOps  int64
+		deadlockOps int64
+		timeoutOps  int64
+		errorOps    int64
 	)
 
 	// Pre-populate work items to create contention
 	orgID := uuid.New()
 	t.Logf("Seeding %d work items across %d telemetry types", workItemSeedCount, len(telemetryTypes))
-	
+
 	for i := 0; i < workItemSeedCount; i++ {
 		for _, telemetryType := range telemetryTypes {
 			err := db.PutInqueueWork(ctx, lrdb.PutInqueueWorkParams{
@@ -85,17 +85,17 @@ func TestWorkQueueDeadlockTorture(t *testing.T) {
 
 	// Error collection
 	errorChan := make(chan error, numWorkers*operationsPerWorker)
-	
+
 	// Start torture workers
 	var wg sync.WaitGroup
-	
+
 	t.Logf("Starting %d torture workers for %d seconds", numWorkers, testDurationSeconds)
-	
+
 	for workerID := 1; workerID <= numWorkers; workerID++ {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			tortureWorker(testCtx, t, db, int64(id), orgID, telemetryTypes, operationsPerWorker, 
+			tortureWorker(testCtx, t, db, int64(id), orgID, telemetryTypes, operationsPerWorker,
 				maxOperationTimeoutSec, errorChan, &totalOps, &successOps)
 		}(workerID)
 	}
@@ -132,7 +132,7 @@ func TestWorkQueueDeadlockTorture(t *testing.T) {
 	for err := range errorChan {
 		errors = append(errors, err)
 		atomic.AddInt64(&errorOps, 1)
-		
+
 		if isDeadlockError(err) {
 			atomic.AddInt64(&deadlockOps, 1)
 		} else if isTimeoutError(err) {
@@ -168,21 +168,21 @@ func TestWorkQueueDeadlockTorture(t *testing.T) {
 
 	// Assertions for deadlock detection
 	assert.Zero(t, deadlocks, "DEADLOCK DETECTED: Found %d deadlock errors. This indicates the workqueue needs better lock ordering when global advisory lock is removed.", deadlocks)
-	
+
 	// Allow some timeouts but not excessive
 	assert.Less(t, timeouts, int64(total/10), "Excessive timeouts (%d) may indicate lock contention issues", timeouts)
-	
+
 	// Require reasonable success rate
 	assert.Greater(t, float64(success)/float64(total), 0.8, "Success rate too low (%.1f%%), may indicate locking issues", float64(success)/float64(total)*100)
 }
 
 // tortureWorker performs aggressive concurrent operations
-func tortureWorker(ctx context.Context, t *testing.T, db lrdb.StoreFull, workerID int64, orgID uuid.UUID, 
+func tortureWorker(ctx context.Context, t *testing.T, db lrdb.StoreFull, workerID int64, orgID uuid.UUID,
 	telemetryTypes []string, maxOps int, timeoutSec int, errorChan chan<- error,
 	totalOps, successOps *int64) {
-	
+
 	operationCount := 0
-	
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -192,17 +192,17 @@ func tortureWorker(ctx context.Context, t *testing.T, db lrdb.StoreFull, workerI
 				return
 			}
 		}
-		
+
 		atomic.AddInt64(totalOps, 1)
 		operationCount++
-		
+
 		// Create operation timeout context
 		opCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
-		
+
 		// Vary operation types to create diverse locking patterns
 		opType := operationCount % 6
 		var err error
-		
+
 		switch opType {
 		case 0, 1: // Claim and delete (most common operations)
 			telemetryType := telemetryTypes[operationCount%len(telemetryTypes)]
@@ -213,7 +213,7 @@ func tortureWorker(ctx context.Context, t *testing.T, db lrdb.StoreFull, workerI
 			if claimErr == nil {
 				// Simulate brief work processing
 				time.Sleep(time.Millisecond * time.Duration(operationCount%5))
-				
+
 				err = db.DeleteInqueueWork(opCtx, lrdb.DeleteInqueueWorkParams{
 					ID:        work.ID,
 					ClaimedBy: workerID,
@@ -221,24 +221,24 @@ func tortureWorker(ctx context.Context, t *testing.T, db lrdb.StoreFull, workerI
 			} else {
 				err = claimErr
 			}
-			
+
 		case 2: // Journal upsert (creates different lock patterns)
 			_, err = db.InqueueJournalUpsert(opCtx, lrdb.InqueueJournalUpsertParams{
 				OrganizationID: orgID,
 				Bucket:         "torture-bucket",
 				ObjectID:       fmt.Sprintf("journal-%d-%d.json", workerID, operationCount),
 			})
-			
+
 		case 3: // Journal delete
 			err = db.InqueueJournalDelete(opCtx, lrdb.InqueueJournalDeleteParams{
 				OrganizationID: orgID,
 				Bucket:         "torture-bucket",
 				ObjectID:       fmt.Sprintf("journal-%d-%d.json", workerID, operationCount-10),
 			})
-			
+
 		case 4: // Cleanup (affects multiple rows)
 			err = db.CleanupInqueueWork(opCtx)
-			
+
 		case 5: // Add new work (creates insertion contention)
 			err = db.PutInqueueWork(opCtx, lrdb.PutInqueueWorkParams{
 				OrganizationID: orgID,
@@ -249,9 +249,9 @@ func tortureWorker(ctx context.Context, t *testing.T, db lrdb.StoreFull, workerI
 				Priority:       int32(operationCount % 3),
 			})
 		}
-		
+
 		cancel()
-		
+
 		if err != nil {
 			errorChan <- err
 		} else {
@@ -264,9 +264,9 @@ func tortureWorker(ctx context.Context, t *testing.T, db lrdb.StoreFull, workerI
 func monitorForDeadlocks(ctx context.Context, t *testing.T, db lrdb.StoreFull, deadlockDetected chan<- bool) {
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
-	
+
 	pool := testhelpers.SetupTestLRDB(t)
-	
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -282,10 +282,10 @@ func monitorForDeadlocks(ctx context.Context, t *testing.T, db lrdb.StoreFull, d
 				  AND (query LIKE '%inqueue%' OR query LIKE '%work_queue%')
 				  AND query_start < NOW() - INTERVAL '2 seconds'
 			`).Scan(&lockWaits)
-			
+
 			if err == nil && lockWaits > 5 {
 				t.Logf("WARNING: %d transactions waiting on locks for >2s", lockWaits)
-				
+
 				// Check for actual deadlocks in pg_stat_database
 				var deadlocks int64
 				err := pool.QueryRow(ctx, `
@@ -293,7 +293,7 @@ func monitorForDeadlocks(ctx context.Context, t *testing.T, db lrdb.StoreFull, d
 					FROM pg_stat_database 
 					WHERE datname = current_database()
 				`).Scan(&deadlocks)
-				
+
 				if err == nil && deadlocks > 0 {
 					select {
 					case deadlockDetected <- true:
@@ -333,7 +333,7 @@ func TestWorkQueueSpecificDeadlockPatterns(t *testing.T) {
 
 	t.Run("concurrent_claim_delete_same_type", func(t *testing.T) {
 		orgID := uuid.New()
-		
+
 		// Create work items for contention
 		for i := 0; i < 50; i++ {
 			err := db.PutInqueueWork(ctx, lrdb.PutInqueueWorkParams{
@@ -346,55 +346,55 @@ func TestWorkQueueSpecificDeadlockPatterns(t *testing.T) {
 			})
 			require.NoError(t, err)
 		}
-		
+
 		// Launch workers that aggressively claim/delete same telemetry type
 		var wg sync.WaitGroup
 		errorCount := int64(0)
-		
+
 		for workerID := 1; workerID <= 10; workerID++ {
 			wg.Add(1)
 			go func(id int64) {
 				defer wg.Done()
-				
+
 				for i := 0; i < 20; i++ {
 					opCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-					
+
 					work, err := db.ClaimInqueueWork(opCtx, lrdb.ClaimInqueueWorkParams{
 						ClaimedBy:     id,
 						TelemetryType: "logs",
 					})
-					
+
 					if err == nil {
 						err = db.DeleteInqueueWork(opCtx, lrdb.DeleteInqueueWorkParams{
 							ID:        work.ID,
 							ClaimedBy: id,
 						})
 					}
-					
+
 					if err != nil && isDeadlockError(err) {
 						atomic.AddInt64(&errorCount, 1)
 						t.Errorf("Deadlock detected in worker %d: %v", id, err)
 					}
-					
+
 					cancel()
 				}
 			}(int64(workerID))
 		}
-		
+
 		// Wait with reasonable timeout
 		done := make(chan bool)
 		go func() {
 			wg.Wait()
 			done <- true
 		}()
-		
+
 		select {
 		case <-done:
 			// Success
 		case <-time.After(15 * time.Second):
 			t.Error("Pattern test timed out - possible deadlock")
 		}
-		
+
 		assert.Zero(t, atomic.LoadInt64(&errorCount), "Deadlocks detected in specific pattern test")
 	})
 }

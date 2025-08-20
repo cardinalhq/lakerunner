@@ -29,9 +29,11 @@ func TestSetupStorageProfiles(t *testing.T) {
 	// Save original database environment variables
 	originalConfigDBVars := map[string]string{
 		"CONFIGDB_HOST":     os.Getenv("CONFIGDB_HOST"),
+		"CONFIGDB_PORT":     os.Getenv("CONFIGDB_PORT"),
 		"CONFIGDB_USER":     os.Getenv("CONFIGDB_USER"),
 		"CONFIGDB_PASSWORD": os.Getenv("CONFIGDB_PASSWORD"),
 		"CONFIGDB_DBNAME":   os.Getenv("CONFIGDB_DBNAME"),
+		"CONFIGDB_SSLMODE":  os.Getenv("CONFIGDB_SSLMODE"),
 		"CONFIGDB_URL":      os.Getenv("CONFIGDB_URL"),
 	}
 
@@ -65,9 +67,11 @@ func TestSetupStorageProfiles(t *testing.T) {
 				os.Setenv("STORAGE_PROFILE_FILE", tempFile)
 				// Temporarily unset database environment variables to force file provider
 				os.Unsetenv("CONFIGDB_HOST")
+				os.Unsetenv("CONFIGDB_PORT")
 				os.Unsetenv("CONFIGDB_USER")
 				os.Unsetenv("CONFIGDB_PASSWORD")
 				os.Unsetenv("CONFIGDB_DBNAME")
+				os.Unsetenv("CONFIGDB_SSLMODE")
 				os.Unsetenv("CONFIGDB_URL")
 			},
 			cleanup: func() {
@@ -91,9 +95,11 @@ func TestSetupStorageProfiles(t *testing.T) {
 				os.Unsetenv("STORAGE_PROFILE_FILE")
 				// Temporarily unset database environment variables to force file provider
 				os.Unsetenv("CONFIGDB_HOST")
+				os.Unsetenv("CONFIGDB_PORT")
 				os.Unsetenv("CONFIGDB_USER")
 				os.Unsetenv("CONFIGDB_PASSWORD")
 				os.Unsetenv("CONFIGDB_DBNAME")
+				os.Unsetenv("CONFIGDB_SSLMODE")
 				os.Unsetenv("CONFIGDB_URL")
 			},
 			cleanup: func() {
@@ -117,9 +123,11 @@ func TestSetupStorageProfiles(t *testing.T) {
 				os.Setenv("STORAGE_PROFILE_FILE", "env:TEST_STORAGE_PROFILES_CONTENT")
 				// Temporarily unset database environment variables to force file provider
 				os.Unsetenv("CONFIGDB_HOST")
+				os.Unsetenv("CONFIGDB_PORT")
 				os.Unsetenv("CONFIGDB_USER")
 				os.Unsetenv("CONFIGDB_PASSWORD")
 				os.Unsetenv("CONFIGDB_DBNAME")
+				os.Unsetenv("CONFIGDB_SSLMODE")
 				os.Unsetenv("CONFIGDB_URL")
 			},
 			cleanup: func() {
@@ -174,9 +182,11 @@ func TestSetupStorageProfiles_FileErrors(t *testing.T) {
 	// Save original database environment variables
 	originalConfigDBVars := map[string]string{
 		"CONFIGDB_HOST":     os.Getenv("CONFIGDB_HOST"),
+		"CONFIGDB_PORT":     os.Getenv("CONFIGDB_PORT"),
 		"CONFIGDB_USER":     os.Getenv("CONFIGDB_USER"),
 		"CONFIGDB_PASSWORD": os.Getenv("CONFIGDB_PASSWORD"),
 		"CONFIGDB_DBNAME":   os.Getenv("CONFIGDB_DBNAME"),
+		"CONFIGDB_SSLMODE":  os.Getenv("CONFIGDB_SSLMODE"),
 		"CONFIGDB_URL":      os.Getenv("CONFIGDB_URL"),
 	}
 
@@ -192,9 +202,11 @@ func TestSetupStorageProfiles_FileErrors(t *testing.T) {
 				os.Setenv("STORAGE_PROFILE_FILE", "/nonexistent/path/file.yaml")
 				// Temporarily unset database environment variables to force file provider
 				os.Unsetenv("CONFIGDB_HOST")
+				os.Unsetenv("CONFIGDB_PORT")
 				os.Unsetenv("CONFIGDB_USER")
 				os.Unsetenv("CONFIGDB_PASSWORD")
 				os.Unsetenv("CONFIGDB_DBNAME")
+				os.Unsetenv("CONFIGDB_SSLMODE")
 				os.Unsetenv("CONFIGDB_URL")
 			},
 			cleanup: func() {
@@ -218,9 +230,25 @@ func TestSetupStorageProfiles_FileErrors(t *testing.T) {
 				err := os.WriteFile(tempFile, []byte("invalid: [yaml: content"), 0644)
 				require.NoError(t, err)
 				os.Setenv("STORAGE_PROFILE_FILE", tempFile)
+				// Temporarily unset database environment variables to force file provider
+				os.Unsetenv("CONFIGDB_HOST")
+				os.Unsetenv("CONFIGDB_PORT")
+				os.Unsetenv("CONFIGDB_USER")
+				os.Unsetenv("CONFIGDB_PASSWORD")
+				os.Unsetenv("CONFIGDB_DBNAME")
+				os.Unsetenv("CONFIGDB_SSLMODE")
+				os.Unsetenv("CONFIGDB_URL")
 			},
 			cleanup: func() {
 				os.Unsetenv("STORAGE_PROFILE_FILE")
+				// Restore database environment variables
+				for key, value := range originalConfigDBVars {
+					if value != "" {
+						os.Setenv(key, value)
+					} else {
+						os.Unsetenv(key)
+					}
+				}
 			},
 			wantErr: "failed to unmarshal v1 storage profiles from file",
 		},
@@ -228,9 +256,25 @@ func TestSetupStorageProfiles_FileErrors(t *testing.T) {
 			name: "env variable not set",
 			setup: func() {
 				os.Setenv("STORAGE_PROFILE_FILE", "env:NONEXISTENT_VAR")
+				// Temporarily unset database environment variables to force file provider
+				os.Unsetenv("CONFIGDB_HOST")
+				os.Unsetenv("CONFIGDB_PORT")
+				os.Unsetenv("CONFIGDB_USER")
+				os.Unsetenv("CONFIGDB_PASSWORD")
+				os.Unsetenv("CONFIGDB_DBNAME")
+				os.Unsetenv("CONFIGDB_SSLMODE")
+				os.Unsetenv("CONFIGDB_URL")
 			},
 			cleanup: func() {
 				os.Unsetenv("STORAGE_PROFILE_FILE")
+				// Restore database environment variables
+				for key, value := range originalConfigDBVars {
+					if value != "" {
+						os.Setenv(key, value)
+					} else {
+						os.Unsetenv(key)
+					}
+				}
 			},
 			wantErr: "environment variable NONEXISTENT_VAR is not set",
 		},
