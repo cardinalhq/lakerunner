@@ -22,34 +22,31 @@ import (
 
 func TestMakeDBObjectID(t *testing.T) {
 	tests := []struct {
-		name          string
-		orgID         uuid.UUID
-		collectorName string
-		dateint       int32
-		hour          int16
-		segmentID     int64
-		ttype         string
-		expected      string
+		name      string
+		orgID     uuid.UUID
+		dateint   int32
+		hour      int16
+		segmentID int64
+		ttype     string
+		expected  string
 	}{
 		{
-			name:          "standard case",
-			orgID:         uuid.MustParse("123e4567-e89b-12d3-a456-426614174000"),
-			collectorName: "testCollector",
-			dateint:       20240607,
-			hour:          15,
-			segmentID:     42,
-			ttype:         "events",
-			expected:      "db/123e4567-e89b-12d3-a456-426614174000/default/20240607/events/15/tbl_42.parquet",
+			name:      "standard case",
+			orgID:     uuid.MustParse("123e4567-e89b-12d3-a456-426614174000"),
+			dateint:   20240607,
+			hour:      15,
+			segmentID: 42,
+			ttype:     "events",
+			expected:  "db/123e4567-e89b-12d3-a456-426614174000/default/20240607/events/15/tbl_42.parquet",
 		},
 		{
-			name:          "single digit hour",
-			orgID:         uuid.MustParse("123e4567-e89b-12d3-a456-426614174000"),
-			collectorName: "collector",
-			dateint:       20240607,
-			hour:          7,
-			segmentID:     1,
-			ttype:         "metrics",
-			expected:      "db/123e4567-e89b-12d3-a456-426614174000/default/20240607/metrics/07/tbl_1.parquet",
+			name:      "single digit hour",
+			orgID:     uuid.MustParse("123e4567-e89b-12d3-a456-426614174000"),
+			dateint:   20240607,
+			hour:      7,
+			segmentID: 1,
+			ttype:     "metrics",
+			expected:  "db/123e4567-e89b-12d3-a456-426614174000/default/20240607/metrics/07/tbl_1.parquet",
 		},
 	}
 
@@ -65,14 +62,13 @@ func TestMakeDBObjectID(t *testing.T) {
 
 func TestMakeDBObjectIDbad(t *testing.T) {
 	tests := []struct {
-		name          string
-		orgID         uuid.UUID
-		collectorName string
-		dateint       int32
-		hour          int16
-		segmentID     int64
-		ttype         string
-		expected      string
+		name      string
+		orgID     uuid.UUID
+		dateint   int32
+		hour      int16
+		segmentID int64
+		ttype     string
+		expected  string
 	}{
 		{
 			name:      "standard case",

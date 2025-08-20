@@ -404,7 +404,6 @@ func writeMetricSketchParquet(ctx context.Context, tmpdir string, blocknum int64
 			"_cardinalhq.timestamp":      startTS,
 			"_cardinalhq.name":           sketch.MetricName,
 			"_cardinalhq.customer_id":    inf.OrganizationID.String(),
-			"_cardinalhq.collector_id":   inf.CollectorName,
 			"_cardinalhq.metric_type":    sketch.MetricType,
 			"_cardinalhq.tid":            tid,
 			"_cardinalhq.value":          float64(-1),
@@ -446,7 +445,6 @@ func writeMetricSketchParquet(ctx context.Context, tmpdir string, blocknum int64
 	for _, stat := range stats {
 		ll.Info("Wrote metric sketch parquet",
 			slog.String("organizationID", inf.OrganizationID.String()),
-			slog.String("collectorName", inf.CollectorName),
 			slog.Int64("blocknum", blocknum),
 			slog.String("file", stat.FileName),
 			slog.Int64("recordcount", stat.RecordCount),
@@ -494,7 +492,6 @@ func writeMetricSketchParquet(ctx context.Context, tmpdir string, blocknum int64
 
 		ll.Info("Inserted metric segment and uploaded to S3",
 			slog.String("organizationID", inf.OrganizationID.String()),
-			slog.String("collectorName", inf.CollectorName),
 			slog.Int64("blocknum", blocknum),
 			slog.String("objectID", objID),
 			slog.Int64("segmentID", segmentID),
