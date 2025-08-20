@@ -20,12 +20,8 @@ SELECT public.work_queue_add(
 WITH params AS (
   SELECT
     NOW()                                         AS v_now,
-    (SELECT value::interval
-       FROM public.settings
-      WHERE key = 'work_fail_requeue_ttl')        AS requeue_ttl,
-    (SELECT value::int
-       FROM public.settings
-      WHERE key = 'max_retries')                  AS max_retries
+    @requeue_ttl::INTERVAL                        AS requeue_ttl,
+    @max_retries::INTEGER                         AS max_retries
 ),
 old AS (
   SELECT w.tries
@@ -88,9 +84,7 @@ WHERE sl.work_id    = u.id
 WITH params AS (
   SELECT
     NOW() AS v_now,
-    (SELECT value::interval
-       FROM public.settings
-      WHERE key = 'lock_ttl') AS lock_ttl
+    @lock_ttl::INTERVAL AS lock_ttl
 )
 -- 1) heart-beat the work_queue
 UPDATE public.work_queue w
@@ -113,9 +107,7 @@ WHERE sl.work_id     = ANY(@ids::BIGINT[])
 WITH params AS (
   SELECT
     NOW() AS v_now,
-    (SELECT value::interval
-       FROM public.settings
-      WHERE key = 'lock_ttl_dead') AS dead_ttl
+    @lock_ttl_dead::INTERVAL AS dead_ttl
 ),
 expired AS (
   UPDATE public.work_queue w
@@ -123,7 +115,8 @@ expired AS (
     claimed_by     = -1,
     claimed_at     = NULL,
     heartbeated_at = params.v_now,
-    needs_run      = TRUE
+    needs_run      = TRUE,
+    tries          = 0
   FROM params
   WHERE
     w.claimed_by <> -1
@@ -161,3 +154,37 @@ del_wq AS (
 )
 SELECT COALESCE(COUNT(*), 0)::int AS deleted
 FROM del_wq;
+
+
+-- name: WorkQueueDeleteDirect :exec
+DELETE FROM public.work_queue
+WHERE id = @id::BIGINT
+  AND claimed_by = @worker_id;
+
+-- name: WorkQueueSummary :many
+SELECT count(*) AS count, signal, action
+FROM work_queue
+WHERE needs_run = true AND runnable_at <= now()
+GROUP BY signal, action
+ORDER BY signal, action;
+
+-- name: WorkQueueOrphanedSignalLockCleanup :one
+WITH params AS (
+  SELECT pg_advisory_xact_lock(hashtext('work_queue_global')::bigint) AS locked
+),
+orphaned AS (
+  SELECT sl.id
+  FROM public.signal_locks sl
+  LEFT JOIN public.work_queue wq ON sl.work_id = wq.id
+  WHERE wq.id IS NULL
+  ORDER BY sl.id
+  LIMIT @maxrows
+),
+deleted AS (
+  DELETE FROM public.signal_locks sl
+  USING orphaned o
+  WHERE sl.id = o.id
+  RETURNING 1
+)
+SELECT COALESCE(COUNT(*), 0)::int AS deleted
+FROM deleted;

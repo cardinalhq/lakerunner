@@ -16,6 +16,8 @@ package lrdb
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type LogSegmentUpserter interface {
@@ -27,6 +29,10 @@ type MetricSegmentInserter interface {
 	InsertMetricSegment(ctx context.Context, params InsertMetricSegmentParams) error
 }
 
+type TraceSegmentInserter interface {
+	InsertTraceSegment(ctx context.Context, params InsertTraceSegmentDirectParams) error
+}
+
 type QuerierFull interface {
 	Querier
 	ReplaceMetricSegs(ctx context.Context, args ReplaceMetricSegsParams) error
@@ -36,8 +42,9 @@ type WorkQueueQuerier interface {
 	WorkQueueAdd(ctx context.Context, params WorkQueueAddParams) error
 	WorkQueueFail(ctx context.Context, params WorkQueueFailParams) error
 	WorkQueueComplete(ctx context.Context, params WorkQueueCompleteParams) error
+	WorkQueueDelete(ctx context.Context, params WorkQueueDeleteParams) error
 	WorkQueueHeartbeat(ctx context.Context, params WorkQueueHeartbeatParams) error
-	WorkQueueCleanup(ctx context.Context) ([]WorkQueueCleanupRow, error)
+	WorkQueueCleanup(ctx context.Context, lockTtlDead pgtype.Interval) ([]WorkQueueCleanupRow, error)
 	WorkQueueClaim(ctx context.Context, params WorkQueueClaimParams) (WorkQueueClaimRow, error)
 }
 
@@ -45,5 +52,6 @@ type StoreFull interface {
 	QuerierFull
 	LogSegmentUpserter
 	MetricSegmentInserter
+	TraceSegmentInserter
 	WorkQueueQuerier
 }

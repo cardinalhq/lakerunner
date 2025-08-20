@@ -20,15 +20,31 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/spf13/cobra"
+	"golang.org/x/exp/slog"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 )
 
-func GetS3CatCmd() *cobra.Command {
+func GetS3Cmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "s3cat",
+		Use:   "s3",
+		Short: "S3 debugging commands",
+		Long:  `S3 debugging commands for troubleshooting S3 operations.`,
+	}
+
+	cmd.AddCommand(getS3CatCmd())
+	cmd.AddCommand(getS3LSCmd())
+
+	return cmd
+}
+
+func getS3CatCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "cat",
 		Short: "return Base64 for an S3 file",
 		RunE: func(c *cobra.Command, _ []string) error {
 			bucketID, err := c.Flags().GetString("bucket")
@@ -60,6 +76,52 @@ func GetS3CatCmd() *cobra.Command {
 	cmd.Flags().String("objectid", "", "S3 objectid")
 	if err := cmd.MarkFlagRequired("objectid"); err != nil {
 		panic(fmt.Errorf("failed to mark objectid flag as required: %w", err))
+	}
+
+	cmd.Flags().String("region", "us-east-2", "AWS region of the S3 bucket")
+	if err := cmd.MarkFlagRequired("region"); err != nil {
+		panic(fmt.Errorf("failed to mark region flag as required: %w", err))
+	}
+
+	cmd.Flags().String("role", "", "AWS IAM role to assume for S3 access")
+
+	return cmd
+}
+
+func getS3LSCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "ls",
+		Short: "List a bucket prefix in S3",
+		RunE: func(c *cobra.Command, _ []string) error {
+			bucketID, err := c.Flags().GetString("bucket")
+			if err != nil {
+				return fmt.Errorf("failed to get bucket flag: %w", err)
+			}
+			prefix, err := c.Flags().GetString("prefix")
+			if err != nil {
+				return fmt.Errorf("failed to get prefix flag: %w", err)
+			}
+			region, err := c.Flags().GetString("region")
+			if err != nil {
+				return fmt.Errorf("failed to get region flag: %w", err)
+			}
+			role, err := c.Flags().GetString("role")
+			if err != nil {
+				return fmt.Errorf("failed to get role flag: %w", err)
+			}
+
+			return runS3LS(bucketID, prefix, region, role)
+		},
+	}
+
+	cmd.Flags().String("bucket", "", "S3 bucket to list")
+	if err := cmd.MarkFlagRequired("bucket"); err != nil {
+		panic(fmt.Errorf("failed to mark bucket flag as required: %w", err))
+	}
+
+	cmd.Flags().String("prefix", "", "S3 prefix to list")
+	if err := cmd.MarkFlagRequired("prefix"); err != nil {
+		panic(fmt.Errorf("failed to mark prefix flag as required: %w", err))
 	}
 
 	cmd.Flags().String("region", "us-east-2", "AWS region of the S3 bucket")
@@ -117,6 +179,65 @@ func runS3Cat(bucketID string, objectID string, region string, role string) erro
 	}
 	b64 := base64.StdEncoding.EncodeToString(data)
 	fmt.Println(b64)
+
+	return nil
+}
+
+func runS3LS(bucketID string, prefix string, region string, role string) error {
+	ctx := context.Background()
+
+	// Initialize AWS S3 client
+	mgr, err := awsclient.NewManager(ctx,
+		awsclient.WithAssumeRoleSessionName("lakerunner-import"),
+	)
+	if err != nil {
+		return err
+	}
+
+	var opts []awsclient.S3Option
+	if role != "" {
+		opts = append(opts, awsclient.WithRole(role))
+	}
+	if region != "" {
+		opts = append(opts, awsclient.WithRegion(region))
+	}
+	s3client, err := mgr.GetS3(ctx, opts...)
+	if err != nil {
+		return fmt.Errorf("failed to get S3 client: %w", err)
+	}
+
+	// List objects in the specified S3 bucket and prefix
+	err = listS3Objects(ctx, s3client.Client, bucketID, prefix)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// listS3Objects returns all object keys under the given prefix.
+// It logs any paging/list errors and bubbles them up.
+func listS3Objects(ctx context.Context, s3client *s3.Client, bucketID, prefix string) error {
+	paginator := s3.NewListObjectsV2Paginator(s3client, &s3.ListObjectsV2Input{
+		Bucket: aws.String(bucketID),
+		Prefix: aws.String(prefix),
+	})
+
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(ctx)
+		if err != nil {
+			slog.Error("Failed to list S3 objects",
+				slog.String("bucket", bucketID),
+				slog.String("prefix", prefix),
+				slog.Any("error", err),
+			)
+			return err
+		}
+
+		for _, obj := range page.Contents {
+			fmt.Println(aws.ToString(obj.Key))
+		}
+	}
 
 	return nil
 }

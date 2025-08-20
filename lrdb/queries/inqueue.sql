@@ -48,3 +48,10 @@ UPDATE inqueue
 SET claimed_by = -1, claimed_at = NULL
 WHERE claimed_at IS NOT NULL
   AND claimed_at < NOW() - INTERVAL '5 minutes';
+
+-- name: InqueueSummary :many
+SELECT count(*) AS count, telemetry_type
+FROM inqueue
+WHERE claimed_at IS NULL
+GROUP BY telemetry_type
+ORDER BY telemetry_type;

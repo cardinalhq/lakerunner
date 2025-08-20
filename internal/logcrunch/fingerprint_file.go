@@ -37,7 +37,9 @@ const maxRowsSortBuffer = 5000
 
 type SplitKey struct {
 	DateInt       int32
+	Hour          int16
 	IngestDateint int32
+	FileIndex     int16 // Support multiple files per hour (0, 1, 2, ...)
 }
 
 type HourlyResult struct {
@@ -81,8 +83,8 @@ func ProcessAndSplit(ll *slog.Logger, fh *filecrunch.FileHandle, tmpdir string, 
 			continue
 		}
 		ms := getMS(tsRaw)
-		dateint, _ := helpers.MSToDateintHour(ms)
-		key := SplitKey{DateInt: dateint, IngestDateint: ingestDateint}
+		dateint, hour := helpers.MSToDateintHour(ms)
+		key := SplitKey{DateInt: dateint, Hour: hour, IngestDateint: ingestDateint, FileIndex: 0}
 
 		st, exists := groups[key]
 		if !exists {
@@ -123,7 +125,7 @@ func ProcessAndSplit(ll *slog.Logger, fh *filecrunch.FileHandle, tmpdir string, 
 	}
 
 	// 2nd pass: merge chunks into Parquet files.
-	results := make(map[SplitKey]HourlyResult, len(groups))
+	results := make(map[SplitKey]HourlyResult)
 	for key, st := range groups {
 		if len(st.chunks) == 0 {
 			continue
@@ -139,16 +141,51 @@ func ProcessAndSplit(ll *slog.Logger, fh *filecrunch.FileHandle, tmpdir string, 
 		if len(res) == 0 {
 			continue
 		}
-		results[key] = HourlyResult{
-			FileName:     res[0].FileName,
-			RecordCount:  res[0].RecordCount,
-			FileSize:     res[0].FileSize,
-			Fingerprints: st.prints,
-			FirstTS:      st.firstTS,
-			LastTS:       st.lastTS,
+
+		// Handle multiple files from buffet writer
+		// Distribute fingerprints and time ranges across all files
+		fingerprintsPerFile := distributeFingerprints(st.prints, len(res))
+
+		for i, fileResult := range res {
+			fileKey := key
+			fileKey.FileIndex = int16(i)
+
+			results[fileKey] = HourlyResult{
+				FileName:     fileResult.FileName,
+				RecordCount:  fileResult.RecordCount,
+				FileSize:     fileResult.FileSize,
+				Fingerprints: fingerprintsPerFile[i],
+				FirstTS:      st.firstTS, // All files share same time range bounds
+				LastTS:       st.lastTS,
+			}
 		}
 	}
 	return results, nil
+}
+
+// distributeFingerprints distributes fingerprints evenly across multiple files
+// Since we can't know which records went to which file without expensive tracking,
+// we distribute them evenly. This is a reasonable approximation for deduplication.
+func distributeFingerprints(allFingerprints mapset.Set[int64], numFiles int) []mapset.Set[int64] {
+	if numFiles <= 1 {
+		return []mapset.Set[int64]{allFingerprints}
+	}
+
+	fingerprints := allFingerprints.ToSlice()
+	result := make([]mapset.Set[int64], numFiles)
+
+	// Initialize each set
+	for i := range result {
+		result[i] = mapset.NewSet[int64]()
+	}
+
+	// Distribute fingerprints round-robin across files
+	for i, fp := range fingerprints {
+		fileIndex := i % numFiles
+		result[fileIndex].Add(fp)
+	}
+
+	return result
 }
 
 func getMS(v any) int64 {

@@ -3,7 +3,6 @@
 -- Drop new constraints
 ALTER TABLE public.work_queue DROP CONSTRAINT work_queue_conflict;
 ALTER TABLE public.signal_locks DROP CONSTRAINT signal_locks_conflict;
-ALTER TABLE public.signal_locks DROP CONSTRAINT signal_locks_organization_id_instance_num_dateint_frequency_sig_key;
 
 -- Remove slot_id columns
 ALTER TABLE public.work_queue DROP COLUMN slot_id;

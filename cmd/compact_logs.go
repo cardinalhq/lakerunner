@@ -100,8 +100,32 @@ func compactLogsFor(
 		return WorkResultTryAgainLater, err
 	}
 
-	ll.Info("Processing log compression item", slog.Any("workItem", inf.AsMap()))
-	return logCompactItemDo(ctx, ll, mdb, tmpdir, inf, profile, s3client, rpfEstimate)
+	ll.Info("Starting log compaction",
+		slog.String("organizationID", inf.OrganizationID().String()),
+		slog.Int("instanceNum", int(inf.InstanceNum())),
+		slog.Int("dateint", int(inf.Dateint())),
+		slog.Int64("workQueueID", inf.ID()))
+
+	t0 := time.Now()
+	result, err := logCompactItemDo(ctx, ll, mdb, tmpdir, inf, profile, s3client, rpfEstimate)
+
+	if err != nil {
+		ll.Info("Log compaction completed",
+			slog.String("result", "error"),
+			slog.Int64("workQueueID", inf.ID()),
+			slog.Duration("elapsed", time.Since(t0)))
+	} else {
+		resultStr := "success"
+		if result == WorkResultTryAgainLater {
+			resultStr = "try_again_later"
+		}
+		ll.Info("Log compaction completed",
+			slog.String("result", resultStr),
+			slog.Int64("workQueueID", inf.ID()),
+			slog.Duration("elapsed", time.Since(t0)))
+	}
+
+	return result, err
 }
 
 func logCompactItemDo(
@@ -114,21 +138,35 @@ func logCompactItemDo(
 	s3client *awsclient.S3Client,
 	rpfEstimate int64,
 ) (WorkResult, error) {
-	st, et, ok := helpers.RangeBounds(inf.TsRange())
+	// Extract the time range using our normalized helper functions
+	timeRange, ok := helpers.NewTimeRangeFromPgRange(inf.TsRange())
 	if !ok {
 		return WorkResultSuccess, errors.New("error getting range bounds")
 	}
-	stdi := timeToDateint(st.Time)
-	etdi := timeToDateint(et.Time.Add(-time.Millisecond)) // end dateint is inclusive, so subtract 1ms
-	if stdi != etdi {
-		ll.Error("Range bounds are not the same dateint",
-			slog.Int("startDateint", int(stdi)),
-			slog.Time("st", st.Time),
-			slog.Int("endDateint", int(etdi)),
-			slog.Time("et", et.Time),
+
+	// Validate that the time range falls entirely within one dateint-hour
+	if !helpers.IsSameDateintHour(timeRange) {
+		startBoundary, endBoundary := helpers.TimeRangeToHourBoundaries(timeRange)
+		ll.Warn("Deleting stale work item with multi-hour range - likely from old queueing logic",
+			slog.Int("startDateint", int(startBoundary.DateInt)),
+			slog.Int("startHour", int(startBoundary.Hour)),
+			slog.Time("rangeStart", timeRange.Start),
+			slog.Int("endDateint", int(endBoundary.DateInt)),
+			slog.Int("endHour", int(endBoundary.Hour)),
+			slog.Time("rangeEnd", timeRange.End),
 		)
-		return WorkResultTryAgainLater, errors.New("range bounds are not the same dateint")
+		// This is likely stale data from before hour-aligned compaction was implemented
+		// Delete it entirely from the work queue
+		if err := inf.Delete(); err != nil {
+			ll.Error("Failed to delete stale work item", slog.Any("error", err))
+			return WorkResultTryAgainLater, err
+		}
+		return WorkResultSuccess, nil
 	}
+
+	// Get the dateint for database queries (both boundaries should be the same now)
+	startBoundary, _ := helpers.TimeRangeToHourBoundaries(timeRange)
+	stdi := startBoundary.DateInt
 
 	const maxRowsLimit = 1000
 	totalBatchesProcessed := 0
@@ -189,10 +227,23 @@ func logCompactItemDo(
 			cursorSegmentID = lastSeg.SegmentID
 		}
 
+		originalSegmentCount := len(segments)
 		packed, err := logcrunch.PackSegments(segments, rpfEstimate)
 		if err != nil {
 			ll.Error("Error packing segments", slog.String("error", err.Error()))
 			return WorkResultTryAgainLater, err
+		}
+
+		// Log if any segments were filtered out during packing
+		packedSegmentCount := 0
+		for _, group := range packed {
+			packedSegmentCount += len(group)
+		}
+		if packedSegmentCount < originalSegmentCount {
+			ll.Info("Some segments were filtered out during packing",
+				slog.Int("originalCount", originalSegmentCount),
+				slog.Int("packedCount", packedSegmentCount),
+				slog.Int("filteredOut", originalSegmentCount-packedSegmentCount))
 		}
 
 		lastGroupSmall := false
@@ -261,11 +312,6 @@ func logCompactItemDo(
 			slog.Time("nextCursorCreatedAt", cursorCreatedAt),
 			slog.Int64("nextCursorSegmentID", cursorSegmentID))
 	}
-}
-
-// timeToDateint computes the dateint for the current time.  This is YYYYMMDD as an int32.
-func timeToDateint(t time.Time) int32 {
-	return int32(t.Year()*10000 + int(t.Month())*100 + t.Day())
 }
 
 var dropFieldNames = []string{

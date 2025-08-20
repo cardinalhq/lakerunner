@@ -16,6 +16,8 @@ package lrdb
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func (q *Store) WorkQueueAdd(ctx context.Context, params WorkQueueAddParams) error {
@@ -45,6 +47,19 @@ func (q *Store) WorkQueueComplete(ctx context.Context, params WorkQueueCompleteP
 	})
 }
 
+// WorkQueueDelete removes a work queue item entirely from the database.
+// This wrapper obtains a global advisory lock before performing the delete operation
+// to fix a deadlock issue with other work queue operations. The lock is automatically
+// released when the transaction completes.
+func (q *Store) WorkQueueDelete(ctx context.Context, params WorkQueueDeleteParams) error {
+	return q.execTx(ctx, func(s *Store) error {
+		if err := s.WorkQueueGlobalLock(ctx); err != nil {
+			return err
+		}
+		return s.WorkQueueDeleteDirect(ctx, params)
+	})
+}
+
 func (q *Store) WorkQueueHeartbeat(ctx context.Context, params WorkQueueHeartbeatParams) error {
 	return q.execTx(ctx, func(s *Store) error {
 		if err := s.WorkQueueGlobalLock(ctx); err != nil {
@@ -54,14 +69,14 @@ func (q *Store) WorkQueueHeartbeat(ctx context.Context, params WorkQueueHeartbea
 	})
 }
 
-func (q *Store) WorkQueueCleanup(ctx context.Context) ([]WorkQueueCleanupRow, error) {
+func (q *Store) WorkQueueCleanup(ctx context.Context, lockTtlDead pgtype.Interval) ([]WorkQueueCleanupRow, error) {
 	var result []WorkQueueCleanupRow
 	err := q.execTx(ctx, func(s *Store) error {
 		if err := s.WorkQueueGlobalLock(ctx); err != nil {
 			return err
 		}
 		var err error
-		result, err = s.WorkQueueCleanupDirect(ctx)
+		result, err = s.WorkQueueCleanupDirect(ctx, lockTtlDead)
 		return err
 	})
 	return result, err

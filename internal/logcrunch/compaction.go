@@ -22,7 +22,7 @@ import (
 
 // PackSegments groups segments into packs such that the sum of RecordCount in each
 // pack is <= estimatedRecordCount (greedy, one-or-more per pack).
-// NOTE: segments must all lie within the same UTC day and must be sorted by StartTs ascending.
+// NOTE: segments must all lie within the same UTC hour and must be sorted by StartTs ascending.
 func PackSegments(segments []lrdb.GetLogSegmentsForCompactionRow, estimatedRecordCount int64) ([][]lrdb.GetLogSegmentsForCompactionRow, error) {
 	if estimatedRecordCount <= 0 {
 		return nil, fmt.Errorf("estimatedRecordCount must be positive, got %d", estimatedRecordCount)
@@ -37,24 +37,54 @@ func PackSegments(segments []lrdb.GetLogSegmentsForCompactionRow, estimatedRecor
 		return [][]lrdb.GetLogSegmentsForCompactionRow{}, nil
 	}
 
-	// 2) Validate same-day and basic time sanity.
-	day := dayFromMillis(segments[0].StartTs)
-	for _, seg := range segments {
-		if seg.StartTs >= seg.EndTs {
-			return nil, fmt.Errorf("invalid segment time range: [%d,%d)", seg.StartTs, seg.EndTs)
-		}
-		// Use end-1 to keep [start,end) semantics in the same day
-		endMinusOne := seg.EndTs - 1
-		// Guard (very defensive)
-		if seg.EndTs == -9223372036854775808 { // math.MinInt64, inline to avoid import
-			return nil, fmt.Errorf("invalid EndTs (MinInt64) for segment starting at %d", seg.StartTs)
-		}
-		if dayFromMillis(seg.StartTs) != day || dayFromMillis(endMinusOne) != day {
-			return nil, fmt.Errorf("segments must be from the same UTC day; offending start=%d end=%d", seg.StartTs, seg.EndTs)
-		}
+	// 2) Filter out segments that cross hour boundaries during transition period.
+	segments = filterHourConformingSegments(segments)
+	if len(segments) == 0 {
+		return [][]lrdb.GetLogSegmentsForCompactionRow{}, nil
 	}
 
-	// 3) Greedy packing by record count threshold.
+	// 3) Filter out segments with invalid time ranges and ensure hour conformity.
+	validSegments := make([]lrdb.GetLogSegmentsForCompactionRow, 0, len(segments))
+	var hour int64 = -1
+
+	for _, seg := range segments {
+		// Skip segments with invalid time ranges
+		if seg.StartTs >= seg.EndTs {
+			continue
+		}
+		// Guard against MinInt64
+		if seg.EndTs == -9223372036854775808 { // math.MinInt64, inline to avoid import
+			continue
+		}
+
+		// Use end-1 to keep [start,end) semantics in the same hour
+		endMinusOne := seg.EndTs - 1
+		segStartHour := hourFromMillis(seg.StartTs)
+		segEndHour := hourFromMillis(endMinusOne)
+
+		// Skip segments that cross hour boundaries
+		if segStartHour != segEndHour {
+			continue
+		}
+
+		// Set hour from first valid segment, then ensure all subsequent segments are in same hour
+		if hour == -1 {
+			hour = segStartHour
+		} else if segStartHour != hour {
+			// Skip segments from different hours
+			continue
+		}
+
+		validSegments = append(validSegments, seg)
+	}
+
+	// Update segments to only include valid ones
+	segments = validSegments
+	if len(segments) == 0 {
+		return [][]lrdb.GetLogSegmentsForCompactionRow{}, nil
+	}
+
+	// 4) Greedy packing by record count threshold.
 	groups := make([][]lrdb.GetLogSegmentsForCompactionRow, 0, len(segments)/2+1)
 	current := make([]lrdb.GetLogSegmentsForCompactionRow, 0, 8)
 	var sumRecords int64
@@ -87,8 +117,33 @@ func filterSegments(segs []lrdb.GetLogSegmentsForCompactionRow) []lrdb.GetLogSeg
 	return segs[:j]
 }
 
-const msPerDay int64 = 86_400_000
+const msPerHour int64 = 3_600_000
 
-func dayFromMillis(millis int64) int64 {
-	return millis / msPerDay
+func hourFromMillis(millis int64) int64 {
+	return millis / msPerHour
+}
+
+// filterHourConformingSegments removes segments that cross hour boundaries.
+// This is used during the transition period to avoid compacting segments
+// that don't conform to the new hour-boundary rule.
+func filterHourConformingSegments(segs []lrdb.GetLogSegmentsForCompactionRow) []lrdb.GetLogSegmentsForCompactionRow {
+	j := 0
+	for _, s := range segs {
+		// Skip segments with invalid time ranges - let validation handle them later
+		if s.StartTs >= s.EndTs {
+			segs[j] = s
+			j++
+			continue
+		}
+
+		// Check if segment stays within the same hour
+		startHour := hourFromMillis(s.StartTs)
+		endHour := hourFromMillis(s.EndTs - 1) // end is exclusive, so subtract 1ms
+		if startHour == endHour {
+			segs[j] = s
+			j++
+		}
+		// If startHour != endHour, segment crosses hour boundary and we skip it
+	}
+	return segs[:j]
 }

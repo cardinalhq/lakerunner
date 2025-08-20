@@ -61,9 +61,7 @@ const workQueueCleanupDirect = `-- name: WorkQueueCleanupDirect :many
 WITH params AS (
   SELECT
     NOW() AS v_now,
-    (SELECT value::interval
-       FROM public.settings
-      WHERE key = 'lock_ttl_dead') AS dead_ttl
+    $1::INTERVAL AS dead_ttl
 ),
 expired AS (
   UPDATE public.work_queue w
@@ -71,7 +69,8 @@ expired AS (
     claimed_by     = -1,
     claimed_at     = NULL,
     heartbeated_at = params.v_now,
-    needs_run      = TRUE
+    needs_run      = TRUE,
+    tries          = 0
   FROM params
   WHERE
     w.claimed_by <> -1
@@ -110,8 +109,8 @@ type WorkQueueCleanupRow struct {
 	LocksRemoved   int64                            `json:"locks_removed"`
 }
 
-func (q *Queries) WorkQueueCleanupDirect(ctx context.Context) ([]WorkQueueCleanupRow, error) {
-	rows, err := q.db.Query(ctx, workQueueCleanupDirect)
+func (q *Queries) WorkQueueCleanupDirect(ctx context.Context, lockTtlDead pgtype.Interval) ([]WorkQueueCleanupRow, error) {
+	rows, err := q.db.Query(ctx, workQueueCleanupDirect, lockTtlDead)
 	if err != nil {
 		return nil, err
 	}
@@ -178,16 +177,28 @@ func (q *Queries) WorkQueueCompleteDirect(ctx context.Context, arg WorkQueueComp
 	return err
 }
 
+const workQueueDeleteDirect = `-- name: WorkQueueDeleteDirect :exec
+DELETE FROM public.work_queue
+WHERE id = $1::BIGINT
+  AND claimed_by = $2
+`
+
+type WorkQueueDeleteParams struct {
+	ID       int64 `json:"id"`
+	WorkerID int64 `json:"worker_id"`
+}
+
+func (q *Queries) WorkQueueDeleteDirect(ctx context.Context, arg WorkQueueDeleteParams) error {
+	_, err := q.db.Exec(ctx, workQueueDeleteDirect, arg.ID, arg.WorkerID)
+	return err
+}
+
 const workQueueFailDirect = `-- name: WorkQueueFailDirect :exec
 WITH params AS (
   SELECT
     NOW()                                         AS v_now,
-    (SELECT value::interval
-       FROM public.settings
-      WHERE key = 'work_fail_requeue_ttl')        AS requeue_ttl,
-    (SELECT value::int
-       FROM public.settings
-      WHERE key = 'max_retries')                  AS max_retries
+    $3::INTERVAL                        AS requeue_ttl,
+    $4::INTEGER                         AS max_retries
 ),
 old AS (
   SELECT w.tries
@@ -227,12 +238,19 @@ WHERE sl.work_id    = $1::BIGINT
 `
 
 type WorkQueueFailParams struct {
-	ID       int64 `json:"id"`
-	WorkerID int64 `json:"worker_id"`
+	ID         int64           `json:"id"`
+	WorkerID   int64           `json:"worker_id"`
+	RequeueTtl pgtype.Interval `json:"requeue_ttl"`
+	MaxRetries int32           `json:"max_retries"`
 }
 
 func (q *Queries) WorkQueueFailDirect(ctx context.Context, arg WorkQueueFailParams) error {
-	_, err := q.db.Exec(ctx, workQueueFailDirect, arg.ID, arg.WorkerID)
+	_, err := q.db.Exec(ctx, workQueueFailDirect,
+		arg.ID,
+		arg.WorkerID,
+		arg.RequeueTtl,
+		arg.MaxRetries,
+	)
 	return err
 }
 
@@ -282,9 +300,7 @@ const workQueueHeartbeatDirect = `-- name: WorkQueueHeartbeatDirect :exec
 WITH params AS (
   SELECT
     NOW() AS v_now,
-    (SELECT value::interval
-       FROM public.settings
-      WHERE key = 'lock_ttl') AS lock_ttl
+    $3::INTERVAL AS lock_ttl
 )
 UPDATE public.work_queue w
 SET heartbeated_at = p.v_now
@@ -295,12 +311,76 @@ WHERE w.id            = ANY($1::BIGINT[])
 `
 
 type WorkQueueHeartbeatParams struct {
-	Ids      []int64 `json:"ids"`
-	WorkerID int64   `json:"worker_id"`
+	Ids      []int64         `json:"ids"`
+	WorkerID int64           `json:"worker_id"`
+	LockTtl  pgtype.Interval `json:"lock_ttl"`
 }
 
 // 1) heart-beat the work_queue
 func (q *Queries) WorkQueueHeartbeatDirect(ctx context.Context, arg WorkQueueHeartbeatParams) error {
-	_, err := q.db.Exec(ctx, workQueueHeartbeatDirect, arg.Ids, arg.WorkerID)
+	_, err := q.db.Exec(ctx, workQueueHeartbeatDirect, arg.Ids, arg.WorkerID, arg.LockTtl)
 	return err
+}
+
+const workQueueOrphanedSignalLockCleanup = `-- name: WorkQueueOrphanedSignalLockCleanup :one
+WITH params AS (
+  SELECT pg_advisory_xact_lock(hashtext('work_queue_global')::bigint) AS locked
+),
+orphaned AS (
+  SELECT sl.id
+  FROM public.signal_locks sl
+  LEFT JOIN public.work_queue wq ON sl.work_id = wq.id
+  WHERE wq.id IS NULL
+  ORDER BY sl.id
+  LIMIT $1
+),
+deleted AS (
+  DELETE FROM public.signal_locks sl
+  USING orphaned o
+  WHERE sl.id = o.id
+  RETURNING 1
+)
+SELECT COALESCE(COUNT(*), 0)::int AS deleted
+FROM deleted
+`
+
+func (q *Queries) WorkQueueOrphanedSignalLockCleanup(ctx context.Context, maxrows int32) (int32, error) {
+	row := q.db.QueryRow(ctx, workQueueOrphanedSignalLockCleanup, maxrows)
+	var deleted int32
+	err := row.Scan(&deleted)
+	return deleted, err
+}
+
+const workQueueSummary = `-- name: WorkQueueSummary :many
+SELECT count(*) AS count, signal, action
+FROM work_queue
+WHERE needs_run = true AND runnable_at <= now()
+GROUP BY signal, action
+ORDER BY signal, action
+`
+
+type WorkQueueSummaryRow struct {
+	Count  int64      `json:"count"`
+	Signal SignalEnum `json:"signal"`
+	Action ActionEnum `json:"action"`
+}
+
+func (q *Queries) WorkQueueSummary(ctx context.Context) ([]WorkQueueSummaryRow, error) {
+	rows, err := q.db.Query(ctx, workQueueSummary)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []WorkQueueSummaryRow
+	for rows.Next() {
+		var i WorkQueueSummaryRow
+		if err := rows.Scan(&i.Count, &i.Signal, &i.Action); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

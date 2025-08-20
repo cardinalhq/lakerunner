@@ -32,6 +32,7 @@ type WorkQueueDB interface {
 	WorkQueueClaim(ctx context.Context, params lrdb.WorkQueueClaimParams) (lrdb.WorkQueueClaimRow, error)
 	WorkQueueComplete(ctx context.Context, params lrdb.WorkQueueCompleteParams) error
 	WorkQueueFail(ctx context.Context, params lrdb.WorkQueueFailParams) error
+	WorkQueueDelete(ctx context.Context, params lrdb.WorkQueueDeleteParams) error
 	WorkQueueHeartbeat(ctx context.Context, params lrdb.WorkQueueHeartbeatParams) error
 }
 
@@ -59,6 +60,7 @@ type wqManager struct {
 	getWork      chan *workRequest
 	completeWork chan *workCompleteRequest
 	failWork     chan *workFailRequest
+	deleteWork   chan *workDeleteRequest
 }
 
 type workCompleteRequest struct {
@@ -83,11 +85,27 @@ type workFailRequest struct {
 	resp     chan error
 }
 
+type workDeleteRequest struct {
+	WorkItem *WorkItem
+	resp     chan error
+}
+
 func (m *wqManager) failWorkItem(ctx context.Context, w *WorkItem) error {
 	m.acquiredIDs = slices.DeleteFunc(m.acquiredIDs, func(id int64) bool {
 		return id == w.id
 	})
 	err := m.db.WorkQueueFail(ctx, lrdb.WorkQueueFailParams{
+		ID:       w.id,
+		WorkerID: m.workerID,
+	})
+	return err
+}
+
+func (m *wqManager) deleteWorkItem(ctx context.Context, w *WorkItem) error {
+	m.acquiredIDs = slices.DeleteFunc(m.acquiredIDs, func(id int64) bool {
+		return id == w.id
+	})
+	err := m.db.WorkQueueDelete(ctx, lrdb.WorkQueueDeleteParams{
 		ID:       w.id,
 		WorkerID: m.workerID,
 	})
@@ -115,6 +133,7 @@ func NewWorkQueueManager(
 		getWork:           make(chan *workRequest, 5),
 		completeWork:      make(chan *workCompleteRequest, 5),
 		failWork:          make(chan *workFailRequest, 5),
+		deleteWork:        make(chan *workDeleteRequest, 5),
 		heartbeatInterval: time.Minute,
 	}
 	for _, opt := range opts {
@@ -162,6 +181,9 @@ func (m *wqManager) runLoop(ctx context.Context) {
 		case req := <-m.failWork:
 			req.resp <- m.failWorkItem(ctx, req.WorkItem)
 
+		case req := <-m.deleteWork:
+			req.resp <- m.deleteWorkItem(ctx, req.WorkItem)
+
 		case <-time.Tick(m.heartbeatInterval):
 			m.heartbeat(ctx)
 		}
@@ -200,6 +222,7 @@ func (m *wqManager) getWorkItem(ctx context.Context) (*WorkItem, error) {
 		priority:    row.Priority,
 		runnableAt:  row.RunnableAt,
 		mgr:         m,
+		slotId:      row.SlotID,
 	}
 
 	m.acquiredIDs = append(m.acquiredIDs, work.id)

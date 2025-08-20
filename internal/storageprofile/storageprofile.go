@@ -57,8 +57,6 @@ func SetupStorageProfiles() (StorageProfileProvider, error) {
 		return nil, err
 	}
 
-	slog.Info("Database storage profile provider not configured, falling back to file provider", "error", err)
-
 	storagePath := os.Getenv("STORAGE_PROFILE_FILE")
 	if storagePath == "" {
 		storagePath = "/app/config/storage_profiles.yaml"

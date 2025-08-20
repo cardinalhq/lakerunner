@@ -23,6 +23,7 @@ WITH
     SELECT unnest($1::INTEGER[]) AS freq
   ),
 
+  -- Only used for rollup actions (compact doesn't expand)
   rollup_sources(parent_freq_ms, child_freq_ms) AS (
     VALUES
       (60000,    10000),
@@ -35,20 +36,25 @@ WITH
     SELECT id, work_id, organization_id, instance_num, dateint, frequency_ms, signal, ts_range, claimed_by, claimed_at, heartbeated_at, slot_id
     FROM public.signal_locks sl
     WHERE
-      sl.signal       = $2
-      AND sl.slot_id  = $3
+      sl.signal = $2
       AND sl.frequency_ms = ANY (
         ARRAY(SELECT freq FROM target_freqs)
         || COALESCE(
              (SELECT array_agg(child_freq_ms)
               FROM rollup_sources
               WHERE parent_freq_ms = ANY(SELECT freq FROM target_freqs)
-                AND $4::action_enum = 'rollup'),
+                AND $3::action_enum = 'rollup'),
              '{}'
            )
       )
   ),
 
+  -- Find a candidate work item that:
+  -- - matches the requested signal, action, and target frequencies
+  -- - has priority >= min_priority
+  -- - is runnable now
+  -- - is not blocked by an existing lock on the same lock key
+  -- - needs to run
   candidate AS (
     SELECT w.id, w.priority, w.runnable_at, w.organization_id, w.instance_num, w.dateint, w.frequency_ms, w.signal, w.action, w.needs_run, w.tries, w.ts_range, w.claimed_by, w.claimed_at, w.heartbeated_at, w.slot_id
     FROM public.work_queue w
@@ -57,43 +63,47 @@ WITH
      AND sl.instance_num    = w.instance_num
      AND sl.signal          = w.signal
      AND sl.slot_id         = w.slot_id
-     AND sl.ts_range && w.ts_range
-     AND sl.work_id <> w.id
+     AND sl.ts_range        && w.ts_range
+     AND sl.work_id         <> w.id
     WHERE
       w.frequency_ms = ANY (SELECT freq FROM target_freqs)
-      AND w.priority >= $5
-      AND w.signal     = $2
-      AND w.action     = $4
-      AND w.slot_id    = $3
-      AND w.runnable_at <= (SELECT ts FROM v_now)
+      AND w.priority       >= $4
+      AND w.signal         = $2
+      AND w.action         = $3
+      AND w.runnable_at   <= (SELECT ts FROM v_now)
       AND sl.id IS NULL
       AND w.needs_run
-    ORDER BY w.needs_run DESC, w.priority DESC, w.runnable_at, w.id
+    ORDER BY
+      w.needs_run DESC,
+      w.priority  DESC,
+      w.runnable_at,
+      w.id
     LIMIT 1
     FOR UPDATE SKIP LOCKED
   ),
 
+  -- Lock the candidate's own frequency, and (for rollup) its child frequency too.
   lock_map AS (
-    -- always insert a lock at the candidate’s own frequency
     SELECT c.frequency_ms AS lock_freq_ms
     FROM candidate c
 
     UNION ALL
 
-    -- if this is a rollup action, also insert a lock at the child-frequency
     SELECT rs.child_freq_ms AS lock_freq_ms
     FROM candidate c
     JOIN rollup_sources rs
       ON c.frequency_ms = rs.parent_freq_ms
-    WHERE $4 = 'rollup'
+    WHERE $3 = 'rollup'
   ),
 
+  -- Clear any stale locks tied to this work_id (idempotence).
   cleanup_locks AS (
     DELETE FROM public.signal_locks sl
     USING candidate c
     WHERE sl.work_id = c.id
   ),
 
+  -- Insert fresh locks bound to the candidate's slot.
   new_locks AS (
     INSERT INTO public.signal_locks (
       organization_id, instance_num, dateint,
@@ -107,7 +117,7 @@ WITH
       c.dateint,
       lm.lock_freq_ms,
       c.signal,
-      $6,
+      $5,
       (SELECT ts FROM v_now),
       c.ts_range,
       c.id,
@@ -117,10 +127,11 @@ WITH
     ORDER BY lm.lock_freq_ms
   ),
 
+  -- Claim the work item.
   updated AS (
     UPDATE public.work_queue w
     SET
-      claimed_by     = $6,
+      claimed_by     = $5,
       claimed_at     = (SELECT ts FROM v_now),
       heartbeated_at = (SELECT ts FROM v_now),
       needs_run      = FALSE,
@@ -136,7 +147,6 @@ SELECT id, priority, runnable_at, organization_id, instance_num, dateint, freque
 type WorkQueueClaimParams struct {
 	TargetFreqs []int32    `json:"target_freqs"`
 	Signal      SignalEnum `json:"signal"`
-	SlotID      int32      `json:"slot_id"`
 	Action      ActionEnum `json:"action"`
 	MinPriority int32      `json:"min_priority"`
 	WorkerID    int64      `json:"worker_id"`
@@ -165,7 +175,6 @@ func (q *Queries) WorkQueueClaimDirect(ctx context.Context, arg WorkQueueClaimPa
 	row := q.db.QueryRow(ctx, workQueueClaimDirect,
 		arg.TargetFreqs,
 		arg.Signal,
-		arg.SlotID,
 		arg.Action,
 		arg.MinPriority,
 		arg.WorkerID,

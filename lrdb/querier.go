@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Querier interface {
@@ -26,6 +27,7 @@ type Querier interface {
 	ClaimInqueueWork(ctx context.Context, arg ClaimInqueueWorkParams) (Inqueue, error)
 	CleanupInqueueWork(ctx context.Context) error
 	CompactLogSegments(ctx context.Context, arg CompactLogSegmentsParams) error
+	CompactTraceSegments(ctx context.Context, arg CompactTraceSegmentsParams) error
 	DeleteInqueueWork(ctx context.Context, arg DeleteInqueueWorkParams) error
 	GetExemplarLogsByFingerprint(ctx context.Context, arg GetExemplarLogsByFingerprintParams) (ExemplarLog, error)
 	GetExemplarLogsByService(ctx context.Context, arg GetExemplarLogsByServiceParams) ([]ExemplarLog, error)
@@ -39,18 +41,21 @@ type Querier interface {
 	GetMetricSegsForCompaction(ctx context.Context, arg GetMetricSegsForCompactionParams) ([]MetricSeg, error)
 	GetMetricSegsForRollup(ctx context.Context, arg GetMetricSegsForRollupParams) ([]MetricSeg, error)
 	GetSpanInfoByFingerprint(ctx context.Context, arg GetSpanInfoByFingerprintParams) (GetSpanInfoByFingerprintRow, error)
+	GetTraceSegmentsForCompaction(ctx context.Context, arg GetTraceSegmentsForCompactionParams) ([]GetTraceSegmentsForCompactionRow, error)
 	InqueueJournalDelete(ctx context.Context, arg InqueueJournalDeleteParams) error
 	InqueueJournalUpsert(ctx context.Context, arg InqueueJournalUpsertParams) (bool, error)
+	InqueueSummary(ctx context.Context) ([]InqueueSummaryRow, error)
 	InsertLogSegmentDirect(ctx context.Context, arg InsertLogSegmentParams) error
 	InsertMetricSegmentDirect(ctx context.Context, arg InsertMetricSegmentParams) error
+	InsertTraceSegmentDirect(ctx context.Context, arg InsertTraceSegmentDirectParams) error
 	ListSegmentsForQuery(ctx context.Context, arg ListSegmentsForQueryParams) ([]ListSegmentsForQueryRow, error)
 	// Returns an estimate of the number of log segments, average bytes, average records,
 	// and average bytes per record for log segments in the last hour per organization and instance.
 	// This query is basically identical to the MetricSegEstimator, but for log segments.
 	LogSegEstimator(ctx context.Context, arg LogSegEstimatorParams) ([]LogSegEstimatorRow, error)
 	// Returns an estimate of the number of metric segments, average bytes, average records,
-	// and average bytes per record for metric segments in the last hour per organization and instance.
-	// This query is basically identical to the LogSegEstimator, but for metric segments.
+	// and average bytes per record for metric segments in the last hour per organization, instance, and frequency.
+	// Uses frequency_ms to provide more accurate estimates based on collection frequency.
 	MetricSegEstimator(ctx context.Context, arg MetricSegEstimatorParams) ([]MetricSegEstimatorRow, error)
 	ObjectCleanupAdd(ctx context.Context, arg ObjectCleanupAddParams) error
 	ObjectCleanupComplete(ctx context.Context, id uuid.UUID) error
@@ -63,13 +68,16 @@ type Querier interface {
 	UpsertServiceIdentifier(ctx context.Context, arg UpsertServiceIdentifierParams) (UpsertServiceIdentifierRow, error)
 	WorkQueueAddDirect(ctx context.Context, arg WorkQueueAddParams) error
 	WorkQueueClaimDirect(ctx context.Context, arg WorkQueueClaimParams) (WorkQueueClaimRow, error)
-	WorkQueueCleanupDirect(ctx context.Context) ([]WorkQueueCleanupRow, error)
+	WorkQueueCleanupDirect(ctx context.Context, lockTtlDead pgtype.Interval) ([]WorkQueueCleanupRow, error)
 	WorkQueueCompleteDirect(ctx context.Context, arg WorkQueueCompleteParams) error
+	WorkQueueDeleteDirect(ctx context.Context, arg WorkQueueDeleteParams) error
 	WorkQueueFailDirect(ctx context.Context, arg WorkQueueFailParams) error
 	WorkQueueGC(ctx context.Context, arg WorkQueueGCParams) (int32, error)
 	WorkQueueGlobalLock(ctx context.Context) error
 	// 1) heart-beat the work_queue
 	WorkQueueHeartbeatDirect(ctx context.Context, arg WorkQueueHeartbeatParams) error
+	WorkQueueOrphanedSignalLockCleanup(ctx context.Context, maxrows int32) (int32, error)
+	WorkQueueSummary(ctx context.Context) ([]WorkQueueSummaryRow, error)
 }
 
 var _ Querier = (*Queries)(nil)

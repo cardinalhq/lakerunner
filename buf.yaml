@@ -1,0 +1,12 @@
+# Buf configuration for proto generation
+version: v2
+modules:
+  - path: queryproto
+deps:
+  - buf.build/googleapis/googleapis
+lint:
+  use:
+    - STANDARD
+breaking:
+  use:
+    - FILE

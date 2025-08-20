@@ -17,6 +17,7 @@ package workqueue
 import (
 	"context"
 	"log/slog"
+	"time"
 )
 
 // Handler defines the common interface for work handlers
@@ -27,8 +28,11 @@ type Handler interface {
 
 // Config holds configuration values for workqueue handlers
 type Config struct {
-	MaxWorkRetries int
-	MyInstanceID   int64
+	MaxWorkRetries     int
+	WorkFailRequeueTTL time.Duration
+	LockTTL            time.Duration
+	LockTTLDead        time.Duration
+	MyInstanceID       int64
 }
 
 // HandlerOption configures a handler
@@ -36,11 +40,19 @@ type HandlerOption func(*handlerOptions)
 
 type handlerOptions struct {
 	logger *slog.Logger
+	config *Config
 }
 
 // WithLogger sets the logger for handlers
 func WithLogger(logger *slog.Logger) HandlerOption {
 	return func(opts *handlerOptions) {
 		opts.logger = logger
+	}
+}
+
+// WithConfig sets the configuration for handlers
+func WithConfig(config *Config) HandlerOption {
+	return func(opts *handlerOptions) {
+		opts.config = config
 	}
 }

@@ -1,0 +1,10 @@
+-- 1755502407_drop_settings_table.up.sql
+
+-- Drop the settings table as all settings have been converted to Go parameters
+-- Settings previously stored:
+-- - lock_ttl (5 minutes) -> Go Config.LockTTL
+-- - lock_ttl_dead (20 minutes) -> Go Config.LockTTLDead  
+-- - work_max_retries (10) -> Go Config.MaxWorkRetries
+-- - work_fail_requeue_ttl (1 minute) -> Go Config.WorkFailRequeueTTL
+
+DROP TABLE IF EXISTS settings;

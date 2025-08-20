@@ -208,11 +208,6 @@ type ServiceIdentifier struct {
 	Namespace      pgtype.Text `json:"namespace"`
 }
 
-type Setting struct {
-	Key   string `json:"key"`
-	Value string `json:"value"`
-}
-
 type SignalLock struct {
 	ID             int64                            `json:"id"`
 	WorkID         *int64                           `json:"work_id"`
@@ -226,6 +221,21 @@ type SignalLock struct {
 	ClaimedAt      *time.Time                       `json:"claimed_at"`
 	HeartbeatedAt  time.Time                        `json:"heartbeated_at"`
 	SlotID         int32                            `json:"slot_id"`
+}
+
+type TraceSeg struct {
+	OrganizationID uuid.UUID                 `json:"organization_id"`
+	Dateint        int32                     `json:"dateint"`
+	SegmentID      int64                     `json:"segment_id"`
+	InstanceNum    int16                     `json:"instance_num"`
+	SlotID         int32                     `json:"slot_id"`
+	Fingerprints   []int64                   `json:"fingerprints"`
+	RecordCount    int64                     `json:"record_count"`
+	FileSize       int64                     `json:"file_size"`
+	IngestDateint  int32                     `json:"ingest_dateint"`
+	TsRange        pgtype.Range[pgtype.Int8] `json:"ts_range"`
+	CreatedBy      CreatedBy                 `json:"created_by"`
+	CreatedAt      time.Time                 `json:"created_at"`
 }
 
 type WorkQueue struct {

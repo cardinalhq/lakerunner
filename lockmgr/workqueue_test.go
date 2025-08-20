@@ -52,6 +52,11 @@ func (m *mockWorkQueueDB) WorkQueueFail(ctx context.Context, params lrdb.WorkQue
 	return args.Error(0)
 }
 
+func (m *mockWorkQueueDB) WorkQueueDelete(ctx context.Context, params lrdb.WorkQueueDeleteParams) error {
+	args := m.Called(ctx, params)
+	return args.Error(0)
+}
+
 func (m *mockWorkQueueDB) WorkQueueHeartbeat(ctx context.Context, params lrdb.WorkQueueHeartbeatParams) error {
 	args := m.Called(ctx, params)
 	return args.Error(0)

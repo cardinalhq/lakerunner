@@ -57,15 +57,16 @@ const (
 )
 
 type RunqueueLoopContext struct {
-	ctx        context.Context
-	wqm        lockmgr.WorkQueueManager
-	mdb        lrdb.StoreFull
-	sp         storageprofile.StorageProfileProvider
-	awsmanager *awsclient.Manager
-	estimator  estimator.Estimator
-	signal     string
-	action     string
-	ll         *slog.Logger
+	ctx             context.Context
+	wqm             lockmgr.WorkQueueManager
+	mdb             lrdb.StoreFull
+	sp              storageprofile.StorageProfileProvider
+	awsmanager      *awsclient.Manager
+	metricEstimator estimator.MetricEstimator
+	logEstimator    estimator.LogEstimator
+	signal          string
+	action          string
+	ll              *slog.Logger
 }
 
 func NewRunqueueLoopContext(ctx context.Context, signal string, action string, assumeRoleSessionName string) (*RunqueueLoopContext, error) {
@@ -84,9 +85,14 @@ func NewRunqueueLoopContext(ctx context.Context, signal string, action string, a
 		return nil, fmt.Errorf("failed to create AWS manager: %w", err)
 	}
 
-	est, err := estimator.NewEstimator(ctx, mdb)
+	metricEst, err := estimator.NewMetricEstimator(ctx, mdb)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create estimator: %w", err)
+		return nil, fmt.Errorf("failed to create metric estimator: %w", err)
+	}
+
+	logEst, err := estimator.NewLogEstimator(ctx, mdb)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create log estimator: %w", err)
 	}
 
 	sp, err := storageprofile.SetupStorageProfiles()
@@ -103,15 +109,16 @@ func NewRunqueueLoopContext(ctx context.Context, signal string, action string, a
 	go wqm.Run(ctx)
 
 	return &RunqueueLoopContext{
-		ctx:        ctx,
-		wqm:        wqm,
-		mdb:        mdb,
-		sp:         sp,
-		awsmanager: awsmanager,
-		estimator:  est,
-		signal:     signal,
-		action:     action,
-		ll:         ll,
+		ctx:             ctx,
+		wqm:             wqm,
+		mdb:             mdb,
+		sp:              sp,
+		awsmanager:      awsmanager,
+		metricEstimator: metricEst,
+		logEstimator:    logEst,
+		signal:          signal,
+		action:          action,
+		ll:              ll,
 	}, nil
 }
 
@@ -125,14 +132,9 @@ func RunqueueLoop(loop *RunqueueLoopContext, pfx RunqueueProcessingFunction, arg
 		default:
 		}
 
-		t0 := time.Now()
-		shouldBackoff, didWork, err := workqueueProcess(ctx, loop, pfx, args)
+		shouldBackoff, _, err := workqueueProcess(ctx, loop, pfx, args)
 		if err != nil {
 			return err
-		}
-
-		if didWork {
-			loop.ll.Info("Completed work", slog.Duration("elapsed", time.Since(t0)))
 		}
 
 		if shouldBackoff {
@@ -154,6 +156,11 @@ func frequenciesToRequest(signal, action string) ([]int32, error) {
 			return []int32{-1}, nil
 		}
 		return nil, errors.New("unknown action for logs signal: " + action)
+	case "traces":
+		if action == "compact" {
+			return []int32{-1}, nil
+		}
+		return nil, errors.New("unknown action for traces signal: " + action)
 	case "metrics":
 		switch action {
 		case "compact":
@@ -217,7 +224,7 @@ func workqueueProcess(
 		slog.Int("instanceNum", int(inf.InstanceNum())),
 	)
 
-	ll.Info("Processing work queue item",
+	ll.Info("Starting work queue item",
 		slog.Int("priority", int(inf.Priority())),
 		slog.Int("frequencyMs", int(inf.FrequencyMs())),
 		slog.Int("dateint", int(inf.Dateint())),
@@ -230,16 +237,21 @@ func workqueueProcess(
 		ll.Error("Failed to create temporary directory", slog.Any("error", err))
 		return true, false, fmt.Errorf("failed to create temporary directory: %w", err)
 	}
-	ll.Info("Created temporary directory", slog.String("path", tmpdir))
 	defer func() {
 		if err := os.RemoveAll(tmpdir); err != nil {
 			ll.Error("Failed to remove temporary directory", slog.String("path", tmpdir), slog.Any("error", err))
-		} else {
-			ll.Info("Removed temporary directory", slog.String("path", tmpdir))
 		}
 	}()
 
-	estBytesPerRecord := loop.estimator.Get(inf.OrganizationID(), inf.InstanceNum(), inf.Signal()).EstimatedRecordCount
+	var estBytesPerRecord int64
+	switch inf.Signal() {
+	case lrdb.SignalEnumMetrics:
+		estBytesPerRecord = loop.metricEstimator.Get(inf.OrganizationID(), inf.InstanceNum(), inf.FrequencyMs())
+	case lrdb.SignalEnumLogs:
+		estBytesPerRecord = loop.logEstimator.Get(inf.OrganizationID(), inf.InstanceNum())
+	default:
+		estBytesPerRecord = 40_000 // Default fallback
+	}
 	t0 = time.Now()
 	result, err := pfx(ctx, ll, tmpdir, loop.awsmanager, loop.sp, loop.mdb, inf, estBytesPerRecord, args)
 	workqueueDuration.Record(ctx, time.Since(t0).Seconds(),

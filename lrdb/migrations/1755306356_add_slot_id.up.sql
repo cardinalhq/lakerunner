@@ -1,13 +1,17 @@
 -- 1755306356_add_slot_id.up.sql
 
+-- Pre-lock tables to prevent deadlocks during migration
+LOCK TABLE public.work_queue IN ACCESS EXCLUSIVE MODE;
+LOCK TABLE public.signal_locks IN ACCESS EXCLUSIVE MODE;
+
 -- Add slot_id column to work_queue table
-ALTER TABLE public.work_queue ADD COLUMN slot_id INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE public.work_queue ADD COLUMN IF NOT EXISTS slot_id INTEGER NOT NULL DEFAULT 0;
 
 -- Drop existing conflict constraint
 ALTER TABLE public.work_queue DROP CONSTRAINT work_queue_conflict;
 
 -- Add new conflict constraint including slot_id
-ALTER TABLE public.work_queue ADD CONSTRAINT work_queue_conflict 
+ALTER TABLE public.work_queue ADD CONSTRAINT work_queue_conflict
   EXCLUDE USING GIST (
     organization_id WITH =,
     instance_num    WITH =,
@@ -18,8 +22,8 @@ ALTER TABLE public.work_queue ADD CONSTRAINT work_queue_conflict
     ts_range        WITH &&
   );
 
--- Add slot_id column to signal_locks table  
-ALTER TABLE public.signal_locks ADD COLUMN slot_id INTEGER NOT NULL DEFAULT 0;
+-- Add slot_id column to signal_locks table
+ALTER TABLE public.signal_locks ADD COLUMN IF NOT EXISTS slot_id INTEGER NOT NULL DEFAULT 0;
 
 -- Drop existing conflict constraint
 ALTER TABLE public.signal_locks DROP CONSTRAINT signal_locks_conflict;
@@ -34,10 +38,6 @@ ALTER TABLE public.signal_locks ADD CONSTRAINT signal_locks_conflict
     slot_id          WITH =,
     ts_range         WITH &&
   );
-
--- Update unique constraint to include slot_id
-ALTER TABLE public.signal_locks DROP CONSTRAINT signal_locks_organization_id_instance_num_dateint_frequency_key;
-ALTER TABLE public.signal_locks ADD UNIQUE (organization_id, instance_num, dateint, frequency_ms, signal, slot_id);
 
 -- Update work_queue_add function to include slot_id
 CREATE OR REPLACE FUNCTION public.work_queue_add(

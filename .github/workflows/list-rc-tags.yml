@@ -1,0 +1,43 @@
+name: List RC Tags
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  list-tags:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: List available RC tags for promotion
+        run: |
+          echo "Available Release Candidate tags for promotion:"
+          echo "=============================================="
+          echo ""
+          
+          # Get all tags that match RC pattern, sorted by version
+          git tag -l 'v*.*.*-*' | sort -V | tail -20 | while read tag; do
+            # Extract base version for each tag
+            base_version=$(echo "$tag" | sed 's/-[a-zA-Z0-9]*$//')
+            
+            # Check if this tag has Docker images
+            echo "📦 $tag"
+            echo "   → Would promote to: $base_version"
+            echo "   → Command: Use 'Promote Release' workflow with:"
+            echo "     - RC version: $tag"
+            echo "     - Final version: (leave empty for auto-derive to $base_version)"
+            echo ""
+          done
+          
+          echo "Usage:"
+          echo "------"
+          echo "1. Go to Actions → Promote Release"
+          echo "2. Enter the RC tag you want to promote"
+          echo "3. Leave final version empty to auto-derive, or specify manually"
+          echo ""
+          echo "Recent RC tags (last 20 shown above)"

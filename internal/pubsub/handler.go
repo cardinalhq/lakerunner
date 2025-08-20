@@ -62,7 +62,12 @@ func handleMessage(ctx context.Context, msg []byte, sp storageprofile.StoragePro
 			item.CollectorName = profile.CollectorName
 		}
 		item.InstanceNum = profile.InstanceNum
-		slog.Info("Processing item", slog.String("bucket", profile.Bucket), slog.String("object_id", item.ObjectID), slog.String("telemetry_type", item.TelemetryType))
+		slog.Info("Starting pubsub item",
+			slog.String("bucket", profile.Bucket),
+			slog.String("objectID", item.ObjectID),
+			slog.String("telemetryType", item.TelemetryType),
+			slog.String("organizationID", item.OrganizationID.String()),
+			slog.Int("instanceNum", int(item.InstanceNum)))
 
 		err = mdb.PutInqueueWork(ctx, lrdb.PutInqueueWorkParams{
 			OrganizationID: item.OrganizationID,

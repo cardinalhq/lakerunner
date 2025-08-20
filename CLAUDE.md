@@ -2,127 +2,157 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+---
+
+## Core Rules
+
+1. **Never break these rules:**
+   - Do not edit generated files (e.g., `*.pb.go`, `*.sql.go`, sqlc output, or any file marked as generated).
+   - Do not include Claude Code promotional text in commits (e.g., “Generated with Claude Code”).
+   - Do not remove `partial:` sections from `goreleaser` config—these are required for CI.
+   - Do not edit old migrations.  One you just changed in this session is OK.
+
+---
+
 ## Project Overview
 
-LakeRunner is a real-time telemetry ingestion engine that transforms S3-compatible object stores into high-performance observability backends. It processes structured telemetry data (CSV, Parquet, JSON.gz) from sources like OpenTelemetry collectors, DataDog, and FluentBit, converting them into optimized Apache Parquet format with indexing, aggregation, and compaction capabilities.
+LakeRunner is a **real-time telemetry ingestion engine** that transforms S3-compatible object stores into high-performance observability backends.
+
+It ingests structured telemetry data (CSV, Parquet, JSON.gz) from sources like OpenTelemetry collectors, DataDog, and FluentBit. Data is converted into optimized **Apache Parquet** with indexing, aggregation, and compaction.
+
+---
+
+## Development Workflow
+
+1. **Code Generation**
+   - Run `make generate` after modifying SQL queries.
+   - Never modify generated files manually.
+
+2. **Testing & Validation**
+   - `make test` for full suite with regeneration.
+   - `make test-only` to run tests without regeneration.
+   - `make check` for full validation: tests, lint, license headers.
+
+3. **Quality & Compliance**
+   - `make lint` for golangci-lint (15m timeout).
+   - `make license-check` for license headers.
+   - `make imports-fix` and `gofmt` to keep code tidy.
+   - All source files must include AGPL v3 headers.
+
+4. **Migrations**
+   - `make new-migration name=migration_name` for lrdb migrations.
+   - No migrations permitted in `configdb` (externally managed schema).
+
+5. **Commit Messages**
+   - Keep clean, technical, and focused.
+   - Use conventional commit style when applicable.
+
+---
 
 ## Development Commands
 
-### Building and Testing
+- **Build:** `make local` (binary in `./bin/lakerunner`)
+- **Check & Test:** `make test`, `make test-only`, `make check`
+- **Codegen:** `make generate`
+- **Lint & Format:** `make lint`, `make imports-fix`
+- **License:** `make license-check`
+- **Migrations:** `make new-migration name=migration_name`
 
-- `make local` - Build binary locally (outputs to bin/lakerunner)
-- `make test` - Run full test suite with code generation
-- `make test-only` - Run tests without regenerating code
-- `make check` - Run comprehensive checks: tests, linting, and license validation
-- `make generate` - Generate code using `go generate ./...`
-
-### Linting and Quality
-
-- `make lint` - Run golangci-lint with 15m timeout
-- `make license-check` - Validate license headers using license-eye tool
-- `make imports-fix` - ensure the imports statements are sane
-- Run gofmt to ensure there are no trailing whitespace or other issues.
-
-### Database Migrations
-
-- `make new-migration name=migration_name` - Create new database migration files
-
-### Docker and Release
-
-- `make images` - Build multi-architecture Docker images using goreleaser
-- `make promote-to-prod` - Promote dev images to production
+---
 
 ## Architecture Overview
 
-LakeRunner follows an event-driven architecture with these core components:
-
 ### Data Flow Pipeline
 
-1. **PubSub Handler** - Receives S3 notifications via SQS or HTTP webhooks
-2. **Ingestion** - Processes raw files into cooked Parquet format
-3. **Processing** - Handles compaction, rollups, and cleanup operations
-4. **Query** - Serves data through API and worker nodes
+1. **PubSub Handler** – S3 notifications via SQS or webhooks
+2. **Ingestion** – Raw files → Parquet conversion
+3. **Processing** – Compaction, rollups, cleanup
+4. **Query** – API + worker nodes serve data
 
-### Key Databases
+### Storage
 
-- **lrdb** - Main LakeRunner database for segment indexing and work queues
-- **configdb** - Configuration and storage profile management
-- Uses PostgreSQL with migrations in `lrdb/migrations/`
+- **Raw files**: S3 under `otel-raw/`, `logs-raw/`, `metrics-raw/`
+- **Cooked files**: Optimized Parquet back to S3
+- **Segment index**: PostgreSQL tables for query optimization
+
+### Databases
+
+- **lrdb** – main DB (segments, work queues), migrations in `lrdb/migrations/`
+- **configdb** – configuration & storage profiles, schema fixed and externally managed
 
 ### Major Components
 
-- **cmd/pubsub/** - S3 event notification handling (SQS, webhooks)
-- **cmd/ingest_*/** - File ingestion and format conversion
-- **cmd/compact_*/** - Data compaction for logs and metrics
-- **cmd/rollup_metrics.go** - Metric aggregation and rollups
-- **cmd/sweeper.go** - Cleanup and maintenance operations
-- **fileconv/** - Format conversion utilities (JSON.gz, Proto, Parquet)
-- **internal/buffet/** - Parquet processing utilities
-- **internal/logcrunch/** - Log compaction and fingerprinting
-- **lockmgr/** - Distributed work coordination
+- **cmd/pubsub/** – S3 event handling
+- **cmd/ingest_*/** – ingestion & conversion
+- **cmd/compact_*/** – data compaction
+- **cmd/rollup_metrics.go** – metric rollups
+- **cmd/sweeper.go** – cleanup tasks
+- **fileconv/** – conversion helpers (JSON.gz, Proto, Parquet)
+- **internal/buffet/** – Parquet utilities
+- **internal/logcrunch/** – log compaction/fingerprints
+- **lockmgr/** – distributed coordination
 
-### Storage Architecture
-
-- **Raw files** - Stored in S3 under `otel-raw/`, `logs-raw/`, `metrics-raw/` prefixes
-- **Cooked files** - Optimized Parquet files stored back to S3
-- **Segment indexing** - PostgreSQL tables track data segments for query optimization
+---
 
 ## Code Conventions
 
 ### Go Standards
 
-- Uses Go 1.24+ features (e.g., range over integers)
-- All source files require AGPL v3 license headers
-- Code generation via `go generate` for SQL queries (using sqlc)
+- Go 1.25 (use new language features).
+- Follow idiomatic Go style; imports fixed with `make fmt` which will gofmt and order imports.
+- Generated SQL via sqlc and protobufs.  Do not edit generated code.
 
-### Testing Approach
+### Testing
 
-- Table-driven tests for simple functions
-- Individual tests for complex setup/inspection scenarios
-- Test files must accompany changes to existing tested functions
-- New public methods require Go documentation
+- Table-driven tests for simple cases.
+- Dedicated tests for complex setups.
+- All new/changed functions must include tests.
+- New public methods require GoDoc comments.
 
 ### Database Schema
 
-- Uses sqlc for type-safe SQL query generation
-- Migration files in `lrdb/migrations/` and `internal/configdb/static-schema/`
-- Database connections managed through connection pools
+- Type-safe SQL via sqlc.
+- `lrdb/migrations/` for schema changes.
+- `internal/configdb/static-schema/` contains fixed schema snapshots (no migrations allowed).
+- Connections are pooled for performance.
 
-## Development Workflow
+Rules:
 
-1. **Code Generation** - Run `make generate` after modifying SQL queries
-2. **Testing** - Use `make test` for full validation including regeneration
-3. **Quality Checks** - `make check` must pass before PR submission
-4. **License Compliance** - All new source files need AGPL v3 headers
+- Migrations run inside a transaction, so CREATE INDEX CONCURRENTLY will not work for instance.
+- The `*_seg` tables are partitioned first by `organization_id`, and then those are further partitioned by `dateint`.  Use this information when crafting queries for table pruning to be efficient, and when making indexes.
 
-## Commit Message Guidelines
-
-- **NEVER** include Claude Code advertising, "Generated with Claude Code", or similar promotional text
-- Keep commit messages clean and focused on the technical changes
-- Use conventional commit format when appropriate
-
-## Storage Profiles and Configuration
-
-LakeRunner uses YAML-based configuration for:
-
-- **Storage Profiles** - Map S3 buckets to organizations and collectors
-- **API Keys** - Authentication for query API access
-- **Cloud Provider Settings** - AWS/GCP/Azure integration parameters
-
-Key environment variables:
-
-- `AWS_ACCESS_KEY`, `AWS_SECRET_KEY` - S3 credentials
-- `S3_BUCKET` - Target bucket name
-- `S3_PROVIDER` - Cloud provider (aws, gcp)
-- `GOGC` - Go garbage collection tuning (defaults to 50%)
+---
 
 ## Query Architecture
 
-The query system consists of:
+- **Query API** – REST interface
+- **Query Workers** – scalable workers
+- **Segment Index** – PostgreSQL metadata
+- **DuckDB Integration** – high-performance queries over Parquet
 
-- **Query API** - REST API for data access
-- **Query Workers** - Scalable processing nodes
-- **Segment Index** - PostgreSQL-based metadata for efficient data location
-- **DuckDB Integration** - High-performance analytical queries on Parquet data
+---
 
-- Do not ever edit generated files, which have either an in-file marker or are suspected generated files like *.pb.go, and in general *.something.go (with exceptions of course, nothing is ever perfect.  If you doubt, ask!)  This also includes SQLC generated files when so marked.
+## Storage Profiles & Configuration
+
+Configuration is YAML-based:
+
+- **Storage Profiles** – mapping S3 buckets to orgs/collectors
+- **API Keys** – for authentication
+- **Cloud Settings** – AWS/GCP/Azure integration
+
+**Environment Variables:**
+
+- `AWS_ACCESS_KEY`, `AWS_SECRET_KEY` – S3 creds
+- `S3_BUCKET` – target bucket
+- `S3_PROVIDER` – provider (`aws`, `gcp`)
+- `GOGC` – GC tuning (default 50%)
+- Inside the container, memory and cpu limits for Go will match the constraints of the container.
+
+---
+
+## Docker & Release
+
+- Docker images built via GitHub Actions.
+- Image tag management handled automatically.
+- CI uses **partial builds** (`partial:` section in goreleaser).
+- Developers cannot use `partial:` locally, but must keep it in config.
