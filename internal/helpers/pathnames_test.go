@@ -39,7 +39,7 @@ func TestMakeDBObjectID(t *testing.T) {
 			hour:          15,
 			segmentID:     42,
 			ttype:         "events",
-			expected:      "db/123e4567-e89b-12d3-a456-426614174000/testCollector/20240607/events/15/tbl_42.parquet",
+			expected:      "db/123e4567-e89b-12d3-a456-426614174000/default/20240607/events/15/tbl_42.parquet",
 		},
 		{
 			name:          "single digit hour",
@@ -49,13 +49,13 @@ func TestMakeDBObjectID(t *testing.T) {
 			hour:          7,
 			segmentID:     1,
 			ttype:         "metrics",
-			expected:      "db/123e4567-e89b-12d3-a456-426614174000/collector/20240607/metrics/07/tbl_1.parquet",
+			expected:      "db/123e4567-e89b-12d3-a456-426614174000/default/20240607/metrics/07/tbl_1.parquet",
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result := MakeDBObjectID(tc.orgID, tc.collectorName, tc.dateint, tc.hour, tc.segmentID, tc.ttype)
+			result := MakeDBObjectID(tc.orgID, tc.dateint, tc.hour, tc.segmentID, tc.ttype)
 			if result != tc.expected {
 				t.Errorf("MakeDBObjectID() = %q, want %q", result, tc.expected)
 			}
@@ -75,30 +75,28 @@ func TestMakeDBObjectIDbad(t *testing.T) {
 		expected      string
 	}{
 		{
-			name:          "standard case",
-			orgID:         uuid.MustParse("123e4567-e89b-12d3-a456-426614174000"),
-			collectorName: "testCollector",
-			dateint:       20240607,
-			hour:          15,
-			segmentID:     42,
-			ttype:         "events",
-			expected:      "db/123e4567-e89b-12d3-a456-426614174000/testCollector/20240607/events/15/tbl_42.parquet",
+			name:      "standard case",
+			orgID:     uuid.MustParse("123e4567-e89b-12d3-a456-426614174000"),
+			dateint:   20240607,
+			hour:      15,
+			segmentID: 42,
+			ttype:     "events",
+			expected:  "db/123e4567-e89b-12d3-a456-426614174000/default/20240607/events/15/tbl_42.parquet",
 		},
 		{
-			name:          "single digit hour (no zero padding)",
-			orgID:         uuid.MustParse("123e4567-e89b-12d3-a456-426614174000"),
-			collectorName: "collector",
-			dateint:       20240607,
-			hour:          7,
-			segmentID:     1,
-			ttype:         "metrics",
-			expected:      "db/123e4567-e89b-12d3-a456-426614174000/collector/20240607/metrics/7/tbl_1.parquet",
+			name:      "single digit hour (no zero padding)",
+			orgID:     uuid.MustParse("123e4567-e89b-12d3-a456-426614174000"),
+			dateint:   20240607,
+			hour:      7,
+			segmentID: 1,
+			ttype:     "metrics",
+			expected:  "db/123e4567-e89b-12d3-a456-426614174000/default/20240607/metrics/7/tbl_1.parquet",
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result := MakeDBObjectIDbad(tc.orgID, tc.collectorName, tc.dateint, tc.hour, tc.segmentID, tc.ttype)
+			result := MakeDBObjectIDbad(tc.orgID, tc.dateint, tc.hour, tc.segmentID, tc.ttype)
 			if result != tc.expected {
 				t.Errorf("MakeDBObjectIDbad() = %q, want %q", result, tc.expected)
 			}

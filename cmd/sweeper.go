@@ -17,6 +17,8 @@ package cmd
 import (
 	"fmt"
 	"log/slog"
+	"os"
+	"strconv"
 
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
@@ -46,12 +48,20 @@ func init() {
 				}
 			}()
 
-			cmd := sweeper.New(myInstanceID, servicename, syncLegacyTables)
+			// Check environment variable first, then fall back to flag
+			finalSyncLegacyTables := syncLegacyTables
+			if envValue := os.Getenv("SYNC_LEGACY_TABLES"); envValue != "" {
+				if parsed, err := strconv.ParseBool(envValue); err == nil {
+					finalSyncLegacyTables = parsed
+				}
+			}
+
+			cmd := sweeper.New(myInstanceID, servicename, finalSyncLegacyTables)
 			return cmd.Run(doneCtx)
 		},
 	}
 
-	cmd.Flags().BoolVar(&syncLegacyTables, "sync-legacy-tables", false, "Enable periodic sync from c_ tables to bucket management tables")
+	cmd.Flags().BoolVar(&syncLegacyTables, "sync-legacy-tables", false, "Enable periodic sync from c_ tables to bucket management tables (can also be set via SYNC_LEGACY_TABLES env var)")
 
 	rootCmd.AddCommand(cmd)
 }

@@ -30,7 +30,7 @@ func TestNewStorageProfileProvider(t *testing.T) {
 	role := "test-role"
 	mockProfile := configdb.GetStorageProfileRow{
 		OrganizationID: orgID,
-		InstanceNum:    1,
+		InstanceNum:    9999,
 		ExternalID:     "test-collector",
 		CloudProvider:  "aws",
 		Region:         "us-west-2",

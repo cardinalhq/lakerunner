@@ -112,7 +112,6 @@ func queueMetricCompaction(ctx context.Context, mdb lrdb.StoreFull, inf qmc) err
 
 	rp := lrdb.WorkQueueAddParams{
 		OrgID:     inf.OrganizationID,
-		Instance:  inf.InstanceNum,
 		Signal:    lrdb.SignalEnumMetrics,
 		Action:    lrdb.ActionEnumCompact,
 		Dateint:   dateint,
@@ -154,7 +153,6 @@ func queueMetricRollup(ctx context.Context, mdb lrdb.StoreFull, inf qmc) error {
 
 	rp := lrdb.WorkQueueAddParams{
 		OrgID:     inf.OrganizationID,
-		Instance:  inf.InstanceNum,
 		Signal:    lrdb.SignalEnumMetrics,
 		Action:    lrdb.ActionEnumRollup,
 		Dateint:   dateint,
@@ -194,7 +192,6 @@ func queueLogCompaction(ctx context.Context, mdb lrdb.StoreFull, inf qmc) error 
 
 	return mdb.WorkQueueAdd(ctx, lrdb.WorkQueueAddParams{
 		OrgID:      inf.OrganizationID,
-		Instance:   inf.InstanceNum,
 		Signal:     lrdb.SignalEnumLogs,
 		Action:     lrdb.ActionEnumCompact,
 		Dateint:    boundary.DateInt,

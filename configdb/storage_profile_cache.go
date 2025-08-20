@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/google/uuid"
 	"github.com/jellydator/ttlcache/v3"
 )
 
@@ -49,9 +50,9 @@ type StorageProfileByNameCacheValue struct {
 	error
 }
 
-func (store *Store) GetStorageProfileByCollectorName(ctx context.Context, params GetStorageProfileByCollectorNameParams) (GetStorageProfileByCollectorNameRow, error) {
-	loader := ttlcache.LoaderFunc[GetStorageProfileByCollectorNameParams, StorageProfileByNameCacheValue](
-		func(cache *ttlcache.Cache[GetStorageProfileByCollectorNameParams, StorageProfileByNameCacheValue], key GetStorageProfileByCollectorNameParams) *ttlcache.Item[GetStorageProfileByCollectorNameParams, StorageProfileByNameCacheValue] {
+func (store *Store) GetStorageProfileByCollectorName(ctx context.Context, organizationID uuid.UUID) (GetStorageProfileByCollectorNameRow, error) {
+	loader := ttlcache.LoaderFunc[uuid.UUID, StorageProfileByNameCacheValue](
+		func(cache *ttlcache.Cache[uuid.UUID, StorageProfileByNameCacheValue], key uuid.UUID) *ttlcache.Item[uuid.UUID, StorageProfileByNameCacheValue] {
 			row, err := store.Queries.GetStorageProfileByCollectorNameUncached(ctx, key)
 			item := cache.Set(key, StorageProfileByNameCacheValue{
 				GetStorageProfileByCollectorNameRow: row,
@@ -60,7 +61,7 @@ func (store *Store) GetStorageProfileByCollectorName(ctx context.Context, params
 			return item
 		},
 	)
-	v := store.storageProfileByCollectorNameCache.Get(params, ttlcache.WithLoader(loader))
+	v := store.storageProfileByCollectorNameCache.Get(organizationID, ttlcache.WithLoader(loader))
 	if v != nil {
 		return v.Value().GetStorageProfileByCollectorNameRow, v.Value().error
 	}

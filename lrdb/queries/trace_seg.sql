@@ -17,7 +17,7 @@ VALUES (
   @dateint,
   @ingest_dateint,
   @segment_id,
-  @instance_num,
+  9999,
   @slot_id,
   int8range(@start_ts, @end_ts, '[)'),
   @record_count,
@@ -39,7 +39,6 @@ SELECT
 FROM trace_seg
 WHERE organization_id = @organization_id
   AND dateint         = @dateint
-  AND instance_num    = @instance_num
   AND slot_id = @slot_id
   AND file_size > 0
   AND record_count > 0
@@ -55,7 +54,7 @@ WITH
       FROM trace_seg
      WHERE organization_id = @organization_id
        AND dateint        = @dateint
-       AND instance_num   = @instance_num
+       AND instance_num   = 9999
        AND slot_id = @slot_id
        AND segment_id     = ANY(@old_segment_ids::bigint[])
   ),
@@ -70,7 +69,7 @@ WITH
     DELETE FROM trace_seg
      WHERE organization_id = @organization_id
        AND dateint        = @dateint
-       AND instance_num   = @instance_num
+       AND instance_num   = 9999
        AND segment_id     = ANY(@old_segment_ids::bigint[])
   )
 INSERT INTO trace_seg (
@@ -91,7 +90,7 @@ SELECT
   @dateint,
   @ingest_dateint,
   @new_segment_id,
-  @instance_num,
+  9999,
   @slot_id,
   @new_record_count,
   @new_file_size,

@@ -170,10 +170,10 @@ func mkSeg(segID int64, startMs int64) lrdb.GetLogSegmentsForCompactionRow {
 }
 
 func goodKey(sp storageprofile.StorageProfile, dateint int32, seg lrdb.GetLogSegmentsForCompactionRow) string {
-	return helpers.MakeDBObjectID(sp.OrganizationID, "default", dateint, s3helper.HourFromMillis(seg.StartTs), seg.SegmentID, "logs")
+	return helpers.MakeDBObjectID(sp.OrganizationID, dateint, s3helper.HourFromMillis(seg.StartTs), seg.SegmentID, "logs")
 }
 func badKey(sp storageprofile.StorageProfile, dateint int32, seg lrdb.GetLogSegmentsForCompactionRow) string {
-	return helpers.MakeDBObjectIDbad(sp.OrganizationID, "default", dateint, s3helper.HourFromMillis(seg.StartTs), seg.SegmentID, "logs")
+	return helpers.MakeDBObjectIDbad(sp.OrganizationID, dateint, s3helper.HourFromMillis(seg.StartTs), seg.SegmentID, "logs")
 }
 
 // --- tests ---

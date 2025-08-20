@@ -38,7 +38,7 @@ func (m *mockConfigDBStoreageProfileFetcher) GetStorageProfile(ctx context.Conte
 	return m.profile, nil
 }
 
-func (m *mockConfigDBStoreageProfileFetcher) GetStorageProfileByCollectorName(ctx context.Context, params configdb.GetStorageProfileByCollectorNameParams) (configdb.GetStorageProfileByCollectorNameRow, error) {
+func (m *mockConfigDBStoreageProfileFetcher) GetStorageProfileByCollectorName(ctx context.Context, organizationID uuid.UUID) (configdb.GetStorageProfileByCollectorNameRow, error) {
 	if m.err != nil {
 		return configdb.GetStorageProfileByCollectorNameRow{}, m.err
 	}
@@ -123,7 +123,7 @@ func TestDatabaseProvider_Get_SuccessWithRole(t *testing.T) {
 	role := "admin"
 	mockProfile := configdb.GetStorageProfileRow{
 		OrganizationID: orgID,
-		InstanceNum:    1,
+		InstanceNum:    9999,
 		ExternalID:     "ext-123",
 		CloudProvider:  "aws",
 		Region:         "us-west-2",
@@ -147,7 +147,7 @@ func TestDatabaseProvider_Get_SuccessWithoutRole(t *testing.T) {
 	orgID := uuid.New()
 	mockProfile := configdb.GetStorageProfileRow{
 		OrganizationID: orgID,
-		InstanceNum:    2,
+		InstanceNum:    9999,
 		ExternalID:     "ext-456",
 		CloudProvider:  "gcp",
 		Region:         "europe-west1",
@@ -208,7 +208,7 @@ func TestDatabaseProvider_GetStorageProfilesByBucketName(t *testing.T) {
 			role := "test-role"
 			mockProfile := configdb.GetStorageProfileRow{
 				OrganizationID: orgID,
-				InstanceNum:    1,
+				InstanceNum:    9999,
 				ExternalID:     "test-collector",
 				CloudProvider:  "aws",
 				Region:         "us-west-2",

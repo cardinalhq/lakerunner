@@ -521,14 +521,6 @@ func runLegacyTablesSync(ctx context.Context, ll *slog.Logger, cdb configdb.Quer
 	}
 	closed = true
 
-	// Validate the sync by counting rows in our tables
-	orgCount, err := qtx.CountOrganizations(ctx)
-	if err != nil {
-		ll.Warn("Failed to count organizations after sync", slog.Any("error", err))
-	} else {
-		ll.Info("Organizations synced", slog.Int64("count", orgCount))
-	}
-
 	ll.Info("Legacy table sync completed successfully",
 		slog.Int("bucketsSync", len(bucketToProfile)),
 		slog.Int("totalProfiles", len(profiles)))

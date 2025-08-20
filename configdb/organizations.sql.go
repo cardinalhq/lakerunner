@@ -20,17 +20,6 @@ func (q *Queries) ClearOrganizations(ctx context.Context) error {
 	return err
 }
 
-const countOrganizations = `-- name: CountOrganizations :one
-SELECT COUNT(*) FROM organizations
-`
-
-func (q *Queries) CountOrganizations(ctx context.Context) (int64, error) {
-	row := q.db.QueryRow(ctx, countOrganizations)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
 const deleteOrganization = `-- name: DeleteOrganization :exec
 DELETE FROM organizations 
 WHERE id = $1

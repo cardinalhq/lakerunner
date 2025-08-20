@@ -276,7 +276,7 @@ func compactInterval(
 	files := make([]string, 0, len(rows))
 	for _, row := range rows {
 		dateint, hour := helpers.MSToDateintHour(st.Time.UTC().UnixMilli())
-		objectID := helpers.MakeDBObjectID(inf.OrganizationID(), "default", dateint, hour, row.SegmentID, "metrics")
+		objectID := helpers.MakeDBObjectID(inf.OrganizationID(), dateint, hour, row.SegmentID, "metrics")
 		fn, _, is404, err := s3helper.DownloadS3Object(ctx, tmpdir, s3client, profile.Bucket, objectID)
 		if err != nil {
 			ll.Error("Failed to download S3 object", slog.String("objectID", objectID), slog.Any("error", err))
@@ -351,7 +351,7 @@ func compactInterval(
 	dateint, hour := helpers.MSToDateintHour(startTs)
 	for tidPartition, result := range mergeResult {
 		segmentID := s3helper.GenerateID()
-		newObjectID := helpers.MakeDBObjectID(inf.OrganizationID(), "default", dateint, hour, segmentID, "metrics")
+		newObjectID := helpers.MakeDBObjectID(inf.OrganizationID(), dateint, hour, segmentID, "metrics")
 		ll.Info("Uploading to S3", slog.String("objectID", newObjectID), slog.String("bucket", profile.Bucket))
 		err = s3helper.UploadS3Object(ctx, s3client, profile.Bucket, newObjectID, result.FileName)
 		if err != nil {
@@ -381,7 +381,7 @@ func compactInterval(
 			return fmt.Errorf("invalid time range in row: %v", row.TsRange)
 		}
 		dateint, hour := helpers.MSToDateintHour(rst.Int64)
-		oid := helpers.MakeDBObjectID(inf.OrganizationID(), "default", dateint, hour, row.SegmentID, "metrics")
+		oid := helpers.MakeDBObjectID(inf.OrganizationID(), dateint, hour, row.SegmentID, "metrics")
 		if err := s3helper.ScheduleS3Delete(ctx, mdb, profile.OrganizationID, profile.Bucket, oid); err != nil {
 			ll.Error("scheduleS3Delete", slog.String("error", err.Error()))
 		}

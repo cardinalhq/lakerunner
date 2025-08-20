@@ -33,6 +33,3 @@ WHERE id = @id;
 -- name: ClearOrganizations :exec
 DELETE FROM organizations;
 
--- name: CountOrganizations :one
-SELECT COUNT(*) FROM organizations;
-

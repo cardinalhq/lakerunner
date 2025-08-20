@@ -201,7 +201,7 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp stora
 		// Process each split result - upload files and insert into database
 		for key, split := range splitResults {
 			segmentID := s3helper.GenerateID()
-			dbObjectID := helpers.MakeDBObjectID(inf.OrganizationID, inf.CollectorName, key.DateInt, s3helper.HourFromMillis(split.FirstTS), segmentID, "logs")
+			dbObjectID := helpers.MakeDBObjectID(inf.OrganizationID, key.DateInt, s3helper.HourFromMillis(split.FirstTS), segmentID, "logs")
 
 			if err := s3helper.UploadS3Object(ctx, s3client, inf.Bucket, dbObjectID, split.FileName); err != nil {
 				ll.Error("Failed to upload S3 object", slog.Any("error", err))
