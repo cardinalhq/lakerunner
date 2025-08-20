@@ -185,6 +185,8 @@ func importStorageProfiles(ctx context.Context, contents []byte, qtx DatabaseQue
 			Region:        firstProfile.Region,
 			Endpoint:      endpoint,
 			Role:          role,
+			UsePathStyle:  firstProfile.UsePathStyle,
+			InsecureTls:   firstProfile.InsecureTLS,
 		})
 		if err != nil {
 			return fmt.Errorf("failed to create bucket configuration for %s: %w", bucketName, err)

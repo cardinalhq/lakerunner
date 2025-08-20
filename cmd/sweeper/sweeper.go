@@ -487,6 +487,8 @@ func runLegacyTablesSync(ctx context.Context, ll *slog.Logger, cdb configdb.Quer
 			Region:        profile.Region,
 			Endpoint:      nil,
 			Role:          profile.Role,
+			UsePathStyle:  true,
+			InsecureTls:   false,
 		})
 		if err != nil {
 			return err

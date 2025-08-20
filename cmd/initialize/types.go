@@ -30,7 +30,6 @@ type StorageProfile struct {
 	Endpoint       string    `yaml:"endpoint,omitempty"`
 	UsePathStyle   bool      `yaml:"use_path_style,omitempty"`
 	InsecureTLS    bool      `yaml:"insecure_tls,omitempty"`
-	UseSSL         bool      `yaml:"use_ssl,omitempty"`
 }
 
 // API Keys configuration

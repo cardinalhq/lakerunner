@@ -25,9 +25,9 @@ LIMIT 1;
 
 -- name: CreateBucketConfiguration :one
 INSERT INTO lrconfig_bucket_configurations (
-  bucket_name, cloud_provider, region, endpoint, role
+  bucket_name, cloud_provider, region, endpoint, role, use_path_style, insecure_tls
 ) VALUES (
-  @bucket_name, @cloud_provider, @region, @endpoint, @role
+  @bucket_name, @cloud_provider, @region, @endpoint, @role, @use_path_style, @insecure_tls
 ) RETURNING *;
 
 -- name: CreateOrganizationBucket :one
@@ -68,14 +68,16 @@ DELETE FROM lrconfig_bucket_configurations;
 
 -- name: UpsertBucketConfiguration :one
 INSERT INTO lrconfig_bucket_configurations (
-  bucket_name, cloud_provider, region, endpoint, role
+  bucket_name, cloud_provider, region, endpoint, role, use_path_style, insecure_tls
 ) VALUES (
-  @bucket_name, @cloud_provider, @region, @endpoint, @role
+  @bucket_name, @cloud_provider, @region, @endpoint, @role, @use_path_style, @insecure_tls
 ) ON CONFLICT (bucket_name) DO UPDATE SET
   cloud_provider = EXCLUDED.cloud_provider,
   region = EXCLUDED.region,
   endpoint = EXCLUDED.endpoint,
-  role = EXCLUDED.role
+  role = EXCLUDED.role,
+  use_path_style = EXCLUDED.use_path_style,
+  insecure_tls = EXCLUDED.insecure_tls
 RETURNING *;
 
 -- name: UpsertOrganizationBucket :exec

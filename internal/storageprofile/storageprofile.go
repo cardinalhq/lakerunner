@@ -29,7 +29,6 @@ type StorageProfile struct {
 	Endpoint       string    `json:"endpoint,omitempty"`
 	InsecureTLS    bool      `json:"insecure_tls,omitempty"`
 	UsePathStyle   bool      `json:"use_path_style,omitempty"`
-	UseSSL         bool      `json:"use_ssl,omitempty"`
 }
 
 type StorageProfileProvider interface {

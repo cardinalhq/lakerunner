@@ -71,6 +71,8 @@ type LrconfigBucketConfiguration struct {
 	Region        string    `json:"region"`
 	Endpoint      *string   `json:"endpoint"`
 	Role          *string   `json:"role"`
+	UsePathStyle  bool      `json:"use_path_style"`
+	InsecureTls   bool      `json:"insecure_tls"`
 }
 
 type LrconfigBucketPrefixMapping struct {

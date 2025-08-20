@@ -129,6 +129,8 @@ func importBucketConfigurations(ctx context.Context, configs []BucketConfigurati
 			Region:        config.Region,
 			Endpoint:      config.Endpoint,
 			Role:          config.Role,
+			UsePathStyle:  true,
+			InsecureTls:   false,
 		})
 		if err != nil {
 			return fmt.Errorf("failed to import bucket %s: %w", config.BucketName, err)

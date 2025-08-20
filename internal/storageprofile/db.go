@@ -31,7 +31,7 @@ type databaseProvider struct {
 var _ StorageProfileProvider = (*databaseProvider)(nil)
 
 type ConfigDBStoreageProfileFetcher interface {
-	GetBucketConfiguration(ctx context.Context, bucketName string) (configdb.BucketConfiguration, error)
+	GetBucketConfiguration(ctx context.Context, bucketName string) (configdb.LrconfigBucketConfiguration, error)
 	GetOrganizationsByBucket(ctx context.Context, bucketName string) ([]uuid.UUID, error)
 	CheckOrgBucketAccess(ctx context.Context, arg configdb.CheckOrgBucketAccessParams) (bool, error)
 	GetLongestPrefixMatch(ctx context.Context, arg configdb.GetLongestPrefixMatchParams) (uuid.UUID, error)
@@ -71,6 +71,8 @@ func (p *databaseProvider) GetStorageProfileForBucket(ctx context.Context, organ
 		CloudProvider:  bucketConfig.CloudProvider,
 		Region:         bucketConfig.Region,
 		Bucket:         bucketConfig.BucketName,
+		UsePathStyle:   bucketConfig.UsePathStyle,
+		InsecureTLS:    bucketConfig.InsecureTls,
 	}
 
 	if bucketConfig.Role != nil {
@@ -115,6 +117,8 @@ func (p *databaseProvider) GetStorageProfilesByBucketName(ctx context.Context, b
 			CloudProvider:  bucketConfig.CloudProvider,
 			Region:         bucketConfig.Region,
 			Bucket:         bucketConfig.BucketName,
+			UsePathStyle:   bucketConfig.UsePathStyle,
+			InsecureTLS:    bucketConfig.InsecureTls,
 		}
 
 		if bucketConfig.Role != nil {

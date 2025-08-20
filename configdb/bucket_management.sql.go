@@ -60,10 +60,10 @@ func (q *Queries) ClearOrganizationBuckets(ctx context.Context) error {
 
 const createBucketConfiguration = `-- name: CreateBucketConfiguration :one
 INSERT INTO lrconfig_bucket_configurations (
-  bucket_name, cloud_provider, region, endpoint, role
+  bucket_name, cloud_provider, region, endpoint, role, use_path_style, insecure_tls
 ) VALUES (
-  $1, $2, $3, $4, $5
-) RETURNING id, bucket_name, cloud_provider, region, endpoint, role
+  $1, $2, $3, $4, $5, $6, $7
+) RETURNING id, bucket_name, cloud_provider, region, endpoint, role, use_path_style, insecure_tls
 `
 
 type CreateBucketConfigurationParams struct {
@@ -72,6 +72,8 @@ type CreateBucketConfigurationParams struct {
 	Region        string  `json:"region"`
 	Endpoint      *string `json:"endpoint"`
 	Role          *string `json:"role"`
+	UsePathStyle  bool    `json:"use_path_style"`
+	InsecureTls   bool    `json:"insecure_tls"`
 }
 
 func (q *Queries) CreateBucketConfiguration(ctx context.Context, arg CreateBucketConfigurationParams) (LrconfigBucketConfiguration, error) {
@@ -81,6 +83,8 @@ func (q *Queries) CreateBucketConfiguration(ctx context.Context, arg CreateBucke
 		arg.Region,
 		arg.Endpoint,
 		arg.Role,
+		arg.UsePathStyle,
+		arg.InsecureTls,
 	)
 	var i LrconfigBucketConfiguration
 	err := row.Scan(
@@ -90,6 +94,8 @@ func (q *Queries) CreateBucketConfiguration(ctx context.Context, arg CreateBucke
 		&i.Region,
 		&i.Endpoint,
 		&i.Role,
+		&i.UsePathStyle,
+		&i.InsecureTls,
 	)
 	return i, err
 }
@@ -210,7 +216,7 @@ func (q *Queries) GetBucketByOrganization(ctx context.Context, organizationID uu
 }
 
 const getBucketConfiguration = `-- name: GetBucketConfiguration :one
-SELECT id, bucket_name, cloud_provider, region, endpoint, role FROM lrconfig_bucket_configurations WHERE bucket_name = $1
+SELECT id, bucket_name, cloud_provider, region, endpoint, role, use_path_style, insecure_tls FROM lrconfig_bucket_configurations WHERE bucket_name = $1
 `
 
 func (q *Queries) GetBucketConfiguration(ctx context.Context, bucketName string) (LrconfigBucketConfiguration, error) {
@@ -223,6 +229,8 @@ func (q *Queries) GetBucketConfiguration(ctx context.Context, bucketName string)
 		&i.Region,
 		&i.Endpoint,
 		&i.Role,
+		&i.UsePathStyle,
+		&i.InsecureTls,
 	)
 	return i, err
 }
@@ -292,15 +300,17 @@ func (q *Queries) HasExistingStorageProfiles(ctx context.Context) (bool, error) 
 
 const upsertBucketConfiguration = `-- name: UpsertBucketConfiguration :one
 INSERT INTO lrconfig_bucket_configurations (
-  bucket_name, cloud_provider, region, endpoint, role
+  bucket_name, cloud_provider, region, endpoint, role, use_path_style, insecure_tls
 ) VALUES (
-  $1, $2, $3, $4, $5
+  $1, $2, $3, $4, $5, $6, $7
 ) ON CONFLICT (bucket_name) DO UPDATE SET
   cloud_provider = EXCLUDED.cloud_provider,
   region = EXCLUDED.region,
   endpoint = EXCLUDED.endpoint,
-  role = EXCLUDED.role
-RETURNING id, bucket_name, cloud_provider, region, endpoint, role
+  role = EXCLUDED.role,
+  use_path_style = EXCLUDED.use_path_style,
+  insecure_tls = EXCLUDED.insecure_tls
+RETURNING id, bucket_name, cloud_provider, region, endpoint, role, use_path_style, insecure_tls
 `
 
 type UpsertBucketConfigurationParams struct {
@@ -309,6 +319,8 @@ type UpsertBucketConfigurationParams struct {
 	Region        string  `json:"region"`
 	Endpoint      *string `json:"endpoint"`
 	Role          *string `json:"role"`
+	UsePathStyle  bool    `json:"use_path_style"`
+	InsecureTls   bool    `json:"insecure_tls"`
 }
 
 func (q *Queries) UpsertBucketConfiguration(ctx context.Context, arg UpsertBucketConfigurationParams) (LrconfigBucketConfiguration, error) {
@@ -318,6 +330,8 @@ func (q *Queries) UpsertBucketConfiguration(ctx context.Context, arg UpsertBucke
 		arg.Region,
 		arg.Endpoint,
 		arg.Role,
+		arg.UsePathStyle,
+		arg.InsecureTls,
 	)
 	var i LrconfigBucketConfiguration
 	err := row.Scan(
@@ -327,6 +341,8 @@ func (q *Queries) UpsertBucketConfiguration(ctx context.Context, arg UpsertBucke
 		&i.Region,
 		&i.Endpoint,
 		&i.Role,
+		&i.UsePathStyle,
+		&i.InsecureTls,
 	)
 	return i, err
 }

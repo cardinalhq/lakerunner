@@ -71,16 +71,18 @@ func (m *mockConfigDBStoreageProfileFetcher) GetStorageProfilesByBucketName(ctx 
 }
 
 // New methods for bucket management (stub implementations for testing)
-func (m *mockConfigDBStoreageProfileFetcher) GetBucketConfiguration(ctx context.Context, bucketName string) (configdb.BucketConfiguration, error) {
+func (m *mockConfigDBStoreageProfileFetcher) GetBucketConfiguration(ctx context.Context, bucketName string) (configdb.LrconfigBucketConfiguration, error) {
 	if m.err != nil {
-		return configdb.BucketConfiguration{}, m.err
+		return configdb.LrconfigBucketConfiguration{}, m.err
 	}
 	// Return a valid bucket configuration for testing
-	config := configdb.BucketConfiguration{
+	config := configdb.LrconfigBucketConfiguration{
 		ID:            uuid.New(),
 		BucketName:    m.profile.Bucket,
 		CloudProvider: m.profile.CloudProvider,
 		Region:        m.profile.Region,
+		UsePathStyle:  true,  // Default for testing
+		InsecureTls:   false, // Default for testing
 	}
 	if m.profile.Role != nil {
 		config.Role = m.profile.Role
