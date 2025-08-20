@@ -52,3 +52,8 @@ DELETE FROM lrconfig_organization_api_keys;
 SELECT ak.*, ako.organization_id
 FROM lrconfig_organization_api_keys ak
 JOIN lrconfig_organization_api_key_mappings ako ON ak.id = ako.api_key_id;
+
+-- name: GetAllCOrganizationAPIKeysForSync :many
+SELECT organization_id, api_key, name, enabled
+FROM c_organization_api_keys
+WHERE enabled = true OR enabled IS NULL;

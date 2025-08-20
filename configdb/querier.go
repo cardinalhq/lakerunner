@@ -28,6 +28,7 @@ type Querier interface {
 	GetAdminAPIKeyByHash(ctx context.Context, keyHash string) (LrconfigAdminApiKey, error)
 	GetAdminAPIKeyByID(ctx context.Context, apiKeyID uuid.UUID) (LrconfigAdminApiKey, error)
 	GetAllAdminAPIKeys(ctx context.Context) ([]LrconfigAdminApiKey, error)
+	GetAllCOrganizationAPIKeysForSync(ctx context.Context) ([]GetAllCOrganizationAPIKeysForSyncRow, error)
 	// Legacy table sync operations
 	GetAllCStorageProfilesForSync(ctx context.Context) ([]GetAllCStorageProfilesForSyncRow, error)
 	GetAllOrganizationAPIKeys(ctx context.Context) ([]GetAllOrganizationAPIKeysRow, error)
@@ -40,6 +41,7 @@ type Querier interface {
 	GetStorageProfileByCollectorNameUncached(ctx context.Context, arg GetStorageProfileByCollectorNameParams) (GetStorageProfileByCollectorNameRow, error)
 	GetStorageProfileUncached(ctx context.Context, arg GetStorageProfileParams) (GetStorageProfileRow, error)
 	GetStorageProfilesByBucketNameUncached(ctx context.Context, bucketName string) ([]GetStorageProfilesByBucketNameRow, error)
+	HasExistingStorageProfiles(ctx context.Context) (bool, error)
 	UpsertAdminAPIKey(ctx context.Context, arg UpsertAdminAPIKeyParams) (LrconfigAdminApiKey, error)
 	UpsertBucketConfiguration(ctx context.Context, arg UpsertBucketConfigurationParams) (LrconfigBucketConfiguration, error)
 	UpsertOrganizationAPIKey(ctx context.Context, arg UpsertOrganizationAPIKeyParams) (LrconfigOrganizationApiKey, error)

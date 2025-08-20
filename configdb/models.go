@@ -19,6 +19,18 @@ type CCollector struct {
 	Type             int32              `json:"type"`
 }
 
+type COrganizationApiKey struct {
+	ID             uuid.UUID        `json:"id"`
+	CreatedAt      pgtype.Timestamp `json:"created_at"`
+	UpdatedAt      pgtype.Timestamp `json:"updated_at"`
+	CreatedBy      *string          `json:"created_by"`
+	UpdatedBy      *string          `json:"updated_by"`
+	OrganizationID pgtype.UUID      `json:"organization_id"`
+	Name           *string          `json:"name"`
+	ApiKey         *string          `json:"api_key"`
+	Enabled        pgtype.Bool      `json:"enabled"`
+}
+
 type CStorageProfile struct {
 	ID             uuid.UUID `json:"id"`
 	OrganizationID uuid.UUID `json:"organization_id"`

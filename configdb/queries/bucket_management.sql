@@ -91,3 +91,7 @@ SELECT bc.bucket_name
 FROM lrconfig_organization_buckets ob
 JOIN lrconfig_bucket_configurations bc ON ob.bucket_id = bc.id
 WHERE ob.organization_id = @organization_id;
+
+-- name: HasExistingStorageProfiles :one
+SELECT COUNT(*) > 0 as has_profiles
+FROM lrconfig_bucket_configurations;

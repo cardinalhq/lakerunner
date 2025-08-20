@@ -278,6 +278,18 @@ func (q *Queries) GetOrganizationsByBucket(ctx context.Context, bucketName strin
 	return items, nil
 }
 
+const hasExistingStorageProfiles = `-- name: HasExistingStorageProfiles :one
+SELECT COUNT(*) > 0 as has_profiles
+FROM lrconfig_bucket_configurations
+`
+
+func (q *Queries) HasExistingStorageProfiles(ctx context.Context) (bool, error) {
+	row := q.db.QueryRow(ctx, hasExistingStorageProfiles)
+	var has_profiles bool
+	err := row.Scan(&has_profiles)
+	return has_profiles, err
+}
+
 const upsertBucketConfiguration = `-- name: UpsertBucketConfiguration :one
 INSERT INTO lrconfig_bucket_configurations (
   bucket_name, cloud_provider, region, endpoint, role

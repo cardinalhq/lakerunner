@@ -77,6 +77,44 @@ func (q *Queries) CreateOrganizationAPIKeyMapping(ctx context.Context, arg Creat
 	return i, err
 }
 
+const getAllCOrganizationAPIKeysForSync = `-- name: GetAllCOrganizationAPIKeysForSync :many
+SELECT organization_id, api_key, name, enabled
+FROM c_organization_api_keys
+WHERE enabled = true OR enabled IS NULL
+`
+
+type GetAllCOrganizationAPIKeysForSyncRow struct {
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	ApiKey         *string     `json:"api_key"`
+	Name           *string     `json:"name"`
+	Enabled        pgtype.Bool `json:"enabled"`
+}
+
+func (q *Queries) GetAllCOrganizationAPIKeysForSync(ctx context.Context) ([]GetAllCOrganizationAPIKeysForSyncRow, error) {
+	rows, err := q.db.Query(ctx, getAllCOrganizationAPIKeysForSync)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetAllCOrganizationAPIKeysForSyncRow
+	for rows.Next() {
+		var i GetAllCOrganizationAPIKeysForSyncRow
+		if err := rows.Scan(
+			&i.OrganizationID,
+			&i.ApiKey,
+			&i.Name,
+			&i.Enabled,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getAllOrganizationAPIKeys = `-- name: GetAllOrganizationAPIKeys :many
 SELECT ak.id, ak.key_hash, ak.name, ak.description, ak.created_at, ako.organization_id
 FROM lrconfig_organization_api_keys ak

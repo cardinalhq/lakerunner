@@ -16,7 +16,9 @@ package sweeper
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"strconv"
@@ -511,9 +513,10 @@ func runLegacyTablesSync(ctx context.Context, ll *slog.Logger, cdb configdb.Quer
 			slog.Int("orgCount", len(orgs)))
 	}
 
-	// Note: API keys are now managed separately:
-	// - Admin API keys: stored only in lrconfig_admin_api_keys (no file sync)
-	// - Organization API keys: imported via bootstrap command or managed directly in DB
+	// Sync organization API keys from c_organization_api_keys to lrconfig_* tables
+	if err := syncOrganizationAPIKeys(ctx, ll, qtx); err != nil {
+		return err
+	}
 
 	// Commit the transaction
 	if err := tx.Commit(ctx); err != nil {
@@ -526,4 +529,90 @@ func runLegacyTablesSync(ctx context.Context, ll *slog.Logger, cdb configdb.Quer
 		slog.Int("totalProfiles", len(profiles)))
 
 	return nil
+}
+
+func syncOrganizationAPIKeys(ctx context.Context, ll *slog.Logger, qtx *configdb.Queries) error {
+	ll.Info("Starting organization API keys sync")
+
+	// Get all organization API keys from c_ table
+	cAPIKeys, err := qtx.GetAllCOrganizationAPIKeysForSync(ctx)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			ll.Info("No legacy organization API keys found")
+			return nil
+		}
+		return err
+	}
+
+	if len(cAPIKeys) == 0 {
+		ll.Info("No legacy organization API keys to sync")
+		return nil
+	}
+
+	ll.Info("Found legacy organization API keys to sync", slog.Int("count", len(cAPIKeys)))
+
+	// Clear existing organization API key tables (mirror mode)
+	if err := qtx.ClearOrganizationAPIKeyMappings(ctx); err != nil {
+		return err
+	}
+	if err := qtx.ClearOrganizationAPIKeys(ctx); err != nil {
+		return err
+	}
+
+	// Sync API keys
+	for _, cAPIKey := range cAPIKeys {
+		if !cAPIKey.OrganizationID.Valid || cAPIKey.ApiKey == nil {
+			ll.Warn("Skipping API key with invalid data",
+				slog.Bool("hasOrgID", cAPIKey.OrganizationID.Valid),
+				slog.Bool("hasAPIKey", cAPIKey.ApiKey != nil))
+			continue
+		}
+
+		orgID := cAPIKey.OrganizationID.Bytes
+		orgUUID, err := uuid.FromBytes(orgID[:])
+		if err != nil {
+			ll.Warn("Skipping API key with invalid organization UUID", slog.Any("error", err))
+			continue
+		}
+
+		apiKey := *cAPIKey.ApiKey
+		keyHash := hashAPIKey(apiKey)
+
+		// Create organization API key
+		var name string
+		if cAPIKey.Name != nil && *cAPIKey.Name != "" {
+			name = *cAPIKey.Name
+		} else {
+			name = fmt.Sprintf("synced-key-%s", apiKey[:min(8, len(apiKey))])
+		}
+
+		apiKeyRow, err := qtx.UpsertOrganizationAPIKey(ctx, configdb.UpsertOrganizationAPIKeyParams{
+			KeyHash:     keyHash,
+			Name:        name,
+			Description: nil,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to sync organization API key for %s: %w", orgUUID, err)
+		}
+
+		// Create organization API key mapping
+		if err := qtx.UpsertOrganizationAPIKeyMapping(ctx, configdb.UpsertOrganizationAPIKeyMappingParams{
+			ApiKeyID:       apiKeyRow.ID,
+			OrganizationID: orgUUID,
+		}); err != nil {
+			return fmt.Errorf("failed to create API key mapping: %w", err)
+		}
+
+		ll.Info("Synced organization API key",
+			slog.String("org_id", orgUUID.String()),
+			slog.String("key_name", name))
+	}
+
+	ll.Info("Organization API keys sync completed successfully", slog.Int("keysSync", len(cAPIKeys)))
+	return nil
+}
+
+func hashAPIKey(apiKey string) string {
+	h := sha256.Sum256([]byte(apiKey))
+	return fmt.Sprintf("%x", h)
 }
