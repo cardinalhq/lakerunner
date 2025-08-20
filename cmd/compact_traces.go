@@ -51,7 +51,7 @@ func init() {
 		Use:   "compact-traces",
 		Short: "Compact traces into optimally sized files by slot",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			helpers.CleanTempDir()
+			helpers.SetupTempDir()
 
 			servicename := "lakerunner-compact-traces"
 			addlAttrs := attribute.NewSet(
@@ -96,16 +96,10 @@ func compactTracesFor(
 	rpfEstimate int64,
 	_ any,
 ) (WorkResult, error) {
-	profile, err := sp.Get(ctx, inf.OrganizationID(), inf.InstanceNum())
+	profile, err := sp.GetStorageProfileForOrganization(ctx, inf.OrganizationID())
 	if err != nil {
 		ll.Error("Failed to get storage profile", slog.Any("error", err))
 		return WorkResultTryAgainLater, err
-	}
-	if profile.Role == "" {
-		if !profile.Hosted {
-			ll.Error("No role on non-hosted profile")
-			return WorkResultTryAgainLater, err
-		}
 	}
 
 	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
@@ -149,7 +143,6 @@ func compactTracesFor(
 		segments, err := mdb.GetTraceSegmentsForCompaction(ctx, lrdb.GetTraceSegmentsForCompactionParams{
 			OrganizationID:  inf.OrganizationID(),
 			Dateint:         inf.Dateint(),
-			InstanceNum:     inf.InstanceNum(),
 			SlotID:          slotID,
 			MaxFileSize:     targetFileSize * 9 / 10, // Only include files < 90% of target (larger files are fine as-is)
 			CursorCreatedAt: cursorCreatedAt,

@@ -66,10 +66,10 @@ func downloadAndOpenTraceSegments(
 			return nil, err
 		}
 
-		// Create S3 object ID for traces using slot-based path
-		// Format: db/<org-id>/<collector-id>/<dateint>/traces/<slot_number>/<segment_id>.parquet
-		objectID := fmt.Sprintf("db/%s/%s/%d/traces/%d/%d.parquet",
-			sp.OrganizationID, sp.CollectorName, dateint, slotID, seg.SegmentID)
+		// Create S3 object ID for traces
+		// Format: db/<org-id>/<dateint>/traces/<segment_id>.parquet
+		objectID := fmt.Sprintf("db/%s/%d/traces/%d.parquet",
+			sp.OrganizationID, dateint, seg.SegmentID)
 
 		// Download the trace segment
 		tmpfile, _, is404, err := fetcher.Download(ctx, bucket, objectID, tmpdir)
@@ -255,8 +255,8 @@ func packTraceSegment(
 	newSegmentID := s3helper.GenerateID()
 
 	// Create S3 object ID for the new consolidated trace file
-	newObjectID := fmt.Sprintf("db/%s/%s/%d/traces/%d/%d.parquet",
-		sp.OrganizationID, sp.CollectorName, dateint, slotID, newSegmentID)
+	newObjectID := fmt.Sprintf("db/%s/%d/traces/%d.parquet",
+		sp.OrganizationID, dateint, newSegmentID)
 
 	if err := s3helper.UploadS3Object(ctx, s3Client, sp.Bucket, newObjectID, writeResult.FileName); err != nil {
 		ll.Error("S3 upload failed", slog.String("error", err.Error()))
@@ -269,7 +269,6 @@ func packTraceSegment(
 		Dateint:        dateint,
 		IngestDateint:  stats.IngestDate,
 		NewSegmentID:   newSegmentID,
-		InstanceNum:    sp.InstanceNum,
 		SlotID:         slotID,
 		NewRecordCount: writeResult.RecordCount,
 		NewFileSize:    fi.Size(),
@@ -284,7 +283,7 @@ func packTraceSegment(
 
 	// Schedule old segments for deletion
 	for _, oid := range objectIDs {
-		if err := s3helper.ScheduleS3Delete(ctx, mdb, sp.OrganizationID, sp.InstanceNum, sp.Bucket, oid); err != nil {
+		if err := s3helper.ScheduleS3Delete(ctx, mdb, sp.OrganizationID, sp.Bucket, oid); err != nil {
 			ll.Error("Failed to schedule segment deletion",
 				slog.String("objectID", oid),
 				slog.String("error", err.Error()))
