@@ -17,7 +17,8 @@ CREATE INDEX idx_bucket_configs_name ON lrconfig_bucket_configurations(bucket_na
 CREATE TABLE lrconfig_organization_buckets (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   organization_id UUID NOT NULL UNIQUE, -- Each org can only be in one bucket
-  bucket_id UUID NOT NULL REFERENCES lrconfig_bucket_configurations(id) ON DELETE CASCADE
+  bucket_id UUID NOT NULL REFERENCES lrconfig_bucket_configurations(id) ON DELETE CASCADE,
+  UNIQUE(organization_id, bucket_id)
 );
 
 -- Indexes for organization and bucket lookups
