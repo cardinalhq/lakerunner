@@ -129,6 +129,16 @@ test: generate test-only
 test-only:
 	go test -race ./...
 
+.PHONY: test-integration
+test-integration:
+	@echo "Running integration tests (requires test databases)..."
+	LRDB_HOST=localhost LRDB_DBNAME=claude_lrdb \
+	CONFIGDB_HOST=localhost CONFIGDB_DBNAME=claude_configdb \
+	go test -race -tags=integration ./...
+
+.PHONY: test-ci
+test-ci: test test-integration
+
 #
 # Coverage targets
 #
