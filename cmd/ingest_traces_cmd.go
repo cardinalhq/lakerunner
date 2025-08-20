@@ -16,6 +16,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -31,8 +32,16 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
+	"github.com/cardinalhq/lakerunner/internal/tracecompaction"
+	"github.com/cardinalhq/lakerunner/lockmgr"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
+
+// SlotHourBoundary combines slot ID with hour boundary for trace compaction
+type SlotHourBoundary struct {
+	SlotID       int
+	HourBoundary helpers.HourBoundary
+}
 
 func init() {
 	cmd := &cobra.Command{
@@ -171,8 +180,8 @@ func traceIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp sto
 					SegmentID:      segmentID,
 					InstanceNum:    inf.InstanceNum,
 					SlotID:         int32(result.SlotID),
-					StartTs:        0, // Time doesn't matter for slot-based traces compaction
-					EndTs:          1, // Time doesn't matter for slot-based traces compaction
+					StartTs:        result.MinTimestamp,
+					EndTs:          result.MaxTimestamp,
 					RecordCount:    result.RecordCount,
 					FileSize:       result.FileSize,
 					CreatedBy:      lrdb.CreatedByIngest,
@@ -187,11 +196,57 @@ func traceIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp sto
 					slog.Int64("segmentID", segmentID),
 					slog.Int("slotID", result.SlotID),
 					slog.Int64("recordCount", result.RecordCount),
-					slog.Int64("fileSize", result.FileSize))
+					slog.Int64("fileSize", result.FileSize),
+					slog.Int64("startTs", result.MinTimestamp),
+					slog.Int64("endTs", result.MaxTimestamp))
+			}
 
-				// Queue trace compaction work for this specific slot
-				if err := queueTraceCompactionForSlot(ctx, mdb, inf, result.SlotID, ingest_dateint); err != nil {
-					ll.Error("Failed to queue trace compaction for slot", slog.Int("slotID", result.SlotID), slog.Any("error", err))
+			// Create work queue items for trace compaction - one per slot+hour combination
+			// This follows the same pattern as logs but with slot-based grouping
+			slotHourTriggers := make(map[SlotHourBoundary]int64)
+
+			for _, result := range traceResults {
+				// Create hour boundary for this slot using the actual trace timestamps
+				startDateint, startHour := helpers.MSToDateintHour(result.MinTimestamp)
+				endDateint, endHour := helpers.MSToDateintHour(result.MaxTimestamp)
+
+				// Handle case where traces span multiple hours (create work items for each hour)
+				for dateint := startDateint; dateint <= endDateint; dateint++ {
+					startH := int16(0)
+					endH := int16(23)
+					if dateint == startDateint {
+						startH = startHour
+					}
+					if dateint == endDateint {
+						endH = endHour
+					}
+
+					for hour := startH; hour <= endH; hour++ {
+						hourBoundary := helpers.HourBoundary{DateInt: dateint, Hour: hour}
+						slotHourKey := SlotHourBoundary{SlotID: result.SlotID, HourBoundary: hourBoundary}
+
+						if existingTS, exists := slotHourTriggers[slotHourKey]; !exists || result.MinTimestamp < existingTS {
+							slotHourTriggers[slotHourKey] = result.MinTimestamp
+						}
+					}
+				}
+			}
+
+			for slotHourKey, earliestTS := range slotHourTriggers {
+				ll.Info("Queueing trace compaction for slot+hour",
+					slog.Int("slotID", slotHourKey.SlotID),
+					slog.Int("dateint", int(slotHourKey.HourBoundary.DateInt)),
+					slog.Int("hour", int(slotHourKey.HourBoundary.Hour)),
+					slog.Int64("triggerTS", earliestTS))
+
+				// Create hour-aligned timestamp for the work queue (same as logs)
+				hourAlignedTS := helpers.TruncateToHour(helpers.UnixMillisToTime(earliestTS)).UnixMilli()
+
+				if err := queueTraceCompactionForSlot(ctx, mdb, inf, slotHourKey.SlotID, slotHourKey.HourBoundary.DateInt, hourAlignedTS); err != nil {
+					ll.Error("Failed to queue trace compaction",
+						slog.Any("slotHourKey", slotHourKey),
+						slog.Int64("triggerTS", earliestTS),
+						slog.Any("error", err))
 					return err
 				}
 			}
@@ -216,7 +271,8 @@ func convertTracesFileIfSupported(ll *slog.Logger, tmpfilename, tmpdir, bucket, 
 }
 
 // queueTraceCompactionForSlot queues a trace compaction job for a specific slot
-func queueTraceCompactionForSlot(ctx context.Context, mdb lrdb.StoreFull, inf lrdb.Inqueue, slotID int, dateint int32) error {
+func queueTraceCompactionForSlot(ctx context.Context, mdb lrdb.StoreFull, inf lrdb.Inqueue, slotID int, dateint int32, hourAlignedTS int64) error {
+
 	return mdb.WorkQueueAdd(ctx, lrdb.WorkQueueAddParams{
 		OrgID:     inf.OrganizationID,
 		Instance:  inf.InstanceNum,
@@ -225,13 +281,7 @@ func queueTraceCompactionForSlot(ctx context.Context, mdb lrdb.StoreFull, inf lr
 		Dateint:   dateint,
 		Frequency: -1,
 		SlotID:    int32(slotID),
-		TsRange: pgtype.Range[pgtype.Timestamptz]{
-			LowerType: pgtype.Inclusive,
-			UpperType: pgtype.Exclusive,
-			Lower:     pgtype.Timestamptz{Time: time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC), Valid: true}, // Time doesn't matter for slot-based traces compaction
-			Upper:     pgtype.Timestamptz{Time: time.Date(1970, 1, 1, 0, 0, 1, 0, time.UTC), Valid: true}, // Time doesn't matter for slot-based traces compaction
-			Valid:     true,
-		},
+		TsRange:   qmcFromInqueue(inf, 3600000, hourAlignedTS).TsRange,
 		RunnableAt: time.Now().UTC().Add(5 * time.Minute),
 	})
 }
