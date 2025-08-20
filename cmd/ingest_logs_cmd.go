@@ -92,9 +92,24 @@ func init() {
 
 func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
 	awsmanager *awsclient.Manager, inf lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
+	ll.Info("Starting log ingest",
+		slog.String("organizationID", inf.OrganizationID.String()),
+		slog.Int("instanceNum", int(inf.InstanceNum)),
+		slog.String("bucket", inf.Bucket),
+		slog.String("objectID", inf.ObjectID),
+		slog.String("inqueueID", inf.ID.String()))
+
+	t0 := time.Now()
+	logCompletion := func(result string) {
+		ll.Info("Log ingest completed",
+			slog.String("result", result),
+			slog.String("inqueueID", inf.ID.String()),
+			slog.Duration("elapsed", time.Since(t0)))
+	}
 	profile, err := sp.Get(ctx, inf.OrganizationID, inf.InstanceNum)
 	if err != nil {
 		ll.Error("Failed to get storage profile", slog.Any("error", err))
+		logCompletion("error")
 		return err
 	}
 	if profile.Role == "" {
@@ -132,8 +147,6 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp stora
 		return nil
 	}
 
-	ll.Info("Downloaded source file")
-
 	filenames := []string{tmpfilename}
 
 	// If the file is not in our `otel-raw` prefix, check if we can convert it
@@ -154,7 +167,6 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp stora
 			return nil
 		} else if fnames != nil {
 			filenames = fnames
-			ll.Info("Converted file", slog.String("filename", tmpfilename), slog.String("objectID", inf.ObjectID))
 		}
 	}
 
@@ -222,15 +234,6 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp stora
 				ll.Error("Failed to upload S3 object", slog.Any("error", err))
 				return err
 			}
-			ll.Info("Uploaded log segment",
-				slog.String("bucket", inf.Bucket),
-				slog.String("objectID", dbObjectID),
-				slog.Int64("segmentID", segmentID),
-				slog.Any("key", key),
-				slog.Int64("firstTS", split.FirstTS),
-				slog.Int64("lastTS", split.LastTS),
-				slog.Int64("recordCount", split.RecordCount),
-				slog.Int64("fileSize", split.FileSize))
 			_ = os.Remove(split.FileName)
 
 			fps := split.Fingerprints.ToSlice()
@@ -260,12 +263,6 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp stora
 				return err
 			}
 
-			ll.Info("Inserted log segment",
-				slog.Int64("segmentID", segmentID),
-				slog.Any("key", key),
-				slog.Int("fingerprintCount", split.Fingerprints.Cardinality()),
-				slog.Int64("recordCount", split.RecordCount),
-				slog.Int64("fileSize", split.FileSize))
 		}
 
 		// Create work queue items - one per unique dateint/hour combination
@@ -283,11 +280,13 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp stora
 					slog.Any("hourBoundary", hourBoundary),
 					slog.Int64("triggerTS", earliestTS),
 					slog.Any("error", err))
+				logCompletion("error")
 				return err
 			}
 		}
 	}
 
+	logCompletion("success")
 	return nil
 }
 

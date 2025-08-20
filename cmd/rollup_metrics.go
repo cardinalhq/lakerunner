@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
@@ -108,8 +109,31 @@ func metricRollupItem(
 		return 0, err
 	}
 
-	ll.Info("Processing rollup item", slog.Int("previousFrequency", int(previousFrequency)), slog.Any("workItem", inf.AsMap()), slog.Int64("estimatedRowsPerFile", rpfEstimate))
-	return metricRollupItemDo(ctx, ll, mdb, tmpdir, inf, profile, s3client, previousFrequency, rpfEstimate)
+	ll.Info("Starting metric rollup",
+		slog.String("organizationID", inf.OrganizationID().String()),
+		slog.Int("instanceNum", int(inf.InstanceNum())),
+		slog.Int("dateint", int(inf.Dateint())),
+		slog.Int("frequencyMs", int(inf.FrequencyMs())),
+		slog.Int("previousFrequencyMs", int(previousFrequency)),
+		slog.Int64("workQueueID", inf.ID()),
+		slog.Int64("estimatedRowsPerFile", rpfEstimate))
+
+	t0 := time.Now()
+	_, err = metricRollupItemDo(ctx, ll, mdb, tmpdir, inf, profile, s3client, previousFrequency, rpfEstimate)
+
+	if err != nil {
+		ll.Info("Metric rollup completed",
+			slog.String("result", "error"),
+			slog.Int64("workQueueID", inf.ID()),
+			slog.Duration("elapsed", time.Since(t0)))
+		return WorkResultTryAgainLater, err
+	} else {
+		ll.Info("Metric rollup completed",
+			slog.String("result", "success"),
+			slog.Int64("workQueueID", inf.ID()),
+			slog.Duration("elapsed", time.Since(t0)))
+		return WorkResultSuccess, nil
+	}
 }
 
 func metricRollupItemDo(
