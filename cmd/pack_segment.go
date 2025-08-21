@@ -439,7 +439,7 @@ func packSegment(
 
 	scheduledCount := 0
 	for _, oid := range objectIDs {
-		if err := s3helper.ScheduleS3Delete(ctx, mdb, sp.OrganizationID, sp.Bucket, oid); err != nil {
+		if err := s3helper.ScheduleS3Delete(ctx, mdb, sp.OrganizationID, sp.InstanceNum, sp.Bucket, oid); err != nil {
 			ll.Warn("Failed to schedule deletion for old segment file",
 				slog.Any("error", err),
 				slog.String("objectID", oid))
