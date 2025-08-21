@@ -82,7 +82,7 @@ func compactLogsFor(
 	rpfEstimate int64,
 	_ any,
 ) (WorkResult, error) {
-	profile, err := sp.GetStorageProfileForOrganization(ctx, inf.OrganizationID())
+	profile, err := sp.GetStorageProfileForOrganizationAndInstance(ctx, inf.OrganizationID(), inf.InstanceNum())
 	if err != nil {
 		ll.Error("Failed to get storage profile", slog.Any("error", err))
 		return WorkResultTryAgainLater, err

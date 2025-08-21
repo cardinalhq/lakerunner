@@ -93,7 +93,7 @@ func handleMessage(ctx context.Context, msg []byte, sp storageprofile.StoragePro
 		// For other paths, we now have the resolved org
 		if !strings.HasPrefix(item.ObjectID, "otel-raw/") {
 			item.OrganizationID = orgID
-			item.CollectorName = "default" // Use default collector for non-otel-raw paths
+			item.CollectorName = "" // Not used in v2
 		}
 
 		// Determine collector name and instance number

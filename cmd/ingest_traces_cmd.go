@@ -91,7 +91,7 @@ func traceIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp sto
 	if collectorName := helpers.ExtractCollectorName(inf.ObjectID); collectorName != "" {
 		profile, err = sp.GetStorageProfileForOrganizationAndCollector(ctx, inf.OrganizationID, collectorName)
 	} else {
-		profile, err = sp.GetStorageProfileForBucket(ctx, inf.OrganizationID, inf.Bucket)
+		profile, err = sp.GetStorageProfileForOrganizationAndInstance(ctx, inf.OrganizationID, inf.InstanceNum)
 	}
 	if err != nil {
 		ll.Error("Failed to get storage profile", slog.Any("error", err))
