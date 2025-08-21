@@ -92,10 +92,25 @@ func init() {
 
 func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
 	awsmanager *awsclient.Manager, inf lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
-	profile, err := sp.GetStorageProfileForBucket(ctx, inf.OrganizationID, inf.Bucket)
-	if err != nil {
-		ll.Error("Failed to get storage profile", slog.Any("error", err))
-		return err
+	// Extract collector name from object path for proper storage profile lookup
+	var profile storageprofile.StorageProfile
+	var err error
+
+	if collectorName := helpers.ExtractCollectorName(inf.ObjectID); collectorName != "" {
+		// Use collector-specific storage profile
+		profile, err = sp.GetStorageProfileForOrganizationAndCollector(ctx, inf.OrganizationID, collectorName)
+		if err != nil {
+			ll.Error("Failed to get storage profile for collector",
+				slog.String("collectorName", collectorName), slog.Any("error", err))
+			return err
+		}
+	} else {
+		// Fallback to bucket-based lookup for backward compatibility
+		profile, err = sp.GetStorageProfileForBucket(ctx, inf.OrganizationID, inf.Bucket)
+		if err != nil {
+			ll.Error("Failed to get storage profile", slog.Any("error", err))
+			return err
+		}
 	}
 	if profile.Bucket != inf.Bucket {
 		ll.Error("Bucket ID mismatch", slog.String("expected", profile.Bucket), slog.String("actual", inf.Bucket))
@@ -217,6 +232,7 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp stora
 				Dateint:        key.DateInt,
 				IngestDateint:  ingest_dateint,
 				SegmentID:      segmentID,
+				InstanceNum:    inf.InstanceNum,
 				StartTs:        split.FirstTS,
 				EndTs:          split.LastTS,
 				RecordCount:    split.RecordCount,

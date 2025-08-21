@@ -94,10 +94,26 @@ func init() {
 
 func metricIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
 	awsmanager *awsclient.Manager, inf lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
-	profile, err := sp.GetStorageProfileForBucket(ctx, inf.OrganizationID, inf.Bucket)
-	if err != nil {
-		ll.Error("Failed to get storage profile", slog.Any("error", err))
-		return err
+
+	// Extract collector name from object path for proper storage profile lookup
+	var profile storageprofile.StorageProfile
+	var err error
+
+	if collectorName := helpers.ExtractCollectorName(inf.ObjectID); collectorName != "" {
+		// Use collector-specific storage profile
+		profile, err = sp.GetStorageProfileForOrganizationAndCollector(ctx, inf.OrganizationID, collectorName)
+		if err != nil {
+			ll.Error("Failed to get storage profile for collector",
+				slog.String("collectorName", collectorName), slog.Any("error", err))
+			return err
+		}
+	} else {
+		// Fallback to bucket-based lookup for backward compatibility
+		profile, err = sp.GetStorageProfileForBucket(ctx, inf.OrganizationID, inf.Bucket)
+		if err != nil {
+			ll.Error("Failed to get storage profile", slog.Any("error", err))
+			return err
+		}
 	}
 	if profile.Bucket != inf.Bucket {
 		ll.Error("Bucket ID mismatch", slog.String("expected", profile.Bucket), slog.String("actual", inf.Bucket))
@@ -404,7 +420,6 @@ func writeMetricSketchParquet(ctx context.Context, tmpdir string, blocknum int64
 			"_cardinalhq.timestamp":      startTS,
 			"_cardinalhq.name":           sketch.MetricName,
 			"_cardinalhq.customer_id":    inf.OrganizationID.String(),
-			"_cardinalhq.collector_id":   inf.CollectorName,
 			"_cardinalhq.metric_type":    sketch.MetricType,
 			"_cardinalhq.tid":            tid,
 			"_cardinalhq.value":          float64(-1),
@@ -446,7 +461,6 @@ func writeMetricSketchParquet(ctx context.Context, tmpdir string, blocknum int64
 	for _, stat := range stats {
 		ll.Info("Wrote metric sketch parquet",
 			slog.String("organizationID", inf.OrganizationID.String()),
-			slog.String("collectorName", inf.CollectorName),
 			slog.Int64("blocknum", blocknum),
 			slog.String("file", stat.FileName),
 			slog.Int64("recordcount", stat.RecordCount),
@@ -468,6 +482,7 @@ func writeMetricSketchParquet(ctx context.Context, tmpdir string, blocknum int64
 			IngestDateint:  ingest_dateint,
 			TidPartition:   0,
 			SegmentID:      segmentID,
+			InstanceNum:    inf.InstanceNum,
 			StartTs:        startTS,
 			EndTs:          endTS,
 			RecordCount:    stat.RecordCount,
@@ -494,7 +509,6 @@ func writeMetricSketchParquet(ctx context.Context, tmpdir string, blocknum int64
 
 		ll.Info("Inserted metric segment and uploaded to S3",
 			slog.String("organizationID", inf.OrganizationID.String()),
-			slog.String("collectorName", inf.CollectorName),
 			slog.Int64("blocknum", blocknum),
 			slog.String("objectID", objID),
 			slog.Int64("segmentID", segmentID),

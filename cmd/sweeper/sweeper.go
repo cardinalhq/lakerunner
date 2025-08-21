@@ -458,30 +458,18 @@ func runLegacyTablesSync(ctx context.Context, ll *slog.Logger, cdb configdb.Quer
 	bucketToOrgs := make(map[string][]uuid.UUID)
 
 	for _, profile := range profiles {
-		if !profile.OrganizationID.Valid {
-			ll.Warn("Skipping profile with invalid organization ID", slog.String("bucket", profile.BucketName))
-			continue
-		}
-
-		orgID := profile.OrganizationID.Bytes
-		orgUUID, err := uuid.FromBytes(orgID[:])
-		if err != nil {
-			ll.Warn("Skipping profile with invalid organization UUID", slog.String("bucket", profile.BucketName), slog.Any("error", err))
-			continue
-		}
-
 		// Use first profile found for each bucket (1:1 mapping enforced)
 		if _, exists := bucketToProfile[profile.BucketName]; !exists {
 			bucketToProfile[profile.BucketName] = profile
 		}
 
-		bucketToOrgs[profile.BucketName] = append(bucketToOrgs[profile.BucketName], orgUUID)
+		bucketToOrgs[profile.BucketName] = append(bucketToOrgs[profile.BucketName], profile.OrganizationID)
 	}
 
 	// Create bucket configurations and organization mappings
 	for bucketName, profile := range bucketToProfile {
 		// Create/update bucket configuration
-		bucketConfig, err := qtx.UpsertBucketConfiguration(ctx, configdb.UpsertBucketConfigurationParams{
+		_, err := qtx.UpsertBucketConfiguration(ctx, configdb.UpsertBucketConfigurationParams{
 			BucketName:    bucketName,
 			CloudProvider: profile.CloudProvider,
 			Region:        profile.Region,
@@ -499,21 +487,21 @@ func runLegacyTablesSync(ctx context.Context, ll *slog.Logger, cdb configdb.Quer
 			slog.String("provider", profile.CloudProvider),
 			slog.String("region", profile.Region))
 
-		// Create organization mappings
-		orgs := bucketToOrgs[bucketName]
-		for _, orgID := range orgs {
-			if err := qtx.UpsertOrganizationBucket(ctx, configdb.UpsertOrganizationBucketParams{
-				OrganizationID: orgID,
-				BucketID:       bucketConfig.ID,
-			}); err != nil {
-				return err
-			}
-		}
-
-		ll.Info("Synced organization mappings",
-			slog.String("bucket", bucketName),
-			slog.Int("orgCount", len(orgs)))
 	}
+
+	// Sync organization buckets from c_collectors to our organization_buckets table
+	ll.Info("Syncing organization buckets from c_collectors table")
+	if err := qtx.SyncOrganizationBuckets(ctx); err != nil {
+		return fmt.Errorf("failed to sync organization buckets: %w", err)
+	}
+	ll.Info("Successfully synced organization buckets")
+
+	// Sync organizations from c_organizations to our organizations table
+	ll.Info("Syncing organizations from c_organizations table")
+	if err := qtx.SyncOrganizations(ctx); err != nil {
+		return fmt.Errorf("failed to sync organizations: %w", err)
+	}
+	ll.Info("Successfully synced organizations")
 
 	// Sync organization API keys from c_organization_api_keys to our organization tables
 	if err := syncOrganizationAPIKeys(ctx, ll, qtx); err != nil {

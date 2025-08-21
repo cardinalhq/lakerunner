@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"path"
 	"strconv"
+	"strings"
 
 	"github.com/google/uuid"
 )
@@ -45,7 +46,6 @@ func MakeDBObjectID(
 
 func MakeDBObjectIDbad(
 	orgID uuid.UUID,
-	collectorName string,
 	dateint int32,
 	hour int16,
 	segmentID int64,
@@ -54,10 +54,25 @@ func MakeDBObjectIDbad(
 	return path.Join(
 		DBPrefix,
 		orgID.String(),
-		collectorName,
+		"default",
 		strconv.Itoa(int(dateint)),
 		ttype,
 		fmt.Sprintf("%d", hour),
 		fmt.Sprintf("tbl_%d.parquet", segmentID),
 	)
+}
+
+// ExtractCollectorName extracts the collector name from the object path
+// Expected format: otel-raw/{organization_id}/{collector_name}/...
+func ExtractCollectorName(objectID string) string {
+	if !strings.HasPrefix(objectID, "otel-raw/") {
+		return ""
+	}
+
+	parts := strings.Split(objectID, "/")
+	if len(parts) < 3 {
+		return ""
+	}
+
+	return parts[2]
 }

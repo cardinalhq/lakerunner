@@ -41,7 +41,7 @@ WHERE
 
 -- name: PutInqueueWork :exec
 INSERT INTO inqueue (organization_id, collector_name, instance_num, bucket, object_id, telemetry_type, priority)
-VALUES (@organization_id, @collector_name, 1, @bucket, @object_id, @telemetry_type, @priority);
+VALUES (@organization_id, @collector_name, @instance_num, @bucket, @object_id, @telemetry_type, @priority);
 
 -- name: CleanupInqueueWork :exec
 UPDATE inqueue

@@ -18,6 +18,8 @@ import (
 	"context"
 	"errors"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jellydator/ttlcache/v3"
 )
 
@@ -49,10 +51,17 @@ type StorageProfileByNameCacheValue struct {
 	error
 }
 
-func (store *Store) GetStorageProfileByCollectorName(ctx context.Context, params GetStorageProfileByCollectorNameParams) (GetStorageProfileByCollectorNameRow, error) {
-	loader := ttlcache.LoaderFunc[GetStorageProfileByCollectorNameParams, StorageProfileByNameCacheValue](
-		func(cache *ttlcache.Cache[GetStorageProfileByCollectorNameParams, StorageProfileByNameCacheValue], key GetStorageProfileByCollectorNameParams) *ttlcache.Item[GetStorageProfileByCollectorNameParams, StorageProfileByNameCacheValue] {
-			row, err := store.Queries.GetStorageProfileByCollectorNameUncached(ctx, key)
+func (store *Store) GetStorageProfileByCollectorName(ctx context.Context, organizationID uuid.UUID) (GetStorageProfileByCollectorNameRow, error) {
+	loader := ttlcache.LoaderFunc[uuid.UUID, StorageProfileByNameCacheValue](
+		func(cache *ttlcache.Cache[uuid.UUID, StorageProfileByNameCacheValue], key uuid.UUID) *ttlcache.Item[uuid.UUID, StorageProfileByNameCacheValue] {
+			pgUUID := pgtype.UUID{}
+			if scanErr := pgUUID.Scan(key); scanErr != nil {
+				item := cache.Set(key, StorageProfileByNameCacheValue{
+					error: scanErr,
+				}, ttlcache.DefaultTTL)
+				return item
+			}
+			row, err := store.Queries.GetStorageProfileByCollectorNameUncached(ctx, pgUUID)
 			item := cache.Set(key, StorageProfileByNameCacheValue{
 				GetStorageProfileByCollectorNameRow: row,
 				error:                               err,
@@ -60,7 +69,7 @@ func (store *Store) GetStorageProfileByCollectorName(ctx context.Context, params
 			return item
 		},
 	)
-	v := store.storageProfileByCollectorNameCache.Get(params, ttlcache.WithLoader(loader))
+	v := store.storageProfileByCollectorNameCache.Get(organizationID, ttlcache.WithLoader(loader))
 	if v != nil {
 		return v.Value().GetStorageProfileByCollectorNameRow, v.Value().error
 	}

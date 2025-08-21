@@ -39,13 +39,26 @@ type BucketPrefixMapping struct {
 }
 
 type CCollector struct {
-	ID               uuid.UUID  `json:"id"`
-	DeletedAt        *time.Time `json:"deleted_at"`
-	OrganizationID   uuid.UUID  `json:"organization_id"`
-	StorageProfileID uuid.UUID  `json:"storage_profile_id"`
-	InstanceNum      int16      `json:"instance_num"`
-	ExternalID       string     `json:"external_id"`
-	Type             int32      `json:"type"`
+	ID               uuid.UUID        `json:"id"`
+	CreatedAt        pgtype.Timestamp `json:"created_at"`
+	UpdatedAt        pgtype.Timestamp `json:"updated_at"`
+	CreatedBy        *string          `json:"created_by"`
+	UpdatedBy        *string          `json:"updated_by"`
+	OrganizationID   pgtype.UUID      `json:"organization_id"`
+	StorageProfileID pgtype.UUID      `json:"storage_profile_id"`
+	InstanceNum      int16            `json:"instance_num"`
+	ExternalID       string           `json:"external_id"`
+	DeletedAt        pgtype.Timestamp `json:"deleted_at"`
+	DeletedBy        *string          `json:"deleted_by"`
+	Type             int32            `json:"type"`
+	Trusted          pgtype.Bool      `json:"trusted"`
+	Version          *string          `json:"version"`
+	Saas             pgtype.Bool      `json:"saas"`
+	Style            *string          `json:"style"`
+	DagHashSeed      pgtype.Int4      `json:"dag_hash_seed"`
+	ConfigHashSeed   pgtype.Int4      `json:"config_hash_seed"`
+	CollectorGroup   string           `json:"collector_group"`
+	Flags            map[string]any   `json:"flags"`
 }
 
 type COrganization struct {
@@ -109,4 +122,6 @@ type OrganizationBucket struct {
 	ID             uuid.UUID `json:"id"`
 	OrganizationID uuid.UUID `json:"organization_id"`
 	BucketID       uuid.UUID `json:"bucket_id"`
+	InstanceNum    int16     `json:"instance_num"`
+	CollectorName  string    `json:"collector_name"`
 }

@@ -17,6 +17,7 @@ package configdb
 import (
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jellydator/ttlcache/v3"
 )
@@ -26,7 +27,7 @@ type Store struct {
 	*Queries
 	connPool                           *pgxpool.Pool
 	storageProfileCache                *ttlcache.Cache[GetStorageProfileParams, StorageProfileCacheValue]
-	storageProfileByCollectorNameCache *ttlcache.Cache[GetStorageProfileByCollectorNameParams, StorageProfileByNameCacheValue]
+	storageProfileByCollectorNameCache *ttlcache.Cache[uuid.UUID, StorageProfileByNameCacheValue]
 	storageProfilesByBucketNameCache   *ttlcache.Cache[string, StorageProfilesByBucketNameCacheValue]
 }
 
@@ -36,7 +37,7 @@ func NewEmptyStore() *Store {
 			ttlcache.WithTTL[GetStorageProfileParams, StorageProfileCacheValue](5 * time.Minute),
 		),
 		storageProfileByCollectorNameCache: ttlcache.New(
-			ttlcache.WithTTL[GetStorageProfileByCollectorNameParams, StorageProfileByNameCacheValue](5 * time.Minute),
+			ttlcache.WithTTL[uuid.UUID, StorageProfileByNameCacheValue](5 * time.Minute),
 		),
 		storageProfilesByBucketNameCache: ttlcache.New(
 			ttlcache.WithTTL[string, StorageProfilesByBucketNameCacheValue](5 * time.Minute),

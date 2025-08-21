@@ -21,8 +21,8 @@ import (
 // StorageProfile represents the YAML structure for storage profile initialization
 type StorageProfile struct {
 	OrganizationID uuid.UUID `yaml:"organization_id"`
-	InstanceNum    int       `yaml:"instance_num,omitempty"`   // Ignored
-	CollectorName  string    `yaml:"collector_name,omitempty"` // Ignored
+	InstanceNum    int       `yaml:"instance_num,omitempty"`   // Defaults to 1 if not specified
+	CollectorName  string    `yaml:"collector_name,omitempty"` // Defaults to "default" if not specified
 	CloudProvider  string    `yaml:"cloud_provider"`
 	Region         string    `yaml:"region"`
 	Bucket         string    `yaml:"bucket"`

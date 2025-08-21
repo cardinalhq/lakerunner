@@ -197,7 +197,6 @@ func ingestFiles(
 	ll := loop.ll.With(
 		slog.String("id", inf.ID.String()),
 		slog.Int("tries", int(inf.Tries)),
-		slog.String("collectorName", inf.CollectorName),
 		slog.String("organizationID", inf.OrganizationID.String()),
 		slog.Int("instanceNum", int(inf.InstanceNum)),
 		slog.String("bucket", inf.Bucket),
@@ -265,8 +264,6 @@ func ingestFiles(
 		metric.WithAttributeSet(commonAttributes),
 		metric.WithAttributes(
 			attribute.String("organizationID", inf.OrganizationID.String()),
-			attribute.String("collectorName", inf.CollectorName),
-			attribute.Int("instanceNum", int(inf.InstanceNum)),
 			attribute.String("bucket", inf.Bucket),
 		))
 	if err != nil {

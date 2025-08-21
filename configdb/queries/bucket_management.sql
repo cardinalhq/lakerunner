@@ -32,9 +32,9 @@ INSERT INTO bucket_configurations (
 
 -- name: CreateOrganizationBucket :one
 INSERT INTO organization_buckets (
-  organization_id, bucket_id
+  organization_id, bucket_id, instance_num, collector_name
 ) VALUES (
-  @organization_id, @bucket_id
+  @organization_id, @bucket_id, @instance_num, @collector_name
 ) RETURNING *;
 
 -- name: CreateBucketPrefixMapping :one
@@ -52,10 +52,9 @@ SELECT DISTINCT
   sp.cloud_provider,
   sp.region,
   sp.role,
-  c.organization_id
+  sp.organization_id
 FROM c_storage_profiles sp
-LEFT OUTER JOIN c_collectors c ON c.storage_profile_id = sp.id
-WHERE c.deleted_at IS NULL;
+WHERE sp.organization_id IS NOT NULL;
 
 -- name: ClearBucketPrefixMappings :exec
 DELETE FROM bucket_prefix_mappings;
@@ -82,11 +81,10 @@ RETURNING *;
 
 -- name: UpsertOrganizationBucket :exec
 INSERT INTO organization_buckets (
-  organization_id, bucket_id
+  organization_id, bucket_id, instance_num, collector_name
 ) VALUES (
-  @organization_id, @bucket_id
-) ON CONFLICT (organization_id) DO UPDATE SET
-  bucket_id = EXCLUDED.bucket_id;
+  @organization_id, @bucket_id, @instance_num, @collector_name
+) ON CONFLICT (organization_id, bucket_id, instance_num, collector_name) DO NOTHING;
 
 -- name: GetBucketByOrganization :one
 SELECT bc.bucket_name
@@ -97,3 +95,23 @@ WHERE ob.organization_id = @organization_id;
 -- name: HasExistingStorageProfiles :one
 SELECT COUNT(*) > 0 as has_profiles
 FROM bucket_configurations;
+
+-- name: GetOrganizationBucketByInstance :one
+SELECT ob.organization_id, ob.instance_num, ob.collector_name, bc.bucket_name, bc.cloud_provider, bc.region, bc.role, bc.endpoint, bc.use_path_style, bc.insecure_tls
+FROM organization_buckets ob
+JOIN bucket_configurations bc ON ob.bucket_id = bc.id  
+WHERE ob.organization_id = $1 AND ob.instance_num = $2;
+
+-- name: GetOrganizationBucketByCollector :one
+SELECT ob.organization_id, ob.instance_num, ob.collector_name, bc.bucket_name, bc.cloud_provider, bc.region, bc.role, bc.endpoint, bc.use_path_style, bc.insecure_tls
+FROM organization_buckets ob
+JOIN bucket_configurations bc ON ob.bucket_id = bc.id  
+WHERE ob.organization_id = $1 AND ob.collector_name = $2;
+
+-- name: GetDefaultOrganizationBucket :one
+SELECT ob.organization_id, ob.instance_num, ob.collector_name, bc.bucket_name, bc.cloud_provider, bc.region, bc.role, bc.endpoint, bc.use_path_style, bc.insecure_tls
+FROM organization_buckets ob
+JOIN bucket_configurations bc ON ob.bucket_id = bc.id  
+WHERE ob.organization_id = $1 
+ORDER BY ob.instance_num, ob.collector_name 
+LIMIT 1;

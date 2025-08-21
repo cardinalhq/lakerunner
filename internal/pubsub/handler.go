@@ -93,18 +93,44 @@ func handleMessage(ctx context.Context, msg []byte, sp storageprofile.StoragePro
 		// For other paths, we now have the resolved org
 		if !strings.HasPrefix(item.ObjectID, "otel-raw/") {
 			item.OrganizationID = orgID
-			item.CollectorName = "" // Not used in v2
+			item.CollectorName = "default" // Use default collector for non-otel-raw paths
+		}
+
+		// Determine collector name and instance number
+		collectorName := item.CollectorName
+		instanceNum := int16(1) // Default instance number
+
+		// For otel-raw paths, we have the collector name from the path
+		// For other paths, use "default" collector
+		if collectorName == "" {
+			collectorName = "default"
+		}
+
+		// Lookup instance number from storage profile
+		if collectorName != "" {
+			profile, err := sp.GetStorageProfileForOrganizationAndCollector(ctx, item.OrganizationID, collectorName)
+			if err != nil {
+				slog.Warn("Failed to lookup storage profile for collector, using default instance",
+					slog.Any("error", err),
+					slog.String("organization_id", item.OrganizationID.String()),
+					slog.String("collector_name", collectorName))
+			} else {
+				instanceNum = profile.InstanceNum
+			}
 		}
 
 		slog.Info("Processing item",
 			slog.String("bucket", item.Bucket),
 			slog.String("object_id", item.ObjectID),
 			slog.String("telemetry_type", item.TelemetryType),
-			slog.String("organization_id", item.OrganizationID.String()))
+			slog.String("organization_id", item.OrganizationID.String()),
+			slog.String("collector_name", collectorName),
+			slog.Int("instance_num", int(instanceNum)))
 
 		err = mdb.PutInqueueWork(ctx, lrdb.PutInqueueWorkParams{
 			OrganizationID: item.OrganizationID,
-			CollectorName:  item.CollectorName,
+			CollectorName:  collectorName,
+			InstanceNum:    instanceNum,
 			Bucket:         item.Bucket,
 			ObjectID:       item.ObjectID,
 			TelemetryType:  item.TelemetryType,

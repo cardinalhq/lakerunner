@@ -116,7 +116,7 @@ bin/lakerunner: ${all_deps}
 #
 .PHONY: images
 images: test-only
-	$(call with_builder, go tool goreleaser release --clean)
+	$(call with_builder, go tool goreleaser release --clean --config .goreleaser-local.yaml)
 
 #
 # Test targets

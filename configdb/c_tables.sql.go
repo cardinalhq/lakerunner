@@ -9,6 +9,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const getStorageProfileByCollectorNameUncached = `-- name: GetStorageProfileByCollectorNameUncached :one
@@ -26,14 +27,9 @@ FROM
 WHERE
   c.deleted_at IS NULL
   AND c.organization_id = $1
-  AND c.external_id = $2
+  AND c.external_id = 'default'
   AND EXISTS (SELECT 1 FROM organizations o WHERE o.id = c.organization_id AND o.enabled = true)
 `
-
-type GetStorageProfileByCollectorNameParams struct {
-	OrganizationID uuid.UUID `json:"organization_id"`
-	CollectorName  string    `json:"collector_name"`
-}
 
 type GetStorageProfileByCollectorNameRow struct {
 	CloudProvider  string    `json:"cloud_provider"`
@@ -45,8 +41,8 @@ type GetStorageProfileByCollectorNameRow struct {
 	ExternalID     string    `json:"external_id"`
 }
 
-func (q *Queries) GetStorageProfileByCollectorNameUncached(ctx context.Context, arg GetStorageProfileByCollectorNameParams) (GetStorageProfileByCollectorNameRow, error) {
-	row := q.db.QueryRow(ctx, getStorageProfileByCollectorNameUncached, arg.OrganizationID, arg.CollectorName)
+func (q *Queries) GetStorageProfileByCollectorNameUncached(ctx context.Context, organizationID pgtype.UUID) (GetStorageProfileByCollectorNameRow, error) {
+	row := q.db.QueryRow(ctx, getStorageProfileByCollectorNameUncached, organizationID)
 	var i GetStorageProfileByCollectorNameRow
 	err := row.Scan(
 		&i.CloudProvider,
@@ -80,8 +76,8 @@ WHERE
 `
 
 type GetStorageProfileParams struct {
-	OrganizationID uuid.UUID `json:"organization_id"`
-	InstanceNum    int16     `json:"instance_num"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	InstanceNum    int16       `json:"instance_num"`
 }
 
 type GetStorageProfileRow struct {

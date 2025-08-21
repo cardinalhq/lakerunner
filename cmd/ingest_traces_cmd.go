@@ -85,7 +85,14 @@ func init() {
 
 func traceIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
 	awsmanager *awsclient.Manager, inf lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
-	profile, err := sp.GetStorageProfileForBucket(ctx, inf.OrganizationID, inf.Bucket)
+	var profile storageprofile.StorageProfile
+	var err error
+
+	if collectorName := helpers.ExtractCollectorName(inf.ObjectID); collectorName != "" {
+		profile, err = sp.GetStorageProfileForOrganizationAndCollector(ctx, inf.OrganizationID, collectorName)
+	} else {
+		profile, err = sp.GetStorageProfileForBucket(ctx, inf.OrganizationID, inf.Bucket)
+	}
 	if err != nil {
 		ll.Error("Failed to get storage profile", slog.Any("error", err))
 		return err
@@ -136,10 +143,9 @@ func traceIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp sto
 			for _, result := range traceResults {
 				segmentID := s3helper.GenerateID()
 
-				// Create S3 object ID for traces
-				// Format: db/<org-id>/<dateint>/traces/<filename>.parquet
-				dbObjectID := fmt.Sprintf("db/%s/%d/traces/%d.parquet",
-					inf.OrganizationID.String(), ingest_dateint, segmentID)
+				// Create S3 object ID for traces using the standard helper
+				hour := int16(0) // Hour doesn't matter for slot-based traces
+				dbObjectID := helpers.MakeDBObjectID(inf.OrganizationID, inf.CollectorName, ingest_dateint, hour, segmentID, "traces")
 
 				// Upload to S3
 				if err := s3helper.UploadS3Object(ctx, s3client, inf.Bucket, dbObjectID, result.FileName); err != nil {
@@ -163,6 +169,7 @@ func traceIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp sto
 					Dateint:        ingest_dateint,
 					IngestDateint:  ingest_dateint,
 					SegmentID:      segmentID,
+					InstanceNum:    inf.InstanceNum,
 					SlotID:         int32(result.SlotID),
 					StartTs:        0, // Time doesn't matter for slot-based traces compaction
 					EndTs:          1, // Time doesn't matter for slot-based traces compaction

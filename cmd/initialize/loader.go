@@ -70,10 +70,11 @@ func InitializeConfig(ctx context.Context, storageProfileFile, apiKeysFile strin
 // InitializeConfigWithDependencies loads and imports with injectable dependencies for testing
 func InitializeConfigWithDependencies(ctx context.Context, storageProfileFile, apiKeysFile string, qtx DatabaseQueries, fileReader FileReader, logger *slog.Logger, replace bool) error {
 	// First sync organizations from c_organizations table
+	logger.Info("Starting organization sync from c_organizations table")
 	if err := qtx.SyncOrganizations(ctx); err != nil {
 		return fmt.Errorf("failed to sync organizations: %w", err)
 	}
-	logger.Info("Synced organizations from c_organizations table")
+	logger.Info("Successfully synced organizations from c_organizations table")
 
 	// Load and import storage profiles
 	if err := loadAndImportStorageProfilesWithReader(ctx, storageProfileFile, qtx, fileReader, logger, replace); err != nil {
@@ -195,9 +196,21 @@ func importStorageProfiles(ctx context.Context, contents []byte, qtx DatabaseQue
 
 		// Create organization bucket mappings for each profile
 		for _, profile := range bucketProfileList {
+			// Use values from YAML if provided, otherwise use defaults
+			instanceNum := int16(profile.InstanceNum)
+			if instanceNum == 0 {
+				instanceNum = 1
+			}
+			collectorName := profile.CollectorName
+			if collectorName == "" {
+				collectorName = "default"
+			}
+
 			if err := qtx.UpsertOrganizationBucket(ctx, configdb.UpsertOrganizationBucketParams{
 				OrganizationID: profile.OrganizationID,
 				BucketID:       bucketConfig.ID,
+				InstanceNum:    instanceNum,
+				CollectorName:  collectorName,
 			}); err != nil {
 				return fmt.Errorf("failed to create organization bucket mapping %s->%s: %w",
 					profile.OrganizationID, bucketConfig.ID, err)
@@ -213,9 +226,11 @@ func importStorageProfiles(ctx context.Context, contents []byte, qtx DatabaseQue
 
 func importAPIKeys(ctx context.Context, apiKeysConfig APIKeysConfig, qtx DatabaseQueries, logger *slog.Logger, replace bool) error {
 	// Sync organizations again in case they weren't synced yet or have changed
+	logger.Info("Re-syncing organizations before API key import")
 	if err := qtx.SyncOrganizations(ctx); err != nil {
 		return fmt.Errorf("failed to sync organizations before API key import: %w", err)
 	}
+	logger.Info("Successfully re-synced organizations before API key import")
 
 	// In replace mode, clear existing API keys first (mirror sync like sweeper)
 	if replace {
