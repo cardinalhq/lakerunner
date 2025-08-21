@@ -285,7 +285,7 @@ func packTraceSegment(
 
 	// Schedule old segments for deletion
 	for _, oid := range objectIDs {
-		if err := s3helper.ScheduleS3Delete(ctx, mdb, sp.OrganizationID, sp.Bucket, oid); err != nil {
+		if err := s3helper.ScheduleS3Delete(ctx, mdb, sp.OrganizationID, sp.InstanceNum, sp.Bucket, oid); err != nil {
 			ll.Error("Failed to schedule segment deletion",
 				slog.String("objectID", oid),
 				slog.String("error", err.Error()))

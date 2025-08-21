@@ -150,10 +150,11 @@ func DeleteS3Object(ctx context.Context, s3client *awsclient.S3Client, bucketID,
 // 	return nil
 // }
 
-func ScheduleS3Delete(ctx context.Context, mdb lrdb.StoreFull, org_id uuid.UUID, bucketID, objectID string) error {
+func ScheduleS3Delete(ctx context.Context, mdb lrdb.StoreFull, org_id uuid.UUID, instanceNum int16, bucketID, objectID string) error {
 	return mdb.ObjectCleanupAdd(ctx, lrdb.ObjectCleanupAddParams{
 		OrganizationID: org_id,
 		BucketID:       bucketID,
 		ObjectID:       objectID,
+		InstanceNum:    instanceNum,
 	})
 }

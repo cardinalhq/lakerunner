@@ -441,7 +441,7 @@ func compactInterval(
 		}
 		dateint, hour := helpers.MSToDateintHour(rst.Int64)
 		oid := helpers.MakeDBObjectID(inf.OrganizationID(), profile.CollectorName, dateint, hour, row.SegmentID, "metrics")
-		if err := s3helper.ScheduleS3Delete(ctx, mdb, profile.OrganizationID, profile.Bucket, oid); err != nil {
+		if err := s3helper.ScheduleS3Delete(ctx, mdb, profile.OrganizationID, profile.InstanceNum, profile.Bucket, oid); err != nil {
 			ll.Error("scheduleS3Delete", slog.String("error", err.Error()))
 		}
 	}
