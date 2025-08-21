@@ -136,6 +136,7 @@ func doCompactItem(
 			OrganizationID:  inf.OrganizationID(),
 			Dateint:         inf.Dateint(),
 			FrequencyMs:     inf.FrequencyMs(),
+			InstanceNum:     inf.InstanceNum(),
 			StartTs:         st.Time.UTC().UnixMilli(),
 			EndTs:           et.Time.UTC().UnixMilli(),
 			MaxFileSize:     targetFileSize * 9 / 10, // Only include files < 90% of target (larger files are fine as-is)

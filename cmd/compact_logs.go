@@ -187,6 +187,7 @@ func logCompactItemDo(
 		segments, err := mdb.GetLogSegmentsForCompaction(ctx, lrdb.GetLogSegmentsForCompactionParams{
 			OrganizationID:  sp.OrganizationID,
 			Dateint:         stdi,
+			InstanceNum:     inf.InstanceNum(),
 			MaxFileSize:     targetFileSize,  // Include files up to full target size (was 90%)
 			CursorCreatedAt: cursorCreatedAt, // Cursor for pagination
 			CursorSegmentID: cursorSegmentID, // Cursor for pagination

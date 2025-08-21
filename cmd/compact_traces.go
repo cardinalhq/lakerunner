@@ -143,6 +143,7 @@ func compactTracesFor(
 		segments, err := mdb.GetTraceSegmentsForCompaction(ctx, lrdb.GetTraceSegmentsForCompactionParams{
 			OrganizationID:  inf.OrganizationID(),
 			Dateint:         inf.Dateint(),
+			InstanceNum:     inf.InstanceNum(),
 			SlotID:          slotID,
 			MaxFileSize:     targetFileSize * 9 / 10, // Only include files < 90% of target (larger files are fine as-is)
 			CursorCreatedAt: cursorCreatedAt,
