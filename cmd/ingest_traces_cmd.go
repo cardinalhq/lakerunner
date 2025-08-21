@@ -125,129 +125,127 @@ func traceIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp sto
 
 	ll.Info("Downloaded source trace file")
 
-	// If the file is not in our `otel-raw` prefix, check if we can convert it
-	if !strings.HasPrefix(inf.ObjectID, "otel-raw/") {
-		// Skip database files (these are processed outputs, not inputs)
-		if strings.HasPrefix(inf.ObjectID, "db/") {
-			// TODO add counter for skipped files in the db prefix
-			return nil
+	// Skip database files (these are processed outputs, not inputs)
+	if strings.HasPrefix(inf.ObjectID, "db/") {
+		// TODO add counter for skipped files in the db prefix
+		return nil
+	}
+
+	// Check file type and convert if supported
+	if traceResults, err := convertTracesFileIfSupported(ll, tmpfilename, tmpdir, inf.Bucket, inf.ObjectID, rpfEstimate, ingest_dateint, inf.OrganizationID.String()); err != nil {
+		ll.Error("Failed to convert file", slog.Any("error", err))
+		// TODO add counter for failure to convert, probably in each convert function
+		return err
+	} else if len(traceResults) == 0 {
+		ll.Info("Empty source file, skipping", slog.String("objectID", inf.ObjectID))
+		return nil
+	} else if traceResults != nil {
+		ll.Info("Converted file", slog.String("filename", tmpfilename), slog.String("objectID", inf.ObjectID))
+
+		// Process each converted file - upload to S3 and insert into database
+		for _, result := range traceResults {
+			segmentID := s3helper.GenerateID()
+
+			// Create S3 object ID for traces using the standard helper
+			hour := int16(0) // Hour doesn't matter for slot-based traces
+			dbObjectID := helpers.MakeDBObjectID(inf.OrganizationID, inf.CollectorName, ingest_dateint, hour, segmentID, "traces")
+
+			// Upload to S3
+			if err := s3helper.UploadS3Object(ctx, s3client, inf.Bucket, dbObjectID, result.FileName); err != nil {
+				ll.Error("Failed to upload S3 object", slog.Any("error", err))
+				return err
+			}
+
+			ll.Info("Uploaded trace segment",
+				slog.String("bucket", inf.Bucket),
+				slog.String("objectID", dbObjectID),
+				slog.Int64("segmentID", segmentID),
+				slog.Int("slotID", result.SlotID),
+				slog.String("dateint", fmt.Sprintf("%d", ingest_dateint)))
+
+			// Clean up local file
+			_ = os.Remove(result.FileName)
+
+			// Insert trace segment into database
+			err = mdb.InsertTraceSegment(ctx, lrdb.InsertTraceSegmentDirectParams{
+				OrganizationID: inf.OrganizationID,
+				Dateint:        ingest_dateint,
+				IngestDateint:  ingest_dateint,
+				SegmentID:      segmentID,
+				InstanceNum:    inf.InstanceNum,
+				SlotID:         int32(result.SlotID),
+				StartTs:        result.MinTimestamp,
+				EndTs:          result.MaxTimestamp,
+				RecordCount:    result.RecordCount,
+				FileSize:       result.FileSize,
+				CreatedBy:      lrdb.CreatedByIngest,
+				Fingerprints:   []int64{}, // TODO: Extract fingerprints
+			})
+			if err != nil {
+				ll.Error("Failed to insert trace segment", slog.Any("error", err))
+				return err
+			}
+
+			ll.Info("Inserted trace segment",
+				slog.Int64("segmentID", segmentID),
+				slog.Int("slotID", result.SlotID),
+				slog.Int64("recordCount", result.RecordCount),
+				slog.Int64("fileSize", result.FileSize),
+				slog.Int64("startTs", result.MinTimestamp),
+				slog.Int64("endTs", result.MaxTimestamp))
 		}
 
-		// Check file type and convert if supported
-		if traceResults, err := convertTracesFileIfSupported(ll, tmpfilename, tmpdir, inf.Bucket, inf.ObjectID, rpfEstimate, ingest_dateint, inf.OrganizationID.String()); err != nil {
-			ll.Error("Failed to convert file", slog.Any("error", err))
-			// TODO add counter for failure to convert, probably in each convert function
-			return err
-		} else if len(traceResults) == 0 {
-			ll.Info("Empty source file, skipping", slog.String("objectID", inf.ObjectID))
-			return nil
-		} else if traceResults != nil {
-			ll.Info("Converted file", slog.String("filename", tmpfilename), slog.String("objectID", inf.ObjectID))
+		// Create work queue items for trace compaction - one per slot+hour combination
+		// This follows the same pattern as logs but with slot-based grouping
+		slotHourTriggers := make(map[SlotHourBoundary]int64)
 
-			// Process each converted file - upload to S3 and insert into database
-			for _, result := range traceResults {
-				segmentID := s3helper.GenerateID()
+		for _, result := range traceResults {
+			// Create hour boundary for this slot using the actual trace timestamps
+			startDateint, startHour := helpers.MSToDateintHour(result.MinTimestamp)
+			endDateint, endHour := helpers.MSToDateintHour(result.MaxTimestamp)
 
-				// Create S3 object ID for traces using the standard helper
-				hour := int16(0) // Hour doesn't matter for slot-based traces
-				dbObjectID := helpers.MakeDBObjectID(inf.OrganizationID, inf.CollectorName, ingest_dateint, hour, segmentID, "traces")
-
-				// Upload to S3
-				if err := s3helper.UploadS3Object(ctx, s3client, inf.Bucket, dbObjectID, result.FileName); err != nil {
-					ll.Error("Failed to upload S3 object", slog.Any("error", err))
-					return err
+			// Handle case where traces span multiple hours (create work items for each hour)
+			for dateint := startDateint; dateint <= endDateint; dateint++ {
+				startH := int16(0)
+				endH := int16(23)
+				if dateint == startDateint {
+					startH = startHour
+				}
+				if dateint == endDateint {
+					endH = endHour
 				}
 
-				ll.Info("Uploaded trace segment",
-					slog.String("bucket", inf.Bucket),
-					slog.String("objectID", dbObjectID),
-					slog.Int64("segmentID", segmentID),
-					slog.Int("slotID", result.SlotID),
-					slog.String("dateint", fmt.Sprintf("%d", ingest_dateint)))
+				for hour := startH; hour <= endH; hour++ {
+					hourBoundary := helpers.HourBoundary{DateInt: dateint, Hour: hour}
+					slotHourKey := SlotHourBoundary{SlotID: result.SlotID, HourBoundary: hourBoundary}
 
-				// Clean up local file
-				_ = os.Remove(result.FileName)
-
-				// Insert trace segment into database
-				err = mdb.InsertTraceSegment(ctx, lrdb.InsertTraceSegmentDirectParams{
-					OrganizationID: inf.OrganizationID,
-					Dateint:        ingest_dateint,
-					IngestDateint:  ingest_dateint,
-					SegmentID:      segmentID,
-					InstanceNum:    inf.InstanceNum,
-					SlotID:         int32(result.SlotID),
-					StartTs:        result.MinTimestamp,
-					EndTs:          result.MaxTimestamp,
-					RecordCount:    result.RecordCount,
-					FileSize:       result.FileSize,
-					CreatedBy:      lrdb.CreatedByIngest,
-					Fingerprints:   []int64{}, // TODO: Extract fingerprints
-				})
-				if err != nil {
-					ll.Error("Failed to insert trace segment", slog.Any("error", err))
-					return err
-				}
-
-				ll.Info("Inserted trace segment",
-					slog.Int64("segmentID", segmentID),
-					slog.Int("slotID", result.SlotID),
-					slog.Int64("recordCount", result.RecordCount),
-					slog.Int64("fileSize", result.FileSize),
-					slog.Int64("startTs", result.MinTimestamp),
-					slog.Int64("endTs", result.MaxTimestamp))
-			}
-
-			// Create work queue items for trace compaction - one per slot+hour combination
-			// This follows the same pattern as logs but with slot-based grouping
-			slotHourTriggers := make(map[SlotHourBoundary]int64)
-
-			for _, result := range traceResults {
-				// Create hour boundary for this slot using the actual trace timestamps
-				startDateint, startHour := helpers.MSToDateintHour(result.MinTimestamp)
-				endDateint, endHour := helpers.MSToDateintHour(result.MaxTimestamp)
-
-				// Handle case where traces span multiple hours (create work items for each hour)
-				for dateint := startDateint; dateint <= endDateint; dateint++ {
-					startH := int16(0)
-					endH := int16(23)
-					if dateint == startDateint {
-						startH = startHour
-					}
-					if dateint == endDateint {
-						endH = endHour
-					}
-
-					for hour := startH; hour <= endH; hour++ {
-						hourBoundary := helpers.HourBoundary{DateInt: dateint, Hour: hour}
-						slotHourKey := SlotHourBoundary{SlotID: result.SlotID, HourBoundary: hourBoundary}
-
-						if existingTS, exists := slotHourTriggers[slotHourKey]; !exists || result.MinTimestamp < existingTS {
-							slotHourTriggers[slotHourKey] = result.MinTimestamp
-						}
+					if existingTS, exists := slotHourTriggers[slotHourKey]; !exists || result.MinTimestamp < existingTS {
+						slotHourTriggers[slotHourKey] = result.MinTimestamp
 					}
 				}
 			}
+		}
 
-			for slotHourKey, earliestTS := range slotHourTriggers {
-				ll.Info("Queueing trace compaction for slot+hour",
-					slog.Int("slotID", slotHourKey.SlotID),
-					slog.Int("dateint", int(slotHourKey.HourBoundary.DateInt)),
-					slog.Int("hour", int(slotHourKey.HourBoundary.Hour)),
-					slog.Int64("triggerTS", earliestTS))
+		for slotHourKey, earliestTS := range slotHourTriggers {
+			ll.Info("Queueing trace compaction for slot+hour",
+				slog.Int("slotID", slotHourKey.SlotID),
+				slog.Int("dateint", int(slotHourKey.HourBoundary.DateInt)),
+				slog.Int("hour", int(slotHourKey.HourBoundary.Hour)),
+				slog.Int64("triggerTS", earliestTS))
 
-				// Create hour-aligned timestamp for the work queue (same as logs)
-				hourAlignedTS := helpers.TruncateToHour(helpers.UnixMillisToTime(earliestTS)).UnixMilli()
+			// Create hour-aligned timestamp for the work queue (same as logs)
+			hourAlignedTS := helpers.TruncateToHour(helpers.UnixMillisToTime(earliestTS)).UnixMilli()
 
-				if err := queueTraceCompactionForSlot(ctx, mdb, inf, slotHourKey.SlotID, slotHourKey.HourBoundary.DateInt, hourAlignedTS); err != nil {
-					ll.Error("Failed to queue trace compaction",
-						slog.Any("slotHourKey", slotHourKey),
-						slog.Int64("triggerTS", earliestTS),
-						slog.Any("error", err))
-					return err
-				}
+			if err := queueTraceCompactionForSlot(ctx, mdb, inf, slotHourKey.SlotID, slotHourKey.HourBoundary.DateInt, hourAlignedTS); err != nil {
+				ll.Error("Failed to queue trace compaction",
+					slog.Any("slotHourKey", slotHourKey),
+					slog.Int64("triggerTS", earliestTS),
+					slog.Any("error", err))
+				return err
 			}
 		}
 	}
+	
 
 	// Trace ingestion logic is now handled in the convertTracesFileIfSupported function
 	// which processes the converted files, uploads them to S3, and prepares for database insertion
