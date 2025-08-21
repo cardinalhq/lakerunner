@@ -184,6 +184,11 @@ func IngestLoopWithBatch(loop *IngestLoopContext, processingFx InqueueProcessing
 	}
 }
 
+// batchRowToInqueue converts ClaimInqueueWorkBatchRow to Inqueue (they have identical fields)
+func batchRowToInqueue(row lrdb.ClaimInqueueWorkBatchRow) lrdb.Inqueue {
+	return lrdb.Inqueue(row)
+}
+
 func ingestFiles(
 	ctx context.Context,
 	loop *IngestLoopContext,
@@ -311,10 +316,34 @@ func ingestFilesBatch(
 	defer span.End()
 
 	t0 := time.Now()
-	items, err := loop.mdb.ClaimInqueueWorkBatch(ctx, lrdb.ClaimInqueueWorkBatchParams{
+
+	// First, find next available work to get org/instance
+	nextWork, err := loop.mdb.ClaimInqueueWork(ctx, lrdb.ClaimInqueueWorkParams{
 		ClaimedBy:     myInstanceID,
 		TelemetryType: loop.signal,
-		MaxBatchSize:  int32(batchSize),
+	})
+	if err != nil {
+		return true, false, fmt.Errorf("failed to find next work: %w", err)
+	}
+
+	// Temporarily release it back so batch claim can get it
+	if err := loop.mdb.ReleaseInqueueWork(ctx, lrdb.ReleaseInqueueWorkParams{
+		ID:        nextWork.ID,
+		ClaimedBy: myInstanceID,
+	}); err != nil {
+		return true, false, fmt.Errorf("failed to release work: %w", err)
+	}
+
+	// Now claim batch from same org/instance with new parameters
+	items, err := loop.mdb.ClaimInqueueWorkBatch(ctx, lrdb.ClaimInqueueWorkBatchParams{
+		OrganizationID: nextWork.OrganizationID,
+		InstanceNum:    nextWork.InstanceNum,
+		TelemetryType:  loop.signal,
+		WorkerID:       myInstanceID,
+		MaxTotalSize:   helpers.GetMaxTotalSize(),
+		MinTotalSize:   helpers.GetMinBatchSize(),
+		MaxAgeSeconds:  int32(helpers.GetMaxAgeSeconds()),
+		BatchCount:     int32(batchSize),
 	})
 	inqueueFetchDuration.Record(ctx, time.Since(t0).Seconds(),
 		metric.WithAttributeSet(commonAttributes),
@@ -332,7 +361,7 @@ func ingestFilesBatch(
 	}
 
 	if len(items) == 1 {
-		return processSingleItem(ctx, loop, processFx, items[0])
+		return processSingleItem(ctx, loop, processFx, batchRowToInqueue(items[0]))
 	}
 
 	ll := loop.ll.With(
@@ -342,7 +371,7 @@ func ingestFilesBatch(
 
 	handlers := make([]*workqueue.InqueueHandler, len(items))
 	for i, item := range items {
-		handlers[i] = workqueue.NewInqueueHandlerFromLRDB(item, loop.mdb, maxWorkRetries, workqueue.WithLogger(ll))
+		handlers[i] = workqueue.NewInqueueHandlerFromLRDB(batchRowToInqueue(item), loop.mdb, maxWorkRetries, workqueue.WithLogger(ll))
 
 		if item.Tries > 10 {
 			ll.Warn("Too many tries, deleting item", slog.String("itemID", item.ID.String()))
@@ -376,7 +405,11 @@ func ingestFilesBatch(
 	ingestDateint, _ := helpers.MSToDateintHour(time.Now().UTC().UnixMilli())
 
 	t0 = time.Now()
-	err = batchProcessingFx(ctx, ll, tmpdir, loop.sp, loop.mdb, loop.awsmanager, items, ingestDateint, rpfEstimate, loop)
+	inqueueBatch := make([]lrdb.Inqueue, len(items))
+	for i, item := range items {
+		inqueueBatch[i] = batchRowToInqueue(item)
+	}
+	err = batchProcessingFx(ctx, ll, tmpdir, loop.sp, loop.mdb, loop.awsmanager, inqueueBatch, ingestDateint, rpfEstimate, loop)
 	inqueueDuration.Record(ctx, time.Since(t0).Seconds(),
 		metric.WithAttributeSet(commonAttributes),
 		metric.WithAttributes(

@@ -57,9 +57,11 @@ prelim_stats AS (
   FROM prelim
 ),
 chosen AS (
-  -- 1) Oversized oldest -> claim just that one
+  -- 1) Oversized oldest -> claim just that one  
   (
-    SELECT o.*
+    SELECT o.id, o.queue_ts, o.priority, o.organization_id, o.collector_name, 
+           o.instance_num, o.bucket, o.object_id, o.telemetry_type, o.tries, 
+           o.claimed_by, o.claimed_at, o.file_size
     FROM oldest o
     JOIN flags f ON TRUE
     WHERE f.is_oversized
@@ -67,7 +69,9 @@ chosen AS (
   UNION ALL
   -- 2) Too old -> take whatever fits under caps (ignore min size)
   (
-    SELECT p.*
+    SELECT p.id, p.queue_ts, p.priority, p.organization_id, p.collector_name, 
+           p.instance_num, p.bucket, p.object_id, p.telemetry_type, p.tries, 
+           p.claimed_by, p.claimed_at, p.file_size
     FROM prelim p
     JOIN flags f ON TRUE
     WHERE NOT f.is_oversized AND f.is_old
@@ -75,7 +79,9 @@ chosen AS (
   UNION ALL
   -- 3) Fresh -> only if size minimum met (and caps already enforced by prelim)
   (
-    SELECT p.*
+    SELECT p.id, p.queue_ts, p.priority, p.organization_id, p.collector_name, 
+           p.instance_num, p.bucket, p.object_id, p.telemetry_type, p.tries, 
+           p.claimed_by, p.claimed_at, p.file_size
     FROM prelim p
     JOIN flags f ON TRUE
     JOIN prelim_stats ps ON TRUE
