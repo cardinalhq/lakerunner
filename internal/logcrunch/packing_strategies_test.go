@@ -27,29 +27,29 @@ import (
 type PackingStrategy int
 
 const (
-	GreedyStrategy PackingStrategy = iota // Current approach
-	BestFitStrategy                       // Find best fitting group for each segment
-	FirstFitStrategy                      // Find first group that fits
-	SortedBestFitStrategy                 // Sort by size, then best fit
-	LargestFirstStrategy                  // Pack largest segments first
+	GreedyStrategy        PackingStrategy = iota // Current approach
+	BestFitStrategy                              // Find best fitting group for each segment
+	FirstFitStrategy                             // Find first group that fits
+	SortedBestFitStrategy                        // Sort by size, then best fit
+	LargestFirstStrategy                         // Pack largest segments first
 )
 
 // PackingResult contains the results of a packing strategy
 type PackingResult struct {
-	Strategy     PackingStrategy
-	Groups       [][]lrdb.GetLogSegmentsForCompactionRow
-	GroupCount   int
+	Strategy              PackingStrategy
+	Groups                [][]lrdb.GetLogSegmentsForCompactionRow
+	GroupCount            int
 	UtilizationPercentage float64 // How well groups fill the available capacity
-	LargestWaste int64            // Largest unused capacity in any group
+	LargestWaste          int64   // Largest unused capacity in any group
 }
 
 // packSegmentsWithStrategy applies different packing strategies to the same segments
 func packSegmentsWithStrategy(segments []lrdb.GetLogSegmentsForCompactionRow, estimatedRecordCount int64, strategy PackingStrategy) PackingResult {
 	// Filter segments like the original function
 	validSegments := filterAndValidateSegments(segments)
-	
+
 	var groups [][]lrdb.GetLogSegmentsForCompactionRow
-	
+
 	switch strategy {
 	case GreedyStrategy:
 		groups = packGreedy(validSegments, estimatedRecordCount)
@@ -64,16 +64,16 @@ func packSegmentsWithStrategy(segments []lrdb.GetLogSegmentsForCompactionRow, es
 	default:
 		groups = packGreedy(validSegments, estimatedRecordCount)
 	}
-	
+
 	// Calculate utilization metrics
 	utilization, largestWaste := calculateUtilization(groups, estimatedRecordCount)
-	
+
 	return PackingResult{
 		Strategy:              strategy,
-		Groups:               groups,
-		GroupCount:           len(groups),
+		Groups:                groups,
+		GroupCount:            len(groups),
 		UtilizationPercentage: utilization,
-		LargestWaste:         largestWaste,
+		LargestWaste:          largestWaste,
 	}
 }
 
@@ -84,16 +84,16 @@ func filterAndValidateSegments(segments []lrdb.GetLogSegmentsForCompactionRow) [
 	if len(segments) == 0 {
 		return segments
 	}
-	
+
 	segments = filterHourConformingSegments(segments)
 	if len(segments) == 0 {
 		return segments
 	}
-	
+
 	// Additional validation from PackSegments
 	validSegments := make([]lrdb.GetLogSegmentsForCompactionRow, 0, len(segments))
 	var hour int64 = -1
-	
+
 	for _, seg := range segments {
 		if seg.StartTs >= seg.EndTs {
 			continue
@@ -101,24 +101,24 @@ func filterAndValidateSegments(segments []lrdb.GetLogSegmentsForCompactionRow) [
 		if seg.EndTs == -9223372036854775808 {
 			continue
 		}
-		
+
 		endMinusOne := seg.EndTs - 1
 		segStartHour := hourFromMillis(seg.StartTs)
 		segEndHour := hourFromMillis(endMinusOne)
-		
+
 		if segStartHour != segEndHour {
 			continue
 		}
-		
+
 		if hour == -1 {
 			hour = segStartHour
 		} else if segStartHour != hour {
 			continue
 		}
-		
+
 		validSegments = append(validSegments, seg)
 	}
-	
+
 	return validSegments
 }
 
@@ -127,7 +127,7 @@ func packGreedy(segments []lrdb.GetLogSegmentsForCompactionRow, estimatedRecordC
 	groups := make([][]lrdb.GetLogSegmentsForCompactionRow, 0, len(segments)/2+1)
 	current := make([]lrdb.GetLogSegmentsForCompactionRow, 0, 8)
 	var sumRecords int64
-	
+
 	for _, seg := range segments {
 		rc := seg.RecordCount
 		if len(current) == 0 || sumRecords+rc <= estimatedRecordCount {
@@ -149,12 +149,12 @@ func packGreedy(segments []lrdb.GetLogSegmentsForCompactionRow, estimatedRecordC
 func packBestFit(segments []lrdb.GetLogSegmentsForCompactionRow, estimatedRecordCount int64) [][]lrdb.GetLogSegmentsForCompactionRow {
 	var groups [][]lrdb.GetLogSegmentsForCompactionRow
 	groupSums := []int64{}
-	
+
 	for _, seg := range segments {
 		rc := seg.RecordCount
 		bestGroupIdx := -1
 		bestRemainingSpace := estimatedRecordCount + 1 // Larger than possible
-		
+
 		// Find the group with the least remaining space that can still fit this segment
 		for i, groupSum := range groupSums {
 			if groupSum+rc <= estimatedRecordCount {
@@ -165,7 +165,7 @@ func packBestFit(segments []lrdb.GetLogSegmentsForCompactionRow, estimatedRecord
 				}
 			}
 		}
-		
+
 		if bestGroupIdx != -1 {
 			// Add to existing group
 			groups[bestGroupIdx] = append(groups[bestGroupIdx], seg)
@@ -176,7 +176,7 @@ func packBestFit(segments []lrdb.GetLogSegmentsForCompactionRow, estimatedRecord
 			groupSums = append(groupSums, rc)
 		}
 	}
-	
+
 	return groups
 }
 
@@ -184,11 +184,11 @@ func packBestFit(segments []lrdb.GetLogSegmentsForCompactionRow, estimatedRecord
 func packFirstFit(segments []lrdb.GetLogSegmentsForCompactionRow, estimatedRecordCount int64) [][]lrdb.GetLogSegmentsForCompactionRow {
 	var groups [][]lrdb.GetLogSegmentsForCompactionRow
 	groupSums := []int64{}
-	
+
 	for _, seg := range segments {
 		rc := seg.RecordCount
 		placed := false
-		
+
 		// Find the first group that can fit this segment
 		for i, groupSum := range groupSums {
 			if groupSum+rc <= estimatedRecordCount {
@@ -198,14 +198,14 @@ func packFirstFit(segments []lrdb.GetLogSegmentsForCompactionRow, estimatedRecor
 				break
 			}
 		}
-		
+
 		if !placed {
 			// Create new group
 			groups = append(groups, []lrdb.GetLogSegmentsForCompactionRow{seg})
 			groupSums = append(groupSums, rc)
 		}
 	}
-	
+
 	return groups
 }
 
@@ -217,7 +217,7 @@ func packSortedBestFit(segments []lrdb.GetLogSegmentsForCompactionRow, estimated
 	sort.Slice(sortedSegments, func(i, j int) bool {
 		return sortedSegments[i].RecordCount > sortedSegments[j].RecordCount
 	})
-	
+
 	return packBestFit(sortedSegments, estimatedRecordCount)
 }
 
@@ -229,7 +229,7 @@ func packLargestFirst(segments []lrdb.GetLogSegmentsForCompactionRow, estimatedR
 	sort.Slice(sortedSegments, func(i, j int) bool {
 		return sortedSegments[i].RecordCount > sortedSegments[j].RecordCount
 	})
-	
+
 	return packGreedy(sortedSegments, estimatedRecordCount)
 }
 
@@ -238,11 +238,11 @@ func calculateUtilization(groups [][]lrdb.GetLogSegmentsForCompactionRow, estima
 	if len(groups) == 0 {
 		return 0, 0
 	}
-	
+
 	totalUsed := int64(0)
 	totalCapacity := int64(len(groups)) * estimatedRecordCount
 	largestWaste := int64(0)
-	
+
 	for _, group := range groups {
 		groupSum := int64(0)
 		for _, seg := range group {
@@ -254,7 +254,7 @@ func calculateUtilization(groups [][]lrdb.GetLogSegmentsForCompactionRow, estima
 			largestWaste = waste
 		}
 	}
-	
+
 	return float64(totalUsed) / float64(totalCapacity) * 100, largestWaste
 }
 
@@ -323,39 +323,39 @@ func TestPackingStrategyComparison(t *testing.T) {
 	for _, threshold := range thresholds {
 		t.Run(threshold.name, func(t *testing.T) {
 			t.Logf("=== Comparing strategies with %s ===", threshold.name)
-			
+
 			var results []PackingResult
-			
+
 			// Test each strategy
 			for _, strategy := range strategies {
 				result := packSegmentsWithStrategy(productionSegments, threshold.threshold, strategy)
 				results = append(results, result)
-				
+
 				t.Logf("%s: %d groups, %.1f%% utilization, largest waste: %d records",
 					strategyNames[strategy], result.GroupCount, result.UtilizationPercentage, result.LargestWaste)
 			}
-			
+
 			// Find best strategy by different metrics
 			bestByGroups := findBestByMetric(results, func(r PackingResult) float64 { return -float64(r.GroupCount) })
 			bestByUtilization := findBestByMetric(results, func(r PackingResult) float64 { return r.UtilizationPercentage })
 			bestByWaste := findBestByMetric(results, func(r PackingResult) float64 { return -float64(r.LargestWaste) })
-			
+
 			t.Logf("Best by group count: %s (%d groups)", strategyNames[bestByGroups.Strategy], bestByGroups.GroupCount)
 			t.Logf("Best by utilization: %s (%.1f%%)", strategyNames[bestByUtilization.Strategy], bestByUtilization.UtilizationPercentage)
 			t.Logf("Best by least waste: %s (%d waste)", strategyNames[bestByWaste.Strategy], bestByWaste.LargestWaste)
-			
+
 			// Ensure all strategies produce valid results
 			for _, result := range results {
 				assert.Greater(t, result.GroupCount, 0, "Strategy %s should produce at least one group", strategyNames[result.Strategy])
 				assert.LessOrEqual(t, result.UtilizationPercentage, 100.0, "Utilization should not exceed 100%%")
-				
+
 				// Verify no group exceeds threshold
 				for i, group := range result.Groups {
 					groupSum := int64(0)
 					for _, seg := range group {
 						groupSum += seg.RecordCount
 					}
-					assert.LessOrEqual(t, groupSum, threshold.threshold, 
+					assert.LessOrEqual(t, groupSum, threshold.threshold,
 						"Group %d in strategy %s exceeds threshold", i, strategyNames[result.Strategy])
 				}
 			}
@@ -368,10 +368,10 @@ func findBestByMetric(results []PackingResult, metric func(PackingResult) float6
 	if len(results) == 0 {
 		return PackingResult{}
 	}
-	
+
 	best := results[0]
 	bestScore := metric(best)
-	
+
 	for _, result := range results[1:] {
 		score := metric(result)
 		if score > bestScore {
@@ -379,6 +379,6 @@ func findBestByMetric(results []PackingResult, metric func(PackingResult) float6
 			bestScore = score
 		}
 	}
-	
+
 	return best
 }

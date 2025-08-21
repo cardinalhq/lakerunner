@@ -62,19 +62,19 @@ func TestAggressivePackingImprovements(t *testing.T) {
 
 	// Calculate realistic bytes per record (accounting for 15KB overhead, >100 records only)
 	avgBytesPerRecord := calculateAvgBytesPerRecord(productionSegments)
-	
+
 	// Calculate realistic record counts for different scenarios
 	targetFileSize := int64(1_100_000) // 1.1MB target
 	baseRecordsForTarget := calculateRecordCountForFileSize(targetFileSize, avgBytesPerRecord)
-	
+
 	t.Logf("Average bytes per record: %.2f", avgBytesPerRecord)
 	t.Logf("Base records for 1.1MB target: %d", baseRecordsForTarget)
 
 	tests := []struct {
-		name                 string
-		recordThreshold      int64
-		description          string
-		scenario             string
+		name            string
+		recordThreshold int64
+		description     string
+		scenario        string
 	}{
 		{
 			name:            "Conservative (90% file size filter)",
@@ -140,31 +140,32 @@ func TestAggressivePackingImprovements(t *testing.T) {
 			} else if tt.scenario == "new" {
 				// Aggressive should create fewer groups (better compression)
 				// but this depends on the actual threshold values, so we'll log for manual verification
+				t.Logf("Aggressive packing created %d groups", len(groups))
 			}
 		})
 	}
 }
 
-// TestPackingWithVariousFileSizes tests how the improved packing handles segments 
+// TestPackingWithVariousFileSizes tests how the improved packing handles segments
 // that would have been excluded by the 90% file size filter
 func TestPackingWithVariousFileSizes(t *testing.T) {
 	// Create segments with sizes that span the old 90% threshold
 	targetFileSize := int64(1_100_000)
 	avgBytesPerRecord := 51.4 // From production data
 	baseThreshold := calculateRecordCountForFileSize(targetFileSize, avgBytesPerRecord)
-	
+
 	// Create segments around the old 90% boundary
 	oldThreshold90Percent := calculateRecordCountForFileSize(targetFileSize*9/10, avgBytesPerRecord)
-	
+
 	segments := []lrdb.GetLogSegmentsForCompactionRow{
 		// Small segments that would always be included
 		{SegmentID: 1, StartTs: 1755741600000, EndTs: 1755741610000, RecordCount: 100, FileSize: 20000},
 		{SegmentID: 2, StartTs: 1755741610000, EndTs: 1755741620000, RecordCount: 200, FileSize: 25000},
-		
+
 		// Medium segments right at the old 90% threshold
 		{SegmentID: 3, StartTs: 1755741620000, EndTs: 1755741630000, RecordCount: oldThreshold90Percent - 100, FileSize: int64(float64(oldThreshold90Percent-100) * avgBytesPerRecord)},
 		{SegmentID: 4, StartTs: 1755741630000, EndTs: 1755741640000, RecordCount: oldThreshold90Percent + 100, FileSize: int64(float64(oldThreshold90Percent+100) * avgBytesPerRecord)},
-		
+
 		// Larger segments that would have been excluded by 90% filter
 		{SegmentID: 5, StartTs: 1755741640000, EndTs: 1755741650000, RecordCount: baseThreshold - 500, FileSize: int64(float64(baseThreshold-500) * avgBytesPerRecord)},
 	}

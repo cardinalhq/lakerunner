@@ -27,11 +27,11 @@ import (
 // accounting for file overhead and focusing on larger files for accuracy
 func calculateAvgBytesPerRecord(segments []lrdb.GetLogSegmentsForCompactionRow) float64 {
 	const fileOverhead = int64(15000) // Base file overhead ~15KB
-	const minRecordsForAccuracy = 100  // Only use files with >100 records for calculation
-	
+	const minRecordsForAccuracy = 100 // Only use files with >100 records for calculation
+
 	totalBytes := int64(0)
 	totalRecords := int64(0)
-	
+
 	for _, seg := range segments {
 		if seg.RecordCount > minRecordsForAccuracy { // Only use larger segments
 			// Subtract file overhead to get actual data bytes
@@ -42,11 +42,11 @@ func calculateAvgBytesPerRecord(segments []lrdb.GetLogSegmentsForCompactionRow) 
 			}
 		}
 	}
-	
+
 	if totalRecords == 0 {
 		return 0
 	}
-	
+
 	return float64(totalBytes) / float64(totalRecords)
 }
 
@@ -54,17 +54,17 @@ func calculateAvgBytesPerRecord(segments []lrdb.GetLogSegmentsForCompactionRow) 
 // based on the average bytes per record from the sample data, accounting for file overhead
 func calculateRecordCountForFileSize(targetFileSize int64, avgBytesPerRecord float64) int64 {
 	const fileOverhead = int64(15000) // Base file overhead ~15KB
-	
+
 	if avgBytesPerRecord <= 0 {
 		return 40000 // fallback to existing test default
 	}
-	
+
 	// Subtract overhead to get available space for actual data
 	availableSpace := targetFileSize - fileOverhead
 	if availableSpace <= 0 {
 		return 0
 	}
-	
+
 	return int64(float64(availableSpace) / avgBytesPerRecord)
 }
 
@@ -107,7 +107,7 @@ func TestPackSegments_ProductionData(t *testing.T) {
 
 	// Calculate realistic bytes per record from production data
 	avgBytesPerRecord := calculateAvgBytesPerRecord(productionSegments)
-	
+
 	// Count how many segments were used for calculation (>100 records)
 	usedSegments := 0
 	for _, seg := range productionSegments {
@@ -115,15 +115,15 @@ func TestPackSegments_ProductionData(t *testing.T) {
 			usedSegments++
 		}
 	}
-	
-	t.Logf("Calculated average bytes per record: %.2f (using %d segments with >100 records, accounting for 15KB file overhead)", 
+
+	t.Logf("Calculated average bytes per record: %.2f (using %d segments with >100 records, accounting for 15KB file overhead)",
 		avgBytesPerRecord, usedSegments)
-	
+
 	// Calculate realistic record counts for different target file sizes
 	targetFileSize := int64(1_100_000) // From cmd/root.go
 	recordsForTargetSize := calculateRecordCountForFileSize(targetFileSize, avgBytesPerRecord)
 	recordsFor90Percent := calculateRecordCountForFileSize(targetFileSize*9/10, avgBytesPerRecord) // 90% threshold used in compaction
-	
+
 	t.Logf("Records for target file size (1.1MB): %d", recordsForTargetSize)
 	t.Logf("Records for 90%% threshold (990KB): %d", recordsFor90Percent)
 
@@ -158,8 +158,8 @@ func TestPackSegments_ProductionData(t *testing.T) {
 		{
 			name:                 "Very small threshold",
 			segments:             productionSegments[:8], // Just the tiny segments
-			estimatedRecordCount: 100, // Very small
-			expectedGroups:       1, // Small segments pack together
+			estimatedRecordCount: 100,                    // Very small
+			expectedGroups:       1,                      // Small segments pack together
 			description:          "Tiny segments group together even with very small threshold",
 		},
 		{
@@ -177,8 +177,8 @@ func TestPackSegments_ProductionData(t *testing.T) {
 			require.NoError(t, err, tt.description)
 
 			// Verify number of groups
-			assert.Equal(t, tt.expectedGroups, len(groups), 
-				"Expected %d groups but got %d. %s", 
+			assert.Equal(t, tt.expectedGroups, len(groups),
+				"Expected %d groups but got %d. %s",
 				tt.expectedGroups, len(groups), tt.description)
 
 			// Verify no group exceeds the record limit
@@ -189,7 +189,7 @@ func TestPackSegments_ProductionData(t *testing.T) {
 					groupRecords += seg.RecordCount
 				}
 				assert.LessOrEqual(t, groupRecords, tt.estimatedRecordCount,
-					"Group %d has %d records, exceeding limit of %d", 
+					"Group %d has %d records, exceeding limit of %d",
 					i, groupRecords, tt.estimatedRecordCount)
 				totalRecords += groupRecords
 			}
@@ -202,7 +202,7 @@ func TestPackSegments_ProductionData(t *testing.T) {
 				}
 			}
 			assert.Equal(t, expectedTotal, totalRecords,
-				"Total records in groups (%d) doesn't match input (%d)", 
+				"Total records in groups (%d) doesn't match input (%d)",
 				totalRecords, expectedTotal)
 
 			// Log group composition for debugging
@@ -224,15 +224,15 @@ func TestPackSegments_CompactionEfficiency(t *testing.T) {
 	// Create many tiny segments (similar to production pattern)
 	tinySegments := []lrdb.GetLogSegmentsForCompactionRow{}
 	baseTime := int64(1755741600000)
-	
+
 	// Use realistic bytes per record based on production data (accounting for file overhead)
 	avgBytesPerRecord := 51.4 // From actual production data calculation after overhead adjustment
-	
+
 	// 50 very small segments (1-10 records each)
 	for i := 0; i < 50; i++ {
-		records := int64(1 + i%10) // 1-10 records
+		records := int64(1 + i%10)                                                           // 1-10 records
 		fileSize := int64(float64(records) * avgBytesPerRecord * (0.8 + 0.4*float64(i%5)/4)) // Some variance
-		
+
 		tinySegments = append(tinySegments, lrdb.GetLogSegmentsForCompactionRow{
 			SegmentID:   int64(i + 1),
 			StartTs:     baseTime + int64(i*1000),
@@ -251,22 +251,22 @@ func TestPackSegments_CompactionEfficiency(t *testing.T) {
 
 	// Should pack efficiently - many tiny segments into fewer groups
 	assert.Less(t, len(groups), 20, "Should pack 50 tiny segments into fewer than 20 groups")
-	
+
 	// Verify each group uses capacity efficiently
 	for i, group := range groups {
 		if len(group) == 1 {
 			// Single-segment groups should only happen if the segment is large enough
 			assert.GreaterOrEqual(t, group[0].RecordCount, int64(500),
-				"Single-segment group %d has only %d records - should be packed with others", 
+				"Single-segment group %d has only %d records - should be packed with others",
 				i, group[0].RecordCount)
 		}
 	}
 
 	// Calculate efficiency: ratio of groups to input segments
 	efficiency := float64(len(groups)) / float64(len(tinySegments))
-	t.Logf("Compaction efficiency: %d groups from %d segments (%.2f ratio)", 
+	t.Logf("Compaction efficiency: %d groups from %d segments (%.2f ratio)",
 		len(groups), len(tinySegments), efficiency)
-	
+
 	// Should achieve at least 50% reduction in segment count
 	assert.Less(t, efficiency, 0.5, "Should achieve at least 50%% compaction efficiency")
 }
@@ -282,10 +282,10 @@ func TestPackSegments_HourBoundaryFiltering(t *testing.T) {
 	segments := []lrdb.GetLogSegmentsForCompactionRow{
 		// Valid segment within hour 1
 		{SegmentID: 1, StartTs: hour1Start, EndTs: hour1Start + 1800000, RecordCount: 100, FileSize: 50000}, // 30 min within hour 1
-		
-		// Invalid segment crossing hour boundary  
+
+		// Invalid segment crossing hour boundary
 		{SegmentID: 2, StartTs: hour1Start + 1800000, EndTs: hour2Start + 1800000, RecordCount: 200, FileSize: 100000}, // Crosses from hour 1 to hour 2
-		
+
 		// Another valid segment within hour 1
 		{SegmentID: 3, StartTs: hour1Start + 900000, EndTs: hour1Start + 2700000, RecordCount: 150, FileSize: 75000}, // Different part of hour 1
 	}
