@@ -85,7 +85,14 @@ func init() {
 
 func traceIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
 	awsmanager *awsclient.Manager, inf lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
-	profile, err := sp.GetStorageProfileForBucket(ctx, inf.OrganizationID, inf.Bucket)
+	var profile storageprofile.StorageProfile
+	var err error
+
+	if collectorName := helpers.ExtractCollectorName(inf.ObjectID); collectorName != "" {
+		profile, err = sp.GetStorageProfileForOrganizationAndCollector(ctx, inf.OrganizationID, collectorName)
+	} else {
+		profile, err = sp.GetStorageProfileForBucket(ctx, inf.OrganizationID, inf.Bucket)
+	}
 	if err != nil {
 		ll.Error("Failed to get storage profile", slog.Any("error", err))
 		return err
