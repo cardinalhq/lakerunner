@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Copyright (C) 2025 CardinalHQ, Inc
 #
@@ -69,8 +69,8 @@ normalize_sql() {
     # Convert to lowercase for case-insensitive comparison
     echo "$content" | \
         sed 's/--.*$//' | \
-        sed '/^\s*$/d' | \
-        sed 's/[[:space:]]\+/ /g' | \
+        sed '/^[[:space:]]*$/d' | \
+        sed -E 's/[[:space:]]+/ /g' | \
         sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | \
         tr '[:upper:]' '[:lower:]'
 }

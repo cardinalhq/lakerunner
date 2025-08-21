@@ -2,6 +2,7 @@ name: Migration Integrity Check
 
 on:
   pull_request:
+    branches: [main]
     paths:
       - 'lrdb/migrations/**'
       - 'configdb/migrations/**'
