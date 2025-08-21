@@ -48,8 +48,8 @@ func TestClaimInqueueWorkBatch_OversizedFile(t *testing.T) {
 			Bucket:         "test-bucket",
 			ObjectID:       "huge_file.json.gz",
 			TelemetryType:  telemetryType,
-			Priority:       10,               // Highest priority
-			FileSize:       15 * 1024 * 1024, // 15MB (oversized for 10MB limit)
+			Priority:       10,              // Highest priority
+			FileSize:       2 * 1024 * 1024, // 2MB (oversized for 1MB limit)
 		},
 		{
 			OrganizationID: orgID,
@@ -85,17 +85,17 @@ func TestClaimInqueueWorkBatch_OversizedFile(t *testing.T) {
 		InstanceNum:    1,
 		TelemetryType:  telemetryType,
 		WorkerID:       workerID,
-		MaxTotalSize:   10 * 1024 * 1024, // 10MB limit
-		MinTotalSize:   5 * 1024 * 1024,  // 5MB minimum for fresh files
-		MaxAgeSeconds:  30,               // 30 seconds
-		BatchCount:     10,               // Allow up to 10 files
+		MaxTotalSize:   1024 * 1024, // 1MB limit
+		MinTotalSize:   512 * 1024,  // 512KB minimum for fresh files
+		MaxAgeSeconds:  30,          // 30 seconds
+		BatchCount:     10,          // Allow up to 10 files
 	})
 	require.NoError(t, err)
 
 	// Should claim exactly 1 item (the oversized one)
 	assert.Len(t, claimedBatch, 1)
 	assert.Equal(t, "huge_file.json.gz", claimedBatch[0].ObjectID)
-	assert.Equal(t, int64(15*1024*1024), claimedBatch[0].FileSize)
+	assert.Equal(t, int64(2*1024*1024), claimedBatch[0].FileSize)
 }
 
 // TestClaimInqueueWorkBatch_TooOldFiles tests Rule 2: Old files should be processed eagerly
@@ -154,11 +154,11 @@ func TestClaimInqueueWorkBatch_TooOldFiles(t *testing.T) {
 		InstanceNum:    1,
 		TelemetryType:  telemetryType,
 		WorkerID:       workerID,
-		NowTs:          &futureTime,      // Use future time to make files appear old
-		MaxTotalSize:   10 * 1024 * 1024, // 10MB limit
-		MinTotalSize:   5 * 1024 * 1024,  // 5MB minimum (ignored for old files)
-		MaxAgeSeconds:  30,               // 30 seconds
-		BatchCount:     10,               // Allow up to 10 files
+		NowTs:          &futureTime, // Use future time to make files appear old
+		MaxTotalSize:   1024 * 1024, // 1MB limit
+		MinTotalSize:   512 * 1024,  // 512KB minimum (ignored for old files)
+		MaxAgeSeconds:  30,          // 30 seconds
+		BatchCount:     10,          // Allow up to 10 files
 	})
 	require.NoError(t, err)
 
@@ -170,7 +170,7 @@ func TestClaimInqueueWorkBatch_TooOldFiles(t *testing.T) {
 	for _, item := range claimedBatch {
 		totalSize += item.FileSize
 	}
-	assert.LessOrEqual(t, totalSize, int64(10*1024*1024))
+	assert.LessOrEqual(t, totalSize, int64(1024*1024))
 }
 
 // TestClaimInqueueWorkBatch_FreshFilesBelowMinimum tests Rule 3: Fresh files below minimum should wait
@@ -218,10 +218,10 @@ func TestClaimInqueueWorkBatch_FreshFilesBelowMinimum(t *testing.T) {
 		InstanceNum:    1,
 		TelemetryType:  telemetryType,
 		WorkerID:       workerID,
-		MaxTotalSize:   10 * 1024 * 1024, // 10MB limit
-		MinTotalSize:   5 * 1024 * 1024,  // 5MB minimum
-		MaxAgeSeconds:  30,               // 30 seconds
-		BatchCount:     10,               // Allow up to 10 files
+		MaxTotalSize:   1024 * 1024, // 1MB limit
+		MinTotalSize:   512 * 1024,  // 512KB minimum
+		MaxAgeSeconds:  30,          // 30 seconds
+		BatchCount:     10,          // Allow up to 10 files
 	})
 	require.NoError(t, err)
 
@@ -248,7 +248,7 @@ func TestClaimInqueueWorkBatch_FreshFilesAboveMinimum(t *testing.T) {
 			ObjectID:       "medium_file1.json.gz",
 			TelemetryType:  telemetryType,
 			Priority:       10,
-			FileSize:       3 * 1024 * 1024, // 3MB
+			FileSize:       400 * 1024, // 400KB
 		},
 		{
 			OrganizationID: orgID,
@@ -258,7 +258,7 @@ func TestClaimInqueueWorkBatch_FreshFilesAboveMinimum(t *testing.T) {
 			ObjectID:       "medium_file2.json.gz",
 			TelemetryType:  telemetryType,
 			Priority:       10,
-			FileSize:       3 * 1024 * 1024, // 3MB
+			FileSize:       300 * 1024, // 300KB
 		},
 		{
 			OrganizationID: orgID,
@@ -268,7 +268,7 @@ func TestClaimInqueueWorkBatch_FreshFilesAboveMinimum(t *testing.T) {
 			ObjectID:       "small_file3.json.gz",
 			TelemetryType:  telemetryType,
 			Priority:       10,
-			FileSize:       1024, // 1KB
+			FileSize:       200 * 1024, // 200KB
 		},
 	}
 
@@ -284,14 +284,14 @@ func TestClaimInqueueWorkBatch_FreshFilesAboveMinimum(t *testing.T) {
 		InstanceNum:    1,
 		TelemetryType:  telemetryType,
 		WorkerID:       workerID,
-		MaxTotalSize:   7 * 1024 * 1024, // 7MB limit
-		MinTotalSize:   5 * 1024 * 1024, // 5MB minimum
-		MaxAgeSeconds:  30,              // 30 seconds
-		BatchCount:     10,              // Allow up to 10 files
+		MaxTotalSize:   1024 * 1024, // 1MB limit
+		MinTotalSize:   512 * 1024,  // 512KB minimum
+		MaxAgeSeconds:  30,          // 30 seconds
+		BatchCount:     10,          // Allow up to 10 files
 	})
 	require.NoError(t, err)
 
-	// Should claim all 3 files (3MB + 3MB + 1KB = 6MB + 1KB, which is >= 5MB minimum and <= 7MB limit)
+	// Should claim all 3 files (400KB + 300KB + 200KB = 900KB, which is >= 512KB minimum and <= 1MB limit)
 	assert.Len(t, claimedBatch, 3)
 
 	// Verify total size meets minimum and stays within limit
@@ -299,8 +299,8 @@ func TestClaimInqueueWorkBatch_FreshFilesAboveMinimum(t *testing.T) {
 	for _, item := range claimedBatch {
 		totalSize += item.FileSize
 	}
-	assert.GreaterOrEqual(t, totalSize, int64(5*1024*1024)) // >= minimum
-	assert.LessOrEqual(t, totalSize, int64(7*1024*1024))    // <= limit
+	assert.GreaterOrEqual(t, totalSize, int64(512*1024)) // >= minimum
+	assert.LessOrEqual(t, totalSize, int64(1024*1024))   // <= limit
 }
 
 // TestClaimInqueueWorkBatch_BatchCountLimit tests that batch_count parameter limits number of files
@@ -340,11 +340,11 @@ func TestClaimInqueueWorkBatch_BatchCountLimit(t *testing.T) {
 		InstanceNum:    1,
 		TelemetryType:  telemetryType,
 		WorkerID:       workerID,
-		NowTs:          &futureTime,      // Make files appear old
-		MaxTotalSize:   10 * 1024 * 1024, // 10MB limit (plenty of room)
-		MinTotalSize:   0,                // No minimum
-		MaxAgeSeconds:  30,               // 30 seconds
-		BatchCount:     3,                // Limit to 3 files
+		NowTs:          &futureTime, // Make files appear old
+		MaxTotalSize:   1024 * 1024, // 1MB limit (plenty of room)
+		MinTotalSize:   0,           // No minimum
+		MaxAgeSeconds:  30,          // 30 seconds
+		BatchCount:     3,           // Limit to 3 files
 	})
 	require.NoError(t, err)
 
@@ -408,11 +408,11 @@ func TestClaimInqueueWorkBatch_PriorityOrdering(t *testing.T) {
 		InstanceNum:    1,
 		TelemetryType:  telemetryType,
 		WorkerID:       workerID,
-		NowTs:          &futureTime,      // Make files appear old
-		MaxTotalSize:   10 * 1024 * 1024, // 10MB limit
-		MinTotalSize:   0,                // No minimum
-		MaxAgeSeconds:  30,               // 30 seconds
-		BatchCount:     10,               // Allow all files
+		NowTs:          &futureTime, // Make files appear old
+		MaxTotalSize:   1024 * 1024, // 1MB limit
+		MinTotalSize:   0,           // No minimum
+		MaxAgeSeconds:  30,          // 30 seconds
+		BatchCount:     10,          // Allow all files
 	})
 	require.NoError(t, err)
 

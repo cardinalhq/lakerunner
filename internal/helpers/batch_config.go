@@ -23,9 +23,9 @@ import (
 const (
 	DefaultTargetSizeBytes = 1024 * 1024 // 1MB
 	DefaultMaxBatchSize    = 20
-	DefaultMaxTotalSize    = 10 * 1024 * 1024 // 10MB
-	DefaultMaxAgeSeconds   = 30               // 30 seconds
-	DefaultMinBatchSize    = 0                // No minimum (disabled)
+	DefaultMaxTotalSize    = 1024 * 1024 // 1MB
+	DefaultMaxAgeSeconds   = 30          // 30 seconds
+	DefaultMinBatchSize    = 0           // No minimum (disabled)
 )
 
 func GetBatchSizeForSignal(signal string) int {

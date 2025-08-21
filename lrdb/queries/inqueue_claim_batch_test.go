@@ -96,10 +96,10 @@ func TestClaimInqueueWorkBatch(t *testing.T) {
 		InstanceNum:    1,
 		TelemetryType:  telemetryType,
 		WorkerID:       workerID,
-		MaxTotalSize:   10 * 1024 * 1024, // 10MB
-		MinTotalSize:   0,                // No minimum
-		MaxAgeSeconds:  30,               // 30 seconds
-		BatchCount:     2,                // Limit to 2 items
+		MaxTotalSize:   1024 * 1024, // 1MB
+		MinTotalSize:   0,           // No minimum
+		MaxAgeSeconds:  30,          // 30 seconds
+		BatchCount:     2,           // Limit to 2 items
 	})
 	require.NoError(t, err)
 
@@ -126,10 +126,10 @@ func TestClaimInqueueWorkBatch(t *testing.T) {
 		OrganizationID: orgID,
 		InstanceNum:    1,
 		TelemetryType:  telemetryType,
-		WorkerID:       workerID + 1,     // Different worker
-		MaxTotalSize:   10 * 1024 * 1024, // 10MB
-		MinTotalSize:   0,                // No minimum
-		MaxAgeSeconds:  30,               // 30 seconds
+		WorkerID:       workerID + 1, // Different worker
+		MaxTotalSize:   1024 * 1024,  // 1MB
+		MinTotalSize:   0,            // No minimum
+		MaxAgeSeconds:  30,           // 30 seconds
 		BatchCount:     10,
 	})
 	require.NoError(t, err)
@@ -143,10 +143,10 @@ func TestClaimInqueueWorkBatch(t *testing.T) {
 		OrganizationID: differentOrgID,
 		InstanceNum:    1,
 		TelemetryType:  telemetryType,
-		WorkerID:       workerID + 2,     // Different worker
-		MaxTotalSize:   10 * 1024 * 1024, // 10MB
-		MinTotalSize:   0,                // No minimum
-		MaxAgeSeconds:  30,               // 30 seconds
+		WorkerID:       workerID + 2, // Different worker
+		MaxTotalSize:   1024 * 1024,  // 1MB
+		MinTotalSize:   0,            // No minimum
+		MaxAgeSeconds:  30,           // 30 seconds
 		BatchCount:     10,
 	})
 	require.NoError(t, err)
@@ -199,9 +199,9 @@ func TestClaimInqueueWorkBatch_DifferentTelemetryTypes(t *testing.T) {
 		InstanceNum:    1,
 		TelemetryType:  "logs",
 		WorkerID:       workerID,
-		MaxTotalSize:   10 * 1024 * 1024, // 10MB
-		MinTotalSize:   0,                // No minimum
-		MaxAgeSeconds:  30,               // 30 seconds
+		MaxTotalSize:   1024 * 1024, // 1MB
+		MinTotalSize:   0,           // No minimum
+		MaxAgeSeconds:  30,          // 30 seconds
 		BatchCount:     10,
 	})
 	require.NoError(t, err)
@@ -216,9 +216,9 @@ func TestClaimInqueueWorkBatch_DifferentTelemetryTypes(t *testing.T) {
 		InstanceNum:    1,
 		TelemetryType:  "metrics",
 		WorkerID:       workerID + 1,
-		MaxTotalSize:   10 * 1024 * 1024, // 10MB
-		MinTotalSize:   0,                // No minimum
-		MaxAgeSeconds:  30,               // 30 seconds
+		MaxTotalSize:   1024 * 1024, // 1MB
+		MinTotalSize:   0,           // No minimum
+		MaxAgeSeconds:  30,          // 30 seconds
 		BatchCount:     10,
 	})
 	require.NoError(t, err)
@@ -241,9 +241,9 @@ func TestClaimInqueueWorkBatch_EmptyQueue(t *testing.T) {
 		InstanceNum:    1,
 		TelemetryType:  "logs",
 		WorkerID:       workerID,
-		MaxTotalSize:   10 * 1024 * 1024, // 10MB
-		MinTotalSize:   0,                // No minimum
-		MaxAgeSeconds:  30,               // 30 seconds
+		MaxTotalSize:   1024 * 1024, // 1MB
+		MinTotalSize:   0,           // No minimum
+		MaxAgeSeconds:  30,          // 30 seconds
 		BatchCount:     10,
 	})
 
