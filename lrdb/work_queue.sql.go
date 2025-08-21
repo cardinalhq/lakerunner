@@ -14,18 +14,65 @@ import (
 )
 
 const workQueueAddDirect = `-- name: WorkQueueAddDirect :exec
-SELECT public.work_queue_add(
-  $1      :: UUID,
-  $2    :: SMALLINT,
-  $3     :: INTEGER,
-  $4   :: INTEGER,
-  $5      :: signal_enum,
-  $6      :: action_enum,
-  $7    :: TSTZRANGE,
-  $8 :: TIMESTAMPTZ,
-  $9    :: INTEGER,
-  $10     :: INTEGER
+WITH params AS (
+  SELECT
+    $1      :: UUID        AS p_org_id,
+    $2    :: SMALLINT    AS p_instance,
+    $3     :: INTEGER     AS p_dateint,
+    $4   :: INTEGER     AS p_frequency,
+    $5      :: signal_enum AS p_signal,
+    $6      :: action_enum AS p_action,
+    $7    :: TSTZRANGE   AS p_ts_range,
+    $8 :: TIMESTAMPTZ AS p_runnable_at,
+    $9    :: INTEGER     AS p_priority,
+    $10     :: INTEGER     AS p_slot_id
+),
+insert_attempt AS (
+  INSERT INTO public.work_queue (
+    organization_id,
+    instance_num,
+    dateint,
+    frequency_ms,
+    signal,
+    action,
+    tries,
+    claimed_by,
+    claimed_at,
+    needs_run,
+    ts_range,
+    heartbeated_at,
+    runnable_at,
+    priority,
+    slot_id
+  )
+  SELECT
+    p.p_org_id,
+    p.p_instance,
+    p.p_dateint,
+    p.p_frequency,
+    p.p_signal,
+    p.p_action,
+    0,
+    -1,
+    NULL,
+    TRUE,
+    p.p_ts_range,
+    NOW(),
+    p.p_runnable_at,
+    p.p_priority,
+    p.p_slot_id
+  FROM params p
+  ON CONFLICT ON CONSTRAINT work_queue_conflict
+  DO UPDATE SET
+    needs_run = TRUE,
+    runnable_at = CASE
+                    WHEN work_queue.needs_run THEN work_queue.runnable_at
+                    ELSE EXCLUDED.runnable_at
+                  END,
+    priority = GREATEST(work_queue.priority, EXCLUDED.priority)
+  RETURNING 1
 )
+SELECT COUNT(*) FROM insert_attempt
 `
 
 type WorkQueueAddParams struct {

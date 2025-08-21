@@ -219,6 +219,7 @@ func convertTracesFileIfSupported(ll *slog.Logger, tmpfilename, tmpdir, bucket, 
 func queueTraceCompactionForSlot(ctx context.Context, mdb lrdb.StoreFull, inf lrdb.Inqueue, slotID int, dateint int32) error {
 	return mdb.WorkQueueAdd(ctx, lrdb.WorkQueueAddParams{
 		OrgID:     inf.OrganizationID,
+		Instance:  inf.InstanceNum,
 		Signal:    lrdb.SignalEnumTraces,
 		Action:    lrdb.ActionEnumCompact,
 		Dateint:   dateint,
