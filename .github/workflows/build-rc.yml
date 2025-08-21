@@ -1,3 +1,12 @@
+name: Build Release Candidate
+
+on:
+  push:
+    branches:
+      - release-candidate
+    tags:
+      - 'v*.*.*-rc*'
+
 jobs:
   partials:
     strategy:
@@ -5,15 +14,12 @@ jobs:
       matrix:
         include:
           - name: linux_amd64
-            label: ubuntu-22.04
+            label: ubuntu-latest-4-cores
             cache_path: dist/linux_amd64
           - name: linux_arm64
-            label: ubuntu-22.04-arm64
+            label: ubuntu-latest-arm-4-cores
             cache_path: dist/linux_arm64
-    runs-on:
-      group: larger-runners
-      labels:
-        - ${{ matrix.label }}
+    runs-on: ${{ matrix.label }}
     env:
       DOCKER_CLI_EXPERIMENTAL: "enabled"
     steps:
@@ -65,10 +71,7 @@ jobs:
 
   merge:
     needs: partials
-    runs-on:
-      group: larger-runners
-      labels:
-        - ubuntu-22.04  # run merge on x64; switch to arm64 if you prefer
+    runs-on: ubuntu-latest
     env:
       DOCKER_CLI_EXPERIMENTAL: "enabled"
     steps:
