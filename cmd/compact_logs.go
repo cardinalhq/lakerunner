@@ -253,7 +253,7 @@ func logCompactItemDo(
 		// This gives us 10% tolerance above the target file size
 		adjustedEstimate := rpfEstimate * 11 / 10
 		recorder := compactionMetricRecorder{}
-		packed, err := logcrunch.PackSegments(ctx, segments, adjustedEstimate, recorder, 
+		packed, err := logcrunch.PackSegments(ctx, segments, adjustedEstimate, recorder,
 			inf.OrganizationID().String(), fmt.Sprintf("%d", inf.InstanceNum()), "logs", "compact")
 		if err != nil {
 			ll.Error("Error packing segments", slog.String("error", err.Error()))

@@ -107,7 +107,7 @@ func TestHourBasedProcessing_EndToEnd(t *testing.T) {
 	for i, seg := range segments {
 		t.Run(fmt.Sprintf("Hour_%d", i), func(t *testing.T) {
 			ctx := context.Background()
-		groups, err := PackSegments(ctx, []lrdb.GetLogSegmentsForCompactionRow{seg}, 1000, NoOpMetricRecorder{}, "test-org", "1", "logs", "compact")
+			groups, err := PackSegments(ctx, []lrdb.GetLogSegmentsForCompactionRow{seg}, 1000, NoOpMetricRecorder{}, "test-org", "1", "logs", "compact")
 			require.NoError(t, err)
 			assert.Len(t, groups, 1)
 			assert.Len(t, groups[0], 1)
@@ -216,7 +216,7 @@ func TestHourBasedProcessing_EdgeCases(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-		_, err := PackSegments(ctx, tt.segments, 1000, NoOpMetricRecorder{}, "test-org", "1", "logs", "compact")
+			_, err := PackSegments(ctx, tt.segments, 1000, NoOpMetricRecorder{}, "test-org", "1", "logs", "compact")
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {

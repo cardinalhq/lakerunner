@@ -50,7 +50,7 @@ var (
 	workqueueLag           metric.Float64Histogram
 	manualGCHistogram      metric.Float64Histogram
 
-	segmentsFilteredCounter metric.Int64Counter
+	segmentsFilteredCounter  metric.Int64Counter
 	segmentsProcessedCounter metric.Int64Counter
 
 	// existsGauge is a gauge that indicates if the service is running (1) or not (0).

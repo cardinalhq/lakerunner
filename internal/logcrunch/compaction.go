@@ -30,8 +30,10 @@ type MetricRecorder interface {
 // NoOpMetricRecorder is a no-op implementation for testing
 type NoOpMetricRecorder struct{}
 
-func (NoOpMetricRecorder) RecordFilteredSegments(context.Context, int64, string, string, string, string, string) {}
-func (NoOpMetricRecorder) RecordProcessedSegments(context.Context, int64, string, string, string, string) {}
+func (NoOpMetricRecorder) RecordFilteredSegments(context.Context, int64, string, string, string, string, string) {
+}
+func (NoOpMetricRecorder) RecordProcessedSegments(context.Context, int64, string, string, string, string) {
+}
 
 // PackSegments groups segments into packs such that the sum of RecordCount in each
 // pack is <= estimatedRecordCount (greedy, one-or-more per pack).
@@ -143,13 +145,13 @@ func PackSegments(ctx context.Context, segments []lrdb.GetLogSegmentsForCompacti
 	if len(current) > 0 {
 		groups = append(groups, current)
 	}
-	
+
 	// Record successful processing metrics
 	totalProcessed := int64(len(segments))
 	if totalProcessed > 0 {
 		recorder.RecordProcessedSegments(ctx, totalProcessed, organizationID, instanceNum, signal, action)
 	}
-	
+
 	return groups, nil
 }
 

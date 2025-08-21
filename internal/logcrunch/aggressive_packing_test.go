@@ -100,7 +100,7 @@ func TestAggressivePackingImprovements(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-		groups, err := PackSegments(ctx, productionSegments, tt.recordThreshold, NoOpMetricRecorder{}, "test-org", "1", "logs", "compact")
+			groups, err := PackSegments(ctx, productionSegments, tt.recordThreshold, NoOpMetricRecorder{}, "test-org", "1", "logs", "compact")
 			require.NoError(t, err)
 
 			// Calculate metrics
