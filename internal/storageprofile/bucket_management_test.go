@@ -44,7 +44,7 @@ func (m *mockBucketManagementFetcher) GetStorageProfile(ctx context.Context, par
 	return configdb.GetStorageProfileRow{}, errors.New("not implemented")
 }
 
-func (m *mockBucketManagementFetcher) GetStorageProfileByCollectorName(ctx context.Context, params configdb.GetStorageProfileByCollectorNameParams) (configdb.GetStorageProfileByCollectorNameRow, error) {
+func (m *mockBucketManagementFetcher) GetStorageProfileByCollectorName(ctx context.Context, organizationID uuid.UUID) (configdb.GetStorageProfileByCollectorNameRow, error) {
 	return configdb.GetStorageProfileByCollectorNameRow{}, errors.New("not implemented")
 }
 

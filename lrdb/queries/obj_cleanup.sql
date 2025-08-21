@@ -6,7 +6,7 @@ INSERT INTO obj_cleanup (
   object_id
 ) VALUES (
   @organization_id,
-  1,
+  9999,
   @bucket_id,
   @object_id
 ) ON CONFLICT (organization_id, instance_num, bucket_id, object_id) DO NOTHING;

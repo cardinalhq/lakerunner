@@ -19,7 +19,7 @@ INSERT INTO obj_cleanup (
   object_id
 ) VALUES (
   $1,
-  1,
+  9999,
   $2,
   $3
 ) ON CONFLICT (organization_id, instance_num, bucket_id, object_id) DO NOTHING

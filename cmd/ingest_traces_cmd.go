@@ -136,10 +136,9 @@ func traceIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp sto
 			for _, result := range traceResults {
 				segmentID := s3helper.GenerateID()
 
-				// Create S3 object ID for traces
-				// Format: db/<org-id>/<dateint>/traces/<filename>.parquet
-				dbObjectID := fmt.Sprintf("db/%s/%d/traces/%d.parquet",
-					inf.OrganizationID.String(), ingest_dateint, segmentID)
+				// Create S3 object ID for traces using the standard helper
+				hour := int16(0) // Hour doesn't matter for slot-based traces
+				dbObjectID := helpers.MakeDBObjectID(inf.OrganizationID, ingest_dateint, hour, segmentID, "traces")
 
 				// Upload to S3
 				if err := s3helper.UploadS3Object(ctx, s3client, inf.Bucket, dbObjectID, result.FileName); err != nil {

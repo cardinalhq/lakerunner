@@ -9,7 +9,6 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const checkOrgBucketAccess = `-- name: CheckOrgBucketAccess :one
@@ -160,18 +159,17 @@ SELECT DISTINCT
   sp.cloud_provider,
   sp.region,
   sp.role,
-  c.organization_id
+  sp.organization_id
 FROM c_storage_profiles sp
-LEFT OUTER JOIN c_collectors c ON c.storage_profile_id = sp.id
-WHERE c.deleted_at IS NULL
+WHERE sp.organization_id IS NOT NULL
 `
 
 type GetAllCStorageProfilesForSyncRow struct {
-	BucketName     string      `json:"bucket_name"`
-	CloudProvider  string      `json:"cloud_provider"`
-	Region         string      `json:"region"`
-	Role           *string     `json:"role"`
-	OrganizationID pgtype.UUID `json:"organization_id"`
+	BucketName     string    `json:"bucket_name"`
+	CloudProvider  string    `json:"cloud_provider"`
+	Region         string    `json:"region"`
+	Role           *string   `json:"role"`
+	OrganizationID uuid.UUID `json:"organization_id"`
 }
 
 // Legacy table sync operations
@@ -352,8 +350,7 @@ INSERT INTO organization_buckets (
   organization_id, bucket_id
 ) VALUES (
   $1, $2
-) ON CONFLICT (organization_id) DO UPDATE SET
-  bucket_id = EXCLUDED.bucket_id
+) ON CONFLICT (organization_id, bucket_id) DO NOTHING
 `
 
 type UpsertOrganizationBucketParams struct {

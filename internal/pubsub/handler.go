@@ -104,7 +104,6 @@ func handleMessage(ctx context.Context, msg []byte, sp storageprofile.StoragePro
 
 		err = mdb.PutInqueueWork(ctx, lrdb.PutInqueueWorkParams{
 			OrganizationID: item.OrganizationID,
-			CollectorName:  item.CollectorName,
 			Bucket:         item.Bucket,
 			ObjectID:       item.ObjectID,
 			TelemetryType:  item.TelemetryType,

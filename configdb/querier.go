@@ -42,7 +42,7 @@ type Querier interface {
 	GetOrganizationAPIKeyByID(ctx context.Context, apiKeyID uuid.UUID) (GetOrganizationAPIKeyByIDRow, error)
 	GetOrganizationByName(ctx context.Context, name string) (Organization, error)
 	GetOrganizationsByBucket(ctx context.Context, bucketName string) ([]uuid.UUID, error)
-	GetStorageProfileByCollectorNameUncached(ctx context.Context, arg GetStorageProfileByCollectorNameParams) (GetStorageProfileByCollectorNameRow, error)
+	GetStorageProfileByCollectorNameUncached(ctx context.Context, organizationID uuid.UUID) (GetStorageProfileByCollectorNameRow, error)
 	GetStorageProfileUncached(ctx context.Context, arg GetStorageProfileParams) (GetStorageProfileRow, error)
 	GetStorageProfilesByBucketNameUncached(ctx context.Context, bucketName string) ([]GetStorageProfilesByBucketNameRow, error)
 	HasExistingStorageProfiles(ctx context.Context) (bool, error)

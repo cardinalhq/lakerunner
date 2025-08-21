@@ -16,21 +16,20 @@ import (
 const workQueueAddDirect = `-- name: WorkQueueAddDirect :exec
 SELECT public.work_queue_add(
   $1      :: UUID,
-  $2    :: SMALLINT,
-  $3     :: INTEGER,
-  $4   :: INTEGER,
-  $5      :: signal_enum,
-  $6      :: action_enum,
-  $7    :: TSTZRANGE,
-  $8 :: TIMESTAMPTZ,
-  $9    :: INTEGER,
-  $10     :: INTEGER
+  9999         :: SMALLINT,
+  $2     :: INTEGER,
+  $3   :: INTEGER,
+  $4      :: signal_enum,
+  $5      :: action_enum,
+  $6    :: TSTZRANGE,
+  $7 :: TIMESTAMPTZ,
+  $8    :: INTEGER,
+  $9     :: INTEGER
 )
 `
 
 type WorkQueueAddParams struct {
 	OrgID      uuid.UUID                        `json:"org_id"`
-	Instance   int16                            `json:"instance"`
 	Dateint    int32                            `json:"dateint"`
 	Frequency  int32                            `json:"frequency"`
 	Signal     SignalEnum                       `json:"signal"`
@@ -44,7 +43,6 @@ type WorkQueueAddParams struct {
 func (q *Queries) WorkQueueAddDirect(ctx context.Context, arg WorkQueueAddParams) error {
 	_, err := q.db.Exec(ctx, workQueueAddDirect,
 		arg.OrgID,
-		arg.Instance,
 		arg.Dateint,
 		arg.Frequency,
 		arg.Signal,

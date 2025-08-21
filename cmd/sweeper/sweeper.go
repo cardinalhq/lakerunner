@@ -458,24 +458,12 @@ func runLegacyTablesSync(ctx context.Context, ll *slog.Logger, cdb configdb.Quer
 	bucketToOrgs := make(map[string][]uuid.UUID)
 
 	for _, profile := range profiles {
-		if !profile.OrganizationID.Valid {
-			ll.Warn("Skipping profile with invalid organization ID", slog.String("bucket", profile.BucketName))
-			continue
-		}
-
-		orgID := profile.OrganizationID.Bytes
-		orgUUID, err := uuid.FromBytes(orgID[:])
-		if err != nil {
-			ll.Warn("Skipping profile with invalid organization UUID", slog.String("bucket", profile.BucketName), slog.Any("error", err))
-			continue
-		}
-
 		// Use first profile found for each bucket (1:1 mapping enforced)
 		if _, exists := bucketToProfile[profile.BucketName]; !exists {
 			bucketToProfile[profile.BucketName] = profile
 		}
 
-		bucketToOrgs[profile.BucketName] = append(bucketToOrgs[profile.BucketName], orgUUID)
+		bucketToOrgs[profile.BucketName] = append(bucketToOrgs[profile.BucketName], profile.OrganizationID)
 	}
 
 	// Create bucket configurations and organization mappings
@@ -514,6 +502,13 @@ func runLegacyTablesSync(ctx context.Context, ll *slog.Logger, cdb configdb.Quer
 			slog.String("bucket", bucketName),
 			slog.Int("orgCount", len(orgs)))
 	}
+
+	// Sync organizations from c_organizations to our organizations table
+	ll.Info("Syncing organizations from c_organizations table")
+	if err := qtx.SyncOrganizations(ctx); err != nil {
+		return fmt.Errorf("failed to sync organizations: %w", err)
+	}
+	ll.Info("Successfully synced organizations")
 
 	// Sync organization API keys from c_organization_api_keys to our organization tables
 	if err := syncOrganizationAPIKeys(ctx, ll, qtx); err != nil {

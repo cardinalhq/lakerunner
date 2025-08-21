@@ -404,7 +404,6 @@ func writeMetricSketchParquet(ctx context.Context, tmpdir string, blocknum int64
 			"_cardinalhq.timestamp":      startTS,
 			"_cardinalhq.name":           sketch.MetricName,
 			"_cardinalhq.customer_id":    inf.OrganizationID.String(),
-			"_cardinalhq.collector_id":   inf.CollectorName,
 			"_cardinalhq.metric_type":    sketch.MetricType,
 			"_cardinalhq.tid":            tid,
 			"_cardinalhq.value":          float64(-1),
@@ -446,7 +445,6 @@ func writeMetricSketchParquet(ctx context.Context, tmpdir string, blocknum int64
 	for _, stat := range stats {
 		ll.Info("Wrote metric sketch parquet",
 			slog.String("organizationID", inf.OrganizationID.String()),
-			slog.String("collectorName", inf.CollectorName),
 			slog.Int64("blocknum", blocknum),
 			slog.String("file", stat.FileName),
 			slog.Int64("recordcount", stat.RecordCount),
@@ -455,7 +453,7 @@ func writeMetricSketchParquet(ctx context.Context, tmpdir string, blocknum int64
 
 		// Upload the file to S3
 		segmentID := s3helper.GenerateID()
-		objID := helpers.MakeDBObjectID(inf.OrganizationID, inf.CollectorName, dateint, hour, segmentID, "metrics")
+		objID := helpers.MakeDBObjectID(inf.OrganizationID, dateint, hour, segmentID, "metrics")
 		if err := s3helper.UploadS3Object(ctx, s3client, inf.Bucket, objID, stat.FileName); err != nil {
 			return fmt.Errorf("uploading file to S3: %w", err)
 		}
@@ -494,7 +492,6 @@ func writeMetricSketchParquet(ctx context.Context, tmpdir string, blocknum int64
 
 		ll.Info("Inserted metric segment and uploaded to S3",
 			slog.String("organizationID", inf.OrganizationID.String()),
-			slog.String("collectorName", inf.CollectorName),
 			slog.Int64("blocknum", blocknum),
 			slog.String("objectID", objID),
 			slog.Int64("segmentID", segmentID),
