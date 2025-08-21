@@ -147,7 +147,7 @@ func traceIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp sto
 			segmentID := s3helper.GenerateID()
 
 			// Create S3 object ID for traces using the standard helper
-			hour := int16(0) // Hour doesn't matter for slot-based traces
+			hour := s3helper.HourFromMillis(result.MinTimestamp)
 			dbObjectID := helpers.MakeDBObjectID(inf.OrganizationID, inf.CollectorName, ingest_dateint, hour, segmentID, "traces")
 
 			// Upload to S3
