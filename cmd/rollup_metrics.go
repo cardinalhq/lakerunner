@@ -149,6 +149,7 @@ func metricRollupItemDo(
 		OrganizationID: inf.OrganizationID(),
 		Dateint:        inf.Dateint(),
 		FrequencyMs:    previousFrequency,
+		InstanceNum:    inf.InstanceNum(),
 		StartTs:        st.Time.UTC().UnixMilli(),
 		EndTs:          et.Time.UTC().UnixMilli(),
 	})
@@ -165,6 +166,7 @@ func metricRollupItemDo(
 		OrganizationID: inf.OrganizationID(),
 		Dateint:        inf.Dateint(),
 		FrequencyMs:    inf.FrequencyMs(),
+		InstanceNum:    inf.InstanceNum(),
 		StartTs:        st.Time.UTC().UnixMilli(),
 		EndTs:          et.Time.UTC().UnixMilli(),
 	})
@@ -257,6 +259,7 @@ func rollupInterval(
 	params := lrdb.ReplaceMetricSegsParams{
 		OrganizationID: inf.OrganizationID(),
 		Dateint:        inf.Dateint(),
+		InstanceNum:    inf.InstanceNum(),
 		IngestDateint:  ingest_dateint,
 		FrequencyMs:    inf.FrequencyMs(),
 		Published:      true,
@@ -315,6 +318,7 @@ func rollupInterval(
 			Dateint:        row.Dateint,
 			FrequencyMs:    row.FrequencyMs,
 			SegmentID:      row.SegmentID,
+			InstanceNum:    row.InstanceNum,
 			TidPartition:   row.TidPartition,
 		})
 	}

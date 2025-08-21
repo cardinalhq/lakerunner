@@ -335,6 +335,7 @@ func compactInterval(
 	params := lrdb.ReplaceMetricSegsParams{
 		OrganizationID: inf.OrganizationID(),
 		Dateint:        inf.Dateint(),
+		InstanceNum:    inf.InstanceNum(),
 		IngestDateint:  ingest_dateint,
 		FrequencyMs:    inf.FrequencyMs(),
 		Published:      true,

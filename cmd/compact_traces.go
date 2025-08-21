@@ -223,7 +223,7 @@ func compactTracesFor(
 			ll := ll.With(slog.Int("groupIndex", i))
 
 			// Call packTraceSegment for each group
-			err = packTraceSegment(ctx, ll, tmpdir, s3client, mdb, group, profile, inf.Dateint(), slotID)
+			err = packTraceSegment(ctx, ll, tmpdir, s3client, mdb, group, profile, inf.Dateint(), slotID, inf.InstanceNum())
 			if err != nil {
 				ll.Error("packTraceSegment failed",
 					slog.Int("groupIndex", i),
