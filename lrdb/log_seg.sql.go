@@ -110,8 +110,9 @@ WHERE organization_id = $1
   AND record_count > 0
   AND file_size <= $4
   AND (created_at, segment_id) > ($5, $6::bigint)
+  AND ts_range && int8range($7, $8, '[)')
 ORDER BY created_at, segment_id
-LIMIT $7
+LIMIT $9
 `
 
 type GetLogSegmentsForCompactionParams struct {
@@ -121,6 +122,8 @@ type GetLogSegmentsForCompactionParams struct {
 	MaxFileSize     int64     `json:"max_file_size"`
 	CursorCreatedAt time.Time `json:"cursor_created_at"`
 	CursorSegmentID int64     `json:"cursor_segment_id"`
+	HourStartTs     int64     `json:"hour_start_ts"`
+	HourEndTs       int64     `json:"hour_end_ts"`
 	Maxrows         int32     `json:"maxrows"`
 }
 
@@ -142,6 +145,8 @@ func (q *Queries) GetLogSegmentsForCompaction(ctx context.Context, arg GetLogSeg
 		arg.MaxFileSize,
 		arg.CursorCreatedAt,
 		arg.CursorSegmentID,
+		arg.HourStartTs,
+		arg.HourEndTs,
 		arg.Maxrows,
 	)
 	if err != nil {

@@ -41,6 +41,7 @@ WHERE organization_id = @organization_id
   AND record_count > 0
   AND file_size <= @max_file_size
   AND (created_at, segment_id) > (@cursor_created_at, @cursor_segment_id::bigint)
+  AND ts_range && int8range(@hour_start_ts, @hour_end_ts, '[)')
 ORDER BY created_at, segment_id
 LIMIT @maxrows;
 
