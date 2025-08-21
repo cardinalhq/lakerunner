@@ -30,7 +30,6 @@ package cmd
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -220,23 +219,36 @@ func compactTracesFor(
 		// Process each group for actual compaction
 
 		for i, group := range packed {
-			ll := ll.With(slog.Int("groupIndex", i))
+			// Generate unique operation ID for this atomic group
+			opID := generateOperationID(i)
+			ll := ll.With(
+				slog.String("operationID", opID),
+				slog.Int("groupIndex", i))
+
+			// Check for shutdown BEFORE starting atomic work
+			select {
+			case <-compactTracesDoneCtx.Done():
+				ll.Info("Shutdown requested - aborting before atomic operation",
+					slog.Int("completedGroups", i),
+					slog.Int("remainingGroups", len(packed)-i))
+				return WorkResultTryAgainLater, nil
+			default:
+			}
+
+			ll.Info("Starting atomic trace compaction operation",
+				slog.Int("segmentCount", len(group)))
 
 			// Call packTraceSegment for each group
 			err = packTraceSegment(ctx, ll, tmpdir, s3client, mdb, group, profile, inf.Dateint(), slotID, inf.InstanceNum())
 			if err != nil {
-				ll.Error("packTraceSegment failed",
-					slog.Int("groupIndex", i),
-					slog.String("error", err.Error()))
+				ll.Error("Atomic operation failed - will retry entire work item",
+					slog.Any("error", err),
+					slog.Int("failedAtGroup", i))
 				break
 			}
 
-			select {
-			case <-compactTracesDoneCtx.Done():
-				ll.Info("Shutdown requested, stopping group processing")
-				return WorkResultTryAgainLater, errors.New("Asked to shut down, will retry work")
-			default:
-			}
+			ll.Info("Atomic operation completed successfully",
+				slog.Int("segmentsProcessed", len(group)))
 		}
 
 		if err != nil {

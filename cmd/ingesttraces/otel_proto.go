@@ -216,12 +216,12 @@ func ConvertProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate 
 			// Include timestamp range information in the result
 			timestampRange := slotTimestampRanges[slot]
 			allResults = append(allResults, TraceFileResult{
-				FileName:      res.FileName,
-				RecordCount:   res.RecordCount,
-				FileSize:      res.FileSize,
-				SlotID:        slot,
-				MinTimestamp:  timestampRange.MinTimestamp,
-				MaxTimestamp:  timestampRange.MaxTimestamp,
+				FileName:     res.FileName,
+				RecordCount:  res.RecordCount,
+				FileSize:     res.FileSize,
+				SlotID:       slot,
+				MinTimestamp: timestampRange.MinTimestamp,
+				MaxTimestamp: timestampRange.MaxTimestamp,
 			})
 		}
 	}
@@ -241,10 +241,10 @@ type SlotTimestampRange struct {
 
 // TraceFileResult contains information about a converted trace file
 type TraceFileResult struct {
-	FileName      string
-	RecordCount   int64
-	FileSize      int64
-	SlotID        int
-	MinTimestamp  int64
-	MaxTimestamp  int64
+	FileName     string
+	RecordCount  int64
+	FileSize     int64
+	SlotID       int
+	MinTimestamp int64
+	MaxTimestamp int64
 }

@@ -281,29 +281,84 @@ func rollupInterval(
 	}
 
 	dateint, hour := helpers.MSToDateintHour(st.Time.UTC().UnixMilli())
+
+	// Process each tid_partition atomically
 	for tidPartition, result := range mergeResult {
+		// Generate operation ID for tracking this atomic operation
+		opID := fmt.Sprintf("rollup_op_%d_%d_%s", time.Now().Unix(), tidPartition, generateShortID())
+		tidLogger := ll.With(slog.String("operationID", opID), slog.Int("tidPartition", int(tidPartition)))
+
+		tidLogger.Info("Starting atomic metric rollup operation",
+			slog.Int64("recordCount", result.RecordCount),
+			slog.Int64("fileSize", result.FileSize))
+
 		segmentID := s3helper.GenerateID()
 		newObjectID := helpers.MakeDBObjectID(inf.OrganizationID(), profile.CollectorName, dateint, hour, segmentID, "metrics")
-		ll.Info("Uploading to S3", slog.String("objectID", newObjectID), slog.String("bucket", profile.Bucket))
+
+		tidLogger.Info("Uploading rolled-up metric file to S3 - point of no return approaching",
+			slog.String("newObjectID", newObjectID),
+			slog.String("bucket", profile.Bucket),
+			slog.Int64("newSegmentID", segmentID))
+
 		err = s3helper.UploadS3Object(ctx, s3client, profile.Bucket, newObjectID, result.FileName)
 		if err != nil {
-			ll.Error("Failed to upload new S3 object", slog.String("objectID", newObjectID), slog.Any("error", err))
+			tidLogger.Error("Atomic operation failed during S3 upload - no changes made",
+				slog.Any("error", err),
+				slog.String("objectID", newObjectID))
 			return fmt.Errorf("uploading new S3 object: %w", err)
 		}
-		ll.Info("adding new metric segment", slog.Int("tidPartition", int(tidPartition)), slog.Int64("segmentID", segmentID))
-		params.NewRecords = append(params.NewRecords, lrdb.ReplaceMetricSegsNew{
-			TidPartition: int16(tidPartition),
-			SegmentID:    segmentID,
-			StartTs:      st.Time.UTC().UnixMilli(),
-			EndTs:        et.Time.UTC().UnixMilli(),
-			RecordCount:  result.RecordCount,
-			FileSize:     result.FileSize,
-		})
-	}
 
-	if err := mdb.ReplaceMetricSegs(ctx, params); err != nil {
-		ll.Error("Failed to replace metric segments", slog.Any("error", err))
-		return fmt.Errorf("replacing metric segments: %w", err)
+		tidLogger.Debug("S3 upload successful, updating database index - CRITICAL SECTION",
+			slog.String("uploadedObject", newObjectID))
+
+		// Create params for this single tid_partition
+		singleParams := lrdb.ReplaceMetricSegsParams{
+			OrganizationID: params.OrganizationID,
+			Dateint:        params.Dateint,
+			FrequencyMs:    params.FrequencyMs,
+			InstanceNum:    params.InstanceNum,
+			IngestDateint:  params.IngestDateint,
+			Published:      params.Published,
+			Rolledup:       params.Rolledup,
+			CreatedBy:      params.CreatedBy,
+			OldRecords:     params.OldRecords, // Contains all old records, but DB will filter by tid_partition
+			NewRecords: []lrdb.ReplaceMetricSegsNew{
+				{
+					TidPartition: int16(tidPartition),
+					SegmentID:    segmentID,
+					StartTs:      st.Time.UTC().UnixMilli(),
+					EndTs:        et.Time.UTC().UnixMilli(),
+					RecordCount:  result.RecordCount,
+					FileSize:     result.FileSize,
+				},
+			},
+		}
+
+		if err := mdb.ReplaceMetricSegs(ctx, singleParams); err != nil {
+			tidLogger.Error("CRITICAL: Database update failed after S3 upload - file orphaned in S3",
+				slog.Any("error", err),
+				slog.String("orphanedObject", newObjectID),
+				slog.Int64("orphanedSegmentID", segmentID),
+				slog.String("bucket", profile.Bucket))
+
+			// Best effort cleanup - try to delete the uploaded file
+			tidLogger.Debug("Attempting to cleanup orphaned S3 object")
+			if cleanupErr := s3helper.DeleteS3Object(ctx, s3client, profile.Bucket, newObjectID); cleanupErr != nil {
+				tidLogger.Error("Failed to cleanup orphaned S3 object - manual cleanup required",
+					slog.Any("error", cleanupErr),
+					slog.String("objectID", newObjectID),
+					slog.String("bucket", profile.Bucket))
+			} else {
+				tidLogger.Info("Successfully cleaned up orphaned S3 object")
+			}
+			return fmt.Errorf("replacing metric segments: %w", err)
+		}
+
+		tidLogger.Info("ATOMIC OPERATION COMMITTED SUCCESSFULLY - database updated, segments swapped",
+			slog.Int64("newSegmentID", segmentID),
+			slog.Int64("newRecordCount", result.RecordCount),
+			slog.Int64("newFileSize", result.FileSize),
+			slog.String("newObjectID", newObjectID))
 	}
 	ll.Info("Replaced metric segments")
 
@@ -349,7 +404,7 @@ func rollupInterval(
 		oid := helpers.MakeDBObjectID(inf.OrganizationID(), profile.CollectorName, dateint, hour, row.SegmentID, "metrics")
 		ll.Info("Deleting old S3 object", slog.String("objectID", oid))
 		if err := s3helper.ScheduleS3Delete(ctx, mdb, profile.OrganizationID, profile.Bucket, oid); err != nil {
-			ll.Error("scheduleS3Delete", slog.String("error", err.Error()))
+			ll.Error("scheduleS3Delete", slog.Any("error", err))
 		}
 	}
 
