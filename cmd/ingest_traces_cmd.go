@@ -16,14 +16,12 @@ package cmd
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
 
@@ -32,8 +30,6 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
-	"github.com/cardinalhq/lakerunner/internal/tracecompaction"
-	"github.com/cardinalhq/lakerunner/lockmgr"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -274,14 +270,14 @@ func convertTracesFileIfSupported(ll *slog.Logger, tmpfilename, tmpdir, bucket, 
 func queueTraceCompactionForSlot(ctx context.Context, mdb lrdb.StoreFull, inf lrdb.Inqueue, slotID int, dateint int32, hourAlignedTS int64) error {
 
 	return mdb.WorkQueueAdd(ctx, lrdb.WorkQueueAddParams{
-		OrgID:     inf.OrganizationID,
-		Instance:  inf.InstanceNum,
-		Signal:    lrdb.SignalEnumTraces,
-		Action:    lrdb.ActionEnumCompact,
-		Dateint:   dateint,
-		Frequency: -1,
-		SlotID:    int32(slotID),
-		TsRange:   qmcFromInqueue(inf, 3600000, hourAlignedTS).TsRange,
+		OrgID:      inf.OrganizationID,
+		Instance:   inf.InstanceNum,
+		Signal:     lrdb.SignalEnumTraces,
+		Action:     lrdb.ActionEnumCompact,
+		Dateint:    dateint,
+		Frequency:  -1,
+		SlotID:     int32(slotID),
+		TsRange:    qmcFromInqueue(inf, 3600000, hourAlignedTS).TsRange,
 		RunnableAt: time.Now().UTC().Add(5 * time.Minute),
 	})
 }

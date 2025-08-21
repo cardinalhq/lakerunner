@@ -213,14 +213,14 @@ func logCompactItemDo(
 		// Check if context is cancelled before starting next batch
 		if ctx.Err() != nil {
 			ll.Info("Context cancelled, stopping compaction loop - will retry to continue",
-				slog.Int("processedBatches", totalBatchesProcessed),
-				slog.Int("processedSegments", totalSegmentsProcessed),
+				slog.Int("batchCount", totalBatchesProcessed),
+				slog.Int("segmentCount", totalSegmentsProcessed),
 				slog.Any("error", ctx.Err()))
 			return WorkResultTryAgainLater, nil
 		}
 
 		ll.Info("Querying for log segments to compact",
-			slog.Int("batch", totalBatchesProcessed+1),
+			slog.Int("batchNumber", totalBatchesProcessed+1),
 			slog.Time("cursorCreatedAt", cursorCreatedAt),
 			slog.Int64("cursorSegmentID", cursorSegmentID))
 
@@ -236,7 +236,7 @@ func logCompactItemDo(
 			Maxrows:         maxRowsLimit,    // Safety limit for compaction batch
 		})
 		if err != nil {
-			ll.Error("Error getting log segments for compaction", slog.String("error", err.Error()))
+			ll.Error("Error getting log segments for compaction", slog.Any("error", err))
 			return WorkResultTryAgainLater, err
 		}
 
@@ -246,15 +246,15 @@ func logCompactItemDo(
 				ll.Info("No segments to compact")
 			} else {
 				ll.Info("Finished processing all compaction batches",
-					slog.Int("totalBatches", totalBatchesProcessed),
-					slog.Int("totalSegments", totalSegmentsProcessed))
+					slog.Int("batchCount", totalBatchesProcessed),
+					slog.Int("segmentCount", totalSegmentsProcessed))
 			}
 			return WorkResultSuccess, nil
 		}
 
 		ll.Info("Processing compaction batch",
 			slog.Int("segmentCount", len(segments)),
-			slog.Int("batch", totalBatchesProcessed+1))
+			slog.Int("batchNumber", totalBatchesProcessed+1))
 
 		// Update cursor to last (created_at, segment_id) in this batch to ensure forward progress
 		if len(segments) > 0 {
@@ -271,7 +271,7 @@ func logCompactItemDo(
 		packed, err := logcrunch.PackSegments(ctx, segments, adjustedEstimate, recorder,
 			inf.OrganizationID().String(), fmt.Sprintf("%d", inf.InstanceNum()), "logs", "compact")
 		if err != nil {
-			ll.Error("Error packing segments", slog.String("error", err.Error()))
+			ll.Error("Error packing segments", slog.Any("error", err))
 			return WorkResultTryAgainLater, err
 		}
 
@@ -282,9 +282,9 @@ func logCompactItemDo(
 		}
 		if packedSegmentCount < originalSegmentCount {
 			ll.Info("Some segments were filtered out during packing",
-				slog.Int("originalCount", originalSegmentCount),
-				slog.Int("packedCount", packedSegmentCount),
-				slog.Int("filteredOut", originalSegmentCount-packedSegmentCount))
+				slog.Int("originalSegmentCount", originalSegmentCount),
+				slog.Int("packedSegmentCount", packedSegmentCount),
+				slog.Int("filteredSegmentCount", originalSegmentCount-packedSegmentCount))
 		}
 
 		lastGroupSmall := false
@@ -316,19 +316,39 @@ func logCompactItemDo(
 			continue
 		}
 
-		ll.Info("counts", slog.Int("currentSegments", len(segments)), slog.Int("packGroups", len(packed)), slog.Bool("lastGroupSmall", lastGroupSmall))
+		ll.Info("Packing summary", slog.Int("segmentCount", len(segments)), slog.Int("groupCount", len(packed)), slog.Bool("lastGroupSmall", lastGroupSmall))
 
 		for i, group := range packed {
-			ll := ll.With(slog.Int("groupIndex", i))
-			err = packSegment(ctx, ll, tmpdir, s3client, mdb, group, sp, stdi, inf.InstanceNum())
-			if err != nil {
-				break
-			}
+			// Generate unique operation ID for this atomic group
+			opID := generateOperationID(i)
+			ll := ll.With(
+				slog.String("operationID", opID),
+				slog.Int("groupIndex", i))
+
+			// Check for shutdown BEFORE starting atomic work
 			select {
 			case <-compactLogsDoneCtx.Done():
-				return WorkResultTryAgainLater, errors.New("Asked to shut down, will retry work")
+				ll.Info("Shutdown requested - aborting before atomic operation",
+					slog.Int("completedGroupCount", i),
+					slog.Int("remainingGroupCount", len(packed)-i))
+				return WorkResultTryAgainLater, nil
 			default:
 			}
+
+			ll.Info("Starting atomic log compaction operation",
+				slog.Int("segmentCount", len(group)))
+
+			err = packSegment(ctx, ll, tmpdir, s3client, mdb, group, sp, stdi, inf.InstanceNum())
+
+			if err != nil {
+				ll.Error("Atomic operation failed - will retry entire work item",
+					slog.Any("error", err),
+					slog.Int("failedGroupIndex", i))
+				break
+			}
+
+			ll.Info("Atomic operation completed successfully",
+				slog.Int("segmentCount", len(group)))
 		}
 
 		if err != nil {
@@ -343,14 +363,14 @@ func logCompactItemDo(
 		// If we didn't hit the limit, we've processed all available segments
 		if len(segments) < maxRowsLimit {
 			ll.Info("Completed all compaction batches",
-				slog.Int("totalBatches", totalBatchesProcessed),
-				slog.Int("totalSegments", totalSegmentsProcessed))
+				slog.Int("batchCount", totalBatchesProcessed),
+				slog.Int("segmentCount", totalSegmentsProcessed))
 			return WorkResultSuccess, nil
 		}
 
 		// Continue to next batch - cursor already advanced
 		ll.Info("Batch completed, checking for more segments",
-			slog.Int("processedSegments", len(segments)),
+			slog.Int("segmentCount", len(segments)),
 			slog.Time("nextCursorCreatedAt", cursorCreatedAt),
 			slog.Int64("nextCursorSegmentID", cursorSegmentID))
 	}
