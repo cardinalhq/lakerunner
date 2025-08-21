@@ -1,45 +1,19 @@
-name: Build Release Candidate
-
-on:
-  push:
-    tags:
-      - "v*.*.*-*"
-
-permissions:
-  contents: write
-  id-token: write
-  packages: write
-
 jobs:
-  # preflight:
-  #   runs-on: ubuntu-22.04
-  #   steps:
-  #     - uses: actions/checkout@v5
-  #       with:
-  #         fetch-depth: 0
-
-  #     - uses: actions/setup-go@v5
-  #       with:
-  #         go-version: stable
-
-  #     - name: Run pre-flight checks
-  #       run: |
-  #         echo "Running pre-flight checks (no code generation)..."
-  #         go test -race ./...
-  #         go tool license-eye header check
-  #         echo "Checking formatting..."
-  #         test -z "$(gofmt -l . | grep -v '\.pb\.go$')" || (echo "Files need formatting:" && gofmt -l . | grep -v '\.pb\.go$' && exit 1)
-  #         echo "Running linter..."
-  #         go tool golangci-lint run --timeout 15m --config .golangci.yaml
-
   partials:
-    # needs: preflight
     strategy:
+      fail-fast: false
       matrix:
-        os:
-          - ubuntu-22.04
-          - ubuntu-22.04-arm
-    runs-on: ${{ matrix.os }}
+        include:
+          - name: linux_amd64
+            label: ubuntu-22.04
+            cache_path: dist/linux_amd64
+          - name: linux_arm64
+            label: ubuntu-22.04-arm64
+            cache_path: dist/linux_arm64
+    runs-on:
+      group: larger-runners
+      labels:
+        - ${{ matrix.label }}
     env:
       DOCKER_CLI_EXPERIMENTAL: "enabled"
     steps:
@@ -47,8 +21,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: docker/setup-qemu-action@v3
-
+      # Native builds on correct arch — no QEMU needed
       - uses: docker/setup-buildx-action@v3
 
       - name: Configure AWS credentials
@@ -71,13 +44,12 @@ jobs:
           go-version: stable
 
       - shell: bash
-        run: |
-          echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+        run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
 
       - uses: actions/cache@v4
         with:
-          path: dist/${{ matrix.os == 'ubuntu-22.04' && 'linux_amd64' || 'linux_arm64' }}
-          key: ${{ matrix.os == 'ubuntu-22.04' && 'linux_amd64' || 'linux_arm64' }}-${{ env.sha_short }}
+          path: ${{ matrix.cache_path }}
+          key: ${{ matrix.name }}-${{ env.sha_short }}
 
       - uses: goreleaser/goreleaser-action@v6
         with:
@@ -89,12 +61,14 @@ jobs:
           DUCKDB_SDK_VERSION: v1.3.2
 
       - shell: bash
-        run: |
-          ls -lR dist
+        run: ls -lR dist
 
   merge:
-    runs-on: ubuntu-22.04
     needs: partials
+    runs-on:
+      group: larger-runners
+      labels:
+        - ubuntu-22.04  # run merge on x64; switch to arm64 if you prefer
     env:
       DOCKER_CLI_EXPERIMENTAL: "enabled"
     steps:
@@ -102,12 +76,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: docker/setup-qemu-action@v3
-
       - uses: docker/setup-buildx-action@v3
-
       - uses: sigstore/cosign-installer@v3.9.2
-
       - uses: anchore/sbom-action/download-syft@v0.20.4
 
       - name: Configure AWS credentials
@@ -126,8 +96,7 @@ jobs:
           registry-type: public
 
       - shell: bash
-        run: |
-          echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+        run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
 
       - uses: actions/cache@v4
         with:
