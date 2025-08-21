@@ -179,7 +179,7 @@ func traceIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp sto
 				RecordCount:    result.RecordCount,
 				FileSize:       result.FileSize,
 				CreatedBy:      lrdb.CreatedByIngest,
-				Fingerprints:   []int64{}, // TODO: Extract fingerprints
+				Fingerprints:   result.Fingerprints.ToSlice(),
 			})
 			if err != nil {
 				ll.Error("Failed to insert trace segment", slog.Any("error", err))
@@ -245,7 +245,6 @@ func traceIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp sto
 			}
 		}
 	}
-	
 
 	// Trace ingestion logic is now handled in the convertTracesFileIfSupported function
 	// which processes the converted files, uploads them to S3, and prepares for database insertion

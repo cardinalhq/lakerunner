@@ -38,11 +38,13 @@ import (
 	"strconv"
 
 	oteltranslate "github.com/cardinalhq/oteltools/pkg/translate"
+	mapset "github.com/deckarep/golang-set/v2"
 
 	"github.com/cardinalhq/lakerunner/cmd/ingestlogs"
 	"github.com/cardinalhq/lakerunner/fileconv/proto"
 	"github.com/cardinalhq/lakerunner/fileconv/translate"
 	"github.com/cardinalhq/lakerunner/internal/buffet"
+	"github.com/cardinalhq/lakerunner/internal/logcrunch"
 )
 
 // NumTracePartitions is the number of partitions/slots for trace processing.
@@ -104,6 +106,9 @@ func ConvertProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate 
 		}
 	}
 
+	// Initialize map to accumulate distinct tag values by tag name across all rows
+	tagValuesByName := make(map[string]mapset.Set[string])
+
 	// Read all rows and build complete schema
 	for {
 		row, done, err := r.GetRow()
@@ -117,6 +122,27 @@ func ConvertProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate 
 		// Add base items to the row
 		for k, v := range baseitems {
 			row[k] = v
+		}
+
+		// Accumulate distinct tag values by tag name across all rows
+		for tagName, tagValue := range row {
+			var tagValueStr string
+			switch v := tagValue.(type) {
+			case string:
+				tagValueStr = v
+			case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+				tagValueStr = fmt.Sprintf("%d", v)
+			case float32, float64:
+				tagValueStr = fmt.Sprintf("%f", v)
+			default:
+				tagValueStr = fmt.Sprintf("%v", v)
+			}
+
+			if _, exists := tagValuesByName[tagName]; !exists {
+				tagValuesByName[tagName] = mapset.NewSet[string]()
+			}
+
+			tagValuesByName[tagName].Add(tagValueStr)
 		}
 
 		// Add row to schema builder
@@ -222,6 +248,7 @@ func ConvertProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate 
 				SlotID:       slot,
 				MinTimestamp: timestampRange.MinTimestamp,
 				MaxTimestamp: timestampRange.MaxTimestamp,
+				Fingerprints: logcrunch.ToFingerprints(tagValuesByName),
 			})
 		}
 	}
@@ -247,4 +274,5 @@ type TraceFileResult struct {
 	SlotID       int
 	MinTimestamp int64
 	MaxTimestamp int64
+	Fingerprints mapset.Set[int64]
 }
