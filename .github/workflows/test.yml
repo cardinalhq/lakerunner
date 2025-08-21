@@ -8,8 +8,7 @@ jobs:
     strategy:
       matrix:
         go-version: [1.25.x]
-        os: [ubuntu-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: larger-runners
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -31,8 +30,7 @@ jobs:
     strategy:
       matrix:
         go-version: [1.25.x]
-        os: [ubuntu-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: larger-runners
 
     services:
       postgres:
