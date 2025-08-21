@@ -154,6 +154,9 @@ func ConvertProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate 
 		writers[slot] = writer
 	}
 
+	// Track timestamp ranges for each slot (similar to how logs track hourly boundaries)
+	slotTimestampRanges := make(map[int]*SlotTimestampRange)
+
 	// Second pass: route each row to the appropriate slot based on trace ID
 	for _, row := range allRows {
 		// Extract trace ID from the row - use the correct field name
@@ -163,8 +166,30 @@ func ConvertProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate 
 			traceID = "unknown"
 		}
 
+		// Extract timestamp from the row
+		timestamp, ok := row[oteltranslate.CardinalFieldTimestamp].(int64)
+		if !ok {
+			// If no timestamp, skip this row or use a default
+			continue
+		}
+
 		// Determine which slot this trace should go to
 		slot := determineSlot(traceID, dateint, orgID)
+
+		// Track timestamp range for this slot
+		if slotRange, exists := slotTimestampRanges[slot]; exists {
+			if timestamp < slotRange.MinTimestamp {
+				slotRange.MinTimestamp = timestamp
+			}
+			if timestamp > slotRange.MaxTimestamp {
+				slotRange.MaxTimestamp = timestamp
+			}
+		} else {
+			slotTimestampRanges[slot] = &SlotTimestampRange{
+				MinTimestamp: timestamp,
+				MaxTimestamp: timestamp,
+			}
+		}
 
 		// Get the writer for this slot
 		writer, exists := writers[slot]
@@ -188,11 +213,15 @@ func ConvertProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate 
 
 		// Add all files from this slot to results
 		for _, res := range result {
+			// Include timestamp range information in the result
+			timestampRange := slotTimestampRanges[slot]
 			allResults = append(allResults, TraceFileResult{
-				FileName:    res.FileName,
-				RecordCount: res.RecordCount,
-				FileSize:    res.FileSize,
-				SlotID:      slot,
+				FileName:      res.FileName,
+				RecordCount:   res.RecordCount,
+				FileSize:      res.FileSize,
+				SlotID:        slot,
+				MinTimestamp:  timestampRange.MinTimestamp,
+				MaxTimestamp:  timestampRange.MaxTimestamp,
 			})
 		}
 	}
@@ -204,10 +233,18 @@ func ConvertProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate 
 	return allResults, nil
 }
 
+// SlotTimestampRange tracks the min and max timestamps for a slot
+type SlotTimestampRange struct {
+	MinTimestamp int64
+	MaxTimestamp int64
+}
+
 // TraceFileResult contains information about a converted trace file
 type TraceFileResult struct {
-	FileName    string
-	RecordCount int64
-	FileSize    int64
-	SlotID      int
+	FileName      string
+	RecordCount   int64
+	FileSize      int64
+	SlotID        int
+	MinTimestamp  int64
+	MaxTimestamp  int64
 }
