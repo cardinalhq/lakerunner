@@ -7,16 +7,26 @@ on:
       - 'configdb/migrations/**'
     types: [opened, synchronize, reopened]
 
+permissions:
+  contents: read
+
 jobs:
   check-migration-integrity:
     runs-on: ubuntu-latest
     name: Check Migration File Integrity
     steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0  # Fetch full history to compare against base branch
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Make script executable
         run: chmod +x scripts/check-migration-integrity.sh
@@ -25,12 +35,13 @@ jobs:
         run: ./scripts/check-migration-integrity.sh "${{ github.base_ref }}"
         env:
           # Ensure we have access to git operations
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
 
       - name: Comment on PR (on failure)
         if: failure()
         uses: actions/github-script@v7
         with:
+          github-token: ${{ steps.app-token.outputs.token }}
           script: |
             github.rest.issues.createComment({
               issue_number: context.issue.number,
@@ -64,6 +75,7 @@ jobs:
         if: success()
         uses: actions/github-script@v7
         with:
+          github-token: ${{ steps.app-token.outputs.token }}
           script: |
             // Only comment if there were migration changes
             const { execSync } = require('child_process');
