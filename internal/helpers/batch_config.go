@@ -23,6 +23,9 @@ import (
 const (
 	DefaultTargetSizeBytes = 1024 * 1024 // 1MB
 	DefaultMaxBatchSize    = 20
+	DefaultMaxTotalSize    = 10 * 1024 * 1024 // 10MB
+	DefaultMaxAgeSeconds   = 30               // 30 seconds
+	DefaultMinBatchSize    = 0                // No minimum (disabled)
 )
 
 func GetBatchSizeForSignal(signal string) int {
@@ -51,4 +54,31 @@ func GetMaxBatchSize() int {
 		}
 	}
 	return DefaultMaxBatchSize
+}
+
+func GetMaxTotalSize() int64 {
+	if value := os.Getenv("LAKERUNNER_MAX_TOTAL_SIZE"); value != "" {
+		if size, err := strconv.ParseInt(value, 10, 64); err == nil && size > 0 {
+			return size
+		}
+	}
+	return DefaultMaxTotalSize
+}
+
+func GetMaxAgeSeconds() int {
+	if value := os.Getenv("LAKERUNNER_MAX_AGE_SECONDS"); value != "" {
+		if age, err := strconv.Atoi(value); err == nil && age > 0 {
+			return age
+		}
+	}
+	return DefaultMaxAgeSeconds
+}
+
+func GetMinBatchSize() int64 {
+	if value := os.Getenv("LAKERUNNER_MIN_BATCH_SIZE"); value != "" {
+		if size, err := strconv.ParseInt(value, 10, 64); err == nil && size >= 0 {
+			return size
+		}
+	}
+	return DefaultMinBatchSize
 }
