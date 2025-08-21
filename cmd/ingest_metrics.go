@@ -453,7 +453,7 @@ func writeMetricSketchParquet(ctx context.Context, tmpdir string, blocknum int64
 
 		// Upload the file to S3
 		segmentID := s3helper.GenerateID()
-		objID := helpers.MakeDBObjectID(inf.OrganizationID, dateint, hour, segmentID, "metrics")
+		objID := helpers.MakeDBObjectID(inf.OrganizationID, inf.CollectorName, dateint, hour, segmentID, "metrics")
 		if err := s3helper.UploadS3Object(ctx, s3client, inf.Bucket, objID, stat.FileName); err != nil {
 			return fmt.Errorf("uploading file to S3: %w", err)
 		}
@@ -466,6 +466,7 @@ func writeMetricSketchParquet(ctx context.Context, tmpdir string, blocknum int64
 			IngestDateint:  ingest_dateint,
 			TidPartition:   0,
 			SegmentID:      segmentID,
+			InstanceNum:    inf.InstanceNum,
 			StartTs:        startTS,
 			EndTs:          endTS,
 			RecordCount:    stat.RecordCount,

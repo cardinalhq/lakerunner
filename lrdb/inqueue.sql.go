@@ -117,11 +117,13 @@ func (q *Queries) InqueueSummary(ctx context.Context) ([]InqueueSummaryRow, erro
 
 const putInqueueWork = `-- name: PutInqueueWork :exec
 INSERT INTO inqueue (organization_id, collector_name, instance_num, bucket, object_id, telemetry_type, priority)
-VALUES ($1, 'default', 9999, $2, $3, $4, $5)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 `
 
 type PutInqueueWorkParams struct {
 	OrganizationID uuid.UUID `json:"organization_id"`
+	CollectorName  string    `json:"collector_name"`
+	InstanceNum    int16     `json:"instance_num"`
 	Bucket         string    `json:"bucket"`
 	ObjectID       string    `json:"object_id"`
 	TelemetryType  string    `json:"telemetry_type"`
@@ -131,6 +133,8 @@ type PutInqueueWorkParams struct {
 func (q *Queries) PutInqueueWork(ctx context.Context, arg PutInqueueWorkParams) error {
 	_, err := q.db.Exec(ctx, putInqueueWork,
 		arg.OrganizationID,
+		arg.CollectorName,
+		arg.InstanceNum,
 		arg.Bucket,
 		arg.ObjectID,
 		arg.TelemetryType,

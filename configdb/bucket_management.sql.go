@@ -137,7 +137,7 @@ INSERT INTO organization_buckets (
   organization_id, bucket_id
 ) VALUES (
   $1, $2
-) RETURNING id, organization_id, bucket_id
+) RETURNING id, organization_id, bucket_id, instance_num, collector_name
 `
 
 type CreateOrganizationBucketParams struct {
@@ -148,7 +148,13 @@ type CreateOrganizationBucketParams struct {
 func (q *Queries) CreateOrganizationBucket(ctx context.Context, arg CreateOrganizationBucketParams) (OrganizationBucket, error) {
 	row := q.db.QueryRow(ctx, createOrganizationBucket, arg.OrganizationID, arg.BucketID)
 	var i OrganizationBucket
-	err := row.Scan(&i.ID, &i.OrganizationID, &i.BucketID)
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.BucketID,
+		&i.InstanceNum,
+		&i.CollectorName,
+	)
 	return i, err
 }
 
@@ -233,6 +239,46 @@ func (q *Queries) GetBucketConfiguration(ctx context.Context, bucketName string)
 	return i, err
 }
 
+const getDefaultOrganizationBucket = `-- name: GetDefaultOrganizationBucket :one
+SELECT ob.organization_id, ob.instance_num, ob.collector_name, bc.bucket_name, bc.cloud_provider, bc.region, bc.role, bc.endpoint, bc.use_path_style, bc.insecure_tls
+FROM organization_buckets ob
+JOIN bucket_configurations bc ON ob.bucket_id = bc.id  
+WHERE ob.organization_id = $1 
+ORDER BY ob.instance_num, ob.collector_name 
+LIMIT 1
+`
+
+type GetDefaultOrganizationBucketRow struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	InstanceNum    int16     `json:"instance_num"`
+	CollectorName  string    `json:"collector_name"`
+	BucketName     string    `json:"bucket_name"`
+	CloudProvider  string    `json:"cloud_provider"`
+	Region         string    `json:"region"`
+	Role           *string   `json:"role"`
+	Endpoint       *string   `json:"endpoint"`
+	UsePathStyle   bool      `json:"use_path_style"`
+	InsecureTls    bool      `json:"insecure_tls"`
+}
+
+func (q *Queries) GetDefaultOrganizationBucket(ctx context.Context, organizationID uuid.UUID) (GetDefaultOrganizationBucketRow, error) {
+	row := q.db.QueryRow(ctx, getDefaultOrganizationBucket, organizationID)
+	var i GetDefaultOrganizationBucketRow
+	err := row.Scan(
+		&i.OrganizationID,
+		&i.InstanceNum,
+		&i.CollectorName,
+		&i.BucketName,
+		&i.CloudProvider,
+		&i.Region,
+		&i.Role,
+		&i.Endpoint,
+		&i.UsePathStyle,
+		&i.InsecureTls,
+	)
+	return i, err
+}
+
 const getLongestPrefixMatch = `-- name: GetLongestPrefixMatch :one
 SELECT bpm.organization_id
 FROM bucket_prefix_mappings bpm
@@ -255,6 +301,92 @@ func (q *Queries) GetLongestPrefixMatch(ctx context.Context, arg GetLongestPrefi
 	var organization_id uuid.UUID
 	err := row.Scan(&organization_id)
 	return organization_id, err
+}
+
+const getOrganizationBucketByCollector = `-- name: GetOrganizationBucketByCollector :one
+SELECT ob.organization_id, ob.instance_num, ob.collector_name, bc.bucket_name, bc.cloud_provider, bc.region, bc.role, bc.endpoint, bc.use_path_style, bc.insecure_tls
+FROM organization_buckets ob
+JOIN bucket_configurations bc ON ob.bucket_id = bc.id  
+WHERE ob.organization_id = $1 AND ob.collector_name = $2
+`
+
+type GetOrganizationBucketByCollectorParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	CollectorName  string    `json:"collector_name"`
+}
+
+type GetOrganizationBucketByCollectorRow struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	InstanceNum    int16     `json:"instance_num"`
+	CollectorName  string    `json:"collector_name"`
+	BucketName     string    `json:"bucket_name"`
+	CloudProvider  string    `json:"cloud_provider"`
+	Region         string    `json:"region"`
+	Role           *string   `json:"role"`
+	Endpoint       *string   `json:"endpoint"`
+	UsePathStyle   bool      `json:"use_path_style"`
+	InsecureTls    bool      `json:"insecure_tls"`
+}
+
+func (q *Queries) GetOrganizationBucketByCollector(ctx context.Context, arg GetOrganizationBucketByCollectorParams) (GetOrganizationBucketByCollectorRow, error) {
+	row := q.db.QueryRow(ctx, getOrganizationBucketByCollector, arg.OrganizationID, arg.CollectorName)
+	var i GetOrganizationBucketByCollectorRow
+	err := row.Scan(
+		&i.OrganizationID,
+		&i.InstanceNum,
+		&i.CollectorName,
+		&i.BucketName,
+		&i.CloudProvider,
+		&i.Region,
+		&i.Role,
+		&i.Endpoint,
+		&i.UsePathStyle,
+		&i.InsecureTls,
+	)
+	return i, err
+}
+
+const getOrganizationBucketByInstance = `-- name: GetOrganizationBucketByInstance :one
+SELECT ob.organization_id, ob.instance_num, ob.collector_name, bc.bucket_name, bc.cloud_provider, bc.region, bc.role, bc.endpoint, bc.use_path_style, bc.insecure_tls
+FROM organization_buckets ob
+JOIN bucket_configurations bc ON ob.bucket_id = bc.id  
+WHERE ob.organization_id = $1 AND ob.instance_num = $2
+`
+
+type GetOrganizationBucketByInstanceParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	InstanceNum    int16     `json:"instance_num"`
+}
+
+type GetOrganizationBucketByInstanceRow struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	InstanceNum    int16     `json:"instance_num"`
+	CollectorName  string    `json:"collector_name"`
+	BucketName     string    `json:"bucket_name"`
+	CloudProvider  string    `json:"cloud_provider"`
+	Region         string    `json:"region"`
+	Role           *string   `json:"role"`
+	Endpoint       *string   `json:"endpoint"`
+	UsePathStyle   bool      `json:"use_path_style"`
+	InsecureTls    bool      `json:"insecure_tls"`
+}
+
+func (q *Queries) GetOrganizationBucketByInstance(ctx context.Context, arg GetOrganizationBucketByInstanceParams) (GetOrganizationBucketByInstanceRow, error) {
+	row := q.db.QueryRow(ctx, getOrganizationBucketByInstance, arg.OrganizationID, arg.InstanceNum)
+	var i GetOrganizationBucketByInstanceRow
+	err := row.Scan(
+		&i.OrganizationID,
+		&i.InstanceNum,
+		&i.CollectorName,
+		&i.BucketName,
+		&i.CloudProvider,
+		&i.Region,
+		&i.Role,
+		&i.Endpoint,
+		&i.UsePathStyle,
+		&i.InsecureTls,
+	)
+	return i, err
 }
 
 const getOrganizationsByBucket = `-- name: GetOrganizationsByBucket :many

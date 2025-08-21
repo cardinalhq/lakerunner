@@ -29,12 +29,16 @@ type StorageProfile struct {
 	Endpoint       string    `json:"endpoint,omitempty"`
 	InsecureTLS    bool      `json:"insecure_tls,omitempty"`
 	UsePathStyle   bool      `json:"use_path_style,omitempty"`
+	CollectorName  string    `json:"collector_name"`
+	InstanceNum    int16     `json:"instance_num"`
 }
 
 type StorageProfileProvider interface {
 	GetStorageProfileForBucket(ctx context.Context, organizationID uuid.UUID, bucketName string) (StorageProfile, error)
 	GetStorageProfilesByBucketName(ctx context.Context, bucketName string) ([]StorageProfile, error)
 	GetStorageProfileForOrganization(ctx context.Context, organizationID uuid.UUID) (StorageProfile, error)
+	GetStorageProfileForOrganizationAndInstance(ctx context.Context, organizationID uuid.UUID, instanceNum int16) (StorageProfile, error)
+	GetStorageProfileForOrganizationAndCollector(ctx context.Context, organizationID uuid.UUID, collectorName string) (StorageProfile, error)
 	ResolveOrganization(ctx context.Context, bucketName, objectPath string) (uuid.UUID, error)
 }
 
