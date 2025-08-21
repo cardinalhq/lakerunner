@@ -132,7 +132,7 @@ func EvaluatePushDown[T promql.Timestamped](
 	// Now start putting channels together for every orgId/instanceNum.
 	for orgId, instances := range segmentsByOrg {
 		for instanceNum, segments := range instances {
-			profile, err := w.storageProfileProvider.GetStorageProfileForOrganization(ctx, orgId)
+			profile, err := w.storageProfileProvider.GetStorageProfileForOrganizationAndInstance(ctx, orgId, instanceNum)
 			if err != nil {
 				slog.Error("Failed to get storage profile for organization",
 					slog.String("orgId", orgId.String()),
@@ -150,7 +150,7 @@ func EvaluatePushDown[T promql.Timestamped](
 
 			for _, seg := range segments {
 				objectId := fmt.Sprintf("db/%s/%s/%d/metrics/%s/tbl_%d.parquet", orgId.String(),
-					"default",
+					profile.CollectorName,
 					seg.DateInt,
 					seg.Hour,
 					seg.SegmentID)
