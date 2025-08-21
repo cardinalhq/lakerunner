@@ -9,6 +9,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const getStorageProfileByCollectorNameUncached = `-- name: GetStorageProfileByCollectorNameUncached :one
@@ -40,7 +41,7 @@ type GetStorageProfileByCollectorNameRow struct {
 	ExternalID     string    `json:"external_id"`
 }
 
-func (q *Queries) GetStorageProfileByCollectorNameUncached(ctx context.Context, organizationID uuid.UUID) (GetStorageProfileByCollectorNameRow, error) {
+func (q *Queries) GetStorageProfileByCollectorNameUncached(ctx context.Context, organizationID pgtype.UUID) (GetStorageProfileByCollectorNameRow, error) {
 	row := q.db.QueryRow(ctx, getStorageProfileByCollectorNameUncached, organizationID)
 	var i GetStorageProfileByCollectorNameRow
 	err := row.Scan(
@@ -75,8 +76,8 @@ WHERE
 `
 
 type GetStorageProfileParams struct {
-	OrganizationID uuid.UUID `json:"organization_id"`
-	InstanceNum    int16     `json:"instance_num"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	InstanceNum    int16       `json:"instance_num"`
 }
 
 type GetStorageProfileRow struct {

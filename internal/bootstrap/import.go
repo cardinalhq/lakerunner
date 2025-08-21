@@ -142,9 +142,21 @@ func importBucketConfigurations(ctx context.Context, configs []BucketConfigurati
 
 func importOrganizationBuckets(ctx context.Context, mappings []OrganizationBucket, qtx *configdb.Queries, logger *slog.Logger) error {
 	for _, mapping := range mappings {
+		// Use values from config if provided, otherwise use defaults
+		instanceNum := int16(1)
+		if mapping.InstanceNum != nil {
+			instanceNum = *mapping.InstanceNum
+		}
+		collectorName := "default"
+		if mapping.CollectorName != nil {
+			collectorName = *mapping.CollectorName
+		}
+
 		if err := qtx.UpsertOrganizationBucket(ctx, configdb.UpsertOrganizationBucketParams{
 			OrganizationID: mapping.OrganizationID,
 			BucketID:       mapping.BucketID,
+			InstanceNum:    instanceNum,
+			CollectorName:  collectorName,
 		}); err != nil {
 			return fmt.Errorf("failed to import organization bucket mapping %s->%s: %w",
 				mapping.OrganizationID, mapping.BucketID, err)

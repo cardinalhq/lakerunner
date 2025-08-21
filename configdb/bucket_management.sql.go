@@ -134,19 +134,26 @@ func (q *Queries) CreateBucketPrefixMapping(ctx context.Context, arg CreateBucke
 
 const createOrganizationBucket = `-- name: CreateOrganizationBucket :one
 INSERT INTO organization_buckets (
-  organization_id, bucket_id
+  organization_id, bucket_id, instance_num, collector_name
 ) VALUES (
-  $1, $2
+  $1, $2, $3, $4
 ) RETURNING id, organization_id, bucket_id, instance_num, collector_name
 `
 
 type CreateOrganizationBucketParams struct {
 	OrganizationID uuid.UUID `json:"organization_id"`
 	BucketID       uuid.UUID `json:"bucket_id"`
+	InstanceNum    int16     `json:"instance_num"`
+	CollectorName  string    `json:"collector_name"`
 }
 
 func (q *Queries) CreateOrganizationBucket(ctx context.Context, arg CreateOrganizationBucketParams) (OrganizationBucket, error) {
-	row := q.db.QueryRow(ctx, createOrganizationBucket, arg.OrganizationID, arg.BucketID)
+	row := q.db.QueryRow(ctx, createOrganizationBucket,
+		arg.OrganizationID,
+		arg.BucketID,
+		arg.InstanceNum,
+		arg.CollectorName,
+	)
 	var i OrganizationBucket
 	err := row.Scan(
 		&i.ID,
@@ -479,18 +486,25 @@ func (q *Queries) UpsertBucketConfiguration(ctx context.Context, arg UpsertBucke
 
 const upsertOrganizationBucket = `-- name: UpsertOrganizationBucket :exec
 INSERT INTO organization_buckets (
-  organization_id, bucket_id
+  organization_id, bucket_id, instance_num, collector_name
 ) VALUES (
-  $1, $2
-) ON CONFLICT (organization_id, bucket_id) DO NOTHING
+  $1, $2, $3, $4
+) ON CONFLICT (organization_id, bucket_id, instance_num, collector_name) DO NOTHING
 `
 
 type UpsertOrganizationBucketParams struct {
 	OrganizationID uuid.UUID `json:"organization_id"`
 	BucketID       uuid.UUID `json:"bucket_id"`
+	InstanceNum    int16     `json:"instance_num"`
+	CollectorName  string    `json:"collector_name"`
 }
 
 func (q *Queries) UpsertOrganizationBucket(ctx context.Context, arg UpsertOrganizationBucketParams) error {
-	_, err := q.db.Exec(ctx, upsertOrganizationBucket, arg.OrganizationID, arg.BucketID)
+	_, err := q.db.Exec(ctx, upsertOrganizationBucket,
+		arg.OrganizationID,
+		arg.BucketID,
+		arg.InstanceNum,
+		arg.CollectorName,
+	)
 	return err
 }

@@ -32,9 +32,9 @@ INSERT INTO bucket_configurations (
 
 -- name: CreateOrganizationBucket :one
 INSERT INTO organization_buckets (
-  organization_id, bucket_id
+  organization_id, bucket_id, instance_num, collector_name
 ) VALUES (
-  @organization_id, @bucket_id
+  @organization_id, @bucket_id, @instance_num, @collector_name
 ) RETURNING *;
 
 -- name: CreateBucketPrefixMapping :one
@@ -81,10 +81,10 @@ RETURNING *;
 
 -- name: UpsertOrganizationBucket :exec
 INSERT INTO organization_buckets (
-  organization_id, bucket_id
+  organization_id, bucket_id, instance_num, collector_name
 ) VALUES (
-  @organization_id, @bucket_id
-) ON CONFLICT (organization_id, bucket_id) DO NOTHING;
+  @organization_id, @bucket_id, @instance_num, @collector_name
+) ON CONFLICT (organization_id, bucket_id, instance_num, collector_name) DO NOTHING;
 
 -- name: GetBucketByOrganization :one
 SELECT bc.bucket_name

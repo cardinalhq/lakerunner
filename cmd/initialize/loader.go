@@ -196,9 +196,21 @@ func importStorageProfiles(ctx context.Context, contents []byte, qtx DatabaseQue
 
 		// Create organization bucket mappings for each profile
 		for _, profile := range bucketProfileList {
+			// Use values from YAML if provided, otherwise use defaults
+			instanceNum := int16(profile.InstanceNum)
+			if instanceNum == 0 {
+				instanceNum = 1
+			}
+			collectorName := profile.CollectorName
+			if collectorName == "" {
+				collectorName = "default"
+			}
+
 			if err := qtx.UpsertOrganizationBucket(ctx, configdb.UpsertOrganizationBucketParams{
 				OrganizationID: profile.OrganizationID,
 				BucketID:       bucketConfig.ID,
+				InstanceNum:    instanceNum,
+				CollectorName:  collectorName,
 			}); err != nil {
 				return fmt.Errorf("failed to create organization bucket mapping %s->%s: %w",
 					profile.OrganizationID, bucketConfig.ID, err)
