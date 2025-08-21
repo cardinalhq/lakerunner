@@ -15,6 +15,7 @@
 package logcrunch
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -105,7 +106,8 @@ func TestHourBasedProcessing_EndToEnd(t *testing.T) {
 	// Each hour should be processed separately
 	for i, seg := range segments {
 		t.Run(fmt.Sprintf("Hour_%d", i), func(t *testing.T) {
-			groups, err := PackSegments([]lrdb.GetLogSegmentsForCompactionRow{seg}, 1000)
+			ctx := context.Background()
+		groups, err := PackSegments(ctx, []lrdb.GetLogSegmentsForCompactionRow{seg}, 1000, NoOpMetricRecorder{}, "test-org", "1", "logs", "compact")
 			require.NoError(t, err)
 			assert.Len(t, groups, 1)
 			assert.Len(t, groups[0], 1)
@@ -119,7 +121,8 @@ func TestHourBasedProcessing_EndToEnd(t *testing.T) {
 		{SegmentID: 2, StartTs: 1672534800000, EndTs: 1672538400000, RecordCount: 2, FileSize: 1000}, // Hour 1
 	}
 
-	groups, err := PackSegments(mixedHourSegments, 1000)
+	ctx := context.Background()
+	groups, err := PackSegments(ctx, mixedHourSegments, 1000, NoOpMetricRecorder{}, "test-org", "1", "logs", "compact")
 	assert.NoError(t, err)
 	// Should only include the first segment (hour 0), second segment (hour 1) should be filtered out
 	assert.Len(t, groups, 1)
@@ -145,24 +148,28 @@ func TestHourBasedProcessing_TransitionPeriod(t *testing.T) {
 	// Each should be processed separately
 
 	// Test segment 1 (hour 0) separately
-	groups1, err := PackSegments([]lrdb.GetLogSegmentsForCompactionRow{segments[0]}, 1000)
+	ctx := context.Background()
+	groups1, err := PackSegments(ctx, []lrdb.GetLogSegmentsForCompactionRow{segments[0]}, 1000, NoOpMetricRecorder{}, "test-org", "1", "logs", "compact")
 	require.NoError(t, err)
 	assert.Len(t, groups1, 1)
 
 	// Test segment 2 (hour 1) separately
-	groups2, err := PackSegments([]lrdb.GetLogSegmentsForCompactionRow{segments[1]}, 1000)
+	ctx = context.Background()
+	groups2, err := PackSegments(ctx, []lrdb.GetLogSegmentsForCompactionRow{segments[1]}, 1000, NoOpMetricRecorder{}, "test-org", "1", "logs", "compact")
 	require.NoError(t, err)
 	assert.Len(t, groups2, 1)
 
 	// Test that mixing segments from different hours filters to keep only the first hour
-	mixedGroups, err := PackSegments([]lrdb.GetLogSegmentsForCompactionRow{segments[0], segments[1]}, 1000)
+	ctx = context.Background()
+	mixedGroups, err := PackSegments(ctx, []lrdb.GetLogSegmentsForCompactionRow{segments[0], segments[1]}, 1000, NoOpMetricRecorder{}, "test-org", "1", "logs", "compact")
 	assert.NoError(t, err)
 	assert.Len(t, mixedGroups, 1)                          // Should only keep segment from first hour
 	assert.Equal(t, int64(1), mixedGroups[0][0].SegmentID) // Only segment 1 (hour 0) should remain
 
 	// Test that the transition segments get filtered out in mixed scenarios
 	mixedSegments := []lrdb.GetLogSegmentsForCompactionRow{segments[0], segments[2]} // hour 0 + cross-boundary
-	groups, err := PackSegments(mixedSegments, 1000)
+	ctx = context.Background()
+	groups, err := PackSegments(ctx, mixedSegments, 1000, NoOpMetricRecorder{}, "test-org", "1", "logs", "compact")
 	require.NoError(t, err)
 	assert.Len(t, groups, 1) // Only the good segment should remain
 
@@ -208,7 +215,8 @@ func TestHourBasedProcessing_EdgeCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := PackSegments(tt.segments, 1000)
+			ctx := context.Background()
+		_, err := PackSegments(ctx, tt.segments, 1000, NoOpMetricRecorder{}, "test-org", "1", "logs", "compact")
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {

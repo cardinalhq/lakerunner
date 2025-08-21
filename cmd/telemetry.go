@@ -50,6 +50,9 @@ var (
 	workqueueLag           metric.Float64Histogram
 	manualGCHistogram      metric.Float64Histogram
 
+	segmentsFilteredCounter metric.Int64Counter
+	segmentsProcessedCounter metric.Int64Counter
+
 	// existsGauge is a gauge that indicates if the service is running (1) or not (0).
 	// It is set to 1, and never changes.  This is unused, but is here to ensure
 	// that the counter is not murdered by the garbage collector.
@@ -198,6 +201,24 @@ func setupGlobalMetrics() {
 		panic(fmt.Errorf("failed to create manual_gc.duration histogram: %w", err))
 	}
 	manualGCHistogram = m
+
+	sc, err := meter.Int64Counter(
+		"lakerunner.compaction.segments.filtered",
+		metric.WithDescription("Number of segments filtered out during compaction processing"),
+	)
+	if err != nil {
+		panic(fmt.Errorf("failed to create segments.filtered counter: %w", err))
+	}
+	segmentsFilteredCounter = sc
+
+	pc, err := meter.Int64Counter(
+		"lakerunner.compaction.segments.processed",
+		metric.WithDescription("Number of segments successfully processed during compaction"),
+	)
+	if err != nil {
+		panic(fmt.Errorf("failed to create segments.processed counter: %w", err))
+	}
+	segmentsProcessedCounter = pc
 
 	mg, err := meter.Int64Gauge(
 		"lakerunner.exists",

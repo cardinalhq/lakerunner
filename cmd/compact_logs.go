@@ -23,6 +23,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
@@ -70,6 +71,32 @@ func init() {
 }
 
 var compactLogsDoneCtx context.Context
+
+// compactionMetricRecorder implements logcrunch.MetricRecorder for recording compaction metrics
+type compactionMetricRecorder struct{}
+
+func (compactionMetricRecorder) RecordFilteredSegments(ctx context.Context, count int64, organizationID, instanceNum, signal, action, reason string) {
+	segmentsFilteredCounter.Add(ctx, count,
+		metric.WithAttributeSet(commonAttributes),
+		metric.WithAttributes(
+			attribute.String("organizationID", organizationID),
+			attribute.String("instanceNum", instanceNum),
+			attribute.String("signal", signal),
+			attribute.String("action", action),
+			attribute.String("reason", reason),
+		))
+}
+
+func (compactionMetricRecorder) RecordProcessedSegments(ctx context.Context, count int64, organizationID, instanceNum, signal, action string) {
+	segmentsProcessedCounter.Add(ctx, count,
+		metric.WithAttributeSet(commonAttributes),
+		metric.WithAttributes(
+			attribute.String("organizationID", organizationID),
+			attribute.String("instanceNum", instanceNum),
+			attribute.String("signal", signal),
+			attribute.String("action", action),
+		))
+}
 
 func compactLogsFor(
 	ctx context.Context,
@@ -225,7 +252,9 @@ func logCompactItemDo(
 		// Allow for 110% of target capacity to account for compression variability
 		// This gives us 10% tolerance above the target file size
 		adjustedEstimate := rpfEstimate * 11 / 10
-		packed, err := logcrunch.PackSegments(segments, adjustedEstimate)
+		recorder := compactionMetricRecorder{}
+		packed, err := logcrunch.PackSegments(ctx, segments, adjustedEstimate, recorder, 
+			inf.OrganizationID().String(), fmt.Sprintf("%d", inf.InstanceNum()), "logs", "compact")
 		if err != nil {
 			ll.Error("Error packing segments", slog.String("error", err.Error()))
 			return WorkResultTryAgainLater, err

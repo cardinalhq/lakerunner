@@ -15,6 +15,7 @@
 package logcrunch
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -98,7 +99,8 @@ func TestAggressivePackingImprovements(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			groups, err := PackSegments(productionSegments, tt.recordThreshold)
+			ctx := context.Background()
+		groups, err := PackSegments(ctx, productionSegments, tt.recordThreshold, NoOpMetricRecorder{}, "test-org", "1", "logs", "compact")
 			require.NoError(t, err)
 
 			// Calculate metrics
@@ -174,10 +176,11 @@ func TestPackingWithVariousFileSizes(t *testing.T) {
 	t.Logf("Old 90%% threshold: %d records", oldThreshold90Percent)
 
 	// Test both old conservative and new aggressive approaches
-	conservativeGroups, err := PackSegments(segments, oldThreshold90Percent)
+	ctx := context.Background()
+	conservativeGroups, err := PackSegments(ctx, segments, oldThreshold90Percent, NoOpMetricRecorder{}, "test-org", "1", "logs", "compact")
 	require.NoError(t, err)
 
-	aggressiveGroups, err := PackSegments(segments, baseThreshold*11/10) // 110% for compression tolerance
+	aggressiveGroups, err := PackSegments(ctx, segments, baseThreshold*11/10, NoOpMetricRecorder{}, "test-org", "1", "logs", "compact") // 110% for compression tolerance
 	require.NoError(t, err)
 
 	t.Logf("Conservative (90%% threshold): %d groups", len(conservativeGroups))
