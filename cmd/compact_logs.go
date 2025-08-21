@@ -187,10 +187,10 @@ func logCompactItemDo(
 		segments, err := mdb.GetLogSegmentsForCompaction(ctx, lrdb.GetLogSegmentsForCompactionParams{
 			OrganizationID:  sp.OrganizationID,
 			Dateint:         stdi,
-			MaxFileSize:     targetFileSize * 9 / 10, // Only include files < 90% of target (larger files are fine as-is)
-			CursorCreatedAt: cursorCreatedAt,         // Cursor for pagination
-			CursorSegmentID: cursorSegmentID,         // Cursor for pagination
-			Maxrows:         maxRowsLimit,            // Safety limit for compaction batch
+			MaxFileSize:     targetFileSize,  // Include files up to full target size (was 90%)
+			CursorCreatedAt: cursorCreatedAt, // Cursor for pagination
+			CursorSegmentID: cursorSegmentID, // Cursor for pagination
+			Maxrows:         maxRowsLimit,    // Safety limit for compaction batch
 		})
 		if err != nil {
 			ll.Error("Error getting log segments for compaction", slog.String("error", err.Error()))
@@ -221,7 +221,10 @@ func logCompactItemDo(
 		}
 
 		originalSegmentCount := len(segments)
-		packed, err := logcrunch.PackSegments(segments, rpfEstimate)
+		// Allow for 110% of target capacity to account for compression variability
+		// This gives us 10% tolerance above the target file size
+		adjustedEstimate := rpfEstimate * 11 / 10
+		packed, err := logcrunch.PackSegments(segments, adjustedEstimate)
 		if err != nil {
 			ll.Error("Error packing segments", slog.String("error", err.Error()))
 			return WorkResultTryAgainLater, err
@@ -241,13 +244,14 @@ func logCompactItemDo(
 
 		lastGroupSmall := false
 		if len(packed) > 0 {
-			// if the last packed segment is smaller than half our target size, drop it.
+			// if the last packed segment is smaller than 30% of our target size, drop it.
+			// This is more aggressive than the previous 50% threshold to maximize compaction
 			bytecount := int64(0)
 			lastGroup := packed[len(packed)-1]
 			for _, segment := range lastGroup {
 				bytecount += segment.FileSize
 			}
-			if bytecount < targetFileSize/2 {
+			if bytecount < targetFileSize*3/10 {
 				packed = packed[:len(packed)-1]
 				lastGroupSmall = true
 			}
