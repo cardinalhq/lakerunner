@@ -15,6 +15,7 @@
 package logcrunch
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -173,7 +174,8 @@ func TestPackSegments_ProductionData(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			groups, err := PackSegments(tt.segments, tt.estimatedRecordCount)
+			ctx := context.Background()
+			groups, err := PackSegments(ctx, tt.segments, tt.estimatedRecordCount, NoOpMetricRecorder{}, "test-org", "1", "logs", "compact")
 			require.NoError(t, err, tt.description)
 
 			// Verify number of groups
@@ -246,7 +248,8 @@ func TestPackSegments_CompactionEfficiency(t *testing.T) {
 	targetFileSize := int64(1_100_000)
 	recordThreshold := calculateRecordCountForFileSize(targetFileSize/10, avgBytesPerRecord) // Use 10% of target for testing
 
-	groups, err := PackSegments(tinySegments, recordThreshold)
+	ctx := context.Background()
+	groups, err := PackSegments(ctx, tinySegments, recordThreshold, NoOpMetricRecorder{}, "test-org", "1", "logs", "compact")
 	require.NoError(t, err)
 
 	// Should pack efficiently - many tiny segments into fewer groups
@@ -290,7 +293,8 @@ func TestPackSegments_HourBoundaryFiltering(t *testing.T) {
 		{SegmentID: 3, StartTs: hour1Start + 900000, EndTs: hour1Start + 2700000, RecordCount: 150, FileSize: 75000}, // Different part of hour 1
 	}
 
-	groups, err := PackSegments(segments, 1000)
+	ctx := context.Background()
+	groups, err := PackSegments(ctx, segments, 1000, NoOpMetricRecorder{}, "test-org", "1", "logs", "compact")
 	require.NoError(t, err)
 
 	// Should only have segments 1 and 3 (segment 2 filtered out)

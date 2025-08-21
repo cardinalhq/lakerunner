@@ -39,9 +39,9 @@ builds:
       - -trimpath
     ldflags:
       - -s -w
-      - -X main.version={{.Version}}
-      - -X main.commit={{.Commit}}
-      - -X main.date={{.Date}}
+      - -X github.com/cardinalhq/lakerunner/cmd.Version={{.Version}}
+      - -X github.com/cardinalhq/lakerunner/cmd.Commit={{.Commit}}
+      - -X github.com/cardinalhq/lakerunner/cmd.Date={{.Date}}
 
 # Define how to build/push Docker images.
 # Only creates the exact tag provided - no additional tags
@@ -54,6 +54,7 @@ dockers:
       - "public.ecr.aws/cardinalhq.io/lakerunner:{{ .Tag }}-amd64"
     build_flag_templates:
       - --pull
+      - --no-cache
       - --platform=linux/amd64
       - --build-arg=TARGETARCH=amd64
       - --build-arg=DUCKDB_VERSION=v1.3.2
@@ -70,6 +71,7 @@ dockers:
       - "public.ecr.aws/cardinalhq.io/lakerunner:{{ .Tag }}-arm64"
     build_flag_templates:
       - --pull
+      - --no-cache
       - --platform=linux/arm64
       - --build-arg=TARGETARCH=arm64
       - --build-arg=DUCKDB_VERSION=v1.3.2

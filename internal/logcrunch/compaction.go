@@ -15,15 +15,30 @@
 package logcrunch
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
+// MetricRecorder is an interface for recording compaction metrics
+type MetricRecorder interface {
+	RecordFilteredSegments(ctx context.Context, count int64, organizationID, instanceNum, signal, action, reason string)
+	RecordProcessedSegments(ctx context.Context, count int64, organizationID, instanceNum, signal, action string)
+}
+
+// NoOpMetricRecorder is a no-op implementation for testing
+type NoOpMetricRecorder struct{}
+
+func (NoOpMetricRecorder) RecordFilteredSegments(context.Context, int64, string, string, string, string, string) {
+}
+func (NoOpMetricRecorder) RecordProcessedSegments(context.Context, int64, string, string, string, string) {
+}
+
 // PackSegments groups segments into packs such that the sum of RecordCount in each
 // pack is <= estimatedRecordCount (greedy, one-or-more per pack).
 // NOTE: segments must all lie within the same UTC hour and must be sorted by StartTs ascending.
-func PackSegments(segments []lrdb.GetLogSegmentsForCompactionRow, estimatedRecordCount int64) ([][]lrdb.GetLogSegmentsForCompactionRow, error) {
+func PackSegments(ctx context.Context, segments []lrdb.GetLogSegmentsForCompactionRow, estimatedRecordCount int64, recorder MetricRecorder, organizationID, instanceNum, signal, action string) ([][]lrdb.GetLogSegmentsForCompactionRow, error) {
 	if estimatedRecordCount <= 0 {
 		return nil, fmt.Errorf("estimatedRecordCount must be positive, got %d", estimatedRecordCount)
 	}
@@ -32,13 +47,21 @@ func PackSegments(segments []lrdb.GetLogSegmentsForCompactionRow, estimatedRecor
 	}
 
 	// 1) Drop zero-record segments up front.
+	originalCount := len(segments)
 	segments = filterSegments(segments)
+	if filteredCount := int64(originalCount - len(segments)); filteredCount > 0 {
+		recorder.RecordFilteredSegments(ctx, filteredCount, organizationID, instanceNum, signal, action, "zero_records")
+	}
 	if len(segments) == 0 {
 		return [][]lrdb.GetLogSegmentsForCompactionRow{}, nil
 	}
 
 	// 2) Filter out segments that cross hour boundaries during transition period.
+	beforeHourFilter := len(segments)
 	segments = filterHourConformingSegments(segments)
+	if filteredCount := int64(beforeHourFilter - len(segments)); filteredCount > 0 {
+		recorder.RecordFilteredSegments(ctx, filteredCount, organizationID, instanceNum, signal, action, "hour_boundary")
+	}
 	if len(segments) == 0 {
 		return [][]lrdb.GetLogSegmentsForCompactionRow{}, nil
 	}
@@ -46,14 +69,17 @@ func PackSegments(segments []lrdb.GetLogSegmentsForCompactionRow, estimatedRecor
 	// 3) Filter out segments with invalid time ranges and ensure hour conformity.
 	validSegments := make([]lrdb.GetLogSegmentsForCompactionRow, 0, len(segments))
 	var hour int64 = -1
+	var invalidTimeRangeCount, minInt64Count, crossHourCount, differentHourCount int64
 
 	for _, seg := range segments {
 		// Skip segments with invalid time ranges
 		if seg.StartTs >= seg.EndTs {
+			invalidTimeRangeCount++
 			continue
 		}
 		// Guard against MinInt64
 		if seg.EndTs == -9223372036854775808 { // math.MinInt64, inline to avoid import
+			minInt64Count++
 			continue
 		}
 
@@ -64,6 +90,7 @@ func PackSegments(segments []lrdb.GetLogSegmentsForCompactionRow, estimatedRecor
 
 		// Skip segments that cross hour boundaries
 		if segStartHour != segEndHour {
+			crossHourCount++
 			continue
 		}
 
@@ -72,10 +99,25 @@ func PackSegments(segments []lrdb.GetLogSegmentsForCompactionRow, estimatedRecor
 			hour = segStartHour
 		} else if segStartHour != hour {
 			// Skip segments from different hours
+			differentHourCount++
 			continue
 		}
 
 		validSegments = append(validSegments, seg)
+	}
+
+	// Record metrics for different filtering reasons
+	if invalidTimeRangeCount > 0 {
+		recorder.RecordFilteredSegments(ctx, invalidTimeRangeCount, organizationID, instanceNum, signal, action, "invalid_time_range")
+	}
+	if minInt64Count > 0 {
+		recorder.RecordFilteredSegments(ctx, minInt64Count, organizationID, instanceNum, signal, action, "min_int64")
+	}
+	if crossHourCount > 0 {
+		recorder.RecordFilteredSegments(ctx, crossHourCount, organizationID, instanceNum, signal, action, "cross_hour")
+	}
+	if differentHourCount > 0 {
+		recorder.RecordFilteredSegments(ctx, differentHourCount, organizationID, instanceNum, signal, action, "different_hour")
 	}
 
 	// Update segments to only include valid ones
@@ -103,6 +145,13 @@ func PackSegments(segments []lrdb.GetLogSegmentsForCompactionRow, estimatedRecor
 	if len(current) > 0 {
 		groups = append(groups, current)
 	}
+
+	// Record successful processing metrics
+	totalProcessed := int64(len(segments))
+	if totalProcessed > 0 {
+		recorder.RecordProcessedSegments(ctx, totalProcessed, organizationID, instanceNum, signal, action)
+	}
+
 	return groups, nil
 }
 

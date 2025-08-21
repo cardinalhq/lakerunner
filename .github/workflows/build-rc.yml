@@ -62,6 +62,9 @@ jobs:
           path: ${{ matrix.cache_path }}
           key: ${{ matrix.name }}-${{ env.sha_short }}
 
+      - shell: bash
+        run: make clean
+
       - uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser-pro

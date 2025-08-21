@@ -15,10 +15,17 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 	"time"
 
 	"github.com/spf13/cobra"
+)
+
+var (
+	Version = "dev"
+	Commit  = "unknown"
+	Date    = "unknown"
 )
 
 const (
@@ -34,8 +41,20 @@ var rootCmd = &cobra.Command{
 	Long:  `Read and process signals written to s3 by the CardinalHQ Open Telemetry Collector's S3 exporter.`,
 }
 
+// versionCmd represents the version command
+var versionCmd = &cobra.Command{
+	Use:   "version",
+	Short: "Print version information",
+	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Printf("lakerunner version %s\n", Version)
+		fmt.Printf("Git commit: %s\n", Commit)
+		fmt.Printf("Build date: %s\n", Date)
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(debugCmd)
+	rootCmd.AddCommand(versionCmd)
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.

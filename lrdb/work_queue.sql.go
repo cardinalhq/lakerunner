@@ -15,16 +15,16 @@ import (
 
 const workQueueAddDirect = `-- name: WorkQueueAddDirect :exec
 SELECT public.work_queue_add(
-  $1      :: UUID,
-  $2    :: SMALLINT,
-  $3     :: INTEGER,
-  $4   :: INTEGER,
-  $5      :: signal_enum,
-  $6      :: action_enum,
-  $7    :: TSTZRANGE,
-  $8 :: TIMESTAMPTZ,
-  $9    :: INTEGER,
-  $10     :: INTEGER
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    $9,
+    $10
 )
 `
 

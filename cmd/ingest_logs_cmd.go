@@ -105,8 +105,8 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp stora
 			return err
 		}
 	} else {
-		// Fallback to bucket-based lookup for backward compatibility
-		profile, err = sp.GetStorageProfileForBucket(ctx, inf.OrganizationID, inf.Bucket)
+		// Use instance-specific storage profile
+		profile, err = sp.GetStorageProfileForOrganizationAndInstance(ctx, inf.OrganizationID, inf.InstanceNum)
 		if err != nil {
 			ll.Error("Failed to get storage profile", slog.Any("error", err))
 			return err

@@ -161,6 +161,7 @@ func packTraceSegment(
 	sp storageprofile.StorageProfile,
 	dateint int32,
 	slotID int32,
+	instanceNum int16,
 ) error {
 
 	if len(group) < 2 {
@@ -267,6 +268,7 @@ func packTraceSegment(
 	if err := mdb.CompactTraceSegments(ctx, lrdb.CompactTraceSegmentsParams{
 		OrganizationID: sp.OrganizationID,
 		Dateint:        dateint,
+		InstanceNum:    instanceNum,
 		IngestDateint:  stats.IngestDate,
 		NewSegmentID:   newSegmentID,
 		SlotID:         slotID,

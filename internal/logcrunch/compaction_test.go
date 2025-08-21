@@ -15,6 +15,7 @@
 package logcrunch
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -49,7 +50,8 @@ func TestPackSegments_NoSplit(t *testing.T) {
 		{SegmentID: 3, StartTs: 21, EndTs: 30, RecordCount: 2000},
 	}
 
-	groups, err := PackSegments(segments, 40_000)
+	ctx := context.Background()
+	groups, err := PackSegments(ctx, segments, 40_000, NoOpMetricRecorder{}, "test-org", "1", "logs", "compact")
 	require.NoError(t, err)
 
 	expected := [][]int64{{1, 2, 3}}
@@ -66,7 +68,8 @@ func TestPackSegments_SplitByRecords(t *testing.T) {
 		{SegmentID: 3, StartTs: 21, EndTs: 30, RecordCount: 3000},
 	}
 
-	groups, err := PackSegments(segments, 10_000)
+	ctx := context.Background()
+	groups, err := PackSegments(ctx, segments, 10_000, NoOpMetricRecorder{}, "test-org", "1", "logs", "compact")
 	require.NoError(t, err)
 
 	expected := [][]int64{{1}, {2, 3}}
@@ -84,7 +87,8 @@ func TestPackSegments_MultiGroup(t *testing.T) {
 		{SegmentID: 4, StartTs: 31, EndTs: 40, RecordCount: 3000},
 	}
 
-	groups, err := PackSegments(segments, 10_000)
+	ctx := context.Background()
+	groups, err := PackSegments(ctx, segments, 10_000, NoOpMetricRecorder{}, "test-org", "1", "logs", "compact")
 	require.NoError(t, err)
 
 	expected := [][]int64{{1, 2, 3}, {4}}
@@ -100,7 +104,8 @@ func TestPackSegments_ExactThreshold(t *testing.T) {
 	}
 
 	// first two sum to 5k+5k=10k, then 10k on its own
-	groups, err := PackSegments(segments, targetRecordCount)
+	ctx := context.Background()
+	groups, err := PackSegments(ctx, segments, targetRecordCount, NoOpMetricRecorder{}, "test-org", "1", "logs", "compact")
 	require.NoError(t, err)
 
 	expected := [][]int64{
@@ -158,7 +163,8 @@ func TestPackSegments_HourBoundaryViolations(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := PackSegments(tt.segments, 1000)
+			ctx := context.Background()
+			_, err := PackSegments(ctx, tt.segments, 1000, NoOpMetricRecorder{}, "test-org", "1", "logs", "compact")
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -180,7 +186,8 @@ func TestPackSegments_WithHourFiltering(t *testing.T) {
 		{SegmentID: 3, StartTs: 1672532400000, EndTs: 1672534800000, RecordCount: 150}, // Within hour 0
 	}
 
-	groups, err := PackSegments(segments, 1000)
+	ctx := context.Background()
+	groups, err := PackSegments(ctx, segments, 1000, NoOpMetricRecorder{}, "test-org", "1", "logs", "compact")
 	assert.NoError(t, err)
 
 	// Should only have segments 1 and 3 (segment 2 filtered out for crossing hour boundary)

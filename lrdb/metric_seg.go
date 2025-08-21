@@ -49,6 +49,8 @@ type ReplaceMetricSegsParams struct {
 	OrganizationID uuid.UUID
 	// Dateint is the date in YYYYMMDD format for which the metric segments are being replaced.
 	Dateint int32
+	// InstanceNum is the instance number for which the segments are being replaced.
+	InstanceNum int16
 	// IngestDateint is the date in YYYYMMDD format when the segments were ingested.
 	IngestDateint int32
 	// FrequencyMs is the frequency in milliseconds at which the metrics are collected.
@@ -74,6 +76,7 @@ func (q *Store) ReplaceMetricSegs(ctx context.Context, args ReplaceMetricSegsPar
 			Dateint:        args.Dateint,
 			FrequencyMs:    args.FrequencyMs,
 			SegmentID:      oldRec.SegmentID,
+			InstanceNum:    args.InstanceNum,
 			TidPartition:   oldRec.TidPartition,
 		}
 	}
@@ -86,6 +89,7 @@ func (q *Store) ReplaceMetricSegs(ctx context.Context, args ReplaceMetricSegsPar
 			IngestDateint:  args.IngestDateint,
 			FrequencyMs:    args.FrequencyMs,
 			SegmentID:      newRec.SegmentID,
+			InstanceNum:    args.InstanceNum,
 			TidPartition:   newRec.TidPartition,
 			StartTs:        newRec.StartTs,
 			EndTs:          newRec.EndTs,

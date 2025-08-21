@@ -259,10 +259,18 @@ func packSegment(
 	group []lrdb.GetLogSegmentsForCompactionRow,
 	sp storageprofile.StorageProfile,
 	dateint int32,
+	instanceNum int16,
 ) error {
+	// ll already has operationID from caller
 	if len(group) < 2 {
+		ll.Info("Atomic operation skipped - insufficient segments for compaction",
+			slog.Int("segmentCount", len(group)),
+			slog.String("reason", "need at least 2 segments"))
 		return nil
 	}
+
+	ll.Debug("Starting atomic compaction - downloading and opening segments",
+		slog.Int("segmentCount", len(group)))
 
 	fetcher := objectFetcherAdapter{s3Client: s3Client}
 	open := fileOpenerAdapter{}
@@ -270,15 +278,22 @@ func packSegment(
 
 	opened, err := downloadAndOpen(ctx, sp, dateint, group, tmpdir, sp.Bucket, fetcher, open)
 	if err != nil {
+		ll.Error("Atomic operation failed during segment download",
+			slog.Any("error", err),
+			slog.Int("segmentCount", len(group)))
 		return err
 	}
 
 	if len(opened) < 2 {
-		ll.Info("Group has fewer than 2 usable segments; skipping",
-			slog.Int("requestedGroupSize", len(group)),
-			slog.Int("usableSegments", len(opened)))
+		ll.Info("Atomic operation skipped - insufficient usable segments after download",
+			slog.Int("requestedSegmentCount", len(group)),
+			slog.Int("usableSegmentCount", len(opened)),
+			slog.String("reason", "some segments may be missing from S3"))
 		return nil
 	}
+
+	ll.Debug("Successfully downloaded segments, beginning compaction",
+		slog.Int("segmentCount", len(opened)))
 
 	handles := make([]*filecrunch.FileHandle, 0, len(opened))
 	usedSegs := make([]lrdb.GetLogSegmentsForCompactionRow, 0, len(opened))
@@ -296,14 +311,19 @@ func packSegment(
 		}
 	}()
 
+	ll.Debug("Merging schemas from downloaded segments")
 	nodes, err := mergeNodes(handles)
 	if err != nil {
-		ll.Error("Error merging nodes", slog.String("error", err.Error()))
+		ll.Error("Atomic operation failed during schema merge",
+			slog.Any("error", err))
 		return err
 	}
 
+	ll.Debug("Creating writer for compacted output")
 	w, err := wf.NewWriter("logcompact", tmpdir, nodes, 0)
 	if err != nil {
+		ll.Error("Atomic operation failed during writer creation",
+			slog.Any("error", err))
 		return err
 	}
 	writerClosed := false
@@ -313,29 +333,42 @@ func packSegment(
 		}
 	}()
 
+	ll.Debug("Copying and compacting data from all segments")
 	_, err = copyAll(ctx, open, w, handles)
 	if err != nil {
+		ll.Error("Atomic operation failed during data copying",
+			slog.Any("error", err))
 		return err
 	}
 
 	writeResults, err := w.Close()
 	writerClosed = true
 	if err != nil {
+		ll.Error("Atomic operation failed during file finalization",
+			slog.Any("error", err))
 		return err
 	}
 	if len(writeResults) == 0 {
-		ll.Info("No records written, skipping upload")
+		ll.Info("Atomic operation skipped - no records to write",
+			slog.String("reason", "all input segments were empty"))
 		return nil
 	}
 	writeResult := writeResults[0]
 
+	ll.Debug("Validating compacted file before upload")
 	stats := statsFor(usedSegs)
 	if writeResult.RecordCount != stats.CountRecords {
+		ll.Error("Atomic operation failed during validation",
+			slog.String("error", "record count mismatch"),
+			slog.Int64("expected", stats.CountRecords),
+			slog.Int64("actual", writeResult.RecordCount))
 		return fmt.Errorf("record count mismatch: expected=%d actual=%d", stats.CountRecords, writeResult.RecordCount)
 	}
 
 	fi, err := os.Stat(writeResult.FileName)
 	if err != nil {
+		ll.Error("Atomic operation failed during file stat",
+			slog.Any("error", err))
 		return err
 	}
 
@@ -344,23 +377,27 @@ func packSegment(
 		sp.OrganizationID, sp.CollectorName, dateint, s3helper.HourFromMillis(stats.FirstTS), newSegmentID, "logs",
 	)
 
-	ll.Info("Uploading new file to S3",
-		slog.Int64("size", fi.Size()),
+	ll.Info("Uploading compacted file to S3 - point of no return approaching",
+		slog.Int64("fileSize", fi.Size()),
 		slog.String("objectID", newObjectID),
 		slog.Int64("segmentID", newSegmentID),
-		slog.Int64("firstTS", stats.FirstTS),
-		slog.Int64("lastTS", stats.LastTS),
 		slog.Int64("recordCount", writeResult.RecordCount),
-		slog.Int64("fileSize", fi.Size()),
-	)
+		slog.Int("segmentCount", len(usedSegs)))
 
 	if err := s3helper.UploadS3Object(ctx, s3Client, sp.Bucket, newObjectID, writeResult.FileName); err != nil {
+		ll.Error("Atomic operation failed during S3 upload - no changes made",
+			slog.Any("error", err),
+			slog.String("objectID", newObjectID))
 		return err
 	}
+
+	ll.Debug("S3 upload successful, updating database index - CRITICAL SECTION",
+		slog.String("objectID", newObjectID))
 
 	if err := mdb.CompactLogSegments(ctx, lrdb.CompactLogSegmentsParams{
 		OrganizationID: sp.OrganizationID,
 		Dateint:        dateint,
+		InstanceNum:    instanceNum,
 		IngestDateint:  stats.IngestDate,
 		NewStartTs:     stats.FirstTS,
 		NewEndTs:       stats.LastTS, // already half-open
@@ -370,14 +407,50 @@ func packSegment(
 		OldSegmentIds:  segmentIDsFrom(usedSegs),
 		CreatedBy:      lrdb.CreatedByCompact,
 	}); err != nil {
+		ll.Error("Database update failed after S3 upload",
+			slog.Any("error", err),
+			slog.String("objectID", newObjectID),
+			slog.Int64("segmentID", newSegmentID),
+			slog.String("bucket", sp.Bucket))
+
+		// Best effort cleanup - try to delete the uploaded file
+		ll.Debug("Attempting to cleanup orphaned S3 object")
+		if cleanupErr := s3helper.DeleteS3Object(ctx, s3Client, sp.Bucket, newObjectID); cleanupErr != nil {
+			ll.Error("Failed to cleanup orphaned S3 object - manual cleanup required",
+				slog.Any("error", cleanupErr),
+				slog.String("objectID", newObjectID),
+				slog.String("bucket", sp.Bucket))
+		} else {
+			ll.Info("Successfully cleaned up orphaned S3 object")
+		}
 		return err
 	}
 
+	ll.Info("Atomic operation committed successfully - database updated, segments swapped",
+		slog.Int("segmentCount", len(usedSegs)),
+		slog.Int64("segmentID", newSegmentID),
+		slog.Int64("recordCount", writeResult.RecordCount),
+		slog.Int64("fileSize", fi.Size()),
+		slog.String("objectID", newObjectID))
+
+	// Schedule old files for deletion (best effort)
+	ll.Debug("Scheduling old segment files for background deletion",
+		slog.Int("fileCount", len(objectIDs)))
+
+	scheduledCount := 0
 	for _, oid := range objectIDs {
 		if err := s3helper.ScheduleS3Delete(ctx, mdb, sp.OrganizationID, sp.Bucket, oid); err != nil {
-			ll.Error("scheduleS3Delete", slog.String("error", err.Error()))
+			ll.Warn("Failed to schedule deletion for old segment file",
+				slog.Any("error", err),
+				slog.String("objectID", oid))
+		} else {
+			scheduledCount++
 		}
 	}
-	ll.Info("Scheduled old segments for deletion", slog.Int("count", len(objectIDs)))
+
+	ll.Info("Atomic operation completed successfully",
+		slog.Int("scheduledDeletions", scheduledCount),
+		slog.Int("totalFiles", len(objectIDs)))
+
 	return nil
 }

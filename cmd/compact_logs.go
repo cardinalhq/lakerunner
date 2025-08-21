@@ -23,6 +23,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
@@ -71,6 +72,41 @@ func init() {
 
 var compactLogsDoneCtx context.Context
 
+// compactionMetricRecorder implements logcrunch.MetricRecorder for recording compaction metrics
+type compactionMetricRecorder struct {
+	logger *slog.Logger
+}
+
+func (r compactionMetricRecorder) RecordFilteredSegments(ctx context.Context, count int64, organizationID, instanceNum, signal, action, reason string) {
+	segmentsFilteredCounter.Add(ctx, count,
+		metric.WithAttributeSet(commonAttributes),
+		metric.WithAttributes(
+			attribute.String("organizationID", organizationID),
+			attribute.String("instanceNum", instanceNum),
+			attribute.String("signal", signal),
+			attribute.String("action", action),
+			attribute.String("reason", reason),
+		))
+
+	// Add detailed logging for each filtering reason
+	r.logger.Info("Segments filtered during packing",
+		slog.Int64("count", count),
+		slog.String("reason", reason),
+		slog.String("organizationID", organizationID),
+		slog.String("instanceNum", instanceNum))
+}
+
+func (compactionMetricRecorder) RecordProcessedSegments(ctx context.Context, count int64, organizationID, instanceNum, signal, action string) {
+	segmentsProcessedCounter.Add(ctx, count,
+		metric.WithAttributeSet(commonAttributes),
+		metric.WithAttributes(
+			attribute.String("organizationID", organizationID),
+			attribute.String("instanceNum", instanceNum),
+			attribute.String("signal", signal),
+			attribute.String("action", action),
+		))
+}
+
 func compactLogsFor(
 	ctx context.Context,
 	ll *slog.Logger,
@@ -82,7 +118,7 @@ func compactLogsFor(
 	rpfEstimate int64,
 	_ any,
 ) (WorkResult, error) {
-	profile, err := sp.GetStorageProfileForOrganization(ctx, inf.OrganizationID())
+	profile, err := sp.GetStorageProfileForOrganizationAndInstance(ctx, inf.OrganizationID(), inf.InstanceNum())
 	if err != nil {
 		ll.Error("Failed to get storage profile", slog.Any("error", err))
 		return WorkResultTryAgainLater, err
@@ -158,9 +194,13 @@ func logCompactItemDo(
 		return WorkResultSuccess, nil
 	}
 
-	// Get the dateint for database queries (both boundaries should be the same now)
+	// Get the dateint and hour boundaries for database queries (both boundaries should be the same now)
 	startBoundary, _ := helpers.TimeRangeToHourBoundaries(timeRange)
 	stdi := startBoundary.DateInt
+
+	// Calculate hour start and end timestamps in milliseconds
+	hourStartTs := timeRange.Start.UnixMilli()
+	hourEndTs := timeRange.End.UnixMilli()
 
 	const maxRowsLimit = 1000
 	totalBatchesProcessed := 0
@@ -173,27 +213,30 @@ func logCompactItemDo(
 		// Check if context is cancelled before starting next batch
 		if ctx.Err() != nil {
 			ll.Info("Context cancelled, stopping compaction loop - will retry to continue",
-				slog.Int("processedBatches", totalBatchesProcessed),
-				slog.Int("processedSegments", totalSegmentsProcessed),
+				slog.Int("batchCount", totalBatchesProcessed),
+				slog.Int("segmentCount", totalSegmentsProcessed),
 				slog.Any("error", ctx.Err()))
 			return WorkResultTryAgainLater, nil
 		}
 
 		ll.Info("Querying for log segments to compact",
-			slog.Int("batch", totalBatchesProcessed+1),
+			slog.Int("batchNumber", totalBatchesProcessed+1),
 			slog.Time("cursorCreatedAt", cursorCreatedAt),
 			slog.Int64("cursorSegmentID", cursorSegmentID))
 
 		segments, err := mdb.GetLogSegmentsForCompaction(ctx, lrdb.GetLogSegmentsForCompactionParams{
 			OrganizationID:  sp.OrganizationID,
 			Dateint:         stdi,
+			InstanceNum:     inf.InstanceNum(),
 			MaxFileSize:     targetFileSize,  // Include files up to full target size (was 90%)
 			CursorCreatedAt: cursorCreatedAt, // Cursor for pagination
 			CursorSegmentID: cursorSegmentID, // Cursor for pagination
+			HourStartTs:     hourStartTs,     // Hour boundary start timestamp
+			HourEndTs:       hourEndTs,       // Hour boundary end timestamp
 			Maxrows:         maxRowsLimit,    // Safety limit for compaction batch
 		})
 		if err != nil {
-			ll.Error("Error getting log segments for compaction", slog.String("error", err.Error()))
+			ll.Error("Error getting log segments for compaction", slog.Any("error", err))
 			return WorkResultTryAgainLater, err
 		}
 
@@ -203,15 +246,15 @@ func logCompactItemDo(
 				ll.Info("No segments to compact")
 			} else {
 				ll.Info("Finished processing all compaction batches",
-					slog.Int("totalBatches", totalBatchesProcessed),
-					slog.Int("totalSegments", totalSegmentsProcessed))
+					slog.Int("batchCount", totalBatchesProcessed),
+					slog.Int("segmentCount", totalSegmentsProcessed))
 			}
 			return WorkResultSuccess, nil
 		}
 
 		ll.Info("Processing compaction batch",
 			slog.Int("segmentCount", len(segments)),
-			slog.Int("batch", totalBatchesProcessed+1))
+			slog.Int("batchNumber", totalBatchesProcessed+1))
 
 		// Update cursor to last (created_at, segment_id) in this batch to ensure forward progress
 		if len(segments) > 0 {
@@ -224,9 +267,11 @@ func logCompactItemDo(
 		// Allow for 110% of target capacity to account for compression variability
 		// This gives us 10% tolerance above the target file size
 		adjustedEstimate := rpfEstimate * 11 / 10
-		packed, err := logcrunch.PackSegments(segments, adjustedEstimate)
+		recorder := compactionMetricRecorder{logger: ll}
+		packed, err := logcrunch.PackSegments(ctx, segments, adjustedEstimate, recorder,
+			inf.OrganizationID().String(), fmt.Sprintf("%d", inf.InstanceNum()), "logs", "compact")
 		if err != nil {
-			ll.Error("Error packing segments", slog.String("error", err.Error()))
+			ll.Error("Error packing segments", slog.Any("error", err))
 			return WorkResultTryAgainLater, err
 		}
 
@@ -237,9 +282,9 @@ func logCompactItemDo(
 		}
 		if packedSegmentCount < originalSegmentCount {
 			ll.Info("Some segments were filtered out during packing",
-				slog.Int("originalCount", originalSegmentCount),
-				slog.Int("packedCount", packedSegmentCount),
-				slog.Int("filteredOut", originalSegmentCount-packedSegmentCount))
+				slog.Int("originalSegmentCount", originalSegmentCount),
+				slog.Int("packedSegmentCount", packedSegmentCount),
+				slog.Int("filteredSegmentCount", originalSegmentCount-packedSegmentCount))
 		}
 
 		lastGroupSmall := false
@@ -271,19 +316,39 @@ func logCompactItemDo(
 			continue
 		}
 
-		ll.Info("counts", slog.Int("currentSegments", len(segments)), slog.Int("packGroups", len(packed)), slog.Bool("lastGroupSmall", lastGroupSmall))
+		ll.Info("Packing summary", slog.Int("segmentCount", len(segments)), slog.Int("groupCount", len(packed)), slog.Bool("lastGroupSmall", lastGroupSmall))
 
 		for i, group := range packed {
-			ll := ll.With(slog.Int("groupIndex", i))
-			err = packSegment(ctx, ll, tmpdir, s3client, mdb, group, sp, stdi)
-			if err != nil {
-				break
-			}
+			// Generate unique operation ID for this atomic group
+			opID := generateOperationID(i)
+			ll := ll.With(
+				slog.String("operationID", opID),
+				slog.Int("groupIndex", i))
+
+			// Check for shutdown BEFORE starting atomic work
 			select {
 			case <-compactLogsDoneCtx.Done():
-				return WorkResultTryAgainLater, errors.New("Asked to shut down, will retry work")
+				ll.Info("Shutdown requested - aborting before atomic operation",
+					slog.Int("completedGroupCount", i),
+					slog.Int("remainingGroupCount", len(packed)-i))
+				return WorkResultTryAgainLater, nil
 			default:
 			}
+
+			ll.Info("Starting atomic log compaction operation",
+				slog.Int("segmentCount", len(group)))
+
+			err = packSegment(ctx, ll, tmpdir, s3client, mdb, group, sp, stdi, inf.InstanceNum())
+
+			if err != nil {
+				ll.Error("Atomic operation failed - will retry entire work item",
+					slog.Any("error", err),
+					slog.Int("failedGroupIndex", i))
+				break
+			}
+
+			ll.Info("Atomic operation completed successfully",
+				slog.Int("segmentCount", len(group)))
 		}
 
 		if err != nil {
@@ -298,14 +363,14 @@ func logCompactItemDo(
 		// If we didn't hit the limit, we've processed all available segments
 		if len(segments) < maxRowsLimit {
 			ll.Info("Completed all compaction batches",
-				slog.Int("totalBatches", totalBatchesProcessed),
-				slog.Int("totalSegments", totalSegmentsProcessed))
+				slog.Int("batchCount", totalBatchesProcessed),
+				slog.Int("segmentCount", totalSegmentsProcessed))
 			return WorkResultSuccess, nil
 		}
 
 		// Continue to next batch - cursor already advanced
 		ll.Info("Batch completed, checking for more segments",
-			slog.Int("processedSegments", len(segments)),
+			slog.Int("segmentCount", len(segments)),
 			slog.Time("nextCursorCreatedAt", cursorCreatedAt),
 			slog.Int64("nextCursorSegmentID", cursorSegmentID))
 	}

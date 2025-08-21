@@ -24,6 +24,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/internal/tidprocessing"
 	"github.com/cardinalhq/lakerunner/lockmgr"
@@ -54,7 +55,7 @@ func ProcessItem(
 		return WorkResultSuccess, nil
 	}
 
-	profile, err := sp.GetStorageProfileForOrganization(ctx, inf.OrganizationID())
+	profile, err := sp.GetStorageProfileForOrganizationAndInstance(ctx, inf.OrganizationID(), inf.InstanceNum())
 	if err != nil {
 		ll.Error("Failed to get storage profile", slog.Any("error", err))
 		return WorkResultTryAgainLater, err
@@ -136,6 +137,7 @@ func doCompactItem(
 			OrganizationID:  inf.OrganizationID(),
 			Dateint:         inf.Dateint(),
 			FrequencyMs:     inf.FrequencyMs(),
+			InstanceNum:     inf.InstanceNum(),
 			StartTs:         st.Time.UTC().UnixMilli(),
 			EndTs:           et.Time.UTC().UnixMilli(),
 			MaxFileSize:     targetFileSize * 9 / 10, // Only include files < 90% of target (larger files are fine as-is)
@@ -334,6 +336,7 @@ func compactInterval(
 	params := lrdb.ReplaceMetricSegsParams{
 		OrganizationID: inf.OrganizationID(),
 		Dateint:        inf.Dateint(),
+		InstanceNum:    inf.InstanceNum(),
 		IngestDateint:  ingest_dateint,
 		FrequencyMs:    inf.FrequencyMs(),
 		Published:      true,
@@ -349,29 +352,85 @@ func compactInterval(
 	}
 
 	dateint, hour := helpers.MSToDateintHour(startTs)
+
+	// Process each tid_partition atomically
 	for tidPartition, result := range mergeResult {
+		// Generate operation ID for tracking this atomic operation
+		opID := fmt.Sprintf("metric_op_%d_%d_%s", time.Now().Unix(), tidPartition, idgen.GenerateShortBase32ID())
+		tidLogger := ll.With(slog.String("operationID", opID), slog.Int("tidPartition", tidPartition))
+
+		tidLogger.Info("Starting atomic metric compaction operation",
+			slog.Int64("recordCount", result.RecordCount),
+			slog.Int64("fileSize", result.FileSize))
+
 		segmentID := s3helper.GenerateID()
 		newObjectID := helpers.MakeDBObjectID(inf.OrganizationID(), profile.CollectorName, dateint, hour, segmentID, "metrics")
-		ll.Info("Uploading to S3", slog.String("objectID", newObjectID), slog.String("bucket", profile.Bucket))
+
+		tidLogger.Info("Uploading compacted metric file to S3 - point of no return approaching",
+			slog.String("newObjectID", newObjectID),
+			slog.String("bucket", profile.Bucket),
+			slog.Int64("newSegmentID", segmentID))
+
 		err = s3helper.UploadS3Object(ctx, s3client, profile.Bucket, newObjectID, result.FileName)
 		if err != nil {
-			ll.Error("Failed to upload new S3 object", slog.String("objectID", newObjectID), slog.Any("error", err))
+			tidLogger.Error("Atomic operation failed during S3 upload - no changes made",
+				slog.Any("error", err),
+				slog.String("objectID", newObjectID))
 			return fmt.Errorf("uploading new S3 object: %w", err)
 		}
-		params.NewRecords = append(params.NewRecords, lrdb.ReplaceMetricSegsNew{
-			TidPartition: int16(tidPartition),
-			SegmentID:    segmentID,
-			StartTs:      startTs,
-			EndTs:        endTs,
-			RecordCount:  result.RecordCount,
-			FileSize:     result.FileSize,
-			TidCount:     result.TidCount,
-		})
-	}
 
-	if err := mdb.ReplaceMetricSegs(ctx, params); err != nil {
-		ll.Error("Failed to replace metric segments", slog.Any("error", err))
-		return fmt.Errorf("replacing metric segments: %w", err)
+		tidLogger.Debug("S3 upload successful, updating database index - CRITICAL SECTION",
+			slog.String("uploadedObject", newObjectID))
+
+		// Create params for this single tid_partition
+		singleParams := lrdb.ReplaceMetricSegsParams{
+			OrganizationID: params.OrganizationID,
+			Dateint:        params.Dateint,
+			FrequencyMs:    params.FrequencyMs,
+			InstanceNum:    params.InstanceNum,
+			IngestDateint:  params.IngestDateint,
+			Published:      params.Published,
+			Rolledup:       params.Rolledup,
+			CreatedBy:      params.CreatedBy,
+			OldRecords:     params.OldRecords, // Contains all old records, but DB will filter by tid_partition
+			NewRecords: []lrdb.ReplaceMetricSegsNew{
+				{
+					TidPartition: int16(tidPartition),
+					SegmentID:    segmentID,
+					StartTs:      startTs,
+					EndTs:        endTs,
+					RecordCount:  result.RecordCount,
+					FileSize:     result.FileSize,
+					TidCount:     result.TidCount,
+				},
+			},
+		}
+
+		if err := mdb.ReplaceMetricSegs(ctx, singleParams); err != nil {
+			tidLogger.Error("CRITICAL: Database update failed after S3 upload - file orphaned in S3",
+				slog.Any("error", err),
+				slog.String("orphanedObject", newObjectID),
+				slog.Int64("orphanedSegmentID", segmentID),
+				slog.String("bucket", profile.Bucket))
+
+			// Best effort cleanup - try to delete the uploaded file
+			tidLogger.Debug("Attempting to cleanup orphaned S3 object")
+			if cleanupErr := s3helper.DeleteS3Object(ctx, s3client, profile.Bucket, newObjectID); cleanupErr != nil {
+				tidLogger.Error("Failed to cleanup orphaned S3 object - manual cleanup required",
+					slog.Any("error", cleanupErr),
+					slog.String("objectID", newObjectID),
+					slog.String("bucket", profile.Bucket))
+			} else {
+				tidLogger.Info("Successfully cleaned up orphaned S3 object")
+			}
+			return fmt.Errorf("replacing metric segments: %w", err)
+		}
+
+		tidLogger.Info("ATOMIC OPERATION COMMITTED SUCCESSFULLY - database updated, segments swapped",
+			slog.Int64("newSegmentID", segmentID),
+			slog.Int64("newRecordCount", result.RecordCount),
+			slog.Int64("newFileSize", result.FileSize),
+			slog.String("newObjectID", newObjectID))
 	}
 
 	for _, row := range rows {
