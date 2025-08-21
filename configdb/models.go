@@ -109,4 +109,6 @@ type OrganizationBucket struct {
 	ID             uuid.UUID `json:"id"`
 	OrganizationID uuid.UUID `json:"organization_id"`
 	BucketID       uuid.UUID `json:"bucket_id"`
+	InstanceNum    int16     `json:"instance_num"`
+	CollectorName  string    `json:"collector_name"`
 }

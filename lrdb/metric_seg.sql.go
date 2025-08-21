@@ -19,18 +19,20 @@ WHERE
   organization_id = $1 AND
   dateint = $2 AND
   frequency_ms = $3 AND
-  ts_range && int8range($4, $5, '[)') AND
-  file_size <= $6 AND
-  (created_at, segment_id) > ($7, $8::bigint)
+  instance_num = $4 AND
+  ts_range && int8range($5, $6, '[)') AND
+  file_size <= $7 AND
+  (created_at, segment_id) > ($8, $9::bigint)
 ORDER BY
   created_at, segment_id
-LIMIT $9
+LIMIT $10
 `
 
 type GetMetricSegsForCompactionParams struct {
 	OrganizationID  uuid.UUID `json:"organization_id"`
 	Dateint         int32     `json:"dateint"`
 	FrequencyMs     int32     `json:"frequency_ms"`
+	InstanceNum     int16     `json:"instance_num"`
 	StartTs         int64     `json:"start_ts"`
 	EndTs           int64     `json:"end_ts"`
 	MaxFileSize     int64     `json:"max_file_size"`
@@ -44,6 +46,7 @@ func (q *Queries) GetMetricSegsForCompaction(ctx context.Context, arg GetMetricS
 		arg.OrganizationID,
 		arg.Dateint,
 		arg.FrequencyMs,
+		arg.InstanceNum,
 		arg.StartTs,
 		arg.EndTs,
 		arg.MaxFileSize,
@@ -92,7 +95,8 @@ WHERE
   organization_id = $1 AND
   dateint = $2 AND
   frequency_ms = $3 AND
-  ts_range && int8range($4, $5, '[)')
+  instance_num = $4 AND
+  ts_range && int8range($5, $6, '[)')
 ORDER BY
   ts_range
 `
@@ -101,6 +105,7 @@ type GetMetricSegsForRollupParams struct {
 	OrganizationID uuid.UUID `json:"organization_id"`
 	Dateint        int32     `json:"dateint"`
 	FrequencyMs    int32     `json:"frequency_ms"`
+	InstanceNum    int16     `json:"instance_num"`
 	StartTs        int64     `json:"start_ts"`
 	EndTs          int64     `json:"end_ts"`
 }
@@ -110,6 +115,7 @@ func (q *Queries) GetMetricSegsForRollup(ctx context.Context, arg GetMetricSegsF
 		arg.OrganizationID,
 		arg.Dateint,
 		arg.FrequencyMs,
+		arg.InstanceNum,
 		arg.StartTs,
 		arg.EndTs,
 	)
@@ -169,14 +175,14 @@ VALUES (
   $3,
   $4,
   $5,
-  9999,
   $6,
-  int8range($7, $8, '[)'),
-  $9,
+  $7,
+  int8range($8, $9, '[)'),
   $10,
   $11,
   $12,
-  $13
+  $13,
+  $14
 )
 `
 
@@ -186,6 +192,7 @@ type InsertMetricSegmentParams struct {
 	IngestDateint  int32     `json:"ingest_dateint"`
 	FrequencyMs    int32     `json:"frequency_ms"`
 	SegmentID      int64     `json:"segment_id"`
+	InstanceNum    int16     `json:"instance_num"`
 	TidPartition   int16     `json:"tid_partition"`
 	StartTs        int64     `json:"start_ts"`
 	EndTs          int64     `json:"end_ts"`
@@ -203,6 +210,7 @@ func (q *Queries) InsertMetricSegmentDirect(ctx context.Context, arg InsertMetri
 		arg.IngestDateint,
 		arg.FrequencyMs,
 		arg.SegmentID,
+		arg.InstanceNum,
 		arg.TidPartition,
 		arg.StartTs,
 		arg.EndTs,

@@ -19,9 +19,9 @@ WITH
       FROM trace_seg
      WHERE organization_id = $1
        AND dateint        = $2
-       AND instance_num   = 9999
-       AND slot_id = $5
-       AND segment_id     = ANY($11::bigint[])
+       AND instance_num   = $5
+       AND slot_id = $6
+       AND segment_id     = ANY($12::bigint[])
   ),
   fingerprint_array AS (
     SELECT coalesce(
@@ -34,8 +34,8 @@ WITH
     DELETE FROM trace_seg
      WHERE organization_id = $1
        AND dateint        = $2
-       AND instance_num   = 9999
-       AND segment_id     = ANY($11::bigint[])
+       AND instance_num   = $5
+       AND segment_id     = ANY($12::bigint[])
   )
 INSERT INTO trace_seg (
   organization_id,
@@ -55,12 +55,12 @@ SELECT
   $2,
   $3,
   $4,
-  9999,
   $5,
   $6,
   $7,
-  int8range($8, $9, '[)'),
-  $10,
+  $8,
+  int8range($9, $10, '[)'),
+  $11,
   fa.fingerprints
 FROM fingerprint_array AS fa
 `
@@ -70,6 +70,7 @@ type CompactTraceSegmentsParams struct {
 	Dateint        int32     `json:"dateint"`
 	IngestDateint  int32     `json:"ingest_dateint"`
 	NewSegmentID   int64     `json:"new_segment_id"`
+	InstanceNum    int16     `json:"instance_num"`
 	SlotID         int32     `json:"slot_id"`
 	NewRecordCount int64     `json:"new_record_count"`
 	NewFileSize    int64     `json:"new_file_size"`
@@ -85,6 +86,7 @@ func (q *Queries) CompactTraceSegments(ctx context.Context, arg CompactTraceSegm
 		arg.Dateint,
 		arg.IngestDateint,
 		arg.NewSegmentID,
+		arg.InstanceNum,
 		arg.SlotID,
 		arg.NewRecordCount,
 		arg.NewFileSize,
@@ -109,18 +111,20 @@ SELECT
 FROM trace_seg
 WHERE organization_id = $1
   AND dateint         = $2
-  AND slot_id = $3
+  AND instance_num    = $3
+  AND slot_id = $4
   AND file_size > 0
   AND record_count > 0
-  AND file_size <= $4
-  AND (created_at, segment_id) > ($5, $6::bigint)
+  AND file_size <= $5
+  AND (created_at, segment_id) > ($6, $7::bigint)
 ORDER BY created_at, segment_id
-LIMIT $7
+LIMIT $8
 `
 
 type GetTraceSegmentsForCompactionParams struct {
 	OrganizationID  uuid.UUID `json:"organization_id"`
 	Dateint         int32     `json:"dateint"`
+	InstanceNum     int16     `json:"instance_num"`
 	SlotID          int32     `json:"slot_id"`
 	MaxFileSize     int64     `json:"max_file_size"`
 	CursorCreatedAt time.Time `json:"cursor_created_at"`
@@ -143,6 +147,7 @@ func (q *Queries) GetTraceSegmentsForCompaction(ctx context.Context, arg GetTrac
 	rows, err := q.db.Query(ctx, getTraceSegmentsForCompaction,
 		arg.OrganizationID,
 		arg.Dateint,
+		arg.InstanceNum,
 		arg.SlotID,
 		arg.MaxFileSize,
 		arg.CursorCreatedAt,
@@ -195,13 +200,13 @@ VALUES (
   $2,
   $3,
   $4,
-  9999,
   $5,
-  int8range($6, $7, '[)'),
-  $8,
+  $6,
+  int8range($7, $8, '[)'),
   $9,
   $10,
-  $11::bigint[]
+  $11,
+  $12::bigint[]
 )
 `
 
@@ -210,6 +215,7 @@ type InsertTraceSegmentDirectParams struct {
 	Dateint        int32     `json:"dateint"`
 	IngestDateint  int32     `json:"ingest_dateint"`
 	SegmentID      int64     `json:"segment_id"`
+	InstanceNum    int16     `json:"instance_num"`
 	SlotID         int32     `json:"slot_id"`
 	StartTs        int64     `json:"start_ts"`
 	EndTs          int64     `json:"end_ts"`
@@ -225,6 +231,7 @@ func (q *Queries) InsertTraceSegmentDirect(ctx context.Context, arg InsertTraceS
 		arg.Dateint,
 		arg.IngestDateint,
 		arg.SegmentID,
+		arg.InstanceNum,
 		arg.SlotID,
 		arg.StartTs,
 		arg.EndTs,

@@ -36,10 +36,13 @@ type Querier interface {
 	GetAllOrganizationAPIKeys(ctx context.Context) ([]GetAllOrganizationAPIKeysRow, error)
 	GetBucketByOrganization(ctx context.Context, organizationID uuid.UUID) (string, error)
 	GetBucketConfiguration(ctx context.Context, bucketName string) (BucketConfiguration, error)
+	GetDefaultOrganizationBucket(ctx context.Context, organizationID uuid.UUID) (GetDefaultOrganizationBucketRow, error)
 	GetLongestPrefixMatch(ctx context.Context, arg GetLongestPrefixMatchParams) (uuid.UUID, error)
 	GetOrganization(ctx context.Context, id uuid.UUID) (Organization, error)
 	GetOrganizationAPIKeyByHash(ctx context.Context, keyHash string) (GetOrganizationAPIKeyByHashRow, error)
 	GetOrganizationAPIKeyByID(ctx context.Context, apiKeyID uuid.UUID) (GetOrganizationAPIKeyByIDRow, error)
+	GetOrganizationBucketByCollector(ctx context.Context, arg GetOrganizationBucketByCollectorParams) (GetOrganizationBucketByCollectorRow, error)
+	GetOrganizationBucketByInstance(ctx context.Context, arg GetOrganizationBucketByInstanceParams) (GetOrganizationBucketByInstanceRow, error)
 	GetOrganizationByName(ctx context.Context, name string) (Organization, error)
 	GetOrganizationsByBucket(ctx context.Context, bucketName string) ([]uuid.UUID, error)
 	GetStorageProfileByCollectorNameUncached(ctx context.Context, organizationID uuid.UUID) (GetStorageProfileByCollectorNameRow, error)
@@ -48,6 +51,7 @@ type Querier interface {
 	HasExistingStorageProfiles(ctx context.Context) (bool, error)
 	ListEnabledOrganizations(ctx context.Context) ([]Organization, error)
 	ListOrganizations(ctx context.Context) ([]Organization, error)
+	SyncOrganizationBuckets(ctx context.Context) error
 	// This file contains queries for syncing data from legacy c_ tables (managed externally)
 	// to our own tables that we control.
 	SyncOrganizations(ctx context.Context) error

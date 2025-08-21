@@ -26,6 +26,7 @@ const DBPrefix = "db"
 
 func MakeDBObjectID(
 	orgID uuid.UUID,
+	collectorName string,
 	dateint int32,
 	hour int16,
 	segmentID int64,
@@ -34,7 +35,7 @@ func MakeDBObjectID(
 	return path.Join(
 		DBPrefix,
 		orgID.String(),
-		"default",
+		collectorName,
 		strconv.Itoa(int(dateint)),
 		ttype,
 		fmt.Sprintf("%02d", hour),

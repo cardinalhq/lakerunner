@@ -118,6 +118,60 @@ func (m *mockConfigDBStoreageProfileFetcher) GetBucketByOrganization(ctx context
 	return m.profile.Bucket, nil
 }
 
+func (m *mockConfigDBStoreageProfileFetcher) GetOrganizationBucketByInstance(ctx context.Context, arg configdb.GetOrganizationBucketByInstanceParams) (configdb.GetOrganizationBucketByInstanceRow, error) {
+	if m.err != nil {
+		return configdb.GetOrganizationBucketByInstanceRow{}, m.err
+	}
+	return configdb.GetOrganizationBucketByInstanceRow{
+		OrganizationID: arg.OrganizationID,
+		InstanceNum:    arg.InstanceNum,
+		CollectorName:  "default",
+		BucketName:     m.profile.Bucket,
+		CloudProvider:  m.profile.CloudProvider,
+		Region:         m.profile.Region,
+		Role:           m.profile.Role,
+		Endpoint:       nil,
+		UsePathStyle:   false,
+		InsecureTls:    false,
+	}, nil
+}
+
+func (m *mockConfigDBStoreageProfileFetcher) GetOrganizationBucketByCollector(ctx context.Context, arg configdb.GetOrganizationBucketByCollectorParams) (configdb.GetOrganizationBucketByCollectorRow, error) {
+	if m.err != nil {
+		return configdb.GetOrganizationBucketByCollectorRow{}, m.err
+	}
+	return configdb.GetOrganizationBucketByCollectorRow{
+		OrganizationID: arg.OrganizationID,
+		InstanceNum:    1,
+		CollectorName:  arg.CollectorName,
+		BucketName:     m.profile.Bucket,
+		CloudProvider:  m.profile.CloudProvider,
+		Region:         m.profile.Region,
+		Role:           m.profile.Role,
+		Endpoint:       nil,
+		UsePathStyle:   false,
+		InsecureTls:    false,
+	}, nil
+}
+
+func (m *mockConfigDBStoreageProfileFetcher) GetDefaultOrganizationBucket(ctx context.Context, organizationID uuid.UUID) (configdb.GetDefaultOrganizationBucketRow, error) {
+	if m.err != nil {
+		return configdb.GetDefaultOrganizationBucketRow{}, m.err
+	}
+	return configdb.GetDefaultOrganizationBucketRow{
+		OrganizationID: organizationID,
+		InstanceNum:    1,
+		CollectorName:  "default",
+		BucketName:     m.profile.Bucket,
+		CloudProvider:  m.profile.CloudProvider,
+		Region:         m.profile.Region,
+		Role:           m.profile.Role,
+		Endpoint:       nil,
+		UsePathStyle:   false,
+		InsecureTls:    false,
+	}, nil
+}
+
 func TestDatabaseProvider_Get_SuccessWithRole(t *testing.T) {
 	orgID := uuid.New()
 	role := "admin"

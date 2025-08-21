@@ -138,7 +138,7 @@ func traceIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp sto
 
 				// Create S3 object ID for traces using the standard helper
 				hour := int16(0) // Hour doesn't matter for slot-based traces
-				dbObjectID := helpers.MakeDBObjectID(inf.OrganizationID, ingest_dateint, hour, segmentID, "traces")
+				dbObjectID := helpers.MakeDBObjectID(inf.OrganizationID, inf.CollectorName, ingest_dateint, hour, segmentID, "traces")
 
 				// Upload to S3
 				if err := s3helper.UploadS3Object(ctx, s3client, inf.Bucket, dbObjectID, result.FileName); err != nil {
@@ -162,6 +162,7 @@ func traceIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp sto
 					Dateint:        ingest_dateint,
 					IngestDateint:  ingest_dateint,
 					SegmentID:      segmentID,
+					InstanceNum:    inf.InstanceNum,
 					SlotID:         int32(result.SlotID),
 					StartTs:        0, // Time doesn't matter for slot-based traces compaction
 					EndTs:          1, // Time doesn't matter for slot-based traces compaction

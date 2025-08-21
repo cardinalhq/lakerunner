@@ -36,6 +36,9 @@ type ConfigDBStoreageProfileFetcher interface {
 	CheckOrgBucketAccess(ctx context.Context, arg configdb.CheckOrgBucketAccessParams) (bool, error)
 	GetLongestPrefixMatch(ctx context.Context, arg configdb.GetLongestPrefixMatchParams) (uuid.UUID, error)
 	GetBucketByOrganization(ctx context.Context, organizationID uuid.UUID) (string, error)
+	GetOrganizationBucketByInstance(ctx context.Context, arg configdb.GetOrganizationBucketByInstanceParams) (configdb.GetOrganizationBucketByInstanceRow, error)
+	GetOrganizationBucketByCollector(ctx context.Context, arg configdb.GetOrganizationBucketByCollectorParams) (configdb.GetOrganizationBucketByCollectorRow, error)
+	GetDefaultOrganizationBucket(ctx context.Context, organizationID uuid.UUID) (configdb.GetDefaultOrganizationBucketRow, error)
 }
 
 var _ ConfigDBStoreageProfileFetcher = (*configdb.Store)(nil)
@@ -47,42 +50,21 @@ func NewDatabaseProvider(cdb ConfigDBStoreageProfileFetcher) StorageProfileProvi
 }
 
 func (p *databaseProvider) GetStorageProfileForBucket(ctx context.Context, organizationID uuid.UUID, bucketName string) (StorageProfile, error) {
-	// Verify the organization has access to this bucket
-	hasAccess, err := p.cdb.CheckOrgBucketAccess(ctx, configdb.CheckOrgBucketAccessParams{
-		OrgID:      organizationID,
-		BucketName: bucketName,
-	})
+	// For backward compatibility, get the default organization bucket entry (first by instance_num, collector_name)
+	// This method should be deprecated in favor of the more specific methods
+	result, err := p.cdb.GetDefaultOrganizationBucket(ctx, organizationID)
 	if err != nil {
-		return StorageProfile{}, fmt.Errorf("failed to check org bucket access: %w", err)
-	}
-	if !hasAccess {
-		return StorageProfile{}, fmt.Errorf("organization %s does not have access to bucket %s", organizationID, bucketName)
+		return StorageProfile{}, fmt.Errorf("failed to get default organization bucket: %w", err)
 	}
 
-	// Get the bucket configuration
-	bucketConfig, err := p.cdb.GetBucketConfiguration(ctx, bucketName)
-	if err != nil {
-		return StorageProfile{}, fmt.Errorf("failed to get bucket configuration: %w", err)
+	// Verify it matches the requested bucket
+	if result.BucketName != bucketName {
+		return StorageProfile{}, fmt.Errorf("organization %s default bucket %s does not match requested bucket %s", organizationID, result.BucketName, bucketName)
 	}
 
-	// Create storage profile from bucket configuration
-	ret := StorageProfile{
-		OrganizationID: organizationID,
-		CloudProvider:  bucketConfig.CloudProvider,
-		Region:         bucketConfig.Region,
-		Bucket:         bucketConfig.BucketName,
-		UsePathStyle:   bucketConfig.UsePathStyle,
-		InsecureTLS:    bucketConfig.InsecureTls,
-	}
-
-	if bucketConfig.Role != nil {
-		ret.Role = *bucketConfig.Role
-	}
-	if bucketConfig.Endpoint != nil {
-		ret.Endpoint = *bucketConfig.Endpoint
-	}
-
-	return ret, nil
+	return p.rowToStorageProfile(result.OrganizationID, result.InstanceNum, result.CollectorName,
+		result.BucketName, result.CloudProvider, result.Region, result.Role, result.Endpoint,
+		result.UsePathStyle, result.InsecureTls), nil
 }
 
 func (p *databaseProvider) GetStorageProfileForOrganization(ctx context.Context, organizationID uuid.UUID) (StorageProfile, error) {
@@ -186,4 +168,57 @@ func (p *databaseProvider) ResolveOrganization(ctx context.Context, bucketName, 
 	}
 
 	return uuid.Nil, fmt.Errorf("unable to resolve organization for path %s in bucket %s: %d organizations found", objectPath, bucketName, len(orgs))
+}
+
+func (p *databaseProvider) GetStorageProfileForOrganizationAndInstance(ctx context.Context, organizationID uuid.UUID, instanceNum int16) (StorageProfile, error) {
+	// Get organization bucket configuration by instance number
+	result, err := p.cdb.GetOrganizationBucketByInstance(ctx, configdb.GetOrganizationBucketByInstanceParams{
+		OrganizationID: organizationID,
+		InstanceNum:    instanceNum,
+	})
+	if err != nil {
+		return StorageProfile{}, fmt.Errorf("failed to get organization bucket by instance: %w", err)
+	}
+
+	return p.rowToStorageProfile(result.OrganizationID, result.InstanceNum, result.CollectorName,
+		result.BucketName, result.CloudProvider, result.Region, result.Role, result.Endpoint,
+		result.UsePathStyle, result.InsecureTls), nil
+}
+
+func (p *databaseProvider) GetStorageProfileForOrganizationAndCollector(ctx context.Context, organizationID uuid.UUID, collectorName string) (StorageProfile, error) {
+	// Get organization bucket configuration by collector name
+	result, err := p.cdb.GetOrganizationBucketByCollector(ctx, configdb.GetOrganizationBucketByCollectorParams{
+		OrganizationID: organizationID,
+		CollectorName:  collectorName,
+	})
+	if err != nil {
+		return StorageProfile{}, fmt.Errorf("failed to get organization bucket by collector: %w", err)
+	}
+
+	return p.rowToStorageProfile(result.OrganizationID, result.InstanceNum, result.CollectorName,
+		result.BucketName, result.CloudProvider, result.Region, result.Role, result.Endpoint,
+		result.UsePathStyle, result.InsecureTls), nil
+}
+
+// Helper function to convert query result row to StorageProfile
+func (p *databaseProvider) rowToStorageProfile(organizationID uuid.UUID, instanceNum int16, collectorName, bucketName, cloudProvider, region string, role, endpoint *string, usePathStyle, insecureTLS bool) StorageProfile {
+	ret := StorageProfile{
+		OrganizationID: organizationID,
+		InstanceNum:    instanceNum,
+		CollectorName:  collectorName,
+		CloudProvider:  cloudProvider,
+		Region:         region,
+		Bucket:         bucketName,
+		UsePathStyle:   usePathStyle,
+		InsecureTLS:    insecureTLS,
+	}
+
+	if role != nil {
+		ret.Role = *role
+	}
+	if endpoint != nil {
+		ret.Endpoint = *endpoint
+	}
+
+	return ret
 }

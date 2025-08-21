@@ -74,6 +74,51 @@ func (m *mockBucketManagementFetcher) GetBucketByOrganization(ctx context.Contex
 	return m.bucketConfig.BucketName, m.bucketErr
 }
 
+func (m *mockBucketManagementFetcher) GetOrganizationBucketByInstance(ctx context.Context, arg configdb.GetOrganizationBucketByInstanceParams) (configdb.GetOrganizationBucketByInstanceRow, error) {
+	return configdb.GetOrganizationBucketByInstanceRow{
+		OrganizationID: arg.OrganizationID,
+		InstanceNum:    arg.InstanceNum,
+		CollectorName:  "default",
+		BucketName:     m.bucketConfig.BucketName,
+		CloudProvider:  m.bucketConfig.CloudProvider,
+		Region:         m.bucketConfig.Region,
+		Role:           m.bucketConfig.Role,
+		Endpoint:       m.bucketConfig.Endpoint,
+		UsePathStyle:   m.bucketConfig.UsePathStyle,
+		InsecureTls:    m.bucketConfig.InsecureTls,
+	}, m.bucketErr
+}
+
+func (m *mockBucketManagementFetcher) GetOrganizationBucketByCollector(ctx context.Context, arg configdb.GetOrganizationBucketByCollectorParams) (configdb.GetOrganizationBucketByCollectorRow, error) {
+	return configdb.GetOrganizationBucketByCollectorRow{
+		OrganizationID: arg.OrganizationID,
+		InstanceNum:    1,
+		CollectorName:  arg.CollectorName,
+		BucketName:     m.bucketConfig.BucketName,
+		CloudProvider:  m.bucketConfig.CloudProvider,
+		Region:         m.bucketConfig.Region,
+		Role:           m.bucketConfig.Role,
+		Endpoint:       m.bucketConfig.Endpoint,
+		UsePathStyle:   m.bucketConfig.UsePathStyle,
+		InsecureTls:    m.bucketConfig.InsecureTls,
+	}, m.bucketErr
+}
+
+func (m *mockBucketManagementFetcher) GetDefaultOrganizationBucket(ctx context.Context, organizationID uuid.UUID) (configdb.GetDefaultOrganizationBucketRow, error) {
+	return configdb.GetDefaultOrganizationBucketRow{
+		OrganizationID: organizationID,
+		InstanceNum:    1,
+		CollectorName:  "default",
+		BucketName:     m.bucketConfig.BucketName,
+		CloudProvider:  m.bucketConfig.CloudProvider,
+		Region:         m.bucketConfig.Region,
+		Role:           m.bucketConfig.Role,
+		Endpoint:       m.bucketConfig.Endpoint,
+		UsePathStyle:   m.bucketConfig.UsePathStyle,
+		InsecureTls:    m.bucketConfig.InsecureTls,
+	}, m.bucketErr
+}
+
 func TestDatabaseProvider_ResolveOrganization_UUIDExtraction(t *testing.T) {
 	orgID := uuid.New()
 

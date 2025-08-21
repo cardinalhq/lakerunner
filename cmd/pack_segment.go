@@ -70,7 +70,7 @@ func downloadAndOpen(
 			return nil, err
 		}
 
-		good := helpers.MakeDBObjectID(sp.OrganizationID, dateint, s3helper.HourFromMillis(seg.StartTs), seg.SegmentID, "logs")
+		good := helpers.MakeDBObjectID(sp.OrganizationID, sp.CollectorName, dateint, s3helper.HourFromMillis(seg.StartTs), seg.SegmentID, "logs")
 		bad := helpers.MakeDBObjectIDbad(sp.OrganizationID, dateint, s3helper.HourFromMillis(seg.StartTs), seg.SegmentID, "logs")
 
 		objectID, tmpfile, _, err := chooseObjectID(ctx, fetcher, bucket, good, bad, tmpdir)
@@ -341,7 +341,7 @@ func packSegment(
 
 	newSegmentID := s3helper.GenerateID()
 	newObjectID := helpers.MakeDBObjectID(
-		sp.OrganizationID, dateint, s3helper.HourFromMillis(stats.FirstTS), newSegmentID, "logs",
+		sp.OrganizationID, sp.CollectorName, dateint, s3helper.HourFromMillis(stats.FirstTS), newSegmentID, "logs",
 	)
 
 	ll.Info("Uploading new file to S3",
