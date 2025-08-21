@@ -276,7 +276,7 @@ func logCompactItemDo(
 
 		for i, group := range packed {
 			ll := ll.With(slog.Int("groupIndex", i))
-			err = packSegment(ctx, ll, tmpdir, s3client, mdb, group, sp, stdi)
+			err = packSegment(ctx, ll, tmpdir, s3client, mdb, group, sp, stdi, inf.InstanceNum())
 			if err != nil {
 				break
 			}

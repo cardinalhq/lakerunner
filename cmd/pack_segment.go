@@ -259,6 +259,7 @@ func packSegment(
 	group []lrdb.GetLogSegmentsForCompactionRow,
 	sp storageprofile.StorageProfile,
 	dateint int32,
+	instanceNum int16,
 ) error {
 	if len(group) < 2 {
 		return nil
@@ -361,6 +362,7 @@ func packSegment(
 	if err := mdb.CompactLogSegments(ctx, lrdb.CompactLogSegmentsParams{
 		OrganizationID: sp.OrganizationID,
 		Dateint:        dateint,
+		InstanceNum:    instanceNum,
 		IngestDateint:  stats.IngestDate,
 		NewStartTs:     stats.FirstTS,
 		NewEndTs:       stats.LastTS, // already half-open
