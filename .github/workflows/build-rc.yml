@@ -19,7 +19,7 @@ jobs:
       matrix:
         include:
           - name: linux_amd64
-            label: ubuntu-latest
+            label: ubuntu-24.04
             cache_path: dist/linux_amd64
           - name: linux_arm64
             label: ubuntu-24.04-arm
@@ -76,7 +76,7 @@ jobs:
 
   merge:
     needs: partials
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       DOCKER_CLI_EXPERIMENTAL: "enabled"
     steps:
