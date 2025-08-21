@@ -12,14 +12,21 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package cmd
+package idgen
 
 import (
-	"github.com/cardinalhq/lakerunner/internal/idgen"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
-// generateOperationID creates a unique operation ID for tracking atomic operations
-// Format: randomBase32
-func generateOperationID(index int) string {
-	return idgen.GenerateShortBase32ID()
+func TestGenerateShortBase32ID(t *testing.T) {
+	// Test that it returns a string
+	id := GenerateShortBase32ID()
+	assert.IsType(t, "", id, "GenerateShortBase32ID should return a string")
+	assert.NotEmpty(t, id, "GenerateShortBase32ID should return a non-empty string")
+
+	// Test that multiple calls return different IDs
+	id2 := GenerateShortBase32ID()
+	assert.NotEqual(t, id, id2, "GenerateShortBase32ID should return different values on subsequent calls")
 }

@@ -27,6 +27,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/internal/tidprocessing"
 	"github.com/cardinalhq/lakerunner/lockmgr"
@@ -285,7 +286,7 @@ func rollupInterval(
 	// Process each tid_partition atomically
 	for tidPartition, result := range mergeResult {
 		// Generate operation ID for tracking this atomic operation
-		opID := fmt.Sprintf("rollup_op_%d_%d_%s", time.Now().Unix(), tidPartition, generateShortID())
+		opID := fmt.Sprintf("rollup_op_%d_%d_%s", time.Now().Unix(), tidPartition, idgen.GenerateShortBase32ID())
 		tidLogger := ll.With(slog.String("operationID", opID), slog.Int("tidPartition", int(tidPartition)))
 
 		tidLogger.Info("Starting atomic metric rollup operation",

@@ -16,17 +16,15 @@ package metriccompaction
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base32"
 	"fmt"
 	"log/slog"
 	"math"
-	"strings"
 	"time"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/internal/tidprocessing"
 	"github.com/cardinalhq/lakerunner/lockmgr"
@@ -41,13 +39,6 @@ const (
 	WorkResultSuccess WorkResult = iota
 	WorkResultTryAgainLater
 )
-
-// generateShortID creates a short random base32 ID for operation tracking
-func generateShortID() string {
-	b := make([]byte, 5) // 5 bytes = 8 base32 chars
-	_, _ = rand.Read(b)  // errors from rand.Read are rare and not critical for operation IDs
-	return strings.TrimRight(base32.StdEncoding.EncodeToString(b), "=")
-}
 
 func ProcessItem(
 	ctx context.Context,
@@ -365,7 +356,7 @@ func compactInterval(
 	// Process each tid_partition atomically
 	for tidPartition, result := range mergeResult {
 		// Generate operation ID for tracking this atomic operation
-		opID := fmt.Sprintf("metric_op_%d_%d_%s", time.Now().Unix(), tidPartition, generateShortID())
+		opID := fmt.Sprintf("metric_op_%d_%d_%s", time.Now().Unix(), tidPartition, idgen.GenerateShortBase32ID())
 		tidLogger := ll.With(slog.String("operationID", opID), slog.Int("tidPartition", tidPartition))
 
 		tidLogger.Info("Starting atomic metric compaction operation",
