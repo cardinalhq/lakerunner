@@ -196,7 +196,7 @@ func queueLogCompaction(ctx context.Context, mdb lrdb.StoreFull, inf qmc) error 
 		Action:     lrdb.ActionEnumCompact,
 		Dateint:    boundary.DateInt,
 		Frequency:  -1,
-		TsRange:    inf.TsRange,                           // Use the already-computed hour range
-		RunnableAt: time.Now().UTC().Add(5 * time.Minute), // give it a little time to settle
+		TsRange:    inf.TsRange,                            // Use the already-computed hour range
+		RunnableAt: time.Now().UTC().Add(30 * time.Second), // give it a little time to settle
 	})
 }
