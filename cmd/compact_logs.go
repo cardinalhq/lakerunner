@@ -73,9 +73,11 @@ func init() {
 var compactLogsDoneCtx context.Context
 
 // compactionMetricRecorder implements logcrunch.MetricRecorder for recording compaction metrics
-type compactionMetricRecorder struct{}
+type compactionMetricRecorder struct {
+	logger *slog.Logger
+}
 
-func (compactionMetricRecorder) RecordFilteredSegments(ctx context.Context, count int64, organizationID, instanceNum, signal, action, reason string) {
+func (r compactionMetricRecorder) RecordFilteredSegments(ctx context.Context, count int64, organizationID, instanceNum, signal, action, reason string) {
 	segmentsFilteredCounter.Add(ctx, count,
 		metric.WithAttributeSet(commonAttributes),
 		metric.WithAttributes(
@@ -85,6 +87,13 @@ func (compactionMetricRecorder) RecordFilteredSegments(ctx context.Context, coun
 			attribute.String("action", action),
 			attribute.String("reason", reason),
 		))
+
+	// Add detailed logging for each filtering reason
+	r.logger.Info("Segments filtered during packing",
+		slog.Int64("count", count),
+		slog.String("reason", reason),
+		slog.String("organizationID", organizationID),
+		slog.String("instanceNum", instanceNum))
 }
 
 func (compactionMetricRecorder) RecordProcessedSegments(ctx context.Context, count int64, organizationID, instanceNum, signal, action string) {
@@ -185,9 +194,13 @@ func logCompactItemDo(
 		return WorkResultSuccess, nil
 	}
 
-	// Get the dateint for database queries (both boundaries should be the same now)
+	// Get the dateint and hour boundaries for database queries (both boundaries should be the same now)
 	startBoundary, _ := helpers.TimeRangeToHourBoundaries(timeRange)
 	stdi := startBoundary.DateInt
+
+	// Calculate hour start and end timestamps in milliseconds
+	hourStartTs := timeRange.Start.UnixMilli()
+	hourEndTs := timeRange.End.UnixMilli()
 
 	const maxRowsLimit = 1000
 	totalBatchesProcessed := 0
@@ -218,6 +231,8 @@ func logCompactItemDo(
 			MaxFileSize:     targetFileSize,  // Include files up to full target size (was 90%)
 			CursorCreatedAt: cursorCreatedAt, // Cursor for pagination
 			CursorSegmentID: cursorSegmentID, // Cursor for pagination
+			HourStartTs:     hourStartTs,     // Hour boundary start timestamp
+			HourEndTs:       hourEndTs,       // Hour boundary end timestamp
 			Maxrows:         maxRowsLimit,    // Safety limit for compaction batch
 		})
 		if err != nil {
@@ -252,7 +267,7 @@ func logCompactItemDo(
 		// Allow for 110% of target capacity to account for compression variability
 		// This gives us 10% tolerance above the target file size
 		adjustedEstimate := rpfEstimate * 11 / 10
-		recorder := compactionMetricRecorder{}
+		recorder := compactionMetricRecorder{logger: ll}
 		packed, err := logcrunch.PackSegments(ctx, segments, adjustedEstimate, recorder,
 			inf.OrganizationID().String(), fmt.Sprintf("%d", inf.InstanceNum()), "logs", "compact")
 		if err != nil {
