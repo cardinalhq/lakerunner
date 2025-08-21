@@ -2,65 +2,18 @@
 SELECT pg_advisory_xact_lock(hashtext('work_queue_global')::bigint);
 
 -- name: WorkQueueAddDirect :exec
-WITH params AS (
-  SELECT
-    @org_id      :: UUID        AS p_org_id,
-    @instance    :: SMALLINT    AS p_instance,
-    @dateint     :: INTEGER     AS p_dateint,
-    @frequency   :: INTEGER     AS p_frequency,
-    @signal      :: signal_enum AS p_signal,
-    @action      :: action_enum AS p_action,
-    @ts_range    :: TSTZRANGE   AS p_ts_range,
-    @runnable_at :: TIMESTAMPTZ AS p_runnable_at,
-    @priority    :: INTEGER     AS p_priority,
-    @slot_id     :: INTEGER     AS p_slot_id
-),
-insert_attempt AS (
-  INSERT INTO public.work_queue (
-    organization_id,
-    instance_num,
-    dateint,
-    frequency_ms,
-    signal,
-    action,
-    tries,
-    claimed_by,
-    claimed_at,
-    needs_run,
-    ts_range,
-    heartbeated_at,
-    runnable_at,
-    priority,
-    slot_id
-  )
-  SELECT
-    p.p_org_id,
-    p.p_instance,
-    p.p_dateint,
-    p.p_frequency,
-    p.p_signal,
-    p.p_action,
-    0,
-    -1,
-    NULL,
-    TRUE,
-    p.p_ts_range,
-    NOW(),
-    p.p_runnable_at,
-    p.p_priority,
-    p.p_slot_id
-  FROM params p
-  ON CONFLICT ON CONSTRAINT work_queue_conflict
-  DO UPDATE SET
-    needs_run = TRUE,
-    runnable_at = CASE
-                    WHEN work_queue.needs_run THEN work_queue.runnable_at
-                    ELSE EXCLUDED.runnable_at
-                  END,
-    priority = GREATEST(work_queue.priority, EXCLUDED.priority)
-  RETURNING 1
-)
-SELECT COUNT(*) FROM insert_attempt;
+SELECT public.work_queue_add(
+    @org_id,
+    @instance,
+    @dateint,
+    @frequency,
+    @signal,
+    @action,
+    @ts_range,
+    @runnable_at,
+    @priority,
+    @slot_id
+);
 
 
 -- name: WorkQueueFailDirect :exec
