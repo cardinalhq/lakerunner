@@ -191,7 +191,9 @@ func TestImportStorageProfiles_Success(t *testing.T) {
 
 	mockDB.On("UpsertOrganizationBucket", ctx, mock.MatchedBy(func(params configdb.UpsertOrganizationBucketParams) bool {
 		return params.OrganizationID == orgID &&
-			params.BucketID == bucketID
+			params.BucketID == bucketID &&
+			params.InstanceNum == 1 &&
+			params.CollectorName == "default"
 	})).Return(nil)
 
 	err := importStorageProfiles(ctx, []byte(yamlContent), mockDB, logger, false)
@@ -235,7 +237,9 @@ func TestImportStorageProfiles_WithReplace(t *testing.T) {
 
 	mockDB.On("UpsertOrganizationBucket", ctx, mock.MatchedBy(func(params configdb.UpsertOrganizationBucketParams) bool {
 		return params.OrganizationID == orgID &&
-			params.BucketID == bucketID
+			params.BucketID == bucketID &&
+			params.InstanceNum == 1 &&
+			params.CollectorName == "default"
 	})).Return(nil)
 
 	err := importStorageProfiles(ctx, []byte(yamlContent), mockDB, logger, true)

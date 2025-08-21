@@ -14,12 +14,25 @@ CREATE TABLE c_organizations (
 
 CREATE TABLE c_collectors (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  deleted_at TIMESTAMP WITH TIME ZONE,
-  organization_id UUID NOT NULL,
-  storage_profile_id UUID NOT NULL,
+  created_at TIMESTAMP WITHOUT TIME ZONE,
+  updated_at TIMESTAMP WITHOUT TIME ZONE,
+  created_by TEXT,
+  updated_by TEXT,
+  organization_id UUID,
+  storage_profile_id UUID,
   instance_num SMALLINT NOT NULL,
   external_id TEXT NOT NULL,
-  type INTEGER NOT NULL
+  deleted_at TIMESTAMP WITHOUT TIME ZONE,
+  deleted_by TEXT,
+  type INTEGER NOT NULL DEFAULT 0,
+  trusted BOOLEAN,
+  version TEXT,
+  saas BOOLEAN,
+  style TEXT DEFAULT 'processor'::text,
+  dag_hash_seed INTEGER,
+  config_hash_seed INTEGER,
+  collector_group TEXT NOT NULL DEFAULT 'UNKNOWN'::text,
+  flags JSONB NOT NULL DEFAULT '{}'::jsonb
 );
 
 CREATE TABLE c_storage_profiles (

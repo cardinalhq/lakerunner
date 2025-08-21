@@ -469,7 +469,7 @@ func runLegacyTablesSync(ctx context.Context, ll *slog.Logger, cdb configdb.Quer
 	// Create bucket configurations and organization mappings
 	for bucketName, profile := range bucketToProfile {
 		// Create/update bucket configuration
-		bucketConfig, err := qtx.UpsertBucketConfiguration(ctx, configdb.UpsertBucketConfigurationParams{
+		_, err := qtx.UpsertBucketConfiguration(ctx, configdb.UpsertBucketConfigurationParams{
 			BucketName:    bucketName,
 			CloudProvider: profile.CloudProvider,
 			Region:        profile.Region,
@@ -487,21 +487,14 @@ func runLegacyTablesSync(ctx context.Context, ll *slog.Logger, cdb configdb.Quer
 			slog.String("provider", profile.CloudProvider),
 			slog.String("region", profile.Region))
 
-		// Create organization mappings
-		orgs := bucketToOrgs[bucketName]
-		for _, orgID := range orgs {
-			if err := qtx.UpsertOrganizationBucket(ctx, configdb.UpsertOrganizationBucketParams{
-				OrganizationID: orgID,
-				BucketID:       bucketConfig.ID,
-			}); err != nil {
-				return err
-			}
-		}
-
-		ll.Info("Synced organization mappings",
-			slog.String("bucket", bucketName),
-			slog.Int("orgCount", len(orgs)))
 	}
+
+	// Sync organization buckets from c_collectors to our organization_buckets table
+	ll.Info("Syncing organization buckets from c_collectors table")
+	if err := qtx.SyncOrganizationBuckets(ctx); err != nil {
+		return fmt.Errorf("failed to sync organization buckets: %w", err)
+	}
+	ll.Info("Successfully synced organization buckets")
 
 	// Sync organizations from c_organizations to our organizations table
 	ll.Info("Syncing organizations from c_organizations table")

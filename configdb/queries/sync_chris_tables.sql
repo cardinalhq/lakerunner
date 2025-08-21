@@ -21,4 +21,8 @@ FROM c_collectors c
 JOIN c_storage_profiles sp ON c.storage_profile_id = sp.id
 JOIN bucket_configurations bc ON sp.bucket = bc.bucket_name
 WHERE c.deleted_at IS NULL
+  AND c.organization_id IS NOT NULL
+  AND c.storage_profile_id IS NOT NULL
+  AND c.instance_num IS NOT NULL
+  AND c.external_id IS NOT NULL
 ON CONFLICT (organization_id, bucket_id, instance_num, collector_name) DO NOTHING;

@@ -19,6 +19,7 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jellydator/ttlcache/v3"
 )
 
@@ -53,7 +54,14 @@ type StorageProfileByNameCacheValue struct {
 func (store *Store) GetStorageProfileByCollectorName(ctx context.Context, organizationID uuid.UUID) (GetStorageProfileByCollectorNameRow, error) {
 	loader := ttlcache.LoaderFunc[uuid.UUID, StorageProfileByNameCacheValue](
 		func(cache *ttlcache.Cache[uuid.UUID, StorageProfileByNameCacheValue], key uuid.UUID) *ttlcache.Item[uuid.UUID, StorageProfileByNameCacheValue] {
-			row, err := store.Queries.GetStorageProfileByCollectorNameUncached(ctx, key)
+			pgUUID := pgtype.UUID{}
+			if scanErr := pgUUID.Scan(key); scanErr != nil {
+				item := cache.Set(key, StorageProfileByNameCacheValue{
+					error: scanErr,
+				}, ttlcache.DefaultTTL)
+				return item
+			}
+			row, err := store.Queries.GetStorageProfileByCollectorNameUncached(ctx, pgUUID)
 			item := cache.Set(key, StorageProfileByNameCacheValue{
 				GetStorageProfileByCollectorNameRow: row,
 				error:                               err,

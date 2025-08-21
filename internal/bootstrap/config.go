@@ -44,6 +44,8 @@ type OrganizationBucket struct {
 	ID             *uuid.UUID `yaml:"id,omitempty" json:"id,omitempty"`
 	OrganizationID uuid.UUID  `yaml:"organization_id" json:"organization_id"`
 	BucketID       uuid.UUID  `yaml:"bucket_id" json:"bucket_id"`
+	InstanceNum    *int16     `yaml:"instance_num,omitempty" json:"instance_num,omitempty"`
+	CollectorName  *string    `yaml:"collector_name,omitempty" json:"collector_name,omitempty"`
 }
 
 // BucketPrefixMapping matches bucket_prefix_mappings table
