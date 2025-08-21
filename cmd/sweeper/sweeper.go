@@ -285,9 +285,22 @@ func runObjCleaner(ctx context.Context, ll *slog.Logger, sp storageprofile.Stora
 }
 
 func cleanupObj(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, awsmanager *awsclient.Manager, obj lrdb.ObjectCleanupGetRow) {
-	profile, err := sp.GetStorageProfileForBucket(ctx, obj.OrganizationID, obj.BucketID)
+	ll = ll.With(
+		slog.String("objectID", obj.ObjectID),
+		slog.String("bucketID", obj.BucketID),
+		slog.String("organizationID", obj.OrganizationID.String()),
+		slog.Int("instanceNum", int(obj.InstanceNum)),
+	)
+
+	profile, err := sp.GetStorageProfileForOrganizationAndInstance(ctx, obj.OrganizationID, obj.InstanceNum)
 	if err != nil {
-		ll.Error("Failed to get storage profile", slog.Any("error", err), slog.String("objectID", obj.ObjectID))
+		ll.Error("Failed to get storage profile", slog.Any("error", err))
+		failWork(ctx, ll, mdb, obj.ID)
+		return
+	}
+
+	if profile.Bucket != obj.BucketID {
+		ll.Error("Storage profile bucket mismatch", slog.String("profileBucket", profile.Bucket))
 		failWork(ctx, ll, mdb, obj.ID)
 		return
 	}
@@ -300,13 +313,13 @@ func cleanupObj(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageP
 	}
 
 	if err := s3helper.DeleteS3Object(ctx, s3client, profile.Bucket, obj.ObjectID); err != nil {
-		ll.Error("Failed to delete S3 object", slog.Any("error", err), slog.String("objectID", obj.ObjectID))
+		ll.Error("Failed to delete S3 object", slog.Any("error", err))
 		failWork(ctx, ll, mdb, obj.ID)
 		return
 	}
 
 	if err := mdb.ObjectCleanupComplete(ctx, obj.ID); err != nil {
-		ll.Error("Failed to mark object cleanup complete", slog.Any("error", err), slog.String("objectID", obj.ObjectID))
+		ll.Error("Failed to mark object cleanup complete", slog.Any("error", err))
 		failWork(ctx, ll, mdb, obj.ID)
 		return
 	}
