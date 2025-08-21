@@ -14,10 +14,10 @@ jobs:
       matrix:
         include:
           - name: linux_amd64
-            label: ubuntu-latest-4-cores
+            label: ubuntu-latest
             cache_path: dist/linux_amd64
           - name: linux_arm64
-            label: ubuntu-latest-arm-4-cores
+            label: ubuntu-24.04-arm
             cache_path: dist/linux_arm64
     runs-on: ${{ matrix.label }}
     env:
