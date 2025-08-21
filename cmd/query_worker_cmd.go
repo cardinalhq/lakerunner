@@ -17,6 +17,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/queryworker"
@@ -44,10 +45,8 @@ func init() {
 				}
 			}()
 
-			sp, err := storageprofile.SetupStorageProfiles()
-			if err != nil {
-				return fmt.Errorf("failed to setup storage profiles: %w", err)
-			}
+			cdb, err := dbopen.ConfigDBStore(context.Background())
+			sp := storageprofile.NewStorageProfileProvider(cdb)
 
 			if err != nil {
 				slog.Error("Failed to create querier service", slog.Any("error", err))

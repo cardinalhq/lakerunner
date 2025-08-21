@@ -25,8 +25,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -86,6 +84,10 @@ func (q *QuerierService) Evaluate(
 				slog.Error("failed to get segment infos", "dateInt", dateIntHour.DateInt, "err", err)
 				continue
 			}
+			slog.Info("Found segments for leaf",
+				"leafID", leaf.ID, "dateIntHour", dateIntHour,
+				"numSegments", len(segments))
+
 			// Tag segments with this leaf id so worker knows which expr it is serving.
 			for i := range segments {
 				segments[i].ExprID = leaf.ID
@@ -347,32 +349,12 @@ func (q *QuerierService) lookupSegments(ctx context.Context,
 
 	var allSegments []promql.SegmentInfo
 
-	if IsLocalDev() {
-		files, err := os.ReadDir("./db")
-		if err != nil {
-			return nil, fmt.Errorf("failed to read local db dir: %w", err)
-		}
-		for _, f := range files {
-			if f.IsDir() || !strings.HasSuffix(f.Name(), ".parquet") {
-				continue
-			}
-			numericSegmentId := strings.Replace(strings.Replace(f.Name(), ".parquet", "", 1), "tbl_", "", 1)
-			segmentID, err := strconv.ParseInt(numericSegmentId, 10, 64)
-			if err != nil {
-				slog.Error("failed to parse segment ID from filename", "filename", f.Name(), "err", err)
-				continue
-			}
-			allSegments = append(allSegments, promql.SegmentInfo{
-				SegmentID:      segmentID,
-				StartTs:        startTs,
-				EndTs:          endTs,
-				OrganizationID: orgUUID,
-				InstanceNum:    0,
-				Frequency:      stepDuration.Milliseconds(),
-			})
-		}
-		return allSegments, nil
-	}
+	slog.Info("Issuing query for segments",
+		"dateInt", dih.DateInt,
+		"startTs", startTs,
+		"endTs", endTs,
+		"frequencyMs", stepDuration.Milliseconds(),
+		"orgUUID", orgUUID)
 
 	rows, err := q.mdb.ListSegmentsForQuery(ctx, lrdb.ListSegmentsForQueryParams{
 		Int8range:      startTs,

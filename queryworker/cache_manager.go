@@ -132,7 +132,7 @@ func EvaluatePushDown[T promql.Timestamped](
 	// Now start putting channels together for every orgId/instanceNum.
 	for orgId, instances := range segmentsByOrg {
 		for instanceNum, segments := range instances {
-			profile, err := w.storageProfileProvider.Get(ctx, orgId, instanceNum)
+			profile, err := w.storageProfileProvider.GetStorageProfileForOrganization(ctx, orgId)
 			if err != nil {
 				slog.Error("Failed to get storage profile for organization",
 					slog.String("orgId", orgId.String()),
@@ -149,7 +149,11 @@ func EvaluatePushDown[T promql.Timestamped](
 			var cachedIDs []int64
 
 			for _, seg := range segments {
-				objectId := fmt.Sprintf("db/%s/%s/%d/metrics/%s", orgId.String(), profile.CollectorName, seg.DateInt, seg.Hour)
+				objectId := fmt.Sprintf("db/%s/%s/%d/metrics/%s/tbl_%d.parquet", orgId.String(),
+					"default",
+					seg.DateInt,
+					seg.Hour,
+					seg.SegmentID)
 
 				w.mu.RLock()
 				_, inCache := w.present[seg.SegmentID]
@@ -160,9 +164,6 @@ func EvaluatePushDown[T promql.Timestamped](
 				} else {
 					bucket := profile.Bucket
 					prefix := "s3://" + bucket + "/"
-					if queryapi.IsLocalDev() {
-						prefix = "./"
-					}
 					s3URIs = append(s3URIs, prefix+objectId)
 					s3LocalPaths = append(s3LocalPaths, objectId)
 					s3IDs = append(s3IDs, seg.SegmentID)

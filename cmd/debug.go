@@ -27,7 +27,6 @@ var debugCmd = &cobra.Command{
 }
 
 func init() {
-	debugCmd.AddCommand(debugcmd.GetKubernetesDiscoveryCmd())
 	debugCmd.AddCommand(debugcmd.GetS3Cmd())
 	debugCmd.AddCommand(debugcmd.GetDDBCmd())
 	debugCmd.AddCommand(debugcmd.GetParquetSchemaCmd())
