@@ -25,6 +25,7 @@ type Querier interface {
 	BatchUpsertExemplarMetrics(ctx context.Context, arg []BatchUpsertExemplarMetricsParams) *BatchUpsertExemplarMetricsBatchResults
 	BatchUpsertExemplarTraces(ctx context.Context, arg []BatchUpsertExemplarTracesParams) *BatchUpsertExemplarTracesBatchResults
 	ClaimInqueueWork(ctx context.Context, arg ClaimInqueueWorkParams) (Inqueue, error)
+	ClaimInqueueWorkBatch(ctx context.Context, arg ClaimInqueueWorkBatchParams) ([]Inqueue, error)
 	CleanupInqueueWork(ctx context.Context) error
 	CompactLogSegments(ctx context.Context, arg CompactLogSegmentsParams) error
 	CompactTraceSegments(ctx context.Context, arg CompactTraceSegmentsParams) error

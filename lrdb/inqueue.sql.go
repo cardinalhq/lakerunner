@@ -25,7 +25,7 @@ WHERE i.id = (
   LIMIT 1
   FOR UPDATE SKIP LOCKED
 )
-RETURNING id, queue_ts, priority, organization_id, collector_name, instance_num, bucket, object_id, telemetry_type, tries, claimed_by, claimed_at
+RETURNING id, queue_ts, priority, organization_id, collector_name, instance_num, bucket, object_id, telemetry_type, tries, claimed_by, claimed_at, file_size
 `
 
 type ClaimInqueueWorkParams struct {
@@ -49,8 +49,80 @@ func (q *Queries) ClaimInqueueWork(ctx context.Context, arg ClaimInqueueWorkPara
 		&i.Tries,
 		&i.ClaimedBy,
 		&i.ClaimedAt,
+		&i.FileSize,
 	)
 	return i, err
+}
+
+const claimInqueueWorkBatch = `-- name: ClaimInqueueWorkBatch :many
+UPDATE inqueue
+SET
+  claimed_by = $1,
+  claimed_at = NOW()
+WHERE id IN (
+  SELECT i.id
+  FROM inqueue i
+  WHERE i.claimed_at IS NULL
+    AND i.telemetry_type = $2
+    AND i.organization_id = (
+      SELECT ii.organization_id 
+      FROM inqueue ii 
+      WHERE ii.claimed_at IS NULL AND ii.telemetry_type = $2 
+      ORDER BY ii.priority DESC, ii.queue_ts 
+      LIMIT 1
+    )
+    AND i.instance_num = (
+      SELECT ii.instance_num 
+      FROM inqueue ii 
+      WHERE ii.claimed_at IS NULL AND ii.telemetry_type = $2 
+      ORDER BY ii.priority DESC, ii.queue_ts 
+      LIMIT 1
+    )
+  ORDER BY i.priority DESC, i.queue_ts
+  LIMIT $3
+  FOR UPDATE SKIP LOCKED
+)
+RETURNING id, queue_ts, priority, organization_id, collector_name, instance_num, bucket, object_id, telemetry_type, tries, claimed_by, claimed_at, file_size
+`
+
+type ClaimInqueueWorkBatchParams struct {
+	ClaimedBy     int64  `json:"claimed_by"`
+	TelemetryType string `json:"telemetry_type"`
+	MaxBatchSize  int32  `json:"max_batch_size"`
+}
+
+func (q *Queries) ClaimInqueueWorkBatch(ctx context.Context, arg ClaimInqueueWorkBatchParams) ([]Inqueue, error) {
+	rows, err := q.db.Query(ctx, claimInqueueWorkBatch, arg.ClaimedBy, arg.TelemetryType, arg.MaxBatchSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Inqueue
+	for rows.Next() {
+		var i Inqueue
+		if err := rows.Scan(
+			&i.ID,
+			&i.QueueTs,
+			&i.Priority,
+			&i.OrganizationID,
+			&i.CollectorName,
+			&i.InstanceNum,
+			&i.Bucket,
+			&i.ObjectID,
+			&i.TelemetryType,
+			&i.Tries,
+			&i.ClaimedBy,
+			&i.ClaimedAt,
+			&i.FileSize,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const cleanupInqueueWork = `-- name: CleanupInqueueWork :exec
@@ -116,8 +188,8 @@ func (q *Queries) InqueueSummary(ctx context.Context) ([]InqueueSummaryRow, erro
 }
 
 const putInqueueWork = `-- name: PutInqueueWork :exec
-INSERT INTO inqueue (organization_id, collector_name, instance_num, bucket, object_id, telemetry_type, priority)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO inqueue (organization_id, collector_name, instance_num, bucket, object_id, telemetry_type, priority, file_size)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 `
 
 type PutInqueueWorkParams struct {
@@ -128,6 +200,7 @@ type PutInqueueWorkParams struct {
 	ObjectID       string    `json:"object_id"`
 	TelemetryType  string    `json:"telemetry_type"`
 	Priority       int32     `json:"priority"`
+	FileSize       int64     `json:"file_size"`
 }
 
 func (q *Queries) PutInqueueWork(ctx context.Context, arg PutInqueueWorkParams) error {
@@ -139,6 +212,7 @@ func (q *Queries) PutInqueueWork(ctx context.Context, arg PutInqueueWorkParams) 
 		arg.ObjectID,
 		arg.TelemetryType,
 		arg.Priority,
+		arg.FileSize,
 	)
 	return err
 }

@@ -79,7 +79,7 @@ func init() {
 				default:
 				}
 
-				err := IngestLoop(loop, logIngestItem)
+				err := IngestLoopWithBatch(loop, logIngestItem, logIngestBatch)
 				if err != nil {
 					slog.Error("Error in ingest loop", slog.Any("error", err))
 				}
@@ -463,4 +463,179 @@ func convertProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate 
 		fnames = append(fnames, res.FileName)
 	}
 	return fnames, nil
+}
+
+func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
+	awsmanager *awsclient.Manager, items []lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
+
+	if len(items) == 0 {
+		return fmt.Errorf("empty batch")
+	}
+
+	ll.Info("Processing log batch", slog.Int("batchSize", len(items)))
+
+	var profile storageprofile.StorageProfile
+	var err error
+
+	firstItem := items[0]
+	if collectorName := helpers.ExtractCollectorName(firstItem.ObjectID); collectorName != "" {
+		profile, err = sp.GetStorageProfileForOrganizationAndCollector(ctx, firstItem.OrganizationID, collectorName)
+		if err != nil {
+			return fmt.Errorf("failed to get storage profile for collector %s: %w", collectorName, err)
+		}
+	} else {
+		profile, err = sp.GetStorageProfileForOrganizationAndInstance(ctx, firstItem.OrganizationID, firstItem.InstanceNum)
+		if err != nil {
+			return fmt.Errorf("failed to get storage profile for organization and instance: %w", err)
+		}
+	}
+
+	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
+	if err != nil {
+		return fmt.Errorf("failed to get S3 client: %w", err)
+	}
+
+	allParquetFiles := make([]string, 0)
+
+	for _, inf := range items {
+		ll.Info("Processing batch item",
+			slog.String("itemID", inf.ID.String()),
+			slog.String("objectID", inf.ObjectID),
+			slog.Int64("fileSize", inf.FileSize))
+
+		itemTmpdir := fmt.Sprintf("%s/item_%s", tmpdir, inf.ID.String())
+		if err := os.MkdirAll(itemTmpdir, 0755); err != nil {
+			return fmt.Errorf("creating item tmpdir: %w", err)
+		}
+
+		tmpfilename, _, is404, err := s3helper.DownloadS3Object(ctx, itemTmpdir, s3client, inf.Bucket, inf.ObjectID)
+		if err != nil {
+			return fmt.Errorf("failed to download file %s: %w", inf.ObjectID, err)
+		}
+		if is404 {
+			ll.Warn("S3 object not found, skipping", slog.String("itemID", inf.ID.String()), slog.String("objectID", inf.ObjectID))
+			continue
+		}
+
+		convertedFiles, err := convertFileIfSupported(ll, tmpfilename, itemTmpdir, inf.Bucket, inf.ObjectID, rpfEstimate)
+		if err != nil {
+			return fmt.Errorf("failed to convert logs file %s: %w", inf.ObjectID, err)
+		}
+		if convertedFiles == nil {
+			ll.Warn("Unsupported file type, skipping", slog.String("objectID", inf.ObjectID))
+			continue
+		}
+
+		allParquetFiles = append(allParquetFiles, convertedFiles...)
+	}
+
+	if len(allParquetFiles) == 0 {
+		ll.Info("No files to process in batch")
+		return nil
+	}
+
+	batchTmpdir := fmt.Sprintf("%s/batch_output", tmpdir)
+	if err := os.MkdirAll(batchTmpdir, 0755); err != nil {
+		return fmt.Errorf("creating batch tmpdir: %w", err)
+	}
+
+	finalResults := make(map[logcrunch.SplitKey]logcrunch.HourlyResult)
+
+	for _, fname := range allParquetFiles {
+		fh, err := filecrunch.LoadSchemaForFile(fname)
+		if err != nil {
+			return fmt.Errorf("failed to open converted file %s: %w", fname, err)
+		}
+
+		fileResults, err := logcrunch.ProcessAndSplit(ll, fh, batchTmpdir, ingest_dateint, rpfEstimate)
+		fh.Close()
+		if err != nil {
+			return fmt.Errorf("failed to process and split file %s: %w", fname, err)
+		}
+
+		for key, result := range fileResults {
+			if existing, exists := finalResults[key]; exists {
+				existing.Fingerprints = existing.Fingerprints.Union(result.Fingerprints)
+				if result.FirstTS < existing.FirstTS || existing.FirstTS == 0 {
+					existing.FirstTS = result.FirstTS
+				}
+				if result.LastTS > existing.LastTS {
+					existing.LastTS = result.LastTS
+				}
+				finalResults[key] = existing
+			} else {
+				finalResults[key] = result
+			}
+		}
+	}
+
+	for key, result := range finalResults {
+		segmentID := s3helper.GenerateID()
+		dbObjectID := helpers.MakeDBObjectID(firstItem.OrganizationID, firstItem.CollectorName, key.DateInt, s3helper.HourFromMillis(result.FirstTS), segmentID, "logs")
+
+		if err := s3helper.UploadS3Object(ctx, s3client, firstItem.Bucket, dbObjectID, result.FileName); err != nil {
+			return fmt.Errorf("failed to upload file to S3: %w", err)
+		}
+		_ = os.Remove(result.FileName)
+
+		fps := result.Fingerprints.ToSlice()
+		resultLastTS := result.LastTS + 1 // end is exclusive, so we need to increment it by 1ms
+		err := mdb.InsertLogSegment(ctx, lrdb.InsertLogSegmentParams{
+			OrganizationID: firstItem.OrganizationID,
+			Dateint:        key.DateInt,
+			IngestDateint:  key.IngestDateint,
+			SegmentID:      segmentID,
+			InstanceNum:    firstItem.InstanceNum,
+			StartTs:        result.FirstTS,
+			EndTs:          resultLastTS,
+			RecordCount:    result.RecordCount,
+			FileSize:       result.FileSize,
+			CreatedBy:      lrdb.CreatedByIngest,
+			Fingerprints:   fps,
+		})
+		if err != nil {
+			ll.Error("Failed to insert log segments", slog.Any("error", err))
+			return err
+		}
+
+		ll.Info("Inserted log segment from batch",
+			slog.String("organizationID", firstItem.OrganizationID.String()),
+			slog.Int("instanceNum", int(firstItem.InstanceNum)),
+			slog.Int("dateint", int(key.DateInt)),
+			slog.Int("hour", int(key.Hour)),
+			slog.String("dbObjectID", dbObjectID),
+			slog.Int64("segmentID", segmentID),
+			slog.Int64("recordCount", result.RecordCount),
+			slog.Int64("fileSize", result.FileSize),
+		)
+	}
+
+	// Create work queue items for compaction - one per unique dateint/hour combination
+	hourlyTriggers := make(map[helpers.HourBoundary]int64) // maps hour boundary to earliest FirstTS
+
+	for key, result := range finalResults {
+		hourBoundary := helpers.HourBoundary{DateInt: key.DateInt, Hour: key.Hour}
+		if existingTS, exists := hourlyTriggers[hourBoundary]; !exists || result.FirstTS < existingTS {
+			hourlyTriggers[hourBoundary] = result.FirstTS
+		}
+	}
+
+	for hourBoundary, earliestTS := range hourlyTriggers {
+		ll.Info("Queueing log compaction for hour from batch",
+			slog.Int("dateint", int(hourBoundary.DateInt)),
+			slog.Int("hour", int(hourBoundary.Hour)),
+			slog.Int64("triggerTS", earliestTS))
+
+		// Create hour-aligned timestamp for the work queue
+		hourAlignedTS := helpers.TruncateToHour(helpers.UnixMillisToTime(earliestTS)).UnixMilli()
+		if err := queueLogCompaction(ctx, mdb, qmcFromInqueue(firstItem, 3600000, hourAlignedTS)); err != nil {
+			ll.Error("Failed to queue log compaction from batch",
+				slog.Any("hourBoundary", hourBoundary),
+				slog.Int64("triggerTS", earliestTS),
+				slog.Any("error", err))
+			return err
+		}
+	}
+
+	return nil
 }

@@ -145,6 +145,7 @@ type Inqueue struct {
 	Tries          int32      `json:"tries"`
 	ClaimedBy      int64      `json:"claimed_by"`
 	ClaimedAt      *time.Time `json:"claimed_at"`
+	FileSize       int64      `json:"file_size"`
 }
 
 type InqueueJournal struct {
