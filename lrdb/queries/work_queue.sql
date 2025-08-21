@@ -4,7 +4,7 @@ SELECT pg_advisory_xact_lock(hashtext('work_queue_global')::bigint);
 -- name: WorkQueueAddDirect :exec
 SELECT public.work_queue_add(
   @org_id      :: UUID,
-  9999         :: SMALLINT,
+  @instance    :: SMALLINT,
   @dateint     :: INTEGER,
   @frequency   :: INTEGER,
   @signal      :: signal_enum,
