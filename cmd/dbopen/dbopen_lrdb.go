@@ -22,14 +22,34 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/cardinalhq/lakerunner/lrdb"
+	lrdbmigrations "github.com/cardinalhq/lakerunner/lrdb/migrations"
 )
 
-func ConnectTolrdb(ctx context.Context) (*pgxpool.Pool, error) {
+func ConnectTolrdb(ctx context.Context, opts ...Options) (*pgxpool.Pool, error) {
 	connectionString, err := getDatabaseURLFromEnv("LRDB")
 	if err != nil {
 		return nil, errors.Join(ErrDatabaseNotConfigured, fmt.Errorf("failed to get LRDB connection string: %w", err))
 	}
-	return lrdb.NewConnectionPool(ctx, connectionString)
+
+	pool, err := lrdb.NewConnectionPool(ctx, connectionString)
+	if err != nil {
+		return nil, err
+	}
+
+	// Check if migration check should be skipped
+	skipMigrationCheck := false
+	if len(opts) > 0 {
+		skipMigrationCheck = opts[0].SkipMigrationCheck
+	}
+
+	if !skipMigrationCheck {
+		if err := lrdbmigrations.CheckExpectedVersion(ctx, pool); err != nil {
+			pool.Close()
+			return nil, fmt.Errorf("LRDB migration version check failed: %w", err)
+		}
+	}
+
+	return pool, nil
 }
 
 func LRDBStore(ctx context.Context) (lrdb.StoreFull, error) {

@@ -21,6 +21,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
 
+	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/queryworker"
 )
 
@@ -42,11 +43,24 @@ func init() {
 				}
 			}()
 
+			// Start health check server
+			healthConfig := healthcheck.GetConfigFromEnv()
+			healthServer := healthcheck.NewServer(healthConfig)
+
+			go func() {
+				if err := healthServer.Start(doneCtx); err != nil {
+					slog.Error("Health check server stopped", slog.Any("error", err))
+				}
+			}()
+
 			service, err := queryworker.NewService()
 			if err != nil {
 				slog.Error("Failed to create query worker service", slog.Any("error", err))
 				return fmt.Errorf("failed to create query worker service: %w", err)
 			}
+
+			// Mark as healthy once service is created and starting
+			healthServer.SetStatus(healthcheck.StatusHealthy)
 
 			return service.Run(doneCtx)
 		},
