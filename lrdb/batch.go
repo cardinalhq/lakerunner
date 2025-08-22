@@ -24,7 +24,8 @@ DELETE FROM public.metric_seg
    AND frequency_ms    = $3
    AND segment_id      = $4
    AND instance_num    = $5
-   AND tid_partition   = $6
+   AND slot_id         = $6
+   AND tid_partition   = $7
 `
 
 type BatchDeleteMetricSegsBatchResults struct {
@@ -39,6 +40,7 @@ type BatchDeleteMetricSegsParams struct {
 	FrequencyMs    int32     `json:"frequency_ms"`
 	SegmentID      int64     `json:"segment_id"`
 	InstanceNum    int16     `json:"instance_num"`
+	SlotID         int32     `json:"slot_id"`
 	TidPartition   int16     `json:"tid_partition"`
 }
 
@@ -51,6 +53,7 @@ func (q *Queries) BatchDeleteMetricSegs(ctx context.Context, arg []BatchDeleteMe
 			a.FrequencyMs,
 			a.SegmentID,
 			a.InstanceNum,
+			a.SlotID,
 			a.TidPartition,
 		}
 		batch.Queue(batchDeleteMetricSegs, vals...)
@@ -88,6 +91,7 @@ INSERT INTO metric_seg (
   frequency_ms,
   segment_id,
   instance_num,
+  slot_id,
   tid_partition,
   ts_range,
   record_count,
@@ -105,13 +109,14 @@ VALUES (
   $5,
   $6,
   $7,
-  int8range($8, $9, '[)'),
-  $10,
+  $8,
+  int8range($9, $10, '[)'),
   $11,
   $12,
   $13,
   $14,
-  $15
+  $15,
+  $16
 )
 `
 
@@ -128,6 +133,7 @@ type BatchInsertMetricSegsParams struct {
 	FrequencyMs    int32     `json:"frequency_ms"`
 	SegmentID      int64     `json:"segment_id"`
 	InstanceNum    int16     `json:"instance_num"`
+	SlotID         int32     `json:"slot_id"`
 	TidPartition   int16     `json:"tid_partition"`
 	StartTs        int64     `json:"start_ts"`
 	EndTs          int64     `json:"end_ts"`
@@ -149,6 +155,7 @@ func (q *Queries) BatchInsertMetricSegs(ctx context.Context, arg []BatchInsertMe
 			a.FrequencyMs,
 			a.SegmentID,
 			a.InstanceNum,
+			a.SlotID,
 			a.TidPartition,
 			a.StartTs,
 			a.EndTs,
@@ -194,7 +201,8 @@ UPDATE public.metric_seg
    AND frequency_ms    = $3
    AND segment_id      = $4
    AND instance_num    = $5
-   AND tid_partition   = $6
+   AND slot_id         = $6
+   AND tid_partition   = $7
 `
 
 type BatchMarkMetricSegsRolledupBatchResults struct {
@@ -209,6 +217,7 @@ type BatchMarkMetricSegsRolledupParams struct {
 	FrequencyMs    int32     `json:"frequency_ms"`
 	SegmentID      int64     `json:"segment_id"`
 	InstanceNum    int16     `json:"instance_num"`
+	SlotID         int32     `json:"slot_id"`
 	TidPartition   int16     `json:"tid_partition"`
 }
 
@@ -221,6 +230,7 @@ func (q *Queries) BatchMarkMetricSegsRolledup(ctx context.Context, arg []BatchMa
 			a.FrequencyMs,
 			a.SegmentID,
 			a.InstanceNum,
+			a.SlotID,
 			a.TidPartition,
 		}
 		batch.Queue(batchMarkMetricSegsRolledup, vals...)

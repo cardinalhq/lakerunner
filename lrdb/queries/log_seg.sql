@@ -5,6 +5,7 @@ INSERT INTO log_seg (
   ingest_dateint,
   segment_id,
   instance_num,
+  slot_id,
   ts_range,
   record_count,
   file_size,
@@ -17,6 +18,7 @@ VALUES (
   @ingest_dateint,
   @segment_id,
   @instance_num,
+  @slot_id,
   int8range(@start_ts, @end_ts, '[)'),
   @record_count,
   @file_size,
@@ -32,11 +34,13 @@ SELECT
   file_size,
   record_count,
   ingest_dateint,
-  created_at
+  created_at,
+  slot_id
 FROM log_seg
 WHERE organization_id = @organization_id
   AND dateint         = @dateint
   AND instance_num    = @instance_num
+  AND slot_id         = @slot_id
   AND file_size > 0
   AND record_count > 0
   AND file_size <= @max_file_size
@@ -75,6 +79,7 @@ INSERT INTO log_seg (
   ingest_dateint,
   segment_id,
   instance_num,
+  slot_id,
   record_count,
   file_size,
   ts_range,
@@ -87,6 +92,7 @@ SELECT
   @ingest_dateint,
   @new_segment_id,
   @instance_num,
+  @slot_id,
   @new_record_count,
   @new_file_size,
   int8range(@new_start_ts, @new_end_ts, '[)'),

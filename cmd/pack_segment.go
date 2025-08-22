@@ -398,6 +398,7 @@ func packSegment(
 		OrganizationID: sp.OrganizationID,
 		Dateint:        dateint,
 		InstanceNum:    instanceNum,
+		SlotID:         usedSegs[0].SlotID, // Use slot ID from the first segment (all should be the same)
 		IngestDateint:  stats.IngestDate,
 		NewStartTs:     stats.FirstTS,
 		NewEndTs:       stats.LastTS, // already half-open

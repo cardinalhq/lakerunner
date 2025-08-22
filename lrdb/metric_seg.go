@@ -32,6 +32,7 @@ func (q *Store) InsertMetricSegment(ctx context.Context, params InsertMetricSegm
 type ReplaceMetricSegsOld struct {
 	TidPartition int16
 	SegmentID    int64
+	SlotID       int32
 }
 
 type ReplaceMetricSegsNew struct {
@@ -51,6 +52,8 @@ type ReplaceMetricSegsParams struct {
 	Dateint int32
 	// InstanceNum is the instance number for which the segments are being replaced.
 	InstanceNum int16
+	// SlotID is the slot identifier for partitioning.
+	SlotID int32
 	// IngestDateint is the date in YYYYMMDD format when the segments were ingested.
 	IngestDateint int32
 	// FrequencyMs is the frequency in milliseconds at which the metrics are collected.
@@ -77,6 +80,7 @@ func (q *Store) ReplaceMetricSegs(ctx context.Context, args ReplaceMetricSegsPar
 			FrequencyMs:    args.FrequencyMs,
 			SegmentID:      oldRec.SegmentID,
 			InstanceNum:    args.InstanceNum,
+			SlotID:         oldRec.SlotID,
 			TidPartition:   oldRec.TidPartition,
 		}
 	}
@@ -90,6 +94,7 @@ func (q *Store) ReplaceMetricSegs(ctx context.Context, args ReplaceMetricSegsPar
 			FrequencyMs:    args.FrequencyMs,
 			SegmentID:      newRec.SegmentID,
 			InstanceNum:    args.InstanceNum,
+			SlotID:         args.SlotID,
 			TidPartition:   newRec.TidPartition,
 			StartTs:        newRec.StartTs,
 			EndTs:          newRec.EndTs,

@@ -174,8 +174,8 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp stora
 		}
 
 		// First, validate that all split results have proper hour boundaries
-		// and collect unique dateint/hour combinations for work queue creation
-		hourlyTriggers := make(map[helpers.HourBoundary]int64) // maps hour boundary to earliest FirstTS
+		// and collect unique slot+hour combinations for work queue creation
+		slotHourTriggers := make(map[SlotHourBoundary]int64) // maps slot+hour boundary to earliest FirstTS
 
 		for key, split := range splitResults {
 			// Validate that this split doesn't cross hour boundaries - this would be a bug in split logic
@@ -206,10 +206,19 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp stora
 					key.DateInt, key.Hour, expectedDateint, expectedHour)
 			}
 
-			// Collect unique hour boundaries for work queue creation
+			// Calculate slot_id using the first fingerprint (or 0 if none)
+			fps := split.Fingerprints.ToSlice()
+			var firstFingerprint int64
+			if len(fps) > 0 {
+				firstFingerprint = fps[0]
+			}
+			slotID := ingestlogs.DetermineLogSlot(firstFingerprint, key.DateInt, inf.OrganizationID.String())
+
+			// Collect unique slot+hour boundaries for work queue creation
 			hourBoundary := helpers.HourBoundary{DateInt: key.DateInt, Hour: key.Hour}
-			if existingTS, exists := hourlyTriggers[hourBoundary]; !exists || split.FirstTS < existingTS {
-				hourlyTriggers[hourBoundary] = split.FirstTS
+			slotHourKey := SlotHourBoundary{SlotID: slotID, HourBoundary: hourBoundary}
+			if existingTS, exists := slotHourTriggers[slotHourKey]; !exists || split.FirstTS < existingTS {
+				slotHourTriggers[slotHourKey] = split.FirstTS
 			}
 		}
 
@@ -227,12 +236,20 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp stora
 			fps := split.Fingerprints.ToSlice()
 			t0 := time.Now()
 			split.LastTS++ // end is exclusive, so we need to increment it by 1ms
+			// Calculate slot_id using the first fingerprint (or 0 if none)
+			var firstFingerprint int64
+			if len(fps) > 0 {
+				firstFingerprint = fps[0]
+			}
+			slotID := ingestlogs.DetermineLogSlot(firstFingerprint, key.DateInt, inf.OrganizationID.String())
+
 			err = mdb.InsertLogSegment(ctx, lrdb.InsertLogSegmentParams{
 				OrganizationID: inf.OrganizationID,
 				Dateint:        key.DateInt,
 				IngestDateint:  ingest_dateint,
 				SegmentID:      segmentID,
 				InstanceNum:    inf.InstanceNum,
+				SlotID:         int32(slotID),
 				StartTs:        split.FirstTS,
 				EndTs:          split.LastTS,
 				RecordCount:    split.RecordCount,
@@ -253,19 +270,21 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp stora
 
 		}
 
-		// Create work queue items - one per unique dateint/hour combination
-		// This ensures we don't create duplicate work items when multiple files exist for the same hour
-		for hourBoundary, earliestTS := range hourlyTriggers {
-			ll.Info("Queueing log compaction for hour",
-				slog.Int("dateint", int(hourBoundary.DateInt)),
-				slog.Int("hour", int(hourBoundary.Hour)),
+		// Create work queue items for log compaction - one per slot+hour combination
+		// This follows the same pattern as traces but with slot-based grouping
+		for slotHourKey, earliestTS := range slotHourTriggers {
+			ll.Info("Queueing log compaction for slot+hour",
+				slog.Int("slotID", slotHourKey.SlotID),
+				slog.Int("dateint", int(slotHourKey.HourBoundary.DateInt)),
+				slog.Int("hour", int(slotHourKey.HourBoundary.Hour)),
 				slog.Int64("triggerTS", earliestTS))
 
-			// Create hour-aligned timestamp for the work queue
+			// Create hour-aligned timestamp for the work queue (same as logs)
 			hourAlignedTS := helpers.TruncateToHour(helpers.UnixMillisToTime(earliestTS)).UnixMilli()
-			if err := queueLogCompaction(ctx, mdb, qmcFromInqueue(inf, 3600000, hourAlignedTS)); err != nil {
+
+			if err := queueLogCompactionForSlot(ctx, mdb, inf, slotHourKey.SlotID, slotHourKey.HourBoundary.DateInt, hourAlignedTS); err != nil {
 				ll.Error("Failed to queue log compaction",
-					slog.Any("hourBoundary", hourBoundary),
+					slog.Any("slotHourKey", slotHourKey),
 					slog.Int64("triggerTS", earliestTS),
 					slog.Any("error", err))
 				return err
@@ -274,6 +293,22 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp stora
 	}
 
 	return nil
+}
+
+// queueLogCompactionForSlot queues a log compaction job for a specific slot
+func queueLogCompactionForSlot(ctx context.Context, mdb lrdb.StoreFull, inf lrdb.Inqueue, slotID int, dateint int32, hourAlignedTS int64) error {
+
+	return mdb.WorkQueueAdd(ctx, lrdb.WorkQueueAddParams{
+		OrgID:      inf.OrganizationID,
+		Instance:   inf.InstanceNum,
+		Signal:     lrdb.SignalEnumLogs,
+		Action:     lrdb.ActionEnumCompact,
+		Dateint:    dateint,
+		Frequency:  -1,
+		SlotID:     int32(slotID),
+		TsRange:    qmcFromInqueue(inf, 3600000, hourAlignedTS).TsRange,
+		RunnableAt: time.Now().UTC().Add(5 * time.Minute),
+	})
 }
 
 // convertFileIfSupported checks the file type and converts it if supported.

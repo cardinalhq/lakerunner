@@ -169,6 +169,7 @@ type LogSeg struct {
 	TsRange        pgtype.Range[pgtype.Int8] `json:"ts_range"`
 	CreatedBy      CreatedBy                 `json:"created_by"`
 	CreatedAt      time.Time                 `json:"created_at"`
+	SlotID         int32                     `json:"slot_id"`
 }
 
 type MetricSeg struct {
@@ -187,6 +188,7 @@ type MetricSeg struct {
 	Rolledup       bool                      `json:"rolledup"`
 	CreatedAt      time.Time                 `json:"created_at"`
 	CreatedBy      CreatedBy                 `json:"created_by"`
+	SlotID         int32                     `json:"slot_id"`
 }
 
 type ObjCleanup struct {
