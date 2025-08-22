@@ -38,6 +38,9 @@ type SQSService struct {
 	mdb    InqueueInserter
 }
 
+// Ensure SQSService implements Backend interface
+var _ Backend = (*SQSService)(nil)
+
 func NewSQSService() (*SQSService, error) {
 	awsMgr, err := awsclient.NewManager(context.Background(),
 		awsclient.WithAssumeRoleSessionName("pubsub-sqs"),
@@ -142,4 +145,8 @@ func (ps *SQSService) pollSQS(doneCtx context.Context, sqsClient *awsclient.SQSC
 			}
 		}
 	}
+}
+
+func (ps *SQSService) GetName() string {
+	return "sqs"
 }
