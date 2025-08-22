@@ -29,4 +29,4 @@ func NewBackend(ctx context.Context, backendType BackendType) (Backend, error) {
 	default:
 		return nil, fmt.Errorf("unsupported backend type: %s", backendType)
 	}
-} 
+}
