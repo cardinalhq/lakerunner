@@ -58,7 +58,7 @@ var NumTracePartitions = func() int {
 		}
 		// Log warning if invalid value, fall back to default
 		slog.Warn("Invalid LAKERUNNER_TRACE_PARTITIONS value, using default",
-			"value", partitionsStr, "default", 16)
+			"value", partitionsStr, "default", 1)
 	}
 	return 16
 }()

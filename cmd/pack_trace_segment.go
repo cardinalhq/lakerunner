@@ -12,20 +12,6 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-// Copyright (C) 2025 CardinalHQ, Inc
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Affero General Public License as
-// published by the GNU Affero General Public License, version 3.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR ANY PURPOSE. See the
-// GNU Affero General Public License for more details.
-//
-// You should have received a copy of the GNU Affero General Public License
-// along with this program. If not, see <http://www.gnu.org/licenses/>.
-
 package cmd
 
 import (
@@ -54,7 +40,6 @@ func downloadAndOpenTraceSegments(
 	ctx context.Context,
 	sp storageprofile.StorageProfile,
 	dateint int32,
-	slotID int32,
 	group []lrdb.GetTraceSegmentsForCompactionRow,
 	tmpdir string,
 	bucket string,
@@ -171,7 +156,7 @@ func packTraceSegment(
 	open := fileOpenerAdapter{}
 	wf := writerFactoryAdapter{}
 
-	opened, err := downloadAndOpenTraceSegments(ctx, sp, dateint, slotID, group, tmpdir, sp.Bucket, fetcher, open)
+	opened, err := downloadAndOpenTraceSegments(ctx, sp, dateint, group, tmpdir, sp.Bucket, fetcher, open)
 	if err != nil {
 		ll.Error("Failed to download and open trace segments", slog.String("error", err.Error()))
 		return err
