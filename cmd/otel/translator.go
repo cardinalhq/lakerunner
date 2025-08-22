@@ -386,7 +386,6 @@ func (l *TableTranslator) TracesFromOtel(ot *ptrace.Traces, environment authenv.
 				addAttributes(ret, span.Attributes(), "span")
 
 				// Add span-specific fields
-				ret[translate.CardinalFieldName] = span.Name()
 				ret[translate.CardinalFieldSpanTraceID] = span.TraceID().String()
 				ret[translate.CardinalFieldSpanSpanID] = span.SpanID().String()
 				if span.ParentSpanID().IsEmpty() {
@@ -394,6 +393,7 @@ func (l *TableTranslator) TracesFromOtel(ot *ptrace.Traces, environment authenv.
 				} else {
 					ret["span.parent_span_id"] = span.ParentSpanID().String()
 				}
+				ret["span.name"] = span.Name()
 				ret["span.kind"] = span.Kind().String()
 				ret["span.status.code"] = span.Status().Code().String()
 				ret["span.status.message"] = span.Status().Message()
@@ -430,6 +430,7 @@ func ensureExpectedKeysTraces(m map[string]any) {
 		"span.trace_id":                    "",
 		"span.span_id":                     "",
 		"span.parent_span_id":              "",
+		"span.name":                        "",
 		"span.kind":                        "",
 		"span.status.code":                 "",
 		"span.status.message":              "",
