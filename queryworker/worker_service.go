@@ -52,6 +52,7 @@ func NewWorkerService(
 		if len(keys) == 0 {
 			return nil
 		}
+
 		s3cli, err := awsMgr.GetS3ForProfile(ctx, profile)
 		if err != nil {
 			return fmt.Errorf("failed to get S3 client for profile %w", err)
@@ -65,6 +66,7 @@ func NewWorkerService(
 		g.SetLimit(maxConc)
 
 		for _, key := range keys {
+			key := key // capture loop var
 			g.Go(func() error {
 				select {
 				case <-gctx.Done():
@@ -72,12 +74,16 @@ func NewWorkerService(
 				default:
 				}
 
-				localPath := key // keep same relative layout locally
-				if err := os.MkdirAll(filepath.Dir(localPath), 0o755); err != nil {
-					return fmt.Errorf("mkdir %q: %w", filepath.Dir(localPath), err)
+				// keep same relative layout locally
+				localPath := key
+				dir := filepath.Dir(localPath)
+
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					return fmt.Errorf("mkdir %q: %w", dir, err)
 				}
 
-				fn, _, is404, err := s3helper.DownloadS3Object(gctx, localPath, s3cli, profile.Bucket, key)
+				// IMPORTANT: pass the directory, not the file path
+				tmpfn, _, is404, err := s3helper.DownloadS3Object(gctx, dir, s3cli, profile.Bucket, key)
 				if err != nil {
 					slog.Error("Failed to download S3 object",
 						slog.String("bucket", profile.Bucket),
@@ -86,17 +92,23 @@ func NewWorkerService(
 					return err
 				}
 				if is404 {
-					// Treat 404 as a non-fatal (skip) for this key; do not fail the whole batch.
+					// Non-fatal skip
 					slog.Info("S3 object not found, skipping",
 						slog.String("bucket", profile.Bucket),
 						slog.String("objectID", key))
 					return nil
 				}
 
-				slog.Info("Successfully downloaded S3 object",
-					slog.String("bucket", profile.Bucket),
-					slog.String("objectID", key),
-					slog.String("localPath", fn))
+				// Atomically move tmp file into place as the final localPath.
+				// Since tmp is in the same dir, os.Rename is atomic on POSIX.
+				if err := os.Rename(tmpfn, localPath); err != nil {
+					// Windows: need to remove existing file first
+					_ = os.Remove(localPath)
+					if err2 := os.Rename(tmpfn, localPath); err2 != nil {
+						_ = os.Remove(tmpfn)
+						return fmt.Errorf("rename %q -> %q: %w", tmpfn, localPath, err2)
+					}
+				}
 				return nil
 			})
 		}
@@ -322,7 +334,7 @@ func (ws *WorkerService) Run(doneCtx context.Context) error {
 
 	<-doneCtx.Done()
 
-	slog.Info("Shutting down querier service")
+	slog.Info("Shutting down query-worker service")
 	if err := srv.Shutdown(context.Background()); err != nil {
 		slog.Error("Failed to shutdown HTTP server", slog.Any("error", err))
 		return fmt.Errorf("failed to shutdown HTTP server: %w", err)

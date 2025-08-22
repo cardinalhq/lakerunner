@@ -49,8 +49,8 @@ func init() {
 			sp := storageprofile.NewStorageProfileProvider(cdb)
 
 			if err != nil {
-				slog.Error("Failed to create querier service", slog.Any("error", err))
-				return fmt.Errorf("failed to create querier service: %w", err)
+				slog.Error("Failed to create query-worker service", slog.Any("error", err))
+				return fmt.Errorf("failed to create query-worker service: %w", err)
 			}
 
 			awsmanager, err := awsclient.NewManager(context.Background(), awsclient.WithAssumeRoleSessionName("query-worker"))
@@ -58,7 +58,7 @@ func init() {
 				return fmt.Errorf("failed to create AWS manager: %w", err)
 			}
 
-			worker := queryworker.NewWorkerService(3, 12, sp, awsmanager)
+			worker := queryworker.NewWorkerService(10, 12, sp, awsmanager)
 			return worker.Run(doneCtx)
 		},
 	}

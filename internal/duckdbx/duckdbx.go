@@ -259,40 +259,40 @@ func (d *DB) Query(ctx context.Context, query string, args ...any) (*sql.Rows, e
 	return rows, nil
 }
 
-func (d *DB) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+func (d *DB) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, *sql.Conn, error) {
 	conn, err := d.Conn(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get duckdb connection: %w", err)
+		return nil, nil, fmt.Errorf("failed to get duckdb connection: %w", err)
 	}
 
 	result, err := conn.ExecContext(ctx, query, args...)
 	if err != nil {
 		closeErr := conn.Close()
 		if closeErr != nil {
-			return nil, fmt.Errorf("exec failed, and closing connection also failed: %v; %v", err, closeErr)
+			return nil, nil, fmt.Errorf("exec failed, and closing connection also failed: %v; %v", err, closeErr)
 		}
-		return nil, fmt.Errorf("exec execution failed: %w", err)
+		return nil, nil, fmt.Errorf("exec execution failed: %w", err)
 	}
 
-	return result, nil
+	return result, conn, nil
 }
 
-func (d *DB) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+func (d *DB) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, *sql.Conn, error) {
 	conn, err := d.Conn(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get duckdb connection: %w", err)
+		return nil, nil, fmt.Errorf("failed to get duckdb connection: %w", err)
 	}
 
 	rows, err := conn.QueryContext(ctx, query, args...)
 	if err != nil {
 		closeErr := conn.Close()
 		if closeErr != nil {
-			return nil, fmt.Errorf("query failed, and closing connection also failed: %v; %v", err, closeErr)
+			return nil, nil, fmt.Errorf("query failed, and closing connection also failed: %v; %v", err, closeErr)
 		}
-		return nil, fmt.Errorf("query execution failed: %w", err)
+		return nil, nil, fmt.Errorf("query execution failed: %w", err)
 	}
 
-	return rows, nil
+	return rows, conn, nil
 }
 
 func (d *DB) BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error) {

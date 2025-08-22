@@ -275,5 +275,5 @@ func TargetSize(totalSegments, workers int) int {
 	if workers <= 0 {
 		return totalSegments
 	}
-	return int(math.Ceil(float64(totalSegments) / float64(workers)))
+	return int(math.Min(30, math.Ceil(float64(totalSegments)/float64(workers))))
 }

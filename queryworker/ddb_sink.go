@@ -85,12 +85,14 @@ func NewDDBSink(ctx context.Context) (*DDBSink, error) {
 	}
 
 	// Create table (idempotent). Keep minimal schema for compatibility.
-	if _, err := s.db.ExecContext(ctx,
+	_, conn, err := s.db.ExecContext(ctx,
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (ts BIGINT);`, ident("cached")),
-	); err != nil {
+	)
+	if err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("create table: %w", err)
 	}
+	defer conn.Close()
 
 	// Ensure segment_id exists (handles pre-existing tables).
 	if err := s.ensureSegmentIDColumn(ctx); err != nil {
@@ -265,10 +267,11 @@ WHERE segment_id IN (
   SELECT v FROM (VALUES %s) AS t(v)
 )`, ident(s.table), strings.Join(valHolders, ", "))
 
-	res, err := s.db.ExecContext(ctx, sqlText, args...)
+	res, conn, err := s.db.ExecContext(ctx, sqlText, args...)
 	if err != nil {
 		return 0, err
 	}
+	defer conn.Close()
 	affected, _ := res.RowsAffected()
 	if affected > 0 {
 		s.totalRows.Add(-affected)
@@ -283,9 +286,11 @@ func (s *DDBSink) ensureSegmentIDColumn(ctx context.Context) error {
 	defer s.writeMu.Unlock()
 
 	stmt := fmt.Sprintf(`ALTER TABLE %s ADD COLUMN IF NOT EXISTS segment_id BIGINT;`, ident(s.table))
-	if _, err := s.db.ExecContext(ctx, stmt); err != nil {
-		return err
+	_, conn, err := s.db.ExecContext(ctx, stmt)
+	if err != nil {
+		return fmt.Errorf("alter add segment_id: %w", err)
 	}
+	defer conn.Close()
 	return nil
 }
 
@@ -296,11 +301,12 @@ FROM duckdb_columns
 WHERE table_name = ?
 ORDER BY column_index;
 `
-	rows, err := s.db.QueryContext(ctx, q, s.table)
+	rows, conn, err := s.db.QueryContext(ctx, q, s.table)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
+	defer conn.Close()
 
 	var cols []colDef
 	idx := make(map[string]int)
@@ -436,11 +442,12 @@ func anchorTsExpr(fileCols map[string]string) (string, bool) {
 // Batch insert over a list of files to discover union schema (for ALTER planning).
 func probeParquetSchemaList(ctx context.Context, db *duckdbx.DB, paths []string) (map[string]string, error) {
 	q := fmt.Sprintf(`SELECT * FROM read_parquet(%s, union_by_name=true) LIMIT 0`, sqlStringArray(paths))
-	rows, err := db.QueryContext(ctx, q)
+	rows, conn, err := db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+	defer conn.Close()
 
 	colTypes, err := rows.ColumnTypes()
 	if err != nil {
@@ -461,11 +468,12 @@ func probeParquetSchemaList(ctx context.Context, db *duckdbx.DB, paths []string)
 // Single-file schema probe.
 func probeParquetSchemaOne(ctx context.Context, db *duckdbx.DB, path string) (map[string]string, error) {
 	q := fmt.Sprintf(`SELECT * FROM read_parquet('%s', union_by_name=true) LIMIT 0`, escape(path))
-	rows, err := db.QueryContext(ctx, q)
+	rows, conn, err := db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+	defer conn.Close()
 
 	colTypes, err := rows.ColumnTypes()
 	if err != nil {

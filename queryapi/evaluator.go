@@ -55,118 +55,145 @@ func (q *QuerierService) Evaluate(
 ) (<-chan map[string]promql.EvalResult, error) {
 	stepDuration := StepForQueryDuration(startTs, endTs)
 
-	var allLeafChans []<-chan promql.SketchInput
-
 	workers, err := q.workerDiscovery.GetAllWorkers()
 	if err != nil {
 		slog.Error("failed to get all workers", "err", err)
 		return nil, fmt.Errorf("failed to get all workers: %w", err)
 	}
 
-	// For each leaf/base-expr, compute effective window (offset-aware), then push down per grouped segments.
-	for _, leaf := range queryPlan.Leaves {
-		offMs, err := parseOffsetMs(leaf.Offset)
-		if err != nil {
-			slog.Error("invalid offset on leaf; ignoring offset", "offset", leaf.Offset, "err", err)
-			offMs = 0
-		}
+	// Final streaming output (EvalFlow output). Closed when all groups are done (or ctx cancelled).
+	out := make(chan map[string]promql.EvalResult, 1024)
 
-		// Effective range to *read* from storage.
-		effStart := startTs - offMs
-		effEnd := endTs - offMs
+	go func() {
+		defer close(out)
 
-		// Partition by dateInt hours for storage listing.
-		dateIntHours := dateIntHoursRange(effStart, effEnd, time.UTC)
-
-		for _, dateIntHour := range dateIntHours {
-			segments, err := q.lookupSegments(ctx, dateIntHour, effStart, effEnd, stepDuration, orgID)
+		// For each leaf/base-expr, compute effective window (offset-aware), then push down per grouped segments.
+		for _, leaf := range queryPlan.Leaves {
+			offMs, err := parseOffsetMs(leaf.Offset)
 			if err != nil {
-				slog.Error("failed to get segment infos", "dateInt", dateIntHour.DateInt, "err", err)
-				continue
-			}
-			slog.Info("Found segments for leaf",
-				"leafID", leaf.ID, "dateIntHour", dateIntHour,
-				"numSegments", len(segments))
-
-			// Tag segments with this leaf id so worker knows which expr it is serving.
-			for i := range segments {
-				segments[i].ExprID = leaf.ID
+				slog.Error("invalid offset on leaf; ignoring offset", "offset", leaf.Offset, "err", err)
+				offMs = 0
 			}
 
-			if len(segments) == 0 {
-				continue
-			}
+			// Effective range to *read* from storage.
+			effStart := startTs - offMs
+			effEnd := endTs - offMs
 
-			// Form time-contiguous batches sized for the number of workers.
-			groups := promql.ComputeReplayBatchesWithWorkers(segments, stepDuration, effStart, effEnd, len(workers), true)
+			// Partition by dateInt hours for storage listing.
+			dateIntHours := dateIntHoursRange(effStart, effEnd, time.UTC)
 
-			for _, group := range groups {
-				// Collect all segment IDs for worker assignment
-				segmentIDs := make([]int64, 0, len(group.Segments))
-				segmentMap := make(map[int64][]promql.SegmentInfo)
-				for _, segment := range segments {
-					segmentIDs = append(segmentIDs, segment.SegmentID)
-					segmentMap[segment.SegmentID] = append(segmentMap[segment.SegmentID], segment)
-				}
-
-				// Get worker assignments for all segments
-				mappings, err := q.workerDiscovery.GetWorkersForSegments(orgID, segmentIDs)
+			for _, dateIntHour := range dateIntHours {
+				segments, err := q.lookupSegments(ctx, dateIntHour, effStart, effEnd, stepDuration, orgID)
 				if err != nil {
-					slog.Error("failed to get worker assignments", "err", err)
+					slog.Error("failed to get segment infos", "dateInt", dateIntHour.DateInt, "err", err)
+					continue
+				}
+				slog.Info("Found segments for leaf",
+					"leafID", leaf.ID, "dateIntHour", dateIntHour,
+					"numSegments", len(segments))
+
+				// Tag segments with this leaf id so worker knows which expr it is serving.
+				for i := range segments {
+					segments[i].ExprID = leaf.ID
+				}
+				if len(segments) == 0 {
 					continue
 				}
 
-				// Group segments by assigned worker
-				workerGroups := make(map[Worker][]promql.SegmentInfo)
-				for _, mapping := range mappings {
-					segmentList := segmentMap[mapping.SegmentID]
-					workerGroups[mapping.Worker] = append(workerGroups[mapping.Worker], segmentList...)
-				}
+				// Form time-contiguous batches sized for the number of workers.
+				groups := promql.ComputeReplayBatchesWithWorkers(
+					segments, stepDuration, effStart, effEnd, len(workers), true,
+				)
 
-				for worker, workerSegments := range workerGroups {
-					req := PushDownRequest{
-						OrganizationID: orgID,
-						BaseExpr:       leaf,
-						StartTs:        group.StartTs,
-						EndTs:          group.EndTs,
-						Segments:       workerSegments,
-						Step:           stepDuration,
+				for _, group := range groups {
+					select {
+					case <-ctx.Done():
+						return
+					default:
 					}
 
-					// Push down to worker; get its stream back.
-					ch, err := q.pushDown(ctx, worker, req)
+					slog.Info("Pushing down segments", "groupSize", len(group.Segments))
+
+					// Collect all segment IDs for worker assignment
+					segmentIDs := make([]int64, 0, len(group.Segments))
+					segmentMap := make(map[int64][]promql.SegmentInfo)
+					for _, segment := range group.Segments {
+						segmentIDs = append(segmentIDs, segment.SegmentID)
+						segmentMap[segment.SegmentID] = append(segmentMap[segment.SegmentID], segment)
+					}
+
+					// Get worker assignments for all segments
+					mappings, err := q.workerDiscovery.GetWorkersForSegments(orgID, segmentIDs)
 					if err != nil {
-						slog.Error("pushdown failed", "worker", worker, "err", err)
+						slog.Error("failed to get worker assignments", "err", err)
 						continue
 					}
 
-					if offMs != 0 {
-						ch = shiftTimestamps(ctx, ch, offMs, 256)
+					// Group segments by assigned worker
+					workerGroups := make(map[Worker][]promql.SegmentInfo)
+					for _, mapping := range mappings {
+						segmentList := segmentMap[mapping.SegmentID]
+						workerGroups[mapping.Worker] = append(workerGroups[mapping.Worker], segmentList...)
 					}
 
-					allLeafChans = append(allLeafChans, ch)
+					// Build per-group leaf channels (one per worker assignment).
+					var groupLeafChans []<-chan promql.SketchInput
+					for worker, workerSegments := range workerGroups {
+						req := PushDownRequest{
+							OrganizationID: orgID,
+							BaseExpr:       leaf,
+							StartTs:        group.StartTs,
+							EndTs:          group.EndTs,
+							Segments:       workerSegments,
+							Step:           stepDuration,
+						}
+
+						ch, err := q.pushDown(ctx, worker, req)
+						if err != nil {
+							slog.Error("pushdown failed", "worker", worker, "err", err)
+							continue
+						}
+						if offMs != 0 {
+							ch = shiftTimestamps(ctx, ch, offMs, 256)
+						}
+						groupLeafChans = append(groupLeafChans, ch)
+					}
+
+					// No channels for this group — skip.
+					if len(groupLeafChans) == 0 {
+						continue
+					}
+
+					// Merge this group's worker streams by timestamp (ascending).
+					mergedGroup := promql.MergeSorted(ctx, 1024, groupLeafChans...)
+
+					// Run EvalFlow for THIS group and forward results to final out.
+					flow := NewEvalFlow(queryPlan.Root, queryPlan.Leaves, stepDuration, EvalFlowOptions{
+						NumBuffers: 2,
+						OutBuffer:  1024,
+					})
+					groupResults := flow.Run(ctx, mergedGroup)
+
+					// Forward group results into final output stream as they arrive.
+					for {
+						select {
+						case <-ctx.Done():
+							return
+						case res, ok := <-groupResults:
+							if !ok {
+								// Group done, proceed to next group.
+								goto nextGroup
+							}
+							out <- res
+						}
+					}
+				nextGroup:
 				}
 			}
 		}
-	}
+	}()
 
-	// Nothing to merge → return closed chan.
-	if len(allLeafChans) == 0 {
-		slog.Info("no pushdowns produced any channels")
-		out := make(chan promql.SketchInput)
-		close(out)
-		return nil, fmt.Errorf("no pushdowns produced any channels")
-	}
-
-	// Merge all worker streams by timestamp (ascending).
-	merged := promql.MergeSorted(ctx, 1024, allLeafChans...)
-	// Pipe through EvalFlow (aggregator -> root.Eval)
-	flow := NewEvalFlow(queryPlan.Root, queryPlan.Leaves, stepDuration, EvalFlowOptions{
-		NumBuffers: 2,
-		OutBuffer:  1024,
-	})
-	results := flow.Run(ctx, merged)
-	return results, nil
+	return out, nil
 }
 
 // pushDown should POST req to the worker’s /pushdown and return a channel that yields SketchInput

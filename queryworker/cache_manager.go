@@ -19,6 +19,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/cardinalhq/lakerunner/internal/duckdbx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/promql"
 	"github.com/cardinalhq/lakerunner/queryapi"
@@ -47,6 +48,7 @@ type ingestJob struct {
 // CacheManager coordinates downloads, batch-ingest, queries, and LRU evictions.
 type CacheManager struct {
 	sink                   *DDBSink
+	s3Db                   *duckdbx.S3DB
 	maxRows                int64
 	downloader             DownloadBatchFunc
 	storageProfileProvider storageprofile.StorageProfileProvider
@@ -72,8 +74,14 @@ func NewCacheManager(dl DownloadBatchFunc, storageProfileProvider storageprofile
 		slog.Error("Failed to create DuckDB sink", slog.Any("error", err))
 		return nil
 	}
+	s3DB, err := duckdbx.NewS3DB("s3")
+	if err != nil {
+		slog.Error("Failed to create S3 DuckDB database", slog.Any("error", err))
+		return nil
+	}
 	w := &CacheManager{
 		sink:                   ddb,
+		s3Db:                   s3DB,
 		storageProfileProvider: storageProfileProvider,
 		maxRows:                MaxRowsDefault,
 		downloader:             dl,
@@ -117,9 +125,22 @@ func EvaluatePushDown[T promql.Timestamped](
 
 	// Group segments by orgId/instanceNum
 	segmentsByOrg := make(map[uuid.UUID]map[int16][]promql.SegmentInfo)
+	profilesByOrgInstanceNum := make(map[uuid.UUID]map[int16]storageprofile.StorageProfile)
 	for _, seg := range request.Segments {
 		if _, ok := segmentsByOrg[seg.OrganizationID]; !ok {
 			segmentsByOrg[seg.OrganizationID] = make(map[int16][]promql.SegmentInfo)
+		}
+		if _, ok := profilesByOrgInstanceNum[seg.OrganizationID]; !ok {
+			profilesByOrgInstanceNum[seg.OrganizationID] = make(map[int16]storageprofile.StorageProfile)
+		}
+		if _, ok := profilesByOrgInstanceNum[seg.OrganizationID][seg.InstanceNum]; !ok {
+			profile, err := w.storageProfileProvider.GetStorageProfileForOrganizationAndInstance(
+				ctx, seg.OrganizationID, seg.InstanceNum)
+			if err != nil {
+				return nil, fmt.Errorf("get storage profile for org %s instance %d: %w",
+					seg.OrganizationID, seg.InstanceNum, err)
+			}
+			profilesByOrgInstanceNum[seg.OrganizationID][seg.InstanceNum] = profile
 		}
 		if _, ok := segmentsByOrg[seg.OrganizationID][seg.InstanceNum]; !ok {
 			segmentsByOrg[seg.OrganizationID][seg.InstanceNum] = []promql.SegmentInfo{}
@@ -132,16 +153,7 @@ func EvaluatePushDown[T promql.Timestamped](
 	// Now start putting channels together for every orgId/instanceNum.
 	for orgId, instances := range segmentsByOrg {
 		for instanceNum, segments := range instances {
-			profile, err := w.storageProfileProvider.GetStorageProfileForOrganizationAndInstance(ctx, orgId, instanceNum)
-			if err != nil {
-				slog.Error("Failed to get storage profile for organization",
-					slog.String("orgId", orgId.String()),
-					slog.Int("instanceNum", int(instanceNum)),
-					slog.Any("error", err))
-
-				return nil, fmt.Errorf("get storage profile for org %s instance %d: %w", orgId.String(), instanceNum, err)
-			}
-
+			profile := profilesByOrgInstanceNum[orgId][instanceNum]
 			// Split into cached vs S3
 			var s3URIs []string
 			var s3LocalPaths []string
@@ -171,7 +183,7 @@ func EvaluatePushDown[T promql.Timestamped](
 			}
 
 			// Stream uncached segments directly from S3 (one channel per glob).
-			s3Channels, err := streamFromS3(ctx, w, request, s3URIs, s3GlobSize, userSQL, mapper)
+			s3Channels, err := streamFromS3(ctx, w, request, profile.Bucket, profile.Region, s3URIs, s3GlobSize, userSQL, mapper)
 			if err != nil {
 				return nil, fmt.Errorf("stream from S3: %w", err)
 			}
@@ -188,6 +200,7 @@ func EvaluatePushDown[T promql.Timestamped](
 		}
 	}
 
+	slog.Info("Returning channels for pushdown evaluation", slog.Int("channels", len(outs)))
 	return promql.MergeSorted(ctx, 1024, outs...), nil
 }
 
@@ -223,7 +236,7 @@ func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
 			cacheSQL := strings.Replace(userSQL, "{table}", w.sink.table, 1)
 			cacheSQL = strings.Replace(cacheSQL, "AND true", "AND segment_id IN ("+inList+")", 1)
 
-			rows, err := w.sink.db.QueryContext(ctx, cacheSQL)
+			rows, conn, err := w.sink.db.QueryContext(ctx, cacheSQL)
 			if err != nil {
 				return
 			}
@@ -233,6 +246,13 @@ func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
 					slog.Error("Error closing rows", slog.Any("error", err))
 				}
 			}(rows)
+
+			defer func(conn *sql.Conn) {
+				err := conn.Close()
+				if err != nil {
+					slog.Error("Error closing connection", slog.Any("error", err))
+				}
+			}(conn)
 
 			cols, err := rows.Columns()
 			if err != nil {
@@ -262,6 +282,8 @@ func streamFromS3[T promql.Timestamped](
 	ctx context.Context,
 	w *CacheManager,
 	request queryapi.PushDownRequest,
+	bucket string,
+	region string,
 	s3URIs []string,
 	s3GlobSize int,
 	userSQL string,
@@ -272,38 +294,52 @@ func streamFromS3[T promql.Timestamped](
 	}
 
 	batches := chunkStrings(s3URIs, s3GlobSize)
+	slog.Info("Chunked S3 URIs into batches", slog.Int("batches", len(batches)), slog.Int("incoming", len(s3URIs)))
 	outs := make([]<-chan T, 0, len(batches))
 
 	for _, uris := range batches {
-		out := make(chan T, 256)
+		slog.Info("Streaming from S3", slog.Int("uris", len(uris)))
+		out := make(chan T, 1024)
 		outs = append(outs, out)
 
-		go func(uris []string, out chan<- T) {
+		urisCopy := append([]string(nil), uris...) // capture loop var
+
+		go func(out chan<- T) {
 			defer close(out)
 
-			quoted := make([]string, len(uris))
-			for i := range uris {
-				quoted[i] = "'" + escapeSQL(uris[i]) + "'"
+			// Build read_parquet source
+			quoted := make([]string, len(urisCopy))
+			for i := range urisCopy {
+				quoted[i] = "'" + escapeSQL(urisCopy[i]) + "'"
 			}
 			array := "[" + strings.Join(quoted, ", ") + "]"
 			src := fmt.Sprintf(`read_parquet(%s, union_by_name=true)`, array)
+
 			sqlReplaced := strings.Replace(userSQL, "{table}", src, 1)
 
-			rows, err := w.sink.db.QueryContext(ctx, sqlReplaced)
-
+			// Lease a per-bucket connection (creates/refreshes S3 secret under the hood)
+			conn, release, err := w.s3Db.GetConnection(ctx, bucket, region)
 			if err != nil {
+				slog.Error("GetConnection failed", slog.String("bucket", bucket), slog.Any("error", err))
 				return
 			}
-			defer func(rows *sql.Rows) {
-				err := rows.Close()
-				if err != nil {
+			// Ensure rows close before releasing the connection
+			defer release()
+
+			rows, err := conn.QueryContext(ctx, sqlReplaced)
+			if err != nil {
+				slog.Error("Query failed", slog.Any("error", err))
+				return
+			}
+			defer func() {
+				if err := rows.Close(); err != nil {
 					slog.Error("Error closing rows", slog.Any("error", err))
 				}
-			}(rows)
+			}()
 
 			cols, err := rows.Columns()
 			if err != nil {
-				slog.Error("failed to get columns", "err", err)
+				slog.Error("failed to get columns", slog.Any("error", err))
 				return
 			}
 
@@ -315,12 +351,15 @@ func streamFromS3[T promql.Timestamped](
 				}
 				v, mErr := mapper(request, cols, rows)
 				if mErr != nil {
+					slog.Error("Row mapping failed", slog.Any("error", mErr))
 					return
 				}
 				out <- v
 			}
-			_ = rows.Err()
-		}(uris, out)
+			if err := rows.Err(); err != nil {
+				slog.Error("Rows iteration error", slog.Any("error", err))
+			}
+		}(out)
 	}
 
 	// enqueue is done in EvaluatePushDown(...) after ids/paths are known
@@ -370,6 +409,7 @@ func (w *CacheManager) ingestLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case job := <-w.ingestQ:
+			slog.Info("Dequeued ingest job", "paths", len(job.paths), "ids", len(job.ids))
 			if len(job.paths) == 0 {
 				continue
 			}
@@ -377,6 +417,7 @@ func (w *CacheManager) ingestLoop(ctx context.Context) {
 			// Download (if provided), then ingest; best-effort and per-batch.
 			if w.downloader != nil {
 				if err := w.downloader(ctx, job.profile, job.paths); err != nil {
+					slog.Error("Failed to download S3 objects", "error", err.Error())
 					// release inflight on failure
 					w.mu.Lock()
 					for _, id := range job.ids {
@@ -390,6 +431,7 @@ func (w *CacheManager) ingestLoop(ctx context.Context) {
 			}
 
 			if err := w.sink.IngestParquetBatch(ctx, job.paths, job.ids); err != nil {
+				slog.Error("Failed to ingest Parquet batch", "error", err.Error())
 				// release inflight on failure
 				w.mu.Lock()
 				for _, id := range job.ids {
@@ -405,6 +447,7 @@ func (w *CacheManager) ingestLoop(ctx context.Context) {
 			now := time.Now()
 			w.mu.Lock()
 			for _, id := range job.ids {
+				slog.Info("Marking segment as present", slog.Int64("segmentID", id))
 				w.present[id] = struct{}{}
 				w.lastAccess[id] = now
 				if wg := w.inflight[id]; wg != nil {
