@@ -42,6 +42,42 @@ func (q *Queries) ObjectCleanupAdd(ctx context.Context, arg ObjectCleanupAddPara
 	return err
 }
 
+const objectCleanupBucketSummary = `-- name: ObjectCleanupBucketSummary :many
+SELECT
+  bucket_id,
+  COUNT(*) FILTER (WHERE delete_at < NOW() AND tries < 10) AS pending,
+  COUNT(*) FILTER (WHERE NOT (delete_at < NOW() AND tries < 10)) AS not_pending
+FROM obj_cleanup
+GROUP BY bucket_id
+ORDER BY bucket_id
+`
+
+type ObjectCleanupBucketSummaryRow struct {
+	BucketID   string `json:"bucket_id"`
+	Pending    int64  `json:"pending"`
+	NotPending int64  `json:"not_pending"`
+}
+
+func (q *Queries) ObjectCleanupBucketSummary(ctx context.Context) ([]ObjectCleanupBucketSummaryRow, error) {
+	rows, err := q.db.Query(ctx, objectCleanupBucketSummary)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ObjectCleanupBucketSummaryRow
+	for rows.Next() {
+		var i ObjectCleanupBucketSummaryRow
+		if err := rows.Scan(&i.BucketID, &i.Pending, &i.NotPending); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const objectCleanupComplete = `-- name: ObjectCleanupComplete :exec
 DELETE FROM obj_cleanup WHERE id = $1
 `
