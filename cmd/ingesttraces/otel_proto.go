@@ -29,13 +29,9 @@
 package ingesttraces
 
 import (
-	"crypto/sha256"
-	"encoding/binary"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
-	"strconv"
 
 	oteltranslate "github.com/cardinalhq/oteltools/pkg/translate"
 	mapset "github.com/deckarep/golang-set/v2"
@@ -46,35 +42,6 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/buffet"
 	"github.com/cardinalhq/lakerunner/internal/logcrunch"
 )
-
-// NumTracePartitions is the number of partitions/slots for trace processing.
-// Can be configured via LAKERUNNER_TRACE_PARTITIONS environment variable, defaults to 16.
-// Compaction compacts all files in a slot - so increase this to increase parallelism.
-// However, more slots means more individual files, so for smaller customers it's better to keep it low.
-var NumTracePartitions = func() int {
-	if partitionsStr := os.Getenv("LAKERUNNER_TRACE_PARTITIONS"); partitionsStr != "" {
-		if partitions, err := strconv.Atoi(partitionsStr); err == nil && partitions > 0 {
-			return partitions
-		}
-		// Log warning if invalid value, fall back to default
-		slog.Warn("Invalid LAKERUNNER_TRACE_PARTITIONS value, using default",
-			"value", partitionsStr, "default", 1)
-	}
-	return 16
-}()
-
-// determineSlot determines which partition slot a trace should go to.
-// This ensures that the same trace ID always goes to the same slot for consistency.
-func determineSlot(traceID string, dateint int32, orgID string) int {
-	// Create a unique key combining trace ID, dateint, and orgID
-	key := fmt.Sprintf("%s_%d_%s", traceID, dateint, orgID)
-
-	// Hash the key to get a deterministic slot assignment
-	h := sha256.Sum256([]byte(key))
-
-	// Use the first 2 bytes of the hash to get a 16-bit number, then modulo by partition count
-	return int(binary.BigEndian.Uint16(h[:])) % NumTracePartitions
-}
 
 // ConvertProtoFile converts a protobuf file to the standardized format
 func ConvertProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate int64, dateint int32, orgID string) ([]TraceFileResult, error) {
@@ -207,7 +174,7 @@ func ConvertProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate 
 		}
 
 		// Determine which slot this trace should go to
-		slot := determineSlot(traceID, dateint, orgID)
+		slot := DetermineTraceSlot(traceID, dateint, orgID)
 
 		// Track timestamp range for this slot
 		if slotRange, exists := slotTimestampRanges[slot]; exists {
