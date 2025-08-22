@@ -38,11 +38,13 @@ import (
 	"strconv"
 
 	oteltranslate "github.com/cardinalhq/oteltools/pkg/translate"
+	mapset "github.com/deckarep/golang-set/v2"
 
 	"github.com/cardinalhq/lakerunner/cmd/ingestlogs"
 	"github.com/cardinalhq/lakerunner/fileconv/proto"
 	"github.com/cardinalhq/lakerunner/fileconv/translate"
 	"github.com/cardinalhq/lakerunner/internal/buffet"
+	"github.com/cardinalhq/lakerunner/internal/logcrunch"
 )
 
 // NumTracePartitions is the number of partitions/slots for trace processing.
@@ -104,6 +106,9 @@ func ConvertProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate 
 		}
 	}
 
+	// Accumulate set of fingerprints across all rows
+	fingerprints := mapset.NewSet[int64]()
+
 	// Read all rows and build complete schema
 	for {
 		row, done, err := r.GetRow()
@@ -118,6 +123,34 @@ func ConvertProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate 
 		for k, v := range baseitems {
 			row[k] = v
 		}
+
+		// Get fingerprints for this row based on its tag name-value pairs
+		rowTagValues := make(map[string]mapset.Set[string])
+		for tagName, tagValue := range row {
+			var tagValueStr string
+			switch v := tagValue.(type) {
+			case string:
+				tagValueStr = v
+			case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+				tagValueStr = fmt.Sprintf("%d", v)
+			case float32, float64:
+				tagValueStr = fmt.Sprintf("%f", v)
+			default:
+				tagValueStr = fmt.Sprintf("%v", v)
+			}
+
+			if _, exists := rowTagValues[tagName]; !exists {
+				rowTagValues[tagName] = mapset.NewSet[string]()
+			}
+			rowTagValues[tagName].Add(tagValueStr)
+		}
+
+		// Get fingerprints for this row and add to global set
+		rowFingerprints := logcrunch.ToFingerprints(rowTagValues)
+		rowFingerprints.Each(func(fingerprint int64) bool {
+			fingerprints.Add(fingerprint)
+			return false
+		})
 
 		// Add row to schema builder
 		if err := nmb.Add(row); err != nil {
@@ -222,6 +255,7 @@ func ConvertProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate 
 				SlotID:       slot,
 				MinTimestamp: timestampRange.MinTimestamp,
 				MaxTimestamp: timestampRange.MaxTimestamp,
+				Fingerprints: fingerprints,
 			})
 		}
 	}
@@ -247,4 +281,5 @@ type TraceFileResult struct {
 	SlotID       int
 	MinTimestamp int64
 	MaxTimestamp int64
+	Fingerprints mapset.Set[int64]
 }
