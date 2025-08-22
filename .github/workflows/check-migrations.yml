@@ -46,7 +46,6 @@ jobs:
           script: |
             const commentMarker = '<!-- migration-integrity-check-failed -->';
             const commentBody = `## Migration Integrity Check Failed
-            ${commentMarker}
 
             This PR modifies existing migration files (from the base branch) in a way that goes beyond comments and whitespace changes.
 
@@ -73,7 +72,9 @@ jobs:
             3. Ensure both up and down migration files exist for every migration
             4. Ensure new migration timestamps are sequential (after existing ones)
 
-            This check exists to prevent database schema inconsistencies in deployed environments where migrations may have already been applied.`;
+            This check exists to prevent database schema inconsistencies in deployed environments where migrations may have already been applied.
+
+            ${commentMarker}`;
 
             // Check if we already have a failure comment
             const comments = await github.rest.issues.listComments({
@@ -140,7 +141,6 @@ jobs:
                     owner: context.repo.owner,
                     repo: context.repo.repo,
                     body: `## Migration Integrity Check Passed
-                    ${successCommentMarker}
 
             This PR's migration changes have been validated:
             - New migrations are allowed
@@ -149,7 +149,9 @@ jobs:
             - All migrations have both up and down files
             - New migration timestamps are sequential
 
-            The migration integrity is maintained and this PR is safe to merge from a database schema perspective.`
+            The migration integrity is maintained and this PR is safe to merge from a database schema perspective.
+
+            ${successCommentMarker}`
                   });
                 }
               }
