@@ -32,3 +32,12 @@ UPDATE obj_cleanup
 SET tries = tries + 1,
     delete_at = NOW() + INTERVAL '1 minute'
 WHERE id = @id;
+
+-- name: ObjectCleanupBucketSummary :many
+SELECT
+  bucket_id,
+  COUNT(*) FILTER (WHERE delete_at < NOW() AND tries < 10) AS pending,
+  COUNT(*) FILTER (WHERE NOT (delete_at < NOW() AND tries < 10)) AS not_pending
+FROM obj_cleanup
+GROUP BY bucket_id
+ORDER BY bucket_id;
