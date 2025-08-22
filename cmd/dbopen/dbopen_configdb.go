@@ -22,14 +22,34 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/cardinalhq/lakerunner/configdb"
+	configdbmigrations "github.com/cardinalhq/lakerunner/configdb/migrations"
 )
 
-func ConnectToConfigDB(ctx context.Context) (*pgxpool.Pool, error) {
+func ConnectToConfigDB(ctx context.Context, opts ...Options) (*pgxpool.Pool, error) {
 	connectionString, err := getDatabaseURLFromEnv("CONFIGDB")
 	if err != nil {
 		return nil, errors.Join(ErrDatabaseNotConfigured, fmt.Errorf("failed to get CONFIGDB connection string: %w", err))
 	}
-	return configdb.NewConnectionPool(ctx, connectionString)
+
+	pool, err := configdb.NewConnectionPool(ctx, connectionString)
+	if err != nil {
+		return nil, err
+	}
+
+	// Check if migration check should be skipped
+	skipMigrationCheck := false
+	if len(opts) > 0 {
+		skipMigrationCheck = opts[0].SkipMigrationCheck
+	}
+
+	if !skipMigrationCheck {
+		if err := configdbmigrations.CheckExpectedVersion(ctx, pool); err != nil {
+			pool.Close()
+			return nil, fmt.Errorf("CONFIGDB migration version check failed: %w", err)
+		}
+	}
+
+	return pool, nil
 }
 
 func ConfigDBStore(ctx context.Context) (configdb.QuerierFull, error) {

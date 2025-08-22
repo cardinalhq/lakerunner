@@ -151,6 +151,14 @@ Configuration is YAML-based:
 - `GOGC` – GC tuning (default 50%)
 - Inside the container, memory and cpu limits for Go will match the constraints of the container.
 
+**Migration Version Check Environment Variables:**
+
+- `LRDB_MIGRATION_CHECK_ENABLED` – enable/disable migration version check for lrdb (default: true)
+- `CONFIGDB_MIGRATION_CHECK_ENABLED` – enable/disable migration version check for configdb (default: true)
+- `MIGRATION_CHECK_TIMEOUT` – maximum time to wait for migrations to complete (default: 60s)
+- `MIGRATION_CHECK_RETRY_INTERVAL` – interval between migration version checks (default: 5s)
+- `MIGRATION_CHECK_ALLOW_DIRTY` – allow connections to databases with dirty migration state (default: false)
+
 ---
 
 ## Docker & Release
