@@ -255,8 +255,8 @@ func packTraceSegment(
 	newSegmentID := s3helper.GenerateID()
 
 	// Create S3 object ID for the new consolidated trace file
-	newObjectID := fmt.Sprintf("db/%s/%d/traces/%d.parquet",
-		sp.OrganizationID, dateint, newSegmentID)
+	hour := s3helper.HourFromMillis(stats.FirstTS)
+	newObjectID := helpers.MakeDBObjectID(sp.OrganizationID, sp.CollectorName, dateint, hour, newSegmentID, "traces")
 
 	if err := s3helper.UploadS3Object(ctx, s3Client, sp.Bucket, newObjectID, writeResult.FileName); err != nil {
 		ll.Error("S3 upload failed", slog.String("error", err.Error()))
