@@ -63,7 +63,7 @@ func init() {
 
 	sqsListenCmd := &cobra.Command{
 		Use:   "sqs",
-		Short: "listen on one or more SQS pubsub sources",
+		Short: "listen on SQS pubsub sources",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			servicename := "pubsub-sqs"
 			addlAttrs := attribute.NewSet(
@@ -88,4 +88,36 @@ func init() {
 		},
 	}
 	cmd.AddCommand(sqsListenCmd)
+
+	gcpListenCmd := &cobra.Command{
+		Use:   "gcp",
+		Short: "listen on GCP Pub/Sub sources",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			servicename := "pubsub-gcp"
+			addlAttrs := attribute.NewSet(
+				attribute.String("action", "pubsub-gcp"),
+			)
+			doneCtx, doneFx, err := setupTelemetry(servicename, &addlAttrs)
+			if err != nil {
+				return fmt.Errorf("failed to setup telemetry: %w", err)
+			}
+
+			defer func() {
+				if err := doneFx(); err != nil {
+					slog.Error("Error shutting down telemetry", slog.Any("error", err))
+				}
+			}()
+
+			backend, err := pubsub.NewBackend(doneCtx, pubsub.BackendTypeGCPPubSub)
+			if err != nil {
+				return fmt.Errorf("failed to create GCP Pub/Sub backend: %w", err)
+			}
+
+			slog.Info("Starting GCP Pub/Sub service",
+				slog.String("backend", backend.GetName()))
+
+			return backend.Run(doneCtx)
+		},
+	}
+	cmd.AddCommand(gcpListenCmd)
 }
