@@ -33,7 +33,7 @@ jobs:
         run: chmod +x scripts/check-migration-integrity.sh
 
       - name: Run migration integrity check
-        run: ./scripts/check-migration-integrity.sh "${{ github.base_ref }}"
+        run: ./scripts/check-migration-integrity.sh "origin/${{ github.base_ref }}"
         env:
           # Ensure we have access to git operations
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
