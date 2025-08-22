@@ -44,11 +44,9 @@ jobs:
         with:
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: `## Migration Integrity Check Failed
+            const commentMarker = '<!-- migration-integrity-check-failed -->';
+            const commentBody = `## Migration Integrity Check Failed
+            ${commentMarker}
 
             This PR modifies existing migration files (from the base branch) in a way that goes beyond comments and whitespace changes.
 
@@ -63,14 +61,39 @@ jobs:
             **For migrations created in this branch:**
             - **ALLOWED:** Any changes during development
 
+            **Additional requirements for ALL migrations:**
+            - **REQUIRED:** Every migration must have both .up.sql and .down.sql files
+            - **REQUIRED:** New migration timestamps must be after all existing migration timestamps
+
             **To fix this:**
             1. Revert changes to existing migration files
             2. Create a new migration file instead using:
                - \`make new-migration name=your_migration_name\` (for lrdb)
                - \`make new-configdb-migration name=your_migration_name\` (for configdb)
+            3. Ensure both up and down migration files exist for every migration
+            4. Ensure new migration timestamps are sequential (after existing ones)
 
-            This check exists to prevent database schema inconsistencies in deployed environments where migrations may have already been applied.`
-            })
+            This check exists to prevent database schema inconsistencies in deployed environments where migrations may have already been applied.`;
+
+            // Check if we already have a failure comment
+            const comments = await github.rest.issues.listComments({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+
+            const existingComment = comments.data.find(comment => 
+              comment.body.includes(commentMarker)
+            );
+
+            if (!existingComment) {
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: commentBody
+              });
+            }
 
       - name: Comment on PR (on success with changes)
         if: success()
@@ -78,24 +101,57 @@ jobs:
         with:
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
+            const failureCommentMarker = '<!-- migration-integrity-check-failed -->';
+            const successCommentMarker = '<!-- migration-integrity-check-passed -->';
+            
+            // Get all comments to check for existing ones
+            const comments = await github.rest.issues.listComments({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+
+            // Delete any existing failure comments
+            const failureComments = comments.data.filter(comment => 
+              comment.body.includes(failureCommentMarker)
+            );
+            
+            for (const comment of failureComments) {
+              await github.rest.issues.deleteComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: comment.id,
+              });
+            }
+
             // Only comment if there were migration changes
             const { execSync } = require('child_process');
             try {
               const output = execSync(`git diff --name-only origin/${{ github.base_ref }}..HEAD -- lrdb/migrations/ configdb/migrations/ | grep '\\.sql$' || true`, { encoding: 'utf8' });
               if (output.trim()) {
-                github.rest.issues.createComment({
-                  issue_number: context.issue.number,
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  body: `## Migration Integrity Check Passed
+                // Check if we already have a success comment
+                const existingSuccessComment = comments.data.find(comment => 
+                  comment.body.includes(successCommentMarker)
+                );
+
+                if (!existingSuccessComment) {
+                  await github.rest.issues.createComment({
+                    issue_number: context.issue.number,
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    body: `## Migration Integrity Check Passed
+                    ${successCommentMarker}
 
             This PR's migration changes have been validated:
             - New migrations are allowed
             - Existing migration changes are limited to comments/whitespace only
             - No migration files were deleted
+            - All migrations have both up and down files
+            - New migration timestamps are sequential
 
             The migration integrity is maintained and this PR is safe to merge from a database schema perspective.`
-                });
+                  });
+                }
               }
             } catch (error) {
               // If the command fails, don't comment

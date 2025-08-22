@@ -77,6 +77,96 @@ normalize_sql() {
 
 VIOLATIONS_FOUND=false
 
+# Function to extract timestamp from migration filename
+extract_timestamp() {
+    local filename="$1"
+    basename "$filename" | sed -E 's/^([0-9]+)_.*/\1/'
+}
+
+# Function to extract migration name (without .up/.down.sql)
+extract_migration_name() {
+    local filename="$1"
+    basename "$filename" | sed -E 's/^([0-9]+_[^.]+)\.(up|down)\.sql$/\1/'
+}
+
+# Check for up/down pair completeness for ALL migrations (existing + new)
+echo "Checking migration up/down pairs..."
+ALL_MIGRATIONS=$(find lrdb/migrations/ configdb/migrations/ -name "*.sql" 2>/dev/null | sort || true)
+
+# Get unique migration names (without .up/.down.sql suffix)
+MIGRATION_NAMES=$(echo "$ALL_MIGRATIONS" | while IFS= read -r migration; do
+    if [ -n "$migration" ]; then
+        extract_migration_name "$migration"
+    fi
+done | sort -u)
+
+# Check that every migration has both up and down
+while IFS= read -r migration_name; do
+    if [ -n "$migration_name" ]; then
+        up_file=""
+        down_file=""
+        
+        # Look for up and down files for this migration
+        while IFS= read -r migration; do
+            if [ -n "$migration" ]; then
+                current_name=$(extract_migration_name "$migration")
+                if [ "$current_name" = "$migration_name" ]; then
+                    if [[ "$migration" == *".up.sql" ]]; then
+                        up_file="$migration"
+                    elif [[ "$migration" == *".down.sql" ]]; then
+                        down_file="$migration"
+                    fi
+                fi
+            fi
+        done <<< "$ALL_MIGRATIONS"
+        
+        if [ -z "$up_file" ]; then
+            echo "VIOLATION: Missing up migration for $migration_name"
+            echo "   Found down file: $down_file"
+            echo "   Expected: $migration_name.up.sql"
+            VIOLATIONS_FOUND=true
+        fi
+        
+        if [ -z "$down_file" ]; then
+            echo "VIOLATION: Missing down migration for $migration_name"
+            echo "   Found up file: $up_file"
+            echo "   Expected: $migration_name.down.sql"
+            VIOLATIONS_FOUND=true
+        fi
+    fi
+done <<< "$MIGRATION_NAMES"
+
+# Check sequential ordering of new migrations
+echo "Checking migration timestamp ordering..."
+if [ -n "$NEW_MIGRATIONS" ]; then
+    # Get the highest timestamp from existing migrations
+    HIGHEST_EXISTING_TIMESTAMP=0
+    if [ -n "$EXISTING_MIGRATIONS" ]; then
+        while IFS= read -r migration; do
+            if [ -n "$migration" ]; then
+                timestamp=$(extract_timestamp "$migration")
+                if [ "$timestamp" -gt "$HIGHEST_EXISTING_TIMESTAMP" ]; then
+                    HIGHEST_EXISTING_TIMESTAMP="$timestamp"
+                fi
+            fi
+        done <<< "$EXISTING_MIGRATIONS"
+    fi
+    
+    # Check that all new migrations have timestamps higher than existing ones
+    while IFS= read -r migration; do
+        if [ -n "$migration" ]; then
+            timestamp=$(extract_timestamp "$migration")
+            if [ "$timestamp" -le "$HIGHEST_EXISTING_TIMESTAMP" ]; then
+                echo "VIOLATION: New migration $migration has timestamp $timestamp"
+                echo "   This is not greater than the highest existing timestamp: $HIGHEST_EXISTING_TIMESTAMP"
+                echo "   New migrations must have timestamps after all existing migrations"
+                VIOLATIONS_FOUND=true
+            fi
+        fi
+    done <<< "$NEW_MIGRATIONS"
+fi
+
+echo "Checking existing migration integrity..."
 while IFS= read -r migration; do
     # Skip if this migration is new in the current branch (can be freely modified)
     if echo "$NEW_MIGRATIONS" | grep -q "^$migration$"; then
