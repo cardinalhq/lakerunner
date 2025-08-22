@@ -57,7 +57,6 @@ func NewGCPPubSubService() (*GCPPubSubService, error) {
 	if keyFile := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"); keyFile != "" {
 		opts = append(opts, option.WithCredentialsFile(keyFile))
 	}
-
 	ctx := context.Background()
 	client, err := pubsub.NewClient(ctx, projectID, opts...)
 	if err != nil {
@@ -89,7 +88,7 @@ func NewGCPPubSubService() (*GCPPubSubService, error) {
 }
 
 func (ps *GCPPubSubService) GetName() string {
-	return "gcp-pubsub"
+	return "gcp"
 }
 
 func (ps *GCPPubSubService) Run(doneCtx context.Context) error {
@@ -109,13 +108,11 @@ func (ps *GCPPubSubService) Run(doneCtx context.Context) error {
 		return fmt.Errorf("GCP Pub/Sub receive error: %w", err)
 	}
 
-	slog.Info("Shutting down GCP Pub/Sub service")
 	return nil
 }
 
 // messageHandler processes individual messages with proper tracing and error handling
 func (ps *GCPPubSubService) messageHandler(ctx context.Context, msg *pubsub.Message) {
-	// Create a span for message processing
 	ctx, span := ps.tracer.Start(ctx, "gcp_pubsub.message_handler",
 		trace.WithAttributes(
 			attribute.String("message_id", msg.ID),
@@ -140,9 +137,7 @@ func (ps *GCPPubSubService) messageHandler(ctx context.Context, msg *pubsub.Mess
 		return
 	}
 
-	// Only ack on success
 	msg.Ack()
 
-	// Record success in span
 	span.SetAttributes(attribute.String("status", "success"))
 } 

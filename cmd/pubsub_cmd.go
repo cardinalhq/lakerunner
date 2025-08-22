@@ -113,9 +113,6 @@ func init() {
 				return fmt.Errorf("failed to create GCP Pub/Sub backend: %w", err)
 			}
 
-			slog.Info("Starting GCP Pub/Sub service",
-				slog.String("backend", backend.GetName()))
-
 			return backend.Run(doneCtx)
 		},
 	}
