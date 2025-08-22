@@ -125,12 +125,10 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp stora
 
 	tmpfilename, _, is404, err := s3helper.DownloadS3Object(ctx, tmpdir, s3client, inf.Bucket, inf.ObjectID)
 	if err != nil {
-		// TODO add counter for download errors
 		ll.Error("Failed to download S3 object", slog.Any("error", err))
 		return err
 	}
 	if is404 {
-		// TODO add counter for missing files
 		ll.Info("S3 object not found, deleting inqueue work item", slog.String("bucket", inf.Bucket), slog.String("objectID", inf.ObjectID))
 		return nil
 	}
