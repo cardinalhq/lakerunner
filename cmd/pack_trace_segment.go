@@ -12,20 +12,6 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-// Copyright (C) 2025 CardinalHQ, Inc
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Affero General Public License as
-// published by the GNU Affero General Public License, version 3.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR ANY PURPOSE. See the
-// GNU Affero General Public License for more details.
-//
-// You should have received a copy of the GNU Affero General Public License
-// along with this program. If not, see <http://www.gnu.org/licenses/>.
-
 package cmd
 
 import (
@@ -37,6 +23,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/filecrunch"
+	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -53,7 +40,6 @@ func downloadAndOpenTraceSegments(
 	ctx context.Context,
 	sp storageprofile.StorageProfile,
 	dateint int32,
-	slotID int32,
 	group []lrdb.GetTraceSegmentsForCompactionRow,
 	tmpdir string,
 	bucket string,
@@ -66,10 +52,8 @@ func downloadAndOpenTraceSegments(
 			return nil, err
 		}
 
-		// Create S3 object ID for traces
-		// Format: db/<org-id>/<dateint>/traces/<segment_id>.parquet
-		objectID := fmt.Sprintf("db/%s/%d/traces/%d.parquet",
-			sp.OrganizationID, dateint, seg.SegmentID)
+		hour := s3helper.HourFromMillis(seg.StartTs)
+		objectID := helpers.MakeDBObjectID(sp.OrganizationID, sp.CollectorName, dateint, hour, seg.SegmentID, "traces")
 
 		// Download the trace segment
 		tmpfile, _, is404, err := fetcher.Download(ctx, bucket, objectID, tmpdir)
@@ -172,7 +156,7 @@ func packTraceSegment(
 	open := fileOpenerAdapter{}
 	wf := writerFactoryAdapter{}
 
-	opened, err := downloadAndOpenTraceSegments(ctx, sp, dateint, slotID, group, tmpdir, sp.Bucket, fetcher, open)
+	opened, err := downloadAndOpenTraceSegments(ctx, sp, dateint, group, tmpdir, sp.Bucket, fetcher, open)
 	if err != nil {
 		ll.Error("Failed to download and open trace segments", slog.String("error", err.Error()))
 		return err
@@ -254,10 +238,16 @@ func packTraceSegment(
 	}
 
 	newSegmentID := s3helper.GenerateID()
+	newObjectID := helpers.MakeDBObjectID(
+		sp.OrganizationID, sp.CollectorName, dateint, s3helper.HourFromMillis(stats.FirstTS), newSegmentID, "traces",
+	)
 
-	// Create S3 object ID for the new consolidated trace file
-	newObjectID := fmt.Sprintf("db/%s/%d/traces/%d.parquet",
-		sp.OrganizationID, dateint, newSegmentID)
+	ll.Info("Uploading compacted file to S3",
+		slog.Int64("fileSize", fi.Size()),
+		slog.String("objectID", newObjectID),
+		slog.Int64("segmentID", newSegmentID),
+		slog.Int64("recordCount", writeResult.RecordCount),
+		slog.Int("segmentCount", len(usedSegs)))
 
 	if err := s3helper.UploadS3Object(ctx, s3Client, sp.Bucket, newObjectID, writeResult.FileName); err != nil {
 		ll.Error("S3 upload failed", slog.String("error", err.Error()))
