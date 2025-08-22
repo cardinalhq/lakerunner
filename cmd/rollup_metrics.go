@@ -151,6 +151,7 @@ func metricRollupItemDo(
 		Dateint:        inf.Dateint(),
 		FrequencyMs:    previousFrequency,
 		InstanceNum:    inf.InstanceNum(),
+		SlotID:         inf.SlotId(),
 		StartTs:        st.Time.UTC().UnixMilli(),
 		EndTs:          et.Time.UTC().UnixMilli(),
 	})
@@ -168,6 +169,7 @@ func metricRollupItemDo(
 		Dateint:        inf.Dateint(),
 		FrequencyMs:    inf.FrequencyMs(),
 		InstanceNum:    inf.InstanceNum(),
+		SlotID:         inf.SlotId(),
 		StartTs:        st.Time.UTC().UnixMilli(),
 		EndTs:          et.Time.UTC().UnixMilli(),
 	})
@@ -375,6 +377,7 @@ func rollupInterval(
 			FrequencyMs:    row.FrequencyMs,
 			SegmentID:      row.SegmentID,
 			InstanceNum:    row.InstanceNum,
+			SlotID:         row.SlotID,
 			TidPartition:   row.TidPartition,
 		})
 	}

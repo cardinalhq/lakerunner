@@ -37,6 +37,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/cmd/ingestlogs"
+	"github.com/cardinalhq/lakerunner/cmd/ingestmetrics"
 	"github.com/cardinalhq/lakerunner/fileconv/proto"
 	"github.com/cardinalhq/lakerunner/fileconv/translate"
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
@@ -474,6 +475,9 @@ func writeMetricSketchParquet(ctx context.Context, tmpdir string, blocknum int64
 			return fmt.Errorf("uploading file to S3: %w", err)
 		}
 
+		// Calculate slot ID for partitioning
+		slotID := ingestmetrics.DetermineMetricSlot(block.FrequencyMS, dateint, inf.OrganizationID.String())
+
 		t0 := time.Now()
 		err = mdb.InsertMetricSegment(ctx, lrdb.InsertMetricSegmentParams{
 			OrganizationID: inf.OrganizationID,
@@ -483,6 +487,7 @@ func writeMetricSketchParquet(ctx context.Context, tmpdir string, blocknum int64
 			TidPartition:   0,
 			SegmentID:      segmentID,
 			InstanceNum:    inf.InstanceNum,
+			SlotID:         int32(slotID),
 			StartTs:        startTS,
 			EndTs:          endTS,
 			RecordCount:    stat.RecordCount,
