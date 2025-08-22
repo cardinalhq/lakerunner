@@ -4,3 +4,4 @@ CREATE TABLE test_table (
     name TEXT NOT NULL
 );
 -- Add another line to test no duplicate comments
+-- Add a comment to test no duplicate success comments
