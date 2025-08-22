@@ -618,13 +618,6 @@ func convertMetricsProtoFile(ll *slog.Logger, tmpfilename, tmpdir, bucket, objec
 
 	mapper := translate.NewMapper()
 
-	// Use the parsed metrics directly
-	r, err := proto.NewMetricsProtoReaderFromMetrics(&metrics, mapper, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer r.Close()
-
 	nmb := buffet.NewNodeMapBuilder()
 
 	baseitems := map[string]string{
@@ -633,8 +626,12 @@ func convertMetricsProtoFile(ll *slog.Logger, tmpfilename, tmpdir, bucket, objec
 		"resource.file.type":   ingestlogs.GetFileType(objectID),
 	}
 
-	// First pass: read all rows to build complete schema
-	allRows := make([]map[string]any, 0)
+	// Pass 1: build schema using MetricsProtoReader
+	r, err := proto.NewMetricsProtoReaderFromMetrics(&metrics, mapper, nil)
+	if err != nil {
+		return nil, err
+	}
+	rowCount := 0
 	for {
 		row, done, err := r.GetRow()
 		if err != nil {
@@ -644,20 +641,19 @@ func convertMetricsProtoFile(ll *slog.Logger, tmpfilename, tmpdir, bucket, objec
 			break
 		}
 
-		// Add base items to the row
 		for k, v := range baseitems {
 			row[k] = v
 		}
 
-		// Add row to schema builder
 		if err := nmb.Add(row); err != nil {
 			return nil, fmt.Errorf("failed to add row to schema: %w", err)
 		}
-
-		allRows = append(allRows, row)
+		rowCount++
 	}
-
-	if len(allRows) == 0 {
+	if err := r.Close(); err != nil {
+		return nil, err
+	}
+	if rowCount == 0 {
 		return nil, fmt.Errorf("no rows processed")
 	}
 
@@ -674,11 +670,30 @@ func convertMetricsProtoFile(ll *slog.Logger, tmpfilename, tmpdir, bucket, objec
 		}
 	}()
 
-	// Second pass: write all rows
-	for _, row := range allRows {
+	// Pass 2: write rows directly to the writer
+	r, err = proto.NewMetricsProtoReaderFromMetrics(&metrics, mapper, nil)
+	if err != nil {
+		return nil, err
+	}
+	for {
+		row, done, err := r.GetRow()
+		if err != nil {
+			return nil, err
+		}
+		if done {
+			break
+		}
+
+		for k, v := range baseitems {
+			row[k] = v
+		}
+
 		if err := w.Write(row); err != nil {
 			return nil, fmt.Errorf("failed to write row: %w", err)
 		}
+	}
+	if err := r.Close(); err != nil {
+		return nil, err
 	}
 
 	result, err := w.Close()
