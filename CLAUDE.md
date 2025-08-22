@@ -27,6 +27,7 @@ It ingests structured telemetry data (CSV, Parquet, JSON.gz) from sources like O
 1. **Code Generation**
    - Run `make generate` after modifying SQL queries.
    - Never modify generated files manually.
+   - Install the Buf CLI with `make bin/buf` to support protobuf generation (binary is placed in `./bin`).
 
 2. **Testing & Validation**
    - `make test` for full suite with regeneration.
@@ -54,6 +55,7 @@ It ingests structured telemetry data (CSV, Parquet, JSON.gz) from sources like O
 - **Build:** `make local` (binary in `./bin/lakerunner`)
 - **Check & Test:** `make test`, `make test-only`, `make check`
 - **Codegen:** `make generate`
+- **Proto tooling:** `make bin/buf` (installs Buf in `./bin`)
 - **Lint & Format:** `make lint`, `make imports-fix`
 - **License:** `make license-check`
 - **Migrations:** `make new-migration name=migration_name`
