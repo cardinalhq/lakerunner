@@ -37,6 +37,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/filecrunch"
+	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -66,10 +67,8 @@ func downloadAndOpenTraceSegments(
 			return nil, err
 		}
 
-		// Create S3 object ID for traces
-		// Format: db/<org-id>/<dateint>/traces/<segment_id>.parquet
-		objectID := fmt.Sprintf("db/%s/%d/traces/%d.parquet",
-			sp.OrganizationID, dateint, seg.SegmentID)
+		hour := s3helper.HourFromMillis(seg.StartTs)
+		objectID := helpers.MakeDBObjectID(sp.OrganizationID, sp.CollectorName, dateint, hour, seg.SegmentID, "traces")
 
 		// Download the trace segment
 		tmpfile, _, is404, err := fetcher.Download(ctx, bucket, objectID, tmpdir)
