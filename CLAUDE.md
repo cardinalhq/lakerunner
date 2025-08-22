@@ -135,6 +135,23 @@ Rules:
 
 ---
 
+## Health Checks
+
+Worker services provide HTTP health check endpoints for Kubernetes monitoring:
+
+- **`/healthz`** – Main health check endpoint (200 when healthy, 503 when not)
+- **`/readyz`** – Readiness probe (200 when ready to accept traffic)
+- **`/livez`** – Liveness probe (200 unless service is completely broken)
+
+Services with health checks:
+- **query-api** – Query API server
+- **query-worker** – Query worker service  
+- **sweeper** – Background cleanup service
+
+Health check responses include JSON with status, timestamp, and service name.
+
+---
+
 ## Storage Profiles & Configuration
 
 Configuration is YAML-based:
@@ -158,6 +175,11 @@ Configuration is YAML-based:
 - `MIGRATION_CHECK_TIMEOUT` – maximum time to wait for migrations to complete (default: 60s)
 - `MIGRATION_CHECK_RETRY_INTERVAL` – interval between migration version checks (default: 5s)
 - `MIGRATION_CHECK_ALLOW_DIRTY` – allow connections to databases with dirty migration state (default: false)
+
+**Health Check Environment Variables:**
+
+- `HEALTH_CHECK_PORT` – port for HTTP health check server (default: 8090)
+- `HEALTH_CHECK_SERVICE_NAME` – service name in health check responses (default: command-specific)
 
 ---
 

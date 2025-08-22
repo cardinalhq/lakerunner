@@ -23,6 +23,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
+	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/promql"
 )
 
@@ -41,6 +42,16 @@ func init() {
 			defer func() {
 				if err := doneFx(); err != nil {
 					slog.Error("Error shutting down telemetry", slog.Any("error", err))
+				}
+			}()
+
+			// Start health check server
+			healthConfig := healthcheck.GetConfigFromEnv()
+			healthServer := healthcheck.NewServer(healthConfig)
+
+			go func() {
+				if err := healthServer.Start(doneCtx); err != nil {
+					slog.Error("Health check server stopped", slog.Any("error", err))
 				}
 			}()
 
@@ -72,6 +83,9 @@ func init() {
 				slog.Error("Failed to create querier service", slog.Any("error", err))
 				return fmt.Errorf("failed to create querier service: %w", err)
 			}
+
+			// Mark as healthy once all services are ready
+			healthServer.SetStatus(healthcheck.StatusHealthy)
 
 			return querier.Run(doneCtx)
 		},
