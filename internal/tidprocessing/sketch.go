@@ -16,11 +16,26 @@ package tidprocessing
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/DataDog/sketches-go/ddsketch"
 	"github.com/DataDog/sketches-go/ddsketch/mapping"
 	"github.com/DataDog/sketches-go/ddsketch/store"
 )
+
+var (
+	defaultRelAcc  = 0.01
+	mappingOnce    sync.Once
+	sharedMapping  mapping.IndexMapping
+	mappingInitErr error
+)
+
+func getSharedMapping() (mapping.IndexMapping, error) {
+	mappingOnce.Do(func() {
+		sharedMapping, mappingInitErr = mapping.NewLogarithmicMapping(defaultRelAcc)
+	})
+	return sharedMapping, mappingInitErr
+}
 
 func EncodeSketch(sketch *ddsketch.DDSketch) []byte {
 	var buf []byte
@@ -29,15 +44,11 @@ func EncodeSketch(sketch *ddsketch.DDSketch) []byte {
 }
 
 func DecodeSketch(data []byte) (*ddsketch.DDSketch, error) {
-	m, err := mapping.NewLogarithmicMapping(0.01)
+	m, err := getSharedMapping()
 	if err != nil {
 		return nil, err
 	}
-	sk, err := ddsketch.DecodeDDSketch(data, store.DefaultProvider, m)
-	if err != nil {
-		return nil, err
-	}
-	return sk, nil
+	return ddsketch.DecodeDDSketch(data, store.DefaultProvider, m)
 }
 
 func Merge(sketch *ddsketch.DDSketch, other *ddsketch.DDSketch) error {

@@ -62,19 +62,23 @@ func NewTracesProtoReader(fname string, mapper *translate.Mapper, tags map[strin
 	if err != nil {
 		return nil, fmt.Errorf("failed to open file %s: %w", fname, err)
 	}
+	defer file.Close()
 
 	traces, err := parseProtoToOtelTraces(file)
 	if err != nil {
-		file.Close()
 		return nil, fmt.Errorf("failed to parse proto to OTEL traces: %w", err)
 	}
 
+	return NewTracesProtoReaderFromTraces(traces, mapper, tags)
+}
+
+func NewTracesProtoReaderFromTraces(traces *ptrace.Traces, mapper *translate.Mapper, tags map[string]string) (*TracesProtoReader, error) {
 	translator := otel.NewTableTranslator()
 	idg := idgen.NewULIDGenerator()
 
 	return &TracesProtoReader{
-		fname:                fname,
-		file:                 nil, // File is closed after parsing
+		fname:                "",
+		file:                 nil,
 		traces:               traces,
 		currentResourceIndex: 0,
 		spanQueue:            nil,
