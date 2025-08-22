@@ -39,6 +39,7 @@ import (
 
 	oteltranslate "github.com/cardinalhq/oteltools/pkg/translate"
 	mapset "github.com/deckarep/golang-set/v2"
+	"go.opentelemetry.io/collector/pdata/ptrace"
 
 	"github.com/cardinalhq/lakerunner/cmd/ingestlogs"
 	"github.com/cardinalhq/lakerunner/fileconv/proto"
@@ -81,15 +82,23 @@ func ConvertProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate 
 	// Create a mapper for protobuf files
 	mapper := translate.NewMapper()
 
-	// Create a traces protobuf reader using the mapper
-	r, err := proto.NewTracesProtoReader(tmpfilename, mapper, nil)
+	data, err := os.ReadFile(tmpfilename)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read file %s: %w", tmpfilename, err)
+	}
+
+	unmarshaler := &ptrace.ProtoUnmarshaler{}
+	traces, err := unmarshaler.UnmarshalTraces(data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal protobuf traces: %w", err)
+	}
+
+	// Pass 1: traverse reader to build complete schema
+	r, err := proto.NewTracesProtoReaderFromTraces(&traces, mapper, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create traces proto reader: %w", err)
 	}
-	defer r.Close()
 
-	// First pass: read all rows to build complete schema
-	allRows := make([]map[string]any, 0)
 	nmb := buffet.NewNodeMapBuilder()
 
 	// Add base items to schema builder
@@ -106,65 +115,30 @@ func ConvertProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate 
 		}
 	}
 
-	// Accumulate set of fingerprints across all rows
-	fingerprints := mapset.NewSet[int64]()
-
-	// Read all rows and build complete schema
+	// Read all rows once to build complete schema
 	for {
 		row, done, err := r.GetRow()
 		if err != nil {
+			r.Close()
 			return nil, fmt.Errorf("failed to get row from traces reader: %w", err)
 		}
 		if done {
 			break
 		}
 
-		// Add base items to the row
 		for k, v := range baseitems {
 			row[k] = v
 		}
 
-		// Get fingerprints for this row based on its tag name-value pairs
-		rowTagValues := make(map[string]mapset.Set[string])
-		for tagName, tagValue := range row {
-			var tagValueStr string
-			switch v := tagValue.(type) {
-			case string:
-				tagValueStr = v
-			case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
-				tagValueStr = fmt.Sprintf("%d", v)
-			case float32, float64:
-				tagValueStr = fmt.Sprintf("%f", v)
-			default:
-				tagValueStr = fmt.Sprintf("%v", v)
-			}
-
-			if _, exists := rowTagValues[tagName]; !exists {
-				rowTagValues[tagName] = mapset.NewSet[string]()
-			}
-			rowTagValues[tagName].Add(tagValueStr)
-		}
-
-		// Get fingerprints for this row and add to global set
-		rowFingerprints := logcrunch.ToFingerprints(rowTagValues)
-		rowFingerprints.Each(func(fingerprint int64) bool {
-			fingerprints.Add(fingerprint)
-			return false
-		})
-
-		// Add row to schema builder
 		if err := nmb.Add(row); err != nil {
+			r.Close()
 			return nil, fmt.Errorf("failed to add row to schema: %w", err)
 		}
-
-		allRows = append(allRows, row)
 	}
 
-	if len(allRows) == 0 {
-		return nil, fmt.Errorf("no rows processed")
-	}
+	r.Close()
 
-	// Build complete schema from all rows
+	// Build complete schema
 	completeSchema := nmb.Build()
 
 	// Create NumTracePartitions BuffetWriters, one per slot, all using the complete schema
@@ -190,26 +164,67 @@ func ConvertProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate 
 	// Track timestamp ranges for each slot (similar to how logs track hourly boundaries)
 	slotTimestampRanges := make(map[int]*SlotTimestampRange)
 
-	// Second pass: route each row to the appropriate slot based on trace ID
-	for _, row := range allRows {
-		// Extract trace ID from the row - use the correct field name
+	// Second pass: stream rows directly into slot writers
+	r2, err := proto.NewTracesProtoReaderFromTraces(&traces, mapper, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create traces proto reader: %w", err)
+	}
+	defer r2.Close()
+
+	fingerprints := mapset.NewSet[int64]()
+
+	for {
+		row, done, err := r2.GetRow()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get row from traces reader: %w", err)
+		}
+		if done {
+			break
+		}
+
+		for k, v := range baseitems {
+			row[k] = v
+		}
+
 		traceID, ok := row[oteltranslate.CardinalFieldSpanTraceID].(string)
 		if !ok {
-			// If no trace ID, use a default slot (0)
 			traceID = "unknown"
 		}
 
-		// Extract timestamp from the row
 		timestamp, ok := row[oteltranslate.CardinalFieldTimestamp].(int64)
 		if !ok {
-			// If no timestamp, skip this row or use a default
 			continue
 		}
 
-		// Determine which slot this trace should go to
+		// Collect fingerprints for this row
+		rowTagValues := make(map[string]mapset.Set[string])
+		for tagName, tagValue := range row {
+			var tagValueStr string
+			switch v := tagValue.(type) {
+			case string:
+				tagValueStr = v
+			case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+				tagValueStr = fmt.Sprintf("%d", v)
+			case float32, float64:
+				tagValueStr = fmt.Sprintf("%f", v)
+			default:
+				tagValueStr = fmt.Sprintf("%v", v)
+			}
+
+			if _, exists := rowTagValues[tagName]; !exists {
+				rowTagValues[tagName] = mapset.NewSet[string]()
+			}
+			rowTagValues[tagName].Add(tagValueStr)
+		}
+
+		rowFingerprints := logcrunch.ToFingerprints(rowTagValues)
+		rowFingerprints.Each(func(fp int64) bool {
+			fingerprints.Add(fp)
+			return false
+		})
+
 		slot := determineSlot(traceID, dateint, orgID)
 
-		// Track timestamp range for this slot
 		if slotRange, exists := slotTimestampRanges[slot]; exists {
 			if timestamp < slotRange.MinTimestamp {
 				slotRange.MinTimestamp = timestamp
@@ -224,13 +239,11 @@ func ConvertProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate 
 			}
 		}
 
-		// Get the writer for this slot
 		writer, exists := writers[slot]
 		if !exists {
 			return nil, fmt.Errorf("writer for slot %d not found", slot)
 		}
 
-		// Write the row to the appropriate slot
 		if err := writer.Write(row); err != nil {
 			return nil, fmt.Errorf("failed to write row to slot %d: %w", slot, err)
 		}
