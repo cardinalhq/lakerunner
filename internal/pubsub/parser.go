@@ -34,7 +34,8 @@ type s3Event struct {
 				Name string `json:"name"`
 			} `json:"bucket"`
 			Object struct {
-				Key string `json:"key"`
+				Key  string `json:"key"`
+				Size int64  `json:"size"`
 			} `json:"object"`
 		} `json:"s3"`
 	} `json:"Records"`
@@ -99,6 +100,7 @@ func parseS3LikeEvents(raw []byte) ([]lrdb.Inqueue, error) {
 			ObjectID:       key,
 			TelemetryType:  telem,
 			CollectorName:  collector,
+			FileSize:       rec.S3.Object.Size,
 		}
 		out = append(out, iq)
 	}

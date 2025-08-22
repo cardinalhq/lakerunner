@@ -85,7 +85,7 @@ func init() {
 				}
 			}()
 
-			return IngestLoop(loop, metricIngestItem)
+			return IngestLoopWithBatch(loop, metricIngestItem, metricIngestBatch)
 		},
 	}
 
@@ -799,4 +799,240 @@ func upsertServiceIdentifierDirect(ctx context.Context, mdb lrdb.StoreFull, orgI
 	}
 
 	return result.ID, nil
+}
+
+func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
+	awsmanager *awsclient.Manager, items []lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
+
+	if len(items) == 0 {
+		return fmt.Errorf("empty batch")
+	}
+
+	ll.Info("Processing metrics batch", slog.Int("batchSize", len(items)))
+
+	var profile storageprofile.StorageProfile
+	var err error
+
+	firstItem := items[0]
+	if collectorName := helpers.ExtractCollectorName(firstItem.ObjectID); collectorName != "" {
+		profile, err = sp.GetStorageProfileForOrganizationAndCollector(ctx, firstItem.OrganizationID, collectorName)
+		if err != nil {
+			return fmt.Errorf("failed to get storage profile for collector %s: %w", collectorName, err)
+		}
+	} else {
+		profile, err = sp.GetStorageProfileForOrganizationAndInstance(ctx, firstItem.OrganizationID, firstItem.InstanceNum)
+		if err != nil {
+			return fmt.Errorf("failed to get storage profile for organization and instance: %w", err)
+		}
+	}
+
+	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
+	if err != nil {
+		return fmt.Errorf("failed to get S3 client: %w", err)
+	}
+
+	// Collect all TimeBlocks from all items
+	allTimeBlocks := make(map[int64]*TimeBlock)
+
+	for _, inf := range items {
+		ll.Info("Processing batch item",
+			slog.String("itemID", inf.ID.String()),
+			slog.String("objectID", inf.ObjectID),
+			slog.Int64("fileSize", inf.FileSize))
+
+		itemTmpdir := fmt.Sprintf("%s/item_%s", tmpdir, inf.ID.String())
+		if err := os.MkdirAll(itemTmpdir, 0755); err != nil {
+			return fmt.Errorf("creating item tmpdir: %w", err)
+		}
+
+		tmpfilename, _, is404, err := s3helper.DownloadS3Object(ctx, itemTmpdir, s3client, inf.Bucket, inf.ObjectID)
+		if err != nil {
+			return fmt.Errorf("failed to download file %s: %w", inf.ObjectID, err)
+		}
+		if is404 {
+			ll.Warn("S3 object not found, skipping", slog.String("itemID", inf.ID.String()), slog.String("objectID", inf.ObjectID))
+			continue
+		}
+
+		filenames := []string{tmpfilename}
+
+		if !strings.HasPrefix(inf.ObjectID, "otel-raw/") {
+			if strings.HasPrefix(inf.ObjectID, "db/") {
+				continue
+			}
+			if fnames, err := convertMetricsFileIfSupported(ll, tmpfilename, itemTmpdir, inf.Bucket, inf.ObjectID, rpfEstimate, loop.exemplarProcessor, inf.OrganizationID.String()); err != nil {
+				return fmt.Errorf("failed to convert metrics file %s: %w", inf.ObjectID, err)
+			} else if fnames != nil {
+				filenames = fnames
+			}
+		}
+
+		// Process each converted file using existing crunchMetricFile logic but accumulate into shared blocks
+		for _, fname := range filenames {
+			fh, err := filecrunch.LoadSchemaForFile(fname)
+			if err != nil {
+				return fmt.Errorf("failed to load schema for file %s: %w", fname, err)
+			}
+
+			if err := crunchMetricFileToBatch(ctx, ll, fh, allTimeBlocks); err != nil {
+				fh.Close()
+				return fmt.Errorf("failed to crunch metric file %s: %w", fname, err)
+			}
+			fh.Close()
+		}
+	}
+
+	if len(allTimeBlocks) == 0 {
+		ll.Info("No time blocks to process in batch")
+		return nil
+	}
+
+	// Process all collected time blocks
+	for blocknum, block := range allTimeBlocks {
+		ll.Info("Writing metric time block from batch",
+			slog.Int64("blocknum", blocknum),
+			slog.Int("nSketches", len(*block.Sketches)),
+			slog.Int64("frequencyMS", int64(block.FrequencyMS)),
+			slog.Int64("startTS", block.Block*int64(block.FrequencyMS)),
+			slog.Int64("endTS", (block.Block+1)*int64(block.FrequencyMS)-1))
+
+		if err := writeMetricSketchParquet(ctx, tmpdir, blocknum, block, firstItem, s3client, ll, mdb, ingest_dateint, rpfEstimate); err != nil {
+			return fmt.Errorf("failed to write metric sketch parquet for block %d: %w", blocknum, err)
+		}
+	}
+
+	return nil
+}
+
+func crunchMetricFileToBatch(ctx context.Context, ll *slog.Logger, fh *filecrunch.FileHandle, allTimeBlocks map[int64]*TimeBlock) error {
+	reader := parquet.NewReader(fh.File, fh.Schema)
+	defer reader.Close()
+
+	for {
+		rec := map[string]any{}
+		if err := reader.Read(&rec); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return fmt.Errorf("reading parquet: %w", err)
+		}
+		delete(rec, "_cardinalhq.id")
+
+		ts, ok := helpers.GetInt64Value(rec, "_cardinalhq.timestamp")
+		if !ok {
+			ll.Warn("Skipping record without timestamp", slog.Any("record", rec))
+			continue
+		}
+		delete(rec, "_cardinalhq.timestamp")
+
+		metricType, ok := helpers.GetStringValue(rec, "_cardinalhq.metric_type")
+		if !ok {
+			ll.Warn("Skipping record without metric type", slog.Any("record", rec))
+			continue
+		}
+		if metricType == "count" || metricType == "gauge" {
+			delete(rec, "_cardinalhq.bucket_bounds")
+			delete(rec, "_cardinalhq.counts")
+			delete(rec, "_cardinalhq.negative_counts")
+			delete(rec, "_cardinalhq.positive_counts")
+		} else {
+			delete(rec, "_cardinalhq.value")
+		}
+
+		metricName, ok := helpers.GetStringValue(rec, "_cardinalhq.name")
+		if !ok {
+			ll.Warn("Skipping record without metric name", slog.Any("record", rec))
+			continue
+		}
+
+		const frequencyMS = 10000 // 10 seconds
+		blocknum := ts / frequencyMS
+		rec["_cardinalhq.timestamp"] = blocknum * frequencyMS
+
+		block, exists := allTimeBlocks[blocknum]
+		if !exists {
+			block = &TimeBlock{
+				Block:       blocknum,
+				FrequencyMS: frequencyMS,
+				Sketches:    &map[int64]TagSketch{},
+				nodebuilder: buffet.NewNodeMapBuilder(),
+			}
+			allTimeBlocks[blocknum] = block
+		}
+
+		tags := helpers.MakeTags(rec)
+		if err := block.nodebuilder.Add(tags); err != nil {
+			return fmt.Errorf("adding tags to node builder: %w", err)
+		}
+
+		tid := helpers.ComputeTID(metricName, tags)
+		tags["_cardinalhq.tid"] = fmt.Sprintf("%d", tid)
+
+		sketch, exists := (*block.Sketches)[tid]
+		if !exists {
+			sketch = TagSketch{
+				MetricName: metricName,
+				MetricType: metricType,
+				Tags:       tags,
+				Sketch:     nil,
+			}
+			s, err := ddsketch.NewDefaultDDSketch(0.01)
+			if err != nil {
+				return fmt.Errorf("creating sketch: %w", err)
+			}
+			sketch.Sketch = s
+			(*block.Sketches)[tid] = sketch
+		} else {
+			if sketch.MetricName != metricName {
+				return fmt.Errorf("metric name mismatch for TID %d: existing %s, new %s", tid, sketch.MetricName, metricName)
+			}
+			if sketch.MetricType != metricType {
+				return fmt.Errorf("metric type mismatch for TID %d: existing %s, new %s", tid, sketch.MetricType, metricType)
+			}
+			diff := helpers.MatchTags(sketch.Tags, tags)
+			if len(diff) > 0 {
+				return fmt.Errorf("tag mismatch for TID %d: diff %v", tid, diff)
+			}
+		}
+
+		switch metricType {
+		case "count", "gauge":
+			value, ok := helpers.GetFloat64Value(rec, "_cardinalhq.value")
+			if !ok {
+				ll.Warn("Skipping record without value", slog.Any("record", rec))
+				continue
+			}
+			rec["_cardinalhq.value"] = -1
+			if err := sketch.Sketch.Add(value); err != nil {
+				return fmt.Errorf("adding value to sketch: %w", err)
+			}
+		case "histogram":
+			bucketCounts, ok := helpers.GetFloat64SliceJSON(rec, "_cardinalhq.counts")
+			if !ok {
+				ll.Warn("Skipping histogram record without counts", slog.Any("record", rec))
+				continue
+			}
+			delete(rec, "_cardinalhq.counts")
+			bucketBounds, ok := helpers.GetFloat64SliceJSON(rec, "_cardinalhq.bucket_bounds")
+			if !ok {
+				ll.Warn("Skipping histogram record without bucket bounds", slog.Any("record", rec))
+				continue
+			}
+			delete(rec, "_cardinalhq.bucket_bounds")
+			counts, values := handleHistogram(bucketCounts, bucketBounds)
+			if len(counts) == 0 {
+				continue
+			}
+			for i, count := range counts {
+				if err := sketch.Sketch.AddWithCount(values[i], count); err != nil {
+					return fmt.Errorf("adding histogram value to sketch: %w", err)
+				}
+			}
+		default:
+			ll.Info("Skipping unsupported metric type", slog.String("metricType", metricType))
+			continue
+		}
+	}
+
+	return nil
 }

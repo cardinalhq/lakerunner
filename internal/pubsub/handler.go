@@ -136,6 +136,7 @@ func handleMessage(ctx context.Context, msg []byte, sp storageprofile.StoragePro
 			ObjectID:       item.ObjectID,
 			TelemetryType:  item.TelemetryType,
 			Priority:       0,
+			FileSize:       item.FileSize,
 		})
 		if err != nil {
 			return fmt.Errorf("failed to insert inqueue work: %w", err)
