@@ -237,5 +237,5 @@ func FormatTSRange(tsRange pgtype.Range[pgtype.Timestamptz]) string {
 
 	// Format as "2006-01-02T15:04:05 1h30m"
 	duration := tr.Duration()
-	return fmt.Sprintf("%s %s", tr.Start.Format("2006-01-02T15:04:05"), FormatDuration(duration))
+	return fmt.Sprintf("%s +%s", tr.Start.Format("2006-01-02T15:04:05"), FormatDuration(duration))
 }

@@ -763,9 +763,9 @@ func TestFormatDuration(t *testing.T) {
 
 func TestFormatTSRange(t *testing.T) {
 	tests := []struct {
-		name     string
-		tsRange  pgtype.Range[pgtype.Timestamptz]
-		want     string
+		name    string
+		tsRange pgtype.Range[pgtype.Timestamptz]
+		want    string
 	}{
 		{
 			name: "invalid range",
@@ -783,7 +783,7 @@ func TestFormatTSRange(t *testing.T) {
 				Upper:     pgtype.Timestamptz{Time: time.Date(2025, 8, 23, 14, 59, 0, 0, time.UTC), Valid: true},
 				Valid:     true,
 			},
-			want: "2025-08-23T13:59:00 1h",
+			want: "2025-08-23T13:59:00 +1h",
 		},
 		{
 			name: "50 seconds range",
@@ -794,7 +794,7 @@ func TestFormatTSRange(t *testing.T) {
 				Upper:     pgtype.Timestamptz{Time: time.Date(2025, 8, 23, 14, 2, 50, 0, time.UTC), Valid: true},
 				Valid:     true,
 			},
-			want: "2025-08-23T14:02:00 50s",
+			want: "2025-08-23T14:02:00 +50s",
 		},
 		{
 			name: "1 minute 30 seconds range",
@@ -805,7 +805,7 @@ func TestFormatTSRange(t *testing.T) {
 				Upper:     pgtype.Timestamptz{Time: time.Date(2025, 8, 23, 13, 57, 30, 0, time.UTC), Valid: true},
 				Valid:     true,
 			},
-			want: "2025-08-23T13:56:00 1m30s",
+			want: "2025-08-23T13:56:00 +1m30s",
 		},
 		{
 			name: "2 hours 15 minutes range",
@@ -816,7 +816,7 @@ func TestFormatTSRange(t *testing.T) {
 				Upper:     pgtype.Timestamptz{Time: time.Date(2025, 8, 23, 12, 15, 0, 0, time.UTC), Valid: true},
 				Valid:     true,
 			},
-			want: "2025-08-23T10:00:00 2h15m",
+			want: "2025-08-23T10:00:00 +2h15m",
 		},
 	}
 
