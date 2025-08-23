@@ -312,17 +312,17 @@ func (w *Writer) Close() ([]Result, error) {
 			}
 		}
 
-		for k, v := range row {
-			if v != nil {
-				switch v.(type) {
-				case string:
-					if _, ok := distinctValuesByKey[k]; !ok {
-						distinctValuesByKey[k] = mapset.NewSet[string]()
-					}
-					distinctValuesByKey[k].Add(v.(string))
-				default:
-				}
+		for k, val := range row {
+			s, ok := val.(string)
+			if !ok || s == "" {
+				continue
 			}
+			set := distinctValuesByKey[k]
+			if set == nil {
+				set = mapset.NewSet[string]()
+				distinctValuesByKey[k] = set
+			}
+			set.Add(s)
 		}
 
 		if w.rowsPerFile > 0 && rowsInFile >= w.rowsPerFile &&
