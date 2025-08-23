@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package logcrunch
+package buffet
 
 import (
 	"container/heap"
@@ -22,13 +22,11 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"slices"
 	"sort"
 
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/parquet-go/parquet-go"
 
-	"github.com/cardinalhq/lakerunner/internal/buffet"
 	"github.com/cardinalhq/lakerunner/internal/filecrunch"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 )
@@ -54,7 +52,6 @@ type HourlyResult struct {
 type gs struct {
 	chunks  []string
 	buf     []map[string]any
-	prints  mapset.Set[int64]
 	firstTS int64
 	lastTS  int64
 }
@@ -89,8 +86,7 @@ func ProcessAndSplit(ll *slog.Logger, fh *filecrunch.FileHandle, tmpdir string, 
 		st, exists := groups[key]
 		if !exists {
 			st = &gs{
-				buf:    make([]map[string]any, 0, maxRowsSortBuffer),
-				prints: mapset.NewSet[int64](),
+				buf: make([]map[string]any, 0, maxRowsSortBuffer),
 			}
 			groups[key] = st
 		}
@@ -111,8 +107,6 @@ func ProcessAndSplit(ll *slog.Logger, fh *filecrunch.FileHandle, tmpdir string, 
 		if ms > st.lastTS {
 			st.lastTS = ms
 		}
-
-		addfp(fh.Schema, row, st.prints)
 	}
 
 	// flush remaining buffers
@@ -130,7 +124,7 @@ func ProcessAndSplit(ll *slog.Logger, fh *filecrunch.FileHandle, tmpdir string, 
 		if len(st.chunks) == 0 {
 			continue
 		}
-		w, err := buffet.NewWriter(fh.File.Name(), tmpdir, fh.Nodes, rpfEstimate)
+		w, err := NewWriter(fh.File.Name(), tmpdir, fh.Nodes, rpfEstimate)
 		if err != nil {
 			return nil, err
 		}
@@ -143,9 +137,6 @@ func ProcessAndSplit(ll *slog.Logger, fh *filecrunch.FileHandle, tmpdir string, 
 		}
 
 		// Handle multiple files from buffet writer
-		// Distribute fingerprints and time ranges across all files
-		fingerprintsPerFile := distributeFingerprints(st.prints, len(res))
-
 		for i, fileResult := range res {
 			fileKey := key
 			fileKey.FileIndex = int16(i)
@@ -154,38 +145,13 @@ func ProcessAndSplit(ll *slog.Logger, fh *filecrunch.FileHandle, tmpdir string, 
 				FileName:     fileResult.FileName,
 				RecordCount:  fileResult.RecordCount,
 				FileSize:     fileResult.FileSize,
-				Fingerprints: fingerprintsPerFile[i],
+				Fingerprints: fileResult.Fingerprints,
 				FirstTS:      st.firstTS, // All files share same time range bounds
 				LastTS:       st.lastTS,
 			}
 		}
 	}
 	return results, nil
-}
-
-// distributeFingerprints distributes fingerprints evenly across multiple files
-// Since we can't know which records went to which file without expensive tracking,
-// we distribute them evenly. This is a reasonable approximation for deduplication.
-func distributeFingerprints(allFingerprints mapset.Set[int64], numFiles int) []mapset.Set[int64] {
-	if numFiles <= 1 {
-		return []mapset.Set[int64]{allFingerprints}
-	}
-
-	fingerprints := allFingerprints.ToSlice()
-	result := make([]mapset.Set[int64], numFiles)
-
-	// Initialize each set
-	for i := range result {
-		result[i] = mapset.NewSet[int64]()
-	}
-
-	// Distribute fingerprints round-robin across files
-	for i, fp := range fingerprints {
-		fileIndex := i % numFiles
-		result[fileIndex].Add(fp)
-	}
-
-	return result
 }
 
 func getMS(v any) int64 {
@@ -276,7 +242,7 @@ func (h *chunkHeap) Pop() any {
 	return x
 }
 
-func mergeChunks(w *buffet.Writer, paths []string) ([]buffet.Result, error) {
+func mergeChunks(w *Writer, paths []string) ([]Result, error) {
 	h := &chunkHeap{}
 	for _, p := range paths {
 		cr, err := newChunkReader(p)
@@ -308,44 +274,6 @@ func mergeChunks(w *buffet.Writer, paths []string) ([]buffet.Result, error) {
 		_ = os.Remove(p)
 	}
 	return res, err
-}
-
-func addfp(schema *parquet.Schema, row map[string]any, accum mapset.Set[int64]) {
-	vals := make(map[string]mapset.Set[string])
-	for _, cols := range schema.Columns() {
-		for _, col := range cols {
-			vals[col] = mapset.NewSet[string]()
-		}
-	}
-
-	seenrows := map[string]struct{}{}
-	for k, v := range row {
-		if v != nil {
-			if !slices.Contains(DimensionsToIndex, k) && asString(v) != "" {
-				vals[k].Add(ExistsRegex)
-				seenrows[k] = struct{}{}
-				continue
-			}
-			s := asString(v)
-			if s == "" {
-				continue
-			}
-			vals[k].Add(s)
-			seenrows[k] = struct{}{}
-
-		}
-	}
-
-	// remove any columns in vals that are not in seenrows
-	for k := range vals {
-		if _, ok := seenrows[k]; !ok {
-			delete(vals, k)
-		}
-	}
-
-	for f := range ToFingerprints(vals).Iter() {
-		accum.Add(f)
-	}
 }
 
 func asString(v any) string {

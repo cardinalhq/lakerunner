@@ -112,11 +112,11 @@ func TestPackMetricSegments(t *testing.T) {
 			expectedGroups:       2,
 			validateGroups: func(t *testing.T, groups [][]lrdb.MetricSeg) {
 				require.Len(t, groups, 2)
-				
+
 				// First group: just the 600 record segment
 				assert.Len(t, groups[0], 1)
 				assert.Equal(t, int64(600), groups[0][0].RecordCount)
-				
+
 				// Second group: 500 + 300 = 800 records
 				assert.Len(t, groups[1], 2)
 				totalRecords := int64(0)
@@ -160,16 +160,16 @@ func TestPackMetricSegments(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			groups, err := PackMetricSegments(tt.segments, tt.estimatedRecordCount)
-			
+
 			if tt.expectedError != "" {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tt.expectedError)
 				return
 			}
-			
+
 			require.NoError(t, err)
 			assert.Len(t, groups, tt.expectedGroups)
-			
+
 			if tt.validateGroups != nil {
 				tt.validateGroups(t, groups)
 			}
@@ -242,8 +242,8 @@ func TestShouldCompactMetricGroupAdditionalCases(t *testing.T) {
 		{
 			name: "mixed small and large files",
 			segments: []lrdb.MetricSeg{
-				{FileSize: targetFileSize / 10},     // Small file
-				{FileSize: targetFileSize * 3},      // Large file
+				{FileSize: targetFileSize / 10}, // Small file
+				{FileSize: targetFileSize * 3},  // Large file
 			},
 			expected: true,
 		},

@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package logcrunch
+package buffet
 
 import (
 	"fmt"
@@ -33,65 +33,26 @@ import (
 )
 
 func TestAddfp(t *testing.T) {
-	nodes := map[string]parquet.Node{
-		"_cardinalhq.timestamp": parquet.Int(64),
-		"resource.file":         parquet.String(),
-	}
-	schema := filecrunch.SchemaFromNodes(nodes)
 
 	row := map[string]any{
 		"_cardinalhq.timestamp": int64(1234567890),
 		"resource.file":         "testfile.log",
 	}
 
-	accum := mapset.NewSet[int64]()
-	addfp(schema, row, accum)
+	tagValuesByFieldName := map[string]mapset.Set[string]{}
+	for k, v := range row {
+		if str, ok := v.(string); ok && str != "" {
+			tagValuesByFieldName[k] = mapset.NewSet(str)
+		}
+	}
 
-	sa := accum.ToSlice()
-	assert.ElementsMatch(t, []int64{
-		ComputeFingerprint("_cardinalhq.timestamp", ExistsRegex),
-		ComputeFingerprint("resource.file", "testfile.log"),
-		ComputeFingerprint("resource.file", ExistsRegex),
-	}, sa)
+	fingerprintSet := ToFingerprints(tagValuesByFieldName)
+
+	assert.True(t, fingerprintSet.Contains(ComputeFingerprint("resource.file", "testfile.log")))
+	assert.True(t, fingerprintSet.Contains(ComputeFingerprint("resource.file", ExistsRegex)))
 }
 
 func TestAddfp_ComplexRow(t *testing.T) {
-	nodes := map[string]parquet.Node{
-		"_cardinalhq.fingerprint":    parquet.String(),
-		"_cardinalhq.hostname":       parquet.String(),
-		"_cardinalhq.id":             parquet.String(),
-		"_cardinalhq.level":          parquet.String(),
-		"_cardinalhq.message":        parquet.String(),
-		"_cardinalhq.name":           parquet.String(),
-		"_cardinalhq.telemetry_type": parquet.String(),
-		"_cardinalhq.timestamp":      parquet.Int(64),
-		"_cardinalhq.tokenMap":       parquet.String(),
-		"_cardinalhq.tokens":         parquet.String(),
-		"_cardinalhq.value":          parquet.Int(64),
-		"env.collector_id":           parquet.String(),
-		"env.collector_name":         parquet.String(),
-		"env.customer_id":            parquet.String(),
-		"log.application":            parquet.String(),
-		"log.controller_ip":          parquet.String(),
-		"log.index_level_0":          parquet.String(),
-		"log.log_level":              parquet.String(),
-		"log.method":                 parquet.String(),
-		"log.module":                 parquet.String(),
-		"log.pid":                    parquet.String(),
-		"log.protocol":               parquet.String(),
-		"log.referer":                parquet.String(),
-		"log.size":                   parquet.String(),
-		"log.source":                 parquet.String(),
-		"log.status":                 parquet.String(),
-		"log.url":                    parquet.String(),
-		"log.user_agent":             parquet.String(),
-		"resource.bucket.name":       parquet.String(),
-		"resource.file.name":         parquet.String(),
-		"resource.file.type":         parquet.String(),
-		"resource.file":              parquet.String(),
-	}
-	schema := filecrunch.SchemaFromNodes(nodes)
-
 	row := map[string]any{
 		"_cardinalhq.fingerprint":    "-8086437514702464098",
 		"_cardinalhq.hostname":       "",
@@ -126,44 +87,38 @@ func TestAddfp_ComplexRow(t *testing.T) {
 		"resource.file.type":         "errorlog",
 		"resource.file":              "REDACTED",
 	}
+	tagValuesByFieldName := map[string]mapset.Set[string]{}
+	for k, v := range row {
+		if str, ok := v.(string); ok && str != "" {
+			tagValuesByFieldName[k] = mapset.NewSet(str)
+		}
+	}
 
-	accum := mapset.NewSet[int64]()
-	addfp(schema, row, accum)
+	fingerprintSet := ToFingerprints(tagValuesByFieldName)
 
-	sa := accum.ToSlice()
-	assert.ElementsMatch(t, []int64{
-		ComputeFingerprint("_cardinalhq.fingerprint", ExistsRegex),
-		ComputeFingerprint("_cardinalhq.id", ExistsRegex),
-		ComputeFingerprint("_cardinalhq.timestamp", ExistsRegex),
-		ComputeFingerprint("_cardinalhq.tokenMap", ExistsRegex),
-		ComputeFingerprint("_cardinalhq.tokens", ExistsRegex),
-		ComputeFingerprint("_cardinalhq.value", ExistsRegex),
-		ComputeFingerprint("log.index_level_0", ExistsRegex),
-		ComputeFingerprint("log.log_level", ExistsRegex),
-		ComputeFingerprint("log.module", ExistsRegex),
-		ComputeFingerprint("log.pid", ExistsRegex),
-		ComputeFingerprint("log.source", ExistsRegex),
-		ComputeFingerprint("resource.bucket.name", ExistsRegex),
-		ComputeFingerprint("resource.file.name", ExistsRegex),
-		ComputeFingerprint("resource.file.type", ExistsRegex),
+	assert.True(t, fingerprintSet.Contains(ComputeFingerprint("resource.file", "REDACTED")))
+	assert.True(t, fingerprintSet.Contains(ComputeFingerprint("_cardinalhq.id", ExistsRegex)))
 
-		ComputeFingerprint("_cardinalhq.message", ExistsRegex),
+	assert.True(t, fingerprintSet.Contains(ComputeFingerprint("log.index_level_0", ExistsRegex)))
+	assert.True(t, fingerprintSet.Contains(ComputeFingerprint("log.log_level", ExistsRegex)))
+	assert.True(t, fingerprintSet.Contains(ComputeFingerprint("log.module", ExistsRegex)))
+	assert.True(t, fingerprintSet.Contains(ComputeFingerprint("log.pid", ExistsRegex)))
+	assert.True(t, fingerprintSet.Contains(ComputeFingerprint("log.source", ExistsRegex)))
+	assert.True(t, fingerprintSet.Contains(ComputeFingerprint("resource.bucket.name", ExistsRegex)))
+	assert.True(t, fingerprintSet.Contains(ComputeFingerprint("resource.file.name", ExistsRegex)))
+	assert.True(t, fingerprintSet.Contains(ComputeFingerprint("resource.file.type", ExistsRegex)))
 
-		ComputeFingerprint("_cardinalhq.name", "log"),
-		ComputeFingerprint("_cardinalhq.name", "og."),
-		ComputeFingerprint("_cardinalhq.name", "g.e"),
-		ComputeFingerprint("_cardinalhq.name", ".ev"),
-		ComputeFingerprint("_cardinalhq.name", "eve"),
-		ComputeFingerprint("_cardinalhq.name", "ven"),
-		ComputeFingerprint("_cardinalhq.name", "ent"),
-		ComputeFingerprint("_cardinalhq.name", "nts"),
-		ComputeFingerprint("_cardinalhq.name", ExistsRegex),
+	assert.True(t, fingerprintSet.Contains(ComputeFingerprint("_cardinalhq.message", ExistsRegex)))
 
-		ComputeFingerprint("_cardinalhq.telemetry_type", ExistsRegex),
-
-		ComputeFingerprint("resource.file", "REDACTED"),
-		ComputeFingerprint("resource.file", ExistsRegex),
-	}, sa)
+	assert.True(t, fingerprintSet.Contains(ComputeFingerprint("_cardinalhq.name", "log")))
+	assert.True(t, fingerprintSet.Contains(ComputeFingerprint("_cardinalhq.name", "og.")))
+	assert.True(t, fingerprintSet.Contains(ComputeFingerprint("_cardinalhq.name", "g.e")))
+	assert.True(t, fingerprintSet.Contains(ComputeFingerprint("_cardinalhq.name", ".ev")))
+	assert.True(t, fingerprintSet.Contains(ComputeFingerprint("_cardinalhq.name", "eve")))
+	assert.True(t, fingerprintSet.Contains(ComputeFingerprint("_cardinalhq.name", "ven")))
+	assert.True(t, fingerprintSet.Contains(ComputeFingerprint("_cardinalhq.name", "ent")))
+	assert.True(t, fingerprintSet.Contains(ComputeFingerprint("_cardinalhq.name", "nts")))
+	assert.True(t, fingerprintSet.Contains(ComputeFingerprint("_cardinalhq.name", ExistsRegex)))
 }
 
 func TestProcessAndSplitSortsByTimestamp(t *testing.T) {

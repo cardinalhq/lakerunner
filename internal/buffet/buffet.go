@@ -31,6 +31,7 @@ import (
 	"encoding/gob"
 	"errors"
 	"fmt"
+	mapset "github.com/deckarep/golang-set/v2"
 	"io"
 	"os"
 	"sort"
@@ -79,10 +80,11 @@ type Writer struct {
 }
 
 type Result struct {
-	FileName    string // path to the .parquet file, in temp dir
-	RecordCount int64  // how many rows in this file
-	FileSize    int64  // size of the Parquet file in bytes
-	Stats       any    // stats from StatsAccumulator, if provided
+	FileName     string // path to the .parquet file, in temp dir
+	RecordCount  int64  // how many rows in this file
+	FileSize     int64  // size of the Parquet file in bytes
+	Stats        any    // stats from StatsAccumulator, if provided
+	Fingerprints mapset.Set[int64]
 }
 
 func init() {
@@ -292,6 +294,7 @@ func (w *Writer) Close() ([]Result, error) {
 
 	var results []Result
 	var prevRow map[string]any
+	distinctValuesByKey := make(map[string]mapset.Set[string])
 
 	for {
 		var row map[string]any
@@ -309,13 +312,29 @@ func (w *Writer) Close() ([]Result, error) {
 			}
 		}
 
+		for k, v := range row {
+			if v != nil {
+				switch v.(type) {
+				case string:
+					if _, ok := distinctValuesByKey[k]; !ok {
+						distinctValuesByKey[k] = mapset.NewSet[string]()
+					}
+					distinctValuesByKey[k].Add(v.(string))
+				default:
+				}
+			}
+		}
+
 		if w.rowsPerFile > 0 && rowsInFile >= w.rowsPerFile &&
 			!(w.groupFunc != nil && prevRow != nil && w.groupFunc(prevRow, row)) {
 			closeCurrent()
+			fingerprints := ToFingerprints(distinctValuesByKey)
 			results = append(results, Result{
-				FileName:    outFile.Name(),
-				RecordCount: rowsInFile,
+				FileName:     outFile.Name(),
+				RecordCount:  rowsInFile,
+				Fingerprints: fingerprints,
 			})
+			distinctValuesByKey = make(map[string]mapset.Set[string])
 			if err := openNext(); err != nil {
 				return nil, fmt.Errorf("buffet: open next parquet file: %w", err)
 			}

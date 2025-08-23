@@ -665,7 +665,7 @@ func convertMetricsProtoFile(ll *slog.Logger, tmpfilename, tmpdir, bucket, objec
 
 	defer func() {
 		_, err := w.Close()
-		if err != buffet.ErrAlreadyClosed && err != nil {
+		if !errors.Is(err, buffet.ErrAlreadyClosed) && err != nil {
 			slog.Error("Failed to close writer", slog.Any("error", err))
 		}
 	}()

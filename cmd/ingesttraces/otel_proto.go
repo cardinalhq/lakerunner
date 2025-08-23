@@ -41,7 +41,6 @@ import (
 	"github.com/cardinalhq/lakerunner/fileconv/proto"
 	"github.com/cardinalhq/lakerunner/fileconv/translate"
 	"github.com/cardinalhq/lakerunner/internal/buffet"
-	"github.com/cardinalhq/lakerunner/internal/logcrunch"
 )
 
 // ConvertProtoFile converts a protobuf file to the standardized format
@@ -184,7 +183,7 @@ func ConvertProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate 
 			rowTagValues[tagName].Add(tagValueStr)
 		}
 
-		rowFingerprints := logcrunch.ToFingerprints(rowTagValues)
+		rowFingerprints := buffet.ToFingerprints(rowTagValues)
 		rowFingerprints.Each(func(fp int64) bool {
 			fingerprints.Add(fp)
 			return false
@@ -235,7 +234,7 @@ func ConvertProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate 
 				SlotID:       slot,
 				MinTimestamp: timestampRange.MinTimestamp,
 				MaxTimestamp: timestampRange.MaxTimestamp,
-				Fingerprints: fingerprints,
+				Fingerprints: res.Fingerprints,
 			})
 		}
 	}

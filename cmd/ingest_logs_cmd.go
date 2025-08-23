@@ -36,7 +36,6 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/buffet"
 	"github.com/cardinalhq/lakerunner/internal/filecrunch"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
-	"github.com/cardinalhq/lakerunner/internal/logcrunch"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -165,7 +164,7 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp stora
 		defer func() {
 			_ = fh.Close()
 		}()
-		splitResults, err := logcrunch.ProcessAndSplit(ll, fh, tmpdir, ingest_dateint, rpfEstimate)
+		splitResults, err := buffet.ProcessAndSplit(ll, fh, tmpdir, ingest_dateint, rpfEstimate)
 		if err != nil {
 			ll.Error("Failed to fingerprint file", slog.Any("error", err))
 			return err
@@ -572,7 +571,7 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 		return fmt.Errorf("creating batch tmpdir: %w", err)
 	}
 
-	finalResults := make(map[logcrunch.SplitKey]logcrunch.HourlyResult)
+	finalResults := make(map[buffet.SplitKey]buffet.HourlyResult)
 
 	for _, fname := range allParquetFiles {
 		fh, err := filecrunch.LoadSchemaForFile(fname)
@@ -580,7 +579,7 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 			return fmt.Errorf("failed to open converted file %s: %w", fname, err)
 		}
 
-		fileResults, err := logcrunch.ProcessAndSplit(ll, fh, batchTmpdir, ingest_dateint, rpfEstimate)
+		fileResults, err := buffet.ProcessAndSplit(ll, fh, batchTmpdir, ingest_dateint, rpfEstimate)
 		fh.Close()
 		if err != nil {
 			return fmt.Errorf("failed to process and split file %s: %w", fname, err)

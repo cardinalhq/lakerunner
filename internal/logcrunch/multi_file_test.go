@@ -15,6 +15,7 @@
 package logcrunch
 
 import (
+	"github.com/cardinalhq/lakerunner/internal/buffet"
 	"io"
 	"log/slog"
 	"os"
@@ -75,11 +76,11 @@ func TestMultipleFilesPerHour(t *testing.T) {
 	ingestDateint := int32(20230101)
 
 	ll := slog.New(slog.NewTextHandler(io.Discard, nil))
-	results, err := ProcessAndSplit(ll, fh, tmpdir, ingestDateint, smallRpfEstimate)
+	results, err := buffet.ProcessAndSplit(ll, fh, tmpdir, ingestDateint, smallRpfEstimate)
 	require.NoError(t, err)
 
 	// Should get multiple files for the same hour
-	hourKeys := make([]SplitKey, 0)
+	hourKeys := make([]buffet.SplitKey, 0)
 	totalRecords := int64(0)
 
 	for key, result := range results {
@@ -176,7 +177,7 @@ func TestSingleFileWhenUnderLimit(t *testing.T) {
 	ingestDateint := int32(20230101)
 
 	ll := slog.New(slog.NewTextHandler(io.Discard, nil))
-	results, err := ProcessAndSplit(ll, fh, tmpdir, ingestDateint, largeRpfEstimate)
+	results, err := buffet.ProcessAndSplit(ll, fh, tmpdir, ingestDateint, largeRpfEstimate)
 	require.NoError(t, err)
 
 	// Should get exactly one file
