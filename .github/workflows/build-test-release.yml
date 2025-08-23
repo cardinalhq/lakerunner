@@ -50,7 +50,12 @@ jobs:
           go-version: stable
 
       - shell: bash
-        run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+        run: |
+          BRANCH=$(echo "$GITHUB_REF_NAME" | tr '/' '-')
+          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
+          sha_short=$(git rev-parse --short HEAD)
+          echo "sha_short=$sha_short" >> $GITHUB_ENV
+          echo "GORELEASER_CURRENT_TAG=v0.0.0-$BRANCH-$sha_short" >> $GITHUB_ENV
 
       - uses: actions/cache@v4
         with:
@@ -64,7 +69,7 @@ jobs:
         with:
           distribution: goreleaser-pro
           version: "~> v2"
-          args: release --clean --split --snapshot --config .goreleaser.test-release.yaml
+          args: release --clean --split --config .goreleaser.test-release.yaml
         env:
           GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
           DUCKDB_SDK_VERSION: v1.3.2
@@ -100,7 +105,12 @@ jobs:
           registry-type: public
 
       - shell: bash
-        run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+        run: |
+          BRANCH=$(echo "$GITHUB_REF_NAME" | tr '/' '-')
+          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
+          sha_short=$(git rev-parse --short HEAD)
+          echo "sha_short=$sha_short" >> $GITHUB_ENV
+          echo "GORELEASER_CURRENT_TAG=v0.0.0-$BRANCH-$sha_short" >> $GITHUB_ENV
 
       - uses: actions/cache@v4
         with:
@@ -118,13 +128,13 @@ jobs:
         with:
           distribution: goreleaser-pro
           version: "~> v2"
-          args: continue --merge --snapshot --config .goreleaser.test-release.yaml
+          args: continue --merge --config .goreleaser.test-release.yaml
         env:
           GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
           DUCKDB_SDK_VERSION: v1.3.2
 
       - name: Output built images
         run: |
-          BRANCH=$(echo "$GITHUB_REF_NAME" | tr '/' '-')
           echo "Test release built successfully!"
-          echo "Image: public.ecr.aws/cardinalhq.io/lakerunner:v0.0.0-$BRANCH-$sha_short"
+          echo "Image: public.ecr.aws/cardinalhq.io/lakerunner:$GORELEASER_CURRENT_TAG"
+
