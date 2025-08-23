@@ -364,6 +364,11 @@ func ingestFilesBatch(
 		return processSingleItem(ctx, loop, processFx, batchRowToInqueue(items[0]))
 	}
 
+	// Safety check: ensure all records in the batch are for the same organization
+	if err := validateBatchOrganizationConsistency(items); err != nil {
+		return true, false, err
+	}
+
 	ll := loop.ll.With(
 		slog.Int("batchSize", len(items)),
 		slog.String("organizationID", items[0].OrganizationID.String()),
@@ -510,4 +515,20 @@ func processSingleItem(ctx context.Context, loop *IngestLoopContext, processFx I
 		ll.Error("Failed to complete work", slog.Any("error", err))
 	}
 	return false, true, nil
+}
+
+// validateBatchOrganizationConsistency ensures all items in a batch belong to the same organization
+func validateBatchOrganizationConsistency(items []lrdb.ClaimInqueueWorkBatchRow) error {
+	if len(items) <= 1 {
+		return nil // Single item or empty batch is always safe
+	}
+
+	expectedOrgID := items[0].OrganizationID
+	for i, item := range items {
+		if item.OrganizationID != expectedOrgID {
+			return fmt.Errorf("batch safety check failed: item %d has organization ID %s, expected %s",
+				i, item.OrganizationID.String(), expectedOrgID.String())
+		}
+	}
+	return nil
 }
