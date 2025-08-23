@@ -275,19 +275,3 @@ func mergeChunks(w *Writer, paths []string) ([]Result, error) {
 	}
 	return res, err
 }
-
-func asString(v any) string {
-	if v == nil {
-		return ""
-	}
-	switch val := v.(type) {
-	case string:
-		return val
-	case int, int8, int16, int32, int64:
-		return fmt.Sprintf("%d", val)
-	case float32, float64:
-		return fmt.Sprintf("%f", val)
-	default:
-		return fmt.Sprintf("%v", v)
-	}
-}
