@@ -23,6 +23,7 @@ package adminproto
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	wrapperspb "google.golang.org/protobuf/types/known/wrapperspb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -411,12 +412,352 @@ func (x *InQueueItem) GetTelemetryType() string {
 	return ""
 }
 
+type Organization struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Enabled       bool                   `protobuf:"varint,3,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Organization) Reset() {
+	*x = Organization{}
+	mi := &file_admin_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Organization) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Organization) ProtoMessage() {}
+
+func (x *Organization) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Organization.ProtoReflect.Descriptor instead.
+func (*Organization) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *Organization) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *Organization) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *Organization) GetEnabled() bool {
+	if x != nil {
+		return x.Enabled
+	}
+	return false
+}
+
+type ListOrganizationsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListOrganizationsRequest) Reset() {
+	*x = ListOrganizationsRequest{}
+	mi := &file_admin_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListOrganizationsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListOrganizationsRequest) ProtoMessage() {}
+
+func (x *ListOrganizationsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListOrganizationsRequest.ProtoReflect.Descriptor instead.
+func (*ListOrganizationsRequest) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{9}
+}
+
+type ListOrganizationsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Organizations []*Organization        `protobuf:"bytes,1,rep,name=organizations,proto3" json:"organizations,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListOrganizationsResponse) Reset() {
+	*x = ListOrganizationsResponse{}
+	mi := &file_admin_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListOrganizationsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListOrganizationsResponse) ProtoMessage() {}
+
+func (x *ListOrganizationsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListOrganizationsResponse.ProtoReflect.Descriptor instead.
+func (*ListOrganizationsResponse) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *ListOrganizationsResponse) GetOrganizations() []*Organization {
+	if x != nil {
+		return x.Organizations
+	}
+	return nil
+}
+
+type CreateOrganizationRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Enabled       bool                   `protobuf:"varint,2,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateOrganizationRequest) Reset() {
+	*x = CreateOrganizationRequest{}
+	mi := &file_admin_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateOrganizationRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateOrganizationRequest) ProtoMessage() {}
+
+func (x *CreateOrganizationRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateOrganizationRequest.ProtoReflect.Descriptor instead.
+func (*CreateOrganizationRequest) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *CreateOrganizationRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *CreateOrganizationRequest) GetEnabled() bool {
+	if x != nil {
+		return x.Enabled
+	}
+	return false
+}
+
+type CreateOrganizationResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Organization  *Organization          `protobuf:"bytes,1,opt,name=organization,proto3" json:"organization,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateOrganizationResponse) Reset() {
+	*x = CreateOrganizationResponse{}
+	mi := &file_admin_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateOrganizationResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateOrganizationResponse) ProtoMessage() {}
+
+func (x *CreateOrganizationResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateOrganizationResponse.ProtoReflect.Descriptor instead.
+func (*CreateOrganizationResponse) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *CreateOrganizationResponse) GetOrganization() *Organization {
+	if x != nil {
+		return x.Organization
+	}
+	return nil
+}
+
+type UpdateOrganizationRequest struct {
+	state         protoimpl.MessageState  `protogen:"open.v1"`
+	Id            string                  `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Name          *wrapperspb.StringValue `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Enabled       *wrapperspb.BoolValue   `protobuf:"bytes,3,opt,name=enabled,proto3" json:"enabled,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateOrganizationRequest) Reset() {
+	*x = UpdateOrganizationRequest{}
+	mi := &file_admin_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateOrganizationRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateOrganizationRequest) ProtoMessage() {}
+
+func (x *UpdateOrganizationRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateOrganizationRequest.ProtoReflect.Descriptor instead.
+func (*UpdateOrganizationRequest) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *UpdateOrganizationRequest) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *UpdateOrganizationRequest) GetName() *wrapperspb.StringValue {
+	if x != nil {
+		return x.Name
+	}
+	return nil
+}
+
+func (x *UpdateOrganizationRequest) GetEnabled() *wrapperspb.BoolValue {
+	if x != nil {
+		return x.Enabled
+	}
+	return nil
+}
+
+type UpdateOrganizationResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Organization  *Organization          `protobuf:"bytes,1,opt,name=organization,proto3" json:"organization,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateOrganizationResponse) Reset() {
+	*x = UpdateOrganizationResponse{}
+	mi := &file_admin_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateOrganizationResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateOrganizationResponse) ProtoMessage() {}
+
+func (x *UpdateOrganizationResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateOrganizationResponse.ProtoReflect.Descriptor instead.
+func (*UpdateOrganizationResponse) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *UpdateOrganizationResponse) GetOrganization() *Organization {
+	if x != nil {
+		return x.Organization
+	}
+	return nil
+}
+
 var File_admin_proto protoreflect.FileDescriptor
 
 const file_admin_proto_rawDesc = "" +
 	"\n" +
 	"\vadmin.proto\x12\n" +
-	"adminproto\"'\n" +
+	"adminproto\x1a\x1egoogle/protobuf/wrappers.proto\"'\n" +
 	"\vPingRequest\x12\x18\n" +
 	"\amessage\x18\x01 \x01(\tR\amessage\"c\n" +
 	"\fPingResponse\x12\x18\n" +
@@ -435,11 +776,32 @@ const file_admin_proto_rawDesc = "" +
 	"\x05items\x18\x01 \x03(\v2\x17.adminproto.InQueueItemR\x05items\"J\n" +
 	"\vInQueueItem\x12\x14\n" +
 	"\x05count\x18\x01 \x01(\x03R\x05count\x12%\n" +
-	"\x0etelemetry_type\x18\x02 \x01(\tR\rtelemetryType2\xfb\x01\n" +
+	"\x0etelemetry_type\x18\x02 \x01(\tR\rtelemetryType\"L\n" +
+	"\fOrganization\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x18\n" +
+	"\aenabled\x18\x03 \x01(\bR\aenabled\"\x1a\n" +
+	"\x18ListOrganizationsRequest\"[\n" +
+	"\x19ListOrganizationsResponse\x12>\n" +
+	"\rorganizations\x18\x01 \x03(\v2\x18.adminproto.OrganizationR\rorganizations\"I\n" +
+	"\x19CreateOrganizationRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
+	"\aenabled\x18\x02 \x01(\bR\aenabled\"Z\n" +
+	"\x1aCreateOrganizationResponse\x12<\n" +
+	"\forganization\x18\x01 \x01(\v2\x18.adminproto.OrganizationR\forganization\"\x93\x01\n" +
+	"\x19UpdateOrganizationRequest\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x120\n" +
+	"\x04name\x18\x02 \x01(\v2\x1c.google.protobuf.StringValueR\x04name\x124\n" +
+	"\aenabled\x18\x03 \x01(\v2\x1a.google.protobuf.BoolValueR\aenabled\"Z\n" +
+	"\x1aUpdateOrganizationResponse\x12<\n" +
+	"\forganization\x18\x01 \x01(\v2\x18.adminproto.OrganizationR\forganization2\xa7\x04\n" +
 	"\fAdminService\x129\n" +
 	"\x04Ping\x12\x17.adminproto.PingRequest\x1a\x18.adminproto.PingResponse\x12Z\n" +
 	"\x0fWorkQueueStatus\x12\".adminproto.WorkQueueStatusRequest\x1a#.adminproto.WorkQueueStatusResponse\x12T\n" +
-	"\rInQueueStatus\x12 .adminproto.InQueueStatusRequest\x1a!.adminproto.InQueueStatusResponseB-Z+github.com/cardinalhq/lakerunner/adminprotob\x06proto3"
+	"\rInQueueStatus\x12 .adminproto.InQueueStatusRequest\x1a!.adminproto.InQueueStatusResponse\x12`\n" +
+	"\x11ListOrganizations\x12$.adminproto.ListOrganizationsRequest\x1a%.adminproto.ListOrganizationsResponse\x12c\n" +
+	"\x12CreateOrganization\x12%.adminproto.CreateOrganizationRequest\x1a&.adminproto.CreateOrganizationResponse\x12c\n" +
+	"\x12UpdateOrganization\x12%.adminproto.UpdateOrganizationRequest\x1a&.adminproto.UpdateOrganizationResponseB-Z+github.com/cardinalhq/lakerunner/adminprotob\x06proto3"
 
 var (
 	file_admin_proto_rawDescOnce sync.Once
@@ -453,31 +815,51 @@ func file_admin_proto_rawDescGZIP() []byte {
 	return file_admin_proto_rawDescData
 }
 
-var file_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
 var file_admin_proto_goTypes = []any{
-	(*PingRequest)(nil),             // 0: adminproto.PingRequest
-	(*PingResponse)(nil),            // 1: adminproto.PingResponse
-	(*WorkQueueStatusRequest)(nil),  // 2: adminproto.WorkQueueStatusRequest
-	(*WorkQueueStatusResponse)(nil), // 3: adminproto.WorkQueueStatusResponse
-	(*WorkQueueItem)(nil),           // 4: adminproto.WorkQueueItem
-	(*InQueueStatusRequest)(nil),    // 5: adminproto.InQueueStatusRequest
-	(*InQueueStatusResponse)(nil),   // 6: adminproto.InQueueStatusResponse
-	(*InQueueItem)(nil),             // 7: adminproto.InQueueItem
+	(*PingRequest)(nil),                // 0: adminproto.PingRequest
+	(*PingResponse)(nil),               // 1: adminproto.PingResponse
+	(*WorkQueueStatusRequest)(nil),     // 2: adminproto.WorkQueueStatusRequest
+	(*WorkQueueStatusResponse)(nil),    // 3: adminproto.WorkQueueStatusResponse
+	(*WorkQueueItem)(nil),              // 4: adminproto.WorkQueueItem
+	(*InQueueStatusRequest)(nil),       // 5: adminproto.InQueueStatusRequest
+	(*InQueueStatusResponse)(nil),      // 6: adminproto.InQueueStatusResponse
+	(*InQueueItem)(nil),                // 7: adminproto.InQueueItem
+	(*Organization)(nil),               // 8: adminproto.Organization
+	(*ListOrganizationsRequest)(nil),   // 9: adminproto.ListOrganizationsRequest
+	(*ListOrganizationsResponse)(nil),  // 10: adminproto.ListOrganizationsResponse
+	(*CreateOrganizationRequest)(nil),  // 11: adminproto.CreateOrganizationRequest
+	(*CreateOrganizationResponse)(nil), // 12: adminproto.CreateOrganizationResponse
+	(*UpdateOrganizationRequest)(nil),  // 13: adminproto.UpdateOrganizationRequest
+	(*UpdateOrganizationResponse)(nil), // 14: adminproto.UpdateOrganizationResponse
+	(*wrapperspb.StringValue)(nil),     // 15: google.protobuf.StringValue
+	(*wrapperspb.BoolValue)(nil),       // 16: google.protobuf.BoolValue
 }
 var file_admin_proto_depIdxs = []int32{
-	4, // 0: adminproto.WorkQueueStatusResponse.items:type_name -> adminproto.WorkQueueItem
-	7, // 1: adminproto.InQueueStatusResponse.items:type_name -> adminproto.InQueueItem
-	0, // 2: adminproto.AdminService.Ping:input_type -> adminproto.PingRequest
-	2, // 3: adminproto.AdminService.WorkQueueStatus:input_type -> adminproto.WorkQueueStatusRequest
-	5, // 4: adminproto.AdminService.InQueueStatus:input_type -> adminproto.InQueueStatusRequest
-	1, // 5: adminproto.AdminService.Ping:output_type -> adminproto.PingResponse
-	3, // 6: adminproto.AdminService.WorkQueueStatus:output_type -> adminproto.WorkQueueStatusResponse
-	6, // 7: adminproto.AdminService.InQueueStatus:output_type -> adminproto.InQueueStatusResponse
-	5, // [5:8] is the sub-list for method output_type
-	2, // [2:5] is the sub-list for method input_type
-	2, // [2:2] is the sub-list for extension type_name
-	2, // [2:2] is the sub-list for extension extendee
-	0, // [0:2] is the sub-list for field type_name
+	4,  // 0: adminproto.WorkQueueStatusResponse.items:type_name -> adminproto.WorkQueueItem
+	7,  // 1: adminproto.InQueueStatusResponse.items:type_name -> adminproto.InQueueItem
+	8,  // 2: adminproto.ListOrganizationsResponse.organizations:type_name -> adminproto.Organization
+	8,  // 3: adminproto.CreateOrganizationResponse.organization:type_name -> adminproto.Organization
+	15, // 4: adminproto.UpdateOrganizationRequest.name:type_name -> google.protobuf.StringValue
+	16, // 5: adminproto.UpdateOrganizationRequest.enabled:type_name -> google.protobuf.BoolValue
+	8,  // 6: adminproto.UpdateOrganizationResponse.organization:type_name -> adminproto.Organization
+	0,  // 7: adminproto.AdminService.Ping:input_type -> adminproto.PingRequest
+	2,  // 8: adminproto.AdminService.WorkQueueStatus:input_type -> adminproto.WorkQueueStatusRequest
+	5,  // 9: adminproto.AdminService.InQueueStatus:input_type -> adminproto.InQueueStatusRequest
+	9,  // 10: adminproto.AdminService.ListOrganizations:input_type -> adminproto.ListOrganizationsRequest
+	11, // 11: adminproto.AdminService.CreateOrganization:input_type -> adminproto.CreateOrganizationRequest
+	13, // 12: adminproto.AdminService.UpdateOrganization:input_type -> adminproto.UpdateOrganizationRequest
+	1,  // 13: adminproto.AdminService.Ping:output_type -> adminproto.PingResponse
+	3,  // 14: adminproto.AdminService.WorkQueueStatus:output_type -> adminproto.WorkQueueStatusResponse
+	6,  // 15: adminproto.AdminService.InQueueStatus:output_type -> adminproto.InQueueStatusResponse
+	10, // 16: adminproto.AdminService.ListOrganizations:output_type -> adminproto.ListOrganizationsResponse
+	12, // 17: adminproto.AdminService.CreateOrganization:output_type -> adminproto.CreateOrganizationResponse
+	14, // 18: adminproto.AdminService.UpdateOrganization:output_type -> adminproto.UpdateOrganizationResponse
+	13, // [13:19] is the sub-list for method output_type
+	7,  // [7:13] is the sub-list for method input_type
+	7,  // [7:7] is the sub-list for extension type_name
+	7,  // [7:7] is the sub-list for extension extendee
+	0,  // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_admin_proto_init() }
@@ -491,7 +873,7 @@ func file_admin_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_admin_proto_rawDesc), len(file_admin_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   8,
+			NumMessages:   15,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

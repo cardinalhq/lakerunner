@@ -16,6 +16,8 @@ syntax = "proto3";
 
 package adminproto;
 
+import "google/protobuf/wrappers.proto";
+
 option go_package = "github.com/cardinalhq/lakerunner/adminproto";
 
 service AdminService {
@@ -27,6 +29,15 @@ service AdminService {
 
   // Get inqueue status/summary
   rpc InQueueStatus(InQueueStatusRequest) returns (InQueueStatusResponse);
+
+  // List organizations in the system
+  rpc ListOrganizations(ListOrganizationsRequest) returns (ListOrganizationsResponse);
+
+  // Create a new organization
+  rpc CreateOrganization(CreateOrganizationRequest) returns (CreateOrganizationResponse);
+
+  // Update fields on an existing organization
+  rpc UpdateOrganization(UpdateOrganizationRequest) returns (UpdateOrganizationResponse);
 }
 
 message PingRequest {
@@ -64,4 +75,35 @@ message InQueueStatusResponse {
 message InQueueItem {
   int64 count = 1;
   string telemetry_type = 2;
+}
+
+message Organization {
+  string id = 1;
+  string name = 2;
+  bool enabled = 3;
+}
+
+message ListOrganizationsRequest {}
+
+message ListOrganizationsResponse {
+  repeated Organization organizations = 1;
+}
+
+message CreateOrganizationRequest {
+  string name = 1;
+  bool enabled = 2;
+}
+
+message CreateOrganizationResponse {
+  Organization organization = 1;
+}
+
+message UpdateOrganizationRequest {
+  string id = 1;
+  google.protobuf.StringValue name = 2;
+  google.protobuf.BoolValue enabled = 3;
+}
+
+message UpdateOrganizationResponse {
+  Organization organization = 1;
 }

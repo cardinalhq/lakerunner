@@ -44,6 +44,23 @@ INSERT INTO bucket_prefix_mappings (
   @bucket_id, @organization_id, @path_prefix, @signal
 ) RETURNING *;
 
+-- name: ListBucketConfigurations :many
+SELECT id, bucket_name, cloud_provider, region, endpoint, role, use_path_style, insecure_tls
+FROM bucket_configurations
+ORDER BY bucket_name;
+
+-- name: DeleteBucketConfiguration :exec
+DELETE FROM bucket_configurations WHERE bucket_name = @bucket_name;
+
+-- name: ListBucketPrefixMappings :many
+SELECT bpm.id, bc.bucket_name, bpm.organization_id, bpm.path_prefix, bpm.signal
+FROM bucket_prefix_mappings bpm
+JOIN bucket_configurations bc ON bpm.bucket_id = bc.id
+ORDER BY bc.bucket_name, bpm.path_prefix;
+
+-- name: DeleteBucketPrefixMapping :exec
+DELETE FROM bucket_prefix_mappings WHERE id = @id;
+
 -- Legacy table sync operations
 
 -- name: GetAllCStorageProfilesForSync :many
