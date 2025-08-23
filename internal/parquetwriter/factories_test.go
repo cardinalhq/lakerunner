@@ -94,6 +94,11 @@ func TestNewLogsWriter(t *testing.T) {
 	}
 	defer writer.Abort()
 
+	// Verify it's configured for spillable ordering
+	if writer.config.OrderBy != OrderSpillable {
+		t.Errorf("Expected OrderBy = OrderSpillable, got %v", writer.config.OrderBy)
+	}
+
 	// Test timestamp ordering - write out of order
 	testData := []map[string]any{
 		{"_cardinalhq.timestamp": int64(3000), "_cardinalhq.fingerprint": int64(300), "message": "third"},
@@ -193,6 +198,11 @@ func TestNewTracesWriter(t *testing.T) {
 		t.Fatalf("Failed to create traces writer: %v", err)
 	}
 	defer writer.Abort()
+
+	// Verify it's configured for spillable ordering
+	if writer.config.OrderBy != OrderSpillable {
+		t.Errorf("Expected OrderBy = OrderSpillable, got %v", writer.config.OrderBy)
+	}
 
 	testData := []map[string]any{
 		{

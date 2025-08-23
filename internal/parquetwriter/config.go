@@ -16,6 +16,8 @@ package parquetwriter
 
 import (
 	"github.com/parquet-go/parquet-go"
+	
+	"github.com/cardinalhq/lakerunner/internal/parquetwriter/spillers"
 )
 
 // WriterConfig contains all configuration options for creating a ParquetWriter.
@@ -48,6 +50,14 @@ type WriterConfig struct {
 
 	// Optional stats collection
 	StatsProvider StatsProvider
+
+	// SpillBufferSize sets the maximum number of rows to keep in memory before spilling
+	// Only used with OrderSpillable. Default: 50000
+	SpillBufferSize int
+
+	// Spiller provides the mechanism for writing/reading spill files
+	// Only used with OrderSpillable. Default: GobSpiller
+	Spiller spillers.Spiller
 }
 
 // OrderingStrategy defines how rows should be ordered in the output files.
@@ -64,6 +74,10 @@ const (
 	// OrderMergeSort uses external merge sort for large datasets that don't fit in memory.
 	// Writes sorted chunks to disk and merges them during finalization.
 	OrderMergeSort
+
+	// OrderSpillable automatically spills to disk when memory limits are exceeded.
+	// Combines in-memory sorting with external merge sort as needed.
+	OrderSpillable
 
 	// OrderPresumed means the input is already in the correct order.
 	// The writer will trust the order and write rows directly.

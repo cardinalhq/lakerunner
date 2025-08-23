@@ -17,6 +17,8 @@ package parquetwriter
 import (
 	"context"
 	"fmt"
+	
+	"github.com/cardinalhq/lakerunner/internal/parquetwriter/spillers"
 )
 
 // UnifiedWriter is the main implementation of ParquetWriter that coordinates
@@ -70,6 +72,20 @@ func createOrderingEngine(config WriterConfig) (OrderingEngine, error) {
 		}
 		// Use reasonable default buffer size
 		return NewExternalMergeOrderer(config.TmpDir, config.OrderKeyFunc, 10000), nil
+
+	case OrderSpillable:
+		if config.OrderKeyFunc == nil {
+			return nil, fmt.Errorf("OrderKeyFunc required for OrderSpillable")
+		}
+		bufferSize := config.SpillBufferSize
+		if bufferSize <= 0 {
+			bufferSize = 50000 // Default buffer size
+		}
+		spiller := config.Spiller
+		if spiller == nil {
+			spiller = spillers.NewGobSpiller() // Default spiller
+		}
+		return NewSpillableOrderer(config.OrderKeyFunc, bufferSize, config.TmpDir, spiller), nil
 
 	default:
 		return nil, fmt.Errorf("unknown ordering strategy: %v", config.OrderBy)

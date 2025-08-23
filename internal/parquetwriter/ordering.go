@@ -129,48 +129,7 @@ func (o *InMemoryOrderer) Flush(ctx context.Context, writer func([]map[string]an
 	}
 
 	// Sort the buffer using the key function
-	slices.SortFunc(o.buffer, func(a, b map[string]any) int {
-		keyA := o.keyFunc(a)
-		keyB := o.keyFunc(b)
-
-		// Generic comparison for comparable types
-		switch ka := keyA.(type) {
-		case int64:
-			kb := keyB.(int64)
-			if ka < kb {
-				return -1
-			} else if ka > kb {
-				return 1
-			}
-			return 0
-		case string:
-			kb := keyB.(string)
-			if ka < kb {
-				return -1
-			} else if ka > kb {
-				return 1
-			}
-			return 0
-		case float64:
-			kb := keyB.(float64)
-			if ka < kb {
-				return -1
-			} else if ka > kb {
-				return 1
-			}
-			return 0
-		default:
-			// Fallback to string comparison for unknown types
-			sa := fmt.Sprintf("%v", keyA)
-			sb := fmt.Sprintf("%v", keyB)
-			if sa < sb {
-				return -1
-			} else if sa > sb {
-				return 1
-			}
-			return 0
-		}
-	})
+	sortRowsByKey(o.buffer, o.keyFunc)
 
 	if err := writer(o.buffer); err != nil {
 		return err
@@ -233,47 +192,7 @@ func (o *ExternalMergeOrderer) flushBuffer() error {
 	}
 
 	// Sort the buffer
-	slices.SortFunc(o.buffer, func(a, b map[string]any) int {
-		keyA := o.keyFunc(a)
-		keyB := o.keyFunc(b)
-
-		// Same comparison logic as InMemoryOrderer
-		switch ka := keyA.(type) {
-		case int64:
-			kb := keyB.(int64)
-			if ka < kb {
-				return -1
-			} else if ka > kb {
-				return 1
-			}
-			return 0
-		case string:
-			kb := keyB.(string)
-			if ka < kb {
-				return -1
-			} else if ka > kb {
-				return 1
-			}
-			return 0
-		case float64:
-			kb := keyB.(float64)
-			if ka < kb {
-				return -1
-			} else if ka > kb {
-				return 1
-			}
-			return 0
-		default:
-			sa := fmt.Sprintf("%v", keyA)
-			sb := fmt.Sprintf("%v", keyB)
-			if sa < sb {
-				return -1
-			} else if sa > sb {
-				return 1
-			}
-			return 0
-		}
-	})
+	sortRowsByKey(o.buffer, o.keyFunc)
 
 	// Write to temporary file
 	chunkFile, err := os.CreateTemp(o.tmpDir, fmt.Sprintf("merge-chunk-%d-*.gob", o.chunkCount))
@@ -448,23 +367,7 @@ func (h mergeHeap) Len() int { return len(h.readers) }
 func (h mergeHeap) Less(i, j int) bool {
 	keyI := h.readers[i].key
 	keyJ := h.readers[j].key
-
-	// Same comparison logic as the sorting functions
-	switch ki := keyI.(type) {
-	case int64:
-		kj := keyJ.(int64)
-		return ki < kj
-	case string:
-		kj := keyJ.(string)
-		return ki < kj
-	case float64:
-		kj := keyJ.(float64)
-		return ki < kj
-	default:
-		si := fmt.Sprintf("%v", keyI)
-		sj := fmt.Sprintf("%v", keyJ)
-		return si < sj
-	}
+	return compareKeys(keyI, keyJ) < 0
 }
 
 func (h mergeHeap) Swap(i, j int) {
@@ -481,4 +384,55 @@ func (h *mergeHeap) Pop() any {
 	item := old[n-1]
 	h.readers = old[0 : n-1]
 	return item
+}
+
+// Shared sorting and comparison utilities
+
+// sortRowsByKey sorts rows using the provided key function.
+func sortRowsByKey(rows []map[string]any, keyFunc func(map[string]any) any) {
+	slices.SortFunc(rows, func(a, b map[string]any) int {
+		keyA := keyFunc(a)
+		keyB := keyFunc(b)
+		return compareKeys(keyA, keyB)
+	})
+}
+
+// compareKeys compares two keys and returns -1, 0, or 1.
+func compareKeys(keyA, keyB any) int {
+	switch ka := keyA.(type) {
+	case int64:
+		kb := keyB.(int64)
+		if ka < kb {
+			return -1
+		} else if ka > kb {
+			return 1
+		}
+		return 0
+	case string:
+		kb := keyB.(string)
+		if ka < kb {
+			return -1
+		} else if ka > kb {
+			return 1
+		}
+		return 0
+	case float64:
+		kb := keyB.(float64)
+		if ka < kb {
+			return -1
+		} else if ka > kb {
+			return 1
+		}
+		return 0
+	default:
+		// Fallback to string comparison for unknown types
+		sa := fmt.Sprintf("%v", keyA)
+		sb := fmt.Sprintf("%v", keyB)
+		if sa < sb {
+			return -1
+		} else if sa > sb {
+			return 1
+		}
+		return 0
+	}
 }

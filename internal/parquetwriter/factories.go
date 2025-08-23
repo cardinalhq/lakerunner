@@ -59,8 +59,8 @@ func NewLogsWriter(baseName, tmpdir string, schemaNodes map[string]parquet.Node,
 		SchemaNodes:    schemaNodes,
 		TargetFileSize: targetFileSize,
 
-		// Logs need to be sorted by timestamp using external merge sort for large datasets
-		OrderBy: OrderMergeSort,
+		// Logs need to be sorted by timestamp, use spillable orderer for automatic handling
+		OrderBy: OrderSpillable,
 		OrderKeyFunc: func(row map[string]any) any {
 			if ts, ok := row["_cardinalhq.timestamp"].(int64); ok {
 				return ts
@@ -91,8 +91,8 @@ func NewTracesWriter(baseName, tmpdir string, schemaNodes map[string]parquet.Nod
 		SchemaNodes:    schemaNodes,
 		TargetFileSize: targetFileSize,
 
-		// Traces typically don't need strong ordering, but could be sorted by timestamp if desired
-		OrderBy: OrderInMemory, // Use in-memory sorting for moderate datasets
+		// Traces benefit from sorting by start time, use spillable orderer for flexibility
+		OrderBy: OrderSpillable,
 		OrderKeyFunc: func(row map[string]any) any {
 			// Sort by start time if available, otherwise by trace ID
 			if startTime, ok := row["_cardinalhq.start_time_unix_ns"].(int64); ok {
