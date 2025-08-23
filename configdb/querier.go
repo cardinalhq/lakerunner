@@ -28,6 +28,7 @@ type Querier interface {
 	CreateOrganizationBucket(ctx context.Context, arg CreateOrganizationBucketParams) (OrganizationBucket, error)
 	DeleteAdminAPIKey(ctx context.Context, apiKeyID uuid.UUID) error
 	DeleteOrganization(ctx context.Context, id uuid.UUID) error
+	DeleteOrganizationAPIKey(ctx context.Context, id uuid.UUID) error
 	GetAdminAPIKeyByHash(ctx context.Context, keyHash string) (AdminApiKey, error)
 	GetAdminAPIKeyByID(ctx context.Context, apiKeyID uuid.UUID) (AdminApiKey, error)
 	GetAllAdminAPIKeys(ctx context.Context) ([]AdminApiKey, error)

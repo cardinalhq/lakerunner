@@ -20,12 +20,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var apiKey string
-
 // SetAPIKey configures the API key used for auth with the admin service.
-func SetAPIKey(key string) {
-	apiKey = key
-}
+// Currently a no-op until remote operations are implemented.
+func SetAPIKey(_ string) {}
 
 // GetStorageProfilesCmd provides commands for managing storage profiles.
 func GetStorageProfilesCmd() *cobra.Command {
