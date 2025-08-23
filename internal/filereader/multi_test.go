@@ -55,7 +55,7 @@ func TestNewMultiReader(t *testing.T) {
 	}
 }
 
-func TestMultiReader_GetRow(t *testing.T) {
+func TestMultiReader_Read(t *testing.T) {
 	// Create readers with different data
 	readers := []Reader{
 		newMockReader("r1", []Row{
@@ -85,20 +85,82 @@ func TestMultiReader_GetRow(t *testing.T) {
 		"r4-first",
 	}
 
+	allRows, err := readAllRows(mr)
+	if err != nil {
+		t.Fatalf("readAllRows() error = %v", err)
+	}
+
+	if len(allRows) != len(expectedData) {
+		t.Fatalf("Expected %d rows, got %d", len(expectedData), len(allRows))
+	}
+
 	for i, expected := range expectedData {
-		row, err := mr.GetRow()
-		if err != nil {
-			t.Fatalf("GetRow() at index %d error = %v", i, err)
+		if allRows[i]["data"] != expected {
+			t.Errorf("Row %d data = %v, want %v", i, allRows[i]["data"], expected)
 		}
-		if row["data"] != expected {
-			t.Errorf("GetRow() at index %d data = %v, want %v", i, row["data"], expected)
-		}
+	}
+}
+
+func TestMultiReader_Read_Batched(t *testing.T) {
+	// Create readers with different data
+	readers := []Reader{
+		newMockReader("r1", []Row{
+			{"data": "r1-first"},
+			{"data": "r1-second"},
+		}),
+		newMockReader("r2", []Row{
+			{"data": "r2-first"},
+		}),
+	}
+
+	mr, err := NewMultiReader(readers)
+	if err != nil {
+		t.Fatalf("NewMultiReader() error = %v", err)
+	}
+	defer mr.Close()
+
+	// Read first batch
+	rows := make([]Row, 2)
+	for i := range rows {
+		rows[i] = make(Row)
+	}
+
+	n, err := mr.Read(rows)
+	if err != nil {
+		t.Fatalf("First Read() error = %v", err)
+	}
+	if n != 2 {
+		t.Errorf("First Read() returned %d rows, want 2", n)
+	}
+	if rows[0]["data"] != "r1-first" {
+		t.Errorf("First row data = %v, want r1-first", rows[0]["data"])
+	}
+	if rows[1]["data"] != "r1-second" {
+		t.Errorf("Second row data = %v, want r1-second", rows[1]["data"])
+	}
+
+	// Read second batch
+	for i := range rows {
+		rows[i] = make(Row)
+	}
+	n, err = mr.Read(rows)
+	if err != nil {
+		t.Fatalf("Second Read() error = %v", err)
+	}
+	if n != 1 {
+		t.Errorf("Second Read() returned %d rows, want 1", n)
+	}
+	if rows[0]["data"] != "r2-first" {
+		t.Errorf("Third row data = %v, want r2-first", rows[0]["data"])
 	}
 
 	// Should return EOF now
-	_, err = mr.GetRow()
-	if !errors.Is(err, io.EOF) {
-		t.Errorf("Final GetRow() should return io.EOF, got %v", err)
+	for i := range rows {
+		rows[i] = make(Row)
+	}
+	n, err = mr.Read(rows)
+	if n != 0 || !errors.Is(err, io.EOF) {
+		t.Errorf("Final Read() should return 0 rows and io.EOF, got n=%d, err=%v", n, err)
 	}
 }
 
@@ -121,9 +183,11 @@ func TestMultiReader_CurrentReaderIndex(t *testing.T) {
 	}
 
 	// Read from first reader
-	_, err = mr.GetRow()
+	rows := make([]Row, 1)
+	rows[0] = make(Row)
+	_, err = mr.Read(rows)
 	if err != nil {
-		t.Fatalf("GetRow() error = %v", err)
+		t.Fatalf("Read() error = %v", err)
 	}
 
 	// Still on reader 0 because it hasn't hit EOF yet
@@ -132,9 +196,10 @@ func TestMultiReader_CurrentReaderIndex(t *testing.T) {
 	}
 
 	// Read from second reader (this will exhaust r1, advance to r2, skip empty r3)
-	_, err = mr.GetRow()
+	rows[0] = make(Row)
+	_, err = mr.Read(rows)
 	if err != nil {
-		t.Fatalf("GetRow() error = %v", err)
+		t.Fatalf("Read() error = %v", err)
 	}
 
 	// Should be on reader 1 now
@@ -143,9 +208,10 @@ func TestMultiReader_CurrentReaderIndex(t *testing.T) {
 	}
 
 	// Try to read again - should return io.EOF and be exhausted
-	_, err = mr.GetRow()
+	rows[0] = make(Row)
+	_, err = mr.Read(rows)
 	if !errors.Is(err, io.EOF) {
-		t.Errorf("Final GetRow() should return io.EOF, got %v", err)
+		t.Errorf("Final Read() should return io.EOF, got %v", err)
 	}
 
 	// Should be exhausted now
@@ -191,9 +257,11 @@ func TestMultiReader_RemainingReaderCount(t *testing.T) {
 	}
 
 	// Read one row (from r1)
-	_, err = mr.GetRow()
+	rows := make([]Row, 1)
+	rows[0] = make(Row)
+	_, err = mr.Read(rows)
 	if err != nil {
-		t.Fatalf("GetRow() error = %v", err)
+		t.Fatalf("Read() error = %v", err)
 	}
 
 	// Should still have 3 readers remaining since r1 hasn't been exhausted yet
@@ -203,12 +271,13 @@ func TestMultiReader_RemainingReaderCount(t *testing.T) {
 
 	// Read remaining rows
 	for {
-		_, err := mr.GetRow()
+		rows[0] = make(Row)
+		_, err := mr.Read(rows)
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
-			t.Fatalf("GetRow() error = %v", err)
+			t.Fatalf("Read() error = %v", err)
 		}
 	}
 
@@ -244,9 +313,11 @@ func TestMultiReader_Close(t *testing.T) {
 	}
 
 	// Verify subsequent operations fail
-	_, err = mr.GetRow()
+	rows := make([]Row, 1)
+	rows[0] = make(Row)
+	_, err = mr.Read(rows)
 	if err == nil {
-		t.Error("GetRow() after Close() should return error")
+		t.Error("Read() after Close() should return error")
 	}
 
 	// Multiple Close() calls should not error
@@ -278,9 +349,11 @@ func TestMultiReader_AllEmptyReaders(t *testing.T) {
 	defer mr.Close()
 
 	// Should immediately return io.EOF
-	_, err = mr.GetRow()
-	if !errors.Is(err, io.EOF) {
-		t.Errorf("GetRow() with all empty readers should return io.EOF, got %v", err)
+	rows := make([]Row, 1)
+	rows[0] = make(Row)
+	n, err := mr.Read(rows)
+	if n != 0 || !errors.Is(err, io.EOF) {
+		t.Errorf("Read() with all empty readers should return 0 rows and io.EOF, got n=%d, err=%v", n, err)
 	}
 }
 
@@ -297,13 +370,16 @@ func TestMultiReader_WithErrors(t *testing.T) {
 	defer mr.Close()
 
 	// First read should succeed (from r1)
-	_, err = mr.GetRow()
+	rows := make([]Row, 1)
+	rows[0] = make(Row)
+	_, err = mr.Read(rows)
 	if err != nil {
-		t.Fatalf("First GetRow() error = %v", err)
+		t.Fatalf("First Read() error = %v", err)
 	}
 
 	// Second read should fail (from error reader)
-	_, err = mr.GetRow()
+	rows[0] = make(Row)
+	_, err = mr.Read(rows)
 	if err == nil {
 		t.Error("Expected error when reading from error reader")
 	}
@@ -312,21 +388,13 @@ func TestMultiReader_WithErrors(t *testing.T) {
 // Test that MultiReader properly handles a reader that returns an error after some successful reads
 func TestMultiReader_ReaderWithDelayedError(t *testing.T) {
 	// Create a reader that succeeds once then errors
-	delayedErrorReader := &struct {
-		calls  int
-		closed bool
-	}{}
+	delayedErrorReader := &delayedErrorReaderImpl{
+		data: []Row{{"data": "delayed"}},
+	}
 
 	readers := []Reader{
 		newMockReader("r1", []Row{{"data": "r1"}}),
-		// Anonymous struct implementing Reader with delayed error
-		ReaderFunc(func() (Row, error) {
-			delayedErrorReader.calls++
-			if delayedErrorReader.calls == 1 {
-				return Row{"data": "delayed"}, nil
-			}
-			return nil, fmt.Errorf("delayed error on call %d", delayedErrorReader.calls)
-		}),
+		delayedErrorReader,
 	}
 
 	mr, err := NewMultiReader(readers)
@@ -336,37 +404,63 @@ func TestMultiReader_ReaderWithDelayedError(t *testing.T) {
 	defer mr.Close()
 
 	// First read from r1
-	row, err := mr.GetRow()
+	rows := make([]Row, 1)
+	rows[0] = make(Row)
+	n, err := mr.Read(rows)
 	if err != nil {
-		t.Fatalf("First GetRow() error = %v", err)
+		t.Fatalf("First Read() error = %v", err)
 	}
-	if row["data"] != "r1" {
-		t.Fatal("First GetRow() should succeed with r1 data")
+	if n != 1 || rows[0]["data"] != "r1" {
+		t.Fatalf("First Read() should return 1 row with r1 data, got n=%d, data=%v", n, rows[0]["data"])
 	}
 
 	// Second read from delayed error reader (first call succeeds)
-	row, err = mr.GetRow()
+	rows[0] = make(Row)
+	n, err = mr.Read(rows)
 	if err != nil {
-		t.Fatalf("Second GetRow() error = %v", err)
+		t.Fatalf("Second Read() error = %v", err)
 	}
-	if row["data"] != "delayed" {
-		t.Fatal("Second GetRow() should succeed with delayed data")
+	if n != 1 || rows[0]["data"] != "delayed" {
+		t.Fatalf("Second Read() should return 1 row with delayed data, got n=%d, data=%v", n, rows[0]["data"])
 	}
 
 	// Third read from delayed error reader (second call fails)
-	_, err = mr.GetRow()
+	rows[0] = make(Row)
+	_, err = mr.Read(rows)
 	if err == nil {
-		t.Error("Third GetRow() should fail with delayed error")
+		t.Error("Third Read() should fail with delayed error")
 	}
 }
 
-// ReaderFunc is a helper type to create Reader from a function
-type ReaderFunc func() (Row, error)
-
-func (f ReaderFunc) GetRow() (Row, error) {
-	return f()
+// delayedErrorReaderImpl is a helper type that succeeds once then errors
+type delayedErrorReaderImpl struct {
+	data     []Row
+	position int
+	closed   bool
 }
 
-func (f ReaderFunc) Close() error {
+func (d *delayedErrorReaderImpl) Read(rows []Row) (int, error) {
+	if d.closed {
+		return 0, errors.New("reader closed")
+	}
+
+	if d.position == 0 && len(d.data) > 0 {
+		// First call - return data
+		if len(rows) > 0 {
+			for k, v := range d.data[0] {
+				rows[0][k] = v
+			}
+			d.position++
+			return 1, nil
+		}
+		return 0, nil
+	}
+
+	// Subsequent calls - return error
+	return 0, fmt.Errorf("delayed error on call %d", d.position+1)
+}
+
+func (d *delayedErrorReaderImpl) Close() error {
+	d.closed = true
 	return nil
 }

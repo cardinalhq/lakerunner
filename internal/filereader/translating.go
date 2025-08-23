@@ -47,25 +47,34 @@ func NewTranslatingReader(reader Reader, translator RowTranslator) (*Translating
 	}, nil
 }
 
-// GetRow returns the next translated row from the underlying reader.
-func (tr *TranslatingReader) GetRow() (Row, error) {
+// Read populates the provided slice with translated rows from the underlying reader.
+func (tr *TranslatingReader) Read(rows []Row) (int, error) {
 	if tr.closed {
-		return nil, errors.New("reader is closed")
+		return 0, errors.New("reader is closed")
 	}
 
-	// Get raw row from underlying reader
-	row, err := tr.reader.GetRow()
-	if err != nil {
-		return nil, err // Pass through EOF and other errors
+	if len(rows) == 0 {
+		return 0, nil
 	}
 
-	// Apply translation
-	translatedRow, err := tr.translator.TranslateRow(row)
-	if err != nil {
-		return nil, fmt.Errorf("translation failed: %w", err)
+	// Get raw rows from underlying reader
+	n, err := tr.reader.Read(rows)
+
+	// Translate each row that was successfully read
+	for i := 0; i < n; i++ {
+		translatedRow, translateErr := tr.translator.TranslateRow(rows[i])
+		if translateErr != nil {
+			return i, fmt.Errorf("translation failed for row %d: %w", i, translateErr)
+		}
+
+		// Clear and replace the row with translated data
+		resetRow(&rows[i])
+		for k, v := range translatedRow {
+			rows[i][k] = v
+		}
 	}
 
-	return translatedRow, nil
+	return n, err // Pass through the original error (including EOF)
 }
 
 // Close closes the underlying reader and releases resources.

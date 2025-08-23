@@ -29,7 +29,7 @@
 //	type Row map[string]any
 //
 //	type Reader interface {
-//	    GetRow() (row Row, err error)  // Returns io.EOF when exhausted
+//	    Read(rows []Row) (n int, err error)  // Returns row count and io.EOF when exhausted
 //	    Close() error
 //	}
 //
@@ -43,7 +43,7 @@
 //
 // All format readers return raw, untransformed data from files:
 //
-//   - ParquetReader: Generic Parquet files using parquet-go/parquet-go
+//   - ParquetReader: Generic Parquet files using parquet-go/parquet-go (requires io.ReaderAt)
 //   - JSONLinesReader: Streams JSON objects line-by-line from any io.Reader
 //   - ProtoLogsReader: Raw OTEL log records from protobuf
 //   - ProtoMetricsReader: Raw OTEL metric data points from protobuf
@@ -65,14 +65,18 @@
 //	defer reader.Close()
 //
 //	for {
-//	    row, err := reader.GetRow()
+//	    rows := make([]Row, 1)
+//	    rows[0] = make(Row)
+//	    n, err := reader.Read(rows)
 //	    if errors.Is(err, io.EOF) {
 //	        break
 //	    }
 //	    if err != nil {
 //	        return err
 //	    }
-//	    // process raw row data
+//	    if n > 0 {
+//	        // process raw row data in rows[0]
+//	    }
 //	}
 //
 // # Data Translation
@@ -119,8 +123,8 @@
 // Time-ordered merge sort across multiple files:
 //
 //	readers := []Reader{
-//	    NewParquetReader(file1),
-//	    NewParquetReader(file2),
+//	    NewParquetReader(file1, size1),
+//	    NewParquetReader(file2, size2),
 //	    NewJSONLinesReader(file3),
 //	}
 //
@@ -129,14 +133,18 @@
 //	defer ordered.Close()
 //
 //	for {
-//	    row, err := ordered.GetRow()
+//	    rows := make([]Row, 1)
+//	    rows[0] = make(Row)
+//	    n, err := ordered.Read(rows)
 //	    if errors.Is(err, io.EOF) {
 //	        break
 //	    }
 //	    if err != nil {
 //	        return err
 //	    }
-//	    // rows arrive in timestamp order across all files
+//	    if n > 0 {
+//	        // rows arrive in timestamp order across all files
+//	    }
 //	}
 //
 // Composable reader trees:
@@ -150,7 +158,7 @@
 // # Resource Management
 //
 //   - All readers must be closed via Close()
-//   - Parquet readers buffer entire files in memory
+//   - Parquet readers use random access (io.ReaderAt) - no buffering
 //   - Streaming readers (JSON, Proto) process incrementally
 //   - Composite readers automatically close child readers
 package filereader

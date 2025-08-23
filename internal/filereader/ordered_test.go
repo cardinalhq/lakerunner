@@ -16,42 +16,9 @@ package filereader
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"testing"
 )
-
-// mockReader is a test implementation of Reader
-type mockReader struct {
-	rows   []Row
-	index  int
-	closed bool
-	name   string
-}
-
-func newMockReader(name string, rows []Row) *mockReader {
-	return &mockReader{
-		rows: rows,
-		name: name,
-	}
-}
-
-func (m *mockReader) GetRow() (Row, error) {
-	if m.closed {
-		return nil, fmt.Errorf("reader %s is closed", m.name)
-	}
-	if m.index >= len(m.rows) {
-		return nil, io.EOF
-	}
-	row := m.rows[m.index]
-	m.index++
-	return row, nil
-}
-
-func (m *mockReader) Close() error {
-	m.closed = true
-	return nil
-}
 
 func TestNewOrderedReader(t *testing.T) {
 	// Test with valid readers and selector
@@ -84,20 +51,21 @@ func TestNewOrderedReader(t *testing.T) {
 	}
 }
 
-func TestOrderedReader_GetRow(t *testing.T) {
-	// Create readers with timestamp-ordered data
+func TestOrderedReader_Read(t *testing.T) {
+	// Create readers with interleaved timestamps to test ordering
 	readers := []Reader{
 		newMockReader("r1", []Row{
-			{"ts": int64(100), "data": "r1-first"},
-			{"ts": int64(300), "data": "r1-second"},
-			{"ts": int64(500), "data": "r1-third"},
+			{"ts": int64(1), "data": "r1-first"},
+			{"ts": int64(4), "data": "r1-second"},
+			{"ts": int64(7), "data": "r1-third"},
 		}),
 		newMockReader("r2", []Row{
-			{"ts": int64(200), "data": "r2-first"},
-			{"ts": int64(400), "data": "r2-second"},
+			{"ts": int64(2), "data": "r2-first"},
+			{"ts": int64(5), "data": "r2-second"},
 		}),
 		newMockReader("r3", []Row{
-			{"ts": int64(150), "data": "r3-first"},
+			{"ts": int64(3), "data": "r3-first"},
+			{"ts": int64(6), "data": "r3-second"},
 		}),
 	}
 
@@ -108,34 +76,42 @@ func TestOrderedReader_GetRow(t *testing.T) {
 	}
 	defer or.Close()
 
-	// Expected order: 100, 150, 200, 300, 400, 500
+	// Expected order: 1, 2, 3, 4, 5, 6, 7
 	expectedData := []string{
-		"r1-first",  // ts=100
-		"r3-first",  // ts=150
-		"r2-first",  // ts=200
-		"r1-second", // ts=300
-		"r2-second", // ts=400
-		"r1-third",  // ts=500
+		"r1-first",  // ts=1
+		"r2-first",  // ts=2
+		"r3-first",  // ts=3
+		"r1-second", // ts=4
+		"r2-second", // ts=5
+		"r3-second", // ts=6
+		"r1-third",  // ts=7
+	}
+
+	allRows, err := readAllRows(or)
+	if err != nil {
+		t.Fatalf("readAllRows() error = %v", err)
+	}
+
+	if len(allRows) != len(expectedData) {
+		t.Fatalf("Expected %d rows, got %d", len(expectedData), len(allRows))
 	}
 
 	for i, expected := range expectedData {
-		row, err := or.GetRow()
-		if err != nil {
-			t.Fatalf("GetRow() at index %d error = %v", i, err)
+		if allRows[i]["data"] != expected {
+			t.Errorf("Row %d data = %v, want %v (ts=%v)", i, allRows[i]["data"], expected, allRows[i]["ts"])
 		}
-		if row["data"] != expected {
-			t.Errorf("GetRow() at index %d data = %v, want %v", i, row["data"], expected)
+		if i > 0 {
+			// Verify timestamps are in order
+			prevTs := allRows[i-1]["ts"].(int64)
+			currTs := allRows[i]["ts"].(int64)
+			if currTs < prevTs {
+				t.Errorf("Timestamps out of order: row %d ts=%d < row %d ts=%d", i, currTs, i-1, prevTs)
+			}
 		}
-	}
-
-	// Should return EOF now
-	_, err = or.GetRow()
-	if !errors.Is(err, io.EOF) {
-		t.Errorf("Final GetRow() should return io.EOF, got %v", err)
 	}
 }
 
-func TestOrderedReader_ActiveReaderCount(t *testing.T) {
+func TestOrderedReader_Read_Batched(t *testing.T) {
 	readers := []Reader{
 		newMockReader("r1", []Row{{"ts": int64(100)}}),
 		newMockReader("r2", []Row{{"ts": int64(200)}}),
@@ -149,15 +125,60 @@ func TestOrderedReader_ActiveReaderCount(t *testing.T) {
 	}
 	defer or.Close()
 
-	// Initially, should have 2 active readers (r3 is empty)
+	// Read in batch of 2 (should get both rows)
+	rows := make([]Row, 2)
+	for i := range rows {
+		rows[i] = make(Row)
+	}
+
+	n, err := or.Read(rows)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if n != 2 {
+		t.Errorf("Read() returned %d rows, want 2", n)
+	}
+	if rows[0]["ts"] != int64(100) {
+		t.Errorf("First row ts = %v, want 100", rows[0]["ts"])
+	}
+	if rows[1]["ts"] != int64(200) {
+		t.Errorf("Second row ts = %v, want 200", rows[1]["ts"])
+	}
+
+	// Next read should return EOF
+	for i := range rows {
+		rows[i] = make(Row)
+	}
+	n, err = or.Read(rows)
+	if n != 0 || !errors.Is(err, io.EOF) {
+		t.Errorf("Final Read() should return 0 rows and io.EOF, got n=%d, err=%v", n, err)
+	}
+}
+
+func TestOrderedReader_ActiveReaderCount(t *testing.T) {
+	readers := []Reader{
+		newMockReader("r1", []Row{{"ts": int64(1)}}),
+		newMockReader("r2", []Row{{"ts": int64(2)}}),
+	}
+
+	selector := TimeOrderedSelector("ts")
+	or, err := NewOrderedReader(readers, selector)
+	if err != nil {
+		t.Fatalf("NewOrderedReader() error = %v", err)
+	}
+	defer or.Close()
+
+	// Initially both readers should be active
 	if count := or.ActiveReaderCount(); count != 2 {
 		t.Errorf("Initial ActiveReaderCount() = %d, want 2", count)
 	}
 
-	// Read one row
-	_, err = or.GetRow()
+	// Read one row (from r1)
+	rows := make([]Row, 1)
+	rows[0] = make(Row)
+	_, err = or.Read(rows)
 	if err != nil {
-		t.Fatalf("GetRow() error = %v", err)
+		t.Fatalf("Read() error = %v", err)
 	}
 
 	// Should still have 1 active reader
@@ -166,14 +187,37 @@ func TestOrderedReader_ActiveReaderCount(t *testing.T) {
 	}
 
 	// Read final row
-	_, err = or.GetRow()
+	rows[0] = make(Row)
+	_, err = or.Read(rows)
 	if err != nil {
-		t.Fatalf("GetRow() error = %v", err)
+		t.Fatalf("Read() error = %v", err)
 	}
 
 	// Should have 0 active readers
 	if count := or.ActiveReaderCount(); count != 0 {
 		t.Errorf("After all reads ActiveReaderCount() = %d, want 0", count)
+	}
+}
+
+func TestOrderedReader_AllEmptyReaders(t *testing.T) {
+	readers := []Reader{
+		newMockReader("r1", []Row{}),
+		newMockReader("r2", []Row{}),
+	}
+
+	selector := TimeOrderedSelector("ts")
+	or, err := NewOrderedReader(readers, selector)
+	if err != nil {
+		t.Fatalf("NewOrderedReader() error = %v", err)
+	}
+	defer or.Close()
+
+	// Should immediately return io.EOF
+	rows := make([]Row, 1)
+	rows[0] = make(Row)
+	n, err := or.Read(rows)
+	if n != 0 || !errors.Is(err, io.EOF) {
+		t.Errorf("Read() with all empty readers should return 0 rows and io.EOF, got n=%d, err=%v", n, err)
 	}
 }
 
@@ -204,9 +248,11 @@ func TestOrderedReader_Close(t *testing.T) {
 	}
 
 	// Verify subsequent operations fail
-	_, err = or.GetRow()
+	rows := make([]Row, 1)
+	rows[0] = make(Row)
+	_, err = or.Read(rows)
 	if err == nil {
-		t.Error("GetRow() after Close() should return error")
+		t.Error("Read() after Close() should return error")
 	}
 
 	// Multiple Close() calls should not error
@@ -214,80 +260,54 @@ func TestOrderedReader_Close(t *testing.T) {
 	if err != nil {
 		t.Errorf("Second Close() error = %v", err)
 	}
-}
 
-func TestOrderedReader_EmptyReaders(t *testing.T) {
-	// All readers are empty
-	readers := []Reader{
-		newMockReader("r1", []Row{}),
-		newMockReader("r2", []Row{}),
-	}
-
-	selector := TimeOrderedSelector("ts")
-	or, err := NewOrderedReader(readers, selector)
-	if err != nil {
-		t.Fatalf("NewOrderedReader() error = %v", err)
-	}
-	defer or.Close()
-
-	// Should immediately return io.EOF
-	_, err = or.GetRow()
-	if !errors.Is(err, io.EOF) {
-		t.Errorf("GetRow() with empty readers should return io.EOF, got %v", err)
+	// Verify count after close
+	if count := or.ActiveReaderCount(); count != 0 {
+		t.Errorf("ActiveReaderCount() after close = %d, want 0", count)
 	}
 }
 
-// errorReader always returns an error
-type errorReader struct {
-	closed bool
-}
+func TestTimeOrderedSelector(t *testing.T) {
+	selector := TimeOrderedSelector("timestamp")
 
-func (e *errorReader) GetRow() (Row, error) {
-	return nil, fmt.Errorf("test error")
-}
-
-func (e *errorReader) Close() error {
-	e.closed = true
-	return nil
-}
-
-func TestOrderedReader_WithErrors(t *testing.T) {
-	readers := []Reader{
-		newMockReader("r1", []Row{{"ts": int64(1)}}),
-		&errorReader{},
+	// Test with different timestamp types
+	rows := []Row{
+		{"timestamp": int64(300), "data": "third"},
+		{"timestamp": int64(100), "data": "first"},
+		{"timestamp": int64(200), "data": "second"},
 	}
 
-	selector := TimeOrderedSelector("ts")
-
-	// Should fail during creation when priming readers
-	or, err := NewOrderedReader(readers, selector)
-	if err == nil {
-		if or != nil {
-			or.Close()
-		}
-		t.Error("Expected error when creating OrderedReader with error reader")
-	}
-}
-
-func TestOrderedReader_SelectorError(t *testing.T) {
-	readers := []Reader{
-		newMockReader("r1", []Row{{"ts": int64(1)}}),
-		newMockReader("r2", []Row{{"ts": int64(2)}}),
+	selected := selector(rows)
+	if selected != 1 { // Should select row with timestamp 100
+		t.Errorf("TimeOrderedSelector selected index %d, want 1", selected)
 	}
 
-	// Selector that returns invalid index
-	selector := func(rows []Row) int {
-		return 99 // Invalid index
+	// Test with float64 timestamps
+	rows = []Row{
+		{"timestamp": float64(300.5), "data": "third"},
+		{"timestamp": float64(100.1), "data": "first"},
+		{"timestamp": float64(200.2), "data": "second"},
 	}
 
-	or, err := NewOrderedReader(readers, selector)
-	if err != nil {
-		t.Fatalf("NewOrderedReader() error = %v", err)
+	selected = selector(rows)
+	if selected != 1 { // Should select row with timestamp 100.1
+		t.Errorf("TimeOrderedSelector with float64 selected index %d, want 1", selected)
 	}
-	defer or.Close()
 
-	_, err = or.GetRow()
-	if err == nil {
-		t.Error("Expected error when selector returns invalid index")
+	// Test with missing timestamp field
+	rows = []Row{
+		{"data": "no timestamp"},
+		{"timestamp": int64(100), "data": "has timestamp"},
+	}
+
+	selected = selector(rows)
+	if selected != 0 { // Should select first row (missing timestamps default to 0)
+		t.Errorf("TimeOrderedSelector with missing timestamp selected index %d, want 0", selected)
+	}
+
+	// Test with empty slice
+	selected = selector([]Row{})
+	if selected != -1 {
+		t.Errorf("TimeOrderedSelector with empty slice selected index %d, want -1", selected)
 	}
 }

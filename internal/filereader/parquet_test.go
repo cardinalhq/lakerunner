@@ -17,6 +17,7 @@ package filereader
 import (
 	"errors"
 	"io"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -63,10 +64,6 @@ func (m *MockParquetGenericReader) Close() error {
 	return nil
 }
 
-func (m *MockParquetGenericReader) NumRows() int64 {
-	return int64(len(m.data))
-}
-
 // TestParquetReaderEOFWithMock tests the n>0 && io.EOF case using a mock
 func TestParquetReaderEOFWithMock(t *testing.T) {
 	// Create mock data
@@ -81,33 +78,33 @@ func TestParquetReaderEOFWithMock(t *testing.T) {
 
 	// We can't easily replace the internal parquet reader, so let's test the logic directly
 	// by simulating what happens in GetRow()
-	
+
 	var collectedRows []map[string]any
-	
+
 	for {
 		// Simulate ParquetReader.GetRow() logic
 		rows := make([]map[string]any, 1)
 		rows[0] = make(map[string]any)
-		
+
 		n, err := mockReader.Read(rows)
-		
+
 		// This is the exact logic from our ParquetReader.GetRow()
 		if n == 1 {
 			row := rows[0]
 			collectedRows = append(collectedRows, row)
-			
+
 			// If we got data, return it regardless of EOF
 			// The next call will return io.EOF with no data
 			continue // In real code this would be: return Row(row), nil
 		}
-		
+
 		// No data was read
 		if n == 0 {
 			if err != nil && errors.Is(err, io.EOF) {
 				break // In real code this would be: return nil, io.EOF
 			}
 		}
-		
+
 		// Any other error
 		if err != nil {
 			require.NoError(t, err, "Unexpected error")
@@ -137,7 +134,7 @@ func TestParquetReaderSingleRowWithEOF(t *testing.T) {
 	rows[0] = make(map[string]any)
 
 	n, err := mockReader.Read(rows)
-	
+
 	// Should get 1 row AND io.EOF
 	assert.Equal(t, 1, n)
 	assert.True(t, errors.Is(err, io.EOF))
@@ -177,15 +174,14 @@ func TestParquetReaderNumRows(t *testing.T) {
 
 	mockReader := &MockParquetGenericReader{data: testData}
 
-	// Should report correct number of rows
-	assert.Equal(t, int64(5), mockReader.NumRows())
+	// We have 5 test records
 
 	// Read all rows
 	var collectedRows []map[string]any
 	for {
 		rows := make([]map[string]any, 1)
 		rows[0] = make(map[string]any)
-		
+
 		n, err := mockReader.Read(rows)
 		if n == 1 {
 			collectedRows = append(collectedRows, rows[0])
@@ -202,4 +198,126 @@ func TestParquetReaderNumRows(t *testing.T) {
 	for i, row := range collectedRows {
 		assert.Equal(t, int64(i+1), row["id"])
 	}
+}
+
+// TestParquetReaderWithRealFile tests ParquetReader with actual parquet files
+func TestParquetReaderWithRealFile(t *testing.T) {
+	file, err := os.Open("testdata/logs-cooked-0001.parquet")
+	require.NoError(t, err)
+	defer file.Close()
+
+	stat, err := file.Stat()
+	require.NoError(t, err)
+
+	reader, err := NewParquetReader(file, stat.Size())
+	require.NoError(t, err)
+	defer reader.Close()
+
+	// Read all rows and verify we get the expected count
+	var rowCount int64
+
+	for {
+		rows := make([]Row, 10) // Create new batch each time
+		n, err := reader.Read(rows)
+		rowCount += int64(n)
+
+		// Verify each row that was read
+		for i := 0; i < n; i++ {
+			require.NotNil(t, rows[i], "Row %d should not be nil", i)
+			require.Greater(t, len(rows[i]), 0, "Row %d should have columns", i)
+			// Verify the expected collector_id field exists
+			assert.Contains(t, rows[i], "_cardinalhq.collector_id", "Row should have collector_id field")
+		}
+
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		require.NoError(t, err)
+	}
+
+	// logs-cooked-0001.parquet should have 32 rows
+	assert.Equal(t, int64(32), rowCount, "Should read exactly 32 rows from logs-cooked-0001.parquet")
+}
+
+// TestParquetReaderMultipleFiles tests ParquetReader with different files
+func TestParquetReaderMultipleFiles(t *testing.T) {
+	testFiles := map[string]int64{
+		"testdata/logs-cooked-0001.parquet":    32,   // 32 rows
+		"testdata/metrics-cooked-0001.parquet": 211,  // 211 rows
+		"testdata/logs-chqs3-0001.parquet":     1807, // 1807 rows
+	}
+
+	for filename, expectedRows := range testFiles {
+		t.Run(filename, func(t *testing.T) {
+			file, err := os.Open(filename)
+			require.NoError(t, err)
+			defer file.Close()
+
+			stat, err := file.Stat()
+			require.NoError(t, err)
+
+			reader, err := NewParquetReader(file, stat.Size())
+			require.NoError(t, err)
+			defer reader.Close()
+
+			// Read all rows and count them
+			var totalRows int64
+
+			for {
+				rows := make([]Row, 20) // Create new batch each time
+				n, err := reader.Read(rows)
+				totalRows += int64(n)
+
+				// Verify each row that was read
+				for i := 0; i < n; i++ {
+					require.NotNil(t, rows[i])
+					require.Greater(t, len(rows[i]), 0, "Row should have columns")
+					// Verify the expected collector_id field exists
+					assert.Contains(t, rows[i], "_cardinalhq.collector_id", "Row should have collector_id field")
+				}
+
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				require.NoError(t, err)
+			}
+
+			// Verify exact row count
+			assert.Equal(t, expectedRows, totalRows, "Should read exactly %d rows from %s", expectedRows, filename)
+		})
+	}
+}
+
+// TestParquetReaderClose tests proper cleanup
+func TestParquetReaderClose(t *testing.T) {
+	file, err := os.Open("testdata/logs-cooked-0001.parquet")
+	require.NoError(t, err)
+	defer file.Close()
+
+	stat, err := file.Stat()
+	require.NoError(t, err)
+
+	reader, err := NewParquetReader(file, stat.Size())
+	require.NoError(t, err)
+
+	// Should be able to read before closing
+	rows := make([]Row, 1)
+	n, err := reader.Read(rows)
+	require.NoError(t, err)
+	require.Greater(t, n, 0)
+	require.NotNil(t, rows[0])
+
+	// Close should work
+	err = reader.Close()
+	assert.NoError(t, err)
+
+	// Reading after close should return error
+	rows = make([]Row, 1)
+	_, err = reader.Read(rows)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "closed")
+
+	// Close should be idempotent
+	err = reader.Close()
+	assert.NoError(t, err)
 }

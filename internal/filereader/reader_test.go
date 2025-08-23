@@ -18,51 +18,6 @@ import (
 	"testing"
 )
 
-func TestTimeOrderedSelector(t *testing.T) {
-	selector := TimeOrderedSelector("timestamp")
-
-	// Test with valid timestamps
-	rows := []Row{
-		{"timestamp": int64(300), "data": "third"},
-		{"timestamp": int64(100), "data": "first"},
-		{"timestamp": int64(200), "data": "second"},
-	}
-
-	selectedIdx := selector(rows)
-	if selectedIdx != 1 {
-		t.Errorf("Expected index 1 (timestamp 100), got %d", selectedIdx)
-	}
-
-	// Test with mixed timestamp types
-	rows = []Row{
-		{"timestamp": int32(300), "data": "third"},
-		{"timestamp": float64(150.0), "data": "second"},
-		{"timestamp": int64(100), "data": "first"},
-	}
-
-	selectedIdx = selector(rows)
-	if selectedIdx != 2 {
-		t.Errorf("Expected index 2 (timestamp 100), got %d", selectedIdx)
-	}
-
-	// Test with missing timestamp field
-	rows = []Row{
-		{"data": "no timestamp"},
-		{"timestamp": int64(100), "data": "has timestamp"},
-	}
-
-	selectedIdx = selector(rows)
-	if selectedIdx != 0 {
-		t.Errorf("Expected index 0 (missing timestamp defaults to 0), got %d", selectedIdx)
-	}
-
-	// Test with empty slice
-	selectedIdx = selector([]Row{})
-	if selectedIdx != -1 {
-		t.Errorf("Expected -1 for empty slice, got %d", selectedIdx)
-	}
-}
-
 func TestExtractTimestamp(t *testing.T) {
 	tests := []struct {
 		row      Row

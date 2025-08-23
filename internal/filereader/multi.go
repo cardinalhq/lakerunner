@@ -49,33 +49,44 @@ func NewMultiReader(readers []Reader) (*MultiReader, error) {
 	}, nil
 }
 
-// GetRow returns the next row from the current reader, advancing to the next reader
-// when the current reader is exhausted.
-func (mr *MultiReader) GetRow() (Row, error) {
+// Read populates the provided slice with as many rows as possible from the current reader,
+// advancing to the next reader when the current reader is exhausted.
+func (mr *MultiReader) Read(rows []Row) (int, error) {
 	if mr.closed {
-		return nil, errors.New("reader is closed")
+		return 0, errors.New("reader is closed")
 	}
 
-	// Loop through readers until we find one with data or exhaust all readers
-	for mr.currentIndex < len(mr.readers) {
+	if len(rows) == 0 {
+		return 0, nil
+	}
+
+	totalRead := 0
+
+	// Loop through readers until we fill the slice or exhaust all readers
+	for totalRead < len(rows) && mr.currentIndex < len(mr.readers) {
 		currentReader := mr.readers[mr.currentIndex]
 
-		row, err := currentReader.GetRow()
+		// Read from current reader into remaining slice space
+		remainingRows := rows[totalRead:]
+		n, err := currentReader.Read(remainingRows)
+		totalRead += n
+
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				// Current reader is exhausted, move to the next one
 				mr.currentIndex++
 				continue
 			}
-			return nil, fmt.Errorf("error reading from reader %d: %w", mr.currentIndex, err)
+			return totalRead, fmt.Errorf("error reading from reader %d: %w", mr.currentIndex, err)
 		}
-
-		// Current reader has data, return it
-		return row, nil
 	}
 
-	// All readers exhausted
-	return nil, io.EOF
+	// Return EOF if we've exhausted all readers and didn't read any data this call
+	if totalRead == 0 && mr.currentIndex >= len(mr.readers) {
+		return 0, io.EOF
+	}
+
+	return totalRead, nil
 }
 
 // Close closes all underlying readers and releases resources.

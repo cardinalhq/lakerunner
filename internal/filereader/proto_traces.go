@@ -48,13 +48,34 @@ func NewProtoTracesReader(reader io.Reader) (*ProtoTracesReader, error) {
 	return protoReader, nil
 }
 
-// GetRow returns the next row from the protobuf traces file.
-func (r *ProtoTracesReader) GetRow() (Row, error) {
+// Read populates the provided slice with as many rows as possible.
+func (r *ProtoTracesReader) Read(rows []Row) (int, error) {
 	if r.closed {
-		return nil, fmt.Errorf("reader is closed")
+		return 0, fmt.Errorf("reader is closed")
 	}
 
-	return r.getTraceRow()
+	if len(rows) == 0 {
+		return 0, nil
+	}
+
+	n := 0
+	for n < len(rows) {
+		row, err := r.getTraceRow()
+		if err != nil {
+			return n, err
+		}
+
+		resetRow(&rows[n])
+
+		// Copy data to Row
+		for k, v := range row {
+			rows[n][k] = v
+		}
+
+		n++
+	}
+
+	return n, nil
 }
 
 // getTraceRow handles reading the next trace row.

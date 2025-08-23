@@ -91,7 +91,9 @@ func (or *OrderedReader) advance(state *readerState) error {
 		return state.err
 	}
 
-	row, err := state.reader.GetRow()
+	rows := make([]Row, 1)
+	resetRow(&rows[0])
+	n, err := state.reader.Read(rows)
 	if err != nil {
 		if errors.Is(err, io.EOF) {
 			state.done = true
@@ -101,54 +103,75 @@ func (or *OrderedReader) advance(state *readerState) error {
 		return err
 	}
 
-	state.current = row
+	if n == 0 {
+		state.done = true
+		return nil
+	}
+
+	state.current = rows[0]
 	return nil
 }
 
-// GetRow returns the next row in sorted order across all readers.
-func (or *OrderedReader) GetRow() (Row, error) {
+// Read populates the provided slice with rows in sorted order across all readers.
+func (or *OrderedReader) Read(rows []Row) (int, error) {
 	if or.closed {
-		return nil, errors.New("reader is closed")
+		return 0, errors.New("reader is closed")
 	}
 
-	// Collect all active (non-done, non-error) readers and their current rows
-	var activeRows []Row
-	var activeStates []*readerState
-
-	for _, state := range or.states {
-		if !state.done && state.err == nil {
-			activeRows = append(activeRows, state.current)
-			activeStates = append(activeStates, state)
-		}
+	if len(rows) == 0 {
+		return 0, nil
 	}
 
-	// No more active readers
-	if len(activeRows) == 0 {
-		// Check if any reader had an error
+	n := 0
+	for n < len(rows) {
+		// Collect all active (non-done, non-error) readers and their current rows
+		var activeRows []Row
+		var activeStates []*readerState
+
 		for _, state := range or.states {
-			if state.err != nil {
-				return nil, fmt.Errorf("reader %d error: %w", state.index, state.err)
+			if !state.done && state.err == nil {
+				activeRows = append(activeRows, state.current)
+				activeStates = append(activeStates, state)
 			}
 		}
-		return nil, io.EOF
+
+		// No more active readers
+		if len(activeRows) == 0 {
+			// Check if any reader had an error
+			for _, state := range or.states {
+				if state.err != nil {
+					return n, fmt.Errorf("reader %d error: %w", state.index, state.err)
+				}
+			}
+			return n, io.EOF
+		}
+
+		// Use selector to determine which row to return
+		selectedIdx := or.selector(activeRows)
+		if selectedIdx < 0 || selectedIdx >= len(activeStates) {
+			return n, fmt.Errorf("selector returned invalid index %d, expected 0-%d",
+				selectedIdx, len(activeStates)-1)
+		}
+
+		selectedState := activeStates[selectedIdx]
+		selectedRow := selectedState.current
+
+		resetRow(&rows[n])
+
+		// Copy data to Row
+		for k, v := range selectedRow {
+			rows[n][k] = v
+		}
+
+		// Advance the selected reader to its next row
+		if err := or.advance(selectedState); err != nil {
+			return n, fmt.Errorf("failed to advance reader %d: %w", selectedState.index, err)
+		}
+
+		n++
 	}
 
-	// Use selector to determine which row to return
-	selectedIdx := or.selector(activeRows)
-	if selectedIdx < 0 || selectedIdx >= len(activeStates) {
-		return nil, fmt.Errorf("selector returned invalid index %d, expected 0-%d",
-			selectedIdx, len(activeStates)-1)
-	}
-
-	selectedState := activeStates[selectedIdx]
-	selectedRow := selectedState.current
-
-	// Advance the selected reader to its next row
-	if err := or.advance(selectedState); err != nil {
-		return nil, fmt.Errorf("failed to advance reader %d: %w", selectedState.index, err)
-	}
-
-	return selectedRow, nil
+	return n, nil
 }
 
 // Close closes all underlying readers and releases resources.

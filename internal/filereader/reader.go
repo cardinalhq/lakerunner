@@ -21,10 +21,10 @@ type Row map[string]any
 
 // Reader is the core interface for reading rows from any file format.
 type Reader interface {
-	// GetRow returns the next row of data.
-	// Returns io.EOF when there are no more rows.
-	// Returns error for any read failures.
-	GetRow() (row Row, err error)
+	// Read populates the provided slice with as many rows as possible.
+	// Returns the number of rows read and any error (including io.EOF when exhausted).
+	// Similar to io.Reader pattern: may return n > 0 and err != nil.
+	Read(rows []Row) (n int, err error)
 
 	// Close releases any resources held by the reader.
 	Close() error
@@ -60,6 +60,19 @@ func TimeOrderedSelector(fieldName string) SelectFunc {
 		}
 
 		return minIdx
+	}
+}
+
+// resetRow initializes or clears a Row map for reuse.
+// If the row is nil, it creates a new Row. If not nil, it clears all existing data.
+func resetRow(row *Row) {
+	if *row == nil {
+		*row = make(Row)
+	} else {
+		// Clear existing row
+		for k := range *row {
+			delete(*row, k)
+		}
 	}
 }
 

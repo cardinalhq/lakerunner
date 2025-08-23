@@ -41,36 +41,52 @@ func NewJSONLinesReader(reader io.Reader) (*JSONLinesReader, error) {
 	}, nil
 }
 
-// GetRow returns the next row from the JSON lines stream.
-func (r *JSONLinesReader) GetRow() (Row, error) {
+// Read populates the provided slice with as many rows as possible.
+func (r *JSONLinesReader) Read(rows []Row) (int, error) {
 	if r.closed {
-		return nil, fmt.Errorf("reader is closed")
+		return 0, fmt.Errorf("reader is closed")
 	}
 
-	if !r.scanner.Scan() {
-		// Check for scanner error
-		if err := r.scanner.Err(); err != nil {
-			return nil, fmt.Errorf("scanner error reading at line %d: %w", r.rowIndex+1, err)
+	if len(rows) == 0 {
+		return 0, nil
+	}
+
+	n := 0
+	for n < len(rows) {
+		if !r.scanner.Scan() {
+			// Check for scanner error
+			if err := r.scanner.Err(); err != nil {
+				return n, fmt.Errorf("scanner error reading at line %d: %w", r.rowIndex+1, err)
+			}
+			// End of file
+			return n, io.EOF
 		}
-		// End of file
-		return nil, io.EOF
+
+		line := strings.TrimSpace(r.scanner.Text())
+		r.rowIndex++
+
+		// Skip empty lines
+		if line == "" {
+			continue
+		}
+
+		resetRow(&rows[n])
+
+		// Parse JSON
+		var rowData map[string]any
+		if err := json.Unmarshal([]byte(line), &rowData); err != nil {
+			return n, fmt.Errorf("failed to parse JSON at line %d: %w", r.rowIndex, err)
+		}
+
+		// Copy data to Row
+		for k, v := range rowData {
+			rows[n][k] = v
+		}
+
+		n++
 	}
 
-	line := strings.TrimSpace(r.scanner.Text())
-	r.rowIndex++
-
-	// Skip empty lines
-	if line == "" {
-		return r.GetRow() // Recursive call to get next non-empty line
-	}
-
-	// Parse JSON
-	var row map[string]any
-	if err := json.Unmarshal([]byte(line), &row); err != nil {
-		return nil, fmt.Errorf("failed to parse JSON at line %d: %w", r.rowIndex, err)
-	}
-
-	return Row(row), nil
+	return n, nil
 }
 
 // Close closes the reader.

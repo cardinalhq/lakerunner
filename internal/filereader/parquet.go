@@ -15,7 +15,6 @@
 package filereader
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -25,70 +24,56 @@ import (
 
 // ParquetReader reads rows from a generic Parquet stream.
 type ParquetReader struct {
-	data   []byte
 	pf     *parquet.File
 	pfr    *parquet.GenericReader[map[string]any]
 	closed bool
 }
 
-// NewParquetReader creates a new ParquetReader for the given io.Reader.
-// The entire content is read into memory since parquet requires random access.
+// NewParquetReader creates a new ParquetReader for the given io.ReaderAt.
 // The caller is responsible for closing the underlying reader.
-func NewParquetReader(reader io.Reader) (*ParquetReader, error) {
-	// Read entire content into memory since parquet requires random access
-	data, err := io.ReadAll(reader)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read parquet data: %w", err)
-	}
-
-	bytesReader := bytes.NewReader(data)
-	pf, err := parquet.OpenFile(bytesReader, int64(len(data)))
+func NewParquetReader(reader io.ReaderAt, size int64) (*ParquetReader, error) {
+	pf, err := parquet.OpenFile(reader, size)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open parquet file: %w", err)
 	}
 
-	pfr := parquet.NewGenericReader[map[string]any](pf)
+	// Use the file's schema to create a GenericReader
+	pfr := parquet.NewGenericReader[map[string]any](pf, pf.Schema())
 
 	return &ParquetReader{
-		data: data,
-		pf:   pf,
-		pfr:  pfr,
+		pf:  pf,
+		pfr: pfr,
 	}, nil
 }
 
-// GetRow returns the next row from the Parquet stream.
-func (r *ParquetReader) GetRow() (Row, error) {
+// Read populates the provided slice with as many rows as possible.
+func (r *ParquetReader) Read(rows []Row) (int, error) {
 	if r.closed || r.pfr == nil {
-		return nil, errors.New("reader is closed or not initialized")
+		return 0, errors.New("reader is closed or not initialized")
 	}
 
-	rows := make([]map[string]any, 1)
-	rows[0] = make(map[string]any)
-
-	n, err := r.pfr.Read(rows)
-
-	// Handle case where we get data and EOF on same call
-	if n == 1 {
-		row := rows[0]
-		// If we got data, return it regardless of EOF
-		// The next call will return io.EOF with no data
-		return Row(row), nil
+	if len(rows) == 0 {
+		return 0, nil
 	}
 
-	// No data was read
-	if n == 0 {
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				return nil, io.EOF
-			}
-			return nil, fmt.Errorf("failed to read row: %w", err)
+	// Create fresh maps for parquet reader to populate
+	parquetRows := make([]map[string]any, len(rows))
+	for i := range parquetRows {
+		parquetRows[i] = make(map[string]any)
+	}
+
+	n, err := r.pfr.Read(parquetRows)
+
+	// Copy the data back to the provided rows slice
+	for i := 0; i < n; i++ {
+		resetRow(&rows[i])
+		// Copy data from parquet row
+		for k, v := range parquetRows[i] {
+			rows[i][k] = v
 		}
-		// Shouldn't happen - no data and no error
-		return nil, fmt.Errorf("no data read and no error")
 	}
 
-	// Unexpected case - got more than 1 row
-	return nil, fmt.Errorf("expected to read 1 row, got %d", n)
+	return n, err
 }
 
 // Close closes the reader and releases resources.
@@ -105,15 +90,6 @@ func (r *ParquetReader) Close() error {
 		r.pfr = nil
 	}
 	r.pf = nil
-	r.data = nil
 
 	return nil
-}
-
-// NumRows returns the total number of rows in the Parquet file, if available.
-func (r *ParquetReader) NumRows() int64 {
-	if r.pfr == nil {
-		return 0
-	}
-	return r.pfr.NumRows()
 }
