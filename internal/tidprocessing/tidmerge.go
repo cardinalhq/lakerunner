@@ -395,7 +395,7 @@ func (m *TIDMerger) mergeRows(rows []map[string]any) []map[string]any {
 			continue
 		}
 
-		if acc, exists := merged[key]; !exists {
+		if _, exists := merged[key]; !exists {
 			// 1st time: store the sketch
 			merged[key] = &mergeaccumulator{
 				row:           row,
@@ -474,7 +474,7 @@ func updateFromSketch(acc *mergeaccumulator) error {
 
 	acc.row["rollup_count"] = rollupCountIn
 	acc.row["rollup_sum"] = rollupSumIn
-	
+
 	// Avoid division by zero
 	if rollupCountIn > 0 {
 		acc.row["rollup_avg"] = rollupSumIn / rollupCountIn

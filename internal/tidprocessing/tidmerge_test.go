@@ -57,16 +57,13 @@ func TestUpdateFromSketch_AllFieldsSet(t *testing.T) {
 	expQs, err := sketch.GetValuesAtQuantiles([]float64{0.25, 0.50, 0.75, 0.90, 0.95, 0.99})
 	require.NoError(t, err)
 
-	// Encode and feed bytes only to exercise lazy decoding with Dense store
-	enc := EncodeSketch(sketch)
+	// Test the sketch processing directly
 
 	row := make(map[string]any)
 	acc := &mergeaccumulator{
-		row: row,
-		holder: sketchHolder{
-			bytes: enc, // no decoded sketch yet; ensureDecoded() will run inside updateFromSketch
-		},
-		contributions: 2, // simulate merged path (updateFromSketch typically called when >1)
+		row:           row,
+		sketch:        sketch, // directly use the sketch
+		contributions: 2,      // simulate merged path (updateFromSketch typically called when >1)
 	}
 
 	err = updateFromSketch(acc)
