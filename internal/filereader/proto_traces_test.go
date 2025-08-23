@@ -46,8 +46,9 @@ func TestNewProtoTracesReader(t *testing.T) {
 	// Verify the reader was initialized properly
 	assert.NotNil(t, protoReader.traces)
 	assert.False(t, protoReader.closed)
-	assert.Equal(t, 0, protoReader.traceResourceIndex)
-	assert.Equal(t, 0, protoReader.traceQueueIndex)
+	assert.Equal(t, 0, protoReader.resourceIndex)
+	assert.Equal(t, 0, protoReader.scopeIndex)
+	assert.Equal(t, 0, protoReader.spanIndex)
 }
 
 func TestNewProtoTracesReader_InvalidData(t *testing.T) {

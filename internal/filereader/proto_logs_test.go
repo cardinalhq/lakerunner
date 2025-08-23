@@ -49,8 +49,9 @@ func TestNewProtoLogsReader(t *testing.T) {
 	// Verify the reader was initialized properly
 	assert.NotNil(t, reader.logs)
 	assert.False(t, reader.closed)
-	assert.Equal(t, 0, reader.currentResourceIndex)
-	assert.Equal(t, 0, reader.queueIndex)
+	assert.Equal(t, 0, reader.resourceIndex)
+	assert.Equal(t, 0, reader.scopeIndex)
+	assert.Equal(t, 0, reader.logIndex)
 }
 
 func TestNewProtoLogsReader_InvalidData(t *testing.T) {

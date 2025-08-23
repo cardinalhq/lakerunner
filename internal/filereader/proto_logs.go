@@ -27,11 +27,11 @@ import (
 type ProtoLogsReader struct {
 	closed bool
 
-	// Streaming state for logs
-	logs                 *plog.Logs
-	currentResourceIndex int
-	logQueue             []map[string]any
-	queueIndex           int
+	// Streaming iterator state for logs
+	logs          *plog.Logs
+	resourceIndex int
+	scopeIndex    int
+	logIndex      int
 }
 
 // NewProtoLogsReader creates a new ProtoLogsReader for the given io.Reader.
@@ -84,34 +84,69 @@ func (r *ProtoLogsReader) getLogRow() (Row, error) {
 		return nil, io.EOF
 	}
 
-	// If we have rows in the queue, return the next one
-	if r.queueIndex < len(r.logQueue) {
-		row := r.logQueue[r.queueIndex]
-		r.queueIndex++
-		return r.processRow(row)
+	// Iterator pattern: advance through resources -> scopes -> logs
+	for r.resourceIndex < r.logs.ResourceLogs().Len() {
+		rl := r.logs.ResourceLogs().At(r.resourceIndex)
+
+		for r.scopeIndex < rl.ScopeLogs().Len() {
+			sl := rl.ScopeLogs().At(r.scopeIndex)
+
+			if r.logIndex < sl.LogRecords().Len() {
+				logRecord := sl.LogRecords().At(r.logIndex)
+
+				// Build row for this log record
+				row := r.buildLogRow(rl, sl, logRecord)
+
+				// Advance to next log record
+				r.logIndex++
+
+				return r.processRow(row)
+			}
+
+			// Move to next scope, reset log index
+			r.scopeIndex++
+			r.logIndex = 0
+		}
+
+		// Move to next resource, reset scope and log indices
+		r.resourceIndex++
+		r.scopeIndex = 0
+		r.logIndex = 0
 	}
 
-	// Process next resource if available
-	if r.currentResourceIndex >= r.logs.ResourceLogs().Len() {
-		return nil, io.EOF
-	}
+	return nil, io.EOF
+}
 
-	resourceLog := r.logs.ResourceLogs().At(r.currentResourceIndex)
+// buildLogRow creates a row from a single log record and its context.
+func (r *ProtoLogsReader) buildLogRow(rl plog.ResourceLogs, sl plog.ScopeLogs, logRecord plog.LogRecord) map[string]any {
+	ret := map[string]any{}
 
-	// Create a single resource log for processing
-	singleResourceLog := plog.NewLogs()
-	newResourceLog := singleResourceLog.ResourceLogs().AppendEmpty()
-	resourceLog.CopyTo(newResourceLog)
+	// Add resource attributes with prefix
+	rl.Resource().Attributes().Range(func(name string, v pcommon.Value) bool {
+		ret["resource."+name] = v.AsString()
+		return true
+	})
 
-	// Convert to raw rows without signal-specific transformation
-	rows := r.rawLogsFromOtel(&singleResourceLog)
+	// Add scope attributes with prefix
+	sl.Scope().Attributes().Range(func(name string, v pcommon.Value) bool {
+		ret["scope."+name] = v.AsString()
+		return true
+	})
 
-	r.logQueue = rows
-	r.queueIndex = 0
-	r.currentResourceIndex++
+	// Add log attributes with prefix
+	logRecord.Attributes().Range(func(name string, v pcommon.Value) bool {
+		ret["log."+name] = v.AsString()
+		return true
+	})
 
-	// Recursively call to return the first row from the new queue
-	return r.getLogRow()
+	// Add basic log fields
+	ret["body"] = logRecord.Body().AsString()
+	ret["timestamp"] = logRecord.Timestamp().AsTime().UnixMilli()
+	ret["observed_timestamp"] = logRecord.ObservedTimestamp().AsTime().UnixMilli()
+	ret["severity_text"] = logRecord.SeverityText()
+	ret["severity_number"] = int32(logRecord.SeverityNumber())
+
+	return ret
 }
 
 // processRow applies any processing to a row.
@@ -128,54 +163,8 @@ func (r *ProtoLogsReader) Close() error {
 
 	// Release references to parsed data
 	r.logs = nil
-	r.logQueue = nil
 
 	return nil
-}
-
-// rawLogsFromOtel converts OTEL logs to raw rows without any transformations
-func (r *ProtoLogsReader) rawLogsFromOtel(ol *plog.Logs) []map[string]any {
-	var rets []map[string]any
-
-	for i := 0; i < ol.ResourceLogs().Len(); i++ {
-		rl := ol.ResourceLogs().At(i)
-		for j := 0; j < rl.ScopeLogs().Len(); j++ {
-			ill := rl.ScopeLogs().At(j)
-			for k := 0; k < ill.LogRecords().Len(); k++ {
-				log := ill.LogRecords().At(k)
-				ret := map[string]any{}
-
-				// Add resource attributes with prefix
-				rl.Resource().Attributes().Range(func(name string, v pcommon.Value) bool {
-					ret["resource."+name] = v.AsString()
-					return true
-				})
-
-				// Add scope attributes with prefix
-				ill.Scope().Attributes().Range(func(name string, v pcommon.Value) bool {
-					ret["scope."+name] = v.AsString()
-					return true
-				})
-
-				// Add log attributes with prefix
-				log.Attributes().Range(func(name string, v pcommon.Value) bool {
-					ret["log."+name] = v.AsString()
-					return true
-				})
-
-				// Add basic log fields
-				ret["body"] = log.Body().AsString()
-				ret["timestamp"] = log.Timestamp().AsTime().UnixMilli()
-				ret["observed_timestamp"] = log.ObservedTimestamp().AsTime().UnixMilli()
-				ret["severity_text"] = log.SeverityText()
-				ret["severity_number"] = int32(log.SeverityNumber())
-
-				rets = append(rets, ret)
-			}
-		}
-	}
-
-	return rets
 }
 
 func parseProtoToOtelLogs(reader io.Reader) (*plog.Logs, error) {

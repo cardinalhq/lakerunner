@@ -46,8 +46,9 @@ func TestNewProtoMetricsReader(t *testing.T) {
 	// Verify the reader was initialized properly
 	assert.NotNil(t, reader.metrics)
 	assert.False(t, reader.closed)
-	assert.Equal(t, 0, reader.metricResourceIndex)
-	assert.Equal(t, 0, reader.metricQueueIndex)
+	assert.Equal(t, 0, reader.resourceIndex)
+	assert.Equal(t, 0, reader.scopeIndex)
+	assert.Equal(t, 0, reader.metricIndex)
 }
 
 func TestNewProtoMetricsReader_InvalidData(t *testing.T) {

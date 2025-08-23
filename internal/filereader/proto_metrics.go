@@ -26,11 +26,11 @@ import (
 type ProtoMetricsReader struct {
 	closed bool
 
-	// Streaming state for metrics
-	metrics             *pmetric.Metrics
-	metricResourceIndex int
-	metricQueue         []map[string]any
-	metricQueueIndex    int
+	// Streaming iterator state for metrics
+	metrics       *pmetric.Metrics
+	resourceIndex int
+	scopeIndex    int
+	metricIndex   int
 }
 
 // NewProtoMetricsReader creates a new ProtoMetricsReader for the given io.Reader.
@@ -77,40 +77,68 @@ func (r *ProtoMetricsReader) Read(rows []Row) (int, error) {
 	return n, nil
 }
 
-// getMetricRow handles reading the next metric row.
+// getMetricRow handles reading the next metric row using streaming iteration.
 func (r *ProtoMetricsReader) getMetricRow() (Row, error) {
 	if r.metrics == nil {
 		return nil, io.EOF
 	}
 
-	// If we have rows in the queue, return the next one
-	if r.metricQueueIndex < len(r.metricQueue) {
-		row := r.metricQueue[r.metricQueueIndex]
-		r.metricQueueIndex++
-		return r.processRow(row)
+	// Iterator pattern: advance through resources -> scopes -> metrics
+	for r.resourceIndex < r.metrics.ResourceMetrics().Len() {
+		rm := r.metrics.ResourceMetrics().At(r.resourceIndex)
+
+		for r.scopeIndex < rm.ScopeMetrics().Len() {
+			sm := rm.ScopeMetrics().At(r.scopeIndex)
+
+			if r.metricIndex < sm.Metrics().Len() {
+				metric := sm.Metrics().At(r.metricIndex)
+
+				// Build row for this metric
+				row := r.buildMetricRow(rm, sm, metric)
+
+				// Advance to next metric
+				r.metricIndex++
+
+				return r.processRow(row)
+			}
+
+			// Move to next scope, reset metric index
+			r.scopeIndex++
+			r.metricIndex = 0
+		}
+
+		// Move to next resource, reset scope and metric indices
+		r.resourceIndex++
+		r.scopeIndex = 0
+		r.metricIndex = 0
 	}
 
-	// Process next resource if available
-	if r.metricResourceIndex >= r.metrics.ResourceMetrics().Len() {
-		return nil, io.EOF
-	}
+	return nil, io.EOF
+}
 
-	resourceMetric := r.metrics.ResourceMetrics().At(r.metricResourceIndex)
+// buildMetricRow creates a row from a single metric and its context.
+func (r *ProtoMetricsReader) buildMetricRow(rm pmetric.ResourceMetrics, sm pmetric.ScopeMetrics, metric pmetric.Metric) map[string]any {
+	ret := map[string]any{}
 
-	// Create a single resource metric for processing
-	singleResourceMetric := pmetric.NewMetrics()
-	newResourceMetric := singleResourceMetric.ResourceMetrics().AppendEmpty()
-	resourceMetric.CopyTo(newResourceMetric)
+	// Add resource attributes with prefix
+	rm.Resource().Attributes().Range(func(name string, v pcommon.Value) bool {
+		ret["resource."+name] = v.AsString()
+		return true
+	})
 
-	// Convert to raw rows
-	rows := r.rawMetricsFromOtel(&singleResourceMetric)
+	// Add scope attributes with prefix
+	sm.Scope().Attributes().Range(func(name string, v pcommon.Value) bool {
+		ret["scope."+name] = v.AsString()
+		return true
+	})
 
-	r.metricQueue = rows
-	r.metricQueueIndex = 0
-	r.metricResourceIndex++
+	// Basic metric fields - raw data only
+	ret["name"] = metric.Name()
+	ret["description"] = metric.Description()
+	ret["unit"] = metric.Unit()
+	ret["type"] = metric.Type().String()
 
-	// Recursively call to return the first row from the new queue
-	return r.getMetricRow()
+	return ret
 }
 
 // processRow applies any processing to a row.
@@ -127,47 +155,8 @@ func (r *ProtoMetricsReader) Close() error {
 
 	// Release references to parsed data
 	r.metrics = nil
-	r.metricQueue = nil
 
 	return nil
-}
-
-// rawMetricsFromOtel converts OTEL metrics to raw rows without signal-specific transformations
-func (r *ProtoMetricsReader) rawMetricsFromOtel(om *pmetric.Metrics) []map[string]any {
-	var rets []map[string]any
-
-	for i := 0; i < om.ResourceMetrics().Len(); i++ {
-		rm := om.ResourceMetrics().At(i)
-		for j := 0; j < rm.ScopeMetrics().Len(); j++ {
-			imm := rm.ScopeMetrics().At(j)
-			for k := 0; k < imm.Metrics().Len(); k++ {
-				metric := imm.Metrics().At(k)
-				ret := map[string]any{}
-
-				// Add resource attributes with prefix
-				rm.Resource().Attributes().Range(func(name string, v pcommon.Value) bool {
-					ret["resource."+name] = v.AsString()
-					return true
-				})
-
-				// Add scope attributes with prefix
-				imm.Scope().Attributes().Range(func(name string, v pcommon.Value) bool {
-					ret["scope."+name] = v.AsString()
-					return true
-				})
-
-				// Basic metric fields - raw data only
-				ret["name"] = metric.Name()
-				ret["description"] = metric.Description()
-				ret["unit"] = metric.Unit()
-				ret["type"] = metric.Type().String()
-
-				rets = append(rets, ret)
-			}
-		}
-	}
-
-	return rets
 }
 
 func parseProtoToOtelMetrics(reader io.Reader) (*pmetric.Metrics, error) {

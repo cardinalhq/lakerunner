@@ -100,8 +100,3 @@ func (r *JSONLinesReader) Close() error {
 	r.scanner = nil
 	return nil
 }
-
-// RowIndex returns the current line number being processed (1-based).
-func (r *JSONLinesReader) RowIndex() int {
-	return r.rowIndex
-}
