@@ -24,8 +24,11 @@ import (
 
 	"google.golang.org/grpc"
 
+	"github.com/google/uuid"
+
 	"github.com/cardinalhq/lakerunner/adminproto"
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
+	"github.com/cardinalhq/lakerunner/configdb"
 	"github.com/cardinalhq/lakerunner/internal/adminconfig"
 )
 
@@ -163,4 +166,74 @@ func (s *Service) InQueueStatus(ctx context.Context, req *adminproto.InQueueStat
 	return &adminproto.InQueueStatusResponse{
 		Items: items,
 	}, nil
+}
+
+func (s *Service) ListOrganizations(ctx context.Context, _ *adminproto.ListOrganizationsRequest) (*adminproto.ListOrganizationsResponse, error) {
+	slog.Debug("Received list organizations request")
+
+	store, err := dbopen.ConfigDBStore(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to configdb: %w", err)
+	}
+
+	orgs, err := store.ListOrganizations(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list organizations: %w", err)
+	}
+
+	respOrgs := make([]*adminproto.Organization, len(orgs))
+	for i, o := range orgs {
+		respOrgs[i] = &adminproto.Organization{Id: o.ID.String(), Name: o.Name, Enabled: o.Enabled}
+	}
+
+	return &adminproto.ListOrganizationsResponse{Organizations: respOrgs}, nil
+}
+
+func (s *Service) CreateOrganization(ctx context.Context, req *adminproto.CreateOrganizationRequest) (*adminproto.CreateOrganizationResponse, error) {
+	slog.Debug("Received create organization request", slog.String("name", req.Name))
+
+	store, err := dbopen.ConfigDBStore(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to configdb: %w", err)
+	}
+
+	org, err := store.UpsertOrganization(ctx, configdb.UpsertOrganizationParams{ID: uuid.New(), Name: req.Name, Enabled: req.Enabled})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create organization: %w", err)
+	}
+
+	return &adminproto.CreateOrganizationResponse{Organization: &adminproto.Organization{Id: org.ID.String(), Name: org.Name, Enabled: org.Enabled}}, nil
+}
+
+func (s *Service) UpdateOrganization(ctx context.Context, req *adminproto.UpdateOrganizationRequest) (*adminproto.UpdateOrganizationResponse, error) {
+	slog.Debug("Received update organization request", slog.String("id", req.Id))
+
+	store, err := dbopen.ConfigDBStore(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to configdb: %w", err)
+	}
+
+	orgID, err := uuid.Parse(req.Id)
+	if err != nil {
+		return nil, fmt.Errorf("invalid organization ID: %w", err)
+	}
+
+	org, err := store.GetOrganization(ctx, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get organization: %w", err)
+	}
+
+	if req.Name != nil {
+		org.Name = req.Name.Value
+	}
+	if req.Enabled != nil {
+		org.Enabled = req.Enabled.Value
+	}
+
+	updated, err := store.UpsertOrganization(ctx, configdb.UpsertOrganizationParams{ID: orgID, Name: org.Name, Enabled: org.Enabled})
+	if err != nil {
+		return nil, fmt.Errorf("failed to update organization: %w", err)
+	}
+
+	return &adminproto.UpdateOrganizationResponse{Organization: &adminproto.Organization{Id: updated.ID.String(), Name: updated.Name, Enabled: updated.Enabled}}, nil
 }

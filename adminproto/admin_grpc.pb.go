@@ -33,9 +33,12 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	AdminService_Ping_FullMethodName            = "/adminproto.AdminService/Ping"
-	AdminService_WorkQueueStatus_FullMethodName = "/adminproto.AdminService/WorkQueueStatus"
-	AdminService_InQueueStatus_FullMethodName   = "/adminproto.AdminService/InQueueStatus"
+	AdminService_Ping_FullMethodName               = "/adminproto.AdminService/Ping"
+	AdminService_WorkQueueStatus_FullMethodName    = "/adminproto.AdminService/WorkQueueStatus"
+	AdminService_InQueueStatus_FullMethodName      = "/adminproto.AdminService/InQueueStatus"
+	AdminService_ListOrganizations_FullMethodName  = "/adminproto.AdminService/ListOrganizations"
+	AdminService_CreateOrganization_FullMethodName = "/adminproto.AdminService/CreateOrganization"
+	AdminService_UpdateOrganization_FullMethodName = "/adminproto.AdminService/UpdateOrganization"
 )
 
 // AdminServiceClient is the client API for AdminService service.
@@ -48,6 +51,12 @@ type AdminServiceClient interface {
 	WorkQueueStatus(ctx context.Context, in *WorkQueueStatusRequest, opts ...grpc.CallOption) (*WorkQueueStatusResponse, error)
 	// Get inqueue status/summary
 	InQueueStatus(ctx context.Context, in *InQueueStatusRequest, opts ...grpc.CallOption) (*InQueueStatusResponse, error)
+	// List organizations in the system
+	ListOrganizations(ctx context.Context, in *ListOrganizationsRequest, opts ...grpc.CallOption) (*ListOrganizationsResponse, error)
+	// Create a new organization
+	CreateOrganization(ctx context.Context, in *CreateOrganizationRequest, opts ...grpc.CallOption) (*CreateOrganizationResponse, error)
+	// Update fields on an existing organization
+	UpdateOrganization(ctx context.Context, in *UpdateOrganizationRequest, opts ...grpc.CallOption) (*UpdateOrganizationResponse, error)
 }
 
 type adminServiceClient struct {
@@ -88,6 +97,36 @@ func (c *adminServiceClient) InQueueStatus(ctx context.Context, in *InQueueStatu
 	return out, nil
 }
 
+func (c *adminServiceClient) ListOrganizations(ctx context.Context, in *ListOrganizationsRequest, opts ...grpc.CallOption) (*ListOrganizationsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListOrganizationsResponse)
+	err := c.cc.Invoke(ctx, AdminService_ListOrganizations_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminServiceClient) CreateOrganization(ctx context.Context, in *CreateOrganizationRequest, opts ...grpc.CallOption) (*CreateOrganizationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateOrganizationResponse)
+	err := c.cc.Invoke(ctx, AdminService_CreateOrganization_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminServiceClient) UpdateOrganization(ctx context.Context, in *UpdateOrganizationRequest, opts ...grpc.CallOption) (*UpdateOrganizationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UpdateOrganizationResponse)
+	err := c.cc.Invoke(ctx, AdminService_UpdateOrganization_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AdminServiceServer is the server API for AdminService service.
 // All implementations must embed UnimplementedAdminServiceServer
 // for forward compatibility.
@@ -98,6 +137,12 @@ type AdminServiceServer interface {
 	WorkQueueStatus(context.Context, *WorkQueueStatusRequest) (*WorkQueueStatusResponse, error)
 	// Get inqueue status/summary
 	InQueueStatus(context.Context, *InQueueStatusRequest) (*InQueueStatusResponse, error)
+	// List organizations in the system
+	ListOrganizations(context.Context, *ListOrganizationsRequest) (*ListOrganizationsResponse, error)
+	// Create a new organization
+	CreateOrganization(context.Context, *CreateOrganizationRequest) (*CreateOrganizationResponse, error)
+	// Update fields on an existing organization
+	UpdateOrganization(context.Context, *UpdateOrganizationRequest) (*UpdateOrganizationResponse, error)
 	mustEmbedUnimplementedAdminServiceServer()
 }
 
@@ -116,6 +161,15 @@ func (UnimplementedAdminServiceServer) WorkQueueStatus(context.Context, *WorkQue
 }
 func (UnimplementedAdminServiceServer) InQueueStatus(context.Context, *InQueueStatusRequest) (*InQueueStatusResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method InQueueStatus not implemented")
+}
+func (UnimplementedAdminServiceServer) ListOrganizations(context.Context, *ListOrganizationsRequest) (*ListOrganizationsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListOrganizations not implemented")
+}
+func (UnimplementedAdminServiceServer) CreateOrganization(context.Context, *CreateOrganizationRequest) (*CreateOrganizationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CreateOrganization not implemented")
+}
+func (UnimplementedAdminServiceServer) UpdateOrganization(context.Context, *UpdateOrganizationRequest) (*UpdateOrganizationResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method UpdateOrganization not implemented")
 }
 func (UnimplementedAdminServiceServer) mustEmbedUnimplementedAdminServiceServer() {}
 func (UnimplementedAdminServiceServer) testEmbeddedByValue()                      {}
@@ -192,6 +246,60 @@ func _AdminService_InQueueStatus_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AdminService_ListOrganizations_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListOrganizationsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).ListOrganizations(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_ListOrganizations_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).ListOrganizations(ctx, req.(*ListOrganizationsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AdminService_CreateOrganization_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateOrganizationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).CreateOrganization(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_CreateOrganization_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).CreateOrganization(ctx, req.(*CreateOrganizationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AdminService_UpdateOrganization_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateOrganizationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).UpdateOrganization(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_UpdateOrganization_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).UpdateOrganization(ctx, req.(*UpdateOrganizationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AdminService_ServiceDesc is the grpc.ServiceDesc for AdminService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -210,6 +318,18 @@ var AdminService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "InQueueStatus",
 			Handler:    _AdminService_InQueueStatus_Handler,
+		},
+		{
+			MethodName: "ListOrganizations",
+			Handler:    _AdminService_ListOrganizations_Handler,
+		},
+		{
+			MethodName: "CreateOrganization",
+			Handler:    _AdminService_CreateOrganization_Handler,
+		},
+		{
+			MethodName: "UpdateOrganization",
+			Handler:    _AdminService_UpdateOrganization_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

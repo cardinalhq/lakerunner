@@ -22,9 +22,14 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/cardinalhq/lakerunner/admin"
+	"github.com/cardinalhq/lakerunner/cmd/admin/adminapikeys"
 	"github.com/cardinalhq/lakerunner/cmd/admin/bootstrap"
+	"github.com/cardinalhq/lakerunner/cmd/admin/bucketprefixes"
 	"github.com/cardinalhq/lakerunner/cmd/admin/inqueue"
 	"github.com/cardinalhq/lakerunner/cmd/admin/objcleanup"
+	"github.com/cardinalhq/lakerunner/cmd/admin/organizations"
+	"github.com/cardinalhq/lakerunner/cmd/admin/orgapikeys"
+	"github.com/cardinalhq/lakerunner/cmd/admin/storageprofiles"
 	"github.com/cardinalhq/lakerunner/cmd/admin/workqueue"
 )
 
@@ -71,6 +76,11 @@ func init() {
 	inqueueCmd := getInQueueCmd()
 	objcleanupCmd := getObjCleanupCmd()
 	bootstrapCmd := bootstrap.GetBootstrapCmd()
+	orgCmd := organizations.GetOrganizationsCmd()
+	orgAPIKeysCmd := orgapikeys.GetOrgAPIKeysCmd()
+	adminAPIKeysCmd := adminapikeys.GetAdminAPIKeysCmd()
+	storageProfilesCmd := storageprofiles.GetStorageProfilesCmd()
+	bucketPrefixesCmd := bucketprefixes.GetBucketPrefixesCmd()
 
 	// Add subcommands to admin command
 	adminCmd.AddCommand(serveCmd)
@@ -79,6 +89,11 @@ func init() {
 	adminCmd.AddCommand(inqueueCmd)
 	adminCmd.AddCommand(objcleanupCmd)
 	adminCmd.AddCommand(bootstrapCmd)
+	adminCmd.AddCommand(orgCmd)
+	adminCmd.AddCommand(orgAPIKeysCmd)
+	adminCmd.AddCommand(adminAPIKeysCmd)
+	adminCmd.AddCommand(storageProfilesCmd)
+	adminCmd.AddCommand(bucketPrefixesCmd)
 
 	// Set API key from environment variable if not provided via flag
 	adminCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
@@ -89,6 +104,11 @@ func init() {
 		workqueue.SetAPIKey(adminAPIKey)
 		inqueue.SetAPIKey(adminAPIKey)
 		objcleanup.SetAPIKey(adminAPIKey)
+		organizations.SetAPIKey(adminAPIKey)
+		orgapikeys.SetAPIKey(adminAPIKey)
+		adminapikeys.SetAPIKey(adminAPIKey)
+		storageprofiles.SetAPIKey(adminAPIKey)
+		bucketprefixes.SetAPIKey(adminAPIKey)
 	}
 
 	// Add API key flag to admin command and all subcommands
