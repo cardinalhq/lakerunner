@@ -97,7 +97,7 @@ Data is converted into optimized **Apache Parquet** with indexing, aggregation, 
 
 ### Go Standards
 
-- Go 1.25 (use new language features), such as `for i := range 1234` and `maps.Copy()`
+- Go 1.25 (use new language features), such as `for i := range 1234`, `maps.Copy()`, and `slices.Sort()`
 - Follow idiomatic Go style; imports fixed with `make fmt` which will gofmt and order imports.
 - Generated SQL via sqlc and protobufs.  Do not edit generated code.
 
