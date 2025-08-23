@@ -53,7 +53,7 @@ jobs:
         run: |
           BRANCH=$(echo "$GITHUB_REF_NAME" | tr '/' '-')
           echo "BRANCH=$BRANCH" >> $GITHUB_ENV
-          sha_short=$(git rev-parse --short HEAD)
+          sha_short=${GITHUB_SHA::8}
           echo "sha_short=$sha_short" >> $GITHUB_ENV
           echo "GORELEASER_CURRENT_TAG=v0.0.0-$BRANCH-$sha_short" >> $GITHUB_ENV
 
@@ -108,7 +108,7 @@ jobs:
         run: |
           BRANCH=$(echo "$GITHUB_REF_NAME" | tr '/' '-')
           echo "BRANCH=$BRANCH" >> $GITHUB_ENV
-          sha_short=$(git rev-parse --short HEAD)
+          sha_short=${GITHUB_SHA::8}
           echo "sha_short=$sha_short" >> $GITHUB_ENV
           echo "GORELEASER_CURRENT_TAG=v0.0.0-$BRANCH-$sha_short" >> $GITHUB_ENV
 
@@ -137,4 +137,5 @@ jobs:
         run: |
           echo "Test release built successfully!"
           echo "Image: public.ecr.aws/cardinalhq.io/lakerunner:$GORELEASER_CURRENT_TAG"
+          echo "Commit: $sha_short"
 
