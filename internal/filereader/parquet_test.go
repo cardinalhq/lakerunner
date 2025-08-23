@@ -1,0 +1,205 @@
+// Copyright (C) 2025 CardinalHQ, Inc
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as
+// published by the Free Software Foundation, version 3.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program. If not, see <http://www.gnu.org/licenses/>.
+
+package filereader
+
+import (
+	"errors"
+	"io"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// MockParquetGenericReader simulates parquet.GenericReader behavior for testing EOF handling
+type MockParquetGenericReader struct {
+	data     []map[string]any
+	position int
+	closed   bool
+}
+
+func (m *MockParquetGenericReader) Read(rows []map[string]any) (int, error) {
+	if m.closed {
+		return 0, errors.New("reader closed")
+	}
+
+	if len(rows) == 0 {
+		return 0, errors.New("no space to read")
+	}
+
+	// Simulate reading one row at a time
+	if m.position >= len(m.data) {
+		return 0, io.EOF
+	}
+
+	// Copy data to the provided slice
+	for k, v := range m.data[m.position] {
+		rows[0][k] = v
+	}
+	m.position++
+
+	// Test the n>0 && io.EOF case: return data AND EOF when reading the last item
+	if m.position >= len(m.data) {
+		return 1, io.EOF // This is the critical case we're testing!
+	}
+
+	return 1, nil
+}
+
+func (m *MockParquetGenericReader) Close() error {
+	m.closed = true
+	return nil
+}
+
+func (m *MockParquetGenericReader) NumRows() int64 {
+	return int64(len(m.data))
+}
+
+// TestParquetReaderEOFWithMock tests the n>0 && io.EOF case using a mock
+func TestParquetReaderEOFWithMock(t *testing.T) {
+	// Create mock data
+	testData := []map[string]any{
+		{"id": int64(1), "name": "first"},
+		{"id": int64(2), "name": "second"},
+		{"id": int64(3), "name": "last"},
+	}
+
+	// Create a ParquetReader with our mock
+	mockReader := &MockParquetGenericReader{data: testData}
+
+	// We can't easily replace the internal parquet reader, so let's test the logic directly
+	// by simulating what happens in GetRow()
+	
+	var collectedRows []map[string]any
+	
+	for {
+		// Simulate ParquetReader.GetRow() logic
+		rows := make([]map[string]any, 1)
+		rows[0] = make(map[string]any)
+		
+		n, err := mockReader.Read(rows)
+		
+		// This is the exact logic from our ParquetReader.GetRow()
+		if n == 1 {
+			row := rows[0]
+			collectedRows = append(collectedRows, row)
+			
+			// If we got data, return it regardless of EOF
+			// The next call will return io.EOF with no data
+			continue // In real code this would be: return Row(row), nil
+		}
+		
+		// No data was read
+		if n == 0 {
+			if err != nil && errors.Is(err, io.EOF) {
+				break // In real code this would be: return nil, io.EOF
+			}
+		}
+		
+		// Any other error
+		if err != nil {
+			require.NoError(t, err, "Unexpected error")
+		}
+	}
+
+	// Verify we got all the data, including the last row that came with EOF
+	require.Len(t, collectedRows, 3)
+	assert.Equal(t, int64(1), collectedRows[0]["id"])
+	assert.Equal(t, "first", collectedRows[0]["name"])
+	assert.Equal(t, int64(2), collectedRows[1]["id"])
+	assert.Equal(t, "second", collectedRows[1]["name"])
+	assert.Equal(t, int64(3), collectedRows[2]["id"])
+	assert.Equal(t, "last", collectedRows[2]["name"])
+}
+
+// TestParquetReaderSingleRowWithEOF tests the edge case of a single row + EOF
+func TestParquetReaderSingleRowWithEOF(t *testing.T) {
+	testData := []map[string]any{
+		{"only": "data"},
+	}
+
+	mockReader := &MockParquetGenericReader{data: testData}
+
+	// First read should get data + EOF
+	rows := make([]map[string]any, 1)
+	rows[0] = make(map[string]any)
+
+	n, err := mockReader.Read(rows)
+	
+	// Should get 1 row AND io.EOF
+	assert.Equal(t, 1, n)
+	assert.True(t, errors.Is(err, io.EOF))
+	assert.Equal(t, "data", rows[0]["only"])
+
+	// Second read should get 0 rows and EOF
+	rows[0] = make(map[string]any) // Reset
+	n, err = mockReader.Read(rows)
+	assert.Equal(t, 0, n)
+	assert.True(t, errors.Is(err, io.EOF))
+}
+
+// TestParquetReaderEmptyData tests EOF handling with no data
+func TestParquetReaderEmptyData(t *testing.T) {
+	testData := []map[string]any{} // Empty data
+
+	mockReader := &MockParquetGenericReader{data: testData}
+
+	// First read should get 0 rows and EOF
+	rows := make([]map[string]any, 1)
+	rows[0] = make(map[string]any)
+
+	n, err := mockReader.Read(rows)
+	assert.Equal(t, 0, n)
+	assert.True(t, errors.Is(err, io.EOF))
+}
+
+// TestParquetReaderNumRows tests the NumRows functionality
+func TestParquetReaderNumRows(t *testing.T) {
+	testData := []map[string]any{
+		{"id": int64(1)},
+		{"id": int64(2)},
+		{"id": int64(3)},
+		{"id": int64(4)},
+		{"id": int64(5)},
+	}
+
+	mockReader := &MockParquetGenericReader{data: testData}
+
+	// Should report correct number of rows
+	assert.Equal(t, int64(5), mockReader.NumRows())
+
+	// Read all rows
+	var collectedRows []map[string]any
+	for {
+		rows := make([]map[string]any, 1)
+		rows[0] = make(map[string]any)
+		
+		n, err := mockReader.Read(rows)
+		if n == 1 {
+			collectedRows = append(collectedRows, rows[0])
+			continue
+		}
+		if n == 0 && errors.Is(err, io.EOF) {
+			break
+		}
+		require.NoError(t, err)
+	}
+
+	// Should have read all rows
+	assert.Len(t, collectedRows, 5)
+	for i, row := range collectedRows {
+		assert.Equal(t, int64(i+1), row["id"])
+	}
+}

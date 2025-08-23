@@ -1,0 +1,156 @@
+// Copyright (C) 2025 CardinalHQ, Inc
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as
+// published by the Free Software Foundation, version 3.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program. If not, see <http://www.gnu.org/licenses/>.
+
+// Package filereader provides generic file reading for structured data formats
+// with composable readers, merge-sort capabilities, and pluggable data transformation.
+//
+// # Overview
+//
+// The filereader package provides streaming row-by-row access to various telemetry
+// file formats. All readers implement a common interface and can be composed together
+// for complex data processing patterns like merge-sort operations across multiple files.
+// Data transformation is handled by separate translator components for maximum flexibility.
+//
+// # Core Interfaces
+//
+// All file format readers return raw data without transformation:
+//
+//	type Row map[string]any
+//
+//	type Reader interface {
+//	    GetRow() (row Row, err error)  // Returns io.EOF when exhausted
+//	    Close() error
+//	}
+//
+//	type RowTranslator interface {
+//	    TranslateRow(in Row) (Row, error)
+//	}
+//
+// Use translators for data processing and TranslatingReader for composition.
+//
+// # Format Readers
+//
+// All format readers return raw, untransformed data from files:
+//
+//   - ParquetReader: Generic Parquet files using parquet-go/parquet-go
+//   - JSONLinesReader: Streams JSON objects line-by-line from any io.Reader
+//   - ProtoLogsReader: Raw OTEL log records from protobuf
+//   - ProtoMetricsReader: Raw OTEL metric data points from protobuf
+//   - ProtoTracesReader: Raw OTEL span data from protobuf
+//
+// Example usage:
+//
+//	// For compressed JSON, pass in a gzip reader:
+//	gzReader, err := gzip.NewReader(file)
+//	if err != nil {
+//	    return err
+//	}
+//	defer gzReader.Close()
+//
+//	reader, err := NewJSONLinesReader(gzReader)
+//	if err != nil {
+//	    return err
+//	}
+//	defer reader.Close()
+//
+//	for {
+//	    row, err := reader.GetRow()
+//	    if errors.Is(err, io.EOF) {
+//	        break
+//	    }
+//	    if err != nil {
+//	        return err
+//	    }
+//	    // process raw row data
+//	}
+//
+// # Data Translation
+//
+// Use translators to transform raw data:
+//
+//	// Create a simple translator that adds tags
+//	translator := NewTagsTranslator(map[string]string{
+//	    "source": "myapp",
+//	    "env": "prod",
+//	})
+//
+//	// Wrap any reader with translation
+//	translatingReader := NewTranslatingReader(rawReader, translator)
+//
+//	// Chain multiple translators
+//	chain := NewChainTranslator(
+//	    NewTagsTranslator(someTags),
+//	    customTranslator,  // Implement your own RowTranslator
+//	)
+//	reader := NewTranslatingReader(rawReader, chain)
+//
+// Built-in translators:
+//
+//   - NoopTranslator: Pass-through (no transformation)
+//   - TagsTranslator: Adds static tags to rows
+//   - ChainTranslator: Applies multiple translators in sequence
+//
+// Implement custom translators by satisfying the RowTranslator interface.
+//
+// # Composite Readers
+//
+// OrderedReader performs file-based merge-sort across multiple pre-sorted readers:
+//
+//	selector := TimeOrderedSelector("timestamp")
+//	reader := NewOrderedReader([]Reader{r1, r2, r3}, selector)
+//
+// MultiReader processes multiple readers sequentially:
+//
+//	reader := NewMultiReader([]Reader{r1, r2, r3})
+//
+// # Usage Patterns
+//
+// Time-ordered merge sort across multiple files:
+//
+//	readers := []Reader{
+//	    NewParquetReader(file1),
+//	    NewParquetReader(file2),
+//	    NewJSONLinesReader(file3),
+//	}
+//
+//	selector := TimeOrderedSelector("_cardinalhq.timestamp")
+//	ordered := NewOrderedReader(readers, selector)
+//	defer ordered.Close()
+//
+//	for {
+//	    row, err := ordered.GetRow()
+//	    if errors.Is(err, io.EOF) {
+//	        break
+//	    }
+//	    if err != nil {
+//	        return err
+//	    }
+//	    // rows arrive in timestamp order across all files
+//	}
+//
+// Composable reader trees:
+//
+//	// Process multiple file groups in timestamp order,
+//	// then combine groups sequentially
+//	group1 := NewOrderedReader(readers1, TimeOrderedSelector("timestamp"))
+//	group2 := NewOrderedReader(readers2, TimeOrderedSelector("timestamp"))
+//	final := NewMultiReader([]Reader{group1, group2})
+//
+// # Resource Management
+//
+//   - All readers must be closed via Close()
+//   - Parquet readers buffer entire files in memory
+//   - Streaming readers (JSON, Proto) process incrementally
+//   - Composite readers automatically close child readers
+package filereader
