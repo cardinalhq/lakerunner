@@ -182,10 +182,12 @@ type TimeBlock struct {
 }
 
 type TagSketch struct {
-	MetricName string
-	MetricType string
-	Tags       map[string]any
-	Sketch     *ddsketch.DDSketch
+	MetricName     string
+	MetricType     string
+	Tags           map[string]any
+	Sketch         *ddsketch.DDSketch
+	DataPointCount int
+	SingleValue    float64 // For single gauge/counter data points, store the actual value
 }
 
 // crunchMetricFile processes the metric file and generates sketches or other
@@ -259,16 +261,12 @@ func crunchMetricFile(ctx context.Context, ll *slog.Logger, tmpdir string, fh *f
 		sketch, exists := (*block.Sketches)[tid]
 		if !exists {
 			sketch = TagSketch{
-				MetricName: metricName,
-				MetricType: metricType,
-				Tags:       tags,
-				Sketch:     nil,
+				MetricName:     metricName,
+				MetricType:     metricType,
+				Tags:           tags,
+				Sketch:         nil,
+				DataPointCount: 0,
 			}
-			s, err := ddsketch.NewDefaultDDSketch(0.01)
-			if err != nil {
-				return fmt.Errorf("creating sketch: %w", err)
-			}
-			sketch.Sketch = s
 			(*block.Sketches)[tid] = sketch
 		} else {
 			if sketch.MetricName != metricName {
@@ -283,6 +281,18 @@ func crunchMetricFile(ctx context.Context, ll *slog.Logger, tmpdir string, fh *f
 			}
 		}
 
+		// Increment data point count
+		sketch.DataPointCount++
+
+		// Create sketch if we have multiple data points OR if it's a histogram (always need sketch for histograms)
+		if (sketch.DataPointCount > 1 || sketch.MetricType == "histogram") && sketch.Sketch == nil {
+			s, err := ddsketch.NewDefaultDDSketch(0.01)
+			if err != nil {
+				return fmt.Errorf("creating sketch: %w", err)
+			}
+			sketch.Sketch = s
+		}
+
 		switch metricType {
 		case "count", "gauge":
 			value, ok := helpers.GetFloat64Value(rec, "_cardinalhq.value")
@@ -291,8 +301,24 @@ func crunchMetricFile(ctx context.Context, ll *slog.Logger, tmpdir string, fh *f
 				continue
 			}
 			rec["_cardinalhq.value"] = -1
-			if err := sketch.Sketch.Add(value); err != nil {
-				return fmt.Errorf("adding value to sketch: %w", err)
+
+			switch sketch.DataPointCount {
+			case 1:
+				// First data point - store the single value
+				sketch.SingleValue = value
+			case 2:
+				// Second data point - add both to the newly created sketch
+				if err := sketch.Sketch.Add(sketch.SingleValue); err != nil {
+					return fmt.Errorf("adding previous single value to sketch: %w", err)
+				}
+				if err := sketch.Sketch.Add(value); err != nil {
+					return fmt.Errorf("adding current value to sketch: %w", err)
+				}
+			default:
+				// Multiple data points - add to existing sketch
+				if err := sketch.Sketch.Add(value); err != nil {
+					return fmt.Errorf("adding value to sketch: %w", err)
+				}
 			}
 		case "histogram":
 			bucketCounts, ok := helpers.GetFloat64SliceJSON(rec, "_cardinalhq.counts")
@@ -309,11 +335,10 @@ func crunchMetricFile(ctx context.Context, ll *slog.Logger, tmpdir string, fh *f
 			delete(rec, "_cardinalhq.bucket_bounds")
 			counts, values := handleHistogram(bucketCounts, bucketBounds)
 			if len(counts) == 0 {
-				// if err := sketch.Sketch.Add(0); err != nil {
-				// 	return fmt.Errorf("adding zero to sketch: %w", err)
-				// }
 				continue
 			}
+
+			// For histograms, we always create sketches, so this is simple
 			for i, count := range counts {
 				if err := sketch.Sketch.AddWithCount(values[i], count); err != nil {
 					return fmt.Errorf("adding histogram value to sketch: %w", err)
@@ -324,6 +349,9 @@ func crunchMetricFile(ctx context.Context, ll *slog.Logger, tmpdir string, fh *f
 			ll.Info("Skipping unsupported metric type", slog.String("metricType", metricType))
 			continue
 		}
+
+		// Update the sketch in the map after processing
+		(*block.Sketches)[tid] = sketch
 	}
 
 	ll.Info("Finished processing metric file", slog.String("file", fh.File.Name()), slog.Int("blocks", len(blocks)))
@@ -395,48 +423,81 @@ func writeMetricSketchParquet(ctx context.Context, tmpdir string, blocknum int64
 
 	for _, tid := range sortedTIDs {
 		sketch := (*block.Sketches)[tid]
-		if sketch.Sketch == nil || sketch.Sketch.GetCount() == 0 {
+
+		// Skip empty sketches (should not happen)
+		if sketch.DataPointCount == 0 {
 			continue
 		}
-		maxvalue, err := sketch.Sketch.GetMaxValue()
-		if err != nil {
-			return fmt.Errorf("getting max value from sketch: %w", err)
-		}
 
-		minvalue, err := sketch.Sketch.GetMinValue()
-		if err != nil {
-			return fmt.Errorf("getting min value from sketch: %w", err)
-		}
+		var addToRec map[string]any
 
-		quantiles, err := sketch.Sketch.GetValuesAtQuantiles([]float64{0.25, 0.5, 0.75, 0.90, 0.95, 0.99})
-		if err != nil {
-			return fmt.Errorf("getting quantiles from sketch: %w", err)
-		}
+		if sketch.Sketch != nil && sketch.Sketch.GetCount() > 0 {
+			// Multi-value case: use sketch
+			maxvalue, err := sketch.Sketch.GetMaxValue()
+			if err != nil {
+				return fmt.Errorf("getting max value from sketch: %w", err)
+			}
 
-		count := sketch.Sketch.GetCount()
-		sum := sketch.Sketch.GetSum()
-		avg := sum / count
+			minvalue, err := sketch.Sketch.GetMinValue()
+			if err != nil {
+				return fmt.Errorf("getting min value from sketch: %w", err)
+			}
 
-		addToRec := map[string]any{
-			"_cardinalhq.timestamp":      startTS,
-			"_cardinalhq.name":           sketch.MetricName,
-			"_cardinalhq.customer_id":    inf.OrganizationID.String(),
-			"_cardinalhq.metric_type":    sketch.MetricType,
-			"_cardinalhq.tid":            tid,
-			"_cardinalhq.value":          float64(-1),
-			"_cardinalhq.telemetry_type": "metrics",
-			"sketch":                     tidprocessing.EncodeSketch(sketch.Sketch),
-			"rollup_avg":                 avg,
-			"rollup_max":                 maxvalue,
-			"rollup_min":                 minvalue,
-			"rollup_count":               count,
-			"rollup_sum":                 sum,
-			"rollup_p25":                 quantiles[0],
-			"rollup_p50":                 quantiles[1],
-			"rollup_p75":                 quantiles[2],
-			"rollup_p90":                 quantiles[3],
-			"rollup_p95":                 quantiles[4],
-			"rollup_p99":                 quantiles[5],
+			quantiles, err := sketch.Sketch.GetValuesAtQuantiles([]float64{0.25, 0.5, 0.75, 0.90, 0.95, 0.99})
+			if err != nil {
+				return fmt.Errorf("getting quantiles from sketch: %w", err)
+			}
+
+			count := sketch.Sketch.GetCount()
+			sum := sketch.Sketch.GetSum()
+			avg := sum / count
+
+			addToRec = map[string]any{
+				"_cardinalhq.timestamp":      startTS,
+				"_cardinalhq.name":           sketch.MetricName,
+				"_cardinalhq.customer_id":    inf.OrganizationID.String(),
+				"_cardinalhq.metric_type":    sketch.MetricType,
+				"_cardinalhq.tid":            tid,
+				"_cardinalhq.value":          float64(-1),
+				"_cardinalhq.telemetry_type": "metrics",
+				"sketch":                     tidprocessing.EncodeSketch(sketch.Sketch),
+				"rollup_avg":                 avg,
+				"rollup_max":                 maxvalue,
+				"rollup_min":                 minvalue,
+				"rollup_count":               count,
+				"rollup_sum":                 sum,
+				"rollup_p25":                 quantiles[0],
+				"rollup_p50":                 quantiles[1],
+				"rollup_p75":                 quantiles[2],
+				"rollup_p90":                 quantiles[3],
+				"rollup_p95":                 quantiles[4],
+				"rollup_p99":                 quantiles[5],
+			}
+		} else {
+			// Single-value case: use stored single value, no sketch
+			value := sketch.SingleValue
+
+			addToRec = map[string]any{
+				"_cardinalhq.timestamp":      startTS,
+				"_cardinalhq.name":           sketch.MetricName,
+				"_cardinalhq.customer_id":    inf.OrganizationID.String(),
+				"_cardinalhq.metric_type":    sketch.MetricType,
+				"_cardinalhq.tid":            tid,
+				"_cardinalhq.value":          float64(-1),
+				"_cardinalhq.telemetry_type": "metrics",
+				"sketch":                     []byte{}, // Empty sketch for single values
+				"rollup_avg":                 value,    // For single value, all stats are the same
+				"rollup_max":                 value,
+				"rollup_min":                 value,
+				"rollup_count":               float64(1),
+				"rollup_sum":                 value, // Single value: sum equals the value
+				"rollup_p25":                 value, // All percentiles are the single value
+				"rollup_p50":                 value,
+				"rollup_p75":                 value,
+				"rollup_p90":                 value,
+				"rollup_p95":                 value,
+				"rollup_p99":                 value,
+			}
 		}
 		rec := map[string]any{}
 		maps.Copy(rec, sketch.Tags)
@@ -938,36 +999,15 @@ func crunchMetricFileToBatch(ctx context.Context, ll *slog.Logger, fh *filecrunc
 		}
 		delete(rec, "_cardinalhq.id")
 
-		ts, ok := helpers.GetInt64Value(rec, "_cardinalhq.timestamp")
-		if !ok {
-			ll.Warn("Skipping record without timestamp", slog.Any("record", rec))
-			continue
-		}
-		delete(rec, "_cardinalhq.timestamp")
-
-		metricType, ok := helpers.GetStringValue(rec, "_cardinalhq.metric_type")
-		if !ok {
-			ll.Warn("Skipping record without metric type", slog.Any("record", rec))
-			continue
-		}
-		if metricType == "count" || metricType == "gauge" {
-			delete(rec, "_cardinalhq.bucket_bounds")
-			delete(rec, "_cardinalhq.counts")
-			delete(rec, "_cardinalhq.negative_counts")
-			delete(rec, "_cardinalhq.positive_counts")
-		} else {
-			delete(rec, "_cardinalhq.value")
-		}
-
-		metricName, ok := helpers.GetStringValue(rec, "_cardinalhq.name")
-		if !ok {
-			ll.Warn("Skipping record without metric name", slog.Any("record", rec))
+		// Parse the metric record using our extracted function
+		metricRecord, err := parseMetricRecord(rec, ll)
+		if err != nil {
+			ll.Warn("Skipping invalid record", slog.String("error", err.Error()), slog.Any("record", rec))
 			continue
 		}
 
 		const frequencyMS = 10000 // 10 seconds
-		blocknum := ts / frequencyMS
-		rec["_cardinalhq.timestamp"] = blocknum * frequencyMS
+		blocknum := metricRecord.Timestamp / frequencyMS
 
 		block, exists := allTimeBlocks[blocknum]
 		if !exists {
@@ -980,77 +1020,9 @@ func crunchMetricFileToBatch(ctx context.Context, ll *slog.Logger, fh *filecrunc
 			allTimeBlocks[blocknum] = block
 		}
 
-		tags := helpers.MakeTags(rec)
-		if err := block.nodebuilder.Add(tags); err != nil {
-			return fmt.Errorf("adding tags to node builder: %w", err)
-		}
-
-		tid := helpers.ComputeTID(metricName, tags)
-		tags["_cardinalhq.tid"] = fmt.Sprintf("%d", tid)
-
-		sketch, exists := (*block.Sketches)[tid]
-		if !exists {
-			sketch = TagSketch{
-				MetricName: metricName,
-				MetricType: metricType,
-				Tags:       tags,
-				Sketch:     nil,
-			}
-			s, err := ddsketch.NewDefaultDDSketch(0.01)
-			if err != nil {
-				return fmt.Errorf("creating sketch: %w", err)
-			}
-			sketch.Sketch = s
-			(*block.Sketches)[tid] = sketch
-		} else {
-			if sketch.MetricName != metricName {
-				return fmt.Errorf("metric name mismatch for TID %d: existing %s, new %s", tid, sketch.MetricName, metricName)
-			}
-			if sketch.MetricType != metricType {
-				return fmt.Errorf("metric type mismatch for TID %d: existing %s, new %s", tid, sketch.MetricType, metricType)
-			}
-			diff := helpers.MatchTags(sketch.Tags, tags)
-			if len(diff) > 0 {
-				return fmt.Errorf("tag mismatch for TID %d: diff %v", tid, diff)
-			}
-		}
-
-		switch metricType {
-		case "count", "gauge":
-			value, ok := helpers.GetFloat64Value(rec, "_cardinalhq.value")
-			if !ok {
-				ll.Warn("Skipping record without value", slog.Any("record", rec))
-				continue
-			}
-			rec["_cardinalhq.value"] = -1
-			if err := sketch.Sketch.Add(value); err != nil {
-				return fmt.Errorf("adding value to sketch: %w", err)
-			}
-		case "histogram":
-			bucketCounts, ok := helpers.GetFloat64SliceJSON(rec, "_cardinalhq.counts")
-			if !ok {
-				ll.Warn("Skipping histogram record without counts", slog.Any("record", rec))
-				continue
-			}
-			delete(rec, "_cardinalhq.counts")
-			bucketBounds, ok := helpers.GetFloat64SliceJSON(rec, "_cardinalhq.bucket_bounds")
-			if !ok {
-				ll.Warn("Skipping histogram record without bucket bounds", slog.Any("record", rec))
-				continue
-			}
-			delete(rec, "_cardinalhq.bucket_bounds")
-			counts, values := handleHistogram(bucketCounts, bucketBounds)
-			if len(counts) == 0 {
-				continue
-			}
-			for i, count := range counts {
-				if err := sketch.Sketch.AddWithCount(values[i], count); err != nil {
-					return fmt.Errorf("adding histogram value to sketch: %w", err)
-				}
-			}
-		default:
-			ll.Info("Skipping unsupported metric type", slog.String("metricType", metricType))
-			continue
+		// Process the metric record using our extracted function
+		if err := processMetricRecord(metricRecord, block.Sketches, block.nodebuilder); err != nil {
+			return fmt.Errorf("processing metric record: %w", err)
 		}
 	}
 

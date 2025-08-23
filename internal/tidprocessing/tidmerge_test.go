@@ -22,6 +22,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestUpdateFromSketch_NilSketch(t *testing.T) {
+	// Test that updateFromSketch handles nil sketch gracefully
+	acc := &mergeaccumulator{
+		row: map[string]any{
+			"_cardinalhq.tid":  int64(123),
+			"_cardinalhq.name": "test_metric",
+		},
+		contributions: 2, // Multiple contributions but nil sketch
+		sketch:        nil,
+	}
+
+	err := updateFromSketch(acc)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "attempting to update from nil sketch")
+	assert.Contains(t, err.Error(), "2 contributions")
+}
+
 func TestUpdateFromSketch_AllFieldsSet(t *testing.T) {
 	// Build a source sketch and compute expected values off it
 	sketch, err := ddsketch.NewDefaultDDSketch(0.01)
@@ -40,16 +57,13 @@ func TestUpdateFromSketch_AllFieldsSet(t *testing.T) {
 	expQs, err := sketch.GetValuesAtQuantiles([]float64{0.25, 0.50, 0.75, 0.90, 0.95, 0.99})
 	require.NoError(t, err)
 
-	// Encode and feed bytes only to exercise lazy decoding with Dense store
-	enc := EncodeSketch(sketch)
+	// Test the sketch processing directly
 
 	row := make(map[string]any)
 	acc := &mergeaccumulator{
-		row: row,
-		holder: sketchHolder{
-			bytes: enc, // no decoded sketch yet; ensureDecoded() will run inside updateFromSketch
-		},
-		contributions: 2, // simulate merged path (updateFromSketch typically called when >1)
+		row:           row,
+		sketch:        sketch, // directly use the sketch
+		contributions: 2,      // simulate merged path (updateFromSketch typically called when >1)
 	}
 
 	err = updateFromSketch(acc)
