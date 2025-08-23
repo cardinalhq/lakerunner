@@ -659,3 +659,171 @@ func TestTimeRangeRoundtripConversions(t *testing.T) {
 		assert.Equal(t, original, endBoundary) // Since it's a perfect hour range
 	})
 }
+
+func TestFormatDuration(t *testing.T) {
+	tests := []struct {
+		name     string
+		duration time.Duration
+		want     string
+	}{
+		{
+			name:     "zero duration",
+			duration: 0,
+			want:     "0s",
+		},
+		{
+			name:     "30 seconds",
+			duration: 30 * time.Second,
+			want:     "30s",
+		},
+		{
+			name:     "50 seconds",
+			duration: 50 * time.Second,
+			want:     "50s",
+		},
+		{
+			name:     "59 seconds",
+			duration: 59 * time.Second,
+			want:     "59s",
+		},
+		{
+			name:     "exactly 1 minute",
+			duration: time.Minute,
+			want:     "1m",
+		},
+		{
+			name:     "1 minute 30 seconds",
+			duration: time.Minute + 30*time.Second,
+			want:     "1m30s",
+		},
+		{
+			name:     "2 minutes",
+			duration: 2 * time.Minute,
+			want:     "2m",
+		},
+		{
+			name:     "5 minutes 45 seconds",
+			duration: 5*time.Minute + 45*time.Second,
+			want:     "5m45s",
+		},
+		{
+			name:     "exactly 1 hour",
+			duration: time.Hour,
+			want:     "1h",
+		},
+		{
+			name:     "1 hour 30 minutes",
+			duration: time.Hour + 30*time.Minute,
+			want:     "1h30m",
+		},
+		{
+			name:     "1 hour 1 minute",
+			duration: time.Hour + time.Minute,
+			want:     "1h1m",
+		},
+		{
+			name:     "2 hours",
+			duration: 2 * time.Hour,
+			want:     "2h",
+		},
+		{
+			name:     "2 hours 15 minutes",
+			duration: 2*time.Hour + 15*time.Minute,
+			want:     "2h15m",
+		},
+		{
+			name:     "24 hours",
+			duration: 24 * time.Hour,
+			want:     "24h",
+		},
+		{
+			name:     "25 hours 30 minutes",
+			duration: 25*time.Hour + 30*time.Minute,
+			want:     "25h30m",
+		},
+		{
+			name:     "fractional seconds rounds to nearest",
+			duration: time.Duration(30.7 * float64(time.Second)),
+			want:     "31s",
+		},
+		{
+			name:     "fractional seconds rounds up",
+			duration: time.Duration(30.9 * float64(time.Second)),
+			want:     "31s",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := FormatDuration(tt.duration)
+			assert.Equal(t, tt.want, got, "FormatDuration(%v)", tt.duration)
+		})
+	}
+}
+
+func TestFormatTSRange(t *testing.T) {
+	tests := []struct {
+		name    string
+		tsRange pgtype.Range[pgtype.Timestamptz]
+		want    string
+	}{
+		{
+			name: "invalid range",
+			tsRange: pgtype.Range[pgtype.Timestamptz]{
+				Valid: false,
+			},
+			want: "-",
+		},
+		{
+			name: "1 hour range",
+			tsRange: pgtype.Range[pgtype.Timestamptz]{
+				LowerType: pgtype.Inclusive,
+				UpperType: pgtype.Exclusive,
+				Lower:     pgtype.Timestamptz{Time: time.Date(2025, 8, 23, 13, 59, 0, 0, time.UTC), Valid: true},
+				Upper:     pgtype.Timestamptz{Time: time.Date(2025, 8, 23, 14, 59, 0, 0, time.UTC), Valid: true},
+				Valid:     true,
+			},
+			want: "2025-08-23T13:59:00 +1h",
+		},
+		{
+			name: "50 seconds range",
+			tsRange: pgtype.Range[pgtype.Timestamptz]{
+				LowerType: pgtype.Inclusive,
+				UpperType: pgtype.Exclusive,
+				Lower:     pgtype.Timestamptz{Time: time.Date(2025, 8, 23, 14, 2, 0, 0, time.UTC), Valid: true},
+				Upper:     pgtype.Timestamptz{Time: time.Date(2025, 8, 23, 14, 2, 50, 0, time.UTC), Valid: true},
+				Valid:     true,
+			},
+			want: "2025-08-23T14:02:00 +50s",
+		},
+		{
+			name: "1 minute 30 seconds range",
+			tsRange: pgtype.Range[pgtype.Timestamptz]{
+				LowerType: pgtype.Inclusive,
+				UpperType: pgtype.Exclusive,
+				Lower:     pgtype.Timestamptz{Time: time.Date(2025, 8, 23, 13, 56, 0, 0, time.UTC), Valid: true},
+				Upper:     pgtype.Timestamptz{Time: time.Date(2025, 8, 23, 13, 57, 30, 0, time.UTC), Valid: true},
+				Valid:     true,
+			},
+			want: "2025-08-23T13:56:00 +1m30s",
+		},
+		{
+			name: "2 hours 15 minutes range",
+			tsRange: pgtype.Range[pgtype.Timestamptz]{
+				LowerType: pgtype.Inclusive,
+				UpperType: pgtype.Exclusive,
+				Lower:     pgtype.Timestamptz{Time: time.Date(2025, 8, 23, 10, 0, 0, 0, time.UTC), Valid: true},
+				Upper:     pgtype.Timestamptz{Time: time.Date(2025, 8, 23, 12, 15, 0, 0, time.UTC), Valid: true},
+				Valid:     true,
+			},
+			want: "2025-08-23T10:00:00 +2h15m",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := FormatTSRange(tt.tsRange)
+			assert.Equal(t, tt.want, got, "FormatTSRange(%v)", tt.tsRange)
+		})
+	}
+}

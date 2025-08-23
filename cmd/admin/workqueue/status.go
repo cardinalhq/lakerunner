@@ -27,6 +27,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/adminproto"
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
+	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -39,7 +40,7 @@ var (
 func GetStatusCmd() *cobra.Command {
 	statusCmd := &cobra.Command{
 		Use:   "status",
-		Short: "Show status of runnable work queue items by signal and action",
+		Short: "Show detailed status of runnable work queue items by signal and action (timestamps in UTC)",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runWorkQueueStatus()
 		},
@@ -65,14 +66,16 @@ func runLocalWorkQueueStatus() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	store, err := dbopen.LRDBStore(ctx)
+	// Use admin-friendly connection that warns on migration mismatches instead of failing
+	// Alternative syntax: dbopen.ConnectTolrdb(ctx, dbopen.WarnOnMigrationMismatch())
+	store, err := dbopen.LRDBStoreForAdmin(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to connect to lrdb: %w", err)
 	}
 
-	results, err := store.WorkQueueSummary(ctx)
+	results, err := store.WorkQueueExtendedStatus(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to query work queue summary: %w", err)
+		return fmt.Errorf("failed to query work queue extended status: %w", err)
 	}
 
 	if len(results) == 0 {
@@ -80,25 +83,7 @@ func runLocalWorkQueueStatus() error {
 		return nil
 	}
 
-	colWidths := []int{len("Count"), len("Signal"), len("Action")}
-
-	for _, result := range results {
-		countStr := fmt.Sprintf("%d", result.Count)
-		signalStr := string(result.Signal)
-		actionStr := string(result.Action)
-
-		if len(countStr) > colWidths[0] {
-			colWidths[0] = len(countStr)
-		}
-		if len(signalStr) > colWidths[1] {
-			colWidths[1] = len(signalStr)
-		}
-		if len(actionStr) > colWidths[2] {
-			colWidths[2] = len(actionStr)
-		}
-	}
-
-	printWorkQueueTable(results, colWidths)
+	printExtendedWorkQueueTable(results)
 	return nil
 }
 
@@ -167,44 +152,6 @@ func createAuthContext(ctx context.Context) context.Context {
 	return ctx
 }
 
-func printWorkQueueTable(results []lrdb.WorkQueueSummaryRow, colWidths []int) {
-	fmt.Print("┌")
-	for i, width := range colWidths {
-		if i > 0 {
-			fmt.Print("┬")
-		}
-		fmt.Print(strings.Repeat("─", width+2))
-	}
-	fmt.Println("┐")
-
-	fmt.Printf("│ %-*s │ %-*s │ %-*s │\n", colWidths[0], "Count", colWidths[1], "Signal", colWidths[2], "Action")
-
-	fmt.Print("├")
-	for i, width := range colWidths {
-		if i > 0 {
-			fmt.Print("┼")
-		}
-		fmt.Print(strings.Repeat("─", width+2))
-	}
-	fmt.Println("┤")
-
-	for _, result := range results {
-		fmt.Printf("│ %-*d │ %-*s │ %-*s │\n",
-			colWidths[0], result.Count,
-			colWidths[1], string(result.Signal),
-			colWidths[2], string(result.Action))
-	}
-
-	fmt.Print("└")
-	for i, width := range colWidths {
-		if i > 0 {
-			fmt.Print("┴")
-		}
-		fmt.Print(strings.Repeat("─", width+2))
-	}
-	fmt.Println("┘")
-}
-
 func printWorkQueueTableFromProto(items []*adminproto.WorkQueueItem, colWidths []int) {
 	fmt.Print("┌")
 	for i, width := range colWidths {
@@ -233,6 +180,157 @@ func printWorkQueueTableFromProto(items []*adminproto.WorkQueueItem, colWidths [
 			colWidths[2], item.Action)
 	}
 
+	fmt.Print("└")
+	for i, width := range colWidths {
+		if i > 0 {
+			fmt.Print("┴")
+		}
+		fmt.Print(strings.Repeat("─", width+2))
+	}
+	fmt.Println("┘")
+}
+
+func formatDuration(seconds *float64) string {
+	if seconds == nil || *seconds == 0 {
+		return ""
+	}
+	duration := time.Duration(*seconds) * time.Second
+	return duration.String()
+}
+
+func printExtendedWorkQueueTable(results []lrdb.WorkQueueExtendedStatusRow) {
+	// Column headers and widths
+	headers := []string{"Signal", "Action", "Time Range", "Claimed At", "Age", "Worker ID"}
+	colWidths := make([]int, len(headers))
+
+	// Initialize with header lengths
+	for i, header := range headers {
+		colWidths[i] = len(header)
+	}
+
+	// Calculate column widths by examining all data
+	for _, result := range results {
+		signalStr := string(result.Signal)
+		actionStr := string(result.Action)
+
+		if len(signalStr) > colWidths[0] {
+			colWidths[0] = len(signalStr)
+		}
+		if len(actionStr) > colWidths[1] {
+			colWidths[1] = len(actionStr)
+		}
+
+		if result.RowType == "unclaimed" {
+			// For unclaimed, show count in Time Range column
+			countStr := fmt.Sprintf("%d items pending", result.CountOrClaimedBy)
+			if len(countStr) > colWidths[2] {
+				colWidths[2] = len(countStr)
+			}
+		} else {
+			// For claimed, show actual data
+			timeRange := helpers.FormatTSRange(result.TsRange)
+			if len(timeRange) > colWidths[2] {
+				colWidths[2] = len(timeRange)
+			}
+
+			if result.ClaimedAtUtc != nil {
+				claimedStr := result.ClaimedAtUtc.Format("15:04:05")
+				if len(claimedStr) > colWidths[3] {
+					colWidths[3] = len(claimedStr)
+				}
+			}
+
+			ageStr := formatDuration(result.AgeSeconds)
+			if result.IsStale {
+				ageStr += " (STALE)"
+			}
+			if len(ageStr) > colWidths[4] {
+				colWidths[4] = len(ageStr)
+			}
+
+			workerStr := fmt.Sprintf("%d", result.CountOrClaimedBy)
+			if len(workerStr) > colWidths[5] {
+				colWidths[5] = len(workerStr)
+			}
+		}
+	}
+
+	// Print table header
+	fmt.Print("┌")
+	for i, width := range colWidths {
+		if i > 0 {
+			fmt.Print("┬")
+		}
+		fmt.Print(strings.Repeat("─", width+2))
+	}
+	fmt.Println("┐")
+
+	// Print header row
+	fmt.Print("│")
+	for i, header := range headers {
+		fmt.Printf(" %-*s │", colWidths[i], header)
+	}
+	fmt.Println()
+
+	// Print separator
+	fmt.Print("├")
+	for i, width := range colWidths {
+		if i > 0 {
+			fmt.Print("┼")
+		}
+		fmt.Print(strings.Repeat("─", width+2))
+	}
+	fmt.Println("┤")
+
+	// Print data rows
+	for _, result := range results {
+		fmt.Print("│")
+
+		// Signal
+		fmt.Printf(" %-*s │", colWidths[0], string(result.Signal))
+
+		// Action
+		fmt.Printf(" %-*s │", colWidths[1], string(result.Action))
+
+		if result.RowType == "unclaimed" {
+			// Time Range shows count
+			countStr := fmt.Sprintf("%d items pending", result.CountOrClaimedBy)
+			fmt.Printf(" %-*s │", colWidths[2], countStr)
+
+			// Empty columns for unclaimed
+			fmt.Printf(" %-*s │", colWidths[3], "-")
+			fmt.Printf(" %-*s │", colWidths[4], "-")
+			fmt.Printf(" %-*s │", colWidths[5], "-")
+		} else {
+			// Time Range shows actual range
+			timeRange := helpers.FormatTSRange(result.TsRange)
+			fmt.Printf(" %-*s │", colWidths[2], timeRange)
+
+			// Claimed At
+			claimedStr := "-"
+			if result.ClaimedAtUtc != nil {
+				claimedStr = result.ClaimedAtUtc.Format("15:04:05")
+			}
+			fmt.Printf(" %-*s │", colWidths[3], claimedStr)
+
+			// Age
+			ageStr := formatDuration(result.AgeSeconds)
+			if result.IsStale {
+				ageStr += " (STALE)"
+			}
+			if ageStr == "" {
+				ageStr = "-"
+			}
+			fmt.Printf(" %-*s │", colWidths[4], ageStr)
+
+			// Worker ID
+			fmt.Printf(" %-*d │", colWidths[5], result.CountOrClaimedBy)
+		}
+
+		fmt.Println()
+	}
+
+	// Print table footer
 	fmt.Print("└")
 	for i, width := range colWidths {
 		if i > 0 {

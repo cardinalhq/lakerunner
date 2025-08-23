@@ -14,7 +14,36 @@
 
 package dbopen
 
+import "github.com/cardinalhq/lakerunner/migrations"
+
 // Options configures database connection behavior
 type Options struct {
-	SkipMigrationCheck bool
+	MigrationCheckOptions []migrations.CheckOption
+}
+
+// SkipMigrationCheck returns Options that skip migration checking entirely
+func SkipMigrationCheck() Options {
+	return Options{
+		MigrationCheckOptions: []migrations.CheckOption{
+			migrations.WithCheckMode(migrations.CheckModeSkip),
+		},
+	}
+}
+
+// WarnOnMigrationMismatch returns Options that warn on migration mismatches but continue
+func WarnOnMigrationMismatch() Options {
+	return Options{
+		MigrationCheckOptions: []migrations.CheckOption{
+			migrations.WithCheckMode(migrations.CheckModeWarn),
+		},
+	}
+}
+
+// WaitForMigrations returns Options that wait for migrations to complete (default behavior)
+func WaitForMigrations() Options {
+	return Options{
+		MigrationCheckOptions: []migrations.CheckOption{
+			migrations.WithCheckMode(migrations.CheckModeWait),
+		},
+	}
 }

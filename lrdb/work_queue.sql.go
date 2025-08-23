@@ -193,6 +193,106 @@ func (q *Queries) WorkQueueDeleteDirect(ctx context.Context, arg WorkQueueDelete
 	return err
 }
 
+const workQueueExtendedStatus = `-- name: WorkQueueExtendedStatus :many
+WITH unclaimed_summary AS (
+  SELECT 
+    signal, 
+    action,
+    count(*) AS unclaimed_count
+  FROM work_queue
+  WHERE needs_run = true 
+    AND runnable_at <= now() 
+    AND claimed_by = -1
+  GROUP BY signal, action
+),
+claimed_details AS (
+  SELECT 
+    signal,
+    action,
+    ts_range,
+    claimed_by,
+    claimed_at AT TIME ZONE 'UTC' AS claimed_at_utc,
+    heartbeated_at AT TIME ZONE 'UTC' AS heartbeated_at_utc,
+    EXTRACT(EPOCH FROM (now() - heartbeated_at)) AS age_seconds,
+    CASE 
+      WHEN heartbeated_at < now() - INTERVAL '2.5 minutes' THEN true
+      ELSE false
+    END AS is_stale
+  FROM work_queue
+  WHERE needs_run = true 
+    AND runnable_at <= now() 
+    AND claimed_by > 0
+)
+SELECT 
+  signal,
+  action,
+  'unclaimed'::text AS row_type,
+  unclaimed_count::bigint AS count_or_claimed_by,
+  NULL::tstzrange AS ts_range,
+  NULL::timestamptz AS claimed_at_utc,
+  NULL::timestamptz AS heartbeated_at_utc,
+  NULL::double precision AS age_seconds,
+  false AS is_stale
+FROM unclaimed_summary
+UNION ALL
+SELECT 
+  signal,
+  action,
+  'claimed'::text AS row_type,
+  claimed_by AS count_or_claimed_by,
+  ts_range,
+  claimed_at_utc,
+  heartbeated_at_utc,
+  age_seconds,
+  is_stale
+FROM claimed_details
+ORDER BY signal, action, row_type DESC
+`
+
+type WorkQueueExtendedStatusRow struct {
+	Signal           SignalEnum                       `json:"signal"`
+	Action           ActionEnum                       `json:"action"`
+	RowType          string                           `json:"row_type"`
+	CountOrClaimedBy int64                            `json:"count_or_claimed_by"`
+	TsRange          pgtype.Range[pgtype.Timestamptz] `json:"ts_range"`
+	ClaimedAtUtc     *time.Time                       `json:"claimed_at_utc"`
+	HeartbeatedAtUtc *time.Time                       `json:"heartbeated_at_utc"`
+	AgeSeconds       *float64                         `json:"age_seconds"`
+	IsStale          bool                             `json:"is_stale"`
+}
+
+// First, return unclaimed summaries
+// Then, return claimed details
+func (q *Queries) WorkQueueExtendedStatus(ctx context.Context) ([]WorkQueueExtendedStatusRow, error) {
+	rows, err := q.db.Query(ctx, workQueueExtendedStatus)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []WorkQueueExtendedStatusRow
+	for rows.Next() {
+		var i WorkQueueExtendedStatusRow
+		if err := rows.Scan(
+			&i.Signal,
+			&i.Action,
+			&i.RowType,
+			&i.CountOrClaimedBy,
+			&i.TsRange,
+			&i.ClaimedAtUtc,
+			&i.HeartbeatedAtUtc,
+			&i.AgeSeconds,
+			&i.IsStale,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const workQueueFailDirect = `-- name: WorkQueueFailDirect :exec
 WITH params AS (
   SELECT
