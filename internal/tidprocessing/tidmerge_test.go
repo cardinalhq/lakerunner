@@ -23,51 +23,59 @@ import (
 )
 
 func TestUpdateFromSketch_AllFieldsSet(t *testing.T) {
+	// Build a source sketch and compute expected values off it
 	sketch, err := ddsketch.NewDefaultDDSketch(0.01)
 	require.NoError(t, err)
 
-	err = sketch.Add(2)
+	require.NoError(t, sketch.Add(2))
+	require.NoError(t, sketch.Add(2))
+	require.NoError(t, sketch.Add(2))
+
+	expCount := sketch.GetCount()
+	expSum := sketch.GetSum()
+	expMax, err := sketch.GetMaxValue()
 	require.NoError(t, err)
-	err = sketch.Add(2)
+	expMin, err := sketch.GetMinValue()
 	require.NoError(t, err)
-	err = sketch.Add(2)
+	expQs, err := sketch.GetValuesAtQuantiles([]float64{0.25, 0.50, 0.75, 0.90, 0.95, 0.99})
 	require.NoError(t, err)
+
+	// Encode and feed bytes only to exercise lazy decoding with Dense store
+	enc := EncodeSketch(sketch)
 
 	row := make(map[string]any)
-
 	acc := &mergeaccumulator{
-		row:    row,
-		sketch: sketch,
+		row: row,
+		holder: sketchHolder{
+			bytes: enc, // no decoded sketch yet; ensureDecoded() will run inside updateFromSketch
+		},
+		contributions: 2, // simulate merged path (updateFromSketch typically called when >1)
 	}
 
 	err = updateFromSketch(acc)
 	require.NoError(t, err)
 
+	// sketch field present and non-empty
 	b, ok := row["sketch"].([]byte)
 	require.True(t, ok, "sketch field should be of type []byte")
 	assert.NotEmpty(t, b, "sketch field should not be empty")
 
-	expected := map[string]any{
-		"rollup_count": float64(3),
-		"rollup_sum":   float64(5.980985104252033),
-		"rollup_avg":   float64(1.9936617014173443),
-		"rollup_max":   float64(1.9936617014173443),
-		"rollup_min":   float64(1.9936617014173443),
-		"rollup_p25":   float64(1.9936617014173443),
-		"rollup_p50":   float64(1.9936617014173443),
-		"rollup_p75":   float64(1.9936617014173443),
-		"rollup_p90":   float64(1.9936617014173443),
-		"rollup_p95":   float64(1.9936617014173443),
-		"rollup_p99":   float64(1.9936617014173443),
-	}
+	// Verify rollup fields (allow small deltas for approximate DDSketch math)
+	const eps = 1e-6
 
-	for k, v := range expected {
-		if k == "rollup_count" {
-			assert.Equal(t, v, row[k], "field %s not set correctly", k)
-		} else {
-			assert.InDelta(t, v, row[k], 0.00000001, "field %s not set correctly", k)
-		}
-	}
+	assert.Equal(t, expCount, row["rollup_count"])
+	assert.InDelta(t, expSum, row["rollup_sum"], eps)
+	assert.InDelta(t, expSum/expCount, row["rollup_avg"], eps)
+	assert.InDelta(t, expMax, row["rollup_max"], eps)
+	assert.InDelta(t, expMin, row["rollup_min"], eps)
+
+	// Quantiles
+	assert.InDelta(t, expQs[0], row["rollup_p25"], eps)
+	assert.InDelta(t, expQs[1], row["rollup_p50"], eps)
+	assert.InDelta(t, expQs[2], row["rollup_p75"], eps)
+	assert.InDelta(t, expQs[3], row["rollup_p90"], eps)
+	assert.InDelta(t, expQs[4], row["rollup_p95"], eps)
+	assert.InDelta(t, expQs[5], row["rollup_p99"], eps)
 }
 
 func TestMakekey(t *testing.T) {
