@@ -78,6 +78,16 @@ func (q *Queries) CreateOrganizationAPIKeyMapping(ctx context.Context, arg Creat
 	return i, err
 }
 
+const deleteOrganizationAPIKey = `-- name: DeleteOrganizationAPIKey :exec
+DELETE FROM organization_api_keys
+WHERE id = $1
+`
+
+func (q *Queries) DeleteOrganizationAPIKey(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteOrganizationAPIKey, id)
+	return err
+}
+
 const getAllCOrganizationAPIKeysForSync = `-- name: GetAllCOrganizationAPIKeysForSync :many
 SELECT organization_id, api_key, name, enabled
 FROM c_organization_api_keys

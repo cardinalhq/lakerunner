@@ -48,6 +48,10 @@ DELETE FROM organization_api_key_mappings;
 -- name: ClearOrganizationAPIKeys :exec
 DELETE FROM organization_api_keys;
 
+-- name: DeleteOrganizationAPIKey :exec
+DELETE FROM organization_api_keys
+WHERE id = @id;
+
 -- name: GetAllOrganizationAPIKeys :many
 SELECT ak.*, ako.organization_id
 FROM organization_api_keys ak

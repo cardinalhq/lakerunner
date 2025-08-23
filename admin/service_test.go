@@ -209,3 +209,83 @@ func TestInQueueStatusWithoutDB(t *testing.T) {
 		t.Error("Expected non-empty error message")
 	}
 }
+
+func TestListOrganizationsWithoutDB(t *testing.T) {
+	originalConfigDBVars := map[string]string{
+		"CONFIGDB_HOST":     os.Getenv("CONFIGDB_HOST"),
+		"CONFIGDB_USER":     os.Getenv("CONFIGDB_USER"),
+		"CONFIGDB_PASSWORD": os.Getenv("CONFIGDB_PASSWORD"),
+		"CONFIGDB_DBNAME":   os.Getenv("CONFIGDB_DBNAME"),
+		"CONFIGDB_URL":      os.Getenv("CONFIGDB_URL"),
+	}
+
+	os.Unsetenv("CONFIGDB_HOST")
+	os.Unsetenv("CONFIGDB_USER")
+	os.Unsetenv("CONFIGDB_PASSWORD")
+	os.Unsetenv("CONFIGDB_DBNAME")
+	os.Unsetenv("CONFIGDB_URL")
+
+	defer func() {
+		for key, value := range originalConfigDBVars {
+			if value != "" {
+				os.Setenv(key, value)
+			} else {
+				os.Unsetenv(key)
+			}
+		}
+	}()
+
+	client, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	_, err := client.ListOrganizations(ctx, &adminproto.ListOrganizationsRequest{})
+	if err == nil {
+		t.Error("Expected error due to missing database connection")
+	}
+
+	if err != nil && err.Error() == "" {
+		t.Error("Expected non-empty error message")
+	}
+}
+
+func TestCreateOrganizationWithoutDB(t *testing.T) {
+	originalConfigDBVars := map[string]string{
+		"CONFIGDB_HOST":     os.Getenv("CONFIGDB_HOST"),
+		"CONFIGDB_USER":     os.Getenv("CONFIGDB_USER"),
+		"CONFIGDB_PASSWORD": os.Getenv("CONFIGDB_PASSWORD"),
+		"CONFIGDB_DBNAME":   os.Getenv("CONFIGDB_DBNAME"),
+		"CONFIGDB_URL":      os.Getenv("CONFIGDB_URL"),
+	}
+
+	os.Unsetenv("CONFIGDB_HOST")
+	os.Unsetenv("CONFIGDB_USER")
+	os.Unsetenv("CONFIGDB_PASSWORD")
+	os.Unsetenv("CONFIGDB_DBNAME")
+	os.Unsetenv("CONFIGDB_URL")
+
+	defer func() {
+		for key, value := range originalConfigDBVars {
+			if value != "" {
+				os.Setenv(key, value)
+			} else {
+				os.Unsetenv(key)
+			}
+		}
+	}()
+
+	client, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	_, err := client.CreateOrganization(ctx, &adminproto.CreateOrganizationRequest{Name: "test", Enabled: true})
+	if err == nil {
+		t.Error("Expected error due to missing database connection")
+	}
+
+	if err != nil && err.Error() == "" {
+		t.Error("Expected non-empty error message")
+	}
+}

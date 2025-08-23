@@ -27,7 +27,10 @@ type Querier interface {
 	CreateOrganizationAPIKeyMapping(ctx context.Context, arg CreateOrganizationAPIKeyMappingParams) (OrganizationApiKeyMapping, error)
 	CreateOrganizationBucket(ctx context.Context, arg CreateOrganizationBucketParams) (OrganizationBucket, error)
 	DeleteAdminAPIKey(ctx context.Context, apiKeyID uuid.UUID) error
+	DeleteBucketConfiguration(ctx context.Context, bucketName string) error
+	DeleteBucketPrefixMapping(ctx context.Context, id uuid.UUID) error
 	DeleteOrganization(ctx context.Context, id uuid.UUID) error
+	DeleteOrganizationAPIKey(ctx context.Context, id uuid.UUID) error
 	GetAdminAPIKeyByHash(ctx context.Context, keyHash string) (AdminApiKey, error)
 	GetAdminAPIKeyByID(ctx context.Context, apiKeyID uuid.UUID) (AdminApiKey, error)
 	GetAllAdminAPIKeys(ctx context.Context) ([]AdminApiKey, error)
@@ -50,6 +53,8 @@ type Querier interface {
 	GetStorageProfileUncached(ctx context.Context, arg GetStorageProfileParams) (GetStorageProfileRow, error)
 	GetStorageProfilesByBucketNameUncached(ctx context.Context, bucketName string) ([]GetStorageProfilesByBucketNameRow, error)
 	HasExistingStorageProfiles(ctx context.Context) (bool, error)
+	ListBucketConfigurations(ctx context.Context) ([]BucketConfiguration, error)
+	ListBucketPrefixMappings(ctx context.Context) ([]ListBucketPrefixMappingsRow, error)
 	ListEnabledOrganizations(ctx context.Context) ([]Organization, error)
 	ListOrganizations(ctx context.Context) ([]Organization, error)
 	SyncOrganizationBuckets(ctx context.Context) error
