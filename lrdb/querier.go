@@ -74,6 +74,9 @@ type Querier interface {
 	WorkQueueCleanupDirect(ctx context.Context, lockTtlDead pgtype.Interval) ([]WorkQueueCleanupRow, error)
 	WorkQueueCompleteDirect(ctx context.Context, arg WorkQueueCompleteParams) error
 	WorkQueueDeleteDirect(ctx context.Context, arg WorkQueueDeleteParams) error
+	// First, return unclaimed summaries
+	// Then, return claimed details
+	WorkQueueExtendedStatus(ctx context.Context) ([]WorkQueueExtendedStatusRow, error)
 	WorkQueueFailDirect(ctx context.Context, arg WorkQueueFailParams) error
 	WorkQueueGC(ctx context.Context, arg WorkQueueGCParams) (int32, error)
 	WorkQueueGlobalLock(ctx context.Context) error

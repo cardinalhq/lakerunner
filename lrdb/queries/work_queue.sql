@@ -168,6 +168,63 @@ WHERE needs_run = true AND runnable_at <= now()
 GROUP BY signal, action
 ORDER BY signal, action;
 
+-- name: WorkQueueExtendedStatus :many
+WITH unclaimed_summary AS (
+  SELECT 
+    signal, 
+    action,
+    count(*) AS unclaimed_count
+  FROM work_queue
+  WHERE needs_run = true 
+    AND runnable_at <= now() 
+    AND claimed_by = -1
+  GROUP BY signal, action
+),
+claimed_details AS (
+  SELECT 
+    signal,
+    action,
+    ts_range,
+    claimed_by,
+    claimed_at AT TIME ZONE 'UTC' AS claimed_at_utc,
+    heartbeated_at AT TIME ZONE 'UTC' AS heartbeated_at_utc,
+    EXTRACT(EPOCH FROM (now() - heartbeated_at)) AS age_seconds,
+    CASE 
+      WHEN heartbeated_at < now() - INTERVAL '2.5 minutes' THEN true
+      ELSE false
+    END AS is_stale
+  FROM work_queue
+  WHERE needs_run = true 
+    AND runnable_at <= now() 
+    AND claimed_by > 0
+)
+-- First, return unclaimed summaries
+SELECT 
+  signal,
+  action,
+  'unclaimed'::text AS row_type,
+  unclaimed_count::bigint AS count_or_claimed_by,
+  NULL::tstzrange AS ts_range,
+  NULL::timestamptz AS claimed_at_utc,
+  NULL::timestamptz AS heartbeated_at_utc,
+  NULL::double precision AS age_seconds,
+  false AS is_stale
+FROM unclaimed_summary
+UNION ALL
+-- Then, return claimed details
+SELECT 
+  signal,
+  action,
+  'claimed'::text AS row_type,
+  claimed_by AS count_or_claimed_by,
+  ts_range,
+  claimed_at_utc,
+  heartbeated_at_utc,
+  age_seconds,
+  is_stale
+FROM claimed_details
+ORDER BY signal, action, row_type DESC;
+
 -- name: WorkQueueOrphanedSignalLockCleanup :one
 WITH params AS (
   SELECT pg_advisory_xact_lock(hashtext('work_queue_global')::bigint) AS locked

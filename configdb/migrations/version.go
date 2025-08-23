@@ -29,6 +29,8 @@ import (
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
+
+	"github.com/cardinalhq/lakerunner/migrations"
 )
 
 // GetMigrationFiles returns the embedded migration files for version checking
@@ -37,15 +39,35 @@ func GetMigrationFiles() embed.FS {
 }
 
 // CheckExpectedVersion verifies that the configdb database is at the expected migration version
+// using default options (wait mode)
 func CheckExpectedVersion(ctx context.Context, pool *pgxpool.Pool) error {
-	// Get configuration from environment
-	config := getMigrationCheckConfig()
-	if !config.Enabled {
+	return CheckVersion(ctx, pool)
+}
+
+// CheckVersion verifies that the configdb database is at the expected migration version
+// with configurable options
+func CheckVersion(ctx context.Context, pool *pgxpool.Pool, options ...migrations.CheckOption) error {
+	// Check if migration checking is disabled via environment
+	if !getMigrationCheckEnabledFromEnv() {
 		slog.Debug("Migration version checking disabled for configdb")
 		return nil
 	}
 
-	return checkMigrationVersion(ctx, pool, migrationFiles, "gomigrate_lrconfigdb", "configdb", config)
+	opts := migrations.DefaultCheckOptions()
+	for _, option := range options {
+		option(&opts)
+	}
+
+	// Skip entirely if requested
+	if opts.Mode == migrations.CheckModeSkip {
+		slog.Debug("Migration version checking skipped for configdb")
+		return nil
+	}
+
+	// Override defaults with environment variables if set
+	applyEnvironmentOverrides(&opts)
+
+	return checkMigrationVersionWithNewOptions(ctx, pool, migrationFiles, "gomigrate_lrconfigdb", "configdb", opts)
 }
 
 // migrationCheckConfig holds configuration for migration version checking
@@ -56,7 +78,35 @@ type migrationCheckConfig struct {
 	AllowDirty    bool
 }
 
+// getMigrationCheckEnabledFromEnv checks if migration checking is enabled via environment
+func getMigrationCheckEnabledFromEnv() bool {
+	if val := os.Getenv("CONFIGDB_MIGRATION_CHECK_ENABLED"); val != "" {
+		return strings.ToLower(val) == "true"
+	}
+	return true // enabled by default
+}
+
+// applyEnvironmentOverrides applies environment variable overrides to CheckOptions
+func applyEnvironmentOverrides(opts *migrations.CheckOptions) {
+	if val := os.Getenv("MIGRATION_CHECK_TIMEOUT"); val != "" {
+		if d, err := time.ParseDuration(val); err == nil {
+			opts.Timeout = d
+		}
+	}
+
+	if val := os.Getenv("MIGRATION_CHECK_RETRY_INTERVAL"); val != "" {
+		if d, err := time.ParseDuration(val); err == nil {
+			opts.RetryInterval = d
+		}
+	}
+
+	if val := os.Getenv("MIGRATION_CHECK_ALLOW_DIRTY"); val != "" {
+		opts.AllowDirty = strings.ToLower(val) == "true"
+	}
+}
+
 // getMigrationCheckConfig returns migration check configuration from environment variables
+// This is kept for backward compatibility with old checkMigrationVersionWithOptions
 func getMigrationCheckConfig() migrationCheckConfig {
 	enabled := true
 	if val := os.Getenv("CONFIGDB_MIGRATION_CHECK_ENABLED"); val != "" {
@@ -131,41 +181,75 @@ func extractLatestMigrationVersion(migrationFiles embed.FS) (uint, error) {
 	return maxVersion, nil
 }
 
-// checkMigrationVersion verifies that the database is at the expected migration version
-func checkMigrationVersion(ctx context.Context, pool *pgxpool.Pool, migrationFiles embed.FS, migrationTable string, dbName string, config migrationCheckConfig) error {
+// checkMigrationVersionWithNewOptions verifies that the database is at the expected migration version
+// using the new options API
+func checkMigrationVersionWithNewOptions(ctx context.Context, pool *pgxpool.Pool, migrationFiles embed.FS, migrationTable string, dbName string, opts migrations.CheckOptions) error {
 	expectedVersion, err := extractLatestMigrationVersion(migrationFiles)
 	if err != nil {
 		return fmt.Errorf("failed to extract expected migration version for %s: %w", dbName, err)
 	}
 
+	// Check current version first
+	currentVersion, dirty, err := getCurrentMigrationVersion(ctx, pool, migrationFiles, migrationTable)
+	if err != nil {
+		return fmt.Errorf("failed to get current migration version for %s: %w", dbName, err)
+	}
+
+	if dirty && !opts.AllowDirty {
+		if opts.Mode == migrations.CheckModeWarn {
+			slog.Warn("Database migration is in dirty state, but continuing anyway",
+				slog.String("database", dbName))
+		} else {
+			return fmt.Errorf("database %s migration is in dirty state, please fix before proceeding", dbName)
+		}
+	}
+
+	if dirty {
+		slog.Warn("Database migration is dirty but allowed to continue", slog.String("database", dbName))
+	}
+
+	// If versions match, return silently (no logging)
+	if currentVersion == expectedVersion {
+		return nil
+	}
+
+	// Versions don't match - log info and handle accordingly
 	slog.Info("Checking migration version",
 		slog.String("database", dbName),
-		slog.Uint64("expected_version", uint64(expectedVersion)),
-		slog.Duration("timeout", config.Timeout))
+		slog.Uint64("current_version", uint64(currentVersion)),
+		slog.Uint64("expected_version", uint64(expectedVersion)))
 
-	deadline := time.Now().Add(config.Timeout)
-	ticker := time.NewTicker(config.RetryInterval)
+	if currentVersion > expectedVersion {
+		if opts.Mode == migrations.CheckModeWarn {
+			slog.Warn("Database version is newer than expected, but continuing anyway",
+				slog.String("database", dbName),
+				slog.Uint64("current_version", uint64(currentVersion)),
+				slog.Uint64("expected_version", uint64(expectedVersion)))
+			return nil
+		}
+		return fmt.Errorf("database %s version %d is newer than expected version %d - you may need to update the application",
+			dbName, currentVersion, expectedVersion)
+	}
+
+	// currentVersion < expectedVersion
+	if opts.Mode == migrations.CheckModeWarn {
+		slog.Warn("Database version is older than expected, but continuing anyway",
+			slog.String("database", dbName),
+			slog.Uint64("current_version", uint64(currentVersion)),
+			slog.Uint64("expected_version", uint64(expectedVersion)))
+		return nil
+	}
+
+	// For wait mode, wait for migrations
+	deadline := time.Now().Add(opts.Timeout)
+	ticker := time.NewTicker(opts.RetryInterval)
 	defer ticker.Stop()
 
 	for {
-		currentVersion, dirty, err := getCurrentMigrationVersion(ctx, pool, migrationFiles, migrationTable)
+		currentVersion, _, err = getCurrentMigrationVersion(ctx, pool, migrationFiles, migrationTable)
 		if err != nil {
 			return fmt.Errorf("failed to get current migration version for %s: %w", dbName, err)
 		}
-
-		if dirty && !config.AllowDirty {
-			return fmt.Errorf("database %s migration is in dirty state, please fix before proceeding", dbName)
-		}
-
-		if dirty {
-			slog.Warn("Database migration is dirty but allowed to continue", slog.String("database", dbName))
-		}
-
-		slog.Debug("Migration version check",
-			slog.String("database", dbName),
-			slog.Uint64("current_version", uint64(currentVersion)),
-			slog.Uint64("expected_version", uint64(expectedVersion)),
-			slog.Bool("dirty", dirty))
 
 		if currentVersion == expectedVersion {
 			slog.Info("Migration version check passed",
@@ -174,12 +258,6 @@ func checkMigrationVersion(ctx context.Context, pool *pgxpool.Pool, migrationFil
 			return nil
 		}
 
-		if currentVersion > expectedVersion {
-			return fmt.Errorf("database %s version %d is newer than expected version %d - you may need to update the application",
-				dbName, currentVersion, expectedVersion)
-		}
-
-		// currentVersion < expectedVersion
 		if time.Now().After(deadline) {
 			return fmt.Errorf("timeout waiting for %s migration to complete: current version %d, expected %d",
 				dbName, currentVersion, expectedVersion)

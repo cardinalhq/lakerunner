@@ -23,6 +23,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/configdb"
 	configdbmigrations "github.com/cardinalhq/lakerunner/configdb/migrations"
+	"github.com/cardinalhq/lakerunner/migrations"
 )
 
 func ConnectToConfigDB(ctx context.Context, opts ...Options) (*pgxpool.Pool, error) {
@@ -36,17 +37,15 @@ func ConnectToConfigDB(ctx context.Context, opts ...Options) (*pgxpool.Pool, err
 		return nil, err
 	}
 
-	// Check if migration check should be skipped
-	skipMigrationCheck := false
-	if len(opts) > 0 {
-		skipMigrationCheck = opts[0].SkipMigrationCheck
+	// Apply migration check options
+	var migrationCheckOptions []migrations.CheckOption
+	if len(opts) > 0 && len(opts[0].MigrationCheckOptions) > 0 {
+		migrationCheckOptions = opts[0].MigrationCheckOptions
 	}
 
-	if !skipMigrationCheck {
-		if err := configdbmigrations.CheckExpectedVersion(ctx, pool); err != nil {
-			pool.Close()
-			return nil, fmt.Errorf("CONFIGDB migration version check failed: %w", err)
-		}
+	if err := configdbmigrations.CheckVersion(ctx, pool, migrationCheckOptions...); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("CONFIGDB migration version check failed: %w", err)
 	}
 
 	return pool, nil
@@ -54,6 +53,17 @@ func ConnectToConfigDB(ctx context.Context, opts ...Options) (*pgxpool.Pool, err
 
 func ConfigDBStore(ctx context.Context) (configdb.QuerierFull, error) {
 	pool, err := ConnectToConfigDB(ctx)
+	if err != nil {
+		return nil, err
+	}
+	configStore := configdb.NewStore(pool)
+	return configStore, nil
+}
+
+// ConfigDBStoreForAdmin connects to ConfigDB with admin-friendly migration checking
+// that warns and continues instead of failing on migration mismatches
+func ConfigDBStoreForAdmin(ctx context.Context) (configdb.QuerierFull, error) {
+	pool, err := ConnectToConfigDB(ctx, WarnOnMigrationMismatch())
 	if err != nil {
 		return nil, err
 	}
