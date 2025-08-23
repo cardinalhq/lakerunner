@@ -1,11 +1,7 @@
-name: Build Release Candidate
+name: Build Test Release
 
 on:
   push:
-    branches:
-      - release-candidate
-    tags:
-      - 'v*.*.*-rc*'
 
 permissions:
   contents: write
@@ -32,7 +28,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Native builds on correct arch — no QEMU needed
       - uses: docker/setup-buildx-action@v3
 
       - name: Configure AWS credentials
@@ -69,7 +64,7 @@ jobs:
         with:
           distribution: goreleaser-pro
           version: "~> v2"
-          args: release --clean --split --config .goreleaser.rc.yaml
+          args: release --clean --split --snapshot --config .goreleaser.test-release.yaml
         env:
           GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
           DUCKDB_SDK_VERSION: v1.3.2
@@ -88,8 +83,6 @@ jobs:
           fetch-depth: 0
 
       - uses: docker/setup-buildx-action@v3
-      - uses: sigstore/cosign-installer@v3.9.2
-      - uses: anchore/sbom-action/download-syft@v0.20.4
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -125,19 +118,13 @@ jobs:
         with:
           distribution: goreleaser-pro
           version: "~> v2"
-          args: continue --merge --config .goreleaser.rc.yaml
+          args: continue --merge --snapshot --config .goreleaser.test-release.yaml
         env:
           GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
           DUCKDB_SDK_VERSION: v1.3.2
 
       - name: Output built images
         run: |
-          echo "Release Candidate built successfully!"
-          echo "Image: public.ecr.aws/cardinalhq.io/lakerunner:${{ github.ref_name }}"
-          echo ""
-          echo "Testing this RC before promotion:"
-          echo "  1. Deploy to staging environment"
-          echo "  2. Run integration tests"
-          echo "  3. Validate functionality"
-          echo ""
-          echo "To promote to production, use the 'Promote Release' workflow"
+          BRANCH=$(echo "$GITHUB_REF_NAME" | tr '/' '-')
+          echo "Test release built successfully!"
+          echo "Image: public.ecr.aws/cardinalhq.io/lakerunner:v0.0.0-$BRANCH-$sha_short"

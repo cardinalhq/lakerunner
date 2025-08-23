@@ -31,6 +31,12 @@ jobs:
         run: |
           echo "Processing RC version: ${{ inputs.rc_version }}"
 
+          # Reject v0.0.0 builds
+          if [[ "${{ inputs.rc_version }}" =~ ^v0\.0\.0 ]]; then
+            echo "ERROR: v0.0.0 builds are not promotable"
+            exit 1
+          fi
+
           # Validate RC format (v1.2.3-suffix)
           if [[ ! "${{ inputs.rc_version }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-[a-zA-Z0-9]+$ ]]; then
             echo "ERROR: RC version must follow format: v1.2.3-suffix (e.g., v1.2.3-rc1, v1.2.3-beta1)"
