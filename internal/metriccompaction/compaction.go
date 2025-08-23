@@ -173,9 +173,25 @@ func doCompactItem(
 			cursorSegmentID = lastRow.SegmentID
 		}
 
-		// Check if this batch needs compaction
-		if !ShouldCompactMetrics(inRows) {
-			ll.Info("No need to compact metrics in this batch", slog.Int("rowCount", len(inRows)))
+		// Pack segments using size-based estimation (similar to logs)
+		// Allow for 110% of target capacity to account for compression variability
+		adjustedEstimate := rpfEstimate * 11 / 10
+		packedGroups, err := PackMetricSegments(inRows, adjustedEstimate)
+		if err != nil {
+			ll.Error("Error packing segments", slog.Any("error", err))
+			return WorkResultTryAgainLater, err
+		}
+
+		// Filter groups that actually need compaction
+		var groupsToProcess [][]lrdb.MetricSeg
+		for _, group := range packedGroups {
+			if ShouldCompactMetricGroup(group) {
+				groupsToProcess = append(groupsToProcess, group)
+			}
+		}
+
+		if len(groupsToProcess) == 0 {
+			ll.Info("No groups need compaction in this batch", slog.Int("segmentCount", len(inRows)))
 
 			// If we didn't hit the limit, we've seen all segments
 			if len(inRows) < maxRowsLimit {
@@ -189,11 +205,23 @@ func doCompactItem(
 			continue
 		}
 
-		// Process this batch
-		err = compactInterval(ctx, ll, mdb, tmpdir, inf, profile, s3client, inRows, rpfEstimate)
-		if err != nil {
-			ll.Error("Failed to compact interval", slog.Any("error", err))
-			return WorkResultTryAgainLater, err
+		ll.Info("Processing compaction groups",
+			slog.Int("totalGroups", len(groupsToProcess)),
+			slog.Int("originalSegments", len(inRows)))
+
+		// Process each packed group
+		for groupIdx, group := range groupsToProcess {
+			ll.Info("Processing compaction group",
+				slog.Int("groupIndex", groupIdx),
+				slog.Int("segmentCount", len(group)))
+
+			err = compactInterval(ctx, ll, mdb, tmpdir, inf, profile, s3client, group, rpfEstimate)
+			if err != nil {
+				ll.Error("Failed to compact interval",
+					slog.Any("error", err),
+					slog.Int("groupIndex", groupIdx))
+				return WorkResultTryAgainLater, err
+			}
 		}
 
 		totalBatchesProcessed++
@@ -213,26 +241,6 @@ func doCompactItem(
 			slog.Time("nextCursorCreatedAt", cursorCreatedAt),
 			slog.Int64("nextCursorSegmentID", cursorSegmentID))
 	}
-}
-
-func ShouldCompactMetrics(rows []lrdb.MetricSeg) bool {
-	if len(rows) < 2 {
-		return false
-	}
-
-	const smallThreshold = int64(targetFileSize) * 3 / 10
-
-	var totalSize int64
-	for _, row := range rows {
-		totalSize += row.FileSize
-		if row.FileSize > targetFileSize*2 || row.FileSize < smallThreshold {
-			return true
-		}
-	}
-
-	estimatedFileCount := (totalSize + targetFileSize - 1) / targetFileSize
-	compact := estimatedFileCount < int64(len(rows))-3 // TODO this feels hacky
-	return compact
 }
 
 func GetStartEndTimes(rows []lrdb.MetricSeg) (int64, int64) {
@@ -353,11 +361,14 @@ func compactInterval(
 
 	dateint, hour := helpers.MSToDateintHour(startTs)
 
-	// Process each tid_partition atomically
-	for tidPartition, result := range mergeResult {
+	// Process each output file from TIDMerger
+	for fileIdx, result := range mergeResult {
+		// Use the tid_partition from the first segment since all segments in the group should have the same partition
+		tidPartition := rows[0].TidPartition
+
 		// Generate operation ID for tracking this atomic operation
-		opID := fmt.Sprintf("metric_op_%d_%d_%s", time.Now().Unix(), tidPartition, idgen.GenerateShortBase32ID())
-		tidLogger := ll.With(slog.String("operationID", opID), slog.Int("tidPartition", tidPartition))
+		opID := fmt.Sprintf("metric_op_%d_%d_%s", time.Now().Unix(), fileIdx, idgen.GenerateShortBase32ID())
+		tidLogger := ll.With(slog.String("operationID", opID), slog.Int("tidPartition", int(tidPartition)))
 
 		tidLogger.Info("Starting atomic metric compaction operation",
 			slog.Int64("recordCount", result.RecordCount),
@@ -395,7 +406,7 @@ func compactInterval(
 			OldRecords:     params.OldRecords, // Contains all old records, but DB will filter by tid_partition
 			NewRecords: []lrdb.ReplaceMetricSegsNew{
 				{
-					TidPartition: int16(tidPartition),
+					TidPartition: tidPartition,
 					SegmentID:    segmentID,
 					StartTs:      startTs,
 					EndTs:        endTs,
