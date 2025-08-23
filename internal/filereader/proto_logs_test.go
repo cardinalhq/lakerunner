@@ -16,24 +16,32 @@ package filereader
 
 import (
 	"bytes"
+	"compress/gzip"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/collector/pdata/pcommon"
+	"go.opentelemetry.io/collector/pdata/plog"
 )
 
 func TestNewProtoLogsReader(t *testing.T) {
-	// Test with valid protobuf data
-	file, err := os.Open("../../fileconv/proto/testdata/logs_160396104.binpb")
+	// Test with valid gzipped protobuf data
+	file, err := os.Open("testdata/otel-logs.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
-	reader, err := NewProtoLogsReader(file)
+	gzReader, err := gzip.NewReader(file)
+	require.NoError(t, err)
+	defer gzReader.Close()
+
+	reader, err := NewProtoLogsReader(gzReader)
 	require.NoError(t, err)
 	require.NotNil(t, reader)
 	defer reader.Close()
@@ -79,11 +87,15 @@ func TestNewProtoLogsReader_EmptyData(t *testing.T) {
 
 func TestProtoLogsReader_Read(t *testing.T) {
 	// Load test data
-	file, err := os.Open("../../fileconv/proto/testdata/logs_160396104.binpb")
+	file, err := os.Open("testdata/otel-logs.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
-	reader, err := NewProtoLogsReader(file)
+	gzReader, err := gzip.NewReader(file)
+	require.NoError(t, err)
+	defer gzReader.Close()
+
+	reader, err := NewProtoLogsReader(gzReader)
 	require.NoError(t, err)
 	defer reader.Close()
 
@@ -118,11 +130,15 @@ func TestProtoLogsReader_Read(t *testing.T) {
 
 func TestProtoLogsReader_ReadBatched(t *testing.T) {
 	// Load test data
-	file, err := os.Open("../../fileconv/proto/testdata/logs_160396104.binpb")
+	file, err := os.Open("testdata/otel-logs.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
-	reader, err := NewProtoLogsReader(file)
+	gzReader, err := gzip.NewReader(file)
+	require.NoError(t, err)
+	defer gzReader.Close()
+
+	reader, err := NewProtoLogsReader(gzReader)
 	require.NoError(t, err)
 	defer reader.Close()
 
@@ -158,11 +174,15 @@ func TestProtoLogsReader_ReadBatched(t *testing.T) {
 
 func TestProtoLogsReader_ReadSingleRow(t *testing.T) {
 	// Load test data
-	file, err := os.Open("../../fileconv/proto/testdata/logs_160396104.binpb")
+	file, err := os.Open("testdata/otel-logs.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
-	reader, err := NewProtoLogsReader(file)
+	gzReader, err := gzip.NewReader(file)
+	require.NoError(t, err)
+	defer gzReader.Close()
+
+	reader, err := NewProtoLogsReader(gzReader)
 	require.NoError(t, err)
 	defer reader.Close()
 
@@ -180,11 +200,15 @@ func TestProtoLogsReader_ReadSingleRow(t *testing.T) {
 
 func TestProtoLogsReader_ResourceAndScopeAttributes(t *testing.T) {
 	// Load test data
-	file, err := os.Open("../../fileconv/proto/testdata/logs_160396104.binpb")
+	file, err := os.Open("testdata/otel-logs.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
-	reader, err := NewProtoLogsReader(file)
+	gzReader, err := gzip.NewReader(file)
+	require.NoError(t, err)
+	defer gzReader.Close()
+
+	reader, err := NewProtoLogsReader(gzReader)
 	require.NoError(t, err)
 	defer reader.Close()
 
@@ -226,11 +250,15 @@ func TestProtoLogsReader_ResourceAndScopeAttributes(t *testing.T) {
 
 func TestProtoLogsReader_EmptySlice(t *testing.T) {
 	// Load test data
-	file, err := os.Open("../../fileconv/proto/testdata/logs_160396104.binpb")
+	file, err := os.Open("testdata/otel-logs.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
-	reader, err := NewProtoLogsReader(file)
+	gzReader, err := gzip.NewReader(file)
+	require.NoError(t, err)
+	defer gzReader.Close()
+
+	reader, err := NewProtoLogsReader(gzReader)
 	require.NoError(t, err)
 	defer reader.Close()
 
@@ -242,11 +270,15 @@ func TestProtoLogsReader_EmptySlice(t *testing.T) {
 
 func TestProtoLogsReader_Close(t *testing.T) {
 	// Load test data
-	file, err := os.Open("../../fileconv/proto/testdata/logs_160396104.binpb")
+	file, err := os.Open("testdata/otel-logs.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
-	reader, err := NewProtoLogsReader(file)
+	gzReader, err := gzip.NewReader(file)
+	require.NoError(t, err)
+	defer gzReader.Close()
+
+	reader, err := NewProtoLogsReader(gzReader)
 	require.NoError(t, err)
 
 	// Should be able to read before closing
@@ -273,11 +305,15 @@ func TestProtoLogsReader_Close(t *testing.T) {
 
 func TestProtoLogsReader_ExhaustData(t *testing.T) {
 	// Load test data
-	file, err := os.Open("../../fileconv/proto/testdata/logs_160396104.binpb")
+	file, err := os.Open("testdata/otel-logs.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
-	reader, err := NewProtoLogsReader(file)
+	gzReader, err := gzip.NewReader(file)
+	require.NoError(t, err)
+	defer gzReader.Close()
+
+	reader, err := NewProtoLogsReader(gzReader)
 	require.NoError(t, err)
 	defer reader.Close()
 
@@ -299,11 +335,15 @@ func TestProtoLogsReader_ExhaustData(t *testing.T) {
 
 func TestProtoLogsReader_LogFields(t *testing.T) {
 	// Load test data
-	file, err := os.Open("../../fileconv/proto/testdata/logs_160396104.binpb")
+	file, err := os.Open("testdata/otel-logs.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
-	reader, err := NewProtoLogsReader(file)
+	gzReader, err := gzip.NewReader(file)
+	require.NoError(t, err)
+	defer gzReader.Close()
+
+	reader, err := NewProtoLogsReader(gzReader)
 	require.NoError(t, err)
 	defer reader.Close()
 
@@ -356,4 +396,173 @@ func TestParseProtoToOtelLogs_ReadError(t *testing.T) {
 	_, err := parseProtoToOtelLogs(errorReader)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to read data")
+}
+
+// Helper function to create synthetic log data
+func createSyntheticLogData() []byte {
+	logs := plog.NewLogs()
+	
+	// Create a resource log
+	resourceLog := logs.ResourceLogs().AppendEmpty()
+	
+	// Add resource attributes
+	resourceLog.Resource().Attributes().PutStr("service.name", "test-log-service")
+	resourceLog.Resource().Attributes().PutStr("service.version", "2.0.0")
+	resourceLog.Resource().Attributes().PutStr("deployment.environment", "test")
+	
+	// Create scope logs
+	scopeLog := resourceLog.ScopeLogs().AppendEmpty()
+	scopeLog.Scope().SetName("test-logger")
+	scopeLog.Scope().SetVersion("1.0.0")
+	scopeLog.Scope().Attributes().PutStr("logger.type", "structured")
+	
+	// Create log records with different severity levels
+	severities := []struct {
+		text   string
+		number plog.SeverityNumber
+		body   string
+	}{
+		{"DEBUG", plog.SeverityNumberDebug, "Debug message for testing"},
+		{"INFO", plog.SeverityNumberInfo, "Info message with details"},
+		{"WARN", plog.SeverityNumberWarn, "Warning about potential issue"},
+		{"ERROR", plog.SeverityNumberError, "Error occurred during processing"},
+		{"FATAL", plog.SeverityNumberFatal, "Fatal error - system shutdown"},
+	}
+	
+	baseTime := time.Now()
+	for i, sev := range severities {
+		logRecord := scopeLog.LogRecords().AppendEmpty()
+		logRecord.Body().SetStr(sev.body)
+		logRecord.SetSeverityText(sev.text)
+		logRecord.SetSeverityNumber(sev.number)
+		logRecord.SetTimestamp(pcommon.NewTimestampFromTime(baseTime.Add(time.Duration(i) * time.Second)))
+		logRecord.SetObservedTimestamp(pcommon.NewTimestampFromTime(baseTime.Add(time.Duration(i) * time.Second)))
+		
+		// Add log-specific attributes
+		logRecord.Attributes().PutStr("log.level", sev.text)
+		logRecord.Attributes().PutStr("log.source", fmt.Sprintf("test-component-%d", i))
+		logRecord.Attributes().PutInt("log.sequence", int64(i+1))
+	}
+	
+	// Marshal to protobuf
+	marshaler := &plog.ProtoMarshaler{}
+	data, _ := marshaler.MarshalLogs(logs)
+	return data
+}
+
+// Test ProtoLogsReader with synthetic log data
+func TestProtoLogsReader_SyntheticData(t *testing.T) {
+	// Create synthetic log data
+	syntheticData := createSyntheticLogData()
+	reader := bytes.NewReader(syntheticData)
+
+	protoReader, err := NewProtoLogsReader(reader)
+	require.NoError(t, err)
+	require.NotNil(t, protoReader)
+	defer protoReader.Close()
+
+	// Read all rows
+	allRows, err := readAllRows(protoReader)
+	require.NoError(t, err)
+	require.Equal(t, 5, len(allRows), "Should read exactly 5 log rows from synthetic data")
+
+	// Verify each row has expected fields and values
+	expectedSeverities := []string{"DEBUG", "INFO", "WARN", "ERROR", "FATAL"}
+	expectedBodies := []string{
+		"Debug message for testing",
+		"Info message with details", 
+		"Warning about potential issue",
+		"Error occurred during processing",
+		"Fatal error - system shutdown",
+	}
+
+	for i, row := range allRows {
+		t.Run(fmt.Sprintf("log_%d", i), func(t *testing.T) {
+			// Should have basic log fields
+			assert.Contains(t, row, "body", "Row should have log body")
+			assert.Contains(t, row, "timestamp", "Row should have timestamp")
+			assert.Contains(t, row, "severity_text", "Row should have severity text")
+			assert.Contains(t, row, "severity_number", "Row should have severity number")
+			
+			// Check specific values
+			assert.Equal(t, expectedBodies[i], row["body"], "Log body should match expected value")
+			assert.Equal(t, expectedSeverities[i], row["severity_text"], "Severity text should match")
+			
+			// Check for resource attributes
+			assert.Contains(t, row, "resource.service.name", "Should have resource service name")
+			assert.Equal(t, "test-log-service", row["resource.service.name"])
+			assert.Contains(t, row, "resource.deployment.environment", "Should have resource environment")
+			assert.Equal(t, "test", row["resource.deployment.environment"])
+			
+			// Check for scope attributes
+			assert.Contains(t, row, "scope.logger.type", "Should have scope logger type")
+			assert.Equal(t, "structured", row["scope.logger.type"])
+			
+			// Check for log attributes
+			assert.Contains(t, row, "log.log.level", "Should have log level attribute")
+			assert.Equal(t, expectedSeverities[i], row["log.log.level"])
+			assert.Contains(t, row, "log.log.source", "Should have log source attribute")
+			expectedSource := fmt.Sprintf("test-component-%d", i)
+			assert.Equal(t, expectedSource, row["log.log.source"])
+		})
+	}
+
+	t.Logf("Successfully read %d synthetic log rows (expected 5)", len(allRows))
+}
+
+// Test ProtoLogsReader synthetic data field analysis
+func TestProtoLogsReader_SyntheticDataFields(t *testing.T) {
+	// Create synthetic log data
+	syntheticData := createSyntheticLogData()
+	reader := bytes.NewReader(syntheticData)
+
+	protoReader, err := NewProtoLogsReader(reader)
+	require.NoError(t, err)
+	defer protoReader.Close()
+
+	// Read all rows and collect log field info
+	allRows, err := readAllRows(protoReader)
+	require.NoError(t, err)
+	require.Equal(t, 5, len(allRows), "Should read exactly 5 rows for synthetic field analysis")
+
+	severityTexts := make(map[string]int)
+	severityNumbers := make(map[int32]int)
+	bodyCount := 0
+	
+	for _, row := range allRows {
+		if body, exists := row["body"]; exists {
+			if bodyStr, ok := body.(string); ok && bodyStr != "" {
+				bodyCount++
+			}
+		}
+		if severityText, exists := row["severity_text"]; exists {
+			if textStr, ok := severityText.(string); ok {
+				severityTexts[textStr]++
+			}
+		}
+		if severityNum, exists := row["severity_number"]; exists {
+			if numInt32, ok := severityNum.(int32); ok {
+				severityNumbers[numInt32]++
+			}
+		}
+	}
+
+	t.Logf("Found %d synthetic logs with non-empty bodies", bodyCount)
+	t.Logf("Found synthetic severity texts: %+v", severityTexts)
+	t.Logf("Found synthetic severity numbers: %+v", severityNumbers)
+	
+	// Validate expected synthetic data
+	assert.Equal(t, 5, bodyCount, "Should have 5 logs with bodies")
+	assert.Equal(t, 1, severityTexts["DEBUG"], "Should have 1 DEBUG log")
+	assert.Equal(t, 1, severityTexts["INFO"], "Should have 1 INFO log")
+	assert.Equal(t, 1, severityTexts["WARN"], "Should have 1 WARN log")
+	assert.Equal(t, 1, severityTexts["ERROR"], "Should have 1 ERROR log")
+	assert.Equal(t, 1, severityTexts["FATAL"], "Should have 1 FATAL log")
+	
+	// Validate severity numbers (using OTEL severity number values)
+	assert.Equal(t, 1, severityNumbers[int32(plog.SeverityNumberDebug)], "Should have 1 DEBUG severity number")
+	assert.Equal(t, 1, severityNumbers[int32(plog.SeverityNumberInfo)], "Should have 1 INFO severity number")
+	assert.Equal(t, 1, severityNumbers[int32(plog.SeverityNumberWarn)], "Should have 1 WARN severity number")
+	assert.Equal(t, 1, severityNumbers[int32(plog.SeverityNumberError)], "Should have 1 ERROR severity number")
+	assert.Equal(t, 1, severityNumbers[int32(plog.SeverityNumberFatal)], "Should have 1 FATAL severity number")
 }
