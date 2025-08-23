@@ -28,7 +28,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-
 func TestNewProtoTracesReader(t *testing.T) {
 	// Test with valid gzipped protobuf data
 	file, err := os.Open("testdata/otel-traces.binpb.gz")
@@ -73,7 +72,7 @@ func TestNewProtoTracesReader_EmptyData(t *testing.T) {
 		// If no error, should still be able to use the reader
 		require.NotNil(t, reader)
 		defer reader.Close()
-		
+
 		// Reading from empty traces should return EOF immediately
 		rows := make([]Row, 1)
 		rows[0] = make(Row)
@@ -110,12 +109,12 @@ func TestProtoTracesReader_Read(t *testing.T) {
 			assert.Contains(t, row, "span_id", "Row should have span ID")
 			assert.Contains(t, row, "name", "Row should have span name")
 			assert.Contains(t, row, "kind", "Row should have span kind")
-			
+
 			// Check that trace_id and span_id are not empty
 			assert.NotEmpty(t, row["trace_id"], "Trace ID should not be empty")
 			assert.NotEmpty(t, row["span_id"], "Span ID should not be empty")
 			assert.NotEmpty(t, row["name"], "Span name should not be empty")
-			
+
 			// Other fields may or may not be present depending on the span
 			// but if present, should have valid values
 			if kind, exists := row["kind"]; exists {
@@ -147,16 +146,16 @@ func TestProtoTracesReader_ReadBatched(t *testing.T) {
 	// Read in batches of 5
 	var totalRows int
 	batchSize := 5
-	
+
 	for {
 		rows := make([]Row, batchSize)
 		for i := range rows {
 			rows[i] = make(Row)
 		}
-		
+
 		n, err := protoReader.Read(rows)
 		totalRows += n
-		
+
 		// Verify each row that was read
 		for i := 0; i < n; i++ {
 			assert.Greater(t, len(rows[i]), 0, "Row %d should have data", i)
@@ -164,7 +163,7 @@ func TestProtoTracesReader_ReadBatched(t *testing.T) {
 			assert.Contains(t, rows[i], "span_id", "Row %d should have span_id field", i)
 			assert.Contains(t, rows[i], "name", "Row %d should have name field", i)
 		}
-		
+
 		if errors.Is(err, io.EOF) {
 			break
 		}
@@ -192,7 +191,7 @@ func TestProtoTracesReader_ReadSingleRow(t *testing.T) {
 	// Read one row at a time
 	rows := make([]Row, 1)
 	rows[0] = make(Row)
-	
+
 	n, err := protoReader.Read(rows)
 	require.NoError(t, err)
 	assert.Equal(t, 1, n)
@@ -221,7 +220,7 @@ func TestProtoTracesReader_ResourceAndScopeAttributes(t *testing.T) {
 	for i := range rows {
 		rows[i] = make(Row)
 	}
-	
+
 	n, err := protoReader.Read(rows)
 	require.NoError(t, err)
 	require.Greater(t, n, 0, "Should read at least one row for attribute checking")
@@ -230,7 +229,7 @@ func TestProtoTracesReader_ResourceAndScopeAttributes(t *testing.T) {
 	foundResourceAttr := false
 	foundScopeAttr := false
 	foundSpanAttr := false
-	
+
 	for i := 0; i < n; i++ {
 		for key := range rows[i] {
 			if strings.HasPrefix(key, "resource.") {
@@ -248,7 +247,7 @@ func TestProtoTracesReader_ResourceAndScopeAttributes(t *testing.T) {
 		}
 	}
 
-	t.Logf("Found resource attributes: %v, scope attributes: %v, span attributes: %v", 
+	t.Logf("Found resource attributes: %v, scope attributes: %v, span attributes: %v",
 		foundResourceAttr, foundScopeAttr, foundSpanAttr)
 }
 
@@ -359,7 +358,7 @@ func TestProtoTracesReader_SpanFields(t *testing.T) {
 	spanKinds := make(map[string]int)
 	statusCodes := make(map[string]int)
 	nameCount := 0
-	
+
 	for _, row := range allRows {
 		if name, exists := row["name"]; exists {
 			if nameStr, ok := name.(string); ok && nameStr != "" {
@@ -381,13 +380,13 @@ func TestProtoTracesReader_SpanFields(t *testing.T) {
 	t.Logf("Found %d spans with names", nameCount)
 	t.Logf("Found span kinds: %+v", spanKinds)
 	t.Logf("Found status codes: %+v", statusCodes)
-	
+
 	// Basic validation - all spans should have names
 	assert.Equal(t, 246, nameCount, "Should have 246 spans with names")
-	
+
 	// Verify specific span type distribution based on test data
 	assert.Equal(t, 82, spanKinds["Client"], "Should have 82 Client spans")
-	assert.Equal(t, 100, spanKinds["Internal"], "Should have 100 Internal spans") 
+	assert.Equal(t, 100, spanKinds["Internal"], "Should have 100 Internal spans")
 	assert.Equal(t, 64, spanKinds["Server"], "Should have 64 Server spans")
 	assert.Equal(t, 246, statusCodes["Unset"], "Should have 246 Unset status codes")
 }

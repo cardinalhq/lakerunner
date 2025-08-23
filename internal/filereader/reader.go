@@ -32,7 +32,13 @@ type Reader interface {
 
 // RowTranslator transforms rows from one format to another.
 type RowTranslator interface {
-	TranslateRow(in Row) (Row, error)
+	// TranslateRow transforms a row and returns:
+	// - The transformed row
+	// - A boolean indicating if the returned row is the same reference as the input (true = same reference)
+	//   If this is not set properly, it will lead to data corruption or a crash due to performance optimizations
+	//   in the TranslatingReader.
+	// - Any error that occurred during translation
+	TranslateRow(in Row) (Row, bool, error)
 }
 
 // SelectFunc is a function that selects which row to return next from a set of candidate rows.

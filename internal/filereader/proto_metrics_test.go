@@ -72,7 +72,7 @@ func TestNewProtoMetricsReader_EmptyData(t *testing.T) {
 		// If no error, should still be able to use the reader
 		require.NotNil(t, reader)
 		defer reader.Close()
-		
+
 		// Reading from empty metrics should return EOF immediately
 		rows := make([]Row, 1)
 		rows[0] = make(Row)
@@ -107,11 +107,11 @@ func TestProtoMetricsReader_Read(t *testing.T) {
 			// Should have basic metric fields
 			assert.Contains(t, row, "name", "Row should have metric name")
 			assert.Contains(t, row, "type", "Row should have metric type")
-			
+
 			// Check that name and type are not empty
 			assert.NotEmpty(t, row["name"], "Metric name should not be empty")
 			assert.NotEmpty(t, row["type"], "Metric type should not be empty")
-			
+
 			// Other fields may or may not be present depending on the metric
 			// but if present, should have valid values
 			if desc, exists := row["description"]; exists {
@@ -143,23 +143,23 @@ func TestProtoMetricsReader_ReadBatched(t *testing.T) {
 	// Read in batches of 5
 	var totalRows int
 	batchSize := 5
-	
+
 	for {
 		rows := make([]Row, batchSize)
 		for i := range rows {
 			rows[i] = make(Row)
 		}
-		
+
 		n, err := reader.Read(rows)
 		totalRows += n
-		
+
 		// Verify each row that was read
 		for i := 0; i < n; i++ {
 			assert.Greater(t, len(rows[i]), 0, "Row %d should have data", i)
 			assert.Contains(t, rows[i], "name", "Row %d should have name field", i)
 			assert.Contains(t, rows[i], "type", "Row %d should have type field", i)
 		}
-		
+
 		if errors.Is(err, io.EOF) {
 			break
 		}
@@ -187,7 +187,7 @@ func TestProtoMetricsReader_ReadSingleRow(t *testing.T) {
 	// Read one row at a time
 	rows := make([]Row, 1)
 	rows[0] = make(Row)
-	
+
 	n, err := reader.Read(rows)
 	require.NoError(t, err)
 	assert.Equal(t, 1, n)
@@ -215,7 +215,7 @@ func TestProtoMetricsReader_ResourceAndScopeAttributes(t *testing.T) {
 	for i := range rows {
 		rows[i] = make(Row)
 	}
-	
+
 	n, err := reader.Read(rows)
 	require.NoError(t, err)
 	require.Equal(t, 3, n, "Should read exactly 3 rows for attribute checking")
@@ -223,7 +223,7 @@ func TestProtoMetricsReader_ResourceAndScopeAttributes(t *testing.T) {
 	// Check if any rows have resource or scope attributes
 	foundResourceAttr := false
 	foundScopeAttr := false
-	
+
 	for i := 0; i < n; i++ {
 		for key := range rows[i] {
 			if strings.HasPrefix(key, "resource.") {
@@ -346,7 +346,7 @@ func TestProtoMetricsReader_MetricTypes(t *testing.T) {
 
 	metricTypes := make(map[string]int)
 	metricNames := make(map[string]int)
-	
+
 	for _, row := range allRows {
 		if metricType, exists := row["type"]; exists {
 			if typeStr, ok := metricType.(string); ok {
@@ -362,14 +362,14 @@ func TestProtoMetricsReader_MetricTypes(t *testing.T) {
 
 	t.Logf("Found metric types: %+v", metricTypes)
 	t.Logf("Found %d unique metric names", len(metricNames))
-	
+
 	// Verify specific expected metric distribution based on test data
 	assert.Equal(t, 3, len(metricTypes), "Should find exactly 3 metric types")
 	assert.Equal(t, 58, len(metricNames), "Should find exactly 58 unique metric names")
-	
+
 	// Verify expected metric type counts
 	assert.Equal(t, 58, metricTypes["Sum"], "Should have 58 Sum metrics")
-	assert.Equal(t, 14, metricTypes["Histogram"], "Should have 14 Histogram metrics") 
+	assert.Equal(t, 14, metricTypes["Histogram"], "Should have 14 Histogram metrics")
 	assert.Equal(t, 7, metricTypes["Gauge"], "Should have 7 Gauge metrics")
 }
 

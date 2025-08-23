@@ -75,7 +75,7 @@ func TestNewProtoLogsReader_EmptyData(t *testing.T) {
 		// If no error, should still be able to use the reader
 		require.NotNil(t, reader)
 		defer reader.Close()
-		
+
 		// Reading from empty logs should return EOF immediately
 		rows := make([]Row, 1)
 		rows[0] = make(Row)
@@ -110,10 +110,10 @@ func TestProtoLogsReader_Read(t *testing.T) {
 			// Should have basic log fields
 			assert.Contains(t, row, "body", "Row should have log body")
 			assert.Contains(t, row, "timestamp", "Row should have timestamp")
-			
+
 			// Check that body is not empty
 			assert.NotEmpty(t, row["body"], "Log body should not be empty")
-			
+
 			// Other fields may or may not be present depending on the log
 			// but if present, should have valid values
 			if severity, exists := row["severity_text"]; exists {
@@ -145,23 +145,23 @@ func TestProtoLogsReader_ReadBatched(t *testing.T) {
 	// Read in batches of 3
 	var totalRows int
 	batchSize := 3
-	
+
 	for {
 		rows := make([]Row, batchSize)
 		for i := range rows {
 			rows[i] = make(Row)
 		}
-		
+
 		n, err := reader.Read(rows)
 		totalRows += n
-		
+
 		// Verify each row that was read
 		for i := 0; i < n; i++ {
 			assert.Greater(t, len(rows[i]), 0, "Row %d should have data", i)
 			assert.Contains(t, rows[i], "body", "Row %d should have body field", i)
 			assert.Contains(t, rows[i], "timestamp", "Row %d should have timestamp field", i)
 		}
-		
+
 		if errors.Is(err, io.EOF) {
 			break
 		}
@@ -189,7 +189,7 @@ func TestProtoLogsReader_ReadSingleRow(t *testing.T) {
 	// Read one row at a time
 	rows := make([]Row, 1)
 	rows[0] = make(Row)
-	
+
 	n, err := reader.Read(rows)
 	require.NoError(t, err)
 	assert.Equal(t, 1, n)
@@ -217,7 +217,7 @@ func TestProtoLogsReader_ResourceAndScopeAttributes(t *testing.T) {
 	for i := range rows {
 		rows[i] = make(Row)
 	}
-	
+
 	n, err := reader.Read(rows)
 	require.NoError(t, err)
 	require.Greater(t, n, 0, "Should read at least one row for attribute checking")
@@ -226,7 +226,7 @@ func TestProtoLogsReader_ResourceAndScopeAttributes(t *testing.T) {
 	foundResourceAttr := false
 	foundScopeAttr := false
 	foundLogAttr := false
-	
+
 	for i := 0; i < n; i++ {
 		for key := range rows[i] {
 			if strings.HasPrefix(key, "resource.") {
@@ -244,7 +244,7 @@ func TestProtoLogsReader_ResourceAndScopeAttributes(t *testing.T) {
 		}
 	}
 
-	t.Logf("Found resource attributes: %v, scope attributes: %v, log attributes: %v", 
+	t.Logf("Found resource attributes: %v, scope attributes: %v, log attributes: %v",
 		foundResourceAttr, foundScopeAttr, foundLogAttr)
 }
 
@@ -355,7 +355,7 @@ func TestProtoLogsReader_LogFields(t *testing.T) {
 	severityTexts := make(map[string]int)
 	severityNumbers := make(map[int32]int)
 	bodyCount := 0
-	
+
 	for _, row := range allRows {
 		if body, exists := row["body"]; exists {
 			if bodyStr, ok := body.(string); ok && bodyStr != "" {
@@ -377,7 +377,7 @@ func TestProtoLogsReader_LogFields(t *testing.T) {
 	t.Logf("Found %d logs with non-empty bodies", bodyCount)
 	t.Logf("Found severity texts: %+v", severityTexts)
 	t.Logf("Found severity numbers: %+v", severityNumbers)
-	
+
 	// Basic validation - at least some logs should have bodies
 	assert.Greater(t, bodyCount, 0, "Should have at least some logs with bodies")
 }
@@ -401,21 +401,21 @@ func TestParseProtoToOtelLogs_ReadError(t *testing.T) {
 // Helper function to create synthetic log data
 func createSyntheticLogData() []byte {
 	logs := plog.NewLogs()
-	
+
 	// Create a resource log
 	resourceLog := logs.ResourceLogs().AppendEmpty()
-	
+
 	// Add resource attributes
 	resourceLog.Resource().Attributes().PutStr("service.name", "test-log-service")
 	resourceLog.Resource().Attributes().PutStr("service.version", "2.0.0")
 	resourceLog.Resource().Attributes().PutStr("deployment.environment", "test")
-	
+
 	// Create scope logs
 	scopeLog := resourceLog.ScopeLogs().AppendEmpty()
 	scopeLog.Scope().SetName("test-logger")
 	scopeLog.Scope().SetVersion("1.0.0")
 	scopeLog.Scope().Attributes().PutStr("logger.type", "structured")
-	
+
 	// Create log records with different severity levels
 	severities := []struct {
 		text   string
@@ -428,7 +428,7 @@ func createSyntheticLogData() []byte {
 		{"ERROR", plog.SeverityNumberError, "Error occurred during processing"},
 		{"FATAL", plog.SeverityNumberFatal, "Fatal error - system shutdown"},
 	}
-	
+
 	baseTime := time.Now()
 	for i, sev := range severities {
 		logRecord := scopeLog.LogRecords().AppendEmpty()
@@ -437,13 +437,13 @@ func createSyntheticLogData() []byte {
 		logRecord.SetSeverityNumber(sev.number)
 		logRecord.SetTimestamp(pcommon.NewTimestampFromTime(baseTime.Add(time.Duration(i) * time.Second)))
 		logRecord.SetObservedTimestamp(pcommon.NewTimestampFromTime(baseTime.Add(time.Duration(i) * time.Second)))
-		
+
 		// Add log-specific attributes
 		logRecord.Attributes().PutStr("log.level", sev.text)
 		logRecord.Attributes().PutStr("log.source", fmt.Sprintf("test-component-%d", i))
 		logRecord.Attributes().PutInt("log.sequence", int64(i+1))
 	}
-	
+
 	// Marshal to protobuf
 	marshaler := &plog.ProtoMarshaler{}
 	data, _ := marshaler.MarshalLogs(logs)
@@ -470,7 +470,7 @@ func TestProtoLogsReader_SyntheticData(t *testing.T) {
 	expectedSeverities := []string{"DEBUG", "INFO", "WARN", "ERROR", "FATAL"}
 	expectedBodies := []string{
 		"Debug message for testing",
-		"Info message with details", 
+		"Info message with details",
 		"Warning about potential issue",
 		"Error occurred during processing",
 		"Fatal error - system shutdown",
@@ -483,21 +483,21 @@ func TestProtoLogsReader_SyntheticData(t *testing.T) {
 			assert.Contains(t, row, "timestamp", "Row should have timestamp")
 			assert.Contains(t, row, "severity_text", "Row should have severity text")
 			assert.Contains(t, row, "severity_number", "Row should have severity number")
-			
+
 			// Check specific values
 			assert.Equal(t, expectedBodies[i], row["body"], "Log body should match expected value")
 			assert.Equal(t, expectedSeverities[i], row["severity_text"], "Severity text should match")
-			
+
 			// Check for resource attributes
 			assert.Contains(t, row, "resource.service.name", "Should have resource service name")
 			assert.Equal(t, "test-log-service", row["resource.service.name"])
 			assert.Contains(t, row, "resource.deployment.environment", "Should have resource environment")
 			assert.Equal(t, "test", row["resource.deployment.environment"])
-			
+
 			// Check for scope attributes
 			assert.Contains(t, row, "scope.logger.type", "Should have scope logger type")
 			assert.Equal(t, "structured", row["scope.logger.type"])
-			
+
 			// Check for log attributes
 			assert.Contains(t, row, "log.log.level", "Should have log level attribute")
 			assert.Equal(t, expectedSeverities[i], row["log.log.level"])
@@ -528,7 +528,7 @@ func TestProtoLogsReader_SyntheticDataFields(t *testing.T) {
 	severityTexts := make(map[string]int)
 	severityNumbers := make(map[int32]int)
 	bodyCount := 0
-	
+
 	for _, row := range allRows {
 		if body, exists := row["body"]; exists {
 			if bodyStr, ok := body.(string); ok && bodyStr != "" {
@@ -550,7 +550,7 @@ func TestProtoLogsReader_SyntheticDataFields(t *testing.T) {
 	t.Logf("Found %d synthetic logs with non-empty bodies", bodyCount)
 	t.Logf("Found synthetic severity texts: %+v", severityTexts)
 	t.Logf("Found synthetic severity numbers: %+v", severityNumbers)
-	
+
 	// Validate expected synthetic data
 	assert.Equal(t, 5, bodyCount, "Should have 5 logs with bodies")
 	assert.Equal(t, 1, severityTexts["DEBUG"], "Should have 1 DEBUG log")
@@ -558,7 +558,7 @@ func TestProtoLogsReader_SyntheticDataFields(t *testing.T) {
 	assert.Equal(t, 1, severityTexts["WARN"], "Should have 1 WARN log")
 	assert.Equal(t, 1, severityTexts["ERROR"], "Should have 1 ERROR log")
 	assert.Equal(t, 1, severityTexts["FATAL"], "Should have 1 FATAL log")
-	
+
 	// Validate severity numbers (using OTEL severity number values)
 	assert.Equal(t, 1, severityNumbers[int32(plog.SeverityNumberDebug)], "Should have 1 DEBUG severity number")
 	assert.Equal(t, 1, severityNumbers[int32(plog.SeverityNumberInfo)], "Should have 1 INFO severity number")

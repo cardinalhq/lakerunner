@@ -62,16 +62,20 @@ func (tr *TranslatingReader) Read(rows []Row) (int, error) {
 
 	// Translate each row that was successfully read
 	for i := 0; i < n; i++ {
-		translatedRow, translateErr := tr.translator.TranslateRow(rows[i])
+		translatedRow, sameRef, translateErr := tr.translator.TranslateRow(rows[i])
 		if translateErr != nil {
 			return i, fmt.Errorf("translation failed for row %d: %w", i, translateErr)
 		}
 
-		// Clear and replace the row with translated data
-		resetRow(&rows[i])
-		for k, v := range translatedRow {
-			rows[i][k] = v
+		// Only clear and copy if translator returned a different reference
+		// This supports high-performance translators that return the same reference
+		if !sameRef {
+			resetRow(&rows[i])
+			for k, v := range translatedRow {
+				rows[i][k] = v
+			}
 		}
+		// If sameRef is true, the translator modified in place or returned same reference
 	}
 
 	return n, err // Pass through the original error (including EOF)

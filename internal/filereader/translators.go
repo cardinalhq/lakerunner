@@ -18,17 +18,18 @@ import (
 	"fmt"
 )
 
-// NoopTranslator is a pass-through translator that returns rows unchanged.
+// NoopTranslator returns rows unchanged for high performance.
+// This is a code example of the most efficient translator implementation.
 type NoopTranslator struct{}
 
-// NewNoopTranslator creates a new NoopTranslator.
+// NewNoopTranslator creates a translator that passes rows through unchanged.
 func NewNoopTranslator() *NoopTranslator {
 	return &NoopTranslator{}
 }
 
-// TranslateRow returns the row unchanged.
-func (nt *NoopTranslator) TranslateRow(in Row) (Row, error) {
-	return in, nil
+// TranslateRow returns the input row unchanged for maximum performance.
+func (nt *NoopTranslator) TranslateRow(in Row) (Row, bool, error) {
+	return in, true, nil // true = same reference
 }
 
 // TagsTranslator adds static tags to every row.
@@ -42,7 +43,7 @@ func NewTagsTranslator(tags map[string]string) *TagsTranslator {
 }
 
 // TranslateRow adds tags to the row.
-func (tt *TagsTranslator) TranslateRow(in Row) (Row, error) {
+func (tt *TagsTranslator) TranslateRow(in Row) (Row, bool, error) {
 	result := make(Row)
 	for k, v := range in {
 		result[k] = v
@@ -52,7 +53,7 @@ func (tt *TagsTranslator) TranslateRow(in Row) (Row, error) {
 		result[k] = v
 	}
 
-	return result, nil
+	return result, false, nil // false = different reference
 }
 
 // ChainTranslator applies multiple translators in sequence.
@@ -66,14 +67,24 @@ func NewChainTranslator(translators ...RowTranslator) *ChainTranslator {
 }
 
 // TranslateRow applies all translators in sequence.
-func (ct *ChainTranslator) TranslateRow(in Row) (Row, error) {
+func (ct *ChainTranslator) TranslateRow(in Row) (Row, bool, error) {
 	result := in
+	anyCopyMade := false // Track if any translator made a copy
+
 	for i, translator := range ct.translators {
 		var err error
-		result, err = translator.TranslateRow(result)
+		var sameRef bool
+		result, sameRef, err = translator.TranslateRow(result)
 		if err != nil {
-			return nil, fmt.Errorf("translator %d failed: %w", i, err)
+			return nil, false, fmt.Errorf("translator %d failed: %w", i, err)
+		}
+
+		// If any translator returns a different reference, we've made a copy
+		if !sameRef {
+			anyCopyMade = true
 		}
 	}
-	return result, nil
+
+	// Final result is same reference as input only if no copies were made
+	return result, !anyCopyMade, nil
 }
