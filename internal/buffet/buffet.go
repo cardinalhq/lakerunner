@@ -31,10 +31,11 @@ import (
 	"encoding/gob"
 	"errors"
 	"fmt"
-	mapset "github.com/deckarep/golang-set/v2"
 	"io"
 	"os"
 	"sort"
+
+	mapset "github.com/deckarep/golang-set/v2"
 
 	"github.com/parquet-go/parquet-go"
 )

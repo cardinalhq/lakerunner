@@ -15,12 +15,13 @@
 package logcrunch
 
 import (
-	"github.com/cardinalhq/lakerunner/internal/buffet"
 	"io"
 	"log/slog"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/cardinalhq/lakerunner/internal/buffet"
 
 	"github.com/parquet-go/parquet-go"
 	"github.com/stretchr/testify/assert"

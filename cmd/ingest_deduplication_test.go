@@ -15,9 +15,10 @@
 package cmd
 
 import (
-	"github.com/cardinalhq/lakerunner/internal/buffet"
 	"testing"
 	"time"
+
+	"github.com/cardinalhq/lakerunner/internal/buffet"
 
 	"github.com/stretchr/testify/assert"
 
