@@ -36,14 +36,16 @@ func ConnectTolrdb(ctx context.Context, opts ...Options) (*pgxpool.Pool, error) 
 		return nil, err
 	}
 
-	// Check if migration check should be skipped
+	// Check migration check options
 	skipMigrationCheck := false
+	warnOnMismatch := false
 	if len(opts) > 0 {
 		skipMigrationCheck = opts[0].SkipMigrationCheck
+		warnOnMismatch = opts[0].WarnOnMigrationMismatch
 	}
 
 	if !skipMigrationCheck {
-		if err := lrdbmigrations.CheckExpectedVersion(ctx, pool); err != nil {
+		if err := lrdbmigrations.CheckExpectedVersionWithOptions(ctx, pool, warnOnMismatch); err != nil {
 			pool.Close()
 			return nil, fmt.Errorf("LRDB migration version check failed: %w", err)
 		}
@@ -54,6 +56,17 @@ func ConnectTolrdb(ctx context.Context, opts ...Options) (*pgxpool.Pool, error) 
 
 func LRDBStore(ctx context.Context) (lrdb.StoreFull, error) {
 	pool, err := ConnectTolrdb(ctx)
+	if err != nil {
+		return nil, err
+	}
+	lrStore := lrdb.NewStore(pool)
+	return lrStore, nil
+}
+
+// LRDBStoreForAdmin connects to LRDB with admin-friendly migration checking
+// that warns and continues instead of failing on migration mismatches
+func LRDBStoreForAdmin(ctx context.Context) (lrdb.StoreFull, error) {
+	pool, err := ConnectTolrdb(ctx, Options{WarnOnMigrationMismatch: true})
 	if err != nil {
 		return nil, err
 	}

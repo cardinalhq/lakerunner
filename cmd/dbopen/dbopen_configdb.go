@@ -36,14 +36,16 @@ func ConnectToConfigDB(ctx context.Context, opts ...Options) (*pgxpool.Pool, err
 		return nil, err
 	}
 
-	// Check if migration check should be skipped
+	// Check migration check options
 	skipMigrationCheck := false
+	warnOnMismatch := false
 	if len(opts) > 0 {
 		skipMigrationCheck = opts[0].SkipMigrationCheck
+		warnOnMismatch = opts[0].WarnOnMigrationMismatch
 	}
 
 	if !skipMigrationCheck {
-		if err := configdbmigrations.CheckExpectedVersion(ctx, pool); err != nil {
+		if err := configdbmigrations.CheckExpectedVersionWithOptions(ctx, pool, warnOnMismatch); err != nil {
 			pool.Close()
 			return nil, fmt.Errorf("CONFIGDB migration version check failed: %w", err)
 		}
@@ -54,6 +56,17 @@ func ConnectToConfigDB(ctx context.Context, opts ...Options) (*pgxpool.Pool, err
 
 func ConfigDBStore(ctx context.Context) (configdb.QuerierFull, error) {
 	pool, err := ConnectToConfigDB(ctx)
+	if err != nil {
+		return nil, err
+	}
+	configStore := configdb.NewStore(pool)
+	return configStore, nil
+}
+
+// ConfigDBStoreForAdmin connects to ConfigDB with admin-friendly migration checking
+// that warns and continues instead of failing on migration mismatches
+func ConfigDBStoreForAdmin(ctx context.Context) (configdb.QuerierFull, error) {
+	pool, err := ConnectToConfigDB(ctx, Options{WarnOnMigrationMismatch: true})
 	if err != nil {
 		return nil, err
 	}

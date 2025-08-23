@@ -16,5 +16,6 @@ package dbopen
 
 // Options configures database connection behavior
 type Options struct {
-	SkipMigrationCheck bool
+	SkipMigrationCheck      bool
+	WarnOnMigrationMismatch bool // Warn and continue instead of failing on migration mismatch
 }

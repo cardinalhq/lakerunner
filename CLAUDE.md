@@ -8,9 +8,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 1. **Never break these rules:**
    - Do not edit generated files (e.g., `*.pb.go`, `*.sql.go`, sqlc output, or any file marked as generated).
-   - Do not include Claude Code promotional text in commits (e.g., “Generated with Claude Code”).
+   - Do not include Claude Code promotional text in commits (e.g., "Generated with Claude Code").
    - Do not remove `partial:` sections from `goreleaser` config—these are required for CI.
    - Do not edit old migrations.  One you just changed in this session is OK.
+   - **CRITICAL**: Always run `make check` before completing any coding task. Work is NOT complete until `make check` passes.
 
 ---
 
@@ -32,13 +33,14 @@ It ingests structured telemetry data (CSV, Parquet, JSON.gz) from sources like O
 2. **Testing & Validation**
    - `make test` for full suite with regeneration.
    - `make test-only` to run tests without regeneration.
-   - `make check` for full validation: tests, lint, license headers.
+   - **MANDATORY: `make check` must pass before any work is considered complete.**
 
 3. **Quality & Compliance**
    - `make lint` for golangci-lint (15m timeout).
    - `make license-check` for license headers.
    - `make imports-fix` and `gofmt` to keep code tidy.
    - All source files must include AGPL v3 headers.
+   - **NEVER mark work as complete until `make check` passes.**
 
 4. **Migrations**
    - `make new-migration name=migration_name` for lrdb migrations.
