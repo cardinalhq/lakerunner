@@ -16,19 +16,16 @@ package parquetwriter
 
 import (
 	"fmt"
-
-	"github.com/parquet-go/parquet-go"
 )
 
 // Signal-specific factory functions for creating optimally configured writers
 
 // NewMetricsWriter creates a writer optimized for metrics data.
 // Metrics are expected to be pre-ordered by TID and should not be split across TID boundaries.
-func NewMetricsWriter(baseName, tmpdir string, schemaNodes map[string]parquet.Node, targetFileSize int64, bytesPerRecord float64) (*UnifiedWriter, error) {
+func NewMetricsWriter(baseName, tmpdir string, targetFileSize int64, bytesPerRecord float64) (*UnifiedWriter, error) {
 	config := WriterConfig{
 		BaseName:       baseName,
 		TmpDir:         tmpdir,
-		SchemaNodes:    schemaNodes,
 		TargetFileSize: targetFileSize,
 
 		// Metrics are already TID-ordered from the TID merger
@@ -52,11 +49,10 @@ func NewMetricsWriter(baseName, tmpdir string, schemaNodes map[string]parquet.No
 
 // NewLogsWriter creates a writer optimized for logs data.
 // Logs need to be sorted by timestamp and can be split freely.
-func NewLogsWriter(baseName, tmpdir string, schemaNodes map[string]parquet.Node, targetFileSize int64, bytesPerRecord float64) (*UnifiedWriter, error) {
+func NewLogsWriter(baseName, tmpdir string, targetFileSize int64, bytesPerRecord float64) (*UnifiedWriter, error) {
 	config := WriterConfig{
 		BaseName:       baseName,
 		TmpDir:         tmpdir,
-		SchemaNodes:    schemaNodes,
 		TargetFileSize: targetFileSize,
 
 		// Logs need to be sorted by timestamp, use spillable orderer for automatic handling
@@ -84,11 +80,10 @@ func NewLogsWriter(baseName, tmpdir string, schemaNodes map[string]parquet.Node,
 
 // NewTracesWriter creates a writer optimized for traces data.
 // Traces are grouped by slot and can be split within slots but benefit from locality.
-func NewTracesWriter(baseName, tmpdir string, schemaNodes map[string]parquet.Node, targetFileSize int64, slotID int32, bytesPerRecord float64) (*UnifiedWriter, error) {
+func NewTracesWriter(baseName, tmpdir string, targetFileSize int64, slotID int32, bytesPerRecord float64) (*UnifiedWriter, error) {
 	config := WriterConfig{
 		BaseName:       baseName,
 		TmpDir:         tmpdir,
-		SchemaNodes:    schemaNodes,
 		TargetFileSize: targetFileSize,
 
 		// Traces benefit from sorting by start time, use spillable orderer for flexibility
@@ -306,14 +301,13 @@ type TracesFileStats struct {
 }
 
 // Helper function to create a writer configuration for testing.
-func NewTestConfig(baseName, tmpdir string, nodes map[string]parquet.Node) WriterConfig {
+func NewTestConfig(baseName, tmpdir string) WriterConfig {
 	return WriterConfig{
 		BaseName:       baseName,
 		TmpDir:         tmpdir,
-		SchemaNodes:    nodes,
-		TargetFileSize: 1000,  // Small size for testing
+		TargetFileSize: 1000, // Small size for testing
 		OrderBy:        OrderNone,
-		BytesPerRecord: 50.0,  // Fixed size for predictable tests
+		BytesPerRecord: 50.0, // Fixed size for predictable tests
 	}
 }
 

@@ -14,15 +14,14 @@
 
 package spillers
 
-
 // SpillFile represents a temporary file containing spilled sorted data.
 type SpillFile struct {
 	// Path is the filesystem path to the spill file
 	Path string
-	
+
 	// RowCount is the number of rows written to this spill file
 	RowCount int64
-	
+
 	// Metadata can contain spiller-specific information
 	Metadata any
 }
@@ -32,7 +31,7 @@ type SpillReader interface {
 	// Next reads the next row from the spill file.
 	// Returns io.EOF when no more rows are available.
 	Next() (map[string]any, error)
-	
+
 	// Close closes the spill reader and cleans up resources.
 	Close() error
 }
@@ -42,11 +41,11 @@ type Spiller interface {
 	// WriteSpillFile writes a sorted slice of rows to a temporary file.
 	// Returns a SpillFile descriptor that can be used to read the data back.
 	WriteSpillFile(tmpDir string, rows []map[string]any, keyFunc func(map[string]any) any) (*SpillFile, error)
-	
+
 	// OpenSpillFile opens a spill file for reading.
 	// The returned SpillReader will read rows in the same order they were written.
 	OpenSpillFile(spillFile *SpillFile, keyFunc func(map[string]any) any) (SpillReader, error)
-	
+
 	// CleanupSpillFile removes the spill file from disk.
 	CleanupSpillFile(spillFile *SpillFile) error
 }

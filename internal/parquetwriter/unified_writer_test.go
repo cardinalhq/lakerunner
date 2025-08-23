@@ -28,14 +28,7 @@ import (
 func TestUnifiedWriter_Basic(t *testing.T) {
 	tmpdir := t.TempDir()
 
-	// Create test schema
-	nodes := map[string]parquet.Node{
-		"id":        parquet.Int(64),
-		"timestamp": parquet.Int(64),
-		"message":   parquet.String(),
-	}
-
-	config := NewTestConfig("test", tmpdir, nodes)
+	config := NewTestConfig("test", tmpdir)
 	writer, err := NewUnifiedWriter(config)
 	if err != nil {
 		t.Fatalf("Failed to create writer: %v", err)
@@ -90,15 +83,9 @@ func TestUnifiedWriter_Basic(t *testing.T) {
 func TestUnifiedWriter_FileSplitting(t *testing.T) {
 	tmpdir := t.TempDir()
 
-	nodes := map[string]parquet.Node{
-		"id":      parquet.Int(64),
-		"message": parquet.String(),
-	}
-
 	config := WriterConfig{
 		BaseName:       "split-test",
 		TmpDir:         tmpdir,
-		SchemaNodes:    nodes,
 		TargetFileSize: 100, // Very small to force splitting
 		OrderBy:        OrderNone,
 		BytesPerRecord: 50.0, // Each row is ~50 bytes
@@ -150,21 +137,15 @@ func TestUnifiedWriter_FileSplitting(t *testing.T) {
 func TestUnifiedWriter_NoSplitGroups(t *testing.T) {
 	tmpdir := t.TempDir()
 
-	nodes := map[string]parquet.Node{
-		"group_id": parquet.Int(64),
-		"value":    parquet.Int(64),
-	}
-
 	config := WriterConfig{
 		BaseName:       "group-test",
 		TmpDir:         tmpdir,
-		SchemaNodes:    nodes,
 		TargetFileSize: 100, // Small to encourage splitting
 		OrderBy:        OrderNone,
 		GroupKeyFunc: func(row map[string]any) any {
 			return row["group_id"].(int64)
 		},
-		NoSplitGroups: true,
+		NoSplitGroups:  true,
 		BytesPerRecord: 30.0,
 	}
 
@@ -210,16 +191,9 @@ func TestUnifiedWriter_NoSplitGroups(t *testing.T) {
 func TestUnifiedWriter_OrderingInMemory(t *testing.T) {
 	tmpdir := t.TempDir()
 
-	nodes := map[string]parquet.Node{
-		"id":        parquet.Int(64),
-		"timestamp": parquet.Int(64),
-		"value":     parquet.String(),
-	}
-
 	config := WriterConfig{
 		BaseName:       "order-test",
 		TmpDir:         tmpdir,
-		SchemaNodes:    nodes,
 		TargetFileSize: 10000,
 		OrderBy:        OrderInMemory,
 		OrderKeyFunc: func(row map[string]any) any {
@@ -266,7 +240,12 @@ func TestUnifiedWriter_OrderingInMemory(t *testing.T) {
 	defer file.Close()
 	defer os.Remove(results[0].FileName)
 
-	// Create schema for reader
+	// For verification, create schema matching the written data
+	nodes := map[string]parquet.Node{
+		"id":        parquet.Int(64),
+		"timestamp": parquet.Int(64),
+		"value":     parquet.String(),
+	}
 	schema := parquet.NewSchema("order-test", parquet.Group(nodes))
 	reader := parquet.NewGenericReader[map[string]any](file, schema)
 	defer reader.Close()
@@ -302,12 +281,8 @@ func TestUnifiedWriter_OrderingInMemory(t *testing.T) {
 func TestUnifiedWriter_ErrorHandling(t *testing.T) {
 	tmpdir := t.TempDir()
 
-	nodes := map[string]parquet.Node{
-		"id": parquet.Int(64),
-	}
-
 	t.Run("nil row", func(t *testing.T) {
-		config := NewTestConfig("test", tmpdir, nodes)
+		config := NewTestConfig("test", tmpdir)
 		writer, err := NewUnifiedWriter(config)
 		if err != nil {
 			t.Fatalf("Failed to create writer: %v", err)
@@ -321,7 +296,7 @@ func TestUnifiedWriter_ErrorHandling(t *testing.T) {
 	})
 
 	t.Run("write after close", func(t *testing.T) {
-		config := NewTestConfig("test", tmpdir, nodes)
+		config := NewTestConfig("test", tmpdir)
 		writer, err := NewUnifiedWriter(config)
 		if err != nil {
 			t.Fatalf("Failed to create writer: %v", err)
@@ -339,27 +314,26 @@ func TestUnifiedWriter_ErrorHandling(t *testing.T) {
 		}
 	})
 
-	t.Run("invalid schema column", func(t *testing.T) {
-		config := NewTestConfig("test", tmpdir, nodes)
+	t.Run("unsupported data type", func(t *testing.T) {
+		config := NewTestConfig("test", tmpdir)
 		writer, err := NewUnifiedWriter(config)
 		if err != nil {
 			t.Fatalf("Failed to create writer: %v", err)
 		}
 		defer writer.Abort()
 
-		// Try to write a column not in schema - this should succeed for now
-		// because validation happens during flush/close
-		err = writer.Write(map[string]any{"invalid_column": "value"})
-		if err != nil {
-			// If we get an immediate error, that's also acceptable
-			return
+		// Try to write an unsupported type - this should fail
+		unsupportedData := map[string]any{
+			"complex_data": map[string]string{"nested": "data"}, // Unsupported nested map
 		}
-
-		// The error will definitely come when we try to close/flush
-		ctx := context.Background()
-		_, err = writer.Close(ctx)
+		err = writer.Write(unsupportedData)
 		if err == nil {
-			t.Error("Expected error for invalid schema column during close")
+			// If no immediate error, should get error during close
+			ctx := context.Background()
+			_, err = writer.Close(ctx)
+			if err == nil {
+				t.Error("Expected error for unsupported data type")
+			}
 		}
 	})
 }
@@ -367,12 +341,7 @@ func TestUnifiedWriter_ErrorHandling(t *testing.T) {
 func TestUnifiedWriter_WriteBatch(t *testing.T) {
 	tmpdir := t.TempDir()
 
-	nodes := map[string]parquet.Node{
-		"id":    parquet.Int(64),
-		"value": parquet.String(),
-	}
-
-	config := NewTestConfig("batch-test", tmpdir, nodes)
+	config := NewTestConfig("batch-test", tmpdir)
 	writer, err := NewUnifiedWriter(config)
 	if err != nil {
 		t.Fatalf("Failed to create writer: %v", err)
@@ -414,11 +383,7 @@ func TestUnifiedWriter_WriteBatch(t *testing.T) {
 func TestUnifiedWriter_ContextCancellation(t *testing.T) {
 	tmpdir := t.TempDir()
 
-	nodes := map[string]parquet.Node{
-		"id": parquet.Int(64),
-	}
-
-	config := NewTestConfig("cancel-test", tmpdir, nodes)
+	config := NewTestConfig("cancel-test", tmpdir)
 	writer, err := NewUnifiedWriter(config)
 	if err != nil {
 		t.Fatalf("Failed to create writer: %v", err)
@@ -451,11 +416,7 @@ func TestUnifiedWriter_ContextCancellation(t *testing.T) {
 func TestUnifiedWriter_Stats(t *testing.T) {
 	tmpdir := t.TempDir()
 
-	nodes := map[string]parquet.Node{
-		"id": parquet.Int(64),
-	}
-
-	config := NewTestConfig("stats-test", tmpdir, nodes)
+	config := NewTestConfig("stats-test", tmpdir)
 	writer, err := NewUnifiedWriter(config)
 	if err != nil {
 		t.Fatalf("Failed to create writer: %v", err)
@@ -495,16 +456,9 @@ func TestUnifiedWriter_Stats(t *testing.T) {
 func BenchmarkUnifiedWriter(b *testing.B) {
 	tmpdir := b.TempDir()
 
-	nodes := map[string]parquet.Node{
-		"id":        parquet.Int(64),
-		"timestamp": parquet.Int(64),
-		"message":   parquet.String(),
-	}
-
 	config := WriterConfig{
 		BaseName:       "bench",
 		TmpDir:         tmpdir,
-		SchemaNodes:    nodes,
 		TargetFileSize: 1000000,
 		OrderBy:        OrderNone,
 		BytesPerRecord: 100.0,

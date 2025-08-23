@@ -54,9 +54,9 @@ func (s *GobSpiller) WriteSpillFile(tmpDir string, rows []map[string]any, keyFun
 		return nil, fmt.Errorf("create spill file: %w", err)
 	}
 	defer file.Close()
-	
+
 	s.chunkCounter++
-	
+
 	// Encode all rows to the file
 	encoder := gob.NewEncoder(file)
 	for _, row := range rows {
@@ -65,7 +65,7 @@ func (s *GobSpiller) WriteSpillFile(tmpDir string, rows []map[string]any, keyFun
 			return nil, fmt.Errorf("encode row to spill file: %w", err)
 		}
 	}
-	
+
 	return &SpillFile{
 		Path:     file.Name(),
 		RowCount: int64(len(rows)),
@@ -79,7 +79,7 @@ func (s *GobSpiller) OpenSpillFile(spillFile *SpillFile, keyFunc func(map[string
 	if err != nil {
 		return nil, fmt.Errorf("open spill file %s: %w", spillFile.Path, err)
 	}
-	
+
 	return &gobSpillReader{
 		file:    file,
 		decoder: gob.NewDecoder(file),
@@ -105,7 +105,7 @@ func (r *gobSpillReader) Next() (map[string]any, error) {
 	if r.closed {
 		return nil, io.EOF
 	}
-	
+
 	var row map[string]any
 	if err := r.decoder.Decode(&row); err != nil {
 		if err == io.EOF {
@@ -113,7 +113,7 @@ func (r *gobSpillReader) Next() (map[string]any, error) {
 		}
 		return nil, err
 	}
-	
+
 	return row, nil
 }
 

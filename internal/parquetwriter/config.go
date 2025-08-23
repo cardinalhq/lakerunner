@@ -15,8 +15,6 @@
 package parquetwriter
 
 import (
-	"github.com/parquet-go/parquet-go"
-	
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/spillers"
 )
 
@@ -27,9 +25,6 @@ type WriterConfig struct {
 
 	// TmpDir is the directory where temporary and output files are created
 	TmpDir string
-
-	// SchemaNodes defines the Parquet schema for the output files
-	SchemaNodes map[string]parquet.Node
 
 	// TargetFileSize is the target size in bytes for each output file.
 	// The writer will try to keep files close to this size, but may exceed
@@ -92,9 +87,7 @@ func (c *WriterConfig) Validate() error {
 	if c.TmpDir == "" {
 		return &ConfigError{Field: "TmpDir", Message: "cannot be empty"}
 	}
-	if len(c.SchemaNodes) == 0 {
-		return &ConfigError{Field: "SchemaNodes", Message: "cannot be empty"}
-	}
+	// Schema is dynamically discovered, no validation needed
 	if c.TargetFileSize <= 0 {
 		return &ConfigError{Field: "TargetFileSize", Message: "must be positive"}
 	}
@@ -104,14 +97,7 @@ func (c *WriterConfig) Validate() error {
 	if c.NoSplitGroups && c.GroupKeyFunc == nil {
 		return &ConfigError{Field: "GroupKeyFunc", Message: "required when NoSplitGroups is true"}
 	}
-	for name, node := range c.SchemaNodes {
-		if name == "" {
-			return &ConfigError{Field: "SchemaNodes", Message: "node name cannot be empty"}
-		}
-		if node == nil {
-			return &ConfigError{Field: "SchemaNodes", Message: "node cannot be nil for field " + name}
-		}
-	}
+	// No schema validation needed - discovered dynamically
 	return nil
 }
 

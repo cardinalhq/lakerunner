@@ -22,20 +22,19 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/spillers"
 )
 
-
 // SpillableOrderer combines in-memory sorting with automatic spilling to disk
 // when memory limits are exceeded. It uses a pluggable Spiller for disk operations.
 type SpillableOrderer struct {
-	keyFunc     func(map[string]any) any
-	maxBuffer   int
-	tmpDir      string
-	spiller     spillers.Spiller
-	
+	keyFunc   func(map[string]any) any
+	maxBuffer int
+	tmpDir    string
+	spiller   spillers.Spiller
+
 	// Current in-memory buffer
-	buffer      []map[string]any
-	
+	buffer []map[string]any
+
 	// Spill files created when buffer overflows
-	spillFiles  []*spillers.SpillFile
+	spillFiles []*spillers.SpillFile
 }
 
 // NewSpillableOrderer creates an orderer that keeps data in memory until maxBuffer
@@ -47,7 +46,7 @@ func NewSpillableOrderer(keyFunc func(map[string]any) any, maxBuffer int, tmpDir
 	if spiller == nil {
 		spiller = spillers.NewGobSpiller() // Default spiller
 	}
-	
+
 	return &SpillableOrderer{
 		keyFunc:    keyFunc,
 		maxBuffer:  maxBuffer,
@@ -65,14 +64,14 @@ func (o *SpillableOrderer) Add(row map[string]any) error {
 	for k, v := range row {
 		rowCopy[k] = v
 	}
-	
+
 	o.buffer = append(o.buffer, rowCopy)
-	
+
 	// Check if we need to spill
 	if len(o.buffer) >= o.maxBuffer {
 		return o.spillCurrentBuffer()
 	}
-	
+
 	return nil
 }
 
@@ -81,19 +80,19 @@ func (o *SpillableOrderer) spillCurrentBuffer() error {
 	if len(o.buffer) == 0 {
 		return nil
 	}
-	
+
 	// Sort the buffer using the same logic as other orderers
 	sortRowsByKey(o.buffer, o.keyFunc)
-	
+
 	// Write to spill file
 	spillFile, err := o.spiller.WriteSpillFile(o.tmpDir, o.buffer, o.keyFunc)
 	if err != nil {
 		return fmt.Errorf("write spill file: %w", err)
 	}
-	
+
 	o.spillFiles = append(o.spillFiles, spillFile)
 	o.buffer = o.buffer[:0] // Clear but keep capacity
-	
+
 	return nil
 }
 
@@ -104,7 +103,7 @@ func (o *SpillableOrderer) Flush(ctx context.Context, writer func([]map[string]a
 		if len(o.buffer) == 0 {
 			return nil
 		}
-		
+
 		// Sort and write the buffer directly
 		sortRowsByKey(o.buffer, o.keyFunc)
 		if err := writer(o.buffer); err != nil {
@@ -113,14 +112,14 @@ func (o *SpillableOrderer) Flush(ctx context.Context, writer func([]map[string]a
 		o.buffer = o.buffer[:0] // Clear but keep capacity
 		return nil
 	}
-	
+
 	// We have spill files, so we need to do a merge
-	
+
 	// First, spill any remaining buffer data
 	if err := o.spillCurrentBuffer(); err != nil {
 		return err
 	}
-	
+
 	// Merge all spill files
 	return o.mergeSpillFiles(ctx, writer)
 }
@@ -130,7 +129,7 @@ func (o *SpillableOrderer) mergeSpillFiles(ctx context.Context, writer func([]ma
 	if len(o.spillFiles) == 0 {
 		return nil
 	}
-	
+
 	// Open all spill files for reading
 	readers := make([]spillReaderWithKey, 0, len(o.spillFiles))
 	defer func() {
@@ -138,13 +137,13 @@ func (o *SpillableOrderer) mergeSpillFiles(ctx context.Context, writer func([]ma
 			r.reader.Close()
 		}
 	}()
-	
+
 	for _, spillFile := range o.spillFiles {
 		reader, err := o.spiller.OpenSpillFile(spillFile, o.keyFunc)
 		if err != nil {
 			return fmt.Errorf("open spill file %s: %w", spillFile.Path, err)
 		}
-		
+
 		// Read the first row from this reader
 		row, err := reader.Next()
 		if err != nil {
@@ -155,35 +154,35 @@ func (o *SpillableOrderer) mergeSpillFiles(ctx context.Context, writer func([]ma
 			reader.Close()
 			continue
 		}
-		
+
 		readers = append(readers, spillReaderWithKey{
 			reader:  reader,
 			current: row,
 			key:     o.keyFunc(row),
 		})
 	}
-	
+
 	if len(readers) == 0 {
 		return nil // All spill files were empty
 	}
-	
+
 	// Use heap to efficiently find the next smallest row across all readers
 	h := &spillMergeHeap{readers: readers}
 	initSpillHeap(h)
-	
+
 	const batchSize = 1000
 	batch := make([]map[string]any, 0, batchSize)
-	
+
 	for h.Len() > 0 {
 		// Check for context cancellation
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		
+
 		// Get the reader with the smallest current key
 		readerWithKey := popSpillHeap(h)
 		batch = append(batch, readerWithKey.current)
-		
+
 		// Try to read the next row from this reader
 		row, err := readerWithKey.reader.Next()
 		if err == nil {
@@ -195,7 +194,7 @@ func (o *SpillableOrderer) mergeSpillFiles(ctx context.Context, writer func([]ma
 			return fmt.Errorf("read from spill file: %w", err)
 		}
 		// If EOF, this reader is done and won't be put back
-		
+
 		// Write batch when full
 		if len(batch) >= batchSize {
 			if err := writer(batch); err != nil {
@@ -204,31 +203,31 @@ func (o *SpillableOrderer) mergeSpillFiles(ctx context.Context, writer func([]ma
 			batch = batch[:0] // Clear but keep capacity
 		}
 	}
-	
+
 	// Write any remaining rows
 	if len(batch) > 0 {
 		if err := writer(batch); err != nil {
 			return err
 		}
 	}
-	
+
 	return nil
 }
 
 // Close cleans up all spill files and resources.
 func (o *SpillableOrderer) Close() error {
 	var lastErr error
-	
+
 	// Clean up all spill files
 	for _, spillFile := range o.spillFiles {
 		if err := o.spiller.CleanupSpillFile(spillFile); err != nil {
 			lastErr = err // Keep track of cleanup errors but continue cleaning
 		}
 	}
-	
+
 	o.spillFiles = nil
 	o.buffer = nil
-	
+
 	return lastErr
 }
 

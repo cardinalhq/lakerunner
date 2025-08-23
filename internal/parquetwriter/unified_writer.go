@@ -17,7 +17,7 @@ package parquetwriter
 import (
 	"context"
 	"fmt"
-	
+
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/spillers"
 )
 

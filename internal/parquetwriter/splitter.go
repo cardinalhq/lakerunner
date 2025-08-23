@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"sort"
 
 	"github.com/parquet-go/parquet-go"
 )
@@ -26,19 +25,18 @@ import (
 // FileSplitter manages splitting data into multiple output files based on
 // size constraints and grouping requirements.
 type FileSplitter struct {
-	config        WriterConfig
-	currentSize   int64
-	currentRows   int64
-	currentGroup  any
+	config       WriterConfig
+	currentSize  int64
+	currentRows  int64
+	currentGroup any
 
 	// Current file being written
 	currentFile   *os.File
 	currentWriter *parquet.GenericWriter[map[string]any]
 	currentStats  StatsAccumulator
 
-	// Schema management
-	seenColumns  map[string]bool
-	parquetNodes map[string]parquet.Node
+	// Dynamic schema management per file
+	currentSchema *SchemaBuilder
 
 	// Results tracking
 	results []Result
@@ -48,10 +46,8 @@ type FileSplitter struct {
 // NewFileSplitter creates a new file splitter with the given configuration.
 func NewFileSplitter(config WriterConfig) *FileSplitter {
 	return &FileSplitter{
-		config:       config,
-		seenColumns:  make(map[string]bool),
-		parquetNodes: make(map[string]parquet.Node),
-		results:      make([]Result, 0),
+		config:  config,
+		results: make([]Result, 0),
 	}
 }
 
@@ -112,23 +108,19 @@ func (s *FileSplitter) WriteRow(ctx context.Context, row map[string]any) error {
 	return nil
 }
 
-// validateRow checks that the row is valid for our schema.
+// validateRow checks that the row is valid.
 func (s *FileSplitter) validateRow(row map[string]any) error {
 	if row == nil {
 		return fmt.Errorf("row cannot be nil")
 	}
 
-	// Check that all columns in the row are defined in the schema
-	for colName := range row {
-		if _, exists := s.config.SchemaNodes[colName]; !exists {
-			return fmt.Errorf("column %q not in schema", colName)
-		}
-	}
-
+	// All rows are accepted - schema is discovered dynamically
+	// The only validation is that the row is not nil
 	return nil
 }
 
 // startNewFile creates a new output file and initializes the writer.
+// The schema will be built dynamically as rows are added.
 func (s *FileSplitter) startNewFile() error {
 	// Create the output file
 	file, err := os.CreateTemp(s.config.TmpDir, s.config.BaseName+"-*.parquet")
@@ -136,38 +128,8 @@ func (s *FileSplitter) startNewFile() error {
 		return fmt.Errorf("create temp file: %w", err)
 	}
 
-	// Build the schema from seen columns (or all columns if no data written yet)
-	var schemaColumns []string
-	if len(s.seenColumns) > 0 {
-		schemaColumns = make([]string, 0, len(s.seenColumns))
-		for col := range s.seenColumns {
-			schemaColumns = append(schemaColumns, col)
-		}
-	} else {
-		// First file - include all schema columns
-		schemaColumns = make([]string, 0, len(s.config.SchemaNodes))
-		for col := range s.config.SchemaNodes {
-			schemaColumns = append(schemaColumns, col)
-		}
-	}
-	sort.Strings(schemaColumns)
-
-	// Build parquet schema
-	nodes := make(map[string]parquet.Node, len(schemaColumns))
-	for _, col := range schemaColumns {
-		nodes[col] = s.config.SchemaNodes[col]
-	}
-	schema := parquet.NewSchema(s.config.BaseName, parquet.Group(nodes))
-
-	// Create parquet writer with optimized settings
-	writerConfig, err := parquet.NewWriterConfig(WriterOptions(s.config.TmpDir, schema)...)
-	if err != nil {
-		file.Close()
-		os.Remove(file.Name())
-		return fmt.Errorf("create writer config: %w", err)
-	}
-
-	writer := parquet.NewGenericWriter[map[string]any](file, writerConfig)
+	// Initialize a new schema builder for this file
+	s.currentSchema = NewSchemaBuilder()
 
 	// Initialize stats accumulator if provider is configured
 	var stats StatsAccumulator
@@ -183,37 +145,37 @@ func (s *FileSplitter) startNewFile() error {
 	}
 
 	s.currentFile = file
-	s.currentWriter = writer
+	s.currentWriter = nil // Will be created after we have schema from first row
 	s.currentStats = stats
 	s.currentSize = 0
 	s.currentRows = 0
 	s.currentGroup = currentGroup
-	s.parquetNodes = nodes
 
 	return nil
 }
 
 // writeRowToCurrentFile writes a row to the current file and updates tracking.
 func (s *FileSplitter) writeRowToCurrentFile(row map[string]any) error {
-	// Filter row to only include columns in this file's schema
-	filteredRow := make(map[string]any, len(s.parquetNodes))
-	for col := range s.parquetNodes {
-		if value, exists := row[col]; exists {
-			filteredRow[col] = value
-			if value != nil {
-				s.seenColumns[col] = true
-			}
+	// Add the row to our schema builder to discover/validate schema
+	if err := s.currentSchema.AddRow(row); err != nil {
+		return fmt.Errorf("schema validation failed: %w", err)
+	}
+
+	// If this is the first row for this file, we need to create the parquet writer
+	if s.currentWriter == nil {
+		if err := s.createParquetWriter(); err != nil {
+			return fmt.Errorf("create parquet writer: %w", err)
 		}
 	}
 
-	// Write to parquet
-	if _, err := s.currentWriter.Write([]map[string]any{filteredRow}); err != nil {
+	// Write the row to parquet (all columns from the row)
+	if _, err := s.currentWriter.Write([]map[string]any{row}); err != nil {
 		return fmt.Errorf("write to parquet: %w", err)
 	}
 
 	// Update stats
 	if s.currentStats != nil {
-		s.currentStats.Add(filteredRow)
+		s.currentStats.Add(row)
 	}
 
 	// Update tracking
@@ -225,6 +187,26 @@ func (s *FileSplitter) writeRowToCurrentFile(row map[string]any) error {
 		s.currentGroup = s.config.GroupKeyFunc(row)
 	}
 
+	return nil
+}
+
+// createParquetWriter creates the parquet writer once we have schema from the first row.
+func (s *FileSplitter) createParquetWriter() error {
+	// Build the schema from accumulated column information
+	nodes := s.currentSchema.Build()
+	if len(nodes) == 0 {
+		return fmt.Errorf("no columns discovered for schema")
+	}
+
+	schema := parquet.NewSchema(s.config.BaseName, parquet.Group(nodes))
+
+	// Create parquet writer with optimized settings
+	writerConfig, err := parquet.NewWriterConfig(WriterOptions(s.config.TmpDir, schema)...)
+	if err != nil {
+		return fmt.Errorf("create writer config: %w", err)
+	}
+
+	s.currentWriter = parquet.NewGenericWriter[map[string]any](s.currentFile, writerConfig)
 	return nil
 }
 

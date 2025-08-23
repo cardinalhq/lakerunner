@@ -25,13 +25,7 @@ import (
 func TestNewMetricsWriter(t *testing.T) {
 	tmpdir := t.TempDir()
 
-	nodes := map[string]parquet.Node{
-		"_cardinalhq.tid":       parquet.Int(64),
-		"_cardinalhq.timestamp": parquet.Int(64),
-		"value":                 parquet.Leaf(parquet.DoubleType),
-	}
-
-	writer, err := NewMetricsWriter("metrics-test", tmpdir, nodes, 200, 50.0) // Very small to force splitting
+	writer, err := NewMetricsWriter("metrics-test", tmpdir, 200, 50.0) // Very small to force splitting
 	if err != nil {
 		t.Fatalf("Failed to create metrics writer: %v", err)
 	}
@@ -82,13 +76,7 @@ func TestNewMetricsWriter(t *testing.T) {
 func TestNewLogsWriter(t *testing.T) {
 	tmpdir := t.TempDir()
 
-	nodes := map[string]parquet.Node{
-		"_cardinalhq.timestamp":   parquet.Int(64),
-		"_cardinalhq.fingerprint": parquet.Int(64),
-		"message":                 parquet.String(),
-	}
-
-	writer, err := NewLogsWriter("logs-test", tmpdir, nodes, 10000, 150.0)
+	writer, err := NewLogsWriter("logs-test", tmpdir, 10000, 150.0)
 	if err != nil {
 		t.Fatalf("Failed to create logs writer: %v", err)
 	}
@@ -134,7 +122,13 @@ func TestNewLogsWriter(t *testing.T) {
 	defer file.Close()
 	defer os.Remove(results[0].FileName)
 
-	// Need to create a schema for the reader
+	// For verification, we'll use a schema discovered from the written data
+	// In practice, this would use the same schema that was discovered during writing
+	nodes := map[string]parquet.Node{
+		"_cardinalhq.timestamp":   parquet.Int(64),
+		"_cardinalhq.fingerprint": parquet.Int(64),
+		"message":                 parquet.String(),
+	}
 	schema := parquet.NewSchema("logs-test", parquet.Group(nodes))
 	reader := parquet.NewGenericReader[map[string]any](file, schema)
 	defer reader.Close()
@@ -185,15 +179,8 @@ func TestNewLogsWriter(t *testing.T) {
 func TestNewTracesWriter(t *testing.T) {
 	tmpdir := t.TempDir()
 
-	nodes := map[string]parquet.Node{
-		"_cardinalhq.trace_id":           parquet.String(),
-		"_cardinalhq.span_id":            parquet.String(),
-		"_cardinalhq.start_time_unix_ns": parquet.Int(64),
-		"operation_name":                 parquet.String(),
-	}
-
 	slotID := int32(42)
-	writer, err := NewTracesWriter("traces-test", tmpdir, nodes, 10000, slotID, 200.0)
+	writer, err := NewTracesWriter("traces-test", tmpdir, 10000, slotID, 200.0)
 	if err != nil {
 		t.Fatalf("Failed to create traces writer: %v", err)
 	}
@@ -376,15 +363,9 @@ func TestValidateTracesRow(t *testing.T) {
 func TestNewCustomWriter(t *testing.T) {
 	tmpdir := t.TempDir()
 
-	nodes := map[string]parquet.Node{
-		"id":   parquet.Int(64),
-		"name": parquet.String(),
-	}
-
 	config := WriterConfig{
 		BaseName:       "custom-test",
 		TmpDir:         tmpdir,
-		SchemaNodes:    nodes,
 		TargetFileSize: 500,
 		OrderBy:        OrderInMemory,
 		OrderKeyFunc: func(row map[string]any) any {
@@ -430,7 +411,11 @@ func TestNewCustomWriter(t *testing.T) {
 	defer file.Close()
 	defer os.Remove(results[0].FileName)
 
-	// Create schema for reader
+	// For verification, create schema matching the written data
+	nodes := map[string]parquet.Node{
+		"id":   parquet.Int(64),
+		"name": parquet.String(),
+	}
 	schema := parquet.NewSchema("custom-test", parquet.Group(nodes))
 	reader := parquet.NewGenericReader[map[string]any](file, schema)
 	defer reader.Close()
