@@ -65,8 +65,9 @@ type ReplaceMetricSegsParams struct {
 	// OldRecords contains the segments to be deleted.
 	OldRecords []ReplaceMetricSegsOld
 	// NewRecords contains the segments to be inserted.
-	NewRecords []ReplaceMetricSegsNew
-	CreatedBy  CreatedBy
+	NewRecords   []ReplaceMetricSegsNew
+	CreatedBy    CreatedBy
+	Fingerprints []int64
 }
 
 // ReplaceMetricSegs replaces old metric segments with new ones for a given organization, date, and instance.
@@ -104,6 +105,7 @@ func (q *Store) ReplaceMetricSegs(ctx context.Context, args ReplaceMetricSegsPar
 			Published:      args.Published,
 			Rolledup:       args.Rolledup,
 			CreatedBy:      args.CreatedBy,
+			Fingerprints:   args.Fingerprints,
 		}
 	}
 

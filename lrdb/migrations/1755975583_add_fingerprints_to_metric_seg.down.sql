@@ -1,0 +1,1 @@
+ALTER TABLE metric_seg DROP COLUMN IF EXSTS fingerprints;

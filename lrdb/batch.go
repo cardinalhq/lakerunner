@@ -99,7 +99,8 @@ INSERT INTO metric_seg (
   tid_count,
   published,
   created_by,
-  rolledup
+  rolledup,
+  fingerprints
 )
 VALUES (
   $1,
@@ -116,7 +117,8 @@ VALUES (
   $13,
   $14,
   $15,
-  $16
+  $16,
+  $17::bigint[]
 )
 `
 
@@ -143,6 +145,7 @@ type BatchInsertMetricSegsParams struct {
 	Published      bool      `json:"published"`
 	CreatedBy      CreatedBy `json:"created_by"`
 	Rolledup       bool      `json:"rolledup"`
+	Fingerprints   []int64   `json:"fingerprints"`
 }
 
 func (q *Queries) BatchInsertMetricSegs(ctx context.Context, arg []BatchInsertMetricSegsParams) *BatchInsertMetricSegsBatchResults {
@@ -165,6 +168,7 @@ func (q *Queries) BatchInsertMetricSegs(ctx context.Context, arg []BatchInsertMe
 			a.Published,
 			a.CreatedBy,
 			a.Rolledup,
+			a.Fingerprints,
 		}
 		batch.Queue(batchInsertMetricSegs, vals...)
 	}
