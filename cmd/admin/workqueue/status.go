@@ -198,53 +198,6 @@ func formatDuration(seconds *float64) string {
 	return duration.String()
 }
 
-func formatTimeRange(tsRange interface{}) string {
-	if tsRange == nil {
-		return "-"
-	}
-
-	// Convert to string and parse the time range
-	str := fmt.Sprintf("%v", tsRange)
-	str = strings.ReplaceAll(str, `"`, "")
-
-	// Extract start and end times
-	if strings.Contains(str, "[") && strings.Contains(str, ",") {
-		str = strings.TrimPrefix(str, "[")
-		str = strings.TrimSuffix(str, ")")
-
-		parts := strings.Split(str, ",")
-		if len(parts) == 2 {
-			start := strings.TrimSpace(parts[0])
-			end := strings.TrimSpace(parts[1])
-
-			// Try to parse as timestamps to calculate duration
-			startTime, startErr := time.Parse("2006-01-02 15:04:05+00", start)
-			endTime, endErr := time.Parse("2006-01-02 15:04:05+00", end)
-
-			if startErr == nil && endErr == nil {
-				duration := endTime.Sub(startTime)
-				// Format as "2006-01-02T15:04:05 1h30m"
-				return fmt.Sprintf("%s %s", startTime.Format("2006-01-02T15:04:05"), helpers.FormatTSRange(duration))
-			}
-
-			// Fallback to showing just the times
-			if len(start) > 19 {
-				start = start[:19]
-			}
-			if len(end) > 19 {
-				end = end[:19]
-			}
-			return fmt.Sprintf("%s to %s", start[11:19], end[11:19]) // Show just time portion
-		}
-	}
-
-	// Fallback
-	if len(str) > 30 {
-		return str[:30] + "..."
-	}
-	return str
-}
-
 func printExtendedWorkQueueTable(results []lrdb.WorkQueueExtendedStatusRow) {
 	// Column headers and widths
 	headers := []string{"Signal", "Action", "Time Range", "Claimed At", "Age", "Worker ID"}
@@ -275,7 +228,7 @@ func printExtendedWorkQueueTable(results []lrdb.WorkQueueExtendedStatusRow) {
 			}
 		} else {
 			// For claimed, show actual data
-			timeRange := formatTimeRange(result.TsRange)
+			timeRange := helpers.FormatTSRange(result.TsRange)
 			if len(timeRange) > colWidths[2] {
 				colWidths[2] = len(timeRange)
 			}
@@ -350,7 +303,7 @@ func printExtendedWorkQueueTable(results []lrdb.WorkQueueExtendedStatusRow) {
 			fmt.Printf(" %-*s │", colWidths[5], "-")
 		} else {
 			// Time Range shows actual range
-			timeRange := formatTimeRange(result.TsRange)
+			timeRange := helpers.FormatTSRange(result.TsRange)
 			fmt.Printf(" %-*s │", colWidths[2], timeRange)
 
 			// Claimed At

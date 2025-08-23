@@ -196,27 +196,46 @@ func UnixMillisToTime(ms int64) time.Time {
 	return time.Unix(sec, nsec).UTC()
 }
 
-// FormatTSRange formats a duration in a compact, human-readable way.
+// FormatDuration formats a duration in a compact, human-readable way.
 // Examples: "50s", "1m30s", "1h30m", "2h"
-func FormatTSRange(d time.Duration) string {
+func FormatDuration(d time.Duration) string {
 	if d < time.Minute {
 		return fmt.Sprintf("%.0fs", d.Seconds())
 	}
-	
+
 	hours := int(d.Hours())
 	minutes := int(d.Minutes()) % 60
 	seconds := int(d.Seconds()) % 60
-	
+
 	if hours > 0 {
 		if minutes > 0 {
 			return fmt.Sprintf("%dh%dm", hours, minutes)
 		}
 		return fmt.Sprintf("%dh", hours)
 	}
-	
+
 	if seconds > 0 {
 		return fmt.Sprintf("%dm%ds", minutes, seconds)
 	}
-	
+
 	return fmt.Sprintf("%dm", minutes)
+}
+
+// FormatTSRange formats a PostgreSQL timestamp range in a clean, readable format.
+// Returns "YYYY-MM-DDTHH:MM:SS duration" or "-" for invalid ranges.
+// Examples: "2025-08-23T13:59:00 1h", "2025-08-23T14:02:00 50s"
+func FormatTSRange(tsRange pgtype.Range[pgtype.Timestamptz]) string {
+	if !tsRange.Valid {
+		return "-"
+	}
+
+	// Extract the TimeRange using the helpers function
+	tr, ok := NewTimeRangeFromPgRange(tsRange)
+	if !ok {
+		return "-"
+	}
+
+	// Format as "2006-01-02T15:04:05 1h30m"
+	duration := tr.Duration()
+	return fmt.Sprintf("%s %s", tr.Start.Format("2006-01-02T15:04:05"), FormatDuration(duration))
 }
