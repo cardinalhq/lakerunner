@@ -16,7 +16,6 @@ package factories
 
 import (
 	"fmt"
-	"slices"
 
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 )
@@ -93,27 +92,24 @@ func (a *LogsStatsAccumulator) Add(row map[string]any) {
 }
 
 func (a *LogsStatsAccumulator) Finalize() any {
-	// Extract sorted list of fingerprints from the map
+	// Extract unique fingerprints from the map
 	fingerprints := make([]int64, 0, len(a.fingerprints))
 	for fp := range a.fingerprints {
 		fingerprints = append(fingerprints, fp)
 	}
-	slices.Sort(fingerprints)
 
 	return LogsFileStats{
-		FingerprintCount: int64(len(a.fingerprints)),
-		FirstTS:          a.firstTS,
-		LastTS:           a.lastTS,
-		Fingerprints:     fingerprints,
+		FirstTS:      a.firstTS,
+		LastTS:       a.lastTS,
+		Fingerprints: fingerprints,
 	}
 }
 
 // LogsFileStats contains statistics about a logs file.
 type LogsFileStats struct {
-	FingerprintCount int64   // Number of unique fingerprints
-	FirstTS          int64   // Earliest timestamp
-	LastTS           int64   // Latest timestamp
-	Fingerprints     []int64 // Actual list of unique fingerprints in this file
+	FirstTS      int64   // Earliest timestamp
+	LastTS       int64   // Latest timestamp
+	Fingerprints []int64 // Actual list of unique fingerprints in this file
 }
 
 // ValidateLogsRow checks that a row has the required fields for logs processing.
