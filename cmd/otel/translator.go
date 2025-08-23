@@ -406,6 +406,27 @@ func (l *TableTranslator) TracesFromOtel(ot *ptrace.Traces, environment authenv.
 				ret["span.end_timestamp"] = endTS
 				ret["span.duration_ms"] = endTS - startTS
 
+				// Span events: JSON stringify, and set as `_cardinalhq.span_events`
+				if spanEvents := span.Events(); spanEvents.Len() > 0 {
+					eventsData := make([]map[string]any, spanEvents.Len())
+					for i := 0; i < spanEvents.Len(); i++ {
+						event := spanEvents.At(i)
+						eventData := map[string]any{
+							"name":       event.Name(),
+							"timestamp":  event.Timestamp().AsTime().UnixMilli(),
+							"attributes": event.Attributes().AsRaw(),
+						}
+						eventsData[i] = eventData
+					}
+					if eventsJSON, err := json.Marshal(eventsData); err == nil {
+						ret[translate.CardinalFieldPrefixDot+"span_events"] = string(eventsJSON)
+					} else {
+						ret[translate.CardinalFieldPrefixDot+"span_events"] = "[]"
+					}
+				} else {
+					ret[translate.CardinalFieldPrefixDot+"span_events"] = "[]"
+				}
+
 				ret[translate.CardinalFieldID] = l.idg.Make(time.Now())
 				if environment != nil {
 					for k, v := range environment.Tags() {
@@ -424,19 +445,20 @@ func (l *TableTranslator) TracesFromOtel(ot *ptrace.Traces, environment authenv.
 
 func ensureExpectedKeysTraces(m map[string]any) {
 	keys := map[string]any{
-		translate.CardinalFieldFingerprint: int64(0),
-		translate.CardinalFieldValue:       float64(1),
-		translate.CardinalFieldName:        "span.events",
-		"span.trace_id":                    "",
-		"span.span_id":                     "",
-		"span.parent_span_id":              "",
-		"span.name":                        "",
-		"span.kind":                        "",
-		"span.status.code":                 "",
-		"span.status.message":              "",
-		"span.start_timestamp":             int64(0),
-		"span.end_timestamp":               int64(0),
-		"span.duration_ms":                 int64(0),
+		translate.CardinalFieldFingerprint:               int64(0),
+		translate.CardinalFieldValue:                     float64(1),
+		translate.CardinalFieldName:                      "span.events",
+		translate.CardinalFieldPrefixDot + "span_events": "[]",
+		"span.trace_id":                                  "",
+		"span.span_id":                                   "",
+		"span.parent_span_id":                            "",
+		"span.name":                                      "",
+		"span.kind":                                      "",
+		"span.status.code":                               "",
+		"span.status.message":                            "",
+		"span.start_timestamp":                           int64(0),
+		"span.end_timestamp":                             int64(0),
+		"span.duration_ms":                               int64(0),
 	}
 
 	for key, val := range keys {
