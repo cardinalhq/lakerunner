@@ -103,7 +103,7 @@ func migrate(_ *cobra.Command, _ []string) error {
 func migratelrdb() error {
 	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(5*time.Minute))
 	defer cancel()
-	pool, err := dbopen.ConnectTolrdb(ctx, dbopen.Options{SkipMigrationCheck: true})
+	pool, err := dbopen.ConnectTolrdb(ctx, dbopen.SkipMigrationCheck())
 	if err != nil {
 		return err
 	}
@@ -114,7 +114,7 @@ func migrateconfigdb() error {
 	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(5*time.Minute))
 	defer cancel()
 
-	pool, err := dbopen.ConnectToConfigDB(ctx, dbopen.Options{SkipMigrationCheck: true})
+	pool, err := dbopen.ConnectToConfigDB(ctx, dbopen.SkipMigrationCheck())
 	if err != nil {
 		if errors.Is(err, dbopen.ErrDatabaseNotConfigured) {
 			slog.Info("ConfigDB not configured, skipping migration")
@@ -128,7 +128,7 @@ func migrateconfigdb() error {
 func initializeIfNeededFunc() error {
 	ctx := context.Background()
 
-	configDBPool, err := dbopen.ConnectToConfigDB(ctx, dbopen.Options{SkipMigrationCheck: true})
+	configDBPool, err := dbopen.ConnectToConfigDB(ctx, dbopen.SkipMigrationCheck())
 	if err != nil {
 		if errors.Is(err, dbopen.ErrDatabaseNotConfigured) {
 			slog.Info("ConfigDB not configured, skipping initialization")

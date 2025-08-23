@@ -112,13 +112,6 @@ bin/lakerunner: ${all_deps}
 	go build -o $@ main.go
 
 #
-# Multi-architecture image builds
-#
-.PHONY: images
-images: test-only
-	$(call with_builder, go tool goreleaser release --clean --config .goreleaser-local.yaml)
-
-#
 # Test targets
 #
 
@@ -165,18 +158,6 @@ coverage-serve: coverage-html
 	@echo "Press Ctrl+C to stop the server"
 	@python3 -m http.server 8080 2>/dev/null || python -m SimpleHTTPServer 8080
 
-
-#
-# promode to prod
-#
-
-.PHONY: promote-to-prod
-promote-to-prod:
-	@echo "ERROR: promote-to-prod target removed - use semantic versioning tags instead"
-	@echo "To promote a version, update the 'stable' tag manually:"
-	@echo "  crane cp ${IMAGE_PREFIX}lakerunner:v1.2.3 ${IMAGE_PREFIX}lakerunner:stable"
-	@exit 1
-
 #
 # Clean the world.
 #
@@ -188,8 +169,8 @@ clean:
 .PHONY: really-clean
 really-clean: clean
 
-new-migration:
-	@if [ -z "$$name" ]; then echo "Usage: make new-migration name=migration_name"; exit 1; fi; \
+new-lrdb-migration:
+	@if [ -z "$$name" ]; then echo "Usage: make new-lrdb-migration name=migration_name"; exit 1; fi; \
 	ts=$$(date +%s); \
 	up_file="lrdb/migrations/$${ts}_$${name}.up.sql"; \
 	down_file="lrdb/migrations/$${ts}_$${name}.down.sql"; \

@@ -23,6 +23,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/lrdb"
 	lrdbmigrations "github.com/cardinalhq/lakerunner/lrdb/migrations"
+	"github.com/cardinalhq/lakerunner/migrations"
 )
 
 func ConnectTolrdb(ctx context.Context, opts ...Options) (*pgxpool.Pool, error) {
@@ -36,19 +37,15 @@ func ConnectTolrdb(ctx context.Context, opts ...Options) (*pgxpool.Pool, error) 
 		return nil, err
 	}
 
-	// Check migration check options
-	skipMigrationCheck := false
-	warnOnMismatch := false
-	if len(opts) > 0 {
-		skipMigrationCheck = opts[0].SkipMigrationCheck
-		warnOnMismatch = opts[0].WarnOnMigrationMismatch
+	// Apply migration check options
+	var migrationCheckOptions []migrations.CheckOption
+	if len(opts) > 0 && len(opts[0].MigrationCheckOptions) > 0 {
+		migrationCheckOptions = opts[0].MigrationCheckOptions
 	}
 
-	if !skipMigrationCheck {
-		if err := lrdbmigrations.CheckExpectedVersionWithOptions(ctx, pool, warnOnMismatch); err != nil {
-			pool.Close()
-			return nil, fmt.Errorf("LRDB migration version check failed: %w", err)
-		}
+	if err := lrdbmigrations.CheckVersion(ctx, pool, migrationCheckOptions...); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("LRDB migration version check failed: %w", err)
 	}
 
 	return pool, nil
@@ -66,7 +63,7 @@ func LRDBStore(ctx context.Context) (lrdb.StoreFull, error) {
 // LRDBStoreForAdmin connects to LRDB with admin-friendly migration checking
 // that warns and continues instead of failing on migration mismatches
 func LRDBStoreForAdmin(ctx context.Context) (lrdb.StoreFull, error) {
-	pool, err := ConnectTolrdb(ctx, Options{WarnOnMigrationMismatch: true})
+	pool, err := ConnectTolrdb(ctx, WarnOnMigrationMismatch())
 	if err != nil {
 		return nil, err
 	}

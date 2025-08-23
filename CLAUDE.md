@@ -1,9 +1,5 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
----
-
 ## Core Rules
 
 1. **Never break these rules:**
@@ -19,7 +15,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 LakeRunner is a **real-time telemetry ingestion engine** that transforms S3-compatible object stores into high-performance observability backends.
 
-It ingests structured telemetry data (CSV, Parquet, JSON.gz) from sources like OpenTelemetry collectors, DataDog, and FluentBit. Data is converted into optimized **Apache Parquet** with indexing, aggregation, and compaction.
+It ingests structured telemetry data (CSV, Parquet, JSON.gz) from sources like OpenTelemetry collectors.
+Data is converted into optimized **Apache Parquet** with indexing, aggregation, and compaction.
 
 ---
 
@@ -36,15 +33,13 @@ It ingests structured telemetry data (CSV, Parquet, JSON.gz) from sources like O
    - **MANDATORY: `make check` must pass before any work is considered complete.**
 
 3. **Quality & Compliance**
-   - `make lint` for golangci-lint (15m timeout).
-   - `make license-check` for license headers.
-   - `make imports-fix` and `gofmt` to keep code tidy.
    - All source files must include AGPL v3 headers.
+   - `make lint` for golangci-lint (15m timeout), included in `make check` as well.
    - **NEVER mark work as complete until `make check` passes.**
 
 4. **Migrations**
-   - `make new-migration name=migration_name` for lrdb migrations.
-   - No migrations permitted in `configdb` (externally managed schema).
+   - `make new-migration name=migration_name` to create a new lrdb migration.
+   - `make new-configdb-migration name=migration_name` to create a new configdb migration.
 
 5. **Commit Messages**
    - Keep clean, technical, and focused.
@@ -102,7 +97,7 @@ It ingests structured telemetry data (CSV, Parquet, JSON.gz) from sources like O
 
 ### Go Standards
 
-- Go 1.25 (use new language features).
+- Go 1.25 (use new language features), such as `for i := range 1234` and `maps.Copy()`
 - Follow idiomatic Go style; imports fixed with `make fmt` which will gofmt and order imports.
 - Generated SQL via sqlc and protobufs.  Do not edit generated code.
 
@@ -111,15 +106,15 @@ It ingests structured telemetry data (CSV, Parquet, JSON.gz) from sources like O
 - Table-driven tests for simple cases.
 - Dedicated tests for complex setups.
 - All new/changed functions must include tests.
-- New public methods require GoDoc comments.
+- New public methods require GoDoc comments that are not redundant, like "New creates a new thing".
 
 ### Database Schema
 
 - Type-safe SQL via sqlc.
-- `lrdb/migrations/` for schema changes.
+- `lrdb/migrations/` and `configdb/migrations` for schema changes.
 - `configdb/static-schema/` contains fixed schema snapshots (no migrations allowed).
 - Connections are pooled for performance.
-- Two local databasees are available, `testing_configdb` and `testing_lrdb`.  To access them on the command line, the command `psql-17` shoudl be used.
+- Two local databasees are available, `testing_configdb` and `testing_lrdb`.  To access them on the command line, the command `psql-17` should be used.
 
 Rules:
 
@@ -146,8 +141,9 @@ Worker services provide HTTP health check endpoints for Kubernetes monitoring:
 - **`/livez`** – Liveness probe (200 unless service is completely broken)
 
 Services with health checks:
+
 - **query-api** – Query API server
-- **query-worker** – Query worker service  
+- **query-worker** – Query worker service
 - **sweeper** – Background cleanup service
 
 Health check responses include JSON with status, timestamp, and service name.
@@ -191,5 +187,3 @@ Configuration is YAML-based:
 - Image tag management handled automatically.
 - CI uses **partial builds** (`partial:` section in goreleaser).
 - Developers cannot use `partial:` locally, but must keep it in config.
-
-- "make check" is required to pass before any work is considered complete.

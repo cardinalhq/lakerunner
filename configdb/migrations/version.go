@@ -29,6 +29,8 @@ import (
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
+
+	"github.com/cardinalhq/lakerunner/migrations"
 )
 
 // GetMigrationFiles returns the embedded migration files for version checking
@@ -37,21 +39,35 @@ func GetMigrationFiles() embed.FS {
 }
 
 // CheckExpectedVersion verifies that the configdb database is at the expected migration version
+// using default options (wait mode)
 func CheckExpectedVersion(ctx context.Context, pool *pgxpool.Pool) error {
-	return CheckExpectedVersionWithOptions(ctx, pool, false)
+	return CheckVersion(ctx, pool)
 }
 
-// CheckExpectedVersionWithOptions verifies that the configdb database is at the expected migration version
-// If warnOnMismatch is true, mismatches will log warnings instead of failing
-func CheckExpectedVersionWithOptions(ctx context.Context, pool *pgxpool.Pool, warnOnMismatch bool) error {
-	// Get configuration from environment
-	config := getMigrationCheckConfig()
-	if !config.Enabled {
+// CheckVersion verifies that the configdb database is at the expected migration version
+// with configurable options
+func CheckVersion(ctx context.Context, pool *pgxpool.Pool, options ...migrations.CheckOption) error {
+	// Check if migration checking is disabled via environment
+	if !getMigrationCheckEnabledFromEnv() {
 		slog.Debug("Migration version checking disabled for configdb")
 		return nil
 	}
 
-	return checkMigrationVersionWithOptions(ctx, pool, migrationFiles, "gomigrate_lrconfigdb", "configdb", config, warnOnMismatch)
+	opts := migrations.DefaultCheckOptions()
+	for _, option := range options {
+		option(&opts)
+	}
+
+	// Skip entirely if requested
+	if opts.Mode == migrations.CheckModeSkip {
+		slog.Debug("Migration version checking skipped for configdb")
+		return nil
+	}
+
+	// Override defaults with environment variables if set
+	applyEnvironmentOverrides(&opts)
+
+	return checkMigrationVersionWithNewOptions(ctx, pool, migrationFiles, "gomigrate_lrconfigdb", "configdb", opts)
 }
 
 // migrationCheckConfig holds configuration for migration version checking
@@ -62,7 +78,35 @@ type migrationCheckConfig struct {
 	AllowDirty    bool
 }
 
+// getMigrationCheckEnabledFromEnv checks if migration checking is enabled via environment
+func getMigrationCheckEnabledFromEnv() bool {
+	if val := os.Getenv("CONFIGDB_MIGRATION_CHECK_ENABLED"); val != "" {
+		return strings.ToLower(val) == "true"
+	}
+	return true // enabled by default
+}
+
+// applyEnvironmentOverrides applies environment variable overrides to CheckOptions
+func applyEnvironmentOverrides(opts *migrations.CheckOptions) {
+	if val := os.Getenv("MIGRATION_CHECK_TIMEOUT"); val != "" {
+		if d, err := time.ParseDuration(val); err == nil {
+			opts.Timeout = d
+		}
+	}
+
+	if val := os.Getenv("MIGRATION_CHECK_RETRY_INTERVAL"); val != "" {
+		if d, err := time.ParseDuration(val); err == nil {
+			opts.RetryInterval = d
+		}
+	}
+
+	if val := os.Getenv("MIGRATION_CHECK_ALLOW_DIRTY"); val != "" {
+		opts.AllowDirty = strings.ToLower(val) == "true"
+	}
+}
+
 // getMigrationCheckConfig returns migration check configuration from environment variables
+// This is kept for backward compatibility with old checkMigrationVersionWithOptions
 func getMigrationCheckConfig() migrationCheckConfig {
 	enabled := true
 	if val := os.Getenv("CONFIGDB_MIGRATION_CHECK_ENABLED"); val != "" {
@@ -137,9 +181,9 @@ func extractLatestMigrationVersion(migrationFiles embed.FS) (uint, error) {
 	return maxVersion, nil
 }
 
-// checkMigrationVersionWithOptions verifies that the database is at the expected migration version
-// If warnOnMismatch is true, version mismatches will log warnings instead of failing
-func checkMigrationVersionWithOptions(ctx context.Context, pool *pgxpool.Pool, migrationFiles embed.FS, migrationTable string, dbName string, config migrationCheckConfig, warnOnMismatch bool) error {
+// checkMigrationVersionWithNewOptions verifies that the database is at the expected migration version
+// using the new options API
+func checkMigrationVersionWithNewOptions(ctx context.Context, pool *pgxpool.Pool, migrationFiles embed.FS, migrationTable string, dbName string, opts migrations.CheckOptions) error {
 	expectedVersion, err := extractLatestMigrationVersion(migrationFiles)
 	if err != nil {
 		return fmt.Errorf("failed to extract expected migration version for %s: %w", dbName, err)
@@ -151,8 +195,8 @@ func checkMigrationVersionWithOptions(ctx context.Context, pool *pgxpool.Pool, m
 		return fmt.Errorf("failed to get current migration version for %s: %w", dbName, err)
 	}
 
-	if dirty && !config.AllowDirty {
-		if warnOnMismatch {
+	if dirty && !opts.AllowDirty {
+		if opts.Mode == migrations.CheckModeWarn {
 			slog.Warn("Database migration is in dirty state, but continuing anyway",
 				slog.String("database", dbName))
 		} else {
@@ -176,7 +220,7 @@ func checkMigrationVersionWithOptions(ctx context.Context, pool *pgxpool.Pool, m
 		slog.Uint64("expected_version", uint64(expectedVersion)))
 
 	if currentVersion > expectedVersion {
-		if warnOnMismatch {
+		if opts.Mode == migrations.CheckModeWarn {
 			slog.Warn("Database version is newer than expected, but continuing anyway",
 				slog.String("database", dbName),
 				slog.Uint64("current_version", uint64(currentVersion)),
@@ -188,7 +232,7 @@ func checkMigrationVersionWithOptions(ctx context.Context, pool *pgxpool.Pool, m
 	}
 
 	// currentVersion < expectedVersion
-	if warnOnMismatch {
+	if opts.Mode == migrations.CheckModeWarn {
 		slog.Warn("Database version is older than expected, but continuing anyway",
 			slog.String("database", dbName),
 			slog.Uint64("current_version", uint64(currentVersion)),
@@ -196,9 +240,9 @@ func checkMigrationVersionWithOptions(ctx context.Context, pool *pgxpool.Pool, m
 		return nil
 	}
 
-	// For non-admin commands, wait for migrations
-	deadline := time.Now().Add(config.Timeout)
-	ticker := time.NewTicker(config.RetryInterval)
+	// For wait mode, wait for migrations
+	deadline := time.Now().Add(opts.Timeout)
+	ticker := time.NewTicker(opts.RetryInterval)
 	defer ticker.Stop()
 
 	for {
