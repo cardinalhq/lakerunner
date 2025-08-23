@@ -31,7 +31,7 @@ func TestNewMetricsWriter(t *testing.T) {
 		"value":                 parquet.Leaf(parquet.DoubleType),
 	}
 
-	writer, err := NewMetricsWriter("metrics-test", tmpdir, nodes, 200) // Very small to force splitting
+	writer, err := NewMetricsWriter("metrics-test", tmpdir, nodes, 200, 50.0) // Very small to force splitting
 	if err != nil {
 		t.Fatalf("Failed to create metrics writer: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestNewLogsWriter(t *testing.T) {
 		"message":                 parquet.String(),
 	}
 
-	writer, err := NewLogsWriter("logs-test", tmpdir, nodes, 10000)
+	writer, err := NewLogsWriter("logs-test", tmpdir, nodes, 10000, 150.0)
 	if err != nil {
 		t.Fatalf("Failed to create logs writer: %v", err)
 	}
@@ -193,7 +193,7 @@ func TestNewTracesWriter(t *testing.T) {
 	}
 
 	slotID := int32(42)
-	writer, err := NewTracesWriter("traces-test", tmpdir, nodes, 10000, slotID)
+	writer, err := NewTracesWriter("traces-test", tmpdir, nodes, 10000, slotID, 200.0)
 	if err != nil {
 		t.Fatalf("Failed to create traces writer: %v", err)
 	}
@@ -390,7 +390,7 @@ func TestNewCustomWriter(t *testing.T) {
 		OrderKeyFunc: func(row map[string]any) any {
 			return row["id"].(int64)
 		},
-		SizeEstimator: NewFixedSizeEstimator(100),
+		BytesPerRecord: 100.0,
 	}
 
 	writer, err := NewCustomWriter(config)

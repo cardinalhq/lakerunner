@@ -204,17 +204,13 @@ func (w *UnifiedWriter) GetCurrentStats() WriterStats {
 		Closed: w.closed,
 	}
 
-	if w.config.SizeEstimator != nil {
-		if adaptive, ok := w.config.SizeEstimator.(*AdaptiveSizeEstimator); ok {
-			stats.CurrentAvgRowSize = adaptive.GetCurrentAverage()
-		}
-	}
+	stats.BytesPerRecord = w.config.BytesPerRecord
 
 	return stats
 }
 
 // WriterStats contains current statistics about a writer's state.
 type WriterStats struct {
-	Closed            bool
-	CurrentAvgRowSize int64
+	Closed         bool
+	BytesPerRecord float64
 }

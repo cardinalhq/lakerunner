@@ -30,7 +30,6 @@ type FileSplitter struct {
 	currentSize   int64
 	currentRows   int64
 	currentGroup  any
-	sizeEstimator SizeEstimator
 
 	// Current file being written
 	currentFile   *os.File
@@ -48,17 +47,11 @@ type FileSplitter struct {
 
 // NewFileSplitter creates a new file splitter with the given configuration.
 func NewFileSplitter(config WriterConfig) *FileSplitter {
-	estimator := config.SizeEstimator
-	if estimator == nil {
-		estimator = NewAdaptiveSizeEstimator()
-	}
-
 	return &FileSplitter{
-		config:        config,
-		sizeEstimator: estimator,
-		seenColumns:   make(map[string]bool),
-		parquetNodes:  make(map[string]parquet.Node),
-		results:       make([]Result, 0),
+		config:       config,
+		seenColumns:  make(map[string]bool),
+		parquetNodes: make(map[string]parquet.Node),
+		results:      make([]Result, 0),
 	}
 }
 
@@ -68,7 +61,7 @@ func (s *FileSplitter) ShouldSplit(row map[string]any) bool {
 		return false // No current file, so we can't split
 	}
 
-	estimatedRowSize := s.sizeEstimator.EstimateRowSize(row)
+	estimatedRowSize := int64(s.config.BytesPerRecord)
 	projectedSize := s.currentSize + estimatedRowSize
 
 	// If we would exceed target size, consider splitting
@@ -225,7 +218,7 @@ func (s *FileSplitter) writeRowToCurrentFile(row map[string]any) error {
 
 	// Update tracking
 	s.currentRows++
-	s.currentSize += s.sizeEstimator.EstimateRowSize(row)
+	s.currentSize += int64(s.config.BytesPerRecord)
 
 	// Update group tracking
 	if s.config.GroupKeyFunc != nil {
@@ -257,10 +250,6 @@ func (s *FileSplitter) finishCurrentFile() error {
 	var fileSize int64 = -1
 	if err == nil {
 		fileSize = info.Size()
-		// Update size estimator with actual file size
-		if s.currentRows > 0 {
-			s.sizeEstimator.UpdateFromActual(s.currentRows, fileSize)
-		}
 	}
 
 	// Collect stats

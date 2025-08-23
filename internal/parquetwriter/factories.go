@@ -24,7 +24,7 @@ import (
 
 // NewMetricsWriter creates a writer optimized for metrics data.
 // Metrics are expected to be pre-ordered by TID and should not be split across TID boundaries.
-func NewMetricsWriter(baseName, tmpdir string, schemaNodes map[string]parquet.Node, targetFileSize int64) (*UnifiedWriter, error) {
+func NewMetricsWriter(baseName, tmpdir string, schemaNodes map[string]parquet.Node, targetFileSize int64, bytesPerRecord float64) (*UnifiedWriter, error) {
 	config := WriterConfig{
 		BaseName:       baseName,
 		TmpDir:         tmpdir,
@@ -43,8 +43,8 @@ func NewMetricsWriter(baseName, tmpdir string, schemaNodes map[string]parquet.No
 		},
 		NoSplitGroups: true,
 
-		SizeEstimator: NewAdaptiveSizeEstimator(),
-		StatsProvider: &MetricsStatsProvider{},
+		BytesPerRecord: bytesPerRecord,
+		StatsProvider:  &MetricsStatsProvider{},
 	}
 
 	return NewUnifiedWriter(config)
@@ -52,7 +52,7 @@ func NewMetricsWriter(baseName, tmpdir string, schemaNodes map[string]parquet.No
 
 // NewLogsWriter creates a writer optimized for logs data.
 // Logs need to be sorted by timestamp and can be split freely.
-func NewLogsWriter(baseName, tmpdir string, schemaNodes map[string]parquet.Node, targetFileSize int64) (*UnifiedWriter, error) {
+func NewLogsWriter(baseName, tmpdir string, schemaNodes map[string]parquet.Node, targetFileSize int64, bytesPerRecord float64) (*UnifiedWriter, error) {
 	config := WriterConfig{
 		BaseName:       baseName,
 		TmpDir:         tmpdir,
@@ -75,8 +75,8 @@ func NewLogsWriter(baseName, tmpdir string, schemaNodes map[string]parquet.Node,
 		// Logs can be split anywhere - no grouping constraints
 		NoSplitGroups: false,
 
-		SizeEstimator: NewAdaptiveSizeEstimator(),
-		StatsProvider: &LogsStatsProvider{},
+		BytesPerRecord: bytesPerRecord,
+		StatsProvider:  &LogsStatsProvider{},
 	}
 
 	return NewUnifiedWriter(config)
@@ -84,7 +84,7 @@ func NewLogsWriter(baseName, tmpdir string, schemaNodes map[string]parquet.Node,
 
 // NewTracesWriter creates a writer optimized for traces data.
 // Traces are grouped by slot and can be split within slots but benefit from locality.
-func NewTracesWriter(baseName, tmpdir string, schemaNodes map[string]parquet.Node, targetFileSize int64, slotID int32) (*UnifiedWriter, error) {
+func NewTracesWriter(baseName, tmpdir string, schemaNodes map[string]parquet.Node, targetFileSize int64, slotID int32, bytesPerRecord float64) (*UnifiedWriter, error) {
 	config := WriterConfig{
 		BaseName:       baseName,
 		TmpDir:         tmpdir,
@@ -110,8 +110,8 @@ func NewTracesWriter(baseName, tmpdir string, schemaNodes map[string]parquet.Nod
 		},
 		NoSplitGroups: false, // Allow splitting within slots for size management
 
-		SizeEstimator: NewAdaptiveSizeEstimator(),
-		StatsProvider: &TracesStatsProvider{SlotID: slotID},
+		BytesPerRecord: bytesPerRecord,
+		StatsProvider:  &TracesStatsProvider{SlotID: slotID},
 	}
 
 	return NewUnifiedWriter(config)
@@ -120,6 +120,10 @@ func NewTracesWriter(baseName, tmpdir string, schemaNodes map[string]parquet.Nod
 // NewCustomWriter creates a writer with fully custom configuration.
 // This provides maximum flexibility for specialized use cases.
 func NewCustomWriter(config WriterConfig) (*UnifiedWriter, error) {
+	// Set default bytes per record if not specified
+	if config.BytesPerRecord <= 0 {
+		config.BytesPerRecord = 250.0 // Reasonable default
+	}
 	return NewUnifiedWriter(config)
 }
 
@@ -307,9 +311,9 @@ func NewTestConfig(baseName, tmpdir string, nodes map[string]parquet.Node) Write
 		BaseName:       baseName,
 		TmpDir:         tmpdir,
 		SchemaNodes:    nodes,
-		TargetFileSize: 1000, // Small size for testing
+		TargetFileSize: 1000,  // Small size for testing
 		OrderBy:        OrderNone,
-		SizeEstimator:  NewFixedSizeEstimator(50), // Fixed size for predictable tests
+		BytesPerRecord: 50.0,  // Fixed size for predictable tests
 	}
 }
 

@@ -45,8 +45,8 @@ type WriterConfig struct {
 	GroupKeyFunc  func(map[string]any) any
 	NoSplitGroups bool
 
-	// Size estimation for intelligent file splitting
-	SizeEstimator SizeEstimator
+	// BytesPerRecord is the estimated size in bytes for each record
+	BytesPerRecord float64
 
 	// Optional stats collection
 	StatsProvider StatsProvider

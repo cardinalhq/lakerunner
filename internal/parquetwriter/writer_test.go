@@ -101,7 +101,7 @@ func TestUnifiedWriter_FileSplitting(t *testing.T) {
 		SchemaNodes:    nodes,
 		TargetFileSize: 100, // Very small to force splitting
 		OrderBy:        OrderNone,
-		SizeEstimator:  NewFixedSizeEstimator(50), // Each row is ~50 bytes
+		BytesPerRecord: 50.0, // Each row is ~50 bytes
 	}
 
 	writer, err := NewUnifiedWriter(config)
@@ -165,7 +165,7 @@ func TestUnifiedWriter_NoSplitGroups(t *testing.T) {
 			return row["group_id"].(int64)
 		},
 		NoSplitGroups: true,
-		SizeEstimator: NewFixedSizeEstimator(30),
+		BytesPerRecord: 30.0,
 	}
 
 	writer, err := NewUnifiedWriter(config)
@@ -225,7 +225,7 @@ func TestUnifiedWriter_OrderingInMemory(t *testing.T) {
 		OrderKeyFunc: func(row map[string]any) any {
 			return row["timestamp"].(int64)
 		},
-		SizeEstimator: NewFixedSizeEstimator(100),
+		BytesPerRecord: 100.0,
 	}
 
 	writer, err := NewUnifiedWriter(config)
@@ -507,7 +507,7 @@ func BenchmarkUnifiedWriter(b *testing.B) {
 		SchemaNodes:    nodes,
 		TargetFileSize: 1000000,
 		OrderBy:        OrderNone,
-		SizeEstimator:  NewFixedSizeEstimator(100),
+		BytesPerRecord: 100.0,
 	}
 
 	b.ResetTimer()
