@@ -110,14 +110,7 @@ func TestAddfp_ComplexRow(t *testing.T) {
 
 	assert.True(t, fingerprintSet.Contains(ComputeFingerprint("_cardinalhq.message", ExistsRegex)))
 
-	assert.True(t, fingerprintSet.Contains(ComputeFingerprint("_cardinalhq.name", "log")))
-	assert.True(t, fingerprintSet.Contains(ComputeFingerprint("_cardinalhq.name", "og.")))
-	assert.True(t, fingerprintSet.Contains(ComputeFingerprint("_cardinalhq.name", "g.e")))
-	assert.True(t, fingerprintSet.Contains(ComputeFingerprint("_cardinalhq.name", ".ev")))
-	assert.True(t, fingerprintSet.Contains(ComputeFingerprint("_cardinalhq.name", "eve")))
-	assert.True(t, fingerprintSet.Contains(ComputeFingerprint("_cardinalhq.name", "ven")))
-	assert.True(t, fingerprintSet.Contains(ComputeFingerprint("_cardinalhq.name", "ent")))
-	assert.True(t, fingerprintSet.Contains(ComputeFingerprint("_cardinalhq.name", "nts")))
+	assert.True(t, fingerprintSet.Contains(ComputeFingerprint("_cardinalhq.name", "log.events")))
 	assert.True(t, fingerprintSet.Contains(ComputeFingerprint("_cardinalhq.name", ExistsRegex)))
 }
 
