@@ -285,13 +285,10 @@ func rollupInterval(
 
 	dateint, hour := helpers.MSToDateintHour(st.Time.UTC().UnixMilli())
 
-	// Process each output file from TIDMerger
-	for fileIdx, result := range mergeResult {
-		// Use the tid_partition from the first source row since all source rows should have the same partition
-		tidPartition := sourceRows[0].TidPartition
-
+	// Process each tid_partition atomically
+	for tidPartition, result := range mergeResult {
 		// Generate operation ID for tracking this atomic operation
-		opID := fmt.Sprintf("rollup_op_%d_%d_%s", time.Now().Unix(), fileIdx, idgen.GenerateShortBase32ID())
+		opID := fmt.Sprintf("rollup_op_%d_%d_%s", time.Now().Unix(), tidPartition, idgen.GenerateShortBase32ID())
 		tidLogger := ll.With(slog.String("operationID", opID), slog.Int("tidPartition", int(tidPartition)))
 
 		tidLogger.Info("Starting atomic metric rollup operation",
@@ -330,7 +327,7 @@ func rollupInterval(
 			OldRecords:     params.OldRecords, // Contains all old records, but DB will filter by tid_partition
 			NewRecords: []lrdb.ReplaceMetricSegsNew{
 				{
-					TidPartition: tidPartition,
+					TidPartition: int16(tidPartition),
 					SegmentID:    segmentID,
 					StartTs:      st.Time.UTC().UnixMilli(),
 					EndTs:        et.Time.UTC().UnixMilli(),
