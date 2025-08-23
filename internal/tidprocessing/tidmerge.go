@@ -316,9 +316,35 @@ type mergekey struct {
 	name      string
 }
 
+// --- Optimization (1) lazy decoding + (2) Dense store decode ---
+
+// sketchHolder holds either raw encoded bytes (fast path: 1st occurrence)
+// or a decoded sketch (slow path: after we see a 2nd occurrence).
+type sketchHolder struct {
+	bytes  []byte
+	sketch *ddsketch.DDSketch
+}
+
+// ensureDecoded decodes bytes into a *DDSketch using a Dense store, once.
+func (h *sketchHolder) ensureDecoded() (*ddsketch.DDSketch, error) {
+	if h.sketch != nil {
+		return h.sketch, nil
+	}
+	if len(h.bytes) == 0 {
+		return nil, errors.New("no sketch bytes to decode")
+	}
+	sk, err := DecodeSketch(h.bytes)
+	if err != nil {
+		return nil, err
+	}
+	h.sketch = sk
+	h.bytes = nil // free memory
+	return sk, nil
+}
+
 type mergeaccumulator struct {
 	row           map[string]any
-	sketch        *ddsketch.DDSketch
+	holder        sketchHolder
 	contributions int
 }
 
@@ -361,22 +387,30 @@ func (m *TIDMerger) mergeRows(rows []map[string]any) []map[string]any {
 			slog.Error("Failed to make key for row", "error", err, "row", row)
 			continue
 		}
-		sketch, err := DecodeSketch(sketchBytes)
-		if err != nil {
-			slog.Error("Failed to decode sketch", "error", err)
-			continue
-		}
 
-		if _, exists := merged[key]; !exists {
+		if acc, exists := merged[key]; !exists {
+			// 1st time: store bytes only (no decode yet)
 			merged[key] = &mergeaccumulator{
-				row:           row,
+				row: row,
+				holder: sketchHolder{
+					bytes: sketchBytes,
+				},
 				contributions: 1,
 			}
-			merged[key].sketch = sketch
 		} else {
-			// accumulate contributions
-			merged[key].contributions++
-			if err := merged[key].sketch.MergeWith(sketch); err != nil {
+			// 2nd+ time: decode existing (once), decode new rhs, then merge
+			acc.contributions++
+			dst, err := acc.holder.ensureDecoded()
+			if err != nil {
+				slog.Error("Failed to decode destination sketch", "error", err)
+				continue
+			}
+			rhs, err := DecodeSketch(sketchBytes)
+			if err != nil {
+				slog.Error("Failed to decode rhs sketch", "error", err)
+				continue
+			}
+			if err := dst.MergeWith(rhs); err != nil {
 				slog.Error("Failed to merge sketch", "error", err)
 				continue
 			}
@@ -400,26 +434,32 @@ func (m *TIDMerger) mergeRows(rows []map[string]any) []map[string]any {
 }
 
 func updateFromSketch(acc *mergeaccumulator) error {
-	rollupCountIn := acc.sketch.GetCount()
-	rollupSumIn := acc.sketch.GetSum()
+	// Ensure decoded (lazy) and use Dense-decoded sketch
+	sk, err := acc.holder.ensureDecoded()
+	if err != nil {
+		return err
+	}
+
+	rollupCountIn := sk.GetCount()
+	rollupSumIn := sk.GetSum()
 
 	acc.row["rollup_count"] = rollupCountIn
 	acc.row["rollup_sum"] = rollupSumIn
 	acc.row["rollup_avg"] = rollupSumIn / rollupCountIn
 
-	rollupMaxIn, err := acc.sketch.GetMaxValue()
+	rollupMaxIn, err := sk.GetMaxValue()
 	if err != nil {
 		return fmt.Errorf("getting max value from sketch: %w", err)
 	}
 	acc.row["rollup_max"] = rollupMaxIn
 
-	rollupMinIn, err := acc.sketch.GetMinValue()
+	rollupMinIn, err := sk.GetMinValue()
 	if err != nil {
 		return fmt.Errorf("getting min value from sketch: %w", err)
 	}
 	acc.row["rollup_min"] = rollupMinIn
 
-	quantiles, err := acc.sketch.GetValuesAtQuantiles([]float64{0.25, 0.50, 0.75, 0.90, 0.95, 0.99})
+	quantiles, err := sk.GetValuesAtQuantiles([]float64{0.25, 0.50, 0.75, 0.90, 0.95, 0.99})
 	if err != nil {
 		return fmt.Errorf("getting quantiles from sketch: %w", err)
 	}
@@ -430,7 +470,8 @@ func updateFromSketch(acc *mergeaccumulator) error {
 	acc.row["rollup_p95"] = quantiles[4]
 	acc.row["rollup_p99"] = quantiles[5]
 
-	acc.row["sketch"] = EncodeSketch(acc.sketch)
+	// Re-encode the merged sketch
+	acc.row["sketch"] = EncodeSketch(sk)
 
 	return nil
 }

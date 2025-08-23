@@ -48,7 +48,7 @@ func DecodeSketch(data []byte) (*ddsketch.DDSketch, error) {
 	if err != nil {
 		return nil, err
 	}
-	return ddsketch.DecodeDDSketch(data, store.DefaultProvider, m)
+	return ddsketch.DecodeDDSketch(data, store.DenseStoreConstructor, m)
 }
 
 func Merge(sketch *ddsketch.DDSketch, other *ddsketch.DDSketch) error {
