@@ -24,7 +24,7 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-func TestShouldCompactMetrics(t *testing.T) {
+func TestShouldCompactMetricGroup(t *testing.T) {
 	tests := []struct {
 		name     string
 		rows     []lrdb.MetricSeg
@@ -102,7 +102,7 @@ func TestShouldCompactMetrics(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ShouldCompactMetrics(tt.rows)
+			result := ShouldCompactMetricGroup(tt.rows)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
