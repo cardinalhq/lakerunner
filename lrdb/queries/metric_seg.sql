@@ -13,7 +13,8 @@ INSERT INTO metric_seg (
   file_size,
   tid_count,
   created_by,
-  published
+  published,
+  fingerprints
 )
 VALUES (
   @organization_id,
@@ -29,7 +30,8 @@ VALUES (
   @file_size,
   @tid_count,
   @created_by,
-  @published
+  @published,
+  @fingerprints::bigint[]
 );
 
 -- name: GetMetricSegsForCompaction :many
@@ -76,7 +78,8 @@ INSERT INTO metric_seg (
   tid_count,
   published,
   created_by,
-  rolledup
+  rolledup,
+  fingerprints
 )
 VALUES (
   @organization_id,
@@ -93,7 +96,8 @@ VALUES (
   @tid_count,
   @published,
   @created_by,
-  @rolledup
+  @rolledup,
+  @fingerprints::bigint[]
 );
 
 -- name: BatchMarkMetricSegsRolledup :batchexec

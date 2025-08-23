@@ -51,10 +51,11 @@ type TIDMerger struct {
 }
 
 type WriteResult struct {
-	FileName    string
-	RecordCount int64
-	FileSize    int64
-	TidCount    int32 // number of unique TIDs in the file
+	FileName     string
+	RecordCount  int64
+	FileSize     int64
+	TidCount     int32 // number of unique TIDs in the file
+	Fingerprints []int64
 }
 
 // NewTIDMerger creates a new TIDMerger instance.
@@ -300,10 +301,11 @@ func (m *TIDMerger) Merge() ([]WriteResult, MergeStats, error) {
 		var stats TidAccumulatorResult
 		stats, _ = res.Stats.(TidAccumulatorResult)
 		ret = append(ret, WriteResult{
-			FileName:    res.FileName,
-			RecordCount: res.RecordCount,
-			FileSize:    res.FileSize,
-			TidCount:    int32(stats.Cardinality),
+			FileName:     res.FileName,
+			RecordCount:  res.RecordCount,
+			FileSize:     res.FileSize,
+			TidCount:     int32(stats.Cardinality),
+			Fingerprints: res.Fingerprints.ToSlice(),
 		})
 	}
 

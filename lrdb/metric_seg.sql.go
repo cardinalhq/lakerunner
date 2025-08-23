@@ -13,7 +13,7 @@ import (
 )
 
 const getMetricSegsForCompaction = `-- name: GetMetricSegsForCompaction :many
-SELECT organization_id, dateint, frequency_ms, segment_id, instance_num, tid_partition, ts_range, record_count, file_size, tid_count, ingest_dateint, published, rolledup, created_at, created_by, slot_id
+SELECT organization_id, dateint, frequency_ms, segment_id, instance_num, tid_partition, ts_range, record_count, file_size, tid_count, ingest_dateint, published, rolledup, created_at, created_by, slot_id, fingerprints
 FROM metric_seg
 WHERE
   organization_id = $1 AND
@@ -78,6 +78,7 @@ func (q *Queries) GetMetricSegsForCompaction(ctx context.Context, arg GetMetricS
 			&i.CreatedAt,
 			&i.CreatedBy,
 			&i.SlotID,
+			&i.Fingerprints,
 		); err != nil {
 			return nil, err
 		}
@@ -90,7 +91,7 @@ func (q *Queries) GetMetricSegsForCompaction(ctx context.Context, arg GetMetricS
 }
 
 const getMetricSegsForRollup = `-- name: GetMetricSegsForRollup :many
-SELECT organization_id, dateint, frequency_ms, segment_id, instance_num, tid_partition, ts_range, record_count, file_size, tid_count, ingest_dateint, published, rolledup, created_at, created_by, slot_id
+SELECT organization_id, dateint, frequency_ms, segment_id, instance_num, tid_partition, ts_range, record_count, file_size, tid_count, ingest_dateint, published, rolledup, created_at, created_by, slot_id, fingerprints
 FROM metric_seg
 WHERE
   organization_id = $1 AND
@@ -147,6 +148,7 @@ func (q *Queries) GetMetricSegsForRollup(ctx context.Context, arg GetMetricSegsF
 			&i.CreatedAt,
 			&i.CreatedBy,
 			&i.SlotID,
+			&i.Fingerprints,
 		); err != nil {
 			return nil, err
 		}
@@ -173,7 +175,8 @@ INSERT INTO metric_seg (
   file_size,
   tid_count,
   created_by,
-  published
+  published,
+  fingerprints
 )
 VALUES (
   $1,
@@ -189,7 +192,8 @@ VALUES (
   $12,
   $13,
   $14,
-  $15
+  $15,
+  $16::bigint[]
 )
 `
 
@@ -209,6 +213,7 @@ type InsertMetricSegmentParams struct {
 	TidCount       int32     `json:"tid_count"`
 	CreatedBy      CreatedBy `json:"created_by"`
 	Published      bool      `json:"published"`
+	Fingerprints   []int64   `json:"fingerprints"`
 }
 
 func (q *Queries) InsertMetricSegmentDirect(ctx context.Context, arg InsertMetricSegmentParams) error {
@@ -228,6 +233,7 @@ func (q *Queries) InsertMetricSegmentDirect(ctx context.Context, arg InsertMetri
 		arg.TidCount,
 		arg.CreatedBy,
 		arg.Published,
+		arg.Fingerprints,
 	)
 	return err
 }

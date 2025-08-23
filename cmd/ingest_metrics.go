@@ -555,6 +555,7 @@ func writeMetricSketchParquet(ctx context.Context, tmpdir string, blocknum int64
 			FileSize:       stat.FileSize,
 			Published:      true,
 			CreatedBy:      lrdb.CreatedByIngest,
+			Fingerprints:   stat.Fingerprints.ToSlice(),
 		})
 		dbExecDuration.Record(ctx, time.Since(t0).Seconds(),
 			metric.WithAttributeSet(commonAttributes),

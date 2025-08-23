@@ -404,6 +404,7 @@ func compactInterval(
 					TidCount:     result.TidCount,
 				},
 			},
+			Fingerprints: result.Fingerprints,
 		}
 
 		if err := mdb.ReplaceMetricSegs(ctx, singleParams); err != nil {

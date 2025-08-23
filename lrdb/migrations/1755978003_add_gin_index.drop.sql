@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS idx_metric_seg_fingerprints;

@@ -189,6 +189,7 @@ type MetricSeg struct {
 	CreatedAt      time.Time                 `json:"created_at"`
 	CreatedBy      CreatedBy                 `json:"created_by"`
 	SlotID         int32                     `json:"slot_id"`
+	Fingerprints   []int64                   `json:"fingerprints"`
 }
 
 type ObjCleanup struct {

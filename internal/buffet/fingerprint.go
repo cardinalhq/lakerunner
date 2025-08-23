@@ -38,7 +38,7 @@ var (
 		//"_cardinalhq.message",
 		"_cardinalhq.span_trace_id",
 	}, InfraDimensions...)
-	IndexFullValueDimensions = []string{"resource.file"}
+	IndexFullValueDimensions = []string{"_cardinalhq.name", "resource.file"}
 )
 
 // ToFingerprints converts a map of tagName → slice of tagValues into a set of fingerprints.
