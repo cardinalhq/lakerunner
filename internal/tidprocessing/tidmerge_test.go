@@ -22,6 +22,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestUpdateFromSketch_NilSketch(t *testing.T) {
+	// Test that updateFromSketch handles nil sketch gracefully
+	acc := &mergeaccumulator{
+		row: map[string]any{
+			"_cardinalhq.tid":  int64(123),
+			"_cardinalhq.name": "test_metric",
+		},
+		contributions: 2, // Multiple contributions but nil sketch
+		sketch:        nil,
+	}
+
+	err := updateFromSketch(acc)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "attempting to update from nil sketch")
+	assert.Contains(t, err.Error(), "2 contributions")
+}
+
 func TestUpdateFromSketch_AllFieldsSet(t *testing.T) {
 	// Build a source sketch and compute expected values off it
 	sketch, err := ddsketch.NewDefaultDDSketch(0.01)
