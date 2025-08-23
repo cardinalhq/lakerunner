@@ -27,6 +27,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/adminproto"
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
+	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -222,8 +223,8 @@ func formatTimeRange(tsRange interface{}) string {
 
 			if startErr == nil && endErr == nil {
 				duration := endTime.Sub(startTime)
-				// Format as "HH:MM:SS + duration"
-				return fmt.Sprintf("%s + %s", startTime.Format("15:04:05"), duration.String())
+				// Format as "2006-01-02T15:04:05 1h30m"
+				return fmt.Sprintf("%s %s", startTime.Format("2006-01-02T15:04:05"), helpers.FormatTSRange(duration))
 			}
 
 			// Fallback to showing just the times

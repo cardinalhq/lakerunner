@@ -15,6 +15,7 @@
 package helpers
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -193,4 +194,29 @@ func UnixMillisToTime(ms int64) time.Time {
 	sec := ms / 1000
 	nsec := (ms % 1000) * 1e6
 	return time.Unix(sec, nsec).UTC()
+}
+
+// FormatTSRange formats a duration in a compact, human-readable way.
+// Examples: "50s", "1m30s", "1h30m", "2h"
+func FormatTSRange(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%.0fs", d.Seconds())
+	}
+	
+	hours := int(d.Hours())
+	minutes := int(d.Minutes()) % 60
+	seconds := int(d.Seconds()) % 60
+	
+	if hours > 0 {
+		if minutes > 0 {
+			return fmt.Sprintf("%dh%dm", hours, minutes)
+		}
+		return fmt.Sprintf("%dh", hours)
+	}
+	
+	if seconds > 0 {
+		return fmt.Sprintf("%dm%ds", minutes, seconds)
+	}
+	
+	return fmt.Sprintf("%dm", minutes)
 }
