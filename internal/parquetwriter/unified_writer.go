@@ -111,6 +111,11 @@ func (w *UnifiedWriter) Write(row map[string]any) error {
 	return nil
 }
 
+// Config returns the configuration used by this writer.
+func (w *UnifiedWriter) Config() WriterConfig {
+	return w.config
+}
+
 // Close finalizes all processing and returns metadata about the created files.
 func (w *UnifiedWriter) Close(ctx context.Context) ([]Result, error) {
 	if w.closed {

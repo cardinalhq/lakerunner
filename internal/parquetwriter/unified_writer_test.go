@@ -28,7 +28,13 @@ import (
 func TestUnifiedWriter_Basic(t *testing.T) {
 	tmpdir := t.TempDir()
 
-	config := NewTestConfig("test", tmpdir)
+	config := WriterConfig{
+		BaseName:       "test",
+		TmpDir:         tmpdir,
+		TargetFileSize: 1000, // Small size for testing
+		OrderBy:        OrderNone,
+		BytesPerRecord: 50.0, // Fixed size for predictable tests
+	}
 	writer, err := NewUnifiedWriter(config)
 	if err != nil {
 		t.Fatalf("Failed to create writer: %v", err)
@@ -282,7 +288,13 @@ func TestUnifiedWriter_ErrorHandling(t *testing.T) {
 	tmpdir := t.TempDir()
 
 	t.Run("nil row", func(t *testing.T) {
-		config := NewTestConfig("test", tmpdir)
+		config := WriterConfig{
+			BaseName:       "test",
+			TmpDir:         tmpdir,
+			TargetFileSize: 1000, // Small size for testing
+			OrderBy:        OrderNone,
+			BytesPerRecord: 50.0, // Fixed size for predictable tests
+		}
 		writer, err := NewUnifiedWriter(config)
 		if err != nil {
 			t.Fatalf("Failed to create writer: %v", err)
@@ -296,7 +308,13 @@ func TestUnifiedWriter_ErrorHandling(t *testing.T) {
 	})
 
 	t.Run("write after close", func(t *testing.T) {
-		config := NewTestConfig("test", tmpdir)
+		config := WriterConfig{
+			BaseName:       "test",
+			TmpDir:         tmpdir,
+			TargetFileSize: 1000, // Small size for testing
+			OrderBy:        OrderNone,
+			BytesPerRecord: 50.0, // Fixed size for predictable tests
+		}
 		writer, err := NewUnifiedWriter(config)
 		if err != nil {
 			t.Fatalf("Failed to create writer: %v", err)
@@ -315,7 +333,13 @@ func TestUnifiedWriter_ErrorHandling(t *testing.T) {
 	})
 
 	t.Run("unsupported data type", func(t *testing.T) {
-		config := NewTestConfig("test", tmpdir)
+		config := WriterConfig{
+			BaseName:       "test",
+			TmpDir:         tmpdir,
+			TargetFileSize: 1000, // Small size for testing
+			OrderBy:        OrderNone,
+			BytesPerRecord: 50.0, // Fixed size for predictable tests
+		}
 		writer, err := NewUnifiedWriter(config)
 		if err != nil {
 			t.Fatalf("Failed to create writer: %v", err)
@@ -341,7 +365,13 @@ func TestUnifiedWriter_ErrorHandling(t *testing.T) {
 func TestUnifiedWriter_WriteBatch(t *testing.T) {
 	tmpdir := t.TempDir()
 
-	config := NewTestConfig("batch-test", tmpdir)
+	config := WriterConfig{
+		BaseName:       "batch-test",
+		TmpDir:         tmpdir,
+		TargetFileSize: 1000, // Small size for testing
+		OrderBy:        OrderNone,
+		BytesPerRecord: 50.0, // Fixed size for predictable tests
+	}
 	writer, err := NewUnifiedWriter(config)
 	if err != nil {
 		t.Fatalf("Failed to create writer: %v", err)
@@ -383,7 +413,13 @@ func TestUnifiedWriter_WriteBatch(t *testing.T) {
 func TestUnifiedWriter_ContextCancellation(t *testing.T) {
 	tmpdir := t.TempDir()
 
-	config := NewTestConfig("cancel-test", tmpdir)
+	config := WriterConfig{
+		BaseName:       "cancel-test",
+		TmpDir:         tmpdir,
+		TargetFileSize: 1000, // Small size for testing
+		OrderBy:        OrderNone,
+		BytesPerRecord: 50.0, // Fixed size for predictable tests
+	}
 	writer, err := NewUnifiedWriter(config)
 	if err != nil {
 		t.Fatalf("Failed to create writer: %v", err)
@@ -416,7 +452,13 @@ func TestUnifiedWriter_ContextCancellation(t *testing.T) {
 func TestUnifiedWriter_Stats(t *testing.T) {
 	tmpdir := t.TempDir()
 
-	config := NewTestConfig("stats-test", tmpdir)
+	config := WriterConfig{
+		BaseName:       "stats-test",
+		TmpDir:         tmpdir,
+		TargetFileSize: 1000, // Small size for testing
+		OrderBy:        OrderNone,
+		BytesPerRecord: 50.0, // Fixed size for predictable tests
+	}
 	writer, err := NewUnifiedWriter(config)
 	if err != nil {
 		t.Fatalf("Failed to create writer: %v", err)
