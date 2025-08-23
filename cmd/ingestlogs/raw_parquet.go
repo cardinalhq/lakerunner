@@ -98,6 +98,10 @@ func ConvertRawParquet(sourcefile, tmpdir, bucket, objectID string, rpfEstimate 
 		return nil, nil
 	}
 
+	slog.Info("Raw Parquet file conversion input count",
+		slog.String("objectID", objectID),
+		slog.Int64("inputRecords", nRows))
+
 	r, err := rawparquet.NewRawParquetReader(sourcefile, translate.NewMapper(), nil)
 	if err != nil {
 		return nil, err
@@ -162,9 +166,18 @@ func ConvertRawParquet(sourcefile, tmpdir, bucket, objectID string, rpfEstimate 
 	}
 
 	var fnames []string
+	outputRecordCount := int64(0)
 	for _, res := range result {
 		fnames = append(fnames, res.FileName)
+		outputRecordCount += res.RecordCount
 	}
+
+	slog.Info("Raw Parquet file conversion output count",
+		slog.String("objectID", objectID),
+		slog.Int64("inputRecords", nRows),
+		slog.Int64("outputRecords", outputRecordCount),
+		slog.Bool("recordCountMatches", nRows == outputRecordCount))
+
 	return fnames, nil
 }
 

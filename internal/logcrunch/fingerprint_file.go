@@ -65,6 +65,8 @@ type gs struct {
 // files in time order.
 func ProcessAndSplit(ll *slog.Logger, fh *filecrunch.FileHandle, tmpdir string, ingestDateint int32, rpfEstimate int64) (map[SplitKey]HourlyResult, error) {
 	groups := make(map[SplitKey]*gs)
+	totalInputRecords := int64(0)
+	skippedRecords := int64(0)
 
 	// 1st pass: read input and write sorted chunks to disk per group.
 	reader := parquet.NewReader(fh.File, fh.Schema)
@@ -77,9 +79,13 @@ func ProcessAndSplit(ll *slog.Logger, fh *filecrunch.FileHandle, tmpdir string, 
 			}
 			return nil, fmt.Errorf("reading parquet: %w", err)
 		}
+
+		totalInputRecords++
+
 		tsRaw, ok := rec["_cardinalhq.timestamp"]
 		if !ok || tsRaw == nil {
 			ll.Warn("Skipping record without timestamp", slog.Any("record", rec))
+			skippedRecords++
 			continue
 		}
 		ms := getMS(tsRaw)
@@ -126,6 +132,8 @@ func ProcessAndSplit(ll *slog.Logger, fh *filecrunch.FileHandle, tmpdir string, 
 
 	// 2nd pass: merge chunks into Parquet files.
 	results := make(map[SplitKey]HourlyResult)
+	totalOutputRecords := int64(0)
+
 	for key, st := range groups {
 		if len(st.chunks) == 0 {
 			continue
@@ -158,8 +166,20 @@ func ProcessAndSplit(ll *slog.Logger, fh *filecrunch.FileHandle, tmpdir string, 
 				FirstTS:      st.firstTS, // All files share same time range bounds
 				LastTS:       st.lastTS,
 			}
+
+			totalOutputRecords += fileResult.RecordCount
 		}
 	}
+
+	processedRecords := totalInputRecords - skippedRecords
+	ll.Info("ProcessAndSplit record tracking",
+		slog.Int64("inputRecords", totalInputRecords),
+		slog.Int64("skippedRecords", skippedRecords),
+		slog.Int64("processedRecords", processedRecords),
+		slog.Int64("outputRecords", totalOutputRecords),
+		slog.Bool("recordCountMatches", processedRecords == totalOutputRecords),
+		slog.Int("outputFiles", len(results)))
+
 	return results, nil
 }
 

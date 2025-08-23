@@ -323,6 +323,9 @@ func ingestFilesBatch(
 		TelemetryType: loop.signal,
 	})
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return true, false, nil
+		}
 		return true, false, fmt.Errorf("failed to find next work: %w", err)
 	}
 

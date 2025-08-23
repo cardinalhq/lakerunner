@@ -18,11 +18,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/parquet-go/parquet-go"
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -170,6 +172,17 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp stora
 			ll.Error("Failed to fingerprint file", slog.Any("error", err))
 			return err
 		}
+
+		// Calculate total records processed in this split
+		totalRecordsInSplit := int64(0)
+		for _, split := range splitResults {
+			totalRecordsInSplit += split.RecordCount
+		}
+
+		ll.Info("File processing complete",
+			slog.String("fileName", fname),
+			slog.Int64("totalRecords", totalRecordsInSplit),
+			slog.Int("splitCount", len(splitResults)))
 
 		// First, validate that all split results have proper hour boundaries
 		// and collect unique slot+hour combinations for work queue creation
@@ -351,6 +364,7 @@ func convertJSONGzFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate
 
 	// First pass: read all rows to build complete schema
 	allRows := make([]map[string]any, 0)
+	inputRecordCount := int64(0)
 	for {
 		row, done, err := r.GetRow()
 		if err != nil {
@@ -359,6 +373,8 @@ func convertJSONGzFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate
 		if done {
 			break
 		}
+
+		inputRecordCount++
 
 		// Add base items to the row
 		for k, v := range baseitems {
@@ -376,6 +392,10 @@ func convertJSONGzFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate
 	if len(allRows) == 0 {
 		return nil, fmt.Errorf("no rows processed")
 	}
+
+	slog.Info("JSON.gz file conversion input count",
+		slog.String("objectID", objectID),
+		slog.Int64("inputRecords", inputRecordCount))
 
 	// Create writer with complete schema
 	w, err := buffet.NewWriter("fileconv", tmpdir, nmb.Build(), rpfEstimate)
@@ -410,9 +430,18 @@ func convertJSONGzFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate
 	}
 
 	var fnames []string
+	outputRecordCount := int64(0)
 	for _, res := range result {
 		fnames = append(fnames, res.FileName)
+		outputRecordCount += res.RecordCount
 	}
+
+	slog.Info("JSON.gz file conversion output count",
+		slog.String("objectID", objectID),
+		slog.Int64("inputRecords", inputRecordCount),
+		slog.Int64("outputRecords", outputRecordCount),
+		slog.Bool("recordCountMatches", inputRecordCount == outputRecordCount))
+
 	return fnames, nil
 }
 
@@ -437,6 +466,7 @@ func convertProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate 
 
 	// First pass: read all rows to build complete schema
 	allRows := make([]map[string]any, 0)
+	inputRecordCount := int64(0)
 	for {
 		row, done, err := r.GetRow()
 		if err != nil {
@@ -445,6 +475,8 @@ func convertProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate 
 		if done {
 			break
 		}
+
+		inputRecordCount++
 
 		// Add base items to the row
 		for k, v := range baseitems {
@@ -462,6 +494,10 @@ func convertProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate 
 	if len(allRows) == 0 {
 		return nil, fmt.Errorf("no rows processed")
 	}
+
+	slog.Info("Protobuf file conversion input count",
+		slog.String("objectID", objectID),
+		slog.Int64("inputRecords", inputRecordCount))
 
 	// Create writer with complete schema
 	w, err := buffet.NewWriter("fileconv", tmpdir, nmb.Build(), rpfEstimate)
@@ -492,9 +528,18 @@ func convertProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate 
 	}
 
 	var fnames []string
+	outputRecordCount := int64(0)
 	for _, res := range result {
 		fnames = append(fnames, res.FileName)
+		outputRecordCount += res.RecordCount
 	}
+
+	slog.Info("Protobuf file conversion output count",
+		slog.String("objectID", objectID),
+		slog.Int64("inputRecords", inputRecordCount),
+		slog.Int64("outputRecords", outputRecordCount),
+		slog.Bool("recordCountMatches", inputRecordCount == outputRecordCount))
+
 	return fnames, nil
 }
 
@@ -572,7 +617,8 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 		return fmt.Errorf("creating batch tmpdir: %w", err)
 	}
 
-	finalResults := make(map[logcrunch.SplitKey]logcrunch.HourlyResult)
+	// Process all files and group results by SplitKey
+	allFileRecords := make(map[logcrunch.SplitKey][]logcrunch.HourlyResult)
 
 	for _, fname := range allParquetFiles {
 		fh, err := filecrunch.LoadSchemaForFile(fname)
@@ -586,20 +632,27 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 			return fmt.Errorf("failed to process and split file %s: %w", fname, err)
 		}
 
-		for key, result := range fileResults {
-			if existing, exists := finalResults[key]; exists {
-				existing.Fingerprints = existing.Fingerprints.Union(result.Fingerprints)
-				if result.FirstTS < existing.FirstTS || existing.FirstTS == 0 {
-					existing.FirstTS = result.FirstTS
-				}
-				if result.LastTS > existing.LastTS {
-					existing.LastTS = result.LastTS
-				}
-				finalResults[key] = existing
-			} else {
-				finalResults[key] = result
-			}
+		// Calculate total records processed in this file for batch logging
+		totalRecordsInFile := int64(0)
+		for _, result := range fileResults {
+			totalRecordsInFile += result.RecordCount
 		}
+
+		ll.Info("Batch file processing complete",
+			slog.String("fileName", fname),
+			slog.Int64("totalRecords", totalRecordsInFile),
+			slog.Int("splitCount", len(fileResults)))
+
+		// Group all results by SplitKey for merging
+		for key, result := range fileResults {
+			allFileRecords[key] = append(allFileRecords[key], result)
+		}
+	}
+
+	// Now merge files within each SplitKey group by reprocessing them through a single writer
+	finalResults, err := processBatchGroups(ll, allFileRecords, batchTmpdir, rpfEstimate)
+	if err != nil {
+		return fmt.Errorf("failed to process batch groups: %w", err)
 	}
 
 	for key, result := range finalResults {
@@ -643,6 +696,17 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 		)
 	}
 
+	// Calculate total records processed in the entire batch
+	totalBatchRecords := int64(0)
+	for _, result := range finalResults {
+		totalBatchRecords += result.RecordCount
+	}
+
+	ll.Info("Batch processing summary",
+		slog.Int("totalFiles", len(allParquetFiles)),
+		slog.Int64("totalRecords", totalBatchRecords),
+		slog.Int("outputSegments", len(finalResults)))
+
 	// Create work queue items for compaction - one per unique dateint/hour combination
 	hourlyTriggers := make(map[helpers.HourBoundary]int64) // maps hour boundary to earliest FirstTS
 
@@ -671,4 +735,142 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 	}
 
 	return nil
+}
+
+// processBatchGroups processes grouped HourlyResults by SplitKey, merging files within each group
+func processBatchGroups(ll *slog.Logger, allFileRecords map[logcrunch.SplitKey][]logcrunch.HourlyResult, tmpdir string, rpfEstimate int64) (map[logcrunch.SplitKey]logcrunch.HourlyResult, error) {
+	finalResults := make(map[logcrunch.SplitKey]logcrunch.HourlyResult)
+
+	for key, results := range allFileRecords {
+		if len(results) == 1 {
+			// Single file for this key, use as-is
+			finalResults[key] = results[0]
+		} else {
+			// Multiple files for same SplitKey - merge them through a single writer
+			mergedResult, err := mergeHourlyResults(ll, results, tmpdir, rpfEstimate)
+			if err != nil {
+				return nil, fmt.Errorf("failed to merge files for key %+v: %w", key, err)
+			}
+			finalResults[key] = *mergedResult
+		}
+	}
+
+	return finalResults, nil
+}
+
+// mergeHourlyResults merges multiple HourlyResult objects by reading all their files
+// and writing records through a single buffet writer to create consolidated output files
+func mergeHourlyResults(ll *slog.Logger, results []logcrunch.HourlyResult, tmpdir string, rpfEstimate int64) (*logcrunch.HourlyResult, error) {
+	if len(results) == 0 {
+		return nil, fmt.Errorf("no results to merge")
+	}
+	if len(results) == 1 {
+		return &results[0], nil
+	}
+
+	// Read schema from the first file
+	firstFileHandle, err := filecrunch.LoadSchemaForFile(results[0].FileName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load schema from first file: %w", err)
+	}
+	defer firstFileHandle.Close()
+
+	// Create output writer
+	writer, err := buffet.NewWriter("batch-merge", tmpdir, firstFileHandle.Nodes, rpfEstimate)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create batch merge writer: %w", err)
+	}
+	defer func() {
+		if _, err := writer.Close(); err != nil && !errors.Is(err, buffet.ErrAlreadyClosed) {
+			slog.Error("failed to close batch merge writer", slog.Any("error", err))
+		}
+	}()
+
+	// Merge metadata from all results
+	mergedFingerprints := results[0].Fingerprints
+	earliestFirstTS := results[0].FirstTS
+	latestLastTS := results[0].LastTS
+	totalInputRecords := results[0].RecordCount
+	totalInputFileSize := results[0].FileSize
+
+	// Process each input file and write records to the merged output
+	for i, result := range results {
+		fh, err := filecrunch.LoadSchemaForFile(result.FileName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load file %s: %w", result.FileName, err)
+		}
+
+		reader := parquet.NewReader(fh.File, fh.Schema)
+		recordsRead := int64(0)
+		for {
+			rec := map[string]any{}
+			if err := reader.Read(&rec); err != nil {
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				fh.Close()
+				return nil, fmt.Errorf("failed to read from %s: %w", result.FileName, err)
+			}
+
+			if err := writer.Write(rec); err != nil {
+				fh.Close()
+				return nil, fmt.Errorf("failed to write record: %w", err)
+			}
+			recordsRead++
+		}
+
+		fh.Close()
+
+		// Verify we read the expected number of records
+		if recordsRead != result.RecordCount {
+			ll.Warn("Record count mismatch during merge",
+				slog.String("fileName", result.FileName),
+				slog.Int64("expected", result.RecordCount),
+				slog.Int64("actual", recordsRead))
+		}
+
+		// Merge metadata (skip first result since it's already included)
+		if i > 0 {
+			mergedFingerprints = mergedFingerprints.Union(result.Fingerprints)
+			if result.FirstTS < earliestFirstTS || earliestFirstTS == 0 {
+				earliestFirstTS = result.FirstTS
+			}
+			if result.LastTS > latestLastTS {
+				latestLastTS = result.LastTS
+			}
+			totalInputRecords += result.RecordCount
+			totalInputFileSize += result.FileSize
+		}
+
+		// Clean up the input file
+		_ = os.Remove(result.FileName)
+	}
+
+	// Close writer and get the result
+	writerResults, err := writer.Close()
+	if err != nil {
+		return nil, fmt.Errorf("failed to close writer: %w", err)
+	}
+
+	if len(writerResults) != 1 {
+		return nil, fmt.Errorf("expected single output file, got %d", len(writerResults))
+	}
+
+	outputResult := writerResults[0]
+
+	ll.Info("Merged HourlyResults",
+		slog.Int("inputFiles", len(results)),
+		slog.Int64("inputRecords", totalInputRecords),
+		slog.Int64("outputRecords", outputResult.RecordCount),
+		slog.Bool("recordCountMatches", totalInputRecords == outputResult.RecordCount),
+		slog.String("outputFile", outputResult.FileName))
+
+	return &logcrunch.HourlyResult{
+		FileName:     outputResult.FileName,
+		RecordCount:  outputResult.RecordCount,
+		FileSize:     outputResult.FileSize,
+		Fingerprints: mergedFingerprints,
+		FirstTS:      earliestFirstTS,
+		LastTS:       latestLastTS,
+	}, nil
 }
