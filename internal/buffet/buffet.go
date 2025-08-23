@@ -366,9 +366,10 @@ func (w *Writer) Close() ([]Result, error) {
 				stats = w.currentAcc.Finalize()
 			}
 			results = append(results, Result{
-				FileName:    outFile.Name(),
-				RecordCount: rowsInFile,
-				Stats:       stats,
+				FileName:     outFile.Name(),
+				RecordCount:  rowsInFile,
+				Stats:        stats,
+				Fingerprints: ToFingerprints(distinctValuesByKey),
 			})
 		}
 	}
