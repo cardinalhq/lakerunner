@@ -16,7 +16,6 @@ package cmd
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
 
@@ -33,6 +32,7 @@ type LogTranslator struct {
 }
 
 // TranslateRow adds fingerprint and resource fields to each row
+// Assumes all other log fields are properly set when the record comes in
 func (t *LogTranslator) TranslateRow(row *filereader.Row) error {
 	if row == nil {
 		return fmt.Errorf("row cannot be nil")
@@ -52,48 +52,15 @@ func (t *LogTranslator) TranslateRow(row *filereader.Row) error {
 		delete(*row, "_cardinalhq.fingerprint")
 	}
 
-	// Add resource fields
+	// Only set the specific required fields - assume all other fields are properly set
 	(*row)["resource.bucket.name"] = t.bucket
 	(*row)["resource.file.name"] = "./" + t.objectID
 	(*row)["resource.file.type"] = ingestlogs.GetFileType(t.objectID)
 
-	// Set _cardinalhq.level from severity_text if not already set
-	if _, ok := (*row)["_cardinalhq.level"]; !ok {
-		if severityText, exists := (*row)["severity_text"]; exists {
-			if level, isString := severityText.(string); isString && level != "" {
-				(*row)["_cardinalhq.level"] = level
-			}
-		}
-	}
-
-	// Set _cardinalhq.message from body if not already set
-	if _, ok := (*row)["_cardinalhq.message"]; !ok {
-		if body, exists := (*row)["body"]; exists {
-			if message, isString := body.(string); isString && message != "" {
-				(*row)["_cardinalhq.message"] = message
-			}
-		}
-	}
-
-	// Ensure timestamp is present and properly typed
-	if ts, ok := (*row)["_cardinalhq.timestamp"]; ok {
-		convertedTS := ensureInt64(ts)
-		if convertedTS == -1 {
-			// Invalid timestamp type, use current time
-			(*row)["_cardinalhq.timestamp"] = time.Now().UnixMilli()
-		} else {
-			(*row)["_cardinalhq.timestamp"] = convertedTS
-		}
-	} else {
-		// If no _cardinalhq.timestamp field exists, try to find timestamp from other common fields
-		timestamp := t.extractTimestamp(*row)
-		if timestamp != 0 {
-			(*row)["_cardinalhq.timestamp"] = timestamp
-		} else {
-			// As a last resort, use current time (this is better than failing completely)
-			(*row)["_cardinalhq.timestamp"] = time.Now().UnixMilli()
-		}
-	}
+	// Ensure required CardinalhQ fields are set
+	(*row)["_cardinalhq.telemetry_type"] = "logs"
+	(*row)["_cardinalhq.name"] = "log.events"
+	(*row)["_cardinalhq.value"] = float64(1)
 
 	return nil
 }
@@ -103,13 +70,10 @@ func (t *LogTranslator) calculateFingerprint(row filereader.Row) (int64, error) 
 	// Extract the log message/body using the same logic as the original system
 	var message string
 
-	// Try common message field names in order of preference
-	for _, field := range []string{"_cardinalhq.message", "message", "body", "msg", "log"} {
-		if val, ok := row[field]; ok {
-			if str, ok := val.(string); ok && str != "" {
-				message = str
-				break
-			}
+	// Only look at _cardinalhq.message field
+	if val, ok := row["_cardinalhq.message"]; ok {
+		if str, ok := val.(string); ok && str != "" {
+			message = str
 		}
 	}
 
@@ -125,43 +89,4 @@ func (t *LogTranslator) calculateFingerprint(row filereader.Row) (int64, error) 
 	}
 
 	return fingerprint, nil
-}
-
-// ensureInt64 converts timestamp to int64 if it's not already
-// Returns -1 for unrecognized types to indicate invalid timestamp
-func ensureInt64(ts interface{}) int64 {
-	switch v := ts.(type) {
-	case int64:
-		return v
-	case float64:
-		return int64(v)
-	case int:
-		return int64(v)
-	case int32:
-		return int64(v)
-	default:
-		return -1 // Return -1 to indicate invalid timestamp
-	}
-}
-
-// extractTimestamp attempts to extract a timestamp from common timestamp fields
-func (t *LogTranslator) extractTimestamp(row filereader.Row) int64 {
-	// Try common timestamp field names
-	for _, field := range []string{"timestamp", "observed_timestamp", "time", "@timestamp", "ts", "created_at", "observed_time_unix_nano"} {
-		if val, ok := row[field]; ok {
-			if timestamp := ensureInt64(val); timestamp != 0 && timestamp != -1 {
-				// Convert nanoseconds to milliseconds if the value is very large
-				if timestamp > 1e15 { // Assume nanoseconds if > year 33658
-					return timestamp / 1e6
-				}
-				// Convert seconds to milliseconds if the value is reasonable for seconds
-				if timestamp > 1e9 && timestamp < 1e12 { // Reasonable range for Unix seconds
-					return timestamp * 1000
-				}
-				// Assume it's already in milliseconds
-				return timestamp
-			}
-		}
-	}
-	return 0
 }

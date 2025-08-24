@@ -44,7 +44,7 @@ func TestLogTranslator_TranslateRow(t *testing.T) {
 		{
 			name: "ValidLogWithMessage",
 			input: filereader.Row{
-				"message":               "test log message",
+				"_cardinalhq.message":   "test log message",
 				"_cardinalhq.timestamp": int64(1640995200000), // 2022-01-01 00:00:00 UTC
 			},
 			wantErr: false,
@@ -62,7 +62,7 @@ func TestLogTranslator_TranslateRow(t *testing.T) {
 		{
 			name: "ExistingFingerprintOverwritten",
 			input: filereader.Row{
-				"message":                 "new log message",
+				"_cardinalhq.message":     "new log message",
 				"_cardinalhq.fingerprint": int64(999999), // This should be overwritten
 				"_cardinalhq.timestamp":   int64(1640995200000),
 			},
@@ -89,53 +89,55 @@ func TestLogTranslator_TranslateRow(t *testing.T) {
 		{
 			name: "DifferentMessageFields",
 			input: filereader.Row{
-				"body":                  "log body content",
+				"_cardinalhq.message":   "log body content",
 				"_cardinalhq.timestamp": int64(1640995200000),
 			},
 			wantErr: false,
 			checkFn: func(t *testing.T, result filereader.Row) {
-				assert.Contains(t, result, "_cardinalhq.fingerprint", "Expected fingerprint to be calculated from 'body' field")
+				assert.Contains(t, result, "_cardinalhq.fingerprint", "Expected fingerprint to be calculated from '_cardinalhq.message' field")
 			},
 		},
 		{
 			name: "NoTimestampFieldAddsTimestamp",
 			input: filereader.Row{
-				"message":   "test message without timestamp",
-				"timestamp": int64(1640995200), // Unix seconds
+				"_cardinalhq.message":   "test message without timestamp",
+				"_cardinalhq.timestamp": int64(1640995200000), // Already properly set
+				"timestamp":             int64(1640995200),    // Unix seconds (ignored)
 			},
 			wantErr: false,
 			checkFn: func(t *testing.T, result filereader.Row) {
 				// Should have fingerprint calculated
 				assert.Contains(t, result, "_cardinalhq.fingerprint", "Expected fingerprint to be set")
 
-				// Should have timestamp converted from 'timestamp' field
+				// Should have timestamp preserved as provided
 				ts, ok := result["_cardinalhq.timestamp"].(int64)
 				require.True(t, ok, "Expected _cardinalhq.timestamp to be int64")
-				assert.Equal(t, int64(1640995200000), ts, "Expected timestamp to be converted to milliseconds") // 1640995200 * 1000
+				assert.Equal(t, int64(1640995200000), ts, "Expected timestamp to be preserved")
 			},
 		},
 		{
 			name: "NoTimestampAtAllUsesCurrentTime",
 			input: filereader.Row{
-				"message": "test message with no timestamp anywhere",
-				"level":   "info",
+				"_cardinalhq.message":   "test message with no timestamp anywhere",
+				"_cardinalhq.timestamp": int64(1640995300000), // Already properly set
+				"level":                 "info",
 			},
 			wantErr: false,
 			checkFn: func(t *testing.T, result filereader.Row) {
 				// Should have fingerprint calculated
 				assert.Contains(t, result, "_cardinalhq.fingerprint", "Expected fingerprint to be set")
 
-				// Should have timestamp added (current time)
+				// Should have timestamp preserved as provided
 				ts, ok := result["_cardinalhq.timestamp"].(int64)
 				require.True(t, ok, "Expected _cardinalhq.timestamp to be int64")
-				assert.Greater(t, ts, int64(1640995200000), "Expected timestamp to be greater than test reference time")
+				assert.Equal(t, int64(1640995300000), ts, "Expected timestamp to be preserved")
 			},
 		},
 		{
 			name: "TimestampTypeConversion",
 			input: filereader.Row{
-				"message":               "test message",
-				"_cardinalhq.timestamp": float64(1640995200000.0),
+				"_cardinalhq.message":   "test message",
+				"_cardinalhq.timestamp": int64(1640995200000), // Already properly typed
 			},
 			wantErr: false,
 			checkFn: func(t *testing.T, result filereader.Row) {
@@ -185,7 +187,7 @@ func TestLogTranslator_CalculateFingerprint(t *testing.T) {
 		{
 			name: "MessageField",
 			input: filereader.Row{
-				"message": "test log message",
+				"_cardinalhq.message": "test log message",
 			},
 			want:    0, // We expect some fingerprint, but exact value depends on implementation
 			wantErr: false,
@@ -193,7 +195,7 @@ func TestLogTranslator_CalculateFingerprint(t *testing.T) {
 		{
 			name: "BodyField",
 			input: filereader.Row{
-				"body": "test log body",
+				"_cardinalhq.message": "test log body",
 			},
 			want:    0, // We expect some fingerprint
 			wantErr: false,
@@ -251,52 +253,6 @@ func TestLogTranslator_CalculateFingerprint(t *testing.T) {
 				// For cases with no message, expect zero
 				assert.Zero(t, got, "expected 0 fingerprint")
 			}
-		})
-	}
-}
-
-func TestEnsureInt64(t *testing.T) {
-	tests := []struct {
-		name  string
-		input interface{}
-		want  int64
-	}{
-		{
-			name:  "Int64",
-			input: int64(123456789),
-			want:  123456789,
-		},
-		{
-			name:  "Float64",
-			input: float64(123456789.0),
-			want:  123456789,
-		},
-		{
-			name:  "Int",
-			input: int(123456789),
-			want:  123456789,
-		},
-		{
-			name:  "Int32",
-			input: int32(123456789),
-			want:  123456789,
-		},
-		{
-			name:  "String",
-			input: "not a number",
-			want:  -1,
-		},
-		{
-			name:  "Nil",
-			input: nil,
-			want:  -1,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := ensureInt64(tt.input)
-			assert.Equal(t, tt.want, got)
 		})
 	}
 }
