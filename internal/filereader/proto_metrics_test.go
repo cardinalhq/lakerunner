@@ -30,7 +30,7 @@ import (
 
 func TestNewProtoMetricsReader(t *testing.T) {
 	// Test with valid gzipped protobuf data
-	file, err := os.Open("testdata/otel-metrics.binpb.gz")
+	file, err := os.Open("../../testdata/metrics/otel-metrics.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
@@ -85,7 +85,7 @@ func TestNewProtoMetricsReader_EmptyData(t *testing.T) {
 
 func TestProtoMetricsReader_Read(t *testing.T) {
 	// Load test data
-	file, err := os.Open("testdata/otel-metrics.binpb.gz")
+	file, err := os.Open("../../testdata/metrics/otel-metrics.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
@@ -129,7 +129,7 @@ func TestProtoMetricsReader_Read(t *testing.T) {
 
 func TestProtoMetricsReader_ReadBatched(t *testing.T) {
 	// Load test data
-	file, err := os.Open("testdata/otel-metrics.binpb.gz")
+	file, err := os.Open("../../testdata/metrics/otel-metrics.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
@@ -173,7 +173,7 @@ func TestProtoMetricsReader_ReadBatched(t *testing.T) {
 
 func TestProtoMetricsReader_ReadSingleRow(t *testing.T) {
 	// Load test data
-	file, err := os.Open("testdata/otel-metrics.binpb.gz")
+	file, err := os.Open("../../testdata/metrics/otel-metrics.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
@@ -199,7 +199,7 @@ func TestProtoMetricsReader_ReadSingleRow(t *testing.T) {
 
 func TestProtoMetricsReader_ResourceAndScopeAttributes(t *testing.T) {
 	// Load test data
-	file, err := os.Open("testdata/otel-metrics.binpb.gz")
+	file, err := os.Open("../../testdata/metrics/otel-metrics.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
@@ -243,7 +243,7 @@ func TestProtoMetricsReader_ResourceAndScopeAttributes(t *testing.T) {
 
 func TestProtoMetricsReader_EmptySlice(t *testing.T) {
 	// Load test data
-	file, err := os.Open("testdata/otel-metrics.binpb.gz")
+	file, err := os.Open("../../testdata/metrics/otel-metrics.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
@@ -263,7 +263,7 @@ func TestProtoMetricsReader_EmptySlice(t *testing.T) {
 
 func TestProtoMetricsReader_Close(t *testing.T) {
 	// Load test data
-	file, err := os.Open("testdata/otel-metrics.binpb.gz")
+	file, err := os.Open("../../testdata/metrics/otel-metrics.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
@@ -298,7 +298,7 @@ func TestProtoMetricsReader_Close(t *testing.T) {
 
 func TestProtoMetricsReader_ExhaustData(t *testing.T) {
 	// Load test data
-	file, err := os.Open("testdata/otel-metrics.binpb.gz")
+	file, err := os.Open("../../testdata/metrics/otel-metrics.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
@@ -328,7 +328,7 @@ func TestProtoMetricsReader_ExhaustData(t *testing.T) {
 
 func TestProtoMetricsReader_MetricTypes(t *testing.T) {
 	// Load test data
-	file, err := os.Open("testdata/otel-metrics.binpb.gz")
+	file, err := os.Open("../../testdata/metrics/otel-metrics.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 

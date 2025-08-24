@@ -98,6 +98,40 @@ func TestLogTranslator_TranslateRow(t *testing.T) {
 			},
 		},
 		{
+			name: "NoTimestampFieldAddsTimestamp",
+			input: filereader.Row{
+				"message":   "test message without timestamp",
+				"timestamp": int64(1640995200), // Unix seconds
+			},
+			wantErr: false,
+			checkFn: func(t *testing.T, result filereader.Row) {
+				// Should have fingerprint calculated
+				assert.Contains(t, result, "_cardinalhq.fingerprint", "Expected fingerprint to be set")
+
+				// Should have timestamp converted from 'timestamp' field
+				ts, ok := result["_cardinalhq.timestamp"].(int64)
+				require.True(t, ok, "Expected _cardinalhq.timestamp to be int64")
+				assert.Equal(t, int64(1640995200000), ts, "Expected timestamp to be converted to milliseconds") // 1640995200 * 1000
+			},
+		},
+		{
+			name: "NoTimestampAtAllUsesCurrentTime",
+			input: filereader.Row{
+				"message": "test message with no timestamp anywhere",
+				"level":   "info",
+			},
+			wantErr: false,
+			checkFn: func(t *testing.T, result filereader.Row) {
+				// Should have fingerprint calculated
+				assert.Contains(t, result, "_cardinalhq.fingerprint", "Expected fingerprint to be set")
+
+				// Should have timestamp added (current time)
+				ts, ok := result["_cardinalhq.timestamp"].(int64)
+				require.True(t, ok, "Expected _cardinalhq.timestamp to be int64")
+				assert.Greater(t, ts, int64(1640995200000), "Expected timestamp to be greater than test reference time")
+			},
+		},
+		{
 			name: "TimestampTypeConversion",
 			input: filereader.Row{
 				"message":               "test message",
@@ -114,15 +148,20 @@ func TestLogTranslator_TranslateRow(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, skip, err := translator.TranslateRow(tt.input)
+			// Create a copy of input to verify original is modified
+			row := make(filereader.Row)
+			for k, v := range tt.input {
+				row[k] = v
+			}
+
+			err := translator.TranslateRow(&row)
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {
 				assert.NoError(t, err)
-			}
-			assert.False(t, skip, "TranslateRow() should never skip rows")
-			if tt.checkFn != nil {
-				tt.checkFn(t, result)
+				if tt.checkFn != nil {
+					tt.checkFn(t, row)
+				}
 			}
 		})
 	}

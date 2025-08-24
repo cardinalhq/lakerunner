@@ -16,6 +16,7 @@ package cmd
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
 
@@ -32,32 +33,45 @@ type LogTranslator struct {
 }
 
 // TranslateRow adds fingerprint and resource fields to each row
-func (t *LogTranslator) TranslateRow(row filereader.Row) (filereader.Row, bool, error) {
+func (t *LogTranslator) TranslateRow(row *filereader.Row) error {
+	if row == nil {
+		return fmt.Errorf("row cannot be nil")
+	}
+
 	// Always recalculate fingerprint from log content, ignoring any existing _cardinalhq.fingerprint field
-	fingerprint, err := t.calculateFingerprint(row)
+	fingerprint, err := t.calculateFingerprint(*row)
 	if err != nil {
-		return row, false, fmt.Errorf("failed to calculate fingerprint: %w", err)
+		return fmt.Errorf("failed to calculate fingerprint: %w", err)
 	}
 
 	// Always set the recalculated fingerprint, overwriting any existing one
 	if fingerprint != 0 {
-		row["_cardinalhq.fingerprint"] = fingerprint
+		(*row)["_cardinalhq.fingerprint"] = fingerprint
 	} else {
 		// Remove existing fingerprint field if we calculated 0 (no valid message found)
-		delete(row, "_cardinalhq.fingerprint")
+		delete(*row, "_cardinalhq.fingerprint")
 	}
 
 	// Add resource fields
-	row["resource.bucket.name"] = t.bucket
-	row["resource.file.name"] = "./" + t.objectID
-	row["resource.file.type"] = ingestlogs.GetFileType(t.objectID)
+	(*row)["resource.bucket.name"] = t.bucket
+	(*row)["resource.file.name"] = "./" + t.objectID
+	(*row)["resource.file.type"] = ingestlogs.GetFileType(t.objectID)
 
 	// Ensure timestamp is present and properly typed
-	if ts, ok := row["_cardinalhq.timestamp"]; ok {
-		row["_cardinalhq.timestamp"] = ensureInt64(ts)
+	if ts, ok := (*row)["_cardinalhq.timestamp"]; ok {
+		(*row)["_cardinalhq.timestamp"] = ensureInt64(ts)
+	} else {
+		// If no _cardinalhq.timestamp field exists, try to find timestamp from other common fields
+		timestamp := t.extractTimestamp(*row)
+		if timestamp != 0 {
+			(*row)["_cardinalhq.timestamp"] = timestamp
+		} else {
+			// As a last resort, use current time (this is better than failing completely)
+			(*row)["_cardinalhq.timestamp"] = time.Now().UnixMilli()
+		}
 	}
 
-	return row, false, nil // always returns new map, no error
+	return nil
 }
 
 // calculateFingerprint computes a fingerprint for the log record
@@ -103,4 +117,26 @@ func ensureInt64(ts interface{}) int64 {
 	default:
 		return 0
 	}
+}
+
+// extractTimestamp attempts to extract a timestamp from common timestamp fields
+func (t *LogTranslator) extractTimestamp(row filereader.Row) int64 {
+	// Try common timestamp field names
+	for _, field := range []string{"timestamp", "time", "@timestamp", "ts", "created_at", "observed_time_unix_nano"} {
+		if val, ok := row[field]; ok {
+			if timestamp := ensureInt64(val); timestamp != 0 {
+				// Convert nanoseconds to milliseconds if the value is very large
+				if timestamp > 1e15 { // Assume nanoseconds if > year 33658
+					return timestamp / 1e6
+				}
+				// Convert seconds to milliseconds if the value is reasonable for seconds
+				if timestamp > 1e9 && timestamp < 1e12 { // Reasonable range for Unix seconds
+					return timestamp * 1000
+				}
+				// Assume it's already in milliseconds
+				return timestamp
+			}
+		}
+	}
+	return 0
 }

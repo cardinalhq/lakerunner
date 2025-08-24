@@ -202,7 +202,7 @@ func TestParquetReaderNumRows(t *testing.T) {
 
 // TestParquetReaderWithRealFile tests ParquetReader with actual parquet files
 func TestParquetReaderWithRealFile(t *testing.T) {
-	file, err := os.Open("testdata/logs-cooked-0001.parquet")
+	file, err := os.Open("../../testdata/logs/logs-cooked-0001.parquet")
 	require.NoError(t, err)
 	defer file.Close()
 
@@ -242,9 +242,9 @@ func TestParquetReaderWithRealFile(t *testing.T) {
 // TestParquetReaderMultipleFiles tests ParquetReader with different files
 func TestParquetReaderMultipleFiles(t *testing.T) {
 	testFiles := map[string]int64{
-		"testdata/logs-cooked-0001.parquet":    32,   // 32 rows
-		"testdata/metrics-cooked-0001.parquet": 211,  // 211 rows
-		"testdata/logs-chqs3-0001.parquet":     1807, // 1807 rows
+		"../../testdata/logs/logs-cooked-0001.parquet":       32,   // 32 rows
+		"../../testdata/metrics/metrics-cooked-0001.parquet": 211,  // 211 rows
+		"../../testdata/logs/logs-chqs3-0001.parquet":        1807, // 1807 rows
 	}
 
 	for filename, expectedRows := range testFiles {
@@ -290,7 +290,7 @@ func TestParquetReaderMultipleFiles(t *testing.T) {
 
 // TestParquetReaderClose tests proper cleanup
 func TestParquetReaderClose(t *testing.T) {
-	file, err := os.Open("testdata/logs-cooked-0001.parquet")
+	file, err := os.Open("../../testdata/logs/logs-cooked-0001.parquet")
 	require.NoError(t, err)
 	defer file.Close()
 
