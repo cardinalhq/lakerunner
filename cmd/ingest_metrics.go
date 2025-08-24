@@ -427,9 +427,19 @@ func uploadMetricResultToS3AndDB(ctx context.Context, ll *slog.Logger, result pa
 	// Generate segment ID and object ID
 	segmentID := s3helper.GenerateID()
 
-	// Use ingest dateint for now - would extract from data in full implementation
-	dateint := ingest_dateint
-	hour := int16(0) // Simplified for now
+	// Extract dateint and hour from actual timestamp data
+	var dateint int32
+	var hour int16
+	if stats, ok := result.Metadata.(factories.MetricsFileStats); ok && stats.FirstTS > 0 {
+		// Convert milliseconds to seconds, then extract date and hour
+		t := time.Unix(stats.FirstTS/1000, 0).UTC()
+		dateint = int32(t.Year()*10000 + int(t.Month())*100 + t.Day())
+		hour = int16(t.Hour())
+	} else {
+		// Fallback to ingest dateint if no timestamp available
+		dateint = ingest_dateint
+		hour = int16(0)
+	}
 
 	objID := helpers.MakeDBObjectID(inf.OrganizationID, inf.CollectorName, dateint, hour, segmentID, "metrics")
 
