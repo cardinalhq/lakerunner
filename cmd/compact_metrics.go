@@ -293,6 +293,15 @@ func compactMetricInterval(
 	}
 	defer orderedReader.Close()
 
+	// Wrap with aggregating reader to merge duplicates during compaction
+	// Use the same frequency as the work item for aggregation
+	aggregatingReader, err := filereader.NewAggregatingReader(orderedReader, int64(inf.FrequencyMs()))
+	if err != nil {
+		ll.Error("Failed to create aggregating reader", slog.Any("error", err))
+		return fmt.Errorf("creating aggregating reader: %w", err)
+	}
+	defer aggregatingReader.Close()
+
 	// Use records per file estimate directly
 	recordsPerFile := rpfEstimate
 	if recordsPerFile <= 0 {
@@ -314,10 +323,10 @@ func compactMetricInterval(
 	totalRows := int64(0)
 
 	for {
-		n, err := orderedReader.Read(rowsBatch)
+		n, err := aggregatingReader.Read(rowsBatch)
 		if err != nil && !errors.Is(err, io.EOF) {
-			ll.Error("Failed to read from ordered reader", slog.Any("error", err))
-			return fmt.Errorf("reading from ordered reader: %w", err)
+			ll.Error("Failed to read from aggregating reader", slog.Any("error", err))
+			return fmt.Errorf("reading from aggregating reader: %w", err)
 		}
 
 		if n == 0 {
