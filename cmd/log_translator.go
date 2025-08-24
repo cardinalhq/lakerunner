@@ -59,7 +59,13 @@ func (t *LogTranslator) TranslateRow(row *filereader.Row) error {
 
 	// Ensure timestamp is present and properly typed
 	if ts, ok := (*row)["_cardinalhq.timestamp"]; ok {
-		(*row)["_cardinalhq.timestamp"] = ensureInt64(ts)
+		convertedTS := ensureInt64(ts)
+		if convertedTS == -1 {
+			// Invalid timestamp type, use current time
+			(*row)["_cardinalhq.timestamp"] = time.Now().UnixMilli()
+		} else {
+			(*row)["_cardinalhq.timestamp"] = convertedTS
+		}
 	} else {
 		// If no _cardinalhq.timestamp field exists, try to find timestamp from other common fields
 		timestamp := t.extractTimestamp(*row)
@@ -104,6 +110,7 @@ func (t *LogTranslator) calculateFingerprint(row filereader.Row) (int64, error) 
 }
 
 // ensureInt64 converts timestamp to int64 if it's not already
+// Returns -1 for unrecognized types to indicate invalid timestamp
 func ensureInt64(ts interface{}) int64 {
 	switch v := ts.(type) {
 	case int64:
@@ -115,7 +122,7 @@ func ensureInt64(ts interface{}) int64 {
 	case int32:
 		return int64(v)
 	default:
-		return 0
+		return -1 // Return -1 to indicate invalid timestamp
 	}
 }
 
@@ -124,7 +131,7 @@ func (t *LogTranslator) extractTimestamp(row filereader.Row) int64 {
 	// Try common timestamp field names
 	for _, field := range []string{"timestamp", "time", "@timestamp", "ts", "created_at", "observed_time_unix_nano"} {
 		if val, ok := row[field]; ok {
-			if timestamp := ensureInt64(val); timestamp != 0 {
+			if timestamp := ensureInt64(val); timestamp != 0 && timestamp != -1 {
 				// Convert nanoseconds to milliseconds if the value is very large
 				if timestamp > 1e15 { // Assume nanoseconds if > year 33658
 					return timestamp / 1e6
