@@ -256,13 +256,24 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 
 		reader, err = createMetricReader(tmpfilename)
 		if err == nil {
-			// Add translator for metrics
+			// Add translator for metrics (adds TID and truncates timestamp)
 			translator := &metricsprocessing.MetricTranslator{
 				OrgID:    firstItem.OrganizationID.String(),
 				Bucket:   inf.Bucket,
 				ObjectID: inf.ObjectID,
 			}
 			reader, err = filereader.NewTranslatingReader(reader, translator)
+
+			if err == nil {
+				// Wrap with sorting and aggregation after translation
+				opts := filereader.ReaderOptions{
+					SignalType:          filereader.SignalTypeMetrics,
+					EnableAggregation:   true,
+					AggregationPeriodMs: 10000, // 10 seconds
+					EnableSorting:       strings.HasSuffix(tmpfilename, ".binpb") || strings.HasSuffix(tmpfilename, ".binpb.gz"),
+				}
+				reader, err = filereader.WrapReaderForAggregation(reader, opts)
+			}
 
 			// Process exemplars if available
 			if loop.exemplarProcessor != nil {

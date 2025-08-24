@@ -161,7 +161,7 @@ func EncodeSketch(sketch *ddsketch.DDSketch) []byte {
 }
 
 // MetricsOrderKeyFunc returns the ordering key function for metrics.
-// Orders by [metric name, TID] for efficient grouping during ingestion and compaction.
+// Orders by [metric name, TID, timestamp] for efficient grouping during ingestion and compaction.
 func MetricsOrderKeyFunc() func(row map[string]any) any {
 	return func(row map[string]any) any {
 		name, nameOk := row["_cardinalhq.name"].(string)
@@ -183,12 +183,18 @@ func MetricsOrderKeyFunc() func(row map[string]any) any {
 			return ""
 		}
 
-		return fmt.Sprintf("%s:%d", name, tid)
+		// Include timestamp in sort key for aggregation ordering
+		timestamp, timestampOk := row["_cardinalhq.timestamp"].(int64)
+		if !timestampOk {
+			return ""
+		}
+
+		return fmt.Sprintf("%s:%d:%d", name, tid, timestamp)
 	}
 }
 
 // MetricsGroupKeyFunc returns the grouping key function for metrics.
-// Groups by [metric name, TID] - don't split groups with same name+TID across files.
+// Groups by [metric name, TID, timestamp] - don't split groups with same name+TID+timestamp across files.
 func MetricsGroupKeyFunc() func(row map[string]any) any {
 	return func(row map[string]any) any {
 		name, nameOk := row["_cardinalhq.name"].(string)
@@ -210,6 +216,12 @@ func MetricsGroupKeyFunc() func(row map[string]any) any {
 			return nil
 		}
 
-		return fmt.Sprintf("%s:%d", name, tid)
+		// Include timestamp in group key for aggregation grouping
+		timestamp, timestampOk := row["_cardinalhq.timestamp"].(int64)
+		if !timestampOk {
+			return nil
+		}
+
+		return fmt.Sprintf("%s:%d:%d", name, tid, timestamp)
 	}
 }
