@@ -33,8 +33,8 @@ func TestNewTracesWriter(t *testing.T) {
 	defer writer.Abort()
 
 	// Verify it's configured for spillable ordering
-	if writer.Config().OrderBy != parquetwriter.OrderSpillable {
-		t.Errorf("Expected OrderBy = OrderSpillable, got %v", writer.Config().OrderBy)
+	if writer.Config().OrderBy != parquetwriter.OrderMergeSort {
+		t.Errorf("Expected OrderBy = OrderMergeSort, got %v", writer.Config().OrderBy)
 	}
 
 	testData := []map[string]any{

@@ -33,8 +33,8 @@ func TestNewLogsWriter(t *testing.T) {
 	require.NoError(t, err, "Failed to create logs writer")
 	defer writer.Abort()
 
-	// Verify it's configured for spillable ordering
-	assert.Equal(t, parquetwriter.OrderSpillable, writer.Config().OrderBy)
+	// Verify it's configured for merge sort ordering
+	assert.Equal(t, parquetwriter.OrderMergeSort, writer.Config().OrderBy)
 
 	// Test timestamp ordering - write out of order
 	testData := []map[string]any{

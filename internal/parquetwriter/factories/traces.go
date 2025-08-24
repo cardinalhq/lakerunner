@@ -29,8 +29,8 @@ func NewTracesWriter(baseName, tmpdir string, targetFileSize int64, slotID int32
 		TmpDir:         tmpdir,
 		TargetFileSize: targetFileSize,
 
-		// Traces benefit from sorting by start time, use spillable orderer for flexibility
-		OrderBy: parquetwriter.OrderSpillable,
+		// Traces benefit from sorting by start time, use merge sort for efficient ordering
+		OrderBy: parquetwriter.OrderMergeSort,
 		OrderKeyFunc: func(row map[string]any) any {
 			// Sort by start time if available, otherwise by trace ID
 			if startTime, ok := row["_cardinalhq.start_time_unix_ns"].(int64); ok {

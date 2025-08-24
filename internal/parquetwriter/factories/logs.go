@@ -29,8 +29,8 @@ func NewLogsWriter(baseName, tmpdir string, targetFileSize int64, bytesPerRecord
 		TmpDir:         tmpdir,
 		TargetFileSize: targetFileSize,
 
-		// Logs need to be sorted by timestamp, use spillable orderer for automatic handling
-		OrderBy: parquetwriter.OrderSpillable,
+		// Logs need to be sorted by timestamp, use merge sort for efficient ordering
+		OrderBy: parquetwriter.OrderMergeSort,
 		OrderKeyFunc: func(row map[string]any) any {
 			if ts, ok := row["_cardinalhq.timestamp"].(int64); ok {
 				return ts
