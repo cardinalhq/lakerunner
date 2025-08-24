@@ -284,12 +284,12 @@ func TestEnsureInt64(t *testing.T) {
 		{
 			name:  "String",
 			input: "not a number",
-			want:  0,
+			want:  -1,
 		},
 		{
 			name:  "Nil",
 			input: nil,
-			want:  0,
+			want:  -1,
 		},
 	}
 
