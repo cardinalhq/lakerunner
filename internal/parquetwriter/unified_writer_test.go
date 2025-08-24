@@ -23,6 +23,8 @@ import (
 	"time"
 
 	"github.com/parquet-go/parquet-go"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestUnifiedWriter_Basic(t *testing.T) {
@@ -493,6 +495,70 @@ func TestUnifiedWriter_Stats(t *testing.T) {
 	for _, result := range results {
 		os.Remove(result.FileName)
 	}
+}
+
+func TestUnifiedWriter_CardinalHQIDColumn(t *testing.T) {
+	tmpdir := t.TempDir()
+
+	config := WriterConfig{
+		BaseName:       "id-test",
+		TmpDir:         tmpdir,
+		TargetFileSize: 1000,
+		OrderBy:        OrderNone,
+		BytesPerRecord: 50.0,
+	}
+
+	writer, err := NewUnifiedWriter(config)
+	require.NoError(t, err, "Failed to create writer")
+	defer writer.Abort()
+
+	// Write test data
+	testRows := []map[string]any{
+		{"timestamp": int64(1000), "message": "first"},
+		{"timestamp": int64(2000), "message": "second"},
+	}
+
+	for _, row := range testRows {
+		err := writer.Write(row)
+		require.NoError(t, err, "Failed to write row")
+	}
+
+	// Close and get results
+	ctx := context.Background()
+	results, err := writer.Close(ctx)
+	require.NoError(t, err, "Failed to close writer")
+	require.Len(t, results, 1, "Expected exactly one result file")
+
+	// Read the parquet file back to verify _cardinalhq.id was added
+	file, err := os.Open(results[0].FileName)
+	require.NoError(t, err, "Failed to open result file")
+	defer file.Close()
+
+	info, err := file.Stat()
+	require.NoError(t, err, "Failed to stat result file")
+
+	pf, err := parquet.OpenFile(file, info.Size())
+	require.NoError(t, err, "Failed to open parquet file")
+
+	// Check that _cardinalhq.id column exists in schema
+	schema := pf.Schema()
+	var hasIDColumn bool
+	for _, field := range schema.Fields() {
+		if field.Name() == "_cardinalhq.id" {
+			hasIDColumn = true
+			// String type is correct since we're passing a string value
+			assert.Contains(t, strings.ToLower(field.Type().String()), "string", "_cardinalhq.id should be string type")
+			break
+		}
+	}
+	assert.True(t, hasIDColumn, "_cardinalhq.id column should be present in schema")
+
+	// Verify that the file was created and has reasonable size (basic sanity check)
+	assert.Greater(t, results[0].FileSize, int64(0), "File should have positive size")
+	assert.Equal(t, int64(2), results[0].RecordCount, "Should have 2 records")
+
+	// Clean up
+	os.Remove(results[0].FileName)
 }
 
 func BenchmarkUnifiedWriter(b *testing.B) {

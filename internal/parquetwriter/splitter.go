@@ -20,6 +20,8 @@ import (
 	"os"
 
 	"github.com/parquet-go/parquet-go"
+
+	"github.com/cardinalhq/lakerunner/internal/idgen"
 )
 
 // FileSplitter manages splitting data into multiple output files based on
@@ -156,8 +158,16 @@ func (s *FileSplitter) startNewFile() error {
 
 // writeRowToCurrentFile writes a row to the current file and updates tracking.
 func (s *FileSplitter) writeRowToCurrentFile(row map[string]any) error {
+	// Add "_cardinalhq.id" column with a base32-encoded flake ID
+	// Make a copy to avoid modifying the original row
+	rowCopy := make(map[string]any, len(row)+1)
+	for k, v := range row {
+		rowCopy[k] = v
+	}
+	rowCopy["_cardinalhq.id"] = idgen.NextBase32ID()
+
 	// Add the row to our schema builder to discover/validate schema
-	if err := s.currentSchema.AddRow(row); err != nil {
+	if err := s.currentSchema.AddRow(rowCopy); err != nil {
 		return fmt.Errorf("schema validation failed: %w", err)
 	}
 
@@ -169,11 +179,11 @@ func (s *FileSplitter) writeRowToCurrentFile(row map[string]any) error {
 	}
 
 	// Write the row to parquet (all columns from the row)
-	if _, err := s.currentWriter.Write([]map[string]any{row}); err != nil {
+	if _, err := s.currentWriter.Write([]map[string]any{rowCopy}); err != nil {
 		return fmt.Errorf("write to parquet: %w", err)
 	}
 
-	// Update stats
+	// Update stats (use original row for stats since the ID is just for tracking)
 	if s.currentStats != nil {
 		s.currentStats.Add(row)
 	}
