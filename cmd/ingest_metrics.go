@@ -103,6 +103,15 @@ func (t *MetricTranslator) TranslateRow(row *filereader.Row) error {
 	(*row)["_cardinalhq.customer_id"] = t.orgID
 	(*row)["_cardinalhq.telemetry_type"] = "metrics"
 
+	// Compute and add TID field
+	metricName, nameOk := (*row)["_cardinalhq.name"].(string)
+	if !nameOk {
+		return fmt.Errorf("missing or invalid _cardinalhq.name field for TID computation")
+	}
+	
+	tid := helpers.ComputeTID(metricName, *row)
+	(*row)["_cardinalhq.tid"] = tid
+
 	return nil
 }
 
