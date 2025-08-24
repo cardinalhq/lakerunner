@@ -151,14 +151,16 @@ func NewIngestLoopContext(ctx context.Context, signal string, assumeRoleSessionN
 	go func() {
 		ticker := time.NewTicker(20 * time.Second)
 		defer ticker.Stop()
+		var totalProcessed int64
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				processedCount := atomic.LoadInt64(loopCtx.processedItems)
+				processedCount := atomic.SwapInt64(loopCtx.processedItems, 0)
 				if processedCount > 0 && time.Since(*loopCtx.lastLogTime) >= 20*time.Second {
-					ll.Info("Processing activity", slog.Int64("itemsProcessed", processedCount))
+					totalProcessed += processedCount
+					ll.Info("Processing activity", slog.Int64("itemsProcessed", processedCount), slog.Int64("totalProcessed", totalProcessed))
 					*loopCtx.lastLogTime = time.Now()
 				}
 			}
