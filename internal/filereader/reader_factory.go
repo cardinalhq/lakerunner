@@ -19,11 +19,18 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
 )
 
 // ReaderOptions provides options for creating readers.
 type ReaderOptions struct {
 	SignalType SignalType
+	// Translation options for protobuf logs
+	OrgID              string
+	Bucket             string
+	ObjectID           string
+	TrieClusterManager *fingerprinter.TrieClusterManager
 }
 
 // ReaderForFile creates a Reader for the given file based on its extension and signal type.
@@ -49,9 +56,9 @@ func ReaderForFileWithOptions(filename string, opts ReaderOptions) (Reader, erro
 	case strings.HasSuffix(filename, ".json"):
 		return createJSONReader(filename)
 	case strings.HasSuffix(filename, ".binpb.gz"):
-		return createProtoBinaryGzReader(filename, opts.SignalType)
+		return createProtoBinaryGzReader(filename, opts)
 	case strings.HasSuffix(filename, ".binpb"):
-		return createProtoBinaryReader(filename, opts.SignalType)
+		return createProtoBinaryReader(filename, opts)
 	default:
 		return nil, fmt.Errorf("unsupported file type: %s", filename)
 	}
@@ -119,7 +126,7 @@ func createJSONReader(filename string) (Reader, error) {
 }
 
 // createProtoBinaryGzReader creates a signal-specific proto reader for a gzipped protobuf file.
-func createProtoBinaryGzReader(filename string, signalType SignalType) (Reader, error) {
+func createProtoBinaryGzReader(filename string, opts ReaderOptions) (Reader, error) {
 	file, err := os.Open(filename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open protobuf.gz file: %w", err)
@@ -131,7 +138,7 @@ func createProtoBinaryGzReader(filename string, signalType SignalType) (Reader, 
 		return nil, fmt.Errorf("failed to create gzip reader: %w", err)
 	}
 
-	reader, err := createProtoReader(gzipReader, signalType)
+	reader, err := createProtoReaderWithOptions(gzipReader, opts)
 	if err != nil {
 		gzipReader.Close()
 		file.Close()
@@ -142,13 +149,13 @@ func createProtoBinaryGzReader(filename string, signalType SignalType) (Reader, 
 }
 
 // createProtoBinaryReader creates a signal-specific proto reader for a protobuf file.
-func createProtoBinaryReader(filename string, signalType SignalType) (Reader, error) {
+func createProtoBinaryReader(filename string, opts ReaderOptions) (Reader, error) {
 	file, err := os.Open(filename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open protobuf file: %w", err)
 	}
 
-	reader, err := createProtoReader(file, signalType)
+	reader, err := createProtoReaderWithOptions(file, opts)
 	if err != nil {
 		file.Close()
 		return nil, err
@@ -157,16 +164,25 @@ func createProtoBinaryReader(filename string, signalType SignalType) (Reader, er
 	return reader, nil
 }
 
-// createProtoReader creates the appropriate proto reader based on signal type.
-func createProtoReader(reader interface{ Read([]byte) (int, error) }, signalType SignalType) (Reader, error) {
-	switch signalType {
+// createProtoReaderWithOptions creates the appropriate proto reader with optional translation
+func createProtoReaderWithOptions(reader interface{ Read([]byte) (int, error) }, opts ReaderOptions) (Reader, error) {
+	switch opts.SignalType {
 	case SignalTypeLogs:
-		return NewProtoLogsReader(reader)
+		protoReader, err := NewProtoLogsReader(reader)
+		if err != nil {
+			return nil, err
+		}
+		// Add translation for protobuf logs if options are provided
+		if opts.TrieClusterManager != nil && opts.OrgID != "" {
+			translator := NewProtoBinLogTranslator(opts.OrgID, opts.Bucket, opts.ObjectID, opts.TrieClusterManager)
+			return NewTranslatingReader(protoReader, translator)
+		}
+		return protoReader, nil
 	case SignalTypeMetrics:
 		return NewProtoMetricsReader(reader)
 	case SignalTypeTraces:
 		return NewProtoTracesReader(reader)
 	default:
-		return nil, fmt.Errorf("unsupported signal type for protobuf: %s", signalType.String())
+		return nil, fmt.Errorf("unsupported signal type for protobuf: %s", opts.SignalType.String())
 	}
 }

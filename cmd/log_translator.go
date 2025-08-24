@@ -57,6 +57,24 @@ func (t *LogTranslator) TranslateRow(row *filereader.Row) error {
 	(*row)["resource.file.name"] = "./" + t.objectID
 	(*row)["resource.file.type"] = ingestlogs.GetFileType(t.objectID)
 
+	// Set _cardinalhq.level from severity_text if not already set
+	if _, ok := (*row)["_cardinalhq.level"]; !ok {
+		if severityText, exists := (*row)["severity_text"]; exists {
+			if level, isString := severityText.(string); isString && level != "" {
+				(*row)["_cardinalhq.level"] = level
+			}
+		}
+	}
+
+	// Set _cardinalhq.message from body if not already set
+	if _, ok := (*row)["_cardinalhq.message"]; !ok {
+		if body, exists := (*row)["body"]; exists {
+			if message, isString := body.(string); isString && message != "" {
+				(*row)["_cardinalhq.message"] = message
+			}
+		}
+	}
+
 	// Ensure timestamp is present and properly typed
 	if ts, ok := (*row)["_cardinalhq.timestamp"]; ok {
 		convertedTS := ensureInt64(ts)
@@ -129,7 +147,7 @@ func ensureInt64(ts interface{}) int64 {
 // extractTimestamp attempts to extract a timestamp from common timestamp fields
 func (t *LogTranslator) extractTimestamp(row filereader.Row) int64 {
 	// Try common timestamp field names
-	for _, field := range []string{"timestamp", "time", "@timestamp", "ts", "created_at", "observed_time_unix_nano"} {
+	for _, field := range []string{"timestamp", "observed_timestamp", "time", "@timestamp", "ts", "created_at", "observed_time_unix_nano"} {
 		if val, ok := row[field]; ok {
 			if timestamp := ensureInt64(val); timestamp != 0 && timestamp != -1 {
 				// Convert nanoseconds to milliseconds if the value is very large
