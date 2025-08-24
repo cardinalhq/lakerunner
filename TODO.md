@@ -23,3 +23,11 @@
   - Need to ensure metric ingest processes handle this field correctly
   - Related to logs ingest - both need consistent `_cardinalhq.*` field handling
   - Contact: @Michael for context on query system changes
+
+## Log Parquet Reader Translation
+- [ ] Fix log parquet filereader to apply translation layer
+  - Currently the parquet reader for logs returns raw parquet data without CardinalHQ field translation
+  - Need to add a translation layer to convert parquet field names to CardinalHQ format
+  - Should ensure returned reader produces rows with `_cardinalhq.*` fields consistently
+  - Related files: `internal/filereader/parquet.go` or similar parquet reading logic
+  - Goal: Make parquet-sourced log data consistent with protobuf-sourced log data field naming
