@@ -99,8 +99,9 @@ func TestMetricTranslator(t *testing.T) {
 	}
 
 	row := filereader.Row{
-		"_cardinalhq.name": "cpu.usage",
-		"host":             "web-server-1",
+		"_cardinalhq.name":      "cpu.usage",
+		"_cardinalhq.timestamp": int64(1756049235874),
+		"host":                  "web-server-1",
 	}
 
 	err := translator.TranslateRow(&row)
@@ -110,6 +111,12 @@ func TestMetricTranslator(t *testing.T) {
 	require.Equal(t, "./metrics/test.json.gz", row["resource.file.name"])
 	require.Equal(t, "test-org", row["_cardinalhq.customer_id"])
 	require.Equal(t, "metrics", row["_cardinalhq.telemetry_type"])
-	require.Equal(t, "cpu.usage", row["_cardinalhq.name"]) // Original field preserved
-	require.Equal(t, "web-server-1", row["host"])          // Original field preserved
+	require.Equal(t, "cpu.usage", row["_cardinalhq.name"])               // Original field preserved
+	require.Equal(t, "web-server-1", row["host"])                        // Original field preserved
+	require.Equal(t, int64(1756049235874), row["_cardinalhq.timestamp"]) // Original field preserved
+
+	// Check that TID was computed and added
+	tid, ok := row["_cardinalhq.tid"].(int64)
+	require.True(t, ok, "TID should be computed and added as int64")
+	require.NotZero(t, tid, "TID should be non-zero")
 }
