@@ -26,6 +26,7 @@ type TranslatingReader struct {
 	reader     Reader
 	translator RowTranslator
 	closed     bool
+	rowCount   int64 // Track total rows successfully read and translated
 }
 
 // NewTranslatingReader creates a new TranslatingReader that applies the given
@@ -60,22 +61,12 @@ func (tr *TranslatingReader) Read(rows []Row) (int, error) {
 	// Get raw rows from underlying reader
 	n, err := tr.reader.Read(rows)
 
-	// Translate each row that was successfully read
+	// Translate each row that was successfully read (in-place modification)
 	for i := 0; i < n; i++ {
-		translatedRow, sameRef, translateErr := tr.translator.TranslateRow(rows[i])
-		if translateErr != nil {
+		if translateErr := tr.translator.TranslateRow(&rows[i]); translateErr != nil {
 			return i, fmt.Errorf("translation failed for row %d: %w", i, translateErr)
 		}
-
-		// Only clear and copy if translator returned a different reference
-		// This supports high-performance translators that return the same reference
-		if !sameRef {
-			resetRow(&rows[i])
-			for k, v := range translatedRow {
-				rows[i][k] = v
-			}
-		}
-		// If sameRef is true, the translator modified in place or returned same reference
+		tr.rowCount++ // Count each successfully translated row
 	}
 
 	return n, err // Pass through the original error (including EOF)
@@ -97,4 +88,10 @@ func (tr *TranslatingReader) Close() error {
 	tr.translator = nil
 
 	return nil
+}
+
+// RowCount returns the total number of rows that have been successfully
+// read and translated by this reader.
+func (tr *TranslatingReader) RowCount() int64 {
+	return tr.rowCount
 }

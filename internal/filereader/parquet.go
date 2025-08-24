@@ -24,9 +24,10 @@ import (
 
 // ParquetReader reads rows from a generic Parquet stream.
 type ParquetReader struct {
-	pf     *parquet.File
-	pfr    *parquet.GenericReader[map[string]any]
-	closed bool
+	pf       *parquet.File
+	pfr      *parquet.GenericReader[map[string]any]
+	closed   bool
+	rowCount int64
 }
 
 // NewParquetReader creates a new ParquetReader for the given io.ReaderAt.
@@ -73,6 +74,11 @@ func (r *ParquetReader) Read(rows []Row) (int, error) {
 		}
 	}
 
+	// Only increment rowCount for successfully read rows
+	if n > 0 {
+		r.rowCount += int64(n)
+	}
+
 	return n, err
 }
 
@@ -92,4 +98,9 @@ func (r *ParquetReader) Close() error {
 	r.pf = nil
 
 	return nil
+}
+
+// RowCount returns the total number of rows that have been successfully read.
+func (r *ParquetReader) RowCount() int64 {
+	return r.rowCount
 }

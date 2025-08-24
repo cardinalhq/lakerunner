@@ -36,6 +36,7 @@ type OrderedReader struct {
 	states   []*readerState
 	selector SelectFunc
 	closed   bool
+	rowCount int64
 }
 
 // NewOrderedReader creates a new OrderedReader that merges rows from multiple readers
@@ -171,6 +172,11 @@ func (or *OrderedReader) Read(rows []Row) (int, error) {
 		n++
 	}
 
+	// Update row count with successfully read rows
+	if n > 0 {
+		or.rowCount += int64(n)
+	}
+
 	return n, nil
 }
 
@@ -209,4 +215,9 @@ func (or *OrderedReader) ActiveReaderCount() int {
 		}
 	}
 	return count
+}
+
+// RowCount returns the total number of rows that have been successfully read from all readers.
+func (or *OrderedReader) RowCount() int64 {
+	return or.rowCount
 }
