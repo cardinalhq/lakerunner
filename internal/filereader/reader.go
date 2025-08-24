@@ -42,6 +42,14 @@ type RowTranslator interface {
 	TranslateRow(row *Row) error
 }
 
+// OTELMetricsProvider provides access to the underlying OpenTelemetry metrics structure.
+// This is used when the original OTEL structure is needed for processing (e.g., exemplars).
+type OTELMetricsProvider interface {
+	// GetOTELMetrics returns the underlying parsed OTEL metrics structure.
+	// This allows access to exemplars and other metadata not available in the row format.
+	GetOTELMetrics() (any, error)
+}
+
 // SelectFunc is a function that selects which row to return next from a set of candidate rows.
 // It receives a slice of rows (one from each active reader) and returns the index of the
 // row that should be returned next. This enables custom sorting logic for ordered reading.
