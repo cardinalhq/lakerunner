@@ -938,7 +938,7 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 
 		filenames := []string{tmpfilename}
 
-		if !strings.HasPrefix(inf.ObjectID, "otel-raw/") {
+		if strings.HasPrefix(inf.ObjectID, "otel-raw/") {
 			if strings.HasPrefix(inf.ObjectID, "db/") {
 				continue
 			}
