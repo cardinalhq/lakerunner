@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/cardinalhq/lakerunner/internal/filereader"
+	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 )
 
 // TestHandleHistogram was moved to the proto reader - no longer needed here
@@ -92,10 +93,10 @@ func TestMetricWriterManager_ProcessMultipleValues(t *testing.T) {
 }
 
 func TestMetricTranslator(t *testing.T) {
-	translator := &MetricTranslator{
-		orgID:    "test-org",
-		bucket:   "test-bucket",
-		objectID: "metrics/test.json.gz",
+	translator := &metricsprocessing.MetricTranslator{
+		OrgID:    "test-org",
+		Bucket:   "test-bucket",
+		ObjectID: "metrics/test.json.gz",
 	}
 
 	row := filereader.Row{
