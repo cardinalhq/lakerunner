@@ -31,3 +31,22 @@
   - Should ensure returned reader produces rows with `_cardinalhq.*` fields consistently
   - Related files: `internal/filereader/parquet.go` or similar parquet reading logic
   - Goal: Make parquet-sourced log data consistent with protobuf-sourced log data field naming
+
+## Parquet File Format Specifications
+- [ ] Create spec for standard cooked log parquet format
+  - Define the canonical schema and field types for processed log files
+  - Document required `_cardinalhq.*` fields and their purposes
+  - Include indexing and compression requirements
+  - Specify file naming conventions and partitioning strategy
+
+- [ ] Create spec for standard cooked metrics parquet format
+  - Define the canonical schema and field types for processed metric files
+  - Document metric-specific fields like TID, rollup levels, and aggregation data
+  - Include guidance for different metric types (gauge, counter, histogram, summary)
+  - Specify file organization and time-based partitioning
+
+- [ ] Create spec for standard cooked traces parquet format
+  - Define the canonical schema and field types for processed trace files
+  - Document trace-specific fields like span relationships, slot IDs, and trace context
+  - Include span duration indexing and trace assembly requirements
+  - Specify file organization optimized for trace queries

@@ -110,7 +110,7 @@ func TestAddfp_ComplexRow(t *testing.T) {
 
 	assert.True(t, fingerprintSet.Contains(ComputeFingerprint("_cardinalhq.message", ExistsRegex)))
 
-	computed := ComputeFingerprint("_cardinalhq.name", "logs")
+	computed := ComputeFingerprint("_cardinalhq.name", "log.events")
 	assert.True(t, fingerprintSet.Contains(computed))
 	assert.True(t, fingerprintSet.Contains(ComputeFingerprint("_cardinalhq.name", ExistsRegex)))
 }
