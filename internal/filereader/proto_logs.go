@@ -129,19 +129,46 @@ func (r *ProtoLogsReader) buildLogRow(rl plog.ResourceLogs, sl plog.ScopeLogs, l
 
 	// Add resource attributes with prefix
 	rl.Resource().Attributes().Range(func(name string, v pcommon.Value) bool {
-		ret["resource."+name] = v.AsString()
+		value := v.AsString()
+		if value == "" {
+			return true
+		}
+		if value[0] == '_' {
+			ret[name] = value
+			return true
+		}
+
+		ret["resource."+name] = value
 		return true
 	})
 
 	// Add scope attributes with prefix
 	sl.Scope().Attributes().Range(func(name string, v pcommon.Value) bool {
-		ret["scope."+name] = v.AsString()
+		value := v.AsString()
+		if value == "" {
+			return true
+		}
+		if value[0] == '_' {
+			ret[name] = value
+			return true
+		}
+
+		ret["scope."+name] = value
 		return true
 	})
 
 	// Add log attributes with prefix
 	logRecord.Attributes().Range(func(name string, v pcommon.Value) bool {
-		ret["log."+name] = v.AsString()
+		value := v.AsString()
+		if value == "" {
+			return true
+		}
+		if value[0] == '_' {
+			ret[name] = value
+			return true
+		}
+
+		ret["log."+name] = value
 		return true
 	})
 
