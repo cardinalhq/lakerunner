@@ -135,7 +135,7 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp stora
 	filenames := []string{tmpfilename}
 
 	// If the file is not in our `otel-raw` prefix, check if we can convert it
-	if !strings.HasPrefix(inf.ObjectID, "otel-raw/") {
+	if strings.HasPrefix(inf.ObjectID, "otel-raw/") {
 		// Skip database files (these are processed outputs, not inputs)
 		if strings.HasPrefix(inf.ObjectID, "db/") {
 			// TODO add counter for skipped files in the db prefix
