@@ -16,30 +16,17 @@ package pubsub
 
 import (
 	"context"
-
-	"github.com/cardinalhq/lakerunner/lrdb"
+	"fmt"
 )
 
-// InqueueInserter defines the interface for inserting work into the inqueue
-type InqueueInserter interface {
-	PutInqueueWork(ctx context.Context, arg lrdb.PutInqueueWorkParams) error
-}
-
-// Service defines the interface for pubsub services
-type Service interface {
-	Run(ctx context.Context) error
-}
-
-// BackendType represents supported pubsub backend types
-type BackendType string
-
-const (
-	BackendTypeSQS       BackendType = "sqs"
-	BackendTypeGCPPubSub BackendType = "gcp"
-)
-
-// Backend defines the interface for different pubsub backends
-type Backend interface {
-	Service
-	GetName() string
+// NewBackend creates a new Backend implementation based on the specified type
+func NewBackend(ctx context.Context, backendType BackendType) (Backend, error) {
+	switch backendType {
+	case BackendTypeSQS:
+		return NewSQSService()
+	case BackendTypeGCPPubSub:
+		return NewGCPPubSubService()
+	default:
+		return nil, fmt.Errorf("unsupported backend type: %s", backendType)
+	}
 }
