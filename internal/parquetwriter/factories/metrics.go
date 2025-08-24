@@ -21,6 +21,7 @@ import (
 	mapset "github.com/deckarep/golang-set/v2"
 
 	"github.com/cardinalhq/lakerunner/internal/fingerprint"
+	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 )
 
@@ -33,25 +34,11 @@ func NewMetricsWriter(baseName, tmpdir string, targetFileSize int64, bytesPerRec
 		TargetFileSize: targetFileSize,
 
 		// Order by [metric name, TID] for efficient grouping
-		OrderBy: parquetwriter.OrderMergeSort,
-		OrderKeyFunc: func(row map[string]any) any {
-			name, nameOk := row["_cardinalhq.name"].(string)
-			tid, tidOk := row["_cardinalhq.tid"].(int64)
-			if nameOk && tidOk {
-				return fmt.Sprintf("%s:%d", name, tid)
-			}
-			return ""
-		},
+		OrderBy:      parquetwriter.OrderMergeSort,
+		OrderKeyFunc: helpers.MetricsOrderKeyFunc(),
 
 		// Group by [metric name, TID] - don't split groups with same name+TID
-		GroupKeyFunc: func(row map[string]any) any {
-			name, nameOk := row["_cardinalhq.name"].(string)
-			tid, tidOk := row["_cardinalhq.tid"].(int64)
-			if nameOk && tidOk {
-				return fmt.Sprintf("%s:%d", name, tid)
-			}
-			return nil
-		},
+		GroupKeyFunc:  helpers.MetricsGroupKeyFunc(),
 		NoSplitGroups: true,
 
 		BytesPerRecord: bytesPerRecord,
