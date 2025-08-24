@@ -329,7 +329,7 @@ func compactMetricInterval(
 		}
 
 		// Write batch to metrics writer
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if err := writer.Write(rowsBatch[i]); err != nil {
 				ll.Error("Failed to write row", slog.Any("error", err))
 				return fmt.Errorf("writing row: %w", err)
