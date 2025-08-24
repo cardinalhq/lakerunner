@@ -46,7 +46,7 @@ func init() {
 
 	metricsCmd.Flags().StringVar(&tmpdir, "tmpdir", "/tmp", "Temporary directory for processing")
 	metricsCmd.Flags().StringArrayVar(&files, "file", nil, "Input files to process (can be repeated)")
-	metricsCmd.MarkFlagRequired("file")
+	_ = metricsCmd.MarkFlagRequired("file")
 
 	cmd.AddCommand(metricsCmd)
 	debugCmd.AddCommand(cmd)
@@ -104,10 +104,6 @@ func debugIngestMetrics(tmpdir string, files []string) error {
 					ll.Error("Row is nil - skipping", slog.Int("rowIndex", i))
 					continue
 				}
-
-				ll.Debug("Processing row",
-					slog.Any("timestamp", rows[i]["_cardinalhq.timestamp"]),
-					slog.Any("name", rows[i]["_cardinalhq.name"]))
 
 				err := wm.processRow(rows[i])
 				if err != nil {
