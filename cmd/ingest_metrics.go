@@ -453,6 +453,8 @@ func uploadMetricResultToS3AndDB(ctx context.Context, ll *slog.Logger, result pa
 		}
 
 		ll.Debug("Metric segment stats",
+			slog.String("objectID", objID),
+			slog.Int64("segmentID", segmentID),
 			slog.Int("fingerprintCount", len(fingerprints)),
 			slog.Int64("startTs", startTs),
 			slog.Int64("endTs", endTs))
