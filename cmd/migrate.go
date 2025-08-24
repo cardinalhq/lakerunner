@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"time"
 
@@ -90,11 +91,10 @@ func migrate(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("migration errors: %s", strings.Join(errMsgs, "; "))
 	}
 
-	if initializeIfNeeded {
-		slog.Info("Running initialization if needed")
-		if err := initializeIfNeededFunc(); err != nil {
-			return fmt.Errorf("failed to initialize: %w", err)
-		}
+	// Always try to run initialization if configdb is empty
+	slog.Info("Checking if initialization is needed")
+	if err := initializeIfNeededFunc(); err != nil {
+		return fmt.Errorf("failed to initialize: %w", err)
 	}
 
 	return nil
@@ -146,6 +146,20 @@ func initializeIfNeededFunc() error {
 	if hasProfiles {
 		slog.Info("Storage profiles already exist, skipping initialization")
 		return nil
+	}
+
+	// Auto-detect storage profile file if none provided
+	if configFile == "" {
+		slog.Info("No config file provided, attempting to auto-detect storage profiles")
+		
+		// Look for storage profiles in the ConfigMap mount location
+		configMapPath := "/app/config/storage_profiles.yaml"
+		if _, err := os.Stat(configMapPath); err == nil {
+			configFile = configMapPath
+			slog.Info("Auto-detected storage profile file", slog.String("file", configFile))
+		} else {
+			return nil
+		}
 	}
 
 	tx, err := configDBPool.Begin(ctx)
