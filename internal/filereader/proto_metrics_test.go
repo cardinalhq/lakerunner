@@ -104,13 +104,15 @@ func TestProtoMetricsReader_Read(t *testing.T) {
 	for i, row := range allRows {
 		t.Run(fmt.Sprintf("row_%d", i), func(t *testing.T) {
 			// Should have basic metric fields
-			assert.Contains(t, row, "name", "Row should have metric name")
+			assert.Contains(t, row, "_cardinalhq.name", "Row should have metric name")
 			assert.Contains(t, row, "type", "Row should have metric type")
-			assert.Contains(t, row, "timestamp", "Row should have datapoint timestamp")
+			assert.Contains(t, row, "_cardinalhq.timestamp", "Row should have datapoint timestamp")
+			assert.Contains(t, row, "_cardinalhq.metric_type", "Row should have CardinalHQ metric type")
 
 			// Check that name and type are not empty
-			assert.NotEmpty(t, row["name"], "Metric name should not be empty")
+			assert.NotEmpty(t, row["_cardinalhq.name"], "Metric name should not be empty")
 			assert.NotEmpty(t, row["type"], "Metric type should not be empty")
+			assert.NotEmpty(t, row["_cardinalhq.metric_type"], "CardinalHQ metric type should not be empty")
 
 			// All metric types should now have rollup fields in CardinalHQ format
 			assert.Contains(t, row, "rollup_count", "Row should have rollup_count field")
@@ -161,7 +163,7 @@ func TestProtoMetricsReader_ReadBatched(t *testing.T) {
 		// Verify each row that was read
 		for i := 0; i < n; i++ {
 			assert.Greater(t, len(rows[i]), 0, "Row %d should have data", i)
-			assert.Contains(t, rows[i], "name", "Row %d should have name field", i)
+			assert.Contains(t, rows[i], "_cardinalhq.name", "Row %d should have name field", i)
 			assert.Contains(t, rows[i], "type", "Row %d should have type field", i)
 		}
 
@@ -197,7 +199,7 @@ func TestProtoMetricsReader_ReadSingleRow(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, n)
 	assert.Greater(t, len(rows[0]), 0, "First row should have data")
-	assert.Contains(t, rows[0], "name")
+	assert.Contains(t, rows[0], "_cardinalhq.name")
 	assert.Contains(t, rows[0], "type")
 }
 
@@ -358,7 +360,7 @@ func TestProtoMetricsReader_MetricTypes(t *testing.T) {
 				metricTypes[typeStr]++
 			}
 		}
-		if metricName, exists := row["name"]; exists {
+		if metricName, exists := row["_cardinalhq.name"]; exists {
 			if nameStr, ok := metricName.(string); ok {
 				metricNames[nameStr]++
 			}
