@@ -219,6 +219,8 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 		return fmt.Errorf("empty batch")
 	}
 
+	ll.Debug("Processing metrics batch", slog.Int("batchSize", len(items)))
+
 	// Get storage profile and S3 client
 	firstItem := items[0]
 	var profile storageprofile.StorageProfile
@@ -252,6 +254,7 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 
 		// Skip database files (processed outputs, not inputs)
 		if strings.HasPrefix(inf.ObjectID, "db/") {
+			ll.Debug("Skipping database file", slog.String("objectID", inf.ObjectID))
 			continue
 		}
 
@@ -336,6 +339,12 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 		// Get total rows read from the reader
 		fileRowsRead := reader.RowCount()
 
+		ll.Debug("File processing completed",
+			slog.String("objectID", inf.ObjectID),
+			slog.Int64("rowsRead", fileRowsRead),
+			slog.Int64("rowsProcessed", processedCount),
+			slog.Int64("rowsErrored", errorCount))
+
 		if errorCount > 0 {
 			ll.Warn("Some rows were dropped due to processing errors",
 				slog.String("objectID", inf.ObjectID),
@@ -351,6 +360,8 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 		batchRowsProcessed += processedCount
 		batchRowsErrored += errorCount
 
+		ll.Debug("Completed processing file", slog.String("objectID", inf.ObjectID))
+
 	}
 
 	// Close all writers and get results
@@ -358,6 +369,12 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 	if err != nil {
 		return fmt.Errorf("failed to close writers: %w", err)
 	}
+
+	ll.Debug("Batch processing summary",
+		slog.Int64("inputRowsRead", batchRowsRead),
+		slog.Int64("inputRowsProcessed", batchRowsProcessed),
+		slog.Int64("inputRowsErrored", batchRowsErrored),
+		slog.Int("outputFiles", len(results)))
 
 	// Upload results and update database
 	var totalOutputRecords int64
@@ -435,6 +452,10 @@ func uploadMetricResultToS3AndDB(ctx context.Context, ll *slog.Logger, result pa
 			return fmt.Errorf("invalid timestamp range: startTs=%d, lastTs=%d", startTs, stats.LastTS)
 		}
 
+		ll.Debug("Metric segment stats",
+			slog.Int("fingerprintCount", len(fingerprints)),
+			slog.Int64("startTs", startTs),
+			slog.Int64("endTs", endTs))
 	} else {
 		ll.Error("Failed to extract MetricsFileStats from result metadata",
 			slog.String("metadataType", fmt.Sprintf("%T", result.Metadata)))
