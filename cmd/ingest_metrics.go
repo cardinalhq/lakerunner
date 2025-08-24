@@ -667,12 +667,10 @@ func convertMetricsProtoFile(ll *slog.Logger, tmpfilename, tmpdir, bucket, objec
 	// Process exemplars from the parsed metrics if processor is available
 	if exemplarProcessor != nil {
 		ll.Info("Processing exemplars from OTEL protobuf file",
-			slog.String("file", tmpfilename),
 			slog.String("customer_id", customerID))
 
 		if err := processExemplarsFromMetrics(&metrics, exemplarProcessor, customerID); err != nil {
 			ll.Warn("Failed to process exemplars from parsed metrics",
-				slog.String("file", tmpfilename),
 				slog.Any("error", err))
 			// Don't fail the entire conversion if exemplar processing fails
 		}

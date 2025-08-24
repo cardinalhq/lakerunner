@@ -25,7 +25,8 @@ import (
 // ProtoTracesReader reads rows from OpenTelemetry protobuf traces format.
 // Returns raw OTEL trace data without signal-specific transformations.
 type ProtoTracesReader struct {
-	closed bool
+	closed   bool
+	rowCount int64
 
 	// Streaming iterator state for traces
 	traces        *ptrace.Traces
@@ -73,6 +74,11 @@ func (r *ProtoTracesReader) Read(rows []Row) (int, error) {
 		}
 
 		n++
+	}
+
+	// Update row count with successfully read rows
+	if n > 0 {
+		r.rowCount += int64(n)
 	}
 
 	return n, nil
@@ -169,6 +175,11 @@ func (r *ProtoTracesReader) Close() error {
 	r.traces = nil
 
 	return nil
+}
+
+// RowCount returns the total number of rows that have been successfully read.
+func (r *ProtoTracesReader) RowCount() int64 {
+	return r.rowCount
 }
 
 func parseProtoToOtelTraces(reader io.Reader) (*ptrace.Traces, error) {

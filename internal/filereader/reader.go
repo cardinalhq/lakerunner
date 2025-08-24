@@ -28,17 +28,18 @@ type Reader interface {
 
 	// Close releases any resources held by the reader.
 	Close() error
+
+	// RowCount returns the total number of rows that have been successfully
+	// read from this reader so far. This count should only include rows that
+	// were actually returned to the caller via Read().
+	RowCount() int64
 }
 
 // RowTranslator transforms rows from one format to another.
 type RowTranslator interface {
-	// TranslateRow transforms a row and returns:
-	// - The transformed row
-	// - A boolean indicating if the returned row is the same reference as the input (true = same reference)
-	//   If this is not set properly, it will lead to data corruption or a crash due to performance optimizations
-	//   in the TranslatingReader.
-	// - Any error that occurred during translation
-	TranslateRow(in Row) (Row, bool, error)
+	// TranslateRow transforms a row in-place by modifying the provided row pointer.
+	// This eliminates confusing reference semantics and makes mutations explicit.
+	TranslateRow(row *Row) error
 }
 
 // SelectFunc is a function that selects which row to return next from a set of candidate rows.

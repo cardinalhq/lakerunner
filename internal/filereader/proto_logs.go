@@ -25,7 +25,8 @@ import (
 // ProtoLogsReader reads rows from OpenTelemetry protobuf logs format.
 // Returns raw OTEL log data without signal-specific transformations.
 type ProtoLogsReader struct {
-	closed bool
+	closed   bool
+	rowCount int64
 
 	// Streaming iterator state for logs
 	logs          *plog.Logs
@@ -73,6 +74,11 @@ func (r *ProtoLogsReader) Read(rows []Row) (int, error) {
 		}
 
 		n++
+	}
+
+	// Update row count with successfully read rows
+	if n > 0 {
+		r.rowCount += int64(n)
 	}
 
 	return n, nil
@@ -165,6 +171,11 @@ func (r *ProtoLogsReader) Close() error {
 	r.logs = nil
 
 	return nil
+}
+
+// RowCount returns the total number of rows that have been successfully read.
+func (r *ProtoLogsReader) RowCount() int64 {
+	return r.rowCount
 }
 
 func parseProtoToOtelLogs(reader io.Reader) (*plog.Logs, error) {
