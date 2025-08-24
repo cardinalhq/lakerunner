@@ -2,6 +2,8 @@ name: Build Test Release
 
 on:
   push:
+    branches-ignore:
+      - main
 
 permissions:
   contents: write
@@ -9,7 +11,25 @@ permissions:
   packages: write
 
 jobs:
+  check-pr:
+    runs-on: ubuntu-latest
+    outputs:
+      has-pr: ${{ steps.pr.outputs.has-pr }}
+    steps:
+      - name: Check for PR
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh pr list --head "$GITHUB_REF_NAME" --state open --json number | jq -e '. | length > 0' > /dev/null; then
+            echo "has-pr=true" >> $GITHUB_OUTPUT
+          else
+            echo "has-pr=false" >> $GITHUB_OUTPUT
+          fi
+
   partials:
+    needs: check-pr
+    if: needs.check-pr.outputs.has-pr == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -78,7 +98,8 @@ jobs:
         run: ls -lR dist
 
   merge:
-    needs: partials
+    needs: [check-pr, partials]
+    if: needs.check-pr.outputs.has-pr == 'true'
     runs-on: ubuntu-22.04
     env:
       DOCKER_CLI_EXPERIMENTAL: "enabled"
