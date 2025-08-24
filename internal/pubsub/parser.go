@@ -137,7 +137,7 @@ func parseObjectKey(bucketName, key string) (lrdb.Inqueue, error) {
 
 	parts := strings.Split(key, "/")
 	if parts[0] == "db" {
-		return lrdb.Inqueue{}, fmt.Errorf("skipping database file: %s", key)
+		return lrdb.Inqueue{}, nil
 	}
 
 	var orgID uuid.UUID
