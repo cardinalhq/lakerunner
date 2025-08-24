@@ -18,21 +18,16 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-
-	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
 
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 )
 
 func TestLogTranslator_TranslateRow(t *testing.T) {
 	// Create a test translator
-	trieClusterManager := fingerprinter.NewTrieClusterManager(0.5)
 	translator := &LogTranslator{
-		orgID:              "test-org",
-		bucket:             "test-bucket",
-		objectID:           "test-object.json.gz",
-		trieClusterManager: trieClusterManager,
+		orgID:    "test-org",
+		bucket:   "test-bucket",
+		objectID: "test-object.json.gz",
 	}
 
 	tests := []struct {
@@ -49,101 +44,61 @@ func TestLogTranslator_TranslateRow(t *testing.T) {
 			},
 			wantErr: false,
 			checkFn: func(t *testing.T, result filereader.Row) {
-				// Check fingerprint was calculated
-				assert.Contains(t, result, "_cardinalhq.fingerprint", "Expected fingerprint to be set")
 				// Check resource fields were added
 				assert.Equal(t, "test-bucket", result["resource.bucket.name"])
 				assert.Equal(t, "./test-object.json.gz", result["resource.file.name"])
 				assert.Equal(t, "testobjectjson", result["resource.file.type"])
-				// Check timestamp was preserved
+				// Check required CardinalHQ fields were added
+				assert.Equal(t, "logs", result["_cardinalhq.telemetry_type"])
+				assert.Equal(t, "log.events", result["_cardinalhq.name"])
+				assert.Equal(t, float64(1), result["_cardinalhq.value"])
+				// Check original fields were preserved
+				assert.Equal(t, "test log message", result["_cardinalhq.message"])
 				assert.Equal(t, int64(1640995200000), result["_cardinalhq.timestamp"])
 			},
 		},
 		{
-			name: "ExistingFingerprintOverwritten",
-			input: filereader.Row{
-				"_cardinalhq.message":     "new log message",
-				"_cardinalhq.fingerprint": int64(999999), // This should be overwritten
-				"_cardinalhq.timestamp":   int64(1640995200000),
-			},
-			wantErr: false,
-			checkFn: func(t *testing.T, result filereader.Row) {
-				fingerprint, ok := result["_cardinalhq.fingerprint"]
-				require.True(t, ok, "Expected fingerprint to be set")
-				// Should be a different fingerprint than the original
-				assert.NotEqual(t, int64(999999), fingerprint, "Expected original fingerprint to be overwritten")
-			},
-		},
-		{
-			name: "NoMessageRemovesFingerprint",
-			input: filereader.Row{
-				"_cardinalhq.fingerprint": int64(123456), // This should be removed
-				"_cardinalhq.timestamp":   int64(1640995200000),
-				"level":                   "info",
-			},
-			wantErr: false,
-			checkFn: func(t *testing.T, result filereader.Row) {
-				assert.NotContains(t, result, "_cardinalhq.fingerprint", "Expected fingerprint to be removed when no message found")
-			},
-		},
-		{
-			name: "DifferentMessageFields",
+			name: "BasicRowTranslation",
 			input: filereader.Row{
 				"_cardinalhq.message":   "log body content",
 				"_cardinalhq.timestamp": int64(1640995200000),
+				"_cardinalhq.level":     "info",
 			},
 			wantErr: false,
 			checkFn: func(t *testing.T, result filereader.Row) {
-				assert.Contains(t, result, "_cardinalhq.fingerprint", "Expected fingerprint to be calculated from '_cardinalhq.message' field")
+				// Check resource fields were added
+				assert.Equal(t, "test-bucket", result["resource.bucket.name"])
+				assert.Equal(t, "./test-object.json.gz", result["resource.file.name"])
+				assert.Equal(t, "testobjectjson", result["resource.file.type"])
+				// Check required CardinalHQ fields were added
+				assert.Equal(t, "logs", result["_cardinalhq.telemetry_type"])
+				assert.Equal(t, "log.events", result["_cardinalhq.name"])
+				assert.Equal(t, float64(1), result["_cardinalhq.value"])
+				// Check original fields were preserved
+				assert.Equal(t, "log body content", result["_cardinalhq.message"])
+				assert.Equal(t, int64(1640995200000), result["_cardinalhq.timestamp"])
+				assert.Equal(t, "info", result["_cardinalhq.level"])
 			},
 		},
 		{
-			name: "NoTimestampFieldAddsTimestamp",
+			name: "MinimalRow",
 			input: filereader.Row{
-				"_cardinalhq.message":   "test message without timestamp",
-				"_cardinalhq.timestamp": int64(1640995200000), // Already properly set
-				"timestamp":             int64(1640995200),    // Unix seconds (ignored)
+				"_cardinalhq.timestamp": int64(1640995300000),
+				"some_field":            "some_value",
 			},
 			wantErr: false,
 			checkFn: func(t *testing.T, result filereader.Row) {
-				// Should have fingerprint calculated
-				assert.Contains(t, result, "_cardinalhq.fingerprint", "Expected fingerprint to be set")
-
-				// Should have timestamp preserved as provided
-				ts, ok := result["_cardinalhq.timestamp"].(int64)
-				require.True(t, ok, "Expected _cardinalhq.timestamp to be int64")
-				assert.Equal(t, int64(1640995200000), ts, "Expected timestamp to be preserved")
-			},
-		},
-		{
-			name: "NoTimestampAtAllUsesCurrentTime",
-			input: filereader.Row{
-				"_cardinalhq.message":   "test message with no timestamp anywhere",
-				"_cardinalhq.timestamp": int64(1640995300000), // Already properly set
-				"level":                 "info",
-			},
-			wantErr: false,
-			checkFn: func(t *testing.T, result filereader.Row) {
-				// Should have fingerprint calculated
-				assert.Contains(t, result, "_cardinalhq.fingerprint", "Expected fingerprint to be set")
-
-				// Should have timestamp preserved as provided
-				ts, ok := result["_cardinalhq.timestamp"].(int64)
-				require.True(t, ok, "Expected _cardinalhq.timestamp to be int64")
-				assert.Equal(t, int64(1640995300000), ts, "Expected timestamp to be preserved")
-			},
-		},
-		{
-			name: "TimestampTypeConversion",
-			input: filereader.Row{
-				"_cardinalhq.message":   "test message",
-				"_cardinalhq.timestamp": int64(1640995200000), // Already properly typed
-			},
-			wantErr: false,
-			checkFn: func(t *testing.T, result filereader.Row) {
-				ts, ok := result["_cardinalhq.timestamp"].(int64)
-				require.True(t, ok, "Expected timestamp to be int64")
-				assert.Equal(t, int64(1640995200000), ts)
+				// Check resource fields were added
+				assert.Equal(t, "test-bucket", result["resource.bucket.name"])
+				assert.Equal(t, "./test-object.json.gz", result["resource.file.name"])
+				assert.Equal(t, "testobjectjson", result["resource.file.type"])
+				// Check required CardinalHQ fields were added
+				assert.Equal(t, "logs", result["_cardinalhq.telemetry_type"])
+				assert.Equal(t, "log.events", result["_cardinalhq.name"])
+				assert.Equal(t, float64(1), result["_cardinalhq.value"])
+				// Check original fields were preserved
+				assert.Equal(t, int64(1640995300000), result["_cardinalhq.timestamp"])
+				assert.Equal(t, "some_value", result["some_field"])
 			},
 		},
 	}
@@ -164,94 +119,6 @@ func TestLogTranslator_TranslateRow(t *testing.T) {
 				if tt.checkFn != nil {
 					tt.checkFn(t, row)
 				}
-			}
-		})
-	}
-}
-
-func TestLogTranslator_CalculateFingerprint(t *testing.T) {
-	trieClusterManager := fingerprinter.NewTrieClusterManager(0.5)
-	translator := &LogTranslator{
-		orgID:              "test-org",
-		bucket:             "test-bucket",
-		objectID:           "test-object.json.gz",
-		trieClusterManager: trieClusterManager,
-	}
-
-	tests := []struct {
-		name    string
-		input   filereader.Row
-		want    int64
-		wantErr bool
-	}{
-		{
-			name: "MessageField",
-			input: filereader.Row{
-				"_cardinalhq.message": "test log message",
-			},
-			want:    0, // We expect some fingerprint, but exact value depends on implementation
-			wantErr: false,
-		},
-		{
-			name: "BodyField",
-			input: filereader.Row{
-				"_cardinalhq.message": "test log body",
-			},
-			want:    0, // We expect some fingerprint
-			wantErr: false,
-		},
-		{
-			name: "CardinalHQMessageField",
-			input: filereader.Row{
-				"_cardinalhq.message": "cardinalhq message",
-			},
-			want:    0, // We expect some fingerprint
-			wantErr: false,
-		},
-		{
-			name: "NoMessageFields",
-			input: filereader.Row{
-				"level":     "info",
-				"timestamp": "2022-01-01T00:00:00Z",
-			},
-			want:    0,
-			wantErr: false,
-		},
-		{
-			name: "EmptyMessage",
-			input: filereader.Row{
-				"message": "",
-			},
-			want:    0,
-			wantErr: false,
-		},
-		{
-			name: "PreferenceOrder",
-			input: filereader.Row{
-				"_cardinalhq.message": "preferred message",
-				"message":             "secondary message",
-				"body":                "tertiary message",
-			},
-			want:    0, // Should use _cardinalhq.message
-			wantErr: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := translator.calculateFingerprint(tt.input)
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
-
-			// For cases where we expect a fingerprint (non-zero), just check it's not zero
-			if tt.name != "NoMessageFields" && tt.name != "EmptyMessage" {
-				assert.NotZero(t, got, "expected non-zero fingerprint")
-			} else {
-				// For cases with no message, expect zero
-				assert.Zero(t, got, "expected 0 fingerprint")
 			}
 		})
 	}

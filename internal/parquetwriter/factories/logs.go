@@ -17,6 +17,7 @@ package factories
 import (
 	"fmt"
 
+	"github.com/cardinalhq/lakerunner/internal/fingerprint"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 )
 
@@ -85,8 +86,9 @@ func (a *LogsStatsAccumulator) Add(row map[string]any) {
 		}
 	}
 
-	// Track fingerprints if available
-	if fp, ok := row["_cardinalhq.fingerprint"].(int64); ok {
+	// Generate comprehensive fingerprints for the row
+	rowFingerprints := fingerprint.GenerateRowFingerprints(row)
+	for _, fp := range rowFingerprints.ToSlice() {
 		a.fingerprints[fp] = true
 	}
 }

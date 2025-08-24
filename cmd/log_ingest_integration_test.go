@@ -18,7 +18,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -31,10 +30,9 @@ import (
 func TestLogTranslatorIntegration(t *testing.T) {
 	// Create LogTranslator
 	translator := &LogTranslator{
-		orgID:              "test-org-123",
-		bucket:             "test-bucket",
-		objectID:           "test-logs.json.gz",
-		trieClusterManager: fingerprinter.NewTrieClusterManager(0.5),
+		orgID:    "test-org-123",
+		bucket:   "test-bucket",
+		objectID: "test-logs.json.gz",
 	}
 
 	tests := []struct {
@@ -51,14 +49,15 @@ func TestLogTranslatorIntegration(t *testing.T) {
 				"level":                 "info",
 			},
 			checkFn: func(t *testing.T, result filereader.Row) {
-				// Should have fingerprint calculated
-				assert.Contains(t, result, "_cardinalhq.fingerprint")
-				assert.NotEqual(t, int64(0), result["_cardinalhq.fingerprint"])
-
 				// Should have resource fields added
 				assert.Equal(t, "test-bucket", result["resource.bucket.name"])
 				assert.Equal(t, "./test-logs.json.gz", result["resource.file.name"])
 				assert.Equal(t, "testlogsjson", result["resource.file.type"])
+
+				// Should have CardinalHQ metadata fields added
+				assert.Equal(t, "logs", result["_cardinalhq.telemetry_type"])
+				assert.Equal(t, "log.events", result["_cardinalhq.name"])
+				assert.Equal(t, float64(1), result["_cardinalhq.value"])
 
 				// Original fields should be preserved
 				assert.Equal(t, "test log message", result["_cardinalhq.message"])
@@ -93,8 +92,11 @@ func TestLogTranslatorIntegration(t *testing.T) {
 				"severity":              "warn",
 			},
 			checkFn: func(t *testing.T, result filereader.Row) {
-				// Should have fingerprint
-				assert.Contains(t, result, "_cardinalhq.fingerprint")
+				// Should have resource fields and CardinalHQ metadata
+				assert.Equal(t, "test-bucket", result["resource.bucket.name"])
+				assert.Equal(t, "logs", result["_cardinalhq.telemetry_type"])
+				assert.Equal(t, "log.events", result["_cardinalhq.name"])
+				assert.Equal(t, float64(1), result["_cardinalhq.value"])
 
 				// Timestamp should be preserved as int64
 				ts, ok := result["_cardinalhq.timestamp"].(int64)
@@ -133,10 +135,9 @@ func TestLogTranslatorWithParquetWriter(t *testing.T) {
 
 	// Create LogTranslator
 	translator := &LogTranslator{
-		orgID:              "test-org",
-		bucket:             "test-bucket",
-		objectID:           "integration-test.json.gz",
-		trieClusterManager: fingerprinter.NewTrieClusterManager(0.5),
+		orgID:    "test-org",
+		bucket:   "test-bucket",
+		objectID: "integration-test.json.gz",
 	}
 
 	// Create logs writer
@@ -189,8 +190,8 @@ func TestLogTranslatorWithParquetWriter(t *testing.T) {
 	stats, ok := results[0].Metadata.(factories.LogsFileStats)
 	require.True(t, ok, "Expected LogsFileStats metadata")
 
-	// Note: All rows have _cardinalhq.message field and generate fingerprints
-	assert.Len(t, stats.Fingerprints, 3) // All 3 rows had _cardinalhq.message to fingerprint
+	// Note: With comprehensive fingerprinting, we expect many fingerprints from all the dimensions
+	assert.Greater(t, len(stats.Fingerprints), 5, "Expected many fingerprints from comprehensive fingerprinting")
 	assert.Equal(t, int64(1640995200000), stats.FirstTS)
 	assert.Equal(t, int64(1640995202000), stats.LastTS)
 
@@ -205,10 +206,9 @@ func TestLogTranslatorWithParquetWriter(t *testing.T) {
 // TestLogTranslatorErrorHandling verifies error handling in the new interface.
 func TestLogTranslatorErrorHandling(t *testing.T) {
 	translator := &LogTranslator{
-		orgID:              "test-org",
-		bucket:             "test-bucket",
-		objectID:           "error-test.json.gz",
-		trieClusterManager: fingerprinter.NewTrieClusterManager(0.5),
+		orgID:    "test-org",
+		bucket:   "test-bucket",
+		objectID: "error-test.json.gz",
 	}
 
 	// Test with nil row (should not panic)
