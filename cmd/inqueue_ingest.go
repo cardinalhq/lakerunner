@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -71,6 +72,8 @@ type IngestLoopContext struct {
 	signal            string
 	ll                *slog.Logger
 	exemplarProcessor *exemplar.Processor
+	processedItems    *int64
+	lastLogTime       *time.Time
 }
 
 func NewIngestLoopContext(ctx context.Context, signal string, assumeRoleSessionName string) (*IngestLoopContext, error) {
@@ -127,7 +130,10 @@ func NewIngestLoopContext(ctx context.Context, signal string, assumeRoleSessionN
 		return processMetricsExemplarsDirect(ctx, organizationID, exemplars, mdb)
 	})
 
-	return &IngestLoopContext{
+	var processedItems int64
+	var lastLogTime time.Time
+
+	loopCtx := &IngestLoopContext{
 		ctx:               ctx,
 		mdb:               mdb,
 		sp:                sp,
@@ -137,7 +143,28 @@ func NewIngestLoopContext(ctx context.Context, signal string, assumeRoleSessionN
 		signal:            signal,
 		ll:                ll,
 		exemplarProcessor: exemplarProcessor,
-	}, nil
+		processedItems:    &processedItems,
+		lastLogTime:       &lastLogTime,
+	}
+
+	// Start periodic activity logging
+	go func() {
+		ticker := time.NewTicker(20 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if *loopCtx.processedItems > 0 && time.Since(*loopCtx.lastLogTime) >= 20*time.Second {
+					ll.Info("Processing activity", slog.Int64("itemsProcessed", *loopCtx.processedItems))
+					*loopCtx.lastLogTime = time.Now()
+				}
+			}
+		}
+	}()
+
+	return loopCtx, nil
 }
 
 // Close cleans up resources
@@ -162,14 +189,9 @@ func IngestLoopWithBatch(loop *IngestLoopContext, processingFx InqueueProcessing
 		default:
 		}
 
-		t0 := time.Now()
-		shouldBackoff, didWork, err := ingestFilesBatch(ctx, loop, processingFx, batchProcessingFx)
+		shouldBackoff, _, err := ingestFilesBatch(ctx, loop, processingFx, batchProcessingFx)
 		if err != nil {
 			return err
-		}
-
-		if didWork {
-			loop.ll.Info("Ingested file(s)", slog.Duration("elapsed", time.Since(t0)))
 		}
 
 		if shouldBackoff {
@@ -261,12 +283,9 @@ func ingestFiles(
 		}
 		return true, false, fmt.Errorf("failed to create temporary directory: %w", err)
 	}
-	ll.Info("Created temporary directory", slog.String("path", tmpdir))
 	defer func() {
 		if err := os.RemoveAll(tmpdir); err != nil {
 			ll.Error("Failed to remove temporary directory", slog.String("path", tmpdir), slog.Any("error", err))
-		} else {
-			ll.Info("Removed temporary directory", slog.String("path", tmpdir))
 		}
 	}()
 
@@ -323,6 +342,9 @@ func ingestFilesBatch(
 		TelemetryType: loop.signal,
 	})
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return true, false, nil
+		}
 		return true, false, fmt.Errorf("failed to find next work: %w", err)
 	}
 
@@ -435,6 +457,8 @@ func ingestFilesBatch(
 	for _, h := range handlers {
 		if err := h.CompleteWork(ctx); err != nil {
 			ll.Error("Failed to complete work", slog.Any("error", err))
+		} else {
+			atomic.AddInt64(loop.processedItems, 1)
 		}
 	}
 	return false, true, nil
@@ -513,6 +537,8 @@ func processSingleItem(ctx context.Context, loop *IngestLoopContext, processFx I
 
 	if err := h.CompleteWork(ctx); err != nil {
 		ll.Error("Failed to complete work", slog.Any("error", err))
+	} else {
+		atomic.AddInt64(loop.processedItems, 1)
 	}
 	return false, true, nil
 }

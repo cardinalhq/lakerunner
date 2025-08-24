@@ -41,6 +41,11 @@ func NewParquetReader(reader io.ReaderAt, size int64) (*ParquetReader, error) {
 	// Use the file's schema to create a GenericReader
 	pfr := parquet.NewGenericReader[map[string]any](pf, pf.Schema())
 
+	// Check if file has data
+	if pf.NumRows() == 0 {
+		return nil, fmt.Errorf("parquet file has no rows")
+	}
+
 	return &ParquetReader{
 		pf:  pf,
 		pfr: pfr,
@@ -64,6 +69,13 @@ func (r *ParquetReader) Read(rows []Row) (int, error) {
 	}
 
 	n, err := r.pfr.Read(parquetRows)
+	if err != nil && err != io.EOF {
+		return 0, fmt.Errorf("parquet reader error: %w", err)
+	}
+	if n == 0 && err == nil {
+		// No data available but no error - treat as EOF
+		return 0, io.EOF
+	}
 
 	// Copy the data back to the provided rows slice
 	for i := 0; i < n; i++ {
