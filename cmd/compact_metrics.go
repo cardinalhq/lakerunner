@@ -91,7 +91,7 @@ func compactRollupItem(
 	args any,
 ) (WorkResult, error) {
 	if !helpers.IsWantedFrequency(inf.FrequencyMs()) {
-		ll.Info("Skipping compaction for unwanted frequency", slog.Int("frequencyMs", int(inf.FrequencyMs())))
+		ll.Debug("Skipping compaction for unwanted frequency", slog.Int("frequencyMs", int(inf.FrequencyMs())))
 		return WorkResultSuccess, nil
 	}
 
@@ -107,7 +107,7 @@ func compactRollupItem(
 		return WorkResultTryAgainLater, err
 	}
 
-	ll.Info("Starting metric compaction",
+	ll.Debug("Starting metric compaction",
 		slog.String("organizationID", inf.OrganizationID().String()),
 		slog.Int("instanceNum", int(inf.InstanceNum())),
 		slog.Int("dateint", int(inf.Dateint())),
@@ -147,7 +147,7 @@ func compactMetricSegments(
 			return WorkResultTryAgainLater, nil
 		}
 
-		ll.Info("Querying for metric segments to compact",
+		ll.Debug("Querying for metric segments to compact",
 			slog.Int("batch", totalBatchesProcessed+1),
 			slog.Time("cursorCreatedAt", cursorCreatedAt),
 			slog.Int64("cursorSegmentID", cursorSegmentID))
@@ -171,16 +171,16 @@ func compactMetricSegments(
 
 		if len(inRows) == 0 {
 			if totalBatchesProcessed == 0 {
-				ll.Info("No input rows to compact, skipping work item")
+				ll.Debug("No input rows to compact, skipping work item")
 			} else {
-				ll.Info("Finished processing all compaction batches",
+				ll.Debug("Finished processing all compaction batches",
 					slog.Int("totalBatches", totalBatchesProcessed),
 					slog.Int("totalSegments", totalSegmentsProcessed))
 			}
 			return WorkResultSuccess, nil
 		}
 
-		ll.Info("Processing compaction batch",
+		ll.Debug("Processing compaction batch",
 			slog.Int("segmentCount", len(inRows)),
 			slog.Int("batch", totalBatchesProcessed+1))
 
@@ -191,11 +191,11 @@ func compactMetricSegments(
 		}
 
 		if !metriccompaction.ShouldCompactMetrics(inRows) {
-			ll.Info("No need to compact metrics in this batch", slog.Int("rowCount", len(inRows)))
+			ll.Debug("No need to compact metrics in this batch", slog.Int("rowCount", len(inRows)))
 
 			if len(inRows) < maxRowsLimit {
 				if totalBatchesProcessed == 0 {
-					ll.Info("No segments need compaction")
+					ll.Debug("No segments need compaction")
 				}
 				return WorkResultSuccess, nil
 			}
@@ -213,13 +213,13 @@ func compactMetricSegments(
 		totalSegmentsProcessed += len(inRows)
 
 		if len(inRows) < maxRowsLimit {
-			ll.Info("Completed all compaction batches",
+			ll.Debug("Completed all compaction batches",
 				slog.Int("totalBatches", totalBatchesProcessed),
 				slog.Int("totalSegments", totalSegmentsProcessed))
 			return WorkResultSuccess, nil
 		}
 
-		ll.Info("Batch completed, checking for more segments",
+		ll.Debug("Batch completed, checking for more segments",
 			slog.Int("processedSegments", len(inRows)),
 			slog.Time("nextCursorCreatedAt", cursorCreatedAt),
 			slog.Int64("nextCursorSegmentID", cursorSegmentID))
@@ -273,7 +273,7 @@ func compactMetricInterval(
 	}
 
 	if len(readers) == 0 {
-		ll.Info("No files to compact, skipping work item")
+		ll.Debug("No files to compact, skipping work item")
 		return nil
 	}
 
@@ -345,7 +345,7 @@ func compactMetricInterval(
 		return fmt.Errorf("finishing writer: %w", err)
 	}
 
-	ll.Info("Compaction completed",
+	ll.Debug("Compaction completed",
 		slog.Int64("totalRows", totalRows),
 		slog.Int("outputFiles", len(results)),
 		slog.Int("inputFiles", len(downloadedFiles)),
