@@ -152,6 +152,11 @@ func (wm *writerManager) processRow(row filereader.Row) (err error) {
 		wm.ll.Debug("Added missing timestamp to row", slog.Int64("timestamp", ts))
 	}
 
+	// Ensure required CardinalhQ fields are set
+	row["_cardinalhq.telemetry_type"] = "logs"
+	row["_cardinalhq.name"] = "log.events"
+	row["_cardinalhq.value"] = float64(1)
+
 	// Determine hour - always use slot 0 as requested
 	dateint, hour16 := helpers.MSToDateintHour(ts)
 	hour := int(hour16)
@@ -222,6 +227,18 @@ func (wm *writerManager) closeAll(ctx context.Context) ([]parquetwriter.Result, 
 // createLogReader creates the appropriate filereader based on file type
 func createLogReader(filename string) (filereader.Reader, error) {
 	return filereader.ReaderForFile(filename, filereader.SignalTypeLogs)
+}
+
+// createLogReaderWithTranslation creates a filereader with protobuf translation options
+func createLogReaderWithTranslation(filename, orgID, bucket, objectID string, trieClusterManager *fingerprinter.TrieClusterManager) (filereader.Reader, error) {
+	opts := filereader.ReaderOptions{
+		SignalType:         filereader.SignalTypeLogs,
+		OrgID:              orgID,
+		Bucket:             bucket,
+		ObjectID:           objectID,
+		TrieClusterManager: trieClusterManager,
+	}
+	return filereader.ReaderForFileWithOptions(filename, opts)
 }
 
 func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
@@ -317,28 +334,30 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 		}
 
 		// Create appropriate reader for the file type
-		reader, err := createLogReader(tmpfilename)
+		var reader filereader.Reader
+
+		// Use specialized reader creation for protobuf files
+		if strings.HasSuffix(inf.ObjectID, ".binpb") || strings.HasSuffix(inf.ObjectID, ".binpb.gz") {
+			reader, err = createLogReaderWithTranslation(tmpfilename, firstItem.OrganizationID.String(), inf.Bucket, inf.ObjectID, sharedTrieClusterManager)
+		} else {
+			reader, err = createLogReader(tmpfilename)
+			if err == nil {
+				// Add general translator for non-protobuf files
+				translator := &LogTranslator{
+					orgID:              firstItem.OrganizationID.String(),
+					bucket:             inf.Bucket,
+					objectID:           inf.ObjectID,
+					trieClusterManager: sharedTrieClusterManager,
+				}
+				reader, err = filereader.NewTranslatingReader(reader, translator)
+			}
+		}
+
 		if err != nil {
 			ll.Warn("Unsupported or problematic file type, skipping",
 				slog.String("objectID", inf.ObjectID),
 				slog.String("error", err.Error()))
 			continue
-		}
-
-		// Add translator for fingerprinting and resource metadata
-		translator := &LogTranslator{
-			orgID:              firstItem.OrganizationID.String(),
-			bucket:             inf.Bucket,
-			objectID:           inf.ObjectID,
-			trieClusterManager: sharedTrieClusterManager,
-		}
-		var err2 error
-		reader, err2 = filereader.NewTranslatingReader(reader, translator)
-		if err2 != nil {
-			if closeErr := reader.Close(); closeErr != nil {
-				ll.Warn("Failed to close reader after translation error", slog.String("objectID", inf.ObjectID), slog.Any("error", closeErr))
-			}
-			return fmt.Errorf("failed to create translating reader: %w", err2)
 		}
 
 		// Process all rows from the file
