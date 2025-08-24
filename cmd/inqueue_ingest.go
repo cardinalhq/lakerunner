@@ -156,8 +156,9 @@ func NewIngestLoopContext(ctx context.Context, signal string, assumeRoleSessionN
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if *loopCtx.processedItems > 0 && time.Since(*loopCtx.lastLogTime) >= 20*time.Second {
-					ll.Info("Processing activity", slog.Int64("itemsProcessed", *loopCtx.processedItems))
+				processedCount := atomic.LoadInt64(loopCtx.processedItems)
+				if processedCount > 0 && time.Since(*loopCtx.lastLogTime) >= 20*time.Second {
+					ll.Info("Processing activity", slog.Int64("itemsProcessed", processedCount))
 					*loopCtx.lastLogTime = time.Now()
 				}
 			}
