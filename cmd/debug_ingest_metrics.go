@@ -24,6 +24,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/cardinalhq/lakerunner/internal/filereader"
+	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
 )
 
@@ -77,10 +78,10 @@ func debugIngestMetrics(tmpdir string, files []string) error {
 		}
 
 		// Add translator (similar to real ingestion)
-		translator := &MetricTranslator{
-			orgID:    "debug-org-id",
-			bucket:   "debug-bucket",
-			objectID: filename,
+		translator := &metricsprocessing.MetricTranslator{
+			OrgID:    "debug-org-id",
+			Bucket:   "debug-bucket",
+			ObjectID: filename,
 		}
 		reader, err = filereader.NewTranslatingReader(reader, translator)
 		if err != nil {

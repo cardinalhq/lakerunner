@@ -15,6 +15,7 @@
 package helpers
 
 import (
+	"fmt"
 	"slices"
 	"time"
 
@@ -157,4 +158,30 @@ func EncodeSketch(sketch *ddsketch.DDSketch) []byte {
 	var buf []byte
 	sketch.Encode(&buf, false)
 	return buf
+}
+
+// MetricsOrderKeyFunc returns the ordering key function for metrics.
+// Orders by [metric name, TID] for efficient grouping during ingestion and compaction.
+func MetricsOrderKeyFunc() func(row map[string]any) any {
+	return func(row map[string]any) any {
+		name, nameOk := row["_cardinalhq.name"].(string)
+		tid, tidOk := row["_cardinalhq.tid"].(int64)
+		if nameOk && tidOk {
+			return fmt.Sprintf("%s:%d", name, tid)
+		}
+		return ""
+	}
+}
+
+// MetricsGroupKeyFunc returns the grouping key function for metrics.
+// Groups by [metric name, TID] - don't split groups with same name+TID across files.
+func MetricsGroupKeyFunc() func(row map[string]any) any {
+	return func(row map[string]any) any {
+		name, nameOk := row["_cardinalhq.name"].(string)
+		tid, tidOk := row["_cardinalhq.tid"].(int64)
+		if nameOk && tidOk {
+			return fmt.Sprintf("%s:%d", name, tid)
+		}
+		return nil
+	}
 }
