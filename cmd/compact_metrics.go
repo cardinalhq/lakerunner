@@ -293,24 +293,20 @@ func compactMetricInterval(
 	}
 	defer orderedReader.Close()
 
-	// Calculate target file size and bytes per record for parquet writer
-	bytesPerRecord := float64(rpfEstimate)
-	if bytesPerRecord <= 0 {
-		bytesPerRecord = 512 // Default estimate
+	// Use records per file estimate directly
+	recordsPerFile := rpfEstimate
+	if recordsPerFile <= 0 {
+		recordsPerFile = 10_000 // Default when no estimate available
 	}
 
 	// Create metrics writer using the factory
 	baseName := fmt.Sprintf("compacted_metrics_%d", time.Now().Unix())
-	writer, err := factories.NewMetricsWriter(baseName, tmpdir, 1_100_000, bytesPerRecord)
+	writer, err := factories.NewMetricsWriter(baseName, tmpdir, 1_100_000, recordsPerFile)
 	if err != nil {
 		ll.Error("Failed to create metrics writer", slog.Any("error", err))
 		return fmt.Errorf("creating metrics writer: %w", err)
 	}
-	defer func() {
-		if _, err := writer.Close(ctx); err != nil {
-			ll.Error("Failed to close writer", slog.Any("error", err))
-		}
-	}()
+	defer writer.Abort()
 
 	// Process all data through the ordered reader and writer
 	const batchSize = 1000
@@ -352,7 +348,8 @@ func compactMetricInterval(
 	ll.Info("Compaction completed",
 		slog.Int64("totalRows", totalRows),
 		slog.Int("outputFiles", len(results)),
-		slog.Int("inputFiles", len(downloadedFiles)))
+		slog.Int("inputFiles", len(downloadedFiles)),
+		slog.Int64("recordsPerFile", recordsPerFile))
 
 	// Upload results and update database
 	compactionParams := metricsprocessing.CompactionUploadParams{

@@ -32,7 +32,7 @@ import (
 func init() {
 	var tmpdir string
 	var files []string
-	var bytesPerRecord float64
+	var recordsPerFile int64
 	var targetFileSize int64
 
 	cmd := &cobra.Command{
@@ -44,13 +44,13 @@ func init() {
 		Use:   "metrics",
 		Short: "Debug metrics compaction processing",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return debugCompactMetrics(tmpdir, files, bytesPerRecord, targetFileSize)
+			return debugCompactMetrics(tmpdir, files, recordsPerFile, targetFileSize)
 		},
 	}
 
 	metricsCmd.Flags().StringVar(&tmpdir, "tmpdir", "/tmp", "Temporary directory for processing")
 	metricsCmd.Flags().StringArrayVar(&files, "file", nil, "Input files to compact (can be repeated)")
-	metricsCmd.Flags().Float64Var(&bytesPerRecord, "bytes-per-record", 512.0, "Estimated bytes per record")
+	metricsCmd.Flags().Int64Var(&recordsPerFile, "records-per-file", 10000, "Estimated records per file")
 	metricsCmd.Flags().Int64Var(&targetFileSize, "target-size", 1_100_000, "Target file size in bytes")
 	_ = metricsCmd.MarkFlagRequired("file")
 
@@ -58,14 +58,14 @@ func init() {
 	debugCmd.AddCommand(cmd)
 }
 
-func debugCompactMetrics(tmpdir string, files []string, bytesPerRecord float64, targetFileSize int64) error {
+func debugCompactMetrics(tmpdir string, files []string, recordsPerFile int64, targetFileSize int64) error {
 	ll := slog.Default()
 	ctx := context.Background()
 
 	ll.Info("Debug metrics compaction",
 		slog.String("tmpdir", tmpdir),
 		slog.Int("fileCount", len(files)),
-		slog.Float64("bytesPerRecord", bytesPerRecord),
+		slog.Int64("recordsPerFile", recordsPerFile),
 		slog.Int64("targetFileSize", targetFileSize))
 
 	// Create readers for all input files
@@ -107,7 +107,7 @@ func debugCompactMetrics(tmpdir string, files []string, bytesPerRecord float64, 
 
 	// Create metrics writer using the factory
 	baseName := fmt.Sprintf("debug_compacted_metrics_%d", time.Now().Unix())
-	writer, err := factories.NewMetricsWriter(baseName, tmpdir, targetFileSize, bytesPerRecord)
+	writer, err := factories.NewMetricsWriter(baseName, tmpdir, targetFileSize, recordsPerFile)
 	if err != nil {
 		ll.Error("Failed to create metrics writer", slog.Any("error", err))
 		return fmt.Errorf("creating metrics writer: %w", err)
@@ -180,8 +180,7 @@ func debugCompactMetrics(tmpdir string, files []string, bytesPerRecord float64, 
 	fmt.Printf("Unique [metric,TID] groups: %d\n", len(groupStats))
 	fmt.Printf("Average rows per group: %.1f\n", float64(totalRows)/float64(len(groupStats)))
 	fmt.Printf("Target file size: %d bytes\n", targetFileSize)
-	fmt.Printf("Bytes per record estimate: %.1f\n", bytesPerRecord)
-	fmt.Printf("Expected rows per file: %.0f\n", float64(targetFileSize)/bytesPerRecord)
+	fmt.Printf("Records per file estimate: %d\n", recordsPerFile)
 
 	// Show file results
 	fmt.Printf("\n=== OUTPUT FILES ===\n")

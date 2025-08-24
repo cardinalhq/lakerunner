@@ -23,7 +23,7 @@ import (
 func TestNewMetricsWriter(t *testing.T) {
 	tmpdir := t.TempDir()
 
-	writer, err := NewMetricsWriter("metrics-test", tmpdir, 200, 50.0) // Very small to force splitting
+	writer, err := NewMetricsWriter("metrics-test", tmpdir, 200, 4) // Limit to 4 records per file
 	if err != nil {
 		t.Fatalf("Failed to create metrics writer: %v", err)
 	}

@@ -35,7 +35,7 @@ func TestParquetWriterWithMutatedRows(t *testing.T) {
 		TmpDir:         tmpdir,
 		TargetFileSize: 1000,
 		OrderBy:        OrderNone,
-		BytesPerRecord: 50.0,
+		RecordsPerFile: 20,
 	}
 
 	writer, err := NewUnifiedWriter(config)
@@ -123,7 +123,7 @@ func TestParquetWriterMutationSafety(t *testing.T) {
 		TmpDir:         tmpdir,
 		TargetFileSize: 1000,
 		OrderBy:        OrderNone,
-		BytesPerRecord: 75.0,
+		RecordsPerFile: 15,
 	}
 
 	writer, err := NewUnifiedWriter(config)
@@ -240,7 +240,7 @@ func TestOrderedWriterWithMutations(t *testing.T) {
 		OrderKeyFunc: func(row map[string]any) any {
 			return row["timestamp"].(int64)
 		},
-		BytesPerRecord: 60.0,
+		RecordsPerFile: 17,
 	}
 
 	writer, err := NewUnifiedWriter(config)

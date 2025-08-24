@@ -28,7 +28,6 @@ import (
 // size constraints and grouping requirements.
 type FileSplitter struct {
 	config       WriterConfig
-	currentSize  int64
 	currentRows  int64
 	currentGroup any
 
@@ -66,20 +65,19 @@ func (s *FileSplitter) WriteRow(ctx context.Context, row map[string]any) error {
 
 	// Check if we need to split
 	if s.currentWriter != nil {
-		estimatedRowSize := int64(s.config.BytesPerRecord)
-		projectedSize := s.currentSize + estimatedRowSize
+		projectedRows := s.currentRows + 1
 
 		if s.config.NoSplitGroups && s.config.GroupKeyFunc != nil {
-			// Group-aware splitting: only split on group boundaries when size exceeded
+			// Group-aware splitting: only split on group boundaries when records exceeded
 			newGroup := s.config.GroupKeyFunc(row)
-			if newGroup != s.currentGroup && projectedSize > s.config.TargetFileSize {
+			if newGroup != s.currentGroup && projectedRows > s.config.RecordsPerFile {
 				if err := s.finishCurrentFile(); err != nil {
 					return fmt.Errorf("finish current file: %w", err)
 				}
 			}
 		} else {
-			// No grouping: split purely based on size
-			if projectedSize > s.config.TargetFileSize {
+			// No grouping: split purely based on record count
+			if projectedRows > s.config.RecordsPerFile {
 				if err := s.finishCurrentFile(); err != nil {
 					return fmt.Errorf("finish current file: %w", err)
 				}
@@ -134,7 +132,6 @@ func (s *FileSplitter) startNewFile() error {
 	s.currentFile = file
 	s.currentWriter = nil // Will be created after we have schema from first row
 	s.currentStats = stats
-	s.currentSize = 0
 	s.currentRows = 0
 	// currentGroup will be set when first row is written
 
@@ -175,7 +172,6 @@ func (s *FileSplitter) writeRowToCurrentFile(row map[string]any) error {
 
 	// Update tracking
 	s.currentRows++
-	s.currentSize += int64(s.config.BytesPerRecord)
 
 	// Update group tracking
 	if s.config.GroupKeyFunc != nil {
@@ -250,7 +246,6 @@ func (s *FileSplitter) finishCurrentFile() error {
 
 	s.currentFile = nil
 	s.currentStats = nil
-	s.currentSize = 0
 	s.currentRows = 0
 
 	return nil
