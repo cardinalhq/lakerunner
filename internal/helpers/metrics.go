@@ -18,6 +18,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/DataDog/sketches-go/ddsketch"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/cardinalhq/lakerunner/lrdb"
@@ -148,4 +149,12 @@ func RangeBounds[T int | int16 | int32 | int64 | pgtype.Int8 | time.Time | pgtyp
 	}
 
 	return lower, upper, true
+}
+
+// EncodeSketch encodes a DDSketch to bytes.
+// Extracted from tidprocessing package for use in metrics ingestion.
+func EncodeSketch(sketch *ddsketch.DDSketch) []byte {
+	var buf []byte
+	sketch.Encode(&buf, false)
+	return buf
 }

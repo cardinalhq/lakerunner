@@ -31,6 +31,9 @@ type ProtoMetricsReader struct {
 	// Pre-generated datapoint rows
 	datapointRows []map[string]any
 	currentIndex  int
+
+	// Store the original OTEL metrics for exemplar processing
+	otelMetrics *pmetric.Metrics
 }
 
 // NewProtoMetricsReader creates a new ProtoMetricsReader for the given io.Reader.
@@ -41,8 +44,21 @@ func NewProtoMetricsReader(reader io.Reader) (*ProtoMetricsReader, error) {
 		return nil, fmt.Errorf("failed to parse proto to OTEL metrics: %w", err)
 	}
 
-	protoReader := &ProtoMetricsReader{}
-	protoReader.datapointRows = protoReader.generateDatapointRows(metrics)
+	return NewProtoMetricsReaderFromMetrics(metrics)
+}
+
+// NewProtoMetricsReaderFromMetrics creates a new ProtoMetricsReader from pre-parsed OTEL metrics.
+// This is useful when you need to access the raw OTEL structure for processing (e.g., exemplars)
+// while also reading rows from the same data.
+func NewProtoMetricsReaderFromMetrics(metrics *pmetric.Metrics) (*ProtoMetricsReader, error) {
+	if metrics == nil {
+		return nil, fmt.Errorf("metrics cannot be nil")
+	}
+
+	protoReader := &ProtoMetricsReader{
+		otelMetrics: metrics,
+	}
+	protoReader.datapointRows = protoReader.generateDatapointRows(*metrics)
 
 	return protoReader, nil
 }
@@ -340,7 +356,7 @@ func (r *ProtoMetricsReader) processRow(row map[string]any) (Row, error) {
 }
 
 // generateDatapointRows pre-generates all datapoint rows from the metrics.
-func (r *ProtoMetricsReader) generateDatapointRows(metrics *pmetric.Metrics) []map[string]any {
+func (r *ProtoMetricsReader) generateDatapointRows(metrics pmetric.Metrics) []map[string]any {
 	var rows []map[string]any
 
 	// Iterate through resources -> scopes -> metrics -> datapoints
@@ -445,4 +461,13 @@ func encodeSketch(sketch *ddsketch.DDSketch) []byte {
 	var buf []byte
 	sketch.Encode(&buf, false)
 	return buf
+}
+
+// GetOTELMetrics implements the OTELMetricsProvider interface.
+// Returns the underlying pmetric.Metrics structure for exemplar processing.
+func (r *ProtoMetricsReader) GetOTELMetrics() (any, error) {
+	if r.otelMetrics == nil {
+		return nil, fmt.Errorf("no OTEL metrics available")
+	}
+	return r.otelMetrics, nil
 }

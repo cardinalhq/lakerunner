@@ -29,13 +29,13 @@ func TestNewMetricsWriter(t *testing.T) {
 	}
 	defer writer.Abort()
 
-	// Test TID grouping - these should not be split across files
+	// Test [metric name, TID] grouping - these should not be split across files
 	testData := []map[string]any{
-		{"_cardinalhq.tid": int64(100), "_cardinalhq.timestamp": int64(1000), "value": float64(1.0)},
-		{"_cardinalhq.tid": int64(100), "_cardinalhq.timestamp": int64(2000), "value": float64(2.0)},
-		{"_cardinalhq.tid": int64(100), "_cardinalhq.timestamp": int64(3000), "value": float64(3.0)},
-		{"_cardinalhq.tid": int64(100), "_cardinalhq.timestamp": int64(4000), "value": float64(4.0)}, // This should exceed target size but stay with TID 100
-		{"_cardinalhq.tid": int64(200), "_cardinalhq.timestamp": int64(5000), "value": float64(5.0)}, // New TID, new file
+		{"_cardinalhq.name": "cpu.usage", "_cardinalhq.tid": int64(100), "_cardinalhq.timestamp": int64(1000), "value": float64(1.0)},
+		{"_cardinalhq.name": "cpu.usage", "_cardinalhq.tid": int64(100), "_cardinalhq.timestamp": int64(2000), "value": float64(2.0)},
+		{"_cardinalhq.name": "cpu.usage", "_cardinalhq.tid": int64(100), "_cardinalhq.timestamp": int64(3000), "value": float64(3.0)},
+		{"_cardinalhq.name": "cpu.usage", "_cardinalhq.tid": int64(100), "_cardinalhq.timestamp": int64(4000), "value": float64(4.0)},    // This should exceed target size but stay with same key
+		{"_cardinalhq.name": "memory.usage", "_cardinalhq.tid": int64(200), "_cardinalhq.timestamp": int64(5000), "value": float64(5.0)}, // New metric+TID, new file
 	}
 
 	for _, row := range testData {
@@ -59,23 +59,11 @@ func TestNewMetricsWriter(t *testing.T) {
 	}
 
 	// Check stats
-	expectedTIDs := [][]int64{
-		{100}, // First file should have TID 100
-		{200}, // Second file should have TID 200
-	}
-
 	for i, result := range results {
 		if stats, ok := result.Metadata.(MetricsFileStats); ok {
-			if stats.TIDCount != 1 {
-				t.Errorf("Expected 1 TID per file, got %d", stats.TIDCount)
-			}
-			// Check that we have the actual TID list
-			if len(stats.TIDs) != 1 {
-				t.Errorf("Expected 1 TID in TIDs list, got %d", len(stats.TIDs))
-			}
-			// Check that the TID matches expected
-			if len(expectedTIDs[i]) > 0 && (len(stats.TIDs) == 0 || stats.TIDs[0] != expectedTIDs[i][0]) {
-				t.Errorf("File %d: Expected TID %d, got %v", i, expectedTIDs[i][0], stats.TIDs)
+			// Check that we have fingerprints
+			if len(stats.Fingerprints) == 0 {
+				t.Errorf("Expected fingerprints in file %d, got 0", i)
 			}
 		} else {
 			t.Error("Expected MetricsFileStats metadata")
@@ -92,12 +80,17 @@ func TestValidateMetricsRow(t *testing.T) {
 	}{
 		{
 			name:    "valid row",
-			row:     map[string]any{"_cardinalhq.tid": int64(123)},
+			row:     map[string]any{"_cardinalhq.name": "cpu.usage", "_cardinalhq.tid": int64(123)},
 			wantErr: false,
 		},
 		{
+			name:    "missing metric name",
+			row:     map[string]any{"_cardinalhq.tid": int64(123)},
+			wantErr: true,
+		},
+		{
 			name:    "missing TID",
-			row:     map[string]any{"value": float64(1.0)},
+			row:     map[string]any{"_cardinalhq.name": "cpu.usage"},
 			wantErr: true,
 		},
 		{
@@ -121,13 +114,13 @@ func TestMetricsStatsAccumulator(t *testing.T) {
 	provider := &MetricsStatsProvider{}
 	accumulator := provider.NewAccumulator().(*MetricsStatsAccumulator)
 
-	// Add some test data
+	// Add some test data with metric names and timestamps
 	testData := []map[string]any{
-		{"_cardinalhq.tid": int64(100)},
-		{"_cardinalhq.tid": int64(200)},
-		{"_cardinalhq.tid": int64(100)}, // Duplicate TID
-		{"_cardinalhq.tid": int64(50)},  // Min TID
-		{"_cardinalhq.tid": int64(300)}, // Max TID
+		{"_cardinalhq.name": "cpu.usage", "_cardinalhq.timestamp": int64(1000)},
+		{"_cardinalhq.name": "memory.usage", "_cardinalhq.timestamp": int64(2000)},
+		{"_cardinalhq.name": "cpu.usage", "_cardinalhq.timestamp": int64(3000)},     // Duplicate metric name
+		{"_cardinalhq.name": "disk.io", "_cardinalhq.timestamp": int64(500)},        // Earliest timestamp
+		{"_cardinalhq.name": "network.bytes", "_cardinalhq.timestamp": int64(4000)}, // Latest timestamp
 	}
 
 	for _, row := range testData {
@@ -136,28 +129,17 @@ func TestMetricsStatsAccumulator(t *testing.T) {
 
 	stats := accumulator.Finalize().(MetricsFileStats)
 
-	// Verify basic counts
-	if stats.TIDCount != 4 { // 4 unique TIDs
-		t.Errorf("Expected 4 unique TIDs, got %d", stats.TIDCount)
+	// Verify timestamps
+	if stats.FirstTS != 500 {
+		t.Errorf("Expected firstTS 500, got %d", stats.FirstTS)
+	}
+	if stats.LastTS != 4000 {
+		t.Errorf("Expected lastTS 4000, got %d", stats.LastTS)
 	}
 
-	if stats.MinTID != 50 {
-		t.Errorf("Expected min TID 50, got %d", stats.MinTID)
+	// Verify we have fingerprints
+	if len(stats.Fingerprints) == 0 {
+		t.Error("Expected fingerprints, got none")
 	}
 
-	if stats.MaxTID != 300 {
-		t.Errorf("Expected max TID 300, got %d", stats.MaxTID)
-	}
-
-	// Verify actual TID list is sorted and complete
-	expectedTIDs := []int64{50, 100, 200, 300}
-	if len(stats.TIDs) != len(expectedTIDs) {
-		t.Errorf("Expected %d TIDs in list, got %d", len(expectedTIDs), len(stats.TIDs))
-	}
-
-	for i, expectedTID := range expectedTIDs {
-		if i >= len(stats.TIDs) || stats.TIDs[i] != expectedTID {
-			t.Errorf("Expected TID %d at index %d, got %v", expectedTID, i, stats.TIDs)
-		}
-	}
 }
