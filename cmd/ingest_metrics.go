@@ -159,7 +159,7 @@ func (wm *metricWriterManager) getWriter(key minuteSlotKey) (*parquetwriter.Unif
 		fmt.Sprintf("metrics_%s_%d_%04d_%d", wm.orgID, key.dateint, key.minute, key.slot),
 		wm.tmpdir,
 		50*1024*1024, // 50MB
-		float64(wm.rpfEstimate),
+		wm.rpfEstimate,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create metrics writer: %w", err)

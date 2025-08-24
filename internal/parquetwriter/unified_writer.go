@@ -209,7 +209,7 @@ func (w *UnifiedWriter) GetCurrentStats() WriterStats {
 		Closed: w.closed,
 	}
 
-	stats.BytesPerRecord = w.config.BytesPerRecord
+	stats.RecordsPerFile = w.config.RecordsPerFile
 
 	return stats
 }
@@ -217,5 +217,5 @@ func (w *UnifiedWriter) GetCurrentStats() WriterStats {
 // WriterStats contains current statistics about a writer's state.
 type WriterStats struct {
 	Closed         bool
-	BytesPerRecord float64
+	RecordsPerFile int64
 }

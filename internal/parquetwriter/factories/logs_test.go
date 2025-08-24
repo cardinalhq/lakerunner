@@ -29,7 +29,7 @@ import (
 func TestNewLogsWriter(t *testing.T) {
 	tmpdir := t.TempDir()
 
-	writer, err := NewLogsWriter("logs-test", tmpdir, 10000, 150.0)
+	writer, err := NewLogsWriter("logs-test", tmpdir, 10000, 67)
 	require.NoError(t, err, "Failed to create logs writer")
 	defer writer.Abort()
 

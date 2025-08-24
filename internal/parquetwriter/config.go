@@ -40,8 +40,8 @@ type WriterConfig struct {
 	GroupKeyFunc  func(map[string]any) any
 	NoSplitGroups bool
 
-	// BytesPerRecord is the estimated size in bytes for each record
-	BytesPerRecord float64
+	// RecordsPerFile is the estimated number of records that fit in a target file
+	RecordsPerFile int64
 
 	// Optional stats collection
 	StatsProvider StatsProvider

@@ -248,10 +248,16 @@ func workqueueProcess(
 	switch inf.Signal() {
 	case lrdb.SignalEnumMetrics:
 		estBytesPerRecord = loop.metricEstimator.Get(inf.OrganizationID(), inf.InstanceNum(), inf.FrequencyMs())
+		if estBytesPerRecord <= 0 {
+			estBytesPerRecord = 100 // Default for all signals
+		}
 	case lrdb.SignalEnumLogs:
 		estBytesPerRecord = loop.logEstimator.Get(inf.OrganizationID(), inf.InstanceNum())
+		if estBytesPerRecord <= 0 {
+			estBytesPerRecord = 100 // Default for all signals
+		}
 	default:
-		estBytesPerRecord = 40_000 // Default fallback
+		estBytesPerRecord = 100 // Default for all signals
 	}
 	t0 = time.Now()
 	result, err := pfx(ctx, ll, tmpdir, loop.awsmanager, loop.sp, loop.mdb, inf, estBytesPerRecord, args)
