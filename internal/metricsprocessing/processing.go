@@ -56,9 +56,15 @@ func (t *MetricTranslator) TranslateRow(row *filereader.Row) error {
 	(*row)["_cardinalhq.telemetry_type"] = "metrics"
 
 	// Validate required timestamp field - drop row if missing or invalid
-	if _, ok := (*row)["_cardinalhq.timestamp"].(int64); !ok {
+	timestamp, ok := (*row)["_cardinalhq.timestamp"].(int64)
+	if !ok {
 		return fmt.Errorf("_cardinalhq.timestamp field is missing or not int64")
 	}
+
+	// Truncate timestamp to nearest 10-second interval
+	const tenSecondsMs = int64(10000)
+	truncatedTimestamp := (timestamp / tenSecondsMs) * tenSecondsMs
+	(*row)["_cardinalhq.timestamp"] = truncatedTimestamp
 
 	// Compute and add TID field
 	metricName, nameOk := (*row)["_cardinalhq.name"].(string)
