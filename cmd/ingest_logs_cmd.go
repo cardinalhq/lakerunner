@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"strings"
@@ -25,22 +26,22 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
 
-	"github.com/cardinalhq/lakerunner/cmd/ingestlogs"
-	"github.com/cardinalhq/lakerunner/fileconv/jsongz"
-	protoconv "github.com/cardinalhq/lakerunner/fileconv/proto"
-	"github.com/cardinalhq/lakerunner/fileconv/translate"
+	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
+
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
-	"github.com/cardinalhq/lakerunner/internal/buffet"
-	"github.com/cardinalhq/lakerunner/internal/filecrunch"
+	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
+	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 func init() {
+	var maxItems int
+
 	cmd := &cobra.Command{
 		Use:   "ingest-logs",
 		Short: "Ingest logs from the inqueue table",
@@ -70,6 +71,12 @@ func init() {
 				return fmt.Errorf("failed to create ingest loop context: %w", err)
 			}
 
+			// Check if we should use the old implementation as a safety net
+			if os.Getenv("LAKERUNNER_LOG_OLDPATH") != "" {
+				return runOldLogIngestion(doneCtx, slog.Default(), loop)
+			}
+
+			var processedItems int
 			for {
 				select {
 				case <-doneCtx.Done():
@@ -79,222 +86,153 @@ func init() {
 				}
 
 				err := IngestLoopWithBatch(loop, logIngestItem, logIngestBatch)
+				processedItems++
 				if err != nil {
 					slog.Error("Error in ingest loop", slog.Any("error", err))
+				}
+
+				if maxItems > 0 && processedItems >= maxItems {
+					slog.Info("Reached maximum items limit, exiting",
+						slog.Int("processedItems", processedItems),
+						slog.Int("maxItems", maxItems))
+					return nil
 				}
 			}
 		},
 	}
 
+	cmd.Flags().IntVar(&maxItems, "max-items", 0, "Maximum number of work queue items to process before exiting (0 = unlimited)")
+
 	rootCmd.AddCommand(cmd)
+}
+
+// hourSlotKey uniquely identifies a writer for a specific hour and slot combination
+type hourSlotKey struct {
+	dateint int32
+	hour    int
+	slot    int
+}
+
+// writerManager manages multiple parquet writers, one per hour/slot combination
+type writerManager struct {
+	writers       map[hourSlotKey]*parquetwriter.UnifiedWriter
+	tmpdir        string
+	orgID         string
+	ingestDateint int32
+	rpfEstimate   int64
+	ll            *slog.Logger
+}
+
+func newWriterManager(tmpdir, orgID string, ingestDateint int32, rpfEstimate int64, ll *slog.Logger) *writerManager {
+	return &writerManager{
+		writers:       make(map[hourSlotKey]*parquetwriter.UnifiedWriter),
+		tmpdir:        tmpdir,
+		orgID:         orgID,
+		ingestDateint: ingestDateint,
+		rpfEstimate:   rpfEstimate,
+		ll:            ll,
+	}
+}
+
+// processRow adds a row to the appropriate writer based on timestamp (hour), always using slot 0
+func (wm *writerManager) processRow(row filereader.Row) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			wm.ll.Error("PANIC in processRow", slog.Any("panic", r))
+			err = fmt.Errorf("panic in processRow: %v", r)
+		}
+	}()
+
+	// Extract timestamp, defaulting to current time if missing
+	ts, ok := row["_cardinalhq.timestamp"].(int64)
+	if !ok {
+		// Set to current time if missing or invalid type
+		ts = time.Now().UnixMilli()
+		row["_cardinalhq.timestamp"] = ts
+		wm.ll.Debug("Added missing timestamp to row", slog.Int64("timestamp", ts))
+	}
+
+	// Determine hour - always use slot 0 as requested
+	dateint, hour16 := helpers.MSToDateintHour(ts)
+	hour := int(hour16)
+	slot := 0 // Always use slot 0 for all output files
+
+	// Get or create writer for this hour/slot
+	key := hourSlotKey{dateint, hour, slot}
+	writer, err := wm.getWriter(key)
+	if err != nil {
+		return fmt.Errorf("failed to get writer for key %v: %w", key, err)
+	}
+
+	// Write row
+	err = writer.Write(row)
+	return err
+}
+
+// getWriter returns the writer for a specific hour/slot, creating it if necessary
+func (wm *writerManager) getWriter(key hourSlotKey) (*parquetwriter.UnifiedWriter, error) {
+	if writer, exists := wm.writers[key]; exists {
+		return writer, nil
+	}
+
+	// Create new writer
+	baseName := fmt.Sprintf("logs_%s_%d_%d_%d", wm.orgID, key.dateint, key.hour, key.slot)
+	writer, err := factories.NewLogsWriter(baseName, wm.tmpdir, 50*1024*1024, float64(wm.rpfEstimate))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create logs writer: %w", err)
+	}
+
+	wm.writers[key] = writer
+	wm.ll.Debug("Created new log writer",
+		slog.String("orgID", wm.orgID),
+		slog.Int("dateint", int(key.dateint)),
+		slog.Int("hour", key.hour),
+		slog.Int("slot", key.slot))
+
+	return writer, nil
+}
+
+// closeAll closes all writers and returns their results
+func (wm *writerManager) closeAll(ctx context.Context) ([]parquetwriter.Result, error) {
+	var allResults []parquetwriter.Result
+	var errs []error
+
+	for key, writer := range wm.writers {
+		results, err := writer.Close(ctx)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("failed to close writer %v: %w", key, err))
+			continue
+		}
+		allResults = append(allResults, results...)
+		wm.ll.Debug("Closed log writer",
+			slog.String("orgID", wm.orgID),
+			slog.Int("dateint", int(key.dateint)),
+			slog.Int("hour", key.hour),
+			slog.Int("slot", key.slot),
+			slog.Int("fileCount", len(results)))
+	}
+
+	if len(errs) > 0 {
+		return allResults, errors.Join(errs...)
+	}
+
+	return allResults, nil
+}
+
+// createLogReader creates the appropriate filereader based on file type
+func createLogReader(filename string) (filereader.Reader, error) {
+	return filereader.ReaderForFile(filename, filereader.SignalTypeLogs)
 }
 
 func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
 	awsmanager *awsclient.Manager, inf lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
-	// Extract collector name from object path for proper storage profile lookup
-	var profile storageprofile.StorageProfile
-	var err error
 
-	if collectorName := helpers.ExtractCollectorName(inf.ObjectID); collectorName != "" {
-		// Use collector-specific storage profile
-		profile, err = sp.GetStorageProfileForOrganizationAndCollector(ctx, inf.OrganizationID, collectorName)
-		if err != nil {
-			ll.Error("Failed to get storage profile for collector",
-				slog.String("collectorName", collectorName), slog.Any("error", err))
-			return err
-		}
-	} else {
-		// Use instance-specific storage profile
-		profile, err = sp.GetStorageProfileForOrganizationAndInstance(ctx, inf.OrganizationID, inf.InstanceNum)
-		if err != nil {
-			ll.Error("Failed to get storage profile", slog.Any("error", err))
-			return err
-		}
-	}
-	if profile.Bucket != inf.Bucket {
-		ll.Error("Bucket ID mismatch", slog.String("expected", profile.Bucket), slog.String("actual", inf.Bucket))
-		return errors.New("bucket ID mismatch")
-	}
-
-	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
-	if err != nil {
-		ll.Error("Failed to get S3 client", slog.Any("error", err))
-		return err
-	}
-
-	tmpfilename, _, is404, err := s3helper.DownloadS3Object(ctx, tmpdir, s3client, inf.Bucket, inf.ObjectID)
-	if err != nil {
-		ll.Error("Failed to download S3 object", slog.Any("error", err))
-		return err
-	}
-	if is404 {
-		ll.Info("S3 object not found, deleting inqueue work item", slog.String("bucket", inf.Bucket), slog.String("objectID", inf.ObjectID))
-		return nil
-	}
-
-	filenames := []string{tmpfilename}
-
-	// If the file is not in our `otel-raw` prefix, check if we can convert it
-	if strings.HasPrefix(inf.ObjectID, "otel-raw/") {
-		// Skip database files (these are processed outputs, not inputs)
-		if strings.HasPrefix(inf.ObjectID, "db/") {
-			// TODO add counter for skipped files in the db prefix
-			return nil
-		}
-
-		// Check file type and convert if supported
-		if fnames, err := convertFileIfSupported(ll, tmpfilename, tmpdir, inf.Bucket, inf.ObjectID, rpfEstimate); err != nil {
-			ll.Error("Failed to convert file", slog.Any("error", err))
-			// TODO add counter for failure to convert, probably in each convert function
-			return err
-		} else if len(fnames) == 0 {
-			ll.Info("Empty source file, skipping", slog.String("objectID", inf.ObjectID))
-			return nil
-		} else if fnames != nil {
-			filenames = fnames
-		}
-	}
-
-	for _, fname := range filenames {
-		fh, err := filecrunch.LoadSchemaForFile(fname)
-		if err != nil {
-			ll.Error("Failed to load schema for file", slog.Any("error", err))
-			return err
-		}
-		defer func() {
-			_ = fh.Close()
-		}()
-		splitResults, err := buffet.ProcessAndSplit(ll, fh, tmpdir, ingest_dateint, rpfEstimate)
-		if err != nil {
-			ll.Error("Failed to fingerprint file", slog.Any("error", err))
-			return err
-		}
-
-		// First, validate that all split results have proper hour boundaries
-		// and collect unique slot+hour combinations for work queue creation
-		slotHourTriggers := make(map[SlotHourBoundary]int64) // maps slot+hour boundary to earliest FirstTS
-
-		for key, split := range splitResults {
-			// Validate that this split doesn't cross hour boundaries - this would be a bug in split logic
-			splitTimeRange := helpers.TimeRange{
-				Start: helpers.UnixMillisToTime(split.FirstTS),
-				End:   helpers.UnixMillisToTime(split.LastTS + 1), // +1 because end is exclusive in our ranges
-			}
-
-			if !helpers.IsSameDateintHour(splitTimeRange) {
-				ll.Error("Split result crosses hour boundaries - this is a bug in split logic",
-					slog.Any("key", key),
-					slog.Int64("firstTS", split.FirstTS),
-					slog.Int64("lastTS", split.LastTS),
-					slog.Time("firstTime", splitTimeRange.Start),
-					slog.Time("lastTime", splitTimeRange.End))
-				return fmt.Errorf("split result for key %v crosses hour boundaries: %d to %d", key, split.FirstTS, split.LastTS)
-			}
-
-			// Verify the key's dateint/hour matches the actual time range
-			expectedDateint, expectedHour := helpers.MSToDateintHour(split.FirstTS)
-			if key.DateInt != expectedDateint || key.Hour != expectedHour {
-				ll.Error("Split key doesn't match actual time range - this is a bug in split logic",
-					slog.Any("key", key),
-					slog.Int("expectedDateint", int(expectedDateint)),
-					slog.Int("expectedHour", int(expectedHour)),
-					slog.Int64("firstTS", split.FirstTS))
-				return fmt.Errorf("split key dateint/hour (%d/%d) doesn't match time range dateint/hour (%d/%d)",
-					key.DateInt, key.Hour, expectedDateint, expectedHour)
-			}
-
-			// Calculate slot_id using the first fingerprint (or 0 if none)
-			fps := split.Fingerprints.ToSlice()
-			var firstFingerprint int64
-			if len(fps) > 0 {
-				firstFingerprint = fps[0]
-			}
-			slotID := ingestlogs.DetermineLogSlot(firstFingerprint, key.DateInt, inf.OrganizationID.String())
-
-			// Collect unique slot+hour boundaries for work queue creation
-			hourBoundary := helpers.HourBoundary{DateInt: key.DateInt, Hour: key.Hour}
-			slotHourKey := SlotHourBoundary{SlotID: slotID, HourBoundary: hourBoundary}
-			if existingTS, exists := slotHourTriggers[slotHourKey]; !exists || split.FirstTS < existingTS {
-				slotHourTriggers[slotHourKey] = split.FirstTS
-			}
-		}
-
-		// Process each split result - upload files and insert into database
-		for key, split := range splitResults {
-			segmentID := s3helper.GenerateID()
-			dbObjectID := helpers.MakeDBObjectID(inf.OrganizationID, inf.CollectorName, key.DateInt, s3helper.HourFromMillis(split.FirstTS), segmentID, "logs")
-
-			if err := s3helper.UploadS3Object(ctx, s3client, inf.Bucket, dbObjectID, split.FileName); err != nil {
-				ll.Error("Failed to upload S3 object", slog.Any("error", err))
-				return err
-			}
-			_ = os.Remove(split.FileName)
-
-			fps := split.Fingerprints.ToSlice()
-			t0 := time.Now()
-			split.LastTS++ // end is exclusive, so we need to increment it by 1ms
-			// Calculate slot_id using the first fingerprint (or 0 if none)
-			var firstFingerprint int64
-			if len(fps) > 0 {
-				firstFingerprint = fps[0]
-			}
-			slotID := ingestlogs.DetermineLogSlot(firstFingerprint, key.DateInt, inf.OrganizationID.String())
-
-			err = mdb.InsertLogSegment(ctx, lrdb.InsertLogSegmentParams{
-				OrganizationID: inf.OrganizationID,
-				Dateint:        key.DateInt,
-				IngestDateint:  ingest_dateint,
-				SegmentID:      segmentID,
-				InstanceNum:    inf.InstanceNum,
-				SlotID:         int32(slotID),
-				StartTs:        split.FirstTS,
-				EndTs:          split.LastTS,
-				RecordCount:    split.RecordCount,
-				FileSize:       split.FileSize,
-				CreatedBy:      lrdb.CreatedByIngest,
-				Fingerprints:   fps,
-			})
-			dbExecDuration.Record(ctx, time.Since(t0).Seconds(),
-				metric.WithAttributeSet(commonAttributes),
-				metric.WithAttributes(
-					attribute.Bool("hasError", err != nil),
-					attribute.String("queryName", "InsertLogSegment"),
-				))
-			if err != nil {
-				ll.Error("Failed to insert log segments", slog.Any("error", err))
-				return err
-			}
-
-		}
-
-		// Create work queue items for log compaction - one per slot+hour combination
-		// This follows the same pattern as traces but with slot-based grouping
-		for slotHourKey, earliestTS := range slotHourTriggers {
-			ll.Info("Queueing log compaction for slot+hour",
-				slog.Int("slotID", slotHourKey.SlotID),
-				slog.Int("dateint", int(slotHourKey.HourBoundary.DateInt)),
-				slog.Int("hour", int(slotHourKey.HourBoundary.Hour)),
-				slog.Int64("triggerTS", earliestTS))
-
-			// Create hour-aligned timestamp for the work queue (same as logs)
-			hourAlignedTS := helpers.TruncateToHour(helpers.UnixMillisToTime(earliestTS)).UnixMilli()
-
-			if err := queueLogCompactionForSlot(ctx, mdb, inf, slotHourKey.SlotID, slotHourKey.HourBoundary.DateInt, hourAlignedTS); err != nil {
-				ll.Error("Failed to queue log compaction",
-					slog.Any("slotHourKey", slotHourKey),
-					slog.Int64("triggerTS", earliestTS),
-					slog.Any("error", err))
-				return err
-			}
-		}
-	}
-
-	return nil
+	// Convert single item to batch and process
+	return logIngestBatch(ctx, ll, tmpdir, sp, mdb, awsmanager, []lrdb.Inqueue{inf}, ingest_dateint, rpfEstimate, loop)
 }
 
 // queueLogCompactionForSlot queues a log compaction job for a specific slot
 func queueLogCompactionForSlot(ctx context.Context, mdb lrdb.StoreFull, inf lrdb.Inqueue, slotID int, dateint int32, hourAlignedTS int64) error {
-
 	return mdb.WorkQueueAdd(ctx, lrdb.WorkQueueAddParams{
 		OrgID:      inf.OrganizationID,
 		Instance:   inf.InstanceNum,
@@ -308,194 +246,7 @@ func queueLogCompactionForSlot(ctx context.Context, mdb lrdb.StoreFull, inf lrdb
 	})
 }
 
-// convertFileIfSupported checks the file type and converts it if supported.
-// Returns nil if the file type is not supported (file will be skipped).
-func convertFileIfSupported(ll *slog.Logger, tmpfilename, tmpdir, bucket, objectID string, rpfEstimate int64) ([]string, error) {
-	// TODO add a counter for each type we process, and a counter for unsupported types
-	// Include the signal type in the attributes, as well as the converter used, and the extension found.
-	switch {
-	case strings.HasSuffix(objectID, ".parquet"):
-		return ingestlogs.ConvertRawParquet(tmpfilename, tmpdir, bucket, objectID, rpfEstimate)
-	case strings.HasSuffix(objectID, ".json.gz"):
-		return convertJSONGzFile(tmpfilename, tmpdir, bucket, objectID, rpfEstimate)
-	case strings.HasSuffix(objectID, ".binpb"):
-		return convertProtoFile(tmpfilename, tmpdir, bucket, objectID, rpfEstimate)
-	default:
-		ll.Warn("Unsupported file type, skipping", slog.String("objectID", objectID))
-		return nil, nil
-	}
-}
-
-// convertJSONGzFile converts a JSON.gz file to the standardized format
-func convertJSONGzFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate int64) ([]string, error) {
-	// Create a mapper that recognizes "date" as a timestamp field
-	mapper := translate.NewMapper(
-		translate.WithTimestampColumn("date"),
-		translate.WithTimeFormat(time.RFC3339Nano),
-	)
-
-	r, err := jsongz.NewJSONGzReader(tmpfilename, mapper, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer r.Close()
-
-	nmb := buffet.NewNodeMapBuilder()
-
-	baseitems := map[string]string{
-		"resource.bucket.name": bucket,
-		"resource.file.name":   "./" + objectID,
-		"resource.file.type":   ingestlogs.GetFileType(objectID),
-	}
-
-	// First pass: read all rows to build complete schema
-	allRows := make([]map[string]any, 0)
-	for {
-		row, done, err := r.GetRow()
-		if err != nil {
-			return nil, err
-		}
-		if done {
-			break
-		}
-
-		// Add base items to the row
-		for k, v := range baseitems {
-			row[k] = v
-		}
-
-		// Add row to schema builder
-		if err := nmb.Add(row); err != nil {
-			return nil, fmt.Errorf("failed to add row to schema: %w", err)
-		}
-
-		allRows = append(allRows, row)
-	}
-
-	if len(allRows) == 0 {
-		return nil, fmt.Errorf("no rows processed")
-	}
-
-	// Create writer with complete schema
-	w, err := buffet.NewWriter("fileconv", tmpdir, nmb.Build(), rpfEstimate)
-	if err != nil {
-		return nil, err
-	}
-
-	var closed bool
-	defer func() {
-		if !closed {
-			_, err := w.Close()
-			if err != buffet.ErrAlreadyClosed && err != nil {
-				slog.Error("Failed to close writer", slog.Any("error", err))
-			}
-		}
-	}()
-
-	// Second pass: write all rows
-	for _, row := range allRows {
-		if err := w.Write(row); err != nil {
-			return nil, fmt.Errorf("failed to write row: %w", err)
-		}
-	}
-
-	result, err := w.Close()
-	if err != nil {
-		return nil, fmt.Errorf("failed to close writer: %w", err)
-	}
-	closed = true
-	if len(result) == 0 {
-		return nil, fmt.Errorf("no records written to file")
-	}
-
-	var fnames []string
-	for _, res := range result {
-		fnames = append(fnames, res.FileName)
-	}
-	return fnames, nil
-}
-
-// convertProtoFile converts a protobuf file to the standardized format
-func convertProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate int64) ([]string, error) {
-	// Create a mapper for protobuf files
-	mapper := translate.NewMapper()
-
-	r, err := protoconv.NewLogsProtoReader(tmpfilename, mapper, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer r.Close()
-
-	nmb := buffet.NewNodeMapBuilder()
-
-	baseitems := map[string]string{
-		"resource.bucket.name": bucket,
-		"resource.file.name":   "./" + objectID,
-		"resource.file.type":   ingestlogs.GetFileType(objectID),
-	}
-
-	// First pass: read all rows to build complete schema
-	allRows := make([]map[string]any, 0)
-	for {
-		row, done, err := r.GetRow()
-		if err != nil {
-			return nil, err
-		}
-		if done {
-			break
-		}
-
-		// Add base items to the row
-		for k, v := range baseitems {
-			row[k] = v
-		}
-
-		// Add row to schema builder
-		if err := nmb.Add(row); err != nil {
-			return nil, fmt.Errorf("failed to add row to schema: %w", err)
-		}
-
-		allRows = append(allRows, row)
-	}
-
-	if len(allRows) == 0 {
-		return nil, fmt.Errorf("no rows processed")
-	}
-
-	// Create writer with complete schema
-	w, err := buffet.NewWriter("fileconv", tmpdir, nmb.Build(), rpfEstimate)
-	if err != nil {
-		return nil, err
-	}
-
-	defer func() {
-		_, err := w.Close()
-		if err != buffet.ErrAlreadyClosed && err != nil {
-			slog.Error("Failed to close writer", slog.Any("error", err))
-		}
-	}()
-
-	// Second pass: write all rows
-	for _, row := range allRows {
-		if err := w.Write(row); err != nil {
-			return nil, fmt.Errorf("failed to write row: %w", err)
-		}
-	}
-
-	result, err := w.Close()
-	if err != nil {
-		return nil, fmt.Errorf("failed to close writer: %w", err)
-	}
-	if len(result) == 0 {
-		return nil, fmt.Errorf("no records written to file")
-	}
-
-	var fnames []string
-	for _, res := range result {
-		fnames = append(fnames, res.FileName)
-	}
-	return fnames, nil
-}
+// Functions removed - now using filereader and parquetwriter packages directly
 
 func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
 	awsmanager *awsclient.Manager, items []lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
@@ -504,12 +255,13 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 		return fmt.Errorf("empty batch")
 	}
 
-	ll.Info("Processing log batch", slog.Int("batchSize", len(items)))
+	ll.Debug("Processing log batch", slog.Int("batchSize", len(items)))
 
+	// Get storage profile and S3 client
+	firstItem := items[0]
 	var profile storageprofile.StorageProfile
 	var err error
 
-	firstItem := items[0]
 	if collectorName := helpers.ExtractCollectorName(firstItem.ObjectID); collectorName != "" {
 		profile, err = sp.GetStorageProfileForOrganizationAndCollector(ctx, firstItem.OrganizationID, collectorName)
 		if err != nil {
@@ -518,7 +270,7 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 	} else {
 		profile, err = sp.GetStorageProfileForOrganizationAndInstance(ctx, firstItem.OrganizationID, firstItem.InstanceNum)
 		if err != nil {
-			return fmt.Errorf("failed to get storage profile for organization and instance: %w", err)
+			return fmt.Errorf("failed to get storage profile: %w", err)
 		}
 	}
 
@@ -527,14 +279,26 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 		return fmt.Errorf("failed to get S3 client: %w", err)
 	}
 
-	allParquetFiles := make([]string, 0)
+	// Create writer manager for organizing output by hour/slot
+	wm := newWriterManager(tmpdir, firstItem.OrganizationID.String(), ingest_dateint, rpfEstimate, ll)
 
+	// Track total rows across all files
+	var batchRowsRead, batchRowsProcessed, batchRowsErrored int64
+
+	// Process each file in the batch
 	for _, inf := range items {
-		ll.Info("Processing batch item",
+		ll.Debug("Processing batch item with filereader",
 			slog.String("itemID", inf.ID.String()),
 			slog.String("objectID", inf.ObjectID),
 			slog.Int64("fileSize", inf.FileSize))
 
+		// Skip database files (processed outputs, not inputs)
+		if strings.HasPrefix(inf.ObjectID, "db/") {
+			ll.Debug("Skipping database file", slog.String("objectID", inf.ObjectID))
+			continue
+		}
+
+		// Download file
 		itemTmpdir := fmt.Sprintf("%s/item_%s", tmpdir, inf.ID.String())
 		if err := os.MkdirAll(itemTmpdir, 0755); err != nil {
 			return fmt.Errorf("creating item tmpdir: %w", err)
@@ -545,127 +309,215 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 			return fmt.Errorf("failed to download file %s: %w", inf.ObjectID, err)
 		}
 		if is404 {
-			ll.Warn("S3 object not found, skipping", slog.String("itemID", inf.ID.String()), slog.String("objectID", inf.ObjectID))
+			ll.Warn("S3 object not found, skipping", slog.String("objectID", inf.ObjectID))
 			continue
 		}
 
-		convertedFiles, err := convertFileIfSupported(ll, tmpfilename, itemTmpdir, inf.Bucket, inf.ObjectID, rpfEstimate)
+		// Create appropriate reader for the file type
+		reader, err := createLogReader(tmpfilename)
 		if err != nil {
-			return fmt.Errorf("failed to convert logs file %s: %w", inf.ObjectID, err)
-		}
-		if convertedFiles == nil {
-			ll.Warn("Unsupported file type, skipping", slog.String("objectID", inf.ObjectID))
+			ll.Warn("Unsupported or problematic file type, skipping",
+				slog.String("objectID", inf.ObjectID),
+				slog.String("error", err.Error()))
 			continue
 		}
 
-		allParquetFiles = append(allParquetFiles, convertedFiles...)
+		// Add translator for fingerprinting and resource metadata
+		translator := &LogTranslator{
+			orgID:              firstItem.OrganizationID.String(),
+			bucket:             inf.Bucket,
+			objectID:           inf.ObjectID,
+			trieClusterManager: fingerprinter.NewTrieClusterManager(0.5),
+		}
+		var err2 error
+		reader, err2 = filereader.NewTranslatingReader(reader, translator)
+		if err2 != nil {
+			reader.Close()
+			return fmt.Errorf("failed to create translating reader: %w", err2)
+		}
+
+		// Process all rows from the file
+		rows := make([]filereader.Row, 100)
+		for i := range rows {
+			rows[i] = make(filereader.Row)
+		}
+		var processedCount, errorCount int64
+		for {
+			n, err := reader.Read(rows)
+
+			// Process any rows we got, even if EOF
+			for i := range n {
+				if rows[i] == nil {
+					ll.Error("Row is nil - skipping", slog.Int("rowIndex", i))
+					continue
+				}
+				err := wm.processRow(rows[i])
+				if err != nil {
+					errorCount++
+					ll.Error("Failed to process row - row will be dropped",
+						slog.String("objectID", inf.ObjectID),
+						slog.Int64("rowNumber", processedCount+int64(i)+1),
+						slog.String("error", err.Error()),
+						slog.Any("rowData", rows[i]))
+					// Continue processing other rows instead of failing the entire batch
+				} else {
+					processedCount++
+				}
+			}
+
+			// Break after processing if we hit EOF or other errors
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				reader.Close()
+				return fmt.Errorf("failed to read from file %s: %w", inf.ObjectID, err)
+			}
+		}
+
+		// Get total rows read from the reader
+		fileRowsRead := reader.RowCount()
+
+		ll.Debug("File processing completed",
+			slog.String("objectID", inf.ObjectID),
+			slog.Int64("rowsRead", fileRowsRead),
+			slog.Int64("rowsProcessed", processedCount),
+			slog.Int64("rowsErrored", errorCount))
+
+		if errorCount > 0 {
+			ll.Warn("Some rows were dropped due to processing errors",
+				slog.String("objectID", inf.ObjectID),
+				slog.Int64("droppedRows", errorCount),
+				slog.Float64("dropRate", float64(errorCount)/float64(fileRowsRead)*100))
+		}
+		reader.Close()
+
+		// Update batch totals
+		batchRowsRead += fileRowsRead
+		batchRowsProcessed += processedCount
+		batchRowsErrored += errorCount
+
+		ll.Debug("Completed processing file", slog.String("objectID", inf.ObjectID))
 	}
 
-	if len(allParquetFiles) == 0 {
-		ll.Info("No files to process in batch")
+	// Close all writers and get results
+	ll.Debug("Closing writers", slog.Int("writerCount", len(wm.writers)))
+	results, err := wm.closeAll(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to close writers: %w", err)
+	}
+	ll.Debug("Closed writers", slog.Int("resultCount", len(results)))
+
+	// Calculate total output records across all result files
+	var totalOutputRecords int64
+	for _, result := range results {
+		totalOutputRecords += result.RecordCount
+	}
+
+	ll.Debug("Batch processing summary",
+		slog.Int64("inputRowsRead", batchRowsRead),
+		slog.Int64("inputRowsProcessed", batchRowsProcessed),
+		slog.Int64("inputRowsErrored", batchRowsErrored),
+		slog.Int64("outputRecordsWritten", totalOutputRecords),
+		slog.Int("outputFiles", len(results)))
+
+	if len(results) == 0 {
+		ll.Warn("No output files generated despite reading rows",
+			slog.Int64("rowsRead", batchRowsRead),
+			slog.Int64("rowsErrored", batchRowsErrored))
 		return nil
 	}
 
-	batchTmpdir := fmt.Sprintf("%s/batch_output", tmpdir)
-	if err := os.MkdirAll(batchTmpdir, 0755); err != nil {
-		return fmt.Errorf("creating batch tmpdir: %w", err)
+	// The critical check: processed rows should equal written records
+	if batchRowsProcessed != totalOutputRecords {
+		ll.Error("CRITICAL: Row count mismatch between processed and written",
+			slog.Int64("rowsProcessed", batchRowsProcessed),
+			slog.Int64("recordsWritten", totalOutputRecords),
+			slog.Int64("difference", batchRowsProcessed-totalOutputRecords))
+		return fmt.Errorf("data loss detected: %d rows processed but only %d written", batchRowsProcessed, totalOutputRecords)
 	}
 
-	finalResults := make(map[buffet.SplitKey]buffet.HourlyResult)
-
-	for _, fname := range allParquetFiles {
-		fh, err := filecrunch.LoadSchemaForFile(fname)
-		if err != nil {
-			return fmt.Errorf("failed to open converted file %s: %w", fname, err)
-		}
-
-		fileResults, err := buffet.ProcessAndSplit(ll, fh, batchTmpdir, ingest_dateint, rpfEstimate)
-		fh.Close()
-		if err != nil {
-			return fmt.Errorf("failed to process and split file %s: %w", fname, err)
-		}
-
-		for key, result := range fileResults {
-			if existing, exists := finalResults[key]; exists {
-				existing.Fingerprints = existing.Fingerprints.Union(result.Fingerprints)
-				if result.FirstTS < existing.FirstTS || existing.FirstTS == 0 {
-					existing.FirstTS = result.FirstTS
-				}
-				if result.LastTS > existing.LastTS {
-					existing.LastTS = result.LastTS
-				}
-				finalResults[key] = existing
-			} else {
-				finalResults[key] = result
-			}
-		}
+	// Also report if we had expected failures
+	if batchRowsErrored > 0 {
+		ll.Warn("Some input rows were dropped due to processing errors",
+			slog.Int64("totalDropped", batchRowsErrored),
+			slog.Float64("dropRate", float64(batchRowsErrored)/float64(batchRowsRead)*100))
 	}
 
-	for key, result := range finalResults {
+	// Upload files and create database segments
+	slotHourTriggers := make(map[hourSlotKey]int64) // Track earliest timestamp per slot/hour for compaction
+
+	for _, result := range results {
+		// Extract metadata from parquetwriter result
+		stats, ok := result.Metadata.(factories.LogsFileStats)
+		if !ok {
+			return fmt.Errorf("expected LogsFileStats metadata, got %T", result.Metadata)
+		}
+
+		// Generate segment ID and upload
 		segmentID := s3helper.GenerateID()
-		dbObjectID := helpers.MakeDBObjectID(firstItem.OrganizationID, firstItem.CollectorName, key.DateInt, s3helper.HourFromMillis(result.FirstTS), segmentID, "logs")
+		dateint, hour16 := helpers.MSToDateintHour(stats.FirstTS)
+		hour := int(hour16)
+		dbObjectID := helpers.MakeDBObjectID(firstItem.OrganizationID, firstItem.CollectorName,
+			dateint, s3helper.HourFromMillis(stats.FirstTS), segmentID, "logs")
 
 		if err := s3helper.UploadS3Object(ctx, s3client, firstItem.Bucket, dbObjectID, result.FileName); err != nil {
 			return fmt.Errorf("failed to upload file to S3: %w", err)
 		}
 		_ = os.Remove(result.FileName)
 
-		fps := result.Fingerprints.ToSlice()
-		resultLastTS := result.LastTS + 1 // end is exclusive, so we need to increment it by 1ms
+		// Always use slot 0 for this segment as requested
+		slotID := 0
+
+		// Insert log segment into database
+		resultLastTS := stats.LastTS + 1 // end is exclusive
 		err := mdb.InsertLogSegment(ctx, lrdb.InsertLogSegmentParams{
 			OrganizationID: firstItem.OrganizationID,
-			Dateint:        key.DateInt,
-			IngestDateint:  key.IngestDateint,
+			Dateint:        dateint,
+			IngestDateint:  ingest_dateint,
 			SegmentID:      segmentID,
 			InstanceNum:    firstItem.InstanceNum,
-			StartTs:        result.FirstTS,
+			SlotID:         int32(slotID),
+			StartTs:        stats.FirstTS,
 			EndTs:          resultLastTS,
 			RecordCount:    result.RecordCount,
 			FileSize:       result.FileSize,
 			CreatedBy:      lrdb.CreatedByIngest,
-			Fingerprints:   fps,
+			Fingerprints:   stats.Fingerprints,
 		})
 		if err != nil {
-			ll.Error("Failed to insert log segments", slog.Any("error", err))
-			return err
+			return fmt.Errorf("failed to insert log segment: %w", err)
 		}
 
-		ll.Info("Inserted log segment from batch",
+		ll.Debug("Inserted log segment",
 			slog.String("organizationID", firstItem.OrganizationID.String()),
-			slog.Int("instanceNum", int(firstItem.InstanceNum)),
-			slog.Int("dateint", int(key.DateInt)),
-			slog.Int("hour", int(key.Hour)),
+			slog.Int("dateint", int(dateint)),
+			slog.Int("hour", hour),
+			slog.Int("slot", slotID),
 			slog.String("dbObjectID", dbObjectID),
 			slog.Int64("segmentID", segmentID),
 			slog.Int64("recordCount", result.RecordCount),
 			slog.Int64("fileSize", result.FileSize),
-		)
-	}
+			slog.Int64("fingerprintCount", int64(len(stats.Fingerprints))))
 
-	// Create work queue items for compaction - one per unique dateint/hour combination
-	hourlyTriggers := make(map[helpers.HourBoundary]int64) // maps hour boundary to earliest FirstTS
-
-	for key, result := range finalResults {
-		hourBoundary := helpers.HourBoundary{DateInt: key.DateInt, Hour: key.Hour}
-		if existingTS, exists := hourlyTriggers[hourBoundary]; !exists || result.FirstTS < existingTS {
-			hourlyTriggers[hourBoundary] = result.FirstTS
+		// Track slot/hour triggers for compaction work queue (slot is always 0)
+		key := hourSlotKey{dateint: dateint, hour: hour, slot: 0}
+		if existingTS, exists := slotHourTriggers[key]; !exists || stats.FirstTS < existingTS {
+			slotHourTriggers[key] = stats.FirstTS
 		}
 	}
 
-	for hourBoundary, earliestTS := range hourlyTriggers {
-		ll.Info("Queueing log compaction for hour from batch",
-			slog.Int("dateint", int(hourBoundary.DateInt)),
-			slog.Int("hour", int(hourBoundary.Hour)),
+	// Queue compaction work for each slot/hour combination
+	for key, earliestTS := range slotHourTriggers {
+		ll.Debug("Queueing log compaction for slot+hour",
+			slog.Int("slotID", key.slot),
+			slog.Int("dateint", int(key.dateint)),
+			slog.Int("hour", key.hour),
 			slog.Int64("triggerTS", earliestTS))
 
-		// Create hour-aligned timestamp for the work queue
 		hourAlignedTS := helpers.TruncateToHour(helpers.UnixMillisToTime(earliestTS)).UnixMilli()
-		if err := queueLogCompaction(ctx, mdb, qmcFromInqueue(firstItem, 3600000, hourAlignedTS)); err != nil {
-			ll.Error("Failed to queue log compaction from batch",
-				slog.Any("hourBoundary", hourBoundary),
-				slog.Int64("triggerTS", earliestTS),
-				slog.Any("error", err))
-			return err
+		if err := queueLogCompactionForSlot(ctx, mdb, firstItem, key.slot, key.dateint, hourAlignedTS); err != nil {
+			return fmt.Errorf("failed to queue log compaction for slot %d: %w", key.slot, err)
 		}
 	}
 
