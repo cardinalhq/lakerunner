@@ -414,7 +414,7 @@ func TestProtoLogsReader_WithTranslator(t *testing.T) {
 	filename := "../../testdata/logs/otel-logs.binpb.gz"
 
 	// Create base proto reader
-	baseReader, err := createProtoBinaryGzReader(filename, SignalTypeLogs)
+	baseReader, err := createProtoBinaryGzReader(filename, ReaderOptions{SignalType: SignalTypeLogs})
 	require.NoError(t, err)
 	defer baseReader.Close()
 
