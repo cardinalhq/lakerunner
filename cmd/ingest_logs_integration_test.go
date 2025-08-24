@@ -137,7 +137,7 @@ func TestCreateLogReaderWithAllSampleFiles(t *testing.T) {
 
 			t.Logf("Testing %s: %s", tt.description, fullPath)
 
-			reader, err := createLogReader(fullPath, tt.objectID)
+			reader, err := createLogReader(fullPath)
 
 			if tt.expectSuccess {
 				require.NoError(t, err, "Expected success for %s but got error: %v", tt.description, err)
@@ -203,7 +203,7 @@ func TestLogIngestPathEndToEnd(t *testing.T) {
 			fullPath := filepath.Join(testdataDir, tf.filename)
 
 			// Test reader creation
-			reader, err := createLogReader(fullPath, tf.objectID)
+			reader, err := createLogReader(fullPath)
 			require.NoError(t, err, "Failed to create reader for %s", tf.description)
 			require.NotNil(t, reader, "Reader is nil for %s", tf.description)
 
@@ -319,7 +319,7 @@ func TestLogTranslatorWithSampleFiles(t *testing.T) {
 			require.NotNil(t, translator, "Failed to create LogTranslator")
 
 			// Create reader
-			reader, err := createLogReader(fullPath, tt.objectID)
+			reader, err := createLogReader(fullPath)
 			require.NoError(t, err, "Failed to create reader for %s", tt.description)
 			require.NotNil(t, reader, "Reader is nil for %s", tt.description)
 			defer reader.Close()
