@@ -282,6 +282,9 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 	// Create writer manager for organizing output by hour/slot
 	wm := newWriterManager(tmpdir, firstItem.OrganizationID.String(), ingest_dateint, rpfEstimate, ll)
 
+	// Create shared TrieClusterManager for the entire batch
+	sharedTrieClusterManager := fingerprinter.NewTrieClusterManager(0.5)
+
 	// Track total rows across all files
 	var batchRowsRead, batchRowsProcessed, batchRowsErrored int64
 
@@ -327,12 +330,14 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 			orgID:              firstItem.OrganizationID.String(),
 			bucket:             inf.Bucket,
 			objectID:           inf.ObjectID,
-			trieClusterManager: fingerprinter.NewTrieClusterManager(0.5),
+			trieClusterManager: sharedTrieClusterManager,
 		}
 		var err2 error
 		reader, err2 = filereader.NewTranslatingReader(reader, translator)
 		if err2 != nil {
-			reader.Close()
+			if closeErr := reader.Close(); closeErr != nil {
+				ll.Warn("Failed to close reader after translation error", slog.String("objectID", inf.ObjectID), slog.Any("error", closeErr))
+			}
 			return fmt.Errorf("failed to create translating reader: %w", err2)
 		}
 
@@ -370,7 +375,9 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 				break
 			}
 			if err != nil {
-				reader.Close()
+				if closeErr := reader.Close(); closeErr != nil {
+					ll.Warn("Failed to close reader after read error", slog.String("objectID", inf.ObjectID), slog.Any("error", closeErr))
+				}
 				return fmt.Errorf("failed to read from file %s: %w", inf.ObjectID, err)
 			}
 		}
@@ -390,7 +397,9 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 				slog.Int64("droppedRows", errorCount),
 				slog.Float64("dropRate", float64(errorCount)/float64(fileRowsRead)*100))
 		}
-		reader.Close()
+		if closeErr := reader.Close(); closeErr != nil {
+			ll.Warn("Failed to close reader", slog.String("objectID", inf.ObjectID), slog.Any("error", closeErr))
+		}
 
 		// Update batch totals
 		batchRowsRead += fileRowsRead
