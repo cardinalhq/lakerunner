@@ -421,6 +421,13 @@ func createMetricReader(filename string) (filereader.Reader, error) {
 
 // uploadMetricResultToS3AndDB uploads a result file to S3 and updates the database
 func uploadMetricResultToS3AndDB(ctx context.Context, ll *slog.Logger, result parquetwriter.Result, inf lrdb.Inqueue, s3client *awsclient.S3Client, mdb lrdb.StoreFull, ingest_dateint int32) error {
+	// Safety check: should never get empty results from the splitter
+	if result.RecordCount == 0 {
+		ll.Error("Received empty result from writer - this should not happen",
+			slog.String("fileName", result.FileName),
+			slog.Int64("recordCount", result.RecordCount))
+		return fmt.Errorf("received empty result file with 0 records")
+	}
 	// Generate segment ID and object ID
 	segmentID := s3helper.GenerateID()
 
@@ -444,11 +451,28 @@ func uploadMetricResultToS3AndDB(ctx context.Context, ll *slog.Logger, result pa
 	if stats, ok := result.Metadata.(factories.MetricsFileStats); ok {
 		fingerprints = stats.Fingerprints
 		startTs = stats.FirstTS
-		endTs = stats.LastTS
+		// Database expects start-inclusive, end-exclusive range [start, end)
+		// So endTs should be LastTS + 1 to include the last timestamp
+		endTs = stats.LastTS + 1
+
+		// Validate timestamp range
+		if startTs == 0 || stats.LastTS == 0 || startTs > stats.LastTS {
+			ll.Error("Invalid timestamp range in metrics file stats",
+				slog.Int64("startTs", startTs),
+				slog.Int64("lastTs", stats.LastTS),
+				slog.Int64("endTs", endTs),
+				slog.Int64("recordCount", result.RecordCount))
+			return fmt.Errorf("invalid timestamp range: startTs=%d, lastTs=%d", startTs, stats.LastTS)
+		}
+
 		ll.Debug("Metric segment stats",
 			slog.Int("fingerprintCount", len(fingerprints)),
 			slog.Int64("startTs", startTs),
 			slog.Int64("endTs", endTs))
+	} else {
+		ll.Error("Failed to extract MetricsFileStats from result metadata",
+			slog.String("metadataType", fmt.Sprintf("%T", result.Metadata)))
+		return fmt.Errorf("missing or invalid MetricsFileStats in result metadata")
 	}
 
 	// Insert segment record

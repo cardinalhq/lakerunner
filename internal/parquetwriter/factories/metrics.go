@@ -98,6 +98,15 @@ func (a *MetricsStatsAccumulator) Add(row map[string]any) {
 				a.lastTS = ts
 			}
 		}
+	} else {
+		// Debug: log when timestamp is missing or wrong type
+		if tsVal, exists := row["_cardinalhq.timestamp"]; exists {
+			// Timestamp exists but wrong type - this could be the issue
+			fmt.Printf("DEBUG: timestamp wrong type: %T = %v\n", tsVal, tsVal)
+		} else {
+			// Timestamp completely missing
+			fmt.Printf("DEBUG: timestamp missing from row\n")
+		}
 	}
 }
 
