@@ -111,13 +111,10 @@ func (t *ProtoBinLogTranslator) TranslateRow(row *Row) error {
 func (t *ProtoBinLogTranslator) calculateFingerprint(row Row) (int64, error) {
 	var message string
 
-	// Try message field names in order of preference for protobuf logs
-	for _, field := range []string{"_cardinalhq.message", "body", "message", "msg"} {
-		if val, ok := row[field]; ok {
-			if str, ok := val.(string); ok && str != "" {
-				message = str
-				break
-			}
+	// Only look at _cardinalhq.message field for protobuf logs
+	if val, ok := row["_cardinalhq.message"]; ok {
+		if str, ok := val.(string); ok && str != "" {
+			message = str
 		}
 	}
 
