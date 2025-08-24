@@ -129,19 +129,22 @@ func (r *ProtoTracesReader) buildSpanRow(rs ptrace.ResourceSpans, ss ptrace.Scop
 
 	// Add resource attributes with prefix
 	rs.Resource().Attributes().Range(func(name string, v pcommon.Value) bool {
-		ret["resource."+name] = v.AsString()
+		value := v.AsString()
+		ret[prefixAttribute(name, "resource")] = value
 		return true
 	})
 
 	// Add scope attributes with prefix
 	ss.Scope().Attributes().Range(func(name string, v pcommon.Value) bool {
-		ret["scope."+name] = v.AsString()
+		value := v.AsString()
+		ret[prefixAttribute(name, "scope")] = value
 		return true
 	})
 
 	// Add span attributes with prefix
 	span.Attributes().Range(func(name string, v pcommon.Value) bool {
-		ret["span."+name] = v.AsString()
+		value := v.AsString()
+		ret[prefixAttribute(name, "span")] = value
 		return true
 	})
 
