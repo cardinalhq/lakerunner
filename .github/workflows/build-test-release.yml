@@ -16,6 +16,7 @@ jobs:
     outputs:
       has-pr: ${{ steps.pr.outputs.has-pr }}
     steps:
+      - uses: actions/checkout@v5
       - name: Check for PR
         id: pr
         env:
