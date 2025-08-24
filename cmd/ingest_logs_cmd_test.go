@@ -112,7 +112,7 @@ func TestCreateLogReader(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			filename := tt.setupFn(t)
 
-			reader, err := createLogReader(filename, tt.objectID)
+			reader, err := createLogReader(filename)
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {
