@@ -130,54 +130,30 @@ func (r *ProtoLogsReader) buildLogRow(rl plog.ResourceLogs, sl plog.ScopeLogs, l
 	// Add resource attributes with prefix
 	rl.Resource().Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
-		if value == "" {
-			return true
-		}
-		if value[0] == '_' {
-			ret[name] = value
-			return true
-		}
-
-		ret["resource."+name] = value
+		ret[prefixAttribute(name, "resource")] = value
 		return true
 	})
 
 	// Add scope attributes with prefix
 	sl.Scope().Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
-		if value == "" {
-			return true
-		}
-		if value[0] == '_' {
-			ret[name] = value
-			return true
-		}
-
-		ret["scope."+name] = value
+		ret[prefixAttribute(name, "scope")] = value
 		return true
 	})
 
 	// Add log attributes with prefix
 	logRecord.Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
-		if value == "" {
-			return true
-		}
-		if value[0] == '_' {
-			ret[name] = value
-			return true
-		}
-
-		ret["log."+name] = value
+		ret[prefixAttribute(name, "log")] = value
 		return true
 	})
 
 	// Add basic log fields
-	ret["body"] = logRecord.Body().AsString()
-	ret["timestamp"] = logRecord.Timestamp().AsTime().UnixMilli()
+	ret["_cardinalhq.message"] = logRecord.Body().AsString()
+	ret["_cardinalhq.timestamp"] = logRecord.Timestamp().AsTime().UnixMilli()
 	ret["observed_timestamp"] = logRecord.ObservedTimestamp().AsTime().UnixMilli()
-	ret["severity_text"] = logRecord.SeverityText()
-	ret["severity_number"] = int32(logRecord.SeverityNumber())
+	ret["_cardinalhq.level"] = logRecord.SeverityText()
+	ret["severity_number"] = int64(logRecord.SeverityNumber())
 
 	return ret
 }
