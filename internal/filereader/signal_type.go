@@ -12,22 +12,30 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package filecrunch
+package filereader
 
-import (
-	"path/filepath"
-	"testing"
+// SignalType represents the type of telemetry signal being processed.
+type SignalType int
 
-	"github.com/parquet-go/parquet-go"
-	"github.com/stretchr/testify/assert"
+const (
+	// SignalTypeLogs represents log data
+	SignalTypeLogs SignalType = iota
+	// SignalTypeMetrics represents metric data
+	SignalTypeMetrics
+	// SignalTypeTraces represents trace data
+	SignalTypeTraces
 )
 
-func TestSchemaForFile_Success(t *testing.T) {
-	// Use a real parquet file from testdata
-	filename := filepath.Join("../../testdata/logs", "logs_1747427310000_667024137.parquet")
-	fh, err := LoadSchemaForFile(filename)
-	assert.NoError(t, err)
-	assert.NotNil(t, fh)
-	defer fh.File.Close()
-	assert.IsType(t, &parquet.Schema{}, fh.Schema)
+// String returns the string representation of the signal type.
+func (s SignalType) String() string {
+	switch s {
+	case SignalTypeLogs:
+		return "logs"
+	case SignalTypeMetrics:
+		return "metrics"
+	case SignalTypeTraces:
+		return "traces"
+	default:
+		return "unknown"
+	}
 }

@@ -24,7 +24,8 @@ import (
 
 // ProtoMetricsReader reads rows from OpenTelemetry protobuf metrics format.
 type ProtoMetricsReader struct {
-	closed bool
+	closed   bool
+	rowCount int64
 
 	// Streaming iterator state for metrics
 	metrics       *pmetric.Metrics
@@ -72,6 +73,11 @@ func (r *ProtoMetricsReader) Read(rows []Row) (int, error) {
 		}
 
 		n++
+	}
+
+	// Update row count with successfully read rows
+	if n > 0 {
+		r.rowCount += int64(n)
 	}
 
 	return n, nil
@@ -157,6 +163,11 @@ func (r *ProtoMetricsReader) Close() error {
 	r.metrics = nil
 
 	return nil
+}
+
+// RowCount returns the total number of rows that have been successfully read.
+func (r *ProtoMetricsReader) RowCount() int64 {
+	return r.rowCount
 }
 
 func parseProtoToOtelMetrics(reader io.Reader) (*pmetric.Metrics, error) {

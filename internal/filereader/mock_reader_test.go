@@ -21,10 +21,11 @@ import (
 
 // mockReader is a test implementation of Reader
 type mockReader struct {
-	rows   []Row
-	index  int
-	closed bool
-	name   string
+	rows     []Row
+	index    int
+	closed   bool
+	name     string
+	rowCount int64
 }
 
 func newMockReader(name string, rows []Row) *mockReader {
@@ -60,6 +61,11 @@ func (m *mockReader) Read(rows []Row) (int, error) {
 		return 0, io.EOF
 	}
 
+	// Update row count with successfully read rows
+	if n > 0 {
+		m.rowCount += int64(n)
+	}
+
 	return n, nil
 }
 
@@ -68,9 +74,14 @@ func (m *mockReader) Close() error {
 	return nil
 }
 
+func (m *mockReader) RowCount() int64 {
+	return m.rowCount
+}
+
 // errorReader is a test reader that always returns errors
 type errorReader struct {
-	closed bool
+	closed   bool
+	rowCount int64
 }
 
 func (e *errorReader) Read(rows []Row) (int, error) {
@@ -83,4 +94,8 @@ func (e *errorReader) Read(rows []Row) (int, error) {
 func (e *errorReader) Close() error {
 	e.closed = true
 	return nil
+}
+
+func (e *errorReader) RowCount() int64 {
+	return e.rowCount
 }

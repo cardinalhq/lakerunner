@@ -27,6 +27,7 @@ type MultiReader struct {
 	readers      []Reader
 	currentIndex int
 	closed       bool
+	rowCount     int64
 }
 
 // NewMultiReader creates a new MultiReader that reads from the provided readers sequentially.
@@ -70,6 +71,11 @@ func (mr *MultiReader) Read(rows []Row) (int, error) {
 		remainingRows := rows[totalRead:]
 		n, err := currentReader.Read(remainingRows)
 		totalRead += n
+
+		// Update our row count with successfully read rows
+		if n > 0 {
+			mr.rowCount += int64(n)
+		}
 
 		if err != nil {
 			if errors.Is(err, io.EOF) {
@@ -135,4 +141,9 @@ func (mr *MultiReader) RemainingReaderCount() int {
 		return 0
 	}
 	return remaining
+}
+
+// RowCount returns the total number of rows that have been successfully read from all readers.
+func (mr *MultiReader) RowCount() int64 {
+	return mr.rowCount
 }

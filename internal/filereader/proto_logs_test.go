@@ -33,7 +33,7 @@ import (
 
 func TestNewProtoLogsReader(t *testing.T) {
 	// Test with valid gzipped protobuf data
-	file, err := os.Open("testdata/otel-logs.binpb.gz")
+	file, err := os.Open("../../testdata/logs/otel-logs.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
@@ -88,7 +88,7 @@ func TestNewProtoLogsReader_EmptyData(t *testing.T) {
 
 func TestProtoLogsReader_Read(t *testing.T) {
 	// Load test data
-	file, err := os.Open("testdata/otel-logs.binpb.gz")
+	file, err := os.Open("../../testdata/logs/otel-logs.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
@@ -131,7 +131,7 @@ func TestProtoLogsReader_Read(t *testing.T) {
 
 func TestProtoLogsReader_ReadBatched(t *testing.T) {
 	// Load test data
-	file, err := os.Open("testdata/otel-logs.binpb.gz")
+	file, err := os.Open("../../testdata/logs/otel-logs.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
@@ -175,7 +175,7 @@ func TestProtoLogsReader_ReadBatched(t *testing.T) {
 
 func TestProtoLogsReader_ReadSingleRow(t *testing.T) {
 	// Load test data
-	file, err := os.Open("testdata/otel-logs.binpb.gz")
+	file, err := os.Open("../../testdata/logs/otel-logs.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
@@ -201,7 +201,7 @@ func TestProtoLogsReader_ReadSingleRow(t *testing.T) {
 
 func TestProtoLogsReader_ResourceAndScopeAttributes(t *testing.T) {
 	// Load test data
-	file, err := os.Open("testdata/otel-logs.binpb.gz")
+	file, err := os.Open("../../testdata/logs/otel-logs.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
@@ -251,7 +251,7 @@ func TestProtoLogsReader_ResourceAndScopeAttributes(t *testing.T) {
 
 func TestProtoLogsReader_EmptySlice(t *testing.T) {
 	// Load test data
-	file, err := os.Open("testdata/otel-logs.binpb.gz")
+	file, err := os.Open("../../testdata/logs/otel-logs.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
@@ -271,7 +271,7 @@ func TestProtoLogsReader_EmptySlice(t *testing.T) {
 
 func TestProtoLogsReader_Close(t *testing.T) {
 	// Load test data
-	file, err := os.Open("testdata/otel-logs.binpb.gz")
+	file, err := os.Open("../../testdata/logs/otel-logs.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
@@ -306,7 +306,7 @@ func TestProtoLogsReader_Close(t *testing.T) {
 
 func TestProtoLogsReader_ExhaustData(t *testing.T) {
 	// Load test data
-	file, err := os.Open("testdata/otel-logs.binpb.gz")
+	file, err := os.Open("../../testdata/logs/otel-logs.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
@@ -336,7 +336,7 @@ func TestProtoLogsReader_ExhaustData(t *testing.T) {
 
 func TestProtoLogsReader_LogFields(t *testing.T) {
 	// Load test data
-	file, err := os.Open("testdata/otel-logs.binpb.gz")
+	file, err := os.Open("../../testdata/logs/otel-logs.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 

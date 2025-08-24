@@ -47,10 +47,12 @@ MERGE_BASE=$(git merge-base HEAD "$BASE_REF")
 # No need to fetch - we're working with the merge-base
 
 # Get list of existing migrations at merge-base (these are the "protected" migrations)
-EXISTING_MIGRATIONS=$(git ls-tree -r --name-only "$MERGE_BASE" -- lrdb/migrations/ configdb/migrations/ | grep '\.sql$' || true)
+# Only consider properly named .up.sql and .down.sql files
+EXISTING_MIGRATIONS=$(git ls-tree -r --name-only "$MERGE_BASE" -- lrdb/migrations/ configdb/migrations/ | grep -E '\.(up|down)\.sql$' || true)
 
 # Get list of new migrations created in current branch (these can be freely modified)
-NEW_MIGRATIONS=$(git diff --name-only --diff-filter=A "$MERGE_BASE..HEAD" -- lrdb/migrations/ configdb/migrations/ | grep '\.sql$' || true)
+# Only consider properly named .up.sql and .down.sql files
+NEW_MIGRATIONS=$(git diff --name-only --diff-filter=A "$MERGE_BASE..HEAD" -- lrdb/migrations/ configdb/migrations/ | grep -E '\.(up|down)\.sql$' || true)
 
 if [ -z "$EXISTING_MIGRATIONS" ]; then
     # No existing migrations to check - silently succeed
@@ -170,6 +172,11 @@ echo "Checking existing migration integrity..."
 while IFS= read -r migration; do
     # Skip if this migration is new in the current branch (can be freely modified)
     if echo "$NEW_MIGRATIONS" | grep -q "^$migration$"; then
+        continue
+    fi
+    
+    # Skip incorrectly named files (only check .up.sql and .down.sql)
+    if [[ ! "$migration" =~ \.(up|down)\.sql$ ]]; then
         continue
     fi
     
