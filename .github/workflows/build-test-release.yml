@@ -9,6 +9,7 @@ permissions:
   contents: write
   id-token: write
   packages: write
+  pull-requests: write
 
 jobs:
   check-pr:
@@ -160,4 +161,59 @@ jobs:
           echo "Test release built successfully!"
           echo "Image: public.ecr.aws/cardinalhq.io/lakerunner:$GORELEASER_CURRENT_TAG"
           echo "Commit: $sha_short"
+
+      - name: Get PR number
+        id: pr-number
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER=$(gh pr list --head "$GITHUB_REF_NAME" --state open --json number --jq '.[0].number')
+          echo "pr-number=$PR_NUMBER" >> $GITHUB_OUTPUT
+
+      - name: Remove previous build comments
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Remove previous comments from github-actions bot about builds
+          gh pr view ${{ steps.pr-number.outputs.pr-number }} --json comments --jq '.comments[] | select(.author.login == "github-actions[bot]" and (.body | contains("Build Complete") or .body | contains("Build Failed"))) | .id' | while read comment_id; do
+            if [ -n "$comment_id" ]; then
+              gh api repos/${{ github.repository }}/issues/comments/$comment_id -X DELETE
+            fi
+          done
+
+      - name: Comment on PR with build info
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr comment ${{ steps.pr-number.outputs.pr-number }} --body "**Build Complete**
+
+          **Image Repository:** \`public.ecr.aws/cardinalhq.io/lakerunner\`
+          **Image Tag:** \`$GORELEASER_CURRENT_TAG\`
+          **Full Image:** \`public.ecr.aws/cardinalhq.io/lakerunner:$GORELEASER_CURRENT_TAG\`
+          **Commit:** \`$sha_short\`
+          
+          **Status:** Success"
+
+      - name: Comment on PR with build failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER=$(gh pr list --head "$GITHUB_REF_NAME" --state open --json number --jq '.[0].number')
+          if [ -n "$PR_NUMBER" ] && [ "$PR_NUMBER" != "null" ]; then
+            # Remove previous build comments
+            gh pr view $PR_NUMBER --json comments --jq '.comments[] | select(.author.login == "github-actions[bot]" and (.body | contains("Build Complete") or .body | contains("Build Failed"))) | .id' | while read comment_id; do
+              if [ -n "$comment_id" ]; then
+                gh api repos/${{ github.repository }}/issues/comments/$comment_id -X DELETE
+              fi
+            done
+            
+            # Add failure comment
+            gh pr comment $PR_NUMBER --body "**Build Failed**
+
+            **Commit:** \`$sha_short\`
+            **Branch:** \`$GITHUB_REF_NAME\`
+            
+            Please check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details."
+          fi
 
