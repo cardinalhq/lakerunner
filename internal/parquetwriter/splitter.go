@@ -53,19 +53,6 @@ func NewFileSplitter(config WriterConfig) *FileSplitter {
 	}
 }
 
-// SplitAllowed returns true if splitting to a new file is permitted at this point.
-// This is only called when the writer wants to split due to size constraints.
-func (s *FileSplitter) SplitAllowed(row map[string]any) bool {
-	// Check if grouping prevents the split
-	if s.config.NoSplitGroups && s.config.GroupKeyFunc != nil {
-		newGroup := s.config.GroupKeyFunc(row)
-		if newGroup == s.currentGroup {
-			return false // Same group, don't split
-		}
-	}
-	return true // Different group or no grouping constraint, allow split
-}
-
 // WriteRow writes a single row to the current file, splitting if necessary.
 func (s *FileSplitter) WriteRow(ctx context.Context, row map[string]any) error {
 	if s.closed {
@@ -77,13 +64,22 @@ func (s *FileSplitter) WriteRow(ctx context.Context, row map[string]any) error {
 		return fmt.Errorf("%w: %v", ErrSchemaViolation, err)
 	}
 
-	// Check if we need to split to a new file (only when size would be exceeded)
+	// Check if we need to split
 	if s.currentWriter != nil {
 		estimatedRowSize := int64(s.config.BytesPerRecord)
 		projectedSize := s.currentSize + estimatedRowSize
 
-		if projectedSize > s.config.TargetFileSize {
-			if s.SplitAllowed(row) {
+		if s.config.NoSplitGroups && s.config.GroupKeyFunc != nil {
+			// Group-aware splitting: only split on group boundaries when size exceeded
+			newGroup := s.config.GroupKeyFunc(row)
+			if newGroup != s.currentGroup && projectedSize > s.config.TargetFileSize {
+				if err := s.finishCurrentFile(); err != nil {
+					return fmt.Errorf("finish current file: %w", err)
+				}
+			}
+		} else {
+			// No grouping: split purely based on size
+			if projectedSize > s.config.TargetFileSize {
 				if err := s.finishCurrentFile(); err != nil {
 					return fmt.Errorf("finish current file: %w", err)
 				}
