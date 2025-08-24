@@ -201,9 +201,6 @@ func (wm *metricWriterManager) closeAll(ctx context.Context) ([]parquetwriter.Re
 			return allResults, fmt.Errorf("failed to close writer %v: %w", key, err)
 		}
 		allResults = append(allResults, results...)
-		wm.ll.Debug("Closed metric writer",
-			slog.Any("key", key),
-			slog.Int("fileCount", len(results)))
 	}
 
 	return allResults, nil
@@ -221,8 +218,6 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 	if len(items) == 0 {
 		return fmt.Errorf("empty batch")
 	}
-
-	ll.Debug("Processing metrics batch", slog.Int("batchSize", len(items)))
 
 	// Get storage profile and S3 client
 	firstItem := items[0]
@@ -254,14 +249,9 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 
 	// Process each file in the batch
 	for _, inf := range items {
-		ll.Debug("Processing batch item with filereader",
-			slog.String("itemID", inf.ID.String()),
-			slog.String("objectID", inf.ObjectID),
-			slog.Int64("fileSize", inf.FileSize))
 
 		// Skip database files (processed outputs, not inputs)
 		if strings.HasPrefix(inf.ObjectID, "db/") {
-			ll.Debug("Skipping database file", slog.String("objectID", inf.ObjectID))
 			continue
 		}
 
@@ -320,17 +310,11 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 			// Process any rows we got, even if EOF
 			for i := range n {
 				if rows[i] == nil {
-					ll.Error("Row is nil - skipping", slog.Int("rowIndex", i))
 					continue
 				}
 				err := wm.processRow(rows[i])
 				if err != nil {
 					errorCount++
-					ll.Error("Failed to process row - row will be dropped",
-						slog.String("objectID", inf.ObjectID),
-						slog.Int64("rowNumber", processedCount+int64(i)+1),
-						slog.String("error", err.Error()),
-						slog.Any("rowData", rows[i]))
 					// Continue processing other rows instead of failing the entire batch
 				} else {
 					processedCount++
@@ -352,12 +336,6 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 		// Get total rows read from the reader
 		fileRowsRead := reader.RowCount()
 
-		ll.Debug("File processing completed",
-			slog.String("objectID", inf.ObjectID),
-			slog.Int64("rowsRead", fileRowsRead),
-			slog.Int64("rowsProcessed", processedCount),
-			slog.Int64("rowsErrored", errorCount))
-
 		if errorCount > 0 {
 			ll.Warn("Some rows were dropped due to processing errors",
 				slog.String("objectID", inf.ObjectID),
@@ -373,7 +351,6 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 		batchRowsProcessed += processedCount
 		batchRowsErrored += errorCount
 
-		ll.Debug("Completed processing file", slog.String("objectID", inf.ObjectID))
 	}
 
 	// Close all writers and get results
@@ -390,13 +367,6 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 		}
 		totalOutputRecords += result.RecordCount
 	}
-
-	ll.Debug("Batch processing summary",
-		slog.Int64("inputRowsRead", batchRowsRead),
-		slog.Int64("inputRowsProcessed", batchRowsProcessed),
-		slog.Int64("inputRowsErrored", batchRowsErrored),
-		slog.Int64("outputRecordsWritten", totalOutputRecords),
-		slog.Int("outputFiles", len(results)))
 
 	if len(results) == 0 {
 		ll.Warn("No output files generated despite reading rows",
@@ -465,10 +435,6 @@ func uploadMetricResultToS3AndDB(ctx context.Context, ll *slog.Logger, result pa
 			return fmt.Errorf("invalid timestamp range: startTs=%d, lastTs=%d", startTs, stats.LastTS)
 		}
 
-		ll.Debug("Metric segment stats",
-			slog.Int("fingerprintCount", len(fingerprints)),
-			slog.Int64("startTs", startTs),
-			slog.Int64("endTs", endTs))
 	} else {
 		ll.Error("Failed to extract MetricsFileStats from result metadata",
 			slog.String("metadataType", fmt.Sprintf("%T", result.Metadata)))
@@ -500,11 +466,6 @@ func uploadMetricResultToS3AndDB(ctx context.Context, ll *slog.Logger, result pa
 		}
 		return fmt.Errorf("inserting metric segment: %w", err)
 	}
-
-	ll.Info("Uploaded metric result to S3 and updated database",
-		slog.String("objectID", objID),
-		slog.Int64("segmentID", segmentID),
-		slog.Int64("recordCount", result.RecordCount))
 
 	return nil
 }
