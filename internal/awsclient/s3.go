@@ -21,7 +21,7 @@ import (
 	"net/http"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go/middleware"
@@ -95,6 +95,9 @@ func WithInsecureTLS() S3Option {
 // WithGCPProvider enables GCP-specific S3 options for GCP Cloud Storage compatibility
 func WithGCPProvider() S3Option {
 	return func(c *s3Config) {
+		c.applyConfigs = append(c.applyConfigs, func(cfg *aws.Config) {
+			cfg.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
+		})
 		c.applyS3s = append(c.applyS3s, func(o *s3.Options) {
 			SignForGCP(o)
 		})
