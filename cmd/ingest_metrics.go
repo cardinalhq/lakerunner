@@ -103,12 +103,17 @@ func (t *MetricTranslator) TranslateRow(row *filereader.Row) error {
 	(*row)["_cardinalhq.customer_id"] = t.orgID
 	(*row)["_cardinalhq.telemetry_type"] = "metrics"
 
+	// Validate required timestamp field - drop row if missing or invalid
+	if _, ok := (*row)["_cardinalhq.timestamp"].(int64); !ok {
+		return fmt.Errorf("_cardinalhq.timestamp field is missing or not int64")
+	}
+
 	// Compute and add TID field
 	metricName, nameOk := (*row)["_cardinalhq.name"].(string)
 	if !nameOk {
 		return fmt.Errorf("missing or invalid _cardinalhq.name field for TID computation")
 	}
-	
+
 	tid := helpers.ComputeTID(metricName, *row)
 	(*row)["_cardinalhq.tid"] = tid
 
@@ -436,9 +441,8 @@ func uploadMetricResultToS3AndDB(ctx context.Context, ll *slog.Logger, result pa
 		dateint = int32(t.Year()*10000 + int(t.Month())*100 + t.Day())
 		hour = int16(t.Hour())
 	} else {
-		// Fallback to ingest dateint if no timestamp available
-		dateint = ingest_dateint
-		hour = int16(0)
+		// No valid timestamps - this shouldn't happen if validation worked correctly
+		return fmt.Errorf("no valid timestamps in result metadata - cannot determine dateint/hour")
 	}
 
 	objID := helpers.MakeDBObjectID(inf.OrganizationID, inf.CollectorName, dateint, hour, segmentID, "metrics")
