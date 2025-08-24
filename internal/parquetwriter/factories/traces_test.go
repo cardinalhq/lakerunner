@@ -26,7 +26,7 @@ func TestNewTracesWriter(t *testing.T) {
 	tmpdir := t.TempDir()
 
 	slotID := int32(42)
-	writer, err := NewTracesWriter("traces-test", tmpdir, 10000, slotID, 200.0)
+	writer, err := NewTracesWriter("traces-test", tmpdir, 10000, slotID, 50)
 	if err != nil {
 		t.Fatalf("Failed to create traces writer: %v", err)
 	}

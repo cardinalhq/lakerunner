@@ -305,10 +305,16 @@ func ingestFiles(
 	switch lrdb.SignalEnum(inf.TelemetryType) {
 	case lrdb.SignalEnumMetrics:
 		rpfEstimate = loop.metricEstimator.Get(inf.OrganizationID, inf.InstanceNum, 10_000)
+		if rpfEstimate <= 0 {
+			rpfEstimate = 100 // Default for all signals
+		}
 	case lrdb.SignalEnumLogs:
 		rpfEstimate = loop.logEstimator.Get(inf.OrganizationID, inf.InstanceNum)
+		if rpfEstimate <= 0 {
+			rpfEstimate = 100 // Default for all signals
+		}
 	default:
-		rpfEstimate = 40_000 // Default fallback
+		rpfEstimate = 100 // Default fallback
 	}
 	t0 = time.Now()
 	err = processFx(ctx, ll, tmpdir, loop.sp, loop.mdb, loop.awsmanager, inf, ingestDateint, rpfEstimate, loop)
@@ -535,10 +541,16 @@ func processSingleItem(ctx context.Context, loop *IngestLoopContext, processFx I
 	switch lrdb.SignalEnum(inf.TelemetryType) {
 	case lrdb.SignalEnumMetrics:
 		rpfEstimate = loop.metricEstimator.Get(inf.OrganizationID, inf.InstanceNum, 10_000)
+		if rpfEstimate <= 0 {
+			rpfEstimate = 100 // Default for all signals
+		}
 	case lrdb.SignalEnumLogs:
 		rpfEstimate = loop.logEstimator.Get(inf.OrganizationID, inf.InstanceNum)
+		if rpfEstimate <= 0 {
+			rpfEstimate = 100 // Default for all signals
+		}
 	default:
-		rpfEstimate = 40_000
+		rpfEstimate = 100
 	}
 
 	ingestDateint, _ := helpers.MSToDateintHour(time.Now().UTC().UnixMilli())

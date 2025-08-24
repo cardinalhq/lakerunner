@@ -35,7 +35,7 @@ func TestUnifiedWriter_Basic(t *testing.T) {
 		TmpDir:         tmpdir,
 		TargetFileSize: 1000, // Small size for testing
 		OrderBy:        OrderNone,
-		BytesPerRecord: 50.0, // Fixed size for predictable tests
+		RecordsPerFile: 20, // Fixed limit for predictable tests
 	}
 	writer, err := NewUnifiedWriter(config)
 	if err != nil {
@@ -96,7 +96,7 @@ func TestUnifiedWriter_FileSplitting(t *testing.T) {
 		TmpDir:         tmpdir,
 		TargetFileSize: 100, // Very small to force splitting
 		OrderBy:        OrderNone,
-		BytesPerRecord: 50.0, // Each row is ~50 bytes
+		RecordsPerFile: 2, // Force multiple files with very low limit
 	}
 
 	writer, err := NewUnifiedWriter(config)
@@ -154,7 +154,7 @@ func TestUnifiedWriter_NoSplitGroups(t *testing.T) {
 			return row["group_id"].(int64)
 		},
 		NoSplitGroups:  true,
-		BytesPerRecord: 30.0,
+		RecordsPerFile: 3, // Force split after 3 records to test group boundaries
 	}
 
 	writer, err := NewUnifiedWriter(config)
@@ -207,7 +207,7 @@ func TestUnifiedWriter_OrderingInMemory(t *testing.T) {
 		OrderKeyFunc: func(row map[string]any) any {
 			return row["timestamp"].(int64)
 		},
-		BytesPerRecord: 100.0,
+		RecordsPerFile: 10000,
 	}
 
 	writer, err := NewUnifiedWriter(config)
@@ -295,7 +295,7 @@ func TestUnifiedWriter_ErrorHandling(t *testing.T) {
 			TmpDir:         tmpdir,
 			TargetFileSize: 1000, // Small size for testing
 			OrderBy:        OrderNone,
-			BytesPerRecord: 50.0, // Fixed size for predictable tests
+			RecordsPerFile: 20, // Fixed limit for predictable tests
 		}
 		writer, err := NewUnifiedWriter(config)
 		if err != nil {
@@ -315,7 +315,7 @@ func TestUnifiedWriter_ErrorHandling(t *testing.T) {
 			TmpDir:         tmpdir,
 			TargetFileSize: 1000, // Small size for testing
 			OrderBy:        OrderNone,
-			BytesPerRecord: 50.0, // Fixed size for predictable tests
+			RecordsPerFile: 20, // Fixed limit for predictable tests
 		}
 		writer, err := NewUnifiedWriter(config)
 		if err != nil {
@@ -340,7 +340,7 @@ func TestUnifiedWriter_ErrorHandling(t *testing.T) {
 			TmpDir:         tmpdir,
 			TargetFileSize: 1000, // Small size for testing
 			OrderBy:        OrderNone,
-			BytesPerRecord: 50.0, // Fixed size for predictable tests
+			RecordsPerFile: 20, // Fixed limit for predictable tests
 		}
 		writer, err := NewUnifiedWriter(config)
 		if err != nil {
@@ -372,7 +372,7 @@ func TestUnifiedWriter_WriteBatch(t *testing.T) {
 		TmpDir:         tmpdir,
 		TargetFileSize: 1000, // Small size for testing
 		OrderBy:        OrderNone,
-		BytesPerRecord: 50.0, // Fixed size for predictable tests
+		RecordsPerFile: 20, // Fixed limit for predictable tests
 	}
 	writer, err := NewUnifiedWriter(config)
 	if err != nil {
@@ -420,7 +420,7 @@ func TestUnifiedWriter_ContextCancellation(t *testing.T) {
 		TmpDir:         tmpdir,
 		TargetFileSize: 1000, // Small size for testing
 		OrderBy:        OrderNone,
-		BytesPerRecord: 50.0, // Fixed size for predictable tests
+		RecordsPerFile: 20, // Fixed limit for predictable tests
 	}
 	writer, err := NewUnifiedWriter(config)
 	if err != nil {
@@ -459,7 +459,7 @@ func TestUnifiedWriter_Stats(t *testing.T) {
 		TmpDir:         tmpdir,
 		TargetFileSize: 1000, // Small size for testing
 		OrderBy:        OrderNone,
-		BytesPerRecord: 50.0, // Fixed size for predictable tests
+		RecordsPerFile: 20, // Fixed limit for predictable tests
 	}
 	writer, err := NewUnifiedWriter(config)
 	if err != nil {
@@ -505,7 +505,7 @@ func TestUnifiedWriter_CardinalHQIDColumn(t *testing.T) {
 		TmpDir:         tmpdir,
 		TargetFileSize: 1000,
 		OrderBy:        OrderNone,
-		BytesPerRecord: 50.0,
+		RecordsPerFile: 20,
 	}
 
 	writer, err := NewUnifiedWriter(config)
@@ -569,7 +569,7 @@ func BenchmarkUnifiedWriter(b *testing.B) {
 		TmpDir:         tmpdir,
 		TargetFileSize: 1000000,
 		OrderBy:        OrderNone,
-		BytesPerRecord: 100.0,
+		RecordsPerFile: 10000,
 	}
 
 	b.ResetTimer()
