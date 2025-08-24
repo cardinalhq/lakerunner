@@ -16,6 +16,7 @@ package filereader
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"testing"
@@ -316,8 +317,133 @@ func TestParquetReaderClose(t *testing.T) {
 	_, err = reader.Read(rows)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "closed")
+}
+
+func TestParquetReader_SpecificProblemFile(t *testing.T) {
+	// Test the specific file that's failing in production
+	filename := "../../testdata/logs/logs_1747427310000_667024137.parquet"
+
+	reader, err := createParquetReader(filename)
+	if err != nil {
+		t.Fatalf("Failed to create reader for problem file: %v", err)
+	}
+	defer reader.Close()
+
+	// Try to read some rows
+	rows := make([]Row, 10)
+	for i := range rows {
+		rows[i] = make(Row)
+	}
+
+	n, err := reader.Read(rows)
+	t.Logf("Read result: n=%d, err=%v", n, err)
+
+	if err != nil && err != io.EOF {
+		t.Fatalf("Read failed: %v", err)
+	}
+
+	if n == 0 {
+		t.Fatalf("Expected to read some rows, got 0")
+	}
+
+	t.Logf("Successfully read %d rows from problem file", n)
+	for i := 0; i < n && i < 3; i++ {
+		t.Logf("Row %d has %d fields", i, len(rows[i]))
+	}
 
 	// Close should be idempotent
 	err = reader.Close()
 	assert.NoError(t, err)
+}
+
+// testTranslator is a simple translator for testing
+type testTranslator struct {
+	addField string
+	addValue string
+}
+
+func (t *testTranslator) TranslateRow(row *Row) error {
+	if row == nil {
+		return fmt.Errorf("row cannot be nil")
+	}
+	(*row)[t.addField] = t.addValue
+	return nil
+}
+
+func TestParquetReader_WithTranslator(t *testing.T) {
+	// Test ParquetReader with TranslatingReader using the problem file
+	filename := "../../testdata/logs/logs_1747427310000_667024137.parquet"
+
+	// Create base parquet reader
+	baseReader, err := createParquetReader(filename)
+	require.NoError(t, err)
+	defer baseReader.Close()
+
+	// Create simple translator that just adds a test field
+	translator := &testTranslator{addField: "test.translator", addValue: "parquet"}
+
+	// Wrap with TranslatingReader
+	reader, err := NewTranslatingReader(baseReader, translator)
+	require.NoError(t, err)
+
+	// Read rows
+	rows := make([]Row, 10)
+	for i := range rows {
+		rows[i] = make(Row)
+	}
+
+	n, err := reader.Read(rows)
+	t.Logf("TranslatingReader with ParquetReader: n=%d, err=%v", n, err)
+
+	if err != nil && err != io.EOF {
+		t.Fatalf("Read failed: %v", err)
+	}
+
+	require.Greater(t, n, 0, "Expected to read some rows")
+
+	// Verify translation worked
+	for i := 0; i < n; i++ {
+		assert.NotNil(t, rows[i])
+		assert.Equal(t, "parquet", rows[i]["test.translator"])
+		t.Logf("Row %d: %d fields, translator field present", i, len(rows[i]))
+	}
+}
+
+// TestProtoLogsReader_WithTranslator tests TranslatingReader with ProtoLogsReader for comparison
+func TestProtoLogsReader_WithTranslator(t *testing.T) {
+	filename := "../../testdata/logs/otel-logs.binpb.gz"
+
+	// Create base proto reader
+	baseReader, err := createProtoBinaryGzReader(filename, SignalTypeLogs)
+	require.NoError(t, err)
+	defer baseReader.Close()
+
+	// Create simple translator that just adds a test field
+	translator := &testTranslator{addField: "test.translator", addValue: "proto"}
+
+	// Wrap with TranslatingReader
+	reader, err := NewTranslatingReader(baseReader, translator)
+	require.NoError(t, err)
+
+	// Read rows
+	rows := make([]Row, 10)
+	for i := range rows {
+		rows[i] = make(Row)
+	}
+
+	n, err := reader.Read(rows)
+	t.Logf("TranslatingReader with ProtoLogsReader: n=%d, err=%v", n, err)
+
+	if err != nil && err != io.EOF {
+		t.Fatalf("Read failed: %v", err)
+	}
+
+	require.Greater(t, n, 0, "Expected to read some rows")
+
+	// Verify translation worked
+	for i := 0; i < n; i++ {
+		assert.NotNil(t, rows[i])
+		assert.Equal(t, "proto", rows[i]["test.translator"])
+		t.Logf("Row %d: %d fields, translator field present", i, len(rows[i]))
+	}
 }

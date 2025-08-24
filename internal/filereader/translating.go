@@ -64,6 +64,7 @@ func (tr *TranslatingReader) Read(rows []Row) (int, error) {
 	// Translate each row that was successfully read (in-place modification)
 	for i := 0; i < n; i++ {
 		if translateErr := tr.translator.TranslateRow(&rows[i]); translateErr != nil {
+			// TODO: Add logging here when we have access to a logger
 			return i, fmt.Errorf("translation failed for row %d: %w", i, translateErr)
 		}
 		tr.rowCount++ // Count each successfully translated row
