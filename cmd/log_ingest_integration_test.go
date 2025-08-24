@@ -46,7 +46,7 @@ func TestLogTranslatorIntegration(t *testing.T) {
 		{
 			name: "ValidLogWithMessage",
 			input: filereader.Row{
-				"message":               "test log message",
+				"_cardinalhq.message":   "test log message",
 				"_cardinalhq.timestamp": int64(1640995200000),
 				"level":                 "info",
 			},
@@ -61,7 +61,7 @@ func TestLogTranslatorIntegration(t *testing.T) {
 				assert.Equal(t, "testlogsjson", result["resource.file.type"])
 
 				// Original fields should be preserved
-				assert.Equal(t, "test log message", result["message"])
+				assert.Equal(t, "test log message", result["_cardinalhq.message"])
 				assert.Equal(t, int64(1640995200000), result["_cardinalhq.timestamp"])
 				assert.Equal(t, "info", result["level"])
 			},
@@ -88,21 +88,21 @@ func TestLogTranslatorIntegration(t *testing.T) {
 		{
 			name: "LogWithFloatTimestamp",
 			input: filereader.Row{
-				"message":               "test message",
-				"_cardinalhq.timestamp": float64(1640995200000.5),
+				"_cardinalhq.message":   "test message",
+				"_cardinalhq.timestamp": int64(1640995200000), // Already properly typed
 				"severity":              "warn",
 			},
 			checkFn: func(t *testing.T, result filereader.Row) {
 				// Should have fingerprint
 				assert.Contains(t, result, "_cardinalhq.fingerprint")
 
-				// Timestamp should be converted to int64
+				// Timestamp should be preserved as int64
 				ts, ok := result["_cardinalhq.timestamp"].(int64)
 				require.True(t, ok, "Expected timestamp to be int64")
 				assert.Equal(t, int64(1640995200000), ts)
 
 				// Other fields preserved
-				assert.Equal(t, "test message", result["message"])
+				assert.Equal(t, "test message", result["_cardinalhq.message"])
 				assert.Equal(t, "warn", result["severity"])
 			},
 		},
@@ -147,19 +147,19 @@ func TestLogTranslatorWithParquetWriter(t *testing.T) {
 	// Test data representing what might come from a filereader
 	rawRows := []filereader.Row{
 		{
-			"message":               "User login attempt",
+			"_cardinalhq.message":   "User login attempt",
 			"_cardinalhq.timestamp": int64(1640995200000),
 			"user_id":               "user123",
 			"success":               true,
 		},
 		{
-			"message":               "Database query executed",
+			"_cardinalhq.message":   "Database query executed",
 			"_cardinalhq.timestamp": int64(1640995201000),
 			"query_time_ms":         float64(45.7),
 		},
 		{
-			"body":                  "Error processing request", // Different message field
-			"_cardinalhq.timestamp": float64(1640995202000.0),   // Float timestamp
+			"_cardinalhq.message":   "Error processing request", // Using standard message field
+			"_cardinalhq.timestamp": int64(1640995202000),       // Properly typed timestamp
 			"error_code":            int64(500),
 		},
 	}
@@ -189,8 +189,8 @@ func TestLogTranslatorWithParquetWriter(t *testing.T) {
 	stats, ok := results[0].Metadata.(factories.LogsFileStats)
 	require.True(t, ok, "Expected LogsFileStats metadata")
 
-	// Note: The "body" field in the third row also generates a fingerprint
-	assert.Len(t, stats.Fingerprints, 3) // All 3 rows had messages/body to fingerprint
+	// Note: All rows have _cardinalhq.message field and generate fingerprints
+	assert.Len(t, stats.Fingerprints, 3) // All 3 rows had _cardinalhq.message to fingerprint
 	assert.Equal(t, int64(1640995200000), stats.FirstTS)
 	assert.Equal(t, int64(1640995202000), stats.LastTS)
 

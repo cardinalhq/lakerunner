@@ -131,10 +131,26 @@ func (r *ProtoMetricsReader) buildDatapointRow(rm pmetric.ResourceMetrics, sm pm
 	})
 
 	// Basic metric fields
-	ret["name"] = metric.Name()
+	ret["_cardinalhq.name"] = metric.Name()
 	ret["description"] = metric.Description()
 	ret["unit"] = metric.Unit()
 	ret["type"] = metric.Type().String()
+
+	// Add CardinalHQ metric type field
+	switch metric.Type() {
+	case pmetric.MetricTypeGauge:
+		ret["_cardinalhq.metric_type"] = "gauge"
+	case pmetric.MetricTypeSum:
+		ret["_cardinalhq.metric_type"] = "count"
+	case pmetric.MetricTypeHistogram:
+		ret["_cardinalhq.metric_type"] = "histogram"
+	case pmetric.MetricTypeExponentialHistogram:
+		ret["_cardinalhq.metric_type"] = "histogram"
+	case pmetric.MetricTypeSummary:
+		ret["_cardinalhq.metric_type"] = "histogram"
+	default:
+		ret["_cardinalhq.metric_type"] = "gauge"
+	}
 
 	// Add datapoint-specific fields based on metric type
 	switch metric.Type() {
@@ -167,7 +183,7 @@ func (r *ProtoMetricsReader) addNumberDatapointFields(ret map[string]any, dp pme
 		return true
 	})
 
-	ret["timestamp"] = dp.Timestamp().AsTime().UnixMilli()
+	ret["_cardinalhq.timestamp"] = dp.Timestamp().AsTime().UnixMilli()
 	ret["start_timestamp"] = dp.StartTimestamp().AsTime().UnixMilli()
 
 	// Get the actual value
@@ -203,7 +219,7 @@ func (r *ProtoMetricsReader) addHistogramDatapointFields(ret map[string]any, dp 
 		return true
 	})
 
-	ret["timestamp"] = dp.Timestamp().AsTime().UnixMilli()
+	ret["_cardinalhq.timestamp"] = dp.Timestamp().AsTime().UnixMilli()
 	ret["start_timestamp"] = dp.StartTimestamp().AsTime().UnixMilli()
 
 	// Convert bucket data to float64 slices for processing
@@ -273,7 +289,7 @@ func (r *ProtoMetricsReader) addExponentialHistogramDatapointFields(ret map[stri
 		return true
 	})
 
-	ret["timestamp"] = dp.Timestamp().AsTime().UnixMilli()
+	ret["_cardinalhq.timestamp"] = dp.Timestamp().AsTime().UnixMilli()
 	ret["start_timestamp"] = dp.StartTimestamp().AsTime().UnixMilli()
 
 	ret["count"] = dp.Count()
@@ -300,7 +316,7 @@ func (r *ProtoMetricsReader) addSummaryDatapointFields(ret map[string]any, dp pm
 		return true
 	})
 
-	ret["timestamp"] = dp.Timestamp().AsTime().UnixMilli()
+	ret["_cardinalhq.timestamp"] = dp.Timestamp().AsTime().UnixMilli()
 	ret["start_timestamp"] = dp.StartTimestamp().AsTime().UnixMilli()
 
 	ret["count"] = dp.Count()
