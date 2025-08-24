@@ -109,19 +109,19 @@ func TestProtoLogsReader_Read(t *testing.T) {
 	for i, row := range allRows {
 		t.Run(fmt.Sprintf("row_%d", i), func(t *testing.T) {
 			// Should have basic log fields
-			assert.Contains(t, row, "body", "Row should have log body")
-			assert.Contains(t, row, "timestamp", "Row should have timestamp")
+			assert.Contains(t, row, "_cardinalhq.message", "Row should have log body")
+			assert.Contains(t, row, "_cardinalhq.timestamp", "Row should have timestamp")
 
 			// Check that body is not empty
-			assert.NotEmpty(t, row["body"], "Log body should not be empty")
+			assert.NotEmpty(t, row["_cardinalhq.message"], "Log body should not be empty")
 
 			// Other fields may or may not be present depending on the log
 			// but if present, should have valid values
-			if severity, exists := row["severity_text"]; exists {
+			if severity, exists := row["_cardinalhq.level"]; exists {
 				assert.IsType(t, "", severity, "Severity text should be string")
 			}
 			if severityNum, exists := row["severity_number"]; exists {
-				assert.IsType(t, int32(0), severityNum, "Severity number should be int32")
+				assert.IsType(t, int64(0), severityNum, "Severity number should be int64")
 			}
 		})
 	}
@@ -159,8 +159,8 @@ func TestProtoLogsReader_ReadBatched(t *testing.T) {
 		// Verify each row that was read
 		for i := 0; i < n; i++ {
 			assert.Greater(t, len(rows[i]), 0, "Row %d should have data", i)
-			assert.Contains(t, rows[i], "body", "Row %d should have body field", i)
-			assert.Contains(t, rows[i], "timestamp", "Row %d should have timestamp field", i)
+			assert.Contains(t, rows[i], "_cardinalhq.message", "Row %d should have body field", i)
+			assert.Contains(t, rows[i], "_cardinalhq.timestamp", "Row %d should have timestamp field", i)
 		}
 
 		if errors.Is(err, io.EOF) {
@@ -195,8 +195,8 @@ func TestProtoLogsReader_ReadSingleRow(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, n)
 	assert.Greater(t, len(rows[0]), 0, "First row should have data")
-	assert.Contains(t, rows[0], "body")
-	assert.Contains(t, rows[0], "timestamp")
+	assert.Contains(t, rows[0], "_cardinalhq.message")
+	assert.Contains(t, rows[0], "_cardinalhq.timestamp")
 }
 
 func TestProtoLogsReader_ResourceAndScopeAttributes(t *testing.T) {
@@ -358,19 +358,19 @@ func TestProtoLogsReader_LogFields(t *testing.T) {
 	bodyCount := 0
 
 	for _, row := range allRows {
-		if body, exists := row["body"]; exists {
+		if body, exists := row["_cardinalhq.message"]; exists {
 			if bodyStr, ok := body.(string); ok && bodyStr != "" {
 				bodyCount++
 			}
 		}
-		if severityText, exists := row["severity_text"]; exists {
+		if severityText, exists := row["_cardinalhq.level"]; exists {
 			if textStr, ok := severityText.(string); ok {
 				severityTexts[textStr]++
 			}
 		}
 		if severityNum, exists := row["severity_number"]; exists {
-			if numInt32, ok := severityNum.(int32); ok {
-				severityNumbers[numInt32]++
+			if numInt64, ok := severityNum.(int64); ok {
+				severityNumbers[int32(numInt64)]++
 			}
 		}
 	}
@@ -480,14 +480,14 @@ func TestProtoLogsReader_SyntheticData(t *testing.T) {
 	for i, row := range allRows {
 		t.Run(fmt.Sprintf("log_%d", i), func(t *testing.T) {
 			// Should have basic log fields
-			assert.Contains(t, row, "body", "Row should have log body")
-			assert.Contains(t, row, "timestamp", "Row should have timestamp")
-			assert.Contains(t, row, "severity_text", "Row should have severity text")
+			assert.Contains(t, row, "_cardinalhq.message", "Row should have log body")
+			assert.Contains(t, row, "_cardinalhq.timestamp", "Row should have timestamp")
+			assert.Contains(t, row, "_cardinalhq.level", "Row should have severity text")
 			assert.Contains(t, row, "severity_number", "Row should have severity number")
 
 			// Check specific values
-			assert.Equal(t, expectedBodies[i], row["body"], "Log body should match expected value")
-			assert.Equal(t, expectedSeverities[i], row["severity_text"], "Severity text should match")
+			assert.Equal(t, expectedBodies[i], row["_cardinalhq.message"], "Log body should match expected value")
+			assert.Equal(t, expectedSeverities[i], row["_cardinalhq.level"], "Severity text should match")
 
 			// Check for resource attributes
 			assert.Contains(t, row, "resource.service.name", "Should have resource service name")
@@ -531,19 +531,19 @@ func TestProtoLogsReader_SyntheticDataFields(t *testing.T) {
 	bodyCount := 0
 
 	for _, row := range allRows {
-		if body, exists := row["body"]; exists {
+		if body, exists := row["_cardinalhq.message"]; exists {
 			if bodyStr, ok := body.(string); ok && bodyStr != "" {
 				bodyCount++
 			}
 		}
-		if severityText, exists := row["severity_text"]; exists {
+		if severityText, exists := row["_cardinalhq.level"]; exists {
 			if textStr, ok := severityText.(string); ok {
 				severityTexts[textStr]++
 			}
 		}
 		if severityNum, exists := row["severity_number"]; exists {
-			if numInt32, ok := severityNum.(int32); ok {
-				severityNumbers[numInt32]++
+			if numInt64, ok := severityNum.(int64); ok {
+				severityNumbers[int32(numInt64)]++
 			}
 		}
 	}
