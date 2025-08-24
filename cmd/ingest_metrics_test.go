@@ -114,10 +114,62 @@ func TestMetricTranslator(t *testing.T) {
 	require.Equal(t, "metrics", row["_cardinalhq.telemetry_type"])
 	require.Equal(t, "cpu.usage", row["_cardinalhq.name"])               // Original field preserved
 	require.Equal(t, "web-server-1", row["host"])                        // Original field preserved
-	require.Equal(t, int64(1756049235874), row["_cardinalhq.timestamp"]) // Original field preserved
+	require.Equal(t, int64(1756049230000), row["_cardinalhq.timestamp"]) // Timestamp truncated to 10s boundary
 
 	// Check that TID was computed and added
 	tid, ok := row["_cardinalhq.tid"].(int64)
 	require.True(t, ok, "TID should be computed and added as int64")
 	require.NotZero(t, tid, "TID should be non-zero")
+}
+
+func TestMetricTranslator_TimestampTruncation(t *testing.T) {
+	translator := &metricsprocessing.MetricTranslator{
+		OrgID:    "test-org",
+		Bucket:   "test-bucket",
+		ObjectID: "metrics/test.json.gz",
+	}
+
+	testCases := []struct {
+		name              string
+		inputTimestamp    int64
+		expectedTruncated int64
+	}{
+		{
+			name:              "exact 10s boundary",
+			inputTimestamp:    1640995200000, // 2022-01-01 00:00:00.000
+			expectedTruncated: 1640995200000,
+		},
+		{
+			name:              "mid-interval",
+			inputTimestamp:    1640995205874, // 2022-01-01 00:00:05.874
+			expectedTruncated: 1640995200000, // truncated to 2022-01-01 00:00:00.000
+		},
+		{
+			name:              "near next boundary",
+			inputTimestamp:    1640995209999, // 2022-01-01 00:00:09.999
+			expectedTruncated: 1640995200000, // truncated to 2022-01-01 00:00:00.000
+		},
+		{
+			name:              "next boundary",
+			inputTimestamp:    1640995210000, // 2022-01-01 00:00:10.000
+			expectedTruncated: 1640995210000,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			row := filereader.Row{
+				"_cardinalhq.name":      "cpu.usage",
+				"_cardinalhq.timestamp": tc.inputTimestamp,
+				"host":                  "web-server-1",
+			}
+
+			err := translator.TranslateRow(&row)
+			require.NoError(t, err)
+
+			actualTimestamp, ok := row["_cardinalhq.timestamp"].(int64)
+			require.True(t, ok, "timestamp should be int64")
+			require.Equal(t, tc.expectedTruncated, actualTimestamp)
+		})
+	}
 }
