@@ -38,10 +38,10 @@ func TestNewLogsWriter(t *testing.T) {
 
 	// Test timestamp ordering - write out of order
 	testData := []map[string]any{
-		{"_cardinalhq.timestamp": int64(3000), "_cardinalhq.fingerprint": int64(300), "message": "third"},
-		{"_cardinalhq.timestamp": int64(1000), "_cardinalhq.fingerprint": int64(100), "message": "first"},
-		{"_cardinalhq.timestamp": int64(4000), "_cardinalhq.fingerprint": int64(400), "message": "fourth"},
-		{"_cardinalhq.timestamp": int64(2000), "_cardinalhq.fingerprint": int64(200), "message": "second"},
+		{"_cardinalhq.timestamp": int64(3000), "_cardinalhq.message": "third", "_cardinalhq.name": "log.events"},
+		{"_cardinalhq.timestamp": int64(1000), "_cardinalhq.message": "first", "_cardinalhq.name": "log.events"},
+		{"_cardinalhq.timestamp": int64(4000), "_cardinalhq.message": "fourth", "_cardinalhq.name": "log.events"},
+		{"_cardinalhq.timestamp": int64(2000), "_cardinalhq.message": "second", "_cardinalhq.name": "log.events"},
 	}
 
 	for _, row := range testData {
@@ -63,9 +63,9 @@ func TestNewLogsWriter(t *testing.T) {
 
 	// For verification, we'll use a schema discovered from the written data
 	nodes := map[string]parquet.Node{
-		"_cardinalhq.timestamp":   parquet.Int(64),
-		"_cardinalhq.fingerprint": parquet.Int(64),
-		"message":                 parquet.String(),
+		"_cardinalhq.timestamp": parquet.Int(64),
+		"_cardinalhq.message":   parquet.String(),
+		"_cardinalhq.name":      parquet.String(),
 	}
 	schema := parquet.NewSchema("logs-test", parquet.Group(nodes))
 	reader := parquet.NewGenericReader[map[string]any](file, schema)
@@ -97,12 +97,18 @@ func TestNewLogsWriter(t *testing.T) {
 
 	// Check stats
 	if stats, ok := results[0].Metadata.(LogsFileStats); ok {
-		assert.Len(t, stats.Fingerprints, 4, "Expected 4 fingerprints")
+		// With comprehensive fingerprinting, we expect multiple fingerprints per row
+		// Each row will generate fingerprints for _cardinalhq.name, _cardinalhq.message trigrams, etc.
+		assert.Greater(t, len(stats.Fingerprints), 3, "Expected multiple fingerprints from comprehensive fingerprinting")
 		assert.Equal(t, int64(1000), stats.FirstTS, "Expected first timestamp 1000")
 		assert.Equal(t, int64(4000), stats.LastTS, "Expected last timestamp 4000")
-		// Check that we have the actual fingerprint list
-		expectedFingerprints := []int64{100, 200, 300, 400}
-		assert.ElementsMatch(t, expectedFingerprints, stats.Fingerprints, "Expected fingerprints to match")
+
+		// Verify all fingerprints are unique (no duplicates in the final list)
+		fingerprintSet := make(map[int64]bool)
+		for _, fp := range stats.Fingerprints {
+			assert.False(t, fingerprintSet[fp], "Found duplicate fingerprint: %d", fp)
+			fingerprintSet[fp] = true
+		}
 	} else {
 		assert.Fail(t, "Expected LogsFileStats metadata")
 	}
@@ -147,12 +153,32 @@ func TestLogsStatsAccumulator(t *testing.T) {
 	provider := &LogsStatsProvider{}
 	accumulator := provider.NewAccumulator().(*LogsStatsAccumulator)
 
-	// Add some test data
+	// Add some test data with comprehensive log fields for fingerprinting
 	testData := []map[string]any{
-		{"_cardinalhq.timestamp": int64(1000), "_cardinalhq.fingerprint": int64(100)},
-		{"_cardinalhq.timestamp": int64(3000), "_cardinalhq.fingerprint": int64(300)},
-		{"_cardinalhq.timestamp": int64(2000), "_cardinalhq.fingerprint": int64(200)},
-		{"_cardinalhq.timestamp": int64(4000), "_cardinalhq.fingerprint": int64(100)}, // Duplicate fingerprint
+		{
+			"_cardinalhq.timestamp": int64(1000),
+			"_cardinalhq.message":   "User login successful",
+			"_cardinalhq.name":      "log.events",
+			"_cardinalhq.level":     "info",
+		},
+		{
+			"_cardinalhq.timestamp": int64(3000),
+			"_cardinalhq.message":   "Database error occurred",
+			"_cardinalhq.name":      "log.events",
+			"_cardinalhq.level":     "error",
+		},
+		{
+			"_cardinalhq.timestamp": int64(2000),
+			"_cardinalhq.message":   "User login successful", // Same message as first row
+			"_cardinalhq.name":      "log.events",
+			"_cardinalhq.level":     "info",
+		},
+		{
+			"_cardinalhq.timestamp": int64(4000),
+			"_cardinalhq.message":   "Connection timeout",
+			"_cardinalhq.name":      "log.events",
+			"_cardinalhq.level":     "warning",
+		},
 	}
 
 	for _, row := range testData {
@@ -161,14 +187,20 @@ func TestLogsStatsAccumulator(t *testing.T) {
 
 	stats := accumulator.Finalize().(LogsFileStats)
 
-	// Verify basic counts
-	assert.Len(t, stats.Fingerprints, 3, "Expected 3 unique fingerprints")
+	// With comprehensive fingerprinting, we expect many more unique fingerprints
+	// Each row generates fingerprints for various dimensions and their combinations
+	assert.Greater(t, len(stats.Fingerprints), 10, "Expected many unique fingerprints from comprehensive fingerprinting")
 
 	assert.Equal(t, int64(1000), stats.FirstTS, "Expected first timestamp 1000")
-
 	assert.Equal(t, int64(4000), stats.LastTS, "Expected last timestamp 4000")
 
-	// Verify actual fingerprint list contains expected unique values
-	expectedFingerprints := []int64{100, 200, 300}
-	assert.ElementsMatch(t, expectedFingerprints, stats.Fingerprints, "Expected fingerprints to match")
+	// Verify all fingerprints are unique (no duplicates)
+	fingerprintSet := make(map[int64]bool)
+	for _, fp := range stats.Fingerprints {
+		assert.False(t, fingerprintSet[fp], "Found duplicate fingerprint: %d", fp)
+		fingerprintSet[fp] = true
+	}
+
+	// Verify we have the expected number of unique fingerprints
+	assert.Equal(t, len(stats.Fingerprints), len(fingerprintSet), "Fingerprints list should contain only unique values")
 }

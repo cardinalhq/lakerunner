@@ -23,8 +23,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
-
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 )
 
@@ -309,12 +307,10 @@ func TestLogTranslatorWithSampleFiles(t *testing.T) {
 			fullPath := filepath.Join(testdataDir, tt.filename)
 
 			// Create LogTranslator
-			trieClusterManager := fingerprinter.NewTrieClusterManager(0.5)
 			translator := &LogTranslator{
-				orgID:              "test-org",
-				bucket:             "test-bucket",
-				objectID:           tt.objectID,
-				trieClusterManager: trieClusterManager,
+				orgID:    "test-org",
+				bucket:   "test-bucket",
+				objectID: tt.objectID,
 			}
 			require.NotNil(t, translator, "Failed to create LogTranslator")
 

@@ -27,8 +27,6 @@ import (
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
 
-	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
-
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
@@ -279,9 +277,6 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 	// Create writer manager for organizing output by hour/slot
 	wm := newWriterManager(tmpdir, firstItem.OrganizationID.String(), ingest_dateint, rpfEstimate, ll)
 
-	// Create shared TrieClusterManager for the entire batch
-	sharedTrieClusterManager := fingerprinter.NewTrieClusterManager(0.5)
-
 	// Track total rows across all files
 	var batchRowsRead, batchRowsProcessed, batchRowsErrored int64
 
@@ -320,10 +315,9 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 		if err == nil {
 			// Add general translator for non-protobuf files
 			translator := &LogTranslator{
-				orgID:              firstItem.OrganizationID.String(),
-				bucket:             inf.Bucket,
-				objectID:           inf.ObjectID,
-				trieClusterManager: sharedTrieClusterManager,
+				orgID:    firstItem.OrganizationID.String(),
+				bucket:   inf.Bucket,
+				objectID: inf.ObjectID,
 			}
 			reader, err = filereader.NewTranslatingReader(reader, translator)
 		}
