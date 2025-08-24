@@ -165,11 +165,25 @@ func EncodeSketch(sketch *ddsketch.DDSketch) []byte {
 func MetricsOrderKeyFunc() func(row map[string]any) any {
 	return func(row map[string]any) any {
 		name, nameOk := row["_cardinalhq.name"].(string)
-		tid, tidOk := row["_cardinalhq.tid"].(int64)
-		if nameOk && tidOk {
-			return fmt.Sprintf("%s:%d", name, tid)
+		if !nameOk {
+			return ""
 		}
-		return ""
+
+		// Handle both string and int64 TID values
+		var tid int64
+		switch v := row["_cardinalhq.tid"].(type) {
+		case int64:
+			tid = v
+		case string:
+			// TID is incorrectly stored as string, parse it
+			if parsed, err := fmt.Sscanf(v, "%d", &tid); err != nil || parsed != 1 {
+				return ""
+			}
+		default:
+			return ""
+		}
+
+		return fmt.Sprintf("%s:%d", name, tid)
 	}
 }
 
@@ -178,10 +192,24 @@ func MetricsOrderKeyFunc() func(row map[string]any) any {
 func MetricsGroupKeyFunc() func(row map[string]any) any {
 	return func(row map[string]any) any {
 		name, nameOk := row["_cardinalhq.name"].(string)
-		tid, tidOk := row["_cardinalhq.tid"].(int64)
-		if nameOk && tidOk {
-			return fmt.Sprintf("%s:%d", name, tid)
+		if !nameOk {
+			return nil
 		}
-		return nil
+
+		// Handle both string and int64 TID values
+		var tid int64
+		switch v := row["_cardinalhq.tid"].(type) {
+		case int64:
+			tid = v
+		case string:
+			// TID is incorrectly stored as string, parse it
+			if parsed, err := fmt.Sscanf(v, "%d", &tid); err != nil || parsed != 1 {
+				return nil
+			}
+		default:
+			return nil
+		}
+
+		return fmt.Sprintf("%s:%d", name, tid)
 	}
 }
