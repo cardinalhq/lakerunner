@@ -254,31 +254,43 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 		// Create appropriate reader for the file type
 		var reader filereader.Reader
 
-		reader, err = createMetricReader(tmpfilename)
+		// Create stacked reader: OtelReader -> Translation -> Sorting -> Aggregation
+
+		// Step 1: Create base reader
+		opts := filereader.ReaderOptions{
+			SignalType: filereader.SignalTypeMetrics,
+		}
+		reader, err = filereader.ReaderForFileWithOptions(tmpfilename, opts)
+
 		if err == nil {
-			// Add translator for metrics (adds TID and truncates timestamp)
+			// Step 2: Add translation (adds TID and truncates timestamp)
 			translator := &metricsprocessing.MetricTranslator{
 				OrgID:    firstItem.OrganizationID.String(),
 				Bucket:   inf.Bucket,
 				ObjectID: inf.ObjectID,
 			}
 			reader, err = filereader.NewTranslatingReader(reader, translator)
+		}
 
-			if err == nil {
-				// Wrap with sorting and aggregation after translation
-				opts := filereader.ReaderOptions{
-					SignalType:          filereader.SignalTypeMetrics,
-					EnableAggregation:   true,
-					AggregationPeriodMs: 10000, // 10 seconds
-				}
-				reader, err = filereader.WrapReaderForAggregation(reader, opts)
+		if err == nil {
+			// Step 3: Add disk-based sorting (after translation so TID is available)
+			reader, err = filereader.NewDiskSortingReader(reader)
+		}
+
+		if err == nil {
+			// Step 4: Add aggregation
+			aggOpts := filereader.ReaderOptions{
+				SignalType:          filereader.SignalTypeMetrics,
+				EnableAggregation:   true,
+				AggregationPeriodMs: 10000, // 10 seconds
 			}
+			reader, err = filereader.WrapReaderForAggregation(reader, aggOpts)
+		}
 
-			// Process exemplars if available
-			if loop.exemplarProcessor != nil {
-				if err := processExemplarsFromReader(ctx, reader, loop.exemplarProcessor, firstItem.OrganizationID.String(), mdb); err != nil {
-					ll.Warn("Failed to process exemplars", slog.Any("error", err))
-				}
+		// Process exemplars if available
+		if loop.exemplarProcessor != nil {
+			if err := processExemplarsFromReader(ctx, reader, loop.exemplarProcessor, firstItem.OrganizationID.String(), mdb); err != nil {
+				ll.Warn("Failed to process exemplars", slog.Any("error", err))
 			}
 		}
 
