@@ -22,8 +22,18 @@ FROM debian:bookworm-slim AS extensions
 ARG TARGETARCH
 ARG DUCKDB_VERSION
 
-# Install curl for downloading extensions
-RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+# List existing libraries before curl install, install curl, then copy only the new ones
+RUN find /usr/lib -name "*.so*" 2>/dev/null | sort > /baseline-libs.txt && \
+    apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/* && \
+    find /usr/lib -name "*.so*" 2>/dev/null | sort > /with-curl-libs.txt && \
+    mkdir -p /runtime-deps && \
+    comm -13 /baseline-libs.txt /with-curl-libs.txt | while read lib; do \
+        if [ -f "$lib" ]; then \
+            DEST_DIR="/runtime-deps$(dirname "$lib")" && \
+            mkdir -p "$DEST_DIR" && \
+            cp "$lib" "$DEST_DIR/"; \
+        fi; \
+    done
 
 # Download httpfs extension
 RUN mkdir -p /app/extensions && \
@@ -38,6 +48,10 @@ COPY --chmod=755 lakerunner /app/bin/lakerunner
 
 # Copy httpfs extension
 COPY --from=extensions /app/extensions/httpfs.duckdb_extension /app/extensions/httpfs.duckdb_extension
+
+# Copy curl binary and only the additional libraries it needs
+COPY --from=extensions /usr/bin/curl /usr/bin/curl
+COPY --from=extensions /runtime-deps/ /
 
 # Set environment variable for extension location
 ENV LAKERUNNER_HTTPFS_EXTENSION=/app/extensions/httpfs.duckdb_extension
