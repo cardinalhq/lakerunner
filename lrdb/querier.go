@@ -25,6 +25,8 @@ type Querier interface {
 	BatchUpsertExemplarMetrics(ctx context.Context, arg []BatchUpsertExemplarMetricsParams) *BatchUpsertExemplarMetricsBatchResults
 	BatchUpsertExemplarTraces(ctx context.Context, arg []BatchUpsertExemplarTracesParams) *BatchUpsertExemplarTracesBatchResults
 	ClaimInqueueWork(ctx context.Context, arg ClaimInqueueWorkParams) (Inqueue, error)
+	// Greedy pack up to size cap and row cap
+	ClaimInqueueWorkBatch(ctx context.Context, arg ClaimInqueueWorkBatchParams) ([]ClaimInqueueWorkBatchRow, error)
 	CleanupInqueueWork(ctx context.Context) error
 	CompactLogSegments(ctx context.Context, arg CompactLogSegmentsParams) error
 	CompactTraceSegments(ctx context.Context, arg CompactTraceSegmentsParams) error
@@ -58,6 +60,7 @@ type Querier interface {
 	// Uses frequency_ms to provide more accurate estimates based on collection frequency.
 	MetricSegEstimator(ctx context.Context, arg MetricSegEstimatorParams) ([]MetricSegEstimatorRow, error)
 	ObjectCleanupAdd(ctx context.Context, arg ObjectCleanupAddParams) error
+	ObjectCleanupBucketSummary(ctx context.Context) ([]ObjectCleanupBucketSummaryRow, error)
 	ObjectCleanupComplete(ctx context.Context, id uuid.UUID) error
 	ObjectCleanupFail(ctx context.Context, id uuid.UUID) error
 	ObjectCleanupGet(ctx context.Context, maxrows int32) ([]ObjectCleanupGetRow, error)
@@ -71,6 +74,9 @@ type Querier interface {
 	WorkQueueCleanupDirect(ctx context.Context, lockTtlDead pgtype.Interval) ([]WorkQueueCleanupRow, error)
 	WorkQueueCompleteDirect(ctx context.Context, arg WorkQueueCompleteParams) error
 	WorkQueueDeleteDirect(ctx context.Context, arg WorkQueueDeleteParams) error
+	// First, return unclaimed summaries
+	// Then, return claimed details
+	WorkQueueExtendedStatus(ctx context.Context) ([]WorkQueueExtendedStatusRow, error)
 	WorkQueueFailDirect(ctx context.Context, arg WorkQueueFailParams) error
 	WorkQueueGC(ctx context.Context, arg WorkQueueGCParams) (int32, error)
 	WorkQueueGlobalLock(ctx context.Context) error

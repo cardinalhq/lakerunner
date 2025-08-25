@@ -1,0 +1,2 @@
+ALTER TABLE metric_seg
+    ADD COLUMN fingerprints BIGINT[] NOT NULL DEFAULT ARRAY[]::BIGINT[];

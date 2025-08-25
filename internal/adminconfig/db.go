@@ -18,17 +18,23 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"os"
 
 	"github.com/cardinalhq/lakerunner/configdb"
 )
 
+type adminAPIKeyStore interface {
+	GetAdminAPIKeyByHash(ctx context.Context, keyHash string) (configdb.AdminApiKey, error)
+	GetAllAdminAPIKeys(ctx context.Context) ([]configdb.AdminApiKey, error)
+}
+
 type dbProvider struct {
-	db configdb.Querier
+	db adminAPIKeyStore
 }
 
 var _ AdminConfigProvider = (*dbProvider)(nil)
 
-func NewDBProvider(db configdb.Querier) AdminConfigProvider {
+func NewDBProvider(db adminAPIKeyStore) AdminConfigProvider {
 	return &dbProvider{
 		db: db,
 	}
@@ -41,12 +47,21 @@ func (p *dbProvider) ValidateAPIKey(ctx context.Context, apiKey string) (bool, e
 
 	keyHash := hashAPIKey(apiKey)
 
-	_, err := p.db.GetAdminAPIKeyByHash(ctx, keyHash)
+	if _, err := p.db.GetAdminAPIKeyByHash(ctx, keyHash); err == nil {
+		return true, nil
+	}
+
+	keys, err := p.db.GetAllAdminAPIKeys(ctx)
 	if err != nil {
 		return false, nil
 	}
+	if len(keys) == 0 {
+		if initKey := os.Getenv("LAKERUNNER_INITITAL_ADMIN_API_KEY"); initKey != "" && apiKey == initKey {
+			return true, nil
+		}
+	}
 
-	return true, nil
+	return false, nil
 }
 
 func (p *dbProvider) GetAPIKeyInfo(ctx context.Context, apiKey string) (*AdminAPIKey, error) {

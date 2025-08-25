@@ -145,6 +145,7 @@ type Inqueue struct {
 	Tries          int32      `json:"tries"`
 	ClaimedBy      int64      `json:"claimed_by"`
 	ClaimedAt      *time.Time `json:"claimed_at"`
+	FileSize       int64      `json:"file_size"`
 }
 
 type InqueueJournal struct {
@@ -168,6 +169,7 @@ type LogSeg struct {
 	TsRange        pgtype.Range[pgtype.Int8] `json:"ts_range"`
 	CreatedBy      CreatedBy                 `json:"created_by"`
 	CreatedAt      time.Time                 `json:"created_at"`
+	SlotID         int32                     `json:"slot_id"`
 }
 
 type MetricSeg struct {
@@ -186,6 +188,8 @@ type MetricSeg struct {
 	Rolledup       bool                      `json:"rolledup"`
 	CreatedAt      time.Time                 `json:"created_at"`
 	CreatedBy      CreatedBy                 `json:"created_by"`
+	SlotID         int32                     `json:"slot_id"`
+	Fingerprints   []int64                   `json:"fingerprints"`
 }
 
 type ObjCleanup struct {

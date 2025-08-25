@@ -1,0 +1,141 @@
+name: Build Test Release
+
+on:
+  push:
+
+permissions:
+  contents: write
+  id-token: write
+  packages: write
+
+jobs:
+  partials:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux_amd64
+            label: ubuntu-22.04
+            cache_path: dist/linux_amd64
+          - name: linux_arm64
+            label: ubuntu-22.04-arm
+            cache_path: dist/linux_arm64
+    runs-on: ${{ matrix.label }}
+    env:
+      DOCKER_CLI_EXPERIMENTAL: "enabled"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          audience: sts.amazonaws.com
+          role-to-assume: arn:aws:iam::${{ secrets.ECR_ACCOUNT_ID }}:role/${{ secrets.ECR_ROLE_NAME }}
+          aws-region: ${{ secrets.ECR_REGISTRY_REGION }}
+          role-session-name: GitHubActions
+
+      - name: Login to PUBLIC Amazon ECR
+        env:
+          AWS_REGION: us-east-1
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registry-type: public
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - shell: bash
+        run: |
+          BRANCH=$(echo "$GITHUB_REF_NAME" | tr '/' '-')
+          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
+          sha_short=${GITHUB_SHA::8}
+          echo "sha_short=$sha_short" >> $GITHUB_ENV
+          echo "GORELEASER_CURRENT_TAG=v0.0.0-$BRANCH-$sha_short" >> $GITHUB_ENV
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ matrix.cache_path }}
+          key: ${{ matrix.name }}-${{ env.sha_short }}
+
+      - shell: bash
+        run: make clean
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser-pro
+          version: "~> v2"
+          args: release --clean --split --config .goreleaser.test-release.yaml
+        env:
+          GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
+          DUCKDB_SDK_VERSION: v1.3.2
+
+      - shell: bash
+        run: ls -lR dist
+
+  merge:
+    needs: partials
+    runs-on: ubuntu-22.04
+    env:
+      DOCKER_CLI_EXPERIMENTAL: "enabled"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          audience: sts.amazonaws.com
+          role-to-assume: arn:aws:iam::${{ secrets.ECR_ACCOUNT_ID }}:role/${{ secrets.ECR_ROLE_NAME }}
+          aws-region: ${{ secrets.ECR_REGISTRY_REGION }}
+          role-session-name: GitHubActions
+
+      - name: Login to PUBLIC Amazon ECR
+        env:
+          AWS_REGION: us-east-1
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registry-type: public
+
+      - shell: bash
+        run: |
+          BRANCH=$(echo "$GITHUB_REF_NAME" | tr '/' '-')
+          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
+          sha_short=${GITHUB_SHA::8}
+          echo "sha_short=$sha_short" >> $GITHUB_ENV
+          echo "GORELEASER_CURRENT_TAG=v0.0.0-$BRANCH-$sha_short" >> $GITHUB_ENV
+
+      - uses: actions/cache@v4
+        with:
+          path: dist/linux_amd64
+          key: linux_amd64-${{ env.sha_short }}
+          fail-on-cache-miss: true
+
+      - uses: actions/cache@v4
+        with:
+          path: dist/linux_arm64
+          key: linux_arm64-${{ env.sha_short }}
+          fail-on-cache-miss: true
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser-pro
+          version: "~> v2"
+          args: continue --merge
+        env:
+          GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
+          DUCKDB_SDK_VERSION: v1.3.2
+
+      - name: Output built images
+        run: |
+          echo "Test release built successfully!"
+          echo "Image: public.ecr.aws/cardinalhq.io/lakerunner:$GORELEASER_CURRENT_TAG"
+          echo "Commit: $sha_short"
+

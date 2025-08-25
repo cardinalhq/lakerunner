@@ -6,13 +6,15 @@ INSERT INTO metric_seg (
   frequency_ms,
   segment_id,
   instance_num,
+  slot_id,
   tid_partition,
   ts_range,
   record_count,
   file_size,
   tid_count,
   created_by,
-  published
+  published,
+  fingerprints
 )
 VALUES (
   @organization_id,
@@ -21,13 +23,15 @@ VALUES (
   @frequency_ms,
   @segment_id,
   @instance_num,
+  @slot_id,
   @tid_partition,
   int8range(@start_ts, @end_ts, '[)'),
   @record_count,
   @file_size,
   @tid_count,
   @created_by,
-  @published
+  @published,
+  @fingerprints::bigint[]
 );
 
 -- name: GetMetricSegsForCompaction :many
@@ -53,6 +57,7 @@ WHERE
   dateint = @dateint AND
   frequency_ms = @frequency_ms AND
   instance_num = @instance_num AND
+  slot_id = @slot_id AND
   ts_range && int8range(@start_ts, @end_ts, '[)')
 ORDER BY
   ts_range;
@@ -65,6 +70,7 @@ INSERT INTO metric_seg (
   frequency_ms,
   segment_id,
   instance_num,
+  slot_id,
   tid_partition,
   ts_range,
   record_count,
@@ -72,7 +78,8 @@ INSERT INTO metric_seg (
   tid_count,
   published,
   created_by,
-  rolledup
+  rolledup,
+  fingerprints
 )
 VALUES (
   @organization_id,
@@ -81,6 +88,7 @@ VALUES (
   @frequency_ms,
   @segment_id,
   @instance_num,
+  @slot_id,
   @tid_partition,
   int8range(@start_ts, @end_ts, '[)'),
   @record_count,
@@ -88,7 +96,8 @@ VALUES (
   @tid_count,
   @published,
   @created_by,
-  @rolledup
+  @rolledup,
+  @fingerprints::bigint[]
 );
 
 -- name: BatchMarkMetricSegsRolledup :batchexec
@@ -99,6 +108,7 @@ UPDATE public.metric_seg
    AND frequency_ms    = @frequency_ms
    AND segment_id      = @segment_id
    AND instance_num    = @instance_num
+   AND slot_id         = @slot_id
    AND tid_partition   = @tid_partition
 ;
 
@@ -109,6 +119,7 @@ DELETE FROM public.metric_seg
    AND frequency_ms    = @frequency_ms
    AND segment_id      = @segment_id
    AND instance_num    = @instance_num
+   AND slot_id         = @slot_id
    AND tid_partition   = @tid_partition
 ;
 

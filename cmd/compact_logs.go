@@ -228,6 +228,7 @@ func logCompactItemDo(
 			OrganizationID:  sp.OrganizationID,
 			Dateint:         stdi,
 			InstanceNum:     inf.InstanceNum(),
+			SlotID:          inf.SlotId(),    // Process segments for this specific slot
 			MaxFileSize:     targetFileSize,  // Include files up to full target size (was 90%)
 			CursorCreatedAt: cursorCreatedAt, // Cursor for pagination
 			CursorSegmentID: cursorSegmentID, // Cursor for pagination

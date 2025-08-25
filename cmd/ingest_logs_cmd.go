@@ -36,7 +36,6 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/buffet"
 	"github.com/cardinalhq/lakerunner/internal/filecrunch"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
-	"github.com/cardinalhq/lakerunner/internal/logcrunch"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -79,7 +78,7 @@ func init() {
 				default:
 				}
 
-				err := IngestLoop(loop, logIngestItem)
+				err := IngestLoopWithBatch(loop, logIngestItem, logIngestBatch)
 				if err != nil {
 					slog.Error("Error in ingest loop", slog.Any("error", err))
 				}
@@ -125,12 +124,10 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp stora
 
 	tmpfilename, _, is404, err := s3helper.DownloadS3Object(ctx, tmpdir, s3client, inf.Bucket, inf.ObjectID)
 	if err != nil {
-		// TODO add counter for download errors
 		ll.Error("Failed to download S3 object", slog.Any("error", err))
 		return err
 	}
 	if is404 {
-		// TODO add counter for missing files
 		ll.Info("S3 object not found, deleting inqueue work item", slog.String("bucket", inf.Bucket), slog.String("objectID", inf.ObjectID))
 		return nil
 	}
@@ -138,7 +135,7 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp stora
 	filenames := []string{tmpfilename}
 
 	// If the file is not in our `otel-raw` prefix, check if we can convert it
-	if !strings.HasPrefix(inf.ObjectID, "otel-raw/") {
+	if strings.HasPrefix(inf.ObjectID, "otel-raw/") {
 		// Skip database files (these are processed outputs, not inputs)
 		if strings.HasPrefix(inf.ObjectID, "db/") {
 			// TODO add counter for skipped files in the db prefix
@@ -167,15 +164,15 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp stora
 		defer func() {
 			_ = fh.Close()
 		}()
-		splitResults, err := logcrunch.ProcessAndSplit(ll, fh, tmpdir, ingest_dateint, rpfEstimate)
+		splitResults, err := buffet.ProcessAndSplit(ll, fh, tmpdir, ingest_dateint, rpfEstimate)
 		if err != nil {
 			ll.Error("Failed to fingerprint file", slog.Any("error", err))
 			return err
 		}
 
 		// First, validate that all split results have proper hour boundaries
-		// and collect unique dateint/hour combinations for work queue creation
-		hourlyTriggers := make(map[helpers.HourBoundary]int64) // maps hour boundary to earliest FirstTS
+		// and collect unique slot+hour combinations for work queue creation
+		slotHourTriggers := make(map[SlotHourBoundary]int64) // maps slot+hour boundary to earliest FirstTS
 
 		for key, split := range splitResults {
 			// Validate that this split doesn't cross hour boundaries - this would be a bug in split logic
@@ -206,10 +203,19 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp stora
 					key.DateInt, key.Hour, expectedDateint, expectedHour)
 			}
 
-			// Collect unique hour boundaries for work queue creation
+			// Calculate slot_id using the first fingerprint (or 0 if none)
+			fps := split.Fingerprints.ToSlice()
+			var firstFingerprint int64
+			if len(fps) > 0 {
+				firstFingerprint = fps[0]
+			}
+			slotID := ingestlogs.DetermineLogSlot(firstFingerprint, key.DateInt, inf.OrganizationID.String())
+
+			// Collect unique slot+hour boundaries for work queue creation
 			hourBoundary := helpers.HourBoundary{DateInt: key.DateInt, Hour: key.Hour}
-			if existingTS, exists := hourlyTriggers[hourBoundary]; !exists || split.FirstTS < existingTS {
-				hourlyTriggers[hourBoundary] = split.FirstTS
+			slotHourKey := SlotHourBoundary{SlotID: slotID, HourBoundary: hourBoundary}
+			if existingTS, exists := slotHourTriggers[slotHourKey]; !exists || split.FirstTS < existingTS {
+				slotHourTriggers[slotHourKey] = split.FirstTS
 			}
 		}
 
@@ -227,12 +233,20 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp stora
 			fps := split.Fingerprints.ToSlice()
 			t0 := time.Now()
 			split.LastTS++ // end is exclusive, so we need to increment it by 1ms
+			// Calculate slot_id using the first fingerprint (or 0 if none)
+			var firstFingerprint int64
+			if len(fps) > 0 {
+				firstFingerprint = fps[0]
+			}
+			slotID := ingestlogs.DetermineLogSlot(firstFingerprint, key.DateInt, inf.OrganizationID.String())
+
 			err = mdb.InsertLogSegment(ctx, lrdb.InsertLogSegmentParams{
 				OrganizationID: inf.OrganizationID,
 				Dateint:        key.DateInt,
 				IngestDateint:  ingest_dateint,
 				SegmentID:      segmentID,
 				InstanceNum:    inf.InstanceNum,
+				SlotID:         int32(slotID),
 				StartTs:        split.FirstTS,
 				EndTs:          split.LastTS,
 				RecordCount:    split.RecordCount,
@@ -253,19 +267,21 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp stora
 
 		}
 
-		// Create work queue items - one per unique dateint/hour combination
-		// This ensures we don't create duplicate work items when multiple files exist for the same hour
-		for hourBoundary, earliestTS := range hourlyTriggers {
-			ll.Info("Queueing log compaction for hour",
-				slog.Int("dateint", int(hourBoundary.DateInt)),
-				slog.Int("hour", int(hourBoundary.Hour)),
+		// Create work queue items for log compaction - one per slot+hour combination
+		// This follows the same pattern as traces but with slot-based grouping
+		for slotHourKey, earliestTS := range slotHourTriggers {
+			ll.Info("Queueing log compaction for slot+hour",
+				slog.Int("slotID", slotHourKey.SlotID),
+				slog.Int("dateint", int(slotHourKey.HourBoundary.DateInt)),
+				slog.Int("hour", int(slotHourKey.HourBoundary.Hour)),
 				slog.Int64("triggerTS", earliestTS))
 
-			// Create hour-aligned timestamp for the work queue
+			// Create hour-aligned timestamp for the work queue (same as logs)
 			hourAlignedTS := helpers.TruncateToHour(helpers.UnixMillisToTime(earliestTS)).UnixMilli()
-			if err := queueLogCompaction(ctx, mdb, qmcFromInqueue(inf, 3600000, hourAlignedTS)); err != nil {
+
+			if err := queueLogCompactionForSlot(ctx, mdb, inf, slotHourKey.SlotID, slotHourKey.HourBoundary.DateInt, hourAlignedTS); err != nil {
 				ll.Error("Failed to queue log compaction",
-					slog.Any("hourBoundary", hourBoundary),
+					slog.Any("slotHourKey", slotHourKey),
 					slog.Int64("triggerTS", earliestTS),
 					slog.Any("error", err))
 				return err
@@ -274,6 +290,22 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp stora
 	}
 
 	return nil
+}
+
+// queueLogCompactionForSlot queues a log compaction job for a specific slot
+func queueLogCompactionForSlot(ctx context.Context, mdb lrdb.StoreFull, inf lrdb.Inqueue, slotID int, dateint int32, hourAlignedTS int64) error {
+
+	return mdb.WorkQueueAdd(ctx, lrdb.WorkQueueAddParams{
+		OrgID:      inf.OrganizationID,
+		Instance:   inf.InstanceNum,
+		Signal:     lrdb.SignalEnumLogs,
+		Action:     lrdb.ActionEnumCompact,
+		Dateint:    dateint,
+		Frequency:  -1,
+		SlotID:     int32(slotID),
+		TsRange:    qmcFromInqueue(inf, 3600000, hourAlignedTS).TsRange,
+		RunnableAt: time.Now().UTC().Add(5 * time.Minute),
+	})
 }
 
 // convertFileIfSupported checks the file type and converts it if supported.
@@ -463,4 +495,179 @@ func convertProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate 
 		fnames = append(fnames, res.FileName)
 	}
 	return fnames, nil
+}
+
+func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
+	awsmanager *awsclient.Manager, items []lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
+
+	if len(items) == 0 {
+		return fmt.Errorf("empty batch")
+	}
+
+	ll.Info("Processing log batch", slog.Int("batchSize", len(items)))
+
+	var profile storageprofile.StorageProfile
+	var err error
+
+	firstItem := items[0]
+	if collectorName := helpers.ExtractCollectorName(firstItem.ObjectID); collectorName != "" {
+		profile, err = sp.GetStorageProfileForOrganizationAndCollector(ctx, firstItem.OrganizationID, collectorName)
+		if err != nil {
+			return fmt.Errorf("failed to get storage profile for collector %s: %w", collectorName, err)
+		}
+	} else {
+		profile, err = sp.GetStorageProfileForOrganizationAndInstance(ctx, firstItem.OrganizationID, firstItem.InstanceNum)
+		if err != nil {
+			return fmt.Errorf("failed to get storage profile for organization and instance: %w", err)
+		}
+	}
+
+	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
+	if err != nil {
+		return fmt.Errorf("failed to get S3 client: %w", err)
+	}
+
+	allParquetFiles := make([]string, 0)
+
+	for _, inf := range items {
+		ll.Info("Processing batch item",
+			slog.String("itemID", inf.ID.String()),
+			slog.String("objectID", inf.ObjectID),
+			slog.Int64("fileSize", inf.FileSize))
+
+		itemTmpdir := fmt.Sprintf("%s/item_%s", tmpdir, inf.ID.String())
+		if err := os.MkdirAll(itemTmpdir, 0755); err != nil {
+			return fmt.Errorf("creating item tmpdir: %w", err)
+		}
+
+		tmpfilename, _, is404, err := s3helper.DownloadS3Object(ctx, itemTmpdir, s3client, inf.Bucket, inf.ObjectID)
+		if err != nil {
+			return fmt.Errorf("failed to download file %s: %w", inf.ObjectID, err)
+		}
+		if is404 {
+			ll.Warn("S3 object not found, skipping", slog.String("itemID", inf.ID.String()), slog.String("objectID", inf.ObjectID))
+			continue
+		}
+
+		convertedFiles, err := convertFileIfSupported(ll, tmpfilename, itemTmpdir, inf.Bucket, inf.ObjectID, rpfEstimate)
+		if err != nil {
+			return fmt.Errorf("failed to convert logs file %s: %w", inf.ObjectID, err)
+		}
+		if convertedFiles == nil {
+			ll.Warn("Unsupported file type, skipping", slog.String("objectID", inf.ObjectID))
+			continue
+		}
+
+		allParquetFiles = append(allParquetFiles, convertedFiles...)
+	}
+
+	if len(allParquetFiles) == 0 {
+		ll.Info("No files to process in batch")
+		return nil
+	}
+
+	batchTmpdir := fmt.Sprintf("%s/batch_output", tmpdir)
+	if err := os.MkdirAll(batchTmpdir, 0755); err != nil {
+		return fmt.Errorf("creating batch tmpdir: %w", err)
+	}
+
+	finalResults := make(map[buffet.SplitKey]buffet.HourlyResult)
+
+	for _, fname := range allParquetFiles {
+		fh, err := filecrunch.LoadSchemaForFile(fname)
+		if err != nil {
+			return fmt.Errorf("failed to open converted file %s: %w", fname, err)
+		}
+
+		fileResults, err := buffet.ProcessAndSplit(ll, fh, batchTmpdir, ingest_dateint, rpfEstimate)
+		fh.Close()
+		if err != nil {
+			return fmt.Errorf("failed to process and split file %s: %w", fname, err)
+		}
+
+		for key, result := range fileResults {
+			if existing, exists := finalResults[key]; exists {
+				existing.Fingerprints = existing.Fingerprints.Union(result.Fingerprints)
+				if result.FirstTS < existing.FirstTS || existing.FirstTS == 0 {
+					existing.FirstTS = result.FirstTS
+				}
+				if result.LastTS > existing.LastTS {
+					existing.LastTS = result.LastTS
+				}
+				finalResults[key] = existing
+			} else {
+				finalResults[key] = result
+			}
+		}
+	}
+
+	for key, result := range finalResults {
+		segmentID := s3helper.GenerateID()
+		dbObjectID := helpers.MakeDBObjectID(firstItem.OrganizationID, firstItem.CollectorName, key.DateInt, s3helper.HourFromMillis(result.FirstTS), segmentID, "logs")
+
+		if err := s3helper.UploadS3Object(ctx, s3client, firstItem.Bucket, dbObjectID, result.FileName); err != nil {
+			return fmt.Errorf("failed to upload file to S3: %w", err)
+		}
+		_ = os.Remove(result.FileName)
+
+		fps := result.Fingerprints.ToSlice()
+		resultLastTS := result.LastTS + 1 // end is exclusive, so we need to increment it by 1ms
+		err := mdb.InsertLogSegment(ctx, lrdb.InsertLogSegmentParams{
+			OrganizationID: firstItem.OrganizationID,
+			Dateint:        key.DateInt,
+			IngestDateint:  key.IngestDateint,
+			SegmentID:      segmentID,
+			InstanceNum:    firstItem.InstanceNum,
+			StartTs:        result.FirstTS,
+			EndTs:          resultLastTS,
+			RecordCount:    result.RecordCount,
+			FileSize:       result.FileSize,
+			CreatedBy:      lrdb.CreatedByIngest,
+			Fingerprints:   fps,
+		})
+		if err != nil {
+			ll.Error("Failed to insert log segments", slog.Any("error", err))
+			return err
+		}
+
+		ll.Info("Inserted log segment from batch",
+			slog.String("organizationID", firstItem.OrganizationID.String()),
+			slog.Int("instanceNum", int(firstItem.InstanceNum)),
+			slog.Int("dateint", int(key.DateInt)),
+			slog.Int("hour", int(key.Hour)),
+			slog.String("dbObjectID", dbObjectID),
+			slog.Int64("segmentID", segmentID),
+			slog.Int64("recordCount", result.RecordCount),
+			slog.Int64("fileSize", result.FileSize),
+		)
+	}
+
+	// Create work queue items for compaction - one per unique dateint/hour combination
+	hourlyTriggers := make(map[helpers.HourBoundary]int64) // maps hour boundary to earliest FirstTS
+
+	for key, result := range finalResults {
+		hourBoundary := helpers.HourBoundary{DateInt: key.DateInt, Hour: key.Hour}
+		if existingTS, exists := hourlyTriggers[hourBoundary]; !exists || result.FirstTS < existingTS {
+			hourlyTriggers[hourBoundary] = result.FirstTS
+		}
+	}
+
+	for hourBoundary, earliestTS := range hourlyTriggers {
+		ll.Info("Queueing log compaction for hour from batch",
+			slog.Int("dateint", int(hourBoundary.DateInt)),
+			slog.Int("hour", int(hourBoundary.Hour)),
+			slog.Int64("triggerTS", earliestTS))
+
+		// Create hour-aligned timestamp for the work queue
+		hourAlignedTS := helpers.TruncateToHour(helpers.UnixMillisToTime(earliestTS)).UnixMilli()
+		if err := queueLogCompaction(ctx, mdb, qmcFromInqueue(firstItem, 3600000, hourAlignedTS)); err != nil {
+			ll.Error("Failed to queue log compaction from batch",
+				slog.Any("hourBoundary", hourBoundary),
+				slog.Int64("triggerTS", earliestTS),
+				slog.Any("error", err))
+			return err
+		}
+	}
+
+	return nil
 }

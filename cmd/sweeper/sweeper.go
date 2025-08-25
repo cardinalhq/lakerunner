@@ -25,6 +25,10 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -37,6 +41,59 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
+
+var (
+	objectCleanupCounter     metric.Int64Counter
+	legacyTableSyncCounter   metric.Int64Counter
+	workQueueExpiryCounter   metric.Int64Counter
+	signalLockCleanupCounter metric.Int64Counter
+	legacyTableSyncDuration  metric.Float64Histogram
+)
+
+func init() {
+	meter := otel.Meter("github.com/cardinalhq/lakerunner/cmd/sweeper")
+
+	var err error
+	objectCleanupCounter, err = meter.Int64Counter(
+		"lakerunner.sweeper.object_cleanup_total",
+		metric.WithDescription("Count of objects processed during cleanup"),
+	)
+	if err != nil {
+		panic(fmt.Errorf("failed to create object_cleanup_total counter: %w", err))
+	}
+
+	legacyTableSyncCounter, err = meter.Int64Counter(
+		"lakerunner.sweeper.legacy_table_sync_total",
+		metric.WithDescription("Count of legacy table synchronization runs"),
+	)
+	if err != nil {
+		panic(fmt.Errorf("failed to create legacy_table_sync_total counter: %w", err))
+	}
+
+	workQueueExpiryCounter, err = meter.Int64Counter(
+		"lakerunner.sweeper.workqueue_expiry_total",
+		metric.WithDescription("Count of work queue items expired"),
+	)
+	if err != nil {
+		panic(fmt.Errorf("failed to create workqueue_expiry_total counter: %w", err))
+	}
+
+	signalLockCleanupCounter, err = meter.Int64Counter(
+		"lakerunner.sweeper.signal_lock_cleanup_total",
+		metric.WithDescription("Count of orphaned signal locks cleaned up"),
+	)
+	if err != nil {
+		panic(fmt.Errorf("failed to create signal_lock_cleanup_total counter: %w", err))
+	}
+
+	legacyTableSyncDuration, err = meter.Float64Histogram(
+		"lakerunner.sweeper.legacy_table_sync_duration_seconds",
+		metric.WithDescription("Duration of legacy table synchronization runs in seconds"),
+	)
+	if err != nil {
+		panic(fmt.Errorf("failed to create legacy_table_sync_duration_seconds histogram: %w", err))
+	}
+}
 
 const (
 	gcBatchLimit           int32         = 1000
@@ -285,9 +342,27 @@ func runObjCleaner(ctx context.Context, ll *slog.Logger, sp storageprofile.Stora
 }
 
 func cleanupObj(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, awsmanager *awsclient.Manager, obj lrdb.ObjectCleanupGetRow) {
-	profile, err := sp.GetStorageProfileForBucket(ctx, obj.OrganizationID, obj.BucketID)
+	ll = ll.With(
+		slog.String("objectID", obj.ObjectID),
+		slog.String("bucketID", obj.BucketID),
+		slog.String("organizationID", obj.OrganizationID.String()),
+		slog.Int("instanceNum", int(obj.InstanceNum)),
+	)
+
+	profile, err := sp.GetStorageProfileForOrganizationAndInstance(ctx, obj.OrganizationID, obj.InstanceNum)
 	if err != nil {
 		ll.Error("Failed to get storage profile", slog.Any("error", err), slog.String("objectID", obj.ObjectID))
+		objectCleanupCounter.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("status", "failure"),
+			attribute.String("bucket", obj.BucketID),
+			attribute.String("organization_id", obj.OrganizationID.String()),
+		))
+		failWork(ctx, ll, mdb, obj.ID)
+		return
+	}
+
+	if profile.Bucket != obj.BucketID {
+		ll.Error("Storage profile bucket mismatch", slog.String("profileBucket", profile.Bucket))
 		failWork(ctx, ll, mdb, obj.ID)
 		return
 	}
@@ -295,21 +370,42 @@ func cleanupObj(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageP
 	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
 	if err != nil {
 		ll.Error("Failed to get S3 client", slog.Any("error", err))
+		objectCleanupCounter.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("status", "failure"),
+			attribute.String("bucket", obj.BucketID),
+			attribute.String("organization_id", obj.OrganizationID.String()),
+		))
 		failWork(ctx, ll, mdb, obj.ID)
 		return
 	}
 
 	if err := s3helper.DeleteS3Object(ctx, s3client, profile.Bucket, obj.ObjectID); err != nil {
 		ll.Error("Failed to delete S3 object", slog.Any("error", err), slog.String("objectID", obj.ObjectID))
+		objectCleanupCounter.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("status", "failure"),
+			attribute.String("bucket", obj.BucketID),
+			attribute.String("organization_id", obj.OrganizationID.String()),
+		))
 		failWork(ctx, ll, mdb, obj.ID)
 		return
 	}
 
 	if err := mdb.ObjectCleanupComplete(ctx, obj.ID); err != nil {
 		ll.Error("Failed to mark object cleanup complete", slog.Any("error", err), slog.String("objectID", obj.ObjectID))
+		objectCleanupCounter.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("status", "failure"),
+			attribute.String("bucket", obj.BucketID),
+			attribute.String("organization_id", obj.OrganizationID.String()),
+		))
 		failWork(ctx, ll, mdb, obj.ID)
 		return
 	}
+
+	objectCleanupCounter.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("status", "success"),
+		attribute.String("bucket", obj.BucketID),
+		attribute.String("organization_id", obj.OrganizationID.String()),
+	))
 }
 
 func failWork(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull, id uuid.UUID) {
@@ -331,6 +427,11 @@ func runWorkqueueExpiry(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull
 	}
 	for _, obj := range expired {
 		ll.Info("Expired work/lock", slog.Any("work", obj))
+		workQueueExpiryCounter.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("organization_id", obj.OrganizationID.String()),
+			attribute.String("signal", string(obj.Signal)),
+			attribute.String("action", string(obj.Action)),
+		))
 	}
 
 	// Clean up orphaned signal locks
@@ -339,6 +440,7 @@ func runWorkqueueExpiry(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull
 		ll.Error("Failed to cleanup orphaned signal locks", slog.Any("error", err))
 		return err
 	}
+	signalLockCleanupCounter.Add(ctx, int64(deleted))
 	if deleted > 0 {
 		ll.Info("Cleaned up orphaned signal locks", slog.Int("deleted", int(deleted)))
 	}
@@ -406,7 +508,20 @@ func workqueueGCLoop(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull) e
 	}
 }
 
-func runLegacyTablesSync(ctx context.Context, ll *slog.Logger, cdb configdb.QuerierFull, cdbPool *pgxpool.Pool) error {
+func runLegacyTablesSync(ctx context.Context, ll *slog.Logger, cdb configdb.QuerierFull, cdbPool *pgxpool.Pool) (err error) {
+	start := time.Now()
+	defer func() {
+		duration := time.Since(start).Seconds()
+		legacyTableSyncDuration.Record(ctx, duration)
+		status := "success"
+		if err != nil {
+			status = "failure"
+		}
+		legacyTableSyncCounter.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("status", status),
+		))
+	}()
+
 	ll.Info("Starting legacy table sync")
 
 	// Get all storage profiles from c_ tables
@@ -443,14 +558,14 @@ func runLegacyTablesSync(ctx context.Context, ll *slog.Logger, cdb configdb.Quer
 	qtx := configdb.New(tx)
 
 	// Clear existing bucket management tables (mirror mode)
-	if err := qtx.ClearBucketPrefixMappings(ctx); err != nil {
-		return err
+	if err = qtx.ClearBucketPrefixMappings(ctx); err != nil {
+		return
 	}
-	if err := qtx.ClearOrganizationBuckets(ctx); err != nil {
-		return err
+	if err = qtx.ClearOrganizationBuckets(ctx); err != nil {
+		return
 	}
-	if err := qtx.ClearBucketConfigurations(ctx); err != nil {
-		return err
+	if err = qtx.ClearBucketConfigurations(ctx); err != nil {
+		return
 	}
 
 	// Group profiles by bucket to ensure 1:1 mapping
@@ -469,7 +584,7 @@ func runLegacyTablesSync(ctx context.Context, ll *slog.Logger, cdb configdb.Quer
 	// Create bucket configurations and organization mappings
 	for bucketName, profile := range bucketToProfile {
 		// Create/update bucket configuration
-		_, err := qtx.UpsertBucketConfiguration(ctx, configdb.UpsertBucketConfigurationParams{
+		_, err = qtx.UpsertBucketConfiguration(ctx, configdb.UpsertBucketConfigurationParams{
 			BucketName:    bucketName,
 			CloudProvider: profile.CloudProvider,
 			Region:        profile.Region,
@@ -479,7 +594,7 @@ func runLegacyTablesSync(ctx context.Context, ll *slog.Logger, cdb configdb.Quer
 			InsecureTls:   false,
 		})
 		if err != nil {
-			return err
+			return
 		}
 
 		ll.Info("Synced bucket configuration",
@@ -491,26 +606,28 @@ func runLegacyTablesSync(ctx context.Context, ll *slog.Logger, cdb configdb.Quer
 
 	// Sync organization buckets from c_collectors to our organization_buckets table
 	ll.Info("Syncing organization buckets from c_collectors table")
-	if err := qtx.SyncOrganizationBuckets(ctx); err != nil {
-		return fmt.Errorf("failed to sync organization buckets: %w", err)
+	if err = qtx.SyncOrganizationBuckets(ctx); err != nil {
+		err = fmt.Errorf("failed to sync organization buckets: %w", err)
+		return
 	}
 	ll.Info("Successfully synced organization buckets")
 
 	// Sync organizations from c_organizations to our organizations table
 	ll.Info("Syncing organizations from c_organizations table")
-	if err := qtx.SyncOrganizations(ctx); err != nil {
-		return fmt.Errorf("failed to sync organizations: %w", err)
+	if err = qtx.SyncOrganizations(ctx); err != nil {
+		err = fmt.Errorf("failed to sync organizations: %w", err)
+		return
 	}
 	ll.Info("Successfully synced organizations")
 
 	// Sync organization API keys from c_organization_api_keys to our organization tables
-	if err := syncOrganizationAPIKeys(ctx, ll, qtx); err != nil {
-		return err
+	if err = syncOrganizationAPIKeys(ctx, ll, qtx); err != nil {
+		return
 	}
 
 	// Commit the transaction
-	if err := tx.Commit(ctx); err != nil {
-		return err
+	if err = tx.Commit(ctx); err != nil {
+		return
 	}
 	closed = true
 

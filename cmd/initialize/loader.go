@@ -69,12 +69,6 @@ func InitializeConfig(ctx context.Context, storageProfileFile, apiKeysFile strin
 
 // InitializeConfigWithDependencies loads and imports with injectable dependencies for testing
 func InitializeConfigWithDependencies(ctx context.Context, storageProfileFile, apiKeysFile string, qtx DatabaseQueries, fileReader FileReader, logger *slog.Logger, replace bool) error {
-	// First sync organizations from c_organizations table
-	logger.Info("Starting organization sync from c_organizations table")
-	if err := qtx.SyncOrganizations(ctx); err != nil {
-		return fmt.Errorf("failed to sync organizations: %w", err)
-	}
-	logger.Info("Successfully synced organizations from c_organizations table")
 
 	// Load and import storage profiles
 	if err := loadAndImportStorageProfilesWithReader(ctx, storageProfileFile, qtx, fileReader, logger, replace); err != nil {

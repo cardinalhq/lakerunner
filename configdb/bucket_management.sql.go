@@ -165,6 +165,24 @@ func (q *Queries) CreateOrganizationBucket(ctx context.Context, arg CreateOrgani
 	return i, err
 }
 
+const deleteBucketConfiguration = `-- name: DeleteBucketConfiguration :exec
+DELETE FROM bucket_configurations WHERE bucket_name = $1
+`
+
+func (q *Queries) DeleteBucketConfiguration(ctx context.Context, bucketName string) error {
+	_, err := q.db.Exec(ctx, deleteBucketConfiguration, bucketName)
+	return err
+}
+
+const deleteBucketPrefixMapping = `-- name: DeleteBucketPrefixMapping :exec
+DELETE FROM bucket_prefix_mappings WHERE id = $1
+`
+
+func (q *Queries) DeleteBucketPrefixMapping(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteBucketPrefixMapping, id)
+	return err
+}
+
 const getAllCStorageProfilesForSync = `-- name: GetAllCStorageProfilesForSync :many
 
 SELECT DISTINCT
@@ -433,6 +451,82 @@ func (q *Queries) HasExistingStorageProfiles(ctx context.Context) (bool, error) 
 	var has_profiles bool
 	err := row.Scan(&has_profiles)
 	return has_profiles, err
+}
+
+const listBucketConfigurations = `-- name: ListBucketConfigurations :many
+SELECT id, bucket_name, cloud_provider, region, endpoint, role, use_path_style, insecure_tls
+FROM bucket_configurations
+ORDER BY bucket_name
+`
+
+func (q *Queries) ListBucketConfigurations(ctx context.Context) ([]BucketConfiguration, error) {
+	rows, err := q.db.Query(ctx, listBucketConfigurations)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []BucketConfiguration
+	for rows.Next() {
+		var i BucketConfiguration
+		if err := rows.Scan(
+			&i.ID,
+			&i.BucketName,
+			&i.CloudProvider,
+			&i.Region,
+			&i.Endpoint,
+			&i.Role,
+			&i.UsePathStyle,
+			&i.InsecureTls,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listBucketPrefixMappings = `-- name: ListBucketPrefixMappings :many
+SELECT bpm.id, bc.bucket_name, bpm.organization_id, bpm.path_prefix, bpm.signal
+FROM bucket_prefix_mappings bpm
+JOIN bucket_configurations bc ON bpm.bucket_id = bc.id
+ORDER BY bc.bucket_name, bpm.path_prefix
+`
+
+type ListBucketPrefixMappingsRow struct {
+	ID             uuid.UUID `json:"id"`
+	BucketName     string    `json:"bucket_name"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+	PathPrefix     string    `json:"path_prefix"`
+	Signal         string    `json:"signal"`
+}
+
+func (q *Queries) ListBucketPrefixMappings(ctx context.Context) ([]ListBucketPrefixMappingsRow, error) {
+	rows, err := q.db.Query(ctx, listBucketPrefixMappings)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListBucketPrefixMappingsRow
+	for rows.Next() {
+		var i ListBucketPrefixMappingsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.BucketName,
+			&i.OrganizationID,
+			&i.PathPrefix,
+			&i.Signal,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const upsertBucketConfiguration = `-- name: UpsertBucketConfiguration :one

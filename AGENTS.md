@@ -31,6 +31,10 @@ Parquet files, specific json.gz format archives for logs, and some other formats
 * "make test" is a good command to run the full test suite, which will also rebuild any generate files.
 * "make check" needs to pass prior to a PR being made.  "make check" will run a linter as well, which can take some significant time to run.  If "make check" consistently fails to complete in the time allowed, fall back to using "make test license-check" instead.
 
+## Build Tools
+
+* Protobuf generation relies on the Buf CLI. Install it with `make bin/buf`, which places the binary in `./bin` for use by `make generate` and other targets.
+
 ## Licensing
 
 This is a common header our source and source-like files must use

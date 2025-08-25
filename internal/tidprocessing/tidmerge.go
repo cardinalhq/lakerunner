@@ -51,10 +51,11 @@ type TIDMerger struct {
 }
 
 type WriteResult struct {
-	FileName    string
-	RecordCount int64
-	FileSize    int64
-	TidCount    int32 // number of unique TIDs in the file
+	FileName     string
+	RecordCount  int64
+	FileSize     int64
+	TidCount     int32 // number of unique TIDs in the file
+	Fingerprints []int64
 }
 
 // NewTIDMerger creates a new TIDMerger instance.
@@ -300,10 +301,11 @@ func (m *TIDMerger) Merge() ([]WriteResult, MergeStats, error) {
 		var stats TidAccumulatorResult
 		stats, _ = res.Stats.(TidAccumulatorResult)
 		ret = append(ret, WriteResult{
-			FileName:    res.FileName,
-			RecordCount: res.RecordCount,
-			FileSize:    res.FileSize,
-			TidCount:    int32(stats.Cardinality),
+			FileName:     res.FileName,
+			RecordCount:  res.RecordCount,
+			FileSize:     res.FileSize,
+			TidCount:     int32(stats.Cardinality),
+			Fingerprints: res.Fingerprints.ToSlice(),
 		})
 	}
 
@@ -344,6 +346,9 @@ func (m *TIDMerger) mergeRows(rows []map[string]any) []map[string]any {
 	}
 
 	merged := make(map[mergekey]*mergeaccumulator)
+	singletons := make(map[mergekey][]float64) // Collect singleton values for efficient addition
+
+	// First pass: collect all sketches and singleton values separately
 	for _, row := range rows {
 		rowTS, ok := getTimestampFromRecord(row)
 		if !ok {
@@ -361,6 +366,31 @@ func (m *TIDMerger) mergeRows(rows []map[string]any) []map[string]any {
 			slog.Error("Failed to make key for row", "error", err, "row", row)
 			continue
 		}
+
+		// Check if this is a singleton (empty sketch with rollup_count=1)
+		if len(sketchBytes) == 0 {
+			rollupCount, countOk := row["rollup_count"].(float64)
+			rollupSum, sumOk := row["rollup_sum"].(float64)
+
+			if countOk && sumOk && rollupCount == 1 {
+				// Collect singleton value for later efficient addition
+				singletons[key] = append(singletons[key], rollupSum)
+				// Ensure we have a merged entry for this key
+				if _, exists := merged[key]; !exists {
+					merged[key] = &mergeaccumulator{
+						row:           row,
+						contributions: 0,
+					}
+				}
+				merged[key].contributions++
+				continue
+			} else {
+				slog.Error("Empty sketch without valid rollup data", "row", row)
+				continue
+			}
+		}
+
+		// This is a real sketch, decode it
 		sketch, err := DecodeSketch(sketchBytes)
 		if err != nil {
 			slog.Error("Failed to decode sketch", "error", err)
@@ -368,17 +398,51 @@ func (m *TIDMerger) mergeRows(rows []map[string]any) []map[string]any {
 		}
 
 		if _, exists := merged[key]; !exists {
+			// 1st time: store the sketch
 			merged[key] = &mergeaccumulator{
 				row:           row,
 				contributions: 1,
+				sketch:        sketch,
 			}
-			merged[key].sketch = sketch
 		} else {
-			// accumulate contributions
+			// Merge sketches (much faster than individual value adds)
 			merged[key].contributions++
-			if err := merged[key].sketch.MergeWith(sketch); err != nil {
-				slog.Error("Failed to merge sketch", "error", err)
+			if merged[key].sketch == nil {
+				// First sketch for this key
+				merged[key].sketch = sketch
+			} else {
+				if err := merged[key].sketch.MergeWith(sketch); err != nil {
+					slog.Error("Failed to merge sketch", "error", err)
+					continue
+				}
+			}
+		}
+	}
+
+	// Second pass: add all singleton values to merged sketches
+	for key, values := range singletons {
+		acc := merged[key]
+		if acc == nil {
+			continue // Should not happen, but be safe
+		}
+
+		// Create sketch if we don't have one yet (all singletons case)
+		if acc.sketch == nil {
+			s, err := ddsketch.NewDefaultDDSketch(0.01)
+			if err != nil {
+				slog.Error("Failed to create sketch for singletons", "error", err)
+				// Mark this accumulator as having failed sketch creation
+				// by setting contributions to 0 to prevent updateFromSketch being called
+				acc.contributions = 0
 				continue
+			}
+			acc.sketch = s
+		}
+
+		// Add all singleton values efficiently (much faster than sketch.MergeWith)
+		for _, value := range values {
+			if err := acc.sketch.Add(value); err != nil {
+				slog.Error("Failed to add singleton value to sketch", "error", err, "value", value)
 			}
 		}
 	}
@@ -400,26 +464,39 @@ func (m *TIDMerger) mergeRows(rows []map[string]any) []map[string]any {
 }
 
 func updateFromSketch(acc *mergeaccumulator) error {
-	rollupCountIn := acc.sketch.GetCount()
-	rollupSumIn := acc.sketch.GetSum()
+	// Check if sketch exists - this should never happen if contributions > 1,
+	// but we need to be defensive in case sketch creation failed
+	if acc.sketch == nil {
+		return fmt.Errorf("attempting to update from nil sketch for %d contributions", acc.contributions)
+	}
+
+	sk := acc.sketch
+	rollupCountIn := sk.GetCount()
+	rollupSumIn := sk.GetSum()
 
 	acc.row["rollup_count"] = rollupCountIn
 	acc.row["rollup_sum"] = rollupSumIn
-	acc.row["rollup_avg"] = rollupSumIn / rollupCountIn
 
-	rollupMaxIn, err := acc.sketch.GetMaxValue()
+	// Avoid division by zero
+	if rollupCountIn > 0 {
+		acc.row["rollup_avg"] = rollupSumIn / rollupCountIn
+	} else {
+		acc.row["rollup_avg"] = 0.0
+	}
+
+	rollupMaxIn, err := sk.GetMaxValue()
 	if err != nil {
 		return fmt.Errorf("getting max value from sketch: %w", err)
 	}
 	acc.row["rollup_max"] = rollupMaxIn
 
-	rollupMinIn, err := acc.sketch.GetMinValue()
+	rollupMinIn, err := sk.GetMinValue()
 	if err != nil {
 		return fmt.Errorf("getting min value from sketch: %w", err)
 	}
 	acc.row["rollup_min"] = rollupMinIn
 
-	quantiles, err := acc.sketch.GetValuesAtQuantiles([]float64{0.25, 0.50, 0.75, 0.90, 0.95, 0.99})
+	quantiles, err := sk.GetValuesAtQuantiles([]float64{0.25, 0.50, 0.75, 0.90, 0.95, 0.99})
 	if err != nil {
 		return fmt.Errorf("getting quantiles from sketch: %w", err)
 	}
@@ -430,7 +507,8 @@ func updateFromSketch(acc *mergeaccumulator) error {
 	acc.row["rollup_p95"] = quantiles[4]
 	acc.row["rollup_p99"] = quantiles[5]
 
-	acc.row["sketch"] = EncodeSketch(acc.sketch)
+	// Re-encode the merged sketch
+	acc.row["sketch"] = EncodeSketch(sk)
 
 	return nil
 }
@@ -467,8 +545,28 @@ func makekey(rec map[string]any, interval int32) (key mergekey, sketchBytes []by
 	switch v := sketchVal.(type) {
 	case []byte:
 		sketchBytes = v
+		// If sketch is empty, try to reconstruct from rollup values
+		if len(v) == 0 {
+			reconstructedSketch, err := reconstructSketchFromRollup(rec)
+			if err != nil {
+				// If we can't reconstruct, use empty sketch
+				sketchBytes = []byte{}
+			} else {
+				sketchBytes = reconstructedSketch
+			}
+		}
 	case string:
 		sketchBytes = []byte(v)
+		// If sketch is empty, try to reconstruct from rollup values
+		if len(v) == 0 {
+			reconstructedSketch, err := reconstructSketchFromRollup(rec)
+			if err != nil {
+				// If we can't reconstruct, use empty sketch
+				sketchBytes = []byte{}
+			} else {
+				sketchBytes = reconstructedSketch
+			}
+		}
 	default:
 		return key, nil, ErrorInvalidSketchType
 	}
@@ -490,6 +588,40 @@ func GroupTIDGroupFunc(prev, current map[string]any) bool {
 		return false
 	}
 	return ptid == ctid
+}
+
+// reconstructSketchFromRollup creates a sketch from rollup values when sketch is empty
+func reconstructSketchFromRollup(rec map[string]any) ([]byte, error) {
+	// Get rollup values to reconstruct the sketch
+	rollupCount, ok := rec["rollup_count"].(float64)
+	if !ok || rollupCount <= 0 {
+		return nil, fmt.Errorf("invalid rollup_count")
+	}
+
+	// If count is 1, we can create a simple sketch with a single value
+	if rollupCount == 1 {
+		rollupSum, ok := rec["rollup_sum"].(float64)
+		if !ok {
+			return nil, fmt.Errorf("invalid rollup_sum")
+		}
+
+		// Create a sketch with single value
+		sketch, err := ddsketch.NewDefaultDDSketch(0.01)
+		if err != nil {
+			return nil, fmt.Errorf("creating sketch: %w", err)
+		}
+
+		if err := sketch.Add(rollupSum); err != nil {
+			return nil, fmt.Errorf("adding value to sketch: %w", err)
+		}
+
+		return EncodeSketch(sketch), nil
+	}
+
+	// For multiple values, we can't perfectly reconstruct the sketch
+	// but we can create an approximation using the available rollup data
+	// For now, we'll return empty sketch as a fallback
+	return []byte{}, nil
 }
 
 func CalculateTargetRecordsPerFile(recordCount int, estimatedBytesPerRecord int, targetFileSize int64) int64 {

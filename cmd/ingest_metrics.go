@@ -37,6 +37,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/cmd/ingestlogs"
+	"github.com/cardinalhq/lakerunner/cmd/ingestmetrics"
 	"github.com/cardinalhq/lakerunner/fileconv/proto"
 	"github.com/cardinalhq/lakerunner/fileconv/translate"
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
@@ -85,7 +86,7 @@ func init() {
 				}
 			}()
 
-			return IngestLoop(loop, metricIngestItem)
+			return IngestLoopWithBatch(loop, metricIngestItem, metricIngestBatch)
 		},
 	}
 
@@ -139,7 +140,7 @@ func metricIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp st
 	filenames := []string{tmpfilename}
 
 	// If the file is not in our `otel-raw` prefix, check if we can convert it
-	if !strings.HasPrefix(inf.ObjectID, "otel-raw/") {
+	if strings.HasPrefix(inf.ObjectID, "otel-raw/") {
 		// Skip database files (these are processed outputs, not inputs)
 		if strings.HasPrefix(inf.ObjectID, "db/") {
 			return nil
@@ -181,10 +182,12 @@ type TimeBlock struct {
 }
 
 type TagSketch struct {
-	MetricName string
-	MetricType string
-	Tags       map[string]any
-	Sketch     *ddsketch.DDSketch
+	MetricName     string
+	MetricType     string
+	Tags           map[string]any
+	Sketch         *ddsketch.DDSketch
+	DataPointCount int
+	SingleValue    float64 // For single gauge/counter data points, store the actual value
 }
 
 // crunchMetricFile processes the metric file and generates sketches or other
@@ -258,16 +261,12 @@ func crunchMetricFile(ctx context.Context, ll *slog.Logger, tmpdir string, fh *f
 		sketch, exists := (*block.Sketches)[tid]
 		if !exists {
 			sketch = TagSketch{
-				MetricName: metricName,
-				MetricType: metricType,
-				Tags:       tags,
-				Sketch:     nil,
+				MetricName:     metricName,
+				MetricType:     metricType,
+				Tags:           tags,
+				Sketch:         nil,
+				DataPointCount: 0,
 			}
-			s, err := ddsketch.NewDefaultDDSketch(0.01)
-			if err != nil {
-				return fmt.Errorf("creating sketch: %w", err)
-			}
-			sketch.Sketch = s
 			(*block.Sketches)[tid] = sketch
 		} else {
 			if sketch.MetricName != metricName {
@@ -282,6 +281,18 @@ func crunchMetricFile(ctx context.Context, ll *slog.Logger, tmpdir string, fh *f
 			}
 		}
 
+		// Increment data point count
+		sketch.DataPointCount++
+
+		// Create sketch if we have multiple data points OR if it's a histogram (always need sketch for histograms)
+		if (sketch.DataPointCount > 1 || sketch.MetricType == "histogram") && sketch.Sketch == nil {
+			s, err := ddsketch.NewDefaultDDSketch(0.01)
+			if err != nil {
+				return fmt.Errorf("creating sketch: %w", err)
+			}
+			sketch.Sketch = s
+		}
+
 		switch metricType {
 		case "count", "gauge":
 			value, ok := helpers.GetFloat64Value(rec, "_cardinalhq.value")
@@ -290,8 +301,24 @@ func crunchMetricFile(ctx context.Context, ll *slog.Logger, tmpdir string, fh *f
 				continue
 			}
 			rec["_cardinalhq.value"] = -1
-			if err := sketch.Sketch.Add(value); err != nil {
-				return fmt.Errorf("adding value to sketch: %w", err)
+
+			switch sketch.DataPointCount {
+			case 1:
+				// First data point - store the single value
+				sketch.SingleValue = value
+			case 2:
+				// Second data point - add both to the newly created sketch
+				if err := sketch.Sketch.Add(sketch.SingleValue); err != nil {
+					return fmt.Errorf("adding previous single value to sketch: %w", err)
+				}
+				if err := sketch.Sketch.Add(value); err != nil {
+					return fmt.Errorf("adding current value to sketch: %w", err)
+				}
+			default:
+				// Multiple data points - add to existing sketch
+				if err := sketch.Sketch.Add(value); err != nil {
+					return fmt.Errorf("adding value to sketch: %w", err)
+				}
 			}
 		case "histogram":
 			bucketCounts, ok := helpers.GetFloat64SliceJSON(rec, "_cardinalhq.counts")
@@ -308,11 +335,10 @@ func crunchMetricFile(ctx context.Context, ll *slog.Logger, tmpdir string, fh *f
 			delete(rec, "_cardinalhq.bucket_bounds")
 			counts, values := handleHistogram(bucketCounts, bucketBounds)
 			if len(counts) == 0 {
-				// if err := sketch.Sketch.Add(0); err != nil {
-				// 	return fmt.Errorf("adding zero to sketch: %w", err)
-				// }
 				continue
 			}
+
+			// For histograms, we always create sketches, so this is simple
 			for i, count := range counts {
 				if err := sketch.Sketch.AddWithCount(values[i], count); err != nil {
 					return fmt.Errorf("adding histogram value to sketch: %w", err)
@@ -323,6 +349,9 @@ func crunchMetricFile(ctx context.Context, ll *slog.Logger, tmpdir string, fh *f
 			ll.Info("Skipping unsupported metric type", slog.String("metricType", metricType))
 			continue
 		}
+
+		// Update the sketch in the map after processing
+		(*block.Sketches)[tid] = sketch
 	}
 
 	ll.Info("Finished processing metric file", slog.String("file", fh.File.Name()), slog.Int("blocks", len(blocks)))
@@ -394,48 +423,81 @@ func writeMetricSketchParquet(ctx context.Context, tmpdir string, blocknum int64
 
 	for _, tid := range sortedTIDs {
 		sketch := (*block.Sketches)[tid]
-		if sketch.Sketch == nil || sketch.Sketch.GetCount() == 0 {
+
+		// Skip empty sketches (should not happen)
+		if sketch.DataPointCount == 0 {
 			continue
 		}
-		maxvalue, err := sketch.Sketch.GetMaxValue()
-		if err != nil {
-			return fmt.Errorf("getting max value from sketch: %w", err)
-		}
 
-		minvalue, err := sketch.Sketch.GetMinValue()
-		if err != nil {
-			return fmt.Errorf("getting min value from sketch: %w", err)
-		}
+		var addToRec map[string]any
 
-		quantiles, err := sketch.Sketch.GetValuesAtQuantiles([]float64{0.25, 0.5, 0.75, 0.90, 0.95, 0.99})
-		if err != nil {
-			return fmt.Errorf("getting quantiles from sketch: %w", err)
-		}
+		if sketch.Sketch != nil && sketch.Sketch.GetCount() > 0 {
+			// Multi-value case: use sketch
+			maxvalue, err := sketch.Sketch.GetMaxValue()
+			if err != nil {
+				return fmt.Errorf("getting max value from sketch: %w", err)
+			}
 
-		count := sketch.Sketch.GetCount()
-		sum := sketch.Sketch.GetSum()
-		avg := sum / count
+			minvalue, err := sketch.Sketch.GetMinValue()
+			if err != nil {
+				return fmt.Errorf("getting min value from sketch: %w", err)
+			}
 
-		addToRec := map[string]any{
-			"_cardinalhq.timestamp":      startTS,
-			"_cardinalhq.name":           sketch.MetricName,
-			"_cardinalhq.customer_id":    inf.OrganizationID.String(),
-			"_cardinalhq.metric_type":    sketch.MetricType,
-			"_cardinalhq.tid":            tid,
-			"_cardinalhq.value":          float64(-1),
-			"_cardinalhq.telemetry_type": "metrics",
-			"sketch":                     tidprocessing.EncodeSketch(sketch.Sketch),
-			"rollup_avg":                 avg,
-			"rollup_max":                 maxvalue,
-			"rollup_min":                 minvalue,
-			"rollup_count":               count,
-			"rollup_sum":                 sum,
-			"rollup_p25":                 quantiles[0],
-			"rollup_p50":                 quantiles[1],
-			"rollup_p75":                 quantiles[2],
-			"rollup_p90":                 quantiles[3],
-			"rollup_p95":                 quantiles[4],
-			"rollup_p99":                 quantiles[5],
+			quantiles, err := sketch.Sketch.GetValuesAtQuantiles([]float64{0.25, 0.5, 0.75, 0.90, 0.95, 0.99})
+			if err != nil {
+				return fmt.Errorf("getting quantiles from sketch: %w", err)
+			}
+
+			count := sketch.Sketch.GetCount()
+			sum := sketch.Sketch.GetSum()
+			avg := sum / count
+
+			addToRec = map[string]any{
+				"_cardinalhq.timestamp":      startTS,
+				"_cardinalhq.name":           sketch.MetricName,
+				"_cardinalhq.customer_id":    inf.OrganizationID.String(),
+				"_cardinalhq.metric_type":    sketch.MetricType,
+				"_cardinalhq.tid":            tid,
+				"_cardinalhq.value":          float64(-1),
+				"_cardinalhq.telemetry_type": "metrics",
+				"sketch":                     tidprocessing.EncodeSketch(sketch.Sketch),
+				"rollup_avg":                 avg,
+				"rollup_max":                 maxvalue,
+				"rollup_min":                 minvalue,
+				"rollup_count":               count,
+				"rollup_sum":                 sum,
+				"rollup_p25":                 quantiles[0],
+				"rollup_p50":                 quantiles[1],
+				"rollup_p75":                 quantiles[2],
+				"rollup_p90":                 quantiles[3],
+				"rollup_p95":                 quantiles[4],
+				"rollup_p99":                 quantiles[5],
+			}
+		} else {
+			// Single-value case: use stored single value, no sketch
+			value := sketch.SingleValue
+
+			addToRec = map[string]any{
+				"_cardinalhq.timestamp":      startTS,
+				"_cardinalhq.name":           sketch.MetricName,
+				"_cardinalhq.customer_id":    inf.OrganizationID.String(),
+				"_cardinalhq.metric_type":    sketch.MetricType,
+				"_cardinalhq.tid":            tid,
+				"_cardinalhq.value":          float64(-1),
+				"_cardinalhq.telemetry_type": "metrics",
+				"sketch":                     []byte{}, // Empty sketch for single values
+				"rollup_avg":                 value,    // For single value, all stats are the same
+				"rollup_max":                 value,
+				"rollup_min":                 value,
+				"rollup_count":               float64(1),
+				"rollup_sum":                 value, // Single value: sum equals the value
+				"rollup_p25":                 value, // All percentiles are the single value
+				"rollup_p50":                 value,
+				"rollup_p75":                 value,
+				"rollup_p90":                 value,
+				"rollup_p95":                 value,
+				"rollup_p99":                 value,
+			}
 		}
 		rec := map[string]any{}
 		maps.Copy(rec, sketch.Tags)
@@ -474,6 +536,9 @@ func writeMetricSketchParquet(ctx context.Context, tmpdir string, blocknum int64
 			return fmt.Errorf("uploading file to S3: %w", err)
 		}
 
+		// Calculate slot ID for partitioning
+		slotID := ingestmetrics.DetermineMetricSlot(block.FrequencyMS, dateint, inf.OrganizationID.String())
+
 		t0 := time.Now()
 		err = mdb.InsertMetricSegment(ctx, lrdb.InsertMetricSegmentParams{
 			OrganizationID: inf.OrganizationID,
@@ -483,12 +548,14 @@ func writeMetricSketchParquet(ctx context.Context, tmpdir string, blocknum int64
 			TidPartition:   0,
 			SegmentID:      segmentID,
 			InstanceNum:    inf.InstanceNum,
+			SlotID:         int32(slotID),
 			StartTs:        startTS,
 			EndTs:          endTS,
 			RecordCount:    stat.RecordCount,
 			FileSize:       stat.FileSize,
 			Published:      true,
 			CreatedBy:      lrdb.CreatedByIngest,
+			Fingerprints:   stat.Fingerprints.ToSlice(),
 		})
 		dbExecDuration.Record(ctx, time.Since(t0).Seconds(),
 			metric.WithAttributeSet(commonAttributes),
@@ -613,13 +680,6 @@ func convertMetricsProtoFile(ll *slog.Logger, tmpfilename, tmpdir, bucket, objec
 
 	mapper := translate.NewMapper()
 
-	// Use the parsed metrics directly
-	r, err := proto.NewMetricsProtoReaderFromMetrics(&metrics, mapper, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer r.Close()
-
 	nmb := buffet.NewNodeMapBuilder()
 
 	baseitems := map[string]string{
@@ -628,8 +688,12 @@ func convertMetricsProtoFile(ll *slog.Logger, tmpfilename, tmpdir, bucket, objec
 		"resource.file.type":   ingestlogs.GetFileType(objectID),
 	}
 
-	// First pass: read all rows to build complete schema
-	allRows := make([]map[string]any, 0)
+	// Pass 1: build schema using MetricsProtoReader
+	r, err := proto.NewMetricsProtoReaderFromMetrics(&metrics, mapper, nil)
+	if err != nil {
+		return nil, err
+	}
+	rowCount := 0
 	for {
 		row, done, err := r.GetRow()
 		if err != nil {
@@ -639,20 +703,19 @@ func convertMetricsProtoFile(ll *slog.Logger, tmpfilename, tmpdir, bucket, objec
 			break
 		}
 
-		// Add base items to the row
 		for k, v := range baseitems {
 			row[k] = v
 		}
 
-		// Add row to schema builder
 		if err := nmb.Add(row); err != nil {
 			return nil, fmt.Errorf("failed to add row to schema: %w", err)
 		}
-
-		allRows = append(allRows, row)
+		rowCount++
 	}
-
-	if len(allRows) == 0 {
+	if err := r.Close(); err != nil {
+		return nil, err
+	}
+	if rowCount == 0 {
 		return nil, fmt.Errorf("no rows processed")
 	}
 
@@ -664,16 +727,35 @@ func convertMetricsProtoFile(ll *slog.Logger, tmpfilename, tmpdir, bucket, objec
 
 	defer func() {
 		_, err := w.Close()
-		if err != buffet.ErrAlreadyClosed && err != nil {
+		if !errors.Is(err, buffet.ErrAlreadyClosed) && err != nil {
 			slog.Error("Failed to close writer", slog.Any("error", err))
 		}
 	}()
 
-	// Second pass: write all rows
-	for _, row := range allRows {
+	// Pass 2: write rows directly to the writer
+	r, err = proto.NewMetricsProtoReaderFromMetrics(&metrics, mapper, nil)
+	if err != nil {
+		return nil, err
+	}
+	for {
+		row, done, err := r.GetRow()
+		if err != nil {
+			return nil, err
+		}
+		if done {
+			break
+		}
+
+		for k, v := range baseitems {
+			row[k] = v
+		}
+
 		if err := w.Write(row); err != nil {
 			return nil, fmt.Errorf("failed to write row: %w", err)
 		}
+	}
+	if err := r.Close(); err != nil {
+		return nil, err
 	}
 
 	result, err := w.Close()
@@ -799,4 +881,151 @@ func upsertServiceIdentifierDirect(ctx context.Context, mdb lrdb.StoreFull, orgI
 	}
 
 	return result.ID, nil
+}
+
+func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
+	awsmanager *awsclient.Manager, items []lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
+
+	if len(items) == 0 {
+		return fmt.Errorf("empty batch")
+	}
+
+	ll.Info("Processing metrics batch", slog.Int("batchSize", len(items)))
+
+	var profile storageprofile.StorageProfile
+	var err error
+
+	firstItem := items[0]
+	if collectorName := helpers.ExtractCollectorName(firstItem.ObjectID); collectorName != "" {
+		profile, err = sp.GetStorageProfileForOrganizationAndCollector(ctx, firstItem.OrganizationID, collectorName)
+		if err != nil {
+			return fmt.Errorf("failed to get storage profile for collector %s: %w", collectorName, err)
+		}
+	} else {
+		profile, err = sp.GetStorageProfileForOrganizationAndInstance(ctx, firstItem.OrganizationID, firstItem.InstanceNum)
+		if err != nil {
+			return fmt.Errorf("failed to get storage profile for organization and instance: %w", err)
+		}
+	}
+
+	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
+	if err != nil {
+		return fmt.Errorf("failed to get S3 client: %w", err)
+	}
+
+	// Collect all TimeBlocks from all items
+	allTimeBlocks := make(map[int64]*TimeBlock)
+
+	for _, inf := range items {
+		ll.Info("Processing batch item",
+			slog.String("itemID", inf.ID.String()),
+			slog.String("objectID", inf.ObjectID),
+			slog.Int64("fileSize", inf.FileSize))
+
+		itemTmpdir := fmt.Sprintf("%s/item_%s", tmpdir, inf.ID.String())
+		if err := os.MkdirAll(itemTmpdir, 0755); err != nil {
+			return fmt.Errorf("creating item tmpdir: %w", err)
+		}
+
+		tmpfilename, _, is404, err := s3helper.DownloadS3Object(ctx, itemTmpdir, s3client, inf.Bucket, inf.ObjectID)
+		if err != nil {
+			return fmt.Errorf("failed to download file %s: %w", inf.ObjectID, err)
+		}
+		if is404 {
+			ll.Warn("S3 object not found, skipping", slog.String("itemID", inf.ID.String()), slog.String("objectID", inf.ObjectID))
+			continue
+		}
+
+		filenames := []string{tmpfilename}
+
+		if strings.HasPrefix(inf.ObjectID, "otel-raw/") {
+			if strings.HasPrefix(inf.ObjectID, "db/") {
+				continue
+			}
+			if fnames, err := convertMetricsFileIfSupported(ll, tmpfilename, itemTmpdir, inf.Bucket, inf.ObjectID, rpfEstimate, loop.exemplarProcessor, inf.OrganizationID.String()); err != nil {
+				return fmt.Errorf("failed to convert metrics file %s: %w", inf.ObjectID, err)
+			} else if fnames != nil {
+				filenames = fnames
+			}
+		}
+
+		// Process each converted file using existing crunchMetricFile logic but accumulate into shared blocks
+		for _, fname := range filenames {
+			fh, err := filecrunch.LoadSchemaForFile(fname)
+			if err != nil {
+				return fmt.Errorf("failed to load schema for file %s: %w", fname, err)
+			}
+
+			if err := crunchMetricFileToBatch(ctx, ll, fh, allTimeBlocks); err != nil {
+				fh.Close()
+				return fmt.Errorf("failed to crunch metric file %s: %w", fname, err)
+			}
+			fh.Close()
+		}
+	}
+
+	if len(allTimeBlocks) == 0 {
+		ll.Info("No time blocks to process in batch")
+		return nil
+	}
+
+	// Process all collected time blocks
+	for blocknum, block := range allTimeBlocks {
+		ll.Info("Writing metric time block from batch",
+			slog.Int64("blocknum", blocknum),
+			slog.Int("nSketches", len(*block.Sketches)),
+			slog.Int64("frequencyMS", int64(block.FrequencyMS)),
+			slog.Int64("startTS", block.Block*int64(block.FrequencyMS)),
+			slog.Int64("endTS", (block.Block+1)*int64(block.FrequencyMS)-1))
+
+		if err := writeMetricSketchParquet(ctx, tmpdir, blocknum, block, firstItem, s3client, ll, mdb, ingest_dateint, rpfEstimate); err != nil {
+			return fmt.Errorf("failed to write metric sketch parquet for block %d: %w", blocknum, err)
+		}
+	}
+
+	return nil
+}
+
+func crunchMetricFileToBatch(ctx context.Context, ll *slog.Logger, fh *filecrunch.FileHandle, allTimeBlocks map[int64]*TimeBlock) error {
+	reader := parquet.NewReader(fh.File, fh.Schema)
+	defer reader.Close()
+
+	for {
+		rec := map[string]any{}
+		if err := reader.Read(&rec); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return fmt.Errorf("reading parquet: %w", err)
+		}
+		delete(rec, "_cardinalhq.id")
+
+		// Parse the metric record using our extracted function
+		metricRecord, err := parseMetricRecord(rec, ll)
+		if err != nil {
+			ll.Warn("Skipping invalid record", slog.String("error", err.Error()), slog.Any("record", rec))
+			continue
+		}
+
+		const frequencyMS = 10000 // 10 seconds
+		blocknum := metricRecord.Timestamp / frequencyMS
+
+		block, exists := allTimeBlocks[blocknum]
+		if !exists {
+			block = &TimeBlock{
+				Block:       blocknum,
+				FrequencyMS: frequencyMS,
+				Sketches:    &map[int64]TagSketch{},
+				nodebuilder: buffet.NewNodeMapBuilder(),
+			}
+			allTimeBlocks[blocknum] = block
+		}
+
+		// Process the metric record using our extracted function
+		if err := processMetricRecord(metricRecord, block.Sketches, block.nodebuilder); err != nil {
+			return fmt.Errorf("processing metric record: %w", err)
+		}
+	}
+
+	return nil
 }

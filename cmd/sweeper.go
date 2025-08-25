@@ -24,6 +24,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/cardinalhq/lakerunner/cmd/sweeper"
+	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 )
 
 func init() {
@@ -48,6 +49,16 @@ func init() {
 				}
 			}()
 
+			// Start health check server
+			healthConfig := healthcheck.GetConfigFromEnv()
+			healthServer := healthcheck.NewServer(healthConfig)
+
+			go func() {
+				if err := healthServer.Start(doneCtx); err != nil {
+					slog.Error("Health check server stopped", slog.Any("error", err))
+				}
+			}()
+
 			// Check environment variable first, then fall back to flag
 			finalSyncLegacyTables := syncLegacyTables
 			if envValue := os.Getenv("SYNC_LEGACY_TABLES"); envValue != "" {
@@ -57,6 +68,10 @@ func init() {
 			}
 
 			cmd := sweeper.New(myInstanceID, servicename, finalSyncLegacyTables)
+
+			// Mark as healthy once sweeper is created and starting
+			healthServer.SetStatus(healthcheck.StatusHealthy)
+
 			return cmd.Run(doneCtx)
 		},
 	}

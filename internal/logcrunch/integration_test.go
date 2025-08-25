@@ -23,6 +23,8 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/cardinalhq/lakerunner/internal/buffet"
+
 	"github.com/parquet-go/parquet-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -72,14 +74,14 @@ func TestHourBasedProcessing_EndToEnd(t *testing.T) {
 	defer fh.Close()
 
 	ll := slog.New(slog.NewTextHandler(io.Discard, nil))
-	results, err := ProcessAndSplit(ll, fh, tmpDir, 20230101, 1000)
+	results, err := buffet.ProcessAndSplit(ll, fh, tmpDir, 20230101, 1000)
 	require.NoError(t, err)
 
 	// Should have 3 splits (3 different hours)
 	assert.Len(t, results, 3)
 
 	// Step 2: Verify each split contains only records from correct hour
-	var splitKeys []SplitKey
+	var splitKeys []buffet.SplitKey
 	for key := range results {
 		splitKeys = append(splitKeys, key)
 	}

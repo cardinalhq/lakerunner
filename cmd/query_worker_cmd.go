@@ -25,12 +25,14 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 )
 
 func init() {
 	cmd := &cobra.Command{
 		Use:   "query-worker",
-		Short: "start query-worker server",
+		Short: "start query-worker service",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			servicename := "query-worker"
 			addlAttrs := attribute.NewSet()
@@ -42,6 +44,16 @@ func init() {
 			defer func() {
 				if err := doneFx(); err != nil {
 					slog.Error("Error shutting down telemetry", slog.Any("error", err))
+				}
+			}()
+
+			// Start health check server
+			healthConfig := healthcheck.GetConfigFromEnv()
+			healthServer := healthcheck.NewServer(healthConfig)
+
+			go func() {
+				if err := healthServer.Start(doneCtx); err != nil {
+					slog.Error("Health check server stopped", slog.Any("error", err))
 				}
 			}()
 
@@ -57,6 +69,7 @@ func init() {
 			if err != nil {
 				return fmt.Errorf("failed to create AWS manager: %w", err)
 			}
+			healthServer.SetStatus(healthcheck.StatusHealthy)
 
 			worker := queryworker.NewWorkerService(10, 12, sp, awsmanager)
 			return worker.Run(doneCtx)

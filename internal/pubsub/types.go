@@ -29,3 +29,17 @@ type InqueueInserter interface {
 type Service interface {
 	Run(ctx context.Context) error
 }
+
+// BackendType represents supported pubsub backend types
+type BackendType string
+
+const (
+	BackendTypeSQS       BackendType = "sqs"
+	BackendTypeGCPPubSub BackendType = "gcp"
+)
+
+// Backend defines the interface for different pubsub backends
+type Backend interface {
+	Service
+	GetName() string
+}

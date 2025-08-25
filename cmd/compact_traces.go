@@ -12,20 +12,6 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-// Copyright (C) 2025 CardinalHQ, Inc
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Affero General Public License as
-// published by the GNU Affero General Public License, version 3.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR ANY PURPOSE. See the
-// GNU Affero General Public License for more details.
-//
-// You should have received a copy of the GNU Affero General Public License
-// along with this program. If not, see <http://www.gnu.org/licenses/>.
-
 package cmd
 
 import (
@@ -92,7 +78,7 @@ func compactTracesFor(
 	sp storageprofile.StorageProfileProvider,
 	mdb lrdb.StoreFull,
 	inf lockmgr.Workable,
-	rpfEstimate int64,
+	rpfEstimate int64, // rows-per-file estimate (from ingest stats), same as logs
 	_ any,
 ) (WorkResult, error) {
 	profile, err := sp.GetStorageProfileForOrganizationAndInstance(ctx, inf.OrganizationID(), inf.InstanceNum())
@@ -107,13 +93,12 @@ func compactTracesFor(
 		return WorkResultTryAgainLater, err
 	}
 
-	ll.Info("Processing trace compression item", slog.Any("workItem", inf.AsMap()))
-
-	// Extract slot_id from work item
-	slotID := inf.SlotId()
-
-	// Use the global targetFileSize constant from cmd/root.go
-	// targetFileSize = 1_100_000 bytes (≈1.1MB)
+	ll.Info("Starting trace compaction",
+		slog.String("organizationID", inf.OrganizationID().String()),
+		slog.Int("instanceNum", int(inf.InstanceNum())),
+		slog.Int("dateint", int(inf.Dateint())),
+		slog.Int("slotID", int(inf.SlotId())),
+		slog.Int64("workQueueID", inf.ID()))
 
 	const maxRowsLimit = 1000
 	totalBatchesProcessed := 0
@@ -121,9 +106,7 @@ func compactTracesFor(
 	cursorCreatedAt := time.Time{} // Start from beginning (zero time)
 	cursorSegmentID := int64(0)    // Start from beginning (zero ID)
 
-	// Loop until we've processed all available segments
 	for {
-		// Check if context is cancelled before starting next batch
 		if ctx.Err() != nil {
 			ll.Info("Context cancelled, stopping compaction loop - will retry to continue",
 				slog.Int("processedBatches", totalBatchesProcessed),
@@ -134,27 +117,26 @@ func compactTracesFor(
 
 		ll.Info("Querying for trace segments to compact",
 			slog.Int("batch", totalBatchesProcessed+1),
-			slog.Int("slotID", int(slotID)),
+			slog.Int("slotID", int(inf.SlotId())),
 			slog.Time("cursorCreatedAt", cursorCreatedAt),
 			slog.Int64("cursorSegmentID", cursorSegmentID))
 
-		// Query for trace segments in this specific slot
+		// Align with logs: include files up to the full target size; let the packer do the grouping by estimate.
 		segments, err := mdb.GetTraceSegmentsForCompaction(ctx, lrdb.GetTraceSegmentsForCompactionParams{
 			OrganizationID:  inf.OrganizationID(),
 			Dateint:         inf.Dateint(),
 			InstanceNum:     inf.InstanceNum(),
-			SlotID:          slotID,
-			MaxFileSize:     targetFileSize * 9 / 10, // Only include files < 90% of target (larger files are fine as-is)
+			SlotID:          inf.SlotId(),
+			MaxFileSize:     targetFileSize, // was 90% — align with logs
 			CursorCreatedAt: cursorCreatedAt,
 			CursorSegmentID: cursorSegmentID,
 			Maxrows:         maxRowsLimit,
 		})
 		if err != nil {
-			ll.Error("Error getting trace segments for compaction", slog.String("error", err.Error()))
+			ll.Error("Error getting trace segments for compaction", slog.Any("error", err))
 			return WorkResultTryAgainLater, err
 		}
 
-		// No more segments to process
 		if len(segments) == 0 {
 			if totalBatchesProcessed == 0 {
 				ll.Info("No segments to compact")
@@ -170,31 +152,60 @@ func compactTracesFor(
 			slog.Int("segmentCount", len(segments)),
 			slog.Int("batch", totalBatchesProcessed+1))
 
-		// Update cursor to last (created_at, segment_id) in this batch to ensure forward progress
-		if len(segments) > 0 {
-			lastSeg := segments[len(segments)-1]
-			cursorCreatedAt = lastSeg.CreatedAt
-			cursorSegmentID = lastSeg.SegmentID
-		}
+		// Advance cursor
+		lastSeg := segments[len(segments)-1]
+		cursorCreatedAt = lastSeg.CreatedAt
+		cursorSegmentID = lastSeg.SegmentID
 
-		// Pack segments into groups for compaction
+		// ---- Packing (mirrors logs behavior) ----
 
-		packed, err := tracecompaction.PackTraceSegments(segments, targetFileSize)
+		// Allow 110% of the target capacity to absorb compression variance like logs.
+		// The estimate is rows-per-file; the packer should translate that to bytes using segment stats.
+		adjustedEstimate := rpfEstimate * 11 / 10
+		originalSegmentCount := len(segments)
+
+		// New API you’ll add in tracecompaction (analogous to logcrunch.PackSegments).
+		// It should:
+		// - group segments by rowsPerFileEstimate into ~targetFileSize outputs
+		// - be conservative near boundaries
+		// - optionally filter obviously-bad segments (empty, oversized, etc.)
+		recorder := compactionMetricRecorder{logger: ll}
+		packed, err := tracecompaction.PackTraceSegmentsWithEstimate(
+			ctx,
+			segments,
+			adjustedEstimate,
+			recorder,
+			inf.OrganizationID().String(),
+			fmt.Sprintf("%d", inf.InstanceNum()),
+			"traces",
+			"compact",
+		)
 		if err != nil {
-			ll.Error("Error packing trace segments", slog.String("error", err.Error()))
+			ll.Error("Error packing trace segments", slog.Any("error", err))
 			return WorkResultTryAgainLater, err
 		}
 
-		// Check if the last group is too small (similar to logs compaction)
+		// Log if any segments were filtered during packing
+		packedSegmentCount := 0
+		for _, group := range packed {
+			packedSegmentCount += len(group)
+		}
+		if packedSegmentCount < originalSegmentCount {
+			ll.Info("Some segments were filtered out during packing",
+				slog.Int("originalSegmentCount", originalSegmentCount),
+				slog.Int("packedSegmentCount", packedSegmentCount),
+				slog.Int("filteredSegmentCount", originalSegmentCount-packedSegmentCount))
+		}
+
+		// If the last group is too small, drop it (align with logs threshold: 30%).
 		lastGroupSmall := false
 		if len(packed) > 0 {
-			// if the last packed segment is smaller than half our target size, drop it.
 			bytecount := int64(0)
 			lastGroup := packed[len(packed)-1]
-			for _, segment := range lastGroup {
-				bytecount += segment.FileSize
+			for _, seg := range lastGroup {
+				bytecount += seg.FileSize
 			}
-			if bytecount < targetFileSize/2 {
+			if bytecount < targetFileSize*3/10 {
 				packed = packed[:len(packed)-1]
 				lastGroupSmall = true
 			}
@@ -202,30 +213,30 @@ func compactTracesFor(
 
 		if len(packed) == 0 {
 			ll.Info("No segments to compact in this batch")
-			// If we didn't hit the limit, we've seen all segments
 			if len(segments) < maxRowsLimit {
 				if totalBatchesProcessed == 0 {
 					ll.Info("No segments need compaction")
 				}
 				return WorkResultSuccess, nil
 			}
-			// Continue to next batch without processing - cursor already advanced
 			totalBatchesProcessed++
 			continue
 		}
 
-		ll.Info("counts", slog.Int("currentSegments", len(segments)), slog.Int("packGroups", len(packed)), slog.Bool("lastGroupSmall", lastGroupSmall))
+		ll.Info("Packing summary",
+			slog.Int("currentSegments", len(segments)),
+			slog.Int("packGroups", len(packed)),
+			slog.Bool("lastGroupSmall", lastGroupSmall))
 
-		// Process each group for actual compaction
+		// ---- Execute atomic compaction per group ----
 
 		for i, group := range packed {
-			// Generate unique operation ID for this atomic group
 			opID := generateOperationID(i)
 			ll := ll.With(
 				slog.String("operationID", opID),
-				slog.Int("groupIndex", i))
+				slog.Int("groupIndex", i),
+			)
 
-			// Check for shutdown BEFORE starting atomic work
 			select {
 			case <-compactTracesDoneCtx.Done():
 				ll.Info("Shutdown requested - aborting before atomic operation",
@@ -238,21 +249,15 @@ func compactTracesFor(
 			ll.Info("Starting atomic trace compaction operation",
 				slog.Int("segmentCount", len(group)))
 
-			// Call packTraceSegment for each group
-			err = packTraceSegment(ctx, ll, tmpdir, s3client, mdb, group, profile, inf.Dateint(), slotID, inf.InstanceNum())
-			if err != nil {
+			if err := packTraceSegment(ctx, ll, tmpdir, s3client, mdb, group, profile, inf.Dateint(), inf.SlotId(), inf.InstanceNum()); err != nil {
 				ll.Error("Atomic operation failed - will retry entire work item",
 					slog.Any("error", err),
 					slog.Int("failedAtGroup", i))
-				break
+				return WorkResultTryAgainLater, err
 			}
 
 			ll.Info("Atomic operation completed successfully",
 				slog.Int("segmentsProcessed", len(group)))
-		}
-
-		if err != nil {
-			return WorkResultTryAgainLater, err
 		}
 
 		totalBatchesProcessed++
@@ -260,7 +265,6 @@ func compactTracesFor(
 
 		ll.Info("Successfully packed segments in batch", slog.Int("groupCount", len(packed)))
 
-		// If we didn't hit the limit, we've processed all available segments
 		if len(segments) < maxRowsLimit {
 			ll.Info("Completed all compaction batches",
 				slog.Int("totalBatches", totalBatchesProcessed),
@@ -268,7 +272,6 @@ func compactTracesFor(
 			return WorkResultSuccess, nil
 		}
 
-		// Continue to next batch - cursor already advanced
 		ll.Info("Batch completed, checking for more segments",
 			slog.Int("processedSegments", len(segments)),
 			slog.Time("nextCursorCreatedAt", cursorCreatedAt),

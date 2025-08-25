@@ -18,16 +18,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cardinalhq/lakerunner/internal/buffet"
+
 	"github.com/stretchr/testify/assert"
 
 	"github.com/cardinalhq/lakerunner/internal/helpers"
-	"github.com/cardinalhq/lakerunner/internal/logcrunch"
 )
 
 func TestWorkQueueDeduplication(t *testing.T) {
 	t.Run("Single hour with multiple files creates one work queue item", func(t *testing.T) {
 		// Simulate multiple files for the same dateint/hour
-		splitResults := map[logcrunch.SplitKey]logcrunch.HourlyResult{
+		splitResults := map[buffet.SplitKey]buffet.HourlyResult{
 			{DateInt: 20230101, Hour: 14, IngestDateint: 20230101, FileIndex: 0}: {
 				FirstTS: 1672581600000, // 2023-01-01 14:00:00 UTC
 				LastTS:  1672582499999, // 2023-01-01 14:14:59.999 UTC
@@ -77,7 +78,7 @@ func TestWorkQueueDeduplication(t *testing.T) {
 
 	t.Run("Multiple hours create multiple work queue items", func(t *testing.T) {
 		// Simulate files across different hours
-		splitResults := map[logcrunch.SplitKey]logcrunch.HourlyResult{
+		splitResults := map[buffet.SplitKey]buffet.HourlyResult{
 			// Hour 14 - 2 files
 			{DateInt: 20230101, Hour: 14, IngestDateint: 20230101, FileIndex: 0}: {
 				FirstTS: 1672581600000, // 2023-01-01 14:00:00 UTC
@@ -147,12 +148,12 @@ func TestWorkQueueDeduplication(t *testing.T) {
 		assert.Equal(t, int16(14), expectedHour)
 
 		// A valid key
-		validKey := logcrunch.SplitKey{DateInt: 20230101, Hour: 14, IngestDateint: 20230101, FileIndex: 0}
+		validKey := buffet.SplitKey{DateInt: 20230101, Hour: 14, IngestDateint: 20230101, FileIndex: 0}
 		assert.Equal(t, expectedDateint, validKey.DateInt)
 		assert.Equal(t, expectedHour, validKey.Hour)
 
 		// An invalid key (wrong hour)
-		invalidKey := logcrunch.SplitKey{DateInt: 20230101, Hour: 13, IngestDateint: 20230101, FileIndex: 0}
+		invalidKey := buffet.SplitKey{DateInt: 20230101, Hour: 13, IngestDateint: 20230101, FileIndex: 0}
 		assert.NotEqual(t, expectedHour, invalidKey.Hour, "Invalid key should not match expected hour")
 	})
 }

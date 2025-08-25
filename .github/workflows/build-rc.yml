@@ -69,7 +69,7 @@ jobs:
         with:
           distribution: goreleaser-pro
           version: "~> v2"
-          args: release --clean --split
+          args: release --clean --split --config .goreleaser.rc.yaml
         env:
           GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
           DUCKDB_SDK_VERSION: v1.3.2

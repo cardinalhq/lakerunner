@@ -17,11 +17,15 @@ package awsclient
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"net/http"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/smithy-go/middleware"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
@@ -88,6 +92,76 @@ func WithInsecureTLS() S3Option {
 	}
 }
 
+// WithGCPProvider enables GCP-specific S3 options for GCP Cloud Storage compatibility
+func WithGCPProvider() S3Option {
+	return func(c *s3Config) {
+		c.applyConfigs = append(c.applyConfigs, func(cfg *aws.Config) {
+			cfg.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
+		})
+		c.applyS3s = append(c.applyS3s, func(o *s3.Options) {
+			SignForGCP(o)
+		})
+	}
+}
+
+const acceptEncodingHeader = "Accept-Encoding"
+
+type acceptEncodingKey struct{}
+
+func GetAcceptEncodingKey(ctx context.Context) (v string) {
+	v, _ = middleware.GetStackValue(ctx, acceptEncodingKey{}).(string)
+	return v
+}
+
+func SetAcceptEncodingKey(ctx context.Context, value string) context.Context {
+	return middleware.WithStackValue(ctx, acceptEncodingKey{}, value)
+}
+
+var dropAcceptEncodingHeader = middleware.FinalizeMiddlewareFunc("DropAcceptEncodingHeader",
+	func(ctx context.Context, in middleware.FinalizeInput, next middleware.FinalizeHandler) (out middleware.FinalizeOutput, metadata middleware.Metadata, err error) {
+		req, ok := in.Request.(*smithyhttp.Request)
+		if !ok {
+			return out, metadata, &v4.SigningError{Err: fmt.Errorf("unexpected request middleware type %T", in.Request)}
+		}
+
+		ae := req.Header.Get(acceptEncodingHeader)
+		ctx = SetAcceptEncodingKey(ctx, ae)
+		req.Header.Del(acceptEncodingHeader)
+		in.Request = req
+
+		return next.HandleFinalize(ctx, in)
+	},
+)
+
+var replaceAcceptEncodingHeader = middleware.FinalizeMiddlewareFunc("ReplaceAcceptEncodingHeader",
+	func(ctx context.Context, in middleware.FinalizeInput, next middleware.FinalizeHandler) (out middleware.FinalizeOutput, metadata middleware.Metadata, err error) {
+		req, ok := in.Request.(*smithyhttp.Request)
+		if !ok {
+			return out, metadata, &v4.SigningError{Err: fmt.Errorf("unexpected request middleware type %T", in.Request)}
+		}
+
+		ae := GetAcceptEncodingKey(ctx)
+		req.Header.Set(acceptEncodingHeader, ae)
+		in.Request = req
+
+		return next.HandleFinalize(ctx, in)
+	},
+)
+
+func SignForGCP(o *s3.Options) {
+	o.APIOptions = append(o.APIOptions, func(stack *middleware.Stack) error {
+		if err := stack.Finalize.Insert(dropAcceptEncodingHeader, "Signing", middleware.Before); err != nil {
+			return err
+		}
+
+		if err := stack.Finalize.Insert(replaceAcceptEncodingHeader, "Signing", middleware.After); err != nil {
+			return err
+		}
+
+		return nil
+	})
+}
+
 type roleKey struct {
 	Region  string
 	RoleARN string
@@ -150,6 +224,10 @@ func (m *Manager) GetS3ForProfile(ctx context.Context, p storageprofile.StorageP
 	}
 	if p.InsecureTLS {
 		opts = append(opts, WithInsecureTLS())
+	}
+	// Automatically enable GCP signing if the cloud provider is GCP
+	if p.CloudProvider == "gcp" {
+		opts = append(opts, WithGCPProvider())
 	}
 	return m.GetS3(ctx, opts...)
 }

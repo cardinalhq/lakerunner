@@ -3,6 +3,7 @@ module github.com/cardinalhq/lakerunner
 go 1.25.0
 
 require (
+	cloud.google.com/go/pubsub v1.49.0
 	github.com/DataDog/sketches-go v1.4.7
 	github.com/KimMachineGun/automemlimit v0.7.4
 	github.com/aws/aws-sdk-go-v2 v1.38.0
@@ -45,6 +46,7 @@ require (
 	golang.org/x/exp v0.0.0-20250813145105-42675adae3e6
 	golang.org/x/sync v0.16.0
 	golang.org/x/sys v0.35.0
+	google.golang.org/api v0.238.0
 	google.golang.org/grpc v1.74.2
 	google.golang.org/protobuf v1.36.6
 	gopkg.in/yaml.v3 v3.0.1
@@ -576,7 +578,6 @@ require (
 	golang.org/x/time v0.12.0 // indirect
 	golang.org/x/tools v0.36.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
-	google.golang.org/api v0.238.0 // indirect
 	google.golang.org/genproto v0.0.0-20250505200425-f936aa4a68b2 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20250728155136-f173205681a0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250728155136-f173205681a0 // indirect

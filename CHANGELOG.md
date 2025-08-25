@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Debug Commands**: Added `debug objcleanup status` to show pending and non-pending object counts by bucket
+- **Database Indexes**: Added bucket-based index for `obj_cleanup` table for faster bucket summaries
+
 ### Changed
 
 - **Record Count Estimation**: Split estimator into signal-specific `MetricEstimator` and `LogEstimator` types with frequency-aware metrics estimation

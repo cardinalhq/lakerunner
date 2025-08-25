@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package logcrunch
+package buffet
 
 import (
 	"slices"
@@ -38,7 +38,7 @@ var (
 		//"_cardinalhq.message",
 		"_cardinalhq.span_trace_id",
 	}, InfraDimensions...)
-	IndexFullValueDimensions = []string{"resource.file"}
+	IndexFullValueDimensions = []string{"_cardinalhq.name", "resource.file"}
 )
 
 // ToFingerprints converts a map of tagName → slice of tagValues into a set of fingerprints.

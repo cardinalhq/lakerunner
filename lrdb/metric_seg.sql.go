@@ -13,7 +13,7 @@ import (
 )
 
 const getMetricSegsForCompaction = `-- name: GetMetricSegsForCompaction :many
-SELECT organization_id, dateint, frequency_ms, segment_id, instance_num, tid_partition, ts_range, record_count, file_size, tid_count, ingest_dateint, published, rolledup, created_at, created_by
+SELECT organization_id, dateint, frequency_ms, segment_id, instance_num, tid_partition, ts_range, record_count, file_size, tid_count, ingest_dateint, published, rolledup, created_at, created_by, slot_id, fingerprints
 FROM metric_seg
 WHERE
   organization_id = $1 AND
@@ -77,6 +77,8 @@ func (q *Queries) GetMetricSegsForCompaction(ctx context.Context, arg GetMetricS
 			&i.Rolledup,
 			&i.CreatedAt,
 			&i.CreatedBy,
+			&i.SlotID,
+			&i.Fingerprints,
 		); err != nil {
 			return nil, err
 		}
@@ -89,14 +91,15 @@ func (q *Queries) GetMetricSegsForCompaction(ctx context.Context, arg GetMetricS
 }
 
 const getMetricSegsForRollup = `-- name: GetMetricSegsForRollup :many
-SELECT organization_id, dateint, frequency_ms, segment_id, instance_num, tid_partition, ts_range, record_count, file_size, tid_count, ingest_dateint, published, rolledup, created_at, created_by
+SELECT organization_id, dateint, frequency_ms, segment_id, instance_num, tid_partition, ts_range, record_count, file_size, tid_count, ingest_dateint, published, rolledup, created_at, created_by, slot_id, fingerprints
 FROM metric_seg
 WHERE
   organization_id = $1 AND
   dateint = $2 AND
   frequency_ms = $3 AND
   instance_num = $4 AND
-  ts_range && int8range($5, $6, '[)')
+  slot_id = $5 AND
+  ts_range && int8range($6, $7, '[)')
 ORDER BY
   ts_range
 `
@@ -106,6 +109,7 @@ type GetMetricSegsForRollupParams struct {
 	Dateint        int32     `json:"dateint"`
 	FrequencyMs    int32     `json:"frequency_ms"`
 	InstanceNum    int16     `json:"instance_num"`
+	SlotID         int32     `json:"slot_id"`
 	StartTs        int64     `json:"start_ts"`
 	EndTs          int64     `json:"end_ts"`
 }
@@ -116,6 +120,7 @@ func (q *Queries) GetMetricSegsForRollup(ctx context.Context, arg GetMetricSegsF
 		arg.Dateint,
 		arg.FrequencyMs,
 		arg.InstanceNum,
+		arg.SlotID,
 		arg.StartTs,
 		arg.EndTs,
 	)
@@ -142,6 +147,8 @@ func (q *Queries) GetMetricSegsForRollup(ctx context.Context, arg GetMetricSegsF
 			&i.Rolledup,
 			&i.CreatedAt,
 			&i.CreatedBy,
+			&i.SlotID,
+			&i.Fingerprints,
 		); err != nil {
 			return nil, err
 		}
@@ -161,13 +168,15 @@ INSERT INTO metric_seg (
   frequency_ms,
   segment_id,
   instance_num,
+  slot_id,
   tid_partition,
   ts_range,
   record_count,
   file_size,
   tid_count,
   created_by,
-  published
+  published,
+  fingerprints
 )
 VALUES (
   $1,
@@ -177,12 +186,14 @@ VALUES (
   $5,
   $6,
   $7,
-  int8range($8, $9, '[)'),
-  $10,
+  $8,
+  int8range($9, $10, '[)'),
   $11,
   $12,
   $13,
-  $14
+  $14,
+  $15,
+  $16::bigint[]
 )
 `
 
@@ -193,6 +204,7 @@ type InsertMetricSegmentParams struct {
 	FrequencyMs    int32     `json:"frequency_ms"`
 	SegmentID      int64     `json:"segment_id"`
 	InstanceNum    int16     `json:"instance_num"`
+	SlotID         int32     `json:"slot_id"`
 	TidPartition   int16     `json:"tid_partition"`
 	StartTs        int64     `json:"start_ts"`
 	EndTs          int64     `json:"end_ts"`
@@ -201,6 +213,7 @@ type InsertMetricSegmentParams struct {
 	TidCount       int32     `json:"tid_count"`
 	CreatedBy      CreatedBy `json:"created_by"`
 	Published      bool      `json:"published"`
+	Fingerprints   []int64   `json:"fingerprints"`
 }
 
 func (q *Queries) InsertMetricSegmentDirect(ctx context.Context, arg InsertMetricSegmentParams) error {
@@ -211,6 +224,7 @@ func (q *Queries) InsertMetricSegmentDirect(ctx context.Context, arg InsertMetri
 		arg.FrequencyMs,
 		arg.SegmentID,
 		arg.InstanceNum,
+		arg.SlotID,
 		arg.TidPartition,
 		arg.StartTs,
 		arg.EndTs,
@@ -219,6 +233,7 @@ func (q *Queries) InsertMetricSegmentDirect(ctx context.Context, arg InsertMetri
 		arg.TidCount,
 		arg.CreatedBy,
 		arg.Published,
+		arg.Fingerprints,
 	)
 	return err
 }
