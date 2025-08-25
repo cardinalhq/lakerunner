@@ -335,6 +335,7 @@ func rollupInterval(
 					FileSize:     result.FileSize,
 				},
 			},
+			Fingerprints: result.Fingerprints,
 		}
 
 		if err := mdb.ReplaceMetricSegs(ctx, singleParams); err != nil {
