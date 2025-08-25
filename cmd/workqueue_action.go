@@ -274,23 +274,23 @@ func workqueueProcess(
 		}
 	}()
 
-	var estBytesPerRecord int64
+	var recordsPerFile int64
 	switch inf.Signal() {
 	case lrdb.SignalEnumMetrics:
-		estBytesPerRecord = loop.metricEstimator.Get(inf.OrganizationID(), inf.InstanceNum(), inf.FrequencyMs())
-		if estBytesPerRecord <= 0 {
-			estBytesPerRecord = 100 // Default for all signals
+		recordsPerFile = loop.metricEstimator.Get(inf.OrganizationID(), inf.InstanceNum(), inf.FrequencyMs())
+		if recordsPerFile <= 0 {
+			recordsPerFile = 40_000 // Default for all signals
 		}
 	case lrdb.SignalEnumLogs:
-		estBytesPerRecord = loop.logEstimator.Get(inf.OrganizationID(), inf.InstanceNum())
-		if estBytesPerRecord <= 0 {
-			estBytesPerRecord = 100 // Default for all signals
+		recordsPerFile = loop.logEstimator.Get(inf.OrganizationID(), inf.InstanceNum())
+		if recordsPerFile <= 0 {
+			recordsPerFile = 40_000 // Default for all signals
 		}
 	default:
-		estBytesPerRecord = 100 // Default for all signals
+		recordsPerFile = 40_000 // Default for all signals
 	}
 	t0 = time.Now()
-	result, err := pfx(ctx, ll, tmpdir, loop.awsmanager, loop.sp, loop.mdb, inf, estBytesPerRecord, args)
+	result, err := pfx(ctx, ll, tmpdir, loop.awsmanager, loop.sp, loop.mdb, inf, recordsPerFile, args)
 	workqueueDuration.Record(ctx, time.Since(t0).Seconds(),
 		metric.WithAttributeSet(commonAttributes),
 		metric.WithAttributeSet(orgAttrs),
