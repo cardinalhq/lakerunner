@@ -61,7 +61,7 @@ func TestJSONLinesReaderEOFHandling(t *testing.T) {
 {"line": 2, "value": "second"}
 {"line": 3, "value": "third"}`
 
-	reader, err := NewJSONLinesReader(bytes.NewReader([]byte(jsonData)))
+	reader, err := NewJSONLinesReader(io.NopCloser(bytes.NewReader([]byte(jsonData))))
 	require.NoError(t, err)
 	defer reader.Close()
 
@@ -93,7 +93,6 @@ func TestJSONLinesReaderGzipEOFHandling(t *testing.T) {
 	// Create gzip reader
 	gzReader, err := gzip.NewReader(&buf)
 	require.NoError(t, err)
-	defer gzReader.Close()
 
 	// Test our JSON reader with the gzip reader
 	jsonReader, err := NewJSONLinesReader(gzReader)
@@ -120,7 +119,7 @@ func TestJSONLinesReaderEmptyLinesEOF(t *testing.T) {
 
 `
 
-	reader, err := NewJSONLinesReader(bytes.NewReader([]byte(jsonData)))
+	reader, err := NewJSONLinesReader(io.NopCloser(bytes.NewReader([]byte(jsonData))))
 	require.NoError(t, err)
 	defer reader.Close()
 
@@ -148,6 +147,18 @@ func (m *MockReaderWithDataAndEOF) Read(p []byte) (n int, err error) {
 	n = copy(p, m.data)
 	// Return both data and EOF on the same call - this is valid per io.Reader contract
 	return n, io.EOF
+}
+
+func (m *MockReaderWithDataAndEOF) Close() error { return nil }
+
+type mockReadCloser struct {
+	io.Reader
+	closed bool
+}
+
+func (m *mockReadCloser) Close() error {
+	m.closed = true
+	return nil
 }
 
 // TestJSONLinesReaderWithMockEOF tests the specific n>0 && EOF case using a mock
@@ -178,7 +189,8 @@ func TestJSONLinesReaderWithMockEOF(t *testing.T) {
 // TestJSONLinesReaderClose tests that Close works properly
 func TestJSONLinesReaderClose(t *testing.T) {
 	jsonData := `{"test": "data"}`
-	reader, err := NewJSONLinesReader(bytes.NewReader([]byte(jsonData)))
+	mock := &mockReadCloser{Reader: bytes.NewReader([]byte(jsonData))}
+	reader, err := NewJSONLinesReader(mock)
 	require.NoError(t, err)
 
 	// Should be able to read before closing
@@ -192,6 +204,7 @@ func TestJSONLinesReaderClose(t *testing.T) {
 	// Close should work
 	err = reader.Close()
 	assert.NoError(t, err)
+	assert.True(t, mock.closed)
 
 	// Reading after close should return error
 	rows[0] = make(Row)
@@ -212,7 +225,7 @@ func TestJSONLinesReaderBatchProcessing(t *testing.T) {
 {"line": 4}
 {"line": 5}`
 
-	reader, err := NewJSONLinesReader(bytes.NewReader([]byte(jsonData)))
+	reader, err := NewJSONLinesReader(io.NopCloser(bytes.NewReader([]byte(jsonData))))
 	require.NoError(t, err)
 	defer reader.Close()
 
