@@ -504,7 +504,7 @@ func (r *mockEOFReader) Read(rows []Row) (int, error) {
 		n++
 		r.index++
 		r.rowCount++
-		
+
 		// Simulate EOF with data: return the last row with EOF
 		if r.index >= len(r.rows) {
 			return n, io.EOF
