@@ -26,7 +26,7 @@ import (
 // ReaderOptions provides options for creating readers.
 type ReaderOptions struct {
 	SignalType SignalType
-	// Translation options for protobuf logs
+	// Translation options for protobuf logs and metrics
 	OrgID              string
 	Bucket             string
 	ObjectID           string
