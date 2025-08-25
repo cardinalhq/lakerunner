@@ -16,24 +16,30 @@ const claimInqueueWorkBatch = `-- name: ClaimInqueueWorkBatch :many
 WITH
 params AS (
   SELECT
-    $1::uuid     AS organization_id,
-    $2::smallint    AS instance_num,
-    $3::text      AS telemetry_type,
-    $4::bigint         AS worker_id,
-    COALESCE($5::timestamptz, now()) AS now_ts,
-    $6::bigint    AS max_total_size,    -- hard cap
-    $7::bigint    AS min_total_size,    -- fresh-path minimum-by-size
-    $8::integer  AS max_age_seconds,
-    $9::integer      AS batch_count        -- row cap (no more than)
+    $1::text      AS telemetry_type,
+    $2::bigint         AS worker_id,
+    COALESCE($3::timestamptz, now()) AS now_ts,
+    $4::bigint    AS max_total_size,    -- hard cap
+    $5::bigint    AS min_total_size,    -- fresh-path minimum-by-size
+    $6::integer  AS max_age_seconds,
+    $7::integer      AS batch_count        -- row cap (no more than)
+),
+first AS (
+  SELECT q.id, q.queue_ts, q.priority, q.organization_id, q.collector_name, q.instance_num, q.bucket, q.object_id, q.telemetry_type, q.tries, q.claimed_by, q.claimed_at, q.file_size
+  FROM inqueue q
+  JOIN params p ON q.telemetry_type = p.telemetry_type
+  WHERE q.claimed_at IS NULL
+  ORDER BY q.priority DESC, q.queue_ts ASC
+  LIMIT 1
+  FOR UPDATE SKIP LOCKED
 ),
 scope AS (
   SELECT q.id, q.queue_ts, q.priority, q.organization_id, q.collector_name, q.instance_num, q.bucket, q.object_id, q.telemetry_type, q.tries, q.claimed_by, q.claimed_at, q.file_size
   FROM inqueue q
-  JOIN params p ON TRUE
+  JOIN first f ON q.organization_id = f.organization_id
+               AND q.instance_num    = f.instance_num
+               AND q.telemetry_type  = f.telemetry_type
   WHERE q.claimed_at IS NULL
-    AND q.organization_id = p.organization_id
-    AND q.instance_num    = p.instance_num
-    AND q.telemetry_type  = p.telemetry_type
   ORDER BY q.priority DESC, q.queue_ts ASC
   FOR UPDATE SKIP LOCKED
 ),
@@ -44,7 +50,7 @@ flags AS (
   SELECT
     (o.file_size >  p.max_total_size)                               AS is_oversized,
     ((p.now_ts - o.queue_ts) > make_interval(secs => p.max_age_seconds)) AS is_old,
-    p.organization_id, p.instance_num, p.telemetry_type, p.worker_id, p.now_ts, p.max_total_size, p.min_total_size, p.max_age_seconds, p.batch_count
+    p.telemetry_type, p.worker_id, p.now_ts, p.max_total_size, p.min_total_size, p.max_age_seconds, p.batch_count
   FROM params p
   JOIN oldest o ON TRUE
 ),
@@ -116,15 +122,13 @@ ORDER BY priority DESC, queue_ts ASC
 `
 
 type ClaimInqueueWorkBatchParams struct {
-	OrganizationID uuid.UUID  `json:"organization_id"`
-	InstanceNum    int16      `json:"instance_num"`
-	TelemetryType  string     `json:"telemetry_type"`
-	WorkerID       int64      `json:"worker_id"`
-	NowTs          *time.Time `json:"now_ts"`
-	MaxTotalSize   int64      `json:"max_total_size"`
-	MinTotalSize   int64      `json:"min_total_size"`
-	MaxAgeSeconds  int32      `json:"max_age_seconds"`
-	BatchCount     int32      `json:"batch_count"`
+	TelemetryType string     `json:"telemetry_type"`
+	WorkerID      int64      `json:"worker_id"`
+	NowTs         *time.Time `json:"now_ts"`
+	MaxTotalSize  int64      `json:"max_total_size"`
+	MinTotalSize  int64      `json:"min_total_size"`
+	MaxAgeSeconds int32      `json:"max_age_seconds"`
+	BatchCount    int32      `json:"batch_count"`
 }
 
 type ClaimInqueueWorkBatchRow struct {
@@ -146,8 +150,6 @@ type ClaimInqueueWorkBatchRow struct {
 // Greedy pack up to size cap and row cap
 func (q *Queries) ClaimInqueueWorkBatch(ctx context.Context, arg ClaimInqueueWorkBatchParams) ([]ClaimInqueueWorkBatchRow, error) {
 	rows, err := q.db.Query(ctx, claimInqueueWorkBatch,
-		arg.OrganizationID,
-		arg.InstanceNum,
 		arg.TelemetryType,
 		arg.WorkerID,
 		arg.NowTs,

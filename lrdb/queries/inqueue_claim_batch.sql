@@ -2,8 +2,6 @@
 WITH
 params AS (
   SELECT
-    @organization_id::uuid     AS organization_id,
-    @instance_num::smallint    AS instance_num,
     @telemetry_type::text      AS telemetry_type,
     @worker_id::bigint         AS worker_id,
     COALESCE(sqlc.narg(now_ts)::timestamptz, now()) AS now_ts,
@@ -12,14 +10,22 @@ params AS (
     @max_age_seconds::integer  AS max_age_seconds,
     @batch_count::integer      AS batch_count        -- row cap (no more than)
 ),
+first AS (
+  SELECT q.*
+  FROM inqueue q
+  JOIN params p ON q.telemetry_type = p.telemetry_type
+  WHERE q.claimed_at IS NULL
+  ORDER BY q.priority DESC, q.queue_ts ASC
+  LIMIT 1
+  FOR UPDATE SKIP LOCKED
+),
 scope AS (
   SELECT q.*
   FROM inqueue q
-  JOIN params p ON TRUE
+  JOIN first f ON q.organization_id = f.organization_id
+               AND q.instance_num    = f.instance_num
+               AND q.telemetry_type  = f.telemetry_type
   WHERE q.claimed_at IS NULL
-    AND q.organization_id = p.organization_id
-    AND q.instance_num    = p.instance_num
-    AND q.telemetry_type  = p.telemetry_type
   ORDER BY q.priority DESC, q.queue_ts ASC
   FOR UPDATE SKIP LOCKED
 ),
