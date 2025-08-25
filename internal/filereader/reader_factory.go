@@ -16,7 +16,9 @@ package filereader
 
 import (
 	"compress/gzip"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -97,6 +99,30 @@ func ReaderForFileWithOptions(filename string, opts ReaderOptions) (Reader, erro
 	}
 }
 
+// readerWithCloser wraps a Reader with associated closers.
+// It ensures that both the reader and any resources it depends on are closed.
+type readerWithCloser struct {
+	Reader
+	closers []io.Closer
+}
+
+// Close releases all resources associated with the reader.
+// It closes the wrapped Reader followed by any additional io.Closers.
+func (r *readerWithCloser) Close() error {
+	var errs []error
+	if r.Reader != nil {
+		if err := r.Reader.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	for i := len(r.closers) - 1; i >= 0; i-- {
+		if err := r.closers[i].Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
 // createParquetReader creates a ParquetReader for the given file.
 func createParquetReader(filename string) (Reader, error) {
 	file, err := os.Open(filename)
@@ -116,7 +142,7 @@ func createParquetReader(filename string) (Reader, error) {
 		return nil, err
 	}
 
-	return reader, nil
+	return &readerWithCloser{Reader: reader, closers: []io.Closer{file}}, nil
 }
 
 // createJSONGzReader creates a JSONLinesReader for a gzipped JSON file.
@@ -139,7 +165,7 @@ func createJSONGzReader(filename string) (Reader, error) {
 		return nil, err
 	}
 
-	return reader, nil
+	return &readerWithCloser{Reader: reader, closers: []io.Closer{gzipReader, file}}, nil
 }
 
 // createJSONReader creates a JSONLinesReader for a plain JSON file.
@@ -155,7 +181,7 @@ func createJSONReader(filename string) (Reader, error) {
 		return nil, err
 	}
 
-	return reader, nil
+	return &readerWithCloser{Reader: reader, closers: []io.Closer{file}}, nil
 }
 
 // createProtoBinaryGzReader creates a signal-specific proto reader for a gzipped protobuf file.
@@ -178,7 +204,7 @@ func createProtoBinaryGzReader(filename string, opts ReaderOptions) (Reader, err
 		return nil, err
 	}
 
-	return reader, nil
+	return &readerWithCloser{Reader: reader, closers: []io.Closer{gzipReader, file}}, nil
 }
 
 // createProtoBinaryReader creates a signal-specific proto reader for a protobuf file.
@@ -194,7 +220,7 @@ func createProtoBinaryReader(filename string, opts ReaderOptions) (Reader, error
 		return nil, err
 	}
 
-	return reader, nil
+	return &readerWithCloser{Reader: reader, closers: []io.Closer{file}}, nil
 }
 
 // createProtoReaderWithOptions creates the appropriate proto reader with optional translation
