@@ -83,6 +83,11 @@ func (m *MockDatabaseQueries) UpsertOrganizationBucket(ctx context.Context, arg 
 	return args.Error(0)
 }
 
+func (m *MockDatabaseQueries) UpsertOrganization(ctx context.Context, arg configdb.UpsertOrganizationParams) (configdb.Organization, error) {
+	args := m.Called(ctx, arg)
+	return args.Get(0).(configdb.Organization), args.Error(1)
+}
+
 func (m *MockDatabaseQueries) ClearOrganizationAPIKeyMappings(ctx context.Context) error {
 	args := m.Called(ctx)
 	return args.Error(0)
@@ -98,10 +103,6 @@ func (m *MockDatabaseQueries) UpsertOrganizationAPIKey(ctx context.Context, arg 
 	return args.Get(0).(configdb.OrganizationApiKey), args.Error(1)
 }
 
-func (m *MockDatabaseQueries) GetOrganizationAPIKeyByHash(ctx context.Context, keyHash string) (configdb.GetOrganizationAPIKeyByHashRow, error) {
-	args := m.Called(ctx, keyHash)
-	return args.Get(0).(configdb.GetOrganizationAPIKeyByHashRow), args.Error(1)
-}
 
 func (m *MockDatabaseQueries) UpsertOrganizationAPIKeyMapping(ctx context.Context, arg configdb.UpsertOrganizationAPIKeyMappingParams) error {
 	args := m.Called(ctx, arg)
@@ -280,17 +281,14 @@ func TestImportAPIKeys_Success(t *testing.T) {
 
 	expectedKeyHash := hashAPIKey(testAPIKey)
 
-	mockDB.On("SyncOrganizations", ctx).Return(nil)
+	// Mock organization upsert (for ensuring organization exists)
+	mockDB.On("UpsertOrganization", ctx, mock.MatchedBy(func(params configdb.UpsertOrganizationParams) bool {
+		return params.ID == orgID && params.Enabled == true
+	})).Return(configdb.Organization{ID: orgID, Name: fmt.Sprintf("imported-org-%s", orgID.String()[:8]), Enabled: true}, nil)
 
 	// Expect clear operations in replace mode
 	mockDB.On("ClearOrganizationAPIKeyMappings", ctx).Return(nil)
 	mockDB.On("ClearOrganizationAPIKeys", ctx).Return(nil)
-
-	apiKeyRow := configdb.GetOrganizationAPIKeyByHashRow{
-		ID:      apiKeyID,
-		KeyHash: expectedKeyHash,
-		Name:    "imported-key-test-api",
-	}
 
 	upsertAPIKeyRow := configdb.OrganizationApiKey{
 		ID:      apiKeyID,
@@ -302,8 +300,6 @@ func TestImportAPIKeys_Success(t *testing.T) {
 		return params.KeyHash == expectedKeyHash &&
 			strings.HasPrefix(params.Name, "imported-key-")
 	})).Return(upsertAPIKeyRow, nil)
-
-	mockDB.On("GetOrganizationAPIKeyByHash", ctx, expectedKeyHash).Return(apiKeyRow, nil)
 
 	mockDB.On("UpsertOrganizationAPIKeyMapping", ctx, mock.MatchedBy(func(params configdb.UpsertOrganizationAPIKeyMappingParams) bool {
 		return params.ApiKeyID == apiKeyID &&
@@ -331,12 +327,15 @@ func TestImportAPIKeys_DatabaseError(t *testing.T) {
 		},
 	}
 
-	mockDB.On("SyncOrganizations", ctx).Return(fmt.Errorf("sync failed"))
+	// Mock organization upsert failure
+	mockDB.On("UpsertOrganization", ctx, mock.MatchedBy(func(params configdb.UpsertOrganizationParams) bool {
+		return params.ID == orgID && params.Enabled == true
+	})).Return(configdb.Organization{}, fmt.Errorf("organization upsert failed"))
 
 	err := importAPIKeys(ctx, apiKeysConfig, mockDB, logger, false)
 
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to sync organizations before API key import")
+	assert.Contains(t, err.Error(), "failed to ensure organizations exist")
 	mockDB.AssertExpectations(t)
 }
 
@@ -367,7 +366,10 @@ func TestInitializeConfigWithDependencies_Success(t *testing.T) {
 	mockReader.On("ReadFile", "apikeys.yaml").Return([]byte(apiKeysYaml), nil)
 
 	// Mock database calls
-	mockDB.On("SyncOrganizations", ctx).Return(nil)
+	// Mock organization upsert (for ensuring organization exists)
+	mockDB.On("UpsertOrganization", ctx, mock.MatchedBy(func(params configdb.UpsertOrganizationParams) bool {
+		return params.Enabled == true // Match any organization ID
+	})).Return(configdb.Organization{ID: uuid.New(), Name: "imported-org", Enabled: true}, nil)
 
 	bucketConfig := configdb.BucketConfiguration{
 		ID:            bucketID,
@@ -381,12 +383,6 @@ func TestInitializeConfigWithDependencies_Success(t *testing.T) {
 
 	// API key operations for non-replace mode
 	apiKeyID := uuid.New()
-	apiKeyRow := configdb.GetOrganizationAPIKeyByHashRow{
-		ID:      apiKeyID,
-		KeyHash: hashAPIKey("integration-test-key-123"),
-		Name:    "imported-key-integrat",
-	}
-
 	upsertAPIKeyRow2 := configdb.OrganizationApiKey{
 		ID:      apiKeyID,
 		KeyHash: hashAPIKey("integration-test-key-123"),
@@ -394,7 +390,6 @@ func TestInitializeConfigWithDependencies_Success(t *testing.T) {
 	}
 
 	mockDB.On("UpsertOrganizationAPIKey", ctx, mock.AnythingOfType("configdb.UpsertOrganizationAPIKeyParams")).Return(upsertAPIKeyRow2, nil)
-	mockDB.On("GetOrganizationAPIKeyByHash", ctx, mock.AnythingOfType("string")).Return(apiKeyRow, nil)
 	mockDB.On("UpsertOrganizationAPIKeyMapping", ctx, mock.AnythingOfType("configdb.UpsertOrganizationAPIKeyMappingParams")).Return(nil)
 
 	err := InitializeConfigWithDependencies(ctx, "storage.yaml", "apikeys.yaml", mockDB, mockReader, logger, false)
@@ -490,7 +485,10 @@ func TestImportAPIKeys_MultipleKeys(t *testing.T) {
 	expectedKeyHash1 := hashAPIKey(testAPIKey1)
 	expectedKeyHash2 := hashAPIKey(testAPIKey2)
 
-	mockDB.On("SyncOrganizations", ctx).Return(nil)
+	// Mock organization upsert (for ensuring organization exists)
+	mockDB.On("UpsertOrganization", ctx, mock.MatchedBy(func(params configdb.UpsertOrganizationParams) bool {
+		return params.ID == orgID && params.Enabled == true
+	})).Return(configdb.Organization{ID: orgID, Name: fmt.Sprintf("imported-org-%s", orgID.String()[:8]), Enabled: true}, nil)
 
 	// First API key
 	upsertAPIKeyRow1 := configdb.OrganizationApiKey{
@@ -499,17 +497,9 @@ func TestImportAPIKeys_MultipleKeys(t *testing.T) {
 		Name:    "imported-key-test-api",
 	}
 
-	getAPIKeyRow1 := configdb.GetOrganizationAPIKeyByHashRow{
-		ID:      apiKeyID1,
-		KeyHash: expectedKeyHash1,
-		Name:    "imported-key-test-api",
-	}
-
 	mockDB.On("UpsertOrganizationAPIKey", ctx, mock.MatchedBy(func(params configdb.UpsertOrganizationAPIKeyParams) bool {
 		return params.KeyHash == expectedKeyHash1
 	})).Return(upsertAPIKeyRow1, nil)
-
-	mockDB.On("GetOrganizationAPIKeyByHash", ctx, expectedKeyHash1).Return(getAPIKeyRow1, nil)
 
 	mockDB.On("UpsertOrganizationAPIKeyMapping", ctx, mock.MatchedBy(func(params configdb.UpsertOrganizationAPIKeyMappingParams) bool {
 		return params.ApiKeyID == apiKeyID1 && params.OrganizationID == orgID
@@ -522,17 +512,9 @@ func TestImportAPIKeys_MultipleKeys(t *testing.T) {
 		Name:    "imported-key-test-api",
 	}
 
-	getAPIKeyRow2 := configdb.GetOrganizationAPIKeyByHashRow{
-		ID:      apiKeyID2,
-		KeyHash: expectedKeyHash2,
-		Name:    "imported-key-test-api",
-	}
-
 	mockDB.On("UpsertOrganizationAPIKey", ctx, mock.MatchedBy(func(params configdb.UpsertOrganizationAPIKeyParams) bool {
 		return params.KeyHash == expectedKeyHash2
 	})).Return(upsertAPIKeyRow2, nil)
-
-	mockDB.On("GetOrganizationAPIKeyByHash", ctx, expectedKeyHash2).Return(getAPIKeyRow2, nil)
 
 	mockDB.On("UpsertOrganizationAPIKeyMapping", ctx, mock.MatchedBy(func(params configdb.UpsertOrganizationAPIKeyMappingParams) bool {
 		return params.ApiKeyID == apiKeyID2 && params.OrganizationID == orgID

@@ -23,6 +23,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
 
 	"github.com/cardinalhq/lakerunner/configdb"
@@ -54,10 +55,10 @@ type DatabaseQueries interface {
 	ClearBucketConfigurations(ctx context.Context) error
 	UpsertBucketConfiguration(ctx context.Context, arg configdb.UpsertBucketConfigurationParams) (configdb.BucketConfiguration, error)
 	UpsertOrganizationBucket(ctx context.Context, arg configdb.UpsertOrganizationBucketParams) error
+	UpsertOrganization(ctx context.Context, arg configdb.UpsertOrganizationParams) (configdb.Organization, error)
 	ClearOrganizationAPIKeyMappings(ctx context.Context) error
 	ClearOrganizationAPIKeys(ctx context.Context) error
 	UpsertOrganizationAPIKey(ctx context.Context, arg configdb.UpsertOrganizationAPIKeyParams) (configdb.OrganizationApiKey, error)
-	GetOrganizationAPIKeyByHash(ctx context.Context, keyHash string) (configdb.GetOrganizationAPIKeyByHashRow, error)
 	UpsertOrganizationAPIKeyMapping(ctx context.Context, arg configdb.UpsertOrganizationAPIKeyMappingParams) error
 }
 
@@ -219,12 +220,14 @@ func importStorageProfiles(ctx context.Context, contents []byte, qtx DatabaseQue
 }
 
 func importAPIKeys(ctx context.Context, apiKeysConfig APIKeysConfig, qtx DatabaseQueries, logger *slog.Logger, replace bool) error {
-	// Sync organizations again in case they weren't synced yet or have changed
-	logger.Info("Re-syncing organizations before API key import")
-	if err := qtx.SyncOrganizations(ctx); err != nil {
-		return fmt.Errorf("failed to sync organizations before API key import: %w", err)
+	// Note: We skip SyncOrganizations() during migration/initialization
+	// as it depends on legacy c_organizations table. Organization IDs
+	// in YAML are assumed to be valid.
+
+	// Ensure organizations exist for the API keys we're importing
+	if err := ensureOrganizationsFromAPIKeys(ctx, apiKeysConfig, qtx, logger); err != nil {
+		return fmt.Errorf("failed to ensure organizations exist: %w", err)
 	}
-	logger.Info("Successfully re-synced organizations before API key import")
 
 	// In replace mode, clear existing API keys first (mirror sync like sweeper)
 	if replace {
@@ -240,7 +243,7 @@ func importAPIKeys(ctx context.Context, apiKeysConfig APIKeysConfig, qtx Databas
 		for _, key := range orgKeys.Keys {
 			keyHash := hashAPIKey(key)
 			// Create organization API key
-			_, err := qtx.UpsertOrganizationAPIKey(ctx, configdb.UpsertOrganizationAPIKeyParams{
+			apiKey, err := qtx.UpsertOrganizationAPIKey(ctx, configdb.UpsertOrganizationAPIKeyParams{
 				KeyHash:     keyHash,
 				Name:        fmt.Sprintf("imported-key-%s", key[:8]), // Use first 8 chars as name
 				Description: nil,
@@ -249,15 +252,9 @@ func importAPIKeys(ctx context.Context, apiKeysConfig APIKeysConfig, qtx Databas
 				return fmt.Errorf("failed to create organization API key for %s: %w", orgKeys.OrganizationID, err)
 			}
 
-			// Get the API key ID to create mapping
-			apiKeyRow, err := qtx.GetOrganizationAPIKeyByHash(ctx, keyHash)
-			if err != nil {
-				return fmt.Errorf("failed to retrieve created API key: %w", err)
-			}
-
-			// Create organization API key mapping
+			// Create organization API key mapping using the ID from the upsert result
 			if err := qtx.UpsertOrganizationAPIKeyMapping(ctx, configdb.UpsertOrganizationAPIKeyMappingParams{
-				ApiKeyID:       apiKeyRow.ID,
+				ApiKeyID:       apiKey.ID,
 				OrganizationID: orgKeys.OrganizationID,
 			}); err != nil {
 				return fmt.Errorf("failed to create API key mapping: %w", err)
@@ -275,4 +272,33 @@ func importAPIKeys(ctx context.Context, apiKeysConfig APIKeysConfig, qtx Databas
 func hashAPIKey(apiKey string) string {
 	h := sha256.Sum256([]byte(apiKey))
 	return fmt.Sprintf("%x", h)
+}
+
+func ensureOrganizationsFromAPIKeys(ctx context.Context, apiKeysConfig APIKeysConfig, qtx DatabaseQueries, logger *slog.Logger) error {
+	// Create a set of unique organization IDs from the API keys config
+	orgIDs := make(map[string]bool)
+	for _, orgKeys := range apiKeysConfig {
+		orgIDs[orgKeys.OrganizationID.String()] = true
+	}
+
+	// Ensure each organization exists
+	for orgIDStr := range orgIDs {
+		orgID, err := uuid.Parse(orgIDStr)
+		if err != nil {
+			return fmt.Errorf("invalid organization ID %s: %w", orgIDStr, err)
+		}
+
+		_, err = qtx.UpsertOrganization(ctx, configdb.UpsertOrganizationParams{
+			ID:      orgID,
+			Name:    fmt.Sprintf("imported-org-%s", orgIDStr[:8]), // Use first 8 chars as name
+			Enabled: true,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to ensure organization %s exists: %w", orgIDStr, err)
+		}
+
+		logger.Info("Ensured organization exists", slog.String("org_id", orgIDStr))
+	}
+
+	return nil
 }
