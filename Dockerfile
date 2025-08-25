@@ -22,12 +22,10 @@ FROM debian:bookworm-slim AS extensions
 ARG TARGETARCH
 ARG DUCKDB_VERSION
 
-# List existing libraries before curl install, install curl, then copy only the new ones
-RUN (find /lib /usr/lib -name "*.so*" 2>/dev/null || true) | sort > /baseline-libs.txt && \
-    apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/* && \
-    (find /lib /usr/lib -name "*.so*" 2>/dev/null || true) | sort > /with-curl-libs.txt && \
+# Install curl and copy all its runtime dependencies
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/* && \
     mkdir -p /runtime-deps && \
-    comm -13 /baseline-libs.txt /with-curl-libs.txt | while read lib; do \
+    ldd /usr/bin/curl | grep "=> /" | awk '{print $3}' | while read lib; do \
         if [ -f "$lib" ]; then \
             DEST_DIR="/runtime-deps$(dirname "$lib")" && \
             mkdir -p "$DEST_DIR" && \
@@ -49,7 +47,7 @@ COPY --chmod=755 lakerunner /app/bin/lakerunner
 # Copy httpfs extension
 COPY --from=extensions /app/extensions/httpfs.duckdb_extension /app/extensions/httpfs.duckdb_extension
 
-# Copy curl binary and only the additional libraries it needs
+# Copy curl binary and its runtime dependencies
 COPY --from=extensions /usr/bin/curl /usr/bin/curl
 COPY --from=extensions /runtime-deps/ /
 
