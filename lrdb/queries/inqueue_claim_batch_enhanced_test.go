@@ -81,14 +81,12 @@ func TestClaimInqueueWorkBatch_OversizedFile(t *testing.T) {
 
 	// Claim batch - should only get the oversized file
 	claimedBatch, err := db.ClaimInqueueWorkBatch(ctx, lrdb.ClaimInqueueWorkBatchParams{
-		OrganizationID: orgID,
-		InstanceNum:    1,
-		TelemetryType:  telemetryType,
-		WorkerID:       workerID,
-		MaxTotalSize:   1024 * 1024, // 1MB limit
-		MinTotalSize:   512 * 1024,  // 512KB minimum for fresh files
-		MaxAgeSeconds:  30,          // 30 seconds
-		BatchCount:     10,          // Allow up to 10 files
+		TelemetryType: telemetryType,
+		WorkerID:      workerID,
+		MaxTotalSize:  1024 * 1024, // 1MB limit
+		MinTotalSize:  512 * 1024,  // 512KB minimum for fresh files
+		MaxAgeSeconds: 30,          // 30 seconds
+		BatchCount:    10,          // Allow up to 10 files
 	})
 	require.NoError(t, err)
 
@@ -150,15 +148,13 @@ func TestClaimInqueueWorkBatch_TooOldFiles(t *testing.T) {
 	// Use future timestamp for now_ts to make files appear old
 	futureTime := time.Now().Add(60 * time.Second)
 	claimedBatch, err := db.ClaimInqueueWorkBatch(ctx, lrdb.ClaimInqueueWorkBatchParams{
-		OrganizationID: orgID,
-		InstanceNum:    1,
-		TelemetryType:  telemetryType,
-		WorkerID:       workerID,
-		NowTs:          &futureTime, // Use future time to make files appear old
-		MaxTotalSize:   1024 * 1024, // 1MB limit
-		MinTotalSize:   512 * 1024,  // 512KB minimum (ignored for old files)
-		MaxAgeSeconds:  30,          // 30 seconds
-		BatchCount:     10,          // Allow up to 10 files
+		TelemetryType: telemetryType,
+		WorkerID:      workerID,
+		NowTs:         &futureTime, // Use future time to make files appear old
+		MaxTotalSize:  1024 * 1024, // 1MB limit
+		MinTotalSize:  512 * 1024,  // 512KB minimum (ignored for old files)
+		MaxAgeSeconds: 30,          // 30 seconds
+		BatchCount:    10,          // Allow up to 10 files
 	})
 	require.NoError(t, err)
 
@@ -214,14 +210,12 @@ func TestClaimInqueueWorkBatch_FreshFilesBelowMinimum(t *testing.T) {
 
 	// Claim batch - should return nothing because total size < minimum
 	claimedBatch, err := db.ClaimInqueueWorkBatch(ctx, lrdb.ClaimInqueueWorkBatchParams{
-		OrganizationID: orgID,
-		InstanceNum:    1,
-		TelemetryType:  telemetryType,
-		WorkerID:       workerID,
-		MaxTotalSize:   1024 * 1024, // 1MB limit
-		MinTotalSize:   512 * 1024,  // 512KB minimum
-		MaxAgeSeconds:  30,          // 30 seconds
-		BatchCount:     10,          // Allow up to 10 files
+		TelemetryType: telemetryType,
+		WorkerID:      workerID,
+		MaxTotalSize:  1024 * 1024, // 1MB limit
+		MinTotalSize:  512 * 1024,  // 512KB minimum
+		MaxAgeSeconds: 30,          // 30 seconds
+		BatchCount:    10,          // Allow up to 10 files
 	})
 	require.NoError(t, err)
 
@@ -280,14 +274,12 @@ func TestClaimInqueueWorkBatch_FreshFilesAboveMinimum(t *testing.T) {
 
 	// Claim batch - should get files that fit within size limit
 	claimedBatch, err := db.ClaimInqueueWorkBatch(ctx, lrdb.ClaimInqueueWorkBatchParams{
-		OrganizationID: orgID,
-		InstanceNum:    1,
-		TelemetryType:  telemetryType,
-		WorkerID:       workerID,
-		MaxTotalSize:   1024 * 1024, // 1MB limit
-		MinTotalSize:   512 * 1024,  // 512KB minimum
-		MaxAgeSeconds:  30,          // 30 seconds
-		BatchCount:     10,          // Allow up to 10 files
+		TelemetryType: telemetryType,
+		WorkerID:      workerID,
+		MaxTotalSize:  1024 * 1024, // 1MB limit
+		MinTotalSize:  512 * 1024,  // 512KB minimum
+		MaxAgeSeconds: 30,          // 30 seconds
+		BatchCount:    10,          // Allow up to 10 files
 	})
 	require.NoError(t, err)
 
@@ -336,15 +328,13 @@ func TestClaimInqueueWorkBatch_BatchCountLimit(t *testing.T) {
 	// Use future timestamp to trigger Rule 2 (eager processing)
 	futureTime := time.Now().Add(60 * time.Second)
 	claimedBatch, err := db.ClaimInqueueWorkBatch(ctx, lrdb.ClaimInqueueWorkBatchParams{
-		OrganizationID: orgID,
-		InstanceNum:    1,
-		TelemetryType:  telemetryType,
-		WorkerID:       workerID,
-		NowTs:          &futureTime, // Make files appear old
-		MaxTotalSize:   1024 * 1024, // 1MB limit (plenty of room)
-		MinTotalSize:   0,           // No minimum
-		MaxAgeSeconds:  30,          // 30 seconds
-		BatchCount:     3,           // Limit to 3 files
+		TelemetryType: telemetryType,
+		WorkerID:      workerID,
+		NowTs:         &futureTime, // Make files appear old
+		MaxTotalSize:  1024 * 1024, // 1MB limit (plenty of room)
+		MinTotalSize:  0,           // No minimum
+		MaxAgeSeconds: 30,          // 30 seconds
+		BatchCount:    3,           // Limit to 3 files
 	})
 	require.NoError(t, err)
 
@@ -404,15 +394,13 @@ func TestClaimInqueueWorkBatch_PriorityOrdering(t *testing.T) {
 	// Use future timestamp to trigger Rule 2 (eager processing)
 	futureTime := time.Now().Add(60 * time.Second)
 	claimedBatch, err := db.ClaimInqueueWorkBatch(ctx, lrdb.ClaimInqueueWorkBatchParams{
-		OrganizationID: orgID,
-		InstanceNum:    1,
-		TelemetryType:  telemetryType,
-		WorkerID:       workerID,
-		NowTs:          &futureTime, // Make files appear old
-		MaxTotalSize:   1024 * 1024, // 1MB limit
-		MinTotalSize:   0,           // No minimum
-		MaxAgeSeconds:  30,          // 30 seconds
-		BatchCount:     10,          // Allow all files
+		TelemetryType: telemetryType,
+		WorkerID:      workerID,
+		NowTs:         &futureTime, // Make files appear old
+		MaxTotalSize:  1024 * 1024, // 1MB limit
+		MinTotalSize:  0,           // No minimum
+		MaxAgeSeconds: 30,          // 30 seconds
+		BatchCount:    10,          // Allow all files
 	})
 	require.NoError(t, err)
 

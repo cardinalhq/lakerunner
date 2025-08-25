@@ -345,36 +345,14 @@ func ingestFilesBatch(
 
 	t0 := time.Now()
 
-	// First, find next available work to get org/instance
-	nextWork, err := loop.mdb.ClaimInqueueWork(ctx, lrdb.ClaimInqueueWorkParams{
-		ClaimedBy:     myInstanceID,
-		TelemetryType: loop.signal,
-	})
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return true, false, nil
-		}
-		return true, false, fmt.Errorf("failed to find next work: %w", err)
-	}
-
-	// Temporarily release it back so batch claim can get it
-	if err := loop.mdb.ReleaseInqueueWork(ctx, lrdb.ReleaseInqueueWorkParams{
-		ID:        nextWork.ID,
-		ClaimedBy: myInstanceID,
-	}); err != nil {
-		return true, false, fmt.Errorf("failed to release work: %w", err)
-	}
-
-	// Now claim batch from same org/instance with new parameters
+	// Claim a batch of work items from the same organization and instance
 	items, err := loop.mdb.ClaimInqueueWorkBatch(ctx, lrdb.ClaimInqueueWorkBatchParams{
-		OrganizationID: nextWork.OrganizationID,
-		InstanceNum:    nextWork.InstanceNum,
-		TelemetryType:  loop.signal,
-		WorkerID:       myInstanceID,
-		MaxTotalSize:   helpers.GetMaxTotalSize(),
-		MinTotalSize:   helpers.GetMinBatchSize(),
-		MaxAgeSeconds:  int32(helpers.GetMaxAgeSeconds()),
-		BatchCount:     int32(batchSize),
+		TelemetryType: loop.signal,
+		WorkerID:      myInstanceID,
+		MaxTotalSize:  helpers.GetMaxTotalSize(),
+		MinTotalSize:  helpers.GetMinBatchSize(),
+		MaxAgeSeconds: int32(helpers.GetMaxAgeSeconds()),
+		BatchCount:    int32(batchSize),
 	})
 	inqueueFetchDuration.Record(ctx, time.Since(t0).Seconds(),
 		metric.WithAttributeSet(commonAttributes),
@@ -394,7 +372,6 @@ func ingestFilesBatch(
 	if len(items) == 1 {
 		return processSingleItem(ctx, loop, processFx, batchRowToInqueue(items[0]))
 	}
-
 	// Safety check: ensure all records in the batch are for the same organization
 	if err := validateBatchOrganizationConsistency(items); err != nil {
 		return true, false, err
