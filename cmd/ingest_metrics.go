@@ -270,7 +270,6 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 					SignalType:          filereader.SignalTypeMetrics,
 					EnableAggregation:   true,
 					AggregationPeriodMs: 10000, // 10 seconds
-					EnableSorting:       strings.HasSuffix(tmpfilename, ".binpb") || strings.HasSuffix(tmpfilename, ".binpb.gz"),
 				}
 				reader, err = filereader.WrapReaderForAggregation(reader, opts)
 			}
