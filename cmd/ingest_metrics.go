@@ -140,19 +140,17 @@ func metricIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp st
 	filenames := []string{tmpfilename}
 
 	// If the file is not in our `otel-raw` prefix, check if we can convert it
-	if strings.HasPrefix(inf.ObjectID, "otel-raw/") {
-		// Skip database files (these are processed outputs, not inputs)
-		if strings.HasPrefix(inf.ObjectID, "db/") {
-			return nil
-		}
+	// Skip database files (these are processed outputs, not inputs)
+	if strings.HasPrefix(inf.ObjectID, "db/") {
+		return nil
+	}
 
-		// Check file type and convert if supported
-		if fnames, err := convertMetricsFileIfSupported(ll, tmpfilename, tmpdir, inf.Bucket, inf.ObjectID, rpfEstimate, loop.exemplarProcessor, inf.OrganizationID.String()); err != nil {
-			ll.Error("Failed to convert file", slog.Any("error", err))
-			return err
-		} else if fnames != nil {
-			filenames = fnames
-		}
+	// Check file type and convert if supported
+	if fnames, err := convertMetricsFileIfSupported(ll, tmpfilename, tmpdir, inf.Bucket, inf.ObjectID, rpfEstimate, loop.exemplarProcessor, inf.OrganizationID.String()); err != nil {
+		ll.Error("Failed to convert file", slog.Any("error", err))
+		return err
+	} else if fnames != nil {
+		filenames = fnames
 	}
 
 	for _, fname := range filenames {
