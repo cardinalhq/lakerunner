@@ -65,22 +65,27 @@ func (p *S3EventParser) Parse(raw []byte) ([]lrdb.Inqueue, error) {
 			slog.Error("Failed to parse S3 record", slog.Any("error", err))
 			continue
 		}
-		out = append(out, item)
+		if item != nil {
+			out = append(out, *item)
+		}
 	}
 	return out, nil
 }
 
-func (p *S3EventParser) parseS3Record(bucketName, key string, size int64) (lrdb.Inqueue, error) {
+func (p *S3EventParser) parseS3Record(bucketName, key string, size int64) (*lrdb.Inqueue, error) {
 	key, err := url.QueryUnescape(key)
 	if err != nil {
-		return lrdb.Inqueue{}, fmt.Errorf("failed to unescape key: %w", err)
+		return nil, fmt.Errorf("failed to unescape key: %w", err)
 	}
 
 	item, err := parseObjectKey(bucketName, key)
 	if err != nil {
-		return lrdb.Inqueue{}, err
+		return nil, err
 	}
-	
+	if item == nil {
+		return nil, nil
+	}
+
 	// Set the file size from S3 event
 	item.FileSize = size
 	return item, nil
@@ -118,6 +123,9 @@ func (p *GCPStorageEventParser) Parse(raw []byte) ([]lrdb.Inqueue, error) {
 	if err != nil {
 		return nil, err
 	}
+	if item == nil {
+		return []lrdb.Inqueue{}, nil
+	}
 
 	slog.Info("Parsed GCP storage event",
 		slog.String("bucket", bucketName),
@@ -126,18 +134,18 @@ func (p *GCPStorageEventParser) Parse(raw []byte) ([]lrdb.Inqueue, error) {
 		slog.String("collector", item.CollectorName),
 		slog.String("organization_id", item.OrganizationID.String()))
 
-	return []lrdb.Inqueue{item}, nil
+	return []lrdb.Inqueue{*item}, nil
 }
 
 // parseObjectKey is a shared method for parsing object keys regardless of event source
-func parseObjectKey(bucketName, key string) (lrdb.Inqueue, error) {
+func parseObjectKey(bucketName, key string) (*lrdb.Inqueue, error) {
 	if strings.HasSuffix(key, "/") {
-		return lrdb.Inqueue{}, fmt.Errorf("skipping directory key: %s", key)
+		return nil, fmt.Errorf("skipping directory key: %s", key)
 	}
 
 	parts := strings.Split(key, "/")
 	if parts[0] == "db" {
-		return lrdb.Inqueue{}, nil
+		return nil, nil
 	}
 
 	var orgID uuid.UUID
@@ -146,12 +154,12 @@ func parseObjectKey(bucketName, key string) (lrdb.Inqueue, error) {
 
 	if parts[0] == "otel-raw" {
 		if len(parts) < 4 {
-			return lrdb.Inqueue{}, fmt.Errorf("unexpected otel-raw key format: %s", key)
+			return nil, fmt.Errorf("unexpected otel-raw key format: %s", key)
 		}
 
 		orgID, err = uuid.Parse(parts[1])
 		if err != nil {
-			return lrdb.Inqueue{}, fmt.Errorf("invalid organization_id %q (key=%s): %w", parts[1], key, err)
+			return nil, fmt.Errorf("invalid organization_id %q (key=%s): %w", parts[1], key, err)
 		}
 		collector = parts[2]
 
@@ -170,7 +178,7 @@ func parseObjectKey(bucketName, key string) (lrdb.Inqueue, error) {
 		telem = "logs" // Default to logs for unknown prefixes
 	}
 
-	return lrdb.Inqueue{
+	return &lrdb.Inqueue{
 		OrganizationID: orgID,
 		InstanceNum:    -1,
 		Bucket:         bucketName,
