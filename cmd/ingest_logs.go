@@ -219,6 +219,13 @@ func createLogReader(filename string) (filereader.Reader, error) {
 	return filereader.ReaderForFile(filename, filereader.SignalTypeLogs)
 }
 
+func storageProfileForInqueue(ctx context.Context, sp storageprofile.StorageProfileProvider, inf lrdb.Inqueue) (storageprofile.StorageProfile, error) {
+	if collectorName := helpers.ExtractCollectorName(inf.ObjectID); collectorName != "" {
+		return sp.GetStorageProfileForOrganizationAndCollector(ctx, inf.OrganizationID, collectorName)
+	}
+	return sp.GetStorageProfileForOrganizationAndInstance(ctx, inf.OrganizationID, inf.InstanceNum)
+}
+
 func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
 	awsmanager *awsclient.Manager, inf lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
 
@@ -252,36 +259,36 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 
 	ll.Debug("Processing log batch", slog.Int("batchSize", len(items)))
 
-	// Get storage profile and S3 client
-	firstItem := items[0]
-	var profile storageprofile.StorageProfile
-	var err error
-
-	if collectorName := helpers.ExtractCollectorName(firstItem.ObjectID); collectorName != "" {
-		profile, err = sp.GetStorageProfileForOrganizationAndCollector(ctx, firstItem.OrganizationID, collectorName)
-		if err != nil {
-			return fmt.Errorf("failed to get storage profile for collector %s: %w", collectorName, err)
-		}
-	} else {
-		profile, err = sp.GetStorageProfileForOrganizationAndInstance(ctx, firstItem.OrganizationID, firstItem.InstanceNum)
-		if err != nil {
-			return fmt.Errorf("failed to get storage profile: %w", err)
-		}
+	// Determine primary storage profile and S3 client for output (use first item)
+	originItem := items[0]
+	profile, err := storageProfileForInqueue(ctx, sp, originItem)
+	if err != nil {
+		return fmt.Errorf("failed to get storage profile: %w", err)
 	}
 
-	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
+	uploadClient, err := awsmanager.GetS3ForProfile(ctx, profile)
 	if err != nil {
 		return fmt.Errorf("failed to get S3 client: %w", err)
 	}
 
 	// Create writer manager for organizing output by hour/slot
-	wm := newWriterManager(tmpdir, firstItem.OrganizationID.String(), ingest_dateint, rpfEstimate, ll)
+	wm := newWriterManager(tmpdir, originItem.OrganizationID.String(), ingest_dateint, rpfEstimate, ll)
 
 	// Track total rows across all files
 	var batchRowsRead, batchRowsProcessed, batchRowsErrored int64
 
 	// Process each file in the batch
 	for _, inf := range items {
+		// Determine storage profile and S3 client for each input item
+		prof, err := storageProfileForInqueue(ctx, sp, inf)
+		if err != nil {
+			return fmt.Errorf("failed to get storage profile: %w", err)
+		}
+		itemClient, err := awsmanager.GetS3ForProfile(ctx, prof)
+		if err != nil {
+			return fmt.Errorf("failed to get S3 client: %w", err)
+		}
+
 		ll.Debug("Processing batch item with filereader",
 			slog.String("itemID", inf.ID.String()),
 			slog.String("objectID", inf.ObjectID),
@@ -299,7 +306,7 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 			return fmt.Errorf("creating item tmpdir: %w", err)
 		}
 
-		tmpfilename, _, is404, err := s3helper.DownloadS3Object(ctx, itemTmpdir, s3client, inf.Bucket, inf.ObjectID)
+		tmpfilename, _, is404, err := s3helper.DownloadS3Object(ctx, itemTmpdir, itemClient, inf.Bucket, inf.ObjectID)
 		if err != nil {
 			return fmt.Errorf("failed to download file %s: %w", inf.ObjectID, err)
 		}
@@ -315,7 +322,7 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 		if err == nil {
 			// Add general translator for non-protobuf files
 			translator := &LogTranslator{
-				orgID:    firstItem.OrganizationID.String(),
+				orgID:    originItem.OrganizationID.String(),
 				bucket:   inf.Bucket,
 				objectID: inf.ObjectID,
 			}
@@ -455,10 +462,10 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 		segmentID := s3helper.GenerateID()
 		dateint, hour16 := helpers.MSToDateintHour(stats.FirstTS)
 		hour := int(hour16)
-		dbObjectID := helpers.MakeDBObjectID(firstItem.OrganizationID, firstItem.CollectorName,
+		dbObjectID := helpers.MakeDBObjectID(originItem.OrganizationID, profile.CollectorName,
 			dateint, s3helper.HourFromMillis(stats.FirstTS), segmentID, "logs")
 
-		if err := s3helper.UploadS3Object(ctx, s3client, firstItem.Bucket, dbObjectID, result.FileName); err != nil {
+		if err := s3helper.UploadS3Object(ctx, uploadClient, profile.Bucket, dbObjectID, result.FileName); err != nil {
 			return fmt.Errorf("failed to upload file to S3: %w", err)
 		}
 		_ = os.Remove(result.FileName)
@@ -469,11 +476,11 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 		// Insert log segment into database
 		resultLastTS := stats.LastTS + 1 // end is exclusive
 		err := mdb.InsertLogSegment(ctx, lrdb.InsertLogSegmentParams{
-			OrganizationID: firstItem.OrganizationID,
+			OrganizationID: originItem.OrganizationID,
 			Dateint:        dateint,
 			IngestDateint:  ingest_dateint,
 			SegmentID:      segmentID,
-			InstanceNum:    firstItem.InstanceNum,
+			InstanceNum:    originItem.InstanceNum,
 			SlotID:         int32(slotID),
 			StartTs:        stats.FirstTS,
 			EndTs:          resultLastTS,
@@ -487,7 +494,7 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 		}
 
 		ll.Debug("Inserted log segment",
-			slog.String("organizationID", firstItem.OrganizationID.String()),
+			slog.String("organizationID", originItem.OrganizationID.String()),
 			slog.Int("dateint", int(dateint)),
 			slog.Int("hour", hour),
 			slog.Int("slot", slotID),
@@ -513,7 +520,7 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 			slog.Int64("triggerTS", earliestTS))
 
 		hourAlignedTS := helpers.TruncateToHour(helpers.UnixMillisToTime(earliestTS)).UnixMilli()
-		if err := queueLogCompactionForSlot(ctx, mdb, firstItem, key.slot, key.dateint, hourAlignedTS); err != nil {
+		if err := queueLogCompactionForSlot(ctx, mdb, originItem, key.slot, key.dateint, hourAlignedTS); err != nil {
 			return fmt.Errorf("failed to queue log compaction for slot %d: %w", key.slot, err)
 		}
 	}
