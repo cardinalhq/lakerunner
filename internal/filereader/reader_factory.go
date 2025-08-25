@@ -34,7 +34,6 @@ type ReaderOptions struct {
 	// Aggregation options for metrics
 	EnableAggregation   bool  // Enable streaming aggregation
 	AggregationPeriodMs int64 // Aggregation period in milliseconds (e.g., 10000 for 10s)
-	EnableSorting       bool  // Enable post-translation sorting for metrics
 }
 
 // ReaderForFile creates a Reader for the given file based on its extension and signal type.
@@ -44,35 +43,22 @@ func ReaderForFile(filename string, signalType SignalType) (Reader, error) {
 }
 
 // ReaderForMetricAggregation creates a Reader for metrics with aggregation enabled.
-// For binpb files, enables post-translation sorting and aggregation.
-// For other formats, wraps with aggregating reader if they're already sorted.
 func ReaderForMetricAggregation(filename string, aggregationPeriodMs int64) (Reader, error) {
 	opts := ReaderOptions{
 		SignalType:          SignalTypeMetrics,
 		EnableAggregation:   true,
 		AggregationPeriodMs: aggregationPeriodMs,
-		EnableSorting:       strings.HasSuffix(filename, ".binpb") || strings.HasSuffix(filename, ".binpb.gz"),
 	}
 	return ReaderForFileWithOptions(filename, opts)
 }
 
-// WrapReaderForAggregation wraps a reader with sorting and aggregation if enabled.
-// This should be called after translation to ensure TID and timestamp fields are available.
+// WrapReaderForAggregation wraps a reader with aggregation if enabled.
 func WrapReaderForAggregation(reader Reader, opts ReaderOptions) (Reader, error) {
 	if opts.SignalType != SignalTypeMetrics {
 		return reader, nil
 	}
 
 	wrappedReader := reader
-
-	// Add sorting if enabled (for binpb files after translation)
-	if opts.EnableSorting {
-		var err error
-		wrappedReader, err = NewPostTranslationSortingReader(wrappedReader)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create sorting reader: %w", err)
-		}
-	}
 
 	// Add aggregation if enabled
 	if opts.EnableAggregation && opts.AggregationPeriodMs > 0 {
