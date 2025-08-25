@@ -23,9 +23,9 @@ ARG TARGETARCH
 ARG DUCKDB_VERSION
 
 # List existing libraries before curl install, install curl, then copy only the new ones
-RUN find /usr/lib -name "*.so*" 2>/dev/null | sort > /baseline-libs.txt && \
+RUN (find /lib /usr/lib -name "*.so*" 2>/dev/null || true) | sort > /baseline-libs.txt && \
     apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/* && \
-    find /usr/lib -name "*.so*" 2>/dev/null | sort > /with-curl-libs.txt && \
+    (find /lib /usr/lib -name "*.so*" 2>/dev/null || true) | sort > /with-curl-libs.txt && \
     mkdir -p /runtime-deps && \
     comm -13 /baseline-libs.txt /with-curl-libs.txt | while read lib; do \
         if [ -f "$lib" ]; then \
