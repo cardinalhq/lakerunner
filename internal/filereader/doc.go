@@ -44,7 +44,7 @@
 // All format readers return raw, untransformed data from files:
 //
 //   - ParquetReader: Generic Parquet files using parquet-go/parquet-go (requires io.ReaderAt)
-//   - JSONLinesReader: Streams JSON objects line-by-line from any io.Reader
+//   - JSONLinesReader: Streams JSON objects line-by-line from any io.ReadCloser
 //   - ProtoLogsReader: Raw OTEL log records from protobuf
 //   - ProtoMetricsReader: Raw OTEL metric data points from protobuf
 //   - ProtoTracesReader: Raw OTEL span data from protobuf
@@ -56,7 +56,6 @@
 //	if err != nil {
 //	    return err
 //	}
-//	defer gzReader.Close()
 //
 //	reader, err := NewJSONLinesReader(gzReader)
 //	if err != nil {

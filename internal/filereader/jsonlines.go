@@ -28,17 +28,19 @@ type JSONLinesReader struct {
 	rowIndex int
 	closed   bool
 	rowCount int64
+	closer   io.Closer
 }
 
-// NewJSONLinesReader creates a new JSONLinesReader for the given io.Reader.
-// The caller is responsible for closing the underlying reader.
-func NewJSONLinesReader(reader io.Reader) (*JSONLinesReader, error) {
+// NewJSONLinesReader creates a new JSONLinesReader for the given io.ReadCloser.
+// The reader takes ownership of the closer and will close it when Close is called.
+func NewJSONLinesReader(reader io.ReadCloser) (*JSONLinesReader, error) {
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024) // 1MB max line size
 
 	return &JSONLinesReader{
 		scanner:  scanner,
 		rowIndex: 0,
+		closer:   reader,
 	}, nil
 }
 
@@ -95,16 +97,20 @@ func (r *JSONLinesReader) Read(rows []Row) (int, error) {
 	return n, nil
 }
 
-// Close closes the reader.
-// The caller is responsible for closing the underlying reader.
+// Close closes the reader and the underlying io.ReadCloser.
 func (r *JSONLinesReader) Close() error {
 	if r.closed {
 		return nil
 	}
 	r.closed = true
 
+	var err error
+	if r.closer != nil {
+		err = r.closer.Close()
+		r.closer = nil
+	}
 	r.scanner = nil
-	return nil
+	return err
 }
 
 // RowCount returns the total number of rows that have been successfully read.

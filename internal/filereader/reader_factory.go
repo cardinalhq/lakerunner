@@ -17,11 +17,27 @@ package filereader
 import (
 	"compress/gzip"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
 	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
 )
+
+type multiReadCloser struct {
+	io.Reader
+	closers []io.Closer
+}
+
+func (m *multiReadCloser) Close() error {
+	var firstErr error
+	for _, c := range m.closers {
+		if err := c.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
 
 // ReaderOptions provides options for creating readers.
 type ReaderOptions struct {
@@ -132,10 +148,14 @@ func createJSONGzReader(filename string) (Reader, error) {
 		return nil, fmt.Errorf("failed to create gzip reader: %w", err)
 	}
 
-	reader, err := NewJSONLinesReader(gzipReader)
+	rc := &multiReadCloser{
+		Reader:  gzipReader,
+		closers: []io.Closer{gzipReader, file},
+	}
+
+	reader, err := NewJSONLinesReader(rc)
 	if err != nil {
-		gzipReader.Close()
-		file.Close()
+		rc.Close()
 		return nil, err
 	}
 
