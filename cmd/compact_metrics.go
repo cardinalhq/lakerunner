@@ -43,7 +43,7 @@ func init() {
 		Use:   "compact-metrics",
 		Short: "Roll up metrics",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if os.Getenv("LAKERUNNER_COMPACT_OLDPATH") != "" {
+			if os.Getenv("LAKERUNNER_METRICS_COMPACT_OLDPATH") != "" {
 				return oldCompactMetricsCommand().RunE(nil, []string{})
 			}
 

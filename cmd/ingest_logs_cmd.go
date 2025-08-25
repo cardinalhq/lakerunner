@@ -70,7 +70,7 @@ func init() {
 			}
 
 			// Check if we should use the old implementation as a safety net
-			if os.Getenv("LAKERUNNER_LOG_OLDPATH") != "" {
+			if os.Getenv("LAKERUNNER_LOGS_INGEST_OLDPATH") != "" {
 				return runOldLogIngestion(doneCtx, slog.Default(), loop)
 			}
 
