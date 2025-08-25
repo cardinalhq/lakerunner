@@ -61,6 +61,8 @@ func migrate(_ *cobra.Command, _ []string) error {
 
 	var errors []error
 
+	configWasMigrated := false
+
 	for _, db := range dbList {
 		db = strings.TrimSpace(db)
 		switch db {
@@ -78,6 +80,7 @@ func migrate(_ *cobra.Command, _ []string) error {
 			} else {
 				slog.Info("configdb migrations completed successfully")
 			}
+			configWasMigrated = true
 		default:
 			errors = append(errors, fmt.Errorf("unknown database: %s", db))
 		}
@@ -92,9 +95,11 @@ func migrate(_ *cobra.Command, _ []string) error {
 	}
 
 	// Always try to run initialization if configdb is empty
-	slog.Info("Checking if initialization is needed")
-	if err := initializeIfNeededFunc(); err != nil {
-		return fmt.Errorf("failed to initialize: %w", err)
+	if configWasMigrated && os.Getenv("SYNC_LEGACY_TABLES") == "" {
+		slog.Info("Checking if initialization is needed")
+		if err := initializeIfNeededFunc(); err != nil {
+			return fmt.Errorf("failed to initialize: %w", err)
+		}
 	}
 
 	return nil
@@ -151,7 +156,7 @@ func initializeIfNeededFunc() error {
 	// Auto-detect storage profile file if none provided
 	if configFile == "" {
 		slog.Info("No config file provided, attempting to auto-detect storage profiles")
-		
+
 		// Look for storage profiles in the ConfigMap mount location
 		configMapPath := "/app/config/storage_profiles.yaml"
 		if _, err := os.Stat(configMapPath); err == nil {
