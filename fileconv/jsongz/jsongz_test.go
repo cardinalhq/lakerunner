@@ -26,7 +26,7 @@ import (
 )
 
 func TestJSONGzReader_ActualFile(t *testing.T) {
-	filePath := "testdata/sample.json.gz"
+	filePath := "../../testdata/logs/sample.json.gz"
 
 	mapper := translate.NewMapper()
 

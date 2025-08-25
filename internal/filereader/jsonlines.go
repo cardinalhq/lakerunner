@@ -27,6 +27,7 @@ type JSONLinesReader struct {
 	scanner  *bufio.Scanner
 	rowIndex int
 	closed   bool
+	rowCount int64
 }
 
 // NewJSONLinesReader creates a new JSONLinesReader for the given io.Reader.
@@ -86,6 +87,11 @@ func (r *JSONLinesReader) Read(rows []Row) (int, error) {
 		n++
 	}
 
+	// Update row count with successfully read rows
+	if n > 0 {
+		r.rowCount += int64(n)
+	}
+
 	return n, nil
 }
 
@@ -99,4 +105,9 @@ func (r *JSONLinesReader) Close() error {
 
 	r.scanner = nil
 	return nil
+}
+
+// RowCount returns the total number of rows that have been successfully read.
+func (r *JSONLinesReader) RowCount() int64 {
+	return r.rowCount
 }

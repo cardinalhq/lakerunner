@@ -437,6 +437,7 @@ type delayedErrorReaderImpl struct {
 	data     []Row
 	position int
 	closed   bool
+	rowCount int64
 }
 
 func (d *delayedErrorReaderImpl) Read(rows []Row) (int, error) {
@@ -451,6 +452,7 @@ func (d *delayedErrorReaderImpl) Read(rows []Row) (int, error) {
 				rows[0][k] = v
 			}
 			d.position++
+			d.rowCount++
 			return 1, nil
 		}
 		return 0, nil
@@ -463,4 +465,8 @@ func (d *delayedErrorReaderImpl) Read(rows []Row) (int, error) {
 func (d *delayedErrorReaderImpl) Close() error {
 	d.closed = true
 	return nil
+}
+
+func (d *delayedErrorReaderImpl) RowCount() int64 {
+	return d.rowCount
 }

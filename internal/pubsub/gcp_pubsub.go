@@ -140,4 +140,4 @@ func (ps *GCPPubSubService) messageHandler(ctx context.Context, msg *pubsub.Mess
 	msg.Ack()
 
 	span.SetAttributes(attribute.String("status", "success"))
-} 
+}

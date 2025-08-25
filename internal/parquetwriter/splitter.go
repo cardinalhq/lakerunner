@@ -20,13 +20,14 @@ import (
 	"os"
 
 	"github.com/parquet-go/parquet-go"
+
+	"github.com/cardinalhq/lakerunner/internal/idgen"
 )
 
 // FileSplitter manages splitting data into multiple output files based on
 // size constraints and grouping requirements.
 type FileSplitter struct {
 	config       WriterConfig
-	currentSize  int64
 	currentRows  int64
 	currentGroup any
 
@@ -51,30 +52,6 @@ func NewFileSplitter(config WriterConfig) *FileSplitter {
 	}
 }
 
-// ShouldSplit determines if a new file should be started for the given row.
-func (s *FileSplitter) ShouldSplit(row map[string]any) bool {
-	if s.currentWriter == nil {
-		return false // No current file, so we can't split
-	}
-
-	estimatedRowSize := int64(s.config.BytesPerRecord)
-	projectedSize := s.currentSize + estimatedRowSize
-
-	// If we would exceed target size, consider splitting
-	if projectedSize > s.config.TargetFileSize {
-		// But don't split if NoSplitGroups is set and we're in the same group
-		if s.config.NoSplitGroups && s.config.GroupKeyFunc != nil {
-			newGroup := s.config.GroupKeyFunc(row)
-			if newGroup == s.currentGroup {
-				return false // Keep in same file to preserve group integrity
-			}
-		}
-		return true
-	}
-
-	return false
-}
-
 // WriteRow writes a single row to the current file, splitting if necessary.
 func (s *FileSplitter) WriteRow(ctx context.Context, row map[string]any) error {
 	if s.closed {
@@ -86,10 +63,25 @@ func (s *FileSplitter) WriteRow(ctx context.Context, row map[string]any) error {
 		return fmt.Errorf("%w: %v", ErrSchemaViolation, err)
 	}
 
-	// Check if we need to split to a new file
-	if s.ShouldSplit(row) {
-		if err := s.finishCurrentFile(); err != nil {
-			return fmt.Errorf("finish current file: %w", err)
+	// Check if we need to split
+	if s.currentWriter != nil {
+		projectedRows := s.currentRows + 1
+
+		if s.config.NoSplitGroups && s.config.GroupKeyFunc != nil {
+			// Group-aware splitting: only split on group boundaries when records exceeded
+			newGroup := s.config.GroupKeyFunc(row)
+			if newGroup != s.currentGroup && projectedRows > s.config.RecordsPerFile {
+				if err := s.finishCurrentFile(); err != nil {
+					return fmt.Errorf("finish current file: %w", err)
+				}
+			}
+		} else {
+			// No grouping: split purely based on record count
+			if projectedRows > s.config.RecordsPerFile {
+				if err := s.finishCurrentFile(); err != nil {
+					return fmt.Errorf("finish current file: %w", err)
+				}
+			}
 		}
 	}
 
@@ -137,27 +129,27 @@ func (s *FileSplitter) startNewFile() error {
 		stats = s.config.StatsProvider.NewAccumulator()
 	}
 
-	// Set up group tracking if needed
-	var currentGroup any
-	if s.config.GroupKeyFunc != nil && len(s.results) > 0 {
-		// We'll set this when we write the first row to this file
-		currentGroup = nil
-	}
-
 	s.currentFile = file
 	s.currentWriter = nil // Will be created after we have schema from first row
 	s.currentStats = stats
-	s.currentSize = 0
 	s.currentRows = 0
-	s.currentGroup = currentGroup
+	// currentGroup will be set when first row is written
 
 	return nil
 }
 
 // writeRowToCurrentFile writes a row to the current file and updates tracking.
 func (s *FileSplitter) writeRowToCurrentFile(row map[string]any) error {
+	// Add "_cardinalhq.id" column with a base32-encoded flake ID
+	// Make a copy to avoid modifying the original row
+	rowCopy := make(map[string]any, len(row)+1)
+	for k, v := range row {
+		rowCopy[k] = v
+	}
+	rowCopy["_cardinalhq.id"] = idgen.NextBase32ID()
+
 	// Add the row to our schema builder to discover/validate schema
-	if err := s.currentSchema.AddRow(row); err != nil {
+	if err := s.currentSchema.AddRow(rowCopy); err != nil {
 		return fmt.Errorf("schema validation failed: %w", err)
 	}
 
@@ -169,18 +161,17 @@ func (s *FileSplitter) writeRowToCurrentFile(row map[string]any) error {
 	}
 
 	// Write the row to parquet (all columns from the row)
-	if _, err := s.currentWriter.Write([]map[string]any{row}); err != nil {
+	if _, err := s.currentWriter.Write([]map[string]any{rowCopy}); err != nil {
 		return fmt.Errorf("write to parquet: %w", err)
 	}
 
-	// Update stats
+	// Update stats (use original row for stats since the ID is just for tracking)
 	if s.currentStats != nil {
 		s.currentStats.Add(row)
 	}
 
 	// Update tracking
 	s.currentRows++
-	s.currentSize += int64(s.config.BytesPerRecord)
 
 	// Update group tracking
 	if s.config.GroupKeyFunc != nil {
@@ -255,7 +246,6 @@ func (s *FileSplitter) finishCurrentFile() error {
 
 	s.currentFile = nil
 	s.currentStats = nil
-	s.currentSize = 0
 	s.currentRows = 0
 
 	return nil

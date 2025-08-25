@@ -30,7 +30,7 @@ import (
 
 func TestNewProtoMetricsReader(t *testing.T) {
 	// Test with valid gzipped protobuf data
-	file, err := os.Open("testdata/otel-metrics.binpb.gz")
+	file, err := os.Open("../../testdata/metrics/otel-metrics.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
@@ -44,11 +44,9 @@ func TestNewProtoMetricsReader(t *testing.T) {
 	defer reader.Close()
 
 	// Verify the reader was initialized properly
-	assert.NotNil(t, reader.metrics)
+	assert.NotNil(t, reader.datapointRows)
 	assert.False(t, reader.closed)
-	assert.Equal(t, 0, reader.resourceIndex)
-	assert.Equal(t, 0, reader.scopeIndex)
-	assert.Equal(t, 0, reader.metricIndex)
+	assert.Equal(t, 0, reader.currentIndex)
 }
 
 func TestNewProtoMetricsReader_InvalidData(t *testing.T) {
@@ -85,7 +83,7 @@ func TestNewProtoMetricsReader_EmptyData(t *testing.T) {
 
 func TestProtoMetricsReader_Read(t *testing.T) {
 	// Load test data
-	file, err := os.Open("testdata/otel-metrics.binpb.gz")
+	file, err := os.Open("../../testdata/metrics/otel-metrics.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
@@ -100,18 +98,26 @@ func TestProtoMetricsReader_Read(t *testing.T) {
 	// Read all rows
 	allRows, err := readAllRows(reader)
 	require.NoError(t, err)
-	require.Equal(t, 79, len(allRows), "Should read exactly 79 rows from otel-metrics.binpb.gz")
+	require.Greater(t, len(allRows), 79, "Should read more rows now that we iterate over datapoints, not just metrics")
 
 	// Verify each row has expected fields
 	for i, row := range allRows {
 		t.Run(fmt.Sprintf("row_%d", i), func(t *testing.T) {
 			// Should have basic metric fields
-			assert.Contains(t, row, "name", "Row should have metric name")
+			assert.Contains(t, row, "_cardinalhq.name", "Row should have metric name")
 			assert.Contains(t, row, "type", "Row should have metric type")
+			assert.Contains(t, row, "_cardinalhq.timestamp", "Row should have datapoint timestamp")
+			assert.Contains(t, row, "_cardinalhq.metric_type", "Row should have CardinalHQ metric type")
 
 			// Check that name and type are not empty
-			assert.NotEmpty(t, row["name"], "Metric name should not be empty")
+			assert.NotEmpty(t, row["_cardinalhq.name"], "Metric name should not be empty")
 			assert.NotEmpty(t, row["type"], "Metric type should not be empty")
+			assert.NotEmpty(t, row["_cardinalhq.metric_type"], "CardinalHQ metric type should not be empty")
+
+			// All metric types should now have rollup fields in CardinalHQ format
+			assert.Contains(t, row, "rollup_count", "Row should have rollup_count field")
+			assert.Contains(t, row, "rollup_avg", "Row should have rollup_avg field")
+			assert.Contains(t, row, "_cardinalhq.value", "Row should have _cardinalhq.value field")
 
 			// Other fields may or may not be present depending on the metric
 			// but if present, should have valid values
@@ -124,12 +130,12 @@ func TestProtoMetricsReader_Read(t *testing.T) {
 		})
 	}
 
-	t.Logf("Successfully read %d metric rows (expected 79)", len(allRows))
+	t.Logf("Successfully read %d datapoint rows (was 79 metric rows)", len(allRows))
 }
 
 func TestProtoMetricsReader_ReadBatched(t *testing.T) {
 	// Load test data
-	file, err := os.Open("testdata/otel-metrics.binpb.gz")
+	file, err := os.Open("../../testdata/metrics/otel-metrics.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
@@ -157,7 +163,7 @@ func TestProtoMetricsReader_ReadBatched(t *testing.T) {
 		// Verify each row that was read
 		for i := 0; i < n; i++ {
 			assert.Greater(t, len(rows[i]), 0, "Row %d should have data", i)
-			assert.Contains(t, rows[i], "name", "Row %d should have name field", i)
+			assert.Contains(t, rows[i], "_cardinalhq.name", "Row %d should have name field", i)
 			assert.Contains(t, rows[i], "type", "Row %d should have type field", i)
 		}
 
@@ -167,13 +173,13 @@ func TestProtoMetricsReader_ReadBatched(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	assert.Equal(t, 79, totalRows, "Should read exactly 79 rows in batches")
-	t.Logf("Read %d rows in batches of %d (expected 79)", totalRows, batchSize)
+	assert.Greater(t, totalRows, 79, "Should read more datapoint rows than the original 79 metric rows")
+	t.Logf("Read %d datapoint rows in batches of %d (was 79 metric rows)", totalRows, batchSize)
 }
 
 func TestProtoMetricsReader_ReadSingleRow(t *testing.T) {
 	// Load test data
-	file, err := os.Open("testdata/otel-metrics.binpb.gz")
+	file, err := os.Open("../../testdata/metrics/otel-metrics.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
@@ -193,13 +199,13 @@ func TestProtoMetricsReader_ReadSingleRow(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, n)
 	assert.Greater(t, len(rows[0]), 0, "First row should have data")
-	assert.Contains(t, rows[0], "name")
+	assert.Contains(t, rows[0], "_cardinalhq.name")
 	assert.Contains(t, rows[0], "type")
 }
 
 func TestProtoMetricsReader_ResourceAndScopeAttributes(t *testing.T) {
 	// Load test data
-	file, err := os.Open("testdata/otel-metrics.binpb.gz")
+	file, err := os.Open("../../testdata/metrics/otel-metrics.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
@@ -243,7 +249,7 @@ func TestProtoMetricsReader_ResourceAndScopeAttributes(t *testing.T) {
 
 func TestProtoMetricsReader_EmptySlice(t *testing.T) {
 	// Load test data
-	file, err := os.Open("testdata/otel-metrics.binpb.gz")
+	file, err := os.Open("../../testdata/metrics/otel-metrics.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
@@ -263,7 +269,7 @@ func TestProtoMetricsReader_EmptySlice(t *testing.T) {
 
 func TestProtoMetricsReader_Close(t *testing.T) {
 	// Load test data
-	file, err := os.Open("testdata/otel-metrics.binpb.gz")
+	file, err := os.Open("../../testdata/metrics/otel-metrics.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
@@ -279,7 +285,7 @@ func TestProtoMetricsReader_Close(t *testing.T) {
 	rows[0] = make(Row)
 	n, err := reader.Read(rows)
 	require.NoError(t, err)
-	require.Equal(t, 1, n, "Should read exactly 1 row before closing")
+	require.Equal(t, 1, n, "Should read exactly 1 datapoint row before closing")
 
 	// Close should work
 	err = reader.Close()
@@ -298,7 +304,7 @@ func TestProtoMetricsReader_Close(t *testing.T) {
 
 func TestProtoMetricsReader_ExhaustData(t *testing.T) {
 	// Load test data
-	file, err := os.Open("testdata/otel-metrics.binpb.gz")
+	file, err := os.Open("../../testdata/metrics/otel-metrics.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
@@ -322,13 +328,13 @@ func TestProtoMetricsReader_ExhaustData(t *testing.T) {
 	assert.Equal(t, 0, n)
 	assert.True(t, errors.Is(err, io.EOF))
 
-	assert.Equal(t, 79, totalRows, "Should read exactly 79 rows before exhaustion")
-	t.Logf("Successfully exhausted reader after reading %d rows (expected 79)", totalRows)
+	assert.Greater(t, totalRows, 79, "Should read more datapoint rows than the original 79 metric rows")
+	t.Logf("Successfully exhausted reader after reading %d datapoint rows (was 79 metric rows)", totalRows)
 }
 
 func TestProtoMetricsReader_MetricTypes(t *testing.T) {
 	// Load test data
-	file, err := os.Open("testdata/otel-metrics.binpb.gz")
+	file, err := os.Open("../../testdata/metrics/otel-metrics.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
@@ -343,7 +349,7 @@ func TestProtoMetricsReader_MetricTypes(t *testing.T) {
 	// Read all rows and collect metric types
 	allRows, err := readAllRows(reader)
 	require.NoError(t, err)
-	require.Equal(t, 79, len(allRows), "Should read exactly 79 rows for metric type analysis")
+	require.Greater(t, len(allRows), 79, "Should read more datapoint rows than the original 79 metric rows")
 
 	metricTypes := make(map[string]int)
 	metricNames := make(map[string]int)
@@ -354,7 +360,7 @@ func TestProtoMetricsReader_MetricTypes(t *testing.T) {
 				metricTypes[typeStr]++
 			}
 		}
-		if metricName, exists := row["name"]; exists {
+		if metricName, exists := row["_cardinalhq.name"]; exists {
 			if nameStr, ok := metricName.(string); ok {
 				metricNames[nameStr]++
 			}
@@ -364,14 +370,14 @@ func TestProtoMetricsReader_MetricTypes(t *testing.T) {
 	t.Logf("Found metric types: %+v", metricTypes)
 	t.Logf("Found %d unique metric names", len(metricNames))
 
-	// Verify specific expected metric distribution based on test data
+	// Verify that we still find the expected metric types and names
 	assert.Equal(t, 3, len(metricTypes), "Should find exactly 3 metric types")
 	assert.Equal(t, 58, len(metricNames), "Should find exactly 58 unique metric names")
 
-	// Verify expected metric type counts
-	assert.Equal(t, 58, metricTypes["Sum"], "Should have 58 Sum metrics")
-	assert.Equal(t, 14, metricTypes["Histogram"], "Should have 14 Histogram metrics")
-	assert.Equal(t, 7, metricTypes["Gauge"], "Should have 7 Gauge metrics")
+	// Note: counts will be higher since we now have one row per datapoint
+	assert.Greater(t, metricTypes["Sum"], 58, "Should have more Sum datapoint rows than 58 Sum metrics")
+	assert.Greater(t, metricTypes["Histogram"], 14, "Should have more Histogram datapoint rows than 14 Histogram metrics")
+	assert.Greater(t, metricTypes["Gauge"], 7, "Should have more Gauge datapoint rows than 7 Gauge metrics")
 }
 
 // Test parsing function directly with invalid data

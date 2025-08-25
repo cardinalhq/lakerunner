@@ -31,13 +31,9 @@ func newTestNoopTranslator() *testNoopTranslator {
 	return &testNoopTranslator{}
 }
 
-func (nt *testNoopTranslator) TranslateRow(in Row) (Row, bool, error) {
-	// Create a copy for safe testing (production NoopTranslator would return in directly)
-	result := make(Row)
-	for k, v := range in {
-		result[k] = v
-	}
-	return result, false, nil // false = different reference
+func (nt *testNoopTranslator) TranslateRow(row *Row) error {
+	// No-op - row is unchanged
+	return nil
 }
 
 // Mock translator for testing
@@ -46,16 +42,26 @@ type mockTranslator struct {
 	prefix      string
 }
 
-func (mt *mockTranslator) TranslateRow(in Row) (Row, bool, error) {
+func (mt *mockTranslator) TranslateRow(row *Row) error {
 	if mt.shouldError {
-		return nil, false, errors.New("mock translation error")
+		return errors.New("mock translation error")
 	}
 
-	result := make(Row)
-	for k, v := range in {
-		result[mt.prefix+k] = v
+	// Apply prefix to all keys in-place
+	newKeys := make(map[string]any)
+	for k, v := range *row {
+		newKeys[mt.prefix+k] = v
 	}
-	return result, false, nil // false = different reference
+
+	// Clear original row and replace with prefixed keys
+	for k := range *row {
+		delete(*row, k)
+	}
+	for k, v := range newKeys {
+		(*row)[k] = v
+	}
+
+	return nil
 }
 
 func TestNewTranslatingReader(t *testing.T) {
@@ -373,6 +379,64 @@ func TestTranslatingReader_ReadBatched(t *testing.T) {
 	assert.Equal(t, 5, totalRows, "Should read exactly 5 rows in batches")
 }
 
+func TestTranslatingReader_RowCount(t *testing.T) {
+	testData := []Row{
+		{"id": 1, "value": "a"},
+		{"id": 2, "value": "b"},
+		{"id": 3, "value": "c"},
+		{"id": 4, "value": "d"},
+		{"id": 5, "value": "e"},
+	}
+
+	mockReader := newMockReader("test", testData)
+	translator := NewTagsTranslator(map[string]string{"batch": "test"})
+
+	reader, err := NewTranslatingReader(mockReader, translator)
+	require.NoError(t, err)
+	defer reader.Close()
+
+	// Initially should have 0 rows
+	assert.Equal(t, int64(0), reader.RowCount())
+
+	// Read first batch
+	rows := make([]Row, 2)
+	for i := range rows {
+		rows[i] = make(Row)
+	}
+	n, err := reader.Read(rows)
+	require.NoError(t, err)
+	assert.Equal(t, 2, n)
+	assert.Equal(t, int64(2), reader.RowCount())
+
+	// Read second batch
+	rows = make([]Row, 2)
+	for i := range rows {
+		rows[i] = make(Row)
+	}
+	n, err = reader.Read(rows)
+	require.NoError(t, err)
+	assert.Equal(t, 2, n)
+	assert.Equal(t, int64(4), reader.RowCount())
+
+	// Read final batch
+	rows = make([]Row, 2)
+	for i := range rows {
+		rows[i] = make(Row)
+	}
+	n, err = reader.Read(rows)
+	assert.Equal(t, 1, n)                        // Only 1 row left
+	require.NoError(t, err)                      // Should not be EOF yet, since we got 1 row
+	assert.Equal(t, int64(5), reader.RowCount()) // Total should be 5
+
+	// Count should remain stable after EOF
+	rows = make([]Row, 1)
+	rows[0] = make(Row)
+	n, err = reader.Read(rows)
+	assert.Equal(t, 0, n)
+	assert.True(t, errors.Is(err, io.EOF))
+	assert.Equal(t, int64(5), reader.RowCount()) // Should still be 5
+}
+
 func TestTranslatingReader_Close(t *testing.T) {
 	testData := []Row{{"test": "data"}}
 
@@ -456,16 +520,16 @@ type conditionalErrorTranslator struct {
 	rowCount  int
 }
 
-func (cet *conditionalErrorTranslator) TranslateRow(in Row) (Row, bool, error) {
+func (cet *conditionalErrorTranslator) TranslateRow(row *Row) error {
 	if cet.rowCount == cet.failOnRow {
-		return nil, false, errors.New("conditional translation error")
+		return errors.New("conditional translation error")
 	}
 
-	result := make(Row)
-	for k, v := range in {
-		result[k] = fmt.Sprintf("translated_%v", v)
+	// Transform all values by adding prefix
+	for k, v := range *row {
+		(*row)[k] = fmt.Sprintf("translated_%v", v)
 	}
 
 	cet.rowCount++
-	return result, false, nil // false = different reference
+	return nil
 }

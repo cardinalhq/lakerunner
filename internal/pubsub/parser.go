@@ -80,7 +80,7 @@ func (p *S3EventParser) parseS3Record(bucketName, key string, size int64) (lrdb.
 	if err != nil {
 		return lrdb.Inqueue{}, err
 	}
-	
+
 	// Set the file size from S3 event
 	item.FileSize = size
 	return item, nil

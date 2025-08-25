@@ -103,13 +103,13 @@ func (r *RawParquetReader) GetRow() (row map[string]any, done bool, err error) {
 
 	ret := make(map[string]any)
 	for k, v := range parsedRow.ResourceAttributes {
-		ret["resource."+k] = v
+		ret[k] = v
 	}
 	for k, v := range parsedRow.ScopeAttributes {
-		ret["scope."+k] = v
+		ret[k] = v
 	}
 	for k, v := range parsedRow.RecordAttributes {
-		ret["log."+k] = v
+		ret[k] = v
 	}
 	maps.Copy(ret, parsedRow.RawAttributes)
 	if _, ok := ret["_cardinalhq.timestamp"]; !ok && parsedRow.Timestamp > 0 {

@@ -32,7 +32,7 @@ var (
 		"resource.file",
 	}
 	DimensionsToIndex = append([]string{
-		//"_cardinalhq.telemetry_type",
+		"_cardinalhq.telemetry_type",
 		"_cardinalhq.name",
 		"_cardinalhq.level",
 		//"_cardinalhq.message",

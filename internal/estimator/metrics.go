@@ -30,6 +30,8 @@ type MetricQuerier interface {
 }
 
 type MetricEstimator interface {
+	// Get returns an estimate of the number of records that will likely be enough to
+	// hit the target size for the output file.
 	Get(organizationID uuid.UUID, instanceNum int16, frequencyMs int32) int64
 }
 

@@ -15,8 +15,11 @@
 package idgen
 
 import (
+	"encoding/base32"
+	"encoding/binary"
 	"errors"
 	"math/rand/v2"
+	"strings"
 	"time"
 
 	"github.com/sony/sonyflake"
@@ -58,4 +61,22 @@ func (sf *SonyFlakeGenerator) NextID() int64 {
 		return rand.Int64()
 	}
 	return int64(v)
+}
+
+// NextBase32ID generates a flake ID and encodes it as base32, removing any padding.
+func (sf *SonyFlakeGenerator) NextBase32ID() string {
+	id := sf.NextID()
+
+	// Convert int64 to bytes (big endian)
+	buf := make([]byte, 8)
+	binary.BigEndian.PutUint64(buf, uint64(id))
+
+	// Encode to base32 and remove padding
+	encoded := base32.StdEncoding.EncodeToString(buf)
+	return strings.TrimRight(encoded, "=")
+}
+
+// NextBase32ID is a convenience function that uses the default generator.
+func NextBase32ID() string {
+	return DefaultFlakeGenerator.NextBase32ID()
 }

@@ -35,14 +35,14 @@ func TestNewProtoReader(t *testing.T) {
 	}{
 		{
 			name:        "valid proto file",
-			fname:       "testdata/logs_160396104.binpb",
+			fname:       "../../testdata/logs/logs_160396104.binpb",
 			mapper:      translate.NewMapper(),
 			tags:        map[string]string{"test": "value"},
 			expectError: false,
 		},
 		{
 			name:        "non-existent file",
-			fname:       "testdata/nonexistent.binpb",
+			fname:       "../../testdata/logs/nonexistent.binpb",
 			mapper:      translate.NewMapper(),
 			tags:        nil,
 			expectError: true,
@@ -65,7 +65,7 @@ func TestNewProtoReader(t *testing.T) {
 }
 
 func TestProtoReader_GetRow(t *testing.T) {
-	reader, err := NewLogsProtoReader("testdata/logs_160396104.binpb", translate.NewMapper(), map[string]string{
+	reader, err := NewLogsProtoReader("../../testdata/logs/logs_160396104.binpb", translate.NewMapper(), map[string]string{
 		"test_tag": "test_value",
 		"env":      "test",
 	})
@@ -125,7 +125,7 @@ func TestProtoReader_GetRow(t *testing.T) {
 }
 
 func TestProtoReader_Close(t *testing.T) {
-	reader, err := NewLogsProtoReader("testdata/logs_160396104.binpb", translate.NewMapper(), nil)
+	reader, err := NewLogsProtoReader("../../testdata/logs/logs_160396104.binpb", translate.NewMapper(), nil)
 	require.NoError(t, err)
 
 	// Test that close doesn't error
@@ -139,7 +139,7 @@ func TestProtoReader_Close(t *testing.T) {
 
 func TestProtoReader_EmptyFile(t *testing.T) {
 	// Test with a file that doesn't exist
-	reader, err := NewLogsProtoReader("testdata/nonexistent.binpb", translate.NewMapper(), nil)
+	reader, err := NewLogsProtoReader("../../testdata/logs/nonexistent.binpb", translate.NewMapper(), nil)
 	assert.Error(t, err)
 	assert.Nil(t, reader)
 }

@@ -15,6 +15,8 @@
 package proto
 
 import (
+	"compress/gzip"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -26,6 +28,23 @@ import (
 	"github.com/cardinalhq/lakerunner/fileconv/translate"
 )
 
+// readGzippedProtoFile reads and decompresses a gzipped protobuf file
+func readGzippedProtoFile(filename string) ([]byte, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	gzReader, err := gzip.NewReader(file)
+	if err != nil {
+		return nil, err
+	}
+	defer gzReader.Close()
+
+	return io.ReadAll(gzReader)
+}
+
 func TestNewMetricsProtoReader(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -36,14 +55,14 @@ func TestNewMetricsProtoReader(t *testing.T) {
 	}{
 		{
 			name:        "valid metrics proto file",
-			fname:       "testdata/metrics_449638969.binpb",
+			fname:       "../../testdata/metrics/metrics_449638969.binpb.gz",
 			mapper:      translate.NewMapper(),
 			tags:        map[string]string{"test": "value"},
 			expectError: false,
 		},
 		{
 			name:        "non-existent file",
-			fname:       "testdata/nonexistent.binpb",
+			fname:       "../../testdata/metrics/nonexistent.binpb",
 			mapper:      translate.NewMapper(),
 			tags:        nil,
 			expectError: true,
@@ -52,7 +71,7 @@ func TestNewMetricsProtoReader(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			data, err := os.ReadFile(tt.fname)
+			data, err := readGzippedProtoFile(tt.fname)
 			if tt.expectError {
 				assert.Error(t, err)
 				return
@@ -68,7 +87,7 @@ func TestNewMetricsProtoReader(t *testing.T) {
 }
 
 func TestMetricsProtoReader_GetRow(t *testing.T) {
-	data, err := os.ReadFile("testdata/metrics_449638969.binpb")
+	data, err := readGzippedProtoFile("../../testdata/metrics/metrics_449638969.binpb.gz")
 	require.NoError(t, err)
 
 	reader, err := NewMetricsProtoReader(data, translate.NewMapper(), map[string]string{
@@ -132,7 +151,7 @@ func TestMetricsProtoReader_GetRow(t *testing.T) {
 }
 
 func TestMetricsProtoReader_Close(t *testing.T) {
-	data, err := os.ReadFile("testdata/metrics_449638969.binpb")
+	data, err := readGzippedProtoFile("../../testdata/metrics/metrics_449638969.binpb.gz")
 	require.NoError(t, err)
 
 	reader, err := NewMetricsProtoReader(data, translate.NewMapper(), nil)
@@ -149,7 +168,7 @@ func TestMetricsProtoReader_Close(t *testing.T) {
 
 func TestMetricsProtoReader_EmptyFile(t *testing.T) {
 	// Test with a file that doesn't exist
-	_, err := os.ReadFile("testdata/nonexistent.binpb")
+	_, err := os.ReadFile("../../testdata/metrics/nonexistent.binpb")
 	assert.Error(t, err)
 
 	// Test with empty data - this actually succeeds with an empty metrics object
@@ -162,7 +181,7 @@ func TestMetricsProtoReader_EmptyFile(t *testing.T) {
 }
 
 func TestMetricsProtoReader_DifferentMetricTypes(t *testing.T) {
-	data, err := os.ReadFile("testdata/metrics_449638969.binpb")
+	data, err := readGzippedProtoFile("../../testdata/metrics/metrics_449638969.binpb.gz")
 	require.NoError(t, err)
 
 	reader, err := NewMetricsProtoReader(data, translate.NewMapper(), nil)
@@ -292,7 +311,7 @@ func TestMetricsProtoReader_GetRowErrorCases(t *testing.T) {
 
 func TestMetricsProtoReader_WithNilMapper(t *testing.T) {
 	// Test with nil mapper - should still work
-	data, err := os.ReadFile("testdata/metrics_449638969.binpb")
+	data, err := readGzippedProtoFile("../../testdata/metrics/metrics_449638969.binpb.gz")
 	require.NoError(t, err)
 
 	reader, err := NewMetricsProtoReader(data, nil, nil)
@@ -309,7 +328,7 @@ func TestMetricsProtoReader_WithNilMapper(t *testing.T) {
 
 func TestNewMetricsProtoReaderFromMetrics(t *testing.T) {
 	// Test the new constructor that accepts parsed metrics directly
-	data, err := os.ReadFile("testdata/metrics_449638969.binpb")
+	data, err := readGzippedProtoFile("../../testdata/metrics/metrics_449638969.binpb.gz")
 	require.NoError(t, err)
 
 	// Parse metrics once

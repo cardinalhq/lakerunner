@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"math"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -67,6 +68,8 @@ type RunqueueLoopContext struct {
 	signal          string
 	action          string
 	ll              *slog.Logger
+	processedItems  *int64
+	lastLogTime     *time.Time
 }
 
 func NewRunqueueLoopContext(ctx context.Context, signal string, action string, assumeRoleSessionName string) (*RunqueueLoopContext, error) {
@@ -109,7 +112,10 @@ func NewRunqueueLoopContext(ctx context.Context, signal string, action string, a
 	wqm := lockmgr.NewWorkQueueManager(mdb, myInstanceID, lrdb.SignalEnum(signal), lrdb.ActionEnum(action), freqs, math.MinInt32)
 	go wqm.Run(ctx)
 
-	return &RunqueueLoopContext{
+	var processedItems int64
+	var lastLogTime time.Time
+
+	loopCtx := &RunqueueLoopContext{
 		ctx:             ctx,
 		wqm:             wqm,
 		mdb:             mdb,
@@ -120,7 +126,31 @@ func NewRunqueueLoopContext(ctx context.Context, signal string, action string, a
 		signal:          signal,
 		action:          action,
 		ll:              ll,
-	}, nil
+		processedItems:  &processedItems,
+		lastLogTime:     &lastLogTime,
+	}
+
+	// Start periodic activity logging
+	go func() {
+		ticker := time.NewTicker(20 * time.Second)
+		defer ticker.Stop()
+		var totalProcessed int64
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				processedCount := atomic.SwapInt64(loopCtx.processedItems, 0)
+				if processedCount > 0 && time.Since(*loopCtx.lastLogTime) >= 20*time.Second {
+					totalProcessed += processedCount
+					ll.Info("Processing activity", slog.Int64("itemsProcessed", processedCount), slog.Int64("totalProcessed", totalProcessed))
+					*loopCtx.lastLogTime = time.Now()
+				}
+			}
+		}
+	}()
+
+	return loopCtx, nil
 }
 
 func RunqueueLoop(loop *RunqueueLoopContext, pfx RunqueueProcessingFunction, args any) error {
@@ -244,17 +274,23 @@ func workqueueProcess(
 		}
 	}()
 
-	var estBytesPerRecord int64
+	var recordsPerFile int64
 	switch inf.Signal() {
 	case lrdb.SignalEnumMetrics:
-		estBytesPerRecord = loop.metricEstimator.Get(inf.OrganizationID(), inf.InstanceNum(), inf.FrequencyMs())
+		recordsPerFile = loop.metricEstimator.Get(inf.OrganizationID(), inf.InstanceNum(), inf.FrequencyMs())
+		if recordsPerFile <= 0 {
+			recordsPerFile = 40_000 // Default for all signals
+		}
 	case lrdb.SignalEnumLogs:
-		estBytesPerRecord = loop.logEstimator.Get(inf.OrganizationID(), inf.InstanceNum())
+		recordsPerFile = loop.logEstimator.Get(inf.OrganizationID(), inf.InstanceNum())
+		if recordsPerFile <= 0 {
+			recordsPerFile = 40_000 // Default for all signals
+		}
 	default:
-		estBytesPerRecord = 40_000 // Default fallback
+		recordsPerFile = 40_000 // Default for all signals
 	}
 	t0 = time.Now()
-	result, err := pfx(ctx, ll, tmpdir, loop.awsmanager, loop.sp, loop.mdb, inf, estBytesPerRecord, args)
+	result, err := pfx(ctx, ll, tmpdir, loop.awsmanager, loop.sp, loop.mdb, inf, recordsPerFile, args)
 	workqueueDuration.Record(ctx, time.Since(t0).Seconds(),
 		metric.WithAttributeSet(commonAttributes),
 		metric.WithAttributeSet(orgAttrs),
@@ -264,7 +300,11 @@ func workqueueProcess(
 		))
 	switch result {
 	case WorkResultSuccess:
-		return false, true, inf.Complete()
+		if err := inf.Complete(); err != nil {
+			return false, true, err
+		}
+		atomic.AddInt64(loop.processedItems, 1)
+		return false, true, nil
 	case WorkResultTryAgainLater:
 		return true, false, inf.Fail()
 	default:

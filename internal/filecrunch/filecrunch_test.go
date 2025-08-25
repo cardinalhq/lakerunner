@@ -24,7 +24,7 @@ import (
 
 func TestSchemaForFile_Success(t *testing.T) {
 	// Use a real parquet file from testdata
-	filename := filepath.Join("testdata", "logs_1747427310000_667024137.parquet")
+	filename := filepath.Join("../../testdata/logs", "logs_1747427310000_667024137.parquet")
 	fh, err := LoadSchemaForFile(filename)
 	assert.NoError(t, err)
 	assert.NotNil(t, fh)

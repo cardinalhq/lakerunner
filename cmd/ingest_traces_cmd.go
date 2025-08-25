@@ -140,7 +140,7 @@ func traceIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp sto
 		ll.Info("Empty source file, skipping", slog.String("objectID", inf.ObjectID))
 		return nil
 	} else if traceResults != nil {
-		ll.Info("Converted file", slog.String("filename", tmpfilename), slog.String("objectID", inf.ObjectID))
+		ll.Info("Converted file", slog.String("objectID", inf.ObjectID))
 
 		// Process each converted file - upload to S3 and insert into database
 		for _, result := range traceResults {

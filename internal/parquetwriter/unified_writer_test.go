@@ -23,6 +23,8 @@ import (
 	"time"
 
 	"github.com/parquet-go/parquet-go"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestUnifiedWriter_Basic(t *testing.T) {
@@ -33,7 +35,7 @@ func TestUnifiedWriter_Basic(t *testing.T) {
 		TmpDir:         tmpdir,
 		TargetFileSize: 1000, // Small size for testing
 		OrderBy:        OrderNone,
-		BytesPerRecord: 50.0, // Fixed size for predictable tests
+		RecordsPerFile: 20, // Fixed limit for predictable tests
 	}
 	writer, err := NewUnifiedWriter(config)
 	if err != nil {
@@ -94,7 +96,7 @@ func TestUnifiedWriter_FileSplitting(t *testing.T) {
 		TmpDir:         tmpdir,
 		TargetFileSize: 100, // Very small to force splitting
 		OrderBy:        OrderNone,
-		BytesPerRecord: 50.0, // Each row is ~50 bytes
+		RecordsPerFile: 2, // Force multiple files with very low limit
 	}
 
 	writer, err := NewUnifiedWriter(config)
@@ -152,7 +154,7 @@ func TestUnifiedWriter_NoSplitGroups(t *testing.T) {
 			return row["group_id"].(int64)
 		},
 		NoSplitGroups:  true,
-		BytesPerRecord: 30.0,
+		RecordsPerFile: 3, // Force split after 3 records to test group boundaries
 	}
 
 	writer, err := NewUnifiedWriter(config)
@@ -205,7 +207,7 @@ func TestUnifiedWriter_OrderingInMemory(t *testing.T) {
 		OrderKeyFunc: func(row map[string]any) any {
 			return row["timestamp"].(int64)
 		},
-		BytesPerRecord: 100.0,
+		RecordsPerFile: 10000,
 	}
 
 	writer, err := NewUnifiedWriter(config)
@@ -293,7 +295,7 @@ func TestUnifiedWriter_ErrorHandling(t *testing.T) {
 			TmpDir:         tmpdir,
 			TargetFileSize: 1000, // Small size for testing
 			OrderBy:        OrderNone,
-			BytesPerRecord: 50.0, // Fixed size for predictable tests
+			RecordsPerFile: 20, // Fixed limit for predictable tests
 		}
 		writer, err := NewUnifiedWriter(config)
 		if err != nil {
@@ -313,7 +315,7 @@ func TestUnifiedWriter_ErrorHandling(t *testing.T) {
 			TmpDir:         tmpdir,
 			TargetFileSize: 1000, // Small size for testing
 			OrderBy:        OrderNone,
-			BytesPerRecord: 50.0, // Fixed size for predictable tests
+			RecordsPerFile: 20, // Fixed limit for predictable tests
 		}
 		writer, err := NewUnifiedWriter(config)
 		if err != nil {
@@ -338,7 +340,7 @@ func TestUnifiedWriter_ErrorHandling(t *testing.T) {
 			TmpDir:         tmpdir,
 			TargetFileSize: 1000, // Small size for testing
 			OrderBy:        OrderNone,
-			BytesPerRecord: 50.0, // Fixed size for predictable tests
+			RecordsPerFile: 20, // Fixed limit for predictable tests
 		}
 		writer, err := NewUnifiedWriter(config)
 		if err != nil {
@@ -370,7 +372,7 @@ func TestUnifiedWriter_WriteBatch(t *testing.T) {
 		TmpDir:         tmpdir,
 		TargetFileSize: 1000, // Small size for testing
 		OrderBy:        OrderNone,
-		BytesPerRecord: 50.0, // Fixed size for predictable tests
+		RecordsPerFile: 20, // Fixed limit for predictable tests
 	}
 	writer, err := NewUnifiedWriter(config)
 	if err != nil {
@@ -418,7 +420,7 @@ func TestUnifiedWriter_ContextCancellation(t *testing.T) {
 		TmpDir:         tmpdir,
 		TargetFileSize: 1000, // Small size for testing
 		OrderBy:        OrderNone,
-		BytesPerRecord: 50.0, // Fixed size for predictable tests
+		RecordsPerFile: 20, // Fixed limit for predictable tests
 	}
 	writer, err := NewUnifiedWriter(config)
 	if err != nil {
@@ -457,7 +459,7 @@ func TestUnifiedWriter_Stats(t *testing.T) {
 		TmpDir:         tmpdir,
 		TargetFileSize: 1000, // Small size for testing
 		OrderBy:        OrderNone,
-		BytesPerRecord: 50.0, // Fixed size for predictable tests
+		RecordsPerFile: 20, // Fixed limit for predictable tests
 	}
 	writer, err := NewUnifiedWriter(config)
 	if err != nil {
@@ -495,6 +497,70 @@ func TestUnifiedWriter_Stats(t *testing.T) {
 	}
 }
 
+func TestUnifiedWriter_CardinalHQIDColumn(t *testing.T) {
+	tmpdir := t.TempDir()
+
+	config := WriterConfig{
+		BaseName:       "id-test",
+		TmpDir:         tmpdir,
+		TargetFileSize: 1000,
+		OrderBy:        OrderNone,
+		RecordsPerFile: 20,
+	}
+
+	writer, err := NewUnifiedWriter(config)
+	require.NoError(t, err, "Failed to create writer")
+	defer writer.Abort()
+
+	// Write test data
+	testRows := []map[string]any{
+		{"timestamp": int64(1000), "message": "first"},
+		{"timestamp": int64(2000), "message": "second"},
+	}
+
+	for _, row := range testRows {
+		err := writer.Write(row)
+		require.NoError(t, err, "Failed to write row")
+	}
+
+	// Close and get results
+	ctx := context.Background()
+	results, err := writer.Close(ctx)
+	require.NoError(t, err, "Failed to close writer")
+	require.Len(t, results, 1, "Expected exactly one result file")
+
+	// Read the parquet file back to verify _cardinalhq.id was added
+	file, err := os.Open(results[0].FileName)
+	require.NoError(t, err, "Failed to open result file")
+	defer file.Close()
+
+	info, err := file.Stat()
+	require.NoError(t, err, "Failed to stat result file")
+
+	pf, err := parquet.OpenFile(file, info.Size())
+	require.NoError(t, err, "Failed to open parquet file")
+
+	// Check that _cardinalhq.id column exists in schema
+	schema := pf.Schema()
+	var hasIDColumn bool
+	for _, field := range schema.Fields() {
+		if field.Name() == "_cardinalhq.id" {
+			hasIDColumn = true
+			// String type is correct since we're passing a string value
+			assert.Contains(t, strings.ToLower(field.Type().String()), "string", "_cardinalhq.id should be string type")
+			break
+		}
+	}
+	assert.True(t, hasIDColumn, "_cardinalhq.id column should be present in schema")
+
+	// Verify that the file was created and has reasonable size (basic sanity check)
+	assert.Greater(t, results[0].FileSize, int64(0), "File should have positive size")
+	assert.Equal(t, int64(2), results[0].RecordCount, "Should have 2 records")
+
+	// Clean up
+	os.Remove(results[0].FileName)
+}
+
 func BenchmarkUnifiedWriter(b *testing.B) {
 	tmpdir := b.TempDir()
 
@@ -503,7 +569,7 @@ func BenchmarkUnifiedWriter(b *testing.B) {
 		TmpDir:         tmpdir,
 		TargetFileSize: 1000000,
 		OrderBy:        OrderNone,
-		BytesPerRecord: 100.0,
+		RecordsPerFile: 10000,
 	}
 
 	b.ResetTimer()

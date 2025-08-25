@@ -15,9 +15,11 @@
 package helpers
 
 import (
+	"fmt"
 	"slices"
 	"time"
 
+	"github.com/DataDog/sketches-go/ddsketch"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/cardinalhq/lakerunner/lrdb"
@@ -148,4 +150,78 @@ func RangeBounds[T int | int16 | int32 | int64 | pgtype.Int8 | time.Time | pgtyp
 	}
 
 	return lower, upper, true
+}
+
+// EncodeSketch encodes a DDSketch to bytes.
+// Extracted from tidprocessing package for use in metrics ingestion.
+func EncodeSketch(sketch *ddsketch.DDSketch) []byte {
+	var buf []byte
+	sketch.Encode(&buf, false)
+	return buf
+}
+
+// MetricsOrderKeyFunc returns the ordering key function for metrics.
+// Orders by [metric name, TID, timestamp] for efficient grouping during ingestion and compaction.
+func MetricsOrderKeyFunc() func(row map[string]any) any {
+	return func(row map[string]any) any {
+		name, nameOk := row["_cardinalhq.name"].(string)
+		if !nameOk {
+			return ""
+		}
+
+		// Handle both string and int64 TID values
+		var tid int64
+		switch v := row["_cardinalhq.tid"].(type) {
+		case int64:
+			tid = v
+		case string:
+			// TID is incorrectly stored as string, parse it
+			if parsed, err := fmt.Sscanf(v, "%d", &tid); err != nil || parsed != 1 {
+				return ""
+			}
+		default:
+			return ""
+		}
+
+		// Include timestamp in sort key for aggregation ordering
+		timestamp, timestampOk := row["_cardinalhq.timestamp"].(int64)
+		if !timestampOk {
+			return ""
+		}
+
+		return fmt.Sprintf("%s:%d:%d", name, tid, timestamp)
+	}
+}
+
+// MetricsGroupKeyFunc returns the grouping key function for metrics.
+// Groups by [metric name, TID, timestamp] - don't split groups with same name+TID+timestamp across files.
+func MetricsGroupKeyFunc() func(row map[string]any) any {
+	return func(row map[string]any) any {
+		name, nameOk := row["_cardinalhq.name"].(string)
+		if !nameOk {
+			return nil
+		}
+
+		// Handle both string and int64 TID values
+		var tid int64
+		switch v := row["_cardinalhq.tid"].(type) {
+		case int64:
+			tid = v
+		case string:
+			// TID is incorrectly stored as string, parse it
+			if parsed, err := fmt.Sscanf(v, "%d", &tid); err != nil || parsed != 1 {
+				return nil
+			}
+		default:
+			return nil
+		}
+
+		// Include timestamp in group key for aggregation grouping
+		timestamp, timestampOk := row["_cardinalhq.timestamp"].(int64)
+		if !timestampOk {
+			return nil
+		}
+
+		return fmt.Sprintf("%s:%d:%d", name, tid, timestamp)
+	}
 }

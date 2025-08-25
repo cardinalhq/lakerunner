@@ -25,7 +25,8 @@ import (
 // ProtoLogsReader reads rows from OpenTelemetry protobuf logs format.
 // Returns raw OTEL log data without signal-specific transformations.
 type ProtoLogsReader struct {
-	closed bool
+	closed   bool
+	rowCount int64
 
 	// Streaming iterator state for logs
 	logs          *plog.Logs
@@ -73,6 +74,11 @@ func (r *ProtoLogsReader) Read(rows []Row) (int, error) {
 		}
 
 		n++
+	}
+
+	// Update row count with successfully read rows
+	if n > 0 {
+		r.rowCount += int64(n)
 	}
 
 	return n, nil
@@ -123,28 +129,31 @@ func (r *ProtoLogsReader) buildLogRow(rl plog.ResourceLogs, sl plog.ScopeLogs, l
 
 	// Add resource attributes with prefix
 	rl.Resource().Attributes().Range(func(name string, v pcommon.Value) bool {
-		ret["resource."+name] = v.AsString()
+		value := v.AsString()
+		ret[prefixAttribute(name, "resource")] = value
 		return true
 	})
 
 	// Add scope attributes with prefix
 	sl.Scope().Attributes().Range(func(name string, v pcommon.Value) bool {
-		ret["scope."+name] = v.AsString()
+		value := v.AsString()
+		ret[prefixAttribute(name, "scope")] = value
 		return true
 	})
 
 	// Add log attributes with prefix
 	logRecord.Attributes().Range(func(name string, v pcommon.Value) bool {
-		ret["log."+name] = v.AsString()
+		value := v.AsString()
+		ret[prefixAttribute(name, "log")] = value
 		return true
 	})
 
 	// Add basic log fields
-	ret["body"] = logRecord.Body().AsString()
-	ret["timestamp"] = logRecord.Timestamp().AsTime().UnixMilli()
+	ret["_cardinalhq.message"] = logRecord.Body().AsString()
+	ret["_cardinalhq.timestamp"] = logRecord.Timestamp().AsTime().UnixMilli()
 	ret["observed_timestamp"] = logRecord.ObservedTimestamp().AsTime().UnixMilli()
-	ret["severity_text"] = logRecord.SeverityText()
-	ret["severity_number"] = int32(logRecord.SeverityNumber())
+	ret["_cardinalhq.level"] = logRecord.SeverityText()
+	ret["severity_number"] = int64(logRecord.SeverityNumber())
 
 	return ret
 }
@@ -165,6 +174,11 @@ func (r *ProtoLogsReader) Close() error {
 	r.logs = nil
 
 	return nil
+}
+
+// RowCount returns the total number of rows that have been successfully read.
+func (r *ProtoLogsReader) RowCount() int64 {
+	return r.rowCount
 }
 
 func parseProtoToOtelLogs(reader io.Reader) (*plog.Logs, error) {

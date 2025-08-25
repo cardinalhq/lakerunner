@@ -30,7 +30,7 @@ import (
 
 func TestNewProtoTracesReader(t *testing.T) {
 	// Test with valid gzipped protobuf data
-	file, err := os.Open("testdata/otel-traces.binpb.gz")
+	file, err := os.Open("../../testdata/traces/otel-traces.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
@@ -85,7 +85,7 @@ func TestNewProtoTracesReader_EmptyData(t *testing.T) {
 
 func TestProtoTracesReader_Read(t *testing.T) {
 	// Load test data
-	file, err := os.Open("testdata/otel-traces.binpb.gz")
+	file, err := os.Open("../../testdata/traces/otel-traces.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
@@ -132,7 +132,7 @@ func TestProtoTracesReader_Read(t *testing.T) {
 
 func TestProtoTracesReader_ReadBatched(t *testing.T) {
 	// Load test data
-	file, err := os.Open("testdata/otel-traces.binpb.gz")
+	file, err := os.Open("../../testdata/traces/otel-traces.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
@@ -177,7 +177,7 @@ func TestProtoTracesReader_ReadBatched(t *testing.T) {
 
 func TestProtoTracesReader_ReadSingleRow(t *testing.T) {
 	// Load test data
-	file, err := os.Open("testdata/otel-traces.binpb.gz")
+	file, err := os.Open("../../testdata/traces/otel-traces.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
@@ -204,7 +204,7 @@ func TestProtoTracesReader_ReadSingleRow(t *testing.T) {
 
 func TestProtoTracesReader_ResourceAndScopeAttributes(t *testing.T) {
 	// Load test data
-	file, err := os.Open("testdata/otel-traces.binpb.gz")
+	file, err := os.Open("../../testdata/traces/otel-traces.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
@@ -254,7 +254,7 @@ func TestProtoTracesReader_ResourceAndScopeAttributes(t *testing.T) {
 
 func TestProtoTracesReader_EmptySlice(t *testing.T) {
 	// Load test data
-	file, err := os.Open("testdata/otel-traces.binpb.gz")
+	file, err := os.Open("../../testdata/traces/otel-traces.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
@@ -274,7 +274,7 @@ func TestProtoTracesReader_EmptySlice(t *testing.T) {
 
 func TestProtoTracesReader_Close(t *testing.T) {
 	// Load test data
-	file, err := os.Open("testdata/otel-traces.binpb.gz")
+	file, err := os.Open("../../testdata/traces/otel-traces.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
@@ -309,7 +309,7 @@ func TestProtoTracesReader_Close(t *testing.T) {
 
 func TestProtoTracesReader_ExhaustData(t *testing.T) {
 	// Load test data
-	file, err := os.Open("testdata/otel-traces.binpb.gz")
+	file, err := os.Open("../../testdata/traces/otel-traces.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
@@ -339,7 +339,7 @@ func TestProtoTracesReader_ExhaustData(t *testing.T) {
 
 func TestProtoTracesReader_SpanFields(t *testing.T) {
 	// Load test data
-	file, err := os.Open("testdata/otel-traces.binpb.gz")
+	file, err := os.Open("../../testdata/traces/otel-traces.binpb.gz")
 	require.NoError(t, err)
 	defer file.Close()
 
