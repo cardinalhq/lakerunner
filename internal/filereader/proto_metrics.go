@@ -296,7 +296,8 @@ func (r *ProtoMetricsReader) addHistogramDatapointFields(ret map[string]any, dp 
 }
 
 // addExponentialHistogramDatapointFields adds fields from an ExponentialHistogramDataPoint to the row.
-// TODO: implement
+// This includes positive/negative buckets, exemplars, and other metadata specific to
+// exponential histograms.
 func (r *ProtoMetricsReader) addExponentialHistogramDatapointFields(ret map[string]any, dp pmetric.ExponentialHistogramDataPoint) {
 	// Add datapoint attributes
 	dp.Attributes().Range(func(name string, v pcommon.Value) bool {
@@ -321,6 +322,76 @@ func (r *ProtoMetricsReader) addExponentialHistogramDatapointFields(ret map[stri
 
 	ret["scale"] = dp.Scale()
 	ret["zero_count"] = dp.ZeroCount()
+
+	// Positive bucket data
+	pos := dp.Positive()
+	ret["positive_offset"] = pos.Offset()
+	posCounts := make([]uint64, pos.BucketCounts().Len())
+	var posCount uint64
+	for i := 0; i < pos.BucketCounts().Len(); i++ {
+		v := pos.BucketCounts().At(i)
+		posCounts[i] = v
+		posCount += v
+	}
+	ret["positive_bucket_counts"] = posCounts
+	ret["positive_count"] = posCount
+
+	// Negative bucket data
+	neg := dp.Negative()
+	ret["negative_offset"] = neg.Offset()
+	negCounts := make([]uint64, neg.BucketCounts().Len())
+	var negCount uint64
+	for i := 0; i < neg.BucketCounts().Len(); i++ {
+		v := neg.BucketCounts().At(i)
+		negCounts[i] = v
+		negCount += v
+	}
+	ret["negative_bucket_counts"] = negCounts
+	ret["negative_count"] = negCount
+
+	// Exemplars
+	if dp.Exemplars().Len() > 0 {
+		exemplars := make([]map[string]any, dp.Exemplars().Len())
+		for i := 0; i < dp.Exemplars().Len(); i++ {
+			ex := dp.Exemplars().At(i)
+			exMap := map[string]any{
+				"timestamp": ex.Timestamp().AsTime().UnixMilli(),
+			}
+
+			// Exemplar value (int or double)
+			if ex.ValueType() == pmetric.ExemplarValueTypeInt {
+				exMap["value"] = float64(ex.IntValue())
+			} else {
+				exMap["value"] = ex.DoubleValue()
+			}
+
+			// Trace and span IDs if present
+			if tid := ex.TraceID(); !tid.IsEmpty() {
+				exMap["trace_id"] = tid.String()
+			}
+			if sid := ex.SpanID(); !sid.IsEmpty() {
+				exMap["span_id"] = sid.String()
+			}
+
+			// Filtered attributes
+			attrs := map[string]string{}
+			ex.FilteredAttributes().Range(func(k string, v pcommon.Value) bool {
+				attrs[k] = v.AsString()
+				return true
+			})
+			if len(attrs) > 0 {
+				exMap["filtered_attributes"] = attrs
+			}
+
+			exemplars[i] = exMap
+		}
+		ret["exemplars"] = exemplars
+	}
+
+	// Datapoint flags
+	if dp.Flags() != 0 {
+		ret["flags"] = dp.Flags()
+	}
 }
 
 // addSummaryDatapointFields adds fields from a SummaryDataPoint to the row.

@@ -26,6 +26,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.opentelemetry.io/collector/pdata/pcommon"
+	"go.opentelemetry.io/collector/pdata/pmetric"
+	"time"
 )
 
 func TestNewProtoMetricsReader(t *testing.T) {
@@ -330,6 +334,71 @@ func TestProtoMetricsReader_ExhaustData(t *testing.T) {
 
 	assert.Greater(t, totalRows, 79, "Should read more datapoint rows than the original 79 metric rows")
 	t.Logf("Successfully exhausted reader after reading %d datapoint rows (was 79 metric rows)", totalRows)
+}
+
+func TestProtoMetricsReader_ExponentialHistogram(t *testing.T) {
+	metrics := pmetric.NewMetrics()
+	rm := metrics.ResourceMetrics().AppendEmpty()
+	sm := rm.ScopeMetrics().AppendEmpty()
+	m := sm.Metrics().AppendEmpty()
+	m.SetName("eh_metric")
+	eh := m.SetEmptyExponentialHistogram()
+	dp := eh.DataPoints().AppendEmpty()
+
+	ts := pcommon.NewTimestampFromTime(time.Unix(1, 0).UTC())
+	dp.SetTimestamp(ts)
+	dp.SetStartTimestamp(ts)
+	dp.SetCount(6)
+	dp.SetScale(1)
+	dp.SetZeroCount(1)
+	dp.SetSum(10)
+	dp.SetMin(1)
+	dp.SetMax(9)
+	dp.SetFlags(pmetric.DefaultDataPointFlags.WithNoRecordedValue(true))
+
+	pos := dp.Positive()
+	pos.SetOffset(0)
+	pos.BucketCounts().FromRaw([]uint64{1, 2})
+
+	neg := dp.Negative()
+	neg.SetOffset(-1)
+	neg.BucketCounts().FromRaw([]uint64{3})
+
+	ex := dp.Exemplars().AppendEmpty()
+	ex.SetTimestamp(ts)
+	ex.SetDoubleValue(5.5)
+	ex.SetTraceID(pcommon.TraceID([16]byte{1}))
+	ex.SetSpanID(pcommon.SpanID([8]byte{2}))
+	ex.FilteredAttributes().PutStr("foo", "bar")
+
+	reader, err := NewProtoMetricsReaderFromMetrics(&metrics)
+	require.NoError(t, err)
+	defer reader.Close()
+
+	rows := make([]Row, 1)
+	rows[0] = make(Row)
+	n, err := reader.Read(rows)
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+
+	row := rows[0]
+	assert.Equal(t, uint64(6), row["count"])
+	assert.Equal(t, int32(1), row["scale"])
+	assert.Equal(t, uint64(1), row["zero_count"])
+	assert.Equal(t, int32(0), row["positive_offset"])
+	assert.Equal(t, int32(-1), row["negative_offset"])
+	assert.Equal(t, []uint64{1, 2}, row["positive_bucket_counts"])
+	assert.Equal(t, []uint64{3}, row["negative_bucket_counts"])
+	assert.Equal(t, uint64(3), row["negative_count"])
+	assert.Equal(t, uint64(3), row["positive_count"])
+	assert.Contains(t, row, "exemplars")
+	exemplars, ok := row["exemplars"].([]map[string]any)
+	require.True(t, ok)
+	require.Len(t, exemplars, 1)
+	assert.Equal(t, 5.5, exemplars[0]["value"])
+	assert.Equal(t, "01000000000000000000000000000000", exemplars[0]["trace_id"])
+	assert.Equal(t, "0200000000000000", exemplars[0]["span_id"])
+	assert.Contains(t, row, "flags")
 }
 
 func TestProtoMetricsReader_MetricTypes(t *testing.T) {
