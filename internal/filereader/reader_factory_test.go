@@ -318,6 +318,9 @@ func getReaderTypeName(reader interface{}) string {
 	if reader == nil {
 		return "<nil>"
 	}
+	if rwc, ok := reader.(*readerWithCloser); ok {
+		return fmt.Sprintf("%T", rwc.Reader)
+	}
 	return fmt.Sprintf("%T", reader)
 }
 
