@@ -73,7 +73,7 @@ func init() {
 			}()
 
 			// Check if we should use the old implementation as a safety net
-			if os.Getenv("LAKERUNNER_METRIC_OLDPATH") != "" {
+			if os.Getenv("LAKERUNNER_METRICS_INGEST_OLDPATH") != "" {
 				return runOldMetricIngestion(doneCtx, slog.Default(), loop)
 			}
 
