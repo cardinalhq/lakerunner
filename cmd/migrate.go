@@ -151,7 +151,7 @@ func initializeIfNeededFunc() error {
 	// Auto-detect storage profile file if none provided
 	if configFile == "" {
 		slog.Info("No config file provided, attempting to auto-detect storage profiles")
-		
+
 		// Look for storage profiles in the ConfigMap mount location
 		configMapPath := "/app/config/storage_profiles.yaml"
 		if _, err := os.Stat(configMapPath); err == nil {
