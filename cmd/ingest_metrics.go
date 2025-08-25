@@ -938,15 +938,13 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 
 		filenames := []string{tmpfilename}
 
-		if strings.HasPrefix(inf.ObjectID, "otel-raw/") {
-			if strings.HasPrefix(inf.ObjectID, "db/") {
-				continue
-			}
-			if fnames, err := convertMetricsFileIfSupported(ll, tmpfilename, itemTmpdir, inf.Bucket, inf.ObjectID, rpfEstimate, loop.exemplarProcessor, inf.OrganizationID.String()); err != nil {
-				return fmt.Errorf("failed to convert metrics file %s: %w", inf.ObjectID, err)
-			} else if fnames != nil {
-				filenames = fnames
-			}
+		if strings.HasPrefix(inf.ObjectID, "db/") {
+			continue
+		}
+		if fnames, err := convertMetricsFileIfSupported(ll, tmpfilename, itemTmpdir, inf.Bucket, inf.ObjectID, rpfEstimate, loop.exemplarProcessor, inf.OrganizationID.String()); err != nil {
+			return fmt.Errorf("failed to convert metrics file %s: %w", inf.ObjectID, err)
+		} else if fnames != nil {
+			filenames = fnames
 		}
 
 		// Process each converted file using existing crunchMetricFile logic but accumulate into shared blocks
