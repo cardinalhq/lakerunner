@@ -22,17 +22,17 @@ import (
 	"github.com/parquet-go/parquet-go"
 )
 
-// ParquetReader reads rows from a generic Parquet stream.
-type ParquetReader struct {
+// PresortedParquetRawReader reads rows from a generic Parquet stream.
+type PresortedParquetRawReader struct {
 	pf       *parquet.File
 	pfr      *parquet.GenericReader[map[string]any]
 	closed   bool
 	rowCount int64
 }
 
-// NewParquetReader creates a new ParquetReader for the given io.ReaderAt.
+// NewPresortedParquetRawReader creates a new PresortedParquetRawReader for the given io.ReaderAt.
 // The caller is responsible for closing the underlying reader.
-func NewParquetReader(reader io.ReaderAt, size int64) (*ParquetReader, error) {
+func NewPresortedParquetRawReader(reader io.ReaderAt, size int64) (*PresortedParquetRawReader, error) {
 	pf, err := parquet.OpenFile(reader, size)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open parquet file: %w", err)
@@ -46,14 +46,14 @@ func NewParquetReader(reader io.ReaderAt, size int64) (*ParquetReader, error) {
 		return nil, fmt.Errorf("parquet file has no rows")
 	}
 
-	return &ParquetReader{
+	return &PresortedParquetRawReader{
 		pf:  pf,
 		pfr: pfr,
 	}, nil
 }
 
 // Read populates the provided slice with as many rows as possible.
-func (r *ParquetReader) Read(rows []Row) (int, error) {
+func (r *PresortedParquetRawReader) Read(rows []Row) (int, error) {
 	if r.closed || r.pfr == nil {
 		return 0, errors.New("reader is closed or not initialized")
 	}
@@ -95,7 +95,7 @@ func (r *ParquetReader) Read(rows []Row) (int, error) {
 }
 
 // Close closes the reader and releases resources.
-func (r *ParquetReader) Close() error {
+func (r *PresortedParquetRawReader) Close() error {
 	if r.closed {
 		return nil
 	}
@@ -113,6 +113,6 @@ func (r *ParquetReader) Close() error {
 }
 
 // TotalRowsReturned returns the total number of rows that have been successfully returned via Read().
-func (r *ParquetReader) TotalRowsReturned() int64 {
+func (r *PresortedParquetRawReader) TotalRowsReturned() int64 {
 	return r.rowCount
 }

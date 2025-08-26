@@ -242,7 +242,7 @@ func TestReaderForFile(t *testing.T) {
 			filename:      filepath.Join(testdataDir, "logs", "logs_1747427310000_667024137.parquet"),
 			signalType:    SignalTypeLogs,
 			expectSuccess: true,
-			expectedType:  "*filereader.ParquetReader",
+			expectedType:  "*filereader.PresortedParquetRawReader",
 			description:   "Logs parquet file with logs signal type",
 		},
 		{
@@ -250,7 +250,7 @@ func TestReaderForFile(t *testing.T) {
 			filename:      filepath.Join(testdataDir, "logs", "logs_1747427310000_667024137.parquet"),
 			signalType:    SignalTypeMetrics,
 			expectSuccess: true,
-			expectedType:  "*filereader.ParquetReader",
+			expectedType:  "*filereader.PresortedParquetRawReader",
 			description:   "Parquet file with metrics signal type (parquet readers work for all signals)",
 		},
 		{
@@ -258,7 +258,7 @@ func TestReaderForFile(t *testing.T) {
 			filename:      filepath.Join(testdataDir, "logs", "logs_1747427310000_667024137.parquet"),
 			signalType:    SignalTypeTraces,
 			expectSuccess: true,
-			expectedType:  "*filereader.ParquetReader",
+			expectedType:  "*filereader.PresortedParquetRawReader",
 			description:   "Parquet file with traces signal type (parquet readers work for all signals)",
 		},
 
