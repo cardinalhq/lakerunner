@@ -40,6 +40,9 @@ type AggregatingMetricsReader struct {
 	aggregatedRow   map[string]any
 	pendingRow      *map[string]any // Next row read from underlying reader
 	readerEOF       bool
+
+	// Track logged histogram errors to avoid spam
+	loggedHistogramErrors map[string]bool
 }
 
 // NewAggregatingMetricsReader creates a new AggregatingMetricsReader that aggregates metrics
@@ -56,9 +59,10 @@ func NewAggregatingMetricsReader(reader Reader, aggregationPeriodMs int64) (*Agg
 	}
 
 	return &AggregatingMetricsReader{
-		reader:            reader,
-		aggregationPeriod: aggregationPeriodMs,
-		singletonValues:   make([]float64, 0, 16),
+		reader:                reader,
+		aggregationPeriod:     aggregationPeriodMs,
+		singletonValues:       make([]float64, 0, 16),
+		loggedHistogramErrors: make(map[string]bool),
 	}, nil
 }
 
@@ -87,14 +91,52 @@ func (ar *AggregatingMetricsReader) makeAggregationKey(row map[string]any) (stri
 
 // isSketchEmpty checks if a row has an empty sketch (indicating singleton value).
 func isSketchEmpty(row map[string]any) bool {
-	sketch, ok := row["sketch"].([]byte)
-	return !ok || len(sketch) == 0
+	sketch := row["sketch"]
+	if sketch == nil {
+		return true
+	}
+
+	// Handle byte slice format (from proto ingestion)
+	if sketchBytes, ok := sketch.([]byte); ok {
+		return len(sketchBytes) == 0
+	}
+
+	// Handle string format (from parquet reading)
+	if sketchStr, ok := sketch.(string); ok {
+		return len(sketchStr) == 0
+	}
+
+	// Unknown format - this would be a bug
+	slog.Error("Unexpected sketch data type - expected []byte or string",
+		"type", fmt.Sprintf("%T", sketch),
+		"metric", row["_cardinalhq.name"])
+	return true
 }
 
 // getSingletonValue extracts the singleton value from rollup_sum field.
 func getSingletonValue(row map[string]any) (float64, bool) {
 	value, ok := row["rollup_sum"].(float64)
 	return value, ok
+}
+
+// getSketchBytes converts sketch data from various parquet formats back to []byte.
+// Handles: []byte (direct), string (encoded bytes)
+func getSketchBytes(sketchData interface{}) ([]byte, error) {
+	if sketchData == nil {
+		return nil, fmt.Errorf("sketch data is nil")
+	}
+
+	// Case 1: Already []byte (from proto ingestion or correct parquet reading)
+	if bytes, ok := sketchData.([]byte); ok {
+		return bytes, nil
+	}
+
+	// Case 2: String format (parquet sometimes returns []byte as string)
+	if str, ok := sketchData.(string); ok {
+		return []byte(str), nil
+	}
+
+	return nil, fmt.Errorf("unsupported sketch data type: %T", sketchData)
 }
 
 // isHistogramType checks if a row represents a histogram metric type.
@@ -266,10 +308,13 @@ func (ar *AggregatingMetricsReader) resetAggregation() {
 func (ar *AggregatingMetricsReader) addRowToAggregation(row map[string]any) error {
 	// VALIDATION: Histograms must always have sketches
 	if isHistogramType(row) && isSketchEmpty(row) {
-		slog.Error("Dropping histogram row without sketch - this should not happen",
-			"name", row["_cardinalhq.name"],
-			"tid", row["_cardinalhq.tid"],
-			"timestamp", row["_cardinalhq.timestamp"])
+		if name, ok := row["_cardinalhq.name"].(string); ok && !ar.loggedHistogramErrors[name] {
+			slog.Error("Dropping histogram row without sketch - this should not happen",
+				"name", name,
+				"tid", row["_cardinalhq.tid"],
+				"timestamp", row["_cardinalhq.timestamp"])
+			ar.loggedHistogramErrors[name] = true
+		}
 		return nil // Skip this row, don't add to aggregation
 	}
 
@@ -292,9 +337,9 @@ func (ar *AggregatingMetricsReader) addRowToAggregation(row map[string]any) erro
 		}
 	} else {
 		// This row has a sketch - handle sketch merging
-		sketchBytes, ok := row["sketch"].([]byte)
-		if !ok {
-			return fmt.Errorf("invalid sketch bytes")
+		sketchBytes, err := getSketchBytes(row["sketch"])
+		if err != nil {
+			return fmt.Errorf("invalid sketch data: %w", err)
 		}
 
 		sketch, err := helpers.DecodeSketch(sketchBytes)
