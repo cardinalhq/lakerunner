@@ -18,21 +18,22 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 
 	"github.com/parquet-go/parquet-go"
 )
 
-// PresortedParquetRawReader reads rows from a generic Parquet stream.
-type PresortedParquetRawReader struct {
+// PreorderedParquetRawReader reads rows from a generic Parquet stream.
+type PreorderedParquetRawReader struct {
 	pf       *parquet.File
 	pfr      *parquet.GenericReader[map[string]any]
 	closed   bool
 	rowCount int64
 }
 
-// NewPresortedParquetRawReader creates a new PresortedParquetRawReader for the given io.ReaderAt.
+// NewPreorderedParquetRawReader creates a new PreorderedParquetRawReader for the given io.ReaderAt.
 // The caller is responsible for closing the underlying reader.
-func NewPresortedParquetRawReader(reader io.ReaderAt, size int64) (*PresortedParquetRawReader, error) {
+func NewPreorderedParquetRawReader(reader io.ReaderAt, size int64) (*PreorderedParquetRawReader, error) {
 	pf, err := parquet.OpenFile(reader, size)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open parquet file: %w", err)
@@ -46,14 +47,14 @@ func NewPresortedParquetRawReader(reader io.ReaderAt, size int64) (*PresortedPar
 		return nil, fmt.Errorf("parquet file has no rows")
 	}
 
-	return &PresortedParquetRawReader{
+	return &PreorderedParquetRawReader{
 		pf:  pf,
 		pfr: pfr,
 	}, nil
 }
 
 // Read populates the provided slice with as many rows as possible.
-func (r *PresortedParquetRawReader) Read(rows []Row) (int, error) {
+func (r *PreorderedParquetRawReader) Read(rows []Row) (int, error) {
 	if r.closed || r.pfr == nil {
 		return 0, errors.New("reader is closed or not initialized")
 	}
@@ -78,12 +79,11 @@ func (r *PresortedParquetRawReader) Read(rows []Row) (int, error) {
 	}
 
 	// Copy the data back to the provided rows slice
-	for i := 0; i < n; i++ {
+	// TODO see if we can avoid this copy
+	for i := range n {
 		resetRow(&rows[i])
 		// Copy data from parquet row
-		for k, v := range parquetRows[i] {
-			rows[i][k] = v
-		}
+		maps.Copy(rows[i], parquetRows[i])
 	}
 
 	// Only increment rowCount for successfully read rows
@@ -95,7 +95,7 @@ func (r *PresortedParquetRawReader) Read(rows []Row) (int, error) {
 }
 
 // Close closes the reader and releases resources.
-func (r *PresortedParquetRawReader) Close() error {
+func (r *PreorderedParquetRawReader) Close() error {
 	if r.closed {
 		return nil
 	}
@@ -113,6 +113,6 @@ func (r *PresortedParquetRawReader) Close() error {
 }
 
 // TotalRowsReturned returns the total number of rows that have been successfully returned via Read().
-func (r *PresortedParquetRawReader) TotalRowsReturned() int64 {
+func (r *PreorderedParquetRawReader) TotalRowsReturned() int64 {
 	return r.rowCount
 }

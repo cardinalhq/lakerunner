@@ -28,6 +28,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
+	"github.com/cardinalhq/lakerunner/internal/constants"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/metriccompaction"
@@ -157,9 +158,10 @@ func compactMetricSegments(
 			Dateint:         inf.Dateint(),
 			FrequencyMs:     inf.FrequencyMs(),
 			InstanceNum:     inf.InstanceNum(),
+			SlotID:          inf.SlotId(),
 			StartTs:         st.Time.UTC().UnixMilli(),
 			EndTs:           et.Time.UTC().UnixMilli(),
-			MaxFileSize:     1_100_000 * 9 / 10, // Only include files < 90% of target
+			MaxFileSize:     constants.TargetFileSizeBytes * 9 / 10,
 			CursorCreatedAt: cursorCreatedAt,
 			CursorSegmentID: cursorSegmentID,
 			Maxrows:         maxRowsLimit,
@@ -243,7 +245,7 @@ func compactMetricInterval(
 		return fmt.Errorf("invalid time range in work item: %v", inf.TsRange())
 	}
 
-	// Download all files and create readers
+	// Download all files and create PreorderedParquetRawReaders
 	var readers []filereader.Reader
 	var downloadedFiles []string
 
@@ -261,9 +263,24 @@ func compactMetricInterval(
 			continue
 		}
 
-		// Create parquet reader for this file
-		reader, err := filereader.ReaderForFile(fn, filereader.SignalTypeMetrics)
+		// Open file and get size for PreorderedParquetRawReader
+		file, err := os.Open(fn)
 		if err != nil {
+			ll.Error("Failed to open parquet file", slog.String("file", fn), slog.Any("error", err))
+			return fmt.Errorf("opening parquet file %s: %w", fn, err)
+		}
+
+		stat, err := file.Stat()
+		if err != nil {
+			file.Close()
+			ll.Error("Failed to stat parquet file", slog.String("file", fn), slog.Any("error", err))
+			return fmt.Errorf("statting parquet file %s: %w", fn, err)
+		}
+
+		// Create PreorderedParquetRawReader directly
+		reader, err := filereader.NewPreorderedParquetRawReader(file, stat.Size())
+		if err != nil {
+			file.Close()
 			ll.Error("Failed to create parquet reader", slog.String("file", fn), slog.Any("error", err))
 			return fmt.Errorf("creating parquet reader for %s: %w", fn, err)
 		}
@@ -285,39 +302,43 @@ func compactMetricInterval(
 		}
 	}()
 
-	// Create OrderedReader to merge sort the parquet files using metrics ordering
-	orderedReader, err := filereader.NewPreorderedMultisourceReader(readers, metricsprocessing.MetricsOrderedSelector())
-	if err != nil {
-		ll.Error("Failed to create ordered reader", slog.Any("error", err))
-		return fmt.Errorf("creating ordered reader: %w", err)
+	// Create PreorderedMultisourceReader for read-time merge sort of pre-sorted parquet files
+	var finalReader filereader.Reader
+	if len(readers) == 1 {
+		finalReader = readers[0]
+	} else {
+		selector := metricsprocessing.MetricsOrderedSelector()
+		multiReader, err := filereader.NewPreorderedMultisourceReader(readers, selector)
+		if err != nil {
+			ll.Error("Failed to create preordered multi-source reader", slog.Any("error", err))
+			return fmt.Errorf("creating preordered multi-source reader: %w", err)
+		}
+		finalReader = multiReader
+		defer multiReader.Close()
 	}
-	defer orderedReader.Close()
 
 	// Wrap with aggregating reader to merge duplicates during compaction
-	// Use the same frequency as the work item for aggregation
-	aggregatingReader, err := filereader.NewAggregatingMetricsReader(orderedReader, int64(inf.FrequencyMs()))
+	aggregatingReader, err := filereader.NewAggregatingMetricsReader(finalReader, int64(inf.FrequencyMs()))
 	if err != nil {
 		ll.Error("Failed to create aggregating metrics reader", slog.Any("error", err))
 		return fmt.Errorf("creating aggregating metrics reader: %w", err)
 	}
 	defer aggregatingReader.Close()
 
-	// Use records per file estimate directly
 	recordsPerFile := rpfEstimate
 	if recordsPerFile <= 0 {
-		recordsPerFile = 10_000 // Default when no estimate available
+		recordsPerFile = 10_000
 	}
 
-	// Create metrics writer using the factory
-	baseName := fmt.Sprintf("compacted_metrics_%d", time.Now().Unix())
-	writer, err := factories.NewMetricsWriter(baseName, tmpdir, 1_100_000, recordsPerFile)
+	slotID := inf.SlotId()
+	baseName := fmt.Sprintf("compacted_metrics_%s_%d_%d", inf.OrganizationID().String(), time.Now().Unix(), slotID)
+	writer, err := factories.NewMetricsWriter(baseName, tmpdir, constants.WriterTargetSizeBytesMetrics, recordsPerFile)
 	if err != nil {
 		ll.Error("Failed to create metrics writer", slog.Any("error", err))
 		return fmt.Errorf("creating metrics writer: %w", err)
 	}
 	defer writer.Abort()
 
-	// Process all data through the ordered reader and writer
 	const batchSize = 1000
 	rowsBatch := make([]filereader.Row, batchSize)
 	totalRows := int64(0)
@@ -333,7 +354,6 @@ func compactMetricInterval(
 			break
 		}
 
-		// Write batch to metrics writer
 		for i := range n {
 			if err := writer.Write(rowsBatch[i]); err != nil {
 				ll.Error("Failed to write row", slog.Any("error", err))
@@ -347,7 +367,6 @@ func compactMetricInterval(
 		}
 	}
 
-	// Finish writing and get results
 	results, err := writer.Close(ctx)
 	if err != nil {
 		ll.Error("Failed to finish writing", slog.Any("error", err))
@@ -360,12 +379,12 @@ func compactMetricInterval(
 		slog.Int("inputFiles", len(downloadedFiles)),
 		slog.Int64("recordsPerFile", recordsPerFile))
 
-	// Upload results and update database
 	compactionParams := metricsprocessing.CompactionUploadParams{
 		OrganizationID: inf.OrganizationID().String(),
 		InstanceNum:    inf.InstanceNum(),
 		Dateint:        inf.Dateint(),
 		FrequencyMs:    inf.FrequencyMs(),
+		SlotID:         inf.SlotId(),
 		IngestDateint:  metricsprocessing.GetIngestDateint(rows),
 		CollectorName:  profile.CollectorName,
 		Bucket:         profile.Bucket,
@@ -376,7 +395,6 @@ func compactMetricInterval(
 		return fmt.Errorf("failed to upload compacted metrics: %w", err)
 	}
 
-	// Schedule cleanup of old files
 	metricsprocessing.ScheduleOldFileCleanup(ctx, ll, mdb, rows, profile)
 
 	return nil

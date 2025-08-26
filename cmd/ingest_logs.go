@@ -29,6 +29,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
+	"github.com/cardinalhq/lakerunner/internal/constants"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
@@ -137,7 +138,7 @@ func (wm *writerManager) processRow(row filereader.Row) (err error) {
 	// Determine hour - always use slot 0 as requested
 	dateint, hour16 := helpers.MSToDateintHour(ts)
 	hour := int(hour16)
-	slot := 0 // Always use slot 0 for all output files
+	slot := 0
 
 	// Get or create writer for this hour/slot
 	key := hourSlotKey{dateint, hour, slot}
@@ -159,7 +160,7 @@ func (wm *writerManager) getWriter(key hourSlotKey) (*parquetwriter.UnifiedWrite
 
 	// Create new writer
 	baseName := fmt.Sprintf("logs_%s_%d_%d_%d", wm.orgID, key.dateint, key.hour, key.slot)
-	writer, err := factories.NewLogsWriter(baseName, wm.tmpdir, 50*1024*1024, wm.rpfEstimate)
+	writer, err := factories.NewLogsWriter(baseName, wm.tmpdir, constants.WriterTargetSizeBytesLogs, wm.rpfEstimate)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create logs writer: %w", err)
 	}
@@ -450,7 +451,6 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 		}
 		_ = os.Remove(result.FileName)
 
-		// Always use slot 0 for this segment as requested
 		slotID := 0
 
 		// Insert log segment into database

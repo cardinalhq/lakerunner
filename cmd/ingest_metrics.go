@@ -29,6 +29,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
+	"github.com/cardinalhq/lakerunner/internal/constants"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
@@ -123,7 +124,7 @@ func (wm *metricWriterManager) processRow(row filereader.Row) error {
 
 	// Calculate 60-second boundary: dateint and minute within day
 	dateint, minute := wm.timestampToMinuteBoundary(ts)
-	slot := 0 // Always use slot 0 for metrics
+	slot := 0
 
 	// Get or create writer for this 60-second boundary
 	key := minuteSlotKey{dateint, minute, slot}
@@ -159,7 +160,7 @@ func (wm *metricWriterManager) getWriter(key minuteSlotKey) (*parquetwriter.Unif
 	writer, err := factories.NewMetricsWriter(
 		fmt.Sprintf("metrics_%s_%d_%04d_%d", wm.orgID, key.dateint, key.minute, key.slot),
 		wm.tmpdir,
-		1024*1024, // 1MB
+		constants.WriterTargetSizeBytesMetrics,
 		wm.rpfEstimate,
 	)
 	if err != nil {

@@ -26,6 +26,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
+	"github.com/cardinalhq/lakerunner/internal/constants"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
@@ -93,7 +94,7 @@ func (ps *HTTPService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, 1024*1024)
+	r.Body = http.MaxBytesReader(w, r.Body, constants.HTTPBodyLimitBytes)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		var maxBytesError *http.MaxBytesError

@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/cardinalhq/lakerunner/internal/constants"
 )
 
 // JSONLinesReader reads rows from a JSON lines stream.
@@ -35,7 +37,7 @@ type JSONLinesReader struct {
 // The reader takes ownership of the closer and will close it when Close is called.
 func NewJSONLinesReader(reader io.ReadCloser) (*JSONLinesReader, error) {
 	scanner := bufio.NewScanner(reader)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024) // 1MB max line size
+	scanner.Buffer(make([]byte, 0, 64*1024), constants.MaxLineSizeBytes)
 
 	return &JSONLinesReader{
 		scanner:  scanner,

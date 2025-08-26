@@ -25,6 +25,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/fileconv"
 	"github.com/cardinalhq/lakerunner/fileconv/translate"
+	"github.com/cardinalhq/lakerunner/internal/constants"
 )
 
 type JSONGzReader struct {
@@ -52,7 +53,7 @@ func NewJSONGzReader(fname string, mapper *translate.Mapper, tags map[string]str
 	}
 
 	scanner := bufio.NewScanner(gzReader)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024) // 1MB max line size
+	scanner.Buffer(make([]byte, 0, 64*1024), constants.MaxLineSizeBytes)
 
 	return &JSONGzReader{
 		fname:    fname,

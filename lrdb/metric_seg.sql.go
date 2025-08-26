@@ -20,12 +20,13 @@ WHERE
   dateint = $2 AND
   frequency_ms = $3 AND
   instance_num = $4 AND
-  ts_range && int8range($5, $6, '[)') AND
-  file_size <= $7 AND
-  (created_at, segment_id) > ($8, $9::bigint)
+  slot_id = $5 AND
+  ts_range && int8range($6, $7, '[)') AND
+  file_size <= $8 AND
+  (created_at, segment_id) > ($9, $10::bigint)
 ORDER BY
   created_at, segment_id
-LIMIT $10
+LIMIT $11
 `
 
 type GetMetricSegsForCompactionParams struct {
@@ -33,6 +34,7 @@ type GetMetricSegsForCompactionParams struct {
 	Dateint         int32     `json:"dateint"`
 	FrequencyMs     int32     `json:"frequency_ms"`
 	InstanceNum     int16     `json:"instance_num"`
+	SlotID          int32     `json:"slot_id"`
 	StartTs         int64     `json:"start_ts"`
 	EndTs           int64     `json:"end_ts"`
 	MaxFileSize     int64     `json:"max_file_size"`
@@ -47,6 +49,7 @@ func (q *Queries) GetMetricSegsForCompaction(ctx context.Context, arg GetMetricS
 		arg.Dateint,
 		arg.FrequencyMs,
 		arg.InstanceNum,
+		arg.SlotID,
 		arg.StartTs,
 		arg.EndTs,
 		arg.MaxFileSize,

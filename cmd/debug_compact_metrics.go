@@ -24,6 +24,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/cardinalhq/lakerunner/internal/constants"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
@@ -51,7 +52,7 @@ func init() {
 	metricsCmd.Flags().StringVar(&tmpdir, "tmpdir", "/tmp", "Temporary directory for processing")
 	metricsCmd.Flags().StringArrayVar(&files, "file", nil, "Input files to compact (can be repeated)")
 	metricsCmd.Flags().Int64Var(&recordsPerFile, "records-per-file", 10000, "Estimated records per file")
-	metricsCmd.Flags().Int64Var(&targetFileSize, "target-size", 1_100_000, "Target file size in bytes")
+	metricsCmd.Flags().Int64Var(&targetFileSize, "target-size", constants.TargetFileSizeBytes, "Target file size in bytes")
 	_ = metricsCmd.MarkFlagRequired("file")
 
 	cmd.AddCommand(metricsCmd)
