@@ -21,7 +21,9 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/fxamacker/cbor/v2"
+	cbor2 "github.com/fxamacker/cbor/v2"
+
+	"github.com/cardinalhq/lakerunner/internal/cbor"
 )
 
 // RowIndex represents a lightweight pointer to a CBOR-encoded row in the temp file.
@@ -35,14 +37,14 @@ type RowIndex struct {
 
 // DiskSortingReader reads all rows from an underlying reader, CBOR-encodes them to a temp file,
 // sorts by index, then returns them in sorted order. This provides memory-efficient sorting
-// for large datasets that don't fit in RAM.
+// for large datasets that don't fit in RAM. See the internal/cbor package for CBOR type behavior.
 type DiskSortingReader struct {
-	reader   Reader
-	tempFile *os.File
-	encoder  *cbor.Encoder
-	decMode  cbor.DecMode // Store decode mode to create fresh decoders
-	closed   bool
-	rowCount int64
+	reader     Reader
+	tempFile   *os.File
+	encoder    *cbor2.Encoder
+	cborConfig *cbor.Config
+	closed     bool
+	rowCount   int64
 
 	// Lightweight sorted indices pointing to CBOR data
 	indices      []RowIndex
@@ -62,37 +64,20 @@ func NewDiskSortingReader(reader Reader) (*DiskSortingReader, error) {
 		return nil, fmt.Errorf("failed to create temp file: %w", err)
 	}
 
-	// Configure CBOR encoding to preserve types
-	encMode, err := cbor.EncOptions{
-		Sort:          cbor.SortNone,          // Don't sort map keys - preserve order
-		ShortestFloat: cbor.ShortestFloatNone, // Don't convert float types
-		BigIntConvert: cbor.BigIntConvertNone, // Don't convert large integers
-		Time:          cbor.TimeUnix,          // Encode times as Unix timestamps
-		TimeTag:       cbor.EncTagNone,        // Don't add CBOR time tags
-	}.EncMode()
+	// Create CBOR config with optimized settings
+	cborConfig, err := cbor.NewConfig()
 	if err != nil {
 		tempFile.Close()
 		os.Remove(tempFile.Name())
-		return nil, fmt.Errorf("failed to create CBOR encoder: %w", err)
-	}
-
-	// Configure CBOR decoding to preserve types
-	decMode, err := cbor.DecOptions{
-		BigIntDec: cbor.BigIntDecodeValue,   // Preserve large integers
-		IntDec:    cbor.IntDecConvertSigned, // Preserve signed integers
-	}.DecMode()
-	if err != nil {
-		tempFile.Close()
-		os.Remove(tempFile.Name())
-		return nil, fmt.Errorf("failed to create CBOR decoder: %w", err)
+		return nil, fmt.Errorf("failed to create CBOR config: %w", err)
 	}
 
 	return &DiskSortingReader{
-		reader:   reader,
-		tempFile: tempFile,
-		encoder:  encMode.NewEncoder(tempFile),
-		decMode:  decMode,
-		indices:  make([]RowIndex, 0, 1000), // Start with reasonable capacity
+		reader:     reader,
+		tempFile:   tempFile,
+		encoder:    cborConfig.NewEncoder(tempFile),
+		cborConfig: cborConfig,
+		indices:    make([]RowIndex, 0, 1000), // Start with reasonable capacity
 	}, nil
 }
 
@@ -226,19 +211,22 @@ func (r *DiskSortingReader) Read(rows []Row) (int, error) {
 			return n, fmt.Errorf("failed to seek to row offset %d: %w", idx.FileOffset, err)
 		}
 
-		// Create a new decoder for this position to avoid state issues
-		decoder := r.decMode.NewDecoder(r.tempFile)
+		// Read the CBOR bytes
+		rowBytes := make([]byte, idx.ByteLength)
+		if _, err := r.tempFile.Read(rowBytes); err != nil {
+			return n, fmt.Errorf("failed to read CBOR data at offset %d: %w", idx.FileOffset, err)
+		}
 
-		// Decode CBOR row
-		var decodedRow map[string]any
-		if err := decoder.Decode(&decodedRow); err != nil {
+		// Use shared CBOR package to decode with type conversion
+		decodedRow, err := r.cborConfig.Decode(rowBytes)
+		if err != nil {
 			return n, fmt.Errorf("failed to decode CBOR row at offset %d: %w", idx.FileOffset, err)
 		}
 
-		// Reset and copy to output row, with type conversion if needed
+		// Reset and copy to output row
 		resetRow(&rows[n])
 		for k, v := range decodedRow {
-			rows[n][k] = r.convertCBORTypes(v)
+			rows[n][k] = v
 		}
 
 		n++
@@ -298,50 +286,4 @@ func (r *DiskSortingReader) GetOTELMetrics() (any, error) {
 		return provider.GetOTELMetrics()
 	}
 	return nil, fmt.Errorf("underlying reader does not support OTEL metrics")
-}
-
-// convertCBORTypes converts CBOR-decoded values back to expected types.
-// CBOR has some limitations in preserving exact Go types, so we fix them here.
-func (r *DiskSortingReader) convertCBORTypes(value any) any {
-	switch v := value.(type) {
-	case []interface{}:
-		// Convert []interface{} back to []float64 if all elements are numeric
-		if len(v) == 0 {
-			return []float64{} // Preserve empty slice type
-		}
-
-		// Check if all elements are numbers
-		allNumbers := true
-		for _, elem := range v {
-			switch elem.(type) {
-			case float64, int64, uint64, int, uint:
-				// These are all numeric types
-			default:
-				allNumbers = false
-			}
-		}
-
-		if allNumbers {
-			// Convert to []float64
-			result := make([]float64, len(v))
-			for i, elem := range v {
-				switch e := elem.(type) {
-				case float64:
-					result[i] = e
-				case int64:
-					result[i] = float64(e)
-				case uint64:
-					result[i] = float64(e)
-				case int:
-					result[i] = float64(e)
-				case uint:
-					result[i] = float64(e)
-				}
-			}
-			return result
-		}
-		return v // Return as-is if not all numbers
-	default:
-		return v // Return unchanged for other types
-	}
 }
