@@ -175,7 +175,7 @@ func BenchmarkGobSpiller_Read(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
-			defer spiller.CleanupSpillFile(spillFile)
+			defer func() { _ = spiller.CleanupSpillFile(spillFile) }()
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
@@ -224,7 +224,7 @@ func BenchmarkCborSpiller_Read(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
-			defer spiller.CleanupSpillFile(spillFile)
+			defer func() { _ = spiller.CleanupSpillFile(spillFile) }()
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
@@ -257,7 +257,7 @@ func BenchmarkSpiller_FileSize(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		defer spiller.CleanupSpillFile(spillFile)
+		defer func() { _ = spiller.CleanupSpillFile(spillFile) }()
 
 		// Get file size
 		stat, err := os.Stat(spillFile.Path)
@@ -279,7 +279,7 @@ func BenchmarkSpiller_FileSize(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		defer spiller.CleanupSpillFile(spillFile)
+		defer func() { _ = spiller.CleanupSpillFile(spillFile) }()
 
 		// Get file size
 		stat, err := os.Stat(spillFile.Path)
