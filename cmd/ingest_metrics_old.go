@@ -46,7 +46,6 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/filecrunch"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
-	"github.com/cardinalhq/lakerunner/internal/tidprocessing"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -422,7 +421,7 @@ func oldWriteMetricSketchParquet(ctx context.Context, tmpdir string, blocknum in
 				"_cardinalhq.tid":            tid,
 				"_cardinalhq.value":          float64(-1),
 				"_cardinalhq.telemetry_type": "metrics",
-				"sketch":                     tidprocessing.EncodeSketch(sketch.Sketch),
+				"sketch":                     helpers.EncodeSketch(sketch.Sketch),
 				"rollup_avg":                 avg,
 				"rollup_max":                 maxvalue,
 				"rollup_min":                 minvalue,

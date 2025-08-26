@@ -15,13 +15,61 @@
 package helpers
 
 import (
+	"fmt"
+	"sync"
+
 	"github.com/DataDog/sketches-go/ddsketch"
+	"github.com/DataDog/sketches-go/ddsketch/mapping"
+	"github.com/DataDog/sketches-go/ddsketch/store"
 )
 
+var (
+	defaultRelAcc  = 0.01
+	mappingOnce    sync.Once
+	sharedMapping  mapping.IndexMapping
+	mappingInitErr error
+)
+
+func getSharedMapping() (mapping.IndexMapping, error) {
+	mappingOnce.Do(func() {
+		sharedMapping, mappingInitErr = mapping.NewLogarithmicMapping(defaultRelAcc)
+	})
+	return sharedMapping, mappingInitErr
+}
+
 // EncodeSketch encodes a DDSketch to bytes.
-// Extracted from tidprocessing package for use in metrics ingestion.
 func EncodeSketch(sketch *ddsketch.DDSketch) []byte {
 	var buf []byte
 	sketch.Encode(&buf, false)
 	return buf
+}
+
+// DecodeSketch decodes a DDSketch from bytes using shared mapping and dense store.
+func DecodeSketch(data []byte) (*ddsketch.DDSketch, error) {
+	m, err := getSharedMapping()
+	if err != nil {
+		return nil, err
+	}
+	return ddsketch.DecodeDDSketch(data, store.DenseStoreConstructor, m)
+}
+
+// Merge merges one sketch into another.
+func Merge(sketch *ddsketch.DDSketch, other *ddsketch.DDSketch) error {
+	return sketch.MergeWith(other)
+}
+
+// MergeEncodedSketch merges two encoded sketches and returns the encoded result.
+func MergeEncodedSketch(a, b []byte) ([]byte, error) {
+	skA, err := DecodeSketch(a)
+	if err != nil {
+		return nil, fmt.Errorf("decoding sketch A: %w", err)
+	}
+	skB, err := DecodeSketch(b)
+	if err != nil {
+		return nil, fmt.Errorf("decoding sketch B: %w", err)
+	}
+	if err := Merge(skA, skB); err != nil {
+		return nil, fmt.Errorf("merging sketches: %w", err)
+	}
+	return EncodeSketch(skA), nil
 }
