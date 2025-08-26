@@ -71,7 +71,7 @@ func debugIngestMetrics(tmpdir string, files []string) error {
 		ll.Info("Processing file", slog.String("filename", filename))
 
 		// Create reader
-		reader, err := createMetricReader(filename)
+		reader, err := createMetricProtoReader(filename)
 		if err != nil {
 			ll.Error("Failed to create reader", slog.String("filename", filename), slog.Any("error", err))
 			continue
