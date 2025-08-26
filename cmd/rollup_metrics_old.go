@@ -12,13 +12,15 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
+// Package cmd contains the original metrics rollup implementation.
+// This file preserves the old rollup implementation
+// for backward compatibility when LAKERUNNER_METRICS_ROLLUP_OLDPATH is set.
 package cmd
 
 import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -35,15 +37,11 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-func init() {
-	cmd := &cobra.Command{
+func oldRollupMetricsCommand() *cobra.Command {
+	return &cobra.Command{
 		Use:   "rollup-metrics",
-		Short: "Roll up metrics",
+		Short: "Roll up metrics (old implementation)",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if os.Getenv("LAKERUNNER_METRICS_ROLLUP_OLDPATH") != "" {
-				return oldRollupMetricsCommand().RunE(nil, []string{})
-			}
-
 			helpers.SetupTempDir()
 
 			servicename := "lakerunner-rollup-metrics"
@@ -69,14 +67,12 @@ func init() {
 				return fmt.Errorf("failed to create runqueue loop context: %w", err)
 			}
 
-			return RunqueueLoop(loop, metricRollupItem, nil)
+			return RunqueueLoop(loop, oldMetricRollupItem, nil)
 		},
 	}
-
-	rootCmd.AddCommand(cmd)
 }
 
-func metricRollupItem(
+func oldMetricRollupItem(
 	ctx context.Context,
 	ll *slog.Logger,
 	tmpdir string,
@@ -119,7 +115,7 @@ func metricRollupItem(
 		slog.Int64("estimatedRowsPerFile", rpfEstimate))
 
 	t0 := time.Now()
-	_, err = metricRollupItemDo(ctx, ll, mdb, tmpdir, inf, profile, s3client, previousFrequency, rpfEstimate)
+	_, err = oldMetricRollupItemDo(ctx, ll, mdb, tmpdir, inf, profile, s3client, previousFrequency, rpfEstimate)
 
 	if err != nil {
 		ll.Info("Metric rollup completed",
@@ -136,7 +132,7 @@ func metricRollupItem(
 	}
 }
 
-func metricRollupItemDo(
+func oldMetricRollupItemDo(
 	ctx context.Context,
 	ll *slog.Logger,
 	mdb lrdb.StoreFull,
@@ -183,7 +179,7 @@ func metricRollupItemDo(
 		return WorkResultTryAgainLater, err
 	}
 
-	err = rollupInterval(ctx, ll, mdb, tmpdir, inf, profile, s3client, sourceRows, currentRows, rpfEstimate)
+	err = oldRollupInterval(ctx, ll, mdb, tmpdir, inf, profile, s3client, sourceRows, currentRows, rpfEstimate)
 	if err != nil {
 		ll.Error("Failed to rollup interval", slog.Any("error", err))
 		return WorkResultTryAgainLater, err
@@ -192,8 +188,8 @@ func metricRollupItemDo(
 	return WorkResultSuccess, nil
 }
 
-// rollupInterval rolls up the metric segments for a given timebox.
-func rollupInterval(
+// oldRollupInterval rolls up the metric segments for a given timebox.
+func oldRollupInterval(
 	ctx context.Context,
 	ll *slog.Logger,
 	mdb lrdb.StoreFull,
@@ -419,19 +415,4 @@ func rollupInterval(
 	}
 
 	return nil
-}
-
-// boxesForRange returns a list of timebox IDs for the given start and end timestamps and frequency.
-func boxesForRange(startTs, endTs int64, frequencyMs int32) []int64 {
-	if startTs > endTs || frequencyMs <= 0 {
-		return []int64{}
-	}
-	firstBox := startTs / int64(frequencyMs)
-	lastBox := endTs / int64(frequencyMs)
-	nBoxes := lastBox - firstBox + 1
-	boxes := make([]int64, nBoxes)
-	for n := range nBoxes {
-		boxes[n] = firstBox + n
-	}
-	return boxes
 }
