@@ -205,6 +205,9 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 	var profile storageprofile.StorageProfile
 	var err error
 
+	// Check exemplar processing setting once at start of batch
+	processExemplars := shouldProcessExemplars()
+
 	// TODO: Add support for finding storage profiles consistently for arbitrary prefixes at some point
 	if collectorName := helpers.ExtractCollectorName(firstItem.ObjectID); collectorName != "" {
 		profile, err = sp.GetStorageProfileForOrganizationAndCollector(ctx, firstItem.OrganizationID, collectorName)
@@ -369,7 +372,7 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 	}
 
 	// Process exemplars if available (from first file for now)
-	if loop.exemplarProcessor != nil {
+	if loop.exemplarProcessor != nil && processExemplars {
 		if len(validFiles) > 0 {
 			// Create a separate reader just for exemplar processing from first file
 			exemplarReader, err := createMetricProtoReader(validFiles[0].tmpfilename)
@@ -623,4 +626,19 @@ func createMetricProtoBinaryGzReader(filename string) (filereader.Reader, error)
 	}
 
 	return reader, nil
+}
+
+// shouldProcessExemplars checks if exemplar processing should be enabled
+// Returns false if LAKERUNNER_METRICS_EXEMPLARS is set to "false", "0", or "off"
+func shouldProcessExemplars() bool {
+	env := strings.ToLower(strings.TrimSpace(os.Getenv("LAKERUNNER_METRICS_EXEMPLARS")))
+	switch env {
+	case "false", "0", "off", "no":
+		return false
+	case "":
+		// Default to true if not set
+		return true
+	default:
+		return true
+	}
 }
