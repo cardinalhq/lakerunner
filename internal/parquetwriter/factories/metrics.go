@@ -21,7 +21,6 @@ import (
 	mapset "github.com/deckarep/golang-set/v2"
 
 	"github.com/cardinalhq/lakerunner/internal/fingerprint"
-	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 )
 
@@ -33,12 +32,11 @@ func NewMetricsWriter(baseName, tmpdir string, targetFileSize int64, recordsPerF
 		TmpDir:         tmpdir,
 		TargetFileSize: targetFileSize,
 
-		// Order by [metric name, TID] for efficient grouping
-		OrderBy:      parquetwriter.OrderMergeSort,
-		OrderKeyFunc: helpers.MetricsOrderKeyFunc(),
+		// Input is already globally sorted by our pipeline, no ordering needed
+		OrderBy: parquetwriter.OrderNone,
 
 		// Group by [metric name, TID] - don't split groups with same name+TID
-		GroupKeyFunc:  helpers.MetricsGroupKeyFunc(),
+		GroupKeyFunc:  metricsGroupKeyFunc(),
 		NoSplitGroups: true,
 
 		RecordsPerFile: recordsPerFile,
@@ -46,6 +44,35 @@ func NewMetricsWriter(baseName, tmpdir string, targetFileSize int64, recordsPerF
 	}
 
 	return parquetwriter.NewUnifiedWriter(config)
+}
+
+// metricsGroupKeyFunc returns the grouping key function for metrics.
+// Groups by [metric name, TID] only - keeps all timestamps for the same metric together
+// for efficient rollup aggregation.
+func metricsGroupKeyFunc() func(row map[string]any) any {
+	return func(row map[string]any) any {
+		name, nameOk := row["_cardinalhq.name"].(string)
+		if !nameOk {
+			return nil
+		}
+
+		// Handle both string and int64 TID values
+		var tid int64
+		switch v := row["_cardinalhq.tid"].(type) {
+		case int64:
+			tid = v
+		case string:
+			// TID is incorrectly stored as string, parse it
+			if parsed, err := fmt.Sscanf(v, "%d", &tid); err != nil || parsed != 1 {
+				return nil
+			}
+		default:
+			return nil
+		}
+
+		// Group by [name, tid] only - no timestamp for better rollup aggregation
+		return fmt.Sprintf("%s:%d", name, tid)
+	}
 }
 
 // MetricsStatsProvider collects metric name statistics for metrics files.
@@ -124,11 +151,24 @@ type MetricsFileStats struct {
 
 // ValidateMetricsRow checks that a row has the required fields for metrics processing.
 func ValidateMetricsRow(row map[string]any) error {
-	if _, ok := row["_cardinalhq.name"]; !ok {
+	nameVal, ok := row["_cardinalhq.name"]
+	if !ok {
 		return fmt.Errorf("missing required field: _cardinalhq.name")
 	}
-	if _, ok := row["_cardinalhq.tid"]; !ok {
+	name, ok := nameVal.(string)
+	if !ok {
+		return fmt.Errorf("field _cardinalhq.name must be a string, got %T", nameVal)
+	}
+	if len(name) == 0 {
+		return fmt.Errorf("field _cardinalhq.name cannot be empty")
+	}
+
+	tidVal, ok := row["_cardinalhq.tid"]
+	if !ok {
 		return fmt.Errorf("missing required field: _cardinalhq.tid")
+	}
+	if _, ok := tidVal.(int64); !ok {
+		return fmt.Errorf("field _cardinalhq.tid must be an int64, got %T", tidVal)
 	}
 	return nil
 }

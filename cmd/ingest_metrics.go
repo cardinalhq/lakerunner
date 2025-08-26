@@ -159,7 +159,7 @@ func (wm *metricWriterManager) getWriter(key minuteSlotKey) (*parquetwriter.Unif
 	writer, err := factories.NewMetricsWriter(
 		fmt.Sprintf("metrics_%s_%d_%04d_%d", wm.orgID, key.dateint, key.minute, key.slot),
 		wm.tmpdir,
-		50*1024*1024, // 50MB
+		1024*1024, // 1MB
 		wm.rpfEstimate,
 	)
 	if err != nil {
