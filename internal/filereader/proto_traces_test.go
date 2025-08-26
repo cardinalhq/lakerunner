@@ -16,40 +16,17 @@ package filereader
 
 import (
 	"bytes"
-	"compress/gzip"
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"strings"
 	"testing"
+	"time"
 
+	"github.com/cardinalhq/oteltools/signalbuilder"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/collector/pdata/ptrace"
 )
-
-func TestNewProtoTracesReader(t *testing.T) {
-	// Test with valid gzipped protobuf data
-	file, err := os.Open("../../testdata/traces/otel-traces.binpb.gz")
-	require.NoError(t, err)
-	defer file.Close()
-
-	gzReader, err := gzip.NewReader(file)
-	require.NoError(t, err)
-	defer gzReader.Close()
-
-	protoReader, err := NewProtoTracesReader(gzReader)
-	require.NoError(t, err)
-	require.NotNil(t, protoReader)
-	defer protoReader.Close()
-
-	// Verify the reader was initialized properly
-	assert.NotNil(t, protoReader.traces)
-	assert.False(t, protoReader.closed)
-	assert.Equal(t, 0, protoReader.resourceIndex)
-	assert.Equal(t, 0, protoReader.scopeIndex)
-	assert.Equal(t, 0, protoReader.spanIndex)
-}
 
 func TestNewProtoTracesReader_InvalidData(t *testing.T) {
 	// Test with invalid protobuf data
@@ -83,186 +60,48 @@ func TestNewProtoTracesReader_EmptyData(t *testing.T) {
 	}
 }
 
-func TestProtoTracesReader_Read(t *testing.T) {
-	// Load test data
-	file, err := os.Open("../../testdata/traces/otel-traces.binpb.gz")
-	require.NoError(t, err)
-	defer file.Close()
-
-	gzReader, err := gzip.NewReader(file)
-	require.NoError(t, err)
-	defer gzReader.Close()
-
-	protoReader, err := NewProtoTracesReader(gzReader)
-	require.NoError(t, err)
-	defer protoReader.Close()
-
-	// Read all rows
-	allRows, err := readAllRows(protoReader)
-	require.NoError(t, err)
-	require.Equal(t, 246, len(allRows), "Should read exactly 246 span rows from otel-traces.binpb.gz")
-
-	// Verify each row has expected fields
-	for i, row := range allRows {
-		t.Run(fmt.Sprintf("row_%d", i), func(t *testing.T) {
-			// Should have basic span fields
-			assert.Contains(t, row, "trace_id", "Row should have trace ID")
-			assert.Contains(t, row, "span_id", "Row should have span ID")
-			assert.Contains(t, row, "name", "Row should have span name")
-			assert.Contains(t, row, "kind", "Row should have span kind")
-
-			// Check that trace_id and span_id are not empty
-			assert.NotEmpty(t, row["trace_id"], "Trace ID should not be empty")
-			assert.NotEmpty(t, row["span_id"], "Span ID should not be empty")
-			assert.NotEmpty(t, row["name"], "Span name should not be empty")
-
-			// Other fields may or may not be present depending on the span
-			// but if present, should have valid values
-			if kind, exists := row["kind"]; exists {
-				assert.IsType(t, "", kind, "Kind should be string")
-			}
-			if status, exists := row["status_code"]; exists {
-				assert.IsType(t, "", status, "Status code should be string")
-			}
-		})
+func createSimpleSyntheticTraces() []byte {
+	builder := signalbuilder.NewTracesBuilder()
+	resourceTraces := &signalbuilder.ResourceTraces{
+		Resource: map[string]any{
+			"service.name": "test-service",
+		},
+		ScopeTraces: []signalbuilder.ScopeTraces{
+			{
+				Name:    "test-tracer",
+				Version: "1.0.0",
+				Spans: []signalbuilder.Span{
+					{
+						TraceID:        "12345678901234567890123456789012",
+						SpanID:         "1234567890123456",
+						Name:           "test-operation",
+						Kind:           1, // Internal
+						StartTimestamp: time.Now().UnixNano(),
+						EndTimestamp:   time.Now().Add(100 * time.Millisecond).UnixNano(),
+					},
+				},
+			},
+		},
+	}
+	err := builder.Add(resourceTraces)
+	if err != nil {
+		panic(err)
 	}
 
-	t.Logf("Successfully read %d span rows (expected 246)", len(allRows))
-}
-
-func TestProtoTracesReader_ReadBatched(t *testing.T) {
-	// Load test data
-	file, err := os.Open("../../testdata/traces/otel-traces.binpb.gz")
-	require.NoError(t, err)
-	defer file.Close()
-
-	gzReader, err := gzip.NewReader(file)
-	require.NoError(t, err)
-	defer gzReader.Close()
-
-	protoReader, err := NewProtoTracesReader(gzReader)
-	require.NoError(t, err)
-	defer protoReader.Close()
-
-	// Read in batches of 5
-	var totalRows int
-	batchSize := 5
-
-	for {
-		rows := make([]Row, batchSize)
-		for i := range rows {
-			rows[i] = make(Row)
-		}
-
-		n, err := protoReader.Read(rows)
-		totalRows += n
-
-		// Verify each row that was read
-		for i := 0; i < n; i++ {
-			assert.Greater(t, len(rows[i]), 0, "Row %d should have data", i)
-			assert.Contains(t, rows[i], "trace_id", "Row %d should have trace_id field", i)
-			assert.Contains(t, rows[i], "span_id", "Row %d should have span_id field", i)
-			assert.Contains(t, rows[i], "name", "Row %d should have name field", i)
-		}
-
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		require.NoError(t, err)
+	tracesData := builder.Build()
+	marshaler := &ptrace.ProtoMarshaler{}
+	protoBytes, err := marshaler.MarshalTraces(tracesData)
+	if err != nil {
+		panic(err)
 	}
-
-	assert.Equal(t, 246, totalRows, "Should read exactly 246 rows in batches")
-	t.Logf("Read %d rows in batches of %d (expected 246)", totalRows, batchSize)
-}
-
-func TestProtoTracesReader_ReadSingleRow(t *testing.T) {
-	// Load test data
-	file, err := os.Open("../../testdata/traces/otel-traces.binpb.gz")
-	require.NoError(t, err)
-	defer file.Close()
-
-	gzReader, err := gzip.NewReader(file)
-	require.NoError(t, err)
-	defer gzReader.Close()
-
-	protoReader, err := NewProtoTracesReader(gzReader)
-	require.NoError(t, err)
-	defer protoReader.Close()
-
-	// Read one row at a time
-	rows := make([]Row, 1)
-	rows[0] = make(Row)
-
-	n, err := protoReader.Read(rows)
-	require.NoError(t, err)
-	assert.Equal(t, 1, n)
-	assert.Greater(t, len(rows[0]), 0, "First row should have data")
-	assert.Contains(t, rows[0], "trace_id")
-	assert.Contains(t, rows[0], "span_id")
-	assert.Contains(t, rows[0], "name")
-}
-
-func TestProtoTracesReader_ResourceAndScopeAttributes(t *testing.T) {
-	// Load test data
-	file, err := os.Open("../../testdata/traces/otel-traces.binpb.gz")
-	require.NoError(t, err)
-	defer file.Close()
-
-	gzReader, err := gzip.NewReader(file)
-	require.NoError(t, err)
-	defer gzReader.Close()
-
-	protoReader, err := NewProtoTracesReader(gzReader)
-	require.NoError(t, err)
-	defer protoReader.Close()
-
-	// Read first few rows to check for resource/scope attributes
-	rows := make([]Row, 3)
-	for i := range rows {
-		rows[i] = make(Row)
-	}
-
-	n, err := protoReader.Read(rows)
-	require.NoError(t, err)
-	require.Greater(t, n, 0, "Should read at least one row for attribute checking")
-
-	// Check if any rows have resource or scope attributes
-	foundResourceAttr := false
-	foundScopeAttr := false
-	foundSpanAttr := false
-
-	for i := 0; i < n; i++ {
-		for key := range rows[i] {
-			if strings.HasPrefix(key, "resource.") {
-				foundResourceAttr = true
-				t.Logf("Found resource attribute: %s = %v", key, rows[i][key])
-			}
-			if strings.HasPrefix(key, "scope.") {
-				foundScopeAttr = true
-				t.Logf("Found scope attribute: %s = %v", key, rows[i][key])
-			}
-			if strings.HasPrefix(key, "span.") {
-				foundSpanAttr = true
-				t.Logf("Found span attribute: %s = %v", key, rows[i][key])
-			}
-		}
-	}
-
-	t.Logf("Found resource attributes: %v, scope attributes: %v, span attributes: %v",
-		foundResourceAttr, foundScopeAttr, foundSpanAttr)
+	return protoBytes
 }
 
 func TestProtoTracesReader_EmptySlice(t *testing.T) {
-	// Load test data
-	file, err := os.Open("../../testdata/traces/otel-traces.binpb.gz")
-	require.NoError(t, err)
-	defer file.Close()
+	// Create synthetic test data
+	syntheticData := createSimpleSyntheticTraces()
 
-	gzReader, err := gzip.NewReader(file)
-	require.NoError(t, err)
-	defer gzReader.Close()
-
-	protoReader, err := NewProtoTracesReader(gzReader)
+	protoReader, err := NewProtoTracesReader(bytes.NewReader(syntheticData))
 	require.NoError(t, err)
 	defer protoReader.Close()
 
@@ -273,16 +112,10 @@ func TestProtoTracesReader_EmptySlice(t *testing.T) {
 }
 
 func TestProtoTracesReader_Close(t *testing.T) {
-	// Load test data
-	file, err := os.Open("../../testdata/traces/otel-traces.binpb.gz")
-	require.NoError(t, err)
-	defer file.Close()
+	// Create synthetic test data
+	syntheticData := createSimpleSyntheticTraces()
 
-	gzReader, err := gzip.NewReader(file)
-	require.NoError(t, err)
-	defer gzReader.Close()
-
-	protoReader, err := NewProtoTracesReader(gzReader)
+	protoReader, err := NewProtoTracesReader(bytes.NewReader(syntheticData))
 	require.NoError(t, err)
 
 	// Should be able to read before closing
@@ -307,91 +140,6 @@ func TestProtoTracesReader_Close(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestProtoTracesReader_ExhaustData(t *testing.T) {
-	// Load test data
-	file, err := os.Open("../../testdata/traces/otel-traces.binpb.gz")
-	require.NoError(t, err)
-	defer file.Close()
-
-	gzReader, err := gzip.NewReader(file)
-	require.NoError(t, err)
-	defer gzReader.Close()
-
-	protoReader, err := NewProtoTracesReader(gzReader)
-	require.NoError(t, err)
-	defer protoReader.Close()
-
-	// Read all data
-	allRows, err := readAllRows(protoReader)
-	require.NoError(t, err)
-	totalRows := len(allRows)
-
-	// Further reads should return EOF
-	rows := make([]Row, 1)
-	rows[0] = make(Row)
-	n, err := protoReader.Read(rows)
-	assert.Equal(t, 0, n)
-	assert.True(t, errors.Is(err, io.EOF))
-
-	assert.Equal(t, 246, totalRows, "Should read exactly 246 rows before exhaustion")
-	t.Logf("Successfully exhausted reader after reading %d rows (expected 246)", totalRows)
-}
-
-func TestProtoTracesReader_SpanFields(t *testing.T) {
-	// Load test data
-	file, err := os.Open("../../testdata/traces/otel-traces.binpb.gz")
-	require.NoError(t, err)
-	defer file.Close()
-
-	gzReader, err := gzip.NewReader(file)
-	require.NoError(t, err)
-	defer gzReader.Close()
-
-	protoReader, err := NewProtoTracesReader(gzReader)
-	require.NoError(t, err)
-	defer protoReader.Close()
-
-	// Read all rows and collect span field info
-	allRows, err := readAllRows(protoReader)
-	require.NoError(t, err)
-	require.Equal(t, 246, len(allRows), "Should read exactly 246 rows for field analysis")
-
-	spanKinds := make(map[string]int)
-	statusCodes := make(map[string]int)
-	nameCount := 0
-
-	for _, row := range allRows {
-		if name, exists := row["name"]; exists {
-			if nameStr, ok := name.(string); ok && nameStr != "" {
-				nameCount++
-			}
-		}
-		if kind, exists := row["kind"]; exists {
-			if kindStr, ok := kind.(string); ok {
-				spanKinds[kindStr]++
-			}
-		}
-		if statusCode, exists := row["status_code"]; exists {
-			if statusStr, ok := statusCode.(string); ok {
-				statusCodes[statusStr]++
-			}
-		}
-	}
-
-	t.Logf("Found %d spans with names", nameCount)
-	t.Logf("Found span kinds: %+v", spanKinds)
-	t.Logf("Found status codes: %+v", statusCodes)
-
-	// Basic validation - all spans should have names
-	assert.Equal(t, 246, nameCount, "Should have 246 spans with names")
-
-	// Verify specific span type distribution based on test data
-	assert.Equal(t, 82, spanKinds["Client"], "Should have 82 Client spans")
-	assert.Equal(t, 100, spanKinds["Internal"], "Should have 100 Internal spans")
-	assert.Equal(t, 64, spanKinds["Server"], "Should have 64 Server spans")
-	assert.Equal(t, 246, statusCodes["Unset"], "Should have 246 Unset status codes")
-}
-
 // Test parsing function directly with invalid data
 func TestParseProtoToOtelTraces_InvalidData(t *testing.T) {
 	invalidData := bytes.NewReader([]byte("invalid protobuf data"))
@@ -406,4 +154,437 @@ func TestParseProtoToOtelTraces_ReadError(t *testing.T) {
 	_, err := parseProtoToOtelTraces(errorReader)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to read data")
+}
+
+func TestProtoTracesReader_SyntheticData(t *testing.T) {
+	// Create synthetic trace data with multiple span types
+	builder := signalbuilder.NewTracesBuilder()
+
+	resourceTraces := &signalbuilder.ResourceTraces{
+		Resource: map[string]any{
+			"service.name":    "test-service",
+			"service.version": "1.0.0",
+			"deployment.env":  "test",
+		},
+		ScopeTraces: []signalbuilder.ScopeTraces{
+			{
+				Name:    "test-tracer",
+				Version: "1.2.3",
+				Attributes: map[string]any{
+					"scope.type": "instrumentation",
+				},
+				Spans: []signalbuilder.Span{
+					{
+						TraceID:        "12345678901234567890123456789012",
+						SpanID:         "1234567890123456",
+						ParentSpanID:   "",
+						Name:           "root-operation",
+						Kind:           3, // Server
+						StartTimestamp: time.Now().UnixNano(),
+						EndTimestamp:   time.Now().Add(100 * time.Millisecond).UnixNano(),
+						Attributes: map[string]any{
+							"http.method":      "GET",
+							"http.url":         "/api/test",
+							"http.status_code": int64(200),
+						},
+						Status: signalbuilder.SpanStatus{
+							Code:    1, // Ok
+							Message: "Request completed successfully",
+						},
+					},
+					{
+						TraceID:        "12345678901234567890123456789012",
+						SpanID:         "2345678901234567",
+						ParentSpanID:   "1234567890123456",
+						Name:           "database-query",
+						Kind:           4, // Client
+						StartTimestamp: time.Now().Add(10 * time.Millisecond).UnixNano(),
+						EndTimestamp:   time.Now().Add(50 * time.Millisecond).UnixNano(),
+						Attributes: map[string]any{
+							"db.system":    "postgresql",
+							"db.name":      "testdb",
+							"db.operation": "SELECT",
+							"db.table":     "users",
+						},
+						Status: signalbuilder.SpanStatus{
+							Code: 0, // Unset
+						},
+					},
+					{
+						TraceID:        "12345678901234567890123456789012",
+						SpanID:         "3456789012345678",
+						ParentSpanID:   "1234567890123456",
+						Name:           "internal-processing",
+						Kind:           1, // Internal
+						StartTimestamp: time.Now().Add(60 * time.Millisecond).UnixNano(),
+						EndTimestamp:   time.Now().Add(90 * time.Millisecond).UnixNano(),
+						Attributes: map[string]any{
+							"component":    "data-processor",
+							"record.count": int64(42),
+						},
+						Status: signalbuilder.SpanStatus{
+							Code: 0, // Unset
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Add resource traces to builder
+	err := builder.Add(resourceTraces)
+	require.NoError(t, err)
+
+	// Build the traces
+	tracesData := builder.Build()
+
+	// Create protobuf bytes
+	marshaler := &ptrace.ProtoMarshaler{}
+	protoBytes, err := marshaler.MarshalTraces(tracesData)
+	require.NoError(t, err)
+
+	// Create reader
+	protoReader, err := NewProtoTracesReader(bytes.NewReader(protoBytes))
+	require.NoError(t, err)
+	defer protoReader.Close()
+
+	// Read all rows
+	allRows, err := readAllRows(protoReader)
+	require.NoError(t, err)
+	require.Equal(t, 3, len(allRows), "Should read exactly 3 spans")
+
+	// Verify common fields for all spans
+	for i, row := range allRows {
+		t.Run(fmt.Sprintf("span_%d", i), func(t *testing.T) {
+			// Basic span fields
+			assert.Contains(t, row, "trace_id")
+			assert.Contains(t, row, "span_id")
+			assert.Contains(t, row, "name")
+			assert.Contains(t, row, "kind")
+			assert.Contains(t, row, "start_timestamp")
+			assert.Contains(t, row, "end_timestamp")
+			assert.Contains(t, row, "status_code")
+
+			// Resource attributes with prefix
+			assert.Contains(t, row, "resource.service.name")
+			assert.Equal(t, "test-service", row["resource.service.name"])
+			assert.Contains(t, row, "resource.service.version")
+			assert.Equal(t, "1.0.0", row["resource.service.version"])
+			assert.Contains(t, row, "resource.deployment.env")
+			assert.Equal(t, "test", row["resource.deployment.env"])
+
+			// Scope attributes with prefix
+			assert.Contains(t, row, "scope.scope.type")
+			assert.Equal(t, "instrumentation", row["scope.scope.type"])
+
+			// Common trace ID
+			assert.Equal(t, "12345678901234567890123456789012", row["trace_id"])
+		})
+	}
+
+	// Verify specific spans
+	rootSpan := allRows[0]
+	assert.Equal(t, "1234567890123456", rootSpan["span_id"])
+	assert.Equal(t, "root-operation", rootSpan["name"])
+	assert.Equal(t, "Client", rootSpan["kind"])
+	assert.Equal(t, "Ok", rootSpan["status_code"])
+	assert.Contains(t, rootSpan, "span.http.method")
+	assert.Equal(t, "GET", rootSpan["span.http.method"])
+	assert.Contains(t, rootSpan, "span.http.status_code")
+	assert.Equal(t, "200", rootSpan["span.http.status_code"])
+
+	dbSpan := allRows[1]
+	assert.Equal(t, "2345678901234567", dbSpan["span_id"])
+	assert.Equal(t, "database-query", dbSpan["name"])
+	assert.Equal(t, "Producer", dbSpan["kind"])
+	assert.Equal(t, "Unset", dbSpan["status_code"])
+	assert.Contains(t, dbSpan, "span.db.system")
+	assert.Equal(t, "postgresql", dbSpan["span.db.system"])
+	assert.Contains(t, dbSpan, "span.db.operation")
+	assert.Equal(t, "SELECT", dbSpan["span.db.operation"])
+
+	internalSpan := allRows[2]
+	assert.Equal(t, "3456789012345678", internalSpan["span_id"])
+	assert.Equal(t, "internal-processing", internalSpan["name"])
+	assert.Equal(t, "Internal", internalSpan["kind"])
+	assert.Equal(t, "Unset", internalSpan["status_code"])
+	assert.Contains(t, internalSpan, "span.component")
+	assert.Equal(t, "data-processor", internalSpan["span.component"])
+	assert.Contains(t, internalSpan, "span.record.count")
+	assert.Equal(t, "42", internalSpan["span.record.count"])
+
+	// Test batched reading with a new reader instance
+	protoReader2, err := NewProtoTracesReader(bytes.NewReader(protoBytes))
+	require.NoError(t, err)
+	defer protoReader2.Close()
+
+	// Read in batches of 2
+	var totalBatchedRows int
+	batchSize := 2
+	for {
+		rows := make([]Row, batchSize)
+		for i := range rows {
+			rows[i] = make(Row)
+		}
+
+		n, readErr := protoReader2.Read(rows)
+		totalBatchedRows += n
+
+		// Verify each row that was read
+		for i := 0; i < n; i++ {
+			assert.Greater(t, len(rows[i]), 0, "Batched row %d should have data", i)
+			assert.Contains(t, rows[i], "trace_id")
+			assert.Contains(t, rows[i], "span_id")
+		}
+
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
+		require.NoError(t, readErr)
+	}
+	assert.Equal(t, len(allRows), totalBatchedRows, "Batched reading should read same number of rows")
+
+	// Test single row reading
+	protoReader3, err := NewProtoTracesReader(bytes.NewReader(protoBytes))
+	require.NoError(t, err)
+	defer protoReader3.Close()
+
+	singleRows := make([]Row, 1)
+	singleRows[0] = make(Row)
+	n, err := protoReader3.Read(singleRows)
+	require.NoError(t, err)
+	assert.Equal(t, 1, n, "Should read exactly 1 row")
+	assert.Contains(t, singleRows[0], "trace_id")
+	assert.Contains(t, singleRows[0], "resource.service.name")
+
+	// Test data exhaustion - continue reading until EOF
+	var exhaustRows int
+	for {
+		rows := make([]Row, 2)
+		for i := range rows {
+			rows[i] = make(Row)
+		}
+		n, readErr := protoReader3.Read(rows)
+		exhaustRows += n
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
+		require.NoError(t, readErr)
+	}
+	// Should have read all remaining rows
+	assert.Equal(t, len(allRows)-1, exhaustRows, "Should read all remaining rows after first single read")
+}
+
+func TestProtoTracesReader_SyntheticMultiResourceTraces(t *testing.T) {
+	builder := signalbuilder.NewTracesBuilder()
+
+	// Create traces from multiple services
+	resourceTraces1 := &signalbuilder.ResourceTraces{
+		Resource: map[string]any{
+			"service.name":    "frontend-service",
+			"service.version": "2.1.0",
+		},
+		ScopeTraces: []signalbuilder.ScopeTraces{
+			{
+				Name:    "frontend-tracer",
+				Version: "1.0.0",
+				Spans: []signalbuilder.Span{
+					{
+						TraceID:        "aaaabbbbccccddddeeeeffff00001111",
+						SpanID:         "aaaa111122223333",
+						Name:           "frontend-request",
+						Kind:           3, // Server
+						StartTimestamp: time.Now().UnixNano(),
+						EndTimestamp:   time.Now().Add(200 * time.Millisecond).UnixNano(),
+						Attributes: map[string]any{
+							"http.method": "POST",
+							"user.id":     int64(123),
+						},
+						Status: signalbuilder.SpanStatus{
+							Code: 1, // Ok
+						},
+					},
+				},
+			},
+		},
+	}
+
+	resourceTraces2 := &signalbuilder.ResourceTraces{
+		Resource: map[string]any{
+			"service.name":    "backend-service",
+			"service.version": "1.5.2",
+		},
+		ScopeTraces: []signalbuilder.ScopeTraces{
+			{
+				Name:    "backend-tracer",
+				Version: "2.0.0",
+				Spans: []signalbuilder.Span{
+					{
+						TraceID:        "aaaabbbbccccddddeeeeffff00001111",
+						SpanID:         "bbbb444455556666",
+						ParentSpanID:   "aaaa111122223333",
+						Name:           "backend-processing",
+						Kind:           1, // Internal
+						StartTimestamp: time.Now().Add(50 * time.Millisecond).UnixNano(),
+						EndTimestamp:   time.Now().Add(150 * time.Millisecond).UnixNano(),
+						Attributes: map[string]any{
+							"operation.type": "data-processing",
+							"batch.size":     int64(500),
+						},
+						Status: signalbuilder.SpanStatus{
+							Code: 1, // Ok
+						},
+					},
+					{
+						TraceID:        "aaaabbbbccccddddeeeeffff00001111",
+						SpanID:         "cccc777788889999",
+						ParentSpanID:   "bbbb444455556666",
+						Name:           "cache-lookup",
+						Kind:           4, // Client
+						StartTimestamp: time.Now().Add(60 * time.Millisecond).UnixNano(),
+						EndTimestamp:   time.Now().Add(80 * time.Millisecond).UnixNano(),
+						Attributes: map[string]any{
+							"cache.system": "redis",
+							"cache.hit":    "true",
+						},
+						Status: signalbuilder.SpanStatus{
+							Code: 0, // Unset
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Add multiple resource traces to builder
+	err := builder.Add(resourceTraces1)
+	require.NoError(t, err)
+	err = builder.Add(resourceTraces2)
+	require.NoError(t, err)
+
+	// Build traces with multiple resources
+	tracesData := builder.Build()
+
+	marshaler := &ptrace.ProtoMarshaler{}
+	protoBytes, err := marshaler.MarshalTraces(tracesData)
+	require.NoError(t, err)
+
+	protoReader, err := NewProtoTracesReader(bytes.NewReader(protoBytes))
+	require.NoError(t, err)
+	defer protoReader.Close()
+
+	allRows, err := readAllRows(protoReader)
+	require.NoError(t, err)
+	require.Equal(t, 3, len(allRows), "Should read 3 spans from 2 resources")
+
+	// Check resource distribution
+	frontendSpans := 0
+	backendSpans := 0
+
+	for _, row := range allRows {
+		if serviceName, exists := row["resource.service.name"]; exists {
+			switch serviceName {
+			case "frontend-service":
+				frontendSpans++
+				assert.Contains(t, row, "resource.service.version")
+				assert.Equal(t, "2.1.0", row["resource.service.version"])
+			case "backend-service":
+				backendSpans++
+				assert.Contains(t, row, "resource.service.version")
+				assert.Equal(t, "1.5.2", row["resource.service.version"])
+			}
+		}
+		// All spans should be part of the same trace
+		assert.Equal(t, "aaaabbbbccccddddeeeeffff00001111", row["trace_id"])
+	}
+
+	assert.Equal(t, 1, frontendSpans, "Should have 1 span from frontend service")
+	assert.Equal(t, 2, backendSpans, "Should have 2 spans from backend service")
+}
+
+func TestProtoTracesReader_SyntheticEdgeCases(t *testing.T) {
+	builder := signalbuilder.NewTracesBuilder()
+
+	// Test traces with edge cases
+	resourceTraces := &signalbuilder.ResourceTraces{
+		Resource: map[string]any{
+			"service.name": "edge-case-service",
+		},
+		ScopeTraces: []signalbuilder.ScopeTraces{
+			{
+				Name:    "edge-tracer",
+				Version: "0.0.1",
+				Spans: []signalbuilder.Span{
+					{
+						TraceID:        "00000000000000000000000000000001",
+						SpanID:         "0000000000000001",
+						Name:           "", // Empty name
+						Kind:           0,  // Unspecified
+						StartTimestamp: 0,  // Zero timestamp
+						EndTimestamp:   1000000,
+						Attributes:     map[string]any{}, // No attributes
+						Status: signalbuilder.SpanStatus{
+							Code: 0, // Unset
+						},
+					},
+					{
+						TraceID:        "ffffffffffffffffffffffffffffff01",
+						SpanID:         "ffffffffffffffff",
+						Name:           "span-with-zero-values",
+						Kind:           1, // Internal
+						StartTimestamp: time.Now().UnixNano(),
+						EndTimestamp:   time.Now().UnixNano(), // Same start/end time
+						Attributes: map[string]any{
+							"zero.int":     int64(0),
+							"empty.string": "",
+							"false.bool":   "false",
+						},
+						Status: signalbuilder.SpanStatus{
+							Code:    2, // Error
+							Message: "Something went wrong",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	err := builder.Add(resourceTraces)
+	require.NoError(t, err)
+
+	tracesData := builder.Build()
+
+	marshaler := &ptrace.ProtoMarshaler{}
+	protoBytes, err := marshaler.MarshalTraces(tracesData)
+	require.NoError(t, err)
+
+	protoReader, err := NewProtoTracesReader(bytes.NewReader(protoBytes))
+	require.NoError(t, err)
+	defer protoReader.Close()
+
+	allRows, err := readAllRows(protoReader)
+	require.NoError(t, err)
+	require.Equal(t, 2, len(allRows), "Should read 2 spans with edge cases")
+
+	// First span - empty name, zero timestamp
+	emptySpan := allRows[0]
+	assert.Equal(t, "", emptySpan["name"])
+	assert.Equal(t, "Unspecified", emptySpan["kind"])
+	assert.Contains(t, emptySpan, "start_timestamp")
+	assert.Contains(t, emptySpan, "end_timestamp")
+	assert.Equal(t, "00000000000000000000000000000001", emptySpan["trace_id"])
+	assert.Equal(t, "0000000000000001", emptySpan["span_id"])
+
+	// Second span - zero values in attributes
+	zeroSpan := allRows[1]
+	assert.Equal(t, "span-with-zero-values", zeroSpan["name"])
+	assert.Equal(t, "Error", zeroSpan["status_code"])
+	assert.Contains(t, zeroSpan, "status_message")
+	assert.Equal(t, "Something went wrong", zeroSpan["status_message"])
+	assert.Contains(t, zeroSpan, "span.zero.int")
+	assert.Equal(t, "0", zeroSpan["span.zero.int"])
+	assert.Contains(t, zeroSpan, "span.empty.string")
+	assert.Equal(t, "", zeroSpan["span.empty.string"])
+	assert.Contains(t, zeroSpan, "span.false.bool")
+	assert.Equal(t, "false", zeroSpan["span.false.bool"])
 }

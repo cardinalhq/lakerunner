@@ -411,7 +411,7 @@ func TestParquetReader_WithTranslator(t *testing.T) {
 
 // TestProtoLogsReader_WithTranslator tests TranslatingReader with ProtoLogsReader for comparison
 func TestProtoLogsReader_WithTranslator(t *testing.T) {
-	filename := "../../testdata/logs/otel-logs.binpb.gz"
+	filename := createSyntheticLogsFile(t, true)
 
 	// Create base proto reader
 	baseReader, err := createProtoBinaryGzReader(filename, ReaderOptions{SignalType: SignalTypeLogs})
