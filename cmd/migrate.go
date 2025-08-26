@@ -33,13 +33,11 @@ import (
 )
 
 var databases string
-var initializeIfNeeded bool
 var configFile string
 var apiKeysFile string
 
 func init() {
 	MigrateCmd.Flags().StringVar(&databases, "databases", "lrdb,configdb", "Comma-separated list of databases to migrate (lrdb,configdb)")
-	MigrateCmd.Flags().BoolVar(&initializeIfNeeded, "initialize-if-needed", false, "Run initialization after migration if configdb is empty")
 	MigrateCmd.Flags().StringVarP(&configFile, "config", "c", "", "Path to storage profile YAML configuration file (required if --initialize-if-needed is used)")
 	MigrateCmd.Flags().StringVarP(&apiKeysFile, "api-keys", "k", "", "Path to API keys YAML configuration file (optional, used with --initialize-if-needed)")
 	rootCmd.AddCommand(MigrateCmd)
@@ -53,10 +51,6 @@ var MigrateCmd = &cobra.Command{
 }
 
 func migrate(_ *cobra.Command, _ []string) error {
-	if initializeIfNeeded && configFile == "" {
-		return fmt.Errorf("--config flag is required when using --initialize-if-needed")
-	}
-
 	dbList := strings.Split(databases, ",")
 
 	var errors []error
@@ -155,15 +149,38 @@ func initializeIfNeededFunc() error {
 
 	// Auto-detect storage profile file if none provided
 	if configFile == "" {
-		slog.Info("No config file provided, attempting to auto-detect storage profiles")
-
-		// Look for storage profiles in the ConfigMap mount location
-		configMapPath := "/app/config/storage_profiles.yaml"
-		if _, err := os.Stat(configMapPath); err == nil {
-			configFile = configMapPath
-			slog.Info("Auto-detected storage profile file", slog.String("file", configFile))
+		// Check STORAGE_PROFILE_FILE environment variable first
+		if storageProfileFile := os.Getenv("STORAGE_PROFILE_FILE"); storageProfileFile != "" {
+			configFile = storageProfileFile
+			slog.Info("Using storage profile file from STORAGE_PROFILE_FILE", slog.String("file", configFile))
 		} else {
-			return nil
+			slog.Info("No config file provided, attempting to auto-detect storage profiles")
+
+			// Look for storage profiles in the ConfigMap mount location
+			configMapPath := "/app/config/storage_profiles.yaml"
+			if _, err := os.Stat(configMapPath); err == nil {
+				configFile = configMapPath
+				slog.Info("Auto-detected storage profile file", slog.String("file", configFile))
+			} else {
+				return nil
+			}
+		}
+	}
+
+	// Auto-detect API keys file if none provided
+	if apiKeysFile == "" {
+		// Check API_KEYS_FILE environment variable first
+		if apiKeysFileEnv := os.Getenv("API_KEYS_FILE"); apiKeysFileEnv != "" {
+			apiKeysFile = apiKeysFileEnv
+			slog.Info("Using API keys file from API_KEYS_FILE", slog.String("file", apiKeysFile))
+		} else {
+			// Look for API keys in the ConfigMap mount location
+			apiKeysPath := "/app/config/apikeys.yaml"
+			if _, err := os.Stat(apiKeysPath); err == nil {
+				apiKeysFile = apiKeysPath
+				slog.Info("Auto-detected API keys file", slog.String("file", apiKeysFile))
+			}
+			// Note: apiKeysFile can remain empty if not found - it's optional
 		}
 	}
 
