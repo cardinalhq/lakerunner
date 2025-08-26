@@ -862,7 +862,7 @@ func ValidateMetricsReaderContract(t *testing.T, rows []Row) {
 		// This is implicitly validated since summaries return errors and are not included
 
 		// 10. All metrics must have required fields
-		requiredFields := []string{"scope_url", "scope_name", "description", "unit", "type"}
+		requiredFields := []string{"scope_url", "scope_name", "description", "unit"}
 		for _, field := range requiredFields {
 			assert.Contains(t, row, field, "Row %d missing required field %s", i, field)
 		}

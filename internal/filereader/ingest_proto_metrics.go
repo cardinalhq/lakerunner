@@ -200,7 +200,6 @@ func (r *IngestProtoMetricsReader) buildDatapointRow(rm pmetric.ResourceMetrics,
 	ret["_cardinalhq.name"] = metric.Name()
 	ret["description"] = metric.Description()
 	ret["unit"] = metric.Unit()
-	ret["type"] = metric.Type().String()
 
 	// Add CardinalHQ metric type field
 	switch metric.Type() {
