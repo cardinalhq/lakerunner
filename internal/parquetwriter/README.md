@@ -24,7 +24,7 @@ Schema-less Parquet writer with dynamic ordering, size-based splitting, and tele
 // Metrics (TID-grouped, no splits within TIDs)
 writer, err := factories.NewMetricsWriter("metrics", "/tmp", 50*1024*1024, 200.0)
 
-// Logs (timestamp-ordered, spillable sorting)  
+// Logs (timestamp-ordered, spillable sorting)
 writer, err := factories.NewLogsWriter("logs", "/tmp", 50*1024*1024, 150.0)
 
 // Traces (slot-grouped, start time ordered)
@@ -36,7 +36,7 @@ err = writer.Write(map[string]any{"field": "value", "count": int64(123)})
 // Finalize
 results, err := writer.Close(ctx)
 for _, result := range results {
-    fmt.Printf("File: %s, Records: %d, Metadata: %+v\n", 
+    fmt.Printf("File: %s, Records: %d, Metadata: %+v\n",
         result.FileName, result.RecordCount, result.Metadata)
 }
 ```
@@ -69,6 +69,6 @@ writer, err := factories.NewCustomWriter(config)
 
 ## Signal-Specific Metadata
 
-- **Metrics**: `MetricsFileStats{TIDCount, MinTID, MaxTID, TIDs[]}`  
+- **Metrics**: `MetricsFileStats{TIDCount, MinTID, MaxTID, TIDs[]}`
 - **Logs**: `LogsFileStats{FingerprintCount, FirstTS, LastTS, Fingerprints[]}`
 - **Traces**: `TracesFileStats{SlotID, SpanCount, TraceCount, FirstTS, LastTS, SpanIDs[], TraceIDs[]}`

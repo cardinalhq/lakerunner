@@ -379,7 +379,7 @@ func TestTranslatingReader_ReadBatched(t *testing.T) {
 	assert.Equal(t, 5, totalRows, "Should read exactly 5 rows in batches")
 }
 
-func TestTranslatingReader_RowCount(t *testing.T) {
+func TestTranslatingReader_TotalRowsReturned(t *testing.T) {
 	testData := []Row{
 		{"id": 1, "value": "a"},
 		{"id": 2, "value": "b"},
@@ -396,7 +396,7 @@ func TestTranslatingReader_RowCount(t *testing.T) {
 	defer reader.Close()
 
 	// Initially should have 0 rows
-	assert.Equal(t, int64(0), reader.RowCount())
+	assert.Equal(t, int64(0), reader.TotalRowsReturned())
 
 	// Read first batch
 	rows := make([]Row, 2)
@@ -406,7 +406,7 @@ func TestTranslatingReader_RowCount(t *testing.T) {
 	n, err := reader.Read(rows)
 	require.NoError(t, err)
 	assert.Equal(t, 2, n)
-	assert.Equal(t, int64(2), reader.RowCount())
+	assert.Equal(t, int64(2), reader.TotalRowsReturned())
 
 	// Read second batch
 	rows = make([]Row, 2)
@@ -416,7 +416,7 @@ func TestTranslatingReader_RowCount(t *testing.T) {
 	n, err = reader.Read(rows)
 	require.NoError(t, err)
 	assert.Equal(t, 2, n)
-	assert.Equal(t, int64(4), reader.RowCount())
+	assert.Equal(t, int64(4), reader.TotalRowsReturned())
 
 	// Read final batch
 	rows = make([]Row, 2)
@@ -424,9 +424,9 @@ func TestTranslatingReader_RowCount(t *testing.T) {
 		rows[i] = make(Row)
 	}
 	n, err = reader.Read(rows)
-	assert.Equal(t, 1, n)                        // Only 1 row left
-	require.NoError(t, err)                      // Should not be EOF yet, since we got 1 row
-	assert.Equal(t, int64(5), reader.RowCount()) // Total should be 5
+	assert.Equal(t, 1, n)                                 // Only 1 row left
+	require.NoError(t, err)                               // Should not be EOF yet, since we got 1 row
+	assert.Equal(t, int64(5), reader.TotalRowsReturned()) // Total should be 5
 
 	// Count should remain stable after EOF
 	rows = make([]Row, 1)
@@ -434,7 +434,7 @@ func TestTranslatingReader_RowCount(t *testing.T) {
 	n, err = reader.Read(rows)
 	assert.Equal(t, 0, n)
 	assert.True(t, errors.Is(err, io.EOF))
-	assert.Equal(t, int64(5), reader.RowCount()) // Should still be 5
+	assert.Equal(t, int64(5), reader.TotalRowsReturned()) // Should still be 5
 }
 
 func TestTranslatingReader_Close(t *testing.T) {

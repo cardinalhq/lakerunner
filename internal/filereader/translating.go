@@ -91,8 +91,8 @@ func (tr *TranslatingReader) Close() error {
 	return nil
 }
 
-// RowCount returns the total number of rows that have been successfully
-// read and translated by this reader.
-func (tr *TranslatingReader) RowCount() int64 {
+// TotalRowsReturned returns the total number of rows that have been successfully
+// returned via Read() after translation by this reader.
+func (tr *TranslatingReader) TotalRowsReturned() int64 {
 	return tr.rowCount
 }

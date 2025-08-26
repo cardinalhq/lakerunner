@@ -274,8 +274,8 @@ func (r *DiskSortingReader) Close() error {
 	return fileErr
 }
 
-// RowCount returns the number of rows that have been read.
-func (r *DiskSortingReader) RowCount() int64 {
+// TotalRowsReturned returns the number of rows that have been returned via Read().
+func (r *DiskSortingReader) TotalRowsReturned() int64 {
 	return r.rowCount
 }
 

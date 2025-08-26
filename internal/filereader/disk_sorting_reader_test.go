@@ -244,7 +244,7 @@ func (m *MockReader) Close() error {
 	return nil
 }
 
-func (m *MockReader) RowCount() int64 {
+func (m *MockReader) TotalRowsReturned() int64 {
 	return int64(m.currentIdx)
 }
 

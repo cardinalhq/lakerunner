@@ -467,6 +467,6 @@ func (d *delayedErrorReaderImpl) Close() error {
 	return nil
 }
 
-func (d *delayedErrorReaderImpl) RowCount() int64 {
+func (d *delayedErrorReaderImpl) TotalRowsReturned() int64 {
 	return d.rowCount
 }

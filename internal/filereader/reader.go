@@ -29,10 +29,10 @@ type Reader interface {
 	// Close releases any resources held by the reader.
 	Close() error
 
-	// RowCount returns the total number of rows that have been successfully
-	// read from this reader so far. This count should only include rows that
-	// were actually returned to the caller via Read().
-	RowCount() int64
+	// TotalRowsReturned returns the total number of rows that have been successfully
+	// returned via Read() calls from this reader so far. This count should only include
+	// rows that were actually provided to the caller via Read().
+	TotalRowsReturned() int64
 }
 
 // RowTranslator transforms rows from one format to another.

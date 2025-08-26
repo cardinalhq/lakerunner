@@ -358,7 +358,7 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 		}
 
 		// Get total rows read from the reader
-		fileRowsRead := reader.RowCount()
+		fileRowsRead := reader.TotalRowsReturned()
 
 		ll.Debug("File processing completed",
 			slog.String("objectID", inf.ObjectID),

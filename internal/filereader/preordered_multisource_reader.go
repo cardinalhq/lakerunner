@@ -217,7 +217,7 @@ func (or *PreorderedMultisourceReader) ActiveReaderCount() int {
 	return count
 }
 
-// RowCount returns the total number of rows that have been successfully read from all readers.
-func (or *PreorderedMultisourceReader) RowCount() int64 {
+// TotalRowsReturned returns the total number of rows that have been successfully returned via Read() from all readers.
+func (or *PreorderedMultisourceReader) TotalRowsReturned() int64 {
 	return or.rowCount
 }
