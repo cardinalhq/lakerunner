@@ -135,24 +135,22 @@ func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp stora
 	filenames := []string{tmpfilename}
 
 	// If the file is not in our `otel-raw` prefix, check if we can convert it
-	if strings.HasPrefix(inf.ObjectID, "otel-raw/") {
-		// Skip database files (these are processed outputs, not inputs)
-		if strings.HasPrefix(inf.ObjectID, "db/") {
-			// TODO add counter for skipped files in the db prefix
-			return nil
-		}
+	// Skip database files (these are processed outputs, not inputs)
+	if strings.HasPrefix(inf.ObjectID, "db/") {
+		// TODO add counter for skipped files in the db prefix
+		return nil
+	}
 
-		// Check file type and convert if supported
-		if fnames, err := convertFileIfSupported(ll, tmpfilename, tmpdir, inf.Bucket, inf.ObjectID, rpfEstimate); err != nil {
-			ll.Error("Failed to convert file", slog.Any("error", err))
-			// TODO add counter for failure to convert, probably in each convert function
-			return err
-		} else if len(fnames) == 0 {
-			ll.Info("Empty source file, skipping", slog.String("objectID", inf.ObjectID))
-			return nil
-		} else if fnames != nil {
-			filenames = fnames
-		}
+	// Check file type and convert if supported
+	if fnames, err := convertFileIfSupported(ll, tmpfilename, tmpdir, inf.Bucket, inf.ObjectID, rpfEstimate); err != nil {
+		ll.Error("Failed to convert file", slog.Any("error", err))
+		// TODO add counter for failure to convert, probably in each convert function
+		return err
+	} else if len(fnames) == 0 {
+		ll.Info("Empty source file, skipping", slog.String("objectID", inf.ObjectID))
+		return nil
+	} else if fnames != nil {
+		filenames = fnames
 	}
 
 	for _, fname := range filenames {
