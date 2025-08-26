@@ -28,12 +28,14 @@ type ProtoMetricsReader struct {
 	closed   bool
 	rowCount int64
 
-	// Pre-generated datapoint rows
-	datapointRows []map[string]any
-	currentIndex  int
-
 	// Store the original OTEL metrics for exemplar processing
 	otelMetrics *pmetric.Metrics
+
+	// Streaming iterator state for metrics
+	resourceIndex  int
+	scopeIndex     int
+	metricIndex    int
+	datapointIndex int
 }
 
 // NewProtoMetricsReader creates a new ProtoMetricsReader for the given io.Reader.
@@ -55,12 +57,9 @@ func NewProtoMetricsReaderFromMetrics(metrics *pmetric.Metrics) (*ProtoMetricsRe
 		return nil, fmt.Errorf("metrics cannot be nil")
 	}
 
-	protoReader := &ProtoMetricsReader{
+	return &ProtoMetricsReader{
 		otelMetrics: metrics,
-	}
-	protoReader.datapointRows = protoReader.generateDatapointRows(*metrics)
-
-	return protoReader, nil
+	}, nil
 }
 
 // Read populates the provided slice with as many rows as possible.
@@ -98,16 +97,52 @@ func (r *ProtoMetricsReader) Read(rows []Row) (int, error) {
 	return n, nil
 }
 
-// getMetricRow handles reading the next datapoint row from the pre-generated slice.
+// getMetricRow handles reading the next datapoint row using streaming iteration.
 func (r *ProtoMetricsReader) getMetricRow() (Row, error) {
-	if r.currentIndex >= len(r.datapointRows) {
+	if r.otelMetrics == nil {
 		return nil, io.EOF
 	}
 
-	row := r.datapointRows[r.currentIndex]
-	r.currentIndex++
+	// Iterator pattern: advance through resources -> scopes -> metrics -> datapoints
+	for r.resourceIndex < r.otelMetrics.ResourceMetrics().Len() {
+		rm := r.otelMetrics.ResourceMetrics().At(r.resourceIndex)
 
-	return r.processRow(row)
+		for r.scopeIndex < rm.ScopeMetrics().Len() {
+			sm := rm.ScopeMetrics().At(r.scopeIndex)
+
+			for r.metricIndex < sm.Metrics().Len() {
+				metric := sm.Metrics().At(r.metricIndex)
+				datapointCount := r.getDatapointCount(metric)
+
+				if r.datapointIndex < datapointCount {
+					// Build row for this datapoint
+					row := r.buildDatapointRow(rm, sm, metric, r.datapointIndex)
+
+					// Advance to next datapoint
+					r.datapointIndex++
+
+					return r.processRow(row)
+				}
+
+				// Move to next metric, reset datapoint index
+				r.metricIndex++
+				r.datapointIndex = 0
+			}
+
+			// Move to next scope, reset metric and datapoint indices
+			r.scopeIndex++
+			r.metricIndex = 0
+			r.datapointIndex = 0
+		}
+
+		// Move to next resource, reset scope, metric and datapoint indices
+		r.resourceIndex++
+		r.scopeIndex = 0
+		r.metricIndex = 0
+		r.datapointIndex = 0
+	}
+
+	return nil, io.EOF
 }
 
 // getDatapointCount returns the number of datapoints for a metric based on its type.
@@ -426,33 +461,6 @@ func (r *ProtoMetricsReader) processRow(row map[string]any) (Row, error) {
 	return Row(row), nil
 }
 
-// generateDatapointRows pre-generates all datapoint rows from the metrics.
-func (r *ProtoMetricsReader) generateDatapointRows(metrics pmetric.Metrics) []map[string]any {
-	var rows []map[string]any
-
-	// Iterate through resources -> scopes -> metrics -> datapoints
-	for resourceIndex := 0; resourceIndex < metrics.ResourceMetrics().Len(); resourceIndex++ {
-		rm := metrics.ResourceMetrics().At(resourceIndex)
-
-		for scopeIndex := 0; scopeIndex < rm.ScopeMetrics().Len(); scopeIndex++ {
-			sm := rm.ScopeMetrics().At(scopeIndex)
-
-			for metricIndex := 0; metricIndex < sm.Metrics().Len(); metricIndex++ {
-				metric := sm.Metrics().At(metricIndex)
-
-				// Generate rows for all datapoints in this metric
-				datapointCount := r.getDatapointCount(metric)
-				for datapointIndex := 0; datapointIndex < datapointCount; datapointIndex++ {
-					row := r.buildDatapointRow(rm, sm, metric, datapointIndex)
-					rows = append(rows, row)
-				}
-			}
-		}
-	}
-
-	return rows
-}
-
 // Close closes the reader and releases resources.
 func (r *ProtoMetricsReader) Close() error {
 	if r.closed {
@@ -461,7 +469,7 @@ func (r *ProtoMetricsReader) Close() error {
 	r.closed = true
 
 	// Release references to parsed data
-	r.datapointRows = nil
+	r.otelMetrics = nil
 
 	return nil
 }
