@@ -24,19 +24,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// mockAggregatingReader implements Reader interface for testing aggregation
-type mockAggregatingReader struct {
+// mockAggregatingMetricsReader implements Reader interface for testing aggregation
+type mockAggregatingMetricsReader struct {
 	rows     []Row
 	index    int
 	rowCount int64
 	closed   bool
 }
 
-func newMockAggregatingReader(rows []Row) *mockAggregatingReader {
-	return &mockAggregatingReader{rows: rows}
+func newMockAggregatingMetricsReader(rows []Row) *mockAggregatingMetricsReader {
+	return &mockAggregatingMetricsReader{rows: rows}
 }
 
-func (r *mockAggregatingReader) Read(rows []Row) (int, error) {
+func (r *mockAggregatingMetricsReader) Read(rows []Row) (int, error) {
 	if r.closed {
 		return 0, fmt.Errorf("reader is closed")
 	}
@@ -59,16 +59,16 @@ func (r *mockAggregatingReader) Read(rows []Row) (int, error) {
 	return n, nil
 }
 
-func (r *mockAggregatingReader) Close() error {
+func (r *mockAggregatingMetricsReader) Close() error {
 	r.closed = true
 	return nil
 }
 
-func (r *mockAggregatingReader) RowCount() int64 {
+func (r *mockAggregatingMetricsReader) RowCount() int64 {
 	return r.rowCount
 }
 
-func TestAggregatingReader_SingleSingleton(t *testing.T) {
+func TestAggregatingMetricsReader_SingleSingleton(t *testing.T) {
 	// Single singleton row - should pass through unchanged
 	inputRows := []Row{
 		{
@@ -84,8 +84,8 @@ func TestAggregatingReader_SingleSingleton(t *testing.T) {
 		},
 	}
 
-	mockReader := newMockAggregatingReader(inputRows)
-	aggregatingReader, err := NewAggregatingReader(mockReader, 10000) // 10s aggregation
+	mockReader := newMockAggregatingMetricsReader(inputRows)
+	aggregatingReader, err := NewAggregatingMetricsReader(mockReader, 10000) // 10s aggregation
 	require.NoError(t, err)
 	defer aggregatingReader.Close()
 
@@ -110,7 +110,7 @@ func TestAggregatingReader_SingleSingleton(t *testing.T) {
 	assert.Equal(t, 0, n)
 }
 
-func TestAggregatingReader_MultipleSingletons(t *testing.T) {
+func TestAggregatingMetricsReader_MultipleSingletons(t *testing.T) {
 	// Multiple singleton rows with same key - should be aggregated into sketch
 	inputRows := []Row{
 		{
@@ -131,8 +131,8 @@ func TestAggregatingReader_MultipleSingletons(t *testing.T) {
 		},
 	}
 
-	mockReader := newMockAggregatingReader(inputRows)
-	aggregatingReader, err := NewAggregatingReader(mockReader, 10000) // 10s aggregation
+	mockReader := newMockAggregatingMetricsReader(inputRows)
+	aggregatingReader, err := NewAggregatingMetricsReader(mockReader, 10000) // 10s aggregation
 	require.NoError(t, err)
 	defer aggregatingReader.Close()
 
@@ -160,7 +160,7 @@ func TestAggregatingReader_MultipleSingletons(t *testing.T) {
 	assert.NotEmpty(t, sketch)
 }
 
-func TestAggregatingReader_SketchAndSingletons(t *testing.T) {
+func TestAggregatingMetricsReader_SketchAndSingletons(t *testing.T) {
 	// Create a sketch with one value for testing
 	testSketch, err := ddsketch.NewDefaultDDSketch(0.01)
 	require.NoError(t, err)
@@ -198,8 +198,8 @@ func TestAggregatingReader_SketchAndSingletons(t *testing.T) {
 		},
 	}
 
-	mockReader := newMockAggregatingReader(inputRows)
-	aggregatingReader, err := NewAggregatingReader(mockReader, 10000) // 10s aggregation
+	mockReader := newMockAggregatingMetricsReader(inputRows)
+	aggregatingReader, err := NewAggregatingMetricsReader(mockReader, 10000) // 10s aggregation
 	require.NoError(t, err)
 	defer aggregatingReader.Close()
 
@@ -224,7 +224,7 @@ func TestAggregatingReader_SketchAndSingletons(t *testing.T) {
 	assert.NotEmpty(t, sketch)
 }
 
-func TestAggregatingReader_DifferentKeys(t *testing.T) {
+func TestAggregatingMetricsReader_DifferentKeys(t *testing.T) {
 	// Rows with different keys - should not be aggregated
 	inputRows := []Row{
 		{
@@ -261,8 +261,8 @@ func TestAggregatingReader_DifferentKeys(t *testing.T) {
 		},
 	}
 
-	mockReader := newMockAggregatingReader(inputRows)
-	aggregatingReader, err := NewAggregatingReader(mockReader, 10000) // 10s aggregation
+	mockReader := newMockAggregatingMetricsReader(inputRows)
+	aggregatingReader, err := NewAggregatingMetricsReader(mockReader, 10000) // 10s aggregation
 	require.NoError(t, err)
 	defer aggregatingReader.Close()
 
@@ -290,7 +290,7 @@ func TestAggregatingReader_DifferentKeys(t *testing.T) {
 	}
 }
 
-func TestAggregatingReader_InvalidRows(t *testing.T) {
+func TestAggregatingMetricsReader_InvalidRows(t *testing.T) {
 	// Rows with missing required fields - should be skipped
 	inputRows := []Row{
 		{
@@ -319,8 +319,8 @@ func TestAggregatingReader_InvalidRows(t *testing.T) {
 		},
 	}
 
-	mockReader := newMockAggregatingReader(inputRows)
-	aggregatingReader, err := NewAggregatingReader(mockReader, 10000)
+	mockReader := newMockAggregatingMetricsReader(inputRows)
+	aggregatingReader, err := NewAggregatingMetricsReader(mockReader, 10000)
 	require.NoError(t, err)
 	defer aggregatingReader.Close()
 
@@ -347,7 +347,7 @@ func TestAggregatingReader_InvalidRows(t *testing.T) {
 	assert.Equal(t, "disk.usage", allRows[1]["_cardinalhq.name"])
 }
 
-func TestAggregatingReader_TimestampTruncation(t *testing.T) {
+func TestAggregatingMetricsReader_TimestampTruncation(t *testing.T) {
 	// Test that timestamps are properly truncated to aggregation period
 	inputRows := []Row{
 		{
@@ -376,8 +376,8 @@ func TestAggregatingReader_TimestampTruncation(t *testing.T) {
 		},
 	}
 
-	mockReader := newMockAggregatingReader(inputRows)
-	aggregatingReader, err := NewAggregatingReader(mockReader, 10000) // 10s aggregation
+	mockReader := newMockAggregatingMetricsReader(inputRows)
+	aggregatingReader, err := NewAggregatingMetricsReader(mockReader, 10000) // 10s aggregation
 	require.NoError(t, err)
 	defer aggregatingReader.Close()
 
@@ -410,7 +410,7 @@ func TestAggregatingReader_TimestampTruncation(t *testing.T) {
 	assert.Equal(t, 95.0, allRows[1]["rollup_sum"])
 }
 
-func TestAggregatingReader_MultipleSketchesMerging(t *testing.T) {
+func TestAggregatingMetricsReader_MultipleSketchesMerging(t *testing.T) {
 	// Create two sketches with different values
 	sketch1, err := ddsketch.NewDefaultDDSketch(0.01)
 	require.NoError(t, err)
@@ -450,8 +450,8 @@ func TestAggregatingReader_MultipleSketchesMerging(t *testing.T) {
 		},
 	}
 
-	mockReader := newMockAggregatingReader(inputRows)
-	aggregatingReader, err := NewAggregatingReader(mockReader, 10000)
+	mockReader := newMockAggregatingMetricsReader(inputRows)
+	aggregatingReader, err := NewAggregatingMetricsReader(mockReader, 10000)
 	require.NoError(t, err)
 	defer aggregatingReader.Close()
 
@@ -523,7 +523,7 @@ func (r *mockEOFReader) RowCount() int64 {
 	return r.rowCount
 }
 
-func TestAggregatingReader_EOFWithData(t *testing.T) {
+func TestAggregatingMetricsReader_EOFWithData(t *testing.T) {
 	// Test the n>0 && io.EOF case: ensure last row is processed correctly
 	inputRows := []Row{
 		{
@@ -540,7 +540,7 @@ func TestAggregatingReader_EOFWithData(t *testing.T) {
 	}
 
 	mockReader := newMockEOFReader(inputRows)
-	aggregatingReader, err := NewAggregatingReader(mockReader, 10000)
+	aggregatingReader, err := NewAggregatingMetricsReader(mockReader, 10000)
 	require.NoError(t, err)
 	defer aggregatingReader.Close()
 
@@ -555,6 +555,51 @@ func TestAggregatingReader_EOFWithData(t *testing.T) {
 	assert.Equal(t, int64(12345), rows[0]["_cardinalhq.tid"])
 	assert.Equal(t, int64(10000), rows[0]["_cardinalhq.timestamp"])
 	assert.Equal(t, 75.0, rows[0]["rollup_sum"])
+
+	// Second read should return EOF
+	n, err = aggregatingReader.Read(rows)
+	assert.Equal(t, io.EOF, err)
+	assert.Equal(t, 0, n)
+}
+
+func TestAggregatingMetricsReader_DropHistogramWithoutSketch(t *testing.T) {
+	// Test that histogram rows without sketches are dropped
+	inputRows := []Row{
+		{
+			"_cardinalhq.name":      "http.request_duration",
+			"_cardinalhq.tid":       int64(12345),
+			"_cardinalhq.timestamp": int64(10500),
+			"type":                  "Histogram", // This is a histogram
+			"sketch":                []byte{},    // But has empty sketch - should be dropped
+			"rollup_sum":            75.0,
+			"rollup_count":          1.0,
+		},
+		{
+			"_cardinalhq.name":      "cpu.usage",
+			"_cardinalhq.tid":       int64(12345),
+			"_cardinalhq.timestamp": int64(10500),
+			"type":                  "Gauge",  // This is a gauge
+			"sketch":                []byte{}, // Empty sketch is OK for gauges
+			"rollup_sum":            50.0,
+			"rollup_count":          1.0,
+		},
+	}
+
+	mockReader := newMockAggregatingMetricsReader(inputRows)
+	aggregatingReader, err := NewAggregatingMetricsReader(mockReader, 10000) // 10s aggregation
+	require.NoError(t, err)
+	defer aggregatingReader.Close()
+
+	// Read the aggregated result
+	rows := make([]Row, 10)
+	n, err := aggregatingReader.Read(rows)
+	require.NoError(t, err)
+	assert.Equal(t, 1, n, "Should only return one row (gauge), histogram should be dropped")
+
+	// Verify only the gauge row was returned
+	assert.Equal(t, "cpu.usage", rows[0]["_cardinalhq.name"])
+	assert.Equal(t, "Gauge", rows[0]["type"])
+	assert.Equal(t, 50.0, rows[0]["rollup_sum"])
 
 	// Second read should return EOF
 	n, err = aggregatingReader.Read(rows)

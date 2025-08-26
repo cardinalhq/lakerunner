@@ -295,10 +295,10 @@ func compactMetricInterval(
 
 	// Wrap with aggregating reader to merge duplicates during compaction
 	// Use the same frequency as the work item for aggregation
-	aggregatingReader, err := filereader.NewAggregatingReader(orderedReader, int64(inf.FrequencyMs()))
+	aggregatingReader, err := filereader.NewAggregatingMetricsReader(orderedReader, int64(inf.FrequencyMs()))
 	if err != nil {
-		ll.Error("Failed to create aggregating reader", slog.Any("error", err))
-		return fmt.Errorf("creating aggregating reader: %w", err)
+		ll.Error("Failed to create aggregating metrics reader", slog.Any("error", err))
+		return fmt.Errorf("creating aggregating metrics reader: %w", err)
 	}
 	defer aggregatingReader.Close()
 

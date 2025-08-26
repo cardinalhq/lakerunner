@@ -51,7 +51,7 @@ func TestMemorySortingReader_SortsByKey(t *testing.T) {
 		},
 	}
 
-	mockReader := newMockAggregatingReader(inputRows)
+	mockReader := NewMockReader(inputRows)
 	sortingReader, err := NewMemorySortingReader(mockReader, MetricNameTidTimestampSort())
 	require.NoError(t, err)
 	defer sortingReader.Close()
@@ -94,7 +94,7 @@ func TestMemorySortingReader_SortsByKey(t *testing.T) {
 }
 
 func TestMemorySortingReader_EmptyInput(t *testing.T) {
-	mockReader := newMockAggregatingReader([]Row{})
+	mockReader := NewMockReader([]Row{})
 	sortingReader, err := NewMemorySortingReader(mockReader, MetricNameTidTimestampSort())
 	require.NoError(t, err)
 	defer sortingReader.Close()
@@ -128,7 +128,7 @@ func TestMemorySortingReader_MissingFields(t *testing.T) {
 		},
 	}
 
-	mockReader := newMockAggregatingReader(inputRows)
+	mockReader := NewMockReader(inputRows)
 	sortingReader, err := NewMemorySortingReader(mockReader, MetricNameTidTimestampSort())
 	require.NoError(t, err)
 	defer sortingReader.Close()
@@ -207,7 +207,7 @@ func TestMemorySortingReader_CustomSortFunction(t *testing.T) {
 		return 0
 	}
 
-	mockReader := newMockAggregatingReader(inputRows)
+	mockReader := NewMockReader(inputRows)
 	sortingReader, err := NewMemorySortingReader(mockReader, customSortFunc)
 	require.NoError(t, err)
 	defer sortingReader.Close()
@@ -252,7 +252,7 @@ func TestMemorySortingReader_TimestampOnlySort(t *testing.T) {
 		},
 	}
 
-	mockReader := newMockAggregatingReader(inputRows)
+	mockReader := NewMockReader(inputRows)
 	sortingReader, err := NewMemorySortingReader(mockReader, TimestampSort())
 	require.NoError(t, err)
 	defer sortingReader.Close()
