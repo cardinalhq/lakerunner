@@ -25,9 +25,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cardinalhq/oteltools/signalbuilder"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 )
 
@@ -399,55 +399,108 @@ func TestParseProtoToOtelLogs_ReadError(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to read data")
 }
 
-// Helper function to create synthetic log data
+// Helper function to create synthetic log data using signalbuilder
 func createSyntheticLogData() []byte {
-	logs := plog.NewLogs()
+	builder := signalbuilder.NewLogBuilder()
 
-	// Create a resource log
-	resourceLog := logs.ResourceLogs().AppendEmpty()
-
-	// Add resource attributes
-	resourceLog.Resource().Attributes().PutStr("service.name", "test-log-service")
-	resourceLog.Resource().Attributes().PutStr("service.version", "2.0.0")
-	resourceLog.Resource().Attributes().PutStr("deployment.environment", "test")
-
-	// Create scope logs
-	scopeLog := resourceLog.ScopeLogs().AppendEmpty()
-	scopeLog.Scope().SetName("test-logger")
-	scopeLog.Scope().SetVersion("1.0.0")
-	scopeLog.Scope().Attributes().PutStr("logger.type", "structured")
-
-	// Create log records with different severity levels
-	severities := []struct {
-		text   string
-		number plog.SeverityNumber
-		body   string
-	}{
-		{"DEBUG", plog.SeverityNumberDebug, "Debug message for testing"},
-		{"INFO", plog.SeverityNumberInfo, "Info message with details"},
-		{"WARN", plog.SeverityNumberWarn, "Warning about potential issue"},
-		{"ERROR", plog.SeverityNumberError, "Error occurred during processing"},
-		{"FATAL", plog.SeverityNumberFatal, "Fatal error - system shutdown"},
+	// Define resource attributes
+	resourceAttrs := map[string]any{
+		"service.name":           "test-log-service",
+		"service.version":        "2.0.0",
+		"deployment.environment": "test",
 	}
 
-	baseTime := time.Now()
-	for i, sev := range severities {
-		logRecord := scopeLog.LogRecords().AppendEmpty()
-		logRecord.Body().SetStr(sev.body)
-		logRecord.SetSeverityText(sev.text)
-		logRecord.SetSeverityNumber(sev.number)
-		logRecord.SetTimestamp(pcommon.NewTimestampFromTime(baseTime.Add(time.Duration(i) * time.Second)))
-		logRecord.SetObservedTimestamp(pcommon.NewTimestampFromTime(baseTime.Add(time.Duration(i) * time.Second)))
-
-		// Add log-specific attributes
-		logRecord.Attributes().PutStr("log.level", sev.text)
-		logRecord.Attributes().PutStr("log.source", fmt.Sprintf("test-component-%d", i))
-		logRecord.Attributes().PutInt("log.sequence", int64(i+1))
+	// Create scope logs with different severity levels
+	scopeLogs := []signalbuilder.ScopeLogs{
+		{
+			Name:    "test-logger",
+			Version: "1.0.0",
+			Attributes: map[string]any{
+				"logger.type": "structured",
+			},
+			LogRecords: []signalbuilder.LogRecord{
+				{
+					Timestamp:         time.Now().UnixNano(),
+					ObservedTimestamp: time.Now().UnixNano(),
+					SeverityText:      "DEBUG",
+					SeverityNumber:    int32(plog.SeverityNumberDebug),
+					Body:              "Debug message for testing",
+					Attributes: map[string]any{
+						"log.level":    "DEBUG",
+						"log.source":   "test-component-0",
+						"log.sequence": int64(1),
+					},
+				},
+				{
+					Timestamp:         time.Now().Add(time.Second).UnixNano(),
+					ObservedTimestamp: time.Now().Add(time.Second).UnixNano(),
+					SeverityText:      "INFO",
+					SeverityNumber:    int32(plog.SeverityNumberInfo),
+					Body:              "Info message with details",
+					Attributes: map[string]any{
+						"log.level":    "INFO",
+						"log.source":   "test-component-1",
+						"log.sequence": int64(2),
+					},
+				},
+				{
+					Timestamp:         time.Now().Add(2 * time.Second).UnixNano(),
+					ObservedTimestamp: time.Now().Add(2 * time.Second).UnixNano(),
+					SeverityText:      "WARN",
+					SeverityNumber:    int32(plog.SeverityNumberWarn),
+					Body:              "Warning about potential issue",
+					Attributes: map[string]any{
+						"log.level":    "WARN",
+						"log.source":   "test-component-2",
+						"log.sequence": int64(3),
+					},
+				},
+				{
+					Timestamp:         time.Now().Add(3 * time.Second).UnixNano(),
+					ObservedTimestamp: time.Now().Add(3 * time.Second).UnixNano(),
+					SeverityText:      "ERROR",
+					SeverityNumber:    int32(plog.SeverityNumberError),
+					Body:              "Error occurred during processing",
+					Attributes: map[string]any{
+						"log.level":    "ERROR",
+						"log.source":   "test-component-3",
+						"log.sequence": int64(4),
+					},
+				},
+				{
+					Timestamp:         time.Now().Add(4 * time.Second).UnixNano(),
+					ObservedTimestamp: time.Now().Add(4 * time.Second).UnixNano(),
+					SeverityText:      "FATAL",
+					SeverityNumber:    int32(plog.SeverityNumberFatal),
+					Body:              "Fatal error - system shutdown",
+					Attributes: map[string]any{
+						"log.level":    "FATAL",
+						"log.source":   "test-component-4",
+						"log.sequence": int64(5),
+					},
+				},
+			},
+		},
 	}
 
-	// Marshal to protobuf
+	// Add the resource with scope logs
+	resourceLogs := &signalbuilder.ResourceLogs{
+		Resource:  resourceAttrs,
+		ScopeLogs: scopeLogs,
+	}
+
+	err := builder.Add(resourceLogs)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to add resource logs: %v", err))
+	}
+
+	// Build and marshal to protobuf
+	logs := builder.Build()
 	marshaler := &plog.ProtoMarshaler{}
-	data, _ := marshaler.MarshalLogs(logs)
+	data, err := marshaler.MarshalLogs(logs)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to marshal logs: %v", err))
+	}
 	return data
 }
 
@@ -566,4 +619,276 @@ func TestProtoLogsReader_SyntheticDataFields(t *testing.T) {
 	assert.Equal(t, 1, severityNumbers[int32(plog.SeverityNumberWarn)], "Should have 1 WARN severity number")
 	assert.Equal(t, 1, severityNumbers[int32(plog.SeverityNumberError)], "Should have 1 ERROR severity number")
 	assert.Equal(t, 1, severityNumbers[int32(plog.SeverityNumberFatal)], "Should have 1 FATAL severity number")
+}
+
+// Test ProtoLogsReader with structured Go-based synthetic data
+func TestProtoLogsReader_SyntheticStructuredData(t *testing.T) {
+	builder := signalbuilder.NewLogBuilder()
+
+	// Use Go struct instead of YAML to avoid parsing ambiguity
+	resourceLogs := &signalbuilder.ResourceLogs{
+		Resource: map[string]any{
+			"service.name":           "structured-test-service",
+			"service.version":        "3.1.4",
+			"deployment.environment": "integration",
+			"host.name":              "test-host-01",
+		},
+		ScopeLogs: []signalbuilder.ScopeLogs{
+			{
+				Name:    "structured-logger",
+				Version: "2.1.0",
+				Attributes: map[string]any{
+					"logger.framework": "slog",
+					"logger.output":    "json",
+				},
+				LogRecords: []signalbuilder.LogRecord{
+					{
+						Timestamp:         1640995200000000000,
+						ObservedTimestamp: 1640995200100000000,
+						SeverityText:      "TRACE",
+						SeverityNumber:    int32(plog.SeverityNumberTrace),
+						Body:              "Detailed trace information for debugging",
+						Attributes: map[string]any{
+							"trace_id":    "abc123def456",
+							"user_id":     "user-001",
+							"operation":   "data_fetch",
+							"duration_ms": int64(45), // Explicit int64 to avoid ambiguity
+						},
+					},
+					{
+						Timestamp:         1640995201000000000,
+						ObservedTimestamp: 1640995201100000000,
+						SeverityText:      "INFO",
+						SeverityNumber:    int32(plog.SeverityNumberInfo),
+						Body:              "User authentication successful",
+						Attributes: map[string]any{
+							"user_id":     "user-001",
+							"auth_method": "oauth2",
+							"session_id":  "sess_987654321",
+						},
+					},
+					{
+						Timestamp:         1640995202000000000,
+						ObservedTimestamp: 1640995202100000000,
+						SeverityText:      "WARN",
+						SeverityNumber:    int32(plog.SeverityNumberWarn),
+						Body:              "Rate limit approaching for API endpoint",
+						Attributes: map[string]any{
+							"endpoint":     "/api/v1/data",
+							"current_rate": int64(950),  // Explicit int64
+							"rate_limit":   int64(1000), // Explicit int64
+							"client_ip":    "192.168.1.100",
+						},
+					},
+					{
+						Timestamp:         1640995203000000000,
+						ObservedTimestamp: 1640995203100000000,
+						SeverityText:      "ERROR",
+						SeverityNumber:    int32(plog.SeverityNumberError),
+						Body:              "Database connection failed",
+						Attributes: map[string]any{
+							"database":        "primary_db",
+							"connection_pool": "pool_1",
+							"retry_count":     int64(3), // Explicit int64
+							"error_code":      "CONNECTION_TIMEOUT",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	err := builder.Add(resourceLogs)
+	require.NoError(t, err, "Should successfully add structured resource logs")
+
+	logs := builder.Build()
+	marshaler := &plog.ProtoMarshaler{}
+	data, err := marshaler.MarshalLogs(logs)
+	require.NoError(t, err, "Should successfully marshal logs to protobuf")
+
+	// Test ProtoLogsReader with this structured data
+	reader := bytes.NewReader(data)
+	protoReader, err := NewProtoLogsReader(reader)
+	require.NoError(t, err)
+	require.NotNil(t, protoReader)
+	defer protoReader.Close()
+
+	// Read all rows from structured data
+	allRows, err := readAllRows(protoReader)
+	require.NoError(t, err)
+	require.Equal(t, 4, len(allRows), "Should read exactly 4 log rows from structured data")
+
+	// Verify structured-specific data
+	expectedBodies := []string{
+		"Detailed trace information for debugging",
+		"User authentication successful",
+		"Rate limit approaching for API endpoint",
+		"Database connection failed",
+	}
+
+	expectedSeverities := []string{"TRACE", "INFO", "WARN", "ERROR"}
+
+	for i, row := range allRows {
+		t.Run(fmt.Sprintf("structured_log_%d", i), func(t *testing.T) {
+			// Check basic log fields
+			assert.Equal(t, expectedBodies[i], row["_cardinalhq.message"], "Structured log body should match")
+			assert.Equal(t, expectedSeverities[i], row["_cardinalhq.level"], "Structured severity should match")
+
+			// Check resource attributes from structured data
+			assert.Equal(t, "structured-test-service", row["resource.service.name"])
+			assert.Equal(t, "3.1.4", row["resource.service.version"])
+			assert.Equal(t, "integration", row["resource.deployment.environment"])
+			assert.Equal(t, "test-host-01", row["resource.host.name"])
+
+			// Check scope attributes from structured data
+			assert.Equal(t, "slog", row["scope.logger.framework"])
+			assert.Equal(t, "json", row["scope.logger.output"])
+
+			// Check log-specific attributes from structured data with proper types
+			switch i {
+			case 0: // TRACE log
+				assert.Equal(t, "abc123def456", row["log.trace_id"])
+				assert.Equal(t, "user-001", row["log.user_id"])
+				assert.Equal(t, "data_fetch", row["log.operation"])
+				// OTEL attribute processing may convert numbers to strings regardless of input type
+				t.Logf("duration_ms type: %T, value: %v", row["log.duration_ms"], row["log.duration_ms"])
+				assert.Contains(t, []any{int64(45), "45"}, row["log.duration_ms"])
+			case 1: // INFO log
+				assert.Equal(t, "user-001", row["log.user_id"])
+				assert.Equal(t, "oauth2", row["log.auth_method"])
+				assert.Equal(t, "sess_987654321", row["log.session_id"])
+			case 2: // WARN log
+				assert.Equal(t, "/api/v1/data", row["log.endpoint"])
+				// OTEL attribute processing may convert numbers to strings regardless of input type
+				assert.Contains(t, []any{int64(950), "950"}, row["log.current_rate"])
+				assert.Contains(t, []any{int64(1000), "1000"}, row["log.rate_limit"])
+				assert.Equal(t, "192.168.1.100", row["log.client_ip"])
+			case 3: // ERROR log
+				assert.Equal(t, "primary_db", row["log.database"])
+				assert.Equal(t, "pool_1", row["log.connection_pool"])
+				// OTEL attribute processing may convert numbers to strings regardless of input type
+				assert.Contains(t, []any{int64(3), "3"}, row["log.retry_count"])
+				assert.Equal(t, "CONNECTION_TIMEOUT", row["log.error_code"])
+			}
+		})
+	}
+
+	t.Logf("Successfully read %d structured log rows", len(allRows))
+}
+
+// Test ProtoLogsReader with multi-resource synthetic data
+func TestProtoLogsReader_MultiResourceSyntheticData(t *testing.T) {
+	builder := signalbuilder.NewLogBuilder()
+
+	// Add logs from multiple services/resources
+	resources := []struct {
+		name   string
+		attrs  map[string]any
+		scopes []signalbuilder.ScopeLogs
+	}{
+		{
+			name: "web-service",
+			attrs: map[string]any{
+				"service.name":    "web-frontend",
+				"service.version": "1.2.3",
+				"environment":     "production",
+			},
+			scopes: []signalbuilder.ScopeLogs{
+				{
+					Name:    "http-logger",
+					Version: "1.0.0",
+					LogRecords: []signalbuilder.LogRecord{
+						{
+							Timestamp:      time.Now().UnixNano(),
+							SeverityText:   "INFO",
+							SeverityNumber: int32(plog.SeverityNumberInfo),
+							Body:           "HTTP request processed",
+							Attributes:     map[string]any{"method": "GET", "status": 200, "path": "/api/users"},
+						},
+						{
+							Timestamp:      time.Now().Add(time.Second).UnixNano(),
+							SeverityText:   "ERROR",
+							SeverityNumber: int32(plog.SeverityNumberError),
+							Body:           "HTTP request failed",
+							Attributes:     map[string]any{"method": "POST", "status": 500, "path": "/api/orders"},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "database-service",
+			attrs: map[string]any{
+				"service.name":    "postgres-db",
+				"service.version": "13.7",
+				"environment":     "production",
+			},
+			scopes: []signalbuilder.ScopeLogs{
+				{
+					Name:    "db-logger",
+					Version: "2.0.0",
+					LogRecords: []signalbuilder.LogRecord{
+						{
+							Timestamp:      time.Now().Add(2 * time.Second).UnixNano(),
+							SeverityText:   "DEBUG",
+							SeverityNumber: int32(plog.SeverityNumberDebug),
+							Body:           "Query executed successfully",
+							Attributes:     map[string]any{"query": "SELECT * FROM users", "duration": "15ms"},
+						},
+						{
+							Timestamp:      time.Now().Add(3 * time.Second).UnixNano(),
+							SeverityText:   "WARN",
+							SeverityNumber: int32(plog.SeverityNumberWarn),
+							Body:           "Slow query detected",
+							Attributes:     map[string]any{"query": "SELECT * FROM orders", "duration": "2500ms"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Add each resource to the builder
+	for _, res := range resources {
+		resourceLogs := &signalbuilder.ResourceLogs{
+			Resource:  res.attrs,
+			ScopeLogs: res.scopes,
+		}
+		err := builder.Add(resourceLogs)
+		require.NoError(t, err, "Should add resource logs for %s", res.name)
+	}
+
+	// Build and test
+	logs := builder.Build()
+	marshaler := &plog.ProtoMarshaler{}
+	data, err := marshaler.MarshalLogs(logs)
+	require.NoError(t, err)
+
+	reader := bytes.NewReader(data)
+	protoReader, err := NewProtoLogsReader(reader)
+	require.NoError(t, err)
+	defer protoReader.Close()
+
+	// Should read logs from both resources (4 total)
+	allRows, err := readAllRows(protoReader)
+	require.NoError(t, err)
+	require.Equal(t, 4, len(allRows), "Should read logs from both services")
+
+	// Count logs by service
+	webLogs := 0
+	dbLogs := 0
+	for _, row := range allRows {
+		serviceName := row["resource.service.name"].(string)
+		switch serviceName {
+		case "web-frontend":
+			webLogs++
+		case "postgres-db":
+			dbLogs++
+		}
+	}
+
+	assert.Equal(t, 2, webLogs, "Should have 2 logs from web service")
+	assert.Equal(t, 2, dbLogs, "Should have 2 logs from database service")
+
+	t.Logf("Successfully read %d logs from %d services", len(allRows), len(resources))
 }
