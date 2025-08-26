@@ -43,7 +43,7 @@
 //
 // All format readers return raw, untransformed data from files:
 //
-//   - ParquetReader: Generic Parquet files using parquet-go/parquet-go (requires io.ReaderAt)
+//   - PresortedParquetRawReader: Generic Parquet files using parquet-go/parquet-go (requires io.ReaderAt)
 //   - JSONLinesReader: Streams JSON objects line-by-line from any io.ReadCloser
 //   - ProtoLogsReader: Raw OTEL log records from protobuf
 //   - IngestProtoMetricsReader: Raw OTEL metric data points from protobuf (ingestion only)
@@ -134,8 +134,8 @@
 // Time-ordered merge sort across multiple files:
 //
 //	readers := []Reader{
-//	    NewParquetReader(file1, size1),
-//	    NewParquetReader(file2, size2),
+//	    NewPresortedParquetRawReader(file1, size1),
+//	    NewPresortedParquetRawReader(file2, size2),
 //	    NewJSONLinesReader(file3),
 //	}
 //

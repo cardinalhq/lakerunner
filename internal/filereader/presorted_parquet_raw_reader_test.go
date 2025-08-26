@@ -65,8 +65,8 @@ func (m *MockParquetGenericReader) Close() error {
 	return nil
 }
 
-// TestParquetReaderEOFWithMock tests the n>0 && io.EOF case using a mock
-func TestParquetReaderEOFWithMock(t *testing.T) {
+// TestPresortedParquetRawReaderEOFWithMock tests the n>0 && io.EOF case using a mock
+func TestPresortedParquetRawReaderEOFWithMock(t *testing.T) {
 	// Create mock data
 	testData := []map[string]any{
 		{"id": int64(1), "name": "first"},
@@ -74,7 +74,7 @@ func TestParquetReaderEOFWithMock(t *testing.T) {
 		{"id": int64(3), "name": "last"},
 	}
 
-	// Create a ParquetReader with our mock
+	// Create a PresortedParquetRawReader with our mock
 	mockReader := &MockParquetGenericReader{data: testData}
 
 	// We can't easily replace the internal parquet reader, so let's test the logic directly
@@ -83,13 +83,13 @@ func TestParquetReaderEOFWithMock(t *testing.T) {
 	var collectedRows []map[string]any
 
 	for {
-		// Simulate ParquetReader.GetRow() logic
+		// Simulate PresortedParquetRawReader.GetRow() logic
 		rows := make([]map[string]any, 1)
 		rows[0] = make(map[string]any)
 
 		n, err := mockReader.Read(rows)
 
-		// This is the exact logic from our ParquetReader.GetRow()
+		// This is the exact logic from our PresortedParquetRawReader.GetRow()
 		if n == 1 {
 			row := rows[0]
 			collectedRows = append(collectedRows, row)
@@ -122,8 +122,8 @@ func TestParquetReaderEOFWithMock(t *testing.T) {
 	assert.Equal(t, "last", collectedRows[2]["name"])
 }
 
-// TestParquetReaderSingleRowWithEOF tests the edge case of a single row + EOF
-func TestParquetReaderSingleRowWithEOF(t *testing.T) {
+// TestPresortedParquetRawReaderSingleRowWithEOF tests the edge case of a single row + EOF
+func TestPresortedParquetRawReaderSingleRowWithEOF(t *testing.T) {
 	testData := []map[string]any{
 		{"only": "data"},
 	}
@@ -148,8 +148,8 @@ func TestParquetReaderSingleRowWithEOF(t *testing.T) {
 	assert.True(t, errors.Is(err, io.EOF))
 }
 
-// TestParquetReaderEmptyData tests EOF handling with no data
-func TestParquetReaderEmptyData(t *testing.T) {
+// TestPresortedParquetRawReaderEmptyData tests EOF handling with no data
+func TestPresortedParquetRawReaderEmptyData(t *testing.T) {
 	testData := []map[string]any{} // Empty data
 
 	mockReader := &MockParquetGenericReader{data: testData}
@@ -163,8 +163,8 @@ func TestParquetReaderEmptyData(t *testing.T) {
 	assert.True(t, errors.Is(err, io.EOF))
 }
 
-// TestParquetReaderNumRows tests the NumRows functionality
-func TestParquetReaderNumRows(t *testing.T) {
+// TestPresortedParquetRawReaderNumRows tests the NumRows functionality
+func TestPresortedParquetRawReaderNumRows(t *testing.T) {
 	testData := []map[string]any{
 		{"id": int64(1)},
 		{"id": int64(2)},
@@ -201,8 +201,8 @@ func TestParquetReaderNumRows(t *testing.T) {
 	}
 }
 
-// TestParquetReaderWithRealFile tests ParquetReader with actual parquet files
-func TestParquetReaderWithRealFile(t *testing.T) {
+// TestPresortedParquetRawReaderWithRealFile tests PresortedParquetRawReader with actual parquet files
+func TestPresortedParquetRawReaderWithRealFile(t *testing.T) {
 	file, err := os.Open("../../testdata/logs/logs-cooked-0001.parquet")
 	require.NoError(t, err)
 	defer file.Close()
@@ -210,7 +210,7 @@ func TestParquetReaderWithRealFile(t *testing.T) {
 	stat, err := file.Stat()
 	require.NoError(t, err)
 
-	reader, err := NewParquetReader(file, stat.Size())
+	reader, err := NewPresortedParquetRawReader(file, stat.Size())
 	require.NoError(t, err)
 	defer reader.Close()
 
@@ -240,8 +240,8 @@ func TestParquetReaderWithRealFile(t *testing.T) {
 	assert.Equal(t, int64(32), rowCount, "Should read exactly 32 rows from logs-cooked-0001.parquet")
 }
 
-// TestParquetReaderMultipleFiles tests ParquetReader with different files
-func TestParquetReaderMultipleFiles(t *testing.T) {
+// TestPresortedParquetRawReaderMultipleFiles tests PresortedParquetRawReader with different files
+func TestPresortedParquetRawReaderMultipleFiles(t *testing.T) {
 	testFiles := map[string]int64{
 		"../../testdata/logs/logs-cooked-0001.parquet":       32,   // 32 rows
 		"../../testdata/metrics/metrics-cooked-0001.parquet": 211,  // 211 rows
@@ -257,7 +257,7 @@ func TestParquetReaderMultipleFiles(t *testing.T) {
 			stat, err := file.Stat()
 			require.NoError(t, err)
 
-			reader, err := NewParquetReader(file, stat.Size())
+			reader, err := NewPresortedParquetRawReader(file, stat.Size())
 			require.NoError(t, err)
 			defer reader.Close()
 
@@ -289,8 +289,8 @@ func TestParquetReaderMultipleFiles(t *testing.T) {
 	}
 }
 
-// TestParquetReaderClose tests proper cleanup
-func TestParquetReaderClose(t *testing.T) {
+// TestPresortedParquetRawReaderClose tests proper cleanup
+func TestPresortedParquetRawReaderClose(t *testing.T) {
 	file, err := os.Open("../../testdata/logs/logs-cooked-0001.parquet")
 	require.NoError(t, err)
 	defer file.Close()
@@ -298,7 +298,7 @@ func TestParquetReaderClose(t *testing.T) {
 	stat, err := file.Stat()
 	require.NoError(t, err)
 
-	reader, err := NewParquetReader(file, stat.Size())
+	reader, err := NewPresortedParquetRawReader(file, stat.Size())
 	require.NoError(t, err)
 
 	// Should be able to read before closing
@@ -319,7 +319,7 @@ func TestParquetReaderClose(t *testing.T) {
 	assert.Contains(t, err.Error(), "closed")
 }
 
-func TestParquetReader_SpecificProblemFile(t *testing.T) {
+func TestPresortedParquetRawReader_SpecificProblemFile(t *testing.T) {
 	// Test the specific file that's failing in production
 	filename := "../../testdata/logs/logs_1747427310000_667024137.parquet"
 
@@ -370,8 +370,8 @@ func (t *testTranslator) TranslateRow(row *Row) error {
 	return nil
 }
 
-func TestParquetReader_WithTranslator(t *testing.T) {
-	// Test ParquetReader with TranslatingReader using the problem file
+func TestPresortedParquetRawReader_WithTranslator(t *testing.T) {
+	// Test PresortedParquetRawReader with TranslatingReader using the problem file
 	filename := "../../testdata/logs/logs_1747427310000_667024137.parquet"
 
 	// Create base parquet reader
@@ -393,7 +393,7 @@ func TestParquetReader_WithTranslator(t *testing.T) {
 	}
 
 	n, err := reader.Read(rows)
-	t.Logf("TranslatingReader with ParquetReader: n=%d, err=%v", n, err)
+	t.Logf("TranslatingReader with PresortedParquetRawReader: n=%d, err=%v", n, err)
 
 	if err != nil && err != io.EOF {
 		t.Fatalf("Read failed: %v", err)
