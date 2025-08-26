@@ -19,7 +19,6 @@ import (
 	"io"
 	"os"
 	"slices"
-	"strings"
 
 	cbor2 "github.com/fxamacker/cbor/v2"
 
@@ -27,24 +26,38 @@ import (
 )
 
 // RowIndex represents a lightweight pointer to a CBOR-encoded row in the temp file.
+// It stores only the extracted sort key plus file location info.
 type RowIndex struct {
-	MetricName string
-	TID        int64
-	Timestamp  int64
+	SortKey    any // Extracted sort key for sorting
 	FileOffset int64
 	ByteLength int32
 }
 
 // DiskSortingReader reads all rows from an underlying reader, CBOR-encodes them to a temp file,
-// sorts by index, then returns them in sorted order. This provides memory-efficient sorting
-// for large datasets that don't fit in RAM. See the internal/cbor package for CBOR type behavior.
+// sorts by index using a custom sort function, then returns them in sorted order.
+// This provides memory-efficient sorting for large datasets that don't fit in RAM.
+//
+// SortKeyFunc extracts sort keys from rows. Return the key that will be passed to your SortFunc.
+// The sort key should contain only the data needed for comparison to minimize memory usage.
+type SortKeyFunc func(row Row) any
+
+// Memory Impact: LOW-MODERATE - Only stores extracted sort keys in memory plus file offsets.
+//
+//	Much more memory-efficient than MemorySortingReader for large datasets.
+//
+// Disk I/O: 2x data size - Each row written once to temp CBOR file, then read once during output
+// Stability: Records are only guaranteed to be sorted by the sort function;
+//
+//	if the sort function is not stable, the result will not be stable
 type DiskSortingReader struct {
-	reader     Reader
-	tempFile   *os.File
-	encoder    *cbor2.Encoder
-	cborConfig *cbor.Config
-	closed     bool
-	rowCount   int64
+	reader      Reader
+	sortKeyFunc SortKeyFunc
+	sortFunc    func(a, b any) int // Sort function works on extracted keys, not full rows
+	tempFile    *os.File
+	encoder     *cbor2.Encoder
+	cborConfig  *cbor.Config
+	closed      bool
+	rowCount    int64
 
 	// Lightweight sorted indices pointing to CBOR data
 	indices      []RowIndex
@@ -53,9 +66,22 @@ type DiskSortingReader struct {
 }
 
 // NewDiskSortingReader creates a reader that uses disk-based sorting with CBOR encoding.
-func NewDiskSortingReader(reader Reader) (*DiskSortingReader, error) {
+//
+// Use this for large datasets that may not fit in memory. The temp file is automatically
+// cleaned up when the reader is closed. CBOR encoding provides compact storage and
+// fast serialization for the temporary data.
+//
+// The sortKeyFunc extracts sort keys from rows to minimize memory usage during sorting.
+// The sortFunc compares the extracted keys (not full rows) and should return -1, 0, or 1.
+func NewDiskSortingReader(reader Reader, sortKeyFunc SortKeyFunc, sortFunc func(a, b any) int) (*DiskSortingReader, error) {
 	if reader == nil {
 		return nil, fmt.Errorf("reader cannot be nil")
+	}
+	if sortKeyFunc == nil {
+		return nil, fmt.Errorf("sortKeyFunc cannot be nil")
+	}
+	if sortFunc == nil {
+		return nil, fmt.Errorf("sortFunc cannot be nil")
 	}
 
 	// Create temp file for CBOR data
@@ -73,11 +99,13 @@ func NewDiskSortingReader(reader Reader) (*DiskSortingReader, error) {
 	}
 
 	return &DiskSortingReader{
-		reader:     reader,
-		tempFile:   tempFile,
-		encoder:    cborConfig.NewEncoder(tempFile),
-		cborConfig: cborConfig,
-		indices:    make([]RowIndex, 0, 1000), // Start with reasonable capacity
+		reader:      reader,
+		sortKeyFunc: sortKeyFunc,
+		sortFunc:    sortFunc,
+		tempFile:    tempFile,
+		encoder:     cborConfig.NewEncoder(tempFile),
+		cborConfig:  cborConfig,
+		indices:     make([]RowIndex, 0, 1000), // Start with reasonable capacity
 	}, nil
 }
 
@@ -108,30 +136,9 @@ func (r *DiskSortingReader) writeAndIndexAllRows() error {
 		}
 	}
 
-	// Sort indices by [metric_name, tid, timestamp]
+	// Sort indices using the provided sort function
 	slices.SortFunc(r.indices, func(a, b RowIndex) int {
-		// First compare by metric name
-		if cmp := strings.Compare(a.MetricName, b.MetricName); cmp != 0 {
-			return cmp
-		}
-
-		// Then by TID
-		if a.TID < b.TID {
-			return -1
-		}
-		if a.TID > b.TID {
-			return 1
-		}
-
-		// Finally by timestamp
-		if a.Timestamp < b.Timestamp {
-			return -1
-		}
-		if a.Timestamp > b.Timestamp {
-			return 1
-		}
-
-		return 0
+		return r.sortFunc(a.SortKey, b.SortKey)
 	})
 
 	r.sorted = true
@@ -144,15 +151,6 @@ func (r *DiskSortingReader) writeAndIndexRow(row Row) error {
 	offset, err := r.tempFile.Seek(0, io.SeekCurrent)
 	if err != nil {
 		return fmt.Errorf("failed to get file offset: %w", err)
-	}
-
-	// Extract sort key components from row
-	metricName, nameOk := row["_cardinalhq.name"].(string)
-	tid, tidOk := row["_cardinalhq.tid"].(int64)
-	timestamp, timestampOk := row["_cardinalhq.timestamp"].(int64)
-
-	if !nameOk || !tidOk || !timestampOk {
-		return fmt.Errorf("row missing required sort key fields: name=%v, tid=%v, timestamp=%v", nameOk, tidOk, timestampOk)
 	}
 
 	// CBOR encode the row
@@ -172,11 +170,12 @@ func (r *DiskSortingReader) writeAndIndexRow(row Row) error {
 		return fmt.Errorf("encoded row too large: %d bytes", byteLength)
 	}
 
-	// Add index entry
+	// Extract sort key from row using the provided function
+	sortKey := r.sortKeyFunc(row)
+
+	// Add index entry with extracted sort key only
 	r.indices = append(r.indices, RowIndex{
-		MetricName: metricName,
-		TID:        tid,
-		Timestamp:  timestamp,
+		SortKey:    sortKey,
 		FileOffset: startPos,
 		ByteLength: int32(byteLength),
 	})

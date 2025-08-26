@@ -21,25 +21,25 @@ import (
 	"testing"
 )
 
-func TestNewMultiReader(t *testing.T) {
+func TestNewSequentialReader(t *testing.T) {
 	// Test with valid readers
 	readers := []Reader{
 		newMockReader("r1", []Row{{"data": "r1"}}),
 		newMockReader("r2", []Row{{"data": "r2"}}),
 	}
 
-	mr, err := NewMultiReader(readers)
+	sr, err := NewSequentialReader(readers)
 	if err != nil {
-		t.Fatalf("NewMultiReader() error = %v", err)
+		t.Fatalf("NewSequentialReader() error = %v", err)
 	}
-	defer mr.Close()
+	defer sr.Close()
 
-	if len(mr.readers) != 2 {
-		t.Errorf("Expected 2 readers, got %d", len(mr.readers))
+	if len(sr.readers) != 2 {
+		t.Errorf("Expected 2 readers, got %d", len(sr.readers))
 	}
 
 	// Test with no readers
-	_, err = NewMultiReader([]Reader{})
+	_, err = NewSequentialReader([]Reader{})
 	if err == nil {
 		t.Error("Expected error for empty readers slice")
 	}
@@ -49,13 +49,13 @@ func TestNewMultiReader(t *testing.T) {
 		newMockReader("r1", []Row{}),
 		nil,
 	}
-	_, err = NewMultiReader(readersWithNil)
+	_, err = NewSequentialReader(readersWithNil)
 	if err == nil {
 		t.Error("Expected error for nil reader")
 	}
 }
 
-func TestMultiReader_Read(t *testing.T) {
+func TestSequentialReader_Read(t *testing.T) {
 	// Create readers with different data
 	readers := []Reader{
 		newMockReader("r1", []Row{
@@ -71,11 +71,11 @@ func TestMultiReader_Read(t *testing.T) {
 		}),
 	}
 
-	mr, err := NewMultiReader(readers)
+	sr, err := NewSequentialReader(readers)
 	if err != nil {
-		t.Fatalf("NewMultiReader() error = %v", err)
+		t.Fatalf("NewSequentialReader() error = %v", err)
 	}
-	defer mr.Close()
+	defer sr.Close()
 
 	// Expected order: all from r1, then all from r2, skip r3 (empty), then all from r4
 	expectedData := []string{
@@ -85,7 +85,7 @@ func TestMultiReader_Read(t *testing.T) {
 		"r4-first",
 	}
 
-	allRows, err := readAllRows(mr)
+	allRows, err := readAllRows(sr)
 	if err != nil {
 		t.Fatalf("readAllRows() error = %v", err)
 	}
@@ -101,7 +101,7 @@ func TestMultiReader_Read(t *testing.T) {
 	}
 }
 
-func TestMultiReader_Read_Batched(t *testing.T) {
+func TestSequentialReader_Read_Batched(t *testing.T) {
 	// Create readers with different data
 	readers := []Reader{
 		newMockReader("r1", []Row{
@@ -113,11 +113,11 @@ func TestMultiReader_Read_Batched(t *testing.T) {
 		}),
 	}
 
-	mr, err := NewMultiReader(readers)
+	sr, err := NewSequentialReader(readers)
 	if err != nil {
-		t.Fatalf("NewMultiReader() error = %v", err)
+		t.Fatalf("NewSequentialReader() error = %v", err)
 	}
-	defer mr.Close()
+	defer sr.Close()
 
 	// Read first batch
 	rows := make([]Row, 2)
@@ -125,7 +125,7 @@ func TestMultiReader_Read_Batched(t *testing.T) {
 		rows[i] = make(Row)
 	}
 
-	n, err := mr.Read(rows)
+	n, err := sr.Read(rows)
 	if err != nil {
 		t.Fatalf("First Read() error = %v", err)
 	}
@@ -143,7 +143,7 @@ func TestMultiReader_Read_Batched(t *testing.T) {
 	for i := range rows {
 		rows[i] = make(Row)
 	}
-	n, err = mr.Read(rows)
+	n, err = sr.Read(rows)
 	if err != nil {
 		t.Fatalf("Second Read() error = %v", err)
 	}
@@ -158,121 +158,121 @@ func TestMultiReader_Read_Batched(t *testing.T) {
 	for i := range rows {
 		rows[i] = make(Row)
 	}
-	n, err = mr.Read(rows)
+	n, err = sr.Read(rows)
 	if n != 0 || !errors.Is(err, io.EOF) {
 		t.Errorf("Final Read() should return 0 rows and io.EOF, got n=%d, err=%v", n, err)
 	}
 }
 
-func TestMultiReader_CurrentReaderIndex(t *testing.T) {
+func TestSequentialReader_CurrentReaderIndex(t *testing.T) {
 	readers := []Reader{
 		newMockReader("r1", []Row{{"data": "r1"}}),
 		newMockReader("r2", []Row{{"data": "r2"}}),
 		newMockReader("r3", []Row{}), // Empty reader
 	}
 
-	mr, err := NewMultiReader(readers)
+	sr, err := NewSequentialReader(readers)
 	if err != nil {
-		t.Fatalf("NewMultiReader() error = %v", err)
+		t.Fatalf("NewSequentialReader() error = %v", err)
 	}
-	defer mr.Close()
+	defer sr.Close()
 
 	// Initially reading from reader 0
-	if index := mr.CurrentReaderIndex(); index != 0 {
+	if index := sr.CurrentReaderIndex(); index != 0 {
 		t.Errorf("Initial CurrentReaderIndex() = %d, want 0", index)
 	}
 
 	// Read from first reader
 	rows := make([]Row, 1)
 	rows[0] = make(Row)
-	_, err = mr.Read(rows)
+	_, err = sr.Read(rows)
 	if err != nil {
 		t.Fatalf("Read() error = %v", err)
 	}
 
 	// Still on reader 0 because it hasn't hit EOF yet
-	if index := mr.CurrentReaderIndex(); index != 0 {
+	if index := sr.CurrentReaderIndex(); index != 0 {
 		t.Errorf("After first read CurrentReaderIndex() = %d, want 0", index)
 	}
 
 	// Read from second reader (this will exhaust r1, advance to r2, skip empty r3)
 	rows[0] = make(Row)
-	_, err = mr.Read(rows)
+	_, err = sr.Read(rows)
 	if err != nil {
 		t.Fatalf("Read() error = %v", err)
 	}
 
 	// Should be on reader 1 now
-	if index := mr.CurrentReaderIndex(); index != 1 {
+	if index := sr.CurrentReaderIndex(); index != 1 {
 		t.Errorf("After second read CurrentReaderIndex() = %d, want 1", index)
 	}
 
 	// Try to read again - should return io.EOF and be exhausted
 	rows[0] = make(Row)
-	_, err = mr.Read(rows)
+	_, err = sr.Read(rows)
 	if !errors.Is(err, io.EOF) {
 		t.Errorf("Final Read() should return io.EOF, got %v", err)
 	}
 
 	// Should be exhausted now
-	if index := mr.CurrentReaderIndex(); index != -1 {
+	if index := sr.CurrentReaderIndex(); index != -1 {
 		t.Errorf("After all reads CurrentReaderIndex() = %d, want -1", index)
 	}
 }
 
-func TestMultiReader_TotalReaderCount(t *testing.T) {
+func TestSequentialReader_TotalReaderCount(t *testing.T) {
 	readers := []Reader{
 		newMockReader("r1", []Row{}),
 		newMockReader("r2", []Row{}),
 		newMockReader("r3", []Row{}),
 	}
 
-	mr, err := NewMultiReader(readers)
+	sr, err := NewSequentialReader(readers)
 	if err != nil {
-		t.Fatalf("NewMultiReader() error = %v", err)
+		t.Fatalf("NewSequentialReader() error = %v", err)
 	}
-	defer mr.Close()
+	defer sr.Close()
 
-	if count := mr.TotalReaderCount(); count != 3 {
+	if count := sr.TotalReaderCount(); count != 3 {
 		t.Errorf("TotalReaderCount() = %d, want 3", count)
 	}
 }
 
-func TestMultiReader_RemainingReaderCount(t *testing.T) {
+func TestSequentialReader_RemainingReaderCount(t *testing.T) {
 	readers := []Reader{
 		newMockReader("r1", []Row{{"data": "r1"}}),
 		newMockReader("r2", []Row{{"data": "r2"}}),
 		newMockReader("r3", []Row{{"data": "r3"}}),
 	}
 
-	mr, err := NewMultiReader(readers)
+	sr, err := NewSequentialReader(readers)
 	if err != nil {
-		t.Fatalf("NewMultiReader() error = %v", err)
+		t.Fatalf("NewSequentialReader() error = %v", err)
 	}
-	defer mr.Close()
+	defer sr.Close()
 
 	// Initially all 3 readers remaining
-	if count := mr.RemainingReaderCount(); count != 3 {
+	if count := sr.RemainingReaderCount(); count != 3 {
 		t.Errorf("Initial RemainingReaderCount() = %d, want 3", count)
 	}
 
 	// Read one row (from r1)
 	rows := make([]Row, 1)
 	rows[0] = make(Row)
-	_, err = mr.Read(rows)
+	_, err = sr.Read(rows)
 	if err != nil {
 		t.Fatalf("Read() error = %v", err)
 	}
 
 	// Should still have 3 readers remaining since r1 hasn't been exhausted yet
-	if count := mr.RemainingReaderCount(); count != 3 {
+	if count := sr.RemainingReaderCount(); count != 3 {
 		t.Errorf("After one read RemainingReaderCount() = %d, want 3", count)
 	}
 
 	// Read remaining rows
 	for {
 		rows[0] = make(Row)
-		_, err := mr.Read(rows)
+		_, err := sr.Read(rows)
 		if errors.Is(err, io.EOF) {
 			break
 		}
@@ -282,24 +282,24 @@ func TestMultiReader_RemainingReaderCount(t *testing.T) {
 	}
 
 	// Should have 0 readers remaining
-	if count := mr.RemainingReaderCount(); count != 0 {
+	if count := sr.RemainingReaderCount(); count != 0 {
 		t.Errorf("After all reads RemainingReaderCount() = %d, want 0", count)
 	}
 }
 
-func TestMultiReader_Close(t *testing.T) {
+func TestSequentialReader_Close(t *testing.T) {
 	readers := []Reader{
 		newMockReader("r1", []Row{{"data": "r1"}}),
 		newMockReader("r2", []Row{{"data": "r2"}}),
 	}
 
-	mr, err := NewMultiReader(readers)
+	sr, err := NewSequentialReader(readers)
 	if err != nil {
-		t.Fatalf("NewMultiReader() error = %v", err)
+		t.Fatalf("NewSequentialReader() error = %v", err)
 	}
 
 	// Close the reader
-	err = mr.Close()
+	err = sr.Close()
 	if err != nil {
 		t.Errorf("Close() error = %v", err)
 	}
@@ -308,85 +308,85 @@ func TestMultiReader_Close(t *testing.T) {
 	for i, reader := range readers {
 		mockReader := reader.(*mockReader)
 		if !mockReader.closed {
-			t.Errorf("Reader %d not closed after MultiReader.Close()", i)
+			t.Errorf("Reader %d not closed after SequentialReader.Close()", i)
 		}
 	}
 
 	// Verify subsequent operations fail
 	rows := make([]Row, 1)
 	rows[0] = make(Row)
-	_, err = mr.Read(rows)
+	_, err = sr.Read(rows)
 	if err == nil {
 		t.Error("Read() after Close() should return error")
 	}
 
 	// Multiple Close() calls should not error
-	err = mr.Close()
+	err = sr.Close()
 	if err != nil {
 		t.Errorf("Second Close() error = %v", err)
 	}
 
 	// Verify counts after close
-	if count := mr.CurrentReaderIndex(); count != -1 {
+	if count := sr.CurrentReaderIndex(); count != -1 {
 		t.Errorf("CurrentReaderIndex() after close = %d, want -1", count)
 	}
-	if count := mr.RemainingReaderCount(); count != 0 {
+	if count := sr.RemainingReaderCount(); count != 0 {
 		t.Errorf("RemainingReaderCount() after close = %d, want 0", count)
 	}
 }
 
-func TestMultiReader_AllEmptyReaders(t *testing.T) {
+func TestSequentialReader_AllEmptyReaders(t *testing.T) {
 	readers := []Reader{
 		newMockReader("r1", []Row{}),
 		newMockReader("r2", []Row{}),
 		newMockReader("r3", []Row{}),
 	}
 
-	mr, err := NewMultiReader(readers)
+	sr, err := NewSequentialReader(readers)
 	if err != nil {
-		t.Fatalf("NewMultiReader() error = %v", err)
+		t.Fatalf("NewSequentialReader() error = %v", err)
 	}
-	defer mr.Close()
+	defer sr.Close()
 
 	// Should immediately return io.EOF
 	rows := make([]Row, 1)
 	rows[0] = make(Row)
-	n, err := mr.Read(rows)
+	n, err := sr.Read(rows)
 	if n != 0 || !errors.Is(err, io.EOF) {
 		t.Errorf("Read() with all empty readers should return 0 rows and io.EOF, got n=%d, err=%v", n, err)
 	}
 }
 
-func TestMultiReader_WithErrors(t *testing.T) {
+func TestSequentialReader_WithErrors(t *testing.T) {
 	readers := []Reader{
 		newMockReader("r1", []Row{{"data": "r1"}}),
 		&errorReader{}, // This reader always returns errors
 	}
 
-	mr, err := NewMultiReader(readers)
+	sr, err := NewSequentialReader(readers)
 	if err != nil {
-		t.Fatalf("NewMultiReader() error = %v", err)
+		t.Fatalf("NewSequentialReader() error = %v", err)
 	}
-	defer mr.Close()
+	defer sr.Close()
 
 	// First read should succeed (from r1)
 	rows := make([]Row, 1)
 	rows[0] = make(Row)
-	_, err = mr.Read(rows)
+	_, err = sr.Read(rows)
 	if err != nil {
 		t.Fatalf("First Read() error = %v", err)
 	}
 
 	// Second read should fail (from error reader)
 	rows[0] = make(Row)
-	_, err = mr.Read(rows)
+	_, err = sr.Read(rows)
 	if err == nil {
 		t.Error("Expected error when reading from error reader")
 	}
 }
 
-// Test that MultiReader properly handles a reader that returns an error after some successful reads
-func TestMultiReader_ReaderWithDelayedError(t *testing.T) {
+// Test that SequentialReader properly handles a reader that returns an error after some successful reads
+func TestSequentialReader_ReaderWithDelayedError(t *testing.T) {
 	// Create a reader that succeeds once then errors
 	delayedErrorReader := &delayedErrorReaderImpl{
 		data: []Row{{"data": "delayed"}},
@@ -397,16 +397,16 @@ func TestMultiReader_ReaderWithDelayedError(t *testing.T) {
 		delayedErrorReader,
 	}
 
-	mr, err := NewMultiReader(readers)
+	sr, err := NewSequentialReader(readers)
 	if err != nil {
-		t.Fatalf("NewMultiReader() error = %v", err)
+		t.Fatalf("NewSequentialReader() error = %v", err)
 	}
-	defer mr.Close()
+	defer sr.Close()
 
 	// First read from r1
 	rows := make([]Row, 1)
 	rows[0] = make(Row)
-	n, err := mr.Read(rows)
+	n, err := sr.Read(rows)
 	if err != nil {
 		t.Fatalf("First Read() error = %v", err)
 	}
@@ -416,7 +416,7 @@ func TestMultiReader_ReaderWithDelayedError(t *testing.T) {
 
 	// Second read from delayed error reader (first call succeeds)
 	rows[0] = make(Row)
-	n, err = mr.Read(rows)
+	n, err = sr.Read(rows)
 	if err != nil {
 		t.Fatalf("Second Read() error = %v", err)
 	}
@@ -426,7 +426,7 @@ func TestMultiReader_ReaderWithDelayedError(t *testing.T) {
 
 	// Third read from delayed error reader (second call fails)
 	rows[0] = make(Row)
-	_, err = mr.Read(rows)
+	_, err = sr.Read(rows)
 	if err == nil {
 		t.Error("Third Read() should fail with delayed error")
 	}

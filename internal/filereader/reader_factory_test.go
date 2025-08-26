@@ -294,7 +294,7 @@ func TestReaderForFile(t *testing.T) {
 			filename:      "",
 			signalType:    SignalTypeMetrics,
 			expectSuccess: true,
-			expectedType:  "*filereader.ProtoMetricsReader",
+			expectedType:  "*filereader.IngestProtoMetricsReader",
 			description:   "Gzipped metrics protobuf file",
 		},
 		{
@@ -414,7 +414,7 @@ func TestSignalTypeSpecificProtoReaders(t *testing.T) {
 			name:       "MetricsProtoReader",
 			filename:   "",
 			signalType: SignalTypeMetrics,
-			readerType: "*filereader.ProtoMetricsReader",
+			readerType: "*filereader.IngestProtoMetricsReader",
 		},
 		{
 			name:       "TracesProtoReader",

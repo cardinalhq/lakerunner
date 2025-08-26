@@ -22,7 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPostTranslationSortingReader_SortsByKey(t *testing.T) {
+func TestMemorySortingReader_SortsByKey(t *testing.T) {
 	// Create rows in unsorted order
 	inputRows := []Row{
 		{
@@ -52,7 +52,7 @@ func TestPostTranslationSortingReader_SortsByKey(t *testing.T) {
 	}
 
 	mockReader := newMockAggregatingReader(inputRows)
-	sortingReader, err := NewPostTranslationSortingReader(mockReader)
+	sortingReader, err := NewMemorySortingReader(mockReader, MetricNameTidTimestampSort())
 	require.NoError(t, err)
 	defer sortingReader.Close()
 
@@ -93,9 +93,9 @@ func TestPostTranslationSortingReader_SortsByKey(t *testing.T) {
 	}
 }
 
-func TestPostTranslationSortingReader_EmptyInput(t *testing.T) {
+func TestMemorySortingReader_EmptyInput(t *testing.T) {
 	mockReader := newMockAggregatingReader([]Row{})
-	sortingReader, err := NewPostTranslationSortingReader(mockReader)
+	sortingReader, err := NewMemorySortingReader(mockReader, MetricNameTidTimestampSort())
 	require.NoError(t, err)
 	defer sortingReader.Close()
 
@@ -105,7 +105,7 @@ func TestPostTranslationSortingReader_EmptyInput(t *testing.T) {
 	assert.Equal(t, 0, n)
 }
 
-func TestPostTranslationSortingReader_MissingFields(t *testing.T) {
+func TestMemorySortingReader_MissingFields(t *testing.T) {
 	// Rows with missing required fields should be sorted to the end
 	inputRows := []Row{
 		{
@@ -129,7 +129,7 @@ func TestPostTranslationSortingReader_MissingFields(t *testing.T) {
 	}
 
 	mockReader := newMockAggregatingReader(inputRows)
-	sortingReader, err := NewPostTranslationSortingReader(mockReader)
+	sortingReader, err := NewMemorySortingReader(mockReader, MetricNameTidTimestampSort())
 	require.NoError(t, err)
 	defer sortingReader.Close()
 
@@ -168,4 +168,114 @@ func TestPostTranslationSortingReader_MissingFields(t *testing.T) {
 	}
 	assert.True(t, hasRowWithoutName, "Should have a row without name")
 	assert.True(t, hasRowWithoutTID, "Should have a row without TID")
+}
+
+func TestMemorySortingReader_CustomSortFunction(t *testing.T) {
+	// Test with a custom sort function that sorts by timestamp only (reverse order)
+	inputRows := []Row{
+		{
+			"_cardinalhq.name":      "cpu.usage",
+			"_cardinalhq.timestamp": int64(30000),
+			"value":                 75.0,
+		},
+		{
+			"_cardinalhq.name":      "memory.usage",
+			"_cardinalhq.timestamp": int64(10000), // Should come last (earliest timestamp)
+			"value":                 85.0,
+		},
+		{
+			"_cardinalhq.name":      "disk.usage",
+			"_cardinalhq.timestamp": int64(20000),
+			"value":                 65.0,
+		},
+	}
+
+	// Custom sort function: reverse timestamp order (newest first)
+	customSortFunc := func(a, b map[string]any) int {
+		tsA, tsAOk := a["_cardinalhq.timestamp"].(int64)
+		tsB, tsBOk := b["_cardinalhq.timestamp"].(int64)
+		if !tsAOk || !tsBOk {
+			return 0
+		}
+		// Reverse order: newer timestamps come first
+		if tsA > tsB {
+			return -1
+		}
+		if tsA < tsB {
+			return 1
+		}
+		return 0
+	}
+
+	mockReader := newMockAggregatingReader(inputRows)
+	sortingReader, err := NewMemorySortingReader(mockReader, customSortFunc)
+	require.NoError(t, err)
+	defer sortingReader.Close()
+
+	// Read all results
+	var allRows []Row
+	for {
+		rows := make([]Row, 10)
+		n, err := sortingReader.Read(rows)
+		if err == io.EOF {
+			break
+		}
+		require.NoError(t, err)
+
+		for i := 0; i < n; i++ {
+			allRows = append(allRows, rows[i])
+		}
+	}
+
+	require.Len(t, allRows, 3)
+
+	// Verify reverse timestamp ordering: 30000, 20000, 10000
+	assert.Equal(t, int64(30000), allRows[0]["_cardinalhq.timestamp"])
+	assert.Equal(t, int64(20000), allRows[1]["_cardinalhq.timestamp"])
+	assert.Equal(t, int64(10000), allRows[2]["_cardinalhq.timestamp"])
+}
+
+func TestMemorySortingReader_TimestampOnlySort(t *testing.T) {
+	// Test the built-in TimestampSort function
+	inputRows := []Row{
+		{
+			"_cardinalhq.name":      "memory.usage", // Different names, but should sort by timestamp
+			"_cardinalhq.timestamp": int64(30000),
+		},
+		{
+			"_cardinalhq.name":      "cpu.usage",
+			"_cardinalhq.timestamp": int64(10000), // Should come first
+		},
+		{
+			"_cardinalhq.name":      "disk.usage",
+			"_cardinalhq.timestamp": int64(20000),
+		},
+	}
+
+	mockReader := newMockAggregatingReader(inputRows)
+	sortingReader, err := NewMemorySortingReader(mockReader, TimestampSort())
+	require.NoError(t, err)
+	defer sortingReader.Close()
+
+	// Read all results
+	var allRows []Row
+	for {
+		rows := make([]Row, 10)
+		n, err := sortingReader.Read(rows)
+		if err == io.EOF {
+			break
+		}
+		require.NoError(t, err)
+
+		for i := 0; i < n; i++ {
+			allRows = append(allRows, rows[i])
+		}
+	}
+
+	require.Len(t, allRows, 3)
+
+	// Verify timestamp ordering: 10000, 20000, 30000
+	assert.Equal(t, int64(10000), allRows[0]["_cardinalhq.timestamp"])
+	assert.Equal(t, int64(20000), allRows[1]["_cardinalhq.timestamp"])
+	assert.Equal(t, int64(30000), allRows[2]["_cardinalhq.timestamp"])
 }

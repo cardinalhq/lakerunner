@@ -29,24 +29,24 @@ type readerState struct {
 	err     error
 }
 
-// OrderedReader implements merge-sort style reading across multiple pre-sorted readers.
+// PreorderedMultisourceReader implements merge-sort style reading across multiple pre-sorted readers.
 // It assumes each individual reader returns rows in sorted order according to the
 // provided selector function.
-type OrderedReader struct {
+type PreorderedMultisourceReader struct {
 	states   []*readerState
 	selector SelectFunc
 	closed   bool
 	rowCount int64
 }
 
-// NewOrderedReader creates a new OrderedReader that merges rows from multiple readers
+// NewPreorderedMultisourceReader creates a new PreorderedMultisourceReader that merges rows from multiple readers
 // in sorted order. The selector function determines which row should be returned next.
 //
 // Requirements:
 // - Each reader must return rows in sorted order (according to the selector logic)
 // - The selector function must be consistent (same inputs -> same output)
-// - Readers will be closed when the OrderedReader is closed
-func NewOrderedReader(readers []Reader, selector SelectFunc) (*OrderedReader, error) {
+// - Readers will be closed when the PreorderedMultisourceReader is closed
+func NewPreorderedMultisourceReader(readers []Reader, selector SelectFunc) (*PreorderedMultisourceReader, error) {
 	if len(readers) == 0 {
 		return nil, errors.New("at least one reader is required")
 	}
@@ -62,7 +62,7 @@ func NewOrderedReader(readers []Reader, selector SelectFunc) (*OrderedReader, er
 		}
 	}
 
-	or := &OrderedReader{
+	or := &PreorderedMultisourceReader{
 		states:   states,
 		selector: selector,
 	}
@@ -77,7 +77,7 @@ func NewOrderedReader(readers []Reader, selector SelectFunc) (*OrderedReader, er
 }
 
 // primeReaders loads the first row from each reader.
-func (or *OrderedReader) primeReaders() error {
+func (or *PreorderedMultisourceReader) primeReaders() error {
 	for _, state := range or.states {
 		if err := or.advance(state); err != nil {
 			return fmt.Errorf("failed to prime reader %d: %w", state.index, err)
@@ -87,7 +87,7 @@ func (or *OrderedReader) primeReaders() error {
 }
 
 // advance loads the next row for the given reader state.
-func (or *OrderedReader) advance(state *readerState) error {
+func (or *PreorderedMultisourceReader) advance(state *readerState) error {
 	if state.done || state.err != nil {
 		return state.err
 	}
@@ -114,7 +114,7 @@ func (or *OrderedReader) advance(state *readerState) error {
 }
 
 // Read populates the provided slice with rows in sorted order across all readers.
-func (or *OrderedReader) Read(rows []Row) (int, error) {
+func (or *PreorderedMultisourceReader) Read(rows []Row) (int, error) {
 	if or.closed {
 		return 0, errors.New("reader is closed")
 	}
@@ -181,7 +181,7 @@ func (or *OrderedReader) Read(rows []Row) (int, error) {
 }
 
 // Close closes all underlying readers and releases resources.
-func (or *OrderedReader) Close() error {
+func (or *PreorderedMultisourceReader) Close() error {
 	if or.closed {
 		return nil
 	}
@@ -203,7 +203,7 @@ func (or *OrderedReader) Close() error {
 }
 
 // ActiveReaderCount returns the number of readers that still have data to read.
-func (or *OrderedReader) ActiveReaderCount() int {
+func (or *PreorderedMultisourceReader) ActiveReaderCount() int {
 	if or.closed {
 		return 0
 	}
@@ -218,6 +218,6 @@ func (or *OrderedReader) ActiveReaderCount() int {
 }
 
 // RowCount returns the total number of rows that have been successfully read from all readers.
-func (or *OrderedReader) RowCount() int64 {
+func (or *PreorderedMultisourceReader) RowCount() int64 {
 	return or.rowCount
 }

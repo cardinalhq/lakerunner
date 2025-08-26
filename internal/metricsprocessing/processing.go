@@ -78,7 +78,7 @@ func (t *MetricTranslator) TranslateRow(row *filereader.Row) error {
 	return nil
 }
 
-// MetricsOrderedSelector returns a SelectFunc for OrderedReader that orders by [metric name, TID].
+// MetricsOrderedSelector returns a SelectFunc for PreorderedMultisourceReader that orders by [metric name, TID].
 // This ensures the same ordering used by the parquet writer during ingestion and compaction.
 func MetricsOrderedSelector() filereader.SelectFunc {
 	return func(rows []filereader.Row) int {

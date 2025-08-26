@@ -46,7 +46,7 @@
 //   - ParquetReader: Generic Parquet files using parquet-go/parquet-go (requires io.ReaderAt)
 //   - JSONLinesReader: Streams JSON objects line-by-line from any io.ReadCloser
 //   - ProtoLogsReader: Raw OTEL log records from protobuf
-//   - ProtoMetricsReader: Raw OTEL metric data points from protobuf
+//   - IngestProtoMetricsReader: Raw OTEL metric data points from protobuf (ingestion only)
 //   - ProtoTracesReader: Raw OTEL span data from protobuf
 //
 // Example usage:
@@ -108,14 +108,26 @@
 //
 // # Composite Readers
 //
-// OrderedReader performs file-based merge-sort across multiple pre-sorted readers:
+// # Sorting Readers
+//
+// Choose the appropriate sorting reader based on dataset size and memory constraints:
+//
+// MemorySortingReader - For smaller datasets (high memory usage, no disk I/O):
+//
+//	reader := NewMemorySortingReader(rawReader, MetricNameTidTimestampSort())
+//
+// DiskSortingReader - For larger datasets (moderate memory usage, 2x disk I/O):
+//
+//	reader := NewDiskSortingReader(rawReader, TimestampSortKeyFunc(), TimestampSortFunc())
+//
+// PreorderedMultisourceReader - For merging multiple already-sorted sources (low memory, streaming):
 //
 //	selector := TimeOrderedSelector("timestamp")
-//	reader := NewOrderedReader([]Reader{r1, r2, r3}, selector)
+//	reader := NewPreorderedMultisourceReader([]Reader{r1, r2, r3}, selector)
 //
-// MultiReader processes multiple readers sequentially:
+// SequentialReader - Sequential processing (no sorting):
 //
-//	reader := NewMultiReader([]Reader{r1, r2, r3})
+//	reader := NewSequentialReader([]Reader{r1, r2, r3})
 //
 // # Usage Patterns
 //
@@ -128,7 +140,7 @@
 //	}
 //
 //	selector := TimeOrderedSelector("_cardinalhq.timestamp")
-//	ordered := NewOrderedReader(readers, selector)
+//	ordered := NewPreorderedMultisourceReader(readers, selector)
 //	defer ordered.Close()
 //
 //	for {
@@ -150,9 +162,9 @@
 //
 //	// Process multiple file groups in timestamp order,
 //	// then combine groups sequentially
-//	group1 := NewOrderedReader(readers1, TimeOrderedSelector("timestamp"))
-//	group2 := NewOrderedReader(readers2, TimeOrderedSelector("timestamp"))
-//	final := NewMultiReader([]Reader{group1, group2})
+//	group1 := NewPreorderedMultisourceReader(readers1, TimeOrderedSelector("timestamp"))
+//	group2 := NewPreorderedMultisourceReader(readers2, TimeOrderedSelector("timestamp"))
+//	final := NewSequentialReader([]Reader{group1, group2})
 //
 // # Resource Management
 //

@@ -49,7 +49,7 @@ func TestDiskSortingReader_BasicSorting(t *testing.T) {
 	}
 
 	mockReader := NewMockReader(testRows)
-	sortingReader, err := NewDiskSortingReader(mockReader)
+	sortingReader, err := NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc())
 	require.NoError(t, err)
 	defer sortingReader.Close()
 
@@ -99,7 +99,7 @@ func TestDiskSortingReader_TypePreservation(t *testing.T) {
 	}
 
 	mockReader := NewMockReader([]Row{testRow})
-	sortingReader, err := NewDiskSortingReader(mockReader)
+	sortingReader, err := NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc())
 	require.NoError(t, err)
 	defer sortingReader.Close()
 
@@ -126,7 +126,7 @@ func TestDiskSortingReader_TypePreservation(t *testing.T) {
 
 func TestDiskSortingReader_EmptyInput(t *testing.T) {
 	mockReader := NewMockReader([]Row{})
-	sortingReader, err := NewDiskSortingReader(mockReader)
+	sortingReader, err := NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc())
 	require.NoError(t, err)
 	defer sortingReader.Close()
 
@@ -138,25 +138,37 @@ func TestDiskSortingReader_EmptyInput(t *testing.T) {
 }
 
 func TestDiskSortingReader_MissingFields(t *testing.T) {
-	// Test row missing required sort fields
+	// Test row missing some sort fields - should be handled gracefully by sort function
 	testRows := []Row{
 		{
+			"_cardinalhq.name":      "metric_b",
+			"_cardinalhq.tid":       int64(100),
+			"_cardinalhq.timestamp": int64(2000),
+			"value":                 float64(2.0),
+		},
+		{
 			"_cardinalhq.name": "metric_a",
-			// Missing TID and timestamp
+			// Missing TID and timestamp - sort function should handle this gracefully
 			"value": float64(1.0),
 		},
 	}
 
 	mockReader := NewMockReader(testRows)
-	sortingReader, err := NewDiskSortingReader(mockReader)
+	sortingReader, err := NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc())
 	require.NoError(t, err)
 	defer sortingReader.Close()
 
-	// Should fail when trying to read due to missing sort fields
-	rows := make([]Row, 1)
-	_, err = sortingReader.Read(rows)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "missing required sort key fields")
+	// Should succeed - missing fields are handled by the sort function
+	rows := make([]Row, 2)
+	n, err := sortingReader.Read(rows)
+
+	// Should read successfully (missing fields don't cause failures anymore)
+	assert.NoError(t, err)
+	assert.Equal(t, 2, n)
+
+	// Row with missing fields should be sorted to the end by MetricNameTidTimestampSort
+	assert.Equal(t, "metric_a", rows[0]["_cardinalhq.name"]) // Missing fields sort first
+	assert.Equal(t, "metric_b", rows[1]["_cardinalhq.name"]) // Complete row sorts later
 }
 
 func TestDiskSortingReader_CleanupOnError(t *testing.T) {
@@ -166,7 +178,7 @@ func TestDiskSortingReader_CleanupOnError(t *testing.T) {
 		readError: fmt.Errorf("simulated read error"),
 	}
 
-	sortingReader, err := NewDiskSortingReader(mockReader)
+	sortingReader, err := NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc())
 	require.NoError(t, err)
 
 	tempFileName := sortingReader.tempFile.Name()
@@ -293,7 +305,7 @@ func TestDiskSortingReader_CBORIdentity(t *testing.T) {
 			}
 
 			mockReader := NewMockReader([]Row{testRow})
-			sortingReader, err := NewDiskSortingReader(mockReader)
+			sortingReader, err := NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc())
 			require.NoError(t, err)
 			defer sortingReader.Close()
 
@@ -374,7 +386,7 @@ func TestDiskSortingReader_CBOREdgeCases(t *testing.T) {
 			}
 
 			mockReader := NewMockReader([]Row{testRow})
-			sortingReader, err := NewDiskSortingReader(mockReader)
+			sortingReader, err := NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc())
 			require.NoError(t, err)
 			defer sortingReader.Close()
 

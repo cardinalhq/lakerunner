@@ -20,19 +20,19 @@ import (
 	"io"
 )
 
-// MultiReader reads from multiple readers sequentially in the order provided.
+// SequentialReader reads from multiple readers sequentially in the order provided.
 // It reads all rows from the first reader, then all rows from the second reader, etc.
 // This is useful when you want to concatenate multiple files without any ordering requirements.
-type MultiReader struct {
+type SequentialReader struct {
 	readers      []Reader
 	currentIndex int
 	closed       bool
 	rowCount     int64
 }
 
-// NewMultiReader creates a new MultiReader that reads from the provided readers sequentially.
-// Readers will be closed when the MultiReader is closed.
-func NewMultiReader(readers []Reader) (*MultiReader, error) {
+// NewSequentialReader creates a new SequentialReader that reads from the provided readers sequentially.
+// Readers will be closed when the SequentialReader is closed.
+func NewSequentialReader(readers []Reader) (*SequentialReader, error) {
 	if len(readers) == 0 {
 		return nil, errors.New("at least one reader is required")
 	}
@@ -44,7 +44,7 @@ func NewMultiReader(readers []Reader) (*MultiReader, error) {
 		}
 	}
 
-	return &MultiReader{
+	return &SequentialReader{
 		readers:      readers,
 		currentIndex: 0,
 	}, nil
@@ -52,8 +52,8 @@ func NewMultiReader(readers []Reader) (*MultiReader, error) {
 
 // Read populates the provided slice with as many rows as possible from the current reader,
 // advancing to the next reader when the current reader is exhausted.
-func (mr *MultiReader) Read(rows []Row) (int, error) {
-	if mr.closed {
+func (sr *SequentialReader) Read(rows []Row) (int, error) {
+	if sr.closed {
 		return 0, errors.New("reader is closed")
 	}
 
@@ -64,8 +64,8 @@ func (mr *MultiReader) Read(rows []Row) (int, error) {
 	totalRead := 0
 
 	// Loop through readers until we fill the slice or exhaust all readers
-	for totalRead < len(rows) && mr.currentIndex < len(mr.readers) {
-		currentReader := mr.readers[mr.currentIndex]
+	for totalRead < len(rows) && sr.currentIndex < len(sr.readers) {
+		currentReader := sr.readers[sr.currentIndex]
 
 		// Read from current reader into remaining slice space
 		remainingRows := rows[totalRead:]
@@ -74,21 +74,21 @@ func (mr *MultiReader) Read(rows []Row) (int, error) {
 
 		// Update our row count with successfully read rows
 		if n > 0 {
-			mr.rowCount += int64(n)
+			sr.rowCount += int64(n)
 		}
 
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				// Current reader is exhausted, move to the next one
-				mr.currentIndex++
+				sr.currentIndex++
 				continue
 			}
-			return totalRead, fmt.Errorf("error reading from reader %d: %w", mr.currentIndex, err)
+			return totalRead, fmt.Errorf("error reading from reader %d: %w", sr.currentIndex, err)
 		}
 	}
 
 	// Return EOF if we've exhausted all readers and didn't read any data this call
-	if totalRead == 0 && mr.currentIndex >= len(mr.readers) {
+	if totalRead == 0 && sr.currentIndex >= len(sr.readers) {
 		return 0, io.EOF
 	}
 
@@ -96,14 +96,14 @@ func (mr *MultiReader) Read(rows []Row) (int, error) {
 }
 
 // Close closes all underlying readers and releases resources.
-func (mr *MultiReader) Close() error {
-	if mr.closed {
+func (sr *SequentialReader) Close() error {
+	if sr.closed {
 		return nil
 	}
-	mr.closed = true
+	sr.closed = true
 
 	var errs []error
-	for i, reader := range mr.readers {
+	for i, reader := range sr.readers {
 		if reader != nil {
 			if err := reader.Close(); err != nil {
 				errs = append(errs, fmt.Errorf("failed to close reader %d: %w", i, err))
@@ -119,24 +119,24 @@ func (mr *MultiReader) Close() error {
 
 // CurrentReaderIndex returns the index of the reader currently being read from.
 // Returns -1 if all readers are exhausted or the reader is closed.
-func (mr *MultiReader) CurrentReaderIndex() int {
-	if mr.closed || mr.currentIndex >= len(mr.readers) {
+func (sr *SequentialReader) CurrentReaderIndex() int {
+	if sr.closed || sr.currentIndex >= len(sr.readers) {
 		return -1
 	}
-	return mr.currentIndex
+	return sr.currentIndex
 }
 
-// TotalReaderCount returns the total number of readers in this MultiReader.
-func (mr *MultiReader) TotalReaderCount() int {
-	return len(mr.readers)
+// TotalReaderCount returns the total number of readers in this SequentialReader.
+func (sr *SequentialReader) TotalReaderCount() int {
+	return len(sr.readers)
 }
 
 // RemainingReaderCount returns the number of readers that haven't been fully processed yet.
-func (mr *MultiReader) RemainingReaderCount() int {
-	if mr.closed {
+func (sr *SequentialReader) RemainingReaderCount() int {
+	if sr.closed {
 		return 0
 	}
-	remaining := len(mr.readers) - mr.currentIndex
+	remaining := len(sr.readers) - sr.currentIndex
 	if remaining < 0 {
 		return 0
 	}
@@ -144,6 +144,6 @@ func (mr *MultiReader) RemainingReaderCount() int {
 }
 
 // RowCount returns the total number of rows that have been successfully read from all readers.
-func (mr *MultiReader) RowCount() int64 {
-	return mr.rowCount
+func (sr *SequentialReader) RowCount() int64 {
+	return sr.rowCount
 }
