@@ -64,7 +64,7 @@ func (r *mockAggregatingMetricsReader) Close() error {
 	return nil
 }
 
-func (r *mockAggregatingMetricsReader) RowCount() int64 {
+func (r *mockAggregatingMetricsReader) TotalRowsReturned() int64 {
 	return r.rowCount
 }
 
@@ -519,7 +519,7 @@ func (r *mockEOFReader) Close() error {
 	return nil
 }
 
-func (r *mockEOFReader) RowCount() int64 {
+func (r *mockEOFReader) TotalRowsReturned() int64 {
 	return r.rowCount
 }
 

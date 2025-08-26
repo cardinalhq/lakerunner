@@ -389,33 +389,31 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 	}
 
 	for {
-		n, err := finalReader.Read(rows)
+		n, readErr := finalReader.Read(rows)
 
-		// Process any rows we got, even if EOF
+		if readErr != nil && readErr != io.EOF {
+			return fmt.Errorf("failed to read from unified pipeline: %w", readErr)
+		}
+
+		// Process any rows we got (safe because either no error or EOF with final data)
 		for i := range n {
 			if rows[i] == nil {
 				continue
 			}
-			err := wm.processRow(rows[i])
-			if err != nil {
+			processErr := wm.processRow(rows[i])
+			if processErr != nil {
 				batchRowsErrored++
-				// Continue processing other rows instead of failing the entire batch
 			} else {
 				batchRowsProcessed++
 			}
 		}
 
-		// Break after processing if we hit EOF or other errors
-		if err == io.EOF {
+		if readErr == io.EOF {
 			break
-		}
-		if err != nil {
-			return fmt.Errorf("failed to read from unified pipeline: %w", err)
 		}
 	}
 
-	// Get total rows read from the final reader
-	batchRowsRead = finalReader.RowCount()
+	batchRowsRead = finalReader.TotalRowsReturned()
 
 	ll.Debug("Batch processing completed",
 		slog.Int64("rowsRead", batchRowsRead),

@@ -394,8 +394,8 @@ func (r *IngestProtoMetricsReader) Close() error {
 	return nil
 }
 
-// RowCount returns the total number of rows that have been successfully read.
-func (r *IngestProtoMetricsReader) RowCount() int64 {
+// TotalRowsReturned returns the total number of rows that have been successfully returned via Read().
+func (r *IngestProtoMetricsReader) TotalRowsReturned() int64 {
 	return r.rowCount
 }
 

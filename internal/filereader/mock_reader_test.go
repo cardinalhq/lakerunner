@@ -74,7 +74,7 @@ func (m *mockReader) Close() error {
 	return nil
 }
 
-func (m *mockReader) RowCount() int64 {
+func (m *mockReader) TotalRowsReturned() int64 {
 	return m.rowCount
 }
 
@@ -96,6 +96,6 @@ func (e *errorReader) Close() error {
 	return nil
 }
 
-func (e *errorReader) RowCount() int64 {
+func (e *errorReader) TotalRowsReturned() int64 {
 	return e.rowCount
 }

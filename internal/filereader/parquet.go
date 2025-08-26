@@ -112,7 +112,7 @@ func (r *ParquetReader) Close() error {
 	return nil
 }
 
-// RowCount returns the total number of rows that have been successfully read.
-func (r *ParquetReader) RowCount() int64 {
+// TotalRowsReturned returns the total number of rows that have been successfully returned via Read().
+func (r *ParquetReader) TotalRowsReturned() int64 {
 	return r.rowCount
 }

@@ -130,7 +130,7 @@ func debugIngestMetrics(tmpdir string, files []string) error {
 			}
 		}
 
-		fileRowsRead := reader.RowCount()
+		fileRowsRead := reader.TotalRowsReturned()
 		ll.Info("File processing completed",
 			slog.String("filename", filename),
 			slog.Int64("rowsRead", fileRowsRead),

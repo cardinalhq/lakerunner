@@ -143,7 +143,7 @@ func (sr *SequentialReader) RemainingReaderCount() int {
 	return remaining
 }
 
-// RowCount returns the total number of rows that have been successfully read from all readers.
-func (sr *SequentialReader) RowCount() int64 {
+// TotalRowsReturned returns the total number of rows that have been successfully returned via Read() from all readers.
+func (sr *SequentialReader) TotalRowsReturned() int64 {
 	return sr.rowCount
 }
