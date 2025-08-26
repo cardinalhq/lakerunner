@@ -329,7 +329,7 @@ func BenchmarkSpiller_Roundtrip(b *testing.B) {
 			}
 
 			// Cleanup
-			spiller.CleanupSpillFile(spillFile)
+			_ = spiller.CleanupSpillFile(spillFile)
 		}
 	})
 
@@ -368,7 +368,7 @@ func BenchmarkSpiller_Roundtrip(b *testing.B) {
 			}
 
 			// Cleanup
-			spiller.CleanupSpillFile(spillFile)
+			_ = spiller.CleanupSpillFile(spillFile)
 		}
 	})
 }

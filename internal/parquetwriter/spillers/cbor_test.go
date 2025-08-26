@@ -192,7 +192,7 @@ func TestCborSpiller_TypePreservation(t *testing.T) {
 	// Write and read back
 	spillFile, err := spiller.WriteSpillFile(os.TempDir(), []map[string]any{testRow}, keyFunc)
 	require.NoError(t, err)
-	defer spiller.CleanupSpillFile(spillFile)
+	defer func() { _ = spiller.CleanupSpillFile(spillFile) }()
 
 	reader, err := spiller.OpenSpillFile(spillFile, keyFunc)
 	require.NoError(t, err)
