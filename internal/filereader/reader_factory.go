@@ -79,9 +79,9 @@ func WrapReaderForAggregation(reader Reader, opts ReaderOptions) (Reader, error)
 	// Add aggregation if enabled
 	if opts.EnableAggregation && opts.AggregationPeriodMs > 0 {
 		var err error
-		wrappedReader, err = NewAggregatingReader(wrappedReader, opts.AggregationPeriodMs)
+		wrappedReader, err = NewAggregatingMetricsReader(wrappedReader, opts.AggregationPeriodMs)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create aggregating reader: %w", err)
+			return nil, fmt.Errorf("failed to create aggregating metrics reader: %w", err)
 		}
 	}
 

@@ -22,10 +22,10 @@ import (
 	"github.com/DataDog/sketches-go/ddsketch"
 )
 
-// AggregatingReader wraps a sorted Reader to perform streaming aggregation of metrics.
+// AggregatingMetricsReader wraps a sorted Reader to perform streaming aggregation of metrics.
 // It aggregates rows with the same [metric_name, tid, truncated_timestamp] key.
 // The underlying reader must return rows in sorted order by this key.
-type AggregatingReader struct {
+type AggregatingMetricsReader struct {
 	reader            Reader
 	aggregationPeriod int64 // milliseconds (e.g., 10000 for 10s)
 	closed            bool
@@ -40,12 +40,12 @@ type AggregatingReader struct {
 	readerEOF       bool
 }
 
-// NewAggregatingReader creates a new AggregatingReader that aggregates metrics
+// NewAggregatingMetricsReader creates a new AggregatingMetricsReader that aggregates metrics
 // with the same [metric_name, tid, truncated_timestamp] key.
 //
 // aggregationPeriodMs: period in milliseconds for timestamp truncation (e.g., 10000 for 10s)
 // reader: underlying reader that returns rows in sorted order by [metric_name, tid, timestamp]
-func NewAggregatingReader(reader Reader, aggregationPeriodMs int64) (*AggregatingReader, error) {
+func NewAggregatingMetricsReader(reader Reader, aggregationPeriodMs int64) (*AggregatingMetricsReader, error) {
 	if reader == nil {
 		return nil, fmt.Errorf("reader cannot be nil")
 	}
@@ -53,7 +53,7 @@ func NewAggregatingReader(reader Reader, aggregationPeriodMs int64) (*Aggregatin
 		return nil, fmt.Errorf("aggregation period must be positive, got %d", aggregationPeriodMs)
 	}
 
-	return &AggregatingReader{
+	return &AggregatingMetricsReader{
 		reader:            reader,
 		aggregationPeriod: aggregationPeriodMs,
 		singletonValues:   make([]float64, 0, 16),
@@ -61,7 +61,7 @@ func NewAggregatingReader(reader Reader, aggregationPeriodMs int64) (*Aggregatin
 }
 
 // makeAggregationKey creates a key for aggregation from [metric_name, tid, truncated_timestamp].
-func (ar *AggregatingReader) makeAggregationKey(row map[string]any) (string, error) {
+func (ar *AggregatingMetricsReader) makeAggregationKey(row map[string]any) (string, error) {
 	name, nameOk := row["_cardinalhq.name"].(string)
 	if !nameOk {
 		return "", fmt.Errorf("missing or invalid _cardinalhq.name field")
@@ -93,6 +93,12 @@ func isSketchEmpty(row map[string]any) bool {
 func getSingletonValue(row map[string]any) (float64, bool) {
 	value, ok := row["rollup_sum"].(float64)
 	return value, ok
+}
+
+// isHistogramType checks if a row represents a histogram metric type.
+func isHistogramType(row map[string]any) bool {
+	metricType, ok := row["type"].(string)
+	return ok && metricType == "Histogram"
 }
 
 // decodeSketch decodes a sketch from bytes.
@@ -159,9 +165,12 @@ func updateRowFromSketch(row map[string]any, sketch *ddsketch.DDSketch) error {
 }
 
 // aggregateGroup processes all rows for a single aggregation group and returns the aggregated result.
-func (ar *AggregatingReader) aggregateGroup() (map[string]any, error) {
+// Returns nil if all rows in the group were dropped (e.g., invalid histograms).
+func (ar *AggregatingMetricsReader) aggregateGroup() (map[string]any, error) {
 	if ar.aggregatedRow == nil {
-		return nil, fmt.Errorf("no aggregated row to finalize")
+		// All rows in this group were dropped - return nil to indicate no output
+		ar.resetAggregation()
+		return nil, nil
 	}
 
 	// Handle the aggregation based on what we collected
@@ -211,7 +220,7 @@ func (ar *AggregatingReader) aggregateGroup() (map[string]any, error) {
 }
 
 // resetAggregation clears the current aggregation state.
-func (ar *AggregatingReader) resetAggregation() {
+func (ar *AggregatingMetricsReader) resetAggregation() {
 	ar.currentKey = ""
 	ar.currentSketch = nil
 	ar.singletonValues = ar.singletonValues[:0] // Reuse slice capacity
@@ -219,7 +228,14 @@ func (ar *AggregatingReader) resetAggregation() {
 }
 
 // addRowToAggregation adds a row to the current aggregation group.
-func (ar *AggregatingReader) addRowToAggregation(row map[string]any) error {
+func (ar *AggregatingMetricsReader) addRowToAggregation(row map[string]any) error {
+	// Validate histogram rows have sketches - drop invalid histograms
+	if isHistogramType(row) && isSketchEmpty(row) {
+		// TODO: Add metric counter here for tracking dropped histogram rows without sketches
+		slog.Warn("Dropping histogram row without sketch", "row", row)
+		return nil // Skip this row, don't add to aggregation
+	}
+
 	// If this is the first row in the group, use it as the base
 	if ar.aggregatedRow == nil {
 		// Deep copy the row to avoid modifying the original
@@ -264,7 +280,7 @@ func (ar *AggregatingReader) addRowToAggregation(row map[string]any) error {
 }
 
 // readNextRowFromUnderlying reads the next row from the underlying reader.
-func (ar *AggregatingReader) readNextRowFromUnderlying() error {
+func (ar *AggregatingMetricsReader) readNextRowFromUnderlying() error {
 	if ar.readerEOF {
 		return nil
 	}
@@ -294,7 +310,7 @@ func (ar *AggregatingReader) readNextRowFromUnderlying() error {
 }
 
 // Read populates the provided slice with aggregated rows.
-func (ar *AggregatingReader) Read(rows []Row) (int, error) {
+func (ar *AggregatingMetricsReader) Read(rows []Row) (int, error) {
 	if ar.closed {
 		return 0, fmt.Errorf("reader is closed")
 	}
@@ -346,12 +362,15 @@ func (ar *AggregatingReader) Read(rows []Row) (int, error) {
 					return n, fmt.Errorf("failed to aggregate group: %w", err)
 				}
 
-				resetRow(&rows[n])
-				for k, v := range result {
-					rows[n][k] = v
+				// Only emit if we have a result (not all rows were dropped)
+				if result != nil {
+					resetRow(&rows[n])
+					for k, v := range result {
+						rows[n][k] = v
+					}
+					n++
+					ar.rowCount++
 				}
-				n++
-				ar.rowCount++
 
 				// Start new aggregation with the pending row
 				ar.currentKey = key
@@ -370,12 +389,15 @@ func (ar *AggregatingReader) Read(rows []Row) (int, error) {
 				return n, fmt.Errorf("failed to aggregate final group: %w", err)
 			}
 
-			resetRow(&rows[n])
-			for k, v := range result {
-				rows[n][k] = v
+			// Only emit if we have a result (not all rows were dropped)
+			if result != nil {
+				resetRow(&rows[n])
+				for k, v := range result {
+					rows[n][k] = v
+				}
+				n++
+				ar.rowCount++
 			}
-			n++
-			ar.rowCount++
 			continue
 		}
 
@@ -387,7 +409,7 @@ func (ar *AggregatingReader) Read(rows []Row) (int, error) {
 }
 
 // Close closes the reader and the underlying reader.
-func (ar *AggregatingReader) Close() error {
+func (ar *AggregatingMetricsReader) Close() error {
 	if ar.closed {
 		return nil
 	}
@@ -398,12 +420,12 @@ func (ar *AggregatingReader) Close() error {
 }
 
 // RowCount returns the total number of aggregated rows returned.
-func (ar *AggregatingReader) RowCount() int64 {
+func (ar *AggregatingMetricsReader) RowCount() int64 {
 	return ar.rowCount
 }
 
 // GetOTELMetrics implements the OTELMetricsProvider interface if the underlying reader supports it.
-func (ar *AggregatingReader) GetOTELMetrics() (any, error) {
+func (ar *AggregatingMetricsReader) GetOTELMetrics() (any, error) {
 	if provider, ok := ar.reader.(interface{ GetOTELMetrics() (any, error) }); ok {
 		return provider.GetOTELMetrics()
 	}
