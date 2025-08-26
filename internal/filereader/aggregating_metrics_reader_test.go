@@ -566,13 +566,13 @@ func TestAggregatingMetricsReader_DropHistogramWithoutSketch(t *testing.T) {
 	// Test that histogram rows without sketches are dropped
 	inputRows := []Row{
 		{
-			"_cardinalhq.name":      "http.request_duration",
-			"_cardinalhq.tid":       int64(12345),
-			"_cardinalhq.timestamp": int64(10500),
-			"type":                  "Histogram", // This is a histogram
-			"sketch":                []byte{},    // But has empty sketch - should be dropped
-			"rollup_sum":            75.0,
-			"rollup_count":          1.0,
+			"_cardinalhq.name":        "http.request_duration",
+			"_cardinalhq.tid":         int64(12345),
+			"_cardinalhq.timestamp":   int64(10500),
+			"_cardinalhq.metric_type": "histogram", // This is a histogram
+			"sketch":                  []byte{},    // But has empty sketch - should be dropped
+			"rollup_sum":              75.0,
+			"rollup_count":            1.0,
 		},
 		{
 			"_cardinalhq.name":      "cpu.usage",

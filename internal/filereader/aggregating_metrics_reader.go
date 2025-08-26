@@ -99,8 +99,8 @@ func getSingletonValue(row map[string]any) (float64, bool) {
 
 // isHistogramType checks if a row represents a histogram metric type.
 func isHistogramType(row map[string]any) bool {
-	metricType, ok := row["type"].(string)
-	return ok && metricType == "Histogram"
+	metricType, ok := row["_cardinalhq.metric_type"].(string)
+	return ok && metricType == "histogram"
 }
 
 // updateRowFromSketch updates all rollup fields in a row based on the sketch.
