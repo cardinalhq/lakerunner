@@ -315,65 +315,70 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ret map[string]an
 	// Use handleHistogram to convert buckets to value/count pairs
 	counts, values := r.handleHistogram(bucketCounts, explicitBounds)
 
-	// Always create a sketch for histograms, even if empty
+	// Check if histogram has any data - if not, drop this datapoint
+	hasData := false
+	for _, count := range counts {
+		if count > 0 {
+			hasData = true
+			break
+		}
+	}
+
+	if !hasData {
+		// Drop histogram datapoints with no data - histograms must always have sketches with data
+		return fmt.Errorf("dropping histogram datapoint with no data - histograms must have counts")
+	}
+
+	// Create sketch for histogram (only for histograms with data)
 	sketch, err := ddsketch.NewDefaultDDSketch(0.01)
 	if err != nil {
-		// TODO: Add a counter to track sketch creation failures for monitoring
-		// If we can't create sketch for histogram, we must drop this data point
-		// since histograms without sketches would break downstream aggregation
 		return fmt.Errorf("failed to create sketch for histogram: %w", err)
 	}
 
-	// Add histogram data to sketch if we have any
-	if len(counts) > 0 {
-		for i, count := range counts {
-			if count > 0 {
-				if err := sketch.AddWithCount(values[i], count); err != nil {
-					// Log error but continue processing
-					continue
-				}
+	// Add histogram data to sketch
+	for i, count := range counts {
+		if count > 0 {
+			if err := sketch.AddWithCount(values[i], count); err != nil {
+				// Log error but continue processing other buckets
+				continue
 			}
 		}
 	}
 
-	// Generate rollup statistics from sketch (works for both empty and populated sketches)
-	if sketch.GetCount() > 0 {
-		// Sketch has data - use actual values
-		maxvalue, _ := sketch.GetMaxValue()
-		minvalue, _ := sketch.GetMinValue()
-		quantiles, _ := sketch.GetValuesAtQuantiles([]float64{0.25, 0.5, 0.75, 0.90, 0.95, 0.99})
-
-		count := sketch.GetCount()
-		sum := sketch.GetSum()
-		avg := sum / count
-
-		ret["rollup_avg"] = avg
-		ret["rollup_max"] = maxvalue
-		ret["rollup_min"] = minvalue
-		ret["rollup_count"] = count
-		ret["rollup_sum"] = sum
-		ret["rollup_p25"] = quantiles[0]
-		ret["rollup_p50"] = quantiles[1]
-		ret["rollup_p75"] = quantiles[2]
-		ret["rollup_p90"] = quantiles[3]
-		ret["rollup_p95"] = quantiles[4]
-		ret["rollup_p99"] = quantiles[5]
-	} else {
-		// Empty sketch - add zero rollup fields but keep the sketch
-		ret["rollup_avg"] = 0.0
-		ret["rollup_max"] = 0.0
-		ret["rollup_min"] = 0.0
-		ret["rollup_count"] = 0.0
-		ret["rollup_sum"] = 0.0
-		ret["rollup_p25"] = 0.0
-		ret["rollup_p50"] = 0.0
-		ret["rollup_p75"] = 0.0
-		ret["rollup_p90"] = 0.0
-		ret["rollup_p95"] = 0.0
-		ret["rollup_p99"] = 0.0
+	// Generate rollup statistics from sketch (sketch always has data at this point)
+	maxvalue, err := sketch.GetMaxValue()
+	if err != nil {
+		return fmt.Errorf("failed to get max value from non-empty sketch: %w", err)
+	}
+	minvalue, err := sketch.GetMinValue()
+	if err != nil {
+		return fmt.Errorf("failed to get min value from non-empty sketch: %w", err)
+	}
+	quantiles, err := sketch.GetValuesAtQuantiles([]float64{0.25, 0.5, 0.75, 0.90, 0.95, 0.99})
+	if err != nil {
+		return fmt.Errorf("failed to get quantiles from non-empty sketch: %w", err)
+	}
+	if len(quantiles) < 6 {
+		return fmt.Errorf("expected 6 quantiles, got %d", len(quantiles))
 	}
 
-	// Always encode the sketch (even if empty) for histograms
+	count := sketch.GetCount()
+	sum := sketch.GetSum()
+	avg := sum / count
+
+	ret["rollup_avg"] = avg
+	ret["rollup_max"] = maxvalue
+	ret["rollup_min"] = minvalue
+	ret["rollup_count"] = count
+	ret["rollup_sum"] = sum
+	ret["rollup_p25"] = quantiles[0]
+	ret["rollup_p50"] = quantiles[1]
+	ret["rollup_p75"] = quantiles[2]
+	ret["rollup_p90"] = quantiles[3]
+	ret["rollup_p95"] = quantiles[4]
+	ret["rollup_p99"] = quantiles[5]
+
+	// Encode the sketch (always has data at this point)
 	ret["sketch"] = helpers.EncodeSketch(sketch)
 	return nil
 }
@@ -425,7 +430,7 @@ func (r *IngestProtoMetricsReader) handleHistogram(bucketCounts []float64, bucke
 	counts = []float64{}
 	values = []float64{}
 
-	if len(bucketCounts) == 0 || len(bucketBounds) == 0 {
+	if len(bucketCounts) == 0 {
 		return counts, values
 	}
 	if len(bucketCounts) > len(bucketBounds)+1 {
@@ -447,7 +452,13 @@ func (r *IngestProtoMetricsReader) handleHistogram(bucketCounts []float64, bucke
 			upperBound := bucketBounds[i]
 			value = (lowerBound + upperBound) / 2.0
 		} else {
-			value = min(bucketBounds[len(bucketBounds)-1]+1, maxTrackableValue)
+			// Overflow bucket - use a reasonable upper bound
+			if len(bucketBounds) > 0 {
+				value = min(bucketBounds[len(bucketBounds)-1]+1, maxTrackableValue)
+			} else {
+				// No bounds at all - use a default mid-range value
+				value = 1.0
+			}
 		}
 
 		counts = append(counts, count)
