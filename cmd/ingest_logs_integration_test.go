@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -266,15 +267,14 @@ func getReaderType(reader interface{}) string {
 	if reader == nil {
 		return "<nil>"
 	}
-	return getTypeName(reader)
-}
 
-// getTypeName returns the type name including package for better debugging
-func getTypeName(v interface{}) string {
-	if v == nil {
-		return "<nil>"
+	if fmt.Sprintf("%T", reader) == "*filereader.readerWithCloser" {
+		v := reflect.ValueOf(reader).Elem().FieldByName("Reader")
+		if v.IsValid() {
+			return fmt.Sprintf("%T", v.Interface())
+		}
 	}
-	return fmt.Sprintf("%T", v)
+	return fmt.Sprintf("%T", reader)
 }
 
 // TestLogTranslatorWithSampleFiles tests LogTranslator with actual sample files
