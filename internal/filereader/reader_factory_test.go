@@ -15,15 +15,215 @@
 package filereader
 
 import (
+	"compress/gzip"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/cardinalhq/oteltools/signalbuilder"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/collector/pdata/plog"
+	"go.opentelemetry.io/collector/pdata/pmetric"
+	"go.opentelemetry.io/collector/pdata/ptrace"
 )
+
+// Helper functions to create synthetic protobuf files
+
+func createSyntheticLogsFile(t *testing.T, compressed bool) string {
+	builder := signalbuilder.NewLogBuilder()
+	resourceLogs := &signalbuilder.ResourceLogs{
+		Resource: map[string]any{
+			"service.name": "factory-test-logs-service",
+		},
+		ScopeLogs: []signalbuilder.ScopeLogs{
+			{
+				Name:    "factory-test-logger",
+				Version: "1.0.0",
+				LogRecords: []signalbuilder.LogRecord{
+					{
+						Timestamp:      time.Now().UnixNano(),
+						SeverityText:   "INFO",
+						SeverityNumber: int32(plog.SeverityNumberInfo),
+						Body:           "Factory test log message",
+					},
+				},
+			},
+		},
+	}
+
+	err := builder.Add(resourceLogs)
+	require.NoError(t, err)
+
+	logs := builder.Build()
+	marshaler := &plog.ProtoMarshaler{}
+	data, err := marshaler.MarshalLogs(logs)
+	require.NoError(t, err)
+
+	// Create temporary file
+	var tmpFile *os.File
+	if compressed {
+		tmpFile, err = os.CreateTemp("", "synthetic-logs-*.binpb.gz")
+		require.NoError(t, err)
+
+		gzWriter := gzip.NewWriter(tmpFile)
+		_, err = gzWriter.Write(data)
+		require.NoError(t, err)
+
+		err = gzWriter.Close()
+		require.NoError(t, err)
+	} else {
+		tmpFile, err = os.CreateTemp("", "synthetic-logs-*.binpb")
+		require.NoError(t, err)
+
+		_, err = tmpFile.Write(data)
+		require.NoError(t, err)
+	}
+
+	err = tmpFile.Close()
+	require.NoError(t, err)
+
+	// Clean up the file when test completes
+	t.Cleanup(func() {
+		os.Remove(tmpFile.Name())
+	})
+
+	return tmpFile.Name()
+}
+
+func createSyntheticMetricsFile(t *testing.T, compressed bool) string {
+	builder := signalbuilder.NewMetricsBuilder()
+	resourceMetrics := &signalbuilder.ResourceMetrics{
+		Resource: map[string]any{
+			"service.name": "factory-test-metrics-service",
+		},
+		ScopeMetrics: []signalbuilder.ScopeMetrics{
+			{
+				Name:    "factory-test-meter",
+				Version: "1.0.0",
+				Metrics: []signalbuilder.Metric{
+					{
+						Name: "factory_test_counter",
+						Type: "sum",
+						Sum: &signalbuilder.SumMetric{
+							IsMonotonic: true,
+							DataPoints: []signalbuilder.NumberDataPoint{
+								{
+									Value:     100,
+									Timestamp: time.Now().UnixNano(),
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	err := builder.Add(resourceMetrics)
+	require.NoError(t, err)
+
+	metrics := builder.Build()
+	marshaler := &pmetric.ProtoMarshaler{}
+	data, err := marshaler.MarshalMetrics(metrics)
+	require.NoError(t, err)
+
+	// Create temporary file
+	var tmpFile *os.File
+	if compressed {
+		tmpFile, err = os.CreateTemp("", "synthetic-metrics-*.binpb.gz")
+		require.NoError(t, err)
+
+		gzWriter := gzip.NewWriter(tmpFile)
+		_, err = gzWriter.Write(data)
+		require.NoError(t, err)
+
+		err = gzWriter.Close()
+		require.NoError(t, err)
+	} else {
+		tmpFile, err = os.CreateTemp("", "synthetic-metrics-*.binpb")
+		require.NoError(t, err)
+
+		_, err = tmpFile.Write(data)
+		require.NoError(t, err)
+	}
+
+	err = tmpFile.Close()
+	require.NoError(t, err)
+
+	// Clean up the file when test completes
+	t.Cleanup(func() {
+		os.Remove(tmpFile.Name())
+	})
+
+	return tmpFile.Name()
+}
+
+func createSyntheticTracesFile(t *testing.T, compressed bool) string {
+	builder := signalbuilder.NewTracesBuilder()
+	resourceTraces := &signalbuilder.ResourceTraces{
+		Resource: map[string]any{
+			"service.name": "factory-test-traces-service",
+		},
+		ScopeTraces: []signalbuilder.ScopeTraces{
+			{
+				Name:    "factory-test-tracer",
+				Version: "1.0.0",
+				Spans: []signalbuilder.Span{
+					{
+						TraceID:        "12345678901234567890123456789012",
+						SpanID:         "1234567890123456",
+						Name:           "factory-test-operation",
+						Kind:           1,
+						StartTimestamp: time.Now().UnixNano(),
+						EndTimestamp:   time.Now().Add(100 * time.Millisecond).UnixNano(),
+					},
+				},
+			},
+		},
+	}
+
+	err := builder.Add(resourceTraces)
+	require.NoError(t, err)
+
+	traces := builder.Build()
+	marshaler := &ptrace.ProtoMarshaler{}
+	data, err := marshaler.MarshalTraces(traces)
+	require.NoError(t, err)
+
+	// Create temporary file
+	var tmpFile *os.File
+	if compressed {
+		tmpFile, err = os.CreateTemp("", "synthetic-traces-*.binpb.gz")
+		require.NoError(t, err)
+
+		gzWriter := gzip.NewWriter(tmpFile)
+		_, err = gzWriter.Write(data)
+		require.NoError(t, err)
+
+		err = gzWriter.Close()
+		require.NoError(t, err)
+	} else {
+		tmpFile, err = os.CreateTemp("", "synthetic-traces-*.binpb")
+		require.NoError(t, err)
+
+		_, err = tmpFile.Write(data)
+		require.NoError(t, err)
+	}
+
+	err = tmpFile.Close()
+	require.NoError(t, err)
+
+	// Clean up the file when test completes
+	t.Cleanup(func() {
+		os.Remove(tmpFile.Name())
+	})
+
+	return tmpFile.Name()
+}
 
 func TestReaderForFile(t *testing.T) {
 	testdataDir := "../../testdata"
@@ -83,7 +283,7 @@ func TestReaderForFile(t *testing.T) {
 		// Protobuf files (signal-specific readers)
 		{
 			name:          "BinpbLogs",
-			filename:      filepath.Join(testdataDir, "logs", "logs_160396104.binpb"),
+			filename:      "",
 			signalType:    SignalTypeLogs,
 			expectSuccess: true,
 			expectedType:  "*filereader.ProtoLogsReader",
@@ -91,19 +291,19 @@ func TestReaderForFile(t *testing.T) {
 		},
 		{
 			name:          "BinpbGzMetrics",
-			filename:      filepath.Join(testdataDir, "metrics", "otel-metrics.binpb.gz"),
+			filename:      "",
 			signalType:    SignalTypeMetrics,
 			expectSuccess: true,
 			expectedType:  "*filereader.ProtoMetricsReader",
-			description:   "Gzipped metrics protobuf file (new support!)",
+			description:   "Gzipped metrics protobuf file",
 		},
 		{
 			name:          "BinpbGzTraces",
-			filename:      filepath.Join(testdataDir, "traces", "otel-traces.binpb.gz"),
+			filename:      "",
 			signalType:    SignalTypeTraces,
 			expectSuccess: true,
 			expectedType:  "*filereader.ProtoTracesReader",
-			description:   "Gzipped traces protobuf file (new support!)",
+			description:   "Gzipped traces protobuf file",
 		},
 
 		// Error cases
@@ -127,9 +327,21 @@ func TestReaderForFile(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Logf("Testing %s: %s", tt.description, tt.filename)
+			filename := tt.filename
+			if tt.filename == "" {
+				switch tt.name {
+				case "BinpbLogs":
+					filename = createSyntheticLogsFile(t, false)
+				case "BinpbGzMetrics":
+					filename = createSyntheticMetricsFile(t, true)
+				case "BinpbGzTraces":
+					filename = createSyntheticTracesFile(t, true)
+				}
+			}
 
-			reader, err := ReaderForFile(tt.filename, tt.signalType)
+			t.Logf("Testing %s: %s", tt.description, filename)
+
+			reader, err := ReaderForFile(filename, tt.signalType)
 
 			if tt.expectSuccess {
 				require.NoError(t, err, "Expected success for %s but got error: %v", tt.description, err)
@@ -140,7 +352,7 @@ func TestReaderForFile(t *testing.T) {
 				assert.Equal(t, tt.expectedType, readerType, "Wrong reader type for %s", tt.description)
 
 				// Test that we can read at least one row (if the file has data)
-				if canRead(tt.filename) {
+				if canRead(filename) {
 					rows := make([]Row, 1)
 					n, readErr := reader.Read(rows)
 					if readErr != nil && readErr != io.EOF {
@@ -166,10 +378,9 @@ func TestReaderForFile(t *testing.T) {
 }
 
 func TestReaderForFileWithOptions(t *testing.T) {
-	testdataDir := "../../testdata"
-
 	// Test that ReaderForFileWithOptions works the same as ReaderForFile
-	filename := filepath.Join(testdataDir, "logs", "logs_160396104.binpb")
+	// Create synthetic protobuf file for testing
+	filename := createSyntheticLogsFile(t, false)
 
 	// Using ReaderForFile
 	reader1, err1 := ReaderForFile(filename, SignalTypeLogs)
@@ -187,8 +398,6 @@ func TestReaderForFileWithOptions(t *testing.T) {
 }
 
 func TestSignalTypeSpecificProtoReaders(t *testing.T) {
-	testdataDir := "../../testdata"
-
 	tests := []struct {
 		name       string
 		filename   string
@@ -197,19 +406,19 @@ func TestSignalTypeSpecificProtoReaders(t *testing.T) {
 	}{
 		{
 			name:       "LogsProtoReader",
-			filename:   filepath.Join(testdataDir, "logs", "logs_160396104.binpb"),
+			filename:   "",
 			signalType: SignalTypeLogs,
 			readerType: "*filereader.ProtoLogsReader",
 		},
 		{
 			name:       "MetricsProtoReader",
-			filename:   filepath.Join(testdataDir, "metrics", "otel-metrics.binpb.gz"),
+			filename:   "",
 			signalType: SignalTypeMetrics,
 			readerType: "*filereader.ProtoMetricsReader",
 		},
 		{
 			name:       "TracesProtoReader",
-			filename:   filepath.Join(testdataDir, "traces", "otel-traces.binpb.gz"),
+			filename:   "",
 			signalType: SignalTypeTraces,
 			readerType: "*filereader.ProtoTracesReader",
 		},
@@ -217,22 +426,31 @@ func TestSignalTypeSpecificProtoReaders(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			reader, err := ReaderForFile(tt.filename, tt.signalType)
+			filename := tt.filename
+			if tt.filename == "" {
+				switch tt.name {
+				case "LogsProtoReader":
+					filename = createSyntheticLogsFile(t, false)
+				case "MetricsProtoReader":
+					filename = createSyntheticMetricsFile(t, true)
+				case "TracesProtoReader":
+					filename = createSyntheticTracesFile(t, true)
+				}
+			}
+
+			reader, err := ReaderForFile(filename, tt.signalType)
 			require.NoError(t, err)
 			defer reader.Close()
 
 			readerType := getReaderTypeName(reader)
 			assert.Equal(t, tt.readerType, readerType)
 
-			t.Logf("Successfully created %s for %s", readerType, tt.filename)
+			t.Logf("Successfully created %s for %s", readerType, filename)
 		})
 	}
 }
 
 func TestGzippedProtobufSupport(t *testing.T) {
-	testdataDir := "../../testdata"
-
-	// Test that .binpb.gz files work correctly
 	tests := []struct {
 		name       string
 		filename   string
@@ -240,19 +458,29 @@ func TestGzippedProtobufSupport(t *testing.T) {
 	}{
 		{
 			name:       "GzippedMetrics",
-			filename:   filepath.Join(testdataDir, "metrics", "otel-metrics.binpb.gz"),
+			filename:   "",
 			signalType: SignalTypeMetrics,
 		},
 		{
 			name:       "GzippedTraces",
-			filename:   filepath.Join(testdataDir, "traces", "otel-traces.binpb.gz"),
+			filename:   "",
 			signalType: SignalTypeTraces,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			reader, err := ReaderForFile(tt.filename, tt.signalType)
+			filename := tt.filename
+			if tt.filename == "" {
+				switch tt.name {
+				case "GzippedMetrics":
+					filename = createSyntheticMetricsFile(t, true)
+				case "GzippedTraces":
+					filename = createSyntheticTracesFile(t, true)
+				}
+			}
+
+			reader, err := ReaderForFile(filename, tt.signalType)
 			require.NoError(t, err, "Should support .binpb.gz files")
 			defer reader.Close()
 
@@ -263,7 +491,7 @@ func TestGzippedProtobufSupport(t *testing.T) {
 				t.Logf("Read error (may be expected): %v", readErr)
 			} else if n > 0 {
 				assert.NotNil(t, rows[0], "Should be able to read data from gzipped protobuf")
-				t.Logf("Successfully read from gzipped protobuf: %s", tt.filename)
+				t.Logf("Successfully read from gzipped protobuf: %s", filename)
 			}
 		})
 	}

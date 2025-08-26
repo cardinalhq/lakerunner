@@ -16,12 +16,9 @@ package filereader
 
 import (
 	"bytes"
-	"compress/gzip"
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -30,29 +27,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/collector/pdata/plog"
 )
-
-func TestNewProtoLogsReader(t *testing.T) {
-	// Test with valid gzipped protobuf data
-	file, err := os.Open("../../testdata/logs/otel-logs.binpb.gz")
-	require.NoError(t, err)
-	defer file.Close()
-
-	gzReader, err := gzip.NewReader(file)
-	require.NoError(t, err)
-	defer gzReader.Close()
-
-	reader, err := NewProtoLogsReader(gzReader)
-	require.NoError(t, err)
-	require.NotNil(t, reader)
-	defer reader.Close()
-
-	// Verify the reader was initialized properly
-	assert.NotNil(t, reader.logs)
-	assert.False(t, reader.closed)
-	assert.Equal(t, 0, reader.resourceIndex)
-	assert.Equal(t, 0, reader.scopeIndex)
-	assert.Equal(t, 0, reader.logIndex)
-}
 
 func TestNewProtoLogsReader_InvalidData(t *testing.T) {
 	// Test with invalid protobuf data
@@ -86,180 +60,9 @@ func TestNewProtoLogsReader_EmptyData(t *testing.T) {
 	}
 }
 
-func TestProtoLogsReader_Read(t *testing.T) {
-	// Load test data
-	file, err := os.Open("../../testdata/logs/otel-logs.binpb.gz")
-	require.NoError(t, err)
-	defer file.Close()
-
-	gzReader, err := gzip.NewReader(file)
-	require.NoError(t, err)
-	defer gzReader.Close()
-
-	reader, err := NewProtoLogsReader(gzReader)
-	require.NoError(t, err)
-	defer reader.Close()
-
-	// Read all rows
-	allRows, err := readAllRows(reader)
-	require.NoError(t, err)
-	require.Equal(t, 525, len(allRows), "Should read exactly 525 rows from logs_160396104.binpb")
-
-	// Verify each row has expected fields
-	for i, row := range allRows {
-		t.Run(fmt.Sprintf("row_%d", i), func(t *testing.T) {
-			// Should have basic log fields
-			assert.Contains(t, row, "_cardinalhq.message", "Row should have log body")
-			assert.Contains(t, row, "_cardinalhq.timestamp", "Row should have timestamp")
-
-			// Check that body is not empty
-			assert.NotEmpty(t, row["_cardinalhq.message"], "Log body should not be empty")
-
-			// Other fields may or may not be present depending on the log
-			// but if present, should have valid values
-			if severity, exists := row["_cardinalhq.level"]; exists {
-				assert.IsType(t, "", severity, "Severity text should be string")
-			}
-			if severityNum, exists := row["severity_number"]; exists {
-				assert.IsType(t, int64(0), severityNum, "Severity number should be int64")
-			}
-		})
-	}
-
-	t.Logf("Successfully read %d log rows", len(allRows))
-}
-
-func TestProtoLogsReader_ReadBatched(t *testing.T) {
-	// Load test data
-	file, err := os.Open("../../testdata/logs/otel-logs.binpb.gz")
-	require.NoError(t, err)
-	defer file.Close()
-
-	gzReader, err := gzip.NewReader(file)
-	require.NoError(t, err)
-	defer gzReader.Close()
-
-	reader, err := NewProtoLogsReader(gzReader)
-	require.NoError(t, err)
-	defer reader.Close()
-
-	// Read in batches of 3
-	var totalRows int
-	batchSize := 3
-
-	for {
-		rows := make([]Row, batchSize)
-		for i := range rows {
-			rows[i] = make(Row)
-		}
-
-		n, err := reader.Read(rows)
-		totalRows += n
-
-		// Verify each row that was read
-		for i := 0; i < n; i++ {
-			assert.Greater(t, len(rows[i]), 0, "Row %d should have data", i)
-			assert.Contains(t, rows[i], "_cardinalhq.message", "Row %d should have body field", i)
-			assert.Contains(t, rows[i], "_cardinalhq.timestamp", "Row %d should have timestamp field", i)
-		}
-
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		require.NoError(t, err)
-	}
-
-	assert.Equal(t, 525, totalRows, "Should read exactly 525 rows in batches")
-	t.Logf("Read %d rows in batches of %d (expected 525)", totalRows, batchSize)
-}
-
-func TestProtoLogsReader_ReadSingleRow(t *testing.T) {
-	// Load test data
-	file, err := os.Open("../../testdata/logs/otel-logs.binpb.gz")
-	require.NoError(t, err)
-	defer file.Close()
-
-	gzReader, err := gzip.NewReader(file)
-	require.NoError(t, err)
-	defer gzReader.Close()
-
-	reader, err := NewProtoLogsReader(gzReader)
-	require.NoError(t, err)
-	defer reader.Close()
-
-	// Read one row at a time
-	rows := make([]Row, 1)
-	rows[0] = make(Row)
-
-	n, err := reader.Read(rows)
-	require.NoError(t, err)
-	assert.Equal(t, 1, n)
-	assert.Greater(t, len(rows[0]), 0, "First row should have data")
-	assert.Contains(t, rows[0], "_cardinalhq.message")
-	assert.Contains(t, rows[0], "_cardinalhq.timestamp")
-}
-
-func TestProtoLogsReader_ResourceAndScopeAttributes(t *testing.T) {
-	// Load test data
-	file, err := os.Open("../../testdata/logs/otel-logs.binpb.gz")
-	require.NoError(t, err)
-	defer file.Close()
-
-	gzReader, err := gzip.NewReader(file)
-	require.NoError(t, err)
-	defer gzReader.Close()
-
-	reader, err := NewProtoLogsReader(gzReader)
-	require.NoError(t, err)
-	defer reader.Close()
-
-	// Read first few rows to check for resource/scope attributes
-	rows := make([]Row, 3)
-	for i := range rows {
-		rows[i] = make(Row)
-	}
-
-	n, err := reader.Read(rows)
-	require.NoError(t, err)
-	require.Greater(t, n, 0, "Should read at least one row for attribute checking")
-
-	// Check if any rows have resource or scope attributes
-	foundResourceAttr := false
-	foundScopeAttr := false
-	foundLogAttr := false
-
-	for i := 0; i < n; i++ {
-		for key := range rows[i] {
-			if strings.HasPrefix(key, "resource.") {
-				foundResourceAttr = true
-				t.Logf("Found resource attribute: %s = %v", key, rows[i][key])
-			}
-			if strings.HasPrefix(key, "scope.") {
-				foundScopeAttr = true
-				t.Logf("Found scope attribute: %s = %v", key, rows[i][key])
-			}
-			if strings.HasPrefix(key, "log.") {
-				foundLogAttr = true
-				t.Logf("Found log attribute: %s = %v", key, rows[i][key])
-			}
-		}
-	}
-
-	t.Logf("Found resource attributes: %v, scope attributes: %v, log attributes: %v",
-		foundResourceAttr, foundScopeAttr, foundLogAttr)
-}
-
 func TestProtoLogsReader_EmptySlice(t *testing.T) {
-	// Load test data
-	file, err := os.Open("../../testdata/logs/otel-logs.binpb.gz")
-	require.NoError(t, err)
-	defer file.Close()
-
-	gzReader, err := gzip.NewReader(file)
-	require.NoError(t, err)
-	defer gzReader.Close()
-
-	reader, err := NewProtoLogsReader(gzReader)
+	syntheticData := createSyntheticLogData()
+	reader, err := NewProtoLogsReader(bytes.NewReader(syntheticData))
 	require.NoError(t, err)
 	defer reader.Close()
 
@@ -270,16 +73,8 @@ func TestProtoLogsReader_EmptySlice(t *testing.T) {
 }
 
 func TestProtoLogsReader_Close(t *testing.T) {
-	// Load test data
-	file, err := os.Open("../../testdata/logs/otel-logs.binpb.gz")
-	require.NoError(t, err)
-	defer file.Close()
-
-	gzReader, err := gzip.NewReader(file)
-	require.NoError(t, err)
-	defer gzReader.Close()
-
-	reader, err := NewProtoLogsReader(gzReader)
+	syntheticData := createSyntheticLogData()
+	reader, err := NewProtoLogsReader(bytes.NewReader(syntheticData))
 	require.NoError(t, err)
 
 	// Should be able to read before closing
@@ -302,85 +97,6 @@ func TestProtoLogsReader_Close(t *testing.T) {
 	// Close should be idempotent
 	err = reader.Close()
 	assert.NoError(t, err)
-}
-
-func TestProtoLogsReader_ExhaustData(t *testing.T) {
-	// Load test data
-	file, err := os.Open("../../testdata/logs/otel-logs.binpb.gz")
-	require.NoError(t, err)
-	defer file.Close()
-
-	gzReader, err := gzip.NewReader(file)
-	require.NoError(t, err)
-	defer gzReader.Close()
-
-	reader, err := NewProtoLogsReader(gzReader)
-	require.NoError(t, err)
-	defer reader.Close()
-
-	// Read all data
-	allRows, err := readAllRows(reader)
-	require.NoError(t, err)
-	totalRows := len(allRows)
-
-	// Further reads should return EOF
-	rows := make([]Row, 1)
-	rows[0] = make(Row)
-	n, err := reader.Read(rows)
-	assert.Equal(t, 0, n)
-	assert.True(t, errors.Is(err, io.EOF))
-
-	assert.Equal(t, 525, totalRows, "Should read exactly 525 rows before exhaustion")
-	t.Logf("Successfully exhausted reader after reading %d rows (expected 525)", totalRows)
-}
-
-func TestProtoLogsReader_LogFields(t *testing.T) {
-	// Load test data
-	file, err := os.Open("../../testdata/logs/otel-logs.binpb.gz")
-	require.NoError(t, err)
-	defer file.Close()
-
-	gzReader, err := gzip.NewReader(file)
-	require.NoError(t, err)
-	defer gzReader.Close()
-
-	reader, err := NewProtoLogsReader(gzReader)
-	require.NoError(t, err)
-	defer reader.Close()
-
-	// Read all rows and collect log field info
-	allRows, err := readAllRows(reader)
-	require.NoError(t, err)
-	require.Equal(t, 525, len(allRows), "Should read exactly 525 rows for field analysis")
-
-	severityTexts := make(map[string]int)
-	severityNumbers := make(map[int32]int)
-	bodyCount := 0
-
-	for _, row := range allRows {
-		if body, exists := row["_cardinalhq.message"]; exists {
-			if bodyStr, ok := body.(string); ok && bodyStr != "" {
-				bodyCount++
-			}
-		}
-		if severityText, exists := row["_cardinalhq.level"]; exists {
-			if textStr, ok := severityText.(string); ok {
-				severityTexts[textStr]++
-			}
-		}
-		if severityNum, exists := row["severity_number"]; exists {
-			if numInt64, ok := severityNum.(int64); ok {
-				severityNumbers[int32(numInt64)]++
-			}
-		}
-	}
-
-	t.Logf("Found %d logs with non-empty bodies", bodyCount)
-	t.Logf("Found severity texts: %+v", severityTexts)
-	t.Logf("Found severity numbers: %+v", severityNumbers)
-
-	// Basic validation - at least some logs should have bodies
-	assert.Greater(t, bodyCount, 0, "Should have at least some logs with bodies")
 }
 
 // Test parsing function directly with invalid data
@@ -561,6 +277,67 @@ func TestProtoLogsReader_SyntheticData(t *testing.T) {
 		})
 	}
 
+	// Test batched reading with a new reader instance
+	protoReader2, err := NewProtoLogsReader(bytes.NewReader(syntheticData))
+	require.NoError(t, err)
+	defer protoReader2.Close()
+
+	// Read in batches of 2
+	var totalBatchedRows int
+	batchSize := 2
+	for {
+		rows := make([]Row, batchSize)
+		for i := range rows {
+			rows[i] = make(Row)
+		}
+
+		n, readErr := protoReader2.Read(rows)
+		totalBatchedRows += n
+
+		// Verify each row that was read
+		for i := 0; i < n; i++ {
+			assert.Greater(t, len(rows[i]), 0, "Batched row %d should have data", i)
+			assert.Contains(t, rows[i], "_cardinalhq.message")
+			assert.Contains(t, rows[i], "_cardinalhq.timestamp")
+		}
+
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
+		require.NoError(t, readErr)
+	}
+	assert.Equal(t, len(allRows), totalBatchedRows, "Batched reading should read same number of rows")
+
+	// Test single row reading
+	protoReader3, err := NewProtoLogsReader(bytes.NewReader(syntheticData))
+	require.NoError(t, err)
+	defer protoReader3.Close()
+
+	singleRows := make([]Row, 1)
+	singleRows[0] = make(Row)
+	n, err := protoReader3.Read(singleRows)
+	require.NoError(t, err)
+	assert.Equal(t, 1, n, "Should read exactly 1 row")
+	assert.Contains(t, singleRows[0], "_cardinalhq.message")
+	assert.Contains(t, singleRows[0], "resource.service.name")
+
+	// Test data exhaustion - continue reading until EOF
+	var exhaustRows int
+	for {
+		rows := make([]Row, 2)
+		for i := range rows {
+			rows[i] = make(Row)
+		}
+		n, readErr := protoReader3.Read(rows)
+		exhaustRows += n
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
+		require.NoError(t, readErr)
+	}
+	// Should have read all remaining rows
+	assert.Equal(t, len(allRows)-1, exhaustRows, "Should read all remaining rows after first single read")
+
 	t.Logf("Successfully read %d synthetic log rows (expected 5)", len(allRows))
 }
 
@@ -652,7 +429,7 @@ func TestProtoLogsReader_SyntheticStructuredData(t *testing.T) {
 							"trace_id":    "abc123def456",
 							"user_id":     "user-001",
 							"operation":   "data_fetch",
-							"duration_ms": int64(45), // Explicit int64 to avoid ambiguity
+							"duration_ms": int64(45),
 						},
 					},
 					{
@@ -675,8 +452,8 @@ func TestProtoLogsReader_SyntheticStructuredData(t *testing.T) {
 						Body:              "Rate limit approaching for API endpoint",
 						Attributes: map[string]any{
 							"endpoint":     "/api/v1/data",
-							"current_rate": int64(950),  // Explicit int64
-							"rate_limit":   int64(1000), // Explicit int64
+							"current_rate": int64(950),
+							"rate_limit":   int64(1000),
 							"client_ip":    "192.168.1.100",
 						},
 					},
@@ -689,7 +466,7 @@ func TestProtoLogsReader_SyntheticStructuredData(t *testing.T) {
 						Attributes: map[string]any{
 							"database":        "primary_db",
 							"connection_pool": "pool_1",
-							"retry_count":     int64(3), // Explicit int64
+							"retry_count":     int64(3),
 							"error_code":      "CONNECTION_TIMEOUT",
 						},
 					},
