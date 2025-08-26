@@ -20,6 +20,8 @@ import (
 	"log/slog"
 
 	"github.com/DataDog/sketches-go/ddsketch"
+
+	"github.com/cardinalhq/lakerunner/internal/helpers"
 )
 
 // AggregatingMetricsReader wraps a sorted Reader to perform streaming aggregation of metrics.
@@ -101,25 +103,6 @@ func isHistogramType(row map[string]any) bool {
 	return ok && metricType == "Histogram"
 }
 
-// decodeSketch decodes a sketch from bytes.
-func decodeSketch(sketchBytes []byte) (*ddsketch.DDSketch, error) {
-	sketch, err := ddsketch.NewDefaultDDSketch(0.01)
-	if err != nil {
-		return nil, err
-	}
-	if err := sketch.DecodeAndMergeWith(sketchBytes); err != nil {
-		return nil, err
-	}
-	return sketch, nil
-}
-
-// encodeSketchBytes encodes a sketch to bytes.
-func encodeSketchBytes(sketch *ddsketch.DDSketch) []byte {
-	var buf []byte
-	sketch.Encode(&buf, false)
-	return buf
-}
-
 // updateRowFromSketch updates all rollup fields in a row based on the sketch.
 func updateRowFromSketch(row map[string]any, sketch *ddsketch.DDSketch) error {
 	count := sketch.GetCount()
@@ -158,8 +141,7 @@ func updateRowFromSketch(row map[string]any, sketch *ddsketch.DDSketch) error {
 	row["rollup_p95"] = quantiles[4]
 	row["rollup_p99"] = quantiles[5]
 
-	// Store the encoded sketch
-	row["sketch"] = encodeSketchBytes(sketch)
+	row["sketch"] = helpers.EncodeSketch(sketch)
 
 	return nil
 }
@@ -260,7 +242,7 @@ func (ar *AggregatingMetricsReader) addRowToAggregation(row map[string]any) erro
 			return fmt.Errorf("invalid sketch bytes")
 		}
 
-		sketch, err := decodeSketch(sketchBytes)
+		sketch, err := helpers.DecodeSketch(sketchBytes)
 		if err != nil {
 			return fmt.Errorf("failed to decode sketch: %w", err)
 		}

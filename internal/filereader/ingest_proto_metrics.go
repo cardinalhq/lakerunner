@@ -21,6 +21,8 @@ import (
 	"github.com/DataDog/sketches-go/ddsketch"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
+
+	"github.com/cardinalhq/lakerunner/internal/helpers"
 )
 
 // IngestProtoMetricsReader reads rows from OpenTelemetry protobuf metrics format for ingestion.
@@ -372,7 +374,7 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ret map[string]an
 	}
 
 	// Always encode the sketch (even if empty) for histograms
-	ret["sketch"] = encodeSketch(sketch)
+	ret["sketch"] = helpers.EncodeSketch(sketch)
 	return nil
 }
 
@@ -453,13 +455,6 @@ func (r *IngestProtoMetricsReader) handleHistogram(bucketCounts []float64, bucke
 	}
 
 	return counts, values
-}
-
-// encodeSketch encodes a DDSketch to bytes.
-func encodeSketch(sketch *ddsketch.DDSketch) []byte {
-	var buf []byte
-	sketch.Encode(&buf, false)
-	return buf
 }
 
 // GetOTELMetrics implements the OTELMetricsProvider interface.
