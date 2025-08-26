@@ -42,6 +42,7 @@ WHERE
   dateint = @dateint AND
   frequency_ms = @frequency_ms AND
   instance_num = @instance_num AND
+  slot_id = @slot_id AND
   ts_range && int8range(@start_ts, @end_ts, '[)') AND
   file_size <= @max_file_size AND
   (created_at, segment_id) > (@cursor_created_at, @cursor_segment_id::bigint)

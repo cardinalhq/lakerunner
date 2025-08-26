@@ -46,7 +46,7 @@ func TestCreateLogReaderWithAllSampleFiles(t *testing.T) {
 			filename:      "logs_1747427310000_667024137.parquet",
 			objectID:      "logs_1747427310000_667024137.parquet",
 			expectSuccess: true,
-			expectedType:  "*filereader.PresortedParquetRawReader",
+			expectedType:  "*filereader.PreorderedParquetRawReader",
 			description:   "Standard logs parquet file from logcrunch",
 		},
 		{
@@ -54,7 +54,7 @@ func TestCreateLogReaderWithAllSampleFiles(t *testing.T) {
 			filename:      "logs_1747427320000_408138269.parquet",
 			objectID:      "logs_1747427320000_408138269.parquet",
 			expectSuccess: true,
-			expectedType:  "*filereader.PresortedParquetRawReader",
+			expectedType:  "*filereader.PreorderedParquetRawReader",
 			description:   "Another logs parquet file from logcrunch",
 		},
 		{
@@ -62,7 +62,7 @@ func TestCreateLogReaderWithAllSampleFiles(t *testing.T) {
 			filename:      "logs_1747427320000_822381101.parquet",
 			objectID:      "logs_1747427320000_822381101.parquet",
 			expectSuccess: true,
-			expectedType:  "*filereader.PresortedParquetRawReader",
+			expectedType:  "*filereader.PreorderedParquetRawReader",
 			description:   "Another logs parquet file from logcrunch",
 		},
 		{
@@ -70,7 +70,7 @@ func TestCreateLogReaderWithAllSampleFiles(t *testing.T) {
 			filename:      "logs_1747427330000_517730925.parquet",
 			objectID:      "logs_1747427330000_517730925.parquet",
 			expectSuccess: true,
-			expectedType:  "*filereader.PresortedParquetRawReader",
+			expectedType:  "*filereader.PreorderedParquetRawReader",
 			description:   "Another logs parquet file from logcrunch",
 		},
 		{
@@ -78,7 +78,7 @@ func TestCreateLogReaderWithAllSampleFiles(t *testing.T) {
 			filename:      "logs_1752872650000_326740161.parquet",
 			objectID:      "logs_1752872650000_326740161.parquet",
 			expectSuccess: true,
-			expectedType:  "*filereader.PresortedParquetRawReader",
+			expectedType:  "*filereader.PreorderedParquetRawReader",
 			description:   "Logs parquet file from rawparquet testdata",
 		},
 		{
@@ -86,7 +86,7 @@ func TestCreateLogReaderWithAllSampleFiles(t *testing.T) {
 			filename:      "logs-chqs3-0001.parquet",
 			objectID:      "logs-chqs3-0001.parquet",
 			expectSuccess: true,
-			expectedType:  "*filereader.PresortedParquetRawReader",
+			expectedType:  "*filereader.PreorderedParquetRawReader",
 			description:   "CHQS3 logs parquet file from filereader testdata",
 		},
 		{
@@ -94,7 +94,7 @@ func TestCreateLogReaderWithAllSampleFiles(t *testing.T) {
 			filename:      "logs-cooked-0001.parquet",
 			objectID:      "logs-cooked-0001.parquet",
 			expectSuccess: true,
-			expectedType:  "*filereader.PresortedParquetRawReader",
+			expectedType:  "*filereader.PreorderedParquetRawReader",
 			description:   "Cooked logs parquet file from filereader testdata",
 		},
 

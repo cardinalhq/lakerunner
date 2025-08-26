@@ -256,7 +256,7 @@ func uploadSingleMetricResult(
 		TidPartition:   0,
 		SegmentID:      segmentID,
 		InstanceNum:    params.InstanceNum,
-		SlotID:         0, // Always use slot 0 for metrics
+		SlotID:         0,
 		StartTs:        startTs,
 		EndTs:          endTs,
 		RecordCount:    result.RecordCount,

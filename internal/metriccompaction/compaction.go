@@ -23,6 +23,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
+	"github.com/cardinalhq/lakerunner/internal/constants"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
@@ -31,7 +32,7 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-const targetFileSize = int64(1_100_000)
+const targetFileSize = constants.TargetFileSizeBytes
 
 type WorkResult int
 
@@ -140,10 +141,10 @@ func doCompactItem(
 			InstanceNum:     inf.InstanceNum(),
 			StartTs:         st.Time.UTC().UnixMilli(),
 			EndTs:           et.Time.UTC().UnixMilli(),
-			MaxFileSize:     targetFileSize * 9 / 10, // Only include files < 90% of target (larger files are fine as-is)
-			CursorCreatedAt: cursorCreatedAt,         // Cursor for pagination
-			CursorSegmentID: cursorSegmentID,         // Cursor for pagination
-			Maxrows:         maxRowsLimit,            // Safety limit for compaction batch
+			MaxFileSize:     targetFileSize * 9 / 10,
+			CursorCreatedAt: cursorCreatedAt,
+			CursorSegmentID: cursorSegmentID,
+			Maxrows:         maxRowsLimit,
 		})
 		if err != nil {
 			ll.Error("Failed to get current metric segments", slog.Any("error", err))

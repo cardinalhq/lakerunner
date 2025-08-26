@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -38,6 +37,7 @@ type CompactionUploadParams struct {
 	InstanceNum    int16
 	Dateint        int32
 	FrequencyMs    int32
+	SlotID         int32
 	IngestDateint  int32
 	CollectorName  string
 	Bucket         string
@@ -66,6 +66,7 @@ func UploadCompactedMetrics(
 		OrganizationID: orgUUID,
 		Dateint:        params.Dateint,
 		InstanceNum:    params.InstanceNum,
+		SlotID:         params.SlotID,
 		IngestDateint:  params.IngestDateint,
 		FrequencyMs:    params.FrequencyMs,
 		Published:      true,
@@ -78,6 +79,7 @@ func UploadCompactedMetrics(
 		replaceParams.OldRecords = append(replaceParams.OldRecords, lrdb.ReplaceMetricSegsOld{
 			TidPartition: row.TidPartition,
 			SegmentID:    row.SegmentID,
+			SlotID:       row.SlotID,
 		})
 	}
 
@@ -86,7 +88,7 @@ func UploadCompactedMetrics(
 	// Process each output file atomically
 	for _, file := range results {
 		// Generate operation ID for tracking this atomic operation
-		opID := fmt.Sprintf("metric_op_%d_%s", time.Now().Unix(), idgen.GenerateShortBase32ID())
+		opID := idgen.GenerateShortBase32ID()
 		fileLogger := ll.With(slog.String("operationID", opID), slog.String("file", file.FileName))
 
 		fileLogger.Debug("Starting atomic metric compaction operation",
@@ -122,16 +124,16 @@ func UploadCompactedMetrics(
 			Published:      replaceParams.Published,
 			Rolledup:       replaceParams.Rolledup,
 			CreatedBy:      replaceParams.CreatedBy,
-			OldRecords:     replaceParams.OldRecords, // Contains all old records
+			SlotID:         replaceParams.SlotID,
+			OldRecords:     replaceParams.OldRecords,
 			NewRecords: []lrdb.ReplaceMetricSegsNew{
 				{
-					TidPartition: 0, // Legacy field, always 0 now
+					TidPartition: 0,
 					SegmentID:    segmentID,
 					StartTs:      startTs,
 					EndTs:        endTs,
 					RecordCount:  file.RecordCount,
 					FileSize:     file.FileSize,
-					TidCount:     1, // Single compacted file
 				},
 			},
 		}
@@ -142,7 +144,7 @@ func UploadCompactedMetrics(
 		}
 
 		if err := mdb.ReplaceMetricSegs(ctx, singleParams); err != nil {
-			fileLogger.Error("CRITICAL: Database update failed after S3 upload - file orphaned in S3",
+			fileLogger.Error("Database update failed after S3 upload - file orphaned in S3",
 				slog.Any("error", err),
 				slog.String("orphanedObject", newObjectID),
 				slog.Int64("orphanedSegmentID", segmentID),
