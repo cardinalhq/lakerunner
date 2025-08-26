@@ -355,6 +355,12 @@ func compactMetricInterval(
 		}
 
 		for i := range n {
+			// Normalize sketch field for parquet writing (string -> []byte)
+			if err := normalizeRowForParquetWrite(rowsBatch[i]); err != nil {
+				ll.Error("Failed to normalize row", slog.Any("error", err))
+				return fmt.Errorf("normalizing row: %w", err)
+			}
+
 			if err := writer.Write(rowsBatch[i]); err != nil {
 				ll.Error("Failed to write row", slog.Any("error", err))
 				return fmt.Errorf("writing row: %w", err)
@@ -398,4 +404,27 @@ func compactMetricInterval(
 	metricsprocessing.ScheduleOldFileCleanup(ctx, ll, mdb, rows, profile)
 
 	return nil
+}
+
+// normalizeRowForParquetWrite ensures row fields are in the correct type for parquet writing.
+// Specifically converts sketch field from string to []byte to match parquet schema.
+func normalizeRowForParquetWrite(row filereader.Row) error {
+	sketch := row["sketch"]
+	if sketch == nil {
+		return nil // No sketch field, nothing to normalize
+	}
+
+	// If already []byte, nothing to do
+	if _, ok := sketch.([]byte); ok {
+		return nil
+	}
+
+	// Convert string to []byte
+	if str, ok := sketch.(string); ok {
+		row["sketch"] = []byte(str)
+		return nil
+	}
+
+	// Unexpected type - should not happen with our fixes
+	return fmt.Errorf("unexpected sketch type for parquet writing: %T", sketch)
 }
