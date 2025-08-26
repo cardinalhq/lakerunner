@@ -20,6 +20,17 @@ import (
 	"time"
 )
 
+const (
+	// DefaultHeartbeatInterval is the default interval for workqueue heartbeats
+	DefaultHeartbeatInterval = 1 * time.Minute
+
+	// MinHeartbeatInterval is the minimum allowed heartbeat interval
+	MinHeartbeatInterval = 10 * time.Second
+
+	// StaleExpiryMultiplier is the number of missed heartbeats before a work item is considered stale
+	StaleExpiryMultiplier = 3
+)
+
 type WorkqueueHandler struct {
 	logger   *slog.Logger
 	config   *Config

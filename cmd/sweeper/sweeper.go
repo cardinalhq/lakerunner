@@ -39,6 +39,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
+	"github.com/cardinalhq/lakerunner/internal/workqueue"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -415,8 +416,10 @@ func failWork(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull, id uuid.
 }
 
 func runWorkqueueExpiry(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull) error {
-	// Use default of 20 minutes for lock_ttl_dead
-	lockTtlDead := pgtype.Interval{Microseconds: (20 * time.Minute).Microseconds(), Valid: true}
+	// Calculate stale expiration based on heartbeat interval
+	// Items are considered stale after missing the configured number of heartbeats
+	staleExpirationTime := time.Duration(workqueue.StaleExpiryMultiplier) * workqueue.DefaultHeartbeatInterval
+	lockTtlDead := pgtype.Interval{Microseconds: staleExpirationTime.Microseconds(), Valid: true}
 	expired, err := mdb.WorkQueueCleanup(ctx, lockTtlDead)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
