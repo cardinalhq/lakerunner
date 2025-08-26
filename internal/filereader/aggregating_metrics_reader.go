@@ -104,18 +104,18 @@ func isHistogramType(row map[string]any) bool {
 }
 
 // updateRowFromSketch updates all rollup fields in a row based on the sketch.
+// This should only be called for valid sketches with data.
 func updateRowFromSketch(row map[string]any, sketch *ddsketch.DDSketch) error {
 	count := sketch.GetCount()
+	if count == 0 {
+		return fmt.Errorf("cannot update row from empty sketch")
+	}
+
 	sum := sketch.GetSum()
 
 	row["rollup_count"] = count
 	row["rollup_sum"] = sum
-
-	if count > 0 {
-		row["rollup_avg"] = sum / count
-	} else {
-		row["rollup_avg"] = 0.0
-	}
+	row["rollup_avg"] = sum / count
 
 	maxValue, err := sketch.GetMaxValue()
 	if err != nil {
@@ -155,40 +155,16 @@ func (ar *AggregatingMetricsReader) aggregateGroup() (map[string]any, error) {
 		return nil, nil
 	}
 
-	// Handle the aggregation based on what we collected
-	if ar.currentSketch != nil {
-		// We have a sketch - add all singleton values to it
-		for _, value := range ar.singletonValues {
-			if err := ar.currentSketch.Add(value); err != nil {
-				slog.Error("Failed to add singleton value to sketch", "error", err, "value", value)
-				continue
-			}
+	// Handle aggregation based on metric type
+	if isHistogramType(ar.aggregatedRow) {
+		if err := ar.aggregateHistogram(); err != nil {
+			return nil, fmt.Errorf("aggregating histogram: %w", err)
 		}
-
-		// Update rollup fields from the final sketch
-		if err := updateRowFromSketch(ar.aggregatedRow, ar.currentSketch); err != nil {
-			return nil, fmt.Errorf("updating row from sketch: %w", err)
-		}
-	} else if len(ar.singletonValues) > 1 {
-		// Multiple singletons without sketch - create sketch and add all values
-		sketch, err := ddsketch.NewDefaultDDSketch(0.01)
-		if err != nil {
-			return nil, fmt.Errorf("creating sketch for singletons: %w", err)
-		}
-
-		for _, value := range ar.singletonValues {
-			if err := sketch.Add(value); err != nil {
-				slog.Error("Failed to add singleton value to new sketch", "error", err, "value", value)
-				continue
-			}
-		}
-
-		// Update rollup fields from the sketch
-		if err := updateRowFromSketch(ar.aggregatedRow, sketch); err != nil {
-			return nil, fmt.Errorf("updating row from new sketch: %w", err)
+	} else {
+		if err := ar.aggregateCounterGauge(); err != nil {
+			return nil, fmt.Errorf("aggregating counter/gauge: %w", err)
 		}
 	}
-	// Single singleton case: keep existing rollup values as-is
 
 	// Update timestamp to truncated value
 	if timestamp, ok := ar.aggregatedRow["_cardinalhq.timestamp"].(int64); ok {
@@ -201,6 +177,83 @@ func (ar *AggregatingMetricsReader) aggregateGroup() (map[string]any, error) {
 	return result, nil
 }
 
+// aggregateHistogram handles aggregation for histogram metrics.
+// Histograms must always have sketches and only merge sketches.
+func (ar *AggregatingMetricsReader) aggregateHistogram() error {
+	// VALIDATION: Histograms must always have a sketch
+	if ar.currentSketch == nil {
+		// This should never happen since we validate histogram rows have sketches
+		slog.Error("Histogram without sketch in aggregation - dropping row",
+			"name", ar.aggregatedRow["_cardinalhq.name"],
+			"tid", ar.aggregatedRow["_cardinalhq.tid"])
+		ar.resetAggregation()
+		return fmt.Errorf("histogram missing sketch")
+	}
+
+	// For histograms, we should not have singleton values mixed with sketches
+	if len(ar.singletonValues) > 0 {
+		slog.Warn("Histogram has both sketch and singleton values - ignoring singletons",
+			"name", ar.aggregatedRow["_cardinalhq.name"],
+			"tid", ar.aggregatedRow["_cardinalhq.tid"],
+			"singletons", ar.singletonValues)
+	}
+
+	// Update rollup fields from the sketch
+	if err := updateRowFromSketch(ar.aggregatedRow, ar.currentSketch); err != nil {
+		return fmt.Errorf("updating histogram row from sketch: %w", err)
+	}
+
+	return nil
+}
+
+// aggregateCounterGauge handles aggregation for counter and gauge metrics.
+// Can handle mixed sketches and singletons.
+func (ar *AggregatingMetricsReader) aggregateCounterGauge() error {
+	if ar.currentSketch != nil {
+		// We have a sketch - add all singleton values to it
+		for _, value := range ar.singletonValues {
+			if err := ar.currentSketch.Add(value); err != nil {
+				slog.Error("Failed to add singleton value to sketch",
+					"error", err,
+					"value", value,
+					"name", ar.aggregatedRow["_cardinalhq.name"],
+					"tid", ar.aggregatedRow["_cardinalhq.tid"])
+				continue
+			}
+		}
+
+		// Update rollup fields from the final sketch
+		if err := updateRowFromSketch(ar.aggregatedRow, ar.currentSketch); err != nil {
+			return fmt.Errorf("updating counter/gauge row from sketch: %w", err)
+		}
+	} else if len(ar.singletonValues) > 1 {
+		// Multiple singletons without sketch - create sketch and add all values
+		sketch, err := ddsketch.NewDefaultDDSketch(0.01)
+		if err != nil {
+			return fmt.Errorf("creating sketch for singletons: %w", err)
+		}
+
+		for _, value := range ar.singletonValues {
+			if err := sketch.Add(value); err != nil {
+				slog.Error("Failed to add singleton value to new sketch",
+					"error", err,
+					"value", value,
+					"name", ar.aggregatedRow["_cardinalhq.name"],
+					"tid", ar.aggregatedRow["_cardinalhq.tid"])
+				continue
+			}
+		}
+
+		// Update rollup fields from the sketch
+		if err := updateRowFromSketch(ar.aggregatedRow, sketch); err != nil {
+			return fmt.Errorf("updating counter/gauge row from new sketch: %w", err)
+		}
+	}
+	// Single singleton case: keep existing rollup values as-is
+
+	return nil
+}
+
 // resetAggregation clears the current aggregation state.
 func (ar *AggregatingMetricsReader) resetAggregation() {
 	ar.currentKey = ""
@@ -211,10 +264,12 @@ func (ar *AggregatingMetricsReader) resetAggregation() {
 
 // addRowToAggregation adds a row to the current aggregation group.
 func (ar *AggregatingMetricsReader) addRowToAggregation(row map[string]any) error {
-	// Validate histogram rows have sketches - drop invalid histograms
+	// VALIDATION: Histograms must always have sketches
 	if isHistogramType(row) && isSketchEmpty(row) {
-		// TODO: Add metric counter here for tracking dropped histogram rows without sketches
-		slog.Warn("Dropping histogram row without sketch", "row", row)
+		slog.Error("Dropping histogram row without sketch - this should not happen",
+			"name", row["_cardinalhq.name"],
+			"tid", row["_cardinalhq.tid"],
+			"timestamp", row["_cardinalhq.timestamp"])
 		return nil // Skip this row, don't add to aggregation
 	}
 
