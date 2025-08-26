@@ -97,8 +97,8 @@ func debugCompactMetrics(tmpdir string, files []string, recordsPerFile int64, ta
 		}
 	}()
 
-	// Create OrderedReader to merge sort the files using metrics ordering
-	orderedReader, err := filereader.NewOrderedReader(readers, metricsprocessing.MetricsOrderedSelector())
+	// Create PreorderedMultisourceReader to merge sort the files using metrics ordering
+	orderedReader, err := filereader.NewPreorderedMultisourceReader(readers, metricsprocessing.MetricsOrderedSelector())
 	if err != nil {
 		ll.Error("Failed to create ordered reader", slog.Any("error", err))
 		return fmt.Errorf("creating ordered reader: %w", err)

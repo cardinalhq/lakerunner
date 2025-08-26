@@ -82,14 +82,14 @@ func benchmarkSortingReader(b *testing.B, createReaderFunc func([]Row) (Reader, 
 func BenchmarkMemorySortingReader(b *testing.B) {
 	benchmarkSortingReader(b, func(rows []Row) (Reader, error) {
 		mockReader := NewMockReader(rows)
-		return NewPostTranslationSortingReader(mockReader)
+		return NewMemorySortingReader(mockReader, MetricNameTidTimestampSort())
 	})
 }
 
 func BenchmarkDiskSortingReader(b *testing.B) {
 	benchmarkSortingReader(b, func(rows []Row) (Reader, error) {
 		mockReader := NewMockReader(rows)
-		return NewDiskSortingReader(mockReader)
+		return NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc())
 	})
 }
 
@@ -132,27 +132,27 @@ func benchmarkSortingReaderWithSize(b *testing.B, numRows int, createReaderFunc 
 func BenchmarkMemorySortingReader_LargeDataset(b *testing.B) {
 	benchmarkSortingReaderWithSize(b, 10000, func(rows []Row) (Reader, error) {
 		mockReader := NewMockReader(rows)
-		return NewPostTranslationSortingReader(mockReader)
+		return NewMemorySortingReader(mockReader, MetricNameTidTimestampSort())
 	})
 }
 
 func BenchmarkDiskSortingReader_LargeDataset(b *testing.B) {
 	benchmarkSortingReaderWithSize(b, 10000, func(rows []Row) (Reader, error) {
 		mockReader := NewMockReader(rows)
-		return NewDiskSortingReader(mockReader)
+		return NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc())
 	})
 }
 
 func BenchmarkMemorySortingReader_VeryLargeDataset(b *testing.B) {
 	benchmarkSortingReaderWithSize(b, 100000, func(rows []Row) (Reader, error) {
 		mockReader := NewMockReader(rows)
-		return NewPostTranslationSortingReader(mockReader)
+		return NewMemorySortingReader(mockReader, MetricNameTidTimestampSort())
 	})
 }
 
 func BenchmarkDiskSortingReader_VeryLargeDataset(b *testing.B) {
 	benchmarkSortingReaderWithSize(b, 100000, func(rows []Row) (Reader, error) {
 		mockReader := NewMockReader(rows)
-		return NewDiskSortingReader(mockReader)
+		return NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc())
 	})
 }

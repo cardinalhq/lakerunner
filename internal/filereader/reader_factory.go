@@ -93,7 +93,7 @@ func WrapReaderForAggregation(reader Reader, opts ReaderOptions) (Reader, error)
 //   - .parquet: Creates a ParquetReader (works for all signal types)
 //   - .json.gz: Creates a JSONLinesReader with gzip decompression (works for all signal types)
 //   - .json: Creates a JSONLinesReader (works for all signal types)
-//   - .binpb: Creates a signal-specific proto reader (NewProtoLogsReader, NewProtoMetricsReader, or NewProtoTracesReader)
+//   - .binpb: Creates a signal-specific proto reader (NewProtoLogsReader, NewIngestProtoMetricsReader, or NewProtoTracesReader)
 //   - .binpb.gz: Creates a signal-specific proto reader with gzip decompression
 func ReaderForFileWithOptions(filename string, opts ReaderOptions) (Reader, error) {
 	// Determine file type from extension
@@ -232,7 +232,7 @@ func createProtoReaderWithOptions(reader interface{ Read([]byte) (int, error) },
 		}
 		return protoReader, nil
 	case SignalTypeMetrics:
-		return NewProtoMetricsReader(reader)
+		return NewIngestProtoMetricsReader(reader)
 	case SignalTypeTraces:
 		return NewProtoTracesReader(reader)
 	default:

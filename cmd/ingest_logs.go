@@ -38,8 +38,6 @@ import (
 )
 
 func init() {
-	var maxItems int
-
 	cmd := &cobra.Command{
 		Use:   "ingest-logs",
 		Short: "Ingest logs from the inqueue table",
@@ -74,7 +72,6 @@ func init() {
 				return runOldLogIngestion(doneCtx, slog.Default(), loop)
 			}
 
-			var processedItems int
 			for {
 				select {
 				case <-doneCtx.Done():
@@ -84,22 +81,12 @@ func init() {
 				}
 
 				err := IngestLoopWithBatch(loop, logIngestItem, logIngestBatch)
-				processedItems++
 				if err != nil {
 					slog.Error("Error in ingest loop", slog.Any("error", err))
-				}
-
-				if maxItems > 0 && processedItems >= maxItems {
-					slog.Info("Reached maximum items limit, exiting",
-						slog.Int("processedItems", processedItems),
-						slog.Int("maxItems", maxItems))
-					return nil
 				}
 			}
 		},
 	}
-
-	cmd.Flags().IntVar(&maxItems, "max-items", 0, "Maximum number of work queue items to process before exiting (0 = unlimited)")
 
 	rootCmd.AddCommand(cmd)
 }

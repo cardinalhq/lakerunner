@@ -286,7 +286,7 @@ func compactMetricInterval(
 	}()
 
 	// Create OrderedReader to merge sort the parquet files using metrics ordering
-	orderedReader, err := filereader.NewOrderedReader(readers, metricsprocessing.MetricsOrderedSelector())
+	orderedReader, err := filereader.NewPreorderedMultisourceReader(readers, metricsprocessing.MetricsOrderedSelector())
 	if err != nil {
 		ll.Error("Failed to create ordered reader", slog.Any("error", err))
 		return fmt.Errorf("creating ordered reader: %w", err)

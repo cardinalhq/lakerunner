@@ -20,7 +20,7 @@ import (
 	"testing"
 )
 
-func TestNewOrderedReader(t *testing.T) {
+func TestNewPreorderedMultisourceReader(t *testing.T) {
 	// Test with valid readers and selector
 	readers := []Reader{
 		newMockReader("r1", []Row{{"ts": int64(1)}}),
@@ -28,9 +28,9 @@ func TestNewOrderedReader(t *testing.T) {
 	}
 	selector := TimeOrderedSelector("ts")
 
-	or, err := NewOrderedReader(readers, selector)
+	or, err := NewPreorderedMultisourceReader(readers, selector)
 	if err != nil {
-		t.Fatalf("NewOrderedReader() error = %v", err)
+		t.Fatalf("NewPreorderedMultisourceReader() error = %v", err)
 	}
 	defer or.Close()
 
@@ -39,13 +39,13 @@ func TestNewOrderedReader(t *testing.T) {
 	}
 
 	// Test with no readers
-	_, err = NewOrderedReader([]Reader{}, selector)
+	_, err = NewPreorderedMultisourceReader([]Reader{}, selector)
 	if err == nil {
 		t.Error("Expected error for empty readers slice")
 	}
 
 	// Test with nil selector
-	_, err = NewOrderedReader(readers, nil)
+	_, err = NewPreorderedMultisourceReader(readers, nil)
 	if err == nil {
 		t.Error("Expected error for nil selector")
 	}
@@ -70,9 +70,9 @@ func TestOrderedReader_Read(t *testing.T) {
 	}
 
 	selector := TimeOrderedSelector("ts")
-	or, err := NewOrderedReader(readers, selector)
+	or, err := NewPreorderedMultisourceReader(readers, selector)
 	if err != nil {
-		t.Fatalf("NewOrderedReader() error = %v", err)
+		t.Fatalf("NewPreorderedMultisourceReader() error = %v", err)
 	}
 	defer or.Close()
 
@@ -119,9 +119,9 @@ func TestOrderedReader_Read_Batched(t *testing.T) {
 	}
 
 	selector := TimeOrderedSelector("ts")
-	or, err := NewOrderedReader(readers, selector)
+	or, err := NewPreorderedMultisourceReader(readers, selector)
 	if err != nil {
-		t.Fatalf("NewOrderedReader() error = %v", err)
+		t.Fatalf("NewPreorderedMultisourceReader() error = %v", err)
 	}
 	defer or.Close()
 
@@ -162,9 +162,9 @@ func TestOrderedReader_ActiveReaderCount(t *testing.T) {
 	}
 
 	selector := TimeOrderedSelector("ts")
-	or, err := NewOrderedReader(readers, selector)
+	or, err := NewPreorderedMultisourceReader(readers, selector)
 	if err != nil {
-		t.Fatalf("NewOrderedReader() error = %v", err)
+		t.Fatalf("NewPreorderedMultisourceReader() error = %v", err)
 	}
 	defer or.Close()
 
@@ -206,9 +206,9 @@ func TestOrderedReader_AllEmptyReaders(t *testing.T) {
 	}
 
 	selector := TimeOrderedSelector("ts")
-	or, err := NewOrderedReader(readers, selector)
+	or, err := NewPreorderedMultisourceReader(readers, selector)
 	if err != nil {
-		t.Fatalf("NewOrderedReader() error = %v", err)
+		t.Fatalf("NewPreorderedMultisourceReader() error = %v", err)
 	}
 	defer or.Close()
 
@@ -228,9 +228,9 @@ func TestOrderedReader_Close(t *testing.T) {
 	}
 
 	selector := TimeOrderedSelector("ts")
-	or, err := NewOrderedReader(readers, selector)
+	or, err := NewPreorderedMultisourceReader(readers, selector)
 	if err != nil {
-		t.Fatalf("NewOrderedReader() error = %v", err)
+		t.Fatalf("NewPreorderedMultisourceReader() error = %v", err)
 	}
 
 	// Close the reader
