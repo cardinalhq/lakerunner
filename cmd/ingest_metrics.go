@@ -15,6 +15,7 @@
 package cmd
 
 import (
+	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
@@ -204,6 +205,7 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 	var profile storageprofile.StorageProfile
 	var err error
 
+	// TODO: Add support for finding storage profiles consistently for arbitrary prefixes at some point
 	if collectorName := helpers.ExtractCollectorName(firstItem.ObjectID); collectorName != "" {
 		profile, err = sp.GetStorageProfileForOrganizationAndCollector(ctx, firstItem.OrganizationID, collectorName)
 		if err != nil {
@@ -227,12 +229,23 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 	// Track total rows across all files
 	var batchRowsRead, batchRowsProcessed, batchRowsErrored int64
 
-	// Process each file in the batch
-	for _, inf := range items {
+	// Step 1: Download all files and collect valid ones
+	type fileInfo struct {
+		item        lrdb.Inqueue
+		tmpfilename string
+	}
 
+	var validFiles []fileInfo
+	for _, inf := range items {
 		// Skip database files (processed outputs, not inputs)
 		if strings.HasPrefix(inf.ObjectID, "db/") {
 			ll.Debug("Skipping database file", slog.String("objectID", inf.ObjectID))
+			continue
+		}
+
+		// Skip unsupported file types - only process .binpb and .binpb.gz from otel-raw/
+		if !isSupportedMetricsFile(inf.ObjectID) {
+			ll.Debug("Skipping unsupported metrics file type", slog.String("objectID", inf.ObjectID))
 			continue
 		}
 
@@ -251,117 +264,167 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 			continue
 		}
 
-		// Create appropriate reader for the file type
+		validFiles = append(validFiles, fileInfo{item: inf, tmpfilename: tmpfilename})
+	}
+
+	if len(validFiles) == 0 {
+		ll.Warn("No valid files to process in batch")
+		// Still need to close the writer manager and return results
+		results, err := wm.closeAll(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to close writers: %w", err)
+		}
+		// With no files processed, we skip the upload and work queueing
+		ll.Debug("Batch processing summary", slog.Int("outputFiles", len(results)))
+		return nil
+	}
+
+	// Step 2: Create individual readers for each file
+	var readers []filereader.Reader
+	var readersToClose []filereader.Reader // Keep track for cleanup
+
+	for _, fileInfo := range validFiles {
+		// Create stacked reader for this file: ProtoReader -> Translation -> Sorting
 		var reader filereader.Reader
 
-		// Create stacked reader: OtelReader -> Translation -> Sorting -> Aggregation
-
-		// Step 1: Create base reader
-		opts := filereader.ReaderOptions{
-			SignalType: filereader.SignalTypeMetrics,
-		}
-		reader, err = filereader.ReaderForFileWithOptions(tmpfilename, opts)
-
-		if err == nil {
-			// Step 2: Add translation (adds TID and truncates timestamp)
-			translator := &metricsprocessing.MetricTranslator{
-				OrgID:    firstItem.OrganizationID.String(),
-				Bucket:   inf.Bucket,
-				ObjectID: inf.ObjectID,
-			}
-			reader, err = filereader.NewTranslatingReader(reader, translator)
-		}
-
-		if err == nil {
-			// Step 3: Add disk-based sorting (after translation so TID is available)
-			reader, err = filereader.NewDiskSortingReader(reader, filereader.MetricNameTidTimestampSortKeyFunc(), filereader.MetricNameTidTimestampSortFunc())
-		}
-
-		if err == nil {
-			// Step 4: Add aggregation
-			aggOpts := filereader.ReaderOptions{
-				SignalType:          filereader.SignalTypeMetrics,
-				EnableAggregation:   true,
-				AggregationPeriodMs: 10000, // 10 seconds
-			}
-			reader, err = filereader.WrapReaderForAggregation(reader, aggOpts)
-		}
-
-		// Process exemplars if available
-		if loop.exemplarProcessor != nil {
-			if err := processExemplarsFromReader(ctx, reader, loop.exemplarProcessor, firstItem.OrganizationID.String(), mdb); err != nil {
-				ll.Warn("Failed to process exemplars", slog.Any("error", err))
-			}
-		}
-
+		// Step 2a: Create base proto reader directly (only support binpb/binpb.gz for metrics)
+		reader, err = createMetricProtoReader(fileInfo.tmpfilename)
 		if err != nil {
-			ll.Warn("Unsupported or problematic file type, skipping",
-				slog.String("objectID", inf.ObjectID),
+			ll.Warn("Failed to create proto reader, skipping file",
+				slog.String("objectID", fileInfo.item.ObjectID),
 				slog.String("error", err.Error()))
 			continue
 		}
 
-		// Process all rows from the file
-		rows := make([]filereader.Row, 100)
-		for i := range rows {
-			rows[i] = make(filereader.Row)
+		// Step 2b: Add translation (adds TID and truncates timestamp)
+		translator := &metricsprocessing.MetricTranslator{
+			OrgID:    firstItem.OrganizationID.String(),
+			Bucket:   fileInfo.item.Bucket,
+			ObjectID: fileInfo.item.ObjectID,
 		}
-		var processedCount, errorCount int64
-		for {
-			n, err := reader.Read(rows)
+		reader, err = filereader.NewTranslatingReader(reader, translator)
+		if err != nil {
+			reader.Close()
+			ll.Warn("Failed to create translating reader, skipping file",
+				slog.String("objectID", fileInfo.item.ObjectID),
+				slog.String("error", err.Error()))
+			continue
+		}
 
-			// Process any rows we got, even if EOF
-			for i := range n {
-				if rows[i] == nil {
-					continue
-				}
-				err := wm.processRow(rows[i])
-				if err != nil {
-					errorCount++
-					// Continue processing other rows instead of failing the entire batch
-				} else {
-					processedCount++
-				}
-			}
+		// Step 2c: Add disk-based sorting (after translation so TID is available)
+		reader, err = filereader.NewDiskSortingReader(reader, filereader.MetricNameTidTimestampSortKeyFunc(), filereader.MetricNameTidTimestampSortFunc())
+		if err != nil {
+			reader.Close()
+			ll.Warn("Failed to create sorting reader, skipping file",
+				slog.String("objectID", fileInfo.item.ObjectID),
+				slog.String("error", err.Error()))
+			continue
+		}
 
-			// Break after processing if we hit EOF or other errors
-			if err == io.EOF {
-				break
+		readers = append(readers, reader)
+		readersToClose = append(readersToClose, reader)
+	}
+
+	// Cleanup function for readers
+	defer func() {
+		for _, reader := range readersToClose {
+			if closeErr := reader.Close(); closeErr != nil {
+				ll.Warn("Failed to close reader during cleanup", slog.Any("error", closeErr))
 			}
+		}
+	}()
+
+	if len(readers) == 0 {
+		ll.Warn("No valid readers created for batch")
+		results, err := wm.closeAll(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to close writers: %w", err)
+		}
+		ll.Debug("Batch processing summary", slog.Int("outputFiles", len(results)))
+		return nil
+	}
+
+	ll.Debug("Created readers for batch", slog.Int("readerCount", len(readers)))
+
+	// Step 3: Set up multi-source reader to merge sorted streams
+	var finalReader filereader.Reader
+
+	if len(readers) == 1 {
+		// Single reader - no need for multi-source reader
+		finalReader = readers[0]
+	} else {
+		// Multiple readers - use PreorderedMultisourceReader to merge sorted streams
+		selector := createMetricOrderSelector()
+		multiReader, err := filereader.NewPreorderedMultisourceReader(readers, selector)
+		if err != nil {
+			return fmt.Errorf("failed to create multi-source reader: %w", err)
+		}
+		finalReader = multiReader
+	}
+
+	// Step 4: Add top-level aggregation for cross-file aggregation
+	finalReader, err = filereader.NewAggregatingMetricsReader(finalReader, 10000) // 10 seconds
+	if err != nil {
+		return fmt.Errorf("failed to create aggregating reader: %w", err)
+	}
+
+	// Process exemplars if available (from first file for now)
+	if loop.exemplarProcessor != nil {
+		if len(validFiles) > 0 {
+			// Create a separate reader just for exemplar processing from first file
+			exemplarReader, err := createMetricProtoReader(validFiles[0].tmpfilename)
+			if err == nil {
+				if err := processExemplarsFromReader(ctx, exemplarReader, loop.exemplarProcessor, firstItem.OrganizationID.String(), mdb); err != nil {
+					ll.Warn("Failed to process exemplars", slog.Any("error", err))
+				}
+				exemplarReader.Close()
+			}
+		}
+	}
+
+	// Step 5: Process all rows from the unified pipeline
+	rows := make([]filereader.Row, 100)
+	for i := range rows {
+		rows[i] = make(filereader.Row)
+	}
+
+	for {
+		n, err := finalReader.Read(rows)
+
+		// Process any rows we got, even if EOF
+		for i := range n {
+			if rows[i] == nil {
+				continue
+			}
+			err := wm.processRow(rows[i])
 			if err != nil {
-				if closeErr := reader.Close(); closeErr != nil {
-					ll.Warn("Failed to close reader after read error", slog.String("objectID", inf.ObjectID), slog.Any("error", closeErr))
-				}
-				return fmt.Errorf("failed to read from file %s: %w", inf.ObjectID, err)
+				batchRowsErrored++
+				// Continue processing other rows instead of failing the entire batch
+			} else {
+				batchRowsProcessed++
 			}
 		}
 
-		// Get total rows read from the reader
-		fileRowsRead := reader.RowCount()
-
-		ll.Debug("File processing completed",
-			slog.String("objectID", inf.ObjectID),
-			slog.Int64("rowsRead", fileRowsRead),
-			slog.Int64("rowsProcessed", processedCount),
-			slog.Int64("rowsErrored", errorCount))
-
-		if errorCount > 0 {
-			ll.Warn("Some rows were dropped due to processing errors",
-				slog.String("objectID", inf.ObjectID),
-				slog.Int64("droppedRows", errorCount),
-				slog.Float64("dropRate", float64(errorCount)/float64(fileRowsRead)*100))
+		// Break after processing if we hit EOF or other errors
+		if err == io.EOF {
+			break
 		}
-		if closeErr := reader.Close(); closeErr != nil {
-			ll.Warn("Failed to close reader", slog.String("objectID", inf.ObjectID), slog.Any("error", closeErr))
+		if err != nil {
+			return fmt.Errorf("failed to read from unified pipeline: %w", err)
 		}
+	}
 
-		// Update batch totals
-		batchRowsRead += fileRowsRead
-		batchRowsProcessed += processedCount
-		batchRowsErrored += errorCount
+	// Get total rows read from the final reader
+	batchRowsRead = finalReader.RowCount()
 
-		ll.Debug("Completed processing file", slog.String("objectID", inf.ObjectID))
+	ll.Debug("Batch processing completed",
+		slog.Int64("rowsRead", batchRowsRead),
+		slog.Int64("rowsProcessed", batchRowsProcessed),
+		slog.Int64("rowsErrored", batchRowsErrored))
 
+	if batchRowsErrored > 0 {
+		ll.Warn("Some rows were dropped due to processing errors",
+			slog.Int64("rowsErrored", batchRowsErrored))
 	}
 
 	// Close all writers and get results
@@ -459,7 +522,107 @@ func queueMetricWorkForResults(ctx context.Context, mdb lrdb.StoreFull, inf lrdb
 	return nil
 }
 
-// createMetricReader creates the appropriate filereader for metrics based on file type
-func createMetricReader(filename string) (filereader.Reader, error) {
-	return filereader.ReaderForFile(filename, filereader.SignalTypeMetrics)
+// isSupportedMetricsFile checks if the file is a supported metrics file type
+func isSupportedMetricsFile(objectID string) bool {
+	// Only support .binpb and .binpb.gz files from otel-raw/ path structure
+	if !strings.HasPrefix(objectID, "otel-raw/") {
+		return false
+	}
+
+	return strings.HasSuffix(objectID, ".binpb") || strings.HasSuffix(objectID, ".binpb.gz")
+}
+
+// createMetricOrderSelector creates a selector function for metrics that orders by [metric_name, tid, timestamp]
+func createMetricOrderSelector() filereader.SelectFunc {
+	return func(rows []filereader.Row) int {
+		if len(rows) == 0 {
+			return 0
+		}
+
+		bestIdx := 0
+		bestRow := rows[0]
+		if bestRow == nil {
+			return bestIdx
+		}
+
+		// Extract comparison values from the best row
+		bestName, _ := bestRow["_cardinalhq.name"].(string)
+		bestTid, _ := bestRow["_cardinalhq.tid"].(int64)
+		bestTs, _ := bestRow["_cardinalhq.timestamp"].(int64)
+
+		for i := 1; i < len(rows); i++ {
+			if rows[i] == nil {
+				continue
+			}
+
+			// Extract comparison values from current row
+			name, _ := rows[i]["_cardinalhq.name"].(string)
+			tid, _ := rows[i]["_cardinalhq.tid"].(int64)
+			ts, _ := rows[i]["_cardinalhq.timestamp"].(int64)
+
+			// Compare by [name, tid, timestamp] in ascending order
+			if name < bestName ||
+				(name == bestName && tid < bestTid) ||
+				(name == bestName && tid == bestTid && ts < bestTs) {
+				bestIdx = i
+				bestName = name
+				bestTid = tid
+				bestTs = ts
+			}
+		}
+
+		return bestIdx
+	}
+}
+
+// createMetricProtoReader creates a protocol buffer reader for metrics files
+func createMetricProtoReader(filename string) (filereader.Reader, error) {
+	// Only support .binpb and .binpb.gz files
+	switch {
+	case strings.HasSuffix(filename, ".binpb.gz"):
+		return createMetricProtoBinaryGzReader(filename)
+	case strings.HasSuffix(filename, ".binpb"):
+		return createMetricProtoBinaryReader(filename)
+	default:
+		return nil, fmt.Errorf("unsupported metrics file type: %s (only .binpb and .binpb.gz are supported)", filename)
+	}
+}
+
+// createMetricProtoBinaryReader creates a metrics proto reader for a protobuf file
+func createMetricProtoBinaryReader(filename string) (filereader.Reader, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open protobuf file: %w", err)
+	}
+
+	reader, err := filereader.NewIngestProtoMetricsReader(file)
+	if err != nil {
+		file.Close()
+		return nil, fmt.Errorf("failed to create metrics proto reader: %w", err)
+	}
+
+	return reader, nil
+}
+
+// createMetricProtoBinaryGzReader creates a metrics proto reader for a gzipped protobuf file
+func createMetricProtoBinaryGzReader(filename string) (filereader.Reader, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open protobuf.gz file: %w", err)
+	}
+
+	gzipReader, err := gzip.NewReader(file)
+	if err != nil {
+		file.Close()
+		return nil, fmt.Errorf("failed to create gzip reader: %w", err)
+	}
+
+	reader, err := filereader.NewIngestProtoMetricsReader(gzipReader)
+	if err != nil {
+		gzipReader.Close()
+		file.Close()
+		return nil, fmt.Errorf("failed to create metrics proto reader: %w", err)
+	}
+
+	return reader, nil
 }
