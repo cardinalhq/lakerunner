@@ -79,6 +79,7 @@ func NewPreorderedMultisourceReader(readers []Reader, selector SelectFunc) (*Pre
 // primeReaders loads the first row from each reader.
 func (or *PreorderedMultisourceReader) primeReaders() error {
 	for _, state := range or.states {
+		resetRow(&state.current)
 		if err := or.advance(state); err != nil {
 			return fmt.Errorf("failed to prime reader %d: %w", state.index, err)
 		}
@@ -92,8 +93,7 @@ func (or *PreorderedMultisourceReader) advance(state *readerState) error {
 		return state.err
 	}
 
-	rows := make([]Row, 1)
-	resetRow(&rows[0])
+	rows := []Row{state.current}
 	n, err := state.reader.Read(rows)
 	if err != nil {
 		if errors.Is(err, io.EOF) {
@@ -155,14 +155,9 @@ func (or *PreorderedMultisourceReader) Read(rows []Row) (int, error) {
 		}
 
 		selectedState := activeStates[selectedIdx]
-		selectedRow := selectedState.current
 
-		resetRow(&rows[n])
-
-		// Copy data to Row
-		for k, v := range selectedRow {
-			rows[n][k] = v
-		}
+		rows[n], selectedState.current = selectedState.current, rows[n]
+		resetRow(&selectedState.current)
 
 		// Advance the selected reader to its next row
 		if err := or.advance(selectedState); err != nil {

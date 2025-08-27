@@ -16,6 +16,7 @@ package filereader
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"testing"
 )
@@ -309,5 +310,85 @@ func TestTimeOrderedSelector(t *testing.T) {
 	selected = selector([]Row{})
 	if selected != -1 {
 		t.Errorf("TimeOrderedSelector with empty slice selected index %d, want -1", selected)
+	}
+}
+
+// trackingReader is a test implementation that records the address of the row slice
+// provided to Read so tests can verify row recycling behavior.
+type trackingReader struct {
+	rows     []Row
+	index    int
+	ptrs     []string
+	rowCount int64
+}
+
+func newTrackingReader(rows []Row) *trackingReader {
+	return &trackingReader{rows: rows}
+}
+
+func (tr *trackingReader) Read(rows []Row) (int, error) {
+	if len(rows) == 0 {
+		return 0, nil
+	}
+
+	if tr.index >= len(tr.rows) {
+		return 0, io.EOF
+	}
+
+	tr.ptrs = append(tr.ptrs, fmt.Sprintf("%p", rows[0]))
+
+	resetRow(&rows[0])
+	for k, v := range tr.rows[tr.index] {
+		rows[0][k] = v
+	}
+
+	tr.index++
+	tr.rowCount++
+	return 1, nil
+}
+
+func (tr *trackingReader) Close() error { return nil }
+
+func (tr *trackingReader) TotalRowsReturned() int64 { return tr.rowCount }
+
+func TestPreorderedMultisourceReader_RowReuse(t *testing.T) {
+	tr := newTrackingReader([]Row{{"ts": int64(1)}, {"ts": int64(2)}, {"ts": int64(3)}, {"ts": int64(4)}})
+	or, err := NewPreorderedMultisourceReader([]Reader{tr}, TimeOrderedSelector("ts"))
+	if err != nil {
+		t.Fatalf("NewPreorderedMultisourceReader() error = %v", err)
+	}
+	defer or.Close()
+
+	rows := []Row{make(Row)}
+
+	n, err := or.Read(rows)
+	if err != nil || n != 1 {
+		t.Fatalf("Read() n=%d err=%v", n, err)
+	}
+	if rows[0]["ts"] != int64(1) {
+		t.Fatalf("first row ts=%v want 1", rows[0]["ts"])
+	}
+
+	n, err = or.Read(rows)
+	if err != nil || n != 1 {
+		t.Fatalf("second Read() n=%d err=%v", n, err)
+	}
+	if rows[0]["ts"] != int64(2) {
+		t.Fatalf("second row ts=%v want 2", rows[0]["ts"])
+	}
+
+	n, err = or.Read(rows)
+	if err != nil || n != 1 {
+		t.Fatalf("third Read() n=%d err=%v", n, err)
+	}
+	if rows[0]["ts"] != int64(3) {
+		t.Fatalf("third row ts=%v want 3", rows[0]["ts"])
+	}
+
+	if len(tr.ptrs) < 4 {
+		t.Fatalf("expected at least 4 recorded pointers, got %d", len(tr.ptrs))
+	}
+	if tr.ptrs[1] != tr.ptrs[3] {
+		t.Fatalf("state row not recycled: %s vs %s", tr.ptrs[1], tr.ptrs[3])
 	}
 }
