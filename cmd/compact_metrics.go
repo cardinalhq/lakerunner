@@ -452,6 +452,23 @@ func compactMetricInterval(
 		slog.Int64("outputBytes", outputBytes),
 		slog.Float64("compressionRatio", compressionRatio))
 
+	// If we produced 0 output files, log source S3 paths for debugging and skip database updates
+	if len(results) == 0 {
+		ll.Warn("Produced 0 output files from aggregating reader - logging source S3 paths for debugging")
+		for _, row := range rows {
+			dateint, hour := helpers.MSToDateintHour(st.Time.UTC().UnixMilli())
+			objectID := helpers.MakeDBObjectID(inf.OrganizationID(), profile.CollectorName, dateint, hour, row.SegmentID, "metrics")
+			s3Path := fmt.Sprintf("s3://%s/%s", profile.Bucket, objectID)
+			ll.Warn("Source file for debugging",
+				slog.String("s3Path", s3Path),
+				slog.Int64("segmentID", row.SegmentID),
+				slog.Int64("fileSize", row.FileSize),
+				slog.Int64("recordCount", row.RecordCount))
+		}
+		ll.Debug("Skipping database updates since no output files were created")
+		return nil
+	}
+
 	compactionParams := metricsprocessing.CompactionUploadParams{
 		OrganizationID: inf.OrganizationID().String(),
 		InstanceNum:    inf.InstanceNum(),
