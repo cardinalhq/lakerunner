@@ -215,6 +215,15 @@ func ingestFiles(
 		return true, false, fmt.Errorf("failed to claim inqueue work: %w", err)
 	}
 
+	lag := time.Since(inf.QueueTs).Seconds()
+	inqueueLag.Record(ctx, lag,
+		metric.WithAttributeSet(commonAttributes),
+		metric.WithAttributes(
+			attribute.String("organizationID", inf.OrganizationID.String()),
+			attribute.String("signal", inf.TelemetryType),
+			attribute.Int("instanceNum", int(inf.InstanceNum)),
+		))
+
 	ll := loop.ll.With(
 		slog.String("id", inf.ID.String()),
 		slog.Int("tries", int(inf.Tries)),
@@ -366,7 +375,7 @@ func ingestFilesBatch(
 			metric.WithAttributeSet(commonAttributes),
 			metric.WithAttributes(
 				attribute.String("organizationID", item.OrganizationID.String()),
-				attribute.String("telemetryType", item.TelemetryType),
+				attribute.String("signal", item.TelemetryType),
 				attribute.Int("instanceNum", int(item.InstanceNum)),
 			))
 	}
