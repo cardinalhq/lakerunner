@@ -360,6 +360,17 @@ func ingestFilesBatch(
 		return true, false, nil
 	}
 
+	for _, item := range items {
+		lag := time.Since(item.QueueTs).Seconds()
+		inqueueLag.Record(ctx, lag,
+			metric.WithAttributeSet(commonAttributes),
+			metric.WithAttributes(
+				attribute.String("organizationID", item.OrganizationID.String()),
+				attribute.String("telemetryType", item.TelemetryType),
+				attribute.Int("instanceNum", int(item.InstanceNum)),
+			))
+	}
+
 	if len(items) == 1 {
 		return processSingleItem(ctx, loop, processFx, batchRowToInqueue(items[0]))
 	}
