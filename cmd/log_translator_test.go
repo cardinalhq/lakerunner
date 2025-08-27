@@ -40,8 +40,8 @@ func TestLogTranslator_TranslateRow(t *testing.T) {
 		{
 			name: "ValidLogWithMessage",
 			input: filereader.Row{
-				wkk.NewRowKey("_cardinalhq.message"): "test log message",
-				wkk.RowKeyCTimestamp:                 int64(1640995200000), // 2022-01-01 00:00:00 UTC
+				wkk.RowKeyCMessage:   "test log message",
+				wkk.RowKeyCTimestamp: int64(1640995200000), // 2022-01-01 00:00:00 UTC
 			},
 			wantErr: false,
 			checkFn: func(t *testing.T, result filereader.Row) {
@@ -54,16 +54,16 @@ func TestLogTranslator_TranslateRow(t *testing.T) {
 				assert.Equal(t, "log.events", result[wkk.RowKeyCName])
 				assert.Equal(t, float64(1), result[wkk.RowKeyCValue])
 				// Check original fields were preserved
-				assert.Equal(t, "test log message", result[wkk.NewRowKey("_cardinalhq.message")])
+				assert.Equal(t, "test log message", result[wkk.RowKeyCMessage])
 				assert.Equal(t, int64(1640995200000), result[wkk.RowKeyCTimestamp])
 			},
 		},
 		{
 			name: "BasicRowTranslation",
 			input: filereader.Row{
-				wkk.NewRowKey("_cardinalhq.message"): "log body content",
-				wkk.RowKeyCTimestamp:                 int64(1640995200000),
-				wkk.NewRowKey("_cardinalhq.level"):   "info",
+				wkk.RowKeyCMessage:                 "log body content",
+				wkk.RowKeyCTimestamp:               int64(1640995200000),
+				wkk.NewRowKey("_cardinalhq.level"): "info",
 			},
 			wantErr: false,
 			checkFn: func(t *testing.T, result filereader.Row) {
@@ -76,7 +76,7 @@ func TestLogTranslator_TranslateRow(t *testing.T) {
 				assert.Equal(t, "log.events", result[wkk.RowKeyCName])
 				assert.Equal(t, float64(1), result[wkk.RowKeyCValue])
 				// Check original fields were preserved
-				assert.Equal(t, "log body content", result[wkk.NewRowKey("_cardinalhq.message")])
+				assert.Equal(t, "log body content", result[wkk.RowKeyCMessage])
 				assert.Equal(t, int64(1640995200000), result[wkk.RowKeyCTimestamp])
 				assert.Equal(t, "info", result[wkk.NewRowKey("_cardinalhq.level")])
 			},

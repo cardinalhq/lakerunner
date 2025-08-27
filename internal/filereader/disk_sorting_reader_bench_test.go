@@ -30,10 +30,10 @@ func createTestRowsForSorting(numRows int) []Row {
 			wkk.RowKeyCName:               fmt.Sprintf("metric_%d", i%10), // 10 different metric names
 			wkk.RowKeyCTID:                int64(100 + i%5),               // 5 different TIDs per metric
 			wkk.RowKeyCTimestamp:          int64(1000 + i*1000),           // Sequential timestamps
-			wkk.NewRowKey("rollup_avg"):   float64(50.0 + float64(i)),
-			wkk.NewRowKey("rollup_count"): float64(1),
-			wkk.NewRowKey("rollup_sum"):   float64(50.0 + float64(i)),
-			wkk.NewRowKey("sketch"):       []byte{byte(i % 256)},
+			wkk.RowKeyRollupAvg:           float64(50.0 + float64(i)),
+			wkk.RowKeyRollupCount:         float64(1),
+			wkk.RowKeyRollupSum:           float64(50.0 + float64(i)),
+			wkk.RowKeySketch:              []byte{byte(i % 256)},
 			wkk.NewRowKey("description"):  fmt.Sprintf("Test metric %d", i),
 			wkk.NewRowKey("unit"):         "percent",
 			wkk.NewRowKey("type"):         "Gauge",

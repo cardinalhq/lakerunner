@@ -147,7 +147,7 @@ func TestPreorderedParquetRawReaderWithRealFile(t *testing.T) {
 				require.NotNil(t, row, "Row %d should not be nil", i)
 				require.Greater(t, len(row), 0, "Row %d should have columns", i)
 				// Verify the expected collector_id field exists
-				_, hasCollectorId := row[wkk.NewRowKey("_cardinalhq.collector_id")]
+				_, hasCollectorId := row[wkk.RowKeyCCollectorID]
 				assert.True(t, hasCollectorId, "Row should have collector_id field")
 			}
 		}
@@ -196,7 +196,7 @@ func TestPreorderedParquetRawReaderMultipleFiles(t *testing.T) {
 						require.NotNil(t, row)
 						require.Greater(t, len(row), 0, "Row should have columns")
 						// Verify the expected collector_id field exists
-						_, hasCollectorId := row[wkk.NewRowKey("_cardinalhq.collector_id")]
+						_, hasCollectorId := row[wkk.RowKeyCCollectorID]
 						assert.True(t, hasCollectorId, "Row should have collector_id field")
 					}
 				}

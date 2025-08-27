@@ -46,9 +46,9 @@ func TestLogTranslatorIntegration(t *testing.T) {
 		{
 			name: "ValidLogWithMessage",
 			input: filereader.Row{
-				wkk.NewRowKey("_cardinalhq.message"): "test log message",
-				wkk.RowKeyCTimestamp:                 int64(1640995200000),
-				wkk.NewRowKey("level"):               "info",
+				wkk.RowKeyCMessage:     "test log message",
+				wkk.RowKeyCTimestamp:   int64(1640995200000),
+				wkk.NewRowKey("level"): "info",
 			},
 			checkFn: func(t *testing.T, result filereader.Row) {
 				// Should have resource fields added
@@ -62,7 +62,7 @@ func TestLogTranslatorIntegration(t *testing.T) {
 				assert.Equal(t, float64(1), result[wkk.RowKeyCValue])
 
 				// Original fields should be preserved
-				assert.Equal(t, "test log message", result[wkk.NewRowKey("_cardinalhq.message")])
+				assert.Equal(t, "test log message", result[wkk.RowKeyCMessage])
 				assert.Equal(t, int64(1640995200000), result[wkk.RowKeyCTimestamp])
 				assert.Equal(t, "info", result[wkk.NewRowKey("level")])
 			},
@@ -89,9 +89,9 @@ func TestLogTranslatorIntegration(t *testing.T) {
 		{
 			name: "LogWithFloatTimestamp",
 			input: filereader.Row{
-				wkk.NewRowKey("_cardinalhq.message"): "test message",
-				wkk.RowKeyCTimestamp:                 int64(1640995200000), // Already properly typed
-				wkk.NewRowKey("severity"):            "warn",
+				wkk.RowKeyCMessage:        "test message",
+				wkk.RowKeyCTimestamp:      int64(1640995200000), // Already properly typed
+				wkk.NewRowKey("severity"): "warn",
 			},
 			checkFn: func(t *testing.T, result filereader.Row) {
 				// Should have resource fields and CardinalHQ metadata
@@ -106,7 +106,7 @@ func TestLogTranslatorIntegration(t *testing.T) {
 				assert.Equal(t, int64(1640995200000), ts)
 
 				// Other fields preserved
-				assert.Equal(t, "test message", result[wkk.NewRowKey("_cardinalhq.message")])
+				assert.Equal(t, "test message", result[wkk.RowKeyCMessage])
 				assert.Equal(t, "warn", result[wkk.NewRowKey("severity")])
 			},
 		},
@@ -150,20 +150,20 @@ func TestLogTranslatorWithParquetWriter(t *testing.T) {
 	// Test data representing what might come from a filereader
 	rawRows := []filereader.Row{
 		{
-			wkk.NewRowKey("_cardinalhq.message"): "User login attempt",
-			wkk.RowKeyCTimestamp:                 int64(1640995200000),
-			wkk.NewRowKey("user_id"):             "user123",
-			wkk.NewRowKey("success"):             true,
+			wkk.RowKeyCMessage:       "User login attempt",
+			wkk.RowKeyCTimestamp:     int64(1640995200000),
+			wkk.NewRowKey("user_id"): "user123",
+			wkk.NewRowKey("success"): true,
 		},
 		{
-			wkk.NewRowKey("_cardinalhq.message"): "Database query executed",
-			wkk.RowKeyCTimestamp:                 int64(1640995201000),
-			wkk.NewRowKey("query_time_ms"):       float64(45.7),
+			wkk.RowKeyCMessage:             "Database query executed",
+			wkk.RowKeyCTimestamp:           int64(1640995201000),
+			wkk.NewRowKey("query_time_ms"): float64(45.7),
 		},
 		{
-			wkk.NewRowKey("_cardinalhq.message"): "Error processing request", // Using standard message field
-			wkk.RowKeyCTimestamp:                 int64(1640995202000),       // Properly typed timestamp
-			wkk.NewRowKey("error_code"):          int64(500),
+			wkk.RowKeyCMessage:          "Error processing request", // Using standard message field
+			wkk.RowKeyCTimestamp:        int64(1640995202000),       // Properly typed timestamp
+			wkk.NewRowKey("error_code"): int64(500),
 		},
 	}
 

@@ -250,9 +250,9 @@ func TestProtoLogsReader_SyntheticData(t *testing.T) {
 	for i, row := range allRows {
 		t.Run(fmt.Sprintf("log_%d", i), func(t *testing.T) {
 			// Should have basic log fields
-			_, hasMessage := row[wkk.NewRowKey("_cardinalhq.message")]
+			_, hasMessage := row[wkk.RowKeyCMessage]
 			assert.True(t, hasMessage, "Row should have log body")
-			_, hasTimestamp := row[wkk.NewRowKey("_cardinalhq.timestamp")]
+			_, hasTimestamp := row[wkk.RowKeyCTimestamp]
 			assert.True(t, hasTimestamp, "Row should have timestamp")
 			_, hasLevel := row[wkk.NewRowKey("_cardinalhq.level")]
 			assert.True(t, hasLevel, "Row should have severity text")
@@ -260,7 +260,7 @@ func TestProtoLogsReader_SyntheticData(t *testing.T) {
 			assert.True(t, hasSeverityNumber, "Row should have severity number")
 
 			// Check specific values
-			assert.Equal(t, expectedBodies[i], row[wkk.NewRowKey("_cardinalhq.message")], "Log body should match expected value")
+			assert.Equal(t, expectedBodies[i], row[wkk.RowKeyCMessage], "Log body should match expected value")
 			assert.Equal(t, expectedSeverities[i], row[wkk.NewRowKey("_cardinalhq.level")], "Severity text should match")
 
 			// Check for resource attributes
@@ -303,9 +303,9 @@ func TestProtoLogsReader_SyntheticData(t *testing.T) {
 			for i := 0; i < batch.Len(); i++ {
 				row := batch.Get(i)
 				assert.Greater(t, len(row), 0, "Batched row %d should have data", i)
-				_, hasMessage := row[wkk.NewRowKey("_cardinalhq.message")]
+				_, hasMessage := row[wkk.RowKeyCMessage]
 				assert.True(t, hasMessage)
-				_, hasTimestamp := row[wkk.NewRowKey("_cardinalhq.timestamp")]
+				_, hasTimestamp := row[wkk.RowKeyCTimestamp]
 				assert.True(t, hasTimestamp)
 			}
 		}
@@ -326,7 +326,7 @@ func TestProtoLogsReader_SyntheticData(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, batch, "Should read a batch")
 	assert.Equal(t, 1, batch.Len(), "Should read exactly 1 row")
-	_, hasMessage := batch.Get(0)[wkk.NewRowKey("_cardinalhq.message")]
+	_, hasMessage := batch.Get(0)[wkk.RowKeyCMessage]
 	assert.True(t, hasMessage)
 	_, hasResourceServiceName := batch.Get(0)[wkk.NewRowKey("resource.service.name")]
 	assert.True(t, hasResourceServiceName)
@@ -369,7 +369,7 @@ func TestProtoLogsReader_SyntheticDataFields(t *testing.T) {
 	bodyCount := 0
 
 	for _, row := range allRows {
-		if body, exists := row[wkk.NewRowKey("_cardinalhq.message")]; exists {
+		if body, exists := row[wkk.RowKeyCMessage]; exists {
 			if bodyStr, ok := body.(string); ok && bodyStr != "" {
 				bodyCount++
 			}
@@ -516,7 +516,7 @@ func TestProtoLogsReader_SyntheticStructuredData(t *testing.T) {
 	for i, row := range allRows {
 		t.Run(fmt.Sprintf("structured_log_%d", i), func(t *testing.T) {
 			// Check basic log fields
-			assert.Equal(t, expectedBodies[i], row[wkk.NewRowKey("_cardinalhq.message")], "Structured log body should match")
+			assert.Equal(t, expectedBodies[i], row[wkk.RowKeyCMessage], "Structured log body should match")
 			assert.Equal(t, expectedSeverities[i], row[wkk.NewRowKey("_cardinalhq.level")], "Structured severity should match")
 
 			// Check resource attributes from structured data

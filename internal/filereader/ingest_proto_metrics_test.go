@@ -752,11 +752,11 @@ func TestIngestProtoMetrics_SyntheticEdgeCases(t *testing.T) {
 			case "simple_counter":
 				// Should handle metrics with no attributes gracefully
 				assert.Equal(t, "count", row[wkk.RowKeyCMetricType])
-				assert.Equal(t, 100.0, row[wkk.NewRowKey("rollup_sum")])
+				assert.Equal(t, 100.0, row[wkk.RowKeyRollupSum])
 			case "zero_gauge":
 				// Should handle zero values
 				assert.Equal(t, "gauge", row[wkk.RowKeyCMetricType])
-				assert.Equal(t, 0.0, row[wkk.NewRowKey("rollup_sum")])
+				assert.Equal(t, 0.0, row[wkk.RowKeyRollupSum])
 				assert.Equal(t, "idle", row[wkk.NewRowKey("metric.measurement")])
 			case "simple_histogram":
 				// Should handle simple histograms
