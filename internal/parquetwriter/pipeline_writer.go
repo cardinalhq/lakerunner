@@ -219,17 +219,8 @@ func ProcessPipelineWithSort(
 	reader pipeline.Reader,
 	writer PipelineWriter,
 	less func(a, b pipeline.Row) bool,
-	batchSize int,
-	external bool, // use external sort for large datasets
 ) ([]Result, error) {
-	pool := pipeline.NewBatchPool(batchSize)
-
-	var sortReader pipeline.Reader
-	if external {
-		sortReader = pipeline.SortExternal(reader, pool, less, 0)
-	} else {
-		sortReader = pipeline.SortInMemory(reader, less)
-	}
+	sortReader := pipeline.SortInMemory(reader, less)
 
 	return writer.ConsumeAll(ctx, sortReader)
 }
