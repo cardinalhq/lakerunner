@@ -16,21 +16,27 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
-	_ "modernc.org/sqlite"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
+	"github.com/cardinalhq/lakerunner/internal/constants"
+	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
+	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
+	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
+	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
-	"github.com/cardinalhq/lakerunner/internal/tidprocessing"
 	"github.com/cardinalhq/lakerunner/lockmgr"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -151,6 +157,8 @@ func metricRollupItemDo(
 	if !ok {
 		return WorkResultSuccess, fmt.Errorf("invalid time range in work item: %v", inf.TsRange())
 	}
+
+	// Get source segments to rollup from (previous frequency)
 	sourceRows, err := mdb.GetMetricSegsForRollup(ctx, lrdb.GetMetricSegsForRollupParams{
 		OrganizationID: inf.OrganizationID(),
 		Dateint:        inf.Dateint(),
@@ -166,10 +174,12 @@ func metricRollupItemDo(
 	}
 
 	if helpers.AllRolledUp(sourceRows) {
+		ll.Debug("All source rows already rolled up, skipping")
 		return WorkResultSuccess, nil
 	}
 
-	currentRows, err := mdb.GetMetricSegsForRollup(ctx, lrdb.GetMetricSegsForRollupParams{
+	// Get existing segments at target frequency to replace
+	existingRows, err := mdb.GetMetricSegsForRollup(ctx, lrdb.GetMetricSegsForRollupParams{
 		OrganizationID: inf.OrganizationID(),
 		Dateint:        inf.Dateint(),
 		FrequencyMs:    inf.FrequencyMs(),
@@ -179,21 +189,14 @@ func metricRollupItemDo(
 		EndTs:          et.Time.UTC().UnixMilli(),
 	})
 	if err != nil {
-		ll.Error("Failed to get metric segments", slog.Any("error", err))
+		ll.Error("Failed to get existing metric segments", slog.Any("error", err))
 		return WorkResultTryAgainLater, err
 	}
 
-	err = rollupInterval(ctx, ll, mdb, tmpdir, inf, profile, s3client, sourceRows, currentRows, rpfEstimate)
-	if err != nil {
-		ll.Error("Failed to rollup interval", slog.Any("error", err))
-		return WorkResultTryAgainLater, err
-	}
-
-	return WorkResultSuccess, nil
+	return rollupMetricSegments(ctx, ll, mdb, tmpdir, inf, profile, s3client, sourceRows, existingRows, rpfEstimate)
 }
 
-// rollupInterval rolls up the metric segments for a given timebox.
-func rollupInterval(
+func rollupMetricSegments(
 	ctx context.Context,
 	ll *slog.Logger,
 	mdb lrdb.StoreFull,
@@ -202,176 +205,339 @@ func rollupInterval(
 	profile storageprofile.StorageProfile,
 	s3client *awsclient.S3Client,
 	sourceRows []lrdb.MetricSeg,
-	existingRowsForThisRollup []lrdb.MetricSeg,
+	existingRows []lrdb.MetricSeg,
 	rpfEstimate int64,
-) error {
+) (WorkResult, error) {
 	if len(sourceRows) == 0 {
-		return nil
+		ll.Debug("No source rows to rollup, skipping")
+		return WorkResultSuccess, nil
 	}
 
-	ingest_dateint := int32(0)
-	files := make([]string, 0, len(sourceRows))
-	for _, row := range sourceRows {
-		rst, _, ok := helpers.RangeBounds(row.TsRange)
-		rts_dateint, _ := helpers.MSToDateintHour(rst.Int64)
-		ingest_dateint = max(ingest_dateint, rts_dateint)
-		if !ok {
-			ll.Error("Invalid time range in source row", slog.Any("tsRange", row.TsRange))
-			return fmt.Errorf("invalid time range in source row: %v", row.TsRange)
-		}
-		dateint, hour := helpers.MSToDateintHour(rst.Int64)
-		objectID := helpers.MakeDBObjectID(inf.OrganizationID(), profile.CollectorName, dateint, hour, row.SegmentID, "metrics")
-		fn, downloadedSize, is404, err := s3helper.DownloadS3Object(ctx, tmpdir, s3client, profile.Bucket, objectID)
-		if err != nil {
-			ll.Error("Failed to download S3 object", slog.String("objectID", objectID), slog.Any("error", err))
-			return err
-		}
-		if is404 {
-			ll.Info("S3 object not found, skipping", slog.String("objectID", objectID))
-			continue
-		}
-		ll.Info("Downloaded S3 SOURCE", slog.String("objectID", objectID), slog.String("bucket", profile.Bucket), slog.Int64("rowFileSize", row.FileSize), slog.Int64("s3FileSize", downloadedSize))
-		files = append(files, fn)
-	}
-
-	if len(files) == 0 {
-		ll.Info("No files to roll up, skipping")
-		return nil
-	}
-
-	startTS, endTS, ok := helpers.RangeBounds(inf.TsRange())
+	st, _, ok := helpers.RangeBounds(inf.TsRange())
 	if !ok {
 		ll.Error("Invalid time range in work item", slog.Any("tsRange", inf.TsRange()))
-		return fmt.Errorf("invalid time range in work item: %v", inf.TsRange())
+		return WorkResultSuccess, fmt.Errorf("invalid time range in work item: %v", inf.TsRange())
 	}
 
-	ll.Info("Rolling up files", slog.Int("fileCount", len(files)), slog.Int("frequency", int(inf.FrequencyMs())), slog.Int64("startTS", startTS.Time.UTC().UnixMilli()), slog.Int64("endTS", endTS.Time.UTC().UnixMilli()))
-	merger, err := tidprocessing.NewTIDMerger(tmpdir, files, inf.FrequencyMs(), rpfEstimate, startTS.Time.UTC().UnixMilli(), endTS.Time.UTC().UnixMilli())
+	// Download all source files and create PreorderedParquetRawReaders
+	var readers []filereader.Reader
+	var downloadedFiles []string
+
+	for _, row := range sourceRows {
+		dateint, hour := helpers.MSToDateintHour(st.Time.UTC().UnixMilli())
+		objectID := helpers.MakeDBObjectID(inf.OrganizationID(), profile.CollectorName, dateint, hour, row.SegmentID, "metrics")
+
+		fn, _, is404, err := s3helper.DownloadS3Object(ctx, tmpdir, s3client, profile.Bucket, objectID)
+		if err != nil {
+			ll.Error("Failed to download S3 object", slog.String("objectID", objectID), slog.Any("error", err))
+			return WorkResultTryAgainLater, err
+		}
+		if is404 {
+			ll.Info("S3 object not found, skipping", slog.String("bucket", profile.Bucket), slog.String("objectID", objectID))
+			continue
+		}
+
+		// Open file and get size for PreorderedParquetRawReader
+		file, err := os.Open(fn)
+		if err != nil {
+			ll.Error("Failed to open parquet file", slog.String("file", fn), slog.Any("error", err))
+			return WorkResultTryAgainLater, fmt.Errorf("opening parquet file %s: %w", fn, err)
+		}
+
+		stat, err := file.Stat()
+		if err != nil {
+			file.Close()
+			ll.Error("Failed to stat parquet file", slog.String("file", fn), slog.Any("error", err))
+			return WorkResultTryAgainLater, fmt.Errorf("statting parquet file %s: %w", fn, err)
+		}
+
+		// Create PreorderedParquetRawReader directly
+		reader, err := filereader.NewPreorderedParquetRawReader(file, stat.Size())
+		if err != nil {
+			file.Close()
+			ll.Error("Failed to create parquet reader", slog.String("file", fn), slog.Any("error", err))
+			return WorkResultTryAgainLater, fmt.Errorf("creating parquet reader for %s: %w", fn, err)
+		}
+
+		readers = append(readers, reader)
+		downloadedFiles = append(downloadedFiles, fn)
+	}
+
+	if len(readers) == 0 {
+		ll.Debug("No files to rollup, skipping work item")
+		return WorkResultSuccess, nil
+	}
+
+	defer func() {
+		for _, reader := range readers {
+			if err := reader.Close(); err != nil {
+				ll.Error("Failed to close reader", slog.Any("error", err))
+			}
+		}
+	}()
+
+	// Create PreorderedMultisourceReader for read-time merge sort of pre-sorted parquet files
+	var finalReader filereader.Reader
+	if len(readers) == 1 {
+		finalReader = readers[0]
+	} else {
+		selector := metricsprocessing.MetricsOrderedSelector()
+		multiReader, err := filereader.NewPreorderedMultisourceReader(readers, selector)
+		if err != nil {
+			ll.Error("Failed to create preordered multi-source reader", slog.Any("error", err))
+			return WorkResultTryAgainLater, fmt.Errorf("creating preordered multi-source reader: %w", err)
+		}
+		finalReader = multiReader
+		defer multiReader.Close()
+	}
+
+	// Wrap with aggregating reader to perform rollup aggregation
+	// Use target frequency for aggregation period
+	aggregatingReader, err := filereader.NewAggregatingMetricsReader(finalReader, int64(inf.FrequencyMs()))
 	if err != nil {
-		ll.Error("Failed to create TIDMerger", slog.Any("error", err))
-		return fmt.Errorf("creating TIDMerger: %w", err)
+		ll.Error("Failed to create aggregating metrics reader", slog.Any("error", err))
+		return WorkResultTryAgainLater, fmt.Errorf("creating aggregating metrics reader: %w", err)
+	}
+	defer aggregatingReader.Close()
+
+	recordsPerFile := rpfEstimate
+	if recordsPerFile <= 0 {
+		recordsPerFile = 10_000
 	}
 
-	mergeResult, stats, err := merger.Merge()
-	if stats.DatapointsOutOfRange > 0 {
-		ll.Warn("Some datapoints were out of range", slog.Int64("count", stats.DatapointsOutOfRange))
-	}
+	slotID := inf.SlotId()
+	baseName := fmt.Sprintf("rolledup_metrics_%s_%d_%d", inf.OrganizationID().String(), time.Now().Unix(), slotID)
+	writer, err := factories.NewMetricsWriter(baseName, tmpdir, constants.WriterTargetSizeBytesMetrics, recordsPerFile)
 	if err != nil {
-		ll.Error("Failed to merge files", slog.Any("error", err))
-		return fmt.Errorf("merging files: %w", err)
+		ll.Error("Failed to create metrics writer", slog.Any("error", err))
+		return WorkResultTryAgainLater, fmt.Errorf("creating metrics writer: %w", err)
 	}
-	ll.Info("Merge results", slog.Any("sourceFiles", files), slog.Any("mergeResult", mergeResult))
+	defer writer.Abort()
 
-	// now we need to update the source items to mark them as having been rolled up,
-	// add our new file to the database, and remove any previous files for this timebox.
-	params := lrdb.ReplaceMetricSegsParams{
-		OrganizationID: inf.OrganizationID(),
-		Dateint:        inf.Dateint(),
+	const batchSize = 1000
+	rowsBatch := make([]filereader.Row, batchSize)
+	totalRows := int64(0)
+
+	for {
+		n, err := aggregatingReader.Read(rowsBatch)
+		if err != nil && !errors.Is(err, io.EOF) {
+			ll.Error("Failed to read from aggregating reader", slog.Any("error", err))
+			return WorkResultTryAgainLater, fmt.Errorf("reading from aggregating reader: %w", err)
+		}
+
+		if n == 0 {
+			break
+		}
+
+		for i := range n {
+			// Normalize sketch field for parquet writing (string -> []byte)
+			if err := normalizeRowForParquetWrite(rowsBatch[i]); err != nil {
+				ll.Error("Failed to normalize row", slog.Any("error", err))
+				return WorkResultTryAgainLater, fmt.Errorf("normalizing row: %w", err)
+			}
+
+			if err := writer.Write(rowsBatch[i]); err != nil {
+				ll.Error("Failed to write row", slog.Any("error", err))
+				return WorkResultTryAgainLater, fmt.Errorf("writing row: %w", err)
+			}
+			totalRows++
+		}
+
+		if errors.Is(err, io.EOF) {
+			break
+		}
+	}
+
+	results, err := writer.Close(ctx)
+	if err != nil {
+		ll.Error("Failed to finish writing", slog.Any("error", err))
+		return WorkResultTryAgainLater, fmt.Errorf("finishing writer: %w", err)
+	}
+
+	ll.Debug("Rollup completed",
+		slog.Int64("totalRows", totalRows),
+		slog.Int("outputFiles", len(results)),
+		slog.Int("inputFiles", len(downloadedFiles)),
+		slog.Int64("recordsPerFile", recordsPerFile))
+
+	// Create rollup upload params
+	rollupParams := metricsprocessing.CompactionUploadParams{
+		OrganizationID: inf.OrganizationID().String(),
 		InstanceNum:    inf.InstanceNum(),
-		IngestDateint:  ingest_dateint,
+		Dateint:        inf.Dateint(),
 		FrequencyMs:    inf.FrequencyMs(),
+		SlotID:         inf.SlotId(),
+		IngestDateint:  metricsprocessing.GetIngestDateint(sourceRows),
+		CollectorName:  profile.CollectorName,
+		Bucket:         profile.Bucket,
+	}
+
+	// Upload rolled-up metrics using the same pattern as compaction
+	err = uploadRolledUpMetrics(ctx, ll, mdb, s3client, results, existingRows, rollupParams)
+	if err != nil {
+		return WorkResultTryAgainLater, fmt.Errorf("failed to upload rolled-up metrics: %w", err)
+	}
+
+	// Mark source rows as rolled up
+	if err := markSourceRowsAsRolledUp(ctx, ll, mdb, sourceRows); err != nil {
+		ll.Error("Failed to mark source rows as rolled up", slog.Any("error", err))
+		// This is not a critical failure - the rollup succeeded but we couldn't update the flag
+		// The next run will skip these since they've already been processed
+	}
+
+	// Schedule cleanup of old files
+	metricsprocessing.ScheduleOldFileCleanup(ctx, ll, mdb, existingRows, profile)
+
+	// Queue next level rollup and compaction
+	if err := queueMetricCompaction(ctx, mdb, qmcFromWorkable(inf)); err != nil {
+		ll.Error("Failed to queue metric compaction", slog.Any("error", err))
+	}
+	if err := queueMetricRollup(ctx, mdb, qmcFromWorkable(inf)); err != nil {
+		ll.Error("Failed to queue metric rollup", slog.Any("error", err))
+	}
+
+	return WorkResultSuccess, nil
+}
+
+// uploadRolledUpMetrics uploads rolled-up metric files using the same atomic pattern as compaction
+func uploadRolledUpMetrics(
+	ctx context.Context,
+	ll *slog.Logger,
+	mdb lrdb.StoreFull,
+	s3client *awsclient.S3Client,
+	results []parquetwriter.Result,
+	existingRows []lrdb.MetricSeg,
+	params metricsprocessing.CompactionUploadParams,
+) error {
+	startTs, endTs := metricsprocessing.GetStartEndTimes(existingRows)
+	if len(existingRows) == 0 && len(results) > 0 {
+		// No existing rows, use current time bounds
+		// This should be derived from the work item's time range, but for safety we'll use current time
+		now := time.Now().UnixMilli()
+		startTs, endTs = now, now+int64(params.FrequencyMs)
+	}
+
+	orgUUID, err := uuid.Parse(params.OrganizationID)
+	if err != nil {
+		return fmt.Errorf("invalid organization ID: %w", err)
+	}
+
+	// Base parameters for database update
+	replaceParams := lrdb.ReplaceMetricSegsParams{
+		OrganizationID: orgUUID,
+		Dateint:        params.Dateint,
+		InstanceNum:    params.InstanceNum,
+		SlotID:         params.SlotID,
+		IngestDateint:  params.IngestDateint,
+		FrequencyMs:    params.FrequencyMs,
 		Published:      true,
-		Rolledup:       false,
+		Rolledup:       false, // Rolled-up data itself is not considered "rolled up" - it's a target
 		CreatedBy:      lrdb.CreateByRollup,
 	}
 
-	for _, row := range existingRowsForThisRollup {
-		ll.Info("removing old metric segment", slog.Int("tidPartition", int(row.TidPartition)), slog.Int64("segmentID", row.SegmentID))
-		params.OldRecords = append(params.OldRecords, lrdb.ReplaceMetricSegsOld{
+	// Add existing records to be replaced
+	for _, row := range existingRows {
+		replaceParams.OldRecords = append(replaceParams.OldRecords, lrdb.ReplaceMetricSegsOld{
 			TidPartition: row.TidPartition,
 			SegmentID:    row.SegmentID,
+			SlotID:       row.SlotID,
 		})
 	}
 
-	st, et, ok := helpers.RangeBounds(inf.TsRange())
-	if !ok {
-		return fmt.Errorf("invalid time range in work item: %v", inf.TsRange())
-	}
+	dateint, hour := helpers.MSToDateintHour(startTs)
 
-	dateint, hour := helpers.MSToDateintHour(st.Time.UTC().UnixMilli())
-
-	// Process each tid_partition atomically
-	for tidPartition, result := range mergeResult {
+	// Process each output file atomically (same as compaction)
+	for _, file := range results {
 		// Generate operation ID for tracking this atomic operation
-		opID := fmt.Sprintf("rollup_op_%d_%d_%s", time.Now().Unix(), tidPartition, idgen.GenerateShortBase32ID())
-		tidLogger := ll.With(slog.String("operationID", opID), slog.Int("tidPartition", int(tidPartition)))
+		opID := idgen.GenerateShortBase32ID()
+		fileLogger := ll.With(slog.String("operationID", opID), slog.String("file", file.FileName))
 
-		tidLogger.Info("Starting atomic metric rollup operation",
-			slog.Int64("recordCount", result.RecordCount),
-			slog.Int64("fileSize", result.FileSize))
+		fileLogger.Debug("Starting atomic metric rollup upload operation",
+			slog.Int64("recordCount", file.RecordCount),
+			slog.Int64("fileSize", file.FileSize))
 
 		segmentID := s3helper.GenerateID()
-		newObjectID := helpers.MakeDBObjectID(inf.OrganizationID(), profile.CollectorName, dateint, hour, segmentID, "metrics")
+		newObjectID := helpers.MakeDBObjectID(orgUUID, params.CollectorName, dateint, hour, segmentID, "metrics")
 
-		tidLogger.Info("Uploading rolled-up metric file to S3 - point of no return approaching",
+		fileLogger.Debug("Uploading rolled-up metric file to S3 - point of no return approaching",
 			slog.String("newObjectID", newObjectID),
-			slog.String("bucket", profile.Bucket),
+			slog.String("bucket", params.Bucket),
 			slog.Int64("newSegmentID", segmentID))
 
-		err = s3helper.UploadS3Object(ctx, s3client, profile.Bucket, newObjectID, result.FileName)
+		err := s3helper.UploadS3Object(ctx, s3client, params.Bucket, newObjectID, file.FileName)
 		if err != nil {
-			tidLogger.Error("Atomic operation failed during S3 upload - no changes made",
+			fileLogger.Error("Atomic operation failed during S3 upload - no changes made",
 				slog.Any("error", err),
 				slog.String("objectID", newObjectID))
 			return fmt.Errorf("uploading new S3 object: %w", err)
 		}
 
-		tidLogger.Debug("S3 upload successful, updating database index - CRITICAL SECTION",
+		fileLogger.Debug("S3 upload successful, updating database index - CRITICAL SECTION",
 			slog.String("uploadedObject", newObjectID))
 
-		// Create params for this single tid_partition
+		// Create params for this single file
 		singleParams := lrdb.ReplaceMetricSegsParams{
-			OrganizationID: params.OrganizationID,
-			Dateint:        params.Dateint,
-			FrequencyMs:    params.FrequencyMs,
-			InstanceNum:    params.InstanceNum,
-			IngestDateint:  params.IngestDateint,
-			Published:      params.Published,
-			Rolledup:       params.Rolledup,
-			CreatedBy:      params.CreatedBy,
-			OldRecords:     params.OldRecords, // Contains all old records, but DB will filter by tid_partition
+			OrganizationID: replaceParams.OrganizationID,
+			Dateint:        replaceParams.Dateint,
+			FrequencyMs:    replaceParams.FrequencyMs,
+			InstanceNum:    replaceParams.InstanceNum,
+			IngestDateint:  replaceParams.IngestDateint,
+			Published:      replaceParams.Published,
+			Rolledup:       replaceParams.Rolledup,
+			CreatedBy:      replaceParams.CreatedBy,
+			SlotID:         replaceParams.SlotID,
+			OldRecords:     replaceParams.OldRecords,
 			NewRecords: []lrdb.ReplaceMetricSegsNew{
 				{
-					TidPartition: int16(tidPartition),
+					TidPartition: 0, // Rollup output uses tid_partition 0
 					SegmentID:    segmentID,
-					StartTs:      st.Time.UTC().UnixMilli(),
-					EndTs:        et.Time.UTC().UnixMilli(),
-					RecordCount:  result.RecordCount,
-					FileSize:     result.FileSize,
+					StartTs:      startTs,
+					EndTs:        endTs,
+					RecordCount:  file.RecordCount,
+					FileSize:     file.FileSize,
 				},
 			},
-			Fingerprints: result.Fingerprints,
+		}
+
+		// Add fingerprints if available in metadata
+		if stats, ok := file.Metadata.(factories.MetricsFileStats); ok {
+			singleParams.Fingerprints = stats.Fingerprints
 		}
 
 		if err := mdb.ReplaceMetricSegs(ctx, singleParams); err != nil {
-			tidLogger.Error("CRITICAL: Database update failed after S3 upload - file orphaned in S3",
+			fileLogger.Error("Database update failed after S3 upload - file orphaned in S3",
 				slog.Any("error", err),
 				slog.String("orphanedObject", newObjectID),
 				slog.Int64("orphanedSegmentID", segmentID),
-				slog.String("bucket", profile.Bucket))
+				slog.String("bucket", params.Bucket))
 
 			// Best effort cleanup - try to delete the uploaded file
-			tidLogger.Debug("Attempting to cleanup orphaned S3 object")
-			if cleanupErr := s3helper.DeleteS3Object(ctx, s3client, profile.Bucket, newObjectID); cleanupErr != nil {
-				tidLogger.Error("Failed to cleanup orphaned S3 object - manual cleanup required",
+			if cleanupErr := s3helper.DeleteS3Object(ctx, s3client, params.Bucket, newObjectID); cleanupErr != nil {
+				fileLogger.Error("Failed to cleanup orphaned S3 object - manual cleanup required",
 					slog.Any("error", cleanupErr),
 					slog.String("objectID", newObjectID),
-					slog.String("bucket", profile.Bucket))
-			} else {
-				tidLogger.Info("Successfully cleaned up orphaned S3 object")
+					slog.String("bucket", params.Bucket))
 			}
 			return fmt.Errorf("replacing metric segments: %w", err)
 		}
 
-		tidLogger.Info("ATOMIC OPERATION COMMITTED SUCCESSFULLY - database updated, segments swapped",
+		fileLogger.Debug("ATOMIC OPERATION COMMITTED SUCCESSFULLY - database updated, segments swapped",
 			slog.Int64("newSegmentID", segmentID),
-			slog.Int64("newRecordCount", result.RecordCount),
-			slog.Int64("newFileSize", result.FileSize),
+			slog.Int64("newRecordCount", file.RecordCount),
+			slog.Int64("newFileSize", file.FileSize),
 			slog.String("newObjectID", newObjectID))
 	}
-	ll.Info("Replaced metric segments")
 
-	// mark the input rows as having been rolled up.
+	return nil
+}
+
+// markSourceRowsAsRolledUp marks the source segments as having been rolled up
+func markSourceRowsAsRolledUp(
+	ctx context.Context,
+	ll *slog.Logger,
+	mdb lrdb.StoreFull,
+	sourceRows []lrdb.MetricSeg,
+) error {
 	newlyRolled := []lrdb.BatchMarkMetricSegsRolledupParams{}
 	for _, row := range sourceRows {
 		if row.Rolledup {
@@ -387,6 +553,7 @@ func rollupInterval(
 			TidPartition:   row.TidPartition,
 		})
 	}
+
 	if len(newlyRolled) > 0 {
 		result := mdb.BatchMarkMetricSegsRolledup(ctx, newlyRolled)
 		result.Exec(func(i int, err error) {
@@ -394,28 +561,6 @@ func rollupInterval(
 				ll.Error("Failed to mark metric segments as rolled up", slog.Int("index", i), slog.Any("error", err), slog.Any("record", newlyRolled[i]))
 			}
 		})
-	}
-
-	if err := queueMetricCompaction(ctx, mdb, qmcFromWorkable(inf)); err != nil {
-		return fmt.Errorf("queueing metric compaction: %w", err)
-	}
-	if err := queueMetricRollup(ctx, mdb, qmcFromWorkable(inf)); err != nil {
-		return fmt.Errorf("queueing metric rollup: %w", err)
-	}
-
-	// now delete the old files from S3.
-	for _, row := range existingRowsForThisRollup {
-		rst, _, ok := helpers.RangeBounds(row.TsRange)
-		if !ok {
-			ll.Error("Invalid time range in existing row", slog.Any("tsRange", row.TsRange))
-			continue
-		}
-		dateint, hour := helpers.MSToDateintHour(rst.Int64)
-		oid := helpers.MakeDBObjectID(inf.OrganizationID(), profile.CollectorName, dateint, hour, row.SegmentID, "metrics")
-		ll.Info("Deleting old S3 object", slog.String("objectID", oid))
-		if err := s3helper.ScheduleS3Delete(ctx, mdb, profile.OrganizationID, profile.InstanceNum, profile.Bucket, oid); err != nil {
-			ll.Error("scheduleS3Delete", slog.Any("error", err))
-		}
 	}
 
 	return nil
