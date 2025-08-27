@@ -18,7 +18,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 
 	"github.com/parquet-go/parquet-go"
 )
@@ -78,12 +77,9 @@ func (r *PreorderedParquetRawReader) Read(rows []Row) (int, error) {
 		return 0, io.EOF
 	}
 
-	// Copy the data back to the provided rows slice
-	// TODO see if we can avoid this copy
+	// Transfer ownership instead of copying to reduce memory pressure
 	for i := range n {
-		resetRow(&rows[i])
-		// Copy data from parquet row
-		maps.Copy(rows[i], parquetRows[i])
+		rows[i] = parquetRows[i] // Transfer map ownership, avoid expensive copy
 	}
 
 	// Only increment rowCount for successfully read rows

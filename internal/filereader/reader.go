@@ -25,28 +25,28 @@ type Row map[string]any
 //
 // Implementations MUST follow these buffer reuse rules for memory efficiency:
 //
-// 1. **Input Buffer Ownership**: The caller owns the Row slice and its individual Row maps.
-//    Readers MUST NOT store references to these Row maps beyond the Read() call.
+//  1. **Input Buffer Ownership**: The caller owns the Row slice and its individual Row maps.
+//     Readers MUST NOT store references to these Row maps beyond the Read() call.
 //
-// 2. **Row Map Reuse**: Callers may reuse Row maps across Read() calls for performance.
-//    Readers MUST call resetRow() or clear each Row map before populating it to prevent
-//    data leakage from previous reads.
+//  2. **Row Map Reuse**: Callers may reuse Row maps across Read() calls for performance.
+//     Readers MUST call resetRow() or clear each Row map before populating it to prevent
+//     data leakage from previous reads.
 //
-// 3. **Population Contract**: Readers MUST only populate Row maps with new data after
-//    ensuring they are clean. Use resetRow(&rows[i]) before populating rows[i].
+//  3. **Population Contract**: Readers MUST only populate Row maps with new data after
+//     ensuring they are clean. Use resetRow(&rows[i]) before populating rows[i].
 //
-// 4. **Error Handling**: On errors, readers SHOULD leave Row maps in a clean state
-//    (empty or properly reset) to prevent partial data corruption.
+//  4. **Error Handling**: On errors, readers SHOULD leave Row maps in a clean state
+//     (empty or properly reset) to prevent partial data corruption.
 //
-// 5. **Concurrent Safety**: Individual Reader instances are NOT thread-safe unless
-//    explicitly documented. Callers MUST NOT call Read() concurrently on the same
-//    Reader instance.
+//  5. **Concurrent Safety**: Individual Reader instances are NOT thread-safe unless
+//     explicitly documented. Callers MUST NOT call Read() concurrently on the same
+//     Reader instance.
 //
 // Example correct usage:
-//   rows := make([]Row, 10)
-//   n, err := reader.Read(rows)
-//   // rows[0:n] now contain valid data, others are undefined
 //
+//	rows := make([]Row, 10)
+//	n, err := reader.Read(rows)
+//	// rows[0:n] now contain valid data, others are undefined
 type Reader interface {
 	// Read populates the provided slice with as many rows as possible.
 	// Returns the number of rows read and any error (including io.EOF when exhausted).
@@ -117,23 +117,25 @@ func TimeOrderedSelector(fieldName string) SelectFunc {
 // ## Usage Patterns:
 //
 // **Reader Implementations**: MUST call this before populating each row
-//   resetRow(&rows[i])
-//   rows[i]["field"] = value
+//
+//	resetRow(&rows[i])
+//	rows[i]["field"] = value
 //
 // **Callers with Buffer Reuse**: Should call this when recycling row buffers
-//   resetRow(&myRowBuffer)
-//   reader.Read([]Row{myRowBuffer})
+//
+//	resetRow(&myRowBuffer)
+//	reader.Read([]Row{myRowBuffer})
 //
 // **Error Recovery**: Call this to ensure clean state after errors
-//   if err != nil {
-//       resetRow(&pendingRow)  // Clean state for next attempt
-//   }
+//
+//	if err != nil {
+//	    resetRow(&pendingRow)  // Clean state for next attempt
+//	}
 //
 // ## Memory Safety:
 // This function prevents data leakage between row uses by ensuring each Row
 // starts clean. It preserves the underlying map allocation for performance
 // while removing all key-value pairs from previous uses.
-//
 func resetRow(row *Row) {
 	if *row == nil {
 		*row = make(Row)

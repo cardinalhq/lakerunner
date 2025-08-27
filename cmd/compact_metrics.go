@@ -182,9 +182,27 @@ func compactMetricSegments(
 			return WorkResultSuccess, nil
 		}
 
+		// Calculate total bytes and records in this batch
+		totalBytes := int64(0)
+		totalRecords := int64(0)
+		for _, row := range inRows {
+			totalBytes += row.FileSize
+			totalRecords += row.RecordCount
+		}
+
+		// Estimate number of output files
+		estimatedOutputFiles := int64(0)
+		if rpfEstimate > 0 {
+			estimatedOutputFiles = (totalRecords + rpfEstimate - 1) / rpfEstimate // Ceiling division
+		}
+
 		ll.Debug("Processing compaction batch",
 			slog.Int("segmentCount", len(inRows)),
-			slog.Int("batch", totalBatchesProcessed+1))
+			slog.Int("batch", totalBatchesProcessed+1),
+			slog.Int64("totalBytes", totalBytes),
+			slog.Int64("totalRecords", totalRecords),
+			slog.Int64("estimatedRecordsPerFile", rpfEstimate),
+			slog.Int64("estimatedOutputFiles", estimatedOutputFiles))
 
 		if len(inRows) > 0 {
 			lastRow := inRows[len(inRows)-1]
@@ -379,11 +397,29 @@ func compactMetricInterval(
 		return fmt.Errorf("finishing writer: %w", err)
 	}
 
+	// Calculate output file sizes
+	outputBytes := int64(0)
+	inputBytes := int64(0)
+	for _, result := range results {
+		outputBytes += result.FileSize
+	}
+	for _, row := range rows {
+		inputBytes += row.FileSize
+	}
+
+	compressionRatio := float64(0)
+	if inputBytes > 0 {
+		compressionRatio = float64(outputBytes) / float64(inputBytes) * 100
+	}
+
 	ll.Debug("Compaction completed",
 		slog.Int64("totalRows", totalRows),
 		slog.Int("outputFiles", len(results)),
 		slog.Int("inputFiles", len(downloadedFiles)),
-		slog.Int64("recordsPerFile", recordsPerFile))
+		slog.Int64("recordsPerFile", recordsPerFile),
+		slog.Int64("inputBytes", inputBytes),
+		slog.Int64("outputBytes", outputBytes),
+		slog.Float64("compressionRatio", compressionRatio))
 
 	compactionParams := metricsprocessing.CompactionUploadParams{
 		OrganizationID: inf.OrganizationID().String(),
