@@ -303,7 +303,19 @@ func compactMetricInterval(
 			return fmt.Errorf("creating parquet reader for %s: %w", fn, err)
 		}
 
-		readers = append(readers, reader)
+		// Wrap with disk-based sorting reader to ensure data is sorted by [name, tid, timestamp]
+		// This is required by the aggregating reader downstream
+		sortingReader, err := filereader.NewDiskSortingReader(reader,
+			filereader.MetricNameTidTimestampSortKeyFunc(),
+			filereader.MetricNameTidTimestampSortFunc())
+		if err != nil {
+			reader.Close()
+			file.Close()
+			ll.Error("Failed to create disk sorting reader", slog.String("file", fn), slog.Any("error", err))
+			return fmt.Errorf("creating disk sorting reader for %s: %w", fn, err)
+		}
+
+		readers = append(readers, sortingReader)
 		downloadedFiles = append(downloadedFiles, fn)
 	}
 
