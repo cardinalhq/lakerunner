@@ -28,22 +28,17 @@ import (
 // readAllRows is a helper function that reads all rows from a reader
 func readAllRows(reader Reader) ([]Row, error) {
 	var allRows []Row
-	buffer := make([]Row, 10) // Read in batches of 10
-
 	for {
-		// Initialize Row maps in the buffer
-		for i := range buffer {
-			buffer[i] = make(Row)
-		}
-
-		n, err := reader.Read(buffer)
-		for i := 0; i < n; i++ {
-			// Copy the row since we're reusing the buffer
-			rowCopy := make(Row)
-			for k, v := range buffer[i] {
-				rowCopy[k] = v
+		batch, err := reader.Next()
+		if batch != nil {
+			// Copy the rows since they are owned by the reader
+			for _, row := range batch.Rows {
+				rowCopy := make(Row)
+				for k, v := range row {
+					rowCopy[k] = v
+				}
+				allRows = append(allRows, rowCopy)
 			}
-			allRows = append(allRows, rowCopy)
 		}
 		if errors.Is(err, io.EOF) {
 			return allRows, nil
@@ -61,7 +56,7 @@ func TestJSONLinesReaderEOFHandling(t *testing.T) {
 {"line": 2, "value": "second"}
 {"line": 3, "value": "third"}`
 
-	reader, err := NewJSONLinesReader(io.NopCloser(bytes.NewReader([]byte(jsonData))))
+	reader, err := NewJSONLinesReader(io.NopCloser(bytes.NewReader([]byte(jsonData))), 100)
 	require.NoError(t, err)
 	defer reader.Close()
 
@@ -95,7 +90,7 @@ func TestJSONLinesReaderGzipEOFHandling(t *testing.T) {
 	require.NoError(t, err)
 
 	// Test our JSON reader with the gzip reader
-	jsonReader, err := NewJSONLinesReader(gzReader)
+	jsonReader, err := NewJSONLinesReader(gzReader, 100)
 	require.NoError(t, err)
 	defer jsonReader.Close()
 
@@ -119,7 +114,7 @@ func TestJSONLinesReaderEmptyLinesEOF(t *testing.T) {
 
 `
 
-	reader, err := NewJSONLinesReader(io.NopCloser(bytes.NewReader([]byte(jsonData))))
+	reader, err := NewJSONLinesReader(io.NopCloser(bytes.NewReader([]byte(jsonData))), 100)
 	require.NoError(t, err)
 	defer reader.Close()
 
@@ -167,22 +162,20 @@ func TestJSONLinesReaderWithMockEOF(t *testing.T) {
 	jsonLine := `{"test": "data"}`
 	mockReader := &MockReaderWithDataAndEOF{data: []byte(jsonLine)}
 
-	reader, err := NewJSONLinesReader(mockReader)
+	reader, err := NewJSONLinesReader(mockReader, 100)
 	require.NoError(t, err)
 	defer reader.Close()
 
 	// Should read the data successfully
-	rows := make([]Row, 1)
-	rows[0] = make(Row)
-	n, err := reader.Read(rows)
-	require.Equal(t, 1, n)
+	batch, err := reader.Next()
 	require.NoError(t, err)
-	assert.Equal(t, "data", rows[0]["test"])
+	require.NotNil(t, batch)
+	assert.Len(t, batch.Rows, 1)
+	assert.Equal(t, "data", batch.Rows[0]["test"])
 
 	// Next call should return EOF
-	rows[0] = make(Row)
-	n, err = reader.Read(rows)
-	assert.Equal(t, 0, n)
+	batch, err = reader.Next()
+	assert.Nil(t, batch)
 	assert.True(t, errors.Is(err, io.EOF))
 }
 
@@ -190,27 +183,24 @@ func TestJSONLinesReaderWithMockEOF(t *testing.T) {
 func TestJSONLinesReaderClose(t *testing.T) {
 	jsonData := `{"test": "data"}`
 	mock := &mockReadCloser{Reader: bytes.NewReader([]byte(jsonData))}
-	reader, err := NewJSONLinesReader(mock)
+	reader, err := NewJSONLinesReader(mock, 100)
 	require.NoError(t, err)
 
 	// Should be able to read before closing
-	rows := make([]Row, 1)
-	rows[0] = make(Row)
-	n, err := reader.Read(rows)
-	require.Equal(t, 1, n)
+	batch, err := reader.Next()
 	require.NoError(t, err)
-	assert.Equal(t, "data", rows[0]["test"])
+	require.NotNil(t, batch)
+	assert.Len(t, batch.Rows, 1)
+	assert.Equal(t, "data", batch.Rows[0]["test"])
 
 	// Close should work
 	err = reader.Close()
 	assert.NoError(t, err)
 	assert.True(t, mock.closed)
 
-	// Reading after close should return error
-	rows[0] = make(Row)
-	_, err = reader.Read(rows)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "closed")
+	// Reading after close should return EOF
+	_, err = reader.Next()
+	assert.True(t, errors.Is(err, io.EOF))
 
 	// Close should be idempotent
 	err = reader.Close()
@@ -225,41 +215,22 @@ func TestJSONLinesReaderBatchProcessing(t *testing.T) {
 {"line": 4}
 {"line": 5}`
 
-	reader, err := NewJSONLinesReader(io.NopCloser(bytes.NewReader([]byte(jsonData))))
+	reader, err := NewJSONLinesReader(io.NopCloser(bytes.NewReader([]byte(jsonData))), 100)
 	require.NoError(t, err)
 	defer reader.Close()
 
-	// Read in batch of 3
-	rows := make([]Row, 3)
-	for i := range rows {
-		rows[i] = make(Row)
-	}
-
-	n, err := reader.Read(rows)
+	// Read all data using Next()
+	allRows, err := readAllRows(reader)
 	require.NoError(t, err)
-	assert.Equal(t, 3, n)
-	assert.Equal(t, float64(1), rows[0]["line"])
-	assert.Equal(t, float64(2), rows[1]["line"])
-	assert.Equal(t, float64(3), rows[2]["line"])
-
-	// Read remaining 2
-	for i := range rows {
-		rows[i] = make(Row)
-	}
-	n, err = reader.Read(rows)
-	// May return EOF with data or just the data
-	if err != nil {
-		require.True(t, errors.Is(err, io.EOF), "Expected EOF or no error, got %v", err)
-	}
-	assert.Equal(t, 2, n)
-	assert.Equal(t, float64(4), rows[0]["line"])
-	assert.Equal(t, float64(5), rows[1]["line"])
+	assert.Len(t, allRows, 5)
+	assert.Equal(t, float64(1), allRows[0]["line"])
+	assert.Equal(t, float64(2), allRows[1]["line"])
+	assert.Equal(t, float64(3), allRows[2]["line"])
+	assert.Equal(t, float64(4), allRows[3]["line"])
+	assert.Equal(t, float64(5), allRows[4]["line"])
 
 	// Next read should return EOF
-	for i := range rows {
-		rows[i] = make(Row)
-	}
-	n, err = reader.Read(rows)
-	assert.Equal(t, 0, n)
+	batch, err := reader.Next()
+	assert.Nil(t, batch)
 	assert.True(t, errors.Is(err, io.EOF))
 }

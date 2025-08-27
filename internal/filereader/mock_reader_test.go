@@ -19,6 +19,9 @@ import (
 	"io"
 )
 
+// resetRow clears all keys from a Row map for test reuse (already defined elsewhere)
+// This is for test files that need it but don't import the one from aggregating_metrics_reader_test.go
+
 // mockReader is a test implementation of Reader
 type mockReader struct {
 	rows     []Row
@@ -35,38 +38,34 @@ func newMockReader(name string, rows []Row) *mockReader {
 	}
 }
 
-func (m *mockReader) Read(rows []Row) (int, error) {
+func (m *mockReader) Next() (*Batch, error) {
 	if m.closed {
-		return 0, fmt.Errorf("reader %s is closed", m.name)
+		return nil, fmt.Errorf("reader %s is closed", m.name)
 	}
 
-	if len(rows) == 0 {
-		return 0, nil
+	if m.index >= len(m.rows) {
+		return nil, io.EOF
 	}
 
-	n := 0
-	for n < len(rows) && m.index < len(m.rows) {
-		resetRow(&rows[n])
+	batch := &Batch{
+		Rows: make([]Row, 0, 100),
+	}
 
-		// Copy data from mock row
+	for len(batch.Rows) < 100 && m.index < len(m.rows) {
+		// Create new row and copy data from mock row
+		row := make(Row)
 		for k, v := range m.rows[m.index] {
-			rows[n][k] = v
+			row[k] = v
 		}
 
+		batch.Rows = append(batch.Rows, row)
 		m.index++
-		n++
-	}
-
-	if n == 0 {
-		return 0, io.EOF
 	}
 
 	// Update row count with successfully read rows
-	if n > 0 {
-		m.rowCount += int64(n)
-	}
+	m.rowCount += int64(len(batch.Rows))
 
-	return n, nil
+	return batch, nil
 }
 
 func (m *mockReader) Close() error {
@@ -84,11 +83,11 @@ type errorReader struct {
 	rowCount int64
 }
 
-func (e *errorReader) Read(rows []Row) (int, error) {
+func (e *errorReader) Next() (*Batch, error) {
 	if e.closed {
-		return 0, fmt.Errorf("reader is closed")
+		return nil, fmt.Errorf("reader is closed")
 	}
-	return 0, fmt.Errorf("test error")
+	return nil, fmt.Errorf("test error")
 }
 
 func (e *errorReader) Close() error {

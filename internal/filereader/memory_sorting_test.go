@@ -52,23 +52,20 @@ func TestMemorySortingReader_SortsByKey(t *testing.T) {
 	}
 
 	mockReader := NewMockReader(inputRows)
-	sortingReader, err := NewMemorySortingReader(mockReader, MetricNameTidTimestampSort())
+	sortingReader, err := NewMemorySortingReader(mockReader, MetricNameTidTimestampSort(), 1000)
 	require.NoError(t, err)
 	defer sortingReader.Close()
 
 	// Read all results
 	var allRows []Row
 	for {
-		rows := make([]Row, 10)
-		n, err := sortingReader.Read(rows)
+		batch, err := sortingReader.Next()
 		if err == io.EOF {
 			break
 		}
 		require.NoError(t, err)
 
-		for i := 0; i < n; i++ {
-			allRows = append(allRows, rows[i])
-		}
+		allRows = append(allRows, batch.Rows...)
 	}
 
 	// Should have 4 rows in sorted order
@@ -95,14 +92,13 @@ func TestMemorySortingReader_SortsByKey(t *testing.T) {
 
 func TestMemorySortingReader_EmptyInput(t *testing.T) {
 	mockReader := NewMockReader([]Row{})
-	sortingReader, err := NewMemorySortingReader(mockReader, MetricNameTidTimestampSort())
+	sortingReader, err := NewMemorySortingReader(mockReader, MetricNameTidTimestampSort(), 1000)
 	require.NoError(t, err)
 	defer sortingReader.Close()
 
-	rows := make([]Row, 10)
-	n, err := sortingReader.Read(rows)
+	batch, err := sortingReader.Next()
 	assert.Equal(t, io.EOF, err)
-	assert.Equal(t, 0, n)
+	assert.Nil(t, batch)
 }
 
 func TestMemorySortingReader_MissingFields(t *testing.T) {
@@ -129,23 +125,20 @@ func TestMemorySortingReader_MissingFields(t *testing.T) {
 	}
 
 	mockReader := NewMockReader(inputRows)
-	sortingReader, err := NewMemorySortingReader(mockReader, MetricNameTidTimestampSort())
+	sortingReader, err := NewMemorySortingReader(mockReader, MetricNameTidTimestampSort(), 1000)
 	require.NoError(t, err)
 	defer sortingReader.Close()
 
 	// Read all results
 	var allRows []Row
 	for {
-		rows := make([]Row, 10)
-		n, err := sortingReader.Read(rows)
+		batch, err := sortingReader.Next()
 		if err == io.EOF {
 			break
 		}
 		require.NoError(t, err)
 
-		for i := 0; i < n; i++ {
-			allRows = append(allRows, rows[i])
-		}
+		allRows = append(allRows, batch.Rows...)
 	}
 
 	require.Len(t, allRows, 3)
@@ -208,23 +201,20 @@ func TestMemorySortingReader_CustomSortFunction(t *testing.T) {
 	}
 
 	mockReader := NewMockReader(inputRows)
-	sortingReader, err := NewMemorySortingReader(mockReader, customSortFunc)
+	sortingReader, err := NewMemorySortingReader(mockReader, customSortFunc, 1000)
 	require.NoError(t, err)
 	defer sortingReader.Close()
 
 	// Read all results
 	var allRows []Row
 	for {
-		rows := make([]Row, 10)
-		n, err := sortingReader.Read(rows)
+		batch, err := sortingReader.Next()
 		if err == io.EOF {
 			break
 		}
 		require.NoError(t, err)
 
-		for i := 0; i < n; i++ {
-			allRows = append(allRows, rows[i])
-		}
+		allRows = append(allRows, batch.Rows...)
 	}
 
 	require.Len(t, allRows, 3)
@@ -253,23 +243,20 @@ func TestMemorySortingReader_TimestampOnlySort(t *testing.T) {
 	}
 
 	mockReader := NewMockReader(inputRows)
-	sortingReader, err := NewMemorySortingReader(mockReader, TimestampSort())
+	sortingReader, err := NewMemorySortingReader(mockReader, TimestampSort(), 1000)
 	require.NoError(t, err)
 	defer sortingReader.Close()
 
 	// Read all results
 	var allRows []Row
 	for {
-		rows := make([]Row, 10)
-		n, err := sortingReader.Read(rows)
+		batch, err := sortingReader.Next()
 		if err == io.EOF {
 			break
 		}
 		require.NoError(t, err)
 
-		for i := 0; i < n; i++ {
-			allRows = append(allRows, rows[i])
-		}
+		allRows = append(allRows, batch.Rows...)
 	}
 
 	require.Len(t, allRows, 3)

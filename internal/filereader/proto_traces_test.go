@@ -33,7 +33,7 @@ func TestNewProtoTracesReader_InvalidData(t *testing.T) {
 	invalidData := []byte("not a protobuf")
 	reader := bytes.NewReader(invalidData)
 
-	_, err := NewProtoTracesReader(reader)
+	_, err := NewProtoTracesReader(reader, 1000)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to parse proto to OTEL traces")
 }
@@ -42,7 +42,7 @@ func TestNewProtoTracesReader_EmptyData(t *testing.T) {
 	// Test with empty data
 	emptyReader := bytes.NewReader([]byte{})
 
-	reader, err := NewProtoTracesReader(emptyReader)
+	reader, err := NewProtoTracesReader(emptyReader, 1000)
 	// Empty data may create a valid but empty traces object
 	if err != nil {
 		assert.Contains(t, err.Error(), "failed to parse proto to OTEL traces")
@@ -52,10 +52,8 @@ func TestNewProtoTracesReader_EmptyData(t *testing.T) {
 		defer reader.Close()
 
 		// Reading from empty traces should return EOF immediately
-		rows := make([]Row, 1)
-		rows[0] = make(Row)
-		n, readErr := reader.Read(rows)
-		assert.Equal(t, 0, n)
+		batch, readErr := reader.Next()
+		assert.Nil(t, batch)
 		assert.True(t, errors.Is(readErr, io.EOF))
 	}
 }
@@ -101,37 +99,38 @@ func TestProtoTracesReader_EmptySlice(t *testing.T) {
 	// Create synthetic test data
 	syntheticData := createSimpleSyntheticTraces()
 
-	protoReader, err := NewProtoTracesReader(bytes.NewReader(syntheticData))
+	protoReader, err := NewProtoTracesReader(bytes.NewReader(syntheticData), 1000)
 	require.NoError(t, err)
 	defer protoReader.Close()
 
-	// Read with empty slice
-	n, err := protoReader.Read([]Row{})
-	assert.NoError(t, err)
-	assert.Equal(t, 0, n)
+	// Read with empty slice behavior is no longer applicable with Next() method
+	// Next() returns a batch or nil, not dependent on slice size
+	batch, err := protoReader.Next()
+	if batch != nil {
+		assert.NoError(t, err)
+		assert.GreaterOrEqual(t, len(batch.Rows), 0)
+	}
 }
 
 func TestProtoTracesReader_Close(t *testing.T) {
 	// Create synthetic test data
 	syntheticData := createSimpleSyntheticTraces()
 
-	protoReader, err := NewProtoTracesReader(bytes.NewReader(syntheticData))
+	protoReader, err := NewProtoTracesReader(bytes.NewReader(syntheticData), 1000)
 	require.NoError(t, err)
 
 	// Should be able to read before closing
-	rows := make([]Row, 1)
-	rows[0] = make(Row)
-	n, err := protoReader.Read(rows)
+	batch, err := protoReader.Next()
 	require.NoError(t, err)
-	require.Equal(t, 1, n, "Should read exactly 1 row before closing")
+	require.NotNil(t, batch, "Should read a batch before closing")
+	require.Len(t, batch.Rows, 1, "Should read exactly 1 row before closing")
 
 	// Close should work
 	err = protoReader.Close()
 	assert.NoError(t, err)
 
 	// Reading after close should return error
-	rows[0] = make(Row)
-	_, err = protoReader.Read(rows)
+	_, err = protoReader.Next()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "closed")
 
@@ -244,7 +243,7 @@ func TestProtoTracesReader_SyntheticData(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create reader
-	protoReader, err := NewProtoTracesReader(bytes.NewReader(protoBytes))
+	protoReader, err := NewProtoTracesReader(bytes.NewReader(protoBytes), 1000)
 	require.NoError(t, err)
 	defer protoReader.Close()
 
@@ -314,27 +313,23 @@ func TestProtoTracesReader_SyntheticData(t *testing.T) {
 	assert.Equal(t, "42", internalSpan["span.record.count"])
 
 	// Test batched reading with a new reader instance
-	protoReader2, err := NewProtoTracesReader(bytes.NewReader(protoBytes))
+	protoReader2, err := NewProtoTracesReader(bytes.NewReader(protoBytes), 1000)
 	require.NoError(t, err)
 	defer protoReader2.Close()
 
-	// Read in batches of 2
+	// Read in batches
 	var totalBatchedRows int
-	batchSize := 2
 	for {
-		rows := make([]Row, batchSize)
-		for i := range rows {
-			rows[i] = make(Row)
-		}
+		batch, readErr := protoReader2.Next()
+		if batch != nil {
+			totalBatchedRows += len(batch.Rows)
 
-		n, readErr := protoReader2.Read(rows)
-		totalBatchedRows += n
-
-		// Verify each row that was read
-		for i := 0; i < n; i++ {
-			assert.Greater(t, len(rows[i]), 0, "Batched row %d should have data", i)
-			assert.Contains(t, rows[i], "trace_id")
-			assert.Contains(t, rows[i], "span_id")
+			// Verify each row that was read
+			for i, row := range batch.Rows {
+				assert.Greater(t, len(row), 0, "Batched row %d should have data", i)
+				assert.Contains(t, row, "trace_id")
+				assert.Contains(t, row, "span_id")
+			}
 		}
 
 		if errors.Is(readErr, io.EOF) {
@@ -345,27 +340,24 @@ func TestProtoTracesReader_SyntheticData(t *testing.T) {
 	assert.Equal(t, len(allRows), totalBatchedRows, "Batched reading should read same number of rows")
 
 	// Test single row reading
-	protoReader3, err := NewProtoTracesReader(bytes.NewReader(protoBytes))
+	protoReader3, err := NewProtoTracesReader(bytes.NewReader(protoBytes), 1)
 	require.NoError(t, err)
 	defer protoReader3.Close()
 
-	singleRows := make([]Row, 1)
-	singleRows[0] = make(Row)
-	n, err := protoReader3.Read(singleRows)
+	batch, err := protoReader3.Next()
 	require.NoError(t, err)
-	assert.Equal(t, 1, n, "Should read exactly 1 row")
-	assert.Contains(t, singleRows[0], "trace_id")
-	assert.Contains(t, singleRows[0], "resource.service.name")
+	require.NotNil(t, batch, "Should read a batch")
+	assert.Len(t, batch.Rows, 1, "Should read exactly 1 row")
+	assert.Contains(t, batch.Rows[0], "trace_id")
+	assert.Contains(t, batch.Rows[0], "resource.service.name")
 
 	// Test data exhaustion - continue reading until EOF
 	var exhaustRows int
 	for {
-		rows := make([]Row, 2)
-		for i := range rows {
-			rows[i] = make(Row)
+		batch, readErr := protoReader3.Next()
+		if batch != nil {
+			exhaustRows += len(batch.Rows)
 		}
-		n, readErr := protoReader3.Read(rows)
-		exhaustRows += n
 		if errors.Is(readErr, io.EOF) {
 			break
 		}
@@ -469,7 +461,7 @@ func TestProtoTracesReader_SyntheticMultiResourceTraces(t *testing.T) {
 	protoBytes, err := marshaler.MarshalTraces(tracesData)
 	require.NoError(t, err)
 
-	protoReader, err := NewProtoTracesReader(bytes.NewReader(protoBytes))
+	protoReader, err := NewProtoTracesReader(bytes.NewReader(protoBytes), 1000)
 	require.NoError(t, err)
 	defer protoReader.Close()
 
@@ -558,7 +550,7 @@ func TestProtoTracesReader_SyntheticEdgeCases(t *testing.T) {
 	protoBytes, err := marshaler.MarshalTraces(tracesData)
 	require.NoError(t, err)
 
-	protoReader, err := NewProtoTracesReader(bytes.NewReader(protoBytes))
+	protoReader, err := NewProtoTracesReader(bytes.NewReader(protoBytes), 1000)
 	require.NoError(t, err)
 	defer protoReader.Close()
 

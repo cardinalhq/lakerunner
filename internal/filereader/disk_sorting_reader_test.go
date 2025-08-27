@@ -49,23 +49,20 @@ func TestDiskSortingReader_BasicSorting(t *testing.T) {
 	}
 
 	mockReader := NewMockReader(testRows)
-	sortingReader, err := NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc())
+	sortingReader, err := NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc(), 1000)
 	require.NoError(t, err)
 	defer sortingReader.Close()
 
 	// Read all rows
 	var allRows []Row
 	for {
-		rows := make([]Row, 10)
-		n, err := sortingReader.Read(rows)
+		batch, err := sortingReader.Next()
 		if err == io.EOF {
 			break
 		}
 		require.NoError(t, err)
 
-		for i := 0; i < n; i++ {
-			allRows = append(allRows, rows[i])
-		}
+		allRows = append(allRows, batch.Rows...)
 	}
 
 	// Verify sorting: metric_a (both rows), then metric_z
@@ -99,17 +96,16 @@ func TestDiskSortingReader_TypePreservation(t *testing.T) {
 	}
 
 	mockReader := NewMockReader([]Row{testRow})
-	sortingReader, err := NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc())
+	sortingReader, err := NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc(), 1000)
 	require.NoError(t, err)
 	defer sortingReader.Close()
 
 	// Read the row back
-	rows := make([]Row, 1)
-	n, err := sortingReader.Read(rows)
+	batch, err := sortingReader.Next()
 	require.NoError(t, err)
-	require.Equal(t, 1, n)
+	require.Len(t, batch.Rows, 1)
 
-	decoded := rows[0]
+	decoded := batch.Rows[0]
 
 	// Verify all types are preserved
 	assert.Equal(t, "test_metric", decoded["_cardinalhq.name"])
@@ -126,14 +122,12 @@ func TestDiskSortingReader_TypePreservation(t *testing.T) {
 
 func TestDiskSortingReader_EmptyInput(t *testing.T) {
 	mockReader := NewMockReader([]Row{})
-	sortingReader, err := NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc())
+	sortingReader, err := NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc(), 1000)
 	require.NoError(t, err)
 	defer sortingReader.Close()
 
 	// Should get EOF immediately
-	rows := make([]Row, 1)
-	n, err := sortingReader.Read(rows)
-	assert.Equal(t, 0, n)
+	_, err = sortingReader.Next()
 	assert.Equal(t, io.EOF, err)
 }
 
@@ -154,21 +148,20 @@ func TestDiskSortingReader_MissingFields(t *testing.T) {
 	}
 
 	mockReader := NewMockReader(testRows)
-	sortingReader, err := NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc())
+	sortingReader, err := NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc(), 1000)
 	require.NoError(t, err)
 	defer sortingReader.Close()
 
 	// Should succeed - missing fields are handled by the sort function
-	rows := make([]Row, 2)
-	n, err := sortingReader.Read(rows)
+	batch, err := sortingReader.Next()
 
 	// Should read successfully (missing fields don't cause failures anymore)
 	assert.NoError(t, err)
-	assert.Equal(t, 2, n)
+	assert.Len(t, batch.Rows, 2)
 
 	// Row with missing fields should be sorted to the end by MetricNameTidTimestampSort
-	assert.Equal(t, "metric_a", rows[0]["_cardinalhq.name"]) // Missing fields sort first
-	assert.Equal(t, "metric_b", rows[1]["_cardinalhq.name"]) // Complete row sorts later
+	assert.Equal(t, "metric_a", batch.Rows[0]["_cardinalhq.name"]) // Missing fields sort first
+	assert.Equal(t, "metric_b", batch.Rows[1]["_cardinalhq.name"]) // Complete row sorts later
 }
 
 func TestDiskSortingReader_CleanupOnError(t *testing.T) {
@@ -178,14 +171,13 @@ func TestDiskSortingReader_CleanupOnError(t *testing.T) {
 		readError: fmt.Errorf("simulated read error"),
 	}
 
-	sortingReader, err := NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc())
+	sortingReader, err := NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc(), 1000)
 	require.NoError(t, err)
 
 	tempFileName := sortingReader.tempFile.Name()
 
 	// Try to read - should fail
-	rows := make([]Row, 1)
-	_, err = sortingReader.Read(rows)
+	_, err = sortingReader.Next()
 	assert.Error(t, err)
 
 	// Close should clean up temp file
@@ -209,34 +201,33 @@ func NewMockReader(rows []Row) *MockReader {
 	return &MockReader{rows: rows}
 }
 
-func (m *MockReader) Read(rows []Row) (int, error) {
+func (m *MockReader) Next() (*Batch, error) {
 	if m.closed {
-		return 0, fmt.Errorf("reader is closed")
+		return nil, fmt.Errorf("reader is closed")
 	}
 
 	if m.readError != nil {
-		return 0, m.readError
+		return nil, m.readError
 	}
 
-	if len(rows) == 0 {
-		return 0, nil
+	if m.currentIdx >= len(m.rows) {
+		return nil, io.EOF
 	}
 
-	n := 0
-	for n < len(rows) && m.currentIdx < len(m.rows) {
-		resetRow(&rows[n])
+	batch := &Batch{
+		Rows: make([]Row, 0, 100),
+	}
+
+	for len(batch.Rows) < 100 && m.currentIdx < len(m.rows) {
+		row := make(Row)
 		for k, v := range m.rows[m.currentIdx] {
-			rows[n][k] = v
+			row[k] = v
 		}
-		n++
+		batch.Rows = append(batch.Rows, row)
 		m.currentIdx++
 	}
 
-	if m.currentIdx >= len(m.rows) && n == 0 {
-		return 0, io.EOF
-	}
-
-	return n, nil
+	return batch, nil
 }
 
 func (m *MockReader) Close() error {
@@ -305,17 +296,16 @@ func TestDiskSortingReader_CBORIdentity(t *testing.T) {
 			}
 
 			mockReader := NewMockReader([]Row{testRow})
-			sortingReader, err := NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc())
+			sortingReader, err := NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc(), 1000)
 			require.NoError(t, err)
 			defer sortingReader.Close()
 
 			// Read the row back
-			rows := make([]Row, 1)
-			n, err := sortingReader.Read(rows)
+			batch, err := sortingReader.Next()
 			require.NoError(t, err)
-			require.Equal(t, 1, n)
+			require.Len(t, batch.Rows, 1)
 
-			decoded := rows[0]
+			decoded := batch.Rows[0]
 			decodedValue := decoded["test_field"]
 
 			// Check type preservation
@@ -386,27 +376,26 @@ func TestDiskSortingReader_CBOREdgeCases(t *testing.T) {
 			}
 
 			mockReader := NewMockReader([]Row{testRow})
-			sortingReader, err := NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc())
+			sortingReader, err := NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc(), 1000)
 			require.NoError(t, err)
 			defer sortingReader.Close()
 
 			// Try to read back
-			rows := make([]Row, 1)
-			n, err := sortingReader.Read(rows)
+			batch, err := sortingReader.Next()
 
 			if tc.shouldWork {
 				require.NoError(t, err, "Edge case %s should work", tc.name)
-				require.Equal(t, 1, n)
+				require.Len(t, batch.Rows, 1)
 
 				// For large byte array, verify pattern
 				if tc.name == "large_byte_array" {
-					decoded := rows[0]["edge_value"].([]byte)
+					decoded := batch.Rows[0]["edge_value"].([]byte)
 					require.Len(t, decoded, 10000)
 					for i := 0; i < 100; i++ { // Check first 100 bytes
 						assert.Equal(t, byte(i), decoded[i], "Byte pattern mismatch at position %d", i)
 					}
 				} else {
-					assert.Equal(t, tc.value, rows[0]["edge_value"], "Value mismatch for edge case %s", tc.name)
+					assert.Equal(t, tc.value, batch.Rows[0]["edge_value"], "Value mismatch for edge case %s", tc.name)
 				}
 			} else {
 				assert.Error(t, err, "Edge case %s should fail", tc.name)

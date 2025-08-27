@@ -307,7 +307,7 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 				bucket:   inf.Bucket,
 				objectID: inf.ObjectID,
 			}
-			reader, err = filereader.NewTranslatingReader(reader, translator)
+			reader, err = filereader.NewTranslatingReader(reader, translator, 1000)
 		}
 
 		if err != nil {
@@ -318,31 +318,29 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 		}
 
 		// Process all rows from the file
-		rows := make([]filereader.Row, 100)
-		for i := range rows {
-			rows[i] = make(filereader.Row)
-		}
 		var processedCount, errorCount int64
 		for {
-			n, err := reader.Read(rows)
+			batch, err := reader.Next()
 
 			// Process any rows we got, even if EOF
-			for i := range n {
-				if rows[i] == nil {
-					ll.Error("Row is nil - skipping", slog.Int("rowIndex", i))
-					continue
-				}
-				err := wm.processRow(rows[i])
-				if err != nil {
-					errorCount++
-					ll.Error("Failed to process row - row will be dropped",
-						slog.String("objectID", inf.ObjectID),
-						slog.Int64("rowNumber", processedCount+int64(i)+1),
-						slog.String("error", err.Error()),
-						slog.Any("rowData", rows[i]))
-					// Continue processing other rows instead of failing the entire batch
-				} else {
-					processedCount++
+			if batch != nil {
+				for i, row := range batch.Rows {
+					if row == nil {
+						ll.Error("Row is nil - skipping", slog.Int("rowIndex", i))
+						continue
+					}
+					processErr := wm.processRow(row)
+					if processErr != nil {
+						errorCount++
+						ll.Error("Failed to process row - row will be dropped",
+							slog.String("objectID", inf.ObjectID),
+							slog.Int64("rowNumber", processedCount+int64(i)+1),
+							slog.String("error", processErr.Error()),
+							slog.Any("rowData", row))
+						// Continue processing other rows instead of failing the entire batch
+					} else {
+						processedCount++
+					}
 				}
 			}
 

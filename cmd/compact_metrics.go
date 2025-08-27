@@ -296,7 +296,7 @@ func compactMetricInterval(
 		}
 
 		// Create PreorderedParquetRawReader directly
-		reader, err := filereader.NewPreorderedParquetRawReader(file, stat.Size())
+		reader, err := filereader.NewPreorderedParquetRawReader(file, stat.Size(), 1000)
 		if err != nil {
 			file.Close()
 			ll.Error("Failed to create parquet reader", slog.String("file", fn), slog.Any("error", err))
@@ -307,7 +307,7 @@ func compactMetricInterval(
 		// This is required by the aggregating reader downstream
 		sortingReader, err := filereader.NewDiskSortingReader(reader,
 			filereader.MetricNameTidTimestampSortKeyFunc(),
-			filereader.MetricNameTidTimestampSortFunc())
+			filereader.MetricNameTidTimestampSortFunc(), 1000)
 		if err != nil {
 			reader.Close()
 			file.Close()
@@ -340,7 +340,7 @@ func compactMetricInterval(
 	} else {
 		ll.Debug("Creating multi-source reader", slog.Int("readerCount", len(readers)))
 		selector := metricsprocessing.MetricsOrderedSelector()
-		multiReader, err := filereader.NewPreorderedMultisourceReader(readers, selector)
+		multiReader, err := filereader.NewPreorderedMultisourceReader(readers, selector, 1000)
 		if err != nil {
 			ll.Error("Failed to create preordered multi-source reader", slog.Any("error", err))
 			return fmt.Errorf("creating preordered multi-source reader: %w", err)
@@ -352,7 +352,7 @@ func compactMetricInterval(
 	// Wrap with aggregating reader to merge duplicates during compaction
 	frequencyMs := int64(inf.FrequencyMs())
 	ll.Debug("Creating aggregating metrics reader", slog.Int64("frequencyMs", frequencyMs))
-	aggregatingReader, err := filereader.NewAggregatingMetricsReader(finalReader, frequencyMs)
+	aggregatingReader, err := filereader.NewAggregatingMetricsReader(finalReader, frequencyMs, 1000)
 	if err != nil {
 		ll.Error("Failed to create aggregating metrics reader", slog.Any("error", err))
 		return fmt.Errorf("creating aggregating metrics reader: %w", err)
@@ -373,14 +373,17 @@ func compactMetricInterval(
 	}
 	defer writer.Abort()
 
-	const batchSize = 1000
-	rowsBatch := make([]filereader.Row, batchSize)
 	totalRows := int64(0)
 	batchCount := 0
 
 	for {
-		n, err := aggregatingReader.Read(rowsBatch)
+		batch, err := aggregatingReader.Next()
 		batchCount++
+
+		n := 0
+		if batch != nil {
+			n = len(batch.Rows)
+		}
 
 		ll.Debug("Aggregating reader batch",
 			slog.Int("batchNum", batchCount),
@@ -392,19 +395,19 @@ func compactMetricInterval(
 			return fmt.Errorf("reading from aggregating reader: %w", err)
 		}
 
-		if n == 0 {
+		if batch == nil || len(batch.Rows) == 0 {
 			ll.Debug("No more rows from aggregating reader", slog.Int("totalBatches", batchCount))
 			break
 		}
 
-		for i := range n {
+		for _, row := range batch.Rows {
 			// Normalize sketch field for parquet writing (string -> []byte)
-			if err := normalizeRowForParquetWrite(rowsBatch[i]); err != nil {
+			if err := normalizeRowForParquetWrite(row); err != nil {
 				ll.Error("Failed to normalize row", slog.Any("error", err))
 				return fmt.Errorf("normalizing row: %w", err)
 			}
 
-			if err := writer.Write(rowsBatch[i]); err != nil {
+			if err := writer.Write(row); err != nil {
 				ll.Error("Failed to write row", slog.Any("error", err))
 				return fmt.Errorf("writing row: %w", err)
 			}

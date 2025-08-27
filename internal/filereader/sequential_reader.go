@@ -28,13 +28,18 @@ type SequentialReader struct {
 	currentIndex int
 	closed       bool
 	rowCount     int64
+	batchSize    int
 }
 
 // NewSequentialReader creates a new SequentialReader that reads from the provided readers sequentially.
 // Readers will be closed when the SequentialReader is closed.
-func NewSequentialReader(readers []Reader) (*SequentialReader, error) {
+func NewSequentialReader(readers []Reader, batchSize int) (*SequentialReader, error) {
 	if len(readers) == 0 {
 		return nil, errors.New("at least one reader is required")
+	}
+
+	if batchSize <= 0 {
+		batchSize = 1000
 	}
 
 	// Validate that all readers are non-nil
@@ -47,52 +52,35 @@ func NewSequentialReader(readers []Reader) (*SequentialReader, error) {
 	return &SequentialReader{
 		readers:      readers,
 		currentIndex: 0,
+		batchSize:    batchSize,
 	}, nil
 }
 
-// Read populates the provided slice with as many rows as possible from the current reader,
-// advancing to the next reader when the current reader is exhausted.
-func (sr *SequentialReader) Read(rows []Row) (int, error) {
+func (sr *SequentialReader) Next() (*Batch, error) {
 	if sr.closed {
-		return 0, errors.New("reader is closed")
+		return nil, io.EOF
 	}
 
-	if len(rows) == 0 {
-		return 0, nil
-	}
-
-	totalRead := 0
-
-	// Loop through readers until we fill the slice or exhaust all readers
-	for totalRead < len(rows) && sr.currentIndex < len(sr.readers) {
+	for sr.currentIndex < len(sr.readers) {
 		currentReader := sr.readers[sr.currentIndex]
 
-		// Read from current reader into remaining slice space
-		remainingRows := rows[totalRead:]
-		n, err := currentReader.Read(remainingRows)
-		totalRead += n
-
-		// Update our row count with successfully read rows
-		if n > 0 {
-			sr.rowCount += int64(n)
-		}
-
+		batch, err := currentReader.Next()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				// Current reader is exhausted, move to the next one
 				sr.currentIndex++
 				continue
 			}
-			return totalRead, fmt.Errorf("error reading from reader %d: %w", sr.currentIndex, err)
+			return nil, fmt.Errorf("error reading from reader %d: %w", sr.currentIndex, err)
 		}
+
+		// Update our row count with successfully read rows
+		sr.rowCount += int64(len(batch.Rows))
+		return batch, nil
 	}
 
-	// Return EOF if we've exhausted all readers and didn't read any data this call
-	if totalRead == 0 && sr.currentIndex >= len(sr.readers) {
-		return 0, io.EOF
-	}
-
-	return totalRead, nil
+	// All readers exhausted
+	return nil, io.EOF
 }
 
 // Close closes all underlying readers and releases resources.

@@ -38,10 +38,11 @@ type SortFunc func(a, b map[string]any) int
 //
 //	if the sort function is not stable, the result will not be stable
 type MemorySortingReader struct {
-	reader   Reader
-	sortFunc SortFunc
-	closed   bool
-	rowCount int64
+	reader    Reader
+	sortFunc  SortFunc
+	closed    bool
+	rowCount  int64
+	batchSize int
 
 	// Buffered and sorted rows
 	allRows      []map[string]any
@@ -54,7 +55,7 @@ type MemorySortingReader struct {
 //
 // Use this for smaller datasets that fit comfortably in memory.
 // For large datasets, consider DiskSortingReader to avoid OOM issues.
-func NewMemorySortingReader(reader Reader, sortFunc SortFunc) (*MemorySortingReader, error) {
+func NewMemorySortingReader(reader Reader, sortFunc SortFunc, batchSize int) (*MemorySortingReader, error) {
 	if reader == nil {
 		return nil, fmt.Errorf("reader cannot be nil")
 	}
@@ -62,10 +63,15 @@ func NewMemorySortingReader(reader Reader, sortFunc SortFunc) (*MemorySortingRea
 		return nil, fmt.Errorf("sortFunc cannot be nil")
 	}
 
+	if batchSize <= 0 {
+		batchSize = 1000
+	}
+
 	return &MemorySortingReader{
-		reader:   reader,
-		sortFunc: sortFunc,
-		allRows:  make([]map[string]any, 0, 1000), // Start with reasonable capacity
+		reader:    reader,
+		sortFunc:  sortFunc,
+		batchSize: batchSize,
+		allRows:   make([]map[string]any, 0, 1000), // Start with reasonable capacity
 	}, nil
 }
 
@@ -75,26 +81,23 @@ func (r *MemorySortingReader) loadAndSortAllRows() error {
 		return nil
 	}
 
-	// Read all rows from the underlying reader
+	// Read all batches from the underlying reader
 	for {
-		rows := make([]Row, 100)
-		n, err := r.reader.Read(rows)
-
-		if err != nil && err != io.EOF {
+		batch, err := r.reader.Next()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
 			return fmt.Errorf("failed to read from underlying reader: %w", err)
 		}
 
-		// Convert and store rows
-		for i := 0; i < n; i++ {
+		// Convert and store rows from batch
+		for _, row := range batch.Rows {
 			rowMap := make(map[string]any)
-			for k, v := range rows[i] {
+			for k, v := range row {
 				rowMap[k] = v
 			}
 			r.allRows = append(r.allRows, rowMap)
-		}
-
-		if err == io.EOF {
-			break
 		}
 	}
 
@@ -105,46 +108,46 @@ func (r *MemorySortingReader) loadAndSortAllRows() error {
 	return nil
 }
 
-// Read returns sorted rows from the buffer.
-func (r *MemorySortingReader) Read(rows []Row) (int, error) {
+// Next returns the next batch of sorted rows from the buffer.
+func (r *MemorySortingReader) Next() (*Batch, error) {
 	if r.closed {
-		return 0, fmt.Errorf("reader is closed")
-	}
-
-	if len(rows) == 0 {
-		return 0, nil
+		return nil, fmt.Errorf("reader is closed")
 	}
 
 	// Ensure all rows are loaded and sorted
 	if !r.sorted {
 		if err := r.loadAndSortAllRows(); err != nil {
-			return 0, err
+			return nil, err
 		}
+	}
+
+	// Check if we've exhausted all rows
+	if r.currentIndex >= len(r.allRows) {
+		return nil, io.EOF
+	}
+
+	batch := &Batch{
+		Rows: make([]Row, 0, r.batchSize),
 	}
 
 	// Return rows from the sorted buffer
-	n := 0
-	for n < len(rows) && r.currentIndex < len(r.allRows) {
-		resetRow(&rows[n])
-
-		// Copy from buffer
+	for len(batch.Rows) < r.batchSize && r.currentIndex < len(r.allRows) {
+		// Create new row and copy from buffer
+		row := make(Row)
 		for k, v := range r.allRows[r.currentIndex] {
-			rows[n][k] = v
+			row[k] = v
 		}
 
-		n++
+		batch.Rows = append(batch.Rows, row)
 		r.currentIndex++
 	}
 
-	if n > 0 {
-		r.rowCount += int64(n)
+	if len(batch.Rows) > 0 {
+		r.rowCount += int64(len(batch.Rows))
+		return batch, nil
 	}
 
-	if r.currentIndex >= len(r.allRows) && n == 0 {
-		return 0, io.EOF
-	}
-
-	return n, nil
+	return nil, io.EOF
 }
 
 // Close closes the reader and underlying reader.

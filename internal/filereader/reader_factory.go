@@ -42,6 +42,7 @@ func (m *multiReadCloser) Close() error {
 // ReaderOptions provides options for creating readers.
 type ReaderOptions struct {
 	SignalType SignalType
+	BatchSize  int // Batch size for readers (default: 1000)
 	// Translation options for protobuf logs and metrics
 	OrgID              string
 	Bucket             string
@@ -55,13 +56,14 @@ type ReaderOptions struct {
 // ReaderForFile creates a Reader for the given file based on its extension and signal type.
 // This is a convenience function that uses default options.
 func ReaderForFile(filename string, signalType SignalType) (Reader, error) {
-	return ReaderForFileWithOptions(filename, ReaderOptions{SignalType: signalType})
+	return ReaderForFileWithOptions(filename, ReaderOptions{SignalType: signalType, BatchSize: 1000})
 }
 
 // ReaderForMetricAggregation creates a Reader for metrics with aggregation enabled.
 func ReaderForMetricAggregation(filename string, aggregationPeriodMs int64) (Reader, error) {
 	opts := ReaderOptions{
 		SignalType:          SignalTypeMetrics,
+		BatchSize:           1000,
 		EnableAggregation:   true,
 		AggregationPeriodMs: aggregationPeriodMs,
 	}
@@ -79,7 +81,7 @@ func WrapReaderForAggregation(reader Reader, opts ReaderOptions) (Reader, error)
 	// Add aggregation if enabled
 	if opts.EnableAggregation && opts.AggregationPeriodMs > 0 {
 		var err error
-		wrappedReader, err = NewAggregatingMetricsReader(wrappedReader, opts.AggregationPeriodMs)
+		wrappedReader, err = NewAggregatingMetricsReader(wrappedReader, opts.AggregationPeriodMs, opts.BatchSize)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create aggregating metrics reader: %w", err)
 		}
@@ -97,13 +99,18 @@ func WrapReaderForAggregation(reader Reader, opts ReaderOptions) (Reader, error)
 //   - .binpb.gz: Creates a signal-specific proto reader with gzip decompression
 func ReaderForFileWithOptions(filename string, opts ReaderOptions) (Reader, error) {
 	// Determine file type from extension
+	// Ensure default batch size
+	if opts.BatchSize <= 0 {
+		opts.BatchSize = 1000
+	}
+
 	switch {
 	case strings.HasSuffix(filename, ".parquet"):
-		return createParquetReader(filename)
+		return createParquetReader(filename, opts)
 	case strings.HasSuffix(filename, ".json.gz"):
-		return createJSONGzReader(filename)
+		return createJSONGzReader(filename, opts)
 	case strings.HasSuffix(filename, ".json"):
-		return createJSONReader(filename)
+		return createJSONReader(filename, opts)
 	case strings.HasSuffix(filename, ".binpb.gz"):
 		return createProtoBinaryGzReader(filename, opts)
 	case strings.HasSuffix(filename, ".binpb"):
@@ -114,7 +121,7 @@ func ReaderForFileWithOptions(filename string, opts ReaderOptions) (Reader, erro
 }
 
 // createParquetReader creates a PreorderedParquetRawReader for the given file.
-func createParquetReader(filename string) (Reader, error) {
+func createParquetReader(filename string, opts ReaderOptions) (Reader, error) {
 	file, err := os.Open(filename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open parquet file: %w", err)
@@ -126,7 +133,7 @@ func createParquetReader(filename string) (Reader, error) {
 		return nil, fmt.Errorf("failed to stat parquet file: %w", err)
 	}
 
-	reader, err := NewPreorderedParquetRawReader(file, stat.Size())
+	reader, err := NewPreorderedParquetRawReader(file, stat.Size(), opts.BatchSize)
 	if err != nil {
 		file.Close()
 		return nil, err
@@ -136,7 +143,7 @@ func createParquetReader(filename string) (Reader, error) {
 }
 
 // createJSONGzReader creates a JSONLinesReader for a gzipped JSON file.
-func createJSONGzReader(filename string) (Reader, error) {
+func createJSONGzReader(filename string, opts ReaderOptions) (Reader, error) {
 	file, err := os.Open(filename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open JSON.gz file: %w", err)
@@ -153,7 +160,7 @@ func createJSONGzReader(filename string) (Reader, error) {
 		closers: []io.Closer{gzipReader, file},
 	}
 
-	reader, err := NewJSONLinesReader(rc)
+	reader, err := NewJSONLinesReader(rc, opts.BatchSize)
 	if err != nil {
 		rc.Close()
 		return nil, err
@@ -163,13 +170,13 @@ func createJSONGzReader(filename string) (Reader, error) {
 }
 
 // createJSONReader creates a JSONLinesReader for a plain JSON file.
-func createJSONReader(filename string) (Reader, error) {
+func createJSONReader(filename string, opts ReaderOptions) (Reader, error) {
 	file, err := os.Open(filename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open JSON file: %w", err)
 	}
 
-	reader, err := NewJSONLinesReader(file)
+	reader, err := NewJSONLinesReader(file, opts.BatchSize)
 	if err != nil {
 		file.Close()
 		return nil, err
@@ -221,20 +228,20 @@ func createProtoBinaryReader(filename string, opts ReaderOptions) (Reader, error
 func createProtoReaderWithOptions(reader interface{ Read([]byte) (int, error) }, opts ReaderOptions) (Reader, error) {
 	switch opts.SignalType {
 	case SignalTypeLogs:
-		protoReader, err := NewProtoLogsReader(reader)
+		protoReader, err := NewProtoLogsReader(reader, opts.BatchSize)
 		if err != nil {
 			return nil, err
 		}
 		// Add translation for protobuf logs if options are provided
 		if opts.TrieClusterManager != nil && opts.OrgID != "" {
 			translator := NewProtoBinLogTranslator(opts.OrgID, opts.Bucket, opts.ObjectID, opts.TrieClusterManager)
-			return NewTranslatingReader(protoReader, translator)
+			return NewTranslatingReader(protoReader, translator, opts.BatchSize)
 		}
 		return protoReader, nil
 	case SignalTypeMetrics:
-		return NewIngestProtoMetricsReader(reader)
+		return NewIngestProtoMetricsReader(reader, opts.BatchSize)
 	case SignalTypeTraces:
-		return NewProtoTracesReader(reader)
+		return NewProtoTracesReader(reader, opts.BatchSize)
 	default:
 		return nil, fmt.Errorf("unsupported signal type for protobuf: %s", opts.SignalType.String())
 	}

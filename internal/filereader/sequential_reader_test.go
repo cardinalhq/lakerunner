@@ -28,7 +28,7 @@ func TestNewSequentialReader(t *testing.T) {
 		newMockReader("r2", []Row{{"data": "r2"}}),
 	}
 
-	sr, err := NewSequentialReader(readers)
+	sr, err := NewSequentialReader(readers, 1000)
 	if err != nil {
 		t.Fatalf("NewSequentialReader() error = %v", err)
 	}
@@ -39,7 +39,7 @@ func TestNewSequentialReader(t *testing.T) {
 	}
 
 	// Test with no readers
-	_, err = NewSequentialReader([]Reader{})
+	_, err = NewSequentialReader([]Reader{}, 1000)
 	if err == nil {
 		t.Error("Expected error for empty readers slice")
 	}
@@ -49,7 +49,7 @@ func TestNewSequentialReader(t *testing.T) {
 		newMockReader("r1", []Row{}),
 		nil,
 	}
-	_, err = NewSequentialReader(readersWithNil)
+	_, err = NewSequentialReader(readersWithNil, 1000)
 	if err == nil {
 		t.Error("Expected error for nil reader")
 	}
@@ -71,7 +71,7 @@ func TestSequentialReader_Read(t *testing.T) {
 		}),
 	}
 
-	sr, err := NewSequentialReader(readers)
+	sr, err := NewSequentialReader(readers, 1000)
 	if err != nil {
 		t.Fatalf("NewSequentialReader() error = %v", err)
 	}
@@ -113,54 +113,43 @@ func TestSequentialReader_Read_Batched(t *testing.T) {
 		}),
 	}
 
-	sr, err := NewSequentialReader(readers)
+	sr, err := NewSequentialReader(readers, 1000)
 	if err != nil {
 		t.Fatalf("NewSequentialReader() error = %v", err)
 	}
 	defer sr.Close()
 
 	// Read first batch
-	rows := make([]Row, 2)
-	for i := range rows {
-		rows[i] = make(Row)
-	}
-
-	n, err := sr.Read(rows)
+	batch, err := sr.Next()
 	if err != nil {
-		t.Fatalf("First Read() error = %v", err)
+		t.Fatalf("First Next() error = %v", err)
 	}
-	if n != 2 {
-		t.Errorf("First Read() returned %d rows, want 2", n)
+	if batch == nil || len(batch.Rows) != 2 {
+		t.Errorf("First Next() returned %d rows, want 2", len(batch.Rows))
 	}
-	if rows[0]["data"] != "r1-first" {
-		t.Errorf("First row data = %v, want r1-first", rows[0]["data"])
+	if batch.Rows[0]["data"] != "r1-first" {
+		t.Errorf("First row data = %v, want r1-first", batch.Rows[0]["data"])
 	}
-	if rows[1]["data"] != "r1-second" {
-		t.Errorf("Second row data = %v, want r1-second", rows[1]["data"])
+	if batch.Rows[1]["data"] != "r1-second" {
+		t.Errorf("Second row data = %v, want r1-second", batch.Rows[1]["data"])
 	}
 
 	// Read second batch
-	for i := range rows {
-		rows[i] = make(Row)
-	}
-	n, err = sr.Read(rows)
+	batch, err = sr.Next()
 	if err != nil {
-		t.Fatalf("Second Read() error = %v", err)
+		t.Fatalf("Second Next() error = %v", err)
 	}
-	if n != 1 {
-		t.Errorf("Second Read() returned %d rows, want 1", n)
+	if batch == nil || len(batch.Rows) != 1 {
+		t.Errorf("Second Next() returned %d rows, want 1", len(batch.Rows))
 	}
-	if rows[0]["data"] != "r2-first" {
-		t.Errorf("Third row data = %v, want r2-first", rows[0]["data"])
+	if batch.Rows[0]["data"] != "r2-first" {
+		t.Errorf("Third row data = %v, want r2-first", batch.Rows[0]["data"])
 	}
 
 	// Should return EOF now
-	for i := range rows {
-		rows[i] = make(Row)
-	}
-	n, err = sr.Read(rows)
-	if n != 0 || !errors.Is(err, io.EOF) {
-		t.Errorf("Final Read() should return 0 rows and io.EOF, got n=%d, err=%v", n, err)
+	batch, err = sr.Next()
+	if batch != nil || !errors.Is(err, io.EOF) {
+		t.Errorf("Final Next() should return nil batch and io.EOF, got batch=%v, err=%v", batch, err)
 	}
 }
 
@@ -171,7 +160,7 @@ func TestSequentialReader_CurrentReaderIndex(t *testing.T) {
 		newMockReader("r3", []Row{}), // Empty reader
 	}
 
-	sr, err := NewSequentialReader(readers)
+	sr, err := NewSequentialReader(readers, 1000)
 	if err != nil {
 		t.Fatalf("NewSequentialReader() error = %v", err)
 	}
@@ -183,11 +172,9 @@ func TestSequentialReader_CurrentReaderIndex(t *testing.T) {
 	}
 
 	// Read from first reader
-	rows := make([]Row, 1)
-	rows[0] = make(Row)
-	_, err = sr.Read(rows)
+	_, err = sr.Next()
 	if err != nil {
-		t.Fatalf("Read() error = %v", err)
+		t.Fatalf("Next() error = %v", err)
 	}
 
 	// Still on reader 0 because it hasn't hit EOF yet
@@ -196,10 +183,9 @@ func TestSequentialReader_CurrentReaderIndex(t *testing.T) {
 	}
 
 	// Read from second reader (this will exhaust r1, advance to r2, skip empty r3)
-	rows[0] = make(Row)
-	_, err = sr.Read(rows)
+	_, err = sr.Next()
 	if err != nil {
-		t.Fatalf("Read() error = %v", err)
+		t.Fatalf("Next() error = %v", err)
 	}
 
 	// Should be on reader 1 now
@@ -208,10 +194,9 @@ func TestSequentialReader_CurrentReaderIndex(t *testing.T) {
 	}
 
 	// Try to read again - should return io.EOF and be exhausted
-	rows[0] = make(Row)
-	_, err = sr.Read(rows)
+	_, err = sr.Next()
 	if !errors.Is(err, io.EOF) {
-		t.Errorf("Final Read() should return io.EOF, got %v", err)
+		t.Errorf("Final Next() should return io.EOF, got %v", err)
 	}
 
 	// Should be exhausted now
@@ -227,7 +212,7 @@ func TestSequentialReader_TotalReaderCount(t *testing.T) {
 		newMockReader("r3", []Row{}),
 	}
 
-	sr, err := NewSequentialReader(readers)
+	sr, err := NewSequentialReader(readers, 1000)
 	if err != nil {
 		t.Fatalf("NewSequentialReader() error = %v", err)
 	}
@@ -245,7 +230,7 @@ func TestSequentialReader_RemainingReaderCount(t *testing.T) {
 		newMockReader("r3", []Row{{"data": "r3"}}),
 	}
 
-	sr, err := NewSequentialReader(readers)
+	sr, err := NewSequentialReader(readers, 1000)
 	if err != nil {
 		t.Fatalf("NewSequentialReader() error = %v", err)
 	}
@@ -257,11 +242,9 @@ func TestSequentialReader_RemainingReaderCount(t *testing.T) {
 	}
 
 	// Read one row (from r1)
-	rows := make([]Row, 1)
-	rows[0] = make(Row)
-	_, err = sr.Read(rows)
+	_, err = sr.Next()
 	if err != nil {
-		t.Fatalf("Read() error = %v", err)
+		t.Fatalf("Next() error = %v", err)
 	}
 
 	// Should still have 3 readers remaining since r1 hasn't been exhausted yet
@@ -271,13 +254,12 @@ func TestSequentialReader_RemainingReaderCount(t *testing.T) {
 
 	// Read remaining rows
 	for {
-		rows[0] = make(Row)
-		_, err := sr.Read(rows)
+		_, err := sr.Next()
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
-			t.Fatalf("Read() error = %v", err)
+			t.Fatalf("Next() error = %v", err)
 		}
 	}
 
@@ -293,7 +275,7 @@ func TestSequentialReader_Close(t *testing.T) {
 		newMockReader("r2", []Row{{"data": "r2"}}),
 	}
 
-	sr, err := NewSequentialReader(readers)
+	sr, err := NewSequentialReader(readers, 1000)
 	if err != nil {
 		t.Fatalf("NewSequentialReader() error = %v", err)
 	}
@@ -313,11 +295,9 @@ func TestSequentialReader_Close(t *testing.T) {
 	}
 
 	// Verify subsequent operations fail
-	rows := make([]Row, 1)
-	rows[0] = make(Row)
-	_, err = sr.Read(rows)
+	_, err = sr.Next()
 	if err == nil {
-		t.Error("Read() after Close() should return error")
+		t.Error("Next() after Close() should return error")
 	}
 
 	// Multiple Close() calls should not error
@@ -342,18 +322,16 @@ func TestSequentialReader_AllEmptyReaders(t *testing.T) {
 		newMockReader("r3", []Row{}),
 	}
 
-	sr, err := NewSequentialReader(readers)
+	sr, err := NewSequentialReader(readers, 1000)
 	if err != nil {
 		t.Fatalf("NewSequentialReader() error = %v", err)
 	}
 	defer sr.Close()
 
 	// Should immediately return io.EOF
-	rows := make([]Row, 1)
-	rows[0] = make(Row)
-	n, err := sr.Read(rows)
-	if n != 0 || !errors.Is(err, io.EOF) {
-		t.Errorf("Read() with all empty readers should return 0 rows and io.EOF, got n=%d, err=%v", n, err)
+	batch, err := sr.Next()
+	if batch != nil || !errors.Is(err, io.EOF) {
+		t.Errorf("Next() with all empty readers should return nil batch and io.EOF, got batch=%v, err=%v", batch, err)
 	}
 }
 
@@ -363,23 +341,20 @@ func TestSequentialReader_WithErrors(t *testing.T) {
 		&errorReader{}, // This reader always returns errors
 	}
 
-	sr, err := NewSequentialReader(readers)
+	sr, err := NewSequentialReader(readers, 1000)
 	if err != nil {
 		t.Fatalf("NewSequentialReader() error = %v", err)
 	}
 	defer sr.Close()
 
 	// First read should succeed (from r1)
-	rows := make([]Row, 1)
-	rows[0] = make(Row)
-	_, err = sr.Read(rows)
+	_, err = sr.Next()
 	if err != nil {
-		t.Fatalf("First Read() error = %v", err)
+		t.Fatalf("First Next() error = %v", err)
 	}
 
 	// Second read should fail (from error reader)
-	rows[0] = make(Row)
-	_, err = sr.Read(rows)
+	_, err = sr.Next()
 	if err == nil {
 		t.Error("Expected error when reading from error reader")
 	}
@@ -397,38 +372,34 @@ func TestSequentialReader_ReaderWithDelayedError(t *testing.T) {
 		delayedErrorReader,
 	}
 
-	sr, err := NewSequentialReader(readers)
+	sr, err := NewSequentialReader(readers, 1000)
 	if err != nil {
 		t.Fatalf("NewSequentialReader() error = %v", err)
 	}
 	defer sr.Close()
 
 	// First read from r1
-	rows := make([]Row, 1)
-	rows[0] = make(Row)
-	n, err := sr.Read(rows)
+	batch, err := sr.Next()
 	if err != nil {
-		t.Fatalf("First Read() error = %v", err)
+		t.Fatalf("First Next() error = %v", err)
 	}
-	if n != 1 || rows[0]["data"] != "r1" {
-		t.Fatalf("First Read() should return 1 row with r1 data, got n=%d, data=%v", n, rows[0]["data"])
+	if batch == nil || len(batch.Rows) != 1 || batch.Rows[0]["data"] != "r1" {
+		t.Fatalf("First Next() should return 1 row with r1 data, got len=%d, data=%v", len(batch.Rows), batch.Rows[0]["data"])
 	}
 
 	// Second read from delayed error reader (first call succeeds)
-	rows[0] = make(Row)
-	n, err = sr.Read(rows)
+	batch, err = sr.Next()
 	if err != nil {
-		t.Fatalf("Second Read() error = %v", err)
+		t.Fatalf("Second Next() error = %v", err)
 	}
-	if n != 1 || rows[0]["data"] != "delayed" {
-		t.Fatalf("Second Read() should return 1 row with delayed data, got n=%d, data=%v", n, rows[0]["data"])
+	if batch == nil || len(batch.Rows) != 1 || batch.Rows[0]["data"] != "delayed" {
+		t.Fatalf("Second Next() should return 1 row with delayed data, got len=%d, data=%v", len(batch.Rows), batch.Rows[0]["data"])
 	}
 
 	// Third read from delayed error reader (second call fails)
-	rows[0] = make(Row)
-	_, err = sr.Read(rows)
+	_, err = sr.Next()
 	if err == nil {
-		t.Error("Third Read() should fail with delayed error")
+		t.Error("Third Next() should fail with delayed error")
 	}
 }
 
@@ -440,26 +411,27 @@ type delayedErrorReaderImpl struct {
 	rowCount int64
 }
 
-func (d *delayedErrorReaderImpl) Read(rows []Row) (int, error) {
+func (d *delayedErrorReaderImpl) Next() (*Batch, error) {
 	if d.closed {
-		return 0, errors.New("reader closed")
+		return nil, errors.New("reader closed")
 	}
 
 	if d.position == 0 && len(d.data) > 0 {
 		// First call - return data
-		if len(rows) > 0 {
-			for k, v := range d.data[0] {
-				rows[0][k] = v
-			}
-			d.position++
-			d.rowCount++
-			return 1, nil
+		batch := &Batch{
+			Rows: make([]Row, 1),
 		}
-		return 0, nil
+		batch.Rows[0] = make(Row)
+		for k, v := range d.data[0] {
+			batch.Rows[0][k] = v
+		}
+		d.position++
+		d.rowCount++
+		return batch, nil
 	}
 
 	// Subsequent calls - return error
-	return 0, fmt.Errorf("delayed error on call %d", d.position+1)
+	return nil, fmt.Errorf("delayed error on call %d", d.position+1)
 }
 
 func (d *delayedErrorReaderImpl) Close() error {

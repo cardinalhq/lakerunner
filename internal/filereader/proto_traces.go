@@ -25,8 +25,9 @@ import (
 // ProtoTracesReader reads rows from OpenTelemetry protobuf traces format.
 // Returns raw OTEL trace data without signal-specific transformations.
 type ProtoTracesReader struct {
-	closed   bool
-	rowCount int64
+	closed    bool
+	rowCount  int64
+	batchSize int
 
 	// Streaming iterator state for traces
 	traces        *ptrace.Traces
@@ -37,8 +38,14 @@ type ProtoTracesReader struct {
 
 // NewProtoTracesReader creates a new ProtoTracesReader for the given io.Reader.
 // The caller is responsible for closing the underlying reader.
-func NewProtoTracesReader(reader io.Reader) (*ProtoTracesReader, error) {
-	protoReader := &ProtoTracesReader{}
+func NewProtoTracesReader(reader io.Reader, batchSize int) (*ProtoTracesReader, error) {
+	if batchSize <= 0 {
+		batchSize = 1000
+	}
+
+	protoReader := &ProtoTracesReader{
+		batchSize: batchSize,
+	}
 
 	traces, err := parseProtoToOtelTraces(reader)
 	if err != nil {
@@ -49,39 +56,38 @@ func NewProtoTracesReader(reader io.Reader) (*ProtoTracesReader, error) {
 	return protoReader, nil
 }
 
-// Read populates the provided slice with as many rows as possible.
-func (r *ProtoTracesReader) Read(rows []Row) (int, error) {
+// Next returns the next batch of rows from the OTEL traces.
+func (r *ProtoTracesReader) Next() (*Batch, error) {
 	if r.closed {
-		return 0, fmt.Errorf("reader is closed")
+		return nil, fmt.Errorf("reader is closed")
 	}
 
-	if len(rows) == 0 {
-		return 0, nil
+	batch := &Batch{
+		Rows: make([]Row, 0, r.batchSize),
 	}
 
-	n := 0
-	for n < len(rows) {
+	for len(batch.Rows) < r.batchSize {
 		row, err := r.getTraceRow()
 		if err != nil {
-			return n, err
+			if err == io.EOF {
+				if len(batch.Rows) == 0 {
+					return nil, io.EOF
+				}
+				break
+			}
+			return nil, err
 		}
 
-		resetRow(&rows[n])
-
-		// Copy data to Row
-		for k, v := range row {
-			rows[n][k] = v
-		}
-
-		n++
+		batch.Rows = append(batch.Rows, row)
 	}
 
 	// Update row count with successfully read rows
-	if n > 0 {
-		r.rowCount += int64(n)
+	if len(batch.Rows) > 0 {
+		r.rowCount += int64(len(batch.Rows))
+		return batch, nil
 	}
 
-	return n, nil
+	return nil, io.EOF
 }
 
 // getTraceRow handles reading the next trace row.

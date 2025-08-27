@@ -58,6 +58,7 @@ type DiskSortingReader struct {
 	cborConfig  *cbor.Config
 	closed      bool
 	rowCount    int64
+	batchSize   int
 
 	// Lightweight sorted indices pointing to CBOR data
 	indices      []RowIndex
@@ -73,7 +74,7 @@ type DiskSortingReader struct {
 //
 // The sortKeyFunc extracts sort keys from rows to minimize memory usage during sorting.
 // The sortFunc compares the extracted keys (not full rows) and should return -1, 0, or 1.
-func NewDiskSortingReader(reader Reader, sortKeyFunc SortKeyFunc, sortFunc func(a, b any) int) (*DiskSortingReader, error) {
+func NewDiskSortingReader(reader Reader, sortKeyFunc SortKeyFunc, sortFunc func(a, b any) int, batchSize int) (*DiskSortingReader, error) {
 	if reader == nil {
 		return nil, fmt.Errorf("reader cannot be nil")
 	}
@@ -82,6 +83,10 @@ func NewDiskSortingReader(reader Reader, sortKeyFunc SortKeyFunc, sortFunc func(
 	}
 	if sortFunc == nil {
 		return nil, fmt.Errorf("sortFunc cannot be nil")
+	}
+
+	if batchSize <= 0 {
+		batchSize = 1000
 	}
 
 	// Create temp file for CBOR data
@@ -105,6 +110,7 @@ func NewDiskSortingReader(reader Reader, sortKeyFunc SortKeyFunc, sortFunc func(
 		tempFile:    tempFile,
 		encoder:     cborConfig.NewEncoder(tempFile),
 		cborConfig:  cborConfig,
+		batchSize:   batchSize,
 		indices:     make([]RowIndex, 0, 1000), // Start with reasonable capacity
 	}, nil
 }
@@ -115,24 +121,21 @@ func (r *DiskSortingReader) writeAndIndexAllRows() error {
 		return nil
 	}
 
-	// Read all rows from the underlying reader and encode to temp file
+	// Read all batches from the underlying reader and encode to temp file
 	for {
-		rows := make([]Row, 100)
-		n, err := r.reader.Read(rows)
-
-		if err != nil && err != io.EOF {
+		batch, err := r.reader.Next()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
 			return fmt.Errorf("failed to read from underlying reader: %w", err)
 		}
 
-		// Encode and index each row
-		for i := 0; i < n; i++ {
-			if err := r.writeAndIndexRow(rows[i]); err != nil {
+		// Encode and index each row in the batch
+		for _, row := range batch.Rows {
+			if err := r.writeAndIndexRow(row); err != nil {
 				return fmt.Errorf("failed to write and index row: %w", err)
 			}
-		}
-
-		if err == io.EOF {
-			break
 		}
 	}
 
@@ -183,64 +186,65 @@ func (r *DiskSortingReader) writeAndIndexRow(row Row) error {
 	return nil
 }
 
-// Read returns sorted rows by reading from the temp file in index order.
-func (r *DiskSortingReader) Read(rows []Row) (int, error) {
+// Next returns the next batch of sorted rows by reading from the temp file in index order.
+func (r *DiskSortingReader) Next() (*Batch, error) {
 	if r.closed {
-		return 0, fmt.Errorf("reader is closed")
-	}
-
-	if len(rows) == 0 {
-		return 0, nil
+		return nil, fmt.Errorf("reader is closed")
 	}
 
 	// Ensure all rows are written to disk and sorted
 	if !r.sorted {
 		if err := r.writeAndIndexAllRows(); err != nil {
-			return 0, err
+			return nil, err
 		}
 	}
 
+	// Check if we've exhausted all indices
+	if r.currentIndex >= len(r.indices) {
+		return nil, io.EOF
+	}
+
+	batch := &Batch{
+		Rows: make([]Row, 0, r.batchSize),
+	}
+
 	// Return rows from disk in sorted order
-	n := 0
-	for n < len(rows) && r.currentIndex < len(r.indices) {
+	for len(batch.Rows) < r.batchSize && r.currentIndex < len(r.indices) {
 		idx := r.indices[r.currentIndex]
 
 		// Seek to the row position in temp file
 		if _, err := r.tempFile.Seek(idx.FileOffset, io.SeekStart); err != nil {
-			return n, fmt.Errorf("failed to seek to row offset %d: %w", idx.FileOffset, err)
+			return nil, fmt.Errorf("failed to seek to row offset %d: %w", idx.FileOffset, err)
 		}
 
 		// Read the CBOR bytes
 		rowBytes := make([]byte, idx.ByteLength)
 		if _, err := r.tempFile.Read(rowBytes); err != nil {
-			return n, fmt.Errorf("failed to read CBOR data at offset %d: %w", idx.FileOffset, err)
+			return nil, fmt.Errorf("failed to read CBOR data at offset %d: %w", idx.FileOffset, err)
 		}
 
 		// Use shared CBOR package to decode with type conversion
 		decodedRow, err := r.cborConfig.Decode(rowBytes)
 		if err != nil {
-			return n, fmt.Errorf("failed to decode CBOR row at offset %d: %w", idx.FileOffset, err)
+			return nil, fmt.Errorf("failed to decode CBOR row at offset %d: %w", idx.FileOffset, err)
 		}
 
-		// Reset and copy to output row
-		resetRow(&rows[n])
+		// Create new row and copy decoded data
+		row := make(Row)
 		for k, v := range decodedRow {
-			rows[n][k] = v
+			row[k] = v
 		}
 
-		n++
+		batch.Rows = append(batch.Rows, row)
 		r.currentIndex++
 	}
 
-	if n > 0 {
-		r.rowCount += int64(n)
+	if len(batch.Rows) > 0 {
+		r.rowCount += int64(len(batch.Rows))
+		return batch, nil
 	}
 
-	if r.currentIndex >= len(r.indices) && n == 0 {
-		return 0, io.EOF
-	}
-
-	return n, nil
+	return nil, io.EOF
 }
 
 // Close closes the reader and cleans up temp file.

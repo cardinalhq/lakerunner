@@ -29,8 +29,9 @@ import (
 // This reader is specifically designed for metric ingestion and should not be used for
 // compaction or rollup operations.
 type IngestProtoMetricsReader struct {
-	closed   bool
-	rowCount int64
+	closed    bool
+	rowCount  int64
+	batchSize int
 
 	// Store the original OTEL metrics for exemplar processing
 	otelMetrics *pmetric.Metrics
@@ -44,55 +45,65 @@ type IngestProtoMetricsReader struct {
 
 // NewIngestProtoMetricsReader creates a new IngestProtoMetricsReader for the given io.Reader.
 // The caller is responsible for closing the underlying reader.
-func NewIngestProtoMetricsReader(reader io.Reader) (*IngestProtoMetricsReader, error) {
+func NewIngestProtoMetricsReader(reader io.Reader, batchSize int) (*IngestProtoMetricsReader, error) {
 	metrics, err := parseProtoToOtelMetrics(reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse proto to OTEL metrics: %w", err)
 	}
 
-	return NewIngestProtoMetricsReaderFromMetrics(metrics)
+	return NewIngestProtoMetricsReaderFromMetrics(metrics, batchSize)
 }
 
 // NewIngestProtoMetricsReaderFromMetrics creates a new IngestProtoMetricsReader from pre-parsed OTEL metrics.
 // This is useful when you need to access the raw OTEL structure for processing (e.g., exemplars)
 // while also reading rows from the same data.
-func NewIngestProtoMetricsReaderFromMetrics(metrics *pmetric.Metrics) (*IngestProtoMetricsReader, error) {
+func NewIngestProtoMetricsReaderFromMetrics(metrics *pmetric.Metrics, batchSize int) (*IngestProtoMetricsReader, error) {
 	if metrics == nil {
 		return nil, fmt.Errorf("metrics cannot be nil")
+	}
+	if batchSize <= 0 {
+		batchSize = 1000 // Default batch size
 	}
 
 	return &IngestProtoMetricsReader{
 		otelMetrics: metrics,
+		batchSize:   batchSize,
 	}, nil
 }
 
-// Read populates the provided slice with as many rows as possible.
-func (r *IngestProtoMetricsReader) Read(rows []Row) (int, error) {
+// Next returns the next batch of rows from the OTEL metrics.
+func (r *IngestProtoMetricsReader) Next() (*Batch, error) {
 	if r.closed {
-		return 0, fmt.Errorf("reader is closed")
+		return nil, fmt.Errorf("reader is closed")
 	}
 
-	if len(rows) == 0 {
-		return 0, nil
+	batch := &Batch{
+		Rows: make([]Row, 0, r.batchSize),
 	}
 
-	n := 0
-	for n < len(rows) {
-		resetRow(&rows[n])
+	for len(batch.Rows) < r.batchSize {
+		row := make(Row)
 
-		if err := r.getMetricRow(rows[n]); err != nil {
-			return n, err
+		if err := r.getMetricRow(row); err != nil {
+			if err == io.EOF {
+				if len(batch.Rows) == 0 {
+					return nil, io.EOF
+				}
+				break
+			}
+			return nil, err
 		}
 
-		n++
+		batch.Rows = append(batch.Rows, row)
 	}
 
 	// Update row count with successfully read rows
-	if n > 0 {
-		r.rowCount += int64(n)
+	if len(batch.Rows) > 0 {
+		r.rowCount += int64(len(batch.Rows))
+		return batch, nil
 	}
 
-	return n, nil
+	return nil, io.EOF
 }
 
 // getMetricRow handles reading the next datapoint row using streaming iteration.
@@ -444,7 +455,12 @@ func (r *IngestProtoMetricsReader) handleHistogram(bucketCounts []float64, bucke
 		} else {
 			// Overflow bucket - use a reasonable upper bound
 			if len(bucketBounds) > 0 {
-				value = min(bucketBounds[len(bucketBounds)-1]+1, maxTrackableValue)
+				boundValue := bucketBounds[len(bucketBounds)-1] + 1
+				if boundValue < float64(maxTrackableValue) {
+					value = boundValue
+				} else {
+					value = float64(maxTrackableValue)
+				}
 			} else {
 				// No bounds at all - use a default mid-range value
 				value = 1.0

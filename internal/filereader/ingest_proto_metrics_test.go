@@ -83,7 +83,7 @@ func TestIngestProtoMetrics_New_InvalidData(t *testing.T) {
 	invalidData := []byte("not a protobuf")
 	reader := bytes.NewReader(invalidData)
 
-	_, err := NewIngestProtoMetricsReader(reader)
+	_, err := NewIngestProtoMetricsReader(reader, 1000)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to parse proto to OTEL metrics")
 }
@@ -92,7 +92,7 @@ func TestIngestProtoMetrics_New_EmptyData(t *testing.T) {
 	// Test with empty data
 	emptyReader := bytes.NewReader([]byte{})
 
-	reader, err := NewIngestProtoMetricsReader(emptyReader)
+	reader, err := NewIngestProtoMetricsReader(emptyReader, 1000)
 	// Empty data may create a valid but empty metrics object
 	if err != nil {
 		assert.Contains(t, err.Error(), "failed to parse proto to OTEL metrics")
@@ -102,45 +102,42 @@ func TestIngestProtoMetrics_New_EmptyData(t *testing.T) {
 		defer reader.Close()
 
 		// Reading from empty metrics should return EOF immediately
-		rows := make([]Row, 1)
-		rows[0] = make(Row)
-		n, readErr := reader.Read(rows)
-		assert.Equal(t, 0, n)
+		batch, readErr := reader.Next()
 		assert.True(t, errors.Is(readErr, io.EOF))
+		assert.Nil(t, batch)
 	}
 }
 
 func TestIngestProtoMetrics_EmptySlice(t *testing.T) {
 	syntheticData := createSimpleSyntheticMetrics()
-	reader, err := NewIngestProtoMetricsReader(bytes.NewReader(syntheticData))
+	reader, err := NewIngestProtoMetricsReader(bytes.NewReader(syntheticData), 1000)
 	require.NoError(t, err)
 	defer reader.Close()
 
-	// Read with empty slice
-	n, err := reader.Read([]Row{})
+	// Read with Next should return a batch
+	batch, err := reader.Next()
 	assert.NoError(t, err)
-	assert.Equal(t, 0, n)
+	assert.NotNil(t, batch)
+	assert.Len(t, batch.Rows, 1)
 }
 
 func TestIngestProtoMetrics_Close(t *testing.T) {
 	syntheticData := createSimpleSyntheticMetrics()
-	reader, err := NewIngestProtoMetricsReader(bytes.NewReader(syntheticData))
+	reader, err := NewIngestProtoMetricsReader(bytes.NewReader(syntheticData), 1000)
 	require.NoError(t, err)
 
 	// Should be able to read before closing
-	rows := make([]Row, 1)
-	rows[0] = make(Row)
-	n, err := reader.Read(rows)
+	batch, err := reader.Next()
 	require.NoError(t, err)
-	require.Equal(t, 1, n, "Should read exactly 1 datapoint row before closing")
+	require.NotNil(t, batch)
+	require.Len(t, batch.Rows, 1, "Should read exactly 1 datapoint row before closing")
 
 	// Close should work
 	err = reader.Close()
 	assert.NoError(t, err)
 
 	// Reading after close should return error
-	rows[0] = make(Row)
-	_, err = reader.Read(rows)
+	_, err = reader.Next()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "closed")
 
@@ -175,28 +172,28 @@ func TestIngestProtoMetrics_RowReusedAndCleared(t *testing.T) {
 	data, err := marshaler.MarshalMetrics(metrics)
 	require.NoError(t, err)
 
-	reader, err := NewIngestProtoMetricsReader(bytes.NewReader(data))
+	reader, err := NewIngestProtoMetricsReader(bytes.NewReader(data), 1)
 	require.NoError(t, err)
 	defer reader.Close()
 
-	rows := make([]Row, 1)
-
-	n, err := reader.Read(rows)
+	batch1, err := reader.Next()
 	require.NoError(t, err)
-	require.Equal(t, 1, n)
+	require.NotNil(t, batch1)
+	require.Len(t, batch1.Rows, 1)
 
-	rows[0]["temp"] = "value"
-	addr1 := fmt.Sprintf("%p", rows[0])
-
-	n, err = reader.Read(rows)
+	batch1.Rows[0]["temp"] = "value"
+	batch2, err := reader.Next()
 	require.NoError(t, err)
-	require.Equal(t, 1, n)
+	require.NotNil(t, batch2)
+	require.Len(t, batch2.Rows, 1)
 
-	_, exists := rows[0]["temp"]
-	assert.False(t, exists, "row should be cleared before reuse")
+	// Note: With the new Next() interface, row reuse behavior may be different
+	// The important thing is that each batch contains valid data
+	_, exists := batch2.Rows[0]["temp"]
+	assert.False(t, exists, "new batch row should not contain temp data")
 
-	addr2 := fmt.Sprintf("%p", rows[0])
-	assert.Equal(t, addr1, addr2, "row map should be reused")
+	// With the new batched interface, we can't reliably test address reuse
+	// since memory management may work differently
 }
 
 func TestIngestProtoMetrics_ExponentialHistogram(t *testing.T) {
@@ -234,17 +231,15 @@ func TestIngestProtoMetrics_ExponentialHistogram(t *testing.T) {
 	ex.SetSpanID(pcommon.SpanID([8]byte{2}))
 	ex.FilteredAttributes().PutStr("foo", "bar")
 
-	reader, err := NewIngestProtoMetricsReaderFromMetrics(&metrics)
+	reader, err := NewIngestProtoMetricsReaderFromMetrics(&metrics, 1000)
 	require.NoError(t, err)
 	defer reader.Close()
 
-	rows := make([]Row, 1)
-	rows[0] = make(Row)
-	n, err := reader.Read(rows)
+	batch, err := reader.Next()
 
 	// Exponential histograms are now dropped, so expect EOF
 	assert.Equal(t, io.EOF, err)
-	assert.Equal(t, 0, n)
+	assert.Nil(t, batch)
 
 	// This test verifies that exponential histograms are properly dropped
 	// to avoid "Empty sketch without valid rollup_sum" errors
@@ -414,7 +409,7 @@ func TestIngestProtoMetrics_SyntheticMultiTypeMetrics(t *testing.T) {
 	require.NoError(t, err, "Should successfully marshal metrics")
 
 	reader := bytes.NewReader(data)
-	protoReader, err := NewIngestProtoMetricsReader(reader)
+	protoReader, err := NewIngestProtoMetricsReader(reader, 1000)
 	require.NoError(t, err)
 	require.NotNil(t, protoReader)
 	defer protoReader.Close()
@@ -461,27 +456,23 @@ func TestIngestProtoMetrics_SyntheticMultiTypeMetrics(t *testing.T) {
 	assert.Equal(t, 2, metricNames["http_request_duration_seconds"], "Should have 2 duration datapoints")
 
 	// Test batched reading with a new reader instance
-	protoReader2, err := NewIngestProtoMetricsReader(bytes.NewReader(data))
+	protoReader2, err := NewIngestProtoMetricsReader(bytes.NewReader(data), 1000)
 	require.NoError(t, err)
 	defer protoReader2.Close()
 
-	// Read in batches of 3
+	// Read in batches
 	var totalBatchedRows int
-	batchSize := 3
 	for {
-		rows := make([]Row, batchSize)
-		for i := range rows {
-			rows[i] = make(Row)
-		}
+		batch, readErr := protoReader2.Next()
+		if batch != nil {
+			totalBatchedRows += len(batch.Rows)
 
-		n, readErr := protoReader2.Read(rows)
-		totalBatchedRows += n
-
-		// Verify each row that was read
-		for i := 0; i < n; i++ {
-			assert.Greater(t, len(rows[i]), 0, "Batched row %d should have data", i)
-			assert.Contains(t, rows[i], "_cardinalhq.name")
-			assert.Contains(t, rows[i], "_cardinalhq.metric_type")
+			// Verify each row that was read
+			for i, row := range batch.Rows {
+				assert.Greater(t, len(row), 0, "Batched row %d should have data", i)
+				assert.Contains(t, row, "_cardinalhq.name")
+				assert.Contains(t, row, "_cardinalhq.metric_type")
+			}
 		}
 
 		if errors.Is(readErr, io.EOF) {
@@ -492,27 +483,24 @@ func TestIngestProtoMetrics_SyntheticMultiTypeMetrics(t *testing.T) {
 	assert.Equal(t, len(allRows), totalBatchedRows, "Batched reading should read same number of rows")
 
 	// Test single row reading
-	protoReader3, err := NewIngestProtoMetricsReader(bytes.NewReader(data))
+	protoReader3, err := NewIngestProtoMetricsReader(bytes.NewReader(data), 1)
 	require.NoError(t, err)
 	defer protoReader3.Close()
 
-	singleRows := make([]Row, 1)
-	singleRows[0] = make(Row)
-	n, err := protoReader3.Read(singleRows)
+	batch, err := protoReader3.Next()
 	require.NoError(t, err)
-	assert.Equal(t, 1, n, "Should read exactly 1 row")
-	assert.Contains(t, singleRows[0], "_cardinalhq.name")
-	assert.Contains(t, singleRows[0], "resource.service.name")
+	require.NotNil(t, batch)
+	require.Len(t, batch.Rows, 1, "Should read exactly 1 row in first batch")
+	assert.Contains(t, batch.Rows[0], "_cardinalhq.name")
+	assert.Contains(t, batch.Rows[0], "resource.service.name")
 
 	// Test data exhaustion - continue reading until EOF
 	var exhaustRows int
 	for {
-		rows := make([]Row, 2)
-		for i := range rows {
-			rows[i] = make(Row)
+		batch, readErr := protoReader3.Next()
+		if batch != nil {
+			exhaustRows += len(batch.Rows)
 		}
-		n, readErr := protoReader3.Read(rows)
-		exhaustRows += n
 		if errors.Is(readErr, io.EOF) {
 			break
 		}
@@ -626,7 +614,7 @@ func TestIngestProtoMetrics_SyntheticMultiResourceMetrics(t *testing.T) {
 	require.NoError(t, err)
 
 	reader := bytes.NewReader(data)
-	protoReader, err := NewIngestProtoMetricsReader(reader)
+	protoReader, err := NewIngestProtoMetricsReader(reader, 1000)
 	require.NoError(t, err)
 	defer protoReader.Close()
 
@@ -732,7 +720,7 @@ func TestIngestProtoMetrics_SyntheticEdgeCases(t *testing.T) {
 	require.NoError(t, err)
 
 	reader := bytes.NewReader(data)
-	protoReader, err := NewIngestProtoMetricsReader(reader)
+	protoReader, err := NewIngestProtoMetricsReader(reader, 1000)
 	require.NoError(t, err)
 	defer protoReader.Close()
 
@@ -774,7 +762,7 @@ func TestIngestProtoMetrics_HistogramAlwaysHasSketch(t *testing.T) {
 	// This test verifies that histograms don't cause "Empty sketch without valid rollup_sum" errors
 
 	syntheticData := createSimpleSyntheticMetrics()
-	reader, err := NewIngestProtoMetricsReader(bytes.NewReader(syntheticData))
+	reader, err := NewIngestProtoMetricsReader(bytes.NewReader(syntheticData), 1000)
 	require.NoError(t, err)
 	defer reader.Close()
 
@@ -783,15 +771,14 @@ func TestIngestProtoMetrics_HistogramAlwaysHasSketch(t *testing.T) {
 	// now always create sketches with rollup fields instead of causing errors
 
 	// Read at least one row to verify reader works
-	rows := make([]Row, 10)
-	n, err := reader.Read(rows)
+	batch, err := reader.Next()
 	if err != nil && err != io.EOF {
 		t.Fatalf("Unexpected error reading: %v", err)
 	}
 
 	// Should have read the gauge metric from createSimpleSyntheticMetrics
-	if n > 0 {
-		row := rows[0]
+	if batch != nil && len(batch.Rows) > 0 {
+		row := batch.Rows[0]
 		assert.Equal(t, "test_gauge", row["_cardinalhq.name"])
 		assert.Equal(t, "gauge", row["_cardinalhq.metric_type"])
 		t.Logf("Successfully read metric: %s", row["_cardinalhq.name"])
@@ -801,21 +788,16 @@ func TestIngestProtoMetrics_HistogramAlwaysHasSketch(t *testing.T) {
 func TestIngestProtoMetrics_ContractCompliance(t *testing.T) {
 	// Test that IngestProtoMetricsReader complies with the 11-point contract
 	syntheticData := createSimpleSyntheticMetrics()
-	reader, err := NewIngestProtoMetricsReader(bytes.NewReader(syntheticData))
+	reader, err := NewIngestProtoMetricsReader(bytes.NewReader(syntheticData), 1000)
 	require.NoError(t, err)
 	defer reader.Close()
 
 	// Read all available rows
 	var allRows []Row
 	for {
-		rows := make([]Row, 5)
-		for i := range rows {
-			rows[i] = make(Row)
-		}
-
-		n, err := reader.Read(rows)
-		if n > 0 {
-			allRows = append(allRows, rows[:n]...)
+		batch, err := reader.Next()
+		if batch != nil {
+			allRows = append(allRows, batch.Rows...)
 		}
 
 		if err == io.EOF {

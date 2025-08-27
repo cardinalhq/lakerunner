@@ -252,7 +252,7 @@ func rollupMetricSegments(
 		}
 
 		// Create PreorderedParquetRawReader directly
-		reader, err := filereader.NewPreorderedParquetRawReader(file, stat.Size())
+		reader, err := filereader.NewPreorderedParquetRawReader(file, stat.Size(), 1000)
 		if err != nil {
 			file.Close()
 			ll.Error("Failed to create parquet reader", slog.String("file", fn), slog.Any("error", err))
@@ -282,7 +282,7 @@ func rollupMetricSegments(
 		finalReader = readers[0]
 	} else {
 		selector := metricsprocessing.MetricsOrderedSelector()
-		multiReader, err := filereader.NewPreorderedMultisourceReader(readers, selector)
+		multiReader, err := filereader.NewPreorderedMultisourceReader(readers, selector, 1000)
 		if err != nil {
 			ll.Error("Failed to create preordered multi-source reader", slog.Any("error", err))
 			return WorkResultTryAgainLater, fmt.Errorf("creating preordered multi-source reader: %w", err)
@@ -293,7 +293,7 @@ func rollupMetricSegments(
 
 	// Wrap with aggregating reader to perform rollup aggregation
 	// Use target frequency for aggregation period
-	aggregatingReader, err := filereader.NewAggregatingMetricsReader(finalReader, int64(inf.FrequencyMs()))
+	aggregatingReader, err := filereader.NewAggregatingMetricsReader(finalReader, int64(inf.FrequencyMs()), 1000)
 	if err != nil {
 		ll.Error("Failed to create aggregating metrics reader", slog.Any("error", err))
 		return WorkResultTryAgainLater, fmt.Errorf("creating aggregating metrics reader: %w", err)
@@ -314,29 +314,27 @@ func rollupMetricSegments(
 	}
 	defer writer.Abort()
 
-	const batchSize = 1000
-	rowsBatch := make([]filereader.Row, batchSize)
 	totalRows := int64(0)
 
 	for {
-		n, err := aggregatingReader.Read(rowsBatch)
+		batch, err := aggregatingReader.Next()
 		if err != nil && !errors.Is(err, io.EOF) {
 			ll.Error("Failed to read from aggregating reader", slog.Any("error", err))
 			return WorkResultTryAgainLater, fmt.Errorf("reading from aggregating reader: %w", err)
 		}
 
-		if n == 0 {
+		if batch == nil || len(batch.Rows) == 0 {
 			break
 		}
 
-		for i := range n {
+		for _, row := range batch.Rows {
 			// Normalize sketch field for parquet writing (string -> []byte)
-			if err := normalizeRowForParquetWrite(rowsBatch[i]); err != nil {
+			if err := normalizeRowForParquetWrite(row); err != nil {
 				ll.Error("Failed to normalize row", slog.Any("error", err))
 				return WorkResultTryAgainLater, fmt.Errorf("normalizing row: %w", err)
 			}
 
-			if err := writer.Write(rowsBatch[i]); err != nil {
+			if err := writer.Write(row); err != nil {
 				ll.Error("Failed to write row", slog.Any("error", err))
 				return WorkResultTryAgainLater, fmt.Errorf("writing row: %w", err)
 			}

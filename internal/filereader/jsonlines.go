@@ -24,47 +24,51 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/constants"
 )
 
-// JSONLinesReader reads rows from a JSON lines stream.
+// JSONLinesReader reads rows from a JSON lines stream using pipeline semantics.
 type JSONLinesReader struct {
-	scanner  *bufio.Scanner
-	rowIndex int
-	closed   bool
-	rowCount int64
-	closer   io.Closer
+	scanner   *bufio.Scanner
+	rowIndex  int
+	closed    bool
+	totalRows int64
+	closer    io.Closer
+	batchSize int
 }
 
 // NewJSONLinesReader creates a new JSONLinesReader for the given io.ReadCloser.
 // The reader takes ownership of the closer and will close it when Close is called.
-func NewJSONLinesReader(reader io.ReadCloser) (*JSONLinesReader, error) {
+func NewJSONLinesReader(reader io.ReadCloser, batchSize int) (*JSONLinesReader, error) {
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 0, 64*1024), constants.MaxLineSizeBytes)
 
+	if batchSize <= 0 {
+		batchSize = 1000 // Default batch size
+	}
+
 	return &JSONLinesReader{
-		scanner:  scanner,
-		rowIndex: 0,
-		closer:   reader,
+		scanner:   scanner,
+		rowIndex:  0,
+		closer:    reader,
+		batchSize: batchSize,
 	}, nil
 }
 
-// Read populates the provided slice with as many rows as possible.
-func (r *JSONLinesReader) Read(rows []Row) (int, error) {
+func (r *JSONLinesReader) Next() (*Batch, error) {
 	if r.closed {
-		return 0, fmt.Errorf("reader is closed")
+		return nil, io.EOF
 	}
 
-	if len(rows) == 0 {
-		return 0, nil
+	batch := &Batch{
+		Rows: make([]Row, 0, r.batchSize),
 	}
 
-	n := 0
-	for n < len(rows) {
+	for len(batch.Rows) < r.batchSize {
 		if !r.scanner.Scan() {
 			// Check for scanner error
 			if err := r.scanner.Err(); err != nil {
-				return n, fmt.Errorf("scanner error reading at line %d: %w", r.rowIndex+1, err)
+				return nil, fmt.Errorf("scanner error reading at line %d: %w", r.rowIndex+1, err)
 			}
-			// End of file
-			return n, io.EOF
+			// End of file - return what we have
+			break
 		}
 
 		line := strings.TrimSpace(r.scanner.Text())
@@ -75,28 +79,23 @@ func (r *JSONLinesReader) Read(rows []Row) (int, error) {
 			continue
 		}
 
-		resetRow(&rows[n])
+		row := make(Row)
 
 		// Parse JSON
-		var rowData map[string]any
-		if err := json.Unmarshal([]byte(line), &rowData); err != nil {
-			return n, fmt.Errorf("failed to parse JSON at line %d: %w", r.rowIndex, err)
+		if err := json.Unmarshal([]byte(line), &row); err != nil {
+			return nil, fmt.Errorf("JSON parse error at line %d: %w", r.rowIndex, err)
 		}
 
-		// Copy data to Row
-		for k, v := range rowData {
-			rows[n][k] = v
-		}
-
-		n++
+		batch.Rows = append(batch.Rows, row)
 	}
 
-	// Update row count with successfully read rows
-	if n > 0 {
-		r.rowCount += int64(n)
+	if len(batch.Rows) == 0 {
+		r.closed = true
+		return nil, io.EOF
 	}
 
-	return n, nil
+	r.totalRows += int64(len(batch.Rows))
+	return batch, nil
 }
 
 // Close closes the reader and the underlying io.ReadCloser.
@@ -115,7 +114,7 @@ func (r *JSONLinesReader) Close() error {
 	return err
 }
 
-// TotalRowsReturned returns the total number of rows that have been successfully returned via Read().
+// TotalRowsReturned returns the total number of rows that have been successfully returned via Next().
 func (r *JSONLinesReader) TotalRowsReturned() int64 {
-	return r.rowCount
+	return r.totalRows
 }

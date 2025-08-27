@@ -24,15 +24,16 @@ import (
 
 // PreorderedParquetRawReader reads rows from a generic Parquet stream.
 type PreorderedParquetRawReader struct {
-	pf       *parquet.File
-	pfr      *parquet.GenericReader[map[string]any]
-	closed   bool
-	rowCount int64
+	pf        *parquet.File
+	pfr       *parquet.GenericReader[map[string]any]
+	closed    bool
+	rowCount  int64
+	batchSize int
 }
 
 // NewPreorderedParquetRawReader creates a new PreorderedParquetRawReader for the given io.ReaderAt.
 // The caller is responsible for closing the underlying reader.
-func NewPreorderedParquetRawReader(reader io.ReaderAt, size int64) (*PreorderedParquetRawReader, error) {
+func NewPreorderedParquetRawReader(reader io.ReaderAt, size int64, batchSize int) (*PreorderedParquetRawReader, error) {
 	pf, err := parquet.OpenFile(reader, size)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open parquet file: %w", err)
@@ -46,48 +47,50 @@ func NewPreorderedParquetRawReader(reader io.ReaderAt, size int64) (*PreorderedP
 		return nil, fmt.Errorf("parquet file has no rows")
 	}
 
+	if batchSize <= 0 {
+		batchSize = 1000
+	}
+
 	return &PreorderedParquetRawReader{
-		pf:  pf,
-		pfr: pfr,
+		pf:        pf,
+		pfr:       pfr,
+		batchSize: batchSize,
 	}, nil
 }
 
-// Read populates the provided slice with as many rows as possible.
-func (r *PreorderedParquetRawReader) Read(rows []Row) (int, error) {
+// Next returns the next batch of rows from the parquet file.
+func (r *PreorderedParquetRawReader) Next() (*Batch, error) {
 	if r.closed || r.pfr == nil {
-		return 0, errors.New("reader is closed or not initialized")
-	}
-
-	if len(rows) == 0 {
-		return 0, nil
+		return nil, errors.New("reader is closed or not initialized")
 	}
 
 	// Create fresh maps for parquet reader to populate
-	parquetRows := make([]map[string]any, len(rows))
+	parquetRows := make([]map[string]any, r.batchSize)
 	for i := range parquetRows {
 		parquetRows[i] = make(map[string]any)
 	}
 
 	n, err := r.pfr.Read(parquetRows)
 	if err != nil && err != io.EOF {
-		return 0, fmt.Errorf("parquet reader error: %w", err)
+		return nil, fmt.Errorf("parquet reader error: %w", err)
 	}
-	if n == 0 && err == nil {
-		// No data available but no error - treat as EOF
-		return 0, io.EOF
+	if n == 0 {
+		return nil, io.EOF
+	}
+
+	batch := &Batch{
+		Rows: make([]Row, n),
 	}
 
 	// Transfer ownership instead of copying to reduce memory pressure
-	for i := range n {
-		rows[i] = parquetRows[i] // Transfer map ownership, avoid expensive copy
+	for i := 0; i < n; i++ {
+		batch.Rows[i] = parquetRows[i] // Transfer map ownership, avoid expensive copy
 	}
 
 	// Only increment rowCount for successfully read rows
-	if n > 0 {
-		r.rowCount += int64(n)
-	}
+	r.rowCount += int64(n)
 
-	return n, err
+	return batch, err
 }
 
 // Close closes the reader and releases resources.

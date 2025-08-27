@@ -65,22 +65,22 @@ func loadBenchmarkData(b *testing.B) {
 
 		// Count fields by reading a few rows
 		reader := bytes.NewReader(data)
-		parquetReader, err := NewPreorderedParquetRawReader(reader, int64(len(data)))
+		parquetReader, err := NewPreorderedParquetRawReader(reader, int64(len(data)), 1000)
 		if err != nil {
 			b.Fatalf("Failed to create reader for %s: %v", filename, err)
 		}
 
 		// Sample first few rows to get average field count
-		rows := make([]Row, 10)
-		for i := range rows {
-			rows[i] = make(Row)
-		}
-		n, _ := parquetReader.Read(rows)
+		batch, _ := parquetReader.Next()
 		parquetReader.Close()
 
 		totalFields := 0
-		for i := 0; i < n; i++ {
-			totalFields += len(rows[i])
+		n := 0
+		if batch != nil {
+			n = len(batch.Rows)
+			for i := 0; i < n; i++ {
+				totalFields += len(batch.Rows[i])
+			}
 		}
 		avgFields := 15 // default
 		if n > 0 {
@@ -100,7 +100,7 @@ func loadBenchmarkData(b *testing.B) {
 // createReaderFromData creates a parquet reader from preloaded data
 func createReaderFromData(data *BenchmarkData) (*PreorderedParquetRawReader, error) {
 	reader := bytes.NewReader(data.Data)
-	return NewPreorderedParquetRawReader(reader, data.Size)
+	return NewPreorderedParquetRawReader(reader, data.Size, 1000)
 }
 
 // MemStats captures memory statistics before/after operations
@@ -191,19 +191,15 @@ func BenchmarkPreorderedParquetRawReader_Small(b *testing.B) {
 
 		rowsThisIter := int64(0)
 		for {
-			rows := make([]Row, 10)
-			for j := range rows {
-				rows[j] = make(Row)
-			}
-
-			n, err := reader.Read(rows)
-			rowsThisIter += int64(n)
-
+			batch, err := reader.Next()
 			if err == io.EOF {
 				break
 			}
 			if err != nil {
 				b.Fatalf("Read error: %v", err)
+			}
+			if batch != nil {
+				rowsThisIter += int64(len(batch.Rows))
 			}
 		}
 
@@ -234,19 +230,15 @@ func BenchmarkPreorderedParquetRawReader_Medium(b *testing.B) {
 
 		rowsThisIter := int64(0)
 		for {
-			rows := make([]Row, 20)
-			for j := range rows {
-				rows[j] = make(Row)
-			}
-
-			n, err := reader.Read(rows)
-			rowsThisIter += int64(n)
-
+			batch, err := reader.Next()
 			if err == io.EOF {
 				break
 			}
 			if err != nil {
 				b.Fatalf("Read error: %v", err)
+			}
+			if batch != nil {
+				rowsThisIter += int64(len(batch.Rows))
 			}
 		}
 
@@ -277,19 +269,15 @@ func BenchmarkPreorderedParquetRawReader_Large(b *testing.B) {
 
 		rowsThisIter := int64(0)
 		for {
-			rows := make([]Row, 50) // Larger batch for big file
-			for j := range rows {
-				rows[j] = make(Row)
-			}
-
-			n, err := reader.Read(rows)
-			rowsThisIter += int64(n)
-
+			batch, err := reader.Next()
 			if err == io.EOF {
 				break
 			}
 			if err != nil {
 				b.Fatalf("Read error: %v", err)
+			}
+			if batch != nil {
+				rowsThisIter += int64(len(batch.Rows))
 			}
 		}
 
@@ -324,19 +312,15 @@ func BenchmarkPreorderedParquetRawReader_BatchSizes(b *testing.B) {
 
 				rowsThisIter := int64(0)
 				for {
-					rows := make([]Row, batchSize)
-					for j := range rows {
-						rows[j] = make(Row)
-					}
-
-					n, err := reader.Read(rows)
-					rowsThisIter += int64(n)
-
+					batch, err := reader.Next()
 					if err == io.EOF {
 						break
 					}
 					if err != nil {
 						b.Fatalf("Read error: %v", err)
+					}
+					if batch != nil {
+						rowsThisIter += int64(len(batch.Rows))
 					}
 				}
 
@@ -364,7 +348,6 @@ func BenchmarkPreorderedParquetRawReader_MemoryProfile(b *testing.B) {
 	}
 	defer reader.Close()
 
-	batchSize := 100
 	totalRows := int64(0)
 	iterationCount := 0
 
@@ -373,14 +356,14 @@ func BenchmarkPreorderedParquetRawReader_MemoryProfile(b *testing.B) {
 		var mBefore runtime.MemStats
 		runtime.ReadMemStats(&mBefore)
 
-		rows := make([]Row, batchSize)
-		for j := range rows {
-			rows[j] = make(Row)
-		}
-
-		n, err := reader.Read(rows)
-		totalRows += int64(n)
+		batch, err := reader.Next()
 		iterationCount++
+
+		n := 0
+		if batch != nil {
+			n = len(batch.Rows)
+			totalRows += int64(n)
+		}
 
 		// Capture memory after each batch read
 		var mAfter runtime.MemStats
@@ -430,14 +413,12 @@ func BenchmarkPreorderedParquetRawReader_GCPressure(b *testing.B) {
 	batchCount := 0
 
 	for {
-		rows := make([]Row, 100)
-		for j := range rows {
-			rows[j] = make(Row)
-		}
-
-		n, err := reader.Read(rows)
-		totalRows += int64(n)
+		batch, err := reader.Next()
 		batchCount++
+
+		if batch != nil {
+			totalRows += int64(len(batch.Rows))
+		}
 
 		// Periodically check GC stats
 		if batchCount%gcCheckInterval == 0 {

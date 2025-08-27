@@ -306,7 +306,7 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 			Bucket:   fileInfo.item.Bucket,
 			ObjectID: fileInfo.item.ObjectID,
 		}
-		reader, err = filereader.NewTranslatingReader(reader, translator)
+		reader, err = filereader.NewTranslatingReader(reader, translator, 1000)
 		if err != nil {
 			reader.Close()
 			ll.Warn("Failed to create translating reader, skipping file",
@@ -316,7 +316,7 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 		}
 
 		// Step 2c: Add disk-based sorting (after translation so TID is available)
-		reader, err = filereader.NewDiskSortingReader(reader, filereader.MetricNameTidTimestampSortKeyFunc(), filereader.MetricNameTidTimestampSortFunc())
+		reader, err = filereader.NewDiskSortingReader(reader, filereader.MetricNameTidTimestampSortKeyFunc(), filereader.MetricNameTidTimestampSortFunc(), 1000)
 		if err != nil {
 			reader.Close()
 			ll.Warn("Failed to create sorting reader, skipping file",
@@ -359,7 +359,7 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 	} else {
 		// Multiple readers - use PreorderedMultisourceReader to merge sorted streams
 		selector := createMetricOrderSelector()
-		multiReader, err := filereader.NewPreorderedMultisourceReader(readers, selector)
+		multiReader, err := filereader.NewPreorderedMultisourceReader(readers, selector, 1000)
 		if err != nil {
 			return fmt.Errorf("failed to create multi-source reader: %w", err)
 		}
@@ -367,7 +367,7 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 	}
 
 	// Step 4: Add top-level aggregation for cross-file aggregation
-	finalReader, err = filereader.NewAggregatingMetricsReader(finalReader, 10000) // 10 seconds
+	finalReader, err = filereader.NewAggregatingMetricsReader(finalReader, 10000, 1000) // 10 seconds
 	if err != nil {
 		return fmt.Errorf("failed to create aggregating reader: %w", err)
 	}
@@ -387,28 +387,25 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 	}
 
 	// Step 5: Process all rows from the unified pipeline
-	rows := make([]filereader.Row, 100)
-	for i := range rows {
-		rows[i] = make(filereader.Row)
-	}
-
 	for {
-		n, readErr := finalReader.Read(rows)
+		batch, readErr := finalReader.Next()
 
 		if readErr != nil && readErr != io.EOF {
 			return fmt.Errorf("failed to read from unified pipeline: %w", readErr)
 		}
 
 		// Process any rows we got (safe because either no error or EOF with final data)
-		for i := range n {
-			if rows[i] == nil {
-				continue
-			}
-			processErr := wm.processRow(rows[i])
-			if processErr != nil {
-				batchRowsErrored++
-			} else {
-				batchRowsProcessed++
+		if batch != nil {
+			for _, row := range batch.Rows {
+				if row == nil {
+					continue
+				}
+				processErr := wm.processRow(row)
+				if processErr != nil {
+					batchRowsErrored++
+				} else {
+					batchRowsProcessed++
+				}
 			}
 		}
 
@@ -597,7 +594,7 @@ func createMetricProtoBinaryReader(filename string) (filereader.Reader, error) {
 		return nil, fmt.Errorf("failed to open protobuf file: %w", err)
 	}
 
-	reader, err := filereader.NewIngestProtoMetricsReader(file)
+	reader, err := filereader.NewIngestProtoMetricsReader(file, 1000)
 	if err != nil {
 		file.Close()
 		return nil, fmt.Errorf("failed to create metrics proto reader: %w", err)
@@ -619,7 +616,7 @@ func createMetricProtoBinaryGzReader(filename string) (filereader.Reader, error)
 		return nil, fmt.Errorf("failed to create gzip reader: %w", err)
 	}
 
-	reader, err := filereader.NewIngestProtoMetricsReader(gzipReader)
+	reader, err := filereader.NewIngestProtoMetricsReader(gzipReader, 1000)
 	if err != nil {
 		gzipReader.Close()
 		file.Close()

@@ -210,7 +210,7 @@ func TestPreorderedParquetRawReaderWithRealFile(t *testing.T) {
 	stat, err := file.Stat()
 	require.NoError(t, err)
 
-	reader, err := NewPreorderedParquetRawReader(file, stat.Size())
+	reader, err := NewPreorderedParquetRawReader(file, stat.Size(), 1000)
 	require.NoError(t, err)
 	defer reader.Close()
 
@@ -218,18 +218,18 @@ func TestPreorderedParquetRawReaderWithRealFile(t *testing.T) {
 	var rowCount int64
 
 	for {
-		rows := make([]Row, 10) // Create new batch each time
-		n, err := reader.Read(rows)
-		rowCount += int64(n)
+		batch, err := reader.Next()
+		if batch != nil {
+			rowCount += int64(len(batch.Rows))
 
-		// Verify each row that was read
-		for i := 0; i < n; i++ {
-			require.NotNil(t, rows[i], "Row %d should not be nil", i)
-			require.Greater(t, len(rows[i]), 0, "Row %d should have columns", i)
-			// Verify the expected collector_id field exists
-			assert.Contains(t, rows[i], "_cardinalhq.collector_id", "Row should have collector_id field")
+			// Verify each row that was read
+			for i, row := range batch.Rows {
+				require.NotNil(t, row, "Row %d should not be nil", i)
+				require.Greater(t, len(row), 0, "Row %d should have columns", i)
+				// Verify the expected collector_id field exists
+				assert.Contains(t, row, "_cardinalhq.collector_id", "Row should have collector_id field")
+			}
 		}
-
 		if errors.Is(err, io.EOF) {
 			break
 		}
@@ -257,7 +257,7 @@ func TestPreorderedParquetRawReaderMultipleFiles(t *testing.T) {
 			stat, err := file.Stat()
 			require.NoError(t, err)
 
-			reader, err := NewPreorderedParquetRawReader(file, stat.Size())
+			reader, err := NewPreorderedParquetRawReader(file, stat.Size(), 1000)
 			require.NoError(t, err)
 			defer reader.Close()
 
@@ -265,18 +265,18 @@ func TestPreorderedParquetRawReaderMultipleFiles(t *testing.T) {
 			var totalRows int64
 
 			for {
-				rows := make([]Row, 20) // Create new batch each time
-				n, err := reader.Read(rows)
-				totalRows += int64(n)
+				batch, err := reader.Next()
+				if batch != nil {
+					totalRows += int64(len(batch.Rows))
 
-				// Verify each row that was read
-				for i := 0; i < n; i++ {
-					require.NotNil(t, rows[i])
-					require.Greater(t, len(rows[i]), 0, "Row should have columns")
-					// Verify the expected collector_id field exists
-					assert.Contains(t, rows[i], "_cardinalhq.collector_id", "Row should have collector_id field")
+					// Verify each row that was read
+					for _, row := range batch.Rows {
+						require.NotNil(t, row)
+						require.Greater(t, len(row), 0, "Row should have columns")
+						// Verify the expected collector_id field exists
+						assert.Contains(t, row, "_cardinalhq.collector_id", "Row should have collector_id field")
+					}
 				}
-
 				if errors.Is(err, io.EOF) {
 					break
 				}
@@ -298,23 +298,23 @@ func TestPreorderedParquetRawReaderClose(t *testing.T) {
 	stat, err := file.Stat()
 	require.NoError(t, err)
 
-	reader, err := NewPreorderedParquetRawReader(file, stat.Size())
+	reader, err := NewPreorderedParquetRawReader(file, stat.Size(), 1000)
 	require.NoError(t, err)
 
 	// Should be able to read before closing
-	rows := make([]Row, 1)
-	n, err := reader.Read(rows)
-	require.NoError(t, err)
-	require.Greater(t, n, 0)
-	require.NotNil(t, rows[0])
+	batch, err := reader.Next()
+	require.NotNil(t, batch)
+	require.Greater(t, len(batch.Rows), 0)
+	// EOF is acceptable if we got data (it means we read all the data in one batch)
+	require.True(t, err == nil || errors.Is(err, io.EOF), "Expected no error or EOF, got: %v", err)
+	require.NotNil(t, batch.Rows[0])
 
 	// Close should work
 	err = reader.Close()
 	assert.NoError(t, err)
 
 	// Reading after close should return error
-	rows = make([]Row, 1)
-	_, err = reader.Read(rows)
+	_, err = reader.Next()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "closed")
 }
@@ -323,19 +323,18 @@ func TestPreorderedParquetRawReader_SpecificProblemFile(t *testing.T) {
 	// Test the specific file that's failing in production
 	filename := "../../testdata/logs/logs_1747427310000_667024137.parquet"
 
-	reader, err := createParquetReader(filename)
+	reader, err := createParquetReader(filename, ReaderOptions{})
 	if err != nil {
 		t.Fatalf("Failed to create reader for problem file: %v", err)
 	}
 	defer reader.Close()
 
 	// Try to read some rows
-	rows := make([]Row, 10)
-	for i := range rows {
-		rows[i] = make(Row)
+	batch, err := reader.Next()
+	n := 0
+	if batch != nil {
+		n = len(batch.Rows)
 	}
-
-	n, err := reader.Read(rows)
 	t.Logf("Read result: n=%d, err=%v", n, err)
 
 	if err != nil && err != io.EOF {
@@ -348,7 +347,7 @@ func TestPreorderedParquetRawReader_SpecificProblemFile(t *testing.T) {
 
 	t.Logf("Successfully read %d rows from problem file", n)
 	for i := 0; i < n && i < 3; i++ {
-		t.Logf("Row %d has %d fields", i, len(rows[i]))
+		t.Logf("Row %d has %d fields", i, len(batch.Rows[i]))
 	}
 
 	// Close should be idempotent
@@ -375,7 +374,7 @@ func TestPreorderedParquetRawReader_WithTranslator(t *testing.T) {
 	filename := "../../testdata/logs/logs_1747427310000_667024137.parquet"
 
 	// Create base parquet reader
-	baseReader, err := createParquetReader(filename)
+	baseReader, err := createParquetReader(filename, ReaderOptions{})
 	require.NoError(t, err)
 	defer baseReader.Close()
 
@@ -383,16 +382,15 @@ func TestPreorderedParquetRawReader_WithTranslator(t *testing.T) {
 	translator := &testTranslator{addField: "test.translator", addValue: "parquet"}
 
 	// Wrap with TranslatingReader
-	reader, err := NewTranslatingReader(baseReader, translator)
+	reader, err := NewTranslatingReader(baseReader, translator, 1000)
 	require.NoError(t, err)
 
 	// Read rows
-	rows := make([]Row, 10)
-	for i := range rows {
-		rows[i] = make(Row)
+	batch, err := reader.Next()
+	n := 0
+	if batch != nil {
+		n = len(batch.Rows)
 	}
-
-	n, err := reader.Read(rows)
 	t.Logf("TranslatingReader with PreorderedParquetRawReader: n=%d, err=%v", n, err)
 
 	if err != nil && err != io.EOF {
@@ -403,9 +401,9 @@ func TestPreorderedParquetRawReader_WithTranslator(t *testing.T) {
 
 	// Verify translation worked
 	for i := 0; i < n; i++ {
-		assert.NotNil(t, rows[i])
-		assert.Equal(t, "parquet", rows[i]["test.translator"])
-		t.Logf("Row %d: %d fields, translator field present", i, len(rows[i]))
+		assert.NotNil(t, batch.Rows[i])
+		assert.Equal(t, "parquet", batch.Rows[i]["test.translator"])
+		t.Logf("Row %d: %d fields, translator field present", i, len(batch.Rows[i]))
 	}
 }
 
@@ -422,16 +420,15 @@ func TestProtoLogsReader_WithTranslator(t *testing.T) {
 	translator := &testTranslator{addField: "test.translator", addValue: "proto"}
 
 	// Wrap with TranslatingReader
-	reader, err := NewTranslatingReader(baseReader, translator)
+	reader, err := NewTranslatingReader(baseReader, translator, 1000)
 	require.NoError(t, err)
 
 	// Read rows
-	rows := make([]Row, 10)
-	for i := range rows {
-		rows[i] = make(Row)
+	batch, err := reader.Next()
+	n := 0
+	if batch != nil {
+		n = len(batch.Rows)
 	}
-
-	n, err := reader.Read(rows)
 	t.Logf("TranslatingReader with ProtoLogsReader: n=%d, err=%v", n, err)
 
 	if err != nil && err != io.EOF {
@@ -442,8 +439,8 @@ func TestProtoLogsReader_WithTranslator(t *testing.T) {
 
 	// Verify translation worked
 	for i := 0; i < n; i++ {
-		assert.NotNil(t, rows[i])
-		assert.Equal(t, "proto", rows[i]["test.translator"])
-		t.Logf("Row %d: %d fields, translator field present", i, len(rows[i]))
+		assert.NotNil(t, batch.Rows[i])
+		assert.Equal(t, "proto", batch.Rows[i]["test.translator"])
+		t.Logf("Row %d: %d fields, translator field present", i, len(batch.Rows[i]))
 	}
 }

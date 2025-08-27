@@ -19,49 +19,20 @@ package filereader
 // Row represents a single row of data as a map of column names to values.
 type Row map[string]any
 
-// Reader is the core interface for reading rows from any file format.
-//
-// ## Row Buffer Contract
-//
-// Implementations MUST follow these buffer reuse rules for memory efficiency:
-//
-//  1. **Input Buffer Ownership**: The caller owns the Row slice and its individual Row maps.
-//     Readers MUST NOT store references to these Row maps beyond the Read() call.
-//
-//  2. **Row Map Reuse**: Callers may reuse Row maps across Read() calls for performance.
-//     Readers MUST call resetRow() or clear each Row map before populating it to prevent
-//     data leakage from previous reads.
-//
-//  3. **Population Contract**: Readers MUST only populate Row maps with new data after
-//     ensuring they are clean. Use resetRow(&rows[i]) before populating rows[i].
-//
-//  4. **Error Handling**: On errors, readers SHOULD leave Row maps in a clean state
-//     (empty or properly reset) to prevent partial data corruption.
-//
-//  5. **Concurrent Safety**: Individual Reader instances are NOT thread-safe unless
-//     explicitly documented. Callers MUST NOT call Read() concurrently on the same
-//     Reader instance.
-//
-// Example correct usage:
-//
-//	rows := make([]Row, 10)
-//	n, err := reader.Read(rows)
-//	// rows[0:n] now contain valid data, others are undefined
+// Reader is the core interface for reading rows from any file format using pipeline semantics.
+// This eliminates memory ownership issues by establishing clear ownership: batches are owned
+// by the reader and must not be retained beyond the next Next() call.
 type Reader interface {
-	// Read populates the provided slice with as many rows as possible.
-	// Returns the number of rows read and any error (including io.EOF when exhausted).
-	// Similar to io.Reader pattern: may return n > 0 and err != nil.
-	//
-	// IMPLEMENTATION REQUIREMENT: Must call resetRow() on each Row before populating
-	// it to ensure proper buffer reuse and prevent data corruption.
-	Read(rows []Row) (n int, err error)
+	// Next returns the next batch of rows, or io.EOF when exhausted.
+	// The returned batch is owned by the reader and must not be retained
+	// beyond the next Next() call. Use pipeline.CopyBatch() if you need to retain.
+	Next() (*Batch, error)
 
 	// Close releases any resources held by the reader.
 	Close() error
 
 	// TotalRowsReturned returns the total number of rows that have been successfully
-	// returned via Read() calls from this reader so far. This count should only include
-	// rows that were actually provided to the caller via Read().
+	// returned via Next() calls from this reader so far.
 	TotalRowsReturned() int64
 }
 
@@ -108,43 +79,10 @@ func TimeOrderedSelector(fieldName string) SelectFunc {
 	}
 }
 
-// resetRow initializes or clears a Row map for reuse to prevent data corruption.
-//
-// This function implements the core buffer reuse pattern for memory efficiency:
-// - If the row is nil, it creates a new Row map
-// - If not nil, it clears all existing data while preserving the underlying map allocation
-//
-// ## Usage Patterns:
-//
-// **Reader Implementations**: MUST call this before populating each row
-//
-//	resetRow(&rows[i])
-//	rows[i]["field"] = value
-//
-// **Callers with Buffer Reuse**: Should call this when recycling row buffers
-//
-//	resetRow(&myRowBuffer)
-//	reader.Read([]Row{myRowBuffer})
-//
-// **Error Recovery**: Call this to ensure clean state after errors
-//
-//	if err != nil {
-//	    resetRow(&pendingRow)  // Clean state for next attempt
-//	}
-//
-// ## Memory Safety:
-// This function prevents data leakage between row uses by ensuring each Row
-// starts clean. It preserves the underlying map allocation for performance
-// while removing all key-value pairs from previous uses.
-func resetRow(row *Row) {
-	if *row == nil {
-		*row = make(Row)
-	} else {
-		// Clear existing row while preserving map allocation
-		for k := range *row {
-			delete(*row, k)
-		}
-	}
+// Batch represents a collection of rows with clear ownership semantics.
+// The batch is owned by the reader that returns it.
+type Batch struct {
+	Rows []Row
 }
 
 // extractTimestamp extracts a timestamp from a row, handling various numeric types.

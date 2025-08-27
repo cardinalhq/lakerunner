@@ -59,15 +59,14 @@ func benchmarkSortingReader(b *testing.B, createReaderFunc func([]Row) (Reader, 
 		// Read all rows
 		rowsRead := 0
 		for {
-			rows := make([]Row, 100)
-			n, err := reader.Read(rows)
+			batch, err := reader.Next()
 			if err == io.EOF {
 				break
 			}
 			if err != nil {
 				b.Fatalf("Read error: %v", err)
 			}
-			rowsRead += n
+			rowsRead += len(batch.Rows)
 		}
 
 		reader.Close()
@@ -82,14 +81,14 @@ func benchmarkSortingReader(b *testing.B, createReaderFunc func([]Row) (Reader, 
 func BenchmarkMemorySortingReader(b *testing.B) {
 	benchmarkSortingReader(b, func(rows []Row) (Reader, error) {
 		mockReader := NewMockReader(rows)
-		return NewMemorySortingReader(mockReader, MetricNameTidTimestampSort())
+		return NewMemorySortingReader(mockReader, MetricNameTidTimestampSort(), 1000)
 	})
 }
 
 func BenchmarkDiskSortingReader(b *testing.B) {
 	benchmarkSortingReader(b, func(rows []Row) (Reader, error) {
 		mockReader := NewMockReader(rows)
-		return NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc())
+		return NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc(), 1000)
 	})
 }
 
@@ -109,15 +108,14 @@ func benchmarkSortingReaderWithSize(b *testing.B, numRows int, createReaderFunc 
 		// Read all rows
 		rowsRead := 0
 		for {
-			rows := make([]Row, 100)
-			n, err := reader.Read(rows)
+			batch, err := reader.Next()
 			if err == io.EOF {
 				break
 			}
 			if err != nil {
 				b.Fatalf("Read error: %v", err)
 			}
-			rowsRead += n
+			rowsRead += len(batch.Rows)
 		}
 
 		reader.Close()
@@ -132,27 +130,27 @@ func benchmarkSortingReaderWithSize(b *testing.B, numRows int, createReaderFunc 
 func BenchmarkMemorySortingReader_LargeDataset(b *testing.B) {
 	benchmarkSortingReaderWithSize(b, 10000, func(rows []Row) (Reader, error) {
 		mockReader := NewMockReader(rows)
-		return NewMemorySortingReader(mockReader, MetricNameTidTimestampSort())
+		return NewMemorySortingReader(mockReader, MetricNameTidTimestampSort(), 1000)
 	})
 }
 
 func BenchmarkDiskSortingReader_LargeDataset(b *testing.B) {
 	benchmarkSortingReaderWithSize(b, 10000, func(rows []Row) (Reader, error) {
 		mockReader := NewMockReader(rows)
-		return NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc())
+		return NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc(), 1000)
 	})
 }
 
 func BenchmarkMemorySortingReader_VeryLargeDataset(b *testing.B) {
 	benchmarkSortingReaderWithSize(b, 100000, func(rows []Row) (Reader, error) {
 		mockReader := NewMockReader(rows)
-		return NewMemorySortingReader(mockReader, MetricNameTidTimestampSort())
+		return NewMemorySortingReader(mockReader, MetricNameTidTimestampSort(), 1000)
 	})
 }
 
 func BenchmarkDiskSortingReader_VeryLargeDataset(b *testing.B) {
 	benchmarkSortingReaderWithSize(b, 100000, func(rows []Row) (Reader, error) {
 		mockReader := NewMockReader(rows)
-		return NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc())
+		return NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc(), 1000)
 	})
 }

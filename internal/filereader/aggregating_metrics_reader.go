@@ -32,6 +32,7 @@ type AggregatingMetricsReader struct {
 	aggregationPeriod int64 // milliseconds (e.g., 10000 for 10s)
 	closed            bool
 	rowCount          int64
+	batchSize         int
 
 	// Current aggregation state
 	currentKey      string
@@ -50,7 +51,7 @@ type AggregatingMetricsReader struct {
 //
 // aggregationPeriodMs: period in milliseconds for timestamp truncation (e.g., 10000 for 10s)
 // reader: underlying reader that returns rows in sorted order by [metric_name, tid, timestamp]
-func NewAggregatingMetricsReader(reader Reader, aggregationPeriodMs int64) (*AggregatingMetricsReader, error) {
+func NewAggregatingMetricsReader(reader Reader, aggregationPeriodMs int64, batchSize int) (*AggregatingMetricsReader, error) {
 	if reader == nil {
 		return nil, fmt.Errorf("reader cannot be nil")
 	}
@@ -58,9 +59,14 @@ func NewAggregatingMetricsReader(reader Reader, aggregationPeriodMs int64) (*Agg
 		return nil, fmt.Errorf("aggregation period must be positive, got %d", aggregationPeriodMs)
 	}
 
+	if batchSize <= 0 {
+		batchSize = 1000
+	}
+
 	return &AggregatingMetricsReader{
 		reader:                reader,
 		aggregationPeriod:     aggregationPeriodMs,
+		batchSize:             batchSize,
 		singletonValues:       make([]float64, 0, 16),
 		loggedHistogramErrors: make(map[string]bool),
 		pendingRow:            make(Row),
@@ -362,128 +368,129 @@ func (ar *AggregatingMetricsReader) addRowToAggregation(row Row) error {
 	return nil
 }
 
-// readNextRowFromUnderlying reads the next row from the underlying reader.
-func (ar *AggregatingMetricsReader) readNextRowFromUnderlying() error {
+// readNextBatchFromUnderlying reads the next batch from the underlying reader.
+func (ar *AggregatingMetricsReader) readNextBatchFromUnderlying() (*Batch, error) {
 	if ar.readerEOF {
-		return nil
+		return nil, io.EOF
 	}
 
-	resetRow(&ar.pendingRow)
-	n, err := ar.reader.Read([]Row{ar.pendingRow})
-
-	if n == 0 {
+	batch, err := ar.reader.Next()
+	if err != nil {
 		if err == io.EOF {
 			ar.readerEOF = true
-			return nil
 		}
-		return err
+		return batch, err
 	}
 
-	if err == io.EOF {
-		ar.readerEOF = true
-		return nil
-	}
-
-	return err
+	return batch, nil
 }
 
-// Read populates the provided slice with aggregated rows.
-func (ar *AggregatingMetricsReader) Read(rows []Row) (int, error) {
+// Next returns the next batch of aggregated rows.
+func (ar *AggregatingMetricsReader) Next() (*Batch, error) {
 	if ar.closed {
-		return 0, fmt.Errorf("reader is closed")
+		return nil, fmt.Errorf("reader is closed")
 	}
 
-	if len(rows) == 0 {
-		return 0, nil
+	batch := &Batch{
+		Rows: make([]Row, 0, ar.batchSize),
 	}
 
-	n := 0
-	for n < len(rows) {
+	for {
 		// Ensure we have a pending row to process
 		if len(ar.pendingRow) == 0 && !ar.readerEOF {
-			if err := ar.readNextRowFromUnderlying(); err != nil {
-				return n, err
-			}
-		}
-
-		// If no more rows and no current aggregation, we're done
-		if len(ar.pendingRow) == 0 && ar.currentKey == "" {
-			if n == 0 {
-				return 0, io.EOF
-			}
-			break
-		}
-
-		// If we have a pending row, process it
-		if len(ar.pendingRow) != 0 {
-			key, err := ar.makeAggregationKey(ar.pendingRow)
+			underlyingBatch, err := ar.readNextBatchFromUnderlying()
 			if err != nil {
-				slog.Error("Failed to make aggregation key", "error", err, "row", ar.pendingRow)
-				resetRow(&ar.pendingRow)
-				continue
-			}
-
-			// If this row belongs to current group, add it
-			if ar.currentKey == "" || ar.currentKey == key {
-				ar.currentKey = key
-				if err := ar.addRowToAggregation(ar.pendingRow); err != nil {
-					slog.Error("Failed to add row to aggregation", "error", err)
-				}
-				resetRow(&ar.pendingRow)
-				continue
-			}
-
-			// Key changed - emit current aggregation and start new one
-			if ar.currentKey != "" {
-				result, err := ar.aggregateGroup()
-				if err != nil {
-					return n, fmt.Errorf("failed to aggregate group: %w", err)
-				}
-
-				// Only emit if we have a result (not all rows were dropped)
-				if result != nil {
-					resetRow(&rows[n])
-					for k, v := range result {
-						rows[n][k] = v
+				if err == io.EOF {
+					// Check if we need to emit final aggregation
+					if ar.currentKey != "" {
+						result, aggErr := ar.aggregateGroup()
+						if aggErr != nil {
+							return nil, fmt.Errorf("failed to aggregate final group: %w", aggErr)
+						}
+						if result != nil {
+							batch.Rows = append(batch.Rows, result)
+							ar.rowCount++
+						}
 					}
-					n++
-					ar.rowCount++
+					if len(batch.Rows) == 0 {
+						return nil, io.EOF
+					}
+					return batch, nil
+				}
+				return nil, err
+			}
+
+			// Process all rows in the batch
+			for _, row := range underlyingBatch.Rows {
+				// Copy row to pending
+				ar.pendingRow = make(Row)
+				for k, v := range row {
+					ar.pendingRow[k] = v
 				}
 
-				// Start new aggregation with the pending row
-				ar.currentKey = key
-				if err := ar.addRowToAggregation(ar.pendingRow); err != nil {
-					slog.Error("Failed to add row to new aggregation", "error", err)
+				// Process this row immediately
+				key, err := ar.makeAggregationKey(ar.pendingRow)
+				if err != nil {
+					slog.Error("Failed to make aggregation key", "error", err, "row", ar.pendingRow)
+					ar.pendingRow = make(Row)
+					continue
 				}
-				resetRow(&ar.pendingRow)
-				continue
+
+				// If this row belongs to current group, add it
+				if ar.currentKey == "" || ar.currentKey == key {
+					ar.currentKey = key
+					if err := ar.addRowToAggregation(ar.pendingRow); err != nil {
+						slog.Error("Failed to add row to aggregation", "error", err)
+					}
+					ar.pendingRow = make(Row)
+					continue
+				}
+
+				// Key changed - emit current aggregation and start new one
+				if ar.currentKey != "" {
+					result, err := ar.aggregateGroup()
+					if err != nil {
+						return nil, fmt.Errorf("failed to aggregate group: %w", err)
+					}
+
+					// Only emit if we have a result (not all rows were dropped)
+					if result != nil {
+						batch.Rows = append(batch.Rows, result)
+						ar.rowCount++
+
+						// Return batch if we have enough rows
+						if len(batch.Rows) >= ar.batchSize {
+							// Start new aggregation with the pending row and break
+							ar.currentKey = key
+							if err := ar.addRowToAggregation(ar.pendingRow); err != nil {
+								slog.Error("Failed to add row to new aggregation", "error", err)
+							}
+							ar.pendingRow = make(Row)
+							return batch, nil
+						}
+					}
+
+					// Start new aggregation with the pending row
+					ar.currentKey = key
+					if err := ar.addRowToAggregation(ar.pendingRow); err != nil {
+						slog.Error("Failed to add row to new aggregation", "error", err)
+					}
+					ar.pendingRow = make(Row)
+					continue
+				}
 			}
 		}
 
-		// No pending row - check if we need to emit final aggregation
-		if ar.currentKey != "" && ar.readerEOF {
-			result, err := ar.aggregateGroup()
-			if err != nil {
-				return n, fmt.Errorf("failed to aggregate final group: %w", err)
-			}
-
-			// Only emit if we have a result (not all rows were dropped)
-			if result != nil {
-				resetRow(&rows[n])
-				for k, v := range result {
-					rows[n][k] = v
-				}
-				n++
-				ar.rowCount++
-			}
-			continue
+		// If we have any aggregated rows, return them
+		if len(batch.Rows) > 0 {
+			return batch, nil
 		}
 
-		// Nothing more to process
-		break
+		// If we have no rows and are at EOF, we're done
+		if ar.readerEOF && ar.currentKey == "" {
+			return nil, io.EOF
+		}
 	}
-
-	return n, nil
 }
 
 // Close closes the reader and the underlying reader.

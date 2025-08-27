@@ -27,6 +27,7 @@ type TranslatingReader struct {
 	translator RowTranslator
 	closed     bool
 	rowCount   int64 // Track total rows successfully read and translated
+	batchSize  int
 }
 
 // NewTranslatingReader creates a new TranslatingReader that applies the given
@@ -34,7 +35,7 @@ type TranslatingReader struct {
 //
 // The TranslatingReader takes ownership of the underlying reader and will
 // close it when Close() is called.
-func NewTranslatingReader(reader Reader, translator RowTranslator) (*TranslatingReader, error) {
+func NewTranslatingReader(reader Reader, translator RowTranslator, batchSize int) (*TranslatingReader, error) {
 	if reader == nil {
 		return nil, errors.New("reader cannot be nil")
 	}
@@ -42,35 +43,51 @@ func NewTranslatingReader(reader Reader, translator RowTranslator) (*Translating
 		return nil, errors.New("translator cannot be nil")
 	}
 
+	if batchSize <= 0 {
+		batchSize = 1000
+	}
+
 	return &TranslatingReader{
 		reader:     reader,
 		translator: translator,
+		batchSize:  batchSize,
 	}, nil
 }
 
-// Read populates the provided slice with translated rows from the underlying reader.
-func (tr *TranslatingReader) Read(rows []Row) (int, error) {
+// Next returns the next batch of translated rows from the underlying reader.
+func (tr *TranslatingReader) Next() (*Batch, error) {
 	if tr.closed {
-		return 0, errors.New("reader is closed")
+		return nil, errors.New("reader is closed")
 	}
 
-	if len(rows) == 0 {
-		return 0, nil
+	// Get raw batch from underlying reader
+	batch, err := tr.reader.Next()
+	if batch == nil {
+		return nil, err
 	}
 
-	// Get raw rows from underlying reader
-	n, err := tr.reader.Read(rows)
-
-	// Translate each row that was successfully read (in-place modification)
-	for i := 0; i < n; i++ {
-		if translateErr := tr.translator.TranslateRow(&rows[i]); translateErr != nil {
+	// Translate each row in the batch (in-place modification)
+	for i := range batch.Rows {
+		if translateErr := tr.translator.TranslateRow(&batch.Rows[i]); translateErr != nil {
 			// TODO: Add logging here when we have access to a logger
-			return i, fmt.Errorf("translation failed for row %d: %w", i, translateErr)
+
+			// Return partial batch if we've successfully translated some rows
+			if i > 0 {
+				// Truncate batch to only include successfully translated rows
+				batch.Rows = batch.Rows[:i]
+				tr.rowCount += int64(len(batch.Rows))
+				return batch, fmt.Errorf("translation failed for row %d: %w", i, translateErr)
+			}
+
+			// No rows successfully translated
+			return nil, fmt.Errorf("translation failed for row %d: %w", i, translateErr)
 		}
-		tr.rowCount++ // Count each successfully translated row
 	}
 
-	return n, err // Pass through the original error (including EOF)
+	// Count each successfully translated row
+	tr.rowCount += int64(len(batch.Rows))
+
+	return batch, err
 }
 
 // Close closes the underlying reader and releases resources.

@@ -25,8 +25,9 @@ import (
 // ProtoLogsReader reads rows from OpenTelemetry protobuf logs format.
 // Returns raw OTEL log data without signal-specific transformations.
 type ProtoLogsReader struct {
-	closed   bool
-	rowCount int64
+	closed    bool
+	rowCount  int64
+	batchSize int
 
 	// Streaming iterator state for logs
 	logs          *plog.Logs
@@ -37,8 +38,14 @@ type ProtoLogsReader struct {
 
 // NewProtoLogsReader creates a new ProtoLogsReader for the given io.Reader.
 // The caller is responsible for closing the underlying reader.
-func NewProtoLogsReader(reader io.Reader) (*ProtoLogsReader, error) {
-	protoReader := &ProtoLogsReader{}
+func NewProtoLogsReader(reader io.Reader, batchSize int) (*ProtoLogsReader, error) {
+	if batchSize <= 0 {
+		batchSize = 1000
+	}
+
+	protoReader := &ProtoLogsReader{
+		batchSize: batchSize,
+	}
 
 	logs, err := parseProtoToOtelLogs(reader)
 	if err != nil {
@@ -49,39 +56,38 @@ func NewProtoLogsReader(reader io.Reader) (*ProtoLogsReader, error) {
 	return protoReader, nil
 }
 
-// Read populates the provided slice with as many rows as possible.
-func (r *ProtoLogsReader) Read(rows []Row) (int, error) {
+// Next returns the next batch of rows from the OTEL logs.
+func (r *ProtoLogsReader) Next() (*Batch, error) {
 	if r.closed {
-		return 0, fmt.Errorf("reader is closed")
+		return nil, fmt.Errorf("reader is closed")
 	}
 
-	if len(rows) == 0 {
-		return 0, nil
+	batch := &Batch{
+		Rows: make([]Row, 0, r.batchSize),
 	}
 
-	n := 0
-	for n < len(rows) {
+	for len(batch.Rows) < r.batchSize {
 		row, err := r.getLogRow()
 		if err != nil {
-			return n, err
+			if err == io.EOF {
+				if len(batch.Rows) == 0 {
+					return nil, io.EOF
+				}
+				break
+			}
+			return nil, err
 		}
 
-		resetRow(&rows[n])
-
-		// Copy data to Row
-		for k, v := range row {
-			rows[n][k] = v
-		}
-
-		n++
+		batch.Rows = append(batch.Rows, row)
 	}
 
 	// Update row count with successfully read rows
-	if n > 0 {
-		r.rowCount += int64(n)
+	if len(batch.Rows) > 0 {
+		r.rowCount += int64(len(batch.Rows))
+		return batch, nil
 	}
 
-	return n, nil
+	return nil, io.EOF
 }
 
 // getLogRow handles reading the next log row.
