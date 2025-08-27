@@ -15,10 +15,11 @@
 package promql
 
 import (
-	"github.com/google/uuid"
 	"math"
 	"sort"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type SegmentInfo struct {
@@ -40,7 +41,8 @@ type SegmentGroup struct {
 	Segments []SegmentInfo
 }
 
-// ComputeReplayBatchesWithWorkers Public entrypoint: takes workers, computes targetSize internally.
+// ComputeReplayBatchesWithWorkers: public entrypoint. Computes a per-group target size
+// from total #segments and worker count (capped), then delegates.
 func ComputeReplayBatchesWithWorkers(
 	segments []SegmentInfo,
 	step time.Duration,
@@ -59,7 +61,10 @@ func ComputeReplayBatchesWithWorkers(
 	)
 }
 
-// ComputeReplayBatches computes batches of segments to replay over a time window.
+// ComputeReplayBatches builds aligned time windows, orders them, then packs groups
+// purely by segment-count (ignoring time gaps) to match the Scala behavior.
+// On flush, it merges per (SegmentID, ExprID), clamps to [queryStartTs, queryEndTs],
+// and *seals* each segment to the group window.
 func ComputeReplayBatches(
 	segments []SegmentInfo,
 	step time.Duration,
@@ -74,63 +79,53 @@ func ComputeReplayBatches(
 		targetSize = len(segments)
 	}
 
-	windows := buildWindows(segments, step, queryStartTs, queryEndTs)
-
-	sort.Slice(windows, func(i, j int) bool {
-		if windows[i].StartTs == windows[j].StartTs {
-			return windows[i].EndTs < windows[j].EndTs
-		}
-		return windows[i].StartTs < windows[j].StartTs
-	})
-
-	batches := coalesceContiguous(windows, targetSize)
-
-	if reverseSort {
-		for i, j := 0, len(batches)-1; i < j; i, j = i+1, j-1 {
-			batches[i], batches[j] = batches[j], batches[i]
-		}
-	}
-
-	for i := range batches {
-		batches[i] = normalizeAndMerge(batches[i], queryStartTs, queryEndTs)
-	}
-	return batches
-}
-
-// ---- internals ----
-
-// Align each segment to step, clamp to query, then group by exact [start,end).
-func buildWindows(segs []SegmentInfo, step time.Duration, qStart, qEnd int64) []SegmentGroup {
 	stepMs := step.Milliseconds()
 	if stepMs <= 0 {
 		stepMs = 1
 	}
 
-	type key struct{ s, e int64 }
-	buckets := map[key][]SegmentInfo{}
+	// 1) Build aligned windows by exact (start,end) buckets.
+	windows := buildWindows(segments, stepMs)
 
-	align := func(ts int64) int64 {
-		// Truncate down to step boundary
-		return ts - (ts % stepMs)
-	}
-	ceilToStep := func(ts int64) int64 {
-		if r := ts % stepMs; r == 0 {
-			return ts
+	// 2) Order the windows by EndTs (Scala sorts by endTs; ties by startTs).
+	sort.Slice(windows, func(i, j int) bool {
+		if windows[i].EndTs == windows[j].EndTs {
+			return windows[i].StartTs < windows[j].StartTs
 		}
-		return ts + (stepMs - (ts % stepMs))
+		return windows[i].EndTs < windows[j].EndTs
+	})
+	if reverseSort && len(windows) > 1 {
+		for i, j := 0, len(windows)-1; i < j; i, j = i+1, j-1 {
+			windows[i], windows[j] = windows[j], windows[i]
+		}
 	}
+
+	// 3) Pack ignoring gaps; flush when we’ve accumulated >= targetSize segments.
+	out := packByCount(windows, targetSize, queryStartTs, queryEndTs)
+	return out
+}
+
+// ---- internals ----
+
+func alignDown(ts, stepMs int64) int64 {
+	return ts - (ts % stepMs)
+}
+func alignUp(ts, stepMs int64) int64 {
+	if r := ts % stepMs; r == 0 {
+		return ts
+	}
+	return ts + (stepMs - (ts % stepMs))
+}
+
+// buildWindows aligns each segment to step boundaries and buckets by (alignedStart, alignedEnd).
+// We *don’t* clamp to the query here; clamping happens at flush to mimic Scala’s merge behavior.
+func buildWindows(segs []SegmentInfo, stepMs int64) []SegmentGroup {
+	type key struct{ s, e int64 }
+	buckets := make(map[key][]SegmentInfo, len(segs))
 
 	for _, s := range segs {
-		// align to step
-		as := align(s.StartTs)
-		ae := ceilToStep(s.EndTs)
-		// clamp to query
-		if as < qStart {
-			as = qStart - (qStart % stepMs) // align/clamp boundary too
-		}
-		if ae > qEnd {
-			ae = ceilToStep(qEnd)
-		}
+		as := alignDown(s.StartTs, stepMs)
+		ae := alignUp(s.EndTs, stepMs)
 		if as >= ae {
 			continue
 		}
@@ -152,128 +147,97 @@ func buildWindows(segs []SegmentInfo, step time.Duration, qStart, qEnd int64) []
 	return wins
 }
 
-// Greedy pack adjacent windows into batches by time. Flush on gaps or when targetSize reached.
-func coalesceContiguous(wins []SegmentGroup, targetSize int) []SegmentGroup {
+// packByCount merges windows by accumulating segment count until >= minGroupSize.
+// On flush, it merges parts by (SegmentID, ExprID), computes the group window as
+// minStart..maxEnd across the parts, clamps to [qStart,qEnd], and seals segments
+// to that group window.
+func packByCount(wins []SegmentGroup, minGroupSize int, qStart, qEnd int64) []SegmentGroup {
 	if len(wins) == 0 {
 		return nil
 	}
-	var out []SegmentGroup
-
-	var curStart, curEnd int64
-	var curSegs []SegmentInfo
-	var curCount int
-
-	flush := func() {
-		if len(curSegs) == 0 {
-			return
-		}
-		out = append(out, SegmentGroup{
-			StartTs:  curStart,
-			EndTs:    curEnd,
-			Segments: curSegs,
-		})
-		curStart, curEnd = 0, 0
-		curSegs = nil
-		curCount = 0
+	if minGroupSize <= 0 {
+		minGroupSize = len(wins)
 	}
 
-	for idx, w := range wins {
-		if idx == 0 {
-			curStart, curEnd = w.StartTs, w.EndTs
-			curSegs = append(curSegs, w.Segments...)
-			curCount += len(w.Segments)
-			continue
+	var out []SegmentGroup
+	var parts []SegmentInfo
+	count := 0
+
+	flush := func() {
+		if len(parts) == 0 {
+			return
 		}
 
-		// Contiguity check: no gaps between previous end and this start.
-		if w.StartTs != curEnd {
-			// Time gap → flush regardless of count
-			flush()
-			curStart, curEnd = w.StartTs, w.EndTs
-			curSegs = append(curSegs, w.Segments...)
-			curCount += len(w.Segments)
-			continue
+		// Compute window across all parts.
+		gs, ge := parts[0].StartTs, parts[0].EndTs
+		for _, p := range parts[1:] {
+			if p.StartTs < gs {
+				gs = p.StartTs
+			}
+			if p.EndTs > ge {
+				ge = p.EndTs
+			}
+		}
+		// Clamp to query.
+		if gs < qStart {
+			gs = qStart
+		}
+		if ge > qEnd {
+			ge = qEnd
+		}
+		if gs >= ge {
+			parts = parts[:0]
+			count = 0
+			return
 		}
 
-		// Extend current batch
-		curEnd = w.EndTs
-		curSegs = append(curSegs, w.Segments...)
-		curCount += len(w.Segments)
+		// Merge per (SegmentID, ExprID) by widening to the group window.
+		type key struct {
+			id   int64
+			expr string
+		}
+		merged := make(map[key]SegmentInfo, len(parts))
+		for _, s := range parts {
+			k := key{s.SegmentID, s.ExprID}
+			if _, ok := merged[k]; !ok {
+				ss := s
+				ss.StartTs = gs
+				ss.EndTs = ge
+				merged[k] = ss
+			} else {
+				// Already sealed to gs..ge; nothing else to do.
+			}
+		}
 
-		// If we've hit target size (or exceeded), flush this contiguous block.
-		if curCount >= targetSize {
+		segs := make([]SegmentInfo, 0, len(merged))
+		for _, v := range merged {
+			segs = append(segs, v)
+		}
+		out = append(out, SegmentGroup{
+			StartTs:  gs,
+			EndTs:    ge,
+			Segments: segs,
+		})
+		parts = parts[:0]
+		count = 0
+	}
+
+	for _, w := range wins {
+		parts = append(parts, w.Segments...)
+		count += len(w.Segments)
+		if count >= minGroupSize {
 			flush()
 		}
 	}
 	flush()
 
-	// (Optional) small-tail rebalance: if we produced ≥2 batches and the last batch is tiny,
-	// merge it into the previous one to avoid stragglers.
-	if len(out) >= 2 {
-		last := &out[len(out)-1]
-		prev := &out[len(out)-2]
-		if len(last.Segments) < targetSize/3 {
-			// merge into prev
-			prev.EndTs = last.EndTs
-			prev.Segments = append(prev.Segments, last.Segments...)
-			out = out[:len(out)-1]
-		}
-	}
-
 	return out
-}
-
-// Within a batch, widen duplicates by (SegmentID, ExprID) to the batch window
-// and clamp to [queryStart, queryEnd]. This ensures each worker reads a single
-// contiguous time window per (segment, expr).
-func normalizeAndMerge(g SegmentGroup, qStart, qEnd int64) SegmentGroup {
-	start := g.StartTs
-	end := g.EndTs
-	if start < qStart {
-		start = qStart
-	}
-	if end > qEnd {
-		end = qEnd
-	}
-	if start >= end {
-		return SegmentGroup{}
-	}
-
-	type key struct {
-		sid int64
-		eid string
-	}
-	merged := map[key]SegmentInfo{}
-
-	for _, s := range g.Segments {
-		k := key{s.SegmentID, s.ExprID}
-		if cur, ok := merged[k]; ok {
-			// widen to batch bounds
-			cur.StartTs = start
-			cur.EndTs = end
-			merged[k] = cur
-		} else {
-			ss := s
-			ss.StartTs = start
-			ss.EndTs = end
-			merged[k] = ss
-		}
-	}
-
-	out := make([]SegmentInfo, 0, len(merged))
-	for _, s := range merged {
-		out = append(out, s)
-	}
-	return SegmentGroup{
-		StartTs:  start,
-		EndTs:    end,
-		Segments: out,
-	}
 }
 
 func TargetSize(totalSegments, workers int) int {
 	if workers <= 0 {
 		return totalSegments
 	}
+	// Keep previous cap behavior (max ~30 per batch) to avoid huge groups.
 	return int(math.Min(30, math.Ceil(float64(totalSegments)/float64(workers))))
 }

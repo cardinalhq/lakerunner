@@ -54,7 +54,7 @@ func TestBuildStepOnly_NoGroup(t *testing.T) {
 	mustContain(t, sql, `WITH buckets AS (SELECT range AS bucket_ts FROM range(({start} - ({start} % 10000)), (({end} - 1) - (({end} - 1) % 10000) + 10000), 10000))`)
 	// step_aggr grouping by bucket_ts and time filter present
 	mustContain(t, sql, `step_aggr AS (SELECT ("_cardinalhq.timestamp" - ("_cardinalhq.timestamp" % 10000)) AS bucket_ts`)
-	mustContain(t, sql, `FROM {table} WHERE "_cardinalhq.name" = 'bytes_total' AND "_cardinalhq.timestamp" >= {start} AND "_cardinalhq.timestamp" < {end} GROUP BY bucket_ts`)
+	mustContain(t, sql, `FROM {table} WHERE "_cardinalhq.name" = 'bytes_total' AND true AND "_cardinalhq.timestamp" >= {start} AND "_cardinalhq.timestamp" < {end} GROUP BY bucket_ts`)
 	// LEFT JOIN and COALESCE zeros
 	mustContain(t, sql, `LEFT JOIN step_aggr sa USING (bucket_ts)`)
 	mustContain(t, sql, `COALESCE(sa.step_sum, 0) AS sum`)
@@ -74,7 +74,7 @@ func TestBuildWindowed_SumCount_NoRange(t *testing.T) {
 	mustContain(t, sql, `grid AS (SELECT CAST(range AS BIGINT) AS step_idx FROM range(CAST(({start} - ({start} % 10000)) AS BIGINT), CAST((({end}-1) - (({end}-1) % 10000) + 10000) AS BIGINT), 10000))`)
 	// step_aggr buckets by same modulo and time predicate WITH placeholders
 	mustContain(t, sql, `step_aggr AS (SELECT (CAST("_cardinalhq.timestamp" AS BIGINT) - (CAST("_cardinalhq.timestamp" AS BIGINT) % 10000)) AS step_idx`)
-	mustContain(t, sql, `FROM {table} WHERE "_cardinalhq.name" = 'events_total' AND "_cardinalhq.timestamp" >= {start} AND "_cardinalhq.timestamp" < {end} GROUP BY step_idx`)
+	mustContain(t, sql, `FROM {table} WHERE "_cardinalhq.name" = 'events_total' AND true AND "_cardinalhq.timestamp" >= {start} AND "_cardinalhq.timestamp" < {end} GROUP BY step_idx`)
 	// base join on explicit ON and COALESCE to 0
 	mustContain(t, sql, `FROM grid g LEFT JOIN step_aggr sa ON g.step_idx = sa.step_idx`)
 	mustContain(t, sql, `COALESCE(sa.step_sum, 0) AS w_step_sum`)

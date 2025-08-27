@@ -65,7 +65,7 @@ type CacheManager struct {
 }
 
 const (
-	MaxRowsDefault = 1000000
+	MaxRowsDefault = 10000000000 // 10 billion rows (approx 10GB on disk assuming 10 bytes/row)
 )
 
 func NewCacheManager(dl DownloadBatchFunc, storageProfileProvider storageprofile.StorageProfileProvider) *CacheManager {
@@ -182,6 +182,7 @@ func EvaluatePushDown[T promql.Timestamped](
 				}
 			}
 
+			slog.Info("Segment Stats", "numS3", len(s3URIs), "numCached", len(cachedIDs), "numPresent", len(w.present))
 			// Stream uncached segments directly from S3 (one channel per glob).
 			s3Channels, err := streamFromS3(ctx, w, request, profile.Bucket, profile.Region, s3URIs, s3GlobSize, userSQL, mapper)
 			if err != nil {
@@ -200,7 +201,7 @@ func EvaluatePushDown[T promql.Timestamped](
 		}
 	}
 
-	slog.Info("Returning channels for pushdown evaluation", slog.Int("channels", len(outs)))
+	//slog.Info("Returning channels for pushdown evaluation", slog.Int("channels", len(outs)))
 	return promql.MergeSorted(ctx, 1024, outs...), nil
 }
 
@@ -294,7 +295,7 @@ func streamFromS3[T promql.Timestamped](
 	}
 
 	batches := chunkStrings(s3URIs, s3GlobSize)
-	slog.Info("Chunked S3 URIs into batches", slog.Int("batches", len(batches)), slog.Int("incoming", len(s3URIs)))
+	//slog.Info("Chunked S3 URIs into batches", slog.Int("batches", len(batches)), slog.Int("incoming", len(s3URIs)))
 	outs := make([]<-chan T, 0, len(batches))
 
 	for _, uris := range batches {
@@ -409,7 +410,6 @@ func (w *CacheManager) ingestLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case job := <-w.ingestQ:
-			slog.Info("Dequeued ingest job", "paths", len(job.paths), "ids", len(job.ids))
 			if len(job.paths) == 0 {
 				continue
 			}
@@ -447,7 +447,7 @@ func (w *CacheManager) ingestLoop(ctx context.Context) {
 			now := time.Now()
 			w.mu.Lock()
 			for _, id := range job.ids {
-				slog.Info("Marking segment as present", slog.Int64("segmentID", id))
+				//slog.Info("Marking segment as present", slog.Int64("segmentID", id))
 				w.present[id] = struct{}{}
 				w.lastAccess[id] = now
 				if wg := w.inflight[id]; wg != nil {
@@ -480,6 +480,8 @@ func chunkStrings(xs []string, size int) [][]string {
 	return out
 }
 
+const batchSize = 300
+
 func escapeSQL(s string) string {
 	return strings.ReplaceAll(s, `'`, `''`)
 }
@@ -509,7 +511,6 @@ func (w *CacheManager) maybeEvictOnce(ctx context.Context) {
 
 	sort.Slice(lru, func(i, j int) bool { return lru[i].at.Before(lru[j].at) })
 
-	const batchSize = 64
 	batch := make([]int64, 0, batchSize)
 
 	for _, e := range lru {
@@ -528,6 +529,7 @@ func (w *CacheManager) maybeEvictOnce(ctx context.Context) {
 }
 
 func (w *CacheManager) dropSegments(ctx context.Context, segIDs []int64) {
+	slog.Info("Evicting segments from cache", slog.Int("count", len(segIDs)))
 	_, _ = w.sink.DeleteSegments(ctx, segIDs)
 
 	w.mu.Lock()

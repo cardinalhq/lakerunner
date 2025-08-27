@@ -456,7 +456,7 @@ func whereFor(be *BaseExpr) string {
 	if len(parts) == 0 {
 		return ""
 	}
-	return " WHERE " + strings.Join(parts, " AND ")
+	return " WHERE " + strings.Join(parts, " AND ") + " AND true"
 }
 
 func sqlLit(s string) string {

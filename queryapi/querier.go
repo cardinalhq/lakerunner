@@ -207,7 +207,8 @@ func (q *QuerierService) Run(doneCtx context.Context) error {
 	slog.Info("Starting querier service")
 
 	mux := http.NewServeMux()
-	mux.Handle("/api/v1/query", q) // supports GET + POST
+	mux.Handle("/api/v1/query", q)          // supports GET + POST
+	mux.Handle("/api/v1/comparePeriods", q) // supports GET + POST
 
 	srv := &http.Server{
 		Addr:    ":8080",

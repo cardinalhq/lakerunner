@@ -18,6 +18,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,8 +29,9 @@ import (
 )
 
 type DDBSink struct {
-	db    *duckdbx.DB
-	table string
+	db        *duckdbx.DB
+	parquetDb *sql.DB
+	table     string
 
 	// schema cache for quick diffs
 	schemaMu sync.RWMutex
@@ -70,15 +72,19 @@ func NewDDBSink(ctx context.Context) (*DDBSink, error) {
 
 	db, err := duckdbx.Open(dbPath,
 		duckdbx.WithMemoryLimitMB(2048),
-		duckdbx.WithExtension("httpfs"),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("open duckdb: %w", err)
 	}
 
+	parquetDb, err := openForLocalParquet()
+	if err != nil {
+		return nil, fmt.Errorf("open duckdb for local parquet: %w", err)
+	}
 	s := &DDBSink{
-		db:    db,
-		table: "cached",
+		db:        db,
+		parquetDb: parquetDb,
+		table:     "cached",
 		schema: schemaCache{
 			index: make(map[string]int),
 		},
@@ -113,7 +119,9 @@ func NewDDBSink(ctx context.Context) (*DDBSink, error) {
 }
 
 // Close closes the underlying DuckDB connection.
-func (s *DDBSink) Close() error { return s.db.Close() }
+func (s *DDBSink) Close() error {
+	return s.db.Close()
+}
 
 // RowCount returns the current cached idea of row count (no DB call).
 func (s *DDBSink) RowCount() int64 { return s.totalRows.Load() }
@@ -135,7 +143,7 @@ func (s *DDBSink) IngestParquetBatch(ctx context.Context, parquetPaths []string,
 	defer s.writeMu.Unlock()
 
 	// 1) Probe union schema across the whole batch → plan ALTERs once.
-	unionAll, err := probeParquetSchemaList(ctx, s.db, parquetPaths)
+	unionAll, err := s.probeParquetSchemaList(ctx, parquetPaths)
 	if err != nil {
 		return fmt.Errorf("probe batch schema: %w", err)
 	}
@@ -178,7 +186,7 @@ func (s *DDBSink) IngestParquetBatch(ctx context.Context, parquetPaths []string,
 		idsChunk := segmentIDs[start:end]
 
 		// 3a) Probe union schema for this chunk (cheap LIMIT 0) & assert timestamp present.
-		unionChunk, err := probeParquetSchemaList(ctx, s.db, pathsChunk)
+		unionChunk, err := s.probeParquetSchemaList(ctx, pathsChunk)
 		if err != nil {
 			return fmt.Errorf("probe chunk schema [%d:%d]: %w", start, end, err)
 		}
@@ -375,79 +383,22 @@ func (s *DDBSink) applyAlters(ctx context.Context, missing map[string]string) er
 	return s.applyAltersLocked(ctx, missing)
 }
 
-// ------------------------------ SQL builders ---------------------------------
-
-// buildInsertSQLPerFile constructs an INSERT for a single parquet file.
-// It sets segment_id to a constant, and forces the anchor timestamp into `ts`.
-// For other table columns: selects the file column if present; otherwise CAST(NULL AS <type>).
-func buildInsertSQLPerFile(table string, tableCols []colDef, fileCols map[string]string, parquetPath, segmentID string) (string, error) {
-	left := make([]string, 0, len(tableCols))
-	right := make([]string, 0, len(tableCols))
-
-	// Build a map for quick presence checks (case-sensitive to match DuckDB column names).
-	has := func(name string) bool {
-		_, ok := fileCols[name]
-		return ok
+func openForLocalParquet() (*sql.DB, error) {
+	db, err := sql.Open("duckdb", "")
+	if err != nil {
+		slog.Error("Error opening duckdb for local parquet", "error", err.Error())
 	}
-
-	// Decide anchor ts expression
-	tsExpr, ok := anchorTsExpr(fileCols)
-	if !ok {
-		return "", fmt.Errorf("no recognizable timestamp column for %s (want one of _cardinalhq.timestamp, ts, timestamp, ts_ms)", parquetPath)
-	}
-
-	for _, c := range tableCols {
-		left = append(left, ident(c.Name))
-
-		switch c.Name {
-		case "segment_id":
-			right = append(right, "'"+escape(segmentID)+"' AS "+ident(c.Name))
-		case "ts":
-			right = append(right, tsExpr+" AS "+ident(c.Name))
-		default:
-			if has(c.Name) {
-				right = append(right, ident(c.Name))
-			} else {
-				right = append(right, fmt.Sprintf("CAST(NULL AS %s) AS %s", c.Type, ident(c.Name)))
-			}
-		}
-	}
-
-	return fmt.Sprintf(`
-INSERT INTO %s (%s)
-SELECT %s
-FROM read_parquet('%s', union_by_name=true);
-`, ident(table), strings.Join(left, ", "), strings.Join(right, ", "), escape(parquetPath)), nil
-}
-
-// anchorTsExpr returns a CAST(...) expression to populate `ts BIGINT` from common source columns.
-func anchorTsExpr(fileCols map[string]string) (string, bool) {
-	// Prefer explicit cardinal timestamp if present.
-	if _, ok := fileCols["_cardinalhq.timestamp"]; ok {
-		return `CAST("_cardinalhq.timestamp" AS BIGINT)`, true
-	}
-	// Common alternates
-	if _, ok := fileCols["ts_ms"]; ok {
-		return "CAST(ts_ms AS BIGINT)", true
-	}
-	if _, ok := fileCols["ts"]; ok {
-		return "CAST(ts AS BIGINT)", true
-	}
-	if _, ok := fileCols["timestamp"]; ok {
-		return "CAST(timestamp AS BIGINT)", true
-	}
-	return "", false
+	return db, err
 }
 
 // Batch insert over a list of files to discover union schema (for ALTER planning).
-func probeParquetSchemaList(ctx context.Context, db *duckdbx.DB, paths []string) (map[string]string, error) {
+func (s *DDBSink) probeParquetSchemaList(ctx context.Context, paths []string) (map[string]string, error) {
 	q := fmt.Sprintf(`SELECT * FROM read_parquet(%s, union_by_name=true) LIMIT 0`, sqlStringArray(paths))
-	rows, conn, err := db.QueryContext(ctx, q)
+	rows, err := s.parquetDb.QueryContext(ctx, q)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	defer conn.Close()
 
 	colTypes, err := rows.ColumnTypes()
 	if err != nil {
@@ -464,34 +415,6 @@ func probeParquetSchemaList(ctx context.Context, db *duckdbx.DB, paths []string)
 	}
 	return out, nil
 }
-
-// Single-file schema probe.
-func probeParquetSchemaOne(ctx context.Context, db *duckdbx.DB, path string) (map[string]string, error) {
-	q := fmt.Sprintf(`SELECT * FROM read_parquet('%s', union_by_name=true) LIMIT 0`, escape(path))
-	rows, conn, err := db.QueryContext(ctx, q)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	defer conn.Close()
-
-	colTypes, err := rows.ColumnTypes()
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[string]string, len(colTypes))
-	for _, ct := range colTypes {
-		name := ct.Name()
-		typ := ct.DatabaseTypeName()
-		if typ == "" {
-			typ = "VARCHAR"
-		}
-		out[name] = normalizeDuckType(typ)
-	}
-	return out, nil
-}
-
-// ------------------------------- Utilities -----------------------------------
 
 func sqlStringArray(paths []string) string {
 	quoted := make([]string, len(paths))
