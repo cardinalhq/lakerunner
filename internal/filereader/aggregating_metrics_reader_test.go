@@ -606,3 +606,38 @@ func TestAggregatingMetricsReader_DropHistogramWithoutSketch(t *testing.T) {
 	assert.Equal(t, io.EOF, err)
 	assert.Equal(t, 0, n)
 }
+
+func TestAggregatingMetricsReader_PendingRowReset(t *testing.T) {
+	inputRows := []Row{
+		{
+			"_cardinalhq.name":      "cpu.usage",
+			"_cardinalhq.tid":       int64(12345),
+			"_cardinalhq.timestamp": int64(10000),
+			"sketch":                []byte{},
+			"rollup_sum":            1.0,
+			"rollup_count":          1.0,
+			"unused":                "extra",
+		},
+		{
+			"_cardinalhq.name":      "memory.usage",
+			"_cardinalhq.tid":       int64(12345),
+			"_cardinalhq.timestamp": int64(10000),
+			"sketch":                []byte{},
+			"rollup_sum":            2.0,
+			"rollup_count":          1.0,
+		},
+	}
+
+	mockReader := newMockAggregatingMetricsReader(inputRows)
+	aggregatingReader, err := NewAggregatingMetricsReader(mockReader, 10000)
+	require.NoError(t, err)
+	defer aggregatingReader.Close()
+
+	rows := make([]Row, 2)
+	n, err := aggregatingReader.Read(rows)
+	require.NoError(t, err)
+	require.Equal(t, 2, n)
+
+	_, ok := rows[1]["unused"]
+	assert.False(t, ok, "unused field should not leak into subsequent rows")
+}
