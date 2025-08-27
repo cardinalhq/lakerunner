@@ -28,6 +28,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/buffet"
 	"github.com/cardinalhq/lakerunner/internal/filecrunch"
+	"github.com/cardinalhq/lakerunner/internal/helpers"
 )
 
 // TIDMerger rolls up multiple Parquet files into multiple files.
@@ -135,7 +136,7 @@ func (rs *readerState) loadNextBatch() error {
 	rs.buffer = temp[:n]
 	rs.idx = 0
 	rs.current = rs.buffer[0]
-	tidVal, ok := rs.current["_cardinalhq.tid"].(int64)
+	tidVal, ok := helpers.GetTIDValue(rs.current, "_cardinalhq.tid")
 	if !ok {
 		return fmt.Errorf("file %s: row does not contain a valid int64 _cardinalhq.tid", rs.fileName)
 	}
@@ -151,7 +152,7 @@ func (rs *readerState) advance() error {
 	rs.idx++
 	if rs.idx < len(rs.buffer) {
 		rs.current = rs.buffer[rs.idx]
-		tidVal, ok := rs.current["_cardinalhq.tid"].(int64)
+		tidVal, ok := helpers.GetTIDValue(rs.current, "_cardinalhq.tid")
 		if !ok {
 			return fmt.Errorf("file %s: row does not contain a valid int64 _cardinalhq.tid", rs.fileName)
 		}
@@ -526,7 +527,7 @@ func getTimestampFromRecord(rec map[string]any) (int64, bool) {
 }
 
 func makekey(rec map[string]any, interval int32) (key mergekey, sketchBytes []byte, err error) {
-	tid, ok := rec["_cardinalhq.tid"].(int64)
+	tid, ok := helpers.GetTIDValue(rec, "_cardinalhq.tid")
 	if !ok {
 		return key, nil, ErrorInvalidTID
 	}
@@ -579,11 +580,11 @@ func makekey(rec map[string]any, interval int32) (key mergekey, sketchBytes []by
 }
 
 func GroupTIDGroupFunc(prev, current map[string]any) bool {
-	ptid, ok := prev["_cardinalhq.tid"].(int64)
+	ptid, ok := helpers.GetTIDValue(prev, "_cardinalhq.tid")
 	if !ok {
 		return false
 	}
-	ctid, ok := current["_cardinalhq.tid"].(int64)
+	ctid, ok := helpers.GetTIDValue(current, "_cardinalhq.tid")
 	if !ok {
 		return false
 	}
