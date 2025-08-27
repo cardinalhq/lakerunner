@@ -25,179 +25,95 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// MockParquetGenericReader simulates parquet.GenericReader behavior for testing EOF handling
-type MockParquetGenericReader struct {
-	data     []map[string]any
-	position int
-	closed   bool
-}
+// TestPreorderedParquetRawReaderNext tests the actual Next() method behavior
+func TestPreorderedParquetRawReaderNext(t *testing.T) {
+	// Test with a real file to verify Next() behavior
+	file, err := os.Open("../../testdata/logs/logs-cooked-0001.parquet")
+	require.NoError(t, err)
+	defer file.Close()
 
-func (m *MockParquetGenericReader) Read(rows []map[string]any) (int, error) {
-	if m.closed {
-		return 0, errors.New("reader closed")
-	}
+	stat, err := file.Stat()
+	require.NoError(t, err)
 
-	if len(rows) == 0 {
-		return 0, errors.New("no space to read")
-	}
+	reader, err := NewPreorderedParquetRawReader(file, stat.Size(), 10) // Small batch size
+	require.NoError(t, err)
+	defer reader.Close()
 
-	// Simulate reading one row at a time
-	if m.position >= len(m.data) {
-		return 0, io.EOF
-	}
+	var totalRows int64
+	batchCount := 0
 
-	// Copy data to the provided slice
-	for k, v := range m.data[m.position] {
-		rows[0][k] = v
-	}
-	m.position++
-
-	// Test the n>0 && io.EOF case: return data AND EOF when reading the last item
-	if m.position >= len(m.data) {
-		return 1, io.EOF // This is the critical case we're testing!
-	}
-
-	return 1, nil
-}
-
-func (m *MockParquetGenericReader) Close() error {
-	m.closed = true
-	return nil
-}
-
-// TestPreorderedParquetRawReaderEOFWithMock tests the n>0 && io.EOF case using a mock
-func TestPreorderedParquetRawReaderEOFWithMock(t *testing.T) {
-	// Create mock data
-	testData := []map[string]any{
-		{"id": int64(1), "name": "first"},
-		{"id": int64(2), "name": "second"},
-		{"id": int64(3), "name": "last"},
-	}
-
-	// Create a PreorderedParquetRawReader with our mock
-	mockReader := &MockParquetGenericReader{data: testData}
-
-	// We can't easily replace the internal parquet reader, so let's test the logic directly
-	// by simulating what happens in GetRow()
-
-	var collectedRows []map[string]any
-
+	// Test actual Next() behavior
 	for {
-		// Simulate PreorderedParquetRawReader.GetRow() logic
-		rows := make([]map[string]any, 1)
-		rows[0] = make(map[string]any)
+		batch, err := reader.Next()
+		if batch != nil {
+			batchCount++
+			totalRows += int64(len(batch.Rows))
 
-		n, err := mockReader.Read(rows)
-
-		// This is the exact logic from our PreorderedParquetRawReader.GetRow()
-		if n == 1 {
-			row := rows[0]
-			collectedRows = append(collectedRows, row)
-
-			// If we got data, return it regardless of EOF
-			// The next call will return io.EOF with no data
-			continue // In real code this would be: return Row(row), nil
-		}
-
-		// No data was read
-		if n == 0 {
-			if err != nil && errors.Is(err, io.EOF) {
-				break // In real code this would be: return nil, io.EOF
+			// Verify batch structure
+			assert.LessOrEqual(t, len(batch.Rows), 10, "Batch should respect batch size limit")
+			for i, row := range batch.Rows {
+				assert.NotNil(t, row, "Row %d in batch %d should not be nil", i, batchCount)
+				assert.Greater(t, len(row), 0, "Row %d in batch %d should have fields", i, batchCount)
 			}
 		}
-
-		// Any other error
-		if err != nil {
-			require.NoError(t, err, "Unexpected error")
-		}
-	}
-
-	// Verify we got all the data, including the last row that came with EOF
-	require.Len(t, collectedRows, 3)
-	assert.Equal(t, int64(1), collectedRows[0]["id"])
-	assert.Equal(t, "first", collectedRows[0]["name"])
-	assert.Equal(t, int64(2), collectedRows[1]["id"])
-	assert.Equal(t, "second", collectedRows[1]["name"])
-	assert.Equal(t, int64(3), collectedRows[2]["id"])
-	assert.Equal(t, "last", collectedRows[2]["name"])
-}
-
-// TestPreorderedParquetRawReaderSingleRowWithEOF tests the edge case of a single row + EOF
-func TestPreorderedParquetRawReaderSingleRowWithEOF(t *testing.T) {
-	testData := []map[string]any{
-		{"only": "data"},
-	}
-
-	mockReader := &MockParquetGenericReader{data: testData}
-
-	// First read should get data + EOF
-	rows := make([]map[string]any, 1)
-	rows[0] = make(map[string]any)
-
-	n, err := mockReader.Read(rows)
-
-	// Should get 1 row AND io.EOF
-	assert.Equal(t, 1, n)
-	assert.True(t, errors.Is(err, io.EOF))
-	assert.Equal(t, "data", rows[0]["only"])
-
-	// Second read should get 0 rows and EOF
-	rows[0] = make(map[string]any) // Reset
-	n, err = mockReader.Read(rows)
-	assert.Equal(t, 0, n)
-	assert.True(t, errors.Is(err, io.EOF))
-}
-
-// TestPreorderedParquetRawReaderEmptyData tests EOF handling with no data
-func TestPreorderedParquetRawReaderEmptyData(t *testing.T) {
-	testData := []map[string]any{} // Empty data
-
-	mockReader := &MockParquetGenericReader{data: testData}
-
-	// First read should get 0 rows and EOF
-	rows := make([]map[string]any, 1)
-	rows[0] = make(map[string]any)
-
-	n, err := mockReader.Read(rows)
-	assert.Equal(t, 0, n)
-	assert.True(t, errors.Is(err, io.EOF))
-}
-
-// TestPreorderedParquetRawReaderNumRows tests the NumRows functionality
-func TestPreorderedParquetRawReaderNumRows(t *testing.T) {
-	testData := []map[string]any{
-		{"id": int64(1)},
-		{"id": int64(2)},
-		{"id": int64(3)},
-		{"id": int64(4)},
-		{"id": int64(5)},
-	}
-
-	mockReader := &MockParquetGenericReader{data: testData}
-
-	// We have 5 test records
-
-	// Read all rows
-	var collectedRows []map[string]any
-	for {
-		rows := make([]map[string]any, 1)
-		rows[0] = make(map[string]any)
-
-		n, err := mockReader.Read(rows)
-		if n == 1 {
-			collectedRows = append(collectedRows, rows[0])
-			continue
-		}
-		if n == 0 && errors.Is(err, io.EOF) {
+		if errors.Is(err, io.EOF) {
 			break
 		}
-		require.NoError(t, err)
+		require.NoError(t, err, "Next() should not return other errors")
 	}
 
-	// Should have read all rows
-	assert.Len(t, collectedRows, 5)
-	for i, row := range collectedRows {
-		assert.Equal(t, int64(i+1), row["id"])
+	// Verify we read the expected number of rows in multiple batches
+	assert.Equal(t, int64(32), totalRows, "Should read all 32 rows from the file")
+	assert.GreaterOrEqual(t, batchCount, 4, "Should read in at least 4 batches with batch size 10")
+	assert.Equal(t, totalRows, reader.TotalRowsReturned(), "TotalRowsReturned should match actual rows read")
+}
+
+// TestPreorderedParquetRawReaderBatching tests batching behavior with real file
+func TestPreorderedParquetRawReaderBatching(t *testing.T) {
+	file, err := os.Open("../../testdata/logs/logs-cooked-0001.parquet")
+	require.NoError(t, err)
+	defer file.Close()
+
+	stat, err := file.Stat()
+	require.NoError(t, err)
+
+	// Test different batch sizes
+	testCases := []struct {
+		batchSize          int
+		expectedMinBatches int
+		expectedMaxBatches int
+	}{
+		{batchSize: 5, expectedMinBatches: 7, expectedMaxBatches: 7},  // 32/5 = 6.4 -> 7 batches
+		{batchSize: 10, expectedMinBatches: 4, expectedMaxBatches: 4}, // 32/10 = 3.2 -> 4 batches
+		{batchSize: 50, expectedMinBatches: 1, expectedMaxBatches: 1}, // 32/50 = 0.64 -> 1 batch
+	}
+
+	for _, tc := range testCases {
+		t.Run(fmt.Sprintf("BatchSize%d", tc.batchSize), func(t *testing.T) {
+			reader, err := NewPreorderedParquetRawReader(file, stat.Size(), tc.batchSize)
+			require.NoError(t, err)
+			defer reader.Close()
+
+			var totalRows int64
+			batchCount := 0
+
+			for {
+				batch, err := reader.Next()
+				if batch != nil {
+					batchCount++
+					totalRows += int64(len(batch.Rows))
+					assert.LessOrEqual(t, len(batch.Rows), tc.batchSize, "Batch should not exceed batch size")
+				}
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				require.NoError(t, err)
+			}
+
+			assert.Equal(t, int64(32), totalRows, "Should read all 32 rows")
+			assert.GreaterOrEqual(t, batchCount, tc.expectedMinBatches, "Should have at least %d batches", tc.expectedMinBatches)
+			assert.LessOrEqual(t, batchCount, tc.expectedMaxBatches, "Should have at most %d batches", tc.expectedMaxBatches)
+		})
 	}
 }
 

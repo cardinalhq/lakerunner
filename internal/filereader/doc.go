@@ -28,13 +28,18 @@
 //
 //	type Row map[string]any
 //
+//	type Batch struct {
+//	    Rows []Row
+//	}
+//
 //	type Reader interface {
-//	    Read(rows []Row) (n int, err error)  // Returns row count and io.EOF when exhausted
+//	    Next() (*Batch, error)        // Returns next batch or io.EOF when exhausted
 //	    Close() error
+//	    TotalRowsReturned() int64     // Total rows successfully returned so far
 //	}
 //
 //	type RowTranslator interface {
-//	    TranslateRow(in Row) (Row, error)
+//	    TranslateRow(row *Row) error  // Transforms row in-place
 //	}
 //
 // Use translators for data processing and TranslatingReader for composition.
@@ -57,24 +62,25 @@
 //	    return err
 //	}
 //
-//	reader, err := NewJSONLinesReader(gzReader)
+//	reader, err := NewJSONLinesReader(gzReader, 1000)
 //	if err != nil {
 //	    return err
 //	}
 //	defer reader.Close()
 //
 //	for {
-//	    rows := make([]Row, 1)
-//	    rows[0] = make(Row)
-//	    n, err := reader.Read(rows)
-//	    if errors.Is(err, io.EOF) {
-//	        break
-//	    }
+//	    batch, err := reader.Next()
 //	    if err != nil {
+//	        if errors.Is(err, io.EOF) {
+//	            break
+//	        }
 //	        return err
 //	    }
-//	    if n > 0 {
-//	        // process raw row data in rows[0]
+//	    if batch != nil {
+//	        // process raw row data in batch.Rows
+//	        for _, row := range batch.Rows {
+//	            // process each row
+//	        }
 //	    }
 //	}
 //
@@ -144,17 +150,18 @@
 //	defer ordered.Close()
 //
 //	for {
-//	    rows := make([]Row, 1)
-//	    rows[0] = make(Row)
-//	    n, err := ordered.Read(rows)
-//	    if errors.Is(err, io.EOF) {
-//	        break
-//	    }
+//	    batch, err := ordered.Next()
 //	    if err != nil {
+//	        if errors.Is(err, io.EOF) {
+//	            break
+//	        }
 //	        return err
 //	    }
-//	    if n > 0 {
+//	    if batch != nil {
 //	        // rows arrive in timestamp order across all files
+//	        for _, row := range batch.Rows {
+//	            // process each row
+//	        }
 //	    }
 //	}
 //
@@ -166,31 +173,34 @@
 //	group2 := NewPreorderedMultisourceReader(readers2, TimeOrderedSelector("timestamp"))
 //	final := NewSequentialReader([]Reader{group1, group2})
 //
-// # Memory Management & Row Buffer Reuse
+// # Memory Management & Batch Ownership
 //
-// The filereader package implements efficient memory management through row buffer reuse:
+// The filereader package implements efficient memory management through batch ownership:
 //
-// **Buffer Ownership**: Callers own the Row slice and its individual Row maps. Readers
-// must not retain references to these maps beyond the Read() call.
+// **Batch Ownership**: Readers own the returned Batch and its Row maps. Callers must NOT
+// retain references to batches beyond the next Next() call.
 //
-// **Memory Efficiency**: Reuse Row maps across Read() calls to reduce allocations:
-//
-//	rows := make([]Row, 10)
-//	for i := range rows {
-//	    rows[i] = make(Row)  // Pre-allocate maps
-//	}
+// **Memory Safety**: Use pipeline.CopyBatch() if you need to retain batch data:
 //
 //	for {
-//	    n, err := reader.Read(rows)
-//	    // Process rows[0:n], maps are reused automatically
-//	    if err == io.EOF { break }
+//	    batch, err := reader.Next()
+//	    if err != nil {
+//	        if errors.Is(err, io.EOF) {
+//	            break
+//	        }
+//	        return err
+//	    }
+//	    if batch != nil {
+//	        // Use data immediately or copy if retention needed
+//	        safeBatch := pipeline.CopyBatch(batch)  // For retention
+//	        // Process batch.Rows directly for immediate use
+//	    }
 //	}
 //
-// **Data Safety**: All readers call resetRow() before populating each Row to prevent
-// data leakage between reads. This ensures clean buffer reuse without corruption.
+// **Data Safety**: Readers maintain clean batch states and handle EOF correctly.
+// Batches must not be accessed after the next Next() call.
 //
-// **Error Handling**: Readers maintain clean Row states on errors to prevent partial
-// data corruption in reused buffers.
+// **Error Handling**: Next() returns nil batch on errors. Check error before accessing batch.
 //
 // # Resource Management
 //

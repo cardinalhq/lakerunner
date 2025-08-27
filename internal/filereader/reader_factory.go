@@ -225,7 +225,7 @@ func createProtoBinaryReader(filename string, opts ReaderOptions) (Reader, error
 }
 
 // createProtoReaderWithOptions creates the appropriate proto reader with optional translation
-func createProtoReaderWithOptions(reader interface{ Read([]byte) (int, error) }, opts ReaderOptions) (Reader, error) {
+func createProtoReaderWithOptions(reader io.Reader, opts ReaderOptions) (Reader, error) {
 	switch opts.SignalType {
 	case SignalTypeLogs:
 		protoReader, err := NewProtoLogsReader(reader, opts.BatchSize)

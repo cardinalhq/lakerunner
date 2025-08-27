@@ -504,7 +504,7 @@ func (ar *AggregatingMetricsReader) Close() error {
 	return ar.reader.Close()
 }
 
-// TotalRowsReturned returns the total number of aggregated rows returned via Read().
+// TotalRowsReturned returns the total number of aggregated rows returned via Next().
 func (ar *AggregatingMetricsReader) TotalRowsReturned() int64 {
 	return ar.rowCount
 }

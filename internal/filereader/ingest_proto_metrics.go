@@ -107,7 +107,7 @@ func (r *IngestProtoMetricsReader) Next() (*Batch, error) {
 }
 
 // getMetricRow handles reading the next datapoint row using streaming iteration.
-// The provided row must be initialized (use resetRow) before calling this method.
+// The provided row must be initialized as an empty map before calling this method.
 func (r *IngestProtoMetricsReader) getMetricRow(row Row) error {
 	if r.otelMetrics == nil {
 		return io.EOF
@@ -402,7 +402,7 @@ func (r *IngestProtoMetricsReader) Close() error {
 	return nil
 }
 
-// TotalRowsReturned returns the total number of rows that have been successfully returned via Read().
+// TotalRowsReturned returns the total number of rows that have been successfully returned via Next().
 func (r *IngestProtoMetricsReader) TotalRowsReturned() int64 {
 	return r.rowCount
 }

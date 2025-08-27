@@ -248,7 +248,7 @@ func (or *PreorderedMultisourceReader) ActiveReaderCount() int {
 	return count
 }
 
-// TotalRowsReturned returns the total number of rows that have been successfully returned via Read() from all readers.
+// TotalRowsReturned returns the total number of rows that have been successfully returned via Next() from all readers.
 func (or *PreorderedMultisourceReader) TotalRowsReturned() int64 {
 	return or.rowCount
 }

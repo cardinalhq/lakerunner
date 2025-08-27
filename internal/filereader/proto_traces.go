@@ -186,7 +186,7 @@ func (r *ProtoTracesReader) Close() error {
 	return nil
 }
 
-// TotalRowsReturned returns the total number of rows that have been successfully returned via Read().
+// TotalRowsReturned returns the total number of rows that have been successfully returned via Next().
 func (r *ProtoTracesReader) TotalRowsReturned() int64 {
 	return r.rowCount
 }

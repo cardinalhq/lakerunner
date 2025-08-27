@@ -111,7 +111,7 @@ func (r *PreorderedParquetRawReader) Close() error {
 	return nil
 }
 
-// TotalRowsReturned returns the total number of rows that have been successfully returned via Read().
+// TotalRowsReturned returns the total number of rows that have been successfully returned via Next().
 func (r *PreorderedParquetRawReader) TotalRowsReturned() int64 {
 	return r.rowCount
 }

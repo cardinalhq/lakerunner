@@ -55,7 +55,7 @@ func TestNewSequentialReader(t *testing.T) {
 	}
 }
 
-func TestSequentialReader_Read(t *testing.T) {
+func TestSequentialReader_Next(t *testing.T) {
 	// Create readers with different data
 	readers := []Reader{
 		newMockReader("r1", []Row{
@@ -101,7 +101,7 @@ func TestSequentialReader_Read(t *testing.T) {
 	}
 }
 
-func TestSequentialReader_Read_Batched(t *testing.T) {
+func TestSequentialReader_NextBatched(t *testing.T) {
 	// Create readers with different data
 	readers := []Reader{
 		newMockReader("r1", []Row{

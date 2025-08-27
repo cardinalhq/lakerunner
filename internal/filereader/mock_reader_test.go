@@ -19,8 +19,7 @@ import (
 	"io"
 )
 
-// resetRow clears all keys from a Row map for test reuse (already defined elsewhere)
-// This is for test files that need it but don't import the one from aggregating_metrics_reader_test.go
+// Mock readers for testing the Next() interface
 
 // mockReader is a test implementation of Reader
 type mockReader struct {

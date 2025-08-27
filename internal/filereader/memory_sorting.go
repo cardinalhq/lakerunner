@@ -163,7 +163,7 @@ func (r *MemorySortingReader) Close() error {
 	return r.reader.Close()
 }
 
-// TotalRowsReturned returns the number of rows that have been returned via Read().
+// TotalRowsReturned returns the number of rows that have been returned via Next().
 func (r *MemorySortingReader) TotalRowsReturned() int64 {
 	return r.rowCount
 }

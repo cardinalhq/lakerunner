@@ -52,7 +52,7 @@ func TestNewPreorderedMultisourceReader(t *testing.T) {
 	}
 }
 
-func TestOrderedReader_Read(t *testing.T) {
+func TestOrderedReader_Next(t *testing.T) {
 	// Create readers with interleaved timestamps to test ordering
 	readers := []Reader{
 		newMockReader("r1", []Row{
@@ -112,7 +112,7 @@ func TestOrderedReader_Read(t *testing.T) {
 	}
 }
 
-func TestOrderedReader_Read_Batched(t *testing.T) {
+func TestOrderedReader_NextBatched(t *testing.T) {
 	readers := []Reader{
 		newMockReader("r1", []Row{{"ts": int64(100)}}),
 		newMockReader("r2", []Row{{"ts": int64(200)}}),
