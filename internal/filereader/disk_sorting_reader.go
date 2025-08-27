@@ -20,11 +20,8 @@ import (
 	"os"
 	"slices"
 
-	cbor2 "github.com/fxamacker/cbor/v2"
-
 	"github.com/cardinalhq/lakerunner/internal/cbor"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
-	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 // RowIndex represents a lightweight pointer to a CBOR-encoded row in the temp file.
@@ -56,7 +53,6 @@ type DiskSortingReader struct {
 	sortKeyFunc SortKeyFunc
 	sortFunc    func(a, b any) int // Sort function works on extracted keys, not full rows
 	tempFile    *os.File
-	encoder     *cbor2.Encoder
 	cborConfig  *cbor.Config
 	closed      bool
 	rowCount    int64
@@ -110,7 +106,6 @@ func NewDiskSortingReader(reader Reader, sortKeyFunc SortKeyFunc, sortFunc func(
 		sortKeyFunc: sortKeyFunc,
 		sortFunc:    sortFunc,
 		tempFile:    tempFile,
-		encoder:     cborConfig.NewEncoder(tempFile),
 		cborConfig:  cborConfig,
 		batchSize:   batchSize,
 		indices:     make([]RowIndex, 0, 1000), // Start with reasonable capacity
@@ -159,11 +154,14 @@ func (r *DiskSortingReader) writeAndIndexRow(row Row) error {
 		return fmt.Errorf("failed to get file offset: %w", err)
 	}
 
-	// CBOR encode the row (convert to string-keyed map for serialization)
+	// CBOR encode the row (converts RowKeys to strings internally)
 	startPos := offset
-	stringKeyedRow := pipeline.ToStringMap(row)
-	if err := r.encoder.Encode(stringKeyedRow); err != nil {
+	rowBytes, err := r.cborConfig.EncodeRow(row)
+	if err != nil {
 		return fmt.Errorf("failed to CBOR encode row: %w", err)
+	}
+	if _, err := r.tempFile.Write(rowBytes); err != nil {
+		return fmt.Errorf("failed to write CBOR data: %w", err)
 	}
 
 	// Get end position to calculate length
@@ -225,16 +223,10 @@ func (r *DiskSortingReader) Next() (*Batch, error) {
 			return nil, fmt.Errorf("failed to read CBOR data at offset %d: %w", idx.FileOffset, err)
 		}
 
-		// Use shared CBOR package to decode with type conversion
-		decodedRow, err := r.cborConfig.Decode(rowBytes)
+		// Use shared CBOR package to decode with Row conversion
+		row, err := r.cborConfig.DecodeRow(rowBytes)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode CBOR row at offset %d: %w", idx.FileOffset, err)
-		}
-
-		// Create new row and copy decoded data
-		row := make(Row)
-		for k, v := range decodedRow {
-			row[wkk.NewRowKey(k)] = v
 		}
 
 		batchRow := batch.AddRow()

@@ -22,6 +22,7 @@
 //   - Maps decode directly as map[string]any (configured via DefaultMapType)
 //   - uint64 values > MaxInt64 cause decode errors and should be avoided
 //   - string, bool, []byte, nil are preserved exactly
+//   - Invalid UTF-8 strings are allowed and decoded as-is (UTF8DecodeInvalid)
 package cbor
 
 import (
@@ -30,6 +31,9 @@ import (
 	"reflect"
 
 	"github.com/fxamacker/cbor/v2"
+
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 // Config holds CBOR encoder and decoder configurations optimized for Row data.
@@ -57,6 +61,7 @@ func NewConfig() (*Config, error) {
 		BigIntDec:      cbor.BigIntDecodeValue,           // Preserve large integers
 		IntDec:         cbor.IntDecConvertSigned,         // Convert all integers to int64 (signed)
 		DefaultMapType: reflect.TypeOf(map[string]any{}), // Decode maps as map[string]any instead of map[interface{}]interface{}
+		UTF8:           cbor.UTF8DecodeInvalid,           // Allow decoding CBOR Text containing invalid UTF-8 strings
 	}.DecMode()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create CBOR decoder: %w", err)
@@ -97,6 +102,30 @@ func (c *Config) Decode(data []byte) (map[string]any, error) {
 	}
 
 	return converted, nil
+}
+
+// EncodeRow encodes a Row (map[wkk.RowKey]any) to CBOR bytes.
+// Converts RowKeys to strings for CBOR compatibility while preserving all data.
+func (c *Config) EncodeRow(row pipeline.Row) ([]byte, error) {
+	stringMap := pipeline.ToStringMap(row)
+	return c.Encode(stringMap)
+}
+
+// DecodeRow decodes CBOR bytes to a Row (map[wkk.RowKey]any) with type conversion applied.
+// Converts string keys back to RowKeys after CBOR decoding.
+func (c *Config) DecodeRow(data []byte) (pipeline.Row, error) {
+	stringMap, err := c.Decode(data)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert string keys back to RowKeys
+	row := make(pipeline.Row, len(stringMap))
+	for k, v := range stringMap {
+		row[wkk.NewRowKey(k)] = v
+	}
+
+	return row, nil
 }
 
 // convertCBORTypes converts CBOR-decoded values back to expected types.
