@@ -45,6 +45,7 @@ var (
 	dbExecDuration         metric.Float64Histogram
 	inqueueFetchDuration   metric.Float64Histogram
 	inqueueDuration        metric.Float64Histogram
+	inqueueLag             metric.Float64Histogram
 	workqueueDuration      metric.Float64Histogram
 	workqueueFetchDuration metric.Float64Histogram
 	workqueueLag           metric.Float64Histogram
@@ -171,6 +172,16 @@ func setupGlobalMetrics() {
 		panic(fmt.Errorf("failed to create inqueue.duration histogram: %w", err))
 	}
 	inqueueDuration = m
+
+	m, err = meter.Float64Histogram(
+		"lakerunner.inqueue.lag",
+		metric.WithUnit("s"),
+		metric.WithDescription("Time in seconds from when an item was queued until it was claimed for processing"),
+	)
+	if err != nil {
+		panic(fmt.Errorf("failed to create inqueue.lag histogram: %w", err))
+	}
+	inqueueLag = m
 
 	m, err = meter.Float64Histogram(
 		"lakerunner.db.exec.duration",
