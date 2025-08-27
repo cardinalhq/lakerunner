@@ -17,6 +17,8 @@ package filereader
 import (
 	"errors"
 	"fmt"
+
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 )
 
 // TranslatingReader wraps another Reader and applies row transformations.
@@ -66,28 +68,46 @@ func (tr *TranslatingReader) Next() (*Batch, error) {
 		return nil, err
 	}
 
-	// Translate each row in the batch (in-place modification)
-	for i := range batch.Rows {
-		if translateErr := tr.translator.TranslateRow(&batch.Rows[i]); translateErr != nil {
+	// Create a new batch for translated rows
+	translatedBatch := pipeline.GetBatch()
+
+	// Translate each row in the batch
+	for i := 0; i < batch.Len(); i++ {
+		sourceRow := batch.Get(i)
+		// Copy row to make it mutable
+		row := make(Row)
+		for k, v := range sourceRow {
+			row[k] = v
+		}
+
+		if translateErr := tr.translator.TranslateRow(&row); translateErr != nil {
 			// TODO: Add logging here when we have access to a logger
 
 			// Return partial batch if we've successfully translated some rows
-			if i > 0 {
-				// Truncate batch to only include successfully translated rows
-				batch.Rows = batch.Rows[:i]
-				tr.rowCount += int64(len(batch.Rows))
-				return batch, fmt.Errorf("translation failed for row %d: %w", i, translateErr)
+			if translatedBatch.Len() > 0 {
+				tr.rowCount += int64(translatedBatch.Len())
+				return translatedBatch, fmt.Errorf("translation failed for row %d: %w", i, translateErr)
 			}
 
 			// No rows successfully translated
+			pipeline.ReturnBatch(translatedBatch)
 			return nil, fmt.Errorf("translation failed for row %d: %w", i, translateErr)
+		}
+
+		// Add translated row to new batch
+		translatedRow := translatedBatch.AddRow()
+		for k, v := range row {
+			translatedRow[k] = v
 		}
 	}
 
-	// Count each successfully translated row
-	tr.rowCount += int64(len(batch.Rows))
+	// Return original batch to pool since we created a new one
+	pipeline.ReturnBatch(batch)
 
-	return batch, err
+	// Count each successfully translated row
+	tr.rowCount += int64(translatedBatch.Len())
+
+	return translatedBatch, nil
 }
 
 // Close closes the underlying reader and releases resources.

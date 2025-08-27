@@ -356,8 +356,8 @@ func TestReaderForFile(t *testing.T) {
 					batch, readErr := reader.Next()
 					if readErr != nil && readErr != io.EOF {
 						t.Logf("Read error for %s (this may be expected for some files): %v", tt.description, readErr)
-					} else if batch != nil && len(batch.Rows) > 0 {
-						assert.NotNil(t, batch.Rows[0], "Expected non-nil row for %s", tt.description)
+					} else if batch != nil && batch.Len() > 0 {
+						assert.NotNil(t, batch.Get(0), "Expected non-nil row for %s", tt.description)
 						t.Logf("Successfully read first row from %s", tt.description)
 					} else {
 						t.Logf("File %s appears to be empty (no batch or empty batch on first read)", tt.description)
@@ -487,8 +487,8 @@ func TestGzippedProtobufSupport(t *testing.T) {
 			batch, readErr := reader.Next()
 			if readErr != nil && readErr != io.EOF {
 				t.Logf("Read error (may be expected): %v", readErr)
-			} else if batch != nil && len(batch.Rows) > 0 {
-				assert.NotNil(t, batch.Rows[0], "Should be able to read data from gzipped protobuf")
+			} else if batch != nil && batch.Len() > 0 {
+				assert.NotNil(t, batch.Get(0), "Should be able to read data from gzipped protobuf")
 				t.Logf("Successfully read from gzipped protobuf: %s", filename)
 			}
 		})

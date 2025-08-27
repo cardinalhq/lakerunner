@@ -22,6 +22,8 @@ import (
 	"github.com/DataDog/sketches-go/ddsketch"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 )
 
 // mockAggregatingMetricsReader implements Reader interface for testing aggregation
@@ -45,20 +47,17 @@ func (r *mockAggregatingMetricsReader) Next() (*Batch, error) {
 		return nil, io.EOF
 	}
 
-	batch := &Batch{
-		Rows: make([]Row, 0, 100),
-	}
+	batch := pipeline.GetBatch()
 
-	for len(batch.Rows) < 100 && r.index < len(r.rows) {
-		row := make(Row)
+	for batch.Len() < 100 && r.index < len(r.rows) {
+		row := batch.AddRow()
 		for k, v := range r.rows[r.index] {
 			row[k] = v
 		}
-		batch.Rows = append(batch.Rows, row)
 		r.index++
 	}
 
-	r.rowCount += int64(len(batch.Rows))
+	r.rowCount += int64(batch.Len())
 	return batch, nil
 }
 
@@ -95,9 +94,9 @@ func TestAggregatingMetricsReader_SingleSingleton(t *testing.T) {
 	// Read the aggregated result
 	batch, err := aggregatingReader.Next()
 	require.NoError(t, err)
-	require.Len(t, batch.Rows, 1)
+	require.Equal(t, 1, batch.Len())
 
-	row := batch.Rows[0]
+	row := batch.Get(0)
 	// Verify timestamp was truncated
 	assert.Equal(t, int64(10000), row["_cardinalhq.timestamp"])
 
@@ -141,9 +140,9 @@ func TestAggregatingMetricsReader_MultipleSingletons(t *testing.T) {
 	// Read the aggregated result
 	batch, err := aggregatingReader.Next()
 	require.NoError(t, err)
-	require.Len(t, batch.Rows, 1)
+	require.Equal(t, 1, batch.Len())
 
-	row := batch.Rows[0]
+	row := batch.Get(0)
 	// Verify aggregated values
 	assert.Equal(t, int64(10000), row["_cardinalhq.timestamp"])
 	assert.Equal(t, "cpu.usage", row["_cardinalhq.name"])
@@ -208,9 +207,9 @@ func TestAggregatingMetricsReader_SketchAndSingletons(t *testing.T) {
 	// Read the aggregated result
 	batch, err := aggregatingReader.Next()
 	require.NoError(t, err)
-	require.Len(t, batch.Rows, 1)
+	require.Equal(t, 1, batch.Len())
 
-	row := batch.Rows[0]
+	row := batch.Get(0)
 	// Verify the result
 	assert.Equal(t, int64(10000), row["_cardinalhq.timestamp"])
 	assert.Equal(t, "cpu.usage", row["_cardinalhq.name"])
@@ -277,7 +276,9 @@ func TestAggregatingMetricsReader_DifferentKeys(t *testing.T) {
 		}
 		require.NoError(t, err)
 
-		allRows = append(allRows, batch.Rows...)
+		for i := 0; i < batch.Len(); i++ {
+			allRows = append(allRows, batch.Get(i))
+		}
 	}
 
 	// Should have 4 separate rows (no aggregation)
@@ -332,7 +333,9 @@ func TestAggregatingMetricsReader_InvalidRows(t *testing.T) {
 		}
 		require.NoError(t, err)
 
-		allRows = append(allRows, batch.Rows...)
+		for i := 0; i < batch.Len(); i++ {
+			allRows = append(allRows, batch.Get(i))
+		}
 	}
 
 	// Should have 2 valid rows (invalid row skipped)
@@ -386,7 +389,9 @@ func TestAggregatingMetricsReader_TimestampTruncation(t *testing.T) {
 		}
 		require.NoError(t, err)
 
-		allRows = append(allRows, batch.Rows...)
+		for i := 0; i < batch.Len(); i++ {
+			allRows = append(allRows, batch.Get(i))
+		}
 	}
 
 	// Should have 2 rows: one for 10000 timestamp bucket, one for 20000
@@ -451,9 +456,9 @@ func TestAggregatingMetricsReader_MultipleSketchesMerging(t *testing.T) {
 	// Read the aggregated result
 	batch, err := aggregatingReader.Next()
 	require.NoError(t, err)
-	require.Len(t, batch.Rows, 1)
+	require.Equal(t, 1, batch.Len())
 
-	row := batch.Rows[0]
+	row := batch.Get(0)
 	// Verify merged sketch has all 3 values (approximately)
 	assert.Equal(t, 3.0, row["rollup_count"])
 	assert.InDelta(t, 600.0, row["rollup_sum"], 10.0) // 100 + 200 + 300, DDSketch is approximate
@@ -488,20 +493,17 @@ func (r *mockEOFReader) Next() (*Batch, error) {
 		return nil, io.EOF
 	}
 
-	batch := &Batch{
-		Rows: make([]Row, 0, 100),
-	}
+	batch := pipeline.GetBatch()
 
-	for len(batch.Rows) < 100 && r.index < len(r.rows) {
-		row := make(Row)
+	for batch.Len() < 100 && r.index < len(r.rows) {
+		row := batch.AddRow()
 		for k, v := range r.rows[r.index] {
 			row[k] = v
 		}
-		batch.Rows = append(batch.Rows, row)
 		r.index++
 	}
 
-	r.rowCount += int64(len(batch.Rows))
+	r.rowCount += int64(batch.Len())
 	return batch, nil
 }
 
@@ -538,9 +540,9 @@ func TestAggregatingMetricsReader_EOFWithData(t *testing.T) {
 	// Read should return the row even though EOF is returned with data
 	batch, err := aggregatingReader.Next()
 	require.NoError(t, err)
-	require.Len(t, batch.Rows, 1)
+	require.Equal(t, 1, batch.Len())
 
-	row := batch.Rows[0]
+	row := batch.Get(0)
 	// Verify the row was processed correctly
 	assert.Equal(t, "cpu.usage", row["_cardinalhq.name"])
 	assert.Equal(t, int64(12345), row["_cardinalhq.tid"])
@@ -583,9 +585,9 @@ func TestAggregatingMetricsReader_DropHistogramWithoutSketch(t *testing.T) {
 	// Read the aggregated result
 	batch, err := aggregatingReader.Next()
 	require.NoError(t, err)
-	require.Len(t, batch.Rows, 1, "Should only return one row (gauge), histogram should be dropped")
+	require.Equal(t, 1, batch.Len(), "Should only return one row (gauge), histogram should be dropped")
 
-	row := batch.Rows[0]
+	row := batch.Get(0)
 	// Verify only the gauge row was returned
 	assert.Equal(t, "cpu.usage", row["_cardinalhq.name"])
 	assert.Equal(t, "Gauge", row["type"])
@@ -630,7 +632,9 @@ func TestAggregatingMetricsReader_PendingRowReset(t *testing.T) {
 			break
 		}
 		require.NoError(t, err)
-		allRows = append(allRows, batch.Rows...)
+		for i := 0; i < batch.Len(); i++ {
+			allRows = append(allRows, batch.Get(i))
+		}
 	}
 
 	require.Len(t, allRows, 2)

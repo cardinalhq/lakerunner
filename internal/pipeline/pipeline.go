@@ -18,6 +18,7 @@
 package pipeline
 
 import (
+	"maps"
 	"sync"
 )
 
@@ -28,8 +29,13 @@ type Row = map[string]any
 // Batch is owned by the Reader that returns it.
 // Consumers must not hold references after the next Next() call.
 // If you must retain, copy rows you need (see copyRow / copyBatch).
+//
+// The Batch reuses underlying Row maps for memory efficiency. Access rows only
+// through the provided methods - never retain references to Row objects returned
+// by Get() as they may be reused. Use CopyRow() if you need to retain data.
 type Batch struct {
-	Rows []Row
+	rows     []Row // Pre-allocated Row maps, some may be cleared/reused (private)
+	validLen int   // Number of valid rows (≤ len(rows)) (private)
 }
 
 // Reader is a pull-based iterator over Batches.
@@ -50,7 +56,15 @@ func newBatchPool(batchSize int) *batchPool {
 	return &batchPool{
 		pool: sync.Pool{
 			New: func() any {
-				return &Batch{Rows: make([]Row, 0, batchSize)}
+				// Pre-allocate Row maps to reduce allocations
+				rows := make([]Row, batchSize)
+				for i := range rows {
+					rows[i] = make(Row)
+				}
+				return &Batch{
+					rows:     rows,
+					validLen: 0,
+				}
 			},
 		},
 		sz: batchSize,
@@ -59,40 +73,43 @@ func newBatchPool(batchSize int) *batchPool {
 
 func (p *batchPool) Get() *Batch {
 	b := p.pool.Get().(*Batch)
-	b.Rows = b.Rows[:0]
+	// Clear all Row maps but keep them allocated for reuse
+	for i := range b.rows {
+		for k := range b.rows[i] {
+			delete(b.rows[i], k)
+		}
+	}
+	b.validLen = 0
 	return b
 }
 
 func (p *batchPool) Put(b *Batch) {
 	// Drop oversized batches to avoid unbounded growth
-	if cap(b.Rows) > p.sz*4 {
+	if cap(b.rows) > p.sz*4 {
 		return
 	}
-	b.Rows = b.Rows[:0]
+	// Keep the Row maps but reset validLen - they'll be cleared on next Get()
+	b.validLen = 0
 	p.pool.Put(b)
 }
 
 func copyRow(in Row) Row {
 	out := make(Row, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
+	maps.Copy(out, in)
 	return out
 }
 
 func copyBatch(in *Batch) *Batch {
-	out := &Batch{Rows: make([]Row, len(in.Rows))}
-	for i := range in.Rows {
-		out.Rows[i] = copyRow(in.Rows[i])
+	out := globalBatchPool.Get()
+	for i := 0; i < in.Len(); i++ {
+		sourceRow := in.Get(i)
+		newRow := out.AddRow()
+		maps.Copy(newRow, sourceRow)
 	}
 	return out
 }
 
 // NewBatchPool creates a new batch pool with the given batch size.
-func NewBatchPool(batchSize int) *batchPool {
-	return newBatchPool(batchSize)
-}
-
 // CopyRow creates a deep copy of a row.
 func CopyRow(in Row) Row {
 	return copyRow(in)
@@ -118,4 +135,60 @@ func ReturnBatch(batch *Batch) {
 	if batch != nil {
 		globalBatchPool.Put(batch)
 	}
+}
+
+// --- Batch manipulation methods ---
+
+// Len returns the number of valid rows in the batch.
+func (b *Batch) Len() int {
+	return b.validLen
+}
+
+// Get returns the row at the given index. The returned Row must not be retained
+// beyond the lifetime of this batch, as it may be reused. Use CopyRow() if you
+// need to retain the data.
+func (b *Batch) Get(index int) Row {
+	if index < 0 || index >= b.validLen {
+		return nil // Invalid index
+	}
+	return b.rows[index]
+}
+
+// AddRow adds a new row to the batch, reusing an existing Row map if available.
+// Returns the Row map that should be populated. The returned Row must not be
+// retained beyond the lifetime of this batch.
+func (b *Batch) AddRow() Row {
+	if b.validLen < len(b.rows) {
+		row := b.rows[b.validLen]
+		for k := range row {
+			delete(row, k)
+		}
+		b.validLen++
+		return row
+	}
+
+	row := make(Row)
+	b.rows = append(b.rows, row)
+	b.validLen++
+	return row
+}
+
+// DeleteRow marks a row as deleted without losing the underlying map.
+// The map is preserved for future reuse.
+func (b *Batch) DeleteRow(index int) {
+	if index < 0 || index >= b.validLen {
+		return // Invalid index
+	}
+
+	// Clear the row data but keep the map
+	row := b.rows[index]
+	for k := range row {
+		delete(row, k)
+	}
+
+	// Swap with last valid row to maintain contiguous valid rows
+	if index < b.validLen-1 {
+		b.rows[index], b.rows[b.validLen-1] = b.rows[b.validLen-1], b.rows[index]
+	}
+	b.validLen--
 }

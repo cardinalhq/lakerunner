@@ -17,6 +17,8 @@ package filereader
 import (
 	"fmt"
 	"io"
+
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 )
 
 // Mock readers for testing the Next() interface
@@ -46,23 +48,19 @@ func (m *mockReader) Next() (*Batch, error) {
 		return nil, io.EOF
 	}
 
-	batch := &Batch{
-		Rows: make([]Row, 0, 100),
-	}
+	batch := pipeline.GetBatch()
 
-	for len(batch.Rows) < 100 && m.index < len(m.rows) {
+	for batch.Len() < 100 && m.index < len(m.rows) {
 		// Create new row and copy data from mock row
-		row := make(Row)
+		row := batch.AddRow()
 		for k, v := range m.rows[m.index] {
 			row[k] = v
 		}
-
-		batch.Rows = append(batch.Rows, row)
 		m.index++
 	}
 
 	// Update row count with successfully read rows
-	m.rowCount += int64(len(batch.Rows))
+	m.rowCount += int64(batch.Len())
 
 	return batch, nil
 }

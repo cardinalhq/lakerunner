@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"io"
 	"testing"
+
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 )
 
 func TestNewSequentialReader(t *testing.T) {
@@ -124,14 +126,14 @@ func TestSequentialReader_NextBatched(t *testing.T) {
 	if err != nil {
 		t.Fatalf("First Next() error = %v", err)
 	}
-	if batch == nil || len(batch.Rows) != 2 {
-		t.Errorf("First Next() returned %d rows, want 2", len(batch.Rows))
+	if batch == nil || batch.Len() != 2 {
+		t.Errorf("First Next() returned %d rows, want 2", batch.Len())
 	}
-	if batch.Rows[0]["data"] != "r1-first" {
-		t.Errorf("First row data = %v, want r1-first", batch.Rows[0]["data"])
+	if batch.Get(0)["data"] != "r1-first" {
+		t.Errorf("First row data = %v, want r1-first", batch.Get(0)["data"])
 	}
-	if batch.Rows[1]["data"] != "r1-second" {
-		t.Errorf("Second row data = %v, want r1-second", batch.Rows[1]["data"])
+	if batch.Get(1)["data"] != "r1-second" {
+		t.Errorf("Second row data = %v, want r1-second", batch.Get(1)["data"])
 	}
 
 	// Read second batch
@@ -139,11 +141,11 @@ func TestSequentialReader_NextBatched(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Second Next() error = %v", err)
 	}
-	if batch == nil || len(batch.Rows) != 1 {
-		t.Errorf("Second Next() returned %d rows, want 1", len(batch.Rows))
+	if batch == nil || batch.Len() != 1 {
+		t.Errorf("Second Next() returned %d rows, want 1", batch.Len())
 	}
-	if batch.Rows[0]["data"] != "r2-first" {
-		t.Errorf("Third row data = %v, want r2-first", batch.Rows[0]["data"])
+	if batch.Get(0)["data"] != "r2-first" {
+		t.Errorf("Third row data = %v, want r2-first", batch.Get(0)["data"])
 	}
 
 	// Should return EOF now
@@ -383,8 +385,8 @@ func TestSequentialReader_ReaderWithDelayedError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("First Next() error = %v", err)
 	}
-	if batch == nil || len(batch.Rows) != 1 || batch.Rows[0]["data"] != "r1" {
-		t.Fatalf("First Next() should return 1 row with r1 data, got len=%d, data=%v", len(batch.Rows), batch.Rows[0]["data"])
+	if batch == nil || batch.Len() != 1 || batch.Get(0)["data"] != "r1" {
+		t.Fatalf("First Next() should return 1 row with r1 data, got len=%d, data=%v", batch.Len(), batch.Get(0)["data"])
 	}
 
 	// Second read from delayed error reader (first call succeeds)
@@ -392,8 +394,8 @@ func TestSequentialReader_ReaderWithDelayedError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Second Next() error = %v", err)
 	}
-	if batch == nil || len(batch.Rows) != 1 || batch.Rows[0]["data"] != "delayed" {
-		t.Fatalf("Second Next() should return 1 row with delayed data, got len=%d, data=%v", len(batch.Rows), batch.Rows[0]["data"])
+	if batch == nil || batch.Len() != 1 || batch.Get(0)["data"] != "delayed" {
+		t.Fatalf("Second Next() should return 1 row with delayed data, got len=%d, data=%v", batch.Len(), batch.Get(0)["data"])
 	}
 
 	// Third read from delayed error reader (second call fails)
@@ -418,12 +420,10 @@ func (d *delayedErrorReaderImpl) Next() (*Batch, error) {
 
 	if d.position == 0 && len(d.data) > 0 {
 		// First call - return data
-		batch := &Batch{
-			Rows: make([]Row, 1),
-		}
-		batch.Rows[0] = make(Row)
+		batch := pipeline.GetBatch()
+		row := batch.AddRow()
 		for k, v := range d.data[0] {
-			batch.Rows[0][k] = v
+			row[k] = v
 		}
 		d.position++
 		d.rowCount++

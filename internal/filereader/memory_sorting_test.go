@@ -65,7 +65,9 @@ func TestMemorySortingReader_SortsByKey(t *testing.T) {
 		}
 		require.NoError(t, err)
 
-		allRows = append(allRows, batch.Rows...)
+		for i := 0; i < batch.Len(); i++ {
+			allRows = append(allRows, batch.Get(i))
+		}
 	}
 
 	// Should have 4 rows in sorted order
@@ -138,7 +140,9 @@ func TestMemorySortingReader_MissingFields(t *testing.T) {
 		}
 		require.NoError(t, err)
 
-		allRows = append(allRows, batch.Rows...)
+		for i := 0; i < batch.Len(); i++ {
+			allRows = append(allRows, batch.Get(i))
+		}
 	}
 
 	require.Len(t, allRows, 3)
@@ -214,7 +218,9 @@ func TestMemorySortingReader_CustomSortFunction(t *testing.T) {
 		}
 		require.NoError(t, err)
 
-		allRows = append(allRows, batch.Rows...)
+		for i := 0; i < batch.Len(); i++ {
+			allRows = append(allRows, batch.Get(i))
+		}
 	}
 
 	require.Len(t, allRows, 3)
@@ -256,7 +262,9 @@ func TestMemorySortingReader_TimestampOnlySort(t *testing.T) {
 		}
 		require.NoError(t, err)
 
-		allRows = append(allRows, batch.Rows...)
+		for i := 0; i < batch.Len(); i++ {
+			allRows = append(allRows, batch.Get(i))
+		}
 	}
 
 	require.Len(t, allRows, 3)

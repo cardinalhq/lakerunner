@@ -32,7 +32,8 @@ func readAllRows(reader Reader) ([]Row, error) {
 		batch, err := reader.Next()
 		if batch != nil {
 			// Copy the rows since they are owned by the reader
-			for _, row := range batch.Rows {
+			for i := 0; i < batch.Len(); i++ {
+				row := batch.Get(i)
 				rowCopy := make(Row)
 				for k, v := range row {
 					rowCopy[k] = v
@@ -170,8 +171,8 @@ func TestJSONLinesReaderWithMockEOF(t *testing.T) {
 	batch, err := reader.Next()
 	require.NoError(t, err)
 	require.NotNil(t, batch)
-	assert.Len(t, batch.Rows, 1)
-	assert.Equal(t, "data", batch.Rows[0]["test"])
+	assert.Equal(t, 1, batch.Len())
+	assert.Equal(t, "data", batch.Get(0)["test"])
 
 	// Next call should return EOF
 	batch, err = reader.Next()
@@ -190,8 +191,8 @@ func TestJSONLinesReaderClose(t *testing.T) {
 	batch, err := reader.Next()
 	require.NoError(t, err)
 	require.NotNil(t, batch)
-	assert.Len(t, batch.Rows, 1)
-	assert.Equal(t, "data", batch.Rows[0]["test"])
+	assert.Equal(t, 1, batch.Len())
+	assert.Equal(t, "data", batch.Get(0)["test"])
 
 	// Close should work
 	err = reader.Close()

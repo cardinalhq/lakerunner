@@ -77,9 +77,9 @@ func loadBenchmarkData(b *testing.B) {
 		totalFields := 0
 		n := 0
 		if batch != nil {
-			n = len(batch.Rows)
+			n = batch.Len()
 			for i := 0; i < n; i++ {
-				totalFields += len(batch.Rows[i])
+				totalFields += len(batch.Get(i))
 			}
 		}
 		avgFields := 15 // default
@@ -199,7 +199,7 @@ func BenchmarkPreorderedParquetRawReader_Small(b *testing.B) {
 				b.Fatalf("Read error: %v", err)
 			}
 			if batch != nil {
-				rowsThisIter += int64(len(batch.Rows))
+				rowsThisIter += int64(batch.Len())
 			}
 		}
 
@@ -238,7 +238,7 @@ func BenchmarkPreorderedParquetRawReader_Medium(b *testing.B) {
 				b.Fatalf("Read error: %v", err)
 			}
 			if batch != nil {
-				rowsThisIter += int64(len(batch.Rows))
+				rowsThisIter += int64(batch.Len())
 			}
 		}
 
@@ -277,7 +277,7 @@ func BenchmarkPreorderedParquetRawReader_Large(b *testing.B) {
 				b.Fatalf("Read error: %v", err)
 			}
 			if batch != nil {
-				rowsThisIter += int64(len(batch.Rows))
+				rowsThisIter += int64(batch.Len())
 			}
 		}
 
@@ -320,7 +320,7 @@ func BenchmarkPreorderedParquetRawReader_BatchSizes(b *testing.B) {
 						b.Fatalf("Read error: %v", err)
 					}
 					if batch != nil {
-						rowsThisIter += int64(len(batch.Rows))
+						rowsThisIter += int64(batch.Len())
 					}
 				}
 
@@ -361,7 +361,7 @@ func BenchmarkPreorderedParquetRawReader_MemoryProfile(b *testing.B) {
 
 		n := 0
 		if batch != nil {
-			n = len(batch.Rows)
+			n = batch.Len()
 			totalRows += int64(n)
 		}
 
@@ -417,7 +417,7 @@ func BenchmarkPreorderedParquetRawReader_GCPressure(b *testing.B) {
 		batchCount++
 
 		if batch != nil {
-			totalRows += int64(len(batch.Rows))
+			totalRows += int64(batch.Len())
 		}
 
 		// Periodically check GC stats

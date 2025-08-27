@@ -17,18 +17,17 @@ package pipeline
 // FlatMapReader: 1→N mapping (including 0 or many)
 type FlatMapReader struct {
 	in    Reader
-	pool  *batchPool
 	fn    func(Row, func(Row))
 	stash *Batch // carry-over when expansion exceeds batch cap
 }
 
-func FlatMap(in Reader, pool *batchPool, fn func(Row, func(Row))) *FlatMapReader {
-	return &FlatMapReader{in: in, pool: pool, fn: fn}
+func FlatMap(in Reader, fn func(Row, func(Row))) *FlatMapReader {
+	return &FlatMapReader{in: in, fn: fn}
 }
 
 func (f *FlatMapReader) Next() (*Batch, error) {
 	// drain stash first
-	if f.stash != nil && len(f.stash.Rows) > 0 {
+	if f.stash != nil && f.stash.Len() > 0 {
 		out := f.stash
 		f.stash = nil
 		return out, nil
@@ -38,10 +37,13 @@ func (f *FlatMapReader) Next() (*Batch, error) {
 		if err != nil {
 			return nil, err
 		}
-		out := f.pool.Get()
+		out := globalBatchPool.Get()
 		emit := func(r Row) {
-			out.Rows = append(out.Rows, r)
-			if len(out.Rows) == cap(out.Rows) {
+			targetRow := out.AddRow()
+			for k, v := range r {
+				targetRow[k] = v
+			}
+			if out.Len() >= 1000 {
 				// Stash the full batch and continue accumulating into a fresh one
 				if f.stash == nil {
 					f.stash = out
@@ -49,15 +51,16 @@ func (f *FlatMapReader) Next() (*Batch, error) {
 					// should not happen, but just in case
 					panic("unexpected multiple stash")
 				}
-				out = f.pool.Get()
+				out = globalBatchPool.Get()
 			}
 		}
-		for _, r := range in.Rows {
+		for i := 0; i < in.Len(); i++ {
+			r := in.Get(i)
 			f.fn(r, emit)
 		}
 		if f.stash != nil {
 			// we filled exactly one batch; return it now, keep 'out' for next call if it has rows
-			if len(out.Rows) > 0 {
+			if out.Len() > 0 {
 				// we have leftover; keep as next stash
 				if f.stash == nil {
 					f.stash = out
@@ -67,13 +70,13 @@ func (f *FlatMapReader) Next() (*Batch, error) {
 				}
 			} else {
 				// recycle empty
-				f.pool.Put(out)
+				globalBatchPool.Put(out)
 			}
 			out := f.stash
 			f.stash = nil
 			return out, nil
 		}
-		if len(out.Rows) > 0 {
+		if out.Len() > 0 {
 			return out, nil
 		}
 		// otherwise loop to pull next input batch

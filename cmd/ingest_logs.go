@@ -324,7 +324,8 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 
 			// Process any rows we got, even if EOF
 			if batch != nil {
-				for i, row := range batch.Rows {
+				for i := 0; i < batch.Len(); i++ {
+					row := batch.Get(i)
 					if row == nil {
 						ll.Error("Row is nil - skipping", slog.Int("rowIndex", i))
 						continue

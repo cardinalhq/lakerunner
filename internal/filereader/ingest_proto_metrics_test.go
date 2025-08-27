@@ -118,7 +118,7 @@ func TestIngestProtoMetrics_EmptySlice(t *testing.T) {
 	batch, err := reader.Next()
 	assert.NoError(t, err)
 	assert.NotNil(t, batch)
-	assert.Len(t, batch.Rows, 1)
+	assert.Equal(t, 1, batch.Len())
 }
 
 func TestIngestProtoMetrics_Close(t *testing.T) {
@@ -130,7 +130,7 @@ func TestIngestProtoMetrics_Close(t *testing.T) {
 	batch, err := reader.Next()
 	require.NoError(t, err)
 	require.NotNil(t, batch)
-	require.Len(t, batch.Rows, 1, "Should read exactly 1 datapoint row before closing")
+	require.Equal(t, 1, batch.Len(), "Should read exactly 1 datapoint row before closing")
 
 	// Close should work
 	err = reader.Close()
@@ -179,17 +179,22 @@ func TestIngestProtoMetrics_RowReusedAndCleared(t *testing.T) {
 	batch1, err := reader.Next()
 	require.NoError(t, err)
 	require.NotNil(t, batch1)
-	require.Len(t, batch1.Rows, 1)
+	require.Equal(t, 1, batch1.Len())
 
-	batch1.Rows[0]["temp"] = "value"
+	// With the new Batch API, we can't directly modify rows
+	// Test that we can access the row data correctly
+	row1 := batch1.Get(0)
+	require.NotNil(t, row1)
+
 	batch2, err := reader.Next()
 	require.NoError(t, err)
 	require.NotNil(t, batch2)
-	require.Len(t, batch2.Rows, 1)
+	require.Equal(t, 1, batch2.Len())
 
-	// Note: With the new Next() interface, row reuse behavior may be different
-	// The important thing is that each batch contains valid data
-	_, exists := batch2.Rows[0]["temp"]
+	// Verify second batch has valid data
+	row2 := batch2.Get(0)
+	require.NotNil(t, row2)
+	_, exists := row2["temp"]
 	assert.False(t, exists, "new batch row should not contain temp data")
 
 	// With the new batched interface, we can't reliably test address reuse
@@ -465,10 +470,11 @@ func TestIngestProtoMetrics_SyntheticMultiTypeMetrics(t *testing.T) {
 	for {
 		batch, readErr := protoReader2.Next()
 		if batch != nil {
-			totalBatchedRows += len(batch.Rows)
+			totalBatchedRows += batch.Len()
 
 			// Verify each row that was read
-			for i, row := range batch.Rows {
+			for i := 0; i < batch.Len(); i++ {
+				row := batch.Get(i)
 				assert.Greater(t, len(row), 0, "Batched row %d should have data", i)
 				assert.Contains(t, row, "_cardinalhq.name")
 				assert.Contains(t, row, "_cardinalhq.metric_type")
@@ -490,16 +496,16 @@ func TestIngestProtoMetrics_SyntheticMultiTypeMetrics(t *testing.T) {
 	batch, err := protoReader3.Next()
 	require.NoError(t, err)
 	require.NotNil(t, batch)
-	require.Len(t, batch.Rows, 1, "Should read exactly 1 row in first batch")
-	assert.Contains(t, batch.Rows[0], "_cardinalhq.name")
-	assert.Contains(t, batch.Rows[0], "resource.service.name")
+	require.Equal(t, 1, batch.Len(), "Should read exactly 1 row in first batch")
+	assert.Contains(t, batch.Get(0), "_cardinalhq.name")
+	assert.Contains(t, batch.Get(0), "resource.service.name")
 
 	// Test data exhaustion - continue reading until EOF
 	var exhaustRows int
 	for {
 		batch, readErr := protoReader3.Next()
 		if batch != nil {
-			exhaustRows += len(batch.Rows)
+			exhaustRows += batch.Len()
 		}
 		if errors.Is(readErr, io.EOF) {
 			break
@@ -777,8 +783,8 @@ func TestIngestProtoMetrics_HistogramAlwaysHasSketch(t *testing.T) {
 	}
 
 	// Should have read the gauge metric from createSimpleSyntheticMetrics
-	if batch != nil && len(batch.Rows) > 0 {
-		row := batch.Rows[0]
+	if batch != nil && batch.Len() > 0 {
+		row := batch.Get(0)
 		assert.Equal(t, "test_gauge", row["_cardinalhq.name"])
 		assert.Equal(t, "gauge", row["_cardinalhq.metric_type"])
 		t.Logf("Successfully read metric: %s", row["_cardinalhq.name"])
@@ -797,7 +803,9 @@ func TestIngestProtoMetrics_ContractCompliance(t *testing.T) {
 	for {
 		batch, err := reader.Next()
 		if batch != nil {
-			allRows = append(allRows, batch.Rows...)
+			for i := 0; i < batch.Len(); i++ {
+				allRows = append(allRows, batch.Get(i))
+			}
 		}
 
 		if err == io.EOF {

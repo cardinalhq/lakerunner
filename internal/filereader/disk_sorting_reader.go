@@ -23,6 +23,7 @@ import (
 	cbor2 "github.com/fxamacker/cbor/v2"
 
 	"github.com/cardinalhq/lakerunner/internal/cbor"
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 )
 
 // RowIndex represents a lightweight pointer to a CBOR-encoded row in the temp file.
@@ -132,7 +133,8 @@ func (r *DiskSortingReader) writeAndIndexAllRows() error {
 		}
 
 		// Encode and index each row in the batch
-		for _, row := range batch.Rows {
+		for i := 0; i < batch.Len(); i++ {
+			row := batch.Get(i)
 			if err := r.writeAndIndexRow(row); err != nil {
 				return fmt.Errorf("failed to write and index row: %w", err)
 			}
@@ -204,12 +206,10 @@ func (r *DiskSortingReader) Next() (*Batch, error) {
 		return nil, io.EOF
 	}
 
-	batch := &Batch{
-		Rows: make([]Row, 0, r.batchSize),
-	}
+	batch := pipeline.GetBatch()
 
 	// Return rows from disk in sorted order
-	for len(batch.Rows) < r.batchSize && r.currentIndex < len(r.indices) {
+	for batch.Len() < r.batchSize && r.currentIndex < len(r.indices) {
 		idx := r.indices[r.currentIndex]
 
 		// Seek to the row position in temp file
@@ -235,12 +235,15 @@ func (r *DiskSortingReader) Next() (*Batch, error) {
 			row[k] = v
 		}
 
-		batch.Rows = append(batch.Rows, row)
+		batchRow := batch.AddRow()
+		for k, v := range row {
+			batchRow[k] = v
+		}
 		r.currentIndex++
 	}
 
-	if len(batch.Rows) > 0 {
-		r.rowCount += int64(len(batch.Rows))
+	if batch.Len() > 0 {
+		r.rowCount += int64(batch.Len())
 		return batch, nil
 	}
 

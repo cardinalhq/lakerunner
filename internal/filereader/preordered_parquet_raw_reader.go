@@ -21,6 +21,8 @@ import (
 	"strconv"
 
 	"github.com/parquet-go/parquet-go"
+
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 )
 
 // PreorderedParquetRawReader reads rows from a generic Parquet stream.
@@ -79,9 +81,7 @@ func (r *PreorderedParquetRawReader) Next() (*Batch, error) {
 		return nil, io.EOF
 	}
 
-	batch := &Batch{
-		Rows: make([]Row, n),
-	}
+	batch := pipeline.GetBatch()
 
 	// Transfer ownership instead of copying to reduce memory pressure
 	// Also perform defensive conversion of _cardinalhq.tid field
@@ -108,12 +108,15 @@ func (r *PreorderedParquetRawReader) Next() (*Batch, error) {
 			}
 		}
 
-		batch.Rows[validRows] = row // Transfer map ownership, avoid expensive copy
+		// Use AddRow and copy the data
+		batchRow := batch.AddRow()
+		for k, v := range row {
+			batchRow[k] = v
+		}
 		validRows++
 	}
 
-	// Resize batch to only include valid rows
-	batch.Rows = batch.Rows[:validRows]
+	// No need to resize batch with new API
 
 	// Only increment rowCount for successfully processed rows
 	r.rowCount += int64(validRows)

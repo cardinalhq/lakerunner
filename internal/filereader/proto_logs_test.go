@@ -69,7 +69,7 @@ func TestProtoLogsReader_EmptySlice(t *testing.T) {
 	batch, err := reader.Next()
 	if batch != nil {
 		assert.NoError(t, err)
-		assert.GreaterOrEqual(t, len(batch.Rows), 0)
+		assert.GreaterOrEqual(t, batch.Len(), 0)
 	}
 }
 
@@ -82,7 +82,7 @@ func TestProtoLogsReader_Close(t *testing.T) {
 	batch, err := reader.Next()
 	require.NoError(t, err)
 	require.NotNil(t, batch, "Should read a batch before closing")
-	require.Len(t, batch.Rows, 1, "Should read exactly 1 row before closing")
+	require.Equal(t, 1, batch.Len(), "Should read exactly 1 row before closing")
 
 	// Close should work
 	err = reader.Close()
@@ -286,10 +286,11 @@ func TestProtoLogsReader_SyntheticData(t *testing.T) {
 	for {
 		batch, readErr := protoReader2.Next()
 		if batch != nil {
-			totalBatchedRows += len(batch.Rows)
+			totalBatchedRows += batch.Len()
 
 			// Verify each row that was read
-			for i, row := range batch.Rows {
+			for i := 0; i < batch.Len(); i++ {
+				row := batch.Get(i)
 				assert.Greater(t, len(row), 0, "Batched row %d should have data", i)
 				assert.Contains(t, row, "_cardinalhq.message")
 				assert.Contains(t, row, "_cardinalhq.timestamp")
@@ -311,16 +312,16 @@ func TestProtoLogsReader_SyntheticData(t *testing.T) {
 	batch, err := protoReader3.Next()
 	require.NoError(t, err)
 	require.NotNil(t, batch, "Should read a batch")
-	assert.Len(t, batch.Rows, 1, "Should read exactly 1 row")
-	assert.Contains(t, batch.Rows[0], "_cardinalhq.message")
-	assert.Contains(t, batch.Rows[0], "resource.service.name")
+	assert.Equal(t, 1, batch.Len(), "Should read exactly 1 row")
+	assert.Contains(t, batch.Get(0), "_cardinalhq.message")
+	assert.Contains(t, batch.Get(0), "resource.service.name")
 
 	// Test data exhaustion - continue reading until EOF
 	var exhaustRows int
 	for {
 		batch, readErr := protoReader3.Next()
 		if batch != nil {
-			exhaustRows += len(batch.Rows)
+			exhaustRows += batch.Len()
 		}
 		if errors.Is(readErr, io.EOF) {
 			break

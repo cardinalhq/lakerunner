@@ -22,6 +22,7 @@ import (
 	"github.com/DataDog/sketches-go/ddsketch"
 
 	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 )
 
 // AggregatingMetricsReader wraps a sorted Reader to perform streaming aggregation of metrics.
@@ -391,9 +392,7 @@ func (ar *AggregatingMetricsReader) Next() (*Batch, error) {
 		return nil, fmt.Errorf("reader is closed")
 	}
 
-	batch := &Batch{
-		Rows: make([]Row, 0, ar.batchSize),
-	}
+	batch := pipeline.GetBatch()
 
 	for {
 		// Ensure we have a pending row to process
@@ -408,11 +407,14 @@ func (ar *AggregatingMetricsReader) Next() (*Batch, error) {
 							return nil, fmt.Errorf("failed to aggregate final group: %w", aggErr)
 						}
 						if result != nil {
-							batch.Rows = append(batch.Rows, result)
+							row := batch.AddRow()
+							for k, v := range result {
+								row[k] = v
+							}
 							ar.rowCount++
 						}
 					}
-					if len(batch.Rows) == 0 {
+					if batch.Len() == 0 {
 						return nil, io.EOF
 					}
 					return batch, nil
@@ -421,7 +423,8 @@ func (ar *AggregatingMetricsReader) Next() (*Batch, error) {
 			}
 
 			// Process all rows in the batch
-			for _, row := range underlyingBatch.Rows {
+			for i := 0; i < underlyingBatch.Len(); i++ {
+				row := underlyingBatch.Get(i)
 				// Copy row to pending
 				ar.pendingRow = make(Row)
 				for k, v := range row {
@@ -455,11 +458,14 @@ func (ar *AggregatingMetricsReader) Next() (*Batch, error) {
 
 					// Only emit if we have a result (not all rows were dropped)
 					if result != nil {
-						batch.Rows = append(batch.Rows, result)
+						batchRow := batch.AddRow()
+						for k, v := range result {
+							batchRow[k] = v
+						}
 						ar.rowCount++
 
 						// Return batch if we have enough rows
-						if len(batch.Rows) >= ar.batchSize {
+						if batch.Len() >= ar.batchSize {
 							// Start new aggregation with the pending row and break
 							ar.currentKey = key
 							if err := ar.addRowToAggregation(ar.pendingRow); err != nil {
@@ -482,7 +488,7 @@ func (ar *AggregatingMetricsReader) Next() (*Batch, error) {
 		}
 
 		// If we have any aggregated rows, return them
-		if len(batch.Rows) > 0 {
+		if batch.Len() > 0 {
 			return batch, nil
 		}
 

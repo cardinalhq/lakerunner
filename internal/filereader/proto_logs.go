@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 )
@@ -62,15 +63,13 @@ func (r *ProtoLogsReader) Next() (*Batch, error) {
 		return nil, fmt.Errorf("reader is closed")
 	}
 
-	batch := &Batch{
-		Rows: make([]Row, 0, r.batchSize),
-	}
+	batch := pipeline.GetBatch()
 
-	for len(batch.Rows) < r.batchSize {
+	for batch.Len() < r.batchSize {
 		row, err := r.getLogRow()
 		if err != nil {
 			if err == io.EOF {
-				if len(batch.Rows) == 0 {
+				if batch.Len() == 0 {
 					return nil, io.EOF
 				}
 				break
@@ -78,12 +77,15 @@ func (r *ProtoLogsReader) Next() (*Batch, error) {
 			return nil, err
 		}
 
-		batch.Rows = append(batch.Rows, row)
+		batchRow := batch.AddRow()
+		for k, v := range row {
+			batchRow[k] = v
+		}
 	}
 
 	// Update row count with successfully read rows
-	if len(batch.Rows) > 0 {
-		r.rowCount += int64(len(batch.Rows))
+	if batch.Len() > 0 {
+		r.rowCount += int64(batch.Len())
 		return batch, nil
 	}
 

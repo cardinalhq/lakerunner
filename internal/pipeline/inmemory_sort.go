@@ -60,13 +60,17 @@ func (s *InMemorySortReader) Next() (*Batch, error) {
 	}
 
 	batch := s.pool.Get()
-	end := s.pos + cap(batch.Rows)
+	batchCapacity := 1000 // default batch size
+	end := s.pos + batchCapacity
 	if end > len(s.allRows) {
 		end = len(s.allRows)
 	}
 
 	for i := s.pos; i < end; i++ {
-		batch.Rows = append(batch.Rows, s.allRows[i])
+		row := batch.AddRow()
+		for k, v := range s.allRows[i] {
+			row[k] = v
+		}
 	}
 	s.pos = end
 
@@ -82,7 +86,8 @@ func (s *InMemorySortReader) loadAllRows() error {
 		if err != nil {
 			return err
 		}
-		for _, row := range batch.Rows {
+		for i := 0; i < batch.Len(); i++ {
+			row := batch.Get(i)
 			s.allRows = append(s.allRows, copyRow(row))
 		}
 	}

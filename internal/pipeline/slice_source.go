@@ -21,12 +21,11 @@ import "io"
 type SliceSource struct {
 	data   []Row
 	pos    int
-	owner  *batchPool
 	closed bool
 }
 
-func NewSliceSource(data []Row, pool *batchPool) *SliceSource {
-	return &SliceSource{data: data, owner: pool}
+func NewSliceSource(data []Row) *SliceSource {
+	return &SliceSource{data: data}
 }
 
 func (s *SliceSource) Next() (*Batch, error) {
@@ -36,12 +35,18 @@ func (s *SliceSource) Next() (*Batch, error) {
 	if s.pos >= len(s.data) {
 		return nil, io.EOF
 	}
-	b := s.owner.Get()
-	upper := s.pos + cap(b.Rows)
+	b := globalBatchPool.Get()
+	batchCapacity := 1000 // default batch size
+	upper := s.pos + batchCapacity
 	if upper > len(s.data) {
 		upper = len(s.data)
 	}
-	b.Rows = append(b.Rows, s.data[s.pos:upper]...)
+	for i := s.pos; i < upper; i++ {
+		row := b.AddRow()
+		for k, v := range s.data[i] {
+			row[k] = v
+		}
+	}
 	s.pos = upper
 	return b, nil
 }

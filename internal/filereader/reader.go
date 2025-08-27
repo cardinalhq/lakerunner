@@ -16,8 +16,10 @@
 // Callers construct readers directly and compose them as needed for their specific use cases.
 package filereader
 
+import "github.com/cardinalhq/lakerunner/internal/pipeline"
+
 // Row represents a single row of data as a map of column names to values.
-type Row map[string]any
+type Row = pipeline.Row
 
 // Reader is the core interface for reading rows from any file format using pipeline semantics.
 // This eliminates memory ownership issues by establishing clear ownership: batches are owned
@@ -81,9 +83,7 @@ func TimeOrderedSelector(fieldName string) SelectFunc {
 
 // Batch represents a collection of rows with clear ownership semantics.
 // The batch is owned by the reader that returns it.
-type Batch struct {
-	Rows []Row
-}
+type Batch = pipeline.Batch
 
 // extractTimestamp extracts a timestamp from a row, handling various numeric types.
 func extractTimestamp(row Row, fieldName string) int64 {

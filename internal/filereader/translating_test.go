@@ -299,12 +299,12 @@ func TestTranslatingReader_PartialTranslationError(t *testing.T) {
 	// Read should succeed for first row, then fail on second
 	batch, err := reader.Next()
 	assert.NotNil(t, batch, "Should return batch with first row before translation error")
-	assert.Len(t, batch.Rows, 1, "Should read exactly 1 row before translation error")
+	assert.Equal(t, 1, batch.Len(), "Should read exactly 1 row before translation error")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "translation failed for row 1")
 
 	// Verify the first row was translated successfully
-	assert.Equal(t, "translated_1", batch.Rows[0]["row"])
+	assert.Equal(t, "translated_1", batch.Get(0)["row"])
 }
 
 func TestTranslatingReader_EmptySlice(t *testing.T) {
@@ -321,7 +321,7 @@ func TestTranslatingReader_EmptySlice(t *testing.T) {
 	batch, err := reader.Next()
 	assert.NoError(t, err)
 	assert.NotNil(t, batch)
-	assert.Len(t, batch.Rows, 1, "Should read 1 row")
+	assert.Equal(t, 1, batch.Len(), "Should read 1 row")
 }
 
 func TestTranslatingReader_ReadBatched(t *testing.T) {
@@ -348,10 +348,11 @@ func TestTranslatingReader_ReadBatched(t *testing.T) {
 		batch, err := reader.Next()
 
 		if batch != nil {
-			totalRows += len(batch.Rows)
+			totalRows += batch.Len()
 
 			// Verify each row that was read has translation applied
-			for i, row := range batch.Rows {
+			for i := 0; i < batch.Len(); i++ {
+				row := batch.Get(i)
 				assert.Greater(t, len(row), 0, "Row %d should have data", i)
 				assert.Contains(t, row, "id", "Row %d should have id field", i)
 				assert.Contains(t, row, "value", "Row %d should have value field", i)
@@ -391,7 +392,7 @@ func TestTranslatingReader_TotalRowsReturned(t *testing.T) {
 	batch, err := reader.Next()
 	require.NoError(t, err)
 	require.NotNil(t, batch)
-	assert.Len(t, batch.Rows, 5)                          // All 5 rows in one batch
+	assert.Equal(t, 5, batch.Len())                       // All 5 rows in one batch
 	assert.Equal(t, int64(5), reader.TotalRowsReturned()) // Total should be 5
 
 	// Count should remain stable after EOF
@@ -414,7 +415,7 @@ func TestTranslatingReader_Close(t *testing.T) {
 	batch, err := reader.Next()
 	require.NoError(t, err)
 	require.NotNil(t, batch)
-	require.Len(t, batch.Rows, 1, "Should read exactly 1 row before closing")
+	require.Equal(t, 1, batch.Len(), "Should read exactly 1 row before closing")
 
 	// Close should work
 	err = reader.Close()
@@ -462,9 +463,9 @@ func TestTranslatingReader_EOF(t *testing.T) {
 	batch, err := reader.Next()
 	assert.NoError(t, err)
 	assert.NotNil(t, batch)
-	assert.Len(t, batch.Rows, 1)
-	assert.Equal(t, "row", batch.Rows[0]["final"])
-	assert.Equal(t, "test", batch.Rows[0]["eof"])
+	assert.Equal(t, 1, batch.Len())
+	assert.Equal(t, "row", batch.Get(0)["final"])
+	assert.Equal(t, "test", batch.Get(0)["eof"])
 
 	// Second read should return EOF
 	batch, err = reader.Next()

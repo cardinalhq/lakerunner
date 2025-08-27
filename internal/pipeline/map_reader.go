@@ -16,13 +16,12 @@ package pipeline
 
 // MapReader: 1→1 mapping (optionally drop by returning (nil,false))
 type MapReader struct {
-	in   Reader
-	pool *batchPool
-	fn   func(Row) (Row, bool) // return ok=false to drop
+	in Reader
+	fn func(Row) (Row, bool) // return ok=false to drop
 }
 
-func Map(in Reader, pool *batchPool, fn func(Row) (Row, bool)) *MapReader {
-	return &MapReader{in: in, pool: pool, fn: fn}
+func Map(in Reader, fn func(Row) (Row, bool)) *MapReader {
+	return &MapReader{in: in, fn: fn}
 }
 
 func (m *MapReader) Next() (*Batch, error) {
@@ -31,18 +30,23 @@ func (m *MapReader) Next() (*Batch, error) {
 		if err != nil {
 			return nil, err
 		}
-		out := m.pool.Get()
-		for _, r := range in.Rows {
-			if nr, ok := m.fn(r); ok {
+		out := globalBatchPool.Get()
+		for i := 0; i < in.Len(); i++ {
+			sourceRow := in.Get(i)
+			if mappedRow, ok := m.fn(sourceRow); ok {
 				// IMPORTANT: assume fn returns a fresh Row or same row but treated ephemeral.
 				// If fn wants to retain, it must copy.
-				out.Rows = append(out.Rows, nr)
-				if len(out.Rows) == cap(out.Rows) {
-					return out, nil // return early if full; remaining rows will be processed on next call
+				targetRow := out.AddRow()
+				for k, v := range mappedRow {
+					targetRow[k] = v
+				}
+				// Check if batch is full (reaching pre-allocated capacity)
+				if out.Len() >= 1000 { // Use default batch size
+					return out, nil
 				}
 			}
 		}
-		if len(out.Rows) > 0 {
+		if out.Len() > 0 {
 			return out, nil
 		}
 		// otherwise loop to pull next input batch
@@ -52,6 +56,6 @@ func (m *MapReader) Next() (*Batch, error) {
 func (m *MapReader) Close() error { return m.in.Close() }
 
 // FilterReader: keep rows where pred==true (thin wrapper around Map)
-func Filter(in Reader, pool *batchPool, pred func(Row) bool) *MapReader {
-	return Map(in, pool, func(r Row) (Row, bool) { return r, pred(r) })
+func Filter(in Reader, pred func(Row) bool) *MapReader {
+	return Map(in, func(r Row) (Row, bool) { return r, pred(r) })
 }

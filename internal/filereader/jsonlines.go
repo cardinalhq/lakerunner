@@ -19,6 +19,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"strings"
 
 	"github.com/cardinalhq/lakerunner/internal/constants"
@@ -57,11 +59,9 @@ func (r *JSONLinesReader) Next() (*Batch, error) {
 		return nil, io.EOF
 	}
 
-	batch := &Batch{
-		Rows: make([]Row, 0, r.batchSize),
-	}
+	batch := pipeline.GetBatch()
 
-	for len(batch.Rows) < r.batchSize {
+	for batch.Len() < r.batchSize {
 		if !r.scanner.Scan() {
 			// Check for scanner error
 			if err := r.scanner.Err(); err != nil {
@@ -86,15 +86,18 @@ func (r *JSONLinesReader) Next() (*Batch, error) {
 			return nil, fmt.Errorf("JSON parse error at line %d: %w", r.rowIndex, err)
 		}
 
-		batch.Rows = append(batch.Rows, row)
+		batchRow := batch.AddRow()
+		for k, v := range row {
+			batchRow[k] = v
+		}
 	}
 
-	if len(batch.Rows) == 0 {
+	if batch.Len() == 0 {
 		r.closed = true
 		return nil, io.EOF
 	}
 
-	r.totalRows += int64(len(batch.Rows))
+	r.totalRows += int64(batch.Len())
 	return batch, nil
 }
 

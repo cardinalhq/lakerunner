@@ -396,7 +396,8 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 
 		// Process any rows we got (safe because either no error or EOF with final data)
 		if batch != nil {
-			for _, row := range batch.Rows {
+			for i := 0; i < batch.Len(); i++ {
+				row := batch.Get(i)
 				if row == nil {
 					continue
 				}

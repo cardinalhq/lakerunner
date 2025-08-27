@@ -19,6 +19,8 @@ import (
 	"io"
 	"slices"
 	"strings"
+
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 )
 
 // SortFunc is a function that compares two rows and returns:
@@ -92,7 +94,8 @@ func (r *MemorySortingReader) loadAndSortAllRows() error {
 		}
 
 		// Convert and store rows from batch
-		for _, row := range batch.Rows {
+		for i := 0; i < batch.Len(); i++ {
+			row := batch.Get(i)
 			rowMap := make(map[string]any)
 			for k, v := range row {
 				rowMap[k] = v
@@ -126,24 +129,20 @@ func (r *MemorySortingReader) Next() (*Batch, error) {
 		return nil, io.EOF
 	}
 
-	batch := &Batch{
-		Rows: make([]Row, 0, r.batchSize),
-	}
+	batch := pipeline.GetBatch()
 
 	// Return rows from the sorted buffer
-	for len(batch.Rows) < r.batchSize && r.currentIndex < len(r.allRows) {
-		// Create new row and copy from buffer
-		row := make(Row)
+	for batch.Len() < r.batchSize && r.currentIndex < len(r.allRows) {
+		// Use batch's AddRow to reuse maps
+		row := batch.AddRow()
 		for k, v := range r.allRows[r.currentIndex] {
 			row[k] = v
 		}
-
-		batch.Rows = append(batch.Rows, row)
 		r.currentIndex++
 	}
 
-	if len(batch.Rows) > 0 {
-		r.rowCount += int64(len(batch.Rows))
+	if batch.Len() > 0 {
+		r.rowCount += int64(batch.Len())
 		return batch, nil
 	}
 

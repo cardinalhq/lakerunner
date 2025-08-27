@@ -18,6 +18,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 )
 
 // readerState holds the state for a single reader in the ordered merge.
@@ -32,15 +34,15 @@ type readerState struct {
 
 // getCurrentRow returns the current row from the reader state, if available.
 func (state *readerState) getCurrentRow() Row {
-	if state.done || state.err != nil || state.currentBatch == nil || state.batchIndex >= len(state.currentBatch.Rows) {
+	if state.done || state.err != nil || state.currentBatch == nil || state.batchIndex >= state.currentBatch.Len() {
 		return nil
 	}
-	return state.currentBatch.Rows[state.batchIndex]
+	return state.currentBatch.Get(state.batchIndex)
 }
 
 // consumeCurrentRow advances to the next row in the current batch.
 func (state *readerState) consumeCurrentRow() {
-	if state.currentBatch != nil && state.batchIndex < len(state.currentBatch.Rows) {
+	if state.currentBatch != nil && state.batchIndex < state.currentBatch.Len() {
 		state.batchIndex++
 	}
 }
@@ -115,7 +117,7 @@ func (or *PreorderedMultisourceReader) advance(state *readerState) error {
 	}
 
 	// Check if we need to load a new batch
-	if state.currentBatch == nil || state.batchIndex >= len(state.currentBatch.Rows) {
+	if state.currentBatch == nil || state.batchIndex >= state.currentBatch.Len() {
 		batch, err := state.reader.Next()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
@@ -126,7 +128,7 @@ func (or *PreorderedMultisourceReader) advance(state *readerState) error {
 			return err
 		}
 
-		if len(batch.Rows) == 0 {
+		if batch.Len() == 0 {
 			state.done = true
 			return nil
 		}
@@ -144,11 +146,9 @@ func (or *PreorderedMultisourceReader) Next() (*Batch, error) {
 		return nil, errors.New("reader is closed")
 	}
 
-	batch := &Batch{
-		Rows: make([]Row, 0, or.batchSize),
-	}
+	batch := pipeline.GetBatch()
 
-	for len(batch.Rows) < or.batchSize {
+	for batch.Len() < or.batchSize {
 		// Collect all active (non-done, non-error) readers and their current rows
 		var activeRows []Row
 		var activeStates []*readerState
@@ -171,7 +171,7 @@ func (or *PreorderedMultisourceReader) Next() (*Batch, error) {
 					return nil, fmt.Errorf("reader %d error: %w", state.index, state.err)
 				}
 			}
-			if len(batch.Rows) == 0 {
+			if batch.Len() == 0 {
 				return nil, io.EOF
 			}
 			break
@@ -188,11 +188,10 @@ func (or *PreorderedMultisourceReader) Next() (*Batch, error) {
 		currentRow := selectedState.getCurrentRow()
 		if currentRow != nil {
 			// Copy the row to the batch
-			row := make(Row)
+			row := batch.AddRow()
 			for k, v := range currentRow {
 				row[k] = v
 			}
-			batch.Rows = append(batch.Rows, row)
 
 			// Consume the current row and advance if needed
 			selectedState.consumeCurrentRow()
@@ -203,8 +202,8 @@ func (or *PreorderedMultisourceReader) Next() (*Batch, error) {
 	}
 
 	// Update row count with successfully read rows
-	if len(batch.Rows) > 0 {
-		or.rowCount += int64(len(batch.Rows))
+	if batch.Len() > 0 {
+		or.rowCount += int64(batch.Len())
 		return batch, nil
 	}
 

@@ -66,7 +66,7 @@ func benchmarkSortingReader(b *testing.B, createReaderFunc func([]Row) (Reader, 
 			if err != nil {
 				b.Fatalf("Read error: %v", err)
 			}
-			rowsRead += len(batch.Rows)
+			rowsRead += batch.Len()
 		}
 
 		reader.Close()
@@ -115,7 +115,7 @@ func benchmarkSortingReaderWithSize(b *testing.B, numRows int, createReaderFunc 
 			if err != nil {
 				b.Fatalf("Read error: %v", err)
 			}
-			rowsRead += len(batch.Rows)
+			rowsRead += batch.Len()
 		}
 
 		reader.Close()

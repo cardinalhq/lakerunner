@@ -25,13 +25,12 @@ func TestGlobalBatchPool(t *testing.T) {
 	// Test basic get/return cycle
 	batch1 := GetBatch()
 	require.NotNil(t, batch1)
-	assert.NotNil(t, batch1.Rows)
-	assert.Equal(t, 0, len(batch1.Rows))
-	assert.GreaterOrEqual(t, cap(batch1.Rows), 1000) // Should have capacity for default batch size
+	assert.Equal(t, 0, batch1.Len()) // Length should be 0
 
-	// Add some data
-	batch1.Rows = append(batch1.Rows, Row{"test": "data"})
-	assert.Equal(t, 1, len(batch1.Rows))
+	// Add some data using new API
+	row := batch1.AddRow()
+	row["test"] = "data"
+	assert.Equal(t, 1, batch1.Len())
 
 	// Return to pool
 	ReturnBatch(batch1)
@@ -39,7 +38,7 @@ func TestGlobalBatchPool(t *testing.T) {
 	// Get another batch - should be clean
 	batch2 := GetBatch()
 	require.NotNil(t, batch2)
-	assert.Equal(t, 0, len(batch2.Rows), "Returned batch should be clean")
+	assert.Equal(t, 0, batch2.Len(), "Returned batch should be clean")
 
 	// Return second batch
 	ReturnBatch(batch2)
@@ -72,4 +71,48 @@ func TestBatchPoolReuse(t *testing.T) {
 
 	ReturnBatch(batch3)
 	ReturnBatch(batch4)
+}
+
+func TestBatchMethods(t *testing.T) {
+	batch := GetBatch()
+
+	// Test AddRow
+	row1 := batch.AddRow()
+	row1["id"] = 1
+	row1["name"] = "test1"
+
+	row2 := batch.AddRow()
+	row2["id"] = 2
+	row2["name"] = "test2"
+
+	row3 := batch.AddRow()
+	row3["id"] = 3
+	row3["name"] = "test3"
+
+	assert.Equal(t, 3, batch.Len())
+
+	// Test Get
+	assert.Equal(t, 1, batch.Get(0)["id"])
+	assert.Equal(t, 2, batch.Get(1)["id"])
+	assert.Equal(t, 3, batch.Get(2)["id"])
+
+	// Test DeleteRow (delete middle row)
+	batch.DeleteRow(1)
+	assert.Equal(t, 2, batch.Len())
+
+	// After deletion, row order should be [1, 3] (2 was deleted)
+	assert.Equal(t, 1, batch.Get(0)["id"])
+	assert.Equal(t, 3, batch.Get(1)["id"]) // row3 should have moved to position 1
+
+	// Test reusing deleted row slot
+	row4 := batch.AddRow()
+	row4["id"] = 4
+	row4["name"] = "test4"
+
+	assert.Equal(t, 3, batch.Len())
+	assert.Equal(t, 1, batch.Get(0)["id"])
+	assert.Equal(t, 3, batch.Get(1)["id"])
+	assert.Equal(t, 4, batch.Get(2)["id"])
+
+	ReturnBatch(batch)
 }

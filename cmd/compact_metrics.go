@@ -382,7 +382,7 @@ func compactMetricInterval(
 
 		n := 0
 		if batch != nil {
-			n = len(batch.Rows)
+			n = batch.Len()
 		}
 
 		ll.Debug("Aggregating reader batch",
@@ -395,12 +395,13 @@ func compactMetricInterval(
 			return fmt.Errorf("reading from aggregating reader: %w", err)
 		}
 
-		if batch == nil || len(batch.Rows) == 0 {
+		if batch == nil || batch.Len() == 0 {
 			ll.Debug("No more rows from aggregating reader", slog.Int("totalBatches", batchCount))
 			break
 		}
 
-		for _, row := range batch.Rows {
+		for i := 0; i < batch.Len(); i++ {
+			row := batch.Get(i)
 			// Normalize sketch field for parquet writing (string -> []byte)
 			if err := normalizeRowForParquetWrite(row); err != nil {
 				ll.Error("Failed to normalize row", slog.Any("error", err))

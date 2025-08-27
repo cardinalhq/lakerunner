@@ -23,6 +23,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 )
 
 func TestDiskSortingReader_BasicSorting(t *testing.T) {
@@ -62,7 +64,9 @@ func TestDiskSortingReader_BasicSorting(t *testing.T) {
 		}
 		require.NoError(t, err)
 
-		allRows = append(allRows, batch.Rows...)
+		for i := 0; i < batch.Len(); i++ {
+			allRows = append(allRows, batch.Get(i))
+		}
 	}
 
 	// Verify sorting: metric_a (both rows), then metric_z
@@ -103,9 +107,9 @@ func TestDiskSortingReader_TypePreservation(t *testing.T) {
 	// Read the row back
 	batch, err := sortingReader.Next()
 	require.NoError(t, err)
-	require.Len(t, batch.Rows, 1)
+	require.Equal(t, 1, batch.Len())
 
-	decoded := batch.Rows[0]
+	decoded := batch.Get(0)
 
 	// Verify all types are preserved
 	assert.Equal(t, "test_metric", decoded["_cardinalhq.name"])
@@ -157,11 +161,11 @@ func TestDiskSortingReader_MissingFields(t *testing.T) {
 
 	// Should read successfully (missing fields don't cause failures anymore)
 	assert.NoError(t, err)
-	assert.Len(t, batch.Rows, 2)
+	assert.Equal(t, 2, batch.Len())
 
 	// Row with missing fields should be sorted to the end by MetricNameTidTimestampSort
-	assert.Equal(t, "metric_a", batch.Rows[0]["_cardinalhq.name"]) // Missing fields sort first
-	assert.Equal(t, "metric_b", batch.Rows[1]["_cardinalhq.name"]) // Complete row sorts later
+	assert.Equal(t, "metric_a", batch.Get(0)["_cardinalhq.name"]) // Missing fields sort first
+	assert.Equal(t, "metric_b", batch.Get(1)["_cardinalhq.name"]) // Complete row sorts later
 }
 
 func TestDiskSortingReader_CleanupOnError(t *testing.T) {
@@ -214,16 +218,13 @@ func (m *MockReader) Next() (*Batch, error) {
 		return nil, io.EOF
 	}
 
-	batch := &Batch{
-		Rows: make([]Row, 0, 100),
-	}
+	batch := pipeline.GetBatch()
 
-	for len(batch.Rows) < 100 && m.currentIdx < len(m.rows) {
-		row := make(Row)
+	for batch.Len() < 100 && m.currentIdx < len(m.rows) {
+		row := batch.AddRow()
 		for k, v := range m.rows[m.currentIdx] {
 			row[k] = v
 		}
-		batch.Rows = append(batch.Rows, row)
 		m.currentIdx++
 	}
 
@@ -303,9 +304,9 @@ func TestDiskSortingReader_CBORIdentity(t *testing.T) {
 			// Read the row back
 			batch, err := sortingReader.Next()
 			require.NoError(t, err)
-			require.Len(t, batch.Rows, 1)
+			require.Equal(t, 1, batch.Len())
 
-			decoded := batch.Rows[0]
+			decoded := batch.Get(0)
 			decodedValue := decoded["test_field"]
 
 			// Check type preservation
@@ -385,17 +386,17 @@ func TestDiskSortingReader_CBOREdgeCases(t *testing.T) {
 
 			if tc.shouldWork {
 				require.NoError(t, err, "Edge case %s should work", tc.name)
-				require.Len(t, batch.Rows, 1)
+				require.Equal(t, 1, batch.Len())
 
 				// For large byte array, verify pattern
 				if tc.name == "large_byte_array" {
-					decoded := batch.Rows[0]["edge_value"].([]byte)
+					decoded := batch.Get(0)["edge_value"].([]byte)
 					require.Len(t, decoded, 10000)
 					for i := 0; i < 100; i++ { // Check first 100 bytes
 						assert.Equal(t, byte(i), decoded[i], "Byte pattern mismatch at position %d", i)
 					}
 				} else {
-					assert.Equal(t, tc.value, batch.Rows[0]["edge_value"], "Value mismatch for edge case %s", tc.name)
+					assert.Equal(t, tc.value, batch.Get(0)["edge_value"], "Value mismatch for edge case %s", tc.name)
 				}
 			} else {
 				assert.Error(t, err, "Edge case %s should fail", tc.name)

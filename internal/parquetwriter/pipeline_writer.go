@@ -73,7 +73,8 @@ func (u *UnifiedPipelineWriter) ConsumeAll(ctx context.Context, reader pipeline.
 		}
 
 		// Write all rows in the batch
-		for _, row := range batch.Rows {
+		for i := 0; i < batch.Len(); i++ {
+			row := batch.Get(i)
 			if err := u.writer.Write(row); err != nil {
 				return nil, err
 			}
@@ -138,7 +139,8 @@ func (b *BatchingPipelineWriter) ConsumeAll(ctx context.Context, reader pipeline
 		}
 
 		// Add rows to buffer
-		for _, row := range batch.Rows {
+		for i := 0; i < batch.Len(); i++ {
+			row := batch.Get(i)
 			b.buffer = append(b.buffer, row)
 
 			// Flush buffer if full
@@ -189,11 +191,8 @@ func ProcessPipelineWithTransform(
 	reader pipeline.Reader,
 	writer PipelineWriter,
 	transform func(pipeline.Row) (pipeline.Row, bool), // return false to drop row
-	batchSize int,
 ) ([]Result, error) {
-	// Create a transformation reader
-	pool := pipeline.NewBatchPool(batchSize)
-	transformReader := pipeline.Map(reader, pool, transform)
+	transformReader := pipeline.Map(reader, transform)
 
 	return writer.ConsumeAll(ctx, transformReader)
 }
@@ -204,11 +203,8 @@ func ProcessPipelineWithFilter(
 	reader pipeline.Reader,
 	writer PipelineWriter,
 	predicate func(pipeline.Row) bool,
-	batchSize int,
 ) ([]Result, error) {
-	// Create a filter reader
-	pool := pipeline.NewBatchPool(batchSize)
-	filterReader := pipeline.Filter(reader, pool, predicate)
+	filterReader := pipeline.Filter(reader, predicate)
 
 	return writer.ConsumeAll(ctx, filterReader)
 }

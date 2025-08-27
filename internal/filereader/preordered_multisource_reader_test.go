@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"io"
 	"testing"
+
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 )
 
 func TestNewPreorderedMultisourceReader(t *testing.T) {
@@ -131,14 +133,14 @@ func TestOrderedReader_NextBatched(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Next() error = %v", err)
 	}
-	if len(batch.Rows) != 2 {
-		t.Errorf("Next() returned %d rows, want 2", len(batch.Rows))
+	if batch.Len() != 2 {
+		t.Errorf("Next() returned %d rows, want 2", batch.Len())
 	}
-	if batch.Rows[0]["ts"] != int64(100) {
-		t.Errorf("First row ts = %v, want 100", batch.Rows[0]["ts"])
+	if batch.Get(0)["ts"] != int64(100) {
+		t.Errorf("First row ts = %v, want 100", batch.Get(0)["ts"])
 	}
-	if batch.Rows[1]["ts"] != int64(200) {
-		t.Errorf("Second row ts = %v, want 200", batch.Rows[1]["ts"])
+	if batch.Get(1)["ts"] != int64(200) {
+		t.Errorf("Second row ts = %v, want 200", batch.Get(1)["ts"])
 	}
 
 	// Next read should return EOF
@@ -174,8 +176,8 @@ func TestOrderedReader_ActiveReaderCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Next() error = %v", err)
 	}
-	if len(batch.Rows) != 2 {
-		t.Fatalf("Expected 2 rows, got %d", len(batch.Rows))
+	if batch.Len() != 2 {
+		t.Fatalf("Expected 2 rows, got %d", batch.Len())
 	}
 
 	// Should have 0 active readers (all consumed)
@@ -315,19 +317,16 @@ func (tr *trackingReader) Next() (*Batch, error) {
 	}
 
 	// Create a new batch with one row
-	batch := &Batch{
-		Rows: make([]Row, 1),
-	}
+	batch := pipeline.GetBatch()
 
 	// Create a new row and copy data
-	row := make(Row)
+	row := batch.AddRow()
 	for k, v := range tr.rows[tr.index] {
 		row[k] = v
 	}
-	batch.Rows[0] = row
 
 	// Track the pointer for testing row reuse
-	tr.ptrs = append(tr.ptrs, fmt.Sprintf("%p", batch.Rows[0]))
+	tr.ptrs = append(tr.ptrs, fmt.Sprintf("%p", row))
 
 	tr.index++
 	tr.rowCount++
@@ -351,11 +350,11 @@ func TestPreorderedMultisourceReader_RowReuse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("First Next() err=%v", err)
 	}
-	if len(batch.Rows) != 1 {
-		t.Fatalf("First batch should have 1 row, got %d", len(batch.Rows))
+	if batch.Len() != 1 {
+		t.Fatalf("First batch should have 1 row, got %d", batch.Len())
 	}
-	if batch.Rows[0]["ts"] != int64(1) {
-		t.Fatalf("first row ts=%v want 1", batch.Rows[0]["ts"])
+	if batch.Get(0)["ts"] != int64(1) {
+		t.Fatalf("first row ts=%v want 1", batch.Get(0)["ts"])
 	}
 
 	// Read second batch
@@ -363,11 +362,11 @@ func TestPreorderedMultisourceReader_RowReuse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Second Next() err=%v", err)
 	}
-	if len(batch.Rows) != 1 {
-		t.Fatalf("Second batch should have 1 row, got %d", len(batch.Rows))
+	if batch.Len() != 1 {
+		t.Fatalf("Second batch should have 1 row, got %d", batch.Len())
 	}
-	if batch.Rows[0]["ts"] != int64(2) {
-		t.Fatalf("second row ts=%v want 2", batch.Rows[0]["ts"])
+	if batch.Get(0)["ts"] != int64(2) {
+		t.Fatalf("second row ts=%v want 2", batch.Get(0)["ts"])
 	}
 
 	// Read third batch
@@ -375,11 +374,11 @@ func TestPreorderedMultisourceReader_RowReuse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Third Next() err=%v", err)
 	}
-	if len(batch.Rows) != 1 {
-		t.Fatalf("Third batch should have 1 row, got %d", len(batch.Rows))
+	if batch.Len() != 1 {
+		t.Fatalf("Third batch should have 1 row, got %d", batch.Len())
 	}
-	if batch.Rows[0]["ts"] != int64(3) {
-		t.Fatalf("third row ts=%v want 3", batch.Rows[0]["ts"])
+	if batch.Get(0)["ts"] != int64(3) {
+		t.Fatalf("third row ts=%v want 3", batch.Get(0)["ts"])
 	}
 
 	// Verify tracking worked

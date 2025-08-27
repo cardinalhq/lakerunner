@@ -75,7 +75,7 @@ func (sr *SequentialReader) Next() (*Batch, error) {
 		}
 
 		// Update our row count with successfully read rows
-		sr.rowCount += int64(len(batch.Rows))
+		sr.rowCount += int64(batch.Len())
 		return batch, nil
 	}
 
