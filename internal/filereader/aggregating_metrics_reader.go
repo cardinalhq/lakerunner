@@ -37,8 +37,8 @@ type AggregatingMetricsReader struct {
 	currentKey      string
 	currentSketch   *ddsketch.DDSketch
 	singletonValues []float64
-	aggregatedRow   map[string]any
-	pendingRow      *map[string]any // Next row read from underlying reader
+	aggregatedRow   Row
+	pendingRow      Row // Next row read from underlying reader
 	readerEOF       bool
 
 	// Track logged histogram errors to avoid spam
@@ -63,11 +63,12 @@ func NewAggregatingMetricsReader(reader Reader, aggregationPeriodMs int64) (*Agg
 		aggregationPeriod:     aggregationPeriodMs,
 		singletonValues:       make([]float64, 0, 16),
 		loggedHistogramErrors: make(map[string]bool),
+		pendingRow:            make(Row),
 	}, nil
 }
 
 // makeAggregationKey creates a key for aggregation from [metric_name, tid, truncated_timestamp].
-func (ar *AggregatingMetricsReader) makeAggregationKey(row map[string]any) (string, error) {
+func (ar *AggregatingMetricsReader) makeAggregationKey(row Row) (string, error) {
 	name, nameOk := row["_cardinalhq.name"].(string)
 	if !nameOk {
 		return "", fmt.Errorf("missing or invalid _cardinalhq.name field")
@@ -90,7 +91,7 @@ func (ar *AggregatingMetricsReader) makeAggregationKey(row map[string]any) (stri
 }
 
 // isSketchEmpty checks if a row has an empty sketch (indicating singleton value).
-func isSketchEmpty(row map[string]any) bool {
+func isSketchEmpty(row Row) bool {
 	sketch := row["sketch"]
 	if sketch == nil {
 		return true
@@ -114,7 +115,7 @@ func isSketchEmpty(row map[string]any) bool {
 }
 
 // getSingletonValue extracts the singleton value from rollup_sum field.
-func getSingletonValue(row map[string]any) (float64, bool) {
+func getSingletonValue(row Row) (float64, bool) {
 	value, ok := row["rollup_sum"].(float64)
 	return value, ok
 }
@@ -140,14 +141,14 @@ func getSketchBytes(sketchData interface{}) ([]byte, error) {
 }
 
 // isHistogramType checks if a row represents a histogram metric type.
-func isHistogramType(row map[string]any) bool {
+func isHistogramType(row Row) bool {
 	metricType, ok := row["_cardinalhq.metric_type"].(string)
 	return ok && metricType == "histogram"
 }
 
 // updateRowFromSketch updates all rollup fields in a row based on the sketch.
 // This should only be called for valid sketches with data.
-func updateRowFromSketch(row map[string]any, sketch *ddsketch.DDSketch) error {
+func updateRowFromSketch(row Row, sketch *ddsketch.DDSketch) error {
 	count := sketch.GetCount()
 	if count == 0 {
 		return fmt.Errorf("cannot update row from empty sketch")
@@ -190,7 +191,7 @@ func updateRowFromSketch(row map[string]any, sketch *ddsketch.DDSketch) error {
 
 // aggregateGroup processes all rows for a single aggregation group and returns the aggregated result.
 // Returns nil if all rows in the group were dropped (e.g., invalid histograms).
-func (ar *AggregatingMetricsReader) aggregateGroup() (map[string]any, error) {
+func (ar *AggregatingMetricsReader) aggregateGroup() (Row, error) {
 	if ar.aggregatedRow == nil {
 		// All rows in this group were dropped - return nil to indicate no output
 		ar.resetAggregation()
@@ -305,7 +306,7 @@ func (ar *AggregatingMetricsReader) resetAggregation() {
 }
 
 // addRowToAggregation adds a row to the current aggregation group.
-func (ar *AggregatingMetricsReader) addRowToAggregation(row map[string]any) error {
+func (ar *AggregatingMetricsReader) addRowToAggregation(row Row) error {
 	// VALIDATION: Histograms must always have sketches
 	if isHistogramType(row) && isSketchEmpty(row) {
 		if name, ok := row["_cardinalhq.name"].(string); ok && !ar.loggedHistogramErrors[name] {
@@ -321,7 +322,7 @@ func (ar *AggregatingMetricsReader) addRowToAggregation(row map[string]any) erro
 	// If this is the first row in the group, use it as the base
 	if ar.aggregatedRow == nil {
 		// Deep copy the row to avoid modifying the original
-		ar.aggregatedRow = make(map[string]any)
+		ar.aggregatedRow = make(Row)
 		for k, v := range row {
 			ar.aggregatedRow[k] = v
 		}
@@ -367,20 +368,10 @@ func (ar *AggregatingMetricsReader) readNextRowFromUnderlying() error {
 		return nil
 	}
 
-	rows := make([]Row, 1)
-	resetRow(&rows[0])
-	n, err := ar.reader.Read(rows)
+	resetRow(&ar.pendingRow)
+	n, err := ar.reader.Read([]Row{ar.pendingRow})
 
-	if n > 0 {
-		// Convert Row to map[string]any
-		rowMap := make(map[string]any)
-		for k, v := range rows[0] {
-			rowMap[k] = v
-		}
-		ar.pendingRow = &rowMap
-	}
-
-	if err != nil {
+	if n == 0 {
 		if err == io.EOF {
 			ar.readerEOF = true
 			return nil
@@ -388,7 +379,12 @@ func (ar *AggregatingMetricsReader) readNextRowFromUnderlying() error {
 		return err
 	}
 
-	return nil
+	if err == io.EOF {
+		ar.readerEOF = true
+		return nil
+	}
+
+	return err
 }
 
 // Read populates the provided slice with aggregated rows.
@@ -404,14 +400,14 @@ func (ar *AggregatingMetricsReader) Read(rows []Row) (int, error) {
 	n := 0
 	for n < len(rows) {
 		// Ensure we have a pending row to process
-		if ar.pendingRow == nil && !ar.readerEOF {
+		if len(ar.pendingRow) == 0 && !ar.readerEOF {
 			if err := ar.readNextRowFromUnderlying(); err != nil {
 				return n, err
 			}
 		}
 
 		// If no more rows and no current aggregation, we're done
-		if ar.pendingRow == nil && ar.currentKey == "" {
+		if len(ar.pendingRow) == 0 && ar.currentKey == "" {
 			if n == 0 {
 				return 0, io.EOF
 			}
@@ -419,21 +415,21 @@ func (ar *AggregatingMetricsReader) Read(rows []Row) (int, error) {
 		}
 
 		// If we have a pending row, process it
-		if ar.pendingRow != nil {
-			key, err := ar.makeAggregationKey(*ar.pendingRow)
+		if len(ar.pendingRow) != 0 {
+			key, err := ar.makeAggregationKey(ar.pendingRow)
 			if err != nil {
-				slog.Error("Failed to make aggregation key", "error", err, "row", *ar.pendingRow)
-				ar.pendingRow = nil
+				slog.Error("Failed to make aggregation key", "error", err, "row", ar.pendingRow)
+				resetRow(&ar.pendingRow)
 				continue
 			}
 
 			// If this row belongs to current group, add it
 			if ar.currentKey == "" || ar.currentKey == key {
 				ar.currentKey = key
-				if err := ar.addRowToAggregation(*ar.pendingRow); err != nil {
+				if err := ar.addRowToAggregation(ar.pendingRow); err != nil {
 					slog.Error("Failed to add row to aggregation", "error", err)
 				}
-				ar.pendingRow = nil
+				resetRow(&ar.pendingRow)
 				continue
 			}
 
@@ -456,10 +452,10 @@ func (ar *AggregatingMetricsReader) Read(rows []Row) (int, error) {
 
 				// Start new aggregation with the pending row
 				ar.currentKey = key
-				if err := ar.addRowToAggregation(*ar.pendingRow); err != nil {
+				if err := ar.addRowToAggregation(ar.pendingRow); err != nil {
 					slog.Error("Failed to add row to new aggregation", "error", err)
 				}
-				ar.pendingRow = nil
+				resetRow(&ar.pendingRow)
 				continue
 			}
 		}
