@@ -323,8 +323,10 @@ func compactMetricInterval(
 	// Create PreorderedMultisourceReader for read-time merge sort of pre-sorted parquet files
 	var finalReader filereader.Reader
 	if len(readers) == 1 {
+		ll.Debug("Using single reader for compaction")
 		finalReader = readers[0]
 	} else {
+		ll.Debug("Creating multi-source reader", slog.Int("readerCount", len(readers)))
 		selector := metricsprocessing.MetricsOrderedSelector()
 		multiReader, err := filereader.NewPreorderedMultisourceReader(readers, selector)
 		if err != nil {
@@ -336,7 +338,9 @@ func compactMetricInterval(
 	}
 
 	// Wrap with aggregating reader to merge duplicates during compaction
-	aggregatingReader, err := filereader.NewAggregatingMetricsReader(finalReader, int64(inf.FrequencyMs()))
+	frequencyMs := int64(inf.FrequencyMs())
+	ll.Debug("Creating aggregating metrics reader", slog.Int64("frequencyMs", frequencyMs))
+	aggregatingReader, err := filereader.NewAggregatingMetricsReader(finalReader, frequencyMs)
 	if err != nil {
 		ll.Error("Failed to create aggregating metrics reader", slog.Any("error", err))
 		return fmt.Errorf("creating aggregating metrics reader: %w", err)
@@ -360,15 +364,24 @@ func compactMetricInterval(
 	const batchSize = 1000
 	rowsBatch := make([]filereader.Row, batchSize)
 	totalRows := int64(0)
+	batchCount := 0
 
 	for {
 		n, err := aggregatingReader.Read(rowsBatch)
+		batchCount++
+
+		ll.Debug("Aggregating reader batch",
+			slog.Int("batchNum", batchCount),
+			slog.Int("rowsRead", n),
+			slog.Any("error", err))
+
 		if err != nil && !errors.Is(err, io.EOF) {
 			ll.Error("Failed to read from aggregating reader", slog.Any("error", err))
 			return fmt.Errorf("reading from aggregating reader: %w", err)
 		}
 
 		if n == 0 {
+			ll.Debug("No more rows from aggregating reader", slog.Int("totalBatches", batchCount))
 			break
 		}
 
