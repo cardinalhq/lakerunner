@@ -166,6 +166,32 @@
 //	group2 := NewPreorderedMultisourceReader(readers2, TimeOrderedSelector("timestamp"))
 //	final := NewSequentialReader([]Reader{group1, group2})
 //
+// # Memory Management & Row Buffer Reuse
+//
+// The filereader package implements efficient memory management through row buffer reuse:
+//
+// **Buffer Ownership**: Callers own the Row slice and its individual Row maps. Readers
+// must not retain references to these maps beyond the Read() call.
+//
+// **Memory Efficiency**: Reuse Row maps across Read() calls to reduce allocations:
+//
+//	rows := make([]Row, 10)
+//	for i := range rows {
+//	    rows[i] = make(Row)  // Pre-allocate maps
+//	}
+//
+//	for {
+//	    n, err := reader.Read(rows)
+//	    // Process rows[0:n], maps are reused automatically
+//	    if err == io.EOF { break }
+//	}
+//
+// **Data Safety**: All readers call resetRow() before populating each Row to prevent
+// data leakage between reads. This ensures clean buffer reuse without corruption.
+//
+// **Error Handling**: Readers maintain clean Row states on errors to prevent partial
+// data corruption in reused buffers.
+//
 // # Resource Management
 //
 //   - All readers must be closed via Close()
