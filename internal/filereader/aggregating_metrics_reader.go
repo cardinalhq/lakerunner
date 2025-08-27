@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 
 	"github.com/DataDog/sketches-go/ddsketch"
 
@@ -41,7 +42,8 @@ type AggregatingMetricsReader struct {
 	currentSketch   *ddsketch.DDSketch
 	singletonValues []float64
 	aggregatedRow   Row
-	pendingRow      Row // Next row read from underlying reader
+	pendingBatch    *Batch // Unprocessed rows from underlying reader
+	pendingIndex    int    // Index of next row to process in pendingBatch
 	readerEOF       bool
 
 	// Track logged histogram errors to avoid spam
@@ -71,7 +73,6 @@ func NewAggregatingMetricsReader(reader Reader, aggregationPeriodMs int64, batch
 		batchSize:             batchSize,
 		singletonValues:       make([]float64, 0, 16),
 		loggedHistogramErrors: make(map[string]bool),
-		pendingRow:            make(Row),
 	}, nil
 }
 
@@ -387,6 +388,49 @@ func (ar *AggregatingMetricsReader) readNextBatchFromUnderlying() (*Batch, error
 	return batch, nil
 }
 
+// processRow processes a single row and adds aggregated results to the batch.
+// Returns an error if processing fails.
+func (ar *AggregatingMetricsReader) processRow(row Row, batch *Batch) error {
+	// Create aggregation key for this row
+	key, err := ar.makeAggregationKey(row)
+	if err != nil {
+		slog.Error("Failed to make aggregation key", "error", err, "row", row)
+		return nil // Skip this row, continue processing
+	}
+
+	// If this row belongs to current group, add it
+	if ar.currentKey == "" || ar.currentKey == key {
+		ar.currentKey = key
+		if err := ar.addRowToAggregation(row); err != nil {
+			slog.Error("Failed to add row to aggregation", "error", err)
+		}
+		return nil
+	}
+
+	// Key changed - emit current aggregation and start new one
+	if ar.currentKey != "" {
+		result, err := ar.aggregateGroup()
+		if err != nil {
+			return fmt.Errorf("failed to aggregate group: %w", err)
+		}
+
+		// Only emit if we have a result (not all rows were dropped)
+		if result != nil {
+			batchRow := batch.AddRow()
+			maps.Copy(batchRow, result)
+			ar.rowCount++
+		}
+	}
+
+	// Start new aggregation with the current row
+	ar.currentKey = key
+	if err := ar.addRowToAggregation(row); err != nil {
+		slog.Error("Failed to add row to new aggregation", "error", err)
+	}
+
+	return nil
+}
+
 // Next returns the next batch of aggregated rows.
 func (ar *AggregatingMetricsReader) Next() (*Batch, error) {
 	if ar.closed {
@@ -396,8 +440,30 @@ func (ar *AggregatingMetricsReader) Next() (*Batch, error) {
 	batch := pipeline.GetBatch()
 
 	for {
-		// Ensure we have a pending row to process
-		if len(ar.pendingRow) == 0 && !ar.readerEOF {
+		// Process pending rows from previous underlying batch if any
+		if ar.pendingBatch != nil && ar.pendingIndex < ar.pendingBatch.Len() {
+			row := ar.pendingBatch.Get(ar.pendingIndex)
+			ar.pendingIndex++
+
+			// Process this row
+			if err := ar.processRow(row, batch); err != nil {
+				return nil, err
+			}
+
+			// Return batch if we have enough rows
+			if batch.Len() >= ar.batchSize {
+				return batch, nil
+			}
+
+			continue
+		}
+
+		// Clear pending batch if we've processed all rows
+		ar.pendingBatch = nil
+		ar.pendingIndex = 0
+
+		// Read next batch from underlying reader
+		if !ar.readerEOF {
 			underlyingBatch, err := ar.readNextBatchFromUnderlying()
 			if err != nil {
 				if err == io.EOF {
@@ -409,9 +475,7 @@ func (ar *AggregatingMetricsReader) Next() (*Batch, error) {
 						}
 						if result != nil {
 							row := batch.AddRow()
-							for k, v := range result {
-								row[k] = v
-							}
+							maps.Copy(row, result)
 							ar.rowCount++
 						}
 					}
@@ -423,69 +487,10 @@ func (ar *AggregatingMetricsReader) Next() (*Batch, error) {
 				return nil, err
 			}
 
-			// Process all rows in the batch
-			for i := 0; i < underlyingBatch.Len(); i++ {
-				row := underlyingBatch.Get(i)
-				// Copy row to pending
-				ar.pendingRow = make(Row)
-				for k, v := range row {
-					ar.pendingRow[k] = v
-				}
-
-				// Process this row immediately
-				key, err := ar.makeAggregationKey(ar.pendingRow)
-				if err != nil {
-					slog.Error("Failed to make aggregation key", "error", err, "row", ar.pendingRow)
-					ar.pendingRow = make(Row)
-					continue
-				}
-
-				// If this row belongs to current group, add it
-				if ar.currentKey == "" || ar.currentKey == key {
-					ar.currentKey = key
-					if err := ar.addRowToAggregation(ar.pendingRow); err != nil {
-						slog.Error("Failed to add row to aggregation", "error", err)
-					}
-					ar.pendingRow = make(Row)
-					continue
-				}
-
-				// Key changed - emit current aggregation and start new one
-				if ar.currentKey != "" {
-					result, err := ar.aggregateGroup()
-					if err != nil {
-						return nil, fmt.Errorf("failed to aggregate group: %w", err)
-					}
-
-					// Only emit if we have a result (not all rows were dropped)
-					if result != nil {
-						batchRow := batch.AddRow()
-						for k, v := range result {
-							batchRow[k] = v
-						}
-						ar.rowCount++
-
-						// Return batch if we have enough rows
-						if batch.Len() >= ar.batchSize {
-							// Start new aggregation with the pending row and break
-							ar.currentKey = key
-							if err := ar.addRowToAggregation(ar.pendingRow); err != nil {
-								slog.Error("Failed to add row to new aggregation", "error", err)
-							}
-							ar.pendingRow = make(Row)
-							return batch, nil
-						}
-					}
-
-					// Start new aggregation with the pending row
-					ar.currentKey = key
-					if err := ar.addRowToAggregation(ar.pendingRow); err != nil {
-						slog.Error("Failed to add row to new aggregation", "error", err)
-					}
-					ar.pendingRow = make(Row)
-					continue
-				}
-			}
+			// Store the underlying batch for processing
+			ar.pendingBatch = underlyingBatch
+			ar.pendingIndex = 0
+			continue
 		}
 
 		// If we have any aggregated rows, return them

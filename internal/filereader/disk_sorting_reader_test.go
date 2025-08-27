@@ -336,6 +336,63 @@ func TestDiskSortingReader_CBORIdentity(t *testing.T) {
 	}
 }
 
+func TestDiskSortingReader_ArbitraryRowCount(t *testing.T) {
+	// Test to verify DiskSortingReader doesn't drop rows due to batch size boundaries
+	// This test creates exactly 1234 rows and verifies we get exactly 1234 back
+	const totalRows = 1234
+	const batchSize = 1000
+
+	// Create test data with 1234 rows
+	testRows := make([]Row, totalRows)
+	for i := 0; i < totalRows; i++ {
+		testRows[i] = Row{
+			wkk.RowKeyCName:        fmt.Sprintf("metric_%04d", i%10), // 10 different metric names
+			wkk.RowKeyCTID:         int64(i % 100),                   // 100 different TIDs
+			wkk.RowKeyCTimestamp:   int64(1000 + i),                  // Sequential timestamps
+			wkk.NewRowKey("value"): float64(i),                       // Sequential values
+		}
+	}
+
+	mockReader := NewMockReader(testRows)
+	sortingReader, err := NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc(), batchSize)
+	require.NoError(t, err)
+	defer sortingReader.Close()
+
+	// Read all rows back and count them
+	totalRead := 0
+	batchCount := 0
+	for {
+		batch, err := sortingReader.Next()
+		if err == io.EOF {
+			break
+		}
+		require.NoError(t, err, "Failed to read batch %d", batchCount+1)
+
+		batchSize := batch.Len()
+		totalRead += batchSize
+		batchCount++
+
+		// Log batch sizes to help debug the pattern
+		t.Logf("Batch %d: %d rows (total so far: %d)", batchCount, batchSize, totalRead)
+
+		// Verify each row has the expected structure
+		for i := 0; i < batch.Len(); i++ {
+			row := batch.Get(i)
+			require.Contains(t, row, wkk.RowKeyCName, "Row missing metric name")
+			require.Contains(t, row, wkk.RowKeyCTID, "Row missing TID")
+			require.Contains(t, row, wkk.RowKeyCTimestamp, "Row missing timestamp")
+		}
+	}
+
+	// This is the critical assertion - we must get exactly the same number of rows out
+	assert.Equal(t, totalRows, totalRead, "DiskSortingReader dropped or duplicated rows")
+
+	// Verify the reader's internal count matches
+	assert.Equal(t, int64(totalRead), sortingReader.TotalRowsReturned(), "TotalRowsReturned doesn't match actual rows read")
+
+	t.Logf("SUCCESS: Fed %d rows, got %d rows back in %d batches", totalRows, totalRead, batchCount)
+}
+
 func TestDiskSortingReader_CBOREdgeCases(t *testing.T) {
 	// Test edge cases that might break CBOR encoding/decoding
 	edgeCases := []struct {

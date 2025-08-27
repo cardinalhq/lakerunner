@@ -642,3 +642,217 @@ func TestAggregatingMetricsReader_PendingRowReset(t *testing.T) {
 	_, ok := allRows[1][wkk.NewRowKey("unused")]
 	assert.False(t, ok, "unused field should not leak into subsequent rows")
 }
+
+func TestAggregatingMetricsReader_ArbitraryRowCountBatchBoundary(t *testing.T) {
+	// Test to verify AggregatingMetricsReader doesn't drop rows due to batch size boundaries
+	// This test creates exactly 1234 rows that should aggregate down to 150 unique groups
+	const totalRows = 1234
+	const batchSize = 1000
+	const aggregationPeriodMs = 10000
+
+	// Create test data with 1234 rows that will aggregate into 150 groups (10 names * 5 TIDs * 3 timestamps)
+	// IMPORTANT: Must be sorted by [name, tid, timestamp] for streaming aggregation to work
+	testRows := make([]Row, totalRows)
+	rowIndex := 0
+
+	// Generate sorted data: for each name, for each tid, for each timestamp, create multiple rows
+	groupIndex := 0
+	for nameIdx := range 10 {
+		for tid := range 5 {
+			for tsIdx := range 3 {
+				timestamp := int64(1000 + tsIdx*aggregationPeriodMs)
+
+				// Create multiple rows for the same aggregation key to test batching across boundaries
+				// Distribute 1234 rows across 150 groups: ~8 rows per group on average
+				rowsForThisGroup := (totalRows / 150)
+				if groupIndex < (totalRows % 150) {
+					rowsForThisGroup++ // Distribute remainder across first (totalRows % 150) groups
+				}
+
+				for r := 0; r < rowsForThisGroup && rowIndex < totalRows; r++ {
+					testRows[rowIndex] = Row{
+						wkk.RowKeyCName:       fmt.Sprintf("metric_%d", nameIdx),
+						wkk.RowKeyCTID:        int64(tid),
+						wkk.RowKeyCTimestamp:  timestamp,
+						wkk.RowKeyCMetricType: "counter",
+						wkk.RowKeyRollupSum:   float64(rowIndex + 1), // Sequential values
+						wkk.RowKeyRollupCount: float64(1),            // Each row represents 1 sample
+						wkk.RowKeySketch:      []byte{},              // Empty sketch = singleton
+					}
+					rowIndex++
+				}
+				groupIndex++
+			}
+		}
+	}
+
+	// Debug: Print first 100 rows to verify sort order
+	t.Logf("First 100 input rows (should be sorted by [name, tid, timestamp]):")
+	for i := 0; i < min(100, len(testRows)); i++ {
+		row := testRows[i]
+		t.Logf("  Input[%d]: name=%v, tid=%v, ts=%v", i,
+			row[wkk.RowKeyCName],
+			row[wkk.RowKeyCTID],
+			row[wkk.RowKeyCTimestamp])
+	}
+
+	mockReader := NewMockReader(testRows)
+	aggregatingReader, err := NewAggregatingMetricsReader(mockReader, aggregationPeriodMs, batchSize)
+	require.NoError(t, err)
+	defer aggregatingReader.Close()
+
+	// Read all aggregated rows back and count them
+	totalRead := 0
+	batchCount := 0
+	for {
+		batch, err := aggregatingReader.Next()
+		if err == io.EOF {
+			t.Logf("Hit EOF after %d batches, %d total rows", batchCount, totalRead)
+			break
+		}
+		require.NoError(t, err, "Failed to read batch %d", batchCount+1)
+
+		batchSizeActual := batch.Len()
+		totalRead += batchSizeActual
+		batchCount++
+
+		// Log batch sizes to help debug the pattern
+		t.Logf("Aggregated Batch %d: %d rows (total so far: %d)", batchCount, batchSizeActual, totalRead)
+
+		// Debug first few rows to see if they're actually being aggregated
+		if batchCount == 1 {
+			for i := 0; i < min(3, batch.Len()); i++ {
+				row := batch.Get(i)
+				t.Logf("  Row %d: name=%v, tid=%v, ts=%v, count=%v", i,
+					row[wkk.RowKeyCName],
+					row[wkk.RowKeyCTID],
+					row[wkk.RowKeyCTimestamp],
+					row[wkk.RowKeyRollupCount])
+			}
+		}
+
+		// Verify each row has the expected aggregated structure
+		for i := 0; i < batch.Len(); i++ {
+			row := batch.Get(i)
+			require.Contains(t, row, wkk.RowKeyCName, "Aggregated row missing metric name")
+			require.Contains(t, row, wkk.RowKeyCTID, "Aggregated row missing TID")
+			require.Contains(t, row, wkk.RowKeyCTimestamp, "Aggregated row missing timestamp")
+			require.Contains(t, row, wkk.RowKeyRollupSum, "Aggregated row missing rollup_sum")
+			require.Contains(t, row, wkk.RowKeyRollupCount, "Aggregated row missing rollup_count")
+		}
+	}
+
+	// Calculate expected aggregated row count: 10 metrics * 5 TIDs * 3 time buckets = 150
+	expectedAggregatedRows := 10 * 5 * 3 // metrics * TIDs * time_buckets
+
+	// This is the critical assertion - we must get the expected aggregated count
+	assert.Equal(t, expectedAggregatedRows, totalRead, "AggregatingMetricsReader produced wrong aggregated count")
+
+	// Verify the reader's internal count matches
+	assert.Equal(t, int64(totalRead), aggregatingReader.TotalRowsReturned(), "TotalRowsReturned doesn't match actual rows read")
+
+	t.Logf("SUCCESS: Fed %d rows, got %d aggregated rows back in %d batches (expected %d)", totalRows, totalRead, batchCount, expectedAggregatedRows)
+}
+
+func TestAggregatingMetricsReader_NoAggregationPassthrough(t *testing.T) {
+	// Test "10s in, 10s out" - each row has unique aggregation key, so no aggregation should occur
+	// This verifies that AggregatingMetricsReader preserves row order and count when no aggregation is needed
+	const totalRows = 1234
+	const batchSize = 1000
+	const aggregationPeriodMs = 10000
+
+	// Create 1234 rows with unique aggregation keys (each row gets unique metric name or timestamp)
+	testRows := make([]Row, totalRows)
+	for i := 0; i < totalRows; i++ {
+		testRows[i] = Row{
+			wkk.RowKeyCName:       fmt.Sprintf("unique_metric_%d", i),  // Each row has unique metric name
+			wkk.RowKeyCTID:        int64(42),                           // Same TID for all
+			wkk.RowKeyCTimestamp:  int64(1000 + i*aggregationPeriodMs), // Each row in different time bucket
+			wkk.RowKeyCMetricType: "gauge",
+			wkk.RowKeyRollupSum:   float64(i + 1), // Sequential values to verify order
+			wkk.RowKeyRollupCount: float64(1),     // Each row represents 1 sample
+			wkk.RowKeySketch:      []byte{},       // Empty sketch = singleton
+		}
+	}
+
+	// Debug: Print first few rows to verify structure
+	t.Logf("First 5 input rows (each should have unique aggregation key):")
+	for i := 0; i < min(5, len(testRows)); i++ {
+		row := testRows[i]
+		t.Logf("  Input[%d]: name=%v, tid=%v, ts=%v, sum=%v", i,
+			row[wkk.RowKeyCName],
+			row[wkk.RowKeyCTID],
+			row[wkk.RowKeyCTimestamp],
+			row[wkk.RowKeyRollupSum])
+	}
+
+	mockReader := NewMockReader(testRows)
+	aggregatingReader, err := NewAggregatingMetricsReader(mockReader, aggregationPeriodMs, batchSize)
+	require.NoError(t, err)
+	defer aggregatingReader.Close()
+
+	// Read all rows back - they should pass through unchanged
+	var allOutputRows []Row
+	totalRead := 0
+	batchCount := 0
+	for {
+		batch, err := aggregatingReader.Next()
+		if err == io.EOF {
+			t.Logf("Hit EOF after %d batches, %d total rows", batchCount, totalRead)
+			break
+		}
+		require.NoError(t, err, "Failed to read batch %d", batchCount+1)
+
+		batchSizeActual := batch.Len()
+		totalRead += batchSizeActual
+		batchCount++
+
+		t.Logf("Batch %d: %d rows (total so far: %d)", batchCount, batchSizeActual, totalRead)
+
+		// Collect all rows to verify order and values
+		for i := 0; i < batch.Len(); i++ {
+			row := batch.Get(i)
+			allOutputRows = append(allOutputRows, row)
+
+			// Verify each row has required fields
+			require.Contains(t, row, wkk.RowKeyCName, "Output row missing metric name")
+			require.Contains(t, row, wkk.RowKeyCTID, "Output row missing TID")
+			require.Contains(t, row, wkk.RowKeyCTimestamp, "Output row missing timestamp")
+			require.Contains(t, row, wkk.RowKeyRollupSum, "Output row missing rollup_sum")
+			require.Contains(t, row, wkk.RowKeyRollupCount, "Output row missing rollup_count")
+		}
+	}
+
+	// Critical assertion: must get exactly the same number of rows (no aggregation)
+	assert.Equal(t, totalRows, totalRead, "AggregatingMetricsReader should pass through all rows when no aggregation occurs")
+	assert.Len(t, allOutputRows, totalRows, "Output row collection should match input count")
+
+	// Verify order preservation and values unchanged (except timestamp truncation)
+	for i, outputRow := range allOutputRows {
+		expectedName := fmt.Sprintf("unique_metric_%d", i)
+		inputTimestamp := int64(1000 + i*aggregationPeriodMs)
+		expectedTimestamp := (inputTimestamp / aggregationPeriodMs) * aggregationPeriodMs // Truncated to aggregation period
+		expectedSum := float64(i + 1)
+
+		assert.Equal(t, expectedName, outputRow[wkk.RowKeyCName],
+			"Row %d: metric name should be preserved", i)
+		assert.Equal(t, int64(42), outputRow[wkk.RowKeyCTID],
+			"Row %d: TID should be preserved", i)
+		assert.Equal(t, expectedTimestamp, outputRow[wkk.RowKeyCTimestamp],
+			"Row %d: timestamp should be truncated to aggregation period", i)
+		assert.Equal(t, expectedSum, outputRow[wkk.RowKeyRollupSum],
+			"Row %d: rollup_sum should be preserved", i)
+		assert.Equal(t, float64(1), outputRow[wkk.RowKeyRollupCount],
+			"Row %d: rollup_count should remain 1 (no aggregation)", i)
+
+		// Verify no aggregation occurred - sketch should remain empty
+		sketch, ok := outputRow[wkk.RowKeySketch].([]byte)
+		assert.True(t, ok, "Row %d: sketch should be []byte", i)
+		assert.Empty(t, sketch, "Row %d: sketch should remain empty (no aggregation)", i)
+	}
+
+	// Verify the reader's internal count matches
+	assert.Equal(t, int64(totalRead), aggregatingReader.TotalRowsReturned(), "TotalRowsReturned doesn't match actual rows read")
+
+	t.Logf("SUCCESS: Fed %d rows, got %d rows back in %d batches (no aggregation, order preserved)", totalRows, totalRead, batchCount)
+}
