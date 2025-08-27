@@ -78,16 +78,10 @@ func (r *IngestProtoMetricsReader) Read(rows []Row) (int, error) {
 
 	n := 0
 	for n < len(rows) {
-		row, err := r.getMetricRow()
-		if err != nil {
-			return n, err
-		}
-
 		resetRow(&rows[n])
 
-		// Copy data to Row
-		for k, v := range row {
-			rows[n][k] = v
+		if err := r.getMetricRow(rows[n]); err != nil {
+			return n, err
 		}
 
 		n++
@@ -102,9 +96,10 @@ func (r *IngestProtoMetricsReader) Read(rows []Row) (int, error) {
 }
 
 // getMetricRow handles reading the next datapoint row using streaming iteration.
-func (r *IngestProtoMetricsReader) getMetricRow() (Row, error) {
+// The provided row must be initialized (use resetRow) before calling this method.
+func (r *IngestProtoMetricsReader) getMetricRow(row Row) error {
 	if r.otelMetrics == nil {
-		return nil, io.EOF
+		return io.EOF
 	}
 
 	// Iterator pattern: advance through resources -> scopes -> metrics -> datapoints
@@ -120,17 +115,15 @@ func (r *IngestProtoMetricsReader) getMetricRow() (Row, error) {
 
 				if r.datapointIndex < datapointCount {
 					// Build row for this datapoint
-					row, err := r.buildDatapointRow(rm, sm, metric, r.datapointIndex)
-
-					// Advance to next datapoint
-					r.datapointIndex++
-
-					// If datapoint failed to build (e.g., sketch creation failed), skip it
-					if err != nil {
-						// Log the error but continue to next datapoint
+					if err := r.buildDatapointRow(row, rm, sm, metric, r.datapointIndex); err != nil {
+						// Advance to next datapoint and continue on error
+						r.datapointIndex++
 						// TODO: Add counter to track dropped datapoints
 						continue
 					}
+
+					// Advance to next datapoint
+					r.datapointIndex++
 
 					return r.processRow(row)
 				}
@@ -153,7 +146,7 @@ func (r *IngestProtoMetricsReader) getMetricRow() (Row, error) {
 		r.datapointIndex = 0
 	}
 
-	return nil, io.EOF
+	return io.EOF
 }
 
 // getDatapointCount returns the number of datapoints for a metric based on its type.
@@ -174,73 +167,71 @@ func (r *IngestProtoMetricsReader) getDatapointCount(metric pmetric.Metric) int 
 	}
 }
 
-// buildDatapointRow creates a row from a single datapoint and its context.
-func (r *IngestProtoMetricsReader) buildDatapointRow(rm pmetric.ResourceMetrics, sm pmetric.ScopeMetrics, metric pmetric.Metric, datapointIndex int) (map[string]any, error) {
-	ret := map[string]any{}
-
+// buildDatapointRow populates the provided row with data from a single datapoint and its context.
+func (r *IngestProtoMetricsReader) buildDatapointRow(row Row, rm pmetric.ResourceMetrics, sm pmetric.ScopeMetrics, metric pmetric.Metric, datapointIndex int) error {
 	// Add resource attributes with prefix
 	rm.Resource().Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
-		ret[prefixAttribute(name, "resource")] = value
+		row[prefixAttribute(name, "resource")] = value
 		return true
 	})
 
 	// Add scope attributes with prefix
 	sm.Scope().Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
-		ret[prefixAttribute(name, "scope")] = value
+		row[prefixAttribute(name, "scope")] = value
 		return true
 	})
 
 	// Add scope URL and name
-	ret["scope_url"] = sm.Scope().Version()
-	ret["scope_name"] = sm.Scope().Name()
+	row["scope_url"] = sm.Scope().Version()
+	row["scope_name"] = sm.Scope().Name()
 
 	// Basic metric fields
-	ret["_cardinalhq.name"] = metric.Name()
-	ret["description"] = metric.Description()
-	ret["unit"] = metric.Unit()
+	row["_cardinalhq.name"] = metric.Name()
+	row["description"] = metric.Description()
+	row["unit"] = metric.Unit()
 
 	// Add CardinalHQ metric type field
 	switch metric.Type() {
 	case pmetric.MetricTypeGauge:
-		ret["_cardinalhq.metric_type"] = "gauge"
+		row["_cardinalhq.metric_type"] = "gauge"
 	case pmetric.MetricTypeSum:
-		ret["_cardinalhq.metric_type"] = "count"
+		row["_cardinalhq.metric_type"] = "count"
 	case pmetric.MetricTypeHistogram:
-		ret["_cardinalhq.metric_type"] = "histogram"
+		row["_cardinalhq.metric_type"] = "histogram"
 	case pmetric.MetricTypeExponentialHistogram:
-		ret["_cardinalhq.metric_type"] = "histogram"
+		row["_cardinalhq.metric_type"] = "histogram"
 	case pmetric.MetricTypeSummary:
-		ret["_cardinalhq.metric_type"] = "histogram"
+		row["_cardinalhq.metric_type"] = "histogram"
 	default:
-		ret["_cardinalhq.metric_type"] = "gauge"
+		row["_cardinalhq.metric_type"] = "gauge"
 	}
 
 	// Add datapoint-specific fields based on metric type
 	switch metric.Type() {
 	case pmetric.MetricTypeGauge:
 		dp := metric.Gauge().DataPoints().At(datapointIndex)
-		r.addNumberDatapointFields(ret, dp)
+		r.addNumberDatapointFields(row, dp)
 	case pmetric.MetricTypeSum:
 		dp := metric.Sum().DataPoints().At(datapointIndex)
-		r.addNumberDatapointFields(ret, dp)
+		r.addNumberDatapointFields(row, dp)
 	case pmetric.MetricTypeHistogram:
 		dp := metric.Histogram().DataPoints().At(datapointIndex)
-		if err := r.addHistogramDatapointFields(ret, dp); err != nil {
-			return nil, fmt.Errorf("failed to process histogram datapoint: %w", err)
+		if err := r.addHistogramDatapointFields(row, dp); err != nil {
+			return fmt.Errorf("failed to process histogram datapoint: %w", err)
 		}
 	case pmetric.MetricTypeExponentialHistogram:
 		// TODO: Implement proper exponential histogram handling with sketches and rollup fields
 		// For now, drop these data points to avoid "Empty sketch without valid rollup_sum" errors
-		return nil, fmt.Errorf("exponential histograms not yet implemented")
+		return fmt.Errorf("exponential histograms not yet implemented")
 	case pmetric.MetricTypeSummary:
 		// TODO: Implement proper summary handling with sketches and rollup fields
 		// For now, drop these data points silently to avoid downstream processing issues
-		return nil, fmt.Errorf("summary data points not yet implemented")
+		return fmt.Errorf("summary data points not yet implemented")
 	}
 
-	return ret, nil
+	return nil
 }
 
 // addNumberDatapointFields adds fields from a NumberDataPoint to the row.
@@ -383,8 +374,8 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ret map[string]an
 }
 
 // processRow applies any processing to a row.
-func (r *IngestProtoMetricsReader) processRow(row map[string]any) (Row, error) {
-	return Row(row), nil
+func (r *IngestProtoMetricsReader) processRow(row Row) error {
+	return nil
 }
 
 // Close closes the reader and releases resources.
