@@ -254,7 +254,7 @@ func crunchMetricFile(ctx context.Context, ll *slog.Logger, tmpdir string, fh *f
 		}
 
 		tid := helpers.ComputeTID(metricName, tags)
-		tags["_cardinalhq.tid"] = fmt.Sprintf("%d", tid)
+		tags["_cardinalhq.tid"] = tid
 
 		sketch, exists := (*block.Sketches)[tid]
 		if !exists {
