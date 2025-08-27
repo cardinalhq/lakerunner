@@ -46,7 +46,7 @@ func (s *SliceSource) Next() (*Batch, error) {
 	return b, nil
 }
 
-func (s *SliceSource) Close() error { 
+func (s *SliceSource) Close() error {
 	s.closed = true
-	return nil 
+	return nil
 }

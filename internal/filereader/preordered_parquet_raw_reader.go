@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 
 	"github.com/parquet-go/parquet-go"
 )
@@ -83,12 +84,48 @@ func (r *PreorderedParquetRawReader) Next() (*Batch, error) {
 	}
 
 	// Transfer ownership instead of copying to reduce memory pressure
+	// Also perform defensive conversion of _cardinalhq.tid field
+	validRows := 0
 	for i := 0; i < n; i++ {
-		batch.Rows[i] = parquetRows[i] // Transfer map ownership, avoid expensive copy
+		row := parquetRows[i]
+
+		// Check and convert _cardinalhq.tid field if present
+		if tidValue, exists := row["_cardinalhq.tid"]; exists {
+			switch v := tidValue.(type) {
+			case string:
+				// Convert string to int64
+				if tidInt64, err := strconv.ParseInt(v, 10, 64); err == nil {
+					row["_cardinalhq.tid"] = tidInt64
+				} else {
+					// Drop row if conversion fails
+					continue
+				}
+			case int64:
+				// Already correct type, no conversion needed
+			default:
+				// Drop row if _cardinalhq.tid is neither string nor int64
+				continue
+			}
+		}
+
+		batch.Rows[validRows] = row // Transfer map ownership, avoid expensive copy
+		validRows++
 	}
 
-	// Only increment rowCount for successfully read rows
-	r.rowCount += int64(n)
+	// Resize batch to only include valid rows
+	batch.Rows = batch.Rows[:validRows]
+
+	// Only increment rowCount for successfully processed rows
+	r.rowCount += int64(validRows)
+
+	// Return EOF if no valid rows remain
+	if validRows == 0 && err == io.EOF {
+		return nil, io.EOF
+	}
+	if validRows == 0 {
+		// If we dropped all rows but haven't reached EOF, try reading more
+		return r.Next()
+	}
 
 	return batch, err
 }

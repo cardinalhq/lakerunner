@@ -18,11 +18,6 @@
 package pipeline
 
 import (
-	"container/heap"
-	"encoding/gob"
-	"errors"
-	"io"
-	"os"
 	"sync"
 )
 
@@ -92,7 +87,6 @@ func copyBatch(in *Batch) *Batch {
 	}
 	return out
 }
-
 
 // NewBatchPool creates a new batch pool with the given batch size.
 func NewBatchPool(batchSize int) *batchPool {
