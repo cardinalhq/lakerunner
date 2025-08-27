@@ -75,7 +75,7 @@ func (u *UnifiedPipelineWriter) ConsumeAll(ctx context.Context, reader pipeline.
 		// Write all rows in the batch
 		for i := 0; i < batch.Len(); i++ {
 			row := batch.Get(i)
-			if err := u.writer.Write(row); err != nil {
+			if err := u.writer.Write(pipeline.ToStringMap(row)); err != nil {
 				return nil, err
 			}
 		}
@@ -141,7 +141,7 @@ func (b *BatchingPipelineWriter) ConsumeAll(ctx context.Context, reader pipeline
 		// Add rows to buffer
 		for i := 0; i < batch.Len(); i++ {
 			row := batch.Get(i)
-			b.buffer = append(b.buffer, row)
+			b.buffer = append(b.buffer, pipeline.ToStringMap(row))
 
 			// Flush buffer if full
 			if len(b.buffer) >= b.batchSize {

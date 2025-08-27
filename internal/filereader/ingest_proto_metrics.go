@@ -24,6 +24,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 // IngestProtoMetricsReader reads rows from OpenTelemetry protobuf metrics format for ingestion.
@@ -185,40 +186,40 @@ func (r *IngestProtoMetricsReader) buildDatapointRow(row Row, rm pmetric.Resourc
 	// Add resource attributes with prefix
 	rm.Resource().Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
-		row[prefixAttribute(name, "resource")] = value
+		row[wkk.NewRowKey(prefixAttribute(name, "resource"))] = value
 		return true
 	})
 
 	// Add scope attributes with prefix
 	sm.Scope().Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
-		row[prefixAttribute(name, "scope")] = value
+		row[wkk.NewRowKey(prefixAttribute(name, "scope"))] = value
 		return true
 	})
 
 	// Add scope URL and name
-	row["scope_url"] = sm.Scope().Version()
-	row["scope_name"] = sm.Scope().Name()
+	row[wkk.NewRowKey("scope_url")] = sm.Scope().Version()
+	row[wkk.NewRowKey("scope_name")] = sm.Scope().Name()
 
 	// Basic metric fields
-	row["_cardinalhq.name"] = metric.Name()
-	row["description"] = metric.Description()
-	row["unit"] = metric.Unit()
+	row[wkk.RowKeyCName] = metric.Name()
+	row[wkk.NewRowKey("description")] = metric.Description()
+	row[wkk.NewRowKey("unit")] = metric.Unit()
 
 	// Add CardinalHQ metric type field
 	switch metric.Type() {
 	case pmetric.MetricTypeGauge:
-		row["_cardinalhq.metric_type"] = "gauge"
+		row[wkk.RowKeyCMetricType] = "gauge"
 	case pmetric.MetricTypeSum:
-		row["_cardinalhq.metric_type"] = "count"
+		row[wkk.RowKeyCMetricType] = "count"
 	case pmetric.MetricTypeHistogram:
-		row["_cardinalhq.metric_type"] = "histogram"
+		row[wkk.RowKeyCMetricType] = "histogram"
 	case pmetric.MetricTypeExponentialHistogram:
-		row["_cardinalhq.metric_type"] = "histogram"
+		row[wkk.RowKeyCMetricType] = "histogram"
 	case pmetric.MetricTypeSummary:
-		row["_cardinalhq.metric_type"] = "histogram"
+		row[wkk.RowKeyCMetricType] = "histogram"
 	default:
-		row["_cardinalhq.metric_type"] = "gauge"
+		row[wkk.RowKeyCMetricType] = "gauge"
 	}
 
 	// Add datapoint-specific fields based on metric type
@@ -248,21 +249,21 @@ func (r *IngestProtoMetricsReader) buildDatapointRow(row Row, rm pmetric.Resourc
 }
 
 // addNumberDatapointFields adds fields from a NumberDataPoint to the row.
-func (r *IngestProtoMetricsReader) addNumberDatapointFields(ret map[string]any, dp pmetric.NumberDataPoint) {
+func (r *IngestProtoMetricsReader) addNumberDatapointFields(ret Row, dp pmetric.NumberDataPoint) {
 	// Add datapoint attributes
 	dp.Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
-		ret[prefixAttribute(name, "metric")] = value
+		ret[wkk.NewRowKey(prefixAttribute(name, "metric"))] = value
 		return true
 	})
 
 	// Use Timestamp if available, fallback to StartTimestamp
 	if dp.Timestamp() != 0 {
-		ret["_cardinalhq.timestamp"] = dp.Timestamp().AsTime().UnixMilli()
+		ret[wkk.RowKeyCTimestamp] = dp.Timestamp().AsTime().UnixMilli()
 	} else {
-		ret["_cardinalhq.timestamp"] = dp.StartTimestamp().AsTime().UnixMilli()
+		ret[wkk.RowKeyCTimestamp] = dp.StartTimestamp().AsTime().UnixMilli()
 	}
-	ret["start_timestamp"] = dp.StartTimestamp().AsTime().UnixMilli()
+	ret[wkk.NewRowKey("start_timestamp")] = dp.StartTimestamp().AsTime().UnixMilli()
 
 	// Get the actual value
 	var value float64
@@ -273,36 +274,36 @@ func (r *IngestProtoMetricsReader) addNumberDatapointFields(ret map[string]any, 
 	}
 
 	// Use CardinalHQ single-value pattern for gauges/sums
-	ret["sketch"] = []byte{}  // Empty sketch for single values
-	ret["rollup_avg"] = value // For single value, all stats are the same
-	ret["rollup_max"] = value
-	ret["rollup_min"] = value
-	ret["rollup_count"] = float64(1)
-	ret["rollup_sum"] = value // Single value: sum equals the value
-	ret["rollup_p25"] = value // All percentiles are the single value
-	ret["rollup_p50"] = value
-	ret["rollup_p75"] = value
-	ret["rollup_p90"] = value
-	ret["rollup_p95"] = value
-	ret["rollup_p99"] = value
+	ret[wkk.RowKeySketch] = []byte{} // Empty sketch for single values
+	ret[wkk.RowKeyRollupAvg] = value // For single value, all stats are the same
+	ret[wkk.RowKeyRollupMax] = value
+	ret[wkk.RowKeyRollupMin] = value
+	ret[wkk.RowKeyRollupCount] = float64(1)
+	ret[wkk.RowKeyRollupSum] = value // Single value: sum equals the value
+	ret[wkk.RowKeyRollupP25] = value // All percentiles are the single value
+	ret[wkk.RowKeyRollupP50] = value
+	ret[wkk.RowKeyRollupP75] = value
+	ret[wkk.RowKeyRollupP90] = value
+	ret[wkk.RowKeyRollupP95] = value
+	ret[wkk.RowKeyRollupP99] = value
 }
 
 // addHistogramDatapointFields adds fields from a HistogramDataPoint to the row.
-func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ret map[string]any, dp pmetric.HistogramDataPoint) error {
+func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ret Row, dp pmetric.HistogramDataPoint) error {
 	// Add datapoint attributes
 	dp.Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
-		ret[prefixAttribute(name, "metric")] = value
+		ret[wkk.NewRowKey(prefixAttribute(name, "metric"))] = value
 		return true
 	})
 
 	// Use Timestamp if available, fallback to StartTimestamp
 	if dp.Timestamp() != 0 {
-		ret["_cardinalhq.timestamp"] = dp.Timestamp().AsTime().UnixMilli()
+		ret[wkk.RowKeyCTimestamp] = dp.Timestamp().AsTime().UnixMilli()
 	} else {
-		ret["_cardinalhq.timestamp"] = dp.StartTimestamp().AsTime().UnixMilli()
+		ret[wkk.RowKeyCTimestamp] = dp.StartTimestamp().AsTime().UnixMilli()
 	}
-	ret["start_timestamp"] = dp.StartTimestamp().AsTime().UnixMilli()
+	ret[wkk.NewRowKey("start_timestamp")] = dp.StartTimestamp().AsTime().UnixMilli()
 
 	// Convert bucket data to float64 slices for processing
 	bucketCounts := make([]float64, dp.BucketCounts().Len())
@@ -369,20 +370,20 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ret map[string]an
 	sum := sketch.GetSum()
 	avg := sum / count
 
-	ret["rollup_avg"] = avg
-	ret["rollup_max"] = maxvalue
-	ret["rollup_min"] = minvalue
-	ret["rollup_count"] = count
-	ret["rollup_sum"] = sum
-	ret["rollup_p25"] = quantiles[0]
-	ret["rollup_p50"] = quantiles[1]
-	ret["rollup_p75"] = quantiles[2]
-	ret["rollup_p90"] = quantiles[3]
-	ret["rollup_p95"] = quantiles[4]
-	ret["rollup_p99"] = quantiles[5]
+	ret[wkk.RowKeyRollupAvg] = avg
+	ret[wkk.RowKeyRollupMax] = maxvalue
+	ret[wkk.RowKeyRollupMin] = minvalue
+	ret[wkk.RowKeyRollupCount] = count
+	ret[wkk.RowKeyRollupSum] = sum
+	ret[wkk.RowKeyRollupP25] = quantiles[0]
+	ret[wkk.RowKeyRollupP50] = quantiles[1]
+	ret[wkk.RowKeyRollupP75] = quantiles[2]
+	ret[wkk.RowKeyRollupP90] = quantiles[3]
+	ret[wkk.RowKeyRollupP95] = quantiles[4]
+	ret[wkk.RowKeyRollupP99] = quantiles[5]
 
 	// Encode the sketch (always has data at this point)
-	ret["sketch"] = helpers.EncodeSketch(sketch)
+	ret[wkk.RowKeySketch] = helpers.EncodeSketch(sketch)
 	return nil
 }
 

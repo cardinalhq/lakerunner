@@ -18,6 +18,8 @@ import (
 	"fmt"
 	"io"
 	"testing"
+
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 func createTestRowsForSorting(numRows int) []Row {
@@ -25,18 +27,18 @@ func createTestRowsForSorting(numRows int) []Row {
 
 	for i := 0; i < numRows; i++ {
 		rows[i] = Row{
-			"_cardinalhq.name":      fmt.Sprintf("metric_%d", i%10), // 10 different metric names
-			"_cardinalhq.tid":       int64(100 + i%5),               // 5 different TIDs per metric
-			"_cardinalhq.timestamp": int64(1000 + i*1000),           // Sequential timestamps
-			"rollup_avg":            float64(50.0 + float64(i)),
-			"rollup_count":          float64(1),
-			"rollup_sum":            float64(50.0 + float64(i)),
-			"sketch":                []byte{byte(i % 256)},
-			"description":           fmt.Sprintf("Test metric %d", i),
-			"unit":                  "percent",
-			"type":                  "Gauge",
-			"service.name":          fmt.Sprintf("service_%d", i%3),
-			"host":                  fmt.Sprintf("host_%d", i%5),
+			wkk.RowKeyCName:               fmt.Sprintf("metric_%d", i%10), // 10 different metric names
+			wkk.RowKeyCTID:                int64(100 + i%5),               // 5 different TIDs per metric
+			wkk.RowKeyCTimestamp:          int64(1000 + i*1000),           // Sequential timestamps
+			wkk.NewRowKey("rollup_avg"):   float64(50.0 + float64(i)),
+			wkk.NewRowKey("rollup_count"): float64(1),
+			wkk.NewRowKey("rollup_sum"):   float64(50.0 + float64(i)),
+			wkk.NewRowKey("sketch"):       []byte{byte(i % 256)},
+			wkk.NewRowKey("description"):  fmt.Sprintf("Test metric %d", i),
+			wkk.NewRowKey("unit"):         "percent",
+			wkk.NewRowKey("type"):         "Gauge",
+			wkk.NewRowKey("service.name"): fmt.Sprintf("service_%d", i%3),
+			wkk.NewRowKey("host"):         fmt.Sprintf("host_%d", i%5),
 		}
 	}
 

@@ -20,11 +20,13 @@ package pipeline
 import (
 	"maps"
 	"sync"
+
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 // --- Core types & contracts ---------------------------------------------------
 
-type Row = map[string]any
+type Row = map[wkk.RowKey]any
 
 // Batch is owned by the Reader that returns it.
 // Consumers must not hold references after the next Next() call.
@@ -118,6 +120,15 @@ func CopyRow(in Row) Row {
 // CopyBatch creates a deep copy of a batch.
 func CopyBatch(in *Batch) *Batch {
 	return copyBatch(in)
+}
+
+// ToStringMap converts a Row to map[string]any for compatibility with legacy interfaces.
+func ToStringMap(row Row) map[string]any {
+	result := make(map[string]any, len(row))
+	for key, value := range row {
+		result[string(key.Value())] = value
+	}
+	return result
 }
 
 // Global batch pool for memory efficiency across all readers and workers

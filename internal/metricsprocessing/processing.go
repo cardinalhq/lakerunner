@@ -32,6 +32,8 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -50,13 +52,13 @@ func (t *MetricTranslator) TranslateRow(row *filereader.Row) error {
 	}
 
 	// Only set the specific required fields - assume all other fields are properly set
-	(*row)["resource.bucket.name"] = t.Bucket
-	(*row)["resource.file.name"] = "./" + t.ObjectID
-	(*row)["_cardinalhq.customer_id"] = t.OrgID
-	(*row)["_cardinalhq.telemetry_type"] = "metrics"
+	(*row)[wkk.NewRowKey("resource.bucket.name")] = t.Bucket
+	(*row)[wkk.NewRowKey("resource.file.name")] = "./" + t.ObjectID
+	(*row)[wkk.RowKeyCCustomerID] = t.OrgID
+	(*row)[wkk.RowKeyCTelemetryType] = "metrics"
 
 	// Validate required timestamp field - drop row if missing or invalid
-	timestamp, ok := (*row)["_cardinalhq.timestamp"].(int64)
+	timestamp, ok := (*row)[wkk.RowKeyCTimestamp].(int64)
 	if !ok {
 		return fmt.Errorf("_cardinalhq.timestamp field is missing or not int64")
 	}
@@ -64,16 +66,16 @@ func (t *MetricTranslator) TranslateRow(row *filereader.Row) error {
 	// Truncate timestamp to nearest 10-second interval
 	const tenSecondsMs = int64(10000)
 	truncatedTimestamp := (timestamp / tenSecondsMs) * tenSecondsMs
-	(*row)["_cardinalhq.timestamp"] = truncatedTimestamp
+	(*row)[wkk.RowKeyCTimestamp] = truncatedTimestamp
 
 	// Compute and add TID field
-	metricName, nameOk := (*row)["_cardinalhq.name"].(string)
+	metricName, nameOk := (*row)[wkk.RowKeyCName].(string)
 	if !nameOk {
 		return fmt.Errorf("missing or invalid _cardinalhq.name field for TID computation")
 	}
 
-	tid := helpers.ComputeTID(metricName, *row)
-	(*row)["_cardinalhq.tid"] = tid
+	tid := helpers.ComputeTID(metricName, pipeline.ToStringMap(*row))
+	(*row)[wkk.RowKeyCTID] = tid
 
 	return nil
 }
@@ -87,10 +89,10 @@ func MetricsOrderedSelector() filereader.SelectFunc {
 		}
 
 		minIdx := 0
-		minKey := GetMetricSortKey(rows[0])
+		minKey := GetMetricSortKey(pipeline.ToStringMap(rows[0]))
 
 		for i := 1; i < len(rows); i++ {
-			key := GetMetricSortKey(rows[i])
+			key := GetMetricSortKey(pipeline.ToStringMap(rows[i]))
 			if strings.Compare(key, minKey) < 0 {
 				minIdx = i
 				minKey = key

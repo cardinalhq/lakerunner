@@ -34,6 +34,8 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -130,7 +132,7 @@ func (wm *writerManager) processRow(row filereader.Row) (err error) {
 	}()
 
 	// Extract timestamp - assume it's properly set
-	ts, ok := row["_cardinalhq.timestamp"].(int64)
+	ts, ok := row[wkk.RowKeyCTimestamp].(int64)
 	if !ok {
 		return fmt.Errorf("_cardinalhq.timestamp field is missing or not int64")
 	}
@@ -148,7 +150,7 @@ func (wm *writerManager) processRow(row filereader.Row) (err error) {
 	}
 
 	// Write row
-	err = writer.Write(row)
+	err = writer.Write(pipeline.ToStringMap(row))
 	return err
 }
 

@@ -16,7 +16,10 @@
 // Callers construct readers directly and compose them as needed for their specific use cases.
 package filereader
 
-import "github.com/cardinalhq/lakerunner/internal/pipeline"
+import (
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
+)
 
 // Row represents a single row of data as a map of column names to values.
 type Row = pipeline.Row
@@ -87,7 +90,9 @@ type Batch = pipeline.Batch
 
 // extractTimestamp extracts a timestamp from a row, handling various numeric types.
 func extractTimestamp(row Row, fieldName string) int64 {
-	val, exists := row[fieldName]
+	// Convert string field name to RowKey for lookup
+	rowKey := wkk.NewRowKey(fieldName)
+	val, exists := row[rowKey]
 	if !exists {
 		return 0
 	}

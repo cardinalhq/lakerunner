@@ -25,28 +25,29 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 func TestDiskSortingReader_BasicSorting(t *testing.T) {
 	// Create test data with unsorted metric names, TIDs, and timestamps
 	testRows := []Row{
 		{
-			"_cardinalhq.name":      "metric_z",
-			"_cardinalhq.tid":       int64(200),
-			"_cardinalhq.timestamp": int64(3000),
-			"value":                 float64(1.0),
+			wkk.RowKeyCName:        "metric_z",
+			wkk.RowKeyCTID:         int64(200),
+			wkk.RowKeyCTimestamp:   int64(3000),
+			wkk.NewRowKey("value"): float64(1.0),
 		},
 		{
-			"_cardinalhq.name":      "metric_a",
-			"_cardinalhq.tid":       int64(100),
-			"_cardinalhq.timestamp": int64(1000),
-			"value":                 float64(2.0),
+			wkk.RowKeyCName:        "metric_a",
+			wkk.RowKeyCTID:         int64(100),
+			wkk.RowKeyCTimestamp:   int64(1000),
+			wkk.NewRowKey("value"): float64(2.0),
 		},
 		{
-			"_cardinalhq.name":      "metric_a",
-			"_cardinalhq.tid":       int64(100),
-			"_cardinalhq.timestamp": int64(2000),
-			"value":                 float64(3.0),
+			wkk.RowKeyCName:        "metric_a",
+			wkk.RowKeyCTID:         int64(100),
+			wkk.RowKeyCTimestamp:   int64(2000),
+			wkk.NewRowKey("value"): float64(3.0),
 		},
 	}
 
@@ -73,30 +74,30 @@ func TestDiskSortingReader_BasicSorting(t *testing.T) {
 	require.Len(t, allRows, 3)
 
 	// First two rows should be metric_a, sorted by timestamp
-	assert.Equal(t, "metric_a", allRows[0]["_cardinalhq.name"])
-	assert.Equal(t, int64(1000), allRows[0]["_cardinalhq.timestamp"])
+	assert.Equal(t, "metric_a", allRows[0][wkk.RowKeyCName])
+	assert.Equal(t, int64(1000), allRows[0][wkk.RowKeyCTimestamp])
 
-	assert.Equal(t, "metric_a", allRows[1]["_cardinalhq.name"])
-	assert.Equal(t, int64(2000), allRows[1]["_cardinalhq.timestamp"])
+	assert.Equal(t, "metric_a", allRows[1][wkk.RowKeyCName])
+	assert.Equal(t, int64(2000), allRows[1][wkk.RowKeyCTimestamp])
 
 	// Last row should be metric_z
-	assert.Equal(t, "metric_z", allRows[2]["_cardinalhq.name"])
-	assert.Equal(t, int64(3000), allRows[2]["_cardinalhq.timestamp"])
+	assert.Equal(t, "metric_z", allRows[2][wkk.RowKeyCName])
+	assert.Equal(t, int64(3000), allRows[2][wkk.RowKeyCTimestamp])
 }
 
 func TestDiskSortingReader_TypePreservation(t *testing.T) {
 	// Test various types that need to be preserved through CBOR
 	testRow := Row{
-		"_cardinalhq.name":      "test_metric",
-		"_cardinalhq.tid":       int64(12345),
-		"_cardinalhq.timestamp": int64(1640995200000),
-		"string_field":          "test_string",
-		"int64_field":           int64(9223372036854775807), // Max int64
-		"float64_field":         float64(3.14159),
-		"byte_slice":            []byte{0x01, 0x02, 0x03},
-		"float64_slice":         []float64{1.1, 2.2, 3.3},
-		"bool_field":            true,
-		"nil_field":             nil,
+		wkk.RowKeyCName:                "test_metric",
+		wkk.RowKeyCTID:                 int64(12345),
+		wkk.RowKeyCTimestamp:           int64(1640995200000),
+		wkk.NewRowKey("string_field"):  "test_string",
+		wkk.NewRowKey("int64_field"):   int64(9223372036854775807), // Max int64
+		wkk.NewRowKey("float64_field"): float64(3.14159),
+		wkk.NewRowKey("byte_slice"):    []byte{0x01, 0x02, 0x03},
+		wkk.NewRowKey("float64_slice"): []float64{1.1, 2.2, 3.3},
+		wkk.NewRowKey("bool_field"):    true,
+		wkk.NewRowKey("nil_field"):     nil,
 	}
 
 	mockReader := NewMockReader([]Row{testRow})
@@ -112,16 +113,16 @@ func TestDiskSortingReader_TypePreservation(t *testing.T) {
 	decoded := batch.Get(0)
 
 	// Verify all types are preserved
-	assert.Equal(t, "test_metric", decoded["_cardinalhq.name"])
-	assert.Equal(t, int64(12345), decoded["_cardinalhq.tid"])
-	assert.Equal(t, int64(1640995200000), decoded["_cardinalhq.timestamp"])
-	assert.Equal(t, "test_string", decoded["string_field"])
-	assert.Equal(t, int64(9223372036854775807), decoded["int64_field"])
-	assert.Equal(t, float64(3.14159), decoded["float64_field"])
-	assert.Equal(t, []byte{0x01, 0x02, 0x03}, decoded["byte_slice"])
-	assert.Equal(t, []float64{1.1, 2.2, 3.3}, decoded["float64_slice"])
-	assert.Equal(t, true, decoded["bool_field"])
-	assert.Nil(t, decoded["nil_field"])
+	assert.Equal(t, "test_metric", decoded[wkk.RowKeyCName])
+	assert.Equal(t, int64(12345), decoded[wkk.RowKeyCTID])
+	assert.Equal(t, int64(1640995200000), decoded[wkk.RowKeyCTimestamp])
+	assert.Equal(t, "test_string", decoded[wkk.NewRowKey("string_field")])
+	assert.Equal(t, int64(9223372036854775807), decoded[wkk.NewRowKey("int64_field")])
+	assert.Equal(t, float64(3.14159), decoded[wkk.NewRowKey("float64_field")])
+	assert.Equal(t, []byte{0x01, 0x02, 0x03}, decoded[wkk.NewRowKey("byte_slice")])
+	assert.Equal(t, []float64{1.1, 2.2, 3.3}, decoded[wkk.NewRowKey("float64_slice")])
+	assert.Equal(t, true, decoded[wkk.NewRowKey("bool_field")])
+	assert.Nil(t, decoded[wkk.NewRowKey("nil_field")])
 }
 
 func TestDiskSortingReader_EmptyInput(t *testing.T) {
@@ -139,15 +140,15 @@ func TestDiskSortingReader_MissingFields(t *testing.T) {
 	// Test row missing some sort fields - should be handled gracefully by sort function
 	testRows := []Row{
 		{
-			"_cardinalhq.name":      "metric_b",
-			"_cardinalhq.tid":       int64(100),
-			"_cardinalhq.timestamp": int64(2000),
-			"value":                 float64(2.0),
+			wkk.RowKeyCName:        "metric_b",
+			wkk.RowKeyCTID:         int64(100),
+			wkk.RowKeyCTimestamp:   int64(2000),
+			wkk.NewRowKey("value"): float64(2.0),
 		},
 		{
-			"_cardinalhq.name": "metric_a",
+			wkk.RowKeyCName: "metric_a",
 			// Missing TID and timestamp - sort function should handle this gracefully
-			"value": float64(1.0),
+			wkk.NewRowKey("value"): float64(1.0),
 		},
 	}
 
@@ -164,14 +165,14 @@ func TestDiskSortingReader_MissingFields(t *testing.T) {
 	assert.Equal(t, 2, batch.Len())
 
 	// Row with missing fields should be sorted to the end by MetricNameTidTimestampSort
-	assert.Equal(t, "metric_a", batch.Get(0)["_cardinalhq.name"]) // Missing fields sort first
-	assert.Equal(t, "metric_b", batch.Get(1)["_cardinalhq.name"]) // Complete row sorts later
+	assert.Equal(t, "metric_a", batch.Get(0)[wkk.RowKeyCName]) // Missing fields sort first
+	assert.Equal(t, "metric_b", batch.Get(1)[wkk.RowKeyCName]) // Complete row sorts later
 }
 
 func TestDiskSortingReader_CleanupOnError(t *testing.T) {
 	// Create reader that will fail during reading
 	mockReader := &MockReader{
-		rows:      []Row{{"test": "value"}},
+		rows:      []Row{{wkk.NewRowKey("test"): "value"}},
 		readError: fmt.Errorf("simulated read error"),
 	}
 
@@ -290,10 +291,10 @@ func TestDiskSortingReader_CBORIdentity(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// Create a test row with the value
 			testRow := Row{
-				"_cardinalhq.name":      "test_metric",
-				"_cardinalhq.tid":       int64(1),
-				"_cardinalhq.timestamp": int64(1000),
-				"test_field":            tc.value,
+				wkk.RowKeyCName:             "test_metric",
+				wkk.RowKeyCTID:              int64(1),
+				wkk.RowKeyCTimestamp:        int64(1000),
+				wkk.NewRowKey("test_field"): tc.value,
 			}
 
 			mockReader := NewMockReader([]Row{testRow})
@@ -307,7 +308,7 @@ func TestDiskSortingReader_CBORIdentity(t *testing.T) {
 			require.Equal(t, 1, batch.Len())
 
 			decoded := batch.Get(0)
-			decodedValue := decoded["test_field"]
+			decodedValue := decoded[wkk.NewRowKey("test_field")]
 
 			// Check type preservation
 			actualType := fmt.Sprintf("%T", decodedValue)
@@ -370,10 +371,10 @@ func TestDiskSortingReader_CBOREdgeCases(t *testing.T) {
 			}
 
 			testRow := Row{
-				"_cardinalhq.name":      "edge_case_metric",
-				"_cardinalhq.tid":       int64(1),
-				"_cardinalhq.timestamp": int64(2000),
-				"edge_value":            tc.value,
+				wkk.RowKeyCName:             "edge_case_metric",
+				wkk.RowKeyCTID:              int64(1),
+				wkk.RowKeyCTimestamp:        int64(2000),
+				wkk.NewRowKey("edge_value"): tc.value,
 			}
 
 			mockReader := NewMockReader([]Row{testRow})
@@ -390,13 +391,13 @@ func TestDiskSortingReader_CBOREdgeCases(t *testing.T) {
 
 				// For large byte array, verify pattern
 				if tc.name == "large_byte_array" {
-					decoded := batch.Get(0)["edge_value"].([]byte)
+					decoded := batch.Get(0)[wkk.NewRowKey("edge_value")].([]byte)
 					require.Len(t, decoded, 10000)
 					for i := 0; i < 100; i++ { // Check first 100 bytes
 						assert.Equal(t, byte(i), decoded[i], "Byte pattern mismatch at position %d", i)
 					}
 				} else {
-					assert.Equal(t, tc.value, batch.Get(0)["edge_value"], "Value mismatch for edge case %s", tc.name)
+					assert.Equal(t, tc.value, batch.Get(0)[wkk.NewRowKey("edge_value")], "Value mismatch for edge case %s", tc.name)
 				}
 			} else {
 				assert.Error(t, err, "Edge case %s should fail", tc.name)

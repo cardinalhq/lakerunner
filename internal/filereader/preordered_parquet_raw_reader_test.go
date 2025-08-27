@@ -23,6 +23,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 // TestPreorderedParquetRawReaderNext tests the actual Next() method behavior
@@ -145,7 +147,8 @@ func TestPreorderedParquetRawReaderWithRealFile(t *testing.T) {
 				require.NotNil(t, row, "Row %d should not be nil", i)
 				require.Greater(t, len(row), 0, "Row %d should have columns", i)
 				// Verify the expected collector_id field exists
-				assert.Contains(t, row, "_cardinalhq.collector_id", "Row should have collector_id field")
+				_, hasCollectorId := row[wkk.NewRowKey("_cardinalhq.collector_id")]
+				assert.True(t, hasCollectorId, "Row should have collector_id field")
 			}
 		}
 		if errors.Is(err, io.EOF) {
@@ -193,7 +196,8 @@ func TestPreorderedParquetRawReaderMultipleFiles(t *testing.T) {
 						require.NotNil(t, row)
 						require.Greater(t, len(row), 0, "Row should have columns")
 						// Verify the expected collector_id field exists
-						assert.Contains(t, row, "_cardinalhq.collector_id", "Row should have collector_id field")
+						_, hasCollectorId := row[wkk.NewRowKey("_cardinalhq.collector_id")]
+						assert.True(t, hasCollectorId, "Row should have collector_id field")
 					}
 				}
 				if errors.Is(err, io.EOF) {
@@ -284,7 +288,7 @@ func (t *testTranslator) TranslateRow(row *Row) error {
 	if row == nil {
 		return fmt.Errorf("row cannot be nil")
 	}
-	(*row)[t.addField] = t.addValue
+	(*row)[wkk.NewRowKey(t.addField)] = t.addValue
 	return nil
 }
 
@@ -322,7 +326,7 @@ func TestPreorderedParquetRawReader_WithTranslator(t *testing.T) {
 	for i := 0; i < n; i++ {
 		row := batch.Get(i)
 		assert.NotNil(t, row)
-		assert.Equal(t, "parquet", row["test.translator"])
+		assert.Equal(t, "parquet", row[wkk.NewRowKey("test.translator")])
 		t.Logf("Row %d: %d fields, translator field present", i, len(row))
 	}
 }
@@ -361,7 +365,7 @@ func TestProtoLogsReader_WithTranslator(t *testing.T) {
 	for i := 0; i < n; i++ {
 		row := batch.Get(i)
 		assert.NotNil(t, row)
-		assert.Equal(t, "proto", row["test.translator"])
+		assert.Equal(t, "proto", row[wkk.NewRowKey("test.translator")])
 		t.Logf("Row %d: %d fields, translator field present", i, len(row))
 	}
 }

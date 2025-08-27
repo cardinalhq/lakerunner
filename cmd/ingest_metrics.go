@@ -35,6 +35,8 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -117,7 +119,7 @@ func newMetricWriterManager(tmpdir, orgID string, ingestDateint int32, rpfEstima
 // processRow processes a single metric row
 func (wm *metricWriterManager) processRow(row filereader.Row) error {
 	// Extract timestamp for 60-second boundary grouping
-	ts, ok := row["_cardinalhq.timestamp"].(int64)
+	ts, ok := row[wkk.RowKeyCTimestamp].(int64)
 	if !ok {
 		return fmt.Errorf("_cardinalhq.timestamp field is missing or not int64")
 	}
@@ -133,7 +135,7 @@ func (wm *metricWriterManager) processRow(row filereader.Row) error {
 		return fmt.Errorf("failed to get writer for key %v: %w", key, err)
 	}
 
-	return writer.Write(row)
+	return writer.Write(pipeline.ToStringMap(row))
 }
 
 // timestampToMinuteBoundary converts a timestamp to dateint and minute boundary
@@ -546,9 +548,9 @@ func createMetricOrderSelector() filereader.SelectFunc {
 		}
 
 		// Extract comparison values from the best row
-		bestName, _ := bestRow["_cardinalhq.name"].(string)
-		bestTid, _ := bestRow["_cardinalhq.tid"].(int64)
-		bestTs, _ := bestRow["_cardinalhq.timestamp"].(int64)
+		bestName, _ := bestRow[wkk.RowKeyCName].(string)
+		bestTid, _ := bestRow[wkk.RowKeyCTID].(int64)
+		bestTs, _ := bestRow[wkk.RowKeyCTimestamp].(int64)
 
 		for i := 1; i < len(rows); i++ {
 			if rows[i] == nil {
@@ -556,9 +558,9 @@ func createMetricOrderSelector() filereader.SelectFunc {
 			}
 
 			// Extract comparison values from current row
-			name, _ := rows[i]["_cardinalhq.name"].(string)
-			tid, _ := rows[i]["_cardinalhq.tid"].(int64)
-			ts, _ := rows[i]["_cardinalhq.timestamp"].(int64)
+			name, _ := rows[i][wkk.RowKeyCName].(string)
+			tid, _ := rows[i][wkk.RowKeyCTID].(int64)
+			ts, _ := rows[i][wkk.RowKeyCTimestamp].(int64)
 
 			// Compare by [name, tid, timestamp] in ascending order
 			if name < bestName ||

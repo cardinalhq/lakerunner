@@ -20,34 +20,36 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 func TestMemorySortingReader_SortsByKey(t *testing.T) {
 	// Create rows in unsorted order
 	inputRows := []Row{
 		{
-			"_cardinalhq.name":      "memory.usage", // Should come after cpu.usage
-			"_cardinalhq.tid":       int64(12345),
-			"_cardinalhq.timestamp": int64(10000),
-			"value":                 85.0,
+			wkk.RowKeyCName:        "memory.usage", // Should come after cpu.usage
+			wkk.RowKeyCTID:         int64(12345),
+			wkk.RowKeyCTimestamp:   int64(10000),
+			wkk.NewRowKey("value"): 85.0,
 		},
 		{
-			"_cardinalhq.name":      "cpu.usage",
-			"_cardinalhq.tid":       int64(54321), // Higher TID, should come after 12345
-			"_cardinalhq.timestamp": int64(10000),
-			"value":                 65.0,
+			wkk.RowKeyCName:        "cpu.usage",
+			wkk.RowKeyCTID:         int64(54321), // Higher TID, should come after 12345
+			wkk.RowKeyCTimestamp:   int64(10000),
+			wkk.NewRowKey("value"): 65.0,
 		},
 		{
-			"_cardinalhq.name":      "cpu.usage",
-			"_cardinalhq.tid":       int64(12345),
-			"_cardinalhq.timestamp": int64(20000), // Later timestamp
-			"value":                 95.0,
+			wkk.RowKeyCName:        "cpu.usage",
+			wkk.RowKeyCTID:         int64(12345),
+			wkk.RowKeyCTimestamp:   int64(20000), // Later timestamp
+			wkk.NewRowKey("value"): 95.0,
 		},
 		{
-			"_cardinalhq.name":      "cpu.usage",
-			"_cardinalhq.tid":       int64(12345),
-			"_cardinalhq.timestamp": int64(10000), // Earlier timestamp, should come first
-			"value":                 75.0,
+			wkk.RowKeyCName:        "cpu.usage",
+			wkk.RowKeyCTID:         int64(12345),
+			wkk.RowKeyCTimestamp:   int64(10000), // Earlier timestamp, should come first
+			wkk.NewRowKey("value"): 75.0,
 		},
 	}
 
@@ -86,9 +88,9 @@ func TestMemorySortingReader_SortsByKey(t *testing.T) {
 	}
 
 	for i, expected := range expectedOrder {
-		assert.Equal(t, expected.name, allRows[i]["_cardinalhq.name"], "Row %d name mismatch", i)
-		assert.Equal(t, expected.tid, allRows[i]["_cardinalhq.tid"], "Row %d TID mismatch", i)
-		assert.Equal(t, expected.timestamp, allRows[i]["_cardinalhq.timestamp"], "Row %d timestamp mismatch", i)
+		assert.Equal(t, expected.name, allRows[i][wkk.RowKeyCName], "Row %d name mismatch", i)
+		assert.Equal(t, expected.tid, allRows[i][wkk.RowKeyCTID], "Row %d TID mismatch", i)
+		assert.Equal(t, expected.timestamp, allRows[i][wkk.RowKeyCTimestamp], "Row %d timestamp mismatch", i)
 	}
 }
 
@@ -107,22 +109,22 @@ func TestMemorySortingReader_MissingFields(t *testing.T) {
 	// Rows with missing required fields should be sorted to the end
 	inputRows := []Row{
 		{
-			"_cardinalhq.name":      "cpu.usage",
-			"_cardinalhq.tid":       int64(12345),
-			"_cardinalhq.timestamp": int64(10000),
-			"value":                 75.0,
+			wkk.RowKeyCName:        "cpu.usage",
+			wkk.RowKeyCTID:         int64(12345),
+			wkk.RowKeyCTimestamp:   int64(10000),
+			wkk.NewRowKey("value"): 75.0,
 		},
 		{
 			// Missing TID - should be sorted to end
-			"_cardinalhq.name":      "memory.usage",
-			"_cardinalhq.timestamp": int64(10000),
-			"value":                 85.0,
+			wkk.RowKeyCName:        "memory.usage",
+			wkk.RowKeyCTimestamp:   int64(10000),
+			wkk.NewRowKey("value"): 85.0,
 		},
 		{
 			// Missing name - should be sorted to end
-			"_cardinalhq.tid":       int64(12345),
-			"_cardinalhq.timestamp": int64(10000),
-			"value":                 65.0,
+			wkk.RowKeyCTID:         int64(12345),
+			wkk.RowKeyCTimestamp:   int64(10000),
+			wkk.NewRowKey("value"): 65.0,
 		},
 	}
 
@@ -148,18 +150,18 @@ func TestMemorySortingReader_MissingFields(t *testing.T) {
 	require.Len(t, allRows, 3)
 
 	// First row should be the valid one
-	assert.Equal(t, "cpu.usage", allRows[0]["_cardinalhq.name"])
-	assert.Equal(t, int64(12345), allRows[0]["_cardinalhq.tid"])
+	assert.Equal(t, "cpu.usage", allRows[0][wkk.RowKeyCName])
+	assert.Equal(t, int64(12345), allRows[0][wkk.RowKeyCTID])
 
 	// Invalid rows should be at the end (exact order may vary)
 	// Just verify we have one row without name and one without TID
 	hasRowWithoutName := false
 	hasRowWithoutTID := false
 	for i := 1; i < len(allRows); i++ {
-		if _, hasName := allRows[i]["_cardinalhq.name"]; !hasName {
+		if _, hasName := allRows[i][wkk.RowKeyCName]; !hasName {
 			hasRowWithoutName = true
 		}
-		if _, hasTID := allRows[i]["_cardinalhq.tid"]; !hasTID {
+		if _, hasTID := allRows[i][wkk.RowKeyCTID]; !hasTID {
 			hasRowWithoutTID = true
 		}
 	}
@@ -171,26 +173,26 @@ func TestMemorySortingReader_CustomSortFunction(t *testing.T) {
 	// Test with a custom sort function that sorts by timestamp only (reverse order)
 	inputRows := []Row{
 		{
-			"_cardinalhq.name":      "cpu.usage",
-			"_cardinalhq.timestamp": int64(30000),
-			"value":                 75.0,
+			wkk.RowKeyCName:        "cpu.usage",
+			wkk.RowKeyCTimestamp:   int64(30000),
+			wkk.NewRowKey("value"): 75.0,
 		},
 		{
-			"_cardinalhq.name":      "memory.usage",
-			"_cardinalhq.timestamp": int64(10000), // Should come last (earliest timestamp)
-			"value":                 85.0,
+			wkk.RowKeyCName:        "memory.usage",
+			wkk.RowKeyCTimestamp:   int64(10000), // Should come last (earliest timestamp)
+			wkk.NewRowKey("value"): 85.0,
 		},
 		{
-			"_cardinalhq.name":      "disk.usage",
-			"_cardinalhq.timestamp": int64(20000),
-			"value":                 65.0,
+			wkk.RowKeyCName:        "disk.usage",
+			wkk.RowKeyCTimestamp:   int64(20000),
+			wkk.NewRowKey("value"): 65.0,
 		},
 	}
 
 	// Custom sort function: reverse timestamp order (newest first)
-	customSortFunc := func(a, b map[string]any) int {
-		tsA, tsAOk := a["_cardinalhq.timestamp"].(int64)
-		tsB, tsBOk := b["_cardinalhq.timestamp"].(int64)
+	customSortFunc := func(a, b Row) int {
+		tsA, tsAOk := a[wkk.RowKeyCTimestamp].(int64)
+		tsB, tsBOk := b[wkk.RowKeyCTimestamp].(int64)
 		if !tsAOk || !tsBOk {
 			return 0
 		}
@@ -226,25 +228,25 @@ func TestMemorySortingReader_CustomSortFunction(t *testing.T) {
 	require.Len(t, allRows, 3)
 
 	// Verify reverse timestamp ordering: 30000, 20000, 10000
-	assert.Equal(t, int64(30000), allRows[0]["_cardinalhq.timestamp"])
-	assert.Equal(t, int64(20000), allRows[1]["_cardinalhq.timestamp"])
-	assert.Equal(t, int64(10000), allRows[2]["_cardinalhq.timestamp"])
+	assert.Equal(t, int64(30000), allRows[0][wkk.RowKeyCTimestamp])
+	assert.Equal(t, int64(20000), allRows[1][wkk.RowKeyCTimestamp])
+	assert.Equal(t, int64(10000), allRows[2][wkk.RowKeyCTimestamp])
 }
 
 func TestMemorySortingReader_TimestampOnlySort(t *testing.T) {
 	// Test the built-in TimestampSort function
 	inputRows := []Row{
 		{
-			"_cardinalhq.name":      "memory.usage", // Different names, but should sort by timestamp
-			"_cardinalhq.timestamp": int64(30000),
+			wkk.RowKeyCName:      "memory.usage", // Different names, but should sort by timestamp
+			wkk.RowKeyCTimestamp: int64(30000),
 		},
 		{
-			"_cardinalhq.name":      "cpu.usage",
-			"_cardinalhq.timestamp": int64(10000), // Should come first
+			wkk.RowKeyCName:      "cpu.usage",
+			wkk.RowKeyCTimestamp: int64(10000), // Should come first
 		},
 		{
-			"_cardinalhq.name":      "disk.usage",
-			"_cardinalhq.timestamp": int64(20000),
+			wkk.RowKeyCName:      "disk.usage",
+			wkk.RowKeyCTimestamp: int64(20000),
 		},
 	}
 
@@ -270,7 +272,7 @@ func TestMemorySortingReader_TimestampOnlySort(t *testing.T) {
 	require.Len(t, allRows, 3)
 
 	// Verify timestamp ordering: 10000, 20000, 30000
-	assert.Equal(t, int64(10000), allRows[0]["_cardinalhq.timestamp"])
-	assert.Equal(t, int64(20000), allRows[1]["_cardinalhq.timestamp"])
-	assert.Equal(t, int64(30000), allRows[2]["_cardinalhq.timestamp"])
+	assert.Equal(t, int64(10000), allRows[0][wkk.RowKeyCTimestamp])
+	assert.Equal(t, int64(20000), allRows[1][wkk.RowKeyCTimestamp])
+	assert.Equal(t, int64(30000), allRows[2][wkk.RowKeyCTimestamp])
 }

@@ -23,6 +23,8 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 // TestLogTranslatorIntegration verifies that the LogTranslator works correctly
@@ -44,68 +46,68 @@ func TestLogTranslatorIntegration(t *testing.T) {
 		{
 			name: "ValidLogWithMessage",
 			input: filereader.Row{
-				"_cardinalhq.message":   "test log message",
-				"_cardinalhq.timestamp": int64(1640995200000),
-				"level":                 "info",
+				wkk.NewRowKey("_cardinalhq.message"): "test log message",
+				wkk.RowKeyCTimestamp:                 int64(1640995200000),
+				wkk.NewRowKey("level"):               "info",
 			},
 			checkFn: func(t *testing.T, result filereader.Row) {
 				// Should have resource fields added
-				assert.Equal(t, "test-bucket", result["resource.bucket.name"])
-				assert.Equal(t, "./test-logs.json.gz", result["resource.file.name"])
-				assert.Equal(t, "testlogsjson", result["resource.file.type"])
+				assert.Equal(t, "test-bucket", result[wkk.NewRowKey("resource.bucket.name")])
+				assert.Equal(t, "./test-logs.json.gz", result[wkk.NewRowKey("resource.file.name")])
+				assert.Equal(t, "testlogsjson", result[wkk.NewRowKey("resource.file.type")])
 
 				// Should have CardinalHQ metadata fields added
-				assert.Equal(t, "logs", result["_cardinalhq.telemetry_type"])
-				assert.Equal(t, "log.events", result["_cardinalhq.name"])
-				assert.Equal(t, float64(1), result["_cardinalhq.value"])
+				assert.Equal(t, "logs", result[wkk.RowKeyCTelemetryType])
+				assert.Equal(t, "log.events", result[wkk.RowKeyCName])
+				assert.Equal(t, float64(1), result[wkk.RowKeyCValue])
 
 				// Original fields should be preserved
-				assert.Equal(t, "test log message", result["_cardinalhq.message"])
-				assert.Equal(t, int64(1640995200000), result["_cardinalhq.timestamp"])
-				assert.Equal(t, "info", result["level"])
+				assert.Equal(t, "test log message", result[wkk.NewRowKey("_cardinalhq.message")])
+				assert.Equal(t, int64(1640995200000), result[wkk.RowKeyCTimestamp])
+				assert.Equal(t, "info", result[wkk.NewRowKey("level")])
 			},
 		},
 		{
 			name: "LogWithoutMessage",
 			input: filereader.Row{
-				"_cardinalhq.timestamp": int64(1640995200000),
-				"level":                 "error",
+				wkk.RowKeyCTimestamp:   int64(1640995200000),
+				wkk.NewRowKey("level"): "error",
 			},
 			checkFn: func(t *testing.T, result filereader.Row) {
 				// Should not have fingerprint (no message to fingerprint)
 				assert.NotContains(t, result, "_cardinalhq.fingerprint")
 
 				// Should have resource fields
-				assert.Equal(t, "test-bucket", result["resource.bucket.name"])
-				assert.Equal(t, "./test-logs.json.gz", result["resource.file.name"])
+				assert.Equal(t, "test-bucket", result[wkk.NewRowKey("resource.bucket.name")])
+				assert.Equal(t, "./test-logs.json.gz", result[wkk.NewRowKey("resource.file.name")])
 
 				// Original fields should be preserved
-				assert.Equal(t, int64(1640995200000), result["_cardinalhq.timestamp"])
-				assert.Equal(t, "error", result["level"])
+				assert.Equal(t, int64(1640995200000), result[wkk.RowKeyCTimestamp])
+				assert.Equal(t, "error", result[wkk.NewRowKey("level")])
 			},
 		},
 		{
 			name: "LogWithFloatTimestamp",
 			input: filereader.Row{
-				"_cardinalhq.message":   "test message",
-				"_cardinalhq.timestamp": int64(1640995200000), // Already properly typed
-				"severity":              "warn",
+				wkk.NewRowKey("_cardinalhq.message"): "test message",
+				wkk.RowKeyCTimestamp:                 int64(1640995200000), // Already properly typed
+				wkk.NewRowKey("severity"):            "warn",
 			},
 			checkFn: func(t *testing.T, result filereader.Row) {
 				// Should have resource fields and CardinalHQ metadata
-				assert.Equal(t, "test-bucket", result["resource.bucket.name"])
-				assert.Equal(t, "logs", result["_cardinalhq.telemetry_type"])
-				assert.Equal(t, "log.events", result["_cardinalhq.name"])
-				assert.Equal(t, float64(1), result["_cardinalhq.value"])
+				assert.Equal(t, "test-bucket", result[wkk.NewRowKey("resource.bucket.name")])
+				assert.Equal(t, "logs", result[wkk.RowKeyCTelemetryType])
+				assert.Equal(t, "log.events", result[wkk.RowKeyCName])
+				assert.Equal(t, float64(1), result[wkk.RowKeyCValue])
 
 				// Timestamp should be preserved as int64
-				ts, ok := result["_cardinalhq.timestamp"].(int64)
+				ts, ok := result[wkk.RowKeyCTimestamp].(int64)
 				require.True(t, ok, "Expected timestamp to be int64")
 				assert.Equal(t, int64(1640995200000), ts)
 
 				// Other fields preserved
-				assert.Equal(t, "test message", result["_cardinalhq.message"])
-				assert.Equal(t, "warn", result["severity"])
+				assert.Equal(t, "test message", result[wkk.NewRowKey("_cardinalhq.message")])
+				assert.Equal(t, "warn", result[wkk.NewRowKey("severity")])
 			},
 		},
 	}
@@ -148,20 +150,20 @@ func TestLogTranslatorWithParquetWriter(t *testing.T) {
 	// Test data representing what might come from a filereader
 	rawRows := []filereader.Row{
 		{
-			"_cardinalhq.message":   "User login attempt",
-			"_cardinalhq.timestamp": int64(1640995200000),
-			"user_id":               "user123",
-			"success":               true,
+			wkk.NewRowKey("_cardinalhq.message"): "User login attempt",
+			wkk.RowKeyCTimestamp:                 int64(1640995200000),
+			wkk.NewRowKey("user_id"):             "user123",
+			wkk.NewRowKey("success"):             true,
 		},
 		{
-			"_cardinalhq.message":   "Database query executed",
-			"_cardinalhq.timestamp": int64(1640995201000),
-			"query_time_ms":         float64(45.7),
+			wkk.NewRowKey("_cardinalhq.message"): "Database query executed",
+			wkk.RowKeyCTimestamp:                 int64(1640995201000),
+			wkk.NewRowKey("query_time_ms"):       float64(45.7),
 		},
 		{
-			"_cardinalhq.message":   "Error processing request", // Using standard message field
-			"_cardinalhq.timestamp": int64(1640995202000),       // Properly typed timestamp
-			"error_code":            int64(500),
+			wkk.NewRowKey("_cardinalhq.message"): "Error processing request", // Using standard message field
+			wkk.RowKeyCTimestamp:                 int64(1640995202000),       // Properly typed timestamp
+			wkk.NewRowKey("error_code"):          int64(500),
 		},
 	}
 
@@ -177,7 +179,7 @@ func TestLogTranslatorWithParquetWriter(t *testing.T) {
 		require.NoError(t, err)
 
 		// Write to parquet writer
-		err = writer.Write(row)
+		err = writer.Write(pipeline.ToStringMap(row))
 		require.NoError(t, err)
 	}
 
@@ -222,6 +224,6 @@ func TestLogTranslatorErrorHandling(t *testing.T) {
 	require.NoError(t, err)
 
 	// Should have resource fields but no fingerprint
-	assert.Equal(t, "test-bucket", emptyRow["resource.bucket.name"])
+	assert.Equal(t, "test-bucket", emptyRow[wkk.NewRowKey("resource.bucket.name")])
 	assert.NotContains(t, emptyRow, "_cardinalhq.fingerprint")
 }

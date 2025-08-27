@@ -21,13 +21,14 @@ import (
 	"testing"
 
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 func TestNewSequentialReader(t *testing.T) {
 	// Test with valid readers
 	readers := []Reader{
-		newMockReader("r1", []Row{{"data": "r1"}}),
-		newMockReader("r2", []Row{{"data": "r2"}}),
+		newMockReader("r1", []Row{{wkk.NewRowKey("data"): "r1"}}),
+		newMockReader("r2", []Row{{wkk.NewRowKey("data"): "r2"}}),
 	}
 
 	sr, err := NewSequentialReader(readers, 1000)
@@ -61,15 +62,15 @@ func TestSequentialReader_Next(t *testing.T) {
 	// Create readers with different data
 	readers := []Reader{
 		newMockReader("r1", []Row{
-			{"data": "r1-first"},
-			{"data": "r1-second"},
+			{wkk.NewRowKey("data"): "r1-first"},
+			{wkk.NewRowKey("data"): "r1-second"},
 		}),
 		newMockReader("r2", []Row{
-			{"data": "r2-first"},
+			{wkk.NewRowKey("data"): "r2-first"},
 		}),
 		newMockReader("r3", []Row{}), // Empty reader
 		newMockReader("r4", []Row{
-			{"data": "r4-first"},
+			{wkk.NewRowKey("data"): "r4-first"},
 		}),
 	}
 
@@ -97,8 +98,8 @@ func TestSequentialReader_Next(t *testing.T) {
 	}
 
 	for i, expected := range expectedData {
-		if allRows[i]["data"] != expected {
-			t.Errorf("Row %d data = %v, want %v", i, allRows[i]["data"], expected)
+		if allRows[i][wkk.NewRowKey("data")] != expected {
+			t.Errorf("Row %d data = %v, want %v", i, allRows[i][wkk.NewRowKey("data")], expected)
 		}
 	}
 }
@@ -107,11 +108,11 @@ func TestSequentialReader_NextBatched(t *testing.T) {
 	// Create readers with different data
 	readers := []Reader{
 		newMockReader("r1", []Row{
-			{"data": "r1-first"},
-			{"data": "r1-second"},
+			{wkk.NewRowKey("data"): "r1-first"},
+			{wkk.NewRowKey("data"): "r1-second"},
 		}),
 		newMockReader("r2", []Row{
-			{"data": "r2-first"},
+			{wkk.NewRowKey("data"): "r2-first"},
 		}),
 	}
 
@@ -129,11 +130,11 @@ func TestSequentialReader_NextBatched(t *testing.T) {
 	if batch == nil || batch.Len() != 2 {
 		t.Errorf("First Next() returned %d rows, want 2", batch.Len())
 	}
-	if batch.Get(0)["data"] != "r1-first" {
-		t.Errorf("First row data = %v, want r1-first", batch.Get(0)["data"])
+	if batch.Get(0)[wkk.NewRowKey("data")] != "r1-first" {
+		t.Errorf("First row data = %v, want r1-first", batch.Get(0)[wkk.NewRowKey("data")])
 	}
-	if batch.Get(1)["data"] != "r1-second" {
-		t.Errorf("Second row data = %v, want r1-second", batch.Get(1)["data"])
+	if batch.Get(1)[wkk.NewRowKey("data")] != "r1-second" {
+		t.Errorf("Second row data = %v, want r1-second", batch.Get(1)[wkk.NewRowKey("data")])
 	}
 
 	// Read second batch
@@ -144,8 +145,8 @@ func TestSequentialReader_NextBatched(t *testing.T) {
 	if batch == nil || batch.Len() != 1 {
 		t.Errorf("Second Next() returned %d rows, want 1", batch.Len())
 	}
-	if batch.Get(0)["data"] != "r2-first" {
-		t.Errorf("Third row data = %v, want r2-first", batch.Get(0)["data"])
+	if batch.Get(0)[wkk.NewRowKey("data")] != "r2-first" {
+		t.Errorf("Third row data = %v, want r2-first", batch.Get(0)[wkk.NewRowKey("data")])
 	}
 
 	// Should return EOF now
@@ -157,8 +158,8 @@ func TestSequentialReader_NextBatched(t *testing.T) {
 
 func TestSequentialReader_CurrentReaderIndex(t *testing.T) {
 	readers := []Reader{
-		newMockReader("r1", []Row{{"data": "r1"}}),
-		newMockReader("r2", []Row{{"data": "r2"}}),
+		newMockReader("r1", []Row{{wkk.NewRowKey("data"): "r1"}}),
+		newMockReader("r2", []Row{{wkk.NewRowKey("data"): "r2"}}),
 		newMockReader("r3", []Row{}), // Empty reader
 	}
 
@@ -227,9 +228,9 @@ func TestSequentialReader_TotalReaderCount(t *testing.T) {
 
 func TestSequentialReader_RemainingReaderCount(t *testing.T) {
 	readers := []Reader{
-		newMockReader("r1", []Row{{"data": "r1"}}),
-		newMockReader("r2", []Row{{"data": "r2"}}),
-		newMockReader("r3", []Row{{"data": "r3"}}),
+		newMockReader("r1", []Row{{wkk.NewRowKey("data"): "r1"}}),
+		newMockReader("r2", []Row{{wkk.NewRowKey("data"): "r2"}}),
+		newMockReader("r3", []Row{{wkk.NewRowKey("data"): "r3"}}),
 	}
 
 	sr, err := NewSequentialReader(readers, 1000)
@@ -273,8 +274,8 @@ func TestSequentialReader_RemainingReaderCount(t *testing.T) {
 
 func TestSequentialReader_Close(t *testing.T) {
 	readers := []Reader{
-		newMockReader("r1", []Row{{"data": "r1"}}),
-		newMockReader("r2", []Row{{"data": "r2"}}),
+		newMockReader("r1", []Row{{wkk.NewRowKey("data"): "r1"}}),
+		newMockReader("r2", []Row{{wkk.NewRowKey("data"): "r2"}}),
 	}
 
 	sr, err := NewSequentialReader(readers, 1000)
@@ -339,7 +340,7 @@ func TestSequentialReader_AllEmptyReaders(t *testing.T) {
 
 func TestSequentialReader_WithErrors(t *testing.T) {
 	readers := []Reader{
-		newMockReader("r1", []Row{{"data": "r1"}}),
+		newMockReader("r1", []Row{{wkk.NewRowKey("data"): "r1"}}),
 		&errorReader{}, // This reader always returns errors
 	}
 
@@ -366,11 +367,11 @@ func TestSequentialReader_WithErrors(t *testing.T) {
 func TestSequentialReader_ReaderWithDelayedError(t *testing.T) {
 	// Create a reader that succeeds once then errors
 	delayedErrorReader := &delayedErrorReaderImpl{
-		data: []Row{{"data": "delayed"}},
+		data: []Row{{wkk.NewRowKey("data"): "delayed"}},
 	}
 
 	readers := []Reader{
-		newMockReader("r1", []Row{{"data": "r1"}}),
+		newMockReader("r1", []Row{{wkk.NewRowKey("data"): "r1"}}),
 		delayedErrorReader,
 	}
 
@@ -385,8 +386,8 @@ func TestSequentialReader_ReaderWithDelayedError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("First Next() error = %v", err)
 	}
-	if batch == nil || batch.Len() != 1 || batch.Get(0)["data"] != "r1" {
-		t.Fatalf("First Next() should return 1 row with r1 data, got len=%d, data=%v", batch.Len(), batch.Get(0)["data"])
+	if batch == nil || batch.Len() != 1 || batch.Get(0)[wkk.NewRowKey("data")] != "r1" {
+		t.Fatalf("First Next() should return 1 row with r1 data, got len=%d, data=%v", batch.Len(), batch.Get(0)[wkk.NewRowKey("data")])
 	}
 
 	// Second read from delayed error reader (first call succeeds)
@@ -394,8 +395,8 @@ func TestSequentialReader_ReaderWithDelayedError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Second Next() error = %v", err)
 	}
-	if batch == nil || batch.Len() != 1 || batch.Get(0)["data"] != "delayed" {
-		t.Fatalf("Second Next() should return 1 row with delayed data, got len=%d, data=%v", batch.Len(), batch.Get(0)["data"])
+	if batch == nil || batch.Len() != 1 || batch.Get(0)[wkk.NewRowKey("data")] != "delayed" {
+		t.Fatalf("Second Next() should return 1 row with delayed data, got len=%d, data=%v", batch.Len(), batch.Get(0)[wkk.NewRowKey("data")])
 	}
 
 	// Third read from delayed error reader (second call fails)

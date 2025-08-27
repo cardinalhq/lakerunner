@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 // SortFunc is a function that compares two rows and returns:
@@ -28,7 +29,7 @@ import (
 //
 //	0 if a and b are equal
 //	1 if a should come after b
-type SortFunc func(a, b map[string]any) int
+type SortFunc func(a, b Row) int
 
 // MemorySortingReader reads all rows from an underlying reader,
 // then sorts them using a custom sort function and returns them in order.
@@ -47,7 +48,7 @@ type MemorySortingReader struct {
 	batchSize int
 
 	// Buffered and sorted rows
-	allRows      []map[string]any
+	allRows      []Row
 	currentIndex int
 	sorted       bool
 }
@@ -73,7 +74,7 @@ func NewMemorySortingReader(reader Reader, sortFunc SortFunc, batchSize int) (*M
 		reader:    reader,
 		sortFunc:  sortFunc,
 		batchSize: batchSize,
-		allRows:   make([]map[string]any, 0, 1000), // Start with reasonable capacity
+		allRows:   make([]Row, 0, 1000), // Start with reasonable capacity
 	}, nil
 }
 
@@ -96,11 +97,7 @@ func (r *MemorySortingReader) loadAndSortAllRows() error {
 		// Convert and store rows from batch
 		for i := 0; i < batch.Len(); i++ {
 			row := batch.Get(i)
-			rowMap := make(map[string]any)
-			for k, v := range row {
-				rowMap[k] = v
-			}
-			r.allRows = append(r.allRows, rowMap)
+			r.allRows = append(r.allRows, row)
 		}
 	}
 
@@ -191,9 +188,9 @@ type MetricSortKey struct {
 func MetricNameTidTimestampSortKeyFunc() SortKeyFunc {
 	return func(row Row) any {
 		key := MetricSortKey{}
-		key.Name, key.NameOk = row["_cardinalhq.name"].(string)
-		key.Tid, key.TidOk = row["_cardinalhq.tid"].(int64)
-		key.Timestamp, key.TsOk = row["_cardinalhq.timestamp"].(int64)
+		key.Name, key.NameOk = row[wkk.RowKeyCName].(string)
+		key.Tid, key.TidOk = row[wkk.RowKeyCTID].(int64)
+		key.Timestamp, key.TsOk = row[wkk.RowKeyCTimestamp].(int64)
 		return key
 	}
 }
@@ -262,10 +259,10 @@ func MetricNameTidTimestampSortFunc() func(a, b any) int {
 // Note: This function handles missing fields by sorting them before valid entries,
 // but the overall sort is not stable for records with identical sort keys.
 func MetricNameTidTimestampSort() SortFunc {
-	return func(a, b map[string]any) int {
+	return func(a, b Row) int {
 		// Get metric name
-		nameA, nameAOk := a["_cardinalhq.name"].(string)
-		nameB, nameBOk := b["_cardinalhq.name"].(string)
+		nameA, nameAOk := a[wkk.RowKeyCName].(string)
+		nameB, nameBOk := b[wkk.RowKeyCName].(string)
 		if !nameAOk || !nameBOk {
 			if !nameAOk && !nameBOk {
 				return 0
@@ -282,8 +279,8 @@ func MetricNameTidTimestampSort() SortFunc {
 		}
 
 		// Get TID
-		tidA, tidAOk := a["_cardinalhq.tid"].(int64)
-		tidB, tidBOk := b["_cardinalhq.tid"].(int64)
+		tidA, tidAOk := a[wkk.RowKeyCTID].(int64)
+		tidB, tidBOk := b[wkk.RowKeyCTID].(int64)
 		if !tidAOk || !tidBOk {
 			if !tidAOk && !tidBOk {
 				return 0
@@ -303,8 +300,8 @@ func MetricNameTidTimestampSort() SortFunc {
 		}
 
 		// Get timestamp
-		tsA, tsAOk := a["_cardinalhq.timestamp"].(int64)
-		tsB, tsBOk := b["_cardinalhq.timestamp"].(int64)
+		tsA, tsAOk := a[wkk.RowKeyCTimestamp].(int64)
+		tsB, tsBOk := b[wkk.RowKeyCTimestamp].(int64)
 		if !tsAOk || !tsBOk {
 			if !tsAOk && !tsBOk {
 				return 0
@@ -337,7 +334,7 @@ type TimestampSortKey struct {
 func TimestampSortKeyFunc() SortKeyFunc {
 	return func(row Row) any {
 		key := TimestampSortKey{}
-		key.Timestamp, key.TsOk = row["_cardinalhq.timestamp"].(int64)
+		key.Timestamp, key.TsOk = row[wkk.RowKeyCTimestamp].(int64)
 		return key
 	}
 }
@@ -373,9 +370,9 @@ func TimestampSortFunc() func(a, b any) int {
 // Note: This function handles missing timestamps by sorting them before valid entries,
 // but the overall sort is not stable for records with identical timestamps.
 func TimestampSort() SortFunc {
-	return func(a, b map[string]any) int {
-		tsA, tsAOk := a["_cardinalhq.timestamp"].(int64)
-		tsB, tsBOk := b["_cardinalhq.timestamp"].(int64)
+	return func(a, b Row) int {
+		tsA, tsAOk := a[wkk.RowKeyCTimestamp].(int64)
+		tsB, tsBOk := b[wkk.RowKeyCTimestamp].(int64)
 		if !tsAOk || !tsBOk {
 			if !tsAOk && !tsBOk {
 				return 0

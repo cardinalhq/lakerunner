@@ -23,6 +23,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 // AggregatingMetricsReader wraps a sorted Reader to perform streaming aggregation of metrics.
@@ -76,17 +77,17 @@ func NewAggregatingMetricsReader(reader Reader, aggregationPeriodMs int64, batch
 
 // makeAggregationKey creates a key for aggregation from [metric_name, tid, truncated_timestamp].
 func (ar *AggregatingMetricsReader) makeAggregationKey(row Row) (string, error) {
-	name, nameOk := row["_cardinalhq.name"].(string)
+	name, nameOk := row[wkk.RowKeyCName].(string)
 	if !nameOk {
 		return "", fmt.Errorf("missing or invalid _cardinalhq.name field")
 	}
 
-	tid, tidOk := row["_cardinalhq.tid"].(int64)
+	tid, tidOk := row[wkk.RowKeyCTID].(int64)
 	if !tidOk {
 		return "", fmt.Errorf("missing or invalid _cardinalhq.tid field")
 	}
 
-	timestamp, tsOk := row["_cardinalhq.timestamp"].(int64)
+	timestamp, tsOk := row[wkk.RowKeyCTimestamp].(int64)
 	if !tsOk {
 		return "", fmt.Errorf("missing or invalid _cardinalhq.timestamp field")
 	}
@@ -99,7 +100,7 @@ func (ar *AggregatingMetricsReader) makeAggregationKey(row Row) (string, error) 
 
 // isSketchEmpty checks if a row has an empty sketch (indicating singleton value).
 func isSketchEmpty(row Row) bool {
-	sketch := row["sketch"]
+	sketch := row[wkk.RowKeySketch]
 	if sketch == nil {
 		return true
 	}
@@ -117,13 +118,13 @@ func isSketchEmpty(row Row) bool {
 	// Unknown format - this would be a bug
 	slog.Error("Unexpected sketch data type - expected []byte or string",
 		"type", fmt.Sprintf("%T", sketch),
-		"metric", row["_cardinalhq.name"])
+		"metric", row[wkk.RowKeyCName])
 	return true
 }
 
 // getSingletonValue extracts the singleton value from rollup_sum field.
 func getSingletonValue(row Row) (float64, bool) {
-	value, ok := row["rollup_sum"].(float64)
+	value, ok := row[wkk.RowKeyRollupSum].(float64)
 	return value, ok
 }
 
@@ -149,7 +150,7 @@ func getSketchBytes(sketchData interface{}) ([]byte, error) {
 
 // isHistogramType checks if a row represents a histogram metric type.
 func isHistogramType(row Row) bool {
-	metricType, ok := row["_cardinalhq.metric_type"].(string)
+	metricType, ok := row[wkk.RowKeyCMetricType].(string)
 	return ok && metricType == "histogram"
 }
 
@@ -163,35 +164,35 @@ func updateRowFromSketch(row Row, sketch *ddsketch.DDSketch) error {
 
 	sum := sketch.GetSum()
 
-	row["rollup_count"] = count
-	row["rollup_sum"] = sum
-	row["rollup_avg"] = sum / count
+	row[wkk.RowKeyRollupCount] = count
+	row[wkk.RowKeyRollupSum] = sum
+	row[wkk.RowKeyRollupAvg] = sum / count
 
 	maxValue, err := sketch.GetMaxValue()
 	if err != nil {
 		return fmt.Errorf("getting max value: %w", err)
 	}
-	row["rollup_max"] = maxValue
+	row[wkk.RowKeyRollupMax] = maxValue
 
 	minValue, err := sketch.GetMinValue()
 	if err != nil {
 		return fmt.Errorf("getting min value: %w", err)
 	}
-	row["rollup_min"] = minValue
+	row[wkk.RowKeyRollupMin] = minValue
 
 	quantiles, err := sketch.GetValuesAtQuantiles([]float64{0.25, 0.50, 0.75, 0.90, 0.95, 0.99})
 	if err != nil {
 		return fmt.Errorf("getting quantiles: %w", err)
 	}
 
-	row["rollup_p25"] = quantiles[0]
-	row["rollup_p50"] = quantiles[1]
-	row["rollup_p75"] = quantiles[2]
-	row["rollup_p90"] = quantiles[3]
-	row["rollup_p95"] = quantiles[4]
-	row["rollup_p99"] = quantiles[5]
+	row[wkk.RowKeyRollupP25] = quantiles[0]
+	row[wkk.RowKeyRollupP50] = quantiles[1]
+	row[wkk.RowKeyRollupP75] = quantiles[2]
+	row[wkk.RowKeyRollupP90] = quantiles[3]
+	row[wkk.RowKeyRollupP95] = quantiles[4]
+	row[wkk.RowKeyRollupP99] = quantiles[5]
 
-	row["sketch"] = helpers.EncodeSketch(sketch)
+	row[wkk.RowKeySketch] = helpers.EncodeSketch(sketch)
 
 	return nil
 }
@@ -217,9 +218,9 @@ func (ar *AggregatingMetricsReader) aggregateGroup() (Row, error) {
 	}
 
 	// Update timestamp to truncated value
-	if timestamp, ok := ar.aggregatedRow["_cardinalhq.timestamp"].(int64); ok {
+	if timestamp, ok := ar.aggregatedRow[wkk.RowKeyCTimestamp].(int64); ok {
 		truncatedTimestamp := (timestamp / ar.aggregationPeriod) * ar.aggregationPeriod
-		ar.aggregatedRow["_cardinalhq.timestamp"] = truncatedTimestamp
+		ar.aggregatedRow[wkk.RowKeyCTimestamp] = truncatedTimestamp
 	}
 
 	result := ar.aggregatedRow
@@ -234,8 +235,8 @@ func (ar *AggregatingMetricsReader) aggregateHistogram() error {
 	if ar.currentSketch == nil {
 		// This should never happen since we validate histogram rows have sketches
 		slog.Error("Histogram without sketch in aggregation - dropping row",
-			"name", ar.aggregatedRow["_cardinalhq.name"],
-			"tid", ar.aggregatedRow["_cardinalhq.tid"])
+			"name", ar.aggregatedRow[wkk.RowKeyCName],
+			"tid", ar.aggregatedRow[wkk.RowKeyCTID])
 		ar.resetAggregation()
 		return fmt.Errorf("histogram missing sketch")
 	}
@@ -243,8 +244,8 @@ func (ar *AggregatingMetricsReader) aggregateHistogram() error {
 	// For histograms, we should not have singleton values mixed with sketches
 	if len(ar.singletonValues) > 0 {
 		slog.Warn("Histogram has both sketch and singleton values - ignoring singletons",
-			"name", ar.aggregatedRow["_cardinalhq.name"],
-			"tid", ar.aggregatedRow["_cardinalhq.tid"],
+			"name", ar.aggregatedRow[wkk.RowKeyCName],
+			"tid", ar.aggregatedRow[wkk.RowKeyCTID],
 			"singletons", ar.singletonValues)
 	}
 
@@ -266,8 +267,8 @@ func (ar *AggregatingMetricsReader) aggregateCounterGauge() error {
 				slog.Error("Failed to add singleton value to sketch",
 					"error", err,
 					"value", value,
-					"name", ar.aggregatedRow["_cardinalhq.name"],
-					"tid", ar.aggregatedRow["_cardinalhq.tid"])
+					"name", ar.aggregatedRow[wkk.RowKeyCName],
+					"tid", ar.aggregatedRow[wkk.RowKeyCTID])
 				continue
 			}
 		}
@@ -288,8 +289,8 @@ func (ar *AggregatingMetricsReader) aggregateCounterGauge() error {
 				slog.Error("Failed to add singleton value to new sketch",
 					"error", err,
 					"value", value,
-					"name", ar.aggregatedRow["_cardinalhq.name"],
-					"tid", ar.aggregatedRow["_cardinalhq.tid"])
+					"name", ar.aggregatedRow[wkk.RowKeyCName],
+					"tid", ar.aggregatedRow[wkk.RowKeyCTID])
 				continue
 			}
 		}
@@ -316,11 +317,11 @@ func (ar *AggregatingMetricsReader) resetAggregation() {
 func (ar *AggregatingMetricsReader) addRowToAggregation(row Row) error {
 	// VALIDATION: Histograms must always have sketches
 	if isHistogramType(row) && isSketchEmpty(row) {
-		if name, ok := row["_cardinalhq.name"].(string); ok && !ar.loggedHistogramErrors[name] {
+		if name, ok := row[wkk.RowKeyCName].(string); ok && !ar.loggedHistogramErrors[name] {
 			slog.Error("Dropping histogram row without sketch - this should not happen",
 				"name", name,
-				"tid", row["_cardinalhq.tid"],
-				"timestamp", row["_cardinalhq.timestamp"])
+				"tid", row[wkk.RowKeyCTID],
+				"timestamp", row[wkk.RowKeyCTimestamp])
 			ar.loggedHistogramErrors[name] = true
 		}
 		return nil // Skip this row, don't add to aggregation
@@ -345,7 +346,7 @@ func (ar *AggregatingMetricsReader) addRowToAggregation(row Row) error {
 		}
 	} else {
 		// This row has a sketch - handle sketch merging
-		sketchBytes, err := getSketchBytes(row["sketch"])
+		sketchBytes, err := getSketchBytes(row[wkk.RowKeySketch])
 		if err != nil {
 			return fmt.Errorf("invalid sketch data: %w", err)
 		}

@@ -23,6 +23,7 @@ import (
 	"github.com/parquet-go/parquet-go"
 
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 // PreorderedParquetRawReader reads rows from a generic Parquet stream.
@@ -111,7 +112,7 @@ func (r *PreorderedParquetRawReader) Next() (*Batch, error) {
 		// Use AddRow and copy the data
 		batchRow := batch.AddRow()
 		for k, v := range row {
-			batchRow[k] = v
+			batchRow[wkk.NewRowKey(k)] = v
 		}
 		validRows++
 	}

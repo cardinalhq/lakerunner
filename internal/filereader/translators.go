@@ -16,6 +16,8 @@ package filereader
 
 import (
 	"fmt"
+
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 // NoopTranslator returns rows unchanged for high performance.
@@ -46,7 +48,7 @@ func NewTagsTranslator(tags map[string]string) *TagsTranslator {
 // TranslateRow adds tags to the row in-place.
 func (tt *TagsTranslator) TranslateRow(row *Row) error {
 	for k, v := range tt.tags {
-		(*row)[k] = v
+		(*row)[wkk.NewRowKey(k)] = v
 	}
 
 	return nil

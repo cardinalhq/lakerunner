@@ -19,11 +19,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-
-	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"strings"
 
 	"github.com/cardinalhq/lakerunner/internal/constants"
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 // JSONLinesReader reads rows from a JSON lines stream using pipeline semantics.
@@ -79,16 +79,16 @@ func (r *JSONLinesReader) Next() (*Batch, error) {
 			continue
 		}
 
-		row := make(Row)
-
-		// Parse JSON
-		if err := json.Unmarshal([]byte(line), &row); err != nil {
+		// Parse JSON into string-keyed map first
+		var jsonRow map[string]any
+		if err := json.Unmarshal([]byte(line), &jsonRow); err != nil {
 			return nil, fmt.Errorf("JSON parse error at line %d: %w", r.rowIndex, err)
 		}
 
+		// Convert to Row with RowKey keys
 		batchRow := batch.AddRow()
-		for k, v := range row {
-			batchRow[k] = v
+		for k, v := range jsonRow {
+			batchRow[wkk.NewRowKey(k)] = v
 		}
 	}
 

@@ -36,6 +36,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lockmgr"
 	"github.com/cardinalhq/lakerunner/lrdb"
@@ -335,7 +336,7 @@ func rollupMetricSegments(
 				return WorkResultTryAgainLater, fmt.Errorf("normalizing row: %w", err)
 			}
 
-			if err := writer.Write(row); err != nil {
+			if err := writer.Write(pipeline.ToStringMap(row)); err != nil {
 				ll.Error("Failed to write row", slog.Any("error", err))
 				return WorkResultTryAgainLater, fmt.Errorf("writing row: %w", err)
 			}

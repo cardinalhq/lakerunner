@@ -26,6 +26,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/collector/pdata/ptrace"
+
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 func TestNewProtoTracesReader_InvalidData(t *testing.T) {
@@ -256,61 +258,78 @@ func TestProtoTracesReader_SyntheticData(t *testing.T) {
 	for i, row := range allRows {
 		t.Run(fmt.Sprintf("span_%d", i), func(t *testing.T) {
 			// Basic span fields
-			assert.Contains(t, row, "trace_id")
-			assert.Contains(t, row, "span_id")
-			assert.Contains(t, row, "name")
-			assert.Contains(t, row, "kind")
-			assert.Contains(t, row, "start_timestamp")
-			assert.Contains(t, row, "end_timestamp")
-			assert.Contains(t, row, "status_code")
+			_, hasTraceId := row[wkk.NewRowKey("trace_id")]
+			assert.True(t, hasTraceId)
+			_, hasSpanId := row[wkk.NewRowKey("span_id")]
+			assert.True(t, hasSpanId)
+			_, hasName := row[wkk.NewRowKey("name")]
+			assert.True(t, hasName)
+			_, hasKind := row[wkk.NewRowKey("kind")]
+			assert.True(t, hasKind)
+			_, hasStartTimestamp := row[wkk.NewRowKey("start_timestamp")]
+			assert.True(t, hasStartTimestamp)
+			_, hasEndTimestamp := row[wkk.NewRowKey("end_timestamp")]
+			assert.True(t, hasEndTimestamp)
+			_, hasStatusCode := row[wkk.NewRowKey("status_code")]
+			assert.True(t, hasStatusCode)
 
 			// Resource attributes with prefix
-			assert.Contains(t, row, "resource.service.name")
-			assert.Equal(t, "test-service", row["resource.service.name"])
-			assert.Contains(t, row, "resource.service.version")
-			assert.Equal(t, "1.0.0", row["resource.service.version"])
-			assert.Contains(t, row, "resource.deployment.env")
-			assert.Equal(t, "test", row["resource.deployment.env"])
+			_, hasResourceServiceName := row[wkk.NewRowKey("resource.service.name")]
+			assert.True(t, hasResourceServiceName)
+			assert.Equal(t, "test-service", row[wkk.NewRowKey("resource.service.name")])
+			_, hasResourceServiceVersion := row[wkk.NewRowKey("resource.service.version")]
+			assert.True(t, hasResourceServiceVersion)
+			assert.Equal(t, "1.0.0", row[wkk.NewRowKey("resource.service.version")])
+			_, hasResourceDeploymentEnv := row[wkk.NewRowKey("resource.deployment.env")]
+			assert.True(t, hasResourceDeploymentEnv)
+			assert.Equal(t, "test", row[wkk.NewRowKey("resource.deployment.env")])
 
 			// Scope attributes with prefix
-			assert.Contains(t, row, "scope.scope.type")
-			assert.Equal(t, "instrumentation", row["scope.scope.type"])
+			_, hasScopeScopeType := row[wkk.NewRowKey("scope.scope.type")]
+			assert.True(t, hasScopeScopeType)
+			assert.Equal(t, "instrumentation", row[wkk.NewRowKey("scope.scope.type")])
 
 			// Common trace ID
-			assert.Equal(t, "12345678901234567890123456789012", row["trace_id"])
+			assert.Equal(t, "12345678901234567890123456789012", row[wkk.NewRowKey("trace_id")])
 		})
 	}
 
 	// Verify specific spans
 	rootSpan := allRows[0]
-	assert.Equal(t, "1234567890123456", rootSpan["span_id"])
-	assert.Equal(t, "root-operation", rootSpan["name"])
-	assert.Equal(t, "Client", rootSpan["kind"])
-	assert.Equal(t, "Ok", rootSpan["status_code"])
-	assert.Contains(t, rootSpan, "span.http.method")
-	assert.Equal(t, "GET", rootSpan["span.http.method"])
-	assert.Contains(t, rootSpan, "span.http.status_code")
-	assert.Equal(t, "200", rootSpan["span.http.status_code"])
+	assert.Equal(t, "1234567890123456", rootSpan[wkk.NewRowKey("span_id")])
+	assert.Equal(t, "root-operation", rootSpan[wkk.NewRowKey("name")])
+	assert.Equal(t, "Client", rootSpan[wkk.NewRowKey("kind")])
+	assert.Equal(t, "Ok", rootSpan[wkk.NewRowKey("status_code")])
+	_, hasSpanHttpMethod := rootSpan[wkk.NewRowKey("span.http.method")]
+	assert.True(t, hasSpanHttpMethod)
+	assert.Equal(t, "GET", rootSpan[wkk.NewRowKey("span.http.method")])
+	_, hasSpanHttpStatusCode := rootSpan[wkk.NewRowKey("span.http.status_code")]
+	assert.True(t, hasSpanHttpStatusCode)
+	assert.Equal(t, "200", rootSpan[wkk.NewRowKey("span.http.status_code")])
 
 	dbSpan := allRows[1]
-	assert.Equal(t, "2345678901234567", dbSpan["span_id"])
-	assert.Equal(t, "database-query", dbSpan["name"])
-	assert.Equal(t, "Producer", dbSpan["kind"])
-	assert.Equal(t, "Unset", dbSpan["status_code"])
-	assert.Contains(t, dbSpan, "span.db.system")
-	assert.Equal(t, "postgresql", dbSpan["span.db.system"])
-	assert.Contains(t, dbSpan, "span.db.operation")
-	assert.Equal(t, "SELECT", dbSpan["span.db.operation"])
+	assert.Equal(t, "2345678901234567", dbSpan[wkk.NewRowKey("span_id")])
+	assert.Equal(t, "database-query", dbSpan[wkk.NewRowKey("name")])
+	assert.Equal(t, "Producer", dbSpan[wkk.NewRowKey("kind")])
+	assert.Equal(t, "Unset", dbSpan[wkk.NewRowKey("status_code")])
+	_, hasSpanDbSystem := dbSpan[wkk.NewRowKey("span.db.system")]
+	assert.True(t, hasSpanDbSystem)
+	assert.Equal(t, "postgresql", dbSpan[wkk.NewRowKey("span.db.system")])
+	_, hasSpanDbOperation := dbSpan[wkk.NewRowKey("span.db.operation")]
+	assert.True(t, hasSpanDbOperation)
+	assert.Equal(t, "SELECT", dbSpan[wkk.NewRowKey("span.db.operation")])
 
 	internalSpan := allRows[2]
-	assert.Equal(t, "3456789012345678", internalSpan["span_id"])
-	assert.Equal(t, "internal-processing", internalSpan["name"])
-	assert.Equal(t, "Internal", internalSpan["kind"])
-	assert.Equal(t, "Unset", internalSpan["status_code"])
-	assert.Contains(t, internalSpan, "span.component")
-	assert.Equal(t, "data-processor", internalSpan["span.component"])
-	assert.Contains(t, internalSpan, "span.record.count")
-	assert.Equal(t, "42", internalSpan["span.record.count"])
+	assert.Equal(t, "3456789012345678", internalSpan[wkk.NewRowKey("span_id")])
+	assert.Equal(t, "internal-processing", internalSpan[wkk.NewRowKey("name")])
+	assert.Equal(t, "Internal", internalSpan[wkk.NewRowKey("kind")])
+	assert.Equal(t, "Unset", internalSpan[wkk.NewRowKey("status_code")])
+	_, hasSpanComponent := internalSpan[wkk.NewRowKey("span.component")]
+	assert.True(t, hasSpanComponent)
+	assert.Equal(t, "data-processor", internalSpan[wkk.NewRowKey("span.component")])
+	_, hasSpanRecordCount := internalSpan[wkk.NewRowKey("span.record.count")]
+	assert.True(t, hasSpanRecordCount)
+	assert.Equal(t, "42", internalSpan[wkk.NewRowKey("span.record.count")])
 
 	// Test batched reading with a new reader instance
 	protoReader2, err := NewProtoTracesReader(bytes.NewReader(protoBytes), 1000)
@@ -328,8 +347,10 @@ func TestProtoTracesReader_SyntheticData(t *testing.T) {
 			for i := 0; i < batch.Len(); i++ {
 				row := batch.Get(i)
 				assert.Greater(t, len(row), 0, "Batched row %d should have data", i)
-				assert.Contains(t, row, "trace_id")
-				assert.Contains(t, row, "span_id")
+				_, hasTraceId := row[wkk.NewRowKey("trace_id")]
+				assert.True(t, hasTraceId)
+				_, hasSpanId := row[wkk.NewRowKey("span_id")]
+				assert.True(t, hasSpanId)
 			}
 		}
 
@@ -349,8 +370,10 @@ func TestProtoTracesReader_SyntheticData(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, batch, "Should read a batch")
 	assert.Equal(t, 1, batch.Len(), "Should read exactly 1 row")
-	assert.Contains(t, batch.Get(0), "trace_id")
-	assert.Contains(t, batch.Get(0), "resource.service.name")
+	_, hasTraceId := batch.Get(0)[wkk.NewRowKey("trace_id")]
+	assert.True(t, hasTraceId)
+	_, hasResourceServiceName := batch.Get(0)[wkk.NewRowKey("resource.service.name")]
+	assert.True(t, hasResourceServiceName)
 
 	// Test data exhaustion - continue reading until EOF
 	var exhaustRows int
@@ -475,20 +498,22 @@ func TestProtoTracesReader_SyntheticMultiResourceTraces(t *testing.T) {
 	backendSpans := 0
 
 	for _, row := range allRows {
-		if serviceName, exists := row["resource.service.name"]; exists {
+		if serviceName, exists := row[wkk.NewRowKey("resource.service.name")]; exists {
 			switch serviceName {
 			case "frontend-service":
 				frontendSpans++
-				assert.Contains(t, row, "resource.service.version")
-				assert.Equal(t, "2.1.0", row["resource.service.version"])
+				_, hasResourceServiceVersion := row[wkk.NewRowKey("resource.service.version")]
+				assert.True(t, hasResourceServiceVersion)
+				assert.Equal(t, "2.1.0", row[wkk.NewRowKey("resource.service.version")])
 			case "backend-service":
 				backendSpans++
-				assert.Contains(t, row, "resource.service.version")
-				assert.Equal(t, "1.5.2", row["resource.service.version"])
+				_, hasResourceServiceVersion := row[wkk.NewRowKey("resource.service.version")]
+				assert.True(t, hasResourceServiceVersion)
+				assert.Equal(t, "1.5.2", row[wkk.NewRowKey("resource.service.version")])
 			}
 		}
 		// All spans should be part of the same trace
-		assert.Equal(t, "aaaabbbbccccddddeeeeffff00001111", row["trace_id"])
+		assert.Equal(t, "aaaabbbbccccddddeeeeffff00001111", row[wkk.NewRowKey("trace_id")])
 	}
 
 	assert.Equal(t, 1, frontendSpans, "Should have 1 span from frontend service")
@@ -561,23 +586,29 @@ func TestProtoTracesReader_SyntheticEdgeCases(t *testing.T) {
 
 	// First span - empty name, zero timestamp
 	emptySpan := allRows[0]
-	assert.Equal(t, "", emptySpan["name"])
-	assert.Equal(t, "Unspecified", emptySpan["kind"])
-	assert.Contains(t, emptySpan, "start_timestamp")
-	assert.Contains(t, emptySpan, "end_timestamp")
-	assert.Equal(t, "00000000000000000000000000000001", emptySpan["trace_id"])
-	assert.Equal(t, "0000000000000001", emptySpan["span_id"])
+	assert.Equal(t, "", emptySpan[wkk.NewRowKey("name")])
+	assert.Equal(t, "Unspecified", emptySpan[wkk.NewRowKey("kind")])
+	_, hasStartTimestamp := emptySpan[wkk.NewRowKey("start_timestamp")]
+	assert.True(t, hasStartTimestamp)
+	_, hasEndTimestamp := emptySpan[wkk.NewRowKey("end_timestamp")]
+	assert.True(t, hasEndTimestamp)
+	assert.Equal(t, "00000000000000000000000000000001", emptySpan[wkk.NewRowKey("trace_id")])
+	assert.Equal(t, "0000000000000001", emptySpan[wkk.NewRowKey("span_id")])
 
 	// Second span - zero values in attributes
 	zeroSpan := allRows[1]
-	assert.Equal(t, "span-with-zero-values", zeroSpan["name"])
-	assert.Equal(t, "Error", zeroSpan["status_code"])
-	assert.Contains(t, zeroSpan, "status_message")
-	assert.Equal(t, "Something went wrong", zeroSpan["status_message"])
-	assert.Contains(t, zeroSpan, "span.zero.int")
-	assert.Equal(t, "0", zeroSpan["span.zero.int"])
-	assert.Contains(t, zeroSpan, "span.empty.string")
-	assert.Equal(t, "", zeroSpan["span.empty.string"])
-	assert.Contains(t, zeroSpan, "span.false.bool")
-	assert.Equal(t, "false", zeroSpan["span.false.bool"])
+	assert.Equal(t, "span-with-zero-values", zeroSpan[wkk.NewRowKey("name")])
+	assert.Equal(t, "Error", zeroSpan[wkk.NewRowKey("status_code")])
+	_, hasStatusMessage := zeroSpan[wkk.NewRowKey("status_message")]
+	assert.True(t, hasStatusMessage)
+	assert.Equal(t, "Something went wrong", zeroSpan[wkk.NewRowKey("status_message")])
+	_, hasSpanZeroInt := zeroSpan[wkk.NewRowKey("span.zero.int")]
+	assert.True(t, hasSpanZeroInt)
+	assert.Equal(t, "0", zeroSpan[wkk.NewRowKey("span.zero.int")])
+	_, hasSpanEmptyString := zeroSpan[wkk.NewRowKey("span.empty.string")]
+	assert.True(t, hasSpanEmptyString)
+	assert.Equal(t, "", zeroSpan[wkk.NewRowKey("span.empty.string")])
+	_, hasSpanFalseBool := zeroSpan[wkk.NewRowKey("span.false.bool")]
+	assert.True(t, hasSpanFalseBool)
+	assert.Equal(t, "false", zeroSpan[wkk.NewRowKey("span.false.bool")])
 }

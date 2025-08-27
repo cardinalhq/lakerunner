@@ -22,6 +22,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 // Test-only NoopTranslator that returns a copy of the row for safe testing
@@ -48,9 +50,9 @@ func (mt *mockTranslator) TranslateRow(row *Row) error {
 	}
 
 	// Apply prefix to all keys in-place
-	newKeys := make(map[string]any)
+	newKeys := make(map[wkk.RowKey]any)
 	for k, v := range *row {
-		newKeys[mt.prefix+k] = v
+		newKeys[wkk.NewRowKey(mt.prefix+string(k.Value()))] = v
 	}
 
 	// Clear original row and replace with prefixed keys
@@ -66,7 +68,7 @@ func (mt *mockTranslator) TranslateRow(row *Row) error {
 
 func TestNewTranslatingReader(t *testing.T) {
 	mockReader := newMockReader("test", []Row{
-		{"test": "data"},
+		{wkk.NewRowKey("test"): "data"},
 	})
 	translator := newTestNoopTranslator()
 
@@ -90,7 +92,7 @@ func TestNewTranslatingReader_NilReader(t *testing.T) {
 }
 
 func TestNewTranslatingReader_NilTranslator(t *testing.T) {
-	mockReader := newMockReader("test", []Row{{"test": "data"}})
+	mockReader := newMockReader("test", []Row{{wkk.NewRowKey("test"): "data"}})
 
 	_, err := NewTranslatingReader(mockReader, nil, 1000)
 	assert.Error(t, err)
@@ -99,9 +101,9 @@ func TestNewTranslatingReader_NilTranslator(t *testing.T) {
 
 func TestTranslatingReader_NoopTranslator(t *testing.T) {
 	testData := []Row{
-		{"name": "Alice", "age": 30, "city": "New York"},
-		{"name": "Bob", "age": 25, "city": "San Francisco"},
-		{"name": "Charlie", "age": 35, "city": "Chicago"},
+		{wkk.NewRowKey("name"): "Alice", wkk.NewRowKey("age"): 30, wkk.NewRowKey("city"): "New York"},
+		{wkk.NewRowKey("name"): "Bob", wkk.NewRowKey("age"): 25, wkk.NewRowKey("city"): "San Francisco"},
+		{wkk.NewRowKey("name"): "Charlie", wkk.NewRowKey("age"): 35, wkk.NewRowKey("city"): "Chicago"},
 	}
 
 	mockReader := newMockReader("test", testData)
@@ -118,16 +120,16 @@ func TestTranslatingReader_NoopTranslator(t *testing.T) {
 
 	// Verify data is unchanged by NoopTranslator
 	for i, row := range allRows {
-		assert.Equal(t, testData[i]["name"], row["name"])
-		assert.Equal(t, testData[i]["age"], row["age"])
-		assert.Equal(t, testData[i]["city"], row["city"])
+		assert.Equal(t, testData[i][wkk.NewRowKey("name")], row[wkk.NewRowKey("name")])
+		assert.Equal(t, testData[i][wkk.NewRowKey("age")], row[wkk.NewRowKey("age")])
+		assert.Equal(t, testData[i][wkk.NewRowKey("city")], row[wkk.NewRowKey("city")])
 	}
 }
 
 func TestTranslatingReader_SameReferenceVsDifferentReference(t *testing.T) {
 	testData := []Row{
-		{"key": "value1"},
-		{"key": "value2"},
+		{wkk.NewRowKey("key"): "value1"},
+		{wkk.NewRowKey("key"): "value2"},
 	}
 
 	t.Run("NoopTranslator_SameReference", func(t *testing.T) {
@@ -143,8 +145,8 @@ func TestTranslatingReader_SameReferenceVsDifferentReference(t *testing.T) {
 		require.Equal(t, 2, len(allRows))
 
 		// Verify data is preserved when translator returns same reference
-		assert.Equal(t, "value1", allRows[0]["key"])
-		assert.Equal(t, "value2", allRows[1]["key"])
+		assert.Equal(t, "value1", allRows[0][wkk.NewRowKey("key")])
+		assert.Equal(t, "value2", allRows[1][wkk.NewRowKey("key")])
 	})
 
 	t.Run("TagsTranslator_DifferentReference", func(t *testing.T) {
@@ -161,8 +163,8 @@ func TestTranslatingReader_SameReferenceVsDifferentReference(t *testing.T) {
 
 		// Verify data is preserved and tag is added when translator returns different reference
 		for i, row := range allRows {
-			assert.Equal(t, testData[i]["key"], row["key"])
-			assert.Equal(t, "test", row["tag"])
+			assert.Equal(t, testData[i][wkk.NewRowKey("key")], row[wkk.NewRowKey("key")])
+			assert.Equal(t, "test", row[wkk.NewRowKey("tag")])
 		}
 	})
 
@@ -179,15 +181,15 @@ func TestTranslatingReader_SameReferenceVsDifferentReference(t *testing.T) {
 		require.Equal(t, 2, len(allRows))
 
 		// Verify data is preserved when test translator returns different reference
-		assert.Equal(t, "value1", allRows[0]["key"])
-		assert.Equal(t, "value2", allRows[1]["key"])
+		assert.Equal(t, "value1", allRows[0][wkk.NewRowKey("key")])
+		assert.Equal(t, "value2", allRows[1][wkk.NewRowKey("key")])
 	})
 }
 
 func TestTranslatingReader_TagsTranslator(t *testing.T) {
 	testData := []Row{
-		{"metric": "cpu_usage", "value": 75.5},
-		{"metric": "memory_usage", "value": 60.2},
+		{wkk.NewRowKey("metric"): "cpu_usage", wkk.NewRowKey("value"): 75.5},
+		{wkk.NewRowKey("metric"): "memory_usage", wkk.NewRowKey("value"): 60.2},
 	}
 
 	tags := map[string]string{
@@ -211,20 +213,20 @@ func TestTranslatingReader_TagsTranslator(t *testing.T) {
 	// Verify original data is preserved and tags are added
 	for i, row := range allRows {
 		// Original data should be preserved
-		assert.Equal(t, testData[i]["metric"], row["metric"])
-		assert.Equal(t, testData[i]["value"], row["value"])
+		assert.Equal(t, testData[i][wkk.NewRowKey("metric")], row[wkk.NewRowKey("metric")])
+		assert.Equal(t, testData[i][wkk.NewRowKey("value")], row[wkk.NewRowKey("value")])
 
 		// Tags should be added
-		assert.Equal(t, "production", row["environment"])
-		assert.Equal(t, "api-server", row["service"])
-		assert.Equal(t, "1.2.3", row["version"])
+		assert.Equal(t, "production", row[wkk.NewRowKey("environment")])
+		assert.Equal(t, "api-server", row[wkk.NewRowKey("service")])
+		assert.Equal(t, "1.2.3", row[wkk.NewRowKey("version")])
 	}
 }
 
 func TestTranslatingReader_ChainTranslator(t *testing.T) {
 	testData := []Row{
-		{"metric": "cpu", "value": 75},
-		{"metric": "memory", "value": 60},
+		{wkk.NewRowKey("metric"): "cpu", wkk.NewRowKey("value"): 75},
+		{wkk.NewRowKey("metric"): "memory", wkk.NewRowKey("value"): 60},
 	}
 
 	// Create a chain of translators
@@ -249,21 +251,21 @@ func TestTranslatingReader_ChainTranslator(t *testing.T) {
 	// Verify both transformations were applied
 	for i, row := range allRows {
 		// Original data should be prefixed
-		expectedMetric := "prefix_metric"
-		expectedValue := "prefix_value"
-		expectedEnv := "prefix_environment"
+		expectedMetric := wkk.NewRowKey("prefix_metric")
+		expectedValue := wkk.NewRowKey("prefix_value")
+		expectedEnv := wkk.NewRowKey("prefix_environment")
 
-		assert.Equal(t, testData[i]["metric"], row[expectedMetric])
-		assert.Equal(t, testData[i]["value"], row[expectedValue])
+		assert.Equal(t, testData[i][wkk.NewRowKey("metric")], row[expectedMetric])
+		assert.Equal(t, testData[i][wkk.NewRowKey("value")], row[expectedValue])
 		assert.Equal(t, "test", row[expectedEnv])
 	}
 }
 
 func TestTranslatingReader_TranslationError(t *testing.T) {
 	testData := []Row{
-		{"good": "data"},
-		{"bad": "data"},
-		{"more": "data"},
+		{wkk.NewRowKey("good"): "data"},
+		{wkk.NewRowKey("bad"): "data"},
+		{wkk.NewRowKey("more"): "data"},
 	}
 
 	mockReader := newMockReader("test", testData)
@@ -283,9 +285,9 @@ func TestTranslatingReader_TranslationError(t *testing.T) {
 
 func TestTranslatingReader_PartialTranslationError(t *testing.T) {
 	testData := []Row{
-		{"row": 1},
-		{"row": 2},
-		{"row": 3},
+		{wkk.NewRowKey("row"): 1},
+		{wkk.NewRowKey("row"): 2},
+		{wkk.NewRowKey("row"): 3},
 	}
 
 	// Create a translator that fails on the second row
@@ -304,11 +306,11 @@ func TestTranslatingReader_PartialTranslationError(t *testing.T) {
 	assert.Contains(t, err.Error(), "translation failed for row 1")
 
 	// Verify the first row was translated successfully
-	assert.Equal(t, "translated_1", batch.Get(0)["row"])
+	assert.Equal(t, "translated_1", batch.Get(0)[wkk.NewRowKey("row")])
 }
 
 func TestTranslatingReader_EmptySlice(t *testing.T) {
-	testData := []Row{{"test": "data"}}
+	testData := []Row{{wkk.NewRowKey("test"): "data"}}
 
 	mockReader := newMockReader("test", testData)
 	translator := newTestNoopTranslator()
@@ -326,11 +328,11 @@ func TestTranslatingReader_EmptySlice(t *testing.T) {
 
 func TestTranslatingReader_ReadBatched(t *testing.T) {
 	testData := []Row{
-		{"id": 1, "value": "a"},
-		{"id": 2, "value": "b"},
-		{"id": 3, "value": "c"},
-		{"id": 4, "value": "d"},
-		{"id": 5, "value": "e"},
+		{wkk.NewRowKey("id"): 1, wkk.NewRowKey("value"): "a"},
+		{wkk.NewRowKey("id"): 2, wkk.NewRowKey("value"): "b"},
+		{wkk.NewRowKey("id"): 3, wkk.NewRowKey("value"): "c"},
+		{wkk.NewRowKey("id"): 4, wkk.NewRowKey("value"): "d"},
+		{wkk.NewRowKey("id"): 5, wkk.NewRowKey("value"): "e"},
 	}
 
 	tags := map[string]string{"batch": "test"}
@@ -354,9 +356,11 @@ func TestTranslatingReader_ReadBatched(t *testing.T) {
 			for i := 0; i < batch.Len(); i++ {
 				row := batch.Get(i)
 				assert.Greater(t, len(row), 0, "Row %d should have data", i)
-				assert.Contains(t, row, "id", "Row %d should have id field", i)
-				assert.Contains(t, row, "value", "Row %d should have value field", i)
-				assert.Equal(t, "test", row["batch"], "Row %d should have batch tag", i)
+				_, hasId := row[wkk.NewRowKey("id")]
+				assert.True(t, hasId, "Row %d should have id field", i)
+				_, hasValue := row[wkk.NewRowKey("value")]
+				assert.True(t, hasValue, "Row %d should have value field", i)
+				assert.Equal(t, "test", row[wkk.NewRowKey("batch")], "Row %d should have batch tag", i)
 			}
 		}
 
@@ -371,11 +375,11 @@ func TestTranslatingReader_ReadBatched(t *testing.T) {
 
 func TestTranslatingReader_TotalRowsReturned(t *testing.T) {
 	testData := []Row{
-		{"id": 1, "value": "a"},
-		{"id": 2, "value": "b"},
-		{"id": 3, "value": "c"},
-		{"id": 4, "value": "d"},
-		{"id": 5, "value": "e"},
+		{wkk.NewRowKey("id"): 1, wkk.NewRowKey("value"): "a"},
+		{wkk.NewRowKey("id"): 2, wkk.NewRowKey("value"): "b"},
+		{wkk.NewRowKey("id"): 3, wkk.NewRowKey("value"): "c"},
+		{wkk.NewRowKey("id"): 4, wkk.NewRowKey("value"): "d"},
+		{wkk.NewRowKey("id"): 5, wkk.NewRowKey("value"): "e"},
 	}
 
 	mockReader := newMockReader("test", testData)
@@ -403,7 +407,7 @@ func TestTranslatingReader_TotalRowsReturned(t *testing.T) {
 }
 
 func TestTranslatingReader_Close(t *testing.T) {
-	testData := []Row{{"test": "data"}}
+	testData := []Row{{wkk.NewRowKey("test"): "data"}}
 
 	mockReader := newMockReader("test", testData)
 	translator := newTestNoopTranslator()
@@ -449,7 +453,7 @@ func TestTranslatingReader_UnderlyingReaderError(t *testing.T) {
 
 func TestTranslatingReader_EOF(t *testing.T) {
 	testData := []Row{
-		{"final": "row"},
+		{wkk.NewRowKey("final"): "row"},
 	}
 
 	mockReader := newMockReader("test", testData)
@@ -464,8 +468,8 @@ func TestTranslatingReader_EOF(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, batch)
 	assert.Equal(t, 1, batch.Len())
-	assert.Equal(t, "row", batch.Get(0)["final"])
-	assert.Equal(t, "test", batch.Get(0)["eof"])
+	assert.Equal(t, "row", batch.Get(0)[wkk.NewRowKey("final")])
+	assert.Equal(t, "test", batch.Get(0)[wkk.NewRowKey("eof")])
 
 	// Second read should return EOF
 	batch, err = reader.Next()

@@ -22,6 +22,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 // TestHandleHistogram was moved to the proto reader - no longer needed here
@@ -50,12 +51,12 @@ func TestMetricWriterManager_ProcessRow(t *testing.T) {
 
 	// Test metric row
 	row := filereader.Row{
-		"_cardinalhq.timestamp":   int64(1640995200000),
-		"_cardinalhq.metric_type": "gauge",
-		"_cardinalhq.name":        "cpu.usage",
-		"_cardinalhq.value":       float64(75.5),
-		"host":                    "web-server-1",
-		"region":                  "us-west-2",
+		wkk.RowKeyCTimestamp:    int64(1640995200000),
+		wkk.RowKeyCMetricType:   "gauge",
+		wkk.RowKeyCName:         "cpu.usage",
+		wkk.RowKeyCValue:        float64(75.5),
+		wkk.NewRowKey("host"):   "web-server-1",
+		wkk.NewRowKey("region"): "us-west-2",
 	}
 
 	err := wm.processRow(row)
@@ -68,21 +69,21 @@ func TestMetricWriterManager_ProcessMultipleValues(t *testing.T) {
 
 	// Test multiple metric rows
 	row1 := filereader.Row{
-		"_cardinalhq.timestamp":   int64(1640995200000),
-		"_cardinalhq.metric_type": "gauge",
-		"_cardinalhq.name":        "cpu.usage",
-		"_cardinalhq.value":       float64(75.5),
-		"host":                    "web-server-1",
-		"region":                  "us-west-2",
+		wkk.RowKeyCTimestamp:    int64(1640995200000),
+		wkk.RowKeyCMetricType:   "gauge",
+		wkk.RowKeyCName:         "cpu.usage",
+		wkk.RowKeyCValue:        float64(75.5),
+		wkk.NewRowKey("host"):   "web-server-1",
+		wkk.NewRowKey("region"): "us-west-2",
 	}
 
 	row2 := filereader.Row{
-		"_cardinalhq.timestamp":   int64(1640995200000),
-		"_cardinalhq.metric_type": "gauge",
-		"_cardinalhq.name":        "cpu.usage",
-		"_cardinalhq.value":       float64(82.3),
-		"host":                    "web-server-1",
-		"region":                  "us-west-2",
+		wkk.RowKeyCTimestamp:    int64(1640995200000),
+		wkk.RowKeyCMetricType:   "gauge",
+		wkk.RowKeyCName:         "cpu.usage",
+		wkk.RowKeyCValue:        float64(82.3),
+		wkk.NewRowKey("host"):   "web-server-1",
+		wkk.NewRowKey("region"): "us-west-2",
 	}
 
 	err := wm.processRow(row1)
@@ -100,24 +101,24 @@ func TestMetricTranslator(t *testing.T) {
 	}
 
 	row := filereader.Row{
-		"_cardinalhq.name":      "cpu.usage",
-		"_cardinalhq.timestamp": int64(1756049235874),
-		"host":                  "web-server-1",
+		wkk.RowKeyCName:       "cpu.usage",
+		wkk.RowKeyCTimestamp:  int64(1756049235874),
+		wkk.NewRowKey("host"): "web-server-1",
 	}
 
 	err := translator.TranslateRow(&row)
 	require.NoError(t, err)
 
-	require.Equal(t, "test-bucket", row["resource.bucket.name"])
-	require.Equal(t, "./metrics/test.json.gz", row["resource.file.name"])
-	require.Equal(t, "test-org", row["_cardinalhq.customer_id"])
-	require.Equal(t, "metrics", row["_cardinalhq.telemetry_type"])
-	require.Equal(t, "cpu.usage", row["_cardinalhq.name"])               // Original field preserved
-	require.Equal(t, "web-server-1", row["host"])                        // Original field preserved
-	require.Equal(t, int64(1756049230000), row["_cardinalhq.timestamp"]) // Timestamp truncated to 10s boundary
+	require.Equal(t, "test-bucket", row[wkk.NewRowKey("resource.bucket.name")])
+	require.Equal(t, "./metrics/test.json.gz", row[wkk.NewRowKey("resource.file.name")])
+	require.Equal(t, "test-org", row[wkk.RowKeyCCustomerID])
+	require.Equal(t, "metrics", row[wkk.RowKeyCTelemetryType])
+	require.Equal(t, "cpu.usage", row[wkk.RowKeyCName])               // Original field preserved
+	require.Equal(t, "web-server-1", row[wkk.NewRowKey("host")])      // Original field preserved
+	require.Equal(t, int64(1756049230000), row[wkk.RowKeyCTimestamp]) // Timestamp truncated to 10s boundary
 
 	// Check that TID was computed and added
-	tid, ok := row["_cardinalhq.tid"].(int64)
+	tid, ok := row[wkk.RowKeyCTID].(int64)
 	require.True(t, ok, "TID should be computed and added as int64")
 	require.NotZero(t, tid, "TID should be non-zero")
 }
@@ -159,15 +160,15 @@ func TestMetricTranslator_TimestampTruncation(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			row := filereader.Row{
-				"_cardinalhq.name":      "cpu.usage",
-				"_cardinalhq.timestamp": tc.inputTimestamp,
-				"host":                  "web-server-1",
+				wkk.RowKeyCName:       "cpu.usage",
+				wkk.RowKeyCTimestamp:  tc.inputTimestamp,
+				wkk.NewRowKey("host"): "web-server-1",
 			}
 
 			err := translator.TranslateRow(&row)
 			require.NoError(t, err)
 
-			actualTimestamp, ok := row["_cardinalhq.timestamp"].(int64)
+			actualTimestamp, ok := row[wkk.RowKeyCTimestamp].(int64)
 			require.True(t, ok, "timestamp should be int64")
 			require.Equal(t, tc.expectedTruncated, actualTimestamp)
 		})

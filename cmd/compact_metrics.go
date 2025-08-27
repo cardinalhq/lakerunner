@@ -34,6 +34,8 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/metriccompaction"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lockmgr"
 	"github.com/cardinalhq/lakerunner/lrdb"
@@ -408,7 +410,7 @@ func compactMetricInterval(
 				return fmt.Errorf("normalizing row: %w", err)
 			}
 
-			if err := writer.Write(row); err != nil {
+			if err := writer.Write(pipeline.ToStringMap(row)); err != nil {
 				ll.Error("Failed to write row", slog.Any("error", err))
 				return fmt.Errorf("writing row: %w", err)
 			}
@@ -474,7 +476,7 @@ func compactMetricInterval(
 // normalizeRowForParquetWrite ensures row fields are in the correct type for parquet writing.
 // Specifically converts sketch field from string to []byte to match parquet schema.
 func normalizeRowForParquetWrite(row filereader.Row) error {
-	sketch := row["sketch"]
+	sketch := row[wkk.RowKeySketch]
 	if sketch == nil {
 		return nil // No sketch field, nothing to normalize
 	}
@@ -486,7 +488,7 @@ func normalizeRowForParquetWrite(row filereader.Row) error {
 
 	// Convert string to []byte
 	if str, ok := sketch.(string); ok {
-		row["sketch"] = []byte(str)
+		row[wkk.RowKeySketch] = []byte(str)
 		return nil
 	}
 

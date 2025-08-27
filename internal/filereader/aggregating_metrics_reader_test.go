@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 // mockAggregatingMetricsReader implements Reader interface for testing aggregation
@@ -74,15 +75,15 @@ func TestAggregatingMetricsReader_SingleSingleton(t *testing.T) {
 	// Single singleton row - should pass through unchanged
 	inputRows := []Row{
 		{
-			"_cardinalhq.name":      "cpu.usage",
-			"_cardinalhq.tid":       int64(12345),
-			"_cardinalhq.timestamp": int64(10500), // Will be truncated to 10000
-			"sketch":                []byte{},     // Empty sketch = singleton
-			"rollup_sum":            75.0,
-			"rollup_count":          1.0,
-			"rollup_avg":            75.0,
-			"rollup_min":            75.0,
-			"rollup_max":            75.0,
+			wkk.RowKeyCName:       "cpu.usage",
+			wkk.RowKeyCTID:        int64(12345),
+			wkk.RowKeyCTimestamp:  int64(10500), // Will be truncated to 10000
+			wkk.RowKeySketch:      []byte{},     // Empty sketch = singleton
+			wkk.RowKeyRollupSum:   75.0,
+			wkk.RowKeyRollupCount: 1.0,
+			wkk.RowKeyRollupAvg:   75.0,
+			wkk.RowKeyRollupMin:   75.0,
+			wkk.RowKeyRollupMax:   75.0,
 		},
 	}
 
@@ -98,13 +99,13 @@ func TestAggregatingMetricsReader_SingleSingleton(t *testing.T) {
 
 	row := batch.Get(0)
 	// Verify timestamp was truncated
-	assert.Equal(t, int64(10000), row["_cardinalhq.timestamp"])
+	assert.Equal(t, int64(10000), row[wkk.RowKeyCTimestamp])
 
 	// Verify other fields unchanged
-	assert.Equal(t, "cpu.usage", row["_cardinalhq.name"])
-	assert.Equal(t, int64(12345), row["_cardinalhq.tid"])
-	assert.Equal(t, 75.0, row["rollup_sum"])
-	assert.Equal(t, 1.0, row["rollup_count"])
+	assert.Equal(t, "cpu.usage", row[wkk.RowKeyCName])
+	assert.Equal(t, int64(12345), row[wkk.RowKeyCTID])
+	assert.Equal(t, 75.0, row[wkk.NewRowKey("rollup_sum")])
+	assert.Equal(t, 1.0, row[wkk.NewRowKey("rollup_count")])
 
 	// Should be EOF on next read
 	_, err = aggregatingReader.Next()
@@ -115,20 +116,20 @@ func TestAggregatingMetricsReader_MultipleSingletons(t *testing.T) {
 	// Multiple singleton rows with same key - should be aggregated into sketch
 	inputRows := []Row{
 		{
-			"_cardinalhq.name":      "cpu.usage",
-			"_cardinalhq.tid":       int64(12345),
-			"_cardinalhq.timestamp": int64(10500), // Will be truncated to 10000
-			"sketch":                []byte{},     // Empty sketch = singleton
-			"rollup_sum":            75.0,
-			"rollup_count":          1.0,
+			wkk.RowKeyCName:               "cpu.usage",
+			wkk.RowKeyCTID:                int64(12345),
+			wkk.RowKeyCTimestamp:          int64(10500), // Will be truncated to 10000
+			wkk.NewRowKey("sketch"):       []byte{},     // Empty sketch = singleton
+			wkk.NewRowKey("rollup_sum"):   75.0,
+			wkk.NewRowKey("rollup_count"): 1.0,
 		},
 		{
-			"_cardinalhq.name":      "cpu.usage",
-			"_cardinalhq.tid":       int64(12345),
-			"_cardinalhq.timestamp": int64(10800), // Will be truncated to 10000 (same group)
-			"sketch":                []byte{},     // Empty sketch = singleton
-			"rollup_sum":            85.0,
-			"rollup_count":          1.0,
+			wkk.RowKeyCName:               "cpu.usage",
+			wkk.RowKeyCTID:                int64(12345),
+			wkk.RowKeyCTimestamp:          int64(10800), // Will be truncated to 10000 (same group)
+			wkk.NewRowKey("sketch"):       []byte{},     // Empty sketch = singleton
+			wkk.NewRowKey("rollup_sum"):   85.0,
+			wkk.NewRowKey("rollup_count"): 1.0,
 		},
 	}
 
@@ -144,19 +145,19 @@ func TestAggregatingMetricsReader_MultipleSingletons(t *testing.T) {
 
 	row := batch.Get(0)
 	// Verify aggregated values
-	assert.Equal(t, int64(10000), row["_cardinalhq.timestamp"])
-	assert.Equal(t, "cpu.usage", row["_cardinalhq.name"])
-	assert.Equal(t, int64(12345), row["_cardinalhq.tid"])
+	assert.Equal(t, int64(10000), row[wkk.RowKeyCTimestamp])
+	assert.Equal(t, "cpu.usage", row[wkk.RowKeyCName])
+	assert.Equal(t, int64(12345), row[wkk.RowKeyCTID])
 
 	// Should have aggregated to 2 count, sum should be approximately 160.0
-	assert.Equal(t, 2.0, row["rollup_count"])
-	assert.InDelta(t, 160.0, row["rollup_sum"], 1.0) // DDSketch is approximate
-	assert.InDelta(t, 80.0, row["rollup_avg"], 1.0)  // 160/2
-	assert.InDelta(t, 75.0, row["rollup_min"], 1.0)
-	assert.InDelta(t, 85.0, row["rollup_max"], 1.0)
+	assert.Equal(t, 2.0, row[wkk.NewRowKey("rollup_count")])
+	assert.InDelta(t, 160.0, row[wkk.NewRowKey("rollup_sum")], 1.0) // DDSketch is approximate
+	assert.InDelta(t, 80.0, row[wkk.NewRowKey("rollup_avg")], 1.0)  // 160/2
+	assert.InDelta(t, 75.0, row[wkk.NewRowKey("rollup_min")], 1.0)
+	assert.InDelta(t, 85.0, row[wkk.NewRowKey("rollup_max")], 1.0)
 
 	// Should have a non-empty sketch now
-	sketch, ok := row["sketch"].([]byte)
+	sketch, ok := row[wkk.NewRowKey("sketch")].([]byte)
 	assert.True(t, ok)
 	assert.NotEmpty(t, sketch)
 }
@@ -174,28 +175,28 @@ func TestAggregatingMetricsReader_SketchAndSingletons(t *testing.T) {
 	// Mix of sketch and singleton rows with same key - should merge properly
 	inputRows := []Row{
 		{
-			"_cardinalhq.name":      "cpu.usage",
-			"_cardinalhq.tid":       int64(12345),
-			"_cardinalhq.timestamp": int64(10500), // Will be truncated to 10000
-			"sketch":                []byte{},     // Empty sketch = singleton
-			"rollup_sum":            75.0,
-			"rollup_count":          1.0,
+			wkk.RowKeyCName:               "cpu.usage",
+			wkk.RowKeyCTID:                int64(12345),
+			wkk.RowKeyCTimestamp:          int64(10500), // Will be truncated to 10000
+			wkk.NewRowKey("sketch"):       []byte{},     // Empty sketch = singleton
+			wkk.NewRowKey("rollup_sum"):   75.0,
+			wkk.NewRowKey("rollup_count"): 1.0,
 		},
 		{
-			"_cardinalhq.name":      "cpu.usage",
-			"_cardinalhq.tid":       int64(12345),
-			"_cardinalhq.timestamp": int64(10800), // Will be truncated to 10000 (same group)
-			"sketch":                sketchBytes,  // Has sketch
-			"rollup_sum":            100.0,        // Should be ignored
-			"rollup_count":          1.0,          // Should be ignored
+			wkk.RowKeyCName:               "cpu.usage",
+			wkk.RowKeyCTID:                int64(12345),
+			wkk.RowKeyCTimestamp:          int64(10800), // Will be truncated to 10000 (same group)
+			wkk.NewRowKey("sketch"):       sketchBytes,  // Has sketch
+			wkk.NewRowKey("rollup_sum"):   100.0,        // Should be ignored
+			wkk.NewRowKey("rollup_count"): 1.0,          // Should be ignored
 		},
 		{
-			"_cardinalhq.name":      "cpu.usage",
-			"_cardinalhq.tid":       int64(12345),
-			"_cardinalhq.timestamp": int64(10900), // Will be truncated to 10000 (same group)
-			"sketch":                []byte{},     // Empty sketch = singleton
-			"rollup_sum":            85.0,
-			"rollup_count":          1.0,
+			wkk.RowKeyCName:               "cpu.usage",
+			wkk.RowKeyCTID:                int64(12345),
+			wkk.RowKeyCTimestamp:          int64(10900), // Will be truncated to 10000 (same group)
+			wkk.NewRowKey("sketch"):       []byte{},     // Empty sketch = singleton
+			wkk.NewRowKey("rollup_sum"):   85.0,
+			wkk.NewRowKey("rollup_count"): 1.0,
 		},
 	}
 
@@ -211,16 +212,16 @@ func TestAggregatingMetricsReader_SketchAndSingletons(t *testing.T) {
 
 	row := batch.Get(0)
 	// Verify the result
-	assert.Equal(t, int64(10000), row["_cardinalhq.timestamp"])
-	assert.Equal(t, "cpu.usage", row["_cardinalhq.name"])
-	assert.Equal(t, int64(12345), row["_cardinalhq.tid"])
+	assert.Equal(t, int64(10000), row[wkk.RowKeyCTimestamp])
+	assert.Equal(t, "cpu.usage", row[wkk.RowKeyCName])
+	assert.Equal(t, int64(12345), row[wkk.RowKeyCTID])
 
 	// Should have aggregated: sketch(100.0) + singleton(75.0) + singleton(85.0) = 3 values
-	assert.Equal(t, 3.0, row["rollup_count"])
-	assert.InDelta(t, 260.0, row["rollup_sum"], 5.0) // 100 + 75 + 85, DDSketch is approximate
+	assert.Equal(t, 3.0, row[wkk.NewRowKey("rollup_count")])
+	assert.InDelta(t, 260.0, row[wkk.NewRowKey("rollup_sum")], 5.0) // 100 + 75 + 85, DDSketch is approximate
 
 	// Should have a non-empty sketch
-	sketch, ok := row["sketch"].([]byte)
+	sketch, ok := row[wkk.NewRowKey("sketch")].([]byte)
 	assert.True(t, ok)
 	assert.NotEmpty(t, sketch)
 }
@@ -229,36 +230,36 @@ func TestAggregatingMetricsReader_DifferentKeys(t *testing.T) {
 	// Rows with different keys - should not be aggregated
 	inputRows := []Row{
 		{
-			"_cardinalhq.name":      "cpu.usage",
-			"_cardinalhq.tid":       int64(12345),
-			"_cardinalhq.timestamp": int64(10000),
-			"sketch":                []byte{},
-			"rollup_sum":            75.0,
-			"rollup_count":          1.0,
+			wkk.RowKeyCName:               "cpu.usage",
+			wkk.RowKeyCTID:                int64(12345),
+			wkk.RowKeyCTimestamp:          int64(10000),
+			wkk.NewRowKey("sketch"):       []byte{},
+			wkk.NewRowKey("rollup_sum"):   75.0,
+			wkk.NewRowKey("rollup_count"): 1.0,
 		},
 		{
-			"_cardinalhq.name":      "memory.usage", // Different metric name
-			"_cardinalhq.tid":       int64(12345),
-			"_cardinalhq.timestamp": int64(10000),
-			"sketch":                []byte{},
-			"rollup_sum":            85.0,
-			"rollup_count":          1.0,
+			wkk.RowKeyCName:               "memory.usage", // Different metric name
+			wkk.RowKeyCTID:                int64(12345),
+			wkk.RowKeyCTimestamp:          int64(10000),
+			wkk.NewRowKey("sketch"):       []byte{},
+			wkk.NewRowKey("rollup_sum"):   85.0,
+			wkk.NewRowKey("rollup_count"): 1.0,
 		},
 		{
-			"_cardinalhq.name":      "cpu.usage",
-			"_cardinalhq.tid":       int64(54321), // Different TID
-			"_cardinalhq.timestamp": int64(10000),
-			"sketch":                []byte{},
-			"rollup_sum":            65.0,
-			"rollup_count":          1.0,
+			wkk.RowKeyCName:               "cpu.usage",
+			wkk.RowKeyCTID:                int64(54321), // Different TID
+			wkk.RowKeyCTimestamp:          int64(10000),
+			wkk.NewRowKey("sketch"):       []byte{},
+			wkk.NewRowKey("rollup_sum"):   65.0,
+			wkk.NewRowKey("rollup_count"): 1.0,
 		},
 		{
-			"_cardinalhq.name":      "cpu.usage",
-			"_cardinalhq.tid":       int64(12345),
-			"_cardinalhq.timestamp": int64(20000), // Different timestamp bucket
-			"sketch":                []byte{},
-			"rollup_sum":            95.0,
-			"rollup_count":          1.0,
+			wkk.RowKeyCName:               "cpu.usage",
+			wkk.RowKeyCTID:                int64(12345),
+			wkk.RowKeyCTimestamp:          int64(20000), // Different timestamp bucket
+			wkk.NewRowKey("sketch"):       []byte{},
+			wkk.NewRowKey("rollup_sum"):   95.0,
+			wkk.NewRowKey("rollup_count"): 1.0,
 		},
 	}
 
@@ -286,7 +287,7 @@ func TestAggregatingMetricsReader_DifferentKeys(t *testing.T) {
 
 	// All should be singletons (count = 1.0)
 	for i, row := range allRows {
-		assert.Equal(t, 1.0, row["rollup_count"], "Row %d should be singleton", i)
+		assert.Equal(t, 1.0, row[wkk.NewRowKey("rollup_count")], "Row %d should be singleton", i)
 	}
 }
 
@@ -294,28 +295,28 @@ func TestAggregatingMetricsReader_InvalidRows(t *testing.T) {
 	// Rows with missing required fields - should be skipped
 	inputRows := []Row{
 		{
-			"_cardinalhq.name":      "cpu.usage",
-			"_cardinalhq.tid":       int64(12345),
-			"_cardinalhq.timestamp": int64(10000),
-			"sketch":                []byte{},
-			"rollup_sum":            75.0,
-			"rollup_count":          1.0,
+			wkk.RowKeyCName:               "cpu.usage",
+			wkk.RowKeyCTID:                int64(12345),
+			wkk.RowKeyCTimestamp:          int64(10000),
+			wkk.NewRowKey("sketch"):       []byte{},
+			wkk.NewRowKey("rollup_sum"):   75.0,
+			wkk.NewRowKey("rollup_count"): 1.0,
 		},
 		{
 			// Missing TID - should be skipped
-			"_cardinalhq.name":      "memory.usage",
-			"_cardinalhq.timestamp": int64(10000),
-			"sketch":                []byte{},
-			"rollup_sum":            85.0,
-			"rollup_count":          1.0,
+			wkk.RowKeyCName:               "memory.usage",
+			wkk.RowKeyCTimestamp:          int64(10000),
+			wkk.NewRowKey("sketch"):       []byte{},
+			wkk.NewRowKey("rollup_sum"):   85.0,
+			wkk.NewRowKey("rollup_count"): 1.0,
 		},
 		{
-			"_cardinalhq.name":      "disk.usage",
-			"_cardinalhq.tid":       int64(54321),
-			"_cardinalhq.timestamp": int64(10000),
-			"sketch":                []byte{},
-			"rollup_sum":            65.0,
-			"rollup_count":          1.0,
+			wkk.RowKeyCName:               "disk.usage",
+			wkk.RowKeyCTID:                int64(54321),
+			wkk.RowKeyCTimestamp:          int64(10000),
+			wkk.NewRowKey("sketch"):       []byte{},
+			wkk.NewRowKey("rollup_sum"):   65.0,
+			wkk.NewRowKey("rollup_count"): 1.0,
 		},
 	}
 
@@ -342,36 +343,36 @@ func TestAggregatingMetricsReader_InvalidRows(t *testing.T) {
 	require.Len(t, allRows, 2)
 
 	// Verify the valid rows
-	assert.Equal(t, "cpu.usage", allRows[0]["_cardinalhq.name"])
-	assert.Equal(t, "disk.usage", allRows[1]["_cardinalhq.name"])
+	assert.Equal(t, "cpu.usage", allRows[0][wkk.RowKeyCName])
+	assert.Equal(t, "disk.usage", allRows[1][wkk.RowKeyCName])
 }
 
 func TestAggregatingMetricsReader_TimestampTruncation(t *testing.T) {
 	// Test that timestamps are properly truncated to aggregation period
 	inputRows := []Row{
 		{
-			"_cardinalhq.name":      "cpu.usage",
-			"_cardinalhq.tid":       int64(12345),
-			"_cardinalhq.timestamp": int64(10123), // Should truncate to 10000
-			"sketch":                []byte{},
-			"rollup_sum":            75.0,
-			"rollup_count":          1.0,
+			wkk.RowKeyCName:               "cpu.usage",
+			wkk.RowKeyCTID:                int64(12345),
+			wkk.RowKeyCTimestamp:          int64(10123), // Should truncate to 10000
+			wkk.NewRowKey("sketch"):       []byte{},
+			wkk.NewRowKey("rollup_sum"):   75.0,
+			wkk.NewRowKey("rollup_count"): 1.0,
 		},
 		{
-			"_cardinalhq.name":      "cpu.usage",
-			"_cardinalhq.tid":       int64(12345),
-			"_cardinalhq.timestamp": int64(19999), // Should truncate to 10000 (same group)
-			"sketch":                []byte{},
-			"rollup_sum":            85.0,
-			"rollup_count":          1.0,
+			wkk.RowKeyCName:               "cpu.usage",
+			wkk.RowKeyCTID:                int64(12345),
+			wkk.RowKeyCTimestamp:          int64(19999), // Should truncate to 10000 (same group)
+			wkk.NewRowKey("sketch"):       []byte{},
+			wkk.NewRowKey("rollup_sum"):   85.0,
+			wkk.NewRowKey("rollup_count"): 1.0,
 		},
 		{
-			"_cardinalhq.name":      "cpu.usage",
-			"_cardinalhq.tid":       int64(12345),
-			"_cardinalhq.timestamp": int64(20001), // Should truncate to 20000 (different group)
-			"sketch":                []byte{},
-			"rollup_sum":            95.0,
-			"rollup_count":          1.0,
+			wkk.RowKeyCName:               "cpu.usage",
+			wkk.RowKeyCTID:                int64(12345),
+			wkk.RowKeyCTimestamp:          int64(20001), // Should truncate to 20000 (different group)
+			wkk.NewRowKey("sketch"):       []byte{},
+			wkk.NewRowKey("rollup_sum"):   95.0,
+			wkk.NewRowKey("rollup_count"): 1.0,
 		},
 	}
 
@@ -398,14 +399,14 @@ func TestAggregatingMetricsReader_TimestampTruncation(t *testing.T) {
 	require.Len(t, allRows, 2)
 
 	// First row: aggregated from first two input rows
-	assert.Equal(t, int64(10000), allRows[0]["_cardinalhq.timestamp"])
-	assert.Equal(t, 2.0, allRows[0]["rollup_count"])
-	assert.InDelta(t, 160.0, allRows[0]["rollup_sum"], 1.0) // 75 + 85, DDSketch is approximate
+	assert.Equal(t, int64(10000), allRows[0][wkk.RowKeyCTimestamp])
+	assert.Equal(t, 2.0, allRows[0][wkk.NewRowKey("rollup_count")])
+	assert.InDelta(t, 160.0, allRows[0][wkk.NewRowKey("rollup_sum")], 1.0) // 75 + 85, DDSketch is approximate
 
 	// Second row: third input row
-	assert.Equal(t, int64(20000), allRows[1]["_cardinalhq.timestamp"])
-	assert.Equal(t, 1.0, allRows[1]["rollup_count"])
-	assert.Equal(t, 95.0, allRows[1]["rollup_sum"])
+	assert.Equal(t, int64(20000), allRows[1][wkk.RowKeyCTimestamp])
+	assert.Equal(t, 1.0, allRows[1][wkk.NewRowKey("rollup_count")])
+	assert.Equal(t, 95.0, allRows[1][wkk.NewRowKey("rollup_sum")])
 }
 
 func TestAggregatingMetricsReader_MultipleSketchesMerging(t *testing.T) {
@@ -431,20 +432,20 @@ func TestAggregatingMetricsReader_MultipleSketchesMerging(t *testing.T) {
 	// Two rows with sketches - should be merged
 	inputRows := []Row{
 		{
-			"_cardinalhq.name":      "response.time",
-			"_cardinalhq.tid":       int64(12345),
-			"_cardinalhq.timestamp": int64(10000),
-			"sketch":                sketch1Bytes, // Sketch with 2 values: 100, 200
-			"rollup_count":          2.0,
-			"rollup_sum":            300.0,
+			wkk.RowKeyCName:               "response.time",
+			wkk.RowKeyCTID:                int64(12345),
+			wkk.RowKeyCTimestamp:          int64(10000),
+			wkk.NewRowKey("sketch"):       sketch1Bytes, // Sketch with 2 values: 100, 200
+			wkk.NewRowKey("rollup_count"): 2.0,
+			wkk.NewRowKey("rollup_sum"):   300.0,
 		},
 		{
-			"_cardinalhq.name":      "response.time",
-			"_cardinalhq.tid":       int64(12345),
-			"_cardinalhq.timestamp": int64(10000), // Same key
-			"sketch":                sketch2Bytes, // Sketch with 1 value: 300
-			"rollup_count":          1.0,
-			"rollup_sum":            300.0,
+			wkk.RowKeyCName:               "response.time",
+			wkk.RowKeyCTID:                int64(12345),
+			wkk.RowKeyCTimestamp:          int64(10000), // Same key
+			wkk.NewRowKey("sketch"):       sketch2Bytes, // Sketch with 1 value: 300
+			wkk.NewRowKey("rollup_count"): 1.0,
+			wkk.NewRowKey("rollup_sum"):   300.0,
 		},
 	}
 
@@ -460,14 +461,14 @@ func TestAggregatingMetricsReader_MultipleSketchesMerging(t *testing.T) {
 
 	row := batch.Get(0)
 	// Verify merged sketch has all 3 values (approximately)
-	assert.Equal(t, 3.0, row["rollup_count"])
-	assert.InDelta(t, 600.0, row["rollup_sum"], 10.0) // 100 + 200 + 300, DDSketch is approximate
-	assert.InDelta(t, 200.0, row["rollup_avg"], 10.0) // 600/3
-	assert.InDelta(t, 100.0, row["rollup_min"], 5.0)
-	assert.InDelta(t, 300.0, row["rollup_max"], 5.0)
+	assert.Equal(t, 3.0, row[wkk.NewRowKey("rollup_count")])
+	assert.InDelta(t, 600.0, row[wkk.NewRowKey("rollup_sum")], 10.0) // 100 + 200 + 300, DDSketch is approximate
+	assert.InDelta(t, 200.0, row[wkk.NewRowKey("rollup_avg")], 10.0) // 600/3
+	assert.InDelta(t, 100.0, row[wkk.NewRowKey("rollup_min")], 5.0)
+	assert.InDelta(t, 300.0, row[wkk.NewRowKey("rollup_max")], 5.0)
 
 	// Should have a non-empty sketch
-	sketch, ok := row["sketch"].([]byte)
+	sketch, ok := row[wkk.NewRowKey("sketch")].([]byte)
 	assert.True(t, ok)
 	assert.NotEmpty(t, sketch)
 }
@@ -520,15 +521,15 @@ func TestAggregatingMetricsReader_EOFWithData(t *testing.T) {
 	// Test the n>0 && io.EOF case: ensure last row is processed correctly
 	inputRows := []Row{
 		{
-			"_cardinalhq.name":      "cpu.usage",
-			"_cardinalhq.tid":       int64(12345),
-			"_cardinalhq.timestamp": int64(10000),
-			"sketch":                []byte{},
-			"rollup_sum":            75.0,
-			"rollup_count":          1.0,
-			"rollup_avg":            75.0,
-			"rollup_min":            75.0,
-			"rollup_max":            75.0,
+			wkk.RowKeyCName:               "cpu.usage",
+			wkk.RowKeyCTID:                int64(12345),
+			wkk.RowKeyCTimestamp:          int64(10000),
+			wkk.NewRowKey("sketch"):       []byte{},
+			wkk.NewRowKey("rollup_sum"):   75.0,
+			wkk.NewRowKey("rollup_count"): 1.0,
+			wkk.NewRowKey("rollup_avg"):   75.0,
+			wkk.NewRowKey("rollup_min"):   75.0,
+			wkk.NewRowKey("rollup_max"):   75.0,
 		},
 	}
 
@@ -544,10 +545,10 @@ func TestAggregatingMetricsReader_EOFWithData(t *testing.T) {
 
 	row := batch.Get(0)
 	// Verify the row was processed correctly
-	assert.Equal(t, "cpu.usage", row["_cardinalhq.name"])
-	assert.Equal(t, int64(12345), row["_cardinalhq.tid"])
-	assert.Equal(t, int64(10000), row["_cardinalhq.timestamp"])
-	assert.Equal(t, 75.0, row["rollup_sum"])
+	assert.Equal(t, "cpu.usage", row[wkk.RowKeyCName])
+	assert.Equal(t, int64(12345), row[wkk.RowKeyCTID])
+	assert.Equal(t, int64(10000), row[wkk.RowKeyCTimestamp])
+	assert.Equal(t, 75.0, row[wkk.NewRowKey("rollup_sum")])
 
 	// Second read should return EOF
 	_, err = aggregatingReader.Next()
@@ -558,22 +559,22 @@ func TestAggregatingMetricsReader_DropHistogramWithoutSketch(t *testing.T) {
 	// Test that histogram rows without sketches are dropped
 	inputRows := []Row{
 		{
-			"_cardinalhq.name":        "http.request_duration",
-			"_cardinalhq.tid":         int64(12345),
-			"_cardinalhq.timestamp":   int64(10500),
-			"_cardinalhq.metric_type": "histogram", // This is a histogram
-			"sketch":                  []byte{},    // But has empty sketch - should be dropped
-			"rollup_sum":              75.0,
-			"rollup_count":            1.0,
+			wkk.RowKeyCName:               "http.request_duration",
+			wkk.RowKeyCTID:                int64(12345),
+			wkk.RowKeyCTimestamp:          int64(10500),
+			wkk.RowKeyCMetricType:         "histogram", // This is a histogram
+			wkk.NewRowKey("sketch"):       []byte{},    // But has empty sketch - should be dropped
+			wkk.NewRowKey("rollup_sum"):   75.0,
+			wkk.NewRowKey("rollup_count"): 1.0,
 		},
 		{
-			"_cardinalhq.name":      "cpu.usage",
-			"_cardinalhq.tid":       int64(12345),
-			"_cardinalhq.timestamp": int64(10500),
-			"type":                  "Gauge",  // This is a gauge
-			"sketch":                []byte{}, // Empty sketch is OK for gauges
-			"rollup_sum":            50.0,
-			"rollup_count":          1.0,
+			wkk.RowKeyCName:               "cpu.usage",
+			wkk.RowKeyCTID:                int64(12345),
+			wkk.RowKeyCTimestamp:          int64(10500),
+			wkk.NewRowKey("type"):         "Gauge",  // This is a gauge
+			wkk.NewRowKey("sketch"):       []byte{}, // Empty sketch is OK for gauges
+			wkk.NewRowKey("rollup_sum"):   50.0,
+			wkk.NewRowKey("rollup_count"): 1.0,
 		},
 	}
 
@@ -589,9 +590,9 @@ func TestAggregatingMetricsReader_DropHistogramWithoutSketch(t *testing.T) {
 
 	row := batch.Get(0)
 	// Verify only the gauge row was returned
-	assert.Equal(t, "cpu.usage", row["_cardinalhq.name"])
-	assert.Equal(t, "Gauge", row["type"])
-	assert.Equal(t, 50.0, row["rollup_sum"])
+	assert.Equal(t, "cpu.usage", row[wkk.RowKeyCName])
+	assert.Equal(t, "Gauge", row[wkk.NewRowKey("type")])
+	assert.Equal(t, 50.0, row[wkk.NewRowKey("rollup_sum")])
 
 	// Second read should return EOF
 	_, err = aggregatingReader.Next()
@@ -601,21 +602,21 @@ func TestAggregatingMetricsReader_DropHistogramWithoutSketch(t *testing.T) {
 func TestAggregatingMetricsReader_PendingRowReset(t *testing.T) {
 	inputRows := []Row{
 		{
-			"_cardinalhq.name":      "cpu.usage",
-			"_cardinalhq.tid":       int64(12345),
-			"_cardinalhq.timestamp": int64(10000),
-			"sketch":                []byte{},
-			"rollup_sum":            1.0,
-			"rollup_count":          1.0,
-			"unused":                "extra",
+			wkk.RowKeyCName:               "cpu.usage",
+			wkk.RowKeyCTID:                int64(12345),
+			wkk.RowKeyCTimestamp:          int64(10000),
+			wkk.NewRowKey("sketch"):       []byte{},
+			wkk.NewRowKey("rollup_sum"):   1.0,
+			wkk.NewRowKey("rollup_count"): 1.0,
+			wkk.NewRowKey("unused"):       "extra",
 		},
 		{
-			"_cardinalhq.name":      "memory.usage",
-			"_cardinalhq.tid":       int64(12345),
-			"_cardinalhq.timestamp": int64(10000),
-			"sketch":                []byte{},
-			"rollup_sum":            2.0,
-			"rollup_count":          1.0,
+			wkk.RowKeyCName:               "memory.usage",
+			wkk.RowKeyCTID:                int64(12345),
+			wkk.RowKeyCTimestamp:          int64(10000),
+			wkk.NewRowKey("sketch"):       []byte{},
+			wkk.NewRowKey("rollup_sum"):   2.0,
+			wkk.NewRowKey("rollup_count"): 1.0,
 		},
 	}
 
@@ -638,6 +639,6 @@ func TestAggregatingMetricsReader_PendingRowReset(t *testing.T) {
 	}
 
 	require.Len(t, allRows, 2)
-	_, ok := allRows[1]["unused"]
+	_, ok := allRows[1][wkk.NewRowKey("unused")]
 	assert.False(t, ok, "unused field should not leak into subsequent rows")
 }

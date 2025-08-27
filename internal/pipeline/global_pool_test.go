@@ -19,6 +19,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 func TestGlobalBatchPool(t *testing.T) {
@@ -29,7 +31,7 @@ func TestGlobalBatchPool(t *testing.T) {
 
 	// Add some data using new API
 	row := batch1.AddRow()
-	row["test"] = "data"
+	row[wkk.NewRowKey("test")] = "data"
 	assert.Equal(t, 1, batch1.Len())
 
 	// Return to pool
@@ -78,41 +80,41 @@ func TestBatchMethods(t *testing.T) {
 
 	// Test AddRow
 	row1 := batch.AddRow()
-	row1["id"] = 1
-	row1["name"] = "test1"
+	row1[wkk.NewRowKey("id")] = 1
+	row1[wkk.NewRowKey("name")] = "test1"
 
 	row2 := batch.AddRow()
-	row2["id"] = 2
-	row2["name"] = "test2"
+	row2[wkk.NewRowKey("id")] = 2
+	row2[wkk.NewRowKey("name")] = "test2"
 
 	row3 := batch.AddRow()
-	row3["id"] = 3
-	row3["name"] = "test3"
+	row3[wkk.NewRowKey("id")] = 3
+	row3[wkk.NewRowKey("name")] = "test3"
 
 	assert.Equal(t, 3, batch.Len())
 
 	// Test Get
-	assert.Equal(t, 1, batch.Get(0)["id"])
-	assert.Equal(t, 2, batch.Get(1)["id"])
-	assert.Equal(t, 3, batch.Get(2)["id"])
+	assert.Equal(t, 1, batch.Get(0)[wkk.NewRowKey("id")])
+	assert.Equal(t, 2, batch.Get(1)[wkk.NewRowKey("id")])
+	assert.Equal(t, 3, batch.Get(2)[wkk.NewRowKey("id")])
 
 	// Test DeleteRow (delete middle row)
 	batch.DeleteRow(1)
 	assert.Equal(t, 2, batch.Len())
 
 	// After deletion, row order should be [1, 3] (2 was deleted)
-	assert.Equal(t, 1, batch.Get(0)["id"])
-	assert.Equal(t, 3, batch.Get(1)["id"]) // row3 should have moved to position 1
+	assert.Equal(t, 1, batch.Get(0)[wkk.NewRowKey("id")])
+	assert.Equal(t, 3, batch.Get(1)[wkk.NewRowKey("id")]) // row3 should have moved to position 1
 
 	// Test reusing deleted row slot
 	row4 := batch.AddRow()
-	row4["id"] = 4
-	row4["name"] = "test4"
+	row4[wkk.NewRowKey("id")] = 4
+	row4[wkk.NewRowKey("name")] = "test4"
 
 	assert.Equal(t, 3, batch.Len())
-	assert.Equal(t, 1, batch.Get(0)["id"])
-	assert.Equal(t, 3, batch.Get(1)["id"])
-	assert.Equal(t, 4, batch.Get(2)["id"])
+	assert.Equal(t, 1, batch.Get(0)[wkk.NewRowKey("id")])
+	assert.Equal(t, 3, batch.Get(1)[wkk.NewRowKey("id")])
+	assert.Equal(t, 4, batch.Get(2)[wkk.NewRowKey("id")])
 
 	ReturnBatch(batch)
 }

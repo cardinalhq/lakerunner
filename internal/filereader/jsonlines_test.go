@@ -23,6 +23,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 // readAllRows is a helper function that reads all rows from a reader
@@ -66,12 +68,12 @@ func TestJSONLinesReaderEOFHandling(t *testing.T) {
 
 	// Should have read all 3 rows despite EOF
 	assert.Len(t, rows, 3)
-	assert.Equal(t, float64(1), rows[0]["line"])
-	assert.Equal(t, "first", rows[0]["value"])
-	assert.Equal(t, float64(2), rows[1]["line"])
-	assert.Equal(t, "second", rows[1]["value"])
-	assert.Equal(t, float64(3), rows[2]["line"])
-	assert.Equal(t, "third", rows[2]["value"])
+	assert.Equal(t, float64(1), rows[0][wkk.NewRowKey("line")])
+	assert.Equal(t, "first", rows[0][wkk.NewRowKey("value")])
+	assert.Equal(t, float64(2), rows[1][wkk.NewRowKey("line")])
+	assert.Equal(t, "second", rows[1][wkk.NewRowKey("value")])
+	assert.Equal(t, float64(3), rows[2][wkk.NewRowKey("line")])
+	assert.Equal(t, "third", rows[2][wkk.NewRowKey("value")])
 }
 
 // TestJSONLinesReaderGzipEOFHandling tests EOF handling with gzipped JSON
@@ -100,10 +102,10 @@ func TestJSONLinesReaderGzipEOFHandling(t *testing.T) {
 
 	// Should have read both rows
 	assert.Len(t, rows, 2)
-	assert.Equal(t, float64(1), rows[0]["line"])
-	assert.Equal(t, true, rows[0]["compressed"])
-	assert.Equal(t, float64(2), rows[1]["line"])
-	assert.Equal(t, true, rows[1]["compressed"])
+	assert.Equal(t, float64(1), rows[0][wkk.NewRowKey("line")])
+	assert.Equal(t, true, rows[0][wkk.NewRowKey("compressed")])
+	assert.Equal(t, float64(2), rows[1][wkk.NewRowKey("line")])
+	assert.Equal(t, true, rows[1][wkk.NewRowKey("compressed")])
 }
 
 // TestJSONLinesReaderEmptyLinesEOF tests EOF handling with empty lines mixed in
@@ -124,8 +126,8 @@ func TestJSONLinesReaderEmptyLinesEOF(t *testing.T) {
 
 	// Should skip empty lines and read both JSON objects
 	assert.Len(t, rows, 2)
-	assert.Equal(t, float64(1), rows[0]["line"])
-	assert.Equal(t, float64(2), rows[1]["line"])
+	assert.Equal(t, float64(1), rows[0][wkk.NewRowKey("line")])
+	assert.Equal(t, float64(2), rows[1][wkk.NewRowKey("line")])
 }
 
 // MockReaderWithDataAndEOF simulates a reader that returns data and EOF on the same call
@@ -172,7 +174,7 @@ func TestJSONLinesReaderWithMockEOF(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, batch)
 	assert.Equal(t, 1, batch.Len())
-	assert.Equal(t, "data", batch.Get(0)["test"])
+	assert.Equal(t, "data", batch.Get(0)[wkk.NewRowKey("test")])
 
 	// Next call should return EOF
 	batch, err = reader.Next()
@@ -192,7 +194,7 @@ func TestJSONLinesReaderClose(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, batch)
 	assert.Equal(t, 1, batch.Len())
-	assert.Equal(t, "data", batch.Get(0)["test"])
+	assert.Equal(t, "data", batch.Get(0)[wkk.NewRowKey("test")])
 
 	// Close should work
 	err = reader.Close()
@@ -224,11 +226,11 @@ func TestJSONLinesReaderBatchProcessing(t *testing.T) {
 	allRows, err := readAllRows(reader)
 	require.NoError(t, err)
 	assert.Len(t, allRows, 5)
-	assert.Equal(t, float64(1), allRows[0]["line"])
-	assert.Equal(t, float64(2), allRows[1]["line"])
-	assert.Equal(t, float64(3), allRows[2]["line"])
-	assert.Equal(t, float64(4), allRows[3]["line"])
-	assert.Equal(t, float64(5), allRows[4]["line"])
+	assert.Equal(t, float64(1), allRows[0][wkk.NewRowKey("line")])
+	assert.Equal(t, float64(2), allRows[1][wkk.NewRowKey("line")])
+	assert.Equal(t, float64(3), allRows[2][wkk.NewRowKey("line")])
+	assert.Equal(t, float64(4), allRows[3][wkk.NewRowKey("line")])
+	assert.Equal(t, float64(5), allRows[4][wkk.NewRowKey("line")])
 
 	// Next read should return EOF
 	batch, err := reader.Next()

@@ -21,13 +21,14 @@ import (
 	"testing"
 
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 func TestNewPreorderedMultisourceReader(t *testing.T) {
 	// Test with valid readers and selector
 	readers := []Reader{
-		newMockReader("r1", []Row{{"ts": int64(1)}}),
-		newMockReader("r2", []Row{{"ts": int64(2)}}),
+		newMockReader("r1", []Row{{wkk.NewRowKey("ts"): int64(1)}}),
+		newMockReader("r2", []Row{{wkk.NewRowKey("ts"): int64(2)}}),
 	}
 	selector := TimeOrderedSelector("ts")
 
@@ -58,17 +59,17 @@ func TestOrderedReader_Next(t *testing.T) {
 	// Create readers with interleaved timestamps to test ordering
 	readers := []Reader{
 		newMockReader("r1", []Row{
-			{"ts": int64(1), "data": "r1-first"},
-			{"ts": int64(4), "data": "r1-second"},
-			{"ts": int64(7), "data": "r1-third"},
+			{wkk.NewRowKey("ts"): int64(1), wkk.NewRowKey("data"): "r1-first"},
+			{wkk.NewRowKey("ts"): int64(4), wkk.NewRowKey("data"): "r1-second"},
+			{wkk.NewRowKey("ts"): int64(7), wkk.NewRowKey("data"): "r1-third"},
 		}),
 		newMockReader("r2", []Row{
-			{"ts": int64(2), "data": "r2-first"},
-			{"ts": int64(5), "data": "r2-second"},
+			{wkk.NewRowKey("ts"): int64(2), wkk.NewRowKey("data"): "r2-first"},
+			{wkk.NewRowKey("ts"): int64(5), wkk.NewRowKey("data"): "r2-second"},
 		}),
 		newMockReader("r3", []Row{
-			{"ts": int64(3), "data": "r3-first"},
-			{"ts": int64(6), "data": "r3-second"},
+			{wkk.NewRowKey("ts"): int64(3), wkk.NewRowKey("data"): "r3-first"},
+			{wkk.NewRowKey("ts"): int64(6), wkk.NewRowKey("data"): "r3-second"},
 		}),
 	}
 
@@ -100,13 +101,13 @@ func TestOrderedReader_Next(t *testing.T) {
 	}
 
 	for i, expected := range expectedData {
-		if allRows[i]["data"] != expected {
-			t.Errorf("Row %d data = %v, want %v (ts=%v)", i, allRows[i]["data"], expected, allRows[i]["ts"])
+		if allRows[i][wkk.NewRowKey("data")] != expected {
+			t.Errorf("Row %d data = %v, want %v (ts=%v)", i, allRows[i][wkk.NewRowKey("data")], expected, allRows[i][wkk.NewRowKey("ts")])
 		}
 		if i > 0 {
 			// Verify timestamps are in order
-			prevTs := allRows[i-1]["ts"].(int64)
-			currTs := allRows[i]["ts"].(int64)
+			prevTs := allRows[i-1][wkk.NewRowKey("ts")].(int64)
+			currTs := allRows[i][wkk.NewRowKey("ts")].(int64)
 			if currTs < prevTs {
 				t.Errorf("Timestamps out of order: row %d ts=%d < row %d ts=%d", i, currTs, i-1, prevTs)
 			}
@@ -116,8 +117,8 @@ func TestOrderedReader_Next(t *testing.T) {
 
 func TestOrderedReader_NextBatched(t *testing.T) {
 	readers := []Reader{
-		newMockReader("r1", []Row{{"ts": int64(100)}}),
-		newMockReader("r2", []Row{{"ts": int64(200)}}),
+		newMockReader("r1", []Row{{wkk.NewRowKey("ts"): int64(100)}}),
+		newMockReader("r2", []Row{{wkk.NewRowKey("ts"): int64(200)}}),
 		newMockReader("r3", []Row{}), // Empty reader
 	}
 
@@ -136,11 +137,11 @@ func TestOrderedReader_NextBatched(t *testing.T) {
 	if batch.Len() != 2 {
 		t.Errorf("Next() returned %d rows, want 2", batch.Len())
 	}
-	if batch.Get(0)["ts"] != int64(100) {
-		t.Errorf("First row ts = %v, want 100", batch.Get(0)["ts"])
+	if batch.Get(0)[wkk.NewRowKey("ts")] != int64(100) {
+		t.Errorf("First row ts = %v, want 100", batch.Get(0)[wkk.NewRowKey("ts")])
 	}
-	if batch.Get(1)["ts"] != int64(200) {
-		t.Errorf("Second row ts = %v, want 200", batch.Get(1)["ts"])
+	if batch.Get(1)[wkk.NewRowKey("ts")] != int64(200) {
+		t.Errorf("Second row ts = %v, want 200", batch.Get(1)[wkk.NewRowKey("ts")])
 	}
 
 	// Next read should return EOF
@@ -155,8 +156,8 @@ func TestOrderedReader_NextBatched(t *testing.T) {
 
 func TestOrderedReader_ActiveReaderCount(t *testing.T) {
 	readers := []Reader{
-		newMockReader("r1", []Row{{"ts": int64(1)}}),
-		newMockReader("r2", []Row{{"ts": int64(2)}}),
+		newMockReader("r1", []Row{{wkk.NewRowKey("ts"): int64(1)}}),
+		newMockReader("r2", []Row{{wkk.NewRowKey("ts"): int64(2)}}),
 	}
 
 	selector := TimeOrderedSelector("ts")
@@ -211,8 +212,8 @@ func TestOrderedReader_AllEmptyReaders(t *testing.T) {
 
 func TestOrderedReader_Close(t *testing.T) {
 	readers := []Reader{
-		newMockReader("r1", []Row{{"ts": int64(1)}}),
-		newMockReader("r2", []Row{{"ts": int64(2)}}),
+		newMockReader("r1", []Row{{wkk.NewRowKey("ts"): int64(1)}}),
+		newMockReader("r2", []Row{{wkk.NewRowKey("ts"): int64(2)}}),
 	}
 
 	selector := TimeOrderedSelector("ts")
@@ -258,9 +259,9 @@ func TestTimeOrderedSelector(t *testing.T) {
 
 	// Test with different timestamp types
 	rows := []Row{
-		{"timestamp": int64(300), "data": "third"},
-		{"timestamp": int64(100), "data": "first"},
-		{"timestamp": int64(200), "data": "second"},
+		{wkk.NewRowKey("timestamp"): int64(300), wkk.NewRowKey("data"): "third"},
+		{wkk.NewRowKey("timestamp"): int64(100), wkk.NewRowKey("data"): "first"},
+		{wkk.NewRowKey("timestamp"): int64(200), wkk.NewRowKey("data"): "second"},
 	}
 
 	selected := selector(rows)
@@ -270,9 +271,9 @@ func TestTimeOrderedSelector(t *testing.T) {
 
 	// Test with float64 timestamps
 	rows = []Row{
-		{"timestamp": float64(300.5), "data": "third"},
-		{"timestamp": float64(100.1), "data": "first"},
-		{"timestamp": float64(200.2), "data": "second"},
+		{wkk.NewRowKey("timestamp"): float64(300.5), wkk.NewRowKey("data"): "third"},
+		{wkk.NewRowKey("timestamp"): float64(100.1), wkk.NewRowKey("data"): "first"},
+		{wkk.NewRowKey("timestamp"): float64(200.2), wkk.NewRowKey("data"): "second"},
 	}
 
 	selected = selector(rows)
@@ -282,8 +283,8 @@ func TestTimeOrderedSelector(t *testing.T) {
 
 	// Test with missing timestamp field
 	rows = []Row{
-		{"data": "no timestamp"},
-		{"timestamp": int64(100), "data": "has timestamp"},
+		{wkk.NewRowKey("data"): "no timestamp"},
+		{wkk.NewRowKey("timestamp"): int64(100), wkk.NewRowKey("data"): "has timestamp"},
 	}
 
 	selected = selector(rows)
@@ -338,7 +339,7 @@ func (tr *trackingReader) Close() error { return nil }
 func (tr *trackingReader) TotalRowsReturned() int64 { return tr.rowCount }
 
 func TestPreorderedMultisourceReader_RowReuse(t *testing.T) {
-	tr := newTrackingReader([]Row{{"ts": int64(1)}, {"ts": int64(2)}, {"ts": int64(3)}, {"ts": int64(4)}})
+	tr := newTrackingReader([]Row{{wkk.NewRowKey("ts"): int64(1)}, {wkk.NewRowKey("ts"): int64(2)}, {wkk.NewRowKey("ts"): int64(3)}, {wkk.NewRowKey("ts"): int64(4)}})
 	or, err := NewPreorderedMultisourceReader([]Reader{tr}, TimeOrderedSelector("ts"), 1)
 	if err != nil {
 		t.Fatalf("NewPreorderedMultisourceReader() error = %v", err)
@@ -353,8 +354,8 @@ func TestPreorderedMultisourceReader_RowReuse(t *testing.T) {
 	if batch.Len() != 1 {
 		t.Fatalf("First batch should have 1 row, got %d", batch.Len())
 	}
-	if batch.Get(0)["ts"] != int64(1) {
-		t.Fatalf("first row ts=%v want 1", batch.Get(0)["ts"])
+	if batch.Get(0)[wkk.NewRowKey("ts")] != int64(1) {
+		t.Fatalf("first row ts=%v want 1", batch.Get(0)[wkk.NewRowKey("ts")])
 	}
 
 	// Read second batch
@@ -365,8 +366,8 @@ func TestPreorderedMultisourceReader_RowReuse(t *testing.T) {
 	if batch.Len() != 1 {
 		t.Fatalf("Second batch should have 1 row, got %d", batch.Len())
 	}
-	if batch.Get(0)["ts"] != int64(2) {
-		t.Fatalf("second row ts=%v want 2", batch.Get(0)["ts"])
+	if batch.Get(0)[wkk.NewRowKey("ts")] != int64(2) {
+		t.Fatalf("second row ts=%v want 2", batch.Get(0)[wkk.NewRowKey("ts")])
 	}
 
 	// Read third batch
@@ -377,8 +378,8 @@ func TestPreorderedMultisourceReader_RowReuse(t *testing.T) {
 	if batch.Len() != 1 {
 		t.Fatalf("Third batch should have 1 row, got %d", batch.Len())
 	}
-	if batch.Get(0)["ts"] != int64(3) {
-		t.Fatalf("third row ts=%v want 3", batch.Get(0)["ts"])
+	if batch.Get(0)[wkk.NewRowKey("ts")] != int64(3) {
+		t.Fatalf("third row ts=%v want 3", batch.Get(0)[wkk.NewRowKey("ts")])
 	}
 
 	// Verify tracking worked

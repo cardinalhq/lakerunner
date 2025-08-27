@@ -21,6 +21,7 @@ import (
 	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
 
 	"github.com/cardinalhq/lakerunner/cmd/ingestlogs"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 // ProtoBinLogTranslator handles translation for protobuf binary log files
@@ -48,13 +49,13 @@ func (t *ProtoBinLogTranslator) TranslateRow(row *Row) error {
 	}
 
 	// Handle timestamp: use timestamp, fallback to observed_timestamp
-	if _, ok := (*row)["_cardinalhq.timestamp"]; !ok {
+	if _, ok := (*row)[wkk.RowKeyCTimestamp]; !ok {
 		var timestamp int64
-		if ts, exists := (*row)["timestamp"]; exists {
+		if ts, exists := (*row)[wkk.NewRowKey("timestamp")]; exists {
 			timestamp = ensureInt64(ts)
 		}
 		if timestamp == 0 || timestamp == -1 {
-			if obsTs, exists := (*row)["observed_timestamp"]; exists {
+			if obsTs, exists := (*row)[wkk.NewRowKey("observed_timestamp")]; exists {
 				timestamp = ensureInt64(obsTs)
 			}
 		}
@@ -63,26 +64,26 @@ func (t *ProtoBinLogTranslator) TranslateRow(row *Row) error {
 			if timestamp > 1e15 {
 				timestamp = timestamp / 1e6
 			}
-			(*row)["_cardinalhq.timestamp"] = timestamp
+			(*row)[wkk.RowKeyCTimestamp] = timestamp
 		} else {
-			(*row)["_cardinalhq.timestamp"] = time.Now().UnixMilli()
+			(*row)[wkk.RowKeyCTimestamp] = time.Now().UnixMilli()
 		}
 	}
 
 	// Handle level: use severity_text if _cardinalhq.level not set
-	if _, ok := (*row)["_cardinalhq.level"]; !ok {
-		if severityText, exists := (*row)["severity_text"]; exists {
+	if _, ok := (*row)[wkk.NewRowKey("_cardinalhq.level")]; !ok {
+		if severityText, exists := (*row)[wkk.NewRowKey("severity_text")]; exists {
 			if level, isString := severityText.(string); isString && level != "" {
-				(*row)["_cardinalhq.level"] = level
+				(*row)[wkk.NewRowKey("_cardinalhq.level")] = level
 			}
 		}
 	}
 
 	// Handle message: use body if _cardinalhq.message not set
-	if _, ok := (*row)["_cardinalhq.message"]; !ok {
-		if body, exists := (*row)["body"]; exists {
+	if _, ok := (*row)[wkk.RowKeyCMessage]; !ok {
+		if body, exists := (*row)[wkk.NewRowKey("body")]; exists {
 			if message, isString := body.(string); isString && message != "" {
-				(*row)["_cardinalhq.message"] = message
+				(*row)[wkk.RowKeyCMessage] = message
 			}
 		}
 	}
@@ -94,15 +95,15 @@ func (t *ProtoBinLogTranslator) TranslateRow(row *Row) error {
 	}
 
 	if fingerprint != 0 {
-		(*row)["_cardinalhq.fingerprint"] = fingerprint
+		(*row)[wkk.RowKeyCFingerprint] = fingerprint
 	} else {
-		delete(*row, "_cardinalhq.fingerprint")
+		delete(*row, wkk.RowKeyCFingerprint)
 	}
 
 	// Add resource fields
-	(*row)["resource.bucket.name"] = t.bucket
-	(*row)["resource.file.name"] = "./" + t.objectID
-	(*row)["resource.file.type"] = ingestlogs.GetFileType(t.objectID)
+	(*row)[wkk.NewRowKey("resource.bucket.name")] = t.bucket
+	(*row)[wkk.NewRowKey("resource.file.name")] = "./" + t.objectID
+	(*row)[wkk.NewRowKey("resource.file.type")] = ingestlogs.GetFileType(t.objectID)
 
 	return nil
 }
@@ -112,7 +113,7 @@ func (t *ProtoBinLogTranslator) calculateFingerprint(row Row) (int64, error) {
 	var message string
 
 	// Only look at _cardinalhq.message field for protobuf logs
-	if val, ok := row["_cardinalhq.message"]; ok {
+	if val, ok := row[wkk.RowKeyCMessage]; ok {
 		if str, ok := val.(string); ok && str != "" {
 			message = str
 		}

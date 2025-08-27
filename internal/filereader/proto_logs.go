@@ -19,6 +19,7 @@ import (
 	"io"
 
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 )
@@ -168,7 +169,11 @@ func (r *ProtoLogsReader) buildLogRow(rl plog.ResourceLogs, sl plog.ScopeLogs, l
 
 // processRow applies any processing to a row.
 func (r *ProtoLogsReader) processRow(row map[string]any) (Row, error) {
-	return Row(row), nil
+	result := make(Row)
+	for k, v := range row {
+		result[wkk.NewRowKey(k)] = v
+	}
+	return result, nil
 }
 
 // Close closes the reader and releases resources.

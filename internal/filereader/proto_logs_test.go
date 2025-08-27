@@ -26,6 +26,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/collector/pdata/plog"
+
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 func TestNewProtoLogsReader_InvalidData(t *testing.T) {
@@ -248,31 +250,40 @@ func TestProtoLogsReader_SyntheticData(t *testing.T) {
 	for i, row := range allRows {
 		t.Run(fmt.Sprintf("log_%d", i), func(t *testing.T) {
 			// Should have basic log fields
-			assert.Contains(t, row, "_cardinalhq.message", "Row should have log body")
-			assert.Contains(t, row, "_cardinalhq.timestamp", "Row should have timestamp")
-			assert.Contains(t, row, "_cardinalhq.level", "Row should have severity text")
-			assert.Contains(t, row, "severity_number", "Row should have severity number")
+			_, hasMessage := row[wkk.NewRowKey("_cardinalhq.message")]
+			assert.True(t, hasMessage, "Row should have log body")
+			_, hasTimestamp := row[wkk.NewRowKey("_cardinalhq.timestamp")]
+			assert.True(t, hasTimestamp, "Row should have timestamp")
+			_, hasLevel := row[wkk.NewRowKey("_cardinalhq.level")]
+			assert.True(t, hasLevel, "Row should have severity text")
+			_, hasSeverityNumber := row[wkk.NewRowKey("severity_number")]
+			assert.True(t, hasSeverityNumber, "Row should have severity number")
 
 			// Check specific values
-			assert.Equal(t, expectedBodies[i], row["_cardinalhq.message"], "Log body should match expected value")
-			assert.Equal(t, expectedSeverities[i], row["_cardinalhq.level"], "Severity text should match")
+			assert.Equal(t, expectedBodies[i], row[wkk.NewRowKey("_cardinalhq.message")], "Log body should match expected value")
+			assert.Equal(t, expectedSeverities[i], row[wkk.NewRowKey("_cardinalhq.level")], "Severity text should match")
 
 			// Check for resource attributes
-			assert.Contains(t, row, "resource.service.name", "Should have resource service name")
-			assert.Equal(t, "test-log-service", row["resource.service.name"])
-			assert.Contains(t, row, "resource.deployment.environment", "Should have resource environment")
-			assert.Equal(t, "test", row["resource.deployment.environment"])
+			_, hasResourceServiceName := row[wkk.NewRowKey("resource.service.name")]
+			assert.True(t, hasResourceServiceName, "Should have resource service name")
+			assert.Equal(t, "test-log-service", row[wkk.NewRowKey("resource.service.name")])
+			_, hasResourceDeploymentEnvironment := row[wkk.NewRowKey("resource.deployment.environment")]
+			assert.True(t, hasResourceDeploymentEnvironment, "Should have resource environment")
+			assert.Equal(t, "test", row[wkk.NewRowKey("resource.deployment.environment")])
 
 			// Check for scope attributes
-			assert.Contains(t, row, "scope.logger.type", "Should have scope logger type")
-			assert.Equal(t, "structured", row["scope.logger.type"])
+			_, hasScopeLoggerType := row[wkk.NewRowKey("scope.logger.type")]
+			assert.True(t, hasScopeLoggerType, "Should have scope logger type")
+			assert.Equal(t, "structured", row[wkk.NewRowKey("scope.logger.type")])
 
 			// Check for log attributes
-			assert.Contains(t, row, "log.log.level", "Should have log level attribute")
-			assert.Equal(t, expectedSeverities[i], row["log.log.level"])
-			assert.Contains(t, row, "log.log.source", "Should have log source attribute")
+			_, hasLogLogLevel := row[wkk.NewRowKey("log.log.level")]
+			assert.True(t, hasLogLogLevel, "Should have log level attribute")
+			assert.Equal(t, expectedSeverities[i], row[wkk.NewRowKey("log.log.level")])
+			_, hasLogLogSource := row[wkk.NewRowKey("log.log.source")]
+			assert.True(t, hasLogLogSource, "Should have log source attribute")
 			expectedSource := fmt.Sprintf("test-component-%d", i)
-			assert.Equal(t, expectedSource, row["log.log.source"])
+			assert.Equal(t, expectedSource, row[wkk.NewRowKey("log.log.source")])
 		})
 	}
 
@@ -292,8 +303,10 @@ func TestProtoLogsReader_SyntheticData(t *testing.T) {
 			for i := 0; i < batch.Len(); i++ {
 				row := batch.Get(i)
 				assert.Greater(t, len(row), 0, "Batched row %d should have data", i)
-				assert.Contains(t, row, "_cardinalhq.message")
-				assert.Contains(t, row, "_cardinalhq.timestamp")
+				_, hasMessage := row[wkk.NewRowKey("_cardinalhq.message")]
+				assert.True(t, hasMessage)
+				_, hasTimestamp := row[wkk.NewRowKey("_cardinalhq.timestamp")]
+				assert.True(t, hasTimestamp)
 			}
 		}
 
@@ -313,8 +326,10 @@ func TestProtoLogsReader_SyntheticData(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, batch, "Should read a batch")
 	assert.Equal(t, 1, batch.Len(), "Should read exactly 1 row")
-	assert.Contains(t, batch.Get(0), "_cardinalhq.message")
-	assert.Contains(t, batch.Get(0), "resource.service.name")
+	_, hasMessage := batch.Get(0)[wkk.NewRowKey("_cardinalhq.message")]
+	assert.True(t, hasMessage)
+	_, hasResourceServiceName := batch.Get(0)[wkk.NewRowKey("resource.service.name")]
+	assert.True(t, hasResourceServiceName)
 
 	// Test data exhaustion - continue reading until EOF
 	var exhaustRows int
@@ -354,17 +369,17 @@ func TestProtoLogsReader_SyntheticDataFields(t *testing.T) {
 	bodyCount := 0
 
 	for _, row := range allRows {
-		if body, exists := row["_cardinalhq.message"]; exists {
+		if body, exists := row[wkk.NewRowKey("_cardinalhq.message")]; exists {
 			if bodyStr, ok := body.(string); ok && bodyStr != "" {
 				bodyCount++
 			}
 		}
-		if severityText, exists := row["_cardinalhq.level"]; exists {
+		if severityText, exists := row[wkk.NewRowKey("_cardinalhq.level")]; exists {
 			if textStr, ok := severityText.(string); ok {
 				severityTexts[textStr]++
 			}
 		}
-		if severityNum, exists := row["severity_number"]; exists {
+		if severityNum, exists := row[wkk.NewRowKey("severity_number")]; exists {
 			if numInt64, ok := severityNum.(int64); ok {
 				severityNumbers[int32(numInt64)]++
 			}
@@ -501,44 +516,44 @@ func TestProtoLogsReader_SyntheticStructuredData(t *testing.T) {
 	for i, row := range allRows {
 		t.Run(fmt.Sprintf("structured_log_%d", i), func(t *testing.T) {
 			// Check basic log fields
-			assert.Equal(t, expectedBodies[i], row["_cardinalhq.message"], "Structured log body should match")
-			assert.Equal(t, expectedSeverities[i], row["_cardinalhq.level"], "Structured severity should match")
+			assert.Equal(t, expectedBodies[i], row[wkk.NewRowKey("_cardinalhq.message")], "Structured log body should match")
+			assert.Equal(t, expectedSeverities[i], row[wkk.NewRowKey("_cardinalhq.level")], "Structured severity should match")
 
 			// Check resource attributes from structured data
-			assert.Equal(t, "structured-test-service", row["resource.service.name"])
-			assert.Equal(t, "3.1.4", row["resource.service.version"])
-			assert.Equal(t, "integration", row["resource.deployment.environment"])
-			assert.Equal(t, "test-host-01", row["resource.host.name"])
+			assert.Equal(t, "structured-test-service", row[wkk.NewRowKey("resource.service.name")])
+			assert.Equal(t, "3.1.4", row[wkk.NewRowKey("resource.service.version")])
+			assert.Equal(t, "integration", row[wkk.NewRowKey("resource.deployment.environment")])
+			assert.Equal(t, "test-host-01", row[wkk.NewRowKey("resource.host.name")])
 
 			// Check scope attributes from structured data
-			assert.Equal(t, "slog", row["scope.logger.framework"])
-			assert.Equal(t, "json", row["scope.logger.output"])
+			assert.Equal(t, "slog", row[wkk.NewRowKey("scope.logger.framework")])
+			assert.Equal(t, "json", row[wkk.NewRowKey("scope.logger.output")])
 
 			// Check log-specific attributes from structured data with proper types
 			switch i {
 			case 0: // TRACE log
-				assert.Equal(t, "abc123def456", row["log.trace_id"])
-				assert.Equal(t, "user-001", row["log.user_id"])
-				assert.Equal(t, "data_fetch", row["log.operation"])
+				assert.Equal(t, "abc123def456", row[wkk.NewRowKey("log.trace_id")])
+				assert.Equal(t, "user-001", row[wkk.NewRowKey("log.user_id")])
+				assert.Equal(t, "data_fetch", row[wkk.NewRowKey("log.operation")])
 				// OTEL attribute processing may convert numbers to strings regardless of input type
-				t.Logf("duration_ms type: %T, value: %v", row["log.duration_ms"], row["log.duration_ms"])
-				assert.Contains(t, []any{int64(45), "45"}, row["log.duration_ms"])
+				t.Logf("duration_ms type: %T, value: %v", row[wkk.NewRowKey("log.duration_ms")], row[wkk.NewRowKey("log.duration_ms")])
+				assert.Contains(t, []any{int64(45), "45"}, row[wkk.NewRowKey("log.duration_ms")])
 			case 1: // INFO log
-				assert.Equal(t, "user-001", row["log.user_id"])
-				assert.Equal(t, "oauth2", row["log.auth_method"])
-				assert.Equal(t, "sess_987654321", row["log.session_id"])
+				assert.Equal(t, "user-001", row[wkk.NewRowKey("log.user_id")])
+				assert.Equal(t, "oauth2", row[wkk.NewRowKey("log.auth_method")])
+				assert.Equal(t, "sess_987654321", row[wkk.NewRowKey("log.session_id")])
 			case 2: // WARN log
-				assert.Equal(t, "/api/v1/data", row["log.endpoint"])
+				assert.Equal(t, "/api/v1/data", row[wkk.NewRowKey("log.endpoint")])
 				// OTEL attribute processing may convert numbers to strings regardless of input type
-				assert.Contains(t, []any{int64(950), "950"}, row["log.current_rate"])
-				assert.Contains(t, []any{int64(1000), "1000"}, row["log.rate_limit"])
-				assert.Equal(t, "192.168.1.100", row["log.client_ip"])
+				assert.Contains(t, []any{int64(950), "950"}, row[wkk.NewRowKey("log.current_rate")])
+				assert.Contains(t, []any{int64(1000), "1000"}, row[wkk.NewRowKey("log.rate_limit")])
+				assert.Equal(t, "192.168.1.100", row[wkk.NewRowKey("log.client_ip")])
 			case 3: // ERROR log
-				assert.Equal(t, "primary_db", row["log.database"])
-				assert.Equal(t, "pool_1", row["log.connection_pool"])
+				assert.Equal(t, "primary_db", row[wkk.NewRowKey("log.database")])
+				assert.Equal(t, "pool_1", row[wkk.NewRowKey("log.connection_pool")])
 				// OTEL attribute processing may convert numbers to strings regardless of input type
-				assert.Contains(t, []any{int64(3), "3"}, row["log.retry_count"])
-				assert.Equal(t, "CONNECTION_TIMEOUT", row["log.error_code"])
+				assert.Contains(t, []any{int64(3), "3"}, row[wkk.NewRowKey("log.retry_count")])
+				assert.Equal(t, "CONNECTION_TIMEOUT", row[wkk.NewRowKey("log.error_code")])
 			}
 		})
 	}
@@ -648,7 +663,7 @@ func TestProtoLogsReader_MultiResourceSyntheticData(t *testing.T) {
 	webLogs := 0
 	dbLogs := 0
 	for _, row := range allRows {
-		serviceName := row["resource.service.name"].(string)
+		serviceName := row[wkk.NewRowKey("resource.service.name")].(string)
 		switch serviceName {
 		case "web-frontend":
 			webLogs++

@@ -24,6 +24,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/cbor"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 // RowIndex represents a lightweight pointer to a CBOR-encoded row in the temp file.
@@ -158,9 +159,10 @@ func (r *DiskSortingReader) writeAndIndexRow(row Row) error {
 		return fmt.Errorf("failed to get file offset: %w", err)
 	}
 
-	// CBOR encode the row
+	// CBOR encode the row (convert to string-keyed map for serialization)
 	startPos := offset
-	if err := r.encoder.Encode(row); err != nil {
+	stringKeyedRow := pipeline.ToStringMap(row)
+	if err := r.encoder.Encode(stringKeyedRow); err != nil {
 		return fmt.Errorf("failed to CBOR encode row: %w", err)
 	}
 
@@ -232,7 +234,7 @@ func (r *DiskSortingReader) Next() (*Batch, error) {
 		// Create new row and copy decoded data
 		row := make(Row)
 		for k, v := range decodedRow {
-			row[k] = v
+			row[wkk.NewRowKey(k)] = v
 		}
 
 		batchRow := batch.AddRow()

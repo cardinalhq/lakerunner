@@ -19,6 +19,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/cmd/ingestlogs"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 // LogTranslator adds resource metadata to log rows
@@ -36,14 +37,14 @@ func (t *LogTranslator) TranslateRow(row *filereader.Row) error {
 	}
 
 	// Only set the specific required fields - assume all other fields are properly set
-	(*row)["resource.bucket.name"] = t.bucket
-	(*row)["resource.file.name"] = "./" + t.objectID
-	(*row)["resource.file.type"] = ingestlogs.GetFileType(t.objectID)
+	(*row)[wkk.NewRowKey("resource.bucket.name")] = t.bucket
+	(*row)[wkk.NewRowKey("resource.file.name")] = "./" + t.objectID
+	(*row)[wkk.NewRowKey("resource.file.type")] = ingestlogs.GetFileType(t.objectID)
 
 	// Ensure required CardinalhQ fields are set
-	(*row)["_cardinalhq.telemetry_type"] = "logs"
-	(*row)["_cardinalhq.name"] = "log.events"
-	(*row)["_cardinalhq.value"] = float64(1)
+	(*row)[wkk.RowKeyCTelemetryType] = "logs"
+	(*row)[wkk.RowKeyCName] = "log.events"
+	(*row)[wkk.RowKeyCValue] = float64(1)
 
 	return nil
 }

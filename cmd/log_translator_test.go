@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/cardinalhq/lakerunner/internal/filereader"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 func TestLogTranslator_TranslateRow(t *testing.T) {
@@ -39,66 +40,66 @@ func TestLogTranslator_TranslateRow(t *testing.T) {
 		{
 			name: "ValidLogWithMessage",
 			input: filereader.Row{
-				"_cardinalhq.message":   "test log message",
-				"_cardinalhq.timestamp": int64(1640995200000), // 2022-01-01 00:00:00 UTC
+				wkk.NewRowKey("_cardinalhq.message"): "test log message",
+				wkk.RowKeyCTimestamp:                 int64(1640995200000), // 2022-01-01 00:00:00 UTC
 			},
 			wantErr: false,
 			checkFn: func(t *testing.T, result filereader.Row) {
 				// Check resource fields were added
-				assert.Equal(t, "test-bucket", result["resource.bucket.name"])
-				assert.Equal(t, "./test-object.json.gz", result["resource.file.name"])
-				assert.Equal(t, "testobjectjson", result["resource.file.type"])
+				assert.Equal(t, "test-bucket", result[wkk.NewRowKey("resource.bucket.name")])
+				assert.Equal(t, "./test-object.json.gz", result[wkk.NewRowKey("resource.file.name")])
+				assert.Equal(t, "testobjectjson", result[wkk.NewRowKey("resource.file.type")])
 				// Check required CardinalHQ fields were added
-				assert.Equal(t, "logs", result["_cardinalhq.telemetry_type"])
-				assert.Equal(t, "log.events", result["_cardinalhq.name"])
-				assert.Equal(t, float64(1), result["_cardinalhq.value"])
+				assert.Equal(t, "logs", result[wkk.RowKeyCTelemetryType])
+				assert.Equal(t, "log.events", result[wkk.RowKeyCName])
+				assert.Equal(t, float64(1), result[wkk.RowKeyCValue])
 				// Check original fields were preserved
-				assert.Equal(t, "test log message", result["_cardinalhq.message"])
-				assert.Equal(t, int64(1640995200000), result["_cardinalhq.timestamp"])
+				assert.Equal(t, "test log message", result[wkk.NewRowKey("_cardinalhq.message")])
+				assert.Equal(t, int64(1640995200000), result[wkk.RowKeyCTimestamp])
 			},
 		},
 		{
 			name: "BasicRowTranslation",
 			input: filereader.Row{
-				"_cardinalhq.message":   "log body content",
-				"_cardinalhq.timestamp": int64(1640995200000),
-				"_cardinalhq.level":     "info",
+				wkk.NewRowKey("_cardinalhq.message"): "log body content",
+				wkk.RowKeyCTimestamp:                 int64(1640995200000),
+				wkk.NewRowKey("_cardinalhq.level"):   "info",
 			},
 			wantErr: false,
 			checkFn: func(t *testing.T, result filereader.Row) {
 				// Check resource fields were added
-				assert.Equal(t, "test-bucket", result["resource.bucket.name"])
-				assert.Equal(t, "./test-object.json.gz", result["resource.file.name"])
-				assert.Equal(t, "testobjectjson", result["resource.file.type"])
+				assert.Equal(t, "test-bucket", result[wkk.NewRowKey("resource.bucket.name")])
+				assert.Equal(t, "./test-object.json.gz", result[wkk.NewRowKey("resource.file.name")])
+				assert.Equal(t, "testobjectjson", result[wkk.NewRowKey("resource.file.type")])
 				// Check required CardinalHQ fields were added
-				assert.Equal(t, "logs", result["_cardinalhq.telemetry_type"])
-				assert.Equal(t, "log.events", result["_cardinalhq.name"])
-				assert.Equal(t, float64(1), result["_cardinalhq.value"])
+				assert.Equal(t, "logs", result[wkk.RowKeyCTelemetryType])
+				assert.Equal(t, "log.events", result[wkk.RowKeyCName])
+				assert.Equal(t, float64(1), result[wkk.RowKeyCValue])
 				// Check original fields were preserved
-				assert.Equal(t, "log body content", result["_cardinalhq.message"])
-				assert.Equal(t, int64(1640995200000), result["_cardinalhq.timestamp"])
-				assert.Equal(t, "info", result["_cardinalhq.level"])
+				assert.Equal(t, "log body content", result[wkk.NewRowKey("_cardinalhq.message")])
+				assert.Equal(t, int64(1640995200000), result[wkk.RowKeyCTimestamp])
+				assert.Equal(t, "info", result[wkk.NewRowKey("_cardinalhq.level")])
 			},
 		},
 		{
 			name: "MinimalRow",
 			input: filereader.Row{
-				"_cardinalhq.timestamp": int64(1640995300000),
-				"some_field":            "some_value",
+				wkk.RowKeyCTimestamp:        int64(1640995300000),
+				wkk.NewRowKey("some_field"): "some_value",
 			},
 			wantErr: false,
 			checkFn: func(t *testing.T, result filereader.Row) {
 				// Check resource fields were added
-				assert.Equal(t, "test-bucket", result["resource.bucket.name"])
-				assert.Equal(t, "./test-object.json.gz", result["resource.file.name"])
-				assert.Equal(t, "testobjectjson", result["resource.file.type"])
+				assert.Equal(t, "test-bucket", result[wkk.NewRowKey("resource.bucket.name")])
+				assert.Equal(t, "./test-object.json.gz", result[wkk.NewRowKey("resource.file.name")])
+				assert.Equal(t, "testobjectjson", result[wkk.NewRowKey("resource.file.type")])
 				// Check required CardinalHQ fields were added
-				assert.Equal(t, "logs", result["_cardinalhq.telemetry_type"])
-				assert.Equal(t, "log.events", result["_cardinalhq.name"])
-				assert.Equal(t, float64(1), result["_cardinalhq.value"])
+				assert.Equal(t, "logs", result[wkk.RowKeyCTelemetryType])
+				assert.Equal(t, "log.events", result[wkk.RowKeyCName])
+				assert.Equal(t, float64(1), result[wkk.RowKeyCValue])
 				// Check original fields were preserved
-				assert.Equal(t, int64(1640995300000), result["_cardinalhq.timestamp"])
-				assert.Equal(t, "some_value", result["some_field"])
+				assert.Equal(t, int64(1640995300000), result[wkk.RowKeyCTimestamp])
+				assert.Equal(t, "some_value", result[wkk.NewRowKey("some_field")])
 			},
 		},
 	}
