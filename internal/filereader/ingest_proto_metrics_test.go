@@ -149,6 +149,56 @@ func TestIngestProtoMetrics_Close(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+func TestIngestProtoMetrics_RowReusedAndCleared(t *testing.T) {
+	builder := signalbuilder.NewMetricsBuilder()
+	ts := time.Now()
+	resourceMetrics := &signalbuilder.ResourceMetrics{
+		Resource: map[string]any{"service.name": "reuse-test"},
+		ScopeMetrics: []signalbuilder.ScopeMetrics{{
+			Name: "reuse-meter",
+			Metrics: []signalbuilder.Metric{{
+				Name: "test_gauge",
+				Type: "gauge",
+				Gauge: &signalbuilder.GaugeMetric{
+					DataPoints: []signalbuilder.NumberDataPoint{
+						{Value: 1.0, Timestamp: ts.UnixNano()},
+						{Value: 2.0, Timestamp: ts.Add(time.Minute).UnixNano()},
+					},
+				},
+			}},
+		}},
+	}
+	require.NoError(t, builder.Add(resourceMetrics))
+
+	metrics := builder.Build()
+	marshaler := &pmetric.ProtoMarshaler{}
+	data, err := marshaler.MarshalMetrics(metrics)
+	require.NoError(t, err)
+
+	reader, err := NewIngestProtoMetricsReader(bytes.NewReader(data))
+	require.NoError(t, err)
+	defer reader.Close()
+
+	rows := make([]Row, 1)
+
+	n, err := reader.Read(rows)
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+
+	rows[0]["temp"] = "value"
+	addr1 := fmt.Sprintf("%p", rows[0])
+
+	n, err = reader.Read(rows)
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+
+	_, exists := rows[0]["temp"]
+	assert.False(t, exists, "row should be cleared before reuse")
+
+	addr2 := fmt.Sprintf("%p", rows[0])
+	assert.Equal(t, addr1, addr2, "row map should be reused")
+}
+
 func TestIngestProtoMetrics_ExponentialHistogram(t *testing.T) {
 	metrics := pmetric.NewMetrics()
 	rm := metrics.ResourceMetrics().AppendEmpty()
