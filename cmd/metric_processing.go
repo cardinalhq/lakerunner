@@ -75,7 +75,7 @@ func parseMetricRecord(rec map[string]any, ll *slog.Logger) (*MetricRecord, erro
 	// Process tags
 	tags := helpers.MakeTags(rec)
 	tid := helpers.ComputeTID(metricName, tags)
-	tags["_cardinalhq.tid"] = fmt.Sprintf("%d", tid)
+	tags["_cardinalhq.tid"] = tid
 
 	result := &MetricRecord{
 		Timestamp:  ts,

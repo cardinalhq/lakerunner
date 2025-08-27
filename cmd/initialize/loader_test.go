@@ -103,7 +103,6 @@ func (m *MockDatabaseQueries) UpsertOrganizationAPIKey(ctx context.Context, arg 
 	return args.Get(0).(configdb.OrganizationApiKey), args.Error(1)
 }
 
-
 func (m *MockDatabaseQueries) UpsertOrganizationAPIKeyMapping(ctx context.Context, arg configdb.UpsertOrganizationAPIKeyMappingParams) error {
 	args := m.Called(ctx, arg)
 	return args.Error(0)
