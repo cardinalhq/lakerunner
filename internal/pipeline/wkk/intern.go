@@ -25,7 +25,40 @@ func NewRowKey(s string) RowKey {
 }
 
 var (
-	RowKeyCTID       = NewRowKey("_cardinalhq.tid")
-	RowKeyCName      = NewRowKey("_cardinalhq.name")
-	RowKeyCTimestamp = NewRowKey("_cardinalhq.timestamp")
+	// _cardinalhq.* keys (sorted alphabetically)
+	RowKeyCCollectorID   = NewRowKey("_cardinalhq.collector_id")
+	RowKeyCCustomerID    = NewRowKey("_cardinalhq.customer_id")
+	RowKeyCFingerprint   = NewRowKey("_cardinalhq.fingerprint")
+	RowKeyCID            = NewRowKey("_cardinalhq.id")
+	RowKeyCMessage       = NewRowKey("_cardinalhq.message")
+	RowKeyCMetricType    = NewRowKey("_cardinalhq.metric_type")
+	RowKeyCName          = NewRowKey("_cardinalhq.name")
+	RowKeyCSpanEvents    = NewRowKey("_cardinalhq.span_events")
+	RowKeyCTelemetryType = NewRowKey("_cardinalhq.telemetry_type")
+	RowKeyCTID           = NewRowKey("_cardinalhq.tid")
+	RowKeyCTimestamp     = NewRowKey("_cardinalhq.timestamp")
+	RowKeyCValue         = NewRowKey("_cardinalhq.value") // Deprecated
+
+	// histogram handling (TODO: just make histograms)
+	RowKeyCBucketBounds   = NewRowKey("_cardinalhq.bucket_bounds")
+	RowKeyCNegativeCounts = NewRowKey("_cardinalhq.negative_counts")
+	RowKeyCPositiveCounts = NewRowKey("_cardinalhq.positive_counts")
+	RowKeyCCounts         = NewRowKey("_cardinalhq.counts")    // Deprecated
+	RowKeyCSumValue       = NewRowKey("_cardinalhq.sum_value") // Deprecated
+
+	// rollup_* keys (sorted alphabetically)
+	RowKeyRollupAvg   = NewRowKey("rollup_avg")
+	RowKeyRollupCount = NewRowKey("rollup_count")
+	RowKeyRollupMax   = NewRowKey("rollup_max")
+	RowKeyRollupMin   = NewRowKey("rollup_min")
+	RowKeyRollupP25   = NewRowKey("rollup_p25")
+	RowKeyRollupP50   = NewRowKey("rollup_p50")
+	RowKeyRollupP75   = NewRowKey("rollup_p75")
+	RowKeyRollupP90   = NewRowKey("rollup_p90")
+	RowKeyRollupP95   = NewRowKey("rollup_p95")
+	RowKeyRollupP99   = NewRowKey("rollup_p99")
+	RowKeyRollupSum   = NewRowKey("rollup_sum")
+
+	// sketch key
+	RowKeySketch = NewRowKey("sketch")
 )
