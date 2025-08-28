@@ -31,6 +31,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/constants"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
+	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
@@ -65,6 +66,16 @@ func init() {
 
 			go diskUsageLoop(doneCtx)
 
+			// Start health check server
+			healthConfig := healthcheck.GetConfigFromEnv()
+			healthServer := healthcheck.NewServer(healthConfig)
+
+			go func() {
+				if err := healthServer.Start(doneCtx); err != nil {
+					slog.Error("Health check server stopped", slog.Any("error", err))
+				}
+			}()
+
 			loop, err := NewIngestLoopContext(doneCtx, "logs", servicename)
 			if err != nil {
 				return fmt.Errorf("failed to create ingest loop context: %w", err)
@@ -72,8 +83,13 @@ func init() {
 
 			// Check if we should use the old implementation as a safety net
 			if os.Getenv("LAKERUNNER_LOGS_INGEST_OLDPATH") != "" {
+				// Still mark as healthy before starting old path
+				healthServer.SetStatus(healthcheck.StatusHealthy)
 				return runOldLogIngestion(doneCtx, slog.Default(), loop)
 			}
+
+			// Mark as healthy once loop is created and about to start
+			healthServer.SetStatus(healthcheck.StatusHealthy)
 
 			for {
 				select {
@@ -310,6 +326,14 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 
 	// Process each file in the batch
 	for _, inf := range items {
+		// Check for context cancellation before processing each file
+		if err := ctx.Err(); err != nil {
+			ll.Info("Context cancelled during batch processing - safe interruption point",
+				slog.String("itemID", inf.ID.String()),
+				slog.Any("error", err))
+			return NewWorkerInterrupted("context cancelled during file processing")
+		}
+
 		ll.Debug("Processing batch item with filereader",
 			slog.String("itemID", inf.ID.String()),
 			slog.String("objectID", inf.ObjectID),
@@ -457,6 +481,14 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 		ll.Warn("Some input rows were dropped due to processing errors",
 			slog.Int64("totalDropped", batchRowsErrored),
 			slog.Float64("dropRate", float64(batchRowsErrored)/float64(batchRowsRead)*100))
+	}
+
+	// Final interruption check before critical section (S3 uploads + DB inserts)
+	if err := ctx.Err(); err != nil {
+		ll.Info("Context cancelled before S3 upload phase - safe interruption point",
+			slog.Int("resultCount", len(results)),
+			slog.Any("error", err))
+		return NewWorkerInterrupted("context cancelled before S3 upload phase")
 	}
 
 	// Upload files and create database segments

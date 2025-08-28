@@ -27,6 +27,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/constants"
+	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/logcrunch"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
@@ -60,10 +61,23 @@ func init() {
 
 			go diskUsageLoop(doneCtx)
 
+			// Start health check server
+			healthConfig := healthcheck.GetConfigFromEnv()
+			healthServer := healthcheck.NewServer(healthConfig)
+
+			go func() {
+				if err := healthServer.Start(doneCtx); err != nil {
+					slog.Error("Health check server stopped", slog.Any("error", err))
+				}
+			}()
+
 			loop, err := NewRunqueueLoopContext(doneCtx, "logs", "compact", servicename)
 			if err != nil {
 				return fmt.Errorf("failed to create runqueue loop context: %w", err)
 			}
+
+			// Mark as healthy once loop is created and about to start
+			healthServer.SetStatus(healthcheck.StatusHealthy)
 
 			return RunqueueLoop(loop, compactLogsFor, nil)
 		},
@@ -213,11 +227,11 @@ func logCompactItemDo(
 	for {
 		// Check if context is cancelled before starting next batch
 		if ctx.Err() != nil {
-			ll.Info("Context cancelled, stopping compaction loop - will retry to continue",
+			ll.Info("Context cancelled, interrupting compaction loop gracefully",
 				slog.Int("batchCount", totalBatchesProcessed),
 				slog.Int("segmentCount", totalSegmentsProcessed),
 				slog.Any("error", ctx.Err()))
-			return WorkResultTryAgainLater, nil
+			return WorkResultInterrupted, NewWorkerInterrupted("context cancelled during batch processing")
 		}
 
 		ll.Info("Querying for log segments to compact",
@@ -330,10 +344,10 @@ func logCompactItemDo(
 			// Check for shutdown BEFORE starting atomic work
 			select {
 			case <-compactLogsDoneCtx.Done():
-				ll.Info("Shutdown requested - aborting before atomic operation",
+				ll.Info("Shutdown requested - interrupting before atomic operation",
 					slog.Int("completedGroupCount", i),
 					slog.Int("remainingGroupCount", len(packed)-i))
-				return WorkResultTryAgainLater, nil
+				return WorkResultInterrupted, NewWorkerInterrupted("shutdown requested before atomic operation")
 			default:
 			}
 

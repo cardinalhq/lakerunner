@@ -30,6 +30,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/constants"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
+	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/metriccompaction"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
@@ -70,10 +71,23 @@ func init() {
 
 			go diskUsageLoop(doneCtx)
 
+			// Start health check server
+			healthConfig := healthcheck.GetConfigFromEnv()
+			healthServer := healthcheck.NewServer(healthConfig)
+
+			go func() {
+				if err := healthServer.Start(doneCtx); err != nil {
+					slog.Error("Health check server stopped", slog.Any("error", err))
+				}
+			}()
+
 			loop, err := NewRunqueueLoopContext(doneCtx, "metrics", "compact", servicename)
 			if err != nil {
 				return fmt.Errorf("failed to create runqueue loop context: %w", err)
 			}
+
+			// Mark as healthy once loop is created and about to start
+			healthServer.SetStatus(healthcheck.StatusHealthy)
 
 			return RunqueueLoop(loop, compactRollupItem, nil)
 		},
@@ -143,11 +157,11 @@ func compactMetricSegments(
 
 	for {
 		if ctx.Err() != nil {
-			ll.Info("Context cancelled, stopping compaction loop - will retry to continue",
+			ll.Info("Context cancelled, interrupting compaction loop gracefully",
 				slog.Int("processedBatches", totalBatchesProcessed),
 				slog.Int("processedSegments", totalSegmentsProcessed),
 				slog.Any("error", ctx.Err()))
-			return WorkResultTryAgainLater, nil
+			return WorkResultInterrupted, NewWorkerInterrupted("context cancelled during batch processing")
 		}
 
 		ll.Debug("Querying for metric segments to compact",
@@ -225,6 +239,14 @@ func compactMetricSegments(
 			continue
 		}
 
+		// Check for context cancellation before starting compaction
+		if ctx.Err() != nil {
+			ll.Info("Context cancelled before starting compaction interval",
+				slog.Int("segmentCount", len(inRows)),
+				slog.Any("error", ctx.Err()))
+			return WorkResultInterrupted, NewWorkerInterrupted("context cancelled before compaction interval")
+		}
+
 		err = compactMetricInterval(ctx, ll, mdb, tmpdir, inf, profile, s3client, inRows, rpfEstimate)
 		if err != nil {
 			ll.Error("Failed to compact interval", slog.Any("error", err))
@@ -269,6 +291,14 @@ func compactMetricInterval(
 	var downloadedFiles []string
 
 	for _, row := range rows {
+		// Check for context cancellation before processing each segment
+		if ctx.Err() != nil {
+			ll.Info("Context cancelled during segment download - safe interruption point",
+				slog.Int64("segmentID", row.SegmentID),
+				slog.Any("error", ctx.Err()))
+			return NewWorkerInterrupted("context cancelled during segment download")
+		}
+
 		dateint, hour := helpers.MSToDateintHour(st.Time.UTC().UnixMilli())
 		objectID := helpers.MakeDBObjectID(inf.OrganizationID(), profile.CollectorName, dateint, hour, row.SegmentID, "metrics")
 
@@ -480,6 +510,14 @@ func compactMetricInterval(
 		}
 		ll.Debug("Skipping database updates since no output files were created")
 		return nil
+	}
+
+	// Final interruption check before critical section (S3 uploads + DB updates)
+	if ctx.Err() != nil {
+		ll.Info("Context cancelled before critical section - safe to abort",
+			slog.Int("resultCount", len(results)),
+			slog.Any("error", ctx.Err()))
+		return NewWorkerInterrupted("context cancelled before metrics upload phase")
 	}
 
 	compactionParams := metricsprocessing.CompactionUploadParams{

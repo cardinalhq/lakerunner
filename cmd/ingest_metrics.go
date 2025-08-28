@@ -31,6 +31,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/constants"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
+	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
@@ -66,6 +67,16 @@ func init() {
 
 			go diskUsageLoop(doneCtx)
 
+			// Start health check server
+			healthConfig := healthcheck.GetConfigFromEnv()
+			healthServer := healthcheck.NewServer(healthConfig)
+
+			go func() {
+				if err := healthServer.Start(doneCtx); err != nil {
+					slog.Error("Health check server stopped", slog.Any("error", err))
+				}
+			}()
+
 			loop, err := NewIngestLoopContext(doneCtx, "metrics", servicename)
 			if err != nil {
 				return fmt.Errorf("failed to create ingest loop context: %w", err)
@@ -78,8 +89,13 @@ func init() {
 
 			// Check if we should use the old implementation as a safety net
 			if os.Getenv("LAKERUNNER_METRICS_INGEST_OLDPATH") != "" {
+				// Still mark as healthy before starting old path
+				healthServer.SetStatus(healthcheck.StatusHealthy)
 				return runOldMetricIngestion(doneCtx, slog.Default(), loop)
 			}
+
+			// Mark as healthy once loop is created and about to start
+			healthServer.SetStatus(healthcheck.StatusHealthy)
 
 			return IngestLoopWithBatch(loop, metricIngestItem, metricIngestBatch)
 		},

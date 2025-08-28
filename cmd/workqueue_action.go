@@ -55,6 +55,7 @@ type WorkResult int
 const (
 	WorkResultSuccess WorkResult = iota
 	WorkResultTryAgainLater
+	WorkResultInterrupted
 )
 
 type RunqueueLoopContext struct {
@@ -163,16 +164,30 @@ func RunqueueLoop(loop *RunqueueLoopContext, pfx RunqueueProcessingFunction, arg
 		default:
 		}
 
-		shouldBackoff, _, err := workqueueProcess(ctx, loop, pfx, args)
+		shouldBackoff, workWasProcessed, err := workqueueProcess(ctx, loop, pfx, args)
 		if err != nil {
+			// Check if this is a worker interruption
+			if IsWorkerInterrupted(err) {
+				slog.Info("Worker loop interrupted gracefully")
+				return loop.ctx.Err() // Return the original context cancellation error
+			}
 			return err
 		}
 
+		// Only backoff if no work was available - if work was processed, poll immediately
 		if shouldBackoff {
 			select {
 			case <-loop.ctx.Done():
 				return loop.ctx.Err()
 			case <-time.After(workSleepTime):
+			}
+		} else if workWasProcessed {
+			// Work was processed successfully - poll immediately for more
+			// Just check context and continue loop without delay
+			select {
+			case <-loop.ctx.Done():
+				return loop.ctx.Err()
+			default:
 			}
 		}
 
@@ -307,6 +322,13 @@ func workqueueProcess(
 		return false, true, nil
 	case WorkResultTryAgainLater:
 		return true, false, inf.Fail()
+	case WorkResultInterrupted:
+		ll.Info("Work interrupted gracefully, releasing work item")
+		if err := inf.Fail(); err != nil {
+			ll.Error("Failed to release interrupted work item", slog.Any("error", err))
+		}
+		// Don't backoff after interruption - exit immediately
+		return false, false, NewWorkerInterrupted("work interrupted during processing")
 	default:
 		ll.Error("Unexpected work result", slog.Int("result", int(result)), slog.Any("error", err))
 		return true, false, inf.Fail()

@@ -192,16 +192,30 @@ func IngestLoopWithBatch(loop *IngestLoopContext, processingFx InqueueProcessing
 		default:
 		}
 
-		shouldBackoff, _, err := ingestFilesBatch(ctx, loop, processingFx, batchProcessingFx)
+		shouldBackoff, workWasProcessed, err := ingestFilesBatch(ctx, loop, processingFx, batchProcessingFx)
 		if err != nil {
+			// Check if this is a worker interruption
+			if IsWorkerInterrupted(err) {
+				slog.Info("Ingest loop interrupted gracefully")
+				return loop.ctx.Err() // Return the original context cancellation error
+			}
 			return err
 		}
 
+		// Only backoff if no work was available - if work was processed, poll immediately
 		if shouldBackoff {
 			select {
 			case <-loop.ctx.Done():
 				return nil
 			case <-time.After(workSleepTime):
+			}
+		} else if workWasProcessed {
+			// Work was processed successfully - poll immediately for more
+			// Just check context and continue loop without delay
+			select {
+			case <-loop.ctx.Done():
+				return nil
+			default:
 			}
 		}
 
