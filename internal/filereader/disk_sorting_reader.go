@@ -122,6 +122,9 @@ func (r *DiskSortingReader) writeAndIndexAllRows() error {
 	for {
 		batch, err := r.reader.Next()
 		if err != nil {
+			if batch != nil {
+				pipeline.ReturnBatch(batch)
+			}
 			if err == io.EOF {
 				break
 			}
@@ -132,9 +135,12 @@ func (r *DiskSortingReader) writeAndIndexAllRows() error {
 		for i := 0; i < batch.Len(); i++ {
 			row := batch.Get(i)
 			if err := r.writeAndIndexRow(row); err != nil {
+				pipeline.ReturnBatch(batch)
 				return fmt.Errorf("failed to write and index row: %w", err)
 			}
 		}
+
+		pipeline.ReturnBatch(batch)
 	}
 
 	// Sort indices using the provided sort function
