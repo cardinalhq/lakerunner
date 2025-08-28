@@ -30,6 +30,12 @@ const (
 	SortVersionNameTidTimestamp = 1
 )
 
+// Current metric sort configuration - single source of truth for all metric sorting
+const (
+	// CurrentMetricSortVersion is the sort version used for all newly created metric segments
+	CurrentMetricSortVersion = SortVersionNameTidTimestamp
+)
+
 func (q *Store) InsertMetricSegment(ctx context.Context, params InsertMetricSegmentParams) error {
 	if err := q.ensureMetricSegmentPartition(ctx, params.OrganizationID, params.Dateint); err != nil {
 		return err

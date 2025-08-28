@@ -335,16 +335,15 @@ func compactMetricInterval(
 
 		// Check if file is already sorted to skip expensive disk-based sorting
 		var finalReader filereader.Reader = reader
-		sourceSortedWithCompatibleKey := row.SortVersion == lrdb.SortVersionNameTidTimestamp
+		sourceSortedWithCompatibleKey := row.SortVersion == lrdb.CurrentMetricSortVersion
 
 		if sourceSortedWithCompatibleKey {
-			// File is already sorted by [name, tid, timestamp] - skip sorting for better performance
+			// File is already sorted with current sort version - skip sorting for better performance
 		} else {
-			// Wrap with disk-based sorting reader to ensure data is sorted by [name, tid, timestamp]
+			// Wrap with disk-based sorting reader to ensure data is sorted with current sort version
 			// This is required by the aggregating reader downstream
-			sortingReader, err := filereader.NewDiskSortingReader(reader,
-				filereader.MetricNameTidTimestampSortKeyFunc(),
-				filereader.MetricNameTidTimestampSortFunc(), 1000)
+			sortKeyFunc, sortFunc := metricsprocessing.GetCurrentMetricSortFunctions()
+			sortingReader, err := filereader.NewDiskSortingReader(reader, sortKeyFunc, sortFunc, 1000)
 			if err != nil {
 				reader.Close()
 				file.Close()

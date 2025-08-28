@@ -382,7 +382,8 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 		}
 
 		// Step 2c: Add disk-based sorting (after translation so TID is available)
-		reader, err = filereader.NewDiskSortingReader(reader, filereader.MetricNameTidTimestampSortKeyFunc(), filereader.MetricNameTidTimestampSortFunc(), 1000)
+		sortKeyFunc, sortFunc := metricsprocessing.GetCurrentMetricSortFunctions()
+		reader, err = filereader.NewDiskSortingReader(reader, sortKeyFunc, sortFunc, 1000)
 		if err != nil {
 			reader.Close()
 			ll.Warn("Failed to create sorting reader, skipping file",

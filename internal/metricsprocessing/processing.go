@@ -80,6 +80,13 @@ func (t *MetricTranslator) TranslateRow(row *filereader.Row) error {
 	return nil
 }
 
+// GetCurrentMetricSortFunctions returns the sort key function and sort comparison function
+// for the current metric sort version. This is the single source of truth for metric sorting.
+func GetCurrentMetricSortFunctions() (filereader.SortKeyFunc, func(a, b any) int) {
+	// These functions correspond to lrdb.CurrentMetricSortVersion (SortVersionNameTidTimestamp)
+	return filereader.MetricNameTidTimestampSortKeyFunc(), filereader.MetricNameTidTimestampSortFunc()
+}
+
 // MetricsOrderedSelector returns a SelectFunc for PreorderedMultisourceReader that orders by [metric name, TID].
 // This ensures the same ordering used by the parquet writer during ingestion and compaction.
 func MetricsOrderedSelector() filereader.SelectFunc {
@@ -266,7 +273,7 @@ func uploadSingleMetricResult(
 		Published:      true,
 		CreatedBy:      params.CreatedBy,
 		Fingerprints:   fingerprints,
-		SortVersion:    lrdb.SortVersionNameTidTimestamp, // Files from ingestion are sorted by [name, tid, timestamp]
+		SortVersion:    lrdb.CurrentMetricSortVersion, // Files from ingestion use current sort version
 	})
 	if err != nil {
 		// Clean up uploaded file on database error
