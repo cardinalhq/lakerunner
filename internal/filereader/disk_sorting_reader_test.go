@@ -494,13 +494,8 @@ func (m *manyBatchReader) TotalRowsReturned() int64 { return 0 }
 func TestWriteAndIndexAllRowsDoesNotLeakBatches(t *testing.T) {
 	const batchCount = 200
 
-	// Warm the pool to eliminate initial allocation noise.
-	pipeline.ReturnBatch(pipeline.GetBatch())
-
-	baseline := testing.AllocsPerRun(100, func() {
-		b := pipeline.GetBatch()
-		pipeline.ReturnBatch(b)
-	})
+	// Get initial pool state before processing
+	initialStats := pipeline.GlobalBatchPoolStats()
 
 	reader := &manyBatchReader{remaining: batchCount}
 	dsr, err := NewDiskSortingReader(reader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc(), 10)
@@ -509,10 +504,18 @@ func TestWriteAndIndexAllRowsDoesNotLeakBatches(t *testing.T) {
 
 	require.NoError(t, dsr.writeAndIndexAllRows())
 
-	allocs := testing.AllocsPerRun(100, func() {
-		b := pipeline.GetBatch()
-		pipeline.ReturnBatch(b)
-	})
+	// Get final pool state after processing
+	finalStats := pipeline.GlobalBatchPoolStats()
 
-	assert.LessOrEqual(t, allocs, baseline, "expected heap allocations from GetBatch not to increase after processing")
+	// Calculate gets and puts during the test
+	getsUsed := finalStats.Gets - initialStats.Gets
+	putsUsed := finalStats.Puts - initialStats.Puts
+
+	// Every GetBatch() call should have a matching ReturnBatch() call
+	assert.Equal(t, getsUsed, putsUsed, 
+		"every GetBatch() should have matching ReturnBatch() - gets: %d, puts: %d", 
+		getsUsed, putsUsed)
+
+	// Sanity check: we should have used some batches during processing
+	assert.Greater(t, getsUsed, uint64(0), "test should have used some batches")
 }
