@@ -27,7 +27,7 @@ type Querier interface {
 	ClaimInqueueWork(ctx context.Context, arg ClaimInqueueWorkParams) (Inqueue, error)
 	// Greedy pack up to size cap and row cap
 	ClaimInqueueWorkBatch(ctx context.Context, arg ClaimInqueueWorkBatchParams) ([]ClaimInqueueWorkBatchRow, error)
-	CleanupInqueueWork(ctx context.Context) error
+	CleanupInqueueWork(ctx context.Context, cutoffTime *time.Time) ([]Inqueue, error)
 	CompactLogSegments(ctx context.Context, arg CompactLogSegmentsParams) error
 	CompactTraceSegments(ctx context.Context, arg CompactTraceSegmentsParams) error
 	DeleteInqueueWork(ctx context.Context, arg DeleteInqueueWorkParams) error
