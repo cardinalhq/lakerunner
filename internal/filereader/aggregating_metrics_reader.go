@@ -447,6 +447,10 @@ func (ar *AggregatingMetricsReader) Next() (*Batch, error) {
 
 			// Process this row
 			if err := ar.processRow(row, batch); err != nil {
+				pipeline.ReturnBatch(ar.pendingBatch)
+				pipeline.ReturnBatch(batch)
+				ar.pendingBatch = nil
+				ar.pendingIndex = 0
 				return nil, err
 			}
 
@@ -459,18 +463,25 @@ func (ar *AggregatingMetricsReader) Next() (*Batch, error) {
 		}
 
 		// Clear pending batch if we've processed all rows
-		ar.pendingBatch = nil
-		ar.pendingIndex = 0
+		if ar.pendingBatch != nil {
+			pipeline.ReturnBatch(ar.pendingBatch)
+			ar.pendingBatch = nil
+			ar.pendingIndex = 0
+		}
 
 		// Read next batch from underlying reader
 		if !ar.readerEOF {
 			underlyingBatch, err := ar.readNextBatchFromUnderlying()
 			if err != nil {
+				if underlyingBatch != nil {
+					pipeline.ReturnBatch(underlyingBatch)
+				}
 				if err == io.EOF {
 					// Check if we need to emit final aggregation
 					if ar.currentKey != "" {
 						result, aggErr := ar.aggregateGroup()
 						if aggErr != nil {
+							pipeline.ReturnBatch(batch)
 							return nil, fmt.Errorf("failed to aggregate final group: %w", aggErr)
 						}
 						if result != nil {
@@ -480,10 +491,12 @@ func (ar *AggregatingMetricsReader) Next() (*Batch, error) {
 						}
 					}
 					if batch.Len() == 0 {
+						pipeline.ReturnBatch(batch)
 						return nil, io.EOF
 					}
 					return batch, nil
 				}
+				pipeline.ReturnBatch(batch)
 				return nil, err
 			}
 
@@ -500,6 +513,7 @@ func (ar *AggregatingMetricsReader) Next() (*Batch, error) {
 
 		// If we have no rows and are at EOF, we're done
 		if ar.readerEOF && ar.currentKey == "" {
+			pipeline.ReturnBatch(batch)
 			return nil, io.EOF
 		}
 	}

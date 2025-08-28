@@ -17,6 +17,7 @@ package pipeline
 import (
 	"maps"
 	"sync"
+	"sync/atomic"
 )
 
 // Batch is owned by the Reader that returns it.
@@ -33,32 +34,36 @@ type Batch struct {
 
 // batchPool provides memory-efficient batch reuse.
 type batchPool struct {
-	pool sync.Pool
-	sz   int
+	pool  sync.Pool
+	sz    int
+	alloc atomic.Uint64
+	gets  atomic.Uint64
+	puts  atomic.Uint64
 }
 
 // newBatchPool creates a new batch pool with the given batch size.
 func newBatchPool(batchSize int) *batchPool {
-	return &batchPool{
-		pool: sync.Pool{
-			New: func() any {
-				// Pre-allocate Row maps to reduce allocations
-				rows := make([]Row, batchSize)
-				for i := range rows {
-					rows[i] = make(Row)
-				}
-				return &Batch{
-					rows:     rows,
-					validLen: 0,
-				}
-			},
+	p := &batchPool{sz: batchSize}
+	p.pool = sync.Pool{
+		New: func() any {
+			p.alloc.Add(1)
+			// Pre-allocate Row maps to reduce allocations
+			rows := make([]Row, batchSize)
+			for i := range rows {
+				rows[i] = make(Row)
+			}
+			return &Batch{
+				rows:     rows,
+				validLen: 0,
+			}
 		},
-		sz: batchSize,
 	}
+	return p
 }
 
 // Get returns a clean batch from the pool.
 func (p *batchPool) Get() *Batch {
+	p.gets.Add(1)
 	b := p.pool.Get().(*Batch)
 	// Clear all Row maps but keep them allocated for reuse
 	for i := range b.rows {
@@ -72,6 +77,7 @@ func (p *batchPool) Get() *Batch {
 
 // Put returns a batch to the pool for reuse.
 func (p *batchPool) Put(b *Batch) {
+	p.puts.Add(1)
 	// Drop oversized batches to avoid unbounded growth
 	if cap(b.rows) > p.sz*4 {
 		return
@@ -79,6 +85,21 @@ func (p *batchPool) Put(b *Batch) {
 	// Keep the Row maps but reset validLen - they'll be cleared on next Get()
 	b.validLen = 0
 	p.pool.Put(b)
+}
+
+// BatchPoolStats contains counters for batch pool usage.
+type BatchPoolStats struct {
+	Allocations uint64
+	Gets        uint64
+	Puts        uint64
+}
+
+func (p *batchPool) stats() BatchPoolStats {
+	return BatchPoolStats{
+		Allocations: p.alloc.Load(),
+		Gets:        p.gets.Load(),
+		Puts:        p.puts.Load(),
+	}
 }
 
 // Global batch pool for memory efficiency across all readers and workers
@@ -96,6 +117,11 @@ func ReturnBatch(batch *Batch) {
 	if batch != nil {
 		globalBatchPool.Put(batch)
 	}
+}
+
+// GlobalBatchPoolStats returns usage counters for the global batch pool.
+func GlobalBatchPoolStats() BatchPoolStats {
+	return globalBatchPool.stats()
 }
 
 // CopyBatch creates a deep copy of a batch using lower-level primitives.
