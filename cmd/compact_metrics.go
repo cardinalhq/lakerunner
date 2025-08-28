@@ -302,19 +302,32 @@ func compactMetricInterval(
 			return fmt.Errorf("creating parquet reader for %s: %w", fn, err)
 		}
 
-		// Wrap with disk-based sorting reader to ensure data is sorted by [name, tid, timestamp]
-		// This is required by the aggregating reader downstream
-		sortingReader, err := filereader.NewDiskSortingReader(reader,
-			filereader.MetricNameTidTimestampSortKeyFunc(),
-			filereader.MetricNameTidTimestampSortFunc(), 1000)
-		if err != nil {
-			reader.Close()
-			file.Close()
-			ll.Error("Failed to create disk sorting reader", slog.String("file", fn), slog.Any("error", err))
-			return fmt.Errorf("creating disk sorting reader for %s: %w", fn, err)
+		// Check if file is already sorted to skip expensive disk-based sorting
+		var finalReader filereader.Reader = reader
+		if row.SortVersion == lrdb.SortVersionNameTidTimestamp {
+			// File is already sorted by [name, tid, timestamp] - skip sorting for better performance
+			ll.Debug("Skipping disk sorting for pre-sorted file",
+				slog.String("file", fn),
+				slog.Int("sortVersion", int(row.SortVersion)))
+		} else {
+			// Wrap with disk-based sorting reader to ensure data is sorted by [name, tid, timestamp]
+			// This is required by the aggregating reader downstream
+			ll.Debug("Applying disk sorting for unsorted file",
+				slog.String("file", fn),
+				slog.Int("sortVersion", int(row.SortVersion)))
+			sortingReader, err := filereader.NewDiskSortingReader(reader,
+				filereader.MetricNameTidTimestampSortKeyFunc(),
+				filereader.MetricNameTidTimestampSortFunc(), 1000)
+			if err != nil {
+				reader.Close()
+				file.Close()
+				ll.Error("Failed to create disk sorting reader", slog.String("file", fn), slog.Any("error", err))
+				return fmt.Errorf("creating disk sorting reader for %s: %w", fn, err)
+			}
+			finalReader = sortingReader
 		}
 
-		readers = append(readers, sortingReader)
+		readers = append(readers, finalReader)
 		downloadedFiles = append(downloadedFiles, fn)
 	}
 
@@ -377,12 +390,6 @@ func compactMetricInterval(
 	for {
 		batch, err := aggregatingReader.Next()
 		batchCount++
-
-		n := 0
-		if batch != nil {
-			n = batch.Len()
-		}
-
 
 		if err != nil && !errors.Is(err, io.EOF) {
 			ll.Error("Failed to read from aggregating reader", slog.Any("error", err))

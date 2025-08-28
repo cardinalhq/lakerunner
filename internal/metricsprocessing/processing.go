@@ -266,6 +266,7 @@ func uploadSingleMetricResult(
 		Published:      true,
 		CreatedBy:      params.CreatedBy,
 		Fingerprints:   fingerprints,
+		SortVersion:    lrdb.SortVersionNameTidTimestamp, // Files from ingestion are sorted by [name, tid, timestamp]
 	})
 	if err != nil {
 		// Clean up uploaded file on database error

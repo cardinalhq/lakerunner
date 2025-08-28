@@ -190,6 +190,7 @@ type MetricSeg struct {
 	CreatedBy      CreatedBy                 `json:"created_by"`
 	SlotID         int32                     `json:"slot_id"`
 	Fingerprints   []int64                   `json:"fingerprints"`
+	SortVersion    int16                     `json:"sort_version"`
 }
 
 type ObjCleanup struct {

@@ -439,6 +439,7 @@ func uploadRolledUpMetrics(
 		Published:      true,
 		Rolledup:       false, // Rolled-up data itself is not considered "rolled up" - it's a target
 		CreatedBy:      lrdb.CreateByRollup,
+		SortVersion:    lrdb.SortVersionNameTidTimestamp, // Rollup output is sorted by [name, tid, timestamp]
 	}
 
 	// Add existing records to be replaced

@@ -269,6 +269,7 @@ func oldRollupInterval(
 		Published:      true,
 		Rolledup:       false,
 		CreatedBy:      lrdb.CreateByRollup,
+		SortVersion:    lrdb.SortVersionNameTidTimestamp, // Rollup output is sorted by [name, tid, timestamp]
 	}
 
 	for _, row := range existingRowsForThisRollup {

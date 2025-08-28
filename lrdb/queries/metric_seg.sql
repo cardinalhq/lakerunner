@@ -14,7 +14,8 @@ INSERT INTO metric_seg (
   tid_count,
   created_by,
   published,
-  fingerprints
+  fingerprints,
+  sort_version
 )
 VALUES (
   @organization_id,
@@ -31,7 +32,8 @@ VALUES (
   @tid_count,
   @created_by,
   @published,
-  @fingerprints::bigint[]
+  @fingerprints::bigint[],
+  @sort_version
 );
 
 -- name: GetMetricSegsForCompaction :many
@@ -80,7 +82,8 @@ INSERT INTO metric_seg (
   published,
   created_by,
   rolledup,
-  fingerprints
+  fingerprints,
+  sort_version
 )
 VALUES (
   @organization_id,
@@ -98,7 +101,8 @@ VALUES (
   @published,
   @created_by,
   @rolledup,
-  @fingerprints::bigint[]
+  @fingerprints::bigint[],
+  @sort_version
 );
 
 -- name: BatchMarkMetricSegsRolledup :batchexec
