@@ -365,8 +365,17 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 		var reader filereader.Reader
 
 		reader, err = createLogReader(tmpfilename)
+		if err == nil {
+			// Add general translator for non-protobuf files
+			translator := &LogTranslator{
+				orgID:    firstItem.OrganizationID.String(),
+				bucket:   inf.Bucket,
+				objectID: inf.ObjectID,
+			}
+			reader, err = filereader.NewTranslatingReader(reader, translator, 1000)
+		}
 
-		// Record file format and input sorted status metrics right after reader creation
+		// Record file format and input sorted status metrics after reader stack is complete
 		if err == nil {
 			fileFormat := getFileFormat(tmpfilename)
 			// For logs, we don't typically have pre-sorted input files
@@ -378,14 +387,6 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 				attribute.Bool("input_sorted", inputSorted),
 			)
 			fileSortedCounter.Add(ctx, 1, metric.WithAttributes(attrs...))
-
-			// Add general translator for non-protobuf files
-			translator := &LogTranslator{
-				orgID:    firstItem.OrganizationID.String(),
-				bucket:   inf.Bucket,
-				objectID: inf.ObjectID,
-			}
-			reader, err = filereader.NewTranslatingReader(reader, translator, 1000)
 		}
 
 		if err != nil {
