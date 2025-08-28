@@ -462,3 +462,52 @@ func TestDiskSortingReader_CBOREdgeCases(t *testing.T) {
 		})
 	}
 }
+
+// manyBatchReader yields a fixed number of single-row batches.
+// It exercises writeAndIndexAllRows across many batches to ensure
+// batches are properly returned to the pool.
+type manyBatchReader struct {
+	remaining int
+}
+
+func (m *manyBatchReader) Next() (*Batch, error) {
+	if m.remaining == 0 {
+		return nil, io.EOF
+	}
+
+	b := pipeline.GetBatch()
+	row := b.AddRow()
+	row[wkk.RowKeyCName] = "metric"
+	row[wkk.RowKeyCTID] = int64(m.remaining)
+	row[wkk.RowKeyCTimestamp] = int64(m.remaining)
+	m.remaining--
+	return b, nil
+}
+
+func (m *manyBatchReader) Close() error { return nil }
+
+func (m *manyBatchReader) TotalRowsReturned() int64 { return 0 }
+
+// TestWriteAndIndexAllRowsDoesNotLeakBatches verifies that batches are always
+// returned to the pool, preventing unbounded heap allocations when processing
+// many batches.
+func TestWriteAndIndexAllRowsDoesNotLeakBatches(t *testing.T) {
+	const batchCount = 200
+
+	// Warm the pool to eliminate initial allocation noise.
+	pipeline.ReturnBatch(pipeline.GetBatch())
+
+	reader := &manyBatchReader{remaining: batchCount}
+	dsr, err := NewDiskSortingReader(reader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc(), 10)
+	require.NoError(t, err)
+	defer dsr.Close()
+
+	require.NoError(t, dsr.writeAndIndexAllRows())
+
+	allocs := testing.AllocsPerRun(100, func() {
+		b := pipeline.GetBatch()
+		pipeline.ReturnBatch(b)
+	})
+
+	assert.Equal(t, float64(0), allocs, "expected no heap allocations from GetBatch after processing")
+}
