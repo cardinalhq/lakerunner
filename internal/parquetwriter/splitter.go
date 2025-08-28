@@ -22,6 +22,7 @@ import (
 	"github.com/parquet-go/parquet-go"
 
 	"github.com/cardinalhq/lakerunner/internal/idgen"
+	"github.com/cardinalhq/lakerunner/internal/parquetwriter/schemabuilder"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 )
 
@@ -38,7 +39,7 @@ type FileSplitter struct {
 	currentStats  StatsAccumulator
 
 	// Dynamic schema management per file
-	currentSchema *SchemaBuilder
+	currentSchema *schemabuilder.SchemaBuilder
 
 	// Results tracking
 	results []Result
@@ -149,7 +150,7 @@ func (s *FileSplitter) startNewFile() error {
 	}
 
 	// Initialize a new schema builder for this file
-	s.currentSchema = NewSchemaBuilder()
+	s.currentSchema = schemabuilder.NewSchemaBuilder()
 
 	// Initialize stats accumulator if provider is configured
 	var stats StatsAccumulator
@@ -177,7 +178,7 @@ func (s *FileSplitter) createParquetWriter() error {
 	schema := parquet.NewSchema(s.config.BaseName, parquet.Group(nodes))
 
 	// Create parquet writer with optimized settings
-	writerConfig, err := parquet.NewWriterConfig(WriterOptions(s.config.TmpDir, schema)...)
+	writerConfig, err := parquet.NewWriterConfig(schemabuilder.WriterOptions(s.config.TmpDir, schema)...)
 	if err != nil {
 		return fmt.Errorf("create writer config: %w", err)
 	}
