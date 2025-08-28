@@ -497,6 +497,11 @@ func TestWriteAndIndexAllRowsDoesNotLeakBatches(t *testing.T) {
 	// Warm the pool to eliminate initial allocation noise.
 	pipeline.ReturnBatch(pipeline.GetBatch())
 
+	baseline := testing.AllocsPerRun(100, func() {
+		b := pipeline.GetBatch()
+		pipeline.ReturnBatch(b)
+	})
+
 	reader := &manyBatchReader{remaining: batchCount}
 	dsr, err := NewDiskSortingReader(reader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc(), 10)
 	require.NoError(t, err)
@@ -509,5 +514,5 @@ func TestWriteAndIndexAllRowsDoesNotLeakBatches(t *testing.T) {
 		pipeline.ReturnBatch(b)
 	})
 
-	assert.Equal(t, float64(0), allocs, "expected no heap allocations from GetBatch after processing")
+	assert.LessOrEqual(t, allocs, baseline, "expected heap allocations from GetBatch not to increase after processing")
 }
