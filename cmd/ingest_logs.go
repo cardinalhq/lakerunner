@@ -122,36 +122,74 @@ func newWriterManager(tmpdir, orgID string, ingestDateint int32, rpfEstimate int
 	}
 }
 
-// processRow adds a row to the appropriate writer based on timestamp (hour), always using slot 0
-func (wm *writerManager) processRow(row filereader.Row) (err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			wm.ll.Error("PANIC in processRow", slog.Any("panic", r))
-			err = fmt.Errorf("panic in processRow: %v", r)
+// processBatch efficiently processes an entire batch, grouping rows by hour/slot
+func (wm *writerManager) processBatch(batch *pipeline.Batch) (processedCount, errorCount int64) {
+	// Group rows by hour/slot to minimize writer lookups and enable batch writes
+	batchGroups := make(map[hourSlotKey]*pipeline.Batch)
+
+	// First pass: group rows by hour/slot
+	for i := 0; i < batch.Len(); i++ {
+		row := batch.Get(i)
+		if row == nil {
+			wm.ll.Error("Row is nil - skipping", slog.Int("rowIndex", i))
+			errorCount++
+			continue
 		}
-	}()
 
-	// Extract timestamp - assume it's properly set
-	ts, ok := row[wkk.RowKeyCTimestamp].(int64)
-	if !ok {
-		return fmt.Errorf("_cardinalhq.timestamp field is missing or not int64")
+		// Extract timestamp
+		ts, ok := row[wkk.RowKeyCTimestamp].(int64)
+		if !ok {
+			wm.ll.Error("_cardinalhq.timestamp field is missing or not int64 - skipping row", slog.Int("rowIndex", i))
+			errorCount++
+			continue
+		}
+
+		// Determine hour/slot
+		dateint, hour16 := helpers.MSToDateintHour(ts)
+		hour := int(hour16)
+		slot := 0
+		key := hourSlotKey{dateint, hour, slot}
+
+		// Create or get batch for this group
+		if batchGroups[key] == nil {
+			batchGroups[key] = pipeline.GetBatch()
+		}
+
+		// Add row to the appropriate batch group
+		newRow := batchGroups[key].AddRow()
+		for k, v := range row {
+			newRow[k] = v
+		}
 	}
 
-	// Determine hour - always use slot 0 as requested
-	dateint, hour16 := helpers.MSToDateintHour(ts)
-	hour := int(hour16)
-	slot := 0
+	// Second pass: write each grouped batch to its writer
+	for key, groupedBatch := range batchGroups {
+		writer, err := wm.getWriter(key)
+		if err != nil {
+			wm.ll.Error("Failed to get writer for batch group",
+				slog.Any("key", key),
+				slog.String("error", err.Error()))
+			errorCount += int64(groupedBatch.Len())
+			pipeline.ReturnBatch(groupedBatch)
+			continue
+		}
 
-	// Get or create writer for this hour/slot
-	key := hourSlotKey{dateint, hour, slot}
-	writer, err := wm.getWriter(key)
-	if err != nil {
-		return fmt.Errorf("failed to get writer for key %v: %w", key, err)
+		// Write the entire batch efficiently
+		if err := writer.WriteBatch(groupedBatch); err != nil {
+			wm.ll.Error("Failed to write batch group",
+				slog.Any("key", key),
+				slog.Int("batchSize", groupedBatch.Len()),
+				slog.String("error", err.Error()))
+			errorCount += int64(groupedBatch.Len())
+		} else {
+			processedCount += int64(groupedBatch.Len())
+		}
+
+		// Return batch to pool
+		pipeline.ReturnBatch(groupedBatch)
 	}
 
-	// Write row
-	err = writer.Write(pipeline.ToStringMap(row))
-	return err
+	return processedCount, errorCount
 }
 
 // getWriter returns the writer for a specific hour/slot, creating it if necessary
@@ -326,24 +364,15 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 
 			// Process any rows we got, even if EOF
 			if batch != nil {
-				for i := 0; i < batch.Len(); i++ {
-					row := batch.Get(i)
-					if row == nil {
-						ll.Error("Row is nil - skipping", slog.Int("rowIndex", i))
-						continue
-					}
-					processErr := wm.processRow(row)
-					if processErr != nil {
-						errorCount++
-						ll.Error("Failed to process row - row will be dropped",
-							slog.String("objectID", inf.ObjectID),
-							slog.Int64("rowNumber", processedCount+int64(i)+1),
-							slog.String("error", processErr.Error()),
-							slog.Any("rowData", row))
-						// Continue processing other rows instead of failing the entire batch
-					} else {
-						processedCount++
-					}
+				batchProcessed, batchErrors := wm.processBatch(batch)
+				processedCount += batchProcessed
+				errorCount += batchErrors
+
+				if batchErrors > 0 {
+					ll.Warn("Some rows failed to process in batch",
+						slog.String("objectID", inf.ObjectID),
+						slog.Int64("processedRows", batchProcessed),
+						slog.Int64("errorRows", batchErrors))
 				}
 			}
 

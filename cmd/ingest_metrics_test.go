@@ -22,6 +22,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
@@ -59,8 +60,17 @@ func TestMetricWriterManager_ProcessRow(t *testing.T) {
 		wkk.NewRowKey("region"): "us-west-2",
 	}
 
-	err := wm.processRow(row)
-	require.NoError(t, err)
+	// Create a single-row batch for testing
+	batch := pipeline.GetBatch()
+	defer pipeline.ReturnBatch(batch)
+	testRow := batch.AddRow()
+	for k, v := range row {
+		testRow[k] = v
+	}
+
+	processed, errored := wm.processBatch(batch)
+	require.Equal(t, int64(1), processed)
+	require.Equal(t, int64(0), errored)
 }
 
 func TestMetricWriterManager_ProcessMultipleValues(t *testing.T) {
@@ -86,11 +96,23 @@ func TestMetricWriterManager_ProcessMultipleValues(t *testing.T) {
 		wkk.NewRowKey("region"): "us-west-2",
 	}
 
-	err := wm.processRow(row1)
-	require.NoError(t, err)
+	// Create a batch with both rows for testing
+	batch := pipeline.GetBatch()
+	defer pipeline.ReturnBatch(batch)
 
-	err = wm.processRow(row2)
-	require.NoError(t, err)
+	testRow1 := batch.AddRow()
+	for k, v := range row1 {
+		testRow1[k] = v
+	}
+
+	testRow2 := batch.AddRow()
+	for k, v := range row2 {
+		testRow2[k] = v
+	}
+
+	processed, errored := wm.processBatch(batch)
+	require.Equal(t, int64(2), processed)
+	require.Equal(t, int64(0), errored)
 }
 
 func TestMetricTranslator(t *testing.T) {

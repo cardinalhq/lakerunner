@@ -17,6 +17,8 @@ package parquetwriter
 import (
 	"context"
 	"fmt"
+
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 )
 
 // UnifiedWriter is the main implementation of ParquetWriter that coordinates
@@ -41,21 +43,6 @@ func NewUnifiedWriter(config WriterConfig) (*UnifiedWriter, error) {
 		config:   config,
 		splitter: splitter,
 	}, nil
-}
-
-// Write adds a row to the writer and writes it directly to the output files.
-func (w *UnifiedWriter) Write(row map[string]any) error {
-	if w.closed {
-		return ErrWriterClosed
-	}
-
-	if row == nil {
-		return fmt.Errorf("%w: row cannot be nil", ErrInvalidRow)
-	}
-
-	// Write row directly to the splitter using a background context
-	// The actual context handling happens in Close()
-	return w.splitter.WriteRow(context.TODO(), row)
 }
 
 // Config returns the configuration used by this writer.
@@ -100,20 +87,20 @@ func (w *UnifiedWriter) Abort() {
 	}
 }
 
-// WriteBatch is a convenience method to write multiple rows at once.
-// This can be more efficient than calling Write multiple times for large batches.
-func (w *UnifiedWriter) WriteBatch(rows []map[string]any) error {
+// WriteBatch efficiently writes multiple rows from a pipeline batch.
+// This preserves string interning and avoids per-row map conversions.
+func (w *UnifiedWriter) WriteBatch(batch *pipeline.Batch) error {
 	if w.closed {
 		return ErrWriterClosed
 	}
 
-	for i, row := range rows {
-		if err := w.Write(row); err != nil {
-			return fmt.Errorf("write row %d: %w", i, err)
-		}
+	if batch == nil {
+		return fmt.Errorf("%w: batch cannot be nil", ErrInvalidRow)
 	}
 
-	return nil
+	// Write batch directly to the splitter using a background context
+	// The actual context handling happens in Close()
+	return w.splitter.WriteBatchRows(context.TODO(), batch)
 }
 
 // GetCurrentStats returns current statistics about the writer's state.

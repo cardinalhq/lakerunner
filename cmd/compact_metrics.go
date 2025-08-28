@@ -398,19 +398,35 @@ func compactMetricInterval(
 			break
 		}
 
+		// Create a new batch for normalized rows
+		normalizedBatch := pipeline.GetBatch()
+
 		for i := 0; i < batch.Len(); i++ {
 			row := batch.Get(i)
 			if err := normalizeRowForParquetWrite(row); err != nil {
 				ll.Error("Failed to normalize row", slog.Any("error", err))
+				pipeline.ReturnBatch(normalizedBatch)
 				return fmt.Errorf("normalizing row: %w", err)
 			}
 
-			if err := writer.Write(pipeline.ToStringMap(row)); err != nil {
-				ll.Error("Failed to write row", slog.Any("error", err))
-				return fmt.Errorf("writing row: %w", err)
+			// Copy normalized row to the new batch
+			normalizedRow := normalizedBatch.AddRow()
+			for k, v := range row {
+				normalizedRow[k] = v
 			}
 			totalRows++
 		}
+
+		// Write the entire normalized batch at once
+		if normalizedBatch.Len() > 0 {
+			if err := writer.WriteBatch(normalizedBatch); err != nil {
+				ll.Error("Failed to write batch", slog.Any("error", err))
+				pipeline.ReturnBatch(normalizedBatch)
+				return fmt.Errorf("writing batch: %w", err)
+			}
+		}
+
+		pipeline.ReturnBatch(normalizedBatch)
 
 		if errors.Is(err, io.EOF) {
 			break

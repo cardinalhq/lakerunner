@@ -116,26 +116,73 @@ func newMetricWriterManager(tmpdir, orgID string, ingestDateint int32, rpfEstima
 	}
 }
 
-// processRow processes a single metric row
-func (wm *metricWriterManager) processRow(row filereader.Row) error {
-	// Extract timestamp for 60-second boundary grouping
-	ts, ok := row[wkk.RowKeyCTimestamp].(int64)
-	if !ok {
-		return fmt.Errorf("_cardinalhq.timestamp field is missing or not int64")
+// processBatch efficiently processes an entire batch, grouping rows by minute boundary
+func (wm *metricWriterManager) processBatch(batch *pipeline.Batch) (processedCount, errorCount int64) {
+	// Group rows by minute boundary to minimize writer lookups and enable batch writes
+	batchGroups := make(map[minuteSlotKey]*pipeline.Batch)
+
+	// First pass: group rows by minute boundary
+	for i := 0; i < batch.Len(); i++ {
+		row := batch.Get(i)
+		if row == nil {
+			wm.ll.Error("Row is nil - skipping", slog.Int("rowIndex", i))
+			errorCount++
+			continue
+		}
+
+		// Extract timestamp
+		ts, ok := row[wkk.RowKeyCTimestamp].(int64)
+		if !ok {
+			wm.ll.Error("_cardinalhq.timestamp field is missing or not int64 - skipping row", slog.Int("rowIndex", i))
+			errorCount++
+			continue
+		}
+
+		// Calculate minute boundary
+		dateint, minute := wm.timestampToMinuteBoundary(ts)
+		slot := 0
+		key := minuteSlotKey{dateint, minute, slot}
+
+		// Create or get batch for this group
+		if batchGroups[key] == nil {
+			batchGroups[key] = pipeline.GetBatch()
+		}
+
+		// Add row to the appropriate batch group
+		newRow := batchGroups[key].AddRow()
+		for k, v := range row {
+			newRow[k] = v
+		}
 	}
 
-	// Calculate 60-second boundary: dateint and minute within day
-	dateint, minute := wm.timestampToMinuteBoundary(ts)
-	slot := 0
+	// Second pass: write each grouped batch to its writer
+	for key, groupedBatch := range batchGroups {
+		writer, err := wm.getWriter(key)
+		if err != nil {
+			wm.ll.Error("Failed to get writer for batch group",
+				slog.Any("key", key),
+				slog.String("error", err.Error()))
+			errorCount += int64(groupedBatch.Len())
+			pipeline.ReturnBatch(groupedBatch)
+			continue
+		}
 
-	// Get or create writer for this 60-second boundary
-	key := minuteSlotKey{dateint, minute, slot}
-	writer, err := wm.getWriter(key)
-	if err != nil {
-		return fmt.Errorf("failed to get writer for key %v: %w", key, err)
+		// Write the entire batch efficiently
+		if err := writer.WriteBatch(groupedBatch); err != nil {
+			wm.ll.Error("Failed to write batch group",
+				slog.Any("key", key),
+				slog.Int("batchSize", groupedBatch.Len()),
+				slog.String("error", err.Error()))
+			errorCount += int64(groupedBatch.Len())
+		} else {
+			processedCount += int64(groupedBatch.Len())
+		}
+
+		// Return batch to pool
+		pipeline.ReturnBatch(groupedBatch)
 	}
 
-	return writer.Write(pipeline.ToStringMap(row))
+	return processedCount, errorCount
 }
 
 // timestampToMinuteBoundary converts a timestamp to dateint and minute boundary
@@ -398,18 +445,9 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 
 		// Process any rows we got (safe because either no error or EOF with final data)
 		if batch != nil {
-			for i := 0; i < batch.Len(); i++ {
-				row := batch.Get(i)
-				if row == nil {
-					continue
-				}
-				processErr := wm.processRow(row)
-				if processErr != nil {
-					batchRowsErrored++
-				} else {
-					batchRowsProcessed++
-				}
-			}
+			processed, errored := wm.processBatch(batch)
+			batchRowsProcessed += processed
+			batchRowsErrored += errored
 		}
 
 		if readErr == io.EOF {

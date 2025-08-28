@@ -22,6 +22,7 @@ import (
 	"github.com/parquet-go/parquet-go"
 
 	"github.com/cardinalhq/lakerunner/internal/idgen"
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 )
 
 // FileSplitter manages splitting data into multiple output files based on
@@ -52,36 +53,47 @@ func NewFileSplitter(config WriterConfig) *FileSplitter {
 	}
 }
 
-// WriteRow writes a single row to the current file, splitting if necessary.
-func (s *FileSplitter) WriteRow(ctx context.Context, row map[string]any) error {
+// WriteBatchRows efficiently writes multiple rows from a pipeline batch.
+// This preserves string interning and avoids per-row map conversions.
+func (s *FileSplitter) WriteBatchRows(ctx context.Context, batch *pipeline.Batch) error {
 	if s.closed {
 		return ErrWriterClosed
 	}
 
-	// Validate row against schema
-	if err := s.validateRow(row); err != nil {
-		return fmt.Errorf("%w: %v", ErrSchemaViolation, err)
+	if batch == nil {
+		return fmt.Errorf("batch cannot be nil")
 	}
 
-	// Check if we need to split
-	if s.currentWriter != nil {
-		projectedRows := s.currentRows + 1
+	// Convert all rows to map[string]any for writing to parquet
+	stringRows := make([]map[string]any, 0, batch.Len())
 
-		if s.config.NoSplitGroups && s.config.GroupKeyFunc != nil {
-			// Group-aware splitting: only split on group boundaries when records exceeded
-			newGroup := s.config.GroupKeyFunc(row)
-			if newGroup != s.currentGroup && projectedRows > s.config.RecordsPerFile {
-				if err := s.finishCurrentFile(); err != nil {
-					return fmt.Errorf("finish current file: %w", err)
-				}
-			}
-		} else {
-			// No grouping: split purely based on record count
-			if projectedRows > s.config.RecordsPerFile {
-				if err := s.finishCurrentFile(); err != nil {
-					return fmt.Errorf("finish current file: %w", err)
-				}
-			}
+	for i := 0; i < batch.Len(); i++ {
+		row := batch.Get(i)
+		if row == nil {
+			continue
+		}
+
+		// Convert pipeline.Row to map[string]any efficiently
+		stringRow := make(map[string]any, len(row)+1) // +1 for _cardinalhq.id
+		for key, value := range row {
+			stringRow[string(key.Value())] = value
+		}
+
+		// Add "_cardinalhq.id" column with a base32-encoded flake ID
+		stringRow["_cardinalhq.id"] = idgen.NextBase32ID()
+
+		stringRows = append(stringRows, stringRow)
+	}
+
+	if len(stringRows) == 0 {
+		return nil // No valid rows to write
+	}
+
+	// Check if we need to split files based on record count
+	projectedRows := s.currentRows + int64(len(stringRows))
+	if s.currentWriter != nil && projectedRows > s.config.RecordsPerFile {
+		if err := s.finishCurrentFile(); err != nil {
+			return fmt.Errorf("finish current file: %w", err)
 		}
 	}
 
@@ -92,22 +104,38 @@ func (s *FileSplitter) WriteRow(ctx context.Context, row map[string]any) error {
 		}
 	}
 
-	// Write the row
-	if err := s.writeRowToCurrentFile(row); err != nil {
-		return fmt.Errorf("%w: %v", ErrWriteFailed, err)
+	// Add all rows to schema builder first
+	for _, stringRow := range stringRows {
+		if err := s.currentSchema.AddRow(stringRow); err != nil {
+			return fmt.Errorf("schema validation failed: %w", err)
+		}
 	}
 
-	return nil
-}
-
-// validateRow checks that the row is valid.
-func (s *FileSplitter) validateRow(row map[string]any) error {
-	if row == nil {
-		return fmt.Errorf("row cannot be nil")
+	// If this is the first batch for this file, we need to create the parquet writer
+	if s.currentWriter == nil {
+		if err := s.createParquetWriter(); err != nil {
+			return fmt.Errorf("create parquet writer: %w", err)
+		}
 	}
 
-	// All rows are accepted - schema is discovered dynamically
-	// The only validation is that the row is not nil
+	// Write all rows to parquet at once
+	if _, err := s.currentWriter.Write(stringRows); err != nil {
+		return fmt.Errorf("write batch to parquet: %w", err)
+	}
+
+	// Update stats and tracking
+	for _, stringRow := range stringRows {
+		if s.currentStats != nil {
+			s.currentStats.Add(stringRow)
+		}
+		s.currentRows++
+
+		// Update group tracking
+		if s.config.GroupKeyFunc != nil {
+			s.currentGroup = s.config.GroupKeyFunc(stringRow)
+		}
+	}
+
 	return nil
 }
 
@@ -134,49 +162,6 @@ func (s *FileSplitter) startNewFile() error {
 	s.currentStats = stats
 	s.currentRows = 0
 	// currentGroup will be set when first row is written
-
-	return nil
-}
-
-// writeRowToCurrentFile writes a row to the current file and updates tracking.
-func (s *FileSplitter) writeRowToCurrentFile(row map[string]any) error {
-	// Add "_cardinalhq.id" column with a base32-encoded flake ID
-	// Make a copy to avoid modifying the original row
-	rowCopy := make(map[string]any, len(row)+1)
-	for k, v := range row {
-		rowCopy[k] = v
-	}
-	rowCopy["_cardinalhq.id"] = idgen.NextBase32ID()
-
-	// Add the row to our schema builder to discover/validate schema
-	if err := s.currentSchema.AddRow(rowCopy); err != nil {
-		return fmt.Errorf("schema validation failed: %w", err)
-	}
-
-	// If this is the first row for this file, we need to create the parquet writer
-	if s.currentWriter == nil {
-		if err := s.createParquetWriter(); err != nil {
-			return fmt.Errorf("create parquet writer: %w", err)
-		}
-	}
-
-	// Write the row to parquet (all columns from the row)
-	if _, err := s.currentWriter.Write([]map[string]any{rowCopy}); err != nil {
-		return fmt.Errorf("write to parquet: %w", err)
-	}
-
-	// Update stats (use original row for stats since the ID is just for tracking)
-	if s.currentStats != nil {
-		s.currentStats.Add(row)
-	}
-
-	// Update tracking
-	s.currentRows++
-
-	// Update group tracking
-	if s.config.GroupKeyFunc != nil {
-		s.currentGroup = s.config.GroupKeyFunc(row)
-	}
 
 	return nil
 }
