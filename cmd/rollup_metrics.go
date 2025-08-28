@@ -59,7 +59,7 @@ func init() {
 				attribute.String("signal", "metrics"),
 				attribute.String("action", "rollup"),
 			)
-			doneCtx, doneFx, err := setupTelemetry(servicename, &addlAttrs)
+			ctx, doneFx, err := setupTelemetry(servicename, &addlAttrs)
 			if err != nil {
 				return fmt.Errorf("failed to setup telemetry: %w", err)
 			}
@@ -70,9 +70,9 @@ func init() {
 				}
 			}()
 
-			go diskUsageLoop(doneCtx)
+			go diskUsageLoop(ctx)
 
-			loop, err := NewRunqueueLoopContext(doneCtx, "metrics", "rollup", servicename)
+			loop, err := NewRunqueueLoopContext(ctx, "metrics", "rollup", servicename)
 			if err != nil {
 				return fmt.Errorf("failed to create runqueue loop context: %w", err)
 			}
@@ -398,27 +398,30 @@ func rollupMetricSegments(
 		Bucket:         profile.Bucket,
 	}
 
+	// Use context without cancellation for critical section to ensure atomic completion
+	criticalCtx := context.WithoutCancel(ctx)
+
 	// Upload rolled-up metrics using the same pattern as ingestion
-	err = uploadRolledUpMetrics(ctx, ll, mdb, s3client, results, existingRows, rollupParams)
+	err = uploadRolledUpMetrics(criticalCtx, ll, mdb, s3client, results, existingRows, rollupParams)
 	if err != nil {
 		return WorkResultTryAgainLater, fmt.Errorf("failed to upload rolled-up metrics: %w", err)
 	}
 
 	// Mark source rows as rolled up
-	if err := markSourceRowsAsRolledUp(ctx, ll, mdb, sourceRows); err != nil {
+	if err := markSourceRowsAsRolledUp(criticalCtx, ll, mdb, sourceRows); err != nil {
 		ll.Error("Failed to mark source rows as rolled up", slog.Any("error", err))
 		// This is not a critical failure - the rollup succeeded but we couldn't update the flag
 		// The next run will skip these since they've already been processed
 	}
 
 	// Schedule cleanup of old files
-	metricsprocessing.ScheduleOldFileCleanup(ctx, ll, mdb, existingRows, profile)
+	metricsprocessing.ScheduleOldFileCleanup(criticalCtx, ll, mdb, existingRows, profile)
 
 	// Queue next level rollup and compaction
-	if err := queueMetricCompaction(ctx, mdb, qmcFromWorkable(inf)); err != nil {
+	if err := queueMetricCompaction(criticalCtx, mdb, qmcFromWorkable(inf)); err != nil {
 		ll.Error("Failed to queue metric compaction", slog.Any("error", err))
 	}
-	if err := queueMetricRollup(ctx, mdb, qmcFromWorkable(inf)); err != nil {
+	if err := queueMetricRollup(criticalCtx, mdb, qmcFromWorkable(inf)); err != nil {
 		ll.Error("Failed to queue metric rollup", slog.Any("error", err))
 	}
 

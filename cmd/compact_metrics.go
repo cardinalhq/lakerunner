@@ -59,7 +59,7 @@ func init() {
 				attribute.String("signal", "metrics"),
 				attribute.String("action", "compact"),
 			)
-			doneCtx, doneFx, err := setupTelemetry(servicename, &addlAttrs)
+			ctx, doneFx, err := setupTelemetry(servicename, &addlAttrs)
 			if err != nil {
 				return fmt.Errorf("failed to setup telemetry: %w", err)
 			}
@@ -70,19 +70,19 @@ func init() {
 				}
 			}()
 
-			go diskUsageLoop(doneCtx)
+			go diskUsageLoop(ctx)
 
 			// Start health check server
 			healthConfig := healthcheck.GetConfigFromEnv()
 			healthServer := healthcheck.NewServer(healthConfig)
 
 			go func() {
-				if err := healthServer.Start(doneCtx); err != nil {
+				if err := healthServer.Start(ctx); err != nil {
 					slog.Error("Health check server stopped", slog.Any("error", err))
 				}
 			}()
 
-			loop, err := NewRunqueueLoopContext(doneCtx, "metrics", "compact", servicename)
+			loop, err := NewRunqueueLoopContext(ctx, "metrics", "compact", servicename)
 			if err != nil {
 				return fmt.Errorf("failed to create runqueue loop context: %w", err)
 			}
@@ -539,12 +539,14 @@ func compactMetricInterval(
 		Bucket:         profile.Bucket,
 	}
 
-	err = metricsprocessing.UploadCompactedMetrics(ctx, ll, mdb, s3client, results, rows, compactionParams)
+	// Use context without cancellation for critical section to ensure atomic completion
+	criticalCtx := context.WithoutCancel(ctx)
+	err = metricsprocessing.UploadCompactedMetrics(criticalCtx, ll, mdb, s3client, results, rows, compactionParams)
 	if err != nil {
 		return fmt.Errorf("failed to upload compacted metrics: %w", err)
 	}
 
-	metricsprocessing.ScheduleOldFileCleanup(ctx, ll, mdb, rows, profile)
+	metricsprocessing.ScheduleOldFileCleanup(criticalCtx, ll, mdb, rows, profile)
 
 	return nil
 }

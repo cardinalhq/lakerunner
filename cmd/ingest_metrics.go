@@ -55,7 +55,7 @@ func init() {
 				attribute.String("signal", "metrics"),
 				attribute.String("action", "ingest"),
 			)
-			doneCtx, doneFx, err := setupTelemetry(servicename, &addlAttrs)
+			ctx, doneFx, err := setupTelemetry(servicename, &addlAttrs)
 			if err != nil {
 				return fmt.Errorf("failed to setup telemetry: %w", err)
 			}
@@ -66,19 +66,19 @@ func init() {
 				}
 			}()
 
-			go diskUsageLoop(doneCtx)
+			go diskUsageLoop(ctx)
 
 			// Start health check server
 			healthConfig := healthcheck.GetConfigFromEnv()
 			healthServer := healthcheck.NewServer(healthConfig)
 
 			go func() {
-				if err := healthServer.Start(doneCtx); err != nil {
+				if err := healthServer.Start(ctx); err != nil {
 					slog.Error("Health check server stopped", slog.Any("error", err))
 				}
 			}()
 
-			loop, err := NewIngestLoopContext(doneCtx, "metrics", servicename)
+			loop, err := NewIngestLoopContext(ctx, "metrics", servicename)
 			if err != nil {
 				return fmt.Errorf("failed to create ingest loop context: %w", err)
 			}
@@ -92,7 +92,7 @@ func init() {
 			if os.Getenv("LAKERUNNER_METRICS_INGEST_OLDPATH") != "" {
 				// Still mark as healthy before starting old path
 				healthServer.SetStatus(healthcheck.StatusHealthy)
-				return runOldMetricIngestion(doneCtx, slog.Default(), loop)
+				return runOldMetricIngestion(ctx, slog.Default(), loop)
 			}
 
 			// Mark as healthy once loop is created and about to start
@@ -520,7 +520,9 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 		CreatedBy:      lrdb.CreatedByIngest,
 	}
 
-	if err := metricsprocessing.UploadMetricResults(ctx, ll, s3client, mdb, results, uploadParams); err != nil {
+	// Use context without cancellation for critical section to ensure atomic completion
+	criticalCtx := context.WithoutCancel(ctx)
+	if err := metricsprocessing.UploadMetricResults(criticalCtx, ll, s3client, mdb, results, uploadParams); err != nil {
 		return fmt.Errorf("failed to upload results: %w", err)
 	}
 
@@ -543,7 +545,7 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 	}
 
 	// Queue compaction and rollup for each time range represented in the results
-	if err := queueMetricWorkForResults(ctx, mdb, firstItem, results); err != nil {
+	if err := queueMetricWorkForResults(criticalCtx, mdb, firstItem, results); err != nil {
 		return fmt.Errorf("failed to queue metric work: %w", err)
 	}
 

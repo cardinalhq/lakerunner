@@ -54,7 +54,7 @@ func init() {
 				attribute.String("signal", "logs"),
 				attribute.String("action", "ingest"),
 			)
-			doneCtx, doneFx, err := setupTelemetry(servicename, &addlAttrs)
+			ctx, doneFx, err := setupTelemetry(servicename, &addlAttrs)
 			if err != nil {
 				return fmt.Errorf("failed to setup telemetry: %w", err)
 			}
@@ -65,19 +65,19 @@ func init() {
 				}
 			}()
 
-			go diskUsageLoop(doneCtx)
+			go diskUsageLoop(ctx)
 
 			// Start health check server
 			healthConfig := healthcheck.GetConfigFromEnv()
 			healthServer := healthcheck.NewServer(healthConfig)
 
 			go func() {
-				if err := healthServer.Start(doneCtx); err != nil {
+				if err := healthServer.Start(ctx); err != nil {
 					slog.Error("Health check server stopped", slog.Any("error", err))
 				}
 			}()
 
-			loop, err := NewIngestLoopContext(doneCtx, "logs", servicename)
+			loop, err := NewIngestLoopContext(ctx, "logs", servicename)
 			if err != nil {
 				return fmt.Errorf("failed to create ingest loop context: %w", err)
 			}
@@ -86,7 +86,7 @@ func init() {
 			if os.Getenv("LAKERUNNER_LOGS_INGEST_OLDPATH") != "" {
 				// Still mark as healthy before starting old path
 				healthServer.SetStatus(healthcheck.StatusHealthy)
-				return runOldLogIngestion(doneCtx, slog.Default(), loop)
+				return runOldLogIngestion(ctx, slog.Default(), loop)
 			}
 
 			// Mark as healthy once loop is created and about to start
@@ -94,7 +94,7 @@ func init() {
 
 			for {
 				select {
-				case <-doneCtx.Done():
+				case <-ctx.Done():
 					slog.Info("Ingest logs command done")
 					return nil
 				default:
@@ -505,6 +505,9 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 		return NewWorkerInterrupted("context cancelled before S3 upload phase")
 	}
 
+	// Use context without cancellation for critical section to ensure atomic completion
+	criticalCtx := context.WithoutCancel(ctx)
+
 	// Upload files and create database segments
 	slotHourTriggers := make(map[hourSlotKey]int64) // Track earliest timestamp per slot/hour for compaction
 
@@ -522,7 +525,7 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 		dbObjectID := helpers.MakeDBObjectID(firstItem.OrganizationID, firstItem.CollectorName,
 			dateint, s3helper.HourFromMillis(stats.FirstTS), segmentID, "logs")
 
-		if err := s3helper.UploadS3Object(ctx, s3client, firstItem.Bucket, dbObjectID, result.FileName); err != nil {
+		if err := s3helper.UploadS3Object(criticalCtx, s3client, firstItem.Bucket, dbObjectID, result.FileName); err != nil {
 			return fmt.Errorf("failed to upload file to S3: %w", err)
 		}
 		_ = os.Remove(result.FileName)
@@ -531,7 +534,7 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 
 		// Insert log segment into database
 		resultLastTS := stats.LastTS + 1 // end is exclusive
-		err := mdb.InsertLogSegment(ctx, lrdb.InsertLogSegmentParams{
+		err := mdb.InsertLogSegment(criticalCtx, lrdb.InsertLogSegmentParams{
 			OrganizationID: firstItem.OrganizationID,
 			Dateint:        dateint,
 			IngestDateint:  ingest_dateint,
@@ -576,7 +579,7 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 			slog.Int64("triggerTS", earliestTS))
 
 		hourAlignedTS := helpers.TruncateToHour(helpers.UnixMillisToTime(earliestTS)).UnixMilli()
-		if err := queueLogCompactionForSlot(ctx, mdb, firstItem, key.slot, key.dateint, hourAlignedTS); err != nil {
+		if err := queueLogCompactionForSlot(criticalCtx, mdb, firstItem, key.slot, key.dateint, hourAlignedTS); err != nil {
 			return fmt.Errorf("failed to queue log compaction for slot %d: %w", key.slot, err)
 		}
 	}
