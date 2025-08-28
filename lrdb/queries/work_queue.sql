@@ -194,9 +194,7 @@ claimed_details AS (
       ELSE false
     END AS is_stale
   FROM work_queue
-  WHERE needs_run = true 
-    AND runnable_at <= now() 
-    AND claimed_by > 0
+  WHERE claimed_by > 0
 )
 -- First, return unclaimed summaries
 SELECT 
