@@ -237,7 +237,8 @@ func tortureWorker(ctx context.Context, t *testing.T, db lrdb.StoreFull, workerI
 			})
 
 		case 4: // Cleanup (affects multiple rows)
-			err = db.CleanupInqueueWork(opCtx)
+			cutoffTime := time.Now().Add(-5 * time.Minute)
+			_, err = db.CleanupInqueueWork(opCtx, &cutoffTime)
 
 		case 5: // Add new work (creates insertion contention)
 			err = db.PutInqueueWork(opCtx, lrdb.PutInqueueWorkParams{
