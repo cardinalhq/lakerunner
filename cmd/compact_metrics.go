@@ -25,6 +25,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
@@ -334,7 +335,9 @@ func compactMetricInterval(
 
 		// Check if file is already sorted to skip expensive disk-based sorting
 		var finalReader filereader.Reader = reader
-		if row.SortVersion == lrdb.SortVersionNameTidTimestamp {
+		sourceSortedWithCompatibleKey := row.SortVersion == lrdb.SortVersionNameTidTimestamp
+
+		if sourceSortedWithCompatibleKey {
 			// File is already sorted by [name, tid, timestamp] - skip sorting for better performance
 		} else {
 			// Wrap with disk-based sorting reader to ensure data is sorted by [name, tid, timestamp]
@@ -350,6 +353,17 @@ func compactMetricInterval(
 			}
 			finalReader = sortingReader
 		}
+
+		// Record file format and input sorted status metrics after reader stack is complete
+		fileFormat := getFileFormat(fn)
+		// input_sorted=true means the source was sorted with compatible key and we could use it directly
+		inputSorted := sourceSortedWithCompatibleKey
+
+		attrs := append(commonAttributes.ToSlice(),
+			attribute.String("format", fileFormat),
+			attribute.Bool("input_sorted", inputSorted),
+		)
+		fileSortedCounter.Add(ctx, 1, metric.WithAttributes(attrs...))
 
 		readers = append(readers, finalReader)
 		downloadedFiles = append(downloadedFiles, fn)

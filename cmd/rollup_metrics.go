@@ -26,6 +26,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
@@ -259,6 +260,17 @@ func rollupMetricSegments(
 			ll.Error("Failed to create parquet reader", slog.String("file", fn), slog.Any("error", err))
 			return WorkResultTryAgainLater, fmt.Errorf("creating parquet reader for %s: %w", fn, err)
 		}
+
+		// Record file format and input sorted status metrics
+		fileFormat := getFileFormat(fn)
+		// Rollup always reads parquet files from compaction output, which are sorted with compatible key
+		inputSorted := true // PreorderedParquetRawReader assumes data is sorted with compatible key
+
+		attrs := append(commonAttributes.ToSlice(),
+			attribute.String("format", fileFormat),
+			attribute.Bool("input_sorted", inputSorted),
+		)
+		fileSortedCounter.Add(ctx, 1, metric.WithAttributes(attrs...))
 
 		readers = append(readers, reader)
 		downloadedFiles = append(downloadedFiles, fn)

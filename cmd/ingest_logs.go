@@ -26,6 +26,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
@@ -364,7 +365,20 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 		var reader filereader.Reader
 
 		reader, err = createLogReader(tmpfilename)
+
+		// Record file format and input sorted status metrics right after reader creation
 		if err == nil {
+			fileFormat := getFileFormat(tmpfilename)
+			// For logs, we don't typically have pre-sorted input files
+			// All log sources are treated as unsorted and processed in order
+			inputSorted := false
+
+			attrs := append(commonAttributes.ToSlice(),
+				attribute.String("format", fileFormat),
+				attribute.Bool("input_sorted", inputSorted),
+			)
+			fileSortedCounter.Add(ctx, 1, metric.WithAttributes(attrs...))
+
 			// Add general translator for non-protobuf files
 			translator := &LogTranslator{
 				orgID:    firstItem.OrganizationID.String(),

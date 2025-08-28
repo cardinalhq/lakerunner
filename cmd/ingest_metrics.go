@@ -26,6 +26,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
@@ -389,6 +390,18 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 				slog.String("error", err.Error()))
 			continue
 		}
+
+		// Record file format and input sorted status metrics after reader stack is complete
+		fileFormat := getFileFormat(fileInfo.tmpfilename)
+		// Source files (binpb/binpb.gz) are unsorted, so input_sorted=false
+		// We wrap them with DiskSortingReader to make them sorted internally
+		inputSorted := false
+
+		attrs := append(commonAttributes.ToSlice(),
+			attribute.String("format", fileFormat),
+			attribute.Bool("input_sorted", inputSorted),
+		)
+		fileSortedCounter.Add(ctx, 1, metric.WithAttributes(attrs...))
 
 		readers = append(readers, reader)
 		readersToClose = append(readersToClose, reader)
