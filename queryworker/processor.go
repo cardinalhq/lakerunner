@@ -68,7 +68,7 @@ func (s *Service) processSegment(ctx context.Context, request promql.PushDownReq
 	if !s.cache.enableCache {
 		defer func() {
 			if err := s.cache.cleanupTempFile(localPath); err != nil {
-				slog.Warn("Failed to cleanup temp file", "path", localPath, "error", err)
+				slog.Warn("Failed to cleanup temp file", "error", err)
 			}
 		}()
 	}

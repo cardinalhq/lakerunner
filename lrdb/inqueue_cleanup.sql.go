@@ -7,16 +7,47 @@ package lrdb
 
 import (
 	"context"
+	"time"
 )
 
-const cleanupInqueueWork = `-- name: CleanupInqueueWork :exec
+const cleanupInqueueWork = `-- name: CleanupInqueueWork :many
 UPDATE inqueue
 SET claimed_by = -1, claimed_at = NULL
 WHERE claimed_at IS NOT NULL
-  AND claimed_at < NOW() - INTERVAL '5 minutes'
+  AND claimed_at < $1
+RETURNING id, queue_ts, priority, organization_id, collector_name, instance_num, bucket, object_id, telemetry_type, tries, claimed_by, claimed_at, file_size
 `
 
-func (q *Queries) CleanupInqueueWork(ctx context.Context) error {
-	_, err := q.db.Exec(ctx, cleanupInqueueWork)
-	return err
+func (q *Queries) CleanupInqueueWork(ctx context.Context, cutoffTime *time.Time) ([]Inqueue, error) {
+	rows, err := q.db.Query(ctx, cleanupInqueueWork, cutoffTime)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Inqueue
+	for rows.Next() {
+		var i Inqueue
+		if err := rows.Scan(
+			&i.ID,
+			&i.QueueTs,
+			&i.Priority,
+			&i.OrganizationID,
+			&i.CollectorName,
+			&i.InstanceNum,
+			&i.Bucket,
+			&i.ObjectID,
+			&i.TelemetryType,
+			&i.Tries,
+			&i.ClaimedBy,
+			&i.ClaimedAt,
+			&i.FileSize,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

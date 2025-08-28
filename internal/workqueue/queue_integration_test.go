@@ -19,6 +19,7 @@ package workqueue
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -213,7 +214,8 @@ func TestInqueueCleanup(t *testing.T) {
 	assert.Equal(t, workerID, claimedWork.ClaimedBy)
 
 	// Run cleanup (this will reset items claimed more than 5 minutes ago)
-	err = db.CleanupInqueueWork(ctx)
+	cutoffTime := time.Now().Add(-5 * time.Minute)
+	_, err = db.CleanupInqueueWork(ctx, &cutoffTime)
 	assert.NoError(t, err)
 
 	// For recently claimed work, it should still be claimed

@@ -23,6 +23,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
+	"github.com/cardinalhq/lakerunner/internal/constants"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
@@ -31,7 +32,7 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-const targetFileSize = int64(1_100_000)
+const targetFileSize = constants.TargetFileSizeBytes
 
 type WorkResult int
 
@@ -51,7 +52,7 @@ func ProcessItem(
 	rpfEstimate int64,
 ) (WorkResult, error) {
 	if !helpers.IsWantedFrequency(inf.FrequencyMs()) {
-		ll.Info("Skipping compaction for unwanted frequency", slog.Int("frequencyMs", int(inf.FrequencyMs())))
+		ll.Debug("Skipping compaction for unwanted frequency", slog.Int("frequencyMs", int(inf.FrequencyMs())))
 		return WorkResultSuccess, nil
 	}
 
@@ -67,7 +68,7 @@ func ProcessItem(
 		return WorkResultTryAgainLater, err
 	}
 
-	ll.Info("Starting metric compaction",
+	ll.Debug("Starting metric compaction",
 		slog.String("organizationID", inf.OrganizationID().String()),
 		slog.Int("instanceNum", int(inf.InstanceNum())),
 		slog.Int("dateint", int(inf.Dateint())),
@@ -128,7 +129,7 @@ func doCompactItem(
 			return WorkResultTryAgainLater, nil
 		}
 
-		ll.Info("Querying for metric segments to compact",
+		ll.Debug("Querying for metric segments to compact",
 			slog.Int("batch", totalBatchesProcessed+1),
 			slog.Time("cursorCreatedAt", cursorCreatedAt),
 			slog.Int64("cursorSegmentID", cursorSegmentID))
@@ -140,10 +141,10 @@ func doCompactItem(
 			InstanceNum:     inf.InstanceNum(),
 			StartTs:         st.Time.UTC().UnixMilli(),
 			EndTs:           et.Time.UTC().UnixMilli(),
-			MaxFileSize:     targetFileSize * 9 / 10, // Only include files < 90% of target (larger files are fine as-is)
-			CursorCreatedAt: cursorCreatedAt,         // Cursor for pagination
-			CursorSegmentID: cursorSegmentID,         // Cursor for pagination
-			Maxrows:         maxRowsLimit,            // Safety limit for compaction batch
+			MaxFileSize:     targetFileSize * 9 / 10,
+			CursorCreatedAt: cursorCreatedAt,
+			CursorSegmentID: cursorSegmentID,
+			Maxrows:         maxRowsLimit,
 		})
 		if err != nil {
 			ll.Error("Failed to get current metric segments", slog.Any("error", err))
@@ -162,7 +163,7 @@ func doCompactItem(
 			return WorkResultSuccess, nil
 		}
 
-		ll.Info("Processing compaction batch",
+		ll.Debug("Processing compaction batch",
 			slog.Int("segmentCount", len(inRows)),
 			slog.Int("batch", totalBatchesProcessed+1))
 
@@ -175,7 +176,7 @@ func doCompactItem(
 
 		// Check if this batch needs compaction
 		if !ShouldCompactMetrics(inRows) {
-			ll.Info("No need to compact metrics in this batch", slog.Int("rowCount", len(inRows)))
+			ll.Debug("No need to compact metrics in this batch", slog.Int("rowCount", len(inRows)))
 
 			// If we didn't hit the limit, we've seen all segments
 			if len(inRows) < maxRowsLimit {
@@ -208,7 +209,7 @@ func doCompactItem(
 		}
 
 		// Continue to next batch - cursor already advanced
-		ll.Info("Batch completed, checking for more segments",
+		ll.Debug("Batch completed, checking for more segments",
 			slog.Int("processedSegments", len(inRows)),
 			slog.Time("nextCursorCreatedAt", cursorCreatedAt),
 			slog.Int64("nextCursorSegmentID", cursorSegmentID))
@@ -285,7 +286,7 @@ func compactInterval(
 			return err
 		}
 		if is404 {
-			ll.Info("S3 object not found, skipping", slog.String("bucket", profile.Bucket), slog.String("objectID", objectID))
+			ll.Debug("S3 object not found, skipping", slog.String("bucket", profile.Bucket), slog.String("objectID", objectID))
 			continue
 		}
 
@@ -293,7 +294,7 @@ func compactInterval(
 	}
 
 	if len(files) == 0 {
-		ll.Info("No files to compact, skipping work item")
+		ll.Debug("No files to compact, skipping work item")
 		return nil
 	}
 
@@ -317,11 +318,11 @@ func compactInterval(
 		ll.Error("Failed to merge files", slog.Any("error", err))
 		return fmt.Errorf("merging files: %w", err)
 	}
-	ll.Info("Merge results", slog.Any("sourceFiles", files), slog.Any("mergeResult", mergeResult), slog.Int64("estimatedRowCount", rpfEstimate))
+	ll.Debug("Merge results", slog.Any("sourceFiles", files), slog.Any("mergeResult", mergeResult), slog.Int64("estimatedRowCount", rpfEstimate))
 
 	startingFileCount := len(files)
 	endingFileCount := len(mergeResult)
-	ll.Info("Compaction results",
+	ll.Debug("Compaction results",
 		slog.Int("startingFileCount", startingFileCount),
 		slog.Int("endingFileCount", endingFileCount),
 		slog.Int("percentFileCountReduction", (startingFileCount-endingFileCount)*100/startingFileCount),
@@ -359,14 +360,14 @@ func compactInterval(
 		opID := fmt.Sprintf("metric_op_%d_%d_%s", time.Now().Unix(), tidPartition, idgen.GenerateShortBase32ID())
 		tidLogger := ll.With(slog.String("operationID", opID), slog.Int("tidPartition", tidPartition))
 
-		tidLogger.Info("Starting atomic metric compaction operation",
+		tidLogger.Debug("Starting atomic metric compaction operation",
 			slog.Int64("recordCount", result.RecordCount),
 			slog.Int64("fileSize", result.FileSize))
 
 		segmentID := s3helper.GenerateID()
 		newObjectID := helpers.MakeDBObjectID(inf.OrganizationID(), profile.CollectorName, dateint, hour, segmentID, "metrics")
 
-		tidLogger.Info("Uploading compacted metric file to S3 - point of no return approaching",
+		tidLogger.Debug("Uploading compacted metric file to S3 - point of no return approaching",
 			slog.String("newObjectID", newObjectID),
 			slog.String("bucket", profile.Bucket),
 			slog.Int64("newSegmentID", segmentID))
@@ -422,12 +423,12 @@ func compactInterval(
 					slog.String("objectID", newObjectID),
 					slog.String("bucket", profile.Bucket))
 			} else {
-				tidLogger.Info("Successfully cleaned up orphaned S3 object")
+				tidLogger.Debug("Successfully cleaned up orphaned S3 object")
 			}
 			return fmt.Errorf("replacing metric segments: %w", err)
 		}
 
-		tidLogger.Info("ATOMIC OPERATION COMMITTED SUCCESSFULLY - database updated, segments swapped",
+		tidLogger.Debug("ATOMIC OPERATION COMMITTED SUCCESSFULLY - database updated, segments swapped",
 			slog.Int64("newSegmentID", segmentID),
 			slog.Int64("newRecordCount", result.RecordCount),
 			slog.Int64("newFileSize", result.FileSize),

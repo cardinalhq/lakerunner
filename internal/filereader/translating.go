@@ -17,6 +17,8 @@ package filereader
 import (
 	"errors"
 	"fmt"
+
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 )
 
 // TranslatingReader wraps another Reader and applies row transformations.
@@ -26,6 +28,8 @@ type TranslatingReader struct {
 	reader     Reader
 	translator RowTranslator
 	closed     bool
+	rowCount   int64 // Track total rows successfully read and translated
+	batchSize  int
 }
 
 // NewTranslatingReader creates a new TranslatingReader that applies the given
@@ -33,7 +37,7 @@ type TranslatingReader struct {
 //
 // The TranslatingReader takes ownership of the underlying reader and will
 // close it when Close() is called.
-func NewTranslatingReader(reader Reader, translator RowTranslator) (*TranslatingReader, error) {
+func NewTranslatingReader(reader Reader, translator RowTranslator, batchSize int) (*TranslatingReader, error) {
 	if reader == nil {
 		return nil, errors.New("reader cannot be nil")
 	}
@@ -41,44 +45,69 @@ func NewTranslatingReader(reader Reader, translator RowTranslator) (*Translating
 		return nil, errors.New("translator cannot be nil")
 	}
 
+	if batchSize <= 0 {
+		batchSize = 1000
+	}
+
 	return &TranslatingReader{
 		reader:     reader,
 		translator: translator,
+		batchSize:  batchSize,
 	}, nil
 }
 
-// Read populates the provided slice with translated rows from the underlying reader.
-func (tr *TranslatingReader) Read(rows []Row) (int, error) {
+// Next returns the next batch of translated rows from the underlying reader.
+func (tr *TranslatingReader) Next() (*Batch, error) {
 	if tr.closed {
-		return 0, errors.New("reader is closed")
+		return nil, errors.New("reader is closed")
 	}
 
-	if len(rows) == 0 {
-		return 0, nil
+	// Get raw batch from underlying reader
+	batch, err := tr.reader.Next()
+	if batch == nil {
+		return nil, err
 	}
 
-	// Get raw rows from underlying reader
-	n, err := tr.reader.Read(rows)
+	// Create a new batch for translated rows
+	translatedBatch := pipeline.GetBatch()
 
-	// Translate each row that was successfully read
-	for i := 0; i < n; i++ {
-		translatedRow, sameRef, translateErr := tr.translator.TranslateRow(rows[i])
-		if translateErr != nil {
-			return i, fmt.Errorf("translation failed for row %d: %w", i, translateErr)
+	// Translate each row in the batch
+	for i := 0; i < batch.Len(); i++ {
+		sourceRow := batch.Get(i)
+		// Copy row to make it mutable
+		row := make(Row)
+		for k, v := range sourceRow {
+			row[k] = v
 		}
 
-		// Only clear and copy if translator returned a different reference
-		// This supports high-performance translators that return the same reference
-		if !sameRef {
-			resetRow(&rows[i])
-			for k, v := range translatedRow {
-				rows[i][k] = v
+		if translateErr := tr.translator.TranslateRow(&row); translateErr != nil {
+			// TODO: Add logging here when we have access to a logger
+
+			// Return partial batch if we've successfully translated some rows
+			if translatedBatch.Len() > 0 {
+				tr.rowCount += int64(translatedBatch.Len())
+				return translatedBatch, fmt.Errorf("translation failed for row %d: %w", i, translateErr)
 			}
+
+			// No rows successfully translated
+			pipeline.ReturnBatch(translatedBatch)
+			return nil, fmt.Errorf("translation failed for row %d: %w", i, translateErr)
 		}
-		// If sameRef is true, the translator modified in place or returned same reference
+
+		// Add translated row to new batch
+		translatedRow := translatedBatch.AddRow()
+		for k, v := range row {
+			translatedRow[k] = v
+		}
 	}
 
-	return n, err // Pass through the original error (including EOF)
+	// Return original batch to pool since we created a new one
+	pipeline.ReturnBatch(batch)
+
+	// Count each successfully translated row
+	tr.rowCount += int64(translatedBatch.Len())
+
+	return translatedBatch, nil
 }
 
 // Close closes the underlying reader and releases resources.
@@ -97,4 +126,10 @@ func (tr *TranslatingReader) Close() error {
 	tr.translator = nil
 
 	return nil
+}
+
+// TotalRowsReturned returns the total number of rows that have been successfully
+// returned via Next() after translation by this reader.
+func (tr *TranslatingReader) TotalRowsReturned() int64 {
+	return tr.rowCount
 }

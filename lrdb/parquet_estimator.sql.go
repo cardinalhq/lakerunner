@@ -137,3 +137,65 @@ func (q *Queries) MetricSegEstimator(ctx context.Context, arg MetricSegEstimator
 	}
 	return items, nil
 }
+
+const traceSegEstimator = `-- name: TraceSegEstimator :many
+WITH params AS (
+  SELECT 1_000_000::float8 AS target_bytes
+),
+bpr AS (
+  SELECT
+    organization_id,
+    (sum(file_size)::float8 / NULLIF(sum(record_count), 0))::float8 AS avg_bpr
+  FROM trace_seg
+  WHERE
+      record_count > 100
+      AND dateint IN ($1, $2)
+      AND ts_range && int8range($3, $4, '[)')
+  GROUP BY organization_id
+)
+SELECT
+  b.organization_id,
+  CEIL(p.target_bytes / NULLIF(b.avg_bpr, 0))::bigint AS estimated_records
+FROM bpr b
+CROSS JOIN params p
+`
+
+type TraceSegEstimatorParams struct {
+	DateintLow  int32 `json:"dateint_low"`
+	DateintHigh int32 `json:"dateint_high"`
+	MsLow       int64 `json:"ms_low"`
+	MsHigh      int64 `json:"ms_high"`
+}
+
+type TraceSegEstimatorRow struct {
+	OrganizationID   uuid.UUID `json:"organization_id"`
+	EstimatedRecords int64     `json:"estimated_records"`
+}
+
+// Returns an estimate of the number of trace segments, average bytes, average records,
+// and average bytes per record for trace segments in the last hour per organization and instance.
+// This query is basically identical to the LogSegEstimator, but for trace segments.
+func (q *Queries) TraceSegEstimator(ctx context.Context, arg TraceSegEstimatorParams) ([]TraceSegEstimatorRow, error) {
+	rows, err := q.db.Query(ctx, traceSegEstimator,
+		arg.DateintLow,
+		arg.DateintHigh,
+		arg.MsLow,
+		arg.MsHigh,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TraceSegEstimatorRow
+	for rows.Next() {
+		var i TraceSegEstimatorRow
+		if err := rows.Scan(&i.OrganizationID, &i.EstimatedRecords); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

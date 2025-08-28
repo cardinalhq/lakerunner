@@ -231,7 +231,7 @@ func compactTracesFor(
 		// ---- Execute atomic compaction per group ----
 
 		for i, group := range packed {
-			opID := generateOperationID(i)
+			opID := generateOperationID()
 			ll := ll.With(
 				slog.String("operationID", opID),
 				slog.Int("groupIndex", i),

@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -71,6 +72,8 @@ type IngestLoopContext struct {
 	signal            string
 	ll                *slog.Logger
 	exemplarProcessor *exemplar.Processor
+	processedItems    *int64
+	lastLogTime       *time.Time
 }
 
 func NewIngestLoopContext(ctx context.Context, signal string, assumeRoleSessionName string) (*IngestLoopContext, error) {
@@ -127,7 +130,10 @@ func NewIngestLoopContext(ctx context.Context, signal string, assumeRoleSessionN
 		return processMetricsExemplarsDirect(ctx, organizationID, exemplars, mdb)
 	})
 
-	return &IngestLoopContext{
+	var processedItems int64
+	var lastLogTime time.Time
+
+	loopCtx := &IngestLoopContext{
 		ctx:               ctx,
 		mdb:               mdb,
 		sp:                sp,
@@ -137,7 +143,31 @@ func NewIngestLoopContext(ctx context.Context, signal string, assumeRoleSessionN
 		signal:            signal,
 		ll:                ll,
 		exemplarProcessor: exemplarProcessor,
-	}, nil
+		processedItems:    &processedItems,
+		lastLogTime:       &lastLogTime,
+	}
+
+	// Start periodic activity logging
+	go func() {
+		ticker := time.NewTicker(20 * time.Second)
+		defer ticker.Stop()
+		var totalProcessed int64
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				processedCount := atomic.SwapInt64(loopCtx.processedItems, 0)
+				if processedCount > 0 && time.Since(*loopCtx.lastLogTime) >= 20*time.Second {
+					totalProcessed += processedCount
+					ll.Info("Processing activity", slog.Int64("itemsProcessed", processedCount), slog.Int64("totalProcessed", totalProcessed))
+					*loopCtx.lastLogTime = time.Now()
+				}
+			}
+		}
+	}()
+
+	return loopCtx, nil
 }
 
 // Close cleans up resources
@@ -162,21 +192,30 @@ func IngestLoopWithBatch(loop *IngestLoopContext, processingFx InqueueProcessing
 		default:
 		}
 
-		t0 := time.Now()
-		shouldBackoff, didWork, err := ingestFilesBatch(ctx, loop, processingFx, batchProcessingFx)
+		shouldBackoff, workWasProcessed, err := ingestFilesBatch(ctx, loop, processingFx, batchProcessingFx)
 		if err != nil {
+			// Check if this is a worker interruption
+			if IsWorkerInterrupted(err) {
+				slog.Info("Ingest loop interrupted gracefully")
+				return loop.ctx.Err() // Return the original context cancellation error
+			}
 			return err
 		}
 
-		if didWork {
-			loop.ll.Info("Ingested file(s)", slog.Duration("elapsed", time.Since(t0)))
-		}
-
+		// Only backoff if no work was available - if work was processed, poll immediately
 		if shouldBackoff {
 			select {
 			case <-loop.ctx.Done():
 				return nil
 			case <-time.After(workSleepTime):
+			}
+		} else if workWasProcessed {
+			// Work was processed successfully - poll immediately for more
+			// Just check context and continue loop without delay
+			select {
+			case <-loop.ctx.Done():
+				return nil
+			default:
 			}
 		}
 
@@ -270,12 +309,9 @@ func ingestFiles(
 		}
 		return true, false, fmt.Errorf("failed to create temporary directory: %w", err)
 	}
-	ll.Info("Created temporary directory", slog.String("path", tmpdir))
 	defer func() {
 		if err := os.RemoveAll(tmpdir); err != nil {
-			ll.Error("Failed to remove temporary directory", slog.String("path", tmpdir), slog.Any("error", err))
-		} else {
-			ll.Info("Removed temporary directory", slog.String("path", tmpdir))
+			ll.Error("Failed to remove temporary directory", slog.Any("error", err))
 		}
 	}()
 
@@ -283,10 +319,16 @@ func ingestFiles(
 	switch lrdb.SignalEnum(inf.TelemetryType) {
 	case lrdb.SignalEnumMetrics:
 		rpfEstimate = loop.metricEstimator.Get(inf.OrganizationID, inf.InstanceNum, 10_000)
+		if rpfEstimate <= 0 {
+			rpfEstimate = 100 // Default for all signals
+		}
 	case lrdb.SignalEnumLogs:
 		rpfEstimate = loop.logEstimator.Get(inf.OrganizationID, inf.InstanceNum)
+		if rpfEstimate <= 0 {
+			rpfEstimate = 100 // Default for all signals
+		}
 	default:
-		rpfEstimate = 40_000 // Default fallback
+		rpfEstimate = 100 // Default fallback
 	}
 	t0 = time.Now()
 	err = processFx(ctx, ll, tmpdir, loop.sp, loop.mdb, loop.awsmanager, inf, ingestDateint, rpfEstimate, loop)
@@ -332,6 +374,9 @@ func ingestFilesBatch(
 		TelemetryType: loop.signal,
 	})
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return true, false, nil
+		}
 		return true, false, fmt.Errorf("failed to find next work: %w", err)
 	}
 
@@ -384,6 +429,11 @@ func ingestFilesBatch(
 		return processSingleItem(ctx, loop, processFx, batchRowToInqueue(items[0]))
 	}
 
+	// Safety check: ensure all records in the batch are for the same organization
+	if err := validateBatchOrganizationConsistency(items); err != nil {
+		return true, false, err
+	}
+
 	ll := loop.ll.With(
 		slog.Int("batchSize", len(items)),
 		slog.String("organizationID", items[0].OrganizationID.String()),
@@ -408,7 +458,7 @@ func ingestFilesBatch(
 	}
 	defer func() {
 		if err := os.RemoveAll(tmpdir); err != nil {
-			ll.Error("Failed to clean up tmpdir", slog.String("tmpdir", tmpdir), slog.Any("error", err))
+			ll.Error("Failed to clean up tmpdir", slog.Any("error", err))
 		}
 	}()
 
@@ -450,6 +500,8 @@ func ingestFilesBatch(
 	for _, h := range handlers {
 		if err := h.CompleteWork(ctx); err != nil {
 			ll.Error("Failed to complete work", slog.Any("error", err))
+		} else {
+			atomic.AddInt64(loop.processedItems, 1)
 		}
 	}
 	return false, true, nil
@@ -495,7 +547,7 @@ func processSingleItem(ctx context.Context, loop *IngestLoopContext, processFx I
 	}
 	defer func() {
 		if err := os.RemoveAll(tmpdir); err != nil {
-			ll.Error("Failed to clean up tmpdir", slog.String("tmpdir", tmpdir), slog.Any("error", err))
+			ll.Error("Failed to clean up tmpdir", slog.Any("error", err))
 		}
 	}()
 
@@ -503,10 +555,16 @@ func processSingleItem(ctx context.Context, loop *IngestLoopContext, processFx I
 	switch lrdb.SignalEnum(inf.TelemetryType) {
 	case lrdb.SignalEnumMetrics:
 		rpfEstimate = loop.metricEstimator.Get(inf.OrganizationID, inf.InstanceNum, 10_000)
+		if rpfEstimate <= 0 {
+			rpfEstimate = 100 // Default for all signals
+		}
 	case lrdb.SignalEnumLogs:
 		rpfEstimate = loop.logEstimator.Get(inf.OrganizationID, inf.InstanceNum)
+		if rpfEstimate <= 0 {
+			rpfEstimate = 100 // Default for all signals
+		}
 	default:
-		rpfEstimate = 40_000
+		rpfEstimate = 100
 	}
 
 	ingestDateint, _ := helpers.MSToDateintHour(time.Now().UTC().UnixMilli())
@@ -528,6 +586,24 @@ func processSingleItem(ctx context.Context, loop *IngestLoopContext, processFx I
 
 	if err := h.CompleteWork(ctx); err != nil {
 		ll.Error("Failed to complete work", slog.Any("error", err))
+	} else {
+		atomic.AddInt64(loop.processedItems, 1)
 	}
 	return false, true, nil
+}
+
+// validateBatchOrganizationConsistency ensures all items in a batch belong to the same organization
+func validateBatchOrganizationConsistency(items []lrdb.ClaimInqueueWorkBatchRow) error {
+	if len(items) <= 1 {
+		return nil // Single item or empty batch is always safe
+	}
+
+	expectedOrgID := items[0].OrganizationID
+	for i, item := range items {
+		if item.OrganizationID != expectedOrgID {
+			return fmt.Errorf("batch safety check failed: item %d has organization ID %s, expected %s",
+				i, item.OrganizationID.String(), expectedOrgID.String())
+		}
+	}
+	return nil
 }

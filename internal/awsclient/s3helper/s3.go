@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
@@ -109,7 +110,12 @@ func DownloadS3Object(
 ) (tmpfile string, size int64, notFound bool, err error) {
 	downloader := manager.NewDownloader(s3client.Client)
 
-	f, err := os.CreateTemp(dir, "s3-*.parquet")
+	// Preserve the original file extension for proper file type detection
+	ext := filepath.Ext(objectID)
+	if ext == "" {
+		ext = ".data" // fallback for files without extension
+	}
+	f, err := os.CreateTemp(dir, "s3-*"+ext)
 	if err != nil {
 		return "", 0, false, fmt.Errorf("create temp file: %w", err)
 	}

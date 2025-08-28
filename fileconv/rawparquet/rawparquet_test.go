@@ -25,7 +25,7 @@ import (
 )
 
 func TestGetRow_ActualParquetFile(t *testing.T) {
-	filePath := "testdata/logs_1752872650000_326740161.parquet"
+	filePath := "../../testdata/logs/logs_1752872650000_326740161.parquet"
 
 	mapper := translate.NewMapper()
 
@@ -120,7 +120,7 @@ func TestNewRawParquetReader_ErrorCases(t *testing.T) {
 
 func TestRawParquetReader_Close(t *testing.T) {
 	// Test with a valid file
-	reader, err := NewRawParquetReader("testdata/logs_1752872650000_326740161.parquet", translate.NewMapper(), nil)
+	reader, err := NewRawParquetReader("../../testdata/logs/logs_1752872650000_326740161.parquet", translate.NewMapper(), nil)
 	assert.NoError(t, err)
 
 	// Test normal close
@@ -133,7 +133,7 @@ func TestRawParquetReader_Close(t *testing.T) {
 }
 
 func TestRawParquetReader_NumRowsBeforeRead(t *testing.T) {
-	reader, err := NewRawParquetReader("testdata/logs_1752872650000_326740161.parquet", translate.NewMapper(), nil)
+	reader, err := NewRawParquetReader("../../testdata/logs/logs_1752872650000_326740161.parquet", translate.NewMapper(), nil)
 	assert.NoError(t, err)
 	defer reader.Close()
 
@@ -148,7 +148,7 @@ func TestRawParquetReader_WithTags(t *testing.T) {
 		"environment": "dev",
 	}
 
-	reader, err := NewRawParquetReader("testdata/logs_1752872650000_326740161.parquet", translate.NewMapper(), tags)
+	reader, err := NewRawParquetReader("../../testdata/logs/logs_1752872650000_326740161.parquet", translate.NewMapper(), tags)
 	assert.NoError(t, err)
 	defer reader.Close()
 
@@ -166,7 +166,7 @@ func TestRawParquetReader_WithTags(t *testing.T) {
 func TestRawParquetReader_WithNilMapper(t *testing.T) {
 	// Test with nil mapper - this causes a panic in the implementation
 	// so we need to test that it fails gracefully during construction
-	reader, err := NewRawParquetReader("testdata/logs_1752872650000_326740161.parquet", nil, nil)
+	reader, err := NewRawParquetReader("../../testdata/logs/logs_1752872650000_326740161.parquet", nil, nil)
 	assert.NoError(t, err)
 	defer reader.Close()
 
@@ -176,7 +176,7 @@ func TestRawParquetReader_WithNilMapper(t *testing.T) {
 }
 
 func TestRawParquetReader_GetRowAfterDone(t *testing.T) {
-	reader, err := NewRawParquetReader("testdata/logs_1752872650000_326740161.parquet", translate.NewMapper(), nil)
+	reader, err := NewRawParquetReader("../../testdata/logs/logs_1752872650000_326740161.parquet", translate.NewMapper(), nil)
 	assert.NoError(t, err)
 	defer reader.Close()
 

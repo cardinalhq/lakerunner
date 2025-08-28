@@ -28,13 +28,18 @@
 //
 //	type Row map[string]any
 //
+//	type Batch struct {
+//	    Rows []Row
+//	}
+//
 //	type Reader interface {
-//	    Read(rows []Row) (n int, err error)  // Returns row count and io.EOF when exhausted
+//	    Next() (*Batch, error)        // Returns next batch or io.EOF when exhausted
 //	    Close() error
+//	    TotalRowsReturned() int64     // Total rows successfully returned so far
 //	}
 //
 //	type RowTranslator interface {
-//	    TranslateRow(in Row) (Row, error)
+//	    TranslateRow(row *Row) error  // Transforms row in-place
 //	}
 //
 // Use translators for data processing and TranslatingReader for composition.
@@ -43,10 +48,10 @@
 //
 // All format readers return raw, untransformed data from files:
 //
-//   - ParquetReader: Generic Parquet files using parquet-go/parquet-go (requires io.ReaderAt)
-//   - JSONLinesReader: Streams JSON objects line-by-line from any io.Reader
+//   - ParquetRawReader: Generic Parquet files using parquet-go/parquet-go (requires io.ReaderAt)
+//   - JSONLinesReader: Streams JSON objects line-by-line from any io.ReadCloser
 //   - ProtoLogsReader: Raw OTEL log records from protobuf
-//   - ProtoMetricsReader: Raw OTEL metric data points from protobuf
+//   - IngestProtoMetricsReader: Raw OTEL metric data points from protobuf (ingestion only)
 //   - ProtoTracesReader: Raw OTEL span data from protobuf
 //
 // Example usage:
@@ -56,26 +61,26 @@
 //	if err != nil {
 //	    return err
 //	}
-//	defer gzReader.Close()
 //
-//	reader, err := NewJSONLinesReader(gzReader)
+//	reader, err := NewJSONLinesReader(gzReader, 1000)
 //	if err != nil {
 //	    return err
 //	}
 //	defer reader.Close()
 //
 //	for {
-//	    rows := make([]Row, 1)
-//	    rows[0] = make(Row)
-//	    n, err := reader.Read(rows)
-//	    if errors.Is(err, io.EOF) {
-//	        break
-//	    }
+//	    batch, err := reader.Next()
 //	    if err != nil {
+//	        if errors.Is(err, io.EOF) {
+//	            break
+//	        }
 //	        return err
 //	    }
-//	    if n > 0 {
-//	        // process raw row data in rows[0]
+//	    if batch != nil {
+//	        // process raw row data in batch.Rows
+//	        for _, row := range batch.Rows {
+//	            // process each row
+//	        }
 //	    }
 //	}
 //
@@ -109,41 +114,54 @@
 //
 // # Composite Readers
 //
-// OrderedReader performs file-based merge-sort across multiple pre-sorted readers:
+// # Sorting Readers
+//
+// Choose the appropriate sorting reader based on dataset size and memory constraints:
+//
+// MemorySortingReader - For smaller datasets (high memory usage, no disk I/O):
+//
+//	reader := NewMemorySortingReader(rawReader, MetricNameTidTimestampSort())
+//
+// DiskSortingReader - For larger datasets (moderate memory usage, 2x disk I/O):
+//
+//	reader := NewDiskSortingReader(rawReader, TimestampSortKeyFunc(), TimestampSortFunc())
+//
+// MergesortReader - For merging multiple already-sorted sources (low memory, streaming):
 //
 //	selector := TimeOrderedSelector("timestamp")
-//	reader := NewOrderedReader([]Reader{r1, r2, r3}, selector)
+//	reader := NewMergesortReader([]Reader{r1, r2, r3}, selector)
 //
-// MultiReader processes multiple readers sequentially:
+// SequentialReader - Sequential processing (no sorting):
 //
-//	reader := NewMultiReader([]Reader{r1, r2, r3})
+//	reader := NewSequentialReader([]Reader{r1, r2, r3})
 //
 // # Usage Patterns
 //
 // Time-ordered merge sort across multiple files:
 //
 //	readers := []Reader{
-//	    NewParquetReader(file1, size1),
-//	    NewParquetReader(file2, size2),
+//	    NewParquetRawReader(file1, size1),
+//	    NewParquetRawReader(file2, size2),
 //	    NewJSONLinesReader(file3),
 //	}
 //
 //	selector := TimeOrderedSelector("_cardinalhq.timestamp")
-//	ordered := NewOrderedReader(readers, selector)
+//	ordered := NewMergesortReader(readers, selector)
 //	defer ordered.Close()
 //
 //	for {
-//	    rows := make([]Row, 1)
-//	    rows[0] = make(Row)
-//	    n, err := ordered.Read(rows)
-//	    if errors.Is(err, io.EOF) {
-//	        break
-//	    }
+//	    batch, err := ordered.Next()
 //	    if err != nil {
+//	        if errors.Is(err, io.EOF) {
+//	            break
+//	        }
 //	        return err
 //	    }
-//	    if n > 0 {
+//	    if batch != nil {
 //	        // rows arrive in timestamp order across all files
+//	        for _, row := range batch.Rows {
+//	            // process each row
+//	        }
 //	    }
 //	}
 //
@@ -151,9 +169,38 @@
 //
 //	// Process multiple file groups in timestamp order,
 //	// then combine groups sequentially
-//	group1 := NewOrderedReader(readers1, TimeOrderedSelector("timestamp"))
-//	group2 := NewOrderedReader(readers2, TimeOrderedSelector("timestamp"))
-//	final := NewMultiReader([]Reader{group1, group2})
+//	group1 := NewMergesortReader(readers1, TimeOrderedSelector("timestamp"))
+//	group2 := NewMergesortReader(readers2, TimeOrderedSelector("timestamp"))
+//	final := NewSequentialReader([]Reader{group1, group2})
+//
+// # Memory Management & Batch Ownership
+//
+// The filereader package implements efficient memory management through batch ownership:
+//
+// **Batch Ownership**: Readers own the returned Batch and its Row maps. Callers must NOT
+// retain references to batches beyond the next Next() call.
+//
+// **Memory Safety**: Use pipeline.CopyBatch() if you need to retain batch data:
+//
+//	for {
+//	    batch, err := reader.Next()
+//	    if err != nil {
+//	        if errors.Is(err, io.EOF) {
+//	            break
+//	        }
+//	        return err
+//	    }
+//	    if batch != nil {
+//	        // Use data immediately or copy if retention needed
+//	        safeBatch := pipeline.CopyBatch(batch)  // For retention
+//	        // Process batch.Rows directly for immediate use
+//	    }
+//	}
+//
+// **Data Safety**: Readers maintain clean batch states and handle EOF correctly.
+// Batches must not be accessed after the next Next() call.
+//
+// **Error Handling**: Next() returns nil batch on errors. Check error before accessing batch.
 //
 // # Resource Management
 //

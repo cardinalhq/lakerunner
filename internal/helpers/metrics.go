@@ -16,9 +16,6 @@ package helpers
 
 import (
 	"slices"
-	"time"
-
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -62,90 +59,4 @@ func AllRolledUp(rows []lrdb.MetricSeg) bool {
 		}
 	}
 	return true
-}
-
-// RangeBounds returns the bounds of the given range. The returned start time is inclusive
-// and the end time is exclusive. If the range is unbounded, or cannot be converted
-// to concrete bounds, the function returns ok=false and the bounds are invalid.
-func RangeBounds[T int | int16 | int32 | int64 | pgtype.Int8 | time.Time | pgtype.Timestamptz](r pgtype.Range[T]) (lower, upper T, ok bool) {
-	if r.LowerType != pgtype.Inclusive && r.LowerType != pgtype.Exclusive {
-		return lower, upper, false
-	}
-	if r.UpperType != pgtype.Inclusive && r.UpperType != pgtype.Exclusive {
-		return lower, upper, false
-	}
-
-	lower = r.Lower
-	upper = r.Upper
-
-	// Always return inclusive lower and exclusive upper.
-	// Only accept inclusive or exclusive lower, and inclusive or exclusive upper.
-	if r.LowerType != pgtype.Inclusive && r.LowerType != pgtype.Exclusive {
-		return lower, upper, false
-	}
-	if r.UpperType != pgtype.Inclusive && r.UpperType != pgtype.Exclusive {
-		return lower, upper, false
-	}
-
-	// If the input lower is exclusive, increment lower by 1ns or 1 (for ints).
-	if r.LowerType == pgtype.Exclusive {
-		switch v := any(lower).(type) {
-		case time.Time:
-			lower = any(v.Add(time.Nanosecond)).(T)
-		case pgtype.Timestamptz:
-			shifted := pgtype.Timestamptz{
-				Time:  v.Time.Add(time.Nanosecond),
-				Valid: true,
-			}
-			lower = any(shifted).(T)
-		case pgtype.Int8:
-			shifted := pgtype.Int8{
-				Int64: v.Int64 + 1,
-				Valid: true,
-			}
-			lower = any(shifted).(T)
-		case int:
-			lower = any(v + 1).(T)
-		case int16:
-			lower = any(v + 1).(T)
-		case int32:
-			lower = any(v + 1).(T)
-		case int64:
-			lower = any(v + 1).(T)
-		default:
-			return lower, upper, false
-		}
-	}
-
-	// If the input upper is inclusive, increment upper by 1ns or 1 (for ints) to make it exclusive.
-	if r.UpperType == pgtype.Inclusive {
-		switch v := any(upper).(type) {
-		case time.Time:
-			upper = any(v.Add(time.Nanosecond)).(T)
-		case pgtype.Timestamptz:
-			shifted := pgtype.Timestamptz{
-				Time:  v.Time.Add(time.Nanosecond),
-				Valid: true,
-			}
-			upper = any(shifted).(T)
-		case pgtype.Int8:
-			shifted := pgtype.Int8{
-				Int64: v.Int64 + 1,
-				Valid: true,
-			}
-			upper = any(shifted).(T)
-		case int:
-			upper = any(v + 1).(T)
-		case int16:
-			upper = any(v + 1).(T)
-		case int32:
-			upper = any(v + 1).(T)
-		case int64:
-			upper = any(v + 1).(T)
-		default:
-			return lower, upper, false
-		}
-	}
-
-	return lower, upper, true
 }

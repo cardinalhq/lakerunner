@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -56,6 +57,11 @@ type wqManager struct {
 	// currently acquired work item IDs
 	acquiredIDs []int64
 
+	// work tracking for graceful shutdown
+	outstandingWork sync.WaitGroup
+	shutdownOnce    sync.Once
+	done            chan struct{}
+
 	// channels for internal processing
 	getWork      chan *workRequest
 	completeWork chan *workCompleteRequest
@@ -69,6 +75,8 @@ type workCompleteRequest struct {
 }
 
 func (m *wqManager) completeWorkItem(ctx context.Context, w *WorkItem) error {
+	defer m.outstandingWork.Done() // Mark work as completed
+
 	m.acquiredIDs = slices.DeleteFunc(m.acquiredIDs, func(id int64) bool {
 		return id == w.id
 	})
@@ -91,6 +99,8 @@ type workDeleteRequest struct {
 }
 
 func (m *wqManager) failWorkItem(ctx context.Context, w *WorkItem) error {
+	defer m.outstandingWork.Done() // Mark work as failed (completed)
+
 	m.acquiredIDs = slices.DeleteFunc(m.acquiredIDs, func(id int64) bool {
 		return id == w.id
 	})
@@ -102,6 +112,8 @@ func (m *wqManager) failWorkItem(ctx context.Context, w *WorkItem) error {
 }
 
 func (m *wqManager) deleteWorkItem(ctx context.Context, w *WorkItem) error {
+	defer m.outstandingWork.Done() // Mark work as deleted (completed)
+
 	m.acquiredIDs = slices.DeleteFunc(m.acquiredIDs, func(id int64) bool {
 		return id == w.id
 	})
@@ -130,6 +142,7 @@ func NewWorkQueueManager(
 		action:            act,
 		frequencies:       frequencies,
 		minimumPriority:   minimumPriority,
+		done:              make(chan struct{}),
 		getWork:           make(chan *workRequest, 5),
 		completeWork:      make(chan *workCompleteRequest, 5),
 		failWork:          make(chan *workFailRequest, 5),
@@ -146,7 +159,11 @@ type WorkQueueManager interface {
 	// Run starts the background goroutine that processes work requests.
 	Run(ctx context.Context)
 	// RequestWork requests the next work item, returning nil if no work is available.
-	RequestWork() (*WorkItem, error)
+	// Returns an error if the context is cancelled or the manager is shutting down.
+	RequestWork(ctx context.Context) (*WorkItem, error)
+	// WaitForOutstandingWork waits for all outstanding work items to complete.
+	// Returns when all work is done or the context is cancelled.
+	WaitForOutstandingWork(ctx context.Context) error
 }
 
 var _ WorkQueueManager = (*wqManager)(nil)
@@ -159,6 +176,10 @@ func (m *wqManager) Run(ctx context.Context) {
 
 // runLoop is the internal processing loop.
 func (m *wqManager) runLoop(ctx context.Context) {
+	defer m.shutdownOnce.Do(func() {
+		close(m.done) // Signal that manager is shut down
+	})
+
 	if m.ll == nil {
 		m.ll = slog.Default()
 	}
@@ -251,12 +272,57 @@ type workRequestResponse struct {
 }
 
 // RequestWork requests the next work item, returning nil if no work is available.
-func (m *wqManager) RequestWork() (*WorkItem, error) {
+// Returns an error if the context is cancelled or the manager is shutting down.
+func (m *wqManager) RequestWork(ctx context.Context) (*WorkItem, error) {
+	// Check if manager is already shut down
+	select {
+	case <-m.done:
+		return nil, errors.New("work queue manager is shut down")
+	default:
+	}
+
 	req := &workRequest{
 		resp: make(chan *workRequestResponse, 1),
 	}
 
-	m.getWork <- req
-	work := <-req.resp
-	return work.work, work.err
+	// Try to send request with context cancellation
+	select {
+	case m.getWork <- req:
+		// Request sent successfully
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-m.done:
+		return nil, errors.New("work queue manager is shut down")
+	}
+
+	// Wait for response with context cancellation
+	select {
+	case work := <-req.resp:
+		if work.work != nil {
+			// Track this work item for graceful shutdown
+			m.outstandingWork.Add(1)
+		}
+		return work.work, work.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-m.done:
+		return nil, errors.New("work queue manager is shut down")
+	}
+}
+
+// WaitForOutstandingWork waits for all outstanding work items to complete.
+// Returns when all work is done or the context is cancelled.
+func (m *wqManager) WaitForOutstandingWork(ctx context.Context) error {
+	done := make(chan struct{})
+	go func() {
+		m.outstandingWork.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }

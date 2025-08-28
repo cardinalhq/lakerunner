@@ -15,98 +15,184 @@
 package cmd
 
 import (
+	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/cardinalhq/lakerunner/internal/filereader"
+	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
-func TestHandleHistogram(t *testing.T) {
-	type testCase struct {
-		name         string
-		bucketCounts []float64
-		bucketBounds []float64
-		wantCounts   []float64
-		wantValues   []float64
+// TestHandleHistogram was moved to the proto reader - no longer needed here
+// The proto reader now handles all histogram processing internally
+
+func TestMetricWriterManager(t *testing.T) {
+	tmpdir := t.TempDir()
+	orgID := "test-org"
+	ingestDateint := int32(20250101)
+	rpfEstimate := int64(1000)
+	ll := slog.Default()
+
+	wm := newMetricWriterManager(tmpdir, orgID, ingestDateint, rpfEstimate, ll)
+	require.NotNil(t, wm)
+	require.Equal(t, tmpdir, wm.tmpdir)
+	require.Equal(t, orgID, wm.orgID)
+	require.Equal(t, ingestDateint, wm.ingestDateint)
+	require.Equal(t, rpfEstimate, wm.rpfEstimate)
+	require.NotNil(t, wm.writers)
+	require.Equal(t, ll, wm.ll)
+}
+
+func TestMetricWriterManager_ProcessRow(t *testing.T) {
+	tmpdir := t.TempDir()
+	wm := newMetricWriterManager(tmpdir, "test-org", int32(20250101), int64(1000), slog.Default())
+
+	// Test metric row
+	row := filereader.Row{
+		wkk.RowKeyCTimestamp:    int64(1640995200000),
+		wkk.RowKeyCMetricType:   "gauge",
+		wkk.RowKeyCName:         "cpu.usage",
+		wkk.RowKeyCValue:        float64(75.5),
+		wkk.NewRowKey("host"):   "web-server-1",
+		wkk.NewRowKey("region"): "us-west-2",
 	}
 
-	tests := []testCase{
+	// Create a single-row batch for testing
+	batch := pipeline.GetBatch()
+	defer pipeline.ReturnBatch(batch)
+	testRow := batch.AddRow()
+	for k, v := range row {
+		testRow[k] = v
+	}
+
+	processed, errored := wm.processBatch(batch)
+	require.Equal(t, int64(1), processed)
+	require.Equal(t, int64(0), errored)
+}
+
+func TestMetricWriterManager_ProcessMultipleValues(t *testing.T) {
+	tmpdir := t.TempDir()
+	wm := newMetricWriterManager(tmpdir, "test-org", int32(20250101), int64(1000), slog.Default())
+
+	// Test multiple metric rows
+	row1 := filereader.Row{
+		wkk.RowKeyCTimestamp:    int64(1640995200000),
+		wkk.RowKeyCMetricType:   "gauge",
+		wkk.RowKeyCName:         "cpu.usage",
+		wkk.RowKeyCValue:        float64(75.5),
+		wkk.NewRowKey("host"):   "web-server-1",
+		wkk.NewRowKey("region"): "us-west-2",
+	}
+
+	row2 := filereader.Row{
+		wkk.RowKeyCTimestamp:    int64(1640995200000),
+		wkk.RowKeyCMetricType:   "gauge",
+		wkk.RowKeyCName:         "cpu.usage",
+		wkk.RowKeyCValue:        float64(82.3),
+		wkk.NewRowKey("host"):   "web-server-1",
+		wkk.NewRowKey("region"): "us-west-2",
+	}
+
+	// Create a batch with both rows for testing
+	batch := pipeline.GetBatch()
+	defer pipeline.ReturnBatch(batch)
+
+	testRow1 := batch.AddRow()
+	for k, v := range row1 {
+		testRow1[k] = v
+	}
+
+	testRow2 := batch.AddRow()
+	for k, v := range row2 {
+		testRow2[k] = v
+	}
+
+	processed, errored := wm.processBatch(batch)
+	require.Equal(t, int64(2), processed)
+	require.Equal(t, int64(0), errored)
+}
+
+func TestMetricTranslator(t *testing.T) {
+	translator := &metricsprocessing.MetricTranslator{
+		OrgID:    "test-org",
+		Bucket:   "test-bucket",
+		ObjectID: "metrics/test.json.gz",
+	}
+
+	row := filereader.Row{
+		wkk.RowKeyCName:       "cpu.usage",
+		wkk.RowKeyCTimestamp:  int64(1756049235874),
+		wkk.NewRowKey("host"): "web-server-1",
+	}
+
+	err := translator.TranslateRow(&row)
+	require.NoError(t, err)
+
+	require.Equal(t, "test-bucket", row[wkk.NewRowKey("resource.bucket.name")])
+	require.Equal(t, "./metrics/test.json.gz", row[wkk.NewRowKey("resource.file.name")])
+	require.Equal(t, "test-org", row[wkk.RowKeyCCustomerID])
+	require.Equal(t, "metrics", row[wkk.RowKeyCTelemetryType])
+	require.Equal(t, "cpu.usage", row[wkk.RowKeyCName])               // Original field preserved
+	require.Equal(t, "web-server-1", row[wkk.NewRowKey("host")])      // Original field preserved
+	require.Equal(t, int64(1756049230000), row[wkk.RowKeyCTimestamp]) // Timestamp truncated to 10s boundary
+
+	// Check that TID was computed and added
+	tid, ok := row[wkk.RowKeyCTID].(int64)
+	require.True(t, ok, "TID should be computed and added as int64")
+	require.NotZero(t, tid, "TID should be non-zero")
+}
+
+func TestMetricTranslator_TimestampTruncation(t *testing.T) {
+	translator := &metricsprocessing.MetricTranslator{
+		OrgID:    "test-org",
+		Bucket:   "test-bucket",
+		ObjectID: "metrics/test.json.gz",
+	}
+
+	testCases := []struct {
+		name              string
+		inputTimestamp    int64
+		expectedTruncated int64
+	}{
 		{
-			name:         "simple one bucket",
-			bucketCounts: []float64{2},
-			bucketBounds: []float64{10},
-			wantCounts:   []float64{2},
-			wantValues:   []float64{5}, // (1e-10 + 10)/2
+			name:              "exact 10s boundary",
+			inputTimestamp:    1640995200000, // 2022-01-01 00:00:00.000
+			expectedTruncated: 1640995200000,
 		},
 		{
-			name:         "two buckets, only second has count",
-			bucketCounts: []float64{0, 3},
-			bucketBounds: []float64{10, 20},
-			wantCounts:   []float64{3},
-			wantValues:   []float64{15}, // (10 + 20)/2
+			name:              "mid-interval",
+			inputTimestamp:    1640995205874, // 2022-01-01 00:00:05.874
+			expectedTruncated: 1640995200000, // truncated to 2022-01-01 00:00:00.000
 		},
 		{
-			name:         "three buckets, last is overflow",
-			bucketCounts: []float64{0, 0, 5},
-			bucketBounds: []float64{10, 20},
-			wantCounts:   []float64{5},
-			wantValues:   []float64{21}, // min(20+1, maxTrackableValue)
+			name:              "near next boundary",
+			inputTimestamp:    1640995209999, // 2022-01-01 00:00:09.999
+			expectedTruncated: 1640995200000, // truncated to 2022-01-01 00:00:00.000
 		},
 		{
-			name:         "all buckets have counts",
-			bucketCounts: []float64{1, 2, 3},
-			bucketBounds: []float64{10, 20},
-			wantCounts:   []float64{1, 2, 3},
-			wantValues:   []float64{5, 15, 21},
-		},
-		{
-			name:         "empty input",
-			bucketCounts: []float64{},
-			bucketBounds: []float64{},
-			wantCounts:   []float64{},
-			wantValues:   []float64{},
-		},
-		{
-			name:         "overflow bucket with huge bound",
-			bucketCounts: []float64{0, 0, 1},
-			bucketBounds: []float64{10, 1e10},
-			wantCounts:   []float64{1},
-			wantValues:   []float64{1e9}, // capped at maxTrackableValue
-		},
-		{
-			name:         "live data #1",
-			bucketCounts: []float64{0, 409, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-			bucketBounds: []float64{0, 5, 10, 25, 50, 75, 100, 250, 500, 750, 1000, 2500, 5000, 7500, 10000},
-			wantCounts:   []float64{409},
-			wantValues:   []float64{2.5},
-		},
-		{
-			name:         "live data #2",
-			bucketCounts: []float64{0, 299, 60, 7, 1, 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0},
-			bucketBounds: []float64{0, 5, 10, 25, 50, 75, 100, 250, 500, 750, 1000, 2500, 5000, 7500, 10000},
-			wantCounts:   []float64{299, 60, 7, 1, 2, 1, 1},
-			wantValues: []float64{
-				(0.0 + 5.0) / 2,
-				(5.0 + 10.0) / 2,
-				(10.0 + 25.0) / 2,
-				(25.0 + 50.0) / 2,
-				(50.0 + 75.0) / 2,
-				(75.0 + 100.0) / 2,
-				(100.0 + 250.0) / 2,
-			},
+			name:              "next boundary",
+			inputTimestamp:    1640995210000, // 2022-01-01 00:00:10.000
+			expectedTruncated: 1640995210000,
 		},
 	}
 
-	const delta = 1e-8
-
-	for _, tc := range tests {
+	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			gotCounts, gotValues := handleHistogram(tc.bucketCounts, tc.bucketBounds)
-			require.Equal(t, len(gotCounts), len(gotValues), "counts and values length mismatch")
-			require.Equal(t, tc.wantCounts, gotCounts, "counts mismatch")
-			require.Equal(t, len(tc.wantValues), len(gotValues), "values length mismatch", gotValues)
-			for i := range tc.wantCounts {
-				require.InDelta(t, tc.wantValues[i], gotValues[i], delta, "values[%d]", i)
+			row := filereader.Row{
+				wkk.RowKeyCName:       "cpu.usage",
+				wkk.RowKeyCTimestamp:  tc.inputTimestamp,
+				wkk.NewRowKey("host"): "web-server-1",
 			}
+
+			err := translator.TranslateRow(&row)
+			require.NoError(t, err)
+
+			actualTimestamp, ok := row[wkk.RowKeyCTimestamp].(int64)
+			require.True(t, ok, "timestamp should be int64")
+			require.Equal(t, tc.expectedTruncated, actualTimestamp)
 		})
 	}
 }

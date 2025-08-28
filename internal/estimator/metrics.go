@@ -30,6 +30,8 @@ type MetricQuerier interface {
 }
 
 type MetricEstimator interface {
+	// Get returns an estimate of the number of records that will likely be enough to
+	// hit the target size for the output file.
 	Get(organizationID uuid.UUID, instanceNum int16, frequencyMs int32) int64
 }
 
@@ -51,7 +53,7 @@ func NewMetricEstimator(doneCtx context.Context, querier EstimationQuerier) (Met
 	e := &metricEstimator{
 		currentEstimates: map[metricEstimatorKey]int64{},
 		updateEvery:      30 * time.Minute,
-		lookback:         6 * time.Hour,
+		lookback:         2 * time.Hour,
 		timeout:          30 * time.Second,
 		defaultGuess:     40_000,
 	}

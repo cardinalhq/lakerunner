@@ -16,6 +16,8 @@ package filereader
 
 import (
 	"fmt"
+
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 // NoopTranslator returns rows unchanged for high performance.
@@ -27,9 +29,10 @@ func NewNoopTranslator() *NoopTranslator {
 	return &NoopTranslator{}
 }
 
-// TranslateRow returns the input row unchanged for maximum performance.
-func (nt *NoopTranslator) TranslateRow(in Row) (Row, bool, error) {
-	return in, true, nil // true = same reference
+// TranslateRow does nothing for maximum performance.
+func (nt *NoopTranslator) TranslateRow(row *Row) error {
+	// No-op - row is unchanged
+	return nil
 }
 
 // TagsTranslator adds static tags to every row.
@@ -42,18 +45,13 @@ func NewTagsTranslator(tags map[string]string) *TagsTranslator {
 	return &TagsTranslator{tags: tags}
 }
 
-// TranslateRow adds tags to the row.
-func (tt *TagsTranslator) TranslateRow(in Row) (Row, bool, error) {
-	result := make(Row)
-	for k, v := range in {
-		result[k] = v
-	}
-
+// TranslateRow adds tags to the row in-place.
+func (tt *TagsTranslator) TranslateRow(row *Row) error {
 	for k, v := range tt.tags {
-		result[k] = v
+		(*row)[wkk.NewRowKey(k)] = v
 	}
 
-	return result, false, nil // false = different reference
+	return nil
 }
 
 // ChainTranslator applies multiple translators in sequence.
@@ -66,25 +64,13 @@ func NewChainTranslator(translators ...RowTranslator) *ChainTranslator {
 	return &ChainTranslator{translators: translators}
 }
 
-// TranslateRow applies all translators in sequence.
-func (ct *ChainTranslator) TranslateRow(in Row) (Row, bool, error) {
-	result := in
-	anyCopyMade := false // Track if any translator made a copy
-
+// TranslateRow applies all translators in sequence to the row.
+func (ct *ChainTranslator) TranslateRow(row *Row) error {
 	for i, translator := range ct.translators {
-		var err error
-		var sameRef bool
-		result, sameRef, err = translator.TranslateRow(result)
-		if err != nil {
-			return nil, false, fmt.Errorf("translator %d failed: %w", i, err)
-		}
-
-		// If any translator returns a different reference, we've made a copy
-		if !sameRef {
-			anyCopyMade = true
+		if err := translator.TranslateRow(row); err != nil {
+			return fmt.Errorf("translator %d failed: %w", i, err)
 		}
 	}
 
-	// Final result is same reference as input only if no copies were made
-	return result, !anyCopyMade, nil
+	return nil
 }

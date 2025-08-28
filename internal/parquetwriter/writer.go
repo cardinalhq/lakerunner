@@ -20,14 +20,16 @@ package parquetwriter
 import (
 	"context"
 	"errors"
+
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 )
 
 // ParquetWriter defines the common interface for writing Parquet files
 // across all signal types (logs, metrics, traces).
 type ParquetWriter interface {
-	// Write adds a single row to the writer. The row will be processed
-	// according to the writer's ordering and grouping configuration.
-	Write(row map[string]any) error
+	// WriteBatch adds multiple rows to the writer efficiently. This preserves
+	// string interning from pipeline.Row and enables batch-level optimizations.
+	WriteBatch(batch *pipeline.Batch) error
 
 	// Close finalizes all processing, writes output files, and returns
 	// metadata about the created files. After Close(), the writer cannot

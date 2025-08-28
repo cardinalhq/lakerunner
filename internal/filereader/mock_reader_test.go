@@ -17,14 +17,19 @@ package filereader
 import (
 	"fmt"
 	"io"
+
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
 )
+
+// Mock readers for testing the Next() interface
 
 // mockReader is a test implementation of Reader
 type mockReader struct {
-	rows   []Row
-	index  int
-	closed bool
-	name   string
+	rows     []Row
+	index    int
+	closed   bool
+	name     string
+	rowCount int64
 }
 
 func newMockReader(name string, rows []Row) *mockReader {
@@ -34,33 +39,30 @@ func newMockReader(name string, rows []Row) *mockReader {
 	}
 }
 
-func (m *mockReader) Read(rows []Row) (int, error) {
+func (m *mockReader) Next() (*Batch, error) {
 	if m.closed {
-		return 0, fmt.Errorf("reader %s is closed", m.name)
+		return nil, fmt.Errorf("reader %s is closed", m.name)
 	}
 
-	if len(rows) == 0 {
-		return 0, nil
+	if m.index >= len(m.rows) {
+		return nil, io.EOF
 	}
 
-	n := 0
-	for n < len(rows) && m.index < len(m.rows) {
-		resetRow(&rows[n])
+	batch := pipeline.GetBatch()
 
-		// Copy data from mock row
+	for batch.Len() < 100 && m.index < len(m.rows) {
+		// Create new row and copy data from mock row
+		row := batch.AddRow()
 		for k, v := range m.rows[m.index] {
-			rows[n][k] = v
+			row[k] = v
 		}
-
 		m.index++
-		n++
 	}
 
-	if n == 0 {
-		return 0, io.EOF
-	}
+	// Update row count with successfully read rows
+	m.rowCount += int64(batch.Len())
 
-	return n, nil
+	return batch, nil
 }
 
 func (m *mockReader) Close() error {
@@ -68,19 +70,28 @@ func (m *mockReader) Close() error {
 	return nil
 }
 
-// errorReader is a test reader that always returns errors
-type errorReader struct {
-	closed bool
+func (m *mockReader) TotalRowsReturned() int64 {
+	return m.rowCount
 }
 
-func (e *errorReader) Read(rows []Row) (int, error) {
+// errorReader is a test reader that always returns errors
+type errorReader struct {
+	closed   bool
+	rowCount int64
+}
+
+func (e *errorReader) Next() (*Batch, error) {
 	if e.closed {
-		return 0, fmt.Errorf("reader is closed")
+		return nil, fmt.Errorf("reader is closed")
 	}
-	return 0, fmt.Errorf("test error")
+	return nil, fmt.Errorf("test error")
 }
 
 func (e *errorReader) Close() error {
 	e.closed = true
 	return nil
+}
+
+func (e *errorReader) TotalRowsReturned() int64 {
+	return e.rowCount
 }

@@ -26,6 +26,8 @@ import (
 	"go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
+	"github.com/cardinalhq/lakerunner/internal/constants"
+	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/logcrunch"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
@@ -59,10 +61,23 @@ func init() {
 
 			go diskUsageLoop(doneCtx)
 
+			// Start health check server
+			healthConfig := healthcheck.GetConfigFromEnv()
+			healthServer := healthcheck.NewServer(healthConfig)
+
+			go func() {
+				if err := healthServer.Start(doneCtx); err != nil {
+					slog.Error("Health check server stopped", slog.Any("error", err))
+				}
+			}()
+
 			loop, err := NewRunqueueLoopContext(doneCtx, "logs", "compact", servicename)
 			if err != nil {
 				return fmt.Errorf("failed to create runqueue loop context: %w", err)
 			}
+
+			// Mark as healthy once loop is created and about to start
+			healthServer.SetStatus(healthcheck.StatusHealthy)
 
 			return RunqueueLoop(loop, compactLogsFor, nil)
 		},
@@ -212,11 +227,11 @@ func logCompactItemDo(
 	for {
 		// Check if context is cancelled before starting next batch
 		if ctx.Err() != nil {
-			ll.Info("Context cancelled, stopping compaction loop - will retry to continue",
+			ll.Info("Context cancelled, interrupting compaction loop gracefully",
 				slog.Int("batchCount", totalBatchesProcessed),
 				slog.Int("segmentCount", totalSegmentsProcessed),
 				slog.Any("error", ctx.Err()))
-			return WorkResultTryAgainLater, nil
+			return WorkResultInterrupted, NewWorkerInterrupted("context cancelled during batch processing")
 		}
 
 		ll.Info("Querying for log segments to compact",
@@ -228,13 +243,13 @@ func logCompactItemDo(
 			OrganizationID:  sp.OrganizationID,
 			Dateint:         stdi,
 			InstanceNum:     inf.InstanceNum(),
-			SlotID:          inf.SlotId(),    // Process segments for this specific slot
-			MaxFileSize:     targetFileSize,  // Include files up to full target size (was 90%)
-			CursorCreatedAt: cursorCreatedAt, // Cursor for pagination
-			CursorSegmentID: cursorSegmentID, // Cursor for pagination
-			HourStartTs:     hourStartTs,     // Hour boundary start timestamp
-			HourEndTs:       hourEndTs,       // Hour boundary end timestamp
-			Maxrows:         maxRowsLimit,    // Safety limit for compaction batch
+			SlotID:          inf.SlotId(),
+			MaxFileSize:     constants.TargetFileSizeBytes,
+			CursorCreatedAt: cursorCreatedAt,
+			CursorSegmentID: cursorSegmentID,
+			HourStartTs:     hourStartTs,
+			HourEndTs:       hourEndTs,
+			Maxrows:         maxRowsLimit,
 		})
 		if err != nil {
 			ll.Error("Error getting log segments for compaction", slog.Any("error", err))
@@ -297,7 +312,7 @@ func logCompactItemDo(
 			for _, segment := range lastGroup {
 				bytecount += segment.FileSize
 			}
-			if bytecount < targetFileSize*3/10 {
+			if bytecount < constants.TargetFileSizeBytes*3/10 {
 				packed = packed[:len(packed)-1]
 				lastGroupSmall = true
 			}
@@ -321,7 +336,7 @@ func logCompactItemDo(
 
 		for i, group := range packed {
 			// Generate unique operation ID for this atomic group
-			opID := generateOperationID(i)
+			opID := generateOperationID()
 			ll := ll.With(
 				slog.String("operationID", opID),
 				slog.Int("groupIndex", i))
@@ -329,10 +344,10 @@ func logCompactItemDo(
 			// Check for shutdown BEFORE starting atomic work
 			select {
 			case <-compactLogsDoneCtx.Done():
-				ll.Info("Shutdown requested - aborting before atomic operation",
+				ll.Info("Shutdown requested - interrupting before atomic operation",
 					slog.Int("completedGroupCount", i),
 					slog.Int("remainingGroupCount", len(packed)-i))
-				return WorkResultTryAgainLater, nil
+				return WorkResultInterrupted, NewWorkerInterrupted("shutdown requested before atomic operation")
 			default:
 			}
 

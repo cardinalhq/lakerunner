@@ -162,7 +162,7 @@ func TestWorkQueueManager_RequestWork_Success(t *testing.T) {
 	// Allow some time for the background goroutine to start
 	time.Sleep(10 * time.Millisecond)
 
-	work, err := mgr.RequestWork()
+	work, err := mgr.RequestWork(ctx)
 
 	require.NoError(t, err)
 	require.NotNil(t, work)
@@ -199,7 +199,7 @@ func TestWorkQueueManager_RequestWork_NoWork(t *testing.T) {
 
 	time.Sleep(10 * time.Millisecond)
 
-	work, err := mgr.RequestWork()
+	work, err := mgr.RequestWork(ctx)
 
 	require.NoError(t, err)
 	assert.Nil(t, work)
@@ -233,7 +233,7 @@ func TestWorkQueueManager_RequestWork_DatabaseError(t *testing.T) {
 
 	time.Sleep(10 * time.Millisecond)
 
-	work, err := mgr.RequestWork()
+	work, err := mgr.RequestWork(ctx)
 
 	require.Error(t, err)
 	assert.Equal(t, dbError, err)
@@ -268,7 +268,7 @@ func TestWorkQueueManager_RequestWork_ConstraintViolation(t *testing.T) {
 
 	time.Sleep(10 * time.Millisecond)
 
-	work, err := mgr.RequestWork()
+	work, err := mgr.RequestWork(ctx)
 
 	require.NoError(t, err)
 	assert.Nil(t, work)
@@ -322,7 +322,7 @@ func TestWorkItem_Complete(t *testing.T) {
 
 	time.Sleep(10 * time.Millisecond)
 
-	work, err := mgr.RequestWork()
+	work, err := mgr.RequestWork(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, work)
 
@@ -379,7 +379,7 @@ func TestWorkItem_Fail(t *testing.T) {
 
 	time.Sleep(10 * time.Millisecond)
 
-	work, err := mgr.RequestWork()
+	work, err := mgr.RequestWork(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, work)
 
@@ -437,7 +437,7 @@ func TestWorkItem_DoubleComplete(t *testing.T) {
 
 	time.Sleep(10 * time.Millisecond)
 
-	work, err := mgr.RequestWork()
+	work, err := mgr.RequestWork(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, work)
 
@@ -512,7 +512,7 @@ func TestWorkQueueManager_Heartbeat(t *testing.T) {
 
 	time.Sleep(10 * time.Millisecond)
 
-	work, err := mgr.RequestWork()
+	work, err := mgr.RequestWork(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, work)
 
@@ -582,7 +582,7 @@ func TestWorkQueueManager_HeartbeatError(t *testing.T) {
 
 	time.Sleep(10 * time.Millisecond)
 
-	work, err := mgr.RequestWork()
+	work, err := mgr.RequestWork(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, work)
 
@@ -703,7 +703,7 @@ func TestWorkItem_GetterMethods(t *testing.T) {
 
 	time.Sleep(10 * time.Millisecond)
 
-	work, err := mgr.RequestWork()
+	work, err := mgr.RequestWork(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, work)
 
@@ -784,7 +784,7 @@ func TestWorkItem_FailAfterComplete(t *testing.T) {
 
 	time.Sleep(10 * time.Millisecond)
 
-	work, err := mgr.RequestWork()
+	work, err := mgr.RequestWork(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, work)
 
@@ -806,4 +806,444 @@ func TestWorkQueueDBInterface(t *testing.T) {
 
 	// Test passes if compilation succeeds
 	assert.True(t, true)
+}
+
+func TestWorkQueueManager_WaitForOutstandingWork_NoWork(t *testing.T) {
+	ctx := context.Background()
+	mockDB := &mockWorkQueueDB{}
+
+	mgr := NewWorkQueueManager(
+		mockDB,
+		int64(123),
+		lrdb.SignalEnumMetrics,
+		lrdb.ActionEnumCompact,
+		[]int32{1000},
+		5,
+	)
+	mgr.Run(ctx)
+
+	// Should return immediately when no outstanding work
+	ctx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+	defer cancel()
+
+	err := mgr.WaitForOutstandingWork(ctx)
+	require.NoError(t, err)
+}
+
+func TestWorkQueueManager_WaitForOutstandingWork_WithWork(t *testing.T) {
+	ctx := context.Background()
+	mockDB := &mockWorkQueueDB{}
+
+	workItem := lrdb.WorkQueueClaimRow{
+		ID:             int64(1),
+		Priority:       int32(10),
+		RunnableAt:     time.Now(),
+		OrganizationID: uuid.New(),
+		InstanceNum:    int16(9999),
+		Dateint:        int32(20250815),
+		FrequencyMs:    int32(1000),
+		Signal:         lrdb.SignalEnumMetrics,
+		Tries:          int32(1),
+		Action:         lrdb.ActionEnumCompact,
+		TsRange:        pgtype.Range[pgtype.Timestamptz]{},
+		SlotID:         int32(42),
+	}
+
+	mockDB.On("WorkQueueClaim", mock.Anything, mock.Anything).Return(workItem, nil)
+	mockDB.On("WorkQueueComplete", mock.Anything, mock.Anything).Return(nil)
+
+	mgr := NewWorkQueueManager(
+		mockDB,
+		int64(123),
+		lrdb.SignalEnumMetrics,
+		lrdb.ActionEnumCompact,
+		[]int32{1000},
+		5,
+	)
+	mgr.Run(ctx)
+
+	time.Sleep(10 * time.Millisecond)
+
+	// Get work item - this should increment outstanding work counter
+	work, err := mgr.RequestWork(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, work)
+
+	// Start waiting for outstanding work in a goroutine
+	done := make(chan error, 1)
+	go func() {
+		waitCtx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		defer cancel()
+		done <- mgr.WaitForOutstandingWork(waitCtx)
+	}()
+
+	// Should not complete immediately since work is outstanding
+	select {
+	case <-done:
+		t.Fatal("WaitForOutstandingWork returned too early")
+	case <-time.After(50 * time.Millisecond):
+		// Good, it's waiting
+	}
+
+	// Complete the work item
+	err = work.Complete()
+	require.NoError(t, err)
+
+	// Now WaitForOutstandingWork should return
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("WaitForOutstandingWork did not return after work completion")
+	}
+
+	mockDB.AssertExpectations(t)
+}
+
+func TestWorkQueueManager_WaitForOutstandingWork_ContextCancellation(t *testing.T) {
+	ctx := context.Background()
+	mockDB := &mockWorkQueueDB{}
+
+	workItem := lrdb.WorkQueueClaimRow{
+		ID:             int64(1),
+		Priority:       int32(10),
+		RunnableAt:     time.Now(),
+		OrganizationID: uuid.New(),
+		InstanceNum:    int16(9999),
+		Dateint:        int32(20250815),
+		FrequencyMs:    int32(1000),
+		Signal:         lrdb.SignalEnumMetrics,
+		Tries:          int32(1),
+		Action:         lrdb.ActionEnumCompact,
+		TsRange:        pgtype.Range[pgtype.Timestamptz]{},
+		SlotID:         int32(42),
+	}
+
+	mockDB.On("WorkQueueClaim", mock.Anything, mock.Anything).Return(workItem, nil)
+
+	mgr := NewWorkQueueManager(
+		mockDB,
+		int64(123),
+		lrdb.SignalEnumMetrics,
+		lrdb.ActionEnumCompact,
+		[]int32{1000},
+		5,
+	)
+	mgr.Run(ctx)
+
+	time.Sleep(10 * time.Millisecond)
+
+	// Get work item - this should increment outstanding work counter
+	work, err := mgr.RequestWork(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, work)
+
+	// Create a context that will be cancelled
+	waitCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	// WaitForOutstandingWork should return with context error when cancelled
+	err = mgr.WaitForOutstandingWork(waitCtx)
+	require.Error(t, err)
+	require.True(t, errors.Is(err, context.DeadlineExceeded))
+
+	mockDB.AssertExpectations(t)
+}
+
+func TestWorkItem_Delete_Success(t *testing.T) {
+	ctx := context.Background()
+	mockDB := &mockWorkQueueDB{}
+
+	workItem := lrdb.WorkQueueClaimRow{
+		ID:             int64(1),
+		Priority:       int32(10),
+		RunnableAt:     time.Now(),
+		OrganizationID: uuid.New(),
+		InstanceNum:    int16(9999),
+		Dateint:        int32(20250815),
+		FrequencyMs:    int32(1000),
+		Signal:         lrdb.SignalEnumMetrics,
+		Tries:          int32(1),
+		Action:         lrdb.ActionEnumCompact,
+		TsRange:        pgtype.Range[pgtype.Timestamptz]{},
+		SlotID:         int32(42),
+	}
+
+	expectedClaimParams := lrdb.WorkQueueClaimParams{
+		WorkerID:    int64(123),
+		Signal:      lrdb.SignalEnumMetrics,
+		Action:      lrdb.ActionEnumCompact,
+		TargetFreqs: []int32{1000},
+		MinPriority: int32(5),
+	}
+
+	expectedDeleteParams := lrdb.WorkQueueDeleteParams{
+		ID:       int64(1),
+		WorkerID: int64(123),
+	}
+
+	mockDB.On("WorkQueueClaim", ctx, expectedClaimParams).Return(workItem, nil)
+	mockDB.On("WorkQueueDelete", mock.Anything, expectedDeleteParams).Return(nil)
+
+	mgr := NewWorkQueueManager(
+		mockDB,
+		int64(123),
+		lrdb.SignalEnumMetrics,
+		lrdb.ActionEnumCompact,
+		[]int32{1000},
+		5,
+	)
+	mgr.Run(ctx)
+
+	time.Sleep(10 * time.Millisecond)
+
+	work, err := mgr.RequestWork(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, work)
+
+	// Delete the work item
+	err = work.Delete()
+	require.NoError(t, err)
+
+	mockDB.AssertExpectations(t)
+}
+
+func TestWorkItem_Delete_DatabaseError(t *testing.T) {
+	ctx := context.Background()
+	mockDB := &mockWorkQueueDB{}
+
+	workItem := lrdb.WorkQueueClaimRow{
+		ID:             int64(1),
+		Priority:       int32(10),
+		RunnableAt:     time.Now(),
+		OrganizationID: uuid.New(),
+		InstanceNum:    int16(9999),
+		Dateint:        int32(20250815),
+		FrequencyMs:    int32(1000),
+		Signal:         lrdb.SignalEnumMetrics,
+		Tries:          int32(1),
+		Action:         lrdb.ActionEnumCompact,
+		TsRange:        pgtype.Range[pgtype.Timestamptz]{},
+		SlotID:         int32(42),
+	}
+
+	expectedDeleteParams := lrdb.WorkQueueDeleteParams{
+		ID:       int64(1),
+		WorkerID: int64(123),
+	}
+
+	mockDB.On("WorkQueueClaim", mock.Anything, mock.Anything).Return(workItem, nil)
+	mockDB.On("WorkQueueDelete", mock.Anything, expectedDeleteParams).Return(errors.New("database error"))
+
+	mgr := NewWorkQueueManager(
+		mockDB,
+		int64(123),
+		lrdb.SignalEnumMetrics,
+		lrdb.ActionEnumCompact,
+		[]int32{1000},
+		5,
+	)
+	mgr.Run(ctx)
+
+	time.Sleep(10 * time.Millisecond)
+
+	work, err := mgr.RequestWork(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, work)
+
+	// Delete should return the database error
+	err = work.Delete()
+	require.Error(t, err)
+	require.Equal(t, "database error", err.Error())
+
+	mockDB.AssertExpectations(t)
+}
+
+func TestWorkItem_Delete_AlreadyClosed(t *testing.T) {
+	ctx := context.Background()
+	mockDB := &mockWorkQueueDB{}
+
+	workItem := lrdb.WorkQueueClaimRow{
+		ID:             int64(1),
+		Priority:       int32(10),
+		RunnableAt:     time.Now(),
+		OrganizationID: uuid.New(),
+		InstanceNum:    int16(9999),
+		Dateint:        int32(20250815),
+		FrequencyMs:    int32(1000),
+		Signal:         lrdb.SignalEnumMetrics,
+		Tries:          int32(1),
+		Action:         lrdb.ActionEnumCompact,
+		TsRange:        pgtype.Range[pgtype.Timestamptz]{},
+		SlotID:         int32(42),
+	}
+
+	mockDB.On("WorkQueueClaim", mock.Anything, mock.Anything).Return(workItem, nil)
+	mockDB.On("WorkQueueComplete", mock.Anything, mock.Anything).Return(nil)
+
+	mgr := NewWorkQueueManager(
+		mockDB,
+		int64(123),
+		lrdb.SignalEnumMetrics,
+		lrdb.ActionEnumCompact,
+		[]int32{1000},
+		5,
+	)
+	mgr.Run(ctx)
+
+	time.Sleep(10 * time.Millisecond)
+
+	work, err := mgr.RequestWork(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, work)
+
+	// Complete the work item first
+	err = work.Complete()
+	require.NoError(t, err)
+
+	// Delete after complete should be a no-op
+	err = work.Delete()
+	require.NoError(t, err)
+
+	mockDB.AssertExpectations(t)
+}
+
+func TestWorkQueueManager_WaitForOutstandingWork_WithDeletedWork(t *testing.T) {
+	ctx := context.Background()
+	mockDB := &mockWorkQueueDB{}
+
+	workItem := lrdb.WorkQueueClaimRow{
+		ID:             int64(1),
+		Priority:       int32(10),
+		RunnableAt:     time.Now(),
+		OrganizationID: uuid.New(),
+		InstanceNum:    int16(9999),
+		Dateint:        int32(20250815),
+		FrequencyMs:    int32(1000),
+		Signal:         lrdb.SignalEnumMetrics,
+		Tries:          int32(1),
+		Action:         lrdb.ActionEnumCompact,
+		TsRange:        pgtype.Range[pgtype.Timestamptz]{},
+		SlotID:         int32(42),
+	}
+
+	mockDB.On("WorkQueueClaim", mock.Anything, mock.Anything).Return(workItem, nil)
+	mockDB.On("WorkQueueDelete", mock.Anything, mock.Anything).Return(nil)
+
+	mgr := NewWorkQueueManager(
+		mockDB,
+		int64(123),
+		lrdb.SignalEnumMetrics,
+		lrdb.ActionEnumCompact,
+		[]int32{1000},
+		5,
+	)
+	mgr.Run(ctx)
+
+	time.Sleep(10 * time.Millisecond)
+
+	// Get work item - this should increment outstanding work counter
+	work, err := mgr.RequestWork(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, work)
+
+	// Start waiting for outstanding work in a goroutine
+	done := make(chan error, 1)
+	go func() {
+		waitCtx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		defer cancel()
+		done <- mgr.WaitForOutstandingWork(waitCtx)
+	}()
+
+	// Should not complete immediately since work is outstanding
+	select {
+	case <-done:
+		t.Fatal("WaitForOutstandingWork returned too early")
+	case <-time.After(50 * time.Millisecond):
+		// Good, it's waiting
+	}
+
+	// Delete the work item (should also decrement counter)
+	err = work.Delete()
+	require.NoError(t, err)
+
+	// Now WaitForOutstandingWork should return
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("WaitForOutstandingWork did not return after work deletion")
+	}
+
+	mockDB.AssertExpectations(t)
+}
+
+func TestWorkQueueManager_WaitForOutstandingWork_WithFailedWork(t *testing.T) {
+	ctx := context.Background()
+	mockDB := &mockWorkQueueDB{}
+
+	workItem := lrdb.WorkQueueClaimRow{
+		ID:             int64(1),
+		Priority:       int32(10),
+		RunnableAt:     time.Now(),
+		OrganizationID: uuid.New(),
+		InstanceNum:    int16(9999),
+		Dateint:        int32(20250815),
+		FrequencyMs:    int32(1000),
+		Signal:         lrdb.SignalEnumMetrics,
+		Tries:          int32(1),
+		Action:         lrdb.ActionEnumCompact,
+		TsRange:        pgtype.Range[pgtype.Timestamptz]{},
+		SlotID:         int32(42),
+	}
+
+	mockDB.On("WorkQueueClaim", mock.Anything, mock.Anything).Return(workItem, nil)
+	mockDB.On("WorkQueueFail", mock.Anything, mock.Anything).Return(nil)
+
+	mgr := NewWorkQueueManager(
+		mockDB,
+		int64(123),
+		lrdb.SignalEnumMetrics,
+		lrdb.ActionEnumCompact,
+		[]int32{1000},
+		5,
+	)
+	mgr.Run(ctx)
+
+	time.Sleep(10 * time.Millisecond)
+
+	// Get work item - this should increment outstanding work counter
+	work, err := mgr.RequestWork(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, work)
+
+	// Start waiting for outstanding work in a goroutine
+	done := make(chan error, 1)
+	go func() {
+		waitCtx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		defer cancel()
+		done <- mgr.WaitForOutstandingWork(waitCtx)
+	}()
+
+	// Should not complete immediately since work is outstanding
+	select {
+	case <-done:
+		t.Fatal("WaitForOutstandingWork returned too early")
+	case <-time.After(50 * time.Millisecond):
+		// Good, it's waiting
+	}
+
+	// Fail the work item (should also decrement counter)
+	err = work.Fail()
+	require.NoError(t, err)
+
+	// Now WaitForOutstandingWork should return
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("WaitForOutstandingWork did not return after work failure")
+	}
+
+	mockDB.AssertExpectations(t)
 }

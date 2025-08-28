@@ -18,6 +18,9 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
+
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 )
@@ -25,7 +28,9 @@ import (
 // ProtoTracesReader reads rows from OpenTelemetry protobuf traces format.
 // Returns raw OTEL trace data without signal-specific transformations.
 type ProtoTracesReader struct {
-	closed bool
+	closed    bool
+	rowCount  int64
+	batchSize int
 
 	// Streaming iterator state for traces
 	traces        *ptrace.Traces
@@ -36,8 +41,14 @@ type ProtoTracesReader struct {
 
 // NewProtoTracesReader creates a new ProtoTracesReader for the given io.Reader.
 // The caller is responsible for closing the underlying reader.
-func NewProtoTracesReader(reader io.Reader) (*ProtoTracesReader, error) {
-	protoReader := &ProtoTracesReader{}
+func NewProtoTracesReader(reader io.Reader, batchSize int) (*ProtoTracesReader, error) {
+	if batchSize <= 0 {
+		batchSize = 1000
+	}
+
+	protoReader := &ProtoTracesReader{
+		batchSize: batchSize,
+	}
 
 	traces, err := parseProtoToOtelTraces(reader)
 	if err != nil {
@@ -48,34 +59,43 @@ func NewProtoTracesReader(reader io.Reader) (*ProtoTracesReader, error) {
 	return protoReader, nil
 }
 
-// Read populates the provided slice with as many rows as possible.
-func (r *ProtoTracesReader) Read(rows []Row) (int, error) {
+// Next returns the next batch of rows from the OTEL traces.
+func (r *ProtoTracesReader) Next() (*Batch, error) {
 	if r.closed {
-		return 0, fmt.Errorf("reader is closed")
+		return nil, fmt.Errorf("reader is closed")
 	}
 
-	if len(rows) == 0 {
-		return 0, nil
-	}
+	batch := pipeline.GetBatch()
 
-	n := 0
-	for n < len(rows) {
-		row, err := r.getTraceRow()
+	for batch.Len() < r.batchSize {
+		sourceRow, err := r.getTraceRow()
 		if err != nil {
-			return n, err
+			if err == io.EOF {
+				if batch.Len() == 0 {
+					pipeline.ReturnBatch(batch)
+					return nil, io.EOF
+				}
+				break
+			}
+			pipeline.ReturnBatch(batch)
+			return nil, err
 		}
 
-		resetRow(&rows[n])
-
-		// Copy data to Row
-		for k, v := range row {
-			rows[n][k] = v
+		// Copy to batch's reusable Row map
+		row := batch.AddRow()
+		for k, v := range sourceRow {
+			row[k] = v
 		}
-
-		n++
 	}
 
-	return n, nil
+	// Update row count with successfully read rows
+	if batch.Len() > 0 {
+		r.rowCount += int64(batch.Len())
+		return batch, nil
+	}
+
+	pipeline.ReturnBatch(batch)
+	return nil, io.EOF
 }
 
 // getTraceRow handles reading the next trace row.
@@ -123,19 +143,22 @@ func (r *ProtoTracesReader) buildSpanRow(rs ptrace.ResourceSpans, ss ptrace.Scop
 
 	// Add resource attributes with prefix
 	rs.Resource().Attributes().Range(func(name string, v pcommon.Value) bool {
-		ret["resource."+name] = v.AsString()
+		value := v.AsString()
+		ret[prefixAttribute(name, "resource")] = value
 		return true
 	})
 
 	// Add scope attributes with prefix
 	ss.Scope().Attributes().Range(func(name string, v pcommon.Value) bool {
-		ret["scope."+name] = v.AsString()
+		value := v.AsString()
+		ret[prefixAttribute(name, "scope")] = value
 		return true
 	})
 
 	// Add span attributes with prefix
 	span.Attributes().Range(func(name string, v pcommon.Value) bool {
-		ret["span."+name] = v.AsString()
+		value := v.AsString()
+		ret[prefixAttribute(name, "span")] = value
 		return true
 	})
 
@@ -155,7 +178,11 @@ func (r *ProtoTracesReader) buildSpanRow(rs ptrace.ResourceSpans, ss ptrace.Scop
 
 // processRow applies any processing to a row.
 func (r *ProtoTracesReader) processRow(row map[string]any) (Row, error) {
-	return Row(row), nil
+	result := make(Row)
+	for k, v := range row {
+		result[wkk.NewRowKey(k)] = v
+	}
+	return result, nil
 }
 
 // Close closes the reader and releases resources.
@@ -169,6 +196,11 @@ func (r *ProtoTracesReader) Close() error {
 	r.traces = nil
 
 	return nil
+}
+
+// TotalRowsReturned returns the total number of rows that have been successfully returned via Next().
+func (r *ProtoTracesReader) TotalRowsReturned() int64 {
+	return r.rowCount
 }
 
 func parseProtoToOtelTraces(reader io.Reader) (*ptrace.Traces, error) {

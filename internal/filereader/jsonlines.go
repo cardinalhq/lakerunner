@@ -20,46 +20,56 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/cardinalhq/lakerunner/internal/constants"
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
-// JSONLinesReader reads rows from a JSON lines stream.
+// JSONLinesReader reads rows from a JSON lines stream using pipeline semantics.
 type JSONLinesReader struct {
-	scanner  *bufio.Scanner
-	rowIndex int
-	closed   bool
+	scanner   *bufio.Scanner
+	rowIndex  int
+	closed    bool
+	totalRows int64
+	closer    io.Closer
+	batchSize int
 }
 
-// NewJSONLinesReader creates a new JSONLinesReader for the given io.Reader.
-// The caller is responsible for closing the underlying reader.
-func NewJSONLinesReader(reader io.Reader) (*JSONLinesReader, error) {
+// NewJSONLinesReader creates a new JSONLinesReader for the given io.ReadCloser.
+// The reader takes ownership of the closer and will close it when Close is called.
+func NewJSONLinesReader(reader io.ReadCloser, batchSize int) (*JSONLinesReader, error) {
 	scanner := bufio.NewScanner(reader)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024) // 1MB max line size
+	scanner.Buffer(make([]byte, 0, 64*1024), constants.MaxLineSizeBytes)
+
+	if batchSize <= 0 {
+		batchSize = 1000 // Default batch size
+	}
 
 	return &JSONLinesReader{
-		scanner:  scanner,
-		rowIndex: 0,
+		scanner:   scanner,
+		rowIndex:  0,
+		closer:    reader,
+		batchSize: batchSize,
 	}, nil
 }
 
-// Read populates the provided slice with as many rows as possible.
-func (r *JSONLinesReader) Read(rows []Row) (int, error) {
+func (r *JSONLinesReader) Next() (*Batch, error) {
 	if r.closed {
-		return 0, fmt.Errorf("reader is closed")
+		return nil, io.EOF
 	}
 
-	if len(rows) == 0 {
-		return 0, nil
-	}
+	batch := pipeline.GetBatch()
 
-	n := 0
-	for n < len(rows) {
+	for batch.Len() < r.batchSize {
 		if !r.scanner.Scan() {
 			// Check for scanner error
 			if err := r.scanner.Err(); err != nil {
-				return n, fmt.Errorf("scanner error reading at line %d: %w", r.rowIndex+1, err)
+				pipeline.ReturnBatch(batch)
+				return nil, fmt.Errorf("scanner error reading at line %d: %w", r.rowIndex+1, err)
 			}
-			// End of file
-			return n, io.EOF
+			// End of file - return what we have
+			break
 		}
 
 		line := strings.TrimSpace(r.scanner.Text())
@@ -70,33 +80,47 @@ func (r *JSONLinesReader) Read(rows []Row) (int, error) {
 			continue
 		}
 
-		resetRow(&rows[n])
-
-		// Parse JSON
-		var rowData map[string]any
-		if err := json.Unmarshal([]byte(line), &rowData); err != nil {
-			return n, fmt.Errorf("failed to parse JSON at line %d: %w", r.rowIndex, err)
+		// Parse JSON into string-keyed map first
+		var jsonRow map[string]any
+		if err := json.Unmarshal([]byte(line), &jsonRow); err != nil {
+			pipeline.ReturnBatch(batch)
+			return nil, fmt.Errorf("JSON parse error at line %d: %w", r.rowIndex, err)
 		}
 
-		// Copy data to Row
-		for k, v := range rowData {
-			rows[n][k] = v
+		// Convert to Row with RowKey keys
+		batchRow := batch.AddRow()
+		for k, v := range jsonRow {
+			batchRow[wkk.NewRowKey(k)] = v
 		}
-
-		n++
 	}
 
-	return n, nil
+	if batch.Len() == 0 {
+		r.closed = true
+		pipeline.ReturnBatch(batch)
+		return nil, io.EOF
+	}
+
+	r.totalRows += int64(batch.Len())
+	return batch, nil
 }
 
-// Close closes the reader.
-// The caller is responsible for closing the underlying reader.
+// Close closes the reader and the underlying io.ReadCloser.
 func (r *JSONLinesReader) Close() error {
 	if r.closed {
 		return nil
 	}
 	r.closed = true
 
+	var err error
+	if r.closer != nil {
+		err = r.closer.Close()
+		r.closer = nil
+	}
 	r.scanner = nil
-	return nil
+	return err
+}
+
+// TotalRowsReturned returns the total number of rows that have been successfully returned via Next().
+func (r *JSONLinesReader) TotalRowsReturned() int64 {
+	return r.totalRows
 }
