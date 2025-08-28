@@ -244,12 +244,14 @@ func TestIngestProtoMetrics_ExponentialHistogram(t *testing.T) {
 
 	batch, err := reader.Next()
 
-	// Exponential histograms are now dropped, so expect EOF
-	assert.Equal(t, io.EOF, err)
-	assert.Nil(t, batch)
+	// Exponential histogram processing is now implemented (though conversion is stubbed)
+	// Zero count creates valid data, so expect successful batch
+	assert.NoError(t, err)
+	assert.NotNil(t, batch)
+	assert.Equal(t, 1, batch.Len())
 
-	// This test verifies that exponential histograms are properly dropped
-	// to avoid "Empty sketch without valid rollup_sum" errors
+	// This test verifies that exponential histograms are processed through the conversion pipeline
+	// Even with stubbed conversion, zero count creates valid sketch data
 }
 
 // Test parsing function directly with invalid data

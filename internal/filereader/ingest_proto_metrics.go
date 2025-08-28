@@ -17,12 +17,15 @@ package filereader
 import (
 	"fmt"
 	"io"
+	"maps"
+	"math"
 
 	"github.com/DataDog/sketches-go/ddsketch"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 
 	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/internal/metricmath"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
@@ -95,9 +98,7 @@ func (r *IngestProtoMetricsReader) Next() (*Batch, error) {
 		}
 
 		batchRow := batch.AddRow()
-		for k, v := range row {
-			batchRow[k] = v
-		}
+		maps.Copy(batchRow, row)
 	}
 
 	// Update row count with successfully read rows
@@ -128,32 +129,26 @@ func (r *IngestProtoMetricsReader) getMetricRow(row Row) error {
 				datapointCount := r.getDatapointCount(metric)
 
 				if r.datapointIndex < datapointCount {
-					// Build row for this datapoint
 					if err := r.buildDatapointRow(row, rm, sm, metric, r.datapointIndex); err != nil {
-						// Advance to next datapoint and continue on error
 						r.datapointIndex++
 						// TODO: Add counter to track dropped datapoints
 						continue
 					}
 
-					// Advance to next datapoint
 					r.datapointIndex++
 
-					return r.processRow(row)
+					return nil
 				}
 
-				// Move to next metric, reset datapoint index
 				r.metricIndex++
 				r.datapointIndex = 0
 			}
 
-			// Move to next scope, reset metric and datapoint indices
 			r.scopeIndex++
 			r.metricIndex = 0
 			r.datapointIndex = 0
 		}
 
-		// Move to next resource, reset scope, metric and datapoint indices
 		r.resourceIndex++
 		r.scopeIndex = 0
 		r.metricIndex = 0
@@ -236,9 +231,10 @@ func (r *IngestProtoMetricsReader) buildDatapointRow(row Row, rm pmetric.Resourc
 			return fmt.Errorf("failed to process histogram datapoint: %w", err)
 		}
 	case pmetric.MetricTypeExponentialHistogram:
-		// TODO: Implement proper exponential histogram handling with sketches and rollup fields
-		// For now, drop these data points to avoid "Empty sketch without valid rollup_sum" errors
-		return fmt.Errorf("exponential histograms not yet implemented")
+		dp := metric.ExponentialHistogram().DataPoints().At(datapointIndex)
+		if err := r.addExponentialHistogramDatapointFields(row, dp); err != nil {
+			return fmt.Errorf("failed to process exponential histogram datapoint: %w", err)
+		}
 	case pmetric.MetricTypeSummary:
 		// TODO: Implement proper summary handling with sketches and rollup fields
 		// For now, drop these data points silently to avoid downstream processing issues
@@ -288,8 +284,193 @@ func (r *IngestProtoMetricsReader) addNumberDatapointFields(ret Row, dp pmetric.
 	ret[wkk.RowKeyRollupP99] = value
 }
 
-// addHistogramDatapointFields adds fields from a HistogramDataPoint to the row.
 func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ret Row, dp pmetric.HistogramDataPoint) error {
+	// 0) Bail if there are no counts at all
+	hasCounts := false
+	for i := 0; i < dp.BucketCounts().Len(); i++ {
+		if dp.BucketCounts().At(i) > 0 {
+			hasCounts = true
+			break
+		}
+	}
+	if !hasCounts {
+		return fmt.Errorf("dropping histogram datapoint with no counts")
+	}
+
+	// 1) Attributes
+	dp.Attributes().Range(func(name string, v pcommon.Value) bool {
+		ret[wkk.NewRowKey(prefixAttribute(name, "metric"))] = v.AsString()
+		return true
+	})
+
+	// 2) Timestamps
+	if dp.Timestamp() != 0 {
+		ret[wkk.RowKeyCTimestamp] = dp.Timestamp().AsTime().UnixMilli()
+	} else {
+		ret[wkk.RowKeyCTimestamp] = dp.StartTimestamp().AsTime().UnixMilli()
+	}
+	ret[wkk.NewRowKey("start_timestamp")] = dp.StartTimestamp().AsTime().UnixMilli()
+
+	// 3) Build the sketch
+	const alpha = 0.01
+	sketch, err := ddsketch.NewDefaultDDSketch(alpha)
+	if err != nil {
+		return fmt.Errorf("failed to create sketch for histogram: %w", err)
+	}
+
+	// Gather OTel explicit bounds & counts
+	m := dp.ExplicitBounds().Len()
+	n := dp.BucketCounts().Len() // usually m+1
+	if n == 0 {
+		return fmt.Errorf("dropping histogram datapoint with no bucket counts")
+	}
+	// Note: m == 0 is valid (single bucket from -inf to +inf)
+
+	bounds := make([]float64, m)
+	for i := range m {
+		bounds[i] = dp.ExplicitBounds().At(i)
+	}
+	counts := make([]uint64, n)
+	for i := range n {
+		counts[i] = dp.BucketCounts().At(i)
+	}
+
+	// 3a) Import finite buckets via ImportStandardHistogram.
+	// OTel buckets: (-inf,b0], (b0,b1], ... (b[m-2],b[m-1]], (b[m-1], +inf)
+	// Handle special case: single bucket spanning -inf to +inf (no explicit bounds)
+	if m == 0 && n == 1 {
+		// Single bucket from -inf to +inf, add all counts at zero (or sum/count average if available)
+		totalCount := counts[0]
+		if totalCount > 0 {
+			// Use a representative value - zero is reasonable for a single bucket
+			// or better yet, use sum/count if we have a sum available
+			rep := 0.0
+			if dp.HasSum() && totalCount > 0 {
+				rep = dp.Sum() / float64(totalCount)
+			}
+			if err := sketch.AddWithCount(rep, float64(totalCount)); err != nil {
+				return fmt.Errorf("failed to add single bucket to sketch: %w", err)
+			}
+		}
+	} else {
+		// Multi-bucket case: process finite buckets and handle underflow/overflow
+		// Our ImportStandardHistogram expects: (lo,cutoffs[0]], (cutoffs[0],cutoffs[1]], ...
+		// So we feed it starting from b0 as the first "lo".
+		if m >= 2 && n >= 2 {
+			lower := bounds[0]
+			// finite cutoffs are bounds[1:] ; finite counts are bucketCounts[1:m]
+			// (they correspond to (b0,b1], ... , (b[m-2], b[m-1]])
+			finiteCutoffs := make([]float64, 0, max(0, m-1))
+			finiteCounts := make([]uint64, 0, max(0, m-1))
+			for i := 1; i < m; i++ {
+				finiteCutoffs = append(finiteCutoffs, bounds[i])
+			}
+			// counts indices 1..m-1 inclusive (length m-1) — guard n
+			for i := 1; i < m && i < n; i++ {
+				finiteCounts = append(finiteCounts, counts[i])
+			}
+
+			if len(finiteCutoffs) == len(finiteCounts) && len(finiteCounts) > 0 {
+				if err := metricmath.ConvertHistogramToValues(
+					sketch,
+					lower,
+					finiteCutoffs,
+					finiteCounts,
+					alpha,
+					nil, // per-bin sums unknown for OTel explicit hist
+				); err != nil {
+					return fmt.Errorf("failed to import finite histogram buckets: %w", err)
+				}
+			}
+		}
+
+		// 3b) Handle underflow (-inf, b0] and overflow (b[m-1], +inf) by adding
+		// single representatives near the edges. Use γ so this plays nicely with DDSketch mapping.
+		if m > 0 {
+			gamma := (1 + alpha) / (1 - alpha)
+			underflow := counts[0]
+			overflow := uint64(0)
+			if n == m+1 {
+				overflow = counts[n-1]
+			} else if n > m+1 {
+				// If an exporter supplied extra buckets, treat the last as overflow.
+				overflow = counts[n-1]
+			}
+
+			if underflow > 0 {
+				// Representative just "one DDSketch half-bucket" below b0 on a log scale if b0>0.
+				// Otherwise, place it slightly below b0 linearly.
+				rep := bounds[0]
+				if rep > 0 {
+					rep = rep / math.Sqrt(gamma)
+				} else {
+					// Fall back to a tiny linear step down if non-positive
+					// (choose step as 1% of |b0| or 1.0 if b0==0).
+					step := math.Max(1.0, math.Abs(rep)*0.01)
+					rep = rep - step
+				}
+				if err := sketch.AddWithCount(rep, float64(underflow)); err != nil {
+					return fmt.Errorf("failed to add underflow to sketch: %w", err)
+				}
+			}
+
+			if overflow > 0 {
+				last := bounds[m-1]
+				rep := last
+				if rep > 0 {
+					rep = rep * math.Sqrt(gamma)
+				} else {
+					// If last bound is non-positive, step upward linearly.
+					step := math.Max(1.0, math.Abs(rep)*0.01)
+					rep = rep + step
+				}
+				if err := sketch.AddWithCount(rep, float64(overflow)); err != nil {
+					return fmt.Errorf("failed to add overflow to sketch: %w", err)
+				}
+			}
+		}
+	}
+
+	// 4) Rollup statistics from the (now non-empty) sketch
+	maxvalue, err := sketch.GetMaxValue()
+	if err != nil {
+		return fmt.Errorf("failed to get max value from non-empty sketch: %w", err)
+	}
+	minvalue, err := sketch.GetMinValue()
+	if err != nil {
+		return fmt.Errorf("failed to get min value from non-empty sketch: %w", err)
+	}
+	quantiles, err := sketch.GetValuesAtQuantiles([]float64{0.25, 0.5, 0.75, 0.90, 0.95, 0.99})
+	if err != nil {
+		return fmt.Errorf("failed to get quantiles from non-empty sketch: %w", err)
+	}
+	if len(quantiles) < 6 {
+		return fmt.Errorf("expected 6 quantiles, got %d", len(quantiles))
+	}
+
+	count := sketch.GetCount()
+	sum := sketch.GetSum()
+	avg := sum / count
+
+	ret[wkk.RowKeyRollupAvg] = avg
+	ret[wkk.RowKeyRollupMax] = maxvalue
+	ret[wkk.RowKeyRollupMin] = minvalue
+	ret[wkk.RowKeyRollupCount] = count
+	ret[wkk.RowKeyRollupSum] = sum
+	ret[wkk.RowKeyRollupP25] = quantiles[0]
+	ret[wkk.RowKeyRollupP50] = quantiles[1]
+	ret[wkk.RowKeyRollupP75] = quantiles[2]
+	ret[wkk.RowKeyRollupP90] = quantiles[3]
+	ret[wkk.RowKeyRollupP95] = quantiles[4]
+	ret[wkk.RowKeyRollupP99] = quantiles[5]
+
+	// 5) Encode the sketch
+	ret[wkk.RowKeySketch] = helpers.EncodeSketch(sketch)
+	return nil
+}
+
+// addExponentialHistogramDatapointFields adds fields from an ExponentialHistogramDataPoint to the row.
+func (r *IngestProtoMetricsReader) addExponentialHistogramDatapointFields(ret Row, dp pmetric.ExponentialHistogramDataPoint) error {
 	// Add datapoint attributes
 	dp.Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
@@ -305,19 +486,31 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ret Row, dp pmetr
 	}
 	ret[wkk.NewRowKey("start_timestamp")] = dp.StartTimestamp().AsTime().UnixMilli()
 
-	// Convert bucket data to float64 slices for processing
-	bucketCounts := make([]float64, dp.BucketCounts().Len())
-	for i := 0; i < dp.BucketCounts().Len(); i++ {
-		bucketCounts[i] = float64(dp.BucketCounts().At(i))
+	// Extract exponential histogram data
+	var positiveBuckets, negativeBuckets []uint64
+	if dp.Positive().BucketCounts().Len() > 0 {
+		positiveBuckets = make([]uint64, dp.Positive().BucketCounts().Len())
+		for i := 0; i < dp.Positive().BucketCounts().Len(); i++ {
+			positiveBuckets[i] = dp.Positive().BucketCounts().At(i)
+		}
+	}
+	if dp.Negative().BucketCounts().Len() > 0 {
+		negativeBuckets = make([]uint64, dp.Negative().BucketCounts().Len())
+		for i := 0; i < dp.Negative().BucketCounts().Len(); i++ {
+			negativeBuckets[i] = dp.Negative().BucketCounts().At(i)
+		}
 	}
 
-	explicitBounds := make([]float64, dp.ExplicitBounds().Len())
-	for i := 0; i < dp.ExplicitBounds().Len(); i++ {
-		explicitBounds[i] = dp.ExplicitBounds().At(i)
+	// Convert exponential histogram to value/count pairs
+	expHist := metricmath.ExpHist{
+		Scale:     dp.Scale(),
+		ZeroCount: dp.ZeroCount(),
+		PosOffset: dp.Positive().Offset(),
+		PosCounts: positiveBuckets,
+		NegOffset: dp.Negative().Offset(),
+		NegCounts: negativeBuckets,
 	}
-
-	// Use handleHistogram to convert buckets to value/count pairs
-	counts, values := r.handleHistogram(bucketCounts, explicitBounds)
+	counts, values := metricmath.ConvertExponentialHistogramToValues(expHist)
 
 	// Check if histogram has any data - if not, drop this datapoint
 	hasData := false
@@ -329,14 +522,14 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ret Row, dp pmetr
 	}
 
 	if !hasData {
-		// Drop histogram datapoints with no data - histograms must always have sketches with data
-		return fmt.Errorf("dropping histogram datapoint with no data - histograms must have counts")
+		// Drop exponential histogram datapoints with no data
+		return fmt.Errorf("dropping exponential histogram datapoint with no data")
 	}
 
-	// Create sketch for histogram (only for histograms with data)
+	// Create sketch for exponential histogram (only for histograms with data)
 	sketch, err := ddsketch.NewDefaultDDSketch(0.01)
 	if err != nil {
-		return fmt.Errorf("failed to create sketch for histogram: %w", err)
+		return fmt.Errorf("failed to create sketch for exponential histogram: %w", err)
 	}
 
 	// Add histogram data to sketch
@@ -387,11 +580,6 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ret Row, dp pmetr
 	return nil
 }
 
-// processRow applies any processing to a row.
-func (r *IngestProtoMetricsReader) processRow(row Row) error {
-	return nil
-}
-
 // Close closes the reader and releases resources.
 func (r *IngestProtoMetricsReader) Close() error {
 	if r.closed {
@@ -424,57 +612,6 @@ func parseProtoToOtelMetrics(reader io.Reader) (*pmetric.Metrics, error) {
 	}
 
 	return &metrics, nil
-}
-
-// handleHistogram fills the sketch with representative values for each bucket count.
-// If bucketCounts[i] > 0, it inserts the midpoint of the bucket that bucketCounts[i] represents.
-func (r *IngestProtoMetricsReader) handleHistogram(bucketCounts []float64, bucketBounds []float64) (counts, values []float64) {
-	const maxTrackableValue = 1e9
-
-	counts = []float64{}
-	values = []float64{}
-
-	if len(bucketCounts) == 0 {
-		return counts, values
-	}
-	if len(bucketCounts) > len(bucketBounds)+1 {
-		return counts, values
-	}
-
-	for i, count := range bucketCounts {
-		if count <= 0 {
-			continue
-		}
-		var value float64
-		if i < len(bucketBounds) {
-			var lowerBound float64
-			if i == 0 {
-				lowerBound = 1e-10 // very small lower bound
-			} else {
-				lowerBound = bucketBounds[i-1]
-			}
-			upperBound := bucketBounds[i]
-			value = (lowerBound + upperBound) / 2.0
-		} else {
-			// Overflow bucket - use a reasonable upper bound
-			if len(bucketBounds) > 0 {
-				boundValue := bucketBounds[len(bucketBounds)-1] + 1
-				if boundValue < float64(maxTrackableValue) {
-					value = boundValue
-				} else {
-					value = float64(maxTrackableValue)
-				}
-			} else {
-				// No bounds at all - use a default mid-range value
-				value = 1.0
-			}
-		}
-
-		counts = append(counts, count)
-		values = append(values, value)
-	}
-
-	return counts, values
 }
 
 // GetOTELMetrics implements the OTELMetricsProvider interface.
