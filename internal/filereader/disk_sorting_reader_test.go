@@ -512,8 +512,8 @@ func TestWriteAndIndexAllRowsDoesNotLeakBatches(t *testing.T) {
 	putsUsed := finalStats.Puts - initialStats.Puts
 
 	// Every GetBatch() call should have a matching ReturnBatch() call
-	assert.Equal(t, getsUsed, putsUsed, 
-		"every GetBatch() should have matching ReturnBatch() - gets: %d, puts: %d", 
+	assert.Equal(t, getsUsed, putsUsed,
+		"every GetBatch() should have matching ReturnBatch() - gets: %d, puts: %d",
 		getsUsed, putsUsed)
 
 	// Sanity check: we should have used some batches during processing
