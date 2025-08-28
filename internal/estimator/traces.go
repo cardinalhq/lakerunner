@@ -25,30 +25,30 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-type LogQuerier interface {
-	LogSegEstimator(ctx context.Context, params lrdb.LogSegEstimatorParams) ([]lrdb.LogSegEstimatorRow, error)
+type TraceQuerier interface {
+	TraceSegEstimator(ctx context.Context, params lrdb.TraceSegEstimatorParams) ([]lrdb.TraceSegEstimatorRow, error)
 }
 
-type LogEstimator interface {
+type TraceEstimator interface {
 	Get(organizationID uuid.UUID, instanceNum int16) int64
 }
 
-type logEstimatorKey struct {
+type traceEstimatorKey struct {
 	OrganizationID uuid.UUID
 }
 
-type logEstimator struct {
+type traceEstimator struct {
 	sync.RWMutex
-	currentEstimates map[logEstimatorKey]int64
+	currentEstimates map[traceEstimatorKey]int64
 	updateEvery      time.Duration
 	lookback         time.Duration
 	timeout          time.Duration
 	defaultGuess     int64
 }
 
-func NewLogEstimator(doneCtx context.Context, querier EstimationQuerier) (LogEstimator, error) {
-	e := &logEstimator{
-		currentEstimates: map[logEstimatorKey]int64{},
+func NewTraceEstimator(doneCtx context.Context, querier EstimationQuerier) (TraceEstimator, error) {
+	e := &traceEstimator{
+		currentEstimates: map[traceEstimatorKey]int64{},
 		updateEvery:      30 * time.Minute,
 		lookback:         2 * time.Hour,
 		timeout:          30 * time.Second,
@@ -61,12 +61,12 @@ func NewLogEstimator(doneCtx context.Context, querier EstimationQuerier) (LogEst
 	return e, nil
 }
 
-func (e *logEstimator) Get(org uuid.UUID, inst int16) int64 {
+func (e *traceEstimator) Get(org uuid.UUID, inst int16) int64 {
 	e.RLock()
 	snap := e.currentEstimates
 	e.RUnlock()
 
-	key := logEstimatorKey{org}
+	key := traceEstimatorKey{org}
 
 	// 1. Try exact match for this organization.
 	if est, ok := snap[key]; ok && est > 0 {
@@ -75,7 +75,7 @@ func (e *logEstimator) Get(org uuid.UUID, inst int16) int64 {
 
 	// avg runs over all entries in the snapshot, selecting only those
 	// that match the filter. Non-positive estimates are ignored entirely.
-	avg := func(filter func(k logEstimatorKey) bool) (int64, bool) {
+	avg := func(filter func(k traceEstimatorKey) bool) (int64, bool) {
 		var sum, n int64
 		for k, v := range snap {
 			if filter(k) && v > 0 {
@@ -90,14 +90,14 @@ func (e *logEstimator) Get(org uuid.UUID, inst int16) int64 {
 	}
 
 	// 2. Try all entries for the same organization, across ANY instance number.
-	if a, ok := avg(func(k logEstimatorKey) bool {
+	if a, ok := avg(func(k traceEstimatorKey) bool {
 		return k.OrganizationID == org
 	}); ok {
 		return a
 	}
 
 	// 3. Try all entries in the snapshot, regardless of organization or instance.
-	if a, ok := avg(func(_ logEstimatorKey) bool { return true }); ok {
+	if a, ok := avg(func(_ traceEstimatorKey) bool { return true }); ok {
 		return a
 	}
 
@@ -105,46 +105,46 @@ func (e *logEstimator) Get(org uuid.UUID, inst int16) int64 {
 	return e.defaultGuess
 }
 
-func (e *logEstimator) updateEstimates(parent context.Context, querier EstimationQuerier) error {
+func (e *traceEstimator) updateEstimates(parent context.Context, querier EstimationQuerier) error {
 	ctx, cancel := context.WithTimeout(parent, e.timeout)
 	defer cancel()
 
 	now := time.Now().UTC()
 	low := now.Add(-e.lookback)
 
-	lp := lrdb.LogSegEstimatorParams{
+	tp := lrdb.TraceSegEstimatorParams{
 		DateintLow:  dateint(low),
 		DateintHigh: dateint(now),
 		MsLow:       low.UnixMilli(),
 		MsHigh:      now.UnixMilli(),
 	}
-	logRows, err := querier.LogSegEstimator(ctx, lp)
+	traceRows, err := querier.TraceSegEstimator(ctx, tp)
 	if err != nil {
-		slog.Warn("LogSegEstimator failed", "error", err)
+		slog.Warn("TraceSegEstimator failed", "error", err)
 		return nil
 	}
 
-	if len(logRows) == 0 {
-		slog.Warn("no log estimates found in database, will keep trying")
+	if len(traceRows) == 0 {
+		slog.Warn("no trace estimates found in database, will keep trying")
 		return nil
 	}
 
 	// Build new map with only positive estimates.
-	next := make(map[logEstimatorKey]int64, len(logRows))
+	next := make(map[traceEstimatorKey]int64, len(traceRows))
 	var kept, dropped int
 
-	for _, r := range logRows {
+	for _, r := range traceRows {
 		if r.EstimatedRecords <= 0 {
 			dropped++
-			slog.Warn("dropping non-positive log estimate", "org", r.OrganizationID, "est", r.EstimatedRecords)
+			slog.Warn("dropping non-positive trace estimate", "org", r.OrganizationID, "est", r.EstimatedRecords)
 			continue
 		}
-		next[logEstimatorKey{r.OrganizationID}] = r.EstimatedRecords
+		next[traceEstimatorKey{r.OrganizationID}] = r.EstimatedRecords
 		kept++
 	}
 
 	if kept == 0 {
-		slog.Warn("all log estimates were non-positive; keeping previous snapshot", "dropped", dropped)
+		slog.Warn("all trace estimates were non-positive; keeping previous snapshot", "dropped", dropped)
 		return nil
 	}
 

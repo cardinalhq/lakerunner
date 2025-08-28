@@ -53,7 +53,7 @@ func NewMetricEstimator(doneCtx context.Context, querier EstimationQuerier) (Met
 	e := &metricEstimator{
 		currentEstimates: map[metricEstimatorKey]int64{},
 		updateEvery:      30 * time.Minute,
-		lookback:         6 * time.Hour,
+		lookback:         2 * time.Hour,
 		timeout:          30 * time.Second,
 		defaultGuess:     40_000,
 	}

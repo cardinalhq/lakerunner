@@ -68,6 +68,10 @@ type Querier interface {
 	ReleaseInqueueWork(ctx context.Context, arg ReleaseInqueueWorkParams) error
 	SignalLockCleanup(ctx context.Context) (int32, error)
 	TouchInqueueWork(ctx context.Context, arg TouchInqueueWorkParams) error
+	// Returns an estimate of the number of trace segments, average bytes, average records,
+	// and average bytes per record for trace segments in the last hour per organization and instance.
+	// This query is basically identical to the LogSegEstimator, but for trace segments.
+	TraceSegEstimator(ctx context.Context, arg TraceSegEstimatorParams) ([]TraceSegEstimatorRow, error)
 	UpsertServiceIdentifier(ctx context.Context, arg UpsertServiceIdentifierParams) (UpsertServiceIdentifierRow, error)
 	WorkQueueAddDirect(ctx context.Context, arg WorkQueueAddParams) error
 	WorkQueueClaimDirect(ctx context.Context, arg WorkQueueClaimParams) (WorkQueueClaimRow, error)

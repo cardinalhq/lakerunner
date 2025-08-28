@@ -42,8 +42,10 @@ func newBareLogEstimator() *logEstimator {
 type fakeLogQuerier struct {
 	metricRows []lrdb.MetricSegEstimatorRow
 	logRows    []lrdb.LogSegEstimatorRow
+	traceRows  []lrdb.TraceSegEstimatorRow
 	errMetrics error
 	errLogs    error
+	errTraces  error
 }
 
 func (f *fakeLogQuerier) MetricSegEstimator(ctx context.Context, _ lrdb.MetricSegEstimatorParams) ([]lrdb.MetricSegEstimatorRow, error) {
@@ -52,6 +54,10 @@ func (f *fakeLogQuerier) MetricSegEstimator(ctx context.Context, _ lrdb.MetricSe
 
 func (f *fakeLogQuerier) LogSegEstimator(ctx context.Context, _ lrdb.LogSegEstimatorParams) ([]lrdb.LogSegEstimatorRow, error) {
 	return f.logRows, f.errLogs
+}
+
+func (f *fakeLogQuerier) TraceSegEstimator(ctx context.Context, _ lrdb.TraceSegEstimatorParams) ([]lrdb.TraceSegEstimatorRow, error) {
+	return f.traceRows, f.errTraces
 }
 
 func TestLogEstimator_Get_ExactMatch(t *testing.T) {
