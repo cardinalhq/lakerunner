@@ -336,15 +336,9 @@ func compactMetricInterval(
 		var finalReader filereader.Reader = reader
 		if row.SortVersion == lrdb.SortVersionNameTidTimestamp {
 			// File is already sorted by [name, tid, timestamp] - skip sorting for better performance
-			ll.Debug("Skipping disk sorting for pre-sorted file",
-				slog.String("file", fn),
-				slog.Int("sortVersion", int(row.SortVersion)))
 		} else {
 			// Wrap with disk-based sorting reader to ensure data is sorted by [name, tid, timestamp]
 			// This is required by the aggregating reader downstream
-			ll.Debug("Applying disk sorting for unsorted file",
-				slog.String("file", fn),
-				slog.Int("sortVersion", int(row.SortVersion)))
 			sortingReader, err := filereader.NewDiskSortingReader(reader,
 				filereader.MetricNameTidTimestampSortKeyFunc(),
 				filereader.MetricNameTidTimestampSortFunc(), 1000)

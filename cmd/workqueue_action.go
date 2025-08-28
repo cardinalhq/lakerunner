@@ -285,7 +285,7 @@ func workqueueProcess(
 	}
 	defer func() {
 		if err := os.RemoveAll(tmpdir); err != nil {
-			ll.Error("Failed to remove temporary directory", slog.String("path", tmpdir), slog.Any("error", err))
+			ll.Error("Failed to remove temporary directory", slog.Any("error", err))
 		}
 	}()
 

@@ -25,24 +25,24 @@ func SetupTempDir() {
 	tmp := os.TempDir()
 	tmp = filepath.Join(tmp, "lakerunner")
 	if err := os.MkdirAll(tmp, 0755); err != nil {
-		slog.Error("Failed to create temp dir path (ignoring)", slog.String("path", tmp), slog.Any("error", err))
+		slog.Error("Failed to create temp dir path (ignoring)", slog.Any("error", err))
 	} else {
-		slog.Debug("Created temp dir path", slog.String("path", tmp))
+		slog.Debug("Created temp dir path")
 	}
 	if err := os.Setenv("TMPDIR", tmp); err != nil {
-		slog.Error("Failed to set TMPDIR environment variable", slog.String("path", tmp), slog.Any("error", err))
+		slog.Error("Failed to set TMPDIR environment variable", slog.Any("error", err))
 	} else {
-		slog.Debug("Set TMPDIR environment variable", slog.String("path", tmp))
+		slog.Debug("Set TMPDIR environment variable")
 	}
 
-	slog.Debug("Using temp dir", "path", os.TempDir())
+	slog.Debug("Using temp dir")
 
 	// Clean the temp directory
-	slog.Debug("Cleaning temp dir", "path", os.TempDir())
+	slog.Debug("Cleaning temp dir")
 	temp := os.TempDir()
 	entries, err := os.ReadDir(temp)
 	if err != nil {
-		slog.Debug("Failed to read temp dir (ignoring)", slog.String("path", temp), slog.Any("error", err))
+		slog.Debug("Failed to read temp dir (ignoring)", slog.Any("error", err))
 		return
 	}
 

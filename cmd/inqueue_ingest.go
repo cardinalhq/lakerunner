@@ -311,7 +311,7 @@ func ingestFiles(
 	}
 	defer func() {
 		if err := os.RemoveAll(tmpdir); err != nil {
-			ll.Error("Failed to remove temporary directory", slog.String("path", tmpdir), slog.Any("error", err))
+			ll.Error("Failed to remove temporary directory", slog.Any("error", err))
 		}
 	}()
 
@@ -458,7 +458,7 @@ func ingestFilesBatch(
 	}
 	defer func() {
 		if err := os.RemoveAll(tmpdir); err != nil {
-			ll.Error("Failed to clean up tmpdir", slog.String("tmpdir", tmpdir), slog.Any("error", err))
+			ll.Error("Failed to clean up tmpdir", slog.Any("error", err))
 		}
 	}()
 
@@ -547,7 +547,7 @@ func processSingleItem(ctx context.Context, loop *IngestLoopContext, processFx I
 	}
 	defer func() {
 		if err := os.RemoveAll(tmpdir); err != nil {
-			ll.Error("Failed to clean up tmpdir", slog.String("tmpdir", tmpdir), slog.Any("error", err))
+			ll.Error("Failed to clean up tmpdir", slog.Any("error", err))
 		}
 	}()
 
