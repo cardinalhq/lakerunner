@@ -159,7 +159,7 @@ func (s *FileSplitter) startNewFile() error {
 	}
 
 	s.currentFile = file
-	s.currentWriter = nil // Will be created after we have schema from first row
+	s.currentWriter = nil
 	s.currentStats = stats
 	s.currentRows = 0
 	// currentGroup will be set when first row is written
