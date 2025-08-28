@@ -383,10 +383,6 @@ func compactMetricInterval(
 			n = batch.Len()
 		}
 
-		ll.Debug("Aggregating reader batch",
-			slog.Int("batchNum", batchCount),
-			slog.Int("rowsRead", n),
-			slog.Any("error", err))
 
 		if err != nil && !errors.Is(err, io.EOF) {
 			ll.Error("Failed to read from aggregating reader", slog.Any("error", err))
@@ -394,7 +390,6 @@ func compactMetricInterval(
 		}
 
 		if batch == nil || batch.Len() == 0 {
-			ll.Debug("No more rows from aggregating reader", slog.Int("totalBatches", batchCount))
 			break
 		}
 
