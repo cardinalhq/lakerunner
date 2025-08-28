@@ -66,6 +66,7 @@ type RunqueueLoopContext struct {
 	awsmanager      *awsclient.Manager
 	metricEstimator estimator.MetricEstimator
 	logEstimator    estimator.LogEstimator
+	traceEstimator  estimator.TraceEstimator
 	signal          string
 	action          string
 	ll              *slog.Logger
@@ -155,21 +156,43 @@ func NewRunqueueLoopContext(ctx context.Context, signal string, action string, a
 }
 
 func RunqueueLoop(loop *RunqueueLoopContext, pfx RunqueueProcessingFunction, args any) error {
-	ctx := context.Background()
+	// Two contexts: one for shutdown detection, one for work processing
+	shutdownCtx := loop.ctx                    // Cancelled on SIGTERM/SIGINT
+	workCtx := context.WithoutCancel(loop.ctx) // Never cancelled, allows work to complete
+
+	// Set up graceful shutdown handler
+	defer func() {
+		slog.Info("Waiting for outstanding work to complete")
+		shutdownTimeout := 30 * time.Second
+		waitCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+
+		if err := loop.wqm.WaitForOutstandingWork(waitCtx); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				slog.Warn("Timeout waiting for outstanding work to complete", slog.Duration("timeout", shutdownTimeout))
+			} else {
+				slog.Error("Error waiting for outstanding work", slog.Any("error", err))
+			}
+		} else {
+			slog.Info("All outstanding work completed")
+		}
+	}()
 
 	for {
+		// Check for shutdown signal
 		select {
-		case <-loop.ctx.Done():
-			return loop.ctx.Err()
+		case <-shutdownCtx.Done():
+			slog.Info("Shutdown signal received, stopping work requests")
+			return shutdownCtx.Err()
 		default:
 		}
 
-		shouldBackoff, workWasProcessed, err := workqueueProcess(ctx, loop, pfx, args)
+		shouldBackoff, workWasProcessed, err := workqueueProcess(workCtx, shutdownCtx, loop, pfx, args)
 		if err != nil {
 			// Check if this is a worker interruption
 			if IsWorkerInterrupted(err) {
 				slog.Info("Worker loop interrupted gracefully")
-				return loop.ctx.Err() // Return the original context cancellation error
+				return shutdownCtx.Err() // Return the original context cancellation error
 			}
 			return err
 		}
@@ -177,16 +200,18 @@ func RunqueueLoop(loop *RunqueueLoopContext, pfx RunqueueProcessingFunction, arg
 		// Only backoff if no work was available - if work was processed, poll immediately
 		if shouldBackoff {
 			select {
-			case <-loop.ctx.Done():
-				return loop.ctx.Err()
+			case <-shutdownCtx.Done():
+				slog.Info("Shutdown signal received during backoff")
+				return shutdownCtx.Err()
 			case <-time.After(workSleepTime):
 			}
 		} else if workWasProcessed {
 			// Work was processed successfully - poll immediately for more
 			// Just check context and continue loop without delay
 			select {
-			case <-loop.ctx.Done():
-				return loop.ctx.Err()
+			case <-shutdownCtx.Done():
+				slog.Info("Shutdown signal received after work processed")
+				return shutdownCtx.Err()
 			default:
 			}
 		}
@@ -225,16 +250,17 @@ func frequenciesToRequest(signal, action string) ([]int32, error) {
 }
 
 func workqueueProcess(
-	ctx context.Context,
+	workCtx context.Context,
+	shutdownCtx context.Context,
 	loop *RunqueueLoopContext,
 	pfx RunqueueProcessingFunction,
 	args any) (bool, bool, error) {
 
-	ctx, span := tracer.Start(ctx, "workqueueProcess", trace.WithAttributes(commonAttributes.ToSlice()...))
+	ctx, span := tracer.Start(workCtx, "workqueueProcess", trace.WithAttributes(commonAttributes.ToSlice()...))
 	defer span.End()
 
 	t0 := time.Now()
-	inf, err := loop.wqm.RequestWork()
+	inf, err := loop.wqm.RequestWork(shutdownCtx)
 	workqueueFetchDuration.Record(ctx, time.Since(t0).Seconds(),
 		metric.WithAttributeSet(commonAttributes),
 		metric.WithAttributes(
@@ -293,15 +319,13 @@ func workqueueProcess(
 	switch inf.Signal() {
 	case lrdb.SignalEnumMetrics:
 		recordsPerFile = loop.metricEstimator.Get(inf.OrganizationID(), inf.InstanceNum(), inf.FrequencyMs())
-		if recordsPerFile <= 0 {
-			recordsPerFile = 40_000 // Default for all signals
-		}
 	case lrdb.SignalEnumLogs:
 		recordsPerFile = loop.logEstimator.Get(inf.OrganizationID(), inf.InstanceNum())
-		if recordsPerFile <= 0 {
-			recordsPerFile = 40_000 // Default for all signals
-		}
+	case lrdb.SignalEnumTraces:
+		recordsPerFile = loop.traceEstimator.Get(inf.OrganizationID(), inf.InstanceNum())
 	default:
+	}
+	if recordsPerFile <= 0 {
 		recordsPerFile = 40_000 // Default for all signals
 	}
 	t0 = time.Now()
