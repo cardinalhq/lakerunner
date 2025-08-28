@@ -322,7 +322,7 @@ func logCompactItemDo(
 
 		for i, group := range packed {
 			// Generate unique operation ID for this atomic group
-			opID := generateOperationID(i)
+			opID := generateOperationID()
 			ll := ll.With(
 				slog.String("operationID", opID),
 				slog.Int("groupIndex", i))

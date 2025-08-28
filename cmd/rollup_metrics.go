@@ -306,9 +306,7 @@ func rollupMetricSegments(
 		recordsPerFile = 10_000
 	}
 
-	slotID := inf.SlotId()
-	baseName := fmt.Sprintf("rolledup_metrics_%s_%d_%d", inf.OrganizationID().String(), time.Now().Unix(), slotID)
-	writer, err := factories.NewMetricsWriter(baseName, tmpdir, constants.WriterTargetSizeBytesMetrics, recordsPerFile)
+	writer, err := factories.NewMetricsWriter("rollup-*", tmpdir, constants.WriterTargetSizeBytesMetrics, recordsPerFile)
 	if err != nil {
 		ll.Error("Failed to create metrics writer", slog.Any("error", err))
 		return WorkResultTryAgainLater, fmt.Errorf("creating metrics writer: %w", err)
@@ -372,7 +370,7 @@ func rollupMetricSegments(
 		Bucket:         profile.Bucket,
 	}
 
-	// Upload rolled-up metrics using the same pattern as compaction
+	// Upload rolled-up metrics using the same pattern as ingestion
 	err = uploadRolledUpMetrics(ctx, ll, mdb, s3client, results, existingRows, rollupParams)
 	if err != nil {
 		return WorkResultTryAgainLater, fmt.Errorf("failed to upload rolled-up metrics: %w", err)
@@ -399,7 +397,7 @@ func rollupMetricSegments(
 	return WorkResultSuccess, nil
 }
 
-// uploadRolledUpMetrics uploads rolled-up metric files using the same atomic pattern as compaction
+// uploadRolledUpMetrics uploads rolled-up metric files using the same atomic pattern as ingestion
 func uploadRolledUpMetrics(
 	ctx context.Context,
 	ll *slog.Logger,
@@ -409,14 +407,6 @@ func uploadRolledUpMetrics(
 	existingRows []lrdb.MetricSeg,
 	params metricsprocessing.CompactionUploadParams,
 ) error {
-	startTs, endTs := metricsprocessing.GetStartEndTimes(existingRows)
-	if len(existingRows) == 0 && len(results) > 0 {
-		// No existing rows, use current time bounds
-		// This should be derived from the work item's time range, but for safety we'll use current time
-		now := time.Now().UnixMilli()
-		startTs, endTs = now, now+int64(params.FrequencyMs)
-	}
-
 	orgUUID, err := uuid.Parse(params.OrganizationID)
 	if err != nil {
 		return fmt.Errorf("invalid organization ID: %w", err)
@@ -444,17 +434,49 @@ func uploadRolledUpMetrics(
 		})
 	}
 
-	dateint, hour := helpers.MSToDateintHour(startTs)
-
-	// Process each output file atomically (same as compaction)
+	// Process each output file atomically (same as ingestion)
 	for _, file := range results {
+		// Extract timestamps from file metadata
+		var fingerprints []int64
+		var startTs, endTs int64
+		var dateint int32
+		var hour int16
+
+		if stats, ok := file.Metadata.(factories.MetricsFileStats); ok {
+			fingerprints = stats.Fingerprints
+			startTs = stats.FirstTS
+			// Database expects start-inclusive, end-exclusive range [start, end)
+			endTs = stats.LastTS + 1
+
+			// Validate timestamp range
+			if startTs == 0 || stats.LastTS == 0 || startTs > stats.LastTS {
+				ll.Error("Invalid timestamp range in metrics file stats",
+					slog.Int64("startTs", startTs),
+					slog.Int64("lastTs", stats.LastTS),
+					slog.Int64("endTs", endTs),
+					slog.Int64("recordCount", file.RecordCount))
+				return fmt.Errorf("invalid timestamp range: startTs=%d, lastTs=%d", startTs, stats.LastTS)
+			}
+
+			// Extract dateint and hour from actual file timestamp data
+			t := time.Unix(stats.FirstTS/1000, 0).UTC()
+			dateint = int32(t.Year()*10000 + int(t.Month())*100 + t.Day())
+			hour = int16(t.Hour())
+		} else {
+			ll.Error("Failed to extract MetricsFileStats from result metadata",
+				slog.String("metadataType", fmt.Sprintf("%T", file.Metadata)))
+			return fmt.Errorf("missing or invalid MetricsFileStats in result metadata")
+		}
+
 		// Generate operation ID for tracking this atomic operation
 		opID := idgen.GenerateShortBase32ID()
 		fileLogger := ll.With(slog.String("operationID", opID), slog.String("file", file.FileName))
 
 		fileLogger.Debug("Starting atomic metric rollup upload operation",
 			slog.Int64("recordCount", file.RecordCount),
-			slog.Int64("fileSize", file.FileSize))
+			slog.Int64("fileSize", file.FileSize),
+			slog.Int64("startTs", startTs),
+			slog.Int64("endTs", endTs))
 
 		segmentID := s3helper.GenerateID()
 		newObjectID := helpers.MakeDBObjectID(orgUUID, params.CollectorName, dateint, hour, segmentID, "metrics")
@@ -497,11 +519,7 @@ func uploadRolledUpMetrics(
 					FileSize:     file.FileSize,
 				},
 			},
-		}
-
-		// Add fingerprints if available in metadata
-		if stats, ok := file.Metadata.(factories.MetricsFileStats); ok {
-			singleParams.Fingerprints = stats.Fingerprints
+			Fingerprints: fingerprints,
 		}
 
 		if err := mdb.ReplaceMetricSegs(ctx, singleParams); err != nil {

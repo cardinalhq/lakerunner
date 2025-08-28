@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -54,8 +55,6 @@ func UploadCompactedMetrics(
 	oldRows []lrdb.MetricSeg,
 	params CompactionUploadParams,
 ) error {
-	startTs, endTs := GetStartEndTimes(oldRows)
-
 	orgUUID, err := uuid.Parse(params.OrganizationID)
 	if err != nil {
 		return fmt.Errorf("invalid organization ID: %w", err)
@@ -83,17 +82,49 @@ func UploadCompactedMetrics(
 		})
 	}
 
-	dateint, hour := helpers.MSToDateintHour(startTs)
-
-	// Process each output file atomically
+	// Process each output file atomically (extract timestamps from each file)
 	for _, file := range results {
+		// Extract timestamps from file metadata
+		var fingerprints []int64
+		var startTs, endTs int64
+		var dateint int32
+		var hour int16
+
+		if stats, ok := file.Metadata.(factories.MetricsFileStats); ok {
+			fingerprints = stats.Fingerprints
+			startTs = stats.FirstTS
+			// Database expects start-inclusive, end-exclusive range [start, end)
+			// File timestamps are inclusive on both ends, so add 1 to make end exclusive
+			endTs = stats.LastTS + 1
+
+			// Validate timestamp range
+			if startTs == 0 || stats.LastTS == 0 || startTs > stats.LastTS {
+				ll.Error("Invalid timestamp range in metrics file stats",
+					slog.Int64("startTs", startTs),
+					slog.Int64("lastTs", stats.LastTS),
+					slog.Int64("endTs", endTs),
+					slog.Int64("recordCount", file.RecordCount))
+				return fmt.Errorf("invalid timestamp range: startTs=%d, lastTs=%d", startTs, stats.LastTS)
+			}
+
+			// Extract dateint and hour from actual file timestamp data
+			t := time.Unix(stats.FirstTS/1000, 0).UTC()
+			dateint = int32(t.Year()*10000 + int(t.Month())*100 + t.Day())
+			hour = int16(t.Hour())
+		} else {
+			ll.Error("Failed to extract MetricsFileStats from result metadata",
+				slog.String("metadataType", fmt.Sprintf("%T", file.Metadata)))
+			return fmt.Errorf("missing or invalid MetricsFileStats in result metadata")
+		}
 		// Generate operation ID for tracking this atomic operation
 		opID := idgen.GenerateShortBase32ID()
 		fileLogger := ll.With(slog.String("operationID", opID), slog.String("file", file.FileName))
 
 		fileLogger.Debug("Starting atomic metric compaction operation",
 			slog.Int64("recordCount", file.RecordCount),
-			slog.Int64("fileSize", file.FileSize))
+			slog.Int64("fileSize", file.FileSize),
+			slog.Int64("startTs", startTs),
+			slog.Int64("endTs", endTs))
 
 		segmentID := s3helper.GenerateID()
 		newObjectID := helpers.MakeDBObjectID(orgUUID, params.CollectorName, dateint, hour, segmentID, "metrics")
@@ -136,11 +167,7 @@ func UploadCompactedMetrics(
 					FileSize:     file.FileSize,
 				},
 			},
-		}
-
-		// Add fingerprints if available in metadata
-		if stats, ok := file.Metadata.(factories.MetricsFileStats); ok {
-			singleParams.Fingerprints = stats.Fingerprints
+			Fingerprints: fingerprints,
 		}
 
 		if err := mdb.ReplaceMetricSegs(ctx, singleParams); err != nil {
