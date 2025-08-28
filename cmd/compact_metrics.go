@@ -265,7 +265,6 @@ func compactMetricInterval(
 		return fmt.Errorf("invalid time range in work item: %v", inf.TsRange())
 	}
 
-	// Download all files and create PreorderedParquetRawReaders
 	var readers []filereader.Reader
 	var downloadedFiles []string
 
@@ -283,7 +282,6 @@ func compactMetricInterval(
 			continue
 		}
 
-		// Open file and get size for PreorderedParquetRawReader
 		file, err := os.Open(fn)
 		if err != nil {
 			ll.Error("Failed to open parquet file", slog.String("file", fn), slog.Any("error", err))
@@ -297,7 +295,6 @@ func compactMetricInterval(
 			return fmt.Errorf("statting parquet file %s: %w", fn, err)
 		}
 
-		// Create PreorderedParquetRawReader directly
 		reader, err := filereader.NewPreorderedParquetRawReader(file, stat.Size(), 1000)
 		if err != nil {
 			file.Close()
@@ -334,7 +331,6 @@ func compactMetricInterval(
 		}
 	}()
 
-	// Create PreorderedMultisourceReader for read-time merge sort of pre-sorted parquet files
 	var finalReader filereader.Reader
 	if len(readers) == 1 {
 		ll.Debug("Using single reader for compaction")
@@ -404,7 +400,6 @@ func compactMetricInterval(
 
 		for i := 0; i < batch.Len(); i++ {
 			row := batch.Get(i)
-			// Normalize sketch field for parquet writing (string -> []byte)
 			if err := normalizeRowForParquetWrite(row); err != nil {
 				ll.Error("Failed to normalize row", slog.Any("error", err))
 				return fmt.Errorf("normalizing row: %w", err)
@@ -495,20 +490,17 @@ func compactMetricInterval(
 func normalizeRowForParquetWrite(row filereader.Row) error {
 	sketch := row[wkk.RowKeySketch]
 	if sketch == nil {
-		return nil // No sketch field, nothing to normalize
+		return nil
 	}
 
-	// If already []byte, nothing to do
 	if _, ok := sketch.([]byte); ok {
 		return nil
 	}
 
-	// Convert string to []byte
 	if str, ok := sketch.(string); ok {
 		row[wkk.RowKeySketch] = []byte(str)
 		return nil
 	}
 
-	// Unexpected type - should not happen with our fixes
 	return fmt.Errorf("unexpected sketch type for parquet writing: %T", sketch)
 }
