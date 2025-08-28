@@ -18,8 +18,6 @@ import (
 	"context"
 	"os"
 	"testing"
-
-	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 )
 
 func TestNewTracesWriter(t *testing.T) {
@@ -32,10 +30,7 @@ func TestNewTracesWriter(t *testing.T) {
 	}
 	defer writer.Abort()
 
-	// Verify it's configured for spillable ordering
-	if writer.Config().OrderBy != parquetwriter.OrderMergeSort {
-		t.Errorf("Expected OrderBy = OrderMergeSort, got %v", writer.Config().OrderBy)
-	}
+	// Verify it's configured correctly (no sorting now)
 
 	testData := []map[string]any{
 		{

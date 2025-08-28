@@ -32,9 +32,6 @@ func NewMetricsWriter(baseName, tmpdir string, targetFileSize int64, recordsPerF
 		TmpDir:         tmpdir,
 		TargetFileSize: targetFileSize,
 
-		// Input is already globally sorted by our pipeline, no ordering needed
-		OrderBy: parquetwriter.OrderNone,
-
 		// Group by [metric name, TID] - don't split groups with same name+TID
 		GroupKeyFunc:  metricsGroupKeyFunc(),
 		NoSplitGroups: true,

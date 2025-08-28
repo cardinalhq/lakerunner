@@ -14,10 +14,6 @@
 
 package parquetwriter
 
-import (
-	"github.com/cardinalhq/lakerunner/internal/parquetwriter/spillers"
-)
-
 // WriterConfig contains all configuration options for creating a ParquetWriter.
 type WriterConfig struct {
 	// BaseName is used as the base name for output files and schema metadata
@@ -31,10 +27,6 @@ type WriterConfig struct {
 	// it to maintain data integrity (e.g., not splitting TID groups).
 	TargetFileSize int64
 
-	// Ordering configuration
-	OrderBy      OrderingStrategy
-	OrderKeyFunc func(map[string]any) any
-
 	// Grouping configuration - controls how rows are grouped and whether
 	// groups can be split across files
 	GroupKeyFunc  func(map[string]any) any
@@ -45,39 +37,7 @@ type WriterConfig struct {
 
 	// Optional stats collection
 	StatsProvider StatsProvider
-
-	// SpillBufferSize sets the maximum number of rows to keep in memory before spilling
-	// Only used with OrderSpillable. Default: 50000
-	SpillBufferSize int
-
-	// Spiller provides the mechanism for writing/reading spill files
-	// Only used with OrderSpillable. Default: GobSpiller
-	Spiller spillers.Spiller
 }
-
-// OrderingStrategy defines how rows should be ordered in the output files.
-type OrderingStrategy int
-
-const (
-	// OrderNone means no ordering is required - rows are written in the order received
-	OrderNone OrderingStrategy = iota
-
-	// OrderInMemory buffers rows in memory and sorts them before writing.
-	// Best for smaller datasets that fit comfortably in memory.
-	OrderInMemory
-
-	// OrderMergeSort uses external merge sort for large datasets that don't fit in memory.
-	// Writes sorted chunks to disk and merges them during finalization.
-	OrderMergeSort
-
-	// OrderSpillable automatically spills to disk when memory limits are exceeded.
-	// Combines in-memory sorting with external merge sort as needed.
-	OrderSpillable
-
-	// OrderPresumed means the input is already in the correct order.
-	// The writer will trust the order and write rows directly.
-	OrderPresumed
-)
 
 // Validate checks that the configuration is valid and returns an error if not.
 func (c *WriterConfig) Validate() error {
@@ -90,9 +50,6 @@ func (c *WriterConfig) Validate() error {
 	// Schema is dynamically discovered, no validation needed
 	if c.TargetFileSize <= 0 {
 		return &ConfigError{Field: "TargetFileSize", Message: "must be positive"}
-	}
-	if c.OrderBy != OrderNone && c.OrderBy != OrderPresumed && c.OrderKeyFunc == nil {
-		return &ConfigError{Field: "OrderKeyFunc", Message: "required when OrderBy is not OrderNone or OrderPresumed"}
 	}
 	if c.NoSplitGroups && c.GroupKeyFunc == nil {
 		return &ConfigError{Field: "GroupKeyFunc", Message: "required when NoSplitGroups is true"}

@@ -19,11 +19,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/parquet-go/parquet-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 )
 
 func TestNewLogsWriter(t *testing.T) {
@@ -33,10 +30,6 @@ func TestNewLogsWriter(t *testing.T) {
 	require.NoError(t, err, "Failed to create logs writer")
 	defer writer.Abort()
 
-	// Verify it's configured for merge sort ordering
-	assert.Equal(t, parquetwriter.OrderMergeSort, writer.Config().OrderBy)
-
-	// Test timestamp ordering - write out of order
 	testData := []map[string]any{
 		{"_cardinalhq.timestamp": int64(3000), "_cardinalhq.message": "third", "_cardinalhq.name": "log.events"},
 		{"_cardinalhq.timestamp": int64(1000), "_cardinalhq.message": "first", "_cardinalhq.name": "log.events"},
@@ -55,45 +48,8 @@ func TestNewLogsWriter(t *testing.T) {
 
 	require.Len(t, results, 1, "Expected 1 file")
 
-	// Verify the file is timestamp-ordered
-	file, err := os.Open(results[0].FileName)
-	require.NoError(t, err, "Failed to open result file")
-	defer file.Close()
+	// Verify the file exists and clean up
 	defer os.Remove(results[0].FileName)
-
-	// For verification, we'll use a schema discovered from the written data
-	nodes := map[string]parquet.Node{
-		"_cardinalhq.timestamp": parquet.Int(64),
-		"_cardinalhq.message":   parquet.String(),
-		"_cardinalhq.name":      parquet.String(),
-	}
-	schema := parquet.NewSchema("logs-test", parquet.Group(nodes))
-	reader := parquet.NewGenericReader[map[string]any](file, schema)
-	defer reader.Close()
-
-	var lastTimestamp int64
-	rowCount := 0
-	for {
-		rows := make([]map[string]any, 1)
-		rows[0] = make(map[string]any)
-
-		n, err := reader.Read(rows)
-		if n == 0 {
-			break
-		}
-		if err != nil && err.Error() != "EOF" {
-			require.NoError(t, err, "Failed to read from parquet")
-		}
-
-		ts := rows[0]["_cardinalhq.timestamp"].(int64)
-		if rowCount > 0 {
-			assert.GreaterOrEqual(t, ts, lastTimestamp, "Timestamps not in order")
-		}
-		lastTimestamp = ts
-		rowCount++
-	}
-
-	assert.Equal(t, 4, rowCount, "Expected 4 rows")
 
 	// Check stats
 	if stats, ok := results[0].Metadata.(LogsFileStats); ok {

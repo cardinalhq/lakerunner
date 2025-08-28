@@ -34,7 +34,6 @@ func TestParquetWriterWithMutatedRows(t *testing.T) {
 		BaseName:       "mutation-test",
 		TmpDir:         tmpdir,
 		TargetFileSize: 1000,
-		OrderBy:        OrderNone,
 		RecordsPerFile: 20,
 	}
 
@@ -122,7 +121,6 @@ func TestParquetWriterMutationSafety(t *testing.T) {
 		BaseName:       "mutation-safety-test",
 		TmpDir:         tmpdir,
 		TargetFileSize: 1000,
-		OrderBy:        OrderNone,
 		RecordsPerFile: 15,
 	}
 
@@ -227,19 +225,15 @@ func TestParquetWriterMutationSafety(t *testing.T) {
 	}
 }
 
-// TestOrderedWriterWithMutations tests that ordering works correctly even when
+// TestWriterWithMutations tests that the writer works correctly even when
 // source rows are mutated after being passed to the writer.
-func TestOrderedWriterWithMutations(t *testing.T) {
+func TestWriterWithMutations(t *testing.T) {
 	tmpdir := t.TempDir()
 
 	config := WriterConfig{
 		BaseName:       "ordered-mutation-test",
 		TmpDir:         tmpdir,
 		TargetFileSize: 1000,
-		OrderBy:        OrderInMemory,
-		OrderKeyFunc: func(row map[string]any) any {
-			return row["timestamp"].(int64)
-		},
 		RecordsPerFile: 17,
 	}
 
@@ -269,7 +263,7 @@ func TestOrderedWriterWithMutations(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 
-	// Read back and verify ordering is preserved based on original data
+	// Read back and verify original data is preserved (not sorted anymore)
 	file, err := os.Open(results[0].FileName)
 	require.NoError(t, err)
 	defer file.Close()
@@ -299,13 +293,13 @@ func TestOrderedWriterWithMutations(t *testing.T) {
 
 	require.Len(t, records, 3)
 
-	// Verify records are in timestamp order with original data
-	assert.Equal(t, int64(100), records[0]["timestamp"])
-	assert.Equal(t, "first", records[0]["value"])
+	// Verify records are in original write order with original data (not sorted)
+	assert.Equal(t, int64(300), records[0]["timestamp"])
+	assert.Equal(t, "third", records[0]["value"])
 
-	assert.Equal(t, int64(200), records[1]["timestamp"])
-	assert.Equal(t, "second", records[1]["value"])
+	assert.Equal(t, int64(100), records[1]["timestamp"])
+	assert.Equal(t, "first", records[1]["value"])
 
-	assert.Equal(t, int64(300), records[2]["timestamp"])
-	assert.Equal(t, "third", records[2]["value"])
+	assert.Equal(t, int64(200), records[2]["timestamp"])
+	assert.Equal(t, "second", records[2]["value"])
 }

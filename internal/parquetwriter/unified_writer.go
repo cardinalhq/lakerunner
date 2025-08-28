@@ -17,15 +17,12 @@ package parquetwriter
 import (
 	"context"
 	"fmt"
-
-	"github.com/cardinalhq/lakerunner/internal/parquetwriter/spillers"
 )
 
 // UnifiedWriter is the main implementation of ParquetWriter that coordinates
-// all the components (ordering, sizing, splitting) to create optimized Parquet files.
+// all the components (sizing, splitting) to create optimized Parquet files.
 type UnifiedWriter struct {
 	config   WriterConfig
-	orderer  OrderingEngine
 	splitter *FileSplitter
 	closed   bool
 }
@@ -37,63 +34,16 @@ func NewUnifiedWriter(config WriterConfig) (*UnifiedWriter, error) {
 		return nil, err
 	}
 
-	// Select and create the appropriate ordering engine
-	orderer, err := createOrderingEngine(config)
-	if err != nil {
-		return nil, fmt.Errorf("create ordering engine: %w", err)
-	}
-
 	// Create the file splitter
 	splitter := NewFileSplitter(config)
 
 	return &UnifiedWriter{
 		config:   config,
-		orderer:  orderer,
 		splitter: splitter,
 	}, nil
 }
 
-// createOrderingEngine creates the appropriate ordering engine based on config.
-func createOrderingEngine(config WriterConfig) (OrderingEngine, error) {
-	switch config.OrderBy {
-	case OrderNone, OrderPresumed:
-		return NewPassthroughOrderer(), nil
-
-	case OrderInMemory:
-		if config.OrderKeyFunc == nil {
-			return nil, fmt.Errorf("OrderKeyFunc required for OrderInMemory")
-		}
-		// Use reasonable default buffer size
-		return NewInMemoryOrderer(config.OrderKeyFunc, 50000), nil
-
-	case OrderMergeSort:
-		if config.OrderKeyFunc == nil {
-			return nil, fmt.Errorf("OrderKeyFunc required for OrderMergeSort")
-		}
-		// Use reasonable default buffer size
-		return NewExternalMergeOrderer(config.TmpDir, config.OrderKeyFunc, 10000), nil
-
-	case OrderSpillable:
-		if config.OrderKeyFunc == nil {
-			return nil, fmt.Errorf("OrderKeyFunc required for OrderSpillable")
-		}
-		bufferSize := config.SpillBufferSize
-		if bufferSize <= 0 {
-			bufferSize = 50000 // Default buffer size
-		}
-		spiller := config.Spiller
-		if spiller == nil {
-			spiller = spillers.NewGobSpiller() // Default spiller
-		}
-		return NewSpillableOrderer(config.OrderKeyFunc, bufferSize, config.TmpDir, spiller), nil
-
-	default:
-		return nil, fmt.Errorf("unknown ordering strategy: %v", config.OrderBy)
-	}
-}
-
-// Write adds a row to the writer. The row will be processed according to the
-// writer's ordering strategy before being written to output files.
+// Write adds a row to the writer and writes it directly to the output files.
 func (w *UnifiedWriter) Write(row map[string]any) error {
 	if w.closed {
 		return ErrWriterClosed
@@ -103,12 +53,9 @@ func (w *UnifiedWriter) Write(row map[string]any) error {
 		return fmt.Errorf("%w: row cannot be nil", ErrInvalidRow)
 	}
 
-	// Add row to the ordering engine
-	if err := w.orderer.Add(row); err != nil {
-		return fmt.Errorf("add row to orderer: %w", err)
-	}
-
-	return nil
+	// Write row directly to the splitter using a background context
+	// The actual context handling happens in Close()
+	return w.splitter.WriteRow(context.TODO(), row)
 }
 
 // Config returns the configuration used by this writer.
@@ -125,38 +72,10 @@ func (w *UnifiedWriter) Close(ctx context.Context) ([]Result, error) {
 
 	// Ensure cleanup happens even if we encounter errors
 	defer func() {
-		if w.orderer != nil {
-			w.orderer.Close()
-		}
 		if w.splitter != nil {
 			w.splitter.Abort()
 		}
 	}()
-
-	// Flush all rows from the orderer to the splitter
-	err := w.orderer.Flush(ctx, func(rows []map[string]any) error {
-		for _, row := range rows {
-			if err := w.splitter.WriteRow(ctx, row); err != nil {
-				return err
-			}
-
-			// Check for context cancellation periodically
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-		}
-		return nil
-	})
-
-	if err != nil {
-		return nil, fmt.Errorf("flush orderer: %w", err)
-	}
-
-	// Close orderer to free resources
-	if err := w.orderer.Close(); err != nil {
-		return nil, fmt.Errorf("close orderer: %w", err)
-	}
-	w.orderer = nil
 
 	// Get final results from splitter
 	results, err := w.splitter.Close(ctx)
@@ -174,11 +93,6 @@ func (w *UnifiedWriter) Abort() {
 		return
 	}
 	w.closed = true
-
-	if w.orderer != nil {
-		w.orderer.Close()
-		w.orderer = nil
-	}
 
 	if w.splitter != nil {
 		w.splitter.Abort()
