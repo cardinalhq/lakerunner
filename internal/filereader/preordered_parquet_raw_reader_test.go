@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -367,5 +368,205 @@ func TestProtoLogsReader_WithTranslator(t *testing.T) {
 		assert.NotNil(t, row)
 		assert.Equal(t, "proto", row[wkk.NewRowKey("test.translator")])
 		t.Logf("Row %d: %d fields, translator field present", i, len(row))
+	}
+}
+
+func TestPreorderedParquetRawReader_CompactTestFiles(t *testing.T) {
+	// Test files from compact-test-0001 with expected record counts from logs
+	expectedCounts := map[string]int64{
+		"tbl_299476429685392687.parquet": 227,
+		"tbl_299476441865651503.parquet": 227,
+		"tbl_299476446630380847.parquet": 227,
+		"tbl_299476458558980900.parquet": 231,
+		"tbl_299476464716219172.parquet": 227,
+		"tbl_299476475503969060.parquet": 227,
+		"tbl_299476481342440751.parquet": 227,
+		"tbl_299476495972173103.parquet": 231,
+		"tbl_299476496878142244.parquet": 227,
+		"tbl_299476509242950436.parquet": 227,
+		"tbl_299476513621803812.parquet": 227,
+		"tbl_299476526607368996.parquet": 227,
+	}
+
+	for filename, expectedCount := range expectedCounts {
+		t.Run(filename, func(t *testing.T) {
+			fullPath := fmt.Sprintf("../../testdata/metrics/compact-test-0001/%s", filename)
+
+			file, err := os.Open(fullPath)
+			require.NoError(t, err, "Failed to open file: %s", fullPath)
+			defer file.Close()
+
+			stat, err := file.Stat()
+			require.NoError(t, err)
+
+			reader, err := NewPreorderedParquetRawReader(file, stat.Size(), 1000)
+			require.NoError(t, err, "Failed to create reader for file: %s", filename)
+			defer reader.Close()
+
+			var totalRows int64
+			batchCount := 0
+
+			for {
+				batch, err := reader.Next()
+				if batch != nil {
+					batchCount++
+					totalRows += int64(batch.Len())
+
+					// Verify batch structure for first batch only to avoid spam
+					if batchCount == 1 {
+						assert.Greater(t, batch.Len(), 0, "First batch should have rows")
+						for i := 0; i < batch.Len() && i < 3; i++ {
+							row := batch.Get(i)
+							assert.NotNil(t, row, "Row %d should not be nil", i)
+							assert.Greater(t, len(row), 0, "Row %d should have fields", i)
+						}
+					}
+				}
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				require.NoError(t, err, "Reader error in file %s", filename)
+			}
+
+			assert.Equal(t, expectedCount, totalRows, "File %s should have exactly %d records", filename, expectedCount)
+			assert.Equal(t, totalRows, reader.TotalRowsReturned(), "TotalRowsReturned should match for file %s", filename)
+
+			t.Logf("File %s: successfully read %d records in %d batches", filename, totalRows, batchCount)
+		})
+	}
+}
+
+func TestPreorderedParquetRawReader_TIDConversion(t *testing.T) {
+	// Test TID field type in actual compact test file data
+	fullPath := "../../testdata/metrics/compact-test-0001/tbl_299476429685392687.parquet"
+
+	file, err := os.Open(fullPath)
+	require.NoError(t, err, "Failed to open test file")
+	defer file.Close()
+
+	stat, err := file.Stat()
+	require.NoError(t, err)
+
+	reader, err := NewPreorderedParquetRawReader(file, stat.Size(), 1000)
+	require.NoError(t, err, "Failed to create reader")
+	defer reader.Close()
+
+	// Read first batch
+	batch, err := reader.Next()
+	if err != nil && !errors.Is(err, io.EOF) {
+		require.NoError(t, err)
+	}
+
+	if batch == nil || batch.Len() == 0 {
+		t.Fatal("No rows returned from ParquetReader")
+	}
+
+	// Examine first row TID field type
+	row := batch.Get(0)
+	require.NotNil(t, row)
+
+	// Check what type the TID field actually is
+	tidValue, hasTID := row[wkk.RowKeyCTID]
+	t.Logf("Row has TID field: %v", hasTID)
+
+	if hasTID {
+		t.Logf("TID value: %v (type: %T)", tidValue, tidValue)
+
+		// Test if it's int64 as expected
+		if tidInt64, isInt64 := tidValue.(int64); isInt64 {
+			t.Logf("TID is int64: %d", tidInt64)
+		} else if tidStr, isString := tidValue.(string); isString {
+			t.Logf("TID is still string: %s", tidStr)
+			// Try manual conversion
+			converted, err := strconv.ParseInt(tidStr, 10, 64)
+			t.Logf("Manual conversion result: %d (err: %v)", converted, err)
+		} else {
+			t.Logf("TID is unexpected type: %T", tidValue)
+		}
+	} else {
+		t.Log("No TID field found")
+	}
+
+	// Also check timestamp
+	timestampValue, hasTimestamp := row[wkk.RowKeyCTimestamp]
+	t.Logf("Row has timestamp field: %v", hasTimestamp)
+	if hasTimestamp {
+		t.Logf("Timestamp value: %v (type: %T)", timestampValue, timestampValue)
+	}
+}
+
+func TestDiskSortingReader_WithParquetCompactTestFiles(t *testing.T) {
+	// Test DiskSortingReader(ParquetReader) combination with compact test files
+	expectedCounts := map[string]int64{
+		"tbl_299476429685392687.parquet": 227,
+		"tbl_299476441865651503.parquet": 227,
+		"tbl_299476446630380847.parquet": 227,
+		"tbl_299476458558980900.parquet": 231, // Special case with 231 records
+		"tbl_299476464716219172.parquet": 227,
+		"tbl_299476475503969060.parquet": 227,
+		"tbl_299476481342440751.parquet": 227,
+		"tbl_299476495972173103.parquet": 231, // Special case with 231 records
+		"tbl_299476496878142244.parquet": 227,
+		"tbl_299476509242950436.parquet": 227,
+		"tbl_299476513621803812.parquet": 227,
+		"tbl_299476526607368996.parquet": 227,
+	}
+
+	// Use the standard metric sorting functions
+	sortKeyFunc := MetricNameTidTimestampSortKeyFunc()
+	sortFunc := MetricNameTidTimestampSortFunc()
+
+	for filename, expectedCount := range expectedCounts {
+		t.Run(filename, func(t *testing.T) {
+			fullPath := fmt.Sprintf("../../testdata/metrics/compact-test-0001/%s", filename)
+
+			// Open fresh file for the DiskSortingReader test
+			file, err := os.Open(fullPath)
+			require.NoError(t, err, "Failed to open file: %s", fullPath)
+			defer file.Close()
+
+			stat, err := file.Stat()
+			require.NoError(t, err)
+
+			// Create the ParquetReader
+			parquetReader, err := NewPreorderedParquetRawReader(file, stat.Size(), 1000)
+			require.NoError(t, err, "Failed to create ParquetReader for file: %s", filename)
+			defer parquetReader.Close()
+
+			// Wrap with DiskSortingReader
+			diskSortingReader, err := NewDiskSortingReader(parquetReader, sortKeyFunc, sortFunc, 1000)
+			require.NoError(t, err, "Failed to create DiskSortingReader for file: %s", filename)
+			defer diskSortingReader.Close()
+
+			var totalRows int64
+			batchCount := 0
+
+			for {
+				batch, err := diskSortingReader.Next()
+				if batch != nil {
+					batchCount++
+					totalRows += int64(batch.Len())
+
+					// Verify batch structure for first batch only
+					if batchCount == 1 {
+						assert.Greater(t, batch.Len(), 0, "First batch should have rows")
+						for i := 0; i < batch.Len() && i < 3; i++ {
+							row := batch.Get(i)
+							assert.NotNil(t, row, "Row %d should not be nil", i)
+							assert.Greater(t, len(row), 0, "Row %d should have fields", i)
+						}
+					}
+				}
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				require.NoError(t, err, "DiskSortingReader error in file %s", filename)
+			}
+
+			assert.Equal(t, expectedCount, totalRows, "DiskSortingReader should preserve all %d records from %s", expectedCount, filename)
+			assert.Equal(t, totalRows, diskSortingReader.TotalRowsReturned(), "DiskSortingReader TotalRowsReturned should match for file %s", filename)
+
+			t.Logf("File %s: DiskSortingReader successfully read %d records in %d batches", filename, totalRows, batchCount)
+		})
 	}
 }

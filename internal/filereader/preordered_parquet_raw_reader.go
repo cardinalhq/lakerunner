@@ -31,6 +31,7 @@ type PreorderedParquetRawReader struct {
 	pf        *parquet.File
 	pfr       *parquet.GenericReader[map[string]any]
 	closed    bool
+	exhausted bool
 	rowCount  int64
 	batchSize int
 }
@@ -68,6 +69,10 @@ func (r *PreorderedParquetRawReader) Next() (*Batch, error) {
 		return nil, errors.New("reader is closed or not initialized")
 	}
 
+	if r.exhausted {
+		return nil, io.EOF
+	}
+
 	// Create fresh maps for parquet reader to populate
 	parquetRows := make([]map[string]any, r.batchSize)
 	for i := range parquetRows {
@@ -79,6 +84,7 @@ func (r *PreorderedParquetRawReader) Next() (*Batch, error) {
 		return nil, fmt.Errorf("parquet reader error: %w", err)
 	}
 	if n == 0 {
+		r.exhausted = true
 		return nil, io.EOF
 	}
 
@@ -117,21 +123,25 @@ func (r *PreorderedParquetRawReader) Next() (*Batch, error) {
 		validRows++
 	}
 
-	// No need to resize batch with new API
-
 	// Only increment rowCount for successfully processed rows
 	r.rowCount += int64(validRows)
 
-	// Return EOF if no valid rows remain
-	if validRows == 0 && err == io.EOF {
-		return nil, io.EOF
+	// If underlying reader hit EOF, mark as exhausted for next call
+	if err == io.EOF {
+		r.exhausted = true
 	}
+
+	// Return EOF if no valid rows remain
 	if validRows == 0 {
+		if r.exhausted {
+			return nil, io.EOF
+		}
 		// If we dropped all rows but haven't reached EOF, try reading more
 		return r.Next()
 	}
 
-	return batch, err
+	// Return valid batch without EOF (EOF will be returned on next call if exhausted)
+	return batch, nil
 }
 
 // Close closes the reader and releases resources.
