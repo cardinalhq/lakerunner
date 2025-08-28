@@ -76,9 +76,7 @@ func setupTelemetry(servicename string, addlAttrs *attribute.Set) (context.Conte
 	// make all the counters, gauges, etc that everyone is likely to use.
 	setupGlobalMetrics()
 
-	attrs := []attribute.KeyValue{
-		attribute.Int64("instanceID", myInstanceID),
-	}
+	attrs := []attribute.KeyValue{}
 	if addlAttrs != nil {
 		iter := addlAttrs.Iter()
 		for iter.Next() {
