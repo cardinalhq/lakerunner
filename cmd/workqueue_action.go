@@ -100,6 +100,11 @@ func NewRunqueueLoopContext(ctx context.Context, signal string, action string, a
 		return nil, fmt.Errorf("failed to create log estimator: %w", err)
 	}
 
+	traceEst, err := estimator.NewTraceEstimator(ctx, mdb)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create trace estimator: %w", err)
+	}
+
 	cdb, err := dbopen.ConfigDBStore(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to configdb: %w", err)
@@ -125,6 +130,7 @@ func NewRunqueueLoopContext(ctx context.Context, signal string, action string, a
 		awsmanager:      awsmanager,
 		metricEstimator: metricEst,
 		logEstimator:    logEst,
+		traceEstimator:  traceEst,
 		signal:          signal,
 		action:          action,
 		ll:              ll,
