@@ -28,8 +28,8 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
-// TestPreorderedParquetRawReaderNext tests the actual Next() method behavior
-func TestPreorderedParquetRawReaderNext(t *testing.T) {
+// TestParquetRawReaderNext tests the actual Next() method behavior
+func TestParquetRawReaderNext(t *testing.T) {
 	// Test with a real file to verify Next() behavior
 	file, err := os.Open("../../testdata/logs/logs-cooked-0001.parquet")
 	require.NoError(t, err)
@@ -38,7 +38,7 @@ func TestPreorderedParquetRawReaderNext(t *testing.T) {
 	stat, err := file.Stat()
 	require.NoError(t, err)
 
-	reader, err := NewPreorderedParquetRawReader(file, stat.Size(), 10) // Small batch size
+	reader, err := NewParquetRawReader(file, stat.Size(), 10) // Small batch size
 	require.NoError(t, err)
 	defer reader.Close()
 
@@ -72,8 +72,8 @@ func TestPreorderedParquetRawReaderNext(t *testing.T) {
 	assert.Equal(t, totalRows, reader.TotalRowsReturned(), "TotalRowsReturned should match actual rows read")
 }
 
-// TestPreorderedParquetRawReaderBatching tests batching behavior with real file
-func TestPreorderedParquetRawReaderBatching(t *testing.T) {
+// TestParquetRawReaderBatching tests batching behavior with real file
+func TestParquetRawReaderBatching(t *testing.T) {
 	file, err := os.Open("../../testdata/logs/logs-cooked-0001.parquet")
 	require.NoError(t, err)
 	defer file.Close()
@@ -94,7 +94,7 @@ func TestPreorderedParquetRawReaderBatching(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(fmt.Sprintf("BatchSize%d", tc.batchSize), func(t *testing.T) {
-			reader, err := NewPreorderedParquetRawReader(file, stat.Size(), tc.batchSize)
+			reader, err := NewParquetRawReader(file, stat.Size(), tc.batchSize)
 			require.NoError(t, err)
 			defer reader.Close()
 
@@ -121,8 +121,8 @@ func TestPreorderedParquetRawReaderBatching(t *testing.T) {
 	}
 }
 
-// TestPreorderedParquetRawReaderWithRealFile tests PreorderedParquetRawReader with actual parquet files
-func TestPreorderedParquetRawReaderWithRealFile(t *testing.T) {
+// TestParquetRawReaderWithRealFile tests ParquetRawReader with actual parquet files
+func TestParquetRawReaderWithRealFile(t *testing.T) {
 	file, err := os.Open("../../testdata/logs/logs-cooked-0001.parquet")
 	require.NoError(t, err)
 	defer file.Close()
@@ -130,7 +130,7 @@ func TestPreorderedParquetRawReaderWithRealFile(t *testing.T) {
 	stat, err := file.Stat()
 	require.NoError(t, err)
 
-	reader, err := NewPreorderedParquetRawReader(file, stat.Size(), 1000)
+	reader, err := NewParquetRawReader(file, stat.Size(), 1000)
 	require.NoError(t, err)
 	defer reader.Close()
 
@@ -162,8 +162,8 @@ func TestPreorderedParquetRawReaderWithRealFile(t *testing.T) {
 	assert.Equal(t, int64(32), rowCount, "Should read exactly 32 rows from logs-cooked-0001.parquet")
 }
 
-// TestPreorderedParquetRawReaderMultipleFiles tests PreorderedParquetRawReader with different files
-func TestPreorderedParquetRawReaderMultipleFiles(t *testing.T) {
+// TestParquetRawReaderMultipleFiles tests ParquetRawReader with different files
+func TestParquetRawReaderMultipleFiles(t *testing.T) {
 	testFiles := map[string]int64{
 		"../../testdata/logs/logs-cooked-0001.parquet":       32,   // 32 rows
 		"../../testdata/metrics/metrics-cooked-0001.parquet": 211,  // 211 rows
@@ -179,7 +179,7 @@ func TestPreorderedParquetRawReaderMultipleFiles(t *testing.T) {
 			stat, err := file.Stat()
 			require.NoError(t, err)
 
-			reader, err := NewPreorderedParquetRawReader(file, stat.Size(), 1000)
+			reader, err := NewParquetRawReader(file, stat.Size(), 1000)
 			require.NoError(t, err)
 			defer reader.Close()
 
@@ -213,8 +213,8 @@ func TestPreorderedParquetRawReaderMultipleFiles(t *testing.T) {
 	}
 }
 
-// TestPreorderedParquetRawReaderClose tests proper cleanup
-func TestPreorderedParquetRawReaderClose(t *testing.T) {
+// TestParquetRawReaderClose tests proper cleanup
+func TestParquetRawReaderClose(t *testing.T) {
 	file, err := os.Open("../../testdata/logs/logs-cooked-0001.parquet")
 	require.NoError(t, err)
 	defer file.Close()
@@ -222,7 +222,7 @@ func TestPreorderedParquetRawReaderClose(t *testing.T) {
 	stat, err := file.Stat()
 	require.NoError(t, err)
 
-	reader, err := NewPreorderedParquetRawReader(file, stat.Size(), 1000)
+	reader, err := NewParquetRawReader(file, stat.Size(), 1000)
 	require.NoError(t, err)
 
 	// Should be able to read before closing
@@ -243,7 +243,7 @@ func TestPreorderedParquetRawReaderClose(t *testing.T) {
 	assert.Contains(t, err.Error(), "closed")
 }
 
-func TestPreorderedParquetRawReader_SpecificProblemFile(t *testing.T) {
+func TestParquetRawReader_SpecificProblemFile(t *testing.T) {
 	// Test the specific file that's failing in production
 	filename := "../../testdata/logs/logs_1747427310000_667024137.parquet"
 
@@ -293,8 +293,8 @@ func (t *testTranslator) TranslateRow(row *Row) error {
 	return nil
 }
 
-func TestPreorderedParquetRawReader_WithTranslator(t *testing.T) {
-	// Test PreorderedParquetRawReader with TranslatingReader using the problem file
+func TestParquetRawReader_WithTranslator(t *testing.T) {
+	// Test ParquetRawReader with TranslatingReader using the problem file
 	filename := "../../testdata/logs/logs_1747427310000_667024137.parquet"
 
 	// Create base parquet reader
@@ -315,7 +315,7 @@ func TestPreorderedParquetRawReader_WithTranslator(t *testing.T) {
 	if batch != nil {
 		n = batch.Len()
 	}
-	t.Logf("TranslatingReader with PreorderedParquetRawReader: n=%d, err=%v", n, err)
+	t.Logf("TranslatingReader with ParquetRawReader: n=%d, err=%v", n, err)
 
 	if err != nil && err != io.EOF {
 		t.Fatalf("Read failed: %v", err)
@@ -371,7 +371,7 @@ func TestProtoLogsReader_WithTranslator(t *testing.T) {
 	}
 }
 
-func TestPreorderedParquetRawReader_CompactTestFiles(t *testing.T) {
+func TestParquetRawReader_CompactTestFiles(t *testing.T) {
 	// Test files from compact-test-0001 with expected record counts from logs
 	expectedCounts := map[string]int64{
 		"tbl_299476429685392687.parquet": 227,
@@ -399,7 +399,7 @@ func TestPreorderedParquetRawReader_CompactTestFiles(t *testing.T) {
 			stat, err := file.Stat()
 			require.NoError(t, err)
 
-			reader, err := NewPreorderedParquetRawReader(file, stat.Size(), 1000)
+			reader, err := NewParquetRawReader(file, stat.Size(), 1000)
 			require.NoError(t, err, "Failed to create reader for file: %s", filename)
 			defer reader.Close()
 
@@ -436,7 +436,7 @@ func TestPreorderedParquetRawReader_CompactTestFiles(t *testing.T) {
 	}
 }
 
-func TestPreorderedParquetRawReader_TIDConversion(t *testing.T) {
+func TestParquetRawReader_TIDConversion(t *testing.T) {
 	// Test TID field type in actual compact test file data
 	fullPath := "../../testdata/metrics/compact-test-0001/tbl_299476429685392687.parquet"
 
@@ -447,7 +447,7 @@ func TestPreorderedParquetRawReader_TIDConversion(t *testing.T) {
 	stat, err := file.Stat()
 	require.NoError(t, err)
 
-	reader, err := NewPreorderedParquetRawReader(file, stat.Size(), 1000)
+	reader, err := NewParquetRawReader(file, stat.Size(), 1000)
 	require.NoError(t, err, "Failed to create reader")
 	defer reader.Close()
 
@@ -529,7 +529,7 @@ func TestDiskSortingReader_WithParquetCompactTestFiles(t *testing.T) {
 			require.NoError(t, err)
 
 			// Create the ParquetReader
-			parquetReader, err := NewPreorderedParquetRawReader(file, stat.Size(), 1000)
+			parquetReader, err := NewParquetRawReader(file, stat.Size(), 1000)
 			require.NoError(t, err, "Failed to create ParquetReader for file: %s", filename)
 			defer parquetReader.Close()
 

@@ -326,7 +326,7 @@ func compactMetricInterval(
 			return fmt.Errorf("statting parquet file %s: %w", fn, err)
 		}
 
-		reader, err := filereader.NewPreorderedParquetRawReader(file, stat.Size(), 1000)
+		reader, err := filereader.NewParquetRawReader(file, stat.Size(), 1000)
 		if err != nil {
 			file.Close()
 			ll.Error("Failed to create parquet reader", slog.String("file", fn), slog.Any("error", err))
@@ -388,10 +388,10 @@ func compactMetricInterval(
 	} else {
 		ll.Debug("Creating multi-source reader", slog.Int("readerCount", len(readers)))
 		selector := metricsprocessing.MetricsOrderedSelector()
-		multiReader, err := filereader.NewPreorderedMultisourceReader(readers, selector, 1000)
+		multiReader, err := filereader.NewMergesortReader(readers, selector, 1000)
 		if err != nil {
-			ll.Error("Failed to create preordered multi-source reader", slog.Any("error", err))
-			return fmt.Errorf("creating preordered multi-source reader: %w", err)
+			ll.Error("Failed to create mergesort reader", slog.Any("error", err))
+			return fmt.Errorf("creating mergesort reader: %w", err)
 		}
 		finalReader = multiReader
 		defer multiReader.Close()

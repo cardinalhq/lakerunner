@@ -221,7 +221,7 @@ func rollupMetricSegments(
 		return WorkResultSuccess, fmt.Errorf("invalid time range in work item: %v", inf.TsRange())
 	}
 
-	// Download all source files and create PreorderedParquetRawReaders
+	// Download all source files and create ParquetRawReaders
 	var readers []filereader.Reader
 	var downloadedFiles []string
 
@@ -239,7 +239,7 @@ func rollupMetricSegments(
 			continue
 		}
 
-		// Open file and get size for PreorderedParquetRawReader
+		// Open file and get size for ParquetRawReader
 		file, err := os.Open(fn)
 		if err != nil {
 			ll.Error("Failed to open parquet file", slog.String("file", fn), slog.Any("error", err))
@@ -253,8 +253,8 @@ func rollupMetricSegments(
 			return WorkResultTryAgainLater, fmt.Errorf("statting parquet file %s: %w", fn, err)
 		}
 
-		// Create PreorderedParquetRawReader directly
-		reader, err := filereader.NewPreorderedParquetRawReader(file, stat.Size(), 1000)
+		// Create ParquetRawReader directly
+		reader, err := filereader.NewParquetRawReader(file, stat.Size(), 1000)
 		if err != nil {
 			file.Close()
 			ll.Error("Failed to create parquet reader", slog.String("file", fn), slog.Any("error", err))
@@ -264,7 +264,7 @@ func rollupMetricSegments(
 		// Record file format and input sorted status metrics
 		fileFormat := getFileFormat(fn)
 		// Rollup always reads parquet files from compaction output, which are sorted with compatible key
-		inputSorted := true // PreorderedParquetRawReader assumes data is sorted with compatible key
+		inputSorted := true // ParquetRawReader assumes data is sorted with compatible key
 
 		attrs := append(commonAttributes.ToSlice(),
 			attribute.String("format", fileFormat),
@@ -289,16 +289,16 @@ func rollupMetricSegments(
 		}
 	}()
 
-	// Create PreorderedMultisourceReader for read-time merge sort of pre-sorted parquet files
+	// Create MergesortReader for read-time merge sort of pre-sorted parquet files
 	var finalReader filereader.Reader
 	if len(readers) == 1 {
 		finalReader = readers[0]
 	} else {
 		selector := metricsprocessing.MetricsOrderedSelector()
-		multiReader, err := filereader.NewPreorderedMultisourceReader(readers, selector, 1000)
+		multiReader, err := filereader.NewMergesortReader(readers, selector, 1000)
 		if err != nil {
-			ll.Error("Failed to create preordered multi-source reader", slog.Any("error", err))
-			return WorkResultTryAgainLater, fmt.Errorf("creating preordered multi-source reader: %w", err)
+			ll.Error("Failed to create mergesort reader", slog.Any("error", err))
+			return WorkResultTryAgainLater, fmt.Errorf("creating mergesort reader: %w", err)
 		}
 		finalReader = multiReader
 		defer multiReader.Close()

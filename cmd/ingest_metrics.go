@@ -436,9 +436,9 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 		// Single reader - no need for multi-source reader
 		finalReader = readers[0]
 	} else {
-		// Multiple readers - use PreorderedMultisourceReader to merge sorted streams
+		// Multiple readers - use MergesortReader to merge sorted streams
 		selector := createMetricOrderSelector()
-		multiReader, err := filereader.NewPreorderedMultisourceReader(readers, selector, 1000)
+		multiReader, err := filereader.NewMergesortReader(readers, selector, 1000)
 		if err != nil {
 			return fmt.Errorf("failed to create multi-source reader: %w", err)
 		}

@@ -26,8 +26,8 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
-// PreorderedParquetRawReader reads rows from a generic Parquet stream.
-type PreorderedParquetRawReader struct {
+// ParquetRawReader reads rows from a generic Parquet stream.
+type ParquetRawReader struct {
 	pf        *parquet.File
 	pfr       *parquet.GenericReader[map[string]any]
 	closed    bool
@@ -36,9 +36,9 @@ type PreorderedParquetRawReader struct {
 	batchSize int
 }
 
-// NewPreorderedParquetRawReader creates a new PreorderedParquetRawReader for the given io.ReaderAt.
+// NewParquetRawReader creates a new ParquetRawReader for the given io.ReaderAt.
 // The caller is responsible for closing the underlying reader.
-func NewPreorderedParquetRawReader(reader io.ReaderAt, size int64, batchSize int) (*PreorderedParquetRawReader, error) {
+func NewParquetRawReader(reader io.ReaderAt, size int64, batchSize int) (*ParquetRawReader, error) {
 	pf, err := parquet.OpenFile(reader, size)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open parquet file: %w", err)
@@ -56,7 +56,7 @@ func NewPreorderedParquetRawReader(reader io.ReaderAt, size int64, batchSize int
 		batchSize = 1000
 	}
 
-	return &PreorderedParquetRawReader{
+	return &ParquetRawReader{
 		pf:        pf,
 		pfr:       pfr,
 		batchSize: batchSize,
@@ -64,7 +64,7 @@ func NewPreorderedParquetRawReader(reader io.ReaderAt, size int64, batchSize int
 }
 
 // Next returns the next batch of rows from the parquet file.
-func (r *PreorderedParquetRawReader) Next() (*Batch, error) {
+func (r *ParquetRawReader) Next() (*Batch, error) {
 	if r.closed || r.pfr == nil {
 		return nil, errors.New("reader is closed or not initialized")
 	}
@@ -146,7 +146,7 @@ func (r *PreorderedParquetRawReader) Next() (*Batch, error) {
 }
 
 // Close closes the reader and releases resources.
-func (r *PreorderedParquetRawReader) Close() error {
+func (r *ParquetRawReader) Close() error {
 	if r.closed {
 		return nil
 	}
@@ -164,6 +164,6 @@ func (r *PreorderedParquetRawReader) Close() error {
 }
 
 // TotalRowsReturned returns the total number of rows that have been successfully returned via Next().
-func (r *PreorderedParquetRawReader) TotalRowsReturned() int64 {
+func (r *ParquetRawReader) TotalRowsReturned() int64 {
 	return r.rowCount
 }

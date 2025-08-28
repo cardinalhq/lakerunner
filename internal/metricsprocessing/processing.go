@@ -87,7 +87,7 @@ func GetCurrentMetricSortFunctions() (filereader.SortKeyFunc, func(a, b any) int
 	return filereader.MetricNameTidTimestampSortKeyFunc(), filereader.MetricNameTidTimestampSortFunc()
 }
 
-// MetricsOrderedSelector returns a SelectFunc for PreorderedMultisourceReader that orders by [metric name, TID].
+// MetricsOrderedSelector returns a SelectFunc for MergesortReader that orders by [metric name, TID].
 // This ensures the same ordering used by the parquet writer during ingestion and compaction.
 func MetricsOrderedSelector() filereader.SelectFunc {
 	return func(rows []filereader.Row) int {

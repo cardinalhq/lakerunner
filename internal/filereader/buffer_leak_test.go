@@ -95,7 +95,7 @@ func readAllBatches(t *testing.T, reader Reader) []*Batch {
 	return batches
 }
 
-func TestPreorderedMultisourceReader_BufferLeak(t *testing.T) {
+func TestMergesortReader_BufferLeak(t *testing.T) {
 	// Record initial buffer pool stats
 	initialStats := pipeline.GlobalBatchPoolStats()
 
@@ -121,10 +121,10 @@ func TestPreorderedMultisourceReader_BufferLeak(t *testing.T) {
 
 	readers := []Reader{reader1, reader2}
 
-	// Create PreorderedMultisourceReader
-	msReader, err := NewPreorderedMultisourceReader(readers, TimeOrderedSelector("_cardinalhq.timestamp"), 100)
+	// Create MergesortReader
+	msReader, err := NewMergesortReader(readers, TimeOrderedSelector("_cardinalhq.timestamp"), 100)
 	if err != nil {
-		t.Fatalf("Failed to create PreorderedMultisourceReader: %v", err)
+		t.Fatalf("Failed to create MergesortReader: %v", err)
 	}
 	defer msReader.Close()
 
@@ -404,11 +404,4 @@ func TestStackedReaders_BufferLeak(t *testing.T) {
 	// Check for buffer leaks
 	finalStats := pipeline.GlobalBatchPoolStats()
 	assertNoBufferLeaks(t, initialStats, finalStats)
-}
-
-// TestParquetReader_BufferLeak tests parquet reader (if we can create mock data)
-func TestParquetReader_BufferLeak(t *testing.T) {
-	// This test would need actual Parquet data to work properly
-	// For now, we'll skip it as creating valid Parquet data is complex
-	t.Skip("Parquet reader buffer leak test requires valid Parquet data - implement when needed")
 }

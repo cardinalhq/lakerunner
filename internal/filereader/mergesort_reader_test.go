@@ -24,7 +24,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
-func TestNewPreorderedMultisourceReader(t *testing.T) {
+func TestNewMergesortReader(t *testing.T) {
 	// Test with valid readers and selector
 	readers := []Reader{
 		newMockReader("r1", []Row{{wkk.NewRowKey("ts"): int64(1)}}),
@@ -32,9 +32,9 @@ func TestNewPreorderedMultisourceReader(t *testing.T) {
 	}
 	selector := TimeOrderedSelector("ts")
 
-	or, err := NewPreorderedMultisourceReader(readers, selector, 1000)
+	or, err := NewMergesortReader(readers, selector, 1000)
 	if err != nil {
-		t.Fatalf("NewPreorderedMultisourceReader() error = %v", err)
+		t.Fatalf("NewMergesortReader() error = %v", err)
 	}
 	defer or.Close()
 
@@ -43,19 +43,19 @@ func TestNewPreorderedMultisourceReader(t *testing.T) {
 	}
 
 	// Test with no readers
-	_, err = NewPreorderedMultisourceReader([]Reader{}, selector, 1000)
+	_, err = NewMergesortReader([]Reader{}, selector, 1000)
 	if err == nil {
 		t.Error("Expected error for empty readers slice")
 	}
 
 	// Test with nil selector
-	_, err = NewPreorderedMultisourceReader(readers, nil, 1000)
+	_, err = NewMergesortReader(readers, nil, 1000)
 	if err == nil {
 		t.Error("Expected error for nil selector")
 	}
 }
 
-func TestOrderedReader_Next(t *testing.T) {
+func TestMergesortReader_Next(t *testing.T) {
 	// Create readers with interleaved timestamps to test ordering
 	readers := []Reader{
 		newMockReader("r1", []Row{
@@ -74,9 +74,9 @@ func TestOrderedReader_Next(t *testing.T) {
 	}
 
 	selector := TimeOrderedSelector("ts")
-	or, err := NewPreorderedMultisourceReader(readers, selector, 1000)
+	or, err := NewMergesortReader(readers, selector, 1000)
 	if err != nil {
-		t.Fatalf("NewPreorderedMultisourceReader() error = %v", err)
+		t.Fatalf("NewMergesortReader() error = %v", err)
 	}
 	defer or.Close()
 
@@ -115,7 +115,7 @@ func TestOrderedReader_Next(t *testing.T) {
 	}
 }
 
-func TestOrderedReader_NextBatched(t *testing.T) {
+func TestMergesortReader_NextBatched(t *testing.T) {
 	readers := []Reader{
 		newMockReader("r1", []Row{{wkk.NewRowKey("ts"): int64(100)}}),
 		newMockReader("r2", []Row{{wkk.NewRowKey("ts"): int64(200)}}),
@@ -123,9 +123,9 @@ func TestOrderedReader_NextBatched(t *testing.T) {
 	}
 
 	selector := TimeOrderedSelector("ts")
-	or, err := NewPreorderedMultisourceReader(readers, selector, 1000)
+	or, err := NewMergesortReader(readers, selector, 1000)
 	if err != nil {
-		t.Fatalf("NewPreorderedMultisourceReader() error = %v", err)
+		t.Fatalf("NewMergesortReader() error = %v", err)
 	}
 	defer or.Close()
 
@@ -154,16 +154,16 @@ func TestOrderedReader_NextBatched(t *testing.T) {
 	}
 }
 
-func TestOrderedReader_ActiveReaderCount(t *testing.T) {
+func TestMergesortReader_ActiveReaderCount(t *testing.T) {
 	readers := []Reader{
 		newMockReader("r1", []Row{{wkk.NewRowKey("ts"): int64(1)}}),
 		newMockReader("r2", []Row{{wkk.NewRowKey("ts"): int64(2)}}),
 	}
 
 	selector := TimeOrderedSelector("ts")
-	or, err := NewPreorderedMultisourceReader(readers, selector, 1000)
+	or, err := NewMergesortReader(readers, selector, 1000)
 	if err != nil {
-		t.Fatalf("NewPreorderedMultisourceReader() error = %v", err)
+		t.Fatalf("NewMergesortReader() error = %v", err)
 	}
 	defer or.Close()
 
@@ -187,16 +187,16 @@ func TestOrderedReader_ActiveReaderCount(t *testing.T) {
 	}
 }
 
-func TestOrderedReader_AllEmptyReaders(t *testing.T) {
+func TestMergesortReader_AllEmptyReaders(t *testing.T) {
 	readers := []Reader{
 		newMockReader("r1", []Row{}),
 		newMockReader("r2", []Row{}),
 	}
 
 	selector := TimeOrderedSelector("ts")
-	or, err := NewPreorderedMultisourceReader(readers, selector, 1000)
+	or, err := NewMergesortReader(readers, selector, 1000)
 	if err != nil {
-		t.Fatalf("NewPreorderedMultisourceReader() error = %v", err)
+		t.Fatalf("NewMergesortReader() error = %v", err)
 	}
 	defer or.Close()
 
@@ -210,16 +210,16 @@ func TestOrderedReader_AllEmptyReaders(t *testing.T) {
 	}
 }
 
-func TestOrderedReader_Close(t *testing.T) {
+func TestMergesortReader_Close(t *testing.T) {
 	readers := []Reader{
 		newMockReader("r1", []Row{{wkk.NewRowKey("ts"): int64(1)}}),
 		newMockReader("r2", []Row{{wkk.NewRowKey("ts"): int64(2)}}),
 	}
 
 	selector := TimeOrderedSelector("ts")
-	or, err := NewPreorderedMultisourceReader(readers, selector, 1000)
+	or, err := NewMergesortReader(readers, selector, 1000)
 	if err != nil {
-		t.Fatalf("NewPreorderedMultisourceReader() error = %v", err)
+		t.Fatalf("NewMergesortReader() error = %v", err)
 	}
 
 	// Close the reader
@@ -338,11 +338,11 @@ func (tr *trackingReader) Close() error { return nil }
 
 func (tr *trackingReader) TotalRowsReturned() int64 { return tr.rowCount }
 
-func TestPreorderedMultisourceReader_RowReuse(t *testing.T) {
+func TestMergesortReader_RowReuse(t *testing.T) {
 	tr := newTrackingReader([]Row{{wkk.NewRowKey("ts"): int64(1)}, {wkk.NewRowKey("ts"): int64(2)}, {wkk.NewRowKey("ts"): int64(3)}, {wkk.NewRowKey("ts"): int64(4)}})
-	or, err := NewPreorderedMultisourceReader([]Reader{tr}, TimeOrderedSelector("ts"), 1)
+	or, err := NewMergesortReader([]Reader{tr}, TimeOrderedSelector("ts"), 1)
 	if err != nil {
-		t.Fatalf("NewPreorderedMultisourceReader() error = %v", err)
+		t.Fatalf("NewMergesortReader() error = %v", err)
 	}
 	defer or.Close()
 

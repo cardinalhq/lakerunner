@@ -48,7 +48,7 @@ func TestCreateLogReader(t *testing.T) {
 				return filename
 			},
 			wantErr:  true, // Empty parquet file will fail to read
-			wantType: "*filereader.PreorderedParquetRawReader",
+			wantType: "*filereader.ParquetRawReader",
 		},
 		{
 			name:     "JSONGzFile",

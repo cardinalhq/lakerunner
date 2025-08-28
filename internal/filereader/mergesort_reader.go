@@ -22,8 +22,8 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 )
 
-// readerState holds the state for a single reader in the ordered merge.
-type readerState struct {
+// mergesortReaderState holds the state for a single reader in the ordered merge.
+type mergesortReaderState struct {
 	reader       Reader
 	currentBatch *Batch
 	batchIndex   int
@@ -33,7 +33,7 @@ type readerState struct {
 }
 
 // getCurrentRow returns the current row from the reader state, if available.
-func (state *readerState) getCurrentRow() Row {
+func (state *mergesortReaderState) getCurrentRow() Row {
 	if state.done || state.err != nil || state.currentBatch == nil || state.batchIndex >= state.currentBatch.Len() {
 		return nil
 	}
@@ -41,31 +41,31 @@ func (state *readerState) getCurrentRow() Row {
 }
 
 // consumeCurrentRow advances to the next row in the current batch.
-func (state *readerState) consumeCurrentRow() {
+func (state *mergesortReaderState) consumeCurrentRow() {
 	if state.currentBatch != nil && state.batchIndex < state.currentBatch.Len() {
 		state.batchIndex++
 	}
 }
 
-// PreorderedMultisourceReader implements merge-sort style reading across multiple pre-sorted readers.
+// MergesortReader implements merge-sort style reading across multiple pre-sorted readers.
 // It assumes each individual reader returns rows in sorted order according to the
 // provided selector function.
-type PreorderedMultisourceReader struct {
-	states    []*readerState
+type MergesortReader struct {
+	states    []*mergesortReaderState
 	selector  SelectFunc
 	closed    bool
 	rowCount  int64
 	batchSize int
 }
 
-// NewPreorderedMultisourceReader creates a new PreorderedMultisourceReader that merges rows from multiple readers
+// NewMergesortReader creates a new MergesortReader that merges rows from multiple readers
 // in sorted order. The selector function determines which row should be returned next.
 //
 // Requirements:
 // - Each reader must return rows in sorted order (according to the selector logic)
 // - The selector function must be consistent (same inputs -> same output)
-// - Readers will be closed when the PreorderedMultisourceReader is closed
-func NewPreorderedMultisourceReader(readers []Reader, selector SelectFunc, batchSize int) (*PreorderedMultisourceReader, error) {
+// - Readers will be closed when the MergesortReader is closed
+func NewMergesortReader(readers []Reader, selector SelectFunc, batchSize int) (*MergesortReader, error) {
 	if len(readers) == 0 {
 		return nil, errors.New("at least one reader is required")
 	}
@@ -77,15 +77,15 @@ func NewPreorderedMultisourceReader(readers []Reader, selector SelectFunc, batch
 		batchSize = 1000
 	}
 
-	states := make([]*readerState, len(readers))
+	states := make([]*mergesortReaderState, len(readers))
 	for i, reader := range readers {
-		states[i] = &readerState{
+		states[i] = &mergesortReaderState{
 			reader: reader,
 			index:  i,
 		}
 	}
 
-	or := &PreorderedMultisourceReader{
+	or := &MergesortReader{
 		states:    states,
 		selector:  selector,
 		batchSize: batchSize,
@@ -101,7 +101,7 @@ func NewPreorderedMultisourceReader(readers []Reader, selector SelectFunc, batch
 }
 
 // primeReaders loads the first batch from each reader.
-func (or *PreorderedMultisourceReader) primeReaders() error {
+func (or *MergesortReader) primeReaders() error {
 	for _, state := range or.states {
 		if err := or.advance(state); err != nil {
 			return fmt.Errorf("failed to prime reader %d: %w", state.index, err)
@@ -111,7 +111,7 @@ func (or *PreorderedMultisourceReader) primeReaders() error {
 }
 
 // advance loads the next batch or moves to the next row in the current batch for the given reader state.
-func (or *PreorderedMultisourceReader) advance(state *readerState) error {
+func (or *MergesortReader) advance(state *mergesortReaderState) error {
 	if state.done || state.err != nil {
 		return state.err
 	}
@@ -148,7 +148,7 @@ func (or *PreorderedMultisourceReader) advance(state *readerState) error {
 }
 
 // Next returns the next batch of rows in sorted order across all readers.
-func (or *PreorderedMultisourceReader) Next() (*Batch, error) {
+func (or *MergesortReader) Next() (*Batch, error) {
 	if or.closed {
 		return nil, errors.New("reader is closed")
 	}
@@ -158,7 +158,7 @@ func (or *PreorderedMultisourceReader) Next() (*Batch, error) {
 	for batch.Len() < or.batchSize {
 		// Collect all active (non-done, non-error) readers and their current rows
 		var activeRows []Row
-		var activeStates []*readerState
+		var activeStates []*mergesortReaderState
 
 		for _, state := range or.states {
 			if !state.done && state.err == nil {
@@ -223,7 +223,7 @@ func (or *PreorderedMultisourceReader) Next() (*Batch, error) {
 }
 
 // Close closes all underlying readers and releases resources.
-func (or *PreorderedMultisourceReader) Close() error {
+func (or *MergesortReader) Close() error {
 	if or.closed {
 		return nil
 	}
@@ -251,7 +251,7 @@ func (or *PreorderedMultisourceReader) Close() error {
 }
 
 // ActiveReaderCount returns the number of readers that still have data to read.
-func (or *PreorderedMultisourceReader) ActiveReaderCount() int {
+func (or *MergesortReader) ActiveReaderCount() int {
 	if or.closed {
 		return 0
 	}
@@ -266,6 +266,6 @@ func (or *PreorderedMultisourceReader) ActiveReaderCount() int {
 }
 
 // TotalRowsReturned returns the total number of rows that have been successfully returned via Next() from all readers.
-func (or *PreorderedMultisourceReader) TotalRowsReturned() int64 {
+func (or *MergesortReader) TotalRowsReturned() int64 {
 	return or.rowCount
 }

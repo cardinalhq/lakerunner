@@ -92,7 +92,7 @@ func WrapReaderForAggregation(reader Reader, opts ReaderOptions) (Reader, error)
 
 // ReaderForFileWithOptions creates a Reader for the given file with the provided options.
 // Supported file formats:
-//   - .parquet: Creates a PreorderedParquetRawReader (works for all signal types)
+//   - .parquet: Creates a ParquetRawReader (works for all signal types)
 //   - .json.gz: Creates a JSONLinesReader with gzip decompression (works for all signal types)
 //   - .json: Creates a JSONLinesReader (works for all signal types)
 //   - .binpb: Creates a signal-specific proto reader (NewProtoLogsReader, NewIngestProtoMetricsReader, or NewProtoTracesReader)
@@ -120,7 +120,7 @@ func ReaderForFileWithOptions(filename string, opts ReaderOptions) (Reader, erro
 	}
 }
 
-// createParquetReader creates a PreorderedParquetRawReader for the given file.
+// createParquetReader creates a ParquetRawReader for the given file.
 func createParquetReader(filename string, opts ReaderOptions) (Reader, error) {
 	file, err := os.Open(filename)
 	if err != nil {
@@ -133,7 +133,7 @@ func createParquetReader(filename string, opts ReaderOptions) (Reader, error) {
 		return nil, fmt.Errorf("failed to stat parquet file: %w", err)
 	}
 
-	reader, err := NewPreorderedParquetRawReader(file, stat.Size(), opts.BatchSize)
+	reader, err := NewParquetRawReader(file, stat.Size(), opts.BatchSize)
 	if err != nil {
 		file.Close()
 		return nil, err

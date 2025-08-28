@@ -48,7 +48,7 @@
 //
 // All format readers return raw, untransformed data from files:
 //
-//   - PreorderedParquetRawReader: Generic Parquet files using parquet-go/parquet-go (requires io.ReaderAt)
+//   - ParquetRawReader: Generic Parquet files using parquet-go/parquet-go (requires io.ReaderAt)
 //   - JSONLinesReader: Streams JSON objects line-by-line from any io.ReadCloser
 //   - ProtoLogsReader: Raw OTEL log records from protobuf
 //   - IngestProtoMetricsReader: Raw OTEL metric data points from protobuf (ingestion only)
@@ -126,10 +126,10 @@
 //
 //	reader := NewDiskSortingReader(rawReader, TimestampSortKeyFunc(), TimestampSortFunc())
 //
-// PreorderedMultisourceReader - For merging multiple already-sorted sources (low memory, streaming):
+// MergesortReader - For merging multiple already-sorted sources (low memory, streaming):
 //
 //	selector := TimeOrderedSelector("timestamp")
-//	reader := NewPreorderedMultisourceReader([]Reader{r1, r2, r3}, selector)
+//	reader := NewMergesortReader([]Reader{r1, r2, r3}, selector)
 //
 // SequentialReader - Sequential processing (no sorting):
 //
@@ -140,13 +140,13 @@
 // Time-ordered merge sort across multiple files:
 //
 //	readers := []Reader{
-//	    NewPreorderedParquetRawReader(file1, size1),
-//	    NewPreorderedParquetRawReader(file2, size2),
+//	    NewParquetRawReader(file1, size1),
+//	    NewParquetRawReader(file2, size2),
 //	    NewJSONLinesReader(file3),
 //	}
 //
 //	selector := TimeOrderedSelector("_cardinalhq.timestamp")
-//	ordered := NewPreorderedMultisourceReader(readers, selector)
+//	ordered := NewMergesortReader(readers, selector)
 //	defer ordered.Close()
 //
 //	for {
@@ -169,8 +169,8 @@
 //
 //	// Process multiple file groups in timestamp order,
 //	// then combine groups sequentially
-//	group1 := NewPreorderedMultisourceReader(readers1, TimeOrderedSelector("timestamp"))
-//	group2 := NewPreorderedMultisourceReader(readers2, TimeOrderedSelector("timestamp"))
+//	group1 := NewMergesortReader(readers1, TimeOrderedSelector("timestamp"))
+//	group2 := NewMergesortReader(readers2, TimeOrderedSelector("timestamp"))
 //	final := NewSequentialReader([]Reader{group1, group2})
 //
 // # Memory Management & Batch Ownership

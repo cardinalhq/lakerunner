@@ -65,7 +65,7 @@ func loadBenchmarkData(b *testing.B) {
 
 		// Count fields by reading a few rows
 		reader := bytes.NewReader(data)
-		parquetReader, err := NewPreorderedParquetRawReader(reader, int64(len(data)), 1000)
+		parquetReader, err := NewParquetRawReader(reader, int64(len(data)), 1000)
 		if err != nil {
 			b.Fatalf("Failed to create reader for %s: %v", filename, err)
 		}
@@ -98,9 +98,9 @@ func loadBenchmarkData(b *testing.B) {
 }
 
 // createReaderFromData creates a parquet reader from preloaded data
-func createReaderFromData(data *BenchmarkData) (*PreorderedParquetRawReader, error) {
+func createReaderFromData(data *BenchmarkData) (*ParquetRawReader, error) {
 	reader := bytes.NewReader(data.Data)
-	return NewPreorderedParquetRawReader(reader, data.Size, 1000)
+	return NewParquetRawReader(reader, data.Size, 1000)
 }
 
 // MemStats captures memory statistics before/after operations
@@ -172,8 +172,8 @@ func (ms *MemStats) report(b *testing.B, operation string, rowsProcessed int64, 
 	}
 }
 
-// BenchmarkPreorderedParquetRawReader_Small benchmarks small file reading
-func BenchmarkPreorderedParquetRawReader_Small(b *testing.B) {
+// BenchmarkParquetRawReader_Small benchmarks small file reading
+func BenchmarkParquetRawReader_Small(b *testing.B) {
 	loadBenchmarkData(b)
 	data := benchmarkFiles["small"]
 
@@ -211,8 +211,8 @@ func BenchmarkPreorderedParquetRawReader_Small(b *testing.B) {
 	ms.report(b, fmt.Sprintf("Small file (%s)", data.Name), totalRows, data.FieldsAvg)
 }
 
-// BenchmarkPreorderedParquetRawReader_Medium benchmarks medium file reading
-func BenchmarkPreorderedParquetRawReader_Medium(b *testing.B) {
+// BenchmarkParquetRawReader_Medium benchmarks medium file reading
+func BenchmarkParquetRawReader_Medium(b *testing.B) {
 	loadBenchmarkData(b)
 	data := benchmarkFiles["medium"]
 
@@ -250,8 +250,8 @@ func BenchmarkPreorderedParquetRawReader_Medium(b *testing.B) {
 	ms.report(b, fmt.Sprintf("Medium file (%s)", data.Name), totalRows, data.FieldsAvg)
 }
 
-// BenchmarkPreorderedParquetRawReader_Large benchmarks large file reading
-func BenchmarkPreorderedParquetRawReader_Large(b *testing.B) {
+// BenchmarkParquetRawReader_Large benchmarks large file reading
+func BenchmarkParquetRawReader_Large(b *testing.B) {
 	loadBenchmarkData(b)
 	data := benchmarkFiles["large"]
 
@@ -289,8 +289,8 @@ func BenchmarkPreorderedParquetRawReader_Large(b *testing.B) {
 	ms.report(b, fmt.Sprintf("Large file (%s)", data.Name), totalRows, data.FieldsAvg)
 }
 
-// BenchmarkPreorderedParquetRawReader_BatchSizes tests different batch sizes
-func BenchmarkPreorderedParquetRawReader_BatchSizes(b *testing.B) {
+// BenchmarkParquetRawReader_BatchSizes tests different batch sizes
+func BenchmarkParquetRawReader_BatchSizes(b *testing.B) {
 	loadBenchmarkData(b)
 	data := benchmarkFiles["medium"]
 
@@ -334,8 +334,8 @@ func BenchmarkPreorderedParquetRawReader_BatchSizes(b *testing.B) {
 	}
 }
 
-// BenchmarkPreorderedParquetRawReader_MemoryProfile profiles memory usage patterns
-func BenchmarkPreorderedParquetRawReader_MemoryProfile(b *testing.B) {
+// BenchmarkParquetRawReader_MemoryProfile profiles memory usage patterns
+func BenchmarkParquetRawReader_MemoryProfile(b *testing.B) {
 	loadBenchmarkData(b)
 	data := benchmarkFiles["large"]
 
@@ -388,8 +388,8 @@ func BenchmarkPreorderedParquetRawReader_MemoryProfile(b *testing.B) {
 	b.Logf("Memory profile complete: %d batches, %d total rows", iterationCount, totalRows)
 }
 
-// BenchmarkPreorderedParquetRawReader_GCPressure measures GC pressure
-func BenchmarkPreorderedParquetRawReader_GCPressure(b *testing.B) {
+// BenchmarkParquetRawReader_GCPressure measures GC pressure
+func BenchmarkParquetRawReader_GCPressure(b *testing.B) {
 	loadBenchmarkData(b)
 	data := benchmarkFiles["large"]
 
