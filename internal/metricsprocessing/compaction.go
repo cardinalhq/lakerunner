@@ -168,6 +168,7 @@ func UploadCompactedMetrics(
 				},
 			},
 			Fingerprints: fingerprints,
+			SortVersion:  lrdb.SortVersionNameTidTimestamp, // Compacted files are sorted by [name, tid, timestamp]
 		}
 
 		if err := mdb.ReplaceMetricSegs(ctx, singleParams); err != nil {
