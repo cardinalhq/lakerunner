@@ -395,28 +395,20 @@ func (q *Queries) WorkQueueGlobalLock(ctx context.Context) error {
 }
 
 const workQueueHeartbeatDirect = `-- name: WorkQueueHeartbeatDirect :exec
-WITH params AS (
-  SELECT
-    NOW() AS v_now,
-    $3::INTERVAL AS lock_ttl
-)
 UPDATE public.work_queue w
-SET heartbeated_at = p.v_now
-FROM params p
-WHERE w.id            = ANY($1::BIGINT[])
-  AND w.claimed_by    = $2
-  AND w.heartbeated_at >= p.v_now - p.lock_ttl
+SET heartbeated_at = NOW()
+WHERE w.id         = ANY($1::BIGINT[])
+  AND w.claimed_by = $2
 `
 
 type WorkQueueHeartbeatParams struct {
-	Ids      []int64         `json:"ids"`
-	WorkerID int64           `json:"worker_id"`
-	LockTtl  pgtype.Interval `json:"lock_ttl"`
+	Ids      []int64 `json:"ids"`
+	WorkerID int64   `json:"worker_id"`
 }
 
 // 1) heart-beat the work_queue
 func (q *Queries) WorkQueueHeartbeatDirect(ctx context.Context, arg WorkQueueHeartbeatParams) error {
-	_, err := q.db.Exec(ctx, workQueueHeartbeatDirect, arg.Ids, arg.WorkerID, arg.LockTtl)
+	_, err := q.db.Exec(ctx, workQueueHeartbeatDirect, arg.Ids, arg.WorkerID)
 	return err
 }
 

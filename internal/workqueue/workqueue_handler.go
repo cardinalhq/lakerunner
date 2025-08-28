@@ -28,7 +28,7 @@ const (
 	MinHeartbeatInterval = 10 * time.Second
 
 	// StaleExpiryMultiplier is the number of missed heartbeats before a work item is considered stale
-	StaleExpiryMultiplier = 3
+	StaleExpiryMultiplier = 4
 )
 
 type WorkqueueHandler struct {
