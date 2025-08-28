@@ -97,8 +97,16 @@ func (r *MemorySortingReader) loadAndSortAllRows() error {
 		// Convert and store rows from batch
 		for i := 0; i < batch.Len(); i++ {
 			row := batch.Get(i)
-			r.allRows = append(r.allRows, row)
+			// Deep copy the row since we're retaining it beyond the batch lifetime
+			copiedRow := make(Row)
+			for k, v := range row {
+				copiedRow[k] = v
+			}
+			r.allRows = append(r.allRows, copiedRow)
 		}
+
+		// Return batch to pool since we're done with it
+		pipeline.ReturnBatch(batch)
 	}
 
 	// Sort using the provided sort function

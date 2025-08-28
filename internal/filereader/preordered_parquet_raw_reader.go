@@ -133,6 +133,7 @@ func (r *PreorderedParquetRawReader) Next() (*Batch, error) {
 
 	// Return EOF if no valid rows remain
 	if validRows == 0 {
+		pipeline.ReturnBatch(batch)
 		if r.exhausted {
 			return nil, io.EOF
 		}

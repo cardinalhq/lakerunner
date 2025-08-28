@@ -118,6 +118,12 @@ func (or *PreorderedMultisourceReader) advance(state *readerState) error {
 
 	// Check if we need to load a new batch
 	if state.currentBatch == nil || state.batchIndex >= state.currentBatch.Len() {
+		// Return old batch to pool before getting a new one
+		if state.currentBatch != nil {
+			pipeline.ReturnBatch(state.currentBatch)
+			state.currentBatch = nil
+		}
+
 		batch, err := state.reader.Next()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
@@ -129,6 +135,7 @@ func (or *PreorderedMultisourceReader) advance(state *readerState) error {
 		}
 
 		if batch.Len() == 0 {
+			pipeline.ReturnBatch(batch)
 			state.done = true
 			return nil
 		}
@@ -168,10 +175,12 @@ func (or *PreorderedMultisourceReader) Next() (*Batch, error) {
 			// Check if any reader had an error
 			for _, state := range or.states {
 				if state.err != nil {
+					pipeline.ReturnBatch(batch)
 					return nil, fmt.Errorf("reader %d error: %w", state.index, state.err)
 				}
 			}
 			if batch.Len() == 0 {
+				pipeline.ReturnBatch(batch)
 				return nil, io.EOF
 			}
 			break
@@ -180,6 +189,7 @@ func (or *PreorderedMultisourceReader) Next() (*Batch, error) {
 		// Use selector to determine which row to return
 		selectedIdx := or.selector(activeRows)
 		if selectedIdx < 0 || selectedIdx >= len(activeStates) {
+			pipeline.ReturnBatch(batch)
 			return nil, fmt.Errorf("selector returned invalid index %d, expected 0-%d",
 				selectedIdx, len(activeStates)-1)
 		}
@@ -196,6 +206,7 @@ func (or *PreorderedMultisourceReader) Next() (*Batch, error) {
 			// Consume the current row and advance if needed
 			selectedState.consumeCurrentRow()
 			if err := or.advance(selectedState); err != nil {
+				pipeline.ReturnBatch(batch)
 				return nil, fmt.Errorf("failed to advance reader %d: %w", selectedState.index, err)
 			}
 		}
@@ -207,6 +218,7 @@ func (or *PreorderedMultisourceReader) Next() (*Batch, error) {
 		return batch, nil
 	}
 
+	pipeline.ReturnBatch(batch)
 	return nil, io.EOF
 }
 
@@ -219,6 +231,12 @@ func (or *PreorderedMultisourceReader) Close() error {
 
 	var errs []error
 	for i, state := range or.states {
+		// Return any remaining batches to the pool
+		if state.currentBatch != nil {
+			pipeline.ReturnBatch(state.currentBatch)
+			state.currentBatch = nil
+		}
+
 		if state.reader != nil {
 			if err := state.reader.Close(); err != nil {
 				errs = append(errs, fmt.Errorf("failed to close reader %d: %w", i, err))

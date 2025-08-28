@@ -94,6 +94,11 @@ type BatchPoolStats struct {
 	Puts        uint64
 }
 
+// LeakedBatches returns the number of batches that were gotten but never returned.
+func (s BatchPoolStats) LeakedBatches() uint64 {
+	return s.Gets - s.Puts
+}
+
 func (p *batchPool) stats() BatchPoolStats {
 	return BatchPoolStats{
 		Allocations: p.alloc.Load(),

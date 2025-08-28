@@ -90,10 +90,12 @@ func (r *IngestProtoMetricsReader) Next() (*Batch, error) {
 		if err := r.getMetricRow(row); err != nil {
 			if err == io.EOF {
 				if batch.Len() == 0 {
+					pipeline.ReturnBatch(batch)
 					return nil, io.EOF
 				}
 				break
 			}
+			pipeline.ReturnBatch(batch)
 			return nil, err
 		}
 
@@ -107,6 +109,7 @@ func (r *IngestProtoMetricsReader) Next() (*Batch, error) {
 		return batch, nil
 	}
 
+	pipeline.ReturnBatch(batch)
 	return nil, io.EOF
 }
 

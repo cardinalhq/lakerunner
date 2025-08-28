@@ -65,6 +65,7 @@ func (r *JSONLinesReader) Next() (*Batch, error) {
 		if !r.scanner.Scan() {
 			// Check for scanner error
 			if err := r.scanner.Err(); err != nil {
+				pipeline.ReturnBatch(batch)
 				return nil, fmt.Errorf("scanner error reading at line %d: %w", r.rowIndex+1, err)
 			}
 			// End of file - return what we have
@@ -82,6 +83,7 @@ func (r *JSONLinesReader) Next() (*Batch, error) {
 		// Parse JSON into string-keyed map first
 		var jsonRow map[string]any
 		if err := json.Unmarshal([]byte(line), &jsonRow); err != nil {
+			pipeline.ReturnBatch(batch)
 			return nil, fmt.Errorf("JSON parse error at line %d: %w", r.rowIndex, err)
 		}
 
@@ -94,6 +96,7 @@ func (r *JSONLinesReader) Next() (*Batch, error) {
 
 	if batch.Len() == 0 {
 		r.closed = true
+		pipeline.ReturnBatch(batch)
 		return nil, io.EOF
 	}
 
