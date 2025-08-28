@@ -15,6 +15,7 @@
 package schemabuilder
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/parquet-go/parquet-go"
@@ -70,6 +71,7 @@ func TestParquetNodeFromType(t *testing.T) {
 		wantErr  bool
 		nodeType string
 	}{
+		// Basic types we already test
 		{"int64_field", int64(123), false, "int64"},
 		{"string_field", "test", false, "string"},
 		{"bool_field", true, false, "bool"},
@@ -78,6 +80,19 @@ func TestParquetNodeFromType(t *testing.T) {
 		{"int_slice", []int64{1, 2, 3}, false, "[]int64"},
 		{"string_slice", []string{"a", "b"}, false, "[]string"},
 		{"unsupported", map[string]string{"key": "value"}, true, ""},
+
+		// Additional primitive types to improve coverage
+		{"byte_field", byte(255), false, "byte"},
+		{"int8_field", int8(-128), false, "int8"},
+		{"int8_slice", []int8{-1, 0, 1}, false, "[]int8"},
+		{"int16_field", int16(-32768), false, "int16"},
+		{"int16_slice", []int16{-100, 0, 100}, false, "[]int16"},
+		{"int32_field", int32(-2147483648), false, "int32"},
+		{"int32_slice", []int32{-1000, 0, 1000}, false, "[]int32"},
+		{"float32_field", float32(3.14), false, "float32"},
+		{"float32_slice", []float32{1.1, 2.2, 3.3}, false, "[]float32"},
+		{"float64_slice", []float64{1.1, 2.2, 3.3}, false, "[]float64"},
+		{"bool_slice", []bool{true, false, true}, false, "[]bool"},
 	}
 
 	for _, tt := range tests {
@@ -142,6 +157,58 @@ func TestNodesFromMap(t *testing.T) {
 	err = NodesFromMap(nodes, sampleData2)
 	if err == nil {
 		t.Error("Expected type mismatch error but got none")
+	}
+}
+
+func TestNodesFromMap_UnsupportedType(t *testing.T) {
+	nodes := make(map[string]parquet.Node)
+
+	// Test error case where ParquetNodeFromType fails
+	sampleData := map[string]any{
+		"unsupported_field": map[string]string{"key": "value"}, // Unsupported type
+	}
+
+	err := NodesFromMap(nodes, sampleData)
+	if err == nil {
+		t.Error("Expected error for unsupported type but got none")
+	}
+
+	// Should contain error message with field name
+	if !strings.Contains(err.Error(), "unsupported_field") {
+		t.Errorf("Expected error to mention field name, got: %v", err)
+	}
+}
+
+func TestNodesFromMap_SameFieldTwice(t *testing.T) {
+	nodes := make(map[string]parquet.Node)
+
+	// First call - add the field
+	sampleData1 := map[string]any{
+		"test_field": int64(123),
+	}
+
+	err := NodesFromMap(nodes, sampleData1)
+	if err != nil {
+		t.Fatalf("First call should succeed: %v", err)
+	}
+
+	if len(nodes) != 1 {
+		t.Errorf("Expected 1 node after first call, got %d", len(nodes))
+	}
+
+	// Second call - same field, same type (should succeed and continue)
+	sampleData2 := map[string]any{
+		"test_field": int64(456), // Same type, different value
+	}
+
+	err = NodesFromMap(nodes, sampleData2)
+	if err != nil {
+		t.Fatalf("Second call with same type should succeed: %v", err)
+	}
+
+	// Should still have only 1 node
+	if len(nodes) != 1 {
+		t.Errorf("Expected 1 node after second call, got %d", len(nodes))
 	}
 }
 
