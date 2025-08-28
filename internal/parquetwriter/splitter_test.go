@@ -136,8 +136,8 @@ func TestFileSplitterWriteBatchRows_EmptyBatch(t *testing.T) {
 	}
 
 	// Should not create any files
-	if splitter.currentWriter != nil {
-		t.Error("Expected no current writer for empty batch")
+	if splitter.cborFile != nil {
+		t.Error("Expected no current CBOR file for empty batch")
 	}
 }
 
@@ -159,9 +159,9 @@ func TestFileSplitterWriteBatchRows_SingleBatch(t *testing.T) {
 		t.Fatalf("WriteBatchRows failed: %v", err)
 	}
 
-	// Should have created a writer
-	if splitter.currentWriter == nil {
-		t.Error("Expected current writer to be created")
+	// Should have created a CBOR file
+	if splitter.cborFile == nil {
+		t.Error("Expected current CBOR file to be created")
 	}
 	if splitter.currentRows != 3 {
 		t.Errorf("Expected 3 current rows, got %d", splitter.currentRows)
@@ -381,18 +381,21 @@ func TestFileSplitterAbort(t *testing.T) {
 		t.Fatalf("WriteBatchRows failed: %v", err)
 	}
 
-	// Get file name before abort
-	fileName := splitter.currentFile.Name()
+	// Get CBOR file name before abort
+	var fileName string
+	if splitter.cborFile != nil {
+		fileName = splitter.cborFile.Name()
+	}
 
 	// Abort should clean up
 	splitter.Abort()
 
-	// Check that writer is closed
-	if splitter.currentWriter != nil {
-		t.Error("Expected currentWriter to be nil after abort")
+	// Check that CBOR file is cleaned up
+	if splitter.cborFile != nil {
+		t.Error("Expected cborFile to be nil after abort")
 	}
-	if splitter.currentFile != nil {
-		t.Error("Expected currentFile to be nil after abort")
+	if splitter.cborEncoder != nil {
+		t.Error("Expected cborEncoder to be nil after abort")
 	}
 	if !splitter.closed {
 		t.Error("Expected splitter to be closed after abort")
@@ -493,8 +496,17 @@ func TestFileSplitterTempFileCreation(t *testing.T) {
 		t.Fatalf("WriteBatchRows failed: %v", err)
 	}
 
-	// Check that file is in the correct directory and has correct prefix
-	fileName := splitter.currentFile.Name()
+	results, err := splitter.Close(ctx)
+	if err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	// Check that result file is in the correct directory and has correct prefix
+	if len(results) != 1 {
+		t.Fatalf("Expected 1 result file, got %d", len(results))
+	}
+
+	fileName := results[0].FileName
 	if filepath.Dir(fileName) != tmpDir {
 		t.Errorf("Expected file to be in %s, got %s", tmpDir, filepath.Dir(fileName))
 	}
@@ -504,11 +516,6 @@ func TestFileSplitterTempFileCreation(t *testing.T) {
 	}
 	if !hasSuffix(baseName, ".parquet") {
 		t.Errorf("Expected filename to end with '.parquet', got %s", baseName)
-	}
-
-	results, err := splitter.Close(ctx)
-	if err != nil {
-		t.Fatalf("Close failed: %v", err)
 	}
 
 	// Clean up
