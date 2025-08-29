@@ -201,6 +201,59 @@ func metricRollupItemDo(
 	return rollupMetricSegments(ctx, ll, mdb, tmpdir, inf, profile, s3client, sourceRows, existingRows, rpfEstimate)
 }
 
+func processRollupMicrobatches(
+	ctx context.Context,
+	ll *slog.Logger,
+	mdb lrdb.StoreFull,
+	tmpdir string,
+	inf lockmgr.Workable,
+	profile storageprofile.StorageProfile,
+	s3client *awsclient.S3Client,
+	sourceRows []lrdb.MetricSeg,
+	existingRows []lrdb.MetricSeg,
+	rpfEstimate int64,
+) error {
+	maxRecordsPerMicrobatch := rpfEstimate * 6
+	if maxRecordsPerMicrobatch <= 0 {
+		maxRecordsPerMicrobatch = 60_000 // Default fallback
+	}
+
+	ll.Debug("Processing rollup in microbatches",
+		slog.Int("totalSegments", len(sourceRows)),
+		slog.Int64("maxRecordsPerMicrobatch", maxRecordsPerMicrobatch),
+		slog.Int64("rpfEstimate", rpfEstimate))
+
+	var currentMicrobatch []lrdb.MetricSeg
+	currentRecords := int64(0)
+
+	for i, row := range sourceRows {
+		currentMicrobatch = append(currentMicrobatch, row)
+		currentRecords += row.RecordCount
+
+		// Process microbatch if we've hit the limit or reached the end
+		isLastRow := i == len(sourceRows)-1
+		shouldProcess := currentRecords >= maxRecordsPerMicrobatch || isLastRow
+
+		if shouldProcess {
+			// For rollups, always process every file (even single files) because we aggregate
+			ll.Debug("Processing rollup microbatch",
+				slog.Int("fileCount", len(currentMicrobatch)),
+				slog.Int64("recordCount", currentRecords))
+
+			err := rollupMetricInterval(ctx, ll, mdb, tmpdir, inf, profile, s3client, currentMicrobatch, existingRows, rpfEstimate)
+			if err != nil {
+				return fmt.Errorf("rolling up microbatch: %w", err)
+			}
+
+			// Reset for next microbatch
+			currentMicrobatch = nil
+			currentRecords = 0
+		}
+	}
+
+	return nil
+}
+
 func rollupMetricSegments(
 	ctx context.Context,
 	ll *slog.Logger,
@@ -218,146 +271,16 @@ func rollupMetricSegments(
 		return WorkResultSuccess, nil
 	}
 
-	st, _, ok := helpers.RangeBounds(inf.TsRange())
-	if !ok {
-		ll.Error("Invalid time range in work item", slog.Any("tsRange", inf.TsRange()))
-		return WorkResultSuccess, fmt.Errorf("invalid time range in work item: %v", inf.TsRange())
-	}
-
-	// Download all source files and create ParquetRawReaders with sorting support
-	config := metricsprocessing.ReaderStackConfig{
-		FileSortedCounter: fileSortedCounter,
-		CommonAttributes:  commonAttributes,
-	}
-
-	readerStack, err := metricsprocessing.CreateReaderStack(
-		ctx, ll, tmpdir, s3client, inf.OrganizationID(), profile, st.Time.UTC().UnixMilli(), sourceRows, config)
+	// Process segments in microbatches limited to rowestimate * 6 records
+	err := processRollupMicrobatches(ctx, ll, mdb, tmpdir, inf, profile, s3client, sourceRows, existingRows, rpfEstimate)
 	if err != nil {
-		return WorkResultTryAgainLater, err
-	}
-
-	readers := readerStack.Readers
-	downloadedFiles := readerStack.DownloadedFiles
-	finalReader := readerStack.FinalReader
-
-	if len(readers) == 0 {
-		ll.Debug("No files to rollup, skipping work item")
-		return WorkResultSuccess, nil
-	}
-
-	defer metricsprocessing.CloseReaderStack(ll, readerStack)
-
-	// Wrap with aggregating reader to perform rollup aggregation
-	// Use target frequency for aggregation period
-	aggregatingReader, err := filereader.NewAggregatingMetricsReader(finalReader, int64(inf.FrequencyMs()), 1000)
-	if err != nil {
-		ll.Error("Failed to create aggregating metrics reader", slog.Any("error", err))
-		return WorkResultTryAgainLater, fmt.Errorf("creating aggregating metrics reader: %w", err)
-	}
-	defer aggregatingReader.Close()
-
-	recordsPerFile := rpfEstimate
-	if recordsPerFile <= 0 {
-		recordsPerFile = 10_000
-	}
-
-	writer, err := factories.NewMetricsWriter(tmpdir, constants.WriterTargetSizeBytesMetrics, recordsPerFile)
-	if err != nil {
-		ll.Error("Failed to create metrics writer", slog.Any("error", err))
-		return WorkResultTryAgainLater, fmt.Errorf("creating metrics writer: %w", err)
-	}
-	defer writer.Abort()
-
-	totalRows := int64(0)
-
-	for {
-		batch, err := aggregatingReader.Next()
-		if err != nil && !errors.Is(err, io.EOF) {
-			if batch != nil {
-				pipeline.ReturnBatch(batch)
-			}
-			ll.Error("Failed to read from aggregating reader", slog.Any("error", err))
-			return WorkResultTryAgainLater, fmt.Errorf("reading from aggregating reader: %w", err)
-		}
-
-		if batch == nil || batch.Len() == 0 {
-			pipeline.ReturnBatch(batch)
-			break
-		}
-
-		// Create a new batch for normalized rows
-		normalizedBatch := pipeline.GetBatch()
-
-		for i := 0; i < batch.Len(); i++ {
-			row := batch.Get(i)
-			// Normalize sketch field for parquet writing (string -> []byte)
-			if err := normalizeRowForParquetWrite(row); err != nil {
-				ll.Error("Failed to normalize row", slog.Any("error", err))
-				pipeline.ReturnBatch(normalizedBatch)
-				pipeline.ReturnBatch(batch)
-				return WorkResultTryAgainLater, fmt.Errorf("normalizing row: %w", err)
-			}
-
-			// Copy normalized row to the new batch
-			normalizedRow := normalizedBatch.AddRow()
-			for k, v := range row {
-				normalizedRow[k] = v
-			}
-			totalRows++
-		}
-
-		// Write the entire normalized batch at once
-		if normalizedBatch.Len() > 0 {
-			if err := writer.WriteBatch(normalizedBatch); err != nil {
-				ll.Error("Failed to write batch", slog.Any("error", err))
-				pipeline.ReturnBatch(normalizedBatch)
-				pipeline.ReturnBatch(batch)
-				return WorkResultTryAgainLater, fmt.Errorf("writing batch: %w", err)
-			}
-		}
-
-		pipeline.ReturnBatch(normalizedBatch)
-		pipeline.ReturnBatch(batch)
-
-		if errors.Is(err, io.EOF) {
-			break
-		}
-	}
-
-	results, err := writer.Close(ctx)
-	if err != nil {
-		ll.Error("Failed to finish writing", slog.Any("error", err))
-		return WorkResultTryAgainLater, fmt.Errorf("finishing writer: %w", err)
-	}
-
-	ll.Debug("Rollup completed",
-		slog.Int64("totalRows", totalRows),
-		slog.Int("outputFiles", len(results)),
-		slog.Int("inputFiles", len(downloadedFiles)),
-		slog.Int64("recordsPerFile", recordsPerFile))
-
-	// Create rollup upload params
-	rollupParams := metricsprocessing.CompactionUploadParams{
-		OrganizationID: inf.OrganizationID().String(),
-		InstanceNum:    inf.InstanceNum(),
-		Dateint:        inf.Dateint(),
-		FrequencyMs:    inf.FrequencyMs(),
-		SlotID:         inf.SlotId(),
-		IngestDateint:  metricsprocessing.GetIngestDateint(sourceRows),
-		CollectorName:  profile.CollectorName,
-		Bucket:         profile.Bucket,
+		return WorkResultTryAgainLater, fmt.Errorf("failed to process rollup microbatches: %w", err)
 	}
 
 	// Use context without cancellation for critical section to ensure atomic completion
 	criticalCtx := context.WithoutCancel(ctx)
 
-	// Upload rolled-up metrics using the same pattern as ingestion
-	err = uploadRolledUpMetrics(criticalCtx, ll, mdb, s3client, results, existingRows, rollupParams)
-	if err != nil {
-		return WorkResultTryAgainLater, fmt.Errorf("failed to upload rolled-up metrics: %w", err)
-	}
-
-	// Mark source rows as rolled up
+	// Mark source rows as rolled up (after all microbatches are complete)
 	if err := markSourceRowsAsRolledUp(criticalCtx, ll, mdb, sourceRows); err != nil {
 		ll.Error("Failed to mark source rows as rolled up", slog.Any("error", err))
 		// This is not a critical failure - the rollup succeeded but we couldn't update the flag
@@ -376,6 +299,166 @@ func rollupMetricSegments(
 	}
 
 	return WorkResultSuccess, nil
+}
+
+func rollupMetricInterval(
+	ctx context.Context,
+	ll *slog.Logger,
+	mdb lrdb.StoreFull,
+	tmpdir string,
+	inf lockmgr.Workable,
+	profile storageprofile.StorageProfile,
+	s3client *awsclient.S3Client,
+	sourceRows []lrdb.MetricSeg,
+	existingRows []lrdb.MetricSeg,
+	rpfEstimate int64,
+) error {
+	st, _, ok := helpers.RangeBounds(inf.TsRange())
+	if !ok {
+		ll.Error("Invalid time range in work item", slog.Any("tsRange", inf.TsRange()))
+		return fmt.Errorf("invalid time range in work item: %v", inf.TsRange())
+	}
+
+	// Download all source files and create ParquetRawReaders with sorting support
+	config := metricsprocessing.ReaderStackConfig{
+		FileSortedCounter: fileSortedCounter,
+		CommonAttributes:  commonAttributes,
+	}
+
+	readerStack, err := metricsprocessing.CreateReaderStack(
+		ctx, ll, tmpdir, s3client, inf.OrganizationID(), profile, st.Time.UTC().UnixMilli(), sourceRows, config)
+	if err != nil {
+		return err
+	}
+
+	readers := readerStack.Readers
+	downloadedFiles := readerStack.DownloadedFiles
+	finalReader := readerStack.FinalReader
+
+	if len(readers) == 0 {
+		ll.Debug("No files to rollup, skipping work item")
+		return nil
+	}
+
+	defer metricsprocessing.CloseReaderStack(ll, readerStack)
+
+	// Wrap with aggregating reader to perform rollup aggregation
+	// Use target frequency for aggregation period
+	aggregatingReader, err := filereader.NewAggregatingMetricsReader(finalReader, int64(inf.FrequencyMs()), 1000)
+	if err != nil {
+		ll.Error("Failed to create aggregating metrics reader", slog.Any("error", err))
+		return fmt.Errorf("creating aggregating metrics reader: %w", err)
+	}
+	defer aggregatingReader.Close()
+
+	recordsPerFile := rpfEstimate
+	if recordsPerFile <= 0 {
+		recordsPerFile = 10_000
+	}
+
+	writer, err := factories.NewMetricsWriter(tmpdir, constants.WriterTargetSizeBytesMetrics, recordsPerFile)
+	if err != nil {
+		ll.Error("Failed to create metrics writer", slog.Any("error", err))
+		return fmt.Errorf("creating metrics writer: %w", err)
+	}
+	defer writer.Abort()
+
+	totalRows := int64(0)
+
+	for {
+		batch, err := aggregatingReader.Next()
+		if err != nil && !errors.Is(err, io.EOF) {
+			if batch != nil {
+				pipeline.ReturnBatch(batch)
+			}
+			ll.Error("Failed to read from aggregating reader", slog.Any("error", err))
+			return fmt.Errorf("reading from aggregating reader: %w", err)
+		}
+
+		if batch == nil || batch.Len() == 0 {
+			pipeline.ReturnBatch(batch)
+			break
+		}
+
+		// Create a new batch for normalized rows
+		normalizedBatch := pipeline.GetBatch()
+
+		for i := 0; i < batch.Len(); i++ {
+			row := batch.Get(i)
+			// Normalize sketch field for parquet writing (string -> []byte)
+			if err := normalizeRowForParquetWrite(row); err != nil {
+				ll.Error("Failed to normalize row", slog.Any("error", err))
+				pipeline.ReturnBatch(normalizedBatch)
+				pipeline.ReturnBatch(batch)
+				return fmt.Errorf("normalizing row: %w", err)
+			}
+
+			// Copy normalized row to the new batch
+			normalizedRow := normalizedBatch.AddRow()
+			for k, v := range row {
+				normalizedRow[k] = v
+			}
+			totalRows++
+		}
+
+		// Write the entire normalized batch at once
+		if normalizedBatch.Len() > 0 {
+			if err := writer.WriteBatch(normalizedBatch); err != nil {
+				ll.Error("Failed to write batch", slog.Any("error", err))
+				pipeline.ReturnBatch(normalizedBatch)
+				pipeline.ReturnBatch(batch)
+				return fmt.Errorf("writing batch: %w", err)
+			}
+		}
+
+		pipeline.ReturnBatch(normalizedBatch)
+		pipeline.ReturnBatch(batch)
+
+		if errors.Is(err, io.EOF) {
+			break
+		}
+	}
+
+	results, err := writer.Close(ctx)
+	if err != nil {
+		ll.Error("Failed to finish writing", slog.Any("error", err))
+		return fmt.Errorf("finishing writer: %w", err)
+	}
+
+	ll.Debug("Rollup microbatch completed",
+		slog.Int64("totalRows", totalRows),
+		slog.Int("outputFiles", len(results)),
+		slog.Int("inputFiles", len(downloadedFiles)),
+		slog.Int64("recordsPerFile", recordsPerFile))
+
+	// If no output files were created, skip upload
+	if len(results) == 0 {
+		ll.Debug("No output files created in rollup microbatch, skipping upload")
+		return nil
+	}
+
+	// Create rollup upload params for this microbatch
+	rollupParams := metricsprocessing.CompactionUploadParams{
+		OrganizationID: inf.OrganizationID().String(),
+		InstanceNum:    inf.InstanceNum(),
+		Dateint:        inf.Dateint(),
+		FrequencyMs:    inf.FrequencyMs(),
+		SlotID:         inf.SlotId(),
+		IngestDateint:  metricsprocessing.GetIngestDateint(sourceRows),
+		CollectorName:  profile.CollectorName,
+		Bucket:         profile.Bucket,
+	}
+
+	// Use context without cancellation for critical section to ensure atomic completion
+	criticalCtx := context.WithoutCancel(ctx)
+
+	// Upload rolled-up metrics using the same pattern as ingestion
+	err = uploadRolledUpMetrics(criticalCtx, ll, mdb, s3client, results, existingRows, rollupParams)
+	if err != nil {
+		return fmt.Errorf("failed to upload rolled-up metrics: %w", err)
+	}
+
+	return nil
 }
 
 // uploadRolledUpMetrics uploads rolled-up metric files using the same atomic pattern as ingestion

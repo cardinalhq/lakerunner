@@ -222,7 +222,7 @@ func RunqueueLoop(loop *RunqueueLoopContext, pfx RunqueueProcessingFunction, arg
 			}
 		}
 
-		//gc()
+		gc()
 	}
 }
 

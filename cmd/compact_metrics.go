@@ -242,17 +242,10 @@ func compactMetricSegments(
 			continue
 		}
 
-		// Check for context cancellation before starting compaction
-		if ctx.Err() != nil {
-			ll.Info("Context cancelled before starting compaction interval",
-				slog.Int("segmentCount", len(inRows)),
-				slog.Any("error", ctx.Err()))
-			return WorkResultInterrupted, NewWorkerInterrupted("context cancelled before compaction interval")
-		}
-
-		err = compactMetricInterval(ctx, ll, mdb, tmpdir, inf, profile, s3client, inRows, rpfEstimate)
+		// Process segments in microbatches limited to rowestimate * 6 records
+		err = processCompactionMicrobatches(ctx, ll, mdb, tmpdir, inf, profile, s3client, inRows, rpfEstimate)
 		if err != nil {
-			ll.Error("Failed to compact interval", slog.Any("error", err))
+			ll.Error("Failed to process compaction microbatches", slog.Any("error", err))
 			return WorkResultTryAgainLater, err
 		}
 
@@ -271,6 +264,64 @@ func compactMetricSegments(
 			slog.Time("nextCursorCreatedAt", cursorCreatedAt),
 			slog.Int64("nextCursorSegmentID", cursorSegmentID))
 	}
+}
+
+func processCompactionMicrobatches(
+	ctx context.Context,
+	ll *slog.Logger,
+	mdb lrdb.StoreFull,
+	tmpdir string,
+	inf lockmgr.Workable,
+	profile storageprofile.StorageProfile,
+	s3client *awsclient.S3Client,
+	inRows []lrdb.MetricSeg,
+	rpfEstimate int64,
+) error {
+	maxRecordsPerMicrobatch := rpfEstimate * 6
+	if maxRecordsPerMicrobatch <= 0 {
+		maxRecordsPerMicrobatch = 60_000 // Default fallback
+	}
+
+	ll.Debug("Processing compaction in microbatches",
+		slog.Int("totalSegments", len(inRows)),
+		slog.Int64("maxRecordsPerMicrobatch", maxRecordsPerMicrobatch),
+		slog.Int64("rpfEstimate", rpfEstimate))
+
+	var currentMicrobatch []lrdb.MetricSeg
+	currentRecords := int64(0)
+
+	for i, row := range inRows {
+		currentMicrobatch = append(currentMicrobatch, row)
+		currentRecords += row.RecordCount
+
+		// Process microbatch if we've hit the limit or reached the end
+		isLastRow := i == len(inRows)-1
+		shouldProcess := currentRecords >= maxRecordsPerMicrobatch || isLastRow
+
+		if shouldProcess {
+			// For compaction, skip microbatches with fewer than 2 files
+			if len(currentMicrobatch) < 2 {
+				ll.Debug("Skipping compaction microbatch with fewer than 2 files",
+					slog.Int("fileCount", len(currentMicrobatch)),
+					slog.Int64("recordCount", currentRecords))
+			} else {
+				ll.Debug("Processing compaction microbatch",
+					slog.Int("fileCount", len(currentMicrobatch)),
+					slog.Int64("recordCount", currentRecords))
+
+				err := compactMetricInterval(ctx, ll, mdb, tmpdir, inf, profile, s3client, currentMicrobatch, rpfEstimate)
+				if err != nil {
+					return fmt.Errorf("compacting microbatch: %w", err)
+				}
+			}
+
+			// Reset for next microbatch
+			currentMicrobatch = nil
+			currentRecords = 0
+		}
+	}
+
+	return nil
 }
 
 func compactMetricInterval(
