@@ -25,6 +25,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          sleep 20 # wait for GitHub to register the PR
           if gh pr list --head "$GITHUB_REF_NAME" --state open --json number | jq -e '. | length > 0' > /dev/null; then
             echo "has-pr=true" >> $GITHUB_OUTPUT
           else
