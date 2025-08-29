@@ -16,7 +16,7 @@ package schemabuilder
 
 import (
 	"fmt"
-	"maps"
+	"reflect"
 
 	"github.com/parquet-go/parquet-go"
 )
@@ -25,73 +25,61 @@ import (
 // a consolidated map[string]parquet.Node. It ensures that fields with the same
 // key have compatible types across all added examples.
 type SchemaBuilder struct {
-	nodes map[string]parquet.Node
+	exemplars map[string]any // Field name -> sample value for type inference
 }
 
 // NewSchemaBuilder initializes an empty schema builder.
 func NewSchemaBuilder() *SchemaBuilder {
-	return &SchemaBuilder{nodes: make(map[string]parquet.Node)}
+	return &SchemaBuilder{exemplars: make(map[string]any)}
 }
 
-// AddRow inspects the fields of a row (a map[string]any) and merges their types
-// into the builder. If a field name already exists but the new node's String()
-// differs, AddRow returns an error.
+// AddRow inspects the fields of a row (a map[string]any) and stores exemplar values
+// for type inference. Does lightweight type checking without expensive ParquetNodeFromType calls.
 func (b *SchemaBuilder) AddRow(row map[string]any) error {
 	for name, val := range row {
 		if val == nil {
 			continue // Skip nil values - they don't contribute to schema
 		}
-		node, err := ParquetNodeFromType(name, val)
+		if existing, exists := b.exemplars[name]; exists {
+			// Check type compatibility using reflect.TypeOf - much cheaper than ParquetNodeFromType
+			if reflect.TypeOf(existing) != reflect.TypeOf(val) {
+				return fmt.Errorf(
+					"type mismatch for field %q: existing=%T, new=%T",
+					name, existing, val,
+				)
+			}
+		} else {
+			// Store the first non-nil value we see for this field name
+			b.exemplars[name] = val
+		}
+	}
+	return nil
+}
+
+// Build creates parquet nodes from collected exemplars and returns the consolidated node map.
+// This is where ParquetNodeFromType is called - only once per unique field.
+// Returns an error if any field cannot be converted to a valid parquet node.
+func (b *SchemaBuilder) Build() (map[string]parquet.Node, error) {
+	nodes := make(map[string]parquet.Node, len(b.exemplars))
+	for name, exemplar := range b.exemplars {
+		node, err := ParquetNodeFromType(name, exemplar)
 		if err != nil {
-			return fmt.Errorf("failed to build node for field %q: %w", name, err)
+			return nil, fmt.Errorf("failed to build node for field %q: %w", name, err)
 		}
-		if existing, ok := b.nodes[name]; ok {
-			if !parquet.EqualNodes(existing, node) {
-				return fmt.Errorf(
-					"type mismatch for field %q: existing=%s, new=%s",
-					name, existing.String(), node.String(),
-				)
-			}
-		} else {
-			b.nodes[name] = node
-		}
+		nodes[name] = node
 	}
-	return nil
-}
-
-// AddNodes merges a map of parquet nodes into the builder.
-func (b *SchemaBuilder) AddNodes(nodes map[string]parquet.Node) error {
-	for name, node := range nodes {
-		if existing, ok := b.nodes[name]; ok {
-			if !parquet.EqualNodes(existing, node) {
-				return fmt.Errorf(
-					"type mismatch for field %q: existing=%s, new=%s",
-					name, existing.String(), node.String(),
-				)
-			}
-		} else {
-			b.nodes[name] = node
-		}
-	}
-	return nil
-}
-
-// Build returns a copy of the consolidated node map.
-func (b *SchemaBuilder) Build() map[string]parquet.Node {
-	out := make(map[string]parquet.Node, len(b.nodes))
-	maps.Copy(out, b.nodes) // Copy the map to avoid external mutations
-	return out
+	return nodes, nil
 }
 
 // HasColumns returns true if the builder has seen any columns.
 func (b *SchemaBuilder) HasColumns() bool {
-	return len(b.nodes) > 0
+	return len(b.exemplars) > 0
 }
 
 // GetColumnNames returns a sorted list of column names seen so far.
 func (b *SchemaBuilder) GetColumnNames() []string {
-	names := make([]string, 0, len(b.nodes))
-	for name := range b.nodes {
+	names := make([]string, 0, len(b.exemplars))
+	for name := range b.exemplars {
 		names = append(names, name)
 	}
 	return names

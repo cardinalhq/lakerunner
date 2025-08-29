@@ -18,18 +18,9 @@ import (
 	"fmt"
 	"io"
 	"slices"
-	"strings"
 
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
-	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
-
-// SortFunc is a function that compares two rows and returns:
-// -1 if a should come before b
-//
-//	0 if a and b are equal
-//	1 if a should come after b
-type SortFunc func(a, b Row) int
 
 // MemorySortingReader reads all rows from an underlying reader,
 // then sorts them using a custom sort function and returns them in order.
@@ -41,29 +32,35 @@ type SortFunc func(a, b Row) int
 //
 //	if the sort function is not stable, the result will not be stable
 type MemorySortingReader struct {
-	reader    Reader
-	sortFunc  SortFunc
-	closed    bool
-	rowCount  int64
-	batchSize int
+	reader      Reader
+	keyProvider SortKeyProvider
+	closed      bool
+	rowCount    int64
+	batchSize   int
 
-	// Buffered and sorted rows
-	allRows      []Row
-	currentIndex int
-	sorted       bool
+	// Buffered rows with their sort keys
+	allRowsWithKeys []rowWithKey
+	currentIndex    int
+	sorted          bool
+}
+
+// rowWithKey pairs a row with its sort key for efficient sorting
+type rowWithKey struct {
+	row Row
+	key SortKey
 }
 
 // NewMemorySortingReader creates a reader that buffers all rows,
-// sorts them using the provided sort function, then returns them in order.
+// sorts them using the provided key provider, then returns them in order.
 //
 // Use this for smaller datasets that fit comfortably in memory.
 // For large datasets, consider DiskSortingReader to avoid OOM issues.
-func NewMemorySortingReader(reader Reader, sortFunc SortFunc, batchSize int) (*MemorySortingReader, error) {
+func NewMemorySortingReader(reader Reader, keyProvider SortKeyProvider, batchSize int) (*MemorySortingReader, error) {
 	if reader == nil {
 		return nil, fmt.Errorf("reader cannot be nil")
 	}
-	if sortFunc == nil {
-		return nil, fmt.Errorf("sortFunc cannot be nil")
+	if keyProvider == nil {
+		return nil, fmt.Errorf("keyProvider cannot be nil")
 	}
 
 	if batchSize <= 0 {
@@ -71,10 +68,10 @@ func NewMemorySortingReader(reader Reader, sortFunc SortFunc, batchSize int) (*M
 	}
 
 	return &MemorySortingReader{
-		reader:    reader,
-		sortFunc:  sortFunc,
-		batchSize: batchSize,
-		allRows:   make([]Row, 0, 1000), // Start with reasonable capacity
+		reader:          reader,
+		keyProvider:     keyProvider,
+		batchSize:       batchSize,
+		allRowsWithKeys: make([]rowWithKey, 0, 1000), // Start with reasonable capacity
 	}, nil
 }
 
@@ -94,7 +91,7 @@ func (r *MemorySortingReader) loadAndSortAllRows() error {
 			return fmt.Errorf("failed to read from underlying reader: %w", err)
 		}
 
-		// Convert and store rows from batch
+		// Convert and store rows from batch with their sort keys
 		for i := 0; i < batch.Len(); i++ {
 			row := batch.Get(i)
 			// Deep copy the row since we're retaining it beyond the batch lifetime
@@ -102,15 +99,22 @@ func (r *MemorySortingReader) loadAndSortAllRows() error {
 			for k, v := range row {
 				copiedRow[k] = v
 			}
-			r.allRows = append(r.allRows, copiedRow)
+			// Create sort key for this row
+			sortKey := r.keyProvider.MakeKey(copiedRow)
+			r.allRowsWithKeys = append(r.allRowsWithKeys, rowWithKey{
+				row: copiedRow,
+				key: sortKey,
+			})
 		}
 
 		// Return batch to pool since we're done with it
 		pipeline.ReturnBatch(batch)
 	}
 
-	// Sort using the provided sort function
-	slices.SortFunc(r.allRows, r.sortFunc)
+	// Sort using the sort keys
+	slices.SortFunc(r.allRowsWithKeys, func(a, b rowWithKey) int {
+		return a.key.Compare(b.key)
+	})
 
 	r.sorted = true
 	return nil
@@ -130,17 +134,17 @@ func (r *MemorySortingReader) Next() (*Batch, error) {
 	}
 
 	// Check if we've exhausted all rows
-	if r.currentIndex >= len(r.allRows) {
+	if r.currentIndex >= len(r.allRowsWithKeys) {
 		return nil, io.EOF
 	}
 
 	batch := pipeline.GetBatch()
 
 	// Return rows from the sorted buffer
-	for batch.Len() < r.batchSize && r.currentIndex < len(r.allRows) {
+	for batch.Len() < r.batchSize && r.currentIndex < len(r.allRowsWithKeys) {
 		// Use batch's AddRow to reuse maps
 		row := batch.AddRow()
-		for k, v := range r.allRows[r.currentIndex] {
+		for k, v := range r.allRowsWithKeys[r.currentIndex].row {
 			row[k] = v
 		}
 		r.currentIndex++
@@ -161,8 +165,15 @@ func (r *MemorySortingReader) Close() error {
 	}
 	r.closed = true
 
+	// Release all sort keys back to their pools
+	for i := range r.allRowsWithKeys {
+		if r.allRowsWithKeys[i].key != nil {
+			r.allRowsWithKeys[i].key.Release()
+		}
+	}
+
 	// Release buffer
-	r.allRows = nil
+	r.allRowsWithKeys = nil
 
 	return r.reader.Close()
 }
@@ -178,225 +189,4 @@ func (r *MemorySortingReader) GetOTELMetrics() (any, error) {
 		return provider.GetOTELMetrics()
 	}
 	return nil, fmt.Errorf("underlying reader does not support OTEL metrics")
-}
-
-// Common sort function constructors
-
-// MetricSortKey represents the sort key for metrics: [name, tid, timestamp]
-type MetricSortKey struct {
-	Name      string
-	Tid       int64
-	Timestamp int64
-	NameOk    bool
-	TidOk     bool
-	TsOk      bool
-}
-
-// MetricNameTidTimestampSortKeyFunc extracts metric sort keys from rows.
-func MetricNameTidTimestampSortKeyFunc() SortKeyFunc {
-	return func(row Row) any {
-		key := MetricSortKey{}
-		key.Name, key.NameOk = row[wkk.RowKeyCName].(string)
-		key.Tid, key.TidOk = row[wkk.RowKeyCTID].(int64)
-		key.Timestamp, key.TsOk = row[wkk.RowKeyCTimestamp].(int64)
-		return key
-	}
-}
-
-// MetricNameTidTimestampSortFunc compares MetricSortKey instances.
-func MetricNameTidTimestampSortFunc() func(a, b any) int {
-	return func(a, b any) int {
-		keyA := a.(MetricSortKey)
-		keyB := b.(MetricSortKey)
-
-		// Compare name field
-		if !keyA.NameOk || !keyB.NameOk {
-			if !keyA.NameOk && !keyB.NameOk {
-				return 0
-			}
-			if !keyA.NameOk {
-				return 1
-			}
-			return -1
-		}
-		if cmp := strings.Compare(keyA.Name, keyB.Name); cmp != 0 {
-			return cmp
-		}
-
-		// Compare TID field
-		if !keyA.TidOk || !keyB.TidOk {
-			if !keyA.TidOk && !keyB.TidOk {
-				return 0
-			}
-			if !keyA.TidOk {
-				return 1
-			}
-			return -1
-		}
-		if keyA.Tid < keyB.Tid {
-			return -1
-		}
-		if keyA.Tid > keyB.Tid {
-			return 1
-		}
-
-		// Compare timestamp field
-		if !keyA.TsOk || !keyB.TsOk {
-			if !keyA.TsOk && !keyB.TsOk {
-				return 0
-			}
-			if !keyA.TsOk {
-				return 1
-			}
-			return -1
-		}
-		if keyA.Timestamp < keyB.Timestamp {
-			return -1
-		}
-		if keyA.Timestamp > keyB.Timestamp {
-			return 1
-		}
-
-		return 0
-	}
-}
-
-// MetricNameTidTimestampSort creates a sort function that sorts by [metric_name, tid, timestamp].
-// This is the most common sort pattern for metrics processing.
-//
-// Note: This function handles missing fields by sorting them before valid entries,
-// but the overall sort is not stable for records with identical sort keys.
-func MetricNameTidTimestampSort() SortFunc {
-	return func(a, b Row) int {
-		// Get metric name
-		nameA, nameAOk := a[wkk.RowKeyCName].(string)
-		nameB, nameBOk := b[wkk.RowKeyCName].(string)
-		if !nameAOk || !nameBOk {
-			if !nameAOk && !nameBOk {
-				return 0
-			}
-			if !nameAOk {
-				return 1
-			}
-			return -1
-		}
-
-		// Compare metric names first
-		if cmp := strings.Compare(nameA, nameB); cmp != 0 {
-			return cmp
-		}
-
-		// Get TID
-		tidA, tidAOk := a[wkk.RowKeyCTID].(int64)
-		tidB, tidBOk := b[wkk.RowKeyCTID].(int64)
-		if !tidAOk || !tidBOk {
-			if !tidAOk && !tidBOk {
-				return 0
-			}
-			if !tidAOk {
-				return 1
-			}
-			return -1
-		}
-
-		// Compare TIDs
-		if tidA < tidB {
-			return -1
-		}
-		if tidA > tidB {
-			return 1
-		}
-
-		// Get timestamp
-		tsA, tsAOk := a[wkk.RowKeyCTimestamp].(int64)
-		tsB, tsBOk := b[wkk.RowKeyCTimestamp].(int64)
-		if !tsAOk || !tsBOk {
-			if !tsAOk && !tsBOk {
-				return 0
-			}
-			if !tsAOk {
-				return 1
-			}
-			return -1
-		}
-
-		// Compare timestamps
-		if tsA < tsB {
-			return -1
-		}
-		if tsA > tsB {
-			return 1
-		}
-
-		return 0
-	}
-}
-
-// TimestampSortKey represents timestamp-only sort key
-type TimestampSortKey struct {
-	Timestamp int64
-	TsOk      bool
-}
-
-// TimestampSortKeyFunc extracts timestamp sort keys from rows.
-func TimestampSortKeyFunc() SortKeyFunc {
-	return func(row Row) any {
-		key := TimestampSortKey{}
-		key.Timestamp, key.TsOk = row[wkk.RowKeyCTimestamp].(int64)
-		return key
-	}
-}
-
-// TimestampSortFunc compares TimestampSortKey instances.
-func TimestampSortFunc() func(a, b any) int {
-	return func(a, b any) int {
-		keyA := a.(TimestampSortKey)
-		keyB := b.(TimestampSortKey)
-
-		if !keyA.TsOk || !keyB.TsOk {
-			if !keyA.TsOk && !keyB.TsOk {
-				return 0
-			}
-			if !keyA.TsOk {
-				return 1
-			}
-			return -1
-		}
-
-		if keyA.Timestamp < keyB.Timestamp {
-			return -1
-		}
-		if keyA.Timestamp > keyB.Timestamp {
-			return 1
-		}
-		return 0
-	}
-}
-
-// TimestampSort creates a sort function that sorts by timestamp only.
-//
-// Note: This function handles missing timestamps by sorting them before valid entries,
-// but the overall sort is not stable for records with identical timestamps.
-func TimestampSort() SortFunc {
-	return func(a, b Row) int {
-		tsA, tsAOk := a[wkk.RowKeyCTimestamp].(int64)
-		tsB, tsBOk := b[wkk.RowKeyCTimestamp].(int64)
-		if !tsAOk || !tsBOk {
-			if !tsAOk && !tsBOk {
-				return 0
-			}
-			if !tsAOk {
-				return 1
-			}
-			return -1
-		}
-
-		if tsA < tsB {
-			return -1
-		}
-		if tsA > tsB {
-			return 1
-		}
-		return 0
-	}
 }

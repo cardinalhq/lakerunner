@@ -43,7 +43,6 @@ var (
 
 	myInstanceID int64
 
-	dbExecDuration         metric.Float64Histogram
 	inqueueFetchDuration   metric.Float64Histogram
 	inqueueDuration        metric.Float64Histogram
 	inqueueLag             metric.Float64Histogram
@@ -182,16 +181,6 @@ func setupGlobalMetrics() {
 		panic(fmt.Errorf("failed to create inqueue.lag histogram: %w", err))
 	}
 	inqueueLag = m
-
-	m, err = meter.Float64Histogram(
-		"lakerunner.db.exec.duration",
-		metric.WithUnit("s"),
-		metric.WithDescription("The duration in seconds for a database update to be processed"),
-	)
-	if err != nil {
-		panic(fmt.Errorf("failed to create db.update.duration histogram: %w", err))
-	}
-	dbExecDuration = m
 
 	m, err = meter.Float64Histogram(
 		"lakerunner.workqueue.lag",

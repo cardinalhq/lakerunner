@@ -15,12 +15,16 @@
 package filereader
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"strconv"
 
 	"github.com/parquet-go/parquet-go"
+	"go.opentelemetry.io/otel/attribute"
+	otelmetric "go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
@@ -34,6 +38,32 @@ type ParquetRawReader struct {
 	exhausted bool
 	rowCount  int64
 	batchSize int
+}
+
+// shouldDropRowForInvalidRollupFields checks if a row has NaN or invalid rollup fields that should be dropped.
+// This filters corrupted data at the parquet source level to isolate data quality issues.
+func shouldDropRowForInvalidRollupFields(row map[string]any) bool {
+	// List of rollup fields to validate
+	rollupFields := []string{
+		"rollup_sum", "rollup_count", "rollup_avg", "rollup_min", "rollup_max",
+		"rollup_p25", "rollup_p50", "rollup_p75", "rollup_p90", "rollup_p95", "rollup_p99",
+	}
+
+	for _, fieldName := range rollupFields {
+		if value, exists := row[fieldName]; exists {
+			if floatVal, ok := value.(float64); ok {
+				if math.IsNaN(floatVal) || math.IsInf(floatVal, 0) {
+					rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+						attribute.String("reader", "ParquetRawReader"),
+						attribute.String("reason", "NaN"),
+					))
+					return true
+				}
+			}
+		}
+	}
+
+	return false
 }
 
 // NewParquetRawReader creates a new ParquetRawReader for the given io.ReaderAt.
@@ -105,20 +135,33 @@ func (r *ParquetRawReader) Next() (*Batch, error) {
 					row["_cardinalhq.tid"] = tidInt64
 				} else {
 					// Drop row if conversion fails
+					rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+						attribute.String("reader", "ParquetRawReader"),
+						attribute.String("reason", "invalid_tid_conversion"),
+					))
 					continue
 				}
 			case int64:
 				// Already correct type, no conversion needed
 			default:
 				// Drop row if _cardinalhq.tid is neither string nor int64
+				rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+					attribute.String("reader", "ParquetRawReader"),
+					attribute.String("reason", "invalid_tid_type"),
+				))
 				continue
 			}
+		}
+
+		// Filter out rows with NaN or invalid rollup fields - this indicates corrupted data from parquet source
+		if shouldDropRowForInvalidRollupFields(row) {
+			continue
 		}
 
 		// Use AddRow and copy the data
 		batchRow := batch.AddRow()
 		for k, v := range row {
-			batchRow[wkk.NewRowKey(k)] = v
+			batchRow[wkk.NewRowKeyFromBytes([]byte(k))] = v
 		}
 		validRows++
 	}

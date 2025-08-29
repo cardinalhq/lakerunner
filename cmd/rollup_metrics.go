@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 	"time"
 
 	"github.com/google/uuid"
@@ -30,6 +29,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/constants"
+	"github.com/cardinalhq/lakerunner/internal/debugging"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
@@ -47,10 +47,6 @@ func init() {
 		Use:   "rollup-metrics",
 		Short: "Roll up metrics",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if os.Getenv("LAKERUNNER_METRICS_ROLLUP_OLDPATH") != "" {
-				return oldRollupMetricsCommand().RunE(nil, []string{})
-			}
-
 			helpers.SetupTempDir()
 
 			servicename := "lakerunner-rollup-metrics"
@@ -70,6 +66,9 @@ func init() {
 			}()
 
 			go diskUsageLoop(ctx)
+
+			// Start pprof server
+			go debugging.RunPprof(ctx)
 
 			loop, err := NewRunqueueLoopContext(ctx, "metrics", "rollup", servicename)
 			if err != nil {
@@ -93,27 +92,27 @@ func metricRollupItem(
 	inf lockmgr.Workable,
 	rpfEstimate int64,
 	_ any,
-) (WorkResult, error) {
+) error {
 	previousFrequency, ok := helpers.RollupSources[inf.FrequencyMs()]
 	if !ok {
 		ll.Error("Unknown parent frequency, dropping rollup request", slog.Int("frequencyMs", int(inf.FrequencyMs())))
-		return WorkResultSuccess, nil
+		return nil
 	}
 	if !helpers.IsWantedFrequency(inf.FrequencyMs()) || !helpers.IsWantedFrequency(previousFrequency) {
 		ll.Info("Skipping rollup for unwanted frequency", slog.Int("frequencyMs", int(inf.FrequencyMs())), slog.Int("previousFrequency", int(previousFrequency)))
-		return WorkResultSuccess, nil
+		return nil
 	}
 
 	profile, err := sp.GetStorageProfileForOrganizationAndInstance(ctx, inf.OrganizationID(), inf.InstanceNum())
 	if err != nil {
 		ll.Error("Failed to get storage profile", slog.Any("error", err))
-		return WorkResultTryAgainLater, err
+		return err
 	}
 
 	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
 	if err != nil {
 		ll.Error("Failed to get S3 client", slog.Any("error", err))
-		return 0, err
+		return err
 	}
 
 	ll.Info("Starting metric rollup",
@@ -126,20 +125,20 @@ func metricRollupItem(
 		slog.Int64("estimatedRowsPerFile", rpfEstimate))
 
 	t0 := time.Now()
-	_, err = metricRollupItemDo(ctx, ll, mdb, tmpdir, inf, profile, s3client, previousFrequency, rpfEstimate)
+	err = metricRollupItemDo(ctx, ll, mdb, tmpdir, inf, profile, s3client, previousFrequency, rpfEstimate)
 
 	if err != nil {
 		ll.Info("Metric rollup completed",
 			slog.String("result", "error"),
 			slog.Int64("workQueueID", inf.ID()),
 			slog.Duration("elapsed", time.Since(t0)))
-		return WorkResultTryAgainLater, err
+		return err
 	} else {
 		ll.Info("Metric rollup completed",
 			slog.String("result", "success"),
 			slog.Int64("workQueueID", inf.ID()),
 			slog.Duration("elapsed", time.Since(t0)))
-		return WorkResultSuccess, nil
+		return nil
 	}
 }
 
@@ -153,10 +152,10 @@ func metricRollupItemDo(
 	s3client *awsclient.S3Client,
 	previousFrequency int32,
 	rpfEstimate int64,
-) (WorkResult, error) {
+) error {
 	st, et, ok := helpers.RangeBounds(inf.TsRange())
 	if !ok {
-		return WorkResultSuccess, fmt.Errorf("invalid time range in work item: %v", inf.TsRange())
+		return fmt.Errorf("invalid time range in work item: %v", inf.TsRange())
 	}
 
 	// Get source segments to rollup from (previous frequency)
@@ -171,12 +170,12 @@ func metricRollupItemDo(
 	})
 	if err != nil {
 		ll.Error("Failed to get previous metric segments", slog.Any("error", err))
-		return WorkResultTryAgainLater, err
+		return err
 	}
 
 	if helpers.AllRolledUp(sourceRows) {
 		ll.Debug("All source rows already rolled up, skipping")
-		return WorkResultSuccess, nil
+		return nil
 	}
 
 	// Get existing segments at target frequency to replace
@@ -191,7 +190,7 @@ func metricRollupItemDo(
 	})
 	if err != nil {
 		ll.Error("Failed to get existing metric segments", slog.Any("error", err))
-		return WorkResultTryAgainLater, err
+		return err
 	}
 
 	return rollupMetricSegments(ctx, ll, mdb, tmpdir, inf, profile, s3client, sourceRows, existingRows, rpfEstimate)
@@ -208,16 +207,16 @@ func rollupMetricSegments(
 	sourceRows []lrdb.MetricSeg,
 	existingRows []lrdb.MetricSeg,
 	rpfEstimate int64,
-) (WorkResult, error) {
+) error {
 	if len(sourceRows) == 0 {
 		ll.Debug("No source rows to rollup, skipping")
-		return WorkResultSuccess, nil
+		return nil
 	}
 
 	st, _, ok := helpers.RangeBounds(inf.TsRange())
 	if !ok {
 		ll.Error("Invalid time range in work item", slog.Any("tsRange", inf.TsRange()))
-		return WorkResultSuccess, fmt.Errorf("invalid time range in work item: %v", inf.TsRange())
+		return fmt.Errorf("invalid time range in work item: %v", inf.TsRange())
 	}
 
 	// Download all source files and create ParquetRawReaders with sorting support
@@ -227,9 +226,9 @@ func rollupMetricSegments(
 	}
 
 	readerStack, err := metricsprocessing.CreateReaderStack(
-		ctx, ll, tmpdir, s3client, inf.OrganizationID(), profile, st.Time.UTC().UnixMilli(), sourceRows, config)
+		ctx, ll, tmpdir, s3client, inf.OrganizationID(), profile, st.Time.UTC().UnixMilli(), sourceRows, config, "")
 	if err != nil {
-		return WorkResultTryAgainLater, err
+		return err
 	}
 
 	readers := readerStack.Readers
@@ -238,7 +237,7 @@ func rollupMetricSegments(
 
 	if len(readers) == 0 {
 		ll.Debug("No files to rollup, skipping work item")
-		return WorkResultSuccess, nil
+		return nil
 	}
 
 	defer metricsprocessing.CloseReaderStack(ll, readerStack)
@@ -248,7 +247,7 @@ func rollupMetricSegments(
 	aggregatingReader, err := filereader.NewAggregatingMetricsReader(finalReader, int64(inf.FrequencyMs()), 1000)
 	if err != nil {
 		ll.Error("Failed to create aggregating metrics reader", slog.Any("error", err))
-		return WorkResultTryAgainLater, fmt.Errorf("creating aggregating metrics reader: %w", err)
+		return fmt.Errorf("creating aggregating metrics reader: %w", err)
 	}
 	defer aggregatingReader.Close()
 
@@ -260,7 +259,7 @@ func rollupMetricSegments(
 	writer, err := factories.NewMetricsWriter(tmpdir, constants.WriterTargetSizeBytesMetrics, recordsPerFile)
 	if err != nil {
 		ll.Error("Failed to create metrics writer", slog.Any("error", err))
-		return WorkResultTryAgainLater, fmt.Errorf("creating metrics writer: %w", err)
+		return fmt.Errorf("creating metrics writer: %w", err)
 	}
 	defer writer.Abort()
 
@@ -273,7 +272,7 @@ func rollupMetricSegments(
 				pipeline.ReturnBatch(batch)
 			}
 			ll.Error("Failed to read from aggregating reader", slog.Any("error", err))
-			return WorkResultTryAgainLater, fmt.Errorf("reading from aggregating reader: %w", err)
+			return fmt.Errorf("reading from aggregating reader: %w", err)
 		}
 
 		if batch == nil || batch.Len() == 0 {
@@ -291,7 +290,7 @@ func rollupMetricSegments(
 				ll.Error("Failed to normalize row", slog.Any("error", err))
 				pipeline.ReturnBatch(normalizedBatch)
 				pipeline.ReturnBatch(batch)
-				return WorkResultTryAgainLater, fmt.Errorf("normalizing row: %w", err)
+				return fmt.Errorf("normalizing row: %w", err)
 			}
 
 			// Copy normalized row to the new batch
@@ -308,7 +307,7 @@ func rollupMetricSegments(
 				ll.Error("Failed to write batch", slog.Any("error", err))
 				pipeline.ReturnBatch(normalizedBatch)
 				pipeline.ReturnBatch(batch)
-				return WorkResultTryAgainLater, fmt.Errorf("writing batch: %w", err)
+				return fmt.Errorf("writing batch: %w", err)
 			}
 		}
 
@@ -323,7 +322,7 @@ func rollupMetricSegments(
 	results, err := writer.Close(ctx)
 	if err != nil {
 		ll.Error("Failed to finish writing", slog.Any("error", err))
-		return WorkResultTryAgainLater, fmt.Errorf("finishing writer: %w", err)
+		return fmt.Errorf("finishing writer: %w", err)
 	}
 
 	ll.Debug("Rollup completed",
@@ -347,10 +346,10 @@ func rollupMetricSegments(
 	// Use context without cancellation for critical section to ensure atomic completion
 	criticalCtx := context.WithoutCancel(ctx)
 
-	// Upload rolled-up metrics using the same pattern as ingestion
+	// Upload rolled-up metrics using custom rollup logic
 	err = uploadRolledUpMetrics(criticalCtx, ll, mdb, s3client, results, existingRows, rollupParams)
 	if err != nil {
-		return WorkResultTryAgainLater, fmt.Errorf("failed to upload rolled-up metrics: %w", err)
+		return fmt.Errorf("failed to upload rolled-up metrics: %w", err)
 	}
 
 	// Mark source rows as rolled up
@@ -371,7 +370,7 @@ func rollupMetricSegments(
 		ll.Error("Failed to queue metric rollup", slog.Any("error", err))
 	}
 
-	return WorkResultSuccess, nil
+	return nil
 }
 
 // uploadRolledUpMetrics uploads rolled-up metric files using the same atomic pattern as ingestion
@@ -487,6 +486,7 @@ func uploadRolledUpMetrics(
 			CreatedBy:      replaceParams.CreatedBy,
 			SlotID:         replaceParams.SlotID,
 			OldRecords:     replaceParams.OldRecords,
+			SortVersion:    replaceParams.SortVersion,
 			NewRecords: []lrdb.ReplaceMetricSegsNew{
 				{
 					TidPartition: 0, // Rollup output uses tid_partition 0

@@ -211,16 +211,7 @@ func TestMemorySortingReader_BufferLeak(t *testing.T) {
 	// Create MemorySortingReader
 	sortingReader, err := NewMemorySortingReader(
 		baseReader,
-		func(a, b Row) int {
-			aVal := a[wkk.RowKeyCTimestamp].(int64)
-			bVal := b[wkk.RowKeyCTimestamp].(int64)
-			if aVal < bVal {
-				return -1
-			} else if aVal > bVal {
-				return 1
-			}
-			return 0
-		},
+		&TimestampSortKeyProvider{},
 		100,
 	)
 	if err != nil {
@@ -251,19 +242,7 @@ func TestDiskSortingReader_BufferLeak(t *testing.T) {
 	// Create DiskSortingReader
 	sortingReader, err := NewDiskSortingReader(
 		baseReader,
-		func(row Row) any {
-			return row[wkk.RowKeyCTimestamp]
-		},
-		func(a, b any) int {
-			aVal := a.(int64)
-			bVal := b.(int64)
-			if aVal < bVal {
-				return -1
-			} else if aVal > bVal {
-				return 1
-			}
-			return 0
-		},
+		&TimestampSortKeyProvider{},
 		100,
 	)
 	if err != nil {
@@ -369,16 +348,7 @@ func TestStackedReaders_BufferLeak(t *testing.T) {
 	// Add sorting
 	sortingReader, err := NewMemorySortingReader(
 		seqReader,
-		func(a, b Row) int {
-			aVal := a[wkk.RowKeyCTimestamp].(int64)
-			bVal := b[wkk.RowKeyCTimestamp].(int64)
-			if aVal < bVal {
-				return -1
-			} else if aVal > bVal {
-				return 1
-			}
-			return 0
-		},
+		&TimestampSortKeyProvider{},
 		50,
 	)
 	if err != nil {

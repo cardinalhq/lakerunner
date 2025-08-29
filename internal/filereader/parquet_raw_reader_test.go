@@ -373,16 +373,17 @@ func TestProtoLogsReader_WithTranslator(t *testing.T) {
 
 func TestParquetRawReader_CompactTestFiles(t *testing.T) {
 	// Test files from compact-test-0001 with expected record counts from logs
+	// Note: Some files have 226 instead of 227 due to NaN filtering (indicates corrupt source data)
 	expectedCounts := map[string]int64{
 		"tbl_299476429685392687.parquet": 227,
-		"tbl_299476441865651503.parquet": 227,
+		"tbl_299476441865651503.parquet": 226, // 1 NaN row filtered
 		"tbl_299476446630380847.parquet": 227,
 		"tbl_299476458558980900.parquet": 231,
-		"tbl_299476464716219172.parquet": 227,
+		"tbl_299476464716219172.parquet": 226, // 1 NaN row filtered
 		"tbl_299476475503969060.parquet": 227,
 		"tbl_299476481342440751.parquet": 227,
 		"tbl_299476495972173103.parquet": 231,
-		"tbl_299476496878142244.parquet": 227,
+		"tbl_299476496878142244.parquet": 226, // 1 NaN row filtered
 		"tbl_299476509242950436.parquet": 227,
 		"tbl_299476513621803812.parquet": 227,
 		"tbl_299476526607368996.parquet": 227,
@@ -497,24 +498,24 @@ func TestParquetRawReader_TIDConversion(t *testing.T) {
 
 func TestDiskSortingReader_WithParquetCompactTestFiles(t *testing.T) {
 	// Test DiskSortingReader(ParquetReader) combination with compact test files
+	// Note: Some files have 226 instead of 227 due to NaN filtering (indicates corrupt source data)
 	expectedCounts := map[string]int64{
 		"tbl_299476429685392687.parquet": 227,
-		"tbl_299476441865651503.parquet": 227,
+		"tbl_299476441865651503.parquet": 226, // 1 NaN row filtered
 		"tbl_299476446630380847.parquet": 227,
 		"tbl_299476458558980900.parquet": 231, // Special case with 231 records
-		"tbl_299476464716219172.parquet": 227,
+		"tbl_299476464716219172.parquet": 226, // 1 NaN row filtered
 		"tbl_299476475503969060.parquet": 227,
 		"tbl_299476481342440751.parquet": 227,
 		"tbl_299476495972173103.parquet": 231, // Special case with 231 records
-		"tbl_299476496878142244.parquet": 227,
+		"tbl_299476496878142244.parquet": 226, // 1 NaN row filtered
 		"tbl_299476509242950436.parquet": 227,
 		"tbl_299476513621803812.parquet": 227,
 		"tbl_299476526607368996.parquet": 227,
 	}
 
-	// Use the standard metric sorting functions
-	sortKeyFunc := MetricNameTidTimestampSortKeyFunc()
-	sortFunc := MetricNameTidTimestampSortFunc()
+	// Use the standard metric sorting provider
+	keyProvider := &MetricSortKeyProvider{}
 
 	for filename, expectedCount := range expectedCounts {
 		t.Run(filename, func(t *testing.T) {
@@ -534,7 +535,7 @@ func TestDiskSortingReader_WithParquetCompactTestFiles(t *testing.T) {
 			defer parquetReader.Close()
 
 			// Wrap with DiskSortingReader
-			diskSortingReader, err := NewDiskSortingReader(parquetReader, sortKeyFunc, sortFunc, 1000)
+			diskSortingReader, err := NewDiskSortingReader(parquetReader, keyProvider, 1000)
 			require.NoError(t, err, "Failed to create DiskSortingReader for file: %s", filename)
 			defer diskSortingReader.Close()
 

@@ -31,6 +31,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/constants"
+	"github.com/cardinalhq/lakerunner/internal/debugging"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
@@ -67,6 +68,9 @@ func init() {
 
 			go diskUsageLoop(ctx)
 
+			// Start pprof server
+			go debugging.RunPprof(ctx)
+
 			// Start health check server
 			healthConfig := healthcheck.GetConfigFromEnv()
 			healthServer := healthcheck.NewServer(healthConfig)
@@ -80,13 +84,6 @@ func init() {
 			loop, err := NewIngestLoopContext(ctx, "logs", servicename)
 			if err != nil {
 				return fmt.Errorf("failed to create ingest loop context: %w", err)
-			}
-
-			// Check if we should use the old implementation as a safety net
-			if os.Getenv("LAKERUNNER_LOGS_INGEST_OLDPATH") != "" {
-				// Still mark as healthy before starting old path
-				healthServer.SetStatus(healthcheck.StatusHealthy)
-				return runOldLogIngestion(ctx, slog.Default(), loop)
 			}
 
 			// Mark as healthy once loop is created and about to start

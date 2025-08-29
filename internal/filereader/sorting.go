@@ -12,24 +12,22 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package cmd
+package filereader
 
-import (
-	"github.com/spf13/cobra"
+// SortKey represents a key that can be compared for sorting
+type SortKey interface {
+	// Compare returns:
+	// -1 if this key should come before other
+	//  0 if this key equals other
+	//  1 if this key should come after other
+	Compare(other SortKey) int
 
-	debugcmd "github.com/cardinalhq/lakerunner/cmd/debug"
-)
-
-var debugCmd = &cobra.Command{
-	Use:   "debug",
-	Short: "Debug commands for troubleshooting",
-	Long:  `Debug commands for troubleshooting various components of lakerunner.`,
+	// Release returns the key to its pool for reuse
+	Release()
 }
 
-func init() {
-	debugCmd.AddCommand(debugcmd.GetKubernetesDiscoveryCmd())
-	debugCmd.AddCommand(debugcmd.GetS3Cmd())
-	debugCmd.AddCommand(debugcmd.GetDDBCmd())
-	debugCmd.AddCommand(debugcmd.GetParquetCmd())
-	debugCmd.AddCommand(debugcmd.GetFileConvCmd())
+// SortKeyProvider creates sort keys from rows
+type SortKeyProvider interface {
+	// MakeKey creates a sort key from a row
+	MakeKey(row Row) SortKey
 }

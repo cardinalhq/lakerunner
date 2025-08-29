@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -28,10 +27,10 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/constants"
+	"github.com/cardinalhq/lakerunner/internal/debugging"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
-	"github.com/cardinalhq/lakerunner/internal/metriccompaction"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
@@ -46,10 +45,6 @@ func init() {
 		Use:   "compact-metrics",
 		Short: "Roll up metrics",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if os.Getenv("LAKERUNNER_METRICS_COMPACT_OLDPATH") != "" {
-				return oldCompactMetricsCommand().RunE(nil, []string{})
-			}
-
 			helpers.SetupTempDir()
 
 			servicename := "lakerunner-compact-metrics"
@@ -69,6 +64,9 @@ func init() {
 			}()
 
 			go diskUsageLoop(ctx)
+
+			// Start pprof server
+			go debugging.RunPprof(ctx)
 
 			// Start health check server
 			healthConfig := healthcheck.GetConfigFromEnv()
@@ -105,22 +103,22 @@ func compactRollupItem(
 	inf lockmgr.Workable,
 	rpfEstimate int64,
 	args any,
-) (WorkResult, error) {
+) error {
 	if !helpers.IsWantedFrequency(inf.FrequencyMs()) {
 		ll.Debug("Skipping compaction for unwanted frequency", slog.Int("frequencyMs", int(inf.FrequencyMs())))
-		return WorkResultSuccess, nil
+		return nil
 	}
 
 	profile, err := sp.GetStorageProfileForOrganizationAndInstance(ctx, inf.OrganizationID(), inf.InstanceNum())
 	if err != nil {
 		ll.Error("Failed to get storage profile", slog.Any("error", err))
-		return WorkResultTryAgainLater, err
+		return err
 	}
 
 	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
 	if err != nil {
 		ll.Error("Failed to get S3 client", slog.Any("error", err))
-		return WorkResultTryAgainLater, err
+		return err
 	}
 
 	ll.Debug("Starting metric compaction",
@@ -142,10 +140,10 @@ func compactMetricSegments(
 	profile storageprofile.StorageProfile,
 	s3client *awsclient.S3Client,
 	rpfEstimate int64,
-) (WorkResult, error) {
+) error {
 	st, et, ok := helpers.RangeBounds(inf.TsRange())
 	if !ok {
-		return WorkResultSuccess, fmt.Errorf("invalid time range in work item: %v", inf.TsRange())
+		return fmt.Errorf("invalid time range in work item: %v", inf.TsRange())
 	}
 
 	const maxRowsLimit = 1000
@@ -160,7 +158,7 @@ func compactMetricSegments(
 				slog.Int("processedBatches", totalBatchesProcessed),
 				slog.Int("processedSegments", totalSegmentsProcessed),
 				slog.Any("error", ctx.Err()))
-			return WorkResultInterrupted, NewWorkerInterrupted("context cancelled during batch processing")
+			return NewWorkerInterrupted("context cancelled during batch processing")
 		}
 
 		ll.Debug("Querying for metric segments to compact",
@@ -183,7 +181,7 @@ func compactMetricSegments(
 		})
 		if err != nil {
 			ll.Error("Failed to get current metric segments", slog.Any("error", err))
-			return WorkResultTryAgainLater, err
+			return err
 		}
 
 		if len(inRows) == 0 {
@@ -194,7 +192,7 @@ func compactMetricSegments(
 					slog.Int("totalBatches", totalBatchesProcessed),
 					slog.Int("totalSegments", totalSegmentsProcessed))
 			}
-			return WorkResultSuccess, nil
+			return nil
 		}
 
 		// Calculate total bytes and records in this batch
@@ -225,14 +223,14 @@ func compactMetricSegments(
 			cursorSegmentID = lastRow.SegmentID
 		}
 
-		if !metriccompaction.ShouldCompactMetrics(inRows) {
+		if !metricsprocessing.ShouldCompactMetrics(inRows) {
 			ll.Debug("No need to compact metrics in this batch", slog.Int("rowCount", len(inRows)))
 
 			if len(inRows) < maxRowsLimit {
 				if totalBatchesProcessed == 0 {
 					ll.Debug("No segments need compaction")
 				}
-				return WorkResultSuccess, nil
+				return nil
 			}
 			totalBatchesProcessed++
 			continue
@@ -243,13 +241,13 @@ func compactMetricSegments(
 			ll.Info("Context cancelled before starting compaction interval",
 				slog.Int("segmentCount", len(inRows)),
 				slog.Any("error", ctx.Err()))
-			return WorkResultInterrupted, NewWorkerInterrupted("context cancelled before compaction interval")
+			return NewWorkerInterrupted("context cancelled before compaction interval")
 		}
 
 		err = compactMetricInterval(ctx, ll, mdb, tmpdir, inf, profile, s3client, inRows, rpfEstimate)
 		if err != nil {
 			ll.Error("Failed to compact interval", slog.Any("error", err))
-			return WorkResultTryAgainLater, err
+			return err
 		}
 
 		totalBatchesProcessed++
@@ -259,7 +257,7 @@ func compactMetricSegments(
 			ll.Debug("Completed all compaction batches",
 				slog.Int("totalBatches", totalBatchesProcessed),
 				slog.Int("totalSegments", totalSegmentsProcessed))
-			return WorkResultSuccess, nil
+			return nil
 		}
 
 		ll.Debug("Batch completed, checking for more segments",
@@ -292,7 +290,7 @@ func compactMetricInterval(
 	}
 
 	readerStack, err := metricsprocessing.CreateReaderStack(
-		ctx, ll, tmpdir, s3client, inf.OrganizationID(), profile, st.Time.UTC().UnixMilli(), rows, config)
+		ctx, ll, tmpdir, s3client, inf.OrganizationID(), profile, st.Time.UTC().UnixMilli(), rows, config, "")
 	if err != nil {
 		return err
 	}
@@ -318,12 +316,7 @@ func compactMetricInterval(
 	}
 	defer aggregatingReader.Close()
 
-	recordsPerFile := rpfEstimate
-	if recordsPerFile <= 0 {
-		recordsPerFile = 10_000
-	}
-
-	writer, err := factories.NewMetricsWriter(tmpdir, constants.WriterTargetSizeBytesMetrics, recordsPerFile)
+	writer, err := factories.NewMetricsWriter(tmpdir, constants.WriterTargetSizeBytesMetrics, rpfEstimate)
 	if err != nil {
 		ll.Error("Failed to create metrics writer", slog.Any("error", err))
 		return fmt.Errorf("creating metrics writer: %w", err)
@@ -413,7 +406,7 @@ func compactMetricInterval(
 		slog.Int64("totalRows", totalRows),
 		slog.Int("outputFiles", len(results)),
 		slog.Int("inputFiles", len(downloadedFiles)),
-		slog.Int64("recordsPerFile", recordsPerFile),
+		slog.Int64("recordsPerFile", rpfEstimate),
 		slog.Int64("inputBytes", inputBytes),
 		slog.Int64("outputBytes", outputBytes),
 		slog.Float64("compressionRatio", compressionRatio))

@@ -12,24 +12,28 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package cmd
+package filereader
 
 import (
-	"github.com/spf13/cobra"
+	"fmt"
 
-	debugcmd "github.com/cardinalhq/lakerunner/cmd/debug"
+	"go.opentelemetry.io/otel"
+	otelmetric "go.opentelemetry.io/otel/metric"
 )
 
-var debugCmd = &cobra.Command{
-	Use:   "debug",
-	Short: "Debug commands for troubleshooting",
-	Long:  `Debug commands for troubleshooting various components of lakerunner.`,
-}
+var (
+	rowsDroppedCounter otelmetric.Int64Counter
+)
 
 func init() {
-	debugCmd.AddCommand(debugcmd.GetKubernetesDiscoveryCmd())
-	debugCmd.AddCommand(debugcmd.GetS3Cmd())
-	debugCmd.AddCommand(debugcmd.GetDDBCmd())
-	debugCmd.AddCommand(debugcmd.GetParquetCmd())
-	debugCmd.AddCommand(debugcmd.GetFileConvCmd())
+	meter := otel.Meter("github.com/cardinalhq/lakerunner/internal/filereader")
+
+	var err error
+	rowsDroppedCounter, err = meter.Int64Counter(
+		"lakerunner.reader.rows_dropped",
+		otelmetric.WithDescription("Number of rows dropped by readers due to invalid data"),
+	)
+	if err != nil {
+		panic(fmt.Errorf("failed to create rows_dropped counter: %w", err))
+	}
 }

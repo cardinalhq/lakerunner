@@ -120,11 +120,11 @@
 //
 // MemorySortingReader - For smaller datasets (high memory usage, no disk I/O):
 //
-//	reader := NewMemorySortingReader(rawReader, MetricNameTidTimestampSort())
+//	reader := NewMemorySortingReader(rawReader, &MetricSortKeyProvider{})
 //
 // DiskSortingReader - For larger datasets (moderate memory usage, 2x disk I/O):
 //
-//	reader := NewDiskSortingReader(rawReader, TimestampSortKeyFunc(), TimestampSortFunc())
+//	reader := NewDiskSortingReader(rawReader, &TimestampSortKeyProvider{})
 //
 // MergesortReader - For merging multiple already-sorted sources (low memory, streaming):
 //

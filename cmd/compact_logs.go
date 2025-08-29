@@ -132,17 +132,17 @@ func compactLogsFor(
 	inf lockmgr.Workable,
 	rpfEstimate int64,
 	_ any,
-) (WorkResult, error) {
+) error {
 	profile, err := sp.GetStorageProfileForOrganizationAndInstance(ctx, inf.OrganizationID(), inf.InstanceNum())
 	if err != nil {
 		ll.Error("Failed to get storage profile", slog.Any("error", err))
-		return WorkResultTryAgainLater, err
+		return err
 	}
 
 	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
 	if err != nil {
 		ll.Error("Failed to get S3 client", slog.Any("error", err))
-		return WorkResultTryAgainLater, err
+		return err
 	}
 
 	ll.Info("Starting log compaction",
@@ -152,7 +152,7 @@ func compactLogsFor(
 		slog.Int64("workQueueID", inf.ID()))
 
 	t0 := time.Now()
-	result, err := logCompactItemDo(ctx, ll, mdb, tmpdir, inf, profile, s3client, rpfEstimate)
+	err = logCompactItemDo(ctx, ll, mdb, tmpdir, inf, profile, s3client, rpfEstimate)
 
 	if err != nil {
 		ll.Info("Log compaction completed",
@@ -160,17 +160,13 @@ func compactLogsFor(
 			slog.Int64("workQueueID", inf.ID()),
 			slog.Duration("elapsed", time.Since(t0)))
 	} else {
-		resultStr := "success"
-		if result == WorkResultTryAgainLater {
-			resultStr = "try_again_later"
-		}
 		ll.Info("Log compaction completed",
-			slog.String("result", resultStr),
+			slog.String("result", "success"),
 			slog.Int64("workQueueID", inf.ID()),
 			slog.Duration("elapsed", time.Since(t0)))
 	}
 
-	return result, err
+	return err
 }
 
 func logCompactItemDo(
@@ -182,11 +178,11 @@ func logCompactItemDo(
 	sp storageprofile.StorageProfile,
 	s3client *awsclient.S3Client,
 	rpfEstimate int64,
-) (WorkResult, error) {
+) error {
 	// Extract the time range using our normalized helper functions
 	timeRange, ok := helpers.NewTimeRangeFromPgRange(inf.TsRange())
 	if !ok {
-		return WorkResultSuccess, errors.New("error getting range bounds")
+		return errors.New("error getting range bounds")
 	}
 
 	// Validate that the time range falls entirely within one dateint-hour
@@ -204,9 +200,9 @@ func logCompactItemDo(
 		// Delete it entirely from the work queue
 		if err := inf.Delete(); err != nil {
 			ll.Error("Failed to delete stale work item", slog.Any("error", err))
-			return WorkResultTryAgainLater, err
+			return err
 		}
-		return WorkResultSuccess, nil
+		return nil
 	}
 
 	// Get the dateint and hour boundaries for database queries (both boundaries should be the same now)
@@ -231,7 +227,7 @@ func logCompactItemDo(
 				slog.Int("batchCount", totalBatchesProcessed),
 				slog.Int("segmentCount", totalSegmentsProcessed),
 				slog.Any("error", ctx.Err()))
-			return WorkResultInterrupted, NewWorkerInterrupted("context cancelled during batch processing")
+			return NewWorkerInterrupted("context cancelled during batch processing")
 		}
 
 		ll.Info("Querying for log segments to compact",
@@ -253,7 +249,7 @@ func logCompactItemDo(
 		})
 		if err != nil {
 			ll.Error("Error getting log segments for compaction", slog.Any("error", err))
-			return WorkResultTryAgainLater, err
+			return err
 		}
 
 		// No more segments to process
@@ -265,7 +261,7 @@ func logCompactItemDo(
 					slog.Int("batchCount", totalBatchesProcessed),
 					slog.Int("segmentCount", totalSegmentsProcessed))
 			}
-			return WorkResultSuccess, nil
+			return nil
 		}
 
 		ll.Info("Processing compaction batch",
@@ -288,7 +284,7 @@ func logCompactItemDo(
 			inf.OrganizationID().String(), fmt.Sprintf("%d", inf.InstanceNum()), "logs", "compact")
 		if err != nil {
 			ll.Error("Error packing segments", slog.Any("error", err))
-			return WorkResultTryAgainLater, err
+			return err
 		}
 
 		// Log if any segments were filtered out during packing
@@ -325,7 +321,7 @@ func logCompactItemDo(
 				if totalBatchesProcessed == 0 {
 					ll.Info("No segments need compaction")
 				}
-				return WorkResultSuccess, nil
+				return nil
 			}
 			// Continue to next batch without processing - cursor already advanced
 			totalBatchesProcessed++
@@ -347,7 +343,7 @@ func logCompactItemDo(
 				ll.Info("Shutdown requested - interrupting before atomic operation",
 					slog.Int("completedGroupCount", i),
 					slog.Int("remainingGroupCount", len(packed)-i))
-				return WorkResultInterrupted, NewWorkerInterrupted("shutdown requested before atomic operation")
+				return NewWorkerInterrupted("shutdown requested before atomic operation")
 			default:
 			}
 
@@ -368,7 +364,7 @@ func logCompactItemDo(
 		}
 
 		if err != nil {
-			return WorkResultTryAgainLater, err
+			return err
 		}
 
 		totalBatchesProcessed++
@@ -381,7 +377,7 @@ func logCompactItemDo(
 			ll.Info("Completed all compaction batches",
 				slog.Int("batchCount", totalBatchesProcessed),
 				slog.Int("segmentCount", totalSegmentsProcessed))
-			return WorkResultSuccess, nil
+			return nil
 		}
 
 		// Continue to next batch - cursor already advanced

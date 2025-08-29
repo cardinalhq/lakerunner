@@ -17,7 +17,6 @@ package filereader
 import (
 	"fmt"
 	"io"
-	"math"
 	"os"
 	"testing"
 
@@ -52,7 +51,7 @@ func TestDiskSortingReader_BasicSorting(t *testing.T) {
 	}
 
 	mockReader := NewMockReader(testRows)
-	sortingReader, err := NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc(), 1000)
+	sortingReader, err := NewDiskSortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
 	require.NoError(t, err)
 	defer sortingReader.Close()
 
@@ -101,7 +100,7 @@ func TestDiskSortingReader_TypePreservation(t *testing.T) {
 	}
 
 	mockReader := NewMockReader([]Row{testRow})
-	sortingReader, err := NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc(), 1000)
+	sortingReader, err := NewDiskSortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
 	require.NoError(t, err)
 	defer sortingReader.Close()
 
@@ -127,7 +126,7 @@ func TestDiskSortingReader_TypePreservation(t *testing.T) {
 
 func TestDiskSortingReader_EmptyInput(t *testing.T) {
 	mockReader := NewMockReader([]Row{})
-	sortingReader, err := NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc(), 1000)
+	sortingReader, err := NewDiskSortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
 	require.NoError(t, err)
 	defer sortingReader.Close()
 
@@ -153,7 +152,7 @@ func TestDiskSortingReader_MissingFields(t *testing.T) {
 	}
 
 	mockReader := NewMockReader(testRows)
-	sortingReader, err := NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc(), 1000)
+	sortingReader, err := NewDiskSortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
 	require.NoError(t, err)
 	defer sortingReader.Close()
 
@@ -176,7 +175,7 @@ func TestDiskSortingReader_CleanupOnError(t *testing.T) {
 		readError: fmt.Errorf("simulated read error"),
 	}
 
-	sortingReader, err := NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc(), 1000)
+	sortingReader, err := NewDiskSortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
 	require.NoError(t, err)
 
 	tempFileName := sortingReader.tempFile.Name()
@@ -241,101 +240,6 @@ func (m *MockReader) TotalRowsReturned() int64 {
 	return int64(m.currentIdx)
 }
 
-func TestDiskSortingReader_CBORIdentity(t *testing.T) {
-	// Test comprehensive type identity preservation through CBOR encode/decode
-	testCases := []struct {
-		name            string
-		value           any
-		expectedType    string
-		expectedValue   any
-		allowConversion bool // Some conversions are acceptable
-	}{
-		// Basic types
-		{"string", "test_string", "string", "test_string", false},
-		{"empty_string", "", "string", "", false},
-		{"bool_true", true, "bool", true, false},
-		{"bool_false", false, "bool", false, false},
-		{"nil", nil, "<nil>", nil, false},
-
-		// Integer types
-		{"int64_positive", int64(9223372036854775807), "int64", int64(9223372036854775807), false},
-		{"int64_negative", int64(-9223372036854775808), "int64", int64(-9223372036854775808), false},
-		{"int64_zero", int64(0), "int64", int64(0), false},
-		{"int32_positive", int32(2147483647), "int64", int64(2147483647), true}, // CBOR converts to int64
-		{"int32_negative", int32(-2147483648), "int64", int64(-2147483648), true},
-		{"uint32_max", uint32(4294967295), "int64", int64(4294967295), true}, // CBOR converts to int64 when < MaxInt64
-		{"uint64_small", uint64(123456789), "int64", int64(123456789), true}, // CBOR converts uint64 < MaxInt64 to int64
-		{"int_positive", int(123456), "int64", int64(123456), true},          // CBOR converts to int64
-		{"int_negative", int(-123456), "int64", int64(-123456), true},
-
-		// Float types
-		{"float64_positive", float64(3.14159265359), "float64", float64(3.14159265359), false},
-		{"float64_negative", float64(-2.71828), "float64", float64(-2.71828), false},
-		{"float64_zero", float64(0.0), "float64", float64(0.0), false},
-		{"float64_inf", math.Inf(1), "float64", math.Inf(1), false},
-		{"float64_nan", math.NaN(), "float64", math.NaN(), false},                 // NaN comparison special case
-		{"float32_value", float32(3.14), "float64", float64(float32(3.14)), true}, // CBOR converts float32->float64
-
-		// Byte arrays
-		{"byte_slice_empty", []byte{}, "[]uint8", []byte{}, false},
-		{"byte_slice_data", []byte{0x01, 0x02, 0x03, 0xFF}, "[]uint8", []byte{0x01, 0x02, 0x03, 0xFF}, false},
-
-		// Slice types (more complex conversion cases)
-		{"float64_slice_empty", []float64{}, "[]any", []any{}, true},                                   // Empty slices become []any
-		{"float64_slice_data", []float64{1.1, 2.2, 3.3}, "[]float64", []float64{1.1, 2.2, 3.3}, false}, // All float64 converts back to []float64
-		{"int64_slice", []int64{1, 2, 3}, "[]any", []any{int64(1), int64(2), int64(3)}, true},          // Mixed numeric stays as []any
-		{"string_slice", []string{"a", "b", "c"}, "[]any", []any{"a", "b", "c"}, true},                 // String slices stay as []any
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Create a test row with the value
-			testRow := Row{
-				wkk.RowKeyCName:             "test_metric",
-				wkk.RowKeyCTID:              int64(1),
-				wkk.RowKeyCTimestamp:        int64(1000),
-				wkk.NewRowKey("test_field"): tc.value,
-			}
-
-			mockReader := NewMockReader([]Row{testRow})
-			sortingReader, err := NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc(), 1000)
-			require.NoError(t, err)
-			defer sortingReader.Close()
-
-			// Read the row back
-			batch, err := sortingReader.Next()
-			require.NoError(t, err)
-			require.Equal(t, 1, batch.Len())
-
-			decoded := batch.Get(0)
-			decodedValue := decoded[wkk.NewRowKey("test_field")]
-
-			// Check type preservation
-			actualType := fmt.Sprintf("%T", decodedValue)
-			if !tc.allowConversion {
-				assert.Equal(t, tc.expectedType, actualType,
-					"Type not preserved for %s: expected %s, got %s", tc.name, tc.expectedType, actualType)
-			}
-
-			// Check value preservation (with special handling for NaN)
-			if tc.expectedType == "float64" && tc.name == "float64_nan" {
-				// NaN != NaN, so check if both are NaN
-				expectedFloat, ok1 := tc.expectedValue.(float64)
-				actualFloat, ok2 := decodedValue.(float64)
-				if ok1 && ok2 {
-					assert.True(t, math.IsNaN(expectedFloat) && math.IsNaN(actualFloat),
-						"Both values should be NaN for %s", tc.name)
-				} else {
-					t.Errorf("Expected both values to be float64 for NaN test")
-				}
-			} else {
-				assert.Equal(t, tc.expectedValue, decodedValue,
-					"Value not preserved for %s", tc.name)
-			}
-		})
-	}
-}
-
 func TestDiskSortingReader_ArbitraryRowCount(t *testing.T) {
 	// Test to verify DiskSortingReader doesn't drop rows due to batch size boundaries
 	// This test creates exactly 1234 rows and verifies we get exactly 1234 back
@@ -354,7 +258,7 @@ func TestDiskSortingReader_ArbitraryRowCount(t *testing.T) {
 	}
 
 	mockReader := NewMockReader(testRows)
-	sortingReader, err := NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc(), batchSize)
+	sortingReader, err := NewDiskSortingReader(mockReader, &MetricSortKeyProvider{}, batchSize)
 	require.NoError(t, err)
 	defer sortingReader.Close()
 
@@ -393,76 +297,6 @@ func TestDiskSortingReader_ArbitraryRowCount(t *testing.T) {
 	t.Logf("SUCCESS: Fed %d rows, got %d rows back in %d batches", totalRows, totalRead, batchCount)
 }
 
-func TestDiskSortingReader_CBOREdgeCases(t *testing.T) {
-	// Test edge cases that might break CBOR encoding/decoding
-	edgeCases := []struct {
-		name       string
-		value      any
-		shouldWork bool
-	}{
-		// Nested structures (CBOR converts complex slices to []any)
-		{"map_in_map", map[string]any{"nested": map[string]any{"key": "value"}}, true},
-		{"slice_of_maps", []any{map[string]any{"a": int64(1)}, map[string]any{"b": int64(2)}}, true},
-
-		// Very large numbers
-		{"max_int64", int64(9223372036854775807), true},
-		{"min_int64", int64(-9223372036854775808), true},
-		{"large_uint64", uint64(9223372036854775808), false}, // Just above max int64, will overflow and fail
-
-		// Unicode strings
-		{"unicode_string", "Hello 世界 🌍 emoji", true},
-		{"empty_unicode", "", true},
-
-		// Large byte arrays
-		{"large_byte_array", make([]byte, 10000), true}, // 10KB
-	}
-
-	for _, tc := range edgeCases {
-		t.Run(tc.name, func(t *testing.T) {
-			// For large byte array test, fill with pattern
-			if tc.name == "large_byte_array" {
-				data := tc.value.([]byte)
-				for i := range data {
-					data[i] = byte(i % 256)
-				}
-			}
-
-			testRow := Row{
-				wkk.RowKeyCName:             "edge_case_metric",
-				wkk.RowKeyCTID:              int64(1),
-				wkk.RowKeyCTimestamp:        int64(2000),
-				wkk.NewRowKey("edge_value"): tc.value,
-			}
-
-			mockReader := NewMockReader([]Row{testRow})
-			sortingReader, err := NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc(), 1000)
-			require.NoError(t, err)
-			defer sortingReader.Close()
-
-			// Try to read back
-			batch, err := sortingReader.Next()
-
-			if tc.shouldWork {
-				require.NoError(t, err, "Edge case %s should work", tc.name)
-				require.Equal(t, 1, batch.Len())
-
-				// For large byte array, verify pattern
-				if tc.name == "large_byte_array" {
-					decoded := batch.Get(0)[wkk.NewRowKey("edge_value")].([]byte)
-					require.Len(t, decoded, 10000)
-					for i := 0; i < 100; i++ { // Check first 100 bytes
-						assert.Equal(t, byte(i), decoded[i], "Byte pattern mismatch at position %d", i)
-					}
-				} else {
-					assert.Equal(t, tc.value, batch.Get(0)[wkk.NewRowKey("edge_value")], "Value mismatch for edge case %s", tc.name)
-				}
-			} else {
-				assert.Error(t, err, "Edge case %s should fail", tc.name)
-			}
-		})
-	}
-}
-
 // manyBatchReader yields a fixed number of single-row batches.
 // It exercises writeAndIndexAllRows across many batches to ensure
 // batches are properly returned to the pool.
@@ -498,7 +332,7 @@ func TestWriteAndIndexAllRowsDoesNotLeakBatches(t *testing.T) {
 	initialStats := pipeline.GlobalBatchPoolStats()
 
 	reader := &manyBatchReader{remaining: batchCount}
-	dsr, err := NewDiskSortingReader(reader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc(), 10)
+	dsr, err := NewDiskSortingReader(reader, &MetricSortKeyProvider{}, 10)
 	require.NoError(t, err)
 	defer dsr.Close()
 

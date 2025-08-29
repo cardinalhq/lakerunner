@@ -108,6 +108,11 @@ Data is converted into optimized **Apache Parquet** with indexing, aggregation, 
 - All new/changed functions must include tests.
 - New public methods require GoDoc comments that are not redundant, like "New creates a new thing".
 
+**Parquet Debug Tools:**
+- `./bin/lakerunner debug parquet cat --file <file>` – Output parquet contents as JSON lines
+- `./bin/lakerunner debug parquet schema --file <file>` – Analyze data to determine actual column types (JSON format)
+- `./bin/lakerunner debug parquet schema-raw --file <file>` – Show raw parquet metadata schema
+
 ### Database Schema
 
 - Type-safe SQL via sqlc.

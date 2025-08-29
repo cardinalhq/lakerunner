@@ -20,93 +20,83 @@ import (
 	"os"
 	"slices"
 
-	"github.com/cardinalhq/lakerunner/internal/cbor"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/internal/rowcodec"
 )
 
-// RowIndex represents a lightweight pointer to a CBOR-encoded row in the temp file.
+// RowIndex represents a lightweight pointer to a binary-encoded row in the temp file.
 // It stores only the extracted sort key plus file location info.
 type RowIndex struct {
-	SortKey    any // Extracted sort key for sorting
+	SortKey    SortKey // Extracted sort key for sorting
 	FileOffset int64
 	ByteLength int32
 }
 
-// DiskSortingReader reads all rows from an underlying reader, CBOR-encodes them to a temp file,
+// DiskSortingReader reads all rows from an underlying reader, binary-encodes them to a temp file,
 // sorts by index using a custom sort function, then returns them in sorted order.
 // This provides memory-efficient sorting for large datasets that don't fit in RAM.
-//
-// SortKeyFunc extracts sort keys from rows. Return the key that will be passed to your SortFunc.
-// The sort key should contain only the data needed for comparison to minimize memory usage.
-type SortKeyFunc func(row Row) any
 
 // Memory Impact: LOW-MODERATE - Only stores extracted sort keys in memory plus file offsets.
 //
 //	Much more memory-efficient than MemorySortingReader for large datasets.
 //
-// Disk I/O: 2x data size - Each row written once to temp CBOR file, then read once during output
+// Disk I/O: 2x data size - Each row written once to temp binary file, then read once during output
 // Stability: Records are only guaranteed to be sorted by the sort function;
 //
 //	if the sort function is not stable, the result will not be stable
 type DiskSortingReader struct {
 	reader      Reader
-	sortKeyFunc SortKeyFunc
-	sortFunc    func(a, b any) int // Sort function works on extracted keys, not full rows
+	keyProvider SortKeyProvider // Provider to create sort keys
 	tempFile    *os.File
-	cborConfig  *cbor.Config
+	codec       *rowcodec.Config
 	closed      bool
 	rowCount    int64
 	batchSize   int
 
-	// Lightweight sorted indices pointing to CBOR data
+	// Lightweight sorted indices pointing to binary data
 	indices      []RowIndex
 	currentIndex int
 	sorted       bool
 }
 
-// NewDiskSortingReader creates a reader that uses disk-based sorting with CBOR encoding.
+// NewDiskSortingReader creates a reader that uses disk-based sorting with custom binary encoding.
 //
 // Use this for large datasets that may not fit in memory. The temp file is automatically
-// cleaned up when the reader is closed. CBOR encoding provides compact storage and
-// fast serialization for the temporary data.
+// cleaned up when the reader is closed. Custom binary encoding provides efficient storage and
+// serialization for the temporary data with no reflection overhead.
 //
-// The sortKeyFunc extracts sort keys from rows to minimize memory usage during sorting.
-// The sortFunc compares the extracted keys (not full rows) and should return -1, 0, or 1.
-func NewDiskSortingReader(reader Reader, sortKeyFunc SortKeyFunc, sortFunc func(a, b any) int, batchSize int) (*DiskSortingReader, error) {
+// The keyProvider creates sort keys from rows to minimize memory usage during sorting.
+func NewDiskSortingReader(reader Reader, keyProvider SortKeyProvider, batchSize int) (*DiskSortingReader, error) {
 	if reader == nil {
 		return nil, fmt.Errorf("reader cannot be nil")
 	}
-	if sortKeyFunc == nil {
-		return nil, fmt.Errorf("sortKeyFunc cannot be nil")
-	}
-	if sortFunc == nil {
-		return nil, fmt.Errorf("sortFunc cannot be nil")
+	if keyProvider == nil {
+		return nil, fmt.Errorf("keyProvider cannot be nil")
 	}
 
 	if batchSize <= 0 {
 		batchSize = 1000
 	}
 
-	// Create temp file for CBOR data
-	tempFile, err := os.CreateTemp("", "lakerunner-sort-*.cbor")
+	// Create temp file for binary data
+	tempFile, err := os.CreateTemp("", "lakerunner-sort-*.bin")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp file: %w", err)
 	}
 
-	// Create CBOR config with optimized settings
-	cborConfig, err := cbor.NewConfig()
+	// Create binary codec config
+	codec, err := rowcodec.NewConfig()
 	if err != nil {
 		tempFile.Close()
 		os.Remove(tempFile.Name())
-		return nil, fmt.Errorf("failed to create CBOR config: %w", err)
+		return nil, fmt.Errorf("failed to create binary codec: %w", err)
 	}
 
 	return &DiskSortingReader{
 		reader:      reader,
-		sortKeyFunc: sortKeyFunc,
-		sortFunc:    sortFunc,
+		keyProvider: keyProvider,
 		tempFile:    tempFile,
-		cborConfig:  cborConfig,
+		codec:       codec,
 		batchSize:   batchSize,
 		indices:     make([]RowIndex, 0, 1000), // Start with reasonable capacity
 	}, nil
@@ -143,16 +133,22 @@ func (r *DiskSortingReader) writeAndIndexAllRows() error {
 		pipeline.ReturnBatch(batch)
 	}
 
-	// Sort indices using the provided sort function
+	// Sort indices using the SortKey Compare method
 	slices.SortFunc(r.indices, func(a, b RowIndex) int {
-		return r.sortFunc(a.SortKey, b.SortKey)
+		return a.SortKey.Compare(b.SortKey)
 	})
+
+	// After sorting is complete, release all sort keys back to their pools
+	for i := range r.indices {
+		r.indices[i].SortKey.Release()
+		r.indices[i].SortKey = nil // Prevent double-release
+	}
 
 	r.sorted = true
 	return nil
 }
 
-// writeAndIndexRow CBOR-encodes a row to the temp file and adds an index entry.
+// writeAndIndexRow binary-encodes a row to the temp file and adds an index entry.
 func (r *DiskSortingReader) writeAndIndexRow(row Row) error {
 	// Get current file position
 	offset, err := r.tempFile.Seek(0, io.SeekCurrent)
@@ -160,14 +156,14 @@ func (r *DiskSortingReader) writeAndIndexRow(row Row) error {
 		return fmt.Errorf("failed to get file offset: %w", err)
 	}
 
-	// CBOR encode the row (converts RowKeys to strings internally)
+	// Binary encode the row (converts RowKeys to strings internally)
 	startPos := offset
-	rowBytes, err := r.cborConfig.EncodeRow(row)
+	rowBytes, err := r.codec.EncodeRow(row)
 	if err != nil {
-		return fmt.Errorf("failed to CBOR encode row: %w", err)
+		return fmt.Errorf("failed to binary encode row: %w", err)
 	}
 	if _, err := r.tempFile.Write(rowBytes); err != nil {
-		return fmt.Errorf("failed to write CBOR data: %w", err)
+		return fmt.Errorf("failed to write binary data: %w", err)
 	}
 
 	// Get end position to calculate length
@@ -181,8 +177,8 @@ func (r *DiskSortingReader) writeAndIndexRow(row Row) error {
 		return fmt.Errorf("encoded row too large: %d bytes", byteLength)
 	}
 
-	// Extract sort key from row using the provided function
-	sortKey := r.sortKeyFunc(row)
+	// Extract sort key from row using the provider
+	sortKey := r.keyProvider.MakeKey(row)
 
 	// Add index entry with extracted sort key only
 	r.indices = append(r.indices, RowIndex{
@@ -223,22 +219,23 @@ func (r *DiskSortingReader) Next() (*Batch, error) {
 			return nil, fmt.Errorf("failed to seek to row offset %d: %w", idx.FileOffset, err)
 		}
 
-		// Read the CBOR bytes
+		// Read the binary bytes
 		rowBytes := make([]byte, idx.ByteLength)
 		if _, err := r.tempFile.Read(rowBytes); err != nil {
-			return nil, fmt.Errorf("failed to read CBOR data at offset %d: %w", idx.FileOffset, err)
+			return nil, fmt.Errorf("failed to read binary data at offset %d: %w", idx.FileOffset, err)
 		}
 
-		// Use shared CBOR package to decode with Row conversion
-		row, err := r.cborConfig.DecodeRow(rowBytes)
+		// Use custom binary codec to decode with Row conversion
+		row, err := r.codec.DecodeRow(rowBytes)
 		if err != nil {
-			return nil, fmt.Errorf("failed to decode CBOR row at offset %d: %w", idx.FileOffset, err)
+			return nil, fmt.Errorf("failed to decode binary row at offset %d: %w", idx.FileOffset, err)
 		}
 
 		batchRow := batch.AddRow()
 		for k, v := range row {
 			batchRow[k] = v
 		}
+
 		r.currentIndex++
 	}
 
@@ -269,6 +266,13 @@ func (r *DiskSortingReader) Close() error {
 		fileName := r.tempFile.Name()
 		r.tempFile.Close()
 		fileErr = os.Remove(fileName)
+	}
+
+	// Release any remaining sort keys back to their pools
+	for i := range r.indices {
+		if r.indices[i].SortKey != nil {
+			r.indices[i].SortKey.Release()
+		}
 	}
 
 	// Release indices
