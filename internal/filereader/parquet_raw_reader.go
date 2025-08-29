@@ -161,7 +161,7 @@ func (r *ParquetRawReader) Next() (*Batch, error) {
 		// Use AddRow and copy the data
 		batchRow := batch.AddRow()
 		for k, v := range row {
-			batchRow[wkk.NewRowKey(k)] = v
+			batchRow[wkk.NewRowKeyFromBytes([]byte(k))] = v
 		}
 		validRows++
 	}

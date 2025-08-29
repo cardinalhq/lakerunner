@@ -251,8 +251,12 @@ func (s *FileSplitter) streamBinaryToParquet() (string, error) {
 
 		// Write the row to parquet
 		if _, err := parquetWriter.Write([]map[string]any{row}); err != nil {
+			s.codec.ReturnMap(row) // Return to pool on error
 			return "", fmt.Errorf("write row to parquet: %w", err)
 		}
+
+		// Return the map to the pool after use
+		s.codec.ReturnMap(row)
 	}
 
 	// Close parquet writer to finalize the file
