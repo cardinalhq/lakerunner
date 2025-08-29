@@ -429,11 +429,15 @@ func compactMetricInterval(
 		batchCount++
 
 		if err != nil && !errors.Is(err, io.EOF) {
+			if batch != nil {
+				pipeline.ReturnBatch(batch)
+			}
 			ll.Error("Failed to read from aggregating reader", slog.Any("error", err))
 			return fmt.Errorf("reading from aggregating reader: %w", err)
 		}
 
 		if batch == nil || batch.Len() == 0 {
+			pipeline.ReturnBatch(batch)
 			break
 		}
 
@@ -445,6 +449,7 @@ func compactMetricInterval(
 			if err := normalizeRowForParquetWrite(row); err != nil {
 				ll.Error("Failed to normalize row", slog.Any("error", err))
 				pipeline.ReturnBatch(normalizedBatch)
+				pipeline.ReturnBatch(batch)
 				return fmt.Errorf("normalizing row: %w", err)
 			}
 
@@ -461,11 +466,13 @@ func compactMetricInterval(
 			if err := writer.WriteBatch(normalizedBatch); err != nil {
 				ll.Error("Failed to write batch", slog.Any("error", err))
 				pipeline.ReturnBatch(normalizedBatch)
+				pipeline.ReturnBatch(batch)
 				return fmt.Errorf("writing batch: %w", err)
 			}
 		}
 
 		pipeline.ReturnBatch(normalizedBatch)
+		pipeline.ReturnBatch(batch)
 
 		if errors.Is(err, io.EOF) {
 			break
