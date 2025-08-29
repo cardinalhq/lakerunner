@@ -63,7 +63,7 @@ fi
 # Removes comments and normalizes whitespace
 normalize_sql() {
     local content="$1"
-    
+
     # Remove SQL comments (-- style)
     # Remove empty lines
     # Normalize whitespace (collapse multiple spaces/tabs to single space)
@@ -107,7 +107,7 @@ while IFS= read -r migration_name; do
     if [ -n "$migration_name" ]; then
         up_file=""
         down_file=""
-        
+
         # Look for up and down files for this migration
         while IFS= read -r migration; do
             if [ -n "$migration" ]; then
@@ -121,14 +121,14 @@ while IFS= read -r migration_name; do
                 fi
             fi
         done <<< "$ALL_MIGRATIONS"
-        
+
         if [ -z "$up_file" ]; then
             echo "VIOLATION: Missing up migration for $migration_name"
             echo "   Found down file: $down_file"
             echo "   Expected: $migration_name.up.sql"
             VIOLATIONS_FOUND=true
         fi
-        
+
         if [ -z "$down_file" ]; then
             echo "VIOLATION: Missing down migration for $migration_name"
             echo "   Found up file: $up_file"
@@ -153,7 +153,7 @@ if [ -n "$NEW_MIGRATIONS" ]; then
             fi
         done <<< "$EXISTING_MIGRATIONS"
     fi
-    
+
     # Check that all new migrations have timestamps higher than existing ones
     while IFS= read -r migration; do
         if [ -n "$migration" ]; then
@@ -174,20 +174,20 @@ while IFS= read -r migration; do
     if echo "$NEW_MIGRATIONS" | grep -q "^$migration$"; then
         continue
     fi
-    
+
     # Skip incorrectly named files (only check .up.sql and .down.sql)
     if [[ ! "$migration" =~ \.(up|down)\.sql$ ]]; then
         continue
     fi
-    
+
     if [ -f "$migration" ]; then
         # Get normalized content from both versions
         BASE_CONTENT=$(git show "$MERGE_BASE:$migration")
         CURRENT_CONTENT=$(cat "$migration")
-        
+
         BASE_NORMALIZED=$(normalize_sql "$BASE_CONTENT")
         CURRENT_NORMALIZED=$(normalize_sql "$CURRENT_CONTENT")
-        
+
         if [ "$BASE_NORMALIZED" != "$CURRENT_NORMALIZED" ]; then
             echo "VIOLATION: $migration has substantive changes beyond comments/whitespace"
             echo "   This migration existed before your branch and cannot be substantially modified."
