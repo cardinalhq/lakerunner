@@ -26,9 +26,8 @@ import (
 
 // NewMetricsWriter creates a writer optimized for metrics data.
 // Metrics are ordered by metric name and grouped for efficient fingerprinting.
-func NewMetricsWriter(baseName, tmpdir string, targetFileSize int64, recordsPerFile int64) (*parquetwriter.UnifiedWriter, error) {
+func NewMetricsWriter(tmpdir string, targetFileSize int64, recordsPerFile int64) (*parquetwriter.UnifiedWriter, error) {
 	config := parquetwriter.WriterConfig{
-		BaseName:       baseName,
 		TmpDir:         tmpdir,
 		TargetFileSize: targetFileSize,
 

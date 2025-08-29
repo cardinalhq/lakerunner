@@ -18,6 +18,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
@@ -53,7 +54,6 @@ func (a *mockStatsAccumulator) Finalize() any {
 
 func TestNewFileSplitter(t *testing.T) {
 	config := WriterConfig{
-		BaseName:       "test",
 		TmpDir:         "/tmp",
 		TargetFileSize: 1024,
 		RecordsPerFile: 100,
@@ -63,9 +63,6 @@ func TestNewFileSplitter(t *testing.T) {
 
 	if splitter == nil {
 		t.Fatal("NewFileSplitter returned nil")
-	}
-	if splitter.config.BaseName != "test" {
-		t.Errorf("Expected BaseName to be 'test', got %q", splitter.config.BaseName)
 	}
 	if splitter.closed {
 		t.Error("Expected splitter to not be closed initially")
@@ -78,7 +75,6 @@ func TestNewFileSplitter(t *testing.T) {
 func TestFileSplitterWriteBatchRows_NilBatch(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
-		BaseName:       "test",
 		TmpDir:         tmpDir,
 		TargetFileSize: 1024,
 		RecordsPerFile: 100,
@@ -99,7 +95,6 @@ func TestFileSplitterWriteBatchRows_NilBatch(t *testing.T) {
 func TestFileSplitterWriteBatchRows_ClosedWriter(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
-		BaseName:       "test",
 		TmpDir:         tmpDir,
 		TargetFileSize: 1024,
 		RecordsPerFile: 100,
@@ -120,7 +115,6 @@ func TestFileSplitterWriteBatchRows_ClosedWriter(t *testing.T) {
 func TestFileSplitterWriteBatchRows_EmptyBatch(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
-		BaseName:       "test",
 		TmpDir:         tmpDir,
 		TargetFileSize: 1024,
 		RecordsPerFile: 100,
@@ -144,7 +138,6 @@ func TestFileSplitterWriteBatchRows_EmptyBatch(t *testing.T) {
 func TestFileSplitterWriteBatchRows_SingleBatch(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
-		BaseName:       "test",
 		TmpDir:         tmpDir,
 		TargetFileSize: 1024,
 		RecordsPerFile: 100,
@@ -200,7 +193,6 @@ func TestFileSplitterWriteBatchRows_WithStats(t *testing.T) {
 	}
 
 	config := WriterConfig{
-		BaseName:       "test",
 		TmpDir:         tmpDir,
 		TargetFileSize: 1024,
 		RecordsPerFile: 100,
@@ -240,7 +232,6 @@ func TestFileSplitterWriteBatchRows_WithStats(t *testing.T) {
 func TestFileSplitterWriteBatchRows_FileSplittingByRecordCount(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
-		BaseName:       "test",
 		TmpDir:         tmpDir,
 		TargetFileSize: 10240, // Large enough not to trigger size-based splitting
 		RecordsPerFile: 2,     // Split after 2 records
@@ -288,7 +279,6 @@ func TestFileSplitterWriteBatchRows_FileSplittingByRecordCount(t *testing.T) {
 func TestFileSplitterWriteBatchRows_WithGroupKeyFunc(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
-		BaseName:       "test",
 		TmpDir:         tmpDir,
 		TargetFileSize: 1024,
 		RecordsPerFile: 100,
@@ -326,7 +316,6 @@ func TestFileSplitterWriteBatchRows_WithGroupKeyFunc(t *testing.T) {
 func TestFileSplitterClose_MultipleTimes(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
-		BaseName:       "test",
 		TmpDir:         tmpDir,
 		TargetFileSize: 1024,
 		RecordsPerFile: 100,
@@ -366,7 +355,6 @@ func TestFileSplitterClose_MultipleTimes(t *testing.T) {
 func TestFileSplitterAbort(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
-		BaseName:       "test",
 		TmpDir:         tmpDir,
 		TargetFileSize: 1024,
 		RecordsPerFile: 100,
@@ -410,7 +398,6 @@ func TestFileSplitterAbort(t *testing.T) {
 func TestFileSplitterAbort_MultipleTimes(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
-		BaseName:       "test",
 		TmpDir:         tmpDir,
 		TargetFileSize: 1024,
 		RecordsPerFile: 100,
@@ -439,7 +426,6 @@ func TestFileSplitterAbort_MultipleTimes(t *testing.T) {
 func TestFileSplitterEmptyFileHandling(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
-		BaseName:       "test",
 		TmpDir:         tmpDir,
 		TargetFileSize: 1024,
 		RecordsPerFile: 1,
@@ -481,7 +467,6 @@ func TestFileSplitterEmptyFileHandling(t *testing.T) {
 func TestFileSplitterTempFileCreation(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
-		BaseName:       "test-prefix",
 		TmpDir:         tmpDir,
 		TargetFileSize: 1024,
 		RecordsPerFile: 100,
@@ -511,10 +496,7 @@ func TestFileSplitterTempFileCreation(t *testing.T) {
 		t.Errorf("Expected file to be in %s, got %s", tmpDir, filepath.Dir(fileName))
 	}
 	baseName := filepath.Base(fileName)
-	if !hasPrefix(baseName, "test-prefix-") {
-		t.Errorf("Expected filename to start with 'test-prefix-', got %s", baseName)
-	}
-	if !hasSuffix(baseName, ".parquet") {
+	if !strings.HasSuffix(baseName, ".parquet") {
 		t.Errorf("Expected filename to end with '.parquet', got %s", baseName)
 	}
 
@@ -557,13 +539,4 @@ func createTestBatchWithGroups(t *testing.T, groups []string) *pipeline.Batch {
 func createEmptyBatch(t *testing.T) *pipeline.Batch {
 	t.Helper()
 	return pipeline.GetBatch()
-}
-
-// Helper functions for string operations (since we're using Go 1.25)
-func hasPrefix(s, prefix string) bool {
-	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
-}
-
-func hasSuffix(s, suffix string) bool {
-	return len(s) >= len(suffix) && s[len(s)-len(suffix):] == suffix
 }

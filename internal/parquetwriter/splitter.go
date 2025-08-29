@@ -149,7 +149,7 @@ func (s *FileSplitter) WriteBatchRows(ctx context.Context, batch *pipeline.Batch
 // The schema will be built dynamically as rows are added.
 func (s *FileSplitter) startNewCBORFile() error {
 	// Create the CBOR buffer file
-	file, err := os.CreateTemp(s.config.TmpDir, s.config.BaseName+"-buffer-*.cbor")
+	file, err := os.CreateTemp(s.config.TmpDir, "buffer-*.cbor")
 	if err != nil {
 		return fmt.Errorf("create CBOR temp file: %w", err)
 	}
@@ -182,10 +182,10 @@ func (s *FileSplitter) streamCBORToParquet() (string, error) {
 		return "", fmt.Errorf("no columns discovered for schema")
 	}
 
-	schema := parquet.NewSchema(s.config.BaseName, parquet.Group(nodes))
+	schema := parquet.NewSchema("lakerunner", parquet.Group(nodes))
 
 	// Create the final parquet output file
-	parquetFile, err := os.CreateTemp(s.config.TmpDir, s.config.BaseName+"-*.parquet")
+	parquetFile, err := os.CreateTemp(s.config.TmpDir, "*.parquet")
 	if err != nil {
 		return "", fmt.Errorf("create parquet temp file: %w", err)
 	}

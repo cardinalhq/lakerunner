@@ -224,7 +224,6 @@ func (wm *metricWriterManager) getWriter(key minuteSlotKey) (*parquetwriter.Unif
 
 	// Create new writer for this boundary
 	writer, err := factories.NewMetricsWriter(
-		fmt.Sprintf("metrics_%s_%d_%04d_%d", wm.orgID, key.dateint, key.minute, key.slot),
 		wm.tmpdir,
 		constants.WriterTargetSizeBytesMetrics,
 		wm.rpfEstimate,

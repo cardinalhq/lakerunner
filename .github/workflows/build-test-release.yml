@@ -18,7 +18,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       has-pr: ${{ steps.pr.outputs.has-pr }}
-      has-write-access: ${{ steps.permissions.outputs.has-write-access }}
     steps:
       - uses: actions/checkout@v5
       - name: Check for PR
@@ -32,21 +31,9 @@ jobs:
             echo "has-pr=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Check write permissions
-        id: permissions
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          PERMISSION=$(gh api repos/${{ github.repository }}/collaborators/${{ github.actor }}/permission --jq '.permission')
-          if [[ "$PERMISSION" == "admin" || "$PERMISSION" == "write" ]]; then
-            echo "has-write-access=true" >> $GITHUB_OUTPUT
-          else
-            echo "has-write-access=false" >> $GITHUB_OUTPUT
-          fi
-
   partials:
     needs: check-pr
-    if: needs.check-pr.outputs.has-pr == 'true' && needs.check-pr.outputs.has-write-access == 'true'
+    if: needs.check-pr.outputs.has-pr == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -125,7 +112,7 @@ jobs:
 
   merge:
     needs: [check-pr, partials]
-    if: needs.check-pr.outputs.has-pr == 'true' && needs.check-pr.outputs.has-write-access == 'true'
+    if: needs.check-pr.outputs.has-pr == 'true'
     runs-on: ubuntu-22.04
     env:
       DOCKER_CLI_EXPERIMENTAL: "enabled"

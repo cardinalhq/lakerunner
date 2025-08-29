@@ -23,9 +23,8 @@ import (
 
 // NewLogsWriter creates a writer optimized for logs data.
 // Logs need to be sorted by timestamp and can be split freely.
-func NewLogsWriter(baseName, tmpdir string, targetFileSize int64, recordsPerFile int64) (*parquetwriter.UnifiedWriter, error) {
+func NewLogsWriter(tmpdir string, targetFileSize int64, recordsPerFile int64) (*parquetwriter.UnifiedWriter, error) {
 	config := parquetwriter.WriterConfig{
-		BaseName:       baseName,
 		TmpDir:         tmpdir,
 		TargetFileSize: targetFileSize,
 

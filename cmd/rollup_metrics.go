@@ -26,7 +26,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
@@ -221,88 +220,28 @@ func rollupMetricSegments(
 		return WorkResultSuccess, fmt.Errorf("invalid time range in work item: %v", inf.TsRange())
 	}
 
-	// Download all source files and create ParquetRawReaders
-	var readers []filereader.Reader
-	var downloadedFiles []string
-
-	for _, row := range sourceRows {
-		dateint, hour := helpers.MSToDateintHour(st.Time.UTC().UnixMilli())
-		objectID := helpers.MakeDBObjectID(inf.OrganizationID(), profile.CollectorName, dateint, hour, row.SegmentID, "metrics")
-
-		fn, _, is404, err := s3helper.DownloadS3Object(ctx, tmpdir, s3client, profile.Bucket, objectID)
-		if err != nil {
-			ll.Error("Failed to download S3 object", slog.String("objectID", objectID), slog.Any("error", err))
-			return WorkResultTryAgainLater, err
-		}
-		if is404 {
-			ll.Info("S3 object not found, skipping", slog.String("bucket", profile.Bucket), slog.String("objectID", objectID))
-			continue
-		}
-
-		// Open file and get size for ParquetRawReader
-		file, err := os.Open(fn)
-		if err != nil {
-			ll.Error("Failed to open parquet file", slog.String("file", fn), slog.Any("error", err))
-			return WorkResultTryAgainLater, fmt.Errorf("opening parquet file %s: %w", fn, err)
-		}
-
-		stat, err := file.Stat()
-		if err != nil {
-			file.Close()
-			ll.Error("Failed to stat parquet file", slog.String("file", fn), slog.Any("error", err))
-			return WorkResultTryAgainLater, fmt.Errorf("statting parquet file %s: %w", fn, err)
-		}
-
-		// Create ParquetRawReader directly
-		reader, err := filereader.NewParquetRawReader(file, stat.Size(), 1000)
-		if err != nil {
-			file.Close()
-			ll.Error("Failed to create parquet reader", slog.String("file", fn), slog.Any("error", err))
-			return WorkResultTryAgainLater, fmt.Errorf("creating parquet reader for %s: %w", fn, err)
-		}
-
-		// Record file format and input sorted status metrics
-		fileFormat := getFileFormat(fn)
-		// Rollup always reads parquet files from compaction output, which are sorted with compatible key
-		inputSorted := true // ParquetRawReader assumes data is sorted with compatible key
-
-		attrs := append(commonAttributes.ToSlice(),
-			attribute.String("format", fileFormat),
-			attribute.Bool("input_sorted", inputSorted),
-		)
-		fileSortedCounter.Add(ctx, 1, metric.WithAttributes(attrs...))
-
-		readers = append(readers, reader)
-		downloadedFiles = append(downloadedFiles, fn)
+	// Download all source files and create ParquetRawReaders with sorting support
+	config := metricsprocessing.ReaderStackConfig{
+		FileSortedCounter: fileSortedCounter,
+		CommonAttributes:  commonAttributes,
 	}
+
+	readerStack, err := metricsprocessing.CreateReaderStack(
+		ctx, ll, tmpdir, s3client, inf.OrganizationID(), profile, st.Time.UTC().UnixMilli(), sourceRows, config)
+	if err != nil {
+		return WorkResultTryAgainLater, err
+	}
+
+	readers := readerStack.Readers
+	downloadedFiles := readerStack.DownloadedFiles
+	finalReader := readerStack.FinalReader
 
 	if len(readers) == 0 {
 		ll.Debug("No files to rollup, skipping work item")
 		return WorkResultSuccess, nil
 	}
 
-	defer func() {
-		for _, reader := range readers {
-			if err := reader.Close(); err != nil {
-				ll.Error("Failed to close reader", slog.Any("error", err))
-			}
-		}
-	}()
-
-	// Create MergesortReader for read-time merge sort of pre-sorted parquet files
-	var finalReader filereader.Reader
-	if len(readers) == 1 {
-		finalReader = readers[0]
-	} else {
-		selector := metricsprocessing.MetricsOrderedSelector()
-		multiReader, err := filereader.NewMergesortReader(readers, selector, 1000)
-		if err != nil {
-			ll.Error("Failed to create mergesort reader", slog.Any("error", err))
-			return WorkResultTryAgainLater, fmt.Errorf("creating mergesort reader: %w", err)
-		}
-		finalReader = multiReader
-		defer multiReader.Close()
-	}
+	defer metricsprocessing.CloseReaderStack(ll, readerStack)
 
 	// Wrap with aggregating reader to perform rollup aggregation
 	// Use target frequency for aggregation period
@@ -318,7 +257,7 @@ func rollupMetricSegments(
 		recordsPerFile = 10_000
 	}
 
-	writer, err := factories.NewMetricsWriter("rollup-*", tmpdir, constants.WriterTargetSizeBytesMetrics, recordsPerFile)
+	writer, err := factories.NewMetricsWriter(tmpdir, constants.WriterTargetSizeBytesMetrics, recordsPerFile)
 	if err != nil {
 		ll.Error("Failed to create metrics writer", slog.Any("error", err))
 		return WorkResultTryAgainLater, fmt.Errorf("creating metrics writer: %w", err)
