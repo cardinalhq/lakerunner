@@ -16,6 +16,9 @@
 
 set -euo pipefail
 
+# Handle Ctrl+C gracefully
+trap 'echo ""; echo "Interrupted by user. Exiting..."; exit 130' INT
+
 REPOSITORY_NAME="lakerunner"
 AWS_REGION="us-east-1"
 
@@ -80,12 +83,21 @@ echo ""
 should_keep_tag() {
     local tag="$1"
 
-    # Keep special tags
+    # Keep special tags and their architecture variants
     case "$tag" in
-        latest|latest-dev|stable)
+        latest|latest-dev|stable|latest-arm64|latest-dev-arm64|stable-arm64|latest-amd64|latest-dev-amd64|stable-amd64)
             return 0
             ;;
     esac
+
+    # Check if this is an architecture variant of a tag we should keep
+    if [[ "$tag" =~ ^(.+)-(arm64|amd64)$ ]]; then
+        local base_tag="${BASH_REMATCH[1]}"
+        # Recursively check if the base tag should be kept
+        if should_keep_tag "$base_tag"; then
+            return 0
+        fi
+    fi
 
     # Keep version tags (both with and without v prefix for helm compatibility)
     # Major version (v1 or 1)
@@ -136,18 +148,25 @@ get_all_tags() {
 # Function to delete a tag
 delete_tag() {
     local tag="$1"
+    local current="${2:-}"
+    local total="${3:-}"
 
     # Final safety check - never delete in dry run mode
     if [ "$DRY_RUN" = true ]; then
         return
     fi
 
-    echo "Deleting tag: $tag..."
+    if [ -n "$current" ] && [ -n "$total" ]; then
+        echo "[$current/$total] Deleting tag: $tag..."
+    else
+        echo "Deleting tag: $tag..."
+    fi
+
     aws ecr-public batch-delete-image \
         --repository-name "$REPOSITORY_NAME" \
         --region "$AWS_REGION" \
         --image-ids imageTag="$tag" \
-        --output text >/dev/null
+        --output text >/dev/null 2>&1
 }
 
 # Main logic
@@ -203,8 +222,11 @@ if [ ${#TAGS_TO_DELETE[@]} -gt 0 ]; then
 
     if [ "$DRY_RUN" = false ]; then
         echo "Processing deletions..."
+        total="${#TAGS_TO_DELETE[@]}"
+        current=0
         for tag in "${TAGS_TO_DELETE[@]}"; do
-            delete_tag "$tag"
+            current=$((current + 1))
+            delete_tag "$tag" "$current" "$total"
         done
     fi
 
