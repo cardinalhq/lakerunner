@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 	"time"
 
 	"github.com/google/uuid"
@@ -48,10 +47,6 @@ func init() {
 		Use:   "rollup-metrics",
 		Short: "Roll up metrics",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if os.Getenv("LAKERUNNER_METRICS_ROLLUP_OLDPATH") != "" {
-				return oldRollupMetricsCommand().RunE(nil, []string{})
-			}
-
 			helpers.SetupTempDir()
 
 			servicename := "lakerunner-rollup-metrics"

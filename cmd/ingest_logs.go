@@ -86,13 +86,6 @@ func init() {
 				return fmt.Errorf("failed to create ingest loop context: %w", err)
 			}
 
-			// Check if we should use the old implementation as a safety net
-			if os.Getenv("LAKERUNNER_LOGS_INGEST_OLDPATH") != "" {
-				// Still mark as healthy before starting old path
-				healthServer.SetStatus(healthcheck.StatusHealthy)
-				return runOldLogIngestion(ctx, slog.Default(), loop)
-			}
-
 			// Mark as healthy once loop is created and about to start
 			healthServer.SetStatus(healthcheck.StatusHealthy)
 

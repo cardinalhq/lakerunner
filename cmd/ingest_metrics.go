@@ -92,13 +92,6 @@ func init() {
 				}
 			}()
 
-			// Check if we should use the old implementation as a safety net
-			if os.Getenv("LAKERUNNER_METRICS_INGEST_OLDPATH") != "" {
-				// Still mark as healthy before starting old path
-				healthServer.SetStatus(healthcheck.StatusHealthy)
-				return runOldMetricIngestion(ctx, slog.Default(), loop)
-			}
-
 			// Mark as healthy once loop is created and about to start
 			healthServer.SetStatus(healthcheck.StatusHealthy)
 
