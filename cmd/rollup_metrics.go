@@ -97,27 +97,27 @@ func metricRollupItem(
 	inf lockmgr.Workable,
 	rpfEstimate int64,
 	_ any,
-) (WorkResult, error) {
+) error {
 	previousFrequency, ok := helpers.RollupSources[inf.FrequencyMs()]
 	if !ok {
 		ll.Error("Unknown parent frequency, dropping rollup request", slog.Int("frequencyMs", int(inf.FrequencyMs())))
-		return WorkResultSuccess, nil
+		return nil
 	}
 	if !helpers.IsWantedFrequency(inf.FrequencyMs()) || !helpers.IsWantedFrequency(previousFrequency) {
 		ll.Info("Skipping rollup for unwanted frequency", slog.Int("frequencyMs", int(inf.FrequencyMs())), slog.Int("previousFrequency", int(previousFrequency)))
-		return WorkResultSuccess, nil
+		return nil
 	}
 
 	profile, err := sp.GetStorageProfileForOrganizationAndInstance(ctx, inf.OrganizationID(), inf.InstanceNum())
 	if err != nil {
 		ll.Error("Failed to get storage profile", slog.Any("error", err))
-		return WorkResultTryAgainLater, err
+		return err
 	}
 
 	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
 	if err != nil {
 		ll.Error("Failed to get S3 client", slog.Any("error", err))
-		return 0, err
+		return err
 	}
 
 	ll.Info("Starting metric rollup",
@@ -130,20 +130,20 @@ func metricRollupItem(
 		slog.Int64("estimatedRowsPerFile", rpfEstimate))
 
 	t0 := time.Now()
-	_, err = metricRollupItemDo(ctx, ll, mdb, tmpdir, inf, profile, s3client, previousFrequency, rpfEstimate)
+	err = metricRollupItemDo(ctx, ll, mdb, tmpdir, inf, profile, s3client, previousFrequency, rpfEstimate)
 
 	if err != nil {
 		ll.Info("Metric rollup completed",
 			slog.String("result", "error"),
 			slog.Int64("workQueueID", inf.ID()),
 			slog.Duration("elapsed", time.Since(t0)))
-		return WorkResultTryAgainLater, err
+		return err
 	} else {
 		ll.Info("Metric rollup completed",
 			slog.String("result", "success"),
 			slog.Int64("workQueueID", inf.ID()),
 			slog.Duration("elapsed", time.Since(t0)))
-		return WorkResultSuccess, nil
+		return nil
 	}
 }
 
@@ -157,10 +157,10 @@ func metricRollupItemDo(
 	s3client *awsclient.S3Client,
 	previousFrequency int32,
 	rpfEstimate int64,
-) (WorkResult, error) {
+) error {
 	st, et, ok := helpers.RangeBounds(inf.TsRange())
 	if !ok {
-		return WorkResultSuccess, fmt.Errorf("invalid time range in work item: %v", inf.TsRange())
+		return fmt.Errorf("invalid time range in work item: %v", inf.TsRange())
 	}
 
 	// Get source segments to rollup from (previous frequency)
@@ -175,12 +175,12 @@ func metricRollupItemDo(
 	})
 	if err != nil {
 		ll.Error("Failed to get previous metric segments", slog.Any("error", err))
-		return WorkResultTryAgainLater, err
+		return err
 	}
 
 	if helpers.AllRolledUp(sourceRows) {
 		ll.Debug("All source rows already rolled up, skipping")
-		return WorkResultSuccess, nil
+		return nil
 	}
 
 	// Get existing segments at target frequency to replace
@@ -195,10 +195,11 @@ func metricRollupItemDo(
 	})
 	if err != nil {
 		ll.Error("Failed to get existing metric segments", slog.Any("error", err))
-		return WorkResultTryAgainLater, err
+		return err
 	}
 
-	return rollupMetricSegments(ctx, ll, mdb, tmpdir, inf, profile, s3client, sourceRows, existingRows, rpfEstimate)
+	err = rollupMetricSegments(ctx, ll, mdb, tmpdir, inf, profile, s3client, sourceRows, existingRows, rpfEstimate)
+	return err
 }
 
 func processRollupMicrobatches(
@@ -227,6 +228,12 @@ func processRollupMicrobatches(
 	currentRecords := int64(0)
 
 	for i, row := range sourceRows {
+		// Check for cancellation during microbatch processing
+		if ctx.Err() != nil {
+			ll.Info("Context cancelled during microbatch processing, aborting rollup")
+			return NewWorkerInterrupted("context cancelled during microbatch processing")
+		}
+
 		currentMicrobatch = append(currentMicrobatch, row)
 		currentRecords += row.RecordCount
 
@@ -265,16 +272,16 @@ func rollupMetricSegments(
 	sourceRows []lrdb.MetricSeg,
 	existingRows []lrdb.MetricSeg,
 	rpfEstimate int64,
-) (WorkResult, error) {
+) error {
 	if len(sourceRows) == 0 {
 		ll.Debug("No source rows to rollup, skipping")
-		return WorkResultSuccess, nil
+		return nil
 	}
 
 	// Process segments in microbatches limited to rowestimate * 6 records
 	err := processRollupMicrobatches(ctx, ll, mdb, tmpdir, inf, profile, s3client, sourceRows, existingRows, rpfEstimate)
 	if err != nil {
-		return WorkResultTryAgainLater, fmt.Errorf("failed to process rollup microbatches: %w", err)
+		return fmt.Errorf("failed to process rollup microbatches: %w", err)
 	}
 
 	// Use context without cancellation for critical section to ensure atomic completion
@@ -298,7 +305,7 @@ func rollupMetricSegments(
 		ll.Error("Failed to queue metric rollup", slog.Any("error", err))
 	}
 
-	return WorkResultSuccess, nil
+	return nil
 }
 
 func rollupMetricInterval(
@@ -328,6 +335,11 @@ func rollupMetricInterval(
 	readerStack, err := metricsprocessing.CreateReaderStack(
 		ctx, ll, tmpdir, s3client, inf.OrganizationID(), profile, st.Time.UTC().UnixMilli(), sourceRows, config)
 	if err != nil {
+		// Check if this is due to context cancellation
+		if ctx.Err() != nil {
+			ll.Info("Context cancelled during S3 download phase", slog.Any("error", err))
+			return NewWorkerInterrupted("context cancelled during S3 download")
+		}
 		return err
 	}
 
@@ -366,6 +378,12 @@ func rollupMetricInterval(
 	totalRows := int64(0)
 
 	for {
+		// Check for cancellation during batch processing
+		if ctx.Err() != nil {
+			ll.Info("Context cancelled during batch processing, aborting rollup")
+			return NewWorkerInterrupted("context cancelled during batch processing")
+		}
+
 		batch, err := aggregatingReader.Next()
 		if err != nil && !errors.Is(err, io.EOF) {
 			if batch != nil {
@@ -574,6 +592,7 @@ func uploadRolledUpMetrics(
 			CreatedBy:      replaceParams.CreatedBy,
 			SlotID:         replaceParams.SlotID,
 			OldRecords:     replaceParams.OldRecords,
+			SortVersion:    replaceParams.SortVersion,
 			NewRecords: []lrdb.ReplaceMetricSegsNew{
 				{
 					TidPartition: 0, // Rollup output uses tid_partition 0

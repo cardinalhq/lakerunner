@@ -48,8 +48,9 @@ type RunqueueProcessingFunction func(
 	inf lockmgr.Workable,
 	rpfEstimate int64,
 	args any,
-) (WorkResult, error)
+) error
 
+// Legacy WorkResult enum - kept for compatibility with old implementations
 type WorkResult int
 
 const (
@@ -57,6 +58,19 @@ const (
 	WorkResultTryAgainLater
 	WorkResultInterrupted
 )
+
+// Legacy function type for old implementations
+type LegacyRunqueueProcessingFunction func(
+	ctx context.Context,
+	ll *slog.Logger,
+	tmpdir string,
+	awsmanager *awsclient.Manager,
+	sp storageprofile.StorageProfileProvider,
+	mdb lrdb.StoreFull,
+	inf lockmgr.Workable,
+	rpfEstimate int64,
+	args any,
+) (WorkResult, error)
 
 type RunqueueLoopContext struct {
 	ctx             context.Context
@@ -162,9 +176,9 @@ func NewRunqueueLoopContext(ctx context.Context, signal string, action string, a
 }
 
 func RunqueueLoop(loop *RunqueueLoopContext, pfx RunqueueProcessingFunction, args any) error {
-	// Two contexts: one for shutdown detection, one for work processing
-	shutdownCtx := loop.ctx                    // Cancelled on SIGTERM/SIGINT
-	workCtx := context.WithoutCancel(loop.ctx) // Never cancelled, allows work to complete
+	// Two contexts: shutdown context for work processing, no-cancel context for work item management
+	shutdownCtx := loop.ctx                        // Cancelled on SIGTERM/SIGINT
+	workMgmtCtx := context.WithoutCancel(loop.ctx) // Never cancelled, allows work item cleanup
 
 	// Set up graceful shutdown handler
 	defer func() {
@@ -189,40 +203,31 @@ func RunqueueLoop(loop *RunqueueLoopContext, pfx RunqueueProcessingFunction, arg
 		select {
 		case <-shutdownCtx.Done():
 			slog.Info("Shutdown signal received, stopping work requests")
-			return shutdownCtx.Err()
+			return nil
 		default:
 		}
 
-		shouldBackoff, workWasProcessed, err := workqueueProcess(workCtx, shutdownCtx, loop, pfx, args)
+		err := workqueueProcess(shutdownCtx, workMgmtCtx, loop, pfx, args)
 		if err != nil {
 			// Check if this is a worker interruption
 			if IsWorkerInterrupted(err) {
 				slog.Info("Worker loop interrupted gracefully")
-				return shutdownCtx.Err() // Return the original context cancellation error
+				return nil
 			}
-			return err
-		}
-
-		// Only backoff if no work was available - if work was processed, poll immediately
-		if shouldBackoff {
-			select {
-			case <-shutdownCtx.Done():
-				slog.Info("Shutdown signal received during backoff")
-				return shutdownCtx.Err()
-			case <-time.After(workSleepTime):
-			}
-		} else if workWasProcessed {
-			// Work was processed successfully - poll immediately for more
-			// Just check context and continue loop without delay
-			select {
-			case <-shutdownCtx.Done():
-				slog.Info("Shutdown signal received after work processed")
-				return shutdownCtx.Err()
-			default:
-			}
+			// Regular error - log and continue polling
+			slog.Error("Work processing failed, continuing to poll", slog.Any("error", err))
 		}
 
 		gc()
+
+		// Poll for work again in 2 seconds, exiting if cancelled
+		select {
+		case <-shutdownCtx.Done():
+			slog.Info("Shutdown signal received during polling wait")
+			return nil
+		case <-time.After(2 * time.Second):
+		}
+
 	}
 }
 
@@ -256,17 +261,17 @@ func frequenciesToRequest(signal, action string) ([]int32, error) {
 }
 
 func workqueueProcess(
-	workCtx context.Context,
-	shutdownCtx context.Context,
+	workerCtx context.Context,
+	workMgmtCtx context.Context,
 	loop *RunqueueLoopContext,
 	pfx RunqueueProcessingFunction,
-	args any) (bool, bool, error) {
+	args any) error {
 
-	ctx, span := tracer.Start(workCtx, "workqueueProcess", trace.WithAttributes(commonAttributes.ToSlice()...))
+	ctx, span := tracer.Start(workerCtx, "workqueueProcess", trace.WithAttributes(commonAttributes.ToSlice()...))
 	defer span.End()
 
 	t0 := time.Now()
-	inf, err := loop.wqm.RequestWork(shutdownCtx)
+	inf, err := loop.wqm.RequestWork(workMgmtCtx)
 	workqueueFetchDuration.Record(ctx, time.Since(t0).Seconds(),
 		metric.WithAttributeSet(commonAttributes),
 		metric.WithAttributes(
@@ -274,13 +279,8 @@ func workqueueProcess(
 			attribute.Bool("errorIsNoRows", errors.Is(err, pgx.ErrNoRows)),
 		))
 	if err != nil || inf == nil {
-		return true, false, err
+		return err
 	}
-	defer func() {
-		if err := inf.Fail(); err != nil {
-			loop.ll.Error("Failed to release work item", slog.Any("error", err))
-		}
-	}()
 
 	orgAttrs := attribute.NewSet(
 		attribute.String("organizationID", inf.OrganizationID().String()),
@@ -313,7 +313,10 @@ func workqueueProcess(
 	tmpdir, err := os.MkdirTemp("", "lakerunner-workqueue-*")
 	if err != nil {
 		ll.Error("Failed to create temporary directory", slog.Any("error", err))
-		return true, false, fmt.Errorf("failed to create temporary directory: %w", err)
+		if failErr := inf.Fail(); failErr != nil {
+			ll.Error("Failed to release work item after temp dir error", slog.Any("error", failErr))
+		}
+		return fmt.Errorf("failed to create temporary directory: %w", err)
 	}
 	defer func() {
 		if err := os.RemoveAll(tmpdir); err != nil {
@@ -335,32 +338,36 @@ func workqueueProcess(
 		recordsPerFile = 40_000 // Default for all signals
 	}
 	t0 = time.Now()
-	result, err := pfx(ctx, ll, tmpdir, loop.awsmanager, loop.sp, loop.mdb, inf, recordsPerFile, args)
+	err = pfx(workerCtx, ll, tmpdir, loop.awsmanager, loop.sp, loop.mdb, inf, recordsPerFile, args)
 	workqueueDuration.Record(ctx, time.Since(t0).Seconds(),
 		metric.WithAttributeSet(commonAttributes),
 		metric.WithAttributeSet(orgAttrs),
 		metric.WithAttributes(
 			attribute.Bool("hasError", err != nil),
-			attribute.Int("result", int(result)),
 		))
-	switch result {
-	case WorkResultSuccess:
-		if err := inf.Complete(); err != nil {
-			return false, true, err
+
+	if err != nil {
+		// Check for worker interruption - release without penalty
+		if IsWorkerInterrupted(err) {
+			ll.Info("Work interrupted gracefully, releasing work item without penalty")
+			if failErr := inf.Fail(); failErr != nil {
+				ll.Error("Failed to release interrupted work item", slog.Any("error", failErr))
+			}
+			return err
 		}
-		atomic.AddInt64(loop.processedItems, 1)
-		return false, true, nil
-	case WorkResultTryAgainLater:
-		return true, false, inf.Fail()
-	case WorkResultInterrupted:
-		ll.Info("Work interrupted gracefully, releasing work item")
-		if err := inf.Fail(); err != nil {
-			ll.Error("Failed to release interrupted work item", slog.Any("error", err))
+
+		// Regular error - fail with penalty for retry
+		ll.Error("Work failed, will retry later", slog.Any("error", err))
+		if failErr := inf.Fail(); failErr != nil {
+			ll.Error("Failed to release work item after error", slog.Any("error", failErr))
 		}
-		// Don't backoff after interruption - exit immediately
-		return false, false, NewWorkerInterrupted("work interrupted during processing")
-	default:
-		ll.Error("Unexpected work result", slog.Int("result", int(result)), slog.Any("error", err))
-		return true, false, inf.Fail()
+		return err
 	}
+
+	// Success - complete the work item
+	if completeErr := inf.Complete(); completeErr != nil {
+		return completeErr
+	}
+	atomic.AddInt64(loop.processedItems, 1)
+	return nil
 }

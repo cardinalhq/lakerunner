@@ -60,7 +60,23 @@ func oldCompactMetricsCommand() *cobra.Command {
 				return fmt.Errorf("failed to create runqueue loop context: %w", err)
 			}
 
-			return RunqueueLoop(loop, oldCompactRollupItem, nil)
+			// Create wrapper to adapt old signature to new signature
+			wrapperFn := func(
+				ctx context.Context,
+				ll *slog.Logger,
+				tmpdir string,
+				awsmanager *awsclient.Manager,
+				sp storageprofile.StorageProfileProvider,
+				mdb lrdb.StoreFull,
+				inf lockmgr.Workable,
+				rpfEstimate int64,
+				args any,
+			) error {
+				result, err := oldCompactRollupItem(ctx, ll, tmpdir, awsmanager, sp, mdb, inf, rpfEstimate, args)
+				_ = result // Ignore WorkResult, use error-only pattern
+				return err
+			}
+			return RunqueueLoop(loop, wrapperFn, nil)
 		},
 	}
 }

@@ -109,22 +109,22 @@ func compactRollupItem(
 	inf lockmgr.Workable,
 	rpfEstimate int64,
 	args any,
-) (WorkResult, error) {
+) error {
 	if !helpers.IsWantedFrequency(inf.FrequencyMs()) {
 		ll.Debug("Skipping compaction for unwanted frequency", slog.Int("frequencyMs", int(inf.FrequencyMs())))
-		return WorkResultSuccess, nil
+		return nil
 	}
 
 	profile, err := sp.GetStorageProfileForOrganizationAndInstance(ctx, inf.OrganizationID(), inf.InstanceNum())
 	if err != nil {
 		ll.Error("Failed to get storage profile", slog.Any("error", err))
-		return WorkResultTryAgainLater, err
+		return err
 	}
 
 	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
 	if err != nil {
 		ll.Error("Failed to get S3 client", slog.Any("error", err))
-		return WorkResultTryAgainLater, err
+		return err
 	}
 
 	ll.Debug("Starting metric compaction",
@@ -146,10 +146,10 @@ func compactMetricSegments(
 	profile storageprofile.StorageProfile,
 	s3client *awsclient.S3Client,
 	rpfEstimate int64,
-) (WorkResult, error) {
+) error {
 	st, et, ok := helpers.RangeBounds(inf.TsRange())
 	if !ok {
-		return WorkResultSuccess, fmt.Errorf("invalid time range in work item: %v", inf.TsRange())
+		return fmt.Errorf("invalid time range in work item: %v", inf.TsRange())
 	}
 
 	const maxRowsLimit = 1000
@@ -164,7 +164,7 @@ func compactMetricSegments(
 				slog.Int("processedBatches", totalBatchesProcessed),
 				slog.Int("processedSegments", totalSegmentsProcessed),
 				slog.Any("error", ctx.Err()))
-			return WorkResultInterrupted, NewWorkerInterrupted("context cancelled during batch processing")
+			return NewWorkerInterrupted("context cancelled during batch processing")
 		}
 
 		ll.Debug("Querying for metric segments to compact",
@@ -187,7 +187,7 @@ func compactMetricSegments(
 		})
 		if err != nil {
 			ll.Error("Failed to get current metric segments", slog.Any("error", err))
-			return WorkResultTryAgainLater, err
+			return err
 		}
 
 		if len(inRows) == 0 {
@@ -198,7 +198,7 @@ func compactMetricSegments(
 					slog.Int("totalBatches", totalBatchesProcessed),
 					slog.Int("totalSegments", totalSegmentsProcessed))
 			}
-			return WorkResultSuccess, nil
+			return nil
 		}
 
 		// Calculate total bytes and records in this batch
@@ -236,7 +236,7 @@ func compactMetricSegments(
 				if totalBatchesProcessed == 0 {
 					ll.Debug("No segments need compaction")
 				}
-				return WorkResultSuccess, nil
+				return nil
 			}
 			totalBatchesProcessed++
 			continue
@@ -246,7 +246,7 @@ func compactMetricSegments(
 		err = processCompactionMicrobatches(ctx, ll, mdb, tmpdir, inf, profile, s3client, inRows, rpfEstimate)
 		if err != nil {
 			ll.Error("Failed to process compaction microbatches", slog.Any("error", err))
-			return WorkResultTryAgainLater, err
+			return err
 		}
 
 		totalBatchesProcessed++
@@ -256,7 +256,7 @@ func compactMetricSegments(
 			ll.Debug("Completed all compaction batches",
 				slog.Int("totalBatches", totalBatchesProcessed),
 				slog.Int("totalSegments", totalSegmentsProcessed))
-			return WorkResultSuccess, nil
+			return nil
 		}
 
 		ll.Debug("Batch completed, checking for more segments",
@@ -291,6 +291,12 @@ func processCompactionMicrobatches(
 	currentRecords := int64(0)
 
 	for i, row := range inRows {
+		// Check for cancellation during microbatch processing
+		if ctx.Err() != nil {
+			ll.Info("Context cancelled during microbatch processing, aborting compaction")
+			return NewWorkerInterrupted("context cancelled during microbatch processing")
+		}
+
 		currentMicrobatch = append(currentMicrobatch, row)
 		currentRecords += row.RecordCount
 
@@ -349,6 +355,11 @@ func compactMetricInterval(
 	readerStack, err := metricsprocessing.CreateReaderStack(
 		ctx, ll, tmpdir, s3client, inf.OrganizationID(), profile, st.Time.UTC().UnixMilli(), rows, config)
 	if err != nil {
+		// Check if this is due to context cancellation
+		if ctx.Err() != nil {
+			ll.Info("Context cancelled during S3 download phase", slog.Any("error", err))
+			return NewWorkerInterrupted("context cancelled during S3 download")
+		}
 		return err
 	}
 
@@ -389,6 +400,12 @@ func compactMetricInterval(
 	batchCount := 0
 
 	for {
+		// Check for cancellation during batch processing
+		if ctx.Err() != nil {
+			ll.Info("Context cancelled during batch processing, aborting compaction")
+			return NewWorkerInterrupted("context cancelled during batch processing")
+		}
+
 		batch, err := aggregatingReader.Next()
 		batchCount++
 

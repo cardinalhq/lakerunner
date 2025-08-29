@@ -32,32 +32,6 @@ func (e WorkerInterruptedError) Error() string {
 	return "worker interrupted"
 }
 
-// WorkerRetryableError indicates that a worker encountered an error that can be retried.
-type WorkerRetryableError struct {
-	Err error
-}
-
-func (e WorkerRetryableError) Error() string {
-	return fmt.Sprintf("retryable error: %v", e.Err)
-}
-
-func (e WorkerRetryableError) Unwrap() error {
-	return e.Err
-}
-
-// WorkerFatalError indicates that a worker encountered an error that should not be retried.
-type WorkerFatalError struct {
-	Err error
-}
-
-func (e WorkerFatalError) Error() string {
-	return fmt.Sprintf("fatal error: %v", e.Err)
-}
-
-func (e WorkerFatalError) Unwrap() error {
-	return e.Err
-}
-
 // Helper functions for creating and checking error types
 
 // NewWorkerInterrupted creates a new WorkerInterruptedError
@@ -65,36 +39,8 @@ func NewWorkerInterrupted(reason string) error {
 	return WorkerInterruptedError{Reason: reason}
 }
 
-// NewWorkerRetryable wraps an error as retryable
-func NewWorkerRetryable(err error) error {
-	if err == nil {
-		return nil
-	}
-	return WorkerRetryableError{Err: err}
-}
-
-// NewWorkerFatal wraps an error as fatal (non-retryable)
-func NewWorkerFatal(err error) error {
-	if err == nil {
-		return nil
-	}
-	return WorkerFatalError{Err: err}
-}
-
 // IsWorkerInterrupted checks if an error is a WorkerInterruptedError
 func IsWorkerInterrupted(err error) bool {
 	var workerErr WorkerInterruptedError
-	return errors.As(err, &workerErr)
-}
-
-// IsWorkerRetryable checks if an error is retryable
-func IsWorkerRetryable(err error) bool {
-	var workerErr WorkerRetryableError
-	return errors.As(err, &workerErr)
-}
-
-// IsWorkerFatal checks if an error is fatal (non-retryable)
-func IsWorkerFatal(err error) bool {
-	var workerErr WorkerFatalError
 	return errors.As(err, &workerErr)
 }
