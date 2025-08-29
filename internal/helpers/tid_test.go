@@ -486,6 +486,67 @@ func TestGetInt64Value(t *testing.T) {
 	}
 }
 
+func TestGetTIDValue(t *testing.T) {
+	tests := []struct {
+		name   string
+		m      map[string]any
+		key    string
+		want   int64
+		wantOk bool
+	}{
+		{
+			name:   "int64 value",
+			m:      map[string]any{"_cardinalhq.tid": int64(123)},
+			key:    "_cardinalhq.tid",
+			want:   123,
+			wantOk: true,
+		},
+		{
+			name:   "string value convertible to int64",
+			m:      map[string]any{"_cardinalhq.tid": "456"},
+			key:    "_cardinalhq.tid",
+			want:   456,
+			wantOk: true,
+		},
+		{
+			name:   "string value not convertible",
+			m:      map[string]any{"_cardinalhq.tid": "not-a-number"},
+			key:    "_cardinalhq.tid",
+			want:   0,
+			wantOk: false,
+		},
+		{
+			name:   "missing key",
+			m:      map[string]any{},
+			key:    "_cardinalhq.tid",
+			want:   0,
+			wantOk: false,
+		},
+		{
+			name:   "nil value",
+			m:      map[string]any{"_cardinalhq.tid": nil},
+			key:    "_cardinalhq.tid",
+			want:   0,
+			wantOk: false,
+		},
+		{
+			name:   "wrong type",
+			m:      map[string]any{"_cardinalhq.tid": 123.45},
+			key:    "_cardinalhq.tid",
+			want:   0,
+			wantOk: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, gotOk := GetTIDValue(tt.m, tt.key)
+			assert.Equal(t, tt.want, got)
+			assert.Equal(t, tt.wantOk, gotOk)
+		})
+	}
+}
+
 func TestGetFloat64SliceJSON(t *testing.T) {
 	tests := []struct {
 		name   string

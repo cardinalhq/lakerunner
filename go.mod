@@ -15,9 +15,10 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.37.0
 	github.com/aws/smithy-go v1.22.5
 	github.com/axiomhq/hyperloglog v0.2.5
-	github.com/cardinalhq/oteltools v0.30.20
+	github.com/cardinalhq/oteltools v0.30.21
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/deckarep/golang-set/v2 v2.8.0
+	github.com/fxamacker/cbor/v2 v2.7.0
 	github.com/gogo/protobuf v1.3.2
 	github.com/golang-migrate/migrate/v4 v4.18.3
 	github.com/google/uuid v1.6.0
@@ -237,7 +238,6 @@ require (
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/firefart/nonamedreturns v1.0.5 // indirect
 	github.com/fsnotify/fsnotify v1.8.0 // indirect
-	github.com/fxamacker/cbor/v2 v2.7.0 // indirect
 	github.com/fzipp/gocyclo v0.6.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.8 // indirect
 	github.com/ghostiam/protogetter v0.3.9 // indirect

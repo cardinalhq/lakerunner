@@ -50,7 +50,7 @@ func NewLogEstimator(doneCtx context.Context, querier EstimationQuerier) (LogEst
 	e := &logEstimator{
 		currentEstimates: map[logEstimatorKey]int64{},
 		updateEvery:      30 * time.Minute,
-		lookback:         6 * time.Hour,
+		lookback:         2 * time.Hour,
 		timeout:          30 * time.Second,
 		defaultGuess:     40_000,
 	}

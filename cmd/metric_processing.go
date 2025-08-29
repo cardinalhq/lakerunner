@@ -24,6 +24,16 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 )
 
+// TagSketch holds a metric sketch with metadata
+type TagSketch struct {
+	MetricName     string
+	MetricType     string
+	Tags           map[string]any
+	Sketch         *ddsketch.DDSketch
+	DataPointCount int
+	SingleValue    float64 // For single gauge/counter data points, store the actual value
+}
+
 // MetricRecord represents a parsed metric record ready for processing
 type MetricRecord struct {
 	Timestamp  int64
@@ -75,7 +85,7 @@ func parseMetricRecord(rec map[string]any, ll *slog.Logger) (*MetricRecord, erro
 	// Process tags
 	tags := helpers.MakeTags(rec)
 	tid := helpers.ComputeTID(metricName, tags)
-	tags["_cardinalhq.tid"] = fmt.Sprintf("%d", tid)
+	tags["_cardinalhq.tid"] = tid
 
 	result := &MetricRecord{
 		Timestamp:  ts,
@@ -196,7 +206,7 @@ func updateSketchWithHistogram(sketch TagSketch, bucketData *HistogramBuckets) (
 		sketch.Sketch = s
 	}
 
-	counts, values := handleHistogram(bucketData.Counts, bucketData.Bounds)
+	counts, values := legacyHandleHistogram(bucketData.Counts, bucketData.Bounds)
 	if len(counts) == 0 {
 		return sketch, nil // No data to add
 	}
@@ -246,4 +256,44 @@ func processMetricRecord(metricRecord *MetricRecord, sketches *map[int64]TagSket
 	(*sketches)[metricRecord.TID] = sketch
 
 	return nil
+}
+
+// legacyHandleHistogram processes histogram bucket data and returns counts and values for sketches
+func legacyHandleHistogram(bucketCounts []float64, bucketBounds []float64) (counts, values []float64) {
+	const maxTrackableValue = 1e9
+
+	counts = []float64{}
+	values = []float64{}
+
+	if len(bucketCounts) == 0 || len(bucketBounds) == 0 {
+		return counts, values
+	}
+	if len(bucketCounts) > len(bucketBounds)+1 {
+		return counts, values
+	}
+
+	for i, count := range bucketCounts {
+		if count <= 0 {
+			continue
+		}
+		var value float64
+		if i < len(bucketBounds) {
+			var lowerBound float64
+			if i == 0 {
+				lowerBound = 1e-10 // very small lower bound
+			} else {
+				lowerBound = bucketBounds[i-1]
+			}
+			upperBound := bucketBounds[i]
+			value = (lowerBound + upperBound) / 2.0
+		} else {
+			value = min(bucketBounds[len(bucketBounds)-1]+1, maxTrackableValue)
+		}
+		if value <= maxTrackableValue {
+			counts = append(counts, count)
+			values = append(values, value)
+		}
+	}
+
+	return counts, values
 }

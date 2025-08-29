@@ -39,6 +39,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
+	"github.com/cardinalhq/lakerunner/internal/workqueue"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -46,6 +47,7 @@ var (
 	objectCleanupCounter     metric.Int64Counter
 	legacyTableSyncCounter   metric.Int64Counter
 	workQueueExpiryCounter   metric.Int64Counter
+	inqueueExpiryCounter     metric.Int64Counter
 	signalLockCleanupCounter metric.Int64Counter
 	legacyTableSyncDuration  metric.Float64Histogram
 )
@@ -72,10 +74,18 @@ func init() {
 
 	workQueueExpiryCounter, err = meter.Int64Counter(
 		"lakerunner.sweeper.workqueue_expiry_total",
-		metric.WithDescription("Count of work queue items expired"),
+		metric.WithDescription("Count of work queue items expired due to staleness"),
 	)
 	if err != nil {
 		panic(fmt.Errorf("failed to create workqueue_expiry_total counter: %w", err))
+	}
+
+	inqueueExpiryCounter, err = meter.Int64Counter(
+		"lakerunner.sweeper.inqueue_expiry_total",
+		metric.WithDescription("Count of inqueue items expired due to staleness"),
+	)
+	if err != nil {
+		panic(fmt.Errorf("failed to create inqueue_expiry_total counter: %w", err))
 	}
 
 	signalLockCleanupCounter, err = meter.Int64Counter(
@@ -415,8 +425,10 @@ func failWork(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull, id uuid.
 }
 
 func runWorkqueueExpiry(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull) error {
-	// Use default of 20 minutes for lock_ttl_dead
-	lockTtlDead := pgtype.Interval{Microseconds: (20 * time.Minute).Microseconds(), Valid: true}
+	// Calculate stale expiration based on heartbeat interval
+	// Items are considered stale after missing the configured number of heartbeats
+	staleExpirationTime := time.Duration(workqueue.StaleExpiryMultiplier) * workqueue.DefaultHeartbeatInterval
+	lockTtlDead := pgtype.Interval{Microseconds: staleExpirationTime.Microseconds(), Valid: true}
 	expired, err := mdb.WorkQueueCleanup(ctx, lockTtlDead)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -428,7 +440,6 @@ func runWorkqueueExpiry(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull
 	for _, obj := range expired {
 		ll.Info("Expired work/lock", slog.Any("work", obj))
 		workQueueExpiryCounter.Add(ctx, 1, metric.WithAttributes(
-			attribute.String("organization_id", obj.OrganizationID.String()),
 			attribute.String("signal", string(obj.Signal)),
 			attribute.String("action", string(obj.Action)),
 		))
@@ -449,12 +460,23 @@ func runWorkqueueExpiry(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull
 }
 
 func runInqueueExpiry(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull) error {
-	if err := mdb.CleanupInqueueWork(ctx); err != nil {
+	// Calculate cutoff time for inqueue items - 5 minutes is the default timeout for claimed work
+	inqueueStaleTimeout := 5 * time.Minute
+	cutoffTime := time.Now().Add(-inqueueStaleTimeout)
+
+	expired, err := mdb.CleanupInqueueWork(ctx, &cutoffTime)
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
-		ll.Error("Failed to expire objects", slog.Any("error", err))
+		ll.Error("Failed to expire inqueue objects", slog.Any("error", err))
 		return err
+	}
+	for _, obj := range expired {
+		ll.Info("Expired inqueue item", slog.Any("item", obj))
+		inqueueExpiryCounter.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("signal", obj.TelemetryType),
+		))
 	}
 	return nil
 }

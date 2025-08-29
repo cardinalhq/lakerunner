@@ -18,6 +18,7 @@ import (
 	mapset "github.com/deckarep/golang-set/v2"
 
 	"github.com/cardinalhq/lakerunner/internal/buffet"
+	"github.com/cardinalhq/lakerunner/internal/helpers"
 )
 
 type TidAccumulatorProvider struct{}
@@ -37,7 +38,7 @@ func NewTidAccumulator() *TidAccumulator {
 }
 
 func (a *TidAccumulator) Add(row map[string]any) {
-	if tid, ok := row["_cardinalhq.tid"].(int64); ok {
+	if tid, ok := helpers.GetTIDValue(row, "_cardinalhq.tid"); ok {
 		a.set.Add(tid)
 	}
 }

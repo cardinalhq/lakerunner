@@ -21,6 +21,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"time"
 
 	"github.com/parquet-go/parquet-go"
 
@@ -250,6 +251,66 @@ func statsFor(used []lrdb.GetLogSegmentsForCompactionRow) usedStats {
 	return s
 }
 
+// executeCriticalSection executes S3 upload followed by database update with a timeout.
+// This ensures the critical section completes atomically or fails completely.
+func executeCriticalSection(
+	ctx context.Context,
+	ll *slog.Logger,
+	s3Client *awsclient.S3Client,
+	mdb lrdb.StoreFull,
+	bucket, objectID, fileName string,
+	dbParams lrdb.CompactLogSegmentsParams,
+	timeout time.Duration,
+) error {
+	// Create a context with timeout for the critical section
+	criticalCtx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	ll.Info("Entering critical section - S3 upload + DB update must complete atomically",
+		slog.Duration("timeout", timeout),
+		slog.String("objectID", objectID))
+
+	// Step 1: Upload to S3
+	ll.Debug("Critical section: uploading to S3",
+		slog.String("objectID", objectID))
+
+	if err := s3helper.UploadS3Object(criticalCtx, s3Client, bucket, objectID, fileName); err != nil {
+		ll.Error("Critical section failed during S3 upload - no changes made",
+			slog.Any("error", err),
+			slog.String("objectID", objectID))
+		return err
+	}
+
+	ll.Debug("Critical section: S3 upload successful, updating database")
+
+	// Step 2: Update database
+	if err := mdb.CompactLogSegments(criticalCtx, dbParams); err != nil {
+		ll.Error("Critical section: database update failed after S3 upload",
+			slog.Any("error", err),
+			slog.String("objectID", objectID))
+
+		// Best effort cleanup - try to delete the uploaded file
+		ll.Debug("Critical section: attempting to cleanup orphaned S3 object")
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanupCancel()
+
+		if cleanupErr := s3helper.DeleteS3Object(cleanupCtx, s3Client, bucket, objectID); cleanupErr != nil {
+			ll.Error("Critical section: failed to cleanup orphaned S3 object - manual cleanup required",
+				slog.Any("error", cleanupErr),
+				slog.String("objectID", objectID),
+				slog.String("bucket", bucket))
+		} else {
+			ll.Info("Critical section: successfully cleaned up orphaned S3 object")
+		}
+		return err
+	}
+
+	ll.Info("Critical section completed successfully - S3 upload and database update committed",
+		slog.String("objectID", objectID))
+
+	return nil
+}
+
 func packSegment(
 	ctx context.Context,
 	ll *slog.Logger,
@@ -377,24 +438,23 @@ func packSegment(
 		sp.OrganizationID, sp.CollectorName, dateint, s3helper.HourFromMillis(stats.FirstTS), newSegmentID, "logs",
 	)
 
-	ll.Info("Uploading compacted file to S3 - point of no return approaching",
+	// Final interruption check before entering critical section
+	if err := ctx.Err(); err != nil {
+		ll.Info("Context cancelled before critical section - safe to abort",
+			slog.String("objectID", newObjectID),
+			slog.Any("error", err))
+		return err
+	}
+
+	ll.Info("Preparing for critical section - S3 upload + DB update",
 		slog.Int64("fileSize", fi.Size()),
 		slog.String("objectID", newObjectID),
 		slog.Int64("segmentID", newSegmentID),
 		slog.Int64("recordCount", writeResult.RecordCount),
 		slog.Int("segmentCount", len(usedSegs)))
 
-	if err := s3helper.UploadS3Object(ctx, s3Client, sp.Bucket, newObjectID, writeResult.FileName); err != nil {
-		ll.Error("Atomic operation failed during S3 upload - no changes made",
-			slog.Any("error", err),
-			slog.String("objectID", newObjectID))
-		return err
-	}
-
-	ll.Debug("S3 upload successful, updating database index - CRITICAL SECTION",
-		slog.String("objectID", newObjectID))
-
-	if err := mdb.CompactLogSegments(ctx, lrdb.CompactLogSegmentsParams{
+	// Prepare database parameters for critical section
+	dbParams := lrdb.CompactLogSegmentsParams{
 		OrganizationID: sp.OrganizationID,
 		Dateint:        dateint,
 		InstanceNum:    instanceNum,
@@ -407,23 +467,10 @@ func packSegment(
 		NewRecordCount: writeResult.RecordCount,
 		OldSegmentIds:  segmentIDsFrom(usedSegs),
 		CreatedBy:      lrdb.CreatedByCompact,
-	}); err != nil {
-		ll.Error("Database update failed after S3 upload",
-			slog.Any("error", err),
-			slog.String("objectID", newObjectID),
-			slog.Int64("segmentID", newSegmentID),
-			slog.String("bucket", sp.Bucket))
+	}
 
-		// Best effort cleanup - try to delete the uploaded file
-		ll.Debug("Attempting to cleanup orphaned S3 object")
-		if cleanupErr := s3helper.DeleteS3Object(ctx, s3Client, sp.Bucket, newObjectID); cleanupErr != nil {
-			ll.Error("Failed to cleanup orphaned S3 object - manual cleanup required",
-				slog.Any("error", cleanupErr),
-				slog.String("objectID", newObjectID),
-				slog.String("bucket", sp.Bucket))
-		} else {
-			ll.Info("Successfully cleaned up orphaned S3 object")
-		}
+	// Execute critical section with 30 second timeout
+	if err := executeCriticalSection(ctx, ll, s3Client, mdb, sp.Bucket, newObjectID, writeResult.FileName, dbParams, 30*time.Second); err != nil {
 		return err
 	}
 

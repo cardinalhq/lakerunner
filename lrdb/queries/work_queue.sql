@@ -81,26 +81,17 @@ WHERE sl.work_id    = u.id
 
 
 -- name: WorkQueueHeartbeatDirect :exec
-WITH params AS (
-  SELECT
-    NOW() AS v_now,
-    @lock_ttl::INTERVAL AS lock_ttl
-)
 -- 1) heart-beat the work_queue
 UPDATE public.work_queue w
-SET heartbeated_at = p.v_now
-FROM params p
-WHERE w.id            = ANY(@ids::BIGINT[])
-  AND w.claimed_by    = @worker_id
-  AND w.heartbeated_at >= p.v_now - p.lock_ttl;
+SET heartbeated_at = NOW()
+WHERE w.id         = ANY(@ids::BIGINT[])
+  AND w.claimed_by = @worker_id;
 
 -- 2) heart-beat the signal_locks
 UPDATE public.signal_locks sl
-SET heartbeated_at = p.v_now
-FROM params p
-WHERE sl.work_id     = ANY(@ids::BIGINT[])
-  AND sl.claimed_by  = @worker_id
-  AND sl.heartbeated_at >= p.v_now - p.lock_ttl;
+SET heartbeated_at = NOW()
+WHERE sl.work_id    = ANY(@ids::BIGINT[])
+  AND sl.claimed_by = @worker_id;
 
 
 -- name: WorkQueueCleanupDirect :many
@@ -194,9 +185,7 @@ claimed_details AS (
       ELSE false
     END AS is_stale
   FROM work_queue
-  WHERE needs_run = true 
-    AND runnable_at <= now() 
-    AND claimed_by > 0
+  WHERE claimed_by > 0
 )
 -- First, return unclaimed summaries
 SELECT 

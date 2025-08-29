@@ -30,6 +30,5 @@ func init() {
 	debugCmd.AddCommand(debugcmd.GetS3Cmd())
 	debugCmd.AddCommand(debugcmd.GetDDBCmd())
 	debugCmd.AddCommand(debugcmd.GetParquetSchemaCmd())
-	debugCmd.AddCommand(debugcmd.GetSQLiteCmd())
 	debugCmd.AddCommand(debugcmd.GetFileConvCmd())
 }

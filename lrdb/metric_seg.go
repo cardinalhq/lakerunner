@@ -22,6 +22,20 @@ import (
 	"github.com/hashicorp/go-multierror"
 )
 
+// Sort version constants for metric segments
+const (
+	// SortVersionUnknown indicates the file's sort order is unknown or unsorted (legacy files)
+	SortVersionUnknown = 0
+	// SortVersionNameTidTimestamp indicates the file is sorted by [metric_name, tid, timestamp]
+	SortVersionNameTidTimestamp = 1
+)
+
+// Current metric sort configuration - single source of truth for all metric sorting
+const (
+	// CurrentMetricSortVersion is the sort version used for all newly created metric segments
+	CurrentMetricSortVersion = SortVersionNameTidTimestamp
+)
+
 func (q *Store) InsertMetricSegment(ctx context.Context, params InsertMetricSegmentParams) error {
 	if err := q.ensureMetricSegmentPartition(ctx, params.OrganizationID, params.Dateint); err != nil {
 		return err
@@ -68,6 +82,9 @@ type ReplaceMetricSegsParams struct {
 	NewRecords   []ReplaceMetricSegsNew
 	CreatedBy    CreatedBy
 	Fingerprints []int64
+	// SortVersion indicates the sort order of the data in the new segments.
+	// 0: Unknown/unsorted, 1: Sorted by [name, tid, timestamp]
+	SortVersion int16
 }
 
 // ReplaceMetricSegs replaces old metric segments with new ones for a given organization, date, and instance.
@@ -106,6 +123,7 @@ func (q *Store) ReplaceMetricSegs(ctx context.Context, args ReplaceMetricSegsPar
 			Rolledup:       args.Rolledup,
 			CreatedBy:      args.CreatedBy,
 			Fingerprints:   args.Fingerprints,
+			SortVersion:    args.SortVersion,
 		}
 	}
 

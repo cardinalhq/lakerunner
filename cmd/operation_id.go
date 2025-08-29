@@ -20,6 +20,6 @@ import (
 
 // generateOperationID creates a unique operation ID for tracking atomic operations
 // Format: randomBase32
-func generateOperationID(index int) string {
+func generateOperationID() string {
 	return idgen.GenerateShortBase32ID()
 }

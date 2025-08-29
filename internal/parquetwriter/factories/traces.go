@@ -23,24 +23,11 @@ import (
 
 // NewTracesWriter creates a writer optimized for traces data.
 // Traces are grouped by slot and can be split within slots but benefit from locality.
-func NewTracesWriter(baseName, tmpdir string, targetFileSize int64, slotID int32, bytesPerRecord float64) (*parquetwriter.UnifiedWriter, error) {
+func NewTracesWriter(baseName, tmpdir string, targetFileSize int64, slotID int32, recordsPerFile int64) (*parquetwriter.UnifiedWriter, error) {
 	config := parquetwriter.WriterConfig{
 		BaseName:       baseName,
 		TmpDir:         tmpdir,
 		TargetFileSize: targetFileSize,
-
-		// Traces benefit from sorting by start time, use spillable orderer for flexibility
-		OrderBy: parquetwriter.OrderSpillable,
-		OrderKeyFunc: func(row map[string]any) any {
-			// Sort by start time if available, otherwise by trace ID
-			if startTime, ok := row["_cardinalhq.start_time_unix_ns"].(int64); ok {
-				return startTime
-			}
-			if traceID, ok := row["_cardinalhq.trace_id"].(string); ok {
-				return traceID
-			}
-			return ""
-		},
 
 		// Group by slot but allow splitting within slots
 		GroupKeyFunc: func(row map[string]any) any {
@@ -48,7 +35,7 @@ func NewTracesWriter(baseName, tmpdir string, targetFileSize int64, slotID int32
 		},
 		NoSplitGroups: false, // Allow splitting within slots for size management
 
-		BytesPerRecord: bytesPerRecord,
+		RecordsPerFile: recordsPerFile,
 		StatsProvider:  &TracesStatsProvider{SlotID: slotID},
 	}
 

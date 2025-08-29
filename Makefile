@@ -70,7 +70,7 @@ bin/buf:
 #
 # Run pre-commit checks
 #
-check: test license-check fmt lint check-migration-integrity
+check: test license-check gofmt lint check-migration-integrity
 
 license-check:
 	go tool license-eye header check
@@ -86,13 +86,11 @@ imports-check:
 	fi
 	@echo "Import organization check passed"
 
+fmt: gofmt imports-fix
+
 imports-fix:
 	@echo "Fixing import organization (excluding *.pb.go files)..."
 	@find . -name '*.go' -not -name '*.pb.go' -exec go tool goimports -local github.com/cardinalhq/lakerunner -w {} \;
-
-fmt: imports-fix
-	@echo "Running gofmt to fix formatting..."
-	@gofmt -w -s .
 
 gofmt:
 	@echo "Running gofmt to fix formatting..."

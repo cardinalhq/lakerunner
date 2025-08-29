@@ -22,10 +22,11 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-// EstimationQuerier interface that can handle both metric and log queries.
+// EstimationQuerier interface that can handle metric, log, and trace queries.
 type EstimationQuerier interface {
 	MetricSegEstimator(ctx context.Context, params lrdb.MetricSegEstimatorParams) ([]lrdb.MetricSegEstimatorRow, error)
 	LogSegEstimator(ctx context.Context, params lrdb.LogSegEstimatorParams) ([]lrdb.LogSegEstimatorRow, error)
+	TraceSegEstimator(ctx context.Context, params lrdb.TraceSegEstimatorParams) ([]lrdb.TraceSegEstimatorRow, error)
 }
 
 // Updater defines the interface for estimators that can be updated.

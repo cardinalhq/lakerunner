@@ -16,29 +16,44 @@
 // Callers construct readers directly and compose them as needed for their specific use cases.
 package filereader
 
-// Row represents a single row of data as a map of column names to values.
-type Row map[string]any
+import (
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
+)
 
-// Reader is the core interface for reading rows from any file format.
+// Row represents a single row of data as a map of column names to values.
+type Row = pipeline.Row
+
+// Reader is the core interface for reading rows from any file format using pipeline semantics.
+// This eliminates memory ownership issues by establishing clear ownership: batches are owned
+// by the reader and must not be retained beyond the next Next() call.
 type Reader interface {
-	// Read populates the provided slice with as many rows as possible.
-	// Returns the number of rows read and any error (including io.EOF when exhausted).
-	// Similar to io.Reader pattern: may return n > 0 and err != nil.
-	Read(rows []Row) (n int, err error)
+	// Next returns the next batch of rows, or io.EOF when exhausted.
+	// The returned batch is owned by the reader and must not be retained
+	// beyond the next Next() call. Use pipeline.CopyBatch() if you need to retain.
+	Next() (*Batch, error)
 
 	// Close releases any resources held by the reader.
 	Close() error
+
+	// TotalRowsReturned returns the total number of rows that have been successfully
+	// returned via Next() calls from this reader so far.
+	TotalRowsReturned() int64
 }
 
 // RowTranslator transforms rows from one format to another.
 type RowTranslator interface {
-	// TranslateRow transforms a row and returns:
-	// - The transformed row
-	// - A boolean indicating if the returned row is the same reference as the input (true = same reference)
-	//   If this is not set properly, it will lead to data corruption or a crash due to performance optimizations
-	//   in the TranslatingReader.
-	// - Any error that occurred during translation
-	TranslateRow(in Row) (Row, bool, error)
+	// TranslateRow transforms a row in-place by modifying the provided row pointer.
+	// This eliminates confusing reference semantics and makes mutations explicit.
+	TranslateRow(row *Row) error
+}
+
+// OTELMetricsProvider provides access to the underlying OpenTelemetry metrics structure.
+// This is used when the original OTEL structure is needed for processing (e.g., exemplars).
+type OTELMetricsProvider interface {
+	// GetOTELMetrics returns the underlying parsed OTEL metrics structure.
+	// This allows access to exemplars and other metadata not available in the row format.
+	GetOTELMetrics() (any, error)
 }
 
 // SelectFunc is a function that selects which row to return next from a set of candidate rows.
@@ -69,22 +84,15 @@ func TimeOrderedSelector(fieldName string) SelectFunc {
 	}
 }
 
-// resetRow initializes or clears a Row map for reuse.
-// If the row is nil, it creates a new Row. If not nil, it clears all existing data.
-func resetRow(row *Row) {
-	if *row == nil {
-		*row = make(Row)
-	} else {
-		// Clear existing row
-		for k := range *row {
-			delete(*row, k)
-		}
-	}
-}
+// Batch represents a collection of rows with clear ownership semantics.
+// The batch is owned by the reader that returns it.
+type Batch = pipeline.Batch
 
 // extractTimestamp extracts a timestamp from a row, handling various numeric types.
 func extractTimestamp(row Row, fieldName string) int64 {
-	val, exists := row[fieldName]
+	// Convert string field name to RowKey for lookup
+	rowKey := wkk.NewRowKey(fieldName)
+	val, exists := row[rowKey]
 	if !exists {
 		return 0
 	}

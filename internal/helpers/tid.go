@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"sort"
+	"strconv"
 )
 
 func ComputeTID(metricName string, tags map[string]any) int64 {
@@ -95,6 +96,28 @@ func GetInt64Value(m map[string]any, key string) (int64, bool) {
 		return 0, false
 	}
 	return intVal, true
+}
+
+// GetTIDValue extracts _cardinalhq.tid from a map, handling both int64 and string types
+func GetTIDValue(m map[string]any, key string) (int64, bool) {
+	val, ok := m[key]
+	if !ok || val == nil {
+		return 0, false
+	}
+
+	// Try int64 first (expected type)
+	if intVal, ok := val.(int64); ok {
+		return intVal, true
+	}
+
+	// Fall back to string conversion for backwards compatibility
+	if strVal, ok := val.(string); ok {
+		if parsed, err := strconv.ParseInt(strVal, 10, 64); err == nil {
+			return parsed, true
+		}
+	}
+
+	return 0, false
 }
 
 func MakeTags(rec map[string]any) map[string]any {

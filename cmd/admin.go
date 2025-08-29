@@ -26,10 +26,13 @@ import (
 	"github.com/cardinalhq/lakerunner/cmd/admin/bootstrap"
 	"github.com/cardinalhq/lakerunner/cmd/admin/bucketprefixes"
 	"github.com/cardinalhq/lakerunner/cmd/admin/inqueue"
+	"github.com/cardinalhq/lakerunner/cmd/admin/logs"
+	"github.com/cardinalhq/lakerunner/cmd/admin/metrics"
 	"github.com/cardinalhq/lakerunner/cmd/admin/objcleanup"
 	"github.com/cardinalhq/lakerunner/cmd/admin/organizations"
 	"github.com/cardinalhq/lakerunner/cmd/admin/orgapikeys"
 	"github.com/cardinalhq/lakerunner/cmd/admin/storageprofiles"
+	"github.com/cardinalhq/lakerunner/cmd/admin/traces"
 	"github.com/cardinalhq/lakerunner/cmd/admin/workqueue"
 )
 
@@ -81,6 +84,9 @@ func init() {
 	adminAPIKeysCmd := adminapikeys.GetAdminAPIKeysCmd()
 	storageProfilesCmd := storageprofiles.GetStorageProfilesCmd()
 	bucketPrefixesCmd := bucketprefixes.GetBucketPrefixesCmd()
+	logsCmd := getLogsCmd()
+	tracesCmd := getTracesCmd()
+	metricsCmd := getMetricsCmd()
 
 	// Add subcommands to admin command
 	adminCmd.AddCommand(serveCmd)
@@ -94,6 +100,9 @@ func init() {
 	adminCmd.AddCommand(adminAPIKeysCmd)
 	adminCmd.AddCommand(storageProfilesCmd)
 	adminCmd.AddCommand(bucketPrefixesCmd)
+	adminCmd.AddCommand(logsCmd)
+	adminCmd.AddCommand(tracesCmd)
+	adminCmd.AddCommand(metricsCmd)
 
 	// Set API key from environment variable if not provided via flag
 	adminCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
@@ -109,6 +118,9 @@ func init() {
 		adminapikeys.SetAPIKey(adminAPIKey)
 		storageprofiles.SetAPIKey(adminAPIKey)
 		bucketprefixes.SetAPIKey(adminAPIKey)
+		logs.SetAPIKey(adminAPIKey)
+		traces.SetAPIKey(adminAPIKey)
+		metrics.SetAPIKey(adminAPIKey)
 	}
 
 	// Add API key flag to admin command and all subcommands
@@ -145,4 +157,35 @@ func getObjCleanupCmd() *cobra.Command {
 
 	objCleanupCmd.AddCommand(objcleanup.GetStatusCmd())
 	return objCleanupCmd
+}
+
+func getLogsCmd() *cobra.Command {
+	logsCmd := &cobra.Command{
+		Use:   "logs",
+		Short: "Log administrative commands",
+	}
+
+	logsCmd.AddCommand(logs.GetCompactCmd())
+	return logsCmd
+}
+
+func getTracesCmd() *cobra.Command {
+	tracesCmd := &cobra.Command{
+		Use:   "traces",
+		Short: "Trace administrative commands",
+	}
+
+	tracesCmd.AddCommand(traces.GetCompactCmd())
+	return tracesCmd
+}
+
+func getMetricsCmd() *cobra.Command {
+	metricsCmd := &cobra.Command{
+		Use:   "metrics",
+		Short: "Metric administrative commands",
+	}
+
+	metricsCmd.AddCommand(metrics.GetCompactCmd())
+	metricsCmd.AddCommand(metrics.GetRollupCmd())
+	return metricsCmd
 }

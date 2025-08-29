@@ -20,12 +20,17 @@ import (
 
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
+
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 // ProtoLogsReader reads rows from OpenTelemetry protobuf logs format.
 // Returns raw OTEL log data without signal-specific transformations.
 type ProtoLogsReader struct {
-	closed bool
+	closed    bool
+	rowCount  int64
+	batchSize int
 
 	// Streaming iterator state for logs
 	logs          *plog.Logs
@@ -36,8 +41,14 @@ type ProtoLogsReader struct {
 
 // NewProtoLogsReader creates a new ProtoLogsReader for the given io.Reader.
 // The caller is responsible for closing the underlying reader.
-func NewProtoLogsReader(reader io.Reader) (*ProtoLogsReader, error) {
-	protoReader := &ProtoLogsReader{}
+func NewProtoLogsReader(reader io.Reader, batchSize int) (*ProtoLogsReader, error) {
+	if batchSize <= 0 {
+		batchSize = 1000
+	}
+
+	protoReader := &ProtoLogsReader{
+		batchSize: batchSize,
+	}
 
 	logs, err := parseProtoToOtelLogs(reader)
 	if err != nil {
@@ -48,34 +59,42 @@ func NewProtoLogsReader(reader io.Reader) (*ProtoLogsReader, error) {
 	return protoReader, nil
 }
 
-// Read populates the provided slice with as many rows as possible.
-func (r *ProtoLogsReader) Read(rows []Row) (int, error) {
+// Next returns the next batch of rows from the OTEL logs.
+func (r *ProtoLogsReader) Next() (*Batch, error) {
 	if r.closed {
-		return 0, fmt.Errorf("reader is closed")
+		return nil, fmt.Errorf("reader is closed")
 	}
 
-	if len(rows) == 0 {
-		return 0, nil
-	}
+	batch := pipeline.GetBatch()
 
-	n := 0
-	for n < len(rows) {
+	for batch.Len() < r.batchSize {
 		row, err := r.getLogRow()
 		if err != nil {
-			return n, err
+			if err == io.EOF {
+				if batch.Len() == 0 {
+					pipeline.ReturnBatch(batch)
+					return nil, io.EOF
+				}
+				break
+			}
+			pipeline.ReturnBatch(batch)
+			return nil, err
 		}
 
-		resetRow(&rows[n])
-
-		// Copy data to Row
+		batchRow := batch.AddRow()
 		for k, v := range row {
-			rows[n][k] = v
+			batchRow[k] = v
 		}
-
-		n++
 	}
 
-	return n, nil
+	// Update row count with successfully read rows
+	if batch.Len() > 0 {
+		r.rowCount += int64(batch.Len())
+		return batch, nil
+	}
+
+	pipeline.ReturnBatch(batch)
+	return nil, io.EOF
 }
 
 // getLogRow handles reading the next log row.
@@ -123,35 +142,42 @@ func (r *ProtoLogsReader) buildLogRow(rl plog.ResourceLogs, sl plog.ScopeLogs, l
 
 	// Add resource attributes with prefix
 	rl.Resource().Attributes().Range(func(name string, v pcommon.Value) bool {
-		ret["resource."+name] = v.AsString()
+		value := v.AsString()
+		ret[prefixAttribute(name, "resource")] = value
 		return true
 	})
 
 	// Add scope attributes with prefix
 	sl.Scope().Attributes().Range(func(name string, v pcommon.Value) bool {
-		ret["scope."+name] = v.AsString()
+		value := v.AsString()
+		ret[prefixAttribute(name, "scope")] = value
 		return true
 	})
 
 	// Add log attributes with prefix
 	logRecord.Attributes().Range(func(name string, v pcommon.Value) bool {
-		ret["log."+name] = v.AsString()
+		value := v.AsString()
+		ret[prefixAttribute(name, "log")] = value
 		return true
 	})
 
 	// Add basic log fields
-	ret["body"] = logRecord.Body().AsString()
-	ret["timestamp"] = logRecord.Timestamp().AsTime().UnixMilli()
+	ret["_cardinalhq.message"] = logRecord.Body().AsString()
+	ret["_cardinalhq.timestamp"] = logRecord.Timestamp().AsTime().UnixMilli()
 	ret["observed_timestamp"] = logRecord.ObservedTimestamp().AsTime().UnixMilli()
-	ret["severity_text"] = logRecord.SeverityText()
-	ret["severity_number"] = int32(logRecord.SeverityNumber())
+	ret["_cardinalhq.level"] = logRecord.SeverityText()
+	ret["severity_number"] = int64(logRecord.SeverityNumber())
 
 	return ret
 }
 
 // processRow applies any processing to a row.
 func (r *ProtoLogsReader) processRow(row map[string]any) (Row, error) {
-	return Row(row), nil
+	result := make(Row)
+	for k, v := range row {
+		result[wkk.NewRowKey(k)] = v
+	}
+	return result, nil
 }
 
 // Close closes the reader and releases resources.
@@ -165,6 +191,11 @@ func (r *ProtoLogsReader) Close() error {
 	r.logs = nil
 
 	return nil
+}
+
+// TotalRowsReturned returns the total number of rows that have been successfully returned via Next().
+func (r *ProtoLogsReader) TotalRowsReturned() int64 {
+	return r.rowCount
 }
 
 func parseProtoToOtelLogs(reader io.Reader) (*plog.Logs, error) {
