@@ -289,6 +289,7 @@ func compactMetricInterval(
 	}
 
 	var readers []filereader.Reader
+	var files []*os.File
 	var downloadedFiles []string
 
 	for _, row := range rows {
@@ -365,6 +366,7 @@ func compactMetricInterval(
 		fileSortedCounter.Add(ctx, 1, metric.WithAttributes(attrs...))
 
 		readers = append(readers, finalReader)
+		files = append(files, file)
 		downloadedFiles = append(downloadedFiles, fn)
 	}
 
@@ -377,6 +379,11 @@ func compactMetricInterval(
 		for _, reader := range readers {
 			if err := reader.Close(); err != nil {
 				ll.Error("Failed to close reader", slog.Any("error", err))
+			}
+		}
+		for _, file := range files {
+			if err := file.Close(); err != nil {
+				ll.Error("Failed to close file", slog.String("file", file.Name()), slog.Any("error", err))
 			}
 		}
 	}()
