@@ -124,11 +124,11 @@ func EvaluatePushDown[T promql.Timestamped](
 	}
 
 	// Group segments by orgId/instanceNum
-	segmentsByOrg := make(map[uuid.UUID]map[int16][]promql.SegmentInfo)
+	segmentsByOrg := make(map[uuid.UUID]map[int16][]queryapi.SegmentInfo)
 	profilesByOrgInstanceNum := make(map[uuid.UUID]map[int16]storageprofile.StorageProfile)
 	for _, seg := range request.Segments {
 		if _, ok := segmentsByOrg[seg.OrganizationID]; !ok {
-			segmentsByOrg[seg.OrganizationID] = make(map[int16][]promql.SegmentInfo)
+			segmentsByOrg[seg.OrganizationID] = make(map[int16][]queryapi.SegmentInfo)
 		}
 		if _, ok := profilesByOrgInstanceNum[seg.OrganizationID]; !ok {
 			profilesByOrgInstanceNum[seg.OrganizationID] = make(map[int16]storageprofile.StorageProfile)
@@ -143,7 +143,7 @@ func EvaluatePushDown[T promql.Timestamped](
 			profilesByOrgInstanceNum[seg.OrganizationID][seg.InstanceNum] = profile
 		}
 		if _, ok := segmentsByOrg[seg.OrganizationID][seg.InstanceNum]; !ok {
-			segmentsByOrg[seg.OrganizationID][seg.InstanceNum] = []promql.SegmentInfo{}
+			segmentsByOrg[seg.OrganizationID][seg.InstanceNum] = []queryapi.SegmentInfo{}
 		}
 		segmentsByOrg[seg.OrganizationID][seg.InstanceNum] = append(segmentsByOrg[seg.OrganizationID][seg.InstanceNum], seg)
 	}

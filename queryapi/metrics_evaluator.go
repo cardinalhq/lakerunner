@@ -21,33 +21,22 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/cardinalhq/lakerunner/internal/buffet"
+	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/cardinalhq/lakerunner/promql"
+	"github.com/google/uuid"
+	"github.com/prometheus/common/model"
 	"io"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/google/uuid"
-	"github.com/prometheus/common/model"
-
-	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-// PushDownRequest is sent to a worker.
-type PushDownRequest struct {
-	OrganizationID uuid.UUID            `json:"orgId"`
-	BaseExpr       promql.BaseExpr      `json:"baseExpr"`
-	StartTs        int64                `json:"startTs"`
-	EndTs          int64                `json:"endTs"`
-	Step           time.Duration        `json:"step"`
-	Segments       []promql.SegmentInfo `json:"segments"`
-}
-
-// Evaluate plans pushdowns, fans requests out to workers, merges their streams,
+// EvaluateMetricsQuery plans pushdowns, fans requests out to workers, merges their streams,
 // and returns a single chronologically merged stream of SketchInput.
 // The merged stream’s timestamps are aligned to the evaluation window.
-func (q *QuerierService) Evaluate(
+func (q *QuerierService) EvaluateMetricsQuery(
 	ctx context.Context,
 	orgID uuid.UUID,
 	startTs, endTs int64,
@@ -83,7 +72,7 @@ func (q *QuerierService) Evaluate(
 			dateIntHours := dateIntHoursRange(effStart, effEnd, time.UTC)
 
 			for _, dateIntHour := range dateIntHours {
-				segments, err := q.lookupSegments(ctx, dateIntHour, effStart, effEnd, stepDuration, orgID)
+				segments, err := q.lookupMetricsSegments(ctx, dateIntHour, leaf, effStart, effEnd, stepDuration, orgID)
 				if err != nil {
 					slog.Error("failed to get segment infos", "dateInt", dateIntHour.DateInt, "err", err)
 					continue
@@ -101,7 +90,7 @@ func (q *QuerierService) Evaluate(
 				}
 
 				// Form time-contiguous batches sized for the number of workers.
-				groups := promql.ComputeReplayBatchesWithWorkers(
+				groups := ComputeReplayBatchesWithWorkers(
 					segments, stepDuration, effStart, effEnd, len(workers), true,
 				)
 
@@ -116,7 +105,7 @@ func (q *QuerierService) Evaluate(
 
 					// Collect all segment IDs for worker assignment
 					segmentIDs := make([]int64, 0, len(group.Segments))
-					segmentMap := make(map[int64][]promql.SegmentInfo)
+					segmentMap := make(map[int64][]SegmentInfo)
 					for _, segment := range group.Segments {
 						segmentIDs = append(segmentIDs, segment.SegmentID)
 						segmentMap[segment.SegmentID] = append(segmentMap[segment.SegmentID], segment)
@@ -130,7 +119,7 @@ func (q *QuerierService) Evaluate(
 					}
 
 					// Group segments by assigned worker
-					workerGroups := make(map[Worker][]promql.SegmentInfo)
+					workerGroups := make(map[Worker][]SegmentInfo)
 					for _, mapping := range mappings {
 						segmentList := segmentMap[mapping.SegmentID]
 						workerGroups[mapping.Worker] = append(workerGroups[mapping.Worker], segmentList...)
@@ -148,7 +137,7 @@ func (q *QuerierService) Evaluate(
 							Step:           stepDuration,
 						}
 
-						ch, err := q.pushDown(ctx, worker, req)
+						ch, err := q.metricsPushDown(ctx, worker, req)
 						if err != nil {
 							slog.Error("pushdown failed", "worker", worker, "err", err)
 							continue
@@ -196,10 +185,10 @@ func (q *QuerierService) Evaluate(
 	return out, nil
 }
 
-// pushDown should POST req to the worker’s /pushdown and return a channel that yields SketchInput
+// metricsPushDown should POST req to the worker’s /pushdown and return a channel that yields SketchInput
 // decoded from the worker’s SSE (or chunked JSON) stream. You can keep your existing stub here.
 // Implement the HTTP/SSE client and decoding where you wire up workers.
-func (q *QuerierService) pushDown(
+func (q *QuerierService) metricsPushDown(
 	ctx context.Context,
 	worker Worker,
 	request PushDownRequest,
@@ -368,13 +357,14 @@ func parseOffsetMs(offset string) (int64, error) {
 	return int64(time.Duration(d) / time.Millisecond), nil
 }
 
-func (q *QuerierService) lookupSegments(ctx context.Context,
+func (q *QuerierService) lookupMetricsSegments(ctx context.Context,
 	dih DateIntHours,
+	be promql.BaseExpr,
 	startTs int64, endTs int64,
 	stepDuration time.Duration,
-	orgUUID uuid.UUID) ([]promql.SegmentInfo, error) {
+	orgUUID uuid.UUID) ([]SegmentInfo, error) {
 
-	var allSegments []promql.SegmentInfo
+	var allSegments []SegmentInfo
 
 	slog.Info("Issuing query for segments",
 		"dateInt", dih.DateInt,
@@ -383,19 +373,22 @@ func (q *QuerierService) lookupSegments(ctx context.Context,
 		"frequencyMs", stepDuration.Milliseconds(),
 		"orgUUID", orgUUID)
 
-	rows, err := q.mdb.ListSegmentsForQuery(ctx, lrdb.ListSegmentsForQueryParams{
+	fingerprint := buffet.ComputeFingerprint("_cardinalhq.name", be.Metric)
+	slog.Info("Computed fingerprint for baseExpr", "fingerprint", fingerprint, "metric", be.Metric)
+	rows, err := q.mdb.ListMetricSegmentsForQuery(ctx, lrdb.ListMetricSegmentsForQueryParams{
 		Int8range:      startTs,
 		Int8range_2:    endTs,
 		Dateint:        int32(dih.DateInt),
 		FrequencyMs:    int32(stepDuration.Milliseconds()),
 		OrganizationID: orgUUID,
+		Fingerprints:   []int64{fingerprint},
 	})
 	if err != nil {
 		return nil, err
 	}
 	for _, row := range rows {
 		endHour := zeroFilledHour(time.UnixMilli(row.EndTs).UTC().Hour())
-		allSegments = append(allSegments, promql.SegmentInfo{
+		allSegments = append(allSegments, SegmentInfo{
 			DateInt:        dih.DateInt,
 			Hour:           endHour,
 			SegmentID:      row.SegmentID,

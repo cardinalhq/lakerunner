@@ -210,13 +210,13 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	workerSql := req.BaseExpr.ToWorkerSQL(req.Step)
 
 	// group request.segments by organizationId and instanceNum
-	segmentsByOrg := make(map[uuid.UUID]map[int16][]promql.SegmentInfo)
+	segmentsByOrg := make(map[uuid.UUID]map[int16][]queryapi.SegmentInfo)
 	for _, seg := range req.Segments {
 		if _, ok := segmentsByOrg[seg.OrganizationID]; !ok {
-			segmentsByOrg[seg.OrganizationID] = make(map[int16][]promql.SegmentInfo)
+			segmentsByOrg[seg.OrganizationID] = make(map[int16][]queryapi.SegmentInfo)
 		}
 		if _, ok := segmentsByOrg[seg.OrganizationID][seg.InstanceNum]; !ok {
-			segmentsByOrg[seg.OrganizationID][seg.InstanceNum] = []promql.SegmentInfo{}
+			segmentsByOrg[seg.OrganizationID][seg.InstanceNum] = []queryapi.SegmentInfo{}
 		}
 		segmentsByOrg[seg.OrganizationID][seg.InstanceNum] = append(segmentsByOrg[seg.OrganizationID][seg.InstanceNum], seg)
 	}

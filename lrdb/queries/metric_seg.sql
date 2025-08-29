@@ -128,7 +128,7 @@ DELETE FROM public.metric_seg
    AND tid_partition   = @tid_partition
 ;
 
--- name: ListSegmentsForQuery :many
+-- name: ListMetricSegmentsForQuery :many
 SELECT
     instance_num,
     segment_id,
@@ -139,4 +139,5 @@ WHERE ts_range && int8range($1, $2, '[)')
   AND dateint = $3
   AND frequency_ms = $4
   AND organization_id = $5
+  AND fingerprints && @fingerprints::BIGINT[]
   AND published = true;

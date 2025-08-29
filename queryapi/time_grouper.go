@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package promql
+package queryapi
 
 import (
 	"math"
@@ -41,7 +41,7 @@ type SegmentGroup struct {
 	Segments []SegmentInfo
 }
 
-// ComputeReplayBatchesWithWorkers: public entrypoint. Computes a per-group target size
+// ComputeReplayBatchesWithWorkers public entrypoint. Computes a per-group target size
 // from total #segments and worker count (capped), then delegates.
 func ComputeReplayBatchesWithWorkers(
 	segments []SegmentInfo,
