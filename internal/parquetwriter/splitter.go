@@ -16,14 +16,14 @@ package parquetwriter
 
 import (
 	"context"
+	"encoding/gob"
 	"fmt"
 	"io"
 	"os"
 
-	"github.com/fxamacker/cbor/v2"
 	"github.com/parquet-go/parquet-go"
 
-	cborconfig "github.com/cardinalhq/lakerunner/internal/cbor"
+	gobconfig "github.com/cardinalhq/lakerunner/internal/gob"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/schemabuilder"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
@@ -36,10 +36,10 @@ type FileSplitter struct {
 	currentRows  int64
 	currentGroup any
 
-	// CBOR buffering for schema evolution
-	cborConfig   *cborconfig.Config
-	cborFile     *os.File
-	cborEncoder  *cbor.Encoder
+	// Gob buffering for schema evolution
+	gobConfig    *gobconfig.Config
+	gobFile      *os.File
+	gobEncoder   *gob.Encoder
 	currentStats StatsAccumulator
 
 	// Dynamic schema management per file
@@ -52,21 +52,21 @@ type FileSplitter struct {
 
 // NewFileSplitter creates a new file splitter with the given configuration.
 func NewFileSplitter(config WriterConfig) *FileSplitter {
-	cborConfig, err := cborconfig.NewConfig()
+	gobConfig, err := gobconfig.NewConfig()
 	if err != nil {
 		// This should never happen with our static configuration
-		panic(fmt.Sprintf("failed to create CBOR config: %v", err))
+		panic(fmt.Sprintf("failed to create gob config: %v", err))
 	}
 
 	return &FileSplitter{
-		config:     config,
-		cborConfig: cborConfig,
-		results:    make([]Result, 0),
+		config:    config,
+		gobConfig: gobConfig,
+		results:   make([]Result, 0),
 	}
 }
 
 // WriteBatchRows efficiently writes multiple rows from a pipeline batch.
-// Rows are buffered to CBOR files to allow schema evolution across batches.
+// Rows are buffered to gob files to allow schema evolution across batches.
 func (s *FileSplitter) WriteBatchRows(ctx context.Context, batch *pipeline.Batch) error {
 	if s.closed {
 		return ErrWriterClosed
@@ -91,21 +91,21 @@ func (s *FileSplitter) WriteBatchRows(ctx context.Context, batch *pipeline.Batch
 
 	// Check if we need to split files BEFORE processing this batch
 	projectedRows := s.currentRows + int64(actualRowCount)
-	if s.cborFile != nil && projectedRows > s.config.RecordsPerFile {
+	if s.gobFile != nil && projectedRows > s.config.RecordsPerFile {
 		// Finish current file first
 		if err := s.finishCurrentFile(); err != nil {
 			return fmt.Errorf("finish current file before split: %w", err)
 		}
 	}
 
-	// Start a new CBOR buffer file if we don't have one
-	if s.cborFile == nil {
-		if err := s.startNewCBORFile(); err != nil {
-			return fmt.Errorf("start new CBOR file: %w", err)
+	// Start a new gob buffer file if we don't have one
+	if s.gobFile == nil {
+		if err := s.startNewGobFile(); err != nil {
+			return fmt.Errorf("start new gob file: %w", err)
 		}
 	}
 
-	// Process and buffer all rows to CBOR
+	// Process and buffer all rows to gob
 	for i := 0; i < batch.Len(); i++ {
 		row := batch.Get(i)
 		if row == nil {
@@ -125,9 +125,9 @@ func (s *FileSplitter) WriteBatchRows(ctx context.Context, batch *pipeline.Batch
 			return fmt.Errorf("schema validation failed: %w", err)
 		}
 
-		// Encode and write row to CBOR buffer
-		if err := s.cborEncoder.Encode(stringRow); err != nil {
-			return fmt.Errorf("encode row to CBOR: %w", err)
+		// Encode and write row to gob buffer
+		if err := s.gobEncoder.Encode(stringRow); err != nil {
+			return fmt.Errorf("encode row to gob: %w", err)
 		}
 
 		// Update stats and tracking
@@ -145,13 +145,13 @@ func (s *FileSplitter) WriteBatchRows(ctx context.Context, batch *pipeline.Batch
 	return nil
 }
 
-// startNewCBORFile creates a new CBOR buffer file for row accumulation.
+// startNewGobFile creates a new gob buffer file for row accumulation.
 // The schema will be built dynamically as rows are added.
-func (s *FileSplitter) startNewCBORFile() error {
-	// Create the CBOR buffer file
-	file, err := os.CreateTemp(s.config.TmpDir, "buffer-*.cbor")
+func (s *FileSplitter) startNewGobFile() error {
+	// Create the gob buffer file
+	file, err := os.CreateTemp(s.config.TmpDir, "buffer-*.gob")
 	if err != nil {
-		return fmt.Errorf("create CBOR temp file: %w", err)
+		return fmt.Errorf("create gob temp file: %w", err)
 	}
 
 	// Initialize a new schema builder for this file
@@ -163,9 +163,9 @@ func (s *FileSplitter) startNewCBORFile() error {
 		stats = s.config.StatsProvider.NewAccumulator()
 	}
 
-	// Create CBOR encoder for writing rows
-	s.cborFile = file
-	s.cborEncoder = s.cborConfig.NewEncoder(file)
+	// Create gob encoder for writing rows
+	s.gobFile = file
+	s.gobEncoder = s.gobConfig.NewEncoder(file)
 	s.currentStats = stats
 	s.currentRows = 0
 	// currentGroup will be set when first row is written
@@ -173,9 +173,9 @@ func (s *FileSplitter) startNewCBORFile() error {
 	return nil
 }
 
-// streamCBORToParquet streams all buffered CBOR data to a new parquet file.
+// streamGobToParquet streams all buffered gob data to a new parquet file.
 // This creates the final parquet file with the evolved schema.
-func (s *FileSplitter) streamCBORToParquet() (string, error) {
+func (s *FileSplitter) streamGobToParquet() (string, error) {
 	// Build the final schema from all accumulated rows
 	nodes, err := s.currentSchema.Build()
 	if err != nil {
@@ -202,50 +202,39 @@ func (s *FileSplitter) streamCBORToParquet() (string, error) {
 
 	parquetWriter := parquet.NewGenericWriter[map[string]any](parquetFile, writerConfig)
 
-	// Close the CBOR encoder and reopen file for reading
-	if s.cborEncoder != nil {
-		// Note: We don't close s.cborFile here as we need it for reading
-		s.cborEncoder = nil
+	// Close the gob encoder and reopen file for reading
+	if s.gobEncoder != nil {
+		// Note: We don't close s.gobFile here as we need it for reading
+		s.gobEncoder = nil
 	}
 
-	// Reopen CBOR file for reading
-	if err := s.cborFile.Close(); err != nil {
-		return "", fmt.Errorf("close CBOR file for writing: %w", err)
+	// Reopen gob file for reading
+	if err := s.gobFile.Close(); err != nil {
+		return "", fmt.Errorf("close gob file for writing: %w", err)
 	}
 
-	cborFile, err := os.Open(s.cborFile.Name())
+	gobFile, err := os.Open(s.gobFile.Name())
 	if err != nil {
-		return "", fmt.Errorf("reopen CBOR file for reading: %w", err)
+		return "", fmt.Errorf("reopen gob file for reading: %w", err)
 	}
-	defer cborFile.Close()
+	defer gobFile.Close()
 
-	// Create CBOR decoder to read back the buffered rows
-	cborDecoder := s.cborConfig.NewDecoder(cborFile)
+	// Create gob decoder to read back the buffered rows
+	gobDecoder := s.gobConfig.NewDecoder(gobFile)
 
-	// Stream all rows from CBOR to parquet
-	// Reuse decode map but copy data before passing to parquet writer
-	row := make(map[string]any)
+	// Stream all rows from gob to parquet
 	for {
-		// Clear the map for reuse
-		for k := range row {
-			delete(row, k)
-		}
+		var row map[string]any
 
-		if err := cborDecoder.Decode(&row); err != nil {
+		if err := gobDecoder.Decode(&row); err != nil {
 			if err == io.EOF {
 				break // End of file reached
 			}
-			return "", fmt.Errorf("decode CBOR row: %w", err)
+			return "", fmt.Errorf("decode gob row: %w", err)
 		}
 
-		// Create a copy for the parquet writer to avoid reference issues
-		rowCopy := make(map[string]any, len(row))
-		for k, v := range row {
-			rowCopy[k] = v
-		}
-
-		// Write the copied row to parquet
-		if _, err := parquetWriter.Write([]map[string]any{rowCopy}); err != nil {
+		// Write the row to parquet
+		if _, err := parquetWriter.Write([]map[string]any{row}); err != nil {
 			return "", fmt.Errorf("write row to parquet: %w", err)
 		}
 	}
@@ -258,23 +247,23 @@ func (s *FileSplitter) streamCBORToParquet() (string, error) {
 	return parquetFile.Name(), nil
 }
 
-// finishCurrentFile streams buffered CBOR data to parquet and adds to results.
+// finishCurrentFile streams buffered gob data to parquet and adds to results.
 func (s *FileSplitter) finishCurrentFile() error {
-	if s.cborFile == nil {
+	if s.gobFile == nil {
 		return nil // No file to finish
 	}
 
 	// Only create parquet if we have rows
 	if s.currentRows == 0 {
-		s.cleanupCurrentCBORFile()
+		s.cleanupCurrentGobFile()
 		return nil
 	}
 
-	// Stream CBOR data to final parquet file
-	parquetFileName, err := s.streamCBORToParquet()
+	// Stream gob data to final parquet file
+	parquetFileName, err := s.streamGobToParquet()
 	if err != nil {
-		s.cleanupCurrentCBORFile()
-		return fmt.Errorf("stream CBOR to parquet: %w", err)
+		s.cleanupCurrentGobFile()
+		return fmt.Errorf("stream gob to parquet: %w", err)
 	}
 
 	// Get file size
@@ -298,22 +287,22 @@ func (s *FileSplitter) finishCurrentFile() error {
 		Metadata:    metadata,
 	})
 
-	// Clean up CBOR file and reset state
-	s.cleanupCurrentCBORFile()
+	// Clean up gob file and reset state
+	s.cleanupCurrentGobFile()
 
 	return nil
 }
 
-// cleanupCurrentCBORFile removes the CBOR buffer file and resets state.
-func (s *FileSplitter) cleanupCurrentCBORFile() {
-	if s.cborFile != nil {
-		cborFileName := s.cborFile.Name()
-		s.cborFile.Close()
-		os.Remove(cborFileName)
-		s.cborFile = nil
+// cleanupCurrentGobFile removes the gob buffer file and resets state.
+func (s *FileSplitter) cleanupCurrentGobFile() {
+	if s.gobFile != nil {
+		gobFileName := s.gobFile.Name()
+		s.gobFile.Close()
+		os.Remove(gobFileName)
+		s.gobFile = nil
 	}
 
-	s.cborEncoder = nil
+	s.gobEncoder = nil
 	s.currentStats = nil
 	s.currentRows = 0
 	s.currentSchema = nil
@@ -338,8 +327,8 @@ func (s *FileSplitter) Close(ctx context.Context) ([]Result, error) {
 func (s *FileSplitter) Abort() {
 	s.closed = true
 
-	// Clean up current CBOR buffer file
-	s.cleanupCurrentCBORFile()
+	// Clean up current gob buffer file
+	s.cleanupCurrentGobFile()
 
 	// Clean up any completed result files too
 	for _, result := range s.results {
