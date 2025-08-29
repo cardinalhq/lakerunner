@@ -31,7 +31,6 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
-	"github.com/cardinalhq/lakerunner/internal/metriccompaction"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
@@ -224,7 +223,7 @@ func compactMetricSegments(
 			cursorSegmentID = lastRow.SegmentID
 		}
 
-		if !metriccompaction.ShouldCompactMetrics(inRows) {
+		if !metricsprocessing.ShouldCompactMetrics(inRows) {
 			ll.Debug("No need to compact metrics in this batch", slog.Int("rowCount", len(inRows)))
 
 			if len(inRows) < maxRowsLimit {
