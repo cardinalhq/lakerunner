@@ -52,7 +52,7 @@ func TestDiskSortingReader_BasicSorting(t *testing.T) {
 	}
 
 	mockReader := NewMockReader(testRows)
-	sortingReader, err := NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc(), 1000)
+	sortingReader, err := NewDiskSortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
 	require.NoError(t, err)
 	defer sortingReader.Close()
 
@@ -101,7 +101,7 @@ func TestDiskSortingReader_TypePreservation(t *testing.T) {
 	}
 
 	mockReader := NewMockReader([]Row{testRow})
-	sortingReader, err := NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc(), 1000)
+	sortingReader, err := NewDiskSortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
 	require.NoError(t, err)
 	defer sortingReader.Close()
 
@@ -127,7 +127,7 @@ func TestDiskSortingReader_TypePreservation(t *testing.T) {
 
 func TestDiskSortingReader_EmptyInput(t *testing.T) {
 	mockReader := NewMockReader([]Row{})
-	sortingReader, err := NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc(), 1000)
+	sortingReader, err := NewDiskSortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
 	require.NoError(t, err)
 	defer sortingReader.Close()
 
@@ -153,7 +153,7 @@ func TestDiskSortingReader_MissingFields(t *testing.T) {
 	}
 
 	mockReader := NewMockReader(testRows)
-	sortingReader, err := NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc(), 1000)
+	sortingReader, err := NewDiskSortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
 	require.NoError(t, err)
 	defer sortingReader.Close()
 
@@ -176,7 +176,7 @@ func TestDiskSortingReader_CleanupOnError(t *testing.T) {
 		readError: fmt.Errorf("simulated read error"),
 	}
 
-	sortingReader, err := NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc(), 1000)
+	sortingReader, err := NewDiskSortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
 	require.NoError(t, err)
 
 	tempFileName := sortingReader.tempFile.Name()
@@ -298,7 +298,7 @@ func TestDiskSortingReader_CBORIdentity(t *testing.T) {
 			}
 
 			mockReader := NewMockReader([]Row{testRow})
-			sortingReader, err := NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc(), 1000)
+			sortingReader, err := NewDiskSortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
 			require.NoError(t, err)
 			defer sortingReader.Close()
 
@@ -354,7 +354,7 @@ func TestDiskSortingReader_ArbitraryRowCount(t *testing.T) {
 	}
 
 	mockReader := NewMockReader(testRows)
-	sortingReader, err := NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc(), batchSize)
+	sortingReader, err := NewDiskSortingReader(mockReader, &MetricSortKeyProvider{}, batchSize)
 	require.NoError(t, err)
 	defer sortingReader.Close()
 
@@ -435,7 +435,7 @@ func TestDiskSortingReader_CBOREdgeCases(t *testing.T) {
 			}
 
 			mockReader := NewMockReader([]Row{testRow})
-			sortingReader, err := NewDiskSortingReader(mockReader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc(), 1000)
+			sortingReader, err := NewDiskSortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
 			require.NoError(t, err)
 			defer sortingReader.Close()
 
@@ -498,7 +498,7 @@ func TestWriteAndIndexAllRowsDoesNotLeakBatches(t *testing.T) {
 	initialStats := pipeline.GlobalBatchPoolStats()
 
 	reader := &manyBatchReader{remaining: batchCount}
-	dsr, err := NewDiskSortingReader(reader, MetricNameTidTimestampSortKeyFunc(), MetricNameTidTimestampSortFunc(), 10)
+	dsr, err := NewDiskSortingReader(reader, &MetricSortKeyProvider{}, 10)
 	require.NoError(t, err)
 	defer dsr.Close()
 

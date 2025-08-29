@@ -106,8 +106,8 @@ func CreateReaderStack(
 		sourceSortedWithCompatibleKey := row.SortVersion == lrdb.CurrentMetricSortVersion
 
 		if !sourceSortedWithCompatibleKey {
-			sortKeyFunc, sortFunc := GetCurrentMetricSortFunctions()
-			sortingReader, err := filereader.NewDiskSortingReader(reader, sortKeyFunc, sortFunc, 1000)
+			keyProvider := GetCurrentMetricSortKeyProvider()
+			sortingReader, err := filereader.NewDiskSortingReader(reader, keyProvider, 1000)
 			if err != nil {
 				reader.Close()
 				file.Close()

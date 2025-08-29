@@ -27,7 +27,7 @@ import (
 // RowIndex represents a lightweight pointer to a CBOR-encoded row in the temp file.
 // It stores only the extracted sort key plus file location info.
 type RowIndex struct {
-	SortKey    any // Extracted sort key for sorting
+	SortKey    SortKey // Extracted sort key for sorting
 	FileOffset int64
 	ByteLength int32
 }
@@ -35,10 +35,6 @@ type RowIndex struct {
 // DiskSortingReader reads all rows from an underlying reader, CBOR-encodes them to a temp file,
 // sorts by index using a custom sort function, then returns them in sorted order.
 // This provides memory-efficient sorting for large datasets that don't fit in RAM.
-//
-// SortKeyFunc extracts sort keys from rows. Return the key that will be passed to your SortFunc.
-// The sort key should contain only the data needed for comparison to minimize memory usage.
-type SortKeyFunc func(row Row) any
 
 // Memory Impact: LOW-MODERATE - Only stores extracted sort keys in memory plus file offsets.
 //
@@ -50,8 +46,7 @@ type SortKeyFunc func(row Row) any
 //	if the sort function is not stable, the result will not be stable
 type DiskSortingReader struct {
 	reader      Reader
-	sortKeyFunc SortKeyFunc
-	sortFunc    func(a, b any) int // Sort function works on extracted keys, not full rows
+	keyProvider SortKeyProvider // Provider to create sort keys
 	tempFile    *os.File
 	cborConfig  *cbor.Config
 	closed      bool
@@ -70,17 +65,13 @@ type DiskSortingReader struct {
 // cleaned up when the reader is closed. CBOR encoding provides compact storage and
 // fast serialization for the temporary data.
 //
-// The sortKeyFunc extracts sort keys from rows to minimize memory usage during sorting.
-// The sortFunc compares the extracted keys (not full rows) and should return -1, 0, or 1.
-func NewDiskSortingReader(reader Reader, sortKeyFunc SortKeyFunc, sortFunc func(a, b any) int, batchSize int) (*DiskSortingReader, error) {
+// The keyProvider creates sort keys from rows to minimize memory usage during sorting.
+func NewDiskSortingReader(reader Reader, keyProvider SortKeyProvider, batchSize int) (*DiskSortingReader, error) {
 	if reader == nil {
 		return nil, fmt.Errorf("reader cannot be nil")
 	}
-	if sortKeyFunc == nil {
-		return nil, fmt.Errorf("sortKeyFunc cannot be nil")
-	}
-	if sortFunc == nil {
-		return nil, fmt.Errorf("sortFunc cannot be nil")
+	if keyProvider == nil {
+		return nil, fmt.Errorf("keyProvider cannot be nil")
 	}
 
 	if batchSize <= 0 {
@@ -103,8 +94,7 @@ func NewDiskSortingReader(reader Reader, sortKeyFunc SortKeyFunc, sortFunc func(
 
 	return &DiskSortingReader{
 		reader:      reader,
-		sortKeyFunc: sortKeyFunc,
-		sortFunc:    sortFunc,
+		keyProvider: keyProvider,
 		tempFile:    tempFile,
 		cborConfig:  cborConfig,
 		batchSize:   batchSize,
@@ -143,10 +133,16 @@ func (r *DiskSortingReader) writeAndIndexAllRows() error {
 		pipeline.ReturnBatch(batch)
 	}
 
-	// Sort indices using the provided sort function
+	// Sort indices using the SortKey Compare method
 	slices.SortFunc(r.indices, func(a, b RowIndex) int {
-		return r.sortFunc(a.SortKey, b.SortKey)
+		return a.SortKey.Compare(b.SortKey)
 	})
+
+	// After sorting is complete, release all sort keys back to their pools
+	for i := range r.indices {
+		r.indices[i].SortKey.Release()
+		r.indices[i].SortKey = nil // Prevent double-release
+	}
 
 	r.sorted = true
 	return nil
@@ -181,8 +177,8 @@ func (r *DiskSortingReader) writeAndIndexRow(row Row) error {
 		return fmt.Errorf("encoded row too large: %d bytes", byteLength)
 	}
 
-	// Extract sort key from row using the provided function
-	sortKey := r.sortKeyFunc(row)
+	// Extract sort key from row using the provider
+	sortKey := r.keyProvider.MakeKey(row)
 
 	// Add index entry with extracted sort key only
 	r.indices = append(r.indices, RowIndex{
@@ -269,6 +265,13 @@ func (r *DiskSortingReader) Close() error {
 		fileName := r.tempFile.Name()
 		r.tempFile.Close()
 		fileErr = os.Remove(fileName)
+	}
+
+	// Release any remaining sort keys back to their pools
+	for i := range r.indices {
+		if r.indices[i].SortKey != nil {
+			r.indices[i].SortKey.Release()
+		}
 	}
 
 	// Release indices

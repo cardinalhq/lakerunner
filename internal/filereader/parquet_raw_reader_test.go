@@ -512,9 +512,8 @@ func TestDiskSortingReader_WithParquetCompactTestFiles(t *testing.T) {
 		"tbl_299476526607368996.parquet": 227,
 	}
 
-	// Use the standard metric sorting functions
-	sortKeyFunc := MetricNameTidTimestampSortKeyFunc()
-	sortFunc := MetricNameTidTimestampSortFunc()
+	// Use the standard metric sorting provider
+	keyProvider := &MetricSortKeyProvider{}
 
 	for filename, expectedCount := range expectedCounts {
 		t.Run(filename, func(t *testing.T) {
@@ -534,7 +533,7 @@ func TestDiskSortingReader_WithParquetCompactTestFiles(t *testing.T) {
 			defer parquetReader.Close()
 
 			// Wrap with DiskSortingReader
-			diskSortingReader, err := NewDiskSortingReader(parquetReader, sortKeyFunc, sortFunc, 1000)
+			diskSortingReader, err := NewDiskSortingReader(parquetReader, keyProvider, 1000)
 			require.NoError(t, err, "Failed to create DiskSortingReader for file: %s", filename)
 			defer diskSortingReader.Close()
 

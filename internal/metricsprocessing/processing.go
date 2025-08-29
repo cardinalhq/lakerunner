@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -80,29 +79,35 @@ func (t *MetricTranslator) TranslateRow(row *filereader.Row) error {
 	return nil
 }
 
-// GetCurrentMetricSortFunctions returns the sort key function and sort comparison function
+// GetCurrentMetricSortKeyProvider returns the provider for creating sort keys
 // for the current metric sort version. This is the single source of truth for metric sorting.
-func GetCurrentMetricSortFunctions() (filereader.SortKeyFunc, func(a, b any) int) {
-	// These functions correspond to lrdb.CurrentMetricSortVersion (SortVersionNameTidTimestamp)
-	return filereader.MetricNameTidTimestampSortKeyFunc(), filereader.MetricNameTidTimestampSortFunc()
+func GetCurrentMetricSortKeyProvider() filereader.SortKeyProvider {
+	// This provider corresponds to lrdb.CurrentMetricSortVersion (SortVersionNameTidTimestamp)
+	return &filereader.MetricSortKeyProvider{}
 }
 
 // MetricsOrderedSelector returns a SelectFunc for MergesortReader that orders by [metric name, TID].
 // This ensures the same ordering used by the parquet writer during ingestion and compaction.
 func MetricsOrderedSelector() filereader.SelectFunc {
+	keyProvider := GetCurrentMetricSortKeyProvider()
+
 	return func(rows []filereader.Row) int {
 		if len(rows) == 0 {
 			return -1
 		}
 
 		minIdx := 0
-		minKey := GetMetricSortKey(pipeline.ToStringMap(rows[0]))
+		minKey := keyProvider.MakeKey(rows[0])
+		defer minKey.Release()
 
 		for i := 1; i < len(rows); i++ {
-			key := GetMetricSortKey(pipeline.ToStringMap(rows[i]))
-			if strings.Compare(key, minKey) < 0 {
+			key := keyProvider.MakeKey(rows[i])
+			if key.Compare(minKey) < 0 {
+				minKey.Release()
 				minIdx = i
 				minKey = key
+			} else {
+				key.Release()
 			}
 		}
 

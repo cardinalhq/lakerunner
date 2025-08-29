@@ -54,7 +54,7 @@ func TestMemorySortingReader_SortsByKey(t *testing.T) {
 	}
 
 	mockReader := NewMockReader(inputRows)
-	sortingReader, err := NewMemorySortingReader(mockReader, MetricNameTidTimestampSort(), 1000)
+	sortingReader, err := NewMemorySortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
 	require.NoError(t, err)
 	defer sortingReader.Close()
 
@@ -96,7 +96,7 @@ func TestMemorySortingReader_SortsByKey(t *testing.T) {
 
 func TestMemorySortingReader_EmptyInput(t *testing.T) {
 	mockReader := NewMockReader([]Row{})
-	sortingReader, err := NewMemorySortingReader(mockReader, MetricNameTidTimestampSort(), 1000)
+	sortingReader, err := NewMemorySortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
 	require.NoError(t, err)
 	defer sortingReader.Close()
 
@@ -129,7 +129,7 @@ func TestMemorySortingReader_MissingFields(t *testing.T) {
 	}
 
 	mockReader := NewMockReader(inputRows)
-	sortingReader, err := NewMemorySortingReader(mockReader, MetricNameTidTimestampSort(), 1000)
+	sortingReader, err := NewMemorySortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
 	require.NoError(t, err)
 	defer sortingReader.Close()
 
@@ -169,6 +169,35 @@ func TestMemorySortingReader_MissingFields(t *testing.T) {
 	assert.True(t, hasRowWithoutTID, "Should have a row without TID")
 }
 
+// reverseTimestampSortKeyProvider provides reversed timestamp sorting for testing
+type reverseTimestampSortKeyProvider struct{}
+
+func (p *reverseTimestampSortKeyProvider) MakeKey(row Row) SortKey {
+	return &reverseTimestampSortKey{
+		timestamp: row[wkk.RowKeyCTimestamp].(int64),
+	}
+}
+
+type reverseTimestampSortKey struct {
+	timestamp int64
+}
+
+func (k *reverseTimestampSortKey) Compare(other SortKey) int {
+	o := other.(*reverseTimestampSortKey)
+	// Reverse order: larger timestamps come first
+	if k.timestamp > o.timestamp {
+		return -1
+	}
+	if k.timestamp < o.timestamp {
+		return 1
+	}
+	return 0
+}
+
+func (k *reverseTimestampSortKey) Release() {
+	// No pooling for test-only key
+}
+
 func TestMemorySortingReader_CustomSortFunction(t *testing.T) {
 	// Test with a custom sort function that sorts by timestamp only (reverse order)
 	inputRows := []Row{
@@ -189,25 +218,8 @@ func TestMemorySortingReader_CustomSortFunction(t *testing.T) {
 		},
 	}
 
-	// Custom sort function: reverse timestamp order (newest first)
-	customSortFunc := func(a, b Row) int {
-		tsA, tsAOk := a[wkk.RowKeyCTimestamp].(int64)
-		tsB, tsBOk := b[wkk.RowKeyCTimestamp].(int64)
-		if !tsAOk || !tsBOk {
-			return 0
-		}
-		// Reverse order: newer timestamps come first
-		if tsA > tsB {
-			return -1
-		}
-		if tsA < tsB {
-			return 1
-		}
-		return 0
-	}
-
 	mockReader := NewMockReader(inputRows)
-	sortingReader, err := NewMemorySortingReader(mockReader, customSortFunc, 1000)
+	sortingReader, err := NewMemorySortingReader(mockReader, &reverseTimestampSortKeyProvider{}, 1000)
 	require.NoError(t, err)
 	defer sortingReader.Close()
 
@@ -251,7 +263,7 @@ func TestMemorySortingReader_TimestampOnlySort(t *testing.T) {
 	}
 
 	mockReader := NewMockReader(inputRows)
-	sortingReader, err := NewMemorySortingReader(mockReader, TimestampSort(), 1000)
+	sortingReader, err := NewMemorySortingReader(mockReader, &TimestampSortKeyProvider{}, 1000)
 	require.NoError(t, err)
 	defer sortingReader.Close()
 
