@@ -25,10 +25,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
-	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/constants"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
@@ -288,105 +286,26 @@ func compactMetricInterval(
 		return fmt.Errorf("invalid time range in work item: %v", inf.TsRange())
 	}
 
-	var readers []filereader.Reader
-	var files []*os.File
-	var downloadedFiles []string
-
-	for _, row := range rows {
-		// Check for context cancellation before processing each segment
-		if ctx.Err() != nil {
-			ll.Info("Context cancelled during segment download - safe interruption point",
-				slog.Int64("segmentID", row.SegmentID),
-				slog.Any("error", ctx.Err()))
-			return NewWorkerInterrupted("context cancelled during segment download")
-		}
-
-		dateint, hour := helpers.MSToDateintHour(st.Time.UTC().UnixMilli())
-		objectID := helpers.MakeDBObjectID(inf.OrganizationID(), profile.CollectorName, dateint, hour, row.SegmentID, "metrics")
-
-		fn, _, is404, err := s3helper.DownloadS3Object(ctx, tmpdir, s3client, profile.Bucket, objectID)
-		if err != nil {
-			ll.Error("Failed to download S3 object", slog.String("objectID", objectID), slog.Any("error", err))
-			return err
-		}
-		if is404 {
-			ll.Info("S3 object not found, skipping", slog.String("bucket", profile.Bucket), slog.String("objectID", objectID))
-			continue
-		}
-
-		file, err := os.Open(fn)
-		if err != nil {
-			ll.Error("Failed to open parquet file", slog.String("file", fn), slog.Any("error", err))
-			return fmt.Errorf("opening parquet file %s: %w", fn, err)
-		}
-
-		stat, err := file.Stat()
-		if err != nil {
-			file.Close()
-			ll.Error("Failed to stat parquet file", slog.String("file", fn), slog.Any("error", err))
-			return fmt.Errorf("statting parquet file %s: %w", fn, err)
-		}
-
-		reader, err := filereader.NewParquetRawReader(file, stat.Size(), 1000)
-		if err != nil {
-			file.Close()
-			ll.Error("Failed to create parquet reader", slog.String("file", fn), slog.Any("error", err))
-			return fmt.Errorf("creating parquet reader for %s: %w", fn, err)
-		}
-
-		// Check if file is already sorted to skip expensive disk-based sorting
-		var finalReader filereader.Reader = reader
-		sourceSortedWithCompatibleKey := row.SortVersion == lrdb.CurrentMetricSortVersion
-
-		if sourceSortedWithCompatibleKey {
-			// File is already sorted with current sort version - skip sorting for better performance
-		} else {
-			// Wrap with disk-based sorting reader to ensure data is sorted with current sort version
-			// This is required by the aggregating reader downstream
-			sortKeyFunc, sortFunc := metricsprocessing.GetCurrentMetricSortFunctions()
-			sortingReader, err := filereader.NewDiskSortingReader(reader, sortKeyFunc, sortFunc, 1000)
-			if err != nil {
-				reader.Close()
-				file.Close()
-				ll.Error("Failed to create disk sorting reader", slog.String("file", fn), slog.Any("error", err))
-				return fmt.Errorf("creating disk sorting reader for %s: %w", fn, err)
-			}
-			finalReader = sortingReader
-		}
-
-		// Record file format and input sorted status metrics after reader stack is complete
-		fileFormat := getFileFormat(fn)
-		// input_sorted=true means the source was sorted with compatible key and we could use it directly
-		inputSorted := sourceSortedWithCompatibleKey
-
-		attrs := append(commonAttributes.ToSlice(),
-			attribute.String("format", fileFormat),
-			attribute.Bool("input_sorted", inputSorted),
-		)
-		fileSortedCounter.Add(ctx, 1, metric.WithAttributes(attrs...))
-
-		readers = append(readers, finalReader)
-		files = append(files, file)
-		downloadedFiles = append(downloadedFiles, fn)
+	config := metricsprocessing.ReaderStackConfig{
+		FileSortedCounter: fileSortedCounter,
+		CommonAttributes:  commonAttributes,
 	}
+
+	readerStack, err := metricsprocessing.CreateReaderStack(
+		ctx, ll, tmpdir, s3client, inf.OrganizationID(), profile, st.Time.UTC().UnixMilli(), rows, config)
+	if err != nil {
+		return err
+	}
+
+	readers := readerStack.Readers
+	downloadedFiles := readerStack.DownloadedFiles
 
 	if len(readers) == 0 {
 		ll.Debug("No files to compact, skipping work item")
 		return nil
 	}
 
-	defer func() {
-		for _, reader := range readers {
-			if err := reader.Close(); err != nil {
-				ll.Error("Failed to close reader", slog.Any("error", err))
-			}
-		}
-		for _, file := range files {
-			if err := file.Close(); err != nil {
-				ll.Error("Failed to close file", slog.String("file", file.Name()), slog.Any("error", err))
-			}
-		}
-	}()
+	defer metricsprocessing.CloseReaderStack(ll, readerStack)
 
 	var finalReader filereader.Reader
 	if len(readers) == 1 {
