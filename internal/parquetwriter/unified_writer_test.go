@@ -39,7 +39,6 @@ func TestUnifiedWriter_Basic(t *testing.T) {
 	tmpdir := t.TempDir()
 
 	config := WriterConfig{
-		BaseName:       "test",
 		TmpDir:         tmpdir,
 		TargetFileSize: 1000, // Small size for testing
 		RecordsPerFile: 20,   // Fixed limit for predictable tests
@@ -100,7 +99,6 @@ func TestUnifiedWriter_WriteBatch(t *testing.T) {
 	tmpdir := t.TempDir()
 
 	config := WriterConfig{
-		BaseName:       "batch-test",
 		TmpDir:         tmpdir,
 		TargetFileSize: 1000, // Small size for testing
 		RecordsPerFile: 20,   // Fixed limit for predictable tests

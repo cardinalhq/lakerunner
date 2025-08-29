@@ -16,9 +16,6 @@ package parquetwriter
 
 // WriterConfig contains all configuration options for creating a ParquetWriter.
 type WriterConfig struct {
-	// BaseName is used as the base name for output files and schema metadata
-	BaseName string
-
 	// TmpDir is the directory where temporary and output files are created
 	TmpDir string
 
@@ -41,9 +38,6 @@ type WriterConfig struct {
 
 // Validate checks that the configuration is valid and returns an error if not.
 func (c *WriterConfig) Validate() error {
-	if c.BaseName == "" {
-		return &ConfigError{Field: "BaseName", Message: "cannot be empty"}
-	}
 	if c.TmpDir == "" {
 		return &ConfigError{Field: "TmpDir", Message: "cannot be empty"}
 	}
