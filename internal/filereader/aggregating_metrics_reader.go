@@ -19,6 +19,7 @@ import (
 	"io"
 	"log/slog"
 	"maps"
+	"math"
 
 	"github.com/DataDog/sketches-go/ddsketch"
 
@@ -135,9 +136,13 @@ func isSketchEmpty(row Row) bool {
 }
 
 // getSingletonValue extracts the singleton value from rollup_sum field.
+// Filters out NaN values since sketches cannot handle them.
 func getSingletonValue(row Row) (float64, bool) {
 	value, ok := row[wkk.RowKeyRollupSum].(float64)
-	return value, ok
+	if !ok || math.IsNaN(value) {
+		return 0, false
+	}
+	return value, true
 }
 
 // getSketchBytes converts sketch data from various parquet formats back to []byte.

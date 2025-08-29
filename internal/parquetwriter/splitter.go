@@ -177,7 +177,10 @@ func (s *FileSplitter) startNewCBORFile() error {
 // This creates the final parquet file with the evolved schema.
 func (s *FileSplitter) streamCBORToParquet() (string, error) {
 	// Build the final schema from all accumulated rows
-	nodes := s.currentSchema.Build()
+	nodes, err := s.currentSchema.Build()
+	if err != nil {
+		return "", fmt.Errorf("failed to build schema: %w", err)
+	}
 	if len(nodes) == 0 {
 		return "", fmt.Errorf("no columns discovered for schema")
 	}
