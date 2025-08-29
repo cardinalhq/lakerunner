@@ -15,14 +15,16 @@
 package filereader
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"math"
 	"strconv"
 
 	"github.com/parquet-go/parquet-go"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
@@ -47,18 +49,15 @@ func shouldDropRowForInvalidRollupFields(row map[string]any) bool {
 		"rollup_p25", "rollup_p50", "rollup_p75", "rollup_p90", "rollup_p95", "rollup_p99",
 	}
 
-	metricName, _ := row["_cardinalhq.name"].(string)
-	tid, _ := row["_cardinalhq.tid"].(int64)
-
 	for _, fieldName := range rollupFields {
 		if value, exists := row[fieldName]; exists {
 			if floatVal, ok := value.(float64); ok {
 				if math.IsNaN(floatVal) || math.IsInf(floatVal, 0) {
-					slog.Error("Dropping row from parquet with NaN/Inf rollup field - indicates corrupted source data",
-						"field", fieldName,
-						"value", floatVal,
-						"name", metricName,
-						"tid", tid)
+					rowsDroppedCounter.Add(context.Background(), 1, metric.WithAttributes(
+						attribute.String("reader", "ParquetRawReader"),
+						attribute.String("reason", "NaN"),
+						attribute.String("signal", "metrics"),
+					))
 					return true
 				}
 			}

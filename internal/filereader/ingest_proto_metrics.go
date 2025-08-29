@@ -15,14 +15,18 @@
 package filereader
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"maps"
 	"math"
 
 	"github.com/DataDog/sketches-go/ddsketch"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/metricmath"
@@ -132,13 +136,16 @@ func (r *IngestProtoMetricsReader) getMetricRow(row Row) error {
 				datapointCount := r.getDatapointCount(metric)
 
 				if r.datapointIndex < datapointCount {
-					if err := r.buildDatapointRow(row, rm, sm, metric, r.datapointIndex); err != nil {
-						r.datapointIndex++
-						// TODO: Add counter to track dropped datapoints
+					dropped, err := r.buildDatapointRow(row, rm, sm, metric, r.datapointIndex)
+					r.datapointIndex++
+
+					if err != nil {
+						slog.Error("Failed to build datapoint row", "error", err)
 						continue
 					}
-
-					r.datapointIndex++
+					if dropped {
+						continue
+					}
 
 					return nil
 				}
@@ -180,7 +187,8 @@ func (r *IngestProtoMetricsReader) getDatapointCount(metric pmetric.Metric) int 
 }
 
 // buildDatapointRow populates the provided row with data from a single datapoint and its context.
-func (r *IngestProtoMetricsReader) buildDatapointRow(row Row, rm pmetric.ResourceMetrics, sm pmetric.ScopeMetrics, metric pmetric.Metric, datapointIndex int) error {
+// Returns (dropped, error) where dropped indicates if the datapoint was filtered out.
+func (r *IngestProtoMetricsReader) buildDatapointRow(row Row, rm pmetric.ResourceMetrics, sm pmetric.ScopeMetrics, metric pmetric.Metric, datapointIndex int) (bool, error) {
 	// Add resource attributes with prefix
 	rm.Resource().Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
@@ -224,35 +232,40 @@ func (r *IngestProtoMetricsReader) buildDatapointRow(row Row, rm pmetric.Resourc
 	switch metric.Type() {
 	case pmetric.MetricTypeGauge:
 		dp := metric.Gauge().DataPoints().At(datapointIndex)
-		if err := r.addNumberDatapointFields(row, dp); err != nil {
-			return fmt.Errorf("failed to process gauge datapoint: %w", err)
+		if dropped, err := r.addNumberDatapointFields(row, dp); err != nil {
+			return false, fmt.Errorf("failed to process gauge datapoint: %w", err)
+		} else if dropped {
+			return true, nil
 		}
 	case pmetric.MetricTypeSum:
 		dp := metric.Sum().DataPoints().At(datapointIndex)
-		if err := r.addNumberDatapointFields(row, dp); err != nil {
-			return fmt.Errorf("failed to process sum datapoint: %w", err)
+		if dropped, err := r.addNumberDatapointFields(row, dp); err != nil {
+			return false, fmt.Errorf("failed to process sum datapoint: %w", err)
+		} else if dropped {
+			return true, nil
 		}
 	case pmetric.MetricTypeHistogram:
 		dp := metric.Histogram().DataPoints().At(datapointIndex)
 		if err := r.addHistogramDatapointFields(row, dp); err != nil {
-			return fmt.Errorf("failed to process histogram datapoint: %w", err)
+			return false, fmt.Errorf("failed to process histogram datapoint: %w", err)
 		}
 	case pmetric.MetricTypeExponentialHistogram:
 		dp := metric.ExponentialHistogram().DataPoints().At(datapointIndex)
 		if err := r.addExponentialHistogramDatapointFields(row, dp); err != nil {
-			return fmt.Errorf("failed to process exponential histogram datapoint: %w", err)
+			return false, fmt.Errorf("failed to process exponential histogram datapoint: %w", err)
 		}
 	case pmetric.MetricTypeSummary:
 		// TODO: Implement proper summary handling with sketches and rollup fields
 		// For now, drop these data points silently to avoid downstream processing issues
-		return fmt.Errorf("summary data points not yet implemented")
+		return false, fmt.Errorf("summary data points not yet implemented")
 	}
 
-	return nil
+	return false, nil
 }
 
 // addNumberDatapointFields adds fields from a NumberDataPoint to the row.
-func (r *IngestProtoMetricsReader) addNumberDatapointFields(ret Row, dp pmetric.NumberDataPoint) error {
+// Returns (dropped, error) where dropped indicates if the datapoint was filtered out.
+func (r *IngestProtoMetricsReader) addNumberDatapointFields(ret Row, dp pmetric.NumberDataPoint) (bool, error) {
 	// Add datapoint attributes
 	dp.Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
@@ -278,7 +291,12 @@ func (r *IngestProtoMetricsReader) addNumberDatapointFields(ret Row, dp pmetric.
 
 	// Check for NaN values and skip this datapoint if found
 	if math.IsNaN(value) || math.IsInf(value, 0) {
-		return fmt.Errorf("dropping datapoint with NaN/Inf value: %f", value)
+		rowsDroppedCounter.Add(context.Background(), 1, metric.WithAttributes(
+			attribute.String("reader", "IngestProtoMetricsReader"),
+			attribute.String("reason", "NaN"),
+			attribute.String("signal", "metrics"),
+		))
+		return true, nil // dropped=true, no error
 	}
 
 	// Use CardinalHQ single-value pattern for gauges/sums
@@ -295,7 +313,7 @@ func (r *IngestProtoMetricsReader) addNumberDatapointFields(ret Row, dp pmetric.
 	ret[wkk.RowKeyRollupP95] = value
 	ret[wkk.RowKeyRollupP99] = value
 
-	return nil
+	return false, nil
 }
 
 func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ret Row, dp pmetric.HistogramDataPoint) error {
