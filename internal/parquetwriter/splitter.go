@@ -223,8 +223,14 @@ func (s *FileSplitter) streamCBORToParquet() (string, error) {
 	cborDecoder := s.cborConfig.NewDecoder(cborFile)
 
 	// Stream all rows from CBOR to parquet
+	// Reuse the same map to avoid millions of allocations
+	row := make(map[string]any)
 	for {
-		var row map[string]any
+		// Clear the map for reuse - much faster than creating fresh maps
+		for k := range row {
+			delete(row, k)
+		}
+
 		if err := cborDecoder.Decode(&row); err != nil {
 			if err == io.EOF {
 				break // End of file reached
