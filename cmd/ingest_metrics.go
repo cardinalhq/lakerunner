@@ -470,6 +470,9 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 		batch, readErr := finalReader.Next()
 
 		if readErr != nil && readErr != io.EOF {
+			if batch != nil {
+				pipeline.ReturnBatch(batch)
+			}
 			return fmt.Errorf("failed to read from unified pipeline: %w", readErr)
 		}
 
@@ -478,6 +481,7 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 			processed, errored := wm.processBatch(batch)
 			batchRowsProcessed += processed
 			batchRowsErrored += errored
+			pipeline.ReturnBatch(batch)
 		}
 
 		if readErr == io.EOF {

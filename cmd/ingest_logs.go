@@ -406,6 +406,7 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 				batchProcessed, batchErrors := wm.processBatch(batch)
 				processedCount += batchProcessed
 				errorCount += batchErrors
+				pipeline.ReturnBatch(batch)
 
 				if batchErrors > 0 {
 					ll.Warn("Some rows failed to process in batch",
