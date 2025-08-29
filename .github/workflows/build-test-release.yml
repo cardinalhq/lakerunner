@@ -4,6 +4,8 @@ on:
   push:
     branches-ignore:
       - main
+    tags-ignore:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
 
 permissions:
   contents: write
@@ -16,6 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       has-pr: ${{ steps.pr.outputs.has-pr }}
+      has-write-access: ${{ steps.permissions.outputs.has-write-access }}
     steps:
       - uses: actions/checkout@v5
       - name: Check for PR
@@ -29,9 +32,21 @@ jobs:
             echo "has-pr=false" >> $GITHUB_OUTPUT
           fi
 
+      - name: Check write permissions
+        id: permissions
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PERMISSION=$(gh api repos/${{ github.repository }}/collaborators/${{ github.actor }}/permission --jq '.permission')
+          if [[ "$PERMISSION" == "admin" || "$PERMISSION" == "write" ]]; then
+            echo "has-write-access=true" >> $GITHUB_OUTPUT
+          else
+            echo "has-write-access=false" >> $GITHUB_OUTPUT
+          fi
+
   partials:
     needs: check-pr
-    if: needs.check-pr.outputs.has-pr == 'true'
+    if: needs.check-pr.outputs.has-pr == 'true' && needs.check-pr.outputs.has-write-access == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -101,7 +116,7 @@ jobs:
 
   merge:
     needs: [check-pr, partials]
-    if: needs.check-pr.outputs.has-pr == 'true'
+    if: needs.check-pr.outputs.has-pr == 'true' && needs.check-pr.outputs.has-write-access == 'true'
     runs-on: ubuntu-22.04
     env:
       DOCKER_CLI_EXPERIMENTAL: "enabled"
@@ -191,7 +206,7 @@ jobs:
           **Image Tag:** \`$GORELEASER_CURRENT_TAG\`
           **Full Image:** \`public.ecr.aws/cardinalhq.io/lakerunner:$GORELEASER_CURRENT_TAG\`
           **Commit:** \`$sha_short\`
-          
+
           **Status:** Success"
 
       - name: Comment on PR with build failure
@@ -207,13 +222,12 @@ jobs:
                 gh api repos/${{ github.repository }}/issues/comments/$comment_id -X DELETE
               fi
             done
-            
+
             # Add failure comment
             gh pr comment $PR_NUMBER --body "**Build Failed**
 
             **Commit:** \`$sha_short\`
             **Branch:** \`$GITHUB_REF_NAME\`
-            
+
             Please check the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details."
           fi
-
