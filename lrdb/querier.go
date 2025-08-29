@@ -27,6 +27,8 @@ type Querier interface {
 	ClaimInqueueWork(ctx context.Context, arg ClaimInqueueWorkParams) (Inqueue, error)
 	// Greedy pack up to size cap and row cap
 	ClaimInqueueWorkBatch(ctx context.Context, arg ClaimInqueueWorkBatchParams) ([]ClaimInqueueWorkBatchRow, error)
+	// Greedy pack up to record cap and row cap
+	ClaimMetricCompactionWorkBatch(ctx context.Context, arg ClaimMetricCompactionWorkBatchParams) ([]ClaimMetricCompactionWorkBatchRow, error)
 	CleanupInqueueWork(ctx context.Context, cutoffTime *time.Time) ([]Inqueue, error)
 	CompactLogSegments(ctx context.Context, arg CompactLogSegmentsParams) error
 	CompactTraceSegments(ctx context.Context, arg CompactTraceSegmentsParams) error
@@ -66,7 +68,9 @@ type Querier interface {
 	ObjectCleanupFail(ctx context.Context, id uuid.UUID) error
 	ObjectCleanupGet(ctx context.Context, maxrows int32) ([]ObjectCleanupGetRow, error)
 	PutInqueueWork(ctx context.Context, arg PutInqueueWorkParams) error
+	PutMetricCompactionWork(ctx context.Context, arg PutMetricCompactionWorkParams) error
 	ReleaseInqueueWork(ctx context.Context, arg ReleaseInqueueWorkParams) error
+	ReleaseMetricCompactionWork(ctx context.Context, arg ReleaseMetricCompactionWorkParams) error
 	SignalLockCleanup(ctx context.Context) (int32, error)
 	TouchInqueueWork(ctx context.Context, arg TouchInqueueWorkParams) error
 	// Returns an estimate of the number of trace segments, average bytes, average records,
