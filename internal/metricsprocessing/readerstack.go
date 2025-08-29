@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/google/uuid"
@@ -72,7 +73,21 @@ func CreateReaderStack(
 		dateint, hour := helpers.MSToDateintHour(startTimeMs)
 		objectID := helpers.MakeDBObjectID(orgID, profile.CollectorName, dateint, hour, row.SegmentID, "metrics")
 
-		fn, _, is404, err := s3helper.DownloadS3Object(ctx, tmpdir, s3client, profile.Bucket, objectID)
+		// Check if save files mode is enabled to customize file naming
+		var fn string
+		var is404 bool
+		var err error
+
+		if os.Getenv("LAKERUNNER_COMPACT_METRICS_SAVEFILES") != "" {
+			// In save files mode, download with S3 object name
+			objectName := filepath.Base(objectID)
+			if objectName == "." || objectName == "/" {
+				objectName = strings.ReplaceAll(objectID, "/", "_")
+			}
+			fn, _, is404, err = downloadS3ObjectWithName(ctx, tmpdir, s3client, profile.Bucket, objectID, objectName)
+		} else {
+			fn, _, is404, err = s3helper.DownloadS3Object(ctx, tmpdir, s3client, profile.Bucket, objectID)
+		}
 		if err != nil {
 			ll.Error("Failed to download S3 object", slog.String("objectID", objectID), slog.Any("error", err))
 			return nil, err
@@ -190,4 +205,27 @@ func getFileFormat(filename string) string {
 	default:
 		return "unknown"
 	}
+}
+
+func downloadS3ObjectWithName(
+	ctx context.Context,
+	dir string,
+	s3client *awsclient.S3Client,
+	bucketID, objectID, fileName string,
+) (tmpfile string, size int64, notFound bool, err error) {
+	// First download to a temporary file
+	tmpFile, size, notFound, err := s3helper.DownloadS3Object(ctx, dir, s3client, bucketID, objectID)
+	if err != nil || notFound {
+		return tmpFile, size, notFound, err
+	}
+
+	// Move the temporary file to the desired name
+	destPath := filepath.Join(dir, fileName)
+	if err := os.Rename(tmpFile, destPath); err != nil {
+		// Clean up the temporary file on error
+		os.Remove(tmpFile)
+		return "", 0, false, fmt.Errorf("failed to rename downloaded file to %s: %w", destPath, err)
+	}
+
+	return destPath, size, false, nil
 }

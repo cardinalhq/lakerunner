@@ -17,7 +17,11 @@ package metricsprocessing
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -134,65 +138,119 @@ func UploadCompactedMetrics(
 			slog.String("bucket", params.Bucket),
 			slog.Int64("newSegmentID", segmentID))
 
-		err := s3helper.UploadS3Object(ctx, s3client, params.Bucket, newObjectID, file.FileName)
-		if err != nil {
-			fileLogger.Error("Atomic operation failed during S3 upload - no changes made",
-				slog.Any("error", err),
-				slog.String("objectID", newObjectID))
-			return fmt.Errorf("uploading new S3 object: %w", err)
-		}
-
-		fileLogger.Debug("S3 upload successful, updating database index - CRITICAL SECTION",
-			slog.String("uploadedObject", newObjectID))
-
-		// Create params for this single file
-		singleParams := lrdb.ReplaceMetricSegsParams{
-			OrganizationID: replaceParams.OrganizationID,
-			Dateint:        replaceParams.Dateint,
-			FrequencyMs:    replaceParams.FrequencyMs,
-			InstanceNum:    replaceParams.InstanceNum,
-			IngestDateint:  replaceParams.IngestDateint,
-			Published:      replaceParams.Published,
-			Rolledup:       replaceParams.Rolledup,
-			CreatedBy:      replaceParams.CreatedBy,
-			SlotID:         replaceParams.SlotID,
-			OldRecords:     replaceParams.OldRecords,
-			NewRecords: []lrdb.ReplaceMetricSegsNew{
-				{
-					TidPartition: 0,
-					SegmentID:    segmentID,
-					StartTs:      startTs,
-					EndTs:        endTs,
-					RecordCount:  file.RecordCount,
-					FileSize:     file.FileSize,
-				},
-			},
-			Fingerprints: fingerprints,
-			SortVersion:  lrdb.CurrentMetricSortVersion, // Compacted files use current sort version
-		}
-
-		if err := mdb.ReplaceMetricSegs(ctx, singleParams); err != nil {
-			fileLogger.Error("Database update failed after S3 upload - file orphaned in S3",
-				slog.Any("error", err),
-				slog.String("orphanedObject", newObjectID),
-				slog.Int64("orphanedSegmentID", segmentID),
-				slog.String("bucket", params.Bucket))
-
-			// Best effort cleanup - try to delete the uploaded file
-			if cleanupErr := s3helper.DeleteS3Object(ctx, s3client, params.Bucket, newObjectID); cleanupErr != nil {
-				fileLogger.Error("Failed to cleanup orphaned S3 object - manual cleanup required",
-					slog.Any("error", cleanupErr),
-					slog.String("objectID", newObjectID),
-					slog.String("bucket", params.Bucket))
+		// Check if save files mode is enabled
+		if os.Getenv("LAKERUNNER_COMPACT_METRICS_SAVEFILES") != "" {
+			// Save file to outputs/ directory instead of uploading to S3
+			// Extract the object name (last part after /)
+			objectName := filepath.Base(newObjectID)
+			if objectName == "." || objectName == "/" {
+				objectName = strings.ReplaceAll(newObjectID, "/", "_")
 			}
-			return fmt.Errorf("replacing metric segments: %w", err)
+
+			// Find outputs directory - tmpdir should be inside inputs dir
+			// We need to navigate to the parent work directory and then to outputs
+			workDir := "/tmp"
+			if strings.Contains(file.FileName, "/tmp/work-") {
+				parts := strings.Split(file.FileName, "/")
+				for i, part := range parts {
+					if strings.HasPrefix(part, "work-") && i > 0 {
+						workDir = filepath.Join("/", strings.Join(parts[:i+1], "/"))
+						break
+					}
+				}
+			}
+			outputsDir := filepath.Join(workDir, "outputs")
+			destPath := filepath.Join(outputsDir, objectName)
+
+			fileLogger.Info("Save files mode: copying file to outputs directory",
+				slog.String("source", file.FileName),
+				slog.String("destination", destPath),
+				slog.String("objectID", newObjectID))
+
+			// Copy the file to outputs directory
+			src, err := os.Open(file.FileName)
+			if err != nil {
+				return fmt.Errorf("failed to open source file for copy: %w", err)
+			}
+			defer src.Close()
+
+			dest, err := os.Create(destPath)
+			if err != nil {
+				return fmt.Errorf("failed to create destination file: %w", err)
+			}
+			defer dest.Close()
+
+			if _, err := io.Copy(dest, src); err != nil {
+				return fmt.Errorf("failed to copy file to outputs: %w", err)
+			}
+
+			fileLogger.Debug("File successfully saved to outputs directory")
+		} else {
+			err := s3helper.UploadS3Object(ctx, s3client, params.Bucket, newObjectID, file.FileName)
+			if err != nil {
+				fileLogger.Error("Atomic operation failed during S3 upload - no changes made",
+					slog.Any("error", err),
+					slog.String("objectID", newObjectID))
+				return fmt.Errorf("uploading new S3 object: %w", err)
+			}
 		}
 
-		fileLogger.Debug("ATOMIC OPERATION COMMITTED SUCCESSFULLY - database updated, segments swapped",
-			slog.Int64("newSegmentID", segmentID),
-			slog.Int64("newRecordCount", file.RecordCount),
-			slog.Int64("newFileSize", file.FileSize),
-			slog.String("newObjectID", newObjectID))
+		// Skip database updates in save files mode
+		if os.Getenv("LAKERUNNER_COMPACT_METRICS_SAVEFILES") == "" {
+			fileLogger.Debug("S3 upload successful, updating database index - CRITICAL SECTION",
+				slog.String("uploadedObject", newObjectID))
+
+			// Create params for this single file
+			singleParams := lrdb.ReplaceMetricSegsParams{
+				OrganizationID: replaceParams.OrganizationID,
+				Dateint:        replaceParams.Dateint,
+				FrequencyMs:    replaceParams.FrequencyMs,
+				InstanceNum:    replaceParams.InstanceNum,
+				IngestDateint:  replaceParams.IngestDateint,
+				Published:      replaceParams.Published,
+				Rolledup:       replaceParams.Rolledup,
+				CreatedBy:      replaceParams.CreatedBy,
+				SlotID:         replaceParams.SlotID,
+				OldRecords:     replaceParams.OldRecords,
+				NewRecords: []lrdb.ReplaceMetricSegsNew{
+					{
+						TidPartition: 0,
+						SegmentID:    segmentID,
+						StartTs:      startTs,
+						EndTs:        endTs,
+						RecordCount:  file.RecordCount,
+						FileSize:     file.FileSize,
+					},
+				},
+				Fingerprints: fingerprints,
+				SortVersion:  lrdb.CurrentMetricSortVersion, // Compacted files use current sort version
+			}
+
+			if err := mdb.ReplaceMetricSegs(ctx, singleParams); err != nil {
+				fileLogger.Error("Database update failed after S3 upload - file orphaned in S3",
+					slog.Any("error", err),
+					slog.String("orphanedObject", newObjectID),
+					slog.Int64("orphanedSegmentID", segmentID),
+					slog.String("bucket", params.Bucket))
+
+				// Best effort cleanup - try to delete the uploaded file
+				if cleanupErr := s3helper.DeleteS3Object(ctx, s3client, params.Bucket, newObjectID); cleanupErr != nil {
+					fileLogger.Error("Failed to cleanup orphaned S3 object - manual cleanup required",
+						slog.Any("error", cleanupErr),
+						slog.String("objectID", newObjectID),
+						slog.String("bucket", params.Bucket))
+				}
+				return fmt.Errorf("replacing metric segments: %w", err)
+			}
+
+			fileLogger.Debug("ATOMIC OPERATION COMMITTED SUCCESSFULLY - database updated, segments swapped",
+				slog.Int64("newSegmentID", segmentID),
+				slog.Int64("newRecordCount", file.RecordCount),
+				slog.Int64("newFileSize", file.FileSize),
+				slog.String("newObjectID", newObjectID))
+		} else {
+			fileLogger.Debug("Save files mode enabled - skipping database updates")
+		}
 	}
 
 	return nil

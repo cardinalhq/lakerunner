@@ -58,7 +58,12 @@ func getParquetCatSubCmd() *cobra.Command {
 				return fmt.Errorf("failed to get limit flag: %w", err)
 			}
 
-			return runParquetCat(filename, limit)
+			keepByteSlices, err := c.Flags().GetBool("keep-byte-slices")
+			if err != nil {
+				return fmt.Errorf("failed to get keep-byte-slices flag: %w", err)
+			}
+
+			return runParquetCat(filename, limit, keepByteSlices)
 		},
 	}
 
@@ -68,6 +73,7 @@ func getParquetCatSubCmd() *cobra.Command {
 	}
 
 	cmd.Flags().Int("limit", 0, "Maximum number of rows to output (0 for unlimited)")
+	cmd.Flags().Bool("keep-byte-slices", false, "Keep literal byte slice values instead of converting to '[size]byte'")
 
 	return cmd
 }
@@ -118,7 +124,7 @@ func getParquetSchemaRawSubCmd() *cobra.Command {
 	return cmd
 }
 
-func runParquetCat(filename string, limit int) error {
+func runParquetCat(filename string, limit int, keepByteSlices bool) error {
 	file, err := os.Open(filename)
 	if err != nil {
 		return fmt.Errorf("failed to open file %s: %w", filename, err)
@@ -169,7 +175,13 @@ func runParquetCat(filename string, limit int) error {
 		}
 
 		for i := 0; i < n; i++ {
-			jsonBytes, err := json.Marshal(rows[i])
+			row := rows[i]
+			// Convert sketch field from string to []byte if needed
+			row = convertSketchField(row)
+			if !keepByteSlices {
+				row = convertByteSlices(row)
+			}
+			jsonBytes, err := json.Marshal(row)
 			if err != nil {
 				return fmt.Errorf("error marshaling row to JSON: %w", err)
 			}
@@ -189,6 +201,25 @@ func runParquetCat(filename string, limit int) error {
 	return nil
 }
 
+func convertSketchField(row map[string]any) map[string]any {
+	if sketch, ok := row["sketch"].(string); ok && sketch != "" {
+		row["sketch"] = []byte(sketch)
+	}
+	return row
+}
+
+func convertByteSlices(row map[string]any) map[string]any {
+	converted := make(map[string]any)
+	for key, value := range row {
+		if byteSlice, ok := value.([]byte); ok {
+			converted[key] = fmt.Sprintf("[%d]byte", len(byteSlice))
+		} else {
+			converted[key] = value
+		}
+	}
+	return converted
+}
+
 func runParquetSchemaFromMetadata(filename string) error {
 	fh, err := filecrunch.LoadSchemaForFile(filename)
 	if err != nil {
@@ -203,8 +234,9 @@ func runParquetSchemaFromMetadata(filename string) error {
 }
 
 type ColumnSchema struct {
-	Name string `json:"name"`
-	Type string `json:"type"`
+	Name    string  `json:"name"`
+	Type    string  `json:"type"`
+	RawType *string `json:"rawType,omitempty"`
 }
 
 type ParquetSchema struct {
@@ -232,6 +264,7 @@ func runParquetSchemaFromData(filename string) error {
 	defer reader.Close()
 
 	seenColumns := make(map[string]string)
+	rawTypes := make(map[string]string) // Track original types before conversion
 	allColumns := make(map[string]bool)
 	batchSize := 1000
 
@@ -252,11 +285,25 @@ func runParquetSchemaFromData(filename string) error {
 
 		for i := 0; i < n; i++ {
 			row := rows[i]
+
 			for columnName, value := range row {
 				allColumns[columnName] = true
 
 				if _, exists := seenColumns[columnName]; !exists && value != nil {
-					seenColumns[columnName] = getGoTypeName(value)
+					// Track original type before any conversion
+					originalType := getGoTypeName(value)
+
+					// Special case: sketch field conversion from string to []byte
+					if columnName == "sketch" {
+						if _, ok := value.(string); ok {
+							rawTypes[columnName] = originalType
+							seenColumns[columnName] = "[]byte"
+						} else {
+							seenColumns[columnName] = originalType
+						}
+					} else {
+						seenColumns[columnName] = originalType
+					}
 				}
 			}
 		}
@@ -278,10 +325,18 @@ func runParquetSchemaFromData(filename string) error {
 		if typeName == "" {
 			typeName = "null"
 		}
-		columns = append(columns, ColumnSchema{
+
+		columnSchema := ColumnSchema{
 			Name: columnName,
 			Type: typeName,
-		})
+		}
+
+		// Add rawType if we converted the field
+		if rawType, hasRawType := rawTypes[columnName]; hasRawType {
+			columnSchema.RawType = &rawType
+		}
+
+		columns = append(columns, columnSchema)
 	}
 
 	schema := ParquetSchema{

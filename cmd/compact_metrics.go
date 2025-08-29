@@ -21,6 +21,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -110,6 +111,29 @@ func compactRollupItem(
 	rpfEstimate int64,
 	args any,
 ) error {
+	// Check if save files mode is enabled
+	if os.Getenv("LAKERUNNER_COMPACT_METRICS_SAVEFILES") != "" {
+		// Create temporary directory structure with work ID
+		workID := fmt.Sprintf("work-%d", inf.ID())
+		saveDir := filepath.Join("/tmp", workID)
+		inputsDir := filepath.Join(saveDir, "inputs")
+		outputsDir := filepath.Join(saveDir, "outputs")
+
+		if err := os.MkdirAll(inputsDir, 0755); err != nil {
+			return fmt.Errorf("failed to create inputs directory: %w", err)
+		}
+		if err := os.MkdirAll(outputsDir, 0755); err != nil {
+			return fmt.Errorf("failed to create outputs directory: %w", err)
+		}
+
+		ll.Info("Save files mode enabled",
+			slog.String("saveDir", saveDir),
+			slog.String("inputsDir", inputsDir),
+			slog.String("outputsDir", outputsDir))
+
+		// Override tmpdir to use our inputs directory for downloads
+		tmpdir = inputsDir
+	}
 	if !helpers.IsWantedFrequency(inf.FrequencyMs()) {
 		ll.Debug("Skipping compaction for unwanted frequency", slog.Int("frequencyMs", int(inf.FrequencyMs())))
 		return nil
@@ -134,7 +158,15 @@ func compactRollupItem(
 		slog.Int("frequencyMs", int(inf.FrequencyMs())),
 		slog.Int64("workQueueID", inf.ID()))
 
-	return compactMetricSegments(ctx, ll, mdb, tmpdir, inf, profile, s3client, rpfEstimate)
+	err = compactMetricSegments(ctx, ll, mdb, tmpdir, inf, profile, s3client, rpfEstimate)
+
+	// If save files mode is enabled, always return work interrupted error
+	if os.Getenv("LAKERUNNER_COMPACT_METRICS_SAVEFILES") != "" {
+		ll.Info("Save files mode enabled - returning work interrupted to stop processing")
+		return NewWorkerInterrupted("save files mode enabled")
+	}
+
+	return err
 }
 
 func compactMetricSegments(
