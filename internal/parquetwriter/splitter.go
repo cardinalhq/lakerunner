@@ -223,10 +223,10 @@ func (s *FileSplitter) streamCBORToParquet() (string, error) {
 	cborDecoder := s.cborConfig.NewDecoder(cborFile)
 
 	// Stream all rows from CBOR to parquet
-	// Reuse the same map to avoid millions of allocations
+	// Reuse decode map but copy data before passing to parquet writer
 	row := make(map[string]any)
 	for {
-		// Clear the map for reuse - much faster than creating fresh maps
+		// Clear the map for reuse
 		for k := range row {
 			delete(row, k)
 		}
@@ -238,8 +238,14 @@ func (s *FileSplitter) streamCBORToParquet() (string, error) {
 			return "", fmt.Errorf("decode CBOR row: %w", err)
 		}
 
-		// Write the row to parquet
-		if _, err := parquetWriter.Write([]map[string]any{row}); err != nil {
+		// Create a copy for the parquet writer to avoid reference issues
+		rowCopy := make(map[string]any, len(row))
+		for k, v := range row {
+			rowCopy[k] = v
+		}
+
+		// Write the copied row to parquet
+		if _, err := parquetWriter.Write([]map[string]any{rowCopy}); err != nil {
 			return "", fmt.Errorf("write row to parquet: %w", err)
 		}
 	}

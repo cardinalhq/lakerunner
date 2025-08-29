@@ -224,10 +224,14 @@ func (r *IngestProtoMetricsReader) buildDatapointRow(row Row, rm pmetric.Resourc
 	switch metric.Type() {
 	case pmetric.MetricTypeGauge:
 		dp := metric.Gauge().DataPoints().At(datapointIndex)
-		r.addNumberDatapointFields(row, dp)
+		if err := r.addNumberDatapointFields(row, dp); err != nil {
+			return fmt.Errorf("failed to process gauge datapoint: %w", err)
+		}
 	case pmetric.MetricTypeSum:
 		dp := metric.Sum().DataPoints().At(datapointIndex)
-		r.addNumberDatapointFields(row, dp)
+		if err := r.addNumberDatapointFields(row, dp); err != nil {
+			return fmt.Errorf("failed to process sum datapoint: %w", err)
+		}
 	case pmetric.MetricTypeHistogram:
 		dp := metric.Histogram().DataPoints().At(datapointIndex)
 		if err := r.addHistogramDatapointFields(row, dp); err != nil {
@@ -248,7 +252,7 @@ func (r *IngestProtoMetricsReader) buildDatapointRow(row Row, rm pmetric.Resourc
 }
 
 // addNumberDatapointFields adds fields from a NumberDataPoint to the row.
-func (r *IngestProtoMetricsReader) addNumberDatapointFields(ret Row, dp pmetric.NumberDataPoint) {
+func (r *IngestProtoMetricsReader) addNumberDatapointFields(ret Row, dp pmetric.NumberDataPoint) error {
 	// Add datapoint attributes
 	dp.Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
@@ -272,6 +276,11 @@ func (r *IngestProtoMetricsReader) addNumberDatapointFields(ret Row, dp pmetric.
 		value = dp.DoubleValue()
 	}
 
+	// Check for NaN values and skip this datapoint if found
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return fmt.Errorf("dropping datapoint with NaN/Inf value: %f", value)
+	}
+
 	// Use CardinalHQ single-value pattern for gauges/sums
 	ret[wkk.RowKeySketch] = []byte{} // Empty sketch for single values
 	ret[wkk.RowKeyRollupAvg] = value // For single value, all stats are the same
@@ -285,6 +294,8 @@ func (r *IngestProtoMetricsReader) addNumberDatapointFields(ret Row, dp pmetric.
 	ret[wkk.RowKeyRollupP90] = value
 	ret[wkk.RowKeyRollupP95] = value
 	ret[wkk.RowKeyRollupP99] = value
+
+	return nil
 }
 
 func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ret Row, dp pmetric.HistogramDataPoint) error {

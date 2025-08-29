@@ -18,6 +18,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
+	"math"
 	"strconv"
 
 	"github.com/parquet-go/parquet-go"
@@ -34,6 +36,36 @@ type ParquetRawReader struct {
 	exhausted bool
 	rowCount  int64
 	batchSize int
+}
+
+// shouldDropRowForInvalidRollupFields checks if a row has NaN or invalid rollup fields that should be dropped.
+// This filters corrupted data at the parquet source level to isolate data quality issues.
+func shouldDropRowForInvalidRollupFields(row map[string]any) bool {
+	// List of rollup fields to validate
+	rollupFields := []string{
+		"rollup_sum", "rollup_count", "rollup_avg", "rollup_min", "rollup_max",
+		"rollup_p25", "rollup_p50", "rollup_p75", "rollup_p90", "rollup_p95", "rollup_p99",
+	}
+
+	metricName, _ := row["_cardinalhq.name"].(string)
+	tid, _ := row["_cardinalhq.tid"].(int64)
+
+	for _, fieldName := range rollupFields {
+		if value, exists := row[fieldName]; exists {
+			if floatVal, ok := value.(float64); ok {
+				if math.IsNaN(floatVal) || math.IsInf(floatVal, 0) {
+					slog.Error("Dropping row from parquet with NaN/Inf rollup field - indicates corrupted source data",
+						"field", fieldName,
+						"value", floatVal,
+						"name", metricName,
+						"tid", tid)
+					return true
+				}
+			}
+		}
+	}
+
+	return false
 }
 
 // NewParquetRawReader creates a new ParquetRawReader for the given io.ReaderAt.
@@ -113,6 +145,11 @@ func (r *ParquetRawReader) Next() (*Batch, error) {
 				// Drop row if _cardinalhq.tid is neither string nor int64
 				continue
 			}
+		}
+
+		// Filter out rows with NaN or invalid rollup fields - this indicates corrupted data from parquet source
+		if shouldDropRowForInvalidRollupFields(row) {
+			continue
 		}
 
 		// Use AddRow and copy the data

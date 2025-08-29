@@ -19,7 +19,6 @@ import (
 	"io"
 	"log/slog"
 	"maps"
-	"math"
 
 	"github.com/DataDog/sketches-go/ddsketch"
 
@@ -39,13 +38,11 @@ type AggregatingMetricsReader struct {
 	batchSize         int
 
 	// Current aggregation state
-	currentKey      SortKey
-	currentSketch   *ddsketch.DDSketch
-	singletonValues []float64
-	aggregatedRow   Row
-	pendingBatch    *Batch // Unprocessed rows from underlying reader
-	pendingIndex    int    // Index of next row to process in pendingBatch
-	readerEOF       bool
+	currentKey   SortKey
+	groupedRows  map[string][]Row // metric_type -> rows for that type
+	pendingBatch *Batch           // Unprocessed rows from underlying reader
+	pendingIndex int              // Index of next row to process in pendingBatch
+	readerEOF    bool
 
 	// Sort key provider for grouping
 	keyProvider SortKeyProvider
@@ -75,15 +72,16 @@ func NewAggregatingMetricsReader(reader Reader, aggregationPeriodMs int64, batch
 		reader:                reader,
 		aggregationPeriod:     aggregationPeriodMs,
 		batchSize:             batchSize,
-		singletonValues:       make([]float64, 0, 16),
+		groupedRows:           make(map[string][]Row),
 		keyProvider:           &MetricSortKeyProvider{},
 		loggedHistogramErrors: make(map[string]bool),
 	}, nil
 }
 
-// makeAggregationKey creates a key for aggregation from [metric_name, tid, truncated_timestamp].
+// makeAggregationKey creates a key for aggregation from [metric_name, tid, timestamp].
+// Assumes timestamp has already been truncated to aggregation period.
 func (ar *AggregatingMetricsReader) makeAggregationKey(row Row) (SortKey, error) {
-	// Validate required fields first
+	// Validate required fields
 	_, nameOk := row[wkk.RowKeyCName].(string)
 	if !nameOk {
 		return nil, fmt.Errorf("missing or invalid _cardinalhq.name field")
@@ -94,21 +92,13 @@ func (ar *AggregatingMetricsReader) makeAggregationKey(row Row) (SortKey, error)
 		return nil, fmt.Errorf("missing or invalid _cardinalhq.tid field")
 	}
 
-	timestamp, tsOk := row[wkk.RowKeyCTimestamp].(int64)
+	_, tsOk := row[wkk.RowKeyCTimestamp].(int64)
 	if !tsOk {
 		return nil, fmt.Errorf("missing or invalid _cardinalhq.timestamp field")
 	}
 
-	// Create a copy of the row with truncated timestamp
-	truncatedTimestamp := (timestamp / ar.aggregationPeriod) * ar.aggregationPeriod
-	rowCopy := make(Row)
-	for k, v := range row {
-		rowCopy[k] = v
-	}
-	rowCopy[wkk.RowKeyCTimestamp] = truncatedTimestamp
-
-	// Use the MetricSortKeyProvider to create the key
-	return ar.keyProvider.MakeKey(rowCopy), nil
+	// Use the row directly - timestamp should already be truncated
+	return ar.keyProvider.MakeKey(row), nil
 }
 
 // isSketchEmpty checks if a row has an empty sketch (indicating singleton value).
@@ -136,13 +126,9 @@ func isSketchEmpty(row Row) bool {
 }
 
 // getSingletonValue extracts the singleton value from rollup_sum field.
-// Filters out NaN values since sketches cannot handle them.
 func getSingletonValue(row Row) (float64, bool) {
 	value, ok := row[wkk.RowKeyRollupSum].(float64)
-	if !ok || math.IsNaN(value) {
-		return 0, false
-	}
-	return value, true
+	return value, ok
 }
 
 // getSketchBytes converts sketch data from various parquet formats back to []byte.
@@ -214,112 +200,204 @@ func updateRowFromSketch(row Row, sketch *ddsketch.DDSketch) error {
 	return nil
 }
 
-// aggregateGroup processes all rows for a single aggregation group and returns the aggregated result.
-// Returns nil if all rows in the group were dropped (e.g., invalid histograms).
-func (ar *AggregatingMetricsReader) aggregateGroup() (Row, error) {
-	if ar.aggregatedRow == nil {
-		// All rows in this group were dropped - return nil to indicate no output
+// aggregateGroup processes all rows for a single aggregation group and returns the aggregated results.
+// Returns multiple rows - one per metric type found in the group.
+func (ar *AggregatingMetricsReader) aggregateGroup() ([]Row, error) {
+	if len(ar.groupedRows) == 0 {
+		// No rows in this group - return empty slice
 		ar.resetAggregation()
 		return nil, nil
 	}
 
-	// Handle aggregation based on metric type
-	if isHistogramType(ar.aggregatedRow) {
-		if err := ar.aggregateHistogram(); err != nil {
-			return nil, fmt.Errorf("aggregating histogram: %w", err)
+	var results []Row
+
+	// Process each metric type group separately
+	for metricType, rows := range ar.groupedRows {
+		if len(rows) == 0 {
+			continue
 		}
-	} else {
-		if err := ar.aggregateCounterGauge(); err != nil {
-			return nil, fmt.Errorf("aggregating counter/gauge: %w", err)
+
+		// Aggregate this specific metric type
+		result, err := ar.aggregateMetricTypeGroup(metricType, rows)
+		if err != nil {
+			return nil, fmt.Errorf("aggregating metric type %q: %w", metricType, err)
+		}
+
+		// Only add to results if aggregation produced a valid result
+		if result != nil {
+			results = append(results, result)
 		}
 	}
 
-	// Update timestamp to truncated value
-	if timestamp, ok := ar.aggregatedRow[wkk.RowKeyCTimestamp].(int64); ok {
-		truncatedTimestamp := (timestamp / ar.aggregationPeriod) * ar.aggregationPeriod
-		ar.aggregatedRow[wkk.RowKeyCTimestamp] = truncatedTimestamp
-	}
-
-	result := ar.aggregatedRow
 	ar.resetAggregation()
-	return result, nil
+	return results, nil
 }
 
-// aggregateHistogram handles aggregation for histogram metrics.
+// aggregateMetricTypeGroup aggregates all rows of the same metric type within an aggregation group.
+func (ar *AggregatingMetricsReader) aggregateMetricTypeGroup(metricType string, rows []Row) (Row, error) {
+	if len(rows) == 0 {
+		return nil, nil
+	}
+
+	// Use the first row as the base for the aggregated result
+	aggregatedRow := make(Row)
+	for k, v := range rows[0] {
+		aggregatedRow[k] = v
+	}
+
+	// Separate processing based on metric type
+	if metricType == "histogram" {
+		return ar.aggregateHistogramGroup(aggregatedRow, rows)
+	}
+
+	return ar.aggregateCounterGaugeGroup(aggregatedRow, rows)
+}
+
+// aggregateHistogramGroup handles aggregation for histogram metrics.
 // Histograms must always have sketches and only merge sketches.
-func (ar *AggregatingMetricsReader) aggregateHistogram() error {
+func (ar *AggregatingMetricsReader) aggregateHistogramGroup(baseRow Row, rows []Row) (Row, error) {
+	var currentSketch *ddsketch.DDSketch
+	var singletonValues []float64
+
+	for _, row := range rows {
+		// Handle sketch or singleton
+		if isSketchEmpty(row) {
+			// This is a singleton - collect its value
+			if value, ok := getSingletonValue(row); ok {
+				singletonValues = append(singletonValues, value)
+			} else {
+				slog.Error("Empty sketch without valid rollup_sum", "row", row)
+			}
+		} else {
+			// This row has a sketch - handle sketch merging
+			sketchBytes, err := getSketchBytes(row[wkk.RowKeySketch])
+			if err != nil {
+				return nil, fmt.Errorf("invalid sketch data: %w", err)
+			}
+
+			sketch, err := helpers.DecodeSketch(sketchBytes)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decode sketch: %w", err)
+			}
+
+			if currentSketch == nil {
+				// First sketch for this group
+				currentSketch = sketch
+			} else {
+				// Merge with existing sketch
+				if err := currentSketch.MergeWith(sketch); err != nil {
+					return nil, fmt.Errorf("failed to merge sketch: %w", err)
+				}
+			}
+		}
+	}
+
 	// VALIDATION: Histograms must always have a sketch
-	if ar.currentSketch == nil {
-		// This should never happen since we validate histogram rows have sketches
+	if currentSketch == nil {
 		slog.Error("Histogram without sketch in aggregation - dropping row",
-			"name", ar.aggregatedRow[wkk.RowKeyCName],
-			"tid", ar.aggregatedRow[wkk.RowKeyCTID])
-		ar.resetAggregation()
-		return fmt.Errorf("histogram missing sketch")
+			"name", baseRow[wkk.RowKeyCName],
+			"tid", baseRow[wkk.RowKeyCTID])
+		return nil, fmt.Errorf("histogram missing sketch")
 	}
 
 	// For histograms, we should not have singleton values mixed with sketches
-	if len(ar.singletonValues) > 0 {
+	if len(singletonValues) > 0 {
 		slog.Warn("Histogram has both sketch and singleton values - ignoring singletons",
-			"name", ar.aggregatedRow[wkk.RowKeyCName],
-			"tid", ar.aggregatedRow[wkk.RowKeyCTID],
-			"singletons", ar.singletonValues)
+			"name", baseRow[wkk.RowKeyCName],
+			"tid", baseRow[wkk.RowKeyCTID],
+			"singletons", singletonValues)
 	}
 
 	// Update rollup fields from the sketch
-	if err := updateRowFromSketch(ar.aggregatedRow, ar.currentSketch); err != nil {
-		return fmt.Errorf("updating histogram row from sketch: %w", err)
+	if err := updateRowFromSketch(baseRow, currentSketch); err != nil {
+		return nil, fmt.Errorf("updating histogram row from sketch: %w", err)
 	}
 
-	return nil
+	return baseRow, nil
 }
 
-// aggregateCounterGauge handles aggregation for counter and gauge metrics.
+// aggregateCounterGaugeGroup handles aggregation for counter and gauge metrics.
 // Can handle mixed sketches and singletons.
-func (ar *AggregatingMetricsReader) aggregateCounterGauge() error {
-	if ar.currentSketch != nil {
+func (ar *AggregatingMetricsReader) aggregateCounterGaugeGroup(baseRow Row, rows []Row) (Row, error) {
+	var currentSketch *ddsketch.DDSketch
+	var singletonValues []float64
+
+	for _, row := range rows {
+		// Handle sketch or singleton
+		if isSketchEmpty(row) {
+			// This is a singleton - collect its value
+			if value, ok := getSingletonValue(row); ok {
+				singletonValues = append(singletonValues, value)
+			} else {
+				slog.Error("Empty sketch without valid rollup_sum", "row", row)
+			}
+		} else {
+			// This row has a sketch - handle sketch merging
+			sketchBytes, err := getSketchBytes(row[wkk.RowKeySketch])
+			if err != nil {
+				return nil, fmt.Errorf("invalid sketch data: %w", err)
+			}
+
+			sketch, err := helpers.DecodeSketch(sketchBytes)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decode sketch: %w", err)
+			}
+
+			if currentSketch == nil {
+				// First sketch for this group
+				currentSketch = sketch
+			} else {
+				// Merge with existing sketch
+				if err := currentSketch.MergeWith(sketch); err != nil {
+					return nil, fmt.Errorf("failed to merge sketch: %w", err)
+				}
+			}
+		}
+	}
+
+	if currentSketch != nil {
 		// We have a sketch - add all singleton values to it
-		for _, value := range ar.singletonValues {
-			if err := ar.currentSketch.Add(value); err != nil {
+		for _, value := range singletonValues {
+			if err := currentSketch.Add(value); err != nil {
 				slog.Error("Failed to add singleton value to sketch",
 					"error", err,
 					"value", value,
-					"name", ar.aggregatedRow[wkk.RowKeyCName],
-					"tid", ar.aggregatedRow[wkk.RowKeyCTID])
+					"name", baseRow[wkk.RowKeyCName],
+					"tid", baseRow[wkk.RowKeyCTID])
 				continue
 			}
 		}
 
 		// Update rollup fields from the final sketch
-		if err := updateRowFromSketch(ar.aggregatedRow, ar.currentSketch); err != nil {
-			return fmt.Errorf("updating counter/gauge row from sketch: %w", err)
+		if err := updateRowFromSketch(baseRow, currentSketch); err != nil {
+			return nil, fmt.Errorf("updating counter/gauge row from sketch: %w", err)
 		}
-	} else if len(ar.singletonValues) > 1 {
+	} else if len(singletonValues) > 1 {
 		// Multiple singletons without sketch - create sketch and add all values
 		sketch, err := ddsketch.NewDefaultDDSketch(0.01)
 		if err != nil {
-			return fmt.Errorf("creating sketch for singletons: %w", err)
+			return nil, fmt.Errorf("creating sketch for singletons: %w", err)
 		}
 
-		for _, value := range ar.singletonValues {
+		for _, value := range singletonValues {
 			if err := sketch.Add(value); err != nil {
 				slog.Error("Failed to add singleton value to new sketch",
 					"error", err,
 					"value", value,
-					"name", ar.aggregatedRow[wkk.RowKeyCName],
-					"tid", ar.aggregatedRow[wkk.RowKeyCTID])
+					"name", baseRow[wkk.RowKeyCName],
+					"tid", baseRow[wkk.RowKeyCTID])
 				continue
 			}
 		}
 
 		// Update rollup fields from the sketch
-		if err := updateRowFromSketch(ar.aggregatedRow, sketch); err != nil {
-			return fmt.Errorf("updating counter/gauge row from new sketch: %w", err)
+		if err := updateRowFromSketch(baseRow, sketch); err != nil {
+			return nil, fmt.Errorf("updating counter/gauge row from new sketch: %w", err)
 		}
 	}
 	// Single singleton case: keep existing rollup values as-is
 
-	return nil
+	return baseRow, nil
 }
 
 // resetAggregation clears the current aggregation state.
@@ -328,12 +406,13 @@ func (ar *AggregatingMetricsReader) resetAggregation() {
 		ar.currentKey.Release()
 		ar.currentKey = nil
 	}
-	ar.currentSketch = nil
-	ar.singletonValues = ar.singletonValues[:0] // Reuse slice capacity
-	ar.aggregatedRow = nil
+	// Clear grouped rows map but keep the map allocated
+	for k := range ar.groupedRows {
+		delete(ar.groupedRows, k)
+	}
 }
 
-// addRowToAggregation adds a row to the current aggregation group.
+// addRowToAggregation adds a row to the current aggregation group, organizing by metric_type.
 func (ar *AggregatingMetricsReader) addRowToAggregation(row Row) error {
 	// VALIDATION: Histograms must always have sketches
 	if isHistogramType(row) && isSketchEmpty(row) {
@@ -347,45 +426,17 @@ func (ar *AggregatingMetricsReader) addRowToAggregation(row Row) error {
 		return nil // Skip this row, don't add to aggregation
 	}
 
-	// If this is the first row in the group, use it as the base
-	if ar.aggregatedRow == nil {
-		// Deep copy the row to avoid modifying the original
-		ar.aggregatedRow = make(Row)
-		for k, v := range row {
-			ar.aggregatedRow[k] = v
-		}
+	// Get metric type, default to empty string if missing
+	metricType, _ := row[wkk.RowKeyCMetricType].(string)
+
+	// Deep copy the row to avoid modifying the original
+	rowCopy := make(Row)
+	for k, v := range row {
+		rowCopy[k] = v
 	}
 
-	// Handle sketch or singleton
-	if isSketchEmpty(row) {
-		// This is a singleton - collect its value
-		if value, ok := getSingletonValue(row); ok {
-			ar.singletonValues = append(ar.singletonValues, value)
-		} else {
-			slog.Error("Empty sketch without valid rollup_sum", "row", row)
-		}
-	} else {
-		// This row has a sketch - handle sketch merging
-		sketchBytes, err := getSketchBytes(row[wkk.RowKeySketch])
-		if err != nil {
-			return fmt.Errorf("invalid sketch data: %w", err)
-		}
-
-		sketch, err := helpers.DecodeSketch(sketchBytes)
-		if err != nil {
-			return fmt.Errorf("failed to decode sketch: %w", err)
-		}
-
-		if ar.currentSketch == nil {
-			// First sketch for this group
-			ar.currentSketch = sketch
-		} else {
-			// Merge with existing sketch
-			if err := ar.currentSketch.MergeWith(sketch); err != nil {
-				return fmt.Errorf("failed to merge sketch: %w", err)
-			}
-		}
-	}
+	// Add to the appropriate metric type group
+	ar.groupedRows[metricType] = append(ar.groupedRows[metricType], rowCopy)
 
 	return nil
 }
@@ -402,6 +453,15 @@ func (ar *AggregatingMetricsReader) readNextBatchFromUnderlying() (*Batch, error
 			ar.readerEOF = true
 		}
 		return batch, err
+	}
+
+	// Truncate timestamps in all rows to aggregation period
+	for i := range batch.Len() {
+		row := batch.Get(i)
+		if timestamp, ok := row[wkk.RowKeyCTimestamp].(int64); ok {
+			truncatedTimestamp := (timestamp / ar.aggregationPeriod) * ar.aggregationPeriod
+			row[wkk.RowKeyCTimestamp] = truncatedTimestamp
+		}
 	}
 
 	return batch, nil
@@ -433,13 +493,13 @@ func (ar *AggregatingMetricsReader) processRow(row Row, batch *Batch) error {
 
 	// Key changed - emit current aggregation and start new one
 	if ar.currentKey != nil {
-		result, err := ar.aggregateGroup()
+		results, err := ar.aggregateGroup()
 		if err != nil {
 			return fmt.Errorf("failed to aggregate group: %w", err)
 		}
 
-		// Only emit if we have a result (not all rows were dropped)
-		if result != nil {
+		// Emit each aggregated result (one per metric type)
+		for _, result := range results {
 			batchRow := batch.AddRow()
 			maps.Copy(batchRow, result)
 			ar.rowCount++
@@ -503,12 +563,13 @@ func (ar *AggregatingMetricsReader) Next() (*Batch, error) {
 				if err == io.EOF {
 					// Check if we need to emit final aggregation
 					if ar.currentKey != nil {
-						result, aggErr := ar.aggregateGroup()
+						results, aggErr := ar.aggregateGroup()
 						if aggErr != nil {
 							pipeline.ReturnBatch(batch)
 							return nil, fmt.Errorf("failed to aggregate final group: %w", aggErr)
 						}
-						if result != nil {
+						// Emit each final aggregated result (one per metric type)
+						for _, result := range results {
 							row := batch.AddRow()
 							maps.Copy(row, result)
 							ar.rowCount++
