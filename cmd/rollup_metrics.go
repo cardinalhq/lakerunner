@@ -30,6 +30,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/constants"
+	"github.com/cardinalhq/lakerunner/internal/debugging"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
@@ -70,6 +71,9 @@ func init() {
 			}()
 
 			go diskUsageLoop(ctx)
+
+			// Start pprof server
+			go debugging.RunPprof(ctx)
 
 			loop, err := NewRunqueueLoopContext(ctx, "metrics", "rollup", servicename)
 			if err != nil {

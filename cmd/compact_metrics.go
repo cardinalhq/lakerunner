@@ -28,6 +28,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/constants"
+	"github.com/cardinalhq/lakerunner/internal/debugging"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
@@ -69,6 +70,9 @@ func init() {
 			}()
 
 			go diskUsageLoop(ctx)
+
+			// Start pprof server
+			go debugging.RunPprof(ctx)
 
 			// Start health check server
 			healthConfig := healthcheck.GetConfigFromEnv()
