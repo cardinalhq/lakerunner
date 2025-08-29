@@ -21,6 +21,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"time"
 
@@ -130,9 +131,6 @@ func compactRollupItem(
 			slog.String("saveDir", saveDir),
 			slog.String("inputsDir", inputsDir),
 			slog.String("outputsDir", outputsDir))
-
-		// Override tmpdir to use our inputs directory for downloads
-		tmpdir = inputsDir
 	}
 	if !helpers.IsWantedFrequency(inf.FrequencyMs()) {
 		ll.Debug("Skipping compaction for unwanted frequency", slog.Int("frequencyMs", int(inf.FrequencyMs())))
@@ -310,10 +308,6 @@ func processCompactionMicrobatches(
 	rpfEstimate int64,
 ) error {
 	maxRecordsPerMicrobatch := rpfEstimate * 6
-	if maxRecordsPerMicrobatch <= 0 {
-		maxRecordsPerMicrobatch = 60_000 // Default fallback
-	}
-
 	ll.Debug("Processing compaction in microbatches",
 		slog.Int("totalSegments", len(inRows)),
 		slog.Int64("maxRecordsPerMicrobatch", maxRecordsPerMicrobatch),
@@ -336,6 +330,12 @@ func processCompactionMicrobatches(
 		isLastRow := i == len(inRows)-1
 		shouldProcess := currentRecords >= maxRecordsPerMicrobatch || isLastRow
 
+		savedir := ""
+		if os.Getenv("LAKERUNNER_COMPACT_METRICS_SAVEFILES") != "" {
+			workID := fmt.Sprintf("work-%d", inf.ID())
+			savedir = filepath.Join("/tmp", workID)
+		}
+
 		if shouldProcess {
 			// For compaction, skip microbatches with fewer than 2 files
 			if len(currentMicrobatch) < 2 {
@@ -347,7 +347,7 @@ func processCompactionMicrobatches(
 					slog.Int("fileCount", len(currentMicrobatch)),
 					slog.Int64("recordCount", currentRecords))
 
-				err := compactMetricInterval(ctx, ll, mdb, tmpdir, inf, profile, s3client, currentMicrobatch, rpfEstimate)
+				err := compactMetricInterval(ctx, ll, mdb, tmpdir, inf, profile, s3client, currentMicrobatch, rpfEstimate, savedir)
 				if err != nil {
 					return fmt.Errorf("compacting microbatch: %w", err)
 				}
@@ -372,6 +372,7 @@ func compactMetricInterval(
 	s3client *awsclient.S3Client,
 	rows []lrdb.MetricSeg,
 	rpfEstimate int64,
+	savedir string,
 ) error {
 	st, _, ok := helpers.RangeBounds(inf.TsRange())
 	if !ok {
@@ -385,7 +386,7 @@ func compactMetricInterval(
 	}
 
 	readerStack, err := metricsprocessing.CreateReaderStack(
-		ctx, ll, tmpdir, s3client, inf.OrganizationID(), profile, st.Time.UTC().UnixMilli(), rows, config)
+		ctx, ll, tmpdir, s3client, inf.OrganizationID(), profile, st.Time.UTC().UnixMilli(), rows, config, savedir)
 	if err != nil {
 		// Check if this is due to context cancellation
 		if ctx.Err() != nil {
@@ -556,6 +557,30 @@ func compactMetricInterval(
 		IngestDateint:  metricsprocessing.GetIngestDateint(rows),
 		CollectorName:  profile.CollectorName,
 		Bucket:         profile.Bucket,
+	}
+
+	if savedir != "" {
+		for i, r := range results {
+			outfile := path.Join(savedir, "outputs", fmt.Sprintf("out_%d.parquet", i))
+			ll.Info("Save files mode: output file saved to outputs directory", slog.String("file", outfile))
+			in, err := os.Open(r.FileName)
+			if err != nil {
+				ll.Error("Failed to open output file for saving", slog.String("file", r.FileName), slog.Any("error", err))
+				return fmt.Errorf("opening output file %s for saving: %w", r.FileName, err)
+			}
+			defer in.Close()
+			out, err := os.Create(outfile)
+			if err != nil {
+				ll.Error("Failed to create save file", slog.String("file", outfile), slog.Any("error", err))
+				return fmt.Errorf("creating save file %s: %w", outfile, err)
+			}
+			defer out.Close()
+			_, err = io.Copy(out, in)
+			if err != nil {
+				ll.Error("Failed to copy to save file", slog.String("file", outfile), slog.Any("error", err))
+				return fmt.Errorf("copying to save file %s: %w", outfile, err)
+			}
+		}
 	}
 
 	// Use context without cancellation for critical section to ensure atomic completion

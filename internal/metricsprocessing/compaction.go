@@ -122,7 +122,7 @@ func UploadCompactedMetrics(
 		}
 		// Generate operation ID for tracking this atomic operation
 		opID := idgen.GenerateShortBase32ID()
-		fileLogger := ll.With(slog.String("operationID", opID), slog.String("file", file.FileName))
+		fileLogger := ll.With(slog.String("operationID", opID))
 
 		fileLogger.Debug("Starting atomic metric compaction operation",
 			slog.Int64("recordCount", file.RecordCount),
@@ -140,12 +140,6 @@ func UploadCompactedMetrics(
 
 		// Check if save files mode is enabled
 		if os.Getenv("LAKERUNNER_COMPACT_METRICS_SAVEFILES") != "" {
-			// Save file to outputs/ directory instead of uploading to S3
-			// Extract the object name (last part after /)
-			objectName := filepath.Base(newObjectID)
-			if objectName == "." || objectName == "/" {
-				objectName = strings.ReplaceAll(newObjectID, "/", "_")
-			}
 
 			// Find outputs directory - tmpdir should be inside inputs dir
 			// We need to navigate to the parent work directory and then to outputs
@@ -160,7 +154,7 @@ func UploadCompactedMetrics(
 				}
 			}
 			outputsDir := filepath.Join(workDir, "outputs")
-			destPath := filepath.Join(outputsDir, objectName)
+			destPath := filepath.Join(outputsDir, filepath.Base(newObjectID))
 
 			fileLogger.Info("Save files mode: copying file to outputs directory",
 				slog.String("source", file.FileName),

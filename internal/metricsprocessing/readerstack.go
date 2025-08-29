@@ -17,6 +17,7 @@ package metricsprocessing
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -57,6 +58,7 @@ func CreateReaderStack(
 	startTimeMs int64,
 	rows []lrdb.MetricSeg,
 	config ReaderStackConfig,
+	savepath string,
 ) (*ReaderStackResult, error) {
 	var readers []filereader.Reader
 	var files []*os.File
@@ -73,21 +75,7 @@ func CreateReaderStack(
 		dateint, hour := helpers.MSToDateintHour(startTimeMs)
 		objectID := helpers.MakeDBObjectID(orgID, profile.CollectorName, dateint, hour, row.SegmentID, "metrics")
 
-		// Check if save files mode is enabled to customize file naming
-		var fn string
-		var is404 bool
-		var err error
-
-		if os.Getenv("LAKERUNNER_COMPACT_METRICS_SAVEFILES") != "" {
-			// In save files mode, download with S3 object name
-			objectName := filepath.Base(objectID)
-			if objectName == "." || objectName == "/" {
-				objectName = strings.ReplaceAll(objectID, "/", "_")
-			}
-			fn, _, is404, err = downloadS3ObjectWithName(ctx, tmpdir, s3client, profile.Bucket, objectID, objectName)
-		} else {
-			fn, _, is404, err = s3helper.DownloadS3Object(ctx, tmpdir, s3client, profile.Bucket, objectID)
-		}
+		fn, _, is404, err := s3helper.DownloadS3Object(ctx, tmpdir, s3client, profile.Bucket, objectID)
 		if err != nil {
 			ll.Error("Failed to download S3 object", slog.String("objectID", objectID), slog.Any("error", err))
 			return nil, err
@@ -95,6 +83,29 @@ func CreateReaderStack(
 		if is404 {
 			ll.Info("S3 object not found, skipping", slog.String("bucket", profile.Bucket), slog.String("objectID", objectID))
 			continue
+		}
+
+		if savepath != "" {
+			basename := filepath.Base(objectID)
+			outpath := filepath.Join(savepath, "inputs", basename)
+			out, err := os.Create(outpath)
+			ll.Info("Saving downloaded file to save path", slog.String("file", outpath))
+			if err != nil {
+				ll.Error("Failed to create save file", slog.String("file", outpath), slog.Any("error", err))
+				return nil, fmt.Errorf("creating save file %s: %w", filepath.Join(savepath, basename), err)
+			}
+			defer out.Close()
+			in, err := os.Open(fn)
+			if err != nil {
+				ll.Error("Failed to open temp file for saving", slog.String("file", fn), slog.Any("error", err))
+				return nil, fmt.Errorf("opening temp file %s for saving: %w", fn, err)
+			}
+			defer in.Close()
+			_, err = io.Copy(out, in)
+			if err != nil {
+				ll.Error("Failed to copy to save file", slog.String("file", outpath), slog.Any("error", err))
+				return nil, fmt.Errorf("copying to save file %s: %w", filepath.Join(savepath, basename), err)
+			}
 		}
 
 		file, err := os.Open(fn)
@@ -205,27 +216,4 @@ func getFileFormat(filename string) string {
 	default:
 		return "unknown"
 	}
-}
-
-func downloadS3ObjectWithName(
-	ctx context.Context,
-	dir string,
-	s3client *awsclient.S3Client,
-	bucketID, objectID, fileName string,
-) (tmpfile string, size int64, notFound bool, err error) {
-	// First download to a temporary file
-	tmpFile, size, notFound, err := s3helper.DownloadS3Object(ctx, dir, s3client, bucketID, objectID)
-	if err != nil || notFound {
-		return tmpFile, size, notFound, err
-	}
-
-	// Move the temporary file to the desired name
-	destPath := filepath.Join(dir, fileName)
-	if err := os.Rename(tmpFile, destPath); err != nil {
-		// Clean up the temporary file on error
-		os.Remove(tmpFile)
-		return "", 0, false, fmt.Errorf("failed to rename downloaded file to %s: %w", destPath, err)
-	}
-
-	return destPath, size, false, nil
 }
