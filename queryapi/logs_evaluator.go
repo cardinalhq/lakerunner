@@ -121,6 +121,9 @@ func (q *QuerierService) lookupLogsSegments(
 
 	// Process Label Filters (that are not part of Parsers)
 	for _, lf := range leaf.LabelFilters {
+		if lf.ParserIdx != nil {
+			continue
+		}
 		switch lf.Op {
 		case logql.MatchEq, logql.MatchRe:
 			tq, fps := buildLabelTrigram(lf.Label, lf.Value)
