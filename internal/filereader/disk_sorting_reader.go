@@ -20,11 +20,11 @@ import (
 	"os"
 	"slices"
 
-	"github.com/cardinalhq/lakerunner/internal/gob"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/internal/rowcodec"
 )
 
-// RowIndex represents a lightweight pointer to a gob-encoded row in the temp file.
+// RowIndex represents a lightweight pointer to a binary-encoded row in the temp file.
 // It stores only the extracted sort key plus file location info.
 type RowIndex struct {
 	SortKey    SortKey // Extracted sort key for sorting
@@ -32,7 +32,7 @@ type RowIndex struct {
 	ByteLength int32
 }
 
-// DiskSortingReader reads all rows from an underlying reader, gob-encodes them to a temp file,
+// DiskSortingReader reads all rows from an underlying reader, binary-encodes them to a temp file,
 // sorts by index using a custom sort function, then returns them in sorted order.
 // This provides memory-efficient sorting for large datasets that don't fit in RAM.
 
@@ -40,7 +40,7 @@ type RowIndex struct {
 //
 //	Much more memory-efficient than MemorySortingReader for large datasets.
 //
-// Disk I/O: 2x data size - Each row written once to temp gob file, then read once during output
+// Disk I/O: 2x data size - Each row written once to temp binary file, then read once during output
 // Stability: Records are only guaranteed to be sorted by the sort function;
 //
 //	if the sort function is not stable, the result will not be stable
@@ -48,22 +48,22 @@ type DiskSortingReader struct {
 	reader      Reader
 	keyProvider SortKeyProvider // Provider to create sort keys
 	tempFile    *os.File
-	gobConfig   *gob.Config
+	codec       *rowcodec.Config
 	closed      bool
 	rowCount    int64
 	batchSize   int
 
-	// Lightweight sorted indices pointing to gob data
+	// Lightweight sorted indices pointing to binary data
 	indices      []RowIndex
 	currentIndex int
 	sorted       bool
 }
 
-// NewDiskSortingReader creates a reader that uses disk-based sorting with gob encoding.
+// NewDiskSortingReader creates a reader that uses disk-based sorting with custom binary encoding.
 //
 // Use this for large datasets that may not fit in memory. The temp file is automatically
-// cleaned up when the reader is closed. Gob encoding provides efficient storage and
-// serialization for the temporary data with excellent memory characteristics.
+// cleaned up when the reader is closed. Custom binary encoding provides efficient storage and
+// serialization for the temporary data with no reflection overhead.
 //
 // The keyProvider creates sort keys from rows to minimize memory usage during sorting.
 func NewDiskSortingReader(reader Reader, keyProvider SortKeyProvider, batchSize int) (*DiskSortingReader, error) {
@@ -78,25 +78,25 @@ func NewDiskSortingReader(reader Reader, keyProvider SortKeyProvider, batchSize 
 		batchSize = 1000
 	}
 
-	// Create temp file for gob data
-	tempFile, err := os.CreateTemp("", "lakerunner-sort-*.gob")
+	// Create temp file for binary data
+	tempFile, err := os.CreateTemp("", "lakerunner-sort-*.bin")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp file: %w", err)
 	}
 
-	// Create gob config with optimized settings
-	gobConfig, err := gob.NewConfig()
+	// Create binary codec config
+	codec, err := rowcodec.NewConfig()
 	if err != nil {
 		tempFile.Close()
 		os.Remove(tempFile.Name())
-		return nil, fmt.Errorf("failed to create gob config: %w", err)
+		return nil, fmt.Errorf("failed to create binary codec: %w", err)
 	}
 
 	return &DiskSortingReader{
 		reader:      reader,
 		keyProvider: keyProvider,
 		tempFile:    tempFile,
-		gobConfig:   gobConfig,
+		codec:       codec,
 		batchSize:   batchSize,
 		indices:     make([]RowIndex, 0, 1000), // Start with reasonable capacity
 	}, nil
@@ -148,7 +148,7 @@ func (r *DiskSortingReader) writeAndIndexAllRows() error {
 	return nil
 }
 
-// writeAndIndexRow gob-encodes a row to the temp file and adds an index entry.
+// writeAndIndexRow binary-encodes a row to the temp file and adds an index entry.
 func (r *DiskSortingReader) writeAndIndexRow(row Row) error {
 	// Get current file position
 	offset, err := r.tempFile.Seek(0, io.SeekCurrent)
@@ -156,14 +156,14 @@ func (r *DiskSortingReader) writeAndIndexRow(row Row) error {
 		return fmt.Errorf("failed to get file offset: %w", err)
 	}
 
-	// Gob encode the row (converts RowKeys to strings internally)
+	// Binary encode the row (converts RowKeys to strings internally)
 	startPos := offset
-	rowBytes, err := r.gobConfig.EncodeRow(row)
+	rowBytes, err := r.codec.EncodeRow(row)
 	if err != nil {
-		return fmt.Errorf("failed to gob encode row: %w", err)
+		return fmt.Errorf("failed to binary encode row: %w", err)
 	}
 	if _, err := r.tempFile.Write(rowBytes); err != nil {
-		return fmt.Errorf("failed to write gob data: %w", err)
+		return fmt.Errorf("failed to write binary data: %w", err)
 	}
 
 	// Get end position to calculate length
@@ -219,16 +219,16 @@ func (r *DiskSortingReader) Next() (*Batch, error) {
 			return nil, fmt.Errorf("failed to seek to row offset %d: %w", idx.FileOffset, err)
 		}
 
-		// Read the gob bytes
+		// Read the binary bytes
 		rowBytes := make([]byte, idx.ByteLength)
 		if _, err := r.tempFile.Read(rowBytes); err != nil {
-			return nil, fmt.Errorf("failed to read gob data at offset %d: %w", idx.FileOffset, err)
+			return nil, fmt.Errorf("failed to read binary data at offset %d: %w", idx.FileOffset, err)
 		}
 
-		// Use shared gob package to decode with Row conversion
-		row, err := r.gobConfig.DecodeRow(rowBytes)
+		// Use custom binary codec to decode with Row conversion
+		row, err := r.codec.DecodeRow(rowBytes)
 		if err != nil {
-			return nil, fmt.Errorf("failed to decode gob row at offset %d: %w", idx.FileOffset, err)
+			return nil, fmt.Errorf("failed to decode binary row at offset %d: %w", idx.FileOffset, err)
 		}
 
 		batchRow := batch.AddRow()

@@ -16,17 +16,16 @@ package parquetwriter
 
 import (
 	"context"
-	"encoding/gob"
 	"fmt"
 	"io"
 	"os"
 
 	"github.com/parquet-go/parquet-go"
 
-	gobconfig "github.com/cardinalhq/lakerunner/internal/gob"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/schemabuilder"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/internal/rowcodec"
 )
 
 // FileSplitter manages splitting data into multiple output files based on
@@ -36,10 +35,10 @@ type FileSplitter struct {
 	currentRows  int64
 	currentGroup any
 
-	// Gob buffering for schema evolution
-	gobConfig    *gobconfig.Config
-	gobFile      *os.File
-	gobEncoder   *gob.Encoder
+	// Binary buffering for schema evolution
+	codec        *rowcodec.Config
+	bufferFile   *os.File
+	encoder      *rowcodec.Encoder
 	currentStats StatsAccumulator
 
 	// Dynamic schema management per file
@@ -52,21 +51,21 @@ type FileSplitter struct {
 
 // NewFileSplitter creates a new file splitter with the given configuration.
 func NewFileSplitter(config WriterConfig) *FileSplitter {
-	gobConfig, err := gobconfig.NewConfig()
+	codec, err := rowcodec.NewConfig()
 	if err != nil {
 		// This should never happen with our static configuration
-		panic(fmt.Sprintf("failed to create gob config: %v", err))
+		panic(fmt.Sprintf("failed to create binary codec: %v", err))
 	}
 
 	return &FileSplitter{
-		config:    config,
-		gobConfig: gobConfig,
-		results:   make([]Result, 0),
+		config:  config,
+		codec:   codec,
+		results: make([]Result, 0),
 	}
 }
 
 // WriteBatchRows efficiently writes multiple rows from a pipeline batch.
-// Rows are buffered to gob files to allow schema evolution across batches.
+// Rows are buffered to binary files to allow schema evolution across batches.
 func (s *FileSplitter) WriteBatchRows(ctx context.Context, batch *pipeline.Batch) error {
 	if s.closed {
 		return ErrWriterClosed
@@ -91,21 +90,21 @@ func (s *FileSplitter) WriteBatchRows(ctx context.Context, batch *pipeline.Batch
 
 	// Check if we need to split files BEFORE processing this batch
 	projectedRows := s.currentRows + int64(actualRowCount)
-	if s.gobFile != nil && projectedRows > s.config.RecordsPerFile {
+	if s.bufferFile != nil && projectedRows > s.config.RecordsPerFile {
 		// Finish current file first
 		if err := s.finishCurrentFile(); err != nil {
 			return fmt.Errorf("finish current file before split: %w", err)
 		}
 	}
 
-	// Start a new gob buffer file if we don't have one
-	if s.gobFile == nil {
-		if err := s.startNewGobFile(); err != nil {
-			return fmt.Errorf("start new gob file: %w", err)
+	// Start a new binary buffer file if we don't have one
+	if s.bufferFile == nil {
+		if err := s.startNewBufferFile(); err != nil {
+			return fmt.Errorf("start new buffer file: %w", err)
 		}
 	}
 
-	// Process and buffer all rows to gob
+	// Process and buffer all rows to binary
 	for i := 0; i < batch.Len(); i++ {
 		row := batch.Get(i)
 		if row == nil {
@@ -125,9 +124,9 @@ func (s *FileSplitter) WriteBatchRows(ctx context.Context, batch *pipeline.Batch
 			return fmt.Errorf("schema validation failed: %w", err)
 		}
 
-		// Encode and write row to gob buffer
-		if err := s.gobEncoder.Encode(stringRow); err != nil {
-			return fmt.Errorf("encode row to gob: %w", err)
+		// Encode and write row to binary buffer
+		if err := s.encoder.Encode(stringRow); err != nil {
+			return fmt.Errorf("encode row to binary: %w", err)
 		}
 
 		// Update stats and tracking
@@ -145,13 +144,13 @@ func (s *FileSplitter) WriteBatchRows(ctx context.Context, batch *pipeline.Batch
 	return nil
 }
 
-// startNewGobFile creates a new gob buffer file for row accumulation.
+// startNewBufferFile creates a new binary buffer file for row accumulation.
 // The schema will be built dynamically as rows are added.
-func (s *FileSplitter) startNewGobFile() error {
-	// Create the gob buffer file
-	file, err := os.CreateTemp(s.config.TmpDir, "buffer-*.gob")
+func (s *FileSplitter) startNewBufferFile() error {
+	// Create the binary buffer file
+	file, err := os.CreateTemp(s.config.TmpDir, "buffer-*.bin")
 	if err != nil {
-		return fmt.Errorf("create gob temp file: %w", err)
+		return fmt.Errorf("create binary temp file: %w", err)
 	}
 
 	// Initialize a new schema builder for this file
@@ -163,9 +162,9 @@ func (s *FileSplitter) startNewGobFile() error {
 		stats = s.config.StatsProvider.NewAccumulator()
 	}
 
-	// Create gob encoder for writing rows
-	s.gobFile = file
-	s.gobEncoder = s.gobConfig.NewEncoder(file)
+	// Create binary encoder for writing rows
+	s.bufferFile = file
+	s.encoder = s.codec.NewEncoder(file)
 	s.currentStats = stats
 	s.currentRows = 0
 	// currentGroup will be set when first row is written
@@ -173,9 +172,9 @@ func (s *FileSplitter) startNewGobFile() error {
 	return nil
 }
 
-// streamGobToParquet streams all buffered gob data to a new parquet file.
+// streamBinaryToParquet streams all buffered binary data to a new parquet file.
 // This creates the final parquet file with the evolved schema.
-func (s *FileSplitter) streamGobToParquet() (string, error) {
+func (s *FileSplitter) streamBinaryToParquet() (string, error) {
 	// Build the final schema from all accumulated rows
 	nodes, err := s.currentSchema.Build()
 	if err != nil {
@@ -202,35 +201,52 @@ func (s *FileSplitter) streamGobToParquet() (string, error) {
 
 	parquetWriter := parquet.NewGenericWriter[map[string]any](parquetFile, writerConfig)
 
-	// Close the gob encoder and reopen file for reading
-	if s.gobEncoder != nil {
-		// Note: We don't close s.gobFile here as we need it for reading
-		s.gobEncoder = nil
+	// Close the binary encoder and sync file before reading
+	if s.encoder != nil {
+		s.encoder = nil
 	}
 
-	// Reopen gob file for reading
-	if err := s.gobFile.Close(); err != nil {
-		return "", fmt.Errorf("close gob file for writing: %w", err)
+	// Sync the file to ensure all data is written to disk
+	if err := s.bufferFile.Sync(); err != nil {
+		return "", fmt.Errorf("sync buffer file: %w", err)
 	}
 
-	gobFile, err := os.Open(s.gobFile.Name())
+	// Get file size for debugging
+	stat, err := s.bufferFile.Stat()
 	if err != nil {
-		return "", fmt.Errorf("reopen gob file for reading: %w", err)
+		return "", fmt.Errorf("failed to stat buffer file: %w", err)
 	}
-	defer gobFile.Close()
+	if stat.Size() == 0 {
+		return "", fmt.Errorf("buffer file is empty - no data was written")
+	}
 
-	// Create gob decoder to read back the buffered rows
-	gobDecoder := s.gobConfig.NewDecoder(gobFile)
+	// Close and reopen buffer file for reading
+	bufferFileName := s.bufferFile.Name()
+	if err := s.bufferFile.Close(); err != nil {
+		return "", fmt.Errorf("close buffer file for writing: %w", err)
+	}
 
-	// Stream all rows from gob to parquet
+	bufferFile, err := os.Open(bufferFileName)
+	if err != nil {
+		return "", fmt.Errorf("reopen buffer file for reading: %w", err)
+	}
+	defer bufferFile.Close()
+
+	// Create binary decoder to read back the buffered rows
+	decoder := s.codec.NewDecoder(bufferFile)
+
+	// Stream all rows from binary to parquet
 	for {
-		var row map[string]any
-
-		if err := gobDecoder.Decode(&row); err != nil {
+		row, err := decoder.Decode()
+		if err != nil {
 			if err == io.EOF {
 				break // End of file reached
 			}
-			return "", fmt.Errorf("decode gob row: %w", err)
+			// Handle EOF that comes from trying to read map length when no more data
+			if err.Error() == "read map length: EOF" {
+				break
+			}
+			return "", fmt.Errorf("decode binary row: %w", err)
 		}
 
 		// Write the row to parquet
@@ -247,23 +263,23 @@ func (s *FileSplitter) streamGobToParquet() (string, error) {
 	return parquetFile.Name(), nil
 }
 
-// finishCurrentFile streams buffered gob data to parquet and adds to results.
+// finishCurrentFile streams buffered binary data to parquet and adds to results.
 func (s *FileSplitter) finishCurrentFile() error {
-	if s.gobFile == nil {
+	if s.bufferFile == nil {
 		return nil // No file to finish
 	}
 
 	// Only create parquet if we have rows
 	if s.currentRows == 0 {
-		s.cleanupCurrentGobFile()
+		s.cleanupCurrentBufferFile()
 		return nil
 	}
 
-	// Stream gob data to final parquet file
-	parquetFileName, err := s.streamGobToParquet()
+	// Stream binary data to final parquet file
+	parquetFileName, err := s.streamBinaryToParquet()
 	if err != nil {
-		s.cleanupCurrentGobFile()
-		return fmt.Errorf("stream gob to parquet: %w", err)
+		s.cleanupCurrentBufferFile()
+		return fmt.Errorf("stream binary to parquet: %w", err)
 	}
 
 	// Get file size
@@ -287,22 +303,22 @@ func (s *FileSplitter) finishCurrentFile() error {
 		Metadata:    metadata,
 	})
 
-	// Clean up gob file and reset state
-	s.cleanupCurrentGobFile()
+	// Clean up buffer file and reset state
+	s.cleanupCurrentBufferFile()
 
 	return nil
 }
 
-// cleanupCurrentGobFile removes the gob buffer file and resets state.
-func (s *FileSplitter) cleanupCurrentGobFile() {
-	if s.gobFile != nil {
-		gobFileName := s.gobFile.Name()
-		s.gobFile.Close()
-		os.Remove(gobFileName)
-		s.gobFile = nil
+// cleanupCurrentBufferFile removes the binary buffer file and resets state.
+func (s *FileSplitter) cleanupCurrentBufferFile() {
+	if s.bufferFile != nil {
+		bufferFileName := s.bufferFile.Name()
+		s.bufferFile.Close()
+		os.Remove(bufferFileName)
+		s.bufferFile = nil
 	}
 
-	s.gobEncoder = nil
+	s.encoder = nil
 	s.currentStats = nil
 	s.currentRows = 0
 	s.currentSchema = nil
@@ -327,8 +343,8 @@ func (s *FileSplitter) Close(ctx context.Context) ([]Result, error) {
 func (s *FileSplitter) Abort() {
 	s.closed = true
 
-	// Clean up current gob buffer file
-	s.cleanupCurrentGobFile()
+	// Clean up current binary buffer file
+	s.cleanupCurrentBufferFile()
 
 	// Clean up any completed result files too
 	for _, result := range s.results {

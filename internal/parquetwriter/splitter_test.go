@@ -130,8 +130,8 @@ func TestFileSplitterWriteBatchRows_EmptyBatch(t *testing.T) {
 	}
 
 	// Should not create any files
-	if splitter.gobFile != nil {
-		t.Error("Expected no current gob file for empty batch")
+	if splitter.bufferFile != nil {
+		t.Error("Expected no current buffer file for empty batch")
 	}
 }
 
@@ -152,9 +152,9 @@ func TestFileSplitterWriteBatchRows_SingleBatch(t *testing.T) {
 		t.Fatalf("WriteBatchRows failed: %v", err)
 	}
 
-	// Should have created a gob file
-	if splitter.gobFile == nil {
-		t.Error("Expected current gob file to be created")
+	// Should have created a buffer file
+	if splitter.bufferFile == nil {
+		t.Error("Expected current buffer file to be created")
 	}
 	if splitter.currentRows != 3 {
 		t.Errorf("Expected 3 current rows, got %d", splitter.currentRows)
@@ -369,21 +369,21 @@ func TestFileSplitterAbort(t *testing.T) {
 		t.Fatalf("WriteBatchRows failed: %v", err)
 	}
 
-	// Get gob file name before abort
+	// Get buffer file name before abort
 	var fileName string
-	if splitter.gobFile != nil {
-		fileName = splitter.gobFile.Name()
+	if splitter.bufferFile != nil {
+		fileName = splitter.bufferFile.Name()
 	}
 
 	// Abort should clean up
 	splitter.Abort()
 
-	// Check that gob file is cleaned up
-	if splitter.gobFile != nil {
-		t.Error("Expected gobFile to be nil after abort")
+	// Check that buffer file is cleaned up
+	if splitter.bufferFile != nil {
+		t.Error("Expected bufferFile to be nil after abort")
 	}
-	if splitter.gobEncoder != nil {
-		t.Error("Expected gobEncoder to be nil after abort")
+	if splitter.encoder != nil {
+		t.Error("Expected encoder to be nil after abort")
 	}
 	if !splitter.closed {
 		t.Error("Expected splitter to be closed after abort")
