@@ -172,6 +172,22 @@ type LogSeg struct {
 	SlotID         int32                     `json:"slot_id"`
 }
 
+type MetricCompactionQueue struct {
+	ID             int64                            `json:"id"`
+	QueueTs        time.Time                        `json:"queue_ts"`
+	Priority       int32                            `json:"priority"`
+	OrganizationID uuid.UUID                        `json:"organization_id"`
+	Dateint        int32                            `json:"dateint"`
+	FrequencyMs    int64                            `json:"frequency_ms"`
+	SegmentID      uuid.UUID                        `json:"segment_id"`
+	InstanceNum    int16                            `json:"instance_num"`
+	TsRange        pgtype.Range[pgtype.Timestamptz] `json:"ts_range"`
+	RecordCount    int64                            `json:"record_count"`
+	Tries          int32                            `json:"tries"`
+	ClaimedBy      int64                            `json:"claimed_by"`
+	ClaimedAt      *time.Time                       `json:"claimed_at"`
+}
+
 type MetricSeg struct {
 	OrganizationID uuid.UUID                 `json:"organization_id"`
 	Dateint        int32                     `json:"dateint"`
