@@ -26,9 +26,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// Make sure this matches the field constant you use in lookupLogsSegments.
-const bodyFieldForTest = "_cardinalhq.message"
-
 func TestLookupLogsSegments_CoarseOnly_LineNotContains(t *testing.T) {
 
 	// --- inputs ---
@@ -47,13 +44,11 @@ func TestLookupLogsSegments_CoarseOnly_LineNotContains(t *testing.T) {
 	}
 
 	// Expected coarse fingerprint for the message field
-	expFP := buffet.ComputeFingerprint(bodyFieldForTest, buffet.ExistsRegex)
+	expFP := buffet.ComputeFingerprint("_cardinalhq.message", buffet.ExistsRegex)
 
 	// Capture the params we send to the DB lookup.
 	var gotParams lrdb.ListLogSegmentsForQueryParams
 
-	// Fake rows the DB would return for that fingerprint.
-	// Two segments whose EndTs hours are 00 and 01, so we can assert the hour formatting.
 	row1End := start.Add(30 * time.Minute).UnixMilli() // 00:30 -> "00"
 	row2End := start.Add(90 * time.Minute).UnixMilli() // 01:30 -> "01"
 
@@ -95,9 +90,6 @@ func TestLookupLogsSegments_CoarseOnly_LineNotContains(t *testing.T) {
 		t.Fatalf("lookupLogsSegments error: %v", err)
 	}
 
-	// --- assertions ---
-
-	// We should have asked for exactly the coarse fingerprint.
 	if gotParams.OrganizationID != orgID {
 		t.Fatalf("org id mismatch in params")
 	}
@@ -112,12 +104,10 @@ func TestLookupLogsSegments_CoarseOnly_LineNotContains(t *testing.T) {
 		t.Fatalf("fingerprints mismatch: got %v want [%d]", gotParams.Fingerprints, expFP)
 	}
 
-	// Returned segments should match fake rows (deduped), with derived fields populated.
 	if len(segs) != 2 {
 		t.Fatalf("expected 2 segments, got %d: %#v", len(segs), segs)
 	}
 
-	// Index by SegmentID for easy checks
 	byID := map[int64]SegmentInfo{}
 	for _, s := range segs {
 		byID[s.SegmentID] = s
@@ -132,7 +122,6 @@ func TestLookupLogsSegments_CoarseOnly_LineNotContains(t *testing.T) {
 		t.Fatalf("missing segment tbl_202 in results: %#v", segs)
 	}
 
-	// Common fields
 	for _, s := range []SegmentInfo{s1, s2} {
 		if s.DateInt != dih.DateInt {
 			t.Fatalf("DateInt mismatch: got %d want %d", s.DateInt, dih.DateInt)
@@ -148,7 +137,6 @@ func TestLookupLogsSegments_CoarseOnly_LineNotContains(t *testing.T) {
 		}
 	}
 
-	// Hour derived from EndTs
 	if s1.Hour != "00" {
 		t.Fatalf("hour(EndTs row1) mismatch: got %q want %q", s1.Hour, "00")
 	}
@@ -156,7 +144,6 @@ func TestLookupLogsSegments_CoarseOnly_LineNotContains(t *testing.T) {
 		t.Fatalf("hour(EndTs row2) mismatch: got %q want %q", s2.Hour, "01")
 	}
 
-	// Start/EndTs passthrough
 	if s1.StartTs != startTs || s1.EndTs != row1End {
 		t.Fatalf("row1 ts mismatch: got [%d,%d) want [%d,%d)", s1.StartTs, s1.EndTs, startTs, row1End)
 	}
@@ -164,7 +151,6 @@ func TestLookupLogsSegments_CoarseOnly_LineNotContains(t *testing.T) {
 		t.Fatalf("row2 ts mismatch: got [%d,%d) want [%d,%d)", s2.StartTs, s2.EndTs, startTs, row2End)
 	}
 
-	// InstanceNum
 	if s1.InstanceNum != 1 || s2.InstanceNum != 1 {
 		t.Fatalf("InstanceNum mismatch: %#v", segs)
 	}
@@ -178,53 +164,76 @@ func TestLookupLogsSegments_CoarseOnly_LineNotContains(t *testing.T) {
 	}
 }
 
-// Optional: tiny smoke test hitting the matchers path (still coarse-only) so we
-// don’t rely on DimensionsToIndex contents. We pick a clearly non-indexed label.
-func TestLookupLogsSegments_CoarseOnly_MatcherNotIndexed(t *testing.T) {
+func TestLookupLogsSegments_ANDNarrowing_Clause1vsClause2(t *testing.T) {
 	orgID := uuid.New()
-	dih := DateIntHours{DateInt: 20250102}
-	start := time.Date(2025, 1, 2, 3, 0, 0, 0, time.UTC)
-	end := time.Date(2025, 1, 2, 4, 0, 0, 0, time.UTC)
-	startTs := start.UnixMilli()
-	endTs := end.UnixMilli()
+	dih := DateIntHours{DateInt: 20250104}
+	start := time.Date(2025, 1, 4, 10, 0, 0, 0, time.UTC)
+	end := start.Add(2 * time.Hour)
+	startTs, endTs := start.UnixMilli(), end.UnixMilli()
 
 	leaf := logql.LogLeaf{
-		Matchers: []logql.LabelMatch{
-			// Pick a label name that (very likely) isn't indexed; if it ever becomes
-			// indexed in your config, change it to another arbitrary label.
-			{Label: "__not_indexed__", Op: logql.MatchEq, Value: "whatever"},
+		LineFilters: []logql.LineFilter{
+			{Op: logql.LineContains, Match: "foo"}, // Clause 1
+			{Op: logql.LineContains, Match: "bar"}, // Clause 2
 		},
 	}
 
-	expFP := buffet.ComputeFingerprint("__not_indexed__", buffet.ExistsRegex)
+	// Fingerprints for the body field (must match the label used in lookupLogsSegments)
+	fpFoo := buffet.ComputeFingerprint("_cardinalhq.message", "foo")
+	fpBar := buffet.ComputeFingerprint("_cardinalhq.message", "bar")
+
+	// Rows the DB would return when asked for BOTH fps:
+	//  foo -> segs 1,2,3
+	//  bar -> seg  2
+	rowFoo1 := lrdb.ListLogSegmentsForQueryRow{
+		Fingerprint: fpFoo, InstanceNum: 1, SegmentID: 1,
+		StartTs: startTs, EndTs: start.Add(5 * time.Minute).UnixMilli(), // "10"
+	}
+	rowFoo2 := lrdb.ListLogSegmentsForQueryRow{
+		Fingerprint: fpFoo, InstanceNum: 1, SegmentID: 2,
+		StartTs: startTs, EndTs: start.Add(10 * time.Minute).UnixMilli(), // "10"
+	}
+	rowFoo3 := lrdb.ListLogSegmentsForQueryRow{
+		Fingerprint: fpFoo, InstanceNum: 1, SegmentID: 3,
+		StartTs: startTs, EndTs: start.Add(15 * time.Minute).UnixMilli(), // "10"
+	}
+	rowBar2 := lrdb.ListLogSegmentsForQueryRow{
+		Fingerprint: fpBar, InstanceNum: 1, SegmentID: 2,
+		StartTs: startTs, EndTs: start.Add(10 * time.Minute).UnixMilli(), // "10"
+	}
 
 	var gotParams lrdb.ListLogSegmentsForQueryParams
-	fakeRows := []lrdb.ListLogSegmentsForQueryRow{
-		{
-			Fingerprint: expFP,
-			InstanceNum: 2,
-			SegmentID:   303,
-			StartTs:     startTs,
-			EndTs:       start.Add(10 * time.Minute).UnixMilli(), // 03:10 -> hour "03"
-		},
-	}
-	var lookup SegmentLookupFunc = func(ctx context.Context, p lrdb.ListLogSegmentsForQueryParams) ([]lrdb.ListLogSegmentsForQueryRow, error) {
+	lookup := func(_ context.Context, p lrdb.ListLogSegmentsForQueryParams) ([]lrdb.ListLogSegmentsForQueryRow, error) {
 		gotParams = p
-		return fakeRows, nil
+		// Return rows for both fps; DB would naturally filter by ANY(fps)
+		return []lrdb.ListLogSegmentsForQueryRow{rowFoo1, rowFoo2, rowFoo3, rowBar2}, nil
 	}
 
 	q := &QuerierService{}
-	segs, err := q.lookupLogsSegments(context.Background(), dih, leaf, startTs, endTs, 5*time.Minute, orgID, lookup)
+	segs, err := q.lookupLogsSegments(context.Background(), dih, leaf, startTs, endTs, time.Minute, orgID, lookup)
 	if err != nil {
 		t.Fatalf("lookupLogsSegments error: %v", err)
 	}
+
+	// We must have asked for BOTH fps.
+	gotFPs := slices.Clone(gotParams.Fingerprints)
+	slices.Sort(gotFPs)
+	wantFPs := []int64{fpBar, fpFoo}
+	if !slices.Equal(gotFPs, wantFPs) {
+		t.Fatalf("requested fingerprints mismatch: got %v want %v", gotFPs, wantFPs)
+	}
+
+	// AND-narrowing: only segment 2 should survive
 	if len(segs) != 1 {
-		t.Fatalf("expected 1 segment, got %d: %#v", len(segs), segs)
+		t.Fatalf("expected 1 intersected segment, got %d: %#v", len(segs), segs)
 	}
-	if got, want := gotParams.Fingerprints, []int64{expFP}; !(len(got) == 1 && got[0] == want[0]) {
-		t.Fatalf("fingerprints mismatch: got %v want %v", got, want)
+	if segs[0].SegmentID != 2 {
+		t.Fatalf("expected SegmentID 2, got %d", segs[0].SegmentID)
 	}
-	if segs[0].Hour != "03" {
-		t.Fatalf("hour mismatch: got %q want %q", segs[0].Hour, "03")
+	if segs[0].Hour != "10" {
+		t.Fatalf("hour mismatch: got %q want %q", segs[0].Hour, "10")
+	}
+	if segs[0].DateInt != dih.DateInt || segs[0].Dataset != "logs" || segs[0].OrganizationID != orgID {
+		t.Fatalf("segment metadata mismatch: %#v", segs[0])
 	}
 }

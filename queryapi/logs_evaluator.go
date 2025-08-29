@@ -53,12 +53,16 @@ func (q *QuerierService) EvaluateLogsQuery(
 	return nil, nil
 }
 
-type TQFp struct {
-	tq           *index.Query
-	fingerprints []int64
+type TrigramQuery struct {
+	Op        index.QueryOp
+	Trigram   []string
+	Sub       []*TrigramQuery
+	fieldName string
 }
 
 type SegmentLookupFunc func(context.Context, lrdb.ListLogSegmentsForQueryParams) ([]lrdb.ListLogSegmentsForQueryRow, error)
+
+const bodyField = "_cardinalhq.message"
 
 func (q *QuerierService) lookupLogsSegments(
 	ctx context.Context,
@@ -69,11 +73,11 @@ func (q *QuerierService) lookupLogsSegments(
 	orgUUID uuid.UUID,
 	lookupFunc SegmentLookupFunc,
 ) ([]SegmentInfo, error) {
+	query := &TrigramQuery{
+		Op: index.QAll,
+	}
 
-	var allSegments []SegmentInfo
-
-	coarseFPs := make(map[int64]struct{})
-	var acc *TQFp
+	fpsToFetch := make(map[int64]struct{})
 
 	// Process leaf Matchers
 	for _, lm := range leaf.Matchers {
@@ -81,41 +85,38 @@ func (q *QuerierService) lookupLogsSegments(
 		val := lm.Value
 
 		if !slices.Contains(buffet.DimensionsToIndex, label) {
-			fp := buffet.ComputeFingerprint(label, buffet.ExistsRegex)
-			coarseFPs[fp] = struct{}{}
+			fpsToFetch[buffet.ComputeFingerprint(label, buffet.ExistsRegex)] = struct{}{}
+			query = &TrigramQuery{
+				Op:  index.QAnd,
+				Sub: []*TrigramQuery{query, toExistsTrigramQuery(label)},
+			}
 			continue
 		}
 
 		switch lm.Op {
 		case logql.MatchEq, logql.MatchRe:
-			tq, fps := buildLabelTrigram(label, val)
-			if len(fps) == 0 && tq == nil {
-				coarseFPs[buffet.ComputeFingerprint(label, buffet.ExistsRegex)] = struct{}{}
-				continue
-			}
-			acc = andAccumulate(acc, tq, fps)
+			query = q.andQuery(label, val, fpsToFetch, query)
 
 		case logql.MatchNe, logql.MatchNre:
-			coarseFPs[buffet.ComputeFingerprint(label, buffet.ExistsRegex)] = struct{}{}
+			fpsToFetch[buffet.ComputeFingerprint(label, buffet.ExistsRegex)] = struct{}{}
+			query = &TrigramQuery{
+				Op:  index.QAnd,
+				Sub: []*TrigramQuery{query, toExistsTrigramQuery(label)},
+			}
 		}
 	}
 
-	const bodyField = "_cardinalhq.message"
-
-	// Process Line Filters
+	// Process Line Filters (these are always on the body/message field)
 	for _, lf := range leaf.LineFilters {
 		switch lf.Op {
 		case logql.LineContains:
 			pat := ".*" + lf.Match + ".*"
-			tq, fps := buildLabelTrigram(bodyField, pat)
-			acc = andAccumulate(acc, tq, fps)
+			query = q.andQuery(bodyField, pat, fpsToFetch, query)
 
 		case logql.LineRegex:
-			tq, fps := buildLabelTrigram(bodyField, lf.Match)
-			acc = andAccumulate(acc, tq, fps)
+			query = q.andQuery(bodyField, lf.Match, fpsToFetch, query)
 
-		case logql.LineNotContains, logql.LineNotRegex:
-			coarseFPs[buffet.ComputeFingerprint(bodyField, buffet.ExistsRegex)] = struct{}{}
+		default:
 		}
 	}
 
@@ -124,38 +125,32 @@ func (q *QuerierService) lookupLogsSegments(
 		if lf.ParserIdx != nil {
 			continue
 		}
+
+		if !slices.Contains(buffet.DimensionsToIndex, lf.Label) {
+			fpsToFetch[buffet.ComputeFingerprint(lf.Label, buffet.ExistsRegex)] = struct{}{}
+			query = &TrigramQuery{
+				Op:  index.QAnd,
+				Sub: []*TrigramQuery{query, toExistsTrigramQuery(lf.Label)},
+			}
+			continue
+		}
 		switch lf.Op {
 		case logql.MatchEq, logql.MatchRe:
-			tq, fps := buildLabelTrigram(lf.Label, lf.Value)
-			if len(fps) == 0 && tq == nil {
-				coarseFPs[buffet.ComputeFingerprint(lf.Label, buffet.ExistsRegex)] = struct{}{}
-				continue
-			}
-			acc = andAccumulate(acc, tq, fps)
+			query = q.andQuery(lf.Label, lf.Value, fpsToFetch, query)
 
 		case logql.MatchNe, logql.MatchNre:
-			coarseFPs[buffet.ComputeFingerprint(lf.Label, buffet.ExistsRegex)] = struct{}{}
+			fpsToFetch[buffet.ComputeFingerprint(lf.Label, buffet.ExistsRegex)] = struct{}{}
+			query = &TrigramQuery{
+				Op:  index.QAnd,
+				Sub: []*TrigramQuery{query, toExistsTrigramQuery(lf.Label)},
+			}
 		}
 	}
 
-	fpSet := make(map[int64]struct{})
-	for fp := range coarseFPs {
-		fpSet[fp] = struct{}{}
-	}
-	if acc != nil {
-		for _, fp := range acc.fingerprints {
-			fpSet[fp] = struct{}{}
-		}
-	}
-	if len(fpSet) == 0 {
-		return nil, nil
-	}
-
-	fpList := make([]int64, 0, len(fpSet))
-	for fp := range fpSet {
+	fpList := make([]int64, 0, len(fpsToFetch))
+	for fp := range fpsToFetch {
 		fpList = append(fpList, fp)
 	}
-	slices.Sort(fpList)
 
 	rows, err := lookupFunc(ctx, lrdb.ListLogSegmentsForQueryParams{
 		OrganizationID: orgUUID,
@@ -165,11 +160,9 @@ func (q *QuerierService) lookupLogsSegments(
 		E:              endTs,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("ListLogSegmentsForQuery: %w", err)
+		return nil, fmt.Errorf("list log segments for query: %w", err)
 	}
-
 	fpToSegments := make(map[int64][]SegmentInfo)
-	segUnique := make(map[string]SegmentInfo)
 
 	for _, row := range rows {
 		endHour := zeroFilledHour(time.UnixMilli(row.EndTs).UTC().Hour())
@@ -184,27 +177,46 @@ func (q *QuerierService) lookupLogsSegments(
 			InstanceNum:    row.InstanceNum,
 			Frequency:      stepDuration.Milliseconds(),
 		}
-		allSegments = append(allSegments)
-		key := fmt.Sprintf("%d:%d:%d", row.StartTs, row.EndTs, seg.SegmentID)
-		segUnique[key] = seg
-
 		fpToSegments[row.Fingerprint] = append(fpToSegments[row.Fingerprint], seg)
 	}
 
-	if acc == nil || acc.tq == nil {
-		allSegments = make([]SegmentInfo, 0, len(segUnique))
-		for _, s := range segUnique {
-			allSegments = append(allSegments, s)
-		}
-		return allSegments, nil
+	return allSegments, nil
+}
+
+func (q *QuerierService) andQuery(label string, val string, fpsToFetch map[int64]struct{}, query *TrigramQuery) *TrigramQuery {
+	lt, fps := buildLabelTrigram(label, val)
+	for _, fp := range fps {
+		fpsToFetch[fp] = struct{}{}
+	}
+	tq := &TrigramQuery{
+		Op:        lt.Op,
+		fieldName: label,
+		Trigram:   lt.Trigram,
+		Sub:       make([]*TrigramQuery, 0, len(lt.Sub)),
+	}
+	for _, sub := range lt.Sub {
+		tq.Sub = append(tq.Sub, &TrigramQuery{
+			Op:        sub.Op,
+			fieldName: label,
+			Trigram:   sub.Trigram,
+		})
 	}
 
-	finalSet := resolveByTrigram(acc.tq, fpToSegments)
-	allSegments = make([]SegmentInfo, 0, len(finalSet))
-	for s := range finalSet {
-		allSegments = append(allSegments, s)
+	query = &TrigramQuery{
+		Op:  index.QAnd,
+		Sub: []*TrigramQuery{query, tq},
 	}
-	return allSegments, nil
+	return query
+}
+
+func toExistsTrigramQuery(label string) *TrigramQuery {
+	trigramQuery := &TrigramQuery{
+		Op:        index.QAnd,
+		fieldName: label,
+		Trigram:   make([]string, 0),
+	}
+	trigramQuery.Trigram = append(trigramQuery.Trigram, buffet.ExistsRegex)
+	return trigramQuery
 }
 
 // buildLabelTrigram compiles a regex pattern to a trigram query and returns
@@ -225,7 +237,6 @@ func buildLabelTrigram(label, pattern string) (*index.Query, []int64) {
 		return tq, dedupeInt64(fps)
 	}
 
-	// If it’s a degenerate (match-all) query and there’s no Sub, no narrowing
 	if len(tq.Sub) == 0 {
 		return tq, nil
 	}
@@ -250,32 +261,6 @@ func buildLabelTrigram(label, pattern string) (*index.Query, []int64) {
 	return tq, dedupeInt64(fps)
 }
 
-// andAccumulate merges a new (tq,fps) into the running accumulator with AND semantics.
-func andAccumulate(acc *TQFp, tq *index.Query, fps []int64) *TQFp {
-	if tq == nil && len(fps) == 0 {
-		return acc
-	}
-	if acc == nil {
-		return &TQFp{tq: tq, fingerprints: dedupeInt64(fps)}
-	}
-	// Intersect fingerprints
-	acc.fingerprints = intersectInt64(acc.fingerprints, fps)
-
-	// Compose query: AND(existing, incoming)
-	if acc.tq == nil {
-		acc.tq = tq
-		return acc
-	}
-	if tq == nil {
-		return acc
-	}
-	acc.tq = &index.Query{
-		Op:  index.QAnd,
-		Sub: []*index.Query{acc.tq, tq},
-	}
-	return acc
-}
-
 func dedupeInt64(in []int64) []int64 {
 	if len(in) <= 1 {
 		// nil or single already unique
@@ -290,134 +275,5 @@ func dedupeInt64(in []int64) []int64 {
 		out = append(out, v)
 	}
 	slices.Sort(out)
-	return out
-}
-
-func intersectInt64(a, b []int64) []int64 {
-	if len(a) == 0 || len(b) == 0 {
-		return nil
-	}
-	// Use the smaller as the set
-	if len(b) < len(a) {
-		a, b = b, a
-	}
-	set := make(map[int64]struct{}, len(a))
-	for _, v := range a {
-		set[v] = struct{}{}
-	}
-	var out []int64
-	for _, v := range b {
-		if _, ok := set[v]; ok {
-			out = append(out, v)
-		}
-	}
-	return dedupeInt64(out)
-}
-
-// resolveByTrigram applies the trigram query tree to fp->segments and returns the final set.
-func resolveByTrigram(qry *index.Query, fpToSegs map[int64][]SegmentInfo) map[SegmentInfo]struct{} {
-	if qry == nil {
-		return flattenAll(fpToSegs)
-	}
-
-	switch qry.Op {
-	case index.QAll:
-		return flattenAll(fpToSegs)
-	case index.QNone:
-		return map[SegmentInfo]struct{}{}
-	case index.QAnd:
-		if len(qry.Sub) == 0 {
-			// AND leaf: intersect all leaf trigrams present
-			return intersectSetsByTrigrams(qry.Trigram, fpToSegs)
-		}
-		sets := make([]map[SegmentInfo]struct{}, 0, len(qry.Sub))
-		for _, ch := range qry.Sub {
-			sets = append(sets, resolveByTrigram(ch, fpToSegs))
-		}
-		return intersectSets(sets...)
-	case index.QOr:
-		// OR over children
-		if len(qry.Sub) == 0 {
-			return unionSetsByTrigrams(qry.Trigram, fpToSegs)
-		}
-		out := make(map[SegmentInfo]struct{})
-		for _, ch := range qry.Sub {
-			for s := range resolveByTrigram(ch, fpToSegs) {
-				out[s] = struct{}{}
-			}
-		}
-		return out
-	default:
-		// Unknown op – fall back to all
-		return flattenAll(fpToSegs)
-	}
-}
-
-func flattenAll(fpToSegs map[int64][]SegmentInfo) map[SegmentInfo]struct{} {
-	out := make(map[SegmentInfo]struct{})
-	for _, segs := range fpToSegs {
-		for _, s := range segs {
-			out[s] = struct{}{}
-		}
-	}
-	return out
-}
-
-func intersectSets(sets ...map[SegmentInfo]struct{}) map[SegmentInfo]struct{} {
-	if len(sets) == 0 {
-		return map[SegmentInfo]struct{}{}
-	}
-	// Start from the smallest
-	smallIdx := 0
-	for i := range sets {
-		if len(sets[i]) < len(sets[smallIdx]) {
-			smallIdx = i
-		}
-	}
-	base := sets[smallIdx]
-	out := make(map[SegmentInfo]struct{})
-	for s := range base {
-		ok := true
-		for i := range sets {
-			if i == smallIdx {
-				continue
-			}
-			if _, has := sets[i][s]; !has {
-				ok = false
-				break
-			}
-		}
-		if ok {
-			out[s] = struct{}{}
-		}
-	}
-	return out
-}
-
-func intersectSetsByTrigrams(tris []string, fpToSegs map[int64][]SegmentInfo) map[SegmentInfo]struct{} {
-	if len(tris) == 0 {
-		return flattenAll(fpToSegs)
-	}
-	sets := make([]map[SegmentInfo]struct{}, 0, len(tris))
-	for _, tri := range tris {
-		fp := buffet.ComputeFingerprint("message", tri) // field here doesn’t matter for set algebra; pick body
-		segs := fpToSegs[fp]
-		set := make(map[SegmentInfo]struct{}, len(segs))
-		for _, s := range segs {
-			set[s] = struct{}{}
-		}
-		sets = append(sets, set)
-	}
-	return intersectSets(sets...)
-}
-
-func unionSetsByTrigrams(tris []string, fpToSegs map[int64][]SegmentInfo) map[SegmentInfo]struct{} {
-	out := make(map[SegmentInfo]struct{})
-	for _, tri := range tris {
-		fp := buffet.ComputeFingerprint("message", tri)
-		for _, s := range fpToSegs[fp] {
-			out[s] = struct{}{}
-		}
-	}
 	return out
 }
