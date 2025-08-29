@@ -237,3 +237,72 @@ func TestLookupLogsSegments_ANDNarrowing_Clause1vsClause2(t *testing.T) {
 		t.Fatalf("segment metadata mismatch: %#v", segs[0])
 	}
 }
+
+func TestLookupLogsSegments_MultiTrigramIntersection_WithinLeaf(t *testing.T) {
+	orgID := uuid.New()
+	dih := DateIntHours{DateInt: 20250105}
+	start := time.Date(2025, 1, 5, 12, 0, 0, 0, time.UTC)
+	end := start.Add(30 * time.Minute)
+	startTs, endTs := start.UnixMilli(), end.UnixMilli()
+
+	// One regex that should yield multiple trigrams (e.g., "abcd" => "abc", "bcd")
+	pattern := "abcd"
+	leaf := logql.LogLeaf{
+		LineFilters: []logql.LineFilter{
+			{Op: logql.LineRegex, Match: pattern},
+		},
+	}
+
+	// Use the same trigram expansion logic as production to know which FPS to synthesize.
+	iq, fps := buildLabelTrigram(bodyField, pattern)
+	if iq == nil || len(fps) == 0 {
+		t.Fatalf("expected non-empty trigrams for pattern %q", pattern)
+	}
+
+	// Build per-fp segment rows so that exactly one segment is common to *all* trigrams.
+	commonSeg := int64(4242)
+	var fakeRows []lrdb.ListLogSegmentsForQueryRow
+	for _, fp := range fps {
+		// Each trigram gets the common segment + a unique-only segment
+		unique := commonSeg + fp%5 + 1
+		fakeRows = append(fakeRows,
+			lrdb.ListLogSegmentsForQueryRow{
+				Fingerprint: fp, InstanceNum: 1, SegmentID: commonSeg,
+				StartTs: startTs, EndTs: start.Add(1 * time.Minute).UnixMilli(),
+			},
+			lrdb.ListLogSegmentsForQueryRow{
+				Fingerprint: fp, InstanceNum: 1, SegmentID: unique,
+				StartTs: startTs, EndTs: start.Add(2 * time.Minute).UnixMilli(),
+			},
+		)
+	}
+
+	var gotParams lrdb.ListLogSegmentsForQueryParams
+	lookup := func(_ context.Context, p lrdb.ListLogSegmentsForQueryParams) ([]lrdb.ListLogSegmentsForQueryRow, error) {
+		gotParams = p
+		return fakeRows, nil
+	}
+
+	q := &QuerierService{}
+	segs, err := q.lookupLogsSegments(context.Background(), dih, leaf, startTs, endTs, time.Minute, orgID, lookup)
+	if err != nil {
+		t.Fatalf("lookupLogsSegments error: %v", err)
+	}
+
+	// We should have asked for exactly those fps (order-insensitive).
+	gotFPs := slices.Clone(gotParams.Fingerprints)
+	slices.Sort(gotFPs)
+	wantFPs := slices.Clone(fps)
+	slices.Sort(wantFPs)
+	if !slices.Equal(gotFPs, wantFPs) {
+		t.Fatalf("requested fingerprints mismatch: got %v want %v", gotFPs, wantFPs)
+	}
+
+	// Intersection across all trigrams must leave only the common segment.
+	if len(segs) != 1 {
+		t.Fatalf("expected 1 segment after intersection, got %d: %#v", len(segs), segs)
+	}
+	if segs[0].SegmentID != commonSeg {
+		t.Fatalf("expected common segment %d, got %d", commonSeg, segs[0].SegmentID)
+	}
+}
