@@ -299,6 +299,7 @@ func compactMetricInterval(
 
 	readers := readerStack.Readers
 	downloadedFiles := readerStack.DownloadedFiles
+	finalReader := readerStack.FinalReader
 
 	if len(readers) == 0 {
 		ll.Debug("No files to compact, skipping work item")
@@ -306,22 +307,6 @@ func compactMetricInterval(
 	}
 
 	defer metricsprocessing.CloseReaderStack(ll, readerStack)
-
-	var finalReader filereader.Reader
-	if len(readers) == 1 {
-		ll.Debug("Using single reader for compaction")
-		finalReader = readers[0]
-	} else {
-		ll.Debug("Creating multi-source reader", slog.Int("readerCount", len(readers)))
-		selector := metricsprocessing.MetricsOrderedSelector()
-		multiReader, err := filereader.NewMergesortReader(readers, selector, 1000)
-		if err != nil {
-			ll.Error("Failed to create mergesort reader", slog.Any("error", err))
-			return fmt.Errorf("creating mergesort reader: %w", err)
-		}
-		finalReader = multiReader
-		defer multiReader.Close()
-	}
 
 	// Wrap with aggregating reader to merge duplicates during compaction
 	frequencyMs := int64(inf.FrequencyMs())
@@ -338,9 +323,7 @@ func compactMetricInterval(
 		recordsPerFile = 10_000
 	}
 
-	slotID := inf.SlotId()
-	baseName := fmt.Sprintf("compacted_metrics_%s_%d_%d", inf.OrganizationID().String(), time.Now().Unix(), slotID)
-	writer, err := factories.NewMetricsWriter(baseName, tmpdir, constants.WriterTargetSizeBytesMetrics, recordsPerFile)
+	writer, err := factories.NewMetricsWriter(tmpdir, constants.WriterTargetSizeBytesMetrics, recordsPerFile)
 	if err != nil {
 		ll.Error("Failed to create metrics writer", slog.Any("error", err))
 		return fmt.Errorf("creating metrics writer: %w", err)

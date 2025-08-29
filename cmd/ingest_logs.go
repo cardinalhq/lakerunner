@@ -216,8 +216,7 @@ func (wm *writerManager) getWriter(key hourSlotKey) (*parquetwriter.UnifiedWrite
 	}
 
 	// Create new writer
-	baseName := fmt.Sprintf("logs_%s_%d_%d_%d", wm.orgID, key.dateint, key.hour, key.slot)
-	writer, err := factories.NewLogsWriter(baseName, wm.tmpdir, constants.WriterTargetSizeBytesLogs, wm.rpfEstimate)
+	writer, err := factories.NewLogsWriter(wm.tmpdir, constants.WriterTargetSizeBytesLogs, wm.rpfEstimate)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create logs writer: %w", err)
 	}

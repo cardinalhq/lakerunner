@@ -234,6 +234,7 @@ func rollupMetricSegments(
 
 	readers := readerStack.Readers
 	downloadedFiles := readerStack.DownloadedFiles
+	finalReader := readerStack.FinalReader
 
 	if len(readers) == 0 {
 		ll.Debug("No files to rollup, skipping work item")
@@ -241,21 +242,6 @@ func rollupMetricSegments(
 	}
 
 	defer metricsprocessing.CloseReaderStack(ll, readerStack)
-
-	// Create MergesortReader for read-time merge sort of pre-sorted parquet files
-	var finalReader filereader.Reader
-	if len(readers) == 1 {
-		finalReader = readers[0]
-	} else {
-		selector := metricsprocessing.MetricsOrderedSelector()
-		multiReader, err := filereader.NewMergesortReader(readers, selector, 1000)
-		if err != nil {
-			ll.Error("Failed to create mergesort reader", slog.Any("error", err))
-			return WorkResultTryAgainLater, fmt.Errorf("creating mergesort reader: %w", err)
-		}
-		finalReader = multiReader
-		defer multiReader.Close()
-	}
 
 	// Wrap with aggregating reader to perform rollup aggregation
 	// Use target frequency for aggregation period
@@ -271,7 +257,7 @@ func rollupMetricSegments(
 		recordsPerFile = 10_000
 	}
 
-	writer, err := factories.NewMetricsWriter("rollup-*", tmpdir, constants.WriterTargetSizeBytesMetrics, recordsPerFile)
+	writer, err := factories.NewMetricsWriter(tmpdir, constants.WriterTargetSizeBytesMetrics, recordsPerFile)
 	if err != nil {
 		ll.Error("Failed to create metrics writer", slog.Any("error", err))
 		return WorkResultTryAgainLater, fmt.Errorf("creating metrics writer: %w", err)

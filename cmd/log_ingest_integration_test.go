@@ -142,7 +142,7 @@ func TestLogTranslatorWithParquetWriter(t *testing.T) {
 	}
 
 	// Create logs writer
-	writer, err := factories.NewLogsWriter("integration-test", tmpdir, 10000, 50)
+	writer, err := factories.NewLogsWriter(tmpdir, 10000, 50)
 	require.NoError(t, err)
 	defer writer.Abort()
 

@@ -42,6 +42,8 @@ type ReaderStackResult struct {
 	Readers         []filereader.Reader
 	Files           []*os.File
 	DownloadedFiles []string
+	FinalReader     filereader.Reader
+	MergedReader    filereader.Reader
 }
 
 func CreateReaderStack(
@@ -131,14 +133,36 @@ func CreateReaderStack(
 		downloadedFiles = append(downloadedFiles, fn)
 	}
 
+	var finalReader filereader.Reader
+	var mergedReader filereader.Reader
+
+	if len(readers) == 1 {
+		finalReader = readers[0]
+	} else if len(readers) > 1 {
+		selector := MetricsOrderedSelector()
+		multiReader, err := filereader.NewMergesortReader(readers, selector, 1000)
+		if err != nil {
+			return nil, fmt.Errorf("creating mergesort reader: %w", err)
+		}
+		finalReader = multiReader
+		mergedReader = multiReader
+	}
+
 	return &ReaderStackResult{
 		Readers:         readers,
 		Files:           files,
 		DownloadedFiles: downloadedFiles,
+		FinalReader:     finalReader,
+		MergedReader:    mergedReader,
 	}, nil
 }
 
 func CloseReaderStack(ll *slog.Logger, result *ReaderStackResult) {
+	if result.MergedReader != nil {
+		if err := result.MergedReader.Close(); err != nil {
+			ll.Error("Failed to close merged reader", slog.Any("error", err))
+		}
+	}
 	for _, reader := range result.Readers {
 		if err := reader.Close(); err != nil {
 			ll.Error("Failed to close reader", slog.Any("error", err))
