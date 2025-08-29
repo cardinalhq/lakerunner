@@ -198,67 +198,7 @@ func metricRollupItemDo(
 		return err
 	}
 
-	err = rollupMetricSegments(ctx, ll, mdb, tmpdir, inf, profile, s3client, sourceRows, existingRows, rpfEstimate)
-	return err
-}
-
-func processRollupMicrobatches(
-	ctx context.Context,
-	ll *slog.Logger,
-	mdb lrdb.StoreFull,
-	tmpdir string,
-	inf lockmgr.Workable,
-	profile storageprofile.StorageProfile,
-	s3client *awsclient.S3Client,
-	sourceRows []lrdb.MetricSeg,
-	existingRows []lrdb.MetricSeg,
-	rpfEstimate int64,
-) error {
-	maxRecordsPerMicrobatch := rpfEstimate * 6
-	if maxRecordsPerMicrobatch <= 0 {
-		maxRecordsPerMicrobatch = 60_000 // Default fallback
-	}
-
-	ll.Debug("Processing rollup in microbatches",
-		slog.Int("totalSegments", len(sourceRows)),
-		slog.Int64("maxRecordsPerMicrobatch", maxRecordsPerMicrobatch),
-		slog.Int64("rpfEstimate", rpfEstimate))
-
-	var currentMicrobatch []lrdb.MetricSeg
-	currentRecords := int64(0)
-
-	for i, row := range sourceRows {
-		// Check for cancellation during microbatch processing
-		if ctx.Err() != nil {
-			ll.Info("Context cancelled during microbatch processing, aborting rollup")
-			return NewWorkerInterrupted("context cancelled during microbatch processing")
-		}
-
-		currentMicrobatch = append(currentMicrobatch, row)
-		currentRecords += row.RecordCount
-
-		// Process microbatch if we've hit the limit or reached the end
-		isLastRow := i == len(sourceRows)-1
-		shouldProcess := currentRecords >= maxRecordsPerMicrobatch || isLastRow
-
-		if shouldProcess {
-			// For rollups, always process every file (even single files) because we aggregate
-			ll.Debug("Processing rollup microbatch",
-				slog.Int("fileCount", len(currentMicrobatch)),
-				slog.Int64("recordCount", currentRecords))
-
-			err := rollupMetricInterval(ctx, ll, mdb, tmpdir, inf, profile, s3client, currentMicrobatch, existingRows, rpfEstimate)
-			if err != nil {
-				return fmt.Errorf("rolling up microbatch: %w", err)
-			}
-
-			// Reset for next microbatch
-			currentMicrobatch = nil
-			currentRecords = 0
-		}
-	}
-
-	return nil
+	return rollupMetricSegments(ctx, ll, mdb, tmpdir, inf, profile, s3client, sourceRows, existingRows, rpfEstimate)
 }
 
 func rollupMetricSegments(
@@ -278,48 +218,6 @@ func rollupMetricSegments(
 		return nil
 	}
 
-	// Process segments in microbatches limited to rowestimate * 6 records
-	err := processRollupMicrobatches(ctx, ll, mdb, tmpdir, inf, profile, s3client, sourceRows, existingRows, rpfEstimate)
-	if err != nil {
-		return fmt.Errorf("failed to process rollup microbatches: %w", err)
-	}
-
-	// Use context without cancellation for critical section to ensure atomic completion
-	criticalCtx := context.WithoutCancel(ctx)
-
-	// Mark source rows as rolled up (after all microbatches are complete)
-	if err := markSourceRowsAsRolledUp(criticalCtx, ll, mdb, sourceRows); err != nil {
-		ll.Error("Failed to mark source rows as rolled up", slog.Any("error", err))
-		// This is not a critical failure - the rollup succeeded but we couldn't update the flag
-		// The next run will skip these since they've already been processed
-	}
-
-	// Schedule cleanup of old files
-	metricsprocessing.ScheduleOldFileCleanup(criticalCtx, ll, mdb, existingRows, profile)
-
-	// Queue next level rollup and compaction
-	if err := queueMetricCompaction(criticalCtx, mdb, qmcFromWorkable(inf)); err != nil {
-		ll.Error("Failed to queue metric compaction", slog.Any("error", err))
-	}
-	if err := queueMetricRollup(criticalCtx, mdb, qmcFromWorkable(inf)); err != nil {
-		ll.Error("Failed to queue metric rollup", slog.Any("error", err))
-	}
-
-	return nil
-}
-
-func rollupMetricInterval(
-	ctx context.Context,
-	ll *slog.Logger,
-	mdb lrdb.StoreFull,
-	tmpdir string,
-	inf lockmgr.Workable,
-	profile storageprofile.StorageProfile,
-	s3client *awsclient.S3Client,
-	sourceRows []lrdb.MetricSeg,
-	existingRows []lrdb.MetricSeg,
-	rpfEstimate int64,
-) error {
 	st, _, ok := helpers.RangeBounds(inf.TsRange())
 	if !ok {
 		ll.Error("Invalid time range in work item", slog.Any("tsRange", inf.TsRange()))
@@ -335,11 +233,6 @@ func rollupMetricInterval(
 	readerStack, err := metricsprocessing.CreateReaderStack(
 		ctx, ll, tmpdir, s3client, inf.OrganizationID(), profile, st.Time.UTC().UnixMilli(), sourceRows, config, "")
 	if err != nil {
-		// Check if this is due to context cancellation
-		if ctx.Err() != nil {
-			ll.Info("Context cancelled during S3 download phase", slog.Any("error", err))
-			return NewWorkerInterrupted("context cancelled during S3 download")
-		}
 		return err
 	}
 
@@ -378,12 +271,6 @@ func rollupMetricInterval(
 	totalRows := int64(0)
 
 	for {
-		// Check for cancellation during batch processing
-		if ctx.Err() != nil {
-			ll.Info("Context cancelled during batch processing, aborting rollup")
-			return NewWorkerInterrupted("context cancelled during batch processing")
-		}
-
 		batch, err := aggregatingReader.Next()
 		if err != nil && !errors.Is(err, io.EOF) {
 			if batch != nil {
@@ -443,19 +330,13 @@ func rollupMetricInterval(
 		return fmt.Errorf("finishing writer: %w", err)
 	}
 
-	ll.Debug("Rollup microbatch completed",
+	ll.Debug("Rollup completed",
 		slog.Int64("totalRows", totalRows),
 		slog.Int("outputFiles", len(results)),
 		slog.Int("inputFiles", len(downloadedFiles)),
 		slog.Int64("recordsPerFile", recordsPerFile))
 
-	// If no output files were created, skip upload
-	if len(results) == 0 {
-		ll.Debug("No output files created in rollup microbatch, skipping upload")
-		return nil
-	}
-
-	// Create rollup upload params for this microbatch
+	// Create rollup upload params
 	rollupParams := metricsprocessing.CompactionUploadParams{
 		OrganizationID: inf.OrganizationID().String(),
 		InstanceNum:    inf.InstanceNum(),
@@ -470,10 +351,28 @@ func rollupMetricInterval(
 	// Use context without cancellation for critical section to ensure atomic completion
 	criticalCtx := context.WithoutCancel(ctx)
 
-	// Upload rolled-up metrics using the same pattern as ingestion
+	// Upload rolled-up metrics using custom rollup logic
 	err = uploadRolledUpMetrics(criticalCtx, ll, mdb, s3client, results, existingRows, rollupParams)
 	if err != nil {
 		return fmt.Errorf("failed to upload rolled-up metrics: %w", err)
+	}
+
+	// Mark source rows as rolled up
+	if err := markSourceRowsAsRolledUp(criticalCtx, ll, mdb, sourceRows); err != nil {
+		ll.Error("Failed to mark source rows as rolled up", slog.Any("error", err))
+		// This is not a critical failure - the rollup succeeded but we couldn't update the flag
+		// The next run will skip these since they've already been processed
+	}
+
+	// Schedule cleanup of old files
+	metricsprocessing.ScheduleOldFileCleanup(criticalCtx, ll, mdb, existingRows, profile)
+
+	// Queue next level rollup and compaction
+	if err := queueMetricCompaction(criticalCtx, mdb, qmcFromWorkable(inf)); err != nil {
+		ll.Error("Failed to queue metric compaction", slog.Any("error", err))
+	}
+	if err := queueMetricRollup(criticalCtx, mdb, qmcFromWorkable(inf)); err != nil {
+		ll.Error("Failed to queue metric rollup", slog.Any("error", err))
 	}
 
 	return nil
