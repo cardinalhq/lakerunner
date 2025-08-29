@@ -15,12 +15,15 @@
 package filereader
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
 	"maps"
 
 	"github.com/DataDog/sketches-go/ddsketch"
+	"go.opentelemetry.io/otel/attribute"
+	otelmetric "go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
@@ -266,7 +269,10 @@ func (ar *AggregatingMetricsReader) aggregateHistogramGroup(baseRow Row, rows []
 			if value, ok := getSingletonValue(row); ok {
 				singletonValues = append(singletonValues, value)
 			} else {
-				slog.Error("Empty sketch without valid rollup_sum", "row", row)
+				rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+					attribute.String("reader", "AggregatingMetricsReader"),
+					attribute.String("reason", "empty_sketch_no_rollup_sum"),
+				))
 			}
 		} else {
 			// This row has a sketch - handle sketch merging
@@ -294,9 +300,10 @@ func (ar *AggregatingMetricsReader) aggregateHistogramGroup(baseRow Row, rows []
 
 	// VALIDATION: Histograms must always have a sketch
 	if currentSketch == nil {
-		slog.Error("Histogram without sketch in aggregation - dropping row",
-			"name", baseRow[wkk.RowKeyCName],
-			"tid", baseRow[wkk.RowKeyCTID])
+		rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+			attribute.String("reader", "AggregatingMetricsReader"),
+			attribute.String("reason", "histogram_no_sketch"),
+		))
 		return nil, fmt.Errorf("histogram missing sketch")
 	}
 
@@ -329,7 +336,10 @@ func (ar *AggregatingMetricsReader) aggregateCounterGaugeGroup(baseRow Row, rows
 			if value, ok := getSingletonValue(row); ok {
 				singletonValues = append(singletonValues, value)
 			} else {
-				slog.Error("Empty sketch without valid rollup_sum", "row", row)
+				rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+					attribute.String("reader", "AggregatingMetricsReader"),
+					attribute.String("reason", "empty_sketch_no_rollup_sum"),
+				))
 			}
 		} else {
 			// This row has a sketch - handle sketch merging
@@ -359,11 +369,10 @@ func (ar *AggregatingMetricsReader) aggregateCounterGaugeGroup(baseRow Row, rows
 		// We have a sketch - add all singleton values to it
 		for _, value := range singletonValues {
 			if err := currentSketch.Add(value); err != nil {
-				slog.Error("Failed to add singleton value to sketch",
-					"error", err,
-					"value", value,
-					"name", baseRow[wkk.RowKeyCName],
-					"tid", baseRow[wkk.RowKeyCTID])
+				rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+					attribute.String("reader", "AggregatingMetricsReader"),
+					attribute.String("reason", "failed_add_singleton"),
+				))
 				continue
 			}
 		}
@@ -381,11 +390,10 @@ func (ar *AggregatingMetricsReader) aggregateCounterGaugeGroup(baseRow Row, rows
 
 		for _, value := range singletonValues {
 			if err := sketch.Add(value); err != nil {
-				slog.Error("Failed to add singleton value to new sketch",
-					"error", err,
-					"value", value,
-					"name", baseRow[wkk.RowKeyCName],
-					"tid", baseRow[wkk.RowKeyCTID])
+				rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+					attribute.String("reader", "AggregatingMetricsReader"),
+					attribute.String("reason", "failed_add_singleton_new_sketch"),
+				))
 				continue
 			}
 		}

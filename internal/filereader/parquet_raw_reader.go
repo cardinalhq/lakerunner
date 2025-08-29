@@ -24,7 +24,7 @@ import (
 
 	"github.com/parquet-go/parquet-go"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
+	otelmetric "go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
@@ -53,10 +53,9 @@ func shouldDropRowForInvalidRollupFields(row map[string]any) bool {
 		if value, exists := row[fieldName]; exists {
 			if floatVal, ok := value.(float64); ok {
 				if math.IsNaN(floatVal) || math.IsInf(floatVal, 0) {
-					rowsDroppedCounter.Add(context.Background(), 1, metric.WithAttributes(
+					rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
 						attribute.String("reader", "ParquetRawReader"),
 						attribute.String("reason", "NaN"),
-						attribute.String("signal", "metrics"),
 					))
 					return true
 				}
@@ -136,12 +135,20 @@ func (r *ParquetRawReader) Next() (*Batch, error) {
 					row["_cardinalhq.tid"] = tidInt64
 				} else {
 					// Drop row if conversion fails
+					rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+						attribute.String("reader", "ParquetRawReader"),
+						attribute.String("reason", "invalid_tid_conversion"),
+					))
 					continue
 				}
 			case int64:
 				// Already correct type, no conversion needed
 			default:
 				// Drop row if _cardinalhq.tid is neither string nor int64
+				rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+					attribute.String("reader", "ParquetRawReader"),
+					attribute.String("reason", "invalid_tid_type"),
+				))
 				continue
 			}
 		}

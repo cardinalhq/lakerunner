@@ -18,11 +18,11 @@ import (
 	"fmt"
 
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/metric"
+	otelmetric "go.opentelemetry.io/otel/metric"
 )
 
 var (
-	rowsDroppedCounter metric.Int64Counter
+	rowsDroppedCounter otelmetric.Int64Counter
 )
 
 func init() {
@@ -31,7 +31,7 @@ func init() {
 	var err error
 	rowsDroppedCounter, err = meter.Int64Counter(
 		"lakerunner.reader.rows_dropped",
-		metric.WithDescription("Number of rows dropped by readers due to invalid data"),
+		otelmetric.WithDescription("Number of rows dropped by readers due to invalid data"),
 	)
 	if err != nil {
 		panic(fmt.Errorf("failed to create rows_dropped counter: %w", err))

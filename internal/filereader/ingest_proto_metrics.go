@@ -26,7 +26,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
+	otelmetric "go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/metricmath"
@@ -257,6 +257,10 @@ func (r *IngestProtoMetricsReader) buildDatapointRow(row Row, rm pmetric.Resourc
 	case pmetric.MetricTypeSummary:
 		// TODO: Implement proper summary handling with sketches and rollup fields
 		// For now, drop these data points silently to avoid downstream processing issues
+		rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+			attribute.String("reader", "IngestProtoMetricsReader"),
+			attribute.String("reason", "summary_not_implemented"),
+		))
 		return false, fmt.Errorf("summary data points not yet implemented")
 	}
 
@@ -291,10 +295,9 @@ func (r *IngestProtoMetricsReader) addNumberDatapointFields(ret Row, dp pmetric.
 
 	// Check for NaN values and skip this datapoint if found
 	if math.IsNaN(value) || math.IsInf(value, 0) {
-		rowsDroppedCounter.Add(context.Background(), 1, metric.WithAttributes(
+		rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
 			attribute.String("reader", "IngestProtoMetricsReader"),
 			attribute.String("reason", "NaN"),
-			attribute.String("signal", "metrics"),
 		))
 		return true, nil // dropped=true, no error
 	}
@@ -326,6 +329,10 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ret Row, dp pmetr
 		}
 	}
 	if !hasCounts {
+		rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+			attribute.String("reader", "IngestProtoMetricsReader"),
+			attribute.String("reason", "histogram_no_counts"),
+		))
 		return fmt.Errorf("dropping histogram datapoint with no counts")
 	}
 
@@ -354,6 +361,10 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ret Row, dp pmetr
 	m := dp.ExplicitBounds().Len()
 	n := dp.BucketCounts().Len() // usually m+1
 	if n == 0 {
+		rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+			attribute.String("reader", "IngestProtoMetricsReader"),
+			attribute.String("reason", "histogram_no_bucket_counts"),
+		))
 		return fmt.Errorf("dropping histogram datapoint with no bucket counts")
 	}
 	// Note: m == 0 is valid (single bucket from -inf to +inf)
@@ -555,6 +566,10 @@ func (r *IngestProtoMetricsReader) addExponentialHistogramDatapointFields(ret Ro
 
 	if !hasData {
 		// Drop exponential histogram datapoints with no data
+		rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+			attribute.String("reader", "IngestProtoMetricsReader"),
+			attribute.String("reason", "exponential_histogram_no_data"),
+		))
 		return fmt.Errorf("dropping exponential histogram datapoint with no data")
 	}
 
