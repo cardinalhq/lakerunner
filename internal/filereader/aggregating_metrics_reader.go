@@ -38,13 +38,16 @@ type AggregatingMetricsReader struct {
 	batchSize         int
 
 	// Current aggregation state
-	currentKey      string
+	currentKey      SortKey
 	currentSketch   *ddsketch.DDSketch
 	singletonValues []float64
 	aggregatedRow   Row
 	pendingBatch    *Batch // Unprocessed rows from underlying reader
 	pendingIndex    int    // Index of next row to process in pendingBatch
 	readerEOF       bool
+
+	// Sort key provider for grouping
+	keyProvider SortKeyProvider
 
 	// Track logged histogram errors to avoid spam
 	loggedHistogramErrors map[string]bool
@@ -72,31 +75,39 @@ func NewAggregatingMetricsReader(reader Reader, aggregationPeriodMs int64, batch
 		aggregationPeriod:     aggregationPeriodMs,
 		batchSize:             batchSize,
 		singletonValues:       make([]float64, 0, 16),
+		keyProvider:           &MetricSortKeyProvider{},
 		loggedHistogramErrors: make(map[string]bool),
 	}, nil
 }
 
 // makeAggregationKey creates a key for aggregation from [metric_name, tid, truncated_timestamp].
-func (ar *AggregatingMetricsReader) makeAggregationKey(row Row) (string, error) {
-	name, nameOk := row[wkk.RowKeyCName].(string)
+func (ar *AggregatingMetricsReader) makeAggregationKey(row Row) (SortKey, error) {
+	// Validate required fields first
+	_, nameOk := row[wkk.RowKeyCName].(string)
 	if !nameOk {
-		return "", fmt.Errorf("missing or invalid _cardinalhq.name field")
+		return nil, fmt.Errorf("missing or invalid _cardinalhq.name field")
 	}
 
-	tid, tidOk := row[wkk.RowKeyCTID].(int64)
+	_, tidOk := row[wkk.RowKeyCTID].(int64)
 	if !tidOk {
-		return "", fmt.Errorf("missing or invalid _cardinalhq.tid field")
+		return nil, fmt.Errorf("missing or invalid _cardinalhq.tid field")
 	}
 
 	timestamp, tsOk := row[wkk.RowKeyCTimestamp].(int64)
 	if !tsOk {
-		return "", fmt.Errorf("missing or invalid _cardinalhq.timestamp field")
+		return nil, fmt.Errorf("missing or invalid _cardinalhq.timestamp field")
 	}
 
-	// Truncate timestamp to aggregation period
+	// Create a copy of the row with truncated timestamp
 	truncatedTimestamp := (timestamp / ar.aggregationPeriod) * ar.aggregationPeriod
+	rowCopy := make(Row)
+	for k, v := range row {
+		rowCopy[k] = v
+	}
+	rowCopy[wkk.RowKeyCTimestamp] = truncatedTimestamp
 
-	return fmt.Sprintf("%s:%d:%d", name, tid, truncatedTimestamp), nil
+	// Use the MetricSortKeyProvider to create the key
+	return ar.keyProvider.MakeKey(rowCopy), nil
 }
 
 // isSketchEmpty checks if a row has an empty sketch (indicating singleton value).
@@ -308,7 +319,10 @@ func (ar *AggregatingMetricsReader) aggregateCounterGauge() error {
 
 // resetAggregation clears the current aggregation state.
 func (ar *AggregatingMetricsReader) resetAggregation() {
-	ar.currentKey = ""
+	if ar.currentKey != nil {
+		ar.currentKey.Release()
+		ar.currentKey = nil
+	}
 	ar.currentSketch = nil
 	ar.singletonValues = ar.singletonValues[:0] // Reuse slice capacity
 	ar.aggregatedRow = nil
@@ -399,8 +413,13 @@ func (ar *AggregatingMetricsReader) processRow(row Row, batch *Batch) error {
 	}
 
 	// If this row belongs to current group, add it
-	if ar.currentKey == "" || ar.currentKey == key {
-		ar.currentKey = key
+	if ar.currentKey == nil || ar.currentKey.Compare(key) == 0 {
+		if ar.currentKey == nil {
+			ar.currentKey = key
+		} else {
+			// Release the new key since we're keeping the existing one
+			key.Release()
+		}
 		if err := ar.addRowToAggregation(row); err != nil {
 			slog.Error("Failed to add row to aggregation", "error", err)
 		}
@@ -408,7 +427,7 @@ func (ar *AggregatingMetricsReader) processRow(row Row, batch *Batch) error {
 	}
 
 	// Key changed - emit current aggregation and start new one
-	if ar.currentKey != "" {
+	if ar.currentKey != nil {
 		result, err := ar.aggregateGroup()
 		if err != nil {
 			return fmt.Errorf("failed to aggregate group: %w", err)
@@ -478,7 +497,7 @@ func (ar *AggregatingMetricsReader) Next() (*Batch, error) {
 				}
 				if err == io.EOF {
 					// Check if we need to emit final aggregation
-					if ar.currentKey != "" {
+					if ar.currentKey != nil {
 						result, aggErr := ar.aggregateGroup()
 						if aggErr != nil {
 							pipeline.ReturnBatch(batch)
@@ -512,7 +531,7 @@ func (ar *AggregatingMetricsReader) Next() (*Batch, error) {
 		}
 
 		// If we have no rows and are at EOF, we're done
-		if ar.readerEOF && ar.currentKey == "" {
+		if ar.readerEOF && ar.currentKey == nil {
 			pipeline.ReturnBatch(batch)
 			return nil, io.EOF
 		}
