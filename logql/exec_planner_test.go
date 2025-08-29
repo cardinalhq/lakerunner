@@ -110,3 +110,179 @@ func TestPlanner_RangeAgg_RootAndLeaf(t *testing.T) {
 		t.Fatalf("leaf range = %q, want %q", childLeaf.Leaf.Range, "5m")
 	}
 }
+
+func TestPlanner_RegexpPipelineLeaf_WithLabelFilters_AttachedToParser(t *testing.T) {
+	q := `{job="my-app"} | regexp "level=(?P<log_level>\\w+).*user=(?P<username>\\w+)" | log_level="ERROR" | username=~"(alice|bob)"`
+
+	ast, err := FromLogQL(q)
+	if err != nil {
+		t.Fatalf("FromLogQL() error: %v", err)
+	}
+
+	plan, err := CompileLog(ast)
+	if err != nil {
+		t.Fatalf("CompileLog() error: %v", err)
+	}
+
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf, got %d; plan=%#v", len(plan.Leaves), plan)
+	}
+	leaf := plan.Leaves[0]
+	rootLeaf, ok := plan.Root.(*LLeafNode)
+	if !ok {
+		t.Fatalf("root is not *LLeafNode, got %T", plan.Root)
+	}
+	if rootLeaf.Leaf.ID != leaf.ID {
+		t.Fatalf("root leaf ID mismatch: got %s, want %s", rootLeaf.Leaf.ID, leaf.ID)
+	}
+
+	// Matchers include job="my-app".
+	if !hasMatcher(leaf.Matchers, "job", "my-app") {
+		t.Fatalf("missing matcher job=my-app; got %#v", leaf.Matchers)
+	}
+
+	reIdx := findParserIndexByType(leaf.Parsers, "regexp")
+	if reIdx < 0 {
+		t.Fatalf("expected a regexp parser stage; parsers=%#v", leaf.Parsers)
+	}
+	reStage := leaf.Parsers[reIdx]
+
+	if pat := reStage.Params["pattern"]; pat != "" && !contains(pat, "(?P<log_level>") {
+		t.Fatalf("regexp pattern missing named capture: %q", pat)
+	}
+
+	if !parserHasFilter(reStage, "log_level", MatchEq, "ERROR") {
+		t.Fatalf("regexp stage missing filter log_level=\"ERROR\"; filters=%#v", reStage.Filters)
+	}
+	if !parserHasFilter(reStage, "username", MatchRe, "(alice|bob)") {
+		t.Fatalf("regexp stage missing filter username=~\"(alice|bob)\"; filters=%#v", reStage.Filters)
+	}
+
+	// They must also appear in the flat LabelFilters with AfterParser=true and ParserIdx=reIdx.
+	if !hasLabelFilterAttached(leaf.LabelFilters, "log_level", MatchEq, "ERROR", reIdx) {
+		t.Fatalf("missing attached label filter log_level=\"ERROR\"; got %#v", leaf.LabelFilters)
+	}
+	if !hasLabelFilterAttached(leaf.LabelFilters, "username", MatchRe, "(alice|bob)", reIdx) {
+		t.Fatalf("missing attached label filter username=~\"(alice|bob)\"; got %#v", leaf.LabelFilters)
+	}
+
+	if ia, oka := indexOfLabel(leaf.LabelFilters, "log_level"); oka {
+		if ib, okb := indexOfLabel(leaf.LabelFilters, "username"); okb && !(ia < ib) {
+			t.Fatalf("label filters order wrong: got %v", leaf.LabelFilters)
+		}
+	}
+
+	if len(leaf.LineFilters) != 0 {
+		t.Fatalf("unexpected line filters: %#v", leaf.LineFilters)
+	}
+
+	if leaf.RangeAggOp != "" {
+		t.Fatalf("unexpected RangeAggOp on leaf: %q", leaf.RangeAggOp)
+	}
+	if len(leaf.OutBy) != 0 || len(leaf.OutWithout) != 0 {
+		t.Fatalf("unexpected OutBy/OutWithout on leaf: by=%v wo=%v", leaf.OutBy, leaf.OutWithout)
+	}
+}
+
+func TestPlanner_JSONPipelineLeaf_WithLabelFilters_AttachedToParser(t *testing.T) {
+	q := `{job="my-app"} | json | level="ERROR" | user=~"(alice|bob)"`
+
+	ast, err := FromLogQL(q)
+	if err != nil {
+		t.Fatalf("FromLogQL() error: %v", err)
+	}
+
+	plan, err := CompileLog(ast)
+	if err != nil {
+		t.Fatalf("CompileLog() error: %v", err)
+	}
+
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf, got %d; plan=%#v", len(plan.Leaves), plan)
+	}
+	leaf := plan.Leaves[0]
+	rootLeaf, ok := plan.Root.(*LLeafNode)
+	if !ok {
+		t.Fatalf("root is not *LLeafNode, got %T", plan.Root)
+	}
+	if rootLeaf.Leaf.ID != leaf.ID {
+		t.Fatalf("root leaf ID mismatch: got %s, want %s", rootLeaf.Leaf.ID, leaf.ID)
+	}
+
+	if !hasMatcher(leaf.Matchers, "job", "my-app") {
+		t.Fatalf("missing matcher job=my-app; got %#v", leaf.Matchers)
+	}
+
+	jsonIdx := findParserIndexByType(leaf.Parsers, "json")
+	if jsonIdx < 0 {
+		t.Fatalf("expected a json parser stage; parsers=%#v", leaf.Parsers)
+	}
+	jsonStage := leaf.Parsers[jsonIdx]
+
+	if !parserHasFilter(jsonStage, "level", MatchEq, "ERROR") {
+		t.Fatalf("json stage missing filter level=\"ERROR\"; filters=%#v", jsonStage.Filters)
+	}
+	if !parserHasFilter(jsonStage, "user", MatchRe, "(alice|bob)") {
+		t.Fatalf("json stage missing filter user=~\"(alice|bob)\"; filters=%#v", jsonStage.Filters)
+	}
+
+	if !hasLabelFilterAttached(leaf.LabelFilters, "level", MatchEq, "ERROR", jsonIdx) {
+		t.Fatalf("missing attached label filter level=\"ERROR\"; got %#v", leaf.LabelFilters)
+	}
+	if !hasLabelFilterAttached(leaf.LabelFilters, "user", MatchRe, "(alice|bob)", jsonIdx) {
+		t.Fatalf("missing attached label filter user=~\"(alice|bob)\"; got %#v", leaf.LabelFilters)
+	}
+
+	if ia, oka := indexOfLabel(leaf.LabelFilters, "level"); oka {
+		if ib, okb := indexOfLabel(leaf.LabelFilters, "user"); okb && !(ia < ib) {
+			t.Fatalf("label filters order wrong: got %v", leaf.LabelFilters)
+		}
+	}
+
+	if len(leaf.LineFilters) != 0 {
+		t.Fatalf("unexpected line filters: %#v", leaf.LineFilters)
+	}
+
+	if leaf.RangeAggOp != "" {
+		t.Fatalf("unexpected RangeAggOp on leaf: %q", leaf.RangeAggOp)
+	}
+	if len(leaf.OutBy) != 0 || len(leaf.OutWithout) != 0 {
+		t.Fatalf("unexpected OutBy/OutWithout on leaf: by=%v wo=%v", leaf.OutBy, leaf.OutWithout)
+	}
+}
+
+func findParserIndexByType(ps []ParserStage, typ string) int {
+	for i, p := range ps {
+		if p.Type == typ {
+			return i
+		}
+	}
+	return -1
+}
+
+func parserHasFilter(p ParserStage, label string, op MatchOp, value string) bool {
+	for _, f := range p.Filters {
+		if f.Label == label && f.Op == op && f.Value == value {
+			return true
+		}
+	}
+	return false
+}
+
+func hasLabelFilterAttached(lfs []LabelFilter, label string, op MatchOp, value string, parserIdx int) bool {
+	for _, lf := range lfs {
+		if lf.Label == label && lf.Op == op && lf.Value == value && lf.AfterParser && lf.ParserIdx != nil && *lf.ParserIdx == parserIdx {
+			return true
+		}
+	}
+	return false
+}
+
+func indexOfLabel(lfs []LabelFilter, label string) (int, bool) {
+	for i, lf := range lfs {
+		if lf.Label == label {
+			return i, true
+		}
+	}
+	return -1, false
+}

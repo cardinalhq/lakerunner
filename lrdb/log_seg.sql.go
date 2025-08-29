@@ -249,11 +249,11 @@ func (q *Queries) InsertLogSegmentDirect(ctx context.Context, arg InsertLogSegme
 
 const listLogSegmentsForQuery = `-- name: ListLogSegmentsForQuery :many
 SELECT
-    t.fp                    AS fingerprint,
+    t.fp::bigint                    AS fingerprint,
     s.instance_num,
     s.segment_id,
-    lower(s.ts_range)       AS start_ts,
-    upper(s.ts_range) - 1   AS end_ts
+    lower(s.ts_range)::bigint        AS start_ts,
+    (upper(s.ts_range) - 1)::bigint  AS end_ts
 FROM log_seg AS s
          CROSS JOIN LATERAL
     unnest(s.fingerprints) AS t(fp)
@@ -269,16 +269,16 @@ type ListLogSegmentsForQueryParams struct {
 	OrganizationID uuid.UUID `json:"organization_id"`
 	Dateint        int32     `json:"dateint"`
 	Fingerprints   []int64   `json:"fingerprints"`
-	StartTs        int64     `json:"start_ts"`
-	EndTs          int64     `json:"end_ts"`
+	S              int64     `json:"s"`
+	E              int64     `json:"e"`
 }
 
 type ListLogSegmentsForQueryRow struct {
-	Fingerprint interface{} `json:"fingerprint"`
-	InstanceNum int16       `json:"instance_num"`
-	SegmentID   int64       `json:"segment_id"`
-	StartTs     string      `json:"start_ts"`
-	EndTs       int32       `json:"end_ts"`
+	Fingerprint int64 `json:"fingerprint"`
+	InstanceNum int16 `json:"instance_num"`
+	SegmentID   int64 `json:"segment_id"`
+	StartTs     int64 `json:"start_ts"`
+	EndTs       int64 `json:"end_ts"`
 }
 
 func (q *Queries) ListLogSegmentsForQuery(ctx context.Context, arg ListLogSegmentsForQueryParams) ([]ListLogSegmentsForQueryRow, error) {
@@ -286,8 +286,8 @@ func (q *Queries) ListLogSegmentsForQuery(ctx context.Context, arg ListLogSegmen
 		arg.OrganizationID,
 		arg.Dateint,
 		arg.Fingerprints,
-		arg.StartTs,
-		arg.EndTs,
+		arg.S,
+		arg.E,
 	)
 	if err != nil {
 		return nil, err

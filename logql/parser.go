@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -61,13 +62,22 @@ type LabelFilter struct {
 	Label string  `json:"label"`
 	Op    MatchOp `json:"op"` // =, !=, =~, !~
 	Value string  `json:"value"`
+
+	// NEW: where did this appear in the pipeline?
+	AfterParser bool `json:"afterParser,omitempty"` // true if it appeared after some parser
+	ParserIdx   *int `json:"parserIdx,omitempty"`   // index in LogSelector.Parsers (0-based), if AfterParser
 }
 
+type ParserStage struct {
+	Type    string            `json:"type"`              // json|logfmt|regexp|label_fmt|keep_labels|...
+	Params  map[string]string `json:"params"`            // optional (e.g. regexp pattern)
+	Filters []LabelFilter     `json:"filters,omitempty"` // NEW: label filters that follow this parser
+}
 type LogSelector struct {
 	Matchers     []LabelMatch  `json:"matchers"`
 	LineFilters  []LineFilter  `json:"lineFilters,omitempty"`
-	LabelFilters []LabelFilter `json:"labelFilters,omitempty"` // NEW
-	Parsers      []ParserStage `json:"parsers,omitempty"`      // json, logfmt, label_fmt, keep/drop, etc.
+	LabelFilters []LabelFilter `json:"labelFilters,omitempty"`
+	Parsers      []ParserStage `json:"parsers,omitempty"` // json, logfmt, regexp, label_fmt, keep/drop, etc.
 }
 
 type LogRange struct {
@@ -130,11 +140,6 @@ const (
 	LineRegex       LineFilterOp = "regex"        // |~ "re"
 	LineNotRegex    LineFilterOp = "not_regex"    // !~ "re"
 )
-
-type ParserStage struct {
-	Type   string            `json:"type"`   // json|logfmt|label_fmt|keep_labels|drop_labels|...
-	Params map[string]string `json:"params"` // placeholder for stage options
-}
 
 // ------------------------------
 // Public API
@@ -303,7 +308,7 @@ func addLineFilterFromSyntax(ls *LogSelector, lineFilterList []logql.LineFilterE
 		if lf.Left != nil {
 			visit(*lf.Left)
 		}
-		// de-dupe by (type, match); adjust key if you need to distinguish same match with different positions
+		// de-dupe by (type, match)
 		key := fmt.Sprintf("%d\x00%s", lf.Ty, lf.Match)
 		if _, ok := seen[key]; ok {
 			return
@@ -321,53 +326,181 @@ func addLineFilterFromSyntax(ls *LogSelector, lineFilterList []logql.LineFilterE
 	}
 }
 
-// Build selector: call this along with your existing line-filter / parser extraction.
+// addParsersAndLabelFiltersFromString builds ParserStage[] and LabelFilters[] together,
+// preserving order and attaching filters that appear after a parser to that parser.
+func addParsersAndLabelFiltersFromString(s string, ls *LogSelector) {
+	lastParser := -1
+
+	for _, chunk := range splitPipelineStages(s) {
+		// Parser?
+		if typ, params, ok := looksLikeParser(chunk); ok {
+			ls.Parsers = append(ls.Parsers, ParserStage{Type: typ, Params: params})
+			lastParser = len(ls.Parsers) - 1
+			continue
+		}
+
+		// Label filter?
+		if lf, ok := tryParseLabelFilter(chunk); ok {
+			if lastParser >= 0 {
+				// Attach to the last parser and mark as "after parser"
+				idx := lastParser
+				lf.AfterParser = true
+				lf.ParserIdx = &idx
+
+				ls.Parsers[lastParser].Filters = append(ls.Parsers[lastParser].Filters, lf)
+				ls.LabelFilters = append(ls.LabelFilters, lf) // keep flat view too
+			} else {
+				// Filter before any parser
+				ls.LabelFilters = append(ls.LabelFilters, lf)
+			}
+		}
+	}
+}
+
 func buildSelector(sel logql.LogSelectorExpr) (LogSelector, error) {
 	ls := LogSelector{
 		Matchers: toLabelMatches(sel.Matchers()),
 	}
 
-	// --- line filters you already do ---
-	lineFilterList := logql.ExtractLineFilters(sel)
-	addLineFilterFromSyntax(&ls, lineFilterList)
+	// 1) Loki-provided line filters
+	addLineFilterFromSyntax(&ls, logql.ExtractLineFilters(sel))
 
-	// --- label filters before parsers ---
-	addLabelFiltersFromSyntax(&ls, sel)
-
-	// --- parser stages ---
-	addParsersFromString(sel.String(), &ls)
+	// 2) Parsers + label filters (order-aware, attached to parser when appropriate)
+	addParsersAndLabelFiltersFromString(sel.String(), &ls)
 
 	sort.Slice(ls.Matchers, func(i, j int) bool { return ls.Matchers[i].Label < ls.Matchers[j].Label })
 	return ls, nil
 }
 
-var (
-	rePipeRegexp     = regexp.MustCompile(`\|\s*regexp\b`)
-	rePipeJSON       = regexp.MustCompile(`\|\s*json\b`)
-	rePipeLogfmt     = regexp.MustCompile(`\|\s*logfmt\b`)
-	rePipeLabelFmt   = regexp.MustCompile(`\|\s*label_(?:format|fmt)\b`)
-	rePipeLineFmt    = regexp.MustCompile(`\|\s*line_(?:format|fmt)\b`)
-	rePipeKeepLabels = regexp.MustCompile(`\|\s*keep_labels\b`)
-	rePipeDropLabels = regexp.MustCompile(`\|\s*drop_labels\b`)
-	rePipeLabelRepl  = regexp.MustCompile(`\|\s*label_replace\b`)
-	rePipeDecolorize = regexp.MustCompile(`\|\s*decolorize\b`)
-)
+// ------------------------------
+// Pipeline scanning (order-preserving, quote/paren aware)
+// ------------------------------
 
-func addParsersFromString(s string, ls *LogSelector) {
-	add := func(n int, typ string) {
-		for i := 0; i < n; i++ {
-			ls.Parsers = append(ls.Parsers, ParserStage{Type: typ, Params: map[string]string{}})
+// splitPipelineStages splits the string form of a selector on top-level '|' after the matcher block.
+func splitPipelineStages(selStr string) []string {
+	// Keep only pipeline tail after the first closing '}'.
+	if i := strings.IndexByte(selStr, '}'); i >= 0 && i+1 < len(selStr) {
+		selStr = selStr[i+1:]
+	}
+
+	var out []string
+	var buf []rune
+	inStr, esc := false, false
+	paren := 0
+
+	flush := func() {
+		s := strings.TrimSpace(string(buf))
+		if s != "" {
+			out = append(out, strings.TrimSpace(strings.TrimPrefix(s, "|")))
+		}
+		buf = buf[:0]
+	}
+
+	for _, r := range selStr {
+		if inStr {
+			buf = append(buf, r)
+			if esc {
+				esc = false
+			} else if r == '\\' {
+				esc = true
+			} else if r == '"' {
+				inStr = false
+			}
+			continue
+		}
+		switch r {
+		case '"':
+			inStr = true
+			buf = append(buf, r)
+		case '(':
+			paren++
+			buf = append(buf, r)
+		case ')':
+			if paren > 0 {
+				paren--
+			}
+			buf = append(buf, r)
+		case '|':
+			if paren == 0 {
+				flush()
+				continue
+			}
+			buf = append(buf, r)
+		default:
+			buf = append(buf, r)
 		}
 	}
-	add(len(rePipeRegexp.FindAllStringIndex(s, -1)), "regexp")
-	add(len(rePipeJSON.FindAllStringIndex(s, -1)), "json")
-	add(len(rePipeLogfmt.FindAllStringIndex(s, -1)), "logfmt")
-	add(len(rePipeLabelFmt.FindAllStringIndex(s, -1)), "label_fmt")
-	add(len(rePipeLineFmt.FindAllStringIndex(s, -1)), "line_fmt")
-	add(len(rePipeKeepLabels.FindAllStringIndex(s, -1)), "keep_labels")
-	add(len(rePipeDropLabels.FindAllStringIndex(s, -1)), "drop_labels")
-	add(len(rePipeLabelRepl.FindAllStringIndex(s, -1)), "label_replace")
-	add(len(rePipeDecolorize.FindAllStringIndex(s, -1)), "decolorize")
+	flush()
+	return out
+}
+
+// looksLikeParser returns (type, params, ok) for known parser heads.
+func looksLikeParser(stage string) (string, map[string]string, bool) {
+	head := strings.Fields(stage)
+	if len(head) == 0 {
+		return "", nil, false
+	}
+	switch head[0] {
+	case "json", "logfmt", "label_format", "line_format", "label_replace", "keep_labels", "drop_labels", "decolorize":
+		return head[0], map[string]string{}, true
+	case "regexp":
+		params := map[string]string{}
+		// Extract first quoted string (pattern) if present
+		if i := strings.Index(stage, "\""); i >= 0 {
+			if j := strings.LastIndex(stage, "\""); j > i {
+				if pat, err := strconv.Unquote(stage[i : j+1]); err == nil {
+					params["pattern"] = pat
+				}
+			}
+		}
+		return "regexp", params, true
+	default:
+		return "", nil, false
+	}
+}
+
+// tryParseLabelFilter parses `<ident> <op> <value>` (value may be quoted).
+func tryParseLabelFilter(stage string) (LabelFilter, bool) {
+	s := strings.TrimSpace(stage)
+	if s == "" {
+		return LabelFilter{}, false
+	}
+	// Prefer longest ops first
+	for _, op := range []string{"=~", "!~", "!=", "="} {
+		if i := strings.Index(s, op); i >= 0 {
+			lab := strings.TrimSpace(s[:i])
+			val := strings.TrimSpace(s[i+len(op):])
+			if lab == "" || val == "" {
+				return LabelFilter{}, false
+			}
+			// Unquote value if it's "...".
+			if len(val) >= 2 && val[0] == '"' && val[len(val)-1] == '"' {
+				if u, err := strconv.Unquote(val); err == nil {
+					val = u
+				}
+			}
+			return LabelFilter{Label: lab, Op: toMatchOpString(op), Value: val}, true
+		}
+	}
+	return LabelFilter{}, false
+}
+
+// addParsersFromString: order-preserving parser detection with optional params.
+func addParsersFromString(s string, ls *LogSelector) {
+	for _, chunk := range splitPipelineStages(s) {
+		if typ, params, ok := looksLikeParser(chunk); ok {
+			ls.Parsers = append(ls.Parsers, ParserStage{Type: typ, Params: params})
+		}
+	}
+}
+
+// addLabelFiltersFromString: picks up label filters anywhere in the pipeline (incl. after parsers).
+func addLabelFiltersFromString(s string, ls *LogSelector) {
+	for _, chunk := range splitPipelineStages(s) {
+		if lf, ok := tryParseLabelFilter(chunk); ok {
+			ls.LabelFilters = append(ls.LabelFilters, lf)
+		}
+	}
 }
 
 // ------------------------------
@@ -403,7 +536,6 @@ func toMatchOp(t labels.MatchType) MatchOp {
 	}
 }
 
-// promDur prints a time.Duration in Prometheus-style ("5m", "1h3m").
 func promDur(d time.Duration) string {
 	if d == 0 {
 		return ""
@@ -430,7 +562,6 @@ func (a *LogAST) FirstPipeline() (*LogSelector, *LogRange, bool) {
 }
 
 // CollectPipelines returns every pipeline (LogRange) in evaluation order (left→right).
-// Useful when expressions contain multiple subqueries (e.g., binops).
 func (a *LogAST) CollectPipelines() []*LogRange {
 	var out []*LogRange
 	collectPipelines(a, &out)
@@ -446,22 +577,18 @@ func pipelineFromNode(node *LogAST) (*LogSelector, *LogRange, bool) {
 	}
 	switch node.Kind {
 	case KindRangeAgg:
-		// VectorAgg -> RangeAgg -> LogRange -> LogSelector
 		if node.RangeAgg != nil {
 			return &node.RangeAgg.Left.Selector, &node.RangeAgg.Left, true
 		}
 	case KindLogRange:
-		// In case someone passed a Range sub-tree directly
 		if node.LogRange != nil {
 			return &node.LogRange.Selector, node.LogRange, true
 		}
 	case KindVectorAgg:
-		// Recurse through nested vector aggs
 		if node.VectorAgg != nil {
 			return pipelineFromNode(&node.VectorAgg.Left)
 		}
 	case KindBinOp:
-		// Try LHS, then RHS (left→right evaluation order)
 		if node.BinOp != nil {
 			if sel, rng, ok := pipelineFromNode(&node.BinOp.LHS); ok {
 				return sel, rng, true
@@ -469,7 +596,6 @@ func pipelineFromNode(node *LogAST) (*LogSelector, *LogRange, bool) {
 			return pipelineFromNode(&node.BinOp.RHS)
 		}
 	case KindLogSelector:
-		// Bare selector (no [range]) — not a pipeline; expose it anyway if you want
 		if node.LogSel != nil {
 			return node.LogSel, nil, true
 		}
@@ -500,49 +626,27 @@ func collectPipelines(node *LogAST, out *[]*LogRange) {
 			collectPipelines(&node.BinOp.LHS, out)
 			collectPipelines(&node.BinOp.RHS, out)
 		}
-		// other node kinds do not contain pipelines directly
 	}
 }
 
-// Walks label-filter pipeline (before parser stages) via the public API and
-// turns them into our simple {label, op, value}.
-func addLabelFiltersFromSyntax(ls *LogSelector, sel logql.LogSelectorExpr) {
-	for _, lf := range logql.ExtractLabelFiltersBeforeParser(sel) {
-		// The only stable/public thing we can read is the string form.
-		// Examples: `| level="ERROR"`, `| duration > 10s`, etc.
-		s := strings.TrimSpace(lf.String()) // LabelFilterExpr implements fmt.Stringer
-
-		// Normalize: drop a leading pipe if present.
-		if strings.HasPrefix(s, "|") {
-			s = strings.TrimSpace(strings.TrimPrefix(s, "|"))
-		}
-
-		// Parse: label, operator, value (quoted or bare). Keep it conservative.
-		if lab, op, val, ok := parseLabelFilterString(s); ok {
-			ls.LabelFilters = append(ls.LabelFilters, LabelFilter{
-				Label: lab,
-				Op:    toMatchOpString(op),
-				Value: val,
-			})
+func parseLabelFilterString(s string) (string, string, string, bool) {
+	s = strings.TrimSpace(s)
+	for _, op := range []string{"=~", "!~", "!=", "="} {
+		if i := strings.Index(s, op); i >= 0 {
+			lab := strings.TrimSpace(s[:i])
+			val := strings.TrimSpace(s[i+len(op):])
+			if lab == "" || val == "" {
+				return "", "", "", false
+			}
+			if len(val) >= 2 && val[0] == '"' && val[len(val)-1] == '"' {
+				if u, err := strconv.Unquote(val); err == nil {
+					val = u
+				}
+			}
+			return lab, op, val, true
 		}
 	}
-}
-
-// Parses strings like: level="ERROR", level!="error", level=~"re", level!~"re"
-// Also allows bare values (numbers/durations) and spaces around tokens.
-var reLabelFilter = regexp.MustCompile(`^\s*([A-Za-z_][A-Za-z0-9_:.]*)\s*(=~|!~|!=|=)\s*(.+?)\s*$`)
-
-func parseLabelFilterString(s string) (label, op, value string, ok bool) {
-	m := reLabelFilter.FindStringSubmatch(s)
-	if len(m) != 4 {
-		return "", "", "", false
-	}
-	label, op, value = m[1], m[2], m[3]
-	// Trim quotes if quoted
-	if len(value) >= 2 && ((value[0] == '"' && value[len(value)-1] == '"') || (value[0] == '\'' && value[len(value)-1] == '\'')) {
-		value = strings.Trim(value, `"'`)
-	}
-	return label, op, value, true
+	return "", "", "", false
 }
 
 func toMatchOpString(op string) MatchOp {

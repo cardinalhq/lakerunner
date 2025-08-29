@@ -102,11 +102,11 @@ FROM fingerprint_array AS fa;
 
 -- name: ListLogSegmentsForQuery :many
 SELECT
-    t.fp                    AS fingerprint,
+    t.fp::bigint                    AS fingerprint,
     s.instance_num,
     s.segment_id,
-    lower(s.ts_range)       AS start_ts,
-    upper(s.ts_range) - 1   AS end_ts
+    lower(s.ts_range)::bigint        AS start_ts,
+    (upper(s.ts_range) - 1)::bigint  AS end_ts
 FROM log_seg AS s
          CROSS JOIN LATERAL
     unnest(s.fingerprints) AS t(fp)
@@ -115,4 +115,4 @@ WHERE
   AND s.dateint      = @dateint
   AND s.fingerprints && @fingerprints::BIGINT[]
   AND t.fp           = ANY(@fingerprints::BIGINT[])
-  AND ts_range && int8range(@start_ts, @end_ts, '[)');
+  AND ts_range && int8range(@s, @e, '[)');

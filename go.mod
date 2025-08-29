@@ -21,6 +21,7 @@ require (
 	github.com/fxamacker/cbor/v2 v2.7.0
 	github.com/gogo/protobuf v1.3.2
 	github.com/golang-migrate/migrate/v4 v4.18.3
+	github.com/google/codesearch v1.2.0
 	github.com/google/uuid v1.6.0
 	github.com/grafana/loki/v3 v3.5.3
 	github.com/hashicorp/go-multierror v1.1.1
