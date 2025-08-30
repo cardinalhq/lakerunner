@@ -36,7 +36,7 @@ func TestPutMetricCompactionWork(t *testing.T) {
 
 	orgID := uuid.New()
 	segmentID := uuid.New()
-	
+
 	now := time.Now()
 	tsRange := pgtype.Range[pgtype.Timestamptz]{
 		Lower:     pgtype.Timestamptz{Time: now, Valid: true},

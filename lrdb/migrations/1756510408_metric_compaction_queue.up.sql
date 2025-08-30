@@ -19,11 +19,17 @@ CREATE TABLE IF NOT EXISTS metric_compaction_queue (
   claimed_at      TIMESTAMPTZ
 );
 
-CREATE INDEX IF NOT EXISTS idx_metric_compaction_queue_pri_ts ON metric_compaction_queue (priority, queue_ts);
+-- Global ready ordering for picking groups quickly
+CREATE INDEX IF NOT EXISTS idx_mcq_ready_global
+ON metric_compaction_queue (priority DESC, queue_ts)
+WHERE claimed_at IS NULL;
 
-CREATE INDEX IF NOT EXISTS idx_metric_compaction_queue_ready ON metric_compaction_queue (priority DESC, queue_ts) WHERE claimed_at IS NULL;
+-- Fast per-group scans once a group is considered
+CREATE INDEX IF NOT EXISTS idx_mcq_ready_group
+ON metric_compaction_queue (organization_id, instance_num, dateint, priority DESC, queue_ts)
+WHERE claimed_at IS NULL;
 
-CREATE INDEX IF NOT EXISTS idx_metric_compaction_queue_claimed_at_nonnull ON metric_compaction_queue (claimed_at) WHERE claimed_at IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_metric_compaction_queue_org_dateint ON metric_compaction_queue (organization_id, dateint);
-
+-- timeout sweeper
+CREATE INDEX IF NOT EXISTS idx_mcq_claimed_at_nonnull
+ON metric_compaction_queue (claimed_at)
+WHERE claimed_at IS NOT NULL;

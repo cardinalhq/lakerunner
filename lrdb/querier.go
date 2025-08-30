@@ -27,8 +27,15 @@ type Querier interface {
 	ClaimInqueueWork(ctx context.Context, arg ClaimInqueueWorkParams) (Inqueue, error)
 	// Greedy pack up to size cap and row cap
 	ClaimInqueueWorkBatch(ctx context.Context, arg ClaimInqueueWorkBatchParams) ([]ClaimInqueueWorkBatchRow, error)
-	// Greedy pack up to record cap and row cap
-	ClaimMetricCompactionWorkBatch(ctx context.Context, arg ClaimMetricCompactionWorkBatchParams) ([]ClaimMetricCompactionWorkBatchRow, error)
+	// Safety net: claim a single big row immediately if any row >= target_records
+	// Ready rows excluding nothing (the big_single branch is short-circuited later)
+	// One seed per (org, instance, dateint): oldest/highest-priority in the group
+	// Order groups globally by seed's (priority DESC, queue_ts ASC)
+	// Evaluate groups in global order; compute per-group “pack” and eligibility
+	// We use LATERAL so Postgres can walk groups one-by-one and stop at the first match.
+	// The rows to claim when using the group path (exact packed rows for the winner)
+	// Final choice: prefer big_single if any; otherwise the packed group
+	ClaimMetricCompactionWork(ctx context.Context, arg ClaimMetricCompactionWorkParams) ([]ClaimMetricCompactionWorkRow, error)
 	CleanupInqueueWork(ctx context.Context, cutoffTime *time.Time) ([]Inqueue, error)
 	CompactLogSegments(ctx context.Context, arg CompactLogSegmentsParams) error
 	CompactTraceSegments(ctx context.Context, arg CompactTraceSegmentsParams) error
