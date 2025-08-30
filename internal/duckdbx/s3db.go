@@ -313,10 +313,10 @@ func (s *S3DB) loadHTTPFS(ctx context.Context, conn *sql.Conn) error {
 
 // CREATE OR REPLACE SECRET for a bucket (serialized).
 func seedS3SecretFromEnv(ctx context.Context, conn *sql.Conn, bucket, region string, endpoint string) error {
-	keyID := os.Getenv("AWS_ACCESS_KEY_ID")
-	secret := os.Getenv("AWS_SECRET_ACCESS_KEY")
+	keyID := os.Getenv("S3_ACCESS_KEY_ID")
+	secret := os.Getenv("S3_SECRET_ACCESS_KEY")
 	if keyID == "" || secret == "" {
-		return fmt.Errorf("missing AWS creds in env: AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY")
+		return fmt.Errorf("missing AWS creds in env: S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY")
 	}
 	session := os.Getenv("AWS_SESSION_TOKEN")
 
