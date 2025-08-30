@@ -86,11 +86,11 @@ func init() {
 			sp := storageprofile.NewStorageProfileProvider(cdb)
 
 			config := compaction.GetConfigFromEnv()
-			manager := compaction.NewManager(mdb, myInstanceID, config)
+			manager := compaction.NewManager(mdb, myInstanceID, config, sp, awsmanager)
 
 			healthServer.SetStatus(healthcheck.StatusHealthy)
 
-			return compaction.RunLoop(ctx, manager, mdb, sp, awsmanager)
+			return manager.Run(ctx)
 		},
 	}
 

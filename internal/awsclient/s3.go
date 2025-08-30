@@ -231,16 +231,3 @@ func (m *Manager) GetS3ForProfile(ctx context.Context, p storageprofile.StorageP
 	}
 	return m.GetS3(ctx, opts...)
 }
-
-// type customResolverV2 struct{ url string }
-
-// func (r customResolverV2) ResolveEndpoint(
-// 	ctx context.Context,
-// 	params s3.EndpointParameters,
-// ) (smithyendpoint.Endpoint, error) {
-// 	return smithyendpoint.Endpoint{
-// 		URL:               r.url,
-// 		SigningRegion:     params.Region,
-// 		HostnameImmutable: true,
-// 	}, nil
-// }

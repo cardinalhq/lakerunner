@@ -24,10 +24,14 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/cardinalhq/lakerunner/internal/awsclient"
+	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
+	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 type compactionStore interface {
+	s3helper.ObjectCleanupStore
 	ClaimMetricCompactionWork(ctx context.Context, params lrdb.ClaimMetricCompactionWorkParams) ([]lrdb.ClaimMetricCompactionWorkRow, error)
 	DeleteMetricCompactionWork(ctx context.Context, params lrdb.DeleteMetricCompactionWorkParams) error
 	ReleaseMetricCompactionWork(ctx context.Context, params lrdb.ReleaseMetricCompactionWorkParams) error
@@ -42,7 +46,7 @@ type config struct {
 }
 
 func GetConfigFromEnv() config {
-	maxAge := int32(900) // 15 minutes default
+	maxAge := int32(900)
 	if env := os.Getenv("METRIC_COMPACTION_MAX_AGE_SECONDS"); env != "" {
 		if val, err := strconv.Atoi(env); err == nil && val > 0 {
 			maxAge = int32(val)
@@ -64,18 +68,28 @@ func GetConfigFromEnv() config {
 }
 
 type Manager struct {
-	db       compactionStore
-	workerID int64
-	config   config
-	ll       *slog.Logger
+	db         compactionStore
+	workerID   int64
+	config     config
+	ll         *slog.Logger
+	sp         storageprofile.StorageProfileProvider
+	awsmanager *awsclient.Manager
 }
 
-func NewManager(db compactionStore, workerID int64, config config) *Manager {
+func NewManager(
+	db compactionStore,
+	workerID int64,
+	config config,
+	sp storageprofile.StorageProfileProvider,
+	awsmanager *awsclient.Manager,
+) *Manager {
 	return &Manager{
-		db:       db,
-		workerID: workerID,
-		config:   config,
-		ll:       slog.Default().With(slog.String("component", "metric-compaction-manager")),
+		db:         db,
+		workerID:   workerID,
+		config:     config,
+		ll:         slog.Default().With(slog.String("component", "metric-compaction-manager")),
+		sp:         sp,
+		awsmanager: awsmanager,
 	}
 }
 
@@ -130,4 +144,9 @@ func (m *Manager) FailWork(ctx context.Context, rows []lrdb.ClaimMetricCompactio
 		}
 	}
 	return nil
+}
+
+// Run starts the compaction loop using the manager's dependencies
+func (m *Manager) Run(ctx context.Context) error {
+	return runLoop(ctx, m, m.db, m.sp, m.awsmanager)
 }

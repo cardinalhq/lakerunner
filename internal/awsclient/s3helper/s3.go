@@ -222,31 +222,12 @@ func DeleteS3Object(ctx context.Context, s3client *awsclient.S3Client, bucketID,
 	return nil
 }
 
-// func deleteS3Objects(ctx context.Context, s3client *s3.Client, bucketID string, objectIDs []string) error {
-// 	oids := make([]types.ObjectIdentifier, len(objectIDs))
-// 	for i, id := range objectIDs {
-// 		oids[i] = types.ObjectIdentifier{
-// 			Key: aws.String(id),
-// 		}
-// 	}
-// 	result, err := s3client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
-// 		Bucket: aws.String(bucketID),
-// 		Delete: &types.Delete{
-// 			Objects: oids,
-// 			Quiet:   aws.Bool(true), // only return errors
-// 		},
-// 	})
-// 	if err != nil {
-// 		slog.Error("Failed to bunk delete objects", slog.Any("error", err))
-// 		return err
-// 	}
-// 	for _, err := range result.Errors {
-// 		slog.Error("Failed to delete S3 object", slog.String("objectID", *err.Key), slog.Any("error", err.Message))
-// 	}
-// 	return nil
-// }
+// ObjectCleanupStore provides the minimal interface needed for scheduling S3 object deletions
+type ObjectCleanupStore interface {
+	ObjectCleanupAdd(ctx context.Context, arg lrdb.ObjectCleanupAddParams) error
+}
 
-func ScheduleS3Delete(ctx context.Context, mdb lrdb.StoreFull, org_id uuid.UUID, instanceNum int16, bucketID, objectID string) error {
+func ScheduleS3Delete(ctx context.Context, mdb ObjectCleanupStore, org_id uuid.UUID, instanceNum int16, bucketID, objectID string) error {
 	return mdb.ObjectCleanupAdd(ctx, lrdb.ObjectCleanupAddParams{
 		OrganizationID: org_id,
 		BucketID:       bucketID,
