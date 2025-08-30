@@ -20,14 +20,16 @@ type AdminApiKey struct {
 }
 
 type BucketConfiguration struct {
-	ID            uuid.UUID `json:"id"`
-	BucketName    string    `json:"bucket_name"`
-	CloudProvider string    `json:"cloud_provider"`
-	Region        string    `json:"region"`
-	Endpoint      *string   `json:"endpoint"`
-	Role          *string   `json:"role"`
-	UsePathStyle  bool      `json:"use_path_style"`
-	InsecureTls   bool      `json:"insecure_tls"`
+	ID             uuid.UUID      `json:"id"`
+	BucketName     string         `json:"bucket_name"`
+	CloudProvider  string         `json:"cloud_provider"`
+	Region         string         `json:"region"`
+	Endpoint       *string        `json:"endpoint"`
+	Role           *string        `json:"role"`
+	UsePathStyle   bool           `json:"use_path_style"`
+	InsecureTls    bool           `json:"insecure_tls"`
+	ProviderType   string         `json:"provider_type"`
+	ProviderConfig map[string]any `json:"provider_config"`
 }
 
 type BucketPrefixMapping struct {

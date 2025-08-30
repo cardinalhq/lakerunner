@@ -26,7 +26,22 @@ func NewBackend(ctx context.Context, backendType BackendType) (Backend, error) {
 		return NewSQSService()
 	case BackendTypeGCPPubSub:
 		return NewGCPPubSubService()
+	case BackendTypeHTTP:
+		httpService, err := NewHTTPService()
+		if err != nil {
+			return nil, err
+		}
+		return httpService, nil
+	case BackendTypeLocal:
+		return NewLocalService()
 	default:
 		return nil, fmt.Errorf("unsupported backend type: %s", backendType)
 	}
+}
+
+// Placeholder implementations for new backend types
+func NewLocalService() (Backend, error) {
+	// Local file-based backend for development
+	// For now, return an error indicating it's not implemented
+	return nil, fmt.Errorf("local backend not yet implemented")
 }

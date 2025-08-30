@@ -53,7 +53,7 @@ func TestNewStorageProfileProvider(t *testing.T) {
 	got, err := provider.GetStorageProfileForOrganization(context.Background(), orgID)
 	assert.NoError(t, err)
 	assert.Equal(t, orgID, got.OrganizationID)
-	assert.Equal(t, "aws", got.CloudProvider)
+	assert.Equal(t, "aws", got.ProviderType)
 	assert.Equal(t, "us-west-2", got.Region)
 	assert.Equal(t, "test-bucket", got.Bucket)
 	assert.Equal(t, "test-role", got.Role)

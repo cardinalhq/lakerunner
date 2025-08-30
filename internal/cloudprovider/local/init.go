@@ -12,24 +12,13 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package queryworker
+package local
 
 import (
-	"encoding/json"
-	"log/slog"
-	"net/http"
-	"time"
+	"github.com/cardinalhq/lakerunner/internal/cloudprovider"
 )
 
-func (s *Service) handleHealth(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	response := map[string]any{
-		"status":    "healthy",
-		"timestamp": time.Now().Unix(),
-		"service":   "query-worker",
-	}
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		slog.Error("Failed to encode health response", "error", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-	}
+func init() {
+	// Register local provider implementation
+	cloudprovider.RegisterLocalProvider(NewLocalProvider)
 }

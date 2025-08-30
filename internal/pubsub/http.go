@@ -112,6 +112,10 @@ func (ps *HTTPService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+func (ps *HTTPService) GetName() string {
+	return "HTTP"
+}
+
 func (ps *HTTPService) Process(ctx context.Context) {
 	slog.Info("Starting worker to process incoming messages")
 

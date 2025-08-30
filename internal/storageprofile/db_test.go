@@ -169,6 +169,8 @@ func (m *mockConfigDBStoreageProfileFetcher) GetDefaultOrganizationBucket(ctx co
 		Endpoint:       nil,
 		UsePathStyle:   false,
 		InsecureTls:    false,
+		ProviderType:   m.profile.CloudProvider, // Use CloudProvider as ProviderType for testing
+		ProviderConfig: map[string]any{},        // Empty config
 	}, nil
 }
 
@@ -191,7 +193,7 @@ func TestDatabaseProvider_Get_SuccessWithRole(t *testing.T) {
 	got, err := provider.GetStorageProfileForOrganization(context.Background(), orgID)
 	assert.NoError(t, err)
 	assert.Equal(t, orgID, got.OrganizationID)
-	assert.Equal(t, "aws", got.CloudProvider)
+	assert.Equal(t, "aws", got.ProviderType)
 	assert.Equal(t, "us-west-2", got.Region)
 	assert.Equal(t, "bucket-1", got.Bucket)
 	assert.Equal(t, "admin", got.Role)
@@ -215,7 +217,7 @@ func TestDatabaseProvider_Get_SuccessWithoutRole(t *testing.T) {
 	got, err := provider.GetStorageProfileForOrganization(context.Background(), orgID)
 	assert.NoError(t, err)
 	assert.Equal(t, orgID, got.OrganizationID)
-	assert.Equal(t, "gcp", got.CloudProvider)
+	assert.Equal(t, "gcp", got.ProviderType)
 	assert.Equal(t, "europe-west1", got.Region)
 	assert.Equal(t, "bucket-2", got.Bucket)
 	assert.Equal(t, "", got.Role)

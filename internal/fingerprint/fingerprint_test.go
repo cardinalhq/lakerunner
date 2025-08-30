@@ -262,7 +262,7 @@ func TestToFingerprints(t *testing.T) {
 
 func TestGenerateRowFingerprints(t *testing.T) {
 	// Example log row with CardinalHQ fields
-	row := map[string]interface{}{
+	row := map[string]any{
 		"_cardinalhq.message":         "User login failed",
 		"_cardinalhq.name":            "log.events",
 		"_cardinalhq.level":           "error",

@@ -21,16 +21,17 @@ import (
 )
 
 type StorageProfile struct {
-	OrganizationID uuid.UUID `json:"organization_id"`
-	CloudProvider  string    `json:"cloud_provider"`
-	Region         string    `json:"region"`
-	Role           string    `json:"role,omitempty"`
-	Bucket         string    `json:"bucket"`
-	Endpoint       string    `json:"endpoint,omitempty"`
-	InsecureTLS    bool      `json:"insecure_tls,omitempty"`
-	UsePathStyle   bool      `json:"use_path_style,omitempty"`
-	CollectorName  string    `json:"collector_name"`
-	InstanceNum    int16     `json:"instance_num"`
+	OrganizationID uuid.UUID      `json:"organization_id"`
+	Region         string         `json:"region"`
+	Role           string         `json:"role,omitempty"`
+	Bucket         string         `json:"bucket"`
+	Endpoint       string         `json:"endpoint,omitempty"`
+	InsecureTLS    bool           `json:"insecure_tls,omitempty"`
+	UsePathStyle   bool           `json:"use_path_style,omitempty"`
+	CollectorName  string         `json:"collector_name"`
+	InstanceNum    int16          `json:"instance_num"`
+	ProviderType   string         `json:"provider_type,omitempty"`   // aws, gcp, azure, local
+	ProviderConfig map[string]any `json:"provider_config,omitempty"` // Provider-specific settings
 }
 
 type StorageProfileProvider interface {

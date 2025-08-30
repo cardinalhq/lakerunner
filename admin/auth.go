@@ -39,10 +39,10 @@ func newAuthInterceptor(configProvider adminconfig.AdminConfigProvider) *authInt
 
 func (a *authInterceptor) unaryInterceptor(
 	ctx context.Context,
-	req interface{},
+	req any,
 	info *grpc.UnaryServerInfo,
 	handler grpc.UnaryHandler,
-) (interface{}, error) {
+) (any, error) {
 	if err := a.authenticate(ctx, info.FullMethod); err != nil {
 		return nil, err
 	}

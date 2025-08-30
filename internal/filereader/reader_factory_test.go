@@ -540,7 +540,7 @@ func TestErrorCases(t *testing.T) {
 }
 
 // Helper function to get the type name of a reader for testing
-func getReaderTypeName(reader interface{}) string {
+func getReaderTypeName(reader any) string {
 	if reader == nil {
 		return "<nil>"
 	}

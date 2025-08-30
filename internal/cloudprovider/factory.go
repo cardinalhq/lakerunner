@@ -12,24 +12,28 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package queryworker
+package cloudprovider
 
-import (
-	"encoding/json"
-	"log/slog"
-	"net/http"
-	"time"
-)
+// NewManagerFromEnv creates a new provider manager using environment variable configuration
+func NewManagerFromEnv() (*Manager, error) {
+	config, err := LoadConfigFromEnv()
+	if err != nil {
+		return nil, err
+	}
 
-func (s *Service) handleHealth(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	response := map[string]any{
-		"status":    "healthy",
-		"timestamp": time.Now().Unix(),
-		"service":   "query-worker",
+	return NewManager(*config)
+}
+
+// GetDefaultManager returns a singleton manager instance configured from environment
+var defaultManager *Manager
+
+func GetDefaultManager() (*Manager, error) {
+	if defaultManager == nil {
+		var err error
+		defaultManager, err = NewManagerFromEnv()
+		if err != nil {
+			return nil, err
+		}
 	}
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		slog.Error("Failed to encode health response", "error", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-	}
+	return defaultManager, nil
 }

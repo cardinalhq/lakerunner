@@ -197,8 +197,8 @@ func (q *QuerierService) pushDown(ctx context.Context, worker Worker, request Pu
 		}
 
 		for rows.Next() {
-			vals := make([]interface{}, len(cols))
-			ptrs := make([]interface{}, len(cols))
+			vals := make([]any, len(cols))
+			ptrs := make([]any, len(cols))
 			for i := range vals {
 				ptrs[i] = &vals[i]
 			}

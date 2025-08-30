@@ -133,7 +133,7 @@ func (t *ProtoBinLogTranslator) calculateFingerprint(row Row) (int64, error) {
 
 // ensureInt64 converts timestamp to int64 if it's not already
 // Returns -1 for unrecognized types to indicate invalid timestamp
-func ensureInt64(ts interface{}) int64 {
+func ensureInt64(ts any) int64 {
 	switch v := ts.(type) {
 	case int64:
 		return v

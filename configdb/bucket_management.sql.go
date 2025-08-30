@@ -62,7 +62,7 @@ INSERT INTO bucket_configurations (
   bucket_name, cloud_provider, region, endpoint, role, use_path_style, insecure_tls
 ) VALUES (
   $1, $2, $3, $4, $5, $6, $7
-) RETURNING id, bucket_name, cloud_provider, region, endpoint, role, use_path_style, insecure_tls
+) RETURNING id, bucket_name, cloud_provider, region, endpoint, role, use_path_style, insecure_tls, provider_type, provider_config
 `
 
 type CreateBucketConfigurationParams struct {
@@ -95,6 +95,8 @@ func (q *Queries) CreateBucketConfiguration(ctx context.Context, arg CreateBucke
 		&i.Role,
 		&i.UsePathStyle,
 		&i.InsecureTls,
+		&i.ProviderType,
+		&i.ProviderConfig,
 	)
 	return i, err
 }
@@ -245,7 +247,7 @@ func (q *Queries) GetBucketByOrganization(ctx context.Context, organizationID uu
 }
 
 const getBucketConfiguration = `-- name: GetBucketConfiguration :one
-SELECT id, bucket_name, cloud_provider, region, endpoint, role, use_path_style, insecure_tls FROM bucket_configurations WHERE bucket_name = $1
+SELECT id, bucket_name, cloud_provider, region, endpoint, role, use_path_style, insecure_tls, provider_type, provider_config FROM bucket_configurations WHERE bucket_name = $1
 `
 
 func (q *Queries) GetBucketConfiguration(ctx context.Context, bucketName string) (BucketConfiguration, error) {
@@ -260,12 +262,14 @@ func (q *Queries) GetBucketConfiguration(ctx context.Context, bucketName string)
 		&i.Role,
 		&i.UsePathStyle,
 		&i.InsecureTls,
+		&i.ProviderType,
+		&i.ProviderConfig,
 	)
 	return i, err
 }
 
 const getDefaultOrganizationBucket = `-- name: GetDefaultOrganizationBucket :one
-SELECT ob.organization_id, ob.instance_num, ob.collector_name, bc.bucket_name, bc.cloud_provider, bc.region, bc.role, bc.endpoint, bc.use_path_style, bc.insecure_tls
+SELECT ob.organization_id, ob.instance_num, ob.collector_name, bc.bucket_name, bc.cloud_provider, bc.region, bc.role, bc.endpoint, bc.use_path_style, bc.insecure_tls, bc.provider_type, bc.provider_config
 FROM organization_buckets ob
 JOIN bucket_configurations bc ON ob.bucket_id = bc.id  
 WHERE ob.organization_id = $1 
@@ -274,16 +278,18 @@ LIMIT 1
 `
 
 type GetDefaultOrganizationBucketRow struct {
-	OrganizationID uuid.UUID `json:"organization_id"`
-	InstanceNum    int16     `json:"instance_num"`
-	CollectorName  string    `json:"collector_name"`
-	BucketName     string    `json:"bucket_name"`
-	CloudProvider  string    `json:"cloud_provider"`
-	Region         string    `json:"region"`
-	Role           *string   `json:"role"`
-	Endpoint       *string   `json:"endpoint"`
-	UsePathStyle   bool      `json:"use_path_style"`
-	InsecureTls    bool      `json:"insecure_tls"`
+	OrganizationID uuid.UUID      `json:"organization_id"`
+	InstanceNum    int16          `json:"instance_num"`
+	CollectorName  string         `json:"collector_name"`
+	BucketName     string         `json:"bucket_name"`
+	CloudProvider  string         `json:"cloud_provider"`
+	Region         string         `json:"region"`
+	Role           *string        `json:"role"`
+	Endpoint       *string        `json:"endpoint"`
+	UsePathStyle   bool           `json:"use_path_style"`
+	InsecureTls    bool           `json:"insecure_tls"`
+	ProviderType   string         `json:"provider_type"`
+	ProviderConfig map[string]any `json:"provider_config"`
 }
 
 func (q *Queries) GetDefaultOrganizationBucket(ctx context.Context, organizationID uuid.UUID) (GetDefaultOrganizationBucketRow, error) {
@@ -300,6 +306,8 @@ func (q *Queries) GetDefaultOrganizationBucket(ctx context.Context, organization
 		&i.Endpoint,
 		&i.UsePathStyle,
 		&i.InsecureTls,
+		&i.ProviderType,
+		&i.ProviderConfig,
 	)
 	return i, err
 }
@@ -329,7 +337,7 @@ func (q *Queries) GetLongestPrefixMatch(ctx context.Context, arg GetLongestPrefi
 }
 
 const getOrganizationBucketByCollector = `-- name: GetOrganizationBucketByCollector :one
-SELECT ob.organization_id, ob.instance_num, ob.collector_name, bc.bucket_name, bc.cloud_provider, bc.region, bc.role, bc.endpoint, bc.use_path_style, bc.insecure_tls
+SELECT ob.organization_id, ob.instance_num, ob.collector_name, bc.bucket_name, bc.cloud_provider, bc.region, bc.role, bc.endpoint, bc.use_path_style, bc.insecure_tls, bc.provider_type, bc.provider_config
 FROM organization_buckets ob
 JOIN bucket_configurations bc ON ob.bucket_id = bc.id  
 WHERE ob.organization_id = $1 AND ob.collector_name = $2
@@ -341,16 +349,18 @@ type GetOrganizationBucketByCollectorParams struct {
 }
 
 type GetOrganizationBucketByCollectorRow struct {
-	OrganizationID uuid.UUID `json:"organization_id"`
-	InstanceNum    int16     `json:"instance_num"`
-	CollectorName  string    `json:"collector_name"`
-	BucketName     string    `json:"bucket_name"`
-	CloudProvider  string    `json:"cloud_provider"`
-	Region         string    `json:"region"`
-	Role           *string   `json:"role"`
-	Endpoint       *string   `json:"endpoint"`
-	UsePathStyle   bool      `json:"use_path_style"`
-	InsecureTls    bool      `json:"insecure_tls"`
+	OrganizationID uuid.UUID      `json:"organization_id"`
+	InstanceNum    int16          `json:"instance_num"`
+	CollectorName  string         `json:"collector_name"`
+	BucketName     string         `json:"bucket_name"`
+	CloudProvider  string         `json:"cloud_provider"`
+	Region         string         `json:"region"`
+	Role           *string        `json:"role"`
+	Endpoint       *string        `json:"endpoint"`
+	UsePathStyle   bool           `json:"use_path_style"`
+	InsecureTls    bool           `json:"insecure_tls"`
+	ProviderType   string         `json:"provider_type"`
+	ProviderConfig map[string]any `json:"provider_config"`
 }
 
 func (q *Queries) GetOrganizationBucketByCollector(ctx context.Context, arg GetOrganizationBucketByCollectorParams) (GetOrganizationBucketByCollectorRow, error) {
@@ -367,12 +377,14 @@ func (q *Queries) GetOrganizationBucketByCollector(ctx context.Context, arg GetO
 		&i.Endpoint,
 		&i.UsePathStyle,
 		&i.InsecureTls,
+		&i.ProviderType,
+		&i.ProviderConfig,
 	)
 	return i, err
 }
 
 const getOrganizationBucketByInstance = `-- name: GetOrganizationBucketByInstance :one
-SELECT ob.organization_id, ob.instance_num, ob.collector_name, bc.bucket_name, bc.cloud_provider, bc.region, bc.role, bc.endpoint, bc.use_path_style, bc.insecure_tls
+SELECT ob.organization_id, ob.instance_num, ob.collector_name, bc.bucket_name, bc.cloud_provider, bc.region, bc.role, bc.endpoint, bc.use_path_style, bc.insecure_tls, bc.provider_type, bc.provider_config
 FROM organization_buckets ob
 JOIN bucket_configurations bc ON ob.bucket_id = bc.id  
 WHERE ob.organization_id = $1 AND ob.instance_num = $2
@@ -384,16 +396,18 @@ type GetOrganizationBucketByInstanceParams struct {
 }
 
 type GetOrganizationBucketByInstanceRow struct {
-	OrganizationID uuid.UUID `json:"organization_id"`
-	InstanceNum    int16     `json:"instance_num"`
-	CollectorName  string    `json:"collector_name"`
-	BucketName     string    `json:"bucket_name"`
-	CloudProvider  string    `json:"cloud_provider"`
-	Region         string    `json:"region"`
-	Role           *string   `json:"role"`
-	Endpoint       *string   `json:"endpoint"`
-	UsePathStyle   bool      `json:"use_path_style"`
-	InsecureTls    bool      `json:"insecure_tls"`
+	OrganizationID uuid.UUID      `json:"organization_id"`
+	InstanceNum    int16          `json:"instance_num"`
+	CollectorName  string         `json:"collector_name"`
+	BucketName     string         `json:"bucket_name"`
+	CloudProvider  string         `json:"cloud_provider"`
+	Region         string         `json:"region"`
+	Role           *string        `json:"role"`
+	Endpoint       *string        `json:"endpoint"`
+	UsePathStyle   bool           `json:"use_path_style"`
+	InsecureTls    bool           `json:"insecure_tls"`
+	ProviderType   string         `json:"provider_type"`
+	ProviderConfig map[string]any `json:"provider_config"`
 }
 
 func (q *Queries) GetOrganizationBucketByInstance(ctx context.Context, arg GetOrganizationBucketByInstanceParams) (GetOrganizationBucketByInstanceRow, error) {
@@ -410,6 +424,8 @@ func (q *Queries) GetOrganizationBucketByInstance(ctx context.Context, arg GetOr
 		&i.Endpoint,
 		&i.UsePathStyle,
 		&i.InsecureTls,
+		&i.ProviderType,
+		&i.ProviderConfig,
 	)
 	return i, err
 }
@@ -454,7 +470,7 @@ func (q *Queries) HasExistingStorageProfiles(ctx context.Context) (bool, error) 
 }
 
 const listBucketConfigurations = `-- name: ListBucketConfigurations :many
-SELECT id, bucket_name, cloud_provider, region, endpoint, role, use_path_style, insecure_tls
+SELECT id, bucket_name, cloud_provider, region, endpoint, role, use_path_style, insecure_tls, provider_type, provider_config
 FROM bucket_configurations
 ORDER BY bucket_name
 `
@@ -477,6 +493,8 @@ func (q *Queries) ListBucketConfigurations(ctx context.Context) ([]BucketConfigu
 			&i.Role,
 			&i.UsePathStyle,
 			&i.InsecureTls,
+			&i.ProviderType,
+			&i.ProviderConfig,
 		); err != nil {
 			return nil, err
 		}
@@ -541,7 +559,7 @@ INSERT INTO bucket_configurations (
   role = EXCLUDED.role,
   use_path_style = EXCLUDED.use_path_style,
   insecure_tls = EXCLUDED.insecure_tls
-RETURNING id, bucket_name, cloud_provider, region, endpoint, role, use_path_style, insecure_tls
+RETURNING id, bucket_name, cloud_provider, region, endpoint, role, use_path_style, insecure_tls, provider_type, provider_config
 `
 
 type UpsertBucketConfigurationParams struct {
@@ -574,6 +592,8 @@ func (q *Queries) UpsertBucketConfiguration(ctx context.Context, arg UpsertBucke
 		&i.Role,
 		&i.UsePathStyle,
 		&i.InsecureTls,
+		&i.ProviderType,
+		&i.ProviderConfig,
 	)
 	return i, err
 }

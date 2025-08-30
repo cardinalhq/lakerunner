@@ -225,8 +225,8 @@ func (m *Manager) GetS3ForProfile(ctx context.Context, p storageprofile.StorageP
 	if p.InsecureTLS {
 		opts = append(opts, WithInsecureTLS())
 	}
-	// Automatically enable GCP signing if the cloud provider is GCP
-	if p.CloudProvider == "gcp" {
+	// Automatically enable GCP signing if the provider type is GCP
+	if p.ProviderType == "gcp" {
 		opts = append(opts, WithGCPProvider())
 	}
 	return m.GetS3(ctx, opts...)

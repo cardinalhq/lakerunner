@@ -127,7 +127,7 @@ func ComputeHash(str string) int64 {
 }
 
 // GenerateRowFingerprints extracts field values from a row and generates comprehensive fingerprints
-func GenerateRowFingerprints(row map[string]interface{}) mapset.Set[int64] {
+func GenerateRowFingerprints(row map[string]any) mapset.Set[int64] {
 	tagValuesByName := make(map[string]mapset.Set[string])
 
 	// Extract values for each field in the row

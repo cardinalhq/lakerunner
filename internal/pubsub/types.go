@@ -36,6 +36,8 @@ type BackendType string
 const (
 	BackendTypeSQS       BackendType = "sqs"
 	BackendTypeGCPPubSub BackendType = "gcp"
+	BackendTypeHTTP      BackendType = "http"
+	BackendTypeLocal     BackendType = "local"
 )
 
 // Backend defines the interface for different pubsub backends

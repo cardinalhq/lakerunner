@@ -45,7 +45,7 @@ INSERT INTO bucket_prefix_mappings (
 ) RETURNING *;
 
 -- name: ListBucketConfigurations :many
-SELECT id, bucket_name, cloud_provider, region, endpoint, role, use_path_style, insecure_tls
+SELECT id, bucket_name, cloud_provider, region, endpoint, role, use_path_style, insecure_tls, provider_type, provider_config
 FROM bucket_configurations
 ORDER BY bucket_name;
 
@@ -114,19 +114,19 @@ SELECT COUNT(*) > 0 as has_profiles
 FROM bucket_configurations;
 
 -- name: GetOrganizationBucketByInstance :one
-SELECT ob.organization_id, ob.instance_num, ob.collector_name, bc.bucket_name, bc.cloud_provider, bc.region, bc.role, bc.endpoint, bc.use_path_style, bc.insecure_tls
+SELECT ob.organization_id, ob.instance_num, ob.collector_name, bc.bucket_name, bc.cloud_provider, bc.region, bc.role, bc.endpoint, bc.use_path_style, bc.insecure_tls, bc.provider_type, bc.provider_config
 FROM organization_buckets ob
 JOIN bucket_configurations bc ON ob.bucket_id = bc.id  
 WHERE ob.organization_id = $1 AND ob.instance_num = $2;
 
 -- name: GetOrganizationBucketByCollector :one
-SELECT ob.organization_id, ob.instance_num, ob.collector_name, bc.bucket_name, bc.cloud_provider, bc.region, bc.role, bc.endpoint, bc.use_path_style, bc.insecure_tls
+SELECT ob.organization_id, ob.instance_num, ob.collector_name, bc.bucket_name, bc.cloud_provider, bc.region, bc.role, bc.endpoint, bc.use_path_style, bc.insecure_tls, bc.provider_type, bc.provider_config
 FROM organization_buckets ob
 JOIN bucket_configurations bc ON ob.bucket_id = bc.id  
 WHERE ob.organization_id = $1 AND ob.collector_name = $2;
 
 -- name: GetDefaultOrganizationBucket :one
-SELECT ob.organization_id, ob.instance_num, ob.collector_name, bc.bucket_name, bc.cloud_provider, bc.region, bc.role, bc.endpoint, bc.use_path_style, bc.insecure_tls
+SELECT ob.organization_id, ob.instance_num, ob.collector_name, bc.bucket_name, bc.cloud_provider, bc.region, bc.role, bc.endpoint, bc.use_path_style, bc.insecure_tls, bc.provider_type, bc.provider_config
 FROM organization_buckets ob
 JOIN bucket_configurations bc ON ob.bucket_id = bc.id  
 WHERE ob.organization_id = $1 

@@ -60,7 +60,7 @@ func NewConfig() (*Config, error) {
 	decMode, err := cbor.DecOptions{
 		BigIntDec:      cbor.BigIntDecodeValue,           // Preserve large integers
 		IntDec:         cbor.IntDecConvertSigned,         // Convert all integers to int64 (signed)
-		DefaultMapType: reflect.TypeOf(map[string]any{}), // Decode maps as map[string]any instead of map[interface{}]interface{}
+		DefaultMapType: reflect.TypeOf(map[string]any{}), // Decode maps as map[string]any instead of map[any]any
 		UTF8:           cbor.UTF8DecodeInvalid,           // Allow decoding CBOR Text containing invalid UTF-8 strings
 	}.DecMode()
 	if err != nil {
@@ -136,7 +136,7 @@ func (c *Config) UnmarshalFirst(data []byte, v any) ([]byte, error) {
 
 // convertCBORTypes converts CBOR-decoded values back to expected types.
 // CBOR naturally converts: float32->float64, any-int->int64, []T->[]any
-// With DefaultMapType set, we no longer get map[interface{}]interface{}.
+// With DefaultMapType set, we no longer get map[any]any.
 func convertCBORTypes(value any) any {
 	switch v := value.(type) {
 	case []any:

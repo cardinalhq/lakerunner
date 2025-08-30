@@ -31,12 +31,12 @@ var (
 	adminAddr string
 	useLocal  bool
 
-	createCloudProvider string
-	createRegion        string
-	createEndpoint      string
-	createRole          string
-	createUsePathStyle  bool
-	createInsecureTLS   bool
+	createProviderType string
+	createRegion       string
+	createEndpoint     string
+	createRole         string
+	createUsePathStyle bool
+	createInsecureTLS  bool
 )
 
 // SetAPIKey configures the API key used for auth with the admin service.
@@ -73,7 +73,7 @@ func GetStorageProfilesCmd() *cobra.Command {
 			return runStorageProfilesCreate(bucket)
 		},
 	}
-	createCmd.Flags().StringVar(&createCloudProvider, "cloud", "", "Cloud provider")
+	createCmd.Flags().StringVar(&createProviderType, "provider", "", "Provider type (aws, gcp, azure, local)")
 	createCmd.Flags().StringVar(&createRegion, "region", "", "Bucket region")
 	createCmd.Flags().StringVar(&createEndpoint, "endpoint", "", "Custom endpoint")
 	createCmd.Flags().StringVar(&createRole, "role", "", "Access role")
@@ -135,8 +135,8 @@ func runStorageProfilesCreate(bucket string) error {
 }
 
 func runLocalStorageProfilesCreate(bucket string) error {
-	if createCloudProvider == "" || createRegion == "" {
-		return fmt.Errorf("cloud provider and region are required")
+	if createProviderType == "" || createRegion == "" {
+		return fmt.Errorf("provider type and region are required")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -149,7 +149,7 @@ func runLocalStorageProfilesCreate(bucket string) error {
 
 	params := configdb.CreateBucketConfigurationParams{
 		BucketName:    bucket,
-		CloudProvider: createCloudProvider,
+		CloudProvider: createProviderType,
 		Region:        createRegion,
 		UsePathStyle:  createUsePathStyle,
 		InsecureTls:   createInsecureTLS,
@@ -205,7 +205,7 @@ func printStorageProfilesTable(profiles []configdb.BucketConfiguration) {
 	for _, p := range profiles {
 		fields := []string{
 			p.BucketName,
-			p.CloudProvider,
+			p.ProviderType,
 			p.Region,
 			valueOrEmpty(p.Endpoint),
 			valueOrEmpty(p.Role),
@@ -252,7 +252,7 @@ func printStorageProfilesTable(profiles []configdb.BucketConfiguration) {
 		role := valueOrEmpty(p.Role)
 		fmt.Printf("│ %-*s │ %-*s │ %-*s │ %-*s │ %-*s │ %-*s │ %-*s │\n",
 			widths[0], p.BucketName,
-			widths[1], p.CloudProvider,
+			widths[1], p.ProviderType,
 			widths[2], p.Region,
 			widths[3], endpoint,
 			widths[4], role,

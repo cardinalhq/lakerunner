@@ -226,7 +226,7 @@ func (p *Processor) addMetricsExemplar(tenant *Tenant, rm pmetric.ResourceMetric
 }
 
 func (p *Processor) Close() error {
-	p.tenants.Range(func(key, value interface{}) bool {
+	p.tenants.Range(func(key, value any) bool {
 		if tenant, ok := value.(*Tenant); ok {
 			if tenant.metricCache != nil {
 				// Force flush all pending exemplars before closing

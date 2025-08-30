@@ -32,7 +32,6 @@ type EventParser interface {
 	GetEventType() string
 }
 
-// S3EventParser handles AWS S3 events
 type S3EventParser struct{}
 
 func (p *S3EventParser) GetEventType() string {
@@ -86,7 +85,6 @@ func (p *S3EventParser) parseS3Record(bucketName, key string, size int64) (*lrdb
 		return nil, nil
 	}
 
-	// Set the file size from S3 event
 	item.FileSize = size
 	return item, nil
 }
@@ -202,7 +200,7 @@ func (f *EventParserFactory) NewParser(raw []byte) (EventParser, error) {
 
 	// Try to detect S3 event
 	var s3Event struct {
-		Records []interface{} `json:"Records"`
+		Records []any `json:"Records"`
 	}
 	if err := json.Unmarshal(raw, &s3Event); err == nil && len(s3Event.Records) > 0 {
 		return &S3EventParser{}, nil

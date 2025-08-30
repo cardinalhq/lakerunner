@@ -136,7 +136,7 @@ func getSingletonValue(row Row) (float64, bool) {
 
 // getSketchBytes converts sketch data from various parquet formats back to []byte.
 // Handles: []byte (direct), string (encoded bytes)
-func getSketchBytes(sketchData interface{}) ([]byte, error) {
+func getSketchBytes(sketchData any) ([]byte, error) {
 	if sketchData == nil {
 		return nil, fmt.Errorf("sketch data is nil")
 	}
