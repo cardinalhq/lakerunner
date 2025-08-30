@@ -22,10 +22,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
-	"go.opentelemetry.io/collector/pdata/pmetric"
 
 	"github.com/cardinalhq/lakerunner/internal/exemplar"
-	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -125,31 +123,4 @@ func upsertServiceIdentifierDirect(ctx context.Context, mdb lrdb.StoreFull, orgI
 	}
 
 	return result.ID, nil
-}
-
-// processExemplarsFromReader processes exemplars from a metrics reader that supports OTEL
-func processExemplarsFromReader(_ context.Context, reader filereader.Reader, processor *exemplar.Processor, orgID string, mdb lrdb.StoreFull) error {
-	// Check if the reader provides OTEL metrics
-	if otelProvider, ok := reader.(filereader.OTELMetricsProvider); ok {
-		otelMetrics, err := otelProvider.GetOTELMetrics()
-		if err != nil {
-			return fmt.Errorf("failed to get OTEL metrics: %w", err)
-		}
-
-		if metrics, ok := otelMetrics.(*pmetric.Metrics); ok {
-			if err := processExemplarsFromMetrics(metrics, processor, orgID); err != nil {
-				return fmt.Errorf("failed to process exemplars from metrics: %w", err)
-			}
-		}
-	}
-	return nil
-}
-
-// processExemplarsFromMetrics processes exemplars from parsed pmetric.Metrics
-func processExemplarsFromMetrics(metrics *pmetric.Metrics, processor *exemplar.Processor, customerID string) error {
-	ctx := context.Background()
-	if err := processor.ProcessMetrics(ctx, *metrics, customerID); err != nil {
-		return fmt.Errorf("failed to process metrics exemplars: %w", err)
-	}
-	return nil
 }

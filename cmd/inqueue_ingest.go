@@ -38,18 +38,6 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-type InqueueProcessingFunction func(
-	ctx context.Context,
-	ll *slog.Logger,
-	tmpdir string,
-	sp storageprofile.StorageProfileProvider,
-	mdb lrdb.StoreFull,
-	awsmanager *awsclient.Manager,
-	inf lrdb.Inqueue,
-	ingest_dateint int32,
-	rpfEstimate int64,
-	loop *IngestLoopContext) error
-
 type InqueueBatchProcessingFunction func(
 	ctx context.Context,
 	ll *slog.Logger,
@@ -178,11 +166,7 @@ func (loop *IngestLoopContext) Close() error {
 	return nil
 }
 
-func IngestLoop(loop *IngestLoopContext, processingFx InqueueProcessingFunction) error {
-	return IngestLoopWithBatch(loop, processingFx, nil)
-}
-
-func IngestLoopWithBatch(loop *IngestLoopContext, processingFx InqueueProcessingFunction, batchProcessingFx InqueueBatchProcessingFunction) error {
+func IngestLoopWithBatch(loop *IngestLoopContext, _ interface{}, batchProcessingFx InqueueBatchProcessingFunction) error {
 	ctx := context.Background()
 
 	for {
@@ -192,7 +176,7 @@ func IngestLoopWithBatch(loop *IngestLoopContext, processingFx InqueueProcessing
 		default:
 		}
 
-		shouldBackoff, workWasProcessed, err := ingestFilesBatch(ctx, loop, processingFx, batchProcessingFx)
+		shouldBackoff, workWasProcessed, err := ingestFilesBatch(ctx, loop, batchProcessingFx)
 		if err != nil {
 			// Check if this is a worker interruption
 			if IsWorkerInterrupted(err) {
@@ -228,140 +212,12 @@ func batchRowToInqueue(row lrdb.ClaimInqueueWorkBatchRow) lrdb.Inqueue {
 	return lrdb.Inqueue(row)
 }
 
-func ingestFiles(
-	ctx context.Context,
-	loop *IngestLoopContext,
-	processFx InqueueProcessingFunction,
-) (bool, bool, error) {
-	ctx, span := tracer.Start(ctx, "ingest", trace.WithAttributes(commonAttributes.ToSlice()...))
-	defer span.End()
-
-	t0 := time.Now()
-	inf, err := loop.mdb.ClaimInqueueWork(ctx, lrdb.ClaimInqueueWorkParams{
-		ClaimedBy:     myInstanceID,
-		TelemetryType: loop.signal,
-	})
-	inqueueFetchDuration.Record(ctx, time.Since(t0).Seconds(),
-		metric.WithAttributeSet(commonAttributes),
-		metric.WithAttributes(
-			attribute.Bool("hasError", err != nil && !errors.Is(err, pgx.ErrNoRows)),
-			attribute.Bool("noRows", errors.Is(err, pgx.ErrNoRows)),
-		))
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return true, false, nil
-		}
-		return true, false, fmt.Errorf("failed to claim inqueue work: %w", err)
-	}
-
-	lag := time.Since(inf.QueueTs).Seconds()
-	inqueueLag.Record(ctx, lag,
-		metric.WithAttributeSet(commonAttributes),
-		metric.WithAttributes(
-			attribute.String("organizationID", inf.OrganizationID.String()),
-			attribute.String("signal", inf.TelemetryType),
-			attribute.Int("instanceNum", int(inf.InstanceNum)),
-		))
-
-	ll := loop.ll.With(
-		slog.String("id", inf.ID.String()),
-		slog.Int("tries", int(inf.Tries)),
-		slog.String("organizationID", inf.OrganizationID.String()),
-		slog.Int("instanceNum", int(inf.InstanceNum)),
-		slog.String("bucket", inf.Bucket),
-		slog.String("objectID", inf.ObjectID))
-
-	h := workqueue.NewInqueueHandlerFromLRDB(inf, loop.mdb, maxWorkRetries, workqueue.WithLogger(ll))
-
-	if inf.Tries > 10 {
-		ll.Warn("Too many tries, deleting")
-		if err := h.CompleteWork(ctx); err != nil {
-			ll.Error("Failed to complete work", slog.Any("error", err))
-		}
-		return false, true, nil
-	}
-
-	isNew, err := h.IsNewWork(ctx)
-	if err != nil {
-		if retryErr := h.RetryWork(ctx); retryErr != nil {
-			ll.Error("Failed to retry work", slog.Any("error", retryErr))
-		}
-		return true, false, err
-	}
-	if !isNew {
-		ll.Warn("already processed, releasing")
-		if err := h.CompleteWork(ctx); err != nil {
-			ll.Error("Failed to complete work", slog.Any("error", err))
-		}
-		return true, true, nil
-	}
-
-	ll.Info("Processing")
-
-	ingestDateint, _ := helpers.MSToDateintHour(time.Now().UTC().UnixMilli())
-
-	// Create a temporary directory for processing
-	tmpdir, err := os.MkdirTemp("", "lakerunner-ingest-*")
-	if err != nil {
-		ll.Error("Failed to create temporary directory", slog.Any("error", err))
-		if retryErr := h.RetryWork(ctx); retryErr != nil {
-			ll.Error("Failed to retry work", slog.Any("error", retryErr))
-		}
-		return true, false, fmt.Errorf("failed to create temporary directory: %w", err)
-	}
-	defer func() {
-		if err := os.RemoveAll(tmpdir); err != nil {
-			ll.Error("Failed to remove temporary directory", slog.Any("error", err))
-		}
-	}()
-
-	var rpfEstimate int64
-	switch lrdb.SignalEnum(inf.TelemetryType) {
-	case lrdb.SignalEnumMetrics:
-		rpfEstimate = loop.metricEstimator.Get(inf.OrganizationID, inf.InstanceNum, 10_000)
-		if rpfEstimate <= 0 {
-			rpfEstimate = 100 // Default for all signals
-		}
-	case lrdb.SignalEnumLogs:
-		rpfEstimate = loop.logEstimator.Get(inf.OrganizationID, inf.InstanceNum)
-		if rpfEstimate <= 0 {
-			rpfEstimate = 100 // Default for all signals
-		}
-	default:
-		rpfEstimate = 100 // Default fallback
-	}
-	t0 = time.Now()
-	err = processFx(ctx, ll, tmpdir, loop.sp, loop.mdb, loop.awsmanager, inf, ingestDateint, rpfEstimate, loop)
-	inqueueDuration.Record(ctx, time.Since(t0).Seconds(),
-		metric.WithAttributeSet(commonAttributes),
-		metric.WithAttributes(
-			attribute.String("organizationID", inf.OrganizationID.String()),
-			attribute.String("bucket", inf.Bucket),
-		))
-	if err != nil {
-		if retryErr := h.RetryWork(ctx); retryErr != nil {
-			ll.Error("Failed to retry work", slog.Any("error", retryErr))
-		}
-		return true, false, fmt.Errorf("Processing failed: %w", err)
-	}
-
-	if err := h.CompleteWork(ctx); err != nil {
-		ll.Error("Failed to complete work", slog.Any("error", err))
-	}
-	return false, true, nil
-}
-
 func ingestFilesBatch(
 	ctx context.Context,
 	loop *IngestLoopContext,
-	processFx InqueueProcessingFunction,
 	batchProcessingFx InqueueBatchProcessingFunction,
 ) (bool, bool, error) {
 	batchSize := helpers.GetBatchSizeForSignal(loop.signal)
-
-	if batchSize <= 1 || batchProcessingFx == nil {
-		return ingestFiles(ctx, loop, processFx)
-	}
 
 	ctx, span := tracer.Start(ctx, "ingest_batch", trace.WithAttributes(commonAttributes.ToSlice()...))
 	defer span.End()
@@ -423,10 +279,6 @@ func ingestFilesBatch(
 				attribute.String("signal", item.TelemetryType),
 				attribute.Int("instanceNum", int(item.InstanceNum)),
 			))
-	}
-
-	if len(items) == 1 {
-		return processSingleItem(ctx, loop, processFx, batchRowToInqueue(items[0]))
 	}
 
 	// Safety check: ensure all records in the batch are for the same organization
@@ -503,91 +355,6 @@ func ingestFilesBatch(
 		} else {
 			atomic.AddInt64(loop.processedItems, 1)
 		}
-	}
-	return false, true, nil
-}
-
-func processSingleItem(ctx context.Context, loop *IngestLoopContext, processFx InqueueProcessingFunction, inf lrdb.Inqueue) (bool, bool, error) {
-	ll := loop.ll.With(
-		slog.String("id", inf.ID.String()),
-		slog.Int("tries", int(inf.Tries)),
-		slog.String("organizationID", inf.OrganizationID.String()),
-		slog.Int("instanceNum", int(inf.InstanceNum)),
-		slog.String("bucket", inf.Bucket),
-		slog.String("objectID", inf.ObjectID))
-
-	h := workqueue.NewInqueueHandlerFromLRDB(inf, loop.mdb, maxWorkRetries, workqueue.WithLogger(ll))
-
-	if inf.Tries > 10 {
-		ll.Warn("Too many tries, deleting")
-		if err := h.CompleteWork(ctx); err != nil {
-			ll.Error("Failed to complete work", slog.Any("error", err))
-		}
-		return false, true, nil
-	}
-
-	isNew, err := h.IsNewWork(ctx)
-	if err != nil {
-		if retryErr := h.RetryWork(ctx); retryErr != nil {
-			ll.Error("Failed to retry work", slog.Any("error", retryErr))
-		}
-		return true, false, fmt.Errorf("checking if work is new: %w", err)
-	}
-	if !isNew {
-		ll.Info("Already processed file, skipping")
-		if err := h.CompleteWork(ctx); err != nil {
-			ll.Error("Failed to complete work", slog.Any("error", err))
-		}
-		return false, true, nil
-	}
-
-	tmpdir, err := os.MkdirTemp("", "lakerunner-ingest-")
-	if err != nil {
-		return true, false, fmt.Errorf("creating tmpdir: %w", err)
-	}
-	defer func() {
-		if err := os.RemoveAll(tmpdir); err != nil {
-			ll.Error("Failed to clean up tmpdir", slog.Any("error", err))
-		}
-	}()
-
-	var rpfEstimate int64
-	switch lrdb.SignalEnum(inf.TelemetryType) {
-	case lrdb.SignalEnumMetrics:
-		rpfEstimate = loop.metricEstimator.Get(inf.OrganizationID, inf.InstanceNum, 10_000)
-		if rpfEstimate <= 0 {
-			rpfEstimate = 100 // Default for all signals
-		}
-	case lrdb.SignalEnumLogs:
-		rpfEstimate = loop.logEstimator.Get(inf.OrganizationID, inf.InstanceNum)
-		if rpfEstimate <= 0 {
-			rpfEstimate = 100 // Default for all signals
-		}
-	default:
-		rpfEstimate = 100
-	}
-
-	ingestDateint, _ := helpers.MSToDateintHour(time.Now().UTC().UnixMilli())
-
-	t0 := time.Now()
-	err = processFx(ctx, ll, tmpdir, loop.sp, loop.mdb, loop.awsmanager, inf, ingestDateint, rpfEstimate, loop)
-	inqueueDuration.Record(ctx, time.Since(t0).Seconds(),
-		metric.WithAttributeSet(commonAttributes),
-		metric.WithAttributes(
-			attribute.String("organizationID", inf.OrganizationID.String()),
-			attribute.String("bucket", inf.Bucket),
-		))
-	if err != nil {
-		if retryErr := h.RetryWork(ctx); retryErr != nil {
-			ll.Error("Failed to retry work", slog.Any("error", retryErr))
-		}
-		return true, false, fmt.Errorf("Processing failed: %w", err)
-	}
-
-	if err := h.CompleteWork(ctx); err != nil {
-		ll.Error("Failed to complete work", slog.Any("error", err))
-	} else {
-		atomic.AddInt64(loop.processedItems, 1)
 	}
 	return false, true, nil
 }

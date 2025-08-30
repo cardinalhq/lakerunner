@@ -97,7 +97,7 @@ func init() {
 				default:
 				}
 
-				err := IngestLoopWithBatch(loop, logIngestItem, logIngestBatch)
+				err := IngestLoopWithBatch(loop, nil, logIngestBatch)
 				if err != nil {
 					slog.Error("Error in ingest loop", slog.Any("error", err))
 				}
@@ -258,13 +258,6 @@ func (wm *writerManager) closeAll(ctx context.Context) ([]parquetwriter.Result, 
 // createLogReader creates the appropriate filereader based on file type
 func createLogReader(filename string) (filereader.Reader, error) {
 	return filereader.ReaderForFile(filename, filereader.SignalTypeLogs)
-}
-
-func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
-	awsmanager *awsclient.Manager, inf lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
-
-	// Convert single item to batch and process
-	return logIngestBatch(ctx, ll, tmpdir, sp, mdb, awsmanager, []lrdb.Inqueue{inf}, ingest_dateint, rpfEstimate, loop)
 }
 
 // queueLogCompactionForSlot queues a log compaction job for a specific slot
