@@ -37,17 +37,8 @@ type Manager struct {
 	tracer    trace.Tracer
 }
 
-// ManagerOption is a functional option for configuring the Manager.
-type ManagerOption func(*Manager)
-
-func WithAssumeRoleSessionName(name string) ManagerOption {
-	return func(mgr *Manager) {
-		mgr.sessionName = name
-	}
-}
-
 // NewManager initializes AWS config + a single STS client.
-func NewManager(ctx context.Context, opts ...ManagerOption) (*Manager, error) {
+func NewManager(ctx context.Context) (*Manager, error) {
 	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("loading AWS config: %w", err)
@@ -59,12 +50,9 @@ func NewManager(ctx context.Context, opts ...ManagerOption) (*Manager, error) {
 	mgr := &Manager{
 		baseCfg:     cfg,
 		stsClient:   sts.NewFromConfig(cfg),
-		sessionName: "default-session-name",
+		sessionName: "lakerunner",
 		providers:   make(map[roleKey]aws.CredentialsProvider),
 		tracer:      tracer,
-	}
-	for _, opt := range opts {
-		opt(mgr)
 	}
 
 	return mgr, nil

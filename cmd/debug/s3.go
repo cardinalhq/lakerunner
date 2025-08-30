@@ -138,9 +138,7 @@ func runS3Cat(bucketID string, objectID string, region string, role string) erro
 	ctx := context.Background()
 
 	// Initialize AWS S3 client
-	mgr, err := awsclient.NewManager(ctx,
-		awsclient.WithAssumeRoleSessionName("lakerunner-import"),
-	)
+	mgr, err := awsclient.NewManager(ctx)
 	if err != nil {
 		return err
 	}
@@ -187,9 +185,7 @@ func runS3LS(bucketID string, prefix string, region string, role string) error {
 	ctx := context.Background()
 
 	// Initialize AWS S3 client
-	mgr, err := awsclient.NewManager(ctx,
-		awsclient.WithAssumeRoleSessionName("lakerunner-import"),
-	)
+	mgr, err := awsclient.NewManager(ctx)
 	if err != nil {
 		return err
 	}

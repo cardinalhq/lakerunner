@@ -57,7 +57,7 @@ func init() {
 
 			go diskUsageLoop(doneCtx)
 
-			loop, err := NewRunqueueLoopContext(doneCtx, "traces", "compact", servicename)
+			loop, err := NewRunqueueLoopContext(doneCtx, "traces", "compact")
 			if err != nil {
 				return fmt.Errorf("failed to create runqueue loop context: %w", err)
 			}

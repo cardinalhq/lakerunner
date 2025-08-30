@@ -114,13 +114,12 @@ const (
 )
 
 type sweeper struct {
-	instanceID            int64
-	assumeRoleSessionName string
-	sp                    storageprofile.StorageProfileProvider
-	syncLegacyTables      bool
+	instanceID       int64
+	sp               storageprofile.StorageProfileProvider
+	syncLegacyTables bool
 }
 
-func New(instanceID int64, assumeRoleSessionName string, syncLegacyTables bool) *sweeper {
+func New(instanceID int64, syncLegacyTables bool) *sweeper {
 	cdb, err := dbopen.ConfigDBStore(context.Background())
 	if err != nil {
 		slog.Error("Failed to connect to configdb", slog.Any("error", err))
@@ -138,10 +137,9 @@ func New(instanceID int64, assumeRoleSessionName string, syncLegacyTables bool) 
 	}
 
 	return &sweeper{
-		instanceID:            instanceID,
-		assumeRoleSessionName: assumeRoleSessionName,
-		sp:                    sp,
-		syncLegacyTables:      syncLegacyTables,
+		instanceID:       instanceID,
+		sp:               sp,
+		syncLegacyTables: syncLegacyTables,
 	}
 }
 
@@ -167,9 +165,7 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 		}
 	}
 
-	awsmanager, err := awsclient.NewManager(ctx,
-		awsclient.WithAssumeRoleSessionName(cmd.assumeRoleSessionName),
-	)
+	awsmanager, err := awsclient.NewManager(ctx)
 	if err != nil {
 		return err
 	}

@@ -82,7 +82,7 @@ func init() {
 				}
 			}()
 
-			loop, err := NewIngestLoopContext(ctx, "metrics", servicename)
+			loop, err := NewIngestLoopContext(ctx, "metrics")
 			if err != nil {
 				return fmt.Errorf("failed to create ingest loop context: %w", err)
 			}

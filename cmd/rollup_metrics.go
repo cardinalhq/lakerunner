@@ -70,7 +70,7 @@ func init() {
 			// Start pprof server
 			go debugging.RunPprof(ctx)
 
-			loop, err := NewRunqueueLoopContext(ctx, "metrics", "rollup", servicename)
+			loop, err := NewRunqueueLoopContext(ctx, "metrics", "rollup")
 			if err != nil {
 				return fmt.Errorf("failed to create runqueue loop context: %w", err)
 			}

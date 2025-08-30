@@ -67,7 +67,7 @@ func init() {
 				}
 			}
 
-			cmd := sweeper.New(myInstanceID, servicename, finalSyncLegacyTables)
+			cmd := sweeper.New(myInstanceID, finalSyncLegacyTables)
 
 			// Mark as healthy once sweeper is created and starting
 			healthServer.SetStatus(healthcheck.StatusHealthy)
