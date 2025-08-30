@@ -15,105 +15,20 @@
 package cmd
 
 import (
-	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
-	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 // TestHandleHistogram was moved to the proto reader - no longer needed here
 // The proto reader now handles all histogram processing internally
 
-func TestMetricWriterManager(t *testing.T) {
-	tmpdir := t.TempDir()
-	orgID := "test-org"
-	ingestDateint := int32(20250101)
-	rpfEstimate := int64(1000)
-	ll := slog.Default()
-
-	wm := newMetricWriterManager(tmpdir, orgID, ingestDateint, rpfEstimate, ll)
-	require.NotNil(t, wm)
-	require.Equal(t, tmpdir, wm.tmpdir)
-	require.Equal(t, orgID, wm.orgID)
-	require.Equal(t, ingestDateint, wm.ingestDateint)
-	require.Equal(t, rpfEstimate, wm.rpfEstimate)
-	require.NotNil(t, wm.writers)
-	require.Equal(t, ll, wm.ll)
-}
-
-func TestMetricWriterManager_ProcessRow(t *testing.T) {
-	tmpdir := t.TempDir()
-	wm := newMetricWriterManager(tmpdir, "test-org", int32(20250101), int64(1000), slog.Default())
-
-	// Test metric row
-	row := filereader.Row{
-		wkk.RowKeyCTimestamp:    int64(1640995200000),
-		wkk.RowKeyCMetricType:   "gauge",
-		wkk.RowKeyCName:         "cpu.usage",
-		wkk.RowKeyCValue:        float64(75.5),
-		wkk.NewRowKey("host"):   "web-server-1",
-		wkk.NewRowKey("region"): "us-west-2",
-	}
-
-	// Create a single-row batch for testing
-	batch := pipeline.GetBatch()
-	defer pipeline.ReturnBatch(batch)
-	testRow := batch.AddRow()
-	for k, v := range row {
-		testRow[k] = v
-	}
-
-	processed, errored := wm.processBatch(batch)
-	require.Equal(t, int64(1), processed)
-	require.Equal(t, int64(0), errored)
-}
-
-func TestMetricWriterManager_ProcessMultipleValues(t *testing.T) {
-	tmpdir := t.TempDir()
-	wm := newMetricWriterManager(tmpdir, "test-org", int32(20250101), int64(1000), slog.Default())
-
-	// Test multiple metric rows
-	row1 := filereader.Row{
-		wkk.RowKeyCTimestamp:    int64(1640995200000),
-		wkk.RowKeyCMetricType:   "gauge",
-		wkk.RowKeyCName:         "cpu.usage",
-		wkk.RowKeyCValue:        float64(75.5),
-		wkk.NewRowKey("host"):   "web-server-1",
-		wkk.NewRowKey("region"): "us-west-2",
-	}
-
-	row2 := filereader.Row{
-		wkk.RowKeyCTimestamp:    int64(1640995200000),
-		wkk.RowKeyCMetricType:   "gauge",
-		wkk.RowKeyCName:         "cpu.usage",
-		wkk.RowKeyCValue:        float64(82.3),
-		wkk.NewRowKey("host"):   "web-server-1",
-		wkk.NewRowKey("region"): "us-west-2",
-	}
-
-	// Create a batch with both rows for testing
-	batch := pipeline.GetBatch()
-	defer pipeline.ReturnBatch(batch)
-
-	testRow1 := batch.AddRow()
-	for k, v := range row1 {
-		testRow1[k] = v
-	}
-
-	testRow2 := batch.AddRow()
-	for k, v := range row2 {
-		testRow2[k] = v
-	}
-
-	processed, errored := wm.processBatch(batch)
-	require.Equal(t, int64(2), processed)
-	require.Equal(t, int64(0), errored)
-}
+// NOTE: Tests for metricWriterManager have been moved to the ingestion package
+// since the implementation moved to internal/metricsprocessing/ingestion
 
 func TestMetricTranslator(t *testing.T) {
 	translator := &metricsprocessing.MetricTranslator{
