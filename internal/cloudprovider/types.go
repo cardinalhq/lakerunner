@@ -36,7 +36,7 @@ const (
 // New code should use objstore.S3Manager directly
 type ObjectStoreClient = objstore.S3Manager
 
-// CloudProvider represents a cloud provider that can provide object storage and pubsub services
+// CloudProvider is the minimal interface implemented by all providers.
 type CloudProvider interface {
 	// Name returns the human-readable name of the provider
 	Name() string
@@ -44,20 +44,35 @@ type CloudProvider interface {
 	// Type returns the provider type
 	Type() ProviderType
 
-	// CreateObjectStoreClient creates an object store client for the given configuration
-	CreateObjectStoreClient(ctx context.Context, config ObjectStoreConfig) (ObjectStoreClient, error)
-
-	// CreatePubSubBackend creates a pubsub backend, returns nil if not supported by this provider
-	CreatePubSubBackend(ctx context.Context, config PubSubConfig) (pubsub.Backend, error)
-
-	// GetCredentialProvider returns the credential provider for this cloud provider
-	GetCredentialProvider() credential.Provider
-
 	// SupportsFeature returns true if the provider supports the given feature
 	SupportsFeature(feature string) bool
 
 	// Validate validates the provider configuration
 	Validate(config ProviderConfig) error
+}
+
+// ObjectStoreProvider is implemented by providers that offer object storage services.
+type ObjectStoreProvider interface {
+	CloudProvider
+
+	// CreateObjectStoreClient creates an object store client for the given configuration
+	CreateObjectStoreClient(ctx context.Context, config ObjectStoreConfig) (ObjectStoreClient, error)
+}
+
+// PubSubProvider is implemented by providers that offer pubsub services.
+type PubSubProvider interface {
+	CloudProvider
+
+	// CreatePubSubBackend creates a pubsub backend, returns nil if not supported by this provider
+	CreatePubSubBackend(ctx context.Context, config PubSubConfig) (pubsub.Backend, error)
+}
+
+// CredentialProvider is implemented by providers that supply credentials.
+type CredentialProvider interface {
+	CloudProvider
+
+	// GetCredentialProvider returns the credential provider for this cloud provider
+	GetCredentialProvider() credential.Provider
 }
 
 // ObjectStoreConfig represents configuration for object storage

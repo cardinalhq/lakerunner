@@ -31,6 +31,10 @@ type AWSProvider struct {
 	credentialProvider credential.Provider
 }
 
+var _ cloudprovider.ObjectStoreProvider = (*AWSProvider)(nil)
+var _ cloudprovider.PubSubProvider = (*AWSProvider)(nil)
+var _ cloudprovider.CredentialProvider = (*AWSProvider)(nil)
+
 // NewAWSProvider creates a new AWS provider
 func NewAWSProvider() (cloudprovider.CloudProvider, error) {
 	credProvider := credential.NewAWSProvider(nil)

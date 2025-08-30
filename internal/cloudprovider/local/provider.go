@@ -24,17 +24,12 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudprovider"
-	"github.com/cardinalhq/lakerunner/internal/cloudprovider/credential"
 	"github.com/cardinalhq/lakerunner/internal/cloudprovider/pubsub"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 // LocalProvider implements the CloudProvider interface for local filesystem development
 type LocalProvider struct{}
-
-func (p *LocalProvider) GetCredentialProvider() credential.Provider {
-	return nil // Local provider doesn't need credentials
-}
 
 // NewLocalProvider creates a new local provider
 func NewLocalProvider() (cloudprovider.CloudProvider, error) {
@@ -47,11 +42,6 @@ func (p *LocalProvider) Name() string {
 
 func (p *LocalProvider) Type() cloudprovider.ProviderType {
 	return cloudprovider.ProviderLocal
-}
-
-func (p *LocalProvider) CreateObjectStoreClient(ctx context.Context, config cloudprovider.ObjectStoreConfig) (cloudprovider.ObjectStoreClient, error) {
-	// Local provider object store not implemented yet - use AWS provider for real usage
-	return nil, fmt.Errorf("LocalProvider object store client not implemented - use AWS provider instead")
 }
 
 func (p *LocalProvider) CreatePubSubBackend(ctx context.Context, config cloudprovider.PubSubConfig) (pubsub.Backend, error) {
@@ -100,6 +90,8 @@ func (p *LocalProvider) Validate(config cloudprovider.ProviderConfig) error {
 
 	return nil
 }
+
+var _ cloudprovider.PubSubProvider = (*LocalProvider)(nil)
 
 // LocalObjectStoreClient wraps a local filesystem implementation
 type LocalObjectStoreClient struct {

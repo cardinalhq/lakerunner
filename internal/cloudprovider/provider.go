@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/cardinalhq/lakerunner/internal/cloudprovider/credential"
 	"github.com/cardinalhq/lakerunner/internal/cloudprovider/pubsub"
 )
 
@@ -63,7 +64,12 @@ func (m *Manager) GetObjectStoreClient(ctx context.Context) (ObjectStoreClient, 
 		return nil, err
 	}
 
-	return provider.CreateObjectStoreClient(ctx, m.config.ObjectStore)
+	objProvider, ok := provider.(ObjectStoreProvider)
+	if !ok {
+		return nil, fmt.Errorf("provider %s does not support object store", provider.Type())
+	}
+
+	return objProvider.CreateObjectStoreClient(ctx, m.config.ObjectStore)
 }
 
 // GetPubSubBackend returns a pubsub backend, either from the provider or override
@@ -79,12 +85,32 @@ func (m *Manager) GetPubSubBackend(ctx context.Context) (pubsub.Backend, error) 
 		return nil, err
 	}
 
-	backend, err := provider.CreatePubSubBackend(ctx, m.config.PubSub)
+	psProvider, ok := provider.(PubSubProvider)
+	if !ok {
+		return nil, fmt.Errorf("provider %s does not support pubsub", provider.Type())
+	}
+
+	backend, err := psProvider.CreatePubSubBackend(ctx, m.config.PubSub)
 	if err != nil {
 		return nil, fmt.Errorf("provider %s does not support pubsub: %w", provider.Type(), err)
 	}
 
 	return backend, nil
+}
+
+// GetCredentialProvider returns the credential provider for the configured cloud provider.
+func (m *Manager) GetCredentialProvider() (credential.Provider, error) {
+	provider, err := m.GetProvider()
+	if err != nil {
+		return nil, err
+	}
+
+	credProvider, ok := provider.(CredentialProvider)
+	if !ok {
+		return nil, fmt.Errorf("provider %s does not support credential provider", provider.Type())
+	}
+
+	return credProvider.GetCredentialProvider(), nil
 }
 
 // createProvider creates a provider instance for the given type
