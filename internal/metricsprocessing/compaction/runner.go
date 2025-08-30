@@ -28,8 +28,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
-	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
+	"github.com/cardinalhq/lakerunner/internal/cloudprovider"
 	"github.com/cardinalhq/lakerunner/internal/constants"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
@@ -59,7 +58,7 @@ func RunLoop(
 	manager *Manager,
 	mdb compactionStore,
 	sp storageprofile.StorageProfileProvider,
-	awsmanager *awsclient.Manager,
+	sessionName string,
 ) error {
 	ll := slog.Default().With(slog.String("component", "metric-compaction-loop"))
 
@@ -83,7 +82,7 @@ func RunLoop(
 			continue
 		}
 
-		err = processBatch(ctx, ll, mdb, sp, awsmanager, claimedWork)
+		err = processBatch(ctx, ll, mdb, sp, sessionName, claimedWork)
 		if err != nil {
 			ll.Error("Failed to process compaction batch", slog.Any("error", err))
 			if failErr := manager.FailWork(ctx, claimedWork); failErr != nil {
@@ -102,7 +101,7 @@ func processBatch(
 	ll *slog.Logger,
 	mdb compactionStore,
 	sp storageprofile.StorageProfileProvider,
-	awsmanager *awsclient.Manager,
+	sessionName string,
 	claimedWork []lrdb.ClaimMetricCompactionWorkRow,
 ) error {
 	if len(claimedWork) == 0 {
@@ -141,9 +140,9 @@ func processBatch(
 		return err
 	}
 
-	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
+	objectStoreClient, err := cloudprovider.GetObjectStoreClientForProfile(ctx, profile)
 	if err != nil {
-		ll.Error("Failed to get S3 client", slog.Any("error", err))
+		ll.Error("Failed to get object store client", slog.Any("error", err))
 		return err
 	}
 
@@ -189,7 +188,7 @@ func processBatch(
 		validSegments = append(validSegments, seg)
 	}
 
-	return compactSegments(ctx, ll, mdb, tmpdir, firstItem, profile, s3client, validSegments, rpfEstimate)
+	return compactSegments(ctx, ll, mdb, tmpdir, firstItem, profile, objectStoreClient, validSegments, rpfEstimate)
 }
 
 func compactSegments(
@@ -199,7 +198,7 @@ func compactSegments(
 	tmpdir string,
 	workItem lrdb.ClaimMetricCompactionWorkRow,
 	profile storageprofile.StorageProfile,
-	s3client *awsclient.S3Client,
+	objectStoreClient cloudprovider.ObjectStoreClient,
 	rows []lrdb.MetricSeg,
 	rpfEstimate int64,
 ) error {
@@ -237,7 +236,7 @@ func compactSegments(
 	}
 
 	readerStack, err := metricsprocessing.CreateReaderStack(
-		ctx, ll, tmpdir, s3client, workItem.OrganizationID, profile, st.Time.UTC().UnixMilli(), rows, config)
+		ctx, ll, tmpdir, objectStoreClient, workItem.OrganizationID, profile, st.Time.UTC().UnixMilli(), rows, config)
 	if err != nil {
 		return err
 	}
@@ -376,7 +375,7 @@ func compactSegments(
 	criticalCtx := context.WithoutCancel(ctx)
 
 	// Upload files to S3 first
-	segmentIDs, err := uploadCompactedFiles(criticalCtx, ll, s3client, results, workItem, profile)
+	segmentIDs, err := uploadCompactedFiles(criticalCtx, ll, objectStoreClient, results, workItem, profile)
 	if err != nil {
 		return fmt.Errorf("failed to upload compacted files to S3: %w", err)
 	}
@@ -393,7 +392,7 @@ func compactSegments(
 func uploadCompactedFiles(
 	ctx context.Context,
 	ll *slog.Logger,
-	s3client *awsclient.S3Client,
+	objectStoreClient cloudprovider.ObjectStoreClient,
 	results []parquetwriter.Result,
 	workItem lrdb.ClaimMetricCompactionWorkRow,
 	profile storageprofile.StorageProfile,
@@ -413,7 +412,7 @@ func uploadCompactedFiles(
 		dateint, hour := helpers.MSToDateintHour(st.Time.UTC().UnixMilli())
 		objectID := helpers.MakeDBObjectID(workItem.OrganizationID, profile.CollectorName, dateint, hour, segmentID, "metrics")
 
-		if err := s3helper.UploadS3Object(ctx, s3client, profile.Bucket, objectID, result.FileName); err != nil {
+		if err := objectStoreClient.UploadObject(ctx, profile.Bucket, objectID, result.FileName); err != nil {
 			ll.Error("Failed to upload compacted file to S3",
 				slog.String("bucket", profile.Bucket),
 				slog.String("objectID", objectID),

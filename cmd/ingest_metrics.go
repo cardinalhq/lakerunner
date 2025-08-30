@@ -28,8 +28,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
-	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
+	"github.com/cardinalhq/lakerunner/internal/cloudprovider"
 	"github.com/cardinalhq/lakerunner/internal/constants"
 	"github.com/cardinalhq/lakerunner/internal/debugging"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
@@ -249,13 +248,13 @@ func (wm *metricWriterManager) closeAll(ctx context.Context) ([]parquetwriter.Re
 }
 
 func metricIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
-	awsmanager *awsclient.Manager, inf lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
+	sessionName string, inf lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
 	// Convert single item to batch and process
-	return metricIngestBatch(ctx, ll, tmpdir, sp, mdb, awsmanager, []lrdb.Inqueue{inf}, ingest_dateint, rpfEstimate, loop)
+	return metricIngestBatch(ctx, ll, tmpdir, sp, mdb, sessionName, []lrdb.Inqueue{inf}, ingest_dateint, rpfEstimate, loop)
 }
 
 func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
-	awsmanager *awsclient.Manager, items []lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
+	sessionName string, items []lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
 
 	if len(items) == 0 {
 		return fmt.Errorf("empty batch")
@@ -284,10 +283,11 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 		}
 	}
 
-	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
+	objectStoreClient, err := cloudprovider.GetObjectStoreClientForProfile(ctx, profile)
 	if err != nil {
-		return fmt.Errorf("failed to get S3 client: %w", err)
+		return fmt.Errorf("failed to get object store client: %w", err)
 	}
+	s3client := objectStoreClient.GetS3Client()
 
 	// Create writer manager
 	wm := newMetricWriterManager(tmpdir, firstItem.OrganizationID.String(), ingest_dateint, rpfEstimate, ll)
@@ -321,7 +321,7 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 			return fmt.Errorf("creating item tmpdir: %w", err)
 		}
 
-		tmpfilename, _, is404, err := s3helper.DownloadS3Object(ctx, itemTmpdir, s3client, inf.Bucket, inf.ObjectID)
+		tmpfilename, _, is404, err := cloudprovider.DownloadToTempFile(ctx, itemTmpdir, objectStoreClient, inf.Bucket, inf.ObjectID)
 		if err != nil {
 			return fmt.Errorf("failed to download file %s: %w", inf.ObjectID, err)
 		}

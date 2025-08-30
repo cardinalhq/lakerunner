@@ -20,8 +20,8 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
-	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/cardinalhq/lakerunner/internal/cloudprovider"
 	"github.com/cardinalhq/lakerunner/internal/filecrunch"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
@@ -52,7 +52,7 @@ func downloadAndOpenTraceSegments(
 			return nil, err
 		}
 
-		hour := s3helper.HourFromMillis(seg.StartTs)
+		hour := cloudprovider.HourFromMillis(seg.StartTs)
 		objectID := helpers.MakeDBObjectID(sp.OrganizationID, sp.CollectorName, dateint, hour, seg.SegmentID, "traces")
 
 		// Download the trace segment
@@ -139,7 +139,7 @@ func packTraceSegment(
 	ctx context.Context,
 	ll *slog.Logger,
 	tmpdir string,
-	s3Client *awsclient.S3Client,
+	s3Client *s3.Client,
 	mdb lrdb.StoreFull,
 	group []lrdb.GetTraceSegmentsForCompactionRow,
 	sp storageprofile.StorageProfile,
@@ -237,9 +237,9 @@ func packTraceSegment(
 		return err
 	}
 
-	newSegmentID := s3helper.GenerateID()
+	newSegmentID := cloudprovider.GenerateID()
 	newObjectID := helpers.MakeDBObjectID(
-		sp.OrganizationID, sp.CollectorName, dateint, s3helper.HourFromMillis(stats.FirstTS), newSegmentID, "traces",
+		sp.OrganizationID, sp.CollectorName, dateint, cloudprovider.HourFromMillis(stats.FirstTS), newSegmentID, "traces",
 	)
 
 	ll.Info("Uploading compacted file to S3",
@@ -249,7 +249,7 @@ func packTraceSegment(
 		slog.Int64("recordCount", writeResult.RecordCount),
 		slog.Int("segmentCount", len(usedSegs)))
 
-	if err := s3helper.UploadS3Object(ctx, s3Client, sp.Bucket, newObjectID, writeResult.FileName); err != nil {
+	if err := cloudprovider.UploadS3Object(ctx, s3Client, sp.Bucket, newObjectID, writeResult.FileName); err != nil {
 		ll.Error("S3 upload failed", slog.String("error", err.Error()))
 		return err
 	}
@@ -275,7 +275,12 @@ func packTraceSegment(
 
 	// Schedule old segments for deletion
 	for _, oid := range objectIDs {
-		if err := s3helper.ScheduleS3Delete(ctx, mdb, sp.OrganizationID, sp.InstanceNum, sp.Bucket, oid); err != nil {
+		if err := mdb.ObjectCleanupAdd(ctx, lrdb.ObjectCleanupAddParams{
+			OrganizationID: sp.OrganizationID,
+			BucketID:       sp.Bucket,
+			ObjectID:       oid,
+			InstanceNum:    sp.InstanceNum,
+		}); err != nil {
 			ll.Error("Failed to schedule segment deletion",
 				slog.String("objectID", oid),
 				slog.String("error", err.Error()))

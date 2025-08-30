@@ -19,13 +19,22 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/cardinalhq/lakerunner/internal/cloudprovider"
-	"github.com/cardinalhq/lakerunner/internal/pubsub"
+	"github.com/cardinalhq/lakerunner/internal/cloudprovider/credential"
+	"github.com/cardinalhq/lakerunner/internal/cloudprovider/pubsub"
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 // LocalProvider implements the CloudProvider interface for local filesystem development
 type LocalProvider struct{}
+
+func (p *LocalProvider) GetCredentialProvider() credential.Provider {
+	return nil // Local provider doesn't need credentials
+}
 
 // NewLocalProvider creates a new local provider
 func NewLocalProvider() (cloudprovider.CloudProvider, error) {
@@ -41,28 +50,8 @@ func (p *LocalProvider) Type() cloudprovider.ProviderType {
 }
 
 func (p *LocalProvider) CreateObjectStoreClient(ctx context.Context, config cloudprovider.ObjectStoreConfig) (cloudprovider.ObjectStoreClient, error) {
-	// Get base path from config
-	basePath := "/tmp/lakerunner-dev"
-	if bp, ok := config.ProviderSettings["base_path"].(string); ok && bp != "" {
-		basePath = bp
-	}
-
-	// Create base directory if it doesn't exist
-	if err := os.MkdirAll(basePath, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create local storage directory %s: %w", basePath, err)
-	}
-
-	// For local provider, we'll create a mock S3Client that uses local filesystem
-	// This is a simplified implementation - in a full version we'd implement a complete local storage layer
-	localS3Client, err := createLocalS3Client(basePath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create local S3 client: %w", err)
-	}
-
-	return &LocalObjectStoreClient{
-		basePath: basePath,
-		s3Client: localS3Client,
-	}, nil
+	// Local provider object store not implemented yet - use AWS provider for real usage
+	return nil, fmt.Errorf("LocalProvider object store client not implemented - use AWS provider instead")
 }
 
 func (p *LocalProvider) CreatePubSubBackend(ctx context.Context, config cloudprovider.PubSubConfig) (pubsub.Backend, error) {
@@ -115,15 +104,51 @@ func (p *LocalProvider) Validate(config cloudprovider.ProviderConfig) error {
 // LocalObjectStoreClient wraps a local filesystem implementation
 type LocalObjectStoreClient struct {
 	basePath string
-	s3Client *awsclient.S3Client // This would be a mock/local implementation
+	s3Client *s3.Client // This would be a mock/local implementation
 }
 
-func (c *LocalObjectStoreClient) GetS3Client() *awsclient.S3Client {
+// DownloadObject downloads an object from local storage to a destination path
+func (c *LocalObjectStoreClient) DownloadObject(ctx context.Context, bucketID, objectID, destPath string) error {
+	// TODO: Implement local filesystem download
+	return fmt.Errorf("local provider download not yet implemented")
+}
+
+// UploadObject uploads a file from source path to local storage
+func (c *LocalObjectStoreClient) UploadObject(ctx context.Context, bucketID, objectID, sourcePath string) error {
+	// TODO: Implement local filesystem upload
+	return fmt.Errorf("local provider upload not yet implemented")
+}
+
+// DeleteObject deletes an object from local storage
+func (c *LocalObjectStoreClient) DeleteObject(ctx context.Context, bucketID, objectID string) error {
+	// TODO: Implement local filesystem delete
+	return fmt.Errorf("local provider delete not yet implemented")
+}
+
+func (c *LocalObjectStoreClient) GetS3Client() *s3.Client {
 	return c.s3Client
 }
 
+// GetTracer returns a no-op tracer for local provider
+func (c *LocalObjectStoreClient) GetTracer() trace.Tracer {
+	// Return a no-op tracer for local development
+	return trace.NewNoopTracerProvider().Tracer("local")
+}
+
+// ScheduleDelete schedules an object for deletion (no-op for local)
+func (c *LocalObjectStoreClient) ScheduleDelete(ctx context.Context, mdb lrdb.StoreFull, orgID uuid.UUID, instanceNum int16, bucketID, objectID string) error {
+	// For local provider, just delete immediately
+	return c.DeleteObject(ctx, bucketID, objectID)
+}
+
+// IsNotFoundError checks if an error indicates object not found
+func (c *LocalObjectStoreClient) IsNotFoundError(err error) bool {
+	// TODO: Implement proper error checking for local filesystem
+	return false
+}
+
 // createLocalS3Client creates a local filesystem-based S3 client
-func createLocalS3Client(basePath string) (*awsclient.S3Client, error) {
+func createLocalS3Client(basePath string) (*s3.Client, error) {
 	// For now, this is a placeholder - in a full implementation we would:
 	// 1. Create a mock S3 service that uses local filesystem
 	// 2. Use something like MinIO in filesystem mode

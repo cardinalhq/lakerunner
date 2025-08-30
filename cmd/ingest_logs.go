@@ -28,8 +28,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
-	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
+	"github.com/cardinalhq/lakerunner/internal/cloudprovider"
 	"github.com/cardinalhq/lakerunner/internal/constants"
 	"github.com/cardinalhq/lakerunner/internal/debugging"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
@@ -261,10 +260,10 @@ func createLogReader(filename string) (filereader.Reader, error) {
 }
 
 func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
-	awsmanager *awsclient.Manager, inf lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
+	sessionName string, inf lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
 
 	// Convert single item to batch and process
-	return logIngestBatch(ctx, ll, tmpdir, sp, mdb, awsmanager, []lrdb.Inqueue{inf}, ingest_dateint, rpfEstimate, loop)
+	return logIngestBatch(ctx, ll, tmpdir, sp, mdb, sessionName, []lrdb.Inqueue{inf}, ingest_dateint, rpfEstimate, loop)
 }
 
 // queueLogCompactionForSlot queues a log compaction job for a specific slot
@@ -285,7 +284,7 @@ func queueLogCompactionForSlot(ctx context.Context, mdb lrdb.StoreFull, inf lrdb
 // Functions removed - now using filereader and parquetwriter packages directly
 
 func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
-	awsmanager *awsclient.Manager, items []lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
+	sessionName string, items []lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
 
 	if len(items) == 0 {
 		return fmt.Errorf("empty batch")
@@ -310,9 +309,9 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 		}
 	}
 
-	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
+	objectStoreClient, err := cloudprovider.GetObjectStoreClientForProfile(ctx, profile)
 	if err != nil {
-		return fmt.Errorf("failed to get S3 client: %w", err)
+		return fmt.Errorf("failed to get object store client: %w", err)
 	}
 
 	// Create writer manager for organizing output by hour/slot
@@ -348,12 +347,12 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 			return fmt.Errorf("creating item tmpdir: %w", err)
 		}
 
-		tmpfilename, _, is404, err := s3helper.DownloadS3Object(ctx, itemTmpdir, s3client, inf.Bucket, inf.ObjectID)
+		tmpfilename, _, is404, err := cloudprovider.DownloadToTempFile(ctx, itemTmpdir, objectStoreClient, inf.Bucket, inf.ObjectID)
 		if err != nil {
 			return fmt.Errorf("failed to download file %s: %w", inf.ObjectID, err)
 		}
 		if is404 {
-			ll.Warn("S3 object not found, skipping", slog.String("objectID", inf.ObjectID))
+			ll.Warn("Object not found, skipping", slog.String("objectID", inf.ObjectID))
 			continue
 		}
 
@@ -517,14 +516,14 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 		}
 
 		// Generate segment ID and upload
-		segmentID := s3helper.GenerateID()
+		segmentID := cloudprovider.GenerateID()
 		dateint, hour16 := helpers.MSToDateintHour(stats.FirstTS)
 		hour := int(hour16)
 		dbObjectID := helpers.MakeDBObjectID(firstItem.OrganizationID, firstItem.CollectorName,
-			dateint, s3helper.HourFromMillis(stats.FirstTS), segmentID, "logs")
+			dateint, cloudprovider.HourFromMillis(stats.FirstTS), segmentID, "logs")
 
-		if err := s3helper.UploadS3Object(criticalCtx, s3client, firstItem.Bucket, dbObjectID, result.FileName); err != nil {
-			return fmt.Errorf("failed to upload file to S3: %w", err)
+		if err := objectStoreClient.UploadObject(criticalCtx, firstItem.Bucket, dbObjectID, result.FileName); err != nil {
+			return fmt.Errorf("failed to upload file: %w", err)
 		}
 		_ = os.Remove(result.FileName)
 

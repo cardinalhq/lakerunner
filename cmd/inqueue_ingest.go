@@ -29,7 +29,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/estimator"
 	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
@@ -44,7 +43,7 @@ type InqueueProcessingFunction func(
 	tmpdir string,
 	sp storageprofile.StorageProfileProvider,
 	mdb lrdb.StoreFull,
-	awsmanager *awsclient.Manager,
+	sessionName string,
 	inf lrdb.Inqueue,
 	ingest_dateint int32,
 	rpfEstimate int64,
@@ -56,7 +55,7 @@ type InqueueBatchProcessingFunction func(
 	tmpdir string,
 	sp storageprofile.StorageProfileProvider,
 	mdb lrdb.StoreFull,
-	awsmanager *awsclient.Manager,
+	sessionName string,
 	items []lrdb.Inqueue,
 	ingest_dateint int32,
 	rpfEstimate int64,
@@ -66,7 +65,7 @@ type IngestLoopContext struct {
 	ctx               context.Context
 	mdb               lrdb.StoreFull
 	sp                storageprofile.StorageProfileProvider
-	awsmanager        *awsclient.Manager
+	sessionName       string
 	metricEstimator   estimator.MetricEstimator
 	logEstimator      estimator.LogEstimator
 	signal            string
@@ -87,10 +86,7 @@ func NewIngestLoopContext(ctx context.Context, signal string, assumeRoleSessionN
 		return nil, fmt.Errorf("failed to open LRDB store: %w", err)
 	}
 
-	awsmanager, err := awsclient.NewManager(ctx, awsclient.WithAssumeRoleSessionName(assumeRoleSessionName))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create AWS manager: %w", err)
-	}
+	// No longer creating awsmanager - using sessionName approach
 
 	metricEst, err := estimator.NewMetricEstimator(ctx, mdb)
 	if err != nil {
@@ -137,7 +133,7 @@ func NewIngestLoopContext(ctx context.Context, signal string, assumeRoleSessionN
 		ctx:               ctx,
 		mdb:               mdb,
 		sp:                sp,
-		awsmanager:        awsmanager,
+		sessionName:       assumeRoleSessionName,
 		metricEstimator:   metricEst,
 		logEstimator:      logEst,
 		signal:            signal,
@@ -331,7 +327,7 @@ func ingestFiles(
 		rpfEstimate = 100 // Default fallback
 	}
 	t0 = time.Now()
-	err = processFx(ctx, ll, tmpdir, loop.sp, loop.mdb, loop.awsmanager, inf, ingestDateint, rpfEstimate, loop)
+	err = processFx(ctx, ll, tmpdir, loop.sp, loop.mdb, loop.sessionName, inf, ingestDateint, rpfEstimate, loop)
 	inqueueDuration.Record(ctx, time.Since(t0).Seconds(),
 		metric.WithAttributeSet(commonAttributes),
 		metric.WithAttributes(
@@ -479,7 +475,7 @@ func ingestFilesBatch(
 	for i, item := range items {
 		inqueueBatch[i] = batchRowToInqueue(item)
 	}
-	err = batchProcessingFx(ctx, ll, tmpdir, loop.sp, loop.mdb, loop.awsmanager, inqueueBatch, ingestDateint, rpfEstimate, loop)
+	err = batchProcessingFx(ctx, ll, tmpdir, loop.sp, loop.mdb, loop.sessionName, inqueueBatch, ingestDateint, rpfEstimate, loop)
 	inqueueDuration.Record(ctx, time.Since(t0).Seconds(),
 		metric.WithAttributeSet(commonAttributes),
 		metric.WithAttributes(
@@ -570,7 +566,7 @@ func processSingleItem(ctx context.Context, loop *IngestLoopContext, processFx I
 	ingestDateint, _ := helpers.MSToDateintHour(time.Now().UTC().UnixMilli())
 
 	t0 := time.Now()
-	err = processFx(ctx, ll, tmpdir, loop.sp, loop.mdb, loop.awsmanager, inf, ingestDateint, rpfEstimate, loop)
+	err = processFx(ctx, ll, tmpdir, loop.sp, loop.mdb, loop.sessionName, inf, ingestDateint, rpfEstimate, loop)
 	inqueueDuration.Record(ctx, time.Since(t0).Seconds(),
 		metric.WithAttributeSet(commonAttributes),
 		metric.WithAttributes(

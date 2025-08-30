@@ -21,7 +21,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
 
-	"github.com/cardinalhq/lakerunner/internal/pubsub"
+	"github.com/cardinalhq/lakerunner/internal/cloudprovider/pubsub"
 )
 
 func init() {

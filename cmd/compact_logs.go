@@ -21,11 +21,12 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
+	"github.com/cardinalhq/lakerunner/internal/cloudprovider"
 	"github.com/cardinalhq/lakerunner/internal/constants"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
@@ -126,7 +127,7 @@ func compactLogsFor(
 	ctx context.Context,
 	ll *slog.Logger,
 	tmpdir string,
-	awsmanager *awsclient.Manager,
+	sessionName string,
 	sp storageprofile.StorageProfileProvider,
 	mdb lrdb.StoreFull,
 	inf lockmgr.Workable,
@@ -139,11 +140,12 @@ func compactLogsFor(
 		return err
 	}
 
-	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
+	objectStoreClient, err := cloudprovider.GetObjectStoreClientForProfile(ctx, profile)
 	if err != nil {
-		ll.Error("Failed to get S3 client", slog.Any("error", err))
+		ll.Error("Failed to get object store client", slog.Any("error", err))
 		return err
 	}
+	s3client := objectStoreClient.GetS3Client()
 
 	ll.Info("Starting log compaction",
 		slog.String("organizationID", inf.OrganizationID().String()),
@@ -176,7 +178,7 @@ func logCompactItemDo(
 	tmpdir string,
 	inf lockmgr.Workable,
 	sp storageprofile.StorageProfile,
-	s3client *awsclient.S3Client,
+	s3client *s3.Client,
 	rpfEstimate int64,
 ) error {
 	// Extract the time range using our normalized helper functions

@@ -26,8 +26,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
 
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
-	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
+	"github.com/cardinalhq/lakerunner/internal/cloudprovider"
 	"github.com/cardinalhq/lakerunner/internal/constants"
 	"github.com/cardinalhq/lakerunner/internal/debugging"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
@@ -86,7 +85,7 @@ func metricRollupItem(
 	ctx context.Context,
 	ll *slog.Logger,
 	tmpdir string,
-	awsmanager *awsclient.Manager,
+	sessionName string,
 	sp storageprofile.StorageProfileProvider,
 	mdb lrdb.StoreFull,
 	inf lockmgr.Workable,
@@ -109,7 +108,7 @@ func metricRollupItem(
 		return err
 	}
 
-	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
+	s3client, err := cloudprovider.GetObjectStoreClientForProfile(ctx, profile)
 	if err != nil {
 		ll.Error("Failed to get S3 client", slog.Any("error", err))
 		return err
@@ -149,7 +148,7 @@ func metricRollupItemDo(
 	tmpdir string,
 	inf lockmgr.Workable,
 	profile storageprofile.StorageProfile,
-	s3client *awsclient.S3Client,
+	s3client cloudprovider.ObjectStoreClient,
 	previousFrequency int32,
 	rpfEstimate int64,
 ) error {
@@ -203,7 +202,7 @@ func rollupMetricSegments(
 	tmpdir string,
 	inf lockmgr.Workable,
 	profile storageprofile.StorageProfile,
-	s3client *awsclient.S3Client,
+	s3client cloudprovider.ObjectStoreClient,
 	sourceRows []lrdb.MetricSeg,
 	existingRows []lrdb.MetricSeg,
 	rpfEstimate int64,
@@ -378,7 +377,7 @@ func uploadRolledUpMetrics(
 	ctx context.Context,
 	ll *slog.Logger,
 	mdb lrdb.StoreFull,
-	s3client *awsclient.S3Client,
+	s3client cloudprovider.ObjectStoreClient,
 	results []parquetwriter.Result,
 	existingRows []lrdb.MetricSeg,
 	params metricsprocessing.CompactionUploadParams,
@@ -455,7 +454,7 @@ func uploadRolledUpMetrics(
 			slog.Int64("startTs", startTs),
 			slog.Int64("endTs", endTs))
 
-		segmentID := s3helper.GenerateID()
+		segmentID := cloudprovider.GenerateID()
 		newObjectID := helpers.MakeDBObjectID(orgUUID, params.CollectorName, dateint, hour, segmentID, "metrics")
 
 		fileLogger.Debug("Uploading rolled-up metric file to S3 - point of no return approaching",
@@ -463,7 +462,7 @@ func uploadRolledUpMetrics(
 			slog.String("bucket", params.Bucket),
 			slog.Int64("newSegmentID", segmentID))
 
-		err := s3helper.UploadS3Object(ctx, s3client, params.Bucket, newObjectID, file.FileName)
+		err := s3client.UploadFromFile(ctx, params.Bucket, newObjectID, file.FileName)
 		if err != nil {
 			fileLogger.Error("Atomic operation failed during S3 upload - no changes made",
 				slog.Any("error", err),
@@ -507,7 +506,7 @@ func uploadRolledUpMetrics(
 				slog.String("bucket", params.Bucket))
 
 			// Best effort cleanup - try to delete the uploaded file
-			if cleanupErr := s3helper.DeleteS3Object(ctx, s3client, params.Bucket, newObjectID); cleanupErr != nil {
+			if cleanupErr := s3client.Delete(ctx, params.Bucket, newObjectID); cleanupErr != nil {
 				fileLogger.Error("Failed to cleanup orphaned S3 object - manual cleanup required",
 					slog.Any("error", cleanupErr),
 					slog.String("objectID", newObjectID),

@@ -18,20 +18,25 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/cardinalhq/lakerunner/internal/cloudprovider"
-	"github.com/cardinalhq/lakerunner/internal/pubsub"
+	"github.com/cardinalhq/lakerunner/internal/cloudprovider/credential"
+	"github.com/cardinalhq/lakerunner/internal/cloudprovider/objstore"
+	"github.com/cardinalhq/lakerunner/internal/cloudprovider/pubsub"
 )
 
 // AWSProvider implements the CloudProvider interface for AWS
 type AWSProvider struct {
-	awsManager *awsclient.Manager
+	sessionName        string
+	credentialProvider credential.Provider
 }
 
 // NewAWSProvider creates a new AWS provider
 func NewAWSProvider() (cloudprovider.CloudProvider, error) {
-	// Create AWS manager - this will be initialized when needed
-	return &AWSProvider{}, nil
+	credProvider := credential.NewAWSProvider(nil)
+	return &AWSProvider{
+		credentialProvider: credProvider,
+	}, nil
 }
 
 func (p *AWSProvider) Name() string {
@@ -42,45 +47,39 @@ func (p *AWSProvider) Type() cloudprovider.ProviderType {
 	return cloudprovider.ProviderAWS
 }
 
+func (p *AWSProvider) GetCredentialProvider() credential.Provider {
+	return p.credentialProvider
+}
+
 func (p *AWSProvider) CreateObjectStoreClient(ctx context.Context, config cloudprovider.ObjectStoreConfig) (cloudprovider.ObjectStoreClient, error) {
-	// Initialize AWS manager if not already done
-	if p.awsManager == nil {
-		var err error
-		p.awsManager, err = awsclient.NewManager(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create AWS manager: %w", err)
-		}
+	// Convert config to credential config and get credentials
+	credConfig := credential.CredentialConfig{
+		Provider: "aws",
+		Region:   config.Region,
+		Role:     config.Role,
+		Settings: make(map[string]any),
 	}
 
-	// Build S3 options from config
-	var opts []awsclient.S3Option
-
-	if config.Region != "" {
-		opts = append(opts, awsclient.WithRegion(config.Region))
-	}
-
-	if config.Role != "" {
-		opts = append(opts, awsclient.WithRole(config.Role))
-	}
-
+	// Add provider-specific settings
 	if config.Endpoint != "" {
-		opts = append(opts, awsclient.WithEndpoint(config.Endpoint))
+		credConfig.Settings["endpoint"] = config.Endpoint
 	}
 
-	if config.UsePathStyle {
-		opts = append(opts, awsclient.WithPathStyle())
-	}
-
-	if config.InsecureTLS {
-		opts = append(opts, awsclient.WithInsecureTLS())
-	}
-
-	s3Client, err := p.awsManager.GetS3(ctx, opts...)
+	// Get credentials
+	creds, err := p.credentialProvider.GetCredentials(ctx, credConfig)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create S3 client: %w", err)
+		return nil, fmt.Errorf("getting AWS credentials: %w", err)
 	}
 
-	return &AWSObjectStoreClient{s3Client: s3Client}, nil
+	// Extract AWS config
+	awsCreds, ok := creds.(*credential.AWSCredentials)
+	if !ok {
+		return nil, fmt.Errorf("expected AWS credentials, got %T", creds)
+	}
+
+	// Create S3 client and manager
+	s3Client := s3.NewFromConfig(awsCreds.GetAWSConfig())
+	return objstore.NewAWSS3Manager(s3Client), nil
 }
 
 func (p *AWSProvider) CreatePubSubBackend(ctx context.Context, config cloudprovider.PubSubConfig) (pubsub.Backend, error) {
@@ -129,13 +128,4 @@ func (p *AWSProvider) Validate(config cloudprovider.ProviderConfig) error {
 	// we let the AWS SDK handle credential resolution (env vars, IAM, etc.)
 
 	return nil
-}
-
-// AWSObjectStoreClient wraps the existing S3Client
-type AWSObjectStoreClient struct {
-	s3Client *awsclient.S3Client
-}
-
-func (c *AWSObjectStoreClient) GetS3Client() *awsclient.S3Client {
-	return c.s3Client
 }

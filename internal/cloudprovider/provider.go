@@ -18,7 +18,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/cardinalhq/lakerunner/internal/pubsub"
+	"github.com/cardinalhq/lakerunner/internal/cloudprovider/pubsub"
 )
 
 // Manager manages cloud provider instances and configurations

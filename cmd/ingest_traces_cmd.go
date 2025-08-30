@@ -26,8 +26,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/cardinalhq/lakerunner/cmd/ingesttraces"
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
-	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
+	"github.com/cardinalhq/lakerunner/internal/cloudprovider"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
@@ -89,7 +88,7 @@ func init() {
 }
 
 func traceIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
-	awsmanager *awsclient.Manager, inf lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
+	sessionName string, inf lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
 	var profile storageprofile.StorageProfile
 	var err error
 
@@ -106,21 +105,26 @@ func traceIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp sto
 		ll.Error("Bucket ID mismatch", slog.String("expected", profile.Bucket), slog.String("actual", inf.Bucket))
 		return fmt.Errorf("bucket ID mismatch")
 	}
-	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
+	objectStoreClient, err := cloudprovider.GetObjectStoreClientForProfile(ctx, profile)
 	if err != nil {
+		ll.Error("Failed to get object store client", slog.Any("error", err))
+		return err
+	}
+	s3client := objectStoreClient.GetS3Client()
+	if s3client == nil {
 		ll.Error("Failed to get S3 client", slog.Any("error", err))
 		return err
 	}
 
 	// Download the trace file from S3
-	tmpfilename, _, is404, err := s3helper.DownloadS3Object(ctx, tmpdir, s3client, inf.Bucket, inf.ObjectID)
+	tmpfilename, _, isNotFound, err := cloudprovider.DownloadToTempFile(ctx, tmpdir, objectStoreClient, inf.Bucket, inf.ObjectID)
+	if isNotFound {
+		ll.Info("S3 object not found, deleting inqueue work item", slog.String("bucket", inf.Bucket), slog.String("objectID", inf.ObjectID))
+		return nil
+	}
 	if err != nil {
 		ll.Error("Failed to download S3 object", slog.Any("error", err))
 		return err
-	}
-	if is404 {
-		ll.Info("S3 object not found, deleting inqueue work item", slog.String("bucket", inf.Bucket), slog.String("objectID", inf.ObjectID))
-		return nil
 	}
 
 	ll.Info("Downloaded source trace file")
@@ -144,14 +148,14 @@ func traceIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp sto
 
 		// Process each converted file - upload to S3 and insert into database
 		for _, result := range traceResults {
-			segmentID := s3helper.GenerateID()
+			segmentID := cloudprovider.GenerateID()
 
 			// Create S3 object ID for traces using the standard helper
-			hour := s3helper.HourFromMillis(result.MinTimestamp)
+			hour := cloudprovider.HourFromMillis(result.MinTimestamp)
 			dbObjectID := helpers.MakeDBObjectID(inf.OrganizationID, inf.CollectorName, ingest_dateint, hour, segmentID, "traces")
 
 			// Upload to S3
-			if err := s3helper.UploadS3Object(ctx, s3client, inf.Bucket, dbObjectID, result.FileName); err != nil {
+			if err := objectStoreClient.UploadObject(ctx, inf.Bucket, dbObjectID, result.FileName); err != nil {
 				ll.Error("Failed to upload S3 object", slog.Any("error", err))
 				return err
 			}
@@ -280,7 +284,7 @@ func queueTraceCompactionForSlot(ctx context.Context, mdb lrdb.StoreFull, inf lr
 }
 
 func traceIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
-	awsmanager *awsclient.Manager, items []lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
+	sessionName string, items []lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
 
 	if len(items) == 0 {
 		return fmt.Errorf("empty batch")
@@ -301,9 +305,9 @@ func traceIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp st
 		return fmt.Errorf("failed to get storage profile: %w", err)
 	}
 
-	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
+	objectStoreClient, err := cloudprovider.GetObjectStoreClientForProfile(ctx, profile)
 	if err != nil {
-		return fmt.Errorf("failed to get S3 client: %w", err)
+		return fmt.Errorf("failed to get object store client: %w", err)
 	}
 
 	// Collect all trace file results from all items, grouped by slot
@@ -320,7 +324,7 @@ func traceIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp st
 			return fmt.Errorf("creating item tmpdir: %w", err)
 		}
 
-		tmpfilename, _, is404, err := s3helper.DownloadS3Object(ctx, itemTmpdir, s3client, inf.Bucket, inf.ObjectID)
+		tmpfilename, _, is404, err := cloudprovider.DownloadToTempFile(ctx, itemTmpdir, objectStoreClient, inf.Bucket, inf.ObjectID)
 		if err != nil {
 			return fmt.Errorf("failed to download file %s: %w", inf.ObjectID, err)
 		}
@@ -370,11 +374,11 @@ func traceIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp st
 		// For simplicity, upload each result file separately
 		// This could be optimized to merge files per slot in the future
 		for _, result := range results {
-			segmentID := s3helper.GenerateID()
+			segmentID := cloudprovider.GenerateID()
 			hour := int16(0) // Hour doesn't matter for slot-based traces
 			dbObjectID := helpers.MakeDBObjectID(firstItem.OrganizationID, firstItem.CollectorName, ingest_dateint, hour, segmentID, "traces")
 
-			if err := s3helper.UploadS3Object(ctx, s3client, firstItem.Bucket, dbObjectID, result.FileName); err != nil {
+			if err := objectStoreClient.UploadObject(ctx, firstItem.Bucket, dbObjectID, result.FileName); err != nil {
 				return fmt.Errorf("failed to upload trace file to S3: %w", err)
 			}
 

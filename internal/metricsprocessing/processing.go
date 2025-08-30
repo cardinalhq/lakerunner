@@ -25,8 +25,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
-	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/cardinalhq/lakerunner/internal/cloudprovider"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
@@ -174,7 +174,7 @@ type UploadParams struct {
 func UploadMetricResults(
 	ctx context.Context,
 	ll *slog.Logger,
-	s3client *awsclient.S3Client,
+	s3client *s3.Client,
 	mdb lrdb.StoreFull,
 	results []parquetwriter.Result,
 	params UploadParams,
@@ -191,7 +191,7 @@ func UploadMetricResults(
 func uploadSingleMetricResult(
 	ctx context.Context,
 	ll *slog.Logger,
-	s3client *awsclient.S3Client,
+	s3client *s3.Client,
 	mdb lrdb.StoreFull,
 	result parquetwriter.Result,
 	params UploadParams,
@@ -205,7 +205,7 @@ func uploadSingleMetricResult(
 	}
 
 	// Generate segment ID and object ID
-	segmentID := s3helper.GenerateID()
+	segmentID := cloudprovider.GenerateID()
 
 	// Extract dateint and hour from actual timestamp data
 	var dateint int32
@@ -227,7 +227,7 @@ func uploadSingleMetricResult(
 	objID := helpers.MakeDBObjectID(orgUUID, params.CollectorName, dateint, hour, segmentID, "metrics")
 
 	// Upload to S3
-	if err := s3helper.UploadS3Object(ctx, s3client, params.Bucket, objID, result.FileName); err != nil {
+	if err := cloudprovider.UploadS3Object(ctx, s3client, params.Bucket, objID, result.FileName); err != nil {
 		return fmt.Errorf("uploading file to S3: %w", err)
 	}
 
@@ -284,7 +284,7 @@ func uploadSingleMetricResult(
 	})
 	if err != nil {
 		// Clean up uploaded file on database error
-		if err2 := s3helper.DeleteS3Object(ctx, s3client, params.Bucket, objID); err2 != nil {
+		if err2 := cloudprovider.DeleteS3Object(ctx, s3client, params.Bucket, objID); err2 != nil {
 			ll.Error("Failed to delete S3 object after insertion failure", slog.Any("error", err2))
 		}
 		return fmt.Errorf("inserting metric segment: %w", err)

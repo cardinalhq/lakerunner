@@ -30,7 +30,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/estimator"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
@@ -42,7 +41,7 @@ type RunqueueProcessingFunction func(
 	ctx context.Context,
 	ll *slog.Logger,
 	tmpdir string,
-	awsmanager *awsclient.Manager,
+	sessionName string,
 	sp storageprofile.StorageProfileProvider,
 	mdb lrdb.StoreFull,
 	inf lockmgr.Workable,
@@ -64,7 +63,7 @@ type LegacyRunqueueProcessingFunction func(
 	ctx context.Context,
 	ll *slog.Logger,
 	tmpdir string,
-	awsmanager *awsclient.Manager,
+	sessionName string,
 	sp storageprofile.StorageProfileProvider,
 	mdb lrdb.StoreFull,
 	inf lockmgr.Workable,
@@ -77,7 +76,7 @@ type RunqueueLoopContext struct {
 	wqm             lockmgr.WorkQueueManager
 	mdb             lrdb.StoreFull
 	sp              storageprofile.StorageProfileProvider
-	awsmanager      *awsclient.Manager
+	sessionName     string
 	metricEstimator estimator.MetricEstimator
 	logEstimator    estimator.LogEstimator
 	traceEstimator  estimator.TraceEstimator
@@ -97,11 +96,6 @@ func NewRunqueueLoopContext(ctx context.Context, signal string, action string, a
 	mdb, err := dbopen.LRDBStore(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open LRDB store: %w", err)
-	}
-
-	awsmanager, err := awsclient.NewManager(ctx, awsclient.WithAssumeRoleSessionName(assumeRoleSessionName))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create AWS manager: %w", err)
 	}
 
 	metricEst, err := estimator.NewMetricEstimator(ctx, mdb)
@@ -141,7 +135,7 @@ func NewRunqueueLoopContext(ctx context.Context, signal string, action string, a
 		wqm:             wqm,
 		mdb:             mdb,
 		sp:              sp,
-		awsmanager:      awsmanager,
+		sessionName:     assumeRoleSessionName,
 		metricEstimator: metricEst,
 		logEstimator:    logEst,
 		traceEstimator:  traceEst,
@@ -338,7 +332,7 @@ func workqueueProcess(
 		recordsPerFile = 40_000 // Default for all signals
 	}
 	t0 = time.Now()
-	err = pfx(workerCtx, ll, tmpdir, loop.awsmanager, loop.sp, loop.mdb, inf, recordsPerFile, args)
+	err = pfx(workerCtx, ll, tmpdir, loop.sessionName, loop.sp, loop.mdb, inf, recordsPerFile, args)
 	workqueueDuration.Record(ctx, time.Since(t0).Seconds(),
 		metric.WithAttributeSet(commonAttributes),
 		metric.WithAttributeSet(orgAttrs),

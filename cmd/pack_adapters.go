@@ -19,22 +19,24 @@ import (
 	"os"
 	"sync"
 
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/parquet-go/parquet-go"
 
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
-	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/buffet"
+	"github.com/cardinalhq/lakerunner/internal/cloudprovider/objstore"
 	"github.com/cardinalhq/lakerunner/internal/filecrunch"
 )
 
 type objectFetcherAdapter struct {
-	s3Client *awsclient.S3Client
+	s3Client *s3.Client
 }
 
 var _ ObjectFetcher = (*objectFetcherAdapter)(nil)
 
 func (a objectFetcherAdapter) Download(ctx context.Context, bucket, key, tmpdir string) (string, int64, bool, error) {
-	return s3helper.DownloadS3Object(ctx, tmpdir, a.s3Client, bucket, key)
+	// Create a temporary S3Manager to use the DownloadToTempFile function
+	manager := objstore.NewAWSS3Manager(a.s3Client)
+	return manager.DownloadToTempFile(ctx, tmpdir, bucket, key)
 }
 
 // In pack_adapters.go

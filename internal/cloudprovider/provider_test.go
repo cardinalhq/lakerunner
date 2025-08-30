@@ -19,7 +19,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/cardinalhq/lakerunner/internal/pubsub"
+	"github.com/cardinalhq/lakerunner/internal/cloudprovider/pubsub"
 )
 
 func TestValidateProviderConfig(t *testing.T) {

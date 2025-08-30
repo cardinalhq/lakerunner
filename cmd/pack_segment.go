@@ -25,8 +25,9 @@ import (
 
 	"github.com/parquet-go/parquet-go"
 
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
-	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+
+	"github.com/cardinalhq/lakerunner/internal/cloudprovider"
 	"github.com/cardinalhq/lakerunner/internal/filecrunch"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
@@ -71,8 +72,8 @@ func downloadAndOpen(
 			return nil, err
 		}
 
-		good := helpers.MakeDBObjectID(sp.OrganizationID, sp.CollectorName, dateint, s3helper.HourFromMillis(seg.StartTs), seg.SegmentID, "logs")
-		bad := helpers.MakeDBObjectIDbad(sp.OrganizationID, dateint, s3helper.HourFromMillis(seg.StartTs), seg.SegmentID, "logs")
+		good := helpers.MakeDBObjectID(sp.OrganizationID, sp.CollectorName, dateint, cloudprovider.HourFromMillis(seg.StartTs), seg.SegmentID, "logs")
+		bad := helpers.MakeDBObjectIDbad(sp.OrganizationID, dateint, cloudprovider.HourFromMillis(seg.StartTs), seg.SegmentID, "logs")
 
 		objectID, tmpfile, _, err := chooseObjectID(ctx, fetcher, bucket, good, bad, tmpdir)
 		if err != nil {
@@ -256,7 +257,7 @@ func statsFor(used []lrdb.GetLogSegmentsForCompactionRow) usedStats {
 func executeCriticalSection(
 	ctx context.Context,
 	ll *slog.Logger,
-	s3Client *awsclient.S3Client,
+	s3Client *s3.Client,
 	mdb lrdb.StoreFull,
 	bucket, objectID, fileName string,
 	dbParams lrdb.CompactLogSegmentsParams,
@@ -274,7 +275,7 @@ func executeCriticalSection(
 	ll.Debug("Critical section: uploading to S3",
 		slog.String("objectID", objectID))
 
-	if err := s3helper.UploadS3Object(criticalCtx, s3Client, bucket, objectID, fileName); err != nil {
+	if err := cloudprovider.UploadS3Object(criticalCtx, s3Client, bucket, objectID, fileName); err != nil {
 		ll.Error("Critical section failed during S3 upload - no changes made",
 			slog.Any("error", err),
 			slog.String("objectID", objectID))
@@ -294,7 +295,7 @@ func executeCriticalSection(
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cleanupCancel()
 
-		if cleanupErr := s3helper.DeleteS3Object(cleanupCtx, s3Client, bucket, objectID); cleanupErr != nil {
+		if cleanupErr := cloudprovider.DeleteS3Object(cleanupCtx, s3Client, bucket, objectID); cleanupErr != nil {
 			ll.Error("Critical section: failed to cleanup orphaned S3 object - manual cleanup required",
 				slog.Any("error", cleanupErr),
 				slog.String("objectID", objectID),
@@ -315,7 +316,7 @@ func packSegment(
 	ctx context.Context,
 	ll *slog.Logger,
 	tmpdir string,
-	s3Client *awsclient.S3Client,
+	s3Client *s3.Client,
 	mdb lrdb.StoreFull,
 	group []lrdb.GetLogSegmentsForCompactionRow,
 	sp storageprofile.StorageProfile,
@@ -433,9 +434,9 @@ func packSegment(
 		return err
 	}
 
-	newSegmentID := s3helper.GenerateID()
+	newSegmentID := cloudprovider.GenerateID()
 	newObjectID := helpers.MakeDBObjectID(
-		sp.OrganizationID, sp.CollectorName, dateint, s3helper.HourFromMillis(stats.FirstTS), newSegmentID, "logs",
+		sp.OrganizationID, sp.CollectorName, dateint, cloudprovider.HourFromMillis(stats.FirstTS), newSegmentID, "logs",
 	)
 
 	// Final interruption check before entering critical section
@@ -487,7 +488,12 @@ func packSegment(
 
 	scheduledCount := 0
 	for _, oid := range objectIDs {
-		if err := s3helper.ScheduleS3Delete(ctx, mdb, sp.OrganizationID, sp.InstanceNum, sp.Bucket, oid); err != nil {
+		if err := mdb.ObjectCleanupAdd(ctx, lrdb.ObjectCleanupAddParams{
+			OrganizationID: sp.OrganizationID,
+			BucketID:       sp.Bucket,
+			ObjectID:       oid,
+			InstanceNum:    sp.InstanceNum,
+		}); err != nil {
 			ll.Warn("Failed to schedule deletion for old segment file",
 				slog.Any("error", err),
 				slog.String("objectID", oid))

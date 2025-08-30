@@ -17,8 +17,9 @@ package cloudprovider
 import (
 	"context"
 
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
-	"github.com/cardinalhq/lakerunner/internal/pubsub"
+	"github.com/cardinalhq/lakerunner/internal/cloudprovider/credential"
+	"github.com/cardinalhq/lakerunner/internal/cloudprovider/objstore"
+	"github.com/cardinalhq/lakerunner/internal/cloudprovider/pubsub"
 )
 
 // ProviderType represents the type of cloud provider
@@ -31,11 +32,9 @@ const (
 	ProviderLocal ProviderType = "local"
 )
 
-// ObjectStoreClient represents a generic object store client
-type ObjectStoreClient interface {
-	// This will initially wrap the S3Client but allow for future abstraction
-	GetS3Client() *awsclient.S3Client
-}
+// ObjectStoreClient is an alias for objstore.S3Manager for backward compatibility
+// New code should use objstore.S3Manager directly
+type ObjectStoreClient = objstore.S3Manager
 
 // CloudProvider represents a cloud provider that can provide object storage and pubsub services
 type CloudProvider interface {
@@ -50,6 +49,9 @@ type CloudProvider interface {
 
 	// CreatePubSubBackend creates a pubsub backend, returns nil if not supported by this provider
 	CreatePubSubBackend(ctx context.Context, config PubSubConfig) (pubsub.Backend, error)
+
+	// GetCredentialProvider returns the credential provider for this cloud provider
+	GetCredentialProvider() credential.Provider
 
 	// SupportsFeature returns true if the provider supports the given feature
 	SupportsFeature(feature string) bool

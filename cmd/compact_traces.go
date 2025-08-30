@@ -23,7 +23,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
 
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
+	"github.com/cardinalhq/lakerunner/internal/cloudprovider"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/internal/tracecompaction"
@@ -74,7 +74,7 @@ func compactTracesFor(
 	ctx context.Context,
 	ll *slog.Logger,
 	tmpdir string,
-	awsmanager *awsclient.Manager,
+	sessionName string,
 	sp storageprofile.StorageProfileProvider,
 	mdb lrdb.StoreFull,
 	inf lockmgr.Workable,
@@ -87,11 +87,12 @@ func compactTracesFor(
 		return err
 	}
 
-	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
+	objectStoreClient, err := cloudprovider.GetObjectStoreClientForProfile(ctx, profile)
 	if err != nil {
-		ll.Error("Failed to get S3 client", slog.Any("error", err))
+		ll.Error("Failed to get object store client", slog.Any("error", err))
 		return err
 	}
+	s3client := objectStoreClient.GetS3Client()
 
 	ll.Info("Starting trace compaction",
 		slog.String("organizationID", inf.OrganizationID().String()),
