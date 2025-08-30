@@ -16,6 +16,7 @@ package logql
 
 import (
 	"github.com/cardinalhq/lakerunner/promql"
+	"strings"
 	"testing"
 	"time"
 )
@@ -233,6 +234,18 @@ func TestPromDur(t *testing.T) {
 	}
 	if got := promDur(5 * time.Minute); got != "5m" {
 		t.Fatalf("promDur(5m) = %q, want %q", got, "5m")
+	}
+}
+
+func TestFromLogQL_LabelFormat_BadTemplate_ReturnsError(t *testing.T) {
+	// Missing closing `end`
+	bad := `{job="x"} | json | label_format api=` + "`{{ if hasPrefix \"Error\" .response }}ERROR{{else}}{{.response}}`"
+	_, err := FromLogQL(bad)
+	if err == nil {
+		t.Fatalf("expected error for invalid label_format template")
+	}
+	if !strings.Contains(err.Error(), "label_format") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

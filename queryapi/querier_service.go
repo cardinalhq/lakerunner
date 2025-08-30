@@ -15,6 +15,7 @@
 package queryapi
 
 import (
+	"github.com/cardinalhq/lakerunner/logql"
 	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/cardinalhq/lakerunner/promql"
 	"time"
@@ -24,12 +25,15 @@ import (
 
 // PushDownRequest is sent to a worker.
 type PushDownRequest struct {
-	OrganizationID uuid.UUID       `json:"orgId"`
-	BaseExpr       promql.BaseExpr `json:"baseExpr"`
-	StartTs        int64           `json:"startTs"`
-	EndTs          int64           `json:"endTs"`
-	Step           time.Duration   `json:"step"`
-	Segments       []SegmentInfo   `json:"segments"`
+	OrganizationID uuid.UUID     `json:"orgId"`
+	StartTs        int64         `json:"startTs"`
+	EndTs          int64         `json:"endTs"`
+	Step           time.Duration `json:"step"`
+	Segments       []SegmentInfo `json:"segments"`
+
+	// dataset specific fields
+	BaseExpr *promql.BaseExpr `json:"baseExpr"`
+	LogLeaf  *logql.LogLeaf   `json:"logLeaf"`
 }
 
 type QuerierService struct {

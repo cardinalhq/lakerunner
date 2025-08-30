@@ -26,7 +26,6 @@ const (
 	SketchMAP SketchType = "map" // pre-aggregated (sum, count, min, max, etc.)
 	SketchDDS SketchType = "dds" // distinct count sketch
 	SUM                  = "sum"
-	STEP_SUM             = "step_sum"
 	COUNT                = "count"
 	MIN                  = "min"
 	MAX                  = "max"
@@ -57,6 +56,13 @@ type SketchInput struct {
 	Frequency      int64      `json:"frequency"` // in seconds
 	SketchTags     SketchTags `json:"sketchTags"`
 }
+
+type DataPoint struct {
+	Timestamp int64          `json:"timestamp"`
+	Tags      map[string]any `json:"tags"`
+}
+
+func (dp DataPoint) GetTimestamp() int64 { return dp.Timestamp }
 
 func (si SketchInput) GetTimestamp() int64 { return si.Timestamp }
 

@@ -68,10 +68,17 @@ type LabelFilter struct {
 	ParserIdx   *int `json:"parserIdx,omitempty"`   // index in LogSelector.Parsers (0-based), if AfterParser
 }
 
+type LabelFormatExpr struct {
+	Out  string `json:"out"`            // target label/column name
+	Tmpl string `json:"tmpl,omitempty"` // original template (normalized, optional for debug)
+	SQL  string `json:"sql"`            // compiled DuckDB SQL expression
+}
+
 type ParserStage struct {
-	Type    string            `json:"type"`              // json|logfmt|regexp|label_fmt|keep_labels|...
-	Params  map[string]string `json:"params"`            // optional (e.g. regexp pattern)
-	Filters []LabelFilter     `json:"filters,omitempty"` // NEW: label filters that follow this parser
+	Type         string            `json:"type"`                   // json|logfmt|regexp|label_fmt|keep_labels|...
+	Params       map[string]string `json:"params"`                 // optional (e.g. regexp pattern)
+	Filters      []LabelFilter     `json:"filters,omitempty"`      // NEW: label filters that follow this parser
+	LabelFormats []LabelFormatExpr `json:"labelFormats,omitempty"` // ONLY for label_format
 }
 type LogSelector struct {
 	Matchers     []LabelMatch  `json:"matchers"`
@@ -326,15 +333,35 @@ func addLineFilterFromSyntax(ls *LogSelector, lineFilterList []logql.LineFilterE
 	}
 }
 
-// addParsersAndLabelFiltersFromString builds ParserStage[] and LabelFilters[] together,
-// preserving order and attaching filters that appear after a parser to that parser.
-func addParsersAndLabelFiltersFromString(s string, ls *LogSelector) {
+// Let this now return error
+func addParsersAndLabelFiltersFromString(s string, ls *LogSelector) error {
 	lastParser := -1
 
 	for _, chunk := range splitPipelineStages(s) {
 		// Parser?
 		if typ, params, ok := looksLikeParser(chunk); ok {
-			ls.Parsers = append(ls.Parsers, ParserStage{Type: typ, Params: params})
+			ps := ParserStage{Type: typ, Params: params}
+
+			if typ == "label_format" {
+				compiled := make([]LabelFormatExpr, 0, len(params))
+				for outName, raw := range params {
+					tmpl := normalizeLabelFormatLiteral(raw)
+
+					// parse+validate+compile to SQL (returns error on bad template)
+					sqlExpr, err := buildLabelFormatExprTemplate(tmpl, func(col string) string { return quoteIdent(col) })
+					if err != nil {
+						return fmt.Errorf("label_format %s: %w", outName, err)
+					}
+					compiled = append(compiled, LabelFormatExpr{
+						Out:  outName,
+						Tmpl: tmpl,
+						SQL:  sqlExpr,
+					})
+				}
+				ps.LabelFormats = compiled
+			}
+
+			ls.Parsers = append(ls.Parsers, ps)
 			lastParser = len(ls.Parsers) - 1
 			continue
 		}
@@ -342,32 +369,27 @@ func addParsersAndLabelFiltersFromString(s string, ls *LogSelector) {
 		// Label filter?
 		if lf, ok := tryParseLabelFilter(chunk); ok {
 			if lastParser >= 0 {
-				// Attach to the last parser and mark as "after parser"
 				idx := lastParser
 				lf.AfterParser = true
 				lf.ParserIdx = &idx
-
 				ls.Parsers[lastParser].Filters = append(ls.Parsers[lastParser].Filters, lf)
-				ls.LabelFilters = append(ls.LabelFilters, lf) // keep flat view too
+				ls.LabelFilters = append(ls.LabelFilters, lf)
 			} else {
-				// Filter before any parser
 				ls.LabelFilters = append(ls.LabelFilters, lf)
 			}
 		}
 	}
+	return nil
 }
 
 func buildSelector(sel logql.LogSelectorExpr) (LogSelector, error) {
 	ls := LogSelector{
 		Matchers: toLabelMatches(sel.Matchers()),
 	}
-
-	// 1) Loki-provided line filters
 	addLineFilterFromSyntax(&ls, logql.ExtractLineFilters(sel))
-
-	// 2) Parsers + label filters (order-aware, attached to parser when appropriate)
-	addParsersAndLabelFiltersFromString(sel.String(), &ls)
-
+	if err := addParsersAndLabelFiltersFromString(sel.String(), &ls); err != nil {
+		return LogSelector{}, err
+	}
 	sort.Slice(ls.Matchers, func(i, j int) bool { return ls.Matchers[i].Label < ls.Matchers[j].Label })
 	return ls, nil
 }
@@ -441,7 +463,7 @@ func looksLikeParser(stage string) (string, map[string]string, bool) {
 		return "", nil, false
 	}
 	switch head[0] {
-	case "json", "logfmt", "label_format", "line_format", "label_replace", "keep_labels", "drop_labels", "decolorize":
+	case "json", "logfmt", "line_format", "label_replace", "keep_labels", "drop_labels", "decolorize":
 		return head[0], map[string]string{}, true
 	case "regexp":
 		params := map[string]string{}
@@ -454,9 +476,118 @@ func looksLikeParser(stage string) (string, map[string]string, bool) {
 			}
 		}
 		return "regexp", params, true
+
+	case "label_format", "label-format", "labelformat":
+		// Normalize to label_format and parse assignments
+		return "label_format", parseLabelFormatParams(stage), true
+
 	default:
 		return "", nil, false
 	}
+}
+
+// parseLabelFormatParams parses: label_format a=`tmpl` b="str" c=unquoted
+// Supports multiple assignments separated by spaces and/or commas.
+// Values may be backtick-quoted templates or double-quoted strings.
+func parseLabelFormatParams(stage string) map[string]string {
+	params := make(map[string]string)
+	s := strings.TrimSpace(stage)
+
+	// strip the head token (label_format / label-format / labelformat)
+	// find first whitespace after the head
+	i := strings.IndexAny(s, " \t")
+	if i < 0 {
+		return params
+	}
+	s = strings.TrimSpace(s[i:]) // remainder after the head
+
+	var (
+		key          strings.Builder
+		val          strings.Builder
+		haveKey      bool
+		inBacktick   bool
+		inQuote      bool
+		esc          bool
+		readingValue bool
+		flushPair    = func() {
+			k := strings.TrimSpace(key.String())
+			v := strings.TrimSpace(val.String())
+			if k != "" {
+				params[k] = v
+			}
+			key.Reset()
+			val.Reset()
+			haveKey = false
+			readingValue = false
+			inBacktick = false
+			inQuote = false
+			esc = false
+		}
+	)
+
+	for _, r := range s {
+		switch {
+		case readingValue:
+			// inside value
+			if inBacktick {
+				val.WriteRune(r)
+				if !esc && r == '`' {
+					inBacktick = false
+				}
+				esc = !esc && r == '\\'
+				continue
+			}
+			if inQuote {
+				val.WriteRune(r)
+				if !esc && r == '"' {
+					inQuote = false
+				}
+				esc = !esc && r == '\\'
+				continue
+			}
+
+			// not in quotes: check for separator
+			if r == ',' || r == ' ' || r == '\t' {
+				flushPair()
+				continue
+			}
+
+			// opening quote types
+			if r == '`' {
+				inBacktick = true
+				val.WriteRune(r) // keep wrapper; builder knows to strip
+				continue
+			}
+			if r == '"' {
+				inQuote = true
+				val.WriteRune(r) // keep wrapper; builder knows to strip
+				continue
+			}
+
+			val.WriteRune(r)
+
+		default:
+			// reading the key until '=' outside quotes
+			if r == '=' && !haveKey {
+				haveKey = true
+				readingValue = true
+				// skip whitespace is handled naturally in value loop
+				continue
+			}
+			// separators without a value → ignore
+			if r == ',' {
+				continue
+			}
+			if !(r == ' ' || r == '\t') || key.Len() > 0 {
+				key.WriteRune(r)
+			}
+		}
+	}
+	// finalize last pair
+	if readingValue || key.Len() > 0 {
+		flushPair()
+	}
+	return params
 }
 
 // tryParseLabelFilter parses `<ident> <op> <value>` (value may be quoted).
@@ -662,4 +793,17 @@ func toMatchOpString(op string) MatchOp {
 	default:
 		return MatchEq
 	}
+}
+
+// Normalize backticks / \" etc. (reuse this in both parser & builder if you want)
+func normalizeLabelFormatLiteral(s string) string {
+	if n := len(s); n >= 2 {
+		if (s[0] == '`' && s[n-1] == '`') || (s[0] == '"' && s[n-1] == '"') {
+			s = s[1 : n-1]
+		}
+	}
+	if strings.Contains(s, `\"`) {
+		s = strings.ReplaceAll(s, `\"`, `"`)
+	}
+	return s
 }

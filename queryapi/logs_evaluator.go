@@ -22,11 +22,16 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/cardinalhq/lakerunner/promql"
 	"github.com/google/uuid"
+	"log/slog"
 	"slices"
 	"time"
 
 	"github.com/google/codesearch/index"
 	"github.com/google/codesearch/regexp"
+)
+
+const (
+	DefaultLogStep = 10 * time.Second
 )
 
 func (q *QuerierService) EvaluateLogsQuery(
@@ -35,21 +40,71 @@ func (q *QuerierService) EvaluateLogsQuery(
 	startTs, endTs int64,
 	queryPlan logql.LQueryPlan,
 ) (<-chan map[string]promql.EvalResult, error) {
-	//workers, err := q.workerDiscovery.GetAllWorkers()
-	//if err != nil {
-	//	slog.Error("failed to get all workers", "err", err)
-	//	return nil, fmt.Errorf("failed to get all workers: %w", err)
-	//}
-	//
-	//out := make(chan map[string]promql.EvalResult, 1024)
-	//
-	//go func() {
-	//	defer close(out)
-	//
-	//	for _, leaf := range queryPlan.Leaves {
-	//
-	//	}
-	//}
+	workers, err := q.workerDiscovery.GetAllWorkers()
+	if err != nil {
+		slog.Error("failed to get all workers", "err", err)
+		return nil, fmt.Errorf("failed to get all workers: %w", err)
+	}
+
+	out := make(chan map[string]promql.EvalResult, 1024)
+
+	go func() {
+		defer close(out)
+
+		// Partition by dateInt hours for storage listing.
+		dateIntHours := dateIntHoursRange(startTs, endTs, time.UTC)
+
+		for _, leaf := range queryPlan.Leaves {
+			for _, dih := range dateIntHours {
+				segments, err := q.lookupLogsSegments(ctx, dih, leaf, startTs, endTs, DefaultLogStep, orgID, q.mdb.ListLogSegmentsForQuery)
+				if err != nil {
+					slog.Error("failed to lookup log segments", "err", err, "dih", dih, "leaf", leaf)
+					return
+				}
+				if len(segments) == 0 {
+					continue
+				}
+				// Form time-contiguous batches sized for the number of workers.
+				groups := ComputeReplayBatchesWithWorkers(segments, DefaultLogStep, startTs, endTs, len(workers), true)
+				for _, group := range groups {
+					select {
+					case <-ctx.Done():
+						return
+					default:
+					}
+
+					slog.Info("Pushing down segments", "groupSize", len(group.Segments))
+
+					// Collect all segment IDs for worker assignment
+					segmentIDs := make([]int64, 0, len(group.Segments))
+					segmentMap := make(map[int64][]SegmentInfo)
+					for _, segment := range group.Segments {
+						segmentIDs = append(segmentIDs, segment.SegmentID)
+						segmentMap[segment.SegmentID] = append(segmentMap[segment.SegmentID], segment)
+					}
+
+					// Get worker assignments for all segments
+					mappings, err := q.workerDiscovery.GetWorkersForSegments(orgID, segmentIDs)
+					if err != nil {
+						slog.Error("failed to get worker assignments", "err", err)
+						continue
+					}
+
+					// Group segments by assigned worker
+					workerGroups := make(map[Worker][]SegmentInfo)
+					for _, mapping := range mappings {
+						segmentList := segmentMap[mapping.SegmentID]
+						workerGroups[mapping.Worker] = append(workerGroups[mapping.Worker], segmentList...)
+					}
+
+					var groupLeafChans []<-chan promql.Timestamped
+					for worker, workerSegments := range workerGroups {
+
+					}
+				}
+			}
+		}
+	}
 	return nil, nil
 }
 

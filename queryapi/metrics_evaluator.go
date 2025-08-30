@@ -130,7 +130,7 @@ func (q *QuerierService) EvaluateMetricsQuery(
 					for worker, workerSegments := range workerGroups {
 						req := PushDownRequest{
 							OrganizationID: orgID,
-							BaseExpr:       leaf,
+							BaseExpr:       &leaf,
 							StartTs:        group.StartTs,
 							EndTs:          group.EndTs,
 							Segments:       workerSegments,
