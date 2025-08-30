@@ -232,36 +232,25 @@ func (r *IngestProtoMetricsReader) buildDatapointRow(row Row, rm pmetric.Resourc
 	switch metric.Type() {
 	case pmetric.MetricTypeGauge:
 		dp := metric.Gauge().DataPoints().At(datapointIndex)
-		if dropped, err := r.addNumberDatapointFields(row, dp); err != nil {
-			return false, fmt.Errorf("failed to process gauge datapoint: %w", err)
-		} else if dropped {
-			return true, nil
-		}
+		return r.addNumberDatapointFields(row, dp, "gauge")
 	case pmetric.MetricTypeSum:
 		dp := metric.Sum().DataPoints().At(datapointIndex)
-		if dropped, err := r.addNumberDatapointFields(row, dp); err != nil {
-			return false, fmt.Errorf("failed to process sum datapoint: %w", err)
-		} else if dropped {
-			return true, nil
-		}
+		return r.addNumberDatapointFields(row, dp, "sum")
 	case pmetric.MetricTypeHistogram:
 		dp := metric.Histogram().DataPoints().At(datapointIndex)
-		if err := r.addHistogramDatapointFields(row, dp); err != nil {
-			return false, fmt.Errorf("failed to process histogram datapoint: %w", err)
-		}
+		return r.addHistogramDatapointFields(row, dp)
 	case pmetric.MetricTypeExponentialHistogram:
 		dp := metric.ExponentialHistogram().DataPoints().At(datapointIndex)
-		if err := r.addExponentialHistogramDatapointFields(row, dp); err != nil {
-			return false, fmt.Errorf("failed to process exponential histogram datapoint: %w", err)
-		}
+		return r.addExponentialHistogramDatapointFields(row, dp)
 	case pmetric.MetricTypeSummary:
 		// TODO: Implement proper summary handling with sketches and rollup fields
-		// For now, drop these data points silently to avoid downstream processing issues
+		// For now, drop these data points to avoid downstream processing issues
 		rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
 			attribute.String("reader", "IngestProtoMetricsReader"),
-			attribute.String("reason", "summary_not_implemented"),
+			attribute.String("metric_type", "summary"),
+			attribute.String("reason", "not_implemented"),
 		))
-		return false, fmt.Errorf("summary data points not yet implemented")
+		return true, nil // dropped, not an error
 	}
 
 	return false, nil
@@ -269,7 +258,7 @@ func (r *IngestProtoMetricsReader) buildDatapointRow(row Row, rm pmetric.Resourc
 
 // addNumberDatapointFields adds fields from a NumberDataPoint to the row.
 // Returns (dropped, error) where dropped indicates if the datapoint was filtered out.
-func (r *IngestProtoMetricsReader) addNumberDatapointFields(ret Row, dp pmetric.NumberDataPoint) (bool, error) {
+func (r *IngestProtoMetricsReader) addNumberDatapointFields(ret Row, dp pmetric.NumberDataPoint, metricType string) (bool, error) {
 	// Add datapoint attributes
 	dp.Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
@@ -297,7 +286,8 @@ func (r *IngestProtoMetricsReader) addNumberDatapointFields(ret Row, dp pmetric.
 	if math.IsNaN(value) || math.IsInf(value, 0) {
 		rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
 			attribute.String("reader", "IngestProtoMetricsReader"),
-			attribute.String("reason", "NaN"),
+			attribute.String("metric_type", metricType),
+			attribute.String("reason", "nan_or_inf"),
 		))
 		return true, nil // dropped=true, no error
 	}
@@ -319,7 +309,7 @@ func (r *IngestProtoMetricsReader) addNumberDatapointFields(ret Row, dp pmetric.
 	return false, nil
 }
 
-func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ret Row, dp pmetric.HistogramDataPoint) error {
+func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ret Row, dp pmetric.HistogramDataPoint) (bool, error) {
 	// 0) Bail if there are no counts at all
 	hasCounts := false
 	for i := 0; i < dp.BucketCounts().Len(); i++ {
@@ -331,9 +321,10 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ret Row, dp pmetr
 	if !hasCounts {
 		rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
 			attribute.String("reader", "IngestProtoMetricsReader"),
-			attribute.String("reason", "histogram_no_counts"),
+			attribute.String("metric_type", "histogram"),
+			attribute.String("reason", "no_counts"),
 		))
-		return ErrHistogramNoCounts
+		return true, nil // dropped, not an error
 	}
 
 	// 1) Attributes
@@ -354,7 +345,7 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ret Row, dp pmetr
 	const alpha = 0.01
 	sketch, err := ddsketch.NewDefaultDDSketch(alpha)
 	if err != nil {
-		return fmt.Errorf("failed to create sketch for histogram: %w", err)
+		return false, fmt.Errorf("failed to create sketch for histogram: %w", err)
 	}
 
 	// Gather OTel explicit bounds & counts
@@ -363,9 +354,10 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ret Row, dp pmetr
 	if n == 0 {
 		rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
 			attribute.String("reader", "IngestProtoMetricsReader"),
-			attribute.String("reason", "histogram_no_bucket_counts"),
+			attribute.String("metric_type", "histogram"),
+			attribute.String("reason", "no_bucket_counts"),
 		))
-		return fmt.Errorf("dropping histogram datapoint with no bucket counts")
+		return true, nil // dropped, not an error
 	}
 	// Note: m == 0 is valid (single bucket from -inf to +inf)
 
@@ -392,7 +384,7 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ret Row, dp pmetr
 				rep = dp.Sum() / float64(totalCount)
 			}
 			if err := sketch.AddWithCount(rep, float64(totalCount)); err != nil {
-				return fmt.Errorf("failed to add single bucket to sketch: %w", err)
+				return false, fmt.Errorf("failed to add single bucket to sketch: %w", err)
 			}
 		}
 	} else {
@@ -422,7 +414,7 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ret Row, dp pmetr
 					alpha,
 					nil, // per-bin sums unknown for OTel explicit hist
 				); err != nil {
-					return fmt.Errorf("failed to import finite histogram buckets: %w", err)
+					return false, fmt.Errorf("failed to import finite histogram buckets: %w", err)
 				}
 			}
 		}
@@ -453,7 +445,7 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ret Row, dp pmetr
 					rep = rep - step
 				}
 				if err := sketch.AddWithCount(rep, float64(underflow)); err != nil {
-					return fmt.Errorf("failed to add underflow to sketch: %w", err)
+					return false, fmt.Errorf("failed to add underflow to sketch: %w", err)
 				}
 			}
 
@@ -468,7 +460,7 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ret Row, dp pmetr
 					rep = rep + step
 				}
 				if err := sketch.AddWithCount(rep, float64(overflow)); err != nil {
-					return fmt.Errorf("failed to add overflow to sketch: %w", err)
+					return false, fmt.Errorf("failed to add overflow to sketch: %w", err)
 				}
 			}
 		}
@@ -477,18 +469,18 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ret Row, dp pmetr
 	// 4) Rollup statistics from the (now non-empty) sketch
 	maxvalue, err := sketch.GetMaxValue()
 	if err != nil {
-		return fmt.Errorf("failed to get max value from non-empty sketch: %w", err)
+		return false, fmt.Errorf("failed to get max value from non-empty sketch: %w", err)
 	}
 	minvalue, err := sketch.GetMinValue()
 	if err != nil {
-		return fmt.Errorf("failed to get min value from non-empty sketch: %w", err)
+		return false, fmt.Errorf("failed to get min value from non-empty sketch: %w", err)
 	}
 	quantiles, err := sketch.GetValuesAtQuantiles([]float64{0.25, 0.5, 0.75, 0.90, 0.95, 0.99})
 	if err != nil {
-		return fmt.Errorf("failed to get quantiles from non-empty sketch: %w", err)
+		return false, fmt.Errorf("failed to get quantiles from non-empty sketch: %w", err)
 	}
 	if len(quantiles) < 6 {
-		return fmt.Errorf("expected 6 quantiles, got %d", len(quantiles))
+		return false, fmt.Errorf("expected 6 quantiles, got %d", len(quantiles))
 	}
 
 	count := sketch.GetCount()
@@ -509,11 +501,11 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ret Row, dp pmetr
 
 	// 5) Encode the sketch
 	ret[wkk.RowKeySketch] = helpers.EncodeSketch(sketch)
-	return nil
+	return false, nil
 }
 
 // addExponentialHistogramDatapointFields adds fields from an ExponentialHistogramDataPoint to the row.
-func (r *IngestProtoMetricsReader) addExponentialHistogramDatapointFields(ret Row, dp pmetric.ExponentialHistogramDataPoint) error {
+func (r *IngestProtoMetricsReader) addExponentialHistogramDatapointFields(ret Row, dp pmetric.ExponentialHistogramDataPoint) (bool, error) {
 	// Add datapoint attributes
 	dp.Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
@@ -568,15 +560,16 @@ func (r *IngestProtoMetricsReader) addExponentialHistogramDatapointFields(ret Ro
 		// Drop exponential histogram datapoints with no data
 		rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
 			attribute.String("reader", "IngestProtoMetricsReader"),
-			attribute.String("reason", "exponential_histogram_no_data"),
+			attribute.String("metric_type", "exponential_histogram"),
+			attribute.String("reason", "no_data"),
 		))
-		return fmt.Errorf("dropping exponential histogram datapoint with no data")
+		return true, nil // dropped, not an error
 	}
 
 	// Create sketch for exponential histogram (only for histograms with data)
 	sketch, err := ddsketch.NewDefaultDDSketch(0.01)
 	if err != nil {
-		return fmt.Errorf("failed to create sketch for exponential histogram: %w", err)
+		return false, fmt.Errorf("failed to create sketch for exponential histogram: %w", err)
 	}
 
 	// Add histogram data to sketch
@@ -592,18 +585,18 @@ func (r *IngestProtoMetricsReader) addExponentialHistogramDatapointFields(ret Ro
 	// Generate rollup statistics from sketch (sketch always has data at this point)
 	maxvalue, err := sketch.GetMaxValue()
 	if err != nil {
-		return fmt.Errorf("failed to get max value from non-empty sketch: %w", err)
+		return false, fmt.Errorf("failed to get max value from non-empty sketch: %w", err)
 	}
 	minvalue, err := sketch.GetMinValue()
 	if err != nil {
-		return fmt.Errorf("failed to get min value from non-empty sketch: %w", err)
+		return false, fmt.Errorf("failed to get min value from non-empty sketch: %w", err)
 	}
 	quantiles, err := sketch.GetValuesAtQuantiles([]float64{0.25, 0.5, 0.75, 0.90, 0.95, 0.99})
 	if err != nil {
-		return fmt.Errorf("failed to get quantiles from non-empty sketch: %w", err)
+		return false, fmt.Errorf("failed to get quantiles from non-empty sketch: %w", err)
 	}
 	if len(quantiles) < 6 {
-		return fmt.Errorf("expected 6 quantiles, got %d", len(quantiles))
+		return false, fmt.Errorf("expected 6 quantiles, got %d", len(quantiles))
 	}
 
 	count := sketch.GetCount()
@@ -624,7 +617,7 @@ func (r *IngestProtoMetricsReader) addExponentialHistogramDatapointFields(ret Ro
 
 	// Encode the sketch (always has data at this point)
 	ret[wkk.RowKeySketch] = helpers.EncodeSketch(sketch)
-	return nil
+	return false, nil
 }
 
 // Close closes the reader and releases resources.
