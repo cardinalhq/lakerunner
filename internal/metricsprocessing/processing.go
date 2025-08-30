@@ -88,6 +88,8 @@ func GetCurrentMetricSortKeyProvider() filereader.SortKeyProvider {
 
 // MetricsOrderedSelector returns a SelectFunc for MergesortReader that orders by [metric name, TID].
 // This ensures the same ordering used by the parquet writer during ingestion and compaction.
+// TODO this should not generate keys on the fly like this, that will hurt GC.
+// TODO the fix is likely to make callers of this track the key for the items it wants, and use .Compare() directly.
 func MetricsOrderedSelector() filereader.SelectFunc {
 	keyProvider := GetCurrentMetricSortKeyProvider()
 
@@ -289,4 +291,24 @@ func uploadSingleMetricResult(
 	}
 
 	return nil
+}
+
+// NormalizeRowForParquetWrite normalizes sketch fields for parquet writing.
+// Converts string sketches to []byte format required by parquet.
+func NormalizeRowForParquetWrite(row filereader.Row) error {
+	sketch := row[wkk.RowKeySketch]
+	if sketch == nil {
+		return nil
+	}
+
+	if _, ok := sketch.([]byte); ok {
+		return nil
+	}
+
+	if str, ok := sketch.(string); ok {
+		row[wkk.RowKeySketch] = []byte(str)
+		return nil
+	}
+
+	return fmt.Errorf("unexpected sketch type for parquet writing: %T", sketch)
 }
