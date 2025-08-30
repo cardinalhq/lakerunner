@@ -60,6 +60,8 @@ type Querier interface {
 	CompactTraceSegments(ctx context.Context, arg CompactTraceSegmentsParams) error
 	DeleteInqueueWork(ctx context.Context, arg DeleteInqueueWorkParams) error
 	DeleteMetricCompactionWork(ctx context.Context, arg DeleteMetricCompactionWorkParams) error
+	// Retrieves all existing metric pack estimates for EWMA calculations
+	GetAllMetricPackEstimates(ctx context.Context) ([]MetricPackEstimate, error)
 	GetExemplarLogsByFingerprint(ctx context.Context, arg GetExemplarLogsByFingerprintParams) (ExemplarLog, error)
 	GetExemplarLogsByService(ctx context.Context, arg GetExemplarLogsByServiceParams) ([]ExemplarLog, error)
 	GetExemplarLogsCreatedAfter(ctx context.Context, ts time.Time) ([]ExemplarLog, error)
@@ -107,6 +109,8 @@ type Querier interface {
 	// and average bytes per record for trace segments in the last hour per organization and instance.
 	// This query is basically identical to the LogSegEstimator, but for trace segments.
 	TraceSegEstimator(ctx context.Context, arg TraceSegEstimatorParams) ([]TraceSegEstimatorRow, error)
+	// Updates or inserts a single metric pack estimate
+	UpsertMetricPackEstimate(ctx context.Context, arg UpsertMetricPackEstimateParams) error
 	UpsertServiceIdentifier(ctx context.Context, arg UpsertServiceIdentifierParams) (UpsertServiceIdentifierRow, error)
 	WorkQueueAddDirect(ctx context.Context, arg WorkQueueAddParams) error
 	WorkQueueClaimDirect(ctx context.Context, arg WorkQueueClaimParams) (WorkQueueClaimRow, error)
