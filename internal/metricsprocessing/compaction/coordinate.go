@@ -23,8 +23,6 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 
-	"github.com/jackc/pgx/v5/pgtype"
-
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/constants"
@@ -142,7 +140,6 @@ func coordinate(
 			ll.Warn("S3 upload failed partway through, scheduling cleanup",
 				slog.Int("uploadedFiles", len(segmentIDs)),
 				slog.Any("error", err))
-			// TODO: Schedule S3 cleanup work for these segment IDs
 			scheduleS3Cleanup(ctx, mdb, segmentIDs, workItem, profile)
 		}
 		return fmt.Errorf("failed to upload compacted files to S3: %w", err)
@@ -243,24 +240,28 @@ func replaceCompactedSegments(
 	workItem lrdb.ClaimMetricCompactionWorkRow,
 	segmentIDs []int64,
 ) error {
-	oldSegmentIds := make([]int64, len(oldRows))
+	// Prepare old records for CompactMetricSegs
+	oldRecords := make([]lrdb.ReplaceMetricSegsOld, len(oldRows))
 	for i, row := range oldRows {
-		oldSegmentIds[i] = row.SegmentID
+		oldRecords[i] = lrdb.ReplaceMetricSegsOld{
+			SegmentID: row.SegmentID,
+			SlotID:    row.SlotID,
+		}
 	}
 
-	newSegmentIds := make([]int64, len(results))
-	newTsRanges := make([]pgtype.Range[pgtype.Int8], len(results))
-	newRecordCounts := make([]int64, len(results))
-	newFileSizes := make([]int64, len(results))
-	newFingerprints := make([][]int64, len(results))
+	// Prepare new records for CompactMetricSegs
+	newRecords := make([]lrdb.ReplaceMetricSegsNew, len(results))
+	st, et, ok := helpers.RangeBounds(workItem.TsRange)
+	if !ok {
+		return fmt.Errorf("invalid time range in work item: %v", workItem.TsRange)
+	}
 
+	// Collect fingerprints from all results
+	var allFingerprints []int64
 	for i, result := range results {
-		newSegmentIds[i] = segmentIDs[i]
-		newRecordCounts[i] = result.RecordCount
-		newFileSizes[i] = result.FileSize
-
+		var fingerprints []int64
 		if metadata, ok := result.Metadata.(factories.MetricsFileStats); ok {
-			newFingerprints[i] = metadata.Fingerprints
+			fingerprints = metadata.Fingerprints
 		} else {
 			ll.Error("Missing metadata for compacted segment - cannot proceed",
 				"segment_id", segmentIDs[i],
@@ -270,50 +271,45 @@ func replaceCompactedSegments(
 				"instance_num", workItem.InstanceNum)
 			return fmt.Errorf("missing metadata for segment %d", segmentIDs[i])
 		}
+		allFingerprints = append(allFingerprints, fingerprints...)
 
-		st, et, ok := helpers.RangeBounds(workItem.TsRange)
-		if !ok {
-			return fmt.Errorf("invalid time range in work item: %v", workItem.TsRange)
-		}
-		newTsRanges[i] = pgtype.Range[pgtype.Int8]{
-			Lower:     pgtype.Int8{Int64: st.Time.UTC().UnixMilli(), Valid: true},
-			Upper:     pgtype.Int8{Int64: et.Time.UTC().UnixMilli(), Valid: true},
-			LowerType: pgtype.Inclusive,
-			UpperType: pgtype.Exclusive,
-			Valid:     true,
+		newRecords[i] = lrdb.ReplaceMetricSegsNew{
+			SegmentID:   segmentIDs[i],
+			StartTs:     st.Time.UTC().UnixMilli(),
+			EndTs:       et.Time.UTC().UnixMilli(),
+			RecordCount: result.RecordCount,
+			FileSize:    result.FileSize,
 		}
 	}
 
-	params := lrdb.ReplaceCompactedMetricSegsParams{
-		OrganizationID:  workItem.OrganizationID,
-		Dateint:         workItem.Dateint,
-		FrequencyMs:     int32(workItem.FrequencyMs),
-		InstanceNum:     workItem.InstanceNum,
-		IngestDateint:   metricsprocessing.GetIngestDateint(oldRows),
-		CreatedBy:       lrdb.CreatedByIngest,
-		SlotID:          0,
-		SlotCount:       1,
-		SortVersion:     lrdb.CurrentMetricSortVersion,
-		NewSegmentIds:   newSegmentIds,
-		NewTsRanges:     newTsRanges,
-		NewRecordCounts: newRecordCounts,
-		NewFileSizes:    newFileSizes,
-		NewFingerprints: newFingerprints,
-		OldSegmentIds:   oldSegmentIds,
-	}
-
-	err := mdb.ReplaceCompactedMetricSegs(ctx, params)
+	// Use the new CompactMetricSegs function
+	err := mdb.CompactMetricSegs(ctx, lrdb.ReplaceMetricSegsParams{
+		OrganizationID: workItem.OrganizationID,
+		Dateint:        workItem.Dateint,
+		InstanceNum:    workItem.InstanceNum,
+		SlotID:         0,
+		SlotCount:      1,
+		IngestDateint:  metricsprocessing.GetIngestDateint(oldRows),
+		FrequencyMs:    int32(workItem.FrequencyMs),
+		Published:      true,
+		Rolledup:       false,
+		OldRecords:     oldRecords,
+		NewRecords:     newRecords,
+		CreatedBy:      lrdb.CreatedByIngest,
+		Fingerprints:   allFingerprints,
+		SortVersion:    lrdb.CurrentMetricSortVersion,
+	})
 	if err != nil {
-		ll.Error("Failed to replace compacted metric segments",
-			slog.Int("oldSegmentCount", len(oldSegmentIds)),
-			slog.Int("newSegmentCount", len(newSegmentIds)),
+		ll.Error("Failed to compact metric segments",
+			slog.Int("oldSegmentCount", len(oldRecords)),
+			slog.Int("newSegmentCount", len(newRecords)),
 			slog.Any("error", err))
-		return err
+		return fmt.Errorf("failed to compact metric segments: %w", err)
 	}
 
 	ll.Info("Successfully replaced compacted metric segments",
-		slog.Int("oldSegmentCount", len(oldSegmentIds)),
-		slog.Int("newSegmentCount", len(newSegmentIds)))
+		slog.Int("oldSegmentCount", len(oldRecords)),
+		slog.Int("newSegmentCount", len(newRecords)))
 
 	return nil
 }

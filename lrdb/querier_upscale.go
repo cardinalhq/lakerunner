@@ -27,6 +27,7 @@ type LogSegmentUpserter interface {
 
 type MetricSegmentInserter interface {
 	InsertMetricSegment(ctx context.Context, params InsertMetricSegmentParams) error
+	CompactMetricSegs(ctx context.Context, args ReplaceMetricSegsParams) error
 }
 
 type TraceSegmentInserter interface {
