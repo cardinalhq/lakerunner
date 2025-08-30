@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
+	"github.com/cardinalhq/lakerunner/internal/heartbeat"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
@@ -52,7 +53,19 @@ func runLoop(
 			continue
 		}
 
+		// Start heartbeating for claimed items
+		itemIDs := make([]int64, len(claimedWork))
+		for i, work := range claimedWork {
+			itemIDs[i] = work.ID
+		}
+		mcqHeartbeater := heartbeat.NewMCQHeartbeater(mdb, manager.workerID, itemIDs)
+		cancel := mcqHeartbeater.Start(ctx)
+
 		err = processBatch(ctx, ll, mdb, sp, awsmanager, claimedWork)
+
+		// Stop heartbeating before handling results
+		cancel()
+
 		if err != nil {
 			ll.Error("Failed to process compaction batch", slog.Any("error", err))
 			if failErr := manager.FailWork(ctx, claimedWork); failErr != nil {

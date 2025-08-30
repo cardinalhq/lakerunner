@@ -146,6 +146,7 @@ type Inqueue struct {
 	ClaimedBy      int64      `json:"claimed_by"`
 	ClaimedAt      *time.Time `json:"claimed_at"`
 	FileSize       int64      `json:"file_size"`
+	HeartbeatedAt  *time.Time `json:"heartbeated_at"`
 }
 
 type InqueueJournal struct {
@@ -186,6 +187,7 @@ type MetricCompactionQueue struct {
 	Tries          int32                            `json:"tries"`
 	ClaimedBy      int64                            `json:"claimed_by"`
 	ClaimedAt      *time.Time                       `json:"claimed_at"`
+	HeartbeatedAt  *time.Time                       `json:"heartbeated_at"`
 }
 
 type MetricPackEstimate struct {
