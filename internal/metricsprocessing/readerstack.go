@@ -17,10 +17,8 @@ package metricsprocessing
 import (
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/google/uuid"
@@ -58,7 +56,6 @@ func CreateReaderStack(
 	startTimeMs int64,
 	rows []lrdb.MetricSeg,
 	config ReaderStackConfig,
-	savepath string,
 ) (*ReaderStackResult, error) {
 	var readers []filereader.Reader
 	var files []*os.File
@@ -83,29 +80,6 @@ func CreateReaderStack(
 		if is404 {
 			ll.Info("S3 object not found, skipping", slog.String("bucket", profile.Bucket), slog.String("objectID", objectID))
 			continue
-		}
-
-		if savepath != "" {
-			basename := filepath.Base(objectID)
-			outpath := filepath.Join(savepath, "inputs", basename)
-			out, err := os.Create(outpath)
-			ll.Info("Saving downloaded file to save path", slog.String("file", outpath))
-			if err != nil {
-				ll.Error("Failed to create save file", slog.String("file", outpath), slog.Any("error", err))
-				return nil, fmt.Errorf("creating save file %s: %w", filepath.Join(savepath, basename), err)
-			}
-			defer out.Close()
-			in, err := os.Open(fn)
-			if err != nil {
-				ll.Error("Failed to open temp file for saving", slog.String("file", fn), slog.Any("error", err))
-				return nil, fmt.Errorf("opening temp file %s for saving: %w", fn, err)
-			}
-			defer in.Close()
-			_, err = io.Copy(out, in)
-			if err != nil {
-				ll.Error("Failed to copy to save file", slog.String("file", outpath), slog.Any("error", err))
-				return nil, fmt.Errorf("copying to save file %s: %w", filepath.Join(savepath, basename), err)
-			}
 		}
 
 		file, err := os.Open(fn)

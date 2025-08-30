@@ -26,12 +26,16 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
+	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/constants"
-	"github.com/cardinalhq/lakerunner/internal/estimator"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
+	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
@@ -59,10 +63,9 @@ func IsWorkerInterrupted(err error) bool {
 func RunLoop(
 	ctx context.Context,
 	manager *Manager,
-	mdb lrdb.StoreFull,
+	mdb CompactionStore,
 	sp storageprofile.StorageProfileProvider,
 	awsmanager *awsclient.Manager,
-	metricEst estimator.MetricEstimator,
 ) error {
 	ll := slog.Default().With(slog.String("component", "metric-compaction-loop"))
 
@@ -86,7 +89,7 @@ func RunLoop(
 			continue
 		}
 
-		err = ProcessBatch(ctx, ll, mdb, sp, awsmanager, metricEst, claimedWork)
+		err = ProcessBatch(ctx, ll, mdb, sp, awsmanager, claimedWork)
 		if err != nil {
 			ll.Error("Failed to process compaction batch", slog.Any("error", err))
 			if failErr := manager.FailWork(ctx, claimedWork); failErr != nil {
@@ -103,10 +106,9 @@ func RunLoop(
 func ProcessBatch(
 	ctx context.Context,
 	ll *slog.Logger,
-	mdb lrdb.StoreFull,
+	mdb CompactionStore,
 	sp storageprofile.StorageProfileProvider,
 	awsmanager *awsclient.Manager,
-	metricEst estimator.MetricEstimator,
 	claimedWork []lrdb.ClaimMetricCompactionWorkRow,
 ) error {
 	if len(claimedWork) == 0 {
@@ -151,12 +153,9 @@ func ProcessBatch(
 		return err
 	}
 
-	rpfEstimate := metricEst.Get(firstItem.OrganizationID, firstItem.InstanceNum, int32(firstItem.FrequencyMs))
-	if rpfEstimate <= 0 {
-		rpfEstimate = 40_000
-	}
+	rpfEstimate := int64(40_000) // Use fixed default since estimation is now in-database
 
-	tmpdir, err := os.MkdirTemp("", "lakerunner-compaction-*")
+	tmpdir, err := os.MkdirTemp("", "work-")
 	if err != nil {
 		ll.Error("Failed to create temporary directory", slog.Any("error", err))
 		return fmt.Errorf("failed to create temporary directory: %w", err)
@@ -175,7 +174,11 @@ func ProcessBatch(
 		slog.Int("batchSize", len(claimedWork)))
 
 	// Convert claimed work to MetricSeg format for existing processing logic
-	segments := ConvertToMetricSegs(claimedWork)
+	segments, err := FetchMetricSegsForCompaction(ctx, mdb, claimedWork)
+	if err != nil {
+		ll.Error("Failed to fetch metric segments for compaction", slog.Any("error", err))
+		return err
+	}
 
 	// Filter out any segments that are already compacted (safety check)
 	validSegments := make([]lrdb.MetricSeg, 0, len(segments))
@@ -198,7 +201,7 @@ func ProcessBatch(
 func compactSegments(
 	ctx context.Context,
 	ll *slog.Logger,
-	mdb lrdb.StoreFull,
+	mdb CompactionStore,
 	tmpdir string,
 	workItem lrdb.ClaimMetricCompactionWorkRow,
 	profile storageprofile.StorageProfile,
@@ -211,7 +214,7 @@ func compactSegments(
 		return nil
 	}
 
-	if !metricsprocessing.ShouldCompactMetrics(rows) {
+	if !shouldCompactMetrics(rows) {
 		ll.Debug("No need to compact metrics in this batch", slog.Int("rowCount", len(rows)))
 		return nil
 	}
@@ -240,7 +243,7 @@ func compactSegments(
 	}
 
 	readerStack, err := metricsprocessing.CreateReaderStack(
-		ctx, ll, tmpdir, s3client, workItem.OrganizationID, profile, st.Time.UTC().UnixMilli(), rows, config, "")
+		ctx, ll, tmpdir, s3client, workItem.OrganizationID, profile, st.Time.UTC().UnixMilli(), rows, config)
 	if err != nil {
 		return err
 	}
@@ -363,18 +366,7 @@ func compactSegments(
 
 	// If we produced 0 output files, log source S3 paths for debugging and skip database updates
 	if len(results) == 0 {
-		ll.Warn("Produced 0 output files from aggregating reader - logging source S3 paths for debugging")
-		for _, row := range rows {
-			dateint, hour := helpers.MSToDateintHour(st.Time.UTC().UnixMilli())
-			objectID := helpers.MakeDBObjectID(workItem.OrganizationID, profile.CollectorName, dateint, hour, row.SegmentID, "metrics")
-			s3Path := fmt.Sprintf("s3://%s/%s", profile.Bucket, objectID)
-			ll.Warn("Source file for debugging",
-				slog.String("s3Path", s3Path),
-				slog.Int64("segmentID", row.SegmentID),
-				slog.Int64("fileSize", row.FileSize),
-				slog.Int64("recordCount", row.RecordCount))
-		}
-		ll.Debug("Skipping database updates since no output files were created")
+		ll.Warn("Produced 0 output files from aggregating reader")
 		return nil
 	}
 
@@ -386,28 +378,171 @@ func compactSegments(
 		return NewWorkerInterrupted("context cancelled before metrics upload phase")
 	}
 
-	compactionParams := metricsprocessing.CompactionUploadParams{
-		OrganizationID: workItem.OrganizationID.String(),
-		InstanceNum:    workItem.InstanceNum,
-		Dateint:        workItem.Dateint,
-		FrequencyMs:    int32(workItem.FrequencyMs),
-		SlotID:         0, // Default slot ID
-		SlotCount:      1, // Default slot count
-		IngestDateint:  metricsprocessing.GetIngestDateint(rows),
-		CollectorName:  profile.CollectorName,
-		Bucket:         profile.Bucket,
-	}
-
 	// Use context without cancellation for critical section to ensure atomic completion
 	criticalCtx := context.WithoutCancel(ctx)
-	err = metricsprocessing.UploadCompactedMetrics(criticalCtx, ll, mdb, s3client, results, rows, compactionParams)
+
+	// Upload files to S3 first
+	segmentIDs, err := uploadCompactedFiles(criticalCtx, ll, s3client, results, workItem, profile)
 	if err != nil {
-		return fmt.Errorf("failed to upload compacted metrics: %w", err)
+		return fmt.Errorf("failed to upload compacted files to S3: %w", err)
 	}
 
-	metricsprocessing.ScheduleOldFileCleanup(criticalCtx, ll, mdb, rows, profile)
+	// Atomically replace segments in database
+	err = replaceCompactedSegments(criticalCtx, ll, mdb, results, rows, workItem, segmentIDs)
+	if err != nil {
+		return fmt.Errorf("failed to replace compacted segments in database: %w", err)
+	}
 
 	return nil
+}
+
+func uploadCompactedFiles(
+	ctx context.Context,
+	ll *slog.Logger,
+	s3client *awsclient.S3Client,
+	results []parquetwriter.Result,
+	workItem lrdb.ClaimMetricCompactionWorkRow,
+	profile storageprofile.StorageProfile,
+) ([]int64, error) {
+	st, _, ok := helpers.RangeBounds(workItem.TsRange)
+	if !ok {
+		return nil, fmt.Errorf("invalid time range in work item: %v", workItem.TsRange)
+	}
+
+	segmentIDs := make([]int64, len(results))
+
+	for i, result := range results {
+		// Generate new segment ID
+		segmentID := idgen.DefaultFlakeGenerator.NextID()
+		segmentIDs[i] = segmentID
+
+		dateint, hour := helpers.MSToDateintHour(st.Time.UTC().UnixMilli())
+		objectID := helpers.MakeDBObjectID(workItem.OrganizationID, profile.CollectorName, dateint, hour, segmentID, "metrics")
+
+		if err := s3helper.UploadS3Object(ctx, s3client, profile.Bucket, objectID, result.FileName); err != nil {
+			ll.Error("Failed to upload compacted file to S3",
+				slog.String("bucket", profile.Bucket),
+				slog.String("objectID", objectID),
+				slog.String("fileName", result.FileName),
+				slog.Any("error", err))
+			return nil, fmt.Errorf("uploading file %s: %w", objectID, err)
+		}
+
+		ll.Debug("Uploaded compacted file to S3",
+			slog.String("objectID", objectID),
+			slog.Int64("fileSize", result.FileSize),
+			slog.Int64("recordCount", result.RecordCount))
+	}
+	return segmentIDs, nil
+}
+
+func replaceCompactedSegments(
+	ctx context.Context,
+	ll *slog.Logger,
+	mdb CompactionStore,
+	results []parquetwriter.Result,
+	oldRows []lrdb.MetricSeg,
+	workItem lrdb.ClaimMetricCompactionWorkRow,
+	segmentIDs []int64,
+) error {
+	// Collect old segment IDs
+	oldSegmentIds := make([]int64, len(oldRows))
+	for i, row := range oldRows {
+		oldSegmentIds[i] = row.SegmentID
+	}
+
+	// Prepare new segment data
+	newSegmentIds := make([]int64, len(results))
+	newTsRanges := make([]pgtype.Range[pgtype.Int8], len(results))
+	newRecordCounts := make([]int64, len(results))
+	newFileSizes := make([]int64, len(results))
+	newFingerprints := make([][]int64, len(results))
+
+	for i, result := range results {
+		newSegmentIds[i] = segmentIDs[i]
+		newRecordCounts[i] = result.RecordCount
+		newFileSizes[i] = result.FileSize
+		// Extract fingerprints from metadata
+		if metadata, ok := result.Metadata.(factories.MetricsFileStats); ok {
+			newFingerprints[i] = metadata.Fingerprints
+		} else {
+			ll.Error("Missing metadata for compacted segment - cannot proceed",
+				"segment_id", segmentIDs[i],
+				"organization_id", workItem.OrganizationID,
+				"dateint", workItem.Dateint,
+				"frequency_ms", workItem.FrequencyMs,
+				"instance_num", workItem.InstanceNum)
+			return fmt.Errorf("missing metadata for segment %d", segmentIDs[i])
+		}
+
+		// Convert timestamptz range to int8 millisecond range
+		st, et, ok := helpers.RangeBounds(workItem.TsRange)
+		if !ok {
+			return fmt.Errorf("invalid time range in work item: %v", workItem.TsRange)
+		}
+		newTsRanges[i] = pgtype.Range[pgtype.Int8]{
+			Lower:     pgtype.Int8{Int64: st.Time.UTC().UnixMilli(), Valid: true},
+			Upper:     pgtype.Int8{Int64: et.Time.UTC().UnixMilli(), Valid: true},
+			LowerType: pgtype.Inclusive,
+			UpperType: pgtype.Exclusive,
+			Valid:     true,
+		}
+	}
+
+	params := lrdb.ReplaceCompactedMetricSegsParams{
+		OrganizationID:  workItem.OrganizationID,
+		Dateint:         workItem.Dateint,
+		FrequencyMs:     int32(workItem.FrequencyMs),
+		InstanceNum:     workItem.InstanceNum,
+		IngestDateint:   metricsprocessing.GetIngestDateint(oldRows),
+		CreatedBy:       lrdb.CreatedByIngest, // Use standard created_by for compacted segments
+		SlotID:          0,                    // Default slot ID
+		SlotCount:       1,                    // Default slot count
+		SortVersion:     lrdb.CurrentMetricSortVersion,
+		NewSegmentIds:   newSegmentIds,
+		NewTsRanges:     newTsRanges,
+		NewRecordCounts: newRecordCounts,
+		NewFileSizes:    newFileSizes,
+		NewFingerprints: newFingerprints,
+		OldSegmentIds:   oldSegmentIds,
+	}
+
+	err := mdb.ReplaceCompactedMetricSegs(ctx, params)
+	if err != nil {
+		ll.Error("Failed to replace compacted metric segments",
+			slog.Int("oldSegmentCount", len(oldSegmentIds)),
+			slog.Int("newSegmentCount", len(newSegmentIds)),
+			slog.Any("error", err))
+		return err
+	}
+
+	ll.Info("Successfully replaced compacted metric segments",
+		slog.Int("oldSegmentCount", len(oldSegmentIds)),
+		slog.Int("newSegmentCount", len(newSegmentIds)))
+
+	return nil
+}
+
+const targetFileSize = constants.TargetFileSizeBytes
+
+func shouldCompactMetrics(rows []lrdb.MetricSeg) bool {
+	if len(rows) < 2 {
+		return false
+	}
+
+	const smallThreshold = int64(targetFileSize) * 3 / 10
+
+	var totalSize int64
+	for _, row := range rows {
+		totalSize += row.FileSize
+		if row.FileSize > targetFileSize*2 || row.FileSize < smallThreshold {
+			return true
+		}
+	}
+
+	estimatedFileCount := (totalSize + targetFileSize - 1) / targetFileSize
+	compact := estimatedFileCount < int64(len(rows))-3
+	return compact
 }
 
 func NormalizeRowForParquetWrite(row filereader.Row) error {

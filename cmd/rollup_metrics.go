@@ -227,7 +227,7 @@ func rollupMetricSegments(
 	}
 
 	readerStack, err := metricsprocessing.CreateReaderStack(
-		ctx, ll, tmpdir, s3client, inf.OrganizationID(), profile, st.Time.UTC().UnixMilli(), sourceRows, config, "")
+		ctx, ll, tmpdir, s3client, inf.OrganizationID(), profile, st.Time.UTC().UnixMilli(), sourceRows, config)
 	if err != nil {
 		return err
 	}

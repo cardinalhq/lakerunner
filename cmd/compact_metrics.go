@@ -24,7 +24,6 @@ import (
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/debugging"
-	"github.com/cardinalhq/lakerunner/internal/estimator"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing/compaction"
@@ -86,18 +85,12 @@ func init() {
 
 			sp := storageprofile.NewStorageProfileProvider(cdb)
 
-			metricEst, err := estimator.NewMetricEstimator(ctx, mdb)
-			if err != nil {
-				return fmt.Errorf("failed to create metric estimator: %w", err)
-			}
-
 			config := compaction.GetConfigFromEnv()
 			manager := compaction.NewManager(mdb, myInstanceID, config)
 
-			// Mark as healthy once components are initialized
 			healthServer.SetStatus(healthcheck.StatusHealthy)
 
-			return compaction.RunLoop(ctx, manager, mdb, sp, awsmanager, metricEst)
+			return compaction.RunLoop(ctx, manager, mdb, sp, awsmanager)
 		},
 	}
 
