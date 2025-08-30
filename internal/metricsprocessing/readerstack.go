@@ -78,7 +78,14 @@ func CreateReaderStack(
 			return nil, err
 		}
 		if is404 {
-			ll.Info("S3 object not found, skipping", slog.String("bucket", profile.Bucket), slog.String("objectID", objectID))
+			ll.Info("S3 object not found, skipping",
+				slog.String("bucket", profile.Bucket),
+				slog.String("objectID", objectID),
+				slog.Int("createdBy", int(row.CreatedBy)),
+				slog.Bool("isCompacted", row.Compacted),
+				slog.Bool("isRolledup", row.Rolledup),
+				slog.Bool("isPublished", row.Published),
+			)
 			continue
 		}
 
