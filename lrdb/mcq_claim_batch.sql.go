@@ -17,107 +17,131 @@ const claimMetricCompactionWork = `-- name: ClaimMetricCompactionWork :many
 WITH
 params AS (
   SELECT
-    $1::bigint         AS worker_id,
-    COALESCE($2::timestamptz, now()) AS now_ts,
-    $3::bigint    AS target_records,
-    $4::integer  AS max_age_seconds,
-    $5::integer      AS batch_count
+    $1::bigint                               AS worker_id,
+    COALESCE($2::timestamptz, now())  AS now_ts,
+    $3::bigint                  AS default_target_records,
+    $4::integer                        AS max_age_seconds,
+    $5::integer                            AS batch_count
 ),
 
 big_single AS (
   SELECT q.id
   FROM metric_compaction_queue q
   JOIN params p ON TRUE
+  LEFT JOIN metric_pack_estimate e_org
+         ON e_org.organization_id = q.organization_id
+        AND e_org.frequency_ms    = q.frequency_ms
+  LEFT JOIN metric_pack_estimate e_glob
+         ON e_glob.organization_id = '00000000-0000-0000-0000-000000000000'::uuid
+        AND e_glob.frequency_ms    = q.frequency_ms
+  CROSS JOIN LATERAL (
+    SELECT COALESCE(e_org.target_records, e_glob.target_records, p.default_target_records)::bigint AS target_records
+  ) trg
   WHERE q.claimed_at IS NULL
-    AND q.record_count >= p.target_records
-  ORDER BY q.priority DESC, q.queue_ts ASC
+    AND q.record_count >= trg.target_records
+  ORDER BY q.priority DESC, q.queue_ts ASC, q.id ASC
   LIMIT 1
 ),
 
 seeds_per_group AS (
-  SELECT DISTINCT ON (organization_id, instance_num, dateint)
-         id AS seed_id, organization_id, instance_num, dateint,
+  SELECT DISTINCT ON (organization_id, dateint, frequency_ms, instance_num)
+         id AS seed_id, organization_id, dateint, frequency_ms, instance_num,
          priority, queue_ts, record_count
   FROM metric_compaction_queue
   WHERE claimed_at IS NULL
-  ORDER BY organization_id, instance_num, dateint, priority DESC, queue_ts ASC
+  ORDER BY organization_id, dateint, frequency_ms, instance_num, priority DESC, queue_ts ASC, id ASC
 ),
 
 ordered_groups AS (
-  SELECT s.seed_id, s.organization_id, s.instance_num, s.dateint, s.priority, s.queue_ts, s.record_count,
-         ROW_NUMBER() OVER (ORDER BY s.priority DESC, s.queue_ts ASC) AS seed_rank
+  SELECT s.seed_id, s.organization_id, s.dateint, s.frequency_ms, s.instance_num, s.priority, s.queue_ts, s.record_count,
+         ROW_NUMBER() OVER (ORDER BY s.priority DESC, s.queue_ts ASC, s.seed_id ASC) AS seed_rank
   FROM seeds_per_group s
 ),
 
 group_flags AS (
   SELECT
-    og.organization_id, og.instance_num, og.dateint,
+    og.organization_id, og.dateint, og.frequency_ms, og.instance_num,
     og.priority, og.queue_ts, og.seed_rank,
     ((p.now_ts - og.queue_ts) > make_interval(secs => p.max_age_seconds)) AS is_old,
-    p.target_records, p.batch_count, p.now_ts
+    COALESCE(e_org.target_records, e_glob.target_records, p.default_target_records)::bigint AS target_records,
+    p.batch_count,
+    p.now_ts
   FROM ordered_groups og
-  JOIN params p ON TRUE
+  CROSS JOIN params p
+  LEFT JOIN metric_pack_estimate e_org
+         ON e_org.organization_id = og.organization_id
+        AND e_org.frequency_ms    = og.frequency_ms
+  LEFT JOIN metric_pack_estimate e_glob
+         ON e_glob.organization_id = '00000000-0000-0000-0000-000000000000'::uuid
+        AND e_glob.frequency_ms    = og.frequency_ms
 ),
 
 grp_scope AS (
   SELECT
-    q.id, q.organization_id, q.instance_num, q.dateint,
+    q.id, q.organization_id, q.dateint, q.frequency_ms, q.instance_num,
     q.priority, q.queue_ts, q.record_count,
     gf.seed_rank, gf.is_old, gf.target_records, gf.batch_count
   FROM metric_compaction_queue q
   JOIN group_flags gf
-    ON q.claimed_at IS NULL
+    ON q.claimed_at   IS NULL
    AND q.organization_id = gf.organization_id
-   AND q.instance_num    = gf.instance_num
    AND q.dateint         = gf.dateint
+   AND q.frequency_ms    = gf.frequency_ms
+   AND q.instance_num    = gf.instance_num
 ),
 
 pack AS (
   SELECT
-    g.id, g.organization_id, g.instance_num, g.dateint, g.priority, g.queue_ts, g.record_count, g.seed_rank, g.is_old, g.target_records, g.batch_count,
+    g.id, g.organization_id, g.dateint, g.frequency_ms, g.instance_num, g.priority, g.queue_ts, g.record_count, g.seed_rank, g.is_old, g.target_records, g.batch_count,
     SUM(g.record_count) OVER (
-      PARTITION BY g.organization_id, g.instance_num, g.dateint
-      ORDER BY g.priority DESC, g.queue_ts ASC
+      PARTITION BY g.organization_id, g.dateint, g.frequency_ms, g.instance_num
+      ORDER BY g.priority DESC, g.queue_ts ASC, g.id ASC
       ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
     ) AS cum_records,
     ROW_NUMBER() OVER (
-      PARTITION BY g.organization_id, g.instance_num, g.dateint
-      ORDER BY g.priority DESC, g.queue_ts ASC
+      PARTITION BY g.organization_id, g.dateint, g.frequency_ms, g.instance_num
+      ORDER BY g.priority DESC, g.queue_ts ASC, g.id ASC
     ) AS rn
   FROM grp_scope g
 ),
 
 prelim AS (
-  SELECT p.id, p.organization_id, p.instance_num, p.dateint, p.priority, p.queue_ts, p.record_count, p.seed_rank, p.is_old, p.target_records, p.batch_count, p.cum_records, p.rn
+  SELECT p.id, p.organization_id, p.dateint, p.frequency_ms, p.instance_num, p.priority, p.queue_ts, p.record_count, p.seed_rank, p.is_old, p.target_records, p.batch_count, p.cum_records, p.rn
   FROM pack p
-  WHERE p.cum_records <= p.target_records
-    AND p.rn          <= p.batch_count
+  JOIN group_flags gf
+    ON gf.organization_id = p.organization_id
+   AND gf.dateint         = p.dateint
+   AND gf.frequency_ms    = p.frequency_ms
+   AND gf.instance_num    = p.instance_num
+  WHERE p.cum_records <= gf.target_records
+    AND p.rn          <= gf.batch_count
 ),
 
 prelim_stats AS (
   SELECT
-    organization_id, instance_num, dateint,
-    MIN(seed_rank) AS seed_rank,
+    organization_id, dateint, frequency_ms, instance_num,
     COUNT(*) AS n_rows,
-    COALESCE(SUM(record_count), 0) AS total_records
+    COALESCE(SUM(record_count), 0) AS total_records,
+    MIN(seed_rank) AS seed_rank
   FROM prelim
-  GROUP BY organization_id, instance_num, dateint
+  GROUP BY organization_id, dateint, frequency_ms, instance_num
 ),
 
 eligible_groups AS (
   SELECT
-    gf.organization_id, gf.instance_num, gf.dateint, gf.seed_rank
+    gf.organization_id, gf.dateint, gf.frequency_ms, gf.instance_num, gf.seed_rank, gf.target_records
   FROM group_flags gf
   JOIN prelim_stats ps
     ON ps.organization_id = gf.organization_id
-   AND ps.instance_num    = gf.instance_num
    AND ps.dateint         = gf.dateint
+   AND ps.frequency_ms    = gf.frequency_ms
+   AND ps.instance_num    = gf.instance_num
   WHERE (NOT gf.is_old AND ps.total_records = gf.target_records)
      OR (gf.is_old      AND ps.total_records > 0)
 ),
 
 winner_group AS (
-  SELECT eg.organization_id, eg.instance_num, eg.dateint, eg.seed_rank
+  SELECT eg.organization_id, eg.dateint, eg.frequency_ms, eg.instance_num, eg.seed_rank, eg.target_records
   FROM eligible_groups eg
   WHERE eg.seed_rank = (SELECT MIN(seed_rank) FROM eligible_groups)
 ),
@@ -127,8 +151,9 @@ group_chosen AS (
   FROM prelim pr
   JOIN winner_group w
     ON w.organization_id = pr.organization_id
-   AND w.instance_num    = pr.instance_num
    AND w.dateint         = pr.dateint
+   AND w.frequency_ms    = pr.frequency_ms
+   AND w.instance_num    = pr.instance_num
 ),
 
 chosen AS (
@@ -148,15 +173,15 @@ upd AS (
   RETURNING q.id, q.queue_ts, q.priority, q.organization_id, q.dateint, q.frequency_ms, q.segment_id, q.instance_num, q.ts_range, q.record_count, q.tries, q.claimed_by, q.claimed_at
 )
 SELECT id, queue_ts, priority, organization_id, dateint, frequency_ms, segment_id, instance_num, ts_range, record_count, tries, claimed_by, claimed_at FROM upd
-ORDER BY priority DESC, queue_ts ASC
+ORDER BY priority DESC, queue_ts ASC, id ASC
 `
 
 type ClaimMetricCompactionWorkParams struct {
-	WorkerID      int64      `json:"worker_id"`
-	NowTs         *time.Time `json:"now_ts"`
-	TargetRecords int64      `json:"target_records"`
-	MaxAgeSeconds int32      `json:"max_age_seconds"`
-	BatchCount    int32      `json:"batch_count"`
+	WorkerID             int64      `json:"worker_id"`
+	NowTs                *time.Time `json:"now_ts"`
+	DefaultTargetRecords int64      `json:"default_target_records"`
+	MaxAgeSeconds        int32      `json:"max_age_seconds"`
+	BatchCount           int32      `json:"batch_count"`
 }
 
 type ClaimMetricCompactionWorkRow struct {
@@ -166,7 +191,7 @@ type ClaimMetricCompactionWorkRow struct {
 	OrganizationID uuid.UUID                        `json:"organization_id"`
 	Dateint        int32                            `json:"dateint"`
 	FrequencyMs    int64                            `json:"frequency_ms"`
-	SegmentID      uuid.UUID                        `json:"segment_id"`
+	SegmentID      int64                            `json:"segment_id"`
 	InstanceNum    int16                            `json:"instance_num"`
 	TsRange        pgtype.Range[pgtype.Timestamptz] `json:"ts_range"`
 	RecordCount    int64                            `json:"record_count"`
@@ -175,25 +200,24 @@ type ClaimMetricCompactionWorkRow struct {
 	ClaimedAt      *time.Time                       `json:"claimed_at"`
 }
 
-// 1) Big single row safety-net (no locks in selection)
-// 2) Seeds: oldest/highest-priority row per (org,instance,dateint)
-// 3) Order groups globally by seed (priority DESC, queue_ts ASC)
-// 4) Flags and parameters per group (based on the seed row)
-// 5) All ready rows in each group (ordered). No locks; just compute packs.
-// 6) Greedy pack within each group up to target_records and batch_count
-// 7) Totals per group and eligibility:
-//   - fresh: exact fill (total = target)
-//   - old:   any positive total (already capped by target)
-//
-// 8) Pick earliest eligible group
-// 9) Rows to claim if using the group path
-// 10) Final chosen IDs: prefer big_single if exists
-// 11) Optimistic claim (atomic per-row; guarded by claimed_at IS NULL)
+// 1) Big single-row safety net
+// 2) One seed per group (org, dateint, freq, instance)
+// 3) Order groups globally by seed recency/priority
+// 4) Attach per-group target_records
+// 5) All ready rows within each group
+// 6) Greedy pack per group
+// 7) Rows that fit under caps
+// 8) Totals per group
+// 9) Eligibility: fresh = exact fill, old = any positive
+// 10) Pick earliest eligible group
+// 11) Rows to claim for the winner group
+// 12) Final chosen IDs
+// 13) Atomic optimistic claim
 func (q *Queries) ClaimMetricCompactionWork(ctx context.Context, arg ClaimMetricCompactionWorkParams) ([]ClaimMetricCompactionWorkRow, error) {
 	rows, err := q.db.Query(ctx, claimMetricCompactionWork,
 		arg.WorkerID,
 		arg.NowTs,
-		arg.TargetRecords,
+		arg.DefaultTargetRecords,
 		arg.MaxAgeSeconds,
 		arg.BatchCount,
 	)

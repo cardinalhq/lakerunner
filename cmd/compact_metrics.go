@@ -20,23 +20,26 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
 
+	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/constants"
 	"github.com/cardinalhq/lakerunner/internal/debugging"
+	"github.com/cardinalhq/lakerunner/internal/estimator"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
+	"github.com/cardinalhq/lakerunner/internal/metricsprocessing/compaction"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
-	"github.com/cardinalhq/lakerunner/lockmgr"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -78,38 +81,109 @@ func init() {
 				}
 			}()
 
-			loop, err := NewRunqueueLoopContext(ctx, "metrics", "compact", servicename)
+			mdb, err := dbopen.LRDBStore(ctx)
 			if err != nil {
-				return fmt.Errorf("failed to create runqueue loop context: %w", err)
+				return fmt.Errorf("failed to open LRDB store: %w", err)
 			}
 
-			// Mark as healthy once loop is created and about to start
+			cdb, err := dbopen.ConfigDBStore(ctx)
+			if err != nil {
+				return fmt.Errorf("failed to open ConfigDB store: %w", err)
+			}
+
+			awsmanager, err := awsclient.NewManager(ctx, awsclient.WithAssumeRoleSessionName(servicename))
+			if err != nil {
+				return fmt.Errorf("failed to create AWS manager: %w", err)
+			}
+
+			sp := storageprofile.NewStorageProfileProvider(cdb)
+
+			metricEst, err := estimator.NewMetricEstimator(ctx, mdb)
+			if err != nil {
+				return fmt.Errorf("failed to create metric estimator: %w", err)
+			}
+
+			config := compaction.GetConfigFromEnv()
+			manager := compaction.NewManager(mdb, myInstanceID, config)
+
+			// Mark as healthy once components are initialized
 			healthServer.SetStatus(healthcheck.StatusHealthy)
 
-			return RunqueueLoop(loop, compactRollupItem, nil)
+			return runMetricCompactionLoop(ctx, manager, mdb, sp, awsmanager, metricEst)
 		},
 	}
 
 	rootCmd.AddCommand(cmd)
 }
 
-func compactRollupItem(
+func runMetricCompactionLoop(
+	ctx context.Context,
+	manager *compaction.Manager,
+	mdb lrdb.StoreFull,
+	sp storageprofile.StorageProfileProvider,
+	awsmanager *awsclient.Manager,
+	metricEst estimator.MetricEstimator,
+) error {
+	ll := slog.Default().With(slog.String("component", "metric-compaction-loop"))
+
+	for {
+		select {
+		case <-ctx.Done():
+			ll.Info("Shutdown signal received, stopping compaction loop")
+			return nil
+		default:
+		}
+
+		claimedWork, err := manager.ClaimWork(ctx)
+		if err != nil {
+			ll.Error("Failed to claim work", slog.Any("error", err))
+			time.Sleep(2 * time.Second)
+			continue
+		}
+
+		if len(claimedWork) == 0 {
+			time.Sleep(2 * time.Second)
+			continue
+		}
+
+		err = processCompactionBatch(ctx, ll, mdb, sp, awsmanager, metricEst, claimedWork)
+		if err != nil {
+			ll.Error("Failed to process compaction batch", slog.Any("error", err))
+			if failErr := manager.FailWork(ctx, claimedWork); failErr != nil {
+				ll.Error("Failed to fail work items", slog.Any("error", failErr))
+			}
+		} else {
+			if completeErr := manager.CompleteWork(ctx, claimedWork); completeErr != nil {
+				ll.Error("Failed to complete work items", slog.Any("error", completeErr))
+			}
+		}
+
+		gc()
+	}
+}
+
+func processCompactionBatch(
 	ctx context.Context,
 	ll *slog.Logger,
-	tmpdir string,
-	awsmanager *awsclient.Manager,
-	sp storageprofile.StorageProfileProvider,
 	mdb lrdb.StoreFull,
-	inf lockmgr.Workable,
-	rpfEstimate int64,
-	args any,
+	sp storageprofile.StorageProfileProvider,
+	awsmanager *awsclient.Manager,
+	metricEst estimator.MetricEstimator,
+	claimedWork []lrdb.ClaimMetricCompactionWorkRow,
 ) error {
-	if !helpers.IsWantedFrequency(inf.FrequencyMs()) {
-		ll.Debug("Skipping compaction for unwanted frequency", slog.Int("frequencyMs", int(inf.FrequencyMs())))
+	if len(claimedWork) == 0 {
 		return nil
 	}
 
-	profile, err := sp.GetStorageProfileForOrganizationAndInstance(ctx, inf.OrganizationID(), inf.InstanceNum())
+	// All work items in a batch should be from the same org/instance/dateint/frequency
+	firstItem := claimedWork[0]
+
+	if !helpers.IsWantedFrequency(int32(firstItem.FrequencyMs)) {
+		ll.Debug("Skipping compaction for unwanted frequency", slog.Int64("frequencyMs", firstItem.FrequencyMs))
+		return nil
+	}
+
+	profile, err := sp.GetStorageProfileForOrganizationAndInstance(ctx, firstItem.OrganizationID, firstItem.InstanceNum)
 	if err != nil {
 		ll.Error("Failed to get storage profile", slog.Any("error", err))
 		return err
@@ -121,14 +195,33 @@ func compactRollupItem(
 		return err
 	}
 
-	ll.Debug("Starting metric compaction",
-		slog.String("organizationID", inf.OrganizationID().String()),
-		slog.Int("instanceNum", int(inf.InstanceNum())),
-		slog.Int("dateint", int(inf.Dateint())),
-		slog.Int("frequencyMs", int(inf.FrequencyMs())),
-		slog.Int64("workQueueID", inf.ID()))
+	rpfEstimate := metricEst.Get(firstItem.OrganizationID, firstItem.InstanceNum, int32(firstItem.FrequencyMs))
+	if rpfEstimate <= 0 {
+		rpfEstimate = 40_000
+	}
 
-	return compactMetricSegments(ctx, ll, mdb, tmpdir, inf, profile, s3client, rpfEstimate)
+	tmpdir, err := os.MkdirTemp("", "lakerunner-compaction-*")
+	if err != nil {
+		ll.Error("Failed to create temporary directory", slog.Any("error", err))
+		return fmt.Errorf("failed to create temporary directory: %w", err)
+	}
+	defer func() {
+		if err := os.RemoveAll(tmpdir); err != nil {
+			ll.Error("Failed to remove temporary directory", slog.Any("error", err))
+		}
+	}()
+
+	ll.Info("Starting metric compaction batch",
+		slog.String("organizationID", firstItem.OrganizationID.String()),
+		slog.Int("instanceNum", int(firstItem.InstanceNum)),
+		slog.Int("dateint", int(firstItem.Dateint)),
+		slog.Int64("frequencyMs", firstItem.FrequencyMs),
+		slog.Int("batchSize", len(claimedWork)))
+
+	// Convert claimed work to MetricSeg format for existing processing logic
+	segments := compaction.ConvertToMetricSegs(claimedWork)
+
+	return compactMetricSegments(ctx, ll, mdb, tmpdir, firstItem, profile, s3client, segments, rpfEstimate)
 }
 
 func compactMetricSegments(
@@ -136,135 +229,31 @@ func compactMetricSegments(
 	ll *slog.Logger,
 	mdb lrdb.StoreFull,
 	tmpdir string,
-	inf lockmgr.Workable,
+	workItem lrdb.ClaimMetricCompactionWorkRow,
 	profile storageprofile.StorageProfile,
 	s3client *awsclient.S3Client,
+	rows []lrdb.MetricSeg,
 	rpfEstimate int64,
 ) error {
-	st, et, ok := helpers.RangeBounds(inf.TsRange())
-	if !ok {
-		return fmt.Errorf("invalid time range in work item: %v", inf.TsRange())
+	if len(rows) == 0 {
+		ll.Debug("No segments to compact")
+		return nil
 	}
 
-	const maxRowsLimit = 1000
-	totalBatchesProcessed := 0
-	totalSegmentsProcessed := 0
-	cursorCreatedAt := time.Time{}
-	cursorSegmentID := int64(0)
-
-	for {
-		if ctx.Err() != nil {
-			ll.Info("Context cancelled, interrupting compaction loop gracefully",
-				slog.Int("processedBatches", totalBatchesProcessed),
-				slog.Int("processedSegments", totalSegmentsProcessed),
-				slog.Any("error", ctx.Err()))
-			return NewWorkerInterrupted("context cancelled during batch processing")
-		}
-
-		ll.Debug("Querying for metric segments to compact",
-			slog.Int("batch", totalBatchesProcessed+1),
-			slog.Time("cursorCreatedAt", cursorCreatedAt),
-			slog.Int64("cursorSegmentID", cursorSegmentID))
-
-		inRows, err := mdb.GetMetricSegsForCompaction(ctx, lrdb.GetMetricSegsForCompactionParams{
-			OrganizationID:  inf.OrganizationID(),
-			Dateint:         inf.Dateint(),
-			FrequencyMs:     inf.FrequencyMs(),
-			InstanceNum:     inf.InstanceNum(),
-			SlotID:          inf.SlotId(),
-			StartTs:         st.Time.UTC().UnixMilli(),
-			EndTs:           et.Time.UTC().UnixMilli(),
-			MaxFileSize:     constants.TargetFileSizeBytes * 9 / 10,
-			CursorCreatedAt: cursorCreatedAt,
-			CursorSegmentID: cursorSegmentID,
-			Maxrows:         maxRowsLimit,
-		})
-		if err != nil {
-			ll.Error("Failed to get current metric segments", slog.Any("error", err))
-			return err
-		}
-
-		if len(inRows) == 0 {
-			if totalBatchesProcessed == 0 {
-				ll.Debug("No input rows to compact, skipping work item")
-			} else {
-				ll.Debug("Finished processing all compaction batches",
-					slog.Int("totalBatches", totalBatchesProcessed),
-					slog.Int("totalSegments", totalSegmentsProcessed))
-			}
-			return nil
-		}
-
-		// Calculate total bytes and records in this batch
-		totalBytes := int64(0)
-		totalRecords := int64(0)
-		for _, row := range inRows {
-			totalBytes += row.FileSize
-			totalRecords += row.RecordCount
-		}
-
-		// Estimate number of output files
-		estimatedOutputFiles := int64(0)
-		if rpfEstimate > 0 {
-			estimatedOutputFiles = (totalRecords + rpfEstimate - 1) / rpfEstimate // Ceiling division
-		}
-
-		ll.Debug("Processing compaction batch",
-			slog.Int("segmentCount", len(inRows)),
-			slog.Int("batch", totalBatchesProcessed+1),
-			slog.Int64("totalBytes", totalBytes),
-			slog.Int64("totalRecords", totalRecords),
-			slog.Int64("estimatedRecordsPerFile", rpfEstimate),
-			slog.Int64("estimatedOutputFiles", estimatedOutputFiles))
-
-		if len(inRows) > 0 {
-			lastRow := inRows[len(inRows)-1]
-			cursorCreatedAt = lastRow.CreatedAt
-			cursorSegmentID = lastRow.SegmentID
-		}
-
-		if !metricsprocessing.ShouldCompactMetrics(inRows) {
-			ll.Debug("No need to compact metrics in this batch", slog.Int("rowCount", len(inRows)))
-
-			if len(inRows) < maxRowsLimit {
-				if totalBatchesProcessed == 0 {
-					ll.Debug("No segments need compaction")
-				}
-				return nil
-			}
-			totalBatchesProcessed++
-			continue
-		}
-
-		// Check for context cancellation before starting compaction
-		if ctx.Err() != nil {
-			ll.Info("Context cancelled before starting compaction interval",
-				slog.Int("segmentCount", len(inRows)),
-				slog.Any("error", ctx.Err()))
-			return NewWorkerInterrupted("context cancelled before compaction interval")
-		}
-
-		err = compactMetricInterval(ctx, ll, mdb, tmpdir, inf, profile, s3client, inRows, rpfEstimate)
-		if err != nil {
-			ll.Error("Failed to compact interval", slog.Any("error", err))
-			return err
-		}
-
-		totalBatchesProcessed++
-		totalSegmentsProcessed += len(inRows)
-
-		if len(inRows) < maxRowsLimit {
-			ll.Debug("Completed all compaction batches",
-				slog.Int("totalBatches", totalBatchesProcessed),
-				slog.Int("totalSegments", totalSegmentsProcessed))
-			return nil
-		}
-
-		ll.Debug("Batch completed, checking for more segments",
-			slog.Int("processedSegments", len(inRows)),
-			slog.Time("nextCursorCreatedAt", cursorCreatedAt),
-			slog.Int64("nextCursorSegmentID", cursorSegmentID))
+	if !metricsprocessing.ShouldCompactMetrics(rows) {
+		ll.Debug("No need to compact metrics in this batch", slog.Int("rowCount", len(rows)))
+		return nil
 	}
+
+	// Check for context cancellation before starting compaction
+	if ctx.Err() != nil {
+		ll.Info("Context cancelled before starting compaction",
+			slog.Int("segmentCount", len(rows)),
+			slog.Any("error", ctx.Err()))
+		return NewWorkerInterrupted("context cancelled before compaction")
+	}
+
+	return compactMetricInterval(ctx, ll, mdb, tmpdir, workItem, profile, s3client, rows, rpfEstimate)
 }
 
 func compactMetricInterval(
@@ -272,16 +261,16 @@ func compactMetricInterval(
 	ll *slog.Logger,
 	mdb lrdb.StoreFull,
 	tmpdir string,
-	inf lockmgr.Workable,
+	workItem lrdb.ClaimMetricCompactionWorkRow,
 	profile storageprofile.StorageProfile,
 	s3client *awsclient.S3Client,
 	rows []lrdb.MetricSeg,
 	rpfEstimate int64,
 ) error {
-	st, _, ok := helpers.RangeBounds(inf.TsRange())
+	st, _, ok := helpers.RangeBounds(workItem.TsRange)
 	if !ok {
-		ll.Error("Invalid time range in work item", slog.Any("tsRange", inf.TsRange()))
-		return fmt.Errorf("invalid time range in work item: %v", inf.TsRange())
+		ll.Error("Invalid time range in work item", slog.Any("tsRange", workItem.TsRange))
+		return fmt.Errorf("invalid time range in work item: %v", workItem.TsRange)
 	}
 
 	config := metricsprocessing.ReaderStackConfig{
@@ -290,7 +279,7 @@ func compactMetricInterval(
 	}
 
 	readerStack, err := metricsprocessing.CreateReaderStack(
-		ctx, ll, tmpdir, s3client, inf.OrganizationID(), profile, st.Time.UTC().UnixMilli(), rows, config, "")
+		ctx, ll, tmpdir, s3client, workItem.OrganizationID, profile, st.Time.UTC().UnixMilli(), rows, config, "")
 	if err != nil {
 		return err
 	}
@@ -307,7 +296,7 @@ func compactMetricInterval(
 	defer metricsprocessing.CloseReaderStack(ll, readerStack)
 
 	// Wrap with aggregating reader to merge duplicates during compaction
-	frequencyMs := int64(inf.FrequencyMs())
+	frequencyMs := workItem.FrequencyMs
 	ll.Debug("Creating aggregating metrics reader", slog.Int64("frequencyMs", frequencyMs))
 	aggregatingReader, err := filereader.NewAggregatingMetricsReader(finalReader, frequencyMs, 1000)
 	if err != nil {
@@ -416,7 +405,7 @@ func compactMetricInterval(
 		ll.Warn("Produced 0 output files from aggregating reader - logging source S3 paths for debugging")
 		for _, row := range rows {
 			dateint, hour := helpers.MSToDateintHour(st.Time.UTC().UnixMilli())
-			objectID := helpers.MakeDBObjectID(inf.OrganizationID(), profile.CollectorName, dateint, hour, row.SegmentID, "metrics")
+			objectID := helpers.MakeDBObjectID(workItem.OrganizationID, profile.CollectorName, dateint, hour, row.SegmentID, "metrics")
 			s3Path := fmt.Sprintf("s3://%s/%s", profile.Bucket, objectID)
 			ll.Warn("Source file for debugging",
 				slog.String("s3Path", s3Path),
@@ -437,11 +426,11 @@ func compactMetricInterval(
 	}
 
 	compactionParams := metricsprocessing.CompactionUploadParams{
-		OrganizationID: inf.OrganizationID().String(),
-		InstanceNum:    inf.InstanceNum(),
-		Dateint:        inf.Dateint(),
-		FrequencyMs:    inf.FrequencyMs(),
-		SlotID:         inf.SlotId(),
+		OrganizationID: workItem.OrganizationID.String(),
+		InstanceNum:    workItem.InstanceNum,
+		Dateint:        workItem.Dateint,
+		FrequencyMs:    int32(workItem.FrequencyMs),
+		SlotID:         0, // Default slot ID
 		IngestDateint:  metricsprocessing.GetIngestDateint(rows),
 		CollectorName:  profile.CollectorName,
 		Bucket:         profile.Bucket,

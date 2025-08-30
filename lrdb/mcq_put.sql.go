@@ -39,7 +39,7 @@ type PutMetricCompactionWorkParams struct {
 	OrganizationID uuid.UUID                        `json:"organization_id"`
 	Dateint        int32                            `json:"dateint"`
 	FrequencyMs    int64                            `json:"frequency_ms"`
-	SegmentID      uuid.UUID                        `json:"segment_id"`
+	SegmentID      int64                            `json:"segment_id"`
 	InstanceNum    int16                            `json:"instance_num"`
 	TsRange        pgtype.Range[pgtype.Timestamptz] `json:"ts_range"`
 	RecordCount    int64                            `json:"record_count"`
