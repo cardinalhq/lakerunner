@@ -16,14 +16,12 @@ package cmd
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"sync/atomic"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
@@ -207,11 +205,6 @@ func IngestLoopWithBatch(loop *IngestLoopContext, _ interface{}, batchProcessing
 	}
 }
 
-// batchRowToInqueue converts ClaimInqueueWorkBatchRow to Inqueue (they have identical fields)
-func batchRowToInqueue(row lrdb.ClaimInqueueWorkBatchRow) lrdb.Inqueue {
-	return lrdb.Inqueue(row)
-}
-
 func ingestFilesBatch(
 	ctx context.Context,
 	loop *IngestLoopContext,
@@ -224,36 +217,14 @@ func ingestFilesBatch(
 
 	t0 := time.Now()
 
-	// First, find next available work to get org/instance
-	nextWork, err := loop.mdb.ClaimInqueueWork(ctx, lrdb.ClaimInqueueWorkParams{
-		ClaimedBy:     myInstanceID,
-		TelemetryType: loop.signal,
-	})
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return true, false, nil
-		}
-		return true, false, fmt.Errorf("failed to find next work: %w", err)
-	}
-
-	// Temporarily release it back so batch claim can get it
-	if err := loop.mdb.ReleaseInqueueWork(ctx, lrdb.ReleaseInqueueWorkParams{
-		ID:        nextWork.ID,
-		ClaimedBy: myInstanceID,
-	}); err != nil {
-		return true, false, fmt.Errorf("failed to release work: %w", err)
-	}
-
-	// Now claim batch from same org/instance with new parameters
+	// Claim batch directly - no pre-fetch needed as SQL finds best group automatically
 	items, err := loop.mdb.ClaimInqueueWorkBatch(ctx, lrdb.ClaimInqueueWorkBatchParams{
-		OrganizationID: nextWork.OrganizationID,
-		InstanceNum:    nextWork.InstanceNum,
-		TelemetryType:  loop.signal,
-		WorkerID:       myInstanceID,
-		MaxTotalSize:   helpers.GetMaxTotalSize(),
-		MinTotalSize:   helpers.GetMinBatchSize(),
-		MaxAgeSeconds:  int32(helpers.GetMaxAgeSeconds()),
-		BatchCount:     int32(batchSize),
+		Signal:        loop.signal,
+		WorkerID:      myInstanceID,
+		MaxTotalSize:  helpers.GetMaxTotalSize(),
+		MinTotalSize:  helpers.GetMinBatchSize(),
+		MaxAgeSeconds: int32(helpers.GetMaxAgeSeconds()),
+		BatchCount:    int32(batchSize),
 	})
 	inqueueFetchDuration.Record(ctx, time.Since(t0).Seconds(),
 		metric.WithAttributeSet(commonAttributes),
@@ -276,7 +247,7 @@ func ingestFilesBatch(
 			metric.WithAttributeSet(commonAttributes),
 			metric.WithAttributes(
 				attribute.String("organizationID", item.OrganizationID.String()),
-				attribute.String("signal", item.TelemetryType),
+				attribute.String("signal", item.Signal),
 				attribute.Int("instanceNum", int(item.InstanceNum)),
 			))
 	}
@@ -293,7 +264,7 @@ func ingestFilesBatch(
 
 	handlers := make([]*workqueue.InqueueHandler, len(items))
 	for i, item := range items {
-		handlers[i] = workqueue.NewInqueueHandlerFromLRDB(batchRowToInqueue(item), loop.mdb, maxWorkRetries, workqueue.WithLogger(ll))
+		handlers[i] = workqueue.NewInqueueHandlerFromLRDB(lrdb.Inqueue(item), loop.mdb, maxWorkRetries, workqueue.WithLogger(ll))
 
 		if item.Tries > 10 {
 			ll.Warn("Too many tries, deleting item", slog.String("itemID", item.ID.String()))
@@ -315,7 +286,7 @@ func ingestFilesBatch(
 	}()
 
 	var rpfEstimate int64
-	switch lrdb.SignalEnum(items[0].TelemetryType) {
+	switch lrdb.SignalEnum(items[0].Signal) {
 	case lrdb.SignalEnumMetrics:
 		rpfEstimate = loop.metricEstimator.Get(items[0].OrganizationID, items[0].InstanceNum, 10_000)
 	case lrdb.SignalEnumLogs:
@@ -329,7 +300,7 @@ func ingestFilesBatch(
 	t0 = time.Now()
 	inqueueBatch := make([]lrdb.Inqueue, len(items))
 	for i, item := range items {
-		inqueueBatch[i] = batchRowToInqueue(item)
+		inqueueBatch[i] = lrdb.Inqueue(item)
 	}
 	err = batchProcessingFx(ctx, ll, tmpdir, loop.sp, loop.mdb, loop.awsmanager, inqueueBatch, ingestDateint, rpfEstimate, loop)
 	inqueueDuration.Record(ctx, time.Since(t0).Seconds(),

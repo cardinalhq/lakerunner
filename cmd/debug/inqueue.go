@@ -65,7 +65,7 @@ func runInqueueStatus(ctx context.Context) error {
 
 	for _, result := range results {
 		countStr := fmt.Sprintf("%d", result.Count)
-		telemetryTypeStr := string(result.TelemetryType)
+		telemetryTypeStr := string(result.Signal)
 
 		if len(countStr) > colWidths[0] {
 			colWidths[0] = len(countStr)
@@ -98,7 +98,7 @@ func runInqueueStatus(ctx context.Context) error {
 	for _, result := range results {
 		fmt.Printf("│ %-*d │ %-*s │\n",
 			colWidths[0], result.Count,
-			colWidths[1], string(result.TelemetryType))
+			colWidths[1], string(result.Signal))
 	}
 
 	fmt.Print("└")

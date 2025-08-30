@@ -12,7 +12,7 @@ import (
 )
 
 const putInqueueWork = `-- name: PutInqueueWork :exec
-INSERT INTO inqueue (organization_id, collector_name, instance_num, bucket, object_id, telemetry_type, priority, file_size)
+INSERT INTO inqueue (organization_id, collector_name, instance_num, bucket, object_id, signal, priority, file_size)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 `
 
@@ -22,7 +22,7 @@ type PutInqueueWorkParams struct {
 	InstanceNum    int16     `json:"instance_num"`
 	Bucket         string    `json:"bucket"`
 	ObjectID       string    `json:"object_id"`
-	TelemetryType  string    `json:"telemetry_type"`
+	Signal         string    `json:"signal"`
 	Priority       int32     `json:"priority"`
 	FileSize       int64     `json:"file_size"`
 }
@@ -34,7 +34,7 @@ func (q *Queries) PutInqueueWork(ctx context.Context, arg PutInqueueWorkParams) 
 		arg.InstanceNum,
 		arg.Bucket,
 		arg.ObjectID,
-		arg.TelemetryType,
+		arg.Signal,
 		arg.Priority,
 		arg.FileSize,
 	)

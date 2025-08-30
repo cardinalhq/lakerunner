@@ -2,101 +2,161 @@
 WITH
 params AS (
   SELECT
-    @organization_id::uuid     AS organization_id,
-    @instance_num::smallint    AS instance_num,
-    @telemetry_type::text      AS telemetry_type,
+    @signal::text              AS signal,
     @worker_id::bigint         AS worker_id,
     COALESCE(sqlc.narg(now_ts)::timestamptz, now()) AS now_ts,
-    @max_total_size::bigint    AS max_total_size,    -- hard cap
-    @min_total_size::bigint    AS min_total_size,    -- fresh-path minimum-by-size
-    @max_age_seconds::integer  AS max_age_seconds,
-    @batch_count::integer      AS batch_count        -- row cap (no more than)
+    @max_total_size::bigint    AS max_total_size,    -- hard cap on summed file_size
+    @min_total_size::bigint    AS min_total_size,    -- fresh-path minimum by size
+    @max_age_seconds::integer  AS max_age_seconds,   -- age threshold for relaxing min
+    @batch_count::integer      AS batch_count        -- row cap
 ),
-scope AS (
-  SELECT q.*
+
+-- 1) Safety net: if any single file already meets/exceeds the cap, take that file alone
+big_single AS (
+  SELECT q.id
   FROM inqueue q
   JOIN params p ON TRUE
   WHERE q.claimed_at IS NULL
-    AND q.organization_id = p.organization_id
-    AND q.instance_num    = p.instance_num
-    AND q.telemetry_type  = p.telemetry_type
-  ORDER BY q.priority DESC, q.queue_ts ASC
-  FOR UPDATE SKIP LOCKED
+    AND q.signal = p.signal
+    AND q.file_size >= p.max_total_size
+  ORDER BY q.priority DESC, q.queue_ts ASC, q.id ASC
+  LIMIT 1
 ),
-oldest AS (
-  SELECT * FROM scope LIMIT 1
+
+-- 2) One seed (oldest/highest-priority) per group (org, instance) within signal
+seeds_per_group AS (
+  SELECT DISTINCT ON (q.organization_id, q.instance_num)
+         q.id AS seed_id, q.organization_id, q.instance_num, q.priority, q.queue_ts
+  FROM inqueue q
+  JOIN params p ON TRUE
+  WHERE q.claimed_at IS NULL
+    AND q.signal = p.signal
+  ORDER BY q.organization_id, q.instance_num, q.priority DESC, q.queue_ts ASC, q.id ASC
 ),
-flags AS (
+
+-- 3) Order groups globally by their seed (priority DESC, queue_ts ASC)
+ordered_groups AS (
+  SELECT s.*,
+         ROW_NUMBER() OVER (ORDER BY s.priority DESC, s.queue_ts ASC, s.seed_id ASC) AS seed_rank
+  FROM seeds_per_group s
+),
+
+-- 4) Attach age flags + caps per group (using params only; no per-row estimator here)
+group_flags AS (
   SELECT
-    (o.file_size >  p.max_total_size)                               AS is_oversized,
-    ((p.now_ts - o.queue_ts) > make_interval(secs => p.max_age_seconds)) AS is_old,
-    p.*
-  FROM params p
-  JOIN oldest o ON TRUE
+    og.organization_id,
+    og.instance_num,
+    og.priority,
+    og.queue_ts,
+    og.seed_rank,
+    ((p.now_ts - og.queue_ts) > make_interval(secs => p.max_age_seconds)) AS is_old,
+    p.max_total_size,
+    p.min_total_size,
+    p.batch_count,
+    p.signal,
+    p.now_ts
+  FROM ordered_groups og
+  CROSS JOIN params p
 ),
--- Greedy pack up to size cap and row cap
+
+-- 5) All ready rows in each group for that signal (selection only; claim happens later)
+grp_scope AS (
+  SELECT
+    q.id, q.organization_id, q.instance_num, q.priority, q.queue_ts, q.file_size,
+    gf.seed_rank, gf.is_old, gf.max_total_size, gf.min_total_size, gf.batch_count
+  FROM inqueue q
+  JOIN group_flags gf
+    ON q.claimed_at IS NULL
+   AND q.signal = gf.signal
+   AND q.organization_id = gf.organization_id
+   AND q.instance_num = gf.instance_num
+),
+
+-- 6) Greedy pack within each group, ordered by priority/queue_ts
 pack AS (
   SELECT
-    s.*,
-    SUM(s.file_size) OVER (ORDER BY s.priority DESC, s.queue_ts ASC
-                           ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS cum_size,
-    ROW_NUMBER() OVER (ORDER BY s.priority DESC, s.queue_ts ASC)              AS rn
-  FROM scope s
+    g.*,
+    SUM(g.file_size) OVER (
+      PARTITION BY g.organization_id, g.instance_num
+      ORDER BY g.priority DESC, g.queue_ts ASC, g.id ASC
+      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+    ) AS cum_size,
+    ROW_NUMBER() OVER (
+      PARTITION BY g.organization_id, g.instance_num
+      ORDER BY g.priority DESC, g.queue_ts ASC, g.id ASC
+    ) AS rn
+  FROM grp_scope g
 ),
+
+-- 7) Keep only rows that fit under caps
 prelim AS (
   SELECT p.*
   FROM pack p
-  JOIN flags f ON TRUE
-  WHERE p.cum_size <= f.max_total_size
-    AND p.rn      <= f.batch_count
+  JOIN group_flags gf
+    ON gf.organization_id = p.organization_id
+   AND gf.instance_num    = p.instance_num
+  WHERE p.cum_size <= gf.max_total_size
+    AND p.rn       <= gf.batch_count
 ),
+
+-- 8) Totals per group (what we’d actually claim)
 prelim_stats AS (
   SELECT
+    organization_id, instance_num,
     COUNT(*) AS n_rows,
-    COALESCE(SUM(file_size), 0) AS total_size
+    COALESCE(SUM(file_size), 0) AS total_size,
+    MIN(seed_rank) AS seed_rank
   FROM prelim
+  GROUP BY organization_id, instance_num
 ),
+
+-- 9) Eligibility:
+--    fresh: require total_size >= min_total_size (exactness not required for raw files)
+--    old:   any positive amount (already capped by max_total_size)
+eligible_groups AS (
+  SELECT
+    gf.organization_id, gf.instance_num, gf.seed_rank
+  FROM group_flags gf
+  JOIN prelim_stats ps
+    ON ps.organization_id = gf.organization_id
+   AND ps.instance_num    = gf.instance_num
+  WHERE (NOT gf.is_old AND ps.total_size >= gf.min_total_size)
+     OR (gf.is_old      AND ps.total_size > 0)
+),
+
+-- 10) Pick earliest eligible group globally
+winner_group AS (
+  SELECT eg.*
+  FROM eligible_groups eg
+  WHERE eg.seed_rank = (SELECT MIN(seed_rank) FROM eligible_groups)
+),
+
+-- 11) Rows to claim for the winner group
+group_chosen AS (
+  SELECT pr.id
+  FROM prelim pr
+  JOIN winner_group w
+    ON w.organization_id = pr.organization_id
+   AND w.instance_num    = pr.instance_num
+),
+
+-- 12) Final chosen IDs: prefer big_single if present; else packed group rows
 chosen AS (
-  -- 1) Oversized oldest -> claim just that one  
-  (
-    SELECT o.id, o.queue_ts, o.priority, o.organization_id, o.collector_name, 
-           o.instance_num, o.bucket, o.object_id, o.telemetry_type, o.tries, 
-           o.claimed_by, o.claimed_at, o.file_size
-    FROM oldest o
-    JOIN flags f ON TRUE
-    WHERE f.is_oversized
-  )
+  SELECT id FROM big_single
   UNION ALL
-  -- 2) Too old -> take whatever fits under caps (ignore min size)
-  (
-    SELECT p.id, p.queue_ts, p.priority, p.organization_id, p.collector_name, 
-           p.instance_num, p.bucket, p.object_id, p.telemetry_type, p.tries, 
-           p.claimed_by, p.claimed_at, p.file_size
-    FROM prelim p
-    JOIN flags f ON TRUE
-    WHERE NOT f.is_oversized AND f.is_old
-  )
-  UNION ALL
-  -- 3) Fresh -> only if size minimum met (and caps already enforced by prelim)
-  (
-    SELECT p.id, p.queue_ts, p.priority, p.organization_id, p.collector_name, 
-           p.instance_num, p.bucket, p.object_id, p.telemetry_type, p.tries, 
-           p.claimed_by, p.claimed_at, p.file_size
-    FROM prelim p
-    JOIN flags f ON TRUE
-    JOIN prelim_stats ps ON TRUE
-    WHERE NOT f.is_oversized
-      AND NOT f.is_old
-      AND ps.total_size >= f.min_total_size
-  )
+  SELECT id FROM group_chosen
+  WHERE NOT EXISTS (SELECT 1 FROM big_single)
 ),
+
+-- 13) Atomic optimistic claim (no window funcs here)
 upd AS (
   UPDATE inqueue q
   SET claimed_by = (SELECT worker_id FROM params),
       claimed_at = (SELECT now_ts FROM params)
   FROM chosen c
   WHERE q.id = c.id
+    AND q.claimed_at IS NULL
   RETURNING q.*
 )
 SELECT * FROM upd
-ORDER BY priority DESC, queue_ts ASC;
+ORDER BY upd.priority DESC, upd.queue_ts ASC, upd.id ASC;

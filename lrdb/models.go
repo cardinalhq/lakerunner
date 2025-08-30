@@ -141,7 +141,7 @@ type Inqueue struct {
 	InstanceNum    int16      `json:"instance_num"`
 	Bucket         string     `json:"bucket"`
 	ObjectID       string     `json:"object_id"`
-	TelemetryType  string     `json:"telemetry_type"`
+	Signal         string     `json:"signal"`
 	Tries          int32      `json:"tries"`
 	ClaimedBy      int64      `json:"claimed_by"`
 	ClaimedAt      *time.Time `json:"claimed_at"`

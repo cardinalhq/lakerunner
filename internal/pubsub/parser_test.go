@@ -51,8 +51,8 @@ func TestParseS3LikeEvents_FileSize(t *testing.T) {
 	if item.FileSize != 2048 {
 		t.Errorf("Expected file size 2048, got %d", item.FileSize)
 	}
-	if item.TelemetryType != "logs" {
-		t.Errorf("Expected telemetry type 'logs', got %s", item.TelemetryType)
+	if item.Signal != "logs" {
+		t.Errorf("Expected telemetry type 'logs', got %s", item.Signal)
 	}
 	if item.OrganizationID != orgID {
 		t.Errorf("Expected org ID %s, got %s", orgID.String(), item.OrganizationID.String())
@@ -92,8 +92,8 @@ func TestParseS3LikeEvents_NonOtelRaw(t *testing.T) {
 	if item.FileSize != 1024 {
 		t.Errorf("Expected file size 1024, got %d", item.FileSize)
 	}
-	if item.TelemetryType != "logs" {
-		t.Errorf("Expected telemetry type 'logs', got %s", item.TelemetryType)
+	if item.Signal != "logs" {
+		t.Errorf("Expected telemetry type 'logs', got %s", item.Signal)
 	}
 	if item.CollectorName != "" {
 		t.Errorf("Expected empty collector name, got %s", item.CollectorName)
@@ -192,16 +192,16 @@ func TestParseS3LikeEvents_MultipleTelemetryTypes(t *testing.T) {
 	}
 
 	// First item should be metrics
-	if items[0].TelemetryType != "metrics" {
-		t.Errorf("Expected first item telemetry type 'metrics', got %s", items[0].TelemetryType)
+	if items[0].Signal != "metrics" {
+		t.Errorf("Expected first item telemetry type 'metrics', got %s", items[0].Signal)
 	}
 	if items[0].FileSize != 512 {
 		t.Errorf("Expected first item file size 512, got %d", items[0].FileSize)
 	}
 
 	// Second item should be traces
-	if items[1].TelemetryType != "traces" {
-		t.Errorf("Expected second item telemetry type 'traces', got %s", items[1].TelemetryType)
+	if items[1].Signal != "traces" {
+		t.Errorf("Expected second item telemetry type 'traces', got %s", items[1].Signal)
 	}
 	if items[1].FileSize != 1536 {
 		t.Errorf("Expected second item file size 1536, got %d", items[1].FileSize)
