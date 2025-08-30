@@ -256,8 +256,7 @@ func replaceCompactedSegments(
 		return fmt.Errorf("invalid time range in work item: %v", workItem.TsRange)
 	}
 
-	// Collect fingerprints from all results
-	var allFingerprints []int64
+	// Collect fingerprints per file
 	for i, result := range results {
 		var fingerprints []int64
 		if metadata, ok := result.Metadata.(factories.MetricsFileStats); ok {
@@ -271,14 +270,14 @@ func replaceCompactedSegments(
 				"instance_num", workItem.InstanceNum)
 			return fmt.Errorf("missing metadata for segment %d", segmentIDs[i])
 		}
-		allFingerprints = append(allFingerprints, fingerprints...)
 
 		newRecords[i] = lrdb.ReplaceMetricSegsNew{
-			SegmentID:   segmentIDs[i],
-			StartTs:     st.Time.UTC().UnixMilli(),
-			EndTs:       et.Time.UTC().UnixMilli(),
-			RecordCount: result.RecordCount,
-			FileSize:    result.FileSize,
+			SegmentID:    segmentIDs[i],
+			StartTs:      st.Time.UTC().UnixMilli(),
+			EndTs:        et.Time.UTC().UnixMilli(),
+			RecordCount:  result.RecordCount,
+			FileSize:     result.FileSize,
+			Fingerprints: fingerprints,
 		}
 	}
 
@@ -295,8 +294,7 @@ func replaceCompactedSegments(
 		Rolledup:       false,
 		OldRecords:     oldRecords,
 		NewRecords:     newRecords,
-		CreatedBy:      lrdb.CreatedByIngest,
-		Fingerprints:   allFingerprints,
+		CreatedBy:      lrdb.CreatedByCompact,
 		SortVersion:    lrdb.CurrentMetricSortVersion,
 	})
 	if err != nil {

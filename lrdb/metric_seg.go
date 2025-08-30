@@ -49,11 +49,12 @@ type ReplaceMetricSegsOld struct {
 }
 
 type ReplaceMetricSegsNew struct {
-	SegmentID   int64
-	StartTs     int64
-	EndTs       int64
-	RecordCount int64
-	FileSize    int64
+	SegmentID    int64
+	StartTs      int64
+	EndTs        int64
+	RecordCount  int64
+	FileSize     int64
+	Fingerprints []int64
 }
 
 type ReplaceMetricSegsParams struct {
@@ -78,9 +79,8 @@ type ReplaceMetricSegsParams struct {
 	// OldRecords contains the segments to be deleted.
 	OldRecords []ReplaceMetricSegsOld
 	// NewRecords contains the segments to be inserted.
-	NewRecords   []ReplaceMetricSegsNew
-	CreatedBy    CreatedBy
-	Fingerprints []int64
+	NewRecords []ReplaceMetricSegsNew
+	CreatedBy  CreatedBy
 	// SortVersion indicates the sort order of the data in the new segments.
 	// 0: Unknown/unsorted, 1: Sorted by [name, tid, timestamp]
 	SortVersion int16
@@ -118,7 +118,7 @@ func (q *Store) ReplaceMetricSegs(ctx context.Context, args ReplaceMetricSegsPar
 			Published:      args.Published,
 			Rolledup:       args.Rolledup,
 			CreatedBy:      args.CreatedBy,
-			Fingerprints:   args.Fingerprints,
+			Fingerprints:   newRec.Fingerprints,
 			SortVersion:    args.SortVersion,
 		}
 	}

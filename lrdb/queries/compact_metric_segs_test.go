@@ -78,16 +78,16 @@ func TestCompactMetricSegs_BasicCompaction(t *testing.T) {
 		},
 		NewRecords: []lrdb.ReplaceMetricSegsNew{
 			{
-				SegmentID:   99999,
-				StartTs:     now.UnixMilli(),
-				EndTs:       now.Add(time.Hour).UnixMilli(),
-				RecordCount: 1500,
-				FileSize:    40000,
+				SegmentID:    99999,
+				StartTs:      now.UnixMilli(),
+				EndTs:        now.Add(time.Hour).UnixMilli(),
+				RecordCount:  1500,
+				FileSize:     40000,
+				Fingerprints: []int64{789, 101112},
 			},
 		},
-		CreatedBy:    lrdb.CreatedByIngest,
-		Fingerprints: []int64{789, 101112},
-		SortVersion:  lrdb.CurrentMetricSortVersion,
+		CreatedBy:   lrdb.CreatedByIngest,
+		SortVersion: lrdb.CurrentMetricSortVersion,
 	})
 	require.NoError(t, err)
 
@@ -152,16 +152,16 @@ func TestCompactMetricSegs_EmptyOldRecords(t *testing.T) {
 		OldRecords:     []lrdb.ReplaceMetricSegsOld{}, // Empty
 		NewRecords: []lrdb.ReplaceMetricSegsNew{
 			{
-				SegmentID:   88888,
-				StartTs:     now.UnixMilli(),
-				EndTs:       now.Add(time.Hour).UnixMilli(),
-				RecordCount: 500,
-				FileSize:    25000,
+				SegmentID:    88888,
+				StartTs:      now.UnixMilli(),
+				EndTs:        now.Add(time.Hour).UnixMilli(),
+				RecordCount:  500,
+				FileSize:     25000,
+				Fingerprints: []int64{111, 222},
 			},
 		},
-		CreatedBy:    lrdb.CreatedByIngest,
-		Fingerprints: []int64{111, 222},
-		SortVersion:  lrdb.CurrentMetricSortVersion,
+		CreatedBy:   lrdb.CreatedByIngest,
+		SortVersion: lrdb.CurrentMetricSortVersion,
 	})
 	require.NoError(t, err)
 
@@ -238,10 +238,9 @@ func TestCompactMetricSegs_EmptyNewRecords(t *testing.T) {
 			{SegmentID: oldSegmentIDs[0], SlotID: 0},
 			{SegmentID: oldSegmentIDs[1], SlotID: 0},
 		},
-		NewRecords:   []lrdb.ReplaceMetricSegsNew{}, // Empty
-		CreatedBy:    lrdb.CreatedByIngest,
-		Fingerprints: []int64{},
-		SortVersion:  lrdb.CurrentMetricSortVersion,
+		NewRecords:  []lrdb.ReplaceMetricSegsNew{}, // Empty
+		CreatedBy:   lrdb.CreatedByIngest,
+		SortVersion: lrdb.CurrentMetricSortVersion,
 	})
 	require.NoError(t, err)
 
@@ -325,23 +324,24 @@ func TestCompactMetricSegs_MultipleNewSegments(t *testing.T) {
 		},
 		NewRecords: []lrdb.ReplaceMetricSegsNew{
 			{
-				SegmentID:   77777,
-				StartTs:     now.UnixMilli(),
-				EndTs:       now.Add(30 * time.Minute).UnixMilli(),
-				RecordCount: 800,
-				FileSize:    40000,
+				SegmentID:    77777,
+				StartTs:      now.UnixMilli(),
+				EndTs:        now.Add(30 * time.Minute).UnixMilli(),
+				RecordCount:  800,
+				FileSize:     40000,
+				Fingerprints: []int64{777, 888},
 			},
 			{
-				SegmentID:   88888,
-				StartTs:     now.Add(30 * time.Minute).UnixMilli(),
-				EndTs:       now.Add(time.Hour).UnixMilli(),
-				RecordCount: 700,
-				FileSize:    35000,
+				SegmentID:    88888,
+				StartTs:      now.Add(30 * time.Minute).UnixMilli(),
+				EndTs:        now.Add(time.Hour).UnixMilli(),
+				RecordCount:  700,
+				FileSize:     35000,
+				Fingerprints: []int64{999, 111},
 			},
 		},
-		CreatedBy:    lrdb.CreatedByIngest,
-		Fingerprints: []int64{777, 888},
-		SortVersion:  lrdb.CurrentMetricSortVersion,
+		CreatedBy:   lrdb.CreatedByIngest,
+		SortVersion: lrdb.CurrentMetricSortVersion,
 	})
 	require.NoError(t, err)
 
@@ -374,15 +374,18 @@ func TestCompactMetricSegs_MultipleNewSegments(t *testing.T) {
 		assert.False(t, seg.Published, "Old segment should be unpublished")
 	}
 
-	// Verify new segments were created
-	newSegmentIDs := []int64{77777, 88888}
-	for _, segmentID := range newSegmentIDs {
-		seg, exists := segmentMap[segmentID]
-		require.True(t, exists, "New segment should exist")
-		assert.False(t, seg.Compacted, "New segment should not be compacted")
-		assert.True(t, seg.Published, "New segment should be published")
-		assert.Equal(t, []int64{777, 888}, seg.Fingerprints)
-	}
+	// Verify new segments were created with their respective fingerprints
+	seg77777, exists := segmentMap[77777]
+	require.True(t, exists, "New segment 77777 should exist")
+	assert.False(t, seg77777.Compacted, "New segment should not be compacted")
+	assert.True(t, seg77777.Published, "New segment should be published")
+	assert.Equal(t, []int64{777, 888}, seg77777.Fingerprints)
+
+	seg88888, exists := segmentMap[88888]
+	require.True(t, exists, "New segment 88888 should exist")
+	assert.False(t, seg88888.Compacted, "New segment should not be compacted")
+	assert.True(t, seg88888.Published, "New segment should be published")
+	assert.Equal(t, []int64{999, 111}, seg88888.Fingerprints)
 
 	// Verify record counts
 	assert.Equal(t, int64(800), segmentMap[77777].RecordCount)
@@ -410,16 +413,16 @@ func TestCompactMetricSegs_IdempotentReplays(t *testing.T) {
 		OldRecords:     []lrdb.ReplaceMetricSegsOld{},
 		NewRecords: []lrdb.ReplaceMetricSegsNew{
 			{
-				SegmentID:   66666,
-				StartTs:     now.UnixMilli(),
-				EndTs:       now.Add(time.Hour).UnixMilli(),
-				RecordCount: 300,
-				FileSize:    15000,
+				SegmentID:    66666,
+				StartTs:      now.UnixMilli(),
+				EndTs:        now.Add(time.Hour).UnixMilli(),
+				RecordCount:  300,
+				FileSize:     15000,
+				Fingerprints: []int64{666, 999},
 			},
 		},
-		CreatedBy:    lrdb.CreatedByIngest,
-		Fingerprints: []int64{666, 999},
-		SortVersion:  lrdb.CurrentMetricSortVersion,
+		CreatedBy:   lrdb.CreatedByIngest,
+		SortVersion: lrdb.CurrentMetricSortVersion,
 	}
 
 	// First call should succeed

@@ -489,14 +489,14 @@ func uploadRolledUpMetrics(
 			SortVersion:    replaceParams.SortVersion,
 			NewRecords: []lrdb.ReplaceMetricSegsNew{
 				{
-					SegmentID:   segmentID,
-					StartTs:     startTs,
-					EndTs:       endTs,
-					RecordCount: file.RecordCount,
-					FileSize:    file.FileSize,
+					SegmentID:    segmentID,
+					StartTs:      startTs,
+					EndTs:        endTs,
+					RecordCount:  file.RecordCount,
+					FileSize:     file.FileSize,
+					Fingerprints: fingerprints,
 				},
 			},
-			Fingerprints: fingerprints,
 		}
 
 		if err := mdb.ReplaceMetricSegs(ctx, singleParams); err != nil {
