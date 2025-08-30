@@ -179,13 +179,20 @@ type MetricCompactionQueue struct {
 	OrganizationID uuid.UUID                        `json:"organization_id"`
 	Dateint        int32                            `json:"dateint"`
 	FrequencyMs    int64                            `json:"frequency_ms"`
-	SegmentID      uuid.UUID                        `json:"segment_id"`
+	SegmentID      int64                            `json:"segment_id"`
 	InstanceNum    int16                            `json:"instance_num"`
 	TsRange        pgtype.Range[pgtype.Timestamptz] `json:"ts_range"`
 	RecordCount    int64                            `json:"record_count"`
 	Tries          int32                            `json:"tries"`
 	ClaimedBy      int64                            `json:"claimed_by"`
 	ClaimedAt      *time.Time                       `json:"claimed_at"`
+}
+
+type MetricPackEstimate struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	FrequencyMs    int64     `json:"frequency_ms"`
+	TargetRecords  *int64    `json:"target_records"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 type MetricSeg struct {

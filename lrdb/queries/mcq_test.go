@@ -35,7 +35,7 @@ func TestPutMetricCompactionWork(t *testing.T) {
 	db := testhelpers.NewTestLRDBStore(t)
 
 	orgID := uuid.New()
-	segmentID := uuid.New()
+	segmentID := int64(12345)
 
 	now := time.Now()
 	tsRange := pgtype.Range[pgtype.Timestamptz]{
@@ -71,7 +71,7 @@ func TestPutMetricCompactionWork_MultipleItems(t *testing.T) {
 			OrganizationID: orgID,
 			Dateint:        20250829,
 			FrequencyMs:    60000,
-			SegmentID:      uuid.New(),
+			SegmentID:      int64(12346),
 			InstanceNum:    1,
 			TsRange: pgtype.Range[pgtype.Timestamptz]{
 				Lower:     pgtype.Timestamptz{Time: now, Valid: true},
@@ -87,7 +87,7 @@ func TestPutMetricCompactionWork_MultipleItems(t *testing.T) {
 			OrganizationID: orgID,
 			Dateint:        20250829,
 			FrequencyMs:    300000,
-			SegmentID:      uuid.New(),
+			SegmentID:      int64(12346),
 			InstanceNum:    1,
 			TsRange: pgtype.Range[pgtype.Timestamptz]{
 				Lower:     pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
@@ -120,7 +120,7 @@ func TestClaimMetricCompactionWork_BasicClaim(t *testing.T) {
 			OrganizationID: orgID,
 			Dateint:        20250829,
 			FrequencyMs:    60000,
-			SegmentID:      uuid.New(),
+			SegmentID:      int64(12346),
 			InstanceNum:    1,
 			TsRange: pgtype.Range[pgtype.Timestamptz]{
 				Lower:     pgtype.Timestamptz{Time: now, Valid: true},
@@ -136,7 +136,7 @@ func TestClaimMetricCompactionWork_BasicClaim(t *testing.T) {
 			OrganizationID: orgID,
 			Dateint:        20250829,
 			FrequencyMs:    60000,
-			SegmentID:      uuid.New(),
+			SegmentID:      int64(12346),
 			InstanceNum:    1,
 			TsRange: pgtype.Range[pgtype.Timestamptz]{
 				Lower:     pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
@@ -156,10 +156,10 @@ func TestClaimMetricCompactionWork_BasicClaim(t *testing.T) {
 	}
 
 	claimedBatch, err := db.ClaimMetricCompactionWork(ctx, lrdb.ClaimMetricCompactionWorkParams{
-		WorkerID:      workerID,
-		TargetRecords: 2500,
-		MaxAgeSeconds: 30,
-		BatchCount:    5,
+		WorkerID:             workerID,
+		DefaultTargetRecords: 2500,
+		MaxAgeSeconds:        30,
+		BatchCount:           5,
 	})
 	require.NoError(t, err)
 
@@ -191,7 +191,7 @@ func TestClaimMetricCompactionWork_ExactFill(t *testing.T) {
 			OrganizationID: orgID,
 			Dateint:        20250829,
 			FrequencyMs:    60000,
-			SegmentID:      uuid.New(),
+			SegmentID:      int64(12346),
 			InstanceNum:    1,
 			TsRange: pgtype.Range[pgtype.Timestamptz]{
 				Lower:     pgtype.Timestamptz{Time: now, Valid: true},
@@ -207,7 +207,7 @@ func TestClaimMetricCompactionWork_ExactFill(t *testing.T) {
 			OrganizationID: orgID,
 			Dateint:        20250829,
 			FrequencyMs:    60000,
-			SegmentID:      uuid.New(),
+			SegmentID:      int64(12346),
 			InstanceNum:    1,
 			TsRange: pgtype.Range[pgtype.Timestamptz]{
 				Lower:     pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
@@ -227,10 +227,10 @@ func TestClaimMetricCompactionWork_ExactFill(t *testing.T) {
 	}
 
 	claimedBatch, err := db.ClaimMetricCompactionWork(ctx, lrdb.ClaimMetricCompactionWorkParams{
-		WorkerID:      workerID,
-		TargetRecords: 2000,
-		MaxAgeSeconds: 30,
-		BatchCount:    5,
+		WorkerID:             workerID,
+		DefaultTargetRecords: 2000,
+		MaxAgeSeconds:        30,
+		BatchCount:           5,
 	})
 	require.NoError(t, err)
 
@@ -249,7 +249,7 @@ func TestClaimMetricCompactionWork_AgeThreshold(t *testing.T) {
 		OrganizationID: orgID,
 		Dateint:        20250829,
 		FrequencyMs:    60000,
-		SegmentID:      uuid.New(),
+		SegmentID:      int64(12347),
 		InstanceNum:    1,
 		TsRange: pgtype.Range[pgtype.Timestamptz]{
 			Lower:     pgtype.Timestamptz{Time: now, Valid: true},
@@ -266,10 +266,10 @@ func TestClaimMetricCompactionWork_AgeThreshold(t *testing.T) {
 	time.Sleep(2 * time.Second)
 
 	claimedBatch, err := db.ClaimMetricCompactionWork(ctx, lrdb.ClaimMetricCompactionWorkParams{
-		WorkerID:      workerID,
-		TargetRecords: 1000,
-		MaxAgeSeconds: 1,
-		BatchCount:    5,
+		WorkerID:             workerID,
+		DefaultTargetRecords: 1000,
+		MaxAgeSeconds:        1,
+		BatchCount:           5,
 	})
 	require.NoError(t, err)
 
@@ -292,7 +292,7 @@ func TestClaimMetricCompactionWork_OversizedItem(t *testing.T) {
 			OrganizationID: orgID,
 			Dateint:        20250829,
 			FrequencyMs:    60000,
-			SegmentID:      uuid.New(),
+			SegmentID:      int64(12346),
 			InstanceNum:    1,
 			TsRange: pgtype.Range[pgtype.Timestamptz]{
 				Lower:     pgtype.Timestamptz{Time: now, Valid: true},
@@ -308,7 +308,7 @@ func TestClaimMetricCompactionWork_OversizedItem(t *testing.T) {
 			OrganizationID: orgID,
 			Dateint:        20250829,
 			FrequencyMs:    60000,
-			SegmentID:      uuid.New(),
+			SegmentID:      int64(12346),
 			InstanceNum:    1,
 			TsRange: pgtype.Range[pgtype.Timestamptz]{
 				Lower:     pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
@@ -328,10 +328,10 @@ func TestClaimMetricCompactionWork_OversizedItem(t *testing.T) {
 	}
 
 	claimedBatch, err := db.ClaimMetricCompactionWork(ctx, lrdb.ClaimMetricCompactionWorkParams{
-		WorkerID:      workerID,
-		TargetRecords: 2000,
-		MaxAgeSeconds: 30,
-		BatchCount:    5,
+		WorkerID:             workerID,
+		DefaultTargetRecords: 2000,
+		MaxAgeSeconds:        30,
+		BatchCount:           5,
 	})
 	require.NoError(t, err)
 
@@ -346,10 +346,10 @@ func TestClaimMetricCompactionWork_EmptyQueue(t *testing.T) {
 	workerID := int64(12345)
 
 	claimedBatch, err := db.ClaimMetricCompactionWork(ctx, lrdb.ClaimMetricCompactionWorkParams{
-		WorkerID:      workerID,
-		TargetRecords: 3000,
-		MaxAgeSeconds: 30,
-		BatchCount:    5,
+		WorkerID:             workerID,
+		DefaultTargetRecords: 3000,
+		MaxAgeSeconds:        30,
+		BatchCount:           5,
 	})
 
 	require.NoError(t, err)
@@ -376,7 +376,7 @@ func TestClaimMetricCompactionWork_Priority(t *testing.T) {
 		OrganizationID: orgID,
 		Dateint:        20250829,
 		FrequencyMs:    60000,
-		SegmentID:      uuid.New(),
+		SegmentID:      int64(12347),
 		InstanceNum:    1,
 		TsRange:        tsRange,
 		RecordCount:    1000,
@@ -388,7 +388,7 @@ func TestClaimMetricCompactionWork_Priority(t *testing.T) {
 		OrganizationID: orgID,
 		Dateint:        20250829,
 		FrequencyMs:    60000,
-		SegmentID:      uuid.New(),
+		SegmentID:      int64(12347),
 		InstanceNum:    1,
 		TsRange:        tsRange,
 		RecordCount:    1000,
@@ -397,10 +397,10 @@ func TestClaimMetricCompactionWork_Priority(t *testing.T) {
 	require.NoError(t, err)
 
 	claimedBatch, err := db.ClaimMetricCompactionWork(ctx, lrdb.ClaimMetricCompactionWorkParams{
-		WorkerID:      workerID,
-		TargetRecords: 1000,
-		MaxAgeSeconds: 30,
-		BatchCount:    1,
+		WorkerID:             workerID,
+		DefaultTargetRecords: 1000,
+		MaxAgeSeconds:        30,
+		BatchCount:           1,
 	})
 	require.NoError(t, err)
 
@@ -420,7 +420,7 @@ func TestReleaseMetricCompactionWork(t *testing.T) {
 		OrganizationID: orgID,
 		Dateint:        20250829,
 		FrequencyMs:    60000,
-		SegmentID:      uuid.New(),
+		SegmentID:      int64(12347),
 		InstanceNum:    1,
 		TsRange: pgtype.Range[pgtype.Timestamptz]{
 			Lower:     pgtype.Timestamptz{Time: now, Valid: true},
@@ -435,10 +435,10 @@ func TestReleaseMetricCompactionWork(t *testing.T) {
 	require.NoError(t, err)
 
 	claimedBatch, err := db.ClaimMetricCompactionWork(ctx, lrdb.ClaimMetricCompactionWorkParams{
-		WorkerID:      workerID,
-		TargetRecords: 1000,
-		MaxAgeSeconds: 30,
-		BatchCount:    5,
+		WorkerID:             workerID,
+		DefaultTargetRecords: 1000,
+		MaxAgeSeconds:        30,
+		BatchCount:           5,
 	})
 	require.NoError(t, err)
 	require.Len(t, claimedBatch, 1)
@@ -453,10 +453,10 @@ func TestReleaseMetricCompactionWork(t *testing.T) {
 	require.NoError(t, err)
 
 	claimedBatch2, err := db.ClaimMetricCompactionWork(ctx, lrdb.ClaimMetricCompactionWorkParams{
-		WorkerID:      workerID + 1,
-		TargetRecords: 1000,
-		MaxAgeSeconds: 30,
-		BatchCount:    5,
+		WorkerID:             workerID + 1,
+		DefaultTargetRecords: 1000,
+		MaxAgeSeconds:        30,
+		BatchCount:           5,
 	})
 	require.NoError(t, err)
 	require.Len(t, claimedBatch2, 1)
@@ -478,7 +478,7 @@ func TestReleaseMetricCompactionWork_OnlyReleasesByCorrectWorker(t *testing.T) {
 		OrganizationID: orgID,
 		Dateint:        20250829,
 		FrequencyMs:    60000,
-		SegmentID:      uuid.New(),
+		SegmentID:      int64(12347),
 		InstanceNum:    1,
 		TsRange: pgtype.Range[pgtype.Timestamptz]{
 			Lower:     pgtype.Timestamptz{Time: now, Valid: true},
@@ -493,10 +493,10 @@ func TestReleaseMetricCompactionWork_OnlyReleasesByCorrectWorker(t *testing.T) {
 	require.NoError(t, err)
 
 	claimedBatch, err := db.ClaimMetricCompactionWork(ctx, lrdb.ClaimMetricCompactionWorkParams{
-		WorkerID:      workerID,
-		TargetRecords: 1000,
-		MaxAgeSeconds: 30,
-		BatchCount:    5,
+		WorkerID:             workerID,
+		DefaultTargetRecords: 1000,
+		MaxAgeSeconds:        30,
+		BatchCount:           5,
 	})
 	require.NoError(t, err)
 	require.Len(t, claimedBatch, 1)
@@ -510,10 +510,10 @@ func TestReleaseMetricCompactionWork_OnlyReleasesByCorrectWorker(t *testing.T) {
 	require.NoError(t, err)
 
 	claimedBatch2, err := db.ClaimMetricCompactionWork(ctx, lrdb.ClaimMetricCompactionWorkParams{
-		WorkerID:      workerID + 1,
-		TargetRecords: 1000,
-		MaxAgeSeconds: 30,
-		BatchCount:    5,
+		WorkerID:             workerID + 1,
+		DefaultTargetRecords: 1000,
+		MaxAgeSeconds:        30,
+		BatchCount:           5,
 	})
 	require.NoError(t, err)
 

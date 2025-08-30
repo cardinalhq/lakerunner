@@ -27,24 +27,25 @@ type Querier interface {
 	ClaimInqueueWork(ctx context.Context, arg ClaimInqueueWorkParams) (Inqueue, error)
 	// Greedy pack up to size cap and row cap
 	ClaimInqueueWorkBatch(ctx context.Context, arg ClaimInqueueWorkBatchParams) ([]ClaimInqueueWorkBatchRow, error)
-	// 1) Big single row safety-net (no locks in selection)
-	// 2) Seeds: oldest/highest-priority row per (org,instance,dateint)
-	// 3) Order groups globally by seed (priority DESC, queue_ts ASC)
-	// 4) Flags and parameters per group (based on the seed row)
-	// 5) All ready rows in each group (ordered). No locks; just compute packs.
-	// 6) Greedy pack within each group up to target_records and batch_count
-	// 7) Totals per group and eligibility:
-	//    - fresh: exact fill (total = target)
-	//    - old:   any positive total (already capped by target)
-	// 8) Pick earliest eligible group
-	// 9) Rows to claim if using the group path
-	// 10) Final chosen IDs: prefer big_single if exists
-	// 11) Optimistic claim (atomic per-row; guarded by claimed_at IS NULL)
+	// 1) Big single-row safety net
+	// 2) One seed per group (org, dateint, freq, instance)
+	// 3) Order groups globally by seed recency/priority
+	// 4) Attach per-group target_records
+	// 5) All ready rows within each group
+	// 6) Greedy pack per group
+	// 7) Rows that fit under caps
+	// 8) Totals per group
+	// 9) Eligibility: fresh = exact fill, old = any positive
+	// 10) Pick earliest eligible group
+	// 11) Rows to claim for the winner group
+	// 12) Final chosen IDs
+	// 13) Atomic optimistic claim
 	ClaimMetricCompactionWork(ctx context.Context, arg ClaimMetricCompactionWorkParams) ([]ClaimMetricCompactionWorkRow, error)
 	CleanupInqueueWork(ctx context.Context, cutoffTime *time.Time) ([]Inqueue, error)
 	CompactLogSegments(ctx context.Context, arg CompactLogSegmentsParams) error
 	CompactTraceSegments(ctx context.Context, arg CompactTraceSegmentsParams) error
 	DeleteInqueueWork(ctx context.Context, arg DeleteInqueueWorkParams) error
+	DeleteMetricCompactionWork(ctx context.Context, arg DeleteMetricCompactionWorkParams) error
 	GetExemplarLogsByFingerprint(ctx context.Context, arg GetExemplarLogsByFingerprintParams) (ExemplarLog, error)
 	GetExemplarLogsByService(ctx context.Context, arg GetExemplarLogsByServiceParams) ([]ExemplarLog, error)
 	GetExemplarLogsCreatedAfter(ctx context.Context, ts time.Time) ([]ExemplarLog, error)
@@ -55,6 +56,7 @@ type Querier interface {
 	GetExemplarTracesCreatedAfter(ctx context.Context, ts time.Time) ([]ExemplarTrace, error)
 	GetLogSegmentsForCompaction(ctx context.Context, arg GetLogSegmentsForCompactionParams) ([]GetLogSegmentsForCompactionRow, error)
 	GetMetricSegsForCompaction(ctx context.Context, arg GetMetricSegsForCompactionParams) ([]MetricSeg, error)
+	GetMetricSegsForCompactionWork(ctx context.Context, arg GetMetricSegsForCompactionWorkParams) ([]MetricSeg, error)
 	GetMetricSegsForRollup(ctx context.Context, arg GetMetricSegsForRollupParams) ([]MetricSeg, error)
 	GetSpanInfoByFingerprint(ctx context.Context, arg GetSpanInfoByFingerprintParams) (GetSpanInfoByFingerprintRow, error)
 	GetTraceSegmentsForCompaction(ctx context.Context, arg GetTraceSegmentsForCompactionParams) ([]GetTraceSegmentsForCompactionRow, error)
