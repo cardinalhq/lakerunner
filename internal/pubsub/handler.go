@@ -123,7 +123,7 @@ func handleMessage(ctx context.Context, msg []byte, sp storageprofile.StoragePro
 		slog.Info("Processing item",
 			slog.String("bucket", item.Bucket),
 			slog.String("object_id", item.ObjectID),
-			slog.String("telemetry_type", item.TelemetryType),
+			slog.String("telemetry_type", item.Signal),
 			slog.String("organization_id", item.OrganizationID.String()),
 			slog.String("collector_name", collectorName),
 			slog.Int("instance_num", int(instanceNum)))
@@ -134,7 +134,7 @@ func handleMessage(ctx context.Context, msg []byte, sp storageprofile.StoragePro
 			InstanceNum:    instanceNum,
 			Bucket:         item.Bucket,
 			ObjectID:       item.ObjectID,
-			TelemetryType:  item.TelemetryType,
+			Signal:         item.Signal,
 			Priority:       0,
 			FileSize:       item.FileSize,
 		})
@@ -144,7 +144,7 @@ func handleMessage(ctx context.Context, msg []byte, sp storageprofile.StoragePro
 
 		itemsProcessed.Add(ctx, 1, metric.WithAttributes(
 			attribute.String("bucket", item.Bucket),
-			attribute.String("telemetry_type", item.TelemetryType),
+			attribute.String("telemetry_type", item.Signal),
 		))
 	}
 

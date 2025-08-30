@@ -38,7 +38,7 @@ Data is converted into optimized **Apache Parquet** with indexing, aggregation, 
    - **NEVER mark work as complete until `make check` passes.**
 
 4. **Migrations**
-   - `make new-migration name=migration_name` to create a new lrdb migration.
+   - `make new-lrbb-migration name=migration_name` to create a new lrdb migration.
    - `make new-configdb-migration name=migration_name` to create a new configdb migration.
 
 5. **Commit Messages**
@@ -109,6 +109,7 @@ Data is converted into optimized **Apache Parquet** with indexing, aggregation, 
 - New public methods require GoDoc comments that are not redundant, like "New creates a new thing".
 
 **Parquet Debug Tools:**
+
 - `./bin/lakerunner debug parquet cat --file <file>` – Output parquet contents as JSON lines
 - `./bin/lakerunner debug parquet schema --file <file>` – Analyze data to determine actual column types (JSON format)
 - `./bin/lakerunner debug parquet schema-raw --file <file>` – Show raw parquet metadata schema

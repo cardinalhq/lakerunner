@@ -72,7 +72,7 @@ func TestWorkQueueDeadlockTorture(t *testing.T) {
 				CollectorName:  "torture-test",
 				Bucket:         "torture-bucket",
 				ObjectID:       fmt.Sprintf("object-%d-%s.json", i, telemetryType),
-				TelemetryType:  telemetryType,
+				Signal:         telemetryType,
 				Priority:       int32(i % 5), // Vary priorities to create lock ordering issues
 			})
 			require.NoError(t, err)
@@ -206,11 +206,16 @@ func tortureWorker(ctx context.Context, t *testing.T, db lrdb.StoreFull, workerI
 		switch opType {
 		case 0, 1: // Claim and delete (most common operations)
 			telemetryType := telemetryTypes[operationCount%len(telemetryTypes)]
-			work, claimErr := db.ClaimInqueueWork(opCtx, lrdb.ClaimInqueueWorkParams{
-				ClaimedBy:     workerID,
-				TelemetryType: telemetryType,
+			works, claimErr := db.ClaimInqueueWorkBatch(opCtx, lrdb.ClaimInqueueWorkBatchParams{
+				Signal:        telemetryType,
+				WorkerID:      workerID,
+				MaxTotalSize:  1024 * 1024,
+				MinTotalSize:  0,
+				MaxAgeSeconds: 30,
+				BatchCount:    1,
 			})
-			if claimErr == nil {
+			if claimErr == nil && len(works) > 0 {
+				work := works[0]
 				// Simulate brief work processing
 				time.Sleep(time.Millisecond * time.Duration(operationCount%5))
 
@@ -246,7 +251,7 @@ func tortureWorker(ctx context.Context, t *testing.T, db lrdb.StoreFull, workerI
 				CollectorName:  "torture-test",
 				Bucket:         "torture-bucket",
 				ObjectID:       fmt.Sprintf("new-work-%d-%d.json", workerID, operationCount),
-				TelemetryType:  telemetryTypes[operationCount%len(telemetryTypes)],
+				Signal:         telemetryTypes[operationCount%len(telemetryTypes)],
 				Priority:       int32(operationCount % 3),
 			})
 		}
@@ -342,7 +347,7 @@ func TestWorkQueueSpecificDeadlockPatterns(t *testing.T) {
 				CollectorName:  "pattern-test",
 				Bucket:         "test-bucket",
 				ObjectID:       fmt.Sprintf("item-%d.json", i),
-				TelemetryType:  "logs",
+				Signal:         "logs",
 				Priority:       1,
 			})
 			require.NoError(t, err)
@@ -360,12 +365,17 @@ func TestWorkQueueSpecificDeadlockPatterns(t *testing.T) {
 				for i := 0; i < 20; i++ {
 					opCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 
-					work, err := db.ClaimInqueueWork(opCtx, lrdb.ClaimInqueueWorkParams{
-						ClaimedBy:     id,
-						TelemetryType: "logs",
+					works, err := db.ClaimInqueueWorkBatch(opCtx, lrdb.ClaimInqueueWorkBatchParams{
+						Signal:        "logs",
+						WorkerID:      id,
+						MaxTotalSize:  1024 * 1024,
+						MinTotalSize:  0,
+						MaxAgeSeconds: 30,
+						BatchCount:    1,
 					})
 
-					if err == nil {
+					if err == nil && len(works) > 0 {
+						work := works[0]
 						err = db.DeleteInqueueWork(opCtx, lrdb.DeleteInqueueWorkParams{
 							ID:        work.ID,
 							ClaimedBy: id,

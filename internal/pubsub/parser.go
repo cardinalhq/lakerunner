@@ -130,7 +130,7 @@ func (p *GCPStorageEventParser) Parse(raw []byte) ([]lrdb.Inqueue, error) {
 	slog.Info("Parsed GCP storage event",
 		slog.String("bucket", bucketName),
 		slog.String("object_key", evt.Name),
-		slog.String("telemetry_type", item.TelemetryType),
+		slog.String("telemetry_type", item.Signal),
 		slog.String("collector", item.CollectorName),
 		slog.String("organization_id", item.OrganizationID.String()))
 
@@ -183,7 +183,7 @@ func parseObjectKey(bucketName, key string) (*lrdb.Inqueue, error) {
 		InstanceNum:    -1,
 		Bucket:         bucketName,
 		ObjectID:       key,
-		TelemetryType:  telem,
+		Signal:         telem,
 		CollectorName:  collector,
 		FileSize:       0,
 	}, nil

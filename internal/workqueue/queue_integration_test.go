@@ -46,30 +46,41 @@ func TestInqueueWorkflow(t *testing.T) {
 		CollectorName:  "default",
 		Bucket:         bucket,
 		ObjectID:       objectID,
-		TelemetryType:  telemetryType,
+		Signal:         telemetryType,
 		Priority:       1,
 	})
 	require.NoError(t, err)
 
 	// Claim work item
-	claimedWork, err := db.ClaimInqueueWork(ctx, lrdb.ClaimInqueueWorkParams{
-		ClaimedBy:     workerID,
-		TelemetryType: telemetryType,
+	claimedWorks, err := db.ClaimInqueueWorkBatch(ctx, lrdb.ClaimInqueueWorkBatchParams{
+		Signal:        telemetryType,
+		WorkerID:      workerID,
+		MaxTotalSize:  1024 * 1024,
+		MinTotalSize:  0,
+		MaxAgeSeconds: 30,
+		BatchCount:    1,
 	})
 	require.NoError(t, err)
+	require.Len(t, claimedWorks, 1)
+	claimedWork := claimedWorks[0]
 	assert.Equal(t, orgID, claimedWork.OrganizationID)
 	assert.Equal(t, bucket, claimedWork.Bucket)
 	assert.Equal(t, objectID, claimedWork.ObjectID)
-	assert.Equal(t, telemetryType, claimedWork.TelemetryType)
+	assert.Equal(t, telemetryType, claimedWork.Signal)
 	assert.Equal(t, workerID, claimedWork.ClaimedBy)
 
 	// Try to claim same type of work again - should not get any since the one item is claimed
-	_, err = db.ClaimInqueueWork(ctx, lrdb.ClaimInqueueWorkParams{
-		ClaimedBy:     workerID + 1, // Different worker
-		TelemetryType: telemetryType,
+	claimedWorks2, err := db.ClaimInqueueWorkBatch(ctx, lrdb.ClaimInqueueWorkBatchParams{
+		Signal:        telemetryType,
+		WorkerID:      workerID + 1, // Different worker
+		MaxTotalSize:  1024 * 1024,
+		MinTotalSize:  0,
+		MaxAgeSeconds: 30,
+		BatchCount:    1,
 	})
-	// This should return an error since no work is available
-	assert.Error(t, err, "Should not find available work of same type")
+	// This should return no items since the work is already claimed
+	require.NoError(t, err)
+	assert.Len(t, claimedWorks2, 0, "Should not find available work of same type")
 
 	// Test work completion by deleting
 	err = db.DeleteInqueueWork(ctx, lrdb.DeleteInqueueWorkParams{
@@ -78,12 +89,17 @@ func TestInqueueWorkflow(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	// Try to claim work again - should fail since it was deleted
-	_, err = db.ClaimInqueueWork(ctx, lrdb.ClaimInqueueWorkParams{
-		ClaimedBy:     workerID,
-		TelemetryType: telemetryType,
+	// Try to claim work again - should return empty since it was deleted
+	claimedWorks3, err := db.ClaimInqueueWorkBatch(ctx, lrdb.ClaimInqueueWorkBatchParams{
+		Signal:        telemetryType,
+		WorkerID:      workerID,
+		MaxTotalSize:  1024 * 1024,
+		MinTotalSize:  0,
+		MaxAgeSeconds: 30,
+		BatchCount:    1,
 	})
-	assert.Error(t, err, "Should not find work after deletion")
+	require.NoError(t, err)
+	assert.Len(t, claimedWorks3, 0, "Should not find work after deletion")
 }
 
 func TestInqueueJournalOperations(t *testing.T) {
@@ -142,7 +158,7 @@ func TestInqueueSummary(t *testing.T) {
 		CollectorName:  "default",
 		Bucket:         "test-bucket",
 		ObjectID:       "logs/test1.json",
-		TelemetryType:  "logs",
+		Signal:         "logs",
 		Priority:       1,
 	})
 	require.NoError(t, err)
@@ -152,7 +168,7 @@ func TestInqueueSummary(t *testing.T) {
 		CollectorName:  "default",
 		Bucket:         "test-bucket",
 		ObjectID:       "logs/test2.json",
-		TelemetryType:  "logs",
+		Signal:         "logs",
 		Priority:       1,
 	})
 	require.NoError(t, err)
@@ -162,7 +178,7 @@ func TestInqueueSummary(t *testing.T) {
 		CollectorName:  "default",
 		Bucket:         "test-bucket",
 		ObjectID:       "metrics/test1.parquet",
-		TelemetryType:  "metrics",
+		Signal:         "metrics",
 		Priority:       1,
 	})
 	require.NoError(t, err)
@@ -175,9 +191,9 @@ func TestInqueueSummary(t *testing.T) {
 	logCount := int64(0)
 	metricCount := int64(0)
 	for _, s := range summary {
-		if s.TelemetryType == "logs" {
+		if s.Signal == "logs" {
 			logCount = s.Count
-		} else if s.TelemetryType == "metrics" {
+		} else if s.Signal == "metrics" {
 			metricCount = s.Count
 		}
 	}
@@ -200,17 +216,23 @@ func TestInqueueCleanup(t *testing.T) {
 		CollectorName:  "default",
 		Bucket:         "cleanup-test-bucket",
 		ObjectID:       "cleanup/test.json",
-		TelemetryType:  telemetryType,
+		Signal:         telemetryType,
 		Priority:       1,
 	})
 	require.NoError(t, err)
 
 	// Claim work
-	claimedWork, err := db.ClaimInqueueWork(ctx, lrdb.ClaimInqueueWorkParams{
-		ClaimedBy:     workerID,
-		TelemetryType: telemetryType,
+	claimedWorks, err := db.ClaimInqueueWorkBatch(ctx, lrdb.ClaimInqueueWorkBatchParams{
+		Signal:        telemetryType,
+		WorkerID:      workerID,
+		MaxTotalSize:  1024 * 1024,
+		MinTotalSize:  0,
+		MaxAgeSeconds: 30,
+		BatchCount:    1,
 	})
 	require.NoError(t, err)
+	require.Len(t, claimedWorks, 1)
+	claimedWork := claimedWorks[0]
 	assert.Equal(t, workerID, claimedWork.ClaimedBy)
 
 	// Run cleanup (this will reset items claimed more than 5 minutes ago)

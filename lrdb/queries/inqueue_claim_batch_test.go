@@ -44,7 +44,7 @@ func TestClaimInqueueWorkBatch(t *testing.T) {
 			InstanceNum:    1,
 			Bucket:         "test-bucket",
 			ObjectID:       "logs1.json.gz",
-			TelemetryType:  telemetryType,
+			Signal:         telemetryType,
 			Priority:       1,
 			FileSize:       1024,
 		},
@@ -54,7 +54,7 @@ func TestClaimInqueueWorkBatch(t *testing.T) {
 			InstanceNum:    1,
 			Bucket:         "test-bucket",
 			ObjectID:       "logs2.json.gz",
-			TelemetryType:  telemetryType,
+			Signal:         telemetryType,
 			Priority:       1,
 			FileSize:       2048,
 		},
@@ -64,7 +64,7 @@ func TestClaimInqueueWorkBatch(t *testing.T) {
 			InstanceNum:    1,
 			Bucket:         "test-bucket",
 			ObjectID:       "logs3.json.gz",
-			TelemetryType:  telemetryType,
+			Signal:         telemetryType,
 			Priority:       1,
 			FileSize:       512,
 		},
@@ -84,7 +84,7 @@ func TestClaimInqueueWorkBatch(t *testing.T) {
 		InstanceNum:    1,
 		Bucket:         "test-bucket",
 		ObjectID:       "logs_different_org.json.gz",
-		TelemetryType:  telemetryType,
+		Signal:         telemetryType,
 		Priority:       1,
 		FileSize:       1024,
 	})
@@ -92,14 +92,12 @@ func TestClaimInqueueWorkBatch(t *testing.T) {
 
 	// Claim batch of work items
 	claimedBatch, err := db.ClaimInqueueWorkBatch(ctx, lrdb.ClaimInqueueWorkBatchParams{
-		OrganizationID: orgID,
-		InstanceNum:    1,
-		TelemetryType:  telemetryType,
-		WorkerID:       workerID,
-		MaxTotalSize:   1024 * 1024, // 1MB
-		MinTotalSize:   0,           // No minimum
-		MaxAgeSeconds:  30,          // 30 seconds
-		BatchCount:     2,           // Limit to 2 items
+		Signal:        telemetryType,
+		WorkerID:      workerID,
+		MaxTotalSize:  1024 * 1024, // 1MB
+		MinTotalSize:  0,           // No minimum
+		MaxAgeSeconds: 30,          // 30 seconds
+		BatchCount:    2,           // Limit to 2 items
 	})
 	require.NoError(t, err)
 
@@ -109,7 +107,7 @@ func TestClaimInqueueWorkBatch(t *testing.T) {
 	// All claimed items should have same organization and telemetry type
 	for _, item := range claimedBatch {
 		assert.Equal(t, orgID, item.OrganizationID)
-		assert.Equal(t, telemetryType, item.TelemetryType)
+		assert.Equal(t, telemetryType, item.Signal)
 		assert.Equal(t, workerID, item.ClaimedBy)
 		assert.Equal(t, int16(1), item.InstanceNum)
 	}
@@ -123,14 +121,12 @@ func TestClaimInqueueWorkBatch(t *testing.T) {
 
 	// Try to claim more work - should get remaining item from same org
 	claimedBatch2, err := db.ClaimInqueueWorkBatch(ctx, lrdb.ClaimInqueueWorkBatchParams{
-		OrganizationID: orgID,
-		InstanceNum:    1,
-		TelemetryType:  telemetryType,
-		WorkerID:       workerID + 1, // Different worker
-		MaxTotalSize:   1024 * 1024,  // 1MB
-		MinTotalSize:   0,            // No minimum
-		MaxAgeSeconds:  30,           // 30 seconds
-		BatchCount:     10,
+		Signal:        telemetryType,
+		WorkerID:      workerID + 1, // Different worker
+		MaxTotalSize:  1024 * 1024,  // 1MB
+		MinTotalSize:  0,            // No minimum
+		MaxAgeSeconds: 30,           // 30 seconds
+		BatchCount:    10,
 	})
 	require.NoError(t, err)
 
@@ -140,14 +136,12 @@ func TestClaimInqueueWorkBatch(t *testing.T) {
 
 	// Try to claim more work - should get item from different org
 	claimedBatch3, err := db.ClaimInqueueWorkBatch(ctx, lrdb.ClaimInqueueWorkBatchParams{
-		OrganizationID: differentOrgID,
-		InstanceNum:    1,
-		TelemetryType:  telemetryType,
-		WorkerID:       workerID + 2, // Different worker
-		MaxTotalSize:   1024 * 1024,  // 1MB
-		MinTotalSize:   0,            // No minimum
-		MaxAgeSeconds:  30,           // 30 seconds
-		BatchCount:     10,
+		Signal:        telemetryType,
+		WorkerID:      workerID + 2, // Different worker
+		MaxTotalSize:  1024 * 1024,  // 1MB
+		MinTotalSize:  0,            // No minimum
+		MaxAgeSeconds: 30,           // 30 seconds
+		BatchCount:    10,
 	})
 	require.NoError(t, err)
 
@@ -156,7 +150,7 @@ func TestClaimInqueueWorkBatch(t *testing.T) {
 	assert.Equal(t, differentOrgID, claimedBatch3[0].OrganizationID)
 }
 
-func TestClaimInqueueWorkBatch_DifferentTelemetryTypes(t *testing.T) {
+func TestClaimInqueueWorkBatch_DifferentSignals(t *testing.T) {
 	ctx := context.Background()
 	db := testhelpers.NewTestLRDBStore(t)
 
@@ -171,7 +165,7 @@ func TestClaimInqueueWorkBatch_DifferentTelemetryTypes(t *testing.T) {
 			InstanceNum:    1,
 			Bucket:         "test-bucket",
 			ObjectID:       "logs1.json.gz",
-			TelemetryType:  "logs",
+			Signal:         "logs",
 			Priority:       1,
 			FileSize:       1024,
 		},
@@ -181,7 +175,7 @@ func TestClaimInqueueWorkBatch_DifferentTelemetryTypes(t *testing.T) {
 			InstanceNum:    1,
 			Bucket:         "test-bucket",
 			ObjectID:       "metrics1.json.gz",
-			TelemetryType:  "metrics",
+			Signal:         "metrics",
 			Priority:       1,
 			FileSize:       2048,
 		},
@@ -195,37 +189,33 @@ func TestClaimInqueueWorkBatch_DifferentTelemetryTypes(t *testing.T) {
 
 	// Claim logs work
 	logsBatch, err := db.ClaimInqueueWorkBatch(ctx, lrdb.ClaimInqueueWorkBatchParams{
-		OrganizationID: orgID,
-		InstanceNum:    1,
-		TelemetryType:  "logs",
-		WorkerID:       workerID,
-		MaxTotalSize:   1024 * 1024, // 1MB
-		MinTotalSize:   0,           // No minimum
-		MaxAgeSeconds:  30,          // 30 seconds
-		BatchCount:     10,
+		Signal:        "logs",
+		WorkerID:      workerID,
+		MaxTotalSize:  1024 * 1024, // 1MB
+		MinTotalSize:  0,           // No minimum
+		MaxAgeSeconds: 30,          // 30 seconds
+		BatchCount:    10,
 	})
 	require.NoError(t, err)
 
 	// Should claim exactly 1 logs item
 	assert.Len(t, logsBatch, 1)
-	assert.Equal(t, "logs", logsBatch[0].TelemetryType)
+	assert.Equal(t, "logs", logsBatch[0].Signal)
 
 	// Claim metrics work
 	metricsBatch, err := db.ClaimInqueueWorkBatch(ctx, lrdb.ClaimInqueueWorkBatchParams{
-		OrganizationID: orgID,
-		InstanceNum:    1,
-		TelemetryType:  "metrics",
-		WorkerID:       workerID + 1,
-		MaxTotalSize:   1024 * 1024, // 1MB
-		MinTotalSize:   0,           // No minimum
-		MaxAgeSeconds:  30,          // 30 seconds
-		BatchCount:     10,
+		Signal:        "metrics",
+		WorkerID:      workerID + 1,
+		MaxTotalSize:  1024 * 1024, // 1MB
+		MinTotalSize:  0,           // No minimum
+		MaxAgeSeconds: 30,          // 30 seconds
+		BatchCount:    10,
 	})
 	require.NoError(t, err)
 
 	// Should claim exactly 1 metrics item
 	assert.Len(t, metricsBatch, 1)
-	assert.Equal(t, "metrics", metricsBatch[0].TelemetryType)
+	assert.Equal(t, "metrics", metricsBatch[0].Signal)
 }
 
 func TestClaimInqueueWorkBatch_EmptyQueue(t *testing.T) {
@@ -234,17 +224,14 @@ func TestClaimInqueueWorkBatch_EmptyQueue(t *testing.T) {
 
 	workerID := int64(12345)
 
-	// Try to claim work from empty queue - need a dummy org/instance
-	dummyOrgID := uuid.New()
+	// Try to claim work from empty queue
 	claimedBatch, err := db.ClaimInqueueWorkBatch(ctx, lrdb.ClaimInqueueWorkBatchParams{
-		OrganizationID: dummyOrgID,
-		InstanceNum:    1,
-		TelemetryType:  "logs",
-		WorkerID:       workerID,
-		MaxTotalSize:   1024 * 1024, // 1MB
-		MinTotalSize:   0,           // No minimum
-		MaxAgeSeconds:  30,          // 30 seconds
-		BatchCount:     10,
+		Signal:        "logs",
+		WorkerID:      workerID,
+		MaxTotalSize:  1024 * 1024, // 1MB
+		MinTotalSize:  0,           // No minimum
+		MaxAgeSeconds: 30,          // 30 seconds
+		BatchCount:    10,
 	})
 
 	// Should succeed but return empty batch

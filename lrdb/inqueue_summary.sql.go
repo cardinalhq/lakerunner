@@ -10,16 +10,16 @@ import (
 )
 
 const inqueueSummary = `-- name: InqueueSummary :many
-SELECT count(*) AS count, telemetry_type
+SELECT count(*) AS count, signal
 FROM inqueue
 WHERE claimed_at IS NULL
-GROUP BY telemetry_type
-ORDER BY telemetry_type
+GROUP BY signal
+ORDER BY signal
 `
 
 type InqueueSummaryRow struct {
-	Count         int64  `json:"count"`
-	TelemetryType string `json:"telemetry_type"`
+	Count  int64  `json:"count"`
+	Signal string `json:"signal"`
 }
 
 func (q *Queries) InqueueSummary(ctx context.Context) ([]InqueueSummaryRow, error) {
@@ -31,7 +31,7 @@ func (q *Queries) InqueueSummary(ctx context.Context) ([]InqueueSummaryRow, erro
 	var items []InqueueSummaryRow
 	for rows.Next() {
 		var i InqueueSummaryRow
-		if err := rows.Scan(&i.Count, &i.TelemetryType); err != nil {
+		if err := rows.Scan(&i.Count, &i.Signal); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

@@ -471,7 +471,7 @@ func runInqueueExpiry(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull) 
 	for _, obj := range expired {
 		ll.Info("Expired inqueue item", slog.Any("item", obj))
 		inqueueExpiryCounter.Add(ctx, 1, metric.WithAttributes(
-			attribute.String("signal", obj.TelemetryType),
+			attribute.String("signal", obj.Signal),
 		))
 	}
 	return nil
