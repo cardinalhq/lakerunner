@@ -43,11 +43,12 @@ type S3DB struct {
 }
 
 type bucketPool struct {
-	parent *S3DB
-	bucket string
-	region string
-	size   int
-	ttl    time.Duration
+	parent   *S3DB
+	bucket   string
+	region   string
+	endpoint string
+	size     int
+	ttl      time.Duration
 
 	mu  sync.Mutex
 	cur int
@@ -88,7 +89,7 @@ func (s *S3DB) Close() error {
 	return nil
 }
 
-func (s *S3DB) GetConnection(ctx context.Context, bucket, region string) (*sql.Conn, func(), error) {
+func (s *S3DB) GetConnection(ctx context.Context, bucket, region string, endpoint string) (*sql.Conn, func(), error) {
 	if bucket == "" {
 		return nil, nil, fmt.Errorf("bucket is required")
 	}
@@ -96,12 +97,13 @@ func (s *S3DB) GetConnection(ctx context.Context, bucket, region string) (*sql.C
 	p := s.pools[bucket]
 	if p == nil {
 		p = &bucketPool{
-			parent: s,
-			bucket: bucket,
-			region: region,
-			size:   s.poolSize,
-			ttl:    s.ttl,
-			ch:     make(chan *pooledConn, s.poolSize),
+			parent:   s,
+			bucket:   bucket,
+			region:   region,
+			endpoint: endpoint,
+			size:     s.poolSize,
+			ttl:      s.ttl,
+			ch:       make(chan *pooledConn, s.poolSize),
 		}
 		s.pools[bucket] = p
 	}
@@ -205,7 +207,7 @@ func (p *bucketPool) newConn(ctx context.Context) (*pooledConn, error) {
 	}
 
 	// create S3 secret for this bucket (serialize DDL)
-	if err := seedS3SecretFromEnv(ctx, conn, p.bucket, p.region); err != nil {
+	if err := seedS3SecretFromEnv(ctx, conn, p.bucket, p.region, p.endpoint); err != nil {
 		_ = conn.Close()
 		_ = db.Close()
 		return nil, err
@@ -310,7 +312,7 @@ func (s *S3DB) loadHTTPFS(ctx context.Context, conn *sql.Conn) error {
 }
 
 // CREATE OR REPLACE SECRET for a bucket (serialized).
-func seedS3SecretFromEnv(ctx context.Context, conn *sql.Conn, bucket, region string) error {
+func seedS3SecretFromEnv(ctx context.Context, conn *sql.Conn, bucket, region string, endpoint string) error {
 	keyID := os.Getenv("AWS_ACCESS_KEY_ID")
 	secret := os.Getenv("AWS_SECRET_ACCESS_KEY")
 	if keyID == "" || secret == "" {
@@ -328,17 +330,23 @@ func seedS3SecretFromEnv(ctx context.Context, conn *sql.Conn, bucket, region str
 		}
 	}
 
-	endpoint := os.Getenv("AWS_S3_ENDPOINT")
+	useSSL := "true"
+
 	if endpoint == "" {
 		endpoint = fmt.Sprintf("s3.%s.amazonaws.com", region)
+	} else {
+		if strings.HasPrefix(endpoint, "http://") {
+			endpoint = strings.TrimPrefix(endpoint, "http://")
+			useSSL = "false"
+		} else if strings.HasPrefix(endpoint, "https://") {
+			endpoint = strings.TrimPrefix(endpoint, "https://")
+			useSSL = "true"
+		}
 	}
+
 	urlStyle := os.Getenv("AWS_S3_URL_STYLE")
 	if urlStyle == "" {
 		urlStyle = "path"
-	}
-	useSSL := os.Getenv("AWS_S3_USE_SSL")
-	if useSSL == "" {
-		useSSL = "true"
 	}
 
 	secretName := "secret_" + strings.ReplaceAll(bucket, "-", "_")

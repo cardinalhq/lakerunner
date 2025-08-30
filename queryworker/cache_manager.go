@@ -19,11 +19,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/cardinalhq/lakerunner/internal/duckdbx"
-	"github.com/cardinalhq/lakerunner/internal/storageprofile"
-	"github.com/cardinalhq/lakerunner/promql"
-	"github.com/cardinalhq/lakerunner/queryapi"
-	"github.com/google/uuid"
 	"log/slog"
 	"os"
 	"sort"
@@ -31,6 +26,12 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cardinalhq/lakerunner/internal/duckdbx"
+	"github.com/cardinalhq/lakerunner/internal/storageprofile"
+	"github.com/cardinalhq/lakerunner/promql"
+	"github.com/cardinalhq/lakerunner/queryapi"
+	"github.com/google/uuid"
 )
 
 // DownloadBatchFunc downloads ALL given paths to their target local paths.
@@ -184,7 +185,7 @@ func EvaluatePushDown[T promql.Timestamped](
 
 			slog.Info("Segment Stats", "numS3", len(s3URIs), "numCached", len(cachedIDs), "numPresent", len(w.present))
 			// Stream uncached segments directly from S3 (one channel per glob).
-			s3Channels, err := streamFromS3(ctx, w, request, profile.Bucket, profile.Region, s3URIs, s3GlobSize, userSQL, mapper)
+			s3Channels, err := streamFromS3(ctx, w, request, profile.Bucket, profile.Region, profile.Endpoint, s3URIs, s3GlobSize, userSQL, mapper)
 			if err != nil {
 				return nil, fmt.Errorf("stream from S3: %w", err)
 			}
@@ -285,6 +286,7 @@ func streamFromS3[T promql.Timestamped](
 	request queryapi.PushDownRequest,
 	bucket string,
 	region string,
+	endpoint string,
 	s3URIs []string,
 	s3GlobSize int,
 	userSQL string,
@@ -319,7 +321,7 @@ func streamFromS3[T promql.Timestamped](
 			sqlReplaced := strings.Replace(userSQL, "{table}", src, 1)
 
 			// Lease a per-bucket connection (creates/refreshes S3 secret under the hood)
-			conn, release, err := w.s3Db.GetConnection(ctx, bucket, region)
+			conn, release, err := w.s3Db.GetConnection(ctx, bucket, region, endpoint)
 			if err != nil {
 				slog.Error("GetConnection failed", slog.String("bucket", bucket), slog.Any("error", err))
 				return
