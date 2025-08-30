@@ -49,7 +49,7 @@ func TestPutMetricCompactionWork(t *testing.T) {
 	err := db.PutMetricCompactionWork(ctx, lrdb.PutMetricCompactionWorkParams{
 		OrganizationID: orgID,
 		Dateint:        20250829,
-		FrequencyMs:    60000,
+		FrequencyMs:    5000,
 		SegmentID:      segmentID,
 		InstanceNum:    1,
 		TsRange:        tsRange,
@@ -70,7 +70,7 @@ func TestPutMetricCompactionWork_MultipleItems(t *testing.T) {
 		{
 			OrganizationID: orgID,
 			Dateint:        20250829,
-			FrequencyMs:    60000,
+			FrequencyMs:    5000,
 			SegmentID:      int64(12346),
 			InstanceNum:    1,
 			TsRange: pgtype.Range[pgtype.Timestamptz]{
@@ -86,7 +86,7 @@ func TestPutMetricCompactionWork_MultipleItems(t *testing.T) {
 		{
 			OrganizationID: orgID,
 			Dateint:        20250829,
-			FrequencyMs:    300000,
+			FrequencyMs:    7000,
 			SegmentID:      int64(12346),
 			InstanceNum:    1,
 			TsRange: pgtype.Range[pgtype.Timestamptz]{
@@ -119,7 +119,7 @@ func TestClaimMetricCompactionWork_BasicClaim(t *testing.T) {
 		{
 			OrganizationID: orgID,
 			Dateint:        20250829,
-			FrequencyMs:    60000,
+			FrequencyMs:    5000,
 			SegmentID:      int64(12346),
 			InstanceNum:    1,
 			TsRange: pgtype.Range[pgtype.Timestamptz]{
@@ -135,7 +135,7 @@ func TestClaimMetricCompactionWork_BasicClaim(t *testing.T) {
 		{
 			OrganizationID: orgID,
 			Dateint:        20250829,
-			FrequencyMs:    60000,
+			FrequencyMs:    5000,
 			SegmentID:      int64(12346),
 			InstanceNum:    1,
 			TsRange: pgtype.Range[pgtype.Timestamptz]{
@@ -190,7 +190,7 @@ func TestClaimMetricCompactionWork_ExactFill(t *testing.T) {
 		{
 			OrganizationID: orgID,
 			Dateint:        20250829,
-			FrequencyMs:    60000,
+			FrequencyMs:    5000,
 			SegmentID:      int64(12346),
 			InstanceNum:    1,
 			TsRange: pgtype.Range[pgtype.Timestamptz]{
@@ -206,7 +206,7 @@ func TestClaimMetricCompactionWork_ExactFill(t *testing.T) {
 		{
 			OrganizationID: orgID,
 			Dateint:        20250829,
-			FrequencyMs:    60000,
+			FrequencyMs:    5000,
 			SegmentID:      int64(12346),
 			InstanceNum:    1,
 			TsRange: pgtype.Range[pgtype.Timestamptz]{
@@ -248,7 +248,7 @@ func TestClaimMetricCompactionWork_AgeThreshold(t *testing.T) {
 	err := db.PutMetricCompactionWork(ctx, lrdb.PutMetricCompactionWorkParams{
 		OrganizationID: orgID,
 		Dateint:        20250829,
-		FrequencyMs:    60000,
+		FrequencyMs:    5000,
 		SegmentID:      int64(12347),
 		InstanceNum:    1,
 		TsRange: pgtype.Range[pgtype.Timestamptz]{
@@ -291,7 +291,7 @@ func TestClaimMetricCompactionWork_OversizedItem(t *testing.T) {
 		{
 			OrganizationID: orgID,
 			Dateint:        20250829,
-			FrequencyMs:    60000,
+			FrequencyMs:    5000,
 			SegmentID:      int64(12346),
 			InstanceNum:    1,
 			TsRange: pgtype.Range[pgtype.Timestamptz]{
@@ -307,7 +307,7 @@ func TestClaimMetricCompactionWork_OversizedItem(t *testing.T) {
 		{
 			OrganizationID: orgID,
 			Dateint:        20250829,
-			FrequencyMs:    60000,
+			FrequencyMs:    5000,
 			SegmentID:      int64(12346),
 			InstanceNum:    1,
 			TsRange: pgtype.Range[pgtype.Timestamptz]{
@@ -375,7 +375,7 @@ func TestClaimMetricCompactionWork_Priority(t *testing.T) {
 	err := db.PutMetricCompactionWork(ctx, lrdb.PutMetricCompactionWorkParams{
 		OrganizationID: orgID,
 		Dateint:        20250829,
-		FrequencyMs:    60000,
+		FrequencyMs:    5000,
 		SegmentID:      int64(12347),
 		InstanceNum:    1,
 		TsRange:        tsRange,
@@ -387,7 +387,7 @@ func TestClaimMetricCompactionWork_Priority(t *testing.T) {
 	err = db.PutMetricCompactionWork(ctx, lrdb.PutMetricCompactionWorkParams{
 		OrganizationID: orgID,
 		Dateint:        20250829,
-		FrequencyMs:    60000,
+		FrequencyMs:    5000,
 		SegmentID:      int64(12347),
 		InstanceNum:    1,
 		TsRange:        tsRange,
@@ -419,7 +419,7 @@ func TestReleaseMetricCompactionWork(t *testing.T) {
 	err := db.PutMetricCompactionWork(ctx, lrdb.PutMetricCompactionWorkParams{
 		OrganizationID: orgID,
 		Dateint:        20250829,
-		FrequencyMs:    60000,
+		FrequencyMs:    5000,
 		SegmentID:      int64(12347),
 		InstanceNum:    1,
 		TsRange: pgtype.Range[pgtype.Timestamptz]{
@@ -477,7 +477,7 @@ func TestReleaseMetricCompactionWork_OnlyReleasesByCorrectWorker(t *testing.T) {
 	err := db.PutMetricCompactionWork(ctx, lrdb.PutMetricCompactionWorkParams{
 		OrganizationID: orgID,
 		Dateint:        20250829,
-		FrequencyMs:    60000,
+		FrequencyMs:    5000,
 		SegmentID:      int64(12347),
 		InstanceNum:    1,
 		TsRange: pgtype.Range[pgtype.Timestamptz]{
