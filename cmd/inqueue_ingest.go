@@ -76,7 +76,7 @@ type IngestLoopContext struct {
 	lastLogTime       *time.Time
 }
 
-func NewIngestLoopContext(ctx context.Context, signal string, assumeRoleSessionName string) (*IngestLoopContext, error) {
+func NewIngestLoopContext(ctx context.Context, signal string) (*IngestLoopContext, error) {
 	ll := slog.Default().With(
 		slog.String("signal", signal),
 		slog.String("action", "ingest"),
@@ -87,7 +87,7 @@ func NewIngestLoopContext(ctx context.Context, signal string, assumeRoleSessionN
 		return nil, fmt.Errorf("failed to open LRDB store: %w", err)
 	}
 
-	awsmanager, err := awsclient.NewManager(ctx, awsclient.WithAssumeRoleSessionName(assumeRoleSessionName))
+	awsmanager, err := awsclient.NewManager(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create AWS manager: %w", err)
 	}

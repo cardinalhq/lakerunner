@@ -71,7 +71,7 @@ func init() {
 				}
 			}()
 
-			loop, err := NewRunqueueLoopContext(doneCtx, "logs", "compact", servicename)
+			loop, err := NewRunqueueLoopContext(doneCtx, "logs", "compact")
 			if err != nil {
 				return fmt.Errorf("failed to create runqueue loop context: %w", err)
 			}

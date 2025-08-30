@@ -78,7 +78,7 @@ func init() {
 				return fmt.Errorf("failed to open ConfigDB store: %w", err)
 			}
 
-			awsmanager, err := awsclient.NewManager(ctx, awsclient.WithAssumeRoleSessionName(servicename))
+			awsmanager, err := awsclient.NewManager(ctx)
 			if err != nil {
 				return fmt.Errorf("failed to create AWS manager: %w", err)
 			}

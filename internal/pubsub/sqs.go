@@ -42,9 +42,7 @@ type SQSService struct {
 var _ Backend = (*SQSService)(nil)
 
 func NewSQSService() (*SQSService, error) {
-	awsMgr, err := awsclient.NewManager(context.Background(),
-		awsclient.WithAssumeRoleSessionName("pubsub-sqs"),
-	)
+	awsMgr, err := awsclient.NewManager(context.Background())
 	if err != nil {
 		slog.Error("Failed to create AWS manager", slog.Any("error", err))
 		return nil, fmt.Errorf("failed to create AWS manager: %w", err)
