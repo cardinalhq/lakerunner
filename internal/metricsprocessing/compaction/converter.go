@@ -57,7 +57,7 @@ func ConvertToMetricSegs(rows []lrdb.ClaimMetricCompactionWorkRow) []lrdb.Metric
 			CreatedBy:    lrdb.CreatedByIngest,
 			SlotID:       0,         // Default
 			Fingerprints: []int64{}, // Empty
-			SortVersion:  1,         // Default
+			SortVersion:  lrdb.CurrentMetricSortVersion,
 		})
 	}
 
