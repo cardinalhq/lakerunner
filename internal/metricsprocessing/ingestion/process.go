@@ -26,7 +26,6 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
-	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -124,53 +123,34 @@ func uploadAndQueue(
 
 	// Use context without cancellation for critical section to ensure atomic completion
 	criticalCtx := context.WithoutCancel(ctx)
-	if err := metricsprocessing.UploadMetricResults(criticalCtx, ll, s3client, mdb, results, uploadParams); err != nil {
+	uploadResults, err := metricsprocessing.UploadMetricResults(criticalCtx, ll, s3client, mdb, results, uploadParams)
+	if err != nil {
 		return fmt.Errorf("failed to upload results: %w", err)
 	}
 
-	// Queue compaction and rollup for each time range represented in the results
-	if err := queueMetricWorkForResults(criticalCtx, mdb, firstItem, results); err != nil {
+	// Queue compaction for each uploaded segment
+	if err := queueMetricWorkForUploadResults(criticalCtx, mdb, firstItem, uploadResults); err != nil {
 		return fmt.Errorf("failed to queue metric work: %w", err)
 	}
 
 	return nil
 }
 
-// queueMetricWorkForResults queues compaction and rollup work for the time ranges in results
-func queueMetricWorkForResults(ctx context.Context, mdb lrdb.StoreFull, inf lrdb.Inqueue, results []parquetwriter.Result) error {
-	// The new path writes 60s files, but we need to queue work for 10s frequency
-	// so compaction can group multiple 10s logical blocks within the 60s boundary
-	const frequency10s = int32(10000) // 10 seconds - the base frequency we're ingesting
+// queueMetricWorkForUploadResults queues compaction work for uploaded segments
+func queueMetricWorkForUploadResults(ctx context.Context, mdb lrdb.StoreFull, inf lrdb.Inqueue, uploadResults []metricsprocessing.UploadResult) error {
+	const frequency10s = int64(10000) // 10 seconds - frequency for compaction work
 
-	// Collect all 10-second blocks covered by our results
-	blocksToQueue := make(map[int64]bool)
-
-	for _, result := range results {
-		if stats, ok := result.Metadata.(factories.MetricsFileStats); ok {
-			// Calculate which 10-second blocks this file covers
-			startBlock := stats.FirstTS / int64(frequency10s)
-			endBlock := stats.LastTS / int64(frequency10s)
-
-			// Mark all 10-second blocks that need queueing
-			for block := startBlock; block <= endBlock; block++ {
-				blocksToQueue[block] = true
-			}
-		}
-	}
-
-	// Queue compaction and rollup for each unique 10-second block
-	for block := range blocksToQueue {
-		blockStartTS := block * int64(frequency10s)
-		qmcData := qmcFromInqueue(inf, frequency10s, blockStartTS)
-
-		// Queue compaction for 10s frequency (will compact within 60s boundary)
-		if err := queueMetricCompaction(ctx, mdb, qmcData); err != nil {
-			return fmt.Errorf("queueing metric compaction for 10s block %d: %w", block, err)
-		}
-
-		// Queue rollup for 60s frequency (will rollup 10s data to 60s)
-		if err := queueMetricRollup(ctx, mdb, qmcData); err != nil {
-			return fmt.Errorf("queueing metric rollup for 10s block %d: %w", block, err)
+	// Queue compaction work for each uploaded segment
+	for _, uploadResult := range uploadResults {
+		err := mdb.PutMetricCompactionWork(ctx, lrdb.PutMetricCompactionWorkParams{
+			OrganizationID: inf.OrganizationID,
+			Dateint:        uploadResult.DateInt,
+			FrequencyMs:    frequency10s,
+			SegmentID:      uploadResult.SegmentID,
+			InstanceNum:    inf.InstanceNum,
+		})
+		if err != nil {
+			return fmt.Errorf("queueing metric compaction work for segment %d: %w", uploadResult.SegmentID, err)
 		}
 	}
 

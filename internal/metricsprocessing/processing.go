@@ -171,6 +171,7 @@ type UploadParams struct {
 }
 
 // UploadMetricResults uploads parquet files to S3 and updates the database with segment records.
+// Returns the upload results containing segment IDs and dateints for each uploaded file.
 func UploadMetricResults(
 	ctx context.Context,
 	ll *slog.Logger,
@@ -178,13 +179,22 @@ func UploadMetricResults(
 	mdb lrdb.StoreFull,
 	results []parquetwriter.Result,
 	params UploadParams,
-) error {
+) ([]UploadResult, error) {
+	var uploadResults []UploadResult
 	for _, result := range results {
-		if err := uploadSingleMetricResult(ctx, ll, s3client, mdb, result, params); err != nil {
-			return fmt.Errorf("failed to upload result: %w", err)
+		uploadResult, err := uploadSingleMetricResult(ctx, ll, s3client, mdb, result, params)
+		if err != nil {
+			return nil, fmt.Errorf("failed to upload result: %w", err)
 		}
+		uploadResults = append(uploadResults, uploadResult)
 	}
-	return nil
+	return uploadResults, nil
+}
+
+// UploadResult contains the result of uploading a single metric file
+type UploadResult struct {
+	SegmentID int64
+	DateInt   int32
 }
 
 // uploadSingleMetricResult uploads a single parquet file result to S3 and database.
@@ -195,13 +205,13 @@ func uploadSingleMetricResult(
 	mdb lrdb.StoreFull,
 	result parquetwriter.Result,
 	params UploadParams,
-) error {
+) (UploadResult, error) {
 	// Safety check: should never get empty results from the writer
 	if result.RecordCount == 0 {
 		ll.Error("Received empty result from writer - this should not happen",
 			slog.String("fileName", result.FileName),
 			slog.Int64("recordCount", result.RecordCount))
-		return fmt.Errorf("received empty result file with 0 records")
+		return UploadResult{}, fmt.Errorf("received empty result file with 0 records")
 	}
 
 	// Generate segment ID and object ID
@@ -217,18 +227,18 @@ func uploadSingleMetricResult(
 		hour = int16(t.Hour())
 	} else {
 		// No valid timestamps - this shouldn't happen if validation worked correctly
-		return fmt.Errorf("no valid timestamps in result metadata - cannot determine dateint/hour")
+		return UploadResult{}, fmt.Errorf("no valid timestamps in result metadata - cannot determine dateint/hour")
 	}
 
 	orgUUID, err := uuid.Parse(params.OrganizationID)
 	if err != nil {
-		return fmt.Errorf("invalid organization ID: %w", err)
+		return UploadResult{}, fmt.Errorf("invalid organization ID: %w", err)
 	}
 	objID := helpers.MakeDBObjectID(orgUUID, params.CollectorName, dateint, hour, segmentID, "metrics")
 
 	// Upload to S3
 	if err := s3helper.UploadS3Object(ctx, s3client, params.Bucket, objID, result.FileName); err != nil {
-		return fmt.Errorf("uploading file to S3: %w", err)
+		return UploadResult{}, fmt.Errorf("uploading file to S3: %w", err)
 	}
 
 	// Extract fingerprints and timestamps from result metadata
@@ -248,7 +258,7 @@ func uploadSingleMetricResult(
 				slog.Int64("lastTs", stats.LastTS),
 				slog.Int64("endTs", endTs),
 				slog.Int64("recordCount", result.RecordCount))
-			return fmt.Errorf("invalid timestamp range: startTs=%d, lastTs=%d", startTs, stats.LastTS)
+			return UploadResult{}, fmt.Errorf("invalid timestamp range: startTs=%d, lastTs=%d", startTs, stats.LastTS)
 		}
 
 		ll.Debug("Metric segment stats",
@@ -260,7 +270,7 @@ func uploadSingleMetricResult(
 	} else {
 		ll.Error("Failed to extract MetricsFileStats from result metadata",
 			slog.String("metadataType", fmt.Sprintf("%T", result.Metadata)))
-		return fmt.Errorf("missing or invalid MetricsFileStats in result metadata")
+		return UploadResult{}, fmt.Errorf("missing or invalid MetricsFileStats in result metadata")
 	}
 
 	// Insert segment record
@@ -280,17 +290,20 @@ func uploadSingleMetricResult(
 		Published:      true,
 		CreatedBy:      params.CreatedBy,
 		Fingerprints:   fingerprints,
-		SortVersion:    lrdb.CurrentMetricSortVersion, // Files from ingestion use current sort version
+		SortVersion:    lrdb.CurrentMetricSortVersion,
 	})
 	if err != nil {
 		// Clean up uploaded file on database error
 		if err2 := s3helper.DeleteS3Object(ctx, s3client, params.Bucket, objID); err2 != nil {
 			ll.Error("Failed to delete S3 object after insertion failure", slog.Any("error", err2))
 		}
-		return fmt.Errorf("inserting metric segment: %w", err)
+		return UploadResult{}, fmt.Errorf("inserting metric segment: %w", err)
 	}
 
-	return nil
+	return UploadResult{
+		SegmentID: segmentID,
+		DateInt:   dateint,
+	}, nil
 }
 
 // NormalizeRowForParquetWrite normalizes sketch fields for parquet writing.
