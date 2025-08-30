@@ -76,6 +76,7 @@ type Querier interface {
 	InqueueJournalDelete(ctx context.Context, arg InqueueJournalDeleteParams) error
 	InqueueJournalUpsert(ctx context.Context, arg InqueueJournalUpsertParams) (bool, error)
 	InqueueSummary(ctx context.Context) ([]InqueueSummaryRow, error)
+	InsertCompactedMetricSeg(ctx context.Context, arg []InsertCompactedMetricSegParams) *InsertCompactedMetricSegBatchResults
 	InsertLogSegmentDirect(ctx context.Context, arg InsertLogSegmentParams) error
 	InsertMetricSegmentDirect(ctx context.Context, arg InsertMetricSegmentParams) error
 	InsertTraceSegmentDirect(ctx context.Context, arg InsertTraceSegmentDirectParams) error
@@ -85,6 +86,7 @@ type Querier interface {
 	// and average bytes per record for log segments in the last hour per organization and instance.
 	// This query is basically identical to the MetricSegEstimator, but for log segments.
 	LogSegEstimator(ctx context.Context, arg LogSegEstimatorParams) ([]LogSegEstimatorRow, error)
+	MarkMetricSegsCompactedByKeys(ctx context.Context, arg MarkMetricSegsCompactedByKeysParams) error
 	// Returns an estimate of the number of metric segments, average bytes, average records,
 	// and average bytes per record for metric segments in the last hour per organization, instance, and frequency.
 	// Uses frequency_ms to provide more accurate estimates based on collection frequency.
@@ -98,9 +100,6 @@ type Querier interface {
 	PutMetricCompactionWork(ctx context.Context, arg PutMetricCompactionWorkParams) error
 	ReleaseInqueueWork(ctx context.Context, arg ReleaseInqueueWorkParams) error
 	ReleaseMetricCompactionWork(ctx context.Context, arg ReleaseMetricCompactionWorkParams) error
-	// Replace metric segments after compaction: mark old as compacted=true, published=false
-	// and insert new segments as compacted=false, published=true
-	ReplaceCompactedMetricSegs(ctx context.Context, arg ReplaceCompactedMetricSegsParams) error
 	SignalLockCleanup(ctx context.Context) (int32, error)
 	TouchInqueueWork(ctx context.Context, arg TouchInqueueWorkParams) error
 	// Returns an estimate of the number of trace segments, average bytes, average records,

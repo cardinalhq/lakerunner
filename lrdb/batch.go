@@ -494,3 +494,109 @@ func (b *BatchUpsertExemplarTracesBatchResults) Close() error {
 	b.closed = true
 	return b.br.Close()
 }
+
+const insertCompactedMetricSeg = `-- name: InsertCompactedMetricSeg :batchexec
+INSERT INTO metric_seg (
+  organization_id, dateint, frequency_ms, segment_id, instance_num,
+  ts_range, record_count, file_size, ingest_dateint,
+  published, rolledup, created_at, created_by, slot_id,
+  fingerprints, sort_version, slot_count, compacted
+)
+VALUES (
+  $1,
+  $2,
+  $3,
+  $4,
+  $5,
+  int8range($6, $7, '[)'),  -- half-open; change to '[]' if you store inclusive end
+  $8,
+  $9,
+  $10,
+  $11,            -- typically true for new compacted output
+  $12,             -- pass as needed
+  now(),
+  $13,
+  $14,
+  $15::bigint[],  -- per-row bigint[]; bind as []int64
+  $16,
+  $17,
+  false                  -- new segments are not compacted
+)
+ON CONFLICT (organization_id, dateint, frequency_ms, segment_id, instance_num)
+DO NOTHING
+`
+
+type InsertCompactedMetricSegBatchResults struct {
+	br     pgx.BatchResults
+	tot    int
+	closed bool
+}
+
+type InsertCompactedMetricSegParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Dateint        int32     `json:"dateint"`
+	FrequencyMs    int32     `json:"frequency_ms"`
+	SegmentID      int64     `json:"segment_id"`
+	InstanceNum    int16     `json:"instance_num"`
+	StartTs        int64     `json:"start_ts"`
+	EndTs          int64     `json:"end_ts"`
+	RecordCount    int64     `json:"record_count"`
+	FileSize       int64     `json:"file_size"`
+	EIngestDateint int32     `json:"e_ingest_dateint"`
+	Published      bool      `json:"published"`
+	Rolledup       bool      `json:"rolledup"`
+	CreatedBy      CreatedBy `json:"created_by"`
+	SlotID         int32     `json:"slot_id"`
+	Fingerprints   []int64   `json:"fingerprints"`
+	SortVersion    int16     `json:"sort_version"`
+	SlotCount      int32     `json:"slot_count"`
+}
+
+func (q *Queries) InsertCompactedMetricSeg(ctx context.Context, arg []InsertCompactedMetricSegParams) *InsertCompactedMetricSegBatchResults {
+	batch := &pgx.Batch{}
+	for _, a := range arg {
+		vals := []interface{}{
+			a.OrganizationID,
+			a.Dateint,
+			a.FrequencyMs,
+			a.SegmentID,
+			a.InstanceNum,
+			a.StartTs,
+			a.EndTs,
+			a.RecordCount,
+			a.FileSize,
+			a.EIngestDateint,
+			a.Published,
+			a.Rolledup,
+			a.CreatedBy,
+			a.SlotID,
+			a.Fingerprints,
+			a.SortVersion,
+			a.SlotCount,
+		}
+		batch.Queue(insertCompactedMetricSeg, vals...)
+	}
+	br := q.db.SendBatch(ctx, batch)
+	return &InsertCompactedMetricSegBatchResults{br, len(arg), false}
+}
+
+func (b *InsertCompactedMetricSegBatchResults) Exec(f func(int, error)) {
+	defer b.br.Close()
+	for t := 0; t < b.tot; t++ {
+		if b.closed {
+			if f != nil {
+				f(t, ErrBatchAlreadyClosed)
+			}
+			continue
+		}
+		_, err := b.br.Exec()
+		if f != nil {
+			f(t, err)
+		}
+	}
+}
+
+func (b *InsertCompactedMetricSegBatchResults) Close() error {
+	b.closed = true
+	return b.br.Close()
+}
