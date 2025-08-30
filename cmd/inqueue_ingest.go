@@ -38,6 +38,31 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
+// InqueueHeartbeatStore defines the minimal interface needed for inqueue heartbeat operations
+type InqueueHeartbeatStore interface {
+	TouchInqueueWork(ctx context.Context, params lrdb.TouchInqueueWorkParams) error
+}
+
+// newInqueueHeartbeater creates a new heartbeater for the given claimed inqueue items
+func newInqueueHeartbeater(db InqueueHeartbeatStore, workerID int64, items []uuid.UUID) *heartbeat.Heartbeater {
+	if len(items) == 0 {
+		// Return a no-op heartbeater for empty items
+		return heartbeat.New(func(ctx context.Context) error {
+			return nil // No-op
+		}, time.Minute, slog.Default().With("component", "inqueue_heartbeater", "worker_id", workerID, "item_count", 0))
+	}
+
+	heartbeatFunc := func(ctx context.Context) error {
+		return db.TouchInqueueWork(ctx, lrdb.TouchInqueueWorkParams{
+			Ids:       items,
+			ClaimedBy: workerID,
+		})
+	}
+
+	logger := slog.Default().With("component", "inqueue_heartbeater", "worker_id", workerID, "item_count", len(items))
+	return heartbeat.New(heartbeatFunc, time.Minute, logger)
+}
+
 type InqueueBatchProcessingFunction func(
 	ctx context.Context,
 	ll *slog.Logger,
@@ -304,7 +329,7 @@ func ingestFilesBatch(
 	for i, item := range items {
 		itemIDs[i] = item.ID
 	}
-	heartbeater := heartbeat.NewInqueueHeartbeater(loop.mdb, myInstanceID, itemIDs)
+	heartbeater := newInqueueHeartbeater(loop.mdb, myInstanceID, itemIDs)
 	cancel := heartbeater.Start(ctx)
 	defer cancel() // Ensure heartbeating stops when processing completes
 
