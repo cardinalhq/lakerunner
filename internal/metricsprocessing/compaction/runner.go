@@ -38,32 +38,26 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
-	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-type WorkerInterruptedError struct {
+type workerInterruptedError struct {
 	Reason string
 }
 
-func (e *WorkerInterruptedError) Error() string {
+func (e *workerInterruptedError) Error() string {
 	return fmt.Sprintf("worker interrupted: %s", e.Reason)
 }
 
-func NewWorkerInterrupted(reason string) error {
-	return &WorkerInterruptedError{Reason: reason}
-}
-
-func IsWorkerInterrupted(err error) bool {
-	var workerErr *WorkerInterruptedError
-	return errors.As(err, &workerErr)
+func newWorkerInterrupted(reason string) error {
+	return &workerInterruptedError{Reason: reason}
 }
 
 func RunLoop(
 	ctx context.Context,
 	manager *Manager,
-	mdb CompactionStore,
+	mdb compactionStore,
 	sp storageprofile.StorageProfileProvider,
 	awsmanager *awsclient.Manager,
 ) error {
@@ -89,7 +83,7 @@ func RunLoop(
 			continue
 		}
 
-		err = ProcessBatch(ctx, ll, mdb, sp, awsmanager, claimedWork)
+		err = processBatch(ctx, ll, mdb, sp, awsmanager, claimedWork)
 		if err != nil {
 			ll.Error("Failed to process compaction batch", slog.Any("error", err))
 			if failErr := manager.FailWork(ctx, claimedWork); failErr != nil {
@@ -103,10 +97,10 @@ func RunLoop(
 	}
 }
 
-func ProcessBatch(
+func processBatch(
 	ctx context.Context,
 	ll *slog.Logger,
-	mdb CompactionStore,
+	mdb compactionStore,
 	sp storageprofile.StorageProfileProvider,
 	awsmanager *awsclient.Manager,
 	claimedWork []lrdb.ClaimMetricCompactionWorkRow,
@@ -174,7 +168,7 @@ func ProcessBatch(
 		slog.Int("batchSize", len(claimedWork)))
 
 	// Convert claimed work to MetricSeg format for existing processing logic
-	segments, err := FetchMetricSegsForCompaction(ctx, mdb, claimedWork)
+	segments, err := fetchMetricSegsForCompaction(ctx, mdb, claimedWork)
 	if err != nil {
 		ll.Error("Failed to fetch metric segments for compaction", slog.Any("error", err))
 		return err
@@ -201,7 +195,7 @@ func ProcessBatch(
 func compactSegments(
 	ctx context.Context,
 	ll *slog.Logger,
-	mdb CompactionStore,
+	mdb compactionStore,
 	tmpdir string,
 	workItem lrdb.ClaimMetricCompactionWorkRow,
 	profile storageprofile.StorageProfile,
@@ -224,7 +218,7 @@ func compactSegments(
 		ll.Info("Context cancelled before starting compaction",
 			slog.Int("segmentCount", len(rows)),
 			slog.Any("error", ctx.Err()))
-		return NewWorkerInterrupted("context cancelled before compaction")
+		return newWorkerInterrupted("context cancelled before compaction")
 	}
 
 	st, _, ok := helpers.RangeBounds(workItem.TsRange)
@@ -301,7 +295,7 @@ func compactSegments(
 
 		for i := 0; i < batch.Len(); i++ {
 			row := batch.Get(i)
-			if err := NormalizeRowForParquetWrite(row); err != nil {
+			if err := metricsprocessing.NormalizeRowForParquetWrite(row); err != nil {
 				ll.Error("Failed to normalize row", slog.Any("error", err))
 				pipeline.ReturnBatch(normalizedBatch)
 				pipeline.ReturnBatch(batch)
@@ -375,7 +369,7 @@ func compactSegments(
 		ll.Info("Context cancelled before critical section - safe to abort",
 			slog.Int("resultCount", len(results)),
 			slog.Any("error", ctx.Err()))
-		return NewWorkerInterrupted("context cancelled before metrics upload phase")
+		return newWorkerInterrupted("context cancelled before metrics upload phase")
 	}
 
 	// Use context without cancellation for critical section to ensure atomic completion
@@ -439,7 +433,7 @@ func uploadCompactedFiles(
 func replaceCompactedSegments(
 	ctx context.Context,
 	ll *slog.Logger,
-	mdb CompactionStore,
+	mdb compactionStore,
 	results []parquetwriter.Result,
 	oldRows []lrdb.MetricSeg,
 	workItem lrdb.ClaimMetricCompactionWorkRow,
@@ -545,20 +539,31 @@ func shouldCompactMetrics(rows []lrdb.MetricSeg) bool {
 	return compact
 }
 
-func NormalizeRowForParquetWrite(row filereader.Row) error {
-	sketch := row[wkk.RowKeySketch]
-	if sketch == nil {
-		return nil
+func fetchMetricSegsForCompaction(ctx context.Context, db compactionStore, claimedWork []lrdb.ClaimMetricCompactionWorkRow) ([]lrdb.MetricSeg, error) {
+	if len(claimedWork) == 0 {
+		return nil, nil
 	}
 
-	if _, ok := sketch.([]byte); ok {
-		return nil
+	// All work items must have same org/dateint/frequency/instance (safety check should ensure this)
+	firstItem := claimedWork[0]
+
+	// Extract segment IDs from claimed work
+	segmentIDs := make([]int64, len(claimedWork))
+	for i, item := range claimedWork {
+		segmentIDs[i] = item.SegmentID
 	}
 
-	if str, ok := sketch.(string); ok {
-		row[wkk.RowKeySketch] = []byte(str)
-		return nil
+	// Query actual segments from database
+	segments, err := db.GetMetricSegsForCompactionWork(ctx, lrdb.GetMetricSegsForCompactionWorkParams{
+		OrganizationID: firstItem.OrganizationID,
+		Dateint:        firstItem.Dateint,
+		FrequencyMs:    int32(firstItem.FrequencyMs),
+		InstanceNum:    firstItem.InstanceNum,
+		SegmentIds:     segmentIDs,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch metric segments: %w", err)
 	}
 
-	return fmt.Errorf("unexpected sketch type for parquet writing: %T", sketch)
+	return segments, nil
 }
