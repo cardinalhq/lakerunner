@@ -52,6 +52,18 @@ func runLoop(
 			continue
 		}
 
+		// Check for cancellation after claiming work but before processing
+		select {
+		case <-ctx.Done():
+			ll.Info("Context cancelled after claiming work, releasing items",
+				slog.Int("claimedItems", len(claimedWork)))
+			if releaseErr := manager.FailWork(ctx, claimedWork); releaseErr != nil {
+				ll.Error("Failed to release work items after cancellation", slog.Any("error", releaseErr))
+			}
+			return ctx.Err()
+		default:
+		}
+
 		// Start heartbeating for claimed items
 		itemIDs := make([]int64, len(claimedWork))
 		for i, work := range claimedWork {

@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -133,8 +134,12 @@ func (m *Manager) CompleteWork(ctx context.Context, rows []lrdb.ClaimMetricCompa
 }
 
 func (m *Manager) FailWork(ctx context.Context, rows []lrdb.ClaimMetricCompactionWorkRow) error {
+	// Use deadline context to ensure DB operations succeed even if original context is cancelled
+	releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
 	for _, row := range rows {
-		if err := m.db.ReleaseMetricCompactionWork(ctx, lrdb.ReleaseMetricCompactionWorkParams{
+		if err := m.db.ReleaseMetricCompactionWork(releaseCtx, lrdb.ReleaseMetricCompactionWorkParams{
 			ID:        row.ID,
 			ClaimedBy: m.workerID,
 		}); err != nil {
