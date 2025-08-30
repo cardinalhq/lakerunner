@@ -85,6 +85,9 @@ type Querier interface {
 	PutMetricCompactionWork(ctx context.Context, arg PutMetricCompactionWorkParams) error
 	ReleaseInqueueWork(ctx context.Context, arg ReleaseInqueueWorkParams) error
 	ReleaseMetricCompactionWork(ctx context.Context, arg ReleaseMetricCompactionWorkParams) error
+	// Replace metric segments after compaction: mark old as compacted=true, published=false
+	// and insert new segments as compacted=false, published=true
+	ReplaceCompactedMetricSegs(ctx context.Context, arg ReplaceCompactedMetricSegsParams) error
 	SignalLockCleanup(ctx context.Context) (int32, error)
 	TouchInqueueWork(ctx context.Context, arg TouchInqueueWorkParams) error
 	// Returns an estimate of the number of trace segments, average bytes, average records,

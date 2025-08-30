@@ -27,6 +27,14 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
+type CompactionStore interface {
+	ClaimMetricCompactionWork(ctx context.Context, params lrdb.ClaimMetricCompactionWorkParams) ([]lrdb.ClaimMetricCompactionWorkRow, error)
+	DeleteMetricCompactionWork(ctx context.Context, params lrdb.DeleteMetricCompactionWorkParams) error
+	ReleaseMetricCompactionWork(ctx context.Context, params lrdb.ReleaseMetricCompactionWorkParams) error
+	ReplaceCompactedMetricSegs(ctx context.Context, params lrdb.ReplaceCompactedMetricSegsParams) error
+	GetMetricSegsForCompactionWork(ctx context.Context, params lrdb.GetMetricSegsForCompactionWorkParams) ([]lrdb.MetricSeg, error)
+}
+
 type Config struct {
 	MaxAgeSeconds        int32
 	BatchCount           int32
@@ -56,13 +64,13 @@ func GetConfigFromEnv() Config {
 }
 
 type Manager struct {
-	db       lrdb.StoreFull
+	db       CompactionStore
 	workerID int64
 	config   Config
 	ll       *slog.Logger
 }
 
-func NewManager(db lrdb.StoreFull, workerID int64, config Config) *Manager {
+func NewManager(db CompactionStore, workerID int64, config Config) *Manager {
 	return &Manager{
 		db:       db,
 		workerID: workerID,

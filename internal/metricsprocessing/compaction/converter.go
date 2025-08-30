@@ -15,50 +15,37 @@
 package compaction
 
 import (
-	"github.com/jackc/pgx/v5/pgtype"
+	"context"
+	"fmt"
 
-	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-func ConvertToMetricSegs(rows []lrdb.ClaimMetricCompactionWorkRow) []lrdb.MetricSeg {
-	segments := make([]lrdb.MetricSeg, 0, len(rows))
-
-	for _, row := range rows {
-		if !row.TsRange.Valid {
-			continue
-		}
-
-		startMs := row.TsRange.Lower.Time.UnixMilli()
-		endMs := row.TsRange.Upper.Time.UnixMilli()
-		dateint, _ := helpers.MSToDateintHour(startMs)
-
-		segments = append(segments, lrdb.MetricSeg{
-			OrganizationID: row.OrganizationID,
-			Dateint:        dateint,
-			FrequencyMs:    int32(row.FrequencyMs),
-			SegmentID:      row.SegmentID,
-			InstanceNum:    row.InstanceNum,
-			RecordCount:    row.RecordCount,
-			FileSize:       row.RecordCount * 100, // Estimate based on record count
-			CreatedAt:      row.QueueTs,
-			IngestDateint:  dateint,
-			TsRange: pgtype.Range[pgtype.Int8]{
-				Lower:     pgtype.Int8{Int64: startMs, Valid: true},
-				Upper:     pgtype.Int8{Int64: endMs, Valid: true},
-				LowerType: pgtype.Inclusive,
-				UpperType: pgtype.Exclusive,
-				Valid:     true,
-			},
-			Published:    true,  // Assume published if in compaction queue
-			Rolledup:     false, // Not yet rolled up
-			CreatedBy:    lrdb.CreatedByIngest,
-			SlotID:       0,         // Default
-			SlotCount:    1,         // Default
-			Fingerprints: []int64{}, // Empty
-			SortVersion:  lrdb.CurrentMetricSortVersion,
-		})
+func FetchMetricSegsForCompaction(ctx context.Context, db CompactionStore, claimedWork []lrdb.ClaimMetricCompactionWorkRow) ([]lrdb.MetricSeg, error) {
+	if len(claimedWork) == 0 {
+		return nil, nil
 	}
 
-	return segments
+	// All work items must have same org/dateint/frequency/instance (safety check should ensure this)
+	firstItem := claimedWork[0]
+
+	// Extract segment IDs from claimed work
+	segmentIDs := make([]int64, len(claimedWork))
+	for i, item := range claimedWork {
+		segmentIDs[i] = item.SegmentID
+	}
+
+	// Query actual segments from database
+	segments, err := db.GetMetricSegsForCompactionWork(ctx, lrdb.GetMetricSegsForCompactionWorkParams{
+		OrganizationID: firstItem.OrganizationID,
+		Dateint:        firstItem.Dateint,
+		FrequencyMs:    int32(firstItem.FrequencyMs),
+		InstanceNum:    firstItem.InstanceNum,
+		SegmentIds:     segmentIDs,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch metric segments: %w", err)
+	}
+
+	return segments, nil
 }
