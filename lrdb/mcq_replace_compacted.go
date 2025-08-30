@@ -49,7 +49,7 @@ func (q *Store) CompactMetricSegs(ctx context.Context, args ReplaceMetricSegsPar
 			Rolledup:       args.Rolledup,
 			CreatedBy:      args.CreatedBy,
 			SlotID:         args.SlotID,
-			Fingerprints:   args.Fingerprints,
+			Fingerprints:   r.Fingerprints,
 			SortVersion:    args.SortVersion,
 			SlotCount:      args.SlotCount,
 		}
