@@ -94,7 +94,7 @@ func SetupTestLRDB(t *testing.T) *pgxpool.Pool {
 		if err != nil {
 			slog.Error("Failed to drop test database", slog.String("dbName", dbName), slog.Any("error", err))
 		}
-		
+
 		// Close base pool after cleanup
 		basePool.Close()
 	})
@@ -163,7 +163,7 @@ func SetupTestConfigDB(t *testing.T) *pgxpool.Pool {
 		if err != nil {
 			slog.Error("Failed to drop test configdb", slog.String("dbName", dbName), slog.Any("error", err))
 		}
-		
+
 		// Close base pool after cleanup
 		basePool.Close()
 	})
