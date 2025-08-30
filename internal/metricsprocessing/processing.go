@@ -193,8 +193,11 @@ func UploadMetricResults(
 
 // UploadResult contains the result of uploading a single metric file
 type UploadResult struct {
-	SegmentID int64
-	DateInt   int32
+	SegmentID   int64
+	DateInt     int32
+	StartTs     int64
+	EndTs       int64
+	RecordCount int64
 }
 
 // uploadSingleMetricResult uploads a single parquet file result to S3 and database.
@@ -301,8 +304,11 @@ func uploadSingleMetricResult(
 	}
 
 	return UploadResult{
-		SegmentID: segmentID,
-		DateInt:   dateint,
+		SegmentID:   segmentID,
+		DateInt:     dateint,
+		StartTs:     startTs,
+		EndTs:       endTs,
+		RecordCount: result.RecordCount,
 	}, nil
 }
 

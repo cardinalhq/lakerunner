@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/exemplar"
@@ -28,6 +29,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // ProcessBatch processes a batch of metric ingest items
@@ -142,12 +144,28 @@ func queueMetricWorkForUploadResults(ctx context.Context, mdb lrdb.StoreFull, in
 
 	// Queue compaction work for each uploaded segment
 	for _, uploadResult := range uploadResults {
+		// Convert timestamps from milliseconds to PostgreSQL timestamptz
+		startTime := time.Unix(uploadResult.StartTs/1000, (uploadResult.StartTs%1000)*1000000).UTC()
+		endTime := time.Unix(uploadResult.EndTs/1000, (uploadResult.EndTs%1000)*1000000).UTC()
+
+		// Construct the timestamp range for PostgreSQL
+		tsRange := pgtype.Range[pgtype.Timestamptz]{
+			Lower:     pgtype.Timestamptz{Time: startTime, Valid: true},
+			Upper:     pgtype.Timestamptz{Time: endTime, Valid: true},
+			LowerType: pgtype.Inclusive,
+			UpperType: pgtype.Exclusive,
+			Valid:     true,
+		}
+
 		err := mdb.PutMetricCompactionWork(ctx, lrdb.PutMetricCompactionWorkParams{
 			OrganizationID: inf.OrganizationID,
 			Dateint:        uploadResult.DateInt,
 			FrequencyMs:    frequency10s,
 			SegmentID:      uploadResult.SegmentID,
 			InstanceNum:    inf.InstanceNum,
+			TsRange:        tsRange,
+			RecordCount:    uploadResult.RecordCount,
+			Priority:       1, // Default priority for metric compaction work
 		})
 		if err != nil {
 			return fmt.Errorf("queueing metric compaction work for segment %d: %w", uploadResult.SegmentID, err)
