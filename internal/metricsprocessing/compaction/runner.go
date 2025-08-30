@@ -359,6 +359,7 @@ func compactSegments(
 		Dateint:        workItem.Dateint,
 		FrequencyMs:    int32(workItem.FrequencyMs),
 		SlotID:         0, // Default slot ID
+		SlotCount:      1, // Default slot count
 		IngestDateint:  metricsprocessing.GetIngestDateint(rows),
 		CollectorName:  profile.CollectorName,
 		Bucket:         profile.Bucket,

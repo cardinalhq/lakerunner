@@ -12,7 +12,7 @@ import (
 )
 
 const getMetricSegsForCompactionWork = `-- name: GetMetricSegsForCompactionWork :many
-SELECT organization_id, dateint, frequency_ms, segment_id, instance_num, tid_partition, ts_range, record_count, file_size, tid_count, ingest_dateint, published, rolledup, created_at, created_by, slot_id, fingerprints, sort_version
+SELECT organization_id, dateint, frequency_ms, segment_id, instance_num, ts_range, record_count, file_size, ingest_dateint, published, rolledup, created_at, created_by, slot_id, fingerprints, sort_version, slot_count, compacted
 FROM metric_seg
 WHERE organization_id = $1
   AND dateint = $2
@@ -51,11 +51,9 @@ func (q *Queries) GetMetricSegsForCompactionWork(ctx context.Context, arg GetMet
 			&i.FrequencyMs,
 			&i.SegmentID,
 			&i.InstanceNum,
-			&i.TidPartition,
 			&i.TsRange,
 			&i.RecordCount,
 			&i.FileSize,
-			&i.TidCount,
 			&i.IngestDateint,
 			&i.Published,
 			&i.Rolledup,
@@ -64,6 +62,8 @@ func (q *Queries) GetMetricSegsForCompactionWork(ctx context.Context, arg GetMet
 			&i.SlotID,
 			&i.Fingerprints,
 			&i.SortVersion,
+			&i.SlotCount,
+			&i.Compacted,
 		); err != nil {
 			return nil, err
 		}

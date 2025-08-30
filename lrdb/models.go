@@ -201,11 +201,9 @@ type MetricSeg struct {
 	FrequencyMs    int32                     `json:"frequency_ms"`
 	SegmentID      int64                     `json:"segment_id"`
 	InstanceNum    int16                     `json:"instance_num"`
-	TidPartition   int16                     `json:"tid_partition"`
 	TsRange        pgtype.Range[pgtype.Int8] `json:"ts_range"`
 	RecordCount    int64                     `json:"record_count"`
 	FileSize       int64                     `json:"file_size"`
-	TidCount       int32                     `json:"tid_count"`
 	IngestDateint  int32                     `json:"ingest_dateint"`
 	Published      bool                      `json:"published"`
 	Rolledup       bool                      `json:"rolledup"`
@@ -214,6 +212,8 @@ type MetricSeg struct {
 	SlotID         int32                     `json:"slot_id"`
 	Fingerprints   []int64                   `json:"fingerprints"`
 	SortVersion    int16                     `json:"sort_version"`
+	SlotCount      int32                     `json:"slot_count"`
+	Compacted      bool                      `json:"compacted"`
 }
 
 type ObjCleanup struct {

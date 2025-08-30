@@ -40,6 +40,7 @@ type CompactionUploadParams struct {
 	Dateint        int32
 	FrequencyMs    int32
 	SlotID         int32
+	SlotCount      int32
 	IngestDateint  int32
 	CollectorName  string
 	Bucket         string
@@ -67,6 +68,7 @@ func UploadCompactedMetrics(
 		Dateint:        params.Dateint,
 		InstanceNum:    params.InstanceNum,
 		SlotID:         params.SlotID,
+		SlotCount:      params.SlotCount,
 		IngestDateint:  params.IngestDateint,
 		FrequencyMs:    params.FrequencyMs,
 		Published:      true,
@@ -77,9 +79,8 @@ func UploadCompactedMetrics(
 	// Add old records to be replaced
 	for _, row := range oldRows {
 		replaceParams.OldRecords = append(replaceParams.OldRecords, lrdb.ReplaceMetricSegsOld{
-			TidPartition: row.TidPartition,
-			SegmentID:    row.SegmentID,
-			SlotID:       row.SlotID,
+			SegmentID: row.SegmentID,
+			SlotID:    row.SlotID,
 		})
 	}
 
@@ -160,12 +161,11 @@ func UploadCompactedMetrics(
 			OldRecords:     replaceParams.OldRecords,
 			NewRecords: []lrdb.ReplaceMetricSegsNew{
 				{
-					TidPartition: 0,
-					SegmentID:    segmentID,
-					StartTs:      startTs,
-					EndTs:        endTs,
-					RecordCount:  file.RecordCount,
-					FileSize:     file.FileSize,
+					SegmentID:   segmentID,
+					StartTs:     startTs,
+					EndTs:       endTs,
+					RecordCount: file.RecordCount,
+					FileSize:    file.FileSize,
 				},
 			},
 			Fingerprints: fingerprints,

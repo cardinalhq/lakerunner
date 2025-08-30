@@ -13,7 +13,7 @@ import (
 )
 
 const getMetricSegsForCompaction = `-- name: GetMetricSegsForCompaction :many
-SELECT organization_id, dateint, frequency_ms, segment_id, instance_num, tid_partition, ts_range, record_count, file_size, tid_count, ingest_dateint, published, rolledup, created_at, created_by, slot_id, fingerprints, sort_version
+SELECT organization_id, dateint, frequency_ms, segment_id, instance_num, ts_range, record_count, file_size, ingest_dateint, published, rolledup, created_at, created_by, slot_id, fingerprints, sort_version, slot_count, compacted
 FROM metric_seg
 WHERE
   organization_id = $1 AND
@@ -70,11 +70,9 @@ func (q *Queries) GetMetricSegsForCompaction(ctx context.Context, arg GetMetricS
 			&i.FrequencyMs,
 			&i.SegmentID,
 			&i.InstanceNum,
-			&i.TidPartition,
 			&i.TsRange,
 			&i.RecordCount,
 			&i.FileSize,
-			&i.TidCount,
 			&i.IngestDateint,
 			&i.Published,
 			&i.Rolledup,
@@ -83,6 +81,8 @@ func (q *Queries) GetMetricSegsForCompaction(ctx context.Context, arg GetMetricS
 			&i.SlotID,
 			&i.Fingerprints,
 			&i.SortVersion,
+			&i.SlotCount,
+			&i.Compacted,
 		); err != nil {
 			return nil, err
 		}
@@ -95,7 +95,7 @@ func (q *Queries) GetMetricSegsForCompaction(ctx context.Context, arg GetMetricS
 }
 
 const getMetricSegsForRollup = `-- name: GetMetricSegsForRollup :many
-SELECT organization_id, dateint, frequency_ms, segment_id, instance_num, tid_partition, ts_range, record_count, file_size, tid_count, ingest_dateint, published, rolledup, created_at, created_by, slot_id, fingerprints, sort_version
+SELECT organization_id, dateint, frequency_ms, segment_id, instance_num, ts_range, record_count, file_size, ingest_dateint, published, rolledup, created_at, created_by, slot_id, fingerprints, sort_version, slot_count, compacted
 FROM metric_seg
 WHERE
   organization_id = $1 AND
@@ -141,11 +141,9 @@ func (q *Queries) GetMetricSegsForRollup(ctx context.Context, arg GetMetricSegsF
 			&i.FrequencyMs,
 			&i.SegmentID,
 			&i.InstanceNum,
-			&i.TidPartition,
 			&i.TsRange,
 			&i.RecordCount,
 			&i.FileSize,
-			&i.TidCount,
 			&i.IngestDateint,
 			&i.Published,
 			&i.Rolledup,
@@ -154,6 +152,8 @@ func (q *Queries) GetMetricSegsForRollup(ctx context.Context, arg GetMetricSegsF
 			&i.SlotID,
 			&i.Fingerprints,
 			&i.SortVersion,
+			&i.SlotCount,
+			&i.Compacted,
 		); err != nil {
 			return nil, err
 		}
@@ -174,15 +174,15 @@ INSERT INTO metric_seg (
   segment_id,
   instance_num,
   slot_id,
-  tid_partition,
   ts_range,
   record_count,
   file_size,
-  tid_count,
   created_by,
   published,
   fingerprints,
-  sort_version
+  sort_version,
+  slot_count,
+  compacted
 )
 VALUES (
   $1,
@@ -192,14 +192,14 @@ VALUES (
   $5,
   $6,
   $7,
-  $8,
-  int8range($9, $10, '[)'),
+  int8range($8, $9, '[)'),
+  $10,
   $11,
   $12,
   $13,
-  $14,
+  $14::bigint[],
   $15,
-  $16::bigint[],
+  $16,
   $17
 )
 `
@@ -212,16 +212,16 @@ type InsertMetricSegmentParams struct {
 	SegmentID      int64     `json:"segment_id"`
 	InstanceNum    int16     `json:"instance_num"`
 	SlotID         int32     `json:"slot_id"`
-	TidPartition   int16     `json:"tid_partition"`
 	StartTs        int64     `json:"start_ts"`
 	EndTs          int64     `json:"end_ts"`
 	RecordCount    int64     `json:"record_count"`
 	FileSize       int64     `json:"file_size"`
-	TidCount       int32     `json:"tid_count"`
 	CreatedBy      CreatedBy `json:"created_by"`
 	Published      bool      `json:"published"`
 	Fingerprints   []int64   `json:"fingerprints"`
 	SortVersion    int16     `json:"sort_version"`
+	SlotCount      int32     `json:"slot_count"`
+	Compacted      bool      `json:"compacted"`
 }
 
 func (q *Queries) InsertMetricSegmentDirect(ctx context.Context, arg InsertMetricSegmentParams) error {
@@ -233,16 +233,16 @@ func (q *Queries) InsertMetricSegmentDirect(ctx context.Context, arg InsertMetri
 		arg.SegmentID,
 		arg.InstanceNum,
 		arg.SlotID,
-		arg.TidPartition,
 		arg.StartTs,
 		arg.EndTs,
 		arg.RecordCount,
 		arg.FileSize,
-		arg.TidCount,
 		arg.CreatedBy,
 		arg.Published,
 		arg.Fingerprints,
 		arg.SortVersion,
+		arg.SlotCount,
+		arg.Compacted,
 	)
 	return err
 }

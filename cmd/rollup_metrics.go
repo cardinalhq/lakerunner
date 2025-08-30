@@ -395,6 +395,7 @@ func uploadRolledUpMetrics(
 		Dateint:        params.Dateint,
 		InstanceNum:    params.InstanceNum,
 		SlotID:         params.SlotID,
+		SlotCount:      params.SlotCount,
 		IngestDateint:  params.IngestDateint,
 		FrequencyMs:    params.FrequencyMs,
 		Published:      true,
@@ -406,9 +407,8 @@ func uploadRolledUpMetrics(
 	// Add existing records to be replaced
 	for _, row := range existingRows {
 		replaceParams.OldRecords = append(replaceParams.OldRecords, lrdb.ReplaceMetricSegsOld{
-			TidPartition: row.TidPartition,
-			SegmentID:    row.SegmentID,
-			SlotID:       row.SlotID,
+			SegmentID: row.SegmentID,
+			SlotID:    row.SlotID,
 		})
 	}
 
@@ -490,12 +490,11 @@ func uploadRolledUpMetrics(
 			SortVersion:    replaceParams.SortVersion,
 			NewRecords: []lrdb.ReplaceMetricSegsNew{
 				{
-					TidPartition: 0, // Rollup output uses tid_partition 0
-					SegmentID:    segmentID,
-					StartTs:      startTs,
-					EndTs:        endTs,
-					RecordCount:  file.RecordCount,
-					FileSize:     file.FileSize,
+					SegmentID:   segmentID,
+					StartTs:     startTs,
+					EndTs:       endTs,
+					RecordCount: file.RecordCount,
+					FileSize:    file.FileSize,
 				},
 			},
 			Fingerprints: fingerprints,
@@ -547,7 +546,6 @@ func markSourceRowsAsRolledUp(
 			SegmentID:      row.SegmentID,
 			InstanceNum:    row.InstanceNum,
 			SlotID:         row.SlotID,
-			TidPartition:   row.TidPartition,
 		})
 	}
 
