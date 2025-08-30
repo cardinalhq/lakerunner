@@ -333,7 +333,7 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ret Row, dp pmetr
 			attribute.String("reader", "IngestProtoMetricsReader"),
 			attribute.String("reason", "histogram_no_counts"),
 		))
-		return fmt.Errorf("dropping histogram datapoint with no counts")
+		return ErrHistogramNoCounts
 	}
 
 	// 1) Attributes
