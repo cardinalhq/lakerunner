@@ -6,6 +6,10 @@
 ALTER TABLE metric_seg 
     ADD COLUMN slot_count INTEGER NOT NULL DEFAULT 1;
 
+-- Add compacted column with default value of false
+ALTER TABLE metric_seg 
+    ADD COLUMN compacted BOOLEAN NOT NULL DEFAULT FALSE;
+
 -- Drop the existing primary key that includes tid_partition
 ALTER TABLE metric_seg 
     DROP CONSTRAINT metric_seg_pkey;
@@ -18,4 +22,16 @@ ALTER TABLE metric_seg
 -- Drop the tid_partition column
 ALTER TABLE metric_seg 
     DROP COLUMN tid_partition;
+
+-- Drop the tid_count column
+ALTER TABLE metric_seg 
+    DROP COLUMN tid_count;
+
+-- Add constraint that slot_count must be > 0
+ALTER TABLE metric_seg 
+    ADD CONSTRAINT metric_seg_slot_count_positive CHECK (slot_count > 0);
+
+-- Add constraint that slot_id must be >= 0 and <= slot_count
+ALTER TABLE metric_seg 
+    ADD CONSTRAINT metric_seg_slot_id_range CHECK (slot_id >= 0 AND slot_id <= slot_count);
 

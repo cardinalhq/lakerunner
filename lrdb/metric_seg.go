@@ -44,19 +44,16 @@ func (q *Store) InsertMetricSegment(ctx context.Context, params InsertMetricSegm
 }
 
 type ReplaceMetricSegsOld struct {
-	TidPartition int16
-	SegmentID    int64
-	SlotID       int32
+	SegmentID int64
+	SlotID    int32
 }
 
 type ReplaceMetricSegsNew struct {
-	TidPartition int16
-	SegmentID    int64
-	StartTs      int64
-	EndTs        int64
-	RecordCount  int64
-	FileSize     int64
-	TidCount     int32
+	SegmentID   int64
+	StartTs     int64
+	EndTs       int64
+	RecordCount int64
+	FileSize    int64
 }
 
 type ReplaceMetricSegsParams struct {
@@ -68,6 +65,8 @@ type ReplaceMetricSegsParams struct {
 	InstanceNum int16
 	// SlotID is the slot identifier for partitioning.
 	SlotID int32
+	// SlotCount is the number of slots.
+	SlotCount int32
 	// IngestDateint is the date in YYYYMMDD format when the segments were ingested.
 	IngestDateint int32
 	// FrequencyMs is the frequency in milliseconds at which the metrics are collected.
@@ -99,7 +98,6 @@ func (q *Store) ReplaceMetricSegs(ctx context.Context, args ReplaceMetricSegsPar
 			SegmentID:      oldRec.SegmentID,
 			InstanceNum:    args.InstanceNum,
 			SlotID:         oldRec.SlotID,
-			TidPartition:   oldRec.TidPartition,
 		}
 	}
 
@@ -113,12 +111,10 @@ func (q *Store) ReplaceMetricSegs(ctx context.Context, args ReplaceMetricSegsPar
 			SegmentID:      newRec.SegmentID,
 			InstanceNum:    args.InstanceNum,
 			SlotID:         args.SlotID,
-			TidPartition:   newRec.TidPartition,
 			StartTs:        newRec.StartTs,
 			EndTs:          newRec.EndTs,
 			RecordCount:    newRec.RecordCount,
 			FileSize:       newRec.FileSize,
-			TidCount:       newRec.TidCount,
 			Published:      args.Published,
 			Rolledup:       args.Rolledup,
 			CreatedBy:      args.CreatedBy,

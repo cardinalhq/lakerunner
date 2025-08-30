@@ -52,10 +52,9 @@ func ConvertToMetricSegs(rows []lrdb.ClaimMetricCompactionWorkRow) []lrdb.Metric
 			},
 			Published:    true,  // Assume published if in compaction queue
 			Rolledup:     false, // Not yet rolled up
-			TidPartition: 0,     // Default
-			TidCount:     0,     // Default
 			CreatedBy:    lrdb.CreatedByIngest,
 			SlotID:       0,         // Default
+			SlotCount:    1,         // Default
 			Fingerprints: []int64{}, // Empty
 			SortVersion:  lrdb.CurrentMetricSortVersion,
 		})

@@ -25,7 +25,6 @@ DELETE FROM public.metric_seg
    AND segment_id      = $4
    AND instance_num    = $5
    AND slot_id         = $6
-   AND tid_partition   = $7
 `
 
 type BatchDeleteMetricSegsBatchResults struct {
@@ -41,7 +40,6 @@ type BatchDeleteMetricSegsParams struct {
 	SegmentID      int64     `json:"segment_id"`
 	InstanceNum    int16     `json:"instance_num"`
 	SlotID         int32     `json:"slot_id"`
-	TidPartition   int16     `json:"tid_partition"`
 }
 
 func (q *Queries) BatchDeleteMetricSegs(ctx context.Context, arg []BatchDeleteMetricSegsParams) *BatchDeleteMetricSegsBatchResults {
@@ -54,7 +52,6 @@ func (q *Queries) BatchDeleteMetricSegs(ctx context.Context, arg []BatchDeleteMe
 			a.SegmentID,
 			a.InstanceNum,
 			a.SlotID,
-			a.TidPartition,
 		}
 		batch.Queue(batchDeleteMetricSegs, vals...)
 	}
@@ -92,16 +89,16 @@ INSERT INTO metric_seg (
   segment_id,
   instance_num,
   slot_id,
-  tid_partition,
   ts_range,
   record_count,
   file_size,
-  tid_count,
   published,
   created_by,
   rolledup,
   fingerprints,
-  sort_version
+  sort_version,
+  slot_count,
+  compacted
 )
 VALUES (
   $1,
@@ -111,15 +108,15 @@ VALUES (
   $5,
   $6,
   $7,
-  $8,
-  int8range($9, $10, '[)'),
+  int8range($8, $9, '[)'),
+  $10,
   $11,
   $12,
   $13,
   $14,
-  $15,
+  $15::bigint[],
   $16,
-  $17::bigint[],
+  $17,
   $18
 )
 `
@@ -138,17 +135,17 @@ type BatchInsertMetricSegsParams struct {
 	SegmentID      int64     `json:"segment_id"`
 	InstanceNum    int16     `json:"instance_num"`
 	SlotID         int32     `json:"slot_id"`
-	TidPartition   int16     `json:"tid_partition"`
 	StartTs        int64     `json:"start_ts"`
 	EndTs          int64     `json:"end_ts"`
 	RecordCount    int64     `json:"record_count"`
 	FileSize       int64     `json:"file_size"`
-	TidCount       int32     `json:"tid_count"`
 	Published      bool      `json:"published"`
 	CreatedBy      CreatedBy `json:"created_by"`
 	Rolledup       bool      `json:"rolledup"`
 	Fingerprints   []int64   `json:"fingerprints"`
 	SortVersion    int16     `json:"sort_version"`
+	SlotCount      int32     `json:"slot_count"`
+	Compacted      bool      `json:"compacted"`
 }
 
 func (q *Queries) BatchInsertMetricSegs(ctx context.Context, arg []BatchInsertMetricSegsParams) *BatchInsertMetricSegsBatchResults {
@@ -162,17 +159,17 @@ func (q *Queries) BatchInsertMetricSegs(ctx context.Context, arg []BatchInsertMe
 			a.SegmentID,
 			a.InstanceNum,
 			a.SlotID,
-			a.TidPartition,
 			a.StartTs,
 			a.EndTs,
 			a.RecordCount,
 			a.FileSize,
-			a.TidCount,
 			a.Published,
 			a.CreatedBy,
 			a.Rolledup,
 			a.Fingerprints,
 			a.SortVersion,
+			a.SlotCount,
+			a.Compacted,
 		}
 		batch.Queue(batchInsertMetricSegs, vals...)
 	}
@@ -210,7 +207,6 @@ UPDATE public.metric_seg
    AND segment_id      = $4
    AND instance_num    = $5
    AND slot_id         = $6
-   AND tid_partition   = $7
 `
 
 type BatchMarkMetricSegsRolledupBatchResults struct {
@@ -226,7 +222,6 @@ type BatchMarkMetricSegsRolledupParams struct {
 	SegmentID      int64     `json:"segment_id"`
 	InstanceNum    int16     `json:"instance_num"`
 	SlotID         int32     `json:"slot_id"`
-	TidPartition   int16     `json:"tid_partition"`
 }
 
 func (q *Queries) BatchMarkMetricSegsRolledup(ctx context.Context, arg []BatchMarkMetricSegsRolledupParams) *BatchMarkMetricSegsRolledupBatchResults {
@@ -239,7 +234,6 @@ func (q *Queries) BatchMarkMetricSegsRolledup(ctx context.Context, arg []BatchMa
 			a.SegmentID,
 			a.InstanceNum,
 			a.SlotID,
-			a.TidPartition,
 		}
 		batch.Queue(batchMarkMetricSegsRolledup, vals...)
 	}
