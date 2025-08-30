@@ -113,8 +113,26 @@ func ProcessBatch(
 		return nil
 	}
 
-	// All work items in a batch should be from the same org/instance/dateint/frequency
+	// Safety check: All work items in a batch must have identical grouping fields
 	firstItem := claimedWork[0]
+	for i, item := range claimedWork {
+		if item.OrganizationID != firstItem.OrganizationID ||
+			item.Dateint != firstItem.Dateint ||
+			item.FrequencyMs != firstItem.FrequencyMs ||
+			item.InstanceNum != firstItem.InstanceNum {
+			ll.Error("Inconsistent work batch detected - all items must have same org/dateint/frequency/instance",
+				slog.Int("itemIndex", i),
+				slog.String("expectedOrg", firstItem.OrganizationID.String()),
+				slog.String("actualOrg", item.OrganizationID.String()),
+				slog.Int("expectedDateint", int(firstItem.Dateint)),
+				slog.Int("actualDateint", int(item.Dateint)),
+				slog.Int64("expectedFreq", firstItem.FrequencyMs),
+				slog.Int64("actualFreq", item.FrequencyMs),
+				slog.Int("expectedInstance", int(firstItem.InstanceNum)),
+				slog.Int("actualInstance", int(item.InstanceNum)))
+			return fmt.Errorf("inconsistent work batch: item %d has different grouping fields", i)
+		}
+	}
 
 	if !helpers.IsWantedFrequency(int32(firstItem.FrequencyMs)) {
 		ll.Debug("Skipping compaction for unwanted frequency", slog.Int64("frequencyMs", firstItem.FrequencyMs))
@@ -159,7 +177,22 @@ func ProcessBatch(
 	// Convert claimed work to MetricSeg format for existing processing logic
 	segments := ConvertToMetricSegs(claimedWork)
 
-	return compactSegments(ctx, ll, mdb, tmpdir, firstItem, profile, s3client, segments, rpfEstimate)
+	// Filter out any segments that are already compacted (safety check)
+	validSegments := make([]lrdb.MetricSeg, 0, len(segments))
+	for _, seg := range segments {
+		if seg.Compacted {
+			ll.Warn("Found already compacted segment in work batch - upstream issue detected",
+				slog.Int64("segmentID", seg.SegmentID),
+				slog.String("organizationID", seg.OrganizationID.String()),
+				slog.Int("dateint", int(seg.Dateint)),
+				slog.Int64("frequencyMs", int64(seg.FrequencyMs)),
+				slog.Int("instanceNum", int(seg.InstanceNum)))
+			continue
+		}
+		validSegments = append(validSegments, seg)
+	}
+
+	return compactSegments(ctx, ll, mdb, tmpdir, firstItem, profile, s3client, validSegments, rpfEstimate)
 }
 
 func compactSegments(
