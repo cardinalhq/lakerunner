@@ -55,6 +55,7 @@ type Querier interface {
 	// 13) Atomic optimistic claim
 	ClaimMetricCompactionWork(ctx context.Context, arg ClaimMetricCompactionWorkParams) ([]ClaimMetricCompactionWorkRow, error)
 	CleanupInqueueWork(ctx context.Context, cutoffTime *time.Time) ([]Inqueue, error)
+	CleanupMetricCompactionWork(ctx context.Context, cutoffTime *time.Time) ([]MetricCompactionQueue, error)
 	CompactLogSegments(ctx context.Context, arg CompactLogSegmentsParams) error
 	CompactTraceSegments(ctx context.Context, arg CompactTraceSegmentsParams) error
 	DeleteInqueueWork(ctx context.Context, arg DeleteInqueueWorkParams) error
@@ -101,6 +102,7 @@ type Querier interface {
 	ReleaseMetricCompactionWork(ctx context.Context, arg ReleaseMetricCompactionWorkParams) error
 	SignalLockCleanup(ctx context.Context) (int32, error)
 	TouchInqueueWork(ctx context.Context, arg TouchInqueueWorkParams) error
+	TouchMetricCompactionWork(ctx context.Context, arg TouchMetricCompactionWorkParams) error
 	// Returns an estimate of the number of trace segments, average bytes, average records,
 	// and average bytes per record for trace segments in the last hour per organization and instance.
 	// This query is basically identical to the LogSegEstimator, but for trace segments.

@@ -166,13 +166,14 @@ chosen AS (
 upd AS (
   UPDATE metric_compaction_queue q
   SET claimed_by = (SELECT worker_id FROM params),
-      claimed_at = (SELECT now_ts FROM params)
+      claimed_at = (SELECT now_ts FROM params),
+      heartbeated_at = (SELECT now_ts FROM params)
   FROM chosen c
   WHERE q.id = c.id
     AND q.claimed_at IS NULL
-  RETURNING q.id, q.queue_ts, q.priority, q.organization_id, q.dateint, q.frequency_ms, q.segment_id, q.instance_num, q.ts_range, q.record_count, q.tries, q.claimed_by, q.claimed_at
+  RETURNING q.id, q.queue_ts, q.priority, q.organization_id, q.dateint, q.frequency_ms, q.segment_id, q.instance_num, q.ts_range, q.record_count, q.tries, q.claimed_by, q.claimed_at, q.heartbeated_at
 )
-SELECT id, queue_ts, priority, organization_id, dateint, frequency_ms, segment_id, instance_num, ts_range, record_count, tries, claimed_by, claimed_at FROM upd
+SELECT id, queue_ts, priority, organization_id, dateint, frequency_ms, segment_id, instance_num, ts_range, record_count, tries, claimed_by, claimed_at, heartbeated_at FROM upd
 ORDER BY priority DESC, queue_ts ASC, id ASC
 `
 
@@ -198,6 +199,7 @@ type ClaimMetricCompactionWorkRow struct {
 	Tries          int32                            `json:"tries"`
 	ClaimedBy      int64                            `json:"claimed_by"`
 	ClaimedAt      *time.Time                       `json:"claimed_at"`
+	HeartbeatedAt  *time.Time                       `json:"heartbeated_at"`
 }
 
 // 1) Big single-row safety net
@@ -242,6 +244,7 @@ func (q *Queries) ClaimMetricCompactionWork(ctx context.Context, arg ClaimMetric
 			&i.Tries,
 			&i.ClaimedBy,
 			&i.ClaimedAt,
+			&i.HeartbeatedAt,
 		); err != nil {
 			return nil, err
 		}

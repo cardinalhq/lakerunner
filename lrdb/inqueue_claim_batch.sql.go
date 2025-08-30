@@ -151,13 +151,14 @@ chosen AS (
 upd AS (
   UPDATE inqueue q
   SET claimed_by = (SELECT worker_id FROM params),
-      claimed_at = (SELECT now_ts FROM params)
+      claimed_at = (SELECT now_ts FROM params),
+      heartbeated_at = (SELECT now_ts FROM params)
   FROM chosen c
   WHERE q.id = c.id
     AND q.claimed_at IS NULL
-  RETURNING q.id, q.queue_ts, q.priority, q.organization_id, q.collector_name, q.instance_num, q.bucket, q.object_id, q.signal, q.tries, q.claimed_by, q.claimed_at, q.file_size
+  RETURNING q.id, q.queue_ts, q.priority, q.organization_id, q.collector_name, q.instance_num, q.bucket, q.object_id, q.signal, q.tries, q.claimed_by, q.claimed_at, q.file_size, q.heartbeated_at
 )
-SELECT id, queue_ts, priority, organization_id, collector_name, instance_num, bucket, object_id, signal, tries, claimed_by, claimed_at, file_size FROM upd
+SELECT id, queue_ts, priority, organization_id, collector_name, instance_num, bucket, object_id, signal, tries, claimed_by, claimed_at, file_size, heartbeated_at FROM upd
 ORDER BY upd.priority DESC, upd.queue_ts ASC, upd.id ASC
 `
 
@@ -185,6 +186,7 @@ type ClaimInqueueWorkBatchRow struct {
 	ClaimedBy      int64      `json:"claimed_by"`
 	ClaimedAt      *time.Time `json:"claimed_at"`
 	FileSize       int64      `json:"file_size"`
+	HeartbeatedAt  *time.Time `json:"heartbeated_at"`
 }
 
 //  1. Safety net: if any single file already meets/exceeds the cap, take that file alone
@@ -233,6 +235,7 @@ func (q *Queries) ClaimInqueueWorkBatch(ctx context.Context, arg ClaimInqueueWor
 			&i.ClaimedBy,
 			&i.ClaimedAt,
 			&i.FileSize,
+			&i.HeartbeatedAt,
 		); err != nil {
 			return nil, err
 		}

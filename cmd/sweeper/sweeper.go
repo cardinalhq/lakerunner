@@ -48,6 +48,7 @@ var (
 	legacyTableSyncCounter   metric.Int64Counter
 	workQueueExpiryCounter   metric.Int64Counter
 	inqueueExpiryCounter     metric.Int64Counter
+	mcqExpiryCounter         metric.Int64Counter
 	signalLockCleanupCounter metric.Int64Counter
 	legacyTableSyncDuration  metric.Float64Histogram
 )
@@ -86,6 +87,14 @@ func init() {
 	)
 	if err != nil {
 		panic(fmt.Errorf("failed to create inqueue_expiry_total counter: %w", err))
+	}
+
+	mcqExpiryCounter, err = meter.Int64Counter(
+		"lakerunner.sweeper.mcq_expiry_total",
+		metric.WithDescription("Count of MCQ items expired due to stale heartbeats"),
+	)
+	if err != nil {
+		panic(fmt.Errorf("failed to create mcq_expiry_total counter: %w", err))
 	}
 
 	signalLockCleanupCounter, err = meter.Int64Counter(
@@ -203,6 +212,17 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 		defer wg.Done()
 		if err := periodicLoop(ctx, time.Minute, func(c context.Context) error {
 			return runInqueueExpiry(c, slog.Default(), mdb)
+		}); err != nil && !errors.Is(err, context.Canceled) {
+			errCh <- err
+		}
+	}()
+
+	// Periodic: MCQ expiry
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := periodicLoop(ctx, time.Minute, func(c context.Context) error {
+			return runMCQExpiry(c, slog.Default(), mdb)
 		}); err != nil && !errors.Is(err, context.Canceled) {
 			errCh <- err
 		}
@@ -456,7 +476,9 @@ func runWorkqueueExpiry(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull
 }
 
 func runInqueueExpiry(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull) error {
-	// Calculate cutoff time for inqueue items - 5 minutes is the default timeout for claimed work
+	// Calculate cutoff time for inqueue items based on heartbeat logic
+	// Items are considered stale if they haven't heartbeated for 5 minutes
+	// This allows for ~5 missed heartbeats (1 minute interval) plus buffer
 	inqueueStaleTimeout := 5 * time.Minute
 	cutoffTime := time.Now().Add(-inqueueStaleTimeout)
 
@@ -472,6 +494,35 @@ func runInqueueExpiry(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull) 
 		ll.Info("Expired inqueue item", slog.Any("item", obj))
 		inqueueExpiryCounter.Add(ctx, 1, metric.WithAttributes(
 			attribute.String("signal", obj.Signal),
+		))
+	}
+	return nil
+}
+
+func runMCQExpiry(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull) error {
+	// Calculate cutoff time for MCQ items based on heartbeat logic
+	// Items are considered stale if they haven't heartbeated for 5 minutes
+	// This allows for ~5 missed heartbeats (1 minute interval) plus buffer
+	mcqStaleTimeout := 5 * time.Minute
+	cutoffTime := time.Now().Add(-mcqStaleTimeout)
+
+	expired, err := mdb.CleanupMetricCompactionWork(ctx, &cutoffTime)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		ll.Error("Failed to expire MCQ objects", slog.Any("error", err))
+		return err
+	}
+	for _, obj := range expired {
+		ll.Info("Expired MCQ item",
+			slog.Int64("id", obj.ID),
+			slog.String("organization_id", obj.OrganizationID.String()),
+			slog.Int("dateint", int(obj.Dateint)),
+			slog.Int64("frequency_ms", obj.FrequencyMs),
+		)
+		mcqExpiryCounter.Add(ctx, 1, metric.WithAttributes(
+			attribute.String("organization_id", obj.OrganizationID.String()),
 		))
 	}
 	return nil

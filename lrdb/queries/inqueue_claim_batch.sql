@@ -152,7 +152,8 @@ chosen AS (
 upd AS (
   UPDATE inqueue q
   SET claimed_by = (SELECT worker_id FROM params),
-      claimed_at = (SELECT now_ts FROM params)
+      claimed_at = (SELECT now_ts FROM params),
+      heartbeated_at = (SELECT now_ts FROM params)
   FROM chosen c
   WHERE q.id = c.id
     AND q.claimed_at IS NULL

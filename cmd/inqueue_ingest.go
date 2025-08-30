@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
@@ -30,6 +31,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/estimator"
 	"github.com/cardinalhq/lakerunner/internal/exemplar"
+	"github.com/cardinalhq/lakerunner/internal/heartbeat"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/internal/workqueue"
@@ -296,6 +298,15 @@ func ingestFilesBatch(
 	}
 
 	ingestDateint, _ := helpers.MSToDateintHour(time.Now().UTC().UnixMilli())
+
+	// Start heartbeating for claimed items
+	itemIDs := make([]uuid.UUID, len(items))
+	for i, item := range items {
+		itemIDs[i] = item.ID
+	}
+	heartbeater := heartbeat.NewInqueueHeartbeater(loop.mdb, myInstanceID, itemIDs)
+	cancel := heartbeater.Start(ctx)
+	defer cancel() // Ensure heartbeating stops when processing completes
 
 	t0 = time.Now()
 	inqueueBatch := make([]lrdb.Inqueue, len(items))
