@@ -34,6 +34,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
+	"github.com/cardinalhq/lakerunner/internal/metricsprocessing/compaction"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
@@ -286,7 +287,7 @@ func rollupMetricSegments(
 		for i := 0; i < batch.Len(); i++ {
 			row := batch.Get(i)
 			// Normalize sketch field for parquet writing (string -> []byte)
-			if err := normalizeRowForParquetWrite(row); err != nil {
+			if err := compaction.NormalizeRowForParquetWrite(row); err != nil {
 				ll.Error("Failed to normalize row", slog.Any("error", err))
 				pipeline.ReturnBatch(normalizedBatch)
 				pipeline.ReturnBatch(batch)
