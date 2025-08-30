@@ -25,27 +25,21 @@ params AS (
 ),
 
 big_single AS (
-  SELECT q.id, q.queue_ts, q.priority, q.organization_id, q.dateint, q.frequency_ms, q.segment_id, q.instance_num, q.ts_range, q.record_count, q.tries, q.claimed_by, q.claimed_at
+  SELECT q.id
   FROM metric_compaction_queue q
   JOIN params p ON TRUE
   WHERE q.claimed_at IS NULL
     AND q.record_count >= p.target_records
   ORDER BY q.priority DESC, q.queue_ts ASC
   LIMIT 1
-  FOR UPDATE SKIP LOCKED
-),
-
-ready AS (
-  SELECT id, queue_ts, priority, organization_id, dateint, frequency_ms, segment_id, instance_num, ts_range, record_count, tries, claimed_by, claimed_at
-  FROM metric_compaction_queue
-  WHERE claimed_at IS NULL
 ),
 
 seeds_per_group AS (
   SELECT DISTINCT ON (organization_id, instance_num, dateint)
          id AS seed_id, organization_id, instance_num, dateint,
          priority, queue_ts, record_count
-  FROM ready
+  FROM metric_compaction_queue
+  WHERE claimed_at IS NULL
   ORDER BY organization_id, instance_num, dateint, priority DESC, queue_ts ASC
 ),
 
@@ -55,73 +49,92 @@ ordered_groups AS (
   FROM seeds_per_group s
 ),
 
-first_eligible_group AS (
-  SELECT og.organization_id, og.instance_num, og.dateint, og.priority, og.queue_ts
+group_flags AS (
+  SELECT
+    og.organization_id, og.instance_num, og.dateint,
+    og.priority, og.queue_ts, og.seed_rank,
+    ((p.now_ts - og.queue_ts) > make_interval(secs => p.max_age_seconds)) AS is_old,
+    p.target_records, p.batch_count, p.now_ts
   FROM ordered_groups og
   JOIN params p ON TRUE
-  CROSS JOIN LATERAL (
-    -- Determine if the seed is "old"
-    SELECT ((p.now_ts - og.queue_ts) > make_interval(secs => p.max_age_seconds)) AS is_old
-  ) age
-  CROSS JOIN LATERAL (
-    -- Greedy pack within THIS group (ordered), capped by target and batch_count
-    SELECT x.id, x.queue_ts, x.priority, x.organization_id, x.dateint, x.frequency_ms, x.segment_id, x.instance_num, x.ts_range, x.record_count, x.tries, x.claimed_by, x.claimed_at, x.cum_records, x.rn
-    FROM (
-      SELECT r.id, r.queue_ts, r.priority, r.organization_id, r.dateint, r.frequency_ms, r.segment_id, r.instance_num, r.ts_range, r.record_count, r.tries, r.claimed_by, r.claimed_at,
-             SUM(r.record_count) OVER (
-               ORDER BY r.priority DESC, r.queue_ts ASC
-               ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-             ) AS cum_records,
-             ROW_NUMBER() OVER (
-               ORDER BY r.priority DESC, r.queue_ts ASC
-             ) AS rn
-      FROM ready r
-      WHERE r.organization_id = og.organization_id
-        AND r.instance_num    = og.instance_num
-        AND r.dateint         = og.dateint
-      ORDER BY r.priority DESC, r.queue_ts ASC
-      FOR UPDATE SKIP LOCKED
-    ) x
-    WHERE x.cum_records <= p.target_records
-      AND x.rn          <= p.batch_count
-  ) packed
-  GROUP BY og.organization_id, og.instance_num, og.dateint, og.priority, og.queue_ts, age.is_old, p.target_records
-  HAVING
-       (age.is_old AND SUM(packed.record_count) > 0)            -- old: any positive amount up to target
-    OR (!age.is_old AND SUM(packed.record_count) = p.target_records) -- fresh: exact fill
-  ORDER BY og.priority DESC, og.queue_ts ASC
-  LIMIT 1
+),
+
+grp_scope AS (
+  SELECT
+    q.id, q.organization_id, q.instance_num, q.dateint,
+    q.priority, q.queue_ts, q.record_count,
+    gf.seed_rank, gf.is_old, gf.target_records, gf.batch_count
+  FROM metric_compaction_queue q
+  JOIN group_flags gf
+    ON q.claimed_at IS NULL
+   AND q.organization_id = gf.organization_id
+   AND q.instance_num    = gf.instance_num
+   AND q.dateint         = gf.dateint
+),
+
+pack AS (
+  SELECT
+    g.id, g.organization_id, g.instance_num, g.dateint, g.priority, g.queue_ts, g.record_count, g.seed_rank, g.is_old, g.target_records, g.batch_count,
+    SUM(g.record_count) OVER (
+      PARTITION BY g.organization_id, g.instance_num, g.dateint
+      ORDER BY g.priority DESC, g.queue_ts ASC
+      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+    ) AS cum_records,
+    ROW_NUMBER() OVER (
+      PARTITION BY g.organization_id, g.instance_num, g.dateint
+      ORDER BY g.priority DESC, g.queue_ts ASC
+    ) AS rn
+  FROM grp_scope g
+),
+
+prelim AS (
+  SELECT p.id, p.organization_id, p.instance_num, p.dateint, p.priority, p.queue_ts, p.record_count, p.seed_rank, p.is_old, p.target_records, p.batch_count, p.cum_records, p.rn
+  FROM pack p
+  WHERE p.cum_records <= p.target_records
+    AND p.rn          <= p.batch_count
+),
+
+prelim_stats AS (
+  SELECT
+    organization_id, instance_num, dateint,
+    MIN(seed_rank) AS seed_rank,
+    COUNT(*) AS n_rows,
+    COALESCE(SUM(record_count), 0) AS total_records
+  FROM prelim
+  GROUP BY organization_id, instance_num, dateint
+),
+
+eligible_groups AS (
+  SELECT
+    gf.organization_id, gf.instance_num, gf.dateint, gf.seed_rank
+  FROM group_flags gf
+  JOIN prelim_stats ps
+    ON ps.organization_id = gf.organization_id
+   AND ps.instance_num    = gf.instance_num
+   AND ps.dateint         = gf.dateint
+  WHERE (NOT gf.is_old AND ps.total_records = gf.target_records)
+     OR (gf.is_old      AND ps.total_records > 0)
+),
+
+winner_group AS (
+  SELECT eg.organization_id, eg.instance_num, eg.dateint, eg.seed_rank
+  FROM eligible_groups eg
+  WHERE eg.seed_rank = (SELECT MIN(seed_rank) FROM eligible_groups)
 ),
 
 group_chosen AS (
-  SELECT pr.id, pr.queue_ts, pr.priority, pr.organization_id, pr.dateint, pr.frequency_ms, pr.segment_id, pr.instance_num, pr.ts_range, pr.record_count, pr.tries, pr.claimed_by, pr.claimed_at, pr.cum_records, pr.rn
-  FROM params p
-  JOIN first_eligible_group w ON TRUE
-  JOIN LATERAL (
-    SELECT r.id, r.queue_ts, r.priority, r.organization_id, r.dateint, r.frequency_ms, r.segment_id, r.instance_num, r.ts_range, r.record_count, r.tries, r.claimed_by, r.claimed_at,
-           SUM(r.record_count) OVER (
-             ORDER BY r.priority DESC, r.queue_ts ASC
-             ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-           ) AS cum_records,
-           ROW_NUMBER() OVER (
-             ORDER BY r.priority DESC, r.queue_ts ASC
-           ) AS rn
-    FROM ready r
-    WHERE r.organization_id = w.organization_id
-      AND r.instance_num    = w.instance_num
-      AND r.dateint         = w.dateint
-    ORDER BY r.priority DESC, r.queue_ts ASC
-    FOR UPDATE SKIP LOCKED
-  ) pr
-    ON TRUE
-  WHERE pr.cum_records <= p.target_records
-    AND pr.rn          <= p.batch_count
+  SELECT pr.id
+  FROM prelim pr
+  JOIN winner_group w
+    ON w.organization_id = pr.organization_id
+   AND w.instance_num    = pr.instance_num
+   AND w.dateint         = pr.dateint
 ),
 
 chosen AS (
-  SELECT id, queue_ts, priority, organization_id, dateint, frequency_ms, segment_id, instance_num, ts_range, record_count, tries, claimed_by, claimed_at FROM big_single
+  SELECT id FROM big_single
   UNION ALL
-  SELECT gc.id, gc.queue_ts, gc.priority, gc.organization_id, gc.dateint, gc.frequency_ms, gc.segment_id, gc.instance_num, gc.ts_range, gc.record_count, gc.tries, gc.claimed_by, gc.claimed_at, gc.cum_records, gc.rn FROM group_chosen gc
+  SELECT id FROM group_chosen
   WHERE NOT EXISTS (SELECT 1 FROM big_single)
 ),
 
@@ -131,6 +144,7 @@ upd AS (
       claimed_at = (SELECT now_ts FROM params)
   FROM chosen c
   WHERE q.id = c.id
+    AND q.claimed_at IS NULL
   RETURNING q.id, q.queue_ts, q.priority, q.organization_id, q.dateint, q.frequency_ms, q.segment_id, q.instance_num, q.ts_range, q.record_count, q.tries, q.claimed_by, q.claimed_at
 )
 SELECT id, queue_ts, priority, organization_id, dateint, frequency_ms, segment_id, instance_num, ts_range, record_count, tries, claimed_by, claimed_at FROM upd
@@ -161,14 +175,20 @@ type ClaimMetricCompactionWorkRow struct {
 	ClaimedAt      *time.Time                       `json:"claimed_at"`
 }
 
-// Safety net: claim a single big row immediately if any row >= target_records
-// Ready rows excluding nothing (the big_single branch is short-circuited later)
-// One seed per (org, instance, dateint): oldest/highest-priority in the group
-// Order groups globally by seed's (priority DESC, queue_ts ASC)
-// Evaluate groups in global order; compute per-group “pack” and eligibility
-// We use LATERAL so Postgres can walk groups one-by-one and stop at the first match.
-// The rows to claim when using the group path (exact packed rows for the winner)
-// Final choice: prefer big_single if any; otherwise the packed group
+// 1) Big single row safety-net (no locks in selection)
+// 2) Seeds: oldest/highest-priority row per (org,instance,dateint)
+// 3) Order groups globally by seed (priority DESC, queue_ts ASC)
+// 4) Flags and parameters per group (based on the seed row)
+// 5) All ready rows in each group (ordered). No locks; just compute packs.
+// 6) Greedy pack within each group up to target_records and batch_count
+// 7) Totals per group and eligibility:
+//   - fresh: exact fill (total = target)
+//   - old:   any positive total (already capped by target)
+//
+// 8) Pick earliest eligible group
+// 9) Rows to claim if using the group path
+// 10) Final chosen IDs: prefer big_single if exists
+// 11) Optimistic claim (atomic per-row; guarded by claimed_at IS NULL)
 func (q *Queries) ClaimMetricCompactionWork(ctx context.Context, arg ClaimMetricCompactionWorkParams) ([]ClaimMetricCompactionWorkRow, error) {
 	rows, err := q.db.Query(ctx, claimMetricCompactionWork,
 		arg.WorkerID,

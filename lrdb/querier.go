@@ -27,14 +27,19 @@ type Querier interface {
 	ClaimInqueueWork(ctx context.Context, arg ClaimInqueueWorkParams) (Inqueue, error)
 	// Greedy pack up to size cap and row cap
 	ClaimInqueueWorkBatch(ctx context.Context, arg ClaimInqueueWorkBatchParams) ([]ClaimInqueueWorkBatchRow, error)
-	// Safety net: claim a single big row immediately if any row >= target_records
-	// Ready rows excluding nothing (the big_single branch is short-circuited later)
-	// One seed per (org, instance, dateint): oldest/highest-priority in the group
-	// Order groups globally by seed's (priority DESC, queue_ts ASC)
-	// Evaluate groups in global order; compute per-group “pack” and eligibility
-	// We use LATERAL so Postgres can walk groups one-by-one and stop at the first match.
-	// The rows to claim when using the group path (exact packed rows for the winner)
-	// Final choice: prefer big_single if any; otherwise the packed group
+	// 1) Big single row safety-net (no locks in selection)
+	// 2) Seeds: oldest/highest-priority row per (org,instance,dateint)
+	// 3) Order groups globally by seed (priority DESC, queue_ts ASC)
+	// 4) Flags and parameters per group (based on the seed row)
+	// 5) All ready rows in each group (ordered). No locks; just compute packs.
+	// 6) Greedy pack within each group up to target_records and batch_count
+	// 7) Totals per group and eligibility:
+	//    - fresh: exact fill (total = target)
+	//    - old:   any positive total (already capped by target)
+	// 8) Pick earliest eligible group
+	// 9) Rows to claim if using the group path
+	// 10) Final chosen IDs: prefer big_single if exists
+	// 11) Optimistic claim (atomic per-row; guarded by claimed_at IS NULL)
 	ClaimMetricCompactionWork(ctx context.Context, arg ClaimMetricCompactionWorkParams) ([]ClaimMetricCompactionWorkRow, error)
 	CleanupInqueueWork(ctx context.Context, cutoffTime *time.Time) ([]Inqueue, error)
 	CompactLogSegments(ctx context.Context, arg CompactLogSegmentsParams) error
