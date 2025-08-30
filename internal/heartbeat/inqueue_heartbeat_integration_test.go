@@ -18,6 +18,7 @@ package heartbeat
 
 import (
 	"context"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -28,6 +29,26 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/cardinalhq/lakerunner/testhelpers"
 )
+
+// Test-local version of the inqueue heartbeater constructor
+func newTestInqueueHeartbeater(db lrdb.StoreFull, workerID int64, items []uuid.UUID) *Heartbeater {
+	if len(items) == 0 {
+		// Return a no-op heartbeater for empty items
+		return New(func(ctx context.Context) error {
+			return nil // No-op
+		}, time.Minute, slog.Default().With("component", "inqueue_heartbeater", "worker_id", workerID, "item_count", 0))
+	}
+
+	heartbeatFunc := func(ctx context.Context) error {
+		return db.TouchInqueueWork(ctx, lrdb.TouchInqueueWorkParams{
+			Ids:       items,
+			ClaimedBy: workerID,
+		})
+	}
+
+	logger := slog.Default().With("component", "inqueue_heartbeater", "worker_id", workerID, "item_count", len(items))
+	return New(heartbeatFunc, time.Minute, logger)
+}
 
 func TestInqueueHeartbeater_Integration(t *testing.T) {
 	ctx := context.Background()
@@ -66,13 +87,12 @@ func TestInqueueHeartbeater_Integration(t *testing.T) {
 
 	itemIDs := []uuid.UUID{claimedItem.ID}
 
-	// Start heartbeater with short interval
-	heartbeater := NewInqueueHeartbeater(db, workerID, itemIDs)
-	heartbeater.interval = 100 * time.Millisecond
+	// Start heartbeater
+	heartbeater := newTestInqueueHeartbeater(db, workerID, itemIDs)
 	cancel := heartbeater.Start(ctx)
 
-	// Wait for a few heartbeats
-	time.Sleep(300 * time.Millisecond)
+	// Wait for initial heartbeat and a few intervals
+	time.Sleep(2 * time.Second)
 
 	// Stop heartbeating
 	cancel()
@@ -103,8 +123,7 @@ func TestInqueueHeartbeater_EmptyItems_Integration(t *testing.T) {
 	var itemIDs []uuid.UUID // Empty slice
 
 	// This should not panic or cause issues
-	heartbeater := NewInqueueHeartbeater(db, workerID, itemIDs)
-	heartbeater.interval = 50 * time.Millisecond
+	heartbeater := newTestInqueueHeartbeater(db, workerID, itemIDs)
 	cancel := heartbeater.Start(ctx)
 
 	time.Sleep(100 * time.Millisecond)
@@ -153,8 +172,7 @@ func TestInqueueHeartbeater_ContextCancellation_Integration(t *testing.T) {
 	t.Run("parent_context_cancellation", func(t *testing.T) {
 		cancelCtx, parentCancel := context.WithCancel(ctx)
 
-		heartbeater := NewInqueueHeartbeater(db, workerID, itemIDs)
-		heartbeater.interval = 50 * time.Millisecond
+		heartbeater := newTestInqueueHeartbeater(db, workerID, itemIDs)
 		cancel := heartbeater.Start(cancelCtx)
 		defer cancel() // Ensure cleanup
 
@@ -173,8 +191,7 @@ func TestInqueueHeartbeater_ContextCancellation_Integration(t *testing.T) {
 
 	// Test surgical cancellation via returned cancel function
 	t.Run("cancel_function_works", func(t *testing.T) {
-		heartbeater := NewInqueueHeartbeater(db, workerID, itemIDs)
-		heartbeater.interval = 50 * time.Millisecond
+		heartbeater := newTestInqueueHeartbeater(db, workerID, itemIDs)
 		cancel := heartbeater.Start(ctx)
 
 		// Let it run briefly

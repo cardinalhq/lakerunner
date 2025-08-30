@@ -18,34 +18,33 @@ import (
 	"context"
 	"log/slog"
 	"time"
-
-	"github.com/google/uuid"
-
-	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-// InqueueHeartbeater manages periodic heartbeating for claimed inqueue items
-type InqueueHeartbeater struct {
-	db       lrdb.StoreFull
-	workerID int64
-	items    []uuid.UUID
-	ll       *slog.Logger
-	interval time.Duration
+// HeartbeatFunc is the function signature for heartbeat callbacks
+type HeartbeatFunc func(ctx context.Context) error
+
+// Heartbeater manages periodic execution of a heartbeat function
+type Heartbeater struct {
+	heartbeatFunc HeartbeatFunc
+	ll            *slog.Logger
+	interval      time.Duration
 }
 
-// NewInqueueHeartbeater creates a new heartbeater for the given claimed items
-func NewInqueueHeartbeater(db lrdb.StoreFull, workerID int64, items []uuid.UUID) *InqueueHeartbeater {
-	return &InqueueHeartbeater{
-		db:       db,
-		workerID: workerID,
-		items:    items,
-		ll:       slog.Default().With("component", "inqueue_heartbeater", "worker_id", workerID, "item_count", len(items)),
-		interval: time.Minute, // Heartbeat every minute as requested
+// New creates a new generic heartbeater with the given callback function
+func New(heartbeatFunc HeartbeatFunc, interval time.Duration, logger *slog.Logger) *Heartbeater {
+	if logger == nil {
+		logger = slog.Default()
+	}
+
+	return &Heartbeater{
+		heartbeatFunc: heartbeatFunc,
+		ll:            logger.With("component", "heartbeater"),
+		interval:      interval,
 	}
 }
 
 // Start begins the heartbeat process in a goroutine and returns a cancel function
-func (h *InqueueHeartbeater) Start(ctx context.Context) context.CancelFunc {
+func (h *Heartbeater) Start(ctx context.Context) context.CancelFunc {
 	// Create a child context that we can cancel independently
 	heartbeatCtx, cancel := context.WithCancel(ctx)
 
@@ -55,12 +54,7 @@ func (h *InqueueHeartbeater) Start(ctx context.Context) context.CancelFunc {
 }
 
 // run is the main heartbeat loop
-func (h *InqueueHeartbeater) run(ctx context.Context) {
-	if len(h.items) == 0 {
-		h.ll.Debug("No items to heartbeat, exiting")
-		return
-	}
-
+func (h *Heartbeater) run(ctx context.Context) {
 	h.ll.Debug("Starting heartbeat loop", "interval", h.interval)
 
 	// Send initial heartbeat immediately
@@ -80,18 +74,11 @@ func (h *InqueueHeartbeater) run(ctx context.Context) {
 	}
 }
 
-// sendHeartbeat sends a heartbeat for all claimed items
-func (h *InqueueHeartbeater) sendHeartbeat(ctx context.Context) {
-	if len(h.items) == 0 {
-		return
-	}
+// sendHeartbeat calls the configured heartbeat function
+func (h *Heartbeater) sendHeartbeat(ctx context.Context) {
+	h.ll.Debug("Sending heartbeat")
 
-	h.ll.Debug("Sending heartbeat", "item_ids", h.items)
-
-	err := h.db.TouchInqueueWork(ctx, lrdb.TouchInqueueWorkParams{
-		Ids:       h.items,
-		ClaimedBy: h.workerID,
-	})
+	err := h.heartbeatFunc(ctx)
 	if err != nil {
 		h.ll.Error("Failed to send heartbeat (continuing)", "error", err)
 		return
