@@ -223,7 +223,7 @@ func (s *Service) IsActive(ctx context.Context, req *ScaledObjectRef) (*IsActive
 	switch serviceType {
 	case "compact-metrics", "compact-logs", "compact-traces", "rollup-metrics":
 		return &IsActiveResponse{Result: true}, nil
-	case "ingest":
+	case "ingest-logs", "ingest-metrics", "ingest-traces":
 		return &IsActiveResponse{Result: true}, nil
 	default:
 		slog.Warn("unknown service type", "serviceType", serviceType)
