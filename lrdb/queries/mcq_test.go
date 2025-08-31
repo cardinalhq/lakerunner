@@ -178,7 +178,7 @@ func TestClaimMetricCompactionWork_BasicClaim(t *testing.T) {
 	assert.Equal(t, int64(2500), totalRecords)
 }
 
-func TestClaimMetricCompactionWork_ExactFill(t *testing.T) {
+func TestClaimMetricCompactionWork_GreedyFill(t *testing.T) {
 	ctx := context.Background()
 	db := testhelpers.NewTestLRDBStore(t)
 
@@ -234,7 +234,15 @@ func TestClaimMetricCompactionWork_ExactFill(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	assert.Len(t, claimedBatch, 0, "Should not claim items when total records (1500) < target_records (2000) and items are fresh")
+	assert.Len(t, claimedBatch, 2, "Should greedily claim items that fit within target_records, even if less than target")
+
+	if len(claimedBatch) > 0 {
+		totalRecords := int64(0)
+		for _, item := range claimedBatch {
+			totalRecords += item.RecordCount
+		}
+		assert.Equal(t, int64(1500), totalRecords, "Should claim all items that fit under target")
+	}
 }
 
 func TestClaimMetricCompactionWork_AgeThreshold(t *testing.T) {

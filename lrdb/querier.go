@@ -48,7 +48,7 @@ type Querier interface {
 	// 6) Greedy pack per group
 	// 7) Rows that fit under caps
 	// 8) Totals per group
-	// 9) Eligibility: fresh = exact fill, old = any positive
+	// 9) Eligibility: any group with positive records
 	// 10) Pick earliest eligible group
 	// 11) Rows to claim for the winner group
 	// 12) Final chosen IDs

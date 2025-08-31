@@ -120,7 +120,7 @@ prelim_stats AS (
   GROUP BY organization_id, dateint, frequency_ms, instance_num
 ),
 
--- 9) Eligibility: fresh = exact fill, old = any positive
+-- 9) Eligibility: any group with positive records
 eligible_groups AS (
   SELECT
     gf.organization_id, gf.dateint, gf.frequency_ms, gf.instance_num, gf.seed_rank, gf.target_records
@@ -130,8 +130,7 @@ eligible_groups AS (
    AND ps.dateint         = gf.dateint
    AND ps.frequency_ms    = gf.frequency_ms
    AND ps.instance_num    = gf.instance_num
-  WHERE (NOT gf.is_old AND ps.total_records = gf.target_records)
-     OR (gf.is_old      AND ps.total_records > 0)
+  WHERE ps.total_records > 0
 ),
 
 -- 10) Pick earliest eligible group
