@@ -136,8 +136,7 @@ eligible_groups AS (
    AND ps.dateint         = gf.dateint
    AND ps.frequency_ms    = gf.frequency_ms
    AND ps.instance_num    = gf.instance_num
-  WHERE (NOT gf.is_old AND ps.total_records = gf.target_records)
-     OR (gf.is_old      AND ps.total_records > 0)
+  WHERE ps.total_records > 0
 ),
 
 winner_group AS (
@@ -210,7 +209,7 @@ type ClaimMetricCompactionWorkRow struct {
 // 6) Greedy pack per group
 // 7) Rows that fit under caps
 // 8) Totals per group
-// 9) Eligibility: fresh = exact fill, old = any positive
+// 9) Eligibility: any group with positive records
 // 10) Pick earliest eligible group
 // 11) Rows to claim for the winner group
 // 12) Final chosen IDs
