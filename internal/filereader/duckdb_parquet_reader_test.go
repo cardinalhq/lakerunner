@@ -15,6 +15,7 @@
 package filereader
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"testing"
@@ -22,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 func countDuckDBParquetRows(t *testing.T, paths []string) int {
@@ -61,4 +63,33 @@ func TestDuckDBParquetRawReaderMultipleFiles(t *testing.T) {
 	}
 	rows := countDuckDBParquetRows(t, paths)
 	require.Greater(t, rows, 0)
+}
+
+// TestDuckDBParquetRawReaderCopiesSketch verifies sketch values aren't reused across rows.
+func TestDuckDBParquetRawReaderCopiesSketch(t *testing.T) {
+	path := "../../testdata/metrics/compact-test-0001/tbl_299476441865651503.parquet"
+	reader, err := NewDuckDBParquetRawReader([]string{path}, 1)
+	require.NoError(t, err)
+	defer reader.Close()
+
+	batch, err := reader.Next()
+	require.NoError(t, err)
+	require.Equal(t, 1, batch.Len())
+	row := pipeline.CopyRow(batch.Get(0))
+	pipeline.ReturnBatch(batch)
+
+	sketch, ok := row[wkk.RowKeySketch].([]byte)
+	require.True(t, ok)
+	snapshot := append([]byte(nil), sketch...)
+
+	// Reading the next batch should not mutate the previously copied sketch
+	batch2, err := reader.Next()
+	if batch2 != nil {
+		pipeline.ReturnBatch(batch2)
+	}
+	if errors.Is(err, io.EOF) {
+		t.Skip("not enough rows to verify sketch copy")
+	}
+
+	require.True(t, bytes.Equal(sketch, snapshot))
 }

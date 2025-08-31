@@ -226,6 +226,11 @@ func (r *DuckDBParquetRawReader) Next() (*Batch, error) {
 
 		batchRow := batch.AddRow()
 		for i, key := range r.rowKeys {
+			if b, ok := r.values[i].([]byte); ok {
+				// DuckDB reuses the backing array for BLOB values, so copy before storing
+				batchRow[key] = append([]byte(nil), b...)
+				continue
+			}
 			batchRow[key] = r.values[i]
 		}
 		validRows++
