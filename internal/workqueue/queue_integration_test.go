@@ -44,10 +44,12 @@ func TestInqueueWorkflow(t *testing.T) {
 	err := db.PutInqueueWork(ctx, lrdb.PutInqueueWorkParams{
 		OrganizationID: orgID,
 		CollectorName:  "default",
+		InstanceNum:    0,
 		Bucket:         bucket,
 		ObjectID:       objectID,
 		Signal:         telemetryType,
 		Priority:       1,
+		FileSize:       1024, // Add non-zero file size
 	})
 	require.NoError(t, err)
 
@@ -156,30 +158,36 @@ func TestInqueueSummary(t *testing.T) {
 	err := db.PutInqueueWork(ctx, lrdb.PutInqueueWorkParams{
 		OrganizationID: orgID,
 		CollectorName:  "default",
+		InstanceNum:    0,
 		Bucket:         "test-bucket",
 		ObjectID:       "logs/test1.json",
 		Signal:         "logs",
 		Priority:       1,
+		FileSize:       2048,
 	})
 	require.NoError(t, err)
 
 	err = db.PutInqueueWork(ctx, lrdb.PutInqueueWorkParams{
 		OrganizationID: orgID,
 		CollectorName:  "default",
+		InstanceNum:    0,
 		Bucket:         "test-bucket",
 		ObjectID:       "logs/test2.json",
 		Signal:         "logs",
 		Priority:       1,
+		FileSize:       1536,
 	})
 	require.NoError(t, err)
 
 	err = db.PutInqueueWork(ctx, lrdb.PutInqueueWorkParams{
 		OrganizationID: orgID,
 		CollectorName:  "default",
+		InstanceNum:    0,
 		Bucket:         "test-bucket",
 		ObjectID:       "metrics/test1.parquet",
 		Signal:         "metrics",
 		Priority:       1,
+		FileSize:       4096,
 	})
 	require.NoError(t, err)
 
@@ -214,10 +222,12 @@ func TestInqueueCleanup(t *testing.T) {
 	err := db.PutInqueueWork(ctx, lrdb.PutInqueueWorkParams{
 		OrganizationID: orgID,
 		CollectorName:  "default",
+		InstanceNum:    0,
 		Bucket:         "cleanup-test-bucket",
 		ObjectID:       "cleanup/test.json",
 		Signal:         telemetryType,
 		Priority:       1,
+		FileSize:       512,
 	})
 	require.NoError(t, err)
 

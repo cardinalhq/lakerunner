@@ -101,7 +101,9 @@ func TestReplaceCompactedSegments_WithCompactMetricSegs(t *testing.T) {
 	newSegmentIDs := []int64{99999}
 
 	// Call the function under test
-	err := replaceCompactedSegments(ctx, ll, db, results, oldRows, workItem, newSegmentIDs)
+	inputRecords := int64(2000) // Sum of old segments record count (1000 + 1000)
+	inputBytes := int64(100000) // Sum of old segments file size (50000 + 50000)
+	err := replaceCompactedSegments(ctx, ll, db, results, oldRows, workItem, newSegmentIDs, inputRecords, inputBytes)
 	require.NoError(t, err)
 
 	// Verify segments by querying all segments for this org/dateint/frequency

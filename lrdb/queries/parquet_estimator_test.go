@@ -36,9 +36,14 @@ func TestMetricSegEstimator(t *testing.T) {
 	now := time.Now().UTC()
 	dateint := int32(now.Year()*10000 + int(now.Month())*100 + now.Day())
 
-	// Test case: Simple math verification
-	// If we have files with known bytes per record, the estimator should calculate
-	// how many records we need for a 1MB target file
+	// Test case: Overhead-aware calculation verification
+	// The estimator now accounts for 15K per-file overhead
+	// Formula: bytes_per_record = (total_bytes - (file_count * 15000)) / total_records
+	// Then: target_records = CEIL((1,000,000 - 15,000) / bytes_per_record)
+	const estimatedOverhead = 15_000
+	const targetBytes = 1_000_000
+	const effectiveTargetBytes = targetBytes - estimatedOverhead // 985,000
+
 	testCases := []struct {
 		name            string
 		fileSize        int64
@@ -47,25 +52,25 @@ func TestMetricSegEstimator(t *testing.T) {
 		expectedRecords int64
 	}{
 		{
-			name:            "100 bytes per record",
-			fileSize:        100_000, // 100KB file
-			recordCount:     1_000,   // 1K records
-			expectedBPR:     100.0,   // 100 bytes per record
-			expectedRecords: 10_000,  // 1MB / 100 bytes = 10K records
+			name:            "100 bytes per record after overhead",
+			fileSize:        100_000 + estimatedOverhead, // 115KB file (100KB + 15KB overhead)
+			recordCount:     1_000,                       // 1K records
+			expectedBPR:     100.0,                       // (115K - 15K) / 1K = 100 bytes per record
+			expectedRecords: 9850,                        // CEIL(985,000 / 100) = 9,850
 		},
 		{
-			name:            "50 bytes per record",
-			fileSize:        50_000, // 50KB file
-			recordCount:     1_000,  // 1K records
-			expectedBPR:     50.0,   // 50 bytes per record
-			expectedRecords: 20_000, // 1MB / 50 bytes = 20K records
+			name:            "50 bytes per record after overhead",
+			fileSize:        50_000 + estimatedOverhead, // 65KB file (50KB + 15KB overhead)
+			recordCount:     1_000,                      // 1K records
+			expectedBPR:     50.0,                       // (65K - 15K) / 1K = 50 bytes per record
+			expectedRecords: 19700,                      // CEIL(985,000 / 50) = 19,700
 		},
 		{
-			name:            "200 bytes per record",
-			fileSize:        200_000, // 200KB file
-			recordCount:     1_000,   // 1K records
-			expectedBPR:     200.0,   // 200 bytes per record
-			expectedRecords: 5_000,   // 1MB / 200 bytes = 5K records
+			name:            "200 bytes per record after overhead",
+			fileSize:        200_000 + estimatedOverhead, // 215KB file (200KB + 15KB overhead)
+			recordCount:     1_000,                       // 1K records
+			expectedBPR:     200.0,                       // (215K - 15K) / 1K = 200 bytes per record
+			expectedRecords: 4925,                        // CEIL(985,000 / 200) = 4,925
 		},
 	}
 
@@ -116,25 +121,31 @@ func TestMetricSegEstimator(t *testing.T) {
 			}
 			require.NotNil(t, row, "Should find result for our test organization")
 
-			// The key test: verify the math
-			actualBPR := float64(tc.fileSize) / float64(tc.recordCount)
-			expectedRecordsFloat := 1_000_000.0 / actualBPR
+			// The key test: verify the overhead-aware math
+			// bytes_per_record = (file_size - overhead) / record_count
+			actualBPRAfterOverhead := float64(tc.fileSize-estimatedOverhead) / float64(tc.recordCount)
+			// target_records = CEIL((target_bytes - overhead) / bytes_per_record)
+			expectedRecordsFloat := effectiveTargetBytes / actualBPRAfterOverhead
 			expectedRecordsCeil := int64(expectedRecordsFloat)
 			if expectedRecordsFloat > float64(expectedRecordsCeil) {
 				expectedRecordsCeil++
+			}
+			// But never less than 1000 (as per the GREATEST clause)
+			if expectedRecordsCeil < 1000 {
+				expectedRecordsCeil = 1000
 			}
 
 			t.Logf("Test case: %s", tc.name)
 			t.Logf("File size: %d bytes", tc.fileSize)
 			t.Logf("Record count: %d", tc.recordCount)
-			t.Logf("Actual BPR: %.2f", actualBPR)
-			t.Logf("Expected records for 1MB: %.2f", expectedRecordsFloat)
+			t.Logf("BPR after overhead: %.2f", actualBPRAfterOverhead)
+			t.Logf("Expected records for 985KB: %.2f", expectedRecordsFloat)
 			t.Logf("Expected records (ceil): %d", expectedRecordsCeil)
 			t.Logf("Actual result: %d", row.EstimatedRecords)
 			t.Logf("Total results returned: %d", len(result))
 
 			assert.Equal(t, expectedRecordsCeil, row.EstimatedRecords,
-				"EstimatedRecords should be CEIL(1MB / bytes_per_record)")
+				"EstimatedRecords should be CEIL((985KB) / overhead_adjusted_bytes_per_record)")
 		})
 	}
 }
@@ -147,17 +158,21 @@ func TestMetricSegEstimatorMultipleFiles(t *testing.T) {
 	now := time.Now().UTC()
 	dateint := int32(now.Year()*10000 + int(now.Month())*100 + now.Day())
 
-	// Insert multiple files with different BPR to test averaging
+	// Insert multiple files with different BPR to test averaging (with overhead)
+	// Files now include overhead - estimator will subtract it out
+	const estimatedOverhead = 15_000
 	files := []struct {
 		fileSize    int64
 		recordCount int64
 	}{
-		{100_000, 1_000}, // 100 BPR
-		{200_000, 1_000}, // 200 BPR
-		{150_000, 1_000}, // 150 BPR
+		{100_000 + estimatedOverhead, 1_000}, // 100 BPR after overhead
+		{200_000 + estimatedOverhead, 1_000}, // 200 BPR after overhead
+		{150_000 + estimatedOverhead, 1_000}, // 150 BPR after overhead
 	}
-	// Average BPR should be (100 + 200 + 150) / 3 = 150
-	// Expected records for 1MB = 1,000,000 / 150 = 6,666.67, ceil = 6,667
+	// Total bytes = 450,000 + (3 * 15,000) = 495,000
+	// Total records = 3,000
+	// Overhead-adjusted BPR = (495,000 - 45,000) / 3,000 = 450,000 / 3,000 = 150
+	// Expected records for effective target = (985,000) / 150 = 6,566.67, ceil = 6,567
 
 	for i, f := range files {
 		err := db.InsertMetricSegment(ctx, lrdb.InsertMetricSegmentParams{
@@ -202,16 +217,23 @@ func TestMetricSegEstimatorMultipleFiles(t *testing.T) {
 	}
 	require.NotNil(t, row, "Should find result for our test organization")
 
-	// Calculate expected: sum(file_size) / sum(record_count) = avg BPR
-	totalFileSize := int64(100_000 + 200_000 + 150_000)      // 450,000
-	totalRecords := int64(1_000 + 1_000 + 1_000)             // 3,000
-	avgBPR := float64(totalFileSize) / float64(totalRecords) // 150.0
-	expectedRecords := int64(1_000_000.0/avgBPR + 0.5)       // ceil(6666.67) = 6667
+	// Calculate expected: (sum(file_size) - (file_count * overhead)) / sum(record_count) = avg BPR after overhead
+	totalFileSize := int64((100_000 + estimatedOverhead) + (200_000 + estimatedOverhead) + (150_000 + estimatedOverhead)) // 495,000
+	totalRecords := int64(1_000 + 1_000 + 1_000)                                                                          // 3,000
+	fileCount := int64(3)
+	totalOverhead := fileCount * estimatedOverhead                                      // 45,000
+	avgBPRAfterOverhead := float64(totalFileSize-totalOverhead) / float64(totalRecords) // (495,000 - 45,000) / 3,000 = 150.0
+	effectiveTargetBytes := 1_000_000 - estimatedOverhead                               // 985,000
+	expectedRecordsFloat := float64(effectiveTargetBytes) / avgBPRAfterOverhead         // 985,000 / 150 = 6,566.67
+	expectedRecords := int64(expectedRecordsFloat + 0.5)                                // ceil(6566.67) = 6567
 
 	t.Logf("Total file size: %d bytes", totalFileSize)
 	t.Logf("Total records: %d", totalRecords)
-	t.Logf("Average BPR: %.2f", avgBPR)
-	t.Logf("Expected records for 1MB: %.2f", 1_000_000.0/avgBPR)
+	t.Logf("File count: %d", fileCount)
+	t.Logf("Total overhead: %d bytes", totalOverhead)
+	t.Logf("Average BPR after overhead: %.2f", avgBPRAfterOverhead)
+	t.Logf("Effective target bytes: %d", effectiveTargetBytes)
+	t.Logf("Expected records for effective target: %.2f", expectedRecordsFloat)
 	t.Logf("Expected records (ceil): %d", expectedRecords)
 	t.Logf("Actual result: %d", row.EstimatedRecords)
 	t.Logf("Total results returned: %d", len(result))
