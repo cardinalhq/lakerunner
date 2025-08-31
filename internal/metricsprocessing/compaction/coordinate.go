@@ -24,7 +24,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
-	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
@@ -85,10 +84,6 @@ func coordinate(
 		return newWorkerInterrupted("context cancelled before compaction")
 	}
 
-	// Use dateint to derive start time for logging context
-	startTs := int64(workItem.Dateint) * 86400 * 1000
-	st := helpers.UnixMillisToTime(startTs)
-
 	meter := otel.Meter("github.com/cardinalhq/lakerunner/internal/metricsprocessing/compaction")
 	fileSortedCounter, _ := meter.Int64Counter("lakerunner.metric.compact.file.sorted")
 	commonAttributes := attribute.NewSet()
@@ -98,9 +93,8 @@ func coordinate(
 		CommonAttributes:  commonAttributes,
 	}
 
-	// Download files from S3
 	readerStack, err := metricsprocessing.CreateReaderStack(
-		ctx, ll, tmpdir, s3client, workItem.OrganizationID, profile, st.UTC().UnixMilli(), rows, config)
+		ctx, ll, tmpdir, s3client, workItem.OrganizationID, profile, rows, config)
 	if err != nil {
 		return err
 	}

@@ -155,7 +155,7 @@ func runS3Cat(bucketID string, objectID string, region string, role string) erro
 		return fmt.Errorf("failed to get S3 client: %w", err)
 	}
 
-	tmpdir, err := os.MkdirTemp("", "lakerunner-s3cat")
+	tmpdir, err := os.MkdirTemp("", "")
 	if err != nil {
 		return fmt.Errorf("failed to create temporary directory: %w", err)
 	}

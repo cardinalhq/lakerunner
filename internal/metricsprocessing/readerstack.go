@@ -16,6 +16,7 @@ package metricsprocessing
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -53,7 +54,6 @@ func CreateReaderStack(
 	s3client *awsclient.S3Client,
 	orgID uuid.UUID,
 	profile storageprofile.StorageProfile,
-	startTimeMs int64,
 	rows []lrdb.MetricSeg,
 	config ReaderStackConfig,
 ) (*ReaderStackResult, error) {
@@ -61,15 +61,19 @@ func CreateReaderStack(
 	var files []*os.File
 	var downloadedFiles []string
 
+	if len(rows) == 0 {
+		return nil, errors.New("no metric segments provided to create reader stack")
+	}
+
 	for _, row := range rows {
 		if ctx.Err() != nil {
-			ll.Info("Context cancelled during segment download - safe interruption point",
+			ll.Info("Context cancelled during segment download",
 				slog.Int64("segmentID", row.SegmentID),
 				slog.Any("error", ctx.Err()))
 			return nil, fmt.Errorf("context cancelled during segment download: %w", ctx.Err())
 		}
 
-		dateint, hour := helpers.MSToDateintHour(startTimeMs)
+		dateint, hour := helpers.MSToDateintHour(rows[0].TsRange.Lower.Int64)
 		objectID := helpers.MakeDBObjectID(orgID, profile.CollectorName, dateint, hour, row.SegmentID, "metrics")
 
 		fn, _, is404, err := s3helper.DownloadS3Object(ctx, tmpdir, s3client, profile.Bucket, objectID)

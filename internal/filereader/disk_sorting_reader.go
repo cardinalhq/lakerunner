@@ -83,7 +83,7 @@ func NewDiskSortingReader(reader Reader, keyProvider SortKeyProvider, batchSize 
 	}
 
 	// Create temp file for binary data
-	tempFile, err := os.CreateTemp("", "lakerunner-sort-*.bin")
+	tempFile, err := os.CreateTemp("", "*.bin")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp file: %w", err)
 	}

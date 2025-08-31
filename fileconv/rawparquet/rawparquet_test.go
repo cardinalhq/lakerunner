@@ -68,7 +68,7 @@ func TestNewRawParquetReader_ErrorCases(t *testing.T) {
 		{
 			name: "empty file",
 			setup: func() string {
-				tmpfile, err := os.CreateTemp("", "empty-*.parquet")
+				tmpfile, err := os.CreateTemp("", "*.parquet")
 				assert.NoError(t, err)
 				tmpfile.Close()
 				return tmpfile.Name()
@@ -79,7 +79,7 @@ func TestNewRawParquetReader_ErrorCases(t *testing.T) {
 		{
 			name: "invalid parquet file",
 			setup: func() string {
-				tmpfile, err := os.CreateTemp("", "invalid-*.parquet")
+				tmpfile, err := os.CreateTemp("", "*.parquet")
 				assert.NoError(t, err)
 				_, err = tmpfile.WriteString("not a parquet file content")
 				assert.NoError(t, err)

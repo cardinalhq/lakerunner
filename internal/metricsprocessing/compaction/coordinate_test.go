@@ -23,10 +23,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
 	"github.com/cardinalhq/lakerunner/lrdb"
@@ -92,22 +92,20 @@ func TestReplaceCompactedSegments_WithCompactMetricSegs(t *testing.T) {
 		Dateint:        20250830,
 		FrequencyMs:    5000,
 		InstanceNum:    1,
-		TsRange: pgtype.Range[pgtype.Timestamptz]{
-			Lower:     pgtype.Timestamptz{Time: now, Valid: true},
-			Upper:     pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
-			LowerType: pgtype.Inclusive,
-			UpperType: pgtype.Exclusive,
-			Valid:     true,
-		},
 	}
 
-	// Test segment IDs for the new compacted segments
-	newSegmentIDs := []int64{99999}
+	// Create processed segments for testing
+	segments := make(metricsprocessing.ProcessedSegments, 0, len(results))
+	for _, result := range results {
+		segment, err := metricsprocessing.NewProcessedSegment(result, orgID, "test-collector", ll)
+		require.NoError(t, err)
+		segments = append(segments, segment)
+	}
 
 	// Call the function under test
 	inputRecords := int64(2000) // Sum of old segments record count (1000 + 1000)
 	inputBytes := int64(100000) // Sum of old segments file size (50000 + 50000)
-	err := replaceCompactedSegments(ctx, ll, db, results, oldRows, workItem, newSegmentIDs, inputRecords, inputBytes)
+	err := replaceCompactedSegments(ctx, ll, db, segments, oldRows, workItem, inputRecords, inputBytes)
 	require.NoError(t, err)
 
 	// Verify segments by querying all segments for this org/dateint/frequency
@@ -141,7 +139,7 @@ func TestReplaceCompactedSegments_WithCompactMetricSegs(t *testing.T) {
 	}
 
 	// Verify new segment was created
-	newSeg, exists := segmentMap[newSegmentIDs[0]]
+	newSeg, exists := segmentMap[segments[0].SegmentID]
 	require.True(t, exists, "New segment should exist")
 	assert.False(t, newSeg.Compacted, "New segment should not be compacted")
 	assert.True(t, newSeg.Published, "New segment should be published")

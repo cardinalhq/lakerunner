@@ -121,8 +121,6 @@ func TestRollupMetricSegs_BasicRollup(t *testing.T) {
 		FrequencyMs:    10000,
 		InstanceNum:    1,
 		SlotID:         0,
-		StartTs:        now.UnixMilli() - 1000,
-		EndTs:          now.Add(2 * time.Minute).UnixMilli(),
 	})
 	require.NoError(t, err)
 
@@ -146,8 +144,6 @@ func TestRollupMetricSegs_BasicRollup(t *testing.T) {
 		FrequencyMs:    60000,
 		InstanceNum:    1,
 		SlotID:         0,
-		StartTs:        now.UnixMilli() - 1000,
-		EndTs:          now.Add(2 * time.Minute).UnixMilli(),
 	})
 	require.NoError(t, err)
 
@@ -240,8 +236,6 @@ func TestRollupMetricSegs_EmptySourceSegments(t *testing.T) {
 		FrequencyMs:    60000,
 		InstanceNum:    1,
 		SlotID:         0,
-		StartTs:        now.UnixMilli() - 1000,
-		EndTs:          now.Add(2 * time.Minute).UnixMilli(),
 	})
 	require.NoError(t, err)
 	require.Len(t, segs, 2) // Both old and new should exist
@@ -322,8 +316,6 @@ func TestRollupMetricSegs_EmptyTargetReplacement(t *testing.T) {
 		FrequencyMs:    10000,
 		InstanceNum:    1,
 		SlotID:         0,
-		StartTs:        now.UnixMilli() - 1000,
-		EndTs:          now.Add(2 * time.Minute).UnixMilli(),
 	})
 	require.NoError(t, err)
 
@@ -440,8 +432,6 @@ func TestRollupMetricSegs_MultipleTargetSegments(t *testing.T) {
 		FrequencyMs:    10000,
 		InstanceNum:    1,
 		SlotID:         0,
-		StartTs:        now.UnixMilli() - 1000,
-		EndTs:          now.Add(2 * time.Minute).UnixMilli(),
 	})
 	require.NoError(t, err)
 
@@ -463,8 +453,6 @@ func TestRollupMetricSegs_MultipleTargetSegments(t *testing.T) {
 		FrequencyMs:    60000,
 		InstanceNum:    1,
 		SlotID:         0,
-		StartTs:        now.UnixMilli() - 1000,
-		EndTs:          now.Add(2 * time.Minute).UnixMilli(),
 	})
 	require.NoError(t, err)
 	require.Len(t, targetSegs, 4) // 2 old + 2 new
@@ -583,8 +571,6 @@ func TestRollupMetricSegs_AtomicTransactionFailure(t *testing.T) {
 		FrequencyMs:    10000,
 		InstanceNum:    1,
 		SlotID:         0,
-		StartTs:        now.UnixMilli() - 1000,
-		EndTs:          now.Add(2 * time.Minute).UnixMilli(),
 	})
 	require.NoError(t, err)
 	require.Len(t, sourceSegs, 1)
@@ -601,8 +587,6 @@ func TestRollupMetricSegs_AtomicTransactionFailure(t *testing.T) {
 		FrequencyMs:    60000,
 		InstanceNum:    1,
 		SlotID:         0,
-		StartTs:        now.UnixMilli() - 1000,
-		EndTs:          now.Add(2 * time.Minute).UnixMilli(),
 	})
 	require.NoError(t, err)
 	require.Len(t, targetSegs, 1)
@@ -702,8 +686,6 @@ func TestRollupMetricSegs_DifferentOrganizations(t *testing.T) {
 		FrequencyMs:    10000,
 		InstanceNum:    1,
 		SlotID:         0,
-		StartTs:        now.UnixMilli() - 1000,
-		EndTs:          now.Add(2 * time.Minute).UnixMilli(),
 	})
 	require.NoError(t, err)
 	require.Len(t, sourceSegs, 1)
@@ -716,8 +698,6 @@ func TestRollupMetricSegs_DifferentOrganizations(t *testing.T) {
 		FrequencyMs:    60000,
 		InstanceNum:    1,
 		SlotID:         0,
-		StartTs:        now.UnixMilli() - 1000,
-		EndTs:          now.Add(2 * time.Minute).UnixMilli(),
 	})
 	require.NoError(t, err)
 	require.Len(t, targetSegs, 2) // Both old and new should exist
@@ -828,8 +808,6 @@ func TestRollupMetricSegs_DifferentSlots(t *testing.T) {
 		FrequencyMs:    10000,
 		InstanceNum:    1,
 		SlotID:         0, // Check slot 0
-		StartTs:        now.UnixMilli() - 1000,
-		EndTs:          now.Add(2 * time.Minute).UnixMilli(),
 	})
 	require.NoError(t, err)
 
@@ -853,8 +831,6 @@ func TestRollupMetricSegs_DifferentSlots(t *testing.T) {
 		FrequencyMs:    60000,
 		InstanceNum:    1,
 		SlotID:         1, // Check slot 1
-		StartTs:        now.UnixMilli() - 1000,
-		EndTs:          now.Add(2 * time.Minute).UnixMilli(),
 	})
 	require.NoError(t, err)
 	require.Len(t, targetSegs, 2) // Both old and new should exist

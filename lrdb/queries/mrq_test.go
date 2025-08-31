@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -36,15 +35,6 @@ func TestPutMetricRollupWork(t *testing.T) {
 
 	orgID := uuid.New()
 
-	now := time.Now()
-	tsRange := pgtype.Range[pgtype.Timestamptz]{
-		Lower:     pgtype.Timestamptz{Time: now, Valid: true},
-		Upper:     pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
-		LowerType: pgtype.Inclusive,
-		UpperType: pgtype.Exclusive,
-		Valid:     true,
-	}
-
 	err := db.PutMetricRollupWork(ctx, lrdb.PutMetricRollupWorkParams{
 		OrganizationID: orgID,
 		Dateint:        20250829,
@@ -52,7 +42,6 @@ func TestPutMetricRollupWork(t *testing.T) {
 		InstanceNum:    1,
 		SlotID:         0,
 		SlotCount:      8,
-		TsRange:        tsRange,
 		Priority:       1000,
 	})
 	require.NoError(t, err)
@@ -63,7 +52,6 @@ func TestPutMetricRollupWork_MultipleItems(t *testing.T) {
 	db := testhelpers.NewTestLRDBStore(t)
 
 	orgID := uuid.New()
-	now := time.Now()
 
 	workItems := []lrdb.PutMetricRollupWorkParams{
 		{
@@ -73,14 +61,7 @@ func TestPutMetricRollupWork_MultipleItems(t *testing.T) {
 			InstanceNum:    1,
 			SlotID:         0,
 			SlotCount:      8,
-			TsRange: pgtype.Range[pgtype.Timestamptz]{
-				Lower:     pgtype.Timestamptz{Time: now, Valid: true},
-				Upper:     pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
-				LowerType: pgtype.Inclusive,
-				UpperType: pgtype.Exclusive,
-				Valid:     true,
-			},
-			Priority: 1000,
+			Priority:       1000,
 		},
 		{
 			OrganizationID: orgID,
@@ -89,14 +70,7 @@ func TestPutMetricRollupWork_MultipleItems(t *testing.T) {
 			InstanceNum:    1,
 			SlotID:         1,
 			SlotCount:      8,
-			TsRange: pgtype.Range[pgtype.Timestamptz]{
-				Lower:     pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
-				Upper:     pgtype.Timestamptz{Time: now.Add(2 * time.Hour), Valid: true},
-				LowerType: pgtype.Inclusive,
-				UpperType: pgtype.Exclusive,
-				Valid:     true,
-			},
-			Priority: 800,
+			Priority:       800,
 		},
 	}
 
@@ -112,7 +86,6 @@ func TestClaimMetricRollupWork_BasicClaim(t *testing.T) {
 
 	orgID := uuid.New()
 	workerID := int64(12345)
-	now := time.Now()
 
 	// Create two items in the same group (same slot_id and other grouping fields)
 	workItems := []lrdb.PutMetricRollupWorkParams{
@@ -123,14 +96,7 @@ func TestClaimMetricRollupWork_BasicClaim(t *testing.T) {
 			InstanceNum:    1,
 			SlotID:         0, // Same slot_id
 			SlotCount:      8,
-			TsRange: pgtype.Range[pgtype.Timestamptz]{
-				Lower:     pgtype.Timestamptz{Time: now, Valid: true},
-				Upper:     pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
-				LowerType: pgtype.Inclusive,
-				UpperType: pgtype.Exclusive,
-				Valid:     true,
-			},
-			Priority: 1000,
+			Priority:       1000,
 		},
 		{
 			OrganizationID: orgID,
@@ -139,14 +105,7 @@ func TestClaimMetricRollupWork_BasicClaim(t *testing.T) {
 			InstanceNum:    1,
 			SlotID:         0, // Same slot_id as first item
 			SlotCount:      8,
-			TsRange: pgtype.Range[pgtype.Timestamptz]{
-				Lower:     pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
-				Upper:     pgtype.Timestamptz{Time: now.Add(2 * time.Hour), Valid: true},
-				LowerType: pgtype.Inclusive,
-				UpperType: pgtype.Exclusive,
-				Valid:     true,
-			},
-			Priority: 1000,
+			Priority:       1000,
 		},
 	}
 
@@ -177,7 +136,6 @@ func TestClaimMetricRollupWork_AgeThreshold(t *testing.T) {
 
 	orgID := uuid.New()
 	workerID := int64(12345)
-	now := time.Now()
 
 	err := db.PutMetricRollupWork(ctx, lrdb.PutMetricRollupWorkParams{
 		OrganizationID: orgID,
@@ -186,14 +144,7 @@ func TestClaimMetricRollupWork_AgeThreshold(t *testing.T) {
 		InstanceNum:    1,
 		SlotID:         0,
 		SlotCount:      8,
-		TsRange: pgtype.Range[pgtype.Timestamptz]{
-			Lower:     pgtype.Timestamptz{Time: now, Valid: true},
-			Upper:     pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
-			LowerType: pgtype.Inclusive,
-			UpperType: pgtype.Exclusive,
-			Valid:     true,
-		},
-		Priority: 1000,
+		Priority:       1000,
 	})
 	require.NoError(t, err)
 
@@ -235,15 +186,6 @@ func TestClaimMetricRollupWork_Priority(t *testing.T) {
 
 	orgID := uuid.New()
 	workerID := int64(12345)
-	now := time.Now()
-
-	tsRange := pgtype.Range[pgtype.Timestamptz]{
-		Lower:     pgtype.Timestamptz{Time: now, Valid: true},
-		Upper:     pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
-		LowerType: pgtype.Inclusive,
-		UpperType: pgtype.Exclusive,
-		Valid:     true,
-	}
 
 	// Add low priority item first
 	err := db.PutMetricRollupWork(ctx, lrdb.PutMetricRollupWorkParams{
@@ -253,7 +195,6 @@ func TestClaimMetricRollupWork_Priority(t *testing.T) {
 		InstanceNum:    1,
 		SlotID:         0,
 		SlotCount:      8,
-		TsRange:        tsRange,
 		Priority:       600,
 	})
 	require.NoError(t, err)
@@ -266,7 +207,6 @@ func TestClaimMetricRollupWork_Priority(t *testing.T) {
 		InstanceNum:    1,
 		SlotID:         1,
 		SlotCount:      8,
-		TsRange:        tsRange,
 		Priority:       1000,
 	})
 	require.NoError(t, err)
@@ -289,7 +229,6 @@ func TestReleaseMetricRollupWork(t *testing.T) {
 
 	orgID := uuid.New()
 	workerID := int64(12345)
-	now := time.Now()
 
 	err := db.PutMetricRollupWork(ctx, lrdb.PutMetricRollupWorkParams{
 		OrganizationID: orgID,
@@ -298,14 +237,7 @@ func TestReleaseMetricRollupWork(t *testing.T) {
 		InstanceNum:    1,
 		SlotID:         0,
 		SlotCount:      8,
-		TsRange: pgtype.Range[pgtype.Timestamptz]{
-			Lower:     pgtype.Timestamptz{Time: now, Valid: true},
-			Upper:     pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
-			LowerType: pgtype.Inclusive,
-			UpperType: pgtype.Exclusive,
-			Valid:     true,
-		},
-		Priority: 1000,
+		Priority:       1000,
 	})
 	require.NoError(t, err)
 
@@ -346,7 +278,6 @@ func TestReleaseMetricRollupWork_OnlyReleasesByCorrectWorker(t *testing.T) {
 	orgID := uuid.New()
 	workerID := int64(12345)
 	wrongWorkerID := int64(54321)
-	now := time.Now()
 
 	err := db.PutMetricRollupWork(ctx, lrdb.PutMetricRollupWorkParams{
 		OrganizationID: orgID,
@@ -355,14 +286,7 @@ func TestReleaseMetricRollupWork_OnlyReleasesByCorrectWorker(t *testing.T) {
 		InstanceNum:    1,
 		SlotID:         0,
 		SlotCount:      8,
-		TsRange: pgtype.Range[pgtype.Timestamptz]{
-			Lower:     pgtype.Timestamptz{Time: now, Valid: true},
-			Upper:     pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
-			LowerType: pgtype.Inclusive,
-			UpperType: pgtype.Exclusive,
-			Valid:     true,
-		},
-		Priority: 1000,
+		Priority:       1000,
 	})
 	require.NoError(t, err)
 
@@ -400,7 +324,6 @@ func TestDeleteMetricRollupWork(t *testing.T) {
 
 	orgID := uuid.New()
 	workerID := int64(12345)
-	now := time.Now()
 
 	err := db.PutMetricRollupWork(ctx, lrdb.PutMetricRollupWorkParams{
 		OrganizationID: orgID,
@@ -409,14 +332,7 @@ func TestDeleteMetricRollupWork(t *testing.T) {
 		InstanceNum:    1,
 		SlotID:         0,
 		SlotCount:      8,
-		TsRange: pgtype.Range[pgtype.Timestamptz]{
-			Lower:     pgtype.Timestamptz{Time: now, Valid: true},
-			Upper:     pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
-			LowerType: pgtype.Inclusive,
-			UpperType: pgtype.Exclusive,
-			Valid:     true,
-		},
-		Priority: 1000,
+		Priority:       1000,
 	})
 	require.NoError(t, err)
 
@@ -454,7 +370,6 @@ func TestDeleteMetricRollupWork_OnlyDeletesByCorrectWorker(t *testing.T) {
 	orgID := uuid.New()
 	workerID := int64(12345)
 	wrongWorkerID := int64(54321)
-	now := time.Now()
 
 	err := db.PutMetricRollupWork(ctx, lrdb.PutMetricRollupWorkParams{
 		OrganizationID: orgID,
@@ -463,14 +378,7 @@ func TestDeleteMetricRollupWork_OnlyDeletesByCorrectWorker(t *testing.T) {
 		InstanceNum:    1,
 		SlotID:         0,
 		SlotCount:      8,
-		TsRange: pgtype.Range[pgtype.Timestamptz]{
-			Lower:     pgtype.Timestamptz{Time: now, Valid: true},
-			Upper:     pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
-			LowerType: pgtype.Inclusive,
-			UpperType: pgtype.Exclusive,
-			Valid:     true,
-		},
-		Priority: 1000,
+		Priority:       1000,
 	})
 	require.NoError(t, err)
 
@@ -515,7 +423,6 @@ func TestTouchMetricRollupWork(t *testing.T) {
 
 	orgID := uuid.New()
 	workerID := int64(12345)
-	now := time.Now()
 
 	err := db.PutMetricRollupWork(ctx, lrdb.PutMetricRollupWorkParams{
 		OrganizationID: orgID,
@@ -524,14 +431,7 @@ func TestTouchMetricRollupWork(t *testing.T) {
 		InstanceNum:    1,
 		SlotID:         0,
 		SlotCount:      8,
-		TsRange: pgtype.Range[pgtype.Timestamptz]{
-			Lower:     pgtype.Timestamptz{Time: now, Valid: true},
-			Upper:     pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
-			LowerType: pgtype.Inclusive,
-			UpperType: pgtype.Exclusive,
-			Valid:     true,
-		},
-		Priority: 1000,
+		Priority:       1000,
 	})
 	require.NoError(t, err)
 
@@ -583,7 +483,6 @@ func TestCleanupMetricRollupWork(t *testing.T) {
 
 	orgID := uuid.New()
 	workerID := int64(12345)
-	now := time.Now()
 
 	// Create an old work item
 	err := db.PutMetricRollupWork(ctx, lrdb.PutMetricRollupWorkParams{
@@ -593,14 +492,7 @@ func TestCleanupMetricRollupWork(t *testing.T) {
 		InstanceNum:    1,
 		SlotID:         0,
 		SlotCount:      8,
-		TsRange: pgtype.Range[pgtype.Timestamptz]{
-			Lower:     pgtype.Timestamptz{Time: now.Add(-2 * time.Hour), Valid: true},
-			Upper:     pgtype.Timestamptz{Time: now.Add(-time.Hour), Valid: true},
-			LowerType: pgtype.Inclusive,
-			UpperType: pgtype.Exclusive,
-			Valid:     true,
-		},
-		Priority: 1000,
+		Priority:       1000,
 	})
 	require.NoError(t, err)
 

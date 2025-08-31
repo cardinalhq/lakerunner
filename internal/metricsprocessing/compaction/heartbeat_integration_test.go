@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -58,15 +57,6 @@ func TestMCQHeartbeater_Integration(t *testing.T) {
 
 	orgID := uuid.New()
 	workerID := int64(12345)
-	now := time.Now()
-
-	tsRange := pgtype.Range[pgtype.Timestamptz]{
-		Lower:     pgtype.Timestamptz{Time: now, Valid: true},
-		Upper:     pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
-		LowerType: pgtype.Inclusive,
-		UpperType: pgtype.Exclusive,
-		Valid:     true,
-	}
 
 	// Create test MCQ item
 	err := db.PutMetricCompactionWork(ctx, lrdb.PutMetricCompactionWorkParams{
@@ -75,7 +65,6 @@ func TestMCQHeartbeater_Integration(t *testing.T) {
 		FrequencyMs:    5000,
 		SegmentID:      int64(12347),
 		InstanceNum:    1,
-		TsRange:        tsRange,
 		RecordCount:    1000,
 		Priority:       1,
 	})
@@ -144,15 +133,6 @@ func TestMCQHeartbeater_ContextCancellation_Integration(t *testing.T) {
 
 	orgID := uuid.New()
 	workerID := int64(12345)
-	now := time.Now()
-
-	tsRange := pgtype.Range[pgtype.Timestamptz]{
-		Lower:     pgtype.Timestamptz{Time: now, Valid: true},
-		Upper:     pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
-		LowerType: pgtype.Inclusive,
-		UpperType: pgtype.Exclusive,
-		Valid:     true,
-	}
 
 	// Create test MCQ item
 	err := db.PutMetricCompactionWork(ctx, lrdb.PutMetricCompactionWorkParams{
@@ -161,7 +141,6 @@ func TestMCQHeartbeater_ContextCancellation_Integration(t *testing.T) {
 		FrequencyMs:    5000,
 		SegmentID:      int64(12347),
 		InstanceNum:    1,
-		TsRange:        tsRange,
 		RecordCount:    1000,
 		Priority:       1,
 	})

@@ -148,7 +148,7 @@ func (s *FileSplitter) WriteBatchRows(ctx context.Context, batch *pipeline.Batch
 // The schema will be built dynamically as rows are added.
 func (s *FileSplitter) startNewBufferFile() error {
 	// Create the binary buffer file
-	file, err := os.CreateTemp(s.config.TmpDir, "buffer-*.bin")
+	file, err := os.CreateTemp(s.config.TmpDir, "*.bin")
 	if err != nil {
 		return fmt.Errorf("create binary temp file: %w", err)
 	}

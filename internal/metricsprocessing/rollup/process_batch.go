@@ -128,7 +128,7 @@ func processBatch(
 		return err
 	}
 
-	tmpdir, err := os.MkdirTemp("", "rollup-work-")
+	tmpdir, err := os.MkdirTemp("", "")
 	if err != nil {
 		ll.Error("Failed to create temporary directory", slog.Any("error", err))
 		return fmt.Errorf("failed to create temporary directory: %w", err)
@@ -247,26 +247,8 @@ func rollupMetricSegments(
 		CommonAttributes:  commonAttributes,
 	}
 
-	startTs := time.Unix(0, 0).UTC().UnixMilli() // Default, will be updated from sourceRows
-	if len(sourceRows) > 0 {
-		// Find the earliest start time from source segments using TsRange
-		firstBound, _, ok := helpers.RangeBounds(sourceRows[0].TsRange)
-		if ok {
-			minStartTs := firstBound.Int64
-			for _, row := range sourceRows {
-				if startBound, _, ok := helpers.RangeBounds(row.TsRange); ok {
-					rowStartTs := startBound.Int64
-					if rowStartTs < minStartTs {
-						minStartTs = rowStartTs
-					}
-				}
-			}
-			startTs = minStartTs
-		}
-	}
-
 	readerStack, err := metricsprocessing.CreateReaderStack(
-		ctx, ll, tmpdir, s3client, firstItem.OrganizationID, profile, startTs, sourceRows, config)
+		ctx, ll, tmpdir, s3client, firstItem.OrganizationID, profile, sourceRows, config)
 	if err != nil {
 		return err
 	}

@@ -302,7 +302,7 @@ func ingestFilesBatch(
 		}
 	}
 
-	tmpdir, err := os.MkdirTemp("", "lakerunner-batch-ingest-")
+	tmpdir, err := os.MkdirTemp("", "")
 	if err != nil {
 		return true, false, fmt.Errorf("creating tmpdir: %w", err)
 	}

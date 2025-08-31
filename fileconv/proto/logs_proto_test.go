@@ -162,7 +162,7 @@ func TestNewLogsProtoReader_ErrorCases(t *testing.T) {
 		{
 			name: "empty file",
 			setup: func() string {
-				tmpfile, err := os.CreateTemp("", "empty-*.binpb")
+				tmpfile, err := os.CreateTemp("", "*.binpb")
 				assert.NoError(t, err)
 				tmpfile.Close()
 				return tmpfile.Name()
@@ -172,7 +172,7 @@ func TestNewLogsProtoReader_ErrorCases(t *testing.T) {
 		{
 			name: "invalid proto file",
 			setup: func() string {
-				tmpfile, err := os.CreateTemp("", "invalid-*.binpb")
+				tmpfile, err := os.CreateTemp("", "*.binpb")
 				assert.NoError(t, err)
 				_, err = tmpfile.WriteString("not a protobuf file content")
 				assert.NoError(t, err)
@@ -213,7 +213,7 @@ func TestNewLogsProtoReader_ErrorCases(t *testing.T) {
 
 func TestLogsProtoReader_GetRowErrorCases(t *testing.T) {
 	// Test that invalid proto files are handled during construction
-	tmpfile, err := os.CreateTemp("", "invalid-proto-*.binpb")
+	tmpfile, err := os.CreateTemp("", "*.binpb")
 	assert.NoError(t, err)
 	defer os.Remove(tmpfile.Name())
 

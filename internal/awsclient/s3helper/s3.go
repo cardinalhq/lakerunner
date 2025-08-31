@@ -110,12 +110,9 @@ func DownloadS3Object(
 ) (tmpfile string, size int64, notFound bool, err error) {
 	downloader := manager.NewDownloader(s3client.Client)
 
-	// Preserve the original file extension for proper file type detection
-	ext := filepath.Ext(objectID)
-	if ext == "" {
-		ext = ".data" // fallback for files without extension
-	}
-	f, err := os.CreateTemp(dir, "s3-*"+ext)
+	// Use the full filename with random prefix for proper file type detection
+	filename := filepath.Base(objectID)
+	f, err := os.CreateTemp(dir, "*-"+filename)
 	if err != nil {
 		return "", 0, false, fmt.Errorf("create temp file: %w", err)
 	}

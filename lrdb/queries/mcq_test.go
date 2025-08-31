@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -37,22 +36,12 @@ func TestPutMetricCompactionWork(t *testing.T) {
 	orgID := uuid.New()
 	segmentID := int64(12345)
 
-	now := time.Now()
-	tsRange := pgtype.Range[pgtype.Timestamptz]{
-		Lower:     pgtype.Timestamptz{Time: now, Valid: true},
-		Upper:     pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
-		LowerType: pgtype.Inclusive,
-		UpperType: pgtype.Exclusive,
-		Valid:     true,
-	}
-
 	err := db.PutMetricCompactionWork(ctx, lrdb.PutMetricCompactionWorkParams{
 		OrganizationID: orgID,
 		Dateint:        20250829,
 		FrequencyMs:    5000,
 		SegmentID:      segmentID,
 		InstanceNum:    1,
-		TsRange:        tsRange,
 		RecordCount:    1000,
 		Priority:       1,
 	})
@@ -64,7 +53,6 @@ func TestPutMetricCompactionWork_MultipleItems(t *testing.T) {
 	db := testhelpers.NewTestLRDBStore(t)
 
 	orgID := uuid.New()
-	now := time.Now()
 
 	workItems := []lrdb.PutMetricCompactionWorkParams{
 		{
@@ -73,15 +61,8 @@ func TestPutMetricCompactionWork_MultipleItems(t *testing.T) {
 			FrequencyMs:    5000,
 			SegmentID:      int64(12346),
 			InstanceNum:    1,
-			TsRange: pgtype.Range[pgtype.Timestamptz]{
-				Lower:     pgtype.Timestamptz{Time: now, Valid: true},
-				Upper:     pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
-				LowerType: pgtype.Inclusive,
-				UpperType: pgtype.Exclusive,
-				Valid:     true,
-			},
-			RecordCount: 500,
-			Priority:    1,
+			RecordCount:    500,
+			Priority:       1,
 		},
 		{
 			OrganizationID: orgID,
@@ -89,15 +70,8 @@ func TestPutMetricCompactionWork_MultipleItems(t *testing.T) {
 			FrequencyMs:    7000,
 			SegmentID:      int64(12346),
 			InstanceNum:    1,
-			TsRange: pgtype.Range[pgtype.Timestamptz]{
-				Lower:     pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
-				Upper:     pgtype.Timestamptz{Time: now.Add(2 * time.Hour), Valid: true},
-				LowerType: pgtype.Inclusive,
-				UpperType: pgtype.Exclusive,
-				Valid:     true,
-			},
-			RecordCount: 1500,
-			Priority:    2,
+			RecordCount:    1500,
+			Priority:       2,
 		},
 	}
 
@@ -113,7 +87,6 @@ func TestClaimMetricCompactionWork_BasicClaim(t *testing.T) {
 
 	orgID := uuid.New()
 	workerID := int64(12345)
-	now := time.Now()
 
 	workItems := []lrdb.PutMetricCompactionWorkParams{
 		{
@@ -122,15 +95,8 @@ func TestClaimMetricCompactionWork_BasicClaim(t *testing.T) {
 			FrequencyMs:    5000,
 			SegmentID:      int64(12346),
 			InstanceNum:    1,
-			TsRange: pgtype.Range[pgtype.Timestamptz]{
-				Lower:     pgtype.Timestamptz{Time: now, Valid: true},
-				Upper:     pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
-				LowerType: pgtype.Inclusive,
-				UpperType: pgtype.Exclusive,
-				Valid:     true,
-			},
-			RecordCount: 1000,
-			Priority:    1,
+			RecordCount:    1000,
+			Priority:       1,
 		},
 		{
 			OrganizationID: orgID,
@@ -138,15 +104,8 @@ func TestClaimMetricCompactionWork_BasicClaim(t *testing.T) {
 			FrequencyMs:    5000,
 			SegmentID:      int64(12346),
 			InstanceNum:    1,
-			TsRange: pgtype.Range[pgtype.Timestamptz]{
-				Lower:     pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
-				Upper:     pgtype.Timestamptz{Time: now.Add(2 * time.Hour), Valid: true},
-				LowerType: pgtype.Inclusive,
-				UpperType: pgtype.Exclusive,
-				Valid:     true,
-			},
-			RecordCount: 1500,
-			Priority:    1,
+			RecordCount:    1500,
+			Priority:       1,
 		},
 	}
 
@@ -191,7 +150,6 @@ func TestClaimMetricCompactionWork_GreedyFill(t *testing.T) {
 
 	orgID := uuid.New()
 	workerID := int64(12345)
-	now := time.Now()
 
 	workItems := []lrdb.PutMetricCompactionWorkParams{
 		{
@@ -200,15 +158,8 @@ func TestClaimMetricCompactionWork_GreedyFill(t *testing.T) {
 			FrequencyMs:    5000,
 			SegmentID:      int64(12346),
 			InstanceNum:    1,
-			TsRange: pgtype.Range[pgtype.Timestamptz]{
-				Lower:     pgtype.Timestamptz{Time: now, Valid: true},
-				Upper:     pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
-				LowerType: pgtype.Inclusive,
-				UpperType: pgtype.Exclusive,
-				Valid:     true,
-			},
-			RecordCount: 1000,
-			Priority:    1,
+			RecordCount:    1000,
+			Priority:       1,
 		},
 		{
 			OrganizationID: orgID,
@@ -216,15 +167,8 @@ func TestClaimMetricCompactionWork_GreedyFill(t *testing.T) {
 			FrequencyMs:    5000,
 			SegmentID:      int64(12346),
 			InstanceNum:    1,
-			TsRange: pgtype.Range[pgtype.Timestamptz]{
-				Lower:     pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
-				Upper:     pgtype.Timestamptz{Time: now.Add(2 * time.Hour), Valid: true},
-				LowerType: pgtype.Inclusive,
-				UpperType: pgtype.Exclusive,
-				Valid:     true,
-			},
-			RecordCount: 500,
-			Priority:    1,
+			RecordCount:    500,
+			Priority:       1,
 		},
 	}
 
@@ -258,7 +202,6 @@ func TestClaimMetricCompactionWork_AgeThreshold(t *testing.T) {
 
 	orgID := uuid.New()
 	workerID := int64(12345)
-	now := time.Now()
 
 	err := db.PutMetricCompactionWork(ctx, lrdb.PutMetricCompactionWorkParams{
 		OrganizationID: orgID,
@@ -266,15 +209,8 @@ func TestClaimMetricCompactionWork_AgeThreshold(t *testing.T) {
 		FrequencyMs:    5000,
 		SegmentID:      int64(12347),
 		InstanceNum:    1,
-		TsRange: pgtype.Range[pgtype.Timestamptz]{
-			Lower:     pgtype.Timestamptz{Time: now, Valid: true},
-			Upper:     pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
-			LowerType: pgtype.Inclusive,
-			UpperType: pgtype.Exclusive,
-			Valid:     true,
-		},
-		RecordCount: 500,
-		Priority:    1,
+		RecordCount:    500,
+		Priority:       1,
 	})
 	require.NoError(t, err)
 
@@ -300,7 +236,6 @@ func TestClaimMetricCompactionWork_OversizedItem(t *testing.T) {
 
 	orgID := uuid.New()
 	workerID := int64(12345)
-	now := time.Now()
 
 	workItems := []lrdb.PutMetricCompactionWorkParams{
 		{
@@ -309,15 +244,8 @@ func TestClaimMetricCompactionWork_OversizedItem(t *testing.T) {
 			FrequencyMs:    5000,
 			SegmentID:      int64(12346),
 			InstanceNum:    1,
-			TsRange: pgtype.Range[pgtype.Timestamptz]{
-				Lower:     pgtype.Timestamptz{Time: now, Valid: true},
-				Upper:     pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
-				LowerType: pgtype.Inclusive,
-				UpperType: pgtype.Exclusive,
-				Valid:     true,
-			},
-			RecordCount: 5000,
-			Priority:    1,
+			RecordCount:    5000,
+			Priority:       1,
 		},
 		{
 			OrganizationID: orgID,
@@ -325,15 +253,8 @@ func TestClaimMetricCompactionWork_OversizedItem(t *testing.T) {
 			FrequencyMs:    5000,
 			SegmentID:      int64(12346),
 			InstanceNum:    1,
-			TsRange: pgtype.Range[pgtype.Timestamptz]{
-				Lower:     pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
-				Upper:     pgtype.Timestamptz{Time: now.Add(2 * time.Hour), Valid: true},
-				LowerType: pgtype.Inclusive,
-				UpperType: pgtype.Exclusive,
-				Valid:     true,
-			},
-			RecordCount: 500,
-			Priority:    1,
+			RecordCount:    500,
+			Priority:       1,
 		},
 	}
 
@@ -377,15 +298,6 @@ func TestClaimMetricCompactionWork_Priority(t *testing.T) {
 
 	orgID := uuid.New()
 	workerID := int64(12345)
-	now := time.Now()
-
-	tsRange := pgtype.Range[pgtype.Timestamptz]{
-		Lower:     pgtype.Timestamptz{Time: now, Valid: true},
-		Upper:     pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
-		LowerType: pgtype.Inclusive,
-		UpperType: pgtype.Exclusive,
-		Valid:     true,
-	}
 
 	err := db.PutMetricCompactionWork(ctx, lrdb.PutMetricCompactionWorkParams{
 		OrganizationID: orgID,
@@ -393,7 +305,6 @@ func TestClaimMetricCompactionWork_Priority(t *testing.T) {
 		FrequencyMs:    5000,
 		SegmentID:      int64(12347),
 		InstanceNum:    1,
-		TsRange:        tsRange,
 		RecordCount:    1000,
 		Priority:       1,
 	})
@@ -405,7 +316,6 @@ func TestClaimMetricCompactionWork_Priority(t *testing.T) {
 		FrequencyMs:    5000,
 		SegmentID:      int64(12347),
 		InstanceNum:    1,
-		TsRange:        tsRange,
 		RecordCount:    1000,
 		Priority:       5,
 	})
@@ -429,7 +339,6 @@ func TestClaimMetricCompactionWork_WithOrgEstimate(t *testing.T) {
 
 	orgID := uuid.New()
 	workerID := int64(12345)
-	now := time.Now()
 
 	// Set up an organization-specific estimate
 	targetRecords := int64(15000)
@@ -447,15 +356,8 @@ func TestClaimMetricCompactionWork_WithOrgEstimate(t *testing.T) {
 		FrequencyMs:    5000,
 		SegmentID:      int64(12347),
 		InstanceNum:    1,
-		TsRange: pgtype.Range[pgtype.Timestamptz]{
-			Lower:     pgtype.Timestamptz{Time: now, Valid: true},
-			Upper:     pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
-			LowerType: pgtype.Inclusive,
-			UpperType: pgtype.Exclusive,
-			Valid:     true,
-		},
-		RecordCount: 8000,
-		Priority:    1,
+		RecordCount:    8000,
+		Priority:       1,
 	})
 	require.NoError(t, err)
 
@@ -484,7 +386,6 @@ func TestReleaseMetricCompactionWork(t *testing.T) {
 
 	orgID := uuid.New()
 	workerID := int64(12345)
-	now := time.Now()
 
 	err := db.PutMetricCompactionWork(ctx, lrdb.PutMetricCompactionWorkParams{
 		OrganizationID: orgID,
@@ -492,15 +393,8 @@ func TestReleaseMetricCompactionWork(t *testing.T) {
 		FrequencyMs:    5000,
 		SegmentID:      int64(12347),
 		InstanceNum:    1,
-		TsRange: pgtype.Range[pgtype.Timestamptz]{
-			Lower:     pgtype.Timestamptz{Time: now, Valid: true},
-			Upper:     pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
-			LowerType: pgtype.Inclusive,
-			UpperType: pgtype.Exclusive,
-			Valid:     true,
-		},
-		RecordCount: 1000,
-		Priority:    1,
+		RecordCount:    1000,
+		Priority:       1,
 	})
 	require.NoError(t, err)
 
@@ -542,7 +436,6 @@ func TestReleaseMetricCompactionWork_OnlyReleasesByCorrectWorker(t *testing.T) {
 	orgID := uuid.New()
 	workerID := int64(12345)
 	wrongWorkerID := int64(54321)
-	now := time.Now()
 
 	err := db.PutMetricCompactionWork(ctx, lrdb.PutMetricCompactionWorkParams{
 		OrganizationID: orgID,
@@ -550,15 +443,8 @@ func TestReleaseMetricCompactionWork_OnlyReleasesByCorrectWorker(t *testing.T) {
 		FrequencyMs:    5000,
 		SegmentID:      int64(12347),
 		InstanceNum:    1,
-		TsRange: pgtype.Range[pgtype.Timestamptz]{
-			Lower:     pgtype.Timestamptz{Time: now, Valid: true},
-			Upper:     pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
-			LowerType: pgtype.Inclusive,
-			UpperType: pgtype.Exclusive,
-			Valid:     true,
-		},
-		RecordCount: 1000,
-		Priority:    1,
+		RecordCount:    1000,
+		Priority:       1,
 	})
 	require.NoError(t, err)
 

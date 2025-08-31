@@ -122,7 +122,7 @@ func TestProcessAndSplitSortsByTimestamp(t *testing.T) {
 		"msg":                   parquet.String(),
 	}
 	schema := filecrunch.SchemaFromNodes(nodes)
-	inputFile, err := os.CreateTemp(tmpDir, "unsorted-*.parquet")
+	inputFile, err := os.CreateTemp(tmpDir, "*.parquet")
 	require.NoError(t, err)
 	defer os.Remove(inputFile.Name())
 	pw := parquet.NewWriter(inputFile, schema)
@@ -270,7 +270,7 @@ func TestProcessAndSplit_HourBoundaries(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create input file
-			inputFile, err := os.CreateTemp(tmpDir, "test-*.parquet")
+			inputFile, err := os.CreateTemp(tmpDir, "*.parquet")
 			require.NoError(t, err)
 			defer os.Remove(inputFile.Name())
 

@@ -310,7 +310,7 @@ func workqueueProcess(
 		slog.Duration("workLag", workLag),
 	)
 
-	tmpdir, err := os.MkdirTemp("", "lakerunner-workqueue-*")
+	tmpdir, err := os.MkdirTemp("", "")
 	if err != nil {
 		ll.Error("Failed to create temporary directory", slog.Any("error", err))
 		if failErr := inf.Fail(); failErr != nil {

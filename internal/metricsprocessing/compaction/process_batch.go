@@ -90,7 +90,7 @@ func processBatch(
 		return err
 	}
 
-	tmpdir, err := os.MkdirTemp("", "work-")
+	tmpdir, err := os.MkdirTemp("", "")
 	if err != nil {
 		ll.Error("Failed to create temporary directory", slog.Any("error", err))
 		return fmt.Errorf("failed to create temporary directory: %w", err)
