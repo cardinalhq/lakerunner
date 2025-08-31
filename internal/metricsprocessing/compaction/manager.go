@@ -39,6 +39,7 @@ type compactionStore interface {
 	TouchMetricCompactionWork(ctx context.Context, params lrdb.TouchMetricCompactionWorkParams) error
 	CompactMetricSegs(ctx context.Context, args lrdb.ReplaceMetricSegsParams) error
 	GetMetricSegsForCompactionWork(ctx context.Context, params lrdb.GetMetricSegsForCompactionWorkParams) ([]lrdb.MetricSeg, error)
+	MarkMetricSegsCompactedByKeys(ctx context.Context, arg lrdb.MarkMetricSegsCompactedByKeysParams) error
 }
 
 type config struct {
