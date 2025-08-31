@@ -35,7 +35,7 @@ func TestDDBSink_IngestParquetBatch(t *testing.T) {
 	}
 
 	// Step 3: Create fresh DDBSink (in-memory or file-backed)
-	sink, err := NewDDBSink(ctx)
+	sink, err := NewDDBSink("metrics", ctx)
 	require.NoError(t, err, "failed to create DDBSink")
 	defer sink.Close()
 

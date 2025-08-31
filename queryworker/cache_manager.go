@@ -53,6 +53,7 @@ type CacheManager struct {
 	maxRows                int64
 	downloader             DownloadBatchFunc
 	storageProfileProvider storageprofile.StorageProfileProvider
+	dataset                string
 
 	// in-memory presence + LRU tracking
 	mu         sync.RWMutex
@@ -69,8 +70,8 @@ const (
 	MaxRowsDefault = 10000000000 // 10 billion rows (approx 10GB on disk assuming 10 bytes/row)
 )
 
-func NewCacheManager(dl DownloadBatchFunc, storageProfileProvider storageprofile.StorageProfileProvider) *CacheManager {
-	ddb, err := NewDDBSink(context.Background())
+func NewCacheManager(dl DownloadBatchFunc, dataset string, storageProfileProvider storageprofile.StorageProfileProvider) *CacheManager {
+	ddb, err := NewDDBSink(dataset, context.Background())
 	if err != nil {
 		slog.Error("Failed to create DuckDB sink", slog.Any("error", err))
 		return nil
@@ -83,6 +84,7 @@ func NewCacheManager(dl DownloadBatchFunc, storageProfileProvider storageprofile
 	w := &CacheManager{
 		sink:                   ddb,
 		s3Db:                   s3DB,
+		dataset:                dataset,
 		storageProfileProvider: storageProfileProvider,
 		maxRows:                MaxRowsDefault,
 		downloader:             dl,
@@ -162,9 +164,10 @@ func EvaluatePushDown[T promql.Timestamped](
 			var cachedIDs []int64
 
 			for _, seg := range segments {
-				objectId := fmt.Sprintf("db/%s/%s/%d/metrics/%s/tbl_%d.parquet", orgId.String(),
+				objectId := fmt.Sprintf("db/%s/%s/%d/%s/%s/tbl_%d.parquet", orgId.String(),
 					profile.CollectorName,
 					seg.DateInt,
+					w.dataset,
 					seg.Hour,
 					seg.SegmentID)
 
@@ -319,7 +322,6 @@ func streamFromS3[T promql.Timestamped](
 			src := fmt.Sprintf(`read_parquet(%s, union_by_name=true)`, array)
 
 			sqlReplaced := strings.Replace(userSQL, "{table}", src, 1)
-
 			// Lease a per-bucket connection (creates/refreshes S3 secret under the hood)
 			conn, release, err := w.s3Db.GetConnection(ctx, bucket, region, endpoint)
 			if err != nil {

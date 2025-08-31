@@ -19,6 +19,71 @@ import (
 	"testing"
 )
 
+func TestBasicQuery(t *testing.T) {
+	q := `{app="api-gateway"}`
+	ast, err := FromLogQL(q)
+	if err != nil {
+		t.Fatalf("FromLogQL() error: %v", err)
+	}
+	plan, err := CompileLog(ast)
+	if err != nil {
+		t.Fatalf("CompileLog() error: %v", err)
+	}
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf, got %d", len(plan.Leaves))
+	}
+	if len(plan.Leaves[0].LabelFilters) != 0 {
+		t.Fatalf("expected 0 label filters, got %d", len(plan.Leaves[0].LabelFilters))
+	}
+}
+
+func TestBasicQueryWithDots(t *testing.T) {
+	q := `{resource_service_name="api-gateway"}` // legal LogQL
+	ast, _ := FromLogQL(q)
+	if ast.LogSel.Matchers[0].Label != "resource.service.name" {
+		t.Fatalf("expected label resource.service.name, got %q", ast.LogSel.Matchers[0].Label)
+	}
+}
+
+func TestPipelineFilterNormalizationWithDots(t *testing.T) {
+	q := `{job="x"} | resource_service_name="api-gateway"`
+	ast, _ := FromLogQL(q)
+	found := false
+	for _, lf := range ast.LogSel.LabelFilters {
+		if lf.Label == "resource.service.name" && lf.Op == MatchEq && lf.Value == "api-gateway" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected label filter resource.service.name=\"api-gateway\", got %#v", ast.LogSel.LabelFilters)
+	}
+}
+
+func TestSplitPipelineStages_NoPipeline(t *testing.T) {
+	in := `{app="api-gateway"}`
+	got := splitPipelineStages(in)
+	if len(got) != 0 {
+		t.Fatalf("expected 0 stages, got %d: %#v", len(got), got)
+	}
+}
+
+func TestSplitPipelineStages_RespectsBackticks(t *testing.T) {
+	in := `{job="x"} | json | label_format api=` + "`{{ .msg | lower }}`" + ` | api="foo"`
+	got := splitPipelineStages(in)
+	if len(got) != 3 {
+		t.Fatalf("expected 3 stages, got %d: %#v", len(got), got)
+	}
+	if got[0] != "json" {
+		t.Fatalf("stage[0] = %q, want json", got[0])
+	}
+	if !strings.Contains(got[1], "`{{ .msg | lower }}`") || !strings.HasPrefix(got[1], "label_format ") {
+		t.Fatalf("stage[1] malformed: %q", got[1])
+	}
+	if got[2] != `api="foo"` {
+		t.Fatalf("stage[2] = %q, want api=\"foo\"", got[2])
+	}
+}
+
 func TestPlanner_RegexpPipelineLeaf_Root(t *testing.T) {
 	q := `{job="my-app"} | regexp "level=(?P<log_level>\\w+).*user=(?P<username>\\w+)"`
 	ast, err := FromLogQL(q)
@@ -112,7 +177,7 @@ func TestPlanner_RangeAgg_RootAndLeaf(t *testing.T) {
 }
 
 func TestPlanner_RegexpPipelineLeaf_WithLabelFilters_AttachedToParser(t *testing.T) {
-	q := `{job="my-app"} | regexp "level=(?P<log_level>\\w+).*user=(?P<username>\\w+)" | log_level="ERROR" | username=~"(alice|bob)"`
+	q := `{job="my-app"} | regexp "level=(?P<level>\\w+).*user=(?P<username>\\w+)" | level="ERROR" | username=~"(alice|bob)"`
 
 	ast, err := FromLogQL(q)
 	if err != nil {
@@ -147,26 +212,26 @@ func TestPlanner_RegexpPipelineLeaf_WithLabelFilters_AttachedToParser(t *testing
 	}
 	reStage := leaf.Parsers[reIdx]
 
-	if pat := reStage.Params["pattern"]; pat != "" && !contains(pat, "(?P<log_level>") {
+	if pat := reStage.Params["pattern"]; pat != "" && !contains(pat, "(?P<level>") {
 		t.Fatalf("regexp pattern missing named capture: %q", pat)
 	}
 
-	if !parserHasFilter(reStage, "log_level", MatchEq, "ERROR") {
-		t.Fatalf("regexp stage missing filter log_level=\"ERROR\"; filters=%#v", reStage.Filters)
+	if !parserHasFilter(reStage, "level", MatchEq, "ERROR") {
+		t.Fatalf("regexp stage missing filter level=\"ERROR\"; filters=%#v", reStage.Filters)
 	}
 	if !parserHasFilter(reStage, "username", MatchRe, "(alice|bob)") {
 		t.Fatalf("regexp stage missing filter username=~\"(alice|bob)\"; filters=%#v", reStage.Filters)
 	}
 
 	// They must also appear in the flat LabelFilters with AfterParser=true and ParserIdx=reIdx.
-	if !hasLabelFilterAttached(leaf.LabelFilters, "log_level", MatchEq, "ERROR", reIdx) {
+	if !hasLabelFilterAttached(leaf.LabelFilters, "level", MatchEq, "ERROR", reIdx) {
 		t.Fatalf("missing attached label filter log_level=\"ERROR\"; got %#v", leaf.LabelFilters)
 	}
 	if !hasLabelFilterAttached(leaf.LabelFilters, "username", MatchRe, "(alice|bob)", reIdx) {
 		t.Fatalf("missing attached label filter username=~\"(alice|bob)\"; got %#v", leaf.LabelFilters)
 	}
 
-	if ia, oka := indexOfLabel(leaf.LabelFilters, "log_level"); oka {
+	if ia, oka := indexOfLabel(leaf.LabelFilters, "level"); oka {
 		if ib, okb := indexOfLabel(leaf.LabelFilters, "username"); okb && !(ia < ib) {
 			t.Fatalf("label filters order wrong: got %v", leaf.LabelFilters)
 		}

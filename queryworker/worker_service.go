@@ -37,13 +37,16 @@ import (
 
 // WorkerService wires HTTP → CacheManager → SSE.
 type WorkerService struct {
-	CM                   *CacheManager
+	MetricsCM            *CacheManager
+	LogsCM               *CacheManager
 	StorageProfilePoller storageprofile.StorageProfileProvider
-	S3GlobSize           int
+	MetricsGlobSize      int
+	LogsGlobSize         int
 }
 
 func NewWorkerService(
-	s3GlobSize int,
+	metricsGlobSize int,
+	logsGlobSize int,
 	maxConcurrency int,
 	sp storageprofile.StorageProfileProvider,
 	awsMgr *awsclient.Manager,
@@ -123,11 +126,12 @@ func NewWorkerService(
 		return nil
 	}
 
-	cm := NewCacheManager(downloader, sp)
 	return &WorkerService{
-		CM:                   cm,
+		MetricsCM:            NewCacheManager(downloader, "metrics", sp),
+		LogsCM:               NewCacheManager(downloader, "logs", sp),
 		StorageProfilePoller: sp,
-		S3GlobSize:           s3GlobSize,
+		MetricsGlobSize:      metricsGlobSize,
+		LogsGlobSize:         logsGlobSize,
 	}
 }
 
@@ -209,6 +213,8 @@ func exemplarMapper(request queryapi.PushDownRequest, cols []string, row *sql.Ro
 		return promql.Exemplar{}, fmt.Errorf("failed to scan row: %w", err)
 	}
 
+	//slog.Info("Found exemplar row", "cols", cols, "vals", vals)
+
 	exemplar := promql.Exemplar{}
 
 	for i, col := range cols {
@@ -240,12 +246,18 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	var workerSql = ""
 	var rowMapper RowMapper[promql.Timestamped]
+	var cacheManager *CacheManager
+	var globSize int
 	if req.BaseExpr != nil {
 		workerSql = req.BaseExpr.ToWorkerSQL(req.Step)
 		rowMapper = sketchInputMapper
+		cacheManager = ws.MetricsCM
+		globSize = ws.MetricsGlobSize
 	} else if req.LogLeaf != nil {
 		workerSql = req.LogLeaf.ToWorkerSQL(req.Step)
 		rowMapper = exemplarMapper
+		cacheManager = ws.LogsCM
+		globSize = ws.LogsGlobSize
 	} else {
 		http.Error(w, "no leaf to evaluate", http.StatusBadRequest)
 		return
@@ -267,7 +279,7 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	workerSql = strings.ReplaceAll(workerSql, "{start}", fmt.Sprintf("%d", req.StartTs))
 	workerSql = strings.ReplaceAll(workerSql, "{end}", fmt.Sprintf("%d", req.EndTs))
 
-	responseChannel, err := EvaluatePushDown[promql.Timestamped](r.Context(), ws.CM, req, workerSql, ws.S3GlobSize, rowMapper)
+	responseChannel, err := EvaluatePushDown[promql.Timestamped](r.Context(), cacheManager, req, workerSql, globSize, rowMapper)
 	if err != nil {
 		slog.Error("failed to query cache", "error", err)
 		http.Error(w, "query failed: "+err.Error(), http.StatusInternalServerError)

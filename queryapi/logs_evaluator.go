@@ -59,6 +59,7 @@ func (q *QuerierService) EvaluateLogsQuery(
 		for _, leaf := range queryPlan.Leaves {
 			for _, dih := range dateIntHours {
 				segments, err := q.lookupLogsSegments(ctx, dih, leaf, startTs, endTs, DefaultLogStep, orgID, q.mdb.ListLogSegmentsForQuery)
+				slog.Info("lookupLogsSegments", "dih", dih, "leaf", leaf, "found", len(segments))
 				if err != nil {
 					slog.Error("failed to lookup log segments", "err", err, "dih", dih, "leaf", leaf)
 					return
@@ -229,6 +230,7 @@ func (q *QuerierService) lookupLogsSegments(
 		}
 	}
 
+	slog.Info("lookupLogsSegments", "dih", dih, "startTs", startTs, "endTs", endTs, "fps", len(fpsToFetch))
 	if len(fpsToFetch) == 0 {
 		addExistsNode(bodyField, fpsToFetch, &root)
 	}
@@ -249,6 +251,10 @@ func (q *QuerierService) lookupLogsSegments(
 	})
 	if err != nil {
 		return nil, fmt.Errorf("list log segments for query: %w", err)
+	}
+
+	if len(rows) == 0 {
+		slog.Info("lookupLogsSegments: no segments found", "dih", dih, "startTs", startTs, "endTs", endTs, slog.Any("fps", fpsToFetch))
 	}
 
 	fpToSegments := make(map[int64][]SegmentInfo, len(rows))
@@ -294,6 +300,7 @@ func addExistsNode(label string, fps map[int64]struct{}, root **TrigramQuery) {
 		fieldName: label,
 		Trigram:   []string{buffet.ExistsRegex},
 	}
+	slog.Info("Adding exists node", "label", label, "fp", fp)
 	*root = &TrigramQuery{Op: index.QAnd, Sub: []*TrigramQuery{*root, tq}}
 }
 

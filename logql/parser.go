@@ -353,7 +353,7 @@ func addParsersAndLabelFiltersFromString(s string, ls *LogSelector) error {
 						return fmt.Errorf("label_format %s: %w", outName, err)
 					}
 					compiled = append(compiled, LabelFormatExpr{
-						Out:  outName,
+						Out:  normalizeLabelName(outName),
 						Tmpl: tmpl,
 						SQL:  sqlExpr,
 					})
@@ -394,20 +394,19 @@ func buildSelector(sel logql.LogSelectorExpr) (LogSelector, error) {
 	return ls, nil
 }
 
-// ------------------------------
-// Pipeline scanning (order-preserving, quote/paren aware)
-// ------------------------------
-
 // splitPipelineStages splits the string form of a selector on top-level '|' after the matcher block.
 func splitPipelineStages(selStr string) []string {
-	// Keep only pipeline tail after the first closing '}'.
-	if i := strings.IndexByte(selStr, '}'); i >= 0 && i+1 < len(selStr) {
+	// Always drop the matcher block (from start through first '}').
+	if i := strings.IndexByte(selStr, '}'); i >= 0 {
 		selStr = selStr[i+1:]
 	}
 
 	var out []string
 	var buf []rune
-	inStr, esc := false, false
+
+	inDQ := false // inside double-quoted string
+	inBT := false // inside backtick-quoted template (label_format)
+	esc := false
 	paren := 0
 
 	flush := func() {
@@ -419,20 +418,37 @@ func splitPipelineStages(selStr string) []string {
 	}
 
 	for _, r := range selStr {
-		if inStr {
+		// Inside a double-quoted string
+		if inDQ {
 			buf = append(buf, r)
 			if esc {
 				esc = false
 			} else if r == '\\' {
 				esc = true
 			} else if r == '"' {
-				inStr = false
+				inDQ = false
 			}
 			continue
 		}
+		// Inside a backtick-quoted template
+		if inBT {
+			buf = append(buf, r)
+			if esc {
+				esc = false
+			} else if r == '\\' {
+				esc = true
+			} else if r == '`' {
+				inBT = false
+			}
+			continue
+		}
+
 		switch r {
 		case '"':
-			inStr = true
+			inDQ = true
+			buf = append(buf, r)
+		case '`':
+			inBT = true
 			buf = append(buf, r)
 		case '(':
 			paren++
@@ -443,6 +459,7 @@ func splitPipelineStages(selStr string) []string {
 			}
 			buf = append(buf, r)
 		case '|':
+			// Only split on top-level pipes
 			if paren == 0 {
 				flush()
 				continue
@@ -610,7 +627,7 @@ func tryParseLabelFilter(stage string) (LabelFilter, bool) {
 					val = u
 				}
 			}
-			return LabelFilter{Label: lab, Op: toMatchOpString(op), Value: val}, true
+			return LabelFilter{Label: normalizeLabelName(lab), Op: toMatchOpString(op), Value: val}, true
 		}
 	}
 	return LabelFilter{}, false
@@ -634,9 +651,12 @@ func addLabelFiltersFromString(s string, ls *LogSelector) {
 	}
 }
 
-// ------------------------------
-// Small helpers
-// ------------------------------
+func normalizeLabelName(label string) string {
+	if strings.HasPrefix(label, "resource_") || strings.HasPrefix(label, "log_") {
+		return strings.ReplaceAll(label, "_", ".")
+	}
+	return label
+}
 
 func toLabelMatches(ms []*labels.Matcher) []LabelMatch {
 	out := make([]LabelMatch, 0, len(ms))
@@ -647,7 +667,8 @@ func toLabelMatches(ms []*labels.Matcher) []LabelMatch {
 		if m.Name == "__name__" {
 			continue
 		}
-		out = append(out, LabelMatch{Label: m.Name, Op: toMatchOp(m.Type), Value: m.Value})
+
+		out = append(out, LabelMatch{Label: normalizeLabelName(m.Name), Op: toMatchOp(m.Type), Value: m.Value})
 	}
 	return out
 }

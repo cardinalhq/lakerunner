@@ -58,8 +58,8 @@ type colDef struct {
 // Clean slate: if dbPath looks like a file (not ":memory:"), we delete it first.
 // It also ensures a `segment_id VARCHAR` column is present (idempotent ALTER)
 // and loads the schema cache.
-func NewDDBSink(ctx context.Context) (*DDBSink, error) {
-	dbPath := "./db/cached.ddb"
+func NewDDBSink(dataset string, ctx context.Context) (*DDBSink, error) {
+	dbPath := fmt.Sprintf("./db/%s_cached.ddb", dataset)
 
 	// Best-effort remove previous DB file.
 	_ = os.Remove(dbPath)

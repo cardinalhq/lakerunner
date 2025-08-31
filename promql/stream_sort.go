@@ -25,9 +25,6 @@ type Timestamped interface {
 }
 
 // MergeSorted merges N locally-sorted channels into one globally-sorted stream.
-// - reverse=false => ascending
-// - reverse=true  => descending
-// Each input must be sorted in the same direction as `reverse`.
 func MergeSorted[T Timestamped](
 	ctx context.Context,
 	outBuf int,

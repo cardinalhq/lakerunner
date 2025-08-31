@@ -160,8 +160,8 @@ func (be *LogLeaf) ToWorkerSQL(step time.Duration) string {
 
 			selects := []string{top() + ".*"}
 			for _, k := range need {
-				selects = append(selects,
-					fmt.Sprintf("json_extract_string(%s, '$.%s') AS %s", bodyCol, k, quoteIdent(k)))
+				path := jsonPathForKey(k)
+				selects = append(selects, fmt.Sprintf("json_extract_string(%s, %s) AS %s", bodyCol, sqlQuote(path), quoteIdent(k)))
 			}
 			push(selects, top(), nil)
 
@@ -612,4 +612,15 @@ func callFunc(name string, args []arg) (string, string, error) {
 	}
 
 	return "", "", fmt.Errorf("label_format: unsupported func %q", name)
+}
+
+var simpleIdentRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+func jsonPathForKey(k string) string {
+	if simpleIdentRe.MatchString(k) {
+		return "$." + k
+	}
+	// Use quoted member: $."resource.service.name"
+	esc := strings.ReplaceAll(k, `"`, `\"`)
+	return `$."` + esc + `"`
 }
