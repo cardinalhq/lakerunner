@@ -46,13 +46,21 @@ ordered_groups AS (
   FROM seeds_per_group s
 ),
 
--- 4) Attach per-group target_records
+-- 4) Attach per-group target_records with estimate tracking
 group_flags AS (
   SELECT
     og.organization_id, og.dateint, og.frequency_ms, og.instance_num,
     og.priority, og.queue_ts, og.seed_rank,
     ((p.now_ts - og.queue_ts) > make_interval(secs => p.max_age_seconds)) AS is_old,
     COALESCE(e_org.target_records, e_glob.target_records, p.default_target_records)::bigint AS target_records,
+    e_org.target_records AS org_estimate,
+    e_glob.target_records AS global_estimate,
+    p.default_target_records AS default_estimate,
+    CASE 
+      WHEN e_org.target_records IS NOT NULL THEN 'organization'
+      WHEN e_glob.target_records IS NOT NULL THEN 'global'
+      ELSE 'default'
+    END AS estimate_source,
     p.batch_count,
     p.now_ts
   FROM ordered_groups og
@@ -70,7 +78,8 @@ grp_scope AS (
   SELECT
     q.id, q.organization_id, q.dateint, q.frequency_ms, q.instance_num,
     q.priority, q.queue_ts, q.record_count,
-    gf.seed_rank, gf.is_old, gf.target_records, gf.batch_count
+    gf.seed_rank, gf.is_old, gf.target_records, gf.batch_count,
+    gf.org_estimate, gf.global_estimate, gf.default_estimate, gf.estimate_source
   FROM metric_compaction_queue q
   JOIN group_flags gf
     ON q.claimed_at   IS NULL
@@ -170,5 +179,13 @@ upd AS (
     AND q.claimed_at IS NULL
   RETURNING q.*
 )
-SELECT * FROM upd
-ORDER BY priority DESC, queue_ts ASC, id ASC;
+SELECT 
+  upd.*,
+  COALESCE(pr.target_records, 0) AS used_target_records,
+  COALESCE(pr.org_estimate, 0) AS org_estimate,
+  COALESCE(pr.global_estimate, 0) AS global_estimate, 
+  COALESCE(pr.default_estimate, 0) AS default_estimate,
+  COALESCE(pr.estimate_source, 'unknown') AS estimate_source
+FROM upd
+LEFT JOIN prelim pr ON upd.id = pr.id
+ORDER BY upd.priority DESC, upd.queue_ts ASC, upd.id ASC;

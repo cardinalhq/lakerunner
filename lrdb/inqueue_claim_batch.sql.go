@@ -123,8 +123,7 @@ eligible_groups AS (
   JOIN prelim_stats ps
     ON ps.organization_id = gf.organization_id
    AND ps.instance_num    = gf.instance_num
-  WHERE (NOT gf.is_old AND ps.total_size >= gf.min_total_size)
-     OR (gf.is_old      AND ps.total_size > 0)
+  WHERE ps.total_size > 0
 ),
 
 winner_group AS (
@@ -189,21 +188,19 @@ type ClaimInqueueWorkBatchRow struct {
 	HeartbeatedAt  *time.Time `json:"heartbeated_at"`
 }
 
-//  1. Safety net: if any single file already meets/exceeds the cap, take that file alone
-//  2. One seed (oldest/highest-priority) per group (org, instance) within signal
-//  3. Order groups globally by their seed (priority DESC, queue_ts ASC)
-//  4. Attach age flags + caps per group (using params only; no per-row estimator here)
-//  5. All ready rows in each group for that signal (selection only; claim happens later)
-//  6. Greedy pack within each group, ordered by priority/queue_ts
-//  7. Keep only rows that fit under caps
-//  8. Totals per group (what we’d actually claim)
-//  9. Eligibility:
-//     fresh: require total_size >= min_total_size (exactness not required for raw files)
-//     old:   any positive amount (already capped by max_total_size)
-//  10. Pick earliest eligible group globally
-//  11. Rows to claim for the winner group
-//  12. Final chosen IDs: prefer big_single if present; else packed group rows
-//  13. Atomic optimistic claim (no window funcs here)
+// 1) Safety net: if any single file already meets/exceeds the cap, take that file alone
+// 2) One seed (oldest/highest-priority) per group (org, instance) within signal
+// 3) Order groups globally by their seed (priority DESC, queue_ts ASC)
+// 4) Attach age flags + caps per group (using params only; no per-row estimator here)
+// 5) All ready rows in each group for that signal (selection only; claim happens later)
+// 6) Greedy pack within each group, ordered by priority/queue_ts
+// 7) Keep only rows that fit under caps
+// 8) Totals per group (what we’d actually claim)
+// 9) Eligibility: any group with positive size (greedy batching)
+// 10) Pick earliest eligible group globally
+// 11) Rows to claim for the winner group
+// 12) Final chosen IDs: prefer big_single if present; else packed group rows
+// 13) Atomic optimistic claim (no window funcs here)
 func (q *Queries) ClaimInqueueWorkBatch(ctx context.Context, arg ClaimInqueueWorkBatchParams) ([]ClaimInqueueWorkBatchRow, error) {
 	rows, err := q.db.Query(ctx, claimInqueueWorkBatch,
 		arg.Signal,

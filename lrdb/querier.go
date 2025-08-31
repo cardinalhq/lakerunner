@@ -32,9 +32,7 @@ type Querier interface {
 	// 6) Greedy pack within each group, ordered by priority/queue_ts
 	// 7) Keep only rows that fit under caps
 	// 8) Totals per group (what we’d actually claim)
-	// 9) Eligibility:
-	//    fresh: require total_size >= min_total_size (exactness not required for raw files)
-	//    old:   any positive amount (already capped by max_total_size)
+	// 9) Eligibility: any group with positive size (greedy batching)
 	// 10) Pick earliest eligible group globally
 	// 11) Rows to claim for the winner group
 	// 12) Final chosen IDs: prefer big_single if present; else packed group rows
@@ -43,7 +41,7 @@ type Querier interface {
 	// 1) Big single-row safety net
 	// 2) One seed per group (org, dateint, freq, instance)
 	// 3) Order groups globally by seed recency/priority
-	// 4) Attach per-group target_records
+	// 4) Attach per-group target_records with estimate tracking
 	// 5) All ready rows within each group
 	// 6) Greedy pack per group
 	// 7) Rows that fit under caps

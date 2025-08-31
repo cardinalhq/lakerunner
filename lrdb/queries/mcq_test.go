@@ -169,6 +169,13 @@ func TestClaimMetricCompactionWork_BasicClaim(t *testing.T) {
 		assert.Equal(t, workerID, item.ClaimedBy)
 		assert.Equal(t, int16(1), item.InstanceNum)
 		assert.NotNil(t, item.ClaimedAt)
+
+		// Verify estimate fields are populated
+		assert.Equal(t, int64(2500), item.UsedTargetRecords, "Should use default target records")
+		assert.Equal(t, int64(0), item.OrgEstimate, "Should have no org-specific estimate")
+		assert.Equal(t, int64(0), item.GlobalEstimate, "Should have no global estimate")
+		assert.Equal(t, int64(2500), item.DefaultEstimate, "Should use default estimate")
+		assert.Equal(t, "default", item.EstimateSource, "Should indicate default source")
 	}
 
 	totalRecords := int64(0)
@@ -414,6 +421,61 @@ func TestClaimMetricCompactionWork_Priority(t *testing.T) {
 
 	assert.Len(t, claimedBatch, 1)
 	assert.Equal(t, int32(5), claimedBatch[0].Priority, "Should claim higher priority item first")
+}
+
+func TestClaimMetricCompactionWork_WithOrgEstimate(t *testing.T) {
+	ctx := context.Background()
+	db := testhelpers.NewTestLRDBStore(t)
+
+	orgID := uuid.New()
+	workerID := int64(12345)
+	now := time.Now()
+
+	// Set up an organization-specific estimate
+	targetRecords := int64(15000)
+	err := db.UpsertMetricPackEstimate(ctx, lrdb.UpsertMetricPackEstimateParams{
+		OrganizationID: orgID,
+		FrequencyMs:    5000,
+		TargetRecords:  &targetRecords, // Custom target for this org/frequency
+	})
+	require.NoError(t, err)
+
+	// Add work item
+	err = db.PutMetricCompactionWork(ctx, lrdb.PutMetricCompactionWorkParams{
+		OrganizationID: orgID,
+		Dateint:        20250829,
+		FrequencyMs:    5000,
+		SegmentID:      int64(12347),
+		InstanceNum:    1,
+		TsRange: pgtype.Range[pgtype.Timestamptz]{
+			Lower:     pgtype.Timestamptz{Time: now, Valid: true},
+			Upper:     pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
+			LowerType: pgtype.Inclusive,
+			UpperType: pgtype.Exclusive,
+			Valid:     true,
+		},
+		RecordCount: 8000,
+		Priority:    1,
+	})
+	require.NoError(t, err)
+
+	claimedBatch, err := db.ClaimMetricCompactionWork(ctx, lrdb.ClaimMetricCompactionWorkParams{
+		WorkerID:             workerID,
+		DefaultTargetRecords: 40000, // Higher default, but should use org estimate
+		MaxAgeSeconds:        30,
+		BatchCount:           5,
+	})
+	require.NoError(t, err)
+
+	require.Len(t, claimedBatch, 1)
+	item := claimedBatch[0]
+
+	// Verify the organization estimate was used
+	assert.Equal(t, int64(15000), item.UsedTargetRecords, "Should use org-specific target")
+	assert.Equal(t, int64(15000), item.OrgEstimate, "Should show org-specific estimate")
+	assert.Equal(t, int64(0), item.GlobalEstimate, "Should have no global estimate")
+	assert.Equal(t, int64(40000), item.DefaultEstimate, "Should show default estimate")
+	assert.Equal(t, "organization", item.EstimateSource, "Should indicate org source")
 }
 
 func TestReleaseMetricCompactionWork(t *testing.T) {

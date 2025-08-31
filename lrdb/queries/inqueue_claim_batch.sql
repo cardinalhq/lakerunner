@@ -110,9 +110,7 @@ prelim_stats AS (
   GROUP BY organization_id, instance_num
 ),
 
--- 9) Eligibility:
---    fresh: require total_size >= min_total_size (exactness not required for raw files)
---    old:   any positive amount (already capped by max_total_size)
+-- 9) Eligibility: any group with positive size (greedy batching)
 eligible_groups AS (
   SELECT
     gf.organization_id, gf.instance_num, gf.seed_rank
@@ -120,8 +118,7 @@ eligible_groups AS (
   JOIN prelim_stats ps
     ON ps.organization_id = gf.organization_id
    AND ps.instance_num    = gf.instance_num
-  WHERE (NOT gf.is_old AND ps.total_size >= gf.min_total_size)
-     OR (gf.is_old      AND ps.total_size > 0)
+  WHERE ps.total_size > 0
 ),
 
 -- 10) Pick earliest eligible group globally
