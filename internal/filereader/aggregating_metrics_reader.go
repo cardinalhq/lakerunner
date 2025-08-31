@@ -41,7 +41,7 @@ type AggregatingMetricsReader struct {
 	batchSize         int
 
 	// Current aggregation state
-	currentKey   SortKey
+	// currentKey removed - using direct value storage to avoid pooling corruption
 	groupedRows  map[string][]Row // metric_type -> rows for that type
 	pendingBatch *Batch           // Unprocessed rows from underlying reader
 	pendingIndex int              // Index of next row to process in pendingBatch
@@ -49,6 +49,12 @@ type AggregatingMetricsReader struct {
 
 	// Sort key provider for grouping
 	keyProvider SortKeyProvider
+
+	// Stored key values (not pooled to avoid corruption)
+	currentKeyName string
+	currentKeyTid  int64
+	currentKeyTs   int64
+	hasCurrentKey  bool
 }
 
 // NewAggregatingMetricsReader creates a new AggregatingMetricsReader that aggregates metrics
@@ -240,9 +246,7 @@ func (ar *AggregatingMetricsReader) aggregateRowGroup(metricType string, rows []
 
 	// Use the first row as the base for the aggregated result
 	aggregatedRow := make(Row)
-	for k, v := range rows[0] {
-		aggregatedRow[k] = v
-	}
+	maps.Copy(aggregatedRow, rows[0])
 
 	// Separate processing based on metric type
 	if metricType == "histogram" {
@@ -406,10 +410,11 @@ func (ar *AggregatingMetricsReader) aggregateCounterGaugeGroup(baseRow Row, rows
 
 // resetAggregation clears the current aggregation state.
 func (ar *AggregatingMetricsReader) resetAggregation() {
-	if ar.currentKey != nil {
-		ar.currentKey.Release()
-		ar.currentKey = nil
-	}
+	// Reset stored key values
+	ar.hasCurrentKey = false
+	ar.currentKeyName = ""
+	ar.currentKeyTid = 0
+	ar.currentKeyTs = 0
 	// Clear grouped rows map but keep the map allocated
 	for k := range ar.groupedRows {
 		delete(ar.groupedRows, k)
@@ -483,6 +488,7 @@ func (ar *AggregatingMetricsReader) readNextBatchFromUnderlying() (*Batch, error
 // processRow processes a single row and adds aggregated results to the batch.
 // Returns an error if processing fails.
 func (ar *AggregatingMetricsReader) processRow(row Row, batch *Batch) error {
+
 	// Create aggregation key for this row
 	key, err := ar.makeAggregationKey(row)
 	if err != nil {
@@ -494,14 +500,25 @@ func (ar *AggregatingMetricsReader) processRow(row Row, batch *Batch) error {
 		return nil // Skip this row, continue processing
 	}
 
-	// If this row belongs to current group, add it
-	if ar.currentKey == nil || ar.currentKey.Compare(key) == 0 {
-		if ar.currentKey == nil {
-			ar.currentKey = key
-		} else {
-			// Release the new key since we're keeping the existing one
-			key.Release()
+	// Check if this row belongs to current group using stored values
+	newMetric := key.(*MetricSortKey)
+	belongsToCurrentGroup := !ar.hasCurrentKey ||
+		(ar.currentKeyName == newMetric.Name &&
+			ar.currentKeyTid == newMetric.Tid &&
+			ar.currentKeyTs == newMetric.Timestamp)
+
+	if belongsToCurrentGroup {
+
+		if !ar.hasCurrentKey {
+			// Store the key values directly
+			ar.currentKeyName = newMetric.Name
+			ar.currentKeyTid = newMetric.Tid
+			ar.currentKeyTs = newMetric.Timestamp
+			ar.hasCurrentKey = true
 		}
+
+		// Always release the key since we store values separately
+		key.Release()
 		if err := ar.addRowToAggregation(row); err != nil {
 			slog.Error("Failed to add row to aggregation", "error", err)
 		}
@@ -509,7 +526,7 @@ func (ar *AggregatingMetricsReader) processRow(row Row, batch *Batch) error {
 	}
 
 	// Key changed - emit current aggregation and start new one
-	if ar.currentKey != nil {
+	if ar.hasCurrentKey {
 		results, err := ar.aggregateGroup()
 		if err != nil {
 			return fmt.Errorf("failed to aggregate group: %w", err)
@@ -524,7 +541,12 @@ func (ar *AggregatingMetricsReader) processRow(row Row, batch *Batch) error {
 	}
 
 	// Start new aggregation with the current row
-	ar.currentKey = key
+	ar.currentKeyName = newMetric.Name
+	ar.currentKeyTid = newMetric.Tid
+	ar.currentKeyTs = newMetric.Timestamp
+	ar.hasCurrentKey = true
+	// Release the key since we store values separately
+	key.Release()
 	if err := ar.addRowToAggregation(row); err != nil {
 		slog.Error("Failed to add row to new aggregation", "error", err)
 	}
@@ -583,7 +605,7 @@ func (ar *AggregatingMetricsReader) Next() (*Batch, error) {
 				}
 				if err == io.EOF {
 					// Check if we need to emit final aggregation
-					if ar.currentKey != nil {
+					if ar.hasCurrentKey {
 						results, aggErr := ar.aggregateGroup()
 						if aggErr != nil {
 							pipeline.ReturnBatch(batch)
@@ -626,7 +648,7 @@ func (ar *AggregatingMetricsReader) Next() (*Batch, error) {
 		}
 
 		// If we have no rows and are at EOF, we're done
-		if ar.readerEOF && ar.currentKey == nil {
+		if ar.readerEOF && !ar.hasCurrentKey {
 			pipeline.ReturnBatch(batch)
 			return nil, io.EOF
 		}
