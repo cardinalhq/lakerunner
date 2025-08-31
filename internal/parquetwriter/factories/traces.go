@@ -23,10 +23,9 @@ import (
 
 // NewTracesWriter creates a writer optimized for traces data.
 // Traces are grouped by slot and can be split within slots but benefit from locality.
-func NewTracesWriter(tmpdir string, targetFileSize int64, slotID int32, recordsPerFile int64) (*parquetwriter.UnifiedWriter, error) {
+func NewTracesWriter(tmpdir string, slotID int32, recordsPerFile int64) (*parquetwriter.UnifiedWriter, error) {
 	config := parquetwriter.WriterConfig{
-		TmpDir:         tmpdir,
-		TargetFileSize: targetFileSize,
+		TmpDir: tmpdir,
 
 		// Group by slot but allow splitting within slots
 		GroupKeyFunc: func(row map[string]any) any {

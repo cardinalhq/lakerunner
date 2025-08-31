@@ -240,7 +240,7 @@ func logCompactItemDo(
 			Dateint:         stdi,
 			InstanceNum:     inf.InstanceNum(),
 			SlotID:          inf.SlotId(),
-			MaxFileSize:     constants.TargetFileSizeBytes,
+			MaxFileSize:     constants.LogCompactionTargetSizeBytes,
 			CursorCreatedAt: cursorCreatedAt,
 			CursorSegmentID: cursorSegmentID,
 			HourStartTs:     hourStartTs,
@@ -308,7 +308,7 @@ func logCompactItemDo(
 			for _, segment := range lastGroup {
 				bytecount += segment.FileSize
 			}
-			if bytecount < constants.TargetFileSizeBytes*3/10 {
+			if bytecount < constants.LogCompactionTargetSizeBytes*3/10 {
 				packed = packed[:len(packed)-1]
 				lastGroupSmall = true
 			}

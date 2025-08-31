@@ -55,7 +55,6 @@ func (a *mockStatsAccumulator) Finalize() any {
 func TestNewFileSplitter(t *testing.T) {
 	config := WriterConfig{
 		TmpDir:         "/tmp",
-		TargetFileSize: 1024,
 		RecordsPerFile: 100,
 	}
 
@@ -76,7 +75,6 @@ func TestFileSplitterWriteBatchRows_NilBatch(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
 		TmpDir:         tmpDir,
-		TargetFileSize: 1024,
 		RecordsPerFile: 100,
 	}
 
@@ -96,7 +94,6 @@ func TestFileSplitterWriteBatchRows_ClosedWriter(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
 		TmpDir:         tmpDir,
-		TargetFileSize: 1024,
 		RecordsPerFile: 100,
 	}
 
@@ -116,7 +113,6 @@ func TestFileSplitterWriteBatchRows_EmptyBatch(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
 		TmpDir:         tmpDir,
-		TargetFileSize: 1024,
 		RecordsPerFile: 100,
 	}
 
@@ -139,7 +135,6 @@ func TestFileSplitterWriteBatchRows_SingleBatch(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
 		TmpDir:         tmpDir,
-		TargetFileSize: 1024,
 		RecordsPerFile: 100,
 	}
 
@@ -194,7 +189,6 @@ func TestFileSplitterWriteBatchRows_WithStats(t *testing.T) {
 
 	config := WriterConfig{
 		TmpDir:         tmpDir,
-		TargetFileSize: 1024,
 		RecordsPerFile: 100,
 		StatsProvider:  statsProvider,
 	}
@@ -233,8 +227,7 @@ func TestFileSplitterWriteBatchRows_FileSplittingByRecordCount(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
 		TmpDir:         tmpDir,
-		TargetFileSize: 10240, // Large enough not to trigger size-based splitting
-		RecordsPerFile: 2,     // Split after 2 records
+		RecordsPerFile: 2, // Split after 2 records
 	}
 
 	splitter := NewFileSplitter(config)
@@ -280,7 +273,6 @@ func TestFileSplitterWriteBatchRows_WithGroupKeyFunc(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
 		TmpDir:         tmpDir,
-		TargetFileSize: 1024,
 		RecordsPerFile: 100,
 		GroupKeyFunc: func(row map[string]any) any {
 			return row["group"]
@@ -317,7 +309,6 @@ func TestFileSplitterClose_MultipleTimes(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
 		TmpDir:         tmpDir,
-		TargetFileSize: 1024,
 		RecordsPerFile: 100,
 	}
 
@@ -356,7 +347,6 @@ func TestFileSplitterAbort(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
 		TmpDir:         tmpDir,
-		TargetFileSize: 1024,
 		RecordsPerFile: 100,
 	}
 
@@ -399,7 +389,6 @@ func TestFileSplitterAbort_MultipleTimes(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
 		TmpDir:         tmpDir,
-		TargetFileSize: 1024,
 		RecordsPerFile: 100,
 	}
 
@@ -427,7 +416,6 @@ func TestFileSplitterEmptyFileHandling(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
 		TmpDir:         tmpDir,
-		TargetFileSize: 1024,
 		RecordsPerFile: 1,
 	}
 
@@ -468,7 +456,6 @@ func TestFileSplitterTempFileCreation(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{
 		TmpDir:         tmpDir,
-		TargetFileSize: 1024,
 		RecordsPerFile: 100,
 	}
 

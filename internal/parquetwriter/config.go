@@ -19,11 +19,6 @@ type WriterConfig struct {
 	// TmpDir is the directory where temporary and output files are created
 	TmpDir string
 
-	// TargetFileSize is the target size in bytes for each output file.
-	// The writer will try to keep files close to this size, but may exceed
-	// it to maintain data integrity (e.g., not splitting TID groups).
-	TargetFileSize int64
-
 	// Grouping configuration - controls how rows are grouped and whether
 	// groups can be split across files
 	GroupKeyFunc  func(map[string]any) any
@@ -40,10 +35,6 @@ type WriterConfig struct {
 func (c *WriterConfig) Validate() error {
 	if c.TmpDir == "" {
 		return &ConfigError{Field: "TmpDir", Message: "cannot be empty"}
-	}
-	// Schema is dynamically discovered, no validation needed
-	if c.TargetFileSize <= 0 {
-		return &ConfigError{Field: "TargetFileSize", Message: "must be positive"}
 	}
 	if c.NoSplitGroups && c.GroupKeyFunc == nil {
 		return &ConfigError{Field: "GroupKeyFunc", Message: "required when NoSplitGroups is true"}

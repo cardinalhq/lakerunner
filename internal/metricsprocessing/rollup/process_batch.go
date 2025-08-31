@@ -28,7 +28,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
-	"github.com/cardinalhq/lakerunner/internal/constants"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
@@ -292,7 +291,7 @@ func rollupMetricSegments(
 	}
 	defer aggregatingReader.Close()
 
-	writer, err := factories.NewMetricsWriter(tmpdir, constants.WriterTargetSizeBytesMetrics, metricsprocessing.DefaultRecordsPerFileRollup)
+	writer, err := factories.NewMetricsWriter(tmpdir, metricsprocessing.DefaultRecordsPerFileRollup)
 	if err != nil {
 		ll.Error("Failed to create metrics writer", slog.Any("error", err))
 		return fmt.Errorf("creating metrics writer: %w", err)

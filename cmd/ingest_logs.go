@@ -30,7 +30,6 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
-	"github.com/cardinalhq/lakerunner/internal/constants"
 	"github.com/cardinalhq/lakerunner/internal/debugging"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
@@ -213,7 +212,7 @@ func (wm *writerManager) getWriter(key hourSlotKey) (*parquetwriter.UnifiedWrite
 	}
 
 	// Create new writer
-	writer, err := factories.NewLogsWriter(wm.tmpdir, constants.WriterTargetSizeBytesLogs, wm.rpfEstimate)
+	writer, err := factories.NewLogsWriter(wm.tmpdir, wm.rpfEstimate)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create logs writer: %w", err)
 	}

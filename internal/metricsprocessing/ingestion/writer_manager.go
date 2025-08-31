@@ -20,7 +20,6 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/cardinalhq/lakerunner/internal/constants"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
@@ -140,7 +139,6 @@ func (wm *metricWriterManager) getWriter(key minuteSlotKey) (*parquetwriter.Unif
 	// Create new writer for this boundary
 	writer, err := factories.NewMetricsWriter(
 		wm.tmpdir,
-		constants.WriterTargetSizeBytesMetrics,
 		wm.rpfEstimate,
 	)
 	if err != nil {

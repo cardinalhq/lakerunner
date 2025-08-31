@@ -15,7 +15,7 @@
 package constants
 
 const (
-	TargetFileSizeBytes          = int64(1_100_000)        // 1.1MB target file size
+	LogCompactionTargetSizeBytes = int64(1_100_000)        // 1.1MB target file size for log compaction
 	WriterTargetSizeBytesLogs    = int64(50 * 1024 * 1024) // 50MB for logs writer
 	WriterTargetSizeBytesMetrics = int64(1024 * 1024)      // 1MB for metrics writer
 	MaxLineSizeBytes             = 1024 * 1024             // 1MB max line size for scanners
