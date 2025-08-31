@@ -97,13 +97,11 @@ type Querier interface {
 	InsertTraceSegmentDirect(ctx context.Context, arg InsertTraceSegmentDirectParams) error
 	ListLogSegmentsForQuery(ctx context.Context, arg ListLogSegmentsForQueryParams) ([]ListLogSegmentsForQueryRow, error)
 	ListMetricSegmentsForQuery(ctx context.Context, arg ListMetricSegmentsForQueryParams) ([]ListMetricSegmentsForQueryRow, error)
-	// Returns an estimate of the number of log segments, average bytes, average records,
-	// and average bytes per record for log segments in the last hour per organization and instance.
-	// This query is basically identical to the MetricSegEstimator, but for log segments.
+	ListSegmentsForQuery(ctx context.Context, arg ListSegmentsForQueryParams) ([]ListSegmentsForQueryRow, error)
+	// Returns an estimate of the number of log segments, accounting for per-file overhead.
 	LogSegEstimator(ctx context.Context, arg LogSegEstimatorParams) ([]LogSegEstimatorRow, error)
 	MarkMetricSegsCompactedByKeys(ctx context.Context, arg MarkMetricSegsCompactedByKeysParams) error
-	// Returns an estimate of the number of metric segments, average bytes, average records,
-	// and average bytes per record for metric segments in the last hour per organization, instance, and frequency.
+	// Returns an estimate of the number of metric segments, accounting for per-file overhead.
 	// Uses frequency_ms to provide more accurate estimates based on collection frequency.
 	MetricSegEstimator(ctx context.Context, arg MetricSegEstimatorParams) ([]MetricSegEstimatorRow, error)
 	ObjectCleanupAdd(ctx context.Context, arg ObjectCleanupAddParams) error
@@ -121,9 +119,7 @@ type Querier interface {
 	TouchInqueueWork(ctx context.Context, arg TouchInqueueWorkParams) error
 	TouchMetricCompactionWork(ctx context.Context, arg TouchMetricCompactionWorkParams) error
 	TouchMetricRollupWork(ctx context.Context, arg TouchMetricRollupWorkParams) error
-	// Returns an estimate of the number of trace segments, average bytes, average records,
-	// and average bytes per record for trace segments in the last hour per organization and instance.
-	// This query is basically identical to the LogSegEstimator, but for trace segments.
+	// Returns an estimate of the number of trace segments, accounting for per-file overhead.
 	TraceSegEstimator(ctx context.Context, arg TraceSegEstimatorParams) ([]TraceSegEstimatorRow, error)
 	// Updates or inserts a single metric pack estimate
 	UpsertMetricPackEstimate(ctx context.Context, arg UpsertMetricPackEstimateParams) error
