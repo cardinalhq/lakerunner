@@ -19,12 +19,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/cardinalhq/oteltools/pkg/dateutils"
-	"github.com/google/uuid"
 	"io"
 	"log/slog"
 	"net/http"
 	"strings"
+
+	"github.com/cardinalhq/oteltools/pkg/dateutils"
+	"github.com/google/uuid"
 
 	"github.com/cardinalhq/lakerunner/promql"
 	// import your logql package (adjust path if different)
@@ -219,12 +220,17 @@ func (q *QuerierService) handleLogQuery(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
+func (q *QuerierService) handlePromQLValidate(w http.ResponseWriter, r *http.Request) {
+	q.validatePromQL(w, r)
+}
+
 func (q *QuerierService) Run(doneCtx context.Context) error {
 	slog.Info("Starting querier service")
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/metrics/query", q.handlePromQuery)
 	mux.HandleFunc("/api/v1/logs/query", q.handleLogQuery)
+	mux.HandleFunc("/api/v1/promql/validate", q.handlePromQLValidate)
 
 	srv := &http.Server{
 		Addr:    ":8080",
