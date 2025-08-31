@@ -49,6 +49,7 @@
 // All format readers return raw, untransformed data from files:
 //
 //   - ParquetRawReader: Generic Parquet files using parquet-go/parquet-go (requires io.ReaderAt)
+//   - ArrowCookedReader: Parquet files via Apache Arrow with streaming record batches
 //   - JSONLinesReader: Streams JSON objects line-by-line from any io.ReadCloser
 //   - ProtoLogsReader: Raw OTEL log records from protobuf
 //   - IngestProtoMetricsReader: Raw OTEL metric data points from protobuf (ingestion only)
