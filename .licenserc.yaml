@@ -31,5 +31,7 @@ header:
     - '**/*db/models.go'
     - '**/*db/querier.go'
     - '**/*db/copyfrom.go'
+    - 'internal/externalscaler/externalscaler.proto'
+    - '**/*.pb.go'
 
   comment: on-failure

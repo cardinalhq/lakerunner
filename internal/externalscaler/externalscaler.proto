@@ -1,7 +1,10 @@
+// External scaler protobuf definition from KEDA
+// Source: https://github.com/kedacore/keda/blob/main/pkg/scalers/externalscaler/externalscaler.proto
+
 syntax = "proto3";
 
 package externalscaler;
-option go_package = ".;externalscaler";
+option go_package = "github.com/cardinalhq/lakerunner/internal/externalscaler";
 
 service ExternalScaler {
     rpc IsActive(ScaledObjectRef) returns (IsActiveResponse) {}

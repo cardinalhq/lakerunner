@@ -93,6 +93,8 @@ type Querier interface {
 	GetTraceSegmentsForCompaction(ctx context.Context, arg GetTraceSegmentsForCompactionParams) ([]GetTraceSegmentsForCompactionRow, error)
 	InqueueJournalDelete(ctx context.Context, arg InqueueJournalDeleteParams) error
 	InqueueJournalUpsert(ctx context.Context, arg InqueueJournalUpsertParams) (bool, error)
+	// Get queue depth for ingest scaling by telemetry type
+	InqueueScalingDepth(ctx context.Context, telemetryType string) (interface{}, error)
 	InqueueSummary(ctx context.Context) ([]InqueueSummaryRow, error)
 	InsertCompactedMetricSeg(ctx context.Context, arg []InsertCompactedMetricSegParams) *InsertCompactedMetricSegBatchResults
 	InsertLogSegmentDirect(ctx context.Context, arg InsertLogSegmentParams) error
@@ -142,6 +144,8 @@ type Querier interface {
 	// 1) heart-beat the work_queue
 	WorkQueueHeartbeatDirect(ctx context.Context, arg WorkQueueHeartbeatParams) error
 	WorkQueueOrphanedSignalLockCleanup(ctx context.Context, maxrows int32) (int32, error)
+	// Get queue depth for work queue scaling by signal and action
+	WorkQueueScalingDepth(ctx context.Context, arg WorkQueueScalingDepthParams) (interface{}, error)
 	WorkQueueSummary(ctx context.Context) ([]WorkQueueSummaryRow, error)
 }
 
