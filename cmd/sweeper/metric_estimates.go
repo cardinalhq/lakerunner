@@ -31,12 +31,12 @@ func runMetricEstimateUpdate(ctx context.Context, ll *slog.Logger, mdb lrdb.Stor
 	// Constants for EWMA calculation
 	const (
 		alpha                = 0.2 // EWMA smoothing factor (20% new data, 80% old data)
-		lookbackHours        = 2
+		lookbackMinutes      = 10
 		defaultTargetRecords = 40000
 	)
 
 	now := time.Now().UTC()
-	lookbackTime := now.Add(-time.Duration(lookbackHours) * time.Hour)
+	lookbackTime := now.Add(-time.Duration(lookbackMinutes) * time.Minute)
 
 	ll.Info("Starting metric estimate update", slog.Time("lookback_start", lookbackTime))
 

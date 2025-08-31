@@ -117,7 +117,7 @@ func init() {
 
 const (
 	legacyTablesSyncPeriod     time.Duration = 5 * time.Minute
-	metricEstimateUpdatePeriod time.Duration = 30 * time.Minute
+	metricEstimateUpdatePeriod time.Duration = 10 * time.Minute
 )
 
 type sweeper struct {
