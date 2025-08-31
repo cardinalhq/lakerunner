@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package compaction
+package rollup
 
 import (
 	"context"
@@ -26,51 +26,50 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
-	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-type compactionStore interface {
-	s3helper.ObjectCleanupStore
-	ClaimMetricCompactionWork(ctx context.Context, params lrdb.ClaimMetricCompactionWorkParams) ([]lrdb.ClaimMetricCompactionWorkRow, error)
-	DeleteMetricCompactionWork(ctx context.Context, params lrdb.DeleteMetricCompactionWorkParams) error
-	ReleaseMetricCompactionWork(ctx context.Context, params lrdb.ReleaseMetricCompactionWorkParams) error
-	TouchMetricCompactionWork(ctx context.Context, params lrdb.TouchMetricCompactionWorkParams) error
-	CompactMetricSegs(ctx context.Context, args lrdb.ReplaceMetricSegsParams) error
-	GetMetricSegsForCompactionWork(ctx context.Context, params lrdb.GetMetricSegsForCompactionWorkParams) ([]lrdb.MetricSeg, error)
+type rollupStore interface {
+	ClaimMetricRollupWork(ctx context.Context, params lrdb.ClaimMetricRollupWorkParams) ([]lrdb.ClaimMetricRollupWorkRow, error)
+	DeleteMetricRollupWork(ctx context.Context, params lrdb.DeleteMetricRollupWorkParams) error
+	ReleaseMetricRollupWork(ctx context.Context, params lrdb.ReleaseMetricRollupWorkParams) error
+	TouchMetricRollupWork(ctx context.Context, params lrdb.TouchMetricRollupWorkParams) error
+	GetMetricSegsForRollup(ctx context.Context, params lrdb.GetMetricSegsForRollupParams) ([]lrdb.MetricSeg, error)
+	BatchMarkMetricSegsRolledup(ctx context.Context, arg []lrdb.BatchMarkMetricSegsRolledupParams) *lrdb.BatchMarkMetricSegsRolledupBatchResults
+	ReplaceMetricSegs(ctx context.Context, args lrdb.ReplaceMetricSegsParams) error
+	PutMetricCompactionWork(ctx context.Context, arg lrdb.PutMetricCompactionWorkParams) error
+	PutMetricRollupWork(ctx context.Context, arg lrdb.PutMetricRollupWorkParams) error
 }
 
 type config struct {
-	MaxAgeSeconds        int32
-	BatchCount           int32
-	DefaultTargetRecords int64
+	MaxAgeSeconds int32
+	BatchCount    int32
 }
 
 func GetConfigFromEnv() config {
 	maxAge := int32(900)
-	if env := os.Getenv("METRIC_COMPACTION_MAX_AGE_SECONDS"); env != "" {
+	if env := os.Getenv("METRIC_ROLLUP_MAX_AGE_SECONDS"); env != "" {
 		if val, err := strconv.Atoi(env); err == nil && val > 0 {
 			maxAge = int32(val)
 		}
 	}
 
 	batchCount := int32(20)
-	if env := os.Getenv("METRIC_COMPACTION_BATCH_COUNT"); env != "" {
+	if env := os.Getenv("METRIC_ROLLUP_BATCH_COUNT"); env != "" {
 		if val, err := strconv.Atoi(env); err == nil && val > 0 {
 			batchCount = int32(val)
 		}
 	}
 
 	return config{
-		MaxAgeSeconds:        maxAge,
-		BatchCount:           batchCount,
-		DefaultTargetRecords: 40_000,
+		MaxAgeSeconds: maxAge,
+		BatchCount:    batchCount,
 	}
 }
 
 type Manager struct {
-	db         compactionStore
+	db         rollupStore
 	workerID   int64
 	config     config
 	ll         *slog.Logger
@@ -79,7 +78,7 @@ type Manager struct {
 }
 
 func NewManager(
-	db compactionStore,
+	db rollupStore,
 	workerID int64,
 	config config,
 	sp storageprofile.StorageProfileProvider,
@@ -89,38 +88,37 @@ func NewManager(
 		db:         db,
 		workerID:   workerID,
 		config:     config,
-		ll:         slog.Default().With(slog.String("component", "metric-compaction-manager")),
+		ll:         slog.Default().With(slog.String("component", "metric-rollup-manager")),
 		sp:         sp,
 		awsmanager: awsmanager,
 	}
 }
 
-func (m *Manager) ClaimWork(ctx context.Context) ([]lrdb.ClaimMetricCompactionWorkRow, error) {
-	claimedRows, err := m.db.ClaimMetricCompactionWork(ctx, lrdb.ClaimMetricCompactionWorkParams{
-		WorkerID:             m.workerID,
-		NowTs:                nil, // Use database now()
-		DefaultTargetRecords: m.config.DefaultTargetRecords,
-		MaxAgeSeconds:        m.config.MaxAgeSeconds,
-		BatchCount:           m.config.BatchCount,
+func (m *Manager) ClaimWork(ctx context.Context) ([]lrdb.ClaimMetricRollupWorkRow, error) {
+	claimedRows, err := m.db.ClaimMetricRollupWork(ctx, lrdb.ClaimMetricRollupWorkParams{
+		WorkerID:      m.workerID,
+		NowTs:         nil, // Use database now()
+		MaxAgeSeconds: m.config.MaxAgeSeconds,
+		BatchCount:    m.config.BatchCount,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("failed to claim metric compaction work: %w", err)
+		return nil, fmt.Errorf("failed to claim metric rollup work: %w", err)
 	}
 
 	if len(claimedRows) > 0 {
-		m.ll.Info("Claimed metric compaction work batch",
+		m.ll.Info("Claimed metric rollup work batch",
 			slog.Int("workItems", len(claimedRows)))
 	}
 
 	return claimedRows, nil
 }
 
-func (m *Manager) CompleteWork(ctx context.Context, rows []lrdb.ClaimMetricCompactionWorkRow) error {
+func (m *Manager) CompleteWork(ctx context.Context, rows []lrdb.ClaimMetricRollupWorkRow) error {
 	for _, row := range rows {
-		if err := m.db.DeleteMetricCompactionWork(ctx, lrdb.DeleteMetricCompactionWorkParams{
+		if err := m.db.DeleteMetricRollupWork(ctx, lrdb.DeleteMetricRollupWorkParams{
 			ID:        row.ID,
 			ClaimedBy: m.workerID,
 		}); err != nil {
@@ -133,13 +131,12 @@ func (m *Manager) CompleteWork(ctx context.Context, rows []lrdb.ClaimMetricCompa
 	return nil
 }
 
-func (m *Manager) FailWork(ctx context.Context, rows []lrdb.ClaimMetricCompactionWorkRow) error {
-	// Use deadline context to ensure DB operations succeed even if original context is cancelled
+func (m *Manager) FailWork(ctx context.Context, rows []lrdb.ClaimMetricRollupWorkRow) error {
 	releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	for _, row := range rows {
-		if err := m.db.ReleaseMetricCompactionWork(releaseCtx, lrdb.ReleaseMetricCompactionWorkParams{
+		if err := m.db.ReleaseMetricRollupWork(releaseCtx, lrdb.ReleaseMetricRollupWorkParams{
 			ID:        row.ID,
 			ClaimedBy: m.workerID,
 		}); err != nil {
@@ -152,7 +149,6 @@ func (m *Manager) FailWork(ctx context.Context, rows []lrdb.ClaimMetricCompactio
 	return nil
 }
 
-// Run starts the compaction loop using the manager's dependencies
 func (m *Manager) Run(ctx context.Context) error {
 	return runLoop(ctx, m, m.db, m.sp, m.awsmanager)
 }
