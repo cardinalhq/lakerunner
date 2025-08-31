@@ -124,10 +124,12 @@ func coordinate(
 		return fmt.Errorf("compaction failed: %w", err)
 	}
 
-	// Calculate input bytes from segment metadata
+	// Calculate input bytes and record counts from segment metadata
 	inputBytes := int64(0)
+	inputRecords := int64(0)
 	for _, row := range rows {
 		inputBytes += row.FileSize
+		inputRecords += row.RecordCount
 	}
 
 	// Calculate statistics for logging
@@ -174,7 +176,7 @@ func coordinate(
 	dbCtx, dbCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer dbCancel()
 
-	err = replaceCompactedSegments(dbCtx, ll, mdb, result.Results, rows, workItem, segmentIDs)
+	err = replaceCompactedSegments(dbCtx, ll, mdb, result.Results, rows, workItem, segmentIDs, inputRecords, inputBytes)
 	if err != nil {
 		// Database update failed after successful uploads - schedule cleanup
 		ll.Error("Database update failed after successful S3 upload, scheduling cleanup",
@@ -264,6 +266,8 @@ func replaceCompactedSegments(
 	oldRows []lrdb.MetricSeg,
 	workItem lrdb.ClaimMetricCompactionWorkRow,
 	segmentIDs []int64,
+	inputRecords int64,
+	inputBytes int64,
 ) error {
 	// Prepare old records for CompactMetricSegs
 	oldRecords := make([]lrdb.ReplaceMetricSegsOld, len(oldRows))
@@ -330,9 +334,21 @@ func replaceCompactedSegments(
 		return fmt.Errorf("failed to compact metric segments: %w", err)
 	}
 
+	// Calculate output bytes and records
+	outputBytes := int64(0)
+	outputRecords := int64(0)
+	for _, result := range results {
+		outputBytes += result.FileSize
+		outputRecords += result.RecordCount
+	}
+
 	ll.Info("Successfully replaced compacted metric segments",
 		slog.Int("oldSegmentCount", len(oldRecords)),
-		slog.Int("newSegmentCount", len(newRecords)))
+		slog.Int("newSegmentCount", len(newRecords)),
+		slog.Int64("inputRecords", inputRecords),
+		slog.Int64("outputRecords", outputRecords),
+		slog.Int64("inputBytes", inputBytes),
+		slog.Int64("outputBytes", outputBytes))
 
 	return nil
 }
