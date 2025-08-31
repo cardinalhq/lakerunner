@@ -206,17 +206,6 @@ func (q *QuerierService) lookupLogsSegments(
 		}
 	}
 
-	for _, lf := range leaf.LineFilters {
-		switch lf.Op {
-		case logql.LineContains:
-			addAndNodeFromPattern(bodyField, ".*"+lf.Match+".*", fpsToFetch, &root)
-		case logql.LineRegex:
-			addAndNodeFromPattern(bodyField, lf.Match, fpsToFetch, &root)
-		default:
-			addExistsNode(bodyField, fpsToFetch, &root)
-		}
-	}
-
 	for _, lf := range leaf.LabelFilters {
 		if lf.ParserIdx != nil {
 			continue
