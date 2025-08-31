@@ -431,6 +431,11 @@ func (ar *AggregatingMetricsReader) addRowToAggregation(row Row) error {
 				"timestamp", row[wkk.RowKeyCTimestamp])
 			ar.loggedHistogramErrors[name] = true
 		}
+		rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+			attribute.String("reader", "AggregatingMetricsReader"),
+			attribute.String("reason", "histogram_without_sketch"),
+			attribute.String("metric_type", "histogram"),
+		))
 		return nil // Skip this row, don't add to aggregation
 	}
 
@@ -482,6 +487,10 @@ func (ar *AggregatingMetricsReader) processRow(row Row, batch *Batch) error {
 	key, err := ar.makeAggregationKey(row)
 	if err != nil {
 		slog.Error("Failed to make aggregation key", "error", err, "row", row)
+		rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+			attribute.String("reader", "AggregatingMetricsReader"),
+			attribute.String("reason", "invalid_aggregation_key"),
+		))
 		return nil // Skip this row, continue processing
 	}
 
