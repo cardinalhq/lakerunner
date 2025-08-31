@@ -190,8 +190,18 @@ func processBatch(
 		return err
 	}
 
+	ll.Debug("Retrieved source segments for rollup analysis",
+		slog.Int("sourceSegmentCount", len(sourceRows)),
+		slog.Int64("timeRangeStartTs", startTs),
+		slog.Int64("timeRangeEndTs", endTs),
+		slog.Int("sourceFrequencyMs", int(sourceFrequency)),
+		slog.Int("targetFrequencyMs", int(targetFrequency)))
+
 	if helpers.AllRolledUp(sourceRows) {
-		ll.Debug("All source rows already rolled up, skipping")
+		ll.Info("All source segments already rolled up, skipping rollup operation",
+			slog.Int("sourceSegmentCount", len(sourceRows)),
+			slog.Int("sourceFrequencyMs", int(firstItem.FrequencyMs)),
+			slog.Int("targetFrequencyMs", int(targetFrequency)))
 		return nil
 	}
 
@@ -210,19 +220,32 @@ func processBatch(
 		return err
 	}
 
+	ll.Debug("Retrieved existing target frequency segments for rollup analysis",
+		slog.Int("existingSegmentCount", len(existingRows)),
+		slog.Int("targetFrequencyMs", int(targetFrequency)))
+
 	err = rollupMetricSegments(ctx, ll, mdb, tmpdir, firstItem, profile, s3client, sourceRows, existingRows, targetFrequency)
+
+	elapsed := time.Since(t0)
 
 	if err != nil {
 		ll.Info("Metric rollup batch completed",
 			slog.String("result", "error"),
 			slog.Int("batchSize", len(claimedWork)),
-			slog.Duration("elapsed", time.Since(t0)))
+			slog.Int("sourceSegmentCount", len(sourceRows)),
+			slog.Int("existingTargetSegmentCount", len(existingRows)),
+			slog.Duration("elapsed", elapsed),
+			slog.Any("error", err))
 		return err
 	} else {
 		ll.Info("Metric rollup batch completed",
 			slog.String("result", "success"),
 			slog.Int("batchSize", len(claimedWork)),
-			slog.Duration("elapsed", time.Since(t0)))
+			slog.Int("sourceSegmentCount", len(sourceRows)),
+			slog.Int("existingTargetSegmentCount", len(existingRows)),
+			slog.Int("sourceFrequencyMs", int(firstItem.FrequencyMs)),
+			slog.Int("targetFrequencyMs", int(targetFrequency)),
+			slog.Duration("elapsed", elapsed))
 		return nil
 	}
 }
@@ -240,7 +263,11 @@ func rollupMetricSegments(
 	targetFrequency int32,
 ) error {
 	if len(sourceRows) == 0 {
-		ll.Debug("No source rows to rollup, skipping")
+		ll.Info("No source segments found for rollup, skipping rollup operation",
+			slog.Int("sourceFrequencyMs", int(firstItem.FrequencyMs)),
+			slog.Int("targetFrequencyMs", int(targetFrequency)),
+			slog.String("organizationID", firstItem.OrganizationID.String()),
+			slog.Int("dateint", int(firstItem.Dateint)))
 		return nil
 	}
 
@@ -275,11 +302,31 @@ func rollupMetricSegments(
 	}
 
 	if len(readerStack.Readers) == 0 {
-		ll.Debug("No files to rollup, skipping work item")
+		ll.Info("No files available for rollup processing, skipping work item",
+			slog.Int("sourceSegmentCount", len(sourceRows)),
+			slog.Int("sourceFrequencyMs", int(firstItem.FrequencyMs)),
+			slog.Int("targetFrequencyMs", int(targetFrequency)),
+			slog.String("organizationID", firstItem.OrganizationID.String()),
+			slog.Int("dateint", int(firstItem.Dateint)))
 		return nil
 	}
 
 	defer metricsprocessing.CloseReaderStack(ll, readerStack)
+
+	// Calculate input statistics from source segments
+	inputBytes := int64(0)
+	inputRecords := int64(0)
+	for _, row := range sourceRows {
+		inputBytes += row.FileSize
+		inputRecords += row.RecordCount
+	}
+
+	ll.Debug("Starting rollup processing",
+		slog.Int("inputFiles", len(readerStack.DownloadedFiles)),
+		slog.Int("sourceSegments", len(sourceRows)),
+		slog.Int64("inputRecords", inputRecords),
+		slog.Int64("inputBytes", inputBytes),
+		slog.Int("targetFrequencyMs", int(targetFrequency)))
 
 	aggregatingReader, err := filereader.NewAggregatingMetricsReader(readerStack.FinalReader, int64(targetFrequency), 1000)
 	if err != nil {
@@ -296,9 +343,12 @@ func rollupMetricSegments(
 	defer writer.Abort()
 
 	totalRows := int64(0)
+	batchCount := 0
 
 	for {
 		batch, err := aggregatingReader.Next()
+		batchCount++
+
 		if err != nil && !errors.Is(err, io.EOF) {
 			if batch != nil {
 				pipeline.ReturnBatch(batch)
@@ -347,10 +397,30 @@ func rollupMetricSegments(
 		return fmt.Errorf("finishing writer: %w", err)
 	}
 
-	ll.Debug("Rollup completed",
+	// Calculate output statistics
+	outputBytes := int64(0)
+	outputRecords := int64(0)
+	for _, result := range results {
+		outputBytes += result.FileSize
+		outputRecords += result.RecordCount
+	}
+
+	// Calculate compression ratio
+	compressionRatio := float64(0)
+	if inputBytes > 0 {
+		compressionRatio = float64(outputBytes) / float64(inputBytes) * 100
+	}
+
+	ll.Debug("Rollup processing completed",
+		slog.Int64("inputRecords", inputRecords),
+		slog.Int64("outputRecords", outputRecords),
 		slog.Int64("totalRows", totalRows),
+		slog.Int("batchCount", batchCount),
 		slog.Int("outputFiles", len(results)),
 		slog.Int("inputFiles", len(readerStack.DownloadedFiles)),
+		slog.Int64("inputBytes", inputBytes),
+		slog.Int64("outputBytes", outputBytes),
+		slog.Float64("compressionRatio", compressionRatio),
 		slog.Int64("recordsPerFile", metricsprocessing.DefaultRecordsPerFileRollup))
 
 	rollupParams := CompactionUploadParams{
@@ -406,19 +476,27 @@ func uploadRolledUpMetricsAtomic(
 		sourceSegmentIDs[i] = row.SegmentID
 	}
 
-	for _, file := range results {
+	ll.Debug("Starting atomic rollup operations for rolled-up files",
+		slog.Int("fileCount", len(results)),
+		slog.Int("sourceSegmentCount", len(sourceSegmentIDs)))
+
+	for i, file := range results {
 		filestats, err := metricsprocessing.ExtractFileMetadata(file, ll)
 		if err != nil {
 			return fmt.Errorf("failed to extract file metadata: %w", err)
 		}
 
-		fileLogger := ll.With(slog.String("file", file.FileName))
+		fileLogger := ll.With(
+			slog.String("file", file.FileName),
+			slog.Int("fileIndex", i+1),
+			slog.Int("totalFiles", len(results)))
 
 		fileLogger.Debug("Starting atomic metric rollup upload operation",
 			slog.Int64("recordCount", file.RecordCount),
 			slog.Int64("fileSize", file.FileSize),
 			slog.Int64("startTs", filestats.StartTs),
-			slog.Int64("endTs", filestats.EndTs))
+			slog.Int64("endTs", filestats.EndTs),
+			slog.Int("fingerprintCount", len(filestats.Fingerprints)))
 
 		segmentID := s3helper.GenerateID()
 		newObjectID := helpers.MakeDBObjectID(params.OrganizationID, params.CollectorName, filestats.Dateint, filestats.Hour, segmentID, "metrics")
@@ -437,7 +515,9 @@ func uploadRolledUpMetricsAtomic(
 		}
 
 		fileLogger.Debug("S3 upload successful, updating database with atomic rollup transaction - CRITICAL SECTION",
-			slog.String("uploadedObject", newObjectID))
+			slog.String("uploadedObject", newObjectID),
+			slog.Int64("uploadedBytes", file.FileSize),
+			slog.Int64("uploadedRecords", file.RecordCount))
 
 		sourceFrequency := sourceRows[0].FrequencyMs
 
@@ -488,13 +568,15 @@ func uploadRolledUpMetricsAtomic(
 			return fmt.Errorf("atomic rollup transaction: %w", err)
 		}
 
-		fileLogger.Debug("Source marked as rolled up, target segments replaced",
+		fileLogger.Debug("Source marked as rolled up, target segments replaced - rollup transaction complete",
 			slog.Int64("newSegmentID", segmentID),
 			slog.Int64("newRecordCount", file.RecordCount),
 			slog.Int64("newFileSize", file.FileSize),
 			slog.String("newObjectID", newObjectID),
 			slog.Int("sourceSegmentCount", len(sourceSegmentIDs)),
-			slog.Int("targetReplacedCount", len(targetOldRecords)))
+			slog.Int("targetReplacedCount", len(targetOldRecords)),
+			slog.Int("sourceFrequencyMs", int(sourceFrequency)),
+			slog.Int("targetFrequencyMs", int(params.FrequencyMs)))
 
 		if err := metricsprocessing.QueueMetricCompaction(ctx, mdb, params.OrganizationID, params.Dateint, params.FrequencyMs, params.InstanceNum, segmentID, file.RecordCount, filestats.StartTs, filestats.EndTs); err != nil {
 			fileLogger.Error("Failed to queue metric compaction", slog.Any("error", err))
@@ -504,6 +586,33 @@ func uploadRolledUpMetricsAtomic(
 			fileLogger.Error("Failed to queue metric rollup", slog.Any("error", err))
 		}
 	}
+
+	// Calculate final accumulated statistics
+	totalOutputBytes := int64(0)
+	totalOutputRecords := int64(0)
+	for _, result := range results {
+		totalOutputBytes += result.FileSize
+		totalOutputRecords += result.RecordCount
+	}
+
+	// Calculate total input statistics
+	totalInputBytes := int64(0)
+	totalInputRecords := int64(0)
+	for _, row := range sourceRows {
+		totalInputBytes += row.FileSize
+		totalInputRecords += row.RecordCount
+	}
+
+	ll.Info("Successfully completed atomic rollup operations",
+		slog.Int("outputFilesCreated", len(results)),
+		slog.Int("sourceSegmentsRolledUp", len(sourceSegmentIDs)),
+		slog.Int("targetSegmentsReplaced", len(targetOldRecords)),
+		slog.Int64("inputRecords", totalInputRecords),
+		slog.Int64("outputRecords", totalOutputRecords),
+		slog.Int64("inputBytes", totalInputBytes),
+		slog.Int64("outputBytes", totalOutputBytes),
+		slog.Int("sourceFrequencyMs", int(sourceRows[0].FrequencyMs)),
+		slog.Int("targetFrequencyMs", int(params.FrequencyMs)))
 
 	return nil
 }
