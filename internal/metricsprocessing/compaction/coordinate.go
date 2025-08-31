@@ -25,7 +25,6 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
-	"github.com/cardinalhq/lakerunner/internal/constants"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
@@ -51,6 +50,32 @@ func coordinate(
 		return nil
 	}
 
+	// Handle single row case: just mark as compacted
+	if len(rows) == 1 {
+		ll.Debug("Single segment found - marking as compacted instead of full processing",
+			slog.Int64("segmentID", rows[0].SegmentID))
+
+		segmentIDs := []int64{rows[0].SegmentID}
+		err := mdb.MarkMetricSegsCompactedByKeys(ctx, lrdb.MarkMetricSegsCompactedByKeysParams{
+			OrganizationID: workItem.OrganizationID,
+			Dateint:        workItem.Dateint,
+			FrequencyMs:    int32(workItem.FrequencyMs),
+			InstanceNum:    workItem.InstanceNum,
+			SegmentIds:     segmentIDs,
+		})
+		if err != nil {
+			ll.Error("Failed to mark single segment as compacted",
+				slog.Int64("segmentID", rows[0].SegmentID),
+				slog.Any("error", err))
+			return fmt.Errorf("failed to mark single segment as compacted: %w", err)
+		}
+
+		ll.Info("Successfully marked single segment as compacted",
+			slog.Int64("segmentID", rows[0].SegmentID))
+		return nil
+	}
+
+	// Handle multiple rows case: proceed with full compaction
 	if !shouldCompactMetrics(rows) {
 		ll.Debug("No need to compact metrics in this batch", slog.Int("rowCount", len(rows)))
 		return nil
@@ -312,26 +337,8 @@ func replaceCompactedSegments(
 	return nil
 }
 
-const targetFileSize = constants.TargetFileSizeBytes
-
 func shouldCompactMetrics(rows []lrdb.MetricSeg) bool {
-	if len(rows) < 2 {
-		return false
-	}
-
-	const smallThreshold = int64(targetFileSize) * 3 / 10
-
-	var totalSize int64
-	for _, row := range rows {
-		totalSize += row.FileSize
-		if row.FileSize > targetFileSize*2 || row.FileSize < smallThreshold {
-			return true
-		}
-	}
-
-	estimatedFileCount := (totalSize + targetFileSize - 1) / targetFileSize
-	compact := estimatedFileCount < int64(len(rows))-3
-	return compact
+	return len(rows) >= 2
 }
 
 // scheduleS3Cleanup schedules cleanup work for orphaned S3 objects
