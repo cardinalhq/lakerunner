@@ -140,9 +140,9 @@ upd AS (
   FROM group_chosen c
   WHERE q.id = c.id
     AND q.claimed_at IS NULL
-  RETURNING q.id, q.queue_ts, q.priority, q.organization_id, q.dateint, q.frequency_ms, q.instance_num, q.slot_id, q.slot_count, q.tries, q.claimed_by, q.claimed_at, q.heartbeated_at
+  RETURNING q.id, q.queue_ts, q.priority, q.organization_id, q.dateint, q.frequency_ms, q.instance_num, q.slot_id, q.slot_count, q.tries, q.claimed_by, q.claimed_at, q.heartbeated_at, q.segment_id
 )
-SELECT id, queue_ts, priority, organization_id, dateint, frequency_ms, instance_num, slot_id, slot_count, tries, claimed_by, claimed_at, heartbeated_at FROM upd
+SELECT id, queue_ts, priority, organization_id, dateint, frequency_ms, instance_num, slot_id, slot_count, tries, claimed_by, claimed_at, heartbeated_at, segment_id FROM upd
 ORDER BY priority DESC, queue_ts ASC, id ASC
 `
 
@@ -167,6 +167,7 @@ type ClaimMetricRollupWorkRow struct {
 	ClaimedBy      int64      `json:"claimed_by"`
 	ClaimedAt      *time.Time `json:"claimed_at"`
 	HeartbeatedAt  *time.Time `json:"heartbeated_at"`
+	SegmentID      int64      `json:"segment_id"`
 }
 
 // 1) One seed per group (org, dateint, freq, instance, slot_id, slot_count)
@@ -208,6 +209,7 @@ func (q *Queries) ClaimMetricRollupWork(ctx context.Context, arg ClaimMetricRoll
 			&i.ClaimedBy,
 			&i.ClaimedAt,
 			&i.HeartbeatedAt,
+			&i.SegmentID,
 		); err != nil {
 			return nil, err
 		}

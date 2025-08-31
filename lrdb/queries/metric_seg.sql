@@ -64,6 +64,16 @@ WHERE
 ORDER BY
   ts_range;
 
+-- name: GetMetricSegsForRollupWork :many
+SELECT *
+FROM metric_seg
+WHERE organization_id = @organization_id
+  AND dateint = @dateint
+  AND frequency_ms = @frequency_ms
+  AND instance_num = @instance_num
+  AND segment_id = ANY(@segment_ids::bigint[])
+ORDER BY segment_id;
+
 -- name: BatchInsertMetricSegs :batchexec
 INSERT INTO metric_seg (
   organization_id,

@@ -160,6 +160,70 @@ func (q *Queries) GetMetricSegsForRollup(ctx context.Context, arg GetMetricSegsF
 	return items, nil
 }
 
+const getMetricSegsForRollupWork = `-- name: GetMetricSegsForRollupWork :many
+SELECT organization_id, dateint, frequency_ms, segment_id, instance_num, ts_range, record_count, file_size, ingest_dateint, published, rolledup, created_at, created_by, slot_id, fingerprints, sort_version, slot_count, compacted
+FROM metric_seg
+WHERE organization_id = $1
+  AND dateint = $2
+  AND frequency_ms = $3
+  AND instance_num = $4
+  AND segment_id = ANY($5::bigint[])
+ORDER BY segment_id
+`
+
+type GetMetricSegsForRollupWorkParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Dateint        int32     `json:"dateint"`
+	FrequencyMs    int32     `json:"frequency_ms"`
+	InstanceNum    int16     `json:"instance_num"`
+	SegmentIds     []int64   `json:"segment_ids"`
+}
+
+func (q *Queries) GetMetricSegsForRollupWork(ctx context.Context, arg GetMetricSegsForRollupWorkParams) ([]MetricSeg, error) {
+	rows, err := q.db.Query(ctx, getMetricSegsForRollupWork,
+		arg.OrganizationID,
+		arg.Dateint,
+		arg.FrequencyMs,
+		arg.InstanceNum,
+		arg.SegmentIds,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MetricSeg
+	for rows.Next() {
+		var i MetricSeg
+		if err := rows.Scan(
+			&i.OrganizationID,
+			&i.Dateint,
+			&i.FrequencyMs,
+			&i.SegmentID,
+			&i.InstanceNum,
+			&i.TsRange,
+			&i.RecordCount,
+			&i.FileSize,
+			&i.IngestDateint,
+			&i.Published,
+			&i.Rolledup,
+			&i.CreatedAt,
+			&i.CreatedBy,
+			&i.SlotID,
+			&i.Fingerprints,
+			&i.SortVersion,
+			&i.SlotCount,
+			&i.Compacted,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const insertMetricSegmentDirect = `-- name: InsertMetricSegmentDirect :exec
 INSERT INTO metric_seg (
   organization_id,

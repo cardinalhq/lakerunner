@@ -19,6 +19,7 @@ INSERT INTO metric_rollup_queue (
   instance_num,
   slot_id,
   slot_count,
+  segment_id,
   priority
 )
 VALUES (
@@ -28,7 +29,8 @@ VALUES (
   $4,
   $5,
   $6,
-  $7
+  $7,
+  $8
 )
 `
 
@@ -39,6 +41,7 @@ type PutMetricRollupWorkParams struct {
 	InstanceNum    int16     `json:"instance_num"`
 	SlotID         int32     `json:"slot_id"`
 	SlotCount      int32     `json:"slot_count"`
+	SegmentID      int64     `json:"segment_id"`
 	Priority       int32     `json:"priority"`
 }
 
@@ -50,6 +53,7 @@ func (q *Queries) PutMetricRollupWork(ctx context.Context, arg PutMetricRollupWo
 		arg.InstanceNum,
 		arg.SlotID,
 		arg.SlotCount,
+		arg.SegmentID,
 		arg.Priority,
 	)
 	return err

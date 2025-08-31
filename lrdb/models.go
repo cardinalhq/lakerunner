@@ -210,6 +210,7 @@ type MetricRollupQueue struct {
 	ClaimedBy      int64      `json:"claimed_by"`
 	ClaimedAt      *time.Time `json:"claimed_at"`
 	HeartbeatedAt  *time.Time `json:"heartbeated_at"`
+	SegmentID      int64      `json:"segment_id"`
 }
 
 type MetricSeg struct {

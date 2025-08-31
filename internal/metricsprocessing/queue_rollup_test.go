@@ -141,6 +141,7 @@ func TestQueueMetricRollup(t *testing.T) {
 				tt.instanceNum,
 				tt.slotID,
 				tt.slotCount,
+				12345, // segmentID
 				tt.startTs,
 				tt.endTs,
 			)
@@ -190,6 +191,7 @@ func TestQueueMetricRollup_FrequencyMapping(t *testing.T) {
 				1,
 				1,
 				1,
+				67890, // segmentID
 				1703174400000,
 				1703174410000,
 			)
@@ -214,6 +216,7 @@ func TestQueueMetricRollup_NoRollupForUnknownFrequency(t *testing.T) {
 		1,
 		1,
 		1,
+		11111, // segmentID
 		1703174400000,
 		1703174410000,
 	)

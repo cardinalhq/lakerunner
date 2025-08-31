@@ -86,6 +86,7 @@ type Querier interface {
 	GetMetricSegsForCompaction(ctx context.Context, arg GetMetricSegsForCompactionParams) ([]MetricSeg, error)
 	GetMetricSegsForCompactionWork(ctx context.Context, arg GetMetricSegsForCompactionWorkParams) ([]MetricSeg, error)
 	GetMetricSegsForRollup(ctx context.Context, arg GetMetricSegsForRollupParams) ([]MetricSeg, error)
+	GetMetricSegsForRollupWork(ctx context.Context, arg GetMetricSegsForRollupWorkParams) ([]MetricSeg, error)
 	GetSpanInfoByFingerprint(ctx context.Context, arg GetSpanInfoByFingerprintParams) (GetSpanInfoByFingerprintRow, error)
 	GetTraceSegmentsForCompaction(ctx context.Context, arg GetTraceSegmentsForCompactionParams) ([]GetTraceSegmentsForCompactionRow, error)
 	InqueueJournalDelete(ctx context.Context, arg InqueueJournalDeleteParams) error

@@ -151,17 +151,22 @@ func processBatch(
 
 	t0 := time.Now()
 
-	// Get source segments to rollup from
-	sourceRows, err := mdb.GetMetricSegsForRollup(ctx, lrdb.GetMetricSegsForRollupParams{
-		OrganizationID: firstItem.OrganizationID,
-		Dateint:        firstItem.Dateint,
-		FrequencyMs:    sourceFrequency,
-		InstanceNum:    firstItem.InstanceNum,
-		SlotID:         firstItem.SlotID,
-	})
+	// Get source segments to rollup from using specific segment IDs
+	sourceRows, err := fetchMetricSegs(ctx, mdb, claimedWork)
 	if err != nil {
-		ll.Error("Failed to get previous metric segments", slog.Any("error", err))
+		ll.Error("Failed to fetch metric segments for rollup", slog.Any("error", err))
 		return err
+	}
+
+	// Log if we got fewer segments than expected
+	if len(sourceRows) < len(claimedWork) {
+		ll.Error("Retrieved fewer segments than work items - some segments may be missing",
+			slog.Int("expectedSegments", len(claimedWork)),
+			slog.Int("retrievedSegments", len(sourceRows)))
+	} else if len(sourceRows) > len(claimedWork) {
+		ll.Error("Retrieved more segments than work items - this should not happen",
+			slog.Int("expectedSegments", len(claimedWork)),
+			slog.Int("retrievedSegments", len(sourceRows)))
 	}
 
 	ll.Debug("Retrieved source segments for rollup analysis",
@@ -395,6 +400,30 @@ func rollupMetricSegments(
 	}
 
 	return nil
+}
+
+// fetchMetricSegs retrieves the MetricSeg records corresponding to the claimed work items.
+// All work items must have the same organization, dateint, frequency, and instance.
+func fetchMetricSegs(ctx context.Context, db rollupStore, claimedWork []lrdb.ClaimMetricRollupWorkRow) ([]lrdb.MetricSeg, error) {
+	if len(claimedWork) == 0 {
+		return nil, nil
+	}
+
+	firstItem := claimedWork[0]
+
+	// Extract segment IDs from claimed work
+	segmentIDs := make([]int64, len(claimedWork))
+	for i, item := range claimedWork {
+		segmentIDs[i] = item.SegmentID
+	}
+
+	return db.GetMetricSegsForRollupWork(ctx, lrdb.GetMetricSegsForRollupWorkParams{
+		OrganizationID: firstItem.OrganizationID,
+		Dateint:        firstItem.Dateint,
+		FrequencyMs:    int32(firstItem.FrequencyMs),
+		InstanceNum:    firstItem.InstanceNum,
+		SegmentIds:     segmentIDs,
+	})
 }
 
 var (

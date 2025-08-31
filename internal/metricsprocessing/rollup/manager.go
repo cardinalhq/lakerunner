@@ -38,6 +38,7 @@ type rollupStore interface {
 	ReleaseMetricRollupWork(ctx context.Context, params lrdb.ReleaseMetricRollupWorkParams) error
 	TouchMetricRollupWork(ctx context.Context, params lrdb.TouchMetricRollupWorkParams) error
 	GetMetricSegsForRollup(ctx context.Context, params lrdb.GetMetricSegsForRollupParams) ([]lrdb.MetricSeg, error)
+	GetMetricSegsForRollupWork(ctx context.Context, params lrdb.GetMetricSegsForRollupWorkParams) ([]lrdb.MetricSeg, error)
 	RollupMetricSegs(ctx context.Context, sourceParams lrdb.RollupSourceParams, targetParams lrdb.RollupTargetParams, sourceSegmentIDs []int64, newRecords []lrdb.RollupNewRecord) error
 	PutMetricCompactionWork(ctx context.Context, arg lrdb.PutMetricCompactionWorkParams) error
 	PutMetricRollupWork(ctx context.Context, arg lrdb.PutMetricRollupWorkParams) error
