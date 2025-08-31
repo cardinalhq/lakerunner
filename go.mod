@@ -32,7 +32,7 @@ require (
 	github.com/parquet-go/parquet-go v0.25.0
 	github.com/pgx-contrib/pgxotel v0.0.0-20250625223024-cb5ea1c4aa0b
 	github.com/prometheus/common v0.65.0
-	github.com/prometheus/prometheus v0.302.1
+	github.com/prometheus/prometheus v0.305.0
 	github.com/rdforte/gomaxecs v1.1.1
 	github.com/samber/slog-multi v1.4.1
 	github.com/sony/sonyflake v1.3.0
@@ -670,3 +670,8 @@ tool (
 )
 
 replace github.com/sqlc-dev/sqlc => github.com/skandragon/sqlc v0.0.0-20250803050355-7a2d750dd096
+
+replace (
+	github.com/prometheus/common => github.com/prometheus/common v0.62.0
+	github.com/prometheus/prometheus => github.com/prometheus/prometheus v0.302.1
+)
