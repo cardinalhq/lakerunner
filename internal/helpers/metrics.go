@@ -50,9 +50,12 @@ func IsWantedFrequency(frequency int32) bool {
 	return slices.Contains(AcceptedMetricFrequencies, frequency)
 }
 
-// AllRolledUp returns true all rows are rolledup.
-// If the slice is empty, the return value is junk.
+// AllRolledUp returns true if all rows are rolledup.
+// If the slice is empty, returns false (no segments found to roll up).
 func AllRolledUp(rows []lrdb.MetricSeg) bool {
+	if len(rows) == 0 {
+		return false
+	}
 	for _, row := range rows {
 		if !row.Rolledup {
 			return false

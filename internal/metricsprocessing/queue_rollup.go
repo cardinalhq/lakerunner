@@ -46,7 +46,7 @@ func QueueMetricRollup(ctx context.Context, mdb RollupWorkQueuer, organizationID
 	err := mdb.PutMetricRollupWork(ctx, lrdb.PutMetricRollupWorkParams{
 		OrganizationID: organizationID,
 		Dateint:        dateint,
-		FrequencyMs:    int64(nextFrequency),
+		FrequencyMs:    int64(frequencyMs),
 		InstanceNum:    instanceNum,
 		SlotID:         slotID,
 		SlotCount:      slotCount,

@@ -107,7 +107,8 @@ func processBatch(
 	}
 
 	// Work items represent source frequencies that roll up to target frequencies
-	targetFrequency, found := metricsprocessing.RollupTo[int32(firstItem.FrequencyMs)]
+	sourceFrequency := int32(firstItem.FrequencyMs)
+	targetFrequency, found := metricsprocessing.RollupTo[sourceFrequency]
 	if !found {
 		ll.Error("Invalid rollup frequency - not in source frequency list. This work item will be marked as completed to avoid reprocessing.",
 			slog.Int64("frequencyMs", firstItem.FrequencyMs))
@@ -115,8 +116,6 @@ func processBatch(
 		// This prevents these invalid work items from being retried indefinitely
 		return nil
 	}
-
-	sourceFrequency := int32(firstItem.FrequencyMs)
 
 	profile, err := sp.GetStorageProfileForOrganizationAndInstance(ctx, firstItem.OrganizationID, firstItem.InstanceNum)
 	if err != nil {

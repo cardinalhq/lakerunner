@@ -121,10 +121,9 @@ func TestQueueMetricRollup(t *testing.T) {
 
 				// Set up expectation
 				mockDB.On("PutMetricRollupWork", mock.Anything, mock.MatchedBy(func(params lrdb.PutMetricRollupWorkParams) bool {
-					// Verify the parameters passed to the database call
 					return params.OrganizationID == tt.organizationID &&
 						params.Dateint == tt.dateint &&
-						params.FrequencyMs == int64(nextFreq) &&
+						params.FrequencyMs == int64(tt.frequencyMs) &&
 						params.InstanceNum == tt.instanceNum &&
 						params.SlotID == tt.slotID &&
 						params.SlotCount == tt.slotCount &&
@@ -179,7 +178,7 @@ func TestQueueMetricRollup_FrequencyMapping(t *testing.T) {
 			mockDB := new(MockRollupWorkQueuer)
 
 			mockDB.On("PutMetricRollupWork", mock.Anything, mock.MatchedBy(func(params lrdb.PutMetricRollupWorkParams) bool {
-				return params.FrequencyMs == int64(tc.targetFreq) &&
+				return params.FrequencyMs == int64(tc.sourceFreq) &&
 					params.Priority == tc.priority
 			})).Return(nil)
 
