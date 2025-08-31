@@ -7,6 +7,7 @@ INSERT INTO metric_rollup_queue (
   slot_id,
   slot_count,
   segment_id,
+  record_count,
   priority
 )
 VALUES (
@@ -17,5 +18,6 @@ VALUES (
   @slot_id,
   @slot_count,
   @segment_id,
+  @record_count,
   @priority
 );

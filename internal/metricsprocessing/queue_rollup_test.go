@@ -127,6 +127,7 @@ func TestQueueMetricRollup(t *testing.T) {
 						params.InstanceNum == tt.instanceNum &&
 						params.SlotID == tt.slotID &&
 						params.SlotCount == tt.slotCount &&
+						params.RecordCount == 1000 &&
 						params.Priority == expectedPriority
 				})).Return(tt.mockError)
 			}
@@ -142,6 +143,7 @@ func TestQueueMetricRollup(t *testing.T) {
 				tt.slotID,
 				tt.slotCount,
 				12345, // segmentID
+				1000,  // recordCount
 				tt.startTs,
 				tt.endTs,
 			)
@@ -179,6 +181,7 @@ func TestQueueMetricRollup_FrequencyMapping(t *testing.T) {
 
 			mockDB.On("PutMetricRollupWork", mock.Anything, mock.MatchedBy(func(params lrdb.PutMetricRollupWorkParams) bool {
 				return params.FrequencyMs == int64(tc.sourceFreq) &&
+					params.RecordCount == 2000 &&
 					params.Priority == tc.priority
 			})).Return(nil)
 
@@ -192,6 +195,7 @@ func TestQueueMetricRollup_FrequencyMapping(t *testing.T) {
 				1,
 				1,
 				67890, // segmentID
+				2000,  // recordCount
 				1703174400000,
 				1703174410000,
 			)
@@ -217,6 +221,7 @@ func TestQueueMetricRollup_NoRollupForUnknownFrequency(t *testing.T) {
 		1,
 		1,
 		11111, // segmentID
+		3000,  // recordCount
 		1703174400000,
 		1703174410000,
 	)

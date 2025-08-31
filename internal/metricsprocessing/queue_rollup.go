@@ -29,7 +29,7 @@ type RollupWorkQueuer interface {
 }
 
 // QueueMetricRollup queues rollup work for a specific segment at the next frequency level
-func QueueMetricRollup(ctx context.Context, mdb RollupWorkQueuer, organizationID uuid.UUID, dateint int32, frequencyMs int32, instanceNum int16, slotID int32, slotCount int32, segmentID int64, startTs int64, endTs int64) error {
+func QueueMetricRollup(ctx context.Context, mdb RollupWorkQueuer, organizationID uuid.UUID, dateint int32, frequencyMs int32, instanceNum int16, slotID int32, slotCount int32, segmentID int64, recordCount int64, startTs int64, endTs int64) error {
 	nextFrequency, exists := RollupTo[frequencyMs]
 	if !exists {
 		return nil
@@ -45,6 +45,7 @@ func QueueMetricRollup(ctx context.Context, mdb RollupWorkQueuer, organizationID
 		SlotID:         slotID,
 		SlotCount:      slotCount,
 		SegmentID:      segmentID,
+		RecordCount:    recordCount,
 		Priority:       priority,
 	})
 

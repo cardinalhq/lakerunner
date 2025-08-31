@@ -154,7 +154,7 @@ func (segments ProcessedSegments) QueueCompactionWork(ctx context.Context, mdb C
 // QueueRollupWork queues rollup work for all segments
 func (segments ProcessedSegments) QueueRollupWork(ctx context.Context, mdb RollupWorkQueuer, orgID uuid.UUID, instanceNum int16, frequency int32, slotID int32, slotCount int32) error {
 	for _, segment := range segments {
-		if err := QueueMetricRollup(ctx, mdb, orgID, segment.GetDateint(), frequency, instanceNum, slotID, slotCount, segment.SegmentID, segment.StartTs, segment.EndTs); err != nil {
+		if err := QueueMetricRollup(ctx, mdb, orgID, segment.GetDateint(), frequency, instanceNum, slotID, slotCount, segment.SegmentID, segment.Result.RecordCount, segment.StartTs, segment.EndTs); err != nil {
 			return fmt.Errorf("queueing rollup work for segment %d: %w", segment.SegmentID, err)
 		}
 	}

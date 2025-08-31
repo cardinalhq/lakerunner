@@ -290,6 +290,9 @@ func ingestFilesBatch(
 		slog.Int("instanceNum", int(items[0].InstanceNum)))
 
 	handlers := make([]*workqueue.InqueueHandler, len(items))
+	var newWorkItems []lrdb.ClaimInqueueWorkBatchRow
+	var newWorkHandlers []*workqueue.InqueueHandler
+
 	for i, item := range items {
 		handlers[i] = workqueue.NewInqueueHandlerFromLRDB(lrdb.Inqueue(item), loop.mdb, maxWorkRetries, workqueue.WithLogger(ll))
 
@@ -300,6 +303,34 @@ func ingestFilesBatch(
 			}
 			continue
 		}
+
+		// Check if this work is new (not already processed)
+		isNew, err := handlers[i].IsNewWork(ctx)
+		if err != nil {
+			ll.Error("Failed to check if work is new", slog.Any("error", err), slog.String("itemID", item.ID.String()))
+			if retryErr := handlers[i].RetryWork(ctx); retryErr != nil {
+				ll.Error("Failed to retry work", slog.Any("error", retryErr))
+			}
+			continue
+		}
+
+		if !isNew {
+			ll.Info("Already processed file, skipping", slog.String("itemID", item.ID.String()))
+			if err := handlers[i].CompleteWork(ctx); err != nil {
+				ll.Error("Failed to complete work for already processed item", slog.Any("error", err))
+			}
+			continue
+		}
+
+		// This item is new work, add to processing lists
+		newWorkItems = append(newWorkItems, item)
+		newWorkHandlers = append(newWorkHandlers, handlers[i])
+	}
+
+	// If no new work remains, we're done
+	if len(newWorkItems) == 0 {
+		ll.Info("No new work items in batch, all were already processed or had too many tries")
+		return false, true, nil
 	}
 
 	tmpdir, err := os.MkdirTemp("", "")
@@ -313,42 +344,42 @@ func ingestFilesBatch(
 	}()
 
 	var rpfEstimate int64
-	switch lrdb.SignalEnum(items[0].Signal) {
+	switch lrdb.SignalEnum(newWorkItems[0].Signal) {
 	case lrdb.SignalEnumMetrics:
-		rpfEstimate = loop.metricEstimator.Get(items[0].OrganizationID, items[0].InstanceNum, 10_000)
+		rpfEstimate = loop.metricEstimator.Get(newWorkItems[0].OrganizationID, newWorkItems[0].InstanceNum, 10_000)
 	case lrdb.SignalEnumLogs:
-		rpfEstimate = loop.logEstimator.Get(items[0].OrganizationID, items[0].InstanceNum)
+		rpfEstimate = loop.logEstimator.Get(newWorkItems[0].OrganizationID, newWorkItems[0].InstanceNum)
 	default:
 		rpfEstimate = 40_000
 	}
 
 	ingestDateint, _ := helpers.MSToDateintHour(time.Now().UTC().UnixMilli())
 
-	// Start heartbeating for claimed items
-	itemIDs := make([]uuid.UUID, len(items))
-	for i, item := range items {
-		itemIDs[i] = item.ID
+	// Start heartbeating for new work items only
+	newWorkItemIDs := make([]uuid.UUID, len(newWorkItems))
+	for i, item := range newWorkItems {
+		newWorkItemIDs[i] = item.ID
 	}
-	heartbeater := newInqueueHeartbeater(loop.mdb, myInstanceID, itemIDs)
+	heartbeater := newInqueueHeartbeater(loop.mdb, myInstanceID, newWorkItemIDs)
 	cancel := heartbeater.Start(ctx)
 	defer cancel() // Ensure heartbeating stops when processing completes
 
 	t0 = time.Now()
-	inqueueBatch := make([]lrdb.Inqueue, len(items))
-	for i, item := range items {
+	inqueueBatch := make([]lrdb.Inqueue, len(newWorkItems))
+	for i, item := range newWorkItems {
 		inqueueBatch[i] = lrdb.Inqueue(item)
 	}
 	err = batchProcessingFx(ctx, ll, tmpdir, loop.sp, loop.mdb, loop.awsmanager, inqueueBatch, ingestDateint, rpfEstimate, loop)
 	inqueueDuration.Record(ctx, time.Since(t0).Seconds(),
 		metric.WithAttributeSet(commonAttributes),
 		metric.WithAttributes(
-			attribute.String("organizationID", items[0].OrganizationID.String()),
-			attribute.String("bucket", items[0].Bucket),
-			attribute.Int("batchSize", len(items)),
+			attribute.String("organizationID", newWorkItems[0].OrganizationID.String()),
+			attribute.String("bucket", newWorkItems[0].Bucket),
+			attribute.Int("batchSize", len(newWorkItems)),
 		))
 
 	if err != nil {
-		for _, h := range handlers {
+		for _, h := range newWorkHandlers {
 			if retryErr := h.RetryWork(ctx); retryErr != nil {
 				ll.Error("Failed to retry work", slog.Any("error", retryErr))
 			}
@@ -356,7 +387,7 @@ func ingestFilesBatch(
 		return true, false, fmt.Errorf("Batch processing failed: %w", err)
 	}
 
-	for _, h := range handlers {
+	for _, h := range newWorkHandlers {
 		if err := h.CompleteWork(ctx); err != nil {
 			ll.Error("Failed to complete work", slog.Any("error", err))
 		} else {
