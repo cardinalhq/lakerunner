@@ -25,14 +25,14 @@ import (
 )
 
 func TestNewMergesortReader(t *testing.T) {
-	// Test with valid readers and selector
+	// Test with valid readers and keyProvider
 	readers := []Reader{
 		newMockReader("r1", []Row{{wkk.NewRowKey("ts"): int64(1)}}),
 		newMockReader("r2", []Row{{wkk.NewRowKey("ts"): int64(2)}}),
 	}
-	selector := TimeOrderedSelector("ts")
+	keyProvider := NewTimeOrderedSortKeyProvider("ts")
 
-	or, err := NewMergesortReader(readers, selector, 1000)
+	or, err := NewMergesortReader(readers, keyProvider, 1000)
 	if err != nil {
 		t.Fatalf("NewMergesortReader() error = %v", err)
 	}
@@ -43,15 +43,15 @@ func TestNewMergesortReader(t *testing.T) {
 	}
 
 	// Test with no readers
-	_, err = NewMergesortReader([]Reader{}, selector, 1000)
+	_, err = NewMergesortReader([]Reader{}, keyProvider, 1000)
 	if err == nil {
 		t.Error("Expected error for empty readers slice")
 	}
 
-	// Test with nil selector
+	// Test with nil keyProvider
 	_, err = NewMergesortReader(readers, nil, 1000)
 	if err == nil {
-		t.Error("Expected error for nil selector")
+		t.Error("Expected error for nil keyProvider")
 	}
 }
 
@@ -73,8 +73,8 @@ func TestMergesortReader_Next(t *testing.T) {
 		}),
 	}
 
-	selector := TimeOrderedSelector("ts")
-	or, err := NewMergesortReader(readers, selector, 1000)
+	keyProvider := NewTimeOrderedSortKeyProvider("ts")
+	or, err := NewMergesortReader(readers, keyProvider, 1000)
 	if err != nil {
 		t.Fatalf("NewMergesortReader() error = %v", err)
 	}
@@ -122,8 +122,8 @@ func TestMergesortReader_NextBatched(t *testing.T) {
 		newMockReader("r3", []Row{}), // Empty reader
 	}
 
-	selector := TimeOrderedSelector("ts")
-	or, err := NewMergesortReader(readers, selector, 1000)
+	keyProvider := NewTimeOrderedSortKeyProvider("ts")
+	or, err := NewMergesortReader(readers, keyProvider, 1000)
 	if err != nil {
 		t.Fatalf("NewMergesortReader() error = %v", err)
 	}
@@ -160,8 +160,8 @@ func TestMergesortReader_ActiveReaderCount(t *testing.T) {
 		newMockReader("r2", []Row{{wkk.NewRowKey("ts"): int64(2)}}),
 	}
 
-	selector := TimeOrderedSelector("ts")
-	or, err := NewMergesortReader(readers, selector, 1000)
+	keyProvider := NewTimeOrderedSortKeyProvider("ts")
+	or, err := NewMergesortReader(readers, keyProvider, 1000)
 	if err != nil {
 		t.Fatalf("NewMergesortReader() error = %v", err)
 	}
@@ -193,8 +193,8 @@ func TestMergesortReader_AllEmptyReaders(t *testing.T) {
 		newMockReader("r2", []Row{}),
 	}
 
-	selector := TimeOrderedSelector("ts")
-	or, err := NewMergesortReader(readers, selector, 1000)
+	keyProvider := NewTimeOrderedSortKeyProvider("ts")
+	or, err := NewMergesortReader(readers, keyProvider, 1000)
 	if err != nil {
 		t.Fatalf("NewMergesortReader() error = %v", err)
 	}
@@ -216,8 +216,8 @@ func TestMergesortReader_Close(t *testing.T) {
 		newMockReader("r2", []Row{{wkk.NewRowKey("ts"): int64(2)}}),
 	}
 
-	selector := TimeOrderedSelector("ts")
-	or, err := NewMergesortReader(readers, selector, 1000)
+	keyProvider := NewTimeOrderedSortKeyProvider("ts")
+	or, err := NewMergesortReader(readers, keyProvider, 1000)
 	if err != nil {
 		t.Fatalf("NewMergesortReader() error = %v", err)
 	}
@@ -254,48 +254,56 @@ func TestMergesortReader_Close(t *testing.T) {
 	}
 }
 
-func TestTimeOrderedSelector(t *testing.T) {
-	selector := TimeOrderedSelector("timestamp")
+func TestTimeOrderedSortKeyProvider(t *testing.T) {
+	provider := NewTimeOrderedSortKeyProvider("timestamp")
 
-	// Test with different timestamp types
-	rows := []Row{
-		{wkk.NewRowKey("timestamp"): int64(300), wkk.NewRowKey("data"): "third"},
-		{wkk.NewRowKey("timestamp"): int64(100), wkk.NewRowKey("data"): "first"},
-		{wkk.NewRowKey("timestamp"): int64(200), wkk.NewRowKey("data"): "second"},
+	// Test basic key creation and comparison
+	row1 := Row{wkk.NewRowKey("timestamp"): int64(100), wkk.NewRowKey("data"): "first"}
+	row2 := Row{wkk.NewRowKey("timestamp"): int64(200), wkk.NewRowKey("data"): "second"}
+	row3 := Row{wkk.NewRowKey("timestamp"): int64(300), wkk.NewRowKey("data"): "third"}
+
+	key1 := provider.MakeKey(row1)
+	key2 := provider.MakeKey(row2)
+	key3 := provider.MakeKey(row3)
+	defer key1.Release()
+	defer key2.Release()
+	defer key3.Release()
+
+	// Test comparisons
+	if key1.Compare(key2) >= 0 {
+		t.Errorf("key1 (ts=100) should be < key2 (ts=200)")
 	}
-
-	selected := selector(rows)
-	if selected != 1 { // Should select row with timestamp 100
-		t.Errorf("TimeOrderedSelector selected index %d, want 1", selected)
+	if key2.Compare(key3) >= 0 {
+		t.Errorf("key2 (ts=200) should be < key3 (ts=300)")
+	}
+	if key1.Compare(key3) >= 0 {
+		t.Errorf("key1 (ts=100) should be < key3 (ts=300)")
 	}
 
 	// Test with float64 timestamps
-	rows = []Row{
-		{wkk.NewRowKey("timestamp"): float64(300.5), wkk.NewRowKey("data"): "third"},
-		{wkk.NewRowKey("timestamp"): float64(100.1), wkk.NewRowKey("data"): "first"},
-		{wkk.NewRowKey("timestamp"): float64(200.2), wkk.NewRowKey("data"): "second"},
-	}
+	rowFloat1 := Row{wkk.NewRowKey("timestamp"): float64(100.1), wkk.NewRowKey("data"): "first"}
+	rowFloat2 := Row{wkk.NewRowKey("timestamp"): float64(200.2), wkk.NewRowKey("data"): "second"}
 
-	selected = selector(rows)
-	if selected != 1 { // Should select row with timestamp 100.1
-		t.Errorf("TimeOrderedSelector with float64 selected index %d, want 1", selected)
+	keyFloat1 := provider.MakeKey(rowFloat1)
+	keyFloat2 := provider.MakeKey(rowFloat2)
+	defer keyFloat1.Release()
+	defer keyFloat2.Release()
+
+	if keyFloat1.Compare(keyFloat2) >= 0 {
+		t.Errorf("keyFloat1 (ts=100.1) should be < keyFloat2 (ts=200.2)")
 	}
 
 	// Test with missing timestamp field
-	rows = []Row{
-		{wkk.NewRowKey("data"): "no timestamp"},
-		{wkk.NewRowKey("timestamp"): int64(100), wkk.NewRowKey("data"): "has timestamp"},
-	}
+	rowMissing := Row{wkk.NewRowKey("data"): "no timestamp"}
+	rowValid := Row{wkk.NewRowKey("timestamp"): int64(100), wkk.NewRowKey("data"): "has timestamp"}
 
-	selected = selector(rows)
-	if selected != 0 { // Should select first row (missing timestamps default to 0)
-		t.Errorf("TimeOrderedSelector with missing timestamp selected index %d, want 0", selected)
-	}
+	keyMissing := provider.MakeKey(rowMissing)
+	keyValid := provider.MakeKey(rowValid)
+	defer keyMissing.Release()
+	defer keyValid.Release()
 
-	// Test with empty slice
-	selected = selector([]Row{})
-	if selected != -1 {
-		t.Errorf("TimeOrderedSelector with empty slice selected index %d, want -1", selected)
+	if keyValid.Compare(keyMissing) >= 0 {
+		t.Errorf("keyValid should be < keyMissing (missing timestamps default to invalid and go last)")
 	}
 }
 
@@ -340,7 +348,7 @@ func (tr *trackingReader) TotalRowsReturned() int64 { return tr.rowCount }
 
 func TestMergesortReader_RowReuse(t *testing.T) {
 	tr := newTrackingReader([]Row{{wkk.NewRowKey("ts"): int64(1)}, {wkk.NewRowKey("ts"): int64(2)}, {wkk.NewRowKey("ts"): int64(3)}, {wkk.NewRowKey("ts"): int64(4)}})
-	or, err := NewMergesortReader([]Reader{tr}, TimeOrderedSelector("ts"), 1)
+	or, err := NewMergesortReader([]Reader{tr}, NewTimeOrderedSortKeyProvider("ts"), 1)
 	if err != nil {
 		t.Fatalf("NewMergesortReader() error = %v", err)
 	}

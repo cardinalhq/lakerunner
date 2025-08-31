@@ -329,8 +329,8 @@ func createUnifiedReader(readers []filereader.Reader) (filereader.Reader, error)
 		finalReader = readers[0]
 	} else {
 		// Multiple readers - use MergesortReader to merge sorted streams
-		selector := createMetricOrderSelector()
-		multiReader, err := filereader.NewMergesortReader(readers, selector, 1000)
+		keyProvider := metricsprocessing.GetCurrentMetricSortKeyProvider()
+		multiReader, err := filereader.NewMergesortReader(readers, keyProvider, 1000)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create multi-source reader: %w", err)
 		}

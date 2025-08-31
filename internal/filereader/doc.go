@@ -128,8 +128,8 @@
 //
 // MergesortReader - For merging multiple already-sorted sources (low memory, streaming):
 //
-//	selector := TimeOrderedSelector("timestamp")
-//	reader := NewMergesortReader([]Reader{r1, r2, r3}, selector)
+//	keyProvider := NewTimeOrderedSortKeyProvider("timestamp")
+//	reader := NewMergesortReader([]Reader{r1, r2, r3}, keyProvider)
 //
 // SequentialReader - Sequential processing (no sorting):
 //
@@ -145,8 +145,8 @@
 //	    NewJSONLinesReader(file3),
 //	}
 //
-//	selector := TimeOrderedSelector("_cardinalhq.timestamp")
-//	ordered := NewMergesortReader(readers, selector)
+//	keyProvider := NewTimeOrderedSortKeyProvider("_cardinalhq.timestamp")
+//	ordered := NewMergesortReader(readers, keyProvider)
 //	defer ordered.Close()
 //
 //	for {
@@ -169,8 +169,9 @@
 //
 //	// Process multiple file groups in timestamp order,
 //	// then combine groups sequentially
-//	group1 := NewMergesortReader(readers1, TimeOrderedSelector("timestamp"))
-//	group2 := NewMergesortReader(readers2, TimeOrderedSelector("timestamp"))
+//	keyProvider := NewTimeOrderedSortKeyProvider("timestamp")
+//	group1 := NewMergesortReader(readers1, keyProvider)
+//	group2 := NewMergesortReader(readers2, keyProvider)
 //	final := NewSequentialReader([]Reader{group1, group2})
 //
 // # Memory Management & Batch Ownership

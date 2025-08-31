@@ -34,6 +34,7 @@ type mergesortReaderState struct {
 	done         bool
 	index        int
 	err          error
+	currentKey   SortKey // cached key for current row
 }
 
 // getCurrentRow returns the current row from the reader state, if available.
@@ -53,13 +54,13 @@ func (state *mergesortReaderState) consumeCurrentRow() {
 
 // MergesortReader implements merge-sort style reading across multiple pre-sorted readers.
 // It assumes each individual reader returns rows in sorted order according to the
-// provided selector function.
+// provided SortKeyProvider.
 type MergesortReader struct {
-	states    []*mergesortReaderState
-	selector  SelectFunc
-	closed    bool
-	rowCount  int64
-	batchSize int
+	states      []*mergesortReaderState
+	keyProvider SortKeyProvider
+	closed      bool
+	rowCount    int64
+	batchSize   int
 }
 
 // NewMergesortReader creates a new MergesortReader that merges rows from multiple readers
@@ -69,12 +70,12 @@ type MergesortReader struct {
 // - Each reader must return rows in sorted order (according to the selector logic)
 // - The selector function must be consistent (same inputs -> same output)
 // - Readers will be closed when the MergesortReader is closed
-func NewMergesortReader(readers []Reader, selector SelectFunc, batchSize int) (*MergesortReader, error) {
+func NewMergesortReader(readers []Reader, keyProvider SortKeyProvider, batchSize int) (*MergesortReader, error) {
 	if len(readers) == 0 {
 		return nil, errors.New("at least one reader is required")
 	}
-	if selector == nil {
-		return nil, errors.New("selector function is required")
+	if keyProvider == nil {
+		return nil, errors.New("keyProvider is required")
 	}
 
 	if batchSize <= 0 {
@@ -90,9 +91,9 @@ func NewMergesortReader(readers []Reader, selector SelectFunc, batchSize int) (*
 	}
 
 	or := &MergesortReader{
-		states:    states,
-		selector:  selector,
-		batchSize: batchSize,
+		states:      states,
+		keyProvider: keyProvider,
+		batchSize:   batchSize,
 	}
 
 	// Prime all readers by loading their first rows
@@ -118,6 +119,12 @@ func (or *MergesortReader) primeReaders() error {
 func (or *MergesortReader) advance(state *mergesortReaderState) error {
 	if state.done || state.err != nil {
 		return state.err
+	}
+
+	// Release old key if moving to next row
+	if state.currentKey != nil {
+		state.currentKey.Release()
+		state.currentKey = nil
 	}
 
 	// Check if we need to load a new batch
@@ -155,6 +162,12 @@ func (or *MergesortReader) advance(state *mergesortReaderState) error {
 		state.batchIndex = 0
 	}
 
+	// Compute sort key for current row
+	if !state.done && state.currentBatch != nil && state.batchIndex < state.currentBatch.Len() {
+		currentRow := state.currentBatch.Get(state.batchIndex)
+		state.currentKey = or.keyProvider.MakeKey(currentRow)
+	}
+
 	return nil
 }
 
@@ -167,22 +180,29 @@ func (or *MergesortReader) Next() (*Batch, error) {
 	batch := pipeline.GetBatch()
 
 	for batch.Len() < or.batchSize {
-		// Collect all active (non-done, non-error) readers and their current rows
-		var activeRows []Row
-		var activeStates []*mergesortReaderState
+		// Find the reader state with the smallest sort key
+		var selectedState *mergesortReaderState
+		var minKey SortKey
 
 		for _, state := range or.states {
-			if !state.done && state.err == nil {
-				currentRow := state.getCurrentRow()
-				if currentRow != nil {
-					activeRows = append(activeRows, currentRow)
-					activeStates = append(activeStates, state)
+			if !state.done && state.err == nil && state.currentKey != nil {
+				if minKey == nil || state.currentKey.Compare(minKey) < 0 {
+					if minKey != nil {
+						minKey.Release()
+					}
+					selectedState = state
+					minKey = state.currentKey
 				}
 			}
 		}
 
 		// No more active readers
-		if len(activeRows) == 0 {
+		if selectedState == nil {
+			// Release minKey if we allocated one
+			if minKey != nil {
+				minKey.Release()
+			}
+
 			// Check if any reader had an error
 			for _, state := range or.states {
 				if state.err != nil {
@@ -197,15 +217,10 @@ func (or *MergesortReader) Next() (*Batch, error) {
 			break
 		}
 
-		// Use selector to determine which row to return
-		selectedIdx := or.selector(activeRows)
-		if selectedIdx < 0 || selectedIdx >= len(activeStates) {
-			pipeline.ReturnBatch(batch)
-			return nil, fmt.Errorf("selector returned invalid index %d, expected 0-%d",
-				selectedIdx, len(activeStates)-1)
+		// Release the minKey (we don't need to hold it)
+		if minKey != nil {
+			minKey.Release()
 		}
-
-		selectedState := activeStates[selectedIdx]
 		currentRow := selectedState.getCurrentRow()
 		if currentRow != nil {
 			// Copy the row to the batch
@@ -250,6 +265,12 @@ func (or *MergesortReader) Close() error {
 		if state.currentBatch != nil {
 			pipeline.ReturnBatch(state.currentBatch)
 			state.currentBatch = nil
+		}
+
+		// Release cached sort key
+		if state.currentKey != nil {
+			state.currentKey.Release()
+			state.currentKey = nil
 		}
 
 		if state.reader != nil {

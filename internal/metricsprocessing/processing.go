@@ -92,47 +92,6 @@ func GetCurrentMetricSortKeyProvider() filereader.SortKeyProvider {
 	return &filereader.MetricSortKeyProvider{}
 }
 
-// MetricsOrderedSelector returns a SelectFunc for MergesortReader that orders by [metric name, TID].
-// This ensures the same ordering used by the parquet writer during ingestion and compaction.
-// TODO this should not generate keys on the fly like this, that will hurt GC.
-// TODO the fix is likely to make callers of this track the key for the items it wants, and use .Compare() directly.
-func MetricsOrderedSelector() filereader.SelectFunc {
-	keyProvider := GetCurrentMetricSortKeyProvider()
-
-	return func(rows []filereader.Row) int {
-		if len(rows) == 0 {
-			return -1
-		}
-
-		minIdx := 0
-		minKey := keyProvider.MakeKey(rows[0])
-		defer minKey.Release()
-
-		for i := 1; i < len(rows); i++ {
-			key := keyProvider.MakeKey(rows[i])
-			if key.Compare(minKey) < 0 {
-				minKey.Release()
-				minIdx = i
-				minKey = key
-			} else {
-				key.Release()
-			}
-		}
-
-		return minIdx
-	}
-}
-
-// GetMetricSortKey extracts the metric sort key [metric_name:tid] from a row.
-func GetMetricSortKey(row map[string]any) string {
-	name, nameOk := row["_cardinalhq.name"].(string)
-	tid, tidOk := row["_cardinalhq.tid"].(int64)
-	if nameOk && tidOk {
-		return fmt.Sprintf("%s:%d", name, tid)
-	}
-	return ""
-}
-
 // GetStartEndTimes calculates the time range from a set of metric segments.
 func GetStartEndTimes(rows []lrdb.MetricSeg) (int64, int64) {
 	startTs := int64(math.MaxInt64)

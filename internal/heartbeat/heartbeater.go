@@ -80,6 +80,9 @@ func (h *Heartbeater) sendHeartbeat(ctx context.Context) {
 
 	err := h.heartbeatFunc(ctx)
 	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
 		h.ll.Error("Failed to send heartbeat (continuing)", "error", err)
 		return
 	}

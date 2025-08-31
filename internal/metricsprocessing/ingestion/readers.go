@@ -21,7 +21,6 @@ import (
 	"strings"
 
 	"github.com/cardinalhq/lakerunner/internal/filereader"
-	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 // IsSupportedMetricsFile checks if the file is a supported metrics file type
@@ -32,49 +31,6 @@ func IsSupportedMetricsFile(objectID string) bool {
 	}
 
 	return strings.HasSuffix(objectID, ".binpb") || strings.HasSuffix(objectID, ".binpb.gz")
-}
-
-// createMetricOrderSelector creates a selector function for metrics that orders by [metric_name, tid, timestamp]
-func createMetricOrderSelector() filereader.SelectFunc {
-	return func(rows []filereader.Row) int {
-		if len(rows) == 0 {
-			return 0
-		}
-
-		bestIdx := 0
-		bestRow := rows[0]
-		if bestRow == nil {
-			return bestIdx
-		}
-
-		// Extract comparison values from the best row
-		bestName, _ := bestRow[wkk.RowKeyCName].(string)
-		bestTid, _ := bestRow[wkk.RowKeyCTID].(int64)
-		bestTs, _ := bestRow[wkk.RowKeyCTimestamp].(int64)
-
-		for i := 1; i < len(rows); i++ {
-			if rows[i] == nil {
-				continue
-			}
-
-			// Extract comparison values from current row
-			name, _ := rows[i][wkk.RowKeyCName].(string)
-			tid, _ := rows[i][wkk.RowKeyCTID].(int64)
-			ts, _ := rows[i][wkk.RowKeyCTimestamp].(int64)
-
-			// Compare by [name, tid, timestamp] in ascending order
-			if name < bestName ||
-				(name == bestName && tid < bestTid) ||
-				(name == bestName && tid == bestTid && ts < bestTs) {
-				bestIdx = i
-				bestName = name
-				bestTid = tid
-				bestTs = ts
-			}
-		}
-
-		return bestIdx
-	}
 }
 
 // CreateMetricProtoReader creates a protocol buffer reader for metrics files

@@ -122,7 +122,7 @@ func TestMergesortReader_BufferLeak(t *testing.T) {
 	readers := []Reader{reader1, reader2}
 
 	// Create MergesortReader
-	msReader, err := NewMergesortReader(readers, TimeOrderedSelector("_cardinalhq.timestamp"), 100)
+	msReader, err := NewMergesortReader(readers, NewTimeOrderedSortKeyProvider("_cardinalhq.timestamp"), 100)
 	if err != nil {
 		t.Fatalf("Failed to create MergesortReader: %v", err)
 	}
