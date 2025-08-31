@@ -269,6 +269,46 @@ func TestFileSplitterWriteBatchRows_FileSplittingByRecordCount(t *testing.T) {
 	}
 }
 
+func TestFileSplitterWriteBatchRows_UnlimitedFileMode(t *testing.T) {
+	tmpDir := t.TempDir()
+	config := WriterConfig{
+		TmpDir:         tmpDir,
+		RecordsPerFile: NoRecordLimitPerFile, // Unlimited mode
+	}
+
+	splitter := NewFileSplitter(config)
+	ctx := context.Background()
+
+	// Write multiple batches that would normally trigger splits
+	// With unlimited mode, all should go into a single file
+	totalRecords := 0
+	for i := 0; i < 5; i++ {
+		batch := createTestBatch(t, 10) // 10 records each batch
+		err := splitter.WriteBatchRows(ctx, batch)
+		if err != nil {
+			t.Fatalf("WriteBatchRows batch %d failed: %v", i, err)
+		}
+		totalRecords += 10
+	}
+
+	// Close and get results
+	results, err := splitter.Close(ctx)
+	if err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	// Should have exactly one file with all records
+	if len(results) != 1 {
+		t.Errorf("Expected 1 file in unlimited mode, got %d", len(results))
+	}
+	if results[0].RecordCount != int64(totalRecords) {
+		t.Errorf("Expected file to have %d records, got %d", totalRecords, results[0].RecordCount)
+	}
+
+	// Clean up
+	os.Remove(results[0].FileName)
+}
+
 func TestFileSplitterWriteBatchRows_WithGroupKeyFunc(t *testing.T) {
 	tmpDir := t.TempDir()
 	config := WriterConfig{

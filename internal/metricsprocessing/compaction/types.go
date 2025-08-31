@@ -21,10 +21,6 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 )
 
-const (
-	defaultRPFEstimate = metricsprocessing.DefaultRecordsPerFileCompaction
-)
-
 type input struct {
 	ReaderStack *metricsprocessing.ReaderStackResult
 	FrequencyMs int64

@@ -291,7 +291,7 @@ func rollupMetricSegments(
 	}
 	defer aggregatingReader.Close()
 
-	writer, err := factories.NewMetricsWriter(tmpdir, metricsprocessing.DefaultRecordsPerFileRollup)
+	writer, err := factories.NewMetricsWriter(tmpdir, parquetwriter.NoRecordLimitPerFile)
 	if err != nil {
 		ll.Error("Failed to create metrics writer", slog.Any("error", err))
 		return fmt.Errorf("creating metrics writer: %w", err)

@@ -14,6 +14,12 @@
 
 package parquetwriter
 
+const (
+	// NoRecordLimitPerFile can be used as RecordsPerFile value to disable file splitting
+	// and allow unlimited file size (all records go into a single file).
+	NoRecordLimitPerFile = -1
+)
+
 // WriterConfig contains all configuration options for creating a ParquetWriter.
 type WriterConfig struct {
 	// TmpDir is the directory where temporary and output files are created
@@ -24,7 +30,9 @@ type WriterConfig struct {
 	GroupKeyFunc  func(map[string]any) any
 	NoSplitGroups bool
 
-	// RecordsPerFile is the estimated number of records that fit in a target file
+	// RecordsPerFile is the estimated number of records that fit in a target file.
+	// Set to NoRecordLimitPerFile (-1) to disable file splitting (unlimited file size).
+	// Set to 0 or positive values to enable splitting at that record count.
 	RecordsPerFile int64
 
 	// Optional stats collection

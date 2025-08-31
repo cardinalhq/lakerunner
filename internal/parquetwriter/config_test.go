@@ -151,14 +151,14 @@ func TestWriterConfig_ValidateEdgeCases(t *testing.T) {
 		}
 	})
 
-	t.Run("negative records per file is allowed", func(t *testing.T) {
+	t.Run("unlimited records per file mode (NoRecordLimitPerFile)", func(t *testing.T) {
 		config := WriterConfig{
 			TmpDir:         "/tmp",
-			RecordsPerFile: -1, // Should be allowed - validation doesn't check this
+			RecordsPerFile: NoRecordLimitPerFile, // Should be allowed - enables unlimited file mode
 		}
 		err := config.Validate()
 		if err != nil {
-			t.Errorf("Expected negative RecordsPerFile to be valid, got error: %v", err)
+			t.Errorf("Expected RecordsPerFile=-1 (unlimited mode) to be valid, got error: %v", err)
 		}
 	})
 
