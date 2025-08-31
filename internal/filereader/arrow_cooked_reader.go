@@ -176,8 +176,18 @@ func arrowValue(col arrow.Array, i int) any {
 		return c.Value(i)
 	case *array.Timestamp:
 		tsType := c.DataType().(*arrow.TimestampType)
-		toTime, _ := tsType.GetToTimeFunc()
-		return toTime(c.Value(i))
+		ts := c.Value(i)
+		switch tsType.Unit {
+		case arrow.Second:
+			ts *= 1000
+		case arrow.Millisecond:
+			// already ms
+		case arrow.Microsecond:
+			ts /= 1000
+		case arrow.Nanosecond:
+			ts /= 1000000
+		}
+		return ts
 	default:
 		return nil
 	}

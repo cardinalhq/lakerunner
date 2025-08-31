@@ -22,6 +22,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 // TestArrowCookedReaderWithRealFile verifies the reader can stream rows from a parquet file.
@@ -35,9 +37,15 @@ func TestArrowCookedReaderWithRealFile(t *testing.T) {
 	defer reader.Close()
 
 	var count int64
+	checkedTimestamp := false
 	for {
 		batch, err := reader.Next()
 		if batch != nil {
+			if !checkedTimestamp && batch.Len() > 0 {
+				_, ok := batch.Get(0)[wkk.RowKeyCTimestamp].(int64)
+				assert.True(t, ok, "_cardinalhq.timestamp should be int64")
+				checkedTimestamp = true
+			}
 			count += int64(batch.Len())
 		}
 		if errors.Is(err, io.EOF) {
