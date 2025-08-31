@@ -121,7 +121,6 @@ func init() {
 		bucketprefixes.SetAPIKey(adminAPIKey)
 		logs.SetAPIKey(adminAPIKey)
 		traces.SetAPIKey(adminAPIKey)
-		metrics.SetAPIKey(adminAPIKey)
 		estimates.SetAPIKey(adminAPIKey)
 	}
 
@@ -187,8 +186,6 @@ func getMetricsCmd() *cobra.Command {
 		Short: "Metric administrative commands",
 	}
 
-	metricsCmd.AddCommand(metrics.GetCompactCmd())
-	metricsCmd.AddCommand(metrics.GetRollupCmd())
 	metricsCmd.AddCommand(metrics.GetEstimatesCmd())
 	return metricsCmd
 }
