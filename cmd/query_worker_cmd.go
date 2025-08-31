@@ -15,14 +15,18 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
+	"github.com/cardinalhq/lakerunner/cmd/dbopen"
+	"github.com/cardinalhq/lakerunner/internal/awsclient"
+	"github.com/cardinalhq/lakerunner/internal/storageprofile"
+	"github.com/cardinalhq/lakerunner/queryworker"
 	"log/slog"
 
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
-	"github.com/cardinalhq/lakerunner/queryworker"
 )
 
 func init() {
@@ -53,16 +57,22 @@ func init() {
 				}
 			}()
 
-			service, err := queryworker.NewService()
+			cdb, err := dbopen.ConfigDBStore(context.Background())
+			sp := storageprofile.NewStorageProfileProvider(cdb)
+
 			if err != nil {
-				slog.Error("Failed to create query worker service", slog.Any("error", err))
-				return fmt.Errorf("failed to create query worker service: %w", err)
+				slog.Error("Failed to create query-worker service", slog.Any("error", err))
+				return fmt.Errorf("failed to create query-worker service: %w", err)
 			}
 
-			// Mark as healthy once service is created and starting
+			awsmanager, err := awsclient.NewManager(context.Background(), awsclient.WithAssumeRoleSessionName("query-worker"))
+			if err != nil {
+				return fmt.Errorf("failed to create AWS manager: %w", err)
+			}
 			healthServer.SetStatus(healthcheck.StatusHealthy)
 
-			return service.Run(doneCtx)
+			worker := queryworker.NewWorkerService(10, 5, 12, sp, awsmanager)
+			return worker.Run(doneCtx)
 		},
 	}
 

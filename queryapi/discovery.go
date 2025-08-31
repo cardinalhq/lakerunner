@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package promql
+package queryapi
 
 import (
 	"context"
@@ -26,7 +26,7 @@ import (
 type WorkerDiscovery interface {
 	Start(ctx context.Context) error
 	Stop() error
-	GetWorkersForSegments(organizationID uuid.UUID, segmentIDs []string) ([]SegmentWorkerMapping, error)
+	GetWorkersForSegments(organizationID uuid.UUID, segmentIDs []int64) ([]SegmentWorkerMapping, error)
 	GetAllWorkers() ([]Worker, error)
 }
 

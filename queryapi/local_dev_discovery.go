@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package promql
+package queryapi
 
 import (
 	"context"
@@ -38,14 +38,14 @@ func (d *LocalDevDiscovery) Stop() error {
 	return nil
 }
 
-func (d *LocalDevDiscovery) GetWorkersForSegments(organizationID uuid.UUID, segmentIDs []string) ([]SegmentWorkerMapping, error) {
+func (d *LocalDevDiscovery) GetWorkersForSegments(organizationID uuid.UUID, segmentIDs []int64) ([]SegmentWorkerMapping, error) {
 	mappings := make([]SegmentWorkerMapping, len(segmentIDs))
 	for i, segmentID := range segmentIDs {
 		mappings[i] = SegmentWorkerMapping{
 			SegmentID: segmentID,
 			Worker: Worker{
 				IP:   "127.0.0.1",
-				Port: 8080,
+				Port: 8081,
 			},
 		}
 	}

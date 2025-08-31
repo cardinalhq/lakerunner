@@ -36,11 +36,18 @@ func sorted(ss []string) []string {
 }
 
 func TestForDots(t *testing.T) {
-	q := `sum(rate(traefik_service_responses_bytes_total[5m]))`
+	q := `sum(rate({"api-gateway.movie_play_errors"}[5m]))`
 	root := mustParse(t, q)
 	res, err := Compile(root)
 	if err != nil {
 		t.Fatalf("Compile error: %v", err)
+	}
+	if len(res.Leaves) != 1 {
+		t.Fatalf("want 1 leaf, got %d", len(res.Leaves))
+	}
+	// assert metric name is with dots
+	if res.Leaves[0].Metric != "api-gateway.movie_play_errors" {
+		t.Fatalf("metric name mismatch, got %q", res.Leaves[0].Metric)
 	}
 	_, ok := res.Root.(*AggNode)
 	if !ok {

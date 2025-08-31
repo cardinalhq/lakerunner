@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package promql
+package queryapi
 
 import (
 	"context"
@@ -46,7 +46,7 @@ type Worker struct {
 }
 
 type SegmentWorkerMapping struct {
-	SegmentID string
+	SegmentID int64
 	Worker    Worker
 }
 
@@ -306,7 +306,7 @@ func (k *KubernetesWorkerDiscovery) rebuildWorkers(ctx context.Context) error {
 	return nil
 }
 
-func (k *KubernetesWorkerDiscovery) GetWorkersForSegments(organizationID uuid.UUID, segmentIDs []string) ([]SegmentWorkerMapping, error) {
+func (k *KubernetesWorkerDiscovery) GetWorkersForSegments(organizationID uuid.UUID, segmentIDs []int64) ([]SegmentWorkerMapping, error) {
 	k.mu.RLock()
 	ws := make([]Worker, len(k.workers))
 	copy(ws, k.workers)
@@ -332,11 +332,11 @@ func (k *KubernetesWorkerDiscovery) GetAllWorkers() ([]Worker, error) {
 	return ws, nil
 }
 
-func (k *KubernetesWorkerDiscovery) assignSegmentToWorker(org uuid.UUID, seg string, ws []Worker) Worker {
+func (k *KubernetesWorkerDiscovery) assignSegmentToWorker(org uuid.UUID, seg int64, ws []Worker) Worker {
 	if len(ws) == 0 {
 		return Worker{}
 	}
-	segKey := org.String() + ":" + seg
+	segKey := fmt.Sprintf("%d:%s", seg, org.String())
 
 	var best Worker
 	var bestHash uint64

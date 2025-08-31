@@ -187,10 +187,19 @@ func fromNode(n promparser.Node) (Expr, error) {
 
 	case *promparser.MatrixSelector:
 		vs := v.VectorSelector.(*promparser.VectorSelector)
+		metricName := vs.Name
+		if metricName == "" {
+			for _, m := range vs.LabelMatchers {
+				if m.Name == "__name__" && m.Type == labels.MatchEqual {
+					metricName = m.Value
+					break
+				}
+			}
+		}
 		inner := Expr{
 			Kind: KindSelector,
 			Selector: &Selector{
-				Metric:   vs.Name,
+				Metric:   metricName,
 				Matchers: toMatchers(vs.LabelMatchers),
 				Offset:   promDur(vs.OriginalOffset),
 			},

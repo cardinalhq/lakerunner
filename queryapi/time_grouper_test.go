@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package promql
+package queryapi
 
 import (
 	"fmt"
@@ -24,7 +24,7 @@ import (
 
 func ts(base time.Time, d time.Duration) int64 { return base.Add(d).UnixMilli() }
 
-func mkSeg(id string, start, end int64) SegmentInfo {
+func mkSeg(id int64, start, end int64) SegmentInfo {
 	return SegmentInfo{
 		SegmentID: id,
 		StartTs:   start,
@@ -78,7 +78,7 @@ func TestComputeReplayBatches_SplitsContiguously(t *testing.T) {
 		end := ts(base, time.Duration(i+1)*step)
 		segs = append(segs, mkSeg(
 			// unique id per segment
-			idf("s%d", i),
+			int64(i),
 			start, end,
 		))
 	}
@@ -124,7 +124,7 @@ func TestComputeReplayBatches_ReverseSort(t *testing.T) {
 	for i := 0; i < 6; i++ {
 		start := ts(base, time.Duration(i)*step)
 		end := ts(base, time.Duration(i+1)*step)
-		segs = append(segs, mkSeg(idf("s%d", i), start, end))
+		segs = append(segs, mkSeg(int64(i), start, end))
 	}
 
 	batches := ComputeReplayBatchesWithWorkers(segs, step, qStart, qEnd, 2, true)
@@ -159,8 +159,8 @@ func TestComputeReplayBatches_ClampsToQueryBounds(t *testing.T) {
 
 	// Segments extend outside: one starts before, one ends after.
 	segs := []SegmentInfo{
-		mkSeg("a", ts(base, 0*step), ts(base, 3*step)), // overlaps into start
-		mkSeg("b", ts(base, 3*step), ts(base, 6*step)), // overlaps into end
+		mkSeg(1, ts(base, 0*step), ts(base, 3*step)), // overlaps into start
+		mkSeg(2, ts(base, 3*step), ts(base, 6*step)), // overlaps into end
 	}
 
 	// 1 worker so everything ends up in one batch, clamped to [1m,5m)
@@ -184,7 +184,7 @@ func TestComputeReplayBatches_ClampsToQueryBounds(t *testing.T) {
 func TestNoDuplicationAcrossGroups(t *testing.T) {
 	// Segment covers [0m, 4m), query splits into two groups of 2m each
 	seg := SegmentInfo{
-		SegmentID: "fileA",
+		SegmentID: 1,
 		ExprID:    "expr1",
 		StartTs:   ts(time.Unix(0, 0), 0),
 		EndTs:     ts(time.Unix(0, 0), 4*time.Minute),
@@ -196,13 +196,13 @@ func TestNoDuplicationAcrossGroups(t *testing.T) {
 		2, false,
 	)
 
-	seen := map[string]int{}
+	seen := map[int64]int{}
 	for _, b := range batches {
 		for _, s := range b.Segments {
 			seen[s.SegmentID]++
 		}
 	}
-	if seen["fileA"] > 1 {
+	if seen[1] > 1 {
 		t.Fatalf("segment duplicated across groups: %+v", seen)
 	}
 }

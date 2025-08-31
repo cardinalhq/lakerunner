@@ -246,3 +246,69 @@ func (q *Queries) InsertLogSegmentDirect(ctx context.Context, arg InsertLogSegme
 	)
 	return err
 }
+
+const listLogSegmentsForQuery = `-- name: ListLogSegmentsForQuery :many
+SELECT
+    t.fp::bigint                    AS fingerprint,
+    s.instance_num,
+    s.segment_id,
+    lower(s.ts_range)::bigint        AS start_ts,
+    (upper(s.ts_range) - 1)::bigint  AS end_ts
+FROM log_seg AS s
+         CROSS JOIN LATERAL
+    unnest(s.fingerprints) AS t(fp)
+WHERE
+    s.organization_id = $1
+  AND s.dateint      = $2
+  AND s.fingerprints && $3::BIGINT[]
+  AND t.fp           = ANY($3::BIGINT[])
+  AND ts_range && int8range($4, $5, '[)')
+`
+
+type ListLogSegmentsForQueryParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Dateint        int32     `json:"dateint"`
+	Fingerprints   []int64   `json:"fingerprints"`
+	S              int64     `json:"s"`
+	E              int64     `json:"e"`
+}
+
+type ListLogSegmentsForQueryRow struct {
+	Fingerprint int64 `json:"fingerprint"`
+	InstanceNum int16 `json:"instance_num"`
+	SegmentID   int64 `json:"segment_id"`
+	StartTs     int64 `json:"start_ts"`
+	EndTs       int64 `json:"end_ts"`
+}
+
+func (q *Queries) ListLogSegmentsForQuery(ctx context.Context, arg ListLogSegmentsForQueryParams) ([]ListLogSegmentsForQueryRow, error) {
+	rows, err := q.db.Query(ctx, listLogSegmentsForQuery,
+		arg.OrganizationID,
+		arg.Dateint,
+		arg.Fingerprints,
+		arg.S,
+		arg.E,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListLogSegmentsForQueryRow
+	for rows.Next() {
+		var i ListLogSegmentsForQueryRow
+		if err := rows.Scan(
+			&i.Fingerprint,
+			&i.InstanceNum,
+			&i.SegmentID,
+			&i.StartTs,
+			&i.EndTs,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

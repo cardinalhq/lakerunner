@@ -247,7 +247,7 @@ func (q *Queries) InsertMetricSegmentDirect(ctx context.Context, arg InsertMetri
 	return err
 }
 
-const listSegmentsForQuery = `-- name: ListSegmentsForQuery :many
+const listMetricSegmentsForQuery = `-- name: ListMetricSegmentsForQuery :many
 SELECT
     instance_num,
     segment_id,
@@ -258,39 +258,42 @@ WHERE ts_range && int8range($1, $2, '[)')
   AND dateint = $3
   AND frequency_ms = $4
   AND organization_id = $5
+  AND fingerprints && $6::BIGINT[]
   AND published = true
 `
 
-type ListSegmentsForQueryParams struct {
+type ListMetricSegmentsForQueryParams struct {
 	Int8range      int64     `json:"int8range"`
 	Int8range_2    int64     `json:"int8range_2"`
 	Dateint        int32     `json:"dateint"`
 	FrequencyMs    int32     `json:"frequency_ms"`
 	OrganizationID uuid.UUID `json:"organization_id"`
+	Fingerprints   []int64   `json:"fingerprints"`
 }
 
-type ListSegmentsForQueryRow struct {
+type ListMetricSegmentsForQueryRow struct {
 	InstanceNum int16 `json:"instance_num"`
 	SegmentID   int64 `json:"segment_id"`
 	StartTs     int64 `json:"start_ts"`
 	EndTs       int64 `json:"end_ts"`
 }
 
-func (q *Queries) ListSegmentsForQuery(ctx context.Context, arg ListSegmentsForQueryParams) ([]ListSegmentsForQueryRow, error) {
-	rows, err := q.db.Query(ctx, listSegmentsForQuery,
+func (q *Queries) ListMetricSegmentsForQuery(ctx context.Context, arg ListMetricSegmentsForQueryParams) ([]ListMetricSegmentsForQueryRow, error) {
+	rows, err := q.db.Query(ctx, listMetricSegmentsForQuery,
 		arg.Int8range,
 		arg.Int8range_2,
 		arg.Dateint,
 		arg.FrequencyMs,
 		arg.OrganizationID,
+		arg.Fingerprints,
 	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListSegmentsForQueryRow
+	var items []ListMetricSegmentsForQueryRow
 	for rows.Next() {
-		var i ListSegmentsForQueryRow
+		var i ListMetricSegmentsForQueryRow
 		if err := rows.Scan(
 			&i.InstanceNum,
 			&i.SegmentID,

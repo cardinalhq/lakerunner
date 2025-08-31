@@ -12,10 +12,11 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package promql
+package queryapi
 
 import (
 	"context"
+	"github.com/cardinalhq/lakerunner/promql"
 	"time"
 )
 
@@ -31,9 +32,9 @@ type EvalFlowOptions struct {
 // EvalFlow connects a stream of SketchInput -> aggregator -> root.Eval,
 // and returns a channel of evaluated results (one map per flushed time-bucket).
 type EvalFlow struct {
-	root ExecNode
+	root promql.ExecNode
 	step time.Duration
-	agg  *TimeGroupedSketchAggregator
+	agg  *promql.TimeGroupedSketchAggregator
 
 	outBuf int
 }
@@ -41,8 +42,8 @@ type EvalFlow struct {
 // NewEvalFlow builds a flow for a compiled plan.
 // `leaves` are used to build a BaseExpr lookup by ID for the aggregator.
 func NewEvalFlow(
-	root ExecNode,
-	leaves []BaseExpr,
+	root promql.ExecNode,
+	leaves []promql.BaseExpr,
 	step time.Duration,
 	opts EvalFlowOptions,
 ) *EvalFlow {
@@ -54,24 +55,24 @@ func NewEvalFlow(
 	}
 
 	// Map BaseExpr.ID -> BaseExpr for fast lookup from SketchInput.
-	beByID := make(map[string]BaseExpr, len(leaves))
+	beByID := make(map[string]promql.BaseExpr, len(leaves))
 	for _, be := range leaves {
 		beByID[be.ID] = be
 	}
 
-	lookup := func(si SketchInput) (BaseExpr, bool) {
+	lookup := func(si promql.SketchInput) (promql.BaseExpr, bool) {
 		// We expect workers to set si.ExprID (or similar). If your field is named
 		// differently, adjust here.
 		if be, ok := beByID[si.ExprID]; ok {
 			return be, true
 		}
-		return BaseExpr{}, false
+		return promql.BaseExpr{}, false
 	}
 
 	return &EvalFlow{
 		root:   root,
 		step:   step,
-		agg:    NewTimeGroupedSketchAggregator(opts.NumBuffers, lookup),
+		agg:    promql.NewTimeGroupedSketchAggregator(opts.NumBuffers, lookup),
 		outBuf: opts.OutBuffer,
 	}
 }
@@ -80,9 +81,9 @@ func NewEvalFlow(
 // a channel of evaluated results (one per flushed time-bucket).
 func (f *EvalFlow) Run(
 	ctx context.Context,
-	in <-chan SketchInput,
-) <-chan map[string]EvalResult {
-	out := make(chan map[string]EvalResult, f.outBuf)
+	in <-chan promql.SketchInput,
+) <-chan map[string]promql.EvalResult {
+	out := make(chan map[string]promql.EvalResult, f.outBuf)
 
 	go func() {
 		defer close(out)
@@ -101,7 +102,7 @@ func (f *EvalFlow) Run(
 					return
 				}
 				// Add this single item; aggregator may return completed buckets.
-				for _, sg := range f.agg.AddBatch([]SketchInput{si}) {
+				for _, sg := range f.agg.AddBatch([]promql.SketchInput{si}) {
 					res := f.root.Eval(sg, f.step)
 					if len(res) > 0 {
 						out <- res
@@ -114,7 +115,7 @@ func (f *EvalFlow) Run(
 	return out
 }
 
-func (f *EvalFlow) flushAll(out chan<- map[string]EvalResult) {
+func (f *EvalFlow) flushAll(out chan<- map[string]promql.EvalResult) {
 	for _, sg := range f.agg.FlushAll() {
 		res := f.root.Eval(sg, f.step)
 		if len(res) > 0 {

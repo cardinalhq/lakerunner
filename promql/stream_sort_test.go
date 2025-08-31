@@ -77,7 +77,7 @@ func TestMergeSorted_Ascending_TwoInputs(t *testing.T) {
 	ch1 := chFromSlice(ctx, 0, a)
 	ch2 := chFromSlice(ctx, 0, b)
 
-	out := MergeSorted[tsItem](ctx /*ascending*/, 8 /*outBuf*/, ch1, ch2)
+	out := MergeSorted[tsItem](ctx /*ascending*/, 8, false, 0, ch1, ch2)
 	got := toSlice(out)
 
 	if len(got) != len(a)+len(b) {
@@ -97,7 +97,7 @@ func TestMergeSorted_Ascending_WithDuplicates(t *testing.T) {
 	ch1 := chFromSlice(ctx, 0, a)
 	ch2 := chFromSlice(ctx, 0, b)
 
-	out := MergeSorted[tsItem](ctx, 2, ch1, ch2)
+	out := MergeSorted[tsItem](ctx, 2, false, 0, ch1, ch2)
 	got := toSlice(out)
 
 	if !isSortedAsc(got) {
@@ -114,7 +114,7 @@ func TestMergeSorted_HandlesEmptyInputs(t *testing.T) {
 	c2 := chFromSlice(ctx, 0, full)
 	c3 := chFromSlice(ctx, 0, empty)
 
-	out := MergeSorted[tsItem](ctx, 1, c1, c2, c3)
+	out := MergeSorted[tsItem](ctx, 1, false, 0, c1, c2, c3)
 	got := toSlice(out)
 
 	if len(got) != len(full) {
@@ -127,7 +127,7 @@ func TestMergeSorted_HandlesEmptyInputs(t *testing.T) {
 
 func TestMergeSorted_NoInputs(t *testing.T) {
 	ctx := context.Background()
-	out := MergeSorted[tsItem](ctx, 1 /*outBuf*/)
+	out := MergeSorted[tsItem](ctx, 1, false, 0)
 	got := toSlice(out)
 	if len(got) != 0 {
 		t.Fatalf("expected empty, got: %#v", got)
@@ -145,7 +145,7 @@ func TestMergeSorted_Cancellation(t *testing.T) {
 	}
 	ch := chFromSlice(ctx, 0, long)
 
-	out := MergeSorted[tsItem](ctx, 32, ch)
+	out := MergeSorted[tsItem](ctx, 32, false, 0, ch)
 
 	// Consume a few, then cancel and ensure the channel closes.
 	for i := 0; i < 10; i++ {
@@ -168,5 +168,101 @@ func TestMergeSorted_Cancellation(t *testing.T) {
 		case <-timeout:
 			t.Fatal("timeout waiting for output channel to close after cancel")
 		}
+	}
+}
+
+func isSortedDesc(xs []tsItem) bool {
+	for i := 1; i < len(xs); i++ {
+		if xs[i-1].ts < xs[i].ts {
+			return false
+		}
+	}
+	return true
+}
+
+// --- tests ---
+
+func TestMergeSorted_Descending_TwoInputs(t *testing.T) {
+	ctx := context.Background()
+
+	// Each input must be non-increasing when reverse=true.
+	a := []tsItem{{8}, {6}, {4}, {2}}
+	b := []tsItem{{7}, {5}, {3}, {1}}
+	ch1 := chFromSlice(ctx, 0, a)
+	ch2 := chFromSlice(ctx, 0, b)
+
+	out := MergeSorted[tsItem](ctx, 8, true, 0, ch1, ch2)
+	got := toSlice(out)
+
+	if len(got) != len(a)+len(b) {
+		t.Fatalf("len mismatch: got=%d want=%d", len(got), len(a)+len(b))
+	}
+	if !isSortedDesc(got) {
+		t.Fatalf("not sorted descending: %#v", got)
+	}
+}
+
+func TestMergeSorted_Descending_WithDuplicates(t *testing.T) {
+	ctx := context.Background()
+
+	// Duplicates across inputs; only require global non-increasing order.
+	a := []tsItem{{9}, {7}, {7}, {3}}
+	b := []tsItem{{8}, {7}, {4}}
+	ch1 := chFromSlice(ctx, 0, a)
+	ch2 := chFromSlice(ctx, 0, b)
+
+	out := MergeSorted[tsItem](ctx, 2, true, 0, ch1, ch2)
+	got := toSlice(out)
+
+	if !isSortedDesc(got) {
+		t.Fatalf("not sorted descending (duplicates): %#v", got)
+	}
+}
+
+func TestMergeSorted_Descending_HandlesEmptyInputs(t *testing.T) {
+	ctx := context.Background()
+
+	var empty []tsItem
+	full := []tsItem{{5}, {3}, {1}}
+	c1 := chFromSlice(ctx, 0, empty)
+	c2 := chFromSlice(ctx, 0, full)
+	c3 := chFromSlice(ctx, 0, empty)
+
+	out := MergeSorted[tsItem](ctx, 1, true, 0, c1, c2, c3)
+	got := toSlice(out)
+
+	if len(got) != len(full) {
+		t.Fatalf("len mismatch: got=%d want=%d", len(got), len(full))
+	}
+	if !isSortedDesc(got) {
+		t.Fatalf("not sorted descending: %#v", got)
+	}
+}
+
+func TestMergeSorted_Limit_Ascending(t *testing.T) {
+	ctx := context.Background()
+	a := []tsItem{{1}, {3}, {5}, {7}}
+	b := []tsItem{{2}, {4}, {6}, {8}}
+	out := MergeSorted[tsItem](ctx, 8, false /*asc*/, 5 /*limit*/, chFromSlice(ctx, 0, a), chFromSlice(ctx, 0, b))
+	got := toSlice(out)
+	if len(got) != 5 {
+		t.Fatalf("len mismatch: got=%d want=5", len(got))
+	}
+	if !isSortedAsc(got) {
+		t.Fatalf("not sorted asc: %#v", got)
+	}
+}
+
+func TestMergeSorted_Limit_Descending(t *testing.T) {
+	ctx := context.Background()
+	a := []tsItem{{8}, {6}, {4}, {2}}
+	b := []tsItem{{7}, {5}, {3}, {1}}
+	out := MergeSorted[tsItem](ctx, 8, true /*desc*/, 3 /*limit*/, chFromSlice(ctx, 0, a), chFromSlice(ctx, 0, b))
+	got := toSlice(out)
+	if len(got) != 3 {
+		t.Fatalf("len mismatch: got=%d want=3", len(got))
+	}
+	if !isSortedDesc(got) {
+		t.Fatalf("not sorted desc: %#v", got)
 	}
 }
