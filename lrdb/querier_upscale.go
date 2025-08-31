@@ -28,7 +28,7 @@ type LogSegmentUpserter interface {
 type MetricSegmentInserter interface {
 	InsertMetricSegment(ctx context.Context, params InsertMetricSegmentParams) error
 	CompactMetricSegs(ctx context.Context, args ReplaceMetricSegsParams) error
-	RollupMetricSegs(ctx context.Context, args RollupMetricSegsParams) error
+	RollupMetricSegs(ctx context.Context, sourceParams RollupSourceParams, targetParams RollupTargetParams, sourceSegmentIDs []int64, newRecords []RollupNewRecord) error
 }
 
 type TraceSegmentInserter interface {

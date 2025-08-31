@@ -57,6 +57,33 @@ type ReplaceMetricSegsNew struct {
 	Fingerprints []int64
 }
 
+type RollupSourceParams struct {
+	OrganizationID uuid.UUID
+	Dateint        int32
+	FrequencyMs    int32
+	InstanceNum    int16
+}
+
+type RollupTargetParams struct {
+	OrganizationID uuid.UUID
+	Dateint        int32
+	FrequencyMs    int32
+	InstanceNum    int16
+	SlotID         int32
+	SlotCount      int32
+	IngestDateint  int32
+	SortVersion    int16
+}
+
+type RollupNewRecord struct {
+	SegmentID    int64
+	StartTs      int64
+	EndTs        int64
+	RecordCount  int64
+	FileSize     int64
+	Fingerprints []int64
+}
+
 type ReplaceMetricSegsParams struct {
 	// OrganizationID is the ID of the organization to which the metric segments belong.
 	OrganizationID uuid.UUID
@@ -149,97 +176,53 @@ func (q *Store) ReplaceMetricSegs(ctx context.Context, args ReplaceMetricSegsPar
 	})
 }
 
-type RollupMetricSegsParams struct {
-	// Source segments to mark as rolled up (don't delete them)
-	SourceSegments struct {
-		OrganizationID uuid.UUID
-		Dateint        int32
-		FrequencyMs    int32
-		InstanceNum    int16
-		SlotID         int32
-		SegmentIDs     []int64
-	}
-	// Target segments to replace (same as ReplaceMetricSegsParams)
-	TargetReplacement ReplaceMetricSegsParams
-}
-
 // RollupMetricSegs marks source segments as rolled up and atomically replaces target segments.
-// This is used during rollup operations where we need to:
-// 1. Mark source frequency segments as rolled up (but keep them)
-// 2. Replace any existing target frequency segments with new rolled-up data
-func (q *Store) RollupMetricSegs(ctx context.Context, args RollupMetricSegsParams) error {
+func (q *Store) RollupMetricSegs(ctx context.Context, sourceParams RollupSourceParams, targetParams RollupTargetParams, sourceSegmentIDs []int64, newRecords []RollupNewRecord) error {
 	// Ensure partitions exist
-	if err := q.ensureMetricSegmentPartition(ctx, args.SourceSegments.OrganizationID, args.SourceSegments.Dateint); err != nil {
-		return fmt.Errorf("ensure source partition: %w", err)
-	}
-	if err := q.ensureMetricSegmentPartition(ctx, args.TargetReplacement.OrganizationID, args.TargetReplacement.Dateint); err != nil {
-		return fmt.Errorf("ensure target partition: %w", err)
+	if err := q.ensureMetricSegmentPartition(ctx, targetParams.OrganizationID, targetParams.Dateint); err != nil {
+		return fmt.Errorf("ensure partition: %w", err)
 	}
 
-	// Prepare target segment replacement (same logic as ReplaceMetricSegs)
-	oldItems := make([]BatchDeleteMetricSegsParams, len(args.TargetReplacement.OldRecords))
-	for i, oldRec := range args.TargetReplacement.OldRecords {
-		oldItems[i] = BatchDeleteMetricSegsParams{
-			OrganizationID: args.TargetReplacement.OrganizationID,
-			Dateint:        args.TargetReplacement.Dateint,
-			FrequencyMs:    args.TargetReplacement.FrequencyMs,
-			SegmentID:      oldRec.SegmentID,
-			InstanceNum:    args.TargetReplacement.InstanceNum,
-			SlotID:         oldRec.SlotID,
-		}
-	}
-
-	newItems := make([]BatchInsertMetricSegsParams, len(args.TargetReplacement.NewRecords))
-	for i, newRec := range args.TargetReplacement.NewRecords {
+	newItems := make([]BatchInsertMetricSegsParams, len(newRecords))
+	for i, newRec := range newRecords {
 		newItems[i] = BatchInsertMetricSegsParams{
-			OrganizationID: args.TargetReplacement.OrganizationID,
-			Dateint:        args.TargetReplacement.Dateint,
-			IngestDateint:  args.TargetReplacement.IngestDateint,
-			FrequencyMs:    args.TargetReplacement.FrequencyMs,
+			OrganizationID: targetParams.OrganizationID,
+			Dateint:        targetParams.Dateint,
+			IngestDateint:  targetParams.IngestDateint,
+			FrequencyMs:    targetParams.FrequencyMs,
 			SegmentID:      newRec.SegmentID,
-			InstanceNum:    args.TargetReplacement.InstanceNum,
-			SlotID:         args.TargetReplacement.SlotID,
+			InstanceNum:    targetParams.InstanceNum,
+			SlotID:         targetParams.SlotID,
 			StartTs:        newRec.StartTs,
 			EndTs:          newRec.EndTs,
 			RecordCount:    newRec.RecordCount,
 			FileSize:       newRec.FileSize,
-			Published:      args.TargetReplacement.Published,
-			Rolledup:       args.TargetReplacement.Rolledup,
-			CreatedBy:      args.TargetReplacement.CreatedBy,
+			Published:      true,
+			Rolledup:       false,
+			CreatedBy:      CreateByRollup,
 			Fingerprints:   newRec.Fingerprints,
-			SortVersion:    args.TargetReplacement.SortVersion,
-			SlotCount:      args.TargetReplacement.SlotCount,
+			SortVersion:    targetParams.SortVersion,
+			SlotCount:      targetParams.SlotCount,
 		}
 	}
 
 	var errs *multierror.Error
 	return q.execTx(ctx, func(s *Store) error {
 		// Mark source segments as rolled up (don't delete them)
-		if len(args.SourceSegments.SegmentIDs) > 0 {
+		if len(sourceSegmentIDs) > 0 {
 			if err := s.MarkMetricSegsRolledupByKeys(ctx, MarkMetricSegsRolledupByKeysParams{
-				OrganizationID: args.SourceSegments.OrganizationID,
-				Dateint:        args.SourceSegments.Dateint,
-				FrequencyMs:    args.SourceSegments.FrequencyMs,
-				InstanceNum:    args.SourceSegments.InstanceNum,
-				SegmentIds:     args.SourceSegments.SegmentIDs,
+				OrganizationID: sourceParams.OrganizationID,
+				Dateint:        sourceParams.Dateint,
+				FrequencyMs:    sourceParams.FrequencyMs,
+				InstanceNum:    sourceParams.InstanceNum,
+				SegmentIds:     sourceSegmentIDs,
 			}); err != nil {
 				return fmt.Errorf("mark source segments as rolled up: %w", err)
 			}
 		}
 
-		// Delete existing target segments
-		if len(oldItems) > 0 {
-			result := s.BatchDeleteMetricSegs(ctx, oldItems)
-			result.Exec(func(i int, err error) {
-				if err != nil {
-					err = fmt.Errorf("error deleting old target segment %d, keys %v: %w", i, oldItems[i], err)
-					errs = multierror.Append(errs, err)
-				}
-			})
-		}
-
 		// Insert new target segments
-		if errs.ErrorOrNil() == nil && len(newItems) > 0 {
+		if len(newItems) > 0 {
 			result := s.BatchInsertMetricSegs(ctx, newItems)
 			result.Exec(func(i int, err error) {
 				if err != nil {

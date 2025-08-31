@@ -23,17 +23,14 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-// mrqHeartbeatStore defines the minimal interface needed for MRQ heartbeat operations
 type mrqHeartbeatStore interface {
 	TouchMetricRollupWork(ctx context.Context, params lrdb.TouchMetricRollupWorkParams) error
 }
 
-// newMRQHeartbeater creates a new heartbeater for the given claimed MRQ items
 func newMRQHeartbeater(db mrqHeartbeatStore, workerID int64, items []int64) *heartbeat.Heartbeater {
 	if len(items) == 0 {
-		// Return a no-op heartbeater for empty items
 		return heartbeat.New(func(ctx context.Context) error {
-			return nil // No-op
+			return nil
 		}, time.Minute, slog.Default().With("component", "mrq_heartbeater", "worker_id", workerID, "item_count", 0))
 	}
 

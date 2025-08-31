@@ -17,8 +17,7 @@ package rollup
 import "slices"
 
 var (
-	// RollupTo defines which frequency each source frequency should roll up to.
-	// Key is the source frequency, value is the target frequency to roll up to.
+	// RollupTo maps source frequency to target rollup frequency
 	RollupTo = map[int32]int32{
 		10_000:    60_000,    // 10sec -> 1min
 		60_000:    300_000,   // 1min -> 5min
