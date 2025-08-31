@@ -42,16 +42,13 @@ type AggregatingMetricsReader struct {
 
 	// Current aggregation state
 	currentKey   SortKey
-	groupedRows  map[string][]Row // metric_type -> rows for that type
-	pendingBatch *Batch           // Unprocessed rows from underlying reader
-	pendingIndex int              // Index of next row to process in pendingBatch
+	groupedRows  []Row  // rows for current aggregation group
+	pendingBatch *Batch // Unprocessed rows from underlying reader
+	pendingIndex int    // Index of next row to process in pendingBatch
 	readerEOF    bool
 
 	// Sort key provider for grouping
 	keyProvider SortKeyProvider
-
-	// Track logged histogram errors to avoid spam
-	loggedHistogramErrors map[string]bool
 }
 
 // NewAggregatingMetricsReader creates a new AggregatingMetricsReader that aggregates metrics
@@ -72,12 +69,11 @@ func NewAggregatingMetricsReader(reader Reader, aggregationPeriodMs int64, batch
 	}
 
 	return &AggregatingMetricsReader{
-		reader:                reader,
-		aggregationPeriod:     aggregationPeriodMs,
-		batchSize:             batchSize,
-		groupedRows:           make(map[string][]Row),
-		keyProvider:           &MetricSortKeyProvider{},
-		loggedHistogramErrors: make(map[string]bool),
+		reader:            reader,
+		aggregationPeriod: aggregationPeriodMs,
+		batchSize:         batchSize,
+		groupedRows:       make([]Row, 0),
+		keyProvider:       &MetricSortKeyProvider{},
 	}, nil
 }
 
@@ -203,41 +199,29 @@ func updateRowFromSketch(row Row, sketch *ddsketch.DDSketch) error {
 	return nil
 }
 
-// aggregateGroup processes all rows for a single aggregation group and returns the aggregated results.
-// Returns multiple rows - one per metric type found in the group.
-func (ar *AggregatingMetricsReader) aggregateGroup() ([]Row, error) {
+// aggregateGroup processes all rows for a single aggregation group and returns the aggregated result.
+func (ar *AggregatingMetricsReader) aggregateGroup() (Row, error) {
 	if len(ar.groupedRows) == 0 {
-		// No rows in this group - return empty slice
+		// No rows in this group - return nil
 		ar.resetAggregation()
 		return nil, nil
 	}
 
-	var results []Row
+	// Get metric type from first row to determine aggregation strategy
+	metricType, _ := ar.groupedRows[0][wkk.RowKeyCMetricType].(string)
 
-	// Process each metric type group separately
-	for metricType, rows := range ar.groupedRows {
-		if len(rows) == 0 {
-			continue
-		}
-
-		// Aggregate this specific metric type
-		result, err := ar.aggregateMetricTypeGroup(metricType, rows)
-		if err != nil {
-			return nil, fmt.Errorf("aggregating metric type %q: %w", metricType, err)
-		}
-
-		// Only add to results if aggregation produced a valid result
-		if result != nil {
-			results = append(results, result)
-		}
+	// Aggregate all rows in the group
+	result, err := ar.aggregateRowGroup(metricType, ar.groupedRows)
+	if err != nil {
+		return nil, fmt.Errorf("aggregating group: %w", err)
 	}
 
 	ar.resetAggregation()
-	return results, nil
+	return result, nil
 }
 
-// aggregateMetricTypeGroup aggregates all rows of the same metric type within an aggregation group.
-func (ar *AggregatingMetricsReader) aggregateMetricTypeGroup(metricType string, rows []Row) (Row, error) {
+// aggregateRowGroup aggregates all rows within an aggregation group.
+func (ar *AggregatingMetricsReader) aggregateRowGroup(metricType string, rows []Row) (Row, error) {
 	if len(rows) == 0 {
 		return nil, nil
 	}
@@ -414,22 +398,19 @@ func (ar *AggregatingMetricsReader) resetAggregation() {
 		ar.currentKey.Release()
 		ar.currentKey = nil
 	}
-	// Clear grouped rows map but keep the map allocated
-	for k := range ar.groupedRows {
-		delete(ar.groupedRows, k)
-	}
+	// Clear grouped rows slice
+	ar.groupedRows = ar.groupedRows[:0]
 }
 
-// addRowToAggregation adds a row to the current aggregation group, organizing by metric_type.
+// addRowToAggregation adds a row to the current aggregation group.
 func (ar *AggregatingMetricsReader) addRowToAggregation(row Row) error {
 	// VALIDATION: Histograms must always have sketches
 	if isHistogramType(row) && isSketchEmpty(row) {
-		if name, ok := row[wkk.RowKeyCName].(string); ok && !ar.loggedHistogramErrors[name] {
+		if name, ok := row[wkk.RowKeyCName].(string); ok {
 			slog.Error("Dropping histogram row without sketch - this should not happen",
 				"name", name,
 				"tid", row[wkk.RowKeyCTID],
 				"timestamp", row[wkk.RowKeyCTimestamp])
-			ar.loggedHistogramErrors[name] = true
 		}
 		rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
 			attribute.String("reader", "AggregatingMetricsReader"),
@@ -439,17 +420,14 @@ func (ar *AggregatingMetricsReader) addRowToAggregation(row Row) error {
 		return nil // Skip this row, don't add to aggregation
 	}
 
-	// Get metric type, default to empty string if missing
-	metricType, _ := row[wkk.RowKeyCMetricType].(string)
-
 	// Deep copy the row to avoid modifying the original
 	rowCopy := make(Row)
 	for k, v := range row {
 		rowCopy[k] = v
 	}
 
-	// Add to the appropriate metric type group
-	ar.groupedRows[metricType] = append(ar.groupedRows[metricType], rowCopy)
+	// Add to aggregation group
+	ar.groupedRows = append(ar.groupedRows, rowCopy)
 
 	return nil
 }
@@ -515,13 +493,13 @@ func (ar *AggregatingMetricsReader) processRow(row Row, batch *Batch) error {
 
 	// Key changed - emit current aggregation and start new one
 	if ar.currentKey != nil {
-		results, err := ar.aggregateGroup()
+		result, err := ar.aggregateGroup()
 		if err != nil {
 			return fmt.Errorf("failed to aggregate group: %w", err)
 		}
 
-		// Emit each aggregated result (one per metric type)
-		for _, result := range results {
+		// Emit aggregated result if valid
+		if result != nil {
 			batchRow := batch.AddRow()
 			maps.Copy(batchRow, result)
 			ar.rowCount++
@@ -589,13 +567,13 @@ func (ar *AggregatingMetricsReader) Next() (*Batch, error) {
 				if err == io.EOF {
 					// Check if we need to emit final aggregation
 					if ar.currentKey != nil {
-						results, aggErr := ar.aggregateGroup()
+						result, aggErr := ar.aggregateGroup()
 						if aggErr != nil {
 							pipeline.ReturnBatch(batch)
 							return nil, fmt.Errorf("failed to aggregate final group: %w", aggErr)
 						}
-						// Emit each final aggregated result (one per metric type)
-						for _, result := range results {
+						// Emit final aggregated result if valid
+						if result != nil {
 							row := batch.AddRow()
 							maps.Copy(row, result)
 							ar.rowCount++

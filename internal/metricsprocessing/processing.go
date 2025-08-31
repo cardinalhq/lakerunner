@@ -73,7 +73,13 @@ func (t *MetricTranslator) TranslateRow(row *filereader.Row) error {
 		return fmt.Errorf("missing or invalid _cardinalhq.name field for TID computation")
 	}
 
-	tid := helpers.ComputeTID(metricName, pipeline.ToStringMap(*row))
+	// Include metric_type in TID calculation to ensure different metric types get different TIDs
+	rowMap := pipeline.ToStringMap(*row)
+	if metricType, hasMetricType := (*row)[wkk.RowKeyCMetricType].(string); hasMetricType {
+		rowMap["_cardinalhq.metric_type"] = metricType
+	}
+
+	tid := helpers.ComputeTID(metricName, rowMap)
 	(*row)[wkk.RowKeyCTID] = tid
 
 	return nil
