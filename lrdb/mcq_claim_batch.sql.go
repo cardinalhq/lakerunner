@@ -64,6 +64,14 @@ group_flags AS (
     og.priority, og.queue_ts, og.seed_rank,
     ((p.now_ts - og.queue_ts) > make_interval(secs => p.max_age_seconds)) AS is_old,
     COALESCE(e_org.target_records, e_glob.target_records, p.default_target_records)::bigint AS target_records,
+    e_org.target_records AS org_estimate,
+    e_glob.target_records AS global_estimate,
+    p.default_target_records AS default_estimate,
+    CASE 
+      WHEN e_org.target_records IS NOT NULL THEN 'organization'
+      WHEN e_glob.target_records IS NOT NULL THEN 'global'
+      ELSE 'default'
+    END AS estimate_source,
     p.batch_count,
     p.now_ts
   FROM ordered_groups og
@@ -80,7 +88,8 @@ grp_scope AS (
   SELECT
     q.id, q.organization_id, q.dateint, q.frequency_ms, q.instance_num,
     q.priority, q.queue_ts, q.record_count,
-    gf.seed_rank, gf.is_old, gf.target_records, gf.batch_count
+    gf.seed_rank, gf.is_old, gf.target_records, gf.batch_count,
+    gf.org_estimate, gf.global_estimate, gf.default_estimate, gf.estimate_source
   FROM metric_compaction_queue q
   JOIN group_flags gf
     ON q.claimed_at   IS NULL
@@ -92,7 +101,7 @@ grp_scope AS (
 
 pack AS (
   SELECT
-    g.id, g.organization_id, g.dateint, g.frequency_ms, g.instance_num, g.priority, g.queue_ts, g.record_count, g.seed_rank, g.is_old, g.target_records, g.batch_count,
+    g.id, g.organization_id, g.dateint, g.frequency_ms, g.instance_num, g.priority, g.queue_ts, g.record_count, g.seed_rank, g.is_old, g.target_records, g.batch_count, g.org_estimate, g.global_estimate, g.default_estimate, g.estimate_source,
     SUM(g.record_count) OVER (
       PARTITION BY g.organization_id, g.dateint, g.frequency_ms, g.instance_num
       ORDER BY g.priority DESC, g.queue_ts ASC, g.id ASC
@@ -106,7 +115,7 @@ pack AS (
 ),
 
 prelim AS (
-  SELECT p.id, p.organization_id, p.dateint, p.frequency_ms, p.instance_num, p.priority, p.queue_ts, p.record_count, p.seed_rank, p.is_old, p.target_records, p.batch_count, p.cum_records, p.rn
+  SELECT p.id, p.organization_id, p.dateint, p.frequency_ms, p.instance_num, p.priority, p.queue_ts, p.record_count, p.seed_rank, p.is_old, p.target_records, p.batch_count, p.org_estimate, p.global_estimate, p.default_estimate, p.estimate_source, p.cum_records, p.rn
   FROM pack p
   JOIN group_flags gf
     ON gf.organization_id = p.organization_id
@@ -172,8 +181,16 @@ upd AS (
     AND q.claimed_at IS NULL
   RETURNING q.id, q.queue_ts, q.priority, q.organization_id, q.dateint, q.frequency_ms, q.segment_id, q.instance_num, q.ts_range, q.record_count, q.tries, q.claimed_by, q.claimed_at, q.heartbeated_at
 )
-SELECT id, queue_ts, priority, organization_id, dateint, frequency_ms, segment_id, instance_num, ts_range, record_count, tries, claimed_by, claimed_at, heartbeated_at FROM upd
-ORDER BY priority DESC, queue_ts ASC, id ASC
+SELECT 
+  upd.id, upd.queue_ts, upd.priority, upd.organization_id, upd.dateint, upd.frequency_ms, upd.segment_id, upd.instance_num, upd.ts_range, upd.record_count, upd.tries, upd.claimed_by, upd.claimed_at, upd.heartbeated_at,
+  COALESCE(pr.target_records, 0) AS used_target_records,
+  COALESCE(pr.org_estimate, 0) AS org_estimate,
+  COALESCE(pr.global_estimate, 0) AS global_estimate, 
+  COALESCE(pr.default_estimate, 0) AS default_estimate,
+  COALESCE(pr.estimate_source, 'unknown') AS estimate_source
+FROM upd
+LEFT JOIN prelim pr ON upd.id = pr.id
+ORDER BY upd.priority DESC, upd.queue_ts ASC, upd.id ASC
 `
 
 type ClaimMetricCompactionWorkParams struct {
@@ -185,26 +202,31 @@ type ClaimMetricCompactionWorkParams struct {
 }
 
 type ClaimMetricCompactionWorkRow struct {
-	ID             int64                            `json:"id"`
-	QueueTs        time.Time                        `json:"queue_ts"`
-	Priority       int32                            `json:"priority"`
-	OrganizationID uuid.UUID                        `json:"organization_id"`
-	Dateint        int32                            `json:"dateint"`
-	FrequencyMs    int64                            `json:"frequency_ms"`
-	SegmentID      int64                            `json:"segment_id"`
-	InstanceNum    int16                            `json:"instance_num"`
-	TsRange        pgtype.Range[pgtype.Timestamptz] `json:"ts_range"`
-	RecordCount    int64                            `json:"record_count"`
-	Tries          int32                            `json:"tries"`
-	ClaimedBy      int64                            `json:"claimed_by"`
-	ClaimedAt      *time.Time                       `json:"claimed_at"`
-	HeartbeatedAt  *time.Time                       `json:"heartbeated_at"`
+	ID                int64                            `json:"id"`
+	QueueTs           time.Time                        `json:"queue_ts"`
+	Priority          int32                            `json:"priority"`
+	OrganizationID    uuid.UUID                        `json:"organization_id"`
+	Dateint           int32                            `json:"dateint"`
+	FrequencyMs       int64                            `json:"frequency_ms"`
+	SegmentID         int64                            `json:"segment_id"`
+	InstanceNum       int16                            `json:"instance_num"`
+	TsRange           pgtype.Range[pgtype.Timestamptz] `json:"ts_range"`
+	RecordCount       int64                            `json:"record_count"`
+	Tries             int32                            `json:"tries"`
+	ClaimedBy         int64                            `json:"claimed_by"`
+	ClaimedAt         *time.Time                       `json:"claimed_at"`
+	HeartbeatedAt     *time.Time                       `json:"heartbeated_at"`
+	UsedTargetRecords int64                            `json:"used_target_records"`
+	OrgEstimate       int64                            `json:"org_estimate"`
+	GlobalEstimate    int64                            `json:"global_estimate"`
+	DefaultEstimate   int64                            `json:"default_estimate"`
+	EstimateSource    string                           `json:"estimate_source"`
 }
 
 // 1) Big single-row safety net
 // 2) One seed per group (org, dateint, freq, instance)
 // 3) Order groups globally by seed recency/priority
-// 4) Attach per-group target_records
+// 4) Attach per-group target_records with estimate tracking
 // 5) All ready rows within each group
 // 6) Greedy pack per group
 // 7) Rows that fit under caps
@@ -244,6 +266,11 @@ func (q *Queries) ClaimMetricCompactionWork(ctx context.Context, arg ClaimMetric
 			&i.ClaimedBy,
 			&i.ClaimedAt,
 			&i.HeartbeatedAt,
+			&i.UsedTargetRecords,
+			&i.OrgEstimate,
+			&i.GlobalEstimate,
+			&i.DefaultEstimate,
+			&i.EstimateSource,
 		); err != nil {
 			return nil, err
 		}

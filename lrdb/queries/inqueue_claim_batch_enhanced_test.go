@@ -169,8 +169,8 @@ func TestClaimInqueueWorkBatch_TooOldFiles(t *testing.T) {
 	assert.LessOrEqual(t, totalSize, int64(1024*1024))
 }
 
-// TestClaimInqueueWorkBatch_FreshFilesBelowMinimum tests Rule 3: Fresh files below minimum should wait
-func TestClaimInqueueWorkBatch_FreshFilesBelowMinimum(t *testing.T) {
+// TestClaimInqueueWorkBatch_FreshFilesGreedyBatch tests greedy batching of small fresh files
+func TestClaimInqueueWorkBatch_FreshFilesGreedyBatch(t *testing.T) {
 	ctx := context.Background()
 	db := testhelpers.NewTestLRDBStore(t)
 
@@ -208,19 +208,26 @@ func TestClaimInqueueWorkBatch_FreshFilesBelowMinimum(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// Claim batch - should return nothing because total size < minimum
+	// Claim batch - should greedily claim small files even if below old minimum threshold
 	claimedBatch, err := db.ClaimInqueueWorkBatch(ctx, lrdb.ClaimInqueueWorkBatchParams{
 		Signal:        telemetryType,
 		WorkerID:      workerID,
 		MaxTotalSize:  1024 * 1024, // 1MB limit
-		MinTotalSize:  512 * 1024,  // 512KB minimum
+		MinTotalSize:  512 * 1024,  // 512KB (now ignored with greedy batching)
 		MaxAgeSeconds: 30,          // 30 seconds
 		BatchCount:    10,          // Allow up to 10 files
 	})
 	require.NoError(t, err)
 
-	// Should claim nothing (wait for more files)
-	assert.Len(t, claimedBatch, 0)
+	// Should claim both small files (greedy batching regardless of minimum)
+	assert.Len(t, claimedBatch, 2)
+
+	// Verify total size
+	totalSize := int64(0)
+	for _, item := range claimedBatch {
+		totalSize += item.FileSize
+	}
+	assert.Equal(t, int64(3072), totalSize) // 1KB + 2KB = 3KB
 }
 
 // TestClaimInqueueWorkBatch_FreshFilesAboveMinimum tests Rule 3: Fresh files above minimum should be claimed

@@ -348,7 +348,9 @@ func replaceCompactedSegments(
 		slog.Int64("inputRecords", inputRecords),
 		slog.Int64("outputRecords", outputRecords),
 		slog.Int64("inputBytes", inputBytes),
-		slog.Int64("outputBytes", outputBytes))
+		slog.Int64("outputBytes", outputBytes),
+		slog.Int64("targetRecords", workItem.UsedTargetRecords),
+		slog.String("estimateSource", workItem.EstimateSource))
 
 	return nil
 }
