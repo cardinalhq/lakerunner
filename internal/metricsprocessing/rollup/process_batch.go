@@ -23,6 +23,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 
@@ -39,6 +40,19 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
+
+// CompactionUploadParams contains parameters for uploading compacted metric files.
+type CompactionUploadParams struct {
+	OrganizationID uuid.UUID
+	InstanceNum    int16
+	Dateint        int32
+	FrequencyMs    int32
+	SlotID         int32
+	SlotCount      int32
+	IngestDateint  int32
+	CollectorName  string
+	Bucket         string
+}
 
 func processBatch(
 	ctx context.Context,
@@ -93,7 +107,7 @@ func processBatch(
 	}
 
 	// Work items represent source frequencies that roll up to target frequencies
-	targetFrequency, found := RollupTo[int32(firstItem.FrequencyMs)]
+	targetFrequency, found := metricsprocessing.RollupTo[int32(firstItem.FrequencyMs)]
 	if !found {
 		ll.Error("Invalid rollup frequency - not in source frequency list. This work item will be marked as completed to avoid reprocessing.",
 			slog.Int64("frequencyMs", firstItem.FrequencyMs))
@@ -339,7 +353,7 @@ func rollupMetricSegments(
 		slog.Int("inputFiles", len(readerStack.DownloadedFiles)),
 		slog.Int64("recordsPerFile", metricsprocessing.DefaultRecordsPerFileRollup))
 
-	rollupParams := metricsprocessing.CompactionUploadParams{
+	rollupParams := CompactionUploadParams{
 		OrganizationID: firstItem.OrganizationID,
 		InstanceNum:    firstItem.InstanceNum,
 		Dateint:        firstItem.Dateint,
@@ -377,7 +391,7 @@ func uploadRolledUpMetricsAtomic(
 	results []parquetwriter.Result,
 	sourceRows []lrdb.MetricSeg,
 	existingRows []lrdb.MetricSeg,
-	params metricsprocessing.CompactionUploadParams,
+	params CompactionUploadParams,
 ) error {
 	var targetOldRecords []lrdb.CompactMetricSegsOld
 	for _, row := range existingRows {
@@ -482,77 +496,14 @@ func uploadRolledUpMetricsAtomic(
 			slog.Int("sourceSegmentCount", len(sourceSegmentIDs)),
 			slog.Int("targetReplacedCount", len(targetOldRecords)))
 
-		if err := queueMetricCompaction(ctx, mdb, params, segmentID, file.RecordCount, filestats.StartTs, filestats.EndTs); err != nil {
+		if err := metricsprocessing.QueueMetricCompaction(ctx, mdb, params.OrganizationID, params.Dateint, params.FrequencyMs, params.InstanceNum, segmentID, file.RecordCount, filestats.StartTs, filestats.EndTs); err != nil {
 			fileLogger.Error("Failed to queue metric compaction", slog.Any("error", err))
 		}
 
-		if err := queueMetricRollup(ctx, mdb, params, filestats.StartTs, filestats.EndTs); err != nil {
+		if err := metricsprocessing.QueueMetricRollup(ctx, mdb, params.OrganizationID, params.Dateint, params.FrequencyMs, params.InstanceNum, params.SlotID, params.SlotCount, filestats.StartTs, filestats.EndTs); err != nil {
 			fileLogger.Error("Failed to queue metric rollup", slog.Any("error", err))
 		}
 	}
 
 	return nil
-}
-
-func queueMetricCompaction(ctx context.Context, mdb rollupStore, params metricsprocessing.CompactionUploadParams, segmentID int64, recordCount int64, startTs, endTs int64) error {
-	priority := priorityForFrequencyForCompaction(params.FrequencyMs)
-
-	startTime := time.UnixMilli(startTs).UTC()
-	endTime := time.UnixMilli(endTs).UTC()
-	tsRange := helpers.TimeRange{Start: startTime, End: endTime}.ToPgRange()
-
-	err := mdb.PutMetricCompactionWork(ctx, lrdb.PutMetricCompactionWorkParams{
-		OrganizationID: params.OrganizationID,
-		Dateint:        params.Dateint,
-		FrequencyMs:    int64(params.FrequencyMs),
-		SegmentID:      segmentID,
-		InstanceNum:    params.InstanceNum,
-		TsRange:        tsRange,
-		RecordCount:    recordCount,
-		Priority:       priority,
-	})
-
-	if err != nil {
-		return fmt.Errorf("failed to queue metric compaction work: %w", err)
-	}
-
-	return nil
-}
-
-func queueMetricRollup(ctx context.Context, mdb rollupStore, params metricsprocessing.CompactionUploadParams, startTs, endTs int64) error {
-	nextFrequency, exists := RollupTo[params.FrequencyMs]
-	if !exists {
-		return nil
-	}
-
-	priority := priorityForFrequencyForRollup(nextFrequency)
-
-	startTime := time.UnixMilli(startTs).UTC()
-	endTime := time.UnixMilli(endTs).UTC()
-	tsRange := helpers.TimeRange{Start: startTime, End: endTime}.ToPgRange()
-
-	err := mdb.PutMetricRollupWork(ctx, lrdb.PutMetricRollupWorkParams{
-		OrganizationID: params.OrganizationID,
-		Dateint:        params.Dateint,
-		FrequencyMs:    int64(nextFrequency),
-		InstanceNum:    params.InstanceNum,
-		SlotID:         params.SlotID,
-		SlotCount:      params.SlotCount,
-		TsRange:        tsRange,
-		Priority:       priority,
-	})
-
-	if err != nil {
-		return fmt.Errorf("failed to queue metric rollup work: %w", err)
-	}
-
-	return nil
-}
-
-func priorityForFrequencyForCompaction(f int32) int32 {
-	return GetFrequencyPriority(f) + 200
-}
-
-func priorityForFrequencyForRollup(f int32) int32 {
-	return GetFrequencyPriority(f) + 100
 }

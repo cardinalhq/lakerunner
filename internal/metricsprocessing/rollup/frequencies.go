@@ -14,46 +14,10 @@
 
 package rollup
 
-import "slices"
-
-var (
-	// RollupTo maps source frequency to target rollup frequency
-	RollupTo = map[int32]int32{
-		10_000:    60_000,    // 10sec -> 1min
-		60_000:    300_000,   // 1min -> 5min
-		300_000:   1_200_000, // 5min -> 20min
-		1_200_000: 3_600_000, // 20min -> 1hour
-	}
-
-	frequencyPriorities = map[int32]int32{
-		10_000:    800,
-		60_000:    600,
-		300_000:   400,
-		1_200_000: 200,
-		3_600_000: 0,
-	}
+import (
+	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 )
 
 func GetAllFrequencies() []int32 {
-	freqSet := make(map[int32]bool)
-
-	for sourceFreq, targetFreq := range RollupTo {
-		freqSet[sourceFreq] = true
-		freqSet[targetFreq] = true
-	}
-
-	var frequencies []int32
-	for freq := range freqSet {
-		frequencies = append(frequencies, freq)
-	}
-
-	slices.Sort(frequencies)
-	return frequencies
-}
-
-func GetFrequencyPriority(frequencyMs int32) int32 {
-	if priority, exists := frequencyPriorities[frequencyMs]; exists {
-		return priority
-	}
-	return 0
+	return metricsprocessing.GetAllFrequencies()
 }

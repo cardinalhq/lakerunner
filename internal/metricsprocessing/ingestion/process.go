@@ -20,7 +20,6 @@ import (
 	"log/slog"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/exemplar"
@@ -30,7 +29,6 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // ProcessBatch processes a batch of metric ingest items
@@ -143,7 +141,7 @@ func uploadAndQueue(
 		return fmt.Errorf("failed to upload results: %w", err)
 	}
 
-	// Queue compaction for each uploaded segment
+	// Queue compaction and rollup for each uploaded segment
 	if err := queueMetricWorkForUploadResults(criticalCtx, mdb, firstItem, uploadResults); err != nil {
 		return fmt.Errorf("failed to queue metric work: %w", err)
 	}
@@ -151,37 +149,20 @@ func uploadAndQueue(
 	return nil
 }
 
-// queueMetricWorkForUploadResults queues compaction work for uploaded segments
+// queueMetricWorkForUploadResults queues compaction and rollup work for uploaded segments
 func queueMetricWorkForUploadResults(ctx context.Context, mdb lrdb.StoreFull, inf lrdb.Inqueue, uploadResults []metricsprocessing.UploadResult) error {
-	const frequency10s = int64(10000) // 10 seconds - frequency for compaction work
+	const frequency10s = int32(10000) // 10 seconds - frequency for compaction work
 
-	// Queue compaction work for each uploaded segment
+	// Queue compaction and rollup work for each uploaded segment
 	for _, uploadResult := range uploadResults {
-		// Convert timestamps from milliseconds to PostgreSQL timestamptz
-		startTime := time.Unix(uploadResult.StartTs/1000, (uploadResult.StartTs%1000)*1000000).UTC()
-		endTime := time.Unix(uploadResult.EndTs/1000, (uploadResult.EndTs%1000)*1000000).UTC()
-
-		// Construct the timestamp range for PostgreSQL
-		tsRange := pgtype.Range[pgtype.Timestamptz]{
-			Lower:     pgtype.Timestamptz{Time: startTime, Valid: true},
-			Upper:     pgtype.Timestamptz{Time: endTime, Valid: true},
-			LowerType: pgtype.Inclusive,
-			UpperType: pgtype.Exclusive,
-			Valid:     true,
+		// Queue compaction work
+		if err := metricsprocessing.QueueMetricCompaction(ctx, mdb, inf.OrganizationID, uploadResult.DateInt, frequency10s, inf.InstanceNum, uploadResult.SegmentID, uploadResult.RecordCount, uploadResult.StartTs, uploadResult.EndTs); err != nil {
+			return fmt.Errorf("queueing compaction work for segment %d: %w", uploadResult.SegmentID, err)
 		}
 
-		err := mdb.PutMetricCompactionWork(ctx, lrdb.PutMetricCompactionWorkParams{
-			OrganizationID: inf.OrganizationID,
-			Dateint:        uploadResult.DateInt,
-			FrequencyMs:    frequency10s,
-			SegmentID:      uploadResult.SegmentID,
-			InstanceNum:    inf.InstanceNum,
-			TsRange:        tsRange,
-			RecordCount:    uploadResult.RecordCount,
-			Priority:       1, // Default priority for metric compaction work
-		})
-		if err != nil {
-			return fmt.Errorf("queueing metric compaction work for segment %d: %w", uploadResult.SegmentID, err)
+		// Queue rollup work
+		if err := metricsprocessing.QueueMetricRollup(ctx, mdb, inf.OrganizationID, uploadResult.DateInt, frequency10s, inf.InstanceNum, 0, 1, uploadResult.StartTs, uploadResult.EndTs); err != nil {
+			return fmt.Errorf("queueing rollup work for segment %d: %w", uploadResult.SegmentID, err)
 		}
 	}
 
