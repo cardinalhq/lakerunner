@@ -60,8 +60,7 @@ WHERE
   dateint = @dateint AND
   frequency_ms = @frequency_ms AND
   instance_num = @instance_num AND
-  slot_id = @slot_id AND
-  ts_range && int8range(@start_ts, @end_ts, '[)')
+  slot_id = @slot_id
 ORDER BY
   ts_range;
 

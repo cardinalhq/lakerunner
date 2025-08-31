@@ -174,20 +174,19 @@ type LogSeg struct {
 }
 
 type MetricCompactionQueue struct {
-	ID             int64                            `json:"id"`
-	QueueTs        time.Time                        `json:"queue_ts"`
-	Priority       int32                            `json:"priority"`
-	OrganizationID uuid.UUID                        `json:"organization_id"`
-	Dateint        int32                            `json:"dateint"`
-	FrequencyMs    int64                            `json:"frequency_ms"`
-	SegmentID      int64                            `json:"segment_id"`
-	InstanceNum    int16                            `json:"instance_num"`
-	TsRange        pgtype.Range[pgtype.Timestamptz] `json:"ts_range"`
-	RecordCount    int64                            `json:"record_count"`
-	Tries          int32                            `json:"tries"`
-	ClaimedBy      int64                            `json:"claimed_by"`
-	ClaimedAt      *time.Time                       `json:"claimed_at"`
-	HeartbeatedAt  *time.Time                       `json:"heartbeated_at"`
+	ID             int64      `json:"id"`
+	QueueTs        time.Time  `json:"queue_ts"`
+	Priority       int32      `json:"priority"`
+	OrganizationID uuid.UUID  `json:"organization_id"`
+	Dateint        int32      `json:"dateint"`
+	FrequencyMs    int64      `json:"frequency_ms"`
+	SegmentID      int64      `json:"segment_id"`
+	InstanceNum    int16      `json:"instance_num"`
+	RecordCount    int64      `json:"record_count"`
+	Tries          int32      `json:"tries"`
+	ClaimedBy      int64      `json:"claimed_by"`
+	ClaimedAt      *time.Time `json:"claimed_at"`
+	HeartbeatedAt  *time.Time `json:"heartbeated_at"`
 }
 
 type MetricPackEstimate struct {
@@ -198,20 +197,19 @@ type MetricPackEstimate struct {
 }
 
 type MetricRollupQueue struct {
-	ID             int64                            `json:"id"`
-	QueueTs        time.Time                        `json:"queue_ts"`
-	Priority       int32                            `json:"priority"`
-	OrganizationID uuid.UUID                        `json:"organization_id"`
-	Dateint        int32                            `json:"dateint"`
-	FrequencyMs    int64                            `json:"frequency_ms"`
-	InstanceNum    int16                            `json:"instance_num"`
-	SlotID         int32                            `json:"slot_id"`
-	SlotCount      int32                            `json:"slot_count"`
-	TsRange        pgtype.Range[pgtype.Timestamptz] `json:"ts_range"`
-	Tries          int32                            `json:"tries"`
-	ClaimedBy      int64                            `json:"claimed_by"`
-	ClaimedAt      *time.Time                       `json:"claimed_at"`
-	HeartbeatedAt  *time.Time                       `json:"heartbeated_at"`
+	ID             int64      `json:"id"`
+	QueueTs        time.Time  `json:"queue_ts"`
+	Priority       int32      `json:"priority"`
+	OrganizationID uuid.UUID  `json:"organization_id"`
+	Dateint        int32      `json:"dateint"`
+	FrequencyMs    int64      `json:"frequency_ms"`
+	InstanceNum    int16      `json:"instance_num"`
+	SlotID         int32      `json:"slot_id"`
+	SlotCount      int32      `json:"slot_count"`
+	Tries          int32      `json:"tries"`
+	ClaimedBy      int64      `json:"claimed_by"`
+	ClaimedAt      *time.Time `json:"claimed_at"`
+	HeartbeatedAt  *time.Time `json:"heartbeated_at"`
 }
 
 type MetricSeg struct {

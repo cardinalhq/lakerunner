@@ -17,11 +17,9 @@ package metricsprocessing
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/google/uuid"
 
-	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -39,10 +37,6 @@ func QueueMetricRollup(ctx context.Context, mdb RollupWorkQueuer, organizationID
 
 	priority := GetRollupPriority(nextFrequency)
 
-	startTime := time.UnixMilli(startTs).UTC()
-	endTime := time.UnixMilli(endTs).UTC()
-	tsRange := helpers.TimeRange{Start: startTime, End: endTime}.ToPgRange()
-
 	err := mdb.PutMetricRollupWork(ctx, lrdb.PutMetricRollupWorkParams{
 		OrganizationID: organizationID,
 		Dateint:        dateint,
@@ -50,7 +44,6 @@ func QueueMetricRollup(ctx context.Context, mdb RollupWorkQueuer, organizationID
 		InstanceNum:    instanceNum,
 		SlotID:         slotID,
 		SlotCount:      slotCount,
-		TsRange:        tsRange,
 		Priority:       priority,
 	})
 

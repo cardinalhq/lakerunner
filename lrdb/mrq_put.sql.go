@@ -9,7 +9,6 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const putMetricRollupWork = `-- name: PutMetricRollupWork :exec
@@ -20,7 +19,6 @@ INSERT INTO metric_rollup_queue (
   instance_num,
   slot_id,
   slot_count,
-  ts_range,
   priority
 )
 VALUES (
@@ -30,20 +28,18 @@ VALUES (
   $4,
   $5,
   $6,
-  $7,
-  $8
+  $7
 )
 `
 
 type PutMetricRollupWorkParams struct {
-	OrganizationID uuid.UUID                        `json:"organization_id"`
-	Dateint        int32                            `json:"dateint"`
-	FrequencyMs    int64                            `json:"frequency_ms"`
-	InstanceNum    int16                            `json:"instance_num"`
-	SlotID         int32                            `json:"slot_id"`
-	SlotCount      int32                            `json:"slot_count"`
-	TsRange        pgtype.Range[pgtype.Timestamptz] `json:"ts_range"`
-	Priority       int32                            `json:"priority"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Dateint        int32     `json:"dateint"`
+	FrequencyMs    int64     `json:"frequency_ms"`
+	InstanceNum    int16     `json:"instance_num"`
+	SlotID         int32     `json:"slot_id"`
+	SlotCount      int32     `json:"slot_count"`
+	Priority       int32     `json:"priority"`
 }
 
 func (q *Queries) PutMetricRollupWork(ctx context.Context, arg PutMetricRollupWorkParams) error {
@@ -54,7 +50,6 @@ func (q *Queries) PutMetricRollupWork(ctx context.Context, arg PutMetricRollupWo
 		arg.InstanceNum,
 		arg.SlotID,
 		arg.SlotCount,
-		arg.TsRange,
 		arg.Priority,
 	)
 	return err

@@ -24,9 +24,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
-	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
-	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
@@ -87,10 +85,9 @@ func coordinate(
 		return newWorkerInterrupted("context cancelled before compaction")
 	}
 
-	st, _, ok := helpers.RangeBounds(workItem.TsRange)
-	if !ok {
-		return fmt.Errorf("invalid time range in work item: %v", workItem.TsRange)
-	}
+	// Use dateint to derive start time for logging context
+	startTs := int64(workItem.Dateint) * 86400 * 1000
+	st := helpers.UnixMillisToTime(startTs)
 
 	meter := otel.Meter("github.com/cardinalhq/lakerunner/internal/metricsprocessing/compaction")
 	fileSortedCounter, _ := meter.Int64Counter("lakerunner.metric.compact.file.sorted")
@@ -103,7 +100,7 @@ func coordinate(
 
 	// Download files from S3
 	readerStack, err := metricsprocessing.CreateReaderStack(
-		ctx, ll, tmpdir, s3client, workItem.OrganizationID, profile, st.Time.UTC().UnixMilli(), rows, config)
+		ctx, ll, tmpdir, s3client, workItem.OrganizationID, profile, st.UTC().UnixMilli(), rows, config)
 	if err != nil {
 		return err
 	}
@@ -159,14 +156,14 @@ func coordinate(
 	s3Ctx, s3Cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer s3Cancel()
 
-	segmentIDs, err := uploadCompactedFiles(s3Ctx, ll, s3client, result.Results, workItem, profile)
+	segments, err := uploadCompactedFiles(s3Ctx, ll, s3client, result.Results, workItem, profile)
 	if err != nil {
 		// If upload failed partway through, we need to clean up any uploaded files
-		if len(segmentIDs) > 0 {
+		if len(segments) > 0 {
 			ll.Warn("S3 upload failed partway through, scheduling cleanup",
-				slog.Int("uploadedFiles", len(segmentIDs)),
+				slog.Int("uploadedFiles", len(segments)),
 				slog.Any("error", err))
-			scheduleS3Cleanup(ctx, mdb, segmentIDs, workItem, profile)
+			scheduleS3Cleanup(ctx, mdb, segments, workItem, profile)
 		}
 		return fmt.Errorf("failed to upload compacted files to S3: %w", err)
 	}
@@ -175,13 +172,13 @@ func coordinate(
 	dbCtx, dbCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer dbCancel()
 
-	err = replaceCompactedSegments(dbCtx, ll, mdb, result.Results, rows, workItem, segmentIDs, inputRecords, inputBytes)
+	err = replaceCompactedSegments(dbCtx, ll, mdb, segments, rows, workItem, inputRecords, inputBytes)
 	if err != nil {
 		// Database update failed after successful uploads - schedule cleanup
 		ll.Error("Database update failed after successful S3 upload, scheduling cleanup",
-			slog.Int("uploadedFiles", len(segmentIDs)),
+			slog.Int("uploadedFiles", len(segments)),
 			slog.Any("error", err))
-		scheduleS3Cleanup(ctx, mdb, segmentIDs, workItem, profile)
+		scheduleS3Cleanup(ctx, mdb, segments, workItem, profile)
 		return fmt.Errorf("failed to replace compacted segments in database: %w", err)
 	}
 
@@ -212,14 +209,9 @@ func uploadCompactedFiles(
 	results []parquetwriter.Result,
 	workItem lrdb.ClaimMetricCompactionWorkRow,
 	profile storageprofile.StorageProfile,
-) ([]int64, error) {
-	st, _, ok := helpers.RangeBounds(workItem.TsRange)
-	if !ok {
-		return nil, fmt.Errorf("invalid time range in work item: %v", workItem.TsRange)
-	}
-
-	segmentIDs := make([]int64, len(results))
-	var lastErr error
+) (metricsprocessing.ProcessedSegments, error) {
+	// Create processed segments from results
+	segments := make(metricsprocessing.ProcessedSegments, 0, len(results))
 
 	for i, result := range results {
 		// Check for context cancellation/timeout before each upload
@@ -228,43 +220,42 @@ func uploadCompactedFiles(
 				slog.Int("completedUploads", i),
 				slog.Int("totalFiles", len(results)),
 				slog.Any("error", ctx.Err()))
-			return segmentIDs[:i], ctx.Err()
+			return segments, ctx.Err()
 		}
 
-		segmentID := idgen.DefaultFlakeGenerator.NextID()
-		segmentIDs[i] = segmentID
+		segment, err := metricsprocessing.NewProcessedSegment(result, workItem.OrganizationID, profile.CollectorName, ll)
+		if err != nil {
+			return segments, fmt.Errorf("failed to create processed segment: %w", err)
+		}
 
-		dateint, hour := helpers.MSToDateintHour(st.Time.UTC().UnixMilli())
-		objectID := helpers.MakeDBObjectID(workItem.OrganizationID, profile.CollectorName, dateint, hour, segmentID, "metrics")
-
-		if err := s3helper.UploadS3Object(ctx, s3client, profile.Bucket, objectID, result.FileName); err != nil {
+		if err := segment.UploadToS3(ctx, s3client, profile.Bucket); err != nil {
 			ll.Error("Failed to upload compacted file to S3",
 				slog.String("bucket", profile.Bucket),
-				slog.String("objectID", objectID),
+				slog.String("objectID", segment.ObjectID),
 				slog.String("fileName", result.FileName),
 				slog.Int("completedUploads", i),
 				slog.Any("error", err))
-			lastErr = fmt.Errorf("uploading file %s: %w", objectID, err)
 			// Return partial results - the already uploaded files need cleanup
-			return segmentIDs[:i], lastErr
+			return segments, fmt.Errorf("uploading file %s: %w", segment.ObjectID, err)
 		}
 
+		segments = append(segments, segment)
+
 		ll.Debug("Uploaded compacted file to S3",
-			slog.String("objectID", objectID),
+			slog.String("objectID", segment.ObjectID),
 			slog.Int64("fileSize", result.FileSize),
 			slog.Int64("recordCount", result.RecordCount))
 	}
-	return segmentIDs, nil
+	return segments, nil
 }
 
 func replaceCompactedSegments(
 	ctx context.Context,
 	ll *slog.Logger,
 	mdb compactionStore,
-	results []parquetwriter.Result,
+	segments metricsprocessing.ProcessedSegments,
 	oldRows []lrdb.MetricSeg,
 	workItem lrdb.ClaimMetricCompactionWorkRow,
-	segmentIDs []int64,
 	inputRecords int64,
 	inputBytes int64,
 ) error {
@@ -278,32 +269,16 @@ func replaceCompactedSegments(
 	}
 
 	// Prepare new records for CompactMetricSegs
-	newRecords := make([]lrdb.CompactMetricSegsNew, len(results))
-	st, et, ok := helpers.RangeBounds(workItem.TsRange)
-	if !ok {
-		return fmt.Errorf("invalid time range in work item: %v", workItem.TsRange)
-	}
+	newRecords := make([]lrdb.CompactMetricSegsNew, len(segments))
 
-	// Collect fingerprints per file
-	for i, result := range results {
-		filestats, err := metricsprocessing.ExtractFileMetadata(result, ll)
-		if err != nil {
-			ll.Error("Missing metadata for compacted segment - cannot proceed",
-				"segment_id", segmentIDs[i],
-				"organization_id", workItem.OrganizationID,
-				"dateint", workItem.Dateint,
-				"frequency_ms", workItem.FrequencyMs,
-				"instance_num", workItem.InstanceNum)
-			return fmt.Errorf("failed to extract metadata for segment %d: %w", segmentIDs[i], err)
-		}
-
+	for i, segment := range segments {
 		newRecords[i] = lrdb.CompactMetricSegsNew{
-			SegmentID:    segmentIDs[i],
-			StartTs:      st.Time.UTC().UnixMilli(),
-			EndTs:        et.Time.UTC().UnixMilli(),
-			RecordCount:  result.RecordCount,
-			FileSize:     result.FileSize,
-			Fingerprints: filestats.Fingerprints,
+			SegmentID:    segment.SegmentID,
+			StartTs:      segment.StartTs,
+			EndTs:        segment.EndTs,
+			RecordCount:  segment.Result.RecordCount,
+			FileSize:     segment.Result.FileSize,
+			Fingerprints: segment.Fingerprints,
 		}
 	}
 
@@ -333,9 +308,9 @@ func replaceCompactedSegments(
 	// Calculate output bytes and records
 	outputBytes := int64(0)
 	outputRecords := int64(0)
-	for _, result := range results {
-		outputBytes += result.FileSize
-		outputRecords += result.RecordCount
+	for _, segment := range segments {
+		outputBytes += segment.Result.FileSize
+		outputRecords += segment.Result.RecordCount
 	}
 
 	ll.Info("Successfully replaced compacted metric segments",
@@ -357,28 +332,6 @@ func shouldCompactMetrics(rows []lrdb.MetricSeg) bool {
 
 // scheduleS3Cleanup schedules cleanup work for orphaned S3 objects
 // This is called when uploads succeed but database updates fail
-func scheduleS3Cleanup(ctx context.Context, mdb compactionStore, segmentIDs []int64, workItem lrdb.ClaimMetricCompactionWorkRow, profile storageprofile.StorageProfile) {
-	for _, segmentID := range segmentIDs {
-		st, _, ok := helpers.RangeBounds(workItem.TsRange)
-		if !ok {
-			slog.Warn("Invalid time range for cleanup", slog.Int64("segmentID", segmentID))
-			continue
-		}
-		dateint, hour := helpers.MSToDateintHour(st.Time.UTC().UnixMilli())
-		objectID := helpers.MakeDBObjectID(workItem.OrganizationID, profile.CollectorName, dateint, hour, segmentID, "metrics")
-
-		if err := s3helper.ScheduleS3Delete(ctx, mdb, workItem.OrganizationID, workItem.InstanceNum, profile.Bucket, objectID); err != nil {
-			slog.Error("Failed to schedule S3 cleanup for orphaned object",
-				slog.String("bucket", profile.Bucket),
-				slog.String("objectID", objectID),
-				slog.Int64("segmentID", segmentID),
-				slog.String("organizationID", workItem.OrganizationID.String()),
-				slog.Any("error", err))
-		} else {
-			slog.Info("Scheduled S3 cleanup for orphaned object",
-				slog.String("bucket", profile.Bucket),
-				slog.String("objectID", objectID),
-				slog.Int64("segmentID", segmentID))
-		}
-	}
+func scheduleS3Cleanup(ctx context.Context, mdb compactionStore, segments metricsprocessing.ProcessedSegments, workItem lrdb.ClaimMetricCompactionWorkRow, profile storageprofile.StorageProfile) {
+	segments.ScheduleCleanupAll(ctx, mdb, workItem.OrganizationID, workItem.InstanceNum, profile.Bucket)
 }

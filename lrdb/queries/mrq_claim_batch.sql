@@ -42,7 +42,7 @@ group_flags AS (
 grp_scope AS (
   SELECT
     q.id, q.organization_id, q.dateint, q.frequency_ms, q.instance_num, 
-    q.slot_id, q.slot_count, q.priority, q.queue_ts, q.ts_range,
+    q.slot_id, q.slot_count, q.priority, q.queue_ts,
     gf.seed_rank, gf.is_old, gf.batch_count
   FROM metric_rollup_queue q
   JOIN group_flags gf
@@ -117,7 +117,7 @@ winner_group AS (
 -- 10) Rows to claim for the winner group
 group_chosen AS (
   SELECT pr.id, pr.organization_id, pr.dateint, pr.frequency_ms, pr.instance_num,
-         pr.slot_id, pr.slot_count, pr.ts_range, pr.priority
+         pr.slot_id, pr.slot_count, pr.priority
   FROM prelim pr
   JOIN winner_group w
     ON w.organization_id = pr.organization_id

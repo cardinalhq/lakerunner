@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const claimMetricCompactionWork = `-- name: ClaimMetricCompactionWork :many
@@ -179,10 +178,10 @@ upd AS (
   FROM chosen c
   WHERE q.id = c.id
     AND q.claimed_at IS NULL
-  RETURNING q.id, q.queue_ts, q.priority, q.organization_id, q.dateint, q.frequency_ms, q.segment_id, q.instance_num, q.ts_range, q.record_count, q.tries, q.claimed_by, q.claimed_at, q.heartbeated_at
+  RETURNING q.id, q.queue_ts, q.priority, q.organization_id, q.dateint, q.frequency_ms, q.segment_id, q.instance_num, q.record_count, q.tries, q.claimed_by, q.claimed_at, q.heartbeated_at
 )
 SELECT 
-  upd.id, upd.queue_ts, upd.priority, upd.organization_id, upd.dateint, upd.frequency_ms, upd.segment_id, upd.instance_num, upd.ts_range, upd.record_count, upd.tries, upd.claimed_by, upd.claimed_at, upd.heartbeated_at,
+  upd.id, upd.queue_ts, upd.priority, upd.organization_id, upd.dateint, upd.frequency_ms, upd.segment_id, upd.instance_num, upd.record_count, upd.tries, upd.claimed_by, upd.claimed_at, upd.heartbeated_at,
   COALESCE(pr.target_records, 0) AS used_target_records,
   COALESCE(pr.org_estimate, 0) AS org_estimate,
   COALESCE(pr.global_estimate, 0) AS global_estimate, 
@@ -202,25 +201,24 @@ type ClaimMetricCompactionWorkParams struct {
 }
 
 type ClaimMetricCompactionWorkRow struct {
-	ID                int64                            `json:"id"`
-	QueueTs           time.Time                        `json:"queue_ts"`
-	Priority          int32                            `json:"priority"`
-	OrganizationID    uuid.UUID                        `json:"organization_id"`
-	Dateint           int32                            `json:"dateint"`
-	FrequencyMs       int64                            `json:"frequency_ms"`
-	SegmentID         int64                            `json:"segment_id"`
-	InstanceNum       int16                            `json:"instance_num"`
-	TsRange           pgtype.Range[pgtype.Timestamptz] `json:"ts_range"`
-	RecordCount       int64                            `json:"record_count"`
-	Tries             int32                            `json:"tries"`
-	ClaimedBy         int64                            `json:"claimed_by"`
-	ClaimedAt         *time.Time                       `json:"claimed_at"`
-	HeartbeatedAt     *time.Time                       `json:"heartbeated_at"`
-	UsedTargetRecords int64                            `json:"used_target_records"`
-	OrgEstimate       int64                            `json:"org_estimate"`
-	GlobalEstimate    int64                            `json:"global_estimate"`
-	DefaultEstimate   int64                            `json:"default_estimate"`
-	EstimateSource    string                           `json:"estimate_source"`
+	ID                int64      `json:"id"`
+	QueueTs           time.Time  `json:"queue_ts"`
+	Priority          int32      `json:"priority"`
+	OrganizationID    uuid.UUID  `json:"organization_id"`
+	Dateint           int32      `json:"dateint"`
+	FrequencyMs       int64      `json:"frequency_ms"`
+	SegmentID         int64      `json:"segment_id"`
+	InstanceNum       int16      `json:"instance_num"`
+	RecordCount       int64      `json:"record_count"`
+	Tries             int32      `json:"tries"`
+	ClaimedBy         int64      `json:"claimed_by"`
+	ClaimedAt         *time.Time `json:"claimed_at"`
+	HeartbeatedAt     *time.Time `json:"heartbeated_at"`
+	UsedTargetRecords int64      `json:"used_target_records"`
+	OrgEstimate       int64      `json:"org_estimate"`
+	GlobalEstimate    int64      `json:"global_estimate"`
+	DefaultEstimate   int64      `json:"default_estimate"`
+	EstimateSource    string     `json:"estimate_source"`
 }
 
 // 1) Big single-row safety net
@@ -260,7 +258,6 @@ func (q *Queries) ClaimMetricCompactionWork(ctx context.Context, arg ClaimMetric
 			&i.FrequencyMs,
 			&i.SegmentID,
 			&i.InstanceNum,
-			&i.TsRange,
 			&i.RecordCount,
 			&i.Tries,
 			&i.ClaimedBy,

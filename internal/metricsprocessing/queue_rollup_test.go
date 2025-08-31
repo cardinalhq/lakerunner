@@ -127,8 +127,7 @@ func TestQueueMetricRollup(t *testing.T) {
 						params.InstanceNum == tt.instanceNum &&
 						params.SlotID == tt.slotID &&
 						params.SlotCount == tt.slotCount &&
-						params.Priority == expectedPriority &&
-						params.TsRange.Valid
+						params.Priority == expectedPriority
 				})).Return(tt.mockError)
 			}
 

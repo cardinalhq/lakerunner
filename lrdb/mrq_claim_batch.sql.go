@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const claimMetricRollupWork = `-- name: ClaimMetricRollupWork :many
@@ -53,7 +52,7 @@ group_flags AS (
 grp_scope AS (
   SELECT
     q.id, q.organization_id, q.dateint, q.frequency_ms, q.instance_num, 
-    q.slot_id, q.slot_count, q.priority, q.queue_ts, q.ts_range,
+    q.slot_id, q.slot_count, q.priority, q.queue_ts,
     gf.seed_rank, gf.is_old, gf.batch_count
   FROM metric_rollup_queue q
   JOIN group_flags gf
@@ -68,7 +67,7 @@ grp_scope AS (
 
 pack AS (
   SELECT
-    g.id, g.organization_id, g.dateint, g.frequency_ms, g.instance_num, g.slot_id, g.slot_count, g.priority, g.queue_ts, g.ts_range, g.seed_rank, g.is_old, g.batch_count,
+    g.id, g.organization_id, g.dateint, g.frequency_ms, g.instance_num, g.slot_id, g.slot_count, g.priority, g.queue_ts, g.seed_rank, g.is_old, g.batch_count,
     ROW_NUMBER() OVER (
       PARTITION BY g.organization_id, g.dateint, g.frequency_ms, g.instance_num, g.slot_id, g.slot_count
       ORDER BY g.priority DESC, g.queue_ts ASC, g.id ASC
@@ -77,7 +76,7 @@ pack AS (
 ),
 
 prelim AS (
-  SELECT p.id, p.organization_id, p.dateint, p.frequency_ms, p.instance_num, p.slot_id, p.slot_count, p.priority, p.queue_ts, p.ts_range, p.seed_rank, p.is_old, p.batch_count, p.rn
+  SELECT p.id, p.organization_id, p.dateint, p.frequency_ms, p.instance_num, p.slot_id, p.slot_count, p.priority, p.queue_ts, p.seed_rank, p.is_old, p.batch_count, p.rn
   FROM pack p
   JOIN group_flags gf
     ON gf.organization_id = p.organization_id
@@ -122,7 +121,7 @@ winner_group AS (
 
 group_chosen AS (
   SELECT pr.id, pr.organization_id, pr.dateint, pr.frequency_ms, pr.instance_num,
-         pr.slot_id, pr.slot_count, pr.ts_range, pr.priority
+         pr.slot_id, pr.slot_count, pr.priority
   FROM prelim pr
   JOIN winner_group w
     ON w.organization_id = pr.organization_id
@@ -141,9 +140,9 @@ upd AS (
   FROM group_chosen c
   WHERE q.id = c.id
     AND q.claimed_at IS NULL
-  RETURNING q.id, q.queue_ts, q.priority, q.organization_id, q.dateint, q.frequency_ms, q.instance_num, q.slot_id, q.slot_count, q.ts_range, q.tries, q.claimed_by, q.claimed_at, q.heartbeated_at
+  RETURNING q.id, q.queue_ts, q.priority, q.organization_id, q.dateint, q.frequency_ms, q.instance_num, q.slot_id, q.slot_count, q.tries, q.claimed_by, q.claimed_at, q.heartbeated_at
 )
-SELECT id, queue_ts, priority, organization_id, dateint, frequency_ms, instance_num, slot_id, slot_count, ts_range, tries, claimed_by, claimed_at, heartbeated_at FROM upd
+SELECT id, queue_ts, priority, organization_id, dateint, frequency_ms, instance_num, slot_id, slot_count, tries, claimed_by, claimed_at, heartbeated_at FROM upd
 ORDER BY priority DESC, queue_ts ASC, id ASC
 `
 
@@ -155,20 +154,19 @@ type ClaimMetricRollupWorkParams struct {
 }
 
 type ClaimMetricRollupWorkRow struct {
-	ID             int64                            `json:"id"`
-	QueueTs        time.Time                        `json:"queue_ts"`
-	Priority       int32                            `json:"priority"`
-	OrganizationID uuid.UUID                        `json:"organization_id"`
-	Dateint        int32                            `json:"dateint"`
-	FrequencyMs    int64                            `json:"frequency_ms"`
-	InstanceNum    int16                            `json:"instance_num"`
-	SlotID         int32                            `json:"slot_id"`
-	SlotCount      int32                            `json:"slot_count"`
-	TsRange        pgtype.Range[pgtype.Timestamptz] `json:"ts_range"`
-	Tries          int32                            `json:"tries"`
-	ClaimedBy      int64                            `json:"claimed_by"`
-	ClaimedAt      *time.Time                       `json:"claimed_at"`
-	HeartbeatedAt  *time.Time                       `json:"heartbeated_at"`
+	ID             int64      `json:"id"`
+	QueueTs        time.Time  `json:"queue_ts"`
+	Priority       int32      `json:"priority"`
+	OrganizationID uuid.UUID  `json:"organization_id"`
+	Dateint        int32      `json:"dateint"`
+	FrequencyMs    int64      `json:"frequency_ms"`
+	InstanceNum    int16      `json:"instance_num"`
+	SlotID         int32      `json:"slot_id"`
+	SlotCount      int32      `json:"slot_count"`
+	Tries          int32      `json:"tries"`
+	ClaimedBy      int64      `json:"claimed_by"`
+	ClaimedAt      *time.Time `json:"claimed_at"`
+	HeartbeatedAt  *time.Time `json:"heartbeated_at"`
 }
 
 // 1) One seed per group (org, dateint, freq, instance, slot_id, slot_count)
@@ -206,7 +204,6 @@ func (q *Queries) ClaimMetricRollupWork(ctx context.Context, arg ClaimMetricRoll
 			&i.InstanceNum,
 			&i.SlotID,
 			&i.SlotCount,
-			&i.TsRange,
 			&i.Tries,
 			&i.ClaimedBy,
 			&i.ClaimedAt,

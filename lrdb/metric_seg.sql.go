@@ -102,8 +102,7 @@ WHERE
   dateint = $2 AND
   frequency_ms = $3 AND
   instance_num = $4 AND
-  slot_id = $5 AND
-  ts_range && int8range($6, $7, '[)')
+  slot_id = $5
 ORDER BY
   ts_range
 `
@@ -114,8 +113,6 @@ type GetMetricSegsForRollupParams struct {
 	FrequencyMs    int32     `json:"frequency_ms"`
 	InstanceNum    int16     `json:"instance_num"`
 	SlotID         int32     `json:"slot_id"`
-	StartTs        int64     `json:"start_ts"`
-	EndTs          int64     `json:"end_ts"`
 }
 
 func (q *Queries) GetMetricSegsForRollup(ctx context.Context, arg GetMetricSegsForRollupParams) ([]MetricSeg, error) {
@@ -125,8 +122,6 @@ func (q *Queries) GetMetricSegsForRollup(ctx context.Context, arg GetMetricSegsF
 		arg.FrequencyMs,
 		arg.InstanceNum,
 		arg.SlotID,
-		arg.StartTs,
-		arg.EndTs,
 	)
 	if err != nil {
 		return nil, err

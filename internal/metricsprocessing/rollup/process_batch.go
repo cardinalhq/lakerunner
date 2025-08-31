@@ -28,7 +28,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
-	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/constants"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
@@ -152,28 +151,6 @@ func processBatch(
 
 	t0 := time.Now()
 
-	// Find the combined time range from all work items
-	var startTs, endTs int64
-	for i, work := range claimedWork {
-		st, et, ok := helpers.RangeBounds(work.TsRange)
-		if !ok {
-			return fmt.Errorf("invalid time range in work item: %v", work.TsRange)
-		}
-		workStartTs := st.Time.UTC().UnixMilli()
-		workEndTs := et.Time.UTC().UnixMilli()
-		if i == 0 {
-			startTs = workStartTs
-			endTs = workEndTs
-		} else {
-			if workStartTs < startTs {
-				startTs = workStartTs
-			}
-			if workEndTs > endTs {
-				endTs = workEndTs
-			}
-		}
-	}
-
 	// Get source segments to rollup from
 	sourceRows, err := mdb.GetMetricSegsForRollup(ctx, lrdb.GetMetricSegsForRollupParams{
 		OrganizationID: firstItem.OrganizationID,
@@ -181,8 +158,6 @@ func processBatch(
 		FrequencyMs:    sourceFrequency,
 		InstanceNum:    firstItem.InstanceNum,
 		SlotID:         firstItem.SlotID,
-		StartTs:        startTs,
-		EndTs:          endTs,
 	})
 	if err != nil {
 		ll.Error("Failed to get previous metric segments", slog.Any("error", err))
@@ -191,8 +166,6 @@ func processBatch(
 
 	ll.Debug("Retrieved source segments for rollup analysis",
 		slog.Int("sourceSegmentCount", len(sourceRows)),
-		slog.Int64("timeRangeStartTs", startTs),
-		slog.Int64("timeRangeEndTs", endTs),
 		slog.Int("sourceFrequencyMs", int(sourceFrequency)),
 		slog.Int("targetFrequencyMs", int(targetFrequency)))
 
@@ -211,8 +184,6 @@ func processBatch(
 		FrequencyMs:    targetFrequency,
 		InstanceNum:    firstItem.InstanceNum,
 		SlotID:         firstItem.SlotID,
-		StartTs:        startTs,
-		EndTs:          endTs,
 	})
 	if err != nil {
 		ll.Error("Failed to get existing metric segments", slog.Any("error", err))
@@ -462,6 +433,15 @@ func uploadRolledUpMetricsAtomic(
 	existingRows []lrdb.MetricSeg,
 	params CompactionUploadParams,
 ) error {
+	// Create processed segments from results
+	segments := make(metricsprocessing.ProcessedSegments, 0, len(results))
+	for _, result := range results {
+		segment, err := metricsprocessing.NewProcessedSegment(result, params.OrganizationID, params.CollectorName, ll)
+		if err != nil {
+			return fmt.Errorf("failed to create processed segment: %w", err)
+		}
+		segments = append(segments, segment)
+	}
 	var targetOldRecords []lrdb.CompactMetricSegsOld
 	for _, row := range existingRows {
 		targetOldRecords = append(targetOldRecords, lrdb.CompactMetricSegsOld{
@@ -476,47 +456,39 @@ func uploadRolledUpMetricsAtomic(
 	}
 
 	ll.Debug("Starting atomic rollup operations for rolled-up files",
-		slog.Int("fileCount", len(results)),
+		slog.Int("fileCount", len(segments)),
 		slog.Int("sourceSegmentCount", len(sourceSegmentIDs)))
 
-	for i, file := range results {
-		filestats, err := metricsprocessing.ExtractFileMetadata(file, ll)
-		if err != nil {
-			return fmt.Errorf("failed to extract file metadata: %w", err)
-		}
-
+	for i, segment := range segments {
 		fileLogger := ll.With(
-			slog.String("file", file.FileName),
+			slog.String("file", segment.Result.FileName),
 			slog.Int("fileIndex", i+1),
-			slog.Int("totalFiles", len(results)))
+			slog.Int("totalFiles", len(segments)))
 
 		fileLogger.Debug("Starting atomic metric rollup upload operation",
-			slog.Int64("recordCount", file.RecordCount),
-			slog.Int64("fileSize", file.FileSize),
-			slog.Int64("startTs", filestats.StartTs),
-			slog.Int64("endTs", filestats.EndTs),
-			slog.Int("fingerprintCount", len(filestats.Fingerprints)))
-
-		segmentID := s3helper.GenerateID()
-		newObjectID := helpers.MakeDBObjectID(params.OrganizationID, params.CollectorName, filestats.Dateint, filestats.Hour, segmentID, "metrics")
+			slog.Int64("recordCount", segment.Result.RecordCount),
+			slog.Int64("fileSize", segment.Result.FileSize),
+			slog.Int64("startTs", segment.StartTs),
+			slog.Int64("endTs", segment.EndTs),
+			slog.Int("fingerprintCount", len(segment.Fingerprints)))
 
 		fileLogger.Debug("Uploading rolled-up metric file to S3 - point of no return approaching",
-			slog.String("newObjectID", newObjectID),
+			slog.String("newObjectID", segment.ObjectID),
 			slog.String("bucket", params.Bucket),
-			slog.Int64("newSegmentID", segmentID))
+			slog.Int64("newSegmentID", segment.SegmentID))
 
-		err = s3helper.UploadS3Object(ctx, s3client, params.Bucket, newObjectID, file.FileName)
+		err := segment.UploadToS3(ctx, s3client, params.Bucket)
 		if err != nil {
 			fileLogger.Error("Atomic operation failed during S3 upload - no changes made",
 				slog.Any("error", err),
-				slog.String("objectID", newObjectID))
+				slog.String("objectID", segment.ObjectID))
 			return fmt.Errorf("uploading new S3 object: %w", err)
 		}
 
 		fileLogger.Debug("S3 upload successful, updating database with atomic rollup transaction - CRITICAL SECTION",
-			slog.String("uploadedObject", newObjectID),
-			slog.Int64("uploadedBytes", file.FileSize),
-			slog.Int64("uploadedRecords", file.RecordCount))
+			slog.String("uploadedObject", segment.ObjectID),
+			slog.Int64("uploadedBytes", segment.Result.FileSize),
+			slog.Int64("uploadedRecords", segment.Result.RecordCount))
 
 		sourceFrequency := sourceRows[0].FrequencyMs
 
@@ -540,58 +512,60 @@ func uploadRolledUpMetricsAtomic(
 			sourceSegmentIDs,
 			[]lrdb.RollupNewRecord{
 				{
-					SegmentID:    segmentID,
-					StartTs:      filestats.StartTs,
-					EndTs:        filestats.EndTs,
-					RecordCount:  file.RecordCount,
-					FileSize:     file.FileSize,
-					Fingerprints: filestats.Fingerprints,
+					SegmentID:    segment.SegmentID,
+					StartTs:      segment.StartTs,
+					EndTs:        segment.EndTs,
+					RecordCount:  segment.Result.RecordCount,
+					FileSize:     segment.Result.FileSize,
+					Fingerprints: segment.Fingerprints,
 				},
 			},
 		); err != nil {
 			fileLogger.Error("Database rollup transaction failed after S3 upload - file orphaned in S3",
 				slog.Any("error", err),
-				slog.String("orphanedObject", newObjectID),
-				slog.Int64("orphanedSegmentID", segmentID),
+				slog.String("orphanedObject", segment.ObjectID),
+				slog.Int64("orphanedSegmentID", segment.SegmentID),
 				slog.String("bucket", params.Bucket))
 
-			if scheduleErr := s3helper.ScheduleS3Delete(ctx, mdb, params.OrganizationID, params.InstanceNum, params.Bucket, newObjectID); scheduleErr != nil {
+			if scheduleErr := segment.ScheduleCleanupIfUploaded(ctx, mdb, params.OrganizationID, params.InstanceNum, params.Bucket); scheduleErr != nil {
 				fileLogger.Error("Failed to schedule orphaned S3 object for deletion",
 					slog.Any("error", scheduleErr),
-					slog.String("objectID", newObjectID),
+					slog.String("objectID", segment.ObjectID),
 					slog.String("bucket", params.Bucket))
 			} else {
 				fileLogger.Info("Scheduled orphaned S3 object for deletion",
-					slog.String("objectID", newObjectID))
+					slog.String("objectID", segment.ObjectID))
 			}
 			return fmt.Errorf("atomic rollup transaction: %w", err)
 		}
 
 		fileLogger.Debug("Source marked as rolled up, target segments replaced - rollup transaction complete",
-			slog.Int64("newSegmentID", segmentID),
-			slog.Int64("newRecordCount", file.RecordCount),
-			slog.Int64("newFileSize", file.FileSize),
-			slog.String("newObjectID", newObjectID),
+			slog.Int64("newSegmentID", segment.SegmentID),
+			slog.Int64("newRecordCount", segment.Result.RecordCount),
+			slog.Int64("newFileSize", segment.Result.FileSize),
+			slog.String("newObjectID", segment.ObjectID),
 			slog.Int("sourceSegmentCount", len(sourceSegmentIDs)),
 			slog.Int("targetReplacedCount", len(targetOldRecords)),
 			slog.Int("sourceFrequencyMs", int(sourceFrequency)),
 			slog.Int("targetFrequencyMs", int(params.FrequencyMs)))
 
-		if err := metricsprocessing.QueueMetricCompaction(ctx, mdb, params.OrganizationID, params.Dateint, params.FrequencyMs, params.InstanceNum, segmentID, file.RecordCount, filestats.StartTs, filestats.EndTs); err != nil {
-			fileLogger.Error("Failed to queue metric compaction", slog.Any("error", err))
-		}
+	}
 
-		if err := metricsprocessing.QueueMetricRollup(ctx, mdb, params.OrganizationID, params.Dateint, params.FrequencyMs, params.InstanceNum, params.SlotID, params.SlotCount, filestats.StartTs, filestats.EndTs); err != nil {
-			fileLogger.Error("Failed to queue metric rollup", slog.Any("error", err))
-		}
+	// Queue compaction and rollup work for all processed segments
+	if err := segments.QueueCompactionWork(ctx, mdb, params.OrganizationID, params.InstanceNum, params.FrequencyMs); err != nil {
+		ll.Error("Failed to queue compaction work for rolled-up segments", slog.Any("error", err))
+	}
+
+	if err := segments.QueueRollupWork(ctx, mdb, params.OrganizationID, params.InstanceNum, params.FrequencyMs, params.SlotID, params.SlotCount); err != nil {
+		ll.Error("Failed to queue rollup work for rolled-up segments", slog.Any("error", err))
 	}
 
 	// Calculate final accumulated statistics
 	totalOutputBytes := int64(0)
 	totalOutputRecords := int64(0)
-	for _, result := range results {
-		totalOutputBytes += result.FileSize
-		totalOutputRecords += result.RecordCount
+	for _, segment := range segments {
+		totalOutputBytes += segment.Result.FileSize
+		totalOutputRecords += segment.Result.RecordCount
 	}
 
 	// Calculate total input statistics

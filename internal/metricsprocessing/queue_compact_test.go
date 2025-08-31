@@ -92,8 +92,7 @@ func TestQueueMetricCompaction(t *testing.T) {
 					params.InstanceNum == tt.instanceNum &&
 					params.SegmentID == tt.segmentID &&
 					params.RecordCount == tt.recordCount &&
-					params.Priority == GetCompactionPriority(tt.frequencyMs) &&
-					params.TsRange.Valid
+					params.Priority == GetCompactionPriority(tt.frequencyMs)
 			})).Return(tt.mockError)
 
 			// Call the function

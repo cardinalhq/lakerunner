@@ -136,34 +136,18 @@ func uploadAndQueue(
 
 	// Use context without cancellation for critical section to ensure atomic completion
 	criticalCtx := context.WithoutCancel(ctx)
-	uploadResults, err := metricsprocessing.UploadMetricResults(criticalCtx, ll, s3client, mdb, results, uploadParams)
+	segments, err := metricsprocessing.UploadMetricResultsWithProcessedSegments(criticalCtx, ll, s3client, mdb, results, uploadParams)
 	if err != nil {
 		return fmt.Errorf("failed to upload results: %w", err)
 	}
 
 	// Queue compaction and rollup for each uploaded segment
-	if err := queueMetricWorkForUploadResults(criticalCtx, mdb, firstItem, uploadResults); err != nil {
-		return fmt.Errorf("failed to queue metric work: %w", err)
+	if err := segments.QueueCompactionWork(criticalCtx, mdb, firstItem.OrganizationID, firstItem.InstanceNum, 10000); err != nil {
+		return fmt.Errorf("failed to queue compaction work: %w", err)
 	}
 
-	return nil
-}
-
-// queueMetricWorkForUploadResults queues compaction and rollup work for uploaded segments
-func queueMetricWorkForUploadResults(ctx context.Context, mdb lrdb.StoreFull, inf lrdb.Inqueue, uploadResults []metricsprocessing.UploadResult) error {
-	const frequency10s = int32(10000) // 10 seconds - frequency for compaction work
-
-	// Queue compaction and rollup work for each uploaded segment
-	for _, uploadResult := range uploadResults {
-		// Queue compaction work
-		if err := metricsprocessing.QueueMetricCompaction(ctx, mdb, inf.OrganizationID, uploadResult.DateInt, frequency10s, inf.InstanceNum, uploadResult.SegmentID, uploadResult.RecordCount, uploadResult.StartTs, uploadResult.EndTs); err != nil {
-			return fmt.Errorf("queueing compaction work for segment %d: %w", uploadResult.SegmentID, err)
-		}
-
-		// Queue rollup work
-		if err := metricsprocessing.QueueMetricRollup(ctx, mdb, inf.OrganizationID, uploadResult.DateInt, frequency10s, inf.InstanceNum, 0, 1, uploadResult.StartTs, uploadResult.EndTs); err != nil {
-			return fmt.Errorf("queueing rollup work for segment %d: %w", uploadResult.SegmentID, err)
-		}
+	if err := segments.QueueRollupWork(criticalCtx, mdb, firstItem.OrganizationID, firstItem.InstanceNum, 10000, 0, 1); err != nil {
+		return fmt.Errorf("failed to queue rollup work: %w", err)
 	}
 
 	return nil

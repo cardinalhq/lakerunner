@@ -17,11 +17,9 @@ package metricsprocessing
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/google/uuid"
 
-	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -34,17 +32,12 @@ type CompactionWorkQueuer interface {
 func QueueMetricCompaction(ctx context.Context, mdb CompactionWorkQueuer, organizationID uuid.UUID, dateint int32, frequencyMs int32, instanceNum int16, segmentID int64, recordCount int64, startTs int64, endTs int64) error {
 	priority := GetCompactionPriority(frequencyMs)
 
-	startTime := time.UnixMilli(startTs).UTC()
-	endTime := time.UnixMilli(endTs).UTC()
-	tsRange := helpers.TimeRange{Start: startTime, End: endTime}.ToPgRange()
-
 	err := mdb.PutMetricCompactionWork(ctx, lrdb.PutMetricCompactionWorkParams{
 		OrganizationID: organizationID,
 		Dateint:        dateint,
 		FrequencyMs:    int64(frequencyMs),
 		SegmentID:      segmentID,
 		InstanceNum:    instanceNum,
-		TsRange:        tsRange,
 		RecordCount:    recordCount,
 		Priority:       priority,
 	})

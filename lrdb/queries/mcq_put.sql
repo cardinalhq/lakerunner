@@ -5,7 +5,6 @@ INSERT INTO metric_compaction_queue (
   frequency_ms,
   segment_id,
   instance_num,
-  ts_range,
   record_count,
   priority
 )
@@ -15,7 +14,6 @@ VALUES (
   @frequency_ms,
   @segment_id,
   @instance_num,
-  @ts_range,
   @record_count,
   @priority
 );

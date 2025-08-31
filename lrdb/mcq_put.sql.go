@@ -9,7 +9,6 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const putMetricCompactionWork = `-- name: PutMetricCompactionWork :exec
@@ -19,7 +18,6 @@ INSERT INTO metric_compaction_queue (
   frequency_ms,
   segment_id,
   instance_num,
-  ts_range,
   record_count,
   priority
 )
@@ -30,20 +28,18 @@ VALUES (
   $4,
   $5,
   $6,
-  $7,
-  $8
+  $7
 )
 `
 
 type PutMetricCompactionWorkParams struct {
-	OrganizationID uuid.UUID                        `json:"organization_id"`
-	Dateint        int32                            `json:"dateint"`
-	FrequencyMs    int64                            `json:"frequency_ms"`
-	SegmentID      int64                            `json:"segment_id"`
-	InstanceNum    int16                            `json:"instance_num"`
-	TsRange        pgtype.Range[pgtype.Timestamptz] `json:"ts_range"`
-	RecordCount    int64                            `json:"record_count"`
-	Priority       int32                            `json:"priority"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Dateint        int32     `json:"dateint"`
+	FrequencyMs    int64     `json:"frequency_ms"`
+	SegmentID      int64     `json:"segment_id"`
+	InstanceNum    int16     `json:"instance_num"`
+	RecordCount    int64     `json:"record_count"`
+	Priority       int32     `json:"priority"`
 }
 
 func (q *Queries) PutMetricCompactionWork(ctx context.Context, arg PutMetricCompactionWorkParams) error {
@@ -53,7 +49,6 @@ func (q *Queries) PutMetricCompactionWork(ctx context.Context, arg PutMetricComp
 		arg.FrequencyMs,
 		arg.SegmentID,
 		arg.InstanceNum,
-		arg.TsRange,
 		arg.RecordCount,
 		arg.Priority,
 	)
