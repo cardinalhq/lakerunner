@@ -205,6 +205,11 @@ func createProtoBinaryGzReader(filename string, opts ReaderOptions) (Reader, err
 		return nil, err
 	}
 
+	// Close file handles after reader is constructed since NewIngestProtoMetricsReader
+	// eagerly reads the entire stream into memory and doesn't need the handles
+	gzipReader.Close()
+	file.Close()
+
 	return reader, nil
 }
 
@@ -220,6 +225,10 @@ func createProtoBinaryReader(filename string, opts ReaderOptions) (Reader, error
 		file.Close()
 		return nil, err
 	}
+
+	// Close file handle after reader is constructed since NewIngestProtoMetricsReader
+	// eagerly reads the entire stream into memory and doesn't need the handle
+	file.Close()
 
 	return reader, nil
 }
