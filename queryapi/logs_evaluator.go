@@ -16,12 +16,14 @@ package queryapi
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/cardinalhq/lakerunner/internal/buffet"
 	"github.com/cardinalhq/lakerunner/logql"
 	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/cardinalhq/lakerunner/promql"
 	"github.com/google/uuid"
+	"log/slog"
 	"slices"
 	"time"
 
@@ -38,73 +40,128 @@ func (q *QuerierService) EvaluateLogsQuery(
 	orgID uuid.UUID,
 	startTs, endTs int64,
 	queryPlan logql.LQueryPlan,
-) (<-chan map[string]promql.EvalResult, error) {
-	//workers, err := q.workerDiscovery.GetAllWorkers()
-	//if err != nil {
-	//	slog.Error("failed to get all workers", "err", err)
-	//	return nil, fmt.Errorf("failed to get all workers: %w", err)
-	//}
-	//
-	//out := make(chan map[string]promql.EvalResult, 1024)
-	//
-	//go func() {
-	//	defer close(out)
-	//
-	//	// Partition by dateInt hours for storage listing.
-	//	dateIntHours := dateIntHoursRange(startTs, endTs, time.UTC)
-	//
-	//	for _, leaf := range queryPlan.Leaves {
-	//		for _, dih := range dateIntHours {
-	//			segments, err := q.lookupLogsSegments(ctx, dih, leaf, startTs, endTs, DefaultLogStep, orgID, q.mdb.ListLogSegmentsForQuery)
-	//			if err != nil {
-	//				slog.Error("failed to lookup log segments", "err", err, "dih", dih, "leaf", leaf)
-	//				return
-	//			}
-	//			if len(segments) == 0 {
-	//				continue
-	//			}
-	//			// Form time-contiguous batches sized for the number of workers.
-	//			groups := ComputeReplayBatchesWithWorkers(segments, DefaultLogStep, startTs, endTs, len(workers), true)
-	//			for _, group := range groups {
-	//				select {
-	//				case <-ctx.Done():
-	//					return
-	//				default:
-	//				}
-	//
-	//				slog.Info("Pushing down segments", "groupSize", len(group.Segments))
-	//
-	//				// Collect all segment IDs for worker assignment
-	//				segmentIDs := make([]int64, 0, len(group.Segments))
-	//				segmentMap := make(map[int64][]SegmentInfo)
-	//				for _, segment := range group.Segments {
-	//					segmentIDs = append(segmentIDs, segment.SegmentID)
-	//					segmentMap[segment.SegmentID] = append(segmentMap[segment.SegmentID], segment)
-	//				}
-	//
-	//				// Get worker assignments for all segments
-	//				mappings, err := q.workerDiscovery.GetWorkersForSegments(orgID, segmentIDs)
-	//				if err != nil {
-	//					slog.Error("failed to get worker assignments", "err", err)
-	//					continue
-	//				}
-	//
-	//				// Group segments by assigned worker
-	//				workerGroups := make(map[Worker][]SegmentInfo)
-	//				for _, mapping := range mappings {
-	//					segmentList := segmentMap[mapping.SegmentID]
-	//					workerGroups[mapping.Worker] = append(workerGroups[mapping.Worker], segmentList...)
-	//				}
-	//
-	//				var groupLeafChans []<-chan promql.Timestamped
-	//				for worker, workerSegments := range workerGroups {
-	//
-	//				}
-	//			}
-	//		}
-	//	}
-	//}
-	return nil, nil
+) (<-chan promql.Timestamped, error) {
+	workers, err := q.workerDiscovery.GetAllWorkers()
+	if err != nil {
+		slog.Error("failed to get all workers", "err", err)
+		return nil, fmt.Errorf("failed to get all workers: %w", err)
+	}
+	stepDuration := StepForQueryDuration(startTs, endTs)
+
+	out := make(chan promql.Timestamped, 1024)
+
+	go func() {
+		defer close(out)
+
+		// Partition by dateInt hours for storage listing.
+		dateIntHours := dateIntHoursRange(startTs, endTs, time.UTC)
+
+		for _, leaf := range queryPlan.Leaves {
+			for _, dih := range dateIntHours {
+				segments, err := q.lookupLogsSegments(ctx, dih, leaf, startTs, endTs, DefaultLogStep, orgID, q.mdb.ListLogSegmentsForQuery)
+				if err != nil {
+					slog.Error("failed to lookup log segments", "err", err, "dih", dih, "leaf", leaf)
+					return
+				}
+				if len(segments) == 0 {
+					continue
+				}
+				// Form time-contiguous batches sized for the number of workers.
+				groups := ComputeReplayBatchesWithWorkers(segments, DefaultLogStep, startTs, endTs, len(workers), true)
+				for _, group := range groups {
+					select {
+					case <-ctx.Done():
+						return
+					default:
+					}
+
+					slog.Info("Pushing down segments", "groupSize", len(group.Segments))
+
+					// Collect all segment IDs for worker assignment
+					segmentIDs := make([]int64, 0, len(group.Segments))
+					segmentMap := make(map[int64][]SegmentInfo)
+					for _, segment := range group.Segments {
+						segmentIDs = append(segmentIDs, segment.SegmentID)
+						segmentMap[segment.SegmentID] = append(segmentMap[segment.SegmentID], segment)
+					}
+
+					// Get worker assignments for all segments
+					mappings, err := q.workerDiscovery.GetWorkersForSegments(orgID, segmentIDs)
+					if err != nil {
+						slog.Error("failed to get worker assignments", "err", err)
+						continue
+					}
+
+					// Group segments by assigned worker
+					workerGroups := make(map[Worker][]SegmentInfo)
+					for _, mapping := range mappings {
+						segmentList := segmentMap[mapping.SegmentID]
+						workerGroups[mapping.Worker] = append(workerGroups[mapping.Worker], segmentList...)
+					}
+
+					var groupLeafChans []<-chan promql.Timestamped
+					for worker, workerSegments := range workerGroups {
+						req := PushDownRequest{
+							OrganizationID: orgID,
+							LogLeaf:        &leaf,
+							StartTs:        group.StartTs,
+							EndTs:          group.EndTs,
+							Segments:       workerSegments,
+							Step:           stepDuration,
+						}
+						ch, err := q.logsPushDown(ctx, worker, req)
+						if err != nil {
+							slog.Error("pushdown failed", "worker", worker, "err", err)
+							continue
+						}
+						groupLeafChans = append(groupLeafChans, ch)
+					}
+					// No channels for this group — skip.
+					if len(groupLeafChans) == 0 {
+						continue
+					}
+
+					// Merge this group's worker streams by timestamp
+					mergedGroup := promql.MergeSorted(ctx, 1024, groupLeafChans...)
+
+					// Forward group results into final output stream as they arrive.
+					for {
+						select {
+						case <-ctx.Done():
+							return
+						case res, ok := <-mergedGroup:
+							if !ok {
+								// Group done, proceed to next group.
+								goto nextGroup
+							}
+							out <- res
+						}
+					}
+				nextGroup:
+				}
+			}
+		}
+	}()
+	return out, nil
+}
+
+func (q *QuerierService) logsPushDown(
+	ctx context.Context,
+	worker Worker,
+	request PushDownRequest,
+) (<-chan promql.Timestamped, error) {
+	return PushDownStream[promql.Timestamped](ctx, worker, request,
+		func(typ string, data json.RawMessage) (promql.Timestamped, bool, error) {
+			var zero promql.Timestamped
+			if typ != "result" {
+				return zero, false, nil
+			}
+			var si promql.Exemplar
+			if err := json.Unmarshal(data, &si); err != nil {
+				return zero, false, err
+			}
+			return si, true, nil
+		})
 }
 
 type SegmentLookupFunc func(context.Context, lrdb.ListLogSegmentsForQueryParams) ([]lrdb.ListLogSegmentsForQueryRow, error)

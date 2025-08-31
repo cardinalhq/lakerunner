@@ -15,21 +15,15 @@
 package queryapi
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"github.com/cardinalhq/lakerunner/internal/buffet"
 	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/cardinalhq/lakerunner/promql"
 	"github.com/google/uuid"
 	"github.com/prometheus/common/model"
-	"io"
 	"log/slog"
-	"net/http"
-	"strings"
 	"time"
 )
 
@@ -193,129 +187,18 @@ func (q *QuerierService) metricsPushDown(
 	worker Worker,
 	request PushDownRequest,
 ) (<-chan promql.SketchInput, error) {
-	// --- Build request ---
-	u := fmt.Sprintf("http://%s:%d/api/v1/pushDown", worker.IP, worker.Port)
-
-	body, err := json.Marshal(request)
-	if err != nil {
-		return nil, fmt.Errorf("marshal PushDownRequest: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("new request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
-
-	// Use a client you already have if available (e.g., q.httpClient)
-	client := http.DefaultClient
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("worker request failed: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		defer func(Body io.ReadCloser) {
-			err := Body.Close()
-			if err != nil {
-				slog.Error("failed to close response body", "err", err)
+	return PushDownStream[promql.SketchInput](ctx, worker, request,
+		func(typ string, data json.RawMessage) (promql.SketchInput, bool, error) {
+			var zero promql.SketchInput
+			if typ != "result" {
+				return zero, false, nil
 			}
-		}(resp.Body)
-		return nil, fmt.Errorf("worker returned %s", resp.Status)
-	}
-
-	out := make(chan promql.SketchInput, 1024)
-
-	go func() {
-		defer close(out)
-		defer func(Body io.ReadCloser) {
-			err := Body.Close()
-			if err != nil {
-				slog.Error("failed to close response body", "err", err)
+			var si promql.SketchInput
+			if err := json.Unmarshal(data, &si); err != nil {
+				return zero, false, err
 			}
-		}(resp.Body)
-
-		type envelope struct {
-			Type string          `json:"type"`
-			Data json.RawMessage `json:"data"`
-		}
-
-		sc := bufio.NewScanner(resp.Body)
-		sc.Buffer(make([]byte, 0, 64*1024), 2*1024*1024) // grow if needed
-
-		var dataBuf strings.Builder
-
-		flush := func() bool {
-			if dataBuf.Len() == 0 {
-				return true
-			}
-			payload := dataBuf.String()
-			dataBuf.Reset()
-
-			var env envelope
-			if err := json.Unmarshal([]byte(payload), &env); err != nil {
-				slog.Error("SSE json unmarshal failed", "err", err)
-				return false
-			}
-
-			switch env.Type {
-			case "result":
-				var si promql.SketchInput
-				if err := json.Unmarshal(env.Data, &si); err != nil {
-					slog.Error("SSE data unmarshal failed", "err", err)
-					return false
-				}
-				select {
-				case <-ctx.Done():
-					return false
-				case out <- si:
-				}
-			case "done":
-				return false
-			default:
-				// ignore unknown types
-			}
-			return true
-		}
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-
-			if !sc.Scan() {
-				// Scanner ended (EOF or error). Flush any pending data once.
-				_ = flush()
-				if err := sc.Err(); err != nil && !errors.Is(err, io.EOF) {
-					slog.Error("SSE scanner error", "err", err)
-				}
-				return
-			}
-
-			line := sc.Text()
-			if line == "" {
-				// blank line → event boundary
-				if !flush() {
-					return
-				}
-				continue
-			}
-
-			// Only collect "data:" lines (ignore other SSE fields)
-			if strings.HasPrefix(line, "data:") {
-				// Trim "data:" prefix & space
-				chunk := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-				if dataBuf.Len() > 0 {
-					dataBuf.WriteByte('\n')
-				}
-				dataBuf.WriteString(chunk)
-			}
-		}
-	}()
-
-	return out, nil
+			return si, true, nil
+		})
 }
 
 // shiftTimestamps returns a channel that forwards every SketchInput from `in`

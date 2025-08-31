@@ -57,12 +57,12 @@ type SketchInput struct {
 	SketchTags     SketchTags `json:"sketchTags"`
 }
 
-type DataPoint struct {
+type Exemplar struct {
 	Timestamp int64          `json:"timestamp"`
 	Tags      map[string]any `json:"tags"`
 }
 
-func (dp DataPoint) GetTimestamp() int64 { return dp.Timestamp }
+func (ex Exemplar) GetTimestamp() int64 { return ex.Timestamp }
 
 func (si SketchInput) GetTimestamp() int64 { return si.Timestamp }
 

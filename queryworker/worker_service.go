@@ -131,7 +131,7 @@ func NewWorkerService(
 	}
 }
 
-func sketchInputMapper(request queryapi.PushDownRequest, cols []string, row *sql.Rows) (promql.SketchInput, error) {
+func sketchInputMapper(request queryapi.PushDownRequest, cols []string, row *sql.Rows) (promql.Timestamped, error) {
 	vals := make([]interface{}, len(cols))
 	ptrs := make([]interface{}, len(cols))
 	for i := range vals {
@@ -195,6 +195,37 @@ func sketchInputMapper(request queryapi.PushDownRequest, cols []string, row *sql
 	}, nil
 }
 
+func exemplarMapper(request queryapi.PushDownRequest, cols []string, row *sql.Rows) (promql.Timestamped, error) {
+	vals := make([]interface{}, len(cols))
+	ptrs := make([]interface{}, len(cols))
+	for i := range vals {
+		ptrs[i] = &vals[i]
+	}
+
+	tags := map[string]any{}
+
+	if err := row.Scan(ptrs...); err != nil {
+		slog.Error("failed to scan row", "err", err)
+		return promql.Exemplar{}, fmt.Errorf("failed to scan row: %w", err)
+	}
+
+	exemplar := promql.Exemplar{}
+
+	for i, col := range cols {
+		switch col {
+		case "_cardinalhq.timestamp":
+			exemplar.Timestamp = vals[i].(int64)
+		default:
+			if vals[i] != nil {
+				tags[col] = vals[i]
+			}
+		}
+	}
+
+	exemplar.Tags = tags
+	return exemplar, nil
+}
+
 // ServeHttp serves SSE with merged, sorted points from cache+S3.
 func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var req queryapi.PushDownRequest
@@ -207,7 +238,18 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	workerSql := req.BaseExpr.ToWorkerSQL(req.Step)
+	var workerSql = ""
+	var rowMapper RowMapper[promql.Timestamped]
+	if req.BaseExpr != nil {
+		workerSql = req.BaseExpr.ToWorkerSQL(req.Step)
+		rowMapper = sketchInputMapper
+	} else if req.LogLeaf != nil {
+		workerSql = req.LogLeaf.ToWorkerSQL(req.Step)
+		rowMapper = exemplarMapper
+	} else {
+		http.Error(w, "no leaf to evaluate", http.StatusBadRequest)
+		return
+	}
 
 	// group request.segments by organizationId and instanceNum
 	segmentsByOrg := make(map[uuid.UUID]map[int16][]queryapi.SegmentInfo)
@@ -225,7 +267,7 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	workerSql = strings.ReplaceAll(workerSql, "{start}", fmt.Sprintf("%d", req.StartTs))
 	workerSql = strings.ReplaceAll(workerSql, "{end}", fmt.Sprintf("%d", req.EndTs))
 
-	responseChannel, err := EvaluatePushDown[promql.SketchInput](r.Context(), ws.CM, req, workerSql, ws.S3GlobSize, sketchInputMapper)
+	responseChannel, err := EvaluatePushDown[promql.Timestamped](r.Context(), ws.CM, req, workerSql, ws.S3GlobSize, rowMapper)
 	if err != nil {
 		slog.Error("failed to query cache", "error", err)
 		http.Error(w, "query failed: "+err.Error(), http.StatusInternalServerError)
