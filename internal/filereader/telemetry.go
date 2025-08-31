@@ -22,6 +22,8 @@ import (
 )
 
 var (
+	rowsInCounter      otelmetric.Int64Counter
+	rowsOutCounter     otelmetric.Int64Counter
 	rowsDroppedCounter otelmetric.Int64Counter
 )
 
@@ -29,11 +31,27 @@ func init() {
 	meter := otel.Meter("github.com/cardinalhq/lakerunner/internal/filereader")
 
 	var err error
+	rowsInCounter, err = meter.Int64Counter(
+		"lakerunner.reader.rows.in",
+		otelmetric.WithDescription("Number of rows read by readers from their input source"),
+	)
+	if err != nil {
+		panic(fmt.Errorf("failed to create rows.in counter: %w", err))
+	}
+
+	rowsOutCounter, err = meter.Int64Counter(
+		"lakerunner.reader.rows.out",
+		otelmetric.WithDescription("Number of rows output by readers to downstream processing"),
+	)
+	if err != nil {
+		panic(fmt.Errorf("failed to create rows.out counter: %w", err))
+	}
+
 	rowsDroppedCounter, err = meter.Int64Counter(
-		"lakerunner.reader.rows_dropped",
+		"lakerunner.reader.rows.dropped",
 		otelmetric.WithDescription("Number of rows dropped by readers due to invalid data"),
 	)
 	if err != nil {
-		panic(fmt.Errorf("failed to create rows_dropped counter: %w", err))
+		panic(fmt.Errorf("failed to create rows.dropped counter: %w", err))
 	}
 }

@@ -15,11 +15,14 @@
 package filereader
 
 import (
+	"context"
 	"fmt"
 	"io"
 
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
+	"go.opentelemetry.io/otel/attribute"
+	otelmetric "go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
@@ -81,6 +84,11 @@ func (r *ProtoLogsReader) Next() (*Batch, error) {
 			return nil, err
 		}
 
+		// Track log records read from proto
+		rowsInCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+			attribute.String("reader", "ProtoLogsReader"),
+		))
+
 		batchRow := batch.AddRow()
 		for k, v := range row {
 			batchRow[k] = v
@@ -90,6 +98,10 @@ func (r *ProtoLogsReader) Next() (*Batch, error) {
 	// Update row count with successfully read rows
 	if batch.Len() > 0 {
 		r.rowCount += int64(batch.Len())
+		// Track rows output to downstream
+		rowsOutCounter.Add(context.Background(), int64(batch.Len()), otelmetric.WithAttributes(
+			attribute.String("reader", "ProtoLogsReader"),
+		))
 		return batch, nil
 	}
 

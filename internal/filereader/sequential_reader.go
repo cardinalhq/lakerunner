@@ -15,9 +15,13 @@
 package filereader
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
+
+	"go.opentelemetry.io/otel/attribute"
+	otelmetric "go.opentelemetry.io/otel/metric"
 )
 
 // SequentialReader reads from multiple readers sequentially in the order provided.
@@ -74,8 +78,19 @@ func (sr *SequentialReader) Next() (*Batch, error) {
 			return nil, fmt.Errorf("error reading from reader %d: %w", sr.currentIndex, err)
 		}
 
+		// Track rows read from underlying readers
+		rowsInCounter.Add(context.Background(), int64(batch.Len()), otelmetric.WithAttributes(
+			attribute.String("reader", "SequentialReader"),
+		))
+
 		// Update our row count with successfully read rows
 		sr.rowCount += int64(batch.Len())
+
+		// Track rows output to downstream
+		rowsOutCounter.Add(context.Background(), int64(batch.Len()), otelmetric.WithAttributes(
+			attribute.String("reader", "SequentialReader"),
+		))
+
 		return batch, nil
 	}
 

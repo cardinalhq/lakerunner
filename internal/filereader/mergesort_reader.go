@@ -15,9 +15,13 @@
 package filereader
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
+
+	"go.opentelemetry.io/otel/attribute"
+	otelmetric "go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 )
@@ -134,6 +138,13 @@ func (or *MergesortReader) advance(state *mergesortReaderState) error {
 			return err
 		}
 
+		// Track rows read from underlying readers
+		if batch != nil {
+			rowsInCounter.Add(context.Background(), int64(batch.Len()), otelmetric.WithAttributes(
+				attribute.String("reader", "MergesortReader"),
+			))
+		}
+
 		if batch.Len() == 0 {
 			pipeline.ReturnBatch(batch)
 			state.done = true
@@ -215,6 +226,10 @@ func (or *MergesortReader) Next() (*Batch, error) {
 	// Update row count with successfully read rows
 	if batch.Len() > 0 {
 		or.rowCount += int64(batch.Len())
+		// Track rows output to downstream
+		rowsOutCounter.Add(context.Background(), int64(batch.Len()), otelmetric.WithAttributes(
+			attribute.String("reader", "MergesortReader"),
+		))
 		return batch, nil
 	}
 

@@ -118,6 +118,11 @@ func (r *ParquetRawReader) Next() (*Batch, error) {
 		return nil, io.EOF
 	}
 
+	// Track rows read from parquet
+	rowsInCounter.Add(context.Background(), int64(n), otelmetric.WithAttributes(
+		attribute.String("reader", "ParquetRawReader"),
+	))
+
 	batch := pipeline.GetBatch()
 
 	// Transfer ownership instead of copying to reduce memory pressure
@@ -176,6 +181,11 @@ func (r *ParquetRawReader) Next() (*Batch, error) {
 
 	// Only increment rowCount for successfully processed rows
 	r.rowCount += int64(validRows)
+
+	// Track rows output to downstream
+	rowsOutCounter.Add(context.Background(), int64(validRows), otelmetric.WithAttributes(
+		attribute.String("reader", "ParquetRawReader"),
+	))
 
 	// If underlying reader hit EOF, mark as exhausted for next call
 	if err == io.EOF {

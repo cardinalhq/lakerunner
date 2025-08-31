@@ -110,6 +110,10 @@ func (r *IngestProtoMetricsReader) Next() (*Batch, error) {
 	// Update row count with successfully read rows
 	if batch.Len() > 0 {
 		r.rowCount += int64(batch.Len())
+		// Track rows output to downstream
+		rowsOutCounter.Add(context.Background(), int64(batch.Len()), otelmetric.WithAttributes(
+			attribute.String("reader", "IngestProtoMetricsReader"),
+		))
 		return batch, nil
 	}
 
@@ -136,6 +140,10 @@ func (r *IngestProtoMetricsReader) getMetricRow(row Row) error {
 				datapointCount := r.getDatapointCount(metric)
 
 				if r.datapointIndex < datapointCount {
+					// Track datapoints read from proto
+					rowsInCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+						attribute.String("reader", "IngestProtoMetricsReader"),
+					))
 					dropped, err := r.buildDatapointRow(row, rm, sm, metric, r.datapointIndex)
 					r.datapointIndex++
 

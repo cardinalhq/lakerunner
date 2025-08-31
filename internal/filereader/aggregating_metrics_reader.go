@@ -468,6 +468,11 @@ func (ar *AggregatingMetricsReader) readNextBatchFromUnderlying() (*Batch, error
 		return batch, err
 	}
 
+	// Track rows read from underlying reader
+	rowsInCounter.Add(context.Background(), int64(batch.Len()), otelmetric.WithAttributes(
+		attribute.String("reader", "AggregatingMetricsReader"),
+	))
+
 	// Truncate timestamps in all rows to aggregation period
 	for i := range batch.Len() {
 		row := batch.Get(i)
@@ -557,6 +562,10 @@ func (ar *AggregatingMetricsReader) Next() (*Batch, error) {
 
 			// Return batch if we have enough rows
 			if batch.Len() >= ar.batchSize {
+				// Track rows output to downstream
+				rowsOutCounter.Add(context.Background(), int64(batch.Len()), otelmetric.WithAttributes(
+					attribute.String("reader", "AggregatingMetricsReader"),
+				))
 				return batch, nil
 			}
 
@@ -596,6 +605,10 @@ func (ar *AggregatingMetricsReader) Next() (*Batch, error) {
 						pipeline.ReturnBatch(batch)
 						return nil, io.EOF
 					}
+					// Track rows output to downstream
+					rowsOutCounter.Add(context.Background(), int64(batch.Len()), otelmetric.WithAttributes(
+						attribute.String("reader", "AggregatingMetricsReader"),
+					))
 					return batch, nil
 				}
 				pipeline.ReturnBatch(batch)
@@ -610,6 +623,10 @@ func (ar *AggregatingMetricsReader) Next() (*Batch, error) {
 
 		// If we have any aggregated rows, return them
 		if batch.Len() > 0 {
+			// Track rows output to downstream
+			rowsOutCounter.Add(context.Background(), int64(batch.Len()), otelmetric.WithAttributes(
+				attribute.String("reader", "AggregatingMetricsReader"),
+			))
 			return batch, nil
 		}
 
