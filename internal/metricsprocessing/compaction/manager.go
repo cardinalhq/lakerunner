@@ -27,6 +27,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
+	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -66,7 +67,7 @@ func GetConfigFromEnv() config {
 	return config{
 		MaxAgeSeconds:        maxAge,
 		BatchCount:           batchCount,
-		DefaultTargetRecords: 40_000,
+		DefaultTargetRecords: metricsprocessing.DefaultRecordsPerFileCompaction,
 	}
 }
 

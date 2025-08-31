@@ -29,7 +29,6 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
-	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -287,17 +286,15 @@ func replaceCompactedSegments(
 
 	// Collect fingerprints per file
 	for i, result := range results {
-		var fingerprints []int64
-		if metadata, ok := result.Metadata.(factories.MetricsFileStats); ok {
-			fingerprints = metadata.Fingerprints
-		} else {
+		filestats, err := metricsprocessing.ExtractFileMetadata(result, ll)
+		if err != nil {
 			ll.Error("Missing metadata for compacted segment - cannot proceed",
 				"segment_id", segmentIDs[i],
 				"organization_id", workItem.OrganizationID,
 				"dateint", workItem.Dateint,
 				"frequency_ms", workItem.FrequencyMs,
 				"instance_num", workItem.InstanceNum)
-			return fmt.Errorf("missing metadata for segment %d", segmentIDs[i])
+			return fmt.Errorf("failed to extract metadata for segment %d: %w", segmentIDs[i], err)
 		}
 
 		newRecords[i] = lrdb.ReplaceMetricSegsNew{
@@ -306,11 +303,10 @@ func replaceCompactedSegments(
 			EndTs:        et.Time.UTC().UnixMilli(),
 			RecordCount:  result.RecordCount,
 			FileSize:     result.FileSize,
-			Fingerprints: fingerprints,
+			Fingerprints: filestats.Fingerprints,
 		}
 	}
 
-	// Use the new CompactMetricSegs function
 	err := mdb.CompactMetricSegs(ctx, lrdb.ReplaceMetricSegsParams{
 		OrganizationID: workItem.OrganizationID,
 		Dateint:        workItem.Dateint,

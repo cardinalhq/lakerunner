@@ -148,3 +148,107 @@ func (q *Store) ReplaceMetricSegs(ctx context.Context, args ReplaceMetricSegsPar
 		return errs.ErrorOrNil()
 	})
 }
+
+type RollupMetricSegsParams struct {
+	// Source segments to mark as rolled up (don't delete them)
+	SourceSegments struct {
+		OrganizationID uuid.UUID
+		Dateint        int32
+		FrequencyMs    int32
+		InstanceNum    int16
+		SlotID         int32
+		SegmentIDs     []int64
+	}
+	// Target segments to replace (same as ReplaceMetricSegsParams)
+	TargetReplacement ReplaceMetricSegsParams
+}
+
+// RollupMetricSegs marks source segments as rolled up and atomically replaces target segments.
+// This is used during rollup operations where we need to:
+// 1. Mark source frequency segments as rolled up (but keep them)
+// 2. Replace any existing target frequency segments with new rolled-up data
+func (q *Store) RollupMetricSegs(ctx context.Context, args RollupMetricSegsParams) error {
+	// Ensure partitions exist
+	if err := q.ensureMetricSegmentPartition(ctx, args.SourceSegments.OrganizationID, args.SourceSegments.Dateint); err != nil {
+		return fmt.Errorf("ensure source partition: %w", err)
+	}
+	if err := q.ensureMetricSegmentPartition(ctx, args.TargetReplacement.OrganizationID, args.TargetReplacement.Dateint); err != nil {
+		return fmt.Errorf("ensure target partition: %w", err)
+	}
+
+	// Prepare target segment replacement (same logic as ReplaceMetricSegs)
+	oldItems := make([]BatchDeleteMetricSegsParams, len(args.TargetReplacement.OldRecords))
+	for i, oldRec := range args.TargetReplacement.OldRecords {
+		oldItems[i] = BatchDeleteMetricSegsParams{
+			OrganizationID: args.TargetReplacement.OrganizationID,
+			Dateint:        args.TargetReplacement.Dateint,
+			FrequencyMs:    args.TargetReplacement.FrequencyMs,
+			SegmentID:      oldRec.SegmentID,
+			InstanceNum:    args.TargetReplacement.InstanceNum,
+			SlotID:         oldRec.SlotID,
+		}
+	}
+
+	newItems := make([]BatchInsertMetricSegsParams, len(args.TargetReplacement.NewRecords))
+	for i, newRec := range args.TargetReplacement.NewRecords {
+		newItems[i] = BatchInsertMetricSegsParams{
+			OrganizationID: args.TargetReplacement.OrganizationID,
+			Dateint:        args.TargetReplacement.Dateint,
+			IngestDateint:  args.TargetReplacement.IngestDateint,
+			FrequencyMs:    args.TargetReplacement.FrequencyMs,
+			SegmentID:      newRec.SegmentID,
+			InstanceNum:    args.TargetReplacement.InstanceNum,
+			SlotID:         args.TargetReplacement.SlotID,
+			StartTs:        newRec.StartTs,
+			EndTs:          newRec.EndTs,
+			RecordCount:    newRec.RecordCount,
+			FileSize:       newRec.FileSize,
+			Published:      args.TargetReplacement.Published,
+			Rolledup:       args.TargetReplacement.Rolledup,
+			CreatedBy:      args.TargetReplacement.CreatedBy,
+			Fingerprints:   newRec.Fingerprints,
+			SortVersion:    args.TargetReplacement.SortVersion,
+			SlotCount:      args.TargetReplacement.SlotCount,
+		}
+	}
+
+	var errs *multierror.Error
+	return q.execTx(ctx, func(s *Store) error {
+		// Mark source segments as rolled up (don't delete them)
+		if len(args.SourceSegments.SegmentIDs) > 0 {
+			if err := s.MarkMetricSegsRolledupByKeys(ctx, MarkMetricSegsRolledupByKeysParams{
+				OrganizationID: args.SourceSegments.OrganizationID,
+				Dateint:        args.SourceSegments.Dateint,
+				FrequencyMs:    args.SourceSegments.FrequencyMs,
+				InstanceNum:    args.SourceSegments.InstanceNum,
+				SegmentIds:     args.SourceSegments.SegmentIDs,
+			}); err != nil {
+				return fmt.Errorf("mark source segments as rolled up: %w", err)
+			}
+		}
+
+		// Delete existing target segments
+		if len(oldItems) > 0 {
+			result := s.BatchDeleteMetricSegs(ctx, oldItems)
+			result.Exec(func(i int, err error) {
+				if err != nil {
+					err = fmt.Errorf("error deleting old target segment %d, keys %v: %w", i, oldItems[i], err)
+					errs = multierror.Append(errs, err)
+				}
+			})
+		}
+
+		// Insert new target segments
+		if errs.ErrorOrNil() == nil && len(newItems) > 0 {
+			result := s.BatchInsertMetricSegs(ctx, newItems)
+			result.Exec(func(i int, err error) {
+				if err != nil {
+					err = fmt.Errorf("error inserting new target segment %d, keys %v: %w", i, newItems[i], err)
+					errs = multierror.Append(errs, err)
+				}
+			})
+		}
+
+		return errs.ErrorOrNil()
+	})
+}

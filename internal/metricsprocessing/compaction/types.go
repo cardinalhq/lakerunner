@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	defaultRPFEstimate = int64(40_000)
+	defaultRPFEstimate = metricsprocessing.DefaultRecordsPerFileCompaction
 )
 
 type input struct {

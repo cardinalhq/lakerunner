@@ -26,18 +26,19 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
+	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 type rollupStore interface {
+	s3helper.ObjectCleanupStore
 	ClaimMetricRollupWork(ctx context.Context, params lrdb.ClaimMetricRollupWorkParams) ([]lrdb.ClaimMetricRollupWorkRow, error)
 	DeleteMetricRollupWork(ctx context.Context, params lrdb.DeleteMetricRollupWorkParams) error
 	ReleaseMetricRollupWork(ctx context.Context, params lrdb.ReleaseMetricRollupWorkParams) error
 	TouchMetricRollupWork(ctx context.Context, params lrdb.TouchMetricRollupWorkParams) error
 	GetMetricSegsForRollup(ctx context.Context, params lrdb.GetMetricSegsForRollupParams) ([]lrdb.MetricSeg, error)
-	BatchMarkMetricSegsRolledup(ctx context.Context, arg []lrdb.BatchMarkMetricSegsRolledupParams) *lrdb.BatchMarkMetricSegsRolledupBatchResults
-	ReplaceMetricSegs(ctx context.Context, args lrdb.ReplaceMetricSegsParams) error
+	RollupMetricSegs(ctx context.Context, args lrdb.RollupMetricSegsParams) error
 	PutMetricCompactionWork(ctx context.Context, arg lrdb.PutMetricCompactionWorkParams) error
 	PutMetricRollupWork(ctx context.Context, arg lrdb.PutMetricRollupWorkParams) error
 }

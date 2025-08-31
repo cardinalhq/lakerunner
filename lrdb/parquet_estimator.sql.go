@@ -14,8 +14,8 @@ import (
 const logSegEstimator = `-- name: LogSegEstimator :many
 WITH params AS (
   SELECT 
-    1_000_000::float8 AS target_bytes,
-    15_000::float8 AS estimated_overhead_per_file  -- Based on observed 10-18K overhead
+    1000000::float8 AS target_bytes,
+    15000::float8 AS estimated_overhead_per_file  -- Based on observed 10-18K overhead
 ),
 stats AS (
   SELECT
@@ -93,8 +93,8 @@ func (q *Queries) LogSegEstimator(ctx context.Context, arg LogSegEstimatorParams
 const metricSegEstimator = `-- name: MetricSegEstimator :many
 WITH params AS (
   SELECT 
-    1_000_000::float8 AS target_bytes,
-    15_000::float8 AS estimated_overhead_per_file  -- Based on observed 10-18K overhead
+    1000000::float8 AS target_bytes,
+    15000::float8 AS estimated_overhead_per_file  -- Based on observed 10-18K overhead
 ),
 stats AS (
   SELECT
@@ -177,8 +177,8 @@ func (q *Queries) MetricSegEstimator(ctx context.Context, arg MetricSegEstimator
 const traceSegEstimator = `-- name: TraceSegEstimator :many
 WITH params AS (
   SELECT 
-    1_000_000::float8 AS target_bytes,
-    15_000::float8 AS estimated_overhead_per_file  -- Based on observed 10-18K overhead
+    1000000::float8 AS target_bytes,
+    15000::float8 AS estimated_overhead_per_file  -- Based on observed 10-18K overhead
 ),
 stats AS (
   SELECT

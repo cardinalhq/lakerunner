@@ -522,7 +522,7 @@ VALUES (
   $17,
   false                  -- new segments are not compacted
 )
-ON CONFLICT (organization_id, dateint, frequency_ms, segment_id, instance_num)
+ON CONFLICT (organization_id, dateint, frequency_ms, segment_id, instance_num, slot_id, slot_count)
 DO NOTHING
 `
 

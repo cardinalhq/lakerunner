@@ -9,6 +9,16 @@ WHERE organization_id = @organization_id
   AND segment_id      = ANY(@segment_ids::bigint[])
   AND compacted       = false;
 
+-- name: MarkMetricSegsRolledupByKeys :exec
+UPDATE metric_seg
+SET rolledup = true
+WHERE organization_id = @organization_id
+  AND dateint         = @dateint
+  AND frequency_ms    = @frequency_ms
+  AND instance_num    = @instance_num
+  AND segment_id      = ANY(@segment_ids::bigint[])
+  AND rolledup        = false;
+
 -- name: InsertCompactedMetricSeg :batchexec
 INSERT INTO metric_seg (
   organization_id, dateint, frequency_ms, segment_id, instance_num,
@@ -36,5 +46,5 @@ VALUES (
   @slot_count,
   false                  -- new segments are not compacted
 )
-ON CONFLICT (organization_id, dateint, frequency_ms, segment_id, instance_num)
+ON CONFLICT (organization_id, dateint, frequency_ms, segment_id, instance_num, slot_id, slot_count)
 DO NOTHING;               -- idempotent replays

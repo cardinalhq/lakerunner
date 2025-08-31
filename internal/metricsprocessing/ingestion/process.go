@@ -25,6 +25,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
@@ -45,6 +46,18 @@ func ProcessBatch(
 	rpfEstimate int64,
 	exemplarProcessor *exemplar.Processor,
 ) error {
+	// Generate batch ID and enhance logger
+	batchID := idgen.GenerateShortBase32ID()
+	ll = ll.With(slog.String("batchID", batchID))
+
+	// Log items we're processing once at the top
+	itemIDs := make([]string, len(items))
+	for i, item := range items {
+		itemIDs[i] = item.ID.String()
+	}
+	ll.Debug("Processing ingestion batch",
+		slog.Int("itemCount", len(items)),
+		slog.Any("itemIDs", itemIDs))
 	// Prepare input
 	ingestionInput := input{
 		Items:             items,

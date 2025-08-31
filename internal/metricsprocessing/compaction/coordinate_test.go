@@ -78,7 +78,11 @@ func TestReplaceCompactedSegments_WithCompactMetricSegs(t *testing.T) {
 			FileName:    "/tmp/compacted1.parquet",
 			RecordCount: 1500,
 			FileSize:    40000,
-			Metadata:    factories.MetricsFileStats{Fingerprints: []int64{789, 101112}},
+			Metadata: factories.MetricsFileStats{
+				Fingerprints: []int64{789, 101112},
+				FirstTS:      now.UnixMilli(),
+				LastTS:       now.Add(time.Hour).UnixMilli() - 1,
+			},
 		},
 	}
 

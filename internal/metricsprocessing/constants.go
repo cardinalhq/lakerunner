@@ -14,19 +14,10 @@
 
 package metricsprocessing
 
-import (
-	"github.com/google/uuid"
-)
+const (
+	// DefaultRecordsPerFileCompaction is the default records per file for compaction operations
+	DefaultRecordsPerFileCompaction = int64(40_000)
 
-// CompactionUploadParams contains parameters for uploading compacted metric files.
-type CompactionUploadParams struct {
-	OrganizationID uuid.UUID
-	InstanceNum    int16
-	Dateint        int32
-	FrequencyMs    int32
-	SlotID         int32
-	SlotCount      int32
-	IngestDateint  int32
-	CollectorName  string
-	Bucket         string
-}
+	// DefaultRecordsPerFileRollup is the default records per file for rollup operations
+	DefaultRecordsPerFileRollup = int64(10_000)
+)

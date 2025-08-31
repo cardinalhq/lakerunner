@@ -22,6 +22,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -37,6 +38,19 @@ func processBatch(
 	if len(claimedWork) == 0 {
 		return nil
 	}
+
+	// Generate batch ID and enhance logger
+	batchID := idgen.GenerateShortBase32ID()
+	ll = ll.With(slog.String("batchID", batchID))
+
+	// Log work items we're processing once at the top
+	workItemIDs := make([]int64, len(claimedWork))
+	for i, work := range claimedWork {
+		workItemIDs[i] = work.ID
+	}
+	ll.Debug("Processing compaction batch",
+		slog.Int("workItemCount", len(claimedWork)),
+		slog.Any("workItemIDs", workItemIDs))
 
 	// Safety check: All work items in a batch must have identical grouping fields
 	firstItem := claimedWork[0]

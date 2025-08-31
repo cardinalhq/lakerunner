@@ -1,0 +1,60 @@
+// Copyright (C) 2025 CardinalHQ, Inc
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as
+// published by the Free Software Foundation, version 3.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program. If not, see <http://www.gnu.org/licenses/>.
+
+package rollup
+
+import "slices"
+
+var (
+	// RollupTo defines which frequency each source frequency should roll up to.
+	// Key is the source frequency, value is the target frequency to roll up to.
+	RollupTo = map[int32]int32{
+		10_000:    60_000,    // 10sec -> 1min
+		60_000:    300_000,   // 1min -> 5min
+		300_000:   1_200_000, // 5min -> 20min
+		1_200_000: 3_600_000, // 20min -> 1hour
+	}
+
+	frequencyPriorities = map[int32]int32{
+		10_000:    800,
+		60_000:    600,
+		300_000:   400,
+		1_200_000: 200,
+		3_600_000: 0,
+	}
+)
+
+func GetAllFrequencies() []int32 {
+	freqSet := make(map[int32]bool)
+
+	for sourceFreq, targetFreq := range RollupTo {
+		freqSet[sourceFreq] = true
+		freqSet[targetFreq] = true
+	}
+
+	var frequencies []int32
+	for freq := range freqSet {
+		frequencies = append(frequencies, freq)
+	}
+
+	slices.Sort(frequencies)
+	return frequencies
+}
+
+func GetFrequencyPriority(frequencyMs int32) int32 {
+	if priority, exists := frequencyPriorities[frequencyMs]; exists {
+		return priority
+	}
+	return 0
+}

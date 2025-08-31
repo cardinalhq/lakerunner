@@ -19,18 +19,15 @@ package metricsprocessing
 import (
 	"context"
 	"fmt"
+	"github.com/google/uuid"
 	"log/slog"
 	"math"
-	"time"
-
-	"github.com/google/uuid"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
-	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 	"github.com/cardinalhq/lakerunner/lrdb"
@@ -186,78 +183,46 @@ func uploadSingleMetricResult(
 	segmentID := s3helper.GenerateID()
 
 	// Extract dateint and hour from actual timestamp data
-	var dateint int32
-	var hour int16
-	if stats, ok := result.Metadata.(factories.MetricsFileStats); ok && stats.FirstTS > 0 {
-		// Convert milliseconds to seconds, then extract date and hour
-		t := time.Unix(stats.FirstTS/1000, 0).UTC()
-		dateint = int32(t.Year()*10000 + int(t.Month())*100 + t.Day())
-		hour = int16(t.Hour())
-	} else {
-		// No valid timestamps - this shouldn't happen if validation worked correctly
-		return UploadResult{}, fmt.Errorf("no valid timestamps in result metadata - cannot determine dateint/hour")
+	filestats, err := ExtractFileMetadata(result, ll)
+	if err != nil {
+		return UploadResult{}, fmt.Errorf("failed to extract file metadata: %w", err)
 	}
 
 	orgUUID, err := uuid.Parse(params.OrganizationID)
 	if err != nil {
 		return UploadResult{}, fmt.Errorf("invalid organization ID: %w", err)
 	}
-	objID := helpers.MakeDBObjectID(orgUUID, params.CollectorName, dateint, hour, segmentID, "metrics")
+	objID := helpers.MakeDBObjectID(orgUUID, params.CollectorName, filestats.Dateint, filestats.Hour, segmentID, "metrics")
 
 	// Upload to S3
 	if err := s3helper.UploadS3Object(ctx, s3client, params.Bucket, objID, result.FileName); err != nil {
 		return UploadResult{}, fmt.Errorf("uploading file to S3: %w", err)
 	}
 
-	// Extract fingerprints and timestamps from result metadata
-	var fingerprints []int64
-	var startTs, endTs int64
-	if stats, ok := result.Metadata.(factories.MetricsFileStats); ok {
-		fingerprints = stats.Fingerprints
-		startTs = stats.FirstTS
-		// Database expects start-inclusive, end-exclusive range [start, end)
-		// So endTs should be LastTS + 1 to include the last timestamp
-		endTs = stats.LastTS + 1
-
-		// Validate timestamp range
-		if startTs == 0 || stats.LastTS == 0 || startTs > stats.LastTS {
-			ll.Error("Invalid timestamp range in metrics file stats",
-				slog.Int64("startTs", startTs),
-				slog.Int64("lastTs", stats.LastTS),
-				slog.Int64("endTs", endTs),
-				slog.Int64("recordCount", result.RecordCount))
-			return UploadResult{}, fmt.Errorf("invalid timestamp range: startTs=%d, lastTs=%d", startTs, stats.LastTS)
-		}
-
-		ll.Debug("Metric segment stats",
-			slog.String("objectID", objID),
-			slog.Int64("segmentID", segmentID),
-			slog.Int("fingerprintCount", len(fingerprints)),
-			slog.Int64("startTs", startTs),
-			slog.Int64("endTs", endTs))
-	} else {
-		ll.Error("Failed to extract MetricsFileStats from result metadata",
-			slog.String("metadataType", fmt.Sprintf("%T", result.Metadata)))
-		return UploadResult{}, fmt.Errorf("missing or invalid MetricsFileStats in result metadata")
-	}
+	ll.Debug("Metric segment stats",
+		slog.String("objectID", objID),
+		slog.Int64("segmentID", segmentID),
+		slog.Int("fingerprintCount", len(filestats.Fingerprints)),
+		slog.Int64("startTs", filestats.StartTs),
+		slog.Int64("endTs", filestats.EndTs))
 
 	// Insert segment record
 	err = mdb.InsertMetricSegment(ctx, lrdb.InsertMetricSegmentParams{
 		OrganizationID: orgUUID,
 		FrequencyMs:    params.FrequencyMs,
-		Dateint:        dateint,
+		Dateint:        filestats.Dateint,
 		IngestDateint:  params.IngestDateint,
 		SegmentID:      segmentID,
 		InstanceNum:    params.InstanceNum,
 		SlotID:         0,
 		SlotCount:      1,
-		StartTs:        startTs,
-		EndTs:          endTs,
+		StartTs:        filestats.StartTs,
+		EndTs:          filestats.EndTs,
 		RecordCount:    result.RecordCount,
 		FileSize:       result.FileSize,
 		Published:      true,
 		CreatedBy:      params.CreatedBy,
-		Fingerprints:   fingerprints,
+		Fingerprints:   filestats.Fingerprints,
 		SortVersion:    lrdb.CurrentMetricSortVersion,
 	})
 	if err != nil {
@@ -270,9 +235,9 @@ func uploadSingleMetricResult(
 
 	return UploadResult{
 		SegmentID:   segmentID,
-		DateInt:     dateint,
-		StartTs:     startTs,
-		EndTs:       endTs,
+		DateInt:     filestats.Dateint,
+		StartTs:     filestats.StartTs,
+		EndTs:       filestats.EndTs,
 		RecordCount: result.RecordCount,
 	}, nil
 }
