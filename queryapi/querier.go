@@ -19,13 +19,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/cardinalhq/oteltools/pkg/dateutils"
+	"github.com/google/uuid"
 	"io"
 	"log/slog"
 	"net/http"
 	"strings"
-
-	"github.com/cardinalhq/oteltools/pkg/dateutils"
-	"github.com/google/uuid"
 
 	"github.com/cardinalhq/lakerunner/promql"
 	// import your logql package (adjust path if different)
@@ -37,82 +36,57 @@ type queryPayload struct {
 	S       string `json:"s"`
 	E       string `json:"e"`
 	Q       string `json:"q"`
-	Reverse *bool  `json:"reverse,omitempty"`
+	Reverse bool   `json:"reverse,omitempty"`
+	Limit   int    `json:"limit,omitempty"`
+
+	// derived fields
+	OrgUUID uuid.UUID `json:"-"`
+	StartTs int64     `json:"-"`
+	EndTs   int64     `json:"-"`
 }
 
-// ---------------- Shared helpers ----------------
+func readQueryPayload(w http.ResponseWriter, r *http.Request) *queryPayload {
+	if r.Method != http.MethodPost {
+		http.Error(w, "only POST method is allowed", http.StatusMethodNotAllowed)
+		return nil
+	}
+	ct := r.Header.Get("Content-Type")
+	body, _ := io.ReadAll(r.Body)
+	defer r.Body.Close()
 
-func readQueryPayload(w http.ResponseWriter, r *http.Request) (orgID uuid.UUID, startTs, endTs int64, expr string, ok bool) {
-	// Defaults from query string
-	org := r.URL.Query().Get("orgId")
-	s := r.URL.Query().Get("s")
-	e := r.URL.Query().Get("e")
-	q := r.URL.Query().Get("q")
-
-	// Optional POST body
-	if r.Method == http.MethodPost {
-		ct := r.Header.Get("Content-Type")
-		body, _ := io.ReadAll(r.Body)
-		defer r.Body.Close()
-
-		switch {
-		case strings.HasPrefix(ct, "application/json"):
-			var p queryPayload
-			if err := json.Unmarshal(body, &p); err != nil {
-				http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
-				return
-			}
-			if p.OrgID != "" {
-				org = p.OrgID
-			}
-			if p.S != "" {
-				s = p.S
-			}
-			if p.E != "" {
-				e = p.E
-			}
-			if p.Q != "" {
-				q = p.Q
-			}
-		case strings.HasPrefix(ct, "text/plain"):
-			if len(body) > 0 {
-				q = strings.TrimSpace(string(body))
-			}
-		default:
-			if len(body) > 0 && q == "" {
-				q = strings.TrimSpace(string(body))
-			}
+	switch {
+	case strings.HasPrefix(ct, "application/json"):
+		var p queryPayload
+		if err := json.Unmarshal(body, &p); err != nil {
+			http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
+			return nil
 		}
+		if p.OrgID == "" {
+			http.Error(w, "missing orgId", http.StatusBadRequest)
+			return nil
+		}
+		if p.Q == "" {
+			http.Error(w, "missing query expression", http.StatusBadRequest)
+			return nil
+		}
+		orgId, err := uuid.Parse(p.OrgID)
+		if err != nil {
+			http.Error(w, "invalid orgId: "+err.Error(), http.StatusBadRequest)
+			return nil
+		}
+		p.OrgUUID = orgId
+		st, en, err := dateutils.ToStartEnd(p.S, p.E)
+		if err != nil {
+			http.Error(w, "invalid start/end time: "+err.Error(), http.StatusBadRequest)
+			return nil
+		}
+		p.StartTs = st
+		p.EndTs = en
+		return &p
+	default:
+		http.Error(w, "unsupported content type", http.StatusBadRequest)
+		return nil
 	}
-
-	if org == "" {
-		http.Error(w, "missing orgId", http.StatusBadRequest)
-		return
-	}
-	ou, err := uuid.Parse(org)
-	if err != nil {
-		http.Error(w, "invalid orgId: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	if s == "" || e == "" {
-		http.Error(w, "missing s/e", http.StatusBadRequest)
-		return
-	}
-	st, en, err := dateutils.ToStartEnd(s, e)
-	if err != nil {
-		http.Error(w, "invalid s/e: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	if st >= en {
-		http.Error(w, "start must be < end", http.StatusBadRequest)
-		return
-	}
-	if q == "" {
-		http.Error(w, "missing query expression (q)", http.StatusBadRequest)
-		return
-	}
-	return ou, st, en, q, true
 }
 
 func (q *QuerierService) sseWriter(w http.ResponseWriter) (func(event string, v any) error, bool) {
@@ -150,16 +124,14 @@ func (q *QuerierService) sseWriter(w http.ResponseWriter) (func(event string, v 
 	return write, true
 }
 
-// ---------------- Handlers ----------------
-
-// PromQL endpoint: /api/v1/query
 func (q *QuerierService) handlePromQuery(w http.ResponseWriter, r *http.Request) {
-	orgID, startTs, endTs, expr, ok := readQueryPayload(w, r)
-	if !ok {
+	qPayload := readQueryPayload(w, r)
+	if qPayload == nil {
 		return
 	}
+
 	// Parse & compile PromQL
-	promExpr, err := promql.FromPromQL(expr)
+	promExpr, err := promql.FromPromQL(qPayload.Q)
 	if err != nil {
 		http.Error(w, "invalid query expression: "+err.Error(), http.StatusBadRequest)
 		return
@@ -175,7 +147,7 @@ func (q *QuerierService) handlePromQuery(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	resultsCh, err := q.EvaluateMetricsQuery(r.Context(), orgID, startTs, endTs, plan)
+	resultsCh, err := q.EvaluateMetricsQuery(r.Context(), qPayload.OrgUUID, qPayload.StartTs, qPayload.EndTs, plan)
 	if err != nil {
 		http.Error(w, "evaluate error: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -201,13 +173,14 @@ func (q *QuerierService) handlePromQuery(w http.ResponseWriter, r *http.Request)
 }
 
 func (q *QuerierService) handleLogQuery(w http.ResponseWriter, r *http.Request) {
-	orgID, startTs, endTs, expr, ok := readQueryPayload(w, r)
-	if !ok {
+	qp := readQueryPayload(w, r)
+	if qp == nil {
 		return
 	}
-	logAst, err := logql.FromLogQL(expr)
+
+	logAst, err := logql.FromLogQL(qp.Q)
 	if err != nil {
-		http.Error(w, "invalid log query expression: "+err.Error(), http.StatusBadRequest)
+		http.Error(w, "invalid log query expression: "+qp.Q+" "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	lplan, err := logql.CompileLog(logAst)
@@ -221,7 +194,7 @@ func (q *QuerierService) handleLogQuery(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	resultsCh, err := q.EvaluateLogsQuery(r.Context(), orgID, startTs, endTs, lplan)
+	resultsCh, err := q.EvaluateLogsQuery(r.Context(), qp.OrgUUID, qp.StartTs, qp.EndTs, qp.Reverse, qp.Limit, lplan)
 	if err != nil {
 		http.Error(w, "evaluate error: "+err.Error(), http.StatusInternalServerError)
 		return

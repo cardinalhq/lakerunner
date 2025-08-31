@@ -34,6 +34,15 @@ type PushDownRequest struct {
 	// dataset specific fields
 	BaseExpr *promql.BaseExpr `json:"baseExpr"`
 	LogLeaf  *logql.LogLeaf   `json:"logLeaf"`
+	Limit    int              `json:"limit"`
+	Reverse  bool             `json:"reverse"`
+}
+
+func (p *PushDownRequest) ToOrderString() string {
+	if p.Reverse {
+		return "DESC"
+	}
+	return "ASC"
 }
 
 type QuerierService struct {

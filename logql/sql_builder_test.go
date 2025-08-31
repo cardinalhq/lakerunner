@@ -79,7 +79,8 @@ func queryAll(t *testing.T, db *sql.DB, q string) []rowmap {
 }
 
 func replaceTable(sql string) string {
-	return strings.ReplaceAll(sql, "{table}", "logs")
+	base := `(SELECT *, 0::BIGINT AS "_cardinalhq.timestamp" FROM logs) AS _t`
+	return strings.ReplaceAll(sql, "{table}", base)
 }
 
 func getString(v any) string {
@@ -114,7 +115,7 @@ func TestToWorkerSQL_Regexp_ExtractOnly(t *testing.T) {
 		}},
 	}
 
-	rows := queryAll(t, db, replaceTable(leaf.ToWorkerSQL(0)))
+	rows := queryAll(t, db, replaceTable(leaf.ToWorkerSQLWithLimit(0, 0, "desc")))
 	if len(rows) != 3 {
 		t.Fatalf("expected 3 rows, got %d", len(rows))
 	}
@@ -154,7 +155,7 @@ func TestToWorkerSQL_Regexp_WithFilters(t *testing.T) {
 		},
 	}
 
-	rows := queryAll(t, db, replaceTable(leaf.ToWorkerSQL(0)))
+	rows := queryAll(t, db, replaceTable(leaf.ToWorkerSQLWithLimit(0, 0, "desc")))
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row after filters, got %d", len(rows))
 	}
@@ -183,7 +184,7 @@ func TestToWorkerSQL_JSON_WithFilters(t *testing.T) {
 			{Label: "user", Op: MatchRe, Value: "(alice|bob)"},
 		},
 	}
-	rows := queryAll(t, db, replaceTable(leaf.ToWorkerSQL(time.Second)))
+	rows := queryAll(t, db, replaceTable(leaf.ToWorkerSQLWithLimit(time.Second, 0, "desc")))
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row after filters, got %d", len(rows))
 	}
@@ -216,7 +217,7 @@ func TestToWorkerSQL_Logfmt_WithFilters(t *testing.T) {
 		},
 	}
 
-	rows := queryAll(t, db, replaceTable(leaf.ToWorkerSQL(0)))
+	rows := queryAll(t, db, replaceTable(leaf.toWorkerSQL(0, 0, "desc")))
 
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row after logfmt filters, got %d", len(rows))
@@ -241,7 +242,7 @@ func TestToWorkerSQL_MatchersOnly_FilterApplied(t *testing.T) {
 		},
 	}
 
-	sql := replaceTable(leaf.ToWorkerSQL(0))
+	sql := replaceTable(leaf.ToWorkerSQLWithLimit(0, 0, "desc"))
 
 	// Sanity: matcher should be present in SQL WHERE
 	if !strings.Contains(sql, "job = 'my-app'") {
@@ -282,7 +283,7 @@ func TestToWorkerSQL_MatchersThenJSON_FilterApplied_FromLogQL(t *testing.T) {
 	}
 	leaf := plan.Leaves[0]
 
-	replacedSql := replaceTable(leaf.ToWorkerSQL(0))
+	replacedSql := replaceTable(leaf.ToWorkerSQLWithLimit(0, 0, "desc"))
 
 	// Sanity: both matcher and JSON extraction should show up
 	if !strings.Contains(replacedSql, "job = 'my-app'") {
@@ -340,7 +341,7 @@ func TestToWorkerSQL_LabelFormat_Conditional_FromLogQL(t *testing.T) {
 	}
 	leaf := plan.Leaves[0]
 
-	replacedSql := replaceTable(leaf.ToWorkerSQL(0))
+	replacedSql := replaceTable(leaf.ToWorkerSQLWithLimit(0, 0, "desc"))
 
 	// Sanity checks on the generated SQL
 	if !strings.Contains(replacedSql, `job = 'my-app'`) {

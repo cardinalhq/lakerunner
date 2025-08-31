@@ -39,6 +39,8 @@ func (q *QuerierService) EvaluateLogsQuery(
 	ctx context.Context,
 	orgID uuid.UUID,
 	startTs, endTs int64,
+	reverse bool,
+	limit int,
 	queryPlan logql.LQueryPlan,
 ) (<-chan promql.Timestamped, error) {
 	workers, err := q.workerDiscovery.GetAllWorkers()
@@ -109,6 +111,8 @@ func (q *QuerierService) EvaluateLogsQuery(
 							EndTs:          group.EndTs,
 							Segments:       workerSegments,
 							Step:           stepDuration,
+							Limit:          limit,
+							Reverse:        reverse,
 						}
 						ch, err := q.logsPushDown(ctx, worker, req)
 						if err != nil {
@@ -123,7 +127,7 @@ func (q *QuerierService) EvaluateLogsQuery(
 					}
 
 					// Merge this group's worker streams by timestamp
-					mergedGroup := promql.MergeSorted(ctx, 1024, groupLeafChans...)
+					mergedGroup := promql.MergeSorted(ctx, 1024, reverse, limit, groupLeafChans...)
 
 					// Forward group results into final output stream as they arrive.
 					for {

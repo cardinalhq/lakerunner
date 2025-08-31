@@ -148,7 +148,7 @@ func (q *QuerierService) EvaluateMetricsQuery(
 					}
 
 					// Merge this group's worker streams by timestamp (ascending).
-					mergedGroup := promql.MergeSorted(ctx, 1024, groupLeafChans...)
+					mergedGroup := promql.MergeSorted(ctx, 1024, false, 0, groupLeafChans...)
 
 					// Run EvalFlow for THIS group and forward results to final out.
 					flow := NewEvalFlow(queryPlan.Root, queryPlan.Leaves, stepDuration, EvalFlowOptions{

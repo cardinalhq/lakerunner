@@ -206,7 +206,7 @@ func EvaluatePushDown[T promql.Timestamped](
 	}
 
 	//slog.Info("Returning channels for pushdown evaluation", slog.Int("channels", len(outs)))
-	return promql.MergeSorted(ctx, 1024, outs...), nil
+	return promql.MergeSorted(ctx, 1024, request.Reverse, request.Limit, outs...), nil
 }
 
 func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
@@ -230,7 +230,6 @@ func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
 		go func(ids []int64, out chan<- T) {
 			defer close(out)
 
-			// Build IN-list: 123,456,...
 			idLits := make([]string, len(ids))
 			for i, id := range ids {
 				idLits[i] = strconv.FormatInt(id, 10)

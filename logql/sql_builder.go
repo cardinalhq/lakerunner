@@ -24,14 +24,16 @@ import (
 	"time"
 )
 
-// ToWorkerSQL renders a left→right pipeline for this leaf as layered SQL.
-// Upstream should replace {table} with the actual base relation (table/subquery).
-// NOTE: Selector matchers (be.Matchers) are pushed as an early WHERE layer,
-//
-//	assuming per-row columns exist for those labels (or a view/CTE provides them).
-func (be *LogLeaf) ToWorkerSQL(step time.Duration) string {
+// ToWorkerSQLWithLimit is like ToWorkerSQL but (for non-aggregated leaves) appends
+func (be *LogLeaf) ToWorkerSQLWithLimit(step time.Duration, limit int, order string) string {
+	return be.toWorkerSQL(step, limit, order)
+}
+
+// toWorkerSQL is the internal worker used by both ToWorkerSQL* variants.
+func (be *LogLeaf) toWorkerSQL(step time.Duration, limit int, order string) string {
 	const baseRel = "{table}"                 // replace upstream
 	const bodyCol = "\"_cardinalhq.message\"" // quoted column for message text
+	const tsCol = "\"_cardinalhq.timestamp\"" // quoted column for event timestamp
 
 	type layer struct {
 		name string
@@ -177,8 +179,6 @@ func (be *LogLeaf) ToWorkerSQL(step time.Duration) string {
 			}
 
 		case "logfmt":
-			// For logfmt, synthesize columns for referenced labels using simple regex extracts,
-			// excluding any labels that will be introduced later by label_format.
 			need := uniqLabels(remainingLF)
 			need = excludeFuture(need)
 
@@ -212,7 +212,6 @@ func (be *LogLeaf) ToWorkerSQL(step time.Duration) string {
 					created[lf.Out] = struct{}{}
 				}
 			} else {
-				// Back-compat path (rare if parser is updated)
 				keys := make([]string, 0, len(p.Params))
 				for k := range p.Params {
 					keys = append(keys, k)
@@ -263,8 +262,27 @@ func (be *LogLeaf) ToWorkerSQL(step time.Duration) string {
 			sb.WriteString("\n")
 		}
 	}
+	finalAlias := mk(layerIdx - 1)
 	sb.WriteString("SELECT * FROM ")
-	sb.WriteString(mk(layerIdx - 1))
+	sb.WriteString(finalAlias)
+
+	// Apply ORDER/LIMIT only for exemplar (non-aggregated) leaves.
+	// (Assumes planner populates be.RangeAggOp for aggregated queries.)
+	if be.RangeAggOp == "" {
+		dir := strings.ToUpper(strings.TrimSpace(order))
+		if dir != "ASC" && dir != "DESC" {
+			dir = "DESC" // default most-recent-first
+		}
+		sb.WriteString(" ORDER BY ")
+		sb.WriteString(tsCol)
+		sb.WriteByte(' ')
+		sb.WriteString(dir)
+
+		if limit > 0 {
+			sb.WriteString(fmt.Sprintf(" LIMIT %d", limit))
+		}
+	}
+
 	sb.WriteString(";\n")
 	return sb.String()
 }
@@ -526,7 +544,6 @@ func evalCommand(c *parse.CommandNode, prev []arg, colResolver func(string) stri
 		return "", "", fmt.Errorf("label_format: variables not supported")
 
 	case *parse.StringNode:
-		// a.Quoted already contains quotes
 		return a.Quoted, "string", nil
 
 	default:
