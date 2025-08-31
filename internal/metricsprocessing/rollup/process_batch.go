@@ -298,15 +298,8 @@ func rollupMetricSegments(
 
 		for i := 0; i < batch.Len(); i++ {
 			row := batch.Get(i)
-			// Normalize sketch field for parquet writing (string -> []byte)
-			if err := metricsprocessing.NormalizeRowForParquetWrite(row); err != nil {
-				ll.Error("Failed to normalize row", slog.Any("error", err))
-				pipeline.ReturnBatch(normalizedBatch)
-				pipeline.ReturnBatch(batch)
-				return fmt.Errorf("normalizing row: %w", err)
-			}
 
-			// Copy normalized row to the new batch
+			// Copy row to the new batch
 			normalizedRow := normalizedBatch.AddRow()
 			for k, v := range row {
 				normalizedRow[k] = v
