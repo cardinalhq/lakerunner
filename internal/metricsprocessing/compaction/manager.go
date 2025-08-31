@@ -51,14 +51,14 @@ type config struct {
 
 func GetConfigFromEnv() config {
 	maxAge := int32(900)
-	if env := os.Getenv("METRIC_COMPACTION_MAX_AGE_SECONDS"); env != "" {
+	if env := os.Getenv("LAKERUNNER_METRIC_COMPACTION_MAX_AGE_SECONDS"); env != "" {
 		if val, err := strconv.Atoi(env); err == nil && val > 0 {
 			maxAge = int32(val)
 		}
 	}
 
-	batchCount := int32(20)
-	if env := os.Getenv("METRIC_COMPACTION_BATCH_COUNT"); env != "" {
+	batchCount := int32(100)
+	if env := os.Getenv("LAKERUNNER_METRIC_COMPACTION_BATCH_COUNT"); env != "" {
 		if val, err := strconv.Atoi(env); err == nil && val > 0 {
 			batchCount = int32(val)
 		}
