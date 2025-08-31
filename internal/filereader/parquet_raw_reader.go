@@ -153,6 +153,14 @@ func (r *ParquetRawReader) Next() (*Batch, error) {
 			}
 		}
 
+		// Convert sketch field from string to []byte if needed (parquet sometimes returns byte fields as strings)
+		if sketchValue, exists := row["sketch"]; exists {
+			if sketchStr, ok := sketchValue.(string); ok {
+				row["sketch"] = []byte(sketchStr)
+			}
+			// If it's already []byte or nil, leave it as-is
+		}
+
 		// Filter out rows with NaN or invalid rollup fields - this indicates corrupted data from parquet source
 		if shouldDropRowForInvalidRollupFields(row) {
 			continue

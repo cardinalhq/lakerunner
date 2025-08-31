@@ -311,23 +311,3 @@ func uploadSingleMetricResult(
 		RecordCount: result.RecordCount,
 	}, nil
 }
-
-// NormalizeRowForParquetWrite normalizes sketch fields for parquet writing.
-// Converts string sketches to []byte format required by parquet.
-func NormalizeRowForParquetWrite(row filereader.Row) error {
-	sketch := row[wkk.RowKeySketch]
-	if sketch == nil {
-		return nil
-	}
-
-	if _, ok := sketch.([]byte); ok {
-		return nil
-	}
-
-	if str, ok := sketch.(string); ok {
-		row[wkk.RowKeySketch] = []byte(str)
-		return nil
-	}
-
-	return fmt.Errorf("unexpected sketch type for parquet writing: %T", sketch)
-}

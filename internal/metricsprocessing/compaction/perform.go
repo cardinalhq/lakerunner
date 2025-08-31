@@ -23,7 +23,6 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/constants"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
-	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 )
@@ -74,12 +73,6 @@ func perform(ctx context.Context, input input) (*result, error) {
 		}
 
 		for i := 0; i < batch.Len(); i++ {
-			row := batch.Get(i)
-			if err := metricsprocessing.NormalizeRowForParquetWrite(row); err != nil {
-				ll.Error("Failed to normalize row", slog.Any("error", err))
-				pipeline.ReturnBatch(batch)
-				return nil, fmt.Errorf("normalizing row: %w", err)
-			}
 			totalRows++
 		}
 
