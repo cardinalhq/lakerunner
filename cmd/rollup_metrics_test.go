@@ -18,8 +18,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-
-	"github.com/cardinalhq/lakerunner/internal/tidprocessing"
 )
 
 func TestBoxesForRange(t *testing.T) {
@@ -106,80 +104,6 @@ func TestBoxesForRange(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := boxesForRange(tt.startTs, tt.endTs, tt.frequencyMs)
 			assert.ElementsMatch(t, got, tt.want)
-		})
-	}
-}
-
-func TestCalculateTargetRecordsPerFile(t *testing.T) {
-	tests := []struct {
-		name                    string
-		recordCount             int
-		estimatedBytesPerRecord int
-		targetFileSize          int64
-		want                    int64
-	}{
-		{
-			name:                    "exact fit",
-			recordCount:             1000,
-			estimatedBytesPerRecord: 100,
-			targetFileSize:          100000,
-			want:                    1000,
-		},
-		{
-			name:                    "multiple files",
-			recordCount:             2000,
-			estimatedBytesPerRecord: 100,
-			targetFileSize:          100000,
-			want:                    1000,
-		},
-		{
-			name:                    "less than one file",
-			recordCount:             500,
-			estimatedBytesPerRecord: 100,
-			targetFileSize:          100000,
-			want:                    500,
-		},
-		{
-			name:                    "targetFileSize larger than total size",
-			recordCount:             10,
-			estimatedBytesPerRecord: 100,
-			targetFileSize:          100000,
-			want:                    10,
-		},
-		{
-			name:                    "realworld example 1",
-			recordCount:             12489*2 + 1,
-			estimatedBytesPerRecord: 100,
-			targetFileSize:          1000000,
-			want:                    8327,
-		},
-		{
-			name:                    "zero records",
-			recordCount:             0,
-			estimatedBytesPerRecord: 100,
-			targetFileSize:          100000,
-			want:                    0,
-		},
-		{
-			name:                    "zero estimatedBytesPerRecord",
-			recordCount:             1000,
-			estimatedBytesPerRecord: 0,
-			targetFileSize:          100000,
-			want:                    0,
-		},
-		{
-			name:                    "zero targetFileSize (should avoid div by zero)",
-			recordCount:             1000,
-			estimatedBytesPerRecord: 100,
-			targetFileSize:          0,
-			want:                    0,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := tidprocessing.CalculateTargetRecordsPerFile(tt.recordCount, tt.estimatedBytesPerRecord, tt.targetFileSize)
-			assert.Equal(t, tt.want, got)
 		})
 	}
 }

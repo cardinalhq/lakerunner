@@ -24,6 +24,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
+	"github.com/cardinalhq/lakerunner/internal/constants"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
@@ -118,7 +119,7 @@ func UploadCompactedMetrics(
 		}
 		// Generate operation ID for tracking this atomic operation
 		opID := idgen.GenerateShortBase32ID()
-		fileLogger := ll.With(slog.String("operationID", opID), slog.String("file", file.FileName))
+		fileLogger := ll.With(slog.String("operationID", opID))
 
 		fileLogger.Debug("Starting atomic metric compaction operation",
 			slog.Int64("recordCount", file.RecordCount),
@@ -218,4 +219,27 @@ func ScheduleOldFileCleanup(
 			ll.Error("scheduleS3Delete", slog.String("error", err.Error()))
 		}
 	}
+}
+
+const targetFileSize = constants.TargetFileSizeBytes
+
+// ShouldCompactMetrics determines whether a set of metric segments should be compacted.
+func ShouldCompactMetrics(rows []lrdb.MetricSeg) bool {
+	if len(rows) < 2 {
+		return false
+	}
+
+	const smallThreshold = int64(targetFileSize) * 3 / 10
+
+	var totalSize int64
+	for _, row := range rows {
+		totalSize += row.FileSize
+		if row.FileSize > targetFileSize*2 || row.FileSize < smallThreshold {
+			return true
+		}
+	}
+
+	estimatedFileCount := (totalSize + targetFileSize - 1) / targetFileSize
+	compact := estimatedFileCount < int64(len(rows))-3 // TODO this feels hacky
+	return compact
 }

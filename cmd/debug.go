@@ -29,6 +29,6 @@ var debugCmd = &cobra.Command{
 func init() {
 	debugCmd.AddCommand(debugcmd.GetS3Cmd())
 	debugCmd.AddCommand(debugcmd.GetDDBCmd())
-	debugCmd.AddCommand(debugcmd.GetParquetSchemaCmd())
+	debugCmd.AddCommand(debugcmd.GetParquetCmd())
 	debugCmd.AddCommand(debugcmd.GetFileConvCmd())
 }

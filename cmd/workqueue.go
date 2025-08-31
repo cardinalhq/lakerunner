@@ -172,34 +172,3 @@ func queueMetricRollup(ctx context.Context, mdb lrdb.StoreFull, inf qmc) error {
 	//slog.Info("queueing metric rollup", "params", rp)
 	return mdb.WorkQueueAdd(ctx, rp)
 }
-
-// queueLogCompaction queues a log compaction job for the entire hour
-func queueLogCompaction(ctx context.Context, mdb lrdb.StoreFull, inf qmc) error {
-	// Extract the hour range - should already be properly aligned from qmcFromInqueue
-	hourRange, ok := helpers.NewTimeRangeFromPgRange(inf.TsRange)
-	if !ok {
-		slog.Error("invalid time range for log compaction", "ts_range", inf.TsRange)
-		return nil // invalid range, nothing to do
-	}
-
-	// Verify the range is properly hour-aligned (should be, but double-check)
-	if !helpers.IsHourAligned(hourRange) {
-		slog.Error("received non-hour-aligned range for log compaction",
-			"hour_range", hourRange)
-		return nil
-	}
-
-	// Get the dateint for the hour boundary
-	boundary := helpers.TimeToHourBoundary(hourRange.Start)
-
-	return mdb.WorkQueueAdd(ctx, lrdb.WorkQueueAddParams{
-		OrgID:      inf.OrganizationID,
-		Instance:   inf.InstanceNum,
-		Signal:     lrdb.SignalEnumLogs,
-		Action:     lrdb.ActionEnumCompact,
-		Dateint:    boundary.DateInt,
-		Frequency:  -1,
-		TsRange:    inf.TsRange,                            // Use the already-computed hour range
-		RunnableAt: time.Now().UTC().Add(30 * time.Second), // give it a little time to settle
-	})
-}

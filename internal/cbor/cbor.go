@@ -128,6 +128,12 @@ func (c *Config) DecodeRow(data []byte) (pipeline.Row, error) {
 	return row, nil
 }
 
+// UnmarshalFirst decodes the first CBOR data item from bytes and returns remaining bytes.
+// This avoids decoder state retention issues that can occur with streaming decoders.
+func (c *Config) UnmarshalFirst(data []byte, v any) ([]byte, error) {
+	return c.decMode.UnmarshalFirst(data, v)
+}
+
 // convertCBORTypes converts CBOR-decoded values back to expected types.
 // CBOR naturally converts: float32->float64, any-int->int64, []T->[]any
 // With DefaultMapType set, we no longer get map[interface{}]interface{}.

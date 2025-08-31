@@ -32,7 +32,7 @@ require (
 	github.com/parquet-go/parquet-go v0.25.0
 	github.com/pgx-contrib/pgxotel v0.0.0-20250625223024-cb5ea1c4aa0b
 	github.com/prometheus/common v0.65.0
-	github.com/prometheus/prometheus v0.305.0
+	github.com/prometheus/prometheus v0.302.1
 	github.com/rdforte/gomaxecs v1.1.1
 	github.com/samber/slog-multi v1.4.1
 	github.com/sony/sonyflake v1.3.0
@@ -57,7 +57,6 @@ require (
 	k8s.io/api v0.33.4
 	k8s.io/apimachinery v0.33.4
 	k8s.io/client-go v0.33.4
-	modernc.org/sqlite v1.38.2
 )
 
 require (
@@ -566,7 +565,7 @@ require (
 	github.com/tomnomnom/linkheader v0.0.0-20180905144013-02ca5825eb80 // indirect
 	github.com/uber/jaeger-client-go v2.30.0+incompatible // indirect
 	github.com/uber/jaeger-lib v2.4.1+incompatible // indirect
-	github.com/ulikunitz/xz v0.5.12 // indirect
+	github.com/ulikunitz/xz v0.5.14 // indirect
 	github.com/ultraware/funlen v0.2.0 // indirect
 	github.com/ultraware/whitespace v0.2.0 // indirect
 	github.com/uudashr/gocognit v1.2.0 // indirect
@@ -651,6 +650,7 @@ require (
 	modernc.org/libc v1.66.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
+	modernc.org/sqlite v1.38.2 // indirect
 	mvdan.cc/gofumpt v0.7.0 // indirect
 	mvdan.cc/unparam v0.0.0-20240528143540-8a5130ca722f // indirect
 	sigs.k8s.io/json v0.0.0-20241010143419-9aa6b5e7a4b3 // indirect
@@ -670,8 +670,3 @@ tool (
 )
 
 replace github.com/sqlc-dev/sqlc => github.com/skandragon/sqlc v0.0.0-20250803050355-7a2d750dd096
-
-replace (
-	github.com/prometheus/common => github.com/prometheus/common v0.62.0
-	github.com/prometheus/prometheus => github.com/prometheus/prometheus v0.302.1
-)

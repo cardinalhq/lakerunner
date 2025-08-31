@@ -31,6 +31,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/constants"
+	"github.com/cardinalhq/lakerunner/internal/debugging"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
@@ -68,6 +69,9 @@ func init() {
 
 			go diskUsageLoop(ctx)
 
+			// Start pprof server
+			go debugging.RunPprof(ctx)
+
 			// Start health check server
 			healthConfig := healthcheck.GetConfigFromEnv()
 			healthServer := healthcheck.NewServer(healthConfig)
@@ -87,13 +91,6 @@ func init() {
 					slog.Error("Error closing ingest loop context", slog.Any("error", err))
 				}
 			}()
-
-			// Check if we should use the old implementation as a safety net
-			if os.Getenv("LAKERUNNER_METRICS_INGEST_OLDPATH") != "" {
-				// Still mark as healthy before starting old path
-				healthServer.SetStatus(healthcheck.StatusHealthy)
-				return runOldMetricIngestion(ctx, slog.Default(), loop)
-			}
 
 			// Mark as healthy once loop is created and about to start
 			healthServer.SetStatus(healthcheck.StatusHealthy)
@@ -224,7 +221,6 @@ func (wm *metricWriterManager) getWriter(key minuteSlotKey) (*parquetwriter.Unif
 
 	// Create new writer for this boundary
 	writer, err := factories.NewMetricsWriter(
-		fmt.Sprintf("metrics_%s_%d_%04d_%d", wm.orgID, key.dateint, key.minute, key.slot),
 		wm.tmpdir,
 		constants.WriterTargetSizeBytesMetrics,
 		wm.rpfEstimate,
@@ -382,8 +378,8 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 		}
 
 		// Step 2c: Add disk-based sorting (after translation so TID is available)
-		sortKeyFunc, sortFunc := metricsprocessing.GetCurrentMetricSortFunctions()
-		reader, err = filereader.NewDiskSortingReader(reader, sortKeyFunc, sortFunc, 1000)
+		keyProvider := metricsprocessing.GetCurrentMetricSortKeyProvider()
+		reader, err = filereader.NewDiskSortingReader(reader, keyProvider, 1000)
 		if err != nil {
 			reader.Close()
 			ll.Warn("Failed to create sorting reader, skipping file",
@@ -470,6 +466,9 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 		batch, readErr := finalReader.Next()
 
 		if readErr != nil && readErr != io.EOF {
+			if batch != nil {
+				pipeline.ReturnBatch(batch)
+			}
 			return fmt.Errorf("failed to read from unified pipeline: %w", readErr)
 		}
 
@@ -478,6 +477,7 @@ func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp s
 			processed, errored := wm.processBatch(batch)
 			batchRowsProcessed += processed
 			batchRowsErrored += errored
+			pipeline.ReturnBatch(batch)
 		}
 
 		if readErr == io.EOF {

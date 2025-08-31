@@ -31,6 +31,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/constants"
+	"github.com/cardinalhq/lakerunner/internal/debugging"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
@@ -67,6 +68,9 @@ func init() {
 
 			go diskUsageLoop(ctx)
 
+			// Start pprof server
+			go debugging.RunPprof(ctx)
+
 			// Start health check server
 			healthConfig := healthcheck.GetConfigFromEnv()
 			healthServer := healthcheck.NewServer(healthConfig)
@@ -80,13 +84,6 @@ func init() {
 			loop, err := NewIngestLoopContext(ctx, "logs", servicename)
 			if err != nil {
 				return fmt.Errorf("failed to create ingest loop context: %w", err)
-			}
-
-			// Check if we should use the old implementation as a safety net
-			if os.Getenv("LAKERUNNER_LOGS_INGEST_OLDPATH") != "" {
-				// Still mark as healthy before starting old path
-				healthServer.SetStatus(healthcheck.StatusHealthy)
-				return runOldLogIngestion(ctx, slog.Default(), loop)
 			}
 
 			// Mark as healthy once loop is created and about to start
@@ -216,8 +213,7 @@ func (wm *writerManager) getWriter(key hourSlotKey) (*parquetwriter.UnifiedWrite
 	}
 
 	// Create new writer
-	baseName := fmt.Sprintf("logs_%s_%d_%d_%d", wm.orgID, key.dateint, key.hour, key.slot)
-	writer, err := factories.NewLogsWriter(baseName, wm.tmpdir, constants.WriterTargetSizeBytesLogs, wm.rpfEstimate)
+	writer, err := factories.NewLogsWriter(wm.tmpdir, constants.WriterTargetSizeBytesLogs, wm.rpfEstimate)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create logs writer: %w", err)
 	}
@@ -406,6 +402,7 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 				batchProcessed, batchErrors := wm.processBatch(batch)
 				processedCount += batchProcessed
 				errorCount += batchErrors
+				pipeline.ReturnBatch(batch)
 
 				if batchErrors > 0 {
 					ll.Warn("Some rows failed to process in batch",

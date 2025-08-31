@@ -27,7 +27,6 @@ func TestWriterConfig_ValidateValid(t *testing.T) {
 		{
 			name: "minimal valid config",
 			config: WriterConfig{
-				BaseName:       "test",
 				TmpDir:         "/tmp",
 				TargetFileSize: 1024,
 				RecordsPerFile: 100,
@@ -36,7 +35,6 @@ func TestWriterConfig_ValidateValid(t *testing.T) {
 		{
 			name: "config with group key func but no split groups",
 			config: WriterConfig{
-				BaseName:       "test",
 				TmpDir:         "/tmp",
 				TargetFileSize: 1024,
 				RecordsPerFile: 100,
@@ -49,7 +47,6 @@ func TestWriterConfig_ValidateValid(t *testing.T) {
 		{
 			name: "config with group key func and no split groups",
 			config: WriterConfig{
-				BaseName:       "test",
 				TmpDir:         "/tmp",
 				TargetFileSize: 1024,
 				RecordsPerFile: 100,
@@ -62,7 +59,6 @@ func TestWriterConfig_ValidateValid(t *testing.T) {
 		{
 			name: "config with stats provider",
 			config: WriterConfig{
-				BaseName:       "test",
 				TmpDir:         "/tmp",
 				TargetFileSize: 1024,
 				RecordsPerFile: 100,
@@ -76,7 +72,6 @@ func TestWriterConfig_ValidateValid(t *testing.T) {
 		{
 			name: "config with large values",
 			config: WriterConfig{
-				BaseName:       "very-long-base-name-for-testing",
 				TmpDir:         "/very/long/path/to/tmp/directory",
 				TargetFileSize: 1024 * 1024 * 1024, // 1GB
 				RecordsPerFile: 1000000,
@@ -102,20 +97,8 @@ func TestWriterConfig_ValidateInvalid(t *testing.T) {
 		expectedField string
 	}{
 		{
-			name: "empty base name",
-			config: WriterConfig{
-				BaseName:       "",
-				TmpDir:         "/tmp",
-				TargetFileSize: 1024,
-				RecordsPerFile: 100,
-			},
-			expectedErr:   "parquetwriter config: BaseName cannot be empty",
-			expectedField: "BaseName",
-		},
-		{
 			name: "empty tmp dir",
 			config: WriterConfig{
-				BaseName:       "test",
 				TmpDir:         "",
 				TargetFileSize: 1024,
 				RecordsPerFile: 100,
@@ -126,7 +109,6 @@ func TestWriterConfig_ValidateInvalid(t *testing.T) {
 		{
 			name: "zero target file size",
 			config: WriterConfig{
-				BaseName:       "test",
 				TmpDir:         "/tmp",
 				TargetFileSize: 0,
 				RecordsPerFile: 100,
@@ -137,7 +119,6 @@ func TestWriterConfig_ValidateInvalid(t *testing.T) {
 		{
 			name: "negative target file size",
 			config: WriterConfig{
-				BaseName:       "test",
 				TmpDir:         "/tmp",
 				TargetFileSize: -1024,
 				RecordsPerFile: 100,
@@ -148,7 +129,6 @@ func TestWriterConfig_ValidateInvalid(t *testing.T) {
 		{
 			name: "no split groups without group key func",
 			config: WriterConfig{
-				BaseName:       "test",
 				TmpDir:         "/tmp",
 				TargetFileSize: 1024,
 				RecordsPerFile: 100,
@@ -189,7 +169,6 @@ func TestWriterConfig_ValidateInvalid(t *testing.T) {
 func TestWriterConfig_ValidateEdgeCases(t *testing.T) {
 	t.Run("zero records per file is allowed", func(t *testing.T) {
 		config := WriterConfig{
-			BaseName:       "test",
 			TmpDir:         "/tmp",
 			TargetFileSize: 1024,
 			RecordsPerFile: 0, // Should be allowed
@@ -202,7 +181,6 @@ func TestWriterConfig_ValidateEdgeCases(t *testing.T) {
 
 	t.Run("negative records per file is allowed", func(t *testing.T) {
 		config := WriterConfig{
-			BaseName:       "test",
 			TmpDir:         "/tmp",
 			TargetFileSize: 1024,
 			RecordsPerFile: -1, // Should be allowed - validation doesn't check this
@@ -215,7 +193,6 @@ func TestWriterConfig_ValidateEdgeCases(t *testing.T) {
 
 	t.Run("nil stats provider is allowed", func(t *testing.T) {
 		config := WriterConfig{
-			BaseName:       "test",
 			TmpDir:         "/tmp",
 			TargetFileSize: 1024,
 			RecordsPerFile: 100,
@@ -312,9 +289,8 @@ func TestConfigError_IsError(t *testing.T) {
 func TestWriterConfig_ValidateMultipleErrors(t *testing.T) {
 	// Test that validation returns the first error encountered
 	config := WriterConfig{
-		BaseName:       "", // First error
-		TmpDir:         "", // Second error (should not be reached)
-		TargetFileSize: 0,  // Third error (should not be reached)
+		TmpDir:         "", // First error
+		TargetFileSize: 0,  // Second error (should not be reached)
 	}
 
 	err := config.Validate()
@@ -323,13 +299,13 @@ func TestWriterConfig_ValidateMultipleErrors(t *testing.T) {
 		return
 	}
 
-	// Should get the first error (BaseName)
-	if !strings.Contains(err.Error(), "BaseName") {
-		t.Errorf("Expected first error to be about BaseName, got: %v", err)
+	// Should get the first error (TmpDir)
+	if !strings.Contains(err.Error(), "TmpDir") {
+		t.Errorf("Expected first error to be about TmpDir, got: %v", err)
 	}
 
 	// Should not contain other field errors since validation stops at first error
-	if strings.Contains(err.Error(), "TmpDir") || strings.Contains(err.Error(), "TargetFileSize") {
+	if strings.Contains(err.Error(), "TargetFileSize") {
 		t.Errorf("Expected only first error, but got: %v", err)
 	}
 }
@@ -337,7 +313,6 @@ func TestWriterConfig_ValidateMultipleErrors(t *testing.T) {
 func TestWriterConfig_GroupKeyFuncValidation(t *testing.T) {
 	t.Run("group key func without no split groups", func(t *testing.T) {
 		config := WriterConfig{
-			BaseName:       "test",
 			TmpDir:         "/tmp",
 			TargetFileSize: 1024,
 			RecordsPerFile: 100,
@@ -354,7 +329,6 @@ func TestWriterConfig_GroupKeyFuncValidation(t *testing.T) {
 
 	t.Run("no split groups with group key func", func(t *testing.T) {
 		config := WriterConfig{
-			BaseName:       "test",
 			TmpDir:         "/tmp",
 			TargetFileSize: 1024,
 			RecordsPerFile: 100,
@@ -379,7 +353,6 @@ func TestWriterConfig_BoundaryValues(t *testing.T) {
 		{
 			name: "minimum positive target file size",
 			config: WriterConfig{
-				BaseName:       "test",
 				TmpDir:         "/tmp",
 				TargetFileSize: 1, // Minimum positive value
 				RecordsPerFile: 100,
@@ -389,7 +362,6 @@ func TestWriterConfig_BoundaryValues(t *testing.T) {
 		{
 			name: "very large target file size",
 			config: WriterConfig{
-				BaseName:       "test",
 				TmpDir:         "/tmp",
 				TargetFileSize: 9223372036854775807, // Max int64
 				RecordsPerFile: 100,
@@ -399,7 +371,6 @@ func TestWriterConfig_BoundaryValues(t *testing.T) {
 		{
 			name: "single character base name",
 			config: WriterConfig{
-				BaseName:       "t",
 				TmpDir:         "/tmp",
 				TargetFileSize: 1024,
 				RecordsPerFile: 100,
@@ -409,7 +380,6 @@ func TestWriterConfig_BoundaryValues(t *testing.T) {
 		{
 			name: "single character tmp dir",
 			config: WriterConfig{
-				BaseName:       "test",
 				TmpDir:         "/",
 				TargetFileSize: 1024,
 				RecordsPerFile: 100,

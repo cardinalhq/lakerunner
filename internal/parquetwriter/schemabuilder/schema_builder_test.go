@@ -25,8 +25,8 @@ import (
 func TestNewSchemaBuilder(t *testing.T) {
 	builder := NewSchemaBuilder()
 	require.NotNil(t, builder)
-	require.NotNil(t, builder.nodes)
-	require.Equal(t, 0, len(builder.nodes))
+	require.NotNil(t, builder.exemplars)
+	require.Equal(t, 0, len(builder.exemplars))
 	require.False(t, builder.HasColumns())
 }
 
@@ -48,7 +48,8 @@ func TestSchemaBuilder_AddRow_Basic(t *testing.T) {
 
 	// Check that all fields were added
 	require.True(t, builder.HasColumns())
-	nodes := builder.Build()
+	nodes, err := builder.Build()
+	require.NoError(t, err)
 	require.Equal(t, 7, len(nodes))
 
 	// Verify specific node types exist
@@ -75,7 +76,8 @@ func TestSchemaBuilder_AddRow_NilValues(t *testing.T) {
 	err := builder.AddRow(row1)
 	require.NoError(t, err)
 
-	nodes := builder.Build()
+	nodes, err := builder.Build()
+	require.NoError(t, err)
 	require.Equal(t, 2, len(nodes)) // Only id and score should be present
 	require.Contains(t, nodes, "id")
 	require.Contains(t, nodes, "score")
@@ -91,7 +93,8 @@ func TestSchemaBuilder_AddRow_NilValues(t *testing.T) {
 	err = builder.AddRow(row2)
 	require.NoError(t, err)
 
-	nodes = builder.Build()
+	nodes, err = builder.Build()
+	require.NoError(t, err)
 	require.Equal(t, 4, len(nodes)) // Now all fields should be present
 	require.Contains(t, nodes, "id")
 	require.Contains(t, nodes, "name")
@@ -152,51 +155,19 @@ func TestSchemaBuilder_AddRow_TypeMismatchDetails(t *testing.T) {
 func TestSchemaBuilder_AddRow_UnsupportedType(t *testing.T) {
 	builder := NewSchemaBuilder()
 
-	// Try to add unsupported type
+	// Add unsupported type - this now succeeds in AddRow, fails in Build()
 	row := map[string]any{
 		"complex": map[string]string{"nested": "data"},
 	}
 
 	err := builder.AddRow(row)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "failed to build node for field \"complex\"")
-}
+	require.NoError(t, err) // AddRow now just stores exemplars
 
-func TestSchemaBuilder_AddNodes(t *testing.T) {
-	builder := NewSchemaBuilder()
-
-	// Create some predefined nodes
-	nodes := map[string]parquet.Node{
-		"id":   parquet.Int(64),
-		"name": parquet.String(),
-	}
-
-	err := builder.AddNodes(nodes)
-	require.NoError(t, err)
-
-	result := builder.Build()
-	require.Equal(t, 2, len(result))
-	require.Contains(t, result, "id")
-	require.Contains(t, result, "name")
-}
-
-func TestSchemaBuilder_AddNodes_TypeMismatch(t *testing.T) {
-	builder := NewSchemaBuilder()
-
-	// Add initial nodes
-	nodes1 := map[string]parquet.Node{
-		"id": parquet.Int(64),
-	}
-	err := builder.AddNodes(nodes1)
-	require.NoError(t, err)
-
-	// Try to add conflicting nodes
-	nodes2 := map[string]parquet.Node{
-		"id": parquet.String(), // Different type
-	}
-	err = builder.AddNodes(nodes2)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "type mismatch for field \"id\"")
+	// The error should occur during Build() when we try to create the node
+	nodes, err := builder.Build()
+	require.Error(t, err) // Should fail on unsupported type
+	require.Contains(t, err.Error(), "failed to build node for field")
+	require.Nil(t, nodes)
 }
 
 func TestSchemaBuilder_GetColumnNames(t *testing.T) {
@@ -237,14 +208,16 @@ func TestSchemaBuilder_Build_IsolatesInternalState(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get the built nodes
-	nodes1 := builder.Build()
+	nodes1, err := builder.Build()
+	require.NoError(t, err)
 	require.Equal(t, 1, len(nodes1))
 
 	// Modify the returned map
 	nodes1["new_field"] = parquet.String()
 
 	// Get nodes again - should not be affected by external modification
-	nodes2 := builder.Build()
+	nodes2, err := builder.Build()
+	require.NoError(t, err)
 	require.Equal(t, 1, len(nodes2))
 	require.NotContains(t, nodes2, "new_field")
 }
@@ -283,7 +256,8 @@ func TestSchemaBuilder_ComplexWorkflow(t *testing.T) {
 	}
 
 	// Verify final schema contains all discovered fields
-	nodes := builder.Build()
+	nodes, err := builder.Build()
+	require.NoError(t, err)
 	expectedFields := []string{"timestamp", "message", "level", "error", "metadata"}
 	require.Equal(t, len(expectedFields), len(nodes))
 
@@ -309,7 +283,8 @@ func TestSchemaBuilder_EmptyRow(t *testing.T) {
 
 	// Should have no columns
 	require.False(t, builder.HasColumns())
-	nodes := builder.Build()
+	nodes, err := builder.Build()
+	require.NoError(t, err)
 	require.Equal(t, 0, len(nodes))
 }
 
@@ -328,7 +303,8 @@ func TestSchemaBuilder_NilRow(t *testing.T) {
 	// If it didn't error, it should have no effect
 	if err == nil {
 		require.False(t, builder.HasColumns())
-		nodes := builder.Build()
+		nodes, err := builder.Build()
+		require.NoError(t, err)
 		require.Equal(t, 0, len(nodes))
 	}
 }
@@ -362,7 +338,8 @@ func TestSchemaBuilder_Integration_WithParquetSchema(t *testing.T) {
 	}
 
 	// Build the schema nodes
-	nodes := builder.Build()
+	nodes, err := builder.Build()
+	require.NoError(t, err)
 	require.Equal(t, 6, len(nodes))
 
 	// Create a parquet schema from the nodes using existing utility

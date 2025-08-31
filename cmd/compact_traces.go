@@ -80,17 +80,17 @@ func compactTracesFor(
 	inf lockmgr.Workable,
 	rpfEstimate int64, // rows-per-file estimate (from ingest stats), same as logs
 	_ any,
-) (WorkResult, error) {
+) error {
 	profile, err := sp.GetStorageProfileForOrganizationAndInstance(ctx, inf.OrganizationID(), inf.InstanceNum())
 	if err != nil {
 		ll.Error("Failed to get storage profile", slog.Any("error", err))
-		return WorkResultTryAgainLater, err
+		return err
 	}
 
 	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
 	if err != nil {
 		ll.Error("Failed to get S3 client", slog.Any("error", err))
-		return WorkResultTryAgainLater, err
+		return err
 	}
 
 	ll.Info("Starting trace compaction",
@@ -112,7 +112,7 @@ func compactTracesFor(
 				slog.Int("processedBatches", totalBatchesProcessed),
 				slog.Int("processedSegments", totalSegmentsProcessed),
 				slog.Any("error", ctx.Err()))
-			return WorkResultTryAgainLater, nil
+			return nil
 		}
 
 		ll.Info("Querying for trace segments to compact",
@@ -134,7 +134,7 @@ func compactTracesFor(
 		})
 		if err != nil {
 			ll.Error("Error getting trace segments for compaction", slog.Any("error", err))
-			return WorkResultTryAgainLater, err
+			return err
 		}
 
 		if len(segments) == 0 {
@@ -145,7 +145,7 @@ func compactTracesFor(
 					slog.Int("totalBatches", totalBatchesProcessed),
 					slog.Int("totalSegments", totalSegmentsProcessed))
 			}
-			return WorkResultSuccess, nil
+			return nil
 		}
 
 		ll.Info("Processing compaction batch",
@@ -182,7 +182,7 @@ func compactTracesFor(
 		)
 		if err != nil {
 			ll.Error("Error packing trace segments", slog.Any("error", err))
-			return WorkResultTryAgainLater, err
+			return err
 		}
 
 		// Log if any segments were filtered during packing
@@ -217,7 +217,7 @@ func compactTracesFor(
 				if totalBatchesProcessed == 0 {
 					ll.Info("No segments need compaction")
 				}
-				return WorkResultSuccess, nil
+				return nil
 			}
 			totalBatchesProcessed++
 			continue
@@ -242,7 +242,7 @@ func compactTracesFor(
 				ll.Info("Shutdown requested - aborting before atomic operation",
 					slog.Int("completedGroups", i),
 					slog.Int("remainingGroups", len(packed)-i))
-				return WorkResultTryAgainLater, nil
+				return nil
 			default:
 			}
 
@@ -253,7 +253,7 @@ func compactTracesFor(
 				ll.Error("Atomic operation failed - will retry entire work item",
 					slog.Any("error", err),
 					slog.Int("failedAtGroup", i))
-				return WorkResultTryAgainLater, err
+				return err
 			}
 
 			ll.Info("Atomic operation completed successfully",
@@ -269,7 +269,7 @@ func compactTracesFor(
 			ll.Info("Completed all compaction batches",
 				slog.Int("totalBatches", totalBatchesProcessed),
 				slog.Int("totalSegments", totalSegmentsProcessed))
-			return WorkResultSuccess, nil
+			return nil
 		}
 
 		ll.Info("Batch completed, checking for more segments",

@@ -15,10 +15,41 @@
 package pipeline
 
 import (
+	"context"
 	"maps"
 	"sync"
 	"sync/atomic"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric"
 )
+
+var (
+	meter = otel.Meter("github.com/cardinalhq/lakerunner/internal/pipeline")
+
+	bufferpoolGetsCounter metric.Int64Counter
+	bufferpoolPutsCounter metric.Int64Counter
+)
+
+func init() {
+	var err error
+
+	bufferpoolGetsCounter, err = meter.Int64Counter(
+		"lakerunner.pipeline.bufferpool.gets",
+		metric.WithDescription("Total number of gets from the buffer pool"),
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	bufferpoolPutsCounter, err = meter.Int64Counter(
+		"lakerunner.pipeline.bufferpool.puts",
+		metric.WithDescription("Total number of puts back to the buffer pool"),
+	)
+	if err != nil {
+		panic(err)
+	}
+}
 
 // Batch is owned by the Reader that returns it.
 // Consumers must not hold references after the next Next() call.
@@ -64,6 +95,7 @@ func newBatchPool(batchSize int) *batchPool {
 // Get returns a clean batch from the pool.
 func (p *batchPool) Get() *Batch {
 	p.gets.Add(1)
+	bufferpoolGetsCounter.Add(context.Background(), 1)
 	b := p.pool.Get().(*Batch)
 	// Clear all Row maps but keep them allocated for reuse
 	for i := range b.rows {
@@ -78,6 +110,7 @@ func (p *batchPool) Get() *Batch {
 // Put returns a batch to the pool for reuse.
 func (p *batchPool) Put(b *Batch) {
 	p.puts.Add(1)
+	bufferpoolPutsCounter.Add(context.Background(), 1)
 	// Drop oversized batches to avoid unbounded growth
 	if cap(b.rows) > p.sz*4 {
 		return
