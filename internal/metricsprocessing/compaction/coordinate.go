@@ -269,16 +269,16 @@ func replaceCompactedSegments(
 	inputBytes int64,
 ) error {
 	// Prepare old records for CompactMetricSegs
-	oldRecords := make([]lrdb.ReplaceMetricSegsOld, len(oldRows))
+	oldRecords := make([]lrdb.CompactMetricSegsOld, len(oldRows))
 	for i, row := range oldRows {
-		oldRecords[i] = lrdb.ReplaceMetricSegsOld{
+		oldRecords[i] = lrdb.CompactMetricSegsOld{
 			SegmentID: row.SegmentID,
 			SlotID:    row.SlotID,
 		}
 	}
 
 	// Prepare new records for CompactMetricSegs
-	newRecords := make([]lrdb.ReplaceMetricSegsNew, len(results))
+	newRecords := make([]lrdb.CompactMetricSegsNew, len(results))
 	st, et, ok := helpers.RangeBounds(workItem.TsRange)
 	if !ok {
 		return fmt.Errorf("invalid time range in work item: %v", workItem.TsRange)
@@ -297,7 +297,7 @@ func replaceCompactedSegments(
 			return fmt.Errorf("failed to extract metadata for segment %d: %w", segmentIDs[i], err)
 		}
 
-		newRecords[i] = lrdb.ReplaceMetricSegsNew{
+		newRecords[i] = lrdb.CompactMetricSegsNew{
 			SegmentID:    segmentIDs[i],
 			StartTs:      st.Time.UTC().UnixMilli(),
 			EndTs:        et.Time.UTC().UnixMilli(),
@@ -307,7 +307,7 @@ func replaceCompactedSegments(
 		}
 	}
 
-	err := mdb.CompactMetricSegs(ctx, lrdb.ReplaceMetricSegsParams{
+	err := mdb.CompactMetricSegs(ctx, lrdb.CompactMetricSegsParams{
 		OrganizationID: workItem.OrganizationID,
 		Dateint:        workItem.Dateint,
 		InstanceNum:    workItem.InstanceNum,

@@ -43,12 +43,12 @@ func (q *Store) InsertMetricSegment(ctx context.Context, params InsertMetricSegm
 	return q.InsertMetricSegmentDirect(ctx, params)
 }
 
-type ReplaceMetricSegsOld struct {
+type CompactMetricSegsOld struct {
 	SegmentID int64
 	SlotID    int32
 }
 
-type ReplaceMetricSegsNew struct {
+type CompactMetricSegsNew struct {
 	SegmentID    int64
 	StartTs      int64
 	EndTs        int64
@@ -84,7 +84,7 @@ type RollupNewRecord struct {
 	Fingerprints []int64
 }
 
-type ReplaceMetricSegsParams struct {
+type CompactMetricSegsParams struct {
 	// OrganizationID is the ID of the organization to which the metric segments belong.
 	OrganizationID uuid.UUID
 	// Dateint is the date in YYYYMMDD format for which the metric segments are being replaced.
@@ -104,76 +104,13 @@ type ReplaceMetricSegsParams struct {
 	// Rolledup indicates whether the new segments are marked as rolledup.
 	Rolledup bool
 	// OldRecords contains the segments to be deleted.
-	OldRecords []ReplaceMetricSegsOld
+	OldRecords []CompactMetricSegsOld
 	// NewRecords contains the segments to be inserted.
-	NewRecords []ReplaceMetricSegsNew
+	NewRecords []CompactMetricSegsNew
 	CreatedBy  CreatedBy
 	// SortVersion indicates the sort order of the data in the new segments.
 	// 0: Unknown/unsorted, 1: Sorted by [name, tid, timestamp]
 	SortVersion int16
-}
-
-// ReplaceMetricSegs replaces old metric segments with new ones for a given organization, date, and instance.
-// The change is made atomically.
-func (q *Store) ReplaceMetricSegs(ctx context.Context, args ReplaceMetricSegsParams) error {
-	oldItems := make([]BatchDeleteMetricSegsParams, len(args.OldRecords))
-	for i, oldRec := range args.OldRecords {
-		oldItems[i] = BatchDeleteMetricSegsParams{
-			OrganizationID: args.OrganizationID,
-			Dateint:        args.Dateint,
-			FrequencyMs:    args.FrequencyMs,
-			SegmentID:      oldRec.SegmentID,
-			InstanceNum:    args.InstanceNum,
-			SlotID:         oldRec.SlotID,
-		}
-	}
-
-	newItems := make([]BatchInsertMetricSegsParams, len(args.NewRecords))
-	for i, newRec := range args.NewRecords {
-		newItems[i] = BatchInsertMetricSegsParams{
-			OrganizationID: args.OrganizationID,
-			Dateint:        args.Dateint,
-			IngestDateint:  args.IngestDateint,
-			FrequencyMs:    args.FrequencyMs,
-			SegmentID:      newRec.SegmentID,
-			InstanceNum:    args.InstanceNum,
-			SlotID:         args.SlotID,
-			StartTs:        newRec.StartTs,
-			EndTs:          newRec.EndTs,
-			RecordCount:    newRec.RecordCount,
-			FileSize:       newRec.FileSize,
-			Published:      args.Published,
-			Rolledup:       args.Rolledup,
-			CreatedBy:      args.CreatedBy,
-			Fingerprints:   newRec.Fingerprints,
-			SortVersion:    args.SortVersion,
-		}
-	}
-
-	var errs *multierror.Error
-	return q.execTx(ctx, func(s *Store) error {
-		if len(oldItems) > 0 {
-			result := s.BatchDeleteMetricSegs(ctx, oldItems)
-			result.Exec(func(i int, err error) {
-				if err != nil {
-					err = fmt.Errorf("error deleting old metric segment %d, keys %v: %w", i, oldItems[i], err)
-					errs = multierror.Append(errs, err)
-				}
-			})
-		}
-
-		if errs.ErrorOrNil() == nil && len(newItems) > 0 {
-			result := s.BatchInsertMetricSegs(ctx, newItems)
-			result.Exec(func(i int, err error) {
-				if err != nil {
-					err = fmt.Errorf("error inserting new metric segment %d, keys %v: %w", i, newItems[i], err)
-					errs = multierror.Append(errs, err)
-				}
-			})
-		}
-
-		return errs.ErrorOrNil()
-	})
 }
 
 // RollupMetricSegs marks source segments as rolled up and atomically replaces target segments.

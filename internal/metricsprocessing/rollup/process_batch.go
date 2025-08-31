@@ -95,13 +95,8 @@ func processBatch(
 	// Work items represent source frequencies that roll up to target frequencies
 	targetFrequency, found := RollupTo[int32(firstItem.FrequencyMs)]
 	if !found {
-		var validSources []int32
-		for freq := range RollupTo {
-			validSources = append(validSources, freq)
-		}
 		ll.Error("Invalid rollup frequency - not in source frequency list. This work item will be marked as completed to avoid reprocessing.",
-			slog.Int64("frequencyMs", firstItem.FrequencyMs),
-			slog.Any("validSourceFrequencies", validSources))
+			slog.Int64("frequencyMs", firstItem.FrequencyMs))
 		// Return nil to indicate successful processing so the work gets marked as completed
 		// This prevents these invalid work items from being retried indefinitely
 		return nil
@@ -272,7 +267,6 @@ func rollupMetricSegments(
 
 	defer metricsprocessing.CloseReaderStack(ll, readerStack)
 
-	// Aggregate to target frequency
 	aggregatingReader, err := filereader.NewAggregatingMetricsReader(readerStack.FinalReader, int64(targetFrequency), 1000)
 	if err != nil {
 		ll.Error("Failed to create aggregating metrics reader", slog.Any("error", err))
@@ -357,7 +351,6 @@ func rollupMetricSegments(
 		Bucket:         profile.Bucket,
 	}
 
-	// Atomic upload requires context without cancellation
 	criticalCtx := context.WithoutCancel(ctx)
 
 	err = uploadRolledUpMetricsAtomic(criticalCtx, ll, mdb, s3client, results, sourceRows, existingRows, rollupParams)
@@ -386,9 +379,9 @@ func uploadRolledUpMetricsAtomic(
 	existingRows []lrdb.MetricSeg,
 	params metricsprocessing.CompactionUploadParams,
 ) error {
-	var targetOldRecords []lrdb.ReplaceMetricSegsOld
+	var targetOldRecords []lrdb.CompactMetricSegsOld
 	for _, row := range existingRows {
-		targetOldRecords = append(targetOldRecords, lrdb.ReplaceMetricSegsOld{
+		targetOldRecords = append(targetOldRecords, lrdb.CompactMetricSegsOld{
 			SegmentID: row.SegmentID,
 			SlotID:    row.SlotID,
 		})
@@ -481,7 +474,7 @@ func uploadRolledUpMetricsAtomic(
 			return fmt.Errorf("atomic rollup transaction: %w", err)
 		}
 
-		fileLogger.Debug("ATOMIC ROLLUP OPERATION COMMITTED SUCCESSFULLY - source marked as rolled up, target segments replaced",
+		fileLogger.Debug("Source marked as rolled up, target segments replaced",
 			slog.Int64("newSegmentID", segmentID),
 			slog.Int64("newRecordCount", file.RecordCount),
 			slog.Int64("newFileSize", file.FileSize),
@@ -489,12 +482,10 @@ func uploadRolledUpMetricsAtomic(
 			slog.Int("sourceSegmentCount", len(sourceSegmentIDs)),
 			slog.Int("targetReplacedCount", len(targetOldRecords)))
 
-		// Queue compaction work for this new segment
 		if err := queueMetricCompaction(ctx, mdb, params, segmentID, file.RecordCount, filestats.StartTs, filestats.EndTs); err != nil {
 			fileLogger.Error("Failed to queue metric compaction", slog.Any("error", err))
 		}
 
-		// Queue rollup work for this new segment (if there's a next level)
 		if err := queueMetricRollup(ctx, mdb, params, filestats.StartTs, filestats.EndTs); err != nil {
 			fileLogger.Error("Failed to queue metric rollup", slog.Any("error", err))
 		}

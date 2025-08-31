@@ -85,49 +85,33 @@ func TestRollupMetricSegs_BasicRollup(t *testing.T) {
 	require.NoError(t, err)
 
 	// Perform rollup operation using RollupMetricSegs
-	err = db.RollupMetricSegs(ctx, lrdb.RollupMetricSegsParams{
-		SourceSegments: struct {
-			OrganizationID uuid.UUID
-			Dateint        int32
-			FrequencyMs    int32
-			InstanceNum    int16
-			SlotID         int32
-			SegmentIDs     []int64
-		}{
-			OrganizationID: orgID,
-			Dateint:        20250830,
-			FrequencyMs:    10000, // Source frequency
-			InstanceNum:    1,
-			SlotID:         0,
-			SegmentIDs:     sourceSegmentIDs,
+	sourceParams := lrdb.RollupSourceParams{
+		OrganizationID: orgID,
+		Dateint:        20250830,
+		FrequencyMs:    10000, // Source frequency
+		InstanceNum:    1,
+	}
+	targetParams := lrdb.RollupTargetParams{
+		OrganizationID: orgID,
+		Dateint:        20250830,
+		FrequencyMs:    60000, // Target frequency
+		InstanceNum:    1,
+		SlotID:         0,
+		SlotCount:      1,
+		IngestDateint:  20250830,
+		SortVersion:    lrdb.CurrentMetricSortVersion,
+	}
+	newRecords := []lrdb.RollupNewRecord{
+		{
+			SegmentID:    30001,
+			StartTs:      now.UnixMilli(),
+			EndTs:        now.Add(time.Minute).UnixMilli(),
+			RecordCount:  120, // Rolled up from 600 + 600 = 1200 to 120
+			FileSize:     12000,
+			Fingerprints: []int64{9001, 9002},
 		},
-		TargetReplacement: lrdb.ReplaceMetricSegsParams{
-			OrganizationID: orgID,
-			Dateint:        20250830,
-			InstanceNum:    1,
-			SlotID:         0,
-			SlotCount:      1,
-			IngestDateint:  20250830,
-			FrequencyMs:    60000, // Target frequency
-			Published:      true,
-			Rolledup:       false, // New rolled-up segments are not themselves rolled up
-			CreatedBy:      lrdb.CreateByRollup,
-			SortVersion:    lrdb.CurrentMetricSortVersion,
-			OldRecords: []lrdb.ReplaceMetricSegsOld{
-				{SegmentID: existingTargetSegmentID, SlotID: 0},
-			},
-			NewRecords: []lrdb.ReplaceMetricSegsNew{
-				{
-					SegmentID:    30001,
-					StartTs:      now.UnixMilli(),
-					EndTs:        now.Add(time.Minute).UnixMilli(),
-					RecordCount:  120, // Rolled up from 600 + 600 = 1200 to 120
-					FileSize:     12000,
-					Fingerprints: []int64{9001, 9002},
-				},
-			},
-		},
-	})
+	}
+	err = db.RollupMetricSegs(ctx, sourceParams, targetParams, sourceSegmentIDs, newRecords)
 	require.NoError(t, err)
 
 	// Verify source segments were marked as rolled up (but still exist)
@@ -155,7 +139,7 @@ func TestRollupMetricSegs_BasicRollup(t *testing.T) {
 		assert.False(t, seg.Compacted, "Source segment should not be compacted")
 	}
 
-	// Verify target segments were replaced
+	// Verify target segments - new implementation only inserts, doesn't delete old ones
 	targetSegs, err := db.GetMetricSegsForRollup(ctx, lrdb.GetMetricSegsForRollupParams{
 		OrganizationID: orgID,
 		Dateint:        20250830,
@@ -172,9 +156,10 @@ func TestRollupMetricSegs_BasicRollup(t *testing.T) {
 		targetSegMap[seg.SegmentID] = seg
 	}
 
-	// Old target segment should be deleted (not just marked)
-	_, oldExists := targetSegMap[existingTargetSegmentID]
-	assert.False(t, oldExists, "Old target segment should be deleted")
+	// Old target segment should still exist (new implementation doesn't delete)
+	oldSeg, oldExists := targetSegMap[existingTargetSegmentID]
+	require.True(t, oldExists, "Old target segment should still exist")
+	assert.Equal(t, []int64{777}, oldSeg.Fingerprints)
 
 	// New target segment should exist
 	newSeg, newExists := targetSegMap[30001]
@@ -218,51 +203,37 @@ func TestRollupMetricSegs_EmptySourceSegments(t *testing.T) {
 	require.NoError(t, err)
 
 	// Test rollup with no source segments to mark (just replace target)
-	err = db.RollupMetricSegs(ctx, lrdb.RollupMetricSegsParams{
-		SourceSegments: struct {
-			OrganizationID uuid.UUID
-			Dateint        int32
-			FrequencyMs    int32
-			InstanceNum    int16
-			SlotID         int32
-			SegmentIDs     []int64
-		}{
-			OrganizationID: orgID,
-			Dateint:        20250830,
-			FrequencyMs:    10000,
-			InstanceNum:    1,
-			SlotID:         0,
-			SegmentIDs:     []int64{}, // Empty source segments
+	sourceParams := lrdb.RollupSourceParams{
+		OrganizationID: orgID,
+		Dateint:        20250830,
+		FrequencyMs:    10000,
+		InstanceNum:    1,
+	}
+	targetParams := lrdb.RollupTargetParams{
+		OrganizationID: orgID,
+		Dateint:        20250830,
+		FrequencyMs:    60000,
+		InstanceNum:    1,
+		SlotID:         0,
+		SlotCount:      1,
+		IngestDateint:  20250830,
+		SortVersion:    lrdb.CurrentMetricSortVersion,
+	}
+	newRecords := []lrdb.RollupNewRecord{
+		{
+			SegmentID:    50001,
+			StartTs:      now.UnixMilli(),
+			EndTs:        now.Add(time.Minute).UnixMilli(),
+			RecordCount:  200,
+			FileSize:     10000,
+			Fingerprints: []int64{5001, 5002},
 		},
-		TargetReplacement: lrdb.ReplaceMetricSegsParams{
-			OrganizationID: orgID,
-			Dateint:        20250830,
-			InstanceNum:    1,
-			SlotID:         0,
-			SlotCount:      1,
-			IngestDateint:  20250830,
-			FrequencyMs:    60000,
-			Published:      true,
-			CreatedBy:      lrdb.CreateByRollup,
-			SortVersion:    lrdb.CurrentMetricSortVersion,
-			OldRecords: []lrdb.ReplaceMetricSegsOld{
-				{SegmentID: existingTargetID, SlotID: 0},
-			},
-			NewRecords: []lrdb.ReplaceMetricSegsNew{
-				{
-					SegmentID:    50001,
-					StartTs:      now.UnixMilli(),
-					EndTs:        now.Add(time.Minute).UnixMilli(),
-					RecordCount:  200,
-					FileSize:     10000,
-					Fingerprints: []int64{5001, 5002},
-				},
-			},
-		},
-	})
+	}
+	emptySourceSegmentIDs := []int64{} // Empty source segments
+	err = db.RollupMetricSegs(ctx, sourceParams, targetParams, emptySourceSegmentIDs, newRecords)
 	require.NoError(t, err)
 
-	// Verify target was replaced
+	// Verify target was added (old one should still exist, new one added)
 	segs, err := db.GetMetricSegsForRollup(ctx, lrdb.GetMetricSegsForRollupParams{
 		OrganizationID: orgID,
 		Dateint:        20250830,
@@ -273,10 +244,21 @@ func TestRollupMetricSegs_EmptySourceSegments(t *testing.T) {
 		EndTs:          now.Add(2 * time.Minute).UnixMilli(),
 	})
 	require.NoError(t, err)
-	require.Len(t, segs, 1)
+	require.Len(t, segs, 2) // Both old and new should exist
 
-	newSeg := segs[0]
-	assert.Equal(t, int64(50001), newSeg.SegmentID)
+	segMap := make(map[int64]lrdb.MetricSeg)
+	for _, seg := range segs {
+		segMap[seg.SegmentID] = seg
+	}
+
+	// Original segment should still exist
+	origSeg, origExists := segMap[existingTargetID]
+	require.True(t, origExists, "Original target segment should still exist")
+	assert.Equal(t, []int64{888}, origSeg.Fingerprints)
+
+	// New segment should exist
+	newSeg, newExists := segMap[50001]
+	require.True(t, newExists, "New target segment should exist")
 	assert.Equal(t, int64(200), newSeg.RecordCount)
 	assert.Equal(t, []int64{5001, 5002}, newSeg.Fingerprints)
 }
@@ -313,37 +295,24 @@ func TestRollupMetricSegs_EmptyTargetReplacement(t *testing.T) {
 	}
 
 	// Test rollup with just marking source segments (no target replacement)
-	err := db.RollupMetricSegs(ctx, lrdb.RollupMetricSegsParams{
-		SourceSegments: struct {
-			OrganizationID uuid.UUID
-			Dateint        int32
-			FrequencyMs    int32
-			InstanceNum    int16
-			SlotID         int32
-			SegmentIDs     []int64
-		}{
-			OrganizationID: orgID,
-			Dateint:        20250830,
-			FrequencyMs:    10000,
-			InstanceNum:    1,
-			SlotID:         0,
-			SegmentIDs:     sourceSegmentIDs,
-		},
-		TargetReplacement: lrdb.ReplaceMetricSegsParams{
-			OrganizationID: orgID,
-			Dateint:        20250830,
-			InstanceNum:    1,
-			SlotID:         0,
-			SlotCount:      1,
-			IngestDateint:  20250830,
-			FrequencyMs:    60000,
-			Published:      true,
-			CreatedBy:      lrdb.CreateByRollup,
-			SortVersion:    lrdb.CurrentMetricSortVersion,
-			OldRecords:     []lrdb.ReplaceMetricSegsOld{}, // Empty
-			NewRecords:     []lrdb.ReplaceMetricSegsNew{}, // Empty
-		},
-	})
+	sourceParams := lrdb.RollupSourceParams{
+		OrganizationID: orgID,
+		Dateint:        20250830,
+		FrequencyMs:    10000,
+		InstanceNum:    1,
+	}
+	targetParams := lrdb.RollupTargetParams{
+		OrganizationID: orgID,
+		Dateint:        20250830,
+		FrequencyMs:    60000,
+		InstanceNum:    1,
+		SlotID:         0,
+		SlotCount:      1,
+		IngestDateint:  20250830,
+		SortVersion:    lrdb.CurrentMetricSortVersion,
+	}
+	emptyNewRecords := []lrdb.RollupNewRecord{} // Empty
+	err := db.RollupMetricSegs(ctx, sourceParams, targetParams, sourceSegmentIDs, emptyNewRecords)
 	require.NoError(t, err)
 
 	// Verify source segments were marked as rolled up
@@ -427,57 +396,41 @@ func TestRollupMetricSegs_MultipleTargetSegments(t *testing.T) {
 	}
 
 	// Test rollup with multiple target segments
-	err := db.RollupMetricSegs(ctx, lrdb.RollupMetricSegsParams{
-		SourceSegments: struct {
-			OrganizationID uuid.UUID
-			Dateint        int32
-			FrequencyMs    int32
-			InstanceNum    int16
-			SlotID         int32
-			SegmentIDs     []int64
-		}{
-			OrganizationID: orgID,
-			Dateint:        20250830,
-			FrequencyMs:    10000,
-			InstanceNum:    1,
-			SlotID:         0,
-			SegmentIDs:     sourceSegmentIDs,
+	sourceParams := lrdb.RollupSourceParams{
+		OrganizationID: orgID,
+		Dateint:        20250830,
+		FrequencyMs:    10000,
+		InstanceNum:    1,
+	}
+	targetParams := lrdb.RollupTargetParams{
+		OrganizationID: orgID,
+		Dateint:        20250830,
+		FrequencyMs:    60000,
+		InstanceNum:    1,
+		SlotID:         0,
+		SlotCount:      1,
+		IngestDateint:  20250830,
+		SortVersion:    lrdb.CurrentMetricSortVersion,
+	}
+	newRecords := []lrdb.RollupNewRecord{
+		{
+			SegmentID:    90001,
+			StartTs:      now.UnixMilli(),
+			EndTs:        now.Add(30 * time.Second).UnixMilli(),
+			RecordCount:  200,
+			FileSize:     20000,
+			Fingerprints: []int64{9001, 9101},
 		},
-		TargetReplacement: lrdb.ReplaceMetricSegsParams{
-			OrganizationID: orgID,
-			Dateint:        20250830,
-			InstanceNum:    1,
-			SlotID:         0,
-			SlotCount:      1,
-			IngestDateint:  20250830,
-			FrequencyMs:    60000,
-			Published:      true,
-			CreatedBy:      lrdb.CreateByRollup,
-			SortVersion:    lrdb.CurrentMetricSortVersion,
-			OldRecords: []lrdb.ReplaceMetricSegsOld{
-				{SegmentID: existingTargetIDs[0], SlotID: 0},
-				{SegmentID: existingTargetIDs[1], SlotID: 0},
-			},
-			NewRecords: []lrdb.ReplaceMetricSegsNew{
-				{
-					SegmentID:    90001,
-					StartTs:      now.UnixMilli(),
-					EndTs:        now.Add(30 * time.Second).UnixMilli(),
-					RecordCount:  200,
-					FileSize:     20000,
-					Fingerprints: []int64{9001, 9101},
-				},
-				{
-					SegmentID:    90002,
-					StartTs:      now.Add(30 * time.Second).UnixMilli(),
-					EndTs:        now.Add(time.Minute).UnixMilli(),
-					RecordCount:  180,
-					FileSize:     18000,
-					Fingerprints: []int64{9002, 9102},
-				},
-			},
+		{
+			SegmentID:    90002,
+			StartTs:      now.Add(30 * time.Second).UnixMilli(),
+			EndTs:        now.Add(time.Minute).UnixMilli(),
+			RecordCount:  180,
+			FileSize:     18000,
+			Fingerprints: []int64{9002, 9102},
 		},
-	})
+	}
+	err := db.RollupMetricSegs(ctx, sourceParams, targetParams, sourceSegmentIDs, newRecords)
 	require.NoError(t, err)
 
 	// Verify source segments marked as rolled up
@@ -503,7 +456,7 @@ func TestRollupMetricSegs_MultipleTargetSegments(t *testing.T) {
 		assert.True(t, seg.Rolledup, "Source segment should be rolled up")
 	}
 
-	// Verify target segments were replaced
+	// Verify target segments - old ones should still exist, new ones added
 	targetSegs, err := db.GetMetricSegsForRollup(ctx, lrdb.GetMetricSegsForRollupParams{
 		OrganizationID: orgID,
 		Dateint:        20250830,
@@ -514,16 +467,18 @@ func TestRollupMetricSegs_MultipleTargetSegments(t *testing.T) {
 		EndTs:          now.Add(2 * time.Minute).UnixMilli(),
 	})
 	require.NoError(t, err)
+	require.Len(t, targetSegs, 4) // 2 old + 2 new
 
 	targetSegMap := make(map[int64]lrdb.MetricSeg)
 	for _, seg := range targetSegs {
 		targetSegMap[seg.SegmentID] = seg
 	}
 
-	// Old target segments should be deleted
+	// Old target segments should still exist
 	for _, oldID := range existingTargetIDs {
-		_, exists := targetSegMap[oldID]
-		assert.False(t, exists, "Old target segment should be deleted")
+		oldSeg, exists := targetSegMap[oldID]
+		require.True(t, exists, "Old target segment should still exist")
+		assert.Equal(t, []int64{800 + oldID}, oldSeg.Fingerprints)
 	}
 
 	// New target segments should exist
@@ -591,46 +546,33 @@ func TestRollupMetricSegs_AtomicTransactionFailure(t *testing.T) {
 	require.NoError(t, err)
 
 	// Try to rollup with a new record that has the same primary key (should fail)
-	err = db.RollupMetricSegs(ctx, lrdb.RollupMetricSegsParams{
-		SourceSegments: struct {
-			OrganizationID uuid.UUID
-			Dateint        int32
-			FrequencyMs    int32
-			InstanceNum    int16
-			SlotID         int32
-			SegmentIDs     []int64
-		}{
-			OrganizationID: orgID,
-			Dateint:        20250830,
-			FrequencyMs:    10000,
-			InstanceNum:    1,
-			SlotID:         0,
-			SegmentIDs:     []int64{sourceSegmentID},
+	sourceParams := lrdb.RollupSourceParams{
+		OrganizationID: orgID,
+		Dateint:        20250830,
+		FrequencyMs:    10000,
+		InstanceNum:    1,
+	}
+	targetParams := lrdb.RollupTargetParams{
+		OrganizationID: orgID,
+		Dateint:        20250830,
+		FrequencyMs:    60000,
+		InstanceNum:    1,
+		SlotID:         0,
+		SlotCount:      1,
+		IngestDateint:  20250830,
+		SortVersion:    lrdb.CurrentMetricSortVersion,
+	}
+	newRecords := []lrdb.RollupNewRecord{
+		{
+			SegmentID:    conflictingSegmentID, // This will cause a primary key violation
+			StartTs:      now.UnixMilli(),
+			EndTs:        now.Add(time.Minute).UnixMilli(),
+			RecordCount:  200,
+			FileSize:     10000,
+			Fingerprints: []int64{9999},
 		},
-		TargetReplacement: lrdb.ReplaceMetricSegsParams{
-			OrganizationID: orgID,
-			Dateint:        20250830,
-			InstanceNum:    1,
-			SlotID:         0,
-			SlotCount:      1,
-			IngestDateint:  20250830,
-			FrequencyMs:    60000,
-			Published:      true,
-			CreatedBy:      lrdb.CreateByRollup,
-			SortVersion:    lrdb.CurrentMetricSortVersion,
-			OldRecords:     []lrdb.ReplaceMetricSegsOld{}, // Don't delete the existing one
-			NewRecords: []lrdb.ReplaceMetricSegsNew{
-				{
-					SegmentID:    conflictingSegmentID, // This will cause a primary key violation
-					StartTs:      now.UnixMilli(),
-					EndTs:        now.Add(time.Minute).UnixMilli(),
-					RecordCount:  200,
-					FileSize:     10000,
-					Fingerprints: []int64{9999},
-				},
-			},
-		},
-	})
+	}
+	err = db.RollupMetricSegs(ctx, sourceParams, targetParams, []int64{sourceSegmentID}, newRecords)
 	// Should fail due to primary key violation
 	require.Error(t, err)
 
@@ -724,49 +666,33 @@ func TestRollupMetricSegs_DifferentOrganizations(t *testing.T) {
 	require.NoError(t, err)
 
 	// Rollup should work on different organizations independently
-	err = db.RollupMetricSegs(ctx, lrdb.RollupMetricSegsParams{
-		SourceSegments: struct {
-			OrganizationID uuid.UUID
-			Dateint        int32
-			FrequencyMs    int32
-			InstanceNum    int16
-			SlotID         int32
-			SegmentIDs     []int64
-		}{
-			OrganizationID: orgID1, // Source from org1
-			Dateint:        20250830,
-			FrequencyMs:    10000,
-			InstanceNum:    1,
-			SlotID:         0,
-			SegmentIDs:     []int64{sourceSegmentID},
+	sourceParams := lrdb.RollupSourceParams{
+		OrganizationID: orgID1, // Source from org1
+		Dateint:        20250830,
+		FrequencyMs:    10000,
+		InstanceNum:    1,
+	}
+	targetParams := lrdb.RollupTargetParams{
+		OrganizationID: orgID2, // Target in org2
+		Dateint:        20250830,
+		FrequencyMs:    60000,
+		InstanceNum:    1,
+		SlotID:         0,
+		SlotCount:      1,
+		IngestDateint:  20250830,
+		SortVersion:    lrdb.CurrentMetricSortVersion,
+	}
+	newRecords := []lrdb.RollupNewRecord{
+		{
+			SegmentID:    300001,
+			StartTs:      now.UnixMilli(),
+			EndTs:        now.Add(time.Minute).UnixMilli(),
+			RecordCount:  150,
+			FileSize:     7500,
+			Fingerprints: []int64{3001},
 		},
-		TargetReplacement: lrdb.ReplaceMetricSegsParams{
-			OrganizationID: orgID2, // Target in org2
-			Dateint:        20250830,
-			InstanceNum:    1,
-			SlotID:         0,
-			SlotCount:      1,
-			IngestDateint:  20250830,
-			FrequencyMs:    60000,
-			Published:      true,
-			Rolledup:       false,
-			CreatedBy:      lrdb.CreateByRollup,
-			SortVersion:    lrdb.CurrentMetricSortVersion,
-			OldRecords: []lrdb.ReplaceMetricSegsOld{
-				{SegmentID: targetSegmentID, SlotID: 0},
-			},
-			NewRecords: []lrdb.ReplaceMetricSegsNew{
-				{
-					SegmentID:    300001,
-					StartTs:      now.UnixMilli(),
-					EndTs:        now.Add(time.Minute).UnixMilli(),
-					RecordCount:  150,
-					FileSize:     7500,
-					Fingerprints: []int64{3001},
-				},
-			},
-		},
-	})
+	}
+	err = db.RollupMetricSegs(ctx, sourceParams, targetParams, []int64{sourceSegmentID}, newRecords)
 	require.NoError(t, err)
 
 	// Verify org1 source segment was marked as rolled up
@@ -783,7 +709,7 @@ func TestRollupMetricSegs_DifferentOrganizations(t *testing.T) {
 	require.Len(t, sourceSegs, 1)
 	assert.True(t, sourceSegs[0].Rolledup, "Org1 source segment should be rolled up")
 
-	// Verify org2 target segment was replaced
+	// Verify org2 target segment - old one should still exist, new one added
 	targetSegs, err := db.GetMetricSegsForRollup(ctx, lrdb.GetMetricSegsForRollupParams{
 		OrganizationID: orgID2,
 		Dateint:        20250830,
@@ -794,9 +720,22 @@ func TestRollupMetricSegs_DifferentOrganizations(t *testing.T) {
 		EndTs:          now.Add(2 * time.Minute).UnixMilli(),
 	})
 	require.NoError(t, err)
-	require.Len(t, targetSegs, 1)
-	assert.Equal(t, int64(300001), targetSegs[0].SegmentID)
-	assert.Equal(t, []int64{3001}, targetSegs[0].Fingerprints)
+	require.Len(t, targetSegs, 2) // Both old and new should exist
+
+	targetSegMap := make(map[int64]lrdb.MetricSeg)
+	for _, seg := range targetSegs {
+		targetSegMap[seg.SegmentID] = seg
+	}
+
+	// Original segment should still exist
+	origSeg, origExists := targetSegMap[targetSegmentID]
+	require.True(t, origExists, "Original target segment should still exist")
+	assert.Equal(t, []int64{2001}, origSeg.Fingerprints)
+
+	// New segment should exist
+	newSeg, newExists := targetSegMap[300001]
+	require.True(t, newExists, "New target segment should exist")
+	assert.Equal(t, []int64{3001}, newSeg.Fingerprints)
 }
 
 func TestRollupMetricSegs_DifferentSlots(t *testing.T) {
@@ -853,49 +792,33 @@ func TestRollupMetricSegs_DifferentSlots(t *testing.T) {
 	require.NoError(t, err)
 
 	// Rollup from slot 0 source to slot 1 target
-	err = db.RollupMetricSegs(ctx, lrdb.RollupMetricSegsParams{
-		SourceSegments: struct {
-			OrganizationID uuid.UUID
-			Dateint        int32
-			FrequencyMs    int32
-			InstanceNum    int16
-			SlotID         int32
-			SegmentIDs     []int64
-		}{
-			OrganizationID: orgID,
-			Dateint:        20250830,
-			FrequencyMs:    10000,
-			InstanceNum:    1,
-			SlotID:         0, // Source slot 0
-			SegmentIDs:     sourceSegmentIDs,
+	sourceParams := lrdb.RollupSourceParams{
+		OrganizationID: orgID,
+		Dateint:        20250830,
+		FrequencyMs:    10000,
+		InstanceNum:    1,
+	}
+	targetParams := lrdb.RollupTargetParams{
+		OrganizationID: orgID,
+		Dateint:        20250830,
+		FrequencyMs:    60000,
+		InstanceNum:    1,
+		SlotID:         1, // Target slot 1
+		SlotCount:      2,
+		IngestDateint:  20250830,
+		SortVersion:    lrdb.CurrentMetricSortVersion,
+	}
+	newRecords := []lrdb.RollupNewRecord{
+		{
+			SegmentID:    130001,
+			StartTs:      now.UnixMilli(),
+			EndTs:        now.Add(time.Minute).UnixMilli(),
+			RecordCount:  80,
+			FileSize:     4000,
+			Fingerprints: []int64{1301},
 		},
-		TargetReplacement: lrdb.ReplaceMetricSegsParams{
-			OrganizationID: orgID,
-			Dateint:        20250830,
-			InstanceNum:    1,
-			SlotID:         1, // Target slot 1
-			SlotCount:      2,
-			IngestDateint:  20250830,
-			FrequencyMs:    60000,
-			Published:      true,
-			Rolledup:       false,
-			CreatedBy:      lrdb.CreateByRollup,
-			SortVersion:    lrdb.CurrentMetricSortVersion,
-			OldRecords: []lrdb.ReplaceMetricSegsOld{
-				{SegmentID: targetSegmentID, SlotID: 1},
-			},
-			NewRecords: []lrdb.ReplaceMetricSegsNew{
-				{
-					SegmentID:    130001,
-					StartTs:      now.UnixMilli(),
-					EndTs:        now.Add(time.Minute).UnixMilli(),
-					RecordCount:  80,
-					FileSize:     4000,
-					Fingerprints: []int64{1301},
-				},
-			},
-		},
-	})
+	}
+	err = db.RollupMetricSegs(ctx, sourceParams, targetParams, sourceSegmentIDs, newRecords)
 	require.NoError(t, err)
 
 	// Verify source segments in slot 0 were marked as rolled up
@@ -923,7 +846,7 @@ func TestRollupMetricSegs_DifferentSlots(t *testing.T) {
 		assert.Equal(t, int32(2), seg.SlotCount)
 	}
 
-	// Verify target segment in slot 1 was replaced
+	// Verify target segment in slot 1 - old one should still exist, new one added
 	targetSegs, err := db.GetMetricSegsForRollup(ctx, lrdb.GetMetricSegsForRollupParams{
 		OrganizationID: orgID,
 		Dateint:        20250830,
@@ -934,10 +857,23 @@ func TestRollupMetricSegs_DifferentSlots(t *testing.T) {
 		EndTs:          now.Add(2 * time.Minute).UnixMilli(),
 	})
 	require.NoError(t, err)
-	require.Len(t, targetSegs, 1)
+	require.Len(t, targetSegs, 2) // Both old and new should exist
 
-	newSeg := targetSegs[0]
-	assert.Equal(t, int64(130001), newSeg.SegmentID)
+	targetSegMap := make(map[int64]lrdb.MetricSeg)
+	for _, seg := range targetSegs {
+		targetSegMap[seg.SegmentID] = seg
+	}
+
+	// Original segment should still exist
+	origSeg, origExists := targetSegMap[targetSegmentID]
+	require.True(t, origExists, "Original target segment should still exist")
+	assert.Equal(t, int32(1), origSeg.SlotID)
+	assert.Equal(t, int32(2), origSeg.SlotCount)
+	assert.Equal(t, []int64{1201}, origSeg.Fingerprints)
+
+	// New segment should exist
+	newSeg, newExists := targetSegMap[130001]
+	require.True(t, newExists, "New target segment should exist")
 	assert.Equal(t, int32(1), newSeg.SlotID)
 	assert.Equal(t, int32(2), newSeg.SlotCount)
 	assert.Equal(t, []int64{1301}, newSeg.Fingerprints)

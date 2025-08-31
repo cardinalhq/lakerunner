@@ -62,7 +62,7 @@ func TestCompactMetricSegs_BasicCompaction(t *testing.T) {
 	}
 
 	// Test CompactMetricSegs function
-	err := db.CompactMetricSegs(ctx, lrdb.ReplaceMetricSegsParams{
+	err := db.CompactMetricSegs(ctx, lrdb.CompactMetricSegsParams{
 		OrganizationID: orgID,
 		Dateint:        20250830,
 		InstanceNum:    1,
@@ -72,11 +72,11 @@ func TestCompactMetricSegs_BasicCompaction(t *testing.T) {
 		FrequencyMs:    5000,
 		Published:      true,
 		Rolledup:       false,
-		OldRecords: []lrdb.ReplaceMetricSegsOld{
+		OldRecords: []lrdb.CompactMetricSegsOld{
 			{SegmentID: oldSegmentIDs[0], SlotID: 0},
 			{SegmentID: oldSegmentIDs[1], SlotID: 0},
 		},
-		NewRecords: []lrdb.ReplaceMetricSegsNew{
+		NewRecords: []lrdb.CompactMetricSegsNew{
 			{
 				SegmentID:    99999,
 				StartTs:      now.UnixMilli(),
@@ -139,7 +139,7 @@ func TestCompactMetricSegs_EmptyOldRecords(t *testing.T) {
 	now := time.Now()
 
 	// Test with no old records to compact - just inserting new segments
-	err := db.CompactMetricSegs(ctx, lrdb.ReplaceMetricSegsParams{
+	err := db.CompactMetricSegs(ctx, lrdb.CompactMetricSegsParams{
 		OrganizationID: orgID,
 		Dateint:        20250830,
 		InstanceNum:    1,
@@ -149,8 +149,8 @@ func TestCompactMetricSegs_EmptyOldRecords(t *testing.T) {
 		FrequencyMs:    5000,
 		Published:      true,
 		Rolledup:       false,
-		OldRecords:     []lrdb.ReplaceMetricSegsOld{}, // Empty
-		NewRecords: []lrdb.ReplaceMetricSegsNew{
+		OldRecords:     []lrdb.CompactMetricSegsOld{}, // Empty
+		NewRecords: []lrdb.CompactMetricSegsNew{
 			{
 				SegmentID:    88888,
 				StartTs:      now.UnixMilli(),
@@ -224,7 +224,7 @@ func TestCompactMetricSegs_EmptyNewRecords(t *testing.T) {
 	}
 
 	// Test with no new records - just marking old as compacted
-	err := db.CompactMetricSegs(ctx, lrdb.ReplaceMetricSegsParams{
+	err := db.CompactMetricSegs(ctx, lrdb.CompactMetricSegsParams{
 		OrganizationID: orgID,
 		Dateint:        20250830,
 		InstanceNum:    1,
@@ -234,11 +234,11 @@ func TestCompactMetricSegs_EmptyNewRecords(t *testing.T) {
 		FrequencyMs:    5000,
 		Published:      true,
 		Rolledup:       false,
-		OldRecords: []lrdb.ReplaceMetricSegsOld{
+		OldRecords: []lrdb.CompactMetricSegsOld{
 			{SegmentID: oldSegmentIDs[0], SlotID: 0},
 			{SegmentID: oldSegmentIDs[1], SlotID: 0},
 		},
-		NewRecords:  []lrdb.ReplaceMetricSegsNew{}, // Empty
+		NewRecords:  []lrdb.CompactMetricSegsNew{}, // Empty
 		CreatedBy:   lrdb.CreatedByIngest,
 		SortVersion: lrdb.CurrentMetricSortVersion,
 	})
@@ -307,7 +307,7 @@ func TestCompactMetricSegs_MultipleNewSegments(t *testing.T) {
 	}
 
 	// Test CompactMetricSegs with multiple new segments
-	err := db.CompactMetricSegs(ctx, lrdb.ReplaceMetricSegsParams{
+	err := db.CompactMetricSegs(ctx, lrdb.CompactMetricSegsParams{
 		OrganizationID: orgID,
 		Dateint:        20250830,
 		InstanceNum:    1,
@@ -317,12 +317,12 @@ func TestCompactMetricSegs_MultipleNewSegments(t *testing.T) {
 		FrequencyMs:    5000,
 		Published:      true,
 		Rolledup:       false,
-		OldRecords: []lrdb.ReplaceMetricSegsOld{
+		OldRecords: []lrdb.CompactMetricSegsOld{
 			{SegmentID: oldSegmentIDs[0], SlotID: 0},
 			{SegmentID: oldSegmentIDs[1], SlotID: 0},
 			{SegmentID: oldSegmentIDs[2], SlotID: 0},
 		},
-		NewRecords: []lrdb.ReplaceMetricSegsNew{
+		NewRecords: []lrdb.CompactMetricSegsNew{
 			{
 				SegmentID:    77777,
 				StartTs:      now.UnixMilli(),
@@ -400,7 +400,7 @@ func TestCompactMetricSegs_IdempotentReplays(t *testing.T) {
 	now := time.Now()
 
 	// Test that duplicate inserts are handled gracefully (ON CONFLICT DO NOTHING)
-	params := lrdb.ReplaceMetricSegsParams{
+	params := lrdb.CompactMetricSegsParams{
 		OrganizationID: orgID,
 		Dateint:        20250830,
 		InstanceNum:    1,
@@ -410,8 +410,8 @@ func TestCompactMetricSegs_IdempotentReplays(t *testing.T) {
 		FrequencyMs:    5000,
 		Published:      true,
 		Rolledup:       false,
-		OldRecords:     []lrdb.ReplaceMetricSegsOld{},
-		NewRecords: []lrdb.ReplaceMetricSegsNew{
+		OldRecords:     []lrdb.CompactMetricSegsOld{},
+		NewRecords: []lrdb.CompactMetricSegsNew{
 			{
 				SegmentID:    66666,
 				StartTs:      now.UnixMilli(),

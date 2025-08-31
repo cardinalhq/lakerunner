@@ -21,7 +21,7 @@ import (
 	"github.com/hashicorp/go-multierror"
 )
 
-func (q *Store) CompactMetricSegs(ctx context.Context, args ReplaceMetricSegsParams) error {
+func (q *Store) CompactMetricSegs(ctx context.Context, args CompactMetricSegsParams) error {
 	// Ensure partition exists before any operations
 	if err := q.ensureMetricSegmentPartition(ctx, args.OrganizationID, args.Dateint); err != nil {
 		return fmt.Errorf("ensure partition: %w", err)

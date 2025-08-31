@@ -27,7 +27,7 @@ type LogSegmentUpserter interface {
 
 type MetricSegmentInserter interface {
 	InsertMetricSegment(ctx context.Context, params InsertMetricSegmentParams) error
-	CompactMetricSegs(ctx context.Context, args ReplaceMetricSegsParams) error
+	CompactMetricSegs(ctx context.Context, args CompactMetricSegsParams) error
 	RollupMetricSegs(ctx context.Context, sourceParams RollupSourceParams, targetParams RollupTargetParams, sourceSegmentIDs []int64, newRecords []RollupNewRecord) error
 }
 
@@ -37,7 +37,6 @@ type TraceSegmentInserter interface {
 
 type QuerierFull interface {
 	Querier
-	ReplaceMetricSegs(ctx context.Context, args ReplaceMetricSegsParams) error
 }
 
 type WorkQueueQuerier interface {
