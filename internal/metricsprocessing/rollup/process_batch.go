@@ -376,8 +376,7 @@ func rollupMetricSegments(
 		slog.Int("inputFiles", len(readerStack.DownloadedFiles)),
 		slog.Int64("inputBytes", inputBytes),
 		slog.Int64("outputBytes", outputBytes),
-		slog.Float64("compressionRatio", compressionRatio),
-		slog.Int64("recordsPerFile", metricsprocessing.DefaultRecordsPerFileRollup))
+		slog.Float64("compressionRatio", compressionRatio))
 
 	rollupParams := CompactionUploadParams{
 		OrganizationID: firstItem.OrganizationID,

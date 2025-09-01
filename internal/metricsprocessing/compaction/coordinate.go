@@ -46,13 +46,13 @@ func coordinate(
 		return nil
 	}
 
-	// Handle single row case: just mark as compacted
+	// Handle single row case: just mark as compacted (keep published=true)
 	if len(rows) == 1 {
 		ll.Debug("Single segment found - marking as compacted instead of full processing",
 			slog.Int64("segmentID", rows[0].SegmentID))
 
 		segmentIDs := []int64{rows[0].SegmentID}
-		err := mdb.MarkMetricSegsCompactedByKeys(ctx, lrdb.MarkMetricSegsCompactedByKeysParams{
+		err := mdb.SetMetricSegCompacted(ctx, lrdb.SetMetricSegCompactedParams{
 			OrganizationID: workItem.OrganizationID,
 			Dateint:        workItem.Dateint,
 			FrequencyMs:    int32(workItem.FrequencyMs),

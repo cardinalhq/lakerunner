@@ -119,6 +119,7 @@ type Querier interface {
 	ReleaseInqueueWork(ctx context.Context, arg ReleaseInqueueWorkParams) error
 	ReleaseMetricCompactionWork(ctx context.Context, arg ReleaseMetricCompactionWorkParams) error
 	ReleaseMetricRollupWork(ctx context.Context, arg ReleaseMetricRollupWorkParams) error
+	SetMetricSegCompacted(ctx context.Context, arg SetMetricSegCompactedParams) error
 	SignalLockCleanup(ctx context.Context) (int32, error)
 	TouchInqueueWork(ctx context.Context, arg TouchInqueueWorkParams) error
 	TouchMetricCompactionWork(ctx context.Context, arg TouchMetricCompactionWorkParams) error

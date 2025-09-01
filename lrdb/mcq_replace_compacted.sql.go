@@ -71,3 +71,33 @@ func (q *Queries) MarkMetricSegsRolledupByKeys(ctx context.Context, arg MarkMetr
 	)
 	return err
 }
+
+const setMetricSegCompacted = `-- name: SetMetricSegCompacted :exec
+UPDATE metric_seg
+SET compacted = true
+WHERE organization_id = $1
+  AND dateint         = $2
+  AND frequency_ms    = $3
+  AND instance_num    = $4
+  AND segment_id      = ANY($5::bigint[])
+  AND compacted       = false
+`
+
+type SetMetricSegCompactedParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Dateint        int32     `json:"dateint"`
+	FrequencyMs    int32     `json:"frequency_ms"`
+	InstanceNum    int16     `json:"instance_num"`
+	SegmentIds     []int64   `json:"segment_ids"`
+}
+
+func (q *Queries) SetMetricSegCompacted(ctx context.Context, arg SetMetricSegCompactedParams) error {
+	_, err := q.db.Exec(ctx, setMetricSegCompacted,
+		arg.OrganizationID,
+		arg.Dateint,
+		arg.FrequencyMs,
+		arg.InstanceNum,
+		arg.SegmentIds,
+	)
+	return err
+}

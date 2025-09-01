@@ -9,6 +9,16 @@ WHERE organization_id = @organization_id
   AND segment_id      = ANY(@segment_ids::bigint[])
   AND compacted       = false;
 
+-- name: SetMetricSegCompacted :exec
+UPDATE metric_seg
+SET compacted = true
+WHERE organization_id = @organization_id
+  AND dateint         = @dateint
+  AND frequency_ms    = @frequency_ms
+  AND instance_num    = @instance_num
+  AND segment_id      = ANY(@segment_ids::bigint[])
+  AND compacted       = false;
+
 -- name: MarkMetricSegsRolledupByKeys :exec
 UPDATE metric_seg
 SET rolledup = true

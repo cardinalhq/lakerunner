@@ -41,6 +41,7 @@ type compactionStore interface {
 	CompactMetricSegs(ctx context.Context, args lrdb.CompactMetricSegsParams) error
 	GetMetricSegsForCompactionWork(ctx context.Context, params lrdb.GetMetricSegsForCompactionWorkParams) ([]lrdb.MetricSeg, error)
 	MarkMetricSegsCompactedByKeys(ctx context.Context, arg lrdb.MarkMetricSegsCompactedByKeysParams) error
+	SetMetricSegCompacted(ctx context.Context, arg lrdb.SetMetricSegCompactedParams) error
 }
 
 type config struct {
