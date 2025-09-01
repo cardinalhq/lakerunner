@@ -259,9 +259,13 @@ func (s *S3DB) setupConn(ctx context.Context, conn *sql.Conn) error {
 		}
 	}
 	// Force single-threaded inside this engine to reduce internal parallelism issues.
-	threads := envIntClamp("DUCKDB_THREADS", 1, 1, 256)
+	// Use all available cores unless overridden by env.
+	threads := envIntClamp("DUCKDB_THREADS", runtime.GOMAXPROCS(0), 1, 256)
 	if _, err := conn.ExecContext(ctx, fmt.Sprintf("PRAGMA threads=%d;", threads)); err != nil {
 		return fmt.Errorf("set threads: %w", err)
+	}
+	if _, err := conn.ExecContext(ctx, "PRAGMA enable_object_cache;"); err != nil {
+		return fmt.Errorf("enable_object_cache: %w", err)
 	}
 
 	// LOAD httpfs (serialize LOAD across engines)

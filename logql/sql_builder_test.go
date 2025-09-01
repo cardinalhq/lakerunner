@@ -16,7 +16,10 @@ package logql
 
 import (
 	"database/sql"
+	"fmt"
+	"io/fs"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -78,8 +81,14 @@ func queryAll(t *testing.T, db *sql.DB, q string) []rowmap {
 	return out
 }
 
+// Replace {table} with a local base subquery that injects stub columns for
+// timestamp/id/level so exemplar queries always have them available.
 func replaceTable(sql string) string {
-	base := `(SELECT *, 0::BIGINT AS "_cardinalhq.timestamp" FROM logs) AS _t`
+	base := `(SELECT *,
+  0::BIGINT   AS "_cardinalhq.timestamp",
+  ''::VARCHAR AS "_cardinalhq.id",
+  ''::VARCHAR AS "_cardinalhq.level"
+FROM logs) AS _t`
 	return strings.ReplaceAll(sql, "{table}", base)
 }
 
@@ -98,7 +107,7 @@ func getString(v any) string {
 
 func TestToWorkerSQL_Regexp_ExtractOnly(t *testing.T) {
 	db := openDuckDB(t)
-	// base table
+	// base table: only message is required; id/level/timestamp are stubbed in replaceTable(...)
 	mustExec(t, db, `CREATE TABLE logs("_cardinalhq.message" TEXT);`)
 	// rows: INFO/alice, ERROR/bob, ERROR/carol
 	mustExec(t, db, `INSERT INTO logs VALUES 
@@ -115,12 +124,17 @@ func TestToWorkerSQL_Regexp_ExtractOnly(t *testing.T) {
 		}},
 	}
 
-	rows := queryAll(t, db, replaceTable(leaf.ToWorkerSQLWithLimit(0, 0, "desc")))
+	sql := replaceTable(leaf.ToWorkerSQLWithLimit(0, 0, "desc"))
+	// The builder should emit the sentinel so cache manager can splice segment filter.
+	if !strings.Contains(sql, "AND true") {
+		t.Fatalf("expected sentinel AND true in generated SQL:\n%s", sql)
+	}
+
+	rows := queryAll(t, db, sql)
 	if len(rows) != 3 {
 		t.Fatalf("expected 3 rows, got %d", len(rows))
 	}
 	// Verify extracted columns exist and look sane for each row
-	// Note: DuckDB returns column names as provided; we projected log_level and username
 	foundExtracts := 0
 	for _, r := range rows {
 		ll := getString(r["log_level"])
@@ -247,6 +261,10 @@ func TestToWorkerSQL_MatchersOnly_FilterApplied(t *testing.T) {
 	// Sanity: matcher should be present in SQL WHERE
 	if !strings.Contains(sql, "job = 'my-app'") {
 		t.Fatalf("generated SQL missing matcher WHERE: \n%s", sql)
+	}
+	// Sentinel present so cache manager can inject segment_id IN (...)
+	if !strings.Contains(sql, "AND true") {
+		t.Fatalf("expected sentinel AND true in generated SQL:\n%s", sql)
 	}
 
 	rows := queryAll(t, db, sql)
@@ -382,4 +400,47 @@ func TestToWorkerSQL_LabelFormat_Conditional_FromLogQL(t *testing.T) {
 			t.Fatalf("derived label mismatch: response=%q -> api=%q (want ERROR)", p.resp, p.api)
 		}
 	}
+}
+
+func parquetGlobOrSkip(t *testing.T) string {
+	t.Helper()
+
+	abs, err := filepath.Abs("db")
+	if err != nil {
+		t.Fatalf("abs(db): %v", err)
+	}
+
+	// ensure at least one *.parquet exists under ./db
+	found := false
+	_ = filepath.WalkDir(abs, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() && strings.HasSuffix(strings.ToLower(d.Name()), ".parquet") {
+			found = true
+			return fs.SkipAll
+		}
+		return nil
+	})
+	if !found {
+		t.Skipf("no parquet files under %s; skipping", abs)
+	}
+
+	// DuckDB likes forward slashes; use file: URL + recursive glob
+	return "file:" + filepath.ToSlash(filepath.Join(abs, "**/*.parquet"))
+}
+
+// Replace {table} with a direct read_parquet(...) subquery (no VIEW).
+// Inject stub columns for timestamp/id/level to satisfy exemplar defaults.
+func replaceTableParquetNoView(t *testing.T, sql string) string {
+	glob := parquetGlobOrSkip(t)
+	base := fmt.Sprintf(
+		`(SELECT *,
+  0::BIGINT   AS "_cardinalhq.timestamp",
+  ''::VARCHAR AS "_cardinalhq.id",
+  ''::VARCHAR AS "_cardinalhq.level"
+FROM read_parquet('%s', union_by_name=true)) AS _t`,
+		glob,
+	)
+	return strings.ReplaceAll(sql, "{table}", base)
 }

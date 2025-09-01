@@ -59,10 +59,35 @@ func (be *LogLeaf) toWorkerSQL(step time.Duration, limit int, order string) stri
 		layers = append(layers, layer{name: alias, sql: sql})
 	}
 
-	// s0: base
-	push(nil, baseRel, nil)
+	// ---- s0: minimal base projection ----
+	// Only project columns guaranteed to exist now:
+	//   - message (for parsers)
+	//   - exemplar defaults: id, timestamp, level
+	//   - matcher columns (since selectors refer to base columns)
+	need := map[string]struct{}{
+		bodyCol:                 {},
+		tsCol:                   {},
+		"\"_cardinalhq.id\"":    {},
+		"\"_cardinalhq.level\"": {},
+	}
+	for _, m := range be.Matchers {
+		need[quoteIdent(m.Label)] = struct{}{}
+	}
+	var s0Select []string
+	for col := range need {
+		s0Select = append(s0Select, col)
+	}
+	sort.Strings(s0Select)
+	push(s0Select, baseRel, nil)
 
-	// Apply selector matchers as an early WHERE layer (if any).
+	// Sentinel layer so cache manager can splice segment filter via "AND true".
+	// This produces a literal "AND true" in the SQL text, independent of other filters.
+	push([]string{mk(layerIdx-1) + ".*"}, mk(layerIdx-1), []string{"1=1", "true"})
+
+	// Track the current top alias
+	top := func() string { return mk(layerIdx - 1) }
+
+	// Apply selector matchers early (WHERE on current top).
 	if len(be.Matchers) > 0 {
 		mLfs := make([]LabelFilter, 0, len(be.Matchers))
 		for _, m := range be.Matchers {
@@ -70,20 +95,18 @@ func (be *LogLeaf) toWorkerSQL(step time.Duration, limit int, order string) stri
 		}
 		mWhere := buildLabelFilterWhere(mLfs, nil) // nil resolver => use quoteIdent(label)
 		if len(mWhere) > 0 {
-			push([]string{mk(layerIdx-1) + ".*"}, mk(layerIdx-1), mWhere)
+			// keep sentinel in earlier CTE; no need to re-append "true" here
+			push([]string{top() + ".*"}, top(), mWhere)
 		}
 	}
 
 	// Line filters (pre-parser) -> WHERE on current top
 	lineWhere := buildLineFilterWhere(be.LineFilters, bodyCol)
 	if len(lineWhere) > 0 {
-		push([]string{mk(layerIdx-1) + ".*"}, mk(layerIdx-1), lineWhere)
+		push([]string{top() + ".*"}, top(), lineWhere)
 	}
 
-	// Track the current top alias
-	top := func() string { return mk(layerIdx - 1) }
-
-	// Collect label filters that aren't tied to a parser (or we can't tell):
+	// Collect label filters that aren't tied to a parser (or we can't tell) yet.
 	remainingLF := make([]LabelFilter, 0, len(be.LabelFilters))
 	remainingLF = append(remainingLF, be.LabelFilters...)
 
@@ -133,70 +156,63 @@ func (be *LogLeaf) toWorkerSQL(step time.Duration, limit int, order string) stri
 		case "regexp":
 			pat := p.Params["pattern"]
 			names := regexCaptureNames(pat)
-			// Projection: carry all columns + extracted captures.
 			selects := []string{top() + ".*"}
 			for i, name := range names {
-				// DuckDB: group index is 1-based
 				selects = append(selects,
 					fmt.Sprintf("regexp_extract(%s, %s, %d) AS %s",
 						bodyCol, sqlQuote(pat), i+1, quoteIdent(name)))
 			}
 			push(selects, top(), nil)
 
-			// Any label filters targeting these extracted names? apply now.
+			// Apply label filters that target these extracted names now.
 			if len(names) > 0 {
 				created := mkSet(names)
 				now, later := partitionByNames(remainingLF, created)
 				if len(now) > 0 {
-					where := buildLabelFilterWhere(now /* colResolver */, nil)
+					where := buildLabelFilterWhere(now, nil)
 					push([]string{top() + ".*"}, top(), where)
 				}
 				remainingLF = later
 			}
 
 		case "json":
-			// Project only the JSON keys we intend to filter on *now*, excluding those
-			// that will be introduced later by label_format.
-			need := uniqLabels(remainingLF)
-			need = excludeFuture(need)
+			needKeys := uniqLabels(remainingLF)
+			needKeys = excludeFuture(needKeys)
 
 			selects := []string{top() + ".*"}
-			for _, k := range need {
+			for _, k := range needKeys {
 				path := jsonPathForKey(k)
 				selects = append(selects, fmt.Sprintf("json_extract_string(%s, %s) AS %s", bodyCol, sqlQuote(path), quoteIdent(k)))
 			}
 			push(selects, top(), nil)
 
-			// Apply only the filters that reference the columns we just created here.
-			if len(need) > 0 {
-				created := mkSet(need)
+			if len(needKeys) > 0 {
+				created := mkSet(needKeys)
 				now, later := partitionByNames(remainingLF, created)
 				if len(now) > 0 {
-					where := buildLabelFilterWhere(now /* colResolver */, nil)
+					where := buildLabelFilterWhere(now, nil)
 					push([]string{top() + ".*"}, top(), where)
 				}
 				remainingLF = later
 			}
 
 		case "logfmt":
-			need := uniqLabels(remainingLF)
-			need = excludeFuture(need)
+			needKeys := uniqLabels(remainingLF)
+			needKeys = excludeFuture(needKeys)
 
 			selects := []string{top() + ".*"}
-			for _, k := range need {
-				// key=value with no spaces in value
+			for _, k := range needKeys {
 				reKey := fmt.Sprintf(`(?:^|\s)%s=([^\s]+)`, regexp.QuoteMeta(k))
 				selects = append(selects,
 					fmt.Sprintf("regexp_extract(%s, %s, 1) AS %s", bodyCol, sqlQuote(reKey), quoteIdent(k)))
 			}
 			push(selects, top(), nil)
 
-			// Apply only filters that reference the columns created in this stage.
-			if len(need) > 0 {
-				created := mkSet(need)
+			if len(needKeys) > 0 {
+				created := mkSet(needKeys)
 				now, later := partitionByNames(remainingLF, created)
 				if len(now) > 0 {
-					where := buildLabelFilterWhere(now /* colResolver */, nil)
+					where := buildLabelFilterWhere(now, nil)
 					push([]string{top() + ".*"}, top(), where)
 				}
 				remainingLF = later
@@ -230,7 +246,6 @@ func (be *LogLeaf) toWorkerSQL(step time.Duration, limit int, order string) stri
 
 			push(selects, top(), nil)
 
-			// Apply any label filters that reference newly created names
 			now, later := partitionByNames(remainingLF, created)
 			if len(now) > 0 {
 				where := buildLabelFilterWhere(now, nil)
@@ -239,15 +254,17 @@ func (be *LogLeaf) toWorkerSQL(step time.Duration, limit int, order string) stri
 			remainingLF = later
 
 		default:
-			// Unknown parser: just pass-through (keeps layering predictable)
+			// Unknown parser: pass-through
 			push([]string{top() + ".*"}, top(), nil)
 		}
 	}
 
-	// Any label filters we didn’t place yet? apply at the end.
+	// Any label filters we didn’t place yet? (i.e., on base columns) apply at the end.
 	if len(remainingLF) > 0 {
-		where := buildLabelFilterWhere(remainingLF /* colResolver */, nil)
-		push([]string{top() + ".*"}, top(), where)
+		where := buildLabelFilterWhere(remainingLF, nil)
+		if len(where) > 0 {
+			push([]string{top() + ".*"}, top(), where)
+		}
 	}
 
 	// Final SELECT
@@ -266,12 +283,11 @@ func (be *LogLeaf) toWorkerSQL(step time.Duration, limit int, order string) stri
 	sb.WriteString("SELECT * FROM ")
 	sb.WriteString(finalAlias)
 
-	// Apply ORDER/LIMIT only for exemplar (non-aggregated) leaves.
-	// (Assumes planner populates be.RangeAggOp for aggregated queries.)
+	// Exemplars (non-aggregated): ORDER/LIMIT
 	if be.RangeAggOp == "" {
 		dir := strings.ToUpper(strings.TrimSpace(order))
 		if dir != "ASC" && dir != "DESC" {
-			dir = "DESC" // default most-recent-first
+			dir = "DESC"
 		}
 		sb.WriteString(" ORDER BY ")
 		sb.WriteString(tsCol)

@@ -34,6 +34,10 @@ import (
 	"github.com/google/uuid"
 )
 
+const (
+	ChannelBufferSize = 4096
+)
+
 // DownloadBatchFunc downloads ALL given paths to their target local paths.
 type DownloadBatchFunc func(ctx context.Context, storageProfile storageprofile.StorageProfile, keys []string) error
 
@@ -61,6 +65,8 @@ type CacheManager struct {
 	lastAccess map[int64]time.Time // segmentID -> last access
 	inflight   map[int64]*struct{} // singleflight per segmentID
 
+	profilesByOrgInstanceNum map[uuid.UUID]map[int16]storageprofile.StorageProfile
+
 	ingestQ    chan ingestJob
 	stopIngest context.CancelFunc
 	ingestWG   sync.WaitGroup
@@ -82,16 +88,17 @@ func NewCacheManager(dl DownloadBatchFunc, dataset string, storageProfileProvide
 		return nil
 	}
 	w := &CacheManager{
-		sink:                   ddb,
-		s3Db:                   s3DB,
-		dataset:                dataset,
-		storageProfileProvider: storageProfileProvider,
-		maxRows:                MaxRowsDefault,
-		downloader:             dl,
-		present:                make(map[int64]struct{}, 1024),
-		lastAccess:             make(map[int64]time.Time, 1024),
-		inflight:               make(map[int64]*struct{}, 1024),
-		ingestQ:                make(chan ingestJob, 64),
+		sink:                     ddb,
+		s3Db:                     s3DB,
+		dataset:                  dataset,
+		storageProfileProvider:   storageProfileProvider,
+		profilesByOrgInstanceNum: make(map[uuid.UUID]map[int16]storageprofile.StorageProfile),
+		maxRows:                  MaxRowsDefault,
+		downloader:               dl,
+		present:                  make(map[int64]struct{}, ChannelBufferSize),
+		lastAccess:               make(map[int64]time.Time, ChannelBufferSize),
+		inflight:                 make(map[int64]*struct{}, ChannelBufferSize),
+		ingestQ:                  make(chan ingestJob, 64),
 	}
 
 	ingCtx, ingCancel := context.WithCancel(context.Background())
@@ -128,40 +135,44 @@ func EvaluatePushDown[T promql.Timestamped](
 
 	// Group segments by orgId/instanceNum
 	segmentsByOrg := make(map[uuid.UUID]map[int16][]queryapi.SegmentInfo)
-	profilesByOrgInstanceNum := make(map[uuid.UUID]map[int16]storageprofile.StorageProfile)
+	start := time.Now()
 	for _, seg := range request.Segments {
 		if _, ok := segmentsByOrg[seg.OrganizationID]; !ok {
 			segmentsByOrg[seg.OrganizationID] = make(map[int16][]queryapi.SegmentInfo)
 		}
-		if _, ok := profilesByOrgInstanceNum[seg.OrganizationID]; !ok {
-			profilesByOrgInstanceNum[seg.OrganizationID] = make(map[int16]storageprofile.StorageProfile)
+		if _, ok := w.profilesByOrgInstanceNum[seg.OrganizationID]; !ok {
+			w.profilesByOrgInstanceNum[seg.OrganizationID] = make(map[int16]storageprofile.StorageProfile)
 		}
-		if _, ok := profilesByOrgInstanceNum[seg.OrganizationID][seg.InstanceNum]; !ok {
+		if _, ok := w.profilesByOrgInstanceNum[seg.OrganizationID][seg.InstanceNum]; !ok {
 			profile, err := w.storageProfileProvider.GetStorageProfileForOrganizationAndInstance(
 				ctx, seg.OrganizationID, seg.InstanceNum)
 			if err != nil {
 				return nil, fmt.Errorf("get storage profile for org %s instance %d: %w",
 					seg.OrganizationID, seg.InstanceNum, err)
 			}
-			profilesByOrgInstanceNum[seg.OrganizationID][seg.InstanceNum] = profile
+			w.profilesByOrgInstanceNum[seg.OrganizationID][seg.InstanceNum] = profile
 		}
 		if _, ok := segmentsByOrg[seg.OrganizationID][seg.InstanceNum]; !ok {
 			segmentsByOrg[seg.OrganizationID][seg.InstanceNum] = []queryapi.SegmentInfo{}
 		}
 		segmentsByOrg[seg.OrganizationID][seg.InstanceNum] = append(segmentsByOrg[seg.OrganizationID][seg.InstanceNum], seg)
 	}
+	metadataCreationTime := time.Since(start)
+	slog.Info("Metadata Creation Time", "duration", metadataCreationTime.String())
+	start = time.Now()
 
 	outs := make([]<-chan T, 0)
 
 	// Now start putting channels together for every orgId/instanceNum.
 	for orgId, instances := range segmentsByOrg {
 		for instanceNum, segments := range instances {
-			profile := profilesByOrgInstanceNum[orgId][instanceNum]
+			profile := w.profilesByOrgInstanceNum[orgId][instanceNum]
 			// Split into cached vs S3
 			var s3URIs []string
 			var s3LocalPaths []string
 			var s3IDs []int64
 			var cachedIDs []int64
+			sortSegments(segments, request)
 
 			for _, seg := range segments {
 				objectId := fmt.Sprintf("db/%s/%s/%d/%s/%s/tbl_%d.parquet", orgId.String(),
@@ -188,11 +199,11 @@ func EvaluatePushDown[T promql.Timestamped](
 
 			slog.Info("Segment Stats", "numS3", len(s3URIs), "numCached", len(cachedIDs), "numPresent", len(w.present))
 			// Stream uncached segments directly from S3 (one channel per glob).
-			s3Channels, err := streamFromS3(ctx, w, request, profile.Bucket, profile.Region, profile.Endpoint, s3URIs, s3GlobSize, userSQL, mapper)
+			s3Channel, err := streamFromS3InParallel(ctx, w, request, profile.Bucket, profile.Region, profile.Endpoint, s3URIs, s3GlobSize, userSQL, mapper)
 			if err != nil {
 				return nil, fmt.Errorf("stream from S3: %w", err)
 			}
-			outs = append(outs, s3Channels...)
+			outs = append(outs, s3Channel)
 
 			// If we have uncached segments, enqueue them for download + batch-ingest.
 			if len(s3LocalPaths) > 0 {
@@ -204,9 +215,32 @@ func EvaluatePushDown[T promql.Timestamped](
 			outs = append(outs, cachedChannels...)
 		}
 	}
+	channelCreationTime := time.Since(start)
+	slog.Info("Channel Creation Time", "duration", channelCreationTime.String())
 
 	//slog.Info("Returning channels for pushdown evaluation", slog.Int("channels", len(outs)))
-	return promql.MergeSorted(ctx, 1024, request.Reverse, request.Limit, outs...), nil
+	return promql.MergeSorted(ctx, ChannelBufferSize, request.Reverse, request.Limit, outs...), nil
+}
+
+func sortSegments(segments []queryapi.SegmentInfo, request queryapi.PushDownRequest) {
+	sort.Slice(segments, func(i, j int) bool {
+		if request.Reverse {
+			if segments[i].DateInt != segments[j].DateInt {
+				return segments[i].DateInt > segments[j].DateInt
+			}
+			if segments[i].Hour != segments[j].Hour {
+				return segments[i].Hour > segments[j].Hour
+			}
+			return segments[i].EndTs > segments[j].EndTs
+		}
+		if segments[i].DateInt != segments[j].DateInt {
+			return segments[i].DateInt < segments[j].DateInt
+		}
+		if segments[i].Hour != segments[j].Hour {
+			return segments[i].Hour < segments[j].Hour
+		}
+		return segments[i].EndTs < segments[j].EndTs
+	})
 }
 
 func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
@@ -216,7 +250,7 @@ func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
 	outs := make([]<-chan T, 0)
 
 	if len(cachedIDs) > 0 {
-		out := make(chan T, 256)
+		out := make(chan T, ChannelBufferSize)
 		outs = append(outs, out)
 
 		// Touch lastAccess for cached segments
@@ -282,6 +316,120 @@ func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
 	return outs
 }
 
+func streamFromS3InParallel[T promql.Timestamped](
+	ctx context.Context,
+	w *CacheManager,
+	request queryapi.PushDownRequest,
+	bucket, region, endpoint string,
+	s3URIs []string,
+	s3GlobSize int,
+	userSQL string,
+	mapper RowMapper[T],
+) (<-chan T, error) {
+	out := make(chan T, ChannelBufferSize)
+	if len(s3URIs) == 0 {
+		close(out)
+		return out, nil
+	}
+
+	// Preserve order: segments are pre-sorted; chunkStrings keeps that order.
+	batches := chunkStrings(s3URIs, s3GlobSize)
+
+	// One channel per batch; workers push here in parallel.
+	bch := make([]chan T, len(batches))
+	for i := range bch {
+		bch[i] = make(chan T, ChannelBufferSize)
+	}
+
+	ctxW := context.WithoutCancel(ctx)
+
+	var wg sync.WaitGroup
+	wg.Add(len(batches))
+	for bi := range batches {
+		uris := append([]string(nil), batches[bi]...) // capture
+		outCh := bch[bi]
+
+		go func() {
+			defer wg.Done()
+			defer close(outCh)
+
+			// Build read_parquet source for this batch
+			quoted := make([]string, len(uris))
+			for i := range uris {
+				quoted[i] = "'" + escapeSQL(uris[i]) + "'"
+			}
+			slog.Info("Making S3 query", "uris", len(uris), "bucket", bucket)
+			src := fmt.Sprintf(`read_parquet([%s], union_by_name=true)`, strings.Join(quoted, ", "))
+			sqlReplaced := strings.Replace(userSQL, "{table}", src, 1)
+
+			conn, release, err := w.s3Db.GetConnection(ctxW, bucket, region, endpoint)
+			if err != nil {
+				slog.Error("GetConnection failed", "bucket", bucket, "error", err)
+				return
+			}
+			defer release()
+
+			rows, err := conn.QueryContext(ctxW, sqlReplaced)
+			if err != nil {
+				slog.Error("Query failed", slog.Any("error", err))
+				return
+			}
+			defer rows.Close()
+
+			cols, err := rows.Columns()
+			if err != nil {
+				slog.Error("failed to get columns", slog.Any("error", err))
+				return
+			}
+
+			for rows.Next() {
+				select {
+				case <-ctxW.Done():
+					return
+				default:
+				}
+				v, mErr := mapper(request, cols, rows)
+				if mErr != nil {
+					slog.Error("Row mapping failed", slog.Any("error", mErr))
+					return
+				}
+				// Non-blocking wrt cancel; will stall only if batch buffer fills.
+				select {
+				case <-ctxW.Done():
+					return
+				case outCh <- v:
+				}
+			}
+			if err := rows.Err(); err != nil {
+				slog.Error("Rows iteration error", slog.Any("error", err))
+			}
+		}()
+	}
+
+	// Coordinator: drain batch0, then batch1, ... → strict global order.
+	go func() {
+		defer close(out)
+
+		emitted := 0
+		for i := 0; i < len(bch); i++ {
+			for v := range bch[i] {
+				select {
+				case <-ctx.Done():
+					return
+				case out <- v:
+				}
+				emitted++
+				if request.Limit > 0 && emitted >= request.Limit {
+					return
+				}
+			}
+		}
+		wg.Wait() // best-effort; workers should be done anyway
+	}()
+
+	return out, nil
+}
+
 func streamFromS3[T promql.Timestamped](
 	ctx context.Context,
 	w *CacheManager,
@@ -304,7 +452,7 @@ func streamFromS3[T promql.Timestamped](
 
 	for _, uris := range batches {
 		slog.Info("Streaming from S3", slog.Int("uris", len(uris)))
-		out := make(chan T, 1024)
+		out := make(chan T, ChannelBufferSize)
 		outs = append(outs, out)
 
 		urisCopy := append([]string(nil), uris...) // capture loop var
@@ -322,7 +470,11 @@ func streamFromS3[T promql.Timestamped](
 
 			sqlReplaced := strings.Replace(userSQL, "{table}", src, 1)
 			// Lease a per-bucket connection (creates/refreshes S3 secret under the hood)
+			start := time.Now()
 			conn, release, err := w.s3Db.GetConnection(ctx, bucket, region, endpoint)
+			connectionAcquireTime := time.Since(start)
+			slog.Info("S3 Connection Acquire Time", "duration", connectionAcquireTime.String(), "bucket", bucket)
+
 			if err != nil {
 				slog.Error("GetConnection failed", slog.String("bucket", bucket), slog.Any("error", err))
 				return
