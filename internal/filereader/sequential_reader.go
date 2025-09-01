@@ -60,7 +60,7 @@ func NewSequentialReader(readers []Reader, batchSize int) (*SequentialReader, er
 	}, nil
 }
 
-func (sr *SequentialReader) Next() (*Batch, error) {
+func (sr *SequentialReader) Next(ctx context.Context) (*Batch, error) {
 	if sr.closed {
 		return nil, io.EOF
 	}
@@ -68,7 +68,7 @@ func (sr *SequentialReader) Next() (*Batch, error) {
 	for sr.currentIndex < len(sr.readers) {
 		currentReader := sr.readers[sr.currentIndex]
 
-		batch, err := currentReader.Next()
+		batch, err := currentReader.Next(ctx)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				// Current reader is exhausted, move to the next one
@@ -79,7 +79,7 @@ func (sr *SequentialReader) Next() (*Batch, error) {
 		}
 
 		// Track rows read from underlying readers
-		rowsInCounter.Add(context.Background(), int64(batch.Len()), otelmetric.WithAttributes(
+		rowsInCounter.Add(ctx, int64(batch.Len()), otelmetric.WithAttributes(
 			attribute.String("reader", "SequentialReader"),
 		))
 
@@ -87,7 +87,7 @@ func (sr *SequentialReader) Next() (*Batch, error) {
 		sr.rowCount += int64(batch.Len())
 
 		// Track rows output to downstream
-		rowsOutCounter.Add(context.Background(), int64(batch.Len()), otelmetric.WithAttributes(
+		rowsOutCounter.Add(ctx, int64(batch.Len()), otelmetric.WithAttributes(
 			attribute.String("reader", "SequentialReader"),
 		))
 

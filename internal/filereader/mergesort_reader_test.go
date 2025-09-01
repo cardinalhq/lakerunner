@@ -15,6 +15,7 @@
 package filereader
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -32,7 +33,7 @@ func TestNewMergesortReader(t *testing.T) {
 	}
 	keyProvider := NewTimeOrderedSortKeyProvider("ts")
 
-	or, err := NewMergesortReader(readers, keyProvider, 1000)
+	or, err := NewMergesortReader(context.TODO(), readers, keyProvider, 1000)
 	if err != nil {
 		t.Fatalf("NewMergesortReader() error = %v", err)
 	}
@@ -43,13 +44,13 @@ func TestNewMergesortReader(t *testing.T) {
 	}
 
 	// Test with no readers
-	_, err = NewMergesortReader([]Reader{}, keyProvider, 1000)
+	_, err = NewMergesortReader(context.TODO(), []Reader{}, keyProvider, 1000)
 	if err == nil {
 		t.Error("Expected error for empty readers slice")
 	}
 
 	// Test with nil keyProvider
-	_, err = NewMergesortReader(readers, nil, 1000)
+	_, err = NewMergesortReader(context.TODO(), readers, nil, 1000)
 	if err == nil {
 		t.Error("Expected error for nil keyProvider")
 	}
@@ -74,7 +75,7 @@ func TestMergesortReader_Next(t *testing.T) {
 	}
 
 	keyProvider := NewTimeOrderedSortKeyProvider("ts")
-	or, err := NewMergesortReader(readers, keyProvider, 1000)
+	or, err := NewMergesortReader(context.TODO(), readers, keyProvider, 1000)
 	if err != nil {
 		t.Fatalf("NewMergesortReader() error = %v", err)
 	}
@@ -123,14 +124,14 @@ func TestMergesortReader_NextBatched(t *testing.T) {
 	}
 
 	keyProvider := NewTimeOrderedSortKeyProvider("ts")
-	or, err := NewMergesortReader(readers, keyProvider, 1000)
+	or, err := NewMergesortReader(context.TODO(), readers, keyProvider, 1000)
 	if err != nil {
 		t.Fatalf("NewMergesortReader() error = %v", err)
 	}
 	defer or.Close()
 
 	// Read first batch (should get both rows)
-	batch, err := or.Next()
+	batch, err := or.Next(context.TODO())
 	if err != nil {
 		t.Fatalf("Next() error = %v", err)
 	}
@@ -145,7 +146,7 @@ func TestMergesortReader_NextBatched(t *testing.T) {
 	}
 
 	// Next read should return EOF
-	batch, err = or.Next()
+	batch, err = or.Next(context.TODO())
 	if !errors.Is(err, io.EOF) {
 		t.Errorf("Final Next() should return io.EOF, got err=%v", err)
 	}
@@ -161,7 +162,7 @@ func TestMergesortReader_ActiveReaderCount(t *testing.T) {
 	}
 
 	keyProvider := NewTimeOrderedSortKeyProvider("ts")
-	or, err := NewMergesortReader(readers, keyProvider, 1000)
+	or, err := NewMergesortReader(context.TODO(), readers, keyProvider, 1000)
 	if err != nil {
 		t.Fatalf("NewMergesortReader() error = %v", err)
 	}
@@ -173,7 +174,7 @@ func TestMergesortReader_ActiveReaderCount(t *testing.T) {
 	}
 
 	// Read batch (should get both rows)
-	batch, err := or.Next()
+	batch, err := or.Next(context.TODO())
 	if err != nil {
 		t.Fatalf("Next() error = %v", err)
 	}
@@ -194,14 +195,14 @@ func TestMergesortReader_AllEmptyReaders(t *testing.T) {
 	}
 
 	keyProvider := NewTimeOrderedSortKeyProvider("ts")
-	or, err := NewMergesortReader(readers, keyProvider, 1000)
+	or, err := NewMergesortReader(context.TODO(), readers, keyProvider, 1000)
 	if err != nil {
 		t.Fatalf("NewMergesortReader() error = %v", err)
 	}
 	defer or.Close()
 
 	// Should immediately return io.EOF
-	batch, err := or.Next()
+	batch, err := or.Next(context.TODO())
 	if !errors.Is(err, io.EOF) {
 		t.Errorf("Next() with all empty readers should return io.EOF, got err=%v", err)
 	}
@@ -217,7 +218,7 @@ func TestMergesortReader_Close(t *testing.T) {
 	}
 
 	keyProvider := NewTimeOrderedSortKeyProvider("ts")
-	or, err := NewMergesortReader(readers, keyProvider, 1000)
+	or, err := NewMergesortReader(context.TODO(), readers, keyProvider, 1000)
 	if err != nil {
 		t.Fatalf("NewMergesortReader() error = %v", err)
 	}
@@ -237,7 +238,7 @@ func TestMergesortReader_Close(t *testing.T) {
 	}
 
 	// Verify subsequent operations fail
-	_, err = or.Next()
+	_, err = or.Next(context.TODO())
 	if err == nil {
 		t.Error("Next() after Close() should return error")
 	}
@@ -320,7 +321,7 @@ func newTrackingReader(rows []Row) *trackingReader {
 	return &trackingReader{rows: rows}
 }
 
-func (tr *trackingReader) Next() (*Batch, error) {
+func (tr *trackingReader) Next(ctx context.Context) (*Batch, error) {
 	if tr.index >= len(tr.rows) {
 		return nil, io.EOF
 	}
@@ -348,14 +349,14 @@ func (tr *trackingReader) TotalRowsReturned() int64 { return tr.rowCount }
 
 func TestMergesortReader_RowReuse(t *testing.T) {
 	tr := newTrackingReader([]Row{{wkk.NewRowKey("ts"): int64(1)}, {wkk.NewRowKey("ts"): int64(2)}, {wkk.NewRowKey("ts"): int64(3)}, {wkk.NewRowKey("ts"): int64(4)}})
-	or, err := NewMergesortReader([]Reader{tr}, NewTimeOrderedSortKeyProvider("ts"), 1)
+	or, err := NewMergesortReader(context.TODO(), []Reader{tr}, NewTimeOrderedSortKeyProvider("ts"), 1)
 	if err != nil {
 		t.Fatalf("NewMergesortReader() error = %v", err)
 	}
 	defer or.Close()
 
 	// Read first batch
-	batch, err := or.Next()
+	batch, err := or.Next(context.TODO())
 	if err != nil {
 		t.Fatalf("First Next() err=%v", err)
 	}
@@ -367,7 +368,7 @@ func TestMergesortReader_RowReuse(t *testing.T) {
 	}
 
 	// Read second batch
-	batch, err = or.Next()
+	batch, err = or.Next(context.TODO())
 	if err != nil {
 		t.Fatalf("Second Next() err=%v", err)
 	}
@@ -379,7 +380,7 @@ func TestMergesortReader_RowReuse(t *testing.T) {
 	}
 
 	// Read third batch
-	batch, err = or.Next()
+	batch, err = or.Next(context.TODO())
 	if err != nil {
 		t.Fatalf("Third Next() err=%v", err)
 	}

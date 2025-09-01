@@ -15,6 +15,7 @@
 package filereader
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"testing"
@@ -61,7 +62,7 @@ func benchmarkSortingReader(b *testing.B, createReaderFunc func([]Row) (Reader, 
 		// Read all rows
 		rowsRead := 0
 		for {
-			batch, err := reader.Next()
+			batch, err := reader.Next(context.TODO())
 			if err == io.EOF {
 				break
 			}
@@ -110,7 +111,7 @@ func benchmarkSortingReaderWithSize(b *testing.B, numRows int, createReaderFunc 
 		// Read all rows
 		rowsRead := 0
 		for {
-			batch, err := reader.Next()
+			batch, err := reader.Next(context.TODO())
 			if err == io.EOF {
 				break
 			}

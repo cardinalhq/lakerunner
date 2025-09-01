@@ -16,6 +16,7 @@ package filereader
 
 import (
 	"compress/gzip"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -353,7 +354,7 @@ func TestReaderForFile(t *testing.T) {
 
 				// Test that we can read at least one row (if the file has data)
 				if canRead(filename) {
-					batch, readErr := reader.Next()
+					batch, readErr := reader.Next(context.TODO())
 					if readErr != nil && readErr != io.EOF {
 						t.Logf("Read error for %s (this may be expected for some files): %v", tt.description, readErr)
 					} else if batch != nil && batch.Len() > 0 {
@@ -484,7 +485,7 @@ func TestGzippedProtobufSupport(t *testing.T) {
 			defer reader.Close()
 
 			// Verify we can read data
-			batch, readErr := reader.Next()
+			batch, readErr := reader.Next(context.TODO())
 			if readErr != nil && readErr != io.EOF {
 				t.Logf("Read error (may be expected): %v", readErr)
 			} else if batch != nil && batch.Len() > 0 {

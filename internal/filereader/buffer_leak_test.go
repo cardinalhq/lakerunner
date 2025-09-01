@@ -15,6 +15,7 @@
 package filereader
 
 import (
+	"context"
 	"io"
 	"strings"
 	"testing"
@@ -41,7 +42,7 @@ func newMockLeakTestReader(numRows int) *mockLeakTestReader {
 	return &mockLeakTestReader{rows: rows}
 }
 
-func (m *mockLeakTestReader) Next() (*Batch, error) {
+func (m *mockLeakTestReader) Next(ctx context.Context) (*Batch, error) {
 	if m.index >= len(m.rows) {
 		return nil, io.EOF
 	}
@@ -82,7 +83,7 @@ func readAllBatches(t *testing.T, reader Reader) []*Batch {
 	var batches []*Batch
 
 	for {
-		batch, err := reader.Next()
+		batch, err := reader.Next(context.TODO())
 		if err == io.EOF {
 			break
 		}
@@ -122,7 +123,7 @@ func TestMergesortReader_BufferLeak(t *testing.T) {
 	readers := []Reader{reader1, reader2}
 
 	// Create MergesortReader
-	msReader, err := NewMergesortReader(readers, NewTimeOrderedSortKeyProvider("_cardinalhq.timestamp"), 100)
+	msReader, err := NewMergesortReader(context.TODO(), readers, NewTimeOrderedSortKeyProvider("_cardinalhq.timestamp"), 100)
 	if err != nil {
 		t.Fatalf("Failed to create MergesortReader: %v", err)
 	}

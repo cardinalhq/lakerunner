@@ -302,7 +302,7 @@ func rollupMetricSegments(
 	batchCount := 0
 
 	for {
-		batch, err := aggregatingReader.Next()
+		batch, err := aggregatingReader.Next(ctx)
 		batchCount++
 
 		if err != nil && !errors.Is(err, io.EOF) {

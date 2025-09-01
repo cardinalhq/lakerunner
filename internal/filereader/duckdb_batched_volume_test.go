@@ -17,6 +17,7 @@
 package filereader
 
 import (
+	"context"
 	"fmt"
 	"runtime"
 	"testing"
@@ -52,7 +53,7 @@ func TestDuckDBBatchedVolumeTest(t *testing.T) {
 
 			// Read all data
 			for {
-				batch, err := reader.Next()
+				batch, err := reader.Next(context.TODO())
 				if err != nil {
 					break // EOF
 				}

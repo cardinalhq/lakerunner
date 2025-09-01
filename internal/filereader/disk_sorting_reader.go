@@ -107,14 +107,14 @@ func NewDiskSortingReader(reader Reader, keyProvider SortKeyProvider, batchSize 
 }
 
 // writeAndIndexAllRows reads all rows from the underlying reader, encodes them to disk, and builds index.
-func (r *DiskSortingReader) writeAndIndexAllRows() error {
+func (r *DiskSortingReader) writeAndIndexAllRows(ctx context.Context) error {
 	if r.sorted {
 		return nil
 	}
 
 	// Read all batches from the underlying reader and encode to temp file
 	for {
-		batch, err := r.reader.Next()
+		batch, err := r.reader.Next(ctx)
 		if err != nil {
 			if batch != nil {
 				pipeline.ReturnBatch(batch)
@@ -126,7 +126,7 @@ func (r *DiskSortingReader) writeAndIndexAllRows() error {
 		}
 
 		// Track rows read from underlying reader
-		rowsInCounter.Add(context.Background(), int64(batch.Len()), otelmetric.WithAttributes(
+		rowsInCounter.Add(ctx, int64(batch.Len()), otelmetric.WithAttributes(
 			attribute.String("reader", "DiskSortingReader"),
 		))
 
@@ -200,14 +200,14 @@ func (r *DiskSortingReader) writeAndIndexRow(row Row) error {
 }
 
 // Next returns the next batch of sorted rows by reading from the temp file in index order.
-func (r *DiskSortingReader) Next() (*Batch, error) {
+func (r *DiskSortingReader) Next(ctx context.Context) (*Batch, error) {
 	if r.closed {
 		return nil, fmt.Errorf("reader is closed")
 	}
 
 	// Ensure all rows are written to disk and sorted
 	if !r.sorted {
-		if err := r.writeAndIndexAllRows(); err != nil {
+		if err := r.writeAndIndexAllRows(ctx); err != nil {
 			return nil, err
 		}
 	}
@@ -251,7 +251,7 @@ func (r *DiskSortingReader) Next() (*Batch, error) {
 	if batch.Len() > 0 {
 		r.rowCount += int64(batch.Len())
 		// Track rows output to downstream
-		rowsOutCounter.Add(context.Background(), int64(batch.Len()), otelmetric.WithAttributes(
+		rowsOutCounter.Add(ctx, int64(batch.Len()), otelmetric.WithAttributes(
 			attribute.String("reader", "DiskSortingReader"),
 		))
 		return batch, nil

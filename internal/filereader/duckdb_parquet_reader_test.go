@@ -16,6 +16,7 @@ package filereader
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"testing"
@@ -27,13 +28,13 @@ import (
 )
 
 func countDuckDBParquetRows(t *testing.T, paths []string) int {
-	reader, err := NewDuckDBParquetRawReader(paths, 10)
+	reader, err := NewDuckDBParquetRawReader(context.TODO(), paths, 10)
 	require.NoError(t, err)
 	defer reader.Close()
 
 	rows := 0
 	for {
-		batch, err := reader.Next()
+		batch, err := reader.Next(context.TODO())
 		if batch != nil {
 			rows += batch.Len()
 			pipeline.ReturnBatch(batch)
@@ -68,11 +69,11 @@ func TestDuckDBParquetRawReaderMultipleFiles(t *testing.T) {
 // TestDuckDBParquetRawReaderCopiesSketch verifies sketch values aren't reused across rows.
 func TestDuckDBParquetRawReaderCopiesSketch(t *testing.T) {
 	path := "../../testdata/metrics/compact-test-0001/tbl_299476441865651503.parquet"
-	reader, err := NewDuckDBParquetRawReader([]string{path}, 1)
+	reader, err := NewDuckDBParquetRawReader(context.TODO(), []string{path}, 1)
 	require.NoError(t, err)
 	defer reader.Close()
 
-	batch, err := reader.Next()
+	batch, err := reader.Next(context.TODO())
 	require.NoError(t, err)
 	require.Equal(t, 1, batch.Len())
 	row := pipeline.CopyRow(batch.Get(0))
@@ -83,7 +84,7 @@ func TestDuckDBParquetRawReaderCopiesSketch(t *testing.T) {
 	snapshot := append([]byte(nil), sketch...)
 
 	// Reading the next batch should not mutate the previously copied sketch
-	batch2, err := reader.Next()
+	batch2, err := reader.Next(context.TODO())
 	if batch2 != nil {
 		pipeline.ReturnBatch(batch2)
 	}

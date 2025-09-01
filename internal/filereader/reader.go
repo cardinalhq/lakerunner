@@ -17,6 +17,8 @@
 package filereader
 
 import (
+	"context"
+
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
@@ -31,7 +33,8 @@ type Reader interface {
 	// Next returns the next batch of rows, or io.EOF when exhausted.
 	// The returned batch is owned by the reader and must not be retained
 	// beyond the next Next() call. Use pipeline.CopyBatch() if you need to retain.
-	Next() (*Batch, error)
+	// The context can be used for cancellation, deadlines, and updating metrics.
+	Next(ctx context.Context) (*Batch, error)
 
 	// Close releases any resources held by the reader.
 	Close() error

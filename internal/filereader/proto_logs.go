@@ -63,7 +63,7 @@ func NewProtoLogsReader(reader io.Reader, batchSize int) (*ProtoLogsReader, erro
 }
 
 // Next returns the next batch of rows from the OTEL logs.
-func (r *ProtoLogsReader) Next() (*Batch, error) {
+func (r *ProtoLogsReader) Next(ctx context.Context) (*Batch, error) {
 	if r.closed {
 		return nil, fmt.Errorf("reader is closed")
 	}
@@ -85,7 +85,7 @@ func (r *ProtoLogsReader) Next() (*Batch, error) {
 		}
 
 		// Track log records read from proto
-		rowsInCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+		rowsInCounter.Add(ctx, 1, otelmetric.WithAttributes(
 			attribute.String("reader", "ProtoLogsReader"),
 		))
 
@@ -99,7 +99,7 @@ func (r *ProtoLogsReader) Next() (*Batch, error) {
 	if batch.Len() > 0 {
 		r.rowCount += int64(batch.Len())
 		// Track rows output to downstream
-		rowsOutCounter.Add(context.Background(), int64(batch.Len()), otelmetric.WithAttributes(
+		rowsOutCounter.Add(ctx, int64(batch.Len()), otelmetric.WithAttributes(
 			attribute.String("reader", "ProtoLogsReader"),
 		))
 		return batch, nil

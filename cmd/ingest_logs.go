@@ -387,7 +387,7 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 		// Process all rows from the file
 		var processedCount, errorCount int64
 		for {
-			batch, err := reader.Next()
+			batch, err := reader.Next(ctx)
 
 			// Process any rows we got, even if EOF
 			if batch != nil {

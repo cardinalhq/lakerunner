@@ -15,6 +15,7 @@
 package filereader
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -123,7 +124,7 @@ func TestSequentialReader_NextBatched(t *testing.T) {
 	defer sr.Close()
 
 	// Read first batch
-	batch, err := sr.Next()
+	batch, err := sr.Next(context.TODO())
 	if err != nil {
 		t.Fatalf("First Next() error = %v", err)
 	}
@@ -138,7 +139,7 @@ func TestSequentialReader_NextBatched(t *testing.T) {
 	}
 
 	// Read second batch
-	batch, err = sr.Next()
+	batch, err = sr.Next(context.TODO())
 	if err != nil {
 		t.Fatalf("Second Next() error = %v", err)
 	}
@@ -150,7 +151,7 @@ func TestSequentialReader_NextBatched(t *testing.T) {
 	}
 
 	// Should return EOF now
-	batch, err = sr.Next()
+	batch, err = sr.Next(context.TODO())
 	if batch != nil || !errors.Is(err, io.EOF) {
 		t.Errorf("Final Next() should return nil batch and io.EOF, got batch=%v, err=%v", batch, err)
 	}
@@ -175,7 +176,7 @@ func TestSequentialReader_CurrentReaderIndex(t *testing.T) {
 	}
 
 	// Read from first reader
-	_, err = sr.Next()
+	_, err = sr.Next(context.TODO())
 	if err != nil {
 		t.Fatalf("Next() error = %v", err)
 	}
@@ -186,7 +187,7 @@ func TestSequentialReader_CurrentReaderIndex(t *testing.T) {
 	}
 
 	// Read from second reader (this will exhaust r1, advance to r2, skip empty r3)
-	_, err = sr.Next()
+	_, err = sr.Next(context.TODO())
 	if err != nil {
 		t.Fatalf("Next() error = %v", err)
 	}
@@ -197,7 +198,7 @@ func TestSequentialReader_CurrentReaderIndex(t *testing.T) {
 	}
 
 	// Try to read again - should return io.EOF and be exhausted
-	_, err = sr.Next()
+	_, err = sr.Next(context.TODO())
 	if !errors.Is(err, io.EOF) {
 		t.Errorf("Final Next() should return io.EOF, got %v", err)
 	}
@@ -245,7 +246,7 @@ func TestSequentialReader_RemainingReaderCount(t *testing.T) {
 	}
 
 	// Read one row (from r1)
-	_, err = sr.Next()
+	_, err = sr.Next(context.TODO())
 	if err != nil {
 		t.Fatalf("Next() error = %v", err)
 	}
@@ -257,7 +258,7 @@ func TestSequentialReader_RemainingReaderCount(t *testing.T) {
 
 	// Read remaining rows
 	for {
-		_, err := sr.Next()
+		_, err := sr.Next(context.TODO())
 		if errors.Is(err, io.EOF) {
 			break
 		}
@@ -298,7 +299,7 @@ func TestSequentialReader_Close(t *testing.T) {
 	}
 
 	// Verify subsequent operations fail
-	_, err = sr.Next()
+	_, err = sr.Next(context.TODO())
 	if err == nil {
 		t.Error("Next() after Close() should return error")
 	}
@@ -332,7 +333,7 @@ func TestSequentialReader_AllEmptyReaders(t *testing.T) {
 	defer sr.Close()
 
 	// Should immediately return io.EOF
-	batch, err := sr.Next()
+	batch, err := sr.Next(context.TODO())
 	if batch != nil || !errors.Is(err, io.EOF) {
 		t.Errorf("Next() with all empty readers should return nil batch and io.EOF, got batch=%v, err=%v", batch, err)
 	}
@@ -351,13 +352,13 @@ func TestSequentialReader_WithErrors(t *testing.T) {
 	defer sr.Close()
 
 	// First read should succeed (from r1)
-	_, err = sr.Next()
+	_, err = sr.Next(context.TODO())
 	if err != nil {
 		t.Fatalf("First Next() error = %v", err)
 	}
 
 	// Second read should fail (from error reader)
-	_, err = sr.Next()
+	_, err = sr.Next(context.TODO())
 	if err == nil {
 		t.Error("Expected error when reading from error reader")
 	}
@@ -382,7 +383,7 @@ func TestSequentialReader_ReaderWithDelayedError(t *testing.T) {
 	defer sr.Close()
 
 	// First read from r1
-	batch, err := sr.Next()
+	batch, err := sr.Next(context.TODO())
 	if err != nil {
 		t.Fatalf("First Next() error = %v", err)
 	}
@@ -391,7 +392,7 @@ func TestSequentialReader_ReaderWithDelayedError(t *testing.T) {
 	}
 
 	// Second read from delayed error reader (first call succeeds)
-	batch, err = sr.Next()
+	batch, err = sr.Next(context.TODO())
 	if err != nil {
 		t.Fatalf("Second Next() error = %v", err)
 	}
@@ -400,7 +401,7 @@ func TestSequentialReader_ReaderWithDelayedError(t *testing.T) {
 	}
 
 	// Third read from delayed error reader (second call fails)
-	_, err = sr.Next()
+	_, err = sr.Next(context.TODO())
 	if err == nil {
 		t.Error("Third Next() should fail with delayed error")
 	}
@@ -414,7 +415,7 @@ type delayedErrorReaderImpl struct {
 	rowCount int64
 }
 
-func (d *delayedErrorReaderImpl) Next() (*Batch, error) {
+func (d *delayedErrorReaderImpl) Next(ctx context.Context) (*Batch, error) {
 	if d.closed {
 		return nil, errors.New("reader closed")
 	}

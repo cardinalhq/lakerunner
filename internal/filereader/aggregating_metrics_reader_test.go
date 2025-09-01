@@ -15,6 +15,7 @@
 package filereader
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"testing"
@@ -39,7 +40,7 @@ func newMockAggregatingMetricsReader(rows []Row) *mockAggregatingMetricsReader {
 	return &mockAggregatingMetricsReader{rows: rows}
 }
 
-func (r *mockAggregatingMetricsReader) Next() (*Batch, error) {
+func (r *mockAggregatingMetricsReader) Next(ctx context.Context) (*Batch, error) {
 	if r.closed {
 		return nil, fmt.Errorf("reader is closed")
 	}
@@ -93,7 +94,7 @@ func TestAggregatingMetricsReader_SingleSingleton(t *testing.T) {
 	defer aggregatingReader.Close()
 
 	// Read the aggregated result
-	batch, err := aggregatingReader.Next()
+	batch, err := aggregatingReader.Next(context.TODO())
 	require.NoError(t, err)
 	require.Equal(t, 1, batch.Len())
 
@@ -108,7 +109,7 @@ func TestAggregatingMetricsReader_SingleSingleton(t *testing.T) {
 	assert.Equal(t, 1.0, row[wkk.RowKeyRollupCount])
 
 	// Should be EOF on next read
-	_, err = aggregatingReader.Next()
+	_, err = aggregatingReader.Next(context.TODO())
 	assert.Equal(t, io.EOF, err)
 }
 
@@ -139,7 +140,7 @@ func TestAggregatingMetricsReader_MultipleSingletons(t *testing.T) {
 	defer aggregatingReader.Close()
 
 	// Read the aggregated result
-	batch, err := aggregatingReader.Next()
+	batch, err := aggregatingReader.Next(context.TODO())
 	require.NoError(t, err)
 	require.Equal(t, 1, batch.Len())
 
@@ -206,7 +207,7 @@ func TestAggregatingMetricsReader_SketchAndSingletons(t *testing.T) {
 	defer aggregatingReader.Close()
 
 	// Read the aggregated result
-	batch, err := aggregatingReader.Next()
+	batch, err := aggregatingReader.Next(context.TODO())
 	require.NoError(t, err)
 	require.Equal(t, 1, batch.Len())
 
@@ -271,7 +272,7 @@ func TestAggregatingMetricsReader_DifferentKeys(t *testing.T) {
 	// Read all results
 	var allRows []Row
 	for {
-		batch, err := aggregatingReader.Next()
+		batch, err := aggregatingReader.Next(context.TODO())
 		if err == io.EOF {
 			break
 		}
@@ -328,7 +329,7 @@ func TestAggregatingMetricsReader_InvalidRows(t *testing.T) {
 	// Read all results
 	var allRows []Row
 	for {
-		batch, err := aggregatingReader.Next()
+		batch, err := aggregatingReader.Next(context.TODO())
 		if err == io.EOF {
 			break
 		}
@@ -384,7 +385,7 @@ func TestAggregatingMetricsReader_TimestampTruncation(t *testing.T) {
 	// Read all results
 	var allRows []Row
 	for {
-		batch, err := aggregatingReader.Next()
+		batch, err := aggregatingReader.Next(context.TODO())
 		if err == io.EOF {
 			break
 		}
@@ -455,7 +456,7 @@ func TestAggregatingMetricsReader_MultipleSketchesMerging(t *testing.T) {
 	defer aggregatingReader.Close()
 
 	// Read the aggregated result
-	batch, err := aggregatingReader.Next()
+	batch, err := aggregatingReader.Next(context.TODO())
 	require.NoError(t, err)
 	require.Equal(t, 1, batch.Len())
 
@@ -485,7 +486,7 @@ func newMockEOFReader(rows []Row) *mockEOFReader {
 	return &mockEOFReader{rows: rows}
 }
 
-func (r *mockEOFReader) Next() (*Batch, error) {
+func (r *mockEOFReader) Next(ctx context.Context) (*Batch, error) {
 	if r.closed {
 		return nil, fmt.Errorf("reader is closed")
 	}
@@ -539,7 +540,7 @@ func TestAggregatingMetricsReader_EOFWithData(t *testing.T) {
 	defer aggregatingReader.Close()
 
 	// Read should return the row even though EOF is returned with data
-	batch, err := aggregatingReader.Next()
+	batch, err := aggregatingReader.Next(context.TODO())
 	require.NoError(t, err)
 	require.Equal(t, 1, batch.Len())
 
@@ -551,7 +552,7 @@ func TestAggregatingMetricsReader_EOFWithData(t *testing.T) {
 	assert.Equal(t, 75.0, row[wkk.RowKeyRollupSum])
 
 	// Second read should return EOF
-	_, err = aggregatingReader.Next()
+	_, err = aggregatingReader.Next(context.TODO())
 	assert.Equal(t, io.EOF, err)
 }
 
@@ -584,7 +585,7 @@ func TestAggregatingMetricsReader_DropHistogramWithoutSketch(t *testing.T) {
 	defer aggregatingReader.Close()
 
 	// Read the aggregated result
-	batch, err := aggregatingReader.Next()
+	batch, err := aggregatingReader.Next(context.TODO())
 	require.NoError(t, err)
 	require.Equal(t, 1, batch.Len(), "Should only return one row (gauge), histogram should be dropped")
 
@@ -595,7 +596,7 @@ func TestAggregatingMetricsReader_DropHistogramWithoutSketch(t *testing.T) {
 	assert.Equal(t, 50.0, row[wkk.RowKeyRollupSum])
 
 	// Second read should return EOF
-	_, err = aggregatingReader.Next()
+	_, err = aggregatingReader.Next(context.TODO())
 	assert.Equal(t, io.EOF, err)
 }
 
@@ -628,7 +629,7 @@ func TestAggregatingMetricsReader_PendingRowReset(t *testing.T) {
 	// Read all results - they should be in separate batches since they have different keys
 	var allRows []Row
 	for {
-		batch, err := aggregatingReader.Next()
+		batch, err := aggregatingReader.Next(context.TODO())
 		if err == io.EOF {
 			break
 		}
@@ -705,7 +706,7 @@ func TestAggregatingMetricsReader_ArbitraryRowCountBatchBoundary(t *testing.T) {
 	totalRead := 0
 	batchCount := 0
 	for {
-		batch, err := aggregatingReader.Next()
+		batch, err := aggregatingReader.Next(context.TODO())
 		if err == io.EOF {
 			t.Logf("Hit EOF after %d batches, %d total rows", batchCount, totalRead)
 			break
@@ -796,7 +797,7 @@ func TestAggregatingMetricsReader_NoAggregationPassthrough(t *testing.T) {
 	totalRead := 0
 	batchCount := 0
 	for {
-		batch, err := aggregatingReader.Next()
+		batch, err := aggregatingReader.Next(context.TODO())
 		if err == io.EOF {
 			t.Logf("Hit EOF after %d batches, %d total rows", batchCount, totalRead)
 			break

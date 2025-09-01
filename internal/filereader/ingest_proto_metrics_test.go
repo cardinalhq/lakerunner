@@ -16,6 +16,7 @@ package filereader
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -104,7 +105,7 @@ func TestIngestProtoMetrics_New_EmptyData(t *testing.T) {
 		defer reader.Close()
 
 		// Reading from empty metrics should return EOF immediately
-		batch, readErr := reader.Next()
+		batch, readErr := reader.Next(context.TODO())
 		assert.True(t, errors.Is(readErr, io.EOF))
 		assert.Nil(t, batch)
 	}
@@ -117,7 +118,7 @@ func TestIngestProtoMetrics_EmptySlice(t *testing.T) {
 	defer reader.Close()
 
 	// Read with Next should return a batch
-	batch, err := reader.Next()
+	batch, err := reader.Next(context.TODO())
 	assert.NoError(t, err)
 	assert.NotNil(t, batch)
 	assert.Equal(t, 1, batch.Len())
@@ -129,7 +130,7 @@ func TestIngestProtoMetrics_Close(t *testing.T) {
 	require.NoError(t, err)
 
 	// Should be able to read before closing
-	batch, err := reader.Next()
+	batch, err := reader.Next(context.TODO())
 	require.NoError(t, err)
 	require.NotNil(t, batch)
 	require.Equal(t, 1, batch.Len(), "Should read exactly 1 datapoint row before closing")
@@ -139,7 +140,7 @@ func TestIngestProtoMetrics_Close(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Reading after close should return error
-	_, err = reader.Next()
+	_, err = reader.Next(context.TODO())
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "closed")
 
@@ -178,7 +179,7 @@ func TestIngestProtoMetrics_RowReusedAndCleared(t *testing.T) {
 	require.NoError(t, err)
 	defer reader.Close()
 
-	batch1, err := reader.Next()
+	batch1, err := reader.Next(context.TODO())
 	require.NoError(t, err)
 	require.NotNil(t, batch1)
 	require.Equal(t, 1, batch1.Len())
@@ -188,7 +189,7 @@ func TestIngestProtoMetrics_RowReusedAndCleared(t *testing.T) {
 	row1 := batch1.Get(0)
 	require.NotNil(t, row1)
 
-	batch2, err := reader.Next()
+	batch2, err := reader.Next(context.TODO())
 	require.NoError(t, err)
 	require.NotNil(t, batch2)
 	require.Equal(t, 1, batch2.Len())
@@ -242,7 +243,7 @@ func TestIngestProtoMetrics_ExponentialHistogram(t *testing.T) {
 	require.NoError(t, err)
 	defer reader.Close()
 
-	batch, err := reader.Next()
+	batch, err := reader.Next(context.TODO())
 
 	// Exponential histogram processing is now implemented (though conversion is stubbed)
 	// Zero count creates valid data, so expect successful batch
@@ -472,7 +473,7 @@ func TestIngestProtoMetrics_SyntheticMultiTypeMetrics(t *testing.T) {
 	// Read in batches
 	var totalBatchedRows int
 	for {
-		batch, readErr := protoReader2.Next()
+		batch, readErr := protoReader2.Next(context.TODO())
 		if batch != nil {
 			totalBatchedRows += batch.Len()
 
@@ -499,7 +500,7 @@ func TestIngestProtoMetrics_SyntheticMultiTypeMetrics(t *testing.T) {
 	require.NoError(t, err)
 	defer protoReader3.Close()
 
-	batch, err := protoReader3.Next()
+	batch, err := protoReader3.Next(context.TODO())
 	require.NoError(t, err)
 	require.NotNil(t, batch)
 	require.Equal(t, 1, batch.Len(), "Should read exactly 1 row in first batch")
@@ -511,7 +512,7 @@ func TestIngestProtoMetrics_SyntheticMultiTypeMetrics(t *testing.T) {
 	// Test data exhaustion - continue reading until EOF
 	var exhaustRows int
 	for {
-		batch, readErr := protoReader3.Next()
+		batch, readErr := protoReader3.Next(context.TODO())
 		if batch != nil {
 			exhaustRows += batch.Len()
 		}
@@ -785,7 +786,7 @@ func TestIngestProtoMetrics_HistogramAlwaysHasSketch(t *testing.T) {
 	// now always create sketches with rollup fields instead of causing errors
 
 	// Read at least one row to verify reader works
-	batch, err := reader.Next()
+	batch, err := reader.Next(context.TODO())
 	if err != nil && err != io.EOF {
 		t.Fatalf("Unexpected error reading: %v", err)
 	}
@@ -809,7 +810,7 @@ func TestIngestProtoMetrics_ContractCompliance(t *testing.T) {
 	// Read all available rows
 	var allRows []Row
 	for {
-		batch, err := reader.Next()
+		batch, err := reader.Next(context.TODO())
 		if batch != nil {
 			for i := 0; i < batch.Len(); i++ {
 				allRows = append(allRows, batch.Get(i))

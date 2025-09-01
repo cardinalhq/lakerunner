@@ -44,7 +44,7 @@ type ArrowCookedReader struct {
 
 // NewArrowCookedReader creates an ArrowCookedReader for the given parquet.ReaderAtSeeker.
 // The caller is responsible for closing the underlying reader.
-func NewArrowCookedReader(r parquet.ReaderAtSeeker, batchSize int) (*ArrowCookedReader, error) {
+func NewArrowCookedReader(ctx context.Context, r parquet.ReaderAtSeeker, batchSize int) (*ArrowCookedReader, error) {
 	pf, err := file.NewParquetReader(r)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open parquet file: %w", err)
@@ -57,7 +57,7 @@ func NewArrowCookedReader(r parquet.ReaderAtSeeker, batchSize int) (*ArrowCooked
 		return nil, fmt.Errorf("failed to create arrow file reader: %w", err)
 	}
 
-	rr, err := fr.GetRecordReader(context.Background(), nil, nil)
+	rr, err := fr.GetRecordReader(ctx, nil, nil)
 	if err != nil {
 		pf.Close()
 		return nil, fmt.Errorf("failed to create record reader: %w", err)
@@ -72,7 +72,7 @@ func NewArrowCookedReader(r parquet.ReaderAtSeeker, batchSize int) (*ArrowCooked
 }
 
 // Next returns the next batch of rows from the parquet file.
-func (r *ArrowCookedReader) Next() (*Batch, error) {
+func (r *ArrowCookedReader) Next(ctx context.Context) (*Batch, error) {
 	if r.closed {
 		return nil, errors.New("reader is closed")
 	}

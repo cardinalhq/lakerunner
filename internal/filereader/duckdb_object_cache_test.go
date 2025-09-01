@@ -17,6 +17,7 @@
 package filereader
 
 import (
+	"context"
 	"runtime"
 	"testing"
 	"time"
@@ -64,7 +65,7 @@ func TestDuckDBObjectCacheEffect(t *testing.T) {
 				}
 
 				// Read first batch only
-				batch, err := r.Next()
+				batch, err := r.Next(context.TODO())
 				if err != nil {
 					r.Close()
 					t.Fatalf("Iteration %d: Failed to read batch: %v", i, err)
@@ -139,7 +140,7 @@ func TestDuckDBObjectCacheLongRun(t *testing.T) {
 				t.Fatalf("Iteration %d: Failed to create reader: %v", i, err)
 			}
 
-			batch, err := reader.Next()
+			batch, err := reader.Next(context.TODO())
 			if err != nil {
 				reader.Close()
 				t.Fatalf("Iteration %d: Failed to read batch: %v", i, err)

@@ -16,6 +16,7 @@ package filereader
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -61,7 +62,7 @@ func loadReaderBenchmarkData(b *testing.B) *ReaderBenchmarkData {
 	actualRowCount := int64(0)
 	colCount := 0
 	for {
-		batch, err := parquetReader.Next()
+		batch, err := parquetReader.Next(context.TODO())
 		if err == io.EOF {
 			break
 		}
@@ -209,7 +210,7 @@ func BenchmarkParquetRawReader(b *testing.B) {
 
 		rowsThisIter := int64(0)
 		for {
-			batch, err := parquetReader.Next()
+			batch, err := parquetReader.Next(context.TODO())
 			if err == io.EOF {
 				break
 			}
@@ -250,14 +251,14 @@ func BenchmarkDuckDBParquetReader(b *testing.B) {
 			b.Fatalf("Failed to get absolute path: %v", err)
 		}
 
-		duckdbReader, err := NewDuckDBParquetRawReader([]string{absPath}, 1000)
+		duckdbReader, err := NewDuckDBParquetRawReader(context.TODO(), []string{absPath}, 1000)
 		if err != nil {
 			b.Fatalf("Failed to create DuckDBParquetRawReader: %v", err)
 		}
 
 		rowsThisIter := int64(0)
 		for {
-			batch, err := duckdbReader.Next()
+			batch, err := duckdbReader.Next(context.TODO())
 			if err == io.EOF {
 				break
 			}
@@ -294,14 +295,14 @@ func BenchmarkArrowCookedReader(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		reader := bytes.NewReader(data.Data)
 		// Arrow reader needs a ReaderAtSeeker
-		arrowReader, err := NewArrowCookedReader(reader, 1000)
+		arrowReader, err := NewArrowCookedReader(context.TODO(), reader, 1000)
 		if err != nil {
 			b.Fatalf("Failed to create ArrowCookedReader: %v", err)
 		}
 
 		rowsThisIter := int64(0)
 		for {
-			batch, err := arrowReader.Next()
+			batch, err := arrowReader.Next(context.TODO())
 			if err == io.EOF {
 				break
 			}
@@ -368,7 +369,7 @@ func benchmarkParquetRawReaderInternal(b *testing.B, data *ReaderBenchmarkData) 
 
 	totalRows := int64(0)
 	for {
-		batch, err := parquetReader.Next()
+		batch, err := parquetReader.Next(context.TODO())
 		if err == io.EOF {
 			break
 		}
@@ -392,7 +393,7 @@ func benchmarkDuckDBReaderInternal(b *testing.B, data *ReaderBenchmarkData) (int
 		b.Fatalf("Failed to get absolute path: %v", err)
 	}
 
-	duckdbReader, err := NewDuckDBParquetRawReader([]string{absPath}, 1000)
+	duckdbReader, err := NewDuckDBParquetRawReader(context.TODO(), []string{absPath}, 1000)
 	if err != nil {
 		b.Fatalf("Failed to create DuckDBParquetRawReader: %v", err)
 	}
@@ -400,7 +401,7 @@ func benchmarkDuckDBReaderInternal(b *testing.B, data *ReaderBenchmarkData) (int
 
 	totalRows := int64(0)
 	for {
-		batch, err := duckdbReader.Next()
+		batch, err := duckdbReader.Next(context.TODO())
 		if err == io.EOF {
 			break
 		}
@@ -420,7 +421,7 @@ func benchmarkArrowReaderInternal(b *testing.B, data *ReaderBenchmarkData) (int6
 	ms := captureDetailedMemStatsBefore()
 
 	reader := bytes.NewReader(data.Data)
-	arrowReader, err := NewArrowCookedReader(reader, 1000)
+	arrowReader, err := NewArrowCookedReader(context.TODO(), reader, 1000)
 	if err != nil {
 		b.Fatalf("Failed to create ArrowCookedReader: %v", err)
 	}
@@ -428,7 +429,7 @@ func benchmarkArrowReaderInternal(b *testing.B, data *ReaderBenchmarkData) (int6
 
 	totalRows := int64(0)
 	for {
-		batch, err := arrowReader.Next()
+		batch, err := arrowReader.Next(context.TODO())
 		if err == io.EOF {
 			break
 		}
@@ -465,7 +466,7 @@ func BenchmarkReadersWithDifferentBatchSizes(b *testing.B) {
 
 					totalRows := int64(0)
 					for {
-						batch, err := pr.Next()
+						batch, err := pr.Next(context.TODO())
 						if err == io.EOF {
 							break
 						}
@@ -484,7 +485,7 @@ func BenchmarkReadersWithDifferentBatchSizes(b *testing.B) {
 						return 0, err
 					}
 
-					dr, err := NewDuckDBParquetRawReader([]string{absPath}, batchSize)
+					dr, err := NewDuckDBParquetRawReader(context.TODO(), []string{absPath}, batchSize)
 					if err != nil {
 						return 0, err
 					}
@@ -492,7 +493,7 @@ func BenchmarkReadersWithDifferentBatchSizes(b *testing.B) {
 
 					totalRows := int64(0)
 					for {
-						batch, err := dr.Next()
+						batch, err := dr.Next(context.TODO())
 						if err == io.EOF {
 							break
 						}
@@ -507,7 +508,7 @@ func BenchmarkReadersWithDifferentBatchSizes(b *testing.B) {
 				}},
 				{"Arrow", func() (int64, error) {
 					reader := bytes.NewReader(data.Data)
-					ar, err := NewArrowCookedReader(reader, batchSize)
+					ar, err := NewArrowCookedReader(context.TODO(), reader, batchSize)
 					if err != nil {
 						return 0, err
 					}
@@ -515,7 +516,7 @@ func BenchmarkReadersWithDifferentBatchSizes(b *testing.B) {
 
 					totalRows := int64(0)
 					for {
-						batch, err := ar.Next()
+						batch, err := ar.Next(context.TODO())
 						if err == io.EOF {
 							break
 						}
@@ -566,7 +567,7 @@ func BenchmarkReadersGCPressure(b *testing.B) {
 			defer pr.Close()
 
 			for {
-				batch, err := pr.Next()
+				batch, err := pr.Next(context.TODO())
 				if err == io.EOF {
 					break
 				}
@@ -583,14 +584,14 @@ func BenchmarkReadersGCPressure(b *testing.B) {
 				return err
 			}
 
-			dr, err := NewDuckDBParquetRawReader([]string{absPath}, 1000)
+			dr, err := NewDuckDBParquetRawReader(context.TODO(), []string{absPath}, 1000)
 			if err != nil {
 				return err
 			}
 			defer dr.Close()
 
 			for {
-				batch, err := dr.Next()
+				batch, err := dr.Next(context.TODO())
 				if err == io.EOF {
 					break
 				}
@@ -603,14 +604,14 @@ func BenchmarkReadersGCPressure(b *testing.B) {
 		}},
 		{"Arrow", func() error {
 			reader := bytes.NewReader(data.Data)
-			ar, err := NewArrowCookedReader(reader, 1000)
+			ar, err := NewArrowCookedReader(context.TODO(), reader, 1000)
 			if err != nil {
 				return err
 			}
 			defer ar.Close()
 
 			for {
-				batch, err := ar.Next()
+				batch, err := ar.Next(context.TODO())
 				if err == io.EOF {
 					break
 				}

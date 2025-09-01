@@ -207,7 +207,7 @@ func updateRowFromSketch(row Row, sketch *ddsketch.DDSketch) error {
 
 // aggregateGroup processes all rows for a single aggregation group and returns the aggregated results.
 // Returns multiple rows - one per metric type found in the group.
-func (ar *AggregatingMetricsReader) aggregateGroup() ([]Row, error) {
+func (ar *AggregatingMetricsReader) aggregateGroup(ctx context.Context) ([]Row, error) {
 	if len(ar.groupedRows) == 0 {
 		// No rows in this group - return empty slice
 		ar.resetAggregation()
@@ -223,7 +223,7 @@ func (ar *AggregatingMetricsReader) aggregateGroup() ([]Row, error) {
 		}
 
 		// Aggregate this specific metric type
-		result, err := ar.aggregateRowGroup(metricType, rows)
+		result, err := ar.aggregateRowGroup(ctx, metricType, rows)
 		if err != nil {
 			return nil, fmt.Errorf("aggregating metric type %q: %w", metricType, err)
 		}
@@ -239,7 +239,7 @@ func (ar *AggregatingMetricsReader) aggregateGroup() ([]Row, error) {
 }
 
 // aggregateRowGroup aggregates all rows within an aggregation group.
-func (ar *AggregatingMetricsReader) aggregateRowGroup(metricType string, rows []Row) (Row, error) {
+func (ar *AggregatingMetricsReader) aggregateRowGroup(ctx context.Context, metricType string, rows []Row) (Row, error) {
 	if len(rows) == 0 {
 		return nil, nil
 	}
@@ -250,15 +250,15 @@ func (ar *AggregatingMetricsReader) aggregateRowGroup(metricType string, rows []
 
 	// Separate processing based on metric type
 	if metricType == "histogram" {
-		return ar.aggregateHistogramGroup(aggregatedRow, rows)
+		return ar.aggregateHistogramGroup(ctx, aggregatedRow, rows)
 	}
 
-	return ar.aggregateCounterGaugeGroup(aggregatedRow, rows)
+	return ar.aggregateCounterGaugeGroup(ctx, aggregatedRow, rows)
 }
 
 // aggregateHistogramGroup handles aggregation for histogram metrics.
 // Histograms must always have sketches and only merge sketches.
-func (ar *AggregatingMetricsReader) aggregateHistogramGroup(baseRow Row, rows []Row) (Row, error) {
+func (ar *AggregatingMetricsReader) aggregateHistogramGroup(ctx context.Context, baseRow Row, rows []Row) (Row, error) {
 	var currentSketch *ddsketch.DDSketch
 	var singletonValues []float64
 
@@ -269,7 +269,7 @@ func (ar *AggregatingMetricsReader) aggregateHistogramGroup(baseRow Row, rows []
 			if value, ok := getSingletonValue(row); ok {
 				singletonValues = append(singletonValues, value)
 			} else {
-				rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+				rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
 					attribute.String("reader", "AggregatingMetricsReader"),
 					attribute.String("reason", "empty_sketch_no_rollup_sum"),
 				))
@@ -300,7 +300,7 @@ func (ar *AggregatingMetricsReader) aggregateHistogramGroup(baseRow Row, rows []
 
 	// VALIDATION: Histograms must always have a sketch
 	if currentSketch == nil {
-		rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+		rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
 			attribute.String("reader", "AggregatingMetricsReader"),
 			attribute.String("reason", "histogram_no_sketch"),
 		))
@@ -325,7 +325,7 @@ func (ar *AggregatingMetricsReader) aggregateHistogramGroup(baseRow Row, rows []
 
 // aggregateCounterGaugeGroup handles aggregation for counter and gauge metrics.
 // Can handle mixed sketches and singletons.
-func (ar *AggregatingMetricsReader) aggregateCounterGaugeGroup(baseRow Row, rows []Row) (Row, error) {
+func (ar *AggregatingMetricsReader) aggregateCounterGaugeGroup(ctx context.Context, baseRow Row, rows []Row) (Row, error) {
 	var currentSketch *ddsketch.DDSketch
 	var singletonValues []float64
 
@@ -336,7 +336,7 @@ func (ar *AggregatingMetricsReader) aggregateCounterGaugeGroup(baseRow Row, rows
 			if value, ok := getSingletonValue(row); ok {
 				singletonValues = append(singletonValues, value)
 			} else {
-				rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+				rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
 					attribute.String("reader", "AggregatingMetricsReader"),
 					attribute.String("reason", "empty_sketch_no_rollup_sum"),
 				))
@@ -369,7 +369,7 @@ func (ar *AggregatingMetricsReader) aggregateCounterGaugeGroup(baseRow Row, rows
 		// We have a sketch - add all singleton values to it
 		for _, value := range singletonValues {
 			if err := currentSketch.Add(value); err != nil {
-				rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+				rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
 					attribute.String("reader", "AggregatingMetricsReader"),
 					attribute.String("reason", "failed_add_singleton"),
 				))
@@ -390,7 +390,7 @@ func (ar *AggregatingMetricsReader) aggregateCounterGaugeGroup(baseRow Row, rows
 
 		for _, value := range singletonValues {
 			if err := sketch.Add(value); err != nil {
-				rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+				rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
 					attribute.String("reader", "AggregatingMetricsReader"),
 					attribute.String("reason", "failed_add_singleton_new_sketch"),
 				))
@@ -422,7 +422,7 @@ func (ar *AggregatingMetricsReader) resetAggregation() {
 }
 
 // addRowToAggregation adds a row to the current aggregation group, organizing by metric_type.
-func (ar *AggregatingMetricsReader) addRowToAggregation(row Row) error {
+func (ar *AggregatingMetricsReader) addRowToAggregation(ctx context.Context, row Row) error {
 	// VALIDATION: Histograms must always have sketches
 	if isHistogramType(row) && isSketchEmpty(row) {
 		if name, ok := row[wkk.RowKeyCName].(string); ok {
@@ -431,7 +431,7 @@ func (ar *AggregatingMetricsReader) addRowToAggregation(row Row) error {
 				"tid", row[wkk.RowKeyCTID],
 				"timestamp", row[wkk.RowKeyCTimestamp])
 		}
-		rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+		rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
 			attribute.String("reader", "AggregatingMetricsReader"),
 			attribute.String("reason", "histogram_without_sketch"),
 			attribute.String("metric_type", "histogram"),
@@ -455,12 +455,12 @@ func (ar *AggregatingMetricsReader) addRowToAggregation(row Row) error {
 }
 
 // readNextBatchFromUnderlying reads the next batch from the underlying reader.
-func (ar *AggregatingMetricsReader) readNextBatchFromUnderlying() (*Batch, error) {
+func (ar *AggregatingMetricsReader) readNextBatchFromUnderlying(ctx context.Context) (*Batch, error) {
 	if ar.readerEOF {
 		return nil, io.EOF
 	}
 
-	batch, err := ar.reader.Next()
+	batch, err := ar.reader.Next(ctx)
 	if err != nil {
 		if err == io.EOF {
 			ar.readerEOF = true
@@ -469,7 +469,7 @@ func (ar *AggregatingMetricsReader) readNextBatchFromUnderlying() (*Batch, error
 	}
 
 	// Track rows read from underlying reader
-	rowsInCounter.Add(context.Background(), int64(batch.Len()), otelmetric.WithAttributes(
+	rowsInCounter.Add(ctx, int64(batch.Len()), otelmetric.WithAttributes(
 		attribute.String("reader", "AggregatingMetricsReader"),
 	))
 
@@ -487,13 +487,13 @@ func (ar *AggregatingMetricsReader) readNextBatchFromUnderlying() (*Batch, error
 
 // processRow processes a single row and adds aggregated results to the batch.
 // Returns an error if processing fails.
-func (ar *AggregatingMetricsReader) processRow(row Row, batch *Batch) error {
+func (ar *AggregatingMetricsReader) processRow(ctx context.Context, row Row, batch *Batch) error {
 
 	// Create aggregation key for this row
 	key, err := ar.makeAggregationKey(row)
 	if err != nil {
 		slog.Error("Failed to make aggregation key", "error", err, "row", row)
-		rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+		rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
 			attribute.String("reader", "AggregatingMetricsReader"),
 			attribute.String("reason", "invalid_aggregation_key"),
 		))
@@ -519,7 +519,7 @@ func (ar *AggregatingMetricsReader) processRow(row Row, batch *Batch) error {
 
 		// Always release the key since we store values separately
 		key.Release()
-		if err := ar.addRowToAggregation(row); err != nil {
+		if err := ar.addRowToAggregation(ctx, row); err != nil {
 			slog.Error("Failed to add row to aggregation", "error", err)
 		}
 		return nil
@@ -527,7 +527,7 @@ func (ar *AggregatingMetricsReader) processRow(row Row, batch *Batch) error {
 
 	// Key changed - emit current aggregation and start new one
 	if ar.hasCurrentKey {
-		results, err := ar.aggregateGroup()
+		results, err := ar.aggregateGroup(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to aggregate group: %w", err)
 		}
@@ -547,7 +547,7 @@ func (ar *AggregatingMetricsReader) processRow(row Row, batch *Batch) error {
 	ar.hasCurrentKey = true
 	// Release the key since we store values separately
 	key.Release()
-	if err := ar.addRowToAggregation(row); err != nil {
+	if err := ar.addRowToAggregation(ctx, row); err != nil {
 		slog.Error("Failed to add row to new aggregation", "error", err)
 	}
 
@@ -555,7 +555,7 @@ func (ar *AggregatingMetricsReader) processRow(row Row, batch *Batch) error {
 }
 
 // Next returns the next batch of aggregated rows.
-func (ar *AggregatingMetricsReader) Next() (*Batch, error) {
+func (ar *AggregatingMetricsReader) Next(ctx context.Context) (*Batch, error) {
 	if ar.closed {
 		return nil, fmt.Errorf("reader is closed")
 	}
@@ -569,7 +569,7 @@ func (ar *AggregatingMetricsReader) Next() (*Batch, error) {
 			ar.pendingIndex++
 
 			// Process this row
-			if err := ar.processRow(row, batch); err != nil {
+			if err := ar.processRow(ctx, row, batch); err != nil {
 				pipeline.ReturnBatch(ar.pendingBatch)
 				pipeline.ReturnBatch(batch)
 				ar.pendingBatch = nil
@@ -580,7 +580,7 @@ func (ar *AggregatingMetricsReader) Next() (*Batch, error) {
 			// Return batch if we have enough rows
 			if batch.Len() >= ar.batchSize {
 				// Track rows output to downstream
-				rowsOutCounter.Add(context.Background(), int64(batch.Len()), otelmetric.WithAttributes(
+				rowsOutCounter.Add(ctx, int64(batch.Len()), otelmetric.WithAttributes(
 					attribute.String("reader", "AggregatingMetricsReader"),
 				))
 				return batch, nil
@@ -598,7 +598,7 @@ func (ar *AggregatingMetricsReader) Next() (*Batch, error) {
 
 		// Read next batch from underlying reader
 		if !ar.readerEOF {
-			underlyingBatch, err := ar.readNextBatchFromUnderlying()
+			underlyingBatch, err := ar.readNextBatchFromUnderlying(ctx)
 			if err != nil {
 				if underlyingBatch != nil {
 					pipeline.ReturnBatch(underlyingBatch)
@@ -606,7 +606,7 @@ func (ar *AggregatingMetricsReader) Next() (*Batch, error) {
 				if err == io.EOF {
 					// Check if we need to emit final aggregation
 					if ar.hasCurrentKey {
-						results, aggErr := ar.aggregateGroup()
+						results, aggErr := ar.aggregateGroup(ctx)
 						if aggErr != nil {
 							pipeline.ReturnBatch(batch)
 							return nil, fmt.Errorf("failed to aggregate final group: %w", aggErr)
@@ -623,7 +623,7 @@ func (ar *AggregatingMetricsReader) Next() (*Batch, error) {
 						return nil, io.EOF
 					}
 					// Track rows output to downstream
-					rowsOutCounter.Add(context.Background(), int64(batch.Len()), otelmetric.WithAttributes(
+					rowsOutCounter.Add(ctx, int64(batch.Len()), otelmetric.WithAttributes(
 						attribute.String("reader", "AggregatingMetricsReader"),
 					))
 					return batch, nil
@@ -641,7 +641,7 @@ func (ar *AggregatingMetricsReader) Next() (*Batch, error) {
 		// If we have any aggregated rows, return them
 		if batch.Len() > 0 {
 			// Track rows output to downstream
-			rowsOutCounter.Add(context.Background(), int64(batch.Len()), otelmetric.WithAttributes(
+			rowsOutCounter.Add(ctx, int64(batch.Len()), otelmetric.WithAttributes(
 				attribute.String("reader", "AggregatingMetricsReader"),
 			))
 			return batch, nil

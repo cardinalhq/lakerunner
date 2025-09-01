@@ -17,6 +17,7 @@
 package filereader
 
 import (
+	"context"
 	"runtime"
 	"testing"
 	"time"
@@ -63,7 +64,7 @@ func TestDuckDBBatchingComparison(t *testing.T) {
 			}
 
 			// Read first batch to trigger initial memory allocation
-			batch, err := r.Next()
+			batch, err := r.Next(context.TODO())
 			if err != nil {
 				r.Close()
 				t.Fatalf("Failed to read first batch: %v", err)
@@ -85,7 +86,7 @@ func TestDuckDBBatchingComparison(t *testing.T) {
 
 			// Read a few more batches to see memory pattern
 			for i := 0; i < 3; i++ {
-				batch, err = r.Next()
+				batch, err = r.Next(context.TODO())
 				if err != nil {
 					break // EOF or error, either is fine for this test
 				}
@@ -148,12 +149,12 @@ func TestDuckDBBatchedReaderBehavior(t *testing.T) {
 	defer batched.Close()
 
 	// Read first batch from each and compare
-	origBatch, err := original.Next()
+	origBatch, err := original.Next(context.TODO())
 	if err != nil {
 		t.Fatalf("Original reader failed: %v", err)
 	}
 
-	batchedBatch, err := batched.Next()
+	batchedBatch, err := batched.Next(context.TODO())
 	if err != nil {
 		t.Fatalf("Batched reader failed: %v", err)
 	}
@@ -172,7 +173,7 @@ func TestDuckDBBatchedReaderBehavior(t *testing.T) {
 	totalRows := int64(batchedBatch.Len())
 
 	for {
-		batch, err := batched.Next()
+		batch, err := batched.Next(context.TODO())
 		if err != nil {
 			break // EOF
 		}

@@ -16,6 +16,7 @@ package filereader
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -95,7 +96,7 @@ func TestArrowReaderSchemaInspection(t *testing.T) {
 
 	// Create Arrow reader and inspect its schema
 	reader := bytes.NewReader(data)
-	arrowReader, err := NewArrowCookedReader(reader, 1000)
+	arrowReader, err := NewArrowCookedReader(context.TODO(), reader, 1000)
 	if err != nil {
 		t.Fatalf("Failed to create Arrow reader: %v", err)
 	}
@@ -139,7 +140,7 @@ func TestCompareArrowAndParquetSchemas(t *testing.T) {
 	}
 
 	// Get first batch to see what fields ParquetRaw finds
-	parquetBatch, err := parquetReader.Next()
+	parquetBatch, err := parquetReader.Next(context.TODO())
 	if err != nil {
 		t.Fatalf("Failed to read ParquetRaw batch: %v", err)
 	}
@@ -155,7 +156,7 @@ func TestCompareArrowAndParquetSchemas(t *testing.T) {
 
 	// Get schema info from Arrow reader
 	reader2 := bytes.NewReader(data)
-	arrowReader, err := NewArrowCookedReader(reader2, 1000)
+	arrowReader, err := NewArrowCookedReader(context.TODO(), reader2, 1000)
 	if err != nil {
 		t.Fatalf("Failed to create Arrow reader: %v", err)
 	}

@@ -14,6 +14,8 @@
 
 package pipeline
 
+import "context"
+
 // FlatMapReader: 1→N mapping (including 0 or many)
 type FlatMapReader struct {
 	in    Reader
@@ -25,7 +27,7 @@ func FlatMap(in Reader, fn func(Row, func(Row))) *FlatMapReader {
 	return &FlatMapReader{in: in, fn: fn}
 }
 
-func (f *FlatMapReader) Next() (*Batch, error) {
+func (f *FlatMapReader) Next(ctx context.Context) (*Batch, error) {
 	// drain stash first
 	if f.stash != nil && f.stash.Len() > 0 {
 		out := f.stash
@@ -33,7 +35,7 @@ func (f *FlatMapReader) Next() (*Batch, error) {
 		return out, nil
 	}
 	for {
-		in, err := f.in.Next()
+		in, err := f.in.Next(ctx)
 		if err != nil {
 			return nil, err
 		}
