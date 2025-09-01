@@ -22,10 +22,11 @@ import (
 )
 
 type input struct {
-	ReaderStack *metricsprocessing.ReaderStackResult
-	FrequencyMs int64
-	TmpDir      string
-	Logger      *slog.Logger
+	ReaderStack  *metricsprocessing.ReaderStackResult
+	FrequencyMs  int64
+	TmpDir       string
+	Logger       *slog.Logger
+	RecordsLimit int64
 }
 
 type result struct {
