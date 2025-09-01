@@ -29,8 +29,6 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
-	"github.com/cardinalhq/lakerunner/internal/pipeline"
-	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -158,55 +156,6 @@ func (segments ProcessedSegments) QueueRollupWork(ctx context.Context, mdb Rollu
 			return fmt.Errorf("queueing rollup work for segment %d: %w", segment.SegmentID, err)
 		}
 	}
-	return nil
-}
-
-// MetricTranslator adds resource metadata to metric rows
-type MetricTranslator struct {
-	OrgID    string
-	Bucket   string
-	ObjectID string
-}
-
-// TranslateRow adds resource fields to each row
-// Assumes all other metric fields (including sketches) are properly set by the proto reader
-func (t *MetricTranslator) TranslateRow(row *filereader.Row) error {
-	if row == nil {
-		return fmt.Errorf("row cannot be nil")
-	}
-
-	// Only set the specific required fields - assume all other fields are properly set
-	(*row)[wkk.NewRowKey("resource.bucket.name")] = t.Bucket
-	(*row)[wkk.NewRowKey("resource.file.name")] = "./" + t.ObjectID
-	(*row)[wkk.RowKeyCCustomerID] = t.OrgID
-	(*row)[wkk.RowKeyCTelemetryType] = "metrics"
-
-	// Validate required timestamp field - drop row if missing or invalid
-	timestamp, ok := (*row)[wkk.RowKeyCTimestamp].(int64)
-	if !ok {
-		return fmt.Errorf("_cardinalhq.timestamp field is missing or not int64")
-	}
-
-	// Truncate timestamp to nearest 10-second interval
-	const tenSecondsMs = int64(10000)
-	truncatedTimestamp := (timestamp / tenSecondsMs) * tenSecondsMs
-	(*row)[wkk.RowKeyCTimestamp] = truncatedTimestamp
-
-	// Compute and add TID field
-	metricName, nameOk := (*row)[wkk.RowKeyCName].(string)
-	if !nameOk {
-		return fmt.Errorf("missing or invalid _cardinalhq.name field for TID computation")
-	}
-
-	// Include metric_type in TID calculation to ensure different metric types get different TIDs
-	rowMap := pipeline.ToStringMap(*row)
-	if metricType, hasMetricType := (*row)[wkk.RowKeyCMetricType].(string); hasMetricType {
-		rowMap["_cardinalhq.metric_type"] = metricType
-	}
-
-	tid := helpers.ComputeTID(metricName, rowMap)
-	(*row)[wkk.RowKeyCTID] = tid
-
 	return nil
 }
 
