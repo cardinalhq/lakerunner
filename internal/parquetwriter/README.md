@@ -22,13 +22,16 @@ Schema-less Parquet writer with dynamic ordering, size-based splitting, and tele
 
 ```go
 // Metrics (TID-grouped, no splits within TIDs)
-writer, err := factories.NewMetricsWriter("metrics", "/tmp", 50*1024*1024, 200.0)
+writer, err := factories.NewMetricsWriter("/tmp", 200)
 
-// Logs (timestamp-ordered, spillable sorting)
-writer, err := factories.NewLogsWriter("logs", "/tmp", 50*1024*1024, 150.0)
+// Logs (timestamp-ordered, spillable sorting)  
+writer, err := factories.NewLogsWriter("/tmp", 150)
 
 // Traces (slot-grouped, start time ordered)
-writer, err := factories.NewTracesWriter("traces", "/tmp", 50*1024*1024, slotID, 300.0)
+writer, err := factories.NewTracesWriter("/tmp", slotID, 300)
+
+// Unlimited file size (single file, no splitting)
+writer, err := factories.NewMetricsWriter("/tmp", parquetwriter.NoRecordLimitPerFile)
 
 // Write data
 err = writer.Write(map[string]any{"field": "value", "count": int64(123)})
@@ -45,26 +48,21 @@ for _, result := range results {
 
 | Field | Description |
 |-------|-------------|
-| `OrderBy` | `OrderNone`, `OrderInMemory`, `OrderMergeSort`, `OrderSpillable`, `OrderPresumed` |
-| `OrderKeyFunc` | Extract sort key from row |
 | `GroupKeyFunc` | Extract grouping key (for `NoSplitGroups`) |
 | `NoSplitGroups` | Prevent splitting groups across files |
-| `TargetFileSize` | Target file size in bytes |
-| `BytesPerRecord` | Size estimation for memory management |
+| `RecordsPerFile` | Record limit per file (use `NoRecordLimitPerFile` for unlimited) |
 | `StatsProvider` | Collect per-file metadata |
 
 ## Custom Writer
 
 ```go
 config := parquetwriter.WriterConfig{
-    BaseName:       "custom",
     TmpDir:         tmpdir,
-    TargetFileSize: 100 * 1024 * 1024,
-    OrderBy:        parquetwriter.OrderSpillable,
-    OrderKeyFunc:   func(row map[string]any) any { return row["timestamp"] },
-    BytesPerRecord: 250.0,
+    RecordsPerFile: 10000, // Or use parquetwriter.NoRecordLimitPerFile for unlimited
+    GroupKeyFunc:   func(row map[string]any) any { return row["group"] },
+    NoSplitGroups:  true,
 }
-writer, err := factories.NewCustomWriter(config)
+writer, err := parquetwriter.NewUnifiedWriter(config)
 ```
 
 ## Signal-Specific Metadata

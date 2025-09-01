@@ -14,9 +14,10 @@ import (
 const touchInqueueWork = `-- name: TouchInqueueWork :exec
 UPDATE inqueue
 SET
-  claimed_at = NOW()
+  claimed_at = NOW(),
+  heartbeated_at = NOW()
 WHERE
-  id IN ($1::uuid[])
+  id = ANY($1::uuid[])
   AND claimed_by = $2
 `
 

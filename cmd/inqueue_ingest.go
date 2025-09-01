@@ -16,14 +16,13 @@ package cmd
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"sync/atomic"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
@@ -32,23 +31,37 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/estimator"
 	"github.com/cardinalhq/lakerunner/internal/exemplar"
+	"github.com/cardinalhq/lakerunner/internal/heartbeat"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/internal/workqueue"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-type InqueueProcessingFunction func(
-	ctx context.Context,
-	ll *slog.Logger,
-	tmpdir string,
-	sp storageprofile.StorageProfileProvider,
-	mdb lrdb.StoreFull,
-	awsmanager *awsclient.Manager,
-	inf lrdb.Inqueue,
-	ingest_dateint int32,
-	rpfEstimate int64,
-	loop *IngestLoopContext) error
+// InqueueHeartbeatStore defines the minimal interface needed for inqueue heartbeat operations
+type InqueueHeartbeatStore interface {
+	TouchInqueueWork(ctx context.Context, params lrdb.TouchInqueueWorkParams) error
+}
+
+// newInqueueHeartbeater creates a new heartbeater for the given claimed inqueue items
+func newInqueueHeartbeater(db InqueueHeartbeatStore, workerID int64, items []uuid.UUID) *heartbeat.Heartbeater {
+	if len(items) == 0 {
+		// Return a no-op heartbeater for empty items
+		return heartbeat.New(func(ctx context.Context) error {
+			return nil // No-op
+		}, time.Minute, slog.Default().With("component", "inqueue_heartbeater", "worker_id", workerID, "item_count", 0))
+	}
+
+	heartbeatFunc := func(ctx context.Context) error {
+		return db.TouchInqueueWork(ctx, lrdb.TouchInqueueWorkParams{
+			Ids:       items,
+			ClaimedBy: workerID,
+		})
+	}
+
+	logger := slog.Default().With("component", "inqueue_heartbeater", "worker_id", workerID, "item_count", len(items))
+	return heartbeat.New(heartbeatFunc, time.Minute, logger)
+}
 
 type InqueueBatchProcessingFunction func(
 	ctx context.Context,
@@ -76,7 +89,7 @@ type IngestLoopContext struct {
 	lastLogTime       *time.Time
 }
 
-func NewIngestLoopContext(ctx context.Context, signal string, assumeRoleSessionName string) (*IngestLoopContext, error) {
+func NewIngestLoopContext(ctx context.Context, signal string) (*IngestLoopContext, error) {
 	ll := slog.Default().With(
 		slog.String("signal", signal),
 		slog.String("action", "ingest"),
@@ -87,7 +100,7 @@ func NewIngestLoopContext(ctx context.Context, signal string, assumeRoleSessionN
 		return nil, fmt.Errorf("failed to open LRDB store: %w", err)
 	}
 
-	awsmanager, err := awsclient.NewManager(ctx, awsclient.WithAssumeRoleSessionName(assumeRoleSessionName))
+	awsmanager, err := awsclient.NewManager(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create AWS manager: %w", err)
 	}
@@ -178,11 +191,7 @@ func (loop *IngestLoopContext) Close() error {
 	return nil
 }
 
-func IngestLoop(loop *IngestLoopContext, processingFx InqueueProcessingFunction) error {
-	return IngestLoopWithBatch(loop, processingFx, nil)
-}
-
-func IngestLoopWithBatch(loop *IngestLoopContext, processingFx InqueueProcessingFunction, batchProcessingFx InqueueBatchProcessingFunction) error {
+func IngestLoopWithBatch(loop *IngestLoopContext, _ interface{}, batchProcessingFx InqueueBatchProcessingFunction) error {
 	ctx := context.Background()
 
 	for {
@@ -192,7 +201,7 @@ func IngestLoopWithBatch(loop *IngestLoopContext, processingFx InqueueProcessing
 		default:
 		}
 
-		shouldBackoff, workWasProcessed, err := ingestFilesBatch(ctx, loop, processingFx, batchProcessingFx)
+		shouldBackoff, workWasProcessed, err := ingestFilesBatch(ctx, loop, batchProcessingFx)
 		if err != nil {
 			// Check if this is a worker interruption
 			if IsWorkerInterrupted(err) {
@@ -223,181 +232,26 @@ func IngestLoopWithBatch(loop *IngestLoopContext, processingFx InqueueProcessing
 	}
 }
 
-// batchRowToInqueue converts ClaimInqueueWorkBatchRow to Inqueue (they have identical fields)
-func batchRowToInqueue(row lrdb.ClaimInqueueWorkBatchRow) lrdb.Inqueue {
-	return lrdb.Inqueue(row)
-}
-
-func ingestFiles(
-	ctx context.Context,
-	loop *IngestLoopContext,
-	processFx InqueueProcessingFunction,
-) (bool, bool, error) {
-	ctx, span := tracer.Start(ctx, "ingest", trace.WithAttributes(commonAttributes.ToSlice()...))
-	defer span.End()
-
-	t0 := time.Now()
-	inf, err := loop.mdb.ClaimInqueueWork(ctx, lrdb.ClaimInqueueWorkParams{
-		ClaimedBy:     myInstanceID,
-		TelemetryType: loop.signal,
-	})
-	inqueueFetchDuration.Record(ctx, time.Since(t0).Seconds(),
-		metric.WithAttributeSet(commonAttributes),
-		metric.WithAttributes(
-			attribute.Bool("hasError", err != nil && !errors.Is(err, pgx.ErrNoRows)),
-			attribute.Bool("noRows", errors.Is(err, pgx.ErrNoRows)),
-		))
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return true, false, nil
-		}
-		return true, false, fmt.Errorf("failed to claim inqueue work: %w", err)
-	}
-
-	lag := time.Since(inf.QueueTs).Seconds()
-	inqueueLag.Record(ctx, lag,
-		metric.WithAttributeSet(commonAttributes),
-		metric.WithAttributes(
-			attribute.String("organizationID", inf.OrganizationID.String()),
-			attribute.String("signal", inf.TelemetryType),
-			attribute.Int("instanceNum", int(inf.InstanceNum)),
-		))
-
-	ll := loop.ll.With(
-		slog.String("id", inf.ID.String()),
-		slog.Int("tries", int(inf.Tries)),
-		slog.String("organizationID", inf.OrganizationID.String()),
-		slog.Int("instanceNum", int(inf.InstanceNum)),
-		slog.String("bucket", inf.Bucket),
-		slog.String("objectID", inf.ObjectID))
-
-	h := workqueue.NewInqueueHandlerFromLRDB(inf, loop.mdb, maxWorkRetries, workqueue.WithLogger(ll))
-
-	if inf.Tries > 10 {
-		ll.Warn("Too many tries, deleting")
-		if err := h.CompleteWork(ctx); err != nil {
-			ll.Error("Failed to complete work", slog.Any("error", err))
-		}
-		return false, true, nil
-	}
-
-	isNew, err := h.IsNewWork(ctx)
-	if err != nil {
-		if retryErr := h.RetryWork(ctx); retryErr != nil {
-			ll.Error("Failed to retry work", slog.Any("error", retryErr))
-		}
-		return true, false, err
-	}
-	if !isNew {
-		ll.Warn("already processed, releasing")
-		if err := h.CompleteWork(ctx); err != nil {
-			ll.Error("Failed to complete work", slog.Any("error", err))
-		}
-		return true, true, nil
-	}
-
-	ll.Info("Processing")
-
-	ingestDateint, _ := helpers.MSToDateintHour(time.Now().UTC().UnixMilli())
-
-	// Create a temporary directory for processing
-	tmpdir, err := os.MkdirTemp("", "lakerunner-ingest-*")
-	if err != nil {
-		ll.Error("Failed to create temporary directory", slog.Any("error", err))
-		if retryErr := h.RetryWork(ctx); retryErr != nil {
-			ll.Error("Failed to retry work", slog.Any("error", retryErr))
-		}
-		return true, false, fmt.Errorf("failed to create temporary directory: %w", err)
-	}
-	defer func() {
-		if err := os.RemoveAll(tmpdir); err != nil {
-			ll.Error("Failed to remove temporary directory", slog.Any("error", err))
-		}
-	}()
-
-	var rpfEstimate int64
-	switch lrdb.SignalEnum(inf.TelemetryType) {
-	case lrdb.SignalEnumMetrics:
-		rpfEstimate = loop.metricEstimator.Get(inf.OrganizationID, inf.InstanceNum, 10_000)
-		if rpfEstimate <= 0 {
-			rpfEstimate = 100 // Default for all signals
-		}
-	case lrdb.SignalEnumLogs:
-		rpfEstimate = loop.logEstimator.Get(inf.OrganizationID, inf.InstanceNum)
-		if rpfEstimate <= 0 {
-			rpfEstimate = 100 // Default for all signals
-		}
-	default:
-		rpfEstimate = 100 // Default fallback
-	}
-	t0 = time.Now()
-	err = processFx(ctx, ll, tmpdir, loop.sp, loop.mdb, loop.awsmanager, inf, ingestDateint, rpfEstimate, loop)
-	inqueueDuration.Record(ctx, time.Since(t0).Seconds(),
-		metric.WithAttributeSet(commonAttributes),
-		metric.WithAttributes(
-			attribute.String("organizationID", inf.OrganizationID.String()),
-			attribute.String("bucket", inf.Bucket),
-		))
-	if err != nil {
-		if retryErr := h.RetryWork(ctx); retryErr != nil {
-			ll.Error("Failed to retry work", slog.Any("error", retryErr))
-		}
-		return true, false, fmt.Errorf("Processing failed: %w", err)
-	}
-
-	if err := h.CompleteWork(ctx); err != nil {
-		ll.Error("Failed to complete work", slog.Any("error", err))
-	}
-	return false, true, nil
-}
-
 func ingestFilesBatch(
 	ctx context.Context,
 	loop *IngestLoopContext,
-	processFx InqueueProcessingFunction,
 	batchProcessingFx InqueueBatchProcessingFunction,
 ) (bool, bool, error) {
 	batchSize := helpers.GetBatchSizeForSignal(loop.signal)
-
-	if batchSize <= 1 || batchProcessingFx == nil {
-		return ingestFiles(ctx, loop, processFx)
-	}
 
 	ctx, span := tracer.Start(ctx, "ingest_batch", trace.WithAttributes(commonAttributes.ToSlice()...))
 	defer span.End()
 
 	t0 := time.Now()
 
-	// First, find next available work to get org/instance
-	nextWork, err := loop.mdb.ClaimInqueueWork(ctx, lrdb.ClaimInqueueWorkParams{
-		ClaimedBy:     myInstanceID,
-		TelemetryType: loop.signal,
-	})
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return true, false, nil
-		}
-		return true, false, fmt.Errorf("failed to find next work: %w", err)
-	}
-
-	// Temporarily release it back so batch claim can get it
-	if err := loop.mdb.ReleaseInqueueWork(ctx, lrdb.ReleaseInqueueWorkParams{
-		ID:        nextWork.ID,
-		ClaimedBy: myInstanceID,
-	}); err != nil {
-		return true, false, fmt.Errorf("failed to release work: %w", err)
-	}
-
-	// Now claim batch from same org/instance with new parameters
+	// Claim batch directly - no pre-fetch needed as SQL finds best group automatically
 	items, err := loop.mdb.ClaimInqueueWorkBatch(ctx, lrdb.ClaimInqueueWorkBatchParams{
-		OrganizationID: nextWork.OrganizationID,
-		InstanceNum:    nextWork.InstanceNum,
-		TelemetryType:  loop.signal,
-		WorkerID:       myInstanceID,
-		MaxTotalSize:   helpers.GetMaxTotalSize(),
-		MinTotalSize:   helpers.GetMinBatchSize(),
-		MaxAgeSeconds:  int32(helpers.GetMaxAgeSeconds()),
-		BatchCount:     int32(batchSize),
+		Signal:        loop.signal,
+		WorkerID:      myInstanceID,
+		MaxTotalSize:  helpers.GetMaxTotalSize(),
+		MinTotalSize:  helpers.GetMinBatchSize(),
+		MaxAgeSeconds: int32(helpers.GetMaxAgeSeconds()),
+		BatchCount:    int32(batchSize),
 	})
 	inqueueFetchDuration.Record(ctx, time.Since(t0).Seconds(),
 		metric.WithAttributeSet(commonAttributes),
@@ -420,13 +274,9 @@ func ingestFilesBatch(
 			metric.WithAttributeSet(commonAttributes),
 			metric.WithAttributes(
 				attribute.String("organizationID", item.OrganizationID.String()),
-				attribute.String("signal", item.TelemetryType),
+				attribute.String("signal", item.Signal),
 				attribute.Int("instanceNum", int(item.InstanceNum)),
 			))
-	}
-
-	if len(items) == 1 {
-		return processSingleItem(ctx, loop, processFx, batchRowToInqueue(items[0]))
 	}
 
 	// Safety check: ensure all records in the batch are for the same organization
@@ -440,8 +290,11 @@ func ingestFilesBatch(
 		slog.Int("instanceNum", int(items[0].InstanceNum)))
 
 	handlers := make([]*workqueue.InqueueHandler, len(items))
+	var newWorkItems []lrdb.ClaimInqueueWorkBatchRow
+	var newWorkHandlers []*workqueue.InqueueHandler
+
 	for i, item := range items {
-		handlers[i] = workqueue.NewInqueueHandlerFromLRDB(batchRowToInqueue(item), loop.mdb, maxWorkRetries, workqueue.WithLogger(ll))
+		handlers[i] = workqueue.NewInqueueHandlerFromLRDB(lrdb.Inqueue(item), loop.mdb, maxWorkRetries, workqueue.WithLogger(ll))
 
 		if item.Tries > 10 {
 			ll.Warn("Too many tries, deleting item", slog.String("itemID", item.ID.String()))
@@ -450,9 +303,37 @@ func ingestFilesBatch(
 			}
 			continue
 		}
+
+		// Check if this work is new (not already processed)
+		isNew, err := handlers[i].IsNewWork(ctx)
+		if err != nil {
+			ll.Error("Failed to check if work is new", slog.Any("error", err), slog.String("itemID", item.ID.String()))
+			if retryErr := handlers[i].RetryWork(ctx); retryErr != nil {
+				ll.Error("Failed to retry work", slog.Any("error", retryErr))
+			}
+			continue
+		}
+
+		if !isNew {
+			ll.Info("Already processed file, skipping", slog.String("itemID", item.ID.String()))
+			if err := handlers[i].CompleteWork(ctx); err != nil {
+				ll.Error("Failed to complete work for already processed item", slog.Any("error", err))
+			}
+			continue
+		}
+
+		// This item is new work, add to processing lists
+		newWorkItems = append(newWorkItems, item)
+		newWorkHandlers = append(newWorkHandlers, handlers[i])
 	}
 
-	tmpdir, err := os.MkdirTemp("", "lakerunner-batch-ingest-")
+	// If no new work remains, we're done
+	if len(newWorkItems) == 0 {
+		ll.Info("No new work items in batch, all were already processed or had too many tries")
+		return false, true, nil
+	}
+
+	tmpdir, err := os.MkdirTemp("", "")
 	if err != nil {
 		return true, false, fmt.Errorf("creating tmpdir: %w", err)
 	}
@@ -463,33 +344,42 @@ func ingestFilesBatch(
 	}()
 
 	var rpfEstimate int64
-	switch lrdb.SignalEnum(items[0].TelemetryType) {
+	switch lrdb.SignalEnum(newWorkItems[0].Signal) {
 	case lrdb.SignalEnumMetrics:
-		rpfEstimate = loop.metricEstimator.Get(items[0].OrganizationID, items[0].InstanceNum, 10_000)
+		rpfEstimate = loop.metricEstimator.Get(newWorkItems[0].OrganizationID, newWorkItems[0].InstanceNum, 10_000)
 	case lrdb.SignalEnumLogs:
-		rpfEstimate = loop.logEstimator.Get(items[0].OrganizationID, items[0].InstanceNum)
+		rpfEstimate = loop.logEstimator.Get(newWorkItems[0].OrganizationID, newWorkItems[0].InstanceNum)
 	default:
 		rpfEstimate = 40_000
 	}
 
 	ingestDateint, _ := helpers.MSToDateintHour(time.Now().UTC().UnixMilli())
 
+	// Start heartbeating for new work items only
+	newWorkItemIDs := make([]uuid.UUID, len(newWorkItems))
+	for i, item := range newWorkItems {
+		newWorkItemIDs[i] = item.ID
+	}
+	heartbeater := newInqueueHeartbeater(loop.mdb, myInstanceID, newWorkItemIDs)
+	cancel := heartbeater.Start(ctx)
+	defer cancel() // Ensure heartbeating stops when processing completes
+
 	t0 = time.Now()
-	inqueueBatch := make([]lrdb.Inqueue, len(items))
-	for i, item := range items {
-		inqueueBatch[i] = batchRowToInqueue(item)
+	inqueueBatch := make([]lrdb.Inqueue, len(newWorkItems))
+	for i, item := range newWorkItems {
+		inqueueBatch[i] = lrdb.Inqueue(item)
 	}
 	err = batchProcessingFx(ctx, ll, tmpdir, loop.sp, loop.mdb, loop.awsmanager, inqueueBatch, ingestDateint, rpfEstimate, loop)
 	inqueueDuration.Record(ctx, time.Since(t0).Seconds(),
 		metric.WithAttributeSet(commonAttributes),
 		metric.WithAttributes(
-			attribute.String("organizationID", items[0].OrganizationID.String()),
-			attribute.String("bucket", items[0].Bucket),
-			attribute.Int("batchSize", len(items)),
+			attribute.String("organizationID", newWorkItems[0].OrganizationID.String()),
+			attribute.String("bucket", newWorkItems[0].Bucket),
+			attribute.Int("batchSize", len(newWorkItems)),
 		))
 
 	if err != nil {
-		for _, h := range handlers {
+		for _, h := range newWorkHandlers {
 			if retryErr := h.RetryWork(ctx); retryErr != nil {
 				ll.Error("Failed to retry work", slog.Any("error", retryErr))
 			}
@@ -497,97 +387,12 @@ func ingestFilesBatch(
 		return true, false, fmt.Errorf("Batch processing failed: %w", err)
 	}
 
-	for _, h := range handlers {
+	for _, h := range newWorkHandlers {
 		if err := h.CompleteWork(ctx); err != nil {
 			ll.Error("Failed to complete work", slog.Any("error", err))
 		} else {
 			atomic.AddInt64(loop.processedItems, 1)
 		}
-	}
-	return false, true, nil
-}
-
-func processSingleItem(ctx context.Context, loop *IngestLoopContext, processFx InqueueProcessingFunction, inf lrdb.Inqueue) (bool, bool, error) {
-	ll := loop.ll.With(
-		slog.String("id", inf.ID.String()),
-		slog.Int("tries", int(inf.Tries)),
-		slog.String("organizationID", inf.OrganizationID.String()),
-		slog.Int("instanceNum", int(inf.InstanceNum)),
-		slog.String("bucket", inf.Bucket),
-		slog.String("objectID", inf.ObjectID))
-
-	h := workqueue.NewInqueueHandlerFromLRDB(inf, loop.mdb, maxWorkRetries, workqueue.WithLogger(ll))
-
-	if inf.Tries > 10 {
-		ll.Warn("Too many tries, deleting")
-		if err := h.CompleteWork(ctx); err != nil {
-			ll.Error("Failed to complete work", slog.Any("error", err))
-		}
-		return false, true, nil
-	}
-
-	isNew, err := h.IsNewWork(ctx)
-	if err != nil {
-		if retryErr := h.RetryWork(ctx); retryErr != nil {
-			ll.Error("Failed to retry work", slog.Any("error", retryErr))
-		}
-		return true, false, fmt.Errorf("checking if work is new: %w", err)
-	}
-	if !isNew {
-		ll.Info("Already processed file, skipping")
-		if err := h.CompleteWork(ctx); err != nil {
-			ll.Error("Failed to complete work", slog.Any("error", err))
-		}
-		return false, true, nil
-	}
-
-	tmpdir, err := os.MkdirTemp("", "lakerunner-ingest-")
-	if err != nil {
-		return true, false, fmt.Errorf("creating tmpdir: %w", err)
-	}
-	defer func() {
-		if err := os.RemoveAll(tmpdir); err != nil {
-			ll.Error("Failed to clean up tmpdir", slog.Any("error", err))
-		}
-	}()
-
-	var rpfEstimate int64
-	switch lrdb.SignalEnum(inf.TelemetryType) {
-	case lrdb.SignalEnumMetrics:
-		rpfEstimate = loop.metricEstimator.Get(inf.OrganizationID, inf.InstanceNum, 10_000)
-		if rpfEstimate <= 0 {
-			rpfEstimate = 100 // Default for all signals
-		}
-	case lrdb.SignalEnumLogs:
-		rpfEstimate = loop.logEstimator.Get(inf.OrganizationID, inf.InstanceNum)
-		if rpfEstimate <= 0 {
-			rpfEstimate = 100 // Default for all signals
-		}
-	default:
-		rpfEstimate = 100
-	}
-
-	ingestDateint, _ := helpers.MSToDateintHour(time.Now().UTC().UnixMilli())
-
-	t0 := time.Now()
-	err = processFx(ctx, ll, tmpdir, loop.sp, loop.mdb, loop.awsmanager, inf, ingestDateint, rpfEstimate, loop)
-	inqueueDuration.Record(ctx, time.Since(t0).Seconds(),
-		metric.WithAttributeSet(commonAttributes),
-		metric.WithAttributes(
-			attribute.String("organizationID", inf.OrganizationID.String()),
-			attribute.String("bucket", inf.Bucket),
-		))
-	if err != nil {
-		if retryErr := h.RetryWork(ctx); retryErr != nil {
-			ll.Error("Failed to retry work", slog.Any("error", retryErr))
-		}
-		return true, false, fmt.Errorf("Processing failed: %w", err)
-	}
-
-	if err := h.CompleteWork(ctx); err != nil {
-		ll.Error("Failed to complete work", slog.Any("error", err))
-	} else {
-		atomic.AddInt64(loop.processedItems, 1)
 	}
 	return false, true, nil
 }

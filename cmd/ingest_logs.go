@@ -30,7 +30,6 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
-	"github.com/cardinalhq/lakerunner/internal/constants"
 	"github.com/cardinalhq/lakerunner/internal/debugging"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
@@ -81,7 +80,7 @@ func init() {
 				}
 			}()
 
-			loop, err := NewIngestLoopContext(ctx, "logs", servicename)
+			loop, err := NewIngestLoopContext(ctx, "logs")
 			if err != nil {
 				return fmt.Errorf("failed to create ingest loop context: %w", err)
 			}
@@ -97,7 +96,7 @@ func init() {
 				default:
 				}
 
-				err := IngestLoopWithBatch(loop, logIngestItem, logIngestBatch)
+				err := IngestLoopWithBatch(loop, nil, logIngestBatch)
 				if err != nil {
 					slog.Error("Error in ingest loop", slog.Any("error", err))
 				}
@@ -213,7 +212,7 @@ func (wm *writerManager) getWriter(key hourSlotKey) (*parquetwriter.UnifiedWrite
 	}
 
 	// Create new writer
-	writer, err := factories.NewLogsWriter(wm.tmpdir, constants.WriterTargetSizeBytesLogs, wm.rpfEstimate)
+	writer, err := factories.NewLogsWriter(wm.tmpdir, wm.rpfEstimate)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create logs writer: %w", err)
 	}
@@ -258,13 +257,6 @@ func (wm *writerManager) closeAll(ctx context.Context) ([]parquetwriter.Result, 
 // createLogReader creates the appropriate filereader based on file type
 func createLogReader(filename string) (filereader.Reader, error) {
 	return filereader.ReaderForFile(filename, filereader.SignalTypeLogs)
-}
-
-func logIngestItem(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
-	awsmanager *awsclient.Manager, inf lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
-
-	// Convert single item to batch and process
-	return logIngestBatch(ctx, ll, tmpdir, sp, mdb, awsmanager, []lrdb.Inqueue{inf}, ingest_dateint, rpfEstimate, loop)
 }
 
 // queueLogCompactionForSlot queues a log compaction job for a specific slot

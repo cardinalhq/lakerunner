@@ -1,6 +1,6 @@
 -- name: InqueueSummary :many
-SELECT count(*) AS count, telemetry_type
+SELECT count(*) AS count, signal
 FROM inqueue
 WHERE claimed_at IS NULL
-GROUP BY telemetry_type
-ORDER BY telemetry_type;
+GROUP BY signal
+ORDER BY signal;

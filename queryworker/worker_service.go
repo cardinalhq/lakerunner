@@ -244,7 +244,7 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var workerSql = ""
+	var workerSql string
 	var rowMapper RowMapper[promql.Timestamped]
 	var cacheManager *CacheManager
 	var globSize int

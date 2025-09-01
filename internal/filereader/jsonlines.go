@@ -16,10 +16,14 @@ package filereader
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
+
+	"go.opentelemetry.io/otel/attribute"
+	otelmetric "go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/constants"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
@@ -80,6 +84,11 @@ func (r *JSONLinesReader) Next() (*Batch, error) {
 			continue
 		}
 
+		// Track lines read from input
+		rowsInCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+			attribute.String("reader", "JSONLinesReader"),
+		))
+
 		// Parse JSON into string-keyed map first
 		var jsonRow map[string]any
 		if err := json.Unmarshal([]byte(line), &jsonRow); err != nil {
@@ -101,6 +110,10 @@ func (r *JSONLinesReader) Next() (*Batch, error) {
 	}
 
 	r.totalRows += int64(batch.Len())
+	// Track rows output to downstream
+	rowsOutCounter.Add(context.Background(), int64(batch.Len()), otelmetric.WithAttributes(
+		attribute.String("reader", "JSONLinesReader"),
+	))
 	return batch, nil
 }
 

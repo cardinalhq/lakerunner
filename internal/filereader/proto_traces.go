@@ -15,14 +15,17 @@
 package filereader
 
 import (
+	"context"
 	"fmt"
 	"io"
 
-	"github.com/cardinalhq/lakerunner/internal/pipeline"
-	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
-
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
+	"go.opentelemetry.io/otel/attribute"
+	otelmetric "go.opentelemetry.io/otel/metric"
+
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 // ProtoTracesReader reads rows from OpenTelemetry protobuf traces format.
@@ -81,6 +84,11 @@ func (r *ProtoTracesReader) Next() (*Batch, error) {
 			return nil, err
 		}
 
+		// Track trace spans read from proto
+		rowsInCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+			attribute.String("reader", "ProtoTracesReader"),
+		))
+
 		// Copy to batch's reusable Row map
 		row := batch.AddRow()
 		for k, v := range sourceRow {
@@ -91,6 +99,10 @@ func (r *ProtoTracesReader) Next() (*Batch, error) {
 	// Update row count with successfully read rows
 	if batch.Len() > 0 {
 		r.rowCount += int64(batch.Len())
+		// Track rows output to downstream
+		rowsOutCounter.Add(context.Background(), int64(batch.Len()), otelmetric.WithAttributes(
+			attribute.String("reader", "ProtoTracesReader"),
+		))
 		return batch, nil
 	}
 

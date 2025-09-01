@@ -169,7 +169,7 @@ func flushChunk(st *gs, tmpdir string) error {
 	sort.Slice(st.buf, func(i, j int) bool {
 		return getMS(st.buf[i]["_cardinalhq.timestamp"]) < getMS(st.buf[j]["_cardinalhq.timestamp"])
 	})
-	f, err := os.CreateTemp(tmpdir, "tschunk-*.gob")
+	f, err := os.CreateTemp(tmpdir, "*.gob")
 	if err != nil {
 		return err
 	}

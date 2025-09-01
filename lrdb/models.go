@@ -141,11 +141,12 @@ type Inqueue struct {
 	InstanceNum    int16      `json:"instance_num"`
 	Bucket         string     `json:"bucket"`
 	ObjectID       string     `json:"object_id"`
-	TelemetryType  string     `json:"telemetry_type"`
+	Signal         string     `json:"signal"`
 	Tries          int32      `json:"tries"`
 	ClaimedBy      int64      `json:"claimed_by"`
 	ClaimedAt      *time.Time `json:"claimed_at"`
 	FileSize       int64      `json:"file_size"`
+	HeartbeatedAt  *time.Time `json:"heartbeated_at"`
 }
 
 type InqueueJournal struct {
@@ -172,17 +173,58 @@ type LogSeg struct {
 	SlotID         int32                     `json:"slot_id"`
 }
 
+type MetricCompactionQueue struct {
+	ID             int64      `json:"id"`
+	QueueTs        time.Time  `json:"queue_ts"`
+	Priority       int32      `json:"priority"`
+	OrganizationID uuid.UUID  `json:"organization_id"`
+	Dateint        int32      `json:"dateint"`
+	FrequencyMs    int64      `json:"frequency_ms"`
+	SegmentID      int64      `json:"segment_id"`
+	InstanceNum    int16      `json:"instance_num"`
+	RecordCount    int64      `json:"record_count"`
+	Tries          int32      `json:"tries"`
+	ClaimedBy      int64      `json:"claimed_by"`
+	ClaimedAt      *time.Time `json:"claimed_at"`
+	HeartbeatedAt  *time.Time `json:"heartbeated_at"`
+}
+
+type MetricPackEstimate struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	FrequencyMs    int64     `json:"frequency_ms"`
+	TargetRecords  *int64    `json:"target_records"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+type MetricRollupQueue struct {
+	ID             int64      `json:"id"`
+	QueueTs        time.Time  `json:"queue_ts"`
+	Priority       int32      `json:"priority"`
+	OrganizationID uuid.UUID  `json:"organization_id"`
+	Dateint        int32      `json:"dateint"`
+	FrequencyMs    int64      `json:"frequency_ms"`
+	InstanceNum    int16      `json:"instance_num"`
+	SlotID         int32      `json:"slot_id"`
+	SlotCount      int32      `json:"slot_count"`
+	Tries          int32      `json:"tries"`
+	ClaimedBy      int64      `json:"claimed_by"`
+	ClaimedAt      *time.Time `json:"claimed_at"`
+	HeartbeatedAt  *time.Time `json:"heartbeated_at"`
+	SegmentID      int64      `json:"segment_id"`
+	RecordCount    int64      `json:"record_count"`
+	RollupGroup    int64      `json:"rollup_group"`
+	WindowCloseTs  time.Time  `json:"window_close_ts"`
+}
+
 type MetricSeg struct {
 	OrganizationID uuid.UUID                 `json:"organization_id"`
 	Dateint        int32                     `json:"dateint"`
 	FrequencyMs    int32                     `json:"frequency_ms"`
 	SegmentID      int64                     `json:"segment_id"`
 	InstanceNum    int16                     `json:"instance_num"`
-	TidPartition   int16                     `json:"tid_partition"`
 	TsRange        pgtype.Range[pgtype.Int8] `json:"ts_range"`
 	RecordCount    int64                     `json:"record_count"`
 	FileSize       int64                     `json:"file_size"`
-	TidCount       int32                     `json:"tid_count"`
 	IngestDateint  int32                     `json:"ingest_dateint"`
 	Published      bool                      `json:"published"`
 	Rolledup       bool                      `json:"rolledup"`
@@ -191,6 +233,8 @@ type MetricSeg struct {
 	SlotID         int32                     `json:"slot_id"`
 	Fingerprints   []int64                   `json:"fingerprints"`
 	SortVersion    int16                     `json:"sort_version"`
+	SlotCount      int32                     `json:"slot_count"`
+	Compacted      bool                      `json:"compacted"`
 }
 
 type ObjCleanup struct {

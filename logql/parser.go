@@ -633,24 +633,6 @@ func tryParseLabelFilter(stage string) (LabelFilter, bool) {
 	return LabelFilter{}, false
 }
 
-// addParsersFromString: order-preserving parser detection with optional params.
-func addParsersFromString(s string, ls *LogSelector) {
-	for _, chunk := range splitPipelineStages(s) {
-		if typ, params, ok := looksLikeParser(chunk); ok {
-			ls.Parsers = append(ls.Parsers, ParserStage{Type: typ, Params: params})
-		}
-	}
-}
-
-// addLabelFiltersFromString: picks up label filters anywhere in the pipeline (incl. after parsers).
-func addLabelFiltersFromString(s string, ls *LogSelector) {
-	for _, chunk := range splitPipelineStages(s) {
-		if lf, ok := tryParseLabelFilter(chunk); ok {
-			ls.LabelFilters = append(ls.LabelFilters, lf)
-		}
-	}
-}
-
 func normalizeLabelName(label string) string {
 	if strings.HasPrefix(label, "resource_") || strings.HasPrefix(label, "log_") {
 		return strings.ReplaceAll(label, "_", ".")
@@ -779,26 +761,6 @@ func collectPipelines(node *LogAST, out *[]*LogRange) {
 			collectPipelines(&node.BinOp.RHS, out)
 		}
 	}
-}
-
-func parseLabelFilterString(s string) (string, string, string, bool) {
-	s = strings.TrimSpace(s)
-	for _, op := range []string{"=~", "!~", "!=", "="} {
-		if i := strings.Index(s, op); i >= 0 {
-			lab := strings.TrimSpace(s[:i])
-			val := strings.TrimSpace(s[i+len(op):])
-			if lab == "" || val == "" {
-				return "", "", "", false
-			}
-			if len(val) >= 2 && val[0] == '"' && val[len(val)-1] == '"' {
-				if u, err := strconv.Unquote(val); err == nil {
-					val = u
-				}
-			}
-			return lab, op, val, true
-		}
-	}
-	return "", "", "", false
 }
 
 func toMatchOpString(op string) MatchOp {

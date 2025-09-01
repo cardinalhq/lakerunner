@@ -118,6 +118,11 @@ func (r *ParquetRawReader) Next() (*Batch, error) {
 		return nil, io.EOF
 	}
 
+	// Track rows read from parquet
+	rowsInCounter.Add(context.Background(), int64(n), otelmetric.WithAttributes(
+		attribute.String("reader", "ParquetRawReader"),
+	))
+
 	batch := pipeline.GetBatch()
 
 	// Transfer ownership instead of copying to reduce memory pressure
@@ -153,6 +158,14 @@ func (r *ParquetRawReader) Next() (*Batch, error) {
 			}
 		}
 
+		// Convert sketch field from string to []byte if needed (parquet sometimes returns byte fields as strings)
+		if sketchValue, exists := row["sketch"]; exists {
+			if sketchStr, ok := sketchValue.(string); ok {
+				row["sketch"] = []byte(sketchStr)
+			}
+			// If it's already []byte or nil, leave it as-is
+		}
+
 		// Filter out rows with NaN or invalid rollup fields - this indicates corrupted data from parquet source
 		if shouldDropRowForInvalidRollupFields(row) {
 			continue
@@ -168,6 +181,11 @@ func (r *ParquetRawReader) Next() (*Batch, error) {
 
 	// Only increment rowCount for successfully processed rows
 	r.rowCount += int64(validRows)
+
+	// Track rows output to downstream
+	rowsOutCounter.Add(context.Background(), int64(validRows), otelmetric.WithAttributes(
+		attribute.String("reader", "ParquetRawReader"),
+	))
 
 	// If underlying reader hit EOF, mark as exhausted for next call
 	if err == io.EOF {

@@ -25,7 +25,7 @@ import (
 func ComputeTID(metricName string, tags map[string]any) int64 {
 	keys := make([]string, 0, len(tags))
 	for k, v := range tags {
-		if v == "" || k[0] == '_' {
+		if v == "" || (k[0] == '_' && k != "_cardinalhq.metric_type") {
 			continue
 		}
 		keys = append(keys, k)

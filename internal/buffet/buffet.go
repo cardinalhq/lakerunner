@@ -145,7 +145,7 @@ func NewWriter(
 	rowsPerfile int64,
 	opts ...WriterOption,
 ) (*Writer, error) {
-	tmp, err := os.CreateTemp(tmpdir, "buffet-*.gob")
+	tmp, err := os.CreateTemp(tmpdir, "*.gob")
 	if err != nil {
 		return nil, fmt.Errorf("buffet: create temp spill file: %w", err)
 	}
@@ -268,7 +268,7 @@ func (w *Writer) Close() ([]Result, error) {
 	var rowsInFile int64
 
 	openNext := func() error {
-		f, err := os.CreateTemp(w.tmpdir, "buffet-*.parquet")
+		f, err := os.CreateTemp(w.tmpdir, "*.parquet")
 		if err != nil {
 			return err
 		}

@@ -28,6 +28,7 @@ import (
 	"github.com/cardinalhq/lakerunner/cmd/admin/inqueue"
 	"github.com/cardinalhq/lakerunner/cmd/admin/logs"
 	"github.com/cardinalhq/lakerunner/cmd/admin/metrics"
+	"github.com/cardinalhq/lakerunner/cmd/admin/metrics/estimates"
 	"github.com/cardinalhq/lakerunner/cmd/admin/objcleanup"
 	"github.com/cardinalhq/lakerunner/cmd/admin/organizations"
 	"github.com/cardinalhq/lakerunner/cmd/admin/orgapikeys"
@@ -120,7 +121,7 @@ func init() {
 		bucketprefixes.SetAPIKey(adminAPIKey)
 		logs.SetAPIKey(adminAPIKey)
 		traces.SetAPIKey(adminAPIKey)
-		metrics.SetAPIKey(adminAPIKey)
+		estimates.SetAPIKey(adminAPIKey)
 	}
 
 	// Add API key flag to admin command and all subcommands
@@ -185,7 +186,6 @@ func getMetricsCmd() *cobra.Command {
 		Short: "Metric administrative commands",
 	}
 
-	metricsCmd.AddCommand(metrics.GetCompactCmd())
-	metricsCmd.AddCommand(metrics.GetRollupCmd())
+	metricsCmd.AddCommand(metrics.GetEstimatesCmd())
 	return metricsCmd
 }

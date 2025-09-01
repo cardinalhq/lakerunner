@@ -88,7 +88,7 @@ type RunqueueLoopContext struct {
 	lastLogTime     *time.Time
 }
 
-func NewRunqueueLoopContext(ctx context.Context, signal string, action string, assumeRoleSessionName string) (*RunqueueLoopContext, error) {
+func NewRunqueueLoopContext(ctx context.Context, signal string, action string) (*RunqueueLoopContext, error) {
 	ll := slog.Default().With(
 		slog.String("signal", signal),
 		slog.String("action", action),
@@ -99,7 +99,7 @@ func NewRunqueueLoopContext(ctx context.Context, signal string, action string, a
 		return nil, fmt.Errorf("failed to open LRDB store: %w", err)
 	}
 
-	awsmanager, err := awsclient.NewManager(ctx, awsclient.WithAssumeRoleSessionName(assumeRoleSessionName))
+	awsmanager, err := awsclient.NewManager(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create AWS manager: %w", err)
 	}
@@ -310,7 +310,7 @@ func workqueueProcess(
 		slog.Duration("workLag", workLag),
 	)
 
-	tmpdir, err := os.MkdirTemp("", "lakerunner-workqueue-*")
+	tmpdir, err := os.MkdirTemp("", "")
 	if err != nil {
 		ll.Error("Failed to create temporary directory", slog.Any("error", err))
 		if failErr := inf.Fail(); failErr != nil {

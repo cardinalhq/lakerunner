@@ -40,8 +40,7 @@ func TestUnifiedWriter_Basic(t *testing.T) {
 
 	config := WriterConfig{
 		TmpDir:         tmpdir,
-		TargetFileSize: 1000, // Small size for testing
-		RecordsPerFile: 20,   // Fixed limit for predictable tests
+		RecordsPerFile: 20, // Fixed limit for predictable tests
 	}
 	writer, err := NewUnifiedWriter(config)
 	if err != nil {
@@ -100,8 +99,7 @@ func TestUnifiedWriter_WriteBatch(t *testing.T) {
 
 	config := WriterConfig{
 		TmpDir:         tmpdir,
-		TargetFileSize: 1000, // Small size for testing
-		RecordsPerFile: 20,   // Fixed limit for predictable tests
+		RecordsPerFile: 20, // Fixed limit for predictable tests
 	}
 	writer, err := NewUnifiedWriter(config)
 	if err != nil {

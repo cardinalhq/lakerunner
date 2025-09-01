@@ -63,7 +63,7 @@ func TestJSONGzReaderWithEmptyLines(t *testing.T) {
 	}
 
 	// Create temporary file
-	tmpfile, err := os.CreateTemp("", "test-*.json.gz")
+	tmpfile, err := os.CreateTemp("", "*.json.gz")
 	assert.NoError(t, err)
 	defer os.Remove(tmpfile.Name())
 
@@ -283,7 +283,7 @@ func TestNewJSONGzReader_ErrorCases(t *testing.T) {
 		{
 			name: "file is not gzip",
 			setup: func() string {
-				tmpfile, err := os.CreateTemp("", "test-*.json")
+				tmpfile, err := os.CreateTemp("", "*.json")
 				assert.NoError(t, err)
 				_, err = tmpfile.WriteString(`{"test": "data"}`)
 				assert.NoError(t, err)
@@ -296,7 +296,7 @@ func TestNewJSONGzReader_ErrorCases(t *testing.T) {
 		{
 			name: "empty gzip file",
 			setup: func() string {
-				tmpfile, err := os.CreateTemp("", "test-*.json.gz")
+				tmpfile, err := os.CreateTemp("", "*.json.gz")
 				assert.NoError(t, err)
 				gzWriter := gzip.NewWriter(tmpfile)
 				gzWriter.Close()
@@ -380,7 +380,7 @@ func TestJSONGzReader_GetRowErrorCases(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create temporary gzip file
-			tmpfile, err := os.CreateTemp("", "test-*.json.gz")
+			tmpfile, err := os.CreateTemp("", "*.json.gz")
 			assert.NoError(t, err)
 			defer os.Remove(tmpfile.Name())
 
@@ -424,7 +424,7 @@ func TestJSONGzReader_GetRowErrorCases(t *testing.T) {
 
 func TestJSONGzReader_Close(t *testing.T) {
 	// Create a valid test file
-	tmpfile, err := os.CreateTemp("", "test-*.json.gz")
+	tmpfile, err := os.CreateTemp("", "*.json.gz")
 	assert.NoError(t, err)
 	defer os.Remove(tmpfile.Name())
 
@@ -449,7 +449,7 @@ func TestJSONGzReader_Close(t *testing.T) {
 
 func TestJSONGzReader_WithTags(t *testing.T) {
 	// Create a test file
-	tmpfile, err := os.CreateTemp("", "test-*.json.gz")
+	tmpfile, err := os.CreateTemp("", "*.json.gz")
 	assert.NoError(t, err)
 	defer os.Remove(tmpfile.Name())
 

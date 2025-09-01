@@ -7,15 +7,15 @@ INSERT INTO metric_seg (
   segment_id,
   instance_num,
   slot_id,
-  tid_partition,
   ts_range,
   record_count,
   file_size,
-  tid_count,
   created_by,
   published,
   fingerprints,
-  sort_version
+  sort_version,
+  slot_count,
+  compacted
 )
 VALUES (
   @organization_id,
@@ -25,15 +25,15 @@ VALUES (
   @segment_id,
   @instance_num,
   @slot_id,
-  @tid_partition,
   int8range(@start_ts, @end_ts, '[)'),
   @record_count,
   @file_size,
-  @tid_count,
   @created_by,
   @published,
   @fingerprints::bigint[],
-  @sort_version
+  @sort_version,
+  @slot_count,
+  @compacted
 );
 
 -- name: GetMetricSegsForCompaction :many
@@ -60,10 +60,19 @@ WHERE
   dateint = @dateint AND
   frequency_ms = @frequency_ms AND
   instance_num = @instance_num AND
-  slot_id = @slot_id AND
-  ts_range && int8range(@start_ts, @end_ts, '[)')
+  slot_id = @slot_id
 ORDER BY
   ts_range;
+
+-- name: GetMetricSegsForRollupWork :many
+SELECT *
+FROM metric_seg
+WHERE organization_id = @organization_id
+  AND dateint = @dateint
+  AND frequency_ms = @frequency_ms
+  AND instance_num = @instance_num
+  AND segment_id = ANY(@segment_ids::bigint[])
+ORDER BY segment_id;
 
 -- name: BatchInsertMetricSegs :batchexec
 INSERT INTO metric_seg (
@@ -74,16 +83,16 @@ INSERT INTO metric_seg (
   segment_id,
   instance_num,
   slot_id,
-  tid_partition,
   ts_range,
   record_count,
   file_size,
-  tid_count,
   published,
   created_by,
   rolledup,
   fingerprints,
-  sort_version
+  sort_version,
+  slot_count,
+  compacted
 )
 VALUES (
   @organization_id,
@@ -93,16 +102,16 @@ VALUES (
   @segment_id,
   @instance_num,
   @slot_id,
-  @tid_partition,
   int8range(@start_ts, @end_ts, '[)'),
   @record_count,
   @file_size,
-  @tid_count,
   @published,
   @created_by,
   @rolledup,
   @fingerprints::bigint[],
-  @sort_version
+  @sort_version,
+  @slot_count,
+  @compacted
 );
 
 -- name: BatchMarkMetricSegsRolledup :batchexec
@@ -114,7 +123,6 @@ UPDATE public.metric_seg
    AND segment_id      = @segment_id
    AND instance_num    = @instance_num
    AND slot_id         = @slot_id
-   AND tid_partition   = @tid_partition
 ;
 
 -- name: BatchDeleteMetricSegs :batchexec
@@ -125,7 +133,6 @@ DELETE FROM public.metric_seg
    AND segment_id      = @segment_id
    AND instance_num    = @instance_num
    AND slot_id         = @slot_id
-   AND tid_partition   = @tid_partition
 ;
 
 -- name: ListMetricSegmentsForQuery :many

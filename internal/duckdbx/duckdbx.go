@@ -157,6 +157,11 @@ func (d *DB) Conn(ctx context.Context) (*sql.Conn, error) {
 }
 
 func (d *DB) setupConn(ctx context.Context, conn *sql.Conn) error {
+	// Enable object cache to improve memory efficiency by reusing internal structures
+	if _, err := conn.ExecContext(ctx, "PRAGMA enable_object_cache;"); err != nil {
+		return fmt.Errorf("failed to enable object cache: %w", err)
+	}
+
 	if d.config.MemoryLimitMB > 0 {
 		stmt := fmt.Sprintf("SET memory_limit='%dMB';", d.config.MemoryLimitMB)
 		if _, err := conn.ExecContext(ctx, stmt); err != nil {

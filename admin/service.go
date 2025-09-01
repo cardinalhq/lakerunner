@@ -159,7 +159,7 @@ func (s *Service) InQueueStatus(ctx context.Context, req *adminproto.InQueueStat
 	for i, result := range results {
 		items[i] = &adminproto.InQueueItem{
 			Count:         result.Count,
-			TelemetryType: result.TelemetryType,
+			TelemetryType: result.Signal,
 		}
 	}
 

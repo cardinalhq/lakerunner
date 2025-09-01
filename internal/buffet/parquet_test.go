@@ -63,7 +63,7 @@ func TestWriterWithAllNodeTypes(t *testing.T) {
 	wc, err := parquet.NewWriterConfig(WriterOptions("/tmp", schema)...)
 	require.NoError(t, err)
 
-	out, err := os.CreateTemp("/tmp", "test-*.parquet")
+	out, err := os.CreateTemp("/tmp", "*.parquet")
 	require.NoError(t, err)
 	defer func() {
 		_ = os.Remove(out.Name())
@@ -86,7 +86,7 @@ func TestWriterWithAllNodeTypes(t *testing.T) {
 // 	fh, err := filecrunch.LoadSchemaForFile("/Users/mgraff/Downloads/tbl_294590228450738.parquet")
 // 	require.NoError(t, err)
 
-// 	out, err := os.CreateTemp("/tmp", "ctest-*.parquet")
+// 	out, err := os.CreateTemp("/tmp", "*.parquet")
 // 	require.NoError(t, err)
 // 	pw := parquet.NewGenericWriter[map[string]any](out, writerOptions(fh.Schema)...)
 

@@ -58,7 +58,7 @@ func TestHourBasedProcessing_EndToEnd(t *testing.T) {
 	}
 	schema := filecrunch.SchemaFromNodes(nodes)
 
-	inputFile, err := os.CreateTemp(tmpDir, "input-*.parquet")
+	inputFile, err := os.CreateTemp(tmpDir, "*.parquet")
 	require.NoError(t, err)
 	defer os.Remove(inputFile.Name())
 

@@ -66,7 +66,7 @@ func createSyntheticLogsFile(t *testing.T, compressed bool) string {
 	// Create temporary file
 	var tmpFile *os.File
 	if compressed {
-		tmpFile, err = os.CreateTemp("", "synthetic-logs-*.binpb.gz")
+		tmpFile, err = os.CreateTemp("", "*.binpb.gz")
 		require.NoError(t, err)
 
 		gzWriter := gzip.NewWriter(tmpFile)
@@ -76,7 +76,7 @@ func createSyntheticLogsFile(t *testing.T, compressed bool) string {
 		err = gzWriter.Close()
 		require.NoError(t, err)
 	} else {
-		tmpFile, err = os.CreateTemp("", "synthetic-logs-*.binpb")
+		tmpFile, err = os.CreateTemp("", "*.binpb")
 		require.NoError(t, err)
 
 		_, err = tmpFile.Write(data)
@@ -134,7 +134,7 @@ func createSyntheticMetricsFile(t *testing.T, compressed bool) string {
 	// Create temporary file
 	var tmpFile *os.File
 	if compressed {
-		tmpFile, err = os.CreateTemp("", "synthetic-metrics-*.binpb.gz")
+		tmpFile, err = os.CreateTemp("", "*.binpb.gz")
 		require.NoError(t, err)
 
 		gzWriter := gzip.NewWriter(tmpFile)
@@ -144,7 +144,7 @@ func createSyntheticMetricsFile(t *testing.T, compressed bool) string {
 		err = gzWriter.Close()
 		require.NoError(t, err)
 	} else {
-		tmpFile, err = os.CreateTemp("", "synthetic-metrics-*.binpb")
+		tmpFile, err = os.CreateTemp("", "*.binpb")
 		require.NoError(t, err)
 
 		_, err = tmpFile.Write(data)
@@ -197,7 +197,7 @@ func createSyntheticTracesFile(t *testing.T, compressed bool) string {
 	// Create temporary file
 	var tmpFile *os.File
 	if compressed {
-		tmpFile, err = os.CreateTemp("", "synthetic-traces-*.binpb.gz")
+		tmpFile, err = os.CreateTemp("", "*.binpb.gz")
 		require.NoError(t, err)
 
 		gzWriter := gzip.NewWriter(tmpFile)
@@ -207,7 +207,7 @@ func createSyntheticTracesFile(t *testing.T, compressed bool) string {
 		err = gzWriter.Close()
 		require.NoError(t, err)
 	} else {
-		tmpFile, err = os.CreateTemp("", "synthetic-traces-*.binpb")
+		tmpFile, err = os.CreateTemp("", "*.binpb")
 		require.NoError(t, err)
 
 		_, err = tmpFile.Write(data)

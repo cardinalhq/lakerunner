@@ -47,7 +47,7 @@ func TestClaimInqueueWorkBatch_OversizedFile(t *testing.T) {
 			InstanceNum:    1,
 			Bucket:         "test-bucket",
 			ObjectID:       "huge_file.json.gz",
-			TelemetryType:  telemetryType,
+			Signal:         telemetryType,
 			Priority:       10,              // Highest priority
 			FileSize:       2 * 1024 * 1024, // 2MB (oversized for 1MB limit)
 		},
@@ -57,7 +57,7 @@ func TestClaimInqueueWorkBatch_OversizedFile(t *testing.T) {
 			InstanceNum:    1,
 			Bucket:         "test-bucket",
 			ObjectID:       "normal_file1.json.gz",
-			TelemetryType:  telemetryType,
+			Signal:         telemetryType,
 			Priority:       5,
 			FileSize:       1024, // 1KB
 		},
@@ -67,7 +67,7 @@ func TestClaimInqueueWorkBatch_OversizedFile(t *testing.T) {
 			InstanceNum:    1,
 			Bucket:         "test-bucket",
 			ObjectID:       "normal_file2.json.gz",
-			TelemetryType:  telemetryType,
+			Signal:         telemetryType,
 			Priority:       5,
 			FileSize:       2048, // 2KB
 		},
@@ -81,14 +81,12 @@ func TestClaimInqueueWorkBatch_OversizedFile(t *testing.T) {
 
 	// Claim batch - should only get the oversized file
 	claimedBatch, err := db.ClaimInqueueWorkBatch(ctx, lrdb.ClaimInqueueWorkBatchParams{
-		OrganizationID: orgID,
-		InstanceNum:    1,
-		TelemetryType:  telemetryType,
-		WorkerID:       workerID,
-		MaxTotalSize:   1024 * 1024, // 1MB limit
-		MinTotalSize:   512 * 1024,  // 512KB minimum for fresh files
-		MaxAgeSeconds:  30,          // 30 seconds
-		BatchCount:     10,          // Allow up to 10 files
+		Signal:        telemetryType,
+		WorkerID:      workerID,
+		MaxTotalSize:  1024 * 1024, // 1MB limit
+		MinTotalSize:  512 * 1024,  // 512KB minimum for fresh files
+		MaxAgeSeconds: 30,          // 30 seconds
+		BatchCount:    10,          // Allow up to 10 files
 	})
 	require.NoError(t, err)
 
@@ -115,7 +113,7 @@ func TestClaimInqueueWorkBatch_TooOldFiles(t *testing.T) {
 			InstanceNum:    1,
 			Bucket:         "test-bucket",
 			ObjectID:       "old_file1.json.gz",
-			TelemetryType:  telemetryType,
+			Signal:         telemetryType,
 			Priority:       10,
 			FileSize:       1024, // 1KB
 		},
@@ -125,7 +123,7 @@ func TestClaimInqueueWorkBatch_TooOldFiles(t *testing.T) {
 			InstanceNum:    1,
 			Bucket:         "test-bucket",
 			ObjectID:       "old_file2.json.gz",
-			TelemetryType:  telemetryType,
+			Signal:         telemetryType,
 			Priority:       10,
 			FileSize:       2048, // 2KB
 		},
@@ -135,7 +133,7 @@ func TestClaimInqueueWorkBatch_TooOldFiles(t *testing.T) {
 			InstanceNum:    1,
 			Bucket:         "test-bucket",
 			ObjectID:       "old_file3.json.gz",
-			TelemetryType:  telemetryType,
+			Signal:         telemetryType,
 			Priority:       10,
 			FileSize:       3072, // 3KB
 		},
@@ -150,15 +148,13 @@ func TestClaimInqueueWorkBatch_TooOldFiles(t *testing.T) {
 	// Use future timestamp for now_ts to make files appear old
 	futureTime := time.Now().Add(60 * time.Second)
 	claimedBatch, err := db.ClaimInqueueWorkBatch(ctx, lrdb.ClaimInqueueWorkBatchParams{
-		OrganizationID: orgID,
-		InstanceNum:    1,
-		TelemetryType:  telemetryType,
-		WorkerID:       workerID,
-		NowTs:          &futureTime, // Use future time to make files appear old
-		MaxTotalSize:   1024 * 1024, // 1MB limit
-		MinTotalSize:   512 * 1024,  // 512KB minimum (ignored for old files)
-		MaxAgeSeconds:  30,          // 30 seconds
-		BatchCount:     10,          // Allow up to 10 files
+		Signal:        telemetryType,
+		WorkerID:      workerID,
+		NowTs:         &futureTime, // Use future time to make files appear old
+		MaxTotalSize:  1024 * 1024, // 1MB limit
+		MinTotalSize:  512 * 1024,  // 512KB minimum (ignored for old files)
+		MaxAgeSeconds: 30,          // 30 seconds
+		BatchCount:    10,          // Allow up to 10 files
 	})
 	require.NoError(t, err)
 
@@ -173,8 +169,8 @@ func TestClaimInqueueWorkBatch_TooOldFiles(t *testing.T) {
 	assert.LessOrEqual(t, totalSize, int64(1024*1024))
 }
 
-// TestClaimInqueueWorkBatch_FreshFilesBelowMinimum tests Rule 3: Fresh files below minimum should wait
-func TestClaimInqueueWorkBatch_FreshFilesBelowMinimum(t *testing.T) {
+// TestClaimInqueueWorkBatch_FreshFilesGreedyBatch tests greedy batching of small fresh files
+func TestClaimInqueueWorkBatch_FreshFilesGreedyBatch(t *testing.T) {
 	ctx := context.Background()
 	db := testhelpers.NewTestLRDBStore(t)
 
@@ -190,7 +186,7 @@ func TestClaimInqueueWorkBatch_FreshFilesBelowMinimum(t *testing.T) {
 			InstanceNum:    1,
 			Bucket:         "test-bucket",
 			ObjectID:       "small_file1.json.gz",
-			TelemetryType:  telemetryType,
+			Signal:         telemetryType,
 			Priority:       10,
 			FileSize:       1024, // 1KB
 		},
@@ -200,7 +196,7 @@ func TestClaimInqueueWorkBatch_FreshFilesBelowMinimum(t *testing.T) {
 			InstanceNum:    1,
 			Bucket:         "test-bucket",
 			ObjectID:       "small_file2.json.gz",
-			TelemetryType:  telemetryType,
+			Signal:         telemetryType,
 			Priority:       10,
 			FileSize:       2048, // 2KB
 		},
@@ -212,21 +208,26 @@ func TestClaimInqueueWorkBatch_FreshFilesBelowMinimum(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// Claim batch - should return nothing because total size < minimum
+	// Claim batch - should greedily claim small files even if below old minimum threshold
 	claimedBatch, err := db.ClaimInqueueWorkBatch(ctx, lrdb.ClaimInqueueWorkBatchParams{
-		OrganizationID: orgID,
-		InstanceNum:    1,
-		TelemetryType:  telemetryType,
-		WorkerID:       workerID,
-		MaxTotalSize:   1024 * 1024, // 1MB limit
-		MinTotalSize:   512 * 1024,  // 512KB minimum
-		MaxAgeSeconds:  30,          // 30 seconds
-		BatchCount:     10,          // Allow up to 10 files
+		Signal:        telemetryType,
+		WorkerID:      workerID,
+		MaxTotalSize:  1024 * 1024, // 1MB limit
+		MinTotalSize:  512 * 1024,  // 512KB (now ignored with greedy batching)
+		MaxAgeSeconds: 30,          // 30 seconds
+		BatchCount:    10,          // Allow up to 10 files
 	})
 	require.NoError(t, err)
 
-	// Should claim nothing (wait for more files)
-	assert.Len(t, claimedBatch, 0)
+	// Should claim both small files (greedy batching regardless of minimum)
+	assert.Len(t, claimedBatch, 2)
+
+	// Verify total size
+	totalSize := int64(0)
+	for _, item := range claimedBatch {
+		totalSize += item.FileSize
+	}
+	assert.Equal(t, int64(3072), totalSize) // 1KB + 2KB = 3KB
 }
 
 // TestClaimInqueueWorkBatch_FreshFilesAboveMinimum tests Rule 3: Fresh files above minimum should be claimed
@@ -246,7 +247,7 @@ func TestClaimInqueueWorkBatch_FreshFilesAboveMinimum(t *testing.T) {
 			InstanceNum:    1,
 			Bucket:         "test-bucket",
 			ObjectID:       "medium_file1.json.gz",
-			TelemetryType:  telemetryType,
+			Signal:         telemetryType,
 			Priority:       10,
 			FileSize:       400 * 1024, // 400KB
 		},
@@ -256,7 +257,7 @@ func TestClaimInqueueWorkBatch_FreshFilesAboveMinimum(t *testing.T) {
 			InstanceNum:    1,
 			Bucket:         "test-bucket",
 			ObjectID:       "medium_file2.json.gz",
-			TelemetryType:  telemetryType,
+			Signal:         telemetryType,
 			Priority:       10,
 			FileSize:       300 * 1024, // 300KB
 		},
@@ -266,7 +267,7 @@ func TestClaimInqueueWorkBatch_FreshFilesAboveMinimum(t *testing.T) {
 			InstanceNum:    1,
 			Bucket:         "test-bucket",
 			ObjectID:       "small_file3.json.gz",
-			TelemetryType:  telemetryType,
+			Signal:         telemetryType,
 			Priority:       10,
 			FileSize:       200 * 1024, // 200KB
 		},
@@ -280,14 +281,12 @@ func TestClaimInqueueWorkBatch_FreshFilesAboveMinimum(t *testing.T) {
 
 	// Claim batch - should get files that fit within size limit
 	claimedBatch, err := db.ClaimInqueueWorkBatch(ctx, lrdb.ClaimInqueueWorkBatchParams{
-		OrganizationID: orgID,
-		InstanceNum:    1,
-		TelemetryType:  telemetryType,
-		WorkerID:       workerID,
-		MaxTotalSize:   1024 * 1024, // 1MB limit
-		MinTotalSize:   512 * 1024,  // 512KB minimum
-		MaxAgeSeconds:  30,          // 30 seconds
-		BatchCount:     10,          // Allow up to 10 files
+		Signal:        telemetryType,
+		WorkerID:      workerID,
+		MaxTotalSize:  1024 * 1024, // 1MB limit
+		MinTotalSize:  512 * 1024,  // 512KB minimum
+		MaxAgeSeconds: 30,          // 30 seconds
+		BatchCount:    10,          // Allow up to 10 files
 	})
 	require.NoError(t, err)
 
@@ -321,7 +320,7 @@ func TestClaimInqueueWorkBatch_BatchCountLimit(t *testing.T) {
 			InstanceNum:    1,
 			Bucket:         "test-bucket",
 			ObjectID:       fmt.Sprintf("file_%d.json.gz", i),
-			TelemetryType:  telemetryType,
+			Signal:         telemetryType,
 			Priority:       10,
 			FileSize:       1024, // 1KB each
 		}
@@ -336,15 +335,13 @@ func TestClaimInqueueWorkBatch_BatchCountLimit(t *testing.T) {
 	// Use future timestamp to trigger Rule 2 (eager processing)
 	futureTime := time.Now().Add(60 * time.Second)
 	claimedBatch, err := db.ClaimInqueueWorkBatch(ctx, lrdb.ClaimInqueueWorkBatchParams{
-		OrganizationID: orgID,
-		InstanceNum:    1,
-		TelemetryType:  telemetryType,
-		WorkerID:       workerID,
-		NowTs:          &futureTime, // Make files appear old
-		MaxTotalSize:   1024 * 1024, // 1MB limit (plenty of room)
-		MinTotalSize:   0,           // No minimum
-		MaxAgeSeconds:  30,          // 30 seconds
-		BatchCount:     3,           // Limit to 3 files
+		Signal:        telemetryType,
+		WorkerID:      workerID,
+		NowTs:         &futureTime, // Make files appear old
+		MaxTotalSize:  1024 * 1024, // 1MB limit (plenty of room)
+		MinTotalSize:  0,           // No minimum
+		MaxAgeSeconds: 30,          // 30 seconds
+		BatchCount:    3,           // Limit to 3 files
 	})
 	require.NoError(t, err)
 
@@ -369,7 +366,7 @@ func TestClaimInqueueWorkBatch_PriorityOrdering(t *testing.T) {
 			InstanceNum:    1,
 			Bucket:         "test-bucket",
 			ObjectID:       "low_priority.json.gz",
-			TelemetryType:  telemetryType,
+			Signal:         telemetryType,
 			Priority:       1, // Low priority
 			FileSize:       1024,
 		},
@@ -379,7 +376,7 @@ func TestClaimInqueueWorkBatch_PriorityOrdering(t *testing.T) {
 			InstanceNum:    1,
 			Bucket:         "test-bucket",
 			ObjectID:       "high_priority.json.gz",
-			TelemetryType:  telemetryType,
+			Signal:         telemetryType,
 			Priority:       10, // High priority
 			FileSize:       1024,
 		},
@@ -389,7 +386,7 @@ func TestClaimInqueueWorkBatch_PriorityOrdering(t *testing.T) {
 			InstanceNum:    1,
 			Bucket:         "test-bucket",
 			ObjectID:       "medium_priority.json.gz",
-			TelemetryType:  telemetryType,
+			Signal:         telemetryType,
 			Priority:       5, // Medium priority
 			FileSize:       1024,
 		},
@@ -404,15 +401,13 @@ func TestClaimInqueueWorkBatch_PriorityOrdering(t *testing.T) {
 	// Use future timestamp to trigger Rule 2 (eager processing)
 	futureTime := time.Now().Add(60 * time.Second)
 	claimedBatch, err := db.ClaimInqueueWorkBatch(ctx, lrdb.ClaimInqueueWorkBatchParams{
-		OrganizationID: orgID,
-		InstanceNum:    1,
-		TelemetryType:  telemetryType,
-		WorkerID:       workerID,
-		NowTs:          &futureTime, // Make files appear old
-		MaxTotalSize:   1024 * 1024, // 1MB limit
-		MinTotalSize:   0,           // No minimum
-		MaxAgeSeconds:  30,          // 30 seconds
-		BatchCount:     10,          // Allow all files
+		Signal:        telemetryType,
+		WorkerID:      workerID,
+		NowTs:         &futureTime, // Make files appear old
+		MaxTotalSize:  1024 * 1024, // 1MB limit
+		MinTotalSize:  0,           // No minimum
+		MaxAgeSeconds: 30,          // 30 seconds
+		BatchCount:    10,          // Allow all files
 	})
 	require.NoError(t, err)
 

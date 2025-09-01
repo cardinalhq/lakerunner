@@ -48,7 +48,7 @@ func TestMultipleFilesPerHour(t *testing.T) {
 	}
 
 	// Create a test parquet file using the same pattern as existing tests
-	inputFile, err := os.CreateTemp(tmpdir, "test-*.parquet")
+	inputFile, err := os.CreateTemp(tmpdir, "*.parquet")
 	require.NoError(t, err)
 	defer os.Remove(inputFile.Name())
 
@@ -149,7 +149,7 @@ func TestSingleFileWhenUnderLimit(t *testing.T) {
 	}
 
 	// Create a test parquet file using the same pattern as existing tests
-	inputFile, err := os.CreateTemp(tmpdir, "test-*.parquet")
+	inputFile, err := os.CreateTemp(tmpdir, "*.parquet")
 	require.NoError(t, err)
 	defer os.Remove(inputFile.Name())
 

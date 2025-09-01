@@ -15,9 +15,13 @@
 package filereader
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"slices"
+
+	"go.opentelemetry.io/otel/attribute"
+	otelmetric "go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 )
@@ -91,6 +95,11 @@ func (r *MemorySortingReader) loadAndSortAllRows() error {
 			return fmt.Errorf("failed to read from underlying reader: %w", err)
 		}
 
+		// Track rows read from underlying reader
+		rowsInCounter.Add(context.Background(), int64(batch.Len()), otelmetric.WithAttributes(
+			attribute.String("reader", "MemorySortingReader"),
+		))
+
 		// Convert and store rows from batch with their sort keys
 		for i := 0; i < batch.Len(); i++ {
 			row := batch.Get(i)
@@ -152,6 +161,10 @@ func (r *MemorySortingReader) Next() (*Batch, error) {
 
 	if batch.Len() > 0 {
 		r.rowCount += int64(batch.Len())
+		// Track rows output to downstream
+		rowsOutCounter.Add(context.Background(), int64(batch.Len()), otelmetric.WithAttributes(
+			attribute.String("reader", "MemorySortingReader"),
+		))
 		return batch, nil
 	}
 

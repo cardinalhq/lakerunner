@@ -16,11 +16,10 @@ package metricsprocessing
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/google/uuid"
@@ -55,24 +54,26 @@ func CreateReaderStack(
 	s3client *awsclient.S3Client,
 	orgID uuid.UUID,
 	profile storageprofile.StorageProfile,
-	startTimeMs int64,
 	rows []lrdb.MetricSeg,
 	config ReaderStackConfig,
-	savepath string,
 ) (*ReaderStackResult, error) {
 	var readers []filereader.Reader
 	var files []*os.File
 	var downloadedFiles []string
 
+	if len(rows) == 0 {
+		return nil, errors.New("no metric segments provided to create reader stack")
+	}
+
 	for _, row := range rows {
 		if ctx.Err() != nil {
-			ll.Info("Context cancelled during segment download - safe interruption point",
+			ll.Info("Context cancelled during segment download",
 				slog.Int64("segmentID", row.SegmentID),
 				slog.Any("error", ctx.Err()))
 			return nil, fmt.Errorf("context cancelled during segment download: %w", ctx.Err())
 		}
 
-		dateint, hour := helpers.MSToDateintHour(startTimeMs)
+		dateint, hour := helpers.MSToDateintHour(rows[0].TsRange.Lower.Int64)
 		objectID := helpers.MakeDBObjectID(orgID, profile.CollectorName, dateint, hour, row.SegmentID, "metrics")
 
 		fn, _, is404, err := s3helper.DownloadS3Object(ctx, tmpdir, s3client, profile.Bucket, objectID)
@@ -81,31 +82,15 @@ func CreateReaderStack(
 			return nil, err
 		}
 		if is404 {
-			ll.Info("S3 object not found, skipping", slog.String("bucket", profile.Bucket), slog.String("objectID", objectID))
+			ll.Info("S3 object not found, skipping",
+				slog.String("bucket", profile.Bucket),
+				slog.String("objectID", objectID),
+				slog.Int("createdBy", int(row.CreatedBy)),
+				slog.Bool("isCompacted", row.Compacted),
+				slog.Bool("isRolledup", row.Rolledup),
+				slog.Bool("isPublished", row.Published),
+			)
 			continue
-		}
-
-		if savepath != "" {
-			basename := filepath.Base(objectID)
-			outpath := filepath.Join(savepath, "inputs", basename)
-			out, err := os.Create(outpath)
-			ll.Info("Saving downloaded file to save path", slog.String("file", outpath))
-			if err != nil {
-				ll.Error("Failed to create save file", slog.String("file", outpath), slog.Any("error", err))
-				return nil, fmt.Errorf("creating save file %s: %w", filepath.Join(savepath, basename), err)
-			}
-			defer out.Close()
-			in, err := os.Open(fn)
-			if err != nil {
-				ll.Error("Failed to open temp file for saving", slog.String("file", fn), slog.Any("error", err))
-				return nil, fmt.Errorf("opening temp file %s for saving: %w", fn, err)
-			}
-			defer in.Close()
-			_, err = io.Copy(out, in)
-			if err != nil {
-				ll.Error("Failed to copy to save file", slog.String("file", outpath), slog.Any("error", err))
-				return nil, fmt.Errorf("copying to save file %s: %w", filepath.Join(savepath, basename), err)
-			}
 		}
 
 		file, err := os.Open(fn)
@@ -165,8 +150,8 @@ func CreateReaderStack(
 	if len(readers) == 1 {
 		finalReader = readers[0]
 	} else if len(readers) > 1 {
-		selector := MetricsOrderedSelector()
-		multiReader, err := filereader.NewMergesortReader(readers, selector, 1000)
+		keyProvider := GetCurrentMetricSortKeyProvider()
+		multiReader, err := filereader.NewMergesortReader(readers, keyProvider, 1000)
 		if err != nil {
 			return nil, fmt.Errorf("creating mergesort reader: %w", err)
 		}

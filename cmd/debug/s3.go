@@ -138,9 +138,7 @@ func runS3Cat(bucketID string, objectID string, region string, role string) erro
 	ctx := context.Background()
 
 	// Initialize AWS S3 client
-	mgr, err := awsclient.NewManager(ctx,
-		awsclient.WithAssumeRoleSessionName("lakerunner-import"),
-	)
+	mgr, err := awsclient.NewManager(ctx)
 	if err != nil {
 		return err
 	}
@@ -157,7 +155,7 @@ func runS3Cat(bucketID string, objectID string, region string, role string) erro
 		return fmt.Errorf("failed to get S3 client: %w", err)
 	}
 
-	tmpdir, err := os.MkdirTemp("", "lakerunner-s3cat")
+	tmpdir, err := os.MkdirTemp("", "")
 	if err != nil {
 		return fmt.Errorf("failed to create temporary directory: %w", err)
 	}
@@ -187,9 +185,7 @@ func runS3LS(bucketID string, prefix string, region string, role string) error {
 	ctx := context.Background()
 
 	// Initialize AWS S3 client
-	mgr, err := awsclient.NewManager(ctx,
-		awsclient.WithAssumeRoleSessionName("lakerunner-import"),
-	)
+	mgr, err := awsclient.NewManager(ctx)
 	if err != nil {
 		return err
 	}

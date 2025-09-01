@@ -24,13 +24,58 @@ type Querier interface {
 	BatchUpsertExemplarLogs(ctx context.Context, arg []BatchUpsertExemplarLogsParams) *BatchUpsertExemplarLogsBatchResults
 	BatchUpsertExemplarMetrics(ctx context.Context, arg []BatchUpsertExemplarMetricsParams) *BatchUpsertExemplarMetricsBatchResults
 	BatchUpsertExemplarTraces(ctx context.Context, arg []BatchUpsertExemplarTracesParams) *BatchUpsertExemplarTracesBatchResults
-	ClaimInqueueWork(ctx context.Context, arg ClaimInqueueWorkParams) (Inqueue, error)
-	// Greedy pack up to size cap and row cap
+	// 1) Safety net: if any single file already meets/exceeds the cap, take that file alone
+	// 2) One seed (oldest/highest-priority) per group (org, instance) within signal
+	// 3) Order groups globally by their seed (priority DESC, queue_ts ASC)
+	// 4) Attach age flags + caps per group (using params only; no per-row estimator here)
+	// 5) All ready rows in each group for that signal (selection only; claim happens later)
+	// 6) Greedy pack within each group, ordered by priority/queue_ts
+	// 7) Keep only rows that fit under caps
+	// 8) Totals per group (what we’d actually claim)
+	// 9) Eligibility: any group with positive size (greedy batching)
+	// 10) Pick earliest eligible group globally
+	// 11) Rows to claim for the winner group
+	// 12) Final chosen IDs: prefer big_single if present; else packed group rows
+	// 13) Atomic optimistic claim (no window funcs here)
 	ClaimInqueueWorkBatch(ctx context.Context, arg ClaimInqueueWorkBatchParams) ([]ClaimInqueueWorkBatchRow, error)
+	// 1) Big single-row safety net
+	// 2) One seed per group (org, dateint, freq, instance)
+	// 3) Order groups globally by seed recency/priority
+	// 4) Attach per-group target_records with estimate tracking
+	// 5) All ready rows within each group
+	// 6) Greedy pack per group
+	// 7) Rows that fit under caps
+	// 8) Totals per group
+	// 9) Eligibility: any group with positive records
+	// 10) Pick earliest eligible group
+	// 11) Rows to claim for the winner group
+	// 12) Final chosen IDs
+	// 13) Atomic optimistic claim
+	ClaimMetricCompactionWork(ctx context.Context, arg ClaimMetricCompactionWorkParams) ([]ClaimMetricCompactionWorkRow, error)
+	// 1) Big single-row safety net
+	// 2) One seed per group (org, dateint, freq, instance, slot_id, slot_count, rollup_group)
+	// 3) Order groups globally by seed recency/priority
+	// 4) Attach per-group target_records with estimate tracking
+	// 5) All ready rows within each group
+	// 6) Greedy pack per group
+	// 7) Rows that fit under caps
+	// 8) Totals per group
+	// 9) Eligibility: any group with positive records
+	// 10) Pick earliest eligible group
+	// 11) Rows to claim for the winner group
+	// 12) Final chosen IDs
+	// 13) Atomic optimistic claim
+	ClaimMetricRollupWork(ctx context.Context, arg ClaimMetricRollupWorkParams) ([]ClaimMetricRollupWorkRow, error)
 	CleanupInqueueWork(ctx context.Context, cutoffTime *time.Time) ([]Inqueue, error)
+	CleanupMetricCompactionWork(ctx context.Context, cutoffTime *time.Time) ([]MetricCompactionQueue, error)
+	CleanupMetricRollupWork(ctx context.Context, timeoutSeconds float64) error
 	CompactLogSegments(ctx context.Context, arg CompactLogSegmentsParams) error
 	CompactTraceSegments(ctx context.Context, arg CompactTraceSegmentsParams) error
 	DeleteInqueueWork(ctx context.Context, arg DeleteInqueueWorkParams) error
+	DeleteMetricCompactionWork(ctx context.Context, arg DeleteMetricCompactionWorkParams) error
+	DeleteMetricRollupWork(ctx context.Context, arg DeleteMetricRollupWorkParams) error
+	// Retrieves all existing metric pack estimates for EWMA calculations
+	GetAllMetricPackEstimates(ctx context.Context) ([]MetricPackEstimate, error)
 	GetExemplarLogsByFingerprint(ctx context.Context, arg GetExemplarLogsByFingerprintParams) (ExemplarLog, error)
 	GetExemplarLogsByService(ctx context.Context, arg GetExemplarLogsByServiceParams) ([]ExemplarLog, error)
 	GetExemplarLogsCreatedAfter(ctx context.Context, ts time.Time) ([]ExemplarLog, error)
@@ -41,23 +86,25 @@ type Querier interface {
 	GetExemplarTracesCreatedAfter(ctx context.Context, ts time.Time) ([]ExemplarTrace, error)
 	GetLogSegmentsForCompaction(ctx context.Context, arg GetLogSegmentsForCompactionParams) ([]GetLogSegmentsForCompactionRow, error)
 	GetMetricSegsForCompaction(ctx context.Context, arg GetMetricSegsForCompactionParams) ([]MetricSeg, error)
+	GetMetricSegsForCompactionWork(ctx context.Context, arg GetMetricSegsForCompactionWorkParams) ([]MetricSeg, error)
 	GetMetricSegsForRollup(ctx context.Context, arg GetMetricSegsForRollupParams) ([]MetricSeg, error)
+	GetMetricSegsForRollupWork(ctx context.Context, arg GetMetricSegsForRollupWorkParams) ([]MetricSeg, error)
 	GetSpanInfoByFingerprint(ctx context.Context, arg GetSpanInfoByFingerprintParams) (GetSpanInfoByFingerprintRow, error)
 	GetTraceSegmentsForCompaction(ctx context.Context, arg GetTraceSegmentsForCompactionParams) ([]GetTraceSegmentsForCompactionRow, error)
 	InqueueJournalDelete(ctx context.Context, arg InqueueJournalDeleteParams) error
 	InqueueJournalUpsert(ctx context.Context, arg InqueueJournalUpsertParams) (bool, error)
 	InqueueSummary(ctx context.Context) ([]InqueueSummaryRow, error)
+	InsertCompactedMetricSeg(ctx context.Context, arg []InsertCompactedMetricSegParams) *InsertCompactedMetricSegBatchResults
 	InsertLogSegmentDirect(ctx context.Context, arg InsertLogSegmentParams) error
 	InsertMetricSegmentDirect(ctx context.Context, arg InsertMetricSegmentParams) error
 	InsertTraceSegmentDirect(ctx context.Context, arg InsertTraceSegmentDirectParams) error
 	ListLogSegmentsForQuery(ctx context.Context, arg ListLogSegmentsForQueryParams) ([]ListLogSegmentsForQueryRow, error)
 	ListMetricSegmentsForQuery(ctx context.Context, arg ListMetricSegmentsForQueryParams) ([]ListMetricSegmentsForQueryRow, error)
-	// Returns an estimate of the number of log segments, average bytes, average records,
-	// and average bytes per record for log segments in the last hour per organization and instance.
-	// This query is basically identical to the MetricSegEstimator, but for log segments.
+	// Returns an estimate of the number of log segments, accounting for per-file overhead.
 	LogSegEstimator(ctx context.Context, arg LogSegEstimatorParams) ([]LogSegEstimatorRow, error)
-	// Returns an estimate of the number of metric segments, average bytes, average records,
-	// and average bytes per record for metric segments in the last hour per organization, instance, and frequency.
+	MarkMetricSegsCompactedByKeys(ctx context.Context, arg MarkMetricSegsCompactedByKeysParams) error
+	MarkMetricSegsRolledupByKeys(ctx context.Context, arg MarkMetricSegsRolledupByKeysParams) error
+	// Returns an estimate of the number of metric segments, accounting for per-file overhead.
 	// Uses frequency_ms to provide more accurate estimates based on collection frequency.
 	MetricSegEstimator(ctx context.Context, arg MetricSegEstimatorParams) ([]MetricSegEstimatorRow, error)
 	ObjectCleanupAdd(ctx context.Context, arg ObjectCleanupAddParams) error
@@ -66,13 +113,20 @@ type Querier interface {
 	ObjectCleanupFail(ctx context.Context, id uuid.UUID) error
 	ObjectCleanupGet(ctx context.Context, maxrows int32) ([]ObjectCleanupGetRow, error)
 	PutInqueueWork(ctx context.Context, arg PutInqueueWorkParams) error
+	PutMetricCompactionWork(ctx context.Context, arg PutMetricCompactionWorkParams) error
+	PutMetricRollupWork(ctx context.Context, arg PutMetricRollupWorkParams) error
 	ReleaseInqueueWork(ctx context.Context, arg ReleaseInqueueWorkParams) error
+	ReleaseMetricCompactionWork(ctx context.Context, arg ReleaseMetricCompactionWorkParams) error
+	ReleaseMetricRollupWork(ctx context.Context, arg ReleaseMetricRollupWorkParams) error
+	SetMetricSegCompacted(ctx context.Context, arg SetMetricSegCompactedParams) error
 	SignalLockCleanup(ctx context.Context) (int32, error)
 	TouchInqueueWork(ctx context.Context, arg TouchInqueueWorkParams) error
-	// Returns an estimate of the number of trace segments, average bytes, average records,
-	// and average bytes per record for trace segments in the last hour per organization and instance.
-	// This query is basically identical to the LogSegEstimator, but for trace segments.
+	TouchMetricCompactionWork(ctx context.Context, arg TouchMetricCompactionWorkParams) error
+	TouchMetricRollupWork(ctx context.Context, arg TouchMetricRollupWorkParams) error
+	// Returns an estimate of the number of trace segments, accounting for per-file overhead.
 	TraceSegEstimator(ctx context.Context, arg TraceSegEstimatorParams) ([]TraceSegEstimatorRow, error)
+	// Updates or inserts a single metric pack estimate
+	UpsertMetricPackEstimate(ctx context.Context, arg UpsertMetricPackEstimateParams) error
 	UpsertServiceIdentifier(ctx context.Context, arg UpsertServiceIdentifierParams) (UpsertServiceIdentifierRow, error)
 	WorkQueueAddDirect(ctx context.Context, arg WorkQueueAddParams) error
 	WorkQueueClaimDirect(ctx context.Context, arg WorkQueueClaimParams) (WorkQueueClaimRow, error)

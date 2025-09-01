@@ -84,7 +84,7 @@ func runLocalInQueueStatus() error {
 
 	for _, result := range results {
 		countStr := fmt.Sprintf("%d", result.Count)
-		telemetryTypeStr := result.TelemetryType
+		telemetryTypeStr := result.Signal
 
 		if len(countStr) > colWidths[0] {
 			colWidths[0] = len(countStr)
@@ -183,7 +183,7 @@ func printInQueueTable(results []lrdb.InqueueSummaryRow, colWidths []int) {
 	for _, result := range results {
 		fmt.Printf("│ %-*d │ %-*s │\n",
 			colWidths[0], result.Count,
-			colWidths[1], result.TelemetryType)
+			colWidths[1], result.Signal)
 	}
 
 	fmt.Print("└")

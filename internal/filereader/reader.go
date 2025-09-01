@@ -56,34 +56,6 @@ type OTELMetricsProvider interface {
 	GetOTELMetrics() (any, error)
 }
 
-// SelectFunc is a function that selects which row to return next from a set of candidate rows.
-// It receives a slice of rows (one from each active reader) and returns the index of the
-// row that should be returned next. This enables custom sorting logic for ordered reading.
-type SelectFunc func(rows []Row) int
-
-// TimeOrderedSelector returns a SelectFunc that selects rows based on ascending timestamp order.
-// It expects rows to have a timestamp field with the given fieldName.
-func TimeOrderedSelector(fieldName string) SelectFunc {
-	return func(rows []Row) int {
-		if len(rows) == 0 {
-			return -1
-		}
-
-		minIdx := 0
-		minTs := extractTimestamp(rows[0], fieldName)
-
-		for i := 1; i < len(rows); i++ {
-			ts := extractTimestamp(rows[i], fieldName)
-			if ts < minTs {
-				minIdx = i
-				minTs = ts
-			}
-		}
-
-		return minIdx
-	}
-}
-
 // Batch represents a collection of rows with clear ownership semantics.
 // The batch is owned by the reader that returns it.
 type Batch = pipeline.Batch
@@ -110,5 +82,58 @@ func extractTimestamp(row Row, fieldName string) int64 {
 		return int64(v)
 	default:
 		return 0
+	}
+}
+
+// TimeOrderedSortKeyProvider creates sort keys based on a single timestamp field
+type TimeOrderedSortKeyProvider struct {
+	fieldName string
+}
+
+// NewTimeOrderedSortKeyProvider creates a provider that sorts by a timestamp field
+func NewTimeOrderedSortKeyProvider(fieldName string) *TimeOrderedSortKeyProvider {
+	return &TimeOrderedSortKeyProvider{fieldName: fieldName}
+}
+
+// TimeOrderedSortKey represents a sort key for timestamp-based ordering
+type TimeOrderedSortKey struct {
+	timestamp int64
+	valid     bool
+}
+
+func (k *TimeOrderedSortKey) Compare(other SortKey) int {
+	o, ok := other.(*TimeOrderedSortKey)
+	if !ok {
+		panic("TimeOrderedSortKey.Compare: other key is not TimeOrderedSortKey")
+	}
+
+	if !k.valid || !o.valid {
+		if !k.valid && !o.valid {
+			return 0
+		}
+		if !k.valid {
+			return 1 // invalid keys go last
+		}
+		return -1
+	}
+
+	if k.timestamp < o.timestamp {
+		return -1
+	}
+	if k.timestamp > o.timestamp {
+		return 1
+	}
+	return 0
+}
+
+func (k *TimeOrderedSortKey) Release() {
+	// No resources to release for simple int64 key
+}
+
+func (p *TimeOrderedSortKeyProvider) MakeKey(row Row) SortKey {
+	timestamp := extractTimestamp(row, p.fieldName)
+	return &TimeOrderedSortKey{
+		timestamp: timestamp,
+		valid:     timestamp != 0,
 	}
 }

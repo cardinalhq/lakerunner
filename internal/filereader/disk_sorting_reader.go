@@ -15,10 +15,14 @@
 package filereader
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"slices"
+
+	"go.opentelemetry.io/otel/attribute"
+	otelmetric "go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/rowcodec"
@@ -79,7 +83,7 @@ func NewDiskSortingReader(reader Reader, keyProvider SortKeyProvider, batchSize 
 	}
 
 	// Create temp file for binary data
-	tempFile, err := os.CreateTemp("", "lakerunner-sort-*.bin")
+	tempFile, err := os.CreateTemp("", "*.bin")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp file: %w", err)
 	}
@@ -120,6 +124,11 @@ func (r *DiskSortingReader) writeAndIndexAllRows() error {
 			}
 			return fmt.Errorf("failed to read from underlying reader: %w", err)
 		}
+
+		// Track rows read from underlying reader
+		rowsInCounter.Add(context.Background(), int64(batch.Len()), otelmetric.WithAttributes(
+			attribute.String("reader", "DiskSortingReader"),
+		))
 
 		// Encode and index each row in the batch
 		for i := 0; i < batch.Len(); i++ {
@@ -241,6 +250,10 @@ func (r *DiskSortingReader) Next() (*Batch, error) {
 
 	if batch.Len() > 0 {
 		r.rowCount += int64(batch.Len())
+		// Track rows output to downstream
+		rowsOutCounter.Add(context.Background(), int64(batch.Len()), otelmetric.WithAttributes(
+			attribute.String("reader", "DiskSortingReader"),
+		))
 		return batch, nil
 	}
 

@@ -15,8 +15,12 @@
 package filereader
 
 import (
+	"context"
 	"errors"
 	"fmt"
+
+	"go.opentelemetry.io/otel/attribute"
+	otelmetric "go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 )
@@ -68,6 +72,11 @@ func (tr *TranslatingReader) Next() (*Batch, error) {
 		return nil, err
 	}
 
+	// Track rows read from underlying reader
+	rowsInCounter.Add(context.Background(), int64(batch.Len()), otelmetric.WithAttributes(
+		attribute.String("reader", "TranslatingReader"),
+	))
+
 	// Create a new batch for translated rows
 	translatedBatch := pipeline.GetBatch()
 
@@ -106,6 +115,11 @@ func (tr *TranslatingReader) Next() (*Batch, error) {
 
 	// Count each successfully translated row
 	tr.rowCount += int64(translatedBatch.Len())
+
+	// Track rows output to downstream
+	rowsOutCounter.Add(context.Background(), int64(translatedBatch.Len()), otelmetric.WithAttributes(
+		attribute.String("reader", "TranslatingReader"),
+	))
 
 	return translatedBatch, nil
 }

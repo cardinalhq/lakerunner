@@ -550,11 +550,8 @@ func (w *CacheManager) enqueueIngest(storageProfile storageprofile.StorageProfil
 		return
 	}
 
-	// Non-blocking enqueue; fallback to blocking if buffer full
-	select {
-	default:
-		w.ingestQ <- ingestJob{profile: storageProfile, paths: todoPaths, ids: todoIDs}
-	}
+	// Non-blocking enqueue
+	w.ingestQ <- ingestJob{profile: storageProfile, paths: todoPaths, ids: todoIDs}
 }
 
 func (w *CacheManager) ingestLoop(ctx context.Context) {

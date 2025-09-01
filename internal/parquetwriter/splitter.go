@@ -89,8 +89,9 @@ func (s *FileSplitter) WriteBatchRows(ctx context.Context, batch *pipeline.Batch
 	}
 
 	// Check if we need to split files BEFORE processing this batch
+	// Skip splitting if RecordsPerFile is NoRecordLimitPerFile (unlimited mode)
 	projectedRows := s.currentRows + int64(actualRowCount)
-	if s.bufferFile != nil && projectedRows > s.config.RecordsPerFile {
+	if s.bufferFile != nil && s.config.RecordsPerFile != NoRecordLimitPerFile && s.config.RecordsPerFile > 0 && projectedRows > s.config.RecordsPerFile {
 		// Finish current file first
 		if err := s.finishCurrentFile(); err != nil {
 			return fmt.Errorf("finish current file before split: %w", err)
@@ -148,7 +149,7 @@ func (s *FileSplitter) WriteBatchRows(ctx context.Context, batch *pipeline.Batch
 // The schema will be built dynamically as rows are added.
 func (s *FileSplitter) startNewBufferFile() error {
 	// Create the binary buffer file
-	file, err := os.CreateTemp(s.config.TmpDir, "buffer-*.bin")
+	file, err := os.CreateTemp(s.config.TmpDir, "*.bin")
 	if err != nil {
 		return fmt.Errorf("create binary temp file: %w", err)
 	}

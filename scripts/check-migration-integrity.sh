@@ -20,19 +20,19 @@ set -euo pipefail
 # Allows comment and whitespace changes, but blocks substantive changes
 
 # Find the merge-base (branch point) automatically
-# First try to find the remote tracking branch, fall back to main/master
+# Prioritize main/master over upstream tracking to ensure we're comparing against the main branch
 if [ -n "${1:-}" ]; then
     # Use provided base branch
     BASE_REF="$1"
-elif git rev-parse --verify @{upstream} >/dev/null 2>&1; then
-    # Use upstream tracking branch
-    BASE_REF="@{upstream}"
 elif git rev-parse --verify origin/main >/dev/null 2>&1; then
-    # Fall back to origin/main
+    # Prefer origin/main
     BASE_REF="origin/main"
 elif git rev-parse --verify origin/master >/dev/null 2>&1; then
     # Fall back to origin/master
     BASE_REF="origin/master"
+elif git rev-parse --verify @{upstream} >/dev/null 2>&1; then
+    # Last resort: use upstream tracking branch
+    BASE_REF="@{upstream}"
 else
     echo "Error: Cannot determine base branch. Please specify one as an argument."
     exit 1

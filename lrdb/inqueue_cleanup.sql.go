@@ -12,10 +12,11 @@ import (
 
 const cleanupInqueueWork = `-- name: CleanupInqueueWork :many
 UPDATE inqueue
-SET claimed_by = -1, claimed_at = NULL
-WHERE claimed_at IS NOT NULL
-  AND claimed_at < $1
-RETURNING id, queue_ts, priority, organization_id, collector_name, instance_num, bucket, object_id, telemetry_type, tries, claimed_by, claimed_at, file_size
+SET claimed_by = -1, claimed_at = NULL, heartbeated_at = NULL
+WHERE claimed_by <> -1
+  AND heartbeated_at IS NOT NULL 
+  AND heartbeated_at < $1
+RETURNING id, queue_ts, priority, organization_id, collector_name, instance_num, bucket, object_id, signal, tries, claimed_by, claimed_at, file_size, heartbeated_at
 `
 
 func (q *Queries) CleanupInqueueWork(ctx context.Context, cutoffTime *time.Time) ([]Inqueue, error) {
@@ -36,11 +37,12 @@ func (q *Queries) CleanupInqueueWork(ctx context.Context, cutoffTime *time.Time)
 			&i.InstanceNum,
 			&i.Bucket,
 			&i.ObjectID,
-			&i.TelemetryType,
+			&i.Signal,
 			&i.Tries,
 			&i.ClaimedBy,
 			&i.ClaimedAt,
 			&i.FileSize,
+			&i.HeartbeatedAt,
 		); err != nil {
 			return nil, err
 		}

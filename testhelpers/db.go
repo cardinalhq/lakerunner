@@ -59,7 +59,6 @@ func SetupTestLRDB(t *testing.T) *pgxpool.Pool {
 	if err != nil {
 		t.Fatalf("Failed to connect to base database: %v", err)
 	}
-	defer basePool.Close()
 
 	// Create test database
 	_, err = basePool.Exec(ctx, fmt.Sprintf("CREATE DATABASE %s", dbName))
@@ -95,6 +94,9 @@ func SetupTestLRDB(t *testing.T) *pgxpool.Pool {
 		if err != nil {
 			slog.Error("Failed to drop test database", slog.String("dbName", dbName), slog.Any("error", err))
 		}
+
+		// Close base pool after cleanup
+		basePool.Close()
 	})
 
 	return testPool
@@ -126,7 +128,6 @@ func SetupTestConfigDB(t *testing.T) *pgxpool.Pool {
 	if err != nil {
 		t.Fatalf("Failed to connect to base configdb: %v", err)
 	}
-	defer basePool.Close()
 
 	// Create test database
 	_, err = basePool.Exec(ctx, fmt.Sprintf("CREATE DATABASE %s", dbName))
@@ -162,6 +163,9 @@ func SetupTestConfigDB(t *testing.T) *pgxpool.Pool {
 		if err != nil {
 			slog.Error("Failed to drop test configdb", slog.String("dbName", dbName), slog.Any("error", err))
 		}
+
+		// Close base pool after cleanup
+		basePool.Close()
 	})
 
 	return testPool
