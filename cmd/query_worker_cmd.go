@@ -71,7 +71,7 @@ func init() {
 			}
 			healthServer.SetStatus(healthcheck.StatusHealthy)
 
-			worker := queryworker.NewWorkerService(10, 5, 12, sp, awsmanager)
+			worker := queryworker.NewWorkerService(20, 5, 12, sp, awsmanager)
 			return worker.Run(doneCtx)
 		},
 	}
