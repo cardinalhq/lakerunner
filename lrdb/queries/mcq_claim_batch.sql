@@ -54,13 +54,16 @@ group_analysis AS (
     -- Age and target calculation
     ((p.now_ts - og.queue_ts) > make_interval(secs => p.max_age_seconds)) AS is_old,
     COALESCE(e_org.target_records, e_glob.target_records, p.default_target_records)::bigint AS target_records,
-    -- Calculate total available records for this group
+    -- Totals across all unclaimed items in this group
     COALESCE(SUM(q.record_count), 0) AS total_available_records,
-    COUNT(*) AS total_items,
+    COUNT(q.id) AS total_items,
+    -- Greedy pack of first batch_count items allowing up to 20% overshoot
+    COALESCE(ps.pack_records, 0) AS packed_records,
+    COALESCE(ps.pack_items, 0)   AS packed_items,
     e_org.target_records AS org_estimate,
     e_glob.target_records AS global_estimate,
     p.default_target_records AS default_estimate,
-    CASE 
+    CASE
       WHEN e_org.target_records IS NOT NULL THEN 'organization'
       WHEN e_glob.target_records IS NOT NULL THEN 'global'
       ELSE 'default'
@@ -75,35 +78,59 @@ group_analysis AS (
   LEFT JOIN metric_pack_estimate e_glob
          ON e_glob.organization_id = '00000000-0000-0000-0000-000000000000'::uuid
         AND e_glob.frequency_ms    = og.frequency_ms
-  -- Join with all unclaimed items in this group
+  -- Join with all unclaimed items in this group to get totals
   LEFT JOIN metric_compaction_queue q
          ON q.claimed_at IS NULL
         AND q.organization_id = og.organization_id
         AND q.dateint = og.dateint
         AND q.frequency_ms = og.frequency_ms
         AND q.instance_num = og.instance_num
+  -- Pack stats limited to first batch_count items and 20% overshoot
+  LEFT JOIN LATERAL (
+    SELECT
+      COUNT(*) AS pack_items,
+      COALESCE(SUM(record_count), 0) AS pack_records
+    FROM (
+      SELECT record_count,
+             SUM(record_count) OVER (
+               ORDER BY priority DESC, queue_ts ASC, id ASC
+               ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+             ) AS cum_records,
+             ROW_NUMBER() OVER (
+               ORDER BY priority DESC, queue_ts ASC, id ASC
+             ) AS rn
+      FROM metric_compaction_queue q2
+      WHERE q2.claimed_at IS NULL
+        AND q2.organization_id = og.organization_id
+        AND q2.dateint = og.dateint
+        AND q2.frequency_ms = og.frequency_ms
+        AND q2.instance_num = og.instance_num
+    ) sub
+    WHERE sub.rn <= p.batch_count
+      AND sub.cum_records <= (COALESCE(e_org.target_records, e_glob.target_records, p.default_target_records)::bigint * 1.2)
+  ) ps ON TRUE
   GROUP BY og.organization_id, og.dateint, og.frequency_ms, og.instance_num,
            og.priority, og.queue_ts, og.seed_rank, p.now_ts, p.max_age_seconds,
            e_org.target_records, e_glob.target_records, p.default_target_records,
-           p.batch_count
+           p.batch_count, ps.pack_records, ps.pack_items
 ),
 
--- 5) Determine group eligibility: old OR can make a full batch (target to target*2.0 for eligibility)
+-- 5) Determine group eligibility: old OR can make a full batch (using packed_records up to 120%)
 eligible_groups AS (
-  SELECT 
+  SELECT
     ga.*,
-    CASE 
+    CASE
       WHEN ga.is_old THEN true
-      WHEN ga.total_available_records >= ga.target_records THEN true
+      WHEN ga.packed_records >= ga.target_records THEN true
       ELSE false
     END AS is_eligible,
-    CASE 
+    CASE
       WHEN ga.is_old THEN 'old'
-      WHEN ga.total_available_records >= ga.target_records THEN 'full_batch'
+      WHEN ga.packed_records >= ga.target_records THEN 'full_batch'
       ELSE 'insufficient'
     END AS eligibility_reason
   FROM group_analysis ga
-  WHERE ga.total_available_records > 0
+  WHERE ga.packed_records > 0
 ),
 
 -- 6) Pick the first eligible group (ordered by seed_rank)
@@ -152,13 +179,13 @@ pack_with_limits AS (
   SELECT p.*
   FROM pack p
   JOIN winner_group wg ON TRUE
-  WHERE 
+  WHERE
     -- For old batches: take up to batch_count items regardless of total records
     (wg.eligibility_reason = 'old' AND p.rn <= wg.batch_count)
     OR
-    -- For full batches: stop once we exceed target_records to prevent massive overshoot
-    (wg.eligibility_reason = 'full_batch' 
-     AND p.cum_records <= wg.target_records
+    -- For full batches: take items up to 120% of target and batch_count
+    (wg.eligibility_reason = 'full_batch'
+     AND p.cum_records <= (wg.target_records * 1.2)
      AND p.rn <= wg.batch_count)
 ),
 

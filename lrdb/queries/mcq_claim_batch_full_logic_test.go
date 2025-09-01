@@ -51,10 +51,13 @@ func TestClaimMetricCompactionWork_FullBatchLogic(t *testing.T) {
 		{OrganizationID: orgID1, Dateint: 20250901, FrequencyMs: 10000, SegmentID: 1002, InstanceNum: 1, RecordCount: 20000, Priority: 800},
 	}
 
-	// Org 2: 45,000 records (40k * 1.125 = within 120% limit, should be eligible as full_batch)
+	// Org 2: 5 x 10,000 records (50k total, should claim first four for a full batch)
 	items2 := []lrdb.PutMetricCompactionWorkParams{
-		{OrganizationID: orgID2, Dateint: 20250901, FrequencyMs: 10000, SegmentID: 2001, InstanceNum: 1, RecordCount: 22500, Priority: 800},
-		{OrganizationID: orgID2, Dateint: 20250901, FrequencyMs: 10000, SegmentID: 2002, InstanceNum: 1, RecordCount: 22500, Priority: 800},
+		{OrganizationID: orgID2, Dateint: 20250901, FrequencyMs: 10000, SegmentID: 2001, InstanceNum: 1, RecordCount: 10000, Priority: 800},
+		{OrganizationID: orgID2, Dateint: 20250901, FrequencyMs: 10000, SegmentID: 2002, InstanceNum: 1, RecordCount: 10000, Priority: 800},
+		{OrganizationID: orgID2, Dateint: 20250901, FrequencyMs: 10000, SegmentID: 2003, InstanceNum: 1, RecordCount: 10000, Priority: 800},
+		{OrganizationID: orgID2, Dateint: 20250901, FrequencyMs: 10000, SegmentID: 2004, InstanceNum: 1, RecordCount: 10000, Priority: 800},
+		{OrganizationID: orgID2, Dateint: 20250901, FrequencyMs: 10000, SegmentID: 2005, InstanceNum: 1, RecordCount: 10000, Priority: 800},
 	}
 
 	// Org 3: 60,000 records (40k * 1.5 = over 120% limit, should NOT be eligible)
@@ -74,7 +77,7 @@ func TestClaimMetricCompactionWork_FullBatchLogic(t *testing.T) {
 
 	fmt.Printf("Created test organizations:\n")
 	fmt.Printf("  Org1 (%s): 40,000 records (exactly target) - should be eligible\n", orgID1.String()[:8])
-	fmt.Printf("  Org2 (%s): 45,000 records (112.5%% of target) - should be eligible\n", orgID2.String()[:8])
+	fmt.Printf("  Org2 (%s): 50,000 records (125%% of target) - should be eligible\n", orgID2.String()[:8])
 	fmt.Printf("  Org3 (%s): 60,000 records (150%% of target) - should NOT be eligible\n", orgID3.String()[:8])
 
 	// Test the improved query with current time (items should be fresh, not old)
@@ -113,8 +116,8 @@ func TestClaimMetricCompactionWork_FullBatchLogic(t *testing.T) {
 		fmt.Printf("No items claimed - this suggests eligibility logic may have issues\n")
 	}
 
-	// Test 2: Should claim Org2 (45k records, within 120%)
-	fmt.Printf("\n--- Test 2: Expecting Org2 (within 120%% limit) ---\n")
+	// Test 2: Should claim Org2 (more than 120%% total, but first four make a full batch)
+	fmt.Printf("\n--- Test 2: Expecting Org2 (trimmed to full batch) ---\n")
 	batch2, err := db.ClaimMetricCompactionWork(ctx, lrdb.ClaimMetricCompactionWorkParams{
 		WorkerID:             workerID,
 		DefaultTargetRecords: targetRecords,
