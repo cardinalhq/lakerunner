@@ -43,7 +43,7 @@ func TestClaimMetricCompactionWork_FullBatchFromTestData(t *testing.T) {
 	fmt.Printf("Loaded %d rows into metric_compaction_queue\n", rowCount)
 
 	workerID := int64(99998) // Different worker ID to avoid conflicts
-	
+
 	// Test the improved query with the same scenarios
 	lastDataTime := time.Date(2025, 9, 1, 15, 12, 55, 809443000, time.UTC)
 	testTimes := []struct {
@@ -60,11 +60,11 @@ func TestClaimMetricCompactionWork_FullBatchFromTestData(t *testing.T) {
 		fmt.Printf("\n=== IMPROVED QUERY Test: %s ===\n", tt.name)
 		fmt.Printf("Query time: %s\n", tt.time.Format(time.RFC3339Nano))
 		fmt.Printf("Max age seconds: %d\n", tt.maxAge)
-		
+
 		// Run several batches to see what gets claimed
 		for batchNum := 1; batchNum <= 5; batchNum++ {
 			fmt.Printf("\n--- Batch %d ---\n", batchNum)
-			
+
 			// Call the query - it now uses the improved logic
 			claimedBatch, err := db.ClaimMetricCompactionWork(ctx, lrdb.ClaimMetricCompactionWorkParams{
 				WorkerID:             workerID,
@@ -81,34 +81,34 @@ func TestClaimMetricCompactionWork_FullBatchFromTestData(t *testing.T) {
 			}
 
 			fmt.Printf("Claimed %d items in batch %d:\n", len(claimedBatch), batchNum)
-			
+
 			totalRecords := int64(0)
 			for i, item := range claimedBatch {
 				if i < 10 { // Show first 10 items details
 					fmt.Printf("  [%d] ID=%d, OrgID=%s, Priority=%d, Records=%d, QueueTS=%s\n",
-						i+1, item.ID, item.OrganizationID.String()[:8]+"...", 
+						i+1, item.ID, item.OrganizationID.String()[:8]+"...",
 						item.Priority, item.RecordCount, item.QueueTs.Format("15:04:05.000"))
 				}
 				totalRecords += item.RecordCount
 			}
-			
+
 			if len(claimedBatch) > 10 {
 				fmt.Printf("  ... and %d more items\n", len(claimedBatch)-10)
 			}
-			
+
 			fmt.Printf("Total records in batch: %d\n", totalRecords)
-			fmt.Printf("Target records used: %d (%.1f%% of target)\n", 
-				claimedBatch[0].UsedTargetRecords, 
+			fmt.Printf("Target records used: %d (%.1f%% of target)\n",
+				claimedBatch[0].UsedTargetRecords,
 				float64(totalRecords)/float64(claimedBatch[0].UsedTargetRecords)*100)
 			fmt.Printf("Estimate source: %s\n", claimedBatch[0].EstimateSource)
-			
+
 			// Group by organization and show distribution
 			orgCounts := make(map[string]int)
 			for _, item := range claimedBatch {
 				orgKey := item.OrganizationID.String()[:8]
 				orgCounts[orgKey]++
 			}
-			
+
 			fmt.Printf("Organization distribution:\n")
 			for orgKey, count := range orgCounts {
 				fmt.Printf("  %s...: %d items\n", orgKey, count)
@@ -125,4 +125,3 @@ func TestClaimMetricCompactionWork_FullBatchFromTestData(t *testing.T) {
 		}
 	}
 }
-
