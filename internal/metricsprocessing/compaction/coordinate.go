@@ -67,7 +67,15 @@ func coordinate(
 		}
 
 		ll.Info("Successfully marked single segment as compacted",
-			slog.Int64("segmentID", rows[0].SegmentID))
+			slog.Int64("segmentID", rows[0].SegmentID),
+			slog.Int("oldSegmentCount", len(rows)),
+			slog.Int("newSegmentCount", 1),
+			slog.Int64("inputRecords", rows[0].RecordCount),
+			slog.Int64("outputRecords", rows[0].RecordCount),
+			slog.Int64("inputBytes", rows[0].FileSize),
+			slog.Int64("outputBytes", rows[0].FileSize),
+			slog.Int64("targetRecords", workItem.UsedTargetRecords),
+			slog.String("estimateSource", workItem.EstimateSource))
 		return nil
 	}
 
