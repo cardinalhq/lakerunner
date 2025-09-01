@@ -15,6 +15,7 @@
 package filereader
 
 import (
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -32,14 +33,14 @@ func TestArrowCookedReaderWithRealFile(t *testing.T) {
 	require.NoError(t, err)
 	defer file.Close()
 
-	reader, err := NewArrowCookedReader(file, 1000)
+	reader, err := NewArrowCookedReader(context.TODO(), file, 1000)
 	require.NoError(t, err)
 	defer reader.Close()
 
 	var count int64
 	checkedTimestamp := false
 	for {
-		batch, err := reader.Next()
+		batch, err := reader.Next(context.TODO())
 		if batch != nil {
 			if !checkedTimestamp && batch.Len() > 0 {
 				_, ok := batch.Get(0)[wkk.RowKeyCTimestamp].(int64)

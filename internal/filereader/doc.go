@@ -70,7 +70,7 @@
 //	defer reader.Close()
 //
 //	for {
-//	    batch, err := reader.Next()
+//	    batch, err := reader.Next(ctx)
 //	    if err != nil {
 //	        if errors.Is(err, io.EOF) {
 //	            break
@@ -151,7 +151,7 @@
 //	defer ordered.Close()
 //
 //	for {
-//	    batch, err := ordered.Next()
+//	    batch, err := ordered.Next(ctx)
 //	    if err != nil {
 //	        if errors.Is(err, io.EOF) {
 //	            break
@@ -185,7 +185,7 @@
 // **Memory Safety**: Use pipeline.CopyBatch() if you need to retain batch data:
 //
 //	for {
-//	    batch, err := reader.Next()
+//	    batch, err := reader.Next(ctx)
 //	    if err != nil {
 //	        if errors.Is(err, io.EOF) {
 //	            break

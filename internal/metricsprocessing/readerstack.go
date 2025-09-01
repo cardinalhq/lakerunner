@@ -151,7 +151,7 @@ func CreateReaderStack(
 		finalReader = readers[0]
 	} else if len(readers) > 1 {
 		keyProvider := GetCurrentMetricSortKeyProvider()
-		multiReader, err := filereader.NewMergesortReader(readers, keyProvider, 1000)
+		multiReader, err := filereader.NewMergesortReader(ctx, readers, keyProvider, 1000)
 		if err != nil {
 			return nil, fmt.Errorf("creating mergesort reader: %w", err)
 		}

@@ -61,19 +61,19 @@ func NewTranslatingReader(reader Reader, translator RowTranslator, batchSize int
 }
 
 // Next returns the next batch of translated rows from the underlying reader.
-func (tr *TranslatingReader) Next() (*Batch, error) {
+func (tr *TranslatingReader) Next(ctx context.Context) (*Batch, error) {
 	if tr.closed {
 		return nil, errors.New("reader is closed")
 	}
 
 	// Get raw batch from underlying reader
-	batch, err := tr.reader.Next()
+	batch, err := tr.reader.Next(ctx)
 	if batch == nil {
 		return nil, err
 	}
 
 	// Track rows read from underlying reader
-	rowsInCounter.Add(context.Background(), int64(batch.Len()), otelmetric.WithAttributes(
+	rowsInCounter.Add(ctx, int64(batch.Len()), otelmetric.WithAttributes(
 		attribute.String("reader", "TranslatingReader"),
 	))
 
@@ -117,7 +117,7 @@ func (tr *TranslatingReader) Next() (*Batch, error) {
 	tr.rowCount += int64(translatedBatch.Len())
 
 	// Track rows output to downstream
-	rowsOutCounter.Add(context.Background(), int64(translatedBatch.Len()), otelmetric.WithAttributes(
+	rowsOutCounter.Add(ctx, int64(translatedBatch.Len()), otelmetric.WithAttributes(
 		attribute.String("reader", "TranslatingReader"),
 	))
 

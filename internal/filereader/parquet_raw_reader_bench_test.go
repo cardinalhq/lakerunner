@@ -16,6 +16,7 @@ package filereader
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -71,7 +72,7 @@ func loadBenchmarkData(b *testing.B) {
 		}
 
 		// Sample first few rows to get average field count
-		batch, _ := parquetReader.Next()
+		batch, _ := parquetReader.Next(context.TODO())
 		parquetReader.Close()
 
 		totalFields := 0
@@ -191,7 +192,7 @@ func BenchmarkParquetRawReader_Small(b *testing.B) {
 
 		rowsThisIter := int64(0)
 		for {
-			batch, err := reader.Next()
+			batch, err := reader.Next(context.TODO())
 			if err == io.EOF {
 				break
 			}
@@ -230,7 +231,7 @@ func BenchmarkParquetRawReader_Medium(b *testing.B) {
 
 		rowsThisIter := int64(0)
 		for {
-			batch, err := reader.Next()
+			batch, err := reader.Next(context.TODO())
 			if err == io.EOF {
 				break
 			}
@@ -269,7 +270,7 @@ func BenchmarkParquetRawReader_Large(b *testing.B) {
 
 		rowsThisIter := int64(0)
 		for {
-			batch, err := reader.Next()
+			batch, err := reader.Next(context.TODO())
 			if err == io.EOF {
 				break
 			}
@@ -312,7 +313,7 @@ func BenchmarkParquetRawReader_BatchSizes(b *testing.B) {
 
 				rowsThisIter := int64(0)
 				for {
-					batch, err := reader.Next()
+					batch, err := reader.Next(context.TODO())
 					if err == io.EOF {
 						break
 					}
@@ -356,7 +357,7 @@ func BenchmarkParquetRawReader_MemoryProfile(b *testing.B) {
 		var mBefore runtime.MemStats
 		runtime.ReadMemStats(&mBefore)
 
-		batch, err := reader.Next()
+		batch, err := reader.Next(context.TODO())
 		iterationCount++
 
 		n := 0
@@ -413,7 +414,7 @@ func BenchmarkParquetRawReader_GCPressure(b *testing.B) {
 	batchCount := 0
 
 	for {
-		batch, err := reader.Next()
+		batch, err := reader.Next(context.TODO())
 		batchCount++
 
 		if batch != nil {

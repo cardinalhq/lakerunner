@@ -17,6 +17,7 @@
 package filereader
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"runtime"
@@ -50,7 +51,7 @@ func TestDuckDBMemoryPatterns(t *testing.T) {
 			}
 
 			// Read first batch only
-			batch, err := reader.Next()
+			batch, err := reader.Next(context.TODO())
 			if err != nil {
 				reader.Close()
 				t.Fatalf("Failed to read first batch: %v", err)
@@ -90,7 +91,7 @@ func TestDuckDBvsArrowMemoryComparison(t *testing.T) {
 			if err != nil {
 				return nil, err
 			}
-			reader, err := NewArrowCookedReader(file, 100)
+			reader, err := NewArrowCookedReader(context.TODO(), file, 100)
 			if err != nil {
 				file.Close()
 				return nil, err
@@ -115,7 +116,7 @@ func TestDuckDBvsArrowMemoryComparison(t *testing.T) {
 				t.Fatalf("Failed to create reader: %v", err)
 			}
 
-			batch, err := r.Next()
+			batch, err := r.Next(context.TODO())
 			if err != nil {
 				r.Close()
 				t.Fatalf("Failed to read batch: %v", err)

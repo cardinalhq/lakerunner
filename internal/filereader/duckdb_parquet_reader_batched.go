@@ -95,14 +95,14 @@ func NewDuckDBParquetBatchedReader(paths []string, batchSize int) (*DuckDBParque
 }
 
 // initSchema discovers the schema on first query
-func (r *DuckDBParquetBatchedReader) initSchema() error {
+func (r *DuckDBParquetBatchedReader) initSchema(ctx context.Context) error {
 	if r.schemaInit {
 		return nil
 	}
 
 	// Query just the first row to get schema
 	args := append(r.queryArgs, 1, 0) // LIMIT 1 OFFSET 0
-	rows, err := r.db.Query(context.Background(), r.baseQuery, args...)
+	rows, err := r.db.Query(ctx, r.baseQuery, args...)
 	if err != nil {
 		return fmt.Errorf("schema discovery query failed: %w", err)
 	}
@@ -147,12 +147,12 @@ func (r *DuckDBParquetBatchedReader) initSchema() error {
 }
 
 // shouldDropRow checks if a row has NaN or invalid rollup fields that should be dropped
-func (r *DuckDBParquetBatchedReader) shouldDropRow(values []any) bool {
+func (r *DuckDBParquetBatchedReader) shouldDropRow(ctx context.Context, values []any) bool {
 	for _, idx := range r.rollupIdx {
 		if idx >= 0 && idx < len(values) {
 			if v, ok := values[idx].(float64); ok {
 				if math.IsNaN(v) || math.IsInf(v, 0) {
-					rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+					rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
 						attribute.String("reader", "DuckDBParquetBatchedReader"),
 						attribute.String("reason", "NaN"),
 					))
@@ -165,7 +165,7 @@ func (r *DuckDBParquetBatchedReader) shouldDropRow(values []any) bool {
 }
 
 // Next returns the next batch of rows from the parquet file using SQL-level batching
-func (r *DuckDBParquetBatchedReader) Next() (*Batch, error) {
+func (r *DuckDBParquetBatchedReader) Next(ctx context.Context) (*Batch, error) {
 	if r.closed {
 		return nil, errors.New("reader is closed")
 	}
@@ -174,13 +174,13 @@ func (r *DuckDBParquetBatchedReader) Next() (*Batch, error) {
 	}
 
 	// Initialize schema on first call
-	if err := r.initSchema(); err != nil {
+	if err := r.initSchema(ctx); err != nil {
 		return nil, fmt.Errorf("schema initialization failed: %w", err)
 	}
 
 	// Execute batched query with LIMIT/OFFSET
 	args := append(r.queryArgs, r.batchSize, r.currentOffset)
-	rows, err := r.db.Query(context.Background(), r.baseQuery, args...)
+	rows, err := r.db.Query(ctx, r.baseQuery, args...)
 	if err != nil {
 		return nil, fmt.Errorf("batched query failed: %w", err)
 	}
@@ -209,7 +209,7 @@ func (r *DuckDBParquetBatchedReader) Next() (*Batch, error) {
 			case string:
 				tidInt, err := strconv.ParseInt(v, 10, 64)
 				if err != nil {
-					rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+					rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
 						attribute.String("reader", "DuckDBParquetBatchedReader"),
 						attribute.String("reason", "invalid_tid_conversion"),
 					))
@@ -221,7 +221,7 @@ func (r *DuckDBParquetBatchedReader) Next() (*Batch, error) {
 			case nil:
 				// Null value is fine
 			default:
-				rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+				rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
 					attribute.String("reader", "DuckDBParquetBatchedReader"),
 					attribute.String("reason", "invalid_tid_type"),
 				))
@@ -237,7 +237,7 @@ func (r *DuckDBParquetBatchedReader) Next() (*Batch, error) {
 		}
 
 		// Check for invalid rollup values
-		if r.shouldDropRow(values) {
+		if r.shouldDropRow(ctx, values) {
 			continue
 		}
 

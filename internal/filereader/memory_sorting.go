@@ -80,14 +80,14 @@ func NewMemorySortingReader(reader Reader, keyProvider SortKeyProvider, batchSiz
 }
 
 // loadAndSortAllRows reads all rows from the underlying reader and sorts them.
-func (r *MemorySortingReader) loadAndSortAllRows() error {
+func (r *MemorySortingReader) loadAndSortAllRows(ctx context.Context) error {
 	if r.sorted {
 		return nil
 	}
 
 	// Read all batches from the underlying reader
 	for {
-		batch, err := r.reader.Next()
+		batch, err := r.reader.Next(ctx)
 		if err != nil {
 			if err == io.EOF {
 				break
@@ -96,7 +96,7 @@ func (r *MemorySortingReader) loadAndSortAllRows() error {
 		}
 
 		// Track rows read from underlying reader
-		rowsInCounter.Add(context.Background(), int64(batch.Len()), otelmetric.WithAttributes(
+		rowsInCounter.Add(ctx, int64(batch.Len()), otelmetric.WithAttributes(
 			attribute.String("reader", "MemorySortingReader"),
 		))
 
@@ -130,14 +130,14 @@ func (r *MemorySortingReader) loadAndSortAllRows() error {
 }
 
 // Next returns the next batch of sorted rows from the buffer.
-func (r *MemorySortingReader) Next() (*Batch, error) {
+func (r *MemorySortingReader) Next(ctx context.Context) (*Batch, error) {
 	if r.closed {
 		return nil, fmt.Errorf("reader is closed")
 	}
 
 	// Ensure all rows are loaded and sorted
 	if !r.sorted {
-		if err := r.loadAndSortAllRows(); err != nil {
+		if err := r.loadAndSortAllRows(ctx); err != nil {
 			return nil, err
 		}
 	}
@@ -162,7 +162,7 @@ func (r *MemorySortingReader) Next() (*Batch, error) {
 	if batch.Len() > 0 {
 		r.rowCount += int64(batch.Len())
 		// Track rows output to downstream
-		rowsOutCounter.Add(context.Background(), int64(batch.Len()), otelmetric.WithAttributes(
+		rowsOutCounter.Add(ctx, int64(batch.Len()), otelmetric.WithAttributes(
 			attribute.String("reader", "MemorySortingReader"),
 		))
 		return batch, nil

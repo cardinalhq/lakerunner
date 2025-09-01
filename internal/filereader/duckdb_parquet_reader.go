@@ -59,7 +59,7 @@ var rollupFieldNames = []string{
 // NewDuckDBParquetRawReader creates a new DuckDBParquetRawReader for the given
 // Parquet file paths. Multiple files will be read using DuckDB's
 // union_by_name option to unify schemas.
-func NewDuckDBParquetRawReader(paths []string, batchSize int) (*DuckDBParquetRawReader, error) {
+func NewDuckDBParquetRawReader(ctx context.Context, paths []string, batchSize int) (*DuckDBParquetRawReader, error) {
 	if batchSize <= 0 {
 		batchSize = 1000
 	}
@@ -88,7 +88,7 @@ func NewDuckDBParquetRawReader(paths []string, batchSize int) (*DuckDBParquetRaw
 		query = fmt.Sprintf("SELECT * FROM read_parquet([%s], union_by_name=true)", strings.Join(quoted, ","))
 	}
 
-	rows, err := db.Query(context.Background(), query, args...)
+	rows, err := db.Query(ctx, query, args...)
 	if err != nil {
 		db.Close()
 		return nil, fmt.Errorf("duckdb query: %w", err)
@@ -147,12 +147,12 @@ func NewDuckDBParquetRawReader(paths []string, batchSize int) (*DuckDBParquetRaw
 	}, nil
 }
 
-func (r *DuckDBParquetRawReader) shouldDropRow() bool {
+func (r *DuckDBParquetRawReader) shouldDropRow(ctx context.Context) bool {
 	for _, idx := range r.rollupIdx {
 		if idx >= 0 {
 			if v, ok := r.values[idx].(float64); ok {
 				if math.IsNaN(v) || math.IsInf(v, 0) {
-					rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+					rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
 						attribute.String("reader", "DuckDBParquetRawReader"),
 						attribute.String("reason", "NaN"),
 					))
@@ -165,7 +165,7 @@ func (r *DuckDBParquetRawReader) shouldDropRow() bool {
 }
 
 // Next returns the next batch of rows from the parquet file.
-func (r *DuckDBParquetRawReader) Next() (*Batch, error) {
+func (r *DuckDBParquetRawReader) Next(ctx context.Context) (*Batch, error) {
 	if r.closed || r.rows == nil {
 		return nil, errors.New("reader is closed or not initialized")
 	}
@@ -196,7 +196,7 @@ func (r *DuckDBParquetRawReader) Next() (*Batch, error) {
 			case string:
 				tidInt, err := strconv.ParseInt(v, 10, 64)
 				if err != nil {
-					rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+					rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
 						attribute.String("reader", "DuckDBParquetRawReader"),
 						attribute.String("reason", "invalid_tid_conversion"),
 					))
@@ -206,7 +206,7 @@ func (r *DuckDBParquetRawReader) Next() (*Batch, error) {
 			case int64:
 			case nil:
 			default:
-				rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+				rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
 					attribute.String("reader", "DuckDBParquetRawReader"),
 					attribute.String("reason", "invalid_tid_type"),
 				))
@@ -220,7 +220,7 @@ func (r *DuckDBParquetRawReader) Next() (*Batch, error) {
 			}
 		}
 
-		if r.shouldDropRow() {
+		if r.shouldDropRow(ctx) {
 			continue
 		}
 
@@ -243,7 +243,7 @@ func (r *DuckDBParquetRawReader) Next() (*Batch, error) {
 		if r.exhausted {
 			return nil, io.EOF
 		}
-		return r.Next()
+		return r.Next(ctx)
 	}
 
 	return batch, nil

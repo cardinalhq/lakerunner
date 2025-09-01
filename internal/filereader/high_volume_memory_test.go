@@ -17,6 +17,7 @@
 package filereader
 
 import (
+	"context"
 	"os"
 	"runtime"
 	"testing"
@@ -55,7 +56,7 @@ func TestHighVolumeMemoryFootprint(t *testing.T) {
 			if err != nil {
 				return nil, err
 			}
-			reader, err := NewArrowCookedReader(file, 1000)
+			reader, err := NewArrowCookedReader(context.TODO(), file, 1000)
 			if err != nil {
 				file.Close()
 				return nil, err
@@ -111,7 +112,7 @@ func TestHighVolumeMemoryFootprint(t *testing.T) {
 				}
 
 				// Process one batch to simulate real usage
-				batch, err := reader.Next()
+				batch, err := reader.Next(context.TODO())
 				if err != nil {
 					reader.Close()
 					t.Fatalf("Iteration %d: Failed to read batch: %v", i, err)

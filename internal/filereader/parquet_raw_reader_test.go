@@ -15,6 +15,7 @@
 package filereader
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -47,7 +48,7 @@ func TestParquetRawReaderNext(t *testing.T) {
 
 	// Test actual Next() behavior
 	for {
-		batch, err := reader.Next()
+		batch, err := reader.Next(context.TODO())
 		if batch != nil {
 			batchCount++
 			totalRows += int64(batch.Len())
@@ -102,7 +103,7 @@ func TestParquetRawReaderBatching(t *testing.T) {
 			batchCount := 0
 
 			for {
-				batch, err := reader.Next()
+				batch, err := reader.Next(context.TODO())
 				if batch != nil {
 					batchCount++
 					totalRows += int64(batch.Len())
@@ -138,7 +139,7 @@ func TestParquetRawReaderWithRealFile(t *testing.T) {
 	var rowCount int64
 
 	for {
-		batch, err := reader.Next()
+		batch, err := reader.Next(context.TODO())
 		if batch != nil {
 			rowCount += int64(batch.Len())
 
@@ -187,7 +188,7 @@ func TestParquetRawReaderMultipleFiles(t *testing.T) {
 			var totalRows int64
 
 			for {
-				batch, err := reader.Next()
+				batch, err := reader.Next(context.TODO())
 				if batch != nil {
 					totalRows += int64(batch.Len())
 
@@ -226,7 +227,7 @@ func TestParquetRawReaderClose(t *testing.T) {
 	require.NoError(t, err)
 
 	// Should be able to read before closing
-	batch, err := reader.Next()
+	batch, err := reader.Next(context.TODO())
 	require.NotNil(t, batch)
 	require.Greater(t, batch.Len(), 0)
 	// EOF is acceptable if we got data (it means we read all the data in one batch)
@@ -238,7 +239,7 @@ func TestParquetRawReaderClose(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Reading after close should return error
-	_, err = reader.Next()
+	_, err = reader.Next(context.TODO())
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "closed")
 }
@@ -254,7 +255,7 @@ func TestParquetRawReader_SpecificProblemFile(t *testing.T) {
 	defer reader.Close()
 
 	// Try to read some rows
-	batch, err := reader.Next()
+	batch, err := reader.Next(context.TODO())
 	n := 0
 	if batch != nil {
 		n = batch.Len()
@@ -310,7 +311,7 @@ func TestParquetRawReader_WithTranslator(t *testing.T) {
 	require.NoError(t, err)
 
 	// Read rows
-	batch, err := reader.Next()
+	batch, err := reader.Next(context.TODO())
 	n := 0
 	if batch != nil {
 		n = batch.Len()
@@ -349,7 +350,7 @@ func TestProtoLogsReader_WithTranslator(t *testing.T) {
 	require.NoError(t, err)
 
 	// Read rows
-	batch, err := reader.Next()
+	batch, err := reader.Next(context.TODO())
 	n := 0
 	if batch != nil {
 		n = batch.Len()
@@ -408,7 +409,7 @@ func TestParquetRawReader_CompactTestFiles(t *testing.T) {
 			batchCount := 0
 
 			for {
-				batch, err := reader.Next()
+				batch, err := reader.Next(context.TODO())
 				if batch != nil {
 					batchCount++
 					totalRows += int64(batch.Len())
@@ -453,7 +454,7 @@ func TestParquetRawReader_TIDConversion(t *testing.T) {
 	defer reader.Close()
 
 	// Read first batch
-	batch, err := reader.Next()
+	batch, err := reader.Next(context.TODO())
 	if err != nil && !errors.Is(err, io.EOF) {
 		require.NoError(t, err)
 	}
@@ -543,7 +544,7 @@ func TestDiskSortingReader_WithParquetCompactTestFiles(t *testing.T) {
 			batchCount := 0
 
 			for {
-				batch, err := diskSortingReader.Next()
+				batch, err := diskSortingReader.Next(context.TODO())
 				if batch != nil {
 					batchCount++
 					totalRows += int64(batch.Len())

@@ -17,9 +17,11 @@
 // batches are owned by the Reader that returns them, and consumers must copy data they wish to retain.
 package pipeline
 
+import "context"
+
 // Reader is a pull-based iterator over Batches.
 // Next returns (nil, io.EOF) when the stream ends.
 type Reader interface {
-	Next() (*Batch, error)
+	Next(ctx context.Context) (*Batch, error)
 	Close() error
 }

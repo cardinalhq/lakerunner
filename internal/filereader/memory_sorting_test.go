@@ -15,6 +15,7 @@
 package filereader
 
 import (
+	"context"
 	"io"
 	"testing"
 
@@ -61,7 +62,7 @@ func TestMemorySortingReader_SortsByKey(t *testing.T) {
 	// Read all results
 	var allRows []Row
 	for {
-		batch, err := sortingReader.Next()
+		batch, err := sortingReader.Next(context.TODO())
 		if err == io.EOF {
 			break
 		}
@@ -100,7 +101,7 @@ func TestMemorySortingReader_EmptyInput(t *testing.T) {
 	require.NoError(t, err)
 	defer sortingReader.Close()
 
-	batch, err := sortingReader.Next()
+	batch, err := sortingReader.Next(context.TODO())
 	assert.Equal(t, io.EOF, err)
 	assert.Nil(t, batch)
 }
@@ -136,7 +137,7 @@ func TestMemorySortingReader_MissingFields(t *testing.T) {
 	// Read all results
 	var allRows []Row
 	for {
-		batch, err := sortingReader.Next()
+		batch, err := sortingReader.Next(context.TODO())
 		if err == io.EOF {
 			break
 		}
@@ -226,7 +227,7 @@ func TestMemorySortingReader_CustomSortFunction(t *testing.T) {
 	// Read all results
 	var allRows []Row
 	for {
-		batch, err := sortingReader.Next()
+		batch, err := sortingReader.Next(context.TODO())
 		if err == io.EOF {
 			break
 		}
@@ -270,7 +271,7 @@ func TestMemorySortingReader_TimestampOnlySort(t *testing.T) {
 	// Read all results
 	var allRows []Row
 	for {
-		batch, err := sortingReader.Next()
+		batch, err := sortingReader.Next(context.TODO())
 		if err == io.EOF {
 			break
 		}

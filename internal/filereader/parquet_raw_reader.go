@@ -42,7 +42,7 @@ type ParquetRawReader struct {
 
 // shouldDropRowForInvalidRollupFields checks if a row has NaN or invalid rollup fields that should be dropped.
 // This filters corrupted data at the parquet source level to isolate data quality issues.
-func shouldDropRowForInvalidRollupFields(row map[string]any) bool {
+func shouldDropRowForInvalidRollupFields(ctx context.Context, row map[string]any) bool {
 	// List of rollup fields to validate
 	rollupFields := []string{
 		"rollup_sum", "rollup_count", "rollup_avg", "rollup_min", "rollup_max",
@@ -53,7 +53,7 @@ func shouldDropRowForInvalidRollupFields(row map[string]any) bool {
 		if value, exists := row[fieldName]; exists {
 			if floatVal, ok := value.(float64); ok {
 				if math.IsNaN(floatVal) || math.IsInf(floatVal, 0) {
-					rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+					rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
 						attribute.String("reader", "ParquetRawReader"),
 						attribute.String("reason", "NaN"),
 					))
@@ -94,7 +94,7 @@ func NewParquetRawReader(reader io.ReaderAt, size int64, batchSize int) (*Parque
 }
 
 // Next returns the next batch of rows from the parquet file.
-func (r *ParquetRawReader) Next() (*Batch, error) {
+func (r *ParquetRawReader) Next(ctx context.Context) (*Batch, error) {
 	if r.closed || r.pfr == nil {
 		return nil, errors.New("reader is closed or not initialized")
 	}
@@ -119,7 +119,7 @@ func (r *ParquetRawReader) Next() (*Batch, error) {
 	}
 
 	// Track rows read from parquet
-	rowsInCounter.Add(context.Background(), int64(n), otelmetric.WithAttributes(
+	rowsInCounter.Add(ctx, int64(n), otelmetric.WithAttributes(
 		attribute.String("reader", "ParquetRawReader"),
 	))
 
@@ -140,7 +140,7 @@ func (r *ParquetRawReader) Next() (*Batch, error) {
 					row["_cardinalhq.tid"] = tidInt64
 				} else {
 					// Drop row if conversion fails
-					rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+					rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
 						attribute.String("reader", "ParquetRawReader"),
 						attribute.String("reason", "invalid_tid_conversion"),
 					))
@@ -150,7 +150,7 @@ func (r *ParquetRawReader) Next() (*Batch, error) {
 				// Already correct type, no conversion needed
 			default:
 				// Drop row if _cardinalhq.tid is neither string nor int64
-				rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+				rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
 					attribute.String("reader", "ParquetRawReader"),
 					attribute.String("reason", "invalid_tid_type"),
 				))
@@ -167,7 +167,7 @@ func (r *ParquetRawReader) Next() (*Batch, error) {
 		}
 
 		// Filter out rows with NaN or invalid rollup fields - this indicates corrupted data from parquet source
-		if shouldDropRowForInvalidRollupFields(row) {
+		if shouldDropRowForInvalidRollupFields(ctx, row) {
 			continue
 		}
 
@@ -183,7 +183,7 @@ func (r *ParquetRawReader) Next() (*Batch, error) {
 	r.rowCount += int64(validRows)
 
 	// Track rows output to downstream
-	rowsOutCounter.Add(context.Background(), int64(validRows), otelmetric.WithAttributes(
+	rowsOutCounter.Add(ctx, int64(validRows), otelmetric.WithAttributes(
 		attribute.String("reader", "ParquetRawReader"),
 	))
 
@@ -199,7 +199,7 @@ func (r *ParquetRawReader) Next() (*Batch, error) {
 			return nil, io.EOF
 		}
 		// If we dropped all rows but haven't reached EOF, try reading more
-		return r.Next()
+		return r.Next(ctx)
 	}
 
 	// Return valid batch without EOF (EOF will be returned on next call if exhausted)

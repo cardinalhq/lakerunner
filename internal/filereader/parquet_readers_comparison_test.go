@@ -16,6 +16,7 @@ package filereader
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -257,7 +258,7 @@ func readAllRowsParquetRaw(data []byte, size int64) ([]map[wkk.RowKey]interface{
 
 	var allRows []map[wkk.RowKey]interface{}
 	for {
-		batch, err := parquetReader.Next()
+		batch, err := parquetReader.Next(context.TODO())
 		if err == io.EOF {
 			break
 		}
@@ -275,7 +276,7 @@ func readAllRowsParquetRaw(data []byte, size int64) ([]map[wkk.RowKey]interface{
 }
 
 func readAllRowsDuckDB(paths []string) ([]map[wkk.RowKey]interface{}, error) {
-	reader, err := NewDuckDBParquetRawReader(paths, 1000)
+	reader, err := NewDuckDBParquetRawReader(context.TODO(), paths, 1000)
 	if err != nil {
 		return nil, err
 	}
@@ -283,7 +284,7 @@ func readAllRowsDuckDB(paths []string) ([]map[wkk.RowKey]interface{}, error) {
 
 	var allRows []map[wkk.RowKey]interface{}
 	for {
-		batch, err := reader.Next()
+		batch, err := reader.Next(context.TODO())
 		if err == io.EOF {
 			break
 		}
@@ -302,7 +303,7 @@ func readAllRowsDuckDB(paths []string) ([]map[wkk.RowKey]interface{}, error) {
 
 func readAllRowsArrow(data []byte, size int64) ([]map[wkk.RowKey]interface{}, error) {
 	reader := bytes.NewReader(data)
-	arrowReader, err := NewArrowCookedReader(reader, 1000)
+	arrowReader, err := NewArrowCookedReader(context.TODO(), reader, 1000)
 	if err != nil {
 		return nil, err
 	}
@@ -310,7 +311,7 @@ func readAllRowsArrow(data []byte, size int64) ([]map[wkk.RowKey]interface{}, er
 
 	var allRows []map[wkk.RowKey]interface{}
 	for {
-		batch, err := arrowReader.Next()
+		batch, err := arrowReader.Next(context.TODO())
 		if err == io.EOF {
 			break
 		}
@@ -361,7 +362,7 @@ func readNRowsParquetRaw(data []byte, size int64, n int) ([]map[wkk.RowKey]inter
 
 	var rows []map[wkk.RowKey]interface{}
 	for len(rows) < n {
-		batch, err := parquetReader.Next()
+		batch, err := parquetReader.Next(context.TODO())
 		if err == io.EOF {
 			break
 		}
@@ -379,7 +380,7 @@ func readNRowsParquetRaw(data []byte, size int64, n int) ([]map[wkk.RowKey]inter
 }
 
 func readNRowsDuckDB(paths []string, n int) ([]map[wkk.RowKey]interface{}, error) {
-	reader, err := NewDuckDBParquetRawReader(paths, 1000)
+	reader, err := NewDuckDBParquetRawReader(context.TODO(), paths, 1000)
 	if err != nil {
 		return nil, err
 	}
@@ -387,7 +388,7 @@ func readNRowsDuckDB(paths []string, n int) ([]map[wkk.RowKey]interface{}, error
 
 	var rows []map[wkk.RowKey]interface{}
 	for len(rows) < n {
-		batch, err := reader.Next()
+		batch, err := reader.Next(context.TODO())
 		if err == io.EOF {
 			break
 		}
@@ -406,7 +407,7 @@ func readNRowsDuckDB(paths []string, n int) ([]map[wkk.RowKey]interface{}, error
 
 func readNRowsArrow(data []byte, size int64, n int) ([]map[wkk.RowKey]interface{}, error) {
 	reader := bytes.NewReader(data)
-	arrowReader, err := NewArrowCookedReader(reader, 1000)
+	arrowReader, err := NewArrowCookedReader(context.TODO(), reader, 1000)
 	if err != nil {
 		return nil, err
 	}
@@ -414,7 +415,7 @@ func readNRowsArrow(data []byte, size int64, n int) ([]map[wkk.RowKey]interface{
 
 	var rows []map[wkk.RowKey]interface{}
 	for len(rows) < n {
-		batch, err := arrowReader.Next()
+		batch, err := arrowReader.Next(context.TODO())
 		if err == io.EOF {
 			break
 		}

@@ -14,6 +14,8 @@
 
 package pipeline
 
+import "context"
+
 // MapReader: 1→1 mapping (optionally drop by returning (nil,false))
 type MapReader struct {
 	in Reader
@@ -24,9 +26,9 @@ func Map(in Reader, fn func(Row) (Row, bool)) *MapReader {
 	return &MapReader{in: in, fn: fn}
 }
 
-func (m *MapReader) Next() (*Batch, error) {
+func (m *MapReader) Next(ctx context.Context) (*Batch, error) {
 	for {
-		in, err := m.in.Next()
+		in, err := m.in.Next(ctx)
 		if err != nil {
 			return nil, err
 		}

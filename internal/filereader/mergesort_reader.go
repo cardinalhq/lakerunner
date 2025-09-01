@@ -70,7 +70,7 @@ type MergesortReader struct {
 // - Each reader must return rows in sorted order (according to the selector logic)
 // - The selector function must be consistent (same inputs -> same output)
 // - Readers will be closed when the MergesortReader is closed
-func NewMergesortReader(readers []Reader, keyProvider SortKeyProvider, batchSize int) (*MergesortReader, error) {
+func NewMergesortReader(ctx context.Context, readers []Reader, keyProvider SortKeyProvider, batchSize int) (*MergesortReader, error) {
 	if len(readers) == 0 {
 		return nil, errors.New("at least one reader is required")
 	}
@@ -97,7 +97,7 @@ func NewMergesortReader(readers []Reader, keyProvider SortKeyProvider, batchSize
 	}
 
 	// Prime all readers by loading their first rows
-	if err := or.primeReaders(); err != nil {
+	if err := or.primeReaders(ctx); err != nil {
 		or.Close()
 		return nil, fmt.Errorf("failed to prime readers: %w", err)
 	}
@@ -106,9 +106,9 @@ func NewMergesortReader(readers []Reader, keyProvider SortKeyProvider, batchSize
 }
 
 // primeReaders loads the first batch from each reader.
-func (or *MergesortReader) primeReaders() error {
+func (or *MergesortReader) primeReaders(ctx context.Context) error {
 	for _, state := range or.states {
-		if err := or.advance(state); err != nil {
+		if err := or.advance(ctx, state); err != nil {
 			return fmt.Errorf("failed to prime reader %d: %w", state.index, err)
 		}
 	}
@@ -116,7 +116,7 @@ func (or *MergesortReader) primeReaders() error {
 }
 
 // advance loads the next batch or moves to the next row in the current batch for the given reader state.
-func (or *MergesortReader) advance(state *mergesortReaderState) error {
+func (or *MergesortReader) advance(ctx context.Context, state *mergesortReaderState) error {
 	if state.done || state.err != nil {
 		return state.err
 	}
@@ -135,7 +135,7 @@ func (or *MergesortReader) advance(state *mergesortReaderState) error {
 			state.currentBatch = nil
 		}
 
-		batch, err := state.reader.Next()
+		batch, err := state.reader.Next(ctx)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				state.done = true
@@ -147,7 +147,7 @@ func (or *MergesortReader) advance(state *mergesortReaderState) error {
 
 		// Track rows read from underlying readers
 		if batch != nil {
-			rowsInCounter.Add(context.Background(), int64(batch.Len()), otelmetric.WithAttributes(
+			rowsInCounter.Add(ctx, int64(batch.Len()), otelmetric.WithAttributes(
 				attribute.String("reader", "MergesortReader"),
 			))
 		}
@@ -172,7 +172,7 @@ func (or *MergesortReader) advance(state *mergesortReaderState) error {
 }
 
 // Next returns the next batch of rows in sorted order across all readers.
-func (or *MergesortReader) Next() (*Batch, error) {
+func (or *MergesortReader) Next(ctx context.Context) (*Batch, error) {
 	if or.closed {
 		return nil, errors.New("reader is closed")
 	}
@@ -231,7 +231,7 @@ func (or *MergesortReader) Next() (*Batch, error) {
 
 			// Consume the current row and advance if needed
 			selectedState.consumeCurrentRow()
-			if err := or.advance(selectedState); err != nil {
+			if err := or.advance(ctx, selectedState); err != nil {
 				pipeline.ReturnBatch(batch)
 				return nil, fmt.Errorf("failed to advance reader %d: %w", selectedState.index, err)
 			}
@@ -242,7 +242,7 @@ func (or *MergesortReader) Next() (*Batch, error) {
 	if batch.Len() > 0 {
 		or.rowCount += int64(batch.Len())
 		// Track rows output to downstream
-		rowsOutCounter.Add(context.Background(), int64(batch.Len()), otelmetric.WithAttributes(
+		rowsOutCounter.Add(ctx, int64(batch.Len()), otelmetric.WithAttributes(
 			attribute.String("reader", "MergesortReader"),
 		))
 		return batch, nil

@@ -17,6 +17,7 @@
 package filereader
 
 import (
+	"context"
 	"io"
 	"os"
 	"runtime"
@@ -73,7 +74,7 @@ func TestLinearMemoryGrowth(t *testing.T) {
 			if err != nil {
 				return nil, err
 			}
-			reader, err := NewArrowCookedReader(file, 1000)
+			reader, err := NewArrowCookedReader(context.TODO(), file, 1000)
 			if err != nil {
 				file.Close()
 				return nil, err
@@ -153,7 +154,7 @@ func measureMemoryGrowthOverIterations(t *testing.T, factory func() (Reader, err
 		}
 
 		// Process one batch
-		batch, err := reader.Next()
+		batch, err := reader.Next(context.TODO())
 		if err != nil {
 			t.Fatalf("Failed to read batch: %v", err)
 		}
@@ -220,7 +221,7 @@ func TestMemoryGrowthPerIteration(t *testing.T) {
 			if err != nil {
 				return nil, err
 			}
-			reader, err := NewArrowCookedReader(file, 1000)
+			reader, err := NewArrowCookedReader(context.TODO(), file, 1000)
 			if err != nil {
 				file.Close()
 				return nil, err

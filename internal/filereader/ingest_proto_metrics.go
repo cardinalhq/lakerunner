@@ -81,7 +81,7 @@ func NewIngestProtoMetricsReaderFromMetrics(metrics *pmetric.Metrics, batchSize 
 }
 
 // Next returns the next batch of rows from the OTEL metrics.
-func (r *IngestProtoMetricsReader) Next() (*Batch, error) {
+func (r *IngestProtoMetricsReader) Next(ctx context.Context) (*Batch, error) {
 	if r.closed {
 		return nil, fmt.Errorf("reader is closed")
 	}
@@ -91,7 +91,7 @@ func (r *IngestProtoMetricsReader) Next() (*Batch, error) {
 	for batch.Len() < r.batchSize {
 		row := make(Row)
 
-		if err := r.getMetricRow(row); err != nil {
+		if err := r.getMetricRow(ctx, row); err != nil {
 			if err == io.EOF {
 				if batch.Len() == 0 {
 					pipeline.ReturnBatch(batch)
@@ -111,7 +111,7 @@ func (r *IngestProtoMetricsReader) Next() (*Batch, error) {
 	if batch.Len() > 0 {
 		r.rowCount += int64(batch.Len())
 		// Track rows output to downstream
-		rowsOutCounter.Add(context.Background(), int64(batch.Len()), otelmetric.WithAttributes(
+		rowsOutCounter.Add(ctx, int64(batch.Len()), otelmetric.WithAttributes(
 			attribute.String("reader", "IngestProtoMetricsReader"),
 		))
 		return batch, nil
@@ -123,7 +123,7 @@ func (r *IngestProtoMetricsReader) Next() (*Batch, error) {
 
 // getMetricRow handles reading the next datapoint row using streaming iteration.
 // The provided row must be initialized as an empty map before calling this method.
-func (r *IngestProtoMetricsReader) getMetricRow(row Row) error {
+func (r *IngestProtoMetricsReader) getMetricRow(ctx context.Context, row Row) error {
 	if r.otelMetrics == nil {
 		return io.EOF
 	}
@@ -141,10 +141,10 @@ func (r *IngestProtoMetricsReader) getMetricRow(row Row) error {
 
 				if r.datapointIndex < datapointCount {
 					// Track datapoints read from proto
-					rowsInCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+					rowsInCounter.Add(ctx, 1, otelmetric.WithAttributes(
 						attribute.String("reader", "IngestProtoMetricsReader"),
 					))
-					dropped, err := r.buildDatapointRow(row, rm, sm, metric, r.datapointIndex)
+					dropped, err := r.buildDatapointRow(ctx, row, rm, sm, metric, r.datapointIndex)
 					r.datapointIndex++
 
 					if err != nil {
@@ -196,7 +196,7 @@ func (r *IngestProtoMetricsReader) getDatapointCount(metric pmetric.Metric) int 
 
 // buildDatapointRow populates the provided row with data from a single datapoint and its context.
 // Returns (dropped, error) where dropped indicates if the datapoint was filtered out.
-func (r *IngestProtoMetricsReader) buildDatapointRow(row Row, rm pmetric.ResourceMetrics, sm pmetric.ScopeMetrics, metric pmetric.Metric, datapointIndex int) (bool, error) {
+func (r *IngestProtoMetricsReader) buildDatapointRow(ctx context.Context, row Row, rm pmetric.ResourceMetrics, sm pmetric.ScopeMetrics, metric pmetric.Metric, datapointIndex int) (bool, error) {
 	// Add resource attributes with prefix
 	rm.Resource().Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
@@ -240,20 +240,20 @@ func (r *IngestProtoMetricsReader) buildDatapointRow(row Row, rm pmetric.Resourc
 	switch metric.Type() {
 	case pmetric.MetricTypeGauge:
 		dp := metric.Gauge().DataPoints().At(datapointIndex)
-		return r.addNumberDatapointFields(row, dp, "gauge")
+		return r.addNumberDatapointFields(ctx, row, dp, "gauge")
 	case pmetric.MetricTypeSum:
 		dp := metric.Sum().DataPoints().At(datapointIndex)
-		return r.addNumberDatapointFields(row, dp, "sum")
+		return r.addNumberDatapointFields(ctx, row, dp, "sum")
 	case pmetric.MetricTypeHistogram:
 		dp := metric.Histogram().DataPoints().At(datapointIndex)
-		return r.addHistogramDatapointFields(row, dp)
+		return r.addHistogramDatapointFields(ctx, row, dp)
 	case pmetric.MetricTypeExponentialHistogram:
 		dp := metric.ExponentialHistogram().DataPoints().At(datapointIndex)
-		return r.addExponentialHistogramDatapointFields(row, dp)
+		return r.addExponentialHistogramDatapointFields(ctx, row, dp)
 	case pmetric.MetricTypeSummary:
 		// TODO: Implement proper summary handling with sketches and rollup fields
 		// For now, drop these data points to avoid downstream processing issues
-		rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+		rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
 			attribute.String("reader", "IngestProtoMetricsReader"),
 			attribute.String("metric_type", "summary"),
 			attribute.String("reason", "not_implemented"),
@@ -266,7 +266,7 @@ func (r *IngestProtoMetricsReader) buildDatapointRow(row Row, rm pmetric.Resourc
 
 // addNumberDatapointFields adds fields from a NumberDataPoint to the row.
 // Returns (dropped, error) where dropped indicates if the datapoint was filtered out.
-func (r *IngestProtoMetricsReader) addNumberDatapointFields(ret Row, dp pmetric.NumberDataPoint, metricType string) (bool, error) {
+func (r *IngestProtoMetricsReader) addNumberDatapointFields(ctx context.Context, ret Row, dp pmetric.NumberDataPoint, metricType string) (bool, error) {
 	// Add datapoint attributes
 	dp.Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
@@ -292,7 +292,7 @@ func (r *IngestProtoMetricsReader) addNumberDatapointFields(ret Row, dp pmetric.
 
 	// Check for NaN values and skip this datapoint if found
 	if math.IsNaN(value) || math.IsInf(value, 0) {
-		rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+		rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
 			attribute.String("reader", "IngestProtoMetricsReader"),
 			attribute.String("metric_type", metricType),
 			attribute.String("reason", "nan_or_inf"),
@@ -317,7 +317,7 @@ func (r *IngestProtoMetricsReader) addNumberDatapointFields(ret Row, dp pmetric.
 	return false, nil
 }
 
-func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ret Row, dp pmetric.HistogramDataPoint) (bool, error) {
+func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ctx context.Context, ret Row, dp pmetric.HistogramDataPoint) (bool, error) {
 	// 0) Bail if there are no counts at all
 	hasCounts := false
 	for i := 0; i < dp.BucketCounts().Len(); i++ {
@@ -327,7 +327,7 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ret Row, dp pmetr
 		}
 	}
 	if !hasCounts {
-		rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+		rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
 			attribute.String("reader", "IngestProtoMetricsReader"),
 			attribute.String("metric_type", "histogram"),
 			attribute.String("reason", "no_counts"),
@@ -360,7 +360,7 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ret Row, dp pmetr
 	m := dp.ExplicitBounds().Len()
 	n := dp.BucketCounts().Len() // usually m+1
 	if n == 0 {
-		rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+		rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
 			attribute.String("reader", "IngestProtoMetricsReader"),
 			attribute.String("metric_type", "histogram"),
 			attribute.String("reason", "no_bucket_counts"),
@@ -513,7 +513,7 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ret Row, dp pmetr
 }
 
 // addExponentialHistogramDatapointFields adds fields from an ExponentialHistogramDataPoint to the row.
-func (r *IngestProtoMetricsReader) addExponentialHistogramDatapointFields(ret Row, dp pmetric.ExponentialHistogramDataPoint) (bool, error) {
+func (r *IngestProtoMetricsReader) addExponentialHistogramDatapointFields(ctx context.Context, ret Row, dp pmetric.ExponentialHistogramDataPoint) (bool, error) {
 	// Add datapoint attributes
 	dp.Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
@@ -566,7 +566,7 @@ func (r *IngestProtoMetricsReader) addExponentialHistogramDatapointFields(ret Ro
 
 	if !hasData {
 		// Drop exponential histogram datapoints with no data
-		rowsDroppedCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+		rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
 			attribute.String("reader", "IngestProtoMetricsReader"),
 			attribute.String("metric_type", "exponential_histogram"),
 			attribute.String("reason", "no_data"),

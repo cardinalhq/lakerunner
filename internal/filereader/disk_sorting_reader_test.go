@@ -15,6 +15,7 @@
 package filereader
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -58,7 +59,7 @@ func TestDiskSortingReader_BasicSorting(t *testing.T) {
 	// Read all rows
 	var allRows []Row
 	for {
-		batch, err := sortingReader.Next()
+		batch, err := sortingReader.Next(context.TODO())
 		if err == io.EOF {
 			break
 		}
@@ -105,7 +106,7 @@ func TestDiskSortingReader_TypePreservation(t *testing.T) {
 	defer sortingReader.Close()
 
 	// Read the row back
-	batch, err := sortingReader.Next()
+	batch, err := sortingReader.Next(context.TODO())
 	require.NoError(t, err)
 	require.Equal(t, 1, batch.Len())
 
@@ -131,7 +132,7 @@ func TestDiskSortingReader_EmptyInput(t *testing.T) {
 	defer sortingReader.Close()
 
 	// Should get EOF immediately
-	_, err = sortingReader.Next()
+	_, err = sortingReader.Next(context.TODO())
 	assert.Equal(t, io.EOF, err)
 }
 
@@ -157,7 +158,7 @@ func TestDiskSortingReader_MissingFields(t *testing.T) {
 	defer sortingReader.Close()
 
 	// Should succeed - missing fields are handled by the sort function
-	batch, err := sortingReader.Next()
+	batch, err := sortingReader.Next(context.TODO())
 
 	// Should read successfully (missing fields don't cause failures anymore)
 	assert.NoError(t, err)
@@ -181,7 +182,7 @@ func TestDiskSortingReader_CleanupOnError(t *testing.T) {
 	tempFileName := sortingReader.tempFile.Name()
 
 	// Try to read - should fail
-	_, err = sortingReader.Next()
+	_, err = sortingReader.Next(context.TODO())
 	assert.Error(t, err)
 
 	// Close should clean up temp file
@@ -205,7 +206,7 @@ func NewMockReader(rows []Row) *MockReader {
 	return &MockReader{rows: rows}
 }
 
-func (m *MockReader) Next() (*Batch, error) {
+func (m *MockReader) Next(ctx context.Context) (*Batch, error) {
 	if m.closed {
 		return nil, fmt.Errorf("reader is closed")
 	}
@@ -266,7 +267,7 @@ func TestDiskSortingReader_ArbitraryRowCount(t *testing.T) {
 	totalRead := 0
 	batchCount := 0
 	for {
-		batch, err := sortingReader.Next()
+		batch, err := sortingReader.Next(context.TODO())
 		if err == io.EOF {
 			break
 		}
@@ -304,7 +305,7 @@ type manyBatchReader struct {
 	remaining int
 }
 
-func (m *manyBatchReader) Next() (*Batch, error) {
+func (m *manyBatchReader) Next(ctx context.Context) (*Batch, error) {
 	if m.remaining == 0 {
 		return nil, io.EOF
 	}
@@ -336,7 +337,7 @@ func TestWriteAndIndexAllRowsDoesNotLeakBatches(t *testing.T) {
 	require.NoError(t, err)
 	defer dsr.Close()
 
-	require.NoError(t, dsr.writeAndIndexAllRows())
+	require.NoError(t, dsr.writeAndIndexAllRows(context.TODO()))
 
 	// Get final pool state after processing
 	finalStats := pipeline.GlobalBatchPoolStats()

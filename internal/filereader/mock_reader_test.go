@@ -15,6 +15,7 @@
 package filereader
 
 import (
+	"context"
 	"fmt"
 	"io"
 
@@ -39,7 +40,7 @@ func newMockReader(name string, rows []Row) *mockReader {
 	}
 }
 
-func (m *mockReader) Next() (*Batch, error) {
+func (m *mockReader) Next(ctx context.Context) (*Batch, error) {
 	if m.closed {
 		return nil, fmt.Errorf("reader %s is closed", m.name)
 	}
@@ -80,7 +81,7 @@ type errorReader struct {
 	rowCount int64
 }
 
-func (e *errorReader) Next() (*Batch, error) {
+func (e *errorReader) Next(ctx context.Context) (*Batch, error) {
 	if e.closed {
 		return nil, fmt.Errorf("reader is closed")
 	}

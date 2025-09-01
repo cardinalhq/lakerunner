@@ -16,6 +16,7 @@ package filereader
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -54,7 +55,7 @@ func TestNewProtoTracesReader_EmptyData(t *testing.T) {
 		defer reader.Close()
 
 		// Reading from empty traces should return EOF immediately
-		batch, readErr := reader.Next()
+		batch, readErr := reader.Next(context.TODO())
 		assert.Nil(t, batch)
 		assert.True(t, errors.Is(readErr, io.EOF))
 	}
@@ -107,7 +108,7 @@ func TestProtoTracesReader_EmptySlice(t *testing.T) {
 
 	// Read with empty slice behavior is no longer applicable with Next() method
 	// Next() returns a batch or nil, not dependent on slice size
-	batch, err := protoReader.Next()
+	batch, err := protoReader.Next(context.TODO())
 	if batch != nil {
 		assert.NoError(t, err)
 		assert.GreaterOrEqual(t, batch.Len(), 0)
@@ -122,7 +123,7 @@ func TestProtoTracesReader_Close(t *testing.T) {
 	require.NoError(t, err)
 
 	// Should be able to read before closing
-	batch, err := protoReader.Next()
+	batch, err := protoReader.Next(context.TODO())
 	require.NoError(t, err)
 	require.NotNil(t, batch, "Should read a batch before closing")
 	require.Equal(t, 1, batch.Len(), "Should read exactly 1 row before closing")
@@ -132,7 +133,7 @@ func TestProtoTracesReader_Close(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Reading after close should return error
-	_, err = protoReader.Next()
+	_, err = protoReader.Next(context.TODO())
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "closed")
 
@@ -339,7 +340,7 @@ func TestProtoTracesReader_SyntheticData(t *testing.T) {
 	// Read in batches
 	var totalBatchedRows int
 	for {
-		batch, readErr := protoReader2.Next()
+		batch, readErr := protoReader2.Next(context.TODO())
 		if batch != nil {
 			totalBatchedRows += batch.Len()
 
@@ -366,7 +367,7 @@ func TestProtoTracesReader_SyntheticData(t *testing.T) {
 	require.NoError(t, err)
 	defer protoReader3.Close()
 
-	batch, err := protoReader3.Next()
+	batch, err := protoReader3.Next(context.TODO())
 	require.NoError(t, err)
 	require.NotNil(t, batch, "Should read a batch")
 	assert.Equal(t, 1, batch.Len(), "Should read exactly 1 row")
@@ -378,7 +379,7 @@ func TestProtoTracesReader_SyntheticData(t *testing.T) {
 	// Test data exhaustion - continue reading until EOF
 	var exhaustRows int
 	for {
-		batch, readErr := protoReader3.Next()
+		batch, readErr := protoReader3.Next(context.TODO())
 		if batch != nil {
 			exhaustRows += batch.Len()
 		}

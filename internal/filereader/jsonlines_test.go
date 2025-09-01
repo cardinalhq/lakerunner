@@ -17,6 +17,7 @@ package filereader
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"errors"
 	"io"
 	"testing"
@@ -31,7 +32,7 @@ import (
 func readAllRows(reader Reader) ([]Row, error) {
 	var allRows []Row
 	for {
-		batch, err := reader.Next()
+		batch, err := reader.Next(context.TODO())
 		if batch != nil {
 			// Copy the rows since they are owned by the reader
 			for i := 0; i < batch.Len(); i++ {
@@ -170,14 +171,14 @@ func TestJSONLinesReaderWithMockEOF(t *testing.T) {
 	defer reader.Close()
 
 	// Should read the data successfully
-	batch, err := reader.Next()
+	batch, err := reader.Next(context.TODO())
 	require.NoError(t, err)
 	require.NotNil(t, batch)
 	assert.Equal(t, 1, batch.Len())
 	assert.Equal(t, "data", batch.Get(0)[wkk.NewRowKey("test")])
 
 	// Next call should return EOF
-	batch, err = reader.Next()
+	batch, err = reader.Next(context.TODO())
 	assert.Nil(t, batch)
 	assert.True(t, errors.Is(err, io.EOF))
 }
@@ -190,7 +191,7 @@ func TestJSONLinesReaderClose(t *testing.T) {
 	require.NoError(t, err)
 
 	// Should be able to read before closing
-	batch, err := reader.Next()
+	batch, err := reader.Next(context.TODO())
 	require.NoError(t, err)
 	require.NotNil(t, batch)
 	assert.Equal(t, 1, batch.Len())
@@ -202,7 +203,7 @@ func TestJSONLinesReaderClose(t *testing.T) {
 	assert.True(t, mock.closed)
 
 	// Reading after close should return EOF
-	_, err = reader.Next()
+	_, err = reader.Next(context.TODO())
 	assert.True(t, errors.Is(err, io.EOF))
 
 	// Close should be idempotent
@@ -233,7 +234,7 @@ func TestJSONLinesReaderBatchProcessing(t *testing.T) {
 	assert.Equal(t, float64(5), allRows[4][wkk.NewRowKey("line")])
 
 	// Next read should return EOF
-	batch, err := reader.Next()
+	batch, err := reader.Next(context.TODO())
 	assert.Nil(t, batch)
 	assert.True(t, errors.Is(err, io.EOF))
 }

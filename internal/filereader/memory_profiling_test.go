@@ -18,6 +18,7 @@ package filereader
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -222,7 +223,7 @@ func TestTotalMemoryFootprintComparison(t *testing.T) {
 
 			totalRows := int64(0)
 			for {
-				batch, err := pr.Next()
+				batch, err := pr.Next(context.TODO())
 				if err == io.EOF {
 					break
 				}
@@ -244,7 +245,7 @@ func TestTotalMemoryFootprintComparison(t *testing.T) {
 
 			totalRows := int64(0)
 			for {
-				batch, err := dr.Next()
+				batch, err := dr.Next(context.TODO())
 				if err == io.EOF {
 					break
 				}
@@ -259,7 +260,7 @@ func TestTotalMemoryFootprintComparison(t *testing.T) {
 		}},
 		{"Arrow", func() (int64, error) {
 			reader := bytes.NewReader(data)
-			ar, err := NewArrowCookedReader(reader, 1000)
+			ar, err := NewArrowCookedReader(context.TODO(), reader, 1000)
 			if err != nil {
 				return 0, err
 			}
@@ -267,7 +268,7 @@ func TestTotalMemoryFootprintComparison(t *testing.T) {
 
 			totalRows := int64(0)
 			for {
-				batch, err := ar.Next()
+				batch, err := ar.Next(context.TODO())
 				if err == io.EOF {
 					break
 				}
@@ -349,7 +350,7 @@ func BenchmarkTotalMemoryFootprint(b *testing.B) {
 
 			totalRows := int64(0)
 			for {
-				batch, err := pr.Next()
+				batch, err := pr.Next(context.TODO())
 				if err == io.EOF {
 					break
 				}
@@ -371,7 +372,7 @@ func BenchmarkTotalMemoryFootprint(b *testing.B) {
 
 			totalRows := int64(0)
 			for {
-				batch, err := dr.Next()
+				batch, err := dr.Next(context.TODO())
 				if err == io.EOF {
 					break
 				}
@@ -386,7 +387,7 @@ func BenchmarkTotalMemoryFootprint(b *testing.B) {
 		}},
 		{"Arrow", func() (int64, error) {
 			reader := bytes.NewReader(data)
-			ar, err := NewArrowCookedReader(reader, 1000)
+			ar, err := NewArrowCookedReader(context.TODO(), reader, 1000)
 			if err != nil {
 				return 0, err
 			}
@@ -394,7 +395,7 @@ func BenchmarkTotalMemoryFootprint(b *testing.B) {
 
 			totalRows := int64(0)
 			for {
-				batch, err := ar.Next()
+				batch, err := ar.Next(context.TODO())
 				if err == io.EOF {
 					break
 				}
@@ -488,7 +489,7 @@ func TestMemoryLeakDetection(t *testing.T) {
 			defer pr.Close()
 
 			for {
-				batch, err := pr.Next()
+				batch, err := pr.Next(context.TODO())
 				if err == io.EOF {
 					break
 				}
@@ -507,7 +508,7 @@ func TestMemoryLeakDetection(t *testing.T) {
 			defer dr.Close()
 
 			for {
-				batch, err := dr.Next()
+				batch, err := dr.Next(context.TODO())
 				if err == io.EOF {
 					break
 				}
@@ -520,14 +521,14 @@ func TestMemoryLeakDetection(t *testing.T) {
 		}},
 		{"Arrow", func() error {
 			reader := bytes.NewReader(data)
-			ar, err := NewArrowCookedReader(reader, 1000)
+			ar, err := NewArrowCookedReader(context.TODO(), reader, 1000)
 			if err != nil {
 				return err
 			}
 			defer ar.Close()
 
 			for {
-				batch, err := ar.Next()
+				batch, err := ar.Next(context.TODO())
 				if err == io.EOF {
 					break
 				}
@@ -630,7 +631,7 @@ func TestPeakMemoryUsage(t *testing.T) {
 			defer pr.Close()
 
 			for {
-				batch, err := pr.Next()
+				batch, err := pr.Next(context.TODO())
 				if err == io.EOF {
 					break
 				}
@@ -652,7 +653,7 @@ func TestPeakMemoryUsage(t *testing.T) {
 			defer dr.Close()
 
 			for {
-				batch, err := dr.Next()
+				batch, err := dr.Next(context.TODO())
 				if err == io.EOF {
 					break
 				}
@@ -668,14 +669,14 @@ func TestPeakMemoryUsage(t *testing.T) {
 	t.Run("Arrow_Peak", func(t *testing.T) {
 		measurePeakMemory(t, "Arrow", func() error {
 			reader := bytes.NewReader(data)
-			ar, err := NewArrowCookedReader(reader, 1000)
+			ar, err := NewArrowCookedReader(context.TODO(), reader, 1000)
 			if err != nil {
 				return err
 			}
 			defer ar.Close()
 
 			for {
-				batch, err := ar.Next()
+				batch, err := ar.Next(context.TODO())
 				if err == io.EOF {
 					break
 				}

@@ -15,6 +15,7 @@
 package filereader
 
 import (
+	"context"
 	"io"
 	"testing"
 
@@ -48,7 +49,7 @@ func runAggregation(t *testing.T) {
 	require.NoError(t, err)
 
 	for {
-		batch, err := reader.Next()
+		batch, err := reader.Next(context.TODO())
 		if err == io.EOF {
 			break
 		}

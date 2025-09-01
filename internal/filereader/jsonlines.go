@@ -58,7 +58,7 @@ func NewJSONLinesReader(reader io.ReadCloser, batchSize int) (*JSONLinesReader, 
 	}, nil
 }
 
-func (r *JSONLinesReader) Next() (*Batch, error) {
+func (r *JSONLinesReader) Next(ctx context.Context) (*Batch, error) {
 	if r.closed {
 		return nil, io.EOF
 	}
@@ -85,7 +85,7 @@ func (r *JSONLinesReader) Next() (*Batch, error) {
 		}
 
 		// Track lines read from input
-		rowsInCounter.Add(context.Background(), 1, otelmetric.WithAttributes(
+		rowsInCounter.Add(ctx, 1, otelmetric.WithAttributes(
 			attribute.String("reader", "JSONLinesReader"),
 		))
 
@@ -111,7 +111,7 @@ func (r *JSONLinesReader) Next() (*Batch, error) {
 
 	r.totalRows += int64(batch.Len())
 	// Track rows output to downstream
-	rowsOutCounter.Add(context.Background(), int64(batch.Len()), otelmetric.WithAttributes(
+	rowsOutCounter.Add(ctx, int64(batch.Len()), otelmetric.WithAttributes(
 		attribute.String("reader", "JSONLinesReader"),
 	))
 	return batch, nil

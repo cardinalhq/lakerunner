@@ -158,14 +158,14 @@ func coordinate(
 	input.Logger.Debug("Created readers for batch", slog.Int("readerCount", len(readers)))
 
 	// Step 3: Set up unified reader pipeline
-	finalReader, err := createUnifiedReader(readers)
+	finalReader, err := createUnifiedReader(ctx, readers)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create unified reader: %w", err)
 	}
 
 	// Step 4: Process all rows from the unified pipeline
 	for {
-		batch, readErr := finalReader.Next()
+		batch, readErr := finalReader.Next(ctx)
 
 		if readErr != nil && readErr != io.EOF {
 			if batch != nil {
@@ -321,7 +321,7 @@ func createReadersForFiles(validFiles []fileInfo, orgID string, ll *slog.Logger)
 }
 
 // createUnifiedReader creates a single reader from multiple readers
-func createUnifiedReader(readers []filereader.Reader) (filereader.Reader, error) {
+func createUnifiedReader(ctx context.Context, readers []filereader.Reader) (filereader.Reader, error) {
 	var finalReader filereader.Reader
 
 	if len(readers) == 1 {
@@ -330,7 +330,7 @@ func createUnifiedReader(readers []filereader.Reader) (filereader.Reader, error)
 	} else {
 		// Multiple readers - use MergesortReader to merge sorted streams
 		keyProvider := metricsprocessing.GetCurrentMetricSortKeyProvider()
-		multiReader, err := filereader.NewMergesortReader(readers, keyProvider, 1000)
+		multiReader, err := filereader.NewMergesortReader(ctx, readers, keyProvider, 1000)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create multi-source reader: %w", err)
 		}

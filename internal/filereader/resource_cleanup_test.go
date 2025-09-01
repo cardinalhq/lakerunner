@@ -18,6 +18,7 @@ package filereader
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"os"
 	"path/filepath"
@@ -50,7 +51,7 @@ func TestResourceCleanupValidation(t *testing.T) {
 
 			// Read all data
 			for {
-				batch, err := pr.Next()
+				batch, err := pr.Next(context.TODO())
 				if err == io.EOF {
 					break
 				}
@@ -74,7 +75,7 @@ func TestResourceCleanupValidation(t *testing.T) {
 
 			// Read all data
 			for {
-				batch, err := dr.Next()
+				batch, err := dr.Next(context.TODO())
 				if err == io.EOF {
 					break
 				}
@@ -92,14 +93,14 @@ func TestResourceCleanupValidation(t *testing.T) {
 	t.Run("Arrow_CleanupValidation", func(t *testing.T) {
 		testReaderCleanup(t, "Arrow", func() error {
 			reader := bytes.NewReader(data)
-			ar, err := NewArrowCookedReader(reader, 1000)
+			ar, err := NewArrowCookedReader(context.TODO(), reader, 1000)
 			if err != nil {
 				return err
 			}
 
 			// Read all data
 			for {
-				batch, err := ar.Next()
+				batch, err := ar.Next(context.TODO())
 				if err == io.EOF {
 					break
 				}
@@ -228,7 +229,7 @@ func TestResourceCleanupWithExplicitDestructions(t *testing.T) {
 				}()
 
 				// Read some data
-				batch, err := dr.Next()
+				batch, err := dr.Next(context.TODO())
 				if err != nil && err != io.EOF {
 					t.Fatalf("Read error: %v", err)
 				}
@@ -253,7 +254,7 @@ func TestResourceCleanupWithExplicitDestructions(t *testing.T) {
 		for i := 0; i < 3; i++ {
 			func() {
 				reader := bytes.NewReader(data)
-				ar, err := NewArrowCookedReader(reader, 1000)
+				ar, err := NewArrowCookedReader(context.TODO(), reader, 1000)
 				if err != nil {
 					t.Fatalf("Failed to create Arrow reader: %v", err)
 				}
@@ -268,7 +269,7 @@ func TestResourceCleanupWithExplicitDestructions(t *testing.T) {
 				}()
 
 				// Read some data
-				batch, err := ar.Next()
+				batch, err := ar.Next(context.TODO())
 				if err != nil && err != io.EOF {
 					t.Fatalf("Read error: %v", err)
 				}
@@ -310,7 +311,7 @@ func TestStabilizedMemoryMeasurement(t *testing.T) {
 			defer pr.Close()
 
 			for {
-				batch, err := pr.Next()
+				batch, err := pr.Next(context.TODO())
 				if err == io.EOF {
 					break
 				}
@@ -329,7 +330,7 @@ func TestStabilizedMemoryMeasurement(t *testing.T) {
 			defer dr.Close()
 
 			for {
-				batch, err := dr.Next()
+				batch, err := dr.Next(context.TODO())
 				if err == io.EOF {
 					break
 				}
@@ -342,14 +343,14 @@ func TestStabilizedMemoryMeasurement(t *testing.T) {
 		}},
 		{"Arrow", func() error {
 			reader := bytes.NewReader(data)
-			ar, err := NewArrowCookedReader(reader, 1000)
+			ar, err := NewArrowCookedReader(context.TODO(), reader, 1000)
 			if err != nil {
 				return err
 			}
 			defer ar.Close()
 
 			for {
-				batch, err := ar.Next()
+				batch, err := ar.Next(context.TODO())
 				if err == io.EOF {
 					break
 				}
@@ -497,7 +498,7 @@ func TestSequentialReaderExecution(t *testing.T) {
 
 	rowCount := 0
 	for {
-		batch, err := pr.Next()
+		batch, err := pr.Next(context.TODO())
 		if err == io.EOF {
 			break
 		}
@@ -531,7 +532,7 @@ func TestSequentialReaderExecution(t *testing.T) {
 
 	rowCount = 0
 	for {
-		batch, err := dr.Next()
+		batch, err := dr.Next(context.TODO())
 		if err == io.EOF {
 			break
 		}
@@ -559,14 +560,14 @@ func TestSequentialReaderExecution(t *testing.T) {
 	// Test Arrow last
 	t.Logf("\n--- Testing Arrow Reader ---")
 	reader3 := bytes.NewReader(data)
-	ar, err := NewArrowCookedReader(reader3, 1000)
+	ar, err := NewArrowCookedReader(context.TODO(), reader3, 1000)
 	if err != nil {
 		t.Fatalf("Failed to create Arrow reader: %v", err)
 	}
 
 	rowCount = 0
 	for {
-		batch, err := ar.Next()
+		batch, err := ar.Next(context.TODO())
 		if err == io.EOF {
 			break
 		}

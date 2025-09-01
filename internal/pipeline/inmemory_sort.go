@@ -15,6 +15,7 @@
 package pipeline
 
 import (
+	"context"
 	"io"
 	"slices"
 )
@@ -38,9 +39,9 @@ func SortInMemory(reader Reader, less func(Row, Row) bool) Reader {
 	}
 }
 
-func (s *InMemorySortReader) Next() (*Batch, error) {
+func (s *InMemorySortReader) Next(ctx context.Context) (*Batch, error) {
 	if !s.loaded {
-		if err := s.loadAllRows(); err != nil {
+		if err := s.loadAllRows(ctx); err != nil {
 			return nil, err
 		}
 		slices.SortFunc(s.allRows, func(a, b Row) int {
@@ -77,9 +78,9 @@ func (s *InMemorySortReader) Next() (*Batch, error) {
 	return batch, nil
 }
 
-func (s *InMemorySortReader) loadAllRows() error {
+func (s *InMemorySortReader) loadAllRows(ctx context.Context) error {
 	for {
-		batch, err := s.reader.Next()
+		batch, err := s.reader.Next(ctx)
 		if err == io.EOF {
 			break
 		}
