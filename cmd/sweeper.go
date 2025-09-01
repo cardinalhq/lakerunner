@@ -38,7 +38,7 @@ func init() {
 			addlAttrs := attribute.NewSet(
 				attribute.String("action", "sweep"),
 			)
-			doneCtx, doneFx, err := setupTelemetry(servicename, &addlAttrs)
+			ctx, doneFx, err := setupTelemetry(servicename, &addlAttrs)
 			if err != nil {
 				return fmt.Errorf("failed to setup telemetry: %w", err)
 			}
@@ -54,7 +54,7 @@ func init() {
 			healthServer := healthcheck.NewServer(healthConfig)
 
 			go func() {
-				if err := healthServer.Start(doneCtx); err != nil {
+				if err := healthServer.Start(ctx); err != nil {
 					slog.Error("Health check server stopped", slog.Any("error", err))
 				}
 			}()
@@ -72,7 +72,7 @@ func init() {
 			// Mark as healthy once sweeper is created and starting
 			healthServer.SetStatus(healthcheck.StatusHealthy)
 
-			return cmd.Run(doneCtx)
+			return cmd.Run(ctx)
 		},
 	}
 
