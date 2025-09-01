@@ -98,11 +98,12 @@ func (r *ArrowCookedReader) Next() (*Batch, error) {
 	fields := rec.Schema().Fields()
 	numRows := int(rec.NumRows())
 
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		br := batch.AddRow()
 		for j, f := range fields {
 			col := rec.Column(j)
 			if col.IsNull(i) {
+				br[wkk.NewRowKeyFromBytes([]byte(f.Name))] = nil
 				continue
 			}
 			val := arrowValue(col, i)

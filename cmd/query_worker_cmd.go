@@ -65,7 +65,7 @@ func init() {
 				return fmt.Errorf("failed to create query-worker service: %w", err)
 			}
 
-			awsmanager, err := awsclient.NewManager(context.Background(), awsclient.WithAssumeRoleSessionName("query-worker"))
+			awsmanager, err := awsclient.NewManager(context.Background())
 			if err != nil {
 				return fmt.Errorf("failed to create AWS manager: %w", err)
 			}

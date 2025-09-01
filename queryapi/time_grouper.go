@@ -204,9 +204,8 @@ func packByCount(wins []SegmentGroup, minGroupSize int, qStart, qEnd int64) []Se
 				ss.StartTs = gs
 				ss.EndTs = ge
 				merged[k] = ss
-			} else {
-				// Already sealed to gs..ge; nothing else to do.
 			}
+			// Already sealed to gs..ge; nothing else to do.
 		}
 
 		segs := make([]SegmentInfo, 0, len(merged))

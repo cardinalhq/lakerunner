@@ -376,13 +376,6 @@ func (s *DDBSink) applyAltersLocked(ctx context.Context, missing map[string]stri
 	return s.reloadSchema(ctx)
 }
 
-// Non-locked variant for callers that don’t hold writeMu (kept for completeness).
-func (s *DDBSink) applyAlters(ctx context.Context, missing map[string]string) error {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	return s.applyAltersLocked(ctx, missing)
-}
-
 func openForLocalParquet() (*sql.DB, error) {
 	db, err := sql.Open("duckdb", "")
 	if err != nil {

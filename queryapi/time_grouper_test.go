@@ -15,7 +15,6 @@
 package queryapi
 
 import (
-	"fmt"
 	"testing"
 	"time"
 )
@@ -205,9 +204,4 @@ func TestNoDuplicationAcrossGroups(t *testing.T) {
 	if seen[1] > 1 {
 		t.Fatalf("segment duplicated across groups: %+v", seen)
 	}
-}
-
-// tiny sprintf helper for ids
-func idf(format string, args ...any) string {
-	return fmt.Sprintf(format, args...)
 }
