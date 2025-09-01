@@ -39,6 +39,7 @@ type StorageProfileProvider interface {
 	GetStorageProfileForOrganization(ctx context.Context, organizationID uuid.UUID) (StorageProfile, error)
 	GetStorageProfileForOrganizationAndInstance(ctx context.Context, organizationID uuid.UUID, instanceNum int16) (StorageProfile, error)
 	GetStorageProfileForOrganizationAndCollector(ctx context.Context, organizationID uuid.UUID, collectorName string) (StorageProfile, error)
+	GetLowestInstanceStorageProfile(ctx context.Context, organizationID uuid.UUID, bucketName string) (StorageProfile, error)
 	ResolveOrganization(ctx context.Context, bucketName, objectPath string) (uuid.UUID, error)
 }
 

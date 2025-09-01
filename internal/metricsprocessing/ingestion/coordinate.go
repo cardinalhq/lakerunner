@@ -31,7 +31,6 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
-	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
@@ -63,20 +62,9 @@ func coordinate(
 	firstItem := input.Items[0]
 
 	// Get storage profile and S3 client
-	var profile storageprofile.StorageProfile
-	var err error
-
-	// TODO: Add support for finding storage profiles consistently for arbitrary prefixes at some point
-	if collectorName := helpers.ExtractCollectorName(firstItem.ObjectID); collectorName != "" {
-		profile, err = sp.GetStorageProfileForOrganizationAndCollector(ctx, firstItem.OrganizationID, collectorName)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get storage profile for collector %s: %w", collectorName, err)
-		}
-	} else {
-		profile, err = sp.GetStorageProfileForOrganizationAndInstance(ctx, firstItem.OrganizationID, firstItem.InstanceNum)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get storage profile: %w", err)
-		}
+	profile, err := getStorageProfileForIngestion(ctx, sp, firstItem)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get storage profile: %w", err)
 	}
 
 	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)

@@ -172,6 +172,24 @@ func (m *mockConfigDBStoreageProfileFetcher) GetDefaultOrganizationBucket(ctx co
 	}, nil
 }
 
+func (m *mockConfigDBStoreageProfileFetcher) GetLowestInstanceOrganizationBucket(ctx context.Context, arg configdb.GetLowestInstanceOrganizationBucketParams) (configdb.GetLowestInstanceOrganizationBucketRow, error) {
+	if m.err != nil {
+		return configdb.GetLowestInstanceOrganizationBucketRow{}, m.err
+	}
+	return configdb.GetLowestInstanceOrganizationBucketRow{
+		OrganizationID: arg.OrganizationID,
+		InstanceNum:    1,
+		CollectorName:  "default",
+		BucketName:     arg.BucketName,
+		CloudProvider:  m.profile.CloudProvider,
+		Region:         m.profile.Region,
+		Role:           m.profile.Role,
+		Endpoint:       nil,
+		UsePathStyle:   false,
+		InsecureTls:    false,
+	}, nil
+}
+
 func TestDatabaseProvider_Get_SuccessWithRole(t *testing.T) {
 	orgID := uuid.New()
 	role := "admin"

@@ -119,6 +119,21 @@ func (m *mockBucketManagementFetcher) GetDefaultOrganizationBucket(ctx context.C
 	}, m.bucketErr
 }
 
+func (m *mockBucketManagementFetcher) GetLowestInstanceOrganizationBucket(ctx context.Context, arg configdb.GetLowestInstanceOrganizationBucketParams) (configdb.GetLowestInstanceOrganizationBucketRow, error) {
+	return configdb.GetLowestInstanceOrganizationBucketRow{
+		OrganizationID: arg.OrganizationID,
+		InstanceNum:    1,
+		CollectorName:  "default",
+		BucketName:     arg.BucketName,
+		CloudProvider:  m.bucketConfig.CloudProvider,
+		Region:         m.bucketConfig.Region,
+		Role:           m.bucketConfig.Role,
+		Endpoint:       m.bucketConfig.Endpoint,
+		UsePathStyle:   m.bucketConfig.UsePathStyle,
+		InsecureTls:    m.bucketConfig.InsecureTls,
+	}, m.bucketErr
+}
+
 func TestDatabaseProvider_ResolveOrganization_UUIDExtraction(t *testing.T) {
 	orgID := uuid.New()
 

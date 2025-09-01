@@ -18,8 +18,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
-	"strings"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/exemplar"
@@ -102,19 +100,9 @@ func uploadAndQueue(
 	ingestDateint int32,
 ) error {
 	// Get storage profile
-	var profile storageprofile.StorageProfile
-	var err error
-
-	if collectorName := helpers.ExtractCollectorName(firstItem.ObjectID); collectorName != "" {
-		profile, err = sp.GetStorageProfileForOrganizationAndCollector(ctx, firstItem.OrganizationID, collectorName)
-		if err != nil {
-			return fmt.Errorf("failed to get storage profile for collector %s: %w", collectorName, err)
-		}
-	} else {
-		profile, err = sp.GetStorageProfileForOrganizationAndInstance(ctx, firstItem.OrganizationID, firstItem.InstanceNum)
-		if err != nil {
-			return fmt.Errorf("failed to get storage profile: %w", err)
-		}
+	profile, err := getStorageProfileForIngestion(ctx, sp, firstItem)
+	if err != nil {
+		return fmt.Errorf("failed to get storage profile: %w", err)
 	}
 
 	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
@@ -156,14 +144,28 @@ func uploadAndQueue(
 // ShouldProcessExemplars checks if exemplar processing should be enabled
 // Returns false if LAKERUNNER_METRICS_EXEMPLARS is set to "false", "0", or "off"
 func ShouldProcessExemplars() bool {
-	env := strings.ToLower(strings.TrimSpace(os.Getenv("LAKERUNNER_METRICS_EXEMPLARS")))
-	switch env {
-	case "false", "0", "off", "no":
-		return false
-	case "":
-		// Default to true if not set
-		return true
-	default:
-		return true
+	return helpers.GetBoolEnv("LAKERUNNER_METRICS_EXEMPLARS", true)
+}
+
+// shouldUseSingleInstanceMode checks if single instance mode is enabled
+// Returns true if LAKERUNNER_SINGLE_INSTANCE_NUM is set to "true" or "1"
+func shouldUseSingleInstanceMode() bool {
+	return helpers.GetBoolEnv("LAKERUNNER_SINGLE_INSTANCE_NUM", false)
+}
+
+// getStorageProfileForIngestion gets the appropriate storage profile for ingestion
+// based on the LAKERUNNER_SINGLE_INSTANCE_NUM environment variable setting
+func getStorageProfileForIngestion(
+	ctx context.Context,
+	sp storageprofile.StorageProfileProvider,
+	firstItem lrdb.Inqueue,
+) (storageprofile.StorageProfile, error) {
+	if shouldUseSingleInstanceMode() {
+		return sp.GetLowestInstanceStorageProfile(ctx, firstItem.OrganizationID, firstItem.Bucket)
 	}
+
+	if collectorName := helpers.ExtractCollectorName(firstItem.ObjectID); collectorName != "" {
+		return sp.GetStorageProfileForOrganizationAndCollector(ctx, firstItem.OrganizationID, collectorName)
+	}
+	return sp.GetStorageProfileForOrganizationAndInstance(ctx, firstItem.OrganizationID, firstItem.InstanceNum)
 }

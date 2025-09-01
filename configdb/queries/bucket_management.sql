@@ -132,3 +132,11 @@ JOIN bucket_configurations bc ON ob.bucket_id = bc.id
 WHERE ob.organization_id = $1 
 ORDER BY ob.instance_num, ob.collector_name 
 LIMIT 1;
+
+-- name: GetLowestInstanceOrganizationBucket :one
+SELECT ob.organization_id, ob.instance_num, ob.collector_name, bc.bucket_name, bc.cloud_provider, bc.region, bc.role, bc.endpoint, bc.use_path_style, bc.insecure_tls
+FROM organization_buckets ob
+JOIN bucket_configurations bc ON ob.bucket_id = bc.id  
+WHERE ob.organization_id = $1 AND bc.bucket_name = $2 
+ORDER BY ob.instance_num, ob.collector_name 
+LIMIT 1;

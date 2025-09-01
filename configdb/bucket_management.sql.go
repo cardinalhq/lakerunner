@@ -328,6 +328,51 @@ func (q *Queries) GetLongestPrefixMatch(ctx context.Context, arg GetLongestPrefi
 	return organization_id, err
 }
 
+const getLowestInstanceOrganizationBucket = `-- name: GetLowestInstanceOrganizationBucket :one
+SELECT ob.organization_id, ob.instance_num, ob.collector_name, bc.bucket_name, bc.cloud_provider, bc.region, bc.role, bc.endpoint, bc.use_path_style, bc.insecure_tls
+FROM organization_buckets ob
+JOIN bucket_configurations bc ON ob.bucket_id = bc.id  
+WHERE ob.organization_id = $1 AND bc.bucket_name = $2 
+ORDER BY ob.instance_num, ob.collector_name 
+LIMIT 1
+`
+
+type GetLowestInstanceOrganizationBucketParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	BucketName     string    `json:"bucket_name"`
+}
+
+type GetLowestInstanceOrganizationBucketRow struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	InstanceNum    int16     `json:"instance_num"`
+	CollectorName  string    `json:"collector_name"`
+	BucketName     string    `json:"bucket_name"`
+	CloudProvider  string    `json:"cloud_provider"`
+	Region         string    `json:"region"`
+	Role           *string   `json:"role"`
+	Endpoint       *string   `json:"endpoint"`
+	UsePathStyle   bool      `json:"use_path_style"`
+	InsecureTls    bool      `json:"insecure_tls"`
+}
+
+func (q *Queries) GetLowestInstanceOrganizationBucket(ctx context.Context, arg GetLowestInstanceOrganizationBucketParams) (GetLowestInstanceOrganizationBucketRow, error) {
+	row := q.db.QueryRow(ctx, getLowestInstanceOrganizationBucket, arg.OrganizationID, arg.BucketName)
+	var i GetLowestInstanceOrganizationBucketRow
+	err := row.Scan(
+		&i.OrganizationID,
+		&i.InstanceNum,
+		&i.CollectorName,
+		&i.BucketName,
+		&i.CloudProvider,
+		&i.Region,
+		&i.Role,
+		&i.Endpoint,
+		&i.UsePathStyle,
+		&i.InsecureTls,
+	)
+	return i, err
+}
+
 const getOrganizationBucketByCollector = `-- name: GetOrganizationBucketByCollector :one
 SELECT ob.organization_id, ob.instance_num, ob.collector_name, bc.bucket_name, bc.cloud_provider, bc.region, bc.role, bc.endpoint, bc.use_path_style, bc.insecure_tls
 FROM organization_buckets ob
