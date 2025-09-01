@@ -309,12 +309,6 @@ func buildWindowed(be *BaseExpr, need need, step time.Duration) string {
 
 	timeWhere := withTime(whereFor(be))
 
-	// grid (no groups here; add back if needed)
-	grid := fmt.Sprintf(
-		"grid AS (SELECT CAST(range AS BIGINT) AS step_idx FROM range(%s, %s, %d))",
-		alignedStart, alignedEndEx, stepMs,
-	)
-
 	// step_aggr: same modulo bucketing, force BIGINT
 	bucketExpr := fmt.Sprintf(
 		"(CAST(\"_cardinalhq.timestamp\" AS BIGINT) - (CAST(\"_cardinalhq.timestamp\" AS BIGINT) %% %d))",
@@ -328,10 +322,99 @@ func buildWindowed(be *BaseExpr, need need, step time.Duration) string {
 		stepCols = append(stepCols, "SUM(COALESCE(rollup_count, 0)) AS step_count")
 	}
 
+	var quotedGroupBy []string
+	if len(be.GroupBy) > 0 {
+		for _, field := range be.GroupBy {
+			quotedField := fmt.Sprintf("\"%s\"", field)
+			quotedGroupBy = append(quotedGroupBy, quotedField)
+		}
+	}
+
+	// Add GroupBy fields to step_aggr SELECT
+	if len(quotedGroupBy) > 0 {
+		stepCols = append(stepCols, strings.Join(quotedGroupBy, ", "))
+	}
+
+	// Build GROUP BY clause for step_aggr
+	groupByParts := []string{"step_idx"}
+	if len(quotedGroupBy) > 0 {
+		groupByParts = append(groupByParts, quotedGroupBy...)
+	}
+
 	stepAgg := "step_aggr AS (SELECT " + strings.Join(stepCols, ", ") +
-		" FROM {table}" + timeWhere + " GROUP BY step_idx)"
+		" FROM {table}" + timeWhere + " GROUP BY " + strings.Join(groupByParts, ", ") + ")"
+
+	// When there are groupBy fields, we don't need a grid CTE since we only want
+	// the actual groups that exist in the data, not a cross product with all possible steps
+	if len(be.GroupBy) > 0 {
+		// Direct selection from step_aggr - no grid CTE needed
+		base := "SELECT " +
+			"CAST(step_idx AS BIGINT) AS bucket_ts" +
+			func() string {
+				var cols []string
+				// Add GroupBy fields to base SELECT
+				cols = append(cols, ", "+strings.Join(quotedGroupBy, ", "))
+				if need.sum {
+					cols = append(cols, ", step_sum AS w_step_sum")
+				}
+				if need.count {
+					cols = append(cols, ", step_count AS w_step_count")
+				}
+				if need.min {
+					cols = append(cols, ", MIN(rollup_min) AS w_step_min")
+				}
+				if need.max {
+					cols = append(cols, ", MAX(rollup_max) AS w_step_max")
+				}
+				return strings.Join(cols, "")
+			}() +
+			" FROM step_aggr"
+
+		// window
+		kMinus1 := rowsPreceding(be.Range, step)
+		order := " ORDER BY bucket_ts"
+		var outCols []string
+		outCols = append(outCols, "bucket_ts")
+
+		// Add GroupBy fields to output columns
+		outCols = append(outCols, strings.Join(quotedGroupBy, ", "))
+
+		if need.sum {
+			outCols = append(outCols,
+				fmt.Sprintf("CAST(SUM(w_step_sum) OVER (%s ROWS BETWEEN %d PRECEDING AND CURRENT ROW) AS DOUBLE) AS sum", order, kMinus1))
+		}
+		if need.count {
+			outCols = append(outCols,
+				fmt.Sprintf("CAST(SUM(w_step_count) OVER (%s ROWS BETWEEN %d PRECEDING AND CURRENT ROW) AS DOUBLE) AS count", order, kMinus1))
+		}
+
+		if need.min {
+			outCols = append(outCols,
+				fmt.Sprintf("CAST(MIN(w_step_min) OVER (%s ROWS BETWEEN %d PRECEDING AND CURRENT ROW) AS DOUBLE) AS min", order, kMinus1))
+		}
+		if need.max {
+			outCols = append(outCols,
+				fmt.Sprintf("CAST(MAX(w_step_max) OVER (%s ROWS BETWEEN %d PRECEDING AND CURRENT ROW) AS DOUBLE) AS max", order, kMinus1))
+		}
+
+		sql := "WITH " + stepAgg +
+			" SELECT " + strings.Join(outCols, ", ") +
+			" FROM (" + base + ")" +
+			" ORDER BY bucket_ts ASC"
+		return sql
+	}
+
+	// Original logic for when there are no groupBy fields
+	// grid (no groups here; add back if needed)
+	grid := fmt.Sprintf(
+		"grid AS (SELECT CAST(range AS BIGINT) AS step_idx FROM range(%s, %s, %d))",
+		alignedStart, alignedEndEx, stepMs,
+	)
 
 	// base (explicit ON join)
+	// Note: We only join on step_idx since grid CTE doesn't have GroupBy fields
+	joinCondition := "g.step_idx = sa.step_idx"
+
 	base := "SELECT " +
 		"CAST(g.step_idx AS BIGINT) AS bucket_ts" +
 		func() string {
@@ -350,13 +433,14 @@ func buildWindowed(be *BaseExpr, need need, step time.Duration) string {
 			}
 			return strings.Join(cols, "")
 		}() +
-		" FROM grid g LEFT JOIN step_aggr sa ON g.step_idx = sa.step_idx"
+		" FROM grid g LEFT JOIN step_aggr sa ON " + joinCondition
 
 	// window
 	kMinus1 := rowsPreceding(be.Range, step)
 	order := " ORDER BY bucket_ts"
 	var outCols []string
 	outCols = append(outCols, "bucket_ts")
+
 	if need.sum {
 		outCols = append(outCols,
 			fmt.Sprintf("CAST(SUM(w_step_sum) OVER (%s ROWS BETWEEN %d PRECEDING AND CURRENT ROW) AS DOUBLE) AS sum", order, kMinus1))

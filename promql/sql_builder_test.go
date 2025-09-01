@@ -85,6 +85,33 @@ func TestBuildWindowed_SumCount_NoRange(t *testing.T) {
 	mustContain(t, sql, `ORDER BY bucket_ts ASC`)
 }
 
+func TestBuildWindowed_WithGroupBy(t *testing.T) {
+	be := &BaseExpr{
+		ID:      "leaf-win-groupby",
+		Metric:  "http_requests_total",
+		GroupBy: []string{"metric.reason", "service.name"},
+		Range:   "5m",
+	}
+	sql := buildWindowed(be, need{sum: true, count: true}, 10*time.Second)
+
+	// step_aggr should include quoted GroupBy fields in SELECT
+	mustContain(t, sql, `step_aggr AS (SELECT (CAST("_cardinalhq.timestamp" AS BIGINT) - (CAST("_cardinalhq.timestamp" AS BIGINT) % 10000)) AS step_idx, SUM(rollup_sum) AS step_sum, SUM(COALESCE(rollup_count, 0)) AS step_count, "metric.reason", "service.name"`)
+
+	// step_aggr should include quoted GroupBy fields in GROUP BY
+	mustContain(t, sql, `GROUP BY step_idx, "metric.reason", "service.name"`)
+
+	// With groupBy fields, we should NOT use grid CTE and LEFT JOIN - should select directly from step_aggr
+	mustNotContain(t, sql, `FROM grid g LEFT JOIN step_aggr sa ON g.step_idx = sa.step_idx`)
+	mustContain(t, sql, `FROM step_aggr`)
+
+	// Final SELECT should include quoted GroupBy fields (without sa. prefix)
+	mustContain(t, sql, `SELECT bucket_ts, "metric.reason", "service.name", CAST(SUM(w_step_sum) OVER ( ORDER BY bucket_ts ROWS BETWEEN 29 PRECEDING AND CURRENT ROW) AS DOUBLE) AS sum`)
+	mustContain(t, sql, `CAST(SUM(w_step_count) OVER ( ORDER BY bucket_ts ROWS BETWEEN 29 PRECEDING AND CURRENT ROW) AS DOUBLE) AS count`)
+
+	// Should still have proper ordering
+	mustContain(t, sql, `ORDER BY bucket_ts ASC`)
+}
+
 func TestToWorkerSQL_Raw_NoRange_UsesRawSimple(t *testing.T) {
 	be := &BaseExpr{
 		ID:       "leaf-dispatch",
