@@ -1,0 +1,348 @@
+// Copyright (C) 2025 CardinalHQ, Inc
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as
+// published by the Free Software Foundation, version 3.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program. If not, see <http://www.gnu.org/licenses/>.
+
+package externalscaler
+
+import (
+	"context"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
+
+	"github.com/cardinalhq/lakerunner/lrdb"
+)
+
+// MockQueries is a mock implementation of QueriesInterface
+type MockQueries struct {
+	mock.Mock
+}
+
+func (m *MockQueries) InqueueScalingDepth(ctx context.Context, signal string) (interface{}, error) {
+	args := m.Called(ctx, signal)
+	return args.Get(0), args.Error(1)
+}
+
+func (m *MockQueries) WorkQueueScalingDepth(ctx context.Context, arg lrdb.WorkQueueScalingDepthParams) (interface{}, error) {
+	args := m.Called(ctx, arg)
+	return args.Get(0), args.Error(1)
+}
+
+func (m *MockQueries) MetricCompactionQueueScalingDepth(ctx context.Context) (interface{}, error) {
+	args := m.Called(ctx)
+	return args.Get(0), args.Error(1)
+}
+
+func (m *MockQueries) MetricRollupQueueScalingDepth(ctx context.Context) (interface{}, error) {
+	args := m.Called(ctx)
+	return args.Get(0), args.Error(1)
+}
+
+func TestService_IsActive(t *testing.T) {
+	service := &Service{}
+
+	tests := []struct {
+		name           string
+		serviceType    string
+		expectedResult bool
+	}{
+		{"ingest-logs", "ingest-logs", true},
+		{"ingest-metrics", "ingest-metrics", true},
+		{"ingest-traces", "ingest-traces", true},
+		{"compact-metrics", "compact-metrics", true},
+		{"compact-logs", "compact-logs", true},
+		{"compact-traces", "compact-traces", true},
+		{"rollup-metrics", "rollup-metrics", true},
+		{"unknown-service", "unknown-service", false},
+		{"empty-service", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := &ScaledObjectRef{
+				Name:      "test-object",
+				Namespace: "test-namespace",
+				ScalerMetadata: map[string]string{
+					"serviceType": tt.serviceType,
+				},
+			}
+
+			if tt.serviceType == "" {
+				req.ScalerMetadata = map[string]string{}
+			}
+
+			resp, err := service.IsActive(context.Background(), req)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectedResult, resp.Result)
+		})
+	}
+}
+
+func TestService_GetMetricSpec(t *testing.T) {
+	service := &Service{}
+
+	tests := []struct {
+		name               string
+		serviceType        string
+		expectedMetricName string
+		expectError        bool
+	}{
+		{"ingest-logs", "ingest-logs", "ingest-logs-queue-depth", false},
+		{"compact-metrics", "compact-metrics", "compact-metrics-queue-depth", false},
+		{"rollup-metrics", "rollup-metrics", "rollup-metrics-queue-depth", false},
+		{"missing-service-type", "", "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := &ScaledObjectRef{
+				Name:           "test-object",
+				Namespace:      "test-namespace",
+				ScalerMetadata: map[string]string{},
+			}
+
+			if tt.serviceType != "" {
+				req.ScalerMetadata["serviceType"] = tt.serviceType
+			}
+
+			resp, err := service.GetMetricSpec(context.Background(), req)
+
+			if tt.expectError {
+				require.Error(t, err)
+				return
+			}
+
+			require.NoError(t, err)
+			require.Len(t, resp.MetricSpecs, 1)
+			assert.Equal(t, tt.expectedMetricName, resp.MetricSpecs[0].MetricName)
+			assert.Equal(t, float64(10.0), resp.MetricSpecs[0].TargetSizeFloat)
+		})
+	}
+}
+
+func TestService_GetMetrics(t *testing.T) {
+	tests := []struct {
+		name          string
+		serviceType   string
+		mockSetup     func(*MockQueries)
+		expectedValue float64
+		expectError   bool
+	}{
+		{
+			name:        "ingest-logs success",
+			serviceType: "ingest-logs",
+			mockSetup: func(m *MockQueries) {
+				m.On("InqueueScalingDepth", mock.Anything, "logs").Return(int64(5), nil)
+			},
+			expectedValue: 5.0,
+			expectError:   false,
+		},
+		{
+			name:        "ingest-metrics success",
+			serviceType: "ingest-metrics",
+			mockSetup: func(m *MockQueries) {
+				m.On("InqueueScalingDepth", mock.Anything, "metrics").Return(int64(12), nil)
+			},
+			expectedValue: 12.0,
+			expectError:   false,
+		},
+		{
+			name:        "ingest-traces success",
+			serviceType: "ingest-traces",
+			mockSetup: func(m *MockQueries) {
+				m.On("InqueueScalingDepth", mock.Anything, "traces").Return(int64(3), nil)
+			},
+			expectedValue: 3.0,
+			expectError:   false,
+		},
+		{
+			name:        "compact-metrics success",
+			serviceType: "compact-metrics",
+			mockSetup: func(m *MockQueries) {
+				m.On("MetricCompactionQueueScalingDepth", mock.Anything).Return(int64(8), nil)
+			},
+			expectedValue: 8.0,
+			expectError:   false,
+		},
+		{
+			name:        "rollup-metrics success",
+			serviceType: "rollup-metrics",
+			mockSetup: func(m *MockQueries) {
+				m.On("MetricRollupQueueScalingDepth", mock.Anything).Return(int64(15), nil)
+			},
+			expectedValue: 15.0,
+			expectError:   false,
+		},
+		{
+			name:        "compact-logs success",
+			serviceType: "compact-logs",
+			mockSetup: func(m *MockQueries) {
+				m.On("WorkQueueScalingDepth", mock.Anything, lrdb.WorkQueueScalingDepthParams{
+					Signal: lrdb.SignalEnumLogs,
+					Action: lrdb.ActionEnumCompact,
+				}).Return(int64(7), nil)
+			},
+			expectedValue: 7.0,
+			expectError:   false,
+		},
+		{
+			name:        "compact-traces success",
+			serviceType: "compact-traces",
+			mockSetup: func(m *MockQueries) {
+				m.On("WorkQueueScalingDepth", mock.Anything, lrdb.WorkQueueScalingDepthParams{
+					Signal: lrdb.SignalEnumTraces,
+					Action: lrdb.ActionEnumCompact,
+				}).Return(int64(2), nil)
+			},
+			expectedValue: 2.0,
+			expectError:   false,
+		},
+		{
+			name:        "ingest-logs database error",
+			serviceType: "ingest-logs",
+			mockSetup: func(m *MockQueries) {
+				m.On("InqueueScalingDepth", mock.Anything, "logs").Return(int64(0), assert.AnError)
+			},
+			expectedValue: 0,
+			expectError:   true,
+		},
+		{
+			name:        "unsupported service type",
+			serviceType: "unknown-service",
+			mockSetup:   func(m *MockQueries) {},
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockQueries := &MockQueries{}
+			tt.mockSetup(mockQueries)
+
+			service := &Service{
+				queries: mockQueries,
+			}
+
+			req := &GetMetricsRequest{
+				ScaledObjectRef: &ScaledObjectRef{
+					Name:      "test-object",
+					Namespace: "test-namespace",
+					ScalerMetadata: map[string]string{
+						"serviceType": tt.serviceType,
+					},
+				},
+				MetricName: tt.serviceType + "-queue-depth",
+			}
+
+			resp, err := service.GetMetrics(context.Background(), req)
+
+			if tt.expectError {
+				require.Error(t, err)
+				mockQueries.AssertExpectations(t)
+				return
+			}
+
+			require.NoError(t, err)
+			require.Len(t, resp.MetricValues, 1)
+			assert.Equal(t, req.MetricName, resp.MetricValues[0].MetricName)
+			assert.Equal(t, tt.expectedValue, resp.MetricValues[0].MetricValueFloat)
+			mockQueries.AssertExpectations(t)
+		})
+	}
+}
+
+func TestService_GetMetrics_MissingServiceType(t *testing.T) {
+	service := &Service{}
+
+	req := &GetMetricsRequest{
+		ScaledObjectRef: &ScaledObjectRef{
+			Name:           "test-object",
+			Namespace:      "test-namespace",
+			ScalerMetadata: map[string]string{}, // No serviceType
+		},
+		MetricName: "test-metric",
+	}
+
+	_, err := service.GetMetrics(context.Background(), req)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "serviceType not specified")
+}
+
+func TestService_getQueueDepth(t *testing.T) {
+	tests := []struct {
+		name          string
+		serviceType   string
+		mockSetup     func(*MockQueries)
+		expectedCount int64
+		expectError   bool
+	}{
+		{
+			name:        "ingest-logs",
+			serviceType: "ingest-logs",
+			mockSetup: func(m *MockQueries) {
+				m.On("InqueueScalingDepth", mock.Anything, "logs").Return(int64(10), nil)
+			},
+			expectedCount: 10,
+			expectError:   false,
+		},
+		{
+			name:        "compact-metrics",
+			serviceType: "compact-metrics",
+			mockSetup: func(m *MockQueries) {
+				m.On("MetricCompactionQueueScalingDepth", mock.Anything).Return(int64(25), nil)
+			},
+			expectedCount: 25,
+			expectError:   false,
+		},
+		{
+			name:        "rollup-metrics",
+			serviceType: "rollup-metrics",
+			mockSetup: func(m *MockQueries) {
+				m.On("MetricRollupQueueScalingDepth", mock.Anything).Return(int64(18), nil)
+			},
+			expectedCount: 18,
+			expectError:   false,
+		},
+		{
+			name:        "unsupported service type",
+			serviceType: "invalid-service",
+			mockSetup:   func(m *MockQueries) {},
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockQueries := &MockQueries{}
+			tt.mockSetup(mockQueries)
+
+			service := &Service{
+				queries: mockQueries,
+			}
+
+			count, err := service.getQueueDepth(context.Background(), tt.serviceType)
+
+			if tt.expectError {
+				require.Error(t, err)
+				mockQueries.AssertExpectations(t)
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectedCount, count)
+			mockQueries.AssertExpectations(t)
+		})
+	}
+}

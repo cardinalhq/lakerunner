@@ -12,13 +12,41 @@ import (
 const inqueueScalingDepth = `-- name: InqueueScalingDepth :one
 SELECT COALESCE(COUNT(*), 0) AS count
 FROM inqueue 
-WHERE telemetry_type = $1 
+WHERE signal = $1 
   AND claimed_at IS NULL
 `
 
-// Get queue depth for ingest scaling by telemetry type
-func (q *Queries) InqueueScalingDepth(ctx context.Context, telemetryType string) (interface{}, error) {
-	row := q.db.QueryRow(ctx, inqueueScalingDepth, telemetryType)
+// Get queue depth for ingest scaling by signal
+func (q *Queries) InqueueScalingDepth(ctx context.Context, signal string) (interface{}, error) {
+	row := q.db.QueryRow(ctx, inqueueScalingDepth, signal)
+	var count interface{}
+	err := row.Scan(&count)
+	return count, err
+}
+
+const metricCompactionQueueScalingDepth = `-- name: MetricCompactionQueueScalingDepth :one
+SELECT COALESCE(COUNT(*), 0) AS count
+FROM metric_compaction_queue 
+WHERE claimed_at IS NULL
+`
+
+// Get queue depth for metric compaction scaling
+func (q *Queries) MetricCompactionQueueScalingDepth(ctx context.Context) (interface{}, error) {
+	row := q.db.QueryRow(ctx, metricCompactionQueueScalingDepth)
+	var count interface{}
+	err := row.Scan(&count)
+	return count, err
+}
+
+const metricRollupQueueScalingDepth = `-- name: MetricRollupQueueScalingDepth :one
+SELECT COALESCE(COUNT(*), 0) AS count
+FROM metric_rollup_queue 
+WHERE claimed_at IS NULL
+`
+
+// Get queue depth for metric rollup scaling
+func (q *Queries) MetricRollupQueueScalingDepth(ctx context.Context) (interface{}, error) {
+	row := q.db.QueryRow(ctx, metricRollupQueueScalingDepth)
 	var count interface{}
 	err := row.Scan(&count)
 	return count, err

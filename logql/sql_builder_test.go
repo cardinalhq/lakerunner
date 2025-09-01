@@ -16,10 +16,7 @@ package logql
 
 import (
 	"database/sql"
-	"fmt"
-	"io/fs"
 	"log/slog"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -402,45 +399,46 @@ func TestToWorkerSQL_LabelFormat_Conditional_FromLogQL(t *testing.T) {
 	}
 }
 
-func parquetGlobOrSkip(t *testing.T) string {
-	t.Helper()
+// TODO: Are these needed?
+// func parquetGlobOrSkip(t *testing.T) string {
+// 	t.Helper()
 
-	abs, err := filepath.Abs("db")
-	if err != nil {
-		t.Fatalf("abs(db): %v", err)
-	}
+// 	abs, err := filepath.Abs("db")
+// 	if err != nil {
+// 		t.Fatalf("abs(db): %v", err)
+// 	}
 
-	// ensure at least one *.parquet exists under ./db
-	found := false
-	_ = filepath.WalkDir(abs, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if !d.IsDir() && strings.HasSuffix(strings.ToLower(d.Name()), ".parquet") {
-			found = true
-			return fs.SkipAll
-		}
-		return nil
-	})
-	if !found {
-		t.Skipf("no parquet files under %s; skipping", abs)
-	}
+// 	// ensure at least one *.parquet exists under ./db
+// 	found := false
+// 	_ = filepath.WalkDir(abs, func(path string, d fs.DirEntry, err error) error {
+// 		if err != nil {
+// 			return err
+// 		}
+// 		if !d.IsDir() && strings.HasSuffix(strings.ToLower(d.Name()), ".parquet") {
+// 			found = true
+// 			return fs.SkipAll
+// 		}
+// 		return nil
+// 	})
+// 	if !found {
+// 		t.Skipf("no parquet files under %s; skipping", abs)
+// 	}
 
-	// DuckDB likes forward slashes; use file: URL + recursive glob
-	return "file:" + filepath.ToSlash(filepath.Join(abs, "**/*.parquet"))
-}
+// 	// DuckDB likes forward slashes; use file: URL + recursive glob
+// 	return "file:" + filepath.ToSlash(filepath.Join(abs, "**/*.parquet"))
+// }
 
-// Replace {table} with a direct read_parquet(...) subquery (no VIEW).
-// Inject stub columns for timestamp/id/level to satisfy exemplar defaults.
-func replaceTableParquetNoView(t *testing.T, sql string) string {
-	glob := parquetGlobOrSkip(t)
-	base := fmt.Sprintf(
-		`(SELECT *,
-  0::BIGINT   AS "_cardinalhq.timestamp",
-  ''::VARCHAR AS "_cardinalhq.id",
-  ''::VARCHAR AS "_cardinalhq.level"
-FROM read_parquet('%s', union_by_name=true)) AS _t`,
-		glob,
-	)
-	return strings.ReplaceAll(sql, "{table}", base)
-}
+// // Replace {table} with a direct read_parquet(...) subquery (no VIEW).
+// // Inject stub columns for timestamp/id/level to satisfy exemplar defaults.
+// func replaceTableParquetNoView(t *testing.T, sql string) string {
+// 	glob := parquetGlobOrSkip(t)
+// 	base := fmt.Sprintf(
+// 		`(SELECT *,
+//   0::BIGINT   AS "_cardinalhq.timestamp",
+//   ''::VARCHAR AS "_cardinalhq.id",
+//   ''::VARCHAR AS "_cardinalhq.level"
+// FROM read_parquet('%s', union_by_name=true)) AS _t`,
+// 		glob,
+// 	)
+// 	return strings.ReplaceAll(sql, "{table}", base)
+// }

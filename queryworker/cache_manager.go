@@ -430,97 +430,98 @@ func streamFromS3InParallel[T promql.Timestamped](
 	return out, nil
 }
 
-func streamFromS3[T promql.Timestamped](
-	ctx context.Context,
-	w *CacheManager,
-	request queryapi.PushDownRequest,
-	bucket string,
-	region string,
-	endpoint string,
-	s3URIs []string,
-	s3GlobSize int,
-	userSQL string,
-	mapper RowMapper[T],
-) ([]<-chan T, error) {
-	if len(s3URIs) == 0 {
-		return []<-chan T{}, nil
-	}
+// TODO: Are these needed?
+// func streamFromS3[T promql.Timestamped](
+// 	ctx context.Context,
+// 	w *CacheManager,
+// 	request queryapi.PushDownRequest,
+// 	bucket string,
+// 	region string,
+// 	endpoint string,
+// 	s3URIs []string,
+// 	s3GlobSize int,
+// 	userSQL string,
+// 	mapper RowMapper[T],
+// ) ([]<-chan T, error) {
+// 	if len(s3URIs) == 0 {
+// 		return []<-chan T{}, nil
+// 	}
 
-	batches := chunkStrings(s3URIs, s3GlobSize)
-	//slog.Info("Chunked S3 URIs into batches", slog.Int("batches", len(batches)), slog.Int("incoming", len(s3URIs)))
-	outs := make([]<-chan T, 0, len(batches))
+// 	batches := chunkStrings(s3URIs, s3GlobSize)
+// 	//slog.Info("Chunked S3 URIs into batches", slog.Int("batches", len(batches)), slog.Int("incoming", len(s3URIs)))
+// 	outs := make([]<-chan T, 0, len(batches))
 
-	for _, uris := range batches {
-		slog.Info("Streaming from S3", slog.Int("uris", len(uris)))
-		out := make(chan T, ChannelBufferSize)
-		outs = append(outs, out)
+// 	for _, uris := range batches {
+// 		slog.Info("Streaming from S3", slog.Int("uris", len(uris)))
+// 		out := make(chan T, ChannelBufferSize)
+// 		outs = append(outs, out)
 
-		urisCopy := append([]string(nil), uris...) // capture loop var
+// 		urisCopy := append([]string(nil), uris...) // capture loop var
 
-		go func(out chan<- T) {
-			defer close(out)
+// 		go func(out chan<- T) {
+// 			defer close(out)
 
-			// Build read_parquet source
-			quoted := make([]string, len(urisCopy))
-			for i := range urisCopy {
-				quoted[i] = "'" + escapeSQL(urisCopy[i]) + "'"
-			}
-			array := "[" + strings.Join(quoted, ", ") + "]"
-			src := fmt.Sprintf(`read_parquet(%s, union_by_name=true)`, array)
+// 			// Build read_parquet source
+// 			quoted := make([]string, len(urisCopy))
+// 			for i := range urisCopy {
+// 				quoted[i] = "'" + escapeSQL(urisCopy[i]) + "'"
+// 			}
+// 			array := "[" + strings.Join(quoted, ", ") + "]"
+// 			src := fmt.Sprintf(`read_parquet(%s, union_by_name=true)`, array)
 
-			sqlReplaced := strings.Replace(userSQL, "{table}", src, 1)
-			// Lease a per-bucket connection (creates/refreshes S3 secret under the hood)
-			start := time.Now()
-			conn, release, err := w.s3Db.GetConnection(ctx, bucket, region, endpoint)
-			connectionAcquireTime := time.Since(start)
-			slog.Info("S3 Connection Acquire Time", "duration", connectionAcquireTime.String(), "bucket", bucket)
+// 			sqlReplaced := strings.Replace(userSQL, "{table}", src, 1)
+// 			// Lease a per-bucket connection (creates/refreshes S3 secret under the hood)
+// 			start := time.Now()
+// 			conn, release, err := w.s3Db.GetConnection(ctx, bucket, region, endpoint)
+// 			connectionAcquireTime := time.Since(start)
+// 			slog.Info("S3 Connection Acquire Time", "duration", connectionAcquireTime.String(), "bucket", bucket)
 
-			if err != nil {
-				slog.Error("GetConnection failed", slog.String("bucket", bucket), slog.Any("error", err))
-				return
-			}
-			// Ensure rows close before releasing the connection
-			defer release()
+// 			if err != nil {
+// 				slog.Error("GetConnection failed", slog.String("bucket", bucket), slog.Any("error", err))
+// 				return
+// 			}
+// 			// Ensure rows close before releasing the connection
+// 			defer release()
 
-			rows, err := conn.QueryContext(ctx, sqlReplaced)
-			if err != nil {
-				slog.Error("Query failed", slog.Any("error", err))
-				return
-			}
-			defer func() {
-				if err := rows.Close(); err != nil {
-					slog.Error("Error closing rows", slog.Any("error", err))
-				}
-			}()
+// 			rows, err := conn.QueryContext(ctx, sqlReplaced)
+// 			if err != nil {
+// 				slog.Error("Query failed", slog.Any("error", err))
+// 				return
+// 			}
+// 			defer func() {
+// 				if err := rows.Close(); err != nil {
+// 					slog.Error("Error closing rows", slog.Any("error", err))
+// 				}
+// 			}()
 
-			cols, err := rows.Columns()
-			if err != nil {
-				slog.Error("failed to get columns", slog.Any("error", err))
-				return
-			}
+// 			cols, err := rows.Columns()
+// 			if err != nil {
+// 				slog.Error("failed to get columns", slog.Any("error", err))
+// 				return
+// 			}
 
-			for rows.Next() {
-				select {
-				case <-ctx.Done():
-					return
-				default:
-				}
-				v, mErr := mapper(request, cols, rows)
-				if mErr != nil {
-					slog.Error("Row mapping failed", slog.Any("error", mErr))
-					return
-				}
-				out <- v
-			}
-			if err := rows.Err(); err != nil {
-				slog.Error("Rows iteration error", slog.Any("error", err))
-			}
-		}(out)
-	}
+// 			for rows.Next() {
+// 				select {
+// 				case <-ctx.Done():
+// 					return
+// 				default:
+// 				}
+// 				v, mErr := mapper(request, cols, rows)
+// 				if mErr != nil {
+// 					slog.Error("Row mapping failed", slog.Any("error", mErr))
+// 					return
+// 				}
+// 				out <- v
+// 			}
+// 			if err := rows.Err(); err != nil {
+// 				slog.Error("Rows iteration error", slog.Any("error", err))
+// 			}
+// 		}(out)
+// 	}
 
-	// enqueue is done in EvaluatePushDown(...) after ids/paths are known
-	return outs, nil
-}
+// 	// enqueue is done in EvaluatePushDown(...) after ids/paths are known
+// 	return outs, nil
+// }
 
 // enqueueIngest filters out present/in-flight, marks new IDs in-flight, and queues one job.
 func (w *CacheManager) enqueueIngest(storageProfile storageprofile.StorageProfile, paths []string, ids []int64) {

@@ -59,7 +59,7 @@ func TestInqueueScalingDepth(t *testing.T) {
 					InstanceNum:    1,
 					Bucket:         "test-bucket",
 					ObjectID:       "logs1.json.gz",
-					TelemetryType:  "logs",
+					Signal:         "logs",
 					Priority:       1,
 					FileSize:       1024,
 				},
@@ -69,7 +69,7 @@ func TestInqueueScalingDepth(t *testing.T) {
 					InstanceNum:    1,
 					Bucket:         "test-bucket",
 					ObjectID:       "logs2.json.gz",
-					TelemetryType:  "logs",
+					Signal:         "logs",
 					Priority:       1,
 					FileSize:       2048,
 				},
@@ -86,7 +86,7 @@ func TestInqueueScalingDepth(t *testing.T) {
 					InstanceNum:    1,
 					Bucket:         "test-bucket",
 					ObjectID:       "metrics1.json.gz",
-					TelemetryType:  "metrics",
+					Signal:         "metrics",
 					Priority:       1,
 					FileSize:       512,
 				},
@@ -96,7 +96,7 @@ func TestInqueueScalingDepth(t *testing.T) {
 					InstanceNum:    1,
 					Bucket:         "test-bucket",
 					ObjectID:       "logs1.json.gz",
-					TelemetryType:  "logs", // Different type, should not be counted
+					Signal:         "logs", // Different type, should not be counted
 					Priority:       1,
 					FileSize:       1024,
 				},
@@ -148,7 +148,7 @@ func TestInqueueScalingDepthWithClaimedItems(t *testing.T) {
 			InstanceNum:    1,
 			Bucket:         "test-bucket",
 			ObjectID:       "unclaimed1.json.gz",
-			TelemetryType:  "logs",
+			Signal:         "logs",
 			Priority:       1,
 			FileSize:       1024,
 		},
@@ -158,7 +158,7 @@ func TestInqueueScalingDepthWithClaimedItems(t *testing.T) {
 			InstanceNum:    1,
 			Bucket:         "test-bucket",
 			ObjectID:       "unclaimed2.json.gz",
-			TelemetryType:  "logs",
+			Signal:         "logs",
 			Priority:       1,
 			FileSize:       2048,
 		},
@@ -176,7 +176,7 @@ func TestInqueueScalingDepthWithClaimedItems(t *testing.T) {
 		InstanceNum:    1,
 		Bucket:         "test-bucket",
 		ObjectID:       "claimed.json.gz",
-		TelemetryType:  "logs",
+		Signal:         "logs",
 		Priority:       1,
 		FileSize:       512,
 	}
@@ -184,12 +184,16 @@ func TestInqueueScalingDepthWithClaimedItems(t *testing.T) {
 	require.NoError(t, err)
 
 	// Claim the item
-	claimed, err := db.ClaimInqueueWork(ctx, lrdb.ClaimInqueueWorkParams{
-		TelemetryType: "logs",
-		ClaimedBy:     workerID,
+	claimed, err := db.ClaimInqueueWorkBatch(ctx, lrdb.ClaimInqueueWorkBatchParams{
+		Signal:        "logs",
+		WorkerID:      workerID,
+		MaxTotalSize:  1024 * 1024,
+		MinTotalSize:  0,
+		MaxAgeSeconds: 30,
+		BatchCount:    1,
 	})
 	require.NoError(t, err)
-	require.NotNil(t, claimed)
+	require.Len(t, claimed, 1) // Should claim exactly 1 item
 
 	// Test the query - should only count unclaimed items
 	result, err := db.InqueueScalingDepth(ctx, "logs")
