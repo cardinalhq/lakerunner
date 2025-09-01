@@ -93,6 +93,8 @@ type Querier interface {
 	GetTraceSegmentsForCompaction(ctx context.Context, arg GetTraceSegmentsForCompactionParams) ([]GetTraceSegmentsForCompactionRow, error)
 	InqueueJournalDelete(ctx context.Context, arg InqueueJournalDeleteParams) error
 	InqueueJournalUpsert(ctx context.Context, arg InqueueJournalUpsertParams) (bool, error)
+	// Get queue depth for ingest scaling by signal
+	InqueueScalingDepth(ctx context.Context, signal string) (interface{}, error)
 	InqueueSummary(ctx context.Context) ([]InqueueSummaryRow, error)
 	InsertCompactedMetricSeg(ctx context.Context, arg []InsertCompactedMetricSegParams) *InsertCompactedMetricSegBatchResults
 	InsertLogSegmentDirect(ctx context.Context, arg InsertLogSegmentParams) error
@@ -104,6 +106,10 @@ type Querier interface {
 	LogSegEstimator(ctx context.Context, arg LogSegEstimatorParams) ([]LogSegEstimatorRow, error)
 	MarkMetricSegsCompactedByKeys(ctx context.Context, arg MarkMetricSegsCompactedByKeysParams) error
 	MarkMetricSegsRolledupByKeys(ctx context.Context, arg MarkMetricSegsRolledupByKeysParams) error
+	// Get queue depth for metric compaction scaling
+	MetricCompactionQueueScalingDepth(ctx context.Context) (interface{}, error)
+	// Get queue depth for metric rollup scaling
+	MetricRollupQueueScalingDepth(ctx context.Context) (interface{}, error)
 	// Returns an estimate of the number of metric segments, accounting for per-file overhead.
 	// Uses frequency_ms to provide more accurate estimates based on collection frequency.
 	MetricSegEstimator(ctx context.Context, arg MetricSegEstimatorParams) ([]MetricSegEstimatorRow, error)
@@ -142,6 +148,8 @@ type Querier interface {
 	// 1) heart-beat the work_queue
 	WorkQueueHeartbeatDirect(ctx context.Context, arg WorkQueueHeartbeatParams) error
 	WorkQueueOrphanedSignalLockCleanup(ctx context.Context, maxrows int32) (int32, error)
+	// Get queue depth for work queue scaling by signal and action
+	WorkQueueScalingDepth(ctx context.Context, arg WorkQueueScalingDepthParams) (interface{}, error)
 	WorkQueueSummary(ctx context.Context) ([]WorkQueueSummaryRow, error)
 }
 

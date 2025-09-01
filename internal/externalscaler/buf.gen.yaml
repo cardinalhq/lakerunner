@@ -1,0 +1,13 @@
+# Buf code generation configuration for externalscaler
+version: v2
+managed:
+  enabled: false
+plugins:
+  - local: ../../bin/protoc-gen-go
+    out: .
+    opt:
+      - paths=source_relative
+  - local: ../../bin/protoc-gen-go-grpc
+    out: .
+    opt:
+      - paths=source_relative

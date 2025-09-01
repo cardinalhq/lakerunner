@@ -12,23 +12,8 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package cmd
-
-import (
-	"github.com/spf13/cobra"
-
-	debugcmd "github.com/cardinalhq/lakerunner/cmd/debug"
-)
-
-var debugCmd = &cobra.Command{
-	Use:   "debug",
-	Short: "Debug commands for troubleshooting",
-	Long:  `Debug commands for troubleshooting various components of lakerunner.`,
-}
-
-func init() {
-	debugCmd.AddCommand(debugcmd.GetS3Cmd())
-	debugCmd.AddCommand(debugcmd.GetDDBCmd())
-	debugCmd.AddCommand(debugcmd.GetParquetCmd())
-	debugCmd.AddCommand(debugcmd.GetScalingCmd())
-}
+// Package externalscaler contains the protocol buffer definitions
+// for the KEDA external scaler service.
+//
+//go:generate sh -c "PATH=\"../../bin:$PATH\" ../../bin/buf generate"
+package externalscaler

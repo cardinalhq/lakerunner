@@ -1,0 +1,12 @@
+# Buf configuration for externalscaler proto generation
+version: v2
+modules:
+  - path: .
+deps:
+  - buf.build/googleapis/googleapis
+lint:
+  use:
+    - STANDARD
+breaking:
+  use:
+    - FILE
