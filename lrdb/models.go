@@ -212,6 +212,7 @@ type MetricRollupQueue struct {
 	HeartbeatedAt  *time.Time `json:"heartbeated_at"`
 	SegmentID      int64      `json:"segment_id"`
 	RecordCount    int64      `json:"record_count"`
+	RollupGroup    int64      `json:"rollup_group"`
 }
 
 type MetricSeg struct {

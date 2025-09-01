@@ -43,24 +43,24 @@ big_single AS (
 ),
 
 seeds_per_group AS (
-  SELECT DISTINCT ON (organization_id, dateint, frequency_ms, instance_num, slot_id, slot_count)
-         id AS seed_id, organization_id, dateint, frequency_ms, instance_num, slot_id, slot_count,
+  SELECT DISTINCT ON (organization_id, dateint, frequency_ms, instance_num, slot_id, slot_count, rollup_group)
+         id AS seed_id, organization_id, dateint, frequency_ms, instance_num, slot_id, slot_count, rollup_group,
          priority, queue_ts, record_count
   FROM metric_rollup_queue
   WHERE claimed_at IS NULL
-  ORDER BY organization_id, dateint, frequency_ms, instance_num, slot_id, slot_count, 
+  ORDER BY organization_id, dateint, frequency_ms, instance_num, slot_id, slot_count, rollup_group,
            priority DESC, queue_ts ASC, id ASC
 ),
 
 ordered_groups AS (
-  SELECT s.seed_id, s.organization_id, s.dateint, s.frequency_ms, s.instance_num, s.slot_id, s.slot_count, s.priority, s.queue_ts, s.record_count,
+  SELECT s.seed_id, s.organization_id, s.dateint, s.frequency_ms, s.instance_num, s.slot_id, s.slot_count, s.rollup_group, s.priority, s.queue_ts, s.record_count,
          ROW_NUMBER() OVER (ORDER BY s.priority DESC, s.queue_ts ASC, s.seed_id ASC) AS seed_rank
   FROM seeds_per_group s
 ),
 
 group_flags AS (
   SELECT
-    og.organization_id, og.dateint, og.frequency_ms, og.instance_num, og.slot_id, og.slot_count,
+    og.organization_id, og.dateint, og.frequency_ms, og.instance_num, og.slot_id, og.slot_count, og.rollup_group,
     og.priority, og.queue_ts, og.seed_rank,
     ((p.now_ts - og.queue_ts) > make_interval(secs => p.max_age_seconds)) AS is_old,
     COALESCE(e_org.target_records, e_glob.target_records, p.default_target_records)::bigint AS target_records,
@@ -87,7 +87,7 @@ group_flags AS (
 grp_scope AS (
   SELECT
     q.id, q.organization_id, q.dateint, q.frequency_ms, q.instance_num,
-    q.slot_id, q.slot_count, q.priority, q.queue_ts, q.record_count,
+    q.slot_id, q.slot_count, q.rollup_group, q.priority, q.queue_ts, q.record_count,
     gf.seed_rank, gf.is_old, gf.target_records, gf.batch_count,
     gf.org_estimate, gf.global_estimate, gf.default_estimate, gf.estimate_source
   FROM metric_rollup_queue q
@@ -99,25 +99,26 @@ grp_scope AS (
    AND q.instance_num    = gf.instance_num
    AND q.slot_id         = gf.slot_id
    AND q.slot_count      = gf.slot_count
+   AND q.rollup_group    = gf.rollup_group
 ),
 
 pack AS (
   SELECT
-    g.id, g.organization_id, g.dateint, g.frequency_ms, g.instance_num, g.slot_id, g.slot_count, g.priority, g.queue_ts, g.record_count, g.seed_rank, g.is_old, g.target_records, g.batch_count, g.org_estimate, g.global_estimate, g.default_estimate, g.estimate_source,
+    g.id, g.organization_id, g.dateint, g.frequency_ms, g.instance_num, g.slot_id, g.slot_count, g.rollup_group, g.priority, g.queue_ts, g.record_count, g.seed_rank, g.is_old, g.target_records, g.batch_count, g.org_estimate, g.global_estimate, g.default_estimate, g.estimate_source,
     SUM(g.record_count) OVER (
-      PARTITION BY g.organization_id, g.dateint, g.frequency_ms, g.instance_num, g.slot_id, g.slot_count
+      PARTITION BY g.organization_id, g.dateint, g.frequency_ms, g.instance_num, g.slot_id, g.slot_count, g.rollup_group
       ORDER BY g.priority DESC, g.queue_ts ASC, g.id ASC
       ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
     ) AS cum_records,
     ROW_NUMBER() OVER (
-      PARTITION BY g.organization_id, g.dateint, g.frequency_ms, g.instance_num, g.slot_id, g.slot_count
+      PARTITION BY g.organization_id, g.dateint, g.frequency_ms, g.instance_num, g.slot_id, g.slot_count, g.rollup_group
       ORDER BY g.priority DESC, g.queue_ts ASC, g.id ASC
     ) AS rn
   FROM grp_scope g
 ),
 
 prelim AS (
-  SELECT p.id, p.organization_id, p.dateint, p.frequency_ms, p.instance_num, p.slot_id, p.slot_count, p.priority, p.queue_ts, p.record_count, p.seed_rank, p.is_old, p.target_records, p.batch_count, p.org_estimate, p.global_estimate, p.default_estimate, p.estimate_source, p.cum_records, p.rn
+  SELECT p.id, p.organization_id, p.dateint, p.frequency_ms, p.instance_num, p.slot_id, p.slot_count, p.rollup_group, p.priority, p.queue_ts, p.record_count, p.seed_rank, p.is_old, p.target_records, p.batch_count, p.org_estimate, p.global_estimate, p.default_estimate, p.estimate_source, p.cum_records, p.rn
   FROM pack p
   JOIN group_flags gf
     ON gf.organization_id = p.organization_id
@@ -126,24 +127,25 @@ prelim AS (
    AND gf.instance_num    = p.instance_num
    AND gf.slot_id         = p.slot_id
    AND gf.slot_count      = p.slot_count
+   AND gf.rollup_group    = p.rollup_group
   WHERE p.cum_records <= gf.target_records
     AND p.rn          <= gf.batch_count
 ),
 
 prelim_stats AS (
   SELECT
-    organization_id, dateint, frequency_ms, instance_num, slot_id, slot_count,
+    organization_id, dateint, frequency_ms, instance_num, slot_id, slot_count, rollup_group,
     COUNT(*) AS n_rows,
     COALESCE(SUM(record_count), 0) AS total_records,
     MIN(seed_rank) AS seed_rank
   FROM prelim
-  GROUP BY organization_id, dateint, frequency_ms, instance_num, slot_id, slot_count
+  GROUP BY organization_id, dateint, frequency_ms, instance_num, slot_id, slot_count, rollup_group
 ),
 
 eligible_groups AS (
   SELECT
     gf.organization_id, gf.dateint, gf.frequency_ms, gf.instance_num, 
-    gf.slot_id, gf.slot_count, gf.seed_rank, gf.target_records
+    gf.slot_id, gf.slot_count, gf.rollup_group, gf.seed_rank, gf.target_records
   FROM group_flags gf
   JOIN prelim_stats ps
     ON ps.organization_id = gf.organization_id
@@ -152,11 +154,12 @@ eligible_groups AS (
    AND ps.instance_num    = gf.instance_num
    AND ps.slot_id         = gf.slot_id
    AND ps.slot_count      = gf.slot_count
+   AND ps.rollup_group    = gf.rollup_group
   WHERE ps.total_records > 0
 ),
 
 winner_group AS (
-  SELECT eg.organization_id, eg.dateint, eg.frequency_ms, eg.instance_num, eg.slot_id, eg.slot_count, eg.seed_rank, eg.target_records
+  SELECT eg.organization_id, eg.dateint, eg.frequency_ms, eg.instance_num, eg.slot_id, eg.slot_count, eg.rollup_group, eg.seed_rank, eg.target_records
   FROM eligible_groups eg
   WHERE eg.seed_rank = (SELECT MIN(seed_rank) FROM eligible_groups)
 ),
@@ -171,6 +174,7 @@ group_chosen AS (
    AND w.instance_num    = pr.instance_num
    AND w.slot_id         = pr.slot_id
    AND w.slot_count      = pr.slot_count
+   AND w.rollup_group    = pr.rollup_group
 ),
 
 chosen AS (
@@ -188,10 +192,10 @@ upd AS (
   FROM chosen c
   WHERE q.id = c.id
     AND q.claimed_at IS NULL
-  RETURNING q.id, q.queue_ts, q.priority, q.organization_id, q.dateint, q.frequency_ms, q.instance_num, q.slot_id, q.slot_count, q.tries, q.claimed_by, q.claimed_at, q.heartbeated_at, q.segment_id, q.record_count
+  RETURNING q.id, q.queue_ts, q.priority, q.organization_id, q.dateint, q.frequency_ms, q.instance_num, q.slot_id, q.slot_count, q.tries, q.claimed_by, q.claimed_at, q.heartbeated_at, q.segment_id, q.record_count, q.rollup_group
 )
 SELECT 
-  upd.id, upd.queue_ts, upd.priority, upd.organization_id, upd.dateint, upd.frequency_ms, upd.instance_num, upd.slot_id, upd.slot_count, upd.tries, upd.claimed_by, upd.claimed_at, upd.heartbeated_at, upd.segment_id, upd.record_count,
+  upd.id, upd.queue_ts, upd.priority, upd.organization_id, upd.dateint, upd.frequency_ms, upd.instance_num, upd.slot_id, upd.slot_count, upd.tries, upd.claimed_by, upd.claimed_at, upd.heartbeated_at, upd.segment_id, upd.record_count, upd.rollup_group,
   COALESCE(pr.target_records, 0) AS used_target_records,
   COALESCE(pr.org_estimate, 0) AS org_estimate,
   COALESCE(pr.global_estimate, 0) AS global_estimate, 
@@ -226,6 +230,7 @@ type ClaimMetricRollupWorkRow struct {
 	HeartbeatedAt     *time.Time `json:"heartbeated_at"`
 	SegmentID         int64      `json:"segment_id"`
 	RecordCount       int64      `json:"record_count"`
+	RollupGroup       int64      `json:"rollup_group"`
 	UsedTargetRecords int64      `json:"used_target_records"`
 	OrgEstimate       int64      `json:"org_estimate"`
 	GlobalEstimate    int64      `json:"global_estimate"`
@@ -234,7 +239,7 @@ type ClaimMetricRollupWorkRow struct {
 }
 
 // 1) Big single-row safety net
-// 2) One seed per group (org, dateint, freq, instance, slot_id, slot_count)
+// 2) One seed per group (org, dateint, freq, instance, slot_id, slot_count, rollup_group)
 // 3) Order groups globally by seed recency/priority
 // 4) Attach per-group target_records with estimate tracking
 // 5) All ready rows within each group
@@ -277,6 +282,7 @@ func (q *Queries) ClaimMetricRollupWork(ctx context.Context, arg ClaimMetricRoll
 			&i.HeartbeatedAt,
 			&i.SegmentID,
 			&i.RecordCount,
+			&i.RollupGroup,
 			&i.UsedTargetRecords,
 			&i.OrgEstimate,
 			&i.GlobalEstimate,

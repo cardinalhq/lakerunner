@@ -53,7 +53,7 @@ type Querier interface {
 	// 13) Atomic optimistic claim
 	ClaimMetricCompactionWork(ctx context.Context, arg ClaimMetricCompactionWorkParams) ([]ClaimMetricCompactionWorkRow, error)
 	// 1) Big single-row safety net
-	// 2) One seed per group (org, dateint, freq, instance, slot_id, slot_count)
+	// 2) One seed per group (org, dateint, freq, instance, slot_id, slot_count, rollup_group)
 	// 3) Order groups globally by seed recency/priority
 	// 4) Attach per-group target_records with estimate tracking
 	// 5) All ready rows within each group

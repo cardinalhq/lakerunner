@@ -44,6 +44,7 @@ func TestPutMetricRollupWork(t *testing.T) {
 		SlotCount:      8,
 		SegmentID:      12345,
 		RecordCount:    1000,
+		RollupGroup:    1000,
 		Priority:       1000,
 	})
 	require.NoError(t, err)
@@ -65,6 +66,7 @@ func TestPutMetricRollupWork_MultipleItems(t *testing.T) {
 			SlotCount:      8,
 			SegmentID:      12346,
 			RecordCount:    1000,
+			RollupGroup:    1001,
 			Priority:       1000,
 		},
 		{
@@ -76,6 +78,7 @@ func TestPutMetricRollupWork_MultipleItems(t *testing.T) {
 			SlotCount:      8,
 			SegmentID:      12347,
 			RecordCount:    2000,
+			RollupGroup:    1002,
 			Priority:       800,
 		},
 	}
@@ -104,6 +107,7 @@ func TestClaimMetricRollupWork_BasicClaim(t *testing.T) {
 			SlotCount:      8,
 			SegmentID:      12348,
 			RecordCount:    500,
+			RollupGroup:    1003, // Same rollup_group to test grouping
 			Priority:       1000,
 		},
 		{
@@ -115,6 +119,7 @@ func TestClaimMetricRollupWork_BasicClaim(t *testing.T) {
 			SlotCount:      8,
 			SegmentID:      12349,
 			RecordCount:    600,
+			RollupGroup:    1003, // Same rollup_group to test grouping
 			Priority:       1000,
 		},
 	}
@@ -156,6 +161,7 @@ func TestClaimMetricRollupWork_AgeThreshold(t *testing.T) {
 		SlotCount:      8,
 		SegmentID:      12345,
 		RecordCount:    1000,
+		RollupGroup:    1004,
 		Priority:       1000,
 	})
 	require.NoError(t, err)
@@ -209,6 +215,7 @@ func TestClaimMetricRollupWork_Priority(t *testing.T) {
 		SlotCount:      8,
 		SegmentID:      12350,
 		RecordCount:    800,
+		RollupGroup:    1005,
 		Priority:       600,
 	})
 	require.NoError(t, err)
@@ -223,6 +230,7 @@ func TestClaimMetricRollupWork_Priority(t *testing.T) {
 		SlotCount:      8,
 		SegmentID:      12351,
 		RecordCount:    900,
+		RollupGroup:    1006,
 		Priority:       1000,
 	})
 	require.NoError(t, err)
@@ -255,6 +263,7 @@ func TestReleaseMetricRollupWork(t *testing.T) {
 		SlotCount:      8,
 		SegmentID:      12345,
 		RecordCount:    1000,
+		RollupGroup:    1004,
 		Priority:       1000,
 	})
 	require.NoError(t, err)
@@ -306,6 +315,7 @@ func TestReleaseMetricRollupWork_OnlyReleasesByCorrectWorker(t *testing.T) {
 		SlotCount:      8,
 		SegmentID:      12345,
 		RecordCount:    1000,
+		RollupGroup:    1004,
 		Priority:       1000,
 	})
 	require.NoError(t, err)
@@ -354,6 +364,7 @@ func TestDeleteMetricRollupWork(t *testing.T) {
 		SlotCount:      8,
 		SegmentID:      12345,
 		RecordCount:    1000,
+		RollupGroup:    1004,
 		Priority:       1000,
 	})
 	require.NoError(t, err)
@@ -402,6 +413,7 @@ func TestDeleteMetricRollupWork_OnlyDeletesByCorrectWorker(t *testing.T) {
 		SlotCount:      8,
 		SegmentID:      12345,
 		RecordCount:    1000,
+		RollupGroup:    1004,
 		Priority:       1000,
 	})
 	require.NoError(t, err)
@@ -457,6 +469,7 @@ func TestTouchMetricRollupWork(t *testing.T) {
 		SlotCount:      8,
 		SegmentID:      12345,
 		RecordCount:    1000,
+		RollupGroup:    1004,
 		Priority:       1000,
 	})
 	require.NoError(t, err)
@@ -520,6 +533,7 @@ func TestCleanupMetricRollupWork(t *testing.T) {
 		SlotCount:      8,
 		SegmentID:      12345,
 		RecordCount:    1000,
+		RollupGroup:    1004,
 		Priority:       1000,
 	})
 	require.NoError(t, err)

@@ -37,6 +37,9 @@ func QueueMetricRollup(ctx context.Context, mdb RollupWorkQueuer, organizationID
 
 	priority := GetRollupPriority(nextFrequency)
 
+	// Calculate rollup group: segment start time divided by target rollup frequency
+	rollupGroup := startTs / int64(nextFrequency)
+
 	err := mdb.PutMetricRollupWork(ctx, lrdb.PutMetricRollupWorkParams{
 		OrganizationID: organizationID,
 		Dateint:        dateint,
@@ -46,6 +49,7 @@ func QueueMetricRollup(ctx context.Context, mdb RollupWorkQueuer, organizationID
 		SlotCount:      slotCount,
 		SegmentID:      segmentID,
 		RecordCount:    recordCount,
+		RollupGroup:    rollupGroup,
 		Priority:       priority,
 	})
 
