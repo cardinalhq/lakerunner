@@ -125,7 +125,7 @@ pack_with_limits AS (
    AND gf.slot_id         = p.slot_id
    AND gf.slot_count      = p.slot_count
    AND gf.rollup_group    = p.rollup_group
-  WHERE p.cum_records <= gf.target_records
+  WHERE p.cum_records <= (gf.target_records * 1.2)
     AND p.rn          <= gf.batch_count
 ),
 

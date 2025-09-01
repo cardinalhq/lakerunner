@@ -156,9 +156,9 @@ pack_with_limits AS (
     -- For old batches: take up to batch_count items regardless of total records
     (wg.eligibility_reason = 'old' AND p.rn <= wg.batch_count)
     OR
-    -- For full batches: stop once we exceed target_records to prevent massive overshoot
+    -- For full batches: greedily pack up to 120% of target to make efficient batches
     (wg.eligibility_reason = 'full_batch' 
-     AND p.cum_records <= wg.target_records
+     AND p.cum_records <= (wg.target_records * 1.2)
      AND p.rn <= wg.batch_count)
 ),
 
@@ -205,12 +205,32 @@ upd AS (
 )
 SELECT 
   upd.*,
-  COALESCE(fs.target_records, 0) AS used_target_records,
-  COALESCE(fs.org_estimate, 0) AS org_estimate,
-  COALESCE(fs.global_estimate, 0) AS global_estimate, 
-  COALESCE(fs.default_estimate, 0) AS default_estimate,
-  COALESCE(fs.estimate_source, 'unknown') AS estimate_source,
+  COALESCE(fs.target_records, est.target_records, p.default_target_records) AS used_target_records,
+  COALESCE(fs.org_estimate, est.org_estimate, 0) AS org_estimate,
+  COALESCE(fs.global_estimate, est.global_estimate, 0) AS global_estimate, 
+  COALESCE(fs.default_estimate, est.default_estimate, p.default_target_records) AS default_estimate,
+  COALESCE(fs.estimate_source, est.estimate_source, 'default') AS estimate_source,
   COALESCE(fs.eligibility_reason, 'big_single') AS batch_reason
 FROM upd
+CROSS JOIN params p
 LEFT JOIN final_selection fs ON upd.id = fs.id
+-- For big_single items, get estimates separately
+LEFT JOIN LATERAL (
+  SELECT 
+    COALESCE(e_org.target_records, e_glob.target_records, p2.default_target_records)::bigint AS target_records,
+    e_org.target_records AS org_estimate,
+    e_glob.target_records AS global_estimate,
+    p2.default_target_records AS default_estimate,
+    CASE 
+      WHEN e_org.target_records IS NOT NULL THEN 'organization'
+      WHEN e_glob.target_records IS NOT NULL THEN 'global'
+      ELSE 'default'
+    END AS estimate_source
+  FROM params p2
+  LEFT JOIN metric_pack_estimate e_org
+         ON e_org.organization_id = upd.organization_id AND e_org.frequency_ms = upd.frequency_ms
+  LEFT JOIN metric_pack_estimate e_glob
+         ON e_glob.organization_id = '00000000-0000-0000-0000-000000000000'::uuid
+        AND e_glob.frequency_ms = upd.frequency_ms
+) est ON fs.id IS NULL
 ORDER BY upd.priority DESC, upd.queue_ts ASC, upd.id ASC;
