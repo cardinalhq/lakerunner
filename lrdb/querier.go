@@ -50,6 +50,7 @@ type Querier interface {
 	// 10) Check for >20% overshoot and drop last item if needed (but keep at least 1 item)
 	// 11) Final chosen IDs
 	// 12) Atomic optimistic claim
+	// For big_single items, get estimates separately
 	ClaimMetricCompactionWork(ctx context.Context, arg ClaimMetricCompactionWorkParams) ([]ClaimMetricCompactionWorkRow, error)
 	// 1) Big single-row safety net (with full batch logic)
 	// 2) One seed per group (org, dateint, freq, instance, slot_id, slot_count, rollup_group)
