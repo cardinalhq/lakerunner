@@ -50,10 +50,13 @@ func TestClaimMetricRollupWork_ImprovedFullBatchVerification(t *testing.T) {
 		{OrganizationID: orgID1, Dateint: 20250901, FrequencyMs: 10000, InstanceNum: 1, SlotID: 0, SlotCount: 8, SegmentID: 1002, RecordCount: 20000, RollupGroup: 1001, Priority: 800, WindowCloseTs: windowCloseTime},
 	}
 
-	// Scenario 2: Organization with 45,000 records (112.5% of target, should be claimed as full_batch)
+	// Scenario 2: 5 x 10,000 records (50k total, should claim first four for a full batch)
 	items2 := []lrdb.PutMetricRollupWorkParams{
-		{OrganizationID: orgID2, Dateint: 20250901, FrequencyMs: 10000, InstanceNum: 1, SlotID: 1, SlotCount: 8, SegmentID: 2001, RecordCount: 22500, RollupGroup: 2001, Priority: 800, WindowCloseTs: windowCloseTime},
-		{OrganizationID: orgID2, Dateint: 20250901, FrequencyMs: 10000, InstanceNum: 1, SlotID: 1, SlotCount: 8, SegmentID: 2002, RecordCount: 22500, RollupGroup: 2001, Priority: 800, WindowCloseTs: windowCloseTime},
+		{OrganizationID: orgID2, Dateint: 20250901, FrequencyMs: 10000, InstanceNum: 1, SlotID: 1, SlotCount: 8, SegmentID: 2001, RecordCount: 10000, RollupGroup: 2001, Priority: 800, WindowCloseTs: windowCloseTime},
+		{OrganizationID: orgID2, Dateint: 20250901, FrequencyMs: 10000, InstanceNum: 1, SlotID: 1, SlotCount: 8, SegmentID: 2002, RecordCount: 10000, RollupGroup: 2001, Priority: 800, WindowCloseTs: windowCloseTime},
+		{OrganizationID: orgID2, Dateint: 20250901, FrequencyMs: 10000, InstanceNum: 1, SlotID: 1, SlotCount: 8, SegmentID: 2003, RecordCount: 10000, RollupGroup: 2001, Priority: 800, WindowCloseTs: windowCloseTime},
+		{OrganizationID: orgID2, Dateint: 20250901, FrequencyMs: 10000, InstanceNum: 1, SlotID: 1, SlotCount: 8, SegmentID: 2004, RecordCount: 10000, RollupGroup: 2001, Priority: 800, WindowCloseTs: windowCloseTime},
+		{OrganizationID: orgID2, Dateint: 20250901, FrequencyMs: 10000, InstanceNum: 1, SlotID: 1, SlotCount: 8, SegmentID: 2005, RecordCount: 10000, RollupGroup: 2001, Priority: 800, WindowCloseTs: windowCloseTime},
 	}
 
 	// Scenario 3: Organization with 60,000 records (150% of target, should NOT be claimed when fresh)
@@ -73,7 +76,7 @@ func TestClaimMetricRollupWork_ImprovedFullBatchVerification(t *testing.T) {
 
 	fmt.Printf("Created test organizations:\n")
 	fmt.Printf("  Org1 (%s): 40,000 records (exactly target) - should be eligible\n", orgID1.String()[:8])
-	fmt.Printf("  Org2 (%s): 45,000 records (112.5%% of target) - should be eligible\n", orgID2.String()[:8])
+	fmt.Printf("  Org2 (%s): 50,000 records (125%% of target) - should be eligible\n", orgID2.String()[:8])
 	fmt.Printf("  Org3 (%s): 60,000 records (150%% of target) - should NOT be eligible when fresh\n", orgID3.String()[:8])
 
 	// Test fresh items (should use full batch logic)
@@ -112,8 +115,8 @@ func TestClaimMetricRollupWork_ImprovedFullBatchVerification(t *testing.T) {
 		fmt.Printf("No items claimed - this suggests eligibility logic may have issues\n")
 	}
 
-	// Test 2: Should claim Org2 (45k records, within 120%)
-	fmt.Printf("\n--- Test 2: Expecting Org2 (within 120%% limit) ---\n")
+	// Test 2: Should claim Org2 (trimmed to full batch)
+	fmt.Printf("\n--- Test 2: Expecting Org2 (trimmed to full batch) ---\n")
 	batch2, err := db.ClaimMetricRollupWork(ctx, lrdb.ClaimMetricRollupWorkParams{
 		WorkerID:             workerID,
 		DefaultTargetRecords: targetRecords,
