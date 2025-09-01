@@ -102,10 +102,11 @@ func coordinate(
 
 	// Prepare input for pure compaction
 	compactionInput := input{
-		ReaderStack: readerStack,
-		FrequencyMs: workItem.FrequencyMs,
-		TmpDir:      tmpdir,
-		Logger:      ll,
+		ReaderStack:  readerStack,
+		FrequencyMs:  workItem.FrequencyMs,
+		TmpDir:       tmpdir,
+		Logger:       ll,
+		RecordsLimit: workItem.UsedTargetRecords * 2,
 	}
 
 	// Perform pure compaction

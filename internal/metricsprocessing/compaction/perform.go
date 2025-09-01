@@ -22,7 +22,6 @@ import (
 	"log/slog"
 
 	"github.com/cardinalhq/lakerunner/internal/filereader"
-	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 )
@@ -45,7 +44,7 @@ func perform(ctx context.Context, input input) (*result, error) {
 	}
 	defer aggregatingReader.Close()
 
-	writer, err := factories.NewMetricsWriter(input.TmpDir, parquetwriter.NoRecordLimitPerFile)
+	writer, err := factories.NewMetricsWriter(input.TmpDir, input.RecordsLimit)
 	if err != nil {
 		ll.Error("Failed to create metrics writer", slog.Any("error", err))
 		return nil, fmt.Errorf("creating metrics writer: %w", err)
