@@ -74,8 +74,8 @@ GROUP BY
   dateint,
   EXTRACT(HOUR FROM to_timestamp(lower(ts_range) / 1000.0))::int
 ORDER BY
-  created_by,
   organization_id,
   dateint,
-  hour;
+  hour,
+  created_by;
 $$;

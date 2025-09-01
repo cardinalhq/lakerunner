@@ -103,14 +103,12 @@ eligible_groups AS (
     ga.organization_id, ga.dateint, ga.frequency_ms, ga.instance_num, ga.priority, ga.queue_ts, ga.seed_rank, ga.is_old, ga.target_records, ga.total_available_records, ga.total_items, ga.org_estimate, ga.global_estimate, ga.default_estimate, ga.estimate_source, ga.batch_count, ga.now_ts,
     CASE 
       WHEN ga.is_old THEN true
-      WHEN ga.total_available_records >= ga.target_records 
-        AND ga.total_available_records <= (ga.target_records * 1.2) THEN true
+      WHEN ga.total_available_records >= ga.target_records THEN true
       ELSE false
     END AS is_eligible,
     CASE 
       WHEN ga.is_old THEN 'old'
-      WHEN ga.total_available_records >= ga.target_records 
-        AND ga.total_available_records <= (ga.target_records * 1.2) THEN 'full_batch'
+      WHEN ga.total_available_records >= ga.target_records THEN 'full_batch'
       ELSE 'insufficient'
     END AS eligibility_reason
   FROM group_analysis ga
@@ -155,7 +153,7 @@ pack AS (
   FROM group_items gi
 ),
 
-final_selection AS (
+pack_with_limits AS (
   SELECT p.id, p.organization_id, p.dateint, p.frequency_ms, p.instance_num, p.priority, p.queue_ts, p.record_count, p.seed_rank, p.is_old, p.target_records, p.batch_count, p.org_estimate, p.global_estimate, p.default_estimate, p.estimate_source, p.eligibility_reason, p.cum_records, p.rn
   FROM pack p
   JOIN winner_group wg ON TRUE
@@ -163,10 +161,31 @@ final_selection AS (
     -- For old batches: take up to batch_count items regardless of total records
     (wg.eligibility_reason = 'old' AND p.rn <= wg.batch_count)
     OR
-    -- For full batches: take items that fit within target * 1.2 and batch_count
+    -- For full batches: stop once we exceed target_records to prevent massive overshoot
     (wg.eligibility_reason = 'full_batch' 
-     AND p.cum_records <= (wg.target_records * 1.2) 
+     AND p.cum_records <= wg.target_records
      AND p.rn <= wg.batch_count)
+),
+
+final_selection AS (
+  SELECT pwl.id, pwl.organization_id, pwl.dateint, pwl.frequency_ms, pwl.instance_num, pwl.priority, pwl.queue_ts, pwl.record_count, pwl.seed_rank, pwl.is_old, pwl.target_records, pwl.batch_count, pwl.org_estimate, pwl.global_estimate, pwl.default_estimate, pwl.estimate_source, pwl.eligibility_reason, pwl.cum_records, pwl.rn
+  FROM pack_with_limits pwl
+  JOIN winner_group wg ON TRUE
+  WHERE 
+    -- For old batches: keep all items (no overshoot protection)
+    wg.eligibility_reason = 'old'
+    OR
+    -- For full batches: drop the last item if it causes >20% overshoot and we have >=2 items
+    (wg.eligibility_reason = 'full_batch' AND (
+      -- Keep if we're not over 20%
+      pwl.cum_records <= (wg.target_records * 1.2)
+      OR
+      -- Keep if we only have 1 item (don't drop everything)
+      (SELECT COUNT(*) FROM pack_with_limits) <= 1
+      OR
+      -- Keep if we're not the last item
+      pwl.rn < (SELECT MAX(rn) FROM pack_with_limits)
+    ))
 ),
 
 chosen AS (
@@ -233,13 +252,14 @@ type ClaimMetricCompactionWorkRow struct {
 // 2) One seed per group
 // 3) Order groups globally by seed recency/priority
 // 4) Calculate group stats and eligibility criteria
-// 5) Determine group eligibility: old OR can make a full batch (target to target*1.2)
+// 5) Determine group eligibility: old OR can make a full batch (target to target*2.0 for eligibility)
 // 6) Pick the first eligible group (ordered by seed_rank)
 // 7) For the winner group, get items in priority order and pack greedily
 // 8) Pack items greedily within limits
-// 9) Apply limits based on eligibility reason
-// 10) Final chosen IDs
-// 11) Atomic optimistic claim
+// 9) Apply limits based on eligibility reason with overshoot protection
+// 10) Check for >20% overshoot and drop last item if needed (but keep at least 1 item)
+// 11) Final chosen IDs
+// 12) Atomic optimistic claim
 func (q *Queries) ClaimMetricCompactionWork(ctx context.Context, arg ClaimMetricCompactionWorkParams) ([]ClaimMetricCompactionWorkRow, error) {
 	rows, err := q.db.Query(ctx, claimMetricCompactionWork,
 		arg.WorkerID,

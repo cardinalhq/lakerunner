@@ -88,20 +88,18 @@ group_analysis AS (
            p.batch_count
 ),
 
--- 5) Determine group eligibility: old OR can make a full batch (target to target*1.2)
+-- 5) Determine group eligibility: old OR can make a full batch (target to target*2.0 for eligibility)
 eligible_groups AS (
   SELECT 
     ga.*,
     CASE 
       WHEN ga.is_old THEN true
-      WHEN ga.total_available_records >= ga.target_records 
-        AND ga.total_available_records <= (ga.target_records * 1.2) THEN true
+      WHEN ga.total_available_records >= ga.target_records THEN true
       ELSE false
     END AS is_eligible,
     CASE 
       WHEN ga.is_old THEN 'old'
-      WHEN ga.total_available_records >= ga.target_records 
-        AND ga.total_available_records <= (ga.target_records * 1.2) THEN 'full_batch'
+      WHEN ga.total_available_records >= ga.target_records THEN 'full_batch'
       ELSE 'insufficient'
     END AS eligibility_reason
   FROM group_analysis ga
@@ -149,8 +147,8 @@ pack AS (
   FROM group_items gi
 ),
 
--- 9) Apply limits based on eligibility reason
-final_selection AS (
+-- 9) Apply limits based on eligibility reason with overshoot protection
+pack_with_limits AS (
   SELECT p.*
   FROM pack p
   JOIN winner_group wg ON TRUE
@@ -158,13 +156,35 @@ final_selection AS (
     -- For old batches: take up to batch_count items regardless of total records
     (wg.eligibility_reason = 'old' AND p.rn <= wg.batch_count)
     OR
-    -- For full batches: take items that fit within target * 1.2 and batch_count
+    -- For full batches: stop once we exceed target_records to prevent massive overshoot
     (wg.eligibility_reason = 'full_batch' 
-     AND p.cum_records <= (wg.target_records * 1.2) 
+     AND p.cum_records <= wg.target_records
      AND p.rn <= wg.batch_count)
 ),
 
--- 10) Final chosen IDs  
+-- 10) Check for >20% overshoot and drop last item if needed (but keep at least 1 item)
+final_selection AS (
+  SELECT pwl.*
+  FROM pack_with_limits pwl
+  JOIN winner_group wg ON TRUE
+  WHERE 
+    -- For old batches: keep all items (no overshoot protection)
+    wg.eligibility_reason = 'old'
+    OR
+    -- For full batches: drop the last item if it causes >20% overshoot and we have >=2 items
+    (wg.eligibility_reason = 'full_batch' AND (
+      -- Keep if we're not over 20%
+      pwl.cum_records <= (wg.target_records * 1.2)
+      OR
+      -- Keep if we only have 1 item (don't drop everything)
+      (SELECT COUNT(*) FROM pack_with_limits) <= 1
+      OR
+      -- Keep if we're not the last item
+      pwl.rn < (SELECT MAX(rn) FROM pack_with_limits)
+    ))
+),
+
+-- 11) Final chosen IDs  
 chosen AS (
   SELECT id FROM big_single
   UNION ALL
@@ -172,7 +192,7 @@ chosen AS (
   WHERE NOT EXISTS (SELECT 1 FROM big_single)
 ),
 
--- 11) Atomic optimistic claim
+-- 12) Atomic optimistic claim
 upd AS (
   UPDATE metric_compaction_queue q
   SET claimed_by = (SELECT worker_id FROM params),

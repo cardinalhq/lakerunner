@@ -42,13 +42,14 @@ type Querier interface {
 	// 2) One seed per group
 	// 3) Order groups globally by seed recency/priority
 	// 4) Calculate group stats and eligibility criteria
-	// 5) Determine group eligibility: old OR can make a full batch (target to target*1.2)
+	// 5) Determine group eligibility: old OR can make a full batch (target to target*2.0 for eligibility)
 	// 6) Pick the first eligible group (ordered by seed_rank)
 	// 7) For the winner group, get items in priority order and pack greedily
 	// 8) Pack items greedily within limits
-	// 9) Apply limits based on eligibility reason
-	// 10) Final chosen IDs
-	// 11) Atomic optimistic claim
+	// 9) Apply limits based on eligibility reason with overshoot protection
+	// 10) Check for >20% overshoot and drop last item if needed (but keep at least 1 item)
+	// 11) Final chosen IDs
+	// 12) Atomic optimistic claim
 	ClaimMetricCompactionWork(ctx context.Context, arg ClaimMetricCompactionWorkParams) ([]ClaimMetricCompactionWorkRow, error)
 	// 1) Big single-row safety net (with full batch logic)
 	// 2) One seed per group (org, dateint, freq, instance, slot_id, slot_count, rollup_group)
@@ -56,14 +57,15 @@ type Querier interface {
 	// 4) Attach per-group target_records with estimate tracking
 	// 5) All ready rows within each group
 	// 6) Greedy pack per group
-	// 7) Rows that fit under caps
-	// 8) Totals per group with full scope for availability calculation
-	// 9) Totals per group from what fits under caps
-	// 10) Eligibility: full batch logic (old items OR efficient fresh batches)
-	// 11) Pick earliest eligible group
-	// 12) Rows to claim for the winner group
-	// 13) Final chosen IDs with batch reason
-	// 14) Atomic optimistic claim
+	// 7) Rows that fit under caps with overshoot protection
+	// 8) Check for >20% overshoot and drop last item if needed (but keep at least 1 item)
+	// 9) Totals per group with full scope for availability calculation
+	// 10) Totals per group from what fits under caps
+	// 11) Eligibility: full batch logic (old items OR efficient fresh batches)
+	// 12) Pick earliest eligible group
+	// 13) Rows to claim for the winner group
+	// 14) Final chosen IDs with batch reason
+	// 15) Atomic optimistic claim
 	ClaimMetricRollupWork(ctx context.Context, arg ClaimMetricRollupWorkParams) ([]ClaimMetricRollupWorkRow, error)
 	CleanupInqueueWork(ctx context.Context, cutoffTime *time.Time) ([]Inqueue, error)
 	CleanupMetricCompactionWork(ctx context.Context, cutoffTime *time.Time) ([]MetricCompactionQueue, error)
