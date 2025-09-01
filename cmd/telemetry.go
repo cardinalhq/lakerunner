@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"runtime"
 	"time"
 
 	"github.com/cardinalhq/oteltools/pkg/telemetry"
@@ -49,7 +48,6 @@ var (
 	workqueueDuration      metric.Float64Histogram
 	workqueueFetchDuration metric.Float64Histogram
 	workqueueLag           metric.Float64Histogram
-	manualGCHistogram      metric.Float64Histogram
 
 	segmentsFilteredCounter metric.Int64Counter
 
@@ -196,16 +194,6 @@ func setupGlobalMetrics() {
 	}
 	workqueueLag = m
 
-	m, err = meter.Float64Histogram(
-		"lakerunner.manual_gc.duration",
-		metric.WithDescription("Duration of manual garbage collection in seconds"),
-		metric.WithUnit("s"),
-	)
-	if err != nil {
-		panic(fmt.Errorf("failed to create manual_gc.duration histogram: %w", err))
-	}
-	manualGCHistogram = m
-
 	sc, err := meter.Int64Counter(
 		"lakerunner.processing.segments.filtered",
 		metric.WithDescription("Number of segments filtered out during processing pipeline"),
@@ -225,10 +213,4 @@ func setupGlobalMetrics() {
 	existsGauge = mg
 	mg.Record(context.Background(), 1, metric.WithAttributeSet(commonAttributes))
 
-}
-
-func gc() {
-	n := time.Now()
-	runtime.GC()
-	manualGCHistogram.Record(context.Background(), time.Since(n).Seconds(), metric.WithAttributeSet(commonAttributes))
 }

@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"math"
 	"os"
+	"runtime"
 	"sync/atomic"
 	"time"
 
@@ -218,7 +219,7 @@ func RunqueueLoop(loop *RunqueueLoopContext, pfx RunqueueProcessingFunction, arg
 			slog.Error("Work processing failed, continuing to poll", slog.Any("error", err))
 		}
 
-		gc()
+		runtime.GC()
 
 		// Poll for work again in 2 seconds, exiting if cancelled
 		select {

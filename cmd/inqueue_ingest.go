@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"runtime"
 	"sync/atomic"
 	"time"
 
@@ -228,7 +229,7 @@ func IngestLoopWithBatch(loop *IngestLoopContext, _ interface{}, batchProcessing
 			}
 		}
 
-		gc()
+		runtime.GC()
 	}
 }
 
