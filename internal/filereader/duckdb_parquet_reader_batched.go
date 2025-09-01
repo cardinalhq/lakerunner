@@ -73,7 +73,7 @@ func NewDuckDBParquetBatchedReader(paths []string, batchSize int) (*DuckDBParque
 	// Build base query template
 	var baseQuery string
 	var queryArgs []any
-	
+
 	if len(paths) == 1 {
 		baseQuery = "SELECT * FROM read_parquet(?, union_by_name=true) LIMIT ? OFFSET ?"
 		queryArgs = []any{paths[0]}

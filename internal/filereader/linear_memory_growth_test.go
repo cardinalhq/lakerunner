@@ -1,3 +1,17 @@
+// Copyright (C) 2025 CardinalHQ, Inc
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as
+// published by the Free Software Foundation, version 3.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program. If not, see <http://www.gnu.org/licenses/>.
+
 //go:build memoryanalysis
 
 package filereader
@@ -72,31 +86,31 @@ func TestLinearMemoryGrowth(t *testing.T) {
 		t.Run(reader.name+"_LinearityTest", func(t *testing.T) {
 			// Test with 5 iterations
 			growth5 := measureMemoryGrowthOverIterations(t, reader.factory, 5)
-			
+
 			// Stabilize memory before second test
 			runtime.GC()
 			runtime.GC()
 			time.Sleep(100 * time.Millisecond)
-			
-			// Test with 25 iterations  
+
+			// Test with 25 iterations
 			growth25 := measureMemoryGrowthOverIterations(t, reader.factory, 25)
-			
+
 			// Calculate expected vs actual ratios
 			expectedRatio := float64(25) / float64(5) // Should be 5.0 for linear growth
 			actualRSSRatio := float64(growth25.rssGrowth) / float64(growth5.rssGrowth)
 			actualNativeRatio := float64(growth25.nativeGrowth) / float64(growth5.nativeGrowth)
-			
+
 			t.Logf("\n=== %s Linearity Analysis ===", reader.name)
-			t.Logf("5 iterations:  RSS=%.2f MB, Native=%.2f MB", 
+			t.Logf("5 iterations:  RSS=%.2f MB, Native=%.2f MB",
 				float64(growth5.rssGrowth)/1024/1024,
 				float64(growth5.nativeGrowth)/1024/1024)
-			t.Logf("25 iterations: RSS=%.2f MB, Native=%.2f MB", 
+			t.Logf("25 iterations: RSS=%.2f MB, Native=%.2f MB",
 				float64(growth25.rssGrowth)/1024/1024,
 				float64(growth25.nativeGrowth)/1024/1024)
 			t.Logf("Expected ratio: %.1fx", expectedRatio)
 			t.Logf("Actual RSS ratio: %.2fx", actualRSSRatio)
 			t.Logf("Actual Native ratio: %.2fx", actualNativeRatio)
-			
+
 			// Check linearity (allow 20% tolerance due to measurement noise)
 			tolerance := 0.2
 			if actualRSSRatio < expectedRatio*(1-tolerance) || actualRSSRatio > expectedRatio*(1+tolerance) {
@@ -104,7 +118,7 @@ func TestLinearMemoryGrowth(t *testing.T) {
 			} else {
 				t.Logf("✅ RSS growth is LINEAR (%.2fx ≈ %.1fx)", actualRSSRatio, expectedRatio)
 			}
-			
+
 			if actualNativeRatio < expectedRatio*(1-tolerance) || actualNativeRatio > expectedRatio*(1+tolerance) {
 				t.Logf("⚠️  Native growth is NON-LINEAR (%.2fx vs expected %.1fx)", actualNativeRatio, expectedRatio)
 			} else {
@@ -125,19 +139,19 @@ func measureMemoryGrowthOverIterations(t *testing.T, factory func() (Reader, err
 	runtime.GC()
 	runtime.GC()
 	time.Sleep(50 * time.Millisecond)
-	
+
 	baseline, err := getSystemMemStats()
 	if err != nil {
 		t.Fatalf("Failed to get baseline memory stats: %v", err)
 	}
-	
+
 	// Run iterations
 	for i := 0; i < iterations; i++ {
 		reader, err := factory()
 		if err != nil {
 			t.Fatalf("Failed to create reader: %v", err)
 		}
-		
+
 		// Process one batch
 		batch, err := reader.Next()
 		if err != nil {
@@ -146,26 +160,26 @@ func measureMemoryGrowthOverIterations(t *testing.T, factory func() (Reader, err
 		if batch.Len() == 0 {
 			t.Fatal("No rows read")
 		}
-		
+
 		// Clean up
 		reader.Close()
 		runtime.GC()
 	}
-	
+
 	// Final cleanup
 	runtime.GC()
 	runtime.GC()
 	time.Sleep(50 * time.Millisecond)
-	
+
 	final, err := getSystemMemStats()
 	if err != nil {
 		t.Fatalf("Failed to get final memory stats: %v", err)
 	}
-	
+
 	rssGrowth := final.ProcessRSS - baseline.ProcessRSS
 	heapGrowth := int64(final.GoHeapAlloc - baseline.GoHeapAlloc)
 	nativeGrowth := rssGrowth - heapGrowth
-	
+
 	return memoryGrowthResult{
 		rssGrowth:    rssGrowth,
 		heapGrowth:   heapGrowth,
@@ -176,7 +190,7 @@ func measureMemoryGrowthOverIterations(t *testing.T, factory func() (Reader, err
 // TestMemoryGrowthPerIteration shows the per-iteration memory cost for each reader
 func TestMemoryGrowthPerIteration(t *testing.T) {
 	testFile := "../../testdata/metrics/metrics-cooked-721581701.parquet"
-	
+
 	readers := []struct {
 		name    string
 		factory func() (Reader, error)
@@ -216,16 +230,16 @@ func TestMemoryGrowthPerIteration(t *testing.T) {
 	}
 
 	t.Logf("\n=== Per-Iteration Memory Cost Analysis ===")
-	
+
 	for _, reader := range readers {
 		t.Run(reader.name+"_PerIterationCost", func(t *testing.T) {
 			iterations := 10
 			growth := measureMemoryGrowthOverIterations(t, reader.factory, iterations)
-			
+
 			rssPerIteration := float64(growth.rssGrowth) / float64(iterations) / 1024 / 1024
 			nativePerIteration := float64(growth.nativeGrowth) / float64(iterations) / 1024 / 1024
-			
-			t.Logf("%s: %.2f MB RSS per iteration (%.2f MB native)", 
+
+			t.Logf("%s: %.2f MB RSS per iteration (%.2f MB native)",
 				reader.name, rssPerIteration, nativePerIteration)
 		})
 	}
