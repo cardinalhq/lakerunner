@@ -73,7 +73,7 @@ func coordinate(
 	}
 
 	// Create writer manager
-	wm := newMetricWriterManager(input.TmpDir, firstItem.OrganizationID.String(), input.IngestDateint, input.RPFEstimate, input.Logger)
+	wm := newMetricWriterManager(input.TmpDir, profile.OrganizationID.String(), input.IngestDateint, input.RPFEstimate, input.Logger)
 
 	// Track total rows across all files
 	var batchRowsRead, batchRowsProcessed, batchRowsErrored int64
@@ -108,7 +108,7 @@ func coordinate(
 				continue
 			}
 
-			if err := processExemplarsFromReader(ctx, exemplarReader, input.ExemplarProcessor, firstItem.OrganizationID.String(), mdb); err != nil {
+			if err := processExemplarsFromReader(ctx, exemplarReader, input.ExemplarProcessor, profile.OrganizationID.String(), mdb); err != nil {
 				input.Logger.Warn("Failed to process exemplars from file",
 					slog.String("objectID", fileInfo.item.ObjectID),
 					slog.Any("error", err))
@@ -119,7 +119,7 @@ func coordinate(
 	}
 
 	// Step 2: Create readers for each file
-	readers, readersToClose, err := createReadersForFiles(validFiles, firstItem.OrganizationID.String(), input.Logger)
+	readers, readersToClose, err := createReadersForFiles(validFiles, profile.OrganizationID.String(), input.Logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create readers: %w", err)
 	}
