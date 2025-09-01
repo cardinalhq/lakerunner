@@ -9,13 +9,19 @@ import (
 	"context"
 )
 
-const cleanupMetricRollupWork = `-- name: CleanupMetricRollupWork :exec
-DELETE FROM metric_rollup_queue
-WHERE claimed_at IS NOT NULL
-  AND heartbeated_at < (now() - make_interval(secs => $1))
+const cleanupMetricRollupWork = `-- name: CleanupMetricRollupWork :one
+WITH deleted AS (
+  DELETE FROM metric_rollup_queue
+  WHERE claimed_at IS NOT NULL
+    AND heartbeated_at < (now() - make_interval(secs => $1))
+  RETURNING 1
+)
+SELECT COUNT(*) FROM deleted
 `
 
-func (q *Queries) CleanupMetricRollupWork(ctx context.Context, timeoutSeconds float64) error {
-	_, err := q.db.Exec(ctx, cleanupMetricRollupWork, timeoutSeconds)
-	return err
+func (q *Queries) CleanupMetricRollupWork(ctx context.Context, timeoutSeconds float64) (int64, error) {
+	row := q.db.QueryRow(ctx, cleanupMetricRollupWork, timeoutSeconds)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }

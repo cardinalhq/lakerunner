@@ -14,12 +14,11 @@ Many metrics include these standardized attributes:
 
 | Metric Name | Description | Attributes |
 |-------------|-------------|------------|
-| `lakerunner.file.sorted` | Number of files processed, tracking whether they were sorted or not | `input_sorted` |
-| `lakerunner.processing.input.filetype` | Number of input files processed by processing pipeline | `action`, `filetype`, `input_sorted` |
 | `lakerunner.pipeline.bufferpool.gets` | Total number of gets from the buffer pool | - |
 | `lakerunner.pipeline.bufferpool.puts` | Total number of puts back to the buffer pool | - |
 | `lakerunner.processing.bytes.in` | Number of bytes input to processing pipeline | `signal`, `action` |
 | `lakerunner.processing.bytes.out` | Number of bytes output from processing pipeline | `signal`, `action` |
+| `lakerunner.processing.input.filetype` | Number of input files processed by processing pipeline | `filetype`, `input_sorted`, `action` (optional) |
 | `lakerunner.processing.records.in` | Number of records input to processing pipeline | `signal`, `action` |
 | `lakerunner.processing.records.out` | Number of records output from processing pipeline | `signal`, `action` |
 | `lakerunner.processing.segments.download_errors` | Number of segment download errors during processing | `signal`, `action`, `reason` |
@@ -37,6 +36,7 @@ Many metrics include these standardized attributes:
 | `lakerunner.sweeper.inqueue_expiry_total` | Count of inqueue items expired due to staleness | `signal` |
 | `lakerunner.sweeper.legacy_table_sync_total` | Count of legacy table synchronization runs | - |
 | `lakerunner.sweeper.mcq_expiry_total` | Count of MCQ items expired due to stale heartbeats | - |
+| `lakerunner.sweeper.mrq_expiry_total` | Count of MRQ items expired due to stale heartbeats | - |
 | `lakerunner.sweeper.metric_estimate_update_total` | Count of metric estimate updates processed | `estimate_source` |
 | `lakerunner.sweeper.object_cleanup_total` | Count of objects processed during cleanup | `result` |
 | `lakerunner.sweeper.signal_lock_cleanup_total` | Count of orphaned signal locks cleaned up | - |
@@ -49,7 +49,6 @@ Many metrics include these standardized attributes:
 | `lakerunner.inqueue.duration` | The duration in seconds for an inqueue item to be processed | s | `bucket`, `batchSize` |
 | `lakerunner.inqueue.lag` | Time in seconds from when an item was queued until it was claimed for processing | s | `signal` |
 | `lakerunner.inqueue.request.delay` | The delay in seconds for a request for new inqueue work to be returned | s | `hasError`, `errorIsNoRows` |
-| `lakerunner.manual_gc.duration` | Duration of manual garbage collection in seconds | s | - |
 | `lakerunner.sweeper.legacy_table_sync_duration_seconds` | Duration of legacy table synchronization runs in seconds | s | - |
 | `lakerunner.workqueue.duration` | The duration in seconds for a work item to be processed | s | - |
 | `lakerunner.workqueue.lag` | The lag in seconds for a work item to be processed in the work queue | s | - |
@@ -73,7 +72,7 @@ Many metrics include these standardized attributes:
 
 ### File Reader Components
 
-- `lakerunner.file.sorted` - Track whether input files are pre-sorted
+- `lakerunner.processing.input.filetype` - Track file types and whether input files are pre-sorted
 - `lakerunner.reader.rows.*` - Track row processing through the reader stack
 
 ### S3 Operations
@@ -87,13 +86,14 @@ Many metrics include these standardized attributes:
 
 ### Processing Pipelines
 
-- `lakerunner.compaction.segments.*` - Segment compaction processing
-- `lakerunner.metric.*` - Metric-specific processing (ingest, compact, rollup)
+- `lakerunner.processing.input.filetype` - File type and sorting status tracking across all processing pipelines
+- `lakerunner.processing.segments.*` - Segment processing counters (in/out/filtered)
+- `lakerunner.processing.records.*` - Record processing counters (in/out)
+- `lakerunner.processing.bytes.*` - Byte processing counters (in/out)
 - `lakerunner.pipeline.bufferpool.*` - Memory pool usage
 
 ### Background Maintenance
 
-- `lakerunner.manual_gc.duration` - Manual garbage collection
 - `lakerunner.sweeper.*` - Cleanup and maintenance operations
 
 ### Database Operations

@@ -124,6 +124,25 @@ func runMCQExpiry(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull) erro
 	return nil
 }
 
+func runMRQExpiry(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull) error {
+	// Calculate cutoff time for MRQ items based on heartbeat logic
+	// Items are considered stale if they haven't heartbeated for 5 minutes
+	// This allows for ~5 missed heartbeats (1 minute interval) plus buffer
+	mrqStaleTimeout := 5 * time.Minute
+	timeoutSeconds := mrqStaleTimeout.Seconds()
+
+	count, err := mdb.CleanupMetricRollupWork(ctx, timeoutSeconds)
+	if err != nil {
+		ll.Error("Failed to expire MRQ objects", slog.Any("error", err))
+		return err
+	}
+	if count > 0 {
+		ll.Info("Expired MRQ items", slog.Int64("count", count))
+		mrqExpiryCounter.Add(ctx, count)
+	}
+	return nil
+}
+
 func workqueueGCLoop(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull) error {
 	runOnce := func() {
 		cutoff := time.Now().Add(-gcCutoffAge).UTC()
