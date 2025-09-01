@@ -88,7 +88,7 @@ group_analysis AS (
            p.batch_count
 ),
 
--- 5) Determine group eligibility: old OR can make a full batch (target to target*2.0 for eligibility)
+-- 5) Determine group eligibility: old OR can make a full batch (>= target records)
 eligible_groups AS (
   SELECT 
     ga.*,
