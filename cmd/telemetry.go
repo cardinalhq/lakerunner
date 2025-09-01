@@ -33,6 +33,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/idgen"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 )
 
 var (
@@ -90,15 +91,17 @@ func setupTelemetry(servicename string, addlAttrs *attribute.Set) (context.Conte
 		opts = &slog.HandlerOptions{Level: slog.LevelDebug}
 	}
 
+	var logger *slog.Logger
 	if os.Getenv("OTEL_SERVICE_NAME") != "" && os.Getenv("ENABLE_OTLP_TELEMETRY") == "true" {
 		slog.Info("OpenTelemetry exporting enabled")
-		slog.SetDefault(slog.New(slogmulti.Fanout(
+		logger = slog.New(slogmulti.Fanout(
 			slog.NewTextHandler(os.Stdout, opts),
 			otelslog.NewHandler(servicename),
 		)).With(
 			slog.String("service", servicename),
 			slog.Int64("instanceID", myInstanceID),
-		))
+		)
+		slog.SetDefault(logger)
 
 		otelShutdown, err := telemetry.SetupOTelSDK(doneCtx)
 		if err != nil {
@@ -122,11 +125,15 @@ func setupTelemetry(servicename string, addlAttrs *attribute.Set) (context.Conte
 		}
 	} else {
 		// Configure slog even when OTEL is disabled
-		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, opts)).With(
+		logger = slog.New(slog.NewTextHandler(os.Stdout, opts)).With(
 			slog.String("service", servicename),
 			slog.Int64("instanceID", myInstanceID),
-		))
+		)
+		slog.SetDefault(logger)
 	}
+
+	// Attach the configured logger to the context
+	doneCtx = logctx.WithLogger(doneCtx, logger)
 
 	return doneCtx, f, nil
 }
