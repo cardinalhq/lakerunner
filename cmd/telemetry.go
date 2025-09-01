@@ -20,7 +20,6 @@ import (
 	"log/slog"
 	"os"
 	"runtime"
-	"strings"
 	"time"
 
 	"github.com/cardinalhq/oteltools/pkg/telemetry"
@@ -52,9 +51,7 @@ var (
 	workqueueLag           metric.Float64Histogram
 	manualGCHistogram      metric.Float64Histogram
 
-	segmentsFilteredCounter  metric.Int64Counter
-	segmentsProcessedCounter metric.Int64Counter
-	fileSortedCounter        metric.Int64Counter
+	segmentsFilteredCounter metric.Int64Counter
 
 	// existsGauge is a gauge that indicates if the service is running (1) or not (0).
 	// It is set to 1, and never changes.  This is unused, but is here to ensure
@@ -210,31 +207,13 @@ func setupGlobalMetrics() {
 	manualGCHistogram = m
 
 	sc, err := meter.Int64Counter(
-		"lakerunner.compaction.segments.filtered",
-		metric.WithDescription("Number of segments filtered out during compaction processing"),
+		"lakerunner.processing.segments.filtered",
+		metric.WithDescription("Number of segments filtered out during processing pipeline"),
 	)
 	if err != nil {
 		panic(fmt.Errorf("failed to create segments.filtered counter: %w", err))
 	}
 	segmentsFilteredCounter = sc
-
-	pc, err := meter.Int64Counter(
-		"lakerunner.compaction.segments.processed",
-		metric.WithDescription("Number of segments successfully processed during compaction"),
-	)
-	if err != nil {
-		panic(fmt.Errorf("failed to create segments.processed counter: %w", err))
-	}
-	segmentsProcessedCounter = pc
-
-	fsc, err := meter.Int64Counter(
-		"lakerunner.file.sorted",
-		metric.WithDescription("Number of files processed, tracking whether they were sorted or not"),
-	)
-	if err != nil {
-		panic(fmt.Errorf("failed to create file.sorted counter: %w", err))
-	}
-	fileSortedCounter = fsc
 
 	mg, err := meter.Int64Gauge(
 		"lakerunner.exists",
@@ -245,28 +224,11 @@ func setupGlobalMetrics() {
 	}
 	existsGauge = mg
 	mg.Record(context.Background(), 1, metric.WithAttributeSet(commonAttributes))
+
 }
 
 func gc() {
 	n := time.Now()
 	runtime.GC()
 	manualGCHistogram.Record(context.Background(), time.Since(n).Seconds(), metric.WithAttributeSet(commonAttributes))
-}
-
-// getFileFormat determines the file format from the filename
-func getFileFormat(filename string) string {
-	switch {
-	case strings.HasSuffix(filename, ".binpb.gz"):
-		return "binpb.gz"
-	case strings.HasSuffix(filename, ".binpb"):
-		return "binpb"
-	case strings.HasSuffix(filename, ".parquet"):
-		return "parquet"
-	case strings.HasSuffix(filename, ".json.gz"):
-		return "json.gz"
-	case strings.HasSuffix(filename, ".json"):
-		return "json"
-	default:
-		return "unknown"
-	}
 }

@@ -22,6 +22,7 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
@@ -93,8 +94,65 @@ func coordinate(
 	}
 
 	meter := otel.Meter("github.com/cardinalhq/lakerunner/internal/metricsprocessing/compaction")
-	fileSortedCounter, _ := meter.Int64Counter("lakerunner.metric.compact.file.sorted")
+	fileSortedCounter, err := meter.Int64Counter("lakerunner.processing.input.filetype")
+	if err != nil {
+		return fmt.Errorf("failed to create processing.input.filetype counter: %w", err)
+	}
+
+	processingSegmentsIn, err := meter.Int64Counter(
+		"lakerunner.processing.segments.in",
+		metric.WithDescription("Number of segments input to compaction processing pipeline"),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create processing.segments.in counter: %w", err)
+	}
+
+	processingSegmentsOut, err := meter.Int64Counter(
+		"lakerunner.processing.segments.out",
+		metric.WithDescription("Number of segments output from compaction processing pipeline"),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create processing.segments.out counter: %w", err)
+	}
+
+	processingRecordsIn, err := meter.Int64Counter(
+		"lakerunner.processing.records.in",
+		metric.WithDescription("Number of records input to compaction processing pipeline"),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create processing.records.in counter: %w", err)
+	}
+
+	processingRecordsOut, err := meter.Int64Counter(
+		"lakerunner.processing.records.out",
+		metric.WithDescription("Number of records output from compaction processing pipeline"),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create processing.records.out counter: %w", err)
+	}
+
+	processingBytesIn, err := meter.Int64Counter(
+		"lakerunner.processing.bytes.in",
+		metric.WithDescription("Number of bytes input to compaction processing pipeline"),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create processing.bytes.in counter: %w", err)
+	}
+
+	processingBytesOut, err := meter.Int64Counter(
+		"lakerunner.processing.bytes.out",
+		metric.WithDescription("Number of bytes output from compaction processing pipeline"),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create processing.bytes.out counter: %w", err)
+	}
 	commonAttributes := attribute.NewSet()
+
+	// Track segments coming into compaction processing
+	processingSegmentsIn.Add(ctx, int64(len(rows)), metric.WithAttributes(
+		attribute.String("signal", "metrics"),
+		attribute.String("action", "compact"),
+	))
 
 	config := metricsprocessing.ReaderStackConfig{
 		FileSortedCounter: fileSortedCounter,
@@ -140,6 +198,32 @@ func coordinate(
 		slog.Int64("inputBytes", stats.InputBytes),
 		slog.Int64("outputBytes", stats.OutputBytes),
 		slog.Float64("compressionRatio", stats.CompressionRatio))
+
+	// Track processing metrics
+	processingSegmentsOut.Add(ctx, int64(len(result.Results)), metric.WithAttributes(
+		attribute.String("signal", "metrics"),
+		attribute.String("action", "compact"),
+	))
+
+	processingRecordsIn.Add(ctx, inputRecords, metric.WithAttributes(
+		attribute.String("signal", "metrics"),
+		attribute.String("action", "compact"),
+	))
+
+	processingRecordsOut.Add(ctx, stats.TotalRows, metric.WithAttributes(
+		attribute.String("signal", "metrics"),
+		attribute.String("action", "compact"),
+	))
+
+	processingBytesIn.Add(ctx, inputBytes, metric.WithAttributes(
+		attribute.String("signal", "metrics"),
+		attribute.String("action", "compact"),
+	))
+
+	processingBytesOut.Add(ctx, stats.OutputBytes, metric.WithAttributes(
+		attribute.String("signal", "metrics"),
+		attribute.String("action", "compact"),
+	))
 
 	// If we produced 0 output files, skip S3 upload and database updates
 	if len(result.Results) == 0 {

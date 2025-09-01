@@ -26,6 +26,7 @@ import (
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
@@ -245,6 +246,12 @@ func rollupMetricSegments(
 		return nil
 	}
 
+	// Track segments coming into rollup processing
+	processingSegmentsIn.Add(ctx, int64(len(sourceRows)), metric.WithAttributes(
+		attribute.String("signal", "metrics"),
+		attribute.String("action", "rollup"),
+	))
+
 	// Create reader stack with sorting support
 	config := metricsprocessing.ReaderStackConfig{
 		FileSortedCounter: fileSortedCounter,
@@ -365,6 +372,32 @@ func rollupMetricSegments(
 		slog.Int64("outputBytes", outputBytes),
 		slog.Float64("compressionRatio", compressionRatio))
 
+	// Track processing metrics
+	processingSegmentsOut.Add(ctx, int64(len(results)), metric.WithAttributes(
+		attribute.String("signal", "metrics"),
+		attribute.String("action", "rollup"),
+	))
+
+	processingRecordsIn.Add(ctx, inputRecords, metric.WithAttributes(
+		attribute.String("signal", "metrics"),
+		attribute.String("action", "rollup"),
+	))
+
+	processingRecordsOut.Add(ctx, outputRecords, metric.WithAttributes(
+		attribute.String("signal", "metrics"),
+		attribute.String("action", "rollup"),
+	))
+
+	processingBytesIn.Add(ctx, inputBytes, metric.WithAttributes(
+		attribute.String("signal", "metrics"),
+		attribute.String("action", "rollup"),
+	))
+
+	processingBytesOut.Add(ctx, outputBytes, metric.WithAttributes(
+		attribute.String("signal", "metrics"),
+		attribute.String("action", "rollup"),
+	))
+
 	rollupParams := CompactionUploadParams{
 		OrganizationID: firstItem.OrganizationID,
 		InstanceNum:    firstItem.InstanceNum,
@@ -412,12 +445,78 @@ func fetchMetricSegs(ctx context.Context, db rollupStore, claimedWork []lrdb.Cla
 }
 
 var (
-	meter                = otel.Meter("github.com/cardinalhq/lakerunner/internal/metricsprocessing/rollup")
-	fileSortedCounter, _ = meter.Int64Counter("lakerunner.metric.rollup.file.sorted")
-	commonAttributes     = attribute.NewSet(
+	meter            = otel.Meter("github.com/cardinalhq/lakerunner/internal/metricsprocessing/rollup")
+	commonAttributes = attribute.NewSet(
 		attribute.String("component", "metric-rollup"),
 	)
+
+	fileSortedCounter metric.Int64Counter
+
+	// Processing counters
+	processingSegmentsIn  metric.Int64Counter
+	processingSegmentsOut metric.Int64Counter
+	processingRecordsIn   metric.Int64Counter
+	processingRecordsOut  metric.Int64Counter
+	processingBytesIn     metric.Int64Counter
+	processingBytesOut    metric.Int64Counter
 )
+
+func init() {
+	var err error
+
+	fileSortedCounter, err = meter.Int64Counter("lakerunner.processing.input.filetype")
+	if err != nil {
+		panic(fmt.Errorf("failed to create processing.input.filetype counter: %w", err))
+	}
+
+	processingSegmentsIn, err = meter.Int64Counter(
+		"lakerunner.processing.segments.in",
+		metric.WithDescription("Number of segments input to rollup processing pipeline"),
+	)
+	if err != nil {
+		panic(fmt.Errorf("failed to create processing.segments.in counter: %w", err))
+	}
+
+	processingSegmentsOut, err = meter.Int64Counter(
+		"lakerunner.processing.segments.out",
+		metric.WithDescription("Number of segments output from rollup processing pipeline"),
+	)
+	if err != nil {
+		panic(fmt.Errorf("failed to create processing.segments.out counter: %w", err))
+	}
+
+	processingRecordsIn, err = meter.Int64Counter(
+		"lakerunner.processing.records.in",
+		metric.WithDescription("Number of records input to rollup processing pipeline"),
+	)
+	if err != nil {
+		panic(fmt.Errorf("failed to create processing.records.in counter: %w", err))
+	}
+
+	processingRecordsOut, err = meter.Int64Counter(
+		"lakerunner.processing.records.out",
+		metric.WithDescription("Number of records output from rollup processing pipeline"),
+	)
+	if err != nil {
+		panic(fmt.Errorf("failed to create processing.records.out counter: %w", err))
+	}
+
+	processingBytesIn, err = meter.Int64Counter(
+		"lakerunner.processing.bytes.in",
+		metric.WithDescription("Number of bytes input to rollup processing pipeline"),
+	)
+	if err != nil {
+		panic(fmt.Errorf("failed to create processing.bytes.in counter: %w", err))
+	}
+
+	processingBytesOut, err = meter.Int64Counter(
+		"lakerunner.processing.bytes.out",
+		metric.WithDescription("Number of bytes output from rollup processing pipeline"),
+	)
+	if err != nil {
+		panic(fmt.Errorf("failed to create processing.bytes.out counter: %w", err))
+	}
+}
 
 func uploadRolledUpMetricsAtomic(
 	ctx context.Context,

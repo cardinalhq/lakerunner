@@ -273,9 +273,7 @@ func ingestFilesBatch(
 		inqueueLag.Record(ctx, lag,
 			metric.WithAttributeSet(commonAttributes),
 			metric.WithAttributes(
-				attribute.String("organizationID", item.OrganizationID.String()),
 				attribute.String("signal", item.Signal),
-				attribute.Int("instanceNum", int(item.InstanceNum)),
 			))
 	}
 
@@ -373,7 +371,6 @@ func ingestFilesBatch(
 	inqueueDuration.Record(ctx, time.Since(t0).Seconds(),
 		metric.WithAttributeSet(commonAttributes),
 		metric.WithAttributes(
-			attribute.String("organizationID", newWorkItems[0].OrganizationID.String()),
 			attribute.String("bucket", newWorkItems[0].Bucket),
 			attribute.Int("batchSize", len(newWorkItems)),
 		))
