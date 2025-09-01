@@ -35,7 +35,7 @@ func QueueMetricRollup(ctx context.Context, mdb RollupWorkQueuer, organizationID
 		return nil
 	}
 
-	priority := GetRollupPriority(nextFrequency)
+	priority := GetFrequencyPriority(nextFrequency)
 
 	// Calculate rollup group: segment start time divided by target rollup frequency
 	rollupGroup := startTs / int64(nextFrequency)

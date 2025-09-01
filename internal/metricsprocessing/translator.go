@@ -71,4 +71,3 @@ func (t *MetricTranslator) TranslateRow(row *filereader.Row) error {
 
 	return nil
 }
-

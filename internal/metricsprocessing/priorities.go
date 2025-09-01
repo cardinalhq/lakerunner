@@ -45,16 +45,6 @@ func GetFrequencyPriority(frequencyMs int32) int32 {
 	return 0
 }
 
-// GetCompactionPriority returns the priority for compaction work at a given frequency
-func GetCompactionPriority(frequencyMs int32) int32 {
-	return GetFrequencyPriority(frequencyMs) + 200
-}
-
-// GetRollupPriority returns the priority for rollup work at a given frequency
-func GetRollupPriority(frequencyMs int32) int32 {
-	return GetFrequencyPriority(frequencyMs) + 100
-}
-
 // GetAllFrequencies returns all frequencies involved in the rollup process
 func GetAllFrequencies() []int32 {
 	freqSet := make(map[int32]bool)

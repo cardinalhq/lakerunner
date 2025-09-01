@@ -30,7 +30,7 @@ type CompactionWorkQueuer interface {
 
 // QueueMetricCompaction queues compaction work for a specific segment
 func QueueMetricCompaction(ctx context.Context, mdb CompactionWorkQueuer, organizationID uuid.UUID, dateint int32, frequencyMs int32, instanceNum int16, segmentID int64, recordCount int64, startTs int64, endTs int64) error {
-	priority := GetCompactionPriority(frequencyMs)
+	priority := GetFrequencyPriority(frequencyMs)
 
 	err := mdb.PutMetricCompactionWork(ctx, lrdb.PutMetricCompactionWorkParams{
 		OrganizationID: organizationID,

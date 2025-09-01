@@ -117,7 +117,7 @@ func TestQueueMetricRollup(t *testing.T) {
 			if tt.shouldQueue {
 				// Calculate expected next frequency
 				nextFreq := RollupTo[tt.frequencyMs]
-				expectedPriority := GetRollupPriority(nextFreq)
+				expectedPriority := GetFrequencyPriority(nextFreq)
 
 				// Set up expectation
 				expectedRollupGroup := tt.startTs / int64(nextFreq)
@@ -171,10 +171,10 @@ func TestQueueMetricRollup_FrequencyMapping(t *testing.T) {
 		targetFreq int32
 		priority   int32
 	}{
-		{10000, 60000, 700},     // 10s -> 1min, priority: 600 + 100
-		{60000, 300000, 500},    // 1min -> 5min, priority: 400 + 100
-		{300000, 1200000, 300},  // 5min -> 20min, priority: 200 + 100
-		{1200000, 3600000, 100}, // 20min -> 1hour, priority: 0 + 100
+		{10000, 60000, 600},    // 10s -> 1min, priority: GetFrequencyPriority(60000) = 600
+		{60000, 300000, 400},   // 1min -> 5min, priority: GetFrequencyPriority(300000) = 400
+		{300000, 1200000, 200}, // 5min -> 20min, priority: GetFrequencyPriority(1200000) = 200
+		{1200000, 3600000, 0},  // 20min -> 1hour, priority: GetFrequencyPriority(3600000) = 0
 	}
 
 	for _, tc := range testCases {
