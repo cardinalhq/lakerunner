@@ -18,13 +18,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"sort"
+	"sync"
+	"time"
+
 	"github.com/cardinalhq/lakerunner/internal/buffet"
 	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/cardinalhq/lakerunner/promql"
 	"github.com/google/uuid"
 	"github.com/prometheus/common/model"
-	"log/slog"
-	"time"
 )
 
 // EvaluateMetricsQuery plans pushdowns, fans requests out to workers, merges their streams,
@@ -88,89 +91,144 @@ func (q *QuerierService) EvaluateMetricsQuery(
 					segments, stepDuration, effStart, effEnd, len(workers), true,
 				)
 
-				for _, group := range groups {
+				// Process groups in parallel with controlled concurrency
+				const maxConcurrentGroups = 4 // Limit concurrent groups to prevent memory issues
+				sem := make(chan struct{}, maxConcurrentGroups)
+				var wg sync.WaitGroup
+
+				// Channel to collect results from all groups in order
+				type groupResult struct {
+					index  int
+					result map[string]promql.EvalResult
+				}
+				groupResultsChan := make(chan groupResult, len(groups))
+
+				// Process each group concurrently
+				for i, group := range groups {
 					select {
 					case <-ctx.Done():
 						return
 					default:
 					}
 
-					slog.Info("Pushing down segments", "groupSize", len(group.Segments))
+					wg.Add(1)
+					go func(groupIndex int, group SegmentGroup) {
+						defer wg.Done()
 
-					// Collect all segment IDs for worker assignment
-					segmentIDs := make([]int64, 0, len(group.Segments))
-					segmentMap := make(map[int64][]SegmentInfo)
-					for _, segment := range group.Segments {
-						segmentIDs = append(segmentIDs, segment.SegmentID)
-						segmentMap[segment.SegmentID] = append(segmentMap[segment.SegmentID], segment)
-					}
+						// Acquire semaphore
+						sem <- struct{}{}
+						defer func() { <-sem }()
 
-					// Get worker assignments for all segments
-					mappings, err := q.workerDiscovery.GetWorkersForSegments(orgID, segmentIDs)
-					if err != nil {
-						slog.Error("failed to get worker assignments", "err", err)
-						continue
-					}
+						slog.Info("Pushing down segments", "groupSize", len(group.Segments), "groupIndex", groupIndex)
 
-					// Group segments by assigned worker
-					workerGroups := make(map[Worker][]SegmentInfo)
-					for _, mapping := range mappings {
-						segmentList := segmentMap[mapping.SegmentID]
-						workerGroups[mapping.Worker] = append(workerGroups[mapping.Worker], segmentList...)
-					}
-
-					// Build per-group leaf channels (one per worker assignment).
-					var groupLeafChans []<-chan promql.SketchInput
-					for worker, workerSegments := range workerGroups {
-						req := PushDownRequest{
-							OrganizationID: orgID,
-							BaseExpr:       &leaf,
-							StartTs:        group.StartTs,
-							EndTs:          group.EndTs,
-							Segments:       workerSegments,
-							Step:           stepDuration,
+						// Collect all segment IDs for worker assignment
+						segmentIDs := make([]int64, 0, len(group.Segments))
+						segmentMap := make(map[int64][]SegmentInfo)
+						for _, segment := range group.Segments {
+							segmentIDs = append(segmentIDs, segment.SegmentID)
+							segmentMap[segment.SegmentID] = append(segmentMap[segment.SegmentID], segment)
 						}
 
-						ch, err := q.metricsPushDown(ctx, worker, req)
+						// Get worker assignments for all segments
+						mappings, err := q.workerDiscovery.GetWorkersForSegments(orgID, segmentIDs)
 						if err != nil {
-							slog.Error("pushdown failed", "worker", worker, "err", err)
-							continue
-						}
-						if offMs != 0 {
-							ch = shiftTimestamps(ctx, ch, offMs, 256)
-						}
-						groupLeafChans = append(groupLeafChans, ch)
-					}
-
-					// No channels for this group — skip.
-					if len(groupLeafChans) == 0 {
-						continue
-					}
-
-					// Merge this group's worker streams by timestamp (ascending).
-					mergedGroup := promql.MergeSorted(ctx, 1024, false, 0, groupLeafChans...)
-
-					// Run EvalFlow for THIS group and forward results to final out.
-					flow := NewEvalFlow(queryPlan.Root, queryPlan.Leaves, stepDuration, EvalFlowOptions{
-						NumBuffers: 2,
-						OutBuffer:  1024,
-					})
-					groupResults := flow.Run(ctx, mergedGroup)
-
-					// Forward group results into final output stream as they arrive.
-					for {
-						select {
-						case <-ctx.Done():
+							slog.Error("failed to get worker assignments", "err", err)
 							return
-						case res, ok := <-groupResults:
-							if !ok {
-								// Group done, proceed to next group.
-								goto nextGroup
-							}
-							out <- res
 						}
+
+						// Group segments by assigned worker
+						workerGroups := make(map[Worker][]SegmentInfo)
+						for _, mapping := range mappings {
+							segmentList := segmentMap[mapping.SegmentID]
+							workerGroups[mapping.Worker] = append(workerGroups[mapping.Worker], segmentList...)
+						}
+
+						// Build per-group leaf channels (one per worker assignment).
+						var groupLeafChans []<-chan promql.SketchInput
+						for worker, workerSegments := range workerGroups {
+							req := PushDownRequest{
+								OrganizationID: orgID,
+								BaseExpr:       &leaf,
+								StartTs:        group.StartTs,
+								EndTs:          group.EndTs,
+								Segments:       workerSegments,
+								Step:           stepDuration,
+							}
+
+							ch, err := q.metricsPushDown(ctx, worker, req)
+							if err != nil {
+								slog.Error("pushdown failed", "worker", worker, "err", err)
+								continue
+							}
+							if offMs != 0 {
+								ch = shiftTimestamps(ctx, ch, offMs, 256)
+							}
+							groupLeafChans = append(groupLeafChans, ch)
+						}
+
+						// No channels for this group — skip.
+						if len(groupLeafChans) == 0 {
+							return
+						}
+
+						// Merge this group's worker streams by timestamp (ascending).
+						mergedGroup := promql.MergeSorted(ctx, 1024, false, 0, groupLeafChans...)
+
+						// Run EvalFlow for THIS group and collect results.
+						flow := NewEvalFlow(queryPlan.Root, queryPlan.Leaves, stepDuration, EvalFlowOptions{
+							NumBuffers: 2,
+							OutBuffer:  1024,
+						})
+						groupResults := flow.Run(ctx, mergedGroup)
+
+						// Collect all results from this group
+						var groupResultsList []map[string]promql.EvalResult
+						for {
+							select {
+							case <-ctx.Done():
+								return
+							case res, ok := <-groupResults:
+								if !ok {
+									// Group done, send results in order
+									for _, result := range groupResultsList {
+										select {
+										case <-ctx.Done():
+											return
+										case groupResultsChan <- groupResult{index: groupIndex, result: result}:
+										}
+									}
+									return
+								}
+								groupResultsList = append(groupResultsList, res)
+							}
+						}
+					}(i, group)
+				}
+
+				// Close the results channel when all groups are done
+				go func() {
+					wg.Wait()
+					close(groupResultsChan)
+				}()
+
+				// Collect and sort results by group index to maintain order
+				var allGroupResults []groupResult
+				for result := range groupResultsChan {
+					allGroupResults = append(allGroupResults, result)
+				}
+
+				// Sort by group index to maintain chronological order
+				sort.Slice(allGroupResults, func(i, j int) bool {
+					return allGroupResults[i].index < allGroupResults[j].index
+				})
+
+				// Forward results to output in order
+				for _, gr := range allGroupResults {
+					select {
+					case <-ctx.Done():
+						return
+					case out <- gr.result:
 					}
-				nextGroup:
 				}
 			}
 		}
