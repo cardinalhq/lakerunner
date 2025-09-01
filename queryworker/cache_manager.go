@@ -199,11 +199,18 @@ func EvaluatePushDown[T promql.Timestamped](
 
 			slog.Info("Segment Stats", "numS3", len(s3URIs), "numCached", len(cachedIDs), "numPresent", len(w.present))
 			// Stream uncached segments directly from S3 (one channel per glob).
-			s3Channel, err := streamFromS3InParallel(ctx, w, request, profile.Bucket, profile.Region, profile.Endpoint, s3URIs, s3GlobSize, userSQL, mapper)
+			s3Channels, err := streamFromS3(ctx, w, request,
+				profile.Bucket,
+				profile.Region,
+				profile.Endpoint,
+				s3URIs,
+				s3GlobSize,
+				userSQL,
+				mapper)
 			if err != nil {
 				return nil, fmt.Errorf("stream from S3: %w", err)
 			}
-			outs = append(outs, s3Channel)
+			outs = append(outs, s3Channels...)
 
 			// If we have uncached segments, enqueue them for download + batch-ingest.
 			if len(s3LocalPaths) > 0 {
@@ -316,64 +323,68 @@ func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
 	return outs
 }
 
-func streamFromS3InParallel[T promql.Timestamped](
+func streamFromS3[T promql.Timestamped](
 	ctx context.Context,
 	w *CacheManager,
 	request queryapi.PushDownRequest,
-	bucket, region, endpoint string,
+	bucket string,
+	region string,
+	endpoint string,
 	s3URIs []string,
 	s3GlobSize int,
 	userSQL string,
 	mapper RowMapper[T],
-) (<-chan T, error) {
-	out := make(chan T, ChannelBufferSize)
+) ([]<-chan T, error) {
 	if len(s3URIs) == 0 {
-		close(out)
-		return out, nil
+		return []<-chan T{}, nil
 	}
 
-	// Preserve order: segments are pre-sorted; chunkStrings keeps that order.
 	batches := chunkStrings(s3URIs, s3GlobSize)
+	//slog.Info("Chunked S3 URIs into batches", slog.Int("batches", len(batches)), slog.Int("incoming", len(s3URIs)))
+	outs := make([]<-chan T, 0, len(batches))
 
-	// One channel per batch; workers push here in parallel.
-	bch := make([]chan T, len(batches))
-	for i := range bch {
-		bch[i] = make(chan T, ChannelBufferSize)
-	}
+	for _, uris := range batches {
+		slog.Info("Streaming from S3", slog.Int("uris", len(uris)))
+		out := make(chan T, ChannelBufferSize)
+		outs = append(outs, out)
 
-	ctxW := context.WithoutCancel(ctx)
+		urisCopy := append([]string(nil), uris...) // capture loop var
 
-	var wg sync.WaitGroup
-	wg.Add(len(batches))
-	for bi := range batches {
-		uris := append([]string(nil), batches[bi]...) // capture
-		outCh := bch[bi]
+		go func(out chan<- T) {
+			defer close(out)
 
-		go func() {
-			defer wg.Done()
-			defer close(outCh)
-
-			// Build read_parquet source for this batch
-			quoted := make([]string, len(uris))
-			for i := range uris {
-				quoted[i] = "'" + escapeSQL(uris[i]) + "'"
+			// Build read_parquet source
+			quoted := make([]string, len(urisCopy))
+			for i := range urisCopy {
+				quoted[i] = "'" + escapeSQL(urisCopy[i]) + "'"
 			}
-			src := fmt.Sprintf(`read_parquet([%s], union_by_name=true)`, strings.Join(quoted, ", "))
-			sqlReplaced := strings.Replace(userSQL, "{table}", src, 1)
+			array := "[" + strings.Join(quoted, ", ") + "]"
+			src := fmt.Sprintf(`read_parquet(%s, union_by_name=true)`, array)
 
-			conn, release, err := w.s3Db.GetConnection(ctxW, bucket, region, endpoint)
+			sqlReplaced := strings.Replace(userSQL, "{table}", src, 1)
+			// Lease a per-bucket connection (creates/refreshes S3 secret under the hood)
+			start := time.Now()
+			conn, release, err := w.s3Db.GetConnection(ctx, bucket, region, endpoint)
+			connectionAcquireTime := time.Since(start)
+			slog.Info("S3 Connection Acquire Time", "duration", connectionAcquireTime.String(), "bucket", bucket)
+
 			if err != nil {
-				slog.Error("GetConnection failed", "bucket", bucket, "error", err)
+				slog.Error("GetConnection failed", slog.String("bucket", bucket), slog.Any("error", err))
 				return
 			}
+			// Ensure rows close before releasing the connection
 			defer release()
 
-			rows, err := conn.QueryContext(ctxW, sqlReplaced)
+			rows, err := conn.QueryContext(ctx, sqlReplaced)
 			if err != nil {
 				slog.Error("Query failed", slog.Any("error", err))
 				return
 			}
-			defer rows.Close()
+			defer func() {
+				if err := rows.Close(); err != nil {
+					slog.Error("Error closing rows", slog.Any("error", err))
+				}
+			}()
 
 			cols, err := rows.Columns()
 			if err != nil {
@@ -383,7 +394,7 @@ func streamFromS3InParallel[T promql.Timestamped](
 
 			for rows.Next() {
 				select {
-				case <-ctxW.Done():
+				case <-ctx.Done():
 					return
 				default:
 				}
@@ -392,41 +403,16 @@ func streamFromS3InParallel[T promql.Timestamped](
 					slog.Error("Row mapping failed", slog.Any("error", mErr))
 					return
 				}
-				// Non-blocking wrt cancel; will stall only if batch buffer fills.
-				select {
-				case <-ctxW.Done():
-					return
-				case outCh <- v:
-				}
+				out <- v
 			}
 			if err := rows.Err(); err != nil {
 				slog.Error("Rows iteration error", slog.Any("error", err))
 			}
-		}()
+		}(out)
 	}
 
-	// Coordinator: drain batch0, then batch1, ... → strict global order.
-	go func() {
-		defer close(out)
-
-		emitted := 0
-		for i := 0; i < len(bch); i++ {
-			for v := range bch[i] {
-				select {
-				case <-ctx.Done():
-					return
-				case out <- v:
-				}
-				emitted++
-				if request.Limit > 0 && emitted >= request.Limit {
-					return
-				}
-			}
-		}
-		wg.Wait() // best-effort; workers should be done anyway
-	}()
-
-	return out, nil
+	// enqueue is done in EvaluatePushDown(...) after ids/paths are known
+	return outs, nil
 }
 
 // enqueueIngest filters out present/in-flight, marks new IDs in-flight, and queues one job.

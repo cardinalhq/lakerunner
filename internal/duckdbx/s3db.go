@@ -18,6 +18,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -42,8 +43,10 @@ type S3DB struct {
 	tempDir       string
 	maxTempSize   string
 
-	poolSize int
-	ttl      time.Duration
+	poolSize       int
+	ttl            time.Duration
+	totalCores     int
+	threadsPerConn int
 
 	installOnce sync.Once
 	installErr  error
@@ -74,18 +77,45 @@ type pooledConn struct {
 }
 
 func NewS3DB(dataSourceName string) (*S3DB, error) {
+	// Prefer in-memory DB unless the caller really wants a file;
+	// treat legacy "s3" as a hint for in-memory.
+	if dataSourceName == "s3" {
+		dataSourceName = ""
+	}
+
 	memoryMB := envInt64("DUCKDB_MEMORY_LIMIT", 0)
-	poolSize := envIntClamp("DUCKDB_S3_POOL_SIZE", min(16, max(2, runtime.GOMAXPROCS(0))), 1, 512)
+
+	// Default pool: half the cores, capped at 8, min 2.
+	// (Avoid oversubscription when each connection has multiple threads.)
+	poolDefault := min(8, max(2, runtime.GOMAXPROCS(0)/2))
+	poolSize := envIntClamp("DUCKDB_S3_POOL_SIZE", poolDefault, 1, 512)
+
 	ttl := envDurationSeconds("DUCKDB_S3_CONN_TTL_SECONDS", 240)
 
+	total := runtime.GOMAXPROCS(0)
+	// Split cores across connections by default; allow explicit override.
+	perConnDefault := max(1, total/max(1, poolSize))
+	threadsPerConn := envIntClamp("DUCKDB_THREADS_PER_CONN", perConnDefault, 1, 256)
+	slog.Info("duckdbx:",
+		"dsn", dataSourceName,
+		"memoryLimitMB", memoryMB,
+		"tempDir", os.Getenv("DUCKDB_TEMP_DIRECTORY"),
+		"maxTempSize", os.Getenv("DUCKDB_MAX_TEMP_DIRECTORY_SIZE"),
+		"poolSize", poolSize,
+		"ttl", ttl.String(),
+		"totalCores", total,
+		"threadsPerConn", threadsPerConn)
+
 	return &S3DB{
-		dsn:           dataSourceName,
-		memoryLimitMB: memoryMB,
-		tempDir:       os.Getenv("DUCKDB_TEMP_DIRECTORY"),
-		maxTempSize:   os.Getenv("DUCKDB_MAX_TEMP_DIRECTORY_SIZE"),
-		poolSize:      poolSize,
-		ttl:           ttl,
-		pools:         make(map[string]*bucketPool, 32),
+		dsn:            dataSourceName,
+		memoryLimitMB:  memoryMB,
+		tempDir:        os.Getenv("DUCKDB_TEMP_DIRECTORY"),
+		maxTempSize:    os.Getenv("DUCKDB_MAX_TEMP_DIRECTORY_SIZE"),
+		poolSize:       poolSize,
+		ttl:            ttl,
+		totalCores:     total,
+		threadsPerConn: threadsPerConn,
+		pools:          make(map[string]*bucketPool, 32),
 	}, nil
 }
 
@@ -258,12 +288,11 @@ func (s *S3DB) setupConn(ctx context.Context, conn *sql.Conn) error {
 			return fmt.Errorf("set max_temp_directory_size: %w", err)
 		}
 	}
-	// Force single-threaded inside this engine to reduce internal parallelism issues.
-	// Use all available cores unless overridden by env.
-	threads := envIntClamp("DUCKDB_THREADS", runtime.GOMAXPROCS(0), 1, 256)
-	if _, err := conn.ExecContext(ctx, fmt.Sprintf("PRAGMA threads=%d;", threads)); err != nil {
+
+	if _, err := conn.ExecContext(ctx, fmt.Sprintf("PRAGMA threads=%d;", s.threadsPerConn)); err != nil {
 		return fmt.Errorf("set threads: %w", err)
 	}
+	// Keep DuckDB's object cache on to reduce repeated S3 GETs for metadata/manifest.
 	if _, err := conn.ExecContext(ctx, "PRAGMA enable_object_cache;"); err != nil {
 		return fmt.Errorf("enable_object_cache: %w", err)
 	}
@@ -421,4 +450,18 @@ func envDurationSeconds(name string, defSec int) time.Duration {
 		}
 	}
 	return time.Duration(defSec) * time.Second
+}
+
+// small helpers (int)
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
