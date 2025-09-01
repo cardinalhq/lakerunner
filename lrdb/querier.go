@@ -50,19 +50,20 @@ type Querier interface {
 	// 10) Final chosen IDs
 	// 11) Atomic optimistic claim
 	ClaimMetricCompactionWork(ctx context.Context, arg ClaimMetricCompactionWorkParams) ([]ClaimMetricCompactionWorkRow, error)
-	// 1) Big single-row safety net
+	// 1) Big single-row safety net (with full batch logic)
 	// 2) One seed per group (org, dateint, freq, instance, slot_id, slot_count, rollup_group)
 	// 3) Order groups globally by seed recency/priority
 	// 4) Attach per-group target_records with estimate tracking
 	// 5) All ready rows within each group
 	// 6) Greedy pack per group
 	// 7) Rows that fit under caps
-	// 8) Totals per group
-	// 9) Eligibility: any group with positive records
-	// 10) Pick earliest eligible group
-	// 11) Rows to claim for the winner group
-	// 12) Final chosen IDs
-	// 13) Atomic optimistic claim
+	// 8) Totals per group with full scope for availability calculation
+	// 9) Totals per group from what fits under caps
+	// 10) Eligibility: full batch logic (old items OR efficient fresh batches)
+	// 11) Pick earliest eligible group
+	// 12) Rows to claim for the winner group
+	// 13) Final chosen IDs with batch reason
+	// 14) Atomic optimistic claim
 	ClaimMetricRollupWork(ctx context.Context, arg ClaimMetricRollupWorkParams) ([]ClaimMetricRollupWorkRow, error)
 	CleanupInqueueWork(ctx context.Context, cutoffTime *time.Time) ([]Inqueue, error)
 	CleanupMetricCompactionWork(ctx context.Context, cutoffTime *time.Time) ([]MetricCompactionQueue, error)
