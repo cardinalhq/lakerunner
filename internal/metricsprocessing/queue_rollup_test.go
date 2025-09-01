@@ -147,7 +147,6 @@ func TestQueueMetricRollup(t *testing.T) {
 				12345, // segmentID
 				1000,  // recordCount
 				tt.startTs,
-				tt.endTs,
 			)
 
 			// Verify results
@@ -201,7 +200,6 @@ func TestQueueMetricRollup_FrequencyMapping(t *testing.T) {
 				67890, // segmentID
 				2000,  // recordCount
 				1703174400000,
-				1703174410000,
 			)
 
 			assert.NoError(t, err)
@@ -227,7 +225,6 @@ func TestQueueMetricRollup_NoRollupForUnknownFrequency(t *testing.T) {
 		11111, // segmentID
 		3000,  // recordCount
 		1703174400000,
-		1703174410000,
 	)
 
 	assert.NoError(t, err)

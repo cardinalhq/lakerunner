@@ -132,11 +132,10 @@ func CreateReaderStack(
 			fileFormat := getFileFormat(fn)
 			inputSorted := sourceSortedWithCompatibleKey
 
-			attrs := append(config.CommonAttributes.ToSlice(),
-				attribute.String("format", fileFormat),
+			config.FileSortedCounter.Add(ctx, 1, metric.WithAttributes(
+				attribute.String("filetype", fileFormat),
 				attribute.Bool("input_sorted", inputSorted),
-			)
-			config.FileSortedCounter.Add(ctx, 1, metric.WithAttributes(attrs...))
+			))
 		}
 
 		readers = append(readers, finalReader)
