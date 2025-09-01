@@ -31,7 +31,6 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
-	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
@@ -63,20 +62,9 @@ func coordinate(
 	firstItem := input.Items[0]
 
 	// Get storage profile and S3 client
-	var profile storageprofile.StorageProfile
-	var err error
-
-	// TODO: Add support for finding storage profiles consistently for arbitrary prefixes at some point
-	if collectorName := helpers.ExtractCollectorName(firstItem.ObjectID); collectorName != "" {
-		profile, err = sp.GetStorageProfileForOrganizationAndCollector(ctx, firstItem.OrganizationID, collectorName)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get storage profile for collector %s: %w", collectorName, err)
-		}
-	} else {
-		profile, err = sp.GetStorageProfileForOrganizationAndInstance(ctx, firstItem.OrganizationID, firstItem.InstanceNum)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get storage profile: %w", err)
-		}
+	profile, err := getStorageProfileForIngestion(ctx, sp, firstItem)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get storage profile: %w", err)
 	}
 
 	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
@@ -85,7 +73,7 @@ func coordinate(
 	}
 
 	// Create writer manager
-	wm := newMetricWriterManager(input.TmpDir, firstItem.OrganizationID.String(), input.IngestDateint, input.RPFEstimate, input.Logger)
+	wm := newMetricWriterManager(input.TmpDir, profile.OrganizationID.String(), input.IngestDateint, input.RPFEstimate, input.Logger)
 
 	// Track total rows across all files
 	var batchRowsRead, batchRowsProcessed, batchRowsErrored int64
@@ -120,7 +108,7 @@ func coordinate(
 				continue
 			}
 
-			if err := processExemplarsFromReader(ctx, exemplarReader, input.ExemplarProcessor, firstItem.OrganizationID.String(), mdb); err != nil {
+			if err := processExemplarsFromReader(ctx, exemplarReader, input.ExemplarProcessor, profile.OrganizationID.String(), mdb); err != nil {
 				input.Logger.Warn("Failed to process exemplars from file",
 					slog.String("objectID", fileInfo.item.ObjectID),
 					slog.Any("error", err))
@@ -131,7 +119,7 @@ func coordinate(
 	}
 
 	// Step 2: Create readers for each file
-	readers, readersToClose, err := createReadersForFiles(validFiles, firstItem.OrganizationID.String(), input.Logger)
+	readers, readersToClose, err := createReadersForFiles(validFiles, profile.OrganizationID.String(), input.Logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create readers: %w", err)
 	}
@@ -303,13 +291,9 @@ func createReadersForFiles(validFiles []fileInfo, orgID string, ll *slog.Logger)
 
 		// Record file format and input sorted status metrics after reader stack is complete
 		fileFormat := getFileFormat(fileInfo.tmpfilename)
-		// Source files (binpb/binpb.gz) are unsorted, so input_sorted=false
-		// We wrap them with DiskSortingReader to make them sorted internally
-		inputSorted := false
-
 		attrs := append(commonAttributes.ToSlice(),
 			attribute.String("format", fileFormat),
-			attribute.Bool("input_sorted", inputSorted),
+			attribute.Bool("input_sorted", false),
 		)
 		fileSortedCounter.Add(context.Background(), 1, metric.WithAttributes(attrs...))
 
@@ -325,10 +309,8 @@ func createUnifiedReader(ctx context.Context, readers []filereader.Reader) (file
 	var finalReader filereader.Reader
 
 	if len(readers) == 1 {
-		// Single reader - no need for multi-source reader
 		finalReader = readers[0]
 	} else {
-		// Multiple readers - use MergesortReader to merge sorted streams
 		keyProvider := metricsprocessing.GetCurrentMetricSortKeyProvider()
 		multiReader, err := filereader.NewMergesortReader(ctx, readers, keyProvider, 1000)
 		if err != nil {
@@ -337,7 +319,6 @@ func createUnifiedReader(ctx context.Context, readers []filereader.Reader) (file
 		finalReader = multiReader
 	}
 
-	// Add top-level aggregation for cross-file aggregation
 	finalReader, err := filereader.NewAggregatingMetricsReader(finalReader, 10000, 1000) // 10 seconds
 	if err != nil {
 		return nil, fmt.Errorf("failed to create aggregating reader: %w", err)
@@ -359,7 +340,6 @@ func getFileFormat(filename string) string {
 
 // processExemplarsFromReader processes exemplars from a metrics reader that supports OTEL
 func processExemplarsFromReader(_ context.Context, reader filereader.Reader, processor *exemplar.Processor, orgID string, mdb lrdb.StoreFull) error {
-	// Check if the reader provides OTEL metrics
 	if otelProvider, ok := reader.(filereader.OTELMetricsProvider); ok {
 		otelMetrics, err := otelProvider.GetOTELMetrics()
 		if err != nil {

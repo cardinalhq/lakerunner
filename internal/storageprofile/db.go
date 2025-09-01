@@ -39,6 +39,7 @@ type ConfigDBStoreageProfileFetcher interface {
 	GetOrganizationBucketByInstance(ctx context.Context, arg configdb.GetOrganizationBucketByInstanceParams) (configdb.GetOrganizationBucketByInstanceRow, error)
 	GetOrganizationBucketByCollector(ctx context.Context, arg configdb.GetOrganizationBucketByCollectorParams) (configdb.GetOrganizationBucketByCollectorRow, error)
 	GetDefaultOrganizationBucket(ctx context.Context, organizationID uuid.UUID) (configdb.GetDefaultOrganizationBucketRow, error)
+	GetLowestInstanceOrganizationBucket(ctx context.Context, arg configdb.GetLowestInstanceOrganizationBucketParams) (configdb.GetLowestInstanceOrganizationBucketRow, error)
 }
 
 var _ ConfigDBStoreageProfileFetcher = (*configdb.Store)(nil)
@@ -193,6 +194,21 @@ func (p *databaseProvider) GetStorageProfileForOrganizationAndCollector(ctx cont
 	})
 	if err != nil {
 		return StorageProfile{}, fmt.Errorf("failed to get organization bucket by collector: %w", err)
+	}
+
+	return p.rowToStorageProfile(result.OrganizationID, result.InstanceNum, result.CollectorName,
+		result.BucketName, result.CloudProvider, result.Region, result.Role, result.Endpoint,
+		result.UsePathStyle, result.InsecureTls), nil
+}
+
+func (p *databaseProvider) GetLowestInstanceStorageProfile(ctx context.Context, organizationID uuid.UUID, bucketName string) (StorageProfile, error) {
+	// Get organization bucket configuration with lowest instance number for specific bucket
+	result, err := p.cdb.GetLowestInstanceOrganizationBucket(ctx, configdb.GetLowestInstanceOrganizationBucketParams{
+		OrganizationID: organizationID,
+		BucketName:     bucketName,
+	})
+	if err != nil {
+		return StorageProfile{}, fmt.Errorf("failed to get lowest instance organization bucket: %w", err)
 	}
 
 	return p.rowToStorageProfile(result.OrganizationID, result.InstanceNum, result.CollectorName,

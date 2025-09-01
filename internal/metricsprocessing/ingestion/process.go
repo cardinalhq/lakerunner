@@ -18,8 +18,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
-	"strings"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/exemplar"
@@ -44,11 +42,9 @@ func ProcessBatch(
 	rpfEstimate int64,
 	exemplarProcessor *exemplar.Processor,
 ) error {
-	// Generate batch ID and enhance logger
 	batchID := idgen.GenerateShortBase32ID()
 	ll = ll.With(slog.String("batchID", batchID))
 
-	// Log items we're processing once at the top
 	itemIDs := make([]string, len(items))
 	for i, item := range items {
 		itemIDs[i] = item.ID.String()
@@ -85,38 +81,27 @@ func ProcessBatch(
 			slog.Float64("dropRate", float64(result.RowsErrored)/float64(result.RowsRead)*100))
 	}
 
-	// Upload results and queue work
+	// Get storage profile for upload operations
 	firstItem := items[0]
-	return uploadAndQueue(ctx, ll, sp, awsmanager, mdb, result.Results, firstItem, ingestDateint)
+	profile, err := getStorageProfileForIngestion(ctx, sp, firstItem)
+	if err != nil {
+		return fmt.Errorf("failed to get storage profile: %w", err)
+	}
+
+	// Upload results and queue work
+	return uploadAndQueue(ctx, ll, awsmanager, mdb, result.Results, profile, ingestDateint)
 }
 
 // uploadAndQueue uploads the results and queues follow-up work
 func uploadAndQueue(
 	ctx context.Context,
 	ll *slog.Logger,
-	sp storageprofile.StorageProfileProvider,
 	awsmanager *awsclient.Manager,
 	mdb lrdb.StoreFull,
 	results []parquetwriter.Result,
-	firstItem lrdb.Inqueue,
+	profile storageprofile.StorageProfile,
 	ingestDateint int32,
 ) error {
-	// Get storage profile
-	var profile storageprofile.StorageProfile
-	var err error
-
-	if collectorName := helpers.ExtractCollectorName(firstItem.ObjectID); collectorName != "" {
-		profile, err = sp.GetStorageProfileForOrganizationAndCollector(ctx, firstItem.OrganizationID, collectorName)
-		if err != nil {
-			return fmt.Errorf("failed to get storage profile for collector %s: %w", collectorName, err)
-		}
-	} else {
-		profile, err = sp.GetStorageProfileForOrganizationAndInstance(ctx, firstItem.OrganizationID, firstItem.InstanceNum)
-		if err != nil {
-			return fmt.Errorf("failed to get storage profile: %w", err)
-		}
-	}
-
 	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
 	if err != nil {
 		return fmt.Errorf("failed to get S3 client: %w", err)
@@ -124,13 +109,13 @@ func uploadAndQueue(
 
 	// Upload results and update database
 	uploadParams := metricsprocessing.UploadParams{
-		OrganizationID: firstItem.OrganizationID.String(),
-		InstanceNum:    firstItem.InstanceNum,
+		OrganizationID: profile.OrganizationID.String(),
+		InstanceNum:    profile.InstanceNum,
 		Dateint:        0,     // Will be calculated from timestamps
 		FrequencyMs:    10000, // 10 second blocks
 		IngestDateint:  ingestDateint,
-		CollectorName:  firstItem.CollectorName,
-		Bucket:         firstItem.Bucket,
+		CollectorName:  profile.CollectorName,
+		Bucket:         profile.Bucket,
 		CreatedBy:      lrdb.CreatedByIngest,
 	}
 
@@ -142,11 +127,11 @@ func uploadAndQueue(
 	}
 
 	// Queue compaction and rollup for each uploaded segment
-	if err := segments.QueueCompactionWork(criticalCtx, mdb, firstItem.OrganizationID, firstItem.InstanceNum, 10000); err != nil {
+	if err := segments.QueueCompactionWork(criticalCtx, mdb, profile.OrganizationID, profile.InstanceNum, 10000); err != nil {
 		return fmt.Errorf("failed to queue compaction work: %w", err)
 	}
 
-	if err := segments.QueueRollupWork(criticalCtx, mdb, firstItem.OrganizationID, firstItem.InstanceNum, 10000, 0, 1); err != nil {
+	if err := segments.QueueRollupWork(criticalCtx, mdb, profile.OrganizationID, profile.InstanceNum, 10000, 0, 1); err != nil {
 		return fmt.Errorf("failed to queue rollup work: %w", err)
 	}
 
@@ -156,14 +141,28 @@ func uploadAndQueue(
 // ShouldProcessExemplars checks if exemplar processing should be enabled
 // Returns false if LAKERUNNER_METRICS_EXEMPLARS is set to "false", "0", or "off"
 func ShouldProcessExemplars() bool {
-	env := strings.ToLower(strings.TrimSpace(os.Getenv("LAKERUNNER_METRICS_EXEMPLARS")))
-	switch env {
-	case "false", "0", "off", "no":
-		return false
-	case "":
-		// Default to true if not set
-		return true
-	default:
-		return true
+	return helpers.GetBoolEnv("LAKERUNNER_METRICS_EXEMPLARS", true)
+}
+
+// shouldUseSingleInstanceMode checks if single instance mode is enabled
+// Returns true if LAKERUNNER_SINGLE_INSTANCE_NUM is set to "true" or "1"
+func shouldUseSingleInstanceMode() bool {
+	return helpers.GetBoolEnv("LAKERUNNER_SINGLE_INSTANCE_NUM", false)
+}
+
+// getStorageProfileForIngestion gets the appropriate storage profile for ingestion
+// based on the LAKERUNNER_SINGLE_INSTANCE_NUM environment variable setting
+func getStorageProfileForIngestion(
+	ctx context.Context,
+	sp storageprofile.StorageProfileProvider,
+	firstItem lrdb.Inqueue,
+) (storageprofile.StorageProfile, error) {
+	if shouldUseSingleInstanceMode() {
+		return sp.GetLowestInstanceStorageProfile(ctx, firstItem.OrganizationID, firstItem.Bucket)
 	}
+
+	if collectorName := helpers.ExtractCollectorName(firstItem.ObjectID); collectorName != "" {
+		return sp.GetStorageProfileForOrganizationAndCollector(ctx, firstItem.OrganizationID, collectorName)
+	}
+	return sp.GetStorageProfileForOrganizationAndInstance(ctx, firstItem.OrganizationID, firstItem.InstanceNum)
 }
