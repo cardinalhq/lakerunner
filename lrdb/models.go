@@ -213,6 +213,7 @@ type MetricRollupQueue struct {
 	SegmentID      int64      `json:"segment_id"`
 	RecordCount    int64      `json:"record_count"`
 	RollupGroup    int64      `json:"rollup_group"`
+	WindowCloseTs  time.Time  `json:"window_close_ts"`
 }
 
 type MetricSeg struct {

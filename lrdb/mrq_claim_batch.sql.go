@@ -38,6 +38,7 @@ big_single AS (
   ) trg
   WHERE q.claimed_at IS NULL
     AND q.record_count >= trg.target_records
+    AND q.window_close_ts <= p.now_ts
   ORDER BY q.priority DESC, q.queue_ts ASC, q.id ASC
   LIMIT 1
 ),
@@ -48,6 +49,7 @@ seeds_per_group AS (
          priority, queue_ts, record_count
   FROM metric_rollup_queue
   WHERE claimed_at IS NULL
+    AND window_close_ts <= (SELECT now_ts FROM params LIMIT 1)
   ORDER BY organization_id, dateint, frequency_ms, instance_num, slot_id, slot_count, rollup_group,
            priority DESC, queue_ts ASC, id ASC
 ),
@@ -93,6 +95,7 @@ grp_scope AS (
   FROM metric_rollup_queue q
   JOIN group_flags gf
     ON q.claimed_at   IS NULL
+   AND q.window_close_ts <= gf.now_ts
    AND q.organization_id = gf.organization_id
    AND q.dateint         = gf.dateint
    AND q.frequency_ms    = gf.frequency_ms
@@ -192,10 +195,10 @@ upd AS (
   FROM chosen c
   WHERE q.id = c.id
     AND q.claimed_at IS NULL
-  RETURNING q.id, q.queue_ts, q.priority, q.organization_id, q.dateint, q.frequency_ms, q.instance_num, q.slot_id, q.slot_count, q.tries, q.claimed_by, q.claimed_at, q.heartbeated_at, q.segment_id, q.record_count, q.rollup_group
+  RETURNING q.id, q.queue_ts, q.priority, q.organization_id, q.dateint, q.frequency_ms, q.instance_num, q.slot_id, q.slot_count, q.tries, q.claimed_by, q.claimed_at, q.heartbeated_at, q.segment_id, q.record_count, q.rollup_group, q.window_close_ts
 )
 SELECT 
-  upd.id, upd.queue_ts, upd.priority, upd.organization_id, upd.dateint, upd.frequency_ms, upd.instance_num, upd.slot_id, upd.slot_count, upd.tries, upd.claimed_by, upd.claimed_at, upd.heartbeated_at, upd.segment_id, upd.record_count, upd.rollup_group,
+  upd.id, upd.queue_ts, upd.priority, upd.organization_id, upd.dateint, upd.frequency_ms, upd.instance_num, upd.slot_id, upd.slot_count, upd.tries, upd.claimed_by, upd.claimed_at, upd.heartbeated_at, upd.segment_id, upd.record_count, upd.rollup_group, upd.window_close_ts,
   COALESCE(pr.target_records, 0) AS used_target_records,
   COALESCE(pr.org_estimate, 0) AS org_estimate,
   COALESCE(pr.global_estimate, 0) AS global_estimate, 
@@ -231,6 +234,7 @@ type ClaimMetricRollupWorkRow struct {
 	SegmentID         int64      `json:"segment_id"`
 	RecordCount       int64      `json:"record_count"`
 	RollupGroup       int64      `json:"rollup_group"`
+	WindowCloseTs     time.Time  `json:"window_close_ts"`
 	UsedTargetRecords int64      `json:"used_target_records"`
 	OrgEstimate       int64      `json:"org_estimate"`
 	GlobalEstimate    int64      `json:"global_estimate"`
@@ -283,6 +287,7 @@ func (q *Queries) ClaimMetricRollupWork(ctx context.Context, arg ClaimMetricRoll
 			&i.SegmentID,
 			&i.RecordCount,
 			&i.RollupGroup,
+			&i.WindowCloseTs,
 			&i.UsedTargetRecords,
 			&i.OrgEstimate,
 			&i.GlobalEstimate,

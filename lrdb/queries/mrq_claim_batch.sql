@@ -25,6 +25,7 @@ big_single AS (
   ) trg
   WHERE q.claimed_at IS NULL
     AND q.record_count >= trg.target_records
+    AND q.window_close_ts <= p.now_ts
   ORDER BY q.priority DESC, q.queue_ts ASC, q.id ASC
   LIMIT 1
 ),
@@ -36,6 +37,7 @@ seeds_per_group AS (
          priority, queue_ts, record_count
   FROM metric_rollup_queue
   WHERE claimed_at IS NULL
+    AND window_close_ts <= (SELECT now_ts FROM params LIMIT 1)
   ORDER BY organization_id, dateint, frequency_ms, instance_num, slot_id, slot_count, rollup_group,
            priority DESC, queue_ts ASC, id ASC
 ),
@@ -84,6 +86,7 @@ grp_scope AS (
   FROM metric_rollup_queue q
   JOIN group_flags gf
     ON q.claimed_at   IS NULL
+   AND q.window_close_ts <= gf.now_ts
    AND q.organization_id = gf.organization_id
    AND q.dateint         = gf.dateint
    AND q.frequency_ms    = gf.frequency_ms

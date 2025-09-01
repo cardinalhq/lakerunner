@@ -9,7 +9,8 @@ INSERT INTO metric_rollup_queue (
   segment_id,
   record_count,
   rollup_group,
-  priority
+  priority,
+  window_close_ts
 )
 VALUES (
   @organization_id,
@@ -21,5 +22,6 @@ VALUES (
   @segment_id,
   @record_count,
   @rollup_group,
-  @priority
+  @priority,
+  @window_close_ts
 );
