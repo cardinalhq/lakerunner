@@ -42,7 +42,6 @@ func ProcessBatch(
 	rpfEstimate int64,
 	exemplarProcessor *exemplar.Processor,
 ) error {
-	// Generate batch ID and enhance logger
 	batchID := idgen.GenerateShortBase32ID()
 	ll = ll.With(slog.String("batchID", batchID))
 

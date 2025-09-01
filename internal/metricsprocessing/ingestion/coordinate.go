@@ -291,13 +291,9 @@ func createReadersForFiles(validFiles []fileInfo, orgID string, ll *slog.Logger)
 
 		// Record file format and input sorted status metrics after reader stack is complete
 		fileFormat := getFileFormat(fileInfo.tmpfilename)
-		// Source files (binpb/binpb.gz) are unsorted, so input_sorted=false
-		// We wrap them with DiskSortingReader to make them sorted internally
-		inputSorted := false
-
 		attrs := append(commonAttributes.ToSlice(),
 			attribute.String("format", fileFormat),
-			attribute.Bool("input_sorted", inputSorted),
+			attribute.Bool("input_sorted", false),
 		)
 		fileSortedCounter.Add(context.Background(), 1, metric.WithAttributes(attrs...))
 
@@ -313,10 +309,8 @@ func createUnifiedReader(ctx context.Context, readers []filereader.Reader) (file
 	var finalReader filereader.Reader
 
 	if len(readers) == 1 {
-		// Single reader - no need for multi-source reader
 		finalReader = readers[0]
 	} else {
-		// Multiple readers - use MergesortReader to merge sorted streams
 		keyProvider := metricsprocessing.GetCurrentMetricSortKeyProvider()
 		multiReader, err := filereader.NewMergesortReader(ctx, readers, keyProvider, 1000)
 		if err != nil {
@@ -325,7 +319,6 @@ func createUnifiedReader(ctx context.Context, readers []filereader.Reader) (file
 		finalReader = multiReader
 	}
 
-	// Add top-level aggregation for cross-file aggregation
 	finalReader, err := filereader.NewAggregatingMetricsReader(finalReader, 10000, 1000) // 10 seconds
 	if err != nil {
 		return nil, fmt.Errorf("failed to create aggregating reader: %w", err)
@@ -347,7 +340,6 @@ func getFileFormat(filename string) string {
 
 // processExemplarsFromReader processes exemplars from a metrics reader that supports OTEL
 func processExemplarsFromReader(_ context.Context, reader filereader.Reader, processor *exemplar.Processor, orgID string, mdb lrdb.StoreFull) error {
-	// Check if the reader provides OTEL metrics
 	if otelProvider, ok := reader.(filereader.OTELMetricsProvider); ok {
 		otelMetrics, err := otelProvider.GetOTELMetrics()
 		if err != nil {

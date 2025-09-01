@@ -118,15 +118,9 @@ func (wm *metricWriterManager) processBatch(batch *pipeline.Batch) (processedCou
 
 // timestampToMinuteBoundary converts a timestamp to dateint and minute boundary
 func (wm *metricWriterManager) timestampToMinuteBoundary(ts int64) (int32, int) {
-	// Convert milliseconds to time
 	t := time.Unix(ts/1000, (ts%1000)*1000000).UTC()
-
-	// Calculate dateint (YYYYMMDD)
 	dateint := int32(t.Year()*10000 + int(t.Month())*100 + t.Day())
-
-	// Calculate minute within day, rounded down to 60-second boundary
 	minute := t.Hour()*60 + t.Minute()
-
 	return dateint, minute
 }
 
@@ -136,7 +130,6 @@ func (wm *metricWriterManager) getWriter(key minuteSlotKey) (*parquetwriter.Unif
 		return writer, nil
 	}
 
-	// Create new writer for this boundary
 	writer, err := factories.NewMetricsWriter(
 		wm.tmpdir,
 		wm.rpfEstimate,

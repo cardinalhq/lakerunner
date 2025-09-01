@@ -25,7 +25,6 @@ import (
 
 // IsSupportedMetricsFile checks if the file is a supported metrics file type
 func IsSupportedMetricsFile(objectID string) bool {
-	// Only support .binpb and .binpb.gz files from otel-raw/ path structure
 	if !strings.HasPrefix(objectID, "otel-raw/") {
 		return false
 	}
@@ -35,7 +34,6 @@ func IsSupportedMetricsFile(objectID string) bool {
 
 // CreateMetricProtoReader creates a protocol buffer reader for metrics files
 func CreateMetricProtoReader(filename string) (filereader.Reader, error) {
-	// Only support .binpb and .binpb.gz files
 	switch {
 	case strings.HasSuffix(filename, ".binpb.gz"):
 		return createMetricProtoBinaryGzReader(filename)
