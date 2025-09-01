@@ -576,10 +576,9 @@ func TestCleanupMetricRollupWork(t *testing.T) {
 
 	// Wait and then cleanup old items (1 second timeout to cleanup items with stale heartbeats)
 	time.Sleep(2 * time.Second)
-	err = db.CleanupMetricRollupWork(ctx, 1)
+	deletedCount, err := db.CleanupMetricRollupWork(ctx, 1)
 	require.NoError(t, err)
-
-	// Note: CleanupMetricRollupWork doesn't return the count of deleted rows
+	require.Equal(t, int64(1), deletedCount, "Should have cleaned up 1 stale work item")
 	// Try to claim again from a different worker - should be empty since item was cleaned up
 	claimedBatch2, err := db.ClaimMetricRollupWork(ctx, lrdb.ClaimMetricRollupWorkParams{
 		WorkerID:      workerID + 1,
