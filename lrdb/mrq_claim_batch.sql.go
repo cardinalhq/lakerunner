@@ -121,7 +121,7 @@ pack AS (
   FROM grp_scope g
 ),
 
-prelim AS (
+pack_with_limits AS (
   SELECT p.id, p.organization_id, p.dateint, p.frequency_ms, p.instance_num, p.slot_id, p.slot_count, p.rollup_group, p.priority, p.queue_ts, p.record_count, p.seed_rank, p.is_old, p.target_records, p.batch_count, p.org_estimate, p.global_estimate, p.default_estimate, p.estimate_source, p.cum_records, p.rn
   FROM pack p
   JOIN group_flags gf
@@ -134,6 +134,48 @@ prelim AS (
    AND gf.rollup_group    = p.rollup_group
   WHERE p.cum_records <= gf.target_records
     AND p.rn          <= gf.batch_count
+),
+
+prelim AS (
+  SELECT pwl.id, pwl.organization_id, pwl.dateint, pwl.frequency_ms, pwl.instance_num, pwl.slot_id, pwl.slot_count, pwl.rollup_group, pwl.priority, pwl.queue_ts, pwl.record_count, pwl.seed_rank, pwl.is_old, pwl.target_records, pwl.batch_count, pwl.org_estimate, pwl.global_estimate, pwl.default_estimate, pwl.estimate_source, pwl.cum_records, pwl.rn
+  FROM pack_with_limits pwl
+  JOIN group_flags gf
+    ON gf.organization_id = pwl.organization_id
+   AND gf.dateint         = pwl.dateint
+   AND gf.frequency_ms    = pwl.frequency_ms
+   AND gf.instance_num    = pwl.instance_num
+   AND gf.slot_id         = pwl.slot_id
+   AND gf.slot_count      = pwl.slot_count
+   AND gf.rollup_group    = pwl.rollup_group
+  WHERE 
+    -- For old groups: keep all items (no overshoot protection)
+    gf.is_old
+    OR
+    -- For full batches: drop the last item if it causes >20% overshoot and we have >=2 items
+    (NOT gf.is_old AND (
+      -- Keep if we're not over 20%
+      pwl.cum_records <= (gf.target_records * 1.2)
+      OR
+      -- Keep if we only have 1 item in this group (don't drop everything)
+      (SELECT COUNT(*) FROM pack_with_limits pwl2 
+       WHERE pwl2.organization_id = pwl.organization_id
+         AND pwl2.dateint = pwl.dateint
+         AND pwl2.frequency_ms = pwl.frequency_ms
+         AND pwl2.instance_num = pwl.instance_num
+         AND pwl2.slot_id = pwl.slot_id
+         AND pwl2.slot_count = pwl.slot_count
+         AND pwl2.rollup_group = pwl.rollup_group) <= 1
+      OR
+      -- Keep if we're not the last item in this group
+      pwl.rn < (SELECT MAX(rn) FROM pack_with_limits pwl3
+                WHERE pwl3.organization_id = pwl.organization_id
+                  AND pwl3.dateint = pwl.dateint
+                  AND pwl3.frequency_ms = pwl.frequency_ms
+                  AND pwl3.instance_num = pwl.instance_num
+                  AND pwl3.slot_id = pwl.slot_id
+                  AND pwl3.slot_count = pwl.slot_count
+                  AND pwl3.rollup_group = pwl.rollup_group)
+    ))
 ),
 
 group_availability AS (
@@ -162,14 +204,12 @@ eligible_groups AS (
     gf.target_records, gf.is_old, ga.total_available_records,
     CASE 
       WHEN gf.is_old THEN true
-      WHEN ga.total_available_records >= gf.target_records 
-        AND ga.total_available_records <= (gf.target_records * 1.2) THEN true
+      WHEN ga.total_available_records >= gf.target_records THEN true
       ELSE false
     END AS is_eligible,
     CASE 
       WHEN gf.is_old THEN 'old'
-      WHEN ga.total_available_records >= gf.target_records 
-        AND ga.total_available_records <= (gf.target_records * 1.2) THEN 'full_batch'
+      WHEN ga.total_available_records >= gf.target_records THEN 'full_batch'
       ELSE 'insufficient'
     END AS eligibility_reason
   FROM group_availability ga
@@ -191,8 +231,7 @@ eligible_groups AS (
    AND ps.rollup_group    = ga.rollup_group
   WHERE ps.total_records > 0
     AND (gf.is_old 
-         OR (ga.total_available_records >= gf.target_records 
-             AND ga.total_available_records <= (gf.target_records * 1.2)))
+         OR ga.total_available_records >= gf.target_records)
 ),
 
 winner_group AS (
@@ -294,14 +333,15 @@ type ClaimMetricRollupWorkRow struct {
 // 4) Attach per-group target_records with estimate tracking
 // 5) All ready rows within each group
 // 6) Greedy pack per group
-// 7) Rows that fit under caps
-// 8) Totals per group with full scope for availability calculation
-// 9) Totals per group from what fits under caps
-// 10) Eligibility: full batch logic (old items OR efficient fresh batches)
-// 11) Pick earliest eligible group
-// 12) Rows to claim for the winner group
-// 13) Final chosen IDs with batch reason
-// 14) Atomic optimistic claim
+// 7) Rows that fit under caps with overshoot protection
+// 8) Check for >20% overshoot and drop last item if needed (but keep at least 1 item)
+// 9) Totals per group with full scope for availability calculation
+// 10) Totals per group from what fits under caps
+// 11) Eligibility: full batch logic (old items OR efficient fresh batches)
+// 12) Pick earliest eligible group
+// 13) Rows to claim for the winner group
+// 14) Final chosen IDs with batch reason
+// 15) Atomic optimistic claim
 func (q *Queries) ClaimMetricRollupWork(ctx context.Context, arg ClaimMetricRollupWorkParams) ([]ClaimMetricRollupWorkRow, error) {
 	rows, err := q.db.Query(ctx, claimMetricRollupWork,
 		arg.WorkerID,
