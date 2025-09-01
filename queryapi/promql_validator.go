@@ -67,7 +67,7 @@ func (q *QuerierService) validatePromQL(w http.ResponseWriter, r *http.Request) 
 
 		near := sliceSafe(req.Query, start-10, end+10)
 
-		w.WriteHeader(http.StatusUnprocessableEntity)
+		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(promQLValidateErrorResponse{
 			Valid:  false,
 			Error:  pe.Err.Error(),
@@ -80,7 +80,7 @@ func (q *QuerierService) validatePromQL(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Fallback for non-parse errors
-	w.WriteHeader(http.StatusUnprocessableEntity)
+	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(promQLValidateErrorResponse{Valid: false, Error: err.Error()})
 }
 
