@@ -158,7 +158,7 @@ func TestClaimMetricCompactionWork_GreedyFill(t *testing.T) {
 			FrequencyMs:    5000,
 			SegmentID:      int64(12346),
 			InstanceNum:    1,
-			RecordCount:    1000,
+			RecordCount:    1200,
 			Priority:       1,
 		},
 		{
@@ -167,7 +167,7 @@ func TestClaimMetricCompactionWork_GreedyFill(t *testing.T) {
 			FrequencyMs:    5000,
 			SegmentID:      int64(12346),
 			InstanceNum:    1,
-			RecordCount:    500,
+			RecordCount:    1000,
 			Priority:       1,
 		},
 	}
@@ -179,20 +179,20 @@ func TestClaimMetricCompactionWork_GreedyFill(t *testing.T) {
 
 	claimedBatch, err := db.ClaimMetricCompactionWork(ctx, lrdb.ClaimMetricCompactionWorkParams{
 		WorkerID:             workerID,
-		DefaultTargetRecords: 2000,
+		DefaultTargetRecords: 2000, // Total available: 2200 (110% of 2000 = within 100-120% range)
 		MaxAgeSeconds:        30,
 		BatchCount:           5,
 	})
 	require.NoError(t, err)
 
-	assert.Len(t, claimedBatch, 2, "Should greedily claim items that fit within target_records, even if less than target")
+	assert.Len(t, claimedBatch, 2, "Should greedily claim items that make efficient full batch")
 
 	if len(claimedBatch) > 0 {
 		totalRecords := int64(0)
 		for _, item := range claimedBatch {
 			totalRecords += item.RecordCount
 		}
-		assert.Equal(t, int64(1500), totalRecords, "Should claim all items that fit under target")
+		assert.Equal(t, int64(2200), totalRecords, "Should claim all items that make efficient batch")
 	}
 }
 
@@ -349,14 +349,14 @@ func TestClaimMetricCompactionWork_WithOrgEstimate(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Add work item
+	// Add work item - use 16000 records to make it within the 100-120% range of 15000 target
 	err = db.PutMetricCompactionWork(ctx, lrdb.PutMetricCompactionWorkParams{
 		OrganizationID: orgID,
 		Dateint:        20250829,
 		FrequencyMs:    5000,
 		SegmentID:      int64(12347),
 		InstanceNum:    1,
-		RecordCount:    8000,
+		RecordCount:    16000, // 106.7% of 15000 target - within full batch range
 		Priority:       1,
 	})
 	require.NoError(t, err)
