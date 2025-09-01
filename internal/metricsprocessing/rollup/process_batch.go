@@ -318,33 +318,20 @@ func rollupMetricSegments(
 			break
 		}
 
-		normalizedBatch := pipeline.GetBatch()
-
-		for i := 0; i < batch.Len(); i++ {
-			row := batch.Get(i)
-
-			normalizedRow := normalizedBatch.AddRow()
-			for k, v := range row {
-				normalizedRow[k] = v
-			}
-			totalRows++
+		if errors.Is(err, io.EOF) {
+			break
 		}
 
-		if normalizedBatch.Len() > 0 {
-			if err := writer.WriteBatch(normalizedBatch); err != nil {
+		totalRows += int64(batch.Len())
+		if batch.Len() > 0 {
+			if err := writer.WriteBatch(batch); err != nil {
 				ll.Error("Failed to write batch", slog.Any("error", err))
-				pipeline.ReturnBatch(normalizedBatch)
 				pipeline.ReturnBatch(batch)
 				return fmt.Errorf("writing batch: %w", err)
 			}
 		}
 
-		pipeline.ReturnBatch(normalizedBatch)
 		pipeline.ReturnBatch(batch)
-
-		if errors.Is(err, io.EOF) {
-			break
-		}
 	}
 
 	results, err := writer.Close(ctx)
