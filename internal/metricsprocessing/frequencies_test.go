@@ -37,26 +37,3 @@ func TestGetAllFrequencies(t *testing.T) {
 		assert.True(t, freqMap[expectedFreq], "Should contain frequency %d", expectedFreq)
 	}
 }
-
-func TestGetFrequencyPriority(t *testing.T) {
-	tests := []struct {
-		name      string
-		frequency int32
-		expected  int32
-	}{
-		{"10 seconds - highest priority", 10_000, 800},
-		{"1 minute", 60_000, 600},
-		{"5 minutes", 300_000, 400},
-		{"20 minutes", 1_200_000, 200},
-		{"1 hour - lowest priority", 3_600_000, 0},
-		{"invalid frequency", 999_999, 0},
-		{"zero frequency", 0, 0},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := GetFrequencyPriority(tt.frequency)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
