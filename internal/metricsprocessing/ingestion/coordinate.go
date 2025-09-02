@@ -28,7 +28,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
-	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
+	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
@@ -61,15 +61,21 @@ func coordinate(
 
 	firstItem := input.Items[0]
 
-	// Get storage profile and S3 client
+	// Get storage profile
 	profile, err := getStorageProfileForIngestion(ctx, sp, firstItem)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get storage profile: %w", err)
 	}
 
-	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
+	input.Logger.Debug("Got storage profile for metrics ingestion",
+		slog.String("cloudProvider", profile.CloudProvider),
+		slog.String("bucket", profile.Bucket),
+		slog.String("region", profile.Region))
+
+	// Create cloud storage client
+	storageClient, err := cloudstorage.NewClient(ctx, awsmanager, profile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get S3 client: %w", err)
+		return nil, fmt.Errorf("failed to create storage client for provider %s: %w", profile.CloudProvider, err)
 	}
 
 	// Create writer manager
@@ -79,7 +85,7 @@ func coordinate(
 	var batchRowsRead, batchRowsProcessed, batchRowsErrored int64
 
 	// Step 1: Download and validate files
-	validFiles, err := downloadAndValidateFiles(ctx, input.Items, input.TmpDir, s3client, input.Logger)
+	validFiles, err := downloadAndValidateFiles(ctx, input.Items, input.TmpDir, storageClient, profile, input.Logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download files: %w", err)
 	}
@@ -207,7 +213,7 @@ func coordinate(
 }
 
 // downloadAndValidateFiles downloads and validates all files in the batch
-func downloadAndValidateFiles(ctx context.Context, items []lrdb.Inqueue, tmpdir string, s3client *awsclient.S3Client, ll *slog.Logger) ([]fileInfo, error) {
+func downloadAndValidateFiles(ctx context.Context, items []lrdb.Inqueue, tmpdir string, storageClient cloudstorage.Client, profile storageprofile.StorageProfile, ll *slog.Logger) ([]fileInfo, error) {
 	var validFiles []fileInfo
 
 	for _, inf := range items {
@@ -229,12 +235,19 @@ func downloadAndValidateFiles(ctx context.Context, items []lrdb.Inqueue, tmpdir 
 			return nil, fmt.Errorf("creating item tmpdir: %w", err)
 		}
 
-		tmpfilename, _, is404, err := s3helper.DownloadS3Object(ctx, itemTmpdir, s3client, inf.Bucket, inf.ObjectID)
+		ll.Debug("Downloading metrics object",
+			slog.String("cloudProvider", profile.CloudProvider),
+			slog.String("bucket", inf.Bucket),
+			slog.String("objectID", inf.ObjectID))
+
+		tmpfilename, _, is404, err := storageClient.DownloadObject(ctx, itemTmpdir, inf.Bucket, inf.ObjectID)
 		if err != nil {
-			return nil, fmt.Errorf("failed to download file %s: %w", inf.ObjectID, err)
+			return nil, fmt.Errorf("failed to download file %s from %s: %w", inf.ObjectID, profile.CloudProvider, err)
 		}
 		if is404 {
-			ll.Warn("S3 object not found, skipping", slog.String("objectID", inf.ObjectID))
+			ll.Warn("Object not found in cloud storage, skipping",
+				slog.String("cloudProvider", profile.CloudProvider),
+				slog.String("objectID", inf.ObjectID))
 			continue
 		}
 
