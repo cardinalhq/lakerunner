@@ -150,7 +150,198 @@ func TestMakeTags(t *testing.T) {
 	}
 }
 
-func TestComputeTID(t *testing.T) {
+func TestComputeTID_NewBehavior(t *testing.T) {
+	// Test that TID changes when specific fields change
+	t.Run("TID changes with _cardinalhq.name", func(t *testing.T) {
+		tags1 := map[string]any{
+			"_cardinalhq.name": "metric1",
+			"resource.host":    "server1",
+		}
+		tags2 := map[string]any{
+			"_cardinalhq.name": "metric2",
+			"resource.host":    "server1",
+		}
+		tid1 := ComputeTID(tags1)
+		tid2 := ComputeTID(tags2)
+		assert.NotEqual(t, tid1, tid2, "TID should change when _cardinalhq.name changes")
+	})
+
+	t.Run("TID changes with _cardinalhq.metric_type", func(t *testing.T) {
+		tags1 := map[string]any{
+			"_cardinalhq.name":        "metric1",
+			"_cardinalhq.metric_type": "gauge",
+			"resource.host":           "server1",
+		}
+		tags2 := map[string]any{
+			"_cardinalhq.name":        "metric1",
+			"_cardinalhq.metric_type": "counter",
+			"resource.host":           "server1",
+		}
+		tid1 := ComputeTID(tags1)
+		tid2 := ComputeTID(tags2)
+		assert.NotEqual(t, tid1, tid2, "TID should change when _cardinalhq.metric_type changes")
+	})
+
+	t.Run("TID changes with resource.* fields", func(t *testing.T) {
+		// Test adding a resource field
+		tags1 := map[string]any{
+			"_cardinalhq.name": "metric1",
+			"resource.host":    "server1",
+		}
+		tags2 := map[string]any{
+			"_cardinalhq.name": "metric1",
+			"resource.host":    "server1",
+			"resource.region":  "us-east",
+		}
+		tid1 := ComputeTID(tags1)
+		tid2 := ComputeTID(tags2)
+		assert.NotEqual(t, tid1, tid2, "TID should change when resource field is added")
+
+		// Test changing a resource field value
+		tags3 := map[string]any{
+			"_cardinalhq.name": "metric1",
+			"resource.host":    "server2",
+		}
+		tid3 := ComputeTID(tags3)
+		assert.NotEqual(t, tid1, tid3, "TID should change when resource field value changes")
+
+		// Test removing a resource field
+		tags4 := map[string]any{
+			"_cardinalhq.name": "metric1",
+		}
+		tid4 := ComputeTID(tags4)
+		assert.NotEqual(t, tid1, tid4, "TID should change when resource field is removed")
+	})
+
+	t.Run("TID changes with metric.* fields", func(t *testing.T) {
+		// Test adding a metric field
+		tags1 := map[string]any{
+			"_cardinalhq.name": "metric1",
+			"metric.label1":    "value1",
+		}
+		tags2 := map[string]any{
+			"_cardinalhq.name": "metric1",
+			"metric.label1":    "value1",
+			"metric.label2":    "value2",
+		}
+		tid1 := ComputeTID(tags1)
+		tid2 := ComputeTID(tags2)
+		assert.NotEqual(t, tid1, tid2, "TID should change when metric field is added")
+
+		// Test changing a metric field value
+		tags3 := map[string]any{
+			"_cardinalhq.name": "metric1",
+			"metric.label1":    "value3",
+		}
+		tid3 := ComputeTID(tags3)
+		assert.NotEqual(t, tid1, tid3, "TID should change when metric field value changes")
+	})
+
+	t.Run("TID ignores non-string resource.* and metric.* fields", func(t *testing.T) {
+		tags1 := map[string]any{
+			"_cardinalhq.name": "metric1",
+			"resource.host":    "server1",
+		}
+		tags2 := map[string]any{
+			"_cardinalhq.name": "metric1",
+			"resource.host":    "server1",
+			"resource.count":   123,   // non-string, should be ignored
+			"metric.value":     45.67, // non-string, should be ignored
+		}
+		tid1 := ComputeTID(tags1)
+		tid2 := ComputeTID(tags2)
+		assert.Equal(t, tid1, tid2, "TID should not change when non-string resource/metric fields are added")
+	})
+
+	t.Run("TID does not change with scope.* fields", func(t *testing.T) {
+		tags1 := map[string]any{
+			"_cardinalhq.name": "metric1",
+			"resource.host":    "server1",
+		}
+		tags2 := map[string]any{
+			"_cardinalhq.name": "metric1",
+			"resource.host":    "server1",
+			"scope.name":       "my-scope",
+			"scope.version":    "1.0.0",
+		}
+		tid1 := ComputeTID(tags1)
+		tid2 := ComputeTID(tags2)
+		assert.Equal(t, tid1, tid2, "TID should not change when scope fields are added")
+	})
+
+	t.Run("TID does not change with arbitrary fields", func(t *testing.T) {
+		tags1 := map[string]any{
+			"_cardinalhq.name": "metric1",
+			"resource.host":    "server1",
+		}
+		tags2 := map[string]any{
+			"_cardinalhq.name": "metric1",
+			"resource.host":    "server1",
+			"alice":            "value",
+			"bob":              "another",
+			"random_field":     "ignored",
+		}
+		tid1 := ComputeTID(tags1)
+		tid2 := ComputeTID(tags2)
+		assert.Equal(t, tid1, tid2, "TID should not change when arbitrary fields are added")
+	})
+
+	t.Run("TID ignores other _cardinalhq.* fields", func(t *testing.T) {
+		tags1 := map[string]any{
+			"_cardinalhq.name":        "metric1",
+			"_cardinalhq.metric_type": "gauge",
+			"resource.host":           "server1",
+		}
+		tags2 := map[string]any{
+			"_cardinalhq.name":        "metric1",
+			"_cardinalhq.metric_type": "gauge",
+			"resource.host":           "server1",
+			"_cardinalhq.timestamp":   123456789,
+			"_cardinalhq.description": "some description",
+			"_cardinalhq.unit":        "bytes",
+		}
+		tid1 := ComputeTID(tags1)
+		tid2 := ComputeTID(tags2)
+		assert.Equal(t, tid1, tid2, "TID should not change when other _cardinalhq fields are added")
+	})
+
+	t.Run("TID is deterministic", func(t *testing.T) {
+		tags := map[string]any{
+			"_cardinalhq.name":        "metric1",
+			"_cardinalhq.metric_type": "gauge",
+			"resource.host":           "server1",
+			"resource.region":         "us-east",
+			"metric.label1":           "value1",
+			"metric.label2":           "value2",
+		}
+		tid1 := ComputeTID(tags)
+		tid2 := ComputeTID(tags)
+		tid3 := ComputeTID(tags)
+		assert.Equal(t, tid1, tid2, "TID should be deterministic")
+		assert.Equal(t, tid1, tid3, "TID should be deterministic")
+	})
+
+	// Test removed - no longer relevant since parameter was removed
+
+	t.Run("Empty values are filtered", func(t *testing.T) {
+		tags1 := map[string]any{
+			"_cardinalhq.name": "metric1",
+			"resource.host":    "server1",
+			"resource.region":  "", // empty string should be filtered
+		}
+		tags2 := map[string]any{
+			"_cardinalhq.name": "metric1",
+			"resource.host":    "server1",
+		}
+		tid1 := ComputeTID(tags1)
+		tid2 := ComputeTID(tags2)
+		assert.Equal(t, tid1, tid2, "Empty string values should be filtered out")
+	})
+}
+
+// TestComputeTID_Legacy tests for backward compatibility with the old test structure
+// The new behavior is comprehensively tested in TestComputeTID_NewBehavior
+func TestComputeTID_Legacy(t *testing.T) {
 	tests := []struct {
 		name       string
 		metricName string
@@ -159,60 +350,55 @@ func TestComputeTID(t *testing.T) {
 		sameTags   map[string]any
 	}{
 		{
-			name:       "basic hash computation",
-			metricName: "cpu_usage",
-			tags:       map[string]any{"host": "server1", "env": "prod"},
+			name:       "basic hash computation with proper fields",
+			metricName: "ignored", // first param is ignored now
+			tags:       map[string]any{"_cardinalhq.name": "cpu_usage", "resource.host": "server1", "resource.env": "prod"},
 			expectSame: false,
 		},
 		{
 			name:       "tag order should not matter",
-			metricName: "memory_usage",
-			tags:       map[string]any{"host": "server1", "env": "prod"},
+			metricName: "ignored",
+			tags:       map[string]any{"_cardinalhq.name": "memory_usage", "resource.host": "server1", "resource.env": "prod"},
 			expectSame: true,
-			sameTags:   map[string]any{"env": "prod", "host": "server1"},
+			sameTags:   map[string]any{"_cardinalhq.name": "memory_usage", "resource.env": "prod", "resource.host": "server1"},
 		},
 		{
 			name:       "empty value filtered out",
-			metricName: "disk_usage",
-			tags:       map[string]any{"host": "server1", "env": "", "region": "us-east"},
+			metricName: "ignored",
+			tags:       map[string]any{"_cardinalhq.name": "disk_usage", "resource.host": "server1", "resource.env": "", "resource.region": "us-east"},
 			expectSame: true,
-			sameTags:   map[string]any{"host": "server1", "region": "us-east"},
+			sameTags:   map[string]any{"_cardinalhq.name": "disk_usage", "resource.host": "server1", "resource.region": "us-east"},
 		},
 		{
 			name:       "underscore-prefixed keys filtered",
-			metricName: "network_io",
-			tags:       map[string]any{"host": "server1", "_internal": "skip", "env": "prod"},
+			metricName: "ignored",
+			tags:       map[string]any{"_cardinalhq.name": "network_io", "resource.host": "server1", "_internal": "skip", "resource.env": "prod"},
 			expectSame: true,
-			sameTags:   map[string]any{"host": "server1", "env": "prod"},
+			sameTags:   map[string]any{"_cardinalhq.name": "network_io", "resource.host": "server1", "resource.env": "prod"},
 		},
 		{
-			name:       "different value types",
-			metricName: "metrics",
-			tags:       map[string]any{"string": "value", "int": 42, "float": 3.14, "bool": true},
-			expectSame: false,
-		},
-		{
-			name:       "empty metric name",
-			metricName: "",
-			tags:       map[string]any{"host": "server1"},
-			expectSame: false,
+			name:       "only string resource/metric fields included",
+			metricName: "ignored",
+			tags:       map[string]any{"_cardinalhq.name": "metrics", "resource.string": "value", "resource.int": 42, "metric.float": 3.14, "metric.bool": true},
+			expectSame: true,
+			sameTags:   map[string]any{"_cardinalhq.name": "metrics", "resource.string": "value"}, // non-string values ignored
 		},
 		{
 			name:       "nil tags map",
-			metricName: "cpu_usage",
+			metricName: "ignored",
 			tags:       nil,
 			expectSame: false,
 		},
 		{
 			name:       "empty tags map",
-			metricName: "cpu_usage",
+			metricName: "ignored",
 			tags:       map[string]any{},
 			expectSame: false,
 		},
 		{
-			name:       "all tags filtered out",
-			metricName: "cpu_usage",
-			tags:       map[string]any{"_private": "skip", "empty_val": ""},
+			name:       "all non-compliant tags filtered out",
+			metricName: "ignored",
+			tags:       map[string]any{"_private": "skip", "empty_val": "", "arbitrary": "ignored"},
 			expectSame: true,
 			sameTags:   map[string]any{},
 		},
@@ -220,22 +406,17 @@ func TestComputeTID(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tid1 := ComputeTID(tt.metricName, tt.tags)
+			tid1 := ComputeTID(tt.tags)
 
 			// TID should be deterministic
-			tid2 := ComputeTID(tt.metricName, tt.tags)
+			tid2 := ComputeTID(tt.tags)
 			assert.Equal(t, tid1, tid2, "TID should be deterministic")
 
 			if tt.expectSame && tt.sameTags != nil {
-				tidSame := ComputeTID(tt.metricName, tt.sameTags)
+				tidSame := ComputeTID(tt.sameTags)
 				assert.Equal(t, tid1, tidSame, "TIDs should be the same")
 			}
 
-			// Different metric names should produce different TIDs
-			if tt.metricName != "" {
-				differentTID := ComputeTID(tt.metricName+"_different", tt.tags)
-				assert.NotEqual(t, tid1, differentTID, "Different metric names should produce different TIDs")
-			}
 		})
 	}
 }

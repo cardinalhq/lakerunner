@@ -572,7 +572,6 @@ func TestAggregatingMetricsReader_DropHistogramWithoutSketch(t *testing.T) {
 			wkk.RowKeyCName:       "cpu.usage",
 			wkk.RowKeyCTID:        int64(12345),
 			wkk.RowKeyCTimestamp:  int64(10500),
-			wkk.NewRowKey("type"): "Gauge",  // This is a gauge
 			wkk.RowKeySketch:      []byte{}, // Empty sketch is OK for gauges
 			wkk.RowKeyRollupSum:   50.0,
 			wkk.RowKeyRollupCount: 1.0,
@@ -592,7 +591,6 @@ func TestAggregatingMetricsReader_DropHistogramWithoutSketch(t *testing.T) {
 	row := batch.Get(0)
 	// Verify only the gauge row was returned
 	assert.Equal(t, "cpu.usage", row[wkk.RowKeyCName])
-	assert.Equal(t, "Gauge", row[wkk.NewRowKey("type")])
 	assert.Equal(t, 50.0, row[wkk.RowKeyRollupSum])
 
 	// Second read should return EOF

@@ -55,18 +55,12 @@ func (t *MetricTranslator) TranslateRow(row *filereader.Row) error {
 	(*row)[wkk.RowKeyCTimestamp] = truncatedTimestamp
 
 	// Compute and add TID field
-	metricName, nameOk := (*row)[wkk.RowKeyCName].(string)
-	if !nameOk {
+	if _, nameOk := (*row)[wkk.RowKeyCName].(string); !nameOk {
 		return fmt.Errorf("missing or invalid _cardinalhq.name field for TID computation")
 	}
 
-	// Include metric_type in TID calculation to ensure different metric types get different TIDs
 	rowMap := pipeline.ToStringMap(*row)
-	if metricType, hasMetricType := (*row)[wkk.RowKeyCMetricType].(string); hasMetricType {
-		rowMap["_cardinalhq.metric_type"] = metricType
-	}
-
-	tid := helpers.ComputeTID(metricName, rowMap)
+	tid := helpers.ComputeTID(rowMap)
 	(*row)[wkk.RowKeyCTID] = tid
 
 	return nil
