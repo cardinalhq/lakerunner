@@ -188,7 +188,7 @@ func coordinate(
 	dbCtx, dbCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer dbCancel()
 
-	err = replaceCompactedSegments(dbCtx, ll, mdb, segments, rows, metadata, inputRecords, inputBytes, estimatedTargetRecords, processingResult.Stats.TotalRows)
+	err = replaceCompactedSegments(dbCtx, ll, mdb, segments, rows, metadata, inputRecords, inputBytes, estimatedTargetRecords)
 	if err != nil {
 		// Database update failed after successful uploads - schedule cleanup
 		ll.Error("Database update failed after successful S3 upload, scheduling cleanup",
@@ -211,7 +211,6 @@ func replaceCompactedSegments(
 	inputRecords int64,
 	inputBytes int64,
 	estimatedTargetRecords int64,
-	totalRows int64,
 ) error {
 	// Prepare old records for CompactMetricSegs
 	oldRecords := make([]lrdb.CompactMetricSegsOld, len(oldRows))
