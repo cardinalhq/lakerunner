@@ -1,4 +1,16 @@
-//go:build !race
+// Copyright (C) 2025 CardinalHQ, Inc
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as
+// published by the Free Software Foundation, version 3.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 package promql
 
@@ -129,7 +141,7 @@ func replaceStartEnd(sql string, start, end int64) string {
 	return s
 }
 
-// Sets up a minimal metrics table used by buildWindowed tests.
+// Sets up a minimal metrics table used by step-agg tests.
 // Columns: timestamp/name + rollup_* + optional "pod" label for group-by tests.
 func createMetricsTable(t *testing.T, db *sql.DB, withPod bool) {
 	t.Helper()
@@ -158,7 +170,8 @@ func mustDropTable(db *sql.DB, name string) {
 
 // --- Tests -------------------------------------------------------------------
 
-func TestBuildWindowed_SumOverTime_NoGroup_GappySeries(t *testing.T) {
+// Worker returns raw per-bucket sum (no windowing). Gaps remain gaps.
+func TestBuildStepAgg_Sum_NoGroup_GappySeries(t *testing.T) {
 	db := openDuckDB(t)
 	createMetricsTable(t, db, false)
 
@@ -170,7 +183,7 @@ func TestBuildWindowed_SumOverTime_NoGroup_GappySeries(t *testing.T) {
 	be := &BaseExpr{
 		Metric:   "m",
 		FuncName: "sum_over_time",
-		Range:    "30s",
+		Range:    "30s", // ignored by worker now; API applies window later
 	}
 	sql := be.ToWorkerSQL(10 * time.Second)
 	if sql == "" {
@@ -187,42 +200,27 @@ func TestBuildWindowed_SumOverTime_NoGroup_GappySeries(t *testing.T) {
 		t.Fatalf("expected 3 rows (no densification), got %d\nsql:\n%s", len(rows), sql)
 	}
 
-	type pair struct {
-		ts  int64
-		sum float64
-	}
-	var got []pair
+	got := make(map[int64]float64, 3)
 	for _, r := range rows {
-		got = append(got, pair{
-			ts:  getInt64(r["bucket_ts"]),
-			sum: getFloat(r["sum"]),
-		})
+		got[getInt64(r["bucket_ts"])] = getFloat(r["sum"])
 	}
-
-	// Expected (RANGE 30s inclusive of boundary):
-	// ts=0     -> [0..0]                = 1
-	// ts=10000 -> [ -..10000]           = 1+2 = 3
-	// ts=40000 -> [10000..40000]        = 2+4 = 6   (no 20s/30s rows; still correct)
 	want := map[int64]float64{
 		0:     1.0,
-		10000: 3.0,
-		40000: 6.0,
+		10000: 2.0,
+		40000: 4.0,
 	}
-	for _, p := range got {
-		if want[p.ts] == 0 && p.ts != 0 {
-			t.Fatalf("unexpected ts=%d present", p.ts)
-		}
-		if math.Abs(want[p.ts]-p.sum) > 1e-9 {
-			t.Fatalf("ts=%d sum got=%v want=%v", p.ts, p.sum, want[p.ts])
+	for ts, w := range want {
+		if g := got[ts]; math.Abs(g-w) > 1e-9 {
+			t.Fatalf("ts=%d sum got=%v want=%v", ts, g, w)
 		}
 	}
 }
 
-func TestBuildWindowed_SumOverTime_GroupBy_PartitionIsolation(t *testing.T) {
+// Group-by isolation should hold; still raw per-bucket sums.
+func TestBuildStepAgg_Sum_GroupBy_Isolation(t *testing.T) {
 	db := openDuckDB(t)
 	createMetricsTable(t, db, true)
 
-	// Interleave groups at shared steps; ensure windows don't bleed.
 	// a@0:2, a@10:3, a@40:5; b@10:10
 	mustExec(t, db, `INSERT INTO metrics VALUES
 	 (    0, 'm', 2.0, 1, 2.0, 2.0, 'a'),
@@ -233,7 +231,7 @@ func TestBuildWindowed_SumOverTime_GroupBy_PartitionIsolation(t *testing.T) {
 	be := &BaseExpr{
 		Metric:   "m",
 		FuncName: "sum_over_time",
-		Range:    "30s",
+		Range:    "30s", // worker ignores windowing
 		GroupBy:  []string{"pod"},
 	}
 	sql := replaceStartEnd(replaceTableMetrics(be.ToWorkerSQL(10*time.Second)), 0, 50000)
@@ -253,16 +251,10 @@ func TestBuildWindowed_SumOverTime_GroupBy_PartitionIsolation(t *testing.T) {
 		got[key{pod: asString(r["pod"]), ts: getInt64(r["bucket_ts"])}] = getFloat(r["sum"])
 	}
 
-	// For pod a:
-	//  0  -> 2
-	//  10 -> 2+3 = 5
-	//  40 -> 3+5 = 8
-	// For pod b:
-	//  10 -> 10
 	want := map[key]float64{
 		{"a", 0}:     2,
-		{"a", 10000}: 5,
-		{"a", 40000}: 8,
+		{"a", 10000}: 3,
+		{"a", 40000}: 5,
 		{"b", 10000}: 10,
 	}
 	for k, v := range want {
@@ -274,13 +266,14 @@ func TestBuildWindowed_SumOverTime_GroupBy_PartitionIsolation(t *testing.T) {
 	}
 }
 
-func TestBuildWindowed_AvgOverTime_UsesSumOfRollupCount(t *testing.T) {
+// Verify we use SUM(rollup_count), not COUNT(*), per bucket.
+func TestBuildStepAgg_Avg_UsesSumOfRollupCount_PerBucket(t *testing.T) {
 	db := openDuckDB(t)
 	createMetricsTable(t, db, false)
 
-	// Two buckets in range at ts=10s:
-	// sum: 1 + 2 = 3
-	// cnt: 5 + 7 = 12  (verifies SUM(rollup_count), not COUNT(*))
+	// Two distinct buckets:
+	// ts=0:     sum=1, count=5
+	// ts=10000: sum=2, count=7
 	mustExec(t, db, `INSERT INTO metrics VALUES
 	 (    0, 'm', 1.0, 5, 1.0, 1.0),
 	 (10000, 'm', 2.0, 7, 2.0, 2.0)`)
@@ -288,7 +281,7 @@ func TestBuildWindowed_AvgOverTime_UsesSumOfRollupCount(t *testing.T) {
 	be := &BaseExpr{
 		Metric:   "m",
 		FuncName: "avg_over_time",
-		Range:    "30s",
+		Range:    "30s", // worker returns raw per-bucket sum & count
 	}
 	sql := replaceStartEnd(replaceTableMetrics(be.ToWorkerSQL(10*time.Second)), 0, 20000)
 	rows := queryAll(t, db, sql)
@@ -296,15 +289,17 @@ func TestBuildWindowed_AvgOverTime_UsesSumOfRollupCount(t *testing.T) {
 	if len(rows) != 2 {
 		t.Fatalf("expected 2 rows, got %d\nsql:\n%s", len(rows), sql)
 	}
-	// Check ts=10000 count = 12
+	// Check ts=10000 count = 7 (SUM(rollup_count)), not COUNT(*)
 	var found bool
 	for _, r := range rows {
 		if getInt64(r["bucket_ts"]) == 10000 {
 			found = true
-			if c := getFloat(r["count"]); math.Abs(c-12.0) > 1e-9 {
-				t.Fatalf("count@10000 got=%v want=12", c)
+			if c := getFloat(r["count"]); math.Abs(c-7.0) > 1e-9 {
+				t.Fatalf("count@10000 got=%v want=7", c)
 			}
-			// (Optional) avg = sum/count = 3/12; that divide happens upstream of worker.
+			if s := getFloat(r["sum"]); math.Abs(s-2.0) > 1e-9 {
+				t.Fatalf("sum@10000 got=%v want=2", s)
+			}
 		}
 	}
 	if !found {
@@ -312,11 +307,11 @@ func TestBuildWindowed_AvgOverTime_UsesSumOfRollupCount(t *testing.T) {
 	}
 }
 
-func TestBuildWindowed_MaxOverTime_NoGroup(t *testing.T) {
+// Max is per-bucket now (no window carry).
+func TestBuildStepAgg_Max_NoGroup(t *testing.T) {
 	db := openDuckDB(t)
 	createMetricsTable(t, db, false)
 
-	// Max over window should respect RANGE across buckets.
 	mustExec(t, db, `INSERT INTO metrics VALUES
 	 (    0, 'm', 0.0, 1, 1.0,  1.0),
 	 (10000, 'm', 0.0, 1, 9.0,  9.0),
@@ -325,7 +320,7 @@ func TestBuildWindowed_MaxOverTime_NoGroup(t *testing.T) {
 	be := &BaseExpr{
 		Metric:   "m",
 		FuncName: "max_over_time",
-		Range:    "30s",
+		Range:    "30s", // ignored by worker; API windows later
 	}
 	sql := replaceStartEnd(replaceTableMetrics(be.ToWorkerSQL(10*time.Second)), 0, 50000)
 	rows := queryAll(t, db, sql)
@@ -334,28 +329,21 @@ func TestBuildWindowed_MaxOverTime_NoGroup(t *testing.T) {
 		t.Fatalf("expected 3 rows, got %d\nsql:\n%s", len(rows), sql)
 	}
 
-	type pair struct {
-		ts  int64
-		max float64
-	}
 	got := map[int64]float64{}
 	for _, r := range rows {
 		got[getInt64(r["bucket_ts"])] = getFloat(r["max"])
 	}
-
-	// ts=0     -> max(1)      = 1
-	// ts=10000 -> max(1,9)    = 9
-	// ts=40000 -> max(9,3)    = 9  (10000 still within 30s)
-	if math.Abs(got[0]-1.0) > 1e-9 || math.Abs(got[10000]-9.0) > 1e-9 || math.Abs(got[40000]-9.0) > 1e-9 {
+	// Per-bucket maxima
+	if math.Abs(got[0]-1.0) > 1e-9 || math.Abs(got[10000]-9.0) > 1e-9 || math.Abs(got[40000]-3.0) > 1e-9 {
 		t.Fatalf("max series wrong: got=%v", got)
 	}
 }
 
-func TestBuildWindowed_RespectsMetricFilter_IgnoresOtherMetrics(t *testing.T) {
+// Metric filter must exclude other series; still raw per-bucket sums.
+func TestBuildStepAgg_RespectsMetricFilter_IgnoresOtherMetrics(t *testing.T) {
 	db := openDuckDB(t)
 	createMetricsTable(t, db, false)
 
-	// Mix 'm' and 'other'; query should only see 'm'.
 	mustExec(t, db, `INSERT INTO metrics VALUES
 	 (0, 'm',     2.0, 1, 2.0, 2.0),
 	 (0, 'other', 9.9, 9, 9.9, 9.9),
@@ -372,19 +360,15 @@ func TestBuildWindowed_RespectsMetricFilter_IgnoresOtherMetrics(t *testing.T) {
 	}
 	rows := queryAll(t, db, sql)
 
-	// Should have ts=0 and 10000 only, sums 2 and 5.
+	// Should have ts=0 and 10000 only, sums 2 and 3 (no window accumulation).
 	if len(rows) != 2 {
 		t.Fatalf("expected 2 rows, got %d\nsql:\n%s", len(rows), sql)
-	}
-	type pair struct {
-		ts  int64
-		sum float64
 	}
 	got := make(map[int64]float64, 2)
 	for _, r := range rows {
 		got[getInt64(r["bucket_ts"])] = getFloat(r["sum"])
 	}
-	if math.Abs(got[0]-2.0) > 1e-9 || math.Abs(got[10000]-5.0) > 1e-9 {
+	if math.Abs(got[0]-2.0) > 1e-9 || math.Abs(got[10000]-3.0) > 1e-9 {
 		t.Fatalf("wrong sums: got=%v", got)
 	}
 }
