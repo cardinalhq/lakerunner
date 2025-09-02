@@ -50,7 +50,7 @@ type config struct {
 }
 
 func GetConfigFromEnv() config {
-	targetRecords := int64(1000000)
+	targetRecords := int64(40000) // Default max records for rollup batches
 	if env := os.Getenv("LAKERUNNER_METRIC_ROLLUP_TARGET_RECORDS"); env != "" {
 		if val, err := strconv.ParseInt(env, 10, 64); err == nil && val > 0 {
 			targetRecords = val

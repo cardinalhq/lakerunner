@@ -69,6 +69,15 @@ func TestClaimRollupBundle_GreedyPacking(t *testing.T) {
 	workerID := int64(42)
 	now := time.Now().Add(-time.Hour)
 
+	// Set up metric pack estimate for this test
+	targetRecords := int64(10000)
+	err := store.UpsertMetricPackEstimate(ctx, lrdb.UpsertMetricPackEstimateParams{
+		OrganizationID: orgID,
+		FrequencyMs:    5000,
+		TargetRecords:  &targetRecords,
+	})
+	require.NoError(t, err)
+
 	// Insert multiple small files that sum to target
 	id1 := insertMRQRow(t, store, orgID, 20241201, 5000, 1, 1, 4, 1001, 3000, now.Add(-time.Minute*10))
 	id2 := insertMRQRow(t, store, orgID, 20241201, 5000, 1, 1, 4, 1001, 4000, now.Add(-time.Minute*9))
@@ -118,6 +127,15 @@ func TestClaimRollupBundle_OverFactorPreventsGreedy(t *testing.T) {
 	orgID := uuid.New()
 	workerID := int64(42)
 	now := time.Now().Add(-time.Hour)
+
+	// Set up metric pack estimate for this test
+	targetRecords := int64(10000)
+	err := store.UpsertMetricPackEstimate(ctx, lrdb.UpsertMetricPackEstimateParams{
+		OrganizationID: orgID,
+		FrequencyMs:    5000,
+		TargetRecords:  &targetRecords,
+	})
+	require.NoError(t, err)
 
 	// Insert files where adding the second would exceed over factor
 	id1 := insertMRQRow(t, store, orgID, 20241201, 5000, 1, 1, 4, 1001, 8000, now)

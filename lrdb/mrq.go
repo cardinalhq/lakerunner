@@ -55,8 +55,6 @@ func (s *Store) ClaimRollupBundle(ctx context.Context, p BundleParams) (*RollupB
 		if err != nil {
 			return fmt.Errorf("failed to acquire advisory lock: %w", err)
 		}
-		target := p.TargetRecords
-		over := int64(float64(target) * p.OverFactor)
 
 		// Try up to MaxAttempts different keys
 		for attempt := 0; attempt < maxAttempts; attempt++ {
@@ -73,6 +71,10 @@ func (s *Store) ClaimRollupBundle(ctx context.Context, p BundleParams) (*RollupB
 			// The head contains the source frequency, we need the target frequency
 			targetFreq := head.FrequencyMs // This will be the target frequency for the rollup
 			estimatedTarget = s.GetMetricEstimate(ctx, head.OrganizationID, targetFreq)
+
+			// Always use the estimator - it has proper defaults
+			target := estimatedTarget
+			over := int64(float64(target) * p.OverFactor)
 
 			// 2) Fetch candidates for that key
 			cands, err := tx.MrqFetchCandidates(ctx, MrqFetchCandidatesParams{
@@ -93,30 +95,40 @@ func (s *Store) ClaimRollupBundle(ctx context.Context, p BundleParams) (*RollupB
 				continue
 			}
 
-			// Rest of the bundle logic is the same as the original ClaimRollupBundle
 			// 3) Build bundle (big-single + greedy + tail rule)
 			var bundleIDs []int64
 			var sum int64
 
 			if cands[0].RecordCount >= target {
-				// big single
+				// big single - take just this one segment
 				bundleIDs = []int64{cands[0].ID}
 			} else {
+				// Greedy accumulation with strict limits
 				for _, x := range cands {
-					if sum+x.RecordCount > over {
+					// Check if adding this item would exceed our over limit
+					nextSum := sum + x.RecordCount
+					if nextSum > over {
+						// If we haven't reached target yet, check if this single item alone is acceptable
+						if sum < target && len(bundleIDs) == 0 {
+							// Take at least one item if we have nothing
+							bundleIDs = append(bundleIDs, x.ID)
+							sum = nextSum
+						}
 						break
 					}
 					bundleIDs = append(bundleIDs, x.ID)
-					sum += x.RecordCount
+					sum = nextSum
+					// Stop as soon as we reach the target
 					if sum >= target {
 						break
 					}
 				}
 				if sum < target {
 					oldest := cands[0].QueueTs
-					// tail rule: if oldest candidate waited >= Grace, flush what we have (even if zero -> push one)
+					// tail rule: if oldest candidate waited >= Grace, flush what we have
 					if time.Since(oldest) >= p.Grace {
-						if len(bundleIDs) == 0 {
+						if len(bundleIDs) == 0 && len(cands) > 0 {
+							// Take at least the first item if we have nothing and it's old enough
 							bundleIDs = append(bundleIDs, cands[0].ID)
 						}
 					} else {
