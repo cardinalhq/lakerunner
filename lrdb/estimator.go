@@ -17,10 +17,14 @@ package lrdb
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jellydator/ttlcache/v3"
+)
+
+const (
+	defaultEstimateTTL = 5 * time.Minute
 )
 
 // EstimateKey represents a cache key for metric pack estimates
@@ -29,29 +33,10 @@ type EstimateKey struct {
 	FrequencyMs    int32
 }
 
-// EstimateValue represents a cached estimate value
-type EstimateValue struct {
-	TargetRecords int64
-	UpdatedAt     time.Time
-}
-
-// LRUNode represents a node in the LRU cache
-type LRUNode struct {
-	Key   EstimateKey
-	Value EstimateValue
-	Prev  *LRUNode
-	Next  *LRUNode
-}
-
 // MetricPackEstimator provides cached access to metric pack estimates
 type MetricPackEstimator struct {
-	db       EstimatorStore
-	mutex    sync.RWMutex
-	cache    map[EstimateKey]*LRUNode
-	head     *LRUNode
-	tail     *LRUNode
-	capacity int
-	size     int
+	db    EstimatorStore
+	cache *ttlcache.Cache[EstimateKey, int64]
 }
 
 // MetricEstimator provides access to metric pack estimates
@@ -64,25 +49,16 @@ type EstimatorStore interface {
 	GetAllMetricPackEstimates(ctx context.Context) ([]MetricPackEstimate, error)
 }
 
-// NewMetricPackEstimator creates a new estimator with LRU cache
-func NewMetricPackEstimator(db EstimatorStore, capacity int) *MetricPackEstimator {
-	if capacity <= 0 {
-		capacity = 1000 // Default cache size
-	}
-
-	// Create dummy head and tail nodes
-	head := &LRUNode{}
-	tail := &LRUNode{}
-	head.Next = tail
-	tail.Prev = head
+// NewMetricPackEstimator creates a new estimator with TTL cache
+func NewMetricPackEstimator(db EstimatorStore) *MetricPackEstimator {
+	cache := ttlcache.New(
+		ttlcache.WithTTL[EstimateKey, int64](defaultEstimateTTL),
+	)
+	go cache.Start()
 
 	return &MetricPackEstimator{
-		db:       db,
-		cache:    make(map[EstimateKey]*LRUNode),
-		head:     head,
-		tail:     tail,
-		capacity: capacity,
-		size:     0,
+		db:    db,
+		cache: cache,
 	}
 }
 
@@ -104,18 +80,9 @@ func (e *MetricPackEstimator) getEstimate(ctx context.Context, orgID uuid.UUID, 
 	key := EstimateKey{OrganizationID: orgID, FrequencyMs: frequencyMs}
 
 	// Try cache first
-	e.mutex.RLock()
-	if node, exists := e.cache[key]; exists {
-		e.mutex.RUnlock()
-
-		// Move to front (most recently used)
-		e.mutex.Lock()
-		e.moveToFront(node)
-		e.mutex.Unlock()
-
-		return node.Value.TargetRecords, nil
+	if item := e.cache.Get(key); item != nil {
+		return item.Value(), nil
 	}
-	e.mutex.RUnlock()
 
 	// Not in cache, try to load from database
 	estimate, err := e.loadEstimate(ctx, orgID, frequencyMs)
@@ -124,11 +91,9 @@ func (e *MetricPackEstimator) getEstimate(ctx context.Context, orgID uuid.UUID, 
 	}
 
 	// Cache the result
-	e.mutex.Lock()
-	e.put(key, estimate)
-	e.mutex.Unlock()
+	e.cache.Set(key, estimate, ttlcache.DefaultTTL)
 
-	return estimate.TargetRecords, nil
+	return estimate, nil
 }
 
 // getHardcodedDefault returns a hardcoded default for a frequency
@@ -138,35 +103,32 @@ func (e *MetricPackEstimator) getHardcodedDefault() int64 {
 
 // loadEstimate loads estimate from database with fallback logic
 // Optimized to cache all estimates for an organization when first accessed
-func (e *MetricPackEstimator) loadEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32) (EstimateValue, error) {
+func (e *MetricPackEstimator) loadEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32) (int64, error) {
 	// Load all estimates from database once
 	estimates, err := e.db.GetAllMetricPackEstimates(ctx)
 	if err != nil {
-		return EstimateValue{}, fmt.Errorf("failed to load metric pack estimates: %w", err)
+		return 0, fmt.Errorf("failed to load metric pack estimates: %w", err)
 	}
 
 	// Cache all estimates for this organization and defaults at once to avoid repeated DB calls
 	zeroUUID := uuid.UUID{}
-	orgEstimates := make(map[int32]EstimateValue)
-	defaultEstimates := make(map[int32]EstimateValue)
+	orgEstimates := make(map[int32]int64)
+	defaultEstimates := make(map[int32]int64)
 
 	for _, est := range estimates {
 		if est.TargetRecords != nil {
-			value := EstimateValue{
-				TargetRecords: *est.TargetRecords,
-				UpdatedAt:     est.UpdatedAt,
-			}
-
-			if est.OrganizationID == orgID {
+			value := *est.TargetRecords
+			switch est.OrganizationID {
+			case orgID:
 				orgEstimates[est.FrequencyMs] = value
 				// Cache this estimate
 				key := EstimateKey{OrganizationID: orgID, FrequencyMs: est.FrequencyMs}
-				e.put(key, value)
-			} else if est.OrganizationID == zeroUUID {
+				e.cache.Set(key, value, ttlcache.DefaultTTL)
+			case zeroUUID:
 				defaultEstimates[est.FrequencyMs] = value
 				// Cache this default estimate
 				key := EstimateKey{OrganizationID: zeroUUID, FrequencyMs: est.FrequencyMs}
-				e.put(key, value)
+				e.cache.Set(key, value, ttlcache.DefaultTTL)
 			}
 		}
 	}
@@ -182,76 +144,15 @@ func (e *MetricPackEstimator) loadEstimate(ctx context.Context, orgID uuid.UUID,
 	}
 
 	// Ultimate fallback
-	return EstimateValue{
-		TargetRecords: 40000, // 40K records
-		UpdatedAt:     time.Now(),
-	}, nil
-}
-
-// put adds or updates a key-value pair in the LRU cache
-func (e *MetricPackEstimator) put(key EstimateKey, value EstimateValue) {
-	if node, exists := e.cache[key]; exists {
-		// Update existing node
-		node.Value = value
-		e.moveToFront(node)
-		return
-	}
-
-	// Add new node
-	newNode := &LRUNode{
-		Key:   key,
-		Value: value,
-	}
-
-	// Add to front
-	e.addToFront(newNode)
-	e.cache[key] = newNode
-	e.size++
-
-	// Check capacity
-	if e.size > e.capacity {
-		// Remove least recently used (tail)
-		lru := e.tail.Prev
-		e.removeNode(lru)
-		delete(e.cache, lru.Key)
-		e.size--
-	}
-}
-
-// moveToFront moves a node to the front of the LRU list
-func (e *MetricPackEstimator) moveToFront(node *LRUNode) {
-	e.removeNode(node)
-	e.addToFront(node)
-}
-
-// addToFront adds a node right after head
-func (e *MetricPackEstimator) addToFront(node *LRUNode) {
-	node.Prev = e.head
-	node.Next = e.head.Next
-	e.head.Next.Prev = node
-	e.head.Next = node
-}
-
-// removeNode removes a node from the LRU list
-func (e *MetricPackEstimator) removeNode(node *LRUNode) {
-	node.Prev.Next = node.Next
-	node.Next.Prev = node.Prev
-}
-
-// CacheStats returns statistics about the cache
-func (e *MetricPackEstimator) CacheStats() (size, capacity int) {
-	e.mutex.RLock()
-	defer e.mutex.RUnlock()
-	return e.size, e.capacity
+	return 40000, nil
 }
 
 // ClearCache clears the entire cache
 func (e *MetricPackEstimator) ClearCache() {
-	e.mutex.Lock()
-	defer e.mutex.Unlock()
+	e.cache.DeleteAll()
+}
 
-	e.cache = make(map[EstimateKey]*LRUNode)
-	e.head.Next = e.tail
-	e.tail.Prev = e.head
-	e.size = 0
+// Stop stops the cache's background goroutine
+func (e *MetricPackEstimator) Stop() {
+	e.cache.Stop()
 }
