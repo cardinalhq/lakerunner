@@ -57,24 +57,6 @@ func ComputeTID(tags map[string]any) int64 {
 	return int64(h.Sum64())
 }
 
-func MatchTags(existing, new map[string]any) map[string][]any {
-	mismatches := make(map[string][]any)
-
-	for k, v := range existing {
-		if nv, ok := new[k]; !ok || nv != v {
-			mismatches[k] = []any{v, new[k]}
-		}
-	}
-
-	for k, v := range new {
-		if _, ok := existing[k]; !ok {
-			mismatches[k] = []any{nil, v}
-		}
-	}
-
-	return mismatches
-}
-
 func GetFloat64Value(m map[string]any, key string) (float64, bool) {
 	val, ok := m[key]
 	if !ok || val == nil {
