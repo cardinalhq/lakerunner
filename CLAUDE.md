@@ -22,14 +22,18 @@ Data is converted into optimized **Apache Parquet** with indexing, aggregation, 
 
 ## Development Workflow
 
+This is a monorepo, and we do not need to nor want to maintain backwards compatiblity with other code in this repo, nor external callers of it.
+
 1. **Code Generation**
    - Run `make generate` after modifying SQL queries.
    - Never modify generated files manually.
    - Install the Buf CLI with `make bin/buf` to support protobuf generation (binary is placed in `./bin`).
 
 2. **Testing & Validation**
+   - we use `github.com/stretchr/testify`
    - `make test` for full suite with regeneration.
    - `make test-only` to run tests without regeneration.
+   - `make test-integration` to run DB-requiring integration tests.
    - **MANDATORY: `make check` must pass before any work is considered complete.**
 
 3. **Quality & Compliance**
@@ -49,13 +53,10 @@ Data is converted into optimized **Apache Parquet** with indexing, aggregation, 
 
 ## Development Commands
 
-- **Build:** `make local` (binary in `./bin/lakerunner`)
-- **Check & Test:** `make test`, `make test-only`, `make check`
-- **Codegen:** `make generate`
+- **Build:** `make` (binary in `./bin/lakerunner`)
+- **Check & Test:** `make test`, `make check`
+- **Codegen:** `make generate` -- after any SQL changes
 - **Proto tooling:** `make bin/buf` (installs Buf in `./bin`)
-- **Lint & Format:** `make lint`, `make imports-fix`
-- **License:** `make license-check`
-- **Migrations:** `make new-migration name=migration_name`
 
 ---
 

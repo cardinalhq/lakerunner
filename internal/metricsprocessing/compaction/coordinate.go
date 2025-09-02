@@ -20,7 +20,7 @@ import (
 	"log/slog"
 	"time"
 
-	"go.opentelemetry.io/otel"
+	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
@@ -31,16 +31,25 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
+// CompactionWorkMetadata holds the basic metadata needed for compaction work
+type CompactionWorkMetadata struct {
+	OrganizationID uuid.UUID
+	Dateint        int32
+	FrequencyMs    int32
+	InstanceNum    int16
+}
+
 // coordinate handles S3 download, compaction, upload, and database update
 func coordinate(
 	ctx context.Context,
 	ll *slog.Logger,
 	mdb compactionStore,
 	tmpdir string,
-	workItem lrdb.ClaimMetricCompactionWorkRow,
+	metadata CompactionWorkMetadata,
 	profile storageprofile.StorageProfile,
 	s3client *awsclient.S3Client,
 	rows []lrdb.MetricSeg,
+	estimatedTargetRecords int64,
 ) error {
 	if len(rows) == 0 {
 		ll.Debug("No segments to compact")
@@ -54,10 +63,10 @@ func coordinate(
 
 		segmentIDs := []int64{rows[0].SegmentID}
 		err := mdb.SetMetricSegCompacted(ctx, lrdb.SetMetricSegCompactedParams{
-			OrganizationID: workItem.OrganizationID,
-			Dateint:        workItem.Dateint,
-			FrequencyMs:    int32(workItem.FrequencyMs),
-			InstanceNum:    workItem.InstanceNum,
+			OrganizationID: metadata.OrganizationID,
+			Dateint:        metadata.Dateint,
+			FrequencyMs:    metadata.FrequencyMs,
+			InstanceNum:    metadata.InstanceNum,
 			SegmentIds:     segmentIDs,
 		})
 		if err != nil {
@@ -75,13 +84,12 @@ func coordinate(
 			slog.Int64("outputRecords", rows[0].RecordCount),
 			slog.Int64("inputBytes", rows[0].FileSize),
 			slog.Int64("outputBytes", rows[0].FileSize),
-			slog.Int64("targetRecords", workItem.UsedTargetRecords),
-			slog.String("estimateSource", workItem.EstimateSource))
+			slog.Int64("targetRecords", estimatedTargetRecords))
 		return nil
 	}
 
 	// Handle multiple rows case: proceed with full compaction
-	if !shouldCompactMetrics(rows) {
+	if len(rows) < 2 {
 		ll.Debug("No need to compact metrics in this batch", slog.Int("rowCount", len(rows)))
 		return nil
 	}
@@ -93,59 +101,6 @@ func coordinate(
 		return newWorkerInterrupted("context cancelled before compaction")
 	}
 
-	meter := otel.Meter("github.com/cardinalhq/lakerunner/internal/metricsprocessing/compaction")
-	fileSortedCounter, err := meter.Int64Counter("lakerunner.processing.input.filetype")
-	if err != nil {
-		return fmt.Errorf("failed to create processing.input.filetype counter: %w", err)
-	}
-
-	processingSegmentsIn, err := meter.Int64Counter(
-		"lakerunner.processing.segments.in",
-		metric.WithDescription("Number of segments input to compaction processing pipeline"),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create processing.segments.in counter: %w", err)
-	}
-
-	processingSegmentsOut, err := meter.Int64Counter(
-		"lakerunner.processing.segments.out",
-		metric.WithDescription("Number of segments output from compaction processing pipeline"),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create processing.segments.out counter: %w", err)
-	}
-
-	processingRecordsIn, err := meter.Int64Counter(
-		"lakerunner.processing.records.in",
-		metric.WithDescription("Number of records input to compaction processing pipeline"),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create processing.records.in counter: %w", err)
-	}
-
-	processingRecordsOut, err := meter.Int64Counter(
-		"lakerunner.processing.records.out",
-		metric.WithDescription("Number of records output from compaction processing pipeline"),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create processing.records.out counter: %w", err)
-	}
-
-	processingBytesIn, err := meter.Int64Counter(
-		"lakerunner.processing.bytes.in",
-		metric.WithDescription("Number of bytes input to compaction processing pipeline"),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create processing.bytes.in counter: %w", err)
-	}
-
-	processingBytesOut, err := meter.Int64Counter(
-		"lakerunner.processing.bytes.out",
-		metric.WithDescription("Number of bytes output from compaction processing pipeline"),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create processing.bytes.out counter: %w", err)
-	}
 	commonAttributes := attribute.NewSet()
 
 	// Track segments coming into compaction processing
@@ -160,7 +115,7 @@ func coordinate(
 	}
 
 	readerStack, err := metricsprocessing.CreateReaderStack(
-		ctx, ll, tmpdir, s3client, workItem.OrganizationID, profile, rows, config)
+		ctx, ll, tmpdir, s3client, metadata.OrganizationID, profile, rows, config)
 	if err != nil {
 		return err
 	}
@@ -169,10 +124,10 @@ func coordinate(
 	// Prepare input for pure compaction
 	compactionInput := input{
 		ReaderStack:  readerStack,
-		FrequencyMs:  workItem.FrequencyMs,
+		FrequencyMs:  metadata.FrequencyMs,
 		TmpDir:       tmpdir,
 		Logger:       ll,
-		RecordsLimit: workItem.UsedTargetRecords * 2,
+		RecordsLimit: estimatedTargetRecords * 2,
 	}
 
 	// Perform pure compaction
@@ -243,14 +198,14 @@ func coordinate(
 	s3Ctx, s3Cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer s3Cancel()
 
-	segments, err := uploadCompactedFiles(s3Ctx, ll, s3client, result.Results, workItem, profile)
+	segments, err := uploadCompactedFiles(s3Ctx, ll, s3client, result.Results, metadata, profile)
 	if err != nil {
 		// If upload failed partway through, we need to clean up any uploaded files
 		if len(segments) > 0 {
 			ll.Warn("S3 upload failed partway through, scheduling cleanup",
 				slog.Int("uploadedFiles", len(segments)),
 				slog.Any("error", err))
-			scheduleS3Cleanup(ctx, mdb, segments, workItem, profile)
+			segments.ScheduleCleanupAll(ctx, mdb, metadata.OrganizationID, metadata.InstanceNum, profile.Bucket)
 		}
 		return fmt.Errorf("failed to upload compacted files to S3: %w", err)
 	}
@@ -259,13 +214,13 @@ func coordinate(
 	dbCtx, dbCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer dbCancel()
 
-	err = replaceCompactedSegments(dbCtx, ll, mdb, segments, rows, workItem, inputRecords, inputBytes)
+	err = replaceCompactedSegments(dbCtx, ll, mdb, segments, rows, metadata, inputRecords, inputBytes, estimatedTargetRecords)
 	if err != nil {
 		// Database update failed after successful uploads - schedule cleanup
 		ll.Error("Database update failed after successful S3 upload, scheduling cleanup",
 			slog.Int("uploadedFiles", len(segments)),
 			slog.Any("error", err))
-		scheduleS3Cleanup(ctx, mdb, segments, workItem, profile)
+		segments.ScheduleCleanupAll(ctx, mdb, metadata.OrganizationID, metadata.InstanceNum, profile.Bucket)
 		return fmt.Errorf("failed to replace compacted segments in database: %w", err)
 	}
 
@@ -294,7 +249,7 @@ func uploadCompactedFiles(
 	ll *slog.Logger,
 	s3client *awsclient.S3Client,
 	results []parquetwriter.Result,
-	workItem lrdb.ClaimMetricCompactionWorkRow,
+	metadata CompactionWorkMetadata,
 	profile storageprofile.StorageProfile,
 ) (metricsprocessing.ProcessedSegments, error) {
 	// Create processed segments from results
@@ -310,7 +265,7 @@ func uploadCompactedFiles(
 			return segments, ctx.Err()
 		}
 
-		segment, err := metricsprocessing.NewProcessedSegment(result, workItem.OrganizationID, profile.CollectorName, ll)
+		segment, err := metricsprocessing.NewProcessedSegment(result, metadata.OrganizationID, profile.CollectorName, ll)
 		if err != nil {
 			return segments, fmt.Errorf("failed to create processed segment: %w", err)
 		}
@@ -342,9 +297,10 @@ func replaceCompactedSegments(
 	mdb compactionStore,
 	segments metricsprocessing.ProcessedSegments,
 	oldRows []lrdb.MetricSeg,
-	workItem lrdb.ClaimMetricCompactionWorkRow,
+	metadata CompactionWorkMetadata,
 	inputRecords int64,
 	inputBytes int64,
+	estimatedTargetRecords int64,
 ) error {
 	// Prepare old records for CompactMetricSegs
 	oldRecords := make([]lrdb.CompactMetricSegsOld, len(oldRows))
@@ -370,13 +326,13 @@ func replaceCompactedSegments(
 	}
 
 	err := mdb.CompactMetricSegs(ctx, lrdb.CompactMetricSegsParams{
-		OrganizationID: workItem.OrganizationID,
-		Dateint:        workItem.Dateint,
-		InstanceNum:    workItem.InstanceNum,
+		OrganizationID: metadata.OrganizationID,
+		Dateint:        metadata.Dateint,
+		InstanceNum:    metadata.InstanceNum,
 		SlotID:         0,
 		SlotCount:      1,
 		IngestDateint:  metricsprocessing.GetIngestDateint(oldRows),
-		FrequencyMs:    int32(workItem.FrequencyMs),
+		FrequencyMs:    metadata.FrequencyMs,
 		Published:      true,
 		Rolledup:       false,
 		OldRecords:     oldRecords,
@@ -407,18 +363,46 @@ func replaceCompactedSegments(
 		slog.Int64("outputRecords", outputRecords),
 		slog.Int64("inputBytes", inputBytes),
 		slog.Int64("outputBytes", outputBytes),
-		slog.Int64("targetRecords", workItem.UsedTargetRecords),
-		slog.String("estimateSource", workItem.EstimateSource))
+		slog.Int64("targetRecords", estimatedTargetRecords))
 
 	return nil
 }
 
-func shouldCompactMetrics(rows []lrdb.MetricSeg) bool {
-	return len(rows) >= 2
-}
+// coordinateBundle handles S3 download, compaction, upload, and database update for bundle-based approach
+func coordinateBundle(
+	ctx context.Context,
+	ll *slog.Logger,
+	mdb compactionStore,
+	tmpdir string,
+	bundle lrdb.CompactionBundleResult,
+	profile storageprofile.StorageProfile,
+	s3client *awsclient.S3Client,
+	rows []lrdb.MetricSeg,
+) error {
+	if len(rows) == 0 {
+		ll.Debug("No segments to compact")
+		return nil
+	}
+	if len(bundle.Items) == 0 {
+		ll.Debug("No bundle items to process")
+		return nil
+	}
 
-// scheduleS3Cleanup schedules cleanup work for orphaned S3 objects
-// This is called when uploads succeed but database updates fail
-func scheduleS3Cleanup(ctx context.Context, mdb compactionStore, segments metricsprocessing.ProcessedSegments, workItem lrdb.ClaimMetricCompactionWorkRow, profile storageprofile.StorageProfile) {
-	segments.ScheduleCleanupAll(ctx, mdb, workItem.OrganizationID, workItem.InstanceNum, profile.Bucket)
+	// Use the first segment to get metadata (all segments in bundle should be consistent)
+	firstSeg := rows[0]
+
+	// Create metadata struct from the segment data
+	metadata := CompactionWorkMetadata{
+		OrganizationID: firstSeg.OrganizationID,
+		Dateint:        firstSeg.Dateint,
+		FrequencyMs:    firstSeg.FrequencyMs,
+		InstanceNum:    firstSeg.InstanceNum,
+	}
+
+	ll.Info("Processing compaction bundle with estimation",
+		slog.Int64("estimatedTarget", bundle.EstimatedTarget),
+		slog.Int("segmentCount", len(rows)),
+		slog.Int("bundleItems", len(bundle.Items)))
+
+	return coordinate(ctx, ll, mdb, tmpdir, metadata, profile, s3client, rows, bundle.EstimatedTarget)
 }

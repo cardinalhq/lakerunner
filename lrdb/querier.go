@@ -37,26 +37,10 @@ type Querier interface {
 	// 12) Final chosen IDs: prefer big_single if present; else packed group rows
 	// 13) Atomic optimistic claim (no window funcs here)
 	ClaimInqueueWorkBatch(ctx context.Context, arg ClaimInqueueWorkBatchParams) ([]ClaimInqueueWorkBatchRow, error)
-	// 1) Big single-row safety net
-	// 2) One seed per group
-	// 3) Order groups globally by seed recency/priority
-	// 4) Calculate group stats and eligibility criteria
-	// 5) Determine group eligibility: old OR can make a full batch (>= target records)
-	// 6) Pick the first eligible group (ordered by seed_rank)
-	// 7) For the winner group, get items in priority order and pack greedily
-	// 8) Pack items greedily within limits
-	// 9) Apply limits based on eligibility reason with overshoot protection
-	// 10) Check for >20% overshoot and drop last item if needed (but keep at least 1 item)
-	// 11) Final chosen IDs
-	// 12) Atomic optimistic claim
-	// For big_single items, get estimates separately
-	ClaimMetricCompactionWork(ctx context.Context, arg ClaimMetricCompactionWorkParams) ([]ClaimMetricCompactionWorkRow, error)
 	CleanupInqueueWork(ctx context.Context, cutoffTime *time.Time) ([]Inqueue, error)
-	CleanupMetricCompactionWork(ctx context.Context, cutoffTime *time.Time) ([]MetricCompactionQueue, error)
 	CompactLogSegments(ctx context.Context, arg CompactLogSegmentsParams) error
 	CompactTraceSegments(ctx context.Context, arg CompactTraceSegmentsParams) error
 	DeleteInqueueWork(ctx context.Context, arg DeleteInqueueWorkParams) error
-	DeleteMetricCompactionWork(ctx context.Context, arg DeleteMetricCompactionWorkParams) error
 	// Retrieves all existing metric pack estimates for EWMA calculations
 	GetAllMetricPackEstimates(ctx context.Context) ([]MetricPackEstimate, error)
 	GetExemplarLogsByFingerprint(ctx context.Context, arg GetExemplarLogsByFingerprintParams) (ExemplarLog, error)
@@ -90,11 +74,14 @@ type Querier interface {
 	MarkMetricSegsCompactedByKeys(ctx context.Context, arg MarkMetricSegsCompactedByKeysParams) error
 	MarkMetricSegsRolledupByKeys(ctx context.Context, arg MarkMetricSegsRolledupByKeysParams) error
 	McqClaimBundle(ctx context.Context, arg McqClaimBundleParams) error
+	McqCleanupExpired(ctx context.Context, cutoffTime *time.Time) ([]MetricCompactionQueue, error)
 	McqCompleteDelete(ctx context.Context, arg McqCompleteDeleteParams) error
 	McqDeferKey(ctx context.Context, arg McqDeferKeyParams) error
 	McqFetchCandidates(ctx context.Context, arg McqFetchCandidatesParams) ([]McqFetchCandidatesRow, error)
+	McqGetSegmentsByIds(ctx context.Context, segmentIds []int64) ([]MetricSeg, error)
 	McqHeartbeat(ctx context.Context, arg McqHeartbeatParams) error
 	McqPickHead(ctx context.Context) (McqPickHeadRow, error)
+	McqQueueWork(ctx context.Context, arg McqQueueWorkParams) error
 	McqReclaimTimeouts(ctx context.Context, arg McqReclaimTimeoutsParams) (int64, error)
 	// Get queue depth for metric compaction scaling
 	MetricCompactionQueueScalingDepth(ctx context.Context) (interface{}, error)
@@ -117,13 +104,10 @@ type Querier interface {
 	ObjectCleanupFail(ctx context.Context, id uuid.UUID) error
 	ObjectCleanupGet(ctx context.Context, maxrows int32) ([]ObjectCleanupGetRow, error)
 	PutInqueueWork(ctx context.Context, arg PutInqueueWorkParams) error
-	PutMetricCompactionWork(ctx context.Context, arg PutMetricCompactionWorkParams) error
 	ReleaseInqueueWork(ctx context.Context, arg ReleaseInqueueWorkParams) error
-	ReleaseMetricCompactionWork(ctx context.Context, arg ReleaseMetricCompactionWorkParams) error
 	SetMetricSegCompacted(ctx context.Context, arg SetMetricSegCompactedParams) error
 	SignalLockCleanup(ctx context.Context) (int32, error)
 	TouchInqueueWork(ctx context.Context, arg TouchInqueueWorkParams) error
-	TouchMetricCompactionWork(ctx context.Context, arg TouchMetricCompactionWorkParams) error
 	// Returns an estimate of the number of trace segments, accounting for per-file overhead.
 	TraceSegEstimator(ctx context.Context, arg TraceSegEstimatorParams) ([]TraceSegEstimatorRow, error)
 	// Updates or inserts a single metric pack estimate

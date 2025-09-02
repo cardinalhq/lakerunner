@@ -25,7 +25,7 @@ import (
 
 // mcqHeartbeatStore defines the minimal interface needed for MCQ heartbeat operations
 type mcqHeartbeatStore interface {
-	TouchMetricCompactionWork(ctx context.Context, params lrdb.TouchMetricCompactionWorkParams) error
+	McqHeartbeat(ctx context.Context, arg lrdb.McqHeartbeatParams) error
 }
 
 // newMCQHeartbeater creates a new heartbeater for the given claimed MCQ items
@@ -38,9 +38,9 @@ func newMCQHeartbeater(db mcqHeartbeatStore, workerID int64, items []int64) *hea
 	}
 
 	heartbeatFunc := func(ctx context.Context) error {
-		return db.TouchMetricCompactionWork(ctx, lrdb.TouchMetricCompactionWorkParams{
-			Ids:       items,
-			ClaimedBy: workerID,
+		return db.McqHeartbeat(ctx, lrdb.McqHeartbeatParams{
+			WorkerID: workerID,
+			Ids:      items,
 		})
 	}
 
