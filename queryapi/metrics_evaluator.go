@@ -72,43 +72,48 @@ func (q *QuerierService) EvaluateMetricsQuery(
 		var regWG sync.WaitGroup              // tracks only registration
 		nextIdx := 0                          // coordinator order
 
-		// ---------- Stage 1/2: enumerate & launch per-group goroutines ----------
-		nextIdx = q.enumerateAndLaunchGroups(
-			ctx, orgID, startTs, endTs, stepDuration, queryPlan,
-			sem, groupRegs, &regWG, nextIdx,
-		)
-
-		// Close registry once all groups have registered.
-		go func() { regWG.Wait(); close(groupRegs) }()
-
-		// ---------- Stage 3: ordered coordinator (concat by idx) ----------
+		// ---------- Start coordinator & EvalFlow *before* enumeration ----------
 		coordinated := runOrderedCoordinator(ctx, groupRegs)
 
-		// ---------- Stage 4: single EvalFlow + fan-out ----------
 		flow := NewEvalFlow(queryPlan.Root, queryPlan.Leaves, stepDuration, EvalFlowOptions{
 			NumBuffers: 2,
 			OutBuffer:  1024,
 		})
 		results := flow.Run(ctx, coordinated)
 
-		for {
-			select {
-			case <-ctx.Done():
-				close(out)
-				return
-			case res, ok := <-results:
-				if !ok {
-					close(out)
-					return
-				}
+		// Stream EvalFlow results to caller concurrently
+		resultDone := make(chan struct{})
+		go func() {
+			defer close(resultDone)
+			for {
 				select {
 				case <-ctx.Done():
-					close(out)
 					return
-				case out <- res:
+				case res, ok := <-results:
+					if !ok {
+						return
+					}
+					select {
+					case <-ctx.Done():
+						return
+					case out <- res:
+					}
 				}
 			}
-		}
+		}()
+
+		// ---------- Stage 1/2: enumerate & launch per-group goroutines ----------
+		nextIdx = q.enumerateAndLaunchGroups(
+			ctx, orgID, startTs, endTs, stepDuration, queryPlan,
+			sem, groupRegs, &regWG, nextIdx,
+		)
+
+		// Close the registry once all groups have REGISTERED
+		go func() { regWG.Wait(); close(groupRegs) }()
+
+		// Wait for EvalFlow drain to finish, then close 'out'
+		<-resultDone
+		close(out)
 	}()
 
 	return out, nil
@@ -165,7 +170,7 @@ launchAll:
 			}
 
 			groups := ComputeReplayBatchesWithWorkers(
-				segments, stepDuration, effStart, effEnd, cap(sem), true,
+				segments, stepDuration, effStart, effEnd, cap(sem), false,
 			)
 
 			for _, group := range groups {
@@ -287,7 +292,7 @@ func (q *QuerierService) launchOneGroup(
 	}
 
 	// Local merge for this group, then register with coordinator.
-	mergedGroup := promql.MergeSorted(ctx, 1024 /*buf*/, false /*reverse*/, 0 /*limit*/, groupLeafChans...)
+	mergedGroup := promql.MergeSorted(ctx, 1024, false, 0, groupLeafChans...)
 	slog.Info("Registering group stream", "idx", idx, "groupStart", g.StartTs, "groupEnd", g.EndTs)
 	select {
 	case groupRegs <- groupReg{idx: idx, startTs: g.StartTs, endTs: g.EndTs, ch: mergedGroup}:
