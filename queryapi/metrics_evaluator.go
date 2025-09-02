@@ -46,19 +46,24 @@ func (q *QuerierService) EvaluateMetricsQuery(
 
 	go func() {
 		// ---- Stage 0: setup bounds + registration channel -------------------
-		maxParallel := len(workers)
+		maxParallel := 3
 		if maxParallel <= 0 {
 			maxParallel = 1
 		}
 		sem := make(chan struct{}, maxParallel) // bound concurrent groups
 
-		// We send a per-group merged stream on this channel.
-		groupMergedChans := make(chan (<-chan promql.SketchInput), 256)
+		// Register per-group merged channels here with a stable index.
+		type groupReg struct {
+			idx     int
+			startTs int64
+			endTs   int64
+			ch      <-chan promql.SketchInput
+		}
+		groupRegs := make(chan groupReg, 256)
 
-		// regWG tracks only "registration" (i.e., sending a group's merged channel).
-		// This lets us close(groupMergedChans) as soon as all groups have *registered*,
-		// without waiting for them to finish producing.
+		// regWG tracks only "registration" (sending a group's merged channel).
 		var regWG sync.WaitGroup
+		nextIdx := 0 // increasing group index (emit in this order)
 
 		// ---- Stage 1/2: enumerate leaves/hours -> groups, launch per-group goroutines
 	launchAll:
@@ -68,11 +73,15 @@ func (q *QuerierService) EvaluateMetricsQuery(
 				slog.Error("invalid offset on leaf; ignoring offset", "offset", leaf.Offset, "err", err)
 				offMs = 0
 			}
+
+			// IMPORTANT: Offset effective base start by the leaf's range to avoid left-side holes.
+			// This mirrors the prior "mutate startTs" behavior, but scoped per leaf to avoid compounding.
+			baseStart := startTs
 			if leaf.Range != "" {
-				startTs = startTs - promql.RangeMsFromRange(leaf.Range)
+				baseStart -= promql.RangeMsFromRange(leaf.Range)
 			}
 
-			effStart := startTs - offMs
+			effStart := baseStart - offMs
 			effEnd := endTs - offMs
 			dateIntHours := dateIntHoursRange(effStart, effEnd, time.UTC)
 
@@ -98,30 +107,31 @@ func (q *QuerierService) EvaluateMetricsQuery(
 				groups := ComputeReplayBatchesWithWorkers(
 					segments, stepDuration, effStart, effEnd, len(workers), true,
 				)
+
 				for _, group := range groups {
 					g := group
 					l := leaf
 					localOff := offMs
 
-					// We will register exactly one per-group merged channel.
-					regWG.Add(1)
+					// Assign a stable, increasing index for coordinator order.
+					idx := nextIdx
+					nextIdx++
 
-					// Bound group-level parallelism.
-					sem <- struct{}{}
-					go func() {
+					regWG.Add(1)
+					sem <- struct{}{} // bound concurrent groups
+
+					go func(idx int) {
 						defer func() { <-sem }()
+						defer regWG.Done()
 
 						select {
 						case <-ctx.Done():
-							// Registration must still complete to avoid deadlock.
-							// Send a closed empty stream to keep counts correct.
 							ch := make(chan promql.SketchInput)
 							close(ch)
 							select {
-							case groupMergedChans <- ch:
+							case groupRegs <- groupReg{idx: idx, startTs: g.StartTs, endTs: g.EndTs, ch: ch}:
 							case <-ctx.Done():
 							}
-							regWG.Done()
 							return
 						default:
 						}
@@ -136,15 +146,12 @@ func (q *QuerierService) EvaluateMetricsQuery(
 						mappings, err := q.workerDiscovery.GetWorkersForSegments(orgID, segmentIDs)
 						if err != nil {
 							slog.Error("failed to get worker assignments", "err", err)
-
-							// Register an empty/closed stream to keep the collector moving.
 							ch := make(chan promql.SketchInput)
 							close(ch)
 							select {
-							case groupMergedChans <- ch:
+							case groupRegs <- groupReg{idx: idx, startTs: g.StartTs, endTs: g.EndTs, ch: ch}:
 							case <-ctx.Done():
 							}
-							regWG.Done()
 							return
 						}
 
@@ -152,20 +159,17 @@ func (q *QuerierService) EvaluateMetricsQuery(
 						for _, m := range mappings {
 							workerGroups[m.Worker] = append(workerGroups[m.Worker], segmentMap[m.SegmentID])
 						}
-
 						if len(workerGroups) == 0 {
-							// Nothing to stream; register closed channel.
 							ch := make(chan promql.SketchInput)
 							close(ch)
 							select {
-							case groupMergedChans <- ch:
+							case groupRegs <- groupReg{idx: idx, startTs: g.StartTs, endTs: g.EndTs, ch: ch}:
 							case <-ctx.Done():
 							}
-							regWG.Done()
 							return
 						}
 
-						slog.Info("Pushing down segments", "groupSize", len(g.Segments))
+						slog.Info("Pushing down segments", "groupSize", len(g.Segments), "idx", idx)
 
 						// Per-worker pushdowns → channels
 						groupLeafChans := make([]<-chan promql.SketchInput, 0, len(workerGroups))
@@ -194,71 +198,103 @@ func (q *QuerierService) EvaluateMetricsQuery(
 							ch := make(chan promql.SketchInput)
 							close(ch)
 							select {
-							case groupMergedChans <- ch:
+							case groupRegs <- groupReg{idx: idx, startTs: g.StartTs, endTs: g.EndTs, ch: ch}:
 							case <-ctx.Done():
 							}
-							regWG.Done()
 							return
 						}
 
 						// ---- Stage 2: Merge-sort within this group -------------------
-						mergedGroup := promql.MergeSorted(ctx, 1024 /*buf*/, false /*closeOnFirstErr*/, 0 /*latenessMs*/, groupLeafChans...)
+						mergedGroup := promql.MergeSorted(ctx, 1024 /*buf*/, false /*reverse*/, 0 /*limit*/, groupLeafChans...)
 
-						// Register this group's merged stream for the final merge.
+						// Register this group's merged stream for the coordinator ASAP.
+						slog.Info("Registering group stream", "idx", idx, "groupStart", g.StartTs, "groupEnd", g.EndTs)
 						select {
-						case groupMergedChans <- mergedGroup:
+						case groupRegs <- groupReg{idx: idx, startTs: g.StartTs, endTs: g.EndTs, ch: mergedGroup}:
 						case <-ctx.Done():
-							// If cancelled before registration, register a closed stream to avoid collector hang.
 							ch := make(chan promql.SketchInput)
 							close(ch)
 							select {
-							case groupMergedChans <- ch:
+							case groupRegs <- groupReg{idx: idx, startTs: g.StartTs, endTs: g.EndTs, ch: ch}:
 							case <-ctx.Done():
 							}
 						}
-						regWG.Done()
-					}()
+					}(idx)
 				}
 			}
 		}
 
-		// Once all groups have REGISTERED their merged channel, close the registry.
+		// Close registry once all groups *registered*.
 		go func() {
 			regWG.Wait()
-			close(groupMergedChans)
+			close(groupRegs)
 		}()
 
-		// ---- Stage 3: Final merge + single EvalFlow + fan-out -----------------
-		// Collect all registered per-group merged channels, then do one final MergeSorted.
-		var allGroupMerged []<-chan promql.SketchInput
-	collect:
-		for {
-			select {
-			case <-ctx.Done():
-				// Abort: nothing more to do; just close out and return.
-				close(out)
-				return
-			case ch, ok := <-groupMergedChans:
-				if !ok {
-					break collect
+		// ---- Stage 3: Ordered coordinator (concat groups in idx order) -------
+		// Streams as soon as idx=0 is registered/producing; no final MergeSorted.
+		coordinated := make(chan promql.SketchInput, 4096)
+		go func() {
+			defer close(coordinated)
+
+			pending := map[int]groupReg{}
+			want := 0
+			var curCh <-chan promql.SketchInput
+
+			for {
+				if curCh == nil {
+					if gr, ok := pending[want]; ok {
+						delete(pending, want)
+						slog.Info("Group starting emit", "idx", want, "groupStart", gr.startTs, "groupEnd", gr.endTs)
+						want++
+						curCh = gr.ch
+					}
 				}
-				allGroupMerged = append(allGroupMerged, ch)
+
+				if curCh == nil {
+					gr, ok := <-groupRegs
+					if !ok {
+						return
+					}
+					pending[gr.idx] = gr
+					continue
+				}
+
+				select {
+				case v, ok := <-curCh:
+					if !ok {
+						curCh = nil
+						continue
+					}
+					select {
+					case coordinated <- v:
+					case <-ctx.Done():
+						return
+					}
+				case gr, ok := <-groupRegs:
+					if !ok {
+						// finish draining current and exit
+						for v := range curCh {
+							select {
+							case coordinated <- v:
+							case <-ctx.Done():
+								return
+							}
+						}
+						return
+					}
+					pending[gr.idx] = gr
+				case <-ctx.Done():
+					return
+				}
 			}
-		}
+		}()
 
-		// If there are no group streams at all, we're done.
-		if len(allGroupMerged) == 0 {
-			close(out)
-			return
-		}
-
-		finalMerged := promql.MergeSorted(ctx, 4096, false, 0, allGroupMerged...)
-
+		// ---- Stage 4: EvalFlow + fan-out -------------------------------------
 		flow := NewEvalFlow(queryPlan.Root, queryPlan.Leaves, stepDuration, EvalFlowOptions{
 			NumBuffers: 2,
 			OutBuffer:  1024,
 		})
-		results := flow.Run(ctx, finalMerged)
+		results := flow.Run(ctx, coordinated)
 
 		for {
 			select {
