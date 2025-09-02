@@ -2,8 +2,9 @@
 
 -- Recreate previous indexes for queue tables
 
--- Drop new compaction queue index
+-- Drop new compaction queue indexes
 DROP INDEX IF EXISTS mcq_ready_group_idx;
+DROP INDEX IF EXISTS idx_mcq_expired_heartbeat;
 
 -- Restore original compaction queue indexes
 CREATE INDEX IF NOT EXISTS idx_mcq_ready_global

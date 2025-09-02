@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Record Count Estimation**: Split estimator into signal-specific `MetricEstimator` and `LogEstimator` types with frequency-aware metrics estimation
 - **Database Index**: Updated metric_seg index to `(frequency_ms, instance_num)` for improved query performance
-- **Queue Indexes**: Consolidated work queue indexes and added eligibility support for faster job retrieval
+- **Queue Indexes**: Consolidated work queue indexes, added eligibility support, and ensured heartbeat cleanup remains efficient
 - **Build Process**: Improved promotion pipeline for production releases
 - **Logging**: Removed confusing CONFIGDB fallback message when database is not configured
 - **Work Queue Configuration**: Converted all settings from database table to Go parameters (retry count, timeouts, TTLs)

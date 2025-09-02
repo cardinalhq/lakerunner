@@ -24,6 +24,11 @@ ON public.metric_compaction_queue (
 ) INCLUDE (segment_id, record_count)
 WHERE claimed_by = -1;
 
+-- Index to efficiently reclaim timed out compaction work
+CREATE INDEX IF NOT EXISTS idx_mcq_expired_heartbeat
+ON public.metric_compaction_queue (heartbeated_at, claimed_by)
+WHERE claimed_by <> -1 AND heartbeated_at IS NOT NULL;
+
 -- Drop obsolete rollup queue indexes
 DROP INDEX IF EXISTS idx_mrq_ready_global;
 DROP INDEX IF EXISTS idx_mrq_ready_group;
