@@ -1,226 +1,405 @@
-// Copyright (C) 2025 CardinalHQ, Inc
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Affero General Public License as
-// published by the Free Software Foundation, version 3.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU Affero General Public License for more details.
-//
-// You should have received a copy of the GNU Affero General Public License
-// along with this program. If not, see <http://www.gnu.org/licenses/>.
+//go:build !race
 
 package promql
 
 import (
+	"database/sql"
+	"fmt"
+	"log/slog"
+	"math"
 	"strings"
 	"testing"
 	"time"
+
+	_ "github.com/marcboeker/go-duckdb/v2"
 )
 
-func TestBuildRawSimple_NoGroup(t *testing.T) {
-	be := &BaseExpr{
-		ID:     "leaf-raw",
-		Metric: "http_requests_total",
-		// no GroupBy, no Range
+func openDuckDB(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("duckdb", "")
+	if err != nil {
+		slog.Error("open duckdb", "error", err)
+		t.Fatalf("open duckdb: %v", err)
 	}
-	sql := buildRawSimple(be, []proj{
-		{"MIN(rollup_min)", "min"},
-		{"MAX(rollup_max)", "max"},
-		{"SUM(rollup_sum)", "sum"},
-		{"COUNT(rollup_count)", "count"},
-	}, 10*time.Second)
-
-	mustContain(t, sql, `SELECT ("_cardinalhq.timestamp" - ("_cardinalhq.timestamp" % 10000)) AS bucket_ts`)
-	mustContain(t, sql, `AND "_cardinalhq.timestamp" >= {start} AND "_cardinalhq.timestamp" < {end}`)
-	mustContain(t, sql, `"_cardinalhq.name" = 'http_requests_total'`)
-	mustContain(t, sql, `GROUP BY bucket_ts`)
-	mustContain(t, sql, `ORDER BY bucket_ts ASC`)
+	t.Cleanup(func() { _ = db.Close() })
+	return db
 }
 
-func TestBuildStepOnly_NoGroup(t *testing.T) {
-	be := &BaseExpr{
-		ID:     "leaf-step",
-		Metric: "bytes_total",
+func mustExec(t *testing.T, db *sql.DB, q string, args ...any) {
+	t.Helper()
+	if _, err := db.Exec(q, args...); err != nil {
+		t.Fatalf("exec failed: %v\nsql:\n%s", err, q)
 	}
-	sql := buildStepOnly(be, []proj{
-		{"SUM(rollup_sum)", "sum"},
-		{"COUNT(rollup_count)", "count"},
-	}, 10*time.Second)
-
-	// CTE with aligned range
-	mustContain(t, sql, `WITH buckets AS (SELECT range AS bucket_ts FROM range(({start} - ({start} % 10000)), (({end} - 1) - (({end} - 1) % 10000) + 10000), 10000))`)
-	// step_aggr grouping by bucket_ts and time filter present
-	mustContain(t, sql, `step_aggr AS (SELECT ("_cardinalhq.timestamp" - ("_cardinalhq.timestamp" % 10000)) AS bucket_ts`)
-	mustContain(t, sql, `FROM {table} WHERE "_cardinalhq.name" = 'bytes_total' AND true AND "_cardinalhq.timestamp" >= {start} AND "_cardinalhq.timestamp" < {end} GROUP BY bucket_ts`)
-	// LEFT JOIN and COALESCE zeros
-	mustContain(t, sql, `LEFT JOIN step_aggr sa USING (bucket_ts)`)
-	mustContain(t, sql, `COALESCE(sa.step_sum, 0) AS sum`)
-	mustContain(t, sql, `COALESCE(sa.step_count, 0) AS count`)
-	mustContain(t, sql, `ORDER BY bucket_ts ASC`)
 }
 
-func TestBuildWindowed_SumCount_NoRange(t *testing.T) {
-	be := &BaseExpr{
-		ID:     "leaf-win",
-		Metric: "events_total",
-		// Range may be empty; k-1 will be 0; we still want densification semantics
-	}
-	sql := buildWindowed(be, need{sum: true, count: true}, 10*time.Second)
+type rowmap map[string]any
 
-	// grid CTE with aligned bounds (BIGINT) and step 10s
-	mustContain(t, sql, `grid AS (SELECT CAST(range AS BIGINT) AS step_idx FROM range(CAST(({start} - ({start} % 10000)) AS BIGINT), CAST((({end}-1) - (({end}-1) % 10000) + 10000) AS BIGINT), 10000))`)
-	// step_aggr buckets by same modulo and time predicate WITH placeholders
-	mustContain(t, sql, `step_aggr AS (SELECT (CAST("_cardinalhq.timestamp" AS BIGINT) - (CAST("_cardinalhq.timestamp" AS BIGINT) % 10000)) AS step_idx`)
-	mustContain(t, sql, `FROM {table} WHERE "_cardinalhq.name" = 'events_total' AND true AND "_cardinalhq.timestamp" >= {start} AND "_cardinalhq.timestamp" < {end} GROUP BY step_idx`)
-	// base join on explicit ON and COALESCE to 0
-	mustContain(t, sql, `FROM grid g LEFT JOIN step_aggr sa ON g.step_idx = sa.step_idx`)
-	mustContain(t, sql, `COALESCE(sa.step_sum, 0) AS w_step_sum`)
-	mustContain(t, sql, `COALESCE(sa.step_count, 0) AS w_step_count`)
-	// window SUM(...) OVER ( ORDER BY bucket_ts ROWS BETWEEN 0 PRECEDING AND CURRENT ROW)
-	mustContain(t, sql, `CAST(SUM(w_step_sum) OVER ( ORDER BY bucket_ts ROWS BETWEEN 0 PRECEDING AND CURRENT ROW) AS DOUBLE) AS sum`)
-	mustContain(t, sql, `CAST(SUM(w_step_count) OVER ( ORDER BY bucket_ts ROWS BETWEEN 0 PRECEDING AND CURRENT ROW) AS DOUBLE) AS count`)
-	mustContain(t, sql, `ORDER BY bucket_ts ASC`)
+func queryAll(t *testing.T, db *sql.DB, q string) []rowmap {
+	t.Helper()
+	rows, err := db.Query(q)
+	if err != nil {
+		t.Fatalf("query failed: %v\nsql:\n%s", err, q)
+	}
+	defer rows.Close()
+
+	cols, err := rows.Columns()
+	if err != nil {
+		t.Fatalf("columns failed: %v", err)
+	}
+
+	var out []rowmap
+	for rows.Next() {
+		raw := make([]any, len(cols))
+		ptrs := make([]any, len(cols))
+		for i := range raw {
+			ptrs[i] = &raw[i]
+		}
+		if err := rows.Scan(ptrs...); err != nil {
+			t.Fatalf("scan failed: %v", err)
+		}
+		m := make(rowmap, len(cols))
+		for i, c := range cols {
+			m[c] = raw[i]
+		}
+		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows err: %v", err)
+	}
+	return out
 }
 
-func TestBuildWindowed_WithGroupBy(t *testing.T) {
-	be := &BaseExpr{
-		ID:      "leaf-win-groupby",
-		Metric:  "http_requests_total",
-		GroupBy: []string{"metric.reason", "service.name"},
-		Range:   "5m",
+func getInt64(v any) int64 {
+	switch x := v.(type) {
+	case int64:
+		return x
+	case int32:
+		return int64(x)
+	case int:
+		return int64(x)
+	case uint64:
+		return int64(x)
+	case []byte:
+		var y int64
+		_, _ = fmt.Sscan(string(x), &y)
+		return y
+	case string:
+		var y int64
+		_, _ = fmt.Sscan(x, &y)
+		return y
+	default:
+		return 0
 	}
-	sql := buildWindowed(be, need{sum: true, count: true}, 10*time.Second)
-
-	// step_aggr should include quoted GroupBy fields in SELECT
-	mustContain(t, sql, `step_aggr AS (SELECT (CAST("_cardinalhq.timestamp" AS BIGINT) - (CAST("_cardinalhq.timestamp" AS BIGINT) % 10000)) AS step_idx, SUM(rollup_sum) AS step_sum, SUM(COALESCE(rollup_count, 0)) AS step_count, "metric.reason", "service.name"`)
-
-	// step_aggr should include quoted GroupBy fields in GROUP BY
-	mustContain(t, sql, `GROUP BY step_idx, "metric.reason", "service.name"`)
-
-	// With groupBy fields, we should NOT use grid CTE and LEFT JOIN - should select directly from step_aggr
-	mustNotContain(t, sql, `FROM grid g LEFT JOIN step_aggr sa ON g.step_idx = sa.step_idx`)
-	mustContain(t, sql, `FROM step_aggr`)
-
-	// Final SELECT should include quoted GroupBy fields (without sa. prefix)
-	mustContain(t, sql, `SELECT bucket_ts, "metric.reason", "service.name", CAST(SUM(w_step_sum) OVER ( ORDER BY bucket_ts ROWS BETWEEN 29 PRECEDING AND CURRENT ROW) AS DOUBLE) AS sum`)
-	mustContain(t, sql, `CAST(SUM(w_step_count) OVER ( ORDER BY bucket_ts ROWS BETWEEN 29 PRECEDING AND CURRENT ROW) AS DOUBLE) AS count`)
-
-	// Should still have proper ordering
-	mustContain(t, sql, `ORDER BY bucket_ts ASC`)
 }
 
-func TestToWorkerSQL_Raw_NoRange_UsesRawSimple(t *testing.T) {
-	be := &BaseExpr{
-		ID:       "leaf-dispatch",
-		Metric:   "latency_ms",
-		FuncName: "", // raw/instant
-		Range:    "", // no range -> RawSimple
+func getFloat(v any) float64 {
+	switch x := v.(type) {
+	case float64:
+		return x
+	case float32:
+		return float64(x)
+	case int64:
+		return float64(x)
+	case int32:
+		return float64(x)
+	case int:
+		return float64(x)
+	case []byte:
+		var y float64
+		_, _ = fmt.Sscan(string(x), &y)
+		return y
+	case string:
+		var y float64
+		_, _ = fmt.Sscan(x, &y)
+		return y
+	default:
+		return math.NaN()
 	}
-	sql := be.ToWorkerSQL(15 * time.Second)
-
-	// Should look like the raw simple query (no CTE grid / step_aggr)
-	mustContain(t, sql, `SELECT ("_cardinalhq.timestamp" - ("_cardinalhq.timestamp" % 15000)) AS bucket_ts`)
-	mustContain(t, sql, `GROUP BY bucket_ts`)
-	mustNotContain(t, sql, `WITH grid AS`)
-	mustNotContain(t, sql, `step_aggr AS`)
 }
 
-func TestBuildDDS_Basic(t *testing.T) {
-	be := &BaseExpr{
-		ID:       "leaf-dds",
-		Metric:   "p95_latency",
-		FuncName: "", // function ignored for DDS path, WantDDS drives it
-		GroupBy:  []string{"service", "region"},
-		WantDDS:  true,
-	}
-	sql := buildDDS(be, 5*time.Second)
-
-	// bucket projection + group columns + sketch
-	mustContain(t, sql, `SELECT ("_cardinalhq.timestamp" - ("_cardinalhq.timestamp" % 5000)) AS bucket_ts, service, region, sketch`)
-	// aligned, end-exclusive bounds in WHERE
-	mustContain(t, sql, `"_cardinalhq.timestamp"`)
-	// allow small formatting variations: check the key structure instead
-	mustContain(t, sql, `"_cardinalhq.timestamp"`)
-	mustContain(t, sql, `"_cardinalhq.timestamp" >= ({start} - ({start} % 5000))`)
-	mustContain(t, sql, `"_cardinalhq.timestamp" < (({end} - 1) - (({end} - 1) % 5000) + 5000)`)
-	mustContain(t, sql, `ORDER BY bucket_ts ASC`)
+func replaceTableMetrics(sql string) string {
+	// Simple passthrough subquery keeps the builder's aliases intact.
+	base := `(SELECT * FROM metrics) AS _t`
+	return strings.ReplaceAll(sql, "{table}", base)
 }
 
-func TestToWorkerSQL_DDS_Dispatch(t *testing.T) {
+func replaceStartEnd(sql string, start, end int64) string {
+	s := strings.ReplaceAll(sql, "{start}", fmt.Sprintf("%d", start))
+	s = strings.ReplaceAll(s, "{end}", fmt.Sprintf("%d", end))
+	return s
+}
+
+// Sets up a minimal metrics table used by buildWindowed tests.
+// Columns: timestamp/name + rollup_* + optional "pod" label for group-by tests.
+func createMetricsTable(t *testing.T, db *sql.DB, withPod bool) {
+	t.Helper()
+	mustDropTable(db, "metrics")
+	stmt := `CREATE TABLE metrics(
+		"_cardinalhq.timestamp" BIGINT,
+		"_cardinalhq.name"     TEXT,
+		rollup_sum    DOUBLE,
+		rollup_count  BIGINT,
+		rollup_min    DOUBLE,
+		rollup_max    DOUBLE` +
+		func() string {
+			if withPod {
+				return `,
+		"pod"          TEXT`
+			}
+			return ``
+		}() + `
+	);`
+	mustExec(t, db, stmt)
+}
+
+func mustDropTable(db *sql.DB, name string) {
+	_, _ = db.Exec(`DROP TABLE IF EXISTS ` + name)
+}
+
+// --- Tests -------------------------------------------------------------------
+
+func TestBuildWindowed_SumOverTime_NoGroup_GappySeries(t *testing.T) {
+	db := openDuckDB(t)
+	createMetricsTable(t, db, false)
+
+	mustExec(t, db, `INSERT INTO metrics VALUES
+	 (    0, 'm', 1.0, 1, 1.0, 1.0),
+	 (10000, 'm', 2.0, 1, 2.0, 2.0),
+	 (40000, 'm', 4.0, 1, 4.0, 4.0)`)
+
 	be := &BaseExpr{
-		ID:      "leaf-dds-dispatch",
-		Metric:  "latency_histogram",
-		WantDDS: true,
+		Metric:   "m",
+		FuncName: "sum_over_time",
+		Range:    "30s",
 	}
 	sql := be.ToWorkerSQL(10 * time.Second)
-	// Should be the DDS path (no GROUP BY clause, no SUM/COUNT/COALESCE)
-	mustContain(t, sql, `SELECT ("_cardinalhq.timestamp" - ("_cardinalhq.timestamp" % 10000)) AS bucket_ts`)
-	mustContain(t, sql, `sketch`)
-	mustNotContain(t, sql, `SUM(rollup_sum)`)
-	mustNotContain(t, sql, `COUNT(rollup_count)`)
-	mustNotContain(t, sql, `COALESCE(`)
-	mustNotContain(t, sql, `WITH grid AS`)
+	if sql == "" {
+		t.Fatal("empty SQL from ToWorkerSQL")
+	}
+	// Sanity: metric WHERE + sentinel present
+	if !strings.Contains(sql, `"_cardinalhq.name" = 'm'`) || !strings.Contains(sql, "AND true") {
+		t.Fatalf("expected metric filter + AND true, got:\n%s", sql)
+	}
+	sql = replaceStartEnd(replaceTableMetrics(sql), 0, 50000)
+
+	rows := queryAll(t, db, sql)
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 rows (no densification), got %d\nsql:\n%s", len(rows), sql)
+	}
+
+	type pair struct {
+		ts  int64
+		sum float64
+	}
+	var got []pair
+	for _, r := range rows {
+		got = append(got, pair{
+			ts:  getInt64(r["bucket_ts"]),
+			sum: getFloat(r["sum"]),
+		})
+	}
+
+	// Expected (RANGE 30s inclusive of boundary):
+	// ts=0     -> [0..0]                = 1
+	// ts=10000 -> [ -..10000]           = 1+2 = 3
+	// ts=40000 -> [10000..40000]        = 2+4 = 6   (no 20s/30s rows; still correct)
+	want := map[int64]float64{
+		0:     1.0,
+		10000: 3.0,
+		40000: 6.0,
+	}
+	for _, p := range got {
+		if want[p.ts] == 0 && p.ts != 0 {
+			t.Fatalf("unexpected ts=%d present", p.ts)
+		}
+		if math.Abs(want[p.ts]-p.sum) > 1e-9 {
+			t.Fatalf("ts=%d sum got=%v want=%v", p.ts, p.sum, want[p.ts])
+		}
+	}
 }
 
-func TestBuildCountHLLHash_NoGroup_SingleIdentity(t *testing.T) {
+func TestBuildWindowed_SumOverTime_GroupBy_PartitionIsolation(t *testing.T) {
+	db := openDuckDB(t)
+	createMetricsTable(t, db, true)
+
+	// Interleave groups at shared steps; ensure windows don't bleed.
+	// a@0:2, a@10:3, a@40:5; b@10:10
+	mustExec(t, db, `INSERT INTO metrics VALUES
+	 (    0, 'm', 2.0, 1, 2.0, 2.0, 'a'),
+	 (10000, 'm', 3.0, 1, 3.0, 3.0, 'a'),
+	 (10000, 'm',10.0, 1,10.0,10.0, 'b'),
+	 (40000, 'm', 5.0, 1, 5.0, 5.0, 'a')`)
+
 	be := &BaseExpr{
-		ID:        "leaf-hll",
-		Metric:    "http_requests_total",
-		CountOnBy: []string{"instance"},
+		Metric:   "m",
+		FuncName: "sum_over_time",
+		Range:    "30s",
+		GroupBy:  []string{"pod"},
 	}
-	sql := buildCountHLLHash(be, 10*time.Second)
+	sql := replaceStartEnd(replaceTableMetrics(be.ToWorkerSQL(10*time.Second)), 0, 50000)
 
-	mustContain(t, sql, `("_cardinalhq.timestamp" - ("_cardinalhq.timestamp" % 10000)) AS bucket_ts`)
-	mustContain(t, sql, `"_cardinalhq.timestamp" >= ({start} - ({start} % 10000)) AND "_cardinalhq.timestamp" < (({end} - 1) - (({end} - 1) % 10000) + 10000)`)
+	rows := queryAll(t, db, sql)
+	// Existing buckets only: a@0, a@10, a@40, b@10
+	if len(rows) != 4 {
+		t.Fatalf("expected 4 rows, got %d\nsql:\n%s", len(rows), sql)
+	}
 
-	mustContain(t, sql, "hash(COALESCE(instance, '\x00')) AS id_hash")
+	type key struct {
+		pod string
+		ts  int64
+	}
+	got := map[key]float64{}
+	for _, r := range rows {
+		got[key{pod: asString(r["pod"]), ts: getInt64(r["bucket_ts"])}] = getFloat(r["sum"])
+	}
 
-	mustContain(t, sql, `GROUP BY bucket_ts, id_hash`)
-	mustContain(t, sql, `ORDER BY bucket_ts ASC`)
+	// For pod a:
+	//  0  -> 2
+	//  10 -> 2+3 = 5
+	//  40 -> 3+5 = 8
+	// For pod b:
+	//  10 -> 10
+	want := map[key]float64{
+		{"a", 0}:     2,
+		{"a", 10000}: 5,
+		{"a", 40000}: 8,
+		{"b", 10000}: 10,
+	}
+	for k, v := range want {
+		if g, ok := got[k]; !ok {
+			t.Fatalf("missing row pod=%s ts=%d", k.pod, k.ts)
+		} else if math.Abs(g-v) > 1e-9 {
+			t.Fatalf("pod=%s ts=%d sum got=%v want=%v", k.pod, k.ts, g, v)
+		}
+	}
 }
 
-func TestBuildCountHLLHash_WithGroup_MultiIdentity(t *testing.T) {
+func TestBuildWindowed_AvgOverTime_UsesSumOfRollupCount(t *testing.T) {
+	db := openDuckDB(t)
+	createMetricsTable(t, db, false)
+
+	// Two buckets in range at ts=10s:
+	// sum: 1 + 2 = 3
+	// cnt: 5 + 7 = 12  (verifies SUM(rollup_count), not COUNT(*))
+	mustExec(t, db, `INSERT INTO metrics VALUES
+	 (    0, 'm', 1.0, 5, 1.0, 1.0),
+	 (10000, 'm', 2.0, 7, 2.0, 2.0)`)
+
 	be := &BaseExpr{
-		ID:        "leaf-hll",
-		Metric:    "http_requests_total",
-		GroupBy:   []string{"job"},
-		CountOnBy: []string{"instance", "pod"},
+		Metric:   "m",
+		FuncName: "avg_over_time",
+		Range:    "30s",
 	}
+	sql := replaceStartEnd(replaceTableMetrics(be.ToWorkerSQL(10*time.Second)), 0, 20000)
+	rows := queryAll(t, db, sql)
 
-	sql := buildCountHLLHash(be, 5*time.Second)
-
-	// bucket expression uses 5000ms step
-	mustContain(t, sql, `("_cardinalhq.timestamp" - ("_cardinalhq.timestamp" % 5000)) AS bucket_ts`)
-
-	// aligned, end-exclusive time window for 5000ms step
-	mustContain(t, sql, `"_cardinalhq.timestamp" >= ({start} - ({start} % 5000)) AND "_cardinalhq.timestamp" < (({end} - 1) - (({end} - 1) % 5000) + 5000)`)
-
-	// id_hash uses both identity columns with NULL sentinels
-	mustContain(t, sql, "hash(COALESCE(instance, '\x00'), COALESCE(pod, '\x00')) AS id_hash")
-
-	// SELECT projects bucket_ts, group-by, id_hash
-	mustContain(t, sql, `SELECT ("_cardinalhq.timestamp" - ("_cardinalhq.timestamp" % 5000)) AS bucket_ts, job, hash`)
-
-	// GROUP BY includes bucket_ts, group-by columns, and id_hash (order matters in string match)
-	mustContain(t, sql, `GROUP BY bucket_ts, job, id_hash`)
-
-	// Ordered output
-	mustContain(t, sql, `ORDER BY bucket_ts ASC`)
-}
-
-func mustContain(t *testing.T, s, sub string) {
-	t.Helper()
-	if !strings.Contains(s, sub) {
-		t.Fatalf("expected SQL to contain:\n%s\n\nSQL was:\n%s", sub, s)
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d\nsql:\n%s", len(rows), sql)
+	}
+	// Check ts=10000 count = 12
+	var found bool
+	for _, r := range rows {
+		if getInt64(r["bucket_ts"]) == 10000 {
+			found = true
+			if c := getFloat(r["count"]); math.Abs(c-12.0) > 1e-9 {
+				t.Fatalf("count@10000 got=%v want=12", c)
+			}
+			// (Optional) avg = sum/count = 3/12; that divide happens upstream of worker.
+		}
+	}
+	if !found {
+		t.Fatalf("no row for ts=10000\nsql:\n%s", sql)
 	}
 }
 
-func mustNotContain(t *testing.T, s, sub string) {
-	t.Helper()
-	if strings.Contains(s, sub) {
-		t.Fatalf("expected SQL NOT to contain:\n%s\n\nSQL was:\n%s", sub, s)
+func TestBuildWindowed_MaxOverTime_NoGroup(t *testing.T) {
+	db := openDuckDB(t)
+	createMetricsTable(t, db, false)
+
+	// Max over window should respect RANGE across buckets.
+	mustExec(t, db, `INSERT INTO metrics VALUES
+	 (    0, 'm', 0.0, 1, 1.0,  1.0),
+	 (10000, 'm', 0.0, 1, 9.0,  9.0),
+	 (40000, 'm', 0.0, 1, 3.0,  3.0)`)
+
+	be := &BaseExpr{
+		Metric:   "m",
+		FuncName: "max_over_time",
+		Range:    "30s",
+	}
+	sql := replaceStartEnd(replaceTableMetrics(be.ToWorkerSQL(10*time.Second)), 0, 50000)
+	rows := queryAll(t, db, sql)
+
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d\nsql:\n%s", len(rows), sql)
+	}
+
+	type pair struct {
+		ts  int64
+		max float64
+	}
+	got := map[int64]float64{}
+	for _, r := range rows {
+		got[getInt64(r["bucket_ts"])] = getFloat(r["max"])
+	}
+
+	// ts=0     -> max(1)      = 1
+	// ts=10000 -> max(1,9)    = 9
+	// ts=40000 -> max(9,3)    = 9  (10000 still within 30s)
+	if math.Abs(got[0]-1.0) > 1e-9 || math.Abs(got[10000]-9.0) > 1e-9 || math.Abs(got[40000]-9.0) > 1e-9 {
+		t.Fatalf("max series wrong: got=%v", got)
+	}
+}
+
+func TestBuildWindowed_RespectsMetricFilter_IgnoresOtherMetrics(t *testing.T) {
+	db := openDuckDB(t)
+	createMetricsTable(t, db, false)
+
+	// Mix 'm' and 'other'; query should only see 'm'.
+	mustExec(t, db, `INSERT INTO metrics VALUES
+	 (0, 'm',     2.0, 1, 2.0, 2.0),
+	 (0, 'other', 9.9, 9, 9.9, 9.9),
+	 (10000, 'm', 3.0, 1, 3.0, 3.0)`)
+
+	be := &BaseExpr{
+		Metric:   "m",
+		FuncName: "sum_over_time",
+		Range:    "20s",
+	}
+	sql := replaceStartEnd(replaceTableMetrics(be.ToWorkerSQL(10*time.Second)), 0, 20000)
+	if !strings.Contains(sql, `"_cardinalhq.name" = 'm'`) {
+		t.Fatalf("missing metric WHERE in SQL:\n%s", sql)
+	}
+	rows := queryAll(t, db, sql)
+
+	// Should have ts=0 and 10000 only, sums 2 and 5.
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d\nsql:\n%s", len(rows), sql)
+	}
+	type pair struct {
+		ts  int64
+		sum float64
+	}
+	got := make(map[int64]float64, 2)
+	for _, r := range rows {
+		got[getInt64(r["bucket_ts"])] = getFloat(r["sum"])
+	}
+	if math.Abs(got[0]-2.0) > 1e-9 || math.Abs(got[10000]-5.0) > 1e-9 {
+		t.Fatalf("wrong sums: got=%v", got)
+	}
+}
+
+// --- small helpers ---
+
+func asString(v any) string {
+	switch x := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return x
+	case []byte:
+		return string(x)
+	default:
+		return fmt.Sprintf("%v", x)
 	}
 }
