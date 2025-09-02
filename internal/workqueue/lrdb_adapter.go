@@ -52,7 +52,7 @@ func (a *LRDBWorkQueueAdapter) FailWork(ctx context.Context, id, workerID int64,
 	return a.db.WorkQueueFail(ctx, lrdb.WorkQueueFailParams{
 		ID:         id,
 		WorkerID:   workerID,
-		RequeueTtl: durationToPGInterval(requeueTTL),
+		RequeueTtl: requeueTTL,
 		MaxRetries: maxRetries,
 	})
 }

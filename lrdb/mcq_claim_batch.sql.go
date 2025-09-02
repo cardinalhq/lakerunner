@@ -203,10 +203,10 @@ upd AS (
   FROM chosen c
   WHERE q.id = c.id
     AND q.claimed_at IS NULL
-  RETURNING q.id, q.queue_ts, q.priority, q.organization_id, q.dateint, q.frequency_ms, q.segment_id, q.instance_num, q.record_count, q.tries, q.claimed_by, q.claimed_at, q.heartbeated_at
+  RETURNING q.id, q.queue_ts, q.priority, q.organization_id, q.dateint, q.frequency_ms, q.segment_id, q.instance_num, q.record_count, q.tries, q.claimed_by, q.claimed_at, q.heartbeated_at, q.eligible_at
 )
 SELECT 
-  upd.id, upd.queue_ts, upd.priority, upd.organization_id, upd.dateint, upd.frequency_ms, upd.segment_id, upd.instance_num, upd.record_count, upd.tries, upd.claimed_by, upd.claimed_at, upd.heartbeated_at,
+  upd.id, upd.queue_ts, upd.priority, upd.organization_id, upd.dateint, upd.frequency_ms, upd.segment_id, upd.instance_num, upd.record_count, upd.tries, upd.claimed_by, upd.claimed_at, upd.heartbeated_at, upd.eligible_at,
   COALESCE(fs.target_records, est.target_records, p.default_target_records) AS used_target_records,
   COALESCE(fs.org_estimate, est.org_estimate, 0) AS org_estimate,
   COALESCE(fs.global_estimate, est.global_estimate, 0) AS global_estimate, 
@@ -259,6 +259,7 @@ type ClaimMetricCompactionWorkRow struct {
 	ClaimedBy         int64      `json:"claimed_by"`
 	ClaimedAt         *time.Time `json:"claimed_at"`
 	HeartbeatedAt     *time.Time `json:"heartbeated_at"`
+	EligibleAt        time.Time  `json:"eligible_at"`
 	UsedTargetRecords int64      `json:"used_target_records"`
 	OrgEstimate       int64      `json:"org_estimate"`
 	GlobalEstimate    int64      `json:"global_estimate"`
@@ -271,7 +272,7 @@ type ClaimMetricCompactionWorkRow struct {
 // 2) One seed per group
 // 3) Order groups globally by seed recency/priority
 // 4) Calculate group stats and eligibility criteria
-// 5) Determine group eligibility: old OR can make a full batch (target to target*2.0 for eligibility)
+// 5) Determine group eligibility: old OR can make a full batch (>= target records)
 // 6) Pick the first eligible group (ordered by seed_rank)
 // 7) For the winner group, get items in priority order and pack greedily
 // 8) Pack items greedily within limits
@@ -309,6 +310,7 @@ func (q *Queries) ClaimMetricCompactionWork(ctx context.Context, arg ClaimMetric
 			&i.ClaimedBy,
 			&i.ClaimedAt,
 			&i.HeartbeatedAt,
+			&i.EligibleAt,
 			&i.UsedTargetRecords,
 			&i.OrgEstimate,
 			&i.GlobalEstimate,

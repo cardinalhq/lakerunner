@@ -16,7 +16,7 @@ SET claimed_by = -1, claimed_at = NULL, heartbeated_at = NULL
 WHERE claimed_by <> -1
   AND heartbeated_at IS NOT NULL 
   AND heartbeated_at < $1
-RETURNING id, queue_ts, priority, organization_id, dateint, frequency_ms, segment_id, instance_num, record_count, tries, claimed_by, claimed_at, heartbeated_at
+RETURNING id, queue_ts, priority, organization_id, dateint, frequency_ms, segment_id, instance_num, record_count, tries, claimed_by, claimed_at, heartbeated_at, eligible_at
 `
 
 func (q *Queries) CleanupMetricCompactionWork(ctx context.Context, cutoffTime *time.Time) ([]MetricCompactionQueue, error) {
@@ -42,6 +42,7 @@ func (q *Queries) CleanupMetricCompactionWork(ctx context.Context, cutoffTime *t
 			&i.ClaimedBy,
 			&i.ClaimedAt,
 			&i.HeartbeatedAt,
+			&i.EligibleAt,
 		); err != nil {
 			return nil, err
 		}

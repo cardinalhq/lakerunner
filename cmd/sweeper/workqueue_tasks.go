@@ -24,7 +24,6 @@ import (
 	"go.opentelemetry.io/otel/metric"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/cardinalhq/lakerunner/internal/workqueue"
 	"github.com/cardinalhq/lakerunner/lrdb"
@@ -41,8 +40,7 @@ func runWorkqueueExpiry(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull
 	// Calculate stale expiration based on heartbeat interval
 	// Items are considered stale after missing the configured number of heartbeats
 	staleExpirationTime := time.Duration(workqueue.StaleExpiryMultiplier) * workqueue.DefaultHeartbeatInterval
-	lockTtlDead := pgtype.Interval{Microseconds: staleExpirationTime.Microseconds(), Valid: true}
-	expired, err := mdb.WorkQueueCleanup(ctx, lockTtlDead)
+	expired, err := mdb.WorkQueueCleanup(ctx, staleExpirationTime)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil

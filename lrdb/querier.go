@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Querier interface {
@@ -42,7 +41,7 @@ type Querier interface {
 	// 2) One seed per group
 	// 3) Order groups globally by seed recency/priority
 	// 4) Calculate group stats and eligibility criteria
-	// 5) Determine group eligibility: old OR can make a full batch (target to target*2.0 for eligibility)
+	// 5) Determine group eligibility: old OR can make a full batch (>= target records)
 	// 6) Pick the first eligible group (ordered by seed_rank)
 	// 7) For the winner group, get items in priority order and pack greedily
 	// 8) Pack items greedily within limits
@@ -108,6 +107,13 @@ type Querier interface {
 	LogSegEstimator(ctx context.Context, arg LogSegEstimatorParams) ([]LogSegEstimatorRow, error)
 	MarkMetricSegsCompactedByKeys(ctx context.Context, arg MarkMetricSegsCompactedByKeysParams) error
 	MarkMetricSegsRolledupByKeys(ctx context.Context, arg MarkMetricSegsRolledupByKeysParams) error
+	McqClaimBundle(ctx context.Context, arg McqClaimBundleParams) error
+	McqCompleteDelete(ctx context.Context, arg McqCompleteDeleteParams) error
+	McqDeferKey(ctx context.Context, arg McqDeferKeyParams) error
+	McqFetchCandidates(ctx context.Context, arg McqFetchCandidatesParams) ([]McqFetchCandidatesRow, error)
+	McqHeartbeat(ctx context.Context, arg McqHeartbeatParams) error
+	McqPickHead(ctx context.Context) (McqPickHeadRow, error)
+	McqReclaimTimeouts(ctx context.Context, arg McqReclaimTimeoutsParams) (int64, error)
 	// Get queue depth for metric compaction scaling
 	MetricCompactionQueueScalingDepth(ctx context.Context) (interface{}, error)
 	// Get queue depth for metric rollup scaling
@@ -115,6 +121,13 @@ type Querier interface {
 	// Returns an estimate of the number of metric segments, accounting for per-file overhead.
 	// Uses frequency_ms to provide more accurate estimates based on collection frequency.
 	MetricSegEstimator(ctx context.Context, arg MetricSegEstimatorParams) ([]MetricSegEstimatorRow, error)
+	MrqClaimBundle(ctx context.Context, arg MrqClaimBundleParams) error
+	MrqCompleteDelete(ctx context.Context, arg MrqCompleteDeleteParams) error
+	MrqDeferKey(ctx context.Context, arg MrqDeferKeyParams) error
+	MrqFetchCandidates(ctx context.Context, arg MrqFetchCandidatesParams) ([]MrqFetchCandidatesRow, error)
+	MrqHeartbeat(ctx context.Context, arg MrqHeartbeatParams) error
+	MrqPickHead(ctx context.Context) (MrqPickHeadRow, error)
+	MrqReclaimTimeouts(ctx context.Context, arg MrqReclaimTimeoutsParams) (int64, error)
 	ObjectCleanupAdd(ctx context.Context, arg ObjectCleanupAddParams) error
 	ObjectCleanupBucketSummary(ctx context.Context) ([]ObjectCleanupBucketSummaryRow, error)
 	ObjectCleanupComplete(ctx context.Context, id uuid.UUID) error
@@ -138,7 +151,7 @@ type Querier interface {
 	UpsertServiceIdentifier(ctx context.Context, arg UpsertServiceIdentifierParams) (UpsertServiceIdentifierRow, error)
 	WorkQueueAddDirect(ctx context.Context, arg WorkQueueAddParams) error
 	WorkQueueClaimDirect(ctx context.Context, arg WorkQueueClaimParams) (WorkQueueClaimRow, error)
-	WorkQueueCleanupDirect(ctx context.Context, lockTtlDead pgtype.Interval) ([]WorkQueueCleanupRow, error)
+	WorkQueueCleanupDirect(ctx context.Context, lockTtlDead time.Duration) ([]WorkQueueCleanupRow, error)
 	WorkQueueCompleteDirect(ctx context.Context, arg WorkQueueCompleteParams) error
 	WorkQueueDeleteDirect(ctx context.Context, arg WorkQueueDeleteParams) error
 	// First, return unclaimed summaries
