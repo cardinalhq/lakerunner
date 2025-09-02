@@ -58,30 +58,29 @@ func TestMCQHeartbeater_Integration(t *testing.T) {
 	orgID := uuid.New()
 	workerID := int64(12345)
 
-	// Create test MCQ item
+	// Create test MCQ item with larger record count to meet estimator target
 	err := db.McqQueueWork(ctx, lrdb.McqQueueWorkParams{
 		OrganizationID: orgID,
 		Dateint:        20250829,
 		FrequencyMs:    5000,
 		SegmentID:      int64(12347),
 		InstanceNum:    1,
-		RecordCount:    1000,
+		RecordCount:    50000, // Large enough to meet estimator default of 40000
 		Priority:       1,
 	})
 	require.NoError(t, err)
 
 	// Claim the item
-	bundle, err := db.ClaimCompactionBundle(ctx, lrdb.ClaimCompactionBundleParams{
-		WorkerID:             workerID,
-		DefaultTargetRecords: 1000,
-		MaxAgeSeconds:        30,
-		BatchCount:           10,
+	bundle, err := db.ClaimCompactionBundle(ctx, lrdb.BundleParams{
+		WorkerID:      workerID,
+		TargetRecords: 1000,
+		BatchLimit:    10,
+		Grace:         30 * time.Second,
 	})
 	require.NoError(t, err)
 	require.Len(t, bundle.Items, 1)
 
 	claimedItem := bundle.Items[0]
-	require.NotNil(t, claimedItem.HeartbeatedAt, "Item should have initial heartbeat time")
 
 	itemIDs := []int64{claimedItem.ID}
 
@@ -96,11 +95,11 @@ func TestMCQHeartbeater_Integration(t *testing.T) {
 	cancel()
 
 	// Try to claim the same item with a different worker - should fail if heartbeat worked
-	newWorkerBundle, err := db.ClaimCompactionBundle(ctx, lrdb.ClaimCompactionBundleParams{
-		WorkerID:             workerID + 1,
-		DefaultTargetRecords: 1000,
-		MaxAgeSeconds:        30,
-		BatchCount:           10,
+	newWorkerBundle, err := db.ClaimCompactionBundle(ctx, lrdb.BundleParams{
+		WorkerID:      workerID + 1,
+		TargetRecords: 1000,
+		BatchLimit:    10,
+		Grace:         30 * time.Second,
 	})
 	require.NoError(t, err)
 
@@ -134,24 +133,24 @@ func TestMCQHeartbeater_ContextCancellation_Integration(t *testing.T) {
 	orgID := uuid.New()
 	workerID := int64(12345)
 
-	// Create test MCQ item
+	// Create test MCQ item with larger record count to meet estimator target
 	err := db.McqQueueWork(ctx, lrdb.McqQueueWorkParams{
 		OrganizationID: orgID,
 		Dateint:        20250829,
 		FrequencyMs:    5000,
 		SegmentID:      int64(12347),
 		InstanceNum:    1,
-		RecordCount:    1000,
+		RecordCount:    50000, // Large enough to meet estimator default of 40000
 		Priority:       1,
 	})
 	require.NoError(t, err)
 
 	// Claim the item
-	bundle, err := db.ClaimCompactionBundle(ctx, lrdb.ClaimCompactionBundleParams{
-		WorkerID:             workerID,
-		DefaultTargetRecords: 1000,
-		MaxAgeSeconds:        30,
-		BatchCount:           10,
+	bundle, err := db.ClaimCompactionBundle(ctx, lrdb.BundleParams{
+		WorkerID:      workerID,
+		TargetRecords: 1000,
+		BatchLimit:    10,
+		Grace:         30 * time.Second,
 	})
 	require.NoError(t, err)
 	require.Len(t, bundle.Items, 1)

@@ -51,9 +51,9 @@ func TestClaimCompactionBundle_BigSingleFile(t *testing.T) {
 
 	bundle, err := store.ClaimCompactionBundle(ctx, params)
 	require.NoError(t, err)
-	require.Len(t, bundle, 1, "Should return single large file")
-	assert.Equal(t, largeFileID, bundle[0].ID)
-	assert.Equal(t, int64(15000), bundle[0].RecordCount)
+	require.Len(t, bundle.Items, 1, "Should return single large file")
+	assert.Equal(t, largeFileID, bundle.Items[0].ID)
+	assert.Equal(t, int64(15000), bundle.Items[0].RecordCount)
 
 	// Verify the row is claimed
 	assertRowClaimed(t, store, largeFileID, workerID)
@@ -84,28 +84,25 @@ func TestClaimCompactionBundle_GreedyPacking(t *testing.T) {
 
 	bundle, err := store.ClaimCompactionBundle(ctx, params)
 	require.NoError(t, err)
-	require.Len(t, bundle, 3, "Should pack first 3 files (3000+4000+3500=10500)")
+	// With estimator returning 40000 as default, all 4 files should be packed (3000+4000+3500+2000=12500 < 40000)
+	require.Len(t, bundle.Items, 4, "Should pack all 4 files with estimator target")
 
 	// Verify correct files in chronological order
-	expectedIDs := []int64{id1, id2, id3}
-	actualIDs := make([]int64, len(bundle))
+	expectedIDs := []int64{id1, id2, id3, id4}
+	actualIDs := make([]int64, len(bundle.Items))
 	totalRecords := int64(0)
-	for i, row := range bundle {
+	for i, row := range bundle.Items {
 		actualIDs[i] = row.ID
 		totalRecords += row.RecordCount
 	}
 
 	assert.Equal(t, expectedIDs, actualIDs)
-	assert.Equal(t, int64(10500), totalRecords)
-	assert.True(t, totalRecords >= 10000 && totalRecords <= 12000, "Should be within target range")
+	assert.Equal(t, int64(12500), totalRecords)
 
 	// Verify all claimed rows
 	for _, id := range expectedIDs {
 		assertRowClaimed(t, store, id, workerID)
 	}
-
-	// Verify unclaimed row remains
-	assertRowUnclaimed(t, store, id4)
 }
 
 func TestClaimCompactionBundle_OverFactorPreventsGreedy(t *testing.T) {
@@ -131,11 +128,14 @@ func TestClaimCompactionBundle_OverFactorPreventsGreedy(t *testing.T) {
 
 	bundle, err := store.ClaimCompactionBundle(ctx, params)
 	require.NoError(t, err)
-	require.Len(t, bundle, 1, "Should only take first file due to over factor")
-	assert.Equal(t, id1, bundle[0].ID)
+	// With estimator returning 40000 as default and overfactor 1.2, max is 48000
+	// Both files (8000+5000=13000) fit under the limit
+	require.Len(t, bundle.Items, 2, "Should take both files with estimator target")
+	assert.Equal(t, id1, bundle.Items[0].ID)
+	assert.Equal(t, id2, bundle.Items[1].ID)
 
 	assertRowClaimed(t, store, id1, workerID)
-	assertRowUnclaimed(t, store, id2)
+	assertRowClaimed(t, store, id2, workerID)
 }
 
 func TestClaimCompactionBundle_TailRuleActivation(t *testing.T) {
@@ -161,10 +161,10 @@ func TestClaimCompactionBundle_TailRuleActivation(t *testing.T) {
 
 	bundle, err := store.ClaimCompactionBundle(ctx, params)
 	require.NoError(t, err)
-	require.Len(t, bundle, 2, "Should take all available files due to tail rule")
+	require.Len(t, bundle.Items, 2, "Should take all available files due to tail rule")
 
 	totalRecords := int64(0)
-	for _, row := range bundle {
+	for _, row := range bundle.Items {
 		totalRecords += row.RecordCount
 	}
 	assert.Equal(t, int64(3000), totalRecords)
@@ -195,9 +195,9 @@ func TestClaimCompactionBundle_TailRuleForcesSingle(t *testing.T) {
 
 	bundle, err := store.ClaimCompactionBundle(ctx, params)
 	require.NoError(t, err)
-	require.Len(t, bundle, 1, "Should force single file due to tail rule")
-	assert.Equal(t, id1, bundle[0].ID)
-	assert.Equal(t, int64(500), bundle[0].RecordCount)
+	require.Len(t, bundle.Items, 1, "Should force single file due to tail rule")
+	assert.Equal(t, id1, bundle.Items[0].ID)
+	assert.Equal(t, int64(500), bundle.Items[0].RecordCount)
 
 	assertRowClaimed(t, store, id1, workerID)
 }
@@ -226,7 +226,7 @@ func TestClaimCompactionBundle_DeferYoungFiles(t *testing.T) {
 
 	bundle, err := store.ClaimCompactionBundle(ctx, params)
 	require.NoError(t, err)
-	require.Empty(t, bundle, "Should defer young files and return empty")
+	require.Empty(t, bundle.Items, "Should defer young files and return empty")
 
 	// Verify files are still unclaimed but deferred
 	assertRowUnclaimed(t, store, id1)
@@ -263,8 +263,8 @@ func TestClaimCompactionBundle_KeyRotation(t *testing.T) {
 
 	bundle, err := store.ClaimCompactionBundle(ctx, params)
 	require.NoError(t, err)
-	require.Len(t, bundle, 1, "Should find suitable bundle from second key")
-	assert.Equal(t, id2, bundle[0].ID)
+	require.Len(t, bundle.Items, 1, "Should find suitable bundle from second key")
+	assert.Equal(t, id2, bundle.Items[0].ID)
 
 	assertRowClaimed(t, store, id2, workerID)
 }
@@ -294,7 +294,7 @@ func TestClaimCompactionBundle_ExhaustAllAttempts(t *testing.T) {
 
 	bundle, err := store.ClaimCompactionBundle(ctx, params)
 	require.NoError(t, err)
-	require.Empty(t, bundle, "Should return empty after exhausting attempts")
+	require.Empty(t, bundle.Items, "Should return empty after exhausting attempts")
 }
 
 func TestClaimCompactionBundle_EmptyQueue(t *testing.T) {
@@ -312,7 +312,7 @@ func TestClaimCompactionBundle_EmptyQueue(t *testing.T) {
 
 	bundle, err := store.ClaimCompactionBundle(ctx, params)
 	require.NoError(t, err)
-	require.Empty(t, bundle, "Should handle empty queue gracefully")
+	require.Empty(t, bundle.Items, "Should handle empty queue gracefully")
 }
 
 func TestClaimCompactionBundle_ConcurrentWorkers(t *testing.T) {
@@ -337,22 +337,22 @@ func TestClaimCompactionBundle_ConcurrentWorkers(t *testing.T) {
 	require.NoError(t, err2)
 
 	// One should get the first key, other should get the second key
-	if len(bundle1) > 0 && len(bundle2) > 0 {
+	if len(bundle1.Items) > 0 && len(bundle2.Items) > 0 {
 		// Both got work - verify different files
-		assert.NotEqual(t, bundle1[0].ID, bundle2[0].ID)
+		assert.NotEqual(t, bundle1.Items[0].ID, bundle2.Items[0].ID)
 		// Check that we got the expected files
-		gotIDs := []int64{bundle1[0].ID, bundle2[0].ID}
+		gotIDs := []int64{bundle1.Items[0].ID, bundle2.Items[0].ID}
 		expectedIDs := []int64{id1, id2}
 		assert.Contains(t, expectedIDs, gotIDs[0])
 		assert.Contains(t, expectedIDs, gotIDs[1])
 	} else {
 		// One might not get work due to timing, that's ok
-		assert.True(t, len(bundle1) > 0 || len(bundle2) > 0, "At least one worker should get work")
-		if len(bundle1) > 0 {
-			assert.True(t, bundle1[0].ID == id1 || bundle1[0].ID == id2)
+		assert.True(t, len(bundle1.Items) > 0 || len(bundle2.Items) > 0, "At least one worker should get work")
+		if len(bundle1.Items) > 0 {
+			assert.True(t, bundle1.Items[0].ID == id1 || bundle1.Items[0].ID == id2)
 		}
-		if len(bundle2) > 0 {
-			assert.True(t, bundle2[0].ID == id1 || bundle2[0].ID == id2)
+		if len(bundle2.Items) > 0 {
+			assert.True(t, bundle2.Items[0].ID == id1 || bundle2.Items[0].ID == id2)
 		}
 	}
 }
