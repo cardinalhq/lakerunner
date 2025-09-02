@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
@@ -33,8 +32,8 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-// CompactionUploadParams contains parameters for uploading compacted metric files.
-type CompactionUploadParams struct {
+// RollupUploadParams contains parameters for uploading rolled-up metric files.
+type RollupUploadParams struct {
 	OrganizationID uuid.UUID
 	InstanceNum    int16
 	Dateint        int32
@@ -222,14 +221,8 @@ func rollupMetricSegments(
 		return nil
 	}
 
-	// Create reader stack with sorting support
-	config := metricsprocessing.ReaderStackConfig{
-		FileSortedCounter: nil, // Telemetry is handled in the generic processor
-		CommonAttributes:  attribute.NewSet(),
-	}
-
 	readerStack, err := metricsprocessing.CreateReaderStack(
-		ctx, ll, tmpdir, s3client, firstSeg.OrganizationID, profile, sourceRows, config)
+		ctx, ll, tmpdir, s3client, firstSeg.OrganizationID, profile, sourceRows)
 	if err != nil {
 		return err
 	}
@@ -299,7 +292,7 @@ func rollupMetricSegments(
 		slog.Int64("outputBytes", processingResult.Stats.OutputBytes),
 		slog.Float64("compressionRatio", compressionRatio))
 
-	rollupParams := CompactionUploadParams{
+	rollupParams := RollupUploadParams{
 		OrganizationID: firstSeg.OrganizationID,
 		InstanceNum:    firstSeg.InstanceNum,
 		Dateint:        firstSeg.Dateint,
@@ -357,16 +350,12 @@ func uploadRolledUpMetricsAtomic(
 	results []parquetwriter.Result,
 	sourceRows []lrdb.MetricSeg,
 	existingRows []lrdb.MetricSeg,
-	params CompactionUploadParams,
+	params RollupUploadParams,
 ) error {
 	// Create processed segments from results
-	segments := make(metricsprocessing.ProcessedSegments, 0, len(results))
-	for _, result := range results {
-		segment, err := metricsprocessing.NewProcessedSegment(result, params.OrganizationID, params.CollectorName, ll)
-		if err != nil {
-			return fmt.Errorf("failed to create processed segment: %w", err)
-		}
-		segments = append(segments, segment)
+	segments, err := metricsprocessing.CreateSegmentsFromResults(results, params.OrganizationID, params.CollectorName, ll)
+	if err != nil {
+		return fmt.Errorf("failed to create processed segment: %w", err)
 	}
 	var targetOldRecords []lrdb.CompactMetricSegsOld
 	for _, row := range existingRows {
@@ -403,8 +392,7 @@ func uploadRolledUpMetricsAtomic(
 			slog.String("bucket", params.Bucket),
 			slog.Int64("newSegmentID", segment.SegmentID))
 
-		err := segment.UploadToS3(ctx, s3client, params.Bucket)
-		if err != nil {
+		if _, err := metricsprocessing.UploadSegments(ctx, fileLogger, s3client, params.Bucket, metricsprocessing.ProcessedSegments{segment}); err != nil {
 			fileLogger.Error("Atomic operation failed during S3 upload - no changes made",
 				slog.Any("error", err),
 				slog.String("objectID", segment.ObjectID))
