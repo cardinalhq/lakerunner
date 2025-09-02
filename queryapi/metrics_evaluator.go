@@ -262,15 +262,8 @@ func (q *QuerierService) lookupMetricsSegments(ctx context.Context,
 
 	var allSegments []SegmentInfo
 
-	slog.Info("Issuing query for segments",
-		"dateInt", dih.DateInt,
-		"startTs", startTs,
-		"endTs", endTs,
-		"frequencyMs", stepDuration.Milliseconds(),
-		"orgUUID", orgUUID)
-
 	fingerprint := buffet.ComputeFingerprint("_cardinalhq.name", be.Metric)
-	slog.Info("Computed fingerprint for baseExpr", "fingerprint", fingerprint, "metric", be.Metric)
+
 	rows, err := q.mdb.ListMetricSegmentsForQuery(ctx, lrdb.ListMetricSegmentsForQueryParams{
 		Int8range:      startTs,
 		Int8range_2:    endTs,
@@ -282,6 +275,15 @@ func (q *QuerierService) lookupMetricsSegments(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
+
+	slog.Info("Metrics Metadata Query for segments",
+		"dateInt", dih.DateInt,
+		"startTs", startTs,
+		"endTs", endTs,
+		"frequencyMs", stepDuration.Milliseconds(),
+		"orgUUID", orgUUID,
+		"fingerprint", fingerprint,
+		"numSegments", len(rows))
 	for _, row := range rows {
 		endHour := zeroFilledHour(time.UnixMilli(row.EndTs).UTC().Hour())
 		allSegments = append(allSegments, SegmentInfo{
