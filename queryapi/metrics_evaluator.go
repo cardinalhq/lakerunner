@@ -68,6 +68,9 @@ func (q *QuerierService) EvaluateMetricsQuery(
 				slog.Error("invalid offset on leaf; ignoring offset", "offset", leaf.Offset, "err", err)
 				offMs = 0
 			}
+			if leaf.Range != "" {
+				startTs = startTs - promql.RangeMsFromRange(leaf.Range)
+			}
 
 			effStart := startTs - offMs
 			effEnd := endTs - offMs
