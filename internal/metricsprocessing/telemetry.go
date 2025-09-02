@@ -12,24 +12,17 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package rollup
+package metricsprocessing
 
 import (
 	"log"
 
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
 
 var (
-	// Common attributes for metrics
-	commonAttributes = attribute.NewSet(
-		attribute.String("component", "metric-rollup"),
-	)
-
-	// Metrics for rollup processing pipeline
-	fileSortedCounter     metric.Int64Counter
+	// Metrics for processing pipeline (shared between compaction and rollup)
 	processingSegmentsIn  metric.Int64Counter
 	processingSegmentsOut metric.Int64Counter
 	processingRecordsIn   metric.Int64Counter
@@ -39,18 +32,13 @@ var (
 )
 
 func init() {
-	meter := otel.Meter("github.com/cardinalhq/lakerunner/internal/metricsprocessing/rollup")
+	meter := otel.Meter("github.com/cardinalhq/lakerunner/internal/metricsprocessing")
 
 	var err error
 
-	fileSortedCounter, err = meter.Int64Counter("lakerunner.processing.input.filetype")
-	if err != nil {
-		log.Fatalf("failed to create processing.input.filetype counter: %v", err)
-	}
-
 	processingSegmentsIn, err = meter.Int64Counter(
 		"lakerunner.processing.segments.in",
-		metric.WithDescription("Number of segments input to rollup processing pipeline"),
+		metric.WithDescription("Number of segments input to processing pipeline"),
 	)
 	if err != nil {
 		log.Fatalf("failed to create processing.segments.in counter: %v", err)
@@ -58,7 +46,7 @@ func init() {
 
 	processingSegmentsOut, err = meter.Int64Counter(
 		"lakerunner.processing.segments.out",
-		metric.WithDescription("Number of segments output from rollup processing pipeline"),
+		metric.WithDescription("Number of segments output from processing pipeline"),
 	)
 	if err != nil {
 		log.Fatalf("failed to create processing.segments.out counter: %v", err)
@@ -66,7 +54,7 @@ func init() {
 
 	processingRecordsIn, err = meter.Int64Counter(
 		"lakerunner.processing.records.in",
-		metric.WithDescription("Number of records input to rollup processing pipeline"),
+		metric.WithDescription("Number of records input to processing pipeline"),
 	)
 	if err != nil {
 		log.Fatalf("failed to create processing.records.in counter: %v", err)
@@ -74,7 +62,7 @@ func init() {
 
 	processingRecordsOut, err = meter.Int64Counter(
 		"lakerunner.processing.records.out",
-		metric.WithDescription("Number of records output from rollup processing pipeline"),
+		metric.WithDescription("Number of records output from processing pipeline"),
 	)
 	if err != nil {
 		log.Fatalf("failed to create processing.records.out counter: %v", err)
@@ -82,7 +70,7 @@ func init() {
 
 	processingBytesIn, err = meter.Int64Counter(
 		"lakerunner.processing.bytes.in",
-		metric.WithDescription("Number of bytes input to rollup processing pipeline"),
+		metric.WithDescription("Number of bytes input to processing pipeline"),
 	)
 	if err != nil {
 		log.Fatalf("failed to create processing.bytes.in counter: %v", err)
@@ -90,7 +78,7 @@ func init() {
 
 	processingBytesOut, err = meter.Int64Counter(
 		"lakerunner.processing.bytes.out",
-		metric.WithDescription("Number of bytes output from rollup processing pipeline"),
+		metric.WithDescription("Number of bytes output from processing pipeline"),
 	)
 	if err != nil {
 		log.Fatalf("failed to create processing.bytes.out counter: %v", err)

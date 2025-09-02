@@ -22,7 +22,6 @@ import (
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
@@ -101,17 +100,10 @@ func coordinate(
 		return newWorkerInterrupted("context cancelled before compaction")
 	}
 
-	commonAttributes := attribute.NewSet()
-
-	// Track segments coming into compaction processing
-	processingSegmentsIn.Add(ctx, int64(len(rows)), metric.WithAttributes(
-		attribute.String("signal", "metrics"),
-		attribute.String("action", "compact"),
-	))
-
+	// Create reader stack for downloading and reading files
 	config := metricsprocessing.ReaderStackConfig{
-		FileSortedCounter: fileSortedCounter,
-		CommonAttributes:  commonAttributes,
+		FileSortedCounter: nil, // Telemetry is handled in the generic processor
+		CommonAttributes:  attribute.NewSet(),
 	}
 
 	readerStack, err := metricsprocessing.CreateReaderStack(
@@ -121,22 +113,7 @@ func coordinate(
 	}
 	defer metricsprocessing.CloseReaderStack(ll, readerStack)
 
-	// Prepare input for pure compaction
-	compactionInput := input{
-		ReaderStack:  readerStack,
-		FrequencyMs:  metadata.FrequencyMs,
-		TmpDir:       tmpdir,
-		Logger:       ll,
-		RecordsLimit: estimatedTargetRecords * 2,
-	}
-
-	// Perform pure compaction
-	result, err := perform(ctx, compactionInput)
-	if err != nil {
-		return fmt.Errorf("compaction failed: %w", err)
-	}
-
-	// Calculate input bytes and record counts from segment metadata
+	// Calculate input stats for tracking
 	inputBytes := int64(0)
 	inputRecords := int64(0)
 	for _, row := range rows {
@@ -144,44 +121,42 @@ func coordinate(
 		inputRecords += row.RecordCount
 	}
 
+	// Input metrics are tracked in the generic processor
+
+	// Use generic processor for compaction
+	processingInput := metricsprocessing.ProcessingInput{
+		ReaderStack:       readerStack,
+		TargetFrequencyMs: metadata.FrequencyMs, // Same frequency for compaction
+		TmpDir:            tmpdir,
+		Logger:            ll,
+		RecordsLimit:      estimatedTargetRecords * 2,
+		EstimatedRecords:  estimatedTargetRecords,
+		Action:            "compact",
+		InputRecords:      inputRecords,
+		InputBytes:        inputBytes,
+	}
+
+	processingResult, err := metricsprocessing.AggregateMetrics(ctx, processingInput)
+	if err != nil {
+		return fmt.Errorf("compaction failed: %w", err)
+	}
+
 	// Calculate statistics for logging
-	stats := calculateStats(result, len(readerStack.DownloadedFiles), inputBytes)
+	compressionRatio := float64(0)
+	if inputBytes > 0 {
+		compressionRatio = float64(processingResult.Stats.OutputBytes) / float64(inputBytes) * 100
+	}
+
 	ll.Debug("Compaction completed",
-		slog.Int64("totalRows", stats.TotalRows),
-		slog.Int("outputFiles", stats.OutputFiles),
-		slog.Int("inputFiles", stats.InputFiles),
-		slog.Int64("inputBytes", stats.InputBytes),
-		slog.Int64("outputBytes", stats.OutputBytes),
-		slog.Float64("compressionRatio", stats.CompressionRatio))
-
-	// Track processing metrics
-	processingSegmentsOut.Add(ctx, int64(len(result.Results)), metric.WithAttributes(
-		attribute.String("signal", "metrics"),
-		attribute.String("action", "compact"),
-	))
-
-	processingRecordsIn.Add(ctx, inputRecords, metric.WithAttributes(
-		attribute.String("signal", "metrics"),
-		attribute.String("action", "compact"),
-	))
-
-	processingRecordsOut.Add(ctx, stats.TotalRows, metric.WithAttributes(
-		attribute.String("signal", "metrics"),
-		attribute.String("action", "compact"),
-	))
-
-	processingBytesIn.Add(ctx, inputBytes, metric.WithAttributes(
-		attribute.String("signal", "metrics"),
-		attribute.String("action", "compact"),
-	))
-
-	processingBytesOut.Add(ctx, stats.OutputBytes, metric.WithAttributes(
-		attribute.String("signal", "metrics"),
-		attribute.String("action", "compact"),
-	))
+		slog.Int64("totalRows", processingResult.Stats.TotalRows),
+		slog.Int("outputFiles", processingResult.Stats.OutputSegments),
+		slog.Int("inputFiles", len(readerStack.DownloadedFiles)),
+		slog.Int64("inputBytes", inputBytes),
+		slog.Int64("outputBytes", processingResult.Stats.OutputBytes),
+		slog.Float64("compressionRatio", compressionRatio))
 
 	// If we produced 0 output files, skip S3 upload and database updates
-	if len(result.Results) == 0 {
+	if processingResult.Stats.OutputSegments == 0 {
 		ll.Warn("Produced 0 output files from aggregating reader")
 		return nil
 	}
@@ -189,7 +164,7 @@ func coordinate(
 	// Final interruption check before critical section (S3 uploads + DB updates)
 	if ctx.Err() != nil {
 		ll.Info("Context cancelled before critical section - safe to abort",
-			slog.Int("resultCount", len(result.Results)),
+			slog.Int("resultCount", processingResult.Stats.OutputSegments),
 			slog.Any("error", ctx.Err()))
 		return newWorkerInterrupted("context cancelled before metrics upload phase")
 	}
@@ -198,7 +173,7 @@ func coordinate(
 	s3Ctx, s3Cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer s3Cancel()
 
-	segments, err := uploadCompactedFiles(s3Ctx, ll, s3client, result.Results, metadata, profile)
+	segments, err := uploadCompactedFiles(s3Ctx, ll, s3client, processingResult.RawResults, metadata, profile)
 	if err != nil {
 		// If upload failed partway through, we need to clean up any uploaded files
 		if len(segments) > 0 {
@@ -214,7 +189,7 @@ func coordinate(
 	dbCtx, dbCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer dbCancel()
 
-	err = replaceCompactedSegments(dbCtx, ll, mdb, segments, rows, metadata, inputRecords, inputBytes, estimatedTargetRecords)
+	err = replaceCompactedSegments(dbCtx, ll, mdb, segments, rows, metadata, inputRecords, inputBytes, estimatedTargetRecords, processingResult.Stats.TotalRows)
 	if err != nil {
 		// Database update failed after successful uploads - schedule cleanup
 		ll.Error("Database update failed after successful S3 upload, scheduling cleanup",
@@ -225,23 +200,6 @@ func coordinate(
 	}
 
 	return nil
-}
-
-// calculateStats computes statistics from compaction results
-func calculateStats(result *result, inputFileCount int, inputBytes int64) stats {
-	compressionRatio := float64(0)
-	if inputBytes > 0 {
-		compressionRatio = float64(result.OutputBytes) / float64(inputBytes) * 100
-	}
-
-	return stats{
-		TotalRows:        result.TotalRows,
-		OutputFiles:      len(result.Results),
-		InputFiles:       inputFileCount,
-		InputBytes:       inputBytes,
-		OutputBytes:      result.OutputBytes,
-		CompressionRatio: compressionRatio,
-	}
 }
 
 func uploadCompactedFiles(
@@ -301,6 +259,7 @@ func replaceCompactedSegments(
 	inputRecords int64,
 	inputBytes int64,
 	estimatedTargetRecords int64,
+	totalRows int64,
 ) error {
 	// Prepare old records for CompactMetricSegs
 	oldRecords := make([]lrdb.CompactMetricSegsOld, len(oldRows))

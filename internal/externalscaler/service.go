@@ -78,7 +78,7 @@ func (s *Service) Close() {
 }
 
 func (s *Service) getQueueDepth(ctx context.Context, serviceType string) (int64, error) {
-	var result interface{}
+	var result any
 	var err error
 
 	switch serviceType {
@@ -110,7 +110,6 @@ func (s *Service) getQueueDepth(ctx context.Context, serviceType string) (int64,
 		return 0, fmt.Errorf("failed to execute queue depth query for %s: %w", serviceType, err)
 	}
 
-	// Convert interface{} to int64
 	count, ok := result.(int64)
 	if !ok {
 		return 0, fmt.Errorf("unexpected result type for %s: %T", serviceType, result)
