@@ -64,7 +64,7 @@ func CreateReaderStack(
 			return nil, fmt.Errorf("context cancelled during segment download: %w", ctx.Err())
 		}
 
-		dateint, hour := helpers.MSToDateintHour(rows[0].TsRange.Lower.Int64)
+		dateint, hour := helpers.MSToDateintHour(row.TsRange.Lower.Int64)
 		objectID := helpers.MakeDBObjectID(orgID, profile.CollectorName, dateint, hour, row.SegmentID, "metrics")
 
 		fn, _, is404, err := s3helper.DownloadS3Object(ctx, tmpdir, s3client, profile.Bucket, objectID)
