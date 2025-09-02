@@ -62,6 +62,11 @@ SET claimed_by = -1,
 FROM stale s
 WHERE q.id = s.id;
 
+-- name: McqRelease :exec
+UPDATE public.metric_compaction_queue
+SET claimed_by = -1, claimed_at = NULL, heartbeated_at = NULL, tries = tries + 1
+WHERE claimed_by = @worker_id AND id = ANY(@ids::bigint[]);
+
 -- name: McqQueueWork :exec
 INSERT INTO metric_compaction_queue (
   organization_id,

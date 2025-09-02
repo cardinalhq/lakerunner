@@ -60,8 +60,8 @@ func runLoop(
 		case <-ctx.Done():
 			ll.Info("Context cancelled after claiming work, releasing items",
 				slog.Int("claimedItems", len(claimedWork)))
-			// Use protected context for cancellation cleanup to ensure it completes
-			if releaseErr := manager.FailWork(context.WithoutCancel(ctx), claimedWork); releaseErr != nil {
+			// Use protected context and ReleaseWork for cancellation to return items to queue
+			if releaseErr := manager.ReleaseWork(context.WithoutCancel(ctx), claimedWork); releaseErr != nil {
 				ll.Error("Failed to release work items after cancellation - items will expire", slog.Any("error", releaseErr))
 			}
 			return ctx.Err()

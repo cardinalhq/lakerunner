@@ -34,6 +34,7 @@ type compactionStore interface {
 	McqCompleteDelete(ctx context.Context, arg lrdb.McqCompleteDeleteParams) error
 	McqDeferKey(ctx context.Context, arg lrdb.McqDeferKeyParams) error
 	McqHeartbeat(ctx context.Context, arg lrdb.McqHeartbeatParams) error
+	McqRelease(ctx context.Context, arg lrdb.McqReleaseParams) error
 	GetMetricSegsByIds(ctx context.Context, arg lrdb.GetMetricSegsByIdsParams) ([]lrdb.MetricSeg, error)
 	CompactMetricSegs(ctx context.Context, args lrdb.CompactMetricSegsParams) error
 	MarkMetricSegsCompactedByKeys(ctx context.Context, arg lrdb.MarkMetricSegsCompactedByKeysParams) error
@@ -162,6 +163,32 @@ func (m *Manager) CompleteWork(ctx context.Context, items []lrdb.McqFetchCandida
 			slog.Any("error", err))
 		return fmt.Errorf("failed to complete work items: %w", err)
 	}
+	return nil
+}
+
+func (m *Manager) ReleaseWork(ctx context.Context, items []lrdb.McqFetchCandidatesRow) error {
+	if len(items) == 0 {
+		return nil
+	}
+
+	ids := make([]int64, len(items))
+	for i, item := range items {
+		ids[i] = item.ID
+	}
+
+	if err := m.db.McqRelease(ctx, lrdb.McqReleaseParams{
+		WorkerID: m.workerID,
+		Ids:      ids,
+	}); err != nil {
+		m.ll.Error("Failed to release work items",
+			slog.Int("count", len(items)),
+			slog.Any("error", err))
+		return fmt.Errorf("failed to release work items: %w", err)
+	}
+
+	m.ll.Info("Released work items back to queue for retry",
+		slog.Int("count", len(items)))
+
 	return nil
 }
 

@@ -33,6 +33,7 @@ type rollupStore interface {
 	ClaimRollupBundle(ctx context.Context, params lrdb.BundleParams) (*lrdb.RollupBundleResult, error)
 	CompleteRollup(ctx context.Context, workerID int64, ids []int64) error
 	HeartbeatRollup(ctx context.Context, workerID int64, ids []int64) error
+	MrqRelease(ctx context.Context, arg lrdb.MrqReleaseParams) error
 	GetMetricSegsForRollup(ctx context.Context, params lrdb.GetMetricSegsForRollupParams) ([]lrdb.MetricSeg, error)
 	GetMetricSegsByIds(ctx context.Context, params lrdb.GetMetricSegsByIdsParams) ([]lrdb.MetricSeg, error)
 	RollupMetricSegs(ctx context.Context, sourceParams lrdb.RollupSourceParams, targetParams lrdb.RollupTargetParams, sourceSegmentIDs []int64, newRecords []lrdb.RollupNewRecord) error
@@ -165,6 +166,32 @@ func (m *Manager) CompleteWork(ctx context.Context, rows []lrdb.MrqFetchCandidat
 			slog.Any("error", err))
 		return fmt.Errorf("failed to complete work items: %w", err)
 	}
+	return nil
+}
+
+func (m *Manager) ReleaseWork(ctx context.Context, rows []lrdb.MrqFetchCandidatesRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+
+	ids := make([]int64, len(rows))
+	for i, row := range rows {
+		ids[i] = row.ID
+	}
+
+	if err := m.db.MrqRelease(ctx, lrdb.MrqReleaseParams{
+		WorkerID: m.workerID,
+		Ids:      ids,
+	}); err != nil {
+		m.ll.Error("Failed to release work items",
+			slog.Int("count", len(rows)),
+			slog.Any("error", err))
+		return fmt.Errorf("failed to release work items: %w", err)
+	}
+
+	m.ll.Info("Released work items back to queue for retry",
+		slog.Int("count", len(rows)))
+
 	return nil
 }
 

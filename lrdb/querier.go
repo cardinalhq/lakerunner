@@ -81,6 +81,7 @@ type Querier interface {
 	McqPickHead(ctx context.Context) (McqPickHeadRow, error)
 	McqQueueWork(ctx context.Context, arg McqQueueWorkParams) error
 	McqReclaimTimeouts(ctx context.Context, arg McqReclaimTimeoutsParams) (int64, error)
+	McqRelease(ctx context.Context, arg McqReleaseParams) error
 	// Get queue depth for metric compaction scaling
 	MetricCompactionQueueScalingDepth(ctx context.Context) (interface{}, error)
 	// Get queue depth for metric rollup scaling
@@ -96,6 +97,7 @@ type Querier interface {
 	MrqPickHead(ctx context.Context) (MrqPickHeadRow, error)
 	MrqQueueWork(ctx context.Context, arg MrqQueueWorkParams) error
 	MrqReclaimTimeouts(ctx context.Context, arg MrqReclaimTimeoutsParams) (int64, error)
+	MrqRelease(ctx context.Context, arg MrqReleaseParams) error
 	ObjectCleanupAdd(ctx context.Context, arg ObjectCleanupAddParams) error
 	ObjectCleanupBucketSummary(ctx context.Context) ([]ObjectCleanupBucketSummaryRow, error)
 	ObjectCleanupComplete(ctx context.Context, id uuid.UUID) error

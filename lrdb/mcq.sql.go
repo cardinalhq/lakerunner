@@ -312,3 +312,19 @@ func (q *Queries) McqReclaimTimeouts(ctx context.Context, arg McqReclaimTimeouts
 	}
 	return result.RowsAffected(), nil
 }
+
+const mcqRelease = `-- name: McqRelease :exec
+UPDATE public.metric_compaction_queue
+SET claimed_by = -1, claimed_at = NULL, heartbeated_at = NULL, tries = tries + 1
+WHERE claimed_by = $1 AND id = ANY($2::bigint[])
+`
+
+type McqReleaseParams struct {
+	WorkerID int64   `json:"worker_id"`
+	Ids      []int64 `json:"ids"`
+}
+
+func (q *Queries) McqRelease(ctx context.Context, arg McqReleaseParams) error {
+	_, err := q.db.Exec(ctx, mcqRelease, arg.WorkerID, arg.Ids)
+	return err
+}
