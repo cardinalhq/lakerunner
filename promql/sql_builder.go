@@ -299,13 +299,11 @@ func buildStepOnly(be *BaseExpr, projs []proj, step time.Duration) string {
 	return sql
 }
 
-// PromQL-like increase(): sum of counter deltas with edge extrapolation.
-// Assumes rollup_sum already encodes reset-fixed positive deltas.
+// PromQL-like increase with sample-aware extrapolation.
+// PromQL-like increase with sample-aware extrapolation.
 func buildIncreaseWindowed(be *BaseExpr, step time.Duration) string {
 	stepMs := step.Milliseconds()
 	timeWhere := withTime(whereFor(be))
-
-	// Bucket to aligned step boundaries
 	bucketExpr := fmt.Sprintf(
 		"(CAST(\"_cardinalhq.timestamp\" AS BIGINT) - (CAST(\"_cardinalhq.timestamp\" AS BIGINT) %% %d))",
 		stepMs,
@@ -313,51 +311,40 @@ func buildIncreaseWindowed(be *BaseExpr, step time.Duration) string {
 
 	// Quote group-by keys
 	var gbq []string
-	if len(be.GroupBy) > 0 {
-		gbq = make([]string, 0, len(be.GroupBy))
-		for _, f := range be.GroupBy {
-			gbq = append(gbq, fmt.Sprintf("\"%s\"", f))
-		}
+	for _, f := range be.GroupBy {
+		gbq = append(gbq, fmt.Sprintf("\"%s\"", f))
 	}
 
-	// step_aggr: one row per (bucket_ts, group) with delta
-	stepCols := []string{bucketExpr + " AS bucket_ts", "SUM(rollup_sum) AS step_delta"}
+	// 1) Per-bucket aggregates, but keep sample-aware stats.
+	stepCols := []string{
+		bucketExpr + " AS bucket_ts",
+		"SUM(rollup_sum) AS step_delta",                                   // counter deltas (post-reset, non-negative)
+		"SUM(COALESCE(rollup_count, 1)) AS step_count",                    // number of raw samples in bucket
+		"MIN(CAST(\"_cardinalhq.timestamp\" AS BIGINT)) AS step_first_ts", // first raw sample ts in bucket
+		"MAX(CAST(\"_cardinalhq.timestamp\" AS BIGINT)) AS step_last_ts",  // last raw sample ts in bucket
+	}
 	if len(gbq) > 0 {
 		stepCols = append(stepCols, strings.Join(gbq, ", "))
 	}
-	groupByParts := []string{"bucket_ts"}
+	groupBy := []string{"bucket_ts"}
 	if len(gbq) > 0 {
-		groupByParts = append(groupByParts, gbq...)
+		groupBy = append(groupBy, gbq...)
 	}
 
 	stepAgg := "step_aggr AS (SELECT " + strings.Join(stepCols, ", ") +
 		" FROM {table}" + timeWhere +
-		" GROUP BY " + strings.Join(groupByParts, ", ") + ")"
+		" GROUP BY " + strings.Join(groupBy, ", ") + ")"
 
 	rangeMs := rangeMsFromRange(be.Range)
-	if rangeMs <= 0 {
-		// Degenerate: with no range, increase is undefined → NULL
-		var cols []string
-		cols = append(cols, "bucket_ts")
-		if len(gbq) > 0 {
-			cols = append(cols, strings.Join(gbq, ", "))
-		}
-		cols = append(cols, "CAST(NULL AS DOUBLE) AS sum")
-		return "WITH " + stepAgg +
-			" SELECT " + strings.Join(cols, ", ") +
-			" FROM step_aggr ORDER BY bucket_ts ASC"
-	}
-
-	// Window over the last rangeMs per group
-	var partition string
+	var part string
 	if len(gbq) > 0 {
-		partition = "PARTITION BY " + strings.Join(gbq, ", ") + " "
+		part = "PARTITION BY " + strings.Join(gbq, ", ") + " "
 	}
-	win := fmt.Sprintf("OVER (%sORDER BY bucket_ts RANGE BETWEEN %d PRECEDING AND CURRENT ROW)", partition, rangeMs)
+	win := fmt.Sprintf("OVER (%sORDER BY bucket_ts RANGE BETWEEN %d PRECEDING AND CURRENT ROW)", part, rangeMs)
 
-	// First CTE with window aggregates (safe: no alias reuse inside window expressions)
-	winCTE := "win AS (SELECT " +
-		"bucket_ts" +
+	// 2) Window stats based on sample-aware fields.
+	winCTE := "win AS (" +
+		"SELECT bucket_ts" +
 		func() string {
 			if len(gbq) == 0 {
 				return ""
@@ -365,37 +352,32 @@ func buildIncreaseWindowed(be *BaseExpr, step time.Duration) string {
 			return ", " + strings.Join(gbq, ", ")
 		}() +
 		", SUM(step_delta) " + win + " AS delta_sum" +
-		", FIRST_VALUE(bucket_ts) " + win + " AS first_ts" +
-		", LAST_VALUE(bucket_ts)  " + win + " AS last_ts" +
-		", COUNT(step_delta)      " + win + " AS n" +
+		", SUM(step_count) " + win + " AS sample_count" +
+		", MIN(step_first_ts) " + win + " AS first_obs_ts" +
+		", MAX(step_last_ts) " + win + " AS last_obs_ts" +
 		" FROM step_aggr)"
 
-	// Final projection does the extrapolation math using those aliases
-	// NOTE: correct start-gap sign: first_ts - (bucket_ts - rangeMs)
-	var out []string
-	out = append(out, "bucket_ts")
+	// 3) Extrapolation using those stats (½ avg-interval caps), capped by range.
+	out := []string{"bucket_ts"}
 	if len(gbq) > 0 {
 		out = append(out, strings.Join(gbq, ", "))
 	}
 	out = append(out,
-		// durations as DOUBLE
-		"CAST(last_ts - first_ts AS DOUBLE) AS sampled_interval",
-		"CASE WHEN n > 1 THEN CAST(last_ts - first_ts AS DOUBLE) / (n - 1) END AS avg_interval",
-		fmt.Sprintf("GREATEST(0, CAST(first_ts - (bucket_ts - %d) AS DOUBLE)) AS gap_start", rangeMs),
-		"GREATEST(0, CAST(bucket_ts - last_ts AS DOUBLE)) AS gap_end",
-		"LEAST(gap_start, COALESCE(avg_interval, 0) / 2.0) AS ex_start",
-		"LEAST(gap_end,   COALESCE(avg_interval, 0) / 2.0) AS ex_end",
+		"CAST(last_obs_ts - first_obs_ts AS DOUBLE) AS sampled_interval",
+		"CASE WHEN sample_count > 1 THEN CAST(last_obs_ts - first_obs_ts AS DOUBLE) / (sample_count - 1) END AS avg_interval",
+		fmt.Sprintf("GREATEST(0, CAST(first_obs_ts - (bucket_ts - %d) AS DOUBLE)) AS gap_start", rangeMs),
+		"GREATEST(0, CAST(bucket_ts - last_obs_ts AS DOUBLE)) AS gap_end",
+		"LEAST(gap_start, COALESCE(avg_interval, 0)/2.0) AS ex_start",
+		"LEAST(gap_end,   COALESCE(avg_interval, 0)/2.0) AS ex_end",
 		"(sampled_interval + ex_start + ex_end) AS effective_interval",
 		fmt.Sprintf("LEAST(effective_interval, %d) AS effective_capped", rangeMs),
-		"CASE WHEN n >= 2 AND sampled_interval > 0 THEN effective_capped / sampled_interval END AS factor",
-		"CASE WHEN n >= 2 AND sampled_interval > 0 THEN delta_sum * factor END AS sum",
+		"CASE WHEN sample_count >= 2 AND sampled_interval > 0 THEN effective_capped / sampled_interval END AS factor",
+		"CASE WHEN sample_count >= 2 AND sampled_interval > 0 THEN delta_sum * factor END AS sum",
 	)
 
-	sql := "WITH " + stepAgg + ", " + winCTE +
+	return "WITH " + stepAgg + ", " + winCTE +
 		" SELECT " + strings.Join(out, ", ") +
-		" FROM win" +
-		" ORDER BY bucket_ts ASC"
-	return sql
+		" FROM win ORDER BY bucket_ts ASC"
 }
 
 func buildWindowed(be *BaseExpr, need need, step time.Duration) string {
