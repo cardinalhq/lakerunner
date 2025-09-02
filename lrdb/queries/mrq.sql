@@ -31,16 +31,22 @@ SET claimed_by = @worker_id, claimed_at = now(), heartbeated_at = now()
 WHERE id = ANY(@ids::bigint[]);
 
 -- name: MrqDeferKey :exec
+WITH to_defer AS (
+  SELECT q.id
+  FROM public.metric_rollup_queue q
+  WHERE q.claimed_by = -1
+    AND q.organization_id = @organization_id
+    AND q.dateint        = @dateint
+    AND q.frequency_ms   = @frequency_ms
+    AND q.instance_num   = @instance_num
+    AND q.slot_id        = @slot_id
+    AND q.slot_count     = @slot_count
+    AND q.rollup_group   = @rollup_group
+  FOR UPDATE SKIP LOCKED
+)
 UPDATE public.metric_rollup_queue
 SET eligible_at = now() + @push::interval
-WHERE claimed_by = -1
-  AND organization_id = @organization_id
-  AND dateint        = @dateint
-  AND frequency_ms   = @frequency_ms
-  AND instance_num   = @instance_num
-  AND slot_id        = @slot_id
-  AND slot_count     = @slot_count
-  AND rollup_group   = @rollup_group;
+WHERE id IN (SELECT id FROM to_defer);
 
 -- name: MrqHeartbeat :execrows
 UPDATE public.metric_rollup_queue

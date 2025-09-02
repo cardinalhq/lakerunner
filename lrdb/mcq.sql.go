@@ -89,13 +89,19 @@ func (q *Queries) McqCompleteDelete(ctx context.Context, arg McqCompleteDeletePa
 }
 
 const mcqDeferKey = `-- name: McqDeferKey :exec
+WITH to_defer AS (
+  SELECT q.id
+  FROM public.metric_compaction_queue q
+  WHERE q.claimed_by = -1
+    AND q.organization_id = $2
+    AND q.dateint        = $3
+    AND q.frequency_ms   = $4
+    AND q.instance_num   = $5
+  FOR UPDATE SKIP LOCKED
+)
 UPDATE public.metric_compaction_queue
 SET eligible_at = now() + $1::interval
-WHERE claimed_by = -1
-  AND organization_id = $2
-  AND dateint        = $3
-  AND frequency_ms   = $4
-  AND instance_num   = $5
+WHERE id IN (SELECT id FROM to_defer)
 `
 
 type McqDeferKeyParams struct {

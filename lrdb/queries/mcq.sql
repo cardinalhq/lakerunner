@@ -26,13 +26,19 @@ SET claimed_by = @worker_id, claimed_at = now(), heartbeated_at = now()
 WHERE id = ANY(@ids::bigint[]);
 
 -- name: McqDeferKey :exec
+WITH to_defer AS (
+  SELECT q.id
+  FROM public.metric_compaction_queue q
+  WHERE q.claimed_by = -1
+    AND q.organization_id = @organization_id
+    AND q.dateint        = @dateint
+    AND q.frequency_ms   = @frequency_ms
+    AND q.instance_num   = @instance_num
+  FOR UPDATE SKIP LOCKED
+)
 UPDATE public.metric_compaction_queue
 SET eligible_at = now() + @push::interval
-WHERE claimed_by = -1
-  AND organization_id = @organization_id
-  AND dateint        = @dateint
-  AND frequency_ms   = @frequency_ms
-  AND instance_num   = @instance_num;
+WHERE id IN (SELECT id FROM to_defer);
 
 -- name: McqHeartbeat :execrows
 UPDATE public.metric_compaction_queue
