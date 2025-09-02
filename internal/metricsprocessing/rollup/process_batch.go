@@ -28,6 +28,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
+	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
@@ -121,9 +122,9 @@ func processBatch(
 		return err
 	}
 
-	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
+	storageClient, err := cloudstorage.NewClient(ctx, awsmanager, profile)
 	if err != nil {
-		ll.Error("Failed to get S3 client", slog.Any("error", err))
+		ll.Error("Failed to get cloud storage client", slog.Any("error", err))
 		return err
 	}
 
@@ -198,7 +199,7 @@ func processBatch(
 		slog.Int("existingSegmentCount", len(existingRows)),
 		slog.Int("targetFrequencyMs", int(targetFrequency)))
 
-	err = rollupMetricSegments(ctx, ll, mdb, tmpdir, firstItem, profile, s3client, sourceRows, existingRows, targetFrequency)
+	err = rollupMetricSegments(ctx, ll, mdb, tmpdir, firstItem, profile, storageClient, sourceRows, existingRows, targetFrequency)
 
 	elapsed := time.Since(t0)
 
@@ -231,7 +232,7 @@ func rollupMetricSegments(
 	tmpdir string,
 	firstItem lrdb.ClaimMetricRollupWorkRow,
 	profile storageprofile.StorageProfile,
-	s3client *awsclient.S3Client,
+	storageClient cloudstorage.Client,
 	sourceRows []lrdb.MetricSeg,
 	existingRows []lrdb.MetricSeg,
 	targetFrequency int32,
@@ -252,7 +253,7 @@ func rollupMetricSegments(
 	}
 
 	readerStack, err := metricsprocessing.CreateReaderStack(
-		ctx, ll, tmpdir, s3client, firstItem.OrganizationID, profile, sourceRows, config)
+		ctx, ll, tmpdir, storageClient, firstItem.OrganizationID, profile, sourceRows, config)
 	if err != nil {
 		return err
 	}
@@ -392,7 +393,7 @@ func rollupMetricSegments(
 
 	criticalCtx := context.WithoutCancel(ctx)
 
-	err = uploadRolledUpMetricsAtomic(criticalCtx, ll, mdb, s3client, results, sourceRows, existingRows, rollupParams)
+	err = uploadRolledUpMetricsAtomic(criticalCtx, ll, mdb, storageClient, results, sourceRows, existingRows, rollupParams)
 	if err != nil {
 		return fmt.Errorf("failed to upload rolled-up metrics: %w", err)
 	}
@@ -436,7 +437,7 @@ func uploadRolledUpMetricsAtomic(
 	ctx context.Context,
 	ll *slog.Logger,
 	mdb rollupStore,
-	s3client *awsclient.S3Client,
+	storageClient cloudstorage.Client,
 	results []parquetwriter.Result,
 	sourceRows []lrdb.MetricSeg,
 	existingRows []lrdb.MetricSeg,
@@ -486,7 +487,7 @@ func uploadRolledUpMetricsAtomic(
 			slog.String("bucket", params.Bucket),
 			slog.Int64("newSegmentID", segment.SegmentID))
 
-		err := segment.UploadToS3(ctx, s3client, params.Bucket)
+		err := segment.Upload(ctx, storageClient, params.Bucket)
 		if err != nil {
 			fileLogger.Error("Atomic operation failed during S3 upload - no changes made",
 				slog.Any("error", err),

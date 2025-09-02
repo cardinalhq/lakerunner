@@ -23,7 +23,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
+	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
@@ -38,7 +38,7 @@ func coordinate(
 	tmpdir string,
 	workItem lrdb.ClaimMetricCompactionWorkRow,
 	profile storageprofile.StorageProfile,
-	s3client *awsclient.S3Client,
+	storageClient cloudstorage.Client,
 	rows []lrdb.MetricSeg,
 ) error {
 	if len(rows) == 0 {
@@ -94,7 +94,7 @@ func coordinate(
 	}
 
 	readerStack, err := metricsprocessing.CreateReaderStack(
-		ctx, ll, tmpdir, s3client, workItem.OrganizationID, profile, rows, config)
+		ctx, ll, tmpdir, storageClient, workItem.OrganizationID, profile, rows, config)
 	if err != nil {
 		return err
 	}
@@ -150,7 +150,7 @@ func coordinate(
 	s3Ctx, s3Cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer s3Cancel()
 
-	segments, err := uploadCompactedFiles(s3Ctx, ll, s3client, result.Results, workItem, profile)
+	segments, err := uploadCompactedFiles(s3Ctx, ll, storageClient, result.Results, workItem, profile)
 	if err != nil {
 		// If upload failed partway through, we need to clean up any uploaded files
 		if len(segments) > 0 {
@@ -199,7 +199,7 @@ func calculateStats(result *result, inputFileCount int, inputBytes int64) stats 
 func uploadCompactedFiles(
 	ctx context.Context,
 	ll *slog.Logger,
-	s3client *awsclient.S3Client,
+	storageClient cloudstorage.Client,
 	results []parquetwriter.Result,
 	workItem lrdb.ClaimMetricCompactionWorkRow,
 	profile storageprofile.StorageProfile,
@@ -222,7 +222,7 @@ func uploadCompactedFiles(
 			return segments, fmt.Errorf("failed to create processed segment: %w", err)
 		}
 
-		if err := segment.UploadToS3(ctx, s3client, profile.Bucket); err != nil {
+		if err := segment.Upload(ctx, storageClient, profile.Bucket); err != nil {
 			ll.Error("Failed to upload compacted file to S3",
 				slog.String("bucket", profile.Bucket),
 				slog.String("objectID", segment.ObjectID),
