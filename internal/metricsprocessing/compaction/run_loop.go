@@ -40,14 +40,14 @@ func runLoop(
 		default:
 		}
 
-		bundle, err := manager.ClaimWorkBundle(ctx)
+		bundle, err := manager.ClaimWork(ctx)
 		if err != nil {
-			ll.Error("Failed to claim bundle", slog.Any("error", err))
+			ll.Error("Failed to claim work", slog.Any("error", err))
 			time.Sleep(2 * time.Second)
 			continue
 		}
 
-		if len(bundle.Items) == 0 {
+		if bundle == nil || len(bundle.Items) == 0 {
 			time.Sleep(2 * time.Second)
 			continue
 		}
@@ -72,7 +72,7 @@ func runLoop(
 		mcqHeartbeater := newMCQHeartbeater(mdb, manager.workerID, itemIDs)
 		cancel := mcqHeartbeater.Start(ctx)
 
-		err = processBatch(ctx, ll, mdb, sp, awsmanager, bundle)
+		err = processBatch(ctx, ll, mdb, sp, awsmanager, *bundle)
 
 		// Stop heartbeating before handling results
 		cancel()

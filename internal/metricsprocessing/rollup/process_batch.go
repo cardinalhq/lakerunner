@@ -59,10 +59,9 @@ func processBatch(
 	mdb rollupStore,
 	sp storageprofile.StorageProfileProvider,
 	awsmanager *awsclient.Manager,
-	claimedWork []lrdb.MrqFetchCandidatesRow,
-	estimatedTargetRecords int64,
+	bundle lrdb.RollupBundleResult,
 ) error {
-	if len(claimedWork) == 0 {
+	if len(bundle.Items) == 0 {
 		return nil
 	}
 
@@ -71,16 +70,17 @@ func processBatch(
 	ll = ll.With(slog.String("batchID", batchID))
 
 	// Log work items we're processing once at the top
-	workItemIDs := make([]int64, len(claimedWork))
-	for i, work := range claimedWork {
-		workItemIDs[i] = work.ID
+	workItemIDs := make([]int64, len(bundle.Items))
+	for i, item := range bundle.Items {
+		workItemIDs[i] = item.ID
 	}
 	ll.Debug("Processing rollup batch",
-		slog.Int("workItemCount", len(claimedWork)),
-		slog.Any("workItemIDs", workItemIDs))
+		slog.Int("workItemCount", len(bundle.Items)),
+		slog.Any("workItemIDs", workItemIDs),
+		slog.Int64("estimatedTarget", bundle.EstimatedTarget))
 
 	// Get source segments to rollup from using specific segment IDs
-	sourceRows, err := fetchMetricSegsFromCandidates(ctx, mdb, claimedWork)
+	sourceRows, err := fetchMetricSegsFromCandidates(ctx, mdb, bundle.Items)
 	if err != nil {
 		ll.Error("Failed to fetch metric segments for rollup", slog.Any("error", err))
 		return err
@@ -136,18 +136,18 @@ func processBatch(
 		slog.Int("targetFrequencyMs", int(targetFrequency)),
 		slog.Int("slotID", int(firstSeg.SlotID)),
 		slog.Int("slotCount", int(firstSeg.SlotCount)),
-		slog.Int("batchSize", len(claimedWork)))
+		slog.Int("batchSize", len(bundle.Items)))
 
 	t0 := time.Now()
 
 	// Log if we got fewer segments than expected
-	if len(sourceRows) < len(claimedWork) {
+	if len(sourceRows) < len(bundle.Items) {
 		ll.Error("Retrieved fewer segments than work items - some segments may be missing",
-			slog.Int("expectedSegments", len(claimedWork)),
+			slog.Int("expectedSegments", len(bundle.Items)),
 			slog.Int("retrievedSegments", len(sourceRows)))
-	} else if len(sourceRows) > len(claimedWork) {
+	} else if len(sourceRows) > len(bundle.Items) {
 		ll.Error("Retrieved more segments than work items - this should not happen",
-			slog.Int("expectedSegments", len(claimedWork)),
+			slog.Int("expectedSegments", len(bundle.Items)),
 			slog.Int("retrievedSegments", len(sourceRows)))
 	}
 
@@ -181,14 +181,14 @@ func processBatch(
 		slog.Int("existingSegmentCount", len(existingRows)),
 		slog.Int("targetFrequencyMs", int(targetFrequency)))
 
-	err = rollupMetricSegments(ctx, ll, mdb, tmpdir, firstSeg, profile, s3client, sourceRows, existingRows, targetFrequency, estimatedTargetRecords)
+	err = rollupMetricSegments(ctx, ll, mdb, tmpdir, firstSeg, profile, s3client, sourceRows, existingRows, targetFrequency, bundle.EstimatedTarget)
 
 	elapsed := time.Since(t0)
 
 	if err != nil {
 		ll.Info("Metric rollup batch completed",
 			slog.String("result", "error"),
-			slog.Int("batchSize", len(claimedWork)),
+			slog.Int("batchSize", len(bundle.Items)),
 			slog.Int("sourceSegmentCount", len(sourceRows)),
 			slog.Int("existingTargetSegmentCount", len(existingRows)),
 			slog.Duration("elapsed", elapsed),
@@ -197,7 +197,7 @@ func processBatch(
 	} else {
 		ll.Info("Metric rollup batch completed",
 			slog.String("result", "success"),
-			slog.Int("batchSize", len(claimedWork)),
+			slog.Int("batchSize", len(bundle.Items)),
 			slog.Int("sourceSegmentCount", len(sourceRows)),
 			slog.Int("existingTargetSegmentCount", len(existingRows)),
 			slog.Int("sourceFrequencyMs", int(firstSeg.FrequencyMs)),
