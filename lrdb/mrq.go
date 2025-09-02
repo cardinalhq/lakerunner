@@ -170,16 +170,6 @@ func (s *Store) ClaimRollupBundle(ctx context.Context, p BundleParams) (*RollupB
 	}, nil
 }
 
-func (s *Store) HeartbeatRollup(ctx context.Context, workerID int64, ids []int64) error {
-	if len(ids) == 0 {
-		return nil
-	}
-	return s.MrqHeartbeat(ctx, MrqHeartbeatParams{
-		WorkerID: workerID,
-		Ids:      ids,
-	})
-}
-
 func (s *Store) CompleteRollup(ctx context.Context, workerID int64, ids []int64) error {
 	if len(ids) == 0 {
 		return nil

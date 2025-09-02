@@ -20,10 +20,11 @@ import (
 	"time"
 
 	"github.com/cardinalhq/lakerunner/internal/heartbeat"
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 type mrqHeartbeatStore interface {
-	HeartbeatRollup(ctx context.Context, workerID int64, ids []int64) error
+	MrqHeartbeat(ctx context.Context, arg lrdb.MrqHeartbeatParams) error
 }
 
 func newMRQHeartbeater(db mrqHeartbeatStore, workerID int64, items []int64) *heartbeat.Heartbeater {
@@ -34,7 +35,10 @@ func newMRQHeartbeater(db mrqHeartbeatStore, workerID int64, items []int64) *hea
 	}
 
 	heartbeatFunc := func(ctx context.Context) error {
-		return db.HeartbeatRollup(ctx, workerID, items)
+		return db.MrqHeartbeat(ctx, lrdb.MrqHeartbeatParams{
+			WorkerID: workerID,
+			Ids:      items,
+		})
 	}
 
 	logger := slog.Default().With("component", "mrq_heartbeater", "worker_id", workerID, "item_count", len(items))
