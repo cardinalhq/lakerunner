@@ -389,6 +389,101 @@ func TestBuildWindowed_RespectsMetricFilter_IgnoresOtherMetrics(t *testing.T) {
 	}
 }
 
+func TestBuildIncreaseWindowed_StartEdgeExtrapolation(t *testing.T) {
+	db := openDuckDB(t)
+	createMetricsTable(t, db, false)
+
+	// Two buckets inside the final frame [10000..40000], with a gap from start(10000) to first(20000).
+	// step=10s, range=30s. Prom-style extrapolation should add up to half avg interval (=10s) at the start.
+	// delta_sum = 2 + 5 = 7; sampled_interval = 40000-20000 = 20000
+	// factor = (sampled_interval + 10s) / sampled_interval = (20000+10000)/20000 = 1.5
+	// expected increase at ts=40000 = 7 * 1.5 = 10.5
+	mustExec(t, db, `INSERT INTO metrics VALUES
+	 (20000, 'm', 2.0, 1, 2.0, 2.0),
+	 (40000, 'm', 5.0, 1, 5.0, 5.0)`)
+
+	be := &BaseExpr{
+		Metric:   "m",
+		FuncName: "increase",
+		Range:    "30s",
+	}
+	sql := replaceStartEnd(replaceTableMetrics(be.ToWorkerSQL(10*time.Second)), 0, 50000)
+
+	rows := queryAll(t, db, sql)
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows (one per existing bucket), got %d\nsql:\n%s", len(rows), sql)
+	}
+
+	var seen40000 bool
+	for _, r := range rows {
+		ts := getInt64(r["bucket_ts"])
+		sum := getFloat(r["sum"])
+		if ts == 20000 {
+			// Only one sample in frame -> should be NULL
+			if !math.IsNaN(sum) {
+				t.Fatalf("expected NULL at ts=20000 (n<2), got %v", sum)
+			}
+		}
+		if ts == 40000 {
+			seen40000 = true
+			if math.Abs(sum-10.5) > 1e-9 {
+				t.Fatalf("increase@40000 got=%v want=10.5", sum)
+			}
+		}
+	}
+	if !seen40000 {
+		t.Fatalf("missing ts=40000 row\nsql:\n%s", sql)
+	}
+}
+
+func TestBuildIncreaseWindowed_GroupBy_GatingAndIsolation(t *testing.T) {
+	db := openDuckDB(t)
+	createMetricsTable(t, db, true)
+
+	// pod=a has two samples → extrapolated result at ts=40000 should be 1.5×(1+1) = 3.0
+	// pod=b has only one sample in frame → NULL
+	mustExec(t, db, `INSERT INTO metrics VALUES
+	 (20000, 'm', 1.0, 1, 1.0, 1.0, 'a'),
+	 (40000, 'm', 1.0, 1, 1.0, 1.0, 'a'),
+	 (40000, 'm', 5.0, 1, 5.0, 5.0, 'b')`)
+
+	be := &BaseExpr{
+		Metric:   "m",
+		FuncName: "increase",
+		Range:    "30s",
+		GroupBy:  []string{"pod"},
+	}
+	sql := replaceStartEnd(replaceTableMetrics(be.ToWorkerSQL(10*time.Second)), 0, 50000)
+
+	rows := queryAll(t, db, sql)
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 rows (a@20000,a@40000,b@40000), got %d\nsql:\n%s", len(rows), sql)
+	}
+
+	type key struct {
+		pod string
+		ts  int64
+	}
+	got := map[key]float64{}
+	for _, r := range rows {
+		k := key{pod: asString(r["pod"]), ts: getInt64(r["bucket_ts"])}
+		got[k] = getFloat(r["sum"])
+	}
+
+	// a@20000 -> n=1 -> NULL
+	if v := got[key{"a", 20000}]; !math.IsNaN(v) {
+		t.Fatalf("pod=a ts=20000 expected NULL (n<2), got %v", v)
+	}
+	// a@40000 -> delta_sum=2, factor=1.5 => 3.0
+	if v := got[key{"a", 40000}]; math.Abs(v-3.0) > 1e-9 {
+		t.Fatalf("pod=a ts=40000 increase got=%v want=3.0", v)
+	}
+	// b@40000 -> only one sample -> NULL
+	if v := got[key{"b", 40000}]; !math.IsNaN(v) {
+		t.Fatalf("pod=b ts=40000 expected NULL (n<2), got %v", v)
+	}
+}
+
 // --- small helpers ---
 
 func asString(v any) string {
