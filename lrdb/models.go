@@ -187,6 +187,7 @@ type MetricCompactionQueue struct {
 	ClaimedBy      int64      `json:"claimed_by"`
 	ClaimedAt      *time.Time `json:"claimed_at"`
 	HeartbeatedAt  *time.Time `json:"heartbeated_at"`
+	EligibleAt     time.Time  `json:"eligible_at"`
 }
 
 type MetricPackEstimate struct {
@@ -214,6 +215,7 @@ type MetricRollupQueue struct {
 	RecordCount    int64      `json:"record_count"`
 	RollupGroup    int64      `json:"rollup_group"`
 	WindowCloseTs  time.Time  `json:"window_close_ts"`
+	EligibleAt     time.Time  `json:"eligible_at"`
 }
 
 type MetricSeg struct {

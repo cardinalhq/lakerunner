@@ -1,0 +1,62 @@
+-- name: McqPickHead :one
+SELECT id, organization_id, dateint, frequency_ms, instance_num, segment_id, record_count, queue_ts
+FROM public.metric_compaction_queue
+WHERE claimed_by = -1
+  AND eligible_at <= now()
+ORDER BY priority ASC, eligible_at ASC, queue_ts ASC
+LIMIT 1
+FOR UPDATE SKIP LOCKED;
+
+-- name: McqFetchCandidates :many
+SELECT id, segment_id, record_count, queue_ts
+FROM public.metric_compaction_queue
+WHERE claimed_by = -1
+  AND eligible_at <= now()
+  AND organization_id = @organization_id
+  AND dateint        = @dateint
+  AND frequency_ms   = @frequency_ms
+  AND instance_num   = @instance_num
+ORDER BY queue_ts ASC, id ASC
+LIMIT @max_rows
+FOR UPDATE SKIP LOCKED;
+
+-- name: McqClaimBundle :exec
+UPDATE public.metric_compaction_queue
+SET claimed_by = @worker_id, claimed_at = now(), heartbeated_at = now()
+WHERE id = ANY(@ids::bigint[]);
+
+-- name: McqDeferKey :exec
+UPDATE public.metric_compaction_queue
+SET eligible_at = now() + @push::interval
+WHERE claimed_by = -1
+  AND organization_id = @organization_id
+  AND dateint        = @dateint
+  AND frequency_ms   = @frequency_ms
+  AND instance_num   = @instance_num;
+
+-- name: McqHeartbeat :exec
+UPDATE public.metric_compaction_queue
+SET heartbeated_at = now()
+WHERE claimed_by = @worker_id
+  AND id = ANY(@ids::bigint[]);
+
+-- name: McqCompleteDelete :exec
+DELETE FROM public.metric_compaction_queue
+WHERE claimed_by = @worker_id
+  AND id = ANY(@ids::bigint[]);
+
+-- name: McqReclaimTimeouts :execrows
+WITH stale AS (
+  SELECT id
+  FROM public.metric_compaction_queue
+  WHERE claimed_by <> -1
+    AND heartbeated_at < (now() - @max_age::interval)
+  LIMIT @max_rows
+)
+UPDATE public.metric_compaction_queue AS q
+SET claimed_by = -1,
+    claimed_at = NULL,
+    heartbeated_at = NULL,
+    tries = q.tries + 1
+FROM stale s
+WHERE q.id = s.id;
