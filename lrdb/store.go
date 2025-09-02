@@ -32,7 +32,7 @@ type Store struct {
 // NewStore creates a new Store
 func NewStore(connPool *pgxpool.Pool) *Store {
 	queries := New(connPool)
-	estimator := NewMetricPackEstimator(queries, 1000) // 1000 item cache
+	estimator := NewMetricPackEstimator(queries)
 	return &Store{
 		connPool:  connPool,
 		Queries:   queries,
