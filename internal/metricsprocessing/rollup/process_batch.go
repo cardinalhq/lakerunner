@@ -16,25 +16,19 @@ package rollup
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"time"
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
-	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
-	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
-	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -228,16 +222,10 @@ func rollupMetricSegments(
 		return nil
 	}
 
-	// Track segments coming into rollup processing
-	processingSegmentsIn.Add(ctx, int64(len(sourceRows)), metric.WithAttributes(
-		attribute.String("signal", "metrics"),
-		attribute.String("action", "rollup"),
-	))
-
 	// Create reader stack with sorting support
 	config := metricsprocessing.ReaderStackConfig{
-		FileSortedCounter: fileSortedCounter,
-		CommonAttributes:  commonAttributes,
+		FileSortedCounter: nil, // Telemetry is handled in the generic processor
+		CommonAttributes:  attribute.NewSet(),
 	}
 
 	readerStack, err := metricsprocessing.CreateReaderStack(
@@ -266,6 +254,8 @@ func rollupMetricSegments(
 		inputRecords += row.RecordCount
 	}
 
+	// Input metrics are tracked in the generic processor
+
 	ll.Debug("Starting rollup processing",
 		slog.Int("inputFiles", len(readerStack.DownloadedFiles)),
 		slog.Int("sourceSegments", len(sourceRows)),
@@ -274,112 +264,40 @@ func rollupMetricSegments(
 		slog.Int("targetFrequencyMs", int(targetFrequency)),
 		slog.Int64("estimatedTargetRecords", estimatedTargetRecords))
 
-	aggregatingReader, err := filereader.NewAggregatingMetricsReader(readerStack.FinalReader, int64(targetFrequency), 1000)
+	// Use generic processor for rollup
+	processingInput := metricsprocessing.ProcessingInput{
+		ReaderStack:       readerStack,
+		TargetFrequencyMs: targetFrequency, // Target frequency for rollup
+		TmpDir:            tmpdir,
+		Logger:            ll,
+		RecordsLimit:      estimatedTargetRecords,
+		EstimatedRecords:  estimatedTargetRecords,
+		Action:            "rollup",
+		InputRecords:      inputRecords,
+		InputBytes:        inputBytes,
+	}
+
+	processingResult, err := metricsprocessing.AggregateMetrics(ctx, processingInput)
 	if err != nil {
-		ll.Error("Failed to create aggregating metrics reader", slog.Any("error", err))
-		return fmt.Errorf("creating aggregating metrics reader: %w", err)
-	}
-	defer aggregatingReader.Close()
-
-	writer, err := factories.NewMetricsWriter(tmpdir, estimatedTargetRecords)
-	if err != nil {
-		ll.Error("Failed to create metrics writer", slog.Any("error", err))
-		return fmt.Errorf("creating metrics writer: %w", err)
-	}
-	defer writer.Abort()
-
-	totalRows := int64(0)
-	batchCount := 0
-
-	for {
-		batch, err := aggregatingReader.Next(ctx)
-		batchCount++
-
-		if err != nil && !errors.Is(err, io.EOF) {
-			if batch != nil {
-				pipeline.ReturnBatch(batch)
-			}
-			ll.Error("Failed to read from aggregating reader", slog.Any("error", err))
-			return fmt.Errorf("reading from aggregating reader: %w", err)
-		}
-
-		if batch == nil || batch.Len() == 0 {
-			pipeline.ReturnBatch(batch)
-			break
-		}
-
-		if errors.Is(err, io.EOF) {
-			break
-		}
-
-		totalRows += int64(batch.Len())
-		if batch.Len() > 0 {
-			if err := writer.WriteBatch(batch); err != nil {
-				ll.Error("Failed to write batch", slog.Any("error", err))
-				pipeline.ReturnBatch(batch)
-				return fmt.Errorf("writing batch: %w", err)
-			}
-		}
-
-		pipeline.ReturnBatch(batch)
-	}
-
-	results, err := writer.Close(ctx)
-	if err != nil {
-		ll.Error("Failed to finish writing", slog.Any("error", err))
-		return fmt.Errorf("finishing writer: %w", err)
-	}
-
-	// Calculate output statistics
-	outputBytes := int64(0)
-	outputRecords := int64(0)
-	for _, result := range results {
-		outputBytes += result.FileSize
-		outputRecords += result.RecordCount
+		return fmt.Errorf("rollup processing failed: %w", err)
 	}
 
 	// Calculate compression ratio
 	compressionRatio := float64(0)
 	if inputBytes > 0 {
-		compressionRatio = float64(outputBytes) / float64(inputBytes) * 100
+		compressionRatio = float64(processingResult.Stats.OutputBytes) / float64(inputBytes) * 100
 	}
 
 	ll.Debug("Rollup processing completed",
 		slog.Int64("inputRecords", inputRecords),
-		slog.Int64("outputRecords", outputRecords),
-		slog.Int64("totalRows", totalRows),
-		slog.Int("batchCount", batchCount),
-		slog.Int("outputFiles", len(results)),
+		slog.Int64("outputRecords", processingResult.Stats.OutputRecords),
+		slog.Int64("totalRows", processingResult.Stats.TotalRows),
+		slog.Int("batchCount", processingResult.Stats.BatchCount),
+		slog.Int("outputFiles", processingResult.Stats.OutputSegments),
 		slog.Int("inputFiles", len(readerStack.DownloadedFiles)),
 		slog.Int64("inputBytes", inputBytes),
-		slog.Int64("outputBytes", outputBytes),
+		slog.Int64("outputBytes", processingResult.Stats.OutputBytes),
 		slog.Float64("compressionRatio", compressionRatio))
-
-	// Track processing metrics
-	processingSegmentsOut.Add(ctx, int64(len(results)), metric.WithAttributes(
-		attribute.String("signal", "metrics"),
-		attribute.String("action", "rollup"),
-	))
-
-	processingRecordsIn.Add(ctx, inputRecords, metric.WithAttributes(
-		attribute.String("signal", "metrics"),
-		attribute.String("action", "rollup"),
-	))
-
-	processingRecordsOut.Add(ctx, outputRecords, metric.WithAttributes(
-		attribute.String("signal", "metrics"),
-		attribute.String("action", "rollup"),
-	))
-
-	processingBytesIn.Add(ctx, inputBytes, metric.WithAttributes(
-		attribute.String("signal", "metrics"),
-		attribute.String("action", "rollup"),
-	))
-
-	processingBytesOut.Add(ctx, outputBytes, metric.WithAttributes(
-		attribute.String("signal", "metrics"),
-		attribute.String("action", "rollup"),
-	))
 
 	rollupParams := CompactionUploadParams{
 		OrganizationID: firstSeg.OrganizationID,
@@ -395,7 +313,7 @@ func rollupMetricSegments(
 
 	criticalCtx := context.WithoutCancel(ctx)
 
-	err = uploadRolledUpMetricsAtomic(criticalCtx, ll, mdb, s3client, results, sourceRows, existingRows, rollupParams)
+	err = uploadRolledUpMetricsAtomic(criticalCtx, ll, mdb, s3client, processingResult.RawResults, sourceRows, existingRows, rollupParams)
 	if err != nil {
 		return fmt.Errorf("failed to upload rolled-up metrics: %w", err)
 	}

@@ -13,33 +13,3 @@
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 package compaction
-
-import (
-	"log/slog"
-
-	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
-	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
-)
-
-type input struct {
-	ReaderStack  *metricsprocessing.ReaderStackResult
-	FrequencyMs  int32
-	TmpDir       string
-	Logger       *slog.Logger
-	RecordsLimit int64
-}
-
-type result struct {
-	Results     []parquetwriter.Result
-	TotalRows   int64
-	OutputBytes int64
-}
-
-type stats struct {
-	TotalRows        int64
-	OutputFiles      int
-	InputFiles       int
-	InputBytes       int64
-	OutputBytes      int64
-	CompressionRatio float64
-}
