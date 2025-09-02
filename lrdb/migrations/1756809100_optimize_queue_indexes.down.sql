@@ -44,8 +44,5 @@ CREATE INDEX IF NOT EXISTS idx_mrq_ready_group
 CREATE INDEX IF NOT EXISTS idx_mrq_claimed_at_nonnull
   ON metric_rollup_queue (claimed_at) WHERE claimed_at IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS idx_mrq_segment_id
-  ON metric_rollup_queue (segment_id);
-
 CREATE INDEX IF NOT EXISTS mrq_claimed_hb_idx
   ON metric_rollup_queue (heartbeated_at) WHERE claimed_by <> -1;

@@ -17,6 +17,7 @@ ON public.metric_compaction_queue (
     dateint,
     frequency_ms,
     instance_num,
+    priority DESC,
     eligible_at,
     queue_ts,
     id
@@ -27,13 +28,12 @@ WHERE claimed_by = -1;
 DROP INDEX IF EXISTS idx_mrq_ready_global;
 DROP INDEX IF EXISTS idx_mrq_ready_group;
 DROP INDEX IF EXISTS idx_mrq_claimed_at_nonnull;
-DROP INDEX IF EXISTS idx_mrq_segment_id;
 DROP INDEX IF EXISTS mrq_claimed_hb_idx;
 
 -- Create optimized rollup queue ready indexes
 CREATE INDEX IF NOT EXISTS mrq_ready_idx
 ON public.metric_rollup_queue (
-    priority,
+    priority DESC,
     eligible_at,
     queue_ts
 ) INCLUDE (
@@ -57,6 +57,7 @@ ON public.metric_rollup_queue (
     slot_id,
     slot_count,
     rollup_group,
+    priority DESC,
     eligible_at,
     queue_ts,
     id
