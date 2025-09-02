@@ -165,7 +165,7 @@ func (q *Queries) MrqFetchCandidates(ctx context.Context, arg MrqFetchCandidates
 	return items, nil
 }
 
-const mrqHeartbeat = `-- name: MrqHeartbeat :exec
+const mrqHeartbeat = `-- name: MrqHeartbeat :execrows
 UPDATE public.metric_rollup_queue
 SET heartbeated_at = now()
 WHERE claimed_by = $1 AND id = ANY($2::bigint[])
@@ -176,9 +176,12 @@ type MrqHeartbeatParams struct {
 	Ids      []int64 `json:"ids"`
 }
 
-func (q *Queries) MrqHeartbeat(ctx context.Context, arg MrqHeartbeatParams) error {
-	_, err := q.db.Exec(ctx, mrqHeartbeat, arg.WorkerID, arg.Ids)
-	return err
+func (q *Queries) MrqHeartbeat(ctx context.Context, arg MrqHeartbeatParams) (int64, error) {
+	result, err := q.db.Exec(ctx, mrqHeartbeat, arg.WorkerID, arg.Ids)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const mrqPickHead = `-- name: MrqPickHead :one

@@ -42,7 +42,7 @@ WHERE claimed_by = -1
   AND slot_count     = @slot_count
   AND rollup_group   = @rollup_group;
 
--- name: MrqHeartbeat :exec
+-- name: MrqHeartbeat :execrows
 UPDATE public.metric_rollup_queue
 SET heartbeated_at = now()
 WHERE claimed_by = @worker_id AND id = ANY(@ids::bigint[]);

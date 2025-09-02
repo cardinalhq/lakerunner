@@ -156,24 +156,7 @@ func processBatch(
 		return nil
 	}
 
-	// Get existing segments at target frequency
-	existingRows, err := mdb.GetMetricSegsForRollup(ctx, lrdb.GetMetricSegsForRollupParams{
-		OrganizationID: firstSeg.OrganizationID,
-		Dateint:        firstSeg.Dateint,
-		FrequencyMs:    targetFrequency,
-		InstanceNum:    firstSeg.InstanceNum,
-		SlotID:         firstSeg.SlotID,
-	})
-	if err != nil {
-		ll.Error("Failed to get existing metric segments", slog.Any("error", err))
-		return err
-	}
-
-	ll.Debug("Retrieved existing target frequency segments for rollup analysis",
-		slog.Int("existingSegmentCount", len(existingRows)),
-		slog.Int("targetFrequencyMs", int(targetFrequency)))
-
-	err = rollupMetricSegments(ctx, ll, mdb, tmpdir, firstSeg, profile, s3client, sourceRows, existingRows, targetFrequency, bundle.EstimatedTarget)
+	err = rollupMetricSegments(ctx, ll, mdb, tmpdir, firstSeg, profile, s3client, sourceRows, targetFrequency, bundle.EstimatedTarget)
 
 	elapsed := time.Since(t0)
 
@@ -182,7 +165,6 @@ func processBatch(
 			slog.String("result", "error"),
 			slog.Int("batchSize", len(bundle.Items)),
 			slog.Int("sourceSegmentCount", len(sourceRows)),
-			slog.Int("existingTargetSegmentCount", len(existingRows)),
 			slog.Duration("elapsed", elapsed),
 			slog.Any("error", err))
 		return err
@@ -191,7 +173,6 @@ func processBatch(
 			slog.String("result", "success"),
 			slog.Int("batchSize", len(bundle.Items)),
 			slog.Int("sourceSegmentCount", len(sourceRows)),
-			slog.Int("existingTargetSegmentCount", len(existingRows)),
 			slog.Int("sourceFrequencyMs", int(firstSeg.FrequencyMs)),
 			slog.Int("targetFrequencyMs", int(targetFrequency)),
 			slog.Duration("elapsed", elapsed))
@@ -208,7 +189,6 @@ func rollupMetricSegments(
 	profile storageprofile.StorageProfile,
 	s3client *awsclient.S3Client,
 	sourceRows []lrdb.MetricSeg,
-	existingRows []lrdb.MetricSeg,
 	targetFrequency int32,
 	estimatedTargetRecords int64,
 ) error {
@@ -306,7 +286,7 @@ func rollupMetricSegments(
 
 	criticalCtx := context.WithoutCancel(ctx)
 
-	err = uploadRolledUpMetricsAtomic(criticalCtx, ll, mdb, s3client, processingResult.RawResults, sourceRows, existingRows, rollupParams)
+	err = uploadRolledUpMetricsAtomic(criticalCtx, ll, mdb, s3client, processingResult.RawResults, sourceRows, rollupParams)
 	if err != nil {
 		return fmt.Errorf("failed to upload rolled-up metrics: %w", err)
 	}
@@ -349,20 +329,12 @@ func uploadRolledUpMetricsAtomic(
 	s3client *awsclient.S3Client,
 	results []parquetwriter.Result,
 	sourceRows []lrdb.MetricSeg,
-	existingRows []lrdb.MetricSeg,
 	params RollupUploadParams,
 ) error {
 	// Create processed segments from results
 	segments, err := metricsprocessing.CreateSegmentsFromResults(results, params.OrganizationID, params.CollectorName, ll)
 	if err != nil {
 		return fmt.Errorf("failed to create processed segment: %w", err)
-	}
-	var targetOldRecords []lrdb.CompactMetricSegsOld
-	for _, row := range existingRows {
-		targetOldRecords = append(targetOldRecords, lrdb.CompactMetricSegsOld{
-			SegmentID: row.SegmentID,
-			SlotID:    row.SlotID,
-		})
 	}
 
 	sourceSegmentIDs := make([]int64, len(sourceRows))
@@ -453,13 +425,12 @@ func uploadRolledUpMetricsAtomic(
 			return fmt.Errorf("atomic rollup transaction: %w", err)
 		}
 
-		fileLogger.Debug("Source marked as rolled up, target segments replaced - rollup transaction complete",
+		fileLogger.Debug("Source marked as rolled up, new target segment inserted - rollup transaction complete",
 			slog.Int64("newSegmentID", segment.SegmentID),
 			slog.Int64("newRecordCount", segment.Result.RecordCount),
 			slog.Int64("newFileSize", segment.Result.FileSize),
 			slog.String("newObjectID", segment.ObjectID),
 			slog.Int("sourceSegmentCount", len(sourceSegmentIDs)),
-			slog.Int("targetReplacedCount", len(targetOldRecords)),
 			slog.Int("sourceFrequencyMs", int(sourceRows[0].FrequencyMs)),
 			slog.Int("targetFrequencyMs", int(params.FrequencyMs)))
 
@@ -492,8 +463,7 @@ func uploadRolledUpMetricsAtomic(
 
 	ll.Info("Successfully completed atomic rollup operations",
 		slog.Int("outputFilesCreated", len(results)),
-		slog.Int("sourceSegmentsRolledUp", len(sourceSegmentIDs)),
-		slog.Int("targetSegmentsReplaced", len(targetOldRecords)),
+		slog.Int("sourceSegmentsMarkedRolledUp", len(sourceSegmentIDs)),
 		slog.Int64("inputRecords", totalInputRecords),
 		slog.Int64("outputRecords", totalOutputRecords),
 		slog.Int64("inputBytes", totalInputBytes),

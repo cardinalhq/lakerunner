@@ -53,8 +53,6 @@ type Querier interface {
 	GetExemplarTracesCreatedAfter(ctx context.Context, ts time.Time) ([]ExemplarTrace, error)
 	GetLogSegmentsForCompaction(ctx context.Context, arg GetLogSegmentsForCompactionParams) ([]GetLogSegmentsForCompactionRow, error)
 	GetMetricSegsByIds(ctx context.Context, arg GetMetricSegsByIdsParams) ([]MetricSeg, error)
-	GetMetricSegsForCompaction(ctx context.Context, arg GetMetricSegsForCompactionParams) ([]MetricSeg, error)
-	GetMetricSegsForRollup(ctx context.Context, arg GetMetricSegsForRollupParams) ([]MetricSeg, error)
 	GetSpanInfoByFingerprint(ctx context.Context, arg GetSpanInfoByFingerprintParams) (GetSpanInfoByFingerprintRow, error)
 	GetTraceSegmentsForCompaction(ctx context.Context, arg GetTraceSegmentsForCompactionParams) ([]GetTraceSegmentsForCompactionRow, error)
 	InqueueJournalDelete(ctx context.Context, arg InqueueJournalDeleteParams) error
@@ -77,7 +75,7 @@ type Querier interface {
 	McqCompleteDelete(ctx context.Context, arg McqCompleteDeleteParams) error
 	McqDeferKey(ctx context.Context, arg McqDeferKeyParams) error
 	McqFetchCandidates(ctx context.Context, arg McqFetchCandidatesParams) ([]McqFetchCandidatesRow, error)
-	McqHeartbeat(ctx context.Context, arg McqHeartbeatParams) error
+	McqHeartbeat(ctx context.Context, arg McqHeartbeatParams) (int64, error)
 	McqPickHead(ctx context.Context) (McqPickHeadRow, error)
 	McqQueueWork(ctx context.Context, arg McqQueueWorkParams) error
 	McqReclaimTimeouts(ctx context.Context, arg McqReclaimTimeoutsParams) (int64, error)
@@ -93,7 +91,7 @@ type Querier interface {
 	MrqCompleteDelete(ctx context.Context, arg MrqCompleteDeleteParams) error
 	MrqDeferKey(ctx context.Context, arg MrqDeferKeyParams) error
 	MrqFetchCandidates(ctx context.Context, arg MrqFetchCandidatesParams) ([]MrqFetchCandidatesRow, error)
-	MrqHeartbeat(ctx context.Context, arg MrqHeartbeatParams) error
+	MrqHeartbeat(ctx context.Context, arg MrqHeartbeatParams) (int64, error)
 	MrqPickHead(ctx context.Context) (MrqPickHeadRow, error)
 	MrqQueueWork(ctx context.Context, arg MrqQueueWorkParams) error
 	MrqReclaimTimeouts(ctx context.Context, arg MrqReclaimTimeoutsParams) (int64, error)

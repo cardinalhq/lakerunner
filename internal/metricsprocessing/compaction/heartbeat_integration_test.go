@@ -18,6 +18,7 @@ package compaction
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"testing"
 	"time"
@@ -40,14 +41,30 @@ func newTestMCQHeartbeater(db lrdb.StoreFull, workerID int64, items []int64) *he
 		}, time.Minute, slog.Default().With("component", "mcq_heartbeater", "worker_id", workerID, "item_count", 0))
 	}
 
+	expectedCount := int64(len(items))
+	logger := slog.Default().With("component", "mcq_heartbeater", "worker_id", workerID, "item_count", expectedCount)
+
 	heartbeatFunc := func(ctx context.Context) error {
-		return db.McqHeartbeat(ctx, lrdb.McqHeartbeatParams{
-			Ids:      items,
+		updatedCount, err := db.McqHeartbeat(ctx, lrdb.McqHeartbeatParams{
 			WorkerID: workerID,
+			Ids:      items,
 		})
+		if err != nil {
+			return err
+		}
+
+		if updatedCount != expectedCount {
+			logger.Error("Heartbeat did not update all expected rows",
+				slog.Int64("expected", expectedCount),
+				slog.Int64("updated", updatedCount),
+				slog.Int64("missing", expectedCount-updatedCount))
+			// Return error to trigger heartbeat failure handling
+			return fmt.Errorf("heartbeat updated %d rows, expected %d", updatedCount, expectedCount)
+		}
+
+		return nil
 	}
 
-	logger := slog.Default().With("component", "mcq_heartbeater", "worker_id", workerID, "item_count", len(items))
 	return heartbeat.New(heartbeatFunc, time.Minute, logger)
 }
 

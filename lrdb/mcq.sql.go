@@ -185,7 +185,7 @@ func (q *Queries) McqFetchCandidates(ctx context.Context, arg McqFetchCandidates
 	return items, nil
 }
 
-const mcqHeartbeat = `-- name: McqHeartbeat :exec
+const mcqHeartbeat = `-- name: McqHeartbeat :execrows
 UPDATE public.metric_compaction_queue
 SET heartbeated_at = now()
 WHERE claimed_by = $1
@@ -197,9 +197,12 @@ type McqHeartbeatParams struct {
 	Ids      []int64 `json:"ids"`
 }
 
-func (q *Queries) McqHeartbeat(ctx context.Context, arg McqHeartbeatParams) error {
-	_, err := q.db.Exec(ctx, mcqHeartbeat, arg.WorkerID, arg.Ids)
-	return err
+func (q *Queries) McqHeartbeat(ctx context.Context, arg McqHeartbeatParams) (int64, error) {
+	result, err := q.db.Exec(ctx, mcqHeartbeat, arg.WorkerID, arg.Ids)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const mcqPickHead = `-- name: McqPickHead :one

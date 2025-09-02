@@ -30,7 +30,7 @@ type MetricSegmentInserter interface {
 	RollupMetricSegs(ctx context.Context, sourceParams RollupSourceParams, targetParams RollupTargetParams, sourceSegmentIDs []int64, newRecords []RollupNewRecord) error
 	ClaimRollupBundle(ctx context.Context, params BundleParams) (*RollupBundleResult, error)
 	CompleteRollup(ctx context.Context, workerID int64, ids []int64) error
-	MrqHeartbeat(ctx context.Context, arg MrqHeartbeatParams) error
+	MrqHeartbeat(ctx context.Context, arg MrqHeartbeatParams) (int64, error)
 	ClaimCompactionBundle(ctx context.Context, p BundleParams) (CompactionBundleResult, error)
 	MrqQueueWork(ctx context.Context, params MrqQueueWorkParams) error
 }

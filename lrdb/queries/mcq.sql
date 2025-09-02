@@ -34,7 +34,7 @@ WHERE claimed_by = -1
   AND frequency_ms   = @frequency_ms
   AND instance_num   = @instance_num;
 
--- name: McqHeartbeat :exec
+-- name: McqHeartbeat :execrows
 UPDATE public.metric_compaction_queue
 SET heartbeated_at = now()
 WHERE claimed_by = @worker_id

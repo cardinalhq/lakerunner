@@ -32,9 +32,8 @@ type rollupStore interface {
 	s3helper.ObjectCleanupStore
 	ClaimRollupBundle(ctx context.Context, params lrdb.BundleParams) (*lrdb.RollupBundleResult, error)
 	CompleteRollup(ctx context.Context, workerID int64, ids []int64) error
-	MrqHeartbeat(ctx context.Context, arg lrdb.MrqHeartbeatParams) error
+	MrqHeartbeat(ctx context.Context, arg lrdb.MrqHeartbeatParams) (int64, error)
 	MrqRelease(ctx context.Context, arg lrdb.MrqReleaseParams) error
-	GetMetricSegsForRollup(ctx context.Context, params lrdb.GetMetricSegsForRollupParams) ([]lrdb.MetricSeg, error)
 	GetMetricSegsByIds(ctx context.Context, params lrdb.GetMetricSegsByIdsParams) ([]lrdb.MetricSeg, error)
 	RollupMetricSegs(ctx context.Context, sourceParams lrdb.RollupSourceParams, targetParams lrdb.RollupTargetParams, sourceSegmentIDs []int64, newRecords []lrdb.RollupNewRecord) error
 	McqQueueWork(ctx context.Context, arg lrdb.McqQueueWorkParams) error

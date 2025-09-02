@@ -36,34 +36,6 @@ VALUES (
   @compacted
 );
 
--- name: GetMetricSegsForCompaction :many
-SELECT *
-FROM metric_seg
-WHERE
-  organization_id = @organization_id AND
-  dateint = @dateint AND
-  frequency_ms = @frequency_ms AND
-  instance_num = @instance_num AND
-  slot_id = @slot_id AND
-  ts_range && int8range(@start_ts, @end_ts, '[)') AND
-  file_size <= @max_file_size AND
-  (created_at, segment_id) > (@cursor_created_at, @cursor_segment_id::bigint)
-ORDER BY
-  created_at, segment_id
-LIMIT @maxrows;
-
--- name: GetMetricSegsForRollup :many
-SELECT *
-FROM metric_seg
-WHERE
-  organization_id = @organization_id AND
-  dateint = @dateint AND
-  frequency_ms = @frequency_ms AND
-  instance_num = @instance_num AND
-  slot_id = @slot_id
-ORDER BY
-  ts_range;
-
 -- name: GetMetricSegsByIds :many
 SELECT *
 FROM metric_seg

@@ -33,7 +33,7 @@ type compactionStore interface {
 	ClaimCompactionBundle(ctx context.Context, p lrdb.BundleParams) (lrdb.CompactionBundleResult, error)
 	McqCompleteDelete(ctx context.Context, arg lrdb.McqCompleteDeleteParams) error
 	McqDeferKey(ctx context.Context, arg lrdb.McqDeferKeyParams) error
-	McqHeartbeat(ctx context.Context, arg lrdb.McqHeartbeatParams) error
+	McqHeartbeat(ctx context.Context, arg lrdb.McqHeartbeatParams) (int64, error)
 	McqRelease(ctx context.Context, arg lrdb.McqReleaseParams) error
 	GetMetricSegsByIds(ctx context.Context, arg lrdb.GetMetricSegsByIdsParams) ([]lrdb.MetricSeg, error)
 	CompactMetricSegs(ctx context.Context, args lrdb.CompactMetricSegsParams) error
