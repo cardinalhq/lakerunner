@@ -26,14 +26,16 @@ import (
 const (
 	// SortVersionUnknown indicates the file's sort order is unknown or unsorted (legacy files)
 	SortVersionUnknown = 0
-	// SortVersionNameTidTimestamp indicates the file is sorted by [metric_name, tid, timestamp]
+	// SortVersionNameTidTimestamp indicates the file is sorted by [metric_name, tid, timestamp] (old TID calculation)
 	SortVersionNameTidTimestamp = 1
+	// SortVersionNameTidTimestampV2 indicates the file is sorted by [metric_name, tid, timestamp] (new TID calculation)
+	SortVersionNameTidTimestampV2 = 2
 )
 
 // Current metric sort configuration - single source of truth for all metric sorting
 const (
 	// CurrentMetricSortVersion is the sort version used for all newly created metric segments
-	CurrentMetricSortVersion = SortVersionNameTidTimestamp
+	CurrentMetricSortVersion = SortVersionNameTidTimestampV2
 )
 
 func (q *Store) InsertMetricSegment(ctx context.Context, params InsertMetricSegmentParams) error {
