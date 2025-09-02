@@ -82,7 +82,8 @@ func (q *Queries) MrqDeferKey(ctx context.Context, arg MrqDeferKeyParams) error 
 }
 
 const mrqFetchCandidates = `-- name: MrqFetchCandidates :many
-SELECT id, segment_id, record_count, queue_ts
+SELECT id, organization_id, dateint, frequency_ms, instance_num, 
+       slot_id, slot_count, rollup_group, segment_id, record_count, queue_ts
 FROM public.metric_rollup_queue
 WHERE claimed_by = -1
   AND eligible_at <= now()
@@ -110,10 +111,17 @@ type MrqFetchCandidatesParams struct {
 }
 
 type MrqFetchCandidatesRow struct {
-	ID          int64     `json:"id"`
-	SegmentID   int64     `json:"segment_id"`
-	RecordCount int64     `json:"record_count"`
-	QueueTs     time.Time `json:"queue_ts"`
+	ID             int64     `json:"id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Dateint        int32     `json:"dateint"`
+	FrequencyMs    int32     `json:"frequency_ms"`
+	InstanceNum    int16     `json:"instance_num"`
+	SlotID         int32     `json:"slot_id"`
+	SlotCount      int32     `json:"slot_count"`
+	RollupGroup    int64     `json:"rollup_group"`
+	SegmentID      int64     `json:"segment_id"`
+	RecordCount    int64     `json:"record_count"`
+	QueueTs        time.Time `json:"queue_ts"`
 }
 
 func (q *Queries) MrqFetchCandidates(ctx context.Context, arg MrqFetchCandidatesParams) ([]MrqFetchCandidatesRow, error) {
@@ -136,6 +144,13 @@ func (q *Queries) MrqFetchCandidates(ctx context.Context, arg MrqFetchCandidates
 		var i MrqFetchCandidatesRow
 		if err := rows.Scan(
 			&i.ID,
+			&i.OrganizationID,
+			&i.Dateint,
+			&i.FrequencyMs,
+			&i.InstanceNum,
+			&i.SlotID,
+			&i.SlotCount,
+			&i.RollupGroup,
 			&i.SegmentID,
 			&i.RecordCount,
 			&i.QueueTs,

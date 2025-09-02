@@ -34,7 +34,7 @@ type rollupStore interface {
 	CompleteRollup(ctx context.Context, workerID int64, ids []int64) error
 	HeartbeatRollup(ctx context.Context, workerID int64, ids []int64) error
 	GetMetricSegsForRollup(ctx context.Context, params lrdb.GetMetricSegsForRollupParams) ([]lrdb.MetricSeg, error)
-	GetMetricSegsForRollupWork(ctx context.Context, params lrdb.GetMetricSegsForRollupWorkParams) ([]lrdb.MetricSeg, error)
+	GetMetricSegsByIds(ctx context.Context, params lrdb.GetMetricSegsByIdsParams) ([]lrdb.MetricSeg, error)
 	RollupMetricSegs(ctx context.Context, sourceParams lrdb.RollupSourceParams, targetParams lrdb.RollupTargetParams, sourceSegmentIDs []int64, newRecords []lrdb.RollupNewRecord) error
 	McqQueueWork(ctx context.Context, arg lrdb.McqQueueWorkParams) error
 	MrqQueueWork(ctx context.Context, arg lrdb.MrqQueueWorkParams) error

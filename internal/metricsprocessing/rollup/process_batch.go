@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
@@ -404,91 +403,32 @@ func rollupMetricSegments(
 	return nil
 }
 
-// fetchMetricSegsFromCandidates retrieves the MetricSeg records corresponding to the claimed candidates.
-// TODO: This is a simplified implementation that assumes we can get the key info another way
-// In production, we would need to modify the bundle claim to return key information
+// fetchMetricSegsFromCandidates retrieves the MetricSeg records corresponding to the claimed candidates
+// by extracting their segment IDs and fetching the segments from the database.
 func fetchMetricSegsFromCandidates(ctx context.Context, db rollupStore, candidates []lrdb.MrqFetchCandidatesRow) ([]lrdb.MetricSeg, error) {
 	if len(candidates) == 0 {
 		return nil, nil
 	}
 
-	// For now, return empty to avoid compilation errors
-	// TODO: Implement proper segment fetching with key information
-	return []lrdb.MetricSeg{}, nil
-}
-
-var (
-	meter            = otel.Meter("github.com/cardinalhq/lakerunner/internal/metricsprocessing/rollup")
-	commonAttributes = attribute.NewSet(
-		attribute.String("component", "metric-rollup"),
-	)
-
-	fileSortedCounter metric.Int64Counter
-
-	// Processing counters
-	processingSegmentsIn  metric.Int64Counter
-	processingSegmentsOut metric.Int64Counter
-	processingRecordsIn   metric.Int64Counter
-	processingRecordsOut  metric.Int64Counter
-	processingBytesIn     metric.Int64Counter
-	processingBytesOut    metric.Int64Counter
-)
-
-func init() {
-	var err error
-
-	fileSortedCounter, err = meter.Int64Counter("lakerunner.processing.input.filetype")
-	if err != nil {
-		panic(fmt.Errorf("failed to create processing.input.filetype counter: %w", err))
+	segmentIDs := make([]int64, len(candidates))
+	for i, candidate := range candidates {
+		segmentIDs[i] = candidate.SegmentID
 	}
 
-	processingSegmentsIn, err = meter.Int64Counter(
-		"lakerunner.processing.segments.in",
-		metric.WithDescription("Number of segments input to rollup processing pipeline"),
-	)
+	firstItem := candidates[0]
+
+	segments, err := db.GetMetricSegsByIds(ctx, lrdb.GetMetricSegsByIdsParams{
+		OrganizationID: firstItem.OrganizationID,
+		Dateint:        firstItem.Dateint,
+		FrequencyMs:    firstItem.FrequencyMs,
+		InstanceNum:    firstItem.InstanceNum,
+		SegmentIds:     segmentIDs,
+	})
 	if err != nil {
-		panic(fmt.Errorf("failed to create processing.segments.in counter: %w", err))
+		return nil, fmt.Errorf("failed to fetch metric segments: %w", err)
 	}
 
-	processingSegmentsOut, err = meter.Int64Counter(
-		"lakerunner.processing.segments.out",
-		metric.WithDescription("Number of segments output from rollup processing pipeline"),
-	)
-	if err != nil {
-		panic(fmt.Errorf("failed to create processing.segments.out counter: %w", err))
-	}
-
-	processingRecordsIn, err = meter.Int64Counter(
-		"lakerunner.processing.records.in",
-		metric.WithDescription("Number of records input to rollup processing pipeline"),
-	)
-	if err != nil {
-		panic(fmt.Errorf("failed to create processing.records.in counter: %w", err))
-	}
-
-	processingRecordsOut, err = meter.Int64Counter(
-		"lakerunner.processing.records.out",
-		metric.WithDescription("Number of records output from rollup processing pipeline"),
-	)
-	if err != nil {
-		panic(fmt.Errorf("failed to create processing.records.out counter: %w", err))
-	}
-
-	processingBytesIn, err = meter.Int64Counter(
-		"lakerunner.processing.bytes.in",
-		metric.WithDescription("Number of bytes input to rollup processing pipeline"),
-	)
-	if err != nil {
-		panic(fmt.Errorf("failed to create processing.bytes.in counter: %w", err))
-	}
-
-	processingBytesOut, err = meter.Int64Counter(
-		"lakerunner.processing.bytes.out",
-		metric.WithDescription("Number of bytes output from rollup processing pipeline"),
-	)
-	if err != nil {
-		panic(fmt.Errorf("failed to create processing.bytes.out counter: %w", err))
-	}
+	return segments, nil
 }
 
 func uploadRolledUpMetricsAtomic(

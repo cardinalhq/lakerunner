@@ -9,7 +9,8 @@ FOR UPDATE SKIP LOCKED
 LIMIT 1;
 
 -- name: MrqFetchCandidates :many
-SELECT id, segment_id, record_count, queue_ts
+SELECT id, organization_id, dateint, frequency_ms, instance_num, 
+       slot_id, slot_count, rollup_group, segment_id, record_count, queue_ts
 FROM public.metric_rollup_queue
 WHERE claimed_by = -1
   AND eligible_at <= now()

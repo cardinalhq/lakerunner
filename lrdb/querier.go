@@ -52,10 +52,9 @@ type Querier interface {
 	GetExemplarTracesByService(ctx context.Context, arg GetExemplarTracesByServiceParams) ([]ExemplarTrace, error)
 	GetExemplarTracesCreatedAfter(ctx context.Context, ts time.Time) ([]ExemplarTrace, error)
 	GetLogSegmentsForCompaction(ctx context.Context, arg GetLogSegmentsForCompactionParams) ([]GetLogSegmentsForCompactionRow, error)
+	GetMetricSegsByIds(ctx context.Context, arg GetMetricSegsByIdsParams) ([]MetricSeg, error)
 	GetMetricSegsForCompaction(ctx context.Context, arg GetMetricSegsForCompactionParams) ([]MetricSeg, error)
-	GetMetricSegsForCompactionWork(ctx context.Context, arg GetMetricSegsForCompactionWorkParams) ([]MetricSeg, error)
 	GetMetricSegsForRollup(ctx context.Context, arg GetMetricSegsForRollupParams) ([]MetricSeg, error)
-	GetMetricSegsForRollupWork(ctx context.Context, arg GetMetricSegsForRollupWorkParams) ([]MetricSeg, error)
 	GetSpanInfoByFingerprint(ctx context.Context, arg GetSpanInfoByFingerprintParams) (GetSpanInfoByFingerprintRow, error)
 	GetTraceSegmentsForCompaction(ctx context.Context, arg GetTraceSegmentsForCompactionParams) ([]GetTraceSegmentsForCompactionRow, error)
 	InqueueJournalDelete(ctx context.Context, arg InqueueJournalDeleteParams) error
@@ -78,7 +77,6 @@ type Querier interface {
 	McqCompleteDelete(ctx context.Context, arg McqCompleteDeleteParams) error
 	McqDeferKey(ctx context.Context, arg McqDeferKeyParams) error
 	McqFetchCandidates(ctx context.Context, arg McqFetchCandidatesParams) ([]McqFetchCandidatesRow, error)
-	McqGetSegmentsByIds(ctx context.Context, segmentIds []int64) ([]MetricSeg, error)
 	McqHeartbeat(ctx context.Context, arg McqHeartbeatParams) error
 	McqPickHead(ctx context.Context) (McqPickHeadRow, error)
 	McqQueueWork(ctx context.Context, arg McqQueueWorkParams) error

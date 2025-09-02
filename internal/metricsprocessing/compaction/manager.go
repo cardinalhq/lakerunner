@@ -34,9 +34,8 @@ type compactionStore interface {
 	McqCompleteDelete(ctx context.Context, arg lrdb.McqCompleteDeleteParams) error
 	McqDeferKey(ctx context.Context, arg lrdb.McqDeferKeyParams) error
 	McqHeartbeat(ctx context.Context, arg lrdb.McqHeartbeatParams) error
-	McqGetSegmentsByIds(ctx context.Context, segmentIds []int64) ([]lrdb.MetricSeg, error)
+	GetMetricSegsByIds(ctx context.Context, arg lrdb.GetMetricSegsByIdsParams) ([]lrdb.MetricSeg, error)
 	CompactMetricSegs(ctx context.Context, args lrdb.CompactMetricSegsParams) error
-	GetMetricSegsForCompactionWork(ctx context.Context, params lrdb.GetMetricSegsForCompactionWorkParams) ([]lrdb.MetricSeg, error)
 	MarkMetricSegsCompactedByKeys(ctx context.Context, arg lrdb.MarkMetricSegsCompactedByKeysParams) error
 	SetMetricSegCompacted(ctx context.Context, arg lrdb.SetMetricSegCompactedParams) error
 }
