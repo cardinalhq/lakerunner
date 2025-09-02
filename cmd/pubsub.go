@@ -117,4 +117,33 @@ func init() {
 		},
 	}
 	cmd.AddCommand(gcpListenCmd)
+
+	azureListenCmd := &cobra.Command{
+		Use:   "azure",
+		Short: "listen on Azure Queue Storage sources",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			servicename := "pubsub-azure"
+			addlAttrs := attribute.NewSet(
+				attribute.String("action", "pubsub-azure"),
+			)
+			doneCtx, doneFx, err := setupTelemetry(servicename, &addlAttrs)
+			if err != nil {
+				return fmt.Errorf("failed to setup telemetry: %w", err)
+			}
+
+			defer func() {
+				if err := doneFx(); err != nil {
+					slog.Error("Error shutting down telemetry", slog.Any("error", err))
+				}
+			}()
+
+			backend, err := pubsub.NewBackend(doneCtx, pubsub.BackendTypeAzure)
+			if err != nil {
+				return fmt.Errorf("failed to create Azure Queue Storage backend: %w", err)
+			}
+
+			return backend.Run(doneCtx)
+		},
+	}
+	cmd.AddCommand(azureListenCmd)
 }

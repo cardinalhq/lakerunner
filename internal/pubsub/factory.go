@@ -26,6 +26,8 @@ func NewBackend(ctx context.Context, backendType BackendType) (Backend, error) {
 		return NewSQSService()
 	case BackendTypeGCPPubSub:
 		return NewGCPPubSubService()
+	case BackendTypeAzure:
+		return NewAzureQueueService()
 	default:
 		return nil, fmt.Errorf("unsupported backend type: %s", backendType)
 	}
