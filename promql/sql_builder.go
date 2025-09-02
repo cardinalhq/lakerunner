@@ -16,7 +16,6 @@ package promql
 
 import (
 	"fmt"
-	"math"
 	"sort"
 	"strings"
 	"time"
@@ -363,27 +362,6 @@ func groupByClause(by []string, first string) string {
 		parts = append(parts, by...)
 	}
 	return " GROUP BY " + strings.Join(parts, ", ")
-}
-
-func rowsPreceding(rangeStr string, step time.Duration) int {
-	// Default to a single-row window if no range (CURRENT ROW only)
-	if rangeStr == "" {
-		return 0
-	}
-	dur, err := model.ParseDuration(rangeStr)
-	if err != nil {
-		return 0
-	}
-	rangeMs := time.Duration(dur).Milliseconds()
-	stepMs := step.Milliseconds()
-	if stepMs <= 0 {
-		return 0
-	}
-	k := int64(math.Ceil(float64(rangeMs) / float64(stepMs)))
-	if k <= 0 {
-		return 0
-	}
-	return int(k - 1) // ROWS <k-1> PRECEDING + CURRENT covers k rows
 }
 
 func equalStringSets(a, b []string) bool {
