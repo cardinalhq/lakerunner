@@ -19,18 +19,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
-
-// durationToPGInterval converts a Go time.Duration to pgtype.Interval
-func durationToPGInterval(d time.Duration) pgtype.Interval {
-	return pgtype.Interval{
-		Microseconds: d.Microseconds(),
-		Valid:        true,
-	}
-}
 
 // LRDBWorkQueueAdapter implements WorkQueueStore using lrdb.StoreFull
 type LRDBWorkQueueAdapter struct {

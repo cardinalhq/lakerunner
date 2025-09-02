@@ -58,7 +58,6 @@ func (s *Store) ClaimRollupBundle(ctx context.Context, p BundleParams) ([]MrqFet
 
 		if cands[0].RecordCount >= target {
 			bundleIDs = []int64{cands[0].ID}
-			sum = cands[0].RecordCount
 		} else {
 			for _, x := range cands {
 				if sum+x.RecordCount > over {
@@ -77,7 +76,6 @@ func (s *Store) ClaimRollupBundle(ctx context.Context, p BundleParams) ([]MrqFet
 				if time.Since(oldest) >= p.Grace || boundary {
 					if len(bundleIDs) == 0 {
 						bundleIDs = append(bundleIDs, cands[0].ID)
-						sum = cands[0].RecordCount
 					}
 				} else {
 					if err := tx.MrqDeferKey(ctx, MrqDeferKeyParams{
