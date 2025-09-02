@@ -20,11 +20,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"strings"
 
 	"github.com/google/uuid"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
@@ -34,16 +31,11 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-type ReaderStackConfig struct {
-	FileSortedCounter metric.Int64Counter
-	CommonAttributes  attribute.Set
-}
-
 type ReaderStackResult struct {
 	Readers         []filereader.Reader
 	Files           []*os.File
 	DownloadedFiles []string
-	FinalReader     filereader.Reader
+	HeadReader      filereader.Reader
 	MergedReader    filereader.Reader
 }
 
@@ -55,7 +47,6 @@ func CreateReaderStack(
 	orgID uuid.UUID,
 	profile storageprofile.StorageProfile,
 	rows []lrdb.MetricSeg,
-	config ReaderStackConfig,
 ) (*ReaderStackResult, error) {
 	var readers []filereader.Reader
 	var files []*os.File
@@ -128,16 +119,6 @@ func CreateReaderStack(
 			finalReader = sortingReader
 		}
 
-		if config.FileSortedCounter != nil {
-			fileFormat := getFileFormat(fn)
-			inputSorted := sourceSortedWithCompatibleKey
-
-			config.FileSortedCounter.Add(ctx, 1, metric.WithAttributes(
-				attribute.String("filetype", fileFormat),
-				attribute.Bool("input_sorted", inputSorted),
-			))
-		}
-
 		readers = append(readers, finalReader)
 		files = append(files, file)
 		downloadedFiles = append(downloadedFiles, fn)
@@ -162,7 +143,7 @@ func CreateReaderStack(
 		Readers:         readers,
 		Files:           files,
 		DownloadedFiles: downloadedFiles,
-		FinalReader:     finalReader,
+		HeadReader:      finalReader,
 		MergedReader:    mergedReader,
 	}, nil
 }
@@ -182,22 +163,5 @@ func CloseReaderStack(ll *slog.Logger, result *ReaderStackResult) {
 		if err := file.Close(); err != nil {
 			ll.Error("Failed to close file", slog.String("file", file.Name()), slog.Any("error", err))
 		}
-	}
-}
-
-func getFileFormat(filename string) string {
-	switch {
-	case strings.HasSuffix(filename, ".binpb.gz"):
-		return "binpb.gz"
-	case strings.HasSuffix(filename, ".binpb"):
-		return "binpb"
-	case strings.HasSuffix(filename, ".parquet"):
-		return "parquet"
-	case strings.HasSuffix(filename, ".json.gz"):
-		return "json.gz"
-	case strings.HasSuffix(filename, ".json"):
-		return "json"
-	default:
-		return "unknown"
 	}
 }

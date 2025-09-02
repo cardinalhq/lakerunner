@@ -64,7 +64,7 @@ func AggregateMetrics(ctx context.Context, input ProcessingInput) (*ProcessingRe
 		slog.String("action", input.Action))
 
 	aggregatingReader, err := filereader.NewAggregatingMetricsReader(
-		input.ReaderStack.FinalReader,
+		input.ReaderStack.HeadReader,
 		int64(input.TargetFrequencyMs),
 		1000,
 	)

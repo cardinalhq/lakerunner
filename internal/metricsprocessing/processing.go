@@ -19,9 +19,10 @@ package metricsprocessing
 import (
 	"context"
 	"fmt"
-	"github.com/google/uuid"
 	"log/slog"
 	"math"
+
+	"github.com/google/uuid"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
@@ -107,6 +108,43 @@ func (ps *ProcessedSegment) GetDateint() int32 {
 
 // ProcessedSegments is a slice of processed segments with helper methods
 type ProcessedSegments []*ProcessedSegment
+
+// CreateSegmentsFromResults converts parquet writer results into processed segments
+// without uploading them. This is shared between compaction and rollup paths.
+func CreateSegmentsFromResults(results []parquetwriter.Result, orgID uuid.UUID, collectorName string, ll *slog.Logger) (ProcessedSegments, error) {
+	segments := make(ProcessedSegments, 0, len(results))
+	for _, result := range results {
+		segment, err := NewProcessedSegment(result, orgID, collectorName, ll)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create processed segment: %w", err)
+		}
+		segments = append(segments, segment)
+	}
+	return segments, nil
+}
+
+// UploadSegments uploads all provided segments to S3. If an error occurs, the
+// returned slice contains only the successfully uploaded segments so callers can
+// schedule cleanup for them.
+func UploadSegments(ctx context.Context, ll *slog.Logger, s3client *awsclient.S3Client, bucket string, segments ProcessedSegments) (ProcessedSegments, error) {
+	uploaded := make(ProcessedSegments, 0, len(segments))
+	for i, segment := range segments {
+		if ctx.Err() != nil {
+			ll.Warn("Upload context cancelled", slog.Int("completedUploads", i), slog.Int("totalFiles", len(segments)), slog.Any("error", ctx.Err()))
+			return uploaded, ctx.Err()
+		}
+
+		if err := segment.UploadToS3(ctx, s3client, bucket); err != nil {
+			ll.Error("Failed to upload segment", slog.String("bucket", bucket), slog.String("objectID", segment.ObjectID), slog.Int("completedUploads", i), slog.Any("error", err))
+			return uploaded, fmt.Errorf("uploading file %s: %w", segment.ObjectID, err)
+		}
+
+		uploaded = append(uploaded, segment)
+
+		ll.Debug("Uploaded segment to S3", slog.String("objectID", segment.ObjectID), slog.Int64("fileSize", segment.Result.FileSize), slog.Int64("recordCount", segment.Result.RecordCount))
+	}
+	return uploaded, nil
+}
 
 // UploadAll uploads all segments to S3, stopping on first error
 func (segments ProcessedSegments) UploadAll(ctx context.Context, s3client *awsclient.S3Client, bucket string) error {

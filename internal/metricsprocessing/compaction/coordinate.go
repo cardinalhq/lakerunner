@@ -21,11 +21,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
-	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -100,14 +98,8 @@ func coordinate(
 		return newWorkerInterrupted("context cancelled before compaction")
 	}
 
-	// Create reader stack for downloading and reading files
-	config := metricsprocessing.ReaderStackConfig{
-		FileSortedCounter: nil, // Telemetry is handled in the generic processor
-		CommonAttributes:  attribute.NewSet(),
-	}
-
 	readerStack, err := metricsprocessing.CreateReaderStack(
-		ctx, ll, tmpdir, s3client, metadata.OrganizationID, profile, rows, config)
+		ctx, ll, tmpdir, s3client, metadata.OrganizationID, profile, rows)
 	if err != nil {
 		return err
 	}
@@ -173,17 +165,24 @@ func coordinate(
 	s3Ctx, s3Cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer s3Cancel()
 
-	segments, err := uploadCompactedFiles(s3Ctx, ll, s3client, processingResult.RawResults, metadata, profile)
+	segments, err := metricsprocessing.CreateSegmentsFromResults(processingResult.RawResults, metadata.OrganizationID, profile.CollectorName, ll)
+	if err != nil {
+		return fmt.Errorf("failed to create processed segments: %w", err)
+	}
+
+	uploadedSegments, err := metricsprocessing.UploadSegments(s3Ctx, ll, s3client, profile.Bucket, segments)
 	if err != nil {
 		// If upload failed partway through, we need to clean up any uploaded files
-		if len(segments) > 0 {
+		if len(uploadedSegments) > 0 {
 			ll.Warn("S3 upload failed partway through, scheduling cleanup",
-				slog.Int("uploadedFiles", len(segments)),
+				slog.Int("uploadedFiles", len(uploadedSegments)),
 				slog.Any("error", err))
-			segments.ScheduleCleanupAll(ctx, mdb, metadata.OrganizationID, metadata.InstanceNum, profile.Bucket)
+			uploadedSegments.ScheduleCleanupAll(ctx, mdb, metadata.OrganizationID, metadata.InstanceNum, profile.Bucket)
 		}
 		return fmt.Errorf("failed to upload compacted files to S3: %w", err)
 	}
+
+	segments = uploadedSegments
 
 	// Atomically replace segments in database with deadline (5 seconds)
 	dbCtx, dbCancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -200,53 +199,6 @@ func coordinate(
 	}
 
 	return nil
-}
-
-func uploadCompactedFiles(
-	ctx context.Context,
-	ll *slog.Logger,
-	s3client *awsclient.S3Client,
-	results []parquetwriter.Result,
-	metadata CompactionWorkMetadata,
-	profile storageprofile.StorageProfile,
-) (metricsprocessing.ProcessedSegments, error) {
-	// Create processed segments from results
-	segments := make(metricsprocessing.ProcessedSegments, 0, len(results))
-
-	for i, result := range results {
-		// Check for context cancellation/timeout before each upload
-		if ctx.Err() != nil {
-			ll.Warn("Upload context cancelled, returning partial results",
-				slog.Int("completedUploads", i),
-				slog.Int("totalFiles", len(results)),
-				slog.Any("error", ctx.Err()))
-			return segments, ctx.Err()
-		}
-
-		segment, err := metricsprocessing.NewProcessedSegment(result, metadata.OrganizationID, profile.CollectorName, ll)
-		if err != nil {
-			return segments, fmt.Errorf("failed to create processed segment: %w", err)
-		}
-
-		if err := segment.UploadToS3(ctx, s3client, profile.Bucket); err != nil {
-			ll.Error("Failed to upload compacted file to S3",
-				slog.String("bucket", profile.Bucket),
-				slog.String("objectID", segment.ObjectID),
-				slog.String("fileName", result.FileName),
-				slog.Int("completedUploads", i),
-				slog.Any("error", err))
-			// Return partial results - the already uploaded files need cleanup
-			return segments, fmt.Errorf("uploading file %s: %w", segment.ObjectID, err)
-		}
-
-		segments = append(segments, segment)
-
-		ll.Debug("Uploaded compacted file to S3",
-			slog.String("objectID", segment.ObjectID),
-			slog.Int64("fileSize", result.FileSize),
-			slog.Int64("recordCount", result.RecordCount))
-	}
-	return segments, nil
 }
 
 func replaceCompactedSegments(

@@ -89,9 +89,9 @@ func TestAggregateMetrics_Compaction_RealData(t *testing.T) {
 
 	// Create reader stack result
 	readerStack := &ReaderStackResult{
-		Readers:     readers,
-		FinalReader: mergedReader,
-		Files:       files,
+		Readers:    readers,
+		HeadReader: mergedReader,
+		Files:      files,
 	}
 
 	// Run aggregation at 10s (same as source) for compaction
@@ -146,7 +146,7 @@ func TestAggregateMetrics_Compaction_RealData(t *testing.T) {
 	mergedReader, err = filereader.NewMergesortReader(ctx, readers, keyProvider, 1000)
 	require.NoError(t, err)
 	defer mergedReader.Close()
-	readerStack.FinalReader = mergedReader
+	readerStack.HeadReader = mergedReader
 
 	// Execute aggregation
 	result, err := AggregateMetrics(ctx, input)
@@ -248,8 +248,8 @@ func TestAggregateMetrics_BatchProcessing(t *testing.T) {
 	}
 
 	readerStack := &ReaderStackResult{
-		Readers:     []filereader.Reader{mockReader},
-		FinalReader: mockReader,
+		Readers:    []filereader.Reader{mockReader},
+		HeadReader: mockReader,
 	}
 
 	input := ProcessingInput{
@@ -325,8 +325,8 @@ func TestAggregateMetrics_ErrorHandling(t *testing.T) {
 	}
 
 	readerStack := &ReaderStackResult{
-		Readers:     []filereader.Reader{errorReader},
-		FinalReader: errorReader,
+		Readers:    []filereader.Reader{errorReader},
+		HeadReader: errorReader,
 	}
 
 	input := ProcessingInput{
@@ -392,8 +392,8 @@ func BenchmarkAggregateMetrics_RealData(b *testing.B) {
 		tmpDir := b.TempDir()
 
 		readerStack := &ReaderStackResult{
-			Readers:     readers,
-			FinalReader: mergedReader,
+			Readers:    readers,
+			HeadReader: mergedReader,
 		}
 
 		input := ProcessingInput{
