@@ -1,6 +1,6 @@
 -- name: MrqPickHead :one
 SELECT id, organization_id, dateint, frequency_ms, instance_num,
-       slot_id, slot_count, segment_id, record_count, window_close_ts, queue_ts
+       slot_id, slot_count, rollup_group, segment_id, record_count, window_close_ts, queue_ts
 FROM public.metric_rollup_queue
 WHERE claimed_by = -1
   AND eligible_at <= now()
@@ -19,6 +19,7 @@ WHERE claimed_by = -1
   AND instance_num   = @instance_num
   AND slot_id        = @slot_id
   AND slot_count     = @slot_count
+  AND rollup_group   = @rollup_group
 ORDER BY window_close_ts ASC, queue_ts ASC, id ASC
 FOR UPDATE SKIP LOCKED
 LIMIT @max_rows;
@@ -37,7 +38,8 @@ WHERE claimed_by = -1
   AND frequency_ms   = @frequency_ms
   AND instance_num   = @instance_num
   AND slot_id        = @slot_id
-  AND slot_count     = @slot_count;
+  AND slot_count     = @slot_count
+  AND rollup_group   = @rollup_group;
 
 -- name: MrqHeartbeat :exec
 UPDATE public.metric_rollup_queue

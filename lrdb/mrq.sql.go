@@ -53,6 +53,7 @@ WHERE claimed_by = -1
   AND instance_num   = $5
   AND slot_id        = $6
   AND slot_count     = $7
+  AND rollup_group   = $8
 `
 
 type MrqDeferKeyParams struct {
@@ -63,6 +64,7 @@ type MrqDeferKeyParams struct {
 	InstanceNum    int16         `json:"instance_num"`
 	SlotID         int32         `json:"slot_id"`
 	SlotCount      int32         `json:"slot_count"`
+	RollupGroup    int64         `json:"rollup_group"`
 }
 
 func (q *Queries) MrqDeferKey(ctx context.Context, arg MrqDeferKeyParams) error {
@@ -74,6 +76,7 @@ func (q *Queries) MrqDeferKey(ctx context.Context, arg MrqDeferKeyParams) error 
 		arg.InstanceNum,
 		arg.SlotID,
 		arg.SlotCount,
+		arg.RollupGroup,
 	)
 	return err
 }
@@ -89,9 +92,10 @@ WHERE claimed_by = -1
   AND instance_num   = $4
   AND slot_id        = $5
   AND slot_count     = $6
+  AND rollup_group   = $7
 ORDER BY window_close_ts ASC, queue_ts ASC, id ASC
 FOR UPDATE SKIP LOCKED
-LIMIT $7
+LIMIT $8
 `
 
 type MrqFetchCandidatesParams struct {
@@ -101,6 +105,7 @@ type MrqFetchCandidatesParams struct {
 	InstanceNum    int16     `json:"instance_num"`
 	SlotID         int32     `json:"slot_id"`
 	SlotCount      int32     `json:"slot_count"`
+	RollupGroup    int64     `json:"rollup_group"`
 	MaxRows        int32     `json:"max_rows"`
 }
 
@@ -120,6 +125,7 @@ func (q *Queries) MrqFetchCandidates(ctx context.Context, arg MrqFetchCandidates
 		arg.InstanceNum,
 		arg.SlotID,
 		arg.SlotCount,
+		arg.RollupGroup,
 		arg.MaxRows,
 	)
 	if err != nil {
@@ -164,7 +170,7 @@ func (q *Queries) MrqHeartbeat(ctx context.Context, arg MrqHeartbeatParams) erro
 
 const mrqPickHead = `-- name: MrqPickHead :one
 SELECT id, organization_id, dateint, frequency_ms, instance_num,
-       slot_id, slot_count, segment_id, record_count, window_close_ts, queue_ts
+       slot_id, slot_count, rollup_group, segment_id, record_count, window_close_ts, queue_ts
 FROM public.metric_rollup_queue
 WHERE claimed_by = -1
   AND eligible_at <= now()
@@ -181,6 +187,7 @@ type MrqPickHeadRow struct {
 	InstanceNum    int16     `json:"instance_num"`
 	SlotID         int32     `json:"slot_id"`
 	SlotCount      int32     `json:"slot_count"`
+	RollupGroup    int64     `json:"rollup_group"`
 	SegmentID      int64     `json:"segment_id"`
 	RecordCount    int64     `json:"record_count"`
 	WindowCloseTs  time.Time `json:"window_close_ts"`
@@ -198,6 +205,7 @@ func (q *Queries) MrqPickHead(ctx context.Context) (MrqPickHeadRow, error) {
 		&i.InstanceNum,
 		&i.SlotID,
 		&i.SlotCount,
+		&i.RollupGroup,
 		&i.SegmentID,
 		&i.RecordCount,
 		&i.WindowCloseTs,
