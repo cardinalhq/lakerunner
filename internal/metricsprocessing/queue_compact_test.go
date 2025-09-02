@@ -32,7 +32,7 @@ type MockCompactionWorkQueuer struct {
 	mock.Mock
 }
 
-func (m *MockCompactionWorkQueuer) PutMetricCompactionWork(ctx context.Context, arg lrdb.PutMetricCompactionWorkParams) error {
+func (m *MockCompactionWorkQueuer) McqQueueWork(ctx context.Context, arg lrdb.McqQueueWorkParams) error {
 	args := m.Called(ctx, arg)
 	return args.Error(0)
 }
@@ -84,7 +84,7 @@ func TestQueueMetricCompaction(t *testing.T) {
 			mockDB := new(MockCompactionWorkQueuer)
 
 			// Set up expectation
-			mockDB.On("PutMetricCompactionWork", mock.Anything, mock.MatchedBy(func(params lrdb.PutMetricCompactionWorkParams) bool {
+			mockDB.On("McqQueueWork", mock.Anything, mock.MatchedBy(func(params lrdb.McqQueueWorkParams) bool {
 				// Verify the parameters passed to the database call
 				return params.OrganizationID == tt.organizationID &&
 					params.Dateint == tt.dateint &&
@@ -141,7 +141,7 @@ func TestQueueMetricCompaction_PriorityCalculation(t *testing.T) {
 		t.Run(fmt.Sprintf("frequency_%d", tc.frequencyMs), func(t *testing.T) {
 			mockDB := new(MockCompactionWorkQueuer)
 
-			mockDB.On("PutMetricCompactionWork", mock.Anything, mock.MatchedBy(func(params lrdb.PutMetricCompactionWorkParams) bool {
+			mockDB.On("McqQueueWork", mock.Anything, mock.MatchedBy(func(params lrdb.McqQueueWorkParams) bool {
 				return params.Priority == tc.expectedPriority
 			})).Return(nil)
 

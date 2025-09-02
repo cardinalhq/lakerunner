@@ -62,3 +62,31 @@ UPDATE public.metric_rollup_queue q
 SET claimed_by = -1, claimed_at = NULL, heartbeated_at = NULL, tries = q.tries + 1
 FROM stale s
 WHERE q.id = s.id;
+
+-- name: MrqQueueWork :exec
+INSERT INTO metric_rollup_queue (
+  organization_id,
+  dateint,
+  frequency_ms,
+  instance_num,
+  slot_id,
+  slot_count,
+  segment_id,
+  record_count,
+  rollup_group,
+  priority,
+  eligible_at
+)
+VALUES (
+  @organization_id,
+  @dateint,
+  @frequency_ms,
+  @instance_num,
+  @slot_id,
+  @slot_count,
+  @segment_id,
+  @record_count,
+  @rollup_group,
+  @priority,
+  @eligible_at
+);

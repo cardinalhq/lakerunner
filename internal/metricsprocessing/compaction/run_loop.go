@@ -40,14 +40,14 @@ func runLoop(
 		default:
 		}
 
-		claimedWork, err := manager.ClaimWork(ctx)
+		bundle, err := manager.ClaimWorkBundle(ctx)
 		if err != nil {
-			ll.Error("Failed to claim work", slog.Any("error", err))
+			ll.Error("Failed to claim bundle", slog.Any("error", err))
 			time.Sleep(2 * time.Second)
 			continue
 		}
 
-		if len(claimedWork) == 0 {
+		if len(bundle.Items) == 0 {
 			time.Sleep(2 * time.Second)
 			continue
 		}
@@ -56,8 +56,8 @@ func runLoop(
 		select {
 		case <-ctx.Done():
 			ll.Info("Context cancelled after claiming work, releasing items",
-				slog.Int("claimedItems", len(claimedWork)))
-			if releaseErr := manager.FailWork(ctx, claimedWork); releaseErr != nil {
+				slog.Int("claimedItems", len(bundle.Items)))
+			if releaseErr := manager.FailWork(ctx, bundle.Items); releaseErr != nil {
 				ll.Error("Failed to release work items after cancellation", slog.Any("error", releaseErr))
 			}
 			return ctx.Err()
@@ -65,25 +65,25 @@ func runLoop(
 		}
 
 		// Start heartbeating for claimed items
-		itemIDs := make([]int64, len(claimedWork))
-		for i, work := range claimedWork {
-			itemIDs[i] = work.ID
+		itemIDs := make([]int64, len(bundle.Items))
+		for i, item := range bundle.Items {
+			itemIDs[i] = item.ID
 		}
 		mcqHeartbeater := newMCQHeartbeater(mdb, manager.workerID, itemIDs)
 		cancel := mcqHeartbeater.Start(ctx)
 
-		err = processBatch(ctx, ll, mdb, sp, awsmanager, claimedWork)
+		err = processBatch(ctx, ll, mdb, sp, awsmanager, bundle)
 
 		// Stop heartbeating before handling results
 		cancel()
 
 		if err != nil {
 			ll.Error("Failed to process compaction batch", slog.Any("error", err))
-			if failErr := manager.FailWork(ctx, claimedWork); failErr != nil {
+			if failErr := manager.FailWork(ctx, bundle.Items); failErr != nil {
 				ll.Error("Failed to fail work items", slog.Any("error", failErr))
 			}
 		} else {
-			if completeErr := manager.CompleteWork(ctx, claimedWork); completeErr != nil {
+			if completeErr := manager.CompleteWork(ctx, bundle.Items); completeErr != nil {
 				ll.Error("Failed to complete work items", slog.Any("error", completeErr))
 			}
 		}

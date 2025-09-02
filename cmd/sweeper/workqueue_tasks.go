@@ -101,7 +101,7 @@ func runMCQExpiry(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull) erro
 	mcqStaleTimeout := 5 * time.Minute
 	cutoffTime := time.Now().Add(-mcqStaleTimeout)
 
-	expired, err := mdb.CleanupMetricCompactionWork(ctx, &cutoffTime)
+	expired, err := mdb.McqCleanupExpired(ctx, &cutoffTime)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil

@@ -17,6 +17,7 @@ package metricsprocessing
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -40,6 +41,9 @@ func QueueMetricRollup(ctx context.Context, mdb RollupWorkQueuer, organizationID
 	// Calculate rollup group: segment start time divided by target rollup frequency
 	rollupGroup := startTs / int64(nextFrequency)
 
+	// Calculate when the rollup work should become eligible
+	eligibleAt := calculateRollupEligibleTime(frequencyMs, startTs, nextFrequency)
+
 	err := mdb.MrqQueueWork(ctx, lrdb.MrqQueueWorkParams{
 		OrganizationID: organizationID,
 		Dateint:        dateint,
@@ -51,6 +55,7 @@ func QueueMetricRollup(ctx context.Context, mdb RollupWorkQueuer, organizationID
 		RecordCount:    recordCount,
 		RollupGroup:    rollupGroup,
 		Priority:       priority,
+		EligibleAt:     eligibleAt,
 	})
 
 	if err != nil {
@@ -58,4 +63,30 @@ func QueueMetricRollup(ctx context.Context, mdb RollupWorkQueuer, organizationID
 	}
 
 	return nil
+}
+
+// calculateRollupEligibleTime determines when rollup work should become eligible based on frequency
+func calculateRollupEligibleTime(currentFrequencyMs int32, startTs int64, nextFrequencyMs int32) time.Time {
+	now := time.Now()
+
+	switch currentFrequencyMs {
+	case 10_000: // 10s rollups
+		// Schedule 120s past the end of the current 60s interval
+		currentMinute := now.Truncate(time.Minute)
+		nextMinute := currentMinute.Add(time.Minute)
+		return nextMinute.Add(2 * time.Minute) // 120s delay
+
+	case 60_000: // 60s rollups (1m)
+		// Schedule 2m past the end of the next 5m interval
+		current5Min := now.Truncate(5 * time.Minute)
+		next5Min := current5Min.Add(5 * time.Minute)
+		return next5Min.Add(2 * time.Minute) // 2m delay
+
+	default: // 5m+ rollups
+		// Schedule 10m past the end of the respective next-level window
+		windowDuration := time.Duration(nextFrequencyMs) * time.Millisecond
+		currentWindow := now.Truncate(windowDuration)
+		nextWindow := currentWindow.Add(windowDuration)
+		return nextWindow.Add(10 * time.Minute) // 10m delay
+	}
 }

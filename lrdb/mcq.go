@@ -41,9 +41,15 @@ func (p BundleParams) deferInterval() time.Duration {
 	return p.DeferBase + time.Duration(rand.Int63n(p.Jitter.Nanoseconds()))
 }
 
-// ClaimCompactionBundle locks and claims a bundle (or returns nil if none).
-func (s *Store) ClaimCompactionBundle(ctx context.Context, p BundleParams) ([]McqFetchCandidatesRow, error) {
-	var out []McqFetchCandidatesRow
+// CompactionBundleResult represents the result of claiming a compaction work bundle with estimation
+type CompactionBundleResult struct {
+	Items           []McqFetchCandidatesRow
+	EstimatedTarget int64
+}
+
+// ClaimCompactionBundle locks and claims a bundle with dynamic estimation support
+func (s *Store) ClaimCompactionBundle(ctx context.Context, p BundleParams) (CompactionBundleResult, error) {
+	var result CompactionBundleResult
 
 	maxAttempts := p.MaxAttempts
 	if maxAttempts <= 0 {
@@ -51,8 +57,7 @@ func (s *Store) ClaimCompactionBundle(ctx context.Context, p BundleParams) ([]Mc
 	}
 
 	err := s.execTx(ctx, func(tx *Store) error {
-		target := p.TargetRecords
-		over := int64(float64(target) * p.OverFactor)
+		var headForEstimate *McqPickHeadRow
 
 		// Try up to MaxAttempts different keys
 		for attempt := 0; attempt < maxAttempts; attempt++ {
@@ -64,6 +69,16 @@ func (s *Store) ClaimCompactionBundle(ctx context.Context, p BundleParams) ([]Mc
 			if err != nil {
 				return fmt.Errorf("pick head (attempt %d): %w", attempt+1, err)
 			}
+
+			// Store the first head for estimation (even if we defer this key)
+			if headForEstimate == nil {
+				headForEstimate = &head
+			}
+
+			// Get dynamic target from estimator for this organization/frequency
+			estimatedTarget := s.GetMetricEstimate(ctx, head.OrganizationID, head.FrequencyMs)
+			target := estimatedTarget
+			over := int64(float64(target) * p.OverFactor)
 
 			// 2) Fetch candidates for that key
 			cands, err := tx.McqFetchCandidates(ctx, McqFetchCandidatesParams{
@@ -140,19 +155,24 @@ func (s *Store) ClaimCompactionBundle(ctx context.Context, p BundleParams) ([]Mc
 				}
 				for _, c := range cands {
 					if _, ok := keep[c.ID]; ok {
-						out = append(out, c)
+						result.Items = append(result.Items, c)
 					}
 				}
+				result.EstimatedTarget = estimatedTarget
 				return nil // success, exit transaction
 			}
 		}
 
 		// Exhausted all attempts without finding a suitable bundle
+		// If we picked at least one head, use it for estimation
+		if headForEstimate != nil {
+			result.EstimatedTarget = s.GetMetricEstimate(ctx, headForEstimate.OrganizationID, headForEstimate.FrequencyMs)
+		}
 		return nil
 	})
 
 	if err != nil {
-		return nil, err
+		return CompactionBundleResult{}, err
 	}
-	return out, nil
+	return result, nil
 }

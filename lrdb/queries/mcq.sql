@@ -8,7 +8,7 @@ LIMIT 1
 FOR UPDATE SKIP LOCKED;
 
 -- name: McqFetchCandidates :many
-SELECT id, segment_id, record_count, queue_ts
+SELECT id, organization_id, dateint, frequency_ms, instance_num, segment_id, record_count, queue_ts
 FROM public.metric_compaction_queue
 WHERE claimed_by = -1
   AND eligible_at <= now()
@@ -45,6 +45,7 @@ DELETE FROM public.metric_compaction_queue
 WHERE claimed_by = @worker_id
   AND id = ANY(@ids::bigint[]);
 
+
 -- name: McqReclaimTimeouts :execrows
 WITH stale AS (
   SELECT id
@@ -60,3 +61,37 @@ SET claimed_by = -1,
     tries = q.tries + 1
 FROM stale s
 WHERE q.id = s.id;
+
+-- name: McqQueueWork :exec
+INSERT INTO metric_compaction_queue (
+  organization_id,
+  dateint,
+  frequency_ms,
+  segment_id,
+  instance_num,
+  record_count,
+  priority
+)
+VALUES (
+  @organization_id,
+  @dateint,
+  @frequency_ms,
+  @segment_id,
+  @instance_num,
+  @record_count,
+  @priority
+);
+
+-- name: McqGetSegmentsByIds :many
+SELECT *
+FROM metric_seg
+WHERE segment_id = ANY(@segment_ids::bigint[])
+ORDER BY segment_id;
+
+-- name: McqCleanupExpired :many
+UPDATE metric_compaction_queue
+SET claimed_by = -1, claimed_at = NULL, heartbeated_at = NULL
+WHERE claimed_by <> -1
+  AND heartbeated_at IS NOT NULL
+  AND heartbeated_at < @cutoff_time
+RETURNING *;

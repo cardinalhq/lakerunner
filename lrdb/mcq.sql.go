@@ -28,6 +28,50 @@ func (q *Queries) McqClaimBundle(ctx context.Context, arg McqClaimBundleParams) 
 	return err
 }
 
+const mcqCleanupExpired = `-- name: McqCleanupExpired :many
+UPDATE metric_compaction_queue
+SET claimed_by = -1, claimed_at = NULL, heartbeated_at = NULL
+WHERE claimed_by <> -1
+  AND heartbeated_at IS NOT NULL
+  AND heartbeated_at < $1
+RETURNING id, queue_ts, priority, organization_id, dateint, frequency_ms, segment_id, instance_num, record_count, tries, claimed_by, claimed_at, heartbeated_at, eligible_at
+`
+
+func (q *Queries) McqCleanupExpired(ctx context.Context, cutoffTime *time.Time) ([]MetricCompactionQueue, error) {
+	rows, err := q.db.Query(ctx, mcqCleanupExpired, cutoffTime)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MetricCompactionQueue
+	for rows.Next() {
+		var i MetricCompactionQueue
+		if err := rows.Scan(
+			&i.ID,
+			&i.QueueTs,
+			&i.Priority,
+			&i.OrganizationID,
+			&i.Dateint,
+			&i.FrequencyMs,
+			&i.SegmentID,
+			&i.InstanceNum,
+			&i.RecordCount,
+			&i.Tries,
+			&i.ClaimedBy,
+			&i.ClaimedAt,
+			&i.HeartbeatedAt,
+			&i.EligibleAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const mcqCompleteDelete = `-- name: McqCompleteDelete :exec
 DELETE FROM public.metric_compaction_queue
 WHERE claimed_by = $1
@@ -74,7 +118,7 @@ func (q *Queries) McqDeferKey(ctx context.Context, arg McqDeferKeyParams) error 
 }
 
 const mcqFetchCandidates = `-- name: McqFetchCandidates :many
-SELECT id, segment_id, record_count, queue_ts
+SELECT id, organization_id, dateint, frequency_ms, instance_num, segment_id, record_count, queue_ts
 FROM public.metric_compaction_queue
 WHERE claimed_by = -1
   AND eligible_at <= now()
@@ -96,10 +140,14 @@ type McqFetchCandidatesParams struct {
 }
 
 type McqFetchCandidatesRow struct {
-	ID          int64     `json:"id"`
-	SegmentID   int64     `json:"segment_id"`
-	RecordCount int64     `json:"record_count"`
-	QueueTs     time.Time `json:"queue_ts"`
+	ID             int64     `json:"id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Dateint        int32     `json:"dateint"`
+	FrequencyMs    int32     `json:"frequency_ms"`
+	InstanceNum    int16     `json:"instance_num"`
+	SegmentID      int64     `json:"segment_id"`
+	RecordCount    int64     `json:"record_count"`
+	QueueTs        time.Time `json:"queue_ts"`
 }
 
 func (q *Queries) McqFetchCandidates(ctx context.Context, arg McqFetchCandidatesParams) ([]McqFetchCandidatesRow, error) {
@@ -119,9 +167,59 @@ func (q *Queries) McqFetchCandidates(ctx context.Context, arg McqFetchCandidates
 		var i McqFetchCandidatesRow
 		if err := rows.Scan(
 			&i.ID,
+			&i.OrganizationID,
+			&i.Dateint,
+			&i.FrequencyMs,
+			&i.InstanceNum,
 			&i.SegmentID,
 			&i.RecordCount,
 			&i.QueueTs,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const mcqGetSegmentsByIds = `-- name: McqGetSegmentsByIds :many
+SELECT organization_id, dateint, frequency_ms, segment_id, instance_num, ts_range, record_count, file_size, ingest_dateint, published, rolledup, created_at, created_by, slot_id, fingerprints, sort_version, slot_count, compacted
+FROM metric_seg
+WHERE segment_id = ANY($1::bigint[])
+ORDER BY segment_id
+`
+
+func (q *Queries) McqGetSegmentsByIds(ctx context.Context, segmentIds []int64) ([]MetricSeg, error) {
+	rows, err := q.db.Query(ctx, mcqGetSegmentsByIds, segmentIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MetricSeg
+	for rows.Next() {
+		var i MetricSeg
+		if err := rows.Scan(
+			&i.OrganizationID,
+			&i.Dateint,
+			&i.FrequencyMs,
+			&i.SegmentID,
+			&i.InstanceNum,
+			&i.TsRange,
+			&i.RecordCount,
+			&i.FileSize,
+			&i.IngestDateint,
+			&i.Published,
+			&i.Rolledup,
+			&i.CreatedAt,
+			&i.CreatedBy,
+			&i.SlotID,
+			&i.Fingerprints,
+			&i.SortVersion,
+			&i.SlotCount,
+			&i.Compacted,
 		); err != nil {
 			return nil, err
 		}
@@ -185,6 +283,50 @@ func (q *Queries) McqPickHead(ctx context.Context) (McqPickHeadRow, error) {
 		&i.QueueTs,
 	)
 	return i, err
+}
+
+const mcqQueueWork = `-- name: McqQueueWork :exec
+INSERT INTO metric_compaction_queue (
+  organization_id,
+  dateint,
+  frequency_ms,
+  segment_id,
+  instance_num,
+  record_count,
+  priority
+)
+VALUES (
+  $1,
+  $2,
+  $3,
+  $4,
+  $5,
+  $6,
+  $7
+)
+`
+
+type McqQueueWorkParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Dateint        int32     `json:"dateint"`
+	FrequencyMs    int32     `json:"frequency_ms"`
+	SegmentID      int64     `json:"segment_id"`
+	InstanceNum    int16     `json:"instance_num"`
+	RecordCount    int64     `json:"record_count"`
+	Priority       int32     `json:"priority"`
+}
+
+func (q *Queries) McqQueueWork(ctx context.Context, arg McqQueueWorkParams) error {
+	_, err := q.db.Exec(ctx, mcqQueueWork,
+		arg.OrganizationID,
+		arg.Dateint,
+		arg.FrequencyMs,
+		arg.SegmentID,
+		arg.InstanceNum,
+		arg.RecordCount,
+		arg.Priority,
+	)
+	return err
 }
 
 const mcqReclaimTimeouts = `-- name: McqReclaimTimeouts :execrows
