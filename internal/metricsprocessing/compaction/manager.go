@@ -122,8 +122,8 @@ func NewManager(
 	}
 }
 
-// ClaimWorkBundle returns the bundle and estimated target records for writers
-func (m *Manager) ClaimWorkBundle(ctx context.Context) (lrdb.CompactionBundleResult, error) {
+// ClaimWork returns the bundle and estimated target records for writers
+func (m *Manager) ClaimWork(ctx context.Context) (*lrdb.CompactionBundleResult, error) {
 	bundleParams := lrdb.BundleParams{
 		WorkerID:    m.workerID,
 		OverFactor:  m.config.OverFactor,
@@ -136,7 +136,7 @@ func (m *Manager) ClaimWorkBundle(ctx context.Context) (lrdb.CompactionBundleRes
 
 	bundle, err := m.db.ClaimCompactionBundle(ctx, bundleParams)
 	if err != nil {
-		return lrdb.CompactionBundleResult{}, fmt.Errorf("failed to claim compaction bundle: %w", err)
+		return nil, fmt.Errorf("failed to claim compaction bundle: %w", err)
 	}
 
 	if len(bundle.Items) > 0 {
@@ -145,7 +145,7 @@ func (m *Manager) ClaimWorkBundle(ctx context.Context) (lrdb.CompactionBundleRes
 			slog.Int64("estimatedTarget", bundle.EstimatedTarget))
 	}
 
-	return bundle, nil
+	return &bundle, nil
 }
 
 func (m *Manager) CompleteWork(ctx context.Context, items []lrdb.McqFetchCandidatesRow) error {

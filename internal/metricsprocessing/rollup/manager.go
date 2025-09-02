@@ -169,10 +169,29 @@ func (m *Manager) CompleteWork(ctx context.Context, rows []lrdb.MrqFetchCandidat
 }
 
 func (m *Manager) FailWork(ctx context.Context, rows []lrdb.MrqFetchCandidatesRow) error {
-	// For the new bundle approach, failed work items are automatically reclaimed
-	// through the timeout mechanism, so we don't need to explicitly release them
-	m.ll.Info("Work batch failed, items will be reclaimed after timeout",
-		slog.Int("itemCount", len(rows)))
+	if len(rows) == 0 {
+		return nil
+	}
+
+	ids := make([]int64, len(rows))
+	for i, row := range rows {
+		ids[i] = row.ID
+	}
+
+	// Delete the failed work items from the queue
+	// They will be re-queued naturally when new work needs to be done
+	err := m.db.CompleteRollup(ctx, m.workerID, ids)
+
+	if err != nil {
+		m.ll.Error("Failed to delete failed work items",
+			slog.Int("count", len(rows)),
+			slog.Any("error", err))
+		return fmt.Errorf("failed to delete failed work items: %w", err)
+	}
+
+	m.ll.Warn("Deleted failed work items from queue",
+		slog.Int("count", len(rows)))
+
 	return nil
 }
 
