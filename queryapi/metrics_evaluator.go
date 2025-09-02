@@ -103,7 +103,7 @@ func (q *QuerierService) EvaluateMetricsQuery(
 		}()
 
 		// ---------- Stage 1/2: enumerate & launch per-group goroutines ----------
-		nextIdx = q.enumerateAndLaunchGroups(
+		q.enumerateAndLaunchGroups(
 			ctx, orgID, startTs, endTs, stepDuration, queryPlan,
 			sem, groupRegs, &regWG, nextIdx,
 		)
