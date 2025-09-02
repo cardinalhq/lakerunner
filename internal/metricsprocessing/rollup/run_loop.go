@@ -17,6 +17,7 @@ package rollup
 import (
 	"context"
 	"log/slog"
+	"runtime"
 	"time"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
@@ -59,8 +60,9 @@ func runLoop(
 		case <-ctx.Done():
 			ll.Info("Context cancelled after claiming work, releasing items",
 				slog.Int("claimedItems", len(claimedWork)))
-			if releaseErr := manager.FailWork(ctx, claimedWork); releaseErr != nil {
-				ll.Error("Failed to release work items after cancellation", slog.Any("error", releaseErr))
+			// Use protected context for cancellation cleanup to ensure it completes
+			if releaseErr := manager.FailWork(context.WithoutCancel(ctx), claimedWork); releaseErr != nil {
+				ll.Error("Failed to release work items after cancellation - items will expire", slog.Any("error", releaseErr))
 			}
 			return ctx.Err()
 		default:
@@ -81,13 +83,17 @@ func runLoop(
 
 		if err != nil {
 			ll.Error("Failed to process rollup batch", slog.Any("error", err))
-			if failErr := manager.FailWork(ctx, claimedWork); failErr != nil {
-				ll.Error("Failed to fail work items", slog.Any("error", failErr))
+			// Fail work items using protected context to prevent expiration
+			if failErr := manager.FailWork(context.WithoutCancel(ctx), claimedWork); failErr != nil {
+				ll.Error("Failed to fail work items - items will expire", slog.Any("error", failErr))
 			}
 		} else {
-			if completeErr := manager.CompleteWork(ctx, claimedWork); completeErr != nil {
-				ll.Error("Failed to complete work items", slog.Any("error", completeErr))
+			// Complete work items using protected context to prevent expiration
+			if completeErr := manager.CompleteWork(context.WithoutCancel(ctx), claimedWork); completeErr != nil {
+				ll.Error("Failed to complete work items - items will expire", slog.Any("error", completeErr))
 			}
 		}
+
+		runtime.GC()
 	}
 }
