@@ -16,14 +16,11 @@ package rollup
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"strconv"
 	"time"
-
-	"github.com/jackc/pgx/v5"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
@@ -33,40 +30,75 @@ import (
 
 type rollupStore interface {
 	s3helper.ObjectCleanupStore
-	ClaimMetricRollupWork(ctx context.Context, params lrdb.ClaimMetricRollupWorkParams) ([]lrdb.ClaimMetricRollupWorkRow, error)
-	DeleteMetricRollupWork(ctx context.Context, params lrdb.DeleteMetricRollupWorkParams) error
-	ReleaseMetricRollupWork(ctx context.Context, params lrdb.ReleaseMetricRollupWorkParams) error
-	TouchMetricRollupWork(ctx context.Context, params lrdb.TouchMetricRollupWorkParams) error
+	ClaimRollupBundle(ctx context.Context, params lrdb.BundleParams) (*lrdb.RollupBundleResult, error)
+	CompleteRollup(ctx context.Context, workerID int64, ids []int64) error
+	HeartbeatRollup(ctx context.Context, workerID int64, ids []int64) error
 	GetMetricSegsForRollup(ctx context.Context, params lrdb.GetMetricSegsForRollupParams) ([]lrdb.MetricSeg, error)
 	GetMetricSegsForRollupWork(ctx context.Context, params lrdb.GetMetricSegsForRollupWorkParams) ([]lrdb.MetricSeg, error)
 	RollupMetricSegs(ctx context.Context, sourceParams lrdb.RollupSourceParams, targetParams lrdb.RollupTargetParams, sourceSegmentIDs []int64, newRecords []lrdb.RollupNewRecord) error
 	PutMetricCompactionWork(ctx context.Context, arg lrdb.PutMetricCompactionWorkParams) error
-	PutMetricRollupWork(ctx context.Context, arg lrdb.PutMetricRollupWorkParams) error
+	MrqQueueWork(ctx context.Context, arg lrdb.MrqQueueWorkParams) error
 }
 
 type config struct {
-	MaxAgeSeconds int32
-	BatchCount    int32
+	TargetRecords int64
+	OverFactor    float64
+	BatchLimit    int32
+	Grace         time.Duration
+	DeferBase     time.Duration
+	MaxAttempts   int
 }
 
 func GetConfigFromEnv() config {
-	maxAge := int32(900)
-	if env := os.Getenv("LAKERUNNER_METRIC_ROLLUP_MAX_AGE_SECONDS"); env != "" {
-		if val, err := strconv.Atoi(env); err == nil && val > 0 {
-			maxAge = int32(val)
+	targetRecords := int64(1000000)
+	if env := os.Getenv("LAKERUNNER_METRIC_ROLLUP_TARGET_RECORDS"); env != "" {
+		if val, err := strconv.ParseInt(env, 10, 64); err == nil && val > 0 {
+			targetRecords = val
 		}
 	}
 
-	batchCount := int32(100)
-	if env := os.Getenv("LAKERUNNER_METRIC_ROLLUP_BATCH_COUNT"); env != "" {
+	overFactor := 1.2
+	if env := os.Getenv("LAKERUNNER_METRIC_ROLLUP_OVER_FACTOR"); env != "" {
+		if val, err := strconv.ParseFloat(env, 64); err == nil && val > 1.0 {
+			overFactor = val
+		}
+	}
+
+	batchLimit := int32(100)
+	if env := os.Getenv("LAKERUNNER_METRIC_ROLLUP_BATCH_LIMIT"); env != "" {
 		if val, err := strconv.Atoi(env); err == nil && val > 0 {
-			batchCount = int32(val)
+			batchLimit = int32(val)
+		}
+	}
+
+	grace := time.Hour
+	if env := os.Getenv("LAKERUNNER_METRIC_ROLLUP_GRACE"); env != "" {
+		if val, err := time.ParseDuration(env); err == nil && val > 0 {
+			grace = val
+		}
+	}
+
+	deferBase := 5 * time.Minute
+	if env := os.Getenv("LAKERUNNER_METRIC_ROLLUP_DEFER_BASE"); env != "" {
+		if val, err := time.ParseDuration(env); err == nil && val > 0 {
+			deferBase = val
+		}
+	}
+
+	maxAttempts := 5
+	if env := os.Getenv("LAKERUNNER_METRIC_ROLLUP_MAX_ATTEMPTS"); env != "" {
+		if val, err := strconv.Atoi(env); err == nil && val > 0 {
+			maxAttempts = val
 		}
 	}
 
 	return config{
-		MaxAgeSeconds: maxAge,
-		BatchCount:    batchCount,
+		TargetRecords: targetRecords,
+		OverFactor:    overFactor,
+		BatchLimit:    batchLimit,
+		Grace:         grace,
+		DeferBase:     deferBase,
+		MaxAttempts:   maxAttempts,
 	}
 }
 
@@ -96,58 +128,51 @@ func NewManager(
 	}
 }
 
-func (m *Manager) ClaimWork(ctx context.Context) ([]lrdb.ClaimMetricRollupWorkRow, error) {
-	claimedRows, err := m.db.ClaimMetricRollupWork(ctx, lrdb.ClaimMetricRollupWorkParams{
+func (m *Manager) ClaimWork(ctx context.Context) (*lrdb.RollupBundleResult, error) {
+	result, err := m.db.ClaimRollupBundle(ctx, lrdb.BundleParams{
 		WorkerID:      m.workerID,
-		NowTs:         nil, // Use database now()
-		MaxAgeSeconds: m.config.MaxAgeSeconds,
-		BatchCount:    m.config.BatchCount,
+		TargetRecords: m.config.TargetRecords,
+		OverFactor:    m.config.OverFactor,
+		BatchLimit:    m.config.BatchLimit,
+		Grace:         m.config.Grace,
+		DeferBase:     m.config.DeferBase,
+		MaxAttempts:   m.config.MaxAttempts,
 	})
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("failed to claim metric rollup work: %w", err)
+		return nil, fmt.Errorf("failed to claim metric rollup bundle: %w", err)
 	}
 
-	if len(claimedRows) > 0 {
-		m.ll.Info("Claimed metric rollup work batch",
-			slog.Int("workItems", len(claimedRows)))
+	if result != nil && len(result.Items) > 0 {
+		m.ll.Info("Claimed metric rollup bundle",
+			slog.Int("workItems", len(result.Items)),
+			slog.Int64("estimatedTarget", result.EstimatedTarget))
 	}
 
-	return claimedRows, nil
+	return result, nil
 }
 
-func (m *Manager) CompleteWork(ctx context.Context, rows []lrdb.ClaimMetricRollupWorkRow) error {
-	for _, row := range rows {
-		if err := m.db.DeleteMetricRollupWork(ctx, lrdb.DeleteMetricRollupWorkParams{
-			ID:        row.ID,
-			ClaimedBy: m.workerID,
-		}); err != nil {
-			m.ll.Error("Failed to complete work item",
-				slog.Int64("id", row.ID),
-				slog.Any("error", err))
-			return fmt.Errorf("failed to complete work item %d: %w", row.ID, err)
-		}
+func (m *Manager) CompleteWork(ctx context.Context, rows []lrdb.MrqFetchCandidatesRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	ids := make([]int64, len(rows))
+	for i, row := range rows {
+		ids[i] = row.ID
+	}
+	if err := m.db.CompleteRollup(ctx, m.workerID, ids); err != nil {
+		m.ll.Error("Failed to complete work items",
+			slog.Any("ids", ids),
+			slog.Any("error", err))
+		return fmt.Errorf("failed to complete work items: %w", err)
 	}
 	return nil
 }
 
-func (m *Manager) FailWork(ctx context.Context, rows []lrdb.ClaimMetricRollupWorkRow) error {
-	releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	for _, row := range rows {
-		if err := m.db.ReleaseMetricRollupWork(releaseCtx, lrdb.ReleaseMetricRollupWorkParams{
-			ID:        row.ID,
-			ClaimedBy: m.workerID,
-		}); err != nil {
-			m.ll.Error("Failed to fail work item",
-				slog.Int64("id", row.ID),
-				slog.Any("error", err))
-			return fmt.Errorf("failed to fail work item %d: %w", row.ID, err)
-		}
-	}
+func (m *Manager) FailWork(ctx context.Context, rows []lrdb.MrqFetchCandidatesRow) error {
+	// For the new bundle approach, failed work items are automatically reclaimed
+	// through the timeout mechanism, so we don't need to explicitly release them
+	m.ll.Info("Work batch failed, items will be reclaimed after timeout",
+		slog.Int("itemCount", len(rows)))
 	return nil
 }
 

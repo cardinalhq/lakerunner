@@ -1,4 +1,4 @@
--- name: PutMetricRollupWork :exec
+-- name: MrqQueueWork :exec
 INSERT INTO metric_rollup_queue (
   organization_id,
   dateint,
@@ -9,8 +9,7 @@ INSERT INTO metric_rollup_queue (
   segment_id,
   record_count,
   rollup_group,
-  priority,
-  window_close_ts
+  priority
 )
 VALUES (
   @organization_id,
@@ -22,6 +21,5 @@ VALUES (
   @segment_id,
   @record_count,
   @rollup_group,
-  @priority,
-  @window_close_ts
+  @priority
 );

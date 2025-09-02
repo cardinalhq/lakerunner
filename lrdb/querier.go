@@ -51,30 +51,12 @@ type Querier interface {
 	// 12) Atomic optimistic claim
 	// For big_single items, get estimates separately
 	ClaimMetricCompactionWork(ctx context.Context, arg ClaimMetricCompactionWorkParams) ([]ClaimMetricCompactionWorkRow, error)
-	// 1) Big single-row safety net (with full batch logic)
-	// 2) One seed per group (org, dateint, freq, instance, slot_id, slot_count, rollup_group)
-	// 3) Order groups globally by seed recency/priority
-	// 4) Attach per-group target_records with estimate tracking
-	// 5) All ready rows within each group
-	// 6) Greedy pack per group
-	// 7) Rows that fit under caps with overshoot protection
-	// 8) Check for >20% overshoot and drop last item if needed (but keep at least 1 item)
-	// 9) Totals per group with full scope for availability calculation
-	// 10) Totals per group from what fits under caps
-	// 11) Eligibility: full batch logic (old items OR efficient fresh batches)
-	// 12) Pick earliest eligible group
-	// 13) Rows to claim for the winner group
-	// 14) Final chosen IDs with batch reason
-	// 15) Atomic optimistic claim
-	ClaimMetricRollupWork(ctx context.Context, arg ClaimMetricRollupWorkParams) ([]ClaimMetricRollupWorkRow, error)
 	CleanupInqueueWork(ctx context.Context, cutoffTime *time.Time) ([]Inqueue, error)
 	CleanupMetricCompactionWork(ctx context.Context, cutoffTime *time.Time) ([]MetricCompactionQueue, error)
-	CleanupMetricRollupWork(ctx context.Context, timeoutSeconds float64) (int64, error)
 	CompactLogSegments(ctx context.Context, arg CompactLogSegmentsParams) error
 	CompactTraceSegments(ctx context.Context, arg CompactTraceSegmentsParams) error
 	DeleteInqueueWork(ctx context.Context, arg DeleteInqueueWorkParams) error
 	DeleteMetricCompactionWork(ctx context.Context, arg DeleteMetricCompactionWorkParams) error
-	DeleteMetricRollupWork(ctx context.Context, arg DeleteMetricRollupWorkParams) error
 	// Retrieves all existing metric pack estimates for EWMA calculations
 	GetAllMetricPackEstimates(ctx context.Context) ([]MetricPackEstimate, error)
 	GetExemplarLogsByFingerprint(ctx context.Context, arg GetExemplarLogsByFingerprintParams) (ExemplarLog, error)
@@ -127,6 +109,7 @@ type Querier interface {
 	MrqFetchCandidates(ctx context.Context, arg MrqFetchCandidatesParams) ([]MrqFetchCandidatesRow, error)
 	MrqHeartbeat(ctx context.Context, arg MrqHeartbeatParams) error
 	MrqPickHead(ctx context.Context) (MrqPickHeadRow, error)
+	MrqQueueWork(ctx context.Context, arg MrqQueueWorkParams) error
 	MrqReclaimTimeouts(ctx context.Context, arg MrqReclaimTimeoutsParams) (int64, error)
 	ObjectCleanupAdd(ctx context.Context, arg ObjectCleanupAddParams) error
 	ObjectCleanupBucketSummary(ctx context.Context) ([]ObjectCleanupBucketSummaryRow, error)
@@ -135,15 +118,12 @@ type Querier interface {
 	ObjectCleanupGet(ctx context.Context, maxrows int32) ([]ObjectCleanupGetRow, error)
 	PutInqueueWork(ctx context.Context, arg PutInqueueWorkParams) error
 	PutMetricCompactionWork(ctx context.Context, arg PutMetricCompactionWorkParams) error
-	PutMetricRollupWork(ctx context.Context, arg PutMetricRollupWorkParams) error
 	ReleaseInqueueWork(ctx context.Context, arg ReleaseInqueueWorkParams) error
 	ReleaseMetricCompactionWork(ctx context.Context, arg ReleaseMetricCompactionWorkParams) error
-	ReleaseMetricRollupWork(ctx context.Context, arg ReleaseMetricRollupWorkParams) error
 	SetMetricSegCompacted(ctx context.Context, arg SetMetricSegCompactedParams) error
 	SignalLockCleanup(ctx context.Context) (int32, error)
 	TouchInqueueWork(ctx context.Context, arg TouchInqueueWorkParams) error
 	TouchMetricCompactionWork(ctx context.Context, arg TouchMetricCompactionWorkParams) error
-	TouchMetricRollupWork(ctx context.Context, arg TouchMetricRollupWorkParams) error
 	// Returns an estimate of the number of trace segments, accounting for per-file overhead.
 	TraceSegEstimator(ctx context.Context, arg TraceSegEstimatorParams) ([]TraceSegEstimatorRow, error)
 	// Updates or inserts a single metric pack estimate

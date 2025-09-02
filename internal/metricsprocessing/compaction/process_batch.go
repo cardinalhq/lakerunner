@@ -65,8 +65,8 @@ func processBatch(
 				slog.String("actualOrg", item.OrganizationID.String()),
 				slog.Int("expectedDateint", int(firstItem.Dateint)),
 				slog.Int("actualDateint", int(item.Dateint)),
-				slog.Int64("expectedFreq", firstItem.FrequencyMs),
-				slog.Int64("actualFreq", item.FrequencyMs),
+				slog.Int("expectedFreq", int(firstItem.FrequencyMs)),
+				slog.Int("actualFreq", int(item.FrequencyMs)),
 				slog.Int("expectedInstance", int(firstItem.InstanceNum)),
 				slog.Int("actualInstance", int(item.InstanceNum)))
 			return fmt.Errorf("inconsistent work batch: item %d has different grouping fields", i)
@@ -74,7 +74,7 @@ func processBatch(
 	}
 
 	if !helpers.IsWantedFrequency(int32(firstItem.FrequencyMs)) {
-		ll.Debug("Skipping compaction for unwanted frequency", slog.Int64("frequencyMs", firstItem.FrequencyMs))
+		ll.Debug("Skipping compaction for unwanted frequency", slog.Int("frequencyMs", int(firstItem.FrequencyMs)))
 		return nil
 	}
 
@@ -105,7 +105,7 @@ func processBatch(
 		slog.String("organizationID", firstItem.OrganizationID.String()),
 		slog.Int("instanceNum", int(firstItem.InstanceNum)),
 		slog.Int("dateint", int(firstItem.Dateint)),
-		slog.Int64("frequencyMs", firstItem.FrequencyMs),
+		slog.Int("frequencyMs", int(firstItem.FrequencyMs)),
 		slog.Int("batchSize", len(claimedWork)))
 
 	segments, err := fetchMetricSegs(ctx, mdb, claimedWork)

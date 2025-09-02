@@ -32,7 +32,7 @@ type MockRollupWorkQueuer struct {
 	mock.Mock
 }
 
-func (m *MockRollupWorkQueuer) PutMetricRollupWork(ctx context.Context, arg lrdb.PutMetricRollupWorkParams) error {
+func (m *MockRollupWorkQueuer) MrqQueueWork(ctx context.Context, arg lrdb.MrqQueueWorkParams) error {
 	args := m.Called(ctx, arg)
 	return args.Error(0)
 }
@@ -121,10 +121,10 @@ func TestQueueMetricRollup(t *testing.T) {
 
 				// Set up expectation
 				expectedRollupGroup := tt.startTs / int64(nextFreq)
-				mockDB.On("PutMetricRollupWork", mock.Anything, mock.MatchedBy(func(params lrdb.PutMetricRollupWorkParams) bool {
+				mockDB.On("MrqQueueWork", mock.Anything, mock.MatchedBy(func(params lrdb.MrqQueueWorkParams) bool {
 					return params.OrganizationID == tt.organizationID &&
 						params.Dateint == tt.dateint &&
-						params.FrequencyMs == int64(tt.frequencyMs) &&
+						params.FrequencyMs == tt.frequencyMs &&
 						params.InstanceNum == tt.instanceNum &&
 						params.SlotID == tt.slotID &&
 						params.SlotCount == tt.slotCount &&
@@ -181,8 +181,8 @@ func TestQueueMetricRollup_FrequencyMapping(t *testing.T) {
 			mockDB := new(MockRollupWorkQueuer)
 
 			expectedRollupGroup := int64(1703174400000) / int64(tc.targetFreq) // startTs / targetFreq
-			mockDB.On("PutMetricRollupWork", mock.Anything, mock.MatchedBy(func(params lrdb.PutMetricRollupWorkParams) bool {
-				return params.FrequencyMs == int64(tc.sourceFreq) &&
+			mockDB.On("MrqQueueWork", mock.Anything, mock.MatchedBy(func(params lrdb.MrqQueueWorkParams) bool {
+				return params.FrequencyMs == tc.sourceFreq &&
 					params.RecordCount == 2000 &&
 					params.RollupGroup == expectedRollupGroup &&
 					params.Priority == tc.priority
@@ -211,7 +211,7 @@ func TestQueueMetricRollup_FrequencyMapping(t *testing.T) {
 func TestQueueMetricRollup_NoRollupForUnknownFrequency(t *testing.T) {
 	// Test that unknown frequencies don't queue rollup work
 	mockDB := new(MockRollupWorkQueuer)
-	// No expectations set - should not call PutMetricRollupWork
+	// No expectations set - should not call MrqQueueWork
 
 	err := QueueMetricRollup(
 		context.Background(),

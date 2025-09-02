@@ -60,7 +60,7 @@ type MrqDeferKeyParams struct {
 	Push           time.Duration `json:"push"`
 	OrganizationID uuid.UUID     `json:"organization_id"`
 	Dateint        int32         `json:"dateint"`
-	FrequencyMs    int64         `json:"frequency_ms"`
+	FrequencyMs    int32         `json:"frequency_ms"`
 	InstanceNum    int16         `json:"instance_num"`
 	SlotID         int32         `json:"slot_id"`
 	SlotCount      int32         `json:"slot_count"`
@@ -82,7 +82,7 @@ func (q *Queries) MrqDeferKey(ctx context.Context, arg MrqDeferKeyParams) error 
 }
 
 const mrqFetchCandidates = `-- name: MrqFetchCandidates :many
-SELECT id, segment_id, record_count, window_close_ts, queue_ts
+SELECT id, segment_id, record_count, queue_ts
 FROM public.metric_rollup_queue
 WHERE claimed_by = -1
   AND eligible_at <= now()
@@ -93,7 +93,7 @@ WHERE claimed_by = -1
   AND slot_id        = $5
   AND slot_count     = $6
   AND rollup_group   = $7
-ORDER BY window_close_ts ASC, queue_ts ASC, id ASC
+ORDER BY queue_ts ASC, id ASC
 FOR UPDATE SKIP LOCKED
 LIMIT $8
 `
@@ -101,7 +101,7 @@ LIMIT $8
 type MrqFetchCandidatesParams struct {
 	OrganizationID uuid.UUID `json:"organization_id"`
 	Dateint        int32     `json:"dateint"`
-	FrequencyMs    int64     `json:"frequency_ms"`
+	FrequencyMs    int32     `json:"frequency_ms"`
 	InstanceNum    int16     `json:"instance_num"`
 	SlotID         int32     `json:"slot_id"`
 	SlotCount      int32     `json:"slot_count"`
@@ -110,11 +110,10 @@ type MrqFetchCandidatesParams struct {
 }
 
 type MrqFetchCandidatesRow struct {
-	ID            int64     `json:"id"`
-	SegmentID     int64     `json:"segment_id"`
-	RecordCount   int64     `json:"record_count"`
-	WindowCloseTs time.Time `json:"window_close_ts"`
-	QueueTs       time.Time `json:"queue_ts"`
+	ID          int64     `json:"id"`
+	SegmentID   int64     `json:"segment_id"`
+	RecordCount int64     `json:"record_count"`
+	QueueTs     time.Time `json:"queue_ts"`
 }
 
 func (q *Queries) MrqFetchCandidates(ctx context.Context, arg MrqFetchCandidatesParams) ([]MrqFetchCandidatesRow, error) {
@@ -139,7 +138,6 @@ func (q *Queries) MrqFetchCandidates(ctx context.Context, arg MrqFetchCandidates
 			&i.ID,
 			&i.SegmentID,
 			&i.RecordCount,
-			&i.WindowCloseTs,
 			&i.QueueTs,
 		); err != nil {
 			return nil, err
@@ -170,11 +168,11 @@ func (q *Queries) MrqHeartbeat(ctx context.Context, arg MrqHeartbeatParams) erro
 
 const mrqPickHead = `-- name: MrqPickHead :one
 SELECT id, organization_id, dateint, frequency_ms, instance_num,
-       slot_id, slot_count, rollup_group, segment_id, record_count, window_close_ts, queue_ts
+       slot_id, slot_count, rollup_group, segment_id, record_count, queue_ts
 FROM public.metric_rollup_queue
 WHERE claimed_by = -1
   AND eligible_at <= now()
-ORDER BY priority ASC, eligible_at ASC, window_close_ts ASC, queue_ts ASC
+ORDER BY priority ASC, eligible_at ASC, queue_ts ASC
 FOR UPDATE SKIP LOCKED
 LIMIT 1
 `
@@ -183,14 +181,13 @@ type MrqPickHeadRow struct {
 	ID             int64     `json:"id"`
 	OrganizationID uuid.UUID `json:"organization_id"`
 	Dateint        int32     `json:"dateint"`
-	FrequencyMs    int64     `json:"frequency_ms"`
+	FrequencyMs    int32     `json:"frequency_ms"`
 	InstanceNum    int16     `json:"instance_num"`
 	SlotID         int32     `json:"slot_id"`
 	SlotCount      int32     `json:"slot_count"`
 	RollupGroup    int64     `json:"rollup_group"`
 	SegmentID      int64     `json:"segment_id"`
 	RecordCount    int64     `json:"record_count"`
-	WindowCloseTs  time.Time `json:"window_close_ts"`
 	QueueTs        time.Time `json:"queue_ts"`
 }
 
@@ -208,7 +205,6 @@ func (q *Queries) MrqPickHead(ctx context.Context) (MrqPickHeadRow, error) {
 		&i.RollupGroup,
 		&i.SegmentID,
 		&i.RecordCount,
-		&i.WindowCloseTs,
 		&i.QueueTs,
 	)
 	return i, err

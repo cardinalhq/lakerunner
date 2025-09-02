@@ -18,25 +18,44 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Store provides all functions to execute db queries and transactions
 type Store struct {
 	*Queries
-	connPool *pgxpool.Pool
+	connPool  *pgxpool.Pool
+	estimator MetricEstimator
 }
 
 // NewStore creates a new Store
 func NewStore(connPool *pgxpool.Pool) *Store {
+	queries := New(connPool)
+	estimator := NewMetricPackEstimator(queries, 1000) // 1000 item cache
 	return &Store{
-		connPool: connPool,
-		Queries:  New(connPool),
+		connPool:  connPool,
+		Queries:   queries,
+		estimator: estimator,
+	}
+}
+
+// NewStoreWithEstimator creates a Store with a custom estimator (for testing)
+func NewStoreWithEstimator(connPool *pgxpool.Pool, estimator MetricEstimator) *Store {
+	return &Store{
+		connPool:  connPool,
+		Queries:   New(connPool),
+		estimator: estimator,
 	}
 }
 
 func (store *Store) Pool() *pgxpool.Pool {
 	return store.connPool
+}
+
+// GetMetricEstimate returns the estimated target records for an organization and frequency
+func (store *Store) GetMetricEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32) int64 {
+	return store.estimator.Get(ctx, orgID, frequencyMs)
 }
 
 func (store *Store) execTx(ctx context.Context, fn func(*Store) error) (err error) {
@@ -54,8 +73,9 @@ func (store *Store) execTx(ctx context.Context, fn func(*Store) error) (err erro
 	}()
 
 	txStore := &Store{
-		connPool: store.connPool,
-		Queries:  New(tx),
+		connPool:  store.connPool,
+		Queries:   New(tx),
+		estimator: store.estimator,
 	}
 
 	if err = fn(txStore); err != nil {

@@ -35,7 +35,7 @@ func QueueMetricCompaction(ctx context.Context, mdb CompactionWorkQueuer, organi
 	err := mdb.PutMetricCompactionWork(ctx, lrdb.PutMetricCompactionWorkParams{
 		OrganizationID: organizationID,
 		Dateint:        dateint,
-		FrequencyMs:    int64(frequencyMs),
+		FrequencyMs:    frequencyMs,
 		SegmentID:      segmentID,
 		InstanceNum:    instanceNum,
 		RecordCount:    recordCount,

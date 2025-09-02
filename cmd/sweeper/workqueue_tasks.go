@@ -114,7 +114,7 @@ func runMCQExpiry(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull) erro
 			slog.Int64("id", obj.ID),
 			slog.String("organization_id", obj.OrganizationID.String()),
 			slog.Int("dateint", int(obj.Dateint)),
-			slog.Int64("frequency_ms", obj.FrequencyMs))
+			slog.Int("frequency_ms", int(obj.FrequencyMs)))
 		mcqExpiryCounter.Add(ctx, 1, metric.WithAttributes(
 			attribute.String("organization_id", obj.OrganizationID.String()),
 		))
@@ -127,15 +127,17 @@ func runMRQExpiry(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull) erro
 	// Items are considered stale if they haven't heartbeated for 5 minutes
 	// This allows for ~5 missed heartbeats (1 minute interval) plus buffer
 	mrqStaleTimeout := 5 * time.Minute
-	timeoutSeconds := mrqStaleTimeout.Seconds()
 
-	count, err := mdb.CleanupMetricRollupWork(ctx, timeoutSeconds)
+	count, err := mdb.MrqReclaimTimeouts(ctx, lrdb.MrqReclaimTimeoutsParams{
+		MaxAge:  mrqStaleTimeout,
+		MaxRows: 1000, // Reasonable batch size
+	})
 	if err != nil {
-		ll.Error("Failed to expire MRQ objects", slog.Any("error", err))
+		ll.Error("Failed to reclaim MRQ timeouts", slog.Any("error", err))
 		return err
 	}
 	if count > 0 {
-		ll.Info("Expired MRQ items", slog.Int64("count", count))
+		ll.Info("Reclaimed MRQ timeout items", slog.Int64("count", count))
 		mrqExpiryCounter.Add(ctx, count)
 	}
 	return nil

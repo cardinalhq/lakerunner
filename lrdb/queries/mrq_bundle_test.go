@@ -38,7 +38,7 @@ func TestClaimRollupBundle_BigSingleFile(t *testing.T) {
 	workerID := int64(42)
 
 	// Insert a large file that exceeds target
-	largeFileID := insertMRQRow(t, store, orgID, 20241201, 5000, 1, 1, 4, 1001, 15000, time.Now().Add(-time.Hour), time.Now().Add(-time.Hour))
+	largeFileID := insertMRQRow(t, store, orgID, 20241201, 5000, 1, 1, 4, 1001, 15000, time.Now().Add(-time.Hour))
 
 	params := lrdb.BundleParams{
 		WorkerID:      workerID,
@@ -49,11 +49,13 @@ func TestClaimRollupBundle_BigSingleFile(t *testing.T) {
 		MaxAttempts:   3,
 	}
 
-	bundle, err := store.ClaimRollupBundle(ctx, params)
+	result, err := store.ClaimRollupBundle(ctx, params)
 	require.NoError(t, err)
-	require.Len(t, bundle, 1, "Should return single large file")
-	assert.Equal(t, largeFileID, bundle[0].ID)
-	assert.Equal(t, int64(15000), bundle[0].RecordCount)
+	require.NotNil(t, result)
+	require.Len(t, result.Items, 1, "Should return single large file")
+	assert.Equal(t, largeFileID, result.Items[0].ID)
+	assert.Equal(t, int64(15000), result.Items[0].RecordCount)
+	assert.Greater(t, result.EstimatedTarget, int64(0), "Should have estimated target")
 
 	// Verify the row is claimed
 	assertMRQRowClaimed(t, store, largeFileID, workerID)
@@ -66,13 +68,12 @@ func TestClaimRollupBundle_GreedyPacking(t *testing.T) {
 	orgID := uuid.New()
 	workerID := int64(42)
 	now := time.Now().Add(-time.Hour)
-	windowClose := now.Add(-time.Minute * 30)
 
 	// Insert multiple small files that sum to target
-	id1 := insertMRQRow(t, store, orgID, 20241201, 5000, 1, 1, 4, 1001, 3000, now.Add(-time.Minute*10), windowClose)
-	id2 := insertMRQRow(t, store, orgID, 20241201, 5000, 1, 1, 4, 1001, 4000, now.Add(-time.Minute*9), windowClose)
-	id3 := insertMRQRow(t, store, orgID, 20241201, 5000, 1, 1, 4, 1001, 3500, now.Add(-time.Minute*8), windowClose)
-	id4 := insertMRQRow(t, store, orgID, 20241201, 5000, 1, 1, 4, 1001, 2000, now.Add(-time.Minute*7), windowClose)
+	id1 := insertMRQRow(t, store, orgID, 20241201, 5000, 1, 1, 4, 1001, 3000, now.Add(-time.Minute*10))
+	id2 := insertMRQRow(t, store, orgID, 20241201, 5000, 1, 1, 4, 1001, 4000, now.Add(-time.Minute*9))
+	id3 := insertMRQRow(t, store, orgID, 20241201, 5000, 1, 1, 4, 1001, 3500, now.Add(-time.Minute*8))
+	id4 := insertMRQRow(t, store, orgID, 20241201, 5000, 1, 1, 4, 1001, 2000, now.Add(-time.Minute*7))
 
 	params := lrdb.BundleParams{
 		WorkerID:      workerID,
@@ -83,15 +84,16 @@ func TestClaimRollupBundle_GreedyPacking(t *testing.T) {
 		MaxAttempts:   3,
 	}
 
-	bundle, err := store.ClaimRollupBundle(ctx, params)
+	result, err := store.ClaimRollupBundle(ctx, params)
 	require.NoError(t, err)
-	require.Len(t, bundle, 3, "Should pack first 3 files (3000+4000+3500=10500)")
+	require.NotNil(t, result)
+	require.Len(t, result.Items, 3, "Should pack first 3 files (3000+4000+3500=10500)")
 
 	// Verify correct files in chronological order by window_close_ts, then queue_ts
 	expectedIDs := []int64{id1, id2, id3}
-	actualIDs := make([]int64, len(bundle))
+	actualIDs := make([]int64, len(result.Items))
 	totalRecords := int64(0)
-	for i, row := range bundle {
+	for i, row := range result.Items {
 		actualIDs[i] = row.ID
 		totalRecords += row.RecordCount
 	}
@@ -116,11 +118,10 @@ func TestClaimRollupBundle_OverFactorPreventsGreedy(t *testing.T) {
 	orgID := uuid.New()
 	workerID := int64(42)
 	now := time.Now().Add(-time.Hour)
-	windowClose := now.Add(-time.Minute * 30)
 
 	// Insert files where adding the second would exceed over factor
-	id1 := insertMRQRow(t, store, orgID, 20241201, 5000, 1, 1, 4, 1001, 8000, now.Add(-time.Minute*10), windowClose)
-	id2 := insertMRQRow(t, store, orgID, 20241201, 5000, 1, 1, 4, 1001, 5000, now.Add(-time.Minute*9), windowClose)
+	id1 := insertMRQRow(t, store, orgID, 20241201, 5000, 1, 1, 4, 1001, 8000, now)
+	id2 := insertMRQRow(t, store, orgID, 20241201, 5000, 1, 1, 4, 1001, 5000, now.Add(time.Minute))
 
 	params := lrdb.BundleParams{
 		WorkerID:      workerID,
@@ -131,10 +132,11 @@ func TestClaimRollupBundle_OverFactorPreventsGreedy(t *testing.T) {
 		MaxAttempts:   3,
 	}
 
-	bundle, err := store.ClaimRollupBundle(ctx, params)
+	result, err := store.ClaimRollupBundle(ctx, params)
 	require.NoError(t, err)
-	require.Len(t, bundle, 1, "Should only take first file due to over factor")
-	assert.Equal(t, id1, bundle[0].ID)
+	require.NotNil(t, result)
+	require.Len(t, result.Items, 1, "Should only take first file due to over factor")
+	assert.Equal(t, id1, result.Items[0].ID)
 
 	assertMRQRowClaimed(t, store, id1, workerID)
 	assertMRQRowUnclaimed(t, store, id2)
@@ -149,9 +151,8 @@ func TestClaimRollupBundle_TailRuleActivation(t *testing.T) {
 
 	// Insert old small files that don't reach target
 	oldTime := time.Now().Add(-time.Hour * 2) // beyond grace period
-	windowClose := oldTime.Add(-time.Minute * 30)
-	id1 := insertMRQRow(t, store, orgID, 20241201, 5000, 1, 1, 4, 1001, 1000, oldTime, windowClose)
-	id2 := insertMRQRow(t, store, orgID, 20241201, 5000, 1, 1, 4, 1001, 2000, oldTime.Add(time.Minute), windowClose)
+	id1 := insertMRQRow(t, store, orgID, 20241201, 5000, 1, 1, 4, 1001, 1000, oldTime)
+	id2 := insertMRQRow(t, store, orgID, 20241201, 5000, 1, 1, 4, 1001, 2000, oldTime.Add(time.Minute))
 
 	params := lrdb.BundleParams{
 		WorkerID:      workerID,
@@ -162,12 +163,13 @@ func TestClaimRollupBundle_TailRuleActivation(t *testing.T) {
 		MaxAttempts:   3,
 	}
 
-	bundle, err := store.ClaimRollupBundle(ctx, params)
+	result, err := store.ClaimRollupBundle(ctx, params)
 	require.NoError(t, err)
-	require.Len(t, bundle, 2, "Should take all available files due to tail rule")
+	require.NotNil(t, result)
+	require.Len(t, result.Items, 2, "Should take all available files due to tail rule")
 
 	totalRecords := int64(0)
-	for _, row := range bundle {
+	for _, row := range result.Items {
 		totalRecords += row.RecordCount
 	}
 	assert.Equal(t, int64(3000), totalRecords)
@@ -183,11 +185,10 @@ func TestClaimRollupBundle_BoundaryRuleActivation(t *testing.T) {
 	orgID := uuid.New()
 	workerID := int64(42)
 
-	// Insert recent files (within grace period) but with past window_close_ts (boundary condition)
-	recentTime := time.Now().Add(-time.Minute * 30)      // within grace period
-	pastWindowClose := time.Now().Add(-time.Minute * 10) // window closed 10 minutes ago
-	id1 := insertMRQRow(t, store, orgID, 20241201, 5000, 1, 1, 4, 1001, 1000, recentTime, pastWindowClose)
-	id2 := insertMRQRow(t, store, orgID, 20241201, 5000, 1, 1, 4, 1001, 2000, recentTime.Add(time.Minute), pastWindowClose)
+	// Insert recent files (within grace period)
+	recentTime := time.Now().Add(-time.Minute * 30) // within grace period
+	id1 := insertMRQRow(t, store, orgID, 20241201, 5000, 1, 1, 4, 1001, 1000, recentTime)
+	id2 := insertMRQRow(t, store, orgID, 20241201, 5000, 1, 1, 4, 1001, 2000, recentTime.Add(time.Minute))
 
 	params := lrdb.BundleParams{
 		WorkerID:      workerID,
@@ -198,18 +199,14 @@ func TestClaimRollupBundle_BoundaryRuleActivation(t *testing.T) {
 		MaxAttempts:   3,
 	}
 
-	bundle, err := store.ClaimRollupBundle(ctx, params)
+	result, err := store.ClaimRollupBundle(ctx, params)
 	require.NoError(t, err)
-	require.Len(t, bundle, 2, "Should take all files due to boundary rule (window closed)")
+	require.NotNil(t, result)
+	require.Empty(t, result.Items, "Should defer recent files and return empty")
 
-	totalRecords := int64(0)
-	for _, row := range bundle {
-		totalRecords += row.RecordCount
-	}
-	assert.Equal(t, int64(3000), totalRecords)
-
-	assertMRQRowClaimed(t, store, id1, workerID)
-	assertMRQRowClaimed(t, store, id2, workerID)
+	// Verify files are still unclaimed (should be deferred)
+	assertMRQRowUnclaimed(t, store, id1)
+	assertMRQRowUnclaimed(t, store, id2)
 }
 
 func TestClaimRollupBundle_DeferYoungFiles(t *testing.T) {
@@ -219,11 +216,10 @@ func TestClaimRollupBundle_DeferYoungFiles(t *testing.T) {
 	orgID := uuid.New()
 	workerID := int64(42)
 
-	// Insert recent small files (within grace period) and future window close
-	recentTime := time.Now().Add(-time.Minute * 30)       // within 1 hour grace
-	futureWindowClose := time.Now().Add(time.Minute * 30) // window not closed yet
-	id1 := insertMRQRow(t, store, orgID, 20241201, 5000, 1, 1, 4, 1001, 1000, recentTime, futureWindowClose)
-	id2 := insertMRQRow(t, store, orgID, 20241201, 5000, 1, 1, 4, 1001, 2000, recentTime.Add(time.Minute), futureWindowClose)
+	// Insert recent small files (within grace period)
+	recentTime := time.Now().Add(-time.Minute * 30) // within 1 hour grace
+	id1 := insertMRQRow(t, store, orgID, 20241201, 5000, 1, 1, 4, 1001, 1000, recentTime)
+	id2 := insertMRQRow(t, store, orgID, 20241201, 5000, 1, 1, 4, 1001, 2000, recentTime.Add(time.Minute))
 
 	params := lrdb.BundleParams{
 		WorkerID:      workerID,
@@ -235,9 +231,10 @@ func TestClaimRollupBundle_DeferYoungFiles(t *testing.T) {
 		MaxAttempts:   3,
 	}
 
-	bundle, err := store.ClaimRollupBundle(ctx, params)
+	result, err := store.ClaimRollupBundle(ctx, params)
 	require.NoError(t, err)
-	require.Empty(t, bundle, "Should defer young files and return empty")
+	require.NotNil(t, result)
+	require.Empty(t, result.Items, "Should defer young files and return empty")
 
 	// Verify files are still unclaimed but deferred
 	assertMRQRowUnclaimed(t, store, id1)
@@ -254,15 +251,13 @@ func TestClaimRollupBundle_KeyRotation(t *testing.T) {
 	orgID := uuid.New()
 	workerID := int64(42)
 	recentTime := time.Now().Add(-time.Minute * 30)
-	futureWindowClose := time.Now().Add(time.Minute * 30)
 
 	// Insert files for first key (young, will be deferred)
-	insertMRQRow(t, store, orgID, 20241201, 5000, 1, 1, 4, 1001, 1000, recentTime, futureWindowClose)
+	insertMRQRow(t, store, orgID, 20241201, 5000, 1, 1, 4, 1001, 1000, recentTime)
 
 	// Insert files for second key (old, can be claimed) - different slot_id
 	oldTime := time.Now().Add(-time.Hour * 2)
-	pastWindowClose := time.Now().Add(-time.Minute * 10)
-	id2 := insertMRQRow(t, store, orgID, 20241201, 5000, 1, 2, 4, 1002, 3000, oldTime, pastWindowClose) // different slot_id
+	id2 := insertMRQRow(t, store, orgID, 20241201, 5000, 1, 2, 4, 1002, 3000, oldTime) // different slot_id
 
 	params := lrdb.BundleParams{
 		WorkerID:      workerID,
@@ -274,10 +269,11 @@ func TestClaimRollupBundle_KeyRotation(t *testing.T) {
 		MaxAttempts:   3,
 	}
 
-	bundle, err := store.ClaimRollupBundle(ctx, params)
+	result, err := store.ClaimRollupBundle(ctx, params)
 	require.NoError(t, err)
-	require.Len(t, bundle, 1, "Should find suitable bundle from second key")
-	assert.Equal(t, id2, bundle[0].ID)
+	require.NotNil(t, result)
+	require.Len(t, result.Items, 1, "Should find suitable bundle from second key")
+	assert.Equal(t, id2, result.Items[0].ID)
 
 	assertMRQRowClaimed(t, store, id2, workerID)
 }
@@ -289,12 +285,11 @@ func TestClaimRollupBundle_ExhaustAllAttempts(t *testing.T) {
 	orgID := uuid.New()
 	workerID := int64(42)
 	recentTime := time.Now().Add(-time.Minute * 30)
-	futureWindowClose := time.Now().Add(time.Minute * 30)
 
 	// Insert only young files across multiple keys
-	insertMRQRow(t, store, orgID, 20241201, 5000, 1, 1, 4, 1001, 1000, recentTime, futureWindowClose)
-	insertMRQRow(t, store, orgID, 20241201, 5000, 1, 2, 4, 1002, 1000, recentTime, futureWindowClose)
-	insertMRQRow(t, store, orgID, 20241201, 5000, 1, 3, 4, 1003, 1000, recentTime, futureWindowClose)
+	insertMRQRow(t, store, orgID, 20241201, 5000, 1, 1, 4, 1001, 1000, recentTime)
+	insertMRQRow(t, store, orgID, 20241201, 5000, 1, 2, 4, 1002, 1000, recentTime)
+	insertMRQRow(t, store, orgID, 20241201, 5000, 1, 3, 4, 1003, 1000, recentTime)
 
 	params := lrdb.BundleParams{
 		WorkerID:      workerID,
@@ -306,9 +301,10 @@ func TestClaimRollupBundle_ExhaustAllAttempts(t *testing.T) {
 		MaxAttempts:   2, // will try 2 keys, then give up
 	}
 
-	bundle, err := store.ClaimRollupBundle(ctx, params)
+	result, err := store.ClaimRollupBundle(ctx, params)
 	require.NoError(t, err)
-	require.Empty(t, bundle, "Should return empty after exhausting attempts")
+	require.NotNil(t, result)
+	require.Empty(t, result.Items, "Should return empty after exhausting attempts")
 }
 
 func TestClaimRollupBundle_EmptyQueue(t *testing.T) {
@@ -324,9 +320,10 @@ func TestClaimRollupBundle_EmptyQueue(t *testing.T) {
 		MaxAttempts:   3,
 	}
 
-	bundle, err := store.ClaimRollupBundle(ctx, params)
+	result, err := store.ClaimRollupBundle(ctx, params)
 	require.NoError(t, err)
-	require.Empty(t, bundle, "Should handle empty queue gracefully")
+	require.NotNil(t, result)
+	require.Empty(t, result.Items, "Should handle empty queue gracefully")
 }
 
 func TestClaimRollupBundle_ConcurrentWorkers(t *testing.T) {
@@ -335,44 +332,45 @@ func TestClaimRollupBundle_ConcurrentWorkers(t *testing.T) {
 
 	orgID := uuid.New()
 	now := time.Now().Add(-time.Hour)
-	windowClose := now.Add(-time.Minute * 30)
 
 	// Insert files
-	id1 := insertMRQRow(t, store, orgID, 20241201, 5000, 1, 1, 4, 1001, 15000, now, windowClose) // big single
-	id2 := insertMRQRow(t, store, orgID, 20241201, 5000, 1, 2, 4, 1002, 8000, now, windowClose)  // another key (different slot_id)
+	id1 := insertMRQRow(t, store, orgID, 20241201, 5000, 1, 1, 4, 1001, 15000, now) // big single
+	id2 := insertMRQRow(t, store, orgID, 20241201, 5000, 1, 2, 4, 1002, 8000, now)  // another key (different slot_id)
 
 	params1 := lrdb.BundleParams{WorkerID: 1, TargetRecords: 10000, OverFactor: 1.2, BatchLimit: 100, Grace: time.Minute, MaxAttempts: 3}
 	params2 := lrdb.BundleParams{WorkerID: 2, TargetRecords: 10000, OverFactor: 1.2, BatchLimit: 100, Grace: time.Minute, MaxAttempts: 3}
 
 	// Both workers try to claim concurrently
-	bundle1, err1 := store.ClaimRollupBundle(ctx, params1)
-	bundle2, err2 := store.ClaimRollupBundle(ctx, params2)
+	result1, err1 := store.ClaimRollupBundle(ctx, params1)
+	result2, err2 := store.ClaimRollupBundle(ctx, params2)
 
 	require.NoError(t, err1)
 	require.NoError(t, err2)
+	require.NotNil(t, result1)
+	require.NotNil(t, result2)
 
 	// One should get the first key, other should get the second key
-	if len(bundle1) > 0 && len(bundle2) > 0 {
+	if len(result1.Items) > 0 && len(result2.Items) > 0 {
 		// Both got work - verify different files
-		assert.NotEqual(t, bundle1[0].ID, bundle2[0].ID)
+		assert.NotEqual(t, result1.Items[0].ID, result2.Items[0].ID)
 		// Check that we got the expected files
-		gotIDs := []int64{bundle1[0].ID, bundle2[0].ID}
+		gotIDs := []int64{result1.Items[0].ID, result2.Items[0].ID}
 		expectedIDs := []int64{id1, id2}
 		assert.Contains(t, expectedIDs, gotIDs[0])
 		assert.Contains(t, expectedIDs, gotIDs[1])
 	} else {
 		// One might not get work due to timing, that's ok
-		assert.True(t, len(bundle1) > 0 || len(bundle2) > 0, "At least one worker should get work")
-		if len(bundle1) > 0 {
-			assert.True(t, bundle1[0].ID == id1 || bundle1[0].ID == id2)
+		assert.True(t, len(result1.Items) > 0 || len(result2.Items) > 0, "At least one worker should get work")
+		if len(result1.Items) > 0 {
+			assert.True(t, result1.Items[0].ID == id1 || result1.Items[0].ID == id2)
 		}
-		if len(bundle2) > 0 {
-			assert.True(t, bundle2[0].ID == id1 || bundle2[0].ID == id2)
+		if len(result2.Items) > 0 {
+			assert.True(t, result2.Items[0].ID == id1 || result2.Items[0].ID == id2)
 		}
 	}
 }
 
-func TestClaimRollupBundle_WindowOrderingMatters(t *testing.T) {
+func TestClaimRollupBundle_QueueTimeOrdering(t *testing.T) {
 	ctx := context.Background()
 	store := testhelpers.NewTestLRDBStore(t).(*lrdb.Store)
 
@@ -380,13 +378,10 @@ func TestClaimRollupBundle_WindowOrderingMatters(t *testing.T) {
 	workerID := int64(42)
 	now := time.Now().Add(-time.Hour)
 
-	// Insert files with different window close times but same queue times
-	// Earlier window close should be prioritized
-	earlyWindowClose := now.Add(-time.Minute * 60)
-	laterWindowClose := now.Add(-time.Minute * 30)
+	// Insert files with different queue times - earlier should be prioritized
 
-	id1 := insertMRQRow(t, store, orgID, 20241201, 5000, 1, 1, 4, 1001, 5000, now, laterWindowClose) // later window close
-	id2 := insertMRQRow(t, store, orgID, 20241201, 5000, 1, 1, 4, 1001, 6000, now, earlyWindowClose) // earlier window close
+	id1 := insertMRQRow(t, store, orgID, 20241201, 5000, 1, 1, 4, 1001, 6000, now.Add(time.Minute)) // later queue time
+	id2 := insertMRQRow(t, store, orgID, 20241201, 5000, 1, 1, 4, 1001, 5000, now)                  // earlier queue time
 
 	params := lrdb.BundleParams{
 		WorkerID:      workerID,
@@ -397,29 +392,33 @@ func TestClaimRollupBundle_WindowOrderingMatters(t *testing.T) {
 		MaxAttempts:   3,
 	}
 
-	bundle, err := store.ClaimRollupBundle(ctx, params)
+	result, err := store.ClaimRollupBundle(ctx, params)
 	require.NoError(t, err)
-	require.Len(t, bundle, 2, "Should pack both files")
+	require.NotNil(t, result)
+	require.Len(t, result.Items, 2, "Should pack both files")
 
-	// Should be ordered by window_close_ts first (earliest first)
-	assert.Equal(t, id2, bundle[0].ID, "File with earlier window close should be first")
-	assert.Equal(t, id1, bundle[1].ID, "File with later window close should be second")
+	// Should be ordered by queue_ts (earliest first)
+	assert.Equal(t, id2, result.Items[0].ID, "File with earlier queue time should be first")
+	assert.Equal(t, id1, result.Items[1].ID, "File with later queue time should be second")
+
+	assertMRQRowClaimed(t, store, id1, workerID)
+	assertMRQRowClaimed(t, store, id2, workerID)
 }
 
 // Helper functions
 
-func insertMRQRow(t *testing.T, store *lrdb.Store, orgID uuid.UUID, dateint int32, freqMs int64, instanceNum int16, slotID, slotCount int32, rollupGroup int64, recordCount int64, queueTs, windowCloseTs time.Time) int64 {
+func insertMRQRow(t *testing.T, store *lrdb.Store, orgID uuid.UUID, dateint int32, freqMs int64, instanceNum int16, slotID, slotCount int32, rollupGroup int64, recordCount int64, queueTs time.Time) int64 {
 	ctx := context.Background()
 
 	// Insert into metric_rollup_queue table
 	query := `
 		INSERT INTO public.metric_rollup_queue 
-		(organization_id, dateint, frequency_ms, instance_num, slot_id, slot_count, segment_id, record_count, rollup_group, window_close_ts, queue_ts, claimed_by, eligible_at, priority)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, -1, now(), 0)
+		(organization_id, dateint, frequency_ms, instance_num, slot_id, slot_count, segment_id, record_count, rollup_group, queue_ts, claimed_by, eligible_at, priority)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, -1, now(), 0)
 		RETURNING id`
 
 	var id int64
-	err := store.Pool().QueryRow(ctx, query, orgID, dateint, freqMs, instanceNum, slotID, slotCount, recordCount+1000, recordCount, rollupGroup, windowCloseTs, queueTs).Scan(&id)
+	err := store.Pool().QueryRow(ctx, query, orgID, dateint, freqMs, instanceNum, slotID, slotCount, recordCount+1000, recordCount, rollupGroup, queueTs).Scan(&id)
 	require.NoError(t, err)
 	return id
 }

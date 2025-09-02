@@ -179,7 +179,7 @@ type MetricCompactionQueue struct {
 	Priority       int32      `json:"priority"`
 	OrganizationID uuid.UUID  `json:"organization_id"`
 	Dateint        int32      `json:"dateint"`
-	FrequencyMs    int64      `json:"frequency_ms"`
+	FrequencyMs    int32      `json:"frequency_ms"`
 	SegmentID      int64      `json:"segment_id"`
 	InstanceNum    int16      `json:"instance_num"`
 	RecordCount    int64      `json:"record_count"`
@@ -192,7 +192,7 @@ type MetricCompactionQueue struct {
 
 type MetricPackEstimate struct {
 	OrganizationID uuid.UUID `json:"organization_id"`
-	FrequencyMs    int64     `json:"frequency_ms"`
+	FrequencyMs    int32     `json:"frequency_ms"`
 	TargetRecords  *int64    `json:"target_records"`
 	UpdatedAt      time.Time `json:"updated_at"`
 }
@@ -203,7 +203,7 @@ type MetricRollupQueue struct {
 	Priority       int32      `json:"priority"`
 	OrganizationID uuid.UUID  `json:"organization_id"`
 	Dateint        int32      `json:"dateint"`
-	FrequencyMs    int64      `json:"frequency_ms"`
+	FrequencyMs    int32      `json:"frequency_ms"`
 	InstanceNum    int16      `json:"instance_num"`
 	SlotID         int32      `json:"slot_id"`
 	SlotCount      int32      `json:"slot_count"`
@@ -214,7 +214,6 @@ type MetricRollupQueue struct {
 	SegmentID      int64      `json:"segment_id"`
 	RecordCount    int64      `json:"record_count"`
 	RollupGroup    int64      `json:"rollup_group"`
-	WindowCloseTs  time.Time  `json:"window_close_ts"`
 	EligibleAt     time.Time  `json:"eligible_at"`
 }
 

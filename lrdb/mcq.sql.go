@@ -58,7 +58,7 @@ type McqDeferKeyParams struct {
 	Push           time.Duration `json:"push"`
 	OrganizationID uuid.UUID     `json:"organization_id"`
 	Dateint        int32         `json:"dateint"`
-	FrequencyMs    int64         `json:"frequency_ms"`
+	FrequencyMs    int32         `json:"frequency_ms"`
 	InstanceNum    int16         `json:"instance_num"`
 }
 
@@ -90,7 +90,7 @@ FOR UPDATE SKIP LOCKED
 type McqFetchCandidatesParams struct {
 	OrganizationID uuid.UUID `json:"organization_id"`
 	Dateint        int32     `json:"dateint"`
-	FrequencyMs    int64     `json:"frequency_ms"`
+	FrequencyMs    int32     `json:"frequency_ms"`
 	InstanceNum    int16     `json:"instance_num"`
 	MaxRows        int32     `json:"max_rows"`
 }
@@ -164,7 +164,7 @@ type McqPickHeadRow struct {
 	ID             int64     `json:"id"`
 	OrganizationID uuid.UUID `json:"organization_id"`
 	Dateint        int32     `json:"dateint"`
-	FrequencyMs    int64     `json:"frequency_ms"`
+	FrequencyMs    int32     `json:"frequency_ms"`
 	InstanceNum    int16     `json:"instance_num"`
 	SegmentID      int64     `json:"segment_id"`
 	RecordCount    int64     `json:"record_count"`

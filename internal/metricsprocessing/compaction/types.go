@@ -23,7 +23,7 @@ import (
 
 type input struct {
 	ReaderStack  *metricsprocessing.ReaderStackResult
-	FrequencyMs  int64
+	FrequencyMs  int32
 	TmpDir       string
 	Logger       *slog.Logger
 	RecordsLimit int64

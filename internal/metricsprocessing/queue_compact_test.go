@@ -88,7 +88,7 @@ func TestQueueMetricCompaction(t *testing.T) {
 				// Verify the parameters passed to the database call
 				return params.OrganizationID == tt.organizationID &&
 					params.Dateint == tt.dateint &&
-					params.FrequencyMs == int64(tt.frequencyMs) &&
+					params.FrequencyMs == tt.frequencyMs &&
 					params.InstanceNum == tt.instanceNum &&
 					params.SegmentID == tt.segmentID &&
 					params.RecordCount == tt.recordCount &&
