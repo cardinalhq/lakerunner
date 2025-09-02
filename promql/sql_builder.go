@@ -60,23 +60,18 @@ func (be *BaseExpr) ToWorkerSQL(step time.Duration) string {
 	}
 
 	switch be.FuncName {
-	// Sliding-window functions (need range + densify)
 	case "sum_over_time":
-		return buildWindowed(be, need{sum: true}, step)
+		return buildStepAggNoWindow(be, need{sum: true}, step)
 	case "avg_over_time":
-		return buildWindowed(be, need{sum: true, count: true}, step)
+		return buildStepAggNoWindow(be, need{sum: true, count: true}, step)
 	case "min_over_time":
-		return buildWindowed(be, need{min: true}, step)
+		return buildStepAggNoWindow(be, need{min: true}, step)
 	case "max_over_time":
-		return buildWindowed(be, need{max: true}, step)
+		return buildStepAggNoWindow(be, need{max: true}, step)
 	case "rate", "irate":
-		// rate = sum_over_time / range_seconds → push SUM window; parent divides by range.
-		return buildWindowed(be, need{sum: true}, step)
+		return buildStepAggNoWindow(be, need{sum: true}, step)
 	case "increase":
-		// increase = sum_over_time over counter deltas → same windowed SUM, no divide.
-		return buildWindowed(be, need{sum: true}, step)
-
-	// Raw/instant — for your current experiment you’re also using the windowed path.
+		return buildStepAggNoWindow(be, need{sum: true}, step)
 	case "":
 		if be.Range == "" {
 			return buildRawSimple(be, []proj{
@@ -86,11 +81,58 @@ func (be *BaseExpr) ToWorkerSQL(step time.Duration) string {
 				{"COUNT(rollup_count)", "count"},
 			}, step)
 		}
-		return buildWindowed(be, need{sum: true, count: true}, step)
-
+		return buildStepAggNoWindow(be, need{sum: true, count: true}, step)
 	default:
 		return ""
 	}
+}
+
+func buildStepAggNoWindow(be *BaseExpr, need need, step time.Duration) string {
+	stepMs := step.Milliseconds()
+	where := withTime(whereFor(be))
+
+	bucketExpr := fmt.Sprintf(
+		"(CAST(\"_cardinalhq.timestamp\" AS BIGINT) - (CAST(\"_cardinalhq.timestamp\" AS BIGINT) %% %d))",
+		stepMs,
+	)
+
+	// Quote group-by once
+	var gbq []string
+	if len(be.GroupBy) > 0 {
+		gbq = make([]string, 0, len(be.GroupBy))
+		for _, f := range be.GroupBy {
+			gbq = append(gbq, fmt.Sprintf("\"%s\"", f))
+		}
+	}
+
+	// Canonical aliases so MAP paths (and tests) are stable: sum,count,min,max
+	cols := []string{bucketExpr + " AS bucket_ts"}
+	if need.sum {
+		cols = append(cols, "SUM(rollup_sum) AS sum")
+	}
+	if need.count {
+		cols = append(cols, "SUM(COALESCE(rollup_count, 0)) AS count")
+	}
+	if need.min {
+		cols = append(cols, "MIN(rollup_min) AS min")
+	}
+	if need.max {
+		cols = append(cols, "MAX(rollup_max) AS max")
+	}
+	if len(gbq) > 0 {
+		cols = append(cols, strings.Join(gbq, ", "))
+	}
+
+	gb := []string{"bucket_ts"}
+	if len(gbq) > 0 {
+		gb = append(gb, gbq...)
+	}
+
+	sql := "SELECT " + strings.Join(cols, ", ") +
+		" FROM {table}" + where +
+		" GROUP BY " + strings.Join(gb, ", ") +
+		" ORDER BY bucket_ts ASC"
+	return sql
 }
 
 // buildDDS: bucket timestamps, project group-by labels + sketch
@@ -209,10 +251,6 @@ func buildCountHLLHash(be *BaseExpr, step time.Duration) string {
 	return sql
 }
 
-// --- Densified step aggregation (no window) ----------------------------------
-
-// buildStepOnly: densify to one row per step (+ per group), then left-join step aggregates.
-// COALESCE turns missing buckets into zeros so holes appear as 0s.
 func buildStepOnly(be *BaseExpr, projs []proj, step time.Duration) string {
 	stepMs := step.Milliseconds()
 	bucketExpr := fmt.Sprintf("(\"_cardinalhq.timestamp\" - (\"_cardinalhq.timestamp\" %% %d))", stepMs)
@@ -300,97 +338,7 @@ func buildStepOnly(be *BaseExpr, projs []proj, step time.Duration) string {
 	return sql
 }
 
-func buildWindowed(be *BaseExpr, need need, step time.Duration) string {
-	stepMs := step.Milliseconds()
-	timeWhere := withTime(whereFor(be))
-
-	// Bucket every sample to the aligned step boundary
-	bucketExpr := fmt.Sprintf(
-		"(CAST(\"_cardinalhq.timestamp\" AS BIGINT) - (CAST(\"_cardinalhq.timestamp\" AS BIGINT) %% %d))",
-		stepMs,
-	)
-
-	// Quote group-by keys once, reuse everywhere
-	var gbq []string
-	if len(be.GroupBy) > 0 {
-		gbq = make([]string, 0, len(be.GroupBy))
-		for _, f := range be.GroupBy {
-			gbq = append(gbq, fmt.Sprintf("\"%s\"", f))
-		}
-	}
-
-	// Build step_aggr SELECT (per-bucket, per-group aggregates)
-	stepCols := []string{bucketExpr + " AS bucket_ts"}
-	if need.sum {
-		stepCols = append(stepCols, "SUM(rollup_sum) AS step_sum")
-	}
-	if need.count {
-		stepCols = append(stepCols, "SUM(COALESCE(rollup_count, 0)) AS step_count")
-	}
-	// Only compute min/max if requested; they represent true sample min/max within the bucket
-	if need.min {
-		stepCols = append(stepCols, "MIN(rollup_min) AS step_min")
-	}
-	if need.max {
-		stepCols = append(stepCols, "MAX(rollup_max) AS step_max")
-	}
-	if len(gbq) > 0 {
-		stepCols = append(stepCols, strings.Join(gbq, ", "))
-	}
-
-	groupByParts := []string{"bucket_ts"}
-	if len(gbq) > 0 {
-		groupByParts = append(groupByParts, gbq...)
-	}
-
-	stepAgg := "step_aggr AS (SELECT " + strings.Join(stepCols, ", ") +
-		" FROM {table}" + timeWhere +
-		" GROUP BY " + strings.Join(groupByParts, ", ") + ")"
-
-	// Window spec: RANGE = time-based frame; fall back to a degenerate frame for instant queries
-	var frame string
-	rangeMs := rangeMsFromRange(be.Range)
-	if rangeMs > 0 {
-		// Inclusive time window: include rows where (current_ts - row_ts) <= rangeMs
-		frame = fmt.Sprintf("RANGE BETWEEN %d PRECEDING AND CURRENT ROW", rangeMs)
-	} else {
-		// No range → behave like CURRENT ROW only
-		frame = "ROWS BETWEEN 0 PRECEDING AND CURRENT ROW"
-	}
-
-	var partition string
-	if len(gbq) > 0 {
-		partition = "PARTITION BY " + strings.Join(gbq, ", ") + " "
-	}
-
-	window := "OVER (" + partition + "ORDER BY bucket_ts " + frame + ")"
-
-	// Build output projection with time-windowed aggregates
-	out := []string{"bucket_ts"}
-	if len(gbq) > 0 {
-		out = append(out, strings.Join(gbq, ", "))
-	}
-	if need.sum {
-		out = append(out, "CAST(SUM(step_sum) "+window+" AS DOUBLE) AS sum")
-	}
-	if need.count {
-		out = append(out, "CAST(SUM(step_count) "+window+" AS DOUBLE) AS count")
-	}
-	if need.min {
-		out = append(out, "CAST(MIN(step_min) "+window+" AS DOUBLE) AS min")
-	}
-	if need.max {
-		out = append(out, "CAST(MAX(step_max) "+window+" AS DOUBLE) AS max")
-	}
-
-	sql := "WITH " + stepAgg +
-		" SELECT " + strings.Join(out, ", ") +
-		" FROM step_aggr" +
-		" ORDER BY bucket_ts ASC"
-	return sql
-}
-
-func rangeMsFromRange(rangeStr string) int64 {
+func RangeMsFromRange(rangeStr string) int64 {
 	if rangeStr == "" {
 		return 0
 	}
@@ -402,8 +350,6 @@ func rangeMsFromRange(rangeStr string) int64 {
 }
 
 // --- Helpers ---------------------------------------------------------------
-// --- Helpers ----------------------------------------------------------------
-
 func withTime(where string) string {
 	if where == "" {
 		return " WHERE " + timePredicate
