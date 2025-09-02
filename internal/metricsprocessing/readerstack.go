@@ -39,6 +39,16 @@ type ReaderStackConfig struct {
 	CommonAttributes  attribute.Set
 }
 
+// DefaultReaderStackConfig returns a ReaderStackConfig with no telemetry counters
+// and an empty attribute set. This is the typical configuration for
+// compaction and rollup processing.
+func DefaultReaderStackConfig() ReaderStackConfig {
+	return ReaderStackConfig{
+		FileSortedCounter: nil,
+		CommonAttributes:  attribute.NewSet(),
+	}
+}
+
 type ReaderStackResult struct {
 	Readers         []filereader.Reader
 	Files           []*os.File
