@@ -127,7 +127,7 @@ func (q *Store) RollupMetricSegs(ctx context.Context, sourceParams RollupSourceP
 		slog.Any("sourceParams", sourceParams),
 		slog.Any("targetParams", targetParams),
 		slog.Any("sourceSegmentIDs", sourceSegmentIDs),
-		slog.Any("newRecords", newRecords),
+		slog.Int("numNewRecords", len(newRecords)),
 	)
 
 	newItems := make([]BatchInsertMetricSegsParams, len(newRecords))
@@ -152,6 +152,7 @@ func (q *Store) RollupMetricSegs(ctx context.Context, sourceParams RollupSourceP
 			SortVersion:    targetParams.SortVersion,
 			StartTs:        newRec.StartTs,
 		}
+		slog.Info("inserting at frequency", slog.Int("frequency", int(newItems[i].FrequencyMs)))
 	}
 
 	var errs *multierror.Error

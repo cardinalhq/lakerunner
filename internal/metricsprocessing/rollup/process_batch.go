@@ -346,95 +346,82 @@ func uploadRolledUpMetricsAtomic(
 		slog.Int("fileCount", len(segments)),
 		slog.Int("sourceSegmentCount", len(sourceSegmentIDs)))
 
-	for i, segment := range segments {
-		fileLogger := ll.With(
-			slog.String("file", segment.Result.FileName),
-			slog.Int("fileIndex", i+1),
-			slog.Int("totalFiles", len(segments)))
+	// Upload all segments to S3 first
+	ll.Debug("Uploading rolled-up metric files to S3 - point of no return approaching",
+		slog.String("bucket", params.Bucket),
+		slog.Int("segmentCount", len(segments)))
 
-		fileLogger.Debug("Starting atomic metric rollup upload operation",
-			slog.Int64("recordCount", segment.Result.RecordCount),
-			slog.Int64("fileSize", segment.Result.FileSize),
-			slog.Int64("startTs", segment.StartTs),
-			slog.Int64("endTs", segment.EndTs),
-			slog.Int("fingerprintCount", len(segment.Fingerprints)))
+	if _, err := metricsprocessing.UploadSegments(ctx, ll, s3client, params.Bucket, segments); err != nil {
+		ll.Error("Atomic operation failed during S3 upload - no changes made",
+			slog.Any("error", err))
+		return fmt.Errorf("uploading new S3 objects: %w", err)
+	}
 
-		fileLogger.Debug("Uploading rolled-up metric file to S3 - point of no return approaching",
-			slog.String("newObjectID", segment.ObjectID),
-			slog.String("bucket", params.Bucket),
-			slog.Int64("newSegmentID", segment.SegmentID))
+	// Build all new records for atomic database update
+	newRecords := make([]lrdb.RollupNewRecord, 0, len(segments))
+	for _, segment := range segments {
+		newRecords = append(newRecords, lrdb.RollupNewRecord{
+			SegmentID:    segment.SegmentID,
+			StartTs:      segment.StartTs,
+			EndTs:        segment.EndTs,
+			RecordCount:  segment.Result.RecordCount,
+			FileSize:     segment.Result.FileSize,
+			Fingerprints: segment.Fingerprints,
+		})
+	}
 
-		if _, err := metricsprocessing.UploadSegments(ctx, fileLogger, s3client, params.Bucket, metricsprocessing.ProcessedSegments{segment}); err != nil {
-			fileLogger.Error("Atomic operation failed during S3 upload - no changes made",
-				slog.Any("error", err),
-				slog.String("objectID", segment.ObjectID))
-			return fmt.Errorf("uploading new S3 object: %w", err)
-		}
+	ll.Debug("S3 uploads successful, updating database with atomic rollup transaction - CRITICAL SECTION",
+		slog.Int("newSegmentCount", len(newRecords)),
+		slog.Int("sourceSegmentCount", len(sourceSegmentIDs)))
 
-		fileLogger.Debug("S3 upload successful, updating database with atomic rollup transaction - CRITICAL SECTION",
-			slog.String("uploadedObject", segment.ObjectID),
-			slog.Int64("uploadedBytes", segment.Result.FileSize),
-			slog.Int64("uploadedRecords", segment.Result.RecordCount))
+	sourceFrequency := sourceRows[0].FrequencyMs
 
-		sourceFrequency := sourceRows[0].FrequencyMs
+	// Single atomic database transaction for all segments
+	if err := mdb.RollupMetricSegs(ctx,
+		lrdb.RollupSourceParams{
+			OrganizationID: params.OrganizationID,
+			Dateint:        params.Dateint,
+			FrequencyMs:    sourceFrequency,
+			InstanceNum:    params.InstanceNum,
+		},
+		lrdb.RollupTargetParams{
+			OrganizationID: params.OrganizationID,
+			Dateint:        params.Dateint,
+			FrequencyMs:    params.FrequencyMs,
+			InstanceNum:    params.InstanceNum,
+			SlotID:         params.SlotID,
+			SlotCount:      params.SlotCount,
+			IngestDateint:  params.IngestDateint,
+			SortVersion:    lrdb.CurrentMetricSortVersion,
+		},
+		sourceSegmentIDs,
+		newRecords,
+	); err != nil {
+		ll.Error("Database rollup transaction failed after S3 upload - files orphaned in S3",
+			slog.Any("error", err),
+			slog.Int("orphanedCount", len(segments)),
+			slog.String("bucket", params.Bucket))
 
-		if err := mdb.RollupMetricSegs(ctx,
-			lrdb.RollupSourceParams{
-				OrganizationID: params.OrganizationID,
-				Dateint:        params.Dateint,
-				FrequencyMs:    sourceFrequency,
-				InstanceNum:    params.InstanceNum,
-			},
-			lrdb.RollupTargetParams{
-				OrganizationID: params.OrganizationID,
-				Dateint:        params.Dateint,
-				FrequencyMs:    params.FrequencyMs,
-				InstanceNum:    params.InstanceNum,
-				SlotID:         params.SlotID,
-				SlotCount:      params.SlotCount,
-				IngestDateint:  params.IngestDateint,
-				SortVersion:    lrdb.CurrentMetricSortVersion,
-			},
-			sourceSegmentIDs,
-			[]lrdb.RollupNewRecord{
-				{
-					SegmentID:    segment.SegmentID,
-					StartTs:      segment.StartTs,
-					EndTs:        segment.EndTs,
-					RecordCount:  segment.Result.RecordCount,
-					FileSize:     segment.Result.FileSize,
-					Fingerprints: segment.Fingerprints,
-				},
-			},
-		); err != nil {
-			fileLogger.Error("Database rollup transaction failed after S3 upload - file orphaned in S3",
-				slog.Any("error", err),
-				slog.String("orphanedObject", segment.ObjectID),
-				slog.Int64("orphanedSegmentID", segment.SegmentID),
-				slog.String("bucket", params.Bucket))
-
+		// Schedule cleanup for all orphaned segments
+		for _, segment := range segments {
 			if scheduleErr := segment.ScheduleCleanupIfUploaded(ctx, mdb, params.OrganizationID, params.InstanceNum, params.Bucket); scheduleErr != nil {
-				fileLogger.Error("Failed to schedule orphaned S3 object for deletion",
+				ll.Error("Failed to schedule orphaned S3 object for deletion",
 					slog.Any("error", scheduleErr),
 					slog.String("objectID", segment.ObjectID),
 					slog.String("bucket", params.Bucket))
 			} else {
-				fileLogger.Info("Scheduled orphaned S3 object for deletion",
+				ll.Info("Scheduled orphaned S3 object for deletion",
 					slog.String("objectID", segment.ObjectID))
 			}
-			return fmt.Errorf("atomic rollup transaction: %w", err)
 		}
-
-		fileLogger.Debug("Source marked as rolled up, new target segment inserted - rollup transaction complete",
-			slog.Int64("newSegmentID", segment.SegmentID),
-			slog.Int64("newRecordCount", segment.Result.RecordCount),
-			slog.Int64("newFileSize", segment.Result.FileSize),
-			slog.String("newObjectID", segment.ObjectID),
-			slog.Int("sourceSegmentCount", len(sourceSegmentIDs)),
-			slog.Int("sourceFrequencyMs", int(sourceRows[0].FrequencyMs)),
-			slog.Int("targetFrequencyMs", int(params.FrequencyMs)))
-
+		return fmt.Errorf("atomic rollup transaction: %w", err)
 	}
+
+	ll.Debug("Source marked as rolled up, new target segments inserted - rollup transaction complete",
+		slog.Int("newSegmentCount", len(newRecords)),
+		slog.Int("sourceSegmentCount", len(sourceSegmentIDs)),
+		slog.Int("sourceFrequencyMs", int(sourceFrequency)),
+		slog.Int("targetFrequencyMs", int(params.FrequencyMs)))
 
 	// Queue compaction and rollup work for all processed segments
 	if err := segments.QueueCompactionWork(ctx, mdb, params.OrganizationID, params.InstanceNum, params.FrequencyMs); err != nil {
