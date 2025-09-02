@@ -28,6 +28,25 @@ import (
 	"time"
 )
 
+// registration for the coordinator
+type groupReg struct {
+	idx     int
+	startTs int64
+	endTs   int64
+	ch      <-chan promql.SketchInput
+}
+
+// max(3, numWorkers); never below 1
+func computeMaxParallel(numWorkers int) int {
+	if numWorkers < 1 {
+		return 1
+	}
+	if numWorkers < 3 {
+		return 3
+	}
+	return numWorkers
+}
+
 func (q *QuerierService) EvaluateMetricsQuery(
 	ctx context.Context,
 	orgID uuid.UUID,
@@ -45,251 +64,27 @@ func (q *QuerierService) EvaluateMetricsQuery(
 	out := make(chan map[string]promql.EvalResult, 1024)
 
 	go func() {
-		// ---- Stage 0: setup bounds + registration channel -------------------
-		maxParallel := 3
-		if maxParallel <= 0 {
-			maxParallel = 1
-		}
-		sem := make(chan struct{}, maxParallel) // bound concurrent groups
+		// ---------- Stage 0: plumbing ----------
+		maxParallel := computeMaxParallel(len(workers))
+		sem := make(chan struct{}, maxParallel) // bounds concurrent groups
 
-		// Register per-group merged channels here with a stable index.
-		type groupReg struct {
-			idx     int
-			startTs int64
-			endTs   int64
-			ch      <-chan promql.SketchInput
-		}
-		groupRegs := make(chan groupReg, 256)
+		groupRegs := make(chan groupReg, 256) // coordinator registry
+		var regWG sync.WaitGroup              // tracks only registration
+		nextIdx := 0                          // coordinator order
 
-		// regWG tracks only "registration" (sending a group's merged channel).
-		var regWG sync.WaitGroup
-		nextIdx := 0 // increasing group index (emit in this order)
+		// ---------- Stage 1/2: enumerate & launch per-group goroutines ----------
+		nextIdx = q.enumerateAndLaunchGroups(
+			ctx, orgID, startTs, endTs, stepDuration, queryPlan,
+			sem, groupRegs, &regWG, nextIdx,
+		)
 
-		// ---- Stage 1/2: enumerate leaves/hours -> groups, launch per-group goroutines
-	launchAll:
-		for _, leaf := range queryPlan.Leaves {
-			offMs, err := parseOffsetMs(leaf.Offset)
-			if err != nil {
-				slog.Error("invalid offset on leaf; ignoring offset", "offset", leaf.Offset, "err", err)
-				offMs = 0
-			}
+		// Close registry once all groups have registered.
+		go func() { regWG.Wait(); close(groupRegs) }()
 
-			// IMPORTANT: Offset effective base start by the leaf's range to avoid left-side holes.
-			// This mirrors the prior "mutate startTs" behavior, but scoped per leaf to avoid compounding.
-			baseStart := startTs
-			if leaf.Range != "" {
-				baseStart -= promql.RangeMsFromRange(leaf.Range)
-			}
+		// ---------- Stage 3: ordered coordinator (concat by idx) ----------
+		coordinated := runOrderedCoordinator(ctx, groupRegs)
 
-			effStart := baseStart - offMs
-			effEnd := endTs - offMs
-			dateIntHours := dateIntHoursRange(effStart, effEnd, time.UTC)
-
-			for _, dih := range dateIntHours {
-				select {
-				case <-ctx.Done():
-					break launchAll
-				default:
-				}
-
-				segments, err := q.lookupMetricsSegments(ctx, dih, leaf, effStart, effEnd, stepDuration, orgID)
-				if err != nil {
-					slog.Error("failed to get segment infos", "dateInt", dih.DateInt, "err", err)
-					continue
-				}
-				for i := range segments {
-					segments[i].ExprID = leaf.ID
-				}
-				if len(segments) == 0 {
-					continue
-				}
-
-				groups := ComputeReplayBatchesWithWorkers(
-					segments, stepDuration, effStart, effEnd, len(workers), true,
-				)
-
-				for _, group := range groups {
-					g := group
-					l := leaf
-					localOff := offMs
-
-					// Assign a stable, increasing index for coordinator order.
-					idx := nextIdx
-					nextIdx++
-
-					regWG.Add(1)
-					sem <- struct{}{} // bound concurrent groups
-
-					go func(idx int) {
-						defer func() { <-sem }()
-						defer regWG.Done()
-
-						select {
-						case <-ctx.Done():
-							ch := make(chan promql.SketchInput)
-							close(ch)
-							select {
-							case groupRegs <- groupReg{idx: idx, startTs: g.StartTs, endTs: g.EndTs, ch: ch}:
-							case <-ctx.Done():
-							}
-							return
-						default:
-						}
-
-						// ---- Stage 1: per-worker pushdowns for this group ------------
-						segmentIDs := make([]int64, 0, len(g.Segments))
-						segmentMap := make(map[int64]SegmentInfo, len(g.Segments))
-						for _, s := range g.Segments {
-							segmentIDs = append(segmentIDs, s.SegmentID)
-							segmentMap[s.SegmentID] = s
-						}
-						mappings, err := q.workerDiscovery.GetWorkersForSegments(orgID, segmentIDs)
-						if err != nil {
-							slog.Error("failed to get worker assignments", "err", err)
-							ch := make(chan promql.SketchInput)
-							close(ch)
-							select {
-							case groupRegs <- groupReg{idx: idx, startTs: g.StartTs, endTs: g.EndTs, ch: ch}:
-							case <-ctx.Done():
-							}
-							return
-						}
-
-						workerGroups := make(map[Worker][]SegmentInfo)
-						for _, m := range mappings {
-							workerGroups[m.Worker] = append(workerGroups[m.Worker], segmentMap[m.SegmentID])
-						}
-						if len(workerGroups) == 0 {
-							ch := make(chan promql.SketchInput)
-							close(ch)
-							select {
-							case groupRegs <- groupReg{idx: idx, startTs: g.StartTs, endTs: g.EndTs, ch: ch}:
-							case <-ctx.Done():
-							}
-							return
-						}
-
-						slog.Info("Pushing down segments", "groupSize", len(g.Segments), "idx", idx)
-
-						// Per-worker pushdowns → channels
-						groupLeafChans := make([]<-chan promql.SketchInput, 0, len(workerGroups))
-						for wkr, segs := range workerGroups {
-							req := PushDownRequest{
-								OrganizationID: orgID,
-								BaseExpr:       &l,
-								StartTs:        g.StartTs,
-								EndTs:          g.EndTs,
-								Segments:       segs,
-								Step:           stepDuration,
-							}
-							ch, err := q.metricsPushDown(ctx, wkr, req)
-							if err != nil {
-								slog.Error("pushdown failed", "worker", wkr, "err", err)
-								continue
-							}
-							if localOff != 0 {
-								ch = shiftTimestamps(ctx, ch, localOff, 256)
-							}
-							groupLeafChans = append(groupLeafChans, ch)
-						}
-
-						// If all pushdowns failed, still register a closed stream.
-						if len(groupLeafChans) == 0 {
-							ch := make(chan promql.SketchInput)
-							close(ch)
-							select {
-							case groupRegs <- groupReg{idx: idx, startTs: g.StartTs, endTs: g.EndTs, ch: ch}:
-							case <-ctx.Done():
-							}
-							return
-						}
-
-						// ---- Stage 2: Merge-sort within this group -------------------
-						mergedGroup := promql.MergeSorted(ctx, 1024 /*buf*/, false /*reverse*/, 0 /*limit*/, groupLeafChans...)
-
-						// Register this group's merged stream for the coordinator ASAP.
-						slog.Info("Registering group stream", "idx", idx, "groupStart", g.StartTs, "groupEnd", g.EndTs)
-						select {
-						case groupRegs <- groupReg{idx: idx, startTs: g.StartTs, endTs: g.EndTs, ch: mergedGroup}:
-						case <-ctx.Done():
-							ch := make(chan promql.SketchInput)
-							close(ch)
-							select {
-							case groupRegs <- groupReg{idx: idx, startTs: g.StartTs, endTs: g.EndTs, ch: ch}:
-							case <-ctx.Done():
-							}
-						}
-					}(idx)
-				}
-			}
-		}
-
-		// Close registry once all groups *registered*.
-		go func() {
-			regWG.Wait()
-			close(groupRegs)
-		}()
-
-		// ---- Stage 3: Ordered coordinator (concat groups in idx order) -------
-		// Streams as soon as idx=0 is registered/producing; no final MergeSorted.
-		coordinated := make(chan promql.SketchInput, 4096)
-		go func() {
-			defer close(coordinated)
-
-			pending := map[int]groupReg{}
-			want := 0
-			var curCh <-chan promql.SketchInput
-
-			for {
-				if curCh == nil {
-					if gr, ok := pending[want]; ok {
-						delete(pending, want)
-						slog.Info("Group starting emit", "idx", want, "groupStart", gr.startTs, "groupEnd", gr.endTs)
-						want++
-						curCh = gr.ch
-					}
-				}
-
-				if curCh == nil {
-					gr, ok := <-groupRegs
-					if !ok {
-						return
-					}
-					pending[gr.idx] = gr
-					continue
-				}
-
-				select {
-				case v, ok := <-curCh:
-					if !ok {
-						curCh = nil
-						continue
-					}
-					select {
-					case coordinated <- v:
-					case <-ctx.Done():
-						return
-					}
-				case gr, ok := <-groupRegs:
-					if !ok {
-						// finish draining current and exit
-						for v := range curCh {
-							select {
-							case coordinated <- v:
-							case <-ctx.Done():
-								return
-							}
-						}
-						return
-					}
-					pending[gr.idx] = gr
-				case <-ctx.Done():
-					return
-				}
-			}
-		}()
-
-		// ---- Stage 4: EvalFlow + fan-out -------------------------------------
+		// ---------- Stage 4: single EvalFlow + fan-out ----------
 		flow := NewEvalFlow(queryPlan.Root, queryPlan.Leaves, stepDuration, EvalFlowOptions{
 			NumBuffers: 2,
 			OutBuffer:  1024,
@@ -317,6 +112,255 @@ func (q *QuerierService) EvaluateMetricsQuery(
 	}()
 
 	return out, nil
+}
+
+// enumerateAndLaunchGroups walks leaves/hours, computes groups, and launches one goroutine per group.
+// It registers each group's merged channel with the coordinator as soon as it's ready.
+func (q *QuerierService) enumerateAndLaunchGroups(
+	ctx context.Context,
+	orgID uuid.UUID,
+	startTs, endTs int64,
+	stepDuration time.Duration,
+	queryPlan promql.QueryPlan,
+	sem chan struct{},
+	groupRegs chan<- groupReg,
+	regWG *sync.WaitGroup,
+	nextIdx int,
+) int {
+launchAll:
+	for _, leaf := range queryPlan.Leaves {
+		offMs, err := parseOffsetMs(leaf.Offset)
+		if err != nil {
+			slog.Error("invalid offset on leaf; ignoring offset", "offset", leaf.Offset, "err", err)
+			offMs = 0
+		}
+
+		// Offset the *effective* base start by the leaf's range to avoid left-side holes.
+		baseStart := startTs
+		if leaf.Range != "" {
+			baseStart -= promql.RangeMsFromRange(leaf.Range)
+		}
+
+		effStart := baseStart - offMs
+		effEnd := endTs - offMs
+		dateIntHours := dateIntHoursRange(effStart, effEnd, time.UTC)
+
+		for _, dih := range dateIntHours {
+			select {
+			case <-ctx.Done():
+				break launchAll
+			default:
+			}
+
+			segments, err := q.lookupMetricsSegments(ctx, dih, leaf, effStart, effEnd, stepDuration, orgID)
+			if err != nil {
+				slog.Error("failed to get segment infos", "dateInt", dih.DateInt, "err", err)
+				continue
+			}
+			for i := range segments {
+				segments[i].ExprID = leaf.ID
+			}
+			if len(segments) == 0 {
+				continue
+			}
+
+			groups := ComputeReplayBatchesWithWorkers(
+				segments, stepDuration, effStart, effEnd, cap(sem), true,
+			)
+
+			for _, group := range groups {
+				idx := nextIdx
+				nextIdx++
+
+				regWG.Add(1)
+				sem <- struct{}{} // bound concurrent groups
+
+				// capture loop vars
+				g := group
+				l := leaf
+				localOff := offMs
+
+				go q.launchOneGroup(
+					ctx, orgID, idx, l, g, localOff, stepDuration,
+					sem, groupRegs, regWG,
+				)
+			}
+		}
+	}
+	return nextIdx
+}
+
+// launchOneGroup does per-worker pushdowns, merges them locally, and registers the stream.
+func (q *QuerierService) launchOneGroup(
+	ctx context.Context,
+	orgID uuid.UUID,
+	idx int,
+	l promql.BaseExpr,
+	g SegmentGroup,
+	localOff int64,
+	stepDuration time.Duration,
+	sem chan struct{},
+	groupRegs chan<- groupReg,
+	regWG *sync.WaitGroup,
+) {
+	defer func() { <-sem }()
+	defer regWG.Done()
+
+	select {
+	case <-ctx.Done():
+		ch := make(chan promql.SketchInput)
+		close(ch)
+		select {
+		case groupRegs <- groupReg{idx: idx, startTs: g.StartTs, endTs: g.EndTs, ch: ch}:
+		case <-ctx.Done():
+		}
+		return
+	default:
+	}
+
+	segmentIDs := make([]int64, 0, len(g.Segments))
+	segmentMap := make(map[int64]SegmentInfo, len(g.Segments))
+	for _, s := range g.Segments {
+		segmentIDs = append(segmentIDs, s.SegmentID)
+		segmentMap[s.SegmentID] = s
+	}
+
+	mappings, err := q.workerDiscovery.GetWorkersForSegments(orgID, segmentIDs)
+	if err != nil {
+		slog.Error("failed to get worker assignments", "err", err)
+		ch := make(chan promql.SketchInput)
+		close(ch)
+		select {
+		case groupRegs <- groupReg{idx: idx, startTs: g.StartTs, endTs: g.EndTs, ch: ch}:
+		case <-ctx.Done():
+		}
+		return
+	}
+
+	workerGroups := make(map[Worker][]SegmentInfo)
+	for _, m := range mappings {
+		workerGroups[m.Worker] = append(workerGroups[m.Worker], segmentMap[m.SegmentID])
+	}
+	if len(workerGroups) == 0 {
+		ch := make(chan promql.SketchInput)
+		close(ch)
+		select {
+		case groupRegs <- groupReg{idx: idx, startTs: g.StartTs, endTs: g.EndTs, ch: ch}:
+		case <-ctx.Done():
+		}
+		return
+	}
+
+	slog.Info("Pushing down segments", "groupSize", len(g.Segments), "idx", idx)
+
+	// Per-worker pushdowns → channels
+	groupLeafChans := make([]<-chan promql.SketchInput, 0, len(workerGroups))
+	for wkr, segs := range workerGroups {
+		req := PushDownRequest{
+			OrganizationID: orgID,
+			BaseExpr:       &l,
+			StartTs:        g.StartTs,
+			EndTs:          g.EndTs,
+			Segments:       segs,
+			Step:           stepDuration,
+		}
+		ch, err := q.metricsPushDown(ctx, wkr, req)
+		if err != nil {
+			slog.Error("pushdown failed", "worker", wkr, "err", err)
+			continue
+		}
+		if localOff != 0 {
+			ch = shiftTimestamps(ctx, ch, localOff, 256)
+		}
+		groupLeafChans = append(groupLeafChans, ch)
+	}
+
+	// If all pushdowns failed, still register a closed stream.
+	if len(groupLeafChans) == 0 {
+		ch := make(chan promql.SketchInput)
+		close(ch)
+		select {
+		case groupRegs <- groupReg{idx: idx, startTs: g.StartTs, endTs: g.EndTs, ch: ch}:
+		case <-ctx.Done():
+		}
+		return
+	}
+
+	// Local merge for this group, then register with coordinator.
+	mergedGroup := promql.MergeSorted(ctx, 1024 /*buf*/, false /*reverse*/, 0 /*limit*/, groupLeafChans...)
+	slog.Info("Registering group stream", "idx", idx, "groupStart", g.StartTs, "groupEnd", g.EndTs)
+	select {
+	case groupRegs <- groupReg{idx: idx, startTs: g.StartTs, endTs: g.EndTs, ch: mergedGroup}:
+	case <-ctx.Done():
+		ch := make(chan promql.SketchInput)
+		close(ch)
+		select {
+		case groupRegs <- groupReg{idx: idx, startTs: g.StartTs, endTs: g.EndTs, ch: ch}:
+		case <-ctx.Done():
+		}
+	}
+}
+
+// runOrderedCoordinator concatenates groups in index order and starts streaming
+// as soon as idx=0 registers. (Assumes groups are time-disjoint and idx is chronological.)
+func runOrderedCoordinator(ctx context.Context, groupRegs <-chan groupReg) <-chan promql.SketchInput {
+	coordinated := make(chan promql.SketchInput, 4096)
+	go func() {
+		defer close(coordinated)
+
+		pending := map[int]groupReg{}
+		want := 0
+		var curCh <-chan promql.SketchInput
+
+		for {
+			if curCh == nil {
+				if gr, ok := pending[want]; ok {
+					delete(pending, want)
+					slog.Info("Group starting emit", "idx", want, "groupStart", gr.startTs, "groupEnd", gr.endTs)
+					want++
+					curCh = gr.ch
+				}
+			}
+
+			if curCh == nil {
+				gr, ok := <-groupRegs
+				if !ok {
+					return
+				}
+				pending[gr.idx] = gr
+				continue
+			}
+
+			select {
+			case v, ok := <-curCh:
+				if !ok {
+					curCh = nil
+					continue
+				}
+				select {
+				case coordinated <- v:
+				case <-ctx.Done():
+					return
+				}
+			case gr, ok := <-groupRegs:
+				if !ok {
+					// finish draining current and exit
+					for v := range curCh {
+						select {
+						case coordinated <- v:
+						case <-ctx.Done():
+							return
+						}
+					}
+					return
+				}
+				pending[gr.idx] = gr
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return coordinated
 }
 
 // metricsPushDown should POST req to the worker’s /pushdown and return a channel that yields SketchInput

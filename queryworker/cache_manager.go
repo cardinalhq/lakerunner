@@ -66,6 +66,7 @@ type CacheManager struct {
 	inflight   map[int64]*struct{} // singleflight per segmentID
 
 	profilesByOrgInstanceNum map[uuid.UUID]map[int16]storageprofile.StorageProfile
+	profilesMu               sync.RWMutex // <--- add this
 
 	ingestQ    chan ingestJob
 	stopIngest context.CancelFunc
@@ -115,6 +116,38 @@ func (w *CacheManager) Close() {
 	w.ingestWG.Wait()
 }
 
+func (w *CacheManager) getProfile(ctx context.Context, orgID uuid.UUID, inst int16) (storageprofile.StorageProfile, error) {
+	// Fast path: read under RLock
+	w.profilesMu.RLock()
+	if byInst, ok := w.profilesByOrgInstanceNum[orgID]; ok {
+		if p, ok2 := byInst[inst]; ok2 {
+			w.profilesMu.RUnlock()
+			return p, nil
+		}
+	}
+	w.profilesMu.RUnlock()
+
+	// Fetch outside locks
+	p, err := w.storageProfileProvider.GetStorageProfileForOrganizationAndInstance(ctx, orgID, inst)
+	if err != nil {
+		return storageprofile.StorageProfile{}, fmt.Errorf(
+			"get storage profile for org %s instance %d: %w", orgID.String(), inst, err)
+	}
+
+	// Write path with double-check
+	w.profilesMu.Lock()
+	defer w.profilesMu.Unlock()
+
+	if _, ok := w.profilesByOrgInstanceNum[orgID]; !ok {
+		w.profilesByOrgInstanceNum[orgID] = make(map[int16]storageprofile.StorageProfile)
+	}
+	if existing, ok := w.profilesByOrgInstanceNum[orgID][inst]; ok {
+		return existing, nil
+	}
+	w.profilesByOrgInstanceNum[orgID][inst] = p
+	return p, nil
+}
+
 func EvaluatePushDown[T promql.Timestamped](
 	ctx context.Context,
 	w *CacheManager,
@@ -133,29 +166,15 @@ func EvaluatePushDown[T promql.Timestamped](
 		return nil, errors.New(`userSQL must contain "{table}" placeholder`)
 	}
 
-	// Group segments by orgId/instanceNum
+	// Group segments by orgId/instanceNum (no profile map mutation here)
 	segmentsByOrg := make(map[uuid.UUID]map[int16][]queryapi.SegmentInfo)
 	start := time.Now()
 	for _, seg := range request.Segments {
 		if _, ok := segmentsByOrg[seg.OrganizationID]; !ok {
 			segmentsByOrg[seg.OrganizationID] = make(map[int16][]queryapi.SegmentInfo)
 		}
-		if _, ok := w.profilesByOrgInstanceNum[seg.OrganizationID]; !ok {
-			w.profilesByOrgInstanceNum[seg.OrganizationID] = make(map[int16]storageprofile.StorageProfile)
-		}
-		if _, ok := w.profilesByOrgInstanceNum[seg.OrganizationID][seg.InstanceNum]; !ok {
-			profile, err := w.storageProfileProvider.GetStorageProfileForOrganizationAndInstance(
-				ctx, seg.OrganizationID, seg.InstanceNum)
-			if err != nil {
-				return nil, fmt.Errorf("get storage profile for org %s instance %d: %w",
-					seg.OrganizationID, seg.InstanceNum, err)
-			}
-			w.profilesByOrgInstanceNum[seg.OrganizationID][seg.InstanceNum] = profile
-		}
-		if _, ok := segmentsByOrg[seg.OrganizationID][seg.InstanceNum]; !ok {
-			segmentsByOrg[seg.OrganizationID][seg.InstanceNum] = []queryapi.SegmentInfo{}
-		}
-		segmentsByOrg[seg.OrganizationID][seg.InstanceNum] = append(segmentsByOrg[seg.OrganizationID][seg.InstanceNum], seg)
+		segmentsByOrg[seg.OrganizationID][seg.InstanceNum] =
+			append(segmentsByOrg[seg.OrganizationID][seg.InstanceNum], seg)
 	}
 	metadataCreationTime := time.Since(start)
 	slog.Info("Metadata Creation Time", "duration", metadataCreationTime.String())
@@ -163,19 +182,25 @@ func EvaluatePushDown[T promql.Timestamped](
 
 	outs := make([]<-chan T, 0)
 
-	// Now start putting channels together for every orgId/instanceNum.
+	// Build channels per (org, instance)
 	for orgId, instances := range segmentsByOrg {
 		for instanceNum, segments := range instances {
-			profile := w.profilesByOrgInstanceNum[orgId][instanceNum]
+			profile, err := w.getProfile(ctx, orgId, instanceNum)
+			if err != nil {
+				return nil, err
+			}
+
 			// Split into cached vs S3
 			var s3URIs []string
 			var s3LocalPaths []string
 			var s3IDs []int64
 			var cachedIDs []int64
+
 			sortSegments(segments, request)
 
 			for _, seg := range segments {
-				objectId := fmt.Sprintf("db/%s/%s/%d/%s/%s/tbl_%d.parquet", orgId.String(),
+				objectId := fmt.Sprintf("db/%s/%s/%d/%s/%s/tbl_%d.parquet",
+					orgId.String(),
 					profile.CollectorName,
 					seg.DateInt,
 					w.dataset,
@@ -197,7 +222,15 @@ func EvaluatePushDown[T promql.Timestamped](
 				}
 			}
 
-			slog.Info("Segment Stats", "numS3", len(s3URIs), "numCached", len(cachedIDs), "numPresent", len(w.present))
+			// Safe logging (len(w.present) under RLock)
+			w.mu.RLock()
+			numPresent := len(w.present)
+			w.mu.RUnlock()
+			slog.Info("Segment Stats",
+				"numS3", len(s3URIs),
+				"numCached", len(cachedIDs),
+				"numPresent", numPresent)
+
 			// Stream uncached segments directly from S3 (one channel per glob).
 			s3Channels, err := streamFromS3(ctx, w, request,
 				profile.Bucket,
@@ -212,12 +245,12 @@ func EvaluatePushDown[T promql.Timestamped](
 			}
 			outs = append(outs, s3Channels...)
 
-			// If we have uncached segments, enqueue them for download + batch-ingest.
+			// Enqueue uncached segments for background ingest.
 			if len(s3LocalPaths) > 0 {
 				w.enqueueIngest(profile, s3LocalPaths, s3IDs)
 			}
 
-			// If we have cached segments, stream them from the cache.
+			// Stream cached segments from the cache.
 			cachedChannels := streamCached(ctx, w, request, cachedIDs, userSQL, mapper)
 			outs = append(outs, cachedChannels...)
 		}
@@ -225,7 +258,7 @@ func EvaluatePushDown[T promql.Timestamped](
 	channelCreationTime := time.Since(start)
 	slog.Info("Channel Creation Time", "duration", channelCreationTime.String())
 
-	//slog.Info("Returning channels for pushdown evaluation", slog.Int("channels", len(outs)))
+	// Merge all sources (cached + S3 batches) in timestamp order.
 	return promql.MergeSorted(ctx, ChannelBufferSize, request.Reverse, request.Limit, outs...), nil
 }
 
