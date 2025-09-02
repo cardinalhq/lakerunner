@@ -115,12 +115,12 @@ func TestRollupMetricSegs_BasicRollup(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify source segments were marked as rolled up (but still exist)
-	sourceSegs, err := db.GetMetricSegsForRollup(ctx, lrdb.GetMetricSegsForRollupParams{
+	sourceSegs, err := db.GetMetricSegsByIds(ctx, lrdb.GetMetricSegsByIdsParams{
 		OrganizationID: orgID,
 		Dateint:        20250830,
 		FrequencyMs:    10000,
 		InstanceNum:    1,
-		SlotID:         0,
+		SegmentIds:     sourceSegmentIDs,
 	})
 	require.NoError(t, err)
 
@@ -138,12 +138,14 @@ func TestRollupMetricSegs_BasicRollup(t *testing.T) {
 	}
 
 	// Verify target segments - new implementation only inserts, doesn't delete old ones
-	targetSegs, err := db.GetMetricSegsForRollup(ctx, lrdb.GetMetricSegsForRollupParams{
+	// Check both the existing target segment and the new one
+	targetSegmentIDs := []int64{existingTargetSegmentID, 30001} // existing and new
+	targetSegs, err := db.GetMetricSegsByIds(ctx, lrdb.GetMetricSegsByIdsParams{
 		OrganizationID: orgID,
 		Dateint:        20250830,
 		FrequencyMs:    60000,
 		InstanceNum:    1,
-		SlotID:         0,
+		SegmentIds:     targetSegmentIDs,
 	})
 	require.NoError(t, err)
 
@@ -230,12 +232,13 @@ func TestRollupMetricSegs_EmptySourceSegments(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify target was added (old one should still exist, new one added)
-	segs, err := db.GetMetricSegsForRollup(ctx, lrdb.GetMetricSegsForRollupParams{
+	targetSegmentIDs := []int64{existingTargetSegmentID, 40001}
+	segs, err := db.GetMetricSegsByIds(ctx, lrdb.GetMetricSegsByIdsParams{
 		OrganizationID: orgID,
 		Dateint:        20250830,
 		FrequencyMs:    60000,
 		InstanceNum:    1,
-		SlotID:         0,
+		SegmentIds:     targetSegmentIDs,
 	})
 	require.NoError(t, err)
 	require.Len(t, segs, 2) // Both old and new should exist
