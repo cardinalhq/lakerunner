@@ -43,47 +43,20 @@ func (q *Queries) MrqCompleteDelete(ctx context.Context, arg MrqCompleteDeletePa
 	return err
 }
 
-const mrqDeferKey = `-- name: MrqDeferKey :exec
-WITH to_defer AS (
-  SELECT q.id
-  FROM public.metric_rollup_queue q
-  WHERE q.claimed_by = -1
-    AND q.organization_id = $2
-    AND q.dateint        = $3
-    AND q.frequency_ms   = $4
-    AND q.instance_num   = $5
-    AND q.slot_id        = $6
-    AND q.slot_count     = $7
-    AND q.rollup_group   = $8
-  FOR UPDATE SKIP LOCKED
-)
+const mrqDeferItems = `-- name: MrqDeferItems :exec
 UPDATE public.metric_rollup_queue
 SET eligible_at = now() + $1::interval
-WHERE id IN (SELECT id FROM to_defer)
+WHERE claimed_by = -1
+  AND id = ANY($2::bigint[])
 `
 
-type MrqDeferKeyParams struct {
-	Push           time.Duration `json:"push"`
-	OrganizationID uuid.UUID     `json:"organization_id"`
-	Dateint        int32         `json:"dateint"`
-	FrequencyMs    int32         `json:"frequency_ms"`
-	InstanceNum    int16         `json:"instance_num"`
-	SlotID         int32         `json:"slot_id"`
-	SlotCount      int32         `json:"slot_count"`
-	RollupGroup    int64         `json:"rollup_group"`
+type MrqDeferItemsParams struct {
+	Push time.Duration `json:"push"`
+	Ids  []int64       `json:"ids"`
 }
 
-func (q *Queries) MrqDeferKey(ctx context.Context, arg MrqDeferKeyParams) error {
-	_, err := q.db.Exec(ctx, mrqDeferKey,
-		arg.Push,
-		arg.OrganizationID,
-		arg.Dateint,
-		arg.FrequencyMs,
-		arg.InstanceNum,
-		arg.SlotID,
-		arg.SlotCount,
-		arg.RollupGroup,
-	)
+func (q *Queries) MrqDeferItems(ctx context.Context, arg MrqDeferItemsParams) error {
+	_, err := q.db.Exec(ctx, mrqDeferItems, arg.Push, arg.Ids)
 	return err
 }
 
@@ -101,7 +74,7 @@ WHERE claimed_by = -1
   AND slot_count     = $6
   AND rollup_group   = $7
 ORDER BY queue_ts ASC, id ASC
-FOR UPDATE SKIP LOCKED
+FOR UPDATE
 LIMIT $8
 `
 
@@ -197,7 +170,7 @@ FROM public.metric_rollup_queue
 WHERE claimed_by = -1
   AND eligible_at <= now()
 ORDER BY priority ASC, eligible_at ASC, queue_ts ASC
-FOR UPDATE SKIP LOCKED
+FOR UPDATE
 LIMIT 1
 `
 

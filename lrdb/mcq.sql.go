@@ -88,38 +88,20 @@ func (q *Queries) McqCompleteDelete(ctx context.Context, arg McqCompleteDeletePa
 	return err
 }
 
-const mcqDeferKey = `-- name: McqDeferKey :exec
-WITH to_defer AS (
-  SELECT q.id
-  FROM public.metric_compaction_queue q
-  WHERE q.claimed_by = -1
-    AND q.organization_id = $2
-    AND q.dateint        = $3
-    AND q.frequency_ms   = $4
-    AND q.instance_num   = $5
-  FOR UPDATE SKIP LOCKED
-)
+const mcqDeferItems = `-- name: McqDeferItems :exec
 UPDATE public.metric_compaction_queue
 SET eligible_at = now() + $1::interval
-WHERE id IN (SELECT id FROM to_defer)
+WHERE claimed_by = -1
+  AND id = ANY($2::bigint[])
 `
 
-type McqDeferKeyParams struct {
-	Push           time.Duration `json:"push"`
-	OrganizationID uuid.UUID     `json:"organization_id"`
-	Dateint        int32         `json:"dateint"`
-	FrequencyMs    int32         `json:"frequency_ms"`
-	InstanceNum    int16         `json:"instance_num"`
+type McqDeferItemsParams struct {
+	Push time.Duration `json:"push"`
+	Ids  []int64       `json:"ids"`
 }
 
-func (q *Queries) McqDeferKey(ctx context.Context, arg McqDeferKeyParams) error {
-	_, err := q.db.Exec(ctx, mcqDeferKey,
-		arg.Push,
-		arg.OrganizationID,
-		arg.Dateint,
-		arg.FrequencyMs,
-		arg.InstanceNum,
-	)
+func (q *Queries) McqDeferItems(ctx context.Context, arg McqDeferItemsParams) error {
+	_, err := q.db.Exec(ctx, mcqDeferItems, arg.Push, arg.Ids)
 	return err
 }
 
@@ -134,7 +116,7 @@ WHERE claimed_by = -1
   AND instance_num   = $4
 ORDER BY queue_ts ASC, id ASC
 LIMIT $5
-FOR UPDATE SKIP LOCKED
+FOR UPDATE
 `
 
 type McqFetchCandidatesParams struct {
@@ -218,7 +200,7 @@ WHERE claimed_by = -1
   AND eligible_at <= now()
 ORDER BY priority ASC, eligible_at ASC, queue_ts ASC
 LIMIT 1
-FOR UPDATE SKIP LOCKED
+FOR UPDATE
 `
 
 type McqPickHeadRow struct {

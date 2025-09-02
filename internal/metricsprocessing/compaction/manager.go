@@ -32,7 +32,7 @@ type compactionStore interface {
 	s3helper.ObjectCleanupStore
 	ClaimCompactionBundle(ctx context.Context, p lrdb.BundleParams) (lrdb.CompactionBundleResult, error)
 	McqCompleteDelete(ctx context.Context, arg lrdb.McqCompleteDeleteParams) error
-	McqDeferKey(ctx context.Context, arg lrdb.McqDeferKeyParams) error
+	McqDeferItems(ctx context.Context, arg lrdb.McqDeferItemsParams) error
 	McqHeartbeat(ctx context.Context, arg lrdb.McqHeartbeatParams) (int64, error)
 	McqRelease(ctx context.Context, arg lrdb.McqReleaseParams) error
 	GetMetricSegsByIds(ctx context.Context, arg lrdb.GetMetricSegsByIdsParams) ([]lrdb.MetricSeg, error)

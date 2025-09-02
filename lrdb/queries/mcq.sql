@@ -5,7 +5,7 @@ WHERE claimed_by = -1
   AND eligible_at <= now()
 ORDER BY priority ASC, eligible_at ASC, queue_ts ASC
 LIMIT 1
-FOR UPDATE SKIP LOCKED;
+FOR UPDATE;
 
 -- name: McqFetchCandidates :many
 SELECT id, organization_id, dateint, frequency_ms, instance_num, segment_id, record_count, queue_ts
@@ -18,27 +18,18 @@ WHERE claimed_by = -1
   AND instance_num   = @instance_num
 ORDER BY queue_ts ASC, id ASC
 LIMIT @max_rows
-FOR UPDATE SKIP LOCKED;
+FOR UPDATE;
 
 -- name: McqClaimBundle :exec
 UPDATE public.metric_compaction_queue
 SET claimed_by = @worker_id, claimed_at = now(), heartbeated_at = now()
 WHERE id = ANY(@ids::bigint[]);
 
--- name: McqDeferKey :exec
-WITH to_defer AS (
-  SELECT q.id
-  FROM public.metric_compaction_queue q
-  WHERE q.claimed_by = -1
-    AND q.organization_id = @organization_id
-    AND q.dateint        = @dateint
-    AND q.frequency_ms   = @frequency_ms
-    AND q.instance_num   = @instance_num
-  FOR UPDATE SKIP LOCKED
-)
+-- name: McqDeferItems :exec
 UPDATE public.metric_compaction_queue
 SET eligible_at = now() + @push::interval
-WHERE id IN (SELECT id FROM to_defer);
+WHERE claimed_by = -1
+  AND id = ANY(@ids::bigint[]);
 
 -- name: McqHeartbeat :execrows
 UPDATE public.metric_compaction_queue

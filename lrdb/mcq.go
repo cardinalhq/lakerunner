@@ -57,6 +57,14 @@ func (s *Store) ClaimCompactionBundle(ctx context.Context, p BundleParams) (Comp
 	}
 
 	err := s.execTx(ctx, func(tx *Store) error {
+		// Take an advisory lock to serialize access to the compaction queue
+		// Using a hash of "metric_compaction_queue" as the lock key
+		// This will wait until the lock is available (released by other transactions)
+		_, err := tx.db.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", int64(0x6d63715f6c6f636b))
+		if err != nil {
+			return fmt.Errorf("failed to acquire advisory lock: %w", err)
+		}
+
 		var headForEstimate *McqPickHeadRow
 
 		// Try up to MaxAttempts different keys
@@ -122,15 +130,16 @@ func (s *Store) ClaimCompactionBundle(ctx context.Context, p BundleParams) (Comp
 							bundleIDs = append(bundleIDs, cands[0].ID)
 						}
 					} else {
-						// Not stale yet => defer the *whole key* and try another key
-						if err := tx.McqDeferKey(ctx, McqDeferKeyParams{
-							OrganizationID: head.OrganizationID,
-							Dateint:        head.Dateint,
-							FrequencyMs:    head.FrequencyMs,
-							InstanceNum:    head.InstanceNum,
-							Push:           p.deferInterval(),
+						// Not stale yet => defer only the items we fetched and try another key
+						deferIDs := make([]int64, len(cands))
+						for i, c := range cands {
+							deferIDs[i] = c.ID
+						}
+						if err := tx.McqDeferItems(ctx, McqDeferItemsParams{
+							Push: p.deferInterval(),
+							Ids:  deferIDs,
 						}); err != nil {
-							return fmt.Errorf("defer key (attempt %d): %w", attempt+1, err)
+							return fmt.Errorf("defer items (attempt %d): %w", attempt+1, err)
 						}
 						// Try another key instead of returning
 						continue

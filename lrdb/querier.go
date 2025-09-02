@@ -73,7 +73,7 @@ type Querier interface {
 	McqClaimBundle(ctx context.Context, arg McqClaimBundleParams) error
 	McqCleanupExpired(ctx context.Context, cutoffTime *time.Time) ([]MetricCompactionQueue, error)
 	McqCompleteDelete(ctx context.Context, arg McqCompleteDeleteParams) error
-	McqDeferKey(ctx context.Context, arg McqDeferKeyParams) error
+	McqDeferItems(ctx context.Context, arg McqDeferItemsParams) error
 	McqFetchCandidates(ctx context.Context, arg McqFetchCandidatesParams) ([]McqFetchCandidatesRow, error)
 	McqHeartbeat(ctx context.Context, arg McqHeartbeatParams) (int64, error)
 	McqPickHead(ctx context.Context) (McqPickHeadRow, error)
@@ -89,7 +89,7 @@ type Querier interface {
 	MetricSegEstimator(ctx context.Context, arg MetricSegEstimatorParams) ([]MetricSegEstimatorRow, error)
 	MrqClaimBundle(ctx context.Context, arg MrqClaimBundleParams) error
 	MrqCompleteDelete(ctx context.Context, arg MrqCompleteDeleteParams) error
-	MrqDeferKey(ctx context.Context, arg MrqDeferKeyParams) error
+	MrqDeferItems(ctx context.Context, arg MrqDeferItemsParams) error
 	MrqFetchCandidates(ctx context.Context, arg MrqFetchCandidatesParams) ([]MrqFetchCandidatesRow, error)
 	MrqHeartbeat(ctx context.Context, arg MrqHeartbeatParams) (int64, error)
 	MrqPickHead(ctx context.Context) (MrqPickHeadRow, error)
