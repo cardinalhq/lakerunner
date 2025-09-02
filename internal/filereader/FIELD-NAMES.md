@@ -15,8 +15,8 @@ dimensional attributes. The TID is a 64-bit hash computed from specific fields i
 
 - `_cardinalhq.name` - The metric name (always included)
 - `_cardinalhq.metric_type` - The metric type: gauge, counter, histogram (always included if present)
-- `resource.*` - Resource attributes (only string values are included; non-string values are ignored)
-- `metric.*` - Metric-specific attributes/labels (only string values are included; non-string values are ignored)
+- `resource.*` - Resource attributes (string values only)
+- `metric.*` - Metric-specific attributes/labels (string values only)
 
 #### Fields explicitly excluded from TID calculation
 
