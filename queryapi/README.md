@@ -11,7 +11,7 @@ This avoids gaps on the left edge for range functions while respecting offsets.
 3.	Within a group we merge multiple worker streams by timestamp; across groups we concatenate by index (no global merge).
 
 
-## Stages (with important details)
+## Stages 
 
                 +----------------------------+
                 | EvaluateMetricsQuery       |
