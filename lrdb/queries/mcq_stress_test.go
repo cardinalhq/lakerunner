@@ -40,12 +40,12 @@ func TestMcqStress_ConcurrentWorkers(t *testing.T) {
 
 	// Test parameters
 	const (
-		numOrgs          = 2
-		numFrequencies   = 2
-		numInstances     = 3
-		itemsPerKey      = 30  // Items per unique key (org/date/freq/instance)
-		numWorkers       = 6   // Concurrent workers
-		testDuration     = 8 * time.Second
+		numOrgs           = 2
+		numFrequencies    = 2
+		numInstances      = 3
+		itemsPerKey       = 30 // Items per unique key (org/date/freq/instance)
+		numWorkers        = 6  // Concurrent workers
+		testDuration      = 8 * time.Second
 		heartbeatInterval = 500 * time.Millisecond
 	)
 
@@ -106,13 +106,13 @@ func TestMcqStress_ConcurrentWorkers(t *testing.T) {
 		// Remaining 10% will defer
 
 		bundleParams := lrdb.BundleParams{
-			WorkerID:      workerID,
-			OverFactor:    1.2,
-			BatchLimit:    20,
-			Grace:         30 * time.Second, // Won't trigger in test
-			DeferBase:     100 * time.Millisecond,
-			Jitter:        50 * time.Millisecond,
-			MaxAttempts:   3,
+			WorkerID:    workerID,
+			OverFactor:  1.2,
+			BatchLimit:  20,
+			Grace:       30 * time.Second, // Won't trigger in test
+			DeferBase:   100 * time.Millisecond,
+			Jitter:      50 * time.Millisecond,
+			MaxAttempts: 3,
 		}
 
 		// Heartbeat goroutine for this worker
@@ -120,11 +120,11 @@ func TestMcqStress_ConcurrentWorkers(t *testing.T) {
 		defer cancelHeartbeat()
 		var activeIDs []int64
 		var idsMutex sync.Mutex
-		
+
 		go func() {
 			ticker := time.NewTicker(heartbeatInterval)
 			defer ticker.Stop()
-			
+
 			for {
 				select {
 				case <-heartbeatCtx.Done():
@@ -137,7 +137,7 @@ func TestMcqStress_ConcurrentWorkers(t *testing.T) {
 							Ids:      activeIDs,
 						})
 						if err != nil {
-							slog.Warn("Heartbeat failed", 
+							slog.Warn("Heartbeat failed",
 								slog.Int64("worker", workerID),
 								slog.Any("error", err))
 						} else if rowsUpdated != int64(len(activeIDs)) {
@@ -160,7 +160,7 @@ func TestMcqStress_ConcurrentWorkers(t *testing.T) {
 			if err != nil {
 				if isDeadlock(err) {
 					atomic.AddInt32(&deadlockCount, 1)
-					slog.Error("DEADLOCK detected!", 
+					slog.Error("DEADLOCK detected!",
 						slog.Int64("worker", workerID),
 						slog.Any("error", err))
 				}
@@ -188,7 +188,7 @@ func TestMcqStress_ConcurrentWorkers(t *testing.T) {
 
 			// Decide outcome
 			outcome := rand.Float64()
-			
+
 			ids := make([]int64, len(bundle.Items))
 			for i, item := range bundle.Items {
 				ids[i] = item.ID
@@ -207,7 +207,7 @@ func TestMcqStress_ConcurrentWorkers(t *testing.T) {
 				} else if err == nil {
 					atomic.AddInt32(&totalFailed, int32(len(bundle.Items)))
 				}
-			} else if outcome < failureRate + completeRate {
+			} else if outcome < failureRate+completeRate {
 				// Complete the work
 				err = db.McqCompleteDelete(ctx, lrdb.McqCompleteDeleteParams{
 					WorkerID: workerID,
@@ -253,7 +253,7 @@ func TestMcqStress_ConcurrentWorkers(t *testing.T) {
 	slog.Info("Starting workers", slog.Int("count", numWorkers))
 	var wg sync.WaitGroup
 	startTime := time.Now()
-	
+
 	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
 		go workerFunc(int64(i+1), &wg)
@@ -261,7 +261,7 @@ func TestMcqStress_ConcurrentWorkers(t *testing.T) {
 
 	// Wait for test duration
 	time.Sleep(testDuration)
-	
+
 	// Wait for workers to finish
 	wg.Wait()
 	duration := time.Since(startTime)
@@ -281,9 +281,9 @@ func TestMcqStress_ConcurrentWorkers(t *testing.T) {
 		for workerID := int64(100); workerID < 100+numWorkers; workerID++ {
 			bundle, err := db.ClaimCompactionBundle(ctx, lrdb.BundleParams{
 				WorkerID:    workerID,
-				OverFactor:  2.0,      // Take more
-				BatchLimit:  100,      // Bigger batches
-				Grace:       0,        // Take everything
+				OverFactor:  2.0, // Take more
+				BatchLimit:  100, // Bigger batches
+				Grace:       0,   // Take everything
 				DeferBase:   0,
 				Jitter:      0,
 				MaxAttempts: 1,
@@ -295,7 +295,7 @@ func TestMcqStress_ConcurrentWorkers(t *testing.T) {
 			}
 
 			claimed += int32(len(bundle.Items))
-			
+
 			ids := make([]int64, len(bundle.Items))
 			for i, item := range bundle.Items {
 				ids[i] = item.ID
@@ -315,9 +315,9 @@ func TestMcqStress_ConcurrentWorkers(t *testing.T) {
 	}
 
 	// Verify all work was eventually processed
-	totalProcessed := atomic.LoadInt32(&totalCompleted) + 
-	                 atomic.LoadInt32(&totalFailed) + 
-	                 remainingCount
+	totalProcessed := atomic.LoadInt32(&totalCompleted) +
+		atomic.LoadInt32(&totalFailed) +
+		remainingCount
 
 	slog.Info("Test completed",
 		slog.Duration("duration", duration),
@@ -329,9 +329,9 @@ func TestMcqStress_ConcurrentWorkers(t *testing.T) {
 		slog.Int("processed", int(totalProcessed)))
 
 	// Verify all work was consumed
-	require.Equal(t, totalQueued, totalProcessed, 
+	require.Equal(t, totalQueued, totalProcessed,
 		"All queued items should be processed (completed, failed, or cleaned up)")
-	
+
 	// Additional verification: try to claim one more time to ensure queue is empty
 	finalBundle, err := db.ClaimCompactionBundle(ctx, lrdb.BundleParams{
 		WorkerID:    999,
@@ -351,16 +351,16 @@ func isDeadlock(err error) bool {
 		return false
 	}
 	// PostgreSQL deadlock error code is 40P01
-	return errors.Is(err, sql.ErrTxDone) || 
-	       contains(err.Error(), "40P01") || 
-	       contains(err.Error(), "deadlock")
+	return errors.Is(err, sql.ErrTxDone) ||
+		contains(err.Error(), "40P01") ||
+		contains(err.Error(), "deadlock")
 }
 
 func contains(s, substr string) bool {
-	return len(s) >= len(substr) && 
-	       (s == substr || 
-	        len(s) > len(substr) && 
-	        (containsHelper(s, substr)))
+	return len(s) >= len(substr) &&
+		(s == substr ||
+			len(s) > len(substr) &&
+				(containsHelper(s, substr)))
 }
 
 func containsHelper(s, substr string) bool {
