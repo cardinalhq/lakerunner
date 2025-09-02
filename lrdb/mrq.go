@@ -25,94 +25,116 @@ import (
 func (s *Store) ClaimRollupBundle(ctx context.Context, p BundleParams) ([]MrqFetchCandidatesRow, error) {
 	var out []MrqFetchCandidatesRow
 
+	maxAttempts := p.MaxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = 5 // reasonable default
+	}
+
 	err := s.execTx(ctx, func(tx *Store) error {
-		head, err := tx.MrqPickHead(ctx)
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("pick head: %w", err)
-		}
-
-		cands, err := tx.MrqFetchCandidates(ctx, MrqFetchCandidatesParams{
-			OrganizationID: head.OrganizationID,
-			Dateint:        head.Dateint,
-			FrequencyMs:    head.FrequencyMs,
-			InstanceNum:    head.InstanceNum,
-			SlotID:         head.SlotID,
-			SlotCount:      head.SlotCount,
-			MaxRows:        p.BatchLimit,
-		})
-		if err != nil {
-			return fmt.Errorf("fetch candidates: %w", err)
-		}
-		if len(cands) == 0 {
-			return nil
-		}
-
 		target := p.TargetRecords
 		over := int64(float64(target) * p.OverFactor)
 
-		var bundleIDs []int64
-		var sum int64
-
-		if cands[0].RecordCount >= target {
-			bundleIDs = []int64{cands[0].ID}
-		} else {
-			for _, x := range cands {
-				if sum+x.RecordCount > over {
-					break
-				}
-				bundleIDs = append(bundleIDs, x.ID)
-				sum += x.RecordCount
-				if sum >= target {
-					break
-				}
+		// Try up to MaxAttempts different keys
+		for attempt := 0; attempt < maxAttempts; attempt++ {
+			// 1) Pick head
+			head, err := tx.MrqPickHead(ctx)
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil // no work available
 			}
-			if sum < target {
-				oldest := cands[0].QueueTs
-				// also consider boundary: if head.WindowCloseTs < now(), force flush
-				boundary := time.Now().After(cands[0].WindowCloseTs)
-				if time.Since(oldest) >= p.Grace || boundary {
-					if len(bundleIDs) == 0 {
-						bundleIDs = append(bundleIDs, cands[0].ID)
+			if err != nil {
+				return fmt.Errorf("pick head (attempt %d): %w", attempt+1, err)
+			}
+
+			// 2) Fetch candidates for that key
+			cands, err := tx.MrqFetchCandidates(ctx, MrqFetchCandidatesParams{
+				OrganizationID: head.OrganizationID,
+				Dateint:        head.Dateint,
+				FrequencyMs:    head.FrequencyMs,
+				InstanceNum:    head.InstanceNum,
+				SlotID:         head.SlotID,
+				SlotCount:      head.SlotCount,
+				RollupGroup:    head.RollupGroup,
+				MaxRows:        p.BatchLimit,
+			})
+			if err != nil {
+				return fmt.Errorf("fetch candidates (attempt %d): %w", attempt+1, err)
+			}
+			if len(cands) == 0 {
+				// This key was claimed by another worker, try next
+				continue
+			}
+
+			// 3) Build bundle (big-single + greedy + tail rule + boundary rule)
+			var bundleIDs []int64
+			var sum int64
+
+			if cands[0].RecordCount >= target {
+				// big single
+				bundleIDs = []int64{cands[0].ID}
+			} else {
+				for _, x := range cands {
+					if sum+x.RecordCount > over {
+						break
 					}
-				} else {
-					if err := tx.MrqDeferKey(ctx, MrqDeferKeyParams{
-						OrganizationID: head.OrganizationID,
-						Dateint:        head.Dateint,
-						FrequencyMs:    head.FrequencyMs,
-						InstanceNum:    head.InstanceNum,
-						SlotID:         head.SlotID,
-						SlotCount:      head.SlotCount,
-						Push:           p.deferInterval(),
-					}); err != nil {
-						return fmt.Errorf("defer key: %w", err)
+					bundleIDs = append(bundleIDs, x.ID)
+					sum += x.RecordCount
+					if sum >= target {
+						break
 					}
-					return nil
+				}
+				if sum < target {
+					oldest := cands[0].QueueTs
+					// also consider boundary: if head.WindowCloseTs < now(), force flush
+					boundary := time.Now().After(cands[0].WindowCloseTs)
+					if time.Since(oldest) >= p.Grace || boundary {
+						if len(bundleIDs) == 0 {
+							bundleIDs = append(bundleIDs, cands[0].ID)
+						}
+					} else {
+						// Not stale yet and not past boundary => defer the *whole key* and try another key
+						if err := tx.MrqDeferKey(ctx, MrqDeferKeyParams{
+							OrganizationID: head.OrganizationID,
+							Dateint:        head.Dateint,
+							FrequencyMs:    head.FrequencyMs,
+							InstanceNum:    head.InstanceNum,
+							SlotID:         head.SlotID,
+							SlotCount:      head.SlotCount,
+							RollupGroup:    head.RollupGroup,
+							Push:           p.deferInterval(),
+						}); err != nil {
+							return fmt.Errorf("defer key (attempt %d): %w", attempt+1, err)
+						}
+						// Try another key instead of returning
+						continue
+					}
 				}
 			}
-		}
 
-		if len(bundleIDs) == 0 {
-			return nil
-		}
-		if err := tx.MrqClaimBundle(ctx, MrqClaimBundleParams{
-			WorkerID: p.WorkerID,
-			Ids:      bundleIDs,
-		}); err != nil {
-			return fmt.Errorf("claim bundle: %w", err)
-		}
+			// 4) If we have a bundle, claim it and return
+			if len(bundleIDs) > 0 {
+				if err := tx.MrqClaimBundle(ctx, MrqClaimBundleParams{
+					WorkerID: p.WorkerID,
+					Ids:      bundleIDs,
+				}); err != nil {
+					return fmt.Errorf("claim bundle (attempt %d): %w", attempt+1, err)
+				}
 
-		keep := make(map[int64]struct{}, len(bundleIDs))
-		for _, id := range bundleIDs {
-			keep[id] = struct{}{}
-		}
-		for _, c := range cands {
-			if _, ok := keep[c.ID]; ok {
-				out = append(out, c)
+				// Return the claimed rows (we already have record_count/segment_id in cands)
+				// Filter to only claimed IDs (cands are a superset in order).
+				keep := make(map[int64]struct{}, len(bundleIDs))
+				for _, id := range bundleIDs {
+					keep[id] = struct{}{}
+				}
+				for _, c := range cands {
+					if _, ok := keep[c.ID]; ok {
+						out = append(out, c)
+					}
+				}
+				return nil // success, exit transaction
 			}
 		}
+
+		// Exhausted all attempts without finding a suitable bundle
 		return nil
 	})
 
