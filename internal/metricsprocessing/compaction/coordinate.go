@@ -275,6 +275,18 @@ func replaceCompactedSegments(
 		slog.Int64("outputBytes", outputBytes),
 		slog.Int64("targetRecords", estimatedTargetRecords))
 
+	// Queue rollup work only for 10s (10000ms) frequency compactions
+	if metadata.FrequencyMs == 10000 {
+		if err := segments.QueueRollupWork(ctx, mdb, metadata.OrganizationID, metadata.InstanceNum, 10000, 0, 1); err != nil {
+			ll.Error("Failed to queue rollup work after compaction",
+				slog.Int("frequencyMs", int(metadata.FrequencyMs)),
+				slog.Any("error", err))
+			return fmt.Errorf("failed to queue rollup work: %w", err)
+		}
+		ll.Debug("Queued rollup work for 10s compaction",
+			slog.Int("segmentCount", len(segments)))
+	}
+
 	return nil
 }
 

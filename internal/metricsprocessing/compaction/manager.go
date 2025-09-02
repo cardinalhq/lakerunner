@@ -39,6 +39,7 @@ type compactionStore interface {
 	CompactMetricSegs(ctx context.Context, args lrdb.CompactMetricSegsParams) error
 	MarkMetricSegsCompactedByKeys(ctx context.Context, arg lrdb.MarkMetricSegsCompactedByKeysParams) error
 	SetMetricSegCompacted(ctx context.Context, arg lrdb.SetMetricSegCompactedParams) error
+	MrqQueueWork(ctx context.Context, arg lrdb.MrqQueueWorkParams) error // For queueing rollup work
 }
 
 type config struct {
