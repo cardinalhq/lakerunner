@@ -22,8 +22,25 @@ import (
 	"time"
 )
 
-func (s *Store) ClaimRollupBundle(ctx context.Context, p BundleParams) ([]MrqFetchCandidatesRow, error) {
+// RollupBundleResult extends the basic bundle with estimate information
+type RollupBundleResult struct {
+	Items           []MrqFetchCandidatesRow
+	EstimatedTarget int64
+}
+
+// ClaimRollupBundle claims a bundle and includes estimate information
+// The goal:
+// 1. if there is a single large candidate >= target, push it alone
+// 2. else, greedily fill up to over (target * over_factor)
+// 3. if we don't reach target, check the oldest candidate's age
+//   - if >= grace, push what we have, which may be just the oldest candidate
+//   - else, defer the whole key and try another key
+//
+// We try up to MaxAttempts different keys before giving up.
+// We also limit the number of candidates fetched per key to BatchLimit.
+func (s *Store) ClaimRollupBundle(ctx context.Context, p BundleParams) (*RollupBundleResult, error) {
 	var out []MrqFetchCandidatesRow
+	var estimatedTarget int64 = 40000 // Default fallback
 
 	maxAttempts := p.MaxAttempts
 	if maxAttempts <= 0 {
@@ -45,6 +62,11 @@ func (s *Store) ClaimRollupBundle(ctx context.Context, p BundleParams) ([]MrqFet
 				return fmt.Errorf("pick head (attempt %d): %w", attempt+1, err)
 			}
 
+			// Get the estimate for this organization and target frequency
+			// The head contains the source frequency, we need the target frequency
+			targetFreq := head.FrequencyMs // This will be the target frequency for the rollup
+			estimatedTarget = s.GetMetricEstimate(ctx, head.OrganizationID, targetFreq)
+
 			// 2) Fetch candidates for that key
 			cands, err := tx.MrqFetchCandidates(ctx, MrqFetchCandidatesParams{
 				OrganizationID: head.OrganizationID,
@@ -64,7 +86,8 @@ func (s *Store) ClaimRollupBundle(ctx context.Context, p BundleParams) ([]MrqFet
 				continue
 			}
 
-			// 3) Build bundle (big-single + greedy + tail rule + boundary rule)
+			// Rest of the bundle logic is the same as the original ClaimRollupBundle
+			// 3) Build bundle (big-single + greedy + tail rule)
 			var bundleIDs []int64
 			var sum int64
 
@@ -84,14 +107,13 @@ func (s *Store) ClaimRollupBundle(ctx context.Context, p BundleParams) ([]MrqFet
 				}
 				if sum < target {
 					oldest := cands[0].QueueTs
-					// also consider boundary: if head.WindowCloseTs < now(), force flush
-					boundary := time.Now().After(cands[0].WindowCloseTs)
-					if time.Since(oldest) >= p.Grace || boundary {
+					// tail rule: if oldest candidate waited >= Grace, flush what we have (even if zero -> push one)
+					if time.Since(oldest) >= p.Grace {
 						if len(bundleIDs) == 0 {
 							bundleIDs = append(bundleIDs, cands[0].ID)
 						}
 					} else {
-						// Not stale yet and not past boundary => defer the *whole key* and try another key
+						// Not stale yet => defer the *whole key* and try another key
 						if err := tx.MrqDeferKey(ctx, MrqDeferKeyParams{
 							OrganizationID: head.OrganizationID,
 							Dateint:        head.Dateint,
@@ -141,7 +163,11 @@ func (s *Store) ClaimRollupBundle(ctx context.Context, p BundleParams) ([]MrqFet
 	if err != nil {
 		return nil, err
 	}
-	return out, nil
+
+	return &RollupBundleResult{
+		Items:           out,
+		EstimatedTarget: estimatedTarget,
+	}, nil
 }
 
 func (s *Store) HeartbeatRollup(ctx context.Context, workerID int64, ids []int64) error {

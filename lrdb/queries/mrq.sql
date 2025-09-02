@@ -1,15 +1,15 @@
 -- name: MrqPickHead :one
 SELECT id, organization_id, dateint, frequency_ms, instance_num,
-       slot_id, slot_count, rollup_group, segment_id, record_count, window_close_ts, queue_ts
+       slot_id, slot_count, rollup_group, segment_id, record_count, queue_ts
 FROM public.metric_rollup_queue
 WHERE claimed_by = -1
   AND eligible_at <= now()
-ORDER BY priority ASC, eligible_at ASC, window_close_ts ASC, queue_ts ASC
+ORDER BY priority ASC, eligible_at ASC, queue_ts ASC
 FOR UPDATE SKIP LOCKED
 LIMIT 1;
 
 -- name: MrqFetchCandidates :many
-SELECT id, segment_id, record_count, window_close_ts, queue_ts
+SELECT id, segment_id, record_count, queue_ts
 FROM public.metric_rollup_queue
 WHERE claimed_by = -1
   AND eligible_at <= now()
@@ -20,7 +20,7 @@ WHERE claimed_by = -1
   AND slot_id        = @slot_id
   AND slot_count     = @slot_count
   AND rollup_group   = @rollup_group
-ORDER BY window_close_ts ASC, queue_ts ASC, id ASC
+ORDER BY queue_ts ASC, id ASC
 FOR UPDATE SKIP LOCKED
 LIMIT @max_rows;
 

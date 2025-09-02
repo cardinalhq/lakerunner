@@ -40,17 +40,19 @@ func runLoop(
 		default:
 		}
 
-		claimedWork, err := manager.ClaimWork(ctx)
+		bundleResult, err := manager.ClaimWork(ctx)
 		if err != nil {
 			ll.Error("Failed to claim work", slog.Any("error", err))
 			time.Sleep(2 * time.Second)
 			continue
 		}
 
-		if len(claimedWork) == 0 {
+		if bundleResult == nil || len(bundleResult.Items) == 0 {
 			time.Sleep(2 * time.Second)
 			continue
 		}
+
+		claimedWork := bundleResult.Items
 
 		// Check for cancellation after claiming work but before processing
 		select {
@@ -72,7 +74,7 @@ func runLoop(
 		heartbeater := newMRQHeartbeater(mdb, manager.workerID, itemIDs)
 		cancel := heartbeater.Start(ctx)
 
-		err = processBatch(ctx, ll, mdb, sp, awsmanager, claimedWork)
+		err = processBatch(ctx, ll, mdb, sp, awsmanager, claimedWork, bundleResult.EstimatedTarget)
 
 		// Stop heartbeating before handling results
 		cancel()

@@ -251,7 +251,7 @@ type ClaimMetricCompactionWorkRow struct {
 	Priority          int32      `json:"priority"`
 	OrganizationID    uuid.UUID  `json:"organization_id"`
 	Dateint           int32      `json:"dateint"`
-	FrequencyMs       int64      `json:"frequency_ms"`
+	FrequencyMs       int32      `json:"frequency_ms"`
 	SegmentID         int64      `json:"segment_id"`
 	InstanceNum       int16      `json:"instance_num"`
 	RecordCount       int64      `json:"record_count"`

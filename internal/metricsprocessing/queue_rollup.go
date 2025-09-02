@@ -17,7 +17,6 @@ package metricsprocessing
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -26,32 +25,7 @@ import (
 
 // RollupWorkQueuer defines the interface for queuing metric rollup work
 type RollupWorkQueuer interface {
-	PutMetricRollupWork(ctx context.Context, arg lrdb.PutMetricRollupWorkParams) error
-}
-
-// calculateWindowCloseTime calculates when a rollup window can safely be processed
-func calculateWindowCloseTime(startTs int64, targetFrequency int32) time.Time {
-	// Calculate which rollup window this segment belongs to
-	windowStartMs := (startTs / int64(targetFrequency)) * int64(targetFrequency)
-	windowEndMs := windowStartMs + int64(targetFrequency)
-	windowEnd := time.UnixMilli(windowEndMs)
-
-	// Add grace period based on target frequency
-	var gracePeriod time.Duration
-	switch targetFrequency {
-	case 60_000: // 1min rollups
-		gracePeriod = 2 * time.Minute
-	case 300_000: // 5min rollups
-		gracePeriod = 3 * time.Minute
-	case 1_200_000: // 20min rollups
-		gracePeriod = 5 * time.Minute
-	case 3_600_000: // 1hr rollups
-		gracePeriod = 10 * time.Minute
-	default:
-		gracePeriod = 2 * time.Minute // Default fallback
-	}
-
-	return windowEnd.Add(gracePeriod)
+	MrqQueueWork(ctx context.Context, arg lrdb.MrqQueueWorkParams) error
 }
 
 // QueueMetricRollup queues rollup work for a specific segment at the next frequency level
@@ -66,13 +40,10 @@ func QueueMetricRollup(ctx context.Context, mdb RollupWorkQueuer, organizationID
 	// Calculate rollup group: segment start time divided by target rollup frequency
 	rollupGroup := startTs / int64(nextFrequency)
 
-	// Calculate when this rollup window can safely be processed
-	windowCloseTs := calculateWindowCloseTime(startTs, nextFrequency)
-
-	err := mdb.PutMetricRollupWork(ctx, lrdb.PutMetricRollupWorkParams{
+	err := mdb.MrqQueueWork(ctx, lrdb.MrqQueueWorkParams{
 		OrganizationID: organizationID,
 		Dateint:        dateint,
-		FrequencyMs:    int64(frequencyMs),
+		FrequencyMs:    frequencyMs,
 		InstanceNum:    instanceNum,
 		SlotID:         slotID,
 		SlotCount:      slotCount,
@@ -80,7 +51,6 @@ func QueueMetricRollup(ctx context.Context, mdb RollupWorkQueuer, organizationID
 		RecordCount:    recordCount,
 		RollupGroup:    rollupGroup,
 		Priority:       priority,
-		WindowCloseTs:  windowCloseTs,
 	})
 
 	if err != nil {

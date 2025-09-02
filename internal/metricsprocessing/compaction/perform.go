@@ -36,8 +36,8 @@ func perform(ctx context.Context, input input) (*result, error) {
 	}
 
 	// Wrap with aggregating reader to merge duplicates during compaction
-	ll.Debug("Creating aggregating metrics reader", slog.Int64("frequencyMs", input.FrequencyMs))
-	aggregatingReader, err := filereader.NewAggregatingMetricsReader(input.ReaderStack.FinalReader, input.FrequencyMs, 1000)
+	ll.Debug("Creating aggregating metrics reader", slog.Int("frequencyMs", int(input.FrequencyMs)))
+	aggregatingReader, err := filereader.NewAggregatingMetricsReader(input.ReaderStack.FinalReader, int64(input.FrequencyMs), 1000)
 	if err != nil {
 		ll.Error("Failed to create aggregating metrics reader", slog.Any("error", err))
 		return nil, fmt.Errorf("creating aggregating metrics reader: %w", err)

@@ -28,6 +28,10 @@ type MetricSegmentInserter interface {
 	InsertMetricSegment(ctx context.Context, params InsertMetricSegmentParams) error
 	CompactMetricSegs(ctx context.Context, args CompactMetricSegsParams) error
 	RollupMetricSegs(ctx context.Context, sourceParams RollupSourceParams, targetParams RollupTargetParams, sourceSegmentIDs []int64, newRecords []RollupNewRecord) error
+	ClaimRollupBundle(ctx context.Context, params BundleParams) (*RollupBundleResult, error)
+	CompleteRollup(ctx context.Context, workerID int64, ids []int64) error
+	HeartbeatRollup(ctx context.Context, workerID int64, ids []int64) error
+	MrqQueueWork(ctx context.Context, params MrqQueueWorkParams) error
 }
 
 type TraceSegmentInserter interface {
