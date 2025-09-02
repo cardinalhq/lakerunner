@@ -185,52 +185,6 @@ func (q *Queries) McqFetchCandidates(ctx context.Context, arg McqFetchCandidates
 	return items, nil
 }
 
-const mcqGetSegmentsByIds = `-- name: McqGetSegmentsByIds :many
-SELECT organization_id, dateint, frequency_ms, segment_id, instance_num, ts_range, record_count, file_size, ingest_dateint, published, rolledup, created_at, created_by, slot_id, fingerprints, sort_version, slot_count, compacted
-FROM metric_seg
-WHERE segment_id = ANY($1::bigint[])
-ORDER BY segment_id
-`
-
-func (q *Queries) McqGetSegmentsByIds(ctx context.Context, segmentIds []int64) ([]MetricSeg, error) {
-	rows, err := q.db.Query(ctx, mcqGetSegmentsByIds, segmentIds)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []MetricSeg
-	for rows.Next() {
-		var i MetricSeg
-		if err := rows.Scan(
-			&i.OrganizationID,
-			&i.Dateint,
-			&i.FrequencyMs,
-			&i.SegmentID,
-			&i.InstanceNum,
-			&i.TsRange,
-			&i.RecordCount,
-			&i.FileSize,
-			&i.IngestDateint,
-			&i.Published,
-			&i.Rolledup,
-			&i.CreatedAt,
-			&i.CreatedBy,
-			&i.SlotID,
-			&i.Fingerprints,
-			&i.SortVersion,
-			&i.SlotCount,
-			&i.Compacted,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const mcqHeartbeat = `-- name: McqHeartbeat :exec
 UPDATE public.metric_compaction_queue
 SET heartbeated_at = now()

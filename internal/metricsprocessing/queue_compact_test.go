@@ -129,12 +129,12 @@ func TestQueueMetricCompaction_PriorityCalculation(t *testing.T) {
 		frequencyMs      int32
 		expectedPriority int32
 	}{
-		{10000, 0},   // GetFrequencyPriority(10000) = 0
-		{60000, 0},   // GetFrequencyPriority(60000) = 0
-		{300000, 0},  // GetFrequencyPriority(300000) = 0
-		{1200000, 0}, // GetFrequencyPriority(1200000) = 0
-		{3600000, 0}, // GetFrequencyPriority(3600000) = 0
-		{999999, 0},  // Unknown frequency defaults to 0
+		{10000, 0},   // 10s
+		{60000, 0},   // 1min
+		{300000, 0},  // 5min
+		{1200000, 0}, // 20min
+		{3600000, 0}, // 1hr
+		{999999, 0},  // Unknown frequency
 	}
 
 	for _, tc := range testCases {

@@ -116,7 +116,7 @@ func processBatch(
 }
 
 // fetchMetricSegsFromBundle retrieves the MetricSeg records corresponding to the bundle items
-// by querying segments directly by their IDs.
+// by querying segments using the full available key fields for safety and efficiency.
 func fetchMetricSegsFromBundle(ctx context.Context, db compactionStore, items []lrdb.McqFetchCandidatesRow) ([]lrdb.MetricSeg, error) {
 	if len(items) == 0 {
 		return nil, nil
@@ -127,9 +127,17 @@ func fetchMetricSegsFromBundle(ctx context.Context, db compactionStore, items []
 		segmentIDs[i] = item.SegmentID
 	}
 
-	segments, err := db.McqGetSegmentsByIds(ctx, segmentIDs)
+	firstItem := items[0]
+
+	segments, err := db.GetMetricSegsByIds(ctx, lrdb.GetMetricSegsByIdsParams{
+		OrganizationID: firstItem.OrganizationID,
+		Dateint:        firstItem.Dateint,
+		FrequencyMs:    firstItem.FrequencyMs,
+		InstanceNum:    firstItem.InstanceNum,
+		SegmentIds:     segmentIDs,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch metric segments by IDs: %w", err)
+		return nil, fmt.Errorf("failed to fetch metric segments: %w", err)
 	}
 
 	return segments, nil

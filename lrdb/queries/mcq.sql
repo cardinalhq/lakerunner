@@ -82,11 +82,6 @@ VALUES (
   @priority
 );
 
--- name: McqGetSegmentsByIds :many
-SELECT *
-FROM metric_seg
-WHERE segment_id = ANY(@segment_ids::bigint[])
-ORDER BY segment_id;
 
 -- name: McqCleanupExpired :many
 UPDATE metric_compaction_queue

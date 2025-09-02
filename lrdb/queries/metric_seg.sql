@@ -64,7 +64,7 @@ WHERE
 ORDER BY
   ts_range;
 
--- name: GetMetricSegsForRollupWork :many
+-- name: GetMetricSegsByIds :many
 SELECT *
 FROM metric_seg
 WHERE organization_id = @organization_id
