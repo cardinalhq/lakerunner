@@ -252,10 +252,10 @@ func (q *QuerierService) lookupLogsSegments(
 
 	fpToSegments := make(map[int64][]SegmentInfo, len(rows))
 	for _, row := range rows {
-		endHour := zeroFilledHour(time.UnixMilli(row.EndTs).UTC().Hour())
+		startHour := zeroFilledHour(time.UnixMilli(row.StartTs).UTC().Hour())
 		seg := SegmentInfo{
 			DateInt:        dih.DateInt,
-			Hour:           endHour,
+			Hour:           startHour,
 			SegmentID:      row.SegmentID,
 			StartTs:        row.StartTs,
 			EndTs:          row.EndTs,

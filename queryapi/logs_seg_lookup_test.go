@@ -140,8 +140,8 @@ func TestLookupLogsSegments_CoarseOnly_LineNotContains(t *testing.T) {
 	if s1.Hour != "00" {
 		t.Fatalf("hour(EndTs row1) mismatch: got %q want %q", s1.Hour, "00")
 	}
-	if s2.Hour != "01" {
-		t.Fatalf("hour(EndTs row2) mismatch: got %q want %q", s2.Hour, "01")
+	if s2.Hour != "00" {
+		t.Fatalf("hour(EndTs row2) mismatch: got %q want %q", s2.Hour, "00")
 	}
 
 	if s1.StartTs != startTs || s1.EndTs != row1End {
