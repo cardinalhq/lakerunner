@@ -461,10 +461,10 @@ func (q *QuerierService) lookupMetricsSegments(ctx context.Context,
 		"fingerprint", fingerprint,
 		"numSegments", len(rows))
 	for _, row := range rows {
-		endHour := zeroFilledHour(time.UnixMilli(row.EndTs).UTC().Hour())
+		startHour := zeroFilledHour(time.UnixMilli(row.StartTs).UTC().Hour())
 		allSegments = append(allSegments, SegmentInfo{
 			DateInt:        dih.DateInt,
-			Hour:           endHour,
+			Hour:           startHour,
 			SegmentID:      row.SegmentID,
 			StartTs:        row.StartTs,
 			EndTs:          row.EndTs,
