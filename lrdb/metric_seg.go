@@ -17,7 +17,6 @@ package lrdb
 import (
 	"context"
 	"fmt"
-	"log/slog"
 
 	"github.com/google/uuid"
 	"github.com/hashicorp/go-multierror"
@@ -123,13 +122,6 @@ func (q *Store) RollupMetricSegs(ctx context.Context, sourceParams RollupSourceP
 		return fmt.Errorf("ensure partition: %w", err)
 	}
 
-	slog.Info("Rolling up metric segments",
-		slog.Any("sourceParams", sourceParams),
-		slog.Any("targetParams", targetParams),
-		slog.Any("sourceSegmentIDs", sourceSegmentIDs),
-		slog.Int("numNewRecords", len(newRecords)),
-	)
-
 	newItems := make([]BatchInsertMetricSegsParams, len(newRecords))
 	for i, newRec := range newRecords {
 		newItems[i] = BatchInsertMetricSegsParams{
@@ -152,7 +144,6 @@ func (q *Store) RollupMetricSegs(ctx context.Context, sourceParams RollupSourceP
 			SortVersion:    targetParams.SortVersion,
 			StartTs:        newRec.StartTs,
 		}
-		slog.Info("inserting at frequency", slog.Int("frequency", int(newItems[i].FrequencyMs)))
 	}
 
 	var errs *multierror.Error

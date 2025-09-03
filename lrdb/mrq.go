@@ -88,3 +88,32 @@ func (s *Store) ReclaimRollupTimeouts(ctx context.Context, timeout time.Duration
 	})
 	return rows, err
 }
+
+// ClaimSingleRollupRow claims a single rollup work item without bundling
+// This is used when LAKERUNNER_METRIC_ROLLUP_BATCH_LIMIT is set to 1
+func (s *Store) ClaimSingleRollupRow(ctx context.Context, workerID int64, now time.Time) (*MrqClaimSingleRowRow, error) {
+	var result *MrqClaimSingleRowRow
+
+	err := s.execTx(ctx, func(tx *Store) error {
+		// Take an advisory lock to serialize access to the rollup queue
+		// Using a hash of "metric_rollup_queue" as the lock key
+		// This will wait until the lock is available (released by other transactions)
+		_, err := tx.db.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", int64(0x6d72715f6c6f636b))
+		if err != nil {
+			return fmt.Errorf("failed to acquire advisory lock: %w", err)
+		}
+
+		row, err := tx.MrqClaimSingleRow(ctx, MrqClaimSingleRowParams{
+			WorkerID: workerID,
+			Now:      now,
+		})
+		if err != nil {
+			return err
+		}
+
+		result = &row
+		return nil
+	})
+
+	return result, err
+}

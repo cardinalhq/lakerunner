@@ -88,6 +88,7 @@ type Querier interface {
 	// Uses frequency_ms to provide more accurate estimates based on collection frequency.
 	MetricSegEstimator(ctx context.Context, arg MetricSegEstimatorParams) ([]MetricSegEstimatorRow, error)
 	MrqClaimBundle(ctx context.Context, arg MrqClaimBundleParams) error
+	MrqClaimSingleRow(ctx context.Context, arg MrqClaimSingleRowParams) (MrqClaimSingleRowRow, error)
 	MrqCompleteDelete(ctx context.Context, arg MrqCompleteDeleteParams) error
 	MrqDeferItems(ctx context.Context, arg MrqDeferItemsParams) error
 	MrqFetchCandidates(ctx context.Context, arg MrqFetchCandidatesParams) ([]MrqFetchCandidatesRow, error)

@@ -16,6 +16,8 @@ package rollup
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -38,6 +40,7 @@ type rollupStore interface {
 	RollupMetricSegs(ctx context.Context, sourceParams lrdb.RollupSourceParams, targetParams lrdb.RollupTargetParams, sourceSegmentIDs []int64, newRecords []lrdb.RollupNewRecord) error
 	McqQueueWork(ctx context.Context, arg lrdb.McqQueueWorkParams) error
 	MrqQueueWork(ctx context.Context, arg lrdb.MrqQueueWorkParams) error
+	MrqClaimSingleRow(ctx context.Context, arg lrdb.MrqClaimSingleRowParams) (lrdb.MrqClaimSingleRowRow, error)
 }
 
 type config struct {
@@ -129,6 +132,36 @@ func NewManager(
 }
 
 func (m *Manager) ClaimWork(ctx context.Context) (*lrdb.RollupBundleResult, error) {
+	// Special case: when batch limit is 1, just grab the first available work item
+	if m.config.BatchLimit == 1 {
+		row, err := m.db.MrqClaimSingleRow(ctx, lrdb.MrqClaimSingleRowParams{
+			WorkerID: m.workerID,
+			Now:      time.Now(),
+		})
+		if err != nil {
+			// sql.ErrNoRows means no work available, which is not an error
+			if errors.Is(err, sql.ErrNoRows) {
+				return &lrdb.RollupBundleResult{Items: nil}, nil
+			}
+			return nil, fmt.Errorf("failed to claim single rollup row: %w", err)
+		}
+
+		// Convert the single row to a RollupBundleResult
+		item := lrdb.MrqFetchCandidatesRow(row)
+
+		result := &lrdb.RollupBundleResult{
+			Items:           []lrdb.MrqFetchCandidatesRow{item},
+			EstimatedTarget: row.RecordCount, // Use the actual record count as the estimate
+		}
+
+		m.ll.Info("Claimed single rollup row",
+			slog.Int64("id", row.ID),
+			slog.Int64("recordCount", row.RecordCount))
+
+		return result, nil
+	}
+
+	// Normal bundling logic for batch limit > 1
 	result, err := m.db.ClaimRollupBundle(ctx, lrdb.BundleParams{
 		WorkerID:      m.workerID,
 		TargetRecords: m.config.TargetRecords,
