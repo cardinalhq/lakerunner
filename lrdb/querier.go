@@ -87,6 +87,7 @@ type Querier interface {
 	// Returns an estimate of the number of metric segments, accounting for per-file overhead.
 	// Uses frequency_ms to provide more accurate estimates based on collection frequency.
 	MetricSegEstimator(ctx context.Context, arg MetricSegEstimatorParams) ([]MetricSegEstimatorRow, error)
+	MrqClaimBatch(ctx context.Context, arg MrqClaimBatchParams) ([]MrqClaimBatchRow, error)
 	MrqClaimBundle(ctx context.Context, arg MrqClaimBundleParams) error
 	MrqClaimSingleRow(ctx context.Context, arg MrqClaimSingleRowParams) (MrqClaimSingleRowRow, error)
 	MrqCompleteDelete(ctx context.Context, arg MrqCompleteDeleteParams) error

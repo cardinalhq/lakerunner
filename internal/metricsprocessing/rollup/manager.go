@@ -32,7 +32,7 @@ import (
 
 type rollupStore interface {
 	s3helper.ObjectCleanupStore
-	ClaimRollupBundle(ctx context.Context, params lrdb.BundleParams) (*lrdb.RollupBundleResult, error)
+	MrqClaimBatch(ctx context.Context, arg lrdb.MrqClaimBatchParams) ([]lrdb.MrqClaimBatchRow, error)
 	CompleteRollup(ctx context.Context, workerID int64, ids []int64) error
 	MrqHeartbeat(ctx context.Context, arg lrdb.MrqHeartbeatParams) (int64, error)
 	MrqRelease(ctx context.Context, arg lrdb.MrqReleaseParams) error
@@ -44,64 +44,19 @@ type rollupStore interface {
 }
 
 type config struct {
-	TargetRecords int64
-	OverFactor    float64
-	BatchLimit    int32
-	Grace         time.Duration
-	DeferBase     time.Duration
-	MaxAttempts   int
+	BatchLimit int32
 }
 
 func GetConfigFromEnv() config {
-	targetRecords := int64(40000) // Default max records for rollup batches
-	if env := os.Getenv("LAKERUNNER_METRIC_ROLLUP_TARGET_RECORDS"); env != "" {
-		if val, err := strconv.ParseInt(env, 10, 64); err == nil && val > 0 {
-			targetRecords = val
-		}
-	}
-
-	overFactor := 1.2
-	if env := os.Getenv("LAKERUNNER_METRIC_ROLLUP_OVER_FACTOR"); env != "" {
-		if val, err := strconv.ParseFloat(env, 64); err == nil && val > 1.0 {
-			overFactor = val
-		}
-	}
-
-	batchLimit := int32(100)
+	batchLimit := int32(10)
 	if env := os.Getenv("LAKERUNNER_METRIC_ROLLUP_BATCH_LIMIT"); env != "" {
 		if val, err := strconv.Atoi(env); err == nil && val > 0 {
 			batchLimit = int32(val)
 		}
 	}
 
-	grace := time.Hour
-	if env := os.Getenv("LAKERUNNER_METRIC_ROLLUP_GRACE"); env != "" {
-		if val, err := time.ParseDuration(env); err == nil && val > 0 {
-			grace = val
-		}
-	}
-
-	deferBase := 5 * time.Minute
-	if env := os.Getenv("LAKERUNNER_METRIC_ROLLUP_DEFER_BASE"); env != "" {
-		if val, err := time.ParseDuration(env); err == nil && val > 0 {
-			deferBase = val
-		}
-	}
-
-	maxAttempts := 5
-	if env := os.Getenv("LAKERUNNER_METRIC_ROLLUP_MAX_ATTEMPTS"); env != "" {
-		if val, err := strconv.Atoi(env); err == nil && val > 0 {
-			maxAttempts = val
-		}
-	}
-
 	return config{
-		TargetRecords: targetRecords,
-		OverFactor:    overFactor,
-		BatchLimit:    batchLimit,
-		Grace:         grace,
-		DeferBase:     deferBase,
-		MaxAttempts:   maxAttempts,
+		BatchLimit: batchLimit,
 	}
 }
 
@@ -131,8 +86,8 @@ func NewManager(
 	}
 }
 
-func (m *Manager) ClaimWork(ctx context.Context) (*lrdb.RollupBundleResult, error) {
-	// Special case: when batch limit is 1, just grab the first available work item
+func (m *Manager) ClaimWork(ctx context.Context) ([]lrdb.MrqClaimBatchRow, error) {
+	// Special case: when batch limit is 1, use the single row claim for compatibility
 	if m.config.BatchLimit == 1 {
 		row, err := m.db.MrqClaimSingleRow(ctx, lrdb.MrqClaimSingleRowParams{
 			WorkerID: m.workerID,
@@ -141,56 +96,42 @@ func (m *Manager) ClaimWork(ctx context.Context) (*lrdb.RollupBundleResult, erro
 		if err != nil {
 			// sql.ErrNoRows means no work available, which is not an error
 			if errors.Is(err, sql.ErrNoRows) {
-				return &lrdb.RollupBundleResult{Items: nil}, nil
+				return nil, nil
 			}
 			return nil, fmt.Errorf("failed to claim single rollup row: %w", err)
 		}
 
-		// Convert the single row to a RollupBundleResult
-		item := lrdb.MrqFetchCandidatesRow(row)
-
-		result := &lrdb.RollupBundleResult{
-			Items:           []lrdb.MrqFetchCandidatesRow{item},
-			EstimatedTarget: row.RecordCount, // Use the actual record count as the estimate
-		}
+		// Convert the single row to a batch row
+		item := lrdb.MrqClaimBatchRow(row)
 
 		m.ll.Info("Claimed single rollup row",
 			slog.Int64("id", row.ID),
 			slog.Int64("recordCount", row.RecordCount))
 
-		return result, nil
+		return []lrdb.MrqClaimBatchRow{item}, nil
 	}
 
-	// Normal bundling logic for batch limit > 1
-	result, err := m.db.ClaimRollupBundle(ctx, lrdb.BundleParams{
-		WorkerID:      m.workerID,
-		TargetRecords: m.config.TargetRecords,
-		OverFactor:    m.config.OverFactor,
-		BatchLimit:    m.config.BatchLimit,
-		Grace:         m.config.Grace,
-		DeferBase:     m.config.DeferBase,
-		MaxAttempts:   m.config.MaxAttempts,
+	// Claim a batch of work items
+	rows, err := m.db.MrqClaimBatch(ctx, lrdb.MrqClaimBatchParams{
+		WorkerID:   m.workerID,
+		Now:        time.Now(),
+		BatchLimit: m.config.BatchLimit,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to claim metric rollup bundle: %w", err)
+		return nil, fmt.Errorf("failed to claim metric rollup batch: %w", err)
 	}
 
-	if result != nil && len(result.Items) > 0 {
-		m.ll.Info("Claimed metric rollup bundle",
-			slog.Int("workItems", len(result.Items)),
-			slog.Int64("estimatedTarget", result.EstimatedTarget))
+	if len(rows) > 0 {
+		m.ll.Info("Claimed metric rollup batch",
+			slog.Int("workItems", len(rows)))
 	}
 
-	return result, nil
+	return rows, nil
 }
 
-func (m *Manager) CompleteWork(ctx context.Context, rows []lrdb.MrqFetchCandidatesRow) error {
-	if len(rows) == 0 {
+func (m *Manager) CompleteWork(ctx context.Context, ids []int64) error {
+	if len(ids) == 0 {
 		return nil
-	}
-	ids := make([]int64, len(rows))
-	for i, row := range rows {
-		ids[i] = row.ID
 	}
 	if err := m.db.CompleteRollup(ctx, m.workerID, ids); err != nil {
 		m.ll.Error("Failed to complete work items",
@@ -201,14 +142,9 @@ func (m *Manager) CompleteWork(ctx context.Context, rows []lrdb.MrqFetchCandidat
 	return nil
 }
 
-func (m *Manager) ReleaseWork(ctx context.Context, rows []lrdb.MrqFetchCandidatesRow) error {
-	if len(rows) == 0 {
+func (m *Manager) ReleaseWork(ctx context.Context, ids []int64) error {
+	if len(ids) == 0 {
 		return nil
-	}
-
-	ids := make([]int64, len(rows))
-	for i, row := range rows {
-		ids[i] = row.ID
 	}
 
 	if err := m.db.MrqRelease(ctx, lrdb.MrqReleaseParams{
@@ -216,25 +152,20 @@ func (m *Manager) ReleaseWork(ctx context.Context, rows []lrdb.MrqFetchCandidate
 		Ids:      ids,
 	}); err != nil {
 		m.ll.Error("Failed to release work items",
-			slog.Int("count", len(rows)),
+			slog.Int("count", len(ids)),
 			slog.Any("error", err))
 		return fmt.Errorf("failed to release work items: %w", err)
 	}
 
 	m.ll.Info("Released work items back to queue for retry",
-		slog.Int("count", len(rows)))
+		slog.Int("count", len(ids)))
 
 	return nil
 }
 
-func (m *Manager) FailWork(ctx context.Context, rows []lrdb.MrqFetchCandidatesRow) error {
-	if len(rows) == 0 {
+func (m *Manager) FailWork(ctx context.Context, ids []int64) error {
+	if len(ids) == 0 {
 		return nil
-	}
-
-	ids := make([]int64, len(rows))
-	for i, row := range rows {
-		ids[i] = row.ID
 	}
 
 	// Delete the failed work items from the queue
@@ -243,13 +174,13 @@ func (m *Manager) FailWork(ctx context.Context, rows []lrdb.MrqFetchCandidatesRo
 
 	if err != nil {
 		m.ll.Error("Failed to delete failed work items",
-			slog.Int("count", len(rows)),
+			slog.Int("count", len(ids)),
 			slog.Any("error", err))
 		return fmt.Errorf("failed to delete failed work items: %w", err)
 	}
 
 	m.ll.Warn("Deleted failed work items from queue",
-		slog.Int("count", len(rows)))
+		slog.Int("count", len(ids)))
 
 	return nil
 }
