@@ -16,8 +16,6 @@ package lrdb
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 	"math/rand"
 	"time"
@@ -51,11 +49,6 @@ type CompactionBundleResult struct {
 func (s *Store) ClaimCompactionBundle(ctx context.Context, p BundleParams) (CompactionBundleResult, error) {
 	var result CompactionBundleResult
 
-	maxAttempts := p.MaxAttempts
-	if maxAttempts <= 0 {
-		maxAttempts = 5 // reasonable default
-	}
-
 	err := s.execTx(ctx, func(tx *Store) error {
 		// Take an advisory lock to serialize access to the compaction queue
 		// Using a hash of "metric_compaction_queue" as the lock key
@@ -65,119 +58,19 @@ func (s *Store) ClaimCompactionBundle(ctx context.Context, p BundleParams) (Comp
 			return fmt.Errorf("failed to acquire advisory lock: %w", err)
 		}
 
-		var headForEstimate *McqPickHeadRow
+		adapter := &mcqAdapter{tx: tx}
+		items, estimatedTarget, err := ClaimBundle(
+			ctx,
+			adapter,
+			p,
+			func(ctx context.Context, head McqPickHeadRow) int64 {
+				return s.GetMetricEstimate(ctx, head.OrganizationID, head.FrequencyMs)
+			},
+		)
 
-		// Try up to MaxAttempts different keys
-		for attempt := 0; attempt < maxAttempts; attempt++ {
-			// 1) Pick head
-			head, err := tx.McqPickHead(ctx)
-			if errors.Is(err, sql.ErrNoRows) {
-				return nil // no work available
-			}
-			if err != nil {
-				return fmt.Errorf("pick head (attempt %d): %w", attempt+1, err)
-			}
-
-			// Store the first head for estimation (even if we defer this key)
-			if headForEstimate == nil {
-				headForEstimate = &head
-			}
-
-			// Get dynamic target from estimator for this organization/frequency
-			estimatedTarget := s.GetMetricEstimate(ctx, head.OrganizationID, head.FrequencyMs)
-			target := estimatedTarget
-			over := int64(float64(target) * p.OverFactor)
-
-			// 2) Fetch candidates for that key
-			cands, err := tx.McqFetchCandidates(ctx, McqFetchCandidatesParams{
-				OrganizationID: head.OrganizationID,
-				Dateint:        head.Dateint,
-				FrequencyMs:    head.FrequencyMs,
-				InstanceNum:    head.InstanceNum,
-				MaxRows:        p.BatchLimit,
-			})
-			if err != nil {
-				return fmt.Errorf("fetch candidates (attempt %d): %w", attempt+1, err)
-			}
-			if len(cands) == 0 {
-				// This key was claimed by another worker, try next
-				continue
-			}
-
-			// 3) Build bundle (big-single + greedy + tail rule)
-			var bundleIDs []int64
-			var sum int64
-
-			if cands[0].RecordCount >= target {
-				// big single
-				bundleIDs = []int64{cands[0].ID}
-			} else {
-				for _, x := range cands {
-					if sum+x.RecordCount > over {
-						break
-					}
-					bundleIDs = append(bundleIDs, x.ID)
-					sum += x.RecordCount
-					if sum >= target {
-						break
-					}
-				}
-				if sum < target {
-					// tail rule: if oldest candidate waited >= Grace, flush what we have (even if zero -> push one)
-					oldest := cands[0].QueueTs
-					if time.Since(oldest) >= p.Grace {
-						if len(bundleIDs) == 0 {
-							bundleIDs = append(bundleIDs, cands[0].ID)
-						}
-					} else {
-						// Not stale yet => defer only the items we fetched and try another key
-						deferIDs := make([]int64, len(cands))
-						for i, c := range cands {
-							deferIDs[i] = c.ID
-						}
-						if err := tx.McqDeferItems(ctx, McqDeferItemsParams{
-							Push: p.deferInterval(),
-							Ids:  deferIDs,
-						}); err != nil {
-							return fmt.Errorf("defer items (attempt %d): %w", attempt+1, err)
-						}
-						// Try another key instead of returning
-						continue
-					}
-				}
-			}
-
-			// 4) If we have a bundle, claim it and return
-			if len(bundleIDs) > 0 {
-				if err := tx.McqClaimBundle(ctx, McqClaimBundleParams{
-					WorkerID: p.WorkerID,
-					Ids:      bundleIDs,
-				}); err != nil {
-					return fmt.Errorf("claim bundle (attempt %d): %w", attempt+1, err)
-				}
-
-				// Return the claimed rows (we already have record_count/segment_id in cands)
-				// Filter to only claimed IDs (cands are a superset in order).
-				keep := make(map[int64]struct{}, len(bundleIDs))
-				for _, id := range bundleIDs {
-					keep[id] = struct{}{}
-				}
-				for _, c := range cands {
-					if _, ok := keep[c.ID]; ok {
-						result.Items = append(result.Items, c)
-					}
-				}
-				result.EstimatedTarget = estimatedTarget
-				return nil // success, exit transaction
-			}
-		}
-
-		// Exhausted all attempts without finding a suitable bundle
-		// If we picked at least one head, use it for estimation
-		if headForEstimate != nil {
-			result.EstimatedTarget = s.GetMetricEstimate(ctx, headForEstimate.OrganizationID, headForEstimate.FrequencyMs)
-		}
-		return nil
+		result.Items = items
+		result.EstimatedTarget = estimatedTarget
+		return err
 	})
 
 	if err != nil {

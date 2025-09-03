@@ -16,8 +16,6 @@ package lrdb
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 	"time"
 )
@@ -39,13 +37,7 @@ type RollupBundleResult struct {
 // We try up to MaxAttempts different keys before giving up.
 // We also limit the number of candidates fetched per key to BatchLimit.
 func (s *Store) ClaimRollupBundle(ctx context.Context, p BundleParams) (*RollupBundleResult, error) {
-	var out []MrqFetchCandidatesRow
-	var estimatedTarget int64 = 40000 // Default fallback
-
-	maxAttempts := p.MaxAttempts
-	if maxAttempts <= 0 {
-		maxAttempts = 5 // reasonable default
-	}
+	var result RollupBundleResult
 
 	err := s.execTx(ctx, func(tx *Store) error {
 		// Take an advisory lock to serialize access to the rollup queue
@@ -56,135 +48,27 @@ func (s *Store) ClaimRollupBundle(ctx context.Context, p BundleParams) (*RollupB
 			return fmt.Errorf("failed to acquire advisory lock: %w", err)
 		}
 
-		// Try up to MaxAttempts different keys
-		for attempt := 0; attempt < maxAttempts; attempt++ {
-			// 1) Pick head
-			head, err := tx.MrqPickHead(ctx)
-			if errors.Is(err, sql.ErrNoRows) {
-				return nil // no work available
-			}
-			if err != nil {
-				return fmt.Errorf("pick head (attempt %d): %w", attempt+1, err)
-			}
+		adapter := &mrqAdapter{tx: tx}
+		items, estimatedTarget, err := ClaimBundle(
+			ctx,
+			adapter,
+			p,
+			func(ctx context.Context, head MrqPickHeadRow) int64 {
+				// The head contains the source frequency, we need the target frequency for the rollup
+				return s.GetMetricEstimate(ctx, head.OrganizationID, head.FrequencyMs)
+			},
+		)
 
-			// Get the estimate for this organization and target frequency
-			// The head contains the source frequency, we need the target frequency
-			targetFreq := head.FrequencyMs // This will be the target frequency for the rollup
-			estimatedTarget = s.GetMetricEstimate(ctx, head.OrganizationID, targetFreq)
-
-			// Always use the estimator - it has proper defaults
-			target := estimatedTarget
-			over := int64(float64(target) * p.OverFactor)
-
-			// 2) Fetch candidates for that key
-			cands, err := tx.MrqFetchCandidates(ctx, MrqFetchCandidatesParams{
-				OrganizationID: head.OrganizationID,
-				Dateint:        head.Dateint,
-				FrequencyMs:    head.FrequencyMs,
-				InstanceNum:    head.InstanceNum,
-				SlotID:         head.SlotID,
-				SlotCount:      head.SlotCount,
-				RollupGroup:    head.RollupGroup,
-				MaxRows:        p.BatchLimit,
-			})
-			if err != nil {
-				return fmt.Errorf("fetch candidates (attempt %d): %w", attempt+1, err)
-			}
-			if len(cands) == 0 {
-				// This key was claimed by another worker, try next
-				continue
-			}
-
-			// 3) Build bundle (big-single + greedy + tail rule)
-			var bundleIDs []int64
-			var sum int64
-
-			if cands[0].RecordCount >= target {
-				// big single - take just this one segment
-				bundleIDs = []int64{cands[0].ID}
-			} else {
-				// Greedy accumulation with strict limits
-				for _, x := range cands {
-					// Check if adding this item would exceed our over limit
-					nextSum := sum + x.RecordCount
-					if nextSum > over {
-						// If we haven't reached target yet, check if this single item alone is acceptable
-						if sum < target && len(bundleIDs) == 0 {
-							// Take at least one item if we have nothing
-							bundleIDs = append(bundleIDs, x.ID)
-							sum = nextSum
-						}
-						break
-					}
-					bundleIDs = append(bundleIDs, x.ID)
-					sum = nextSum
-					// Stop as soon as we reach the target
-					if sum >= target {
-						break
-					}
-				}
-				if sum < target {
-					oldest := cands[0].QueueTs
-					// tail rule: if oldest candidate waited >= Grace, flush what we have
-					if time.Since(oldest) >= p.Grace {
-						if len(bundleIDs) == 0 && len(cands) > 0 {
-							// Take at least the first item if we have nothing and it's old enough
-							bundleIDs = append(bundleIDs, cands[0].ID)
-						}
-					} else {
-						// Not stale yet => defer only the items we fetched and try another key
-						deferIDs := make([]int64, len(cands))
-						for i, c := range cands {
-							deferIDs[i] = c.ID
-						}
-						if err := tx.MrqDeferItems(ctx, MrqDeferItemsParams{
-							Push: p.deferInterval(),
-							Ids:  deferIDs,
-						}); err != nil {
-							return fmt.Errorf("defer items (attempt %d): %w", attempt+1, err)
-						}
-						// Try another key instead of returning
-						continue
-					}
-				}
-			}
-
-			// 4) If we have a bundle, claim it and return
-			if len(bundleIDs) > 0 {
-				if err := tx.MrqClaimBundle(ctx, MrqClaimBundleParams{
-					WorkerID: p.WorkerID,
-					Ids:      bundleIDs,
-				}); err != nil {
-					return fmt.Errorf("claim bundle (attempt %d): %w", attempt+1, err)
-				}
-
-				// Return the claimed rows (we already have record_count/segment_id in cands)
-				// Filter to only claimed IDs (cands are a superset in order).
-				keep := make(map[int64]struct{}, len(bundleIDs))
-				for _, id := range bundleIDs {
-					keep[id] = struct{}{}
-				}
-				for _, c := range cands {
-					if _, ok := keep[c.ID]; ok {
-						out = append(out, c)
-					}
-				}
-				return nil // success, exit transaction
-			}
-		}
-
-		// Exhausted all attempts without finding a suitable bundle
-		return nil
+		result.Items = items
+		result.EstimatedTarget = estimatedTarget
+		return err
 	})
 
 	if err != nil {
 		return nil, err
 	}
 
-	return &RollupBundleResult{
-		Items:           out,
-		EstimatedTarget: estimatedTarget,
-	}, nil
+	return &result, nil
 }
 
 func (s *Store) CompleteRollup(ctx context.Context, workerID int64, ids []int64) error {
