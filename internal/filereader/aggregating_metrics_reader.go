@@ -30,6 +30,16 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
+// aggregationState holds the minimal data needed for aggregation
+// Uses lazy sketch creation - only creates a sketch when we have multiple values
+type aggregationState struct {
+	baseRow    Row                // Template row with all metadata fields
+	sketch     *ddsketch.DDSketch // Accumulated sketch (nil until needed)
+	lastValue  *float64           // Last singleton value seen (for lazy sketch creation)
+	rowCount   int                // Number of rows aggregated
+	metricType string             // Metric type for this aggregation
+}
+
 // AggregatingMetricsReader wraps a sorted Reader to perform streaming aggregation of metrics.
 // It aggregates rows with the same [metric_name, tid, truncated_timestamp] key.
 // The underlying reader must return rows in sorted order by this key.
@@ -40,11 +50,10 @@ type AggregatingMetricsReader struct {
 	rowCount          int64
 	batchSize         int
 
-	// Current aggregation state
-	// currentKey removed - using direct value storage to avoid pooling corruption
-	groupedRows  map[string][]Row // metric_type -> rows for that type
-	pendingBatch *Batch           // Unprocessed rows from underlying reader
-	pendingIndex int              // Index of next row to process in pendingBatch
+	// Current aggregation state - lightweight, no full row copies
+	aggStates    map[string]*aggregationState // metric_type -> aggregation state
+	pendingBatch *Batch                       // Unprocessed rows from underlying reader
+	pendingIndex int                          // Index of next row to process in pendingBatch
 	readerEOF    bool
 
 	// Sort key provider for grouping
@@ -78,7 +87,7 @@ func NewAggregatingMetricsReader(reader Reader, aggregationPeriodMs int64, batch
 		reader:            reader,
 		aggregationPeriod: aggregationPeriodMs,
 		batchSize:         batchSize,
-		groupedRows:       make(map[string][]Row),
+		aggStates:         make(map[string]*aggregationState),
 		keyProvider:       &MetricSortKeyProvider{},
 	}, nil
 }
@@ -205,30 +214,36 @@ func updateRowFromSketch(row Row, sketch *ddsketch.DDSketch) error {
 	return nil
 }
 
-// aggregateGroup processes all rows for a single aggregation group and returns the aggregated results.
+// aggregateGroup processes all aggregation states and returns the aggregated results.
 // Returns multiple rows - one per metric type found in the group.
 func (ar *AggregatingMetricsReader) aggregateGroup(ctx context.Context) ([]Row, error) {
-	if len(ar.groupedRows) == 0 {
-		// No rows in this group - return empty slice
+	if len(ar.aggStates) == 0 {
+		// No aggregation states - return empty slice
 		ar.resetAggregation()
 		return nil, nil
 	}
 
 	var results []Row
 
-	// Process each metric type group separately
-	for metricType, rows := range ar.groupedRows {
-		if len(rows) == 0 {
+	// Process each metric type's aggregation state
+	for metricType, state := range ar.aggStates {
+		if state == nil {
 			continue
 		}
 
-		// Aggregate this specific metric type
-		result, err := ar.aggregateRowGroup(ctx, metricType, rows)
-		if err != nil {
-			return nil, fmt.Errorf("aggregating metric type %q: %w", metricType, err)
+		// Finalize the aggregation for this metric type
+		var result Row
+		var err error
+		if metricType == "histogram" {
+			result, err = ar.finalizeHistogramAggregation(ctx, state)
+		} else {
+			result, err = ar.finalizeCounterGaugeAggregation(ctx, state)
 		}
 
-		// Only add to results if aggregation produced a valid result
+		if err != nil {
+			return nil, fmt.Errorf("finalizing %s aggregation: %w", metricType, err)
+		}
+
 		if result != nil {
 			results = append(results, result)
 		}
@@ -238,174 +253,57 @@ func (ar *AggregatingMetricsReader) aggregateGroup(ctx context.Context) ([]Row, 
 	return results, nil
 }
 
-// aggregateRowGroup aggregates all rows within an aggregation group.
-func (ar *AggregatingMetricsReader) aggregateRowGroup(ctx context.Context, metricType string, rows []Row) (Row, error) {
-	if len(rows) == 0 {
-		return nil, nil
-	}
-
-	// Use the first row as the base for the aggregated result
-	aggregatedRow := make(Row)
-	maps.Copy(aggregatedRow, rows[0])
-
-	// Separate processing based on metric type
-	if metricType == "histogram" {
-		return ar.aggregateHistogramGroup(ctx, aggregatedRow, rows)
-	}
-
-	return ar.aggregateCounterGaugeGroup(ctx, aggregatedRow, rows)
-}
-
-// aggregateHistogramGroup handles aggregation for histogram metrics.
-// Histograms must always have sketches and only merge sketches.
-func (ar *AggregatingMetricsReader) aggregateHistogramGroup(ctx context.Context, baseRow Row, rows []Row) (Row, error) {
-	var currentSketch *ddsketch.DDSketch
-	var singletonValues []float64
-
-	for _, row := range rows {
-		// Handle sketch or singleton
-		if isSketchEmpty(row) {
-			// This is a singleton - collect its value
-			if value, ok := getSingletonValue(row); ok {
-				singletonValues = append(singletonValues, value)
-			} else {
-				rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
-					attribute.String("reader", "AggregatingMetricsReader"),
-					attribute.String("reason", "empty_sketch_no_rollup_sum"),
-				))
-			}
-		} else {
-			// This row has a sketch - handle sketch merging
-			sketchBytes, err := getSketchBytes(row[wkk.RowKeySketch])
-			if err != nil {
-				return nil, fmt.Errorf("invalid sketch data: %w", err)
-			}
-
-			sketch, err := helpers.DecodeSketch(sketchBytes)
-			if err != nil {
-				return nil, fmt.Errorf("failed to decode sketch: %w", err)
-			}
-
-			if currentSketch == nil {
-				// First sketch for this group
-				currentSketch = sketch
-			} else {
-				// Merge with existing sketch
-				if err := currentSketch.MergeWith(sketch); err != nil {
-					return nil, fmt.Errorf("failed to merge sketch: %w", err)
-				}
-			}
-		}
-	}
-
+// finalizeHistogramAggregation completes aggregation for a histogram metric.
+func (ar *AggregatingMetricsReader) finalizeHistogramAggregation(ctx context.Context, state *aggregationState) (Row, error) {
 	// VALIDATION: Histograms must always have a sketch
-	if currentSketch == nil {
+	if state.sketch == nil && state.lastValue == nil {
 		rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
 			attribute.String("reader", "AggregatingMetricsReader"),
-			attribute.String("reason", "histogram_no_sketch"),
+			attribute.String("reason", "histogram_no_data"),
 		))
-		return nil, fmt.Errorf("histogram missing sketch")
+		return nil, fmt.Errorf("histogram missing data")
 	}
 
-	// For histograms, we should not have singleton values mixed with sketches
-	if len(singletonValues) > 0 {
-		slog.Warn("Histogram has both sketch and singleton values - ignoring singletons",
-			"name", baseRow[wkk.RowKeyCName],
-			"tid", baseRow[wkk.RowKeyCTID],
-			"singletons", singletonValues)
+	// Create result row from base row
+	result := make(Row)
+	maps.Copy(result, state.baseRow)
+
+	// For histograms with only one value, keep the original row as-is
+	if state.sketch == nil && state.lastValue != nil {
+		// Single value histogram - unusual but handle it
+		return result, nil
 	}
 
 	// Update rollup fields from the sketch
-	if err := updateRowFromSketch(baseRow, currentSketch); err != nil {
+	if err := updateRowFromSketch(result, state.sketch); err != nil {
 		return nil, fmt.Errorf("updating histogram row from sketch: %w", err)
 	}
 
-	return baseRow, nil
+	return result, nil
 }
 
-// aggregateCounterGaugeGroup handles aggregation for counter and gauge metrics.
-// Can handle mixed sketches and singletons.
-func (ar *AggregatingMetricsReader) aggregateCounterGaugeGroup(ctx context.Context, baseRow Row, rows []Row) (Row, error) {
-	var currentSketch *ddsketch.DDSketch
-	var singletonValues []float64
-
-	for _, row := range rows {
-		// Handle sketch or singleton
-		if isSketchEmpty(row) {
-			// This is a singleton - collect its value
-			if value, ok := getSingletonValue(row); ok {
-				singletonValues = append(singletonValues, value)
-			} else {
-				rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
-					attribute.String("reader", "AggregatingMetricsReader"),
-					attribute.String("reason", "empty_sketch_no_rollup_sum"),
-				))
-			}
-		} else {
-			// This row has a sketch - handle sketch merging
-			sketchBytes, err := getSketchBytes(row[wkk.RowKeySketch])
-			if err != nil {
-				return nil, fmt.Errorf("invalid sketch data: %w", err)
-			}
-
-			sketch, err := helpers.DecodeSketch(sketchBytes)
-			if err != nil {
-				return nil, fmt.Errorf("failed to decode sketch: %w", err)
-			}
-
-			if currentSketch == nil {
-				// First sketch for this group
-				currentSketch = sketch
-			} else {
-				// Merge with existing sketch
-				if err := currentSketch.MergeWith(sketch); err != nil {
-					return nil, fmt.Errorf("failed to merge sketch: %w", err)
-				}
-			}
-		}
+// finalizeCounterGaugeAggregation completes aggregation for counter/gauge metrics.
+func (ar *AggregatingMetricsReader) finalizeCounterGaugeAggregation(_ context.Context, state *aggregationState) (Row, error) {
+	// Create result row from base row
+	result := make(Row)
+	for k, v := range state.baseRow {
+		result[k] = v
 	}
 
-	if currentSketch != nil {
-		// We have a sketch - add all singleton values to it
-		for _, value := range singletonValues {
-			if err := currentSketch.Add(value); err != nil {
-				rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
-					attribute.String("reader", "AggregatingMetricsReader"),
-					attribute.String("reason", "failed_add_singleton"),
-				))
-				continue
-			}
-		}
-
+	if state.sketch != nil {
+		// We have a sketch - it already contains all aggregated values
 		// Update rollup fields from the final sketch
-		if err := updateRowFromSketch(baseRow, currentSketch); err != nil {
+		if err := updateRowFromSketch(result, state.sketch); err != nil {
 			return nil, fmt.Errorf("updating counter/gauge row from sketch: %w", err)
 		}
-	} else if len(singletonValues) > 1 {
-		// Multiple singletons without sketch - create sketch and add all values
-		sketch, err := ddsketch.NewDefaultDDSketch(0.01)
-		if err != nil {
-			return nil, fmt.Errorf("creating sketch for singletons: %w", err)
-		}
-
-		for _, value := range singletonValues {
-			if err := sketch.Add(value); err != nil {
-				rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
-					attribute.String("reader", "AggregatingMetricsReader"),
-					attribute.String("reason", "failed_add_singleton_new_sketch"),
-				))
-				continue
-			}
-		}
-
-		// Update rollup fields from the sketch
-		if err := updateRowFromSketch(baseRow, sketch); err != nil {
-			return nil, fmt.Errorf("updating counter/gauge row from new sketch: %w", err)
-		}
+	} else if state.lastValue != nil {
+		// Single value - keep the base row as-is (it already has correct rollup values)
+		// No need to create a sketch for a single value
+		return result, nil
 	}
-	// Single singleton case: keep existing rollup values as-is
+	// No values at all - shouldn't happen but return the base row
 
-	return baseRow, nil
+	return result, nil
 }
 
 // resetAggregation clears the current aggregation state.
@@ -415,13 +313,14 @@ func (ar *AggregatingMetricsReader) resetAggregation() {
 	ar.currentKeyName = ""
 	ar.currentKeyTid = 0
 	ar.currentKeyTs = 0
-	// Clear grouped rows map but keep the map allocated
-	for k := range ar.groupedRows {
-		delete(ar.groupedRows, k)
+	// Clear aggregation states map but keep the map allocated
+	for k := range ar.aggStates {
+		delete(ar.aggStates, k)
 	}
 }
 
-// addRowToAggregation adds a row to the current aggregation group, organizing by metric_type.
+// addRowToAggregation adds a row to the current aggregation state, organizing by metric_type.
+// Uses lazy sketch creation - only creates sketches when needed for multiple values.
 func (ar *AggregatingMetricsReader) addRowToAggregation(ctx context.Context, row Row) error {
 	// VALIDATION: Histograms must always have sketches
 	if isHistogramType(row) && isSketchEmpty(row) {
@@ -442,14 +341,87 @@ func (ar *AggregatingMetricsReader) addRowToAggregation(ctx context.Context, row
 	// Get metric type, default to empty string if missing
 	metricType, _ := row[wkk.RowKeyCMetricType].(string)
 
-	// Deep copy the row to avoid modifying the original
-	rowCopy := make(Row)
-	for k, v := range row {
-		rowCopy[k] = v
+	// Get or create aggregation state for this metric type
+	state, exists := ar.aggStates[metricType]
+	if !exists {
+		// First row for this metric type - create new state
+		// Copy the row as base
+		baseRow := make(Row)
+		maps.Copy(baseRow, row)
+		state = &aggregationState{
+			baseRow:    baseRow,
+			metricType: metricType,
+			rowCount:   0,
+		}
+		ar.aggStates[metricType] = state
 	}
 
-	// Add to the appropriate metric type group
-	ar.groupedRows[metricType] = append(ar.groupedRows[metricType], rowCopy)
+	state.rowCount++
+
+	// Lazy sketch creation - only create when we need to aggregate multiple values
+	if isSketchEmpty(row) {
+		// This row is a singleton
+		value, ok := getSingletonValue(row)
+		if !ok {
+			rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
+				attribute.String("reader", "AggregatingMetricsReader"),
+				attribute.String("reason", "empty_sketch_no_rollup_sum"),
+			))
+			return nil
+		}
+
+		if state.sketch != nil {
+			// We already have a sketch - add singleton to it
+			if err := state.sketch.Add(value); err != nil {
+				rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
+					attribute.String("reader", "AggregatingMetricsReader"),
+					attribute.String("reason", "failed_add_singleton"),
+				))
+			}
+		} else if state.lastValue != nil {
+			// We have a previous singleton - now create a sketch with both values
+			sketch, err := ddsketch.NewDefaultDDSketch(0.01)
+			if err != nil {
+				return fmt.Errorf("creating sketch for aggregation: %w", err)
+			}
+			if err := sketch.Add(*state.lastValue); err == nil {
+				if err := sketch.Add(value); err == nil {
+					state.sketch = sketch
+					state.lastValue = nil // Clear since we now have a sketch
+				}
+			}
+		} else {
+			// First value - just store it
+			state.lastValue = &value
+		}
+	} else {
+		// This row has a sketch
+		sketchBytes, err := getSketchBytes(row[wkk.RowKeySketch])
+		if err != nil {
+			return fmt.Errorf("invalid sketch data: %w", err)
+		}
+
+		sketch, err := helpers.DecodeSketch(sketchBytes)
+		if err != nil {
+			return fmt.Errorf("failed to decode sketch: %w", err)
+		}
+
+		if state.sketch != nil {
+			// Merge with existing sketch
+			if err := state.sketch.MergeWith(sketch); err != nil {
+				return fmt.Errorf("failed to merge sketch: %w", err)
+			}
+		} else if state.lastValue != nil {
+			// We have a singleton - add it to the incoming sketch
+			if err := sketch.Add(*state.lastValue); err == nil {
+				state.sketch = sketch
+				state.lastValue = nil
+			}
+		} else {
+			// First sketch for this group
+			state.sketch = sketch
+		}
+	}
 
 	return nil
 }
@@ -614,7 +586,10 @@ func (ar *AggregatingMetricsReader) Next(ctx context.Context) (*Batch, error) {
 						// Emit each final aggregated result (one per metric type)
 						for _, result := range results {
 							row := batch.AddRow()
-							maps.Copy(row, result)
+							// Direct assignment instead of maps.Copy to avoid overhead
+							for k, v := range result {
+								row[k] = v
+							}
 							ar.rowCount++
 						}
 					}
