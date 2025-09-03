@@ -224,7 +224,7 @@ func (n *LeafNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalResul
 				num := n.evalRangeAwareScalar(k, si, stepMs, rangeMs)
 				v = Value{Kind: ValScalar, Num: num}
 			} else {
-				// this is the path when baseExpr.FuncName is empty, for example sum(metric)
+				// this is the path when baseExpr.FuncName is empty, for example `sum(metric)` and not `sum(rate(metric[5m]))`
 				v = Value{Kind: ValMap, MapSketch: si.SketchTags.Agg}
 			}
 
