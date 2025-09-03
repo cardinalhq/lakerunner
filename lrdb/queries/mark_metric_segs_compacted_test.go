@@ -70,18 +70,12 @@ func TestMarkMetricSegsCompactedByKeys_SingleSegment(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify the segment is now marked as compacted and unpublished
-	segments, err := db.GetMetricSegsForCompaction(ctx, lrdb.GetMetricSegsForCompactionParams{
-		OrganizationID:  orgID,
-		Dateint:         20250830,
-		FrequencyMs:     5000,
-		InstanceNum:     1,
-		SlotID:          0,
-		StartTs:         now.UnixMilli() - 1000,
-		EndTs:           now.Add(2 * time.Hour).UnixMilli(),
-		MaxFileSize:     1000000,
-		CursorCreatedAt: time.Time{},
-		CursorSegmentID: 0,
-		Maxrows:         100,
+	segments, err := db.GetMetricSegsByIds(ctx, lrdb.GetMetricSegsByIdsParams{
+		OrganizationID: orgID,
+		Dateint:        20250830,
+		FrequencyMs:    5000,
+		InstanceNum:    1,
+		SegmentIds:     []int64{segmentID},
 	})
 	require.NoError(t, err)
 	require.Len(t, segments, 1)
@@ -135,18 +129,12 @@ func TestMarkMetricSegsCompactedByKeys_MultipleSegments(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify all segments are now marked as compacted and unpublished
-	segments, err := db.GetMetricSegsForCompaction(ctx, lrdb.GetMetricSegsForCompactionParams{
-		OrganizationID:  orgID,
-		Dateint:         20250830,
-		FrequencyMs:     5000,
-		InstanceNum:     1,
-		SlotID:          0,
-		StartTs:         now.UnixMilli() - 1000,
-		EndTs:           now.Add(2 * time.Hour).UnixMilli(),
-		MaxFileSize:     1000000,
-		CursorCreatedAt: time.Time{},
-		CursorSegmentID: 0,
-		Maxrows:         100,
+	segments, err := db.GetMetricSegsByIds(ctx, lrdb.GetMetricSegsByIdsParams{
+		OrganizationID: orgID,
+		Dateint:        20250830,
+		FrequencyMs:    5000,
+		InstanceNum:    1,
+		SegmentIds:     segmentIDs,
 	})
 	require.NoError(t, err)
 	require.Len(t, segments, 3)
@@ -231,36 +219,24 @@ func TestMarkMetricSegsCompactedByKeys_OnlyMatchingKeys(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify only the matching segment is compacted
-	segments5k, err := db.GetMetricSegsForCompaction(ctx, lrdb.GetMetricSegsForCompactionParams{
-		OrganizationID:  orgID,
-		Dateint:         20250830,
-		FrequencyMs:     5000,
-		InstanceNum:     1,
-		SlotID:          0,
-		StartTs:         now.UnixMilli() - 1000,
-		EndTs:           now.Add(2 * time.Hour).UnixMilli(),
-		MaxFileSize:     1000000,
-		CursorCreatedAt: time.Time{},
-		CursorSegmentID: 0,
-		Maxrows:         100,
+	segments5k, err := db.GetMetricSegsByIds(ctx, lrdb.GetMetricSegsByIdsParams{
+		OrganizationID: orgID,
+		Dateint:        20250830,
+		FrequencyMs:    5000,
+		InstanceNum:    1,
+		SegmentIds:     []int64{segmentID1},
 	})
 	require.NoError(t, err)
 	require.Len(t, segments5k, 1)
 	assert.True(t, segments5k[0].Compacted, "5000ms segment should be compacted")
 	assert.False(t, segments5k[0].Published, "5000ms segment should be unpublished")
 
-	segments10k, err := db.GetMetricSegsForCompaction(ctx, lrdb.GetMetricSegsForCompactionParams{
-		OrganizationID:  orgID,
-		Dateint:         20250830,
-		FrequencyMs:     10000,
-		InstanceNum:     1,
-		SlotID:          0,
-		StartTs:         now.UnixMilli() - 1000,
-		EndTs:           now.Add(2 * time.Hour).UnixMilli(),
-		MaxFileSize:     1000000,
-		CursorCreatedAt: time.Time{},
-		CursorSegmentID: 0,
-		Maxrows:         100,
+	segments10k, err := db.GetMetricSegsByIds(ctx, lrdb.GetMetricSegsByIdsParams{
+		OrganizationID: orgID,
+		Dateint:        20250830,
+		FrequencyMs:    10000,
+		InstanceNum:    1,
+		SegmentIds:     []int64{segmentID2},
 	})
 	require.NoError(t, err)
 	require.Len(t, segments10k, 1)
@@ -309,18 +285,12 @@ func TestMarkMetricSegsCompactedByKeys_AlreadyCompacted(t *testing.T) {
 	require.NoError(t, err) // Should succeed without error
 
 	// Verify segment state remains unchanged
-	segments, err := db.GetMetricSegsForCompaction(ctx, lrdb.GetMetricSegsForCompactionParams{
-		OrganizationID:  orgID,
-		Dateint:         20250830,
-		FrequencyMs:     5000,
-		InstanceNum:     1,
-		SlotID:          0,
-		StartTs:         now.UnixMilli() - 1000,
-		EndTs:           now.Add(2 * time.Hour).UnixMilli(),
-		MaxFileSize:     1000000,
-		CursorCreatedAt: time.Time{},
-		CursorSegmentID: 0,
-		Maxrows:         100,
+	segments, err := db.GetMetricSegsByIds(ctx, lrdb.GetMetricSegsByIdsParams{
+		OrganizationID: orgID,
+		Dateint:        20250830,
+		FrequencyMs:    5000,
+		InstanceNum:    1,
+		SegmentIds:     []int64{segmentID},
 	})
 	require.NoError(t, err)
 	require.Len(t, segments, 1)

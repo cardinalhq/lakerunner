@@ -7,160 +7,11 @@ package lrdb
 
 import (
 	"context"
-	"time"
 
 	"github.com/google/uuid"
 )
 
-const getMetricSegsForCompaction = `-- name: GetMetricSegsForCompaction :many
-SELECT organization_id, dateint, frequency_ms, segment_id, instance_num, ts_range, record_count, file_size, ingest_dateint, published, rolledup, created_at, created_by, slot_id, fingerprints, sort_version, slot_count, compacted
-FROM metric_seg
-WHERE
-  organization_id = $1 AND
-  dateint = $2 AND
-  frequency_ms = $3 AND
-  instance_num = $4 AND
-  slot_id = $5 AND
-  ts_range && int8range($6, $7, '[)') AND
-  file_size <= $8 AND
-  (created_at, segment_id) > ($9, $10::bigint)
-ORDER BY
-  created_at, segment_id
-LIMIT $11
-`
-
-type GetMetricSegsForCompactionParams struct {
-	OrganizationID  uuid.UUID `json:"organization_id"`
-	Dateint         int32     `json:"dateint"`
-	FrequencyMs     int32     `json:"frequency_ms"`
-	InstanceNum     int16     `json:"instance_num"`
-	SlotID          int32     `json:"slot_id"`
-	StartTs         int64     `json:"start_ts"`
-	EndTs           int64     `json:"end_ts"`
-	MaxFileSize     int64     `json:"max_file_size"`
-	CursorCreatedAt time.Time `json:"cursor_created_at"`
-	CursorSegmentID int64     `json:"cursor_segment_id"`
-	Maxrows         int32     `json:"maxrows"`
-}
-
-func (q *Queries) GetMetricSegsForCompaction(ctx context.Context, arg GetMetricSegsForCompactionParams) ([]MetricSeg, error) {
-	rows, err := q.db.Query(ctx, getMetricSegsForCompaction,
-		arg.OrganizationID,
-		arg.Dateint,
-		arg.FrequencyMs,
-		arg.InstanceNum,
-		arg.SlotID,
-		arg.StartTs,
-		arg.EndTs,
-		arg.MaxFileSize,
-		arg.CursorCreatedAt,
-		arg.CursorSegmentID,
-		arg.Maxrows,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []MetricSeg
-	for rows.Next() {
-		var i MetricSeg
-		if err := rows.Scan(
-			&i.OrganizationID,
-			&i.Dateint,
-			&i.FrequencyMs,
-			&i.SegmentID,
-			&i.InstanceNum,
-			&i.TsRange,
-			&i.RecordCount,
-			&i.FileSize,
-			&i.IngestDateint,
-			&i.Published,
-			&i.Rolledup,
-			&i.CreatedAt,
-			&i.CreatedBy,
-			&i.SlotID,
-			&i.Fingerprints,
-			&i.SortVersion,
-			&i.SlotCount,
-			&i.Compacted,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getMetricSegsForRollup = `-- name: GetMetricSegsForRollup :many
-SELECT organization_id, dateint, frequency_ms, segment_id, instance_num, ts_range, record_count, file_size, ingest_dateint, published, rolledup, created_at, created_by, slot_id, fingerprints, sort_version, slot_count, compacted
-FROM metric_seg
-WHERE
-  organization_id = $1 AND
-  dateint = $2 AND
-  frequency_ms = $3 AND
-  instance_num = $4 AND
-  slot_id = $5
-ORDER BY
-  ts_range
-`
-
-type GetMetricSegsForRollupParams struct {
-	OrganizationID uuid.UUID `json:"organization_id"`
-	Dateint        int32     `json:"dateint"`
-	FrequencyMs    int32     `json:"frequency_ms"`
-	InstanceNum    int16     `json:"instance_num"`
-	SlotID         int32     `json:"slot_id"`
-}
-
-func (q *Queries) GetMetricSegsForRollup(ctx context.Context, arg GetMetricSegsForRollupParams) ([]MetricSeg, error) {
-	rows, err := q.db.Query(ctx, getMetricSegsForRollup,
-		arg.OrganizationID,
-		arg.Dateint,
-		arg.FrequencyMs,
-		arg.InstanceNum,
-		arg.SlotID,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []MetricSeg
-	for rows.Next() {
-		var i MetricSeg
-		if err := rows.Scan(
-			&i.OrganizationID,
-			&i.Dateint,
-			&i.FrequencyMs,
-			&i.SegmentID,
-			&i.InstanceNum,
-			&i.TsRange,
-			&i.RecordCount,
-			&i.FileSize,
-			&i.IngestDateint,
-			&i.Published,
-			&i.Rolledup,
-			&i.CreatedAt,
-			&i.CreatedBy,
-			&i.SlotID,
-			&i.Fingerprints,
-			&i.SortVersion,
-			&i.SlotCount,
-			&i.Compacted,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getMetricSegsForRollupWork = `-- name: GetMetricSegsForRollupWork :many
+const getMetricSegsByIds = `-- name: GetMetricSegsByIds :many
 SELECT organization_id, dateint, frequency_ms, segment_id, instance_num, ts_range, record_count, file_size, ingest_dateint, published, rolledup, created_at, created_by, slot_id, fingerprints, sort_version, slot_count, compacted
 FROM metric_seg
 WHERE organization_id = $1
@@ -171,7 +22,7 @@ WHERE organization_id = $1
 ORDER BY segment_id
 `
 
-type GetMetricSegsForRollupWorkParams struct {
+type GetMetricSegsByIdsParams struct {
 	OrganizationID uuid.UUID `json:"organization_id"`
 	Dateint        int32     `json:"dateint"`
 	FrequencyMs    int32     `json:"frequency_ms"`
@@ -179,8 +30,8 @@ type GetMetricSegsForRollupWorkParams struct {
 	SegmentIds     []int64   `json:"segment_ids"`
 }
 
-func (q *Queries) GetMetricSegsForRollupWork(ctx context.Context, arg GetMetricSegsForRollupWorkParams) ([]MetricSeg, error) {
-	rows, err := q.db.Query(ctx, getMetricSegsForRollupWork,
+func (q *Queries) GetMetricSegsByIds(ctx context.Context, arg GetMetricSegsByIdsParams) ([]MetricSeg, error) {
+	rows, err := q.db.Query(ctx, getMetricSegsByIds,
 		arg.OrganizationID,
 		arg.Dateint,
 		arg.FrequencyMs,

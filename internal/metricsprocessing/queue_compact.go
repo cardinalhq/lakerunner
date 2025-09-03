@@ -25,21 +25,19 @@ import (
 
 // CompactionWorkQueuer defines the interface for queuing metric compaction work
 type CompactionWorkQueuer interface {
-	PutMetricCompactionWork(ctx context.Context, arg lrdb.PutMetricCompactionWorkParams) error
+	McqQueueWork(ctx context.Context, arg lrdb.McqQueueWorkParams) error
 }
 
 // QueueMetricCompaction queues compaction work for a specific segment
 func QueueMetricCompaction(ctx context.Context, mdb CompactionWorkQueuer, organizationID uuid.UUID, dateint int32, frequencyMs int32, instanceNum int16, segmentID int64, recordCount int64, startTs int64, endTs int64) error {
-	priority := GetFrequencyPriority(frequencyMs)
-
-	err := mdb.PutMetricCompactionWork(ctx, lrdb.PutMetricCompactionWorkParams{
+	err := mdb.McqQueueWork(ctx, lrdb.McqQueueWorkParams{
 		OrganizationID: organizationID,
 		Dateint:        dateint,
-		FrequencyMs:    int64(frequencyMs),
+		FrequencyMs:    frequencyMs,
 		SegmentID:      segmentID,
 		InstanceNum:    instanceNum,
 		RecordCount:    recordCount,
-		Priority:       priority,
+		Priority:       frequencyMs,
 	})
 
 	if err != nil {

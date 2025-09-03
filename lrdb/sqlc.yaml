@@ -41,7 +41,7 @@ sql:
           - {db_type: "pg_catalog.timestamptz", go_type: {type: "time.Time"}}
           - {db_type: "pg_catalog.timestamptz", nullable: true, go_type: {type: "*time.Time"}}
           - {db_type: "interval", go_type: {import: "time", type: "Duration"}}
-          - {db_type: "interval", nullable: false, go_type: {import: "time", type: "Duration"}}
+          - {db_type: "pg_catalog.interval", go_type: {import: "time", type: "Duration"}}
           - {db_type: "uuid", go_type: {import: "github.com/google/uuid", type: "UUID"}}
           - {db_type: "pg_catalog.float8", nullable: true, go_type: {type: "*float64"}}
           - {db_type: "pg_catalog.int8", nullable: true, go_type: {type: "*int64"}}

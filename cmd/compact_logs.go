@@ -94,10 +94,7 @@ type compactionMetricRecorder struct {
 
 func (r compactionMetricRecorder) RecordFilteredSegments(ctx context.Context, count int64, organizationID, instanceNum, signal, action, reason string) {
 	segmentsFilteredCounter.Add(ctx, count,
-		metric.WithAttributeSet(commonAttributes),
 		metric.WithAttributes(
-			attribute.String("organizationID", organizationID),
-			attribute.String("instanceNum", instanceNum),
 			attribute.String("signal", signal),
 			attribute.String("action", action),
 			attribute.String("reason", reason),
@@ -109,17 +106,6 @@ func (r compactionMetricRecorder) RecordFilteredSegments(ctx context.Context, co
 		slog.String("reason", reason),
 		slog.String("organizationID", organizationID),
 		slog.String("instanceNum", instanceNum))
-}
-
-func (compactionMetricRecorder) RecordProcessedSegments(ctx context.Context, count int64, organizationID, instanceNum, signal, action string) {
-	segmentsProcessedCounter.Add(ctx, count,
-		metric.WithAttributeSet(commonAttributes),
-		metric.WithAttributes(
-			attribute.String("organizationID", organizationID),
-			attribute.String("instanceNum", instanceNum),
-			attribute.String("signal", signal),
-			attribute.String("action", action),
-		))
 }
 
 func compactLogsFor(

@@ -24,11 +24,14 @@ These functions are generated but not referenced anywhere in the codebase:
 
 #### Metric Compaction Queue (MCQ) Operations
 
-*Tested in `lrdb/queries/mcq_test.go:522`*
+Tests were removed when functions were migrated to new MCQ bundle-based approach
 
-- **PutMetricCompactionWork**: 6 test scenarios (basic insertion, multiple items, age thresholds, priority ordering, error cases)
-- **ClaimMetricCompactionWork**: 8 test scenarios (basic claiming, exact fill logic, age thresholds, oversized items, empty queues, priority ordering, worker validation)
-- **ReleaseMetricCompactionWork**: 2 test scenarios (successful release, worker validation)
+- **McqQueueWork**: Queues metric compaction work items
+- **ClaimCompactionBundle**: Claims bundles of work items for processing with dynamic estimation
+- **McqHeartbeat**: Updates heartbeat timestamps for claimed items
+- **McqCompleteDelete**: Removes completed work items
+- **McqDeferKey**: Defers work items with backoff
+- **McqCleanupExpired**: Cleans up expired work items
 
 #### Inqueue Operations
 
@@ -66,7 +69,7 @@ Several other SQL functions are covered by integration tests in:
 ### High-Risk Untested Operations
 
 - **DeleteInqueueWork** — Used in production but no direct tests
-- **DeleteMetricCompactionWork** — Used in compaction manager but no direct tests
+- **McqCompleteDelete** — Used in compaction manager but no direct tests
 - **MarkMetricSegsCompactedByKeys** — Critical for metric compaction workflow
 - **WorkQueue functions** (Add, Complete, Fail, Cleanup, etc.) — Core work queue operations
 - **Object cleanup functions** — Important for S3 cleanup workflow

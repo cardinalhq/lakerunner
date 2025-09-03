@@ -78,10 +78,9 @@ func newBatchPool(batchSize int) *batchPool {
 	p.pool = sync.Pool{
 		New: func() any {
 			p.alloc.Add(1)
-			// Pre-allocate Row maps to reduce allocations
 			rows := make([]Row, batchSize)
 			for i := range rows {
-				rows[i] = make(Row)
+				rows[i] = getPooledRow()
 			}
 			return &Batch{
 				rows:     rows,
@@ -113,6 +112,11 @@ func (p *batchPool) Put(b *Batch) {
 	bufferpoolPutsCounter.Add(context.Background(), 1)
 	// Drop oversized batches to avoid unbounded growth
 	if cap(b.rows) > p.sz*4 {
+		for i := range b.rows {
+			if b.rows[i] != nil {
+				returnRowToPool(b.rows[i])
+			}
+		}
 		return
 	}
 	// Keep the Row maps but reset validLen - they'll be cleared on next Get()
@@ -142,6 +146,13 @@ func (p *batchPool) stats() BatchPoolStats {
 
 // Global batch pool for memory efficiency across all readers and workers
 var globalBatchPool = newBatchPool(1000) // Default batch size
+
+// rowPool provides memory-efficient Row map reuse
+var rowPool = sync.Pool{
+	New: func() any {
+		return make(Row)
+	},
+}
 
 // GetBatch returns a reusable batch from the global pool.
 // The batch is clean and ready to use.
@@ -206,7 +217,7 @@ func (b *Batch) AddRow() Row {
 		return row
 	}
 
-	row := make(Row)
+	row := getPooledRow()
 	b.rows = append(b.rows, row)
 	b.validLen++
 	return row
@@ -230,4 +241,73 @@ func (b *Batch) DeleteRow(index int) {
 		b.rows[index], b.rows[b.validLen-1] = b.rows[b.validLen-1], b.rows[index]
 	}
 	b.validLen--
+}
+
+// TakeRow extracts a row from the batch and transfers ownership to the caller.
+// The row at the given index is replaced with a fresh row from the pool.
+// The caller is responsible for returning the row to the pool when done.
+// Returns nil if index is invalid.
+func (b *Batch) TakeRow(index int) Row {
+	if index < 0 || index >= b.validLen {
+		return nil // Invalid index
+	}
+
+	// Extract the current row
+	extractedRow := b.rows[index]
+
+	// Replace with a fresh row from the pool
+	b.rows[index] = getPooledRow()
+
+	// Return the extracted row - caller now owns it
+	return extractedRow
+}
+
+// ReplaceRow replaces the row at the given index with a new row.
+// The old row is returned to the pool and the new row takes its place.
+// The batch takes ownership of the new row.
+func (b *Batch) ReplaceRow(index int, newRow Row) {
+	if index < 0 || index >= b.validLen || newRow == nil {
+		return // Invalid index or nil row
+	}
+
+	// Return the old row to the pool
+	oldRow := b.rows[index]
+	returnRowToPool(oldRow)
+
+	// Put the new row in its place
+	b.rows[index] = newRow
+}
+
+// getPooledRow gets a clean row from the pool
+func getPooledRow() Row {
+	row := rowPool.Get().(Row)
+	// Clear any leftover data
+	for k := range row {
+		delete(row, k)
+	}
+	return row
+}
+
+// returnRowToPool returns a row to the pool after clearing it
+func returnRowToPool(row Row) {
+	if row == nil {
+		return
+	}
+	// Clear the row before returning to pool
+	for k := range row {
+		delete(row, k)
+	}
+	rowPool.Put(row)
+}
+
+// GetPooledRow gets a clean Row map from the global pool.
+// The caller is responsible for returning it via ReturnPooledRow when done.
+func GetPooledRow() Row {
+	return getPooledRow()
+}
+
+// ReturnPooledRow returns a Row map to the global pool for reuse.
+// The row is cleared before being pooled.
+func ReturnPooledRow(row Row) {
+	returnRowToPool(row)
 }

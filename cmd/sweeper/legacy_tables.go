@@ -46,24 +46,24 @@ func runLegacyTablesSync(ctx context.Context, ll *slog.Logger, cdb configdb.Quer
 		))
 	}()
 
-	ll.Info("Starting legacy table sync")
+	ll.Debug("Starting legacy table sync")
 
 	// Get all storage profiles from c_ tables
 	profiles, err := cdb.GetAllCStorageProfilesForSync(ctx)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			ll.Info("No legacy storage profiles found")
+			ll.Debug("No legacy storage profiles found")
 			return nil
 		}
 		return err
 	}
 
 	if len(profiles) == 0 {
-		ll.Info("No legacy storage profiles to sync")
+		ll.Debug("No legacy storage profiles to sync")
 		return nil
 	}
 
-	ll.Info("Found legacy storage profiles to sync", slog.Int("count", len(profiles)))
+	ll.Debug("Found legacy storage profiles to sync", slog.Int("count", len(profiles)))
 
 	// Start a transaction for atomic sync
 	closed := false
@@ -121,7 +121,7 @@ func runLegacyTablesSync(ctx context.Context, ll *slog.Logger, cdb configdb.Quer
 			return
 		}
 
-		ll.Info("Synced bucket configuration",
+		ll.Debug("Synced bucket configuration",
 			slog.String("bucket", bucketName),
 			slog.String("provider", profile.CloudProvider),
 			slog.String("region", profile.Region))
@@ -129,20 +129,20 @@ func runLegacyTablesSync(ctx context.Context, ll *slog.Logger, cdb configdb.Quer
 	}
 
 	// Sync organization buckets from c_collectors to our organization_buckets table
-	ll.Info("Syncing organization buckets from c_collectors table")
+	ll.Debug("Syncing organization buckets from c_collectors table")
 	if err = qtx.SyncOrganizationBuckets(ctx); err != nil {
 		err = fmt.Errorf("failed to sync organization buckets: %w", err)
 		return
 	}
-	ll.Info("Successfully synced organization buckets")
+	ll.Debug("Successfully synced organization buckets")
 
 	// Sync organizations from c_organizations to our organizations table
-	ll.Info("Syncing organizations from c_organizations table")
+	ll.Debug("Syncing organizations from c_organizations table")
 	if err = qtx.SyncOrganizations(ctx); err != nil {
 		err = fmt.Errorf("failed to sync organizations: %w", err)
 		return
 	}
-	ll.Info("Successfully synced organizations")
+	ll.Debug("Successfully synced organizations")
 
 	// Sync organization API keys from c_organization_api_keys to our organization tables
 	if err = syncOrganizationAPIKeys(ctx, ll, qtx); err != nil {
@@ -155,7 +155,7 @@ func runLegacyTablesSync(ctx context.Context, ll *slog.Logger, cdb configdb.Quer
 	}
 	closed = true
 
-	ll.Info("Legacy table sync completed successfully",
+	ll.Debug("Legacy table sync completed successfully",
 		slog.Int("bucketsSync", len(bucketToProfile)),
 		slog.Int("totalProfiles", len(profiles)))
 
@@ -163,24 +163,24 @@ func runLegacyTablesSync(ctx context.Context, ll *slog.Logger, cdb configdb.Quer
 }
 
 func syncOrganizationAPIKeys(ctx context.Context, ll *slog.Logger, qtx *configdb.Queries) error {
-	ll.Info("Starting organization API keys sync")
+	ll.Debug("Starting organization API keys sync")
 
 	// Get all organization API keys from c_ table
 	cAPIKeys, err := qtx.GetAllCOrganizationAPIKeysForSync(ctx)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			ll.Info("No legacy organization API keys found")
+			ll.Debug("No legacy organization API keys found")
 			return nil
 		}
 		return err
 	}
 
 	if len(cAPIKeys) == 0 {
-		ll.Info("No legacy organization API keys to sync")
+		ll.Debug("No legacy organization API keys to sync")
 		return nil
 	}
 
-	ll.Info("Found legacy organization API keys to sync", slog.Int("count", len(cAPIKeys)))
+	ll.Debug("Found legacy organization API keys to sync", slog.Int("count", len(cAPIKeys)))
 
 	// Clear existing organization API key tables (mirror mode)
 	if err := qtx.ClearOrganizationAPIKeyMappings(ctx); err != nil {
@@ -234,12 +234,12 @@ func syncOrganizationAPIKeys(ctx context.Context, ll *slog.Logger, qtx *configdb
 			return fmt.Errorf("failed to create API key mapping: %w", err)
 		}
 
-		ll.Info("Synced organization API key",
+		ll.Debug("Synced organization API key",
 			slog.String("org_id", orgUUID.String()),
 			slog.String("key_name", name))
 	}
 
-	ll.Info("Organization API keys sync completed successfully", slog.Int("keysSync", len(cAPIKeys)))
+	ll.Debug("Organization API keys sync completed successfully", slog.Int("keysSync", len(cAPIKeys)))
 	return nil
 }
 

@@ -32,7 +32,7 @@ type MockRollupWorkQueuer struct {
 	mock.Mock
 }
 
-func (m *MockRollupWorkQueuer) PutMetricRollupWork(ctx context.Context, arg lrdb.PutMetricRollupWorkParams) error {
+func (m *MockRollupWorkQueuer) MrqQueueWork(ctx context.Context, arg lrdb.MrqQueueWorkParams) error {
 	args := m.Called(ctx, arg)
 	return args.Error(0)
 }
@@ -117,14 +117,14 @@ func TestQueueMetricRollup(t *testing.T) {
 			if tt.shouldQueue {
 				// Calculate expected next frequency
 				nextFreq := RollupTo[tt.frequencyMs]
-				expectedPriority := GetFrequencyPriority(nextFreq)
+				expectedPriority := tt.frequencyMs
 
 				// Set up expectation
 				expectedRollupGroup := tt.startTs / int64(nextFreq)
-				mockDB.On("PutMetricRollupWork", mock.Anything, mock.MatchedBy(func(params lrdb.PutMetricRollupWorkParams) bool {
+				mockDB.On("MrqQueueWork", mock.Anything, mock.MatchedBy(func(params lrdb.MrqQueueWorkParams) bool {
 					return params.OrganizationID == tt.organizationID &&
 						params.Dateint == tt.dateint &&
-						params.FrequencyMs == int64(tt.frequencyMs) &&
+						params.FrequencyMs == tt.frequencyMs &&
 						params.InstanceNum == tt.instanceNum &&
 						params.SlotID == tt.slotID &&
 						params.SlotCount == tt.slotCount &&
@@ -147,7 +147,6 @@ func TestQueueMetricRollup(t *testing.T) {
 				12345, // segmentID
 				1000,  // recordCount
 				tt.startTs,
-				tt.endTs,
 			)
 
 			// Verify results
@@ -171,10 +170,10 @@ func TestQueueMetricRollup_FrequencyMapping(t *testing.T) {
 		targetFreq int32
 		priority   int32
 	}{
-		{10000, 60000, 600},    // 10s -> 1min, priority: GetFrequencyPriority(60000) = 600
-		{60000, 300000, 400},   // 1min -> 5min, priority: GetFrequencyPriority(300000) = 400
-		{300000, 1200000, 200}, // 5min -> 20min, priority: GetFrequencyPriority(1200000) = 200
-		{1200000, 3600000, 0},  // 20min -> 1hour, priority: GetFrequencyPriority(3600000) = 0
+		{10000, 60000, 10000},       // 10s -> 1min
+		{60000, 300000, 60000},      // 1min -> 5min
+		{300000, 1200000, 300000},   // 5min -> 20min
+		{1200000, 3600000, 1200000}, // 20min -> 1hour
 	}
 
 	for _, tc := range testCases {
@@ -182,8 +181,8 @@ func TestQueueMetricRollup_FrequencyMapping(t *testing.T) {
 			mockDB := new(MockRollupWorkQueuer)
 
 			expectedRollupGroup := int64(1703174400000) / int64(tc.targetFreq) // startTs / targetFreq
-			mockDB.On("PutMetricRollupWork", mock.Anything, mock.MatchedBy(func(params lrdb.PutMetricRollupWorkParams) bool {
-				return params.FrequencyMs == int64(tc.sourceFreq) &&
+			mockDB.On("MrqQueueWork", mock.Anything, mock.MatchedBy(func(params lrdb.MrqQueueWorkParams) bool {
+				return params.FrequencyMs == tc.sourceFreq &&
 					params.RecordCount == 2000 &&
 					params.RollupGroup == expectedRollupGroup &&
 					params.Priority == tc.priority
@@ -201,7 +200,6 @@ func TestQueueMetricRollup_FrequencyMapping(t *testing.T) {
 				67890, // segmentID
 				2000,  // recordCount
 				1703174400000,
-				1703174410000,
 			)
 
 			assert.NoError(t, err)
@@ -213,7 +211,7 @@ func TestQueueMetricRollup_FrequencyMapping(t *testing.T) {
 func TestQueueMetricRollup_NoRollupForUnknownFrequency(t *testing.T) {
 	// Test that unknown frequencies don't queue rollup work
 	mockDB := new(MockRollupWorkQueuer)
-	// No expectations set - should not call PutMetricRollupWork
+	// No expectations set - should not call MrqQueueWork
 
 	err := QueueMetricRollup(
 		context.Background(),
@@ -227,7 +225,6 @@ func TestQueueMetricRollup_NoRollupForUnknownFrequency(t *testing.T) {
 		11111, // segmentID
 		3000,  // recordCount
 		1703174400000,
-		1703174410000,
 	)
 
 	assert.NoError(t, err)

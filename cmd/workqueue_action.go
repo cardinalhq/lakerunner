@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"math"
 	"os"
+	"runtime"
 	"sync/atomic"
 	"time"
 
@@ -218,7 +219,7 @@ func RunqueueLoop(loop *RunqueueLoopContext, pfx RunqueueProcessingFunction, arg
 			slog.Error("Work processing failed, continuing to poll", slog.Any("error", err))
 		}
 
-		gc()
+		runtime.GC()
 
 		// Poll for work again in 2 seconds, exiting if cancelled
 		select {
@@ -282,17 +283,9 @@ func workqueueProcess(
 		return err
 	}
 
-	orgAttrs := attribute.NewSet(
-		attribute.String("organizationID", inf.OrganizationID().String()),
-		attribute.Int64("instanceNum", int64(inf.InstanceNum())),
-		attribute.Int64("priority", int64(inf.Priority())),
-		attribute.Int64("frequencyMs", int64(inf.FrequencyMs())),
-	)
-
 	workLag := max(time.Since(inf.RunnableAt()), 0)
 	workqueueLag.Record(ctx, workLag.Seconds(),
 		metric.WithAttributeSet(commonAttributes),
-		metric.WithAttributeSet(orgAttrs),
 	)
 
 	ll := loop.ll.With(
@@ -341,7 +334,6 @@ func workqueueProcess(
 	err = pfx(workerCtx, ll, tmpdir, loop.awsmanager, loop.sp, loop.mdb, inf, recordsPerFile, args)
 	workqueueDuration.Record(ctx, time.Since(t0).Seconds(),
 		metric.WithAttributeSet(commonAttributes),
-		metric.WithAttributeSet(orgAttrs),
 		metric.WithAttributes(
 			attribute.Bool("hasError", err != nil),
 		))

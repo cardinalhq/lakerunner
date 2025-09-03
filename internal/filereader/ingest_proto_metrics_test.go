@@ -863,7 +863,7 @@ func ValidateMetricsReaderContract(t *testing.T, rows []Row) {
 		// 2-4. Validate attribute prefixing
 		// Check that all metric/resource/scope attributes are properly prefixed
 		expectedPrefixes := []string{"metric.", "resource.", "scope."}
-		standardFields := []string{"description", "unit", "type", "scope_url", "scope_name", "sketch", "start_timestamp"}
+		standardFields := []string{"_cardinalhq.description", "_cardinalhq.unit", "_cardinalhq.scope_url", "_cardinalhq.scope_name", "sketch"}
 
 		for key := range row {
 			// Skip CardinalHQ internal fields and standard literal fields
@@ -914,7 +914,7 @@ func ValidateMetricsReaderContract(t *testing.T, rows []Row) {
 		// This is implicitly validated since summaries return errors and are not included
 
 		// 10. All metrics must have required fields
-		requiredFields := []string{"scope_url", "scope_name", "description", "unit"}
+		requiredFields := []string{"_cardinalhq.scope_url", "_cardinalhq.scope_name", "_cardinalhq.description", "_cardinalhq.unit"}
 		for _, field := range requiredFields {
 			_, hasRequiredField := row[wkk.NewRowKey(field)]
 			assert.True(t, hasRequiredField, "Row %d missing required field %s", i, field)

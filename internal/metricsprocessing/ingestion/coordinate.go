@@ -38,12 +38,84 @@ import (
 )
 
 var (
-	meter                = otel.Meter("github.com/cardinalhq/lakerunner/internal/metricsprocessing/ingestion")
-	fileSortedCounter, _ = meter.Int64Counter("lakerunner.metric.ingest.file.sorted")
-	commonAttributes     = attribute.NewSet(
-		attribute.String("component", "metric-ingestion"),
-	)
+	meter = otel.Meter("github.com/cardinalhq/lakerunner/internal/metricsprocessing/ingestion")
+
+	fileSortedCounter metric.Int64Counter
+
+	// Processing counters
+	processingSegmentsIn            metric.Int64Counter
+	processingSegmentsOut           metric.Int64Counter
+	processingSegmentDownloadErrors metric.Int64Counter
+	processingRecordsIn             metric.Int64Counter
+	processingRecordsOut            metric.Int64Counter
+	processingBytesIn               metric.Int64Counter
+	processingBytesOut              metric.Int64Counter
 )
+
+func init() {
+	var err error
+
+	fileSortedCounter, err = meter.Int64Counter("lakerunner.processing.input.filetype")
+	if err != nil {
+		panic(fmt.Errorf("failed to create processing.input.filetype counter: %w", err))
+	}
+
+	processingSegmentsIn, err = meter.Int64Counter(
+		"lakerunner.processing.segments.in",
+		metric.WithDescription("Number of segments input to ingestion processing pipeline"),
+	)
+	if err != nil {
+		panic(fmt.Errorf("failed to create processing.segments.in counter: %w", err))
+	}
+
+	processingSegmentsOut, err = meter.Int64Counter(
+		"lakerunner.processing.segments.out",
+		metric.WithDescription("Number of segments output from ingestion processing pipeline"),
+	)
+	if err != nil {
+		panic(fmt.Errorf("failed to create processing.segments.out counter: %w", err))
+	}
+
+	processingSegmentDownloadErrors, err = meter.Int64Counter(
+		"lakerunner.processing.segments.download_errors",
+		metric.WithDescription("Number of segment download errors during ingestion processing"),
+	)
+	if err != nil {
+		panic(fmt.Errorf("failed to create processing.segments.download_errors counter: %w", err))
+	}
+
+	processingRecordsIn, err = meter.Int64Counter(
+		"lakerunner.processing.records.in",
+		metric.WithDescription("Number of records input to ingestion processing pipeline"),
+	)
+	if err != nil {
+		panic(fmt.Errorf("failed to create processing.records.in counter: %w", err))
+	}
+
+	processingRecordsOut, err = meter.Int64Counter(
+		"lakerunner.processing.records.out",
+		metric.WithDescription("Number of records output from ingestion processing pipeline"),
+	)
+	if err != nil {
+		panic(fmt.Errorf("failed to create processing.records.out counter: %w", err))
+	}
+
+	processingBytesIn, err = meter.Int64Counter(
+		"lakerunner.processing.bytes.in",
+		metric.WithDescription("Number of bytes input to ingestion processing pipeline"),
+	)
+	if err != nil {
+		panic(fmt.Errorf("failed to create processing.bytes.in counter: %w", err))
+	}
+
+	processingBytesOut, err = meter.Int64Counter(
+		"lakerunner.processing.bytes.out",
+		metric.WithDescription("Number of bytes output from ingestion processing pipeline"),
+	)
+	if err != nil {
+		panic(fmt.Errorf("failed to create processing.bytes.out counter: %w", err))
+	}
+}
 
 // coordinate handles the complete ingestion process for a batch of metric files
 func coordinate(
@@ -58,6 +130,12 @@ func coordinate(
 	}
 
 	input.Logger.Debug("Processing metrics batch", slog.Int("batchSize", len(input.Items)))
+
+	// Track segments coming into processing
+	processingSegmentsIn.Add(ctx, int64(len(input.Items)), metric.WithAttributes(
+		attribute.String("signal", "metrics"),
+		attribute.String("action", "ingest"),
+	))
 
 	firstItem := input.Items[0]
 
@@ -199,6 +277,44 @@ func coordinate(
 		slog.Int64("inputRowsErrored", batchRowsErrored),
 		slog.Int("outputFiles", len(results)))
 
+	// Track processing output metrics
+	processingSegmentsOut.Add(ctx, int64(len(results)), metric.WithAttributes(
+		attribute.String("signal", "metrics"),
+		attribute.String("action", "ingest"),
+	))
+
+	processingRecordsIn.Add(ctx, batchRowsRead, metric.WithAttributes(
+		attribute.String("signal", "metrics"),
+		attribute.String("action", "ingest"),
+	))
+
+	// Calculate input bytes from inqueue items
+	var totalInputBytes int64
+	for _, item := range input.Items {
+		totalInputBytes += item.FileSize
+	}
+
+	processingBytesIn.Add(ctx, totalInputBytes, metric.WithAttributes(
+		attribute.String("signal", "metrics"),
+		attribute.String("action", "ingest"),
+	))
+
+	processingRecordsOut.Add(ctx, batchRowsProcessed, metric.WithAttributes(
+		attribute.String("signal", "metrics"),
+		attribute.String("action", "ingest"),
+	))
+
+	// Calculate output bytes from results
+	var totalOutputBytes int64
+	for _, result := range results {
+		totalOutputBytes += result.FileSize
+	}
+
+	processingBytesOut.Add(ctx, totalOutputBytes, metric.WithAttributes(
+		attribute.String("signal", "metrics"),
+		attribute.String("action", "ingest"),
+	))
+
 	return &result{
 		Results:     results,
 		RowsRead:    batchRowsRead,
@@ -231,9 +347,19 @@ func downloadAndValidateFiles(ctx context.Context, items []lrdb.Inqueue, tmpdir 
 
 		tmpfilename, _, is404, err := s3helper.DownloadS3Object(ctx, itemTmpdir, s3client, inf.Bucket, inf.ObjectID)
 		if err != nil {
+			processingSegmentDownloadErrors.Add(ctx, 1, metric.WithAttributes(
+				attribute.String("signal", "metrics"),
+				attribute.String("action", "ingest"),
+				attribute.String("reason", "download_error"),
+			))
 			return nil, fmt.Errorf("failed to download file %s: %w", inf.ObjectID, err)
 		}
 		if is404 {
+			processingSegmentDownloadErrors.Add(ctx, 1, metric.WithAttributes(
+				attribute.String("signal", "metrics"),
+				attribute.String("action", "ingest"),
+				attribute.String("reason", "object_not_found"),
+			))
 			ll.Warn("S3 object not found, skipping", slog.String("objectID", inf.ObjectID))
 			continue
 		}
@@ -264,7 +390,7 @@ func createReadersForFiles(validFiles []fileInfo, orgID string, ll *slog.Logger)
 		}
 
 		// Step 2b: Add translation (adds TID and truncates timestamp)
-		translator := &metricsprocessing.MetricTranslator{
+		translator := &MetricTranslator{
 			OrgID:    orgID,
 			Bucket:   fileInfo.item.Bucket,
 			ObjectID: fileInfo.item.ObjectID,
@@ -291,11 +417,11 @@ func createReadersForFiles(validFiles []fileInfo, orgID string, ll *slog.Logger)
 
 		// Record file format and input sorted status metrics after reader stack is complete
 		fileFormat := getFileFormat(fileInfo.tmpfilename)
-		attrs := append(commonAttributes.ToSlice(),
-			attribute.String("format", fileFormat),
+		fileSortedCounter.Add(context.Background(), 1, metric.WithAttributes(
+			attribute.String("action", "ingest"),
+			attribute.String("filetype", fileFormat),
 			attribute.Bool("input_sorted", false),
-		)
-		fileSortedCounter.Add(context.Background(), 1, metric.WithAttributes(attrs...))
+		))
 
 		readers = append(readers, reader)
 		readersToClose = append(readersToClose, reader)

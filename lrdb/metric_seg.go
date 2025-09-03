@@ -26,14 +26,16 @@ import (
 const (
 	// SortVersionUnknown indicates the file's sort order is unknown or unsorted (legacy files)
 	SortVersionUnknown = 0
-	// SortVersionNameTidTimestamp indicates the file is sorted by [metric_name, tid, timestamp]
+	// SortVersionNameTidTimestamp indicates the file is sorted by [metric_name, tid, timestamp] (old TID calculation)
 	SortVersionNameTidTimestamp = 1
+	// SortVersionNameTidTimestampV2 indicates the file is sorted by [metric_name, tid, timestamp] (new TID calculation)
+	SortVersionNameTidTimestampV2 = 2
 )
 
 // Current metric sort configuration - single source of truth for all metric sorting
 const (
 	// CurrentMetricSortVersion is the sort version used for all newly created metric segments
-	CurrentMetricSortVersion = SortVersionNameTidTimestamp
+	CurrentMetricSortVersion = SortVersionNameTidTimestampV2
 )
 
 func (q *Store) InsertMetricSegment(ctx context.Context, params InsertMetricSegmentParams) error {
@@ -123,29 +125,29 @@ func (q *Store) RollupMetricSegs(ctx context.Context, sourceParams RollupSourceP
 	newItems := make([]BatchInsertMetricSegsParams, len(newRecords))
 	for i, newRec := range newRecords {
 		newItems[i] = BatchInsertMetricSegsParams{
-			OrganizationID: targetParams.OrganizationID,
-			Dateint:        targetParams.Dateint,
-			IngestDateint:  targetParams.IngestDateint,
-			FrequencyMs:    targetParams.FrequencyMs,
-			SegmentID:      newRec.SegmentID,
-			InstanceNum:    targetParams.InstanceNum,
-			SlotID:         targetParams.SlotID,
-			StartTs:        newRec.StartTs,
-			EndTs:          newRec.EndTs,
-			RecordCount:    newRec.RecordCount,
-			FileSize:       newRec.FileSize,
-			Published:      true,
-			Rolledup:       false,
 			CreatedBy:      CreateByRollup,
+			Dateint:        targetParams.Dateint,
+			EndTs:          newRec.EndTs,
+			FileSize:       newRec.FileSize,
 			Fingerprints:   newRec.Fingerprints,
-			SortVersion:    targetParams.SortVersion,
+			FrequencyMs:    targetParams.FrequencyMs,
+			IngestDateint:  targetParams.IngestDateint,
+			InstanceNum:    targetParams.InstanceNum,
+			OrganizationID: targetParams.OrganizationID,
+			Published:      true,
+			RecordCount:    newRec.RecordCount,
+			Rolledup:       false,
+			Compacted:      false,
+			SegmentID:      newRec.SegmentID,
 			SlotCount:      targetParams.SlotCount,
+			SlotID:         targetParams.SlotID,
+			SortVersion:    targetParams.SortVersion,
+			StartTs:        newRec.StartTs,
 		}
 	}
 
 	var errs *multierror.Error
 	return q.execTx(ctx, func(s *Store) error {
-		// Mark source segments as rolled up (don't delete them)
 		if len(sourceSegmentIDs) > 0 {
 			if err := s.MarkMetricSegsRolledupByKeys(ctx, MarkMetricSegsRolledupByKeysParams{
 				OrganizationID: sourceParams.OrganizationID,
@@ -158,7 +160,6 @@ func (q *Store) RollupMetricSegs(ctx context.Context, sourceParams RollupSourceP
 			}
 		}
 
-		// Insert new target segments
 		if len(newItems) > 0 {
 			result := s.BatchInsertMetricSegs(ctx, newItems)
 			result.Exec(func(i int, err error) {

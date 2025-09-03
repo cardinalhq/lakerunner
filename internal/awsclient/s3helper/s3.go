@@ -36,12 +36,11 @@ import (
 )
 
 var (
-	downloadErrors   metric.Int64Counter
-	downloadNotFound metric.Int64Counter
-	downloadCount    metric.Int64Counter
-	downloadBytes    metric.Int64Counter
-	uploadCount      metric.Int64Counter
-	uploadBytes      metric.Int64Counter
+	downloadErrors metric.Int64Counter
+	downloadCount  metric.Int64Counter
+	downloadBytes  metric.Int64Counter
+	uploadCount    metric.Int64Counter
+	uploadBytes    metric.Int64Counter
 )
 
 func init() {
@@ -49,51 +48,43 @@ func init() {
 
 	var err error
 	downloadErrors, err = meter.Int64Counter(
-		"lakerunner.s3.download_errors",
+		"lakerunner.s3.download.errors",
 		metric.WithDescription("Number of S3 download errors"),
 	)
 	if err != nil {
-		panic(fmt.Errorf("failed to create download_errors counter: %w", err))
-	}
-
-	downloadNotFound, err = meter.Int64Counter(
-		"lakerunner.s3.download_not_found",
-		metric.WithDescription("Number of missing S3 objects during download"),
-	)
-	if err != nil {
-		panic(fmt.Errorf("failed to create download_not_found counter: %w", err))
+		panic(fmt.Errorf("failed to create download.errors counter: %w", err))
 	}
 
 	downloadCount, err = meter.Int64Counter(
-		"lakerunner.s3.download_count",
+		"lakerunner.s3.download.count",
 		metric.WithDescription("Number of S3 downloads"),
 	)
 	if err != nil {
-		panic(fmt.Errorf("failed to create download_count counter: %w", err))
+		panic(fmt.Errorf("failed to create download.count counter: %w", err))
 	}
 
 	downloadBytes, err = meter.Int64Counter(
-		"lakerunner.s3.download_bytes",
+		"lakerunner.s3.download.bytes",
 		metric.WithDescription("Bytes downloaded from S3"),
 	)
 	if err != nil {
-		panic(fmt.Errorf("failed to create download_bytes counter: %w", err))
+		panic(fmt.Errorf("failed to create download.bytes counter: %w", err))
 	}
 
 	uploadCount, err = meter.Int64Counter(
-		"lakerunner.s3.upload_count",
+		"lakerunner.s3.upload.count",
 		metric.WithDescription("Number of S3 uploads"),
 	)
 	if err != nil {
-		panic(fmt.Errorf("failed to create upload_count counter: %w", err))
+		panic(fmt.Errorf("failed to create upload.count counter: %w", err))
 	}
 
 	uploadBytes, err = meter.Int64Counter(
-		"lakerunner.s3.upload_bytes",
+		"lakerunner.s3.upload.bytes",
 		metric.WithDescription("Bytes uploaded to S3"),
 	)
 	if err != nil {
-		panic(fmt.Errorf("failed to create upload_bytes counter: %w", err))
+		panic(fmt.Errorf("failed to create upload.bytes counter: %w", err))
 	}
 }
 
@@ -133,13 +124,15 @@ func DownloadS3Object(
 		_ = f.Close()
 		_ = os.Remove(f.Name())
 		if S3ErrorIs404(err) {
-			downloadNotFound.Add(ctx, 1, metric.WithAttributes(
+			downloadErrors.Add(ctx, 1, metric.WithAttributes(
 				attribute.String("bucket", bucketID),
+				attribute.String("reason", "not_found"),
 			))
 			return "", 0, true, nil
 		}
 		downloadErrors.Add(ctx, 1, metric.WithAttributes(
 			attribute.String("bucket", bucketID),
+			attribute.String("reason", "unknown"),
 		))
 		return "", 0, false, fmt.Errorf("download %s/%s: %w", bucketID, objectID, err)
 	}

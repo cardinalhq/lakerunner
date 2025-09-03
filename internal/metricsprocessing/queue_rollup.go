@@ -26,61 +26,34 @@ import (
 
 // RollupWorkQueuer defines the interface for queuing metric rollup work
 type RollupWorkQueuer interface {
-	PutMetricRollupWork(ctx context.Context, arg lrdb.PutMetricRollupWorkParams) error
-}
-
-// calculateWindowCloseTime calculates when a rollup window can safely be processed
-func calculateWindowCloseTime(startTs int64, targetFrequency int32) time.Time {
-	// Calculate which rollup window this segment belongs to
-	windowStartMs := (startTs / int64(targetFrequency)) * int64(targetFrequency)
-	windowEndMs := windowStartMs + int64(targetFrequency)
-	windowEnd := time.UnixMilli(windowEndMs)
-
-	// Add grace period based on target frequency
-	var gracePeriod time.Duration
-	switch targetFrequency {
-	case 60_000: // 1min rollups
-		gracePeriod = 2 * time.Minute
-	case 300_000: // 5min rollups
-		gracePeriod = 3 * time.Minute
-	case 1_200_000: // 20min rollups
-		gracePeriod = 5 * time.Minute
-	case 3_600_000: // 1hr rollups
-		gracePeriod = 10 * time.Minute
-	default:
-		gracePeriod = 2 * time.Minute // Default fallback
-	}
-
-	return windowEnd.Add(gracePeriod)
+	MrqQueueWork(ctx context.Context, arg lrdb.MrqQueueWorkParams) error
 }
 
 // QueueMetricRollup queues rollup work for a specific segment at the next frequency level
-func QueueMetricRollup(ctx context.Context, mdb RollupWorkQueuer, organizationID uuid.UUID, dateint int32, frequencyMs int32, instanceNum int16, slotID int32, slotCount int32, segmentID int64, recordCount int64, startTs int64, endTs int64) error {
+func QueueMetricRollup(ctx context.Context, mdb RollupWorkQueuer, organizationID uuid.UUID, dateint int32, frequencyMs int32, instanceNum int16, slotID int32, slotCount int32, segmentID int64, recordCount int64, startTs int64) error {
 	nextFrequency, exists := RollupTo[frequencyMs]
 	if !exists {
 		return nil
 	}
 
-	priority := GetFrequencyPriority(nextFrequency)
-
 	// Calculate rollup group: segment start time divided by target rollup frequency
 	rollupGroup := startTs / int64(nextFrequency)
 
-	// Calculate when this rollup window can safely be processed
-	windowCloseTs := calculateWindowCloseTime(startTs, nextFrequency)
+	// Calculate when the rollup work should become eligible
+	eligibleAt := calculateRollupEligibleTime(frequencyMs, startTs, nextFrequency)
 
-	err := mdb.PutMetricRollupWork(ctx, lrdb.PutMetricRollupWorkParams{
+	err := mdb.MrqQueueWork(ctx, lrdb.MrqQueueWorkParams{
 		OrganizationID: organizationID,
 		Dateint:        dateint,
-		FrequencyMs:    int64(frequencyMs),
+		FrequencyMs:    frequencyMs,
 		InstanceNum:    instanceNum,
 		SlotID:         slotID,
 		SlotCount:      slotCount,
 		SegmentID:      segmentID,
 		RecordCount:    recordCount,
 		RollupGroup:    rollupGroup,
-		Priority:       priority,
-		WindowCloseTs:  windowCloseTs,
+		Priority:       frequencyMs,
+		EligibleAt:     eligibleAt,
 	})
 
 	if err != nil {
@@ -88,4 +61,30 @@ func QueueMetricRollup(ctx context.Context, mdb RollupWorkQueuer, organizationID
 	}
 
 	return nil
+}
+
+// calculateRollupEligibleTime determines when rollup work should become eligible based on frequency
+func calculateRollupEligibleTime(currentFrequencyMs int32, startTs int64, nextFrequencyMs int32) time.Time {
+	now := time.Now()
+
+	switch currentFrequencyMs {
+	case 10_000: // 10s rollups
+		// Schedule 120s past the end of the current 60s interval
+		currentMinute := now.Truncate(time.Minute)
+		nextMinute := currentMinute.Add(time.Minute)
+		return nextMinute.Add(2 * time.Minute) // 120s delay
+
+	case 60_000: // 60s rollups (1m)
+		// Schedule 2m past the end of the next 5m interval
+		current5Min := now.Truncate(5 * time.Minute)
+		next5Min := current5Min.Add(5 * time.Minute)
+		return next5Min.Add(2 * time.Minute) // 2m delay
+
+	default: // 5m+ rollups
+		// Schedule 10m past the end of the respective next-level window
+		windowDuration := time.Duration(nextFrequencyMs) * time.Millisecond
+		currentWindow := now.Truncate(windowDuration)
+		nextWindow := currentWindow.Add(windowDuration)
+		return nextWindow.Add(10 * time.Minute) // 10m delay
+	}
 }

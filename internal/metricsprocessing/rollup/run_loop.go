@@ -17,6 +17,7 @@ package rollup
 import (
 	"context"
 	"log/slog"
+	"runtime"
 	"time"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
@@ -40,25 +41,28 @@ func runLoop(
 		default:
 		}
 
-		claimedWork, err := manager.ClaimWork(ctx)
+		bundleResult, err := manager.ClaimWork(ctx)
 		if err != nil {
 			ll.Error("Failed to claim work", slog.Any("error", err))
 			time.Sleep(2 * time.Second)
 			continue
 		}
 
-		if len(claimedWork) == 0 {
+		if bundleResult == nil || len(bundleResult.Items) == 0 {
 			time.Sleep(2 * time.Second)
 			continue
 		}
+
+		claimedWork := bundleResult.Items
 
 		// Check for cancellation after claiming work but before processing
 		select {
 		case <-ctx.Done():
 			ll.Info("Context cancelled after claiming work, releasing items",
 				slog.Int("claimedItems", len(claimedWork)))
-			if releaseErr := manager.FailWork(ctx, claimedWork); releaseErr != nil {
-				ll.Error("Failed to release work items after cancellation", slog.Any("error", releaseErr))
+			// Use protected context and ReleaseWork for cancellation to return items to queue
+			if releaseErr := manager.ReleaseWork(context.WithoutCancel(ctx), claimedWork); releaseErr != nil {
+				ll.Error("Failed to release work items after cancellation - items will expire", slog.Any("error", releaseErr))
 			}
 			return ctx.Err()
 		default:
@@ -72,20 +76,24 @@ func runLoop(
 		heartbeater := newMRQHeartbeater(mdb, manager.workerID, itemIDs)
 		cancel := heartbeater.Start(ctx)
 
-		err = processBatch(ctx, ll, mdb, sp, awsmanager, claimedWork)
+		err = processBatch(ctx, ll, mdb, sp, awsmanager, *bundleResult)
 
 		// Stop heartbeating before handling results
 		cancel()
 
 		if err != nil {
 			ll.Error("Failed to process rollup batch", slog.Any("error", err))
-			if failErr := manager.FailWork(ctx, claimedWork); failErr != nil {
-				ll.Error("Failed to fail work items", slog.Any("error", failErr))
+			// Fail work items using protected context to prevent expiration
+			if failErr := manager.FailWork(context.WithoutCancel(ctx), claimedWork); failErr != nil {
+				ll.Error("Failed to fail work items - items will expire", slog.Any("error", failErr))
 			}
 		} else {
-			if completeErr := manager.CompleteWork(ctx, claimedWork); completeErr != nil {
-				ll.Error("Failed to complete work items", slog.Any("error", completeErr))
+			// Complete work items using protected context to prevent expiration
+			if completeErr := manager.CompleteWork(context.WithoutCancel(ctx), claimedWork); completeErr != nil {
+				ll.Error("Failed to complete work items - items will expire", slog.Any("error", completeErr))
 			}
 		}
+
+		runtime.GC()
 	}
 }

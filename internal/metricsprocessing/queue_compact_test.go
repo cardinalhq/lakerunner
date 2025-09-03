@@ -32,7 +32,7 @@ type MockCompactionWorkQueuer struct {
 	mock.Mock
 }
 
-func (m *MockCompactionWorkQueuer) PutMetricCompactionWork(ctx context.Context, arg lrdb.PutMetricCompactionWorkParams) error {
+func (m *MockCompactionWorkQueuer) McqQueueWork(ctx context.Context, arg lrdb.McqQueueWorkParams) error {
 	args := m.Called(ctx, arg)
 	return args.Error(0)
 }
@@ -84,15 +84,15 @@ func TestQueueMetricCompaction(t *testing.T) {
 			mockDB := new(MockCompactionWorkQueuer)
 
 			// Set up expectation
-			mockDB.On("PutMetricCompactionWork", mock.Anything, mock.MatchedBy(func(params lrdb.PutMetricCompactionWorkParams) bool {
+			mockDB.On("McqQueueWork", mock.Anything, mock.MatchedBy(func(params lrdb.McqQueueWorkParams) bool {
 				// Verify the parameters passed to the database call
 				return params.OrganizationID == tt.organizationID &&
 					params.Dateint == tt.dateint &&
-					params.FrequencyMs == int64(tt.frequencyMs) &&
+					params.FrequencyMs == tt.frequencyMs &&
 					params.InstanceNum == tt.instanceNum &&
 					params.SegmentID == tt.segmentID &&
 					params.RecordCount == tt.recordCount &&
-					params.Priority == GetFrequencyPriority(tt.frequencyMs)
+					params.Priority == tt.frequencyMs
 			})).Return(tt.mockError)
 
 			// Call the function
@@ -129,19 +129,19 @@ func TestQueueMetricCompaction_PriorityCalculation(t *testing.T) {
 		frequencyMs      int32
 		expectedPriority int32
 	}{
-		{10000, 800},   // GetFrequencyPriority(10000) = 800
-		{60000, 600},   // GetFrequencyPriority(60000) = 600
-		{300000, 400},  // GetFrequencyPriority(300000) = 400
-		{1200000, 200}, // GetFrequencyPriority(1200000) = 200
-		{3600000, 0},   // GetFrequencyPriority(3600000) = 0
-		{999999, 0},    // Unknown frequency defaults to 0
+		{10000, 10000},     // 10s
+		{60000, 60000},     // 1min
+		{300000, 300000},   // 5min
+		{1200000, 1200000}, // 20min
+		{3600000, 3600000}, // 1hr
+		{999999, 999999},   // Unknown frequency
 	}
 
 	for _, tc := range testCases {
 		t.Run(fmt.Sprintf("frequency_%d", tc.frequencyMs), func(t *testing.T) {
 			mockDB := new(MockCompactionWorkQueuer)
 
-			mockDB.On("PutMetricCompactionWork", mock.Anything, mock.MatchedBy(func(params lrdb.PutMetricCompactionWorkParams) bool {
+			mockDB.On("McqQueueWork", mock.Anything, mock.MatchedBy(func(params lrdb.McqQueueWorkParams) bool {
 				return params.Priority == tc.expectedPriority
 			})).Return(nil)
 

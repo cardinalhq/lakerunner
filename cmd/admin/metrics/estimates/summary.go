@@ -42,7 +42,7 @@ func GetSummaryCmd() *cobra.Command {
 		Use:   "summary",
 		Short: "Display metric pack estimates summary",
 		Long: `Display metric pack estimates summary in a table format.
-		
+
 Shows target record estimates by organization and frequency.
 The 'default' row shows global estimates (all-zeros organization ID).`,
 		RunE: func(_ *cobra.Command, _ []string) error {
@@ -62,7 +62,7 @@ func SetAPIKey(key string) {
 type estimateRow struct {
 	orgID   uuid.UUID
 	orgName string
-	values  map[int64]*int64 // frequency -> target_records
+	values  map[int32]*int64 // frequency -> target_records
 }
 
 func runMetricEstimatesSummary(local bool) error {
@@ -93,7 +93,7 @@ func runMetricEstimatesSummary(local bool) error {
 
 	// Organize data by organization and collect all frequencies
 	rows := make(map[uuid.UUID]*estimateRow)
-	frequencies := make(map[int64]bool)
+	frequencies := make(map[int32]bool)
 
 	for _, est := range estimates {
 		if _, exists := rows[est.OrganizationID]; !exists {
@@ -101,7 +101,7 @@ func runMetricEstimatesSummary(local bool) error {
 			rows[est.OrganizationID] = &estimateRow{
 				orgID:   est.OrganizationID,
 				orgName: orgName,
-				values:  make(map[int64]*int64),
+				values:  make(map[int32]*int64),
 			}
 		}
 		rows[est.OrganizationID].values[est.FrequencyMs] = est.TargetRecords
@@ -109,7 +109,7 @@ func runMetricEstimatesSummary(local bool) error {
 	}
 
 	// Sort frequencies for consistent column ordering
-	sortedFreqs := make([]int64, 0, len(frequencies))
+	sortedFreqs := make([]int32, 0, len(frequencies))
 	for freq := range frequencies {
 		sortedFreqs = append(sortedFreqs, freq)
 	}
@@ -153,7 +153,7 @@ func isZeroUUID(id uuid.UUID) bool {
 	return id == uuid.UUID{}
 }
 
-func formatFrequency(freqMs int64) string {
+func formatFrequency(freqMs int32) string {
 	if freqMs < 1000 {
 		return fmt.Sprintf("%dms", freqMs)
 	}
@@ -172,7 +172,7 @@ func formatFrequency(freqMs int64) string {
 	return fmt.Sprintf("%dh", hours)
 }
 
-func displayTable(rows []*estimateRow, frequencies []int64) {
+func displayTable(rows []*estimateRow, frequencies []int32) {
 	// Calculate column widths
 	const orgColWidth = 38 // UUID width + "default"
 	const freqColWidth = 10

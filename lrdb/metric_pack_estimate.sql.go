@@ -58,7 +58,7 @@ DO UPDATE SET
 
 type UpsertMetricPackEstimateParams struct {
 	OrganizationID uuid.UUID `json:"organization_id"`
-	FrequencyMs    int64     `json:"frequency_ms"`
+	FrequencyMs    int32     `json:"frequency_ms"`
 	TargetRecords  *int64    `json:"target_records"`
 }
 
