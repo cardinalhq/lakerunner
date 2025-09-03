@@ -14,10 +14,6 @@
 
 package metricsprocessing
 
-import (
-	"slices"
-)
-
 var (
 	// RollupTo maps source frequency to target rollup frequency
 	RollupTo = map[int32]int32{
@@ -27,21 +23,3 @@ var (
 		1_200_000: 3_600_000, // 20min -> 1hour
 	}
 )
-
-// GetAllFrequencies returns all frequencies involved in the rollup process
-func GetAllFrequencies() []int32 {
-	freqSet := make(map[int32]bool)
-
-	for sourceFreq, targetFreq := range RollupTo {
-		freqSet[sourceFreq] = true
-		freqSet[targetFreq] = true
-	}
-
-	var frequencies []int32
-	for freq := range freqSet {
-		frequencies = append(frequencies, freq)
-	}
-
-	slices.Sort(frequencies)
-	return frequencies
-}

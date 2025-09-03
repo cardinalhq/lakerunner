@@ -34,8 +34,7 @@ WITH candidate AS (
          slot_id, slot_count, rollup_group, segment_id, record_count, queue_ts
   FROM public.metric_rollup_queue
   WHERE claimed_by = -1
-    AND eligible_at <= $2::timestamptz
-  ORDER BY priority ASC, eligible_at ASC, queue_ts ASC
+  ORDER BY priority ASC, queue_ts ASC
   FOR UPDATE SKIP LOCKED
   LIMIT 1
 )
@@ -118,7 +117,7 @@ func (q *Queries) MrqDeferItems(ctx context.Context, arg MrqDeferItemsParams) er
 }
 
 const mrqFetchCandidates = `-- name: MrqFetchCandidates :many
-SELECT id, organization_id, dateint, frequency_ms, instance_num, 
+SELECT id, organization_id, dateint, frequency_ms, instance_num,
        slot_id, slot_count, rollup_group, segment_id, record_count, queue_ts
 FROM public.metric_rollup_queue
 WHERE claimed_by = -1

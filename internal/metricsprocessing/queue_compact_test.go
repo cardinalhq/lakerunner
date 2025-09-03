@@ -92,7 +92,7 @@ func TestQueueMetricCompaction(t *testing.T) {
 					params.InstanceNum == tt.instanceNum &&
 					params.SegmentID == tt.segmentID &&
 					params.RecordCount == tt.recordCount &&
-					params.Priority == int32(0)
+					params.Priority == tt.frequencyMs
 			})).Return(tt.mockError)
 
 			// Call the function
@@ -129,12 +129,12 @@ func TestQueueMetricCompaction_PriorityCalculation(t *testing.T) {
 		frequencyMs      int32
 		expectedPriority int32
 	}{
-		{10000, 0},   // 10s
-		{60000, 0},   // 1min
-		{300000, 0},  // 5min
-		{1200000, 0}, // 20min
-		{3600000, 0}, // 1hr
-		{999999, 0},  // Unknown frequency
+		{10000, 10000},     // 10s
+		{60000, 60000},     // 1min
+		{300000, 300000},   // 5min
+		{1200000, 1200000}, // 20min
+		{3600000, 3600000}, // 1hr
+		{999999, 999999},   // Unknown frequency
 	}
 
 	for _, tc := range testCases {
