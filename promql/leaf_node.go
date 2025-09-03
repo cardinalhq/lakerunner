@@ -310,7 +310,6 @@ func (n *LeafNode) evalRangeAwareScalar(key string, in SketchInput, stepMs, rang
 		return out
 	}
 
-	// Fallback (unknown func)
 	return evalLeafValuePerBucket(n.BE, in, float64(stepMs)/1000.0)
 }
 
@@ -343,7 +342,8 @@ func evalLeafValuePerBucket(be BaseExpr, in SketchInput, stepSecs float64) float
 	case "max_over_time":
 		return in.SketchTags.getAggValue(MAX)
 	default:
-		return math.NaN()
+		// default to SUM
+		return in.SketchTags.getAggValue(SUM)
 	}
 }
 
