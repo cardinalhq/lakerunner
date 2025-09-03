@@ -33,11 +33,10 @@ import (
 // aggregationState holds the minimal data needed for aggregation
 // Uses lazy sketch creation - only creates a sketch when we have multiple values
 type aggregationState struct {
-	baseRow    Row                // Template row with all metadata fields
-	sketch     *ddsketch.DDSketch // Accumulated sketch (nil until needed)
-	lastValue  *float64           // Last singleton value seen (for lazy sketch creation)
-	rowCount   int                // Number of rows aggregated
-	metricType string             // Metric type for this aggregation
+	baseRow   Row                // Template row with all metadata fields
+	sketch    *ddsketch.DDSketch // Accumulated sketch (nil until needed)
+	lastValue *float64           // Last singleton value seen (for lazy sketch creation)
+	rowCount  int                // Number of rows aggregated
 }
 
 // AggregatingMetricsReader wraps a sorted Reader to perform streaming aggregation of metrics.
@@ -51,9 +50,9 @@ type AggregatingMetricsReader struct {
 	batchSize         int
 
 	// Current aggregation state - lightweight, no full row copies
-	aggStates    map[string]*aggregationState // metric_type -> aggregation state
-	pendingBatch *Batch                       // Unprocessed rows from underlying reader
-	pendingIndex int                          // Index of next row to process in pendingBatch
+	aggState     *aggregationState // Single aggregation state for current key
+	pendingBatch *Batch            // Unprocessed rows from underlying reader
+	pendingIndex int               // Index of next row to process in pendingBatch
 	readerEOF    bool
 
 	// Sort key provider for grouping
@@ -87,7 +86,6 @@ func NewAggregatingMetricsReader(reader Reader, aggregationPeriodMs int64, batch
 		reader:            reader,
 		aggregationPeriod: aggregationPeriodMs,
 		batchSize:         batchSize,
-		aggStates:         make(map[string]*aggregationState),
 		keyProvider:       &MetricSortKeyProvider{},
 	}, nil
 }
@@ -214,65 +212,56 @@ func updateRowFromSketch(row Row, sketch *ddsketch.DDSketch) error {
 	return nil
 }
 
-// aggregateGroup processes all aggregation states and returns the aggregated results.
-// Returns multiple rows - one per metric type found in the group.
-func (ar *AggregatingMetricsReader) aggregateGroup(ctx context.Context) ([]Row, error) {
-	if len(ar.aggStates) == 0 {
-		// No aggregation states - return empty slice
+// aggregateGroup finalizes the current aggregation and returns the result.
+func (ar *AggregatingMetricsReader) aggregateGroup(ctx context.Context) (Row, error) {
+	if ar.aggState == nil {
+		// No aggregation state - nothing to return
 		ar.resetAggregation()
 		return nil, nil
 	}
 
-	var results []Row
+	// Determine metric type from base row for proper aggregation
+	metricType, _ := ar.aggState.baseRow[wkk.RowKeyCMetricType].(string)
 
-	// Process each metric type's aggregation state
-	for metricType, state := range ar.aggStates {
-		if state == nil {
-			continue
-		}
+	// Finalize the aggregation based on metric type
+	var result Row
+	var err error
+	if metricType == "histogram" {
+		result, err = ar.finalizeHistogramAggregation(ctx, ar.aggState)
+	} else {
+		result, err = ar.finalizeCounterGaugeAggregation(ctx, ar.aggState)
+	}
 
-		// Finalize the aggregation for this metric type
-		var result Row
-		var err error
-		if metricType == "histogram" {
-			result, err = ar.finalizeHistogramAggregation(ctx, state)
-		} else {
-			result, err = ar.finalizeCounterGaugeAggregation(ctx, state)
-		}
-
-		if err != nil {
-			return nil, fmt.Errorf("finalizing %s aggregation: %w", metricType, err)
-		}
-
-		if result != nil {
-			results = append(results, result)
-		}
+	if err != nil {
+		return nil, fmt.Errorf("finalizing %s aggregation: %w", metricType, err)
 	}
 
 	ar.resetAggregation()
-	return results, nil
+	return result, nil
 }
 
 // finalizeHistogramAggregation completes aggregation for a histogram metric.
 func (ar *AggregatingMetricsReader) finalizeHistogramAggregation(ctx context.Context, state *aggregationState) (Row, error) {
-	// VALIDATION: Histograms must always have a sketch
-	if state.sketch == nil && state.lastValue == nil {
+	// VALIDATION: Histograms must always have a sketch - no singleton values allowed
+	if state.sketch == nil {
 		rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
 			attribute.String("reader", "AggregatingMetricsReader"),
-			attribute.String("reason", "histogram_no_data"),
+			attribute.String("reason", "histogram_no_sketch"),
 		))
-		return nil, fmt.Errorf("histogram missing data")
+		// Drop this invalid histogram - return nil to skip it
+		return nil, nil
+	}
+
+	// Warn if we somehow got singleton values mixed with histogram sketch
+	if state.lastValue != nil {
+		slog.Warn("Histogram has both sketch and singleton value - ignoring singleton",
+			"name", state.baseRow[wkk.RowKeyCName],
+			"tid", state.baseRow[wkk.RowKeyCTID])
 	}
 
 	// Create result row from base row
 	result := make(Row)
 	maps.Copy(result, state.baseRow)
-
-	// For histograms with only one value, keep the original row as-is
-	if state.sketch == nil && state.lastValue != nil {
-		// Single value histogram - unusual but handle it
-		return result, nil
-	}
 
 	// Update rollup fields from the sketch
 	if err := updateRowFromSketch(result, state.sketch); err != nil {
@@ -313,13 +302,11 @@ func (ar *AggregatingMetricsReader) resetAggregation() {
 	ar.currentKeyName = ""
 	ar.currentKeyTid = 0
 	ar.currentKeyTs = 0
-	// Clear aggregation states map but keep the map allocated
-	for k := range ar.aggStates {
-		delete(ar.aggStates, k)
-	}
+	// Clear aggregation state
+	ar.aggState = nil
 }
 
-// addRowToAggregation adds a row to the current aggregation state, organizing by metric_type.
+// addRowToAggregation adds a row to the current aggregation state.
 // Uses lazy sketch creation - only creates sketches when needed for multiple values.
 func (ar *AggregatingMetricsReader) addRowToAggregation(ctx context.Context, row Row) error {
 	// VALIDATION: Histograms must always have sketches
@@ -338,25 +325,21 @@ func (ar *AggregatingMetricsReader) addRowToAggregation(ctx context.Context, row
 		return nil // Skip this row, don't add to aggregation
 	}
 
-	// Get metric type, default to empty string if missing
-	metricType, _ := row[wkk.RowKeyCMetricType].(string)
-
-	// Get or create aggregation state for this metric type
-	state, exists := ar.aggStates[metricType]
-	if !exists {
-		// First row for this metric type - create new state
+	// Create aggregation state if this is the first row for this key
+	if ar.aggState == nil {
+		// First row for this aggregation key - create new state
 		// Copy the row as base
 		baseRow := make(Row)
 		maps.Copy(baseRow, row)
-		state = &aggregationState{
-			baseRow:    baseRow,
-			metricType: metricType,
-			rowCount:   0,
+		ar.aggState = &aggregationState{
+			baseRow:  baseRow,
+			rowCount: 0,
 		}
-		ar.aggStates[metricType] = state
 	}
 
-	state.rowCount++
+	state := ar.aggState
+
+	ar.aggState.rowCount++
 
 	// Lazy sketch creation - only create when we need to aggregate multiple values
 	if isSketchEmpty(row) {
@@ -499,13 +482,13 @@ func (ar *AggregatingMetricsReader) processRow(ctx context.Context, row Row, bat
 
 	// Key changed - emit current aggregation and start new one
 	if ar.hasCurrentKey {
-		results, err := ar.aggregateGroup(ctx)
+		result, err := ar.aggregateGroup(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to aggregate group: %w", err)
 		}
 
-		// Emit each aggregated result (one per metric type)
-		for _, result := range results {
+		// Emit the aggregated result if we have one
+		if result != nil {
 			batchRow := batch.AddRow()
 			maps.Copy(batchRow, result)
 			ar.rowCount++
@@ -578,13 +561,13 @@ func (ar *AggregatingMetricsReader) Next(ctx context.Context) (*Batch, error) {
 				if err == io.EOF {
 					// Check if we need to emit final aggregation
 					if ar.hasCurrentKey {
-						results, aggErr := ar.aggregateGroup(ctx)
+						result, aggErr := ar.aggregateGroup(ctx)
 						if aggErr != nil {
 							pipeline.ReturnBatch(batch)
 							return nil, fmt.Errorf("failed to aggregate final group: %w", aggErr)
 						}
-						// Emit each final aggregated result (one per metric type)
-						for _, result := range results {
+						// Emit the final aggregated result if we have one
+						if result != nil {
 							row := batch.AddRow()
 							// Direct assignment instead of maps.Copy to avoid overhead
 							for k, v := range result {
