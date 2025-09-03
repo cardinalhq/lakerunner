@@ -220,8 +220,12 @@ func (n *LeafNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalResul
 
 		case SketchMAP:
 			k := keyFor(si.SketchTags.Tags)
-			num := n.evalRangeAwareScalar(k, si, stepMs, rangeMs)
-			v = Value{Kind: ValScalar, Num: num}
+			if n.BE.FuncName != "" {
+				num := n.evalRangeAwareScalar(k, si, stepMs, rangeMs)
+				v = Value{Kind: ValScalar, Num: num}
+			} else {
+				v = Value{Kind: ValMap, AggMap: si.SketchTags.Agg}
+			}
 
 		default:
 			// Unknown sketch type

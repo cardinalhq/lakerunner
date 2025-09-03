@@ -200,9 +200,9 @@ func (n *AggNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalResult
 		aggs := make(map[string]*acc, len(child))
 
 		for _, r := range child {
-			if r.Value.Kind != ValScalar || math.IsNaN(r.Value.Num) {
-				continue
-			}
+			//if r.Value.Kind != ValScalar || math.IsNaN(r.Value.Num) {
+			//	continue
+			//}
 			k := makeKey(r.Tags)
 			a := aggs[k]
 			if a == nil {
@@ -216,7 +216,35 @@ func (n *AggNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalResult
 				}
 				aggs[k] = a
 			}
-			v := r.Value.Num
+			var v float64
+			switch r.Value.Kind {
+			case ValScalar:
+				v = r.Value.Num
+			case ValMap:
+				// if there is a map, extract the right aggregation value from it.
+				switch n.Op {
+				case AggSum:
+					v = r.Value.AggMap[SUM]
+				case AggAvg:
+					s := r.Value.AggMap[SUM]
+					c := r.Value.AggMap[COUNT]
+					if c == 0 {
+						v = math.NaN()
+					} else {
+						v = s / c
+					}
+				case AggMin:
+					v = r.Value.AggMap[MIN]
+				case AggMax:
+					v = r.Value.AggMap[MAX]
+				case AggCount:
+					v = r.Value.AggMap[COUNT]
+				default:
+					v = math.NaN()
+				}
+			default:
+				continue
+			}
 			a.sum += v
 			a.count++
 			if v < a.min {
