@@ -44,10 +44,15 @@ This is a monorepo, and we do not need to nor want to maintain backwards compati
 4. **Migrations**
    - `make new-lrbb-migration name=migration_name` to create a new lrdb migration.
    - `make new-configdb-migration name=migration_name` to create a new configdb migration.
+   - When working on SQL, `make test-integration` must pass in addition to other checks.
 
 5. **Commit Messages**
    - Keep clean, technical, and focused.
    - Use conventional commit style when applicable.
+
+6. **Code comments**
+   - Write comments for a senior engineer
+   - No "historical" comments like "removed ..." or "this used to..." -- we use git for a reason
 
 ---
 
@@ -122,6 +127,7 @@ This is a monorepo, and we do not need to nor want to maintain backwards compati
 - `configdb/static-schema/` contains fixed schema snapshots (no migrations allowed).
 - Connections are pooled for performance.
 - Two local databasees are available, `testing_configdb` and `testing_lrdb`.  To access them on the command line, the command `psql-17` should be used.
+- To discover the shapes of DB tables, it is best to migrate the test DB and then examine it.
 
 Rules:
 
