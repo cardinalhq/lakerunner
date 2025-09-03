@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-// Package rowcodec provides a custom binary encoding/decoding for Row data
+// binary_codec.go provides a custom binary encoding/decoding for Row data
 // (map[string]any) optimized for memory efficiency and performance.
 //
 // Binary Format:
@@ -30,6 +30,9 @@
 //	5 = []byte ([uint32: len][bytes])
 //	6 = int32 (4 bytes, little endian)
 //	7 = float32 (4 bytes, little endian)
+//	8 = []int64
+//	9 = []float64
+//	10 = []string
 //
 // This format avoids reflection entirely for maximum memory efficiency.
 package rowcodec
@@ -60,43 +63,12 @@ const (
 	typeStringSlice  = byte(10)
 )
 
-// mapPool provides reusable map[string]any instances to reduce allocations
-var mapPool = sync.Pool{
-	New: func() any {
-		return make(map[string]any, 32) // Start with reasonable capacity
-	},
-}
-
 // bytePool provides reusable byte slices to reduce allocations during decoding
 var bytePool = sync.Pool{
 	New: func() any {
 		buf := make([]byte, 0, 256) // Start with 256 byte capacity
 		return &buf
 	},
-}
-
-// getPooledMap gets a map from the pool and clears it
-func getPooledMap() map[string]any {
-	m := mapPool.Get().(map[string]any)
-	// Clear the map for reuse
-	for k := range m {
-		delete(m, k)
-	}
-	return m
-}
-
-// returnPooledMap returns a map to the pool
-func returnPooledMap(m map[string]any) {
-	if len(m) > 256 { // Don't pool overly large maps
-		return
-	}
-	mapPool.Put(m)
-}
-
-// ReturnMap returns a decoded map back to the pool for reuse.
-// Call this when you're done with a map returned by Decode().
-func (c *Config) ReturnMap(m map[string]any) {
-	returnPooledMap(m)
 }
 
 // getPooledBytes gets a byte slice from the pool with at least the requested capacity
@@ -120,36 +92,16 @@ func returnPooledBytes(buf []byte) {
 	bytePool.Put(&resetBuf)
 }
 
-// Config holds encoder/decoder for the custom binary format.
-type Config struct{}
+// BinaryCodec holds the binary encoder/decoder.
+type BinaryCodec struct{}
 
-// NewConfig creates a new custom binary format configuration.
-func NewConfig() (*Config, error) {
-	return &Config{}, nil
-}
-
-// NewEncoder creates a new binary encoder.
-func (c *Config) NewEncoder(w io.Writer) *Encoder {
-	return &Encoder{w: w}
-}
-
-// NewDecoder creates a new binary decoder.
-func (c *Config) NewDecoder(r io.Reader) *Decoder {
-	return &Decoder{r: r}
-}
-
-// NewRowEncoder creates a new Row encoder that preserves RowKey handles.
-func (c *Config) NewRowEncoder(w io.Writer) *RowEncoder {
-	return &RowEncoder{w: w}
-}
-
-// NewRowDecoder creates a new Row decoder that preserves RowKey handles.
-func (c *Config) NewRowDecoder(r io.Reader) *RowDecoder {
-	return &RowDecoder{r: r}
+// NewBinaryCodec creates a new binary codec.
+func NewBinaryCodec() (*BinaryCodec, error) {
+	return &BinaryCodec{}, nil
 }
 
 // Encode encodes a map[string]any to binary bytes.
-func (c *Config) Encode(row map[string]any) ([]byte, error) {
+func (c *BinaryCodec) Encode(row map[string]any) ([]byte, error) {
 	var buf bytes.Buffer
 	encoder := c.NewEncoder(&buf)
 	if err := encoder.Encode(row); err != nil {
@@ -158,62 +110,49 @@ func (c *Config) Encode(row map[string]any) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// Decode decodes binary bytes to a map[string]any.
-func (c *Config) Decode(data []byte) (map[string]any, error) {
+// Decode decodes binary bytes into the supplied map[string]any.
+// The supplied map is cleared before decoding.
+func (c *BinaryCodec) Decode(data []byte, into map[string]any) error {
 	buf := bytes.NewReader(data)
 	decoder := c.NewDecoder(buf)
-	return decoder.Decode()
-}
-
-// DecodeInto decodes binary bytes into the provided map, clearing it first.
-// This avoids allocating a new map and can reuse pooled maps.
-func (c *Config) DecodeInto(data []byte, target map[string]any) error {
-	// Clear the target map
-	for k := range target {
-		delete(target, k)
-	}
-
-	buf := bytes.NewReader(data)
-	decoder := c.NewDecoder(buf)
-	return decoder.DecodeInto(target)
+	return decoder.Decode(into)
 }
 
 // EncodeRow encodes a Row (map[wkk.RowKey]any) to binary bytes.
-func (c *Config) EncodeRow(row pipeline.Row) ([]byte, error) {
+func (c *BinaryCodec) EncodeRow(row pipeline.Row) ([]byte, error) {
 	var buf bytes.Buffer
-	encoder := c.NewRowEncoder(&buf)
+	encoder := NewRowEncoder(&buf)
 	if err := encoder.EncodeRow(row); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
 }
 
-// DecodeRow decodes binary bytes to a Row (map[wkk.RowKey]any).
-func (c *Config) DecodeRow(data []byte) (pipeline.Row, error) {
+// DecodeRow decodes binary bytes into the supplied Row (map[wkk.RowKey]any).
+// The supplied Row is cleared before decoding.
+func (c *BinaryCodec) DecodeRow(data []byte, into pipeline.Row) error {
 	buf := bytes.NewReader(data)
-	decoder := c.NewRowDecoder(buf)
-	return decoder.DecodeRow()
+	decoder := NewRowDecoder(buf)
+	return decoder.DecodeRow(into)
 }
 
-// DecodeRowInto decodes binary bytes into the provided Row, clearing it first.
-func (c *Config) DecodeRowInto(data []byte, target pipeline.Row) error {
-	// Clear the target row
-	for k := range target {
-		delete(target, k)
-	}
-
-	buf := bytes.NewReader(data)
-	decoder := c.NewRowDecoder(buf)
-	return decoder.DecodeRowInto(target)
+// NewEncoder creates a new binary encoder.
+func (c *BinaryCodec) NewEncoder(w io.Writer) Encoder {
+	return &BinaryEncoder{w: w}
 }
 
-// Encoder writes binary-encoded map data to an io.Writer.
-type Encoder struct {
+// NewDecoder creates a new binary decoder.
+func (c *BinaryCodec) NewDecoder(r io.Reader) Decoder {
+	return &BinaryDecoder{r: r}
+}
+
+// BinaryEncoder writes binary-encoded map data to an io.Writer.
+type BinaryEncoder struct {
 	w io.Writer
 }
 
 // Encode writes a map[string]any in binary format.
-func (e *Encoder) Encode(row map[string]any) error {
+func (e *BinaryEncoder) Encode(row map[string]any) error {
 	// Write number of key-value pairs
 	if err := binary.Write(e.w, binary.LittleEndian, uint32(len(row))); err != nil {
 		return fmt.Errorf("write map length: %w", err)
@@ -229,7 +168,7 @@ func (e *Encoder) Encode(row map[string]any) error {
 	return nil
 }
 
-func (e *Encoder) writeKeyValue(key string, value any) error {
+func (e *BinaryEncoder) writeKeyValue(key string, value any) error {
 	// Write key length and bytes
 	keyBytes := []byte(key)
 	if err := binary.Write(e.w, binary.LittleEndian, uint32(len(keyBytes))); err != nil {
@@ -260,20 +199,22 @@ func (e *Encoder) writeKeyValue(key string, value any) error {
 		}
 		return binary.Write(e.w, binary.LittleEndian, v)
 	case int32:
-		if _, err := e.w.Write([]byte{typeInt32}); err != nil {
+		// Promote int32 to int64 for consistency
+		if _, err := e.w.Write([]byte{typeInt64}); err != nil {
 			return err
 		}
-		return binary.Write(e.w, binary.LittleEndian, v)
+		return binary.Write(e.w, binary.LittleEndian, int64(v))
 	case float64:
 		if _, err := e.w.Write([]byte{typeFloat64}); err != nil {
 			return err
 		}
 		return binary.Write(e.w, binary.LittleEndian, math.Float64bits(v))
 	case float32:
-		if _, err := e.w.Write([]byte{typeFloat32}); err != nil {
+		// Promote float32 to float64 for consistency
+		if _, err := e.w.Write([]byte{typeFloat64}); err != nil {
 			return err
 		}
-		return binary.Write(e.w, binary.LittleEndian, math.Float32bits(v))
+		return binary.Write(e.w, binary.LittleEndian, math.Float64bits(float64(v)))
 	case string:
 		if _, err := e.w.Write([]byte{typeString}); err != nil {
 			return err
@@ -341,24 +282,22 @@ func (e *Encoder) writeKeyValue(key string, value any) error {
 	}
 }
 
-// Decoder reads binary-encoded map data from an io.Reader.
-type Decoder struct {
+// BinaryDecoder reads binary-encoded map data from an io.Reader.
+type BinaryDecoder struct {
 	r io.Reader
 }
 
 // Decode reads a map[string]any from binary format.
-func (d *Decoder) Decode() (map[string]any, error) {
-	row := getPooledMap()
-	err := d.DecodeInto(row)
-	if err != nil {
-		returnPooledMap(row)
-		return nil, err
+func (d *BinaryDecoder) Decode(into map[string]any) error {
+	// Clear the supplied map
+	for k := range into {
+		delete(into, k)
 	}
-	return row, nil
+	return d.DecodeInto(into)
 }
 
 // DecodeInto reads binary data into the provided map, which should be empty or will be cleared.
-func (d *Decoder) DecodeInto(target map[string]any) error {
+func (d *BinaryDecoder) DecodeInto(target map[string]any) error {
 	// Read number of key-value pairs
 	var numPairs uint32
 	if err := binary.Read(d.r, binary.LittleEndian, &numPairs); err != nil {
@@ -377,7 +316,7 @@ func (d *Decoder) DecodeInto(target map[string]any) error {
 	return nil
 }
 
-func (d *Decoder) readKeyValue() (string, any, error) {
+func (d *BinaryDecoder) readKeyValue() (string, any, error) {
 	// Read key length and bytes
 	var keyLen uint32
 	if err := binary.Read(d.r, binary.LittleEndian, &keyLen); err != nil {
@@ -512,6 +451,11 @@ type RowEncoder struct {
 	w io.Writer
 }
 
+// NewRowEncoder creates a new Row encoder that preserves RowKey handles.
+func NewRowEncoder(w io.Writer) *RowEncoder {
+	return &RowEncoder{w: w}
+}
+
 // EncodeRow writes a pipeline.Row in binary format without converting keys to strings.
 func (e *RowEncoder) EncodeRow(row pipeline.Row) error {
 	// Write number of key-value pairs
@@ -540,7 +484,7 @@ func (e *RowEncoder) writeRowKeyValue(key wkk.RowKey, value any) error {
 		return fmt.Errorf("write key bytes: %w", err)
 	}
 
-	// Write type byte and value data (reuse same logic as Encoder)
+	// Write type byte and value data
 	switch v := value.(type) {
 	case nil:
 		_, err := e.w.Write([]byte{typeNil})
@@ -561,20 +505,22 @@ func (e *RowEncoder) writeRowKeyValue(key wkk.RowKey, value any) error {
 		}
 		return binary.Write(e.w, binary.LittleEndian, v)
 	case int32:
-		if _, err := e.w.Write([]byte{typeInt32}); err != nil {
+		// Promote int32 to int64 for consistency
+		if _, err := e.w.Write([]byte{typeInt64}); err != nil {
 			return err
 		}
-		return binary.Write(e.w, binary.LittleEndian, v)
+		return binary.Write(e.w, binary.LittleEndian, int64(v))
 	case float64:
 		if _, err := e.w.Write([]byte{typeFloat64}); err != nil {
 			return err
 		}
 		return binary.Write(e.w, binary.LittleEndian, math.Float64bits(v))
 	case float32:
-		if _, err := e.w.Write([]byte{typeFloat32}); err != nil {
+		// Promote float32 to float64 for consistency
+		if _, err := e.w.Write([]byte{typeFloat64}); err != nil {
 			return err
 		}
-		return binary.Write(e.w, binary.LittleEndian, math.Float32bits(v))
+		return binary.Write(e.w, binary.LittleEndian, math.Float64bits(float64(v)))
 	case string:
 		if _, err := e.w.Write([]byte{typeString}); err != nil {
 			return err
@@ -647,30 +593,18 @@ type RowDecoder struct {
 	r io.Reader
 }
 
-// DecodeRow reads a pipeline.Row from binary format, preserving RowKey handles.
-func (d *RowDecoder) DecodeRow() (pipeline.Row, error) {
-	// Read number of key-value pairs
-	var numPairs uint32
-	if err := binary.Read(d.r, binary.LittleEndian, &numPairs); err != nil {
-		return nil, fmt.Errorf("read map length: %w", err)
-	}
-
-	row := make(pipeline.Row, numPairs)
-
-	// Read each key-value pair
-	for i := uint32(0); i < numPairs; i++ {
-		key, value, err := d.readRowKeyValue()
-		if err != nil {
-			return nil, fmt.Errorf("read key-value %d: %w", i, err)
-		}
-		row[key] = value
-	}
-
-	return row, nil
+// NewRowDecoder creates a new Row decoder that preserves RowKey handles.
+func NewRowDecoder(r io.Reader) *RowDecoder {
+	return &RowDecoder{r: r}
 }
 
-// DecodeRowInto reads binary data into the provided Row.
-func (d *RowDecoder) DecodeRowInto(target pipeline.Row) error {
+// DecodeRow reads a pipeline.Row from binary format, preserving RowKey handles.
+func (d *RowDecoder) DecodeRow(into pipeline.Row) error {
+	// Clear the supplied Row
+	for k := range into {
+		delete(into, k)
+	}
+
 	// Read number of key-value pairs
 	var numPairs uint32
 	if err := binary.Read(d.r, binary.LittleEndian, &numPairs); err != nil {
@@ -683,7 +617,7 @@ func (d *RowDecoder) DecodeRowInto(target pipeline.Row) error {
 		if err != nil {
 			return fmt.Errorf("read key-value %d: %w", i, err)
 		}
-		target[key] = value
+		into[key] = value
 	}
 
 	return nil

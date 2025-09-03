@@ -52,7 +52,7 @@ type DiskSortingReader struct {
 	reader      Reader
 	keyProvider SortKeyProvider // Provider to create sort keys
 	tempFile    *os.File
-	codec       *rowcodec.Config
+	codec       rowcodec.Codec
 	closed      bool
 	rowCount    int64
 	batchSize   int
@@ -89,7 +89,7 @@ func NewDiskSortingReader(reader Reader, keyProvider SortKeyProvider, batchSize 
 	}
 
 	// Create binary codec config
-	codec, err := rowcodec.NewConfig()
+	codec, err := rowcodec.NewBinary()
 	if err != nil {
 		tempFile.Close()
 		os.Remove(tempFile.Name())
@@ -234,15 +234,10 @@ func (r *DiskSortingReader) Next(ctx context.Context) (*Batch, error) {
 			return nil, fmt.Errorf("failed to read binary data at offset %d: %w", idx.FileOffset, err)
 		}
 
-		// Use custom binary codec to decode with Row conversion
-		row, err := r.codec.DecodeRow(rowBytes)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decode binary row at offset %d: %w", idx.FileOffset, err)
-		}
-
+		// Decode directly into the batch row to avoid allocation
 		batchRow := batch.AddRow()
-		for k, v := range row {
-			batchRow[k] = v
+		if err := r.codec.DecodeRow(rowBytes, batchRow); err != nil {
+			return nil, fmt.Errorf("failed to decode binary row at offset %d: %w", idx.FileOffset, err)
 		}
 
 		r.currentIndex++

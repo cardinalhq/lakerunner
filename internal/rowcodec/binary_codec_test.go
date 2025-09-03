@@ -25,7 +25,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
-func TestRowCodecBasicTypes(t *testing.T) {
+func TestBinaryCodec_BasicTypes(t *testing.T) {
 	testCases := []struct {
 		name  string
 		value any
@@ -36,22 +36,22 @@ func TestRowCodecBasicTypes(t *testing.T) {
 		{"int64_positive", int64(9223372036854775807)},
 		{"int64_negative", int64(-9223372036854775808)},
 		{"int64_zero", int64(0)},
-		{"int32_positive", int32(2147483647)},
-		{"int32_negative", int32(-2147483648)},
+		{"int32_positive", int32(2147483647)},  // Will be promoted to int64
+		{"int32_negative", int32(-2147483648)}, // Will be promoted to int64
 		{"float64_positive", float64(3.14159265359)},
 		{"float64_negative", float64(-2.71828)},
 		{"float64_zero", float64(0.0)},
 		{"float64_inf", math.Inf(1)},
 		{"float64_nan", math.NaN()},
-		{"float32_positive", float32(3.14)},
-		{"float32_negative", float32(-2.71)},
+		{"float32_positive", float32(3.14)},  // Will be promoted to float64
+		{"float32_negative", float32(-2.71)}, // Will be promoted to float64
 		{"string", "test_string"},
 		{"empty_string", ""},
 		{"byte_slice", []byte{0x01, 0x02, 0x03, 0xFF}},
 		{"empty_byte_slice", []byte{}},
 	}
 
-	config, err := NewConfig()
+	config, err := NewBinary()
 	require.NoError(t, err)
 
 	for _, tc := range testCases {
@@ -65,7 +65,8 @@ func TestRowCodecBasicTypes(t *testing.T) {
 			encoded, err := config.Encode(testRow)
 			require.NoError(t, err)
 
-			decoded, err := config.Decode(encoded)
+			decoded := make(map[string]any)
+			err = config.Decode(encoded, decoded)
 			require.NoError(t, err)
 
 			decodedValue := decoded["test_field"]
@@ -76,6 +77,18 @@ func TestRowCodecBasicTypes(t *testing.T) {
 				actualFloat, ok2 := decodedValue.(float64)
 				require.True(t, ok1 && ok2, "Both should be float64")
 				assert.True(t, math.IsNaN(expectedFloat) && math.IsNaN(actualFloat), "Both should be NaN")
+			} else if tc.name == "int32_positive" || tc.name == "int32_negative" {
+				// int32 is promoted to int64
+				expectedInt32 := tc.value.(int32)
+				actualInt64, ok := decodedValue.(int64)
+				require.True(t, ok, "int32 should be decoded as int64")
+				assert.Equal(t, int64(expectedInt32), actualInt64, "Value should be preserved")
+			} else if tc.name == "float32_positive" || tc.name == "float32_negative" {
+				// float32 is promoted to float64
+				expectedFloat32 := tc.value.(float32)
+				actualFloat64, ok := decodedValue.(float64)
+				require.True(t, ok, "float32 should be decoded as float64")
+				assert.InDelta(t, float64(expectedFloat32), actualFloat64, 0.0001, "Value should be preserved")
 			} else {
 				assert.Equal(t, tc.value, decodedValue, "Value should be preserved")
 			}
@@ -83,8 +96,8 @@ func TestRowCodecBasicTypes(t *testing.T) {
 	}
 }
 
-func TestRowCodecComplexMap(t *testing.T) {
-	config, err := NewConfig()
+func TestBinaryCodec_ComplexMap(t *testing.T) {
+	config, err := NewBinary()
 	require.NoError(t, err)
 
 	// Test with complex map containing multiple types
@@ -103,22 +116,25 @@ func TestRowCodecComplexMap(t *testing.T) {
 	encoded, err := config.Encode(testRow)
 	require.NoError(t, err)
 
-	decoded, err := config.Decode(encoded)
+	decoded := make(map[string]any)
+	err = config.Decode(encoded, decoded)
 	require.NoError(t, err)
 
-	// Verify all fields are preserved exactly
+	// Verify all fields are preserved (with type promotions)
 	assert.Equal(t, testRow["string_field"], decoded["string_field"])
 	assert.Equal(t, testRow["int64_field"], decoded["int64_field"])
 	assert.Equal(t, testRow["float64_field"], decoded["float64_field"])
 	assert.Equal(t, testRow["bool_field"], decoded["bool_field"])
 	assert.Equal(t, testRow["bytes_field"], decoded["bytes_field"])
 	assert.Equal(t, testRow["nil_field"], decoded["nil_field"])
-	assert.Equal(t, testRow["int32_field"], decoded["int32_field"])
-	assert.Equal(t, testRow["float32_field"], decoded["float32_field"])
+	// int32 is promoted to int64
+	assert.Equal(t, int64(testRow["int32_field"].(int32)), decoded["int32_field"])
+	// float32 is promoted to float64
+	assert.InDelta(t, float64(testRow["float32_field"].(float32)), decoded["float32_field"].(float64), 0.0001)
 }
 
-func TestRowCodecRowEncoding(t *testing.T) {
-	config, err := NewConfig()
+func TestBinaryCodec_RowEncoding(t *testing.T) {
+	config, err := NewBinary()
 	require.NoError(t, err)
 
 	// Create test Row
@@ -134,7 +150,8 @@ func TestRowCodecRowEncoding(t *testing.T) {
 	encoded, err := config.EncodeRow(originalRow)
 	require.NoError(t, err)
 
-	decoded, err := config.DecodeRow(encoded)
+	decoded := make(pipeline.Row)
+	err = config.DecodeRow(encoded, decoded)
 	require.NoError(t, err)
 
 	// Verify all fields are preserved
@@ -145,8 +162,8 @@ func TestRowCodecRowEncoding(t *testing.T) {
 	assert.Equal(t, originalRow[wkk.NewRowKey("bytes_field")], decoded[wkk.NewRowKey("bytes_field")])
 }
 
-func TestRowCodecEmptyMap(t *testing.T) {
-	config, err := NewConfig()
+func TestBinaryCodec_EmptyMap(t *testing.T) {
+	config, err := NewBinary()
 	require.NoError(t, err)
 
 	// Test empty map
@@ -155,14 +172,15 @@ func TestRowCodecEmptyMap(t *testing.T) {
 	encoded, err := config.Encode(emptyRow)
 	require.NoError(t, err)
 
-	decoded, err := config.Decode(encoded)
+	decoded := make(map[string]any)
+	err = config.Decode(encoded, decoded)
 	require.NoError(t, err)
 
 	assert.Equal(t, 0, len(decoded))
 }
 
-func TestRowCodecUnsupportedType(t *testing.T) {
-	config, err := NewConfig()
+func TestBinaryCodec_UnsupportedType(t *testing.T) {
+	config, err := NewBinary()
 	require.NoError(t, err)
 
 	// Test unsupported type

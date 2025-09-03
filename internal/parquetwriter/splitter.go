@@ -36,9 +36,9 @@ type FileSplitter struct {
 	currentGroup any
 
 	// Binary buffering for schema evolution
-	codec        *rowcodec.Config
+	codec        rowcodec.Codec
 	bufferFile   *os.File
-	encoder      *rowcodec.Encoder
+	encoder      rowcodec.Encoder
 	currentStats StatsAccumulator
 
 	// Dynamic schema management per file
@@ -51,7 +51,7 @@ type FileSplitter struct {
 
 // NewFileSplitter creates a new file splitter with the given configuration.
 func NewFileSplitter(config WriterConfig) *FileSplitter {
-	codec, err := rowcodec.NewConfig()
+	codec, err := rowcodec.NewBinary()
 	if err != nil {
 		// This should never happen with our static configuration
 		panic(fmt.Sprintf("failed to create binary codec: %v", err))
@@ -237,8 +237,9 @@ func (s *FileSplitter) streamBinaryToParquet() (string, error) {
 	decoder := s.codec.NewDecoder(bufferFile)
 
 	// Stream all rows from binary to parquet
+	row := make(map[string]any) // Reuse this map for all decodes
 	for {
-		row, err := decoder.Decode()
+		err := decoder.Decode(row)
 		if err != nil {
 			if err == io.EOF {
 				break // End of file reached
@@ -252,12 +253,8 @@ func (s *FileSplitter) streamBinaryToParquet() (string, error) {
 
 		// Write the row to parquet
 		if _, err := parquetWriter.Write([]map[string]any{row}); err != nil {
-			s.codec.ReturnMap(row) // Return to pool on error
 			return "", fmt.Errorf("write row to parquet: %w", err)
 		}
-
-		// Return the map to the pool after use
-		s.codec.ReturnMap(row)
 	}
 
 	// Close parquet writer to finalize the file
