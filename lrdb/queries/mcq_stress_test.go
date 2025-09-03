@@ -97,7 +97,7 @@ func TestMcqStress_ConcurrentWorkers(t *testing.T) {
 	slog.Info("Queued work items", slog.Int("count", int(totalQueued)))
 
 	// Worker function
-	workerFunc := func(workerID int64, wg *sync.WaitGroup) {
+	workerFunc := func(workerID int64, wg *sync.WaitGroup, workerCtx context.Context) {
 		defer wg.Done()
 
 		// Decide worker behavior
@@ -116,7 +116,7 @@ func TestMcqStress_ConcurrentWorkers(t *testing.T) {
 		}
 
 		// Heartbeat goroutine for this worker
-		heartbeatCtx, cancelHeartbeat := context.WithCancel(ctx)
+		heartbeatCtx, cancelHeartbeat := context.WithCancel(workerCtx)
 		defer cancelHeartbeat()
 		var activeIDs []int64
 		var idsMutex sync.Mutex
@@ -152,8 +152,13 @@ func TestMcqStress_ConcurrentWorkers(t *testing.T) {
 			}
 		}()
 
-		deadline := time.Now().Add(testDuration)
-		for time.Now().Before(deadline) {
+		for {
+			// Check if context is done
+			select {
+			case <-workerCtx.Done():
+				return
+			default:
+			}
 
 			// Try to claim work
 			bundle, err := db.ClaimCompactionBundle(ctx, bundleParams)
@@ -254,13 +259,14 @@ func TestMcqStress_ConcurrentWorkers(t *testing.T) {
 	var wg sync.WaitGroup
 	startTime := time.Now()
 
+	// Create a context with timeout for all workers
+	workerCtx, cancelWorkers := context.WithTimeout(ctx, testDuration)
+	defer cancelWorkers()
+
 	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
-		go workerFunc(int64(i+1), &wg)
+		go workerFunc(int64(i+1), &wg, workerCtx)
 	}
-
-	// Wait for test duration
-	time.Sleep(testDuration)
 
 	// Wait for workers to finish
 	wg.Wait()

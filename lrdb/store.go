@@ -58,6 +58,13 @@ func (store *Store) GetMetricEstimate(ctx context.Context, orgID uuid.UUID, freq
 	return store.estimator.Get(ctx, orgID, frequencyMs)
 }
 
+// Close stops the background goroutines and cleans up resources
+func (store *Store) Close() {
+	if estimator, ok := store.estimator.(*MetricPackEstimator); ok {
+		estimator.Stop()
+	}
+}
+
 func (store *Store) execTx(ctx context.Context, fn func(*Store) error) (err error) {
 	closed := false
 	tx, err := store.connPool.Begin(ctx)
