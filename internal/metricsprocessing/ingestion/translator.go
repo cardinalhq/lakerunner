@@ -12,10 +12,11 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package metricsprocessing
+package ingestion
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
@@ -38,8 +39,6 @@ func (t *MetricTranslator) TranslateRow(row *filereader.Row) error {
 	}
 
 	// Only set the specific required fields - assume all other fields are properly set
-	(*row)[wkk.NewRowKey("resource.bucket.name")] = t.Bucket
-	(*row)[wkk.NewRowKey("resource.file.name")] = "./" + t.ObjectID
 	(*row)[wkk.RowKeyCCustomerID] = t.OrgID
 	(*row)[wkk.RowKeyCTelemetryType] = "metrics"
 
@@ -59,9 +58,43 @@ func (t *MetricTranslator) TranslateRow(row *filereader.Row) error {
 		return fmt.Errorf("missing or invalid _cardinalhq.name field for TID computation")
 	}
 
+	filterKeys(row)
+
 	rowMap := pipeline.ToStringMap(*row)
 	tid := helpers.ComputeTID(rowMap)
 	(*row)[wkk.RowKeyCTID] = tid
 
 	return nil
+}
+
+var (
+	keepkeys = map[string]bool{
+		"resource.app":                  true,
+		"resource.container.image.name": true,
+		"resource.container.image.tag":  true,
+		"resource.k8s.cluster.name":     true,
+		"resource.k8s.daemonset.name":   true,
+		"resource.k8s.deployment.name":  true,
+		"resource.k8s.namespace.name":   true,
+		"resource.k8s.pod.ip":           true,
+		"resource.k8s.pod.name":         true,
+		"resource.k8s.statefulset.name": true,
+		"resource.service.name":         true,
+		"resource.service.version":      true,
+	}
+)
+
+func filterKeys(row *filereader.Row) {
+	for k := range *row {
+		name := wkk.RowKeyValue(k)
+		if !strings.HasPrefix(name, "resource.") {
+			continue
+		}
+
+		if keepkeys[name] {
+			continue
+		}
+
+		delete(*row, k)
+	}
 }

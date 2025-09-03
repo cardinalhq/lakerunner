@@ -390,7 +390,7 @@ func createReadersForFiles(validFiles []fileInfo, orgID string, ll *slog.Logger)
 		}
 
 		// Step 2b: Add translation (adds TID and truncates timestamp)
-		translator := &metricsprocessing.MetricTranslator{
+		translator := &MetricTranslator{
 			OrgID:    orgID,
 			Bucket:   fileInfo.item.Bucket,
 			ObjectID: fileInfo.item.ObjectID,
