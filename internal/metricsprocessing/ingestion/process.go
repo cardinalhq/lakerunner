@@ -88,6 +88,32 @@ func ProcessBatch(
 		return fmt.Errorf("failed to get storage profile: %w", err)
 	}
 
+	// Calculate input size from bundle
+	var totalInputSize int64
+	for _, item := range items {
+		totalInputSize += item.FileSize
+	}
+
+	// Calculate output size
+	var totalOutputSize int64
+	for _, r := range result.Results {
+		totalOutputSize += r.FileSize
+	}
+
+	// Calculate compression ratio (output/input * 100)
+	var compressionRatio float64
+	if totalInputSize > 0 {
+		compressionRatio = (float64(totalOutputSize) / float64(totalInputSize)) * 100
+	}
+
+	ll.Debug("Metrics ingestion batch summary",
+		slog.Int("inputFileCount", len(items)),
+		slog.Int64("totalInputBytes", totalInputSize),
+		slog.Int("outputFileCount", len(result.Results)),
+		slog.Int64("totalOutputBytes", totalOutputSize),
+		slog.Float64("compressionRatio", compressionRatio),
+		slog.String("compressionRatioStr", fmt.Sprintf("%.1f%%", compressionRatio)))
+
 	// Upload results and queue work
 	return uploadAndQueue(ctx, ll, awsmanager, mdb, result.Results, profile, ingestDateint)
 }

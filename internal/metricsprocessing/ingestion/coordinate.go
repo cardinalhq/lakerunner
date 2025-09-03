@@ -364,6 +364,11 @@ func downloadAndValidateFiles(ctx context.Context, items []lrdb.Inqueue, tmpdir 
 			continue
 		}
 
+		ll.Debug("Downloaded input file",
+			slog.String("objectID", inf.ObjectID),
+			slog.Int64("inputFileSize", inf.FileSize),
+			slog.String("bucket", inf.Bucket))
+
 		validFiles = append(validFiles, fileInfo{item: inf, tmpfilename: tmpfilename})
 	}
 
