@@ -129,10 +129,15 @@ func (s *Store) ClaimInqueueBundleWithLock(ctx context.Context, params InqueueBu
 				return item.FileSize
 			}
 
-			// Check for single large file that exceeds target
+			// Check if items are old enough
+			oldestAge := time.Since(candidates[0].QueueTs)
+			isOldEnough := oldestAge >= params.GracePeriod
+			// fmt.Printf("DEBUG: oldestAge=%v, gracePeriod=%v, isOldEnough=%v\n", oldestAge, params.GracePeriod, isOldEnough)
+
+			// Check for single large file that exceeds target (only for fresh files)
 			firstEffectiveSize := effectiveSize(candidates[0])
-			if firstEffectiveSize >= params.TargetSize {
-				// Take just this one large file
+			if !isOldEnough && firstEffectiveSize >= params.TargetSize {
+				// Take just this one large file (for fresh files only)
 				bundleIDs = []uuid.UUID{candidates[0].ID}
 			} else {
 				// Greedy accumulation up to max size
@@ -146,36 +151,28 @@ func (s *Store) ClaimInqueueBundleWithLock(ctx context.Context, params InqueueBu
 					bundleIDs = append(bundleIDs, item.ID)
 					totalSize = nextSize
 
-					// Stop if we've reached target
-					if totalSize >= params.TargetSize {
+					// For fresh files, stop if we've reached target
+					// For old files, continue accumulating up to max
+					if !isOldEnough && totalSize >= params.TargetSize {
 						break
 					}
 				}
 
 				// 4. Check if we have enough or if items are old enough
-				if totalSize < params.TargetSize {
-					oldestAge := time.Since(candidates[0].QueueTs)
-					if oldestAge >= params.GracePeriod {
-						// Items are old enough, accept partial batch
-						if len(bundleIDs) == 0 && len(candidates) > 0 {
-							// Take at least one item if it's old
-							bundleIDs = []uuid.UUID{candidates[0].ID}
-						}
-					} else {
-						// 5. Not enough and not old - defer these items
-						deferIDs := make([]uuid.UUID, len(candidates))
-						for i, c := range candidates {
-							deferIDs[i] = c.ID
-						}
-						if err := tx.InqueueDeferItems(ctx, InqueueDeferItemsParams{
-							Column2: deferIDs,
-							Column1: params.deferInterval(),
-						}); err != nil {
-							return fmt.Errorf("defer items (attempt %d): %w", attempt+1, err)
-						}
-						// Try another group
-						continue
+				if totalSize < params.TargetSize && !isOldEnough {
+					// Not enough and not old - defer these items
+					deferIDs := make([]uuid.UUID, len(candidates))
+					for i, c := range candidates {
+						deferIDs[i] = c.ID
 					}
+					if err := tx.InqueueDeferItems(ctx, InqueueDeferItemsParams{
+						Column2: deferIDs,
+						Column1: params.deferInterval(),
+					}); err != nil {
+						return fmt.Errorf("defer items (attempt %d): %w", attempt+1, err)
+					}
+					// Try another group
+					continue
 				}
 			}
 
