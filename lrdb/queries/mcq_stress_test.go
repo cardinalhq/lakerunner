@@ -276,7 +276,22 @@ func TestMcqStress_ConcurrentWorkers(t *testing.T) {
 	// Final cleanup pass - claim and complete all remaining work
 	slog.Info("Final cleanup pass")
 	var remainingCount int32
+	cleanupTimeout := time.After(30 * time.Second) // Add timeout for cleanup
+	maxCleanupIterations := 100                    // Prevent infinite loops
+	cleanupIterations := 0
+
 	for {
+		select {
+		case <-cleanupTimeout:
+			t.Fatalf("Cleanup phase timed out after 30 seconds, processed %d items", remainingCount)
+		default:
+		}
+
+		cleanupIterations++
+		if cleanupIterations > maxCleanupIterations {
+			t.Fatalf("Cleanup phase exceeded maximum iterations (%d), processed %d items", maxCleanupIterations, remainingCount)
+		}
+
 		var claimed int32
 		for workerID := int64(100); workerID < 100+numWorkers; workerID++ {
 			bundle, err := db.ClaimCompactionBundle(ctx, lrdb.BundleParams{
@@ -312,6 +327,10 @@ func TestMcqStress_ConcurrentWorkers(t *testing.T) {
 			break
 		}
 		remainingCount += claimed
+		slog.Info("Cleanup iteration",
+			slog.Int("iteration", cleanupIterations),
+			slog.Int("claimed", int(claimed)),
+			slog.Int("total_remaining", int(remainingCount)))
 	}
 
 	// Verify all work was eventually processed
