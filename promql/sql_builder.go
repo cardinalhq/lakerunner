@@ -60,17 +60,17 @@ func (be *BaseExpr) ToWorkerSQL(step time.Duration) string {
 
 	switch be.FuncName {
 	case "sum_over_time":
-		return buildStepAggNoWindow(be, need{sum: true}, step)
+		return buildStepAggNoWindow(be, step)
 	case "avg_over_time":
-		return buildStepAggNoWindow(be, need{sum: true, count: true}, step)
+		return buildStepAggNoWindow(be, step)
 	case "min_over_time":
-		return buildStepAggNoWindow(be, need{min: true}, step)
+		return buildStepAggNoWindow(be, step)
 	case "max_over_time":
-		return buildStepAggNoWindow(be, need{max: true}, step)
+		return buildStepAggNoWindow(be, step)
 	case "rate", "irate":
-		return buildStepAggNoWindow(be, need{sum: true}, step)
+		return buildStepAggNoWindow(be, step)
 	case "increase":
-		return buildStepAggNoWindow(be, need{sum: true}, step)
+		return buildStepAggNoWindow(be, step)
 	case "":
 		if be.Range == "" {
 			return buildRawSimple(be, []proj{
@@ -80,13 +80,13 @@ func (be *BaseExpr) ToWorkerSQL(step time.Duration) string {
 				{"COUNT(rollup_count)", "count"},
 			}, step)
 		}
-		return buildStepAggNoWindow(be, need{sum: true, count: true}, step)
+		return buildStepAggNoWindow(be, step)
 	default:
 		return ""
 	}
 }
 
-func buildStepAggNoWindow(be *BaseExpr, need need, step time.Duration) string {
+func buildStepAggNoWindow(be *BaseExpr, step time.Duration) string {
 	stepMs := step.Milliseconds()
 	where := withTime(whereFor(be))
 
@@ -106,18 +106,11 @@ func buildStepAggNoWindow(be *BaseExpr, need need, step time.Duration) string {
 
 	// Canonical aliases so MAP paths (and tests) are stable: sum,count,min,max
 	cols := []string{bucketExpr + " AS bucket_ts"}
-	if need.sum {
-		cols = append(cols, "SUM(rollup_sum) AS sum")
-	}
-	if need.count {
-		cols = append(cols, "SUM(COALESCE(rollup_count, 0)) AS count")
-	}
-	if need.min {
-		cols = append(cols, "MIN(rollup_min) AS min")
-	}
-	if need.max {
-		cols = append(cols, "MAX(rollup_max) AS max")
-	}
+	cols = append(cols, "SUM(rollup_sum) AS sum")
+	cols = append(cols, "SUM(COALESCE(rollup_count, 0)) AS count")
+	cols = append(cols, "MIN(rollup_min) AS min")
+	cols = append(cols, "MAX(rollup_max) AS max")
+
 	if len(gbq) > 0 {
 		cols = append(cols, strings.Join(gbq, ", "))
 	}
@@ -166,10 +159,6 @@ func buildDDS(be *BaseExpr, step time.Duration) string {
 }
 
 type proj struct{ expr, alias string }
-
-type need struct {
-	sum, count, min, max bool
-}
 
 const (
 	timePredicate = "\"_cardinalhq.timestamp\" >= {start} AND \"_cardinalhq.timestamp\" < {end}"

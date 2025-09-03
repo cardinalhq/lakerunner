@@ -77,13 +77,15 @@ const (
 	ValScalar ValueKind = iota
 	ValHLL
 	ValDDS
+	ValMap = 4
 )
 
 type Value struct {
-	Kind ValueKind           `json:"-"`
-	Num  float64             `json:"num"`
-	HLL  *hyperloglog.Sketch `json:"hll,omitempty"`
-	DDS  *ddsketch.DDSketch  `json:"dds,omitempty"`
+	Kind      ValueKind           `json:"-"`
+	Num       float64             `json:"num"`
+	HLL       *hyperloglog.Sketch `json:"hll,omitempty"`
+	DDS       *ddsketch.DDSketch  `json:"dds,omitempty"`
+	MapSketch map[string]float64  `json:"map,omitempty"` // for pre-aggregated sketches (sum, count, min, max, etc.)
 }
 
 type EvalResult struct {
