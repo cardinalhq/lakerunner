@@ -26,25 +26,25 @@ import (
 func TestBatchOrgSafetyCheck(t *testing.T) {
 	tests := []struct {
 		name    string
-		items   []lrdb.ClaimInqueueWorkBatchRow
+		items   []lrdb.InqueueGetBundleItemsRow
 		wantErr bool
 		errMsg  string
 	}{
 		{
 			name:    "EmptyBatch",
-			items:   []lrdb.ClaimInqueueWorkBatchRow{},
+			items:   []lrdb.InqueueGetBundleItemsRow{},
 			wantErr: false,
 		},
 		{
 			name: "SingleItem",
-			items: []lrdb.ClaimInqueueWorkBatchRow{
+			items: []lrdb.InqueueGetBundleItemsRow{
 				{OrganizationID: uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")},
 			},
 			wantErr: false,
 		},
 		{
 			name: "SameOrgBatch",
-			items: []lrdb.ClaimInqueueWorkBatchRow{
+			items: []lrdb.InqueueGetBundleItemsRow{
 				{OrganizationID: uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")},
 				{OrganizationID: uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")},
 				{OrganizationID: uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")},
@@ -53,7 +53,7 @@ func TestBatchOrgSafetyCheck(t *testing.T) {
 		},
 		{
 			name: "DifferentOrgBatch",
-			items: []lrdb.ClaimInqueueWorkBatchRow{
+			items: []lrdb.InqueueGetBundleItemsRow{
 				{OrganizationID: uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")},
 				{OrganizationID: uuid.MustParse("550e8400-e29b-41d4-a716-446655440001")}, // Different org
 				{OrganizationID: uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")},
@@ -63,7 +63,7 @@ func TestBatchOrgSafetyCheck(t *testing.T) {
 		},
 		{
 			name: "DifferentOrgAtEnd",
-			items: []lrdb.ClaimInqueueWorkBatchRow{
+			items: []lrdb.InqueueGetBundleItemsRow{
 				{OrganizationID: uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")},
 				{OrganizationID: uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")},
 				{OrganizationID: uuid.MustParse("550e8400-e29b-41d4-a716-446655440002")}, // Different org at end

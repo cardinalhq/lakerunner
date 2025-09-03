@@ -235,33 +235,35 @@ func ingestFilesBatch(
 	loop *IngestLoopContext,
 	batchProcessingFx InqueueBatchProcessingFunction,
 ) (bool, bool, error) {
-	batchSize := helpers.GetBatchSizeForSignal(loop.signal)
-
 	ctx, span := tracer.Start(ctx, "ingest_batch", trace.WithAttributes(commonAttributes.ToSlice()...))
 	defer span.End()
 
 	t0 := time.Now()
 
-	// Claim batch directly - no pre-fetch needed as SQL finds best group automatically
-	items, err := loop.mdb.ClaimInqueueWorkBatch(ctx, lrdb.ClaimInqueueWorkBatchParams{
-		Signal:        loop.signal,
+	// Use new bundle claiming with lock
+	bundle, err := loop.mdb.ClaimInqueueBundleWithLock(ctx, lrdb.InqueueBundleParams{
 		WorkerID:      myInstanceID,
-		MaxTotalSize:  helpers.GetMaxTotalSize(),
-		MinTotalSize:  helpers.GetMinBatchSize(),
-		MaxAgeSeconds: int32(helpers.GetMaxAgeSeconds()),
-		BatchCount:    int32(batchSize),
+		Signal:        loop.signal,
+		TargetSize:    helpers.GetMinBatchSize(),
+		MaxSize:       helpers.GetMaxTotalSize(),
+		GracePeriod:   time.Duration(helpers.GetMaxAgeSeconds()) * time.Second,
+		DeferInterval: 10 * time.Second,
+		Jitter:        5 * time.Second,
+		MaxAttempts:   5,
+		MaxCandidates: int32(helpers.GetBatchSizeForSignal(loop.signal)),
 	})
 	inqueueFetchDuration.Record(ctx, time.Since(t0).Seconds(),
 		metric.WithAttributeSet(commonAttributes),
 		metric.WithAttributes(
 			attribute.Bool("hasError", err != nil),
-			attribute.Bool("noRows", len(items) == 0),
+			attribute.Bool("noRows", len(bundle.Items) == 0),
 		))
 
 	if err != nil {
 		return true, false, fmt.Errorf("failed to claim batch inqueue work: %w", err)
 	}
 
+	items := bundle.Items
 	if len(items) == 0 {
 		return true, false, nil
 	}
@@ -286,11 +288,28 @@ func ingestFilesBatch(
 		slog.Int("instanceNum", int(items[0].InstanceNum)))
 
 	handlers := make([]*workqueue.InqueueHandler, len(items))
-	var newWorkItems []lrdb.ClaimInqueueWorkBatchRow
+	var newWorkItems []lrdb.InqueueGetBundleItemsRow
 	var newWorkHandlers []*workqueue.InqueueHandler
 
 	for i, item := range items {
-		handlers[i] = workqueue.NewInqueueHandlerFromLRDB(lrdb.Inqueue(item), loop.mdb, maxWorkRetries, workqueue.WithLogger(ll))
+		// Convert to Inqueue type for handler
+		inqItem := lrdb.Inqueue{
+			ID:             item.ID,
+			QueueTs:        item.QueueTs,
+			Priority:       item.Priority,
+			OrganizationID: item.OrganizationID,
+			CollectorName:  item.CollectorName,
+			InstanceNum:    item.InstanceNum,
+			Bucket:         item.Bucket,
+			ObjectID:       item.ObjectID,
+			Signal:         item.Signal,
+			Tries:          item.Tries,
+			ClaimedBy:      item.ClaimedBy,
+			ClaimedAt:      item.ClaimedAt,
+			HeartbeatedAt:  item.HeartbeatedAt,
+			FileSize:       item.FileSize,
+		}
+		handlers[i] = workqueue.NewInqueueHandlerFromLRDB(inqItem, loop.mdb, maxWorkRetries, workqueue.WithLogger(ll))
 
 		if item.Tries > 10 {
 			ll.Warn("Too many tries, deleting item", slog.String("itemID", item.ID.String()))
@@ -363,7 +382,22 @@ func ingestFilesBatch(
 	t0 = time.Now()
 	inqueueBatch := make([]lrdb.Inqueue, len(newWorkItems))
 	for i, item := range newWorkItems {
-		inqueueBatch[i] = lrdb.Inqueue(item)
+		inqueueBatch[i] = lrdb.Inqueue{
+			ID:             item.ID,
+			QueueTs:        item.QueueTs,
+			Priority:       item.Priority,
+			OrganizationID: item.OrganizationID,
+			CollectorName:  item.CollectorName,
+			InstanceNum:    item.InstanceNum,
+			Bucket:         item.Bucket,
+			ObjectID:       item.ObjectID,
+			Signal:         item.Signal,
+			Tries:          item.Tries,
+			ClaimedBy:      item.ClaimedBy,
+			ClaimedAt:      item.ClaimedAt,
+			HeartbeatedAt:  item.HeartbeatedAt,
+			FileSize:       item.FileSize,
+		}
 	}
 	err = batchProcessingFx(ctx, ll, tmpdir, loop.sp, loop.mdb, loop.awsmanager, inqueueBatch, ingestDateint, rpfEstimate, loop)
 	inqueueDuration.Record(ctx, time.Since(t0).Seconds(),
@@ -393,7 +427,7 @@ func ingestFilesBatch(
 }
 
 // validateBatchOrganizationConsistency ensures all items in a batch belong to the same organization
-func validateBatchOrganizationConsistency(items []lrdb.ClaimInqueueWorkBatchRow) error {
+func validateBatchOrganizationConsistency(items []lrdb.InqueueGetBundleItemsRow) error {
 	if len(items) <= 1 {
 		return nil // Single item or empty batch is always safe
 	}

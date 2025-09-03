@@ -147,6 +147,7 @@ type Inqueue struct {
 	ClaimedAt      *time.Time `json:"claimed_at"`
 	FileSize       int64      `json:"file_size"`
 	HeartbeatedAt  *time.Time `json:"heartbeated_at"`
+	EligibleAt     time.Time  `json:"eligible_at"`
 }
 
 type InqueueJournal struct {

@@ -104,4 +104,3 @@ func newMRQHeartbeaterWithTracker(db mrqHeartbeatStore, workerID int64, tracker 
 
 	return heartbeat.New(heartbeatFunc, time.Minute, logger)
 }
-

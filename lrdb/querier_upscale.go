@@ -53,10 +53,15 @@ type WorkQueueQuerier interface {
 	WorkQueueClaim(ctx context.Context, params WorkQueueClaimParams) (WorkQueueClaimRow, error)
 }
 
+type InqueueBundler interface {
+	ClaimInqueueBundleWithLock(ctx context.Context, params InqueueBundleParams) (InqueueBundleResult, error)
+}
+
 type StoreFull interface {
 	QuerierFull
 	LogSegmentUpserter
 	MetricSegmentInserter
 	TraceSegmentInserter
 	WorkQueueQuerier
+	InqueueBundler
 }

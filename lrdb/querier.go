@@ -55,8 +55,18 @@ type Querier interface {
 	GetMetricSegsByIds(ctx context.Context, arg GetMetricSegsByIdsParams) ([]MetricSeg, error)
 	GetSpanInfoByFingerprint(ctx context.Context, arg GetSpanInfoByFingerprintParams) (GetSpanInfoByFingerprintRow, error)
 	GetTraceSegmentsForCompaction(ctx context.Context, arg GetTraceSegmentsForCompactionParams) ([]GetTraceSegmentsForCompactionRow, error)
+	// Claim a bundle of items
+	InqueueClaimBundle(ctx context.Context, arg InqueueClaimBundleParams) error
+	// Defer items by pushing their eligible_at forward
+	InqueueDeferItems(ctx context.Context, arg InqueueDeferItemsParams) error
+	// Fetch all eligible candidates matching the grouping key
+	InqueueFetchCandidates(ctx context.Context, arg InqueueFetchCandidatesParams) ([]InqueueFetchCandidatesRow, error)
+	// Get full details for claimed bundle items
+	InqueueGetBundleItems(ctx context.Context, dollar_1 []uuid.UUID) ([]InqueueGetBundleItemsRow, error)
 	InqueueJournalDelete(ctx context.Context, arg InqueueJournalDeleteParams) error
 	InqueueJournalUpsert(ctx context.Context, arg InqueueJournalUpsertParams) (bool, error)
+	// Pick the oldest eligible item for a given signal
+	InqueuePickHead(ctx context.Context, dollar_1 string) (InqueuePickHeadRow, error)
 	// Get queue depth for ingest scaling by signal
 	InqueueScalingDepth(ctx context.Context, signal string) (interface{}, error)
 	InqueueSummary(ctx context.Context) ([]InqueueSummaryRow, error)
