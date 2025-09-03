@@ -25,7 +25,7 @@ import (
 	otelmetric "go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
-	"github.com/cardinalhq/lakerunner/internal/rowcodec"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/rowcodec"
 )
 
 // RowIndex represents a lightweight pointer to a binary-encoded row in the temp file.
@@ -36,7 +36,7 @@ type RowIndex struct {
 	ByteLength int32
 }
 
-// DiskSortingReader reads all rows from an underlying reader, binary-encodes them to a temp file,
+// DiskSortingReader reads all rows from an underlying reader, encodes them to a temp file,
 // sorts by index using a custom sort function, then returns them in sorted order.
 // This provides memory-efficient sorting for large datasets that don't fit in RAM.
 
@@ -88,12 +88,12 @@ func NewDiskSortingReader(reader Reader, keyProvider SortKeyProvider, batchSize 
 		return nil, fmt.Errorf("failed to create temp file: %w", err)
 	}
 
-	// Create binary codec config
-	codec, err := rowcodec.NewBinary()
+	// Create default codec (Binary for compatibility, can use TypeCBOR for better performance)
+	codec, err := rowcodec.New(rowcodec.TypeDefault)
 	if err != nil {
 		tempFile.Close()
 		os.Remove(tempFile.Name())
-		return nil, fmt.Errorf("failed to create binary codec: %w", err)
+		return nil, fmt.Errorf("failed to create codec: %w", err)
 	}
 
 	return &DiskSortingReader{
@@ -157,7 +157,7 @@ func (r *DiskSortingReader) writeAndIndexAllRows(ctx context.Context) error {
 	return nil
 }
 
-// writeAndIndexRow binary-encodes a row to the temp file and adds an index entry.
+// writeAndIndexRow encodes a row to the temp file and adds an index entry.
 func (r *DiskSortingReader) writeAndIndexRow(row Row) error {
 	// Get current file position
 	offset, err := r.tempFile.Seek(0, io.SeekCurrent)
@@ -165,14 +165,14 @@ func (r *DiskSortingReader) writeAndIndexRow(row Row) error {
 		return fmt.Errorf("failed to get file offset: %w", err)
 	}
 
-	// Binary encode the row (converts RowKeys to strings internally)
+	// Encode the row (converts RowKeys to strings internally)
 	startPos := offset
 	rowBytes, err := r.codec.EncodeRow(row)
 	if err != nil {
-		return fmt.Errorf("failed to binary encode row: %w", err)
+		return fmt.Errorf("failed to encode row: %w", err)
 	}
 	if _, err := r.tempFile.Write(rowBytes); err != nil {
-		return fmt.Errorf("failed to write binary data: %w", err)
+		return fmt.Errorf("failed to write encoded data: %w", err)
 	}
 
 	// Get end position to calculate length
@@ -228,16 +228,16 @@ func (r *DiskSortingReader) Next(ctx context.Context) (*Batch, error) {
 			return nil, fmt.Errorf("failed to seek to row offset %d: %w", idx.FileOffset, err)
 		}
 
-		// Read the binary bytes
+		// Read the encoded bytes
 		rowBytes := make([]byte, idx.ByteLength)
 		if _, err := r.tempFile.Read(rowBytes); err != nil {
-			return nil, fmt.Errorf("failed to read binary data at offset %d: %w", idx.FileOffset, err)
+			return nil, fmt.Errorf("failed to read encoded data at offset %d: %w", idx.FileOffset, err)
 		}
 
 		// Decode directly into the batch row to avoid allocation
 		batchRow := batch.AddRow()
 		if err := r.codec.DecodeRow(rowBytes, batchRow); err != nil {
-			return nil, fmt.Errorf("failed to decode binary row at offset %d: %w", idx.FileOffset, err)
+			return nil, fmt.Errorf("failed to decode row at offset %d: %w", idx.FileOffset, err)
 		}
 
 		r.currentIndex++

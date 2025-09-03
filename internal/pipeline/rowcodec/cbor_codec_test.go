@@ -56,12 +56,6 @@ func TestCBORCodec_BasicTypes(t *testing.T) {
 		{"unicode_string", "Hello 世界 🌍"},
 		{"byte_slice", []byte{0x01, 0x02, 0x03, 0xFF}},
 		{"empty_byte_slice", []byte{}},
-		{"int_slice", []int64{1, 2, 3, 4, 5}},
-		{"float_slice", []float64{1.1, 2.2, 3.3}},
-		{"string_slice", []string{"a", "b", "c"}},
-		{"empty_int_slice", []int64{}},
-		{"empty_float_slice", []float64{}},
-		{"empty_string_slice", []string{}},
 	}
 
 	codec, err := NewCBOR()
@@ -99,47 +93,6 @@ func TestCBORCodec_BasicTypes(t *testing.T) {
 				actualFloat, ok2 := decodedValue.(float64)
 				require.True(t, ok1 && ok2, "Both should be float64")
 				assert.True(t, math.IsNaN(expectedFloat) && math.IsNaN(actualFloat), "Both should be NaN")
-			} else if sliceVal, ok := tc.value.([]int64); ok {
-				// CBOR may decode integers as different types, normalize
-				actualSlice, ok := decodedValue.([]any)
-				if ok {
-					assert.Len(t, actualSlice, len(sliceVal))
-					for i, v := range sliceVal {
-						// Convert to int64 for comparison
-						switch actual := actualSlice[i].(type) {
-						case int64:
-							assert.Equal(t, v, actual)
-						case int:
-							assert.Equal(t, v, int64(actual))
-						case uint64:
-							assert.Equal(t, v, int64(actual))
-						default:
-							t.Errorf("Unexpected type %T at index %d", actual, i)
-						}
-					}
-				} else {
-					assert.Equal(t, tc.value, decodedValue, "Value should be preserved")
-				}
-			} else if sliceVal, ok := tc.value.([]float64); ok {
-				actualSlice, ok := decodedValue.([]any)
-				if ok {
-					assert.Len(t, actualSlice, len(sliceVal))
-					for i, v := range sliceVal {
-						assert.Equal(t, v, actualSlice[i].(float64))
-					}
-				} else {
-					assert.Equal(t, tc.value, decodedValue, "Value should be preserved")
-				}
-			} else if sliceVal, ok := tc.value.([]string); ok {
-				actualSlice, ok := decodedValue.([]any)
-				if ok {
-					assert.Len(t, actualSlice, len(sliceVal))
-					for i, v := range sliceVal {
-						assert.Equal(t, v, actualSlice[i].(string))
-					}
-				} else {
-					assert.Equal(t, tc.value, decodedValue, "Value should be preserved")
-				}
 			} else {
 				assert.Equal(t, tc.value, decodedValue, "Value should be preserved")
 			}

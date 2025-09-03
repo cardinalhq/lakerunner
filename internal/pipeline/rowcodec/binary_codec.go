@@ -28,11 +28,8 @@
 //	3 = float64 (8 bytes, little endian)
 //	4 = string ([uint32: len][bytes])
 //	5 = []byte ([uint32: len][bytes])
-//	6 = int32 (4 bytes, little endian)
-//	7 = float32 (4 bytes, little endian)
-//	8 = []int64
-//	9 = []float64
-//	10 = []string
+//	6 = int32 (4 bytes, little endian) - promoted to int64
+//	7 = float32 (4 bytes, little endian) - promoted to float64
 //
 // This format avoids reflection entirely for maximum memory efficiency.
 package rowcodec
@@ -50,17 +47,14 @@ import (
 )
 
 const (
-	typeNil          = byte(0)
-	typeBool         = byte(1)
-	typeInt64        = byte(2)
-	typeFloat64      = byte(3)
-	typeString       = byte(4)
-	typeBytes        = byte(5)
-	typeInt32        = byte(6)
-	typeFloat32      = byte(7)
-	typeInt64Slice   = byte(8)
-	typeFloat64Slice = byte(9)
-	typeStringSlice  = byte(10)
+	typeNil     = byte(0)
+	typeBool    = byte(1)
+	typeInt64   = byte(2)
+	typeFloat64 = byte(3)
+	typeString  = byte(4)
+	typeBytes   = byte(5)
+	typeInt32   = byte(6) // Legacy, promoted to int64 on encode
+	typeFloat32 = byte(7) // Legacy, promoted to float64 on encode
 )
 
 // bytePool provides reusable byte slices to reduce allocations during decoding
@@ -234,49 +228,6 @@ func (e *BinaryEncoder) writeKeyValue(key string, value any) error {
 		}
 		_, err := e.w.Write(v)
 		return err
-	case []int64:
-		if _, err := e.w.Write([]byte{typeInt64Slice}); err != nil {
-			return err
-		}
-		if err := binary.Write(e.w, binary.LittleEndian, uint32(len(v))); err != nil {
-			return err
-		}
-		for _, item := range v {
-			if err := binary.Write(e.w, binary.LittleEndian, item); err != nil {
-				return err
-			}
-		}
-		return nil
-	case []float64:
-		if _, err := e.w.Write([]byte{typeFloat64Slice}); err != nil {
-			return err
-		}
-		if err := binary.Write(e.w, binary.LittleEndian, uint32(len(v))); err != nil {
-			return err
-		}
-		for _, item := range v {
-			if err := binary.Write(e.w, binary.LittleEndian, math.Float64bits(item)); err != nil {
-				return err
-			}
-		}
-		return nil
-	case []string:
-		if _, err := e.w.Write([]byte{typeStringSlice}); err != nil {
-			return err
-		}
-		if err := binary.Write(e.w, binary.LittleEndian, uint32(len(v))); err != nil {
-			return err
-		}
-		for _, item := range v {
-			itemBytes := []byte(item)
-			if err := binary.Write(e.w, binary.LittleEndian, uint32(len(itemBytes))); err != nil {
-				return err
-			}
-			if _, err := e.w.Write(itemBytes); err != nil {
-				return err
-			}
-		}
-		return nil
 	default:
 		return fmt.Errorf("unsupported type %T for key %q", value, key)
 	}
@@ -395,52 +346,6 @@ func (d *BinaryDecoder) readKeyValue() (string, any, error) {
 		result := make([]byte, bytesLen)
 		copy(result, data)
 		return key, result, nil
-	case typeInt64Slice:
-		var sliceLen uint32
-		if err := binary.Read(d.r, binary.LittleEndian, &sliceLen); err != nil {
-			return "", nil, fmt.Errorf("read int64 slice length: %w", err)
-		}
-		slice := make([]int64, sliceLen)
-		for i := range slice {
-			if err := binary.Read(d.r, binary.LittleEndian, &slice[i]); err != nil {
-				return "", nil, fmt.Errorf("read int64 slice item %d: %w", i, err)
-			}
-		}
-		return key, slice, nil
-	case typeFloat64Slice:
-		var sliceLen uint32
-		if err := binary.Read(d.r, binary.LittleEndian, &sliceLen); err != nil {
-			return "", nil, fmt.Errorf("read float64 slice length: %w", err)
-		}
-		slice := make([]float64, sliceLen)
-		for i := range slice {
-			var bits uint64
-			if err := binary.Read(d.r, binary.LittleEndian, &bits); err != nil {
-				return "", nil, fmt.Errorf("read float64 slice item %d: %w", i, err)
-			}
-			slice[i] = math.Float64frombits(bits)
-		}
-		return key, slice, nil
-	case typeStringSlice:
-		var sliceLen uint32
-		if err := binary.Read(d.r, binary.LittleEndian, &sliceLen); err != nil {
-			return "", nil, fmt.Errorf("read string slice length: %w", err)
-		}
-		slice := make([]string, sliceLen)
-		for i := range slice {
-			var strLen uint32
-			if err := binary.Read(d.r, binary.LittleEndian, &strLen); err != nil {
-				return "", nil, fmt.Errorf("read string slice item %d length: %w", i, err)
-			}
-			strBytes := getPooledBytes(int(strLen))
-			if _, err := io.ReadFull(d.r, strBytes); err != nil {
-				returnPooledBytes(strBytes)
-				return "", nil, fmt.Errorf("read string slice item %d data: %w", i, err)
-			}
-			slice[i] = string(strBytes)
-			returnPooledBytes(strBytes)
-		}
-		return key, slice, nil
 	default:
 		return "", nil, fmt.Errorf("unknown type byte: %d", typeByte[0])
 	}
@@ -540,49 +445,6 @@ func (e *RowEncoder) writeRowKeyValue(key wkk.RowKey, value any) error {
 		}
 		_, err := e.w.Write(v)
 		return err
-	case []int64:
-		if _, err := e.w.Write([]byte{typeInt64Slice}); err != nil {
-			return err
-		}
-		if err := binary.Write(e.w, binary.LittleEndian, uint32(len(v))); err != nil {
-			return err
-		}
-		for _, item := range v {
-			if err := binary.Write(e.w, binary.LittleEndian, item); err != nil {
-				return err
-			}
-		}
-		return nil
-	case []float64:
-		if _, err := e.w.Write([]byte{typeFloat64Slice}); err != nil {
-			return err
-		}
-		if err := binary.Write(e.w, binary.LittleEndian, uint32(len(v))); err != nil {
-			return err
-		}
-		for _, item := range v {
-			if err := binary.Write(e.w, binary.LittleEndian, math.Float64bits(item)); err != nil {
-				return err
-			}
-		}
-		return nil
-	case []string:
-		if _, err := e.w.Write([]byte{typeStringSlice}); err != nil {
-			return err
-		}
-		if err := binary.Write(e.w, binary.LittleEndian, uint32(len(v))); err != nil {
-			return err
-		}
-		for _, item := range v {
-			itemBytes := []byte(item)
-			if err := binary.Write(e.w, binary.LittleEndian, uint32(len(itemBytes))); err != nil {
-				return err
-			}
-			if _, err := e.w.Write(itemBytes); err != nil {
-				return err
-			}
-		}
-		return nil
 	default:
 		return fmt.Errorf("unsupported type %T for key %q", value, string(key.Value()))
 	}
@@ -703,52 +565,6 @@ func (d *RowDecoder) readRowKeyValue() (wkk.RowKey, any, error) {
 		result := make([]byte, bytesLen)
 		copy(result, data)
 		return key, result, nil
-	case typeInt64Slice:
-		var sliceLen uint32
-		if err := binary.Read(d.r, binary.LittleEndian, &sliceLen); err != nil {
-			return wkk.RowKey{}, nil, fmt.Errorf("read int64 slice length: %w", err)
-		}
-		slice := make([]int64, sliceLen)
-		for i := range slice {
-			if err := binary.Read(d.r, binary.LittleEndian, &slice[i]); err != nil {
-				return wkk.RowKey{}, nil, fmt.Errorf("read int64 slice item %d: %w", i, err)
-			}
-		}
-		return key, slice, nil
-	case typeFloat64Slice:
-		var sliceLen uint32
-		if err := binary.Read(d.r, binary.LittleEndian, &sliceLen); err != nil {
-			return wkk.RowKey{}, nil, fmt.Errorf("read float64 slice length: %w", err)
-		}
-		slice := make([]float64, sliceLen)
-		for i := range slice {
-			var bits uint64
-			if err := binary.Read(d.r, binary.LittleEndian, &bits); err != nil {
-				return wkk.RowKey{}, nil, fmt.Errorf("read float64 slice item %d: %w", i, err)
-			}
-			slice[i] = math.Float64frombits(bits)
-		}
-		return key, slice, nil
-	case typeStringSlice:
-		var sliceLen uint32
-		if err := binary.Read(d.r, binary.LittleEndian, &sliceLen); err != nil {
-			return wkk.RowKey{}, nil, fmt.Errorf("read string slice length: %w", err)
-		}
-		slice := make([]string, sliceLen)
-		for i := range slice {
-			var strLen uint32
-			if err := binary.Read(d.r, binary.LittleEndian, &strLen); err != nil {
-				return wkk.RowKey{}, nil, fmt.Errorf("read string slice item %d length: %w", i, err)
-			}
-			strBytes := getPooledBytes(int(strLen))
-			if _, err := io.ReadFull(d.r, strBytes); err != nil {
-				returnPooledBytes(strBytes)
-				return wkk.RowKey{}, nil, fmt.Errorf("read string slice item %d data: %w", i, err)
-			}
-			slice[i] = string(strBytes)
-			returnPooledBytes(strBytes)
-		}
-		return key, slice, nil
 	default:
 		return wkk.RowKey{}, nil, fmt.Errorf("unknown type byte: %d", typeByte[0])
 	}

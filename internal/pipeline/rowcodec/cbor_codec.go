@@ -39,9 +39,10 @@ func NewCBORCodec() (*CBORCodec, error) {
 	}
 
 	dm, err := cbor.DecOptions{
-		DupMapKey:       cbor.DupMapKeyEnforcedAPF, // Enforce unique keys
-		IndefLength:     cbor.IndefLengthAllowed,   // Allow indefinite length
-		MaxNestedLevels: 20,                        // Reasonable nesting limit
+		DupMapKey:       cbor.DupMapKeyEnforcedAPF,      // Enforce unique keys
+		IndefLength:     cbor.IndefLengthAllowed,        // Allow indefinite length
+		MaxNestedLevels: 20,                             // Reasonable nesting limit
+		IntDec:          cbor.IntDecConvertSignedOrFail, // Always decode to int64 for consistency
 	}.DecMode()
 	if err != nil {
 		return nil, fmt.Errorf("create CBOR decoder: %w", err)

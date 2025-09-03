@@ -64,6 +64,8 @@ type Decoder interface {
 type Type string
 
 const (
+	// default type
+	TypeDefault Type = ""
 	// TypeBinary is the custom binary codec.
 	TypeBinary Type = "binary"
 	// TypeCBOR is the CBOR codec.
@@ -88,11 +90,12 @@ func NewGOB() (Codec, error) {
 }
 
 // New creates a new codec of the specified type.
+// TypeDefault uses CBOR for better performance (smaller files, less memory).
 func New(t Type) (Codec, error) {
 	switch t {
-	case TypeBinary, "":
+	case TypeBinary:
 		return NewBinary()
-	case TypeCBOR:
+	case TypeCBOR, TypeDefault:
 		return NewCBOR()
 	case TypeGOB:
 		return NewGOB()

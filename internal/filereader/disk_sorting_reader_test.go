@@ -95,7 +95,6 @@ func TestDiskSortingReader_TypePreservation(t *testing.T) {
 		wkk.NewRowKey("int64_field"):   int64(9223372036854775807), // Max int64
 		wkk.NewRowKey("float64_field"): float64(3.14159),
 		wkk.NewRowKey("byte_slice"):    []byte{0x01, 0x02, 0x03},
-		wkk.NewRowKey("float64_slice"): []float64{1.1, 2.2, 3.3},
 		wkk.NewRowKey("bool_field"):    true,
 		wkk.NewRowKey("nil_field"):     nil,
 	}
@@ -120,7 +119,6 @@ func TestDiskSortingReader_TypePreservation(t *testing.T) {
 	assert.Equal(t, int64(9223372036854775807), decoded[wkk.NewRowKey("int64_field")])
 	assert.Equal(t, float64(3.14159), decoded[wkk.NewRowKey("float64_field")])
 	assert.Equal(t, []byte{0x01, 0x02, 0x03}, decoded[wkk.NewRowKey("byte_slice")])
-	assert.Equal(t, []float64{1.1, 2.2, 3.3}, decoded[wkk.NewRowKey("float64_slice")])
 	assert.Equal(t, true, decoded[wkk.NewRowKey("bool_field")])
 	assert.Nil(t, decoded[wkk.NewRowKey("nil_field")])
 }
