@@ -30,8 +30,7 @@ import (
 type InqueueBundleParams struct {
 	WorkerID      int64
 	Signal        string
-	TargetSize    int64         // target total file size
-	MaxSize       int64         // maximum total file size
+	TargetSize    int64         // target total file size (will accumulate up to +20%)
 	GracePeriod   time.Duration // how old before we accept partial batch
 	DeferInterval time.Duration // base defer time
 	Jitter        time.Duration // random jitter to add
@@ -134,28 +133,40 @@ func (s *Store) ClaimInqueueBundleWithLock(ctx context.Context, params InqueueBu
 			isOldEnough := oldestAge >= params.GracePeriod
 			// fmt.Printf("DEBUG: oldestAge=%v, gracePeriod=%v, isOldEnough=%v\n", oldestAge, params.GracePeriod, isOldEnough)
 
-			// Check for single large file that exceeds target (only for fresh files)
+			// Calculate the upper bound for accumulation (target + 20%)
+			upperBound := params.TargetSize + (params.TargetSize / 5) // target + 20%
+
+			// Check for single large file
 			firstEffectiveSize := effectiveSize(candidates[0])
-			if !isOldEnough && firstEffectiveSize >= params.TargetSize {
-				// Take just this one large file (for fresh files only)
+			if firstEffectiveSize >= params.TargetSize {
+				// Single file meets or exceeds target - take it alone
 				bundleIDs = []uuid.UUID{candidates[0].ID}
 			} else {
-				// Greedy accumulation up to max size
+				// Greedy accumulation up to upper bound (target + 20%)
 				for _, item := range candidates {
 					itemEffectiveSize := effectiveSize(item)
 					nextSize := totalSize + itemEffectiveSize
-					if nextSize > params.MaxSize {
-						// Would exceed max, stop here
+
+					// Special case: if this is the first item and nothing accumulated yet, always take it
+					if len(bundleIDs) == 0 {
+						bundleIDs = append(bundleIDs, item.ID)
+						totalSize = itemEffectiveSize
+						continue
+					}
+
+					// Stop if adding this item would exceed upper bound
+					if nextSize > upperBound {
+						// If we haven't reached target yet and files are fresh, keep trying
+						if totalSize < params.TargetSize && !isOldEnough {
+							// Skip this item and continue looking for smaller ones
+							continue
+						}
+						// Otherwise stop here
 						break
 					}
+
 					bundleIDs = append(bundleIDs, item.ID)
 					totalSize = nextSize
-
-					// For fresh files, stop if we've reached target
-					// For old files, continue accumulating up to max
-					if !isOldEnough && totalSize >= params.TargetSize {
-						break
-					}
 				}
 
 				// 4. Check if we have enough or if items are old enough

@@ -68,8 +68,7 @@ func TestClaimInqueueBundle_SimpleBatch(t *testing.T) {
 	result, err := store.ClaimInqueueBundleWithLock(ctx, lrdb.InqueueBundleParams{
 		WorkerID:      1000,
 		Signal:        signal,
-		TargetSize:    10000,           // Just 10KB target
-		MaxSize:       1000000,         // 1MB max - plenty of room for all 5 files (50KB total)
+		TargetSize:    50000,           // 50KB target - should get all files (50KB total) as it's within +20%
 		GracePeriod:   1 * time.Minute, // Files are 2 minutes old
 		DeferInterval: 10 * time.Second,
 		MaxAttempts:   1,   // Just need one attempt

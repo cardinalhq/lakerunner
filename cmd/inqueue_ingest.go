@@ -245,7 +245,6 @@ func ingestFilesBatch(
 		WorkerID:      myInstanceID,
 		Signal:        loop.signal,
 		TargetSize:    helpers.GetMinBatchSize(),
-		MaxSize:       helpers.GetMaxTotalSize(),
 		GracePeriod:   time.Duration(helpers.GetMaxAgeSeconds()) * time.Second,
 		DeferInterval: 10 * time.Second,
 		Jitter:        5 * time.Second,

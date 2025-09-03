@@ -47,7 +47,6 @@ func TestClaimInqueueBundleWithLock(t *testing.T) {
 			WorkerID:   1,
 			Signal:     "metrics",
 			TargetSize: 1000,
-			MaxSize:    2000,
 		})
 		require.NoError(t, err)
 		assert.Empty(t, result.Items)
@@ -69,7 +68,6 @@ func TestClaimInqueueBundleWithLock(t *testing.T) {
 			WorkerID:   1,
 			Signal:     "metrics",
 			TargetSize: 1000,
-			MaxSize:    10000,
 		})
 		require.NoError(t, err)
 		require.Len(t, result.Items, 1)
@@ -104,7 +102,6 @@ func TestClaimInqueueBundleWithLock(t *testing.T) {
 			WorkerID:   2,
 			Signal:     "metrics",
 			TargetSize: 1000, // Should claim all 10 files (effective size = 1000)
-			MaxSize:    2000,
 		})
 		require.NoError(t, err)
 		assert.Len(t, result.Items, 10)
@@ -141,7 +138,6 @@ func TestClaimInqueueBundleWithLock(t *testing.T) {
 			WorkerID:   3,
 			Signal:     "logs",
 			TargetSize: 900,
-			MaxSize:    1000, // Should get first 3 files (300+400+200=900)
 		})
 		require.NoError(t, err)
 		assert.Len(t, result.Items, 3)
@@ -177,8 +173,7 @@ func TestClaimInqueueBundleWithLock(t *testing.T) {
 		result, err := store.ClaimInqueueBundleWithLock(ctx, lrdb.InqueueBundleParams{
 			WorkerID:    4,
 			Signal:      "traces",
-			TargetSize:  1000, // Much larger than available
-			MaxSize:     2000,
+			TargetSize:  1000,            // Much larger than available
 			GracePeriod: 1 * time.Minute, // Items older than this should be returned
 		})
 		require.NoError(t, err)
@@ -209,7 +204,6 @@ func TestClaimInqueueBundleWithLock(t *testing.T) {
 			WorkerID:      5,
 			Signal:        "metrics",
 			TargetSize:    1000,
-			MaxSize:       2000,
 			GracePeriod:   1 * time.Minute,
 			DeferInterval: 5 * time.Second,
 			MaxAttempts:   1, // Only try once
@@ -251,7 +245,6 @@ func TestClaimInqueueBundleWithLock(t *testing.T) {
 			WorkerID:   6,
 			Signal:     "metrics",
 			TargetSize: 500,
-			MaxSize:    1000,
 		})
 		require.NoError(t, err)
 		require.Len(t, result.Items, 1)
@@ -282,7 +275,6 @@ func TestClaimInqueueBundleWithLock(t *testing.T) {
 			WorkerID:   100,
 			Signal:     "logs",
 			TargetSize: 1000,
-			MaxSize:    2000,
 		})
 		require.NoError(t, err)
 		assert.Len(t, result1.Items, 1)
@@ -292,7 +284,6 @@ func TestClaimInqueueBundleWithLock(t *testing.T) {
 			WorkerID:   101,
 			Signal:     "logs",
 			TargetSize: 1000,
-			MaxSize:    2000,
 		})
 		require.NoError(t, err)
 		assert.Empty(t, result2.Items)
@@ -332,7 +323,6 @@ func TestClaimInqueueBundleWithLock(t *testing.T) {
 			WorkerID:   8,
 			Signal:     "metrics",
 			TargetSize: 500, // Lower target to match file size
-			MaxSize:    2000,
 		})
 		require.NoError(t, err)
 		require.Len(t, result.Items, 1)
@@ -371,7 +361,6 @@ func TestClaimInqueueBundleWithLock(t *testing.T) {
 			WorkerID:      9,
 			Signal:        "traces",
 			TargetSize:    1000,
-			MaxSize:       2000,
 			MaxAttempts:   2,             // Only try 2 groups
 			GracePeriod:   1 * time.Hour, // Don't trigger grace period
 			DeferInterval: 1 * time.Second,

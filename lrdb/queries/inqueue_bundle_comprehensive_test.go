@@ -89,7 +89,6 @@ func TestClaimInqueueBundle_MixedGroupingKeys(t *testing.T) {
 		WorkerID:      1,
 		Signal:        "metrics",
 		TargetSize:    750, // Will get org1_inst1_file1(100) + org1_inst1_file2(250) + org1_inst1_file3(400)
-		MaxSize:       1000,
 		GracePeriod:   5 * time.Minute,
 		DeferInterval: 10 * time.Second,
 		MaxAttempts:   5,
@@ -112,7 +111,6 @@ func TestClaimInqueueBundle_MixedGroupingKeys(t *testing.T) {
 		WorkerID:      2,
 		Signal:        "metrics",
 		TargetSize:    500,
-		MaxSize:       600,
 		GracePeriod:   5 * time.Minute,
 		DeferInterval: 10 * time.Second,
 		MaxAttempts:   5,
@@ -196,8 +194,7 @@ func TestClaimInqueueBundle_DeferMechanismWithShortBundles(t *testing.T) {
 	result, err := store.ClaimInqueueBundleWithLock(ctx, lrdb.InqueueBundleParams{
 		WorkerID:      100,
 		Signal:        "logs",
-		TargetSize:    1000, // Small bundles won't meet this
-		MaxSize:       1500,
+		TargetSize:    1000,             // Small bundles won't meet this
 		GracePeriod:   10 * time.Minute, // Not old enough for grace period
 		DeferInterval: 2 * time.Second,
 		Jitter:        100 * time.Millisecond,
@@ -227,7 +224,6 @@ func TestClaimInqueueBundle_DeferMechanismWithShortBundles(t *testing.T) {
 		WorkerID:      101,
 		Signal:        "logs",
 		TargetSize:    1000,
-		MaxSize:       1500,
 		GracePeriod:   10 * time.Minute,
 		DeferInterval: 2 * time.Second,
 		MaxAttempts:   5,
@@ -244,7 +240,6 @@ func TestClaimInqueueBundle_DeferMechanismWithShortBundles(t *testing.T) {
 		WorkerID:      102,
 		Signal:        "logs",
 		TargetSize:    100, // Now small bundles can meet this
-		MaxSize:       500,
 		GracePeriod:   10 * time.Minute,
 		DeferInterval: 2 * time.Second,
 		MaxAttempts:   5,
@@ -295,8 +290,7 @@ func TestClaimInqueueBundle_ExactRowCountExpectations(t *testing.T) {
 		result, err := store.ClaimInqueueBundleWithLock(ctx, lrdb.InqueueBundleParams{
 			WorkerID:      200,
 			Signal:        "metrics",
-			TargetSize:    950,  // 100+200+150+300+250=1000 (first 5)
-			MaxSize:       1000, // Hard limit at 1000
+			TargetSize:    950, // 100+200+150+300+250=1000 (first 5)
 			GracePeriod:   10 * time.Minute,
 			MaxCandidates: 10,
 		})
@@ -323,7 +317,6 @@ func TestClaimInqueueBundle_ExactRowCountExpectations(t *testing.T) {
 			WorkerID:    201,
 			Signal:      "metrics",
 			TargetSize:  1000,
-			MaxSize:     1000,
 			GracePeriod: 1 * time.Minute, // Files are now old enough
 		})
 		require.NoError(t, err)
@@ -363,7 +356,6 @@ func TestClaimInqueueBundle_ExactRowCountExpectations(t *testing.T) {
 			WorkerID:      202,
 			Signal:        "traces",
 			TargetSize:    5000, // Much higher than total
-			MaxSize:       10000,
 			GracePeriod:   1 * time.Minute,
 			MaxCandidates: 15, // Allow more than we have
 		})
@@ -414,8 +406,7 @@ func TestClaimInqueueBundle_ExactRowCountExpectations(t *testing.T) {
 			result, err := store.ClaimInqueueBundleWithLock(ctx, lrdb.InqueueBundleParams{
 				WorkerID:      int64(300 + i),
 				Signal:        "logs",
-				TargetSize:    100,             // Low target, but files are old so should get them anyway
-				MaxSize:       2000,            // High enough to get all files from a group (max 5*200=1000)
+				TargetSize:    1000,            // Target that allows multiple files (1000 + 20% = 1200, can fit 5 files)
 				GracePeriod:   1 * time.Minute, // Items are old enough (2 minutes old)
 				MaxCandidates: 20,              // Increased to ensure we fetch enough
 			})
@@ -492,7 +483,6 @@ func TestClaimInqueueBundle_ExactRowCountExpectations(t *testing.T) {
 			WorkerID:      400,
 			Signal:        "metrics",
 			TargetSize:    1100, // Matches total effective size
-			MaxSize:       1500,
 			GracePeriod:   10 * time.Minute,
 			MaxCandidates: 10,
 		})
@@ -513,6 +503,79 @@ func TestClaimInqueueBundle_ExactRowCountExpectations(t *testing.T) {
 		}
 		assert.Equal(t, 5, binpbCount, "Should have exactly 5 binpb files")
 		assert.Equal(t, 3, jsonCount, "Should have exactly 3 json files")
+
+		// Cleanup
+		for _, id := range fileIDs {
+			_, _ = pool.Exec(ctx, "DELETE FROM inqueue WHERE id = $1", id)
+		}
+	})
+
+	t.Run("OversizedFile", func(t *testing.T) {
+		// Test that a single file exceeding MaxSize is still claimed
+		// This tests the "if seed > max, return seed" rule
+
+		orgID := uuid.New()
+		signal := "metrics"
+		var fileIDs []uuid.UUID
+
+		// Insert a single massive binpb file (20MB raw, 2MB effective)
+		hugeFileID := uuid.New()
+		fileIDs = append(fileIDs, hugeFileID)
+		_, err := pool.Exec(ctx, `
+			INSERT INTO inqueue (
+				id, organization_id, collector_name, instance_num,
+				bucket, object_id, signal, file_size, queue_ts, priority, eligible_at
+			) VALUES ($1, $2, 'collector1', 1, 'test-bucket', 'huge.binpb', $3, $4, $5, 100, NOW())`,
+			hugeFileID, orgID, signal, int64(20*1024*1024), time.Now().Add(-2*time.Minute))
+		require.NoError(t, err)
+
+		// Also insert some smaller files in the same group
+		for i := 0; i < 3; i++ {
+			fileID := uuid.New()
+			fileIDs = append(fileIDs, fileID)
+			_, err = pool.Exec(ctx, `
+				INSERT INTO inqueue (
+					id, organization_id, collector_name, instance_num,
+					bucket, object_id, signal, file_size, queue_ts, priority, eligible_at
+				) VALUES ($1, $2, 'collector1', 1, 'test-bucket', $3, $4, $5, $6, 100, NOW())`,
+				fileID, orgID, fmt.Sprintf("small%d.binpb", i), signal, int64(10*1024),
+				time.Now().Add(-2*time.Minute).Add(time.Duration(i+1)*time.Second))
+			require.NoError(t, err)
+		}
+
+		// Claim with MaxSize = 1MB (smaller than the huge file's effective size of 2MB)
+		result, err := store.ClaimInqueueBundleWithLock(ctx, lrdb.InqueueBundleParams{
+			WorkerID:      5000,
+			Signal:        signal,
+			TargetSize:    100 * 1024, // 100KB target
+			GracePeriod:   1 * time.Minute,
+			DeferInterval: 10 * time.Second,
+			Jitter:        0,
+			MaxAttempts:   1,
+			MaxCandidates: 100,
+		})
+		require.NoError(t, err)
+
+		// Should get exactly the huge file, even though it exceeds MaxSize
+		require.Len(t, result.Items, 1, "Should claim the oversized file even though it exceeds MaxSize")
+		assert.Equal(t, hugeFileID, result.Items[0].ID, "Should claim the huge file")
+		assert.Equal(t, int64(20*1024*1024), result.Items[0].FileSize, "File size should be 20MB")
+
+		// Second claim should get the smaller files
+		result2, err := store.ClaimInqueueBundleWithLock(ctx, lrdb.InqueueBundleParams{
+			WorkerID:      5001,
+			Signal:        signal,
+			TargetSize:    100 * 1024,
+			GracePeriod:   1 * time.Minute,
+			DeferInterval: 10 * time.Second,
+			Jitter:        0,
+			MaxAttempts:   1,
+			MaxCandidates: 100,
+		})
+		require.NoError(t, err)
+
+		// Should get all 3 smaller files (3 * 10KB / 10 = 3KB effective, well under limits)
+		assert.Len(t, result2.Items, 3, "Should claim all 3 smaller files")
 
 		// Cleanup
 		for _, id := range fileIDs {
