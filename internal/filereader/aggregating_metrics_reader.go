@@ -33,10 +33,11 @@ import (
 // aggregationState holds the minimal data needed for aggregation
 // Uses lazy sketch creation - only creates a sketch when we have multiple values
 type aggregationState struct {
-	baseRow   Row                // Template row with all metadata fields
-	sketch    *ddsketch.DDSketch // Accumulated sketch (nil until needed)
-	lastValue *float64           // Last singleton value seen (for lazy sketch creation)
-	rowCount  int                // Number of rows aggregated
+	baseRow     Row                // Template row with all metadata fields
+	ownsBaseRow bool               // Whether we own baseRow (taken from batch)
+	sketch      *ddsketch.DDSketch // Accumulated sketch (nil until needed)
+	lastValue   *float64           // Last singleton value seen (for lazy sketch creation)
+	rowCount    int                // Number of rows aggregated
 }
 
 // AggregatingMetricsReader wraps a sorted Reader to perform streaming aggregation of metrics.
@@ -63,6 +64,10 @@ type AggregatingMetricsReader struct {
 	currentKeyTid  int64
 	currentKeyTs   int64
 	hasCurrentKey  bool
+
+	// Track for zero-copy optimization
+	firstRowBatch *Batch // Batch containing first row of current aggregation
+	firstRowIndex int    // Index in firstRowBatch (-1 if already taken)
 }
 
 // NewAggregatingMetricsReader creates a new AggregatingMetricsReader that aggregates metrics
@@ -236,7 +241,20 @@ func (ar *AggregatingMetricsReader) aggregateGroup(ctx context.Context) (Row, er
 		return nil, fmt.Errorf("finalizing %s aggregation: %w", metricType, err)
 	}
 
-	ar.resetAggregation()
+	// Transfer ownership of the row - don't return to pool since caller will use it
+	if result != nil && ar.aggState.ownsBaseRow {
+		ar.aggState.ownsBaseRow = false // Ownership transferred to caller
+	}
+
+	// Clear state but don't return the row (ownership transferred)
+	ar.aggState = nil
+	ar.firstRowBatch = nil
+	ar.firstRowIndex = -1
+	ar.hasCurrentKey = false
+	ar.currentKeyName = ""
+	ar.currentKeyTid = 0
+	ar.currentKeyTs = 0
+
 	return result, nil
 }
 
@@ -259,9 +277,8 @@ func (ar *AggregatingMetricsReader) finalizeHistogramAggregation(ctx context.Con
 			"tid", state.baseRow[wkk.RowKeyCTID])
 	}
 
-	// Create result row from base row
-	result := make(Row)
-	maps.Copy(result, state.baseRow)
+	// Use the base row directly - we own it and will transfer ownership to the caller
+	result := state.baseRow
 
 	// Update rollup fields from the sketch
 	if err := updateRowFromSketch(result, state.sketch); err != nil {
@@ -273,11 +290,8 @@ func (ar *AggregatingMetricsReader) finalizeHistogramAggregation(ctx context.Con
 
 // finalizeCounterGaugeAggregation completes aggregation for counter/gauge metrics.
 func (ar *AggregatingMetricsReader) finalizeCounterGaugeAggregation(_ context.Context, state *aggregationState) (Row, error) {
-	// Create result row from base row
-	result := make(Row)
-	for k, v := range state.baseRow {
-		result[k] = v
-	}
+	// Use the base row directly - we own it and will transfer ownership to the caller
+	result := state.baseRow
 
 	if state.sketch != nil {
 		// We have a sketch - it already contains all aggregated values
@@ -302,13 +316,23 @@ func (ar *AggregatingMetricsReader) resetAggregation() {
 	ar.currentKeyName = ""
 	ar.currentKeyTid = 0
 	ar.currentKeyTs = 0
+
+	// Return owned row to pool if we have one
+	if ar.aggState != nil && ar.aggState.ownsBaseRow && ar.aggState.baseRow != nil {
+		// Only return to pool if we own it and haven't transferred ownership
+		pipeline.ReturnPooledRow(ar.aggState.baseRow)
+	}
+
 	// Clear aggregation state
 	ar.aggState = nil
+	ar.firstRowBatch = nil
+	ar.firstRowIndex = -1
 }
 
 // addRowToAggregation adds a row to the current aggregation state.
 // Uses lazy sketch creation - only creates sketches when needed for multiple values.
-func (ar *AggregatingMetricsReader) addRowToAggregation(ctx context.Context, row Row) error {
+// rowIndex is the index in pendingBatch (-1 if not from current batch).
+func (ar *AggregatingMetricsReader) addRowToAggregation(ctx context.Context, row Row, rowIndex int) error {
 	// VALIDATION: Histograms must always have sketches
 	if isHistogramType(row) && isSketchEmpty(row) {
 		if name, ok := row[wkk.RowKeyCName].(string); ok {
@@ -328,12 +352,33 @@ func (ar *AggregatingMetricsReader) addRowToAggregation(ctx context.Context, row
 	// Create aggregation state if this is the first row for this key
 	if ar.aggState == nil {
 		// First row for this aggregation key - create new state
-		// Copy the row as base
-		baseRow := make(Row)
-		maps.Copy(baseRow, row)
+		var baseRow Row
+		var ownsRow bool
+
+		// Try zero-copy: take ownership of the row from the batch
+		if rowIndex >= 0 && ar.pendingBatch != nil {
+			// We can take ownership of this row from the batch
+			baseRow = ar.pendingBatch.TakeRow(rowIndex)
+			if baseRow != nil {
+				ownsRow = true
+				ar.firstRowBatch = ar.pendingBatch
+				ar.firstRowIndex = rowIndex
+			}
+		}
+
+		// Fallback: copy if we couldn't take ownership
+		if baseRow == nil {
+			baseRow = pipeline.GetPooledRow()
+			maps.Copy(baseRow, row)
+			ownsRow = true
+			ar.firstRowBatch = nil
+			ar.firstRowIndex = -1
+		}
+
 		ar.aggState = &aggregationState{
-			baseRow:  baseRow,
-			rowCount: 0,
+			baseRow:     baseRow,
+			ownsBaseRow: ownsRow,
+			rowCount:    0,
 		}
 	}
 
@@ -442,7 +487,8 @@ func (ar *AggregatingMetricsReader) readNextBatchFromUnderlying(ctx context.Cont
 
 // processRow processes a single row and adds aggregated results to the batch.
 // Returns an error if processing fails.
-func (ar *AggregatingMetricsReader) processRow(ctx context.Context, row Row, batch *Batch) error {
+// rowIndex is the index of this row in pendingBatch (for zero-copy optimization).
+func (ar *AggregatingMetricsReader) processRow(ctx context.Context, row Row, rowIndex int, batch *Batch) error {
 
 	// Create aggregation key for this row
 	key, err := ar.makeAggregationKey(row)
@@ -474,7 +520,7 @@ func (ar *AggregatingMetricsReader) processRow(ctx context.Context, row Row, bat
 
 		// Always release the key since we store values separately
 		key.Release()
-		if err := ar.addRowToAggregation(ctx, row); err != nil {
+		if err := ar.addRowToAggregation(ctx, row, rowIndex); err != nil {
 			slog.Error("Failed to add row to aggregation", "error", err)
 		}
 		return nil
@@ -489,8 +535,9 @@ func (ar *AggregatingMetricsReader) processRow(ctx context.Context, row Row, bat
 
 		// Emit the aggregated result if we have one
 		if result != nil {
-			batchRow := batch.AddRow()
-			maps.Copy(batchRow, result)
+			// Add a slot and replace it with our result row (zero-copy transfer)
+			batch.AddRow()
+			batch.ReplaceRow(batch.Len()-1, result)
 			ar.rowCount++
 		}
 	}
@@ -502,7 +549,7 @@ func (ar *AggregatingMetricsReader) processRow(ctx context.Context, row Row, bat
 	ar.hasCurrentKey = true
 	// Release the key since we store values separately
 	key.Release()
-	if err := ar.addRowToAggregation(ctx, row); err != nil {
+	if err := ar.addRowToAggregation(ctx, row, rowIndex); err != nil {
 		slog.Error("Failed to add row to new aggregation", "error", err)
 	}
 
@@ -524,7 +571,7 @@ func (ar *AggregatingMetricsReader) Next(ctx context.Context) (*Batch, error) {
 			ar.pendingIndex++
 
 			// Process this row
-			if err := ar.processRow(ctx, row, batch); err != nil {
+			if err := ar.processRow(ctx, row, ar.pendingIndex-1, batch); err != nil {
 				pipeline.ReturnBatch(ar.pendingBatch)
 				pipeline.ReturnBatch(batch)
 				ar.pendingBatch = nil
@@ -568,11 +615,9 @@ func (ar *AggregatingMetricsReader) Next(ctx context.Context) (*Batch, error) {
 						}
 						// Emit the final aggregated result if we have one
 						if result != nil {
-							row := batch.AddRow()
-							// Direct assignment instead of maps.Copy to avoid overhead
-							for k, v := range result {
-								row[k] = v
-							}
+							// Add a slot and replace it with our result row (zero-copy transfer)
+							batch.AddRow()
+							batch.ReplaceRow(batch.Len()-1, result)
 							ar.rowCount++
 						}
 					}
