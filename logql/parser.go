@@ -634,6 +634,10 @@ func tryParseLabelFilter(stage string) (LabelFilter, bool) {
 }
 
 func normalizeLabelName(label string) string {
+	if strings.HasPrefix(label, "_cardinalhq_") {
+		remainder := strings.TrimPrefix(label, "_cardinalhq_")
+		return "_cardinalhq." + remainder
+	}
 	if strings.HasPrefix(label, "resource_") || strings.HasPrefix(label, "log_") {
 		return strings.ReplaceAll(label, "_", ".")
 	}
