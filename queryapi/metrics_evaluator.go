@@ -248,6 +248,7 @@ func (q *QuerierService) EvaluateMetricsQuery(
 						workerGroups[m.Worker] = append(workerGroups[m.Worker], segmentMap[m.SegmentID])
 					}
 					if len(workerGroups) == 0 {
+						slog.Error("no worker assignments for leaf segments; skipping leaf", "leafID", leafID, "numLeafSegments", len(segsForLeaf))
 						continue
 					}
 
@@ -276,6 +277,7 @@ func (q *QuerierService) EvaluateMetricsQuery(
 						workerChans = append(workerChans, ch)
 					}
 					if len(workerChans) == 0 {
+						slog.Error("no worker pushdowns survived; skipping leaf", "leafID", leafID)
 						continue
 					}
 					leafChans = append(leafChans, promql.MergeSorted(ctx, 1024, false, 0, workerChans...))
