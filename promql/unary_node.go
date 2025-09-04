@@ -96,3 +96,7 @@ func applyUnary(fn string, x float64) float64 {
 		return math.NaN()
 	}
 }
+
+func (n *UnaryNode) Label(tags map[string]any) string {
+	return n.Func + "(" + n.Child.Label(tags) + ")"
+}

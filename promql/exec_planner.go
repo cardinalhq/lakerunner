@@ -60,6 +60,7 @@ type ExecHints struct {
 type ExecNode interface {
 	Hints() ExecHints
 	Eval(sg SketchGroup, step time.Duration) map[string]EvalResult
+	Label(tags map[string]any) string
 }
 
 // ---------- Planner ----------

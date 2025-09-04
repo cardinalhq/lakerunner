@@ -200,7 +200,7 @@ func (n *AggNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalResult
 		aggs := make(map[string]*acc, len(child))
 
 		for _, r := range child {
-			if r.Value.Kind != ValScalar || math.IsNaN(r.Value.Num) {
+			if math.IsNaN(r.Value.Num) && r.Value.Kind == ValScalar {
 				continue
 			}
 			k := makeKey(r.Tags)
@@ -216,7 +216,35 @@ func (n *AggNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalResult
 				}
 				aggs[k] = a
 			}
-			v := r.Value.Num
+			var v float64
+			switch r.Value.Kind {
+			case ValScalar:
+				v = r.Value.Num
+			case ValMap:
+				// if there is a map, extract the right aggregation value from it.
+				switch n.Op {
+				case AggSum:
+					v = r.Value.AggMap[SUM]
+				case AggAvg:
+					s := r.Value.AggMap[SUM]
+					c := r.Value.AggMap[COUNT]
+					if c == 0 {
+						v = math.NaN()
+					} else {
+						v = s / c
+					}
+				case AggMin:
+					v = r.Value.AggMap[MIN]
+				case AggMax:
+					v = r.Value.AggMap[MAX]
+				case AggCount:
+					v = r.Value.AggMap[COUNT]
+				default:
+					v = math.NaN()
+				}
+			default:
+				continue
+			}
 			a.sum += v
 			a.count++
 			if v < a.min {
@@ -256,4 +284,37 @@ func (n *AggNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalResult
 		}
 		return out
 	}
+}
+
+func (n *AggNode) Label(tags map[string]any) string {
+	var b strings.Builder
+	switch n.Op {
+	case AggSum:
+		b.WriteString("sum")
+	case AggAvg:
+		b.WriteString("avg")
+	case AggMin:
+		b.WriteString("min")
+	case AggMax:
+		b.WriteString("max")
+	case AggCount:
+		b.WriteString("count")
+	default:
+		b.WriteString("unknown-agg")
+	}
+	if len(n.By) > 0 {
+		b.WriteString(" by (")
+		b.WriteString(strings.Join(n.By, ","))
+		b.WriteString(")")
+	} else if len(n.Without) > 0 {
+		b.WriteString(" without (")
+		b.WriteString(strings.Join(n.Without, ","))
+		b.WriteString(")")
+	}
+	if n.Child != nil {
+		b.WriteString("(")
+		b.WriteString(n.Child.Label(tags))
+		b.WriteString(")")
+	}
+	return b.String()
 }

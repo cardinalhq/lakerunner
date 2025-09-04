@@ -125,6 +125,14 @@ func (q *QuerierService) sseWriter(w http.ResponseWriter) (func(event string, v 
 	return write, true
 }
 
+type evalData struct {
+	Key       string         `json:"key,omitempty"`
+	Tags      map[string]any `json:"Tags"`
+	Value     float64        `json:"value"`
+	Timestamp int64          `json:"timestamp"`
+	Label     string         `json:"label"`
+}
+
 func (q *QuerierService) handlePromQuery(w http.ResponseWriter, r *http.Request) {
 	qPayload := readQueryPayload(w, r)
 	if qPayload == nil {
@@ -165,10 +173,21 @@ func (q *QuerierService) handlePromQuery(w http.ResponseWriter, r *http.Request)
 				_ = writeSSE("done", map[string]string{"status": "ok"})
 				return
 			}
-			if err := writeSSE("result", res); err != nil {
-				slog.Error("write SSE failed", "error", err)
-				return
+			for k, v := range res {
+				label := plan.Root.Label(v.Tags)
+				ed := evalData{
+					Key:       k,
+					Tags:      v.Tags,
+					Value:     v.Value.Num,
+					Timestamp: v.Timestamp,
+					Label:     label,
+				}
+				if err := writeSSE("result", ed); err != nil {
+					slog.Error("write SSE failed", "error", err)
+					return
+				}
 			}
+
 		}
 	}
 }

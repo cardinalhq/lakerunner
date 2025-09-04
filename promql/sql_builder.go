@@ -80,7 +80,7 @@ func (be *BaseExpr) ToWorkerSQL(step time.Duration) string {
 				{"COUNT(rollup_count)", "count"},
 			}, step)
 		}
-		return buildStepAggNoWindow(be, need{sum: true, count: true}, step)
+		return buildStepAggNoWindow(be, need{sum: true, count: true, min: true, max: true}, step)
 	default:
 		return ""
 	}

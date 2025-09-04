@@ -45,3 +45,7 @@ func (n *ClampMinNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalR
 	}
 	return out
 }
+
+func (n *ClampMinNode) Label(tags map[string]any) string {
+	return "clamp_min(" + n.Child.Label(tags) + ")"
+}
