@@ -27,6 +27,7 @@ import (
 	"github.com/cardinalhq/lakerunner/cmd/ingesttraces"
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
+	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
@@ -96,6 +97,7 @@ func traceIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp st
 
 	ll.Info("Processing traces batch", slog.Int("batchSize", len(items)))
 
+	// Get storage profile
 	var profile storageprofile.StorageProfile
 	var err error
 
@@ -109,9 +111,10 @@ func traceIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp st
 		return fmt.Errorf("failed to get storage profile: %w", err)
 	}
 
-	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
+	// Create cloud storage client
+	storageClient, err := cloudstorage.NewClient(ctx, awsmanager, profile)
 	if err != nil {
-		return fmt.Errorf("failed to get S3 client: %w", err)
+		return fmt.Errorf("failed to create storage client for provider %s: %w", profile.CloudProvider, err)
 	}
 
 	// Collect all trace file results from all items, grouped by slot
@@ -128,12 +131,15 @@ func traceIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp st
 			return fmt.Errorf("creating item tmpdir: %w", err)
 		}
 
-		tmpfilename, _, is404, err := s3helper.DownloadS3Object(ctx, itemTmpdir, s3client, inf.Bucket, inf.ObjectID)
+		tmpfilename, _, is404, err := storageClient.DownloadObject(ctx, itemTmpdir, inf.Bucket, inf.ObjectID)
 		if err != nil {
-			return fmt.Errorf("failed to download file %s: %w", inf.ObjectID, err)
+			return fmt.Errorf("failed to download file %s from %s: %w", inf.ObjectID, profile.CloudProvider, err)
 		}
 		if is404 {
-			ll.Warn("S3 object not found, skipping", slog.String("itemID", inf.ID.String()), slog.String("objectID", inf.ObjectID))
+			ll.Warn("Object not found in cloud storage, skipping",
+				slog.String("cloudProvider", profile.CloudProvider),
+				slog.String("itemID", inf.ID.String()),
+				slog.String("objectID", inf.ObjectID))
 			continue
 		}
 
@@ -182,8 +188,8 @@ func traceIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp st
 			hour := int16(0) // Hour doesn't matter for slot-based traces
 			dbObjectID := helpers.MakeDBObjectID(firstItem.OrganizationID, firstItem.CollectorName, ingest_dateint, hour, segmentID, "traces")
 
-			if err := s3helper.UploadS3Object(ctx, s3client, firstItem.Bucket, dbObjectID, result.FileName); err != nil {
-				return fmt.Errorf("failed to upload trace file to S3: %w", err)
+			if err := storageClient.UploadObject(ctx, firstItem.Bucket, dbObjectID, result.FileName); err != nil {
+				return fmt.Errorf("failed to upload trace file to %s: %w", profile.CloudProvider, err)
 			}
 
 			_ = os.Remove(result.FileName)

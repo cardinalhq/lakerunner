@@ -36,31 +36,27 @@ type azureClient struct {
 
 // newAzureClient creates a new Azure Blob Storage client
 func newAzureClient(ctx context.Context, profile storageprofile.StorageProfile) (Client, error) {
-	// Create credential using DefaultAzureCredential
+	if profile.Endpoint == "" {
+		return nil, fmt.Errorf("endpoint is required for Azure blob storage")
+	}
+
 	cred, err := azidentity.NewDefaultAzureCredential(nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Azure credentials: %w", err)
 	}
 
-	// The endpoint should be the full storage account URL: https://{account}.blob.core.windows.net/
-	if profile.Endpoint == "" {
-		return nil, fmt.Errorf("endpoint is required for Azure blob storage")
-	}
-
-	// Create the blob service client
 	client, err := azblob.NewClient(profile.Endpoint, cred, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Azure blob client: %w", err)
 	}
 
-	return &azureClient{
-		client: client,
-	}, nil
+	return &azureClient{client: client}, nil
 }
 
 // DownloadObject downloads a blob from Azure Blob Storage
-// bucket = container name, key = blob name
 func (c *azureClient) DownloadObject(ctx context.Context, tmpdir, bucket, key string) (string, int64, bool, error) {
+	containerName := bucket
+	blobName := key
 	// Preserve the original file extension for proper file type detection
 	ext := filepath.Ext(key)
 	if ext == "" {
@@ -74,17 +70,16 @@ func (c *azureClient) DownloadObject(ctx context.Context, tmpdir, bucket, key st
 	}
 	defer f.Close()
 
+
 	// Get the download response
-	resp, err := c.client.DownloadStream(ctx, bucket, key, nil)
+	resp, err := c.client.DownloadStream(ctx, containerName, blobName, nil)
 	if err != nil {
 		_ = os.Remove(f.Name())
 		
-		// Check if this is a "not found" error using the correct API
 		if bloberror.HasCode(err, bloberror.BlobNotFound) {
 			return "", 0, true, nil
 		}
-		
-		return "", 0, false, fmt.Errorf("download blob %s/%s: %w", bucket, key, err)
+		return "", 0, false, fmt.Errorf("download blob %s/%s: %w", containerName, blobName, err)
 	}
 	defer resp.Body.Close()
 
@@ -100,6 +95,8 @@ func (c *azureClient) DownloadObject(ctx context.Context, tmpdir, bucket, key st
 
 // UploadObject uploads a file to Azure Blob Storage
 func (c *azureClient) UploadObject(ctx context.Context, bucket, key, sourceFilename string) error {
+	containerName := bucket
+	blobName := key
 	// Open the source file
 	file, err := os.Open(sourceFilename)
 	if err != nil {
@@ -107,8 +104,9 @@ func (c *azureClient) UploadObject(ctx context.Context, bucket, key, sourceFilen
 	}
 	defer file.Close()
 
+
 	// Upload the blob with Parquet content type and metadata
-	_, err = c.client.UploadStream(ctx, bucket, key, file, &azblob.UploadStreamOptions{
+	_, err = c.client.UploadStream(ctx, containerName, blobName, file, &azblob.UploadStreamOptions{
 		Metadata: map[string]*string{
 			"writer": to.Ptr("lakerunner-go"),
 		},
@@ -117,7 +115,7 @@ func (c *azureClient) UploadObject(ctx context.Context, bucket, key, sourceFilen
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to upload blob %s/%s: %w", bucket, key, err)
+		return fmt.Errorf("failed to upload blob %s/%s: %w", containerName, blobName, err)
 	}
 
 	return nil

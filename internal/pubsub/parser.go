@@ -91,6 +91,62 @@ func (p *S3EventParser) parseS3Record(bucketName, key string, size int64) (*lrdb
 	return item, nil
 }
 
+// AzureEventGridParser handles Azure Event Grid events
+type AzureEventGridParser struct{}
+
+func (p *AzureEventGridParser) GetEventType() string {
+	return "Azure"
+}
+
+func (p *AzureEventGridParser) Parse(raw []byte) ([]lrdb.Inqueue, error) {
+	var evt struct {
+		EventType string `json:"eventType"`
+		Subject   string `json:"subject"`
+		Data      struct {
+			URL           string `json:"url"`
+			ContentLength int64  `json:"contentLength"`
+		} `json:"data"`
+	}
+
+	if err := json.Unmarshal(raw, &evt); err != nil {
+		return nil, fmt.Errorf("failed to parse Azure Event Grid event: %w", err)
+	}
+
+	// Only process blob created events
+	if evt.EventType != "Microsoft.Storage.BlobCreated" {
+		return []lrdb.Inqueue{}, nil
+	}
+
+	// Extract container and blob path from subject
+	// Subject format: /blobServices/default/containers/{container}/blobs/{blob-path}
+	subjectParts := strings.Split(evt.Subject, "/")
+	if len(subjectParts) < 6 {
+		return nil, fmt.Errorf("invalid Azure Event Grid subject format: %s", evt.Subject)
+	}
+
+	containerName := subjectParts[4]
+	blobPath := strings.Join(subjectParts[6:], "/")
+
+	// For Azure, the object key is the blob path as-is
+	objectKey := blobPath
+
+	// Parse the object key to determine telemetry type and extract other info
+	parsedItem, err := parseObjectKey(containerName, objectKey)
+	if err != nil {
+		return nil, err
+	}
+	if parsedItem == nil {
+		return []lrdb.Inqueue{}, nil
+	}
+
+	// Merge parsed information with Azure event data
+	parsedItem.FileSize = evt.Data.ContentLength
+	parsedItem.Bucket = containerName
+
+
+	return []lrdb.Inqueue{*parsedItem}, nil
+}
+
 // GCPStorageEventParser handles GCP Cloud Storage events
 type GCPStorageEventParser struct{}
 
@@ -206,6 +262,14 @@ func (f *EventParserFactory) NewParser(raw []byte) (EventParser, error) {
 	}
 	if err := json.Unmarshal(raw, &s3Event); err == nil && len(s3Event.Records) > 0 {
 		return &S3EventParser{}, nil
+	}
+
+	// Try to detect Azure Event Grid event
+	var azureEvent struct {
+		EventType string `json:"eventType"`
+	}
+	if err := json.Unmarshal(raw, &azureEvent); err == nil {
+		return &AzureEventGridParser{}, nil
 	}
 
 	return nil, fmt.Errorf("unable to determine event type from content")
