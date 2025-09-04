@@ -127,7 +127,7 @@ func (q *QuerierService) sseWriter(w http.ResponseWriter) (func(event string, v 
 
 type evalData struct {
 	Key       string         `json:"key,omitempty"`
-	Tags      map[string]any `json:"Tags"`
+	Tags      map[string]any `json:"tags"`
 	Value     float64        `json:"value"`
 	Timestamp int64          `json:"timestamp"`
 	Label     string         `json:"label"`

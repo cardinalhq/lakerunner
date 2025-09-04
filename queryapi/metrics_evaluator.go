@@ -47,32 +47,31 @@ func computeMaxParallel(numWorkers int) int {
 	return numWorkers
 }
 
-// concat groups in index order; starts streaming as soon as idx=0 registers
+// concat groups in index order; streams as soon as idx=0 registers.
 func runOrderedCoordinator(ctx context.Context, regs <-chan groupReg) <-chan promql.SketchInput {
 	out := make(chan promql.SketchInput, 4096)
 	go func() {
 		defer close(out)
+
 		pending := map[int]groupReg{}
 		want := 0
 		var cur <-chan promql.SketchInput
+		closed := false
 
 		for {
+			// Try to start the next expected group when we're idle.
 			if cur == nil {
 				if gr, ok := pending[want]; ok {
 					delete(pending, want)
 					slog.Info("Group starting emit", "idx", want, "groupStart", gr.startTs, "groupEnd", gr.endTs)
 					want++
 					cur = gr.ch
-				}
-			}
-			if cur == nil {
-				gr, ok := <-regs
-				if !ok {
+				} else if closed {
+					// No current, nothing pending, registry is closed → done.
 					return
 				}
-				pending[gr.idx] = gr
-				continue
 			}
+
 			select {
 			case v, ok := <-cur:
 				if !ok {
@@ -84,19 +83,16 @@ func runOrderedCoordinator(ctx context.Context, regs <-chan groupReg) <-chan pro
 				case <-ctx.Done():
 					return
 				}
+
 			case gr, ok := <-regs:
 				if !ok {
-					// drain current then exit
-					for v := range cur {
-						select {
-						case out <- v:
-						case <-ctx.Done():
-							return
-						}
-					}
-					return
+					// Registry closed; keep draining current and any pending.
+					closed = true
+					regs = nil // remove this select arm
+					continue
 				}
 				pending[gr.idx] = gr
+
 			case <-ctx.Done():
 				return
 			}
@@ -248,6 +244,7 @@ func (q *QuerierService) EvaluateMetricsQuery(
 						workerGroups[m.Worker] = append(workerGroups[m.Worker], segmentMap[m.SegmentID])
 					}
 					if len(workerGroups) == 0 {
+						slog.Error("no worker assignments for leaf segments; skipping leaf", "leafID", leafID, "numLeafSegments", len(segsForLeaf))
 						continue
 					}
 
@@ -276,6 +273,7 @@ func (q *QuerierService) EvaluateMetricsQuery(
 						workerChans = append(workerChans, ch)
 					}
 					if len(workerChans) == 0 {
+						slog.Error("no worker pushdowns survived; skipping leaf", "leafID", leafID)
 						continue
 					}
 					leafChans = append(leafChans, promql.MergeSorted(ctx, 1024, false, 0, workerChans...))
