@@ -12,6 +12,77 @@ import (
 	"github.com/google/uuid"
 )
 
+const mrqClaimBatch = `-- name: MrqClaimBatch :many
+WITH candidates AS (
+  SELECT id, organization_id, dateint, frequency_ms, instance_num,
+         slot_id, slot_count, rollup_group, segment_id, record_count, queue_ts
+  FROM public.metric_rollup_queue
+  WHERE claimed_by = -1
+    AND eligible_at <= now()
+  ORDER BY priority ASC, eligible_at ASC, queue_ts ASC
+  FOR UPDATE SKIP LOCKED
+  LIMIT $3
+)
+UPDATE public.metric_rollup_queue q
+SET claimed_by = $1, claimed_at = $2::timestamptz, heartbeated_at = $2::timestamptz
+FROM candidates c
+WHERE q.id = c.id
+RETURNING c.id, c.organization_id, c.dateint, c.frequency_ms, c.instance_num,
+          c.slot_id, c.slot_count, c.rollup_group, c.segment_id, c.record_count, c.queue_ts
+`
+
+type MrqClaimBatchParams struct {
+	WorkerID   int64     `json:"worker_id"`
+	Now        time.Time `json:"now"`
+	BatchLimit int32     `json:"batch_limit"`
+}
+
+type MrqClaimBatchRow struct {
+	ID             int64     `json:"id"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Dateint        int32     `json:"dateint"`
+	FrequencyMs    int32     `json:"frequency_ms"`
+	InstanceNum    int16     `json:"instance_num"`
+	SlotID         int32     `json:"slot_id"`
+	SlotCount      int32     `json:"slot_count"`
+	RollupGroup    int64     `json:"rollup_group"`
+	SegmentID      int64     `json:"segment_id"`
+	RecordCount    int64     `json:"record_count"`
+	QueueTs        time.Time `json:"queue_ts"`
+}
+
+func (q *Queries) MrqClaimBatch(ctx context.Context, arg MrqClaimBatchParams) ([]MrqClaimBatchRow, error) {
+	rows, err := q.db.Query(ctx, mrqClaimBatch, arg.WorkerID, arg.Now, arg.BatchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MrqClaimBatchRow
+	for rows.Next() {
+		var i MrqClaimBatchRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrganizationID,
+			&i.Dateint,
+			&i.FrequencyMs,
+			&i.InstanceNum,
+			&i.SlotID,
+			&i.SlotCount,
+			&i.RollupGroup,
+			&i.SegmentID,
+			&i.RecordCount,
+			&i.QueueTs,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const mrqClaimBundle = `-- name: MrqClaimBundle :exec
 UPDATE public.metric_rollup_queue
 SET claimed_by = $1, claimed_at = now(), heartbeated_at = now()

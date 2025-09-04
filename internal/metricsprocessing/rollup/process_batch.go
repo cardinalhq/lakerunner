@@ -201,11 +201,17 @@ func rollupMetricSegments(
 		return nil
 	}
 
+	// Track download time
+	downloadStart := time.Now()
 	readerStack, err := metricsprocessing.CreateReaderStack(
 		ctx, ll, tmpdir, s3client, firstSeg.OrganizationID, profile, sourceRows)
 	if err != nil {
 		return err
 	}
+	downloadDuration := time.Since(downloadStart)
+	ll.Info("Download phase completed",
+		slog.Duration("duration", downloadDuration),
+		slog.Int("filesDownloaded", len(sourceRows)))
 
 	if len(readerStack.Readers) == 0 {
 		ll.Info("No files available for rollup processing, skipping work item",
@@ -250,10 +256,17 @@ func rollupMetricSegments(
 		InputBytes:        inputBytes,
 	}
 
+	// Track aggregation time
+	aggregateStart := time.Now()
 	processingResult, err := metricsprocessing.AggregateMetrics(ctx, processingInput)
 	if err != nil {
 		return fmt.Errorf("rollup processing failed: %w", err)
 	}
+	aggregateDuration := time.Since(aggregateStart)
+	ll.Info("Aggregation phase completed",
+		slog.Duration("duration", aggregateDuration),
+		slog.Int64("inputRecords", inputRecords),
+		slog.Int64("outputRecords", processingResult.Stats.OutputRecords))
 
 	// Calculate compression ratio
 	compressionRatio := float64(0)
@@ -286,10 +299,17 @@ func rollupMetricSegments(
 
 	criticalCtx := context.WithoutCancel(ctx)
 
+	// Track upload time
+	uploadStart := time.Now()
 	err = uploadRolledUpMetricsAtomic(criticalCtx, ll, mdb, s3client, processingResult.RawResults, sourceRows, rollupParams)
 	if err != nil {
 		return fmt.Errorf("failed to upload rolled-up metrics: %w", err)
 	}
+	uploadDuration := time.Since(uploadStart)
+	ll.Info("Upload phase completed",
+		slog.Duration("duration", uploadDuration),
+		slog.Int("filesUploaded", len(processingResult.RawResults)),
+		slog.Int64("bytesUploaded", processingResult.Stats.OutputBytes))
 
 	return nil
 }
