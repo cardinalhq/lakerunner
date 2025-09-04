@@ -58,7 +58,7 @@ func toDateInt(t time.Time) int {
 }
 
 // dateIntHoursRange: given a time range produces the date int hours, in reverse order of date ints, and hours are reverse as well.
-func dateIntHoursRange(startMs, endMs int64, loc *time.Location) []DateIntHours {
+func dateIntHoursRange(startMs, endMs int64, loc *time.Location, reverse bool) []DateIntHours {
 	if loc == nil {
 		loc = time.UTC
 	}
@@ -78,7 +78,11 @@ func dateIntHoursRange(startMs, endMs int64, loc *time.Location) []DateIntHours 
 			hh = append(hh, h)
 		}
 		// reverse hour order "23".."00"
-		sort.Sort(sort.Reverse(sort.StringSlice(hh)))
+		if reverse {
+			sort.Sort(sort.Reverse(sort.StringSlice(hh)))
+		} else {
+			sort.Sort(sort.StringSlice(hh))
+		}
 		out = append(out, DateIntHours{DateInt: curDateInt, Hours: hh})
 		hoursSet = make(map[string]struct{})
 	}

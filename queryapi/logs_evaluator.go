@@ -56,7 +56,7 @@ func (q *QuerierService) EvaluateLogsQuery(
 		defer close(out)
 
 		// Partition by dateInt hours for storage listing.
-		dateIntHours := dateIntHoursRange(startTs, endTs, time.UTC)
+		dateIntHours := dateIntHoursRange(startTs, endTs, time.UTC, reverse)
 
 		for _, leaf := range queryPlan.Leaves {
 			for _, dih := range dateIntHours {
@@ -70,7 +70,7 @@ func (q *QuerierService) EvaluateLogsQuery(
 					continue
 				}
 				// Form time-contiguous batches sized for the number of workers.
-				groups := ComputeReplayBatchesWithWorkers(segments, DefaultLogStep, startTs, endTs, len(workers), true)
+				groups := ComputeReplayBatchesWithWorkers(segments, DefaultLogStep, startTs, endTs, len(workers), reverse)
 				for _, group := range groups {
 					select {
 					case <-ctx.Done():
