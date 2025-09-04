@@ -65,10 +65,11 @@ func (be *LogLeaf) toWorkerSQL(step time.Duration, limit int, order string) stri
 	//   - exemplar defaults: id, timestamp, level
 	//   - matcher columns (since selectors refer to base columns)
 	need := map[string]struct{}{
-		bodyCol:                 {},
-		tsCol:                   {},
-		"\"_cardinalhq.id\"":    {},
-		"\"_cardinalhq.level\"": {},
+		bodyCol:                       {},
+		tsCol:                         {},
+		"\"_cardinalhq.id\"":          {},
+		"\"_cardinalhq.level\"":       {},
+		"\"_cardinalhq.fingerprint\"": {},
 	}
 	for _, m := range be.Matchers {
 		need[quoteIdent(m.Label)] = struct{}{}
