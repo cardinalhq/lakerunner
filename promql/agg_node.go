@@ -200,9 +200,9 @@ func (n *AggNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalResult
 		aggs := make(map[string]*acc, len(child))
 
 		for _, r := range child {
-			//if r.Value.Kind != ValScalar || math.IsNaN(r.Value.Num) {
-			//	continue
-			//}
+			if math.IsNaN(r.Value.Num) && r.Value.Kind == ValScalar {
+				continue
+			}
 			k := makeKey(r.Tags)
 			a := aggs[k]
 			if a == nil {
