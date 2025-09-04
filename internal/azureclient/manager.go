@@ -17,11 +17,15 @@ package azureclient
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"strings"
 	"sync"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
 type Manager struct {
@@ -29,8 +33,9 @@ type Manager struct {
 	sessionName string
 
 	sync.RWMutex
-	clients map[clientKey]*QueueClient
-	tracer  trace.Tracer
+	queueClients map[clientKey]*QueueClient
+	blobClients  map[blobClientKey]*BlobClient
+	tracer       trace.Tracer
 }
 
 // ManagerOption is a functional option for configuring the Manager.
@@ -51,14 +56,53 @@ func NewManager(ctx context.Context, opts ...ManagerOption) (*Manager, error) {
 
 	tracer := otel.Tracer("github.com/cardinalhq/lakerunner/internal/azureclient")
 	mgr := &Manager{
-		baseCred:    cred,
-		sessionName: "default-session-name",
-		clients:     make(map[clientKey]*QueueClient),
-		tracer:      tracer,
+		baseCred:     cred,
+		sessionName:  "default-session-name",
+		queueClients: make(map[clientKey]*QueueClient),
+		blobClients:  make(map[blobClientKey]*BlobClient),
+		tracer:       tracer,
 	}
 	for _, opt := range opts {
 		opt(mgr)
 	}
 
 	return mgr, nil
+}
+
+// GetBlobForProfile helper to bind your StorageProfile
+func (m *Manager) GetBlobForProfile(ctx context.Context, p storageprofile.StorageProfile) (*BlobClient, error) {
+	if p.Endpoint == "" {
+		return nil, fmt.Errorf("endpoint is required for Azure blob storage")
+	}
+
+	// Extract storage account from endpoint
+	storageAccount, err := extractStorageAccountFromEndpoint(p.Endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract storage account from endpoint %s: %w", p.Endpoint, err)
+	}
+
+	var opts []BlobOption
+	opts = append(opts, WithBlobEndpoint(p.Endpoint))
+	opts = append(opts, WithBlobStorageAccount(storageAccount))
+
+	return m.GetBlob(ctx, opts...)
+}
+
+func extractStorageAccountFromEndpoint(endpoint string) (string, error) {
+	if endpoint == "" {
+		return "", fmt.Errorf("empty endpoint")
+	}
+
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return "", fmt.Errorf("invalid endpoint: %w", err)
+	}
+
+	host := u.Hostname()
+	parts := strings.Split(host, ".")
+	if len(parts) < 1 {
+		return "", fmt.Errorf("could not parse account name from host: %s", host)
+	}
+
+	return parts[0], nil
 }

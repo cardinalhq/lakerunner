@@ -24,6 +24,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
+	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
@@ -50,7 +51,7 @@ func processBatch(
 	ll *slog.Logger,
 	mdb rollupStore,
 	sp storageprofile.StorageProfileProvider,
-	awsmanager *awsclient.Manager,
+	cloudManagers *cloudstorage.CloudManagers,
 	bundle lrdb.RollupBundleResult,
 ) error {
 	if len(bundle.Items) == 0 {
@@ -103,7 +104,7 @@ func processBatch(
 		return err
 	}
 
-	storageClient, err := cloudstorage.NewClient(ctx, awsmanager, profile)
+	storageClient, err := cloudstorage.NewClient(ctx, cloudManagers, profile)
 	if err != nil {
 		ll.Error("Failed to get cloud storage client", slog.Any("error", err))
 		return err

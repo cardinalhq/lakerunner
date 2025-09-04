@@ -122,7 +122,7 @@ func coordinate(
 	ctx context.Context,
 	input input,
 	sp storageprofile.StorageProfileProvider,
-	awsmanager *awsclient.Manager,
+	cloudManagers *cloudstorage.CloudManagers,
 	mdb lrdb.StoreFull,
 ) (*result, error) {
 	if len(input.Items) == 0 {
@@ -151,7 +151,7 @@ func coordinate(
 		slog.String("region", profile.Region))
 
 	// Create cloud storage client
-	storageClient, err := cloudstorage.NewClient(ctx, awsmanager, profile)
+	storageClient, err := cloudstorage.NewClient(ctx, cloudManagers, profile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create storage client for provider %s: %w", profile.CloudProvider, err)
 	}

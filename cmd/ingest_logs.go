@@ -277,7 +277,7 @@ func queueLogCompactionForSlot(ctx context.Context, mdb lrdb.StoreFull, inf lrdb
 // Functions removed - now using filereader and parquetwriter packages directly
 
 func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
-	awsmanager *awsclient.Manager, items []lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
+	cloudManagers *cloudstorage.CloudManagers, items []lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
 
 	if len(items) == 0 {
 		return fmt.Errorf("empty batch")
@@ -303,7 +303,7 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 	}
 
 	// Create cloud storage client
-	storageClient, err := cloudstorage.NewClient(ctx, awsmanager, profile)
+	storageClient, err := cloudstorage.NewClient(ctx, cloudManagers, profile)
 	if err != nil {
 		return fmt.Errorf("failed to create storage client for provider %s: %w", profile.CloudProvider, err)
 	}
@@ -503,7 +503,6 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 		hour := int(hour16)
 		dbObjectID := helpers.MakeDBObjectID(firstItem.OrganizationID, firstItem.CollectorName,
 			dateint, s3helper.HourFromMillis(stats.FirstTS), segmentID, "logs")
-
 
 		if err := storageClient.UploadObject(criticalCtx, firstItem.Bucket, dbObjectID, result.FileName); err != nil {
 			return fmt.Errorf("failed to upload file to %s: %w", profile.CloudProvider, err)

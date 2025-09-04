@@ -89,7 +89,7 @@ func init() {
 }
 
 func traceIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
-	awsmanager *awsclient.Manager, items []lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
+	cloudManagers *cloudstorage.CloudManagers, items []lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
 
 	if len(items) == 0 {
 		return fmt.Errorf("empty batch")
@@ -112,7 +112,7 @@ func traceIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp st
 	}
 
 	// Create cloud storage client
-	storageClient, err := cloudstorage.NewClient(ctx, awsmanager, profile)
+	storageClient, err := cloudstorage.NewClient(ctx, cloudManagers, profile)
 	if err != nil {
 		return fmt.Errorf("failed to create storage client for provider %s: %w", profile.CloudProvider, err)
 	}

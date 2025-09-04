@@ -69,11 +69,11 @@ func (m *Manager) GetQueue(ctx context.Context, opts ...QueueOption) (*QueueClie
 
 	key := clientKey{StorageAccount: qc.StorageAccount, QueueName: qc.QueueName}
 	m.RLock()
-	client, ok := m.clients[key]
+	client, ok := m.queueClients[key]
 	m.RUnlock()
 	if !ok {
 		m.Lock()
-		if client, ok = m.clients[key]; !ok {
+		if client, ok = m.queueClients[key]; !ok {
 			serviceURL := fmt.Sprintf("https://%s.queue.core.windows.net", qc.StorageAccount)
 			serviceClient, err := azqueue.NewServiceClient(serviceURL, m.baseCred, nil)
 			if err != nil {
@@ -87,7 +87,7 @@ func (m *Manager) GetQueue(ctx context.Context, opts ...QueueOption) (*QueueClie
 				QueueClient:   queueClient,
 				Tracer:        m.tracer,
 			}
-			m.clients[key] = client
+			m.queueClients[key] = client
 		}
 		m.Unlock()
 	}

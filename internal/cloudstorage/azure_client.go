@@ -26,12 +26,18 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/bloberror"
+	"github.com/cardinalhq/lakerunner/internal/azureclient"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
 // azureClient implements the Client interface for Azure Blob Storage
 type azureClient struct {
 	client *azblob.Client
+}
+
+// newAzureClientFromManager creates an Azure client using the managed BlobClient
+func newAzureClientFromManager(blobClient *azureclient.BlobClient) Client {
+	return &azureClient{client: blobClient.Client}
 }
 
 // newAzureClient creates a new Azure Blob Storage client
@@ -62,7 +68,7 @@ func (c *azureClient) DownloadObject(ctx context.Context, tmpdir, bucket, key st
 	if ext == "" {
 		ext = ".data" // fallback for files without extension
 	}
-	
+
 	// Create temp file
 	f, err := os.CreateTemp(tmpdir, "azure-*"+ext)
 	if err != nil {
@@ -70,12 +76,11 @@ func (c *azureClient) DownloadObject(ctx context.Context, tmpdir, bucket, key st
 	}
 	defer f.Close()
 
-
 	// Get the download response
 	resp, err := c.client.DownloadStream(ctx, containerName, blobName, nil)
 	if err != nil {
 		_ = os.Remove(f.Name())
-		
+
 		if bloberror.HasCode(err, bloberror.BlobNotFound) {
 			return "", 0, true, nil
 		}
@@ -103,7 +108,6 @@ func (c *azureClient) UploadObject(ctx context.Context, bucket, key, sourceFilen
 		return fmt.Errorf("failed to open source file %s: %w", sourceFilename, err)
 	}
 	defer file.Close()
-
 
 	// Upload the blob with Parquet content type and metadata
 	_, err = c.client.UploadStream(ctx, containerName, blobName, file, &azblob.UploadStreamOptions{

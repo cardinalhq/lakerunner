@@ -143,7 +143,6 @@ func (p *AzureEventGridParser) Parse(raw []byte) ([]lrdb.Inqueue, error) {
 	parsedItem.FileSize = evt.Data.ContentLength
 	parsedItem.Bucket = containerName
 
-
 	return []lrdb.Inqueue{*parsedItem}, nil
 }
 

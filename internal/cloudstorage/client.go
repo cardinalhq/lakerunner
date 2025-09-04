@@ -35,19 +35,23 @@ type Client interface {
 	DeleteObject(ctx context.Context, bucket, key string) error
 }
 
-// NewClient creates a new cloud storage client based on the storage profile
-func NewClient(ctx context.Context, awsManager *awsclient.Manager, profile storageprofile.StorageProfile) (Client, error) {
+// NewClient creates a new cloud storage client using unified cloud managers
+func NewClient(ctx context.Context, managers *CloudManagers, profile storageprofile.StorageProfile) (Client, error) {
 	switch profile.CloudProvider {
 	case "aws", "gcp", "": // Empty defaults to AWS for backward compatibility
 		// Both AWS and GCP use the S3 client - reuse existing GetS3ForProfile
-		awsS3Client, err := awsManager.GetS3ForProfile(ctx, profile)
+		awsS3Client, err := managers.AWS.GetS3ForProfile(ctx, profile)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create S3 client: %w", err)
 		}
 		return &s3Client{awsS3Client: awsS3Client}, nil
 	case "azure":
-		// Use Azure Blob Storage client
-		return newAzureClient(ctx, profile)
+		// Use Azure Blob Storage client via manager
+		azureBlobClient, err := managers.Azure.GetBlobForProfile(ctx, profile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Azure blob client: %w", err)
+		}
+		return newAzureClientFromManager(azureBlobClient), nil
 	default:
 		return nil, fmt.Errorf("unsupported cloud provider: %s", profile.CloudProvider)
 	}

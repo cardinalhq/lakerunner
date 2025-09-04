@@ -33,7 +33,7 @@ func processBatch(
 	ll *slog.Logger,
 	mdb compactionStore,
 	sp storageprofile.StorageProfileProvider,
-	awsmanager *awsclient.Manager,
+	cloudManagers *cloudstorage.CloudManagers,
 	bundle lrdb.CompactionBundleResult,
 ) error {
 	if len(bundle.Items) == 0 {
@@ -71,7 +71,7 @@ func processBatch(
 		return err
 	}
 
-	storageClient, err := cloudstorage.NewClient(ctx, awsmanager, profile)
+	storageClient, err := cloudstorage.NewClient(ctx, cloudManagers, profile)
 	if err != nil {
 		ll.Error("Failed to get cloud storage client", slog.Any("error", err))
 		return err

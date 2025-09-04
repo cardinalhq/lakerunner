@@ -37,7 +37,7 @@ func ProcessBatch(
 	tmpdir string,
 	sp storageprofile.StorageProfileProvider,
 	mdb lrdb.StoreFull,
-	awsmanager *awsclient.Manager,
+	cloudManagers *cloudstorage.CloudManagers,
 	items []lrdb.Inqueue,
 	ingestDateint int32,
 	rpfEstimate int64,
@@ -123,14 +123,14 @@ func ProcessBatch(
 func uploadAndQueue(
 	ctx context.Context,
 	ll *slog.Logger,
-	awsmanager *awsclient.Manager,
+	cloudManagers *cloudstorage.CloudManagers,
 	mdb lrdb.StoreFull,
 	results []parquetwriter.Result,
 	profile storageprofile.StorageProfile,
 	ingestDateint int32,
 ) error {
 	// Create cloud storage client based on profile
-	storageClient, err := cloudstorage.NewClient(ctx, awsmanager, profile)
+	storageClient, err := cloudstorage.NewClient(ctx, cloudManagers, profile)
 	if err != nil {
 		return fmt.Errorf("failed to get cloud storage client: %w", err)
 	}
