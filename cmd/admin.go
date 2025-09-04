@@ -44,7 +44,7 @@ var (
 func init() {
 	adminCmd := &cobra.Command{
 		Use:   "admin",
-		Short: "Administrative commands for LakeRunner",
+		Short: "Administrative commands for Lakerunner",
 	}
 
 	serveCmd := &cobra.Command{

@@ -45,65 +45,65 @@ import (
 
 func init() {
 	cmd := &cobra.Command{
-	Use:   "ingest-logs",
-	Short: "Ingest logs from the inqueue table",
-	RunE: func(_ *cobra.Command, _ []string) error {
-		helpers.SetupTempDir()
+		Use:   "ingest-logs",
+		Short: "Ingest logs from the inqueue table",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			helpers.SetupTempDir()
 
-		servicename := "lakerunner-ingest-logs"
-		addlAttrs := attribute.NewSet(
-			attribute.String("signal", "logs"),
-			attribute.String("action", "ingest"),
-		)
-		ctx, doneFx, err := setupTelemetry(servicename, &addlAttrs)
-		if err != nil {
-			return fmt.Errorf("failed to setup telemetry: %w", err)
-		}
-
-		defer func() {
-			if err := doneFx(); err != nil {
-				slog.Error("Error shutting down telemetry", slog.Any("error", err))
+			servicename := "lakerunner-ingest-logs"
+			addlAttrs := attribute.NewSet(
+				attribute.String("signal", "logs"),
+				attribute.String("action", "ingest"),
+			)
+			ctx, doneFx, err := setupTelemetry(servicename, &addlAttrs)
+			if err != nil {
+				return fmt.Errorf("failed to setup telemetry: %w", err)
 			}
-		}()
 
-		go diskUsageLoop(ctx)
+			defer func() {
+				if err := doneFx(); err != nil {
+					slog.Error("Error shutting down telemetry", slog.Any("error", err))
+				}
+			}()
 
-		// Start pprof server
-		go debugging.RunPprof(ctx)
+			go diskUsageLoop(ctx)
 
-		// Start health check server
-		healthConfig := healthcheck.GetConfigFromEnv()
-		healthServer := healthcheck.NewServer(healthConfig)
+			// Start pprof server
+			go debugging.RunPprof(ctx)
 
-		go func() {
-			if err := healthServer.Start(ctx); err != nil {
-				slog.Error("Health check server stopped", slog.Any("error", err))
+			// Start health check server
+			healthConfig := healthcheck.GetConfigFromEnv()
+			healthServer := healthcheck.NewServer(healthConfig)
+
+			go func() {
+				if err := healthServer.Start(ctx); err != nil {
+					slog.Error("Health check server stopped", slog.Any("error", err))
+				}
+			}()
+
+			// Kafka is required for ingestion
+			kafkaFactory := fly.NewFactoryFromEnv()
+			if !kafkaFactory.IsEnabledForIngestion() {
+				return fmt.Errorf("Kafka is required for ingestion but is not enabled")
 			}
-		}()
 
-		// Kafka is required for ingestion
-		kafkaFactory := fly.NewFactoryFromEnv()
-		if !kafkaFactory.IsEnabledForIngestion() {
-			return fmt.Errorf("Kafka is required for ingestion but is not enabled")
-		}
+			slog.Info("Starting logs ingestion with Kafka consumer")
 
-		slog.Info("Starting logs ingestion with Kafka consumer")
-
-		consumer, err := NewKafkaIngestConsumer("logs", "lakerunner.ingest.logs")
-		if err != nil {
-			return fmt.Errorf("failed to create Kafka consumer: %w", err)
-		}
-		defer func() {
-			if err := consumer.Close(); err != nil {
-				slog.Error("Error closing Kafka consumer", slog.Any("error", err))
+			consumer, err := NewKafkaIngestConsumer("logs", "lakerunner.ingest.logs")
+			if err != nil {
+				return fmt.Errorf("failed to create Kafka consumer: %w", err)
 			}
-		}()
+			defer func() {
+				if err := consumer.Close(); err != nil {
+					slog.Error("Error closing Kafka consumer", slog.Any("error", err))
+				}
+			}()
 
-		// Mark as healthy once consumer is created and about to start
-		healthServer.SetStatus(healthcheck.StatusHealthy)
+			// Mark as healthy once consumer is created and about to start
+			healthServer.SetStatus(healthcheck.StatusHealthy)
 
-		return consumer.Run(ctx)
-	},
+			return consumer.Run(ctx)
+		},
 	}
 
 	rootCmd.AddCommand(cmd)
@@ -128,12 +128,12 @@ type writerManager struct {
 
 func newWriterManager(tmpdir, orgID string, ingestDateint int32, rpfEstimate int64, ll *slog.Logger) *writerManager {
 	return &writerManager{
-	writers:       make(map[hourSlotKey]*parquetwriter.UnifiedWriter),
-	tmpdir:        tmpdir,
-	orgID:         orgID,
-	ingestDateint: ingestDateint,
-	rpfEstimate:   rpfEstimate,
-	ll:            ll,
+		writers:       make(map[hourSlotKey]*parquetwriter.UnifiedWriter),
+		tmpdir:        tmpdir,
+		orgID:         orgID,
+		ingestDateint: ingestDateint,
+		rpfEstimate:   rpfEstimate,
+		ll:            ll,
 	}
 }
 
@@ -144,64 +144,64 @@ func (wm *writerManager) processBatch(batch *pipeline.Batch) (processedCount, er
 
 	// First pass: group rows by hour/slot
 	for i := 0; i < batch.Len(); i++ {
-	row := batch.Get(i)
-	if row == nil {
-		wm.ll.Error("Row is nil - skipping", slog.Int("rowIndex", i))
-		errorCount++
-		continue
-	}
+		row := batch.Get(i)
+		if row == nil {
+			wm.ll.Error("Row is nil - skipping", slog.Int("rowIndex", i))
+			errorCount++
+			continue
+		}
 
-	// Extract timestamp
-	ts, ok := row[wkk.RowKeyCTimestamp].(int64)
-	if !ok {
-		wm.ll.Error("_cardinalhq.timestamp field is missing or not int64 - skipping row", slog.Int("rowIndex", i))
-		errorCount++
-		continue
-	}
+		// Extract timestamp
+		ts, ok := row[wkk.RowKeyCTimestamp].(int64)
+		if !ok {
+			wm.ll.Error("_cardinalhq.timestamp field is missing or not int64 - skipping row", slog.Int("rowIndex", i))
+			errorCount++
+			continue
+		}
 
-	// Determine hour/slot
-	dateint, hour16 := helpers.MSToDateintHour(ts)
-	hour := int(hour16)
-	slot := 0
-	key := hourSlotKey{dateint, hour, slot}
+		// Determine hour/slot
+		dateint, hour16 := helpers.MSToDateintHour(ts)
+		hour := int(hour16)
+		slot := 0
+		key := hourSlotKey{dateint, hour, slot}
 
-	// Create or get batch for this group
-	if batchGroups[key] == nil {
-		batchGroups[key] = pipeline.GetBatch()
-	}
+		// Create or get batch for this group
+		if batchGroups[key] == nil {
+			batchGroups[key] = pipeline.GetBatch()
+		}
 
-	// Add row to the appropriate batch group
-	newRow := batchGroups[key].AddRow()
-	for k, v := range row {
-		newRow[k] = v
-	}
+		// Add row to the appropriate batch group
+		newRow := batchGroups[key].AddRow()
+		for k, v := range row {
+			newRow[k] = v
+		}
 	}
 
 	// Second pass: write each grouped batch to its writer
 	for key, groupedBatch := range batchGroups {
-	writer, err := wm.getWriter(key)
-	if err != nil {
-		wm.ll.Error("Failed to get writer for batch group",
-			slog.Any("key", key),
-			slog.String("error", err.Error()))
-		errorCount += int64(groupedBatch.Len())
+		writer, err := wm.getWriter(key)
+		if err != nil {
+			wm.ll.Error("Failed to get writer for batch group",
+				slog.Any("key", key),
+				slog.String("error", err.Error()))
+			errorCount += int64(groupedBatch.Len())
+			pipeline.ReturnBatch(groupedBatch)
+			continue
+		}
+
+		// Write the entire batch efficiently
+		if err := writer.WriteBatch(groupedBatch); err != nil {
+			wm.ll.Error("Failed to write batch group",
+				slog.Any("key", key),
+				slog.Int("batchSize", groupedBatch.Len()),
+				slog.String("error", err.Error()))
+			errorCount += int64(groupedBatch.Len())
+		} else {
+			processedCount += int64(groupedBatch.Len())
+		}
+
+		// Return batch to pool
 		pipeline.ReturnBatch(groupedBatch)
-		continue
-	}
-
-	// Write the entire batch efficiently
-	if err := writer.WriteBatch(groupedBatch); err != nil {
-		wm.ll.Error("Failed to write batch group",
-			slog.Any("key", key),
-			slog.Int("batchSize", groupedBatch.Len()),
-			slog.String("error", err.Error()))
-		errorCount += int64(groupedBatch.Len())
-	} else {
-		processedCount += int64(groupedBatch.Len())
-	}
-
-	// Return batch to pool
-	pipeline.ReturnBatch(groupedBatch)
 	}
 
 	return processedCount, errorCount
@@ -210,21 +210,21 @@ func (wm *writerManager) processBatch(batch *pipeline.Batch) (processedCount, er
 // getWriter returns the writer for a specific hour/slot, creating it if necessary
 func (wm *writerManager) getWriter(key hourSlotKey) (*parquetwriter.UnifiedWriter, error) {
 	if writer, exists := wm.writers[key]; exists {
-	return writer, nil
+		return writer, nil
 	}
 
 	// Create new writer
 	writer, err := factories.NewLogsWriter(wm.tmpdir, wm.rpfEstimate)
 	if err != nil {
-	return nil, fmt.Errorf("failed to create logs writer: %w", err)
+		return nil, fmt.Errorf("failed to create logs writer: %w", err)
 	}
 
 	wm.writers[key] = writer
 	wm.ll.Debug("Created new log writer",
-	slog.String("orgID", wm.orgID),
-	slog.Int("dateint", int(key.dateint)),
-	slog.Int("hour", key.hour),
-	slog.Int("slot", key.slot))
+		slog.String("orgID", wm.orgID),
+		slog.Int("dateint", int(key.dateint)),
+		slog.Int("hour", key.hour),
+		slog.Int("slot", key.slot))
 
 	return writer, nil
 }
@@ -235,22 +235,22 @@ func (wm *writerManager) closeAll(ctx context.Context) ([]parquetwriter.Result, 
 	var errs []error
 
 	for key, writer := range wm.writers {
-	results, err := writer.Close(ctx)
-	if err != nil {
-		errs = append(errs, fmt.Errorf("failed to close writer %v: %w", key, err))
-		continue
-	}
-	allResults = append(allResults, results...)
-	wm.ll.Debug("Closed log writer",
-		slog.String("orgID", wm.orgID),
-		slog.Int("dateint", int(key.dateint)),
-		slog.Int("hour", key.hour),
-		slog.Int("slot", key.slot),
-		slog.Int("fileCount", len(results)))
+		results, err := writer.Close(ctx)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("failed to close writer %v: %w", key, err))
+			continue
+		}
+		allResults = append(allResults, results...)
+		wm.ll.Debug("Closed log writer",
+			slog.String("orgID", wm.orgID),
+			slog.Int("dateint", int(key.dateint)),
+			slog.Int("hour", key.hour),
+			slog.Int("slot", key.slot),
+			slog.Int("fileCount", len(results)))
 	}
 
 	if len(errs) > 0 {
-	return allResults, errors.Join(errs...)
+		return allResults, errors.Join(errs...)
 	}
 
 	return allResults, nil
@@ -267,15 +267,15 @@ func queueLogCompactionForSlot(ctx context.Context, mdb lrdb.StoreFull, item ing
 	endTime := startTime.Add(time.Hour)
 
 	return mdb.WorkQueueAdd(ctx, lrdb.WorkQueueAddParams{
-	OrgID:      item.OrganizationID,
-	Instance:   item.InstanceNum,
-	Signal:     lrdb.SignalEnumLogs,
-	Action:     lrdb.ActionEnumCompact,
-	Dateint:    dateint,
-	Frequency:  -1,
-	SlotID:     int32(slotID),
-	TsRange:    helpers.TimeRange{Start: startTime, End: endTime}.ToPgRange(),
-	RunnableAt: time.Now().UTC().Add(5 * time.Minute),
+		OrgID:      item.OrganizationID,
+		Instance:   item.InstanceNum,
+		Signal:     lrdb.SignalEnumLogs,
+		Action:     lrdb.ActionEnumCompact,
+		Dateint:    dateint,
+		Frequency:  -1,
+		SlotID:     int32(slotID),
+		TsRange:    helpers.TimeRange{Start: startTime, End: endTime}.ToPgRange(),
+		RunnableAt: time.Now().UTC().Add(5 * time.Minute),
 	})
 }
 
@@ -293,15 +293,15 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 	var err error
 
 	if collectorName := helpers.ExtractCollectorName(item.ObjectID); collectorName != "" {
-	profile, err = sp.GetStorageProfileForOrganizationAndCollector(ctx, item.OrganizationID, collectorName)
-	if err != nil {
-		return fmt.Errorf("failed to get storage profile for collector %s: %w", collectorName, err)
-	}
+		profile, err = sp.GetStorageProfileForOrganizationAndCollector(ctx, item.OrganizationID, collectorName)
+		if err != nil {
+			return fmt.Errorf("failed to get storage profile for collector %s: %w", collectorName, err)
+		}
 	} else {
-	profile, err = sp.GetStorageProfileForOrganizationAndInstance(ctx, item.OrganizationID, item.InstanceNum)
-	if err != nil {
-		return fmt.Errorf("failed to get storage profile: %w", err)
-	}
+		profile, err = sp.GetStorageProfileForOrganizationAndInstance(ctx, item.OrganizationID, item.InstanceNum)
+		if err != nil {
+			return fmt.Errorf("failed to get storage profile: %w", err)
+		}
 	}
 
 	// Create cloud storage client
@@ -435,8 +435,8 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 	}
 
 	ll.Debug("Processing batch item with filereader",
-	slog.String("objectID", item.ObjectID),
-	slog.Int64("fileSize", item.FileSize))
+		slog.String("objectID", item.ObjectID),
+		slog.Int64("fileSize", item.FileSize))
 
 	// Skip database files (processed outputs, not inputs)
 	if strings.HasPrefix(item.ObjectID, "db/") {
@@ -542,52 +542,52 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 	ll.Debug("Closing writers", slog.Int("writerCount", len(wm.writers)))
 	results, err := wm.closeAll(ctx)
 	if err != nil {
-	return fmt.Errorf("failed to close writers: %w", err)
+		return fmt.Errorf("failed to close writers: %w", err)
 	}
 	ll.Debug("Closed writers", slog.Int("resultCount", len(results)))
 
 	// Calculate total output records across all result files
 	var totalOutputRecords int64
 	for _, result := range results {
-	totalOutputRecords += result.RecordCount
+		totalOutputRecords += result.RecordCount
 	}
 
 	ll.Debug("Batch processing summary",
-	slog.Int64("inputRowsRead", batchRowsRead),
-	slog.Int64("inputRowsProcessed", batchRowsProcessed),
-	slog.Int64("inputRowsErrored", batchRowsErrored),
-	slog.Int64("outputRecordsWritten", totalOutputRecords),
-	slog.Int("outputFiles", len(results)))
+		slog.Int64("inputRowsRead", batchRowsRead),
+		slog.Int64("inputRowsProcessed", batchRowsProcessed),
+		slog.Int64("inputRowsErrored", batchRowsErrored),
+		slog.Int64("outputRecordsWritten", totalOutputRecords),
+		slog.Int("outputFiles", len(results)))
 
 	if len(results) == 0 {
-	ll.Warn("No output files generated despite reading rows",
-		slog.Int64("rowsRead", batchRowsRead),
-		slog.Int64("rowsErrored", batchRowsErrored))
-	return nil
+		ll.Warn("No output files generated despite reading rows",
+			slog.Int64("rowsRead", batchRowsRead),
+			slog.Int64("rowsErrored", batchRowsErrored))
+		return nil
 	}
 
 	// The critical check: processed rows should equal written records
 	if batchRowsProcessed != totalOutputRecords {
-	ll.Error("CRITICAL: Row count mismatch between processed and written",
-		slog.Int64("rowsProcessed", batchRowsProcessed),
-		slog.Int64("recordsWritten", totalOutputRecords),
-		slog.Int64("difference", batchRowsProcessed-totalOutputRecords))
-	return fmt.Errorf("data loss detected: %d rows processed but only %d written", batchRowsProcessed, totalOutputRecords)
+		ll.Error("CRITICAL: Row count mismatch between processed and written",
+			slog.Int64("rowsProcessed", batchRowsProcessed),
+			slog.Int64("recordsWritten", totalOutputRecords),
+			slog.Int64("difference", batchRowsProcessed-totalOutputRecords))
+		return fmt.Errorf("data loss detected: %d rows processed but only %d written", batchRowsProcessed, totalOutputRecords)
 	}
 
 	// Also report if we had expected failures
 	if batchRowsErrored > 0 {
-	ll.Warn("Some input rows were dropped due to processing errors",
-		slog.Int64("totalDropped", batchRowsErrored),
-		slog.Float64("dropRate", float64(batchRowsErrored)/float64(batchRowsRead)*100))
+		ll.Warn("Some input rows were dropped due to processing errors",
+			slog.Int64("totalDropped", batchRowsErrored),
+			slog.Float64("dropRate", float64(batchRowsErrored)/float64(batchRowsRead)*100))
 	}
 
 	// Final interruption check before critical section (S3 uploads + DB inserts)
 	if err := ctx.Err(); err != nil {
-	ll.Info("Context cancelled before S3 upload phase - safe interruption point",
-		slog.Int("resultCount", len(results)),
-		slog.Any("error", err))
-	return NewWorkerInterrupted("context cancelled before S3 upload phase")
+		ll.Info("Context cancelled before S3 upload phase - safe interruption point",
+			slog.Int("resultCount", len(results)),
+			slog.Any("error", err))
+		return NewWorkerInterrupted("context cancelled before S3 upload phase")
 	}
 
 	// Use context without cancellation for critical section to ensure atomic completion
@@ -597,76 +597,76 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 	slotHourTriggers := make(map[hourSlotKey]int64) // Track earliest timestamp per slot/hour for compaction
 
 	for _, result := range results {
-	// Extract metadata from parquetwriter result
-	stats, ok := result.Metadata.(factories.LogsFileStats)
-	if !ok {
-		return fmt.Errorf("expected LogsFileStats metadata, got %T", result.Metadata)
-	}
+		// Extract metadata from parquetwriter result
+		stats, ok := result.Metadata.(factories.LogsFileStats)
+		if !ok {
+			return fmt.Errorf("expected LogsFileStats metadata, got %T", result.Metadata)
+		}
 
-	// Generate segment ID and upload
-	segmentID := s3helper.GenerateID()
-	dateint, hour16 := helpers.MSToDateintHour(stats.FirstTS)
-	hour := int(hour16)
-	dbObjectID := helpers.MakeDBObjectID(item.OrganizationID, "",
-		dateint, s3helper.HourFromMillis(stats.FirstTS), segmentID, "logs")
+		// Generate segment ID and upload
+		segmentID := s3helper.GenerateID()
+		dateint, hour16 := helpers.MSToDateintHour(stats.FirstTS)
+		hour := int(hour16)
+		dbObjectID := helpers.MakeDBObjectID(item.OrganizationID, "",
+			dateint, s3helper.HourFromMillis(stats.FirstTS), segmentID, "logs")
 
 		if err := storageClient.UploadObject(criticalCtx, firstItem.Bucket, dbObjectID, result.FileName); err != nil {
 			return fmt.Errorf("failed to upload file to %s: %w", profile.CloudProvider, err)
 		}
 		_ = os.Remove(result.FileName)
 
-	slotID := 0
+		slotID := 0
 
-	// Insert log segment into database
-	resultLastTS := stats.LastTS + 1 // end is exclusive
-	err := mdb.InsertLogSegment(criticalCtx, lrdb.InsertLogSegmentParams{
-		OrganizationID: item.OrganizationID,
-		Dateint:        dateint,
-		IngestDateint:  ingest_dateint,
-		SegmentID:      segmentID,
-		InstanceNum:    item.InstanceNum,
-		SlotID:         int32(slotID),
-		StartTs:        stats.FirstTS,
-		EndTs:          resultLastTS,
-		RecordCount:    result.RecordCount,
-		FileSize:       result.FileSize,
-		CreatedBy:      lrdb.CreatedByIngest,
-		Fingerprints:   stats.Fingerprints,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to insert log segment: %w", err)
-	}
+		// Insert log segment into database
+		resultLastTS := stats.LastTS + 1 // end is exclusive
+		err := mdb.InsertLogSegment(criticalCtx, lrdb.InsertLogSegmentParams{
+			OrganizationID: item.OrganizationID,
+			Dateint:        dateint,
+			IngestDateint:  ingest_dateint,
+			SegmentID:      segmentID,
+			InstanceNum:    item.InstanceNum,
+			SlotID:         int32(slotID),
+			StartTs:        stats.FirstTS,
+			EndTs:          resultLastTS,
+			RecordCount:    result.RecordCount,
+			FileSize:       result.FileSize,
+			CreatedBy:      lrdb.CreatedByIngest,
+			Fingerprints:   stats.Fingerprints,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to insert log segment: %w", err)
+		}
 
-	ll.Debug("Inserted log segment",
-		slog.String("organizationID", item.OrganizationID.String()),
-		slog.Int("dateint", int(dateint)),
-		slog.Int("hour", hour),
-		slog.Int("slot", slotID),
-		slog.String("dbObjectID", dbObjectID),
-		slog.Int64("segmentID", segmentID),
-		slog.Int64("recordCount", result.RecordCount),
-		slog.Int64("fileSize", result.FileSize),
-		slog.Int64("fingerprintCount", int64(len(stats.Fingerprints))))
+		ll.Debug("Inserted log segment",
+			slog.String("organizationID", item.OrganizationID.String()),
+			slog.Int("dateint", int(dateint)),
+			slog.Int("hour", hour),
+			slog.Int("slot", slotID),
+			slog.String("dbObjectID", dbObjectID),
+			slog.Int64("segmentID", segmentID),
+			slog.Int64("recordCount", result.RecordCount),
+			slog.Int64("fileSize", result.FileSize),
+			slog.Int64("fingerprintCount", int64(len(stats.Fingerprints))))
 
-	// Track slot/hour triggers for compaction work queue (slot is always 0)
-	key := hourSlotKey{dateint: dateint, hour: hour, slot: 0}
-	if existingTS, exists := slotHourTriggers[key]; !exists || stats.FirstTS < existingTS {
-		slotHourTriggers[key] = stats.FirstTS
-	}
+		// Track slot/hour triggers for compaction work queue (slot is always 0)
+		key := hourSlotKey{dateint: dateint, hour: hour, slot: 0}
+		if existingTS, exists := slotHourTriggers[key]; !exists || stats.FirstTS < existingTS {
+			slotHourTriggers[key] = stats.FirstTS
+		}
 	}
 
 	// Queue compaction work for each slot/hour combination
 	for key, earliestTS := range slotHourTriggers {
-	ll.Debug("Queueing log compaction for slot+hour",
-		slog.Int("slotID", key.slot),
-		slog.Int("dateint", int(key.dateint)),
-		slog.Int("hour", key.hour),
-		slog.Int64("triggerTS", earliestTS))
+		ll.Debug("Queueing log compaction for slot+hour",
+			slog.Int("slotID", key.slot),
+			slog.Int("dateint", int(key.dateint)),
+			slog.Int("hour", key.hour),
+			slog.Int64("triggerTS", earliestTS))
 
-	hourAlignedTS := helpers.TruncateToHour(helpers.UnixMillisToTime(earliestTS)).UnixMilli()
-	if err := queueLogCompactionForSlot(criticalCtx, mdb, item, key.slot, key.dateint, hourAlignedTS); err != nil {
-		return fmt.Errorf("failed to queue log compaction for slot %d: %w", key.slot, err)
-	}
+		hourAlignedTS := helpers.TruncateToHour(helpers.UnixMillisToTime(earliestTS)).UnixMilli()
+		if err := queueLogCompactionForSlot(criticalCtx, mdb, item, key.slot, key.dateint, hourAlignedTS); err != nil {
+			return fmt.Errorf("failed to queue log compaction for slot %d: %w", key.slot, err)
+		}
 	}
 
 	return nil

@@ -41,7 +41,7 @@ func init() {
 	serveCmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Start the KEDA external scaler service",
-		Long:  `Starts a gRPC service that implements the KEDA external scaler interface for auto-scaling LakeRunner services.`,
+		Long:  `Starts a gRPC service that implements the KEDA external scaler interface for auto-scaling Lakerunner services.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runMonitoringServe(cmd.Context())
 		},
