@@ -202,79 +202,9 @@ func TestFactory_CreateConsumerWithService(t *testing.T) {
 	consumer.Close()
 }
 
-func TestFactory_FeatureFlags(t *testing.T) {
-	tests := []struct {
-		name    string
-		config  *Config
-		enabled bool
-		ingest  bool
-		compact bool
-		rollup  bool
-	}{
-		{
-			name: "all disabled",
-			config: &Config{
-				Enabled:              false,
-				EnabledForIngestion:  false,
-				EnabledForCompaction: false,
-				EnabledForRollup:     false,
-			},
-			enabled: false,
-			ingest:  false,
-			compact: false,
-			rollup:  false,
-		},
-		{
-			name: "all enabled",
-			config: &Config{
-				Enabled:              true,
-				EnabledForIngestion:  true,
-				EnabledForCompaction: true,
-				EnabledForRollup:     true,
-			},
-			enabled: true,
-			ingest:  true,
-			compact: true,
-			rollup:  true,
-		},
-		{
-			name: "main disabled overrides features",
-			config: &Config{
-				Enabled:              false,
-				EnabledForIngestion:  true,
-				EnabledForCompaction: true,
-				EnabledForRollup:     true,
-			},
-			enabled: false,
-			ingest:  false, // Main flag disabled
-			compact: false, // Main flag disabled
-			rollup:  false, // Main flag disabled
-		},
-		{
-			name: "selective features",
-			config: &Config{
-				Enabled:              true,
-				EnabledForIngestion:  true,
-				EnabledForCompaction: false,
-				EnabledForRollup:     true,
-			},
-			enabled: true,
-			ingest:  true,
-			compact: false,
-			rollup:  true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			factory := NewFactory(tt.config)
-
-			assert.Equal(t, tt.enabled, factory.IsEnabled())
-			assert.Equal(t, tt.ingest, factory.IsEnabledForIngestion())
-			assert.Equal(t, tt.compact, factory.IsEnabledForCompaction())
-			assert.Equal(t, tt.rollup, factory.IsEnabledForRollup())
-		})
-	}
+func TestFactory_IsEnabled(t *testing.T) {
+	factory := NewFactory(&Config{Enabled: true})
+	assert.True(t, factory.IsEnabled())
 }
 
 func TestManager_Lifecycle(t *testing.T) {
@@ -377,7 +307,6 @@ func TestFactoryIntegration(t *testing.T) {
 	config := &Config{
 		Brokers:              []string{"localhost:9092"},
 		Enabled:              true,
-		EnabledForIngestion:  true,
 		ProducerBatchSize:    10,
 		ProducerBatchTimeout: 100000000, // 100ms
 		ConsumerBatchSize:    10,
@@ -387,7 +316,6 @@ func TestFactoryIntegration(t *testing.T) {
 
 	factory := NewFactory(config)
 	assert.True(t, factory.IsEnabled())
-	assert.True(t, factory.IsEnabledForIngestion())
 
 	// Test producer creation
 	producer, err := factory.CreateProducer()

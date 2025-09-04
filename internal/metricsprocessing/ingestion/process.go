@@ -41,6 +41,7 @@ func ProcessBatch(
 	ingestDateint int32,
 	rpfEstimate int64,
 	exemplarProcessor *exemplar.Processor,
+	cfg Config,
 ) error {
 	batchID := idgen.GenerateShortBase32ID()
 	ll = ll.With(slog.String("batchID", batchID))
@@ -60,6 +61,7 @@ func ProcessBatch(
 		RPFEstimate:       rpfEstimate,
 		ExemplarProcessor: exemplarProcessor,
 		Logger:            ll,
+		Config:            cfg,
 	}
 
 	// Execute ingestion
@@ -83,7 +85,7 @@ func ProcessBatch(
 
 	// Get storage profile for upload operations
 	firstItem := items[0]
-	profile, err := getStorageProfileForIngestion(ctx, sp, firstItem)
+	profile, err := getStorageProfileForIngestion(ctx, sp, firstItem, cfg)
 	if err != nil {
 		return fmt.Errorf("failed to get storage profile: %w", err)
 	}
@@ -160,26 +162,14 @@ func uploadAndQueue(
 	return nil
 }
 
-// ShouldProcessExemplars checks if exemplar processing should be enabled
-// Returns false if LAKERUNNER_METRICS_EXEMPLARS is set to "false", "0", or "off"
-func ShouldProcessExemplars() bool {
-	return helpers.GetBoolEnv("LAKERUNNER_METRICS_EXEMPLARS", true)
-}
-
-// shouldUseSingleInstanceMode checks if single instance mode is enabled
-// Returns true if LAKERUNNER_SINGLE_INSTANCE_NUM is set to "true" or "1"
-func shouldUseSingleInstanceMode() bool {
-	return helpers.GetBoolEnv("LAKERUNNER_SINGLE_INSTANCE_NUM", false)
-}
-
 // getStorageProfileForIngestion gets the appropriate storage profile for ingestion
-// based on the LAKERUNNER_SINGLE_INSTANCE_NUM environment variable setting
 func getStorageProfileForIngestion(
 	ctx context.Context,
 	sp storageprofile.StorageProfileProvider,
 	firstItem lrdb.Inqueue,
+	cfg Config,
 ) (storageprofile.StorageProfile, error) {
-	if shouldUseSingleInstanceMode() {
+	if cfg.SingleInstanceMode {
 		return sp.GetLowestInstanceStorageProfile(ctx, firstItem.OrganizationID, firstItem.Bucket)
 	}
 

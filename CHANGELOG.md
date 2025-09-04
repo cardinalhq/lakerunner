@@ -19,11 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Build Process**: Improved promotion pipeline for production releases
 - **Logging**: Removed confusing CONFIGDB fallback message when database is not configured
 - **Work Queue Configuration**: Converted all settings from database table to Go parameters (retry count, timeouts, TTLs)
+- **Configuration System**: Switched to centralized Viper-based loader with `LAKERUNNER_`-prefixed environment variables (breaking change)
 
 ### Removed
 
 - **Settings Table**: Dropped database settings table as all configuration moved to Go code parameters
 - **Settings Dependencies**: Updated database functions to use hardcoded defaults instead of settings table lookups
+- **Kafka Feature Flags**: Removed `EnabledForIngestion`, `EnabledForCompaction`, and `EnabledForRollup` in favor of single `Enabled` toggle (breaking change)
 
 ### Fixed
 

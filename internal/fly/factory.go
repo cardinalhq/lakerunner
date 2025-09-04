@@ -35,11 +35,6 @@ func NewFactory(config *Config) *Factory {
 	}
 }
 
-// NewFactoryFromEnv creates a factory with configuration from environment
-func NewFactoryFromEnv() *Factory {
-	return NewFactory(LoadFromEnv())
-}
-
 // CreateProducer creates a new Kafka producer
 func (f *Factory) CreateProducer() (Producer, error) {
 	cfg := ProducerConfig{
@@ -124,21 +119,6 @@ func (f *Factory) createSASLMechanism() (sasl.Mechanism, error) {
 // IsEnabled returns whether Kafka is enabled
 func (f *Factory) IsEnabled() bool {
 	return f.config.Enabled
-}
-
-// IsEnabledForIngestion returns whether Kafka is enabled for ingestion
-func (f *Factory) IsEnabledForIngestion() bool {
-	return f.config.Enabled && f.config.EnabledForIngestion
-}
-
-// IsEnabledForCompaction returns whether Kafka is enabled for compaction
-func (f *Factory) IsEnabledForCompaction() bool {
-	return f.config.Enabled && f.config.EnabledForCompaction
-}
-
-// IsEnabledForRollup returns whether Kafka is enabled for rollup
-func (f *Factory) IsEnabledForRollup() bool {
-	return f.config.Enabled && f.config.EnabledForRollup
 }
 
 // GetConfig returns the underlying configuration

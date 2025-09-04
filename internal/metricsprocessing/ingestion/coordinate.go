@@ -140,7 +140,7 @@ func coordinate(
 	firstItem := input.Items[0]
 
 	// Get storage profile and S3 client
-	profile, err := getStorageProfileForIngestion(ctx, sp, firstItem)
+	profile, err := getStorageProfileForIngestion(ctx, sp, firstItem, input.Config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get storage profile: %w", err)
 	}
@@ -173,7 +173,7 @@ func coordinate(
 	}
 
 	// Process exemplars from all files if exemplar processor is available
-	if input.ExemplarProcessor != nil && ShouldProcessExemplars() {
+	if input.ExemplarProcessor != nil && input.Config.ProcessExemplars {
 		input.Logger.Debug("Processing exemplars from all files", slog.Int("fileCount", len(validFiles)))
 
 		for _, fileInfo := range validFiles {
