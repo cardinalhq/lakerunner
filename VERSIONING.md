@@ -1,8 +1,8 @@
-# LakeRunner Versioning Policy
+# Lakerunner Versioning Policy
 
 ## Semantic Versioning Scheme
 
-LakeRunner follows [Semantic Versioning 2.0.0](https://semver.org/) with the format `vMAJOR.MINOR.PATCH`:
+Lakerunner follows [Semantic Versioning 2.0.0](https://semver.org/) with the format `vMAJOR.MINOR.PATCH`:
 
 ### Version Components
 

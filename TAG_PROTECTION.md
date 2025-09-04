@@ -1,6 +1,6 @@
 # Tag Protection Policy
 
-This document describes how LakeRunner enforces controlled releases through GitHub tag protection rules.
+This document describes how Lakerunner enforces controlled releases through GitHub tag protection rules.
 
 ## Protected Tag Patterns
 
