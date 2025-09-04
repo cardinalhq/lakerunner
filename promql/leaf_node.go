@@ -220,8 +220,12 @@ func (n *LeafNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalResul
 
 		case SketchMAP:
 			k := keyFor(si.SketchTags.Tags)
-			num := n.evalRangeAwareScalar(k, si, stepMs, rangeMs)
-			v = Value{Kind: ValScalar, Num: num}
+			if n.BE.FuncName != "" {
+				num := n.evalRangeAwareScalar(k, si, stepMs, rangeMs)
+				v = Value{Kind: ValScalar, Num: num}
+			} else {
+				v = Value{Kind: ValMap, AggMap: si.SketchTags.Agg}
+			}
 
 		default:
 			// Unknown sketch type
@@ -356,4 +360,34 @@ func rangeSeconds(be BaseExpr, stepSecs float64) float64 {
 		return math.NaN()
 	}
 	return time.Duration(d).Seconds()
+}
+
+func (n *LeafNode) Label(tags map[string]any) string {
+	out := ""
+	if n.BE.FuncName != "" {
+		out += n.BE.FuncName + "("
+	}
+	out += n.BE.Metric
+	if len(n.BE.GroupBy) > 0 {
+		parts := make([]string, 0, len(n.BE.GroupBy))
+		groupByTags := n.BE.GroupBy
+		for _, lbl := range groupByTags {
+			if v, ok := tags[lbl]; ok {
+				parts = append(parts, fmt.Sprintf("%s=%v", lbl, v))
+			}
+		}
+		if len(parts) > 0 {
+			out += "{" + strings.Join(parts, ",") + "}"
+		}
+	} else {
+		for _, matcher := range n.BE.Matchers {
+			parts := fmt.Sprintf("%s%s%v", matcher.Label, matcher.Op, matcher.Value)
+			out += "{" + parts + "}"
+		}
+	}
+	if n.BE.Range != "" {
+		out += fmt.Sprintf("[%s]", n.BE.Range)
+	}
+	out += ")"
+	return out
 }

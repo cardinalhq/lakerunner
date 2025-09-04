@@ -319,7 +319,9 @@ func uploadSingleMetricResult(
 		slog.Int64("segmentID", segmentID),
 		slog.Int("fingerprintCount", len(filestats.Fingerprints)),
 		slog.Int64("startTs", filestats.StartTs),
-		slog.Int64("endTs", filestats.EndTs))
+		slog.Int64("endTs", filestats.EndTs),
+		slog.Int64("outputFileSize", result.FileSize),
+		slog.Int64("recordCount", result.RecordCount))
 
 	// Insert segment record
 	err = mdb.InsertMetricSegment(ctx, lrdb.InsertMetricSegmentParams{
@@ -398,7 +400,9 @@ func UploadMetricResultsWithProcessedSegments(
 			slog.Int64("segmentID", segment.SegmentID),
 			slog.Int("fingerprintCount", len(segment.Fingerprints)),
 			slog.Int64("startTs", segment.StartTs),
-			slog.Int64("endTs", segment.EndTs))
+			slog.Int64("endTs", segment.EndTs),
+			slog.Int64("outputFileSize", segment.Result.FileSize),
+			slog.Int64("recordCount", segment.Result.RecordCount))
 
 		// Insert segment record
 		err = mdb.InsertMetricSegment(ctx, lrdb.InsertMetricSegmentParams{

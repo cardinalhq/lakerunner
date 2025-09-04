@@ -56,8 +56,18 @@ type Querier interface {
 	GetMetricType(ctx context.Context, arg GetMetricTypeParams) (string, error)
 	GetSpanInfoByFingerprint(ctx context.Context, arg GetSpanInfoByFingerprintParams) (GetSpanInfoByFingerprintRow, error)
 	GetTraceSegmentsForCompaction(ctx context.Context, arg GetTraceSegmentsForCompactionParams) ([]GetTraceSegmentsForCompactionRow, error)
+	// Claim a bundle of items
+	InqueueClaimBundle(ctx context.Context, arg InqueueClaimBundleParams) error
+	// Defer items by pushing their eligible_at forward
+	InqueueDeferItems(ctx context.Context, arg InqueueDeferItemsParams) error
+	// Fetch all eligible candidates matching the grouping key
+	InqueueFetchCandidates(ctx context.Context, arg InqueueFetchCandidatesParams) ([]InqueueFetchCandidatesRow, error)
+	// Get full details for claimed bundle items
+	InqueueGetBundleItems(ctx context.Context, dollar_1 []uuid.UUID) ([]InqueueGetBundleItemsRow, error)
 	InqueueJournalDelete(ctx context.Context, arg InqueueJournalDeleteParams) error
 	InqueueJournalUpsert(ctx context.Context, arg InqueueJournalUpsertParams) (bool, error)
+	// Pick the oldest eligible item for a given signal
+	InqueuePickHead(ctx context.Context, dollar_1 string) (InqueuePickHeadRow, error)
 	// Get queue depth for ingest scaling by signal
 	InqueueScalingDepth(ctx context.Context, signal string) (interface{}, error)
 	InqueueSummary(ctx context.Context) ([]InqueueSummaryRow, error)
@@ -65,6 +75,7 @@ type Querier interface {
 	InsertLogSegmentDirect(ctx context.Context, arg InsertLogSegmentParams) error
 	InsertMetricSegmentDirect(ctx context.Context, arg InsertMetricSegmentParams) error
 	InsertTraceSegmentDirect(ctx context.Context, arg InsertTraceSegmentDirectParams) error
+	ListLogQLTags(ctx context.Context, organizationID uuid.UUID) ([]string, error)
 	ListLogSegmentsForQuery(ctx context.Context, arg ListLogSegmentsForQueryParams) ([]ListLogSegmentsForQueryRow, error)
 	ListMetricSegmentsForQuery(ctx context.Context, arg ListMetricSegmentsForQueryParams) ([]ListMetricSegmentsForQueryRow, error)
 	ListPromMetricTags(ctx context.Context, arg ListPromMetricTagsParams) ([]string, error)
@@ -90,6 +101,7 @@ type Querier interface {
 	// Returns an estimate of the number of metric segments, accounting for per-file overhead.
 	// Uses frequency_ms to provide more accurate estimates based on collection frequency.
 	MetricSegEstimator(ctx context.Context, arg MetricSegEstimatorParams) ([]MetricSegEstimatorRow, error)
+	MrqClaimBatch(ctx context.Context, arg MrqClaimBatchParams) ([]MrqClaimBatchRow, error)
 	MrqClaimBundle(ctx context.Context, arg MrqClaimBundleParams) error
 	MrqClaimSingleRow(ctx context.Context, arg MrqClaimSingleRowParams) (MrqClaimSingleRowRow, error)
 	MrqCompleteDelete(ctx context.Context, arg MrqCompleteDeleteParams) error

@@ -15,6 +15,7 @@
 package promql
 
 import (
+	"fmt"
 	"math"
 	"sort"
 	"time"
@@ -78,4 +79,8 @@ func (n *BottomKNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalRe
 		out[e.key] = e.val
 	}
 	return out
+}
+
+func (n *BottomKNode) Label(tags map[string]any) string {
+	return "bottomK(" + n.Child.Label(tags) + ", " + fmt.Sprint(n.K) + ")"
 }
