@@ -250,6 +250,7 @@ func (q *QuerierService) Run(doneCtx context.Context) error {
 	mux.HandleFunc("/api/v1/metrics/query", q.handlePromQuery)
 	mux.HandleFunc("/api/v1/logs/query", q.handleLogQuery)
 	mux.HandleFunc("/api/v1/promql/validate", q.handlePromQLValidate)
+	mux.HandleFunc("/api/v1/tags/logql", q.handleListLogQLTags)
 
 	srv := &http.Server{
 		Addr:    ":8080",

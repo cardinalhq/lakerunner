@@ -74,6 +74,7 @@ type Querier interface {
 	InsertLogSegmentDirect(ctx context.Context, arg InsertLogSegmentParams) error
 	InsertMetricSegmentDirect(ctx context.Context, arg InsertMetricSegmentParams) error
 	InsertTraceSegmentDirect(ctx context.Context, arg InsertTraceSegmentDirectParams) error
+	ListLogQLTags(ctx context.Context, organizationID uuid.UUID) ([]string, error)
 	ListLogSegmentsForQuery(ctx context.Context, arg ListLogSegmentsForQueryParams) ([]ListLogSegmentsForQueryRow, error)
 	ListMetricSegmentsForQuery(ctx context.Context, arg ListMetricSegmentsForQueryParams) ([]ListMetricSegmentsForQueryRow, error)
 	// Returns an estimate of the number of log segments, accounting for per-file overhead.
