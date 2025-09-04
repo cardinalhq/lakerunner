@@ -39,7 +39,6 @@ var (
 	objectCleanupCounter     metric.Int64Counter
 	legacyTableSyncCounter   metric.Int64Counter
 	workQueueExpiryCounter   metric.Int64Counter
-	inqueueExpiryCounter     metric.Int64Counter
 	mcqExpiryCounter         metric.Int64Counter
 	mrqExpiryCounter         metric.Int64Counter
 	signalLockCleanupCounter metric.Int64Counter
@@ -73,14 +72,6 @@ func init() {
 	)
 	if err != nil {
 		panic(fmt.Errorf("failed to create workqueue_expiry_total counter: %w", err))
-	}
-
-	inqueueExpiryCounter, err = meter.Int64Counter(
-		"lakerunner.sweeper.inqueue_expiry_total",
-		metric.WithDescription("Count of inqueue items expired due to staleness"),
-	)
-	if err != nil {
-		panic(fmt.Errorf("failed to create inqueue_expiry_total counter: %w", err))
 	}
 
 	mcqExpiryCounter, err = meter.Int64Counter(

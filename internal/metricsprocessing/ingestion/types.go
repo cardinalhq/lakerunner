@@ -19,7 +19,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
-	"github.com/cardinalhq/lakerunner/lrdb"
+	"github.com/cardinalhq/lakerunner/internal/processing/ingest"
 )
 
 // minuteSlotKey uniquely identifies a writer for a specific 60-second boundary
@@ -31,7 +31,7 @@ type minuteSlotKey struct {
 
 // input contains all parameters needed for metric ingestion
 type input struct {
-	Items             []lrdb.Inqueue
+	Items             []ingest.IngestItem
 	TmpDir            string
 	IngestDateint     int32
 	RPFEstimate       int64
@@ -48,6 +48,6 @@ type result struct {
 
 // fileInfo holds information about a downloaded file
 type fileInfo struct {
-	item        lrdb.Inqueue
+	item        ingest.IngestItem
 	tmpfilename string
 }

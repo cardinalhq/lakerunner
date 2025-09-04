@@ -46,6 +46,3 @@ func init() {
 		panic(fmt.Errorf("failed to create itemsSkipped counter: %w", err))
 	}
 }
-
-// handleMessage has been removed - all messages now go through Kafka
-// See kafka_handler.go for the new implementation

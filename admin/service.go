@@ -145,23 +145,8 @@ func (s *Service) WorkQueueStatus(ctx context.Context, req *adminproto.WorkQueue
 func (s *Service) InQueueStatus(ctx context.Context, req *adminproto.InQueueStatusRequest) (*adminproto.InQueueStatusResponse, error) {
 	slog.Debug("Received inqueue status request")
 
-	store, err := dbopen.LRDBStore(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to lrdb: %w", err)
-	}
-
-	results, err := store.InqueueSummary(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query inqueue summary: %w", err)
-	}
-
-	items := make([]*adminproto.InQueueItem, len(results))
-	for i, result := range results {
-		items[i] = &adminproto.InQueueItem{
-			Count:         result.Count,
-			TelemetryType: result.Signal,
-		}
-	}
+	// Return empty response for backward compatibility
+	items := make([]*adminproto.InQueueItem, 0)
 
 	return &adminproto.InQueueStatusResponse{
 		Items: items,

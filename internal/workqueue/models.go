@@ -14,21 +14,8 @@
 
 package workqueue
 
-import "github.com/google/uuid"
-
 // WorkItem represents a work queue item independent of database schema
 type WorkItem struct {
 	ID       int64
 	WorkerID int64
-}
-
-// InqueueItem represents an inqueue work item independent of database schema
-type InqueueItem struct {
-	ID             uuid.UUID
-	OrganizationID uuid.UUID
-	Bucket         string
-	ObjectID       string
-	ClaimedBy      int64
-	Tries          int32
-	InstanceNum    int16
 }

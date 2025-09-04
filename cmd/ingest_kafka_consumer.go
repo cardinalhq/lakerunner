@@ -29,6 +29,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing/ingestion"
+	"github.com/cardinalhq/lakerunner/internal/processing/ingest"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -116,7 +117,7 @@ func (k *KafkaIngestConsumer) Run(ctx context.Context) error {
 // processItem processes a single Kafka notification
 func (k *KafkaIngestConsumer) processItem(ctx context.Context, notif *messages.ObjStoreNotificationMessage) error {
 	// Convert notification to IngestItem
-	item := IngestItem{
+	item := ingest.IngestItem{
 		OrganizationID: notif.OrganizationID,
 		InstanceNum:    notif.InstanceNum,
 		Bucket:         notif.Bucket,
@@ -168,10 +169,8 @@ func (k *KafkaIngestConsumer) processItem(ctx context.Context, notif *messages.O
 	var processErr error
 	switch k.signal {
 	case "metrics":
-		// Convert IngestItem to Inqueue for compatibility with existing code
-		inqueueItems := ConvertIngestItemsToInqueue([]IngestItem{item})
 		processErr = ingestion.ProcessBatch(ctx, ll, tmpdir, k.loop.sp, k.loop.mdb,
-			k.loop.awsmanager, inqueueItems, ingestDateint, rpfEstimate, k.loop.exemplarProcessor)
+			k.loop.awsmanager, []ingest.IngestItem{item}, ingestDateint, rpfEstimate, k.loop.exemplarProcessor)
 	case "logs":
 		processErr = processLogsBatch(ctx, ll, tmpdir, k.loop.sp, k.loop.mdb,
 			k.loop.awsmanager, item, ingestDateint, rpfEstimate, k.loop)
@@ -217,7 +216,7 @@ func (k *KafkaIngestConsumer) Close() error {
 
 func processLogsBatch(ctx context.Context, ll *slog.Logger, tmpdir string,
 	sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
-	awsmanager *awsclient.Manager, item IngestItem,
+	awsmanager *awsclient.Manager, item ingest.IngestItem,
 	ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
 	// Call the existing logIngestBatch function from ingest_logs.go
 	return logIngestBatch(ctx, ll, tmpdir, sp, mdb, awsmanager, item, ingest_dateint, rpfEstimate, loop)
@@ -225,7 +224,7 @@ func processLogsBatch(ctx context.Context, ll *slog.Logger, tmpdir string,
 
 func processTracesBatch(ctx context.Context, ll *slog.Logger, tmpdir string,
 	sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
-	awsmanager *awsclient.Manager, item IngestItem,
+	awsmanager *awsclient.Manager, item ingest.IngestItem,
 	ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
 	// Call the existing traceIngestBatch function from ingest_traces_cmd.go
 	return traceIngestBatch(ctx, ll, tmpdir, sp, mdb, awsmanager, item, ingest_dateint, rpfEstimate, loop)

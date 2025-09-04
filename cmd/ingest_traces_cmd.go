@@ -28,6 +28,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/internal/processing/ingest"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -118,15 +119,28 @@ func traceIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp st
 	// Collect all trace file results from all items, grouped by slot
 	slotResults := make(map[int][]ingesttraces.TraceFileResult)
 
-	for _, inf := range inqueueItems {
-		ll.Info("Processing batch item",
-			slog.String("itemID", inf.ID.String()),
-			slog.String("objectID", inf.ObjectID),
-			slog.Int64("fileSize", inf.FileSize))
+	ll.Info("Processing batch item",
+		slog.String("objectID", item.ObjectID),
+		slog.Int64("fileSize", item.FileSize))
 
-		itemTmpdir := fmt.Sprintf("%s/item_%s", tmpdir, inf.ID.String())
-		if err := os.MkdirAll(itemTmpdir, 0755); err != nil {
-			return fmt.Errorf("creating item tmpdir: %w", err)
+	itemTmpdir := fmt.Sprintf("%s/item", tmpdir)
+	if err := os.MkdirAll(itemTmpdir, 0755); err != nil {
+		return fmt.Errorf("creating item tmpdir: %w", err)
+	}
+
+	tmpfilename, _, is404, err := s3helper.DownloadS3Object(ctx, itemTmpdir, s3client, item.Bucket, item.ObjectID)
+	if err != nil {
+		return fmt.Errorf("failed to download file %s: %w", item.ObjectID, err)
+	}
+	if is404 {
+		ll.Warn("S3 object not found, skipping", slog.String("objectID", item.ObjectID))
+		return nil
+	}
+
+	// Convert file if not already in otel-raw format
+	if !strings.HasPrefix(item.ObjectID, "otel-raw/") {
+		if strings.HasPrefix(item.ObjectID, "db/") {
+			return nil
 		}
 
 		tmpfilename, _, is404, err := storageClient.DownloadObject(ctx, itemTmpdir, inf.Bucket, inf.ObjectID)
@@ -141,26 +155,9 @@ func traceIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp st
 			continue
 		}
 
-		// Convert file if not already in otel-raw format
-		if !strings.HasPrefix(inf.ObjectID, "otel-raw/") {
-			if strings.HasPrefix(inf.ObjectID, "db/") {
-				continue
-			}
-
-			if !strings.HasSuffix(inf.ObjectID, ".binpb") {
-				ll.Warn("Unsupported file type for traces, skipping", slog.String("objectID", inf.ObjectID))
-				continue
-			}
-
-			results, err := ingesttraces.ConvertProtoFile(tmpfilename, itemTmpdir, inf.Bucket, inf.ObjectID, rpfEstimate, ingest_dateint, inf.OrganizationID.String())
-			if err != nil {
-				return fmt.Errorf("failed to convert trace file %s: %w", inf.ObjectID, err)
-			}
-
-			// Group results by slot
-			for _, result := range results {
-				slotResults[result.SlotID] = append(slotResults[result.SlotID], result)
-			}
+		// Group results by slot
+		for _, result := range results {
+			slotResults[result.SlotID] = append(slotResults[result.SlotID], result)
 		}
 	}
 

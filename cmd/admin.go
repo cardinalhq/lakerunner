@@ -25,7 +25,6 @@ import (
 	"github.com/cardinalhq/lakerunner/cmd/admin/adminapikeys"
 	"github.com/cardinalhq/lakerunner/cmd/admin/bootstrap"
 	"github.com/cardinalhq/lakerunner/cmd/admin/bucketprefixes"
-	"github.com/cardinalhq/lakerunner/cmd/admin/inqueue"
 	"github.com/cardinalhq/lakerunner/cmd/admin/logs"
 	"github.com/cardinalhq/lakerunner/cmd/admin/metrics"
 	"github.com/cardinalhq/lakerunner/cmd/admin/metrics/estimates"
@@ -77,7 +76,6 @@ func init() {
 
 	// Get subcommands from their respective packages
 	workqueueCmd := getWorkQueueCmd()
-	inqueueCmd := getInQueueCmd()
 	objcleanupCmd := getObjCleanupCmd()
 	bootstrapCmd := bootstrap.GetBootstrapCmd()
 	orgCmd := organizations.GetOrganizationsCmd()
@@ -93,7 +91,6 @@ func init() {
 	adminCmd.AddCommand(serveCmd)
 	adminCmd.AddCommand(pingCmd)
 	adminCmd.AddCommand(workqueueCmd)
-	adminCmd.AddCommand(inqueueCmd)
 	adminCmd.AddCommand(objcleanupCmd)
 	adminCmd.AddCommand(bootstrapCmd)
 	adminCmd.AddCommand(orgCmd)
@@ -112,7 +109,6 @@ func init() {
 		}
 		// Pass the API key to subcommands
 		workqueue.SetAPIKey(adminAPIKey)
-		inqueue.SetAPIKey(adminAPIKey)
 		objcleanup.SetAPIKey(adminAPIKey)
 		organizations.SetAPIKey(adminAPIKey)
 		orgapikeys.SetAPIKey(adminAPIKey)
@@ -138,16 +134,6 @@ func getWorkQueueCmd() *cobra.Command {
 
 	workqueueCmd.AddCommand(workqueue.GetStatusCmd())
 	return workqueueCmd
-}
-
-func getInQueueCmd() *cobra.Command {
-	inqueueCmd := &cobra.Command{
-		Use:   "inqueue",
-		Short: "Inqueue administrative commands",
-	}
-
-	inqueueCmd.AddCommand(inqueue.GetStatusCmd())
-	return inqueueCmd
 }
 
 func getObjCleanupCmd() *cobra.Command {

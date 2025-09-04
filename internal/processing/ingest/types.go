@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package cmd
+package ingest
 
 import (
 	"time"
@@ -21,7 +21,6 @@ import (
 )
 
 // IngestItem represents a work item for ingestion processing.
-// This replaces lrdb.Inqueue and contains only the essential fields needed for processing.
 type IngestItem struct {
 	OrganizationID uuid.UUID `json:"organization_id"`
 	InstanceNum    int16     `json:"instance_num"`
@@ -30,4 +29,5 @@ type IngestItem struct {
 	Signal         string    `json:"signal"`
 	FileSize       int64     `json:"file_size"`
 	QueuedAt       time.Time `json:"queued_at"`
+	CollectorName  string    `json:"collector_name"`
 }

@@ -18,8 +18,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -45,44 +43,5 @@ func (a *LRDBWorkQueueAdapter) FailWork(ctx context.Context, id, workerID int64,
 		WorkerID:   workerID,
 		RequeueTtl: requeueTTL,
 		MaxRetries: maxRetries,
-	})
-}
-
-// LRDBInqueueAdapter implements InqueueStore using lrdb.StoreFull
-type LRDBInqueueAdapter struct {
-	db lrdb.StoreFull
-}
-
-func NewLRDBInqueueAdapter(db lrdb.StoreFull) *LRDBInqueueAdapter {
-	return &LRDBInqueueAdapter{db: db}
-}
-
-func (a *LRDBInqueueAdapter) ReleaseWork(ctx context.Context, id uuid.UUID, claimedBy int64) error {
-	return a.db.ReleaseInqueueWork(ctx, lrdb.ReleaseInqueueWorkParams{
-		ID:        id,
-		ClaimedBy: claimedBy,
-	})
-}
-
-func (a *LRDBInqueueAdapter) DeleteWork(ctx context.Context, id uuid.UUID, claimedBy int64) error {
-	return a.db.DeleteInqueueWork(ctx, lrdb.DeleteInqueueWorkParams{
-		ID:        id,
-		ClaimedBy: claimedBy,
-	})
-}
-
-func (a *LRDBInqueueAdapter) DeleteJournal(ctx context.Context, orgID uuid.UUID, bucket, objectID string) error {
-	return a.db.InqueueJournalDelete(ctx, lrdb.InqueueJournalDeleteParams{
-		OrganizationID: orgID,
-		Bucket:         bucket,
-		ObjectID:       objectID,
-	})
-}
-
-func (a *LRDBInqueueAdapter) UpsertJournal(ctx context.Context, orgID uuid.UUID, bucket, objectID string) (bool, error) {
-	return a.db.InqueueJournalUpsert(ctx, lrdb.InqueueJournalUpsertParams{
-		OrganizationID: orgID,
-		Bucket:         bucket,
-		ObjectID:       objectID,
 	})
 }

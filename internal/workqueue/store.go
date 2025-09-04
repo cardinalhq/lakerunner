@@ -17,20 +17,10 @@ package workqueue
 import (
 	"context"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 // WorkQueueStore defines operations for work queue management
 type WorkQueueStore interface {
 	CompleteWork(ctx context.Context, id, workerID int64) error
 	FailWork(ctx context.Context, id, workerID int64, maxRetries int32, requeueTTL time.Duration) error
-}
-
-// InqueueStore defines operations for inqueue management
-type InqueueStore interface {
-	ReleaseWork(ctx context.Context, id uuid.UUID, claimedBy int64) error
-	DeleteWork(ctx context.Context, id uuid.UUID, claimedBy int64) error
-	DeleteJournal(ctx context.Context, orgID uuid.UUID, bucket, objectID string) error
-	UpsertJournal(ctx context.Context, orgID uuid.UUID, bucket, objectID string) (bool, error)
 }

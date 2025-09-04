@@ -33,6 +33,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/internal/processing/ingest"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -323,10 +324,10 @@ func coordinate(
 }
 
 // downloadAndValidateFiles downloads and validates all files in the batch
-func downloadAndValidateFiles(ctx context.Context, items []lrdb.Inqueue, tmpdir string, s3client *awsclient.S3Client, ll *slog.Logger) ([]fileInfo, error) {
+func downloadAndValidateFiles(ctx context.Context, items []ingest.IngestItem, tmpdir string, s3client *awsclient.S3Client, ll *slog.Logger) ([]fileInfo, error) {
 	var validFiles []fileInfo
 
-	for _, inf := range items {
+	for i, inf := range items {
 		// Skip database files (processed outputs, not inputs)
 		if strings.HasPrefix(inf.ObjectID, "db/") {
 			ll.Debug("Skipping database file", slog.String("objectID", inf.ObjectID))
@@ -340,7 +341,8 @@ func downloadAndValidateFiles(ctx context.Context, items []lrdb.Inqueue, tmpdir 
 		}
 
 		// Download file
-		itemTmpdir := fmt.Sprintf("%s/item_%s", tmpdir, inf.ID.String())
+		// Generate a unique directory name based on the object ID
+		itemTmpdir := fmt.Sprintf("%s/item_%d", tmpdir, i)
 		if err := os.MkdirAll(itemTmpdir, 0755); err != nil {
 			return nil, fmt.Errorf("creating item tmpdir: %w", err)
 		}

@@ -25,6 +25,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
+	"github.com/cardinalhq/lakerunner/internal/processing/ingest"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -37,7 +38,7 @@ func ProcessBatch(
 	sp storageprofile.StorageProfileProvider,
 	mdb lrdb.StoreFull,
 	awsmanager *awsclient.Manager,
-	items []lrdb.Inqueue,
+	items []ingest.IngestItem,
 	ingestDateint int32,
 	rpfEstimate int64,
 	exemplarProcessor *exemplar.Processor,
@@ -45,13 +46,13 @@ func ProcessBatch(
 	batchID := idgen.GenerateShortBase32ID()
 	ll = ll.With(slog.String("batchID", batchID))
 
-	itemIDs := make([]string, len(items))
+	objectIDs := make([]string, len(items))
 	for i, item := range items {
-		itemIDs[i] = item.ID.String()
+		objectIDs[i] = item.ObjectID
 	}
 	ll.Debug("Processing ingestion batch",
 		slog.Int("itemCount", len(items)),
-		slog.Any("itemIDs", itemIDs))
+		slog.Any("objectIDs", objectIDs))
 	// Prepare input
 	ingestionInput := input{
 		Items:             items,
@@ -177,7 +178,7 @@ func shouldUseSingleInstanceMode() bool {
 func getStorageProfileForIngestion(
 	ctx context.Context,
 	sp storageprofile.StorageProfileProvider,
-	firstItem lrdb.Inqueue,
+	firstItem ingest.IngestItem,
 ) (storageprofile.StorageProfile, error) {
 	if shouldUseSingleInstanceMode() {
 		return sp.GetLowestInstanceStorageProfile(ctx, firstItem.OrganizationID, firstItem.Bucket)
