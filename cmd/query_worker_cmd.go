@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
+	"github.com/cardinalhq/lakerunner/internal/azureclient"
+	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/queryworker"
 	"log/slog"
@@ -65,13 +67,14 @@ func init() {
 				return fmt.Errorf("failed to create query-worker service: %w", err)
 			}
 
-			awsmanager, err := awsclient.NewManager(context.Background())
+			cloudManagers, err := cloudstorage.NewCloudManagers(context.Background())
 			if err != nil {
-				return fmt.Errorf("failed to create AWS manager: %w", err)
+				return fmt.Errorf("failed to create cloud managers: %w", err)
 			}
+
 			healthServer.SetStatus(healthcheck.StatusHealthy)
 
-			worker := queryworker.NewWorkerService(5, 5, 12, sp, awsmanager)
+			worker := queryworker.NewWorkerService(5, 5, 12, sp, cloudManagers)
 			return worker.Run(doneCtx)
 		},
 	}
