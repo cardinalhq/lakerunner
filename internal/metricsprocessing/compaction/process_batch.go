@@ -21,6 +21,7 @@ import (
 	"os"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
+	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
@@ -70,9 +71,9 @@ func processBatch(
 		return err
 	}
 
-	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
+	storageClient, err := cloudstorage.NewClient(ctx, awsmanager, profile)
 	if err != nil {
-		ll.Error("Failed to get S3 client", slog.Any("error", err))
+		ll.Error("Failed to get cloud storage client", slog.Any("error", err))
 		return err
 	}
 

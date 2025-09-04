@@ -20,6 +20,7 @@ import (
 	"log/slog"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
+	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
@@ -128,9 +129,10 @@ func uploadAndQueue(
 	profile storageprofile.StorageProfile,
 	ingestDateint int32,
 ) error {
-	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
+	// Create cloud storage client based on profile
+	storageClient, err := cloudstorage.NewClient(ctx, awsmanager, profile)
 	if err != nil {
-		return fmt.Errorf("failed to get S3 client: %w", err)
+		return fmt.Errorf("failed to get cloud storage client: %w", err)
 	}
 
 	// Upload results and update database
@@ -147,7 +149,7 @@ func uploadAndQueue(
 
 	// Use context without cancellation for critical section to ensure atomic completion
 	criticalCtx := context.WithoutCancel(ctx)
-	segments, err := metricsprocessing.UploadMetricResultsWithProcessedSegments(criticalCtx, ll, s3client, mdb, results, uploadParams)
+	segments, err := metricsprocessing.UploadMetricResultsWithProcessedSegments(criticalCtx, ll, storageClient, mdb, results, uploadParams)
 	if err != nil {
 		return fmt.Errorf("failed to upload results: %w", err)
 	}

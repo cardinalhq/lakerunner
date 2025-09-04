@@ -22,7 +22,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
+	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
@@ -44,7 +44,7 @@ func coordinate(
 	tmpdir string,
 	metadata CompactionWorkMetadata,
 	profile storageprofile.StorageProfile,
-	s3client *awsclient.S3Client,
+	storageClient cloudstorage.Client,
 	rows []lrdb.MetricSeg,
 	estimatedTargetRecords int64,
 ) error {

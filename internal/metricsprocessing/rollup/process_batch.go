@@ -103,9 +103,9 @@ func processBatch(
 		return err
 	}
 
-	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
+	storageClient, err := cloudstorage.NewClient(ctx, awsmanager, profile)
 	if err != nil {
-		ll.Error("Failed to get S3 client", slog.Any("error", err))
+		ll.Error("Failed to get cloud storage client", slog.Any("error", err))
 		return err
 	}
 
@@ -187,7 +187,7 @@ func rollupMetricSegments(
 	tmpdir string,
 	firstSeg lrdb.MetricSeg,
 	profile storageprofile.StorageProfile,
-	s3client *awsclient.S3Client,
+	storageClient cloudstorage.Client,
 	sourceRows []lrdb.MetricSeg,
 	targetFrequency int32,
 	estimatedTargetRecords int64,
@@ -346,7 +346,7 @@ func uploadRolledUpMetricsAtomic(
 	ctx context.Context,
 	ll *slog.Logger,
 	mdb rollupStore,
-	s3client *awsclient.S3Client,
+	storageClient cloudstorage.Client,
 	results []parquetwriter.Result,
 	sourceRows []lrdb.MetricSeg,
 	params RollupUploadParams,
