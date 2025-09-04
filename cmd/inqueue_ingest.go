@@ -18,52 +18,18 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"sync/atomic"
 	"time"
-
-	"github.com/google/uuid"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
-	"go.opentelemetry.io/otel/trace"
 
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/estimator"
 	"github.com/cardinalhq/lakerunner/internal/exemplar"
-	"github.com/cardinalhq/lakerunner/internal/heartbeat"
-	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
-	"github.com/cardinalhq/lakerunner/internal/workqueue"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-// InqueueHeartbeatStore defines the minimal interface needed for inqueue heartbeat operations
-type InqueueHeartbeatStore interface {
-	TouchInqueueWork(ctx context.Context, params lrdb.TouchInqueueWorkParams) error
-}
-
-// newInqueueHeartbeater creates a new heartbeater for the given claimed inqueue items
-func newInqueueHeartbeater(db InqueueHeartbeatStore, workerID int64, items []uuid.UUID) *heartbeat.Heartbeater {
-	if len(items) == 0 {
-		// Return a no-op heartbeater for empty items
-		return heartbeat.New(func(ctx context.Context) error {
-			return nil // No-op
-		}, time.Minute, slog.Default().With("component", "inqueue_heartbeater", "worker_id", workerID, "item_count", 0))
-	}
-
-	heartbeatFunc := func(ctx context.Context) error {
-		return db.TouchInqueueWork(ctx, lrdb.TouchInqueueWorkParams{
-			Ids:       items,
-			ClaimedBy: workerID,
-		})
-	}
-
-	logger := slog.Default().With("component", "inqueue_heartbeater", "worker_id", workerID, "item_count", len(items))
-	return heartbeat.New(heartbeatFunc, time.Minute, logger)
-}
-
-type InqueueBatchProcessingFunction func(
+type IngestBatchProcessingFunction func(
 	ctx context.Context,
 	ll *slog.Logger,
 	tmpdir string,

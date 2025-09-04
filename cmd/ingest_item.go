@@ -13,3 +13,21 @@
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 package cmd
+
+import (
+	"time"
+
+	"github.com/google/uuid"
+)
+
+// IngestItem represents a work item for ingestion processing.
+// This replaces lrdb.Inqueue and contains only the essential fields needed for processing.
+type IngestItem struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	InstanceNum    int16     `json:"instance_num"`
+	Bucket         string    `json:"bucket"`
+	ObjectID       string    `json:"object_id"`
+	Signal         string    `json:"signal"`
+	FileSize       int64     `json:"file_size"`
+	QueuedAt       time.Time `json:"queued_at"`
+}

@@ -261,16 +261,19 @@ func createLogReader(filename string) (filereader.Reader, error) {
 }
 
 // queueLogCompactionForSlot queues a log compaction job for a specific slot
-func queueLogCompactionForSlot(ctx context.Context, mdb lrdb.StoreFull, inf lrdb.Inqueue, slotID int, dateint int32, hourAlignedTS int64) error {
+func queueLogCompactionForSlot(ctx context.Context, mdb lrdb.StoreFull, item IngestItem, slotID int, dateint int32, hourAlignedTS int64) error {
+	startTime := time.UnixMilli(hourAlignedTS).UTC()
+	endTime := startTime.Add(time.Hour)
+
 	return mdb.WorkQueueAdd(ctx, lrdb.WorkQueueAddParams{
-		OrgID:      inf.OrganizationID,
-		Instance:   inf.InstanceNum,
+		OrgID:      item.OrganizationID,
+		Instance:   item.InstanceNum,
 		Signal:     lrdb.SignalEnumLogs,
 		Action:     lrdb.ActionEnumCompact,
 		Dateint:    dateint,
 		Frequency:  -1,
 		SlotID:     int32(slotID),
-		TsRange:    qmcFromInqueue(inf, 3600000, hourAlignedTS).TsRange,
+		TsRange:    helpers.TimeRange{Start: startTime, End: endTime}.ToPgRange(),
 		RunnableAt: time.Now().UTC().Add(5 * time.Minute),
 	})
 }
@@ -280,24 +283,23 @@ func queueLogCompactionForSlot(ctx context.Context, mdb lrdb.StoreFull, inf lrdb
 func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
 	cloudManagers *cloudstorage.CloudManagers, items []lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
 
-	if len(items) == 0 {
-		return fmt.Errorf("empty batch")
-	}
+	ll.Debug("Processing log item")
 
-	ll.Debug("Processing log batch", slog.Int("batchSize", len(items)))
+	// Convert IngestItem to Inqueue for compatibility with existing code
+	inqueueItems := ConvertIngestItemsToInqueue([]IngestItem{item})
 
 	// Get storage profile
 	firstItem := items[0]
 	var profile storageprofile.StorageProfile
 	var err error
 
-	if collectorName := helpers.ExtractCollectorName(firstItem.ObjectID); collectorName != "" {
-		profile, err = sp.GetStorageProfileForOrganizationAndCollector(ctx, firstItem.OrganizationID, collectorName)
+	if collectorName := helpers.ExtractCollectorName(item.ObjectID); collectorName != "" {
+		profile, err = sp.GetStorageProfileForOrganizationAndCollector(ctx, item.OrganizationID, collectorName)
 		if err != nil {
 			return fmt.Errorf("failed to get storage profile for collector %s: %w", collectorName, err)
 		}
 	} else {
-		profile, err = sp.GetStorageProfileForOrganizationAndInstance(ctx, firstItem.OrganizationID, firstItem.InstanceNum)
+		profile, err = sp.GetStorageProfileForOrganizationAndInstance(ctx, item.OrganizationID, item.InstanceNum)
 		if err != nil {
 			return fmt.Errorf("failed to get storage profile: %w", err)
 		}
@@ -310,13 +312,13 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 	}
 
 	// Create writer manager for organizing output by hour/slot
-	wm := newWriterManager(tmpdir, firstItem.OrganizationID.String(), ingest_dateint, rpfEstimate, ll)
+	wm := newWriterManager(tmpdir, item.OrganizationID.String(), ingest_dateint, rpfEstimate, ll)
 
 	// Track total rows across all files
 	var batchRowsRead, batchRowsProcessed, batchRowsErrored int64
 
 	// Process each file in the batch
-	for _, inf := range items {
+	for _, inf := range inqueueItems {
 		// Check for context cancellation before processing each file
 		if err := ctx.Err(); err != nil {
 			ll.Info("Context cancelled during batch processing - safe interruption point",
@@ -360,7 +362,7 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 		if err == nil {
 			// Add general translator for non-protobuf files
 			translator := &LogTranslator{
-				orgID:    firstItem.OrganizationID.String(),
+				orgID:    item.OrganizationID.String(),
 				bucket:   inf.Bucket,
 				objectID: inf.ObjectID,
 			}
@@ -502,7 +504,7 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 		segmentID := s3helper.GenerateID()
 		dateint, hour16 := helpers.MSToDateintHour(stats.FirstTS)
 		hour := int(hour16)
-		dbObjectID := helpers.MakeDBObjectID(firstItem.OrganizationID, firstItem.CollectorName,
+		dbObjectID := helpers.MakeDBObjectID(item.OrganizationID, "",
 			dateint, s3helper.HourFromMillis(stats.FirstTS), segmentID, "logs")
 
 		if err := storageClient.UploadObject(criticalCtx, firstItem.Bucket, dbObjectID, result.FileName); err != nil {
@@ -515,11 +517,11 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 		// Insert log segment into database
 		resultLastTS := stats.LastTS + 1 // end is exclusive
 		err := mdb.InsertLogSegment(criticalCtx, lrdb.InsertLogSegmentParams{
-			OrganizationID: firstItem.OrganizationID,
+			OrganizationID: item.OrganizationID,
 			Dateint:        dateint,
 			IngestDateint:  ingest_dateint,
 			SegmentID:      segmentID,
-			InstanceNum:    firstItem.InstanceNum,
+			InstanceNum:    item.InstanceNum,
 			SlotID:         int32(slotID),
 			StartTs:        stats.FirstTS,
 			EndTs:          resultLastTS,
@@ -533,7 +535,7 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 		}
 
 		ll.Debug("Inserted log segment",
-			slog.String("organizationID", firstItem.OrganizationID.String()),
+			slog.String("organizationID", item.OrganizationID.String()),
 			slog.Int("dateint", int(dateint)),
 			slog.Int("hour", hour),
 			slog.Int("slot", slotID),
@@ -559,7 +561,7 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 			slog.Int64("triggerTS", earliestTS))
 
 		hourAlignedTS := helpers.TruncateToHour(helpers.UnixMillisToTime(earliestTS)).UnixMilli()
-		if err := queueLogCompactionForSlot(criticalCtx, mdb, firstItem, key.slot, key.dateint, hourAlignedTS); err != nil {
+		if err := queueLogCompactionForSlot(criticalCtx, mdb, item, key.slot, key.dateint, hourAlignedTS); err != nil {
 			return fmt.Errorf("failed to queue log compaction for slot %d: %w", key.slot, err)
 		}
 	}

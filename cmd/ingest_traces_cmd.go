@@ -91,21 +91,19 @@ func init() {
 func traceIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
 	cloudManagers *cloudstorage.CloudManagers, items []lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
 
-	if len(items) == 0 {
-		return fmt.Errorf("empty batch")
-	}
+	ll.Info("Processing trace item")
 
-	ll.Info("Processing traces batch", slog.Int("batchSize", len(items)))
+	// Convert IngestItem to Inqueue for compatibility with existing code
+	inqueueItems := ConvertIngestItemsToInqueue([]IngestItem{item})
 
 	// Get storage profile
 	var profile storageprofile.StorageProfile
 	var err error
 
-	firstItem := items[0]
-	if collectorName := helpers.ExtractCollectorName(firstItem.ObjectID); collectorName != "" {
-		profile, err = sp.GetStorageProfileForOrganizationAndCollector(ctx, firstItem.OrganizationID, collectorName)
+	if collectorName := helpers.ExtractCollectorName(item.ObjectID); collectorName != "" {
+		profile, err = sp.GetStorageProfileForOrganizationAndCollector(ctx, item.OrganizationID, collectorName)
 	} else {
-		profile, err = sp.GetStorageProfileForOrganizationAndInstance(ctx, firstItem.OrganizationID, firstItem.InstanceNum)
+		profile, err = sp.GetStorageProfileForOrganizationAndInstance(ctx, item.OrganizationID, item.InstanceNum)
 	}
 	if err != nil {
 		return fmt.Errorf("failed to get storage profile: %w", err)
@@ -120,7 +118,7 @@ func traceIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp st
 	// Collect all trace file results from all items, grouped by slot
 	slotResults := make(map[int][]ingesttraces.TraceFileResult)
 
-	for _, inf := range items {
+	for _, inf := range inqueueItems {
 		ll.Info("Processing batch item",
 			slog.String("itemID", inf.ID.String()),
 			slog.String("objectID", inf.ObjectID),
@@ -186,7 +184,7 @@ func traceIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp st
 		for _, result := range results {
 			segmentID := s3helper.GenerateID()
 			hour := int16(0) // Hour doesn't matter for slot-based traces
-			dbObjectID := helpers.MakeDBObjectID(firstItem.OrganizationID, firstItem.CollectorName, ingest_dateint, hour, segmentID, "traces")
+			dbObjectID := helpers.MakeDBObjectID(item.OrganizationID, "", ingest_dateint, hour, segmentID, "traces")
 
 			if err := storageClient.UploadObject(ctx, firstItem.Bucket, dbObjectID, result.FileName); err != nil {
 				return fmt.Errorf("failed to upload trace file to %s: %w", profile.CloudProvider, err)
@@ -195,11 +193,11 @@ func traceIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp st
 			_ = os.Remove(result.FileName)
 
 			err = mdb.InsertTraceSegment(ctx, lrdb.InsertTraceSegmentDirectParams{
-				OrganizationID: firstItem.OrganizationID,
+				OrganizationID: item.OrganizationID,
 				Dateint:        ingest_dateint,
 				IngestDateint:  ingest_dateint,
 				SegmentID:      segmentID,
-				InstanceNum:    firstItem.InstanceNum,
+				InstanceNum:    item.InstanceNum,
 				SlotID:         int32(result.SlotID),
 				StartTs:        result.MinTimestamp,
 				EndTs:          result.MaxTimestamp,

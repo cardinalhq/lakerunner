@@ -21,7 +21,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
@@ -91,10 +90,12 @@ func (k *KafkaIngestConsumer) Run(ctx context.Context) error {
 				return nil
 			}
 
-			// Process the notifications
-			if err := k.processBatch(ctx, notifications); err != nil {
-				k.logger.Error("Failed to process batch", slog.Any("error", err))
-				return err // Return error to prevent commit
+			// Process each notification individually since they are unrelated
+			for _, notif := range notifications {
+				if err := k.processItem(ctx, notif); err != nil {
+					k.logger.Error("Failed to process item", slog.Any("error", err))
+					return err // Return error to prevent commit
+				}
 			}
 
 			return nil // Success - consumer will commit automatically
@@ -112,109 +113,82 @@ func (k *KafkaIngestConsumer) Run(ctx context.Context) error {
 	}
 }
 
-// processBatch converts Kafka notifications to inqueue items and processes them
-func (k *KafkaIngestConsumer) processBatch(ctx context.Context, notifications []*messages.ObjStoreNotificationMessage) error {
-	if len(notifications) == 0 {
-		return nil
+// processItem processes a single Kafka notification
+func (k *KafkaIngestConsumer) processItem(ctx context.Context, notif *messages.ObjStoreNotificationMessage) error {
+	// Convert notification to IngestItem
+	item := IngestItem{
+		OrganizationID: notif.OrganizationID,
+		InstanceNum:    notif.InstanceNum,
+		Bucket:         notif.Bucket,
+		ObjectID:       notif.ObjectID,
+		Signal:         k.signal,
+		FileSize:       notif.FileSize,
+		QueuedAt:       notif.QueuedAt,
 	}
 
-	// Group notifications by organization and instance for efficient batching
-	grouped := make(map[string][]*messages.ObjStoreNotificationMessage)
-	for _, notif := range notifications {
-		key := fmt.Sprintf("%s-%d", notif.OrganizationID.String(), notif.InstanceNum)
-		grouped[key] = append(grouped[key], notif)
+	// Log lag metrics
+	lag := time.Since(item.QueuedAt).Seconds()
+	inqueueLag.Record(ctx, lag,
+		metric.WithAttributeSet(commonAttributes),
+		metric.WithAttributes(
+			attribute.String("signal", item.Signal),
+		))
+
+	// Create temporary directory for processing
+	tmpdir, err := os.MkdirTemp("", "kafka-ingest-")
+	if err != nil {
+		return fmt.Errorf("creating tmpdir: %w", err)
+	}
+	defer func() {
+		if err := os.RemoveAll(tmpdir); err != nil {
+			k.logger.Error("Failed to clean up tmpdir", slog.Any("error", err))
+		}
+	}()
+
+	ingestDateint, _ := helpers.MSToDateintHour(time.Now().UTC().UnixMilli())
+
+	ll := k.logger.With(
+		slog.String("organizationID", item.OrganizationID.String()),
+		slog.Int("instanceNum", int(item.InstanceNum)),
+		slog.String("bucket", item.Bucket),
+		slog.String("objectID", item.ObjectID))
+
+	// Get RPF estimate for this specific item
+	var rpfEstimate int64
+	switch k.signal {
+	case "metrics":
+		rpfEstimate = k.loop.metricEstimator.Get(item.OrganizationID, item.InstanceNum, 10_000)
+	case "logs":
+		rpfEstimate = k.loop.logEstimator.Get(item.OrganizationID, item.InstanceNum)
+	default:
+		rpfEstimate = 40_000
 	}
 
-	// Process each group separately
-	for groupKey, groupNotifications := range grouped {
-		// Convert notifications to Inqueue items
-		items := make([]lrdb.Inqueue, len(groupNotifications))
-		now := time.Now()
-		for i, notif := range groupNotifications {
-			items[i] = lrdb.Inqueue{
-				ID:             uuid.New(), // Generate ID for database
-				QueueTs:        notif.QueuedAt,
-				Priority:       10, // Default priority
-				OrganizationID: notif.OrganizationID,
-				CollectorName:  "", // Will be looked up based on bucket/instance/org
-				InstanceNum:    notif.InstanceNum,
-				Bucket:         notif.Bucket,
-				ObjectID:       notif.ObjectID,
-				Signal:         k.signal, // Use the consumer's signal
-				FileSize:       notif.FileSize,
-				Tries:          0,
-				ClaimedBy:      myInstanceID,
-				ClaimedAt:      &now,
-			}
-		}
-
-		// Log lag metrics
-		for _, item := range items {
-			lag := time.Since(item.QueueTs).Seconds()
-			inqueueLag.Record(ctx, lag,
-				metric.WithAttributeSet(commonAttributes),
-				metric.WithAttributes(
-					attribute.String("signal", item.Signal),
-				))
-		}
-
-		// Get RPF estimate for this group
-		var rpfEstimate int64
-		switch k.signal {
-		case "metrics":
-			rpfEstimate = k.loop.metricEstimator.Get(items[0].OrganizationID, items[0].InstanceNum, 10_000)
-		case "logs":
-			rpfEstimate = k.loop.logEstimator.Get(items[0].OrganizationID, items[0].InstanceNum)
-		default:
-			rpfEstimate = 40_000
-		}
-
-		ingestDateint, _ := helpers.MSToDateintHour(time.Now().UTC().UnixMilli())
-
-		// Create temporary directory for processing
-		tmpdir, err := os.MkdirTemp("", "kafka-ingest-")
-		if err != nil {
-			return fmt.Errorf("creating tmpdir: %w", err)
-		}
-		defer func() {
-			if err := os.RemoveAll(tmpdir); err != nil {
-				k.logger.Error("Failed to clean up tmpdir", slog.Any("error", err))
-			}
-		}()
-
-		ll := k.logger.With(
-			slog.String("group", groupKey),
-			slog.Int("batchSize", len(items)),
-			slog.String("organizationID", items[0].OrganizationID.String()),
-			slog.Int("instanceNum", int(items[0].InstanceNum)))
-
-		// Process based on signal type
-		var processErr error
-		switch k.signal {
-		case "metrics":
-			processErr = ingestion.ProcessBatch(ctx, ll, tmpdir, k.loop.sp, k.loop.mdb,
-				k.loop.awsmanager, items, ingestDateint, rpfEstimate, k.loop.exemplarProcessor)
-		case "logs":
-			processErr = processLogsBatch(ctx, ll, tmpdir, k.loop.sp, k.loop.mdb,
-				k.loop.awsmanager, items, ingestDateint, rpfEstimate, k.loop)
-		case "traces":
-			processErr = processTracesBatch(ctx, ll, tmpdir, k.loop.sp, k.loop.mdb,
-				k.loop.awsmanager, items, ingestDateint, rpfEstimate, k.loop)
-		default:
-			processErr = fmt.Errorf("unsupported signal type: %s", k.signal)
-		}
-
-		if processErr != nil {
-			return fmt.Errorf("failed to process batch for group %s: %w", groupKey, processErr)
-		}
-
-		// Record successful processing
-		// Note: itemsProcessed metric should be defined in the parent cmd package
-		// For now, just log the success
-		k.logger.Info("Successfully processed batch from Kafka",
-			slog.String("group", groupKey),
-			slog.Int("items", len(items)))
+	// Process based on signal type - single item
+	var processErr error
+	switch k.signal {
+	case "metrics":
+		// Convert IngestItem to Inqueue for compatibility with existing code
+		inqueueItems := ConvertIngestItemsToInqueue([]IngestItem{item})
+		processErr = ingestion.ProcessBatch(ctx, ll, tmpdir, k.loop.sp, k.loop.mdb,
+			k.loop.awsmanager, inqueueItems, ingestDateint, rpfEstimate, k.loop.exemplarProcessor)
+	case "logs":
+		processErr = processLogsBatch(ctx, ll, tmpdir, k.loop.sp, k.loop.mdb,
+			k.loop.awsmanager, item, ingestDateint, rpfEstimate, k.loop)
+	case "traces":
+		processErr = processTracesBatch(ctx, ll, tmpdir, k.loop.sp, k.loop.mdb,
+			k.loop.awsmanager, item, ingestDateint, rpfEstimate, k.loop)
+	default:
+		processErr = fmt.Errorf("unsupported signal type: %s", k.signal)
 	}
+
+	if processErr != nil {
+		return fmt.Errorf("failed to process item: %w", processErr)
+	}
+
+	// Record successful processing
+	k.logger.Debug("Successfully processed item from Kafka",
+		slog.String("objectID", item.ObjectID))
 
 	return nil
 }
@@ -243,16 +217,16 @@ func (k *KafkaIngestConsumer) Close() error {
 
 func processLogsBatch(ctx context.Context, ll *slog.Logger, tmpdir string,
 	sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
-	awsmanager *awsclient.Manager, items []lrdb.Inqueue,
+	awsmanager *awsclient.Manager, item IngestItem,
 	ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
 	// Call the existing logIngestBatch function from ingest_logs.go
-	return logIngestBatch(ctx, ll, tmpdir, sp, mdb, awsmanager, items, ingest_dateint, rpfEstimate, loop)
+	return logIngestBatch(ctx, ll, tmpdir, sp, mdb, awsmanager, item, ingest_dateint, rpfEstimate, loop)
 }
 
 func processTracesBatch(ctx context.Context, ll *slog.Logger, tmpdir string,
 	sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
-	awsmanager *awsclient.Manager, items []lrdb.Inqueue,
+	awsmanager *awsclient.Manager, item IngestItem,
 	ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
 	// Call the existing traceIngestBatch function from ingest_traces_cmd.go
-	return traceIngestBatch(ctx, ll, tmpdir, sp, mdb, awsmanager, items, ingest_dateint, rpfEstimate, loop)
+	return traceIngestBatch(ctx, ll, tmpdir, sp, mdb, awsmanager, item, ingest_dateint, rpfEstimate, loop)
 }
