@@ -15,6 +15,7 @@
 package config
 
 import (
+	"reflect"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -52,6 +53,7 @@ func Load() (*Config, error) {
 	v.SetEnvPrefix("LAKERUNNER")
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
+	bindEnvs(v, cfg)
 	_ = v.ReadInConfig()
 
 	if err := v.Unmarshal(cfg); err != nil {
@@ -62,4 +64,28 @@ func Load() (*Config, error) {
 	}
 	cfg.Fly.Enabled = v.GetBool("fly.enabled")
 	return cfg, nil
+}
+
+// bindEnvs registers all keys within cfg so that viper will look up
+// corresponding environment variables when unmarshalling.
+func bindEnvs(v *viper.Viper, cfg any, parts ...string) {
+	val := reflect.ValueOf(cfg)
+	typ := reflect.TypeOf(cfg)
+	if typ.Kind() == reflect.Ptr {
+		val = val.Elem()
+		typ = typ.Elem()
+	}
+	for i := 0; i < typ.NumField(); i++ {
+		f := typ.Field(i)
+		tag := f.Tag.Get("mapstructure")
+		if tag == "" {
+			tag = strings.ToLower(f.Name)
+		}
+		key := append(parts, tag)
+		if f.Type.Kind() == reflect.Struct {
+			bindEnvs(v, val.Field(i).Interface(), key...)
+			continue
+		}
+		_ = v.BindEnv(strings.Join(key, "."))
+	}
 }
