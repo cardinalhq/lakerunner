@@ -15,6 +15,7 @@
 package config
 
 import (
+	"os"
 	"reflect"
 	"strings"
 
@@ -27,12 +28,57 @@ import (
 // Config aggregates configuration for the application.
 // Each field is owned by its respective package.
 type Config struct {
+	Debug   bool          `mapstructure:"debug"`
 	Fly     fly.Config    `mapstructure:"fly"`
 	Metrics MetricsConfig `mapstructure:"metrics"`
+	Batch   BatchConfig   `mapstructure:"batch"`
+	DuckDB  DuckDBConfig  `mapstructure:"duckdb"`
+	Logs    LogsConfig    `mapstructure:"logs"`
+	Traces  TracesConfig  `mapstructure:"traces"`
+	Admin   AdminConfig   `mapstructure:"admin"`
 }
 
 type MetricsConfig struct {
-	Ingestion ingestion.Config `mapstructure:"ingestion"`
+	Ingestion  ingestion.Config `mapstructure:"ingestion"`
+	Compaction CompactionConfig `mapstructure:"compaction"`
+	Rollup     RollupConfig     `mapstructure:"rollup"`
+}
+
+type BatchConfig struct {
+	TargetSizeBytes int64 `mapstructure:"target_size_bytes"`
+	MaxBatchSize    int   `mapstructure:"max_batch_size"`
+	MaxTotalSize    int64 `mapstructure:"max_total_size"`
+	MaxAgeSeconds   int   `mapstructure:"max_age_seconds"`
+	MinBatchSize    int   `mapstructure:"min_batch_size"`
+}
+
+type DuckDBConfig struct {
+	ExtensionsPath  string `mapstructure:"extensions_path"`
+	HTTPFSExtension string `mapstructure:"httpfs_extension"`
+}
+
+type LogsConfig struct {
+	Partitions int `mapstructure:"partitions"`
+}
+
+type TracesConfig struct {
+	Partitions int `mapstructure:"partitions"`
+}
+
+type AdminConfig struct {
+	InitialAPIKey string `mapstructure:"initial_api_key"`
+}
+
+type CompactionConfig struct {
+	OverFactor   float64 `mapstructure:"over_factor"`
+	BatchLimit   int     `mapstructure:"batch_limit"`
+	GraceMinutes int     `mapstructure:"grace_minutes"`
+	DeferSeconds int     `mapstructure:"defer_seconds"`
+	MaxAttempts  int     `mapstructure:"max_attempts"`
+}
+
+type RollupConfig struct {
+	BatchLimit int `mapstructure:"batch_limit"`
 }
 
 // Load reads configuration from files and environment variables.
@@ -41,9 +87,40 @@ type MetricsConfig struct {
 // "LAKERUNNER_FLY_BROKERS".
 func Load() (*Config, error) {
 	cfg := &Config{
-		Fly: *fly.DefaultConfig(),
+		Debug: false,
+		Fly:   *fly.DefaultConfig(),
 		Metrics: MetricsConfig{
 			Ingestion: ingestion.DefaultConfig(),
+			Compaction: CompactionConfig{
+				OverFactor:   2.0,
+				BatchLimit:   100,
+				GraceMinutes: 5,
+				DeferSeconds: 0,
+				MaxAttempts:  3,
+			},
+			Rollup: RollupConfig{
+				BatchLimit: 100,
+			},
+		},
+		Batch: BatchConfig{
+			TargetSizeBytes: 100 * 1024 * 1024, // 100MB
+			MaxBatchSize:    100,
+			MaxTotalSize:    1024 * 1024 * 1024, // 1GB
+			MaxAgeSeconds:   300,                // 5 minutes
+			MinBatchSize:    1,
+		},
+		DuckDB: DuckDBConfig{
+			ExtensionsPath:  "",
+			HTTPFSExtension: "",
+		},
+		Logs: LogsConfig{
+			Partitions: 128,
+		},
+		Traces: TracesConfig{
+			Partitions: 128,
+		},
+		Admin: AdminConfig{
+			InitialAPIKey: "",
 		},
 	}
 
@@ -63,6 +140,12 @@ func Load() (*Config, error) {
 		cfg.Fly.Brokers = strings.Split(b, ",")
 	}
 	cfg.Fly.Enabled = v.GetBool("fly.enabled")
+
+	// Also check DEBUG environment variable (without prefix)
+	if os.Getenv("DEBUG") != "" {
+		cfg.Debug = true
+	}
+
 	return cfg, nil
 }
 

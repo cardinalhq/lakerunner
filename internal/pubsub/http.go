@@ -38,7 +38,7 @@ type HTTPService struct {
 	kafkaHandler *KafkaHandler
 }
 
-func NewHTTPService() (*HTTPService, error) {
+func NewHTTPService(kafkaFactory *fly.Factory) (*HTTPService, error) {
 	cdb, err := dbopen.ConfigDBStore(context.Background())
 	if err != nil {
 		slog.Error("Failed to connect to configdb", slog.Any("error", err))
@@ -47,7 +47,6 @@ func NewHTTPService() (*HTTPService, error) {
 	sp := storageprofile.NewStorageProfileProvider(cdb)
 
 	// Kafka is required
-	kafkaFactory := fly.NewFactoryFromEnv()
 	if !kafkaFactory.IsEnabled() {
 		return nil, fmt.Errorf("Kafka is required for pubsub services but is not enabled")
 	}

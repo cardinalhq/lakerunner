@@ -67,14 +67,19 @@ func init() {
 			}()
 
 			// Kafka is required for ingestion
-			kafkaFactory := fly.NewFactoryFromEnv()
-			if !kafkaFactory.IsEnabledForIngestion() {
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+
+			kafkaFactory := fly.NewFactory(&cfg.Fly)
+			if !kafkaFactory.IsEnabled() {
 				return fmt.Errorf("Kafka is required for ingestion but is not enabled")
 			}
 
 			slog.Info("Starting metrics ingestion with Kafka consumer")
 
-			consumer, err := NewKafkaIngestConsumer("metrics", "lakerunner.ingest.metrics")
+			consumer, err := NewKafkaIngestConsumer(kafkaFactory, cfg, "metrics", "lakerunner.ingest.metrics")
 			if err != nil {
 				return fmt.Errorf("failed to create Kafka consumer: %w", err)
 			}

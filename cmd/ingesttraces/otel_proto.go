@@ -37,10 +37,10 @@ import (
 	mapset "github.com/deckarep/golang-set/v2"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
-	"github.com/cardinalhq/lakerunner/cmd/ingestlogs"
 	"github.com/cardinalhq/lakerunner/fileconv/proto"
 	"github.com/cardinalhq/lakerunner/fileconv/translate"
 	"github.com/cardinalhq/lakerunner/internal/buffet"
+	"github.com/cardinalhq/lakerunner/internal/helpers"
 )
 
 // ConvertProtoFile converts a protobuf file to the standardized format
@@ -71,7 +71,7 @@ func ConvertProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate 
 	baseitems := map[string]string{
 		"resource.bucket.name": bucket,
 		"resource.file.name":   "./" + objectID,
-		"resource.file.type":   ingestlogs.GetFileType(objectID),
+		"resource.file.type":   helpers.GetFileType(objectID),
 	}
 
 	// Add base items to schema

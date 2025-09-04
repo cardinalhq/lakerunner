@@ -24,6 +24,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
@@ -40,12 +41,12 @@ type KafkaIngestConsumer struct {
 	loop     *IngestLoopContext
 	signal   string
 	logger   *slog.Logger
+	config   *config.Config
 }
 
 // NewKafkaIngestConsumer creates a new Kafka-based ingest consumer
-func NewKafkaIngestConsumer(signal string, groupID string) (*KafkaIngestConsumer, error) {
-	factory := fly.NewFactoryFromEnv()
-	if !factory.IsEnabledForIngestion() {
+func NewKafkaIngestConsumer(factory *fly.Factory, cfg *config.Config, signal string, groupID string) (*KafkaIngestConsumer, error) {
+	if !factory.IsEnabled() {
 		return nil, fmt.Errorf("Kafka is not enabled for ingestion")
 	}
 
@@ -67,6 +68,7 @@ func NewKafkaIngestConsumer(signal string, groupID string) (*KafkaIngestConsumer
 		loop:     loop,
 		signal:   signal,
 		logger:   logger,
+		config:   cfg,
 	}, nil
 }
 
@@ -76,7 +78,6 @@ func (k *KafkaIngestConsumer) Run(ctx context.Context) error {
 
 	// Note: batchSize is not currently used since we're using a handler-based approach
 	// that consumes continuously rather than fetching a specific batch size
-	_ = helpers.GetBatchSizeForSignal(k.signal)
 
 	for {
 		select {
@@ -170,7 +171,7 @@ func (k *KafkaIngestConsumer) processItem(ctx context.Context, notif *messages.O
 	switch k.signal {
 	case "metrics":
 		processErr = ingestion.ProcessBatch(ctx, ll, tmpdir, k.loop.sp, k.loop.mdb,
-			k.loop.awsmanager, []ingest.IngestItem{item}, ingestDateint, rpfEstimate, k.loop.exemplarProcessor)
+			k.loop.awsmanager, []ingest.IngestItem{item}, ingestDateint, rpfEstimate, k.loop.exemplarProcessor, k.config.Metrics.Ingestion)
 	case "logs":
 		processErr = processLogsBatch(ctx, ll, tmpdir, k.loop.sp, k.loop.mdb,
 			k.loop.awsmanager, item, ingestDateint, rpfEstimate, k.loop)

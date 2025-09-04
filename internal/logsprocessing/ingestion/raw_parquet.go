@@ -12,27 +12,26 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package ingestlogs
+package ingestion
 
 import (
 	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
-	"path"
 	"reflect"
-	"regexp"
 	"strings"
 
 	"github.com/cardinalhq/lakerunner/fileconv/rawparquet"
 	"github.com/cardinalhq/lakerunner/fileconv/translate"
 	"github.com/cardinalhq/lakerunner/internal/buffet"
+	"github.com/cardinalhq/lakerunner/internal/helpers"
 )
 
 // getSchema scans a raw Parquet file and infers a flattened schema.
 //
 // It returns a map from fully-qualified field names to a representative sample
-// value (used only to convey the field’s Go type), along with the total number
+// value (used only to convey the field's Go type), along with the total number
 // of rows in the file.
 //
 // Why this is needed: nested/complex Parquet fields (maps, structs, arrays) are
@@ -132,7 +131,7 @@ func ConvertRawParquet(sourcefile, tmpdir, bucket, objectID string, rpfEstimate 
 	baseitems := map[string]any{
 		"resource.bucket.name": bucket,
 		"resource.file.name":   "./" + objectID,
-		"resource.file.type":   GetFileType(objectID),
+		"resource.file.type":   helpers.GetFileType(objectID),
 		"resource.file":        getResourceFile(objectID),
 	}
 
@@ -179,18 +178,3 @@ func getResourceFile(objectID string) string {
 	return ""
 }
 
-var nonLetter = regexp.MustCompile(`[^a-zA-Z]`)
-
-// getFileType extracts the “base” of the filename (everything before the last dot),
-// then strips out any non‑letter characters.
-func GetFileType(p string) string {
-	fileName := path.Base(p)
-
-	// find last “.”; if none, use whole filename
-	if idx := strings.LastIndex(fileName, "."); idx != -1 {
-		fileName = fileName[:idx]
-	}
-
-	// strip out anything that isn’t A–Z or a–z
-	return nonLetter.ReplaceAllString(fileName, "")
-}

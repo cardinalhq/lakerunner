@@ -12,25 +12,26 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package pubsub
+package helpers
 
 import (
-	"context"
-	"fmt"
-
-	"github.com/cardinalhq/lakerunner/internal/fly"
+	"path"
+	"regexp"
+	"strings"
 )
 
-// NewBackend creates a new Backend implementation based on the specified type
-func NewBackend(ctx context.Context, backendType BackendType, kafkaFactory *fly.Factory) (Backend, error) {
-	switch backendType {
-	case BackendTypeSQS:
-		return NewSQSService(kafkaFactory)
-	case BackendTypeGCPPubSub:
-		return NewGCPPubSubService()
-	case BackendTypeAzure:
-		return NewAzureQueueService()
-	default:
-		return nil, fmt.Errorf("unsupported backend type: %s", backendType)
+var nonLetter = regexp.MustCompile("[^A-Za-z]+")
+
+// GetFileType extracts a normalized file type from a file path.
+// It removes the extension and non-letter characters from the filename.
+func GetFileType(p string) string {
+	fileName := path.Base(p)
+
+	// find last "."; if none, use whole filename
+	if idx := strings.LastIndex(fileName, "."); idx != -1 {
+		fileName = fileName[:idx]
 	}
+
+	// strip out anything that isn't A–Z or a–z
+	return nonLetter.ReplaceAllString(fileName, "")
 }

@@ -42,7 +42,7 @@ type GCPPubSubService struct {
 // Ensure GCPPubSubService implements Backend interface
 var _ Backend = (*GCPPubSubService)(nil)
 
-func NewGCPPubSubService() (*GCPPubSubService, error) {
+func NewGCPPubSubService(kafkaFactory *fly.Factory) (*GCPPubSubService, error) {
 	projectID := os.Getenv("GCP_PROJECT_ID")
 	if projectID == "" {
 		return nil, fmt.Errorf("GCP_PROJECT_ID environment variable is required")
@@ -74,7 +74,6 @@ func NewGCPPubSubService() (*GCPPubSubService, error) {
 	sp := storageprofile.NewStorageProfileProvider(cdb)
 
 	// Kafka is required
-	kafkaFactory := fly.NewFactoryFromEnv()
 	if !kafkaFactory.IsEnabled() {
 		return nil, fmt.Errorf("Kafka is required for pubsub services but is not enabled")
 	}

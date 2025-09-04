@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package cmd
+package ingestion
 
 import (
 	"testing"
@@ -25,11 +25,7 @@ import (
 
 func TestLogTranslator_TranslateRow(t *testing.T) {
 	// Create a test translator
-	translator := &LogTranslator{
-		orgID:    "test-org",
-		bucket:   "test-bucket",
-		objectID: "test-object.json.gz",
-	}
+	translator := NewLogTranslator("test-org", "test-bucket", "test-object.json.gz")
 
 	tests := []struct {
 		name    string

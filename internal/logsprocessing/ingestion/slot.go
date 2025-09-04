@@ -12,32 +12,27 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package ingestlogs
+package ingestion
 
 import (
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
-	"log/slog"
-	"os"
-	"strconv"
 )
 
 // NumLogPartitions is the number of partitions/slots for log processing.
 // Can be configured via LAKERUNNER_LOG_PARTITIONS environment variable, defaults to 1.
 // Compaction compacts all files in a slot - so increase this to increase parallelism.
 // However, more slots means more individual files, so for smaller customers it's better to keep it low.
-var NumLogPartitions = func() int {
-	if partitionsStr := os.Getenv("LAKERUNNER_LOG_PARTITIONS"); partitionsStr != "" {
-		if partitions, err := strconv.Atoi(partitionsStr); err == nil && partitions > 0 {
-			return partitions
-		}
-		// Log warning if invalid value, fall back to default
-		slog.Warn("Invalid LAKERUNNER_LOG_PARTITIONS value, using default",
-			"value", partitionsStr, "default", 1)
+// This should be configured from the parent cmd package that uses this.
+var NumLogPartitions = 1
+
+// SetNumLogPartitions sets the number of log partitions
+func SetNumLogPartitions(n int) {
+	if n > 0 {
+		NumLogPartitions = n
 	}
-	return 1
-}()
+}
 
 // DetermineLogSlot determines which partition slot a log should go to.
 // This ensures that logs with similar content characteristics go to the same slot for consistency.

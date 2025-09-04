@@ -65,14 +65,24 @@ func init() {
 			go diskUsageLoop(doneCtx)
 
 			// Kafka is required for ingestion
-			kafkaFactory := fly.NewFactoryFromEnv()
-			if !kafkaFactory.IsEnabledForIngestion() {
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+
+			// Also set trace partitions from config
+			if cfg.Traces.Partitions > 0 {
+				ingesttraces.SetNumTracePartitions(cfg.Traces.Partitions)
+			}
+
+			kafkaFactory := fly.NewFactory(&cfg.Fly)
+			if !kafkaFactory.IsEnabled() {
 				return fmt.Errorf("Kafka is required for ingestion but is not enabled")
 			}
 
 			slog.Info("Starting traces ingestion with Kafka consumer")
 
-			consumer, err := NewKafkaIngestConsumer("traces", "lakerunner.ingest.traces")
+			consumer, err := NewKafkaIngestConsumer(kafkaFactory, cfg, "traces", "lakerunner.ingest.traces")
 			if err != nil {
 				return fmt.Errorf("failed to create Kafka consumer: %w", err)
 			}

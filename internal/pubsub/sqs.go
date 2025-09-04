@@ -42,7 +42,7 @@ type SQSService struct {
 // Ensure SQSService implements Backend interface
 var _ Backend = (*SQSService)(nil)
 
-func NewSQSService() (*SQSService, error) {
+func NewSQSService(kafkaFactory *fly.Factory) (*SQSService, error) {
 	awsMgr, err := awsclient.NewManager(context.Background())
 	if err != nil {
 		slog.Error("Failed to create AWS manager", slog.Any("error", err))
@@ -57,7 +57,6 @@ func NewSQSService() (*SQSService, error) {
 	sp := storageprofile.NewStorageProfileProvider(cdb)
 
 	// Kafka is required
-	kafkaFactory := fly.NewFactoryFromEnv()
 	if !kafkaFactory.IsEnabled() {
 		return nil, fmt.Errorf("Kafka is required for pubsub services but is not enabled")
 	}
