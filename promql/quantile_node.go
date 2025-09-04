@@ -15,6 +15,7 @@
 package promql
 
 import (
+	"fmt"
 	"math"
 	"time"
 
@@ -110,4 +111,8 @@ func (n *QuantileNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalR
 		}
 	}
 	return out
+}
+
+func (n *QuantileNode) Label(tags map[string]any) string {
+	return "quantile(" + fmt.Sprintf("%f", n.Q) + ", " + n.Child.Label(tags) + ")"
 }

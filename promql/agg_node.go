@@ -285,3 +285,36 @@ func (n *AggNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalResult
 		return out
 	}
 }
+
+func (n *AggNode) Label(tags map[string]any) string {
+	var b strings.Builder
+	switch n.Op {
+	case AggSum:
+		b.WriteString("sum")
+	case AggAvg:
+		b.WriteString("avg")
+	case AggMin:
+		b.WriteString("min")
+	case AggMax:
+		b.WriteString("max")
+	case AggCount:
+		b.WriteString("count")
+	default:
+		b.WriteString("unknown-agg")
+	}
+	if len(n.By) > 0 {
+		b.WriteString(" by (")
+		b.WriteString(strings.Join(n.By, ","))
+		b.WriteString(")")
+	} else if len(n.Without) > 0 {
+		b.WriteString(" without (")
+		b.WriteString(strings.Join(n.Without, ","))
+		b.WriteString(")")
+	}
+	if n.Child != nil {
+		b.WriteString("(")
+		b.WriteString(n.Child.Label(tags))
+		b.WriteString(")")
+	}
+	return b.String()
+}

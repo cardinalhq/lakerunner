@@ -45,3 +45,7 @@ func (n *ClampMaxNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalR
 	}
 	return out
 }
+
+func (n *ClampMaxNode) Label(tags map[string]any) string {
+	return "clamp_max(" + n.Child.Label(tags) + ")"
+}

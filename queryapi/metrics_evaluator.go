@@ -184,16 +184,16 @@ func (q *QuerierService) EvaluateMetricsQuery(
 			}
 
 			for _, dih := range dateIntHoursRange(effStart, effEnd, time.UTC, false) {
-				segs, err := q.lookupMetricsSegments(ctx, dih, leaf, effStart, effEnd, stepDuration, orgID)
+				segments, err := q.lookupMetricsSegments(ctx, dih, leaf, effStart, effEnd, stepDuration, orgID)
 				if err != nil {
 					slog.Error("failed to get segment infos", "dateInt", dih.DateInt, "err", err)
 					continue
 				}
-				for i := range segs {
-					segs[i].ExprID = leaf.ID
+				for i := range segments {
+					segments[i].ExprID = leaf.ID
 				}
-				if len(segs) > 0 {
-					segmentUniverse = append(segmentUniverse, segs...)
+				if len(segments) > 0 {
+					segmentUniverse = append(segmentUniverse, segments...)
 				}
 			}
 		}
@@ -231,7 +231,7 @@ func (q *QuerierService) EvaluateMetricsQuery(
 						offMs = 0
 					}
 
-					// build worker mapping for only this leaf’s segs
+					// build worker mapping for only this leaf’s segments
 					segmentIDs := make([]int64, 0, len(segsForLeaf))
 					segmentMap := make(map[int64]SegmentInfo, len(segsForLeaf))
 					for _, s := range segsForLeaf {

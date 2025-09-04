@@ -15,7 +15,9 @@
 package promql
 
 import (
+	"fmt"
 	"math"
+	"strings"
 	"time"
 )
 
@@ -34,6 +36,20 @@ func (n *ScalarNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalRes
 			Tags:      map[string]any{}, // no labels on a pure scalar
 		},
 	}
+}
+
+func (n *ScalarNode) Label(tags map[string]any) string {
+	return formatFloatNoTrailingZeros(n.Value)
+}
+
+func formatFloatNoTrailingZeros(f float64) string {
+	s := fmt.Sprintf("%.2f", f)
+	if !strings.Contains(s, ".") {
+		return s
+	}
+	s = strings.TrimRight(s, "0")
+	s = strings.TrimRight(s, ".")
+	return s
 }
 
 type ScalarOfNode struct {
@@ -67,4 +83,8 @@ func (n *ScalarOfNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalR
 	}
 	// unreachable, but keep compiler happy
 	return map[string]EvalResult{}
+}
+
+func (n *ScalarOfNode) Label(tags map[string]any) string {
+	return "scalar(" + n.Child.Label(tags) + ")"
 }

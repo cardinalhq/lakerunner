@@ -15,6 +15,7 @@
 package promql
 
 import (
+	"fmt"
 	"math"
 	"time"
 )
@@ -58,6 +59,7 @@ func (n *BinaryNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalRes
 		}
 
 		a, b := l.Value.Num, r.Value.Num
+
 		var v float64
 		switch n.Op {
 		case OpAdd:
@@ -76,16 +78,42 @@ func (n *BinaryNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalRes
 			v = math.NaN()
 		}
 
-		emitTags := l.Tags
+		if math.IsNaN(v) {
+			continue
+		}
+
+		emitTags := make(map[string]any)
+		// merge tags from LHS and RHS
+		for k, val := range l.Tags {
+			emitTags[k] = val
+		}
+
 		if len(emitTags) == 0 {
 			emitTags = r.Tags
 		}
+
 		out[lk] = EvalResult{
 			Timestamp: sg.Timestamp,
 			Value:     Value{Kind: ValScalar, Num: v},
-			Tags:      emitTags, // only the on(...) labels (or full set if no on)
+			Tags:      emitTags,
 		}
 	}
 
 	return out
+}
+
+func (n *BinaryNode) Label(tags map[string]any) string {
+	leftLabel := n.LHS.Label(tags)
+	rightLabel := n.RHS.Label(tags)
+	switch n.Op {
+	case OpAdd:
+		return fmt.Sprintf("(%s + %s)", leftLabel, rightLabel)
+	case OpSub:
+		return fmt.Sprintf("(%s - %s)", leftLabel, rightLabel)
+	case OpMul:
+		return fmt.Sprintf("(%s * %s)", leftLabel, rightLabel)
+	case OpDiv:
+		return fmt.Sprintf("(%s / %s)", leftLabel, rightLabel)
+	}
+	return "unknown"
 }
