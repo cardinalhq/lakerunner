@@ -27,14 +27,17 @@ import (
 
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/internal/constants"
+	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
 type HTTPService struct {
-	sp       storageprofile.StorageProfileProvider
-	workChan chan []byte
-	tracer   trace.Tracer
-	mdb      InqueueInserter
+	sp           storageprofile.StorageProfileProvider
+	workChan     chan []byte
+	tracer       trace.Tracer
+	mdb          InqueueInserter // Keep for fallback when Kafka is disabled
+	kafkaHandler *KafkaHandler
+	kafkaEnabled bool
 }
 
 func NewHTTPService() (*HTTPService, error) {
@@ -51,12 +54,29 @@ func NewHTTPService() (*HTTPService, error) {
 		return nil, fmt.Errorf("failed to connect to lr database: %w", err)
 	}
 
-	return &HTTPService{
+	service := &HTTPService{
 		sp:       sp,
 		mdb:      mdb,
 		workChan: make(chan []byte, 100), // Buffered channel to handle incoming requests
 		tracer:   otel.Tracer("github.com/cardinalhq/lakerunner/internal/pubsub"),
-	}, nil
+	}
+
+	// Try to initialize Kafka if enabled
+	kafkaFactory := fly.NewFactoryFromEnv()
+	if kafkaFactory.IsEnabled() {
+		kafkaHandler, err := NewKafkaHandler(kafkaFactory, "http", sp, slog.Default())
+		if err != nil {
+			slog.Warn("Failed to create Kafka handler, falling back to direct DB writes", slog.Any("error", err))
+		} else {
+			service.kafkaHandler = kafkaHandler
+			service.kafkaEnabled = true
+			slog.Info("HTTP pubsub service initialized with Kafka support")
+		}
+	} else {
+		slog.Info("HTTP pubsub service initialized without Kafka (direct DB writes)")
+	}
+
+	return service, nil
 }
 
 func (ps *HTTPService) Run(doneCtx context.Context) error {
@@ -84,6 +104,13 @@ func (ps *HTTPService) Run(doneCtx context.Context) error {
 	}
 
 	close(ps.workChan)
+
+	// Close Kafka handler if it exists
+	if ps.kafkaHandler != nil {
+		if err := ps.kafkaHandler.Close(); err != nil {
+			slog.Error("Failed to close Kafka handler", slog.Any("error", err))
+		}
+	}
 
 	return nil
 }
@@ -121,8 +148,18 @@ func (ps *HTTPService) Process(ctx context.Context) {
 			ctx, span = ps.tracer.Start(ctx, "HTTPService.Process")
 			defer span.End()
 
-			if err := handleMessage(ctx, msg, ps.sp, ps.mdb); err != nil {
-				slog.Error("Failed to handle message", slog.Any("error", err))
+			if ps.kafkaEnabled {
+				if err := ps.kafkaHandler.HandleMessage(ctx, msg); err != nil {
+					slog.Error("Failed to handle message with Kafka", slog.Any("error", err))
+					// Fallback to direct DB write on Kafka failure
+					if err := handleMessage(ctx, msg, ps.sp, ps.mdb); err != nil {
+						slog.Error("Failed to handle message with fallback", slog.Any("error", err))
+					}
+				}
+			} else {
+				if err := handleMessage(ctx, msg, ps.sp, ps.mdb); err != nil {
+					slog.Error("Failed to handle message", slog.Any("error", err))
+				}
 			}
 		}()
 	}

@@ -24,6 +24,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/debugging"
+	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing/ingestion"
@@ -34,7 +35,7 @@ import (
 func init() {
 	cmd := &cobra.Command{
 		Use:   "ingest-metrics",
-		Short: "Ingest metrics from the inqueue table",
+		Short: "Ingest metrics from the inqueue table or Kafka",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			helpers.SetupTempDir()
 
@@ -69,20 +70,43 @@ func init() {
 				}
 			}()
 
-			loop, err := NewIngestLoopContext(ctx, "metrics")
-			if err != nil {
-				return fmt.Errorf("failed to create ingest loop context: %w", err)
-			}
-			defer func() {
-				if err := loop.Close(); err != nil {
-					slog.Error("Error closing ingest loop context", slog.Any("error", err))
+			// Check if Kafka is enabled for ingestion
+			kafkaFactory := fly.NewFactoryFromEnv()
+			if kafkaFactory.IsEnabledForIngestion() {
+				slog.Info("Starting metrics ingestion with Kafka consumer")
+
+				consumer, err := NewKafkaIngestConsumer("metrics", "lakerunner.ingest.metrics")
+				if err != nil {
+					return fmt.Errorf("failed to create Kafka consumer: %w", err)
 				}
-			}()
+				defer func() {
+					if err := consumer.Close(); err != nil {
+						slog.Error("Error closing Kafka consumer", slog.Any("error", err))
+					}
+				}()
 
-			// Mark as healthy once loop is created and about to start
-			healthServer.SetStatus(healthcheck.StatusHealthy)
+				// Mark as healthy once consumer is created and about to start
+				healthServer.SetStatus(healthcheck.StatusHealthy)
 
-			return IngestLoopWithBatch(loop, nil, metricIngestBatch)
+				return consumer.Run(ctx)
+			} else {
+				slog.Info("Starting metrics ingestion with database polling")
+
+				loop, err := NewIngestLoopContext(ctx, "metrics")
+				if err != nil {
+					return fmt.Errorf("failed to create ingest loop context: %w", err)
+				}
+				defer func() {
+					if err := loop.Close(); err != nil {
+						slog.Error("Error closing ingest loop context", slog.Any("error", err))
+					}
+				}()
+
+				// Mark as healthy once loop is created and about to start
+				healthServer.SetStatus(healthcheck.StatusHealthy)
+
+				return IngestLoopWithBatch(loop, nil, metricIngestBatch)
+			}
 		},
 	}
 

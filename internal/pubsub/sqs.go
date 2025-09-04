@@ -28,14 +28,17 @@ import (
 
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
+	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
 type SQSService struct {
-	tracer trace.Tracer
-	awsMgr *awsclient.Manager
-	sp     storageprofile.StorageProfileProvider
-	mdb    InqueueInserter
+	tracer       trace.Tracer
+	awsMgr       *awsclient.Manager
+	sp           storageprofile.StorageProfileProvider
+	mdb          InqueueInserter // Keep for fallback when Kafka is disabled
+	kafkaHandler *KafkaHandler
+	kafkaEnabled bool
 }
 
 // Ensure SQSService implements Backend interface
@@ -61,12 +64,29 @@ func NewSQSService() (*SQSService, error) {
 		return nil, fmt.Errorf("failed to connect to lr database: %w", err)
 	}
 
-	return &SQSService{
+	service := &SQSService{
 		tracer: otel.Tracer("github.com/cardinalhq/lakerunner/internal/pubsub/sqs"),
 		awsMgr: awsMgr,
 		sp:     sp,
 		mdb:    mdb,
-	}, nil
+	}
+
+	// Try to initialize Kafka if enabled
+	kafkaFactory := fly.NewFactoryFromEnv()
+	if kafkaFactory.IsEnabled() {
+		kafkaHandler, err := NewKafkaHandler(kafkaFactory, "sqs", sp, slog.Default())
+		if err != nil {
+			slog.Warn("Failed to create Kafka handler, falling back to direct DB writes", slog.Any("error", err))
+		} else {
+			service.kafkaHandler = kafkaHandler
+			service.kafkaEnabled = true
+			slog.Info("SQS pubsub service initialized with Kafka support")
+		}
+	} else {
+		slog.Info("SQS pubsub service initialized without Kafka (direct DB writes)")
+	}
+
+	return service, nil
 }
 
 func (ps *SQSService) Run(doneCtx context.Context) error {
@@ -102,6 +122,14 @@ func (ps *SQSService) Run(doneCtx context.Context) error {
 	<-doneCtx.Done()
 
 	slog.Info("Shutting down SQS pubsub service")
+
+	// Close Kafka handler if it exists
+	if ps.kafkaHandler != nil {
+		if err := ps.kafkaHandler.Close(); err != nil {
+			slog.Error("Failed to close Kafka handler", slog.Any("error", err))
+		}
+	}
+
 	return nil
 }
 
@@ -129,9 +157,22 @@ func (ps *SQSService) pollSQS(doneCtx context.Context, sqsClient *awsclient.SQSC
 
 		for _, message := range result.Messages {
 			if message.Body != nil {
-				err := handleMessage(context.Background(), []byte(*message.Body), ps.sp, ps.mdb)
-				if err != nil {
-					slog.Error("Failed to handle S3 event", slog.Any("error", err))
+				var err error
+				if ps.kafkaEnabled {
+					err = ps.kafkaHandler.HandleMessage(context.Background(), []byte(*message.Body))
+					if err != nil {
+						slog.Error("Failed to handle S3 event with Kafka", slog.Any("error", err))
+						// Fallback to direct DB write on Kafka failure
+						err = handleMessage(context.Background(), []byte(*message.Body), ps.sp, ps.mdb)
+						if err != nil {
+							slog.Error("Failed to handle S3 event with fallback", slog.Any("error", err))
+						}
+					}
+				} else {
+					err = handleMessage(context.Background(), []byte(*message.Body), ps.sp, ps.mdb)
+					if err != nil {
+						slog.Error("Failed to handle S3 event", slog.Any("error", err))
+					}
 				}
 			}
 			_, err := sqsClient.Client.DeleteMessage(context.Background(), &sqs.DeleteMessageInput{

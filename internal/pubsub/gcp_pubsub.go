@@ -27,15 +27,18 @@ import (
 	"google.golang.org/api/option"
 
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
+	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
 type GCPPubSubService struct {
-	tracer trace.Tracer
-	sp     storageprofile.StorageProfileProvider
-	mdb    InqueueInserter
-	client *pubsub.Client
-	sub    *pubsub.Subscription
+	tracer       trace.Tracer
+	sp           storageprofile.StorageProfileProvider
+	mdb          InqueueInserter // Keep for fallback when Kafka is disabled
+	client       *pubsub.Client
+	sub          *pubsub.Subscription
+	kafkaHandler *KafkaHandler
+	kafkaEnabled bool
 }
 
 // Ensure GCPPubSubService implements Backend interface
@@ -78,13 +81,30 @@ func NewGCPPubSubService() (*GCPPubSubService, error) {
 		return nil, fmt.Errorf("failed to connect to lr database: %w", err)
 	}
 
-	return &GCPPubSubService{
+	service := &GCPPubSubService{
 		tracer: otel.Tracer("github.com/cardinalhq/lakerunner/internal/pubsub/gcp-pubsub"),
 		sp:     sp,
 		mdb:    mdb,
 		client: client,
 		sub:    sub,
-	}, nil
+	}
+
+	// Try to initialize Kafka if enabled
+	kafkaFactory := fly.NewFactoryFromEnv()
+	if kafkaFactory.IsEnabled() {
+		kafkaHandler, err := NewKafkaHandler(kafkaFactory, "gcp", sp, slog.Default())
+		if err != nil {
+			slog.Warn("Failed to create Kafka handler, falling back to direct DB writes", slog.Any("error", err))
+		} else {
+			service.kafkaHandler = kafkaHandler
+			service.kafkaEnabled = true
+			slog.Info("GCP Pub/Sub service initialized with Kafka support")
+		}
+	} else {
+		slog.Info("GCP Pub/Sub service initialized without Kafka (direct DB writes)")
+	}
+
+	return service, nil
 }
 
 func (ps *GCPPubSubService) GetName() string {
@@ -97,10 +117,15 @@ func (ps *GCPPubSubService) Run(doneCtx context.Context) error {
 	// Start the receive loop
 	err := ps.sub.Receive(doneCtx, ps.messageHandler)
 
-	// Ensure client is closed on exit
+	// Ensure client and Kafka handler are closed on exit
 	defer func() {
 		if err := ps.client.Close(); err != nil {
 			slog.Error("Failed to close GCP Pub/Sub client", slog.Any("error", err))
+		}
+		if ps.kafkaHandler != nil {
+			if err := ps.kafkaHandler.Close(); err != nil {
+				slog.Error("Failed to close Kafka handler", slog.Any("error", err))
+			}
 		}
 	}()
 
@@ -121,7 +146,20 @@ func (ps *GCPPubSubService) messageHandler(ctx context.Context, msg *pubsub.Mess
 	defer span.End()
 
 	// Process the message
-	err := handleMessage(ctx, msg.Data, ps.sp, ps.mdb)
+	var err error
+	if ps.kafkaEnabled {
+		err = ps.kafkaHandler.HandleMessage(ctx, msg.Data)
+		if err != nil {
+			slog.Error("Failed to handle Cloud Storage event with Kafka",
+				slog.Any("error", err),
+				slog.String("message_id", msg.ID))
+			// Fallback to direct DB write on Kafka failure
+			err = handleMessage(ctx, msg.Data, ps.sp, ps.mdb)
+		}
+	} else {
+		err = handleMessage(ctx, msg.Data, ps.sp, ps.mdb)
+	}
+
 	if err != nil {
 		// Record error in span
 		span.RecordError(err)
