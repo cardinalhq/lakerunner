@@ -37,6 +37,7 @@ type input struct {
 	RPFEstimate       int64
 	ExemplarProcessor *exemplar.Processor
 	Logger            *slog.Logger
+	Config            Config
 }
 
 // result contains the output of metric ingestion

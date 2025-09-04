@@ -43,6 +43,7 @@ require (
 	github.com/segmentio/kafka-go v0.4.49
 	github.com/sony/sonyflake v1.3.0
 	github.com/spf13/cobra v1.9.1
+	github.com/spf13/viper v1.19.0
 	github.com/stretchr/testify v1.10.0
 	go.opentelemetry.io/collector/pdata v1.34.0
 	go.opentelemetry.io/contrib/bridges/otelslog v0.12.0
@@ -548,7 +549,6 @@ require (
 	github.com/spf13/afero v1.14.0 // indirect
 	github.com/spf13/cast v1.7.1 // indirect
 	github.com/spf13/pflag v1.0.7 // indirect
-	github.com/spf13/viper v1.19.0 // indirect
 	github.com/spiffe/go-spiffe/v2 v2.5.0 // indirect
 	github.com/sqlc-dev/sqlc v1.29.0 // indirect
 	github.com/ssgreg/nlreturn/v2 v2.2.1 // indirect
