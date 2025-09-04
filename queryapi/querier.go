@@ -234,7 +234,7 @@ func (q *QuerierService) Run(doneCtx context.Context) error {
 	mux.HandleFunc("/api/v1/tags/logql", q.handleListLogQLTags)
 
 	srv := &http.Server{
-		Addr:    ":9090",
+		Addr:    ":8080",
 		Handler: mux,
 	}
 
