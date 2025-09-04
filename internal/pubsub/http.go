@@ -35,9 +35,7 @@ type HTTPService struct {
 	sp           storageprofile.StorageProfileProvider
 	workChan     chan []byte
 	tracer       trace.Tracer
-	mdb          InqueueInserter // Keep for fallback when Kafka is disabled
 	kafkaHandler *KafkaHandler
-	kafkaEnabled bool
 }
 
 func NewHTTPService() (*HTTPService, error) {
@@ -48,34 +46,25 @@ func NewHTTPService() (*HTTPService, error) {
 	}
 	sp := storageprofile.NewStorageProfileProvider(cdb)
 
-	mdb, err := dbopen.LRDBStore(context.Background())
+	// Kafka is required
+	kafkaFactory := fly.NewFactoryFromEnv()
+	if !kafkaFactory.IsEnabled() {
+		return nil, fmt.Errorf("Kafka is required for pubsub services but is not enabled")
+	}
+
+	kafkaHandler, err := NewKafkaHandler(kafkaFactory, "http", sp, slog.Default())
 	if err != nil {
-		slog.Error("Failed to connect to lr database", slog.Any("error", err))
-		return nil, fmt.Errorf("failed to connect to lr database: %w", err)
+		return nil, fmt.Errorf("failed to create Kafka handler: %w", err)
 	}
 
 	service := &HTTPService{
-		sp:       sp,
-		mdb:      mdb,
-		workChan: make(chan []byte, 100), // Buffered channel to handle incoming requests
-		tracer:   otel.Tracer("github.com/cardinalhq/lakerunner/internal/pubsub"),
+		sp:           sp,
+		workChan:     make(chan []byte, 100), // Buffered channel to handle incoming requests
+		tracer:       otel.Tracer("github.com/cardinalhq/lakerunner/internal/pubsub"),
+		kafkaHandler: kafkaHandler,
 	}
 
-	// Try to initialize Kafka if enabled
-	kafkaFactory := fly.NewFactoryFromEnv()
-	if kafkaFactory.IsEnabled() {
-		kafkaHandler, err := NewKafkaHandler(kafkaFactory, "http", sp, slog.Default())
-		if err != nil {
-			slog.Warn("Failed to create Kafka handler, falling back to direct DB writes", slog.Any("error", err))
-		} else {
-			service.kafkaHandler = kafkaHandler
-			service.kafkaEnabled = true
-			slog.Info("HTTP pubsub service initialized with Kafka support")
-		}
-	} else {
-		slog.Info("HTTP pubsub service initialized without Kafka (direct DB writes)")
-	}
-
+	slog.Info("HTTP pubsub service initialized with Kafka support")
 	return service, nil
 }
 
@@ -148,18 +137,8 @@ func (ps *HTTPService) Process(ctx context.Context) {
 			ctx, span = ps.tracer.Start(ctx, "HTTPService.Process")
 			defer span.End()
 
-			if ps.kafkaEnabled {
-				if err := ps.kafkaHandler.HandleMessage(ctx, msg); err != nil {
-					slog.Error("Failed to handle message with Kafka", slog.Any("error", err))
-					// Fallback to direct DB write on Kafka failure
-					if err := handleMessage(ctx, msg, ps.sp, ps.mdb); err != nil {
-						slog.Error("Failed to handle message with fallback", slog.Any("error", err))
-					}
-				}
-			} else {
-				if err := handleMessage(ctx, msg, ps.sp, ps.mdb); err != nil {
-					slog.Error("Failed to handle message", slog.Any("error", err))
-				}
+			if err := ps.kafkaHandler.HandleMessage(ctx, msg); err != nil {
+				slog.Error("Failed to handle message with Kafka", slog.Any("error", err))
 			}
 		}()
 	}

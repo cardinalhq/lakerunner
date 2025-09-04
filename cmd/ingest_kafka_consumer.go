@@ -245,16 +245,14 @@ func processLogsBatch(ctx context.Context, ll *slog.Logger, tmpdir string,
 	sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
 	awsmanager *awsclient.Manager, items []lrdb.Inqueue,
 	ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
-	// This should be implemented based on your actual logs processing logic
-	// For now, returning an error to indicate it needs implementation
-	return fmt.Errorf("logs processing not yet implemented for Kafka consumer")
+	// Call the existing logIngestBatch function from ingest_logs.go
+	return logIngestBatch(ctx, ll, tmpdir, sp, mdb, awsmanager, items, ingest_dateint, rpfEstimate, loop)
 }
 
 func processTracesBatch(ctx context.Context, ll *slog.Logger, tmpdir string,
 	sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
 	awsmanager *awsclient.Manager, items []lrdb.Inqueue,
 	ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
-	// This should be implemented based on your actual traces processing logic
-	// For now, returning an error to indicate it needs implementation
-	return fmt.Errorf("traces processing not yet implemented for Kafka consumer")
+	// Call the existing traceIngestBatch function from ingest_traces_cmd.go
+	return traceIngestBatch(ctx, ll, tmpdir, sp, mdb, awsmanager, items, ingest_dateint, rpfEstimate, loop)
 }

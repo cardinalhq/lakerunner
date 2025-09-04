@@ -31,6 +31,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/debugging"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
+	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
@@ -79,27 +80,28 @@ func init() {
 				}
 			}()
 
-			loop, err := NewIngestLoopContext(ctx, "logs")
-			if err != nil {
-				return fmt.Errorf("failed to create ingest loop context: %w", err)
+			// Kafka is required for ingestion
+			kafkaFactory := fly.NewFactoryFromEnv()
+			if !kafkaFactory.IsEnabledForIngestion() {
+				return fmt.Errorf("Kafka is required for ingestion but is not enabled")
 			}
 
-			// Mark as healthy once loop is created and about to start
+			slog.Info("Starting logs ingestion with Kafka consumer")
+
+			consumer, err := NewKafkaIngestConsumer("logs", "lakerunner.ingest.logs")
+			if err != nil {
+				return fmt.Errorf("failed to create Kafka consumer: %w", err)
+			}
+			defer func() {
+				if err := consumer.Close(); err != nil {
+					slog.Error("Error closing Kafka consumer", slog.Any("error", err))
+				}
+			}()
+
+			// Mark as healthy once consumer is created and about to start
 			healthServer.SetStatus(healthcheck.StatusHealthy)
 
-			for {
-				select {
-				case <-ctx.Done():
-					slog.Info("Ingest logs command done")
-					return nil
-				default:
-				}
-
-				err := IngestLoopWithBatch(loop, nil, logIngestBatch)
-				if err != nil {
-					slog.Error("Error in ingest loop", slog.Any("error", err))
-				}
-			}
+			return consumer.Run(ctx)
 		},
 	}
 

@@ -63,24 +63,25 @@ func init() {
 
 			go diskUsageLoop(doneCtx)
 
-			loop, err := NewIngestLoopContext(doneCtx, "traces")
+			// Kafka is required for ingestion
+			kafkaFactory := fly.NewFactoryFromEnv()
+			if !kafkaFactory.IsEnabledForIngestion() {
+				return fmt.Errorf("Kafka is required for ingestion but is not enabled")
+			}
+
+			slog.Info("Starting traces ingestion with Kafka consumer")
+
+			consumer, err := NewKafkaIngestConsumer("traces", "lakerunner.ingest.traces")
 			if err != nil {
-				return fmt.Errorf("failed to create ingest loop context: %w", err)
+				return fmt.Errorf("failed to create Kafka consumer: %w", err)
 			}
-
-			for {
-				select {
-				case <-doneCtx.Done():
-					slog.Info("Ingest traces command done")
-					return nil
-				default:
+			defer func() {
+				if err := consumer.Close(); err != nil {
+					slog.Error("Error closing Kafka consumer", slog.Any("error", err))
 				}
+			}()
 
-				err := IngestLoopWithBatch(loop, nil, traceIngestBatch)
-				if err != nil {
-					slog.Error("Error in ingest loop", slog.Any("error", err))
-				}
-			}
+			return consumer.Run(doneCtx)
 		},
 	}
 

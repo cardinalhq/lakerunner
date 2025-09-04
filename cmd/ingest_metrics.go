@@ -15,7 +15,6 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 
@@ -27,9 +26,6 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
-	"github.com/cardinalhq/lakerunner/internal/metricsprocessing/ingestion"
-	"github.com/cardinalhq/lakerunner/internal/storageprofile"
-	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 func init() {
@@ -70,43 +66,28 @@ func init() {
 				}
 			}()
 
-			// Check if Kafka is enabled for ingestion
+			// Kafka is required for ingestion
 			kafkaFactory := fly.NewFactoryFromEnv()
-			if kafkaFactory.IsEnabledForIngestion() {
-				slog.Info("Starting metrics ingestion with Kafka consumer")
-
-				consumer, err := NewKafkaIngestConsumer("metrics", "lakerunner.ingest.metrics")
-				if err != nil {
-					return fmt.Errorf("failed to create Kafka consumer: %w", err)
-				}
-				defer func() {
-					if err := consumer.Close(); err != nil {
-						slog.Error("Error closing Kafka consumer", slog.Any("error", err))
-					}
-				}()
-
-				// Mark as healthy once consumer is created and about to start
-				healthServer.SetStatus(healthcheck.StatusHealthy)
-
-				return consumer.Run(ctx)
-			} else {
-				slog.Info("Starting metrics ingestion with database polling")
-
-				loop, err := NewIngestLoopContext(ctx, "metrics")
-				if err != nil {
-					return fmt.Errorf("failed to create ingest loop context: %w", err)
-				}
-				defer func() {
-					if err := loop.Close(); err != nil {
-						slog.Error("Error closing ingest loop context", slog.Any("error", err))
-					}
-				}()
-
-				// Mark as healthy once loop is created and about to start
-				healthServer.SetStatus(healthcheck.StatusHealthy)
-
-				return IngestLoopWithBatch(loop, nil, metricIngestBatch)
+			if !kafkaFactory.IsEnabledForIngestion() {
+				return fmt.Errorf("Kafka is required for ingestion but is not enabled")
 			}
+
+			slog.Info("Starting metrics ingestion with Kafka consumer")
+
+			consumer, err := NewKafkaIngestConsumer("metrics", "lakerunner.ingest.metrics")
+			if err != nil {
+				return fmt.Errorf("failed to create Kafka consumer: %w", err)
+			}
+			defer func() {
+				if err := consumer.Close(); err != nil {
+					slog.Error("Error closing Kafka consumer", slog.Any("error", err))
+				}
+			}()
+
+			// Mark as healthy once consumer is created and about to start
+			healthServer.SetStatus(healthcheck.StatusHealthy)
+
+			return consumer.Run(ctx)
 		},
 	}
 

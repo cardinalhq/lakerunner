@@ -36,9 +36,7 @@ type SQSService struct {
 	tracer       trace.Tracer
 	awsMgr       *awsclient.Manager
 	sp           storageprofile.StorageProfileProvider
-	mdb          InqueueInserter // Keep for fallback when Kafka is disabled
 	kafkaHandler *KafkaHandler
-	kafkaEnabled bool
 }
 
 // Ensure SQSService implements Backend interface
@@ -58,33 +56,25 @@ func NewSQSService() (*SQSService, error) {
 	}
 	sp := storageprofile.NewStorageProfileProvider(cdb)
 
-	mdb, err := dbopen.LRDBStore(context.Background())
+	// Kafka is required
+	kafkaFactory := fly.NewFactoryFromEnv()
+	if !kafkaFactory.IsEnabled() {
+		return nil, fmt.Errorf("Kafka is required for pubsub services but is not enabled")
+	}
+
+	kafkaHandler, err := NewKafkaHandler(kafkaFactory, "sqs", sp, slog.Default())
 	if err != nil {
-		slog.Error("Failed to connect to lr database", slog.Any("error", err))
-		return nil, fmt.Errorf("failed to connect to lr database: %w", err)
+		return nil, fmt.Errorf("failed to create Kafka handler: %w", err)
 	}
 
 	service := &SQSService{
-		tracer: otel.Tracer("github.com/cardinalhq/lakerunner/internal/pubsub/sqs"),
-		awsMgr: awsMgr,
-		sp:     sp,
-		mdb:    mdb,
+		tracer:       otel.Tracer("github.com/cardinalhq/lakerunner/internal/pubsub/sqs"),
+		awsMgr:       awsMgr,
+		sp:           sp,
+		kafkaHandler: kafkaHandler,
 	}
 
-	// Try to initialize Kafka if enabled
-	kafkaFactory := fly.NewFactoryFromEnv()
-	if kafkaFactory.IsEnabled() {
-		kafkaHandler, err := NewKafkaHandler(kafkaFactory, "sqs", sp, slog.Default())
-		if err != nil {
-			slog.Warn("Failed to create Kafka handler, falling back to direct DB writes", slog.Any("error", err))
-		} else {
-			service.kafkaHandler = kafkaHandler
-			service.kafkaEnabled = true
-			slog.Info("SQS pubsub service initialized with Kafka support")
-		}
-	} else {
-		slog.Info("SQS pubsub service initialized without Kafka (direct DB writes)")
-	}
+	slog.Info("SQS pubsub service initialized with Kafka support")
 
 	return service, nil
 }
@@ -157,22 +147,9 @@ func (ps *SQSService) pollSQS(doneCtx context.Context, sqsClient *awsclient.SQSC
 
 		for _, message := range result.Messages {
 			if message.Body != nil {
-				var err error
-				if ps.kafkaEnabled {
-					err = ps.kafkaHandler.HandleMessage(context.Background(), []byte(*message.Body))
-					if err != nil {
-						slog.Error("Failed to handle S3 event with Kafka", slog.Any("error", err))
-						// Fallback to direct DB write on Kafka failure
-						err = handleMessage(context.Background(), []byte(*message.Body), ps.sp, ps.mdb)
-						if err != nil {
-							slog.Error("Failed to handle S3 event with fallback", slog.Any("error", err))
-						}
-					}
-				} else {
-					err = handleMessage(context.Background(), []byte(*message.Body), ps.sp, ps.mdb)
-					if err != nil {
-						slog.Error("Failed to handle S3 event", slog.Any("error", err))
-					}
+				err := ps.kafkaHandler.HandleMessage(context.Background(), []byte(*message.Body))
+				if err != nil {
+					slog.Error("Failed to handle S3 event with Kafka", slog.Any("error", err))
 				}
 			}
 			_, err := sqsClient.Client.DeleteMessage(context.Background(), &sqs.DeleteMessageInput{
