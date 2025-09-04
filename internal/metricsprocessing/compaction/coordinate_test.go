@@ -86,8 +86,8 @@ func TestReplaceCompactedSegments_WithCompactMetricSegs(t *testing.T) {
 		},
 	}
 
-	// Create work item
-	workItem := lrdb.ClaimMetricCompactionWorkRow{
+	// Create metadata
+	metadata := CompactionWorkMetadata{
 		OrganizationID: orgID,
 		Dateint:        20250830,
 		FrequencyMs:    5000,
@@ -105,22 +105,20 @@ func TestReplaceCompactedSegments_WithCompactMetricSegs(t *testing.T) {
 	// Call the function under test
 	inputRecords := int64(2000) // Sum of old segments record count (1000 + 1000)
 	inputBytes := int64(100000) // Sum of old segments file size (50000 + 50000)
-	err := replaceCompactedSegments(ctx, ll, db, segments, oldRows, workItem, inputRecords, inputBytes)
+	err := replaceCompactedSegments(ctx, ll, db, segments, oldRows, metadata, inputRecords, inputBytes, int64(1500))
 	require.NoError(t, err)
 
-	// Verify segments by querying all segments for this org/dateint/frequency
-	allSegs, err := db.GetMetricSegsForCompaction(ctx, lrdb.GetMetricSegsForCompactionParams{
-		OrganizationID:  orgID,
-		Dateint:         20250830,
-		FrequencyMs:     5000,
-		InstanceNum:     1,
-		SlotID:          0,
-		StartTs:         now.UnixMilli() - 1000,
-		EndTs:           now.Add(2 * time.Hour).UnixMilli(),
-		MaxFileSize:     1000000,
-		CursorCreatedAt: time.Time{},
-		CursorSegmentID: 0,
-		Maxrows:         100,
+	// Verify segments by querying all segments we care about
+	allSegmentIDs := append([]int64{}, oldSegmentIDs...)
+	for _, seg := range segments {
+		allSegmentIDs = append(allSegmentIDs, seg.SegmentID)
+	}
+	allSegs, err := db.GetMetricSegsByIds(ctx, lrdb.GetMetricSegsByIdsParams{
+		OrganizationID: orgID,
+		Dateint:        20250830,
+		FrequencyMs:    5000,
+		InstanceNum:    1,
+		SegmentIds:     allSegmentIDs,
 	})
 	require.NoError(t, err)
 

@@ -16,8 +16,7 @@ package lrdb
 
 import (
 	"context"
-
-	"github.com/jackc/pgx/v5/pgtype"
+	"time"
 )
 
 type LogSegmentUpserter interface {
@@ -29,6 +28,11 @@ type MetricSegmentInserter interface {
 	InsertMetricSegment(ctx context.Context, params InsertMetricSegmentParams) error
 	CompactMetricSegs(ctx context.Context, args CompactMetricSegsParams) error
 	RollupMetricSegs(ctx context.Context, sourceParams RollupSourceParams, targetParams RollupTargetParams, sourceSegmentIDs []int64, newRecords []RollupNewRecord) error
+	ClaimRollupBundle(ctx context.Context, params BundleParams) (*RollupBundleResult, error)
+	CompleteRollup(ctx context.Context, workerID int64, ids []int64) error
+	MrqHeartbeat(ctx context.Context, arg MrqHeartbeatParams) (int64, error)
+	ClaimCompactionBundle(ctx context.Context, p BundleParams) (CompactionBundleResult, error)
+	MrqQueueWork(ctx context.Context, params MrqQueueWorkParams) error
 }
 
 type TraceSegmentInserter interface {
@@ -45,7 +49,7 @@ type WorkQueueQuerier interface {
 	WorkQueueComplete(ctx context.Context, params WorkQueueCompleteParams) error
 	WorkQueueDelete(ctx context.Context, params WorkQueueDeleteParams) error
 	WorkQueueHeartbeat(ctx context.Context, params WorkQueueHeartbeatParams) error
-	WorkQueueCleanup(ctx context.Context, lockTtlDead pgtype.Interval) ([]WorkQueueCleanupRow, error)
+	WorkQueueCleanup(ctx context.Context, lockTtlDead time.Duration) ([]WorkQueueCleanupRow, error)
 	WorkQueueClaim(ctx context.Context, params WorkQueueClaimParams) (WorkQueueClaimRow, error)
 }
 

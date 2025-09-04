@@ -388,13 +388,13 @@ func whereFor(be *BaseExpr) string {
 	for _, m := range be.Matchers {
 		switch m.Op {
 		case MatchEq:
-			parts = append(parts, fmt.Sprintf("%s = %s", m.Label, sqlLit(m.Value)))
+			parts = append(parts, fmt.Sprintf("\"%s\" = %s", m.Label, sqlLit(m.Value)))
 		case MatchNe:
-			parts = append(parts, fmt.Sprintf("%s <> %s", m.Label, sqlLit(m.Value)))
+			parts = append(parts, fmt.Sprintf("\"%s\" <> %s", m.Label, sqlLit(m.Value)))
 		case MatchRe:
-			parts = append(parts, fmt.Sprintf("%s ~ %s", m.Label, sqlLit(m.Value)))
+			parts = append(parts, fmt.Sprintf("\"%s\" ~ %s", m.Label, sqlLit(m.Value)))
 		case MatchNre:
-			parts = append(parts, fmt.Sprintf("%s !~ %s", m.Label, sqlLit(m.Value)))
+			parts = append(parts, fmt.Sprintf("\"%s\" !~ %s", m.Label, sqlLit(m.Value)))
 		}
 	}
 	if len(parts) == 0 {

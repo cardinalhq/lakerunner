@@ -174,7 +174,11 @@ func SetupTestConfigDB(t *testing.T) *pgxpool.Pool {
 // NewTestLRDBStore creates a new lrdb store connected to a test database.
 func NewTestLRDBStore(t *testing.T) lrdb.StoreFull {
 	pool := SetupTestLRDB(t)
-	return lrdb.NewStore(pool)
+	store := lrdb.NewStore(pool)
+	t.Cleanup(func() {
+		store.Close()
+	})
+	return store
 }
 
 // NewTestConfigDBStore creates a new configdb store connected to a test database.

@@ -17,6 +17,7 @@ package compaction
 import (
 	"context"
 	"log/slog"
+	"runtime"
 	"time"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
@@ -40,14 +41,14 @@ func runLoop(
 		default:
 		}
 
-		claimedWork, err := manager.ClaimWork(ctx)
+		bundle, err := manager.ClaimWork(ctx)
 		if err != nil {
 			ll.Error("Failed to claim work", slog.Any("error", err))
 			time.Sleep(2 * time.Second)
 			continue
 		}
 
-		if len(claimedWork) == 0 {
+		if bundle == nil || len(bundle.Items) == 0 {
 			time.Sleep(2 * time.Second)
 			continue
 		}
@@ -56,36 +57,41 @@ func runLoop(
 		select {
 		case <-ctx.Done():
 			ll.Info("Context cancelled after claiming work, releasing items",
-				slog.Int("claimedItems", len(claimedWork)))
-			if releaseErr := manager.FailWork(ctx, claimedWork); releaseErr != nil {
-				ll.Error("Failed to release work items after cancellation", slog.Any("error", releaseErr))
+				slog.Int("claimedItems", len(bundle.Items)))
+			// Use protected context and ReleaseWork for cancellation to return items to queue
+			if releaseErr := manager.ReleaseWork(context.WithoutCancel(ctx), bundle.Items); releaseErr != nil {
+				ll.Error("Failed to release work items after cancellation - items will expire", slog.Any("error", releaseErr))
 			}
 			return ctx.Err()
 		default:
 		}
 
 		// Start heartbeating for claimed items
-		itemIDs := make([]int64, len(claimedWork))
-		for i, work := range claimedWork {
-			itemIDs[i] = work.ID
+		itemIDs := make([]int64, len(bundle.Items))
+		for i, item := range bundle.Items {
+			itemIDs[i] = item.ID
 		}
 		mcqHeartbeater := newMCQHeartbeater(mdb, manager.workerID, itemIDs)
 		cancel := mcqHeartbeater.Start(ctx)
 
-		err = processBatch(ctx, ll, mdb, sp, awsmanager, claimedWork)
+		err = processBatch(ctx, ll, mdb, sp, awsmanager, *bundle)
 
 		// Stop heartbeating before handling results
 		cancel()
 
 		if err != nil {
 			ll.Error("Failed to process compaction batch", slog.Any("error", err))
-			if failErr := manager.FailWork(ctx, claimedWork); failErr != nil {
-				ll.Error("Failed to fail work items", slog.Any("error", failErr))
+			// Fail work items using protected context to prevent expiration
+			if failErr := manager.FailWork(context.WithoutCancel(ctx), bundle.Items); failErr != nil {
+				ll.Error("Failed to fail work items - items will expire", slog.Any("error", failErr))
 			}
 		} else {
-			if completeErr := manager.CompleteWork(ctx, claimedWork); completeErr != nil {
-				ll.Error("Failed to complete work items", slog.Any("error", completeErr))
+			// Complete work items using protected context to prevent expiration
+			if completeErr := manager.CompleteWork(context.WithoutCancel(ctx), bundle.Items); completeErr != nil {
+				ll.Error("Failed to complete work items - items will expire", slog.Any("error", completeErr))
 			}
 		}
+
+		runtime.GC()
 	}
 }

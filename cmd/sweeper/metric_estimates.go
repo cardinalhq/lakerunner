@@ -108,7 +108,7 @@ func runMetricEstimateUpdate(ctx context.Context, ll *slog.Logger, mdb lrdb.Stor
 		// Update the estimate in the database
 		if err := mdb.UpsertMetricPackEstimate(ctx, lrdb.UpsertMetricPackEstimateParams{
 			OrganizationID: data.OrganizationID,
-			FrequencyMs:    int64(data.FrequencyMs),
+			FrequencyMs:    data.FrequencyMs,
 			TargetRecords:  &newTargetRecords,
 		}); err != nil {
 			ll.Error("Failed to upsert metric pack estimate",

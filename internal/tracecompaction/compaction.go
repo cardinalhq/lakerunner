@@ -38,7 +38,6 @@ import (
 // MetricRecorder mirrors the logs-side interface so counters stay consistent.
 type MetricRecorder interface {
 	RecordFilteredSegments(ctx context.Context, count int64, organizationID, instanceNum, signal, action, reason string)
-	RecordProcessedSegments(ctx context.Context, count int64, organizationID, instanceNum, signal, action string)
 }
 
 // PackTraceSegmentsWithEstimate mirrors logs PackSegments:
@@ -114,11 +113,6 @@ func PackTraceSegmentsWithEstimate(
 	}
 	if len(current) > 0 {
 		groups = append(groups, current)
-	}
-
-	// (4) Processed metric.
-	if total := int64(len(segments)); total > 0 {
-		recorder.RecordProcessedSegments(ctx, total, organizationID, instanceNum, signal, action)
 	}
 
 	return groups, nil

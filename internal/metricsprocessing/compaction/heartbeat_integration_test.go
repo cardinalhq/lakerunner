@@ -18,6 +18,7 @@ package compaction
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"testing"
 	"time"
@@ -40,14 +41,30 @@ func newTestMCQHeartbeater(db lrdb.StoreFull, workerID int64, items []int64) *he
 		}, time.Minute, slog.Default().With("component", "mcq_heartbeater", "worker_id", workerID, "item_count", 0))
 	}
 
+	expectedCount := int64(len(items))
+	logger := slog.Default().With("component", "mcq_heartbeater", "worker_id", workerID, "item_count", expectedCount)
+
 	heartbeatFunc := func(ctx context.Context) error {
-		return db.TouchMetricCompactionWork(ctx, lrdb.TouchMetricCompactionWorkParams{
-			Ids:       items,
-			ClaimedBy: workerID,
+		updatedCount, err := db.McqHeartbeat(ctx, lrdb.McqHeartbeatParams{
+			WorkerID: workerID,
+			Ids:      items,
 		})
+		if err != nil {
+			return err
+		}
+
+		if updatedCount != expectedCount {
+			logger.Error("Heartbeat did not update all expected rows",
+				slog.Int64("expected", expectedCount),
+				slog.Int64("updated", updatedCount),
+				slog.Int64("missing", expectedCount-updatedCount))
+			// Return error to trigger heartbeat failure handling
+			return fmt.Errorf("heartbeat updated %d rows, expected %d", updatedCount, expectedCount)
+		}
+
+		return nil
 	}
 
-	logger := slog.Default().With("component", "mcq_heartbeater", "worker_id", workerID, "item_count", len(items))
 	return heartbeat.New(heartbeatFunc, time.Minute, logger)
 }
 
@@ -58,30 +75,29 @@ func TestMCQHeartbeater_Integration(t *testing.T) {
 	orgID := uuid.New()
 	workerID := int64(12345)
 
-	// Create test MCQ item
-	err := db.PutMetricCompactionWork(ctx, lrdb.PutMetricCompactionWorkParams{
+	// Create test MCQ item with larger record count to meet estimator target
+	err := db.McqQueueWork(ctx, lrdb.McqQueueWorkParams{
 		OrganizationID: orgID,
 		Dateint:        20250829,
 		FrequencyMs:    5000,
 		SegmentID:      int64(12347),
 		InstanceNum:    1,
-		RecordCount:    1000,
+		RecordCount:    50000, // Large enough to meet estimator default of 40000
 		Priority:       1,
 	})
 	require.NoError(t, err)
 
 	// Claim the item
-	items, err := db.ClaimMetricCompactionWork(ctx, lrdb.ClaimMetricCompactionWorkParams{
-		WorkerID:             workerID,
-		DefaultTargetRecords: 1000,
-		MaxAgeSeconds:        30,
-		BatchCount:           10,
+	bundle, err := db.ClaimCompactionBundle(ctx, lrdb.BundleParams{
+		WorkerID:      workerID,
+		TargetRecords: 1000,
+		BatchLimit:    10,
+		Grace:         30 * time.Second,
 	})
 	require.NoError(t, err)
-	require.Len(t, items, 1)
+	require.Len(t, bundle.Items, 1)
 
-	claimedItem := items[0]
-	require.NotNil(t, claimedItem.HeartbeatedAt, "Item should have initial heartbeat time")
+	claimedItem := bundle.Items[0]
 
 	itemIDs := []int64{claimedItem.ID}
 
@@ -96,16 +112,16 @@ func TestMCQHeartbeater_Integration(t *testing.T) {
 	cancel()
 
 	// Try to claim the same item with a different worker - should fail if heartbeat worked
-	newWorkerItems, err := db.ClaimMetricCompactionWork(ctx, lrdb.ClaimMetricCompactionWorkParams{
-		WorkerID:             workerID + 1,
-		DefaultTargetRecords: 1000,
-		MaxAgeSeconds:        30,
-		BatchCount:           10,
+	newWorkerBundle, err := db.ClaimCompactionBundle(ctx, lrdb.BundleParams{
+		WorkerID:      workerID + 1,
+		TargetRecords: 1000,
+		BatchLimit:    10,
+		Grace:         30 * time.Second,
 	})
 	require.NoError(t, err)
 
 	// If heartbeat is working, the item should still be claimed by the original worker
-	assert.Len(t, newWorkerItems, 0, "Item should still be claimed due to heartbeat, not available for new worker")
+	assert.Len(t, newWorkerBundle.Items, 0, "Item should still be claimed due to heartbeat, not available for new worker")
 }
 
 func TestMCQHeartbeater_EmptyItems_Integration(t *testing.T) {
@@ -134,29 +150,29 @@ func TestMCQHeartbeater_ContextCancellation_Integration(t *testing.T) {
 	orgID := uuid.New()
 	workerID := int64(12345)
 
-	// Create test MCQ item
-	err := db.PutMetricCompactionWork(ctx, lrdb.PutMetricCompactionWorkParams{
+	// Create test MCQ item with larger record count to meet estimator target
+	err := db.McqQueueWork(ctx, lrdb.McqQueueWorkParams{
 		OrganizationID: orgID,
 		Dateint:        20250829,
 		FrequencyMs:    5000,
 		SegmentID:      int64(12347),
 		InstanceNum:    1,
-		RecordCount:    1000,
+		RecordCount:    50000, // Large enough to meet estimator default of 40000
 		Priority:       1,
 	})
 	require.NoError(t, err)
 
 	// Claim the item
-	items, err := db.ClaimMetricCompactionWork(ctx, lrdb.ClaimMetricCompactionWorkParams{
-		WorkerID:             workerID,
-		DefaultTargetRecords: 1000,
-		MaxAgeSeconds:        30,
-		BatchCount:           10,
+	bundle, err := db.ClaimCompactionBundle(ctx, lrdb.BundleParams{
+		WorkerID:      workerID,
+		TargetRecords: 1000,
+		BatchLimit:    10,
+		Grace:         30 * time.Second,
 	})
 	require.NoError(t, err)
-	require.Len(t, items, 1)
+	require.Len(t, bundle.Items, 1)
 
-	itemIDs := []int64{items[0].ID}
+	itemIDs := []int64{bundle.Items[0].ID}
 
 	// Test parent context cancellation propagates to heartbeater
 	t.Run("parent_context_cancellation", func(t *testing.T) {

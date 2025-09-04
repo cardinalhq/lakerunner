@@ -25,7 +25,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/schemabuilder"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
-	"github.com/cardinalhq/lakerunner/internal/rowcodec"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/rowcodec"
 )
 
 // FileSplitter manages splitting data into multiple output files based on
@@ -36,9 +36,9 @@ type FileSplitter struct {
 	currentGroup any
 
 	// Binary buffering for schema evolution
-	codec        *rowcodec.Config
+	codec        rowcodec.Codec
 	bufferFile   *os.File
-	encoder      *rowcodec.Encoder
+	encoder      rowcodec.Encoder
 	currentStats StatsAccumulator
 
 	// Dynamic schema management per file
@@ -51,10 +51,11 @@ type FileSplitter struct {
 
 // NewFileSplitter creates a new file splitter with the given configuration.
 func NewFileSplitter(config WriterConfig) *FileSplitter {
-	codec, err := rowcodec.NewConfig()
+	// Use default codec (Binary for compatibility, can use TypeCBOR for better performance)
+	codec, err := rowcodec.New(rowcodec.TypeDefault)
 	if err != nil {
 		// This should never happen with our static configuration
-		panic(fmt.Sprintf("failed to create binary codec: %v", err))
+		panic(fmt.Sprintf("failed to create codec: %v", err))
 	}
 
 	return &FileSplitter{
@@ -105,7 +106,7 @@ func (s *FileSplitter) WriteBatchRows(ctx context.Context, batch *pipeline.Batch
 		}
 	}
 
-	// Process and buffer all rows to binary
+	// Process and buffer all rows
 	for i := 0; i < batch.Len(); i++ {
 		row := batch.Get(i)
 		if row == nil {
@@ -125,9 +126,9 @@ func (s *FileSplitter) WriteBatchRows(ctx context.Context, batch *pipeline.Batch
 			return fmt.Errorf("schema validation failed: %w", err)
 		}
 
-		// Encode and write row to binary buffer
+		// Encode and write row to buffer
 		if err := s.encoder.Encode(stringRow); err != nil {
-			return fmt.Errorf("encode row to binary: %w", err)
+			return fmt.Errorf("encode row: %w", err)
 		}
 
 		// Update stats and tracking
@@ -145,7 +146,7 @@ func (s *FileSplitter) WriteBatchRows(ctx context.Context, batch *pipeline.Batch
 	return nil
 }
 
-// startNewBufferFile creates a new binary buffer file for row accumulation.
+// startNewBufferFile creates a new buffer file for row accumulation.
 // The schema will be built dynamically as rows are added.
 func (s *FileSplitter) startNewBufferFile() error {
 	// Create the binary buffer file
@@ -233,12 +234,13 @@ func (s *FileSplitter) streamBinaryToParquet() (string, error) {
 	}
 	defer bufferFile.Close()
 
-	// Create binary decoder to read back the buffered rows
+	// Create decoder to read back the buffered rows
 	decoder := s.codec.NewDecoder(bufferFile)
 
-	// Stream all rows from binary to parquet
+	// Stream all rows to parquet
+	row := make(map[string]any) // Reuse this map for all decodes
 	for {
-		row, err := decoder.Decode()
+		err := decoder.Decode(row)
 		if err != nil {
 			if err == io.EOF {
 				break // End of file reached
@@ -247,17 +249,13 @@ func (s *FileSplitter) streamBinaryToParquet() (string, error) {
 			if err.Error() == "read map length: EOF" {
 				break
 			}
-			return "", fmt.Errorf("decode binary row: %w", err)
+			return "", fmt.Errorf("decode row: %w", err)
 		}
 
 		// Write the row to parquet
 		if _, err := parquetWriter.Write([]map[string]any{row}); err != nil {
-			s.codec.ReturnMap(row) // Return to pool on error
 			return "", fmt.Errorf("write row to parquet: %w", err)
 		}
-
-		// Return the map to the pool after use
-		s.codec.ReturnMap(row)
 	}
 
 	// Close parquet writer to finalize the file

@@ -126,13 +126,9 @@ func uploadAndQueue(
 		return fmt.Errorf("failed to upload results: %w", err)
 	}
 
-	// Queue compaction and rollup for each uploaded segment
+	// Queue compaction for each uploaded segment (rollup will be queued during compaction)
 	if err := segments.QueueCompactionWork(criticalCtx, mdb, profile.OrganizationID, profile.InstanceNum, 10000); err != nil {
 		return fmt.Errorf("failed to queue compaction work: %w", err)
-	}
-
-	if err := segments.QueueRollupWork(criticalCtx, mdb, profile.OrganizationID, profile.InstanceNum, 10000, 0, 1); err != nil {
-		return fmt.Errorf("failed to queue rollup work: %w", err)
 	}
 
 	return nil

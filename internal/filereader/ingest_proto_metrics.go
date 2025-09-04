@@ -212,13 +212,13 @@ func (r *IngestProtoMetricsReader) buildDatapointRow(ctx context.Context, row Ro
 	})
 
 	// Add scope URL and name
-	row[wkk.NewRowKey("scope_url")] = sm.Scope().Version()
-	row[wkk.NewRowKey("scope_name")] = sm.Scope().Name()
+	row[wkk.NewRowKey("_cardinalhq.scope_url")] = sm.Scope().Version()
+	row[wkk.NewRowKey("_cardinalhq.scope_name")] = sm.Scope().Name()
 
 	// Basic metric fields
 	row[wkk.RowKeyCName] = metric.Name()
-	row[wkk.NewRowKey("description")] = metric.Description()
-	row[wkk.NewRowKey("unit")] = metric.Unit()
+	row[wkk.NewRowKey("_cardinalhq.description")] = metric.Description()
+	row[wkk.NewRowKey("_cardinalhq.unit")] = metric.Unit()
 
 	// Add CardinalHQ metric type field
 	switch metric.Type() {
@@ -280,7 +280,6 @@ func (r *IngestProtoMetricsReader) addNumberDatapointFields(ctx context.Context,
 	} else {
 		ret[wkk.RowKeyCTimestamp] = dp.StartTimestamp().AsTime().UnixMilli()
 	}
-	ret[wkk.NewRowKey("start_timestamp")] = dp.StartTimestamp().AsTime().UnixMilli()
 
 	// Get the actual value
 	var value float64
@@ -347,7 +346,6 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ctx context.Conte
 	} else {
 		ret[wkk.RowKeyCTimestamp] = dp.StartTimestamp().AsTime().UnixMilli()
 	}
-	ret[wkk.NewRowKey("start_timestamp")] = dp.StartTimestamp().AsTime().UnixMilli()
 
 	// 3) Build the sketch
 	const alpha = 0.01
@@ -527,7 +525,6 @@ func (r *IngestProtoMetricsReader) addExponentialHistogramDatapointFields(ctx co
 	} else {
 		ret[wkk.RowKeyCTimestamp] = dp.StartTimestamp().AsTime().UnixMilli()
 	}
-	ret[wkk.NewRowKey("start_timestamp")] = dp.StartTimestamp().AsTime().UnixMilli()
 
 	// Extract exponential histogram data
 	var positiveBuckets, negativeBuckets []uint64

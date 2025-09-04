@@ -109,7 +109,7 @@ type WorkQueueCleanupRow struct {
 	LocksRemoved   int64                            `json:"locks_removed"`
 }
 
-func (q *Queries) WorkQueueCleanupDirect(ctx context.Context, lockTtlDead pgtype.Interval) ([]WorkQueueCleanupRow, error) {
+func (q *Queries) WorkQueueCleanupDirect(ctx context.Context, lockTtlDead time.Duration) ([]WorkQueueCleanupRow, error) {
 	rows, err := q.db.Query(ctx, workQueueCleanupDirect, lockTtlDead)
 	if err != nil {
 		return nil, err
@@ -336,10 +336,10 @@ WHERE sl.work_id    = $1::BIGINT
 `
 
 type WorkQueueFailParams struct {
-	ID         int64           `json:"id"`
-	WorkerID   int64           `json:"worker_id"`
-	RequeueTtl pgtype.Interval `json:"requeue_ttl"`
-	MaxRetries int32           `json:"max_retries"`
+	ID         int64         `json:"id"`
+	WorkerID   int64         `json:"worker_id"`
+	RequeueTtl time.Duration `json:"requeue_ttl"`
+	MaxRetries int32         `json:"max_retries"`
 }
 
 func (q *Queries) WorkQueueFailDirect(ctx context.Context, arg WorkQueueFailParams) error {

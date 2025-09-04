@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Querier interface {
@@ -38,42 +37,10 @@ type Querier interface {
 	// 12) Final chosen IDs: prefer big_single if present; else packed group rows
 	// 13) Atomic optimistic claim (no window funcs here)
 	ClaimInqueueWorkBatch(ctx context.Context, arg ClaimInqueueWorkBatchParams) ([]ClaimInqueueWorkBatchRow, error)
-	// 1) Big single-row safety net
-	// 2) One seed per group (org, dateint, freq, instance)
-	// 3) Order groups globally by seed recency/priority
-	// 4) Attach per-group target_records with estimate tracking
-	// 5) All ready rows within each group
-	// 6) Greedy pack per group
-	// 7) Rows that fit under caps
-	// 8) Totals per group
-	// 9) Eligibility: any group with positive records
-	// 10) Pick earliest eligible group
-	// 11) Rows to claim for the winner group
-	// 12) Final chosen IDs
-	// 13) Atomic optimistic claim
-	ClaimMetricCompactionWork(ctx context.Context, arg ClaimMetricCompactionWorkParams) ([]ClaimMetricCompactionWorkRow, error)
-	// 1) Big single-row safety net
-	// 2) One seed per group (org, dateint, freq, instance, slot_id, slot_count, rollup_group)
-	// 3) Order groups globally by seed recency/priority
-	// 4) Attach per-group target_records with estimate tracking
-	// 5) All ready rows within each group
-	// 6) Greedy pack per group
-	// 7) Rows that fit under caps
-	// 8) Totals per group
-	// 9) Eligibility: any group with positive records
-	// 10) Pick earliest eligible group
-	// 11) Rows to claim for the winner group
-	// 12) Final chosen IDs
-	// 13) Atomic optimistic claim
-	ClaimMetricRollupWork(ctx context.Context, arg ClaimMetricRollupWorkParams) ([]ClaimMetricRollupWorkRow, error)
 	CleanupInqueueWork(ctx context.Context, cutoffTime *time.Time) ([]Inqueue, error)
-	CleanupMetricCompactionWork(ctx context.Context, cutoffTime *time.Time) ([]MetricCompactionQueue, error)
-	CleanupMetricRollupWork(ctx context.Context, timeoutSeconds float64) error
 	CompactLogSegments(ctx context.Context, arg CompactLogSegmentsParams) error
 	CompactTraceSegments(ctx context.Context, arg CompactTraceSegmentsParams) error
 	DeleteInqueueWork(ctx context.Context, arg DeleteInqueueWorkParams) error
-	DeleteMetricCompactionWork(ctx context.Context, arg DeleteMetricCompactionWorkParams) error
-	DeleteMetricRollupWork(ctx context.Context, arg DeleteMetricRollupWorkParams) error
 	// Retrieves all existing metric pack estimates for EWMA calculations
 	GetAllMetricPackEstimates(ctx context.Context) ([]MetricPackEstimate, error)
 	GetExemplarLogsByFingerprint(ctx context.Context, arg GetExemplarLogsByFingerprintParams) (ExemplarLog, error)
@@ -85,10 +52,7 @@ type Querier interface {
 	GetExemplarTracesByService(ctx context.Context, arg GetExemplarTracesByServiceParams) ([]ExemplarTrace, error)
 	GetExemplarTracesCreatedAfter(ctx context.Context, ts time.Time) ([]ExemplarTrace, error)
 	GetLogSegmentsForCompaction(ctx context.Context, arg GetLogSegmentsForCompactionParams) ([]GetLogSegmentsForCompactionRow, error)
-	GetMetricSegsForCompaction(ctx context.Context, arg GetMetricSegsForCompactionParams) ([]MetricSeg, error)
-	GetMetricSegsForCompactionWork(ctx context.Context, arg GetMetricSegsForCompactionWorkParams) ([]MetricSeg, error)
-	GetMetricSegsForRollup(ctx context.Context, arg GetMetricSegsForRollupParams) ([]MetricSeg, error)
-	GetMetricSegsForRollupWork(ctx context.Context, arg GetMetricSegsForRollupWorkParams) ([]MetricSeg, error)
+	GetMetricSegsByIds(ctx context.Context, arg GetMetricSegsByIdsParams) ([]MetricSeg, error)
 	GetSpanInfoByFingerprint(ctx context.Context, arg GetSpanInfoByFingerprintParams) (GetSpanInfoByFingerprintRow, error)
 	GetTraceSegmentsForCompaction(ctx context.Context, arg GetTraceSegmentsForCompactionParams) ([]GetTraceSegmentsForCompactionRow, error)
 	InqueueJournalDelete(ctx context.Context, arg InqueueJournalDeleteParams) error
@@ -106,6 +70,16 @@ type Querier interface {
 	LogSegEstimator(ctx context.Context, arg LogSegEstimatorParams) ([]LogSegEstimatorRow, error)
 	MarkMetricSegsCompactedByKeys(ctx context.Context, arg MarkMetricSegsCompactedByKeysParams) error
 	MarkMetricSegsRolledupByKeys(ctx context.Context, arg MarkMetricSegsRolledupByKeysParams) error
+	McqClaimBundle(ctx context.Context, arg McqClaimBundleParams) error
+	McqCleanupExpired(ctx context.Context, cutoffTime *time.Time) ([]MetricCompactionQueue, error)
+	McqCompleteDelete(ctx context.Context, arg McqCompleteDeleteParams) error
+	McqDeferItems(ctx context.Context, arg McqDeferItemsParams) error
+	McqFetchCandidates(ctx context.Context, arg McqFetchCandidatesParams) ([]McqFetchCandidatesRow, error)
+	McqHeartbeat(ctx context.Context, arg McqHeartbeatParams) (int64, error)
+	McqPickHead(ctx context.Context) (McqPickHeadRow, error)
+	McqQueueWork(ctx context.Context, arg McqQueueWorkParams) error
+	McqReclaimTimeouts(ctx context.Context, arg McqReclaimTimeoutsParams) (int64, error)
+	McqRelease(ctx context.Context, arg McqReleaseParams) error
 	// Get queue depth for metric compaction scaling
 	MetricCompactionQueueScalingDepth(ctx context.Context) (interface{}, error)
 	// Get queue depth for metric rollup scaling
@@ -113,22 +87,26 @@ type Querier interface {
 	// Returns an estimate of the number of metric segments, accounting for per-file overhead.
 	// Uses frequency_ms to provide more accurate estimates based on collection frequency.
 	MetricSegEstimator(ctx context.Context, arg MetricSegEstimatorParams) ([]MetricSegEstimatorRow, error)
+	MrqClaimBundle(ctx context.Context, arg MrqClaimBundleParams) error
+	MrqClaimSingleRow(ctx context.Context, arg MrqClaimSingleRowParams) (MrqClaimSingleRowRow, error)
+	MrqCompleteDelete(ctx context.Context, arg MrqCompleteDeleteParams) error
+	MrqDeferItems(ctx context.Context, arg MrqDeferItemsParams) error
+	MrqFetchCandidates(ctx context.Context, arg MrqFetchCandidatesParams) ([]MrqFetchCandidatesRow, error)
+	MrqHeartbeat(ctx context.Context, arg MrqHeartbeatParams) (int64, error)
+	MrqPickHead(ctx context.Context) (MrqPickHeadRow, error)
+	MrqQueueWork(ctx context.Context, arg MrqQueueWorkParams) error
+	MrqReclaimTimeouts(ctx context.Context, arg MrqReclaimTimeoutsParams) (int64, error)
+	MrqRelease(ctx context.Context, arg MrqReleaseParams) error
 	ObjectCleanupAdd(ctx context.Context, arg ObjectCleanupAddParams) error
 	ObjectCleanupBucketSummary(ctx context.Context) ([]ObjectCleanupBucketSummaryRow, error)
 	ObjectCleanupComplete(ctx context.Context, id uuid.UUID) error
 	ObjectCleanupFail(ctx context.Context, id uuid.UUID) error
 	ObjectCleanupGet(ctx context.Context, maxrows int32) ([]ObjectCleanupGetRow, error)
 	PutInqueueWork(ctx context.Context, arg PutInqueueWorkParams) error
-	PutMetricCompactionWork(ctx context.Context, arg PutMetricCompactionWorkParams) error
-	PutMetricRollupWork(ctx context.Context, arg PutMetricRollupWorkParams) error
 	ReleaseInqueueWork(ctx context.Context, arg ReleaseInqueueWorkParams) error
-	ReleaseMetricCompactionWork(ctx context.Context, arg ReleaseMetricCompactionWorkParams) error
-	ReleaseMetricRollupWork(ctx context.Context, arg ReleaseMetricRollupWorkParams) error
 	SetMetricSegCompacted(ctx context.Context, arg SetMetricSegCompactedParams) error
 	SignalLockCleanup(ctx context.Context) (int32, error)
 	TouchInqueueWork(ctx context.Context, arg TouchInqueueWorkParams) error
-	TouchMetricCompactionWork(ctx context.Context, arg TouchMetricCompactionWorkParams) error
-	TouchMetricRollupWork(ctx context.Context, arg TouchMetricRollupWorkParams) error
 	// Returns an estimate of the number of trace segments, accounting for per-file overhead.
 	TraceSegEstimator(ctx context.Context, arg TraceSegEstimatorParams) ([]TraceSegEstimatorRow, error)
 	// Updates or inserts a single metric pack estimate
@@ -136,7 +114,7 @@ type Querier interface {
 	UpsertServiceIdentifier(ctx context.Context, arg UpsertServiceIdentifierParams) (UpsertServiceIdentifierRow, error)
 	WorkQueueAddDirect(ctx context.Context, arg WorkQueueAddParams) error
 	WorkQueueClaimDirect(ctx context.Context, arg WorkQueueClaimParams) (WorkQueueClaimRow, error)
-	WorkQueueCleanupDirect(ctx context.Context, lockTtlDead pgtype.Interval) ([]WorkQueueCleanupRow, error)
+	WorkQueueCleanupDirect(ctx context.Context, lockTtlDead time.Duration) ([]WorkQueueCleanupRow, error)
 	WorkQueueCompleteDirect(ctx context.Context, arg WorkQueueCompleteParams) error
 	WorkQueueDeleteDirect(ctx context.Context, arg WorkQueueDeleteParams) error
 	// First, return unclaimed summaries

@@ -27,6 +27,10 @@ func NewRowKey(s string) RowKey {
 	return unique.Make(rowkey(s))
 }
 
+func RowKeyValue(rk RowKey) string {
+	return string(rk.Value())
+}
+
 // commonKeys maps common field names to pre-allocated RowKeys
 var commonKeys = map[string]RowKey{
 	// Core telemetry fields

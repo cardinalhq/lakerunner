@@ -16,59 +16,84 @@ package compaction
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"strconv"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
-	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 type compactionStore interface {
 	s3helper.ObjectCleanupStore
-	ClaimMetricCompactionWork(ctx context.Context, params lrdb.ClaimMetricCompactionWorkParams) ([]lrdb.ClaimMetricCompactionWorkRow, error)
-	DeleteMetricCompactionWork(ctx context.Context, params lrdb.DeleteMetricCompactionWorkParams) error
-	ReleaseMetricCompactionWork(ctx context.Context, params lrdb.ReleaseMetricCompactionWorkParams) error
-	TouchMetricCompactionWork(ctx context.Context, params lrdb.TouchMetricCompactionWorkParams) error
+	ClaimCompactionBundle(ctx context.Context, p lrdb.BundleParams) (lrdb.CompactionBundleResult, error)
+	McqCompleteDelete(ctx context.Context, arg lrdb.McqCompleteDeleteParams) error
+	McqDeferItems(ctx context.Context, arg lrdb.McqDeferItemsParams) error
+	McqHeartbeat(ctx context.Context, arg lrdb.McqHeartbeatParams) (int64, error)
+	McqRelease(ctx context.Context, arg lrdb.McqReleaseParams) error
+	GetMetricSegsByIds(ctx context.Context, arg lrdb.GetMetricSegsByIdsParams) ([]lrdb.MetricSeg, error)
 	CompactMetricSegs(ctx context.Context, args lrdb.CompactMetricSegsParams) error
-	GetMetricSegsForCompactionWork(ctx context.Context, params lrdb.GetMetricSegsForCompactionWorkParams) ([]lrdb.MetricSeg, error)
 	MarkMetricSegsCompactedByKeys(ctx context.Context, arg lrdb.MarkMetricSegsCompactedByKeysParams) error
 	SetMetricSegCompacted(ctx context.Context, arg lrdb.SetMetricSegCompactedParams) error
+	MrqQueueWork(ctx context.Context, arg lrdb.MrqQueueWorkParams) error // For queueing rollup work
 }
 
 type config struct {
-	MaxAgeSeconds        int32
-	BatchCount           int32
-	DefaultTargetRecords int64
+	OverFactor  float64
+	BatchLimit  int32
+	Grace       time.Duration
+	DeferBase   time.Duration
+	Jitter      time.Duration
+	MaxAttempts int
 }
 
 func GetConfigFromEnv() config {
-	maxAge := int32(900)
-	if env := os.Getenv("LAKERUNNER_METRIC_COMPACTION_MAX_AGE_SECONDS"); env != "" {
-		if val, err := strconv.Atoi(env); err == nil && val > 0 {
-			maxAge = int32(val)
+	overFactor := 1.20
+	if env := os.Getenv("LAKERUNNER_METRIC_COMPACTION_OVER_FACTOR"); env != "" {
+		if val, err := strconv.ParseFloat(env, 64); err == nil && val > 1.0 {
+			overFactor = val
 		}
 	}
 
-	batchCount := int32(100)
-	if env := os.Getenv("LAKERUNNER_METRIC_COMPACTION_BATCH_COUNT"); env != "" {
+	batchLimit := int32(100)
+	if env := os.Getenv("LAKERUNNER_METRIC_COMPACTION_BATCH_LIMIT"); env != "" {
 		if val, err := strconv.Atoi(env); err == nil && val > 0 {
-			batchCount = int32(val)
+			batchLimit = int32(val)
+		}
+	}
+
+	grace := 5 * time.Minute
+	if env := os.Getenv("LAKERUNNER_METRIC_COMPACTION_GRACE_MINUTES"); env != "" {
+		if val, err := strconv.Atoi(env); err == nil && val > 0 {
+			grace = time.Duration(val) * time.Minute
+		}
+	}
+
+	deferBase := 30 * time.Second
+	if env := os.Getenv("LAKERUNNER_METRIC_COMPACTION_DEFER_SECONDS"); env != "" {
+		if val, err := strconv.Atoi(env); err == nil && val > 0 {
+			deferBase = time.Duration(val) * time.Second
+		}
+	}
+
+	maxAttempts := 5
+	if env := os.Getenv("LAKERUNNER_METRIC_COMPACTION_MAX_ATTEMPTS"); env != "" {
+		if val, err := strconv.Atoi(env); err == nil && val > 0 {
+			maxAttempts = val
 		}
 	}
 
 	return config{
-		MaxAgeSeconds:        maxAge,
-		BatchCount:           batchCount,
-		DefaultTargetRecords: metricsprocessing.DefaultRecordsPerFileCompaction,
+		OverFactor:  overFactor,
+		BatchLimit:  batchLimit,
+		Grace:       grace,
+		DeferBase:   deferBase,
+		Jitter:      10 * time.Second, // Fixed jitter
+		MaxAttempts: maxAttempts,
 	}
 }
 
@@ -98,60 +123,103 @@ func NewManager(
 	}
 }
 
-func (m *Manager) ClaimWork(ctx context.Context) ([]lrdb.ClaimMetricCompactionWorkRow, error) {
-	claimedRows, err := m.db.ClaimMetricCompactionWork(ctx, lrdb.ClaimMetricCompactionWorkParams{
-		WorkerID:             m.workerID,
-		NowTs:                nil, // Use database now()
-		DefaultTargetRecords: m.config.DefaultTargetRecords,
-		MaxAgeSeconds:        m.config.MaxAgeSeconds,
-		BatchCount:           m.config.BatchCount,
-	})
+// ClaimWork returns the bundle and estimated target records for writers
+func (m *Manager) ClaimWork(ctx context.Context) (*lrdb.CompactionBundleResult, error) {
+	bundleParams := lrdb.BundleParams{
+		WorkerID:    m.workerID,
+		OverFactor:  m.config.OverFactor,
+		BatchLimit:  m.config.BatchLimit,
+		Grace:       m.config.Grace,
+		DeferBase:   m.config.DeferBase,
+		Jitter:      m.config.Jitter,
+		MaxAttempts: m.config.MaxAttempts,
+	}
+
+	bundle, err := m.db.ClaimCompactionBundle(ctx, bundleParams)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("failed to claim metric compaction work: %w", err)
+		return nil, fmt.Errorf("failed to claim compaction bundle: %w", err)
 	}
 
-	if len(claimedRows) > 0 {
-		m.ll.Info("Claimed metric compaction work batch",
-			slog.Int("workItems", len(claimedRows)))
+	if len(bundle.Items) > 0 {
+		m.ll.Info("Claimed compaction work bundle",
+			slog.Int("workItems", len(bundle.Items)),
+			slog.Int64("estimatedTarget", bundle.EstimatedTarget))
 	}
 
-	return claimedRows, nil
+	return &bundle, nil
 }
 
-func (m *Manager) CompleteWork(ctx context.Context, rows []lrdb.ClaimMetricCompactionWorkRow) error {
-	for _, row := range rows {
-		if err := m.db.DeleteMetricCompactionWork(ctx, lrdb.DeleteMetricCompactionWorkParams{
-			ID:        row.ID,
-			ClaimedBy: m.workerID,
-		}); err != nil {
-			m.ll.Error("Failed to complete work item",
-				slog.Int64("id", row.ID),
-				slog.Any("error", err))
-			return fmt.Errorf("failed to complete work item %d: %w", row.ID, err)
-		}
+func (m *Manager) CompleteWork(ctx context.Context, items []lrdb.McqFetchCandidatesRow) error {
+	ids := make([]int64, len(items))
+	for i, item := range items {
+		ids[i] = item.ID
+	}
+
+	if err := m.db.McqCompleteDelete(ctx, lrdb.McqCompleteDeleteParams{
+		WorkerID: m.workerID,
+		Ids:      ids,
+	}); err != nil {
+		m.ll.Error("Failed to complete work items",
+			slog.Int("count", len(items)),
+			slog.Any("error", err))
+		return fmt.Errorf("failed to complete work items: %w", err)
 	}
 	return nil
 }
 
-func (m *Manager) FailWork(ctx context.Context, rows []lrdb.ClaimMetricCompactionWorkRow) error {
-	// Use deadline context to ensure DB operations succeed even if original context is cancelled
-	releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	for _, row := range rows {
-		if err := m.db.ReleaseMetricCompactionWork(releaseCtx, lrdb.ReleaseMetricCompactionWorkParams{
-			ID:        row.ID,
-			ClaimedBy: m.workerID,
-		}); err != nil {
-			m.ll.Error("Failed to fail work item",
-				slog.Int64("id", row.ID),
-				slog.Any("error", err))
-			return fmt.Errorf("failed to fail work item %d: %w", row.ID, err)
-		}
+func (m *Manager) ReleaseWork(ctx context.Context, items []lrdb.McqFetchCandidatesRow) error {
+	if len(items) == 0 {
+		return nil
 	}
+
+	ids := make([]int64, len(items))
+	for i, item := range items {
+		ids[i] = item.ID
+	}
+
+	if err := m.db.McqRelease(ctx, lrdb.McqReleaseParams{
+		WorkerID: m.workerID,
+		Ids:      ids,
+	}); err != nil {
+		m.ll.Error("Failed to release work items",
+			slog.Int("count", len(items)),
+			slog.Any("error", err))
+		return fmt.Errorf("failed to release work items: %w", err)
+	}
+
+	m.ll.Info("Released work items back to queue for retry",
+		slog.Int("count", len(items)))
+
+	return nil
+}
+
+func (m *Manager) FailWork(ctx context.Context, items []lrdb.McqFetchCandidatesRow) error {
+	if len(items) == 0 {
+		return nil
+	}
+
+	ids := make([]int64, len(items))
+	for i, item := range items {
+		ids[i] = item.ID
+	}
+
+	// Delete the failed work items from the queue
+	// They will be re-queued naturally when new segments arrive that need compaction
+	err := m.db.McqCompleteDelete(ctx, lrdb.McqCompleteDeleteParams{
+		WorkerID: m.workerID,
+		Ids:      ids,
+	})
+
+	if err != nil {
+		m.ll.Error("Failed to delete failed work items",
+			slog.Int("count", len(items)),
+			slog.Any("error", err))
+		return fmt.Errorf("failed to delete failed work items: %w", err)
+	}
+
+	m.ll.Warn("Deleted failed work items from queue",
+		slog.Int("count", len(items)))
+
 	return nil
 }
 

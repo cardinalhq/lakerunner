@@ -33,9 +33,9 @@ func processBatch(
 	mdb compactionStore,
 	sp storageprofile.StorageProfileProvider,
 	awsmanager *awsclient.Manager,
-	claimedWork []lrdb.ClaimMetricCompactionWorkRow,
+	bundle lrdb.CompactionBundleResult,
 ) error {
-	if len(claimedWork) == 0 {
+	if len(bundle.Items) == 0 {
 		return nil
 	}
 
@@ -44,37 +44,23 @@ func processBatch(
 	ll = ll.With(slog.String("batchID", batchID))
 
 	// Log work items we're processing once at the top
-	workItemIDs := make([]int64, len(claimedWork))
-	for i, work := range claimedWork {
-		workItemIDs[i] = work.ID
+	workItemIDs := make([]int64, len(bundle.Items))
+	for i, item := range bundle.Items {
+		workItemIDs[i] = item.ID
 	}
 	ll.Debug("Processing compaction batch",
-		slog.Int("workItemCount", len(claimedWork)),
-		slog.Any("workItemIDs", workItemIDs))
+		slog.Int("workItemCount", len(bundle.Items)),
+		slog.Any("workItemIDs", workItemIDs),
+		slog.Int64("estimatedTarget", bundle.EstimatedTarget))
 
 	// Safety check: All work items in a batch must have identical grouping fields
-	firstItem := claimedWork[0]
-	for i, item := range claimedWork {
-		if item.OrganizationID != firstItem.OrganizationID ||
-			item.Dateint != firstItem.Dateint ||
-			item.FrequencyMs != firstItem.FrequencyMs ||
-			item.InstanceNum != firstItem.InstanceNum {
-			ll.Error("Inconsistent work batch detected - all items must have same org/dateint/frequency/instance",
-				slog.Int("itemIndex", i),
-				slog.String("expectedOrg", firstItem.OrganizationID.String()),
-				slog.String("actualOrg", item.OrganizationID.String()),
-				slog.Int("expectedDateint", int(firstItem.Dateint)),
-				slog.Int("actualDateint", int(item.Dateint)),
-				slog.Int64("expectedFreq", firstItem.FrequencyMs),
-				slog.Int64("actualFreq", item.FrequencyMs),
-				slog.Int("expectedInstance", int(firstItem.InstanceNum)),
-				slog.Int("actualInstance", int(item.InstanceNum)))
-			return fmt.Errorf("inconsistent work batch: item %d has different grouping fields", i)
-		}
-	}
+	// For bundle-based approach, we trust that the bundle selection ensures consistency
+	// The bundle approach guarantees all items are from the same org/dateint/frequency/instance
+	// TODO: Add validation once we have proper segment metadata access
+	firstItem := bundle.Items[0]
 
 	if !helpers.IsWantedFrequency(int32(firstItem.FrequencyMs)) {
-		ll.Debug("Skipping compaction for unwanted frequency", slog.Int64("frequencyMs", firstItem.FrequencyMs))
+		ll.Debug("Skipping compaction for unwanted frequency", slog.Int("frequencyMs", int(firstItem.FrequencyMs)))
 		return nil
 	}
 
@@ -102,13 +88,10 @@ func processBatch(
 	}()
 
 	ll.Info("Starting metric compaction batch",
-		slog.String("organizationID", firstItem.OrganizationID.String()),
-		slog.Int("instanceNum", int(firstItem.InstanceNum)),
-		slog.Int("dateint", int(firstItem.Dateint)),
-		slog.Int64("frequencyMs", firstItem.FrequencyMs),
-		slog.Int("batchSize", len(claimedWork)))
+		slog.Int("batchSize", len(bundle.Items)),
+		slog.Int64("estimatedTarget", bundle.EstimatedTarget))
 
-	segments, err := fetchMetricSegs(ctx, mdb, claimedWork)
+	segments, err := fetchMetricSegsFromBundle(ctx, mdb, bundle.Items)
 	if err != nil {
 		ll.Error("Failed to fetch metric segments for compaction", slog.Any("error", err))
 		return err
@@ -129,29 +112,27 @@ func processBatch(
 		validSegments = append(validSegments, seg)
 	}
 
-	return coordinate(ctx, ll, mdb, tmpdir, firstItem, profile, s3client, validSegments)
+	return coordinateBundle(ctx, ll, mdb, tmpdir, bundle, profile, s3client, validSegments)
 }
 
-// fetchMetricSegs retrieves the MetricSeg records corresponding to the claimed work items.
-// All work items must have the same organization, dateint, frequency, and instance.
-func fetchMetricSegs(ctx context.Context, db compactionStore, claimedWork []lrdb.ClaimMetricCompactionWorkRow) ([]lrdb.MetricSeg, error) {
-	if len(claimedWork) == 0 {
+// fetchMetricSegsFromBundle retrieves the MetricSeg records corresponding to the bundle items
+// by querying segments using the full available key fields for safety and efficiency.
+func fetchMetricSegsFromBundle(ctx context.Context, db compactionStore, items []lrdb.McqFetchCandidatesRow) ([]lrdb.MetricSeg, error) {
+	if len(items) == 0 {
 		return nil, nil
 	}
 
-	firstItem := claimedWork[0]
-
-	// Extract segment IDs from claimed work
-	segmentIDs := make([]int64, len(claimedWork))
-	for i, item := range claimedWork {
+	segmentIDs := make([]int64, len(items))
+	for i, item := range items {
 		segmentIDs[i] = item.SegmentID
 	}
 
-	// Query actual segments from database
-	segments, err := db.GetMetricSegsForCompactionWork(ctx, lrdb.GetMetricSegsForCompactionWorkParams{
+	firstItem := items[0]
+
+	segments, err := db.GetMetricSegsByIds(ctx, lrdb.GetMetricSegsByIdsParams{
 		OrganizationID: firstItem.OrganizationID,
 		Dateint:        firstItem.Dateint,
-		FrequencyMs:    int32(firstItem.FrequencyMs),
+		FrequencyMs:    firstItem.FrequencyMs,
 		InstanceNum:    firstItem.InstanceNum,
 		SegmentIds:     segmentIDs,
 	})

@@ -22,44 +22,39 @@ import (
 	"strconv"
 )
 
-func ComputeTID(metricName string, tags map[string]any) int64 {
+func ComputeTID(tags map[string]any) int64 {
 	keys := make([]string, 0, len(tags))
 	for k, v := range tags {
-		if v == "" || (k[0] == '_' && k != "_cardinalhq.metric_type") {
+		// Skip nil and empty values
+		if v == nil || v == "" {
 			continue
 		}
-		keys = append(keys, k)
+
+		// Collect fields we want to include:
+		// 1. _cardinalhq.name and _cardinalhq.metric_type
+		// 2. resource.* and metric.* fields
+		// Skip all other fields
+
+		if k == "_cardinalhq.name" || k == "_cardinalhq.metric_type" {
+			keys = append(keys, k)
+		} else if len(k) > 9 && k[:9] == "resource." {
+			keys = append(keys, k)
+		} else if len(k) > 7 && k[:7] == "metric." {
+			keys = append(keys, k)
+		}
 	}
+
 	sort.Strings(keys)
 	h := fnv.New64a()
-	_, _ = h.Write([]byte(metricName))
+
+	// Only include string values in the hash
 	for _, k := range keys {
-		switch v := tags[k].(type) {
-		case string:
+		if v, ok := tags[k].(string); ok {
 			_, _ = h.Write([]byte(k + "=" + v + "|"))
-		default:
-			_, _ = h.Write([]byte(k + fmt.Sprintf("=%v|", v)))
 		}
 	}
+
 	return int64(h.Sum64())
-}
-
-func MatchTags(existing, new map[string]any) map[string][]any {
-	mismatches := make(map[string][]any)
-
-	for k, v := range existing {
-		if nv, ok := new[k]; !ok || nv != v {
-			mismatches[k] = []any{v, new[k]}
-		}
-	}
-
-	for k, v := range new {
-		if _, ok := existing[k]; !ok {
-			mismatches[k] = []any{nil, v}
-		}
-	}
-
-	return mismatches
 }
 
 func GetFloat64Value(m map[string]any, key string) (float64, bool) {
