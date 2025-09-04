@@ -157,12 +157,30 @@ func (be *LogLeaf) toWorkerSQL(step time.Duration, limit int, order string) stri
 			pat := p.Params["pattern"]
 			names := regexCaptureNames(pat)
 			selects := []string{top() + ".*"}
-			for i, name := range names {
+
+			if len(names) > 0 {
+				quotedNames := make([]string, len(names))
+				for i, name := range names {
+					quotedNames[i] = fmt.Sprintf("'%s'", name)
+				}
 				selects = append(selects,
-					fmt.Sprintf("regexp_extract(%s, %s, %d) AS %s",
-						bodyCol, sqlQuote(pat), i+1, quoteIdent(name)))
+					fmt.Sprintf("regexp_extract(%s, %s, [%s]) AS __extracted_struct",
+						bodyCol, sqlQuote(pat), strings.Join(quotedNames, ", ")))
 			}
 			push(selects, top(), nil)
+
+			// Extract individual columns from the `__extracted_struct` in a separate CTE
+			if len(names) > 0 {
+				extractSelects := []string{top() + ".*"}
+				for _, name := range names {
+					if strings.HasPrefix(name, "__var_") {
+						continue
+					}
+					extractSelects = append(extractSelects,
+						fmt.Sprintf("__extracted_struct.%s AS %s", quoteIdent(name), quoteIdent(name)))
+				}
+				push(extractSelects, top(), nil)
+			}
 
 			// Apply label filters that target these extracted names now.
 			if len(names) > 0 {
@@ -318,16 +336,42 @@ func quoteIdent(s string) string {
 }
 
 func regexCaptureNames(pattern string) []string {
-	// find all (?P<name>...) left→right
-	re := regexp.MustCompile(`\(\?P<([A-Za-z_][A-Za-z0-9_]*)>`)
-	m := re.FindAllStringSubmatchIndex(pattern, -1)
+	// Find all capture groups (both named and unnamed) left→right
+	// This regex matches:
+	// - Named capture groups: (?P<name>...)
+	// - Unnamed capture groups: (...)
+	// We need to be careful to not match non-capturing groups: (?:...)
+	// We'll use a two-step approach: first find all parentheses, then filter out non-capturing ones
+	re := regexp.MustCompile(`\(`)
+	m := re.FindAllStringIndex(pattern, -1)
 	if len(m) == 0 {
 		return nil
 	}
-	names := make([]string, 0, len(m))
+
+	// Now filter out non-capturing groups and collect capture groups
+	names := make([]string, 0)
+	unnamedIndex := 0
+
 	for _, idx := range m {
-		// submatch 2 is the name group
-		names = append(names, pattern[idx[2]:idx[3]])
+		start := idx[0]
+		// Check if this is a non-capturing group (?:...)
+		if start+2 < len(pattern) && pattern[start:start+3] == "(?:" {
+			continue // Skip non-capturing groups
+		}
+
+		// Check if this is a named capture group (?P<name>...)
+		if start+3 < len(pattern) && pattern[start:start+3] == "(?P" {
+			// Find the closing > for the name
+			nameEnd := strings.Index(pattern[start+3:], ">")
+			if nameEnd != -1 {
+				name := pattern[start+4 : start+3+nameEnd]
+				names = append(names, name)
+			}
+		} else {
+			// This is an unnamed capture group
+			names = append(names, fmt.Sprintf("__var_%d", unnamedIndex))
+			unnamedIndex++
+		}
 	}
 	return names
 }

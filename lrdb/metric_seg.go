@@ -137,7 +137,7 @@ func (q *Store) RollupMetricSegs(ctx context.Context, sourceParams RollupSourceP
 			Published:      true,
 			RecordCount:    newRec.RecordCount,
 			Rolledup:       false,
-			Compacted:      false,
+			Compacted:      true,
 			SegmentID:      newRec.SegmentID,
 			SlotCount:      targetParams.SlotCount,
 			SlotID:         targetParams.SlotID,

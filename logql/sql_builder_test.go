@@ -145,6 +145,49 @@ func TestToWorkerSQL_Regexp_ExtractOnly(t *testing.T) {
 	}
 }
 
+func TestToWorkerSQL_Regexp_ExtractWithGeneratedRegex(t *testing.T) {
+	db := openDuckDB(t)
+	mustExec(t, db, `CREATE TABLE logs("_cardinalhq.message" TEXT);`)
+	mustExec(t, db, `INSERT INTO logs VALUES 
+('Received playback request for movieId=XKTATT8'), 
+('Received playback request for movieId=BIDGDS8'),
+('Received playback request for movieId=IGNAJR8');`)
+
+	leaf := LogLeaf{
+		Parsers: []ParserStage{{
+			Type: "regexp",
+			Params: map[string]string{
+				"pattern": `([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+)=(?P<movieId>[A-Za-z0-9]+)`,
+			},
+		}},
+	}
+
+	sql := replaceTable(leaf.ToWorkerSQLWithLimit(0, 0, "desc"))
+	// The builder should emit the sentinel so cache manager can splice segment filter.
+	if !strings.Contains(sql, "AND true") {
+		t.Fatalf("expected sentinel AND true in generated SQL:\n%s", sql)
+	}
+
+	rows := queryAll(t, db, sql)
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(rows))
+	}
+
+	movieIds := []string{}
+	for _, r := range rows {
+		movieId := getString(r["movieId"])
+		if movieId != "" {
+			movieIds = append(movieIds, movieId)
+		}
+	}
+	if len(movieIds) != 3 {
+		t.Fatalf("expected 3 rows to have extracted movieIds, got %d", len(movieIds))
+	}
+	if movieIds[0] != "XKTATT8" || movieIds[1] != "BIDGDS8" || movieIds[2] != "IGNAJR8" {
+		t.Fatalf("expected movieIds to be XKTATT8, BIDGDS8, IGNAJR8, got %v", movieIds)
+	}
+}
+
 func TestToWorkerSQL_Regexp_WithFilters(t *testing.T) {
 	db := openDuckDB(t)
 	mustExec(t, db, `CREATE TABLE logs("_cardinalhq.message" TEXT);`)

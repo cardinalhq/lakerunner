@@ -107,3 +107,21 @@ FROM candidate c
 WHERE q.id = c.id
 RETURNING c.id, c.organization_id, c.dateint, c.frequency_ms, c.instance_num,
           c.slot_id, c.slot_count, c.rollup_group, c.segment_id, c.record_count, c.queue_ts;
+
+-- name: MrqClaimBatch :many
+WITH candidates AS (
+  SELECT id, organization_id, dateint, frequency_ms, instance_num,
+         slot_id, slot_count, rollup_group, segment_id, record_count, queue_ts
+  FROM public.metric_rollup_queue
+  WHERE claimed_by = -1
+    AND eligible_at <= now()
+  ORDER BY priority ASC, eligible_at ASC, queue_ts ASC
+  FOR UPDATE SKIP LOCKED
+  LIMIT @batch_limit
+)
+UPDATE public.metric_rollup_queue q
+SET claimed_by = @worker_id, claimed_at = @now::timestamptz, heartbeated_at = @now::timestamptz
+FROM candidates c
+WHERE q.id = c.id
+RETURNING c.id, c.organization_id, c.dateint, c.frequency_ms, c.instance_num,
+          c.slot_id, c.slot_count, c.rollup_group, c.segment_id, c.record_count, c.queue_ts;
