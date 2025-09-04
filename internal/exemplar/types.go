@@ -16,17 +16,22 @@ package exemplar
 
 import (
 	"go.opentelemetry.io/collector/pdata/pcommon"
+	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 
+	"github.com/cardinalhq/lakerunner/internal/buffet"
+	"github.com/cardinalhq/oteltools/pkg/translate"
 	semconv "go.opentelemetry.io/otel/semconv/v1.30.0"
 )
 
 const (
-	serviceNameKey   = string(semconv.ServiceNameKey)
-	clusterNameKey   = string(semconv.K8SClusterNameKey)
-	namespaceNameKey = string(semconv.K8SNamespaceNameKey)
-	metricNameKey    = "metric.name"
-	metricTypeKey    = "metric.type"
+	serviceNameKey    = string(semconv.ServiceNameKey)
+	clusterNameKey    = string(semconv.K8SClusterNameKey)
+	namespaceNameKey  = string(semconv.K8SNamespaceNameKey)
+	metricNameKey     = "metric.name"
+	metricTypeKey     = "metric.type"
+	fingerprintKey    = "fingerprint"
+	oldFingerprintKey = "old_fingerprint"
 )
 
 // getFromResource extracts a value from resource attributes with a default fallback
@@ -110,6 +115,48 @@ func toMetricExemplar(rm pmetric.ResourceMetrics, sm pmetric.ScopeMetrics, mm pm
 	default:
 		// do nothing
 	}
+	return exemplarRecord
+}
+
+// getLogFingerprint extracts an existing fingerprint from log record attributes
+// Returns 0 if no fingerprint is found (e.g., logs not processed by collector)
+func getLogFingerprint(lr plog.LogRecord) int64 {
+	if fingerprintField, found := lr.Attributes().Get(translate.CardinalFieldFingerprint); found {
+		return fingerprintField.Int()
+	}
+	return 0
+}
+
+// generateLogFingerprint creates a fingerprint from the log body using LakeRunner's buffet package
+// Deprecated: Use fingerprinter.Fingerprint for complex pattern matching
+func generateLogFingerprint(logBody string) int64 {
+	// Use the same fingerprinting approach as LakeRunner's query system
+	return buffet.ComputeFingerprint("_cardinalhq.message", logBody)
+}
+
+// extractLogBody extracts the log body from a log record
+func extractLogBody(lr plog.LogRecord) string {
+	body := lr.Body()
+	switch body.Type() {
+	case pcommon.ValueTypeStr:
+		return body.Str()
+	case pcommon.ValueTypeBytes:
+		return string(body.Bytes().AsRaw())
+	default:
+		return body.AsString()
+	}
+}
+
+// toLogExemplar creates a log exemplar containing the full log record
+func toLogExemplar(rl plog.ResourceLogs, sl plog.ScopeLogs, lr plog.LogRecord) plog.Logs {
+	exemplarRecord := plog.NewLogs()
+	copyRl := exemplarRecord.ResourceLogs().AppendEmpty()
+	rl.Resource().CopyTo(copyRl.Resource())
+	copySl := copyRl.ScopeLogs().AppendEmpty()
+	sl.Scope().CopyTo(copySl.Scope())
+	copyLr := copySl.LogRecords().AppendEmpty()
+	lr.CopyTo(copyLr)
+
 	return exemplarRecord
 }
 
