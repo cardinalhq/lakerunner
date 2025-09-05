@@ -88,6 +88,7 @@ func (q *QuerierService) handleGetLogTagValues(w http.ResponseWriter, r *http.Re
 		return
 	}
 	lplan, err := logql.CompileLog(logAst)
+	lplan.TagName = r.URL.Query().Get("tagName")
 	if err != nil {
 		http.Error(w, "compile error: "+err.Error(), http.StatusBadRequest)
 		return
