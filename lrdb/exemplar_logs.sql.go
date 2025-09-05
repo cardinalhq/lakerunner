@@ -13,7 +13,7 @@ import (
 )
 
 const getExemplarLogsByFingerprint = `-- name: GetExemplarLogsByFingerprint :one
-SELECT created_at, updated_at, organization_id, service_identifier_id, attributes, exemplar, fingerprint, related_fingerprints FROM exemplar_logs 
+SELECT created_at, updated_at, organization_id, service_identifier_id, attributes, exemplar, fingerprint, related_fingerprints FROM lrdb_exemplar_logs 
 WHERE organization_id = $1 
   AND fingerprint = $2
 LIMIT 1
@@ -24,9 +24,9 @@ type GetExemplarLogsByFingerprintParams struct {
 	Fingerprint    int64     `json:"fingerprint"`
 }
 
-func (q *Queries) GetExemplarLogsByFingerprint(ctx context.Context, arg GetExemplarLogsByFingerprintParams) (ExemplarLog, error) {
+func (q *Queries) GetExemplarLogsByFingerprint(ctx context.Context, arg GetExemplarLogsByFingerprintParams) (LrdbExemplarLog, error) {
 	row := q.db.QueryRow(ctx, getExemplarLogsByFingerprint, arg.OrganizationID, arg.Fingerprint)
-	var i ExemplarLog
+	var i LrdbExemplarLog
 	err := row.Scan(
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -41,7 +41,7 @@ func (q *Queries) GetExemplarLogsByFingerprint(ctx context.Context, arg GetExemp
 }
 
 const getExemplarLogsByService = `-- name: GetExemplarLogsByService :many
-SELECT created_at, updated_at, organization_id, service_identifier_id, attributes, exemplar, fingerprint, related_fingerprints FROM exemplar_logs 
+SELECT created_at, updated_at, organization_id, service_identifier_id, attributes, exemplar, fingerprint, related_fingerprints FROM lrdb_exemplar_logs 
 WHERE organization_id = $1 
   AND service_identifier_id = $2
 ORDER BY created_at DESC
@@ -52,15 +52,15 @@ type GetExemplarLogsByServiceParams struct {
 	ServiceIdentifierID uuid.UUID `json:"service_identifier_id"`
 }
 
-func (q *Queries) GetExemplarLogsByService(ctx context.Context, arg GetExemplarLogsByServiceParams) ([]ExemplarLog, error) {
+func (q *Queries) GetExemplarLogsByService(ctx context.Context, arg GetExemplarLogsByServiceParams) ([]LrdbExemplarLog, error) {
 	rows, err := q.db.Query(ctx, getExemplarLogsByService, arg.OrganizationID, arg.ServiceIdentifierID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ExemplarLog
+	var items []LrdbExemplarLog
 	for rows.Next() {
-		var i ExemplarLog
+		var i LrdbExemplarLog
 		if err := rows.Scan(
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -82,18 +82,18 @@ func (q *Queries) GetExemplarLogsByService(ctx context.Context, arg GetExemplarL
 }
 
 const getExemplarLogsCreatedAfter = `-- name: GetExemplarLogsCreatedAfter :many
-SELECT created_at, updated_at, organization_id, service_identifier_id, attributes, exemplar, fingerprint, related_fingerprints FROM exemplar_logs WHERE created_at > $1
+SELECT created_at, updated_at, organization_id, service_identifier_id, attributes, exemplar, fingerprint, related_fingerprints FROM lrdb_exemplar_logs WHERE created_at > $1
 `
 
-func (q *Queries) GetExemplarLogsCreatedAfter(ctx context.Context, ts time.Time) ([]ExemplarLog, error) {
+func (q *Queries) GetExemplarLogsCreatedAfter(ctx context.Context, ts time.Time) ([]LrdbExemplarLog, error) {
 	rows, err := q.db.Query(ctx, getExemplarLogsCreatedAfter, ts)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ExemplarLog
+	var items []LrdbExemplarLog
 	for rows.Next() {
-		var i ExemplarLog
+		var i LrdbExemplarLog
 		if err := rows.Scan(
 			&i.CreatedAt,
 			&i.UpdatedAt,

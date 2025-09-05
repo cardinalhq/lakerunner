@@ -59,6 +59,14 @@ type OTELMetricsProvider interface {
 	GetOTELMetrics() (any, error)
 }
 
+// OTELLogsProvider provides access to the underlying OpenTelemetry logs structure.
+// This is used when the original OTEL structure is needed for processing (e.g., exemplars).
+type OTELLogsProvider interface {
+	// GetOTELLogs returns the underlying parsed OTEL logs structure.
+	// This allows access to the original log body and metadata not available in the row format.
+	GetOTELLogs() (any, error)
+}
+
 // Batch represents a collection of rows with clear ownership semantics.
 // The batch is owned by the reader that returns it.
 type Batch = pipeline.Batch
