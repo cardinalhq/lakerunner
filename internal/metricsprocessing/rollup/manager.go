@@ -32,7 +32,7 @@ import (
 )
 
 type rollupStore interface {
-	s3helper.ObjectCleanupStore
+	cloudstorage.ObjectCleanupStore
 	MrqClaimBatch(ctx context.Context, arg lrdb.MrqClaimBatchParams) ([]lrdb.MrqClaimBatchRow, error)
 	CompleteRollup(ctx context.Context, workerID int64, ids []int64) error
 	MrqHeartbeat(ctx context.Context, arg lrdb.MrqHeartbeatParams) (int64, error)

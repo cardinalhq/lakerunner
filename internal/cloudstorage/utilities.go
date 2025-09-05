@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package s3helper
+package cloudstorage
 
 import (
 	"context"
@@ -22,14 +22,17 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
+// Object cleanup utilities
+
 // ObjectCleanupStore provides the minimal interface needed for scheduling S3 object deletions
 type ObjectCleanupStore interface {
 	ObjectCleanupAdd(ctx context.Context, arg lrdb.ObjectCleanupAddParams) error
 }
 
-func ScheduleS3Delete(ctx context.Context, mdb ObjectCleanupStore, org_id uuid.UUID, instanceNum int16, bucketID, objectID string) error {
+// ScheduleS3Delete schedules an S3 object for deletion by adding it to the cleanup queue
+func ScheduleS3Delete(ctx context.Context, mdb ObjectCleanupStore, orgID uuid.UUID, instanceNum int16, bucketID, objectID string) error {
 	return mdb.ObjectCleanupAdd(ctx, lrdb.ObjectCleanupAddParams{
-		OrganizationID: org_id,
+		OrganizationID: orgID,
 		BucketID:       bucketID,
 		ObjectID:       objectID,
 		InstanceNum:    instanceNum,

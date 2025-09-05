@@ -30,7 +30,7 @@ import (
 )
 
 type compactionStore interface {
-	s3helper.ObjectCleanupStore
+	cloudstorage.ObjectCleanupStore
 	ClaimCompactionBundle(ctx context.Context, p lrdb.BundleParams) (lrdb.CompactionBundleResult, error)
 	McqCompleteDelete(ctx context.Context, arg lrdb.McqCompleteDeleteParams) error
 	McqDeferItems(ctx context.Context, arg lrdb.McqDeferItemsParams) error

@@ -28,6 +28,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/processing/ingest"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
@@ -224,7 +225,7 @@ func traceIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp st
 
 		// Upload each result file and collect parameters
 		for _, result := range results {
-			segmentID := s3helper.GenerateID()
+			segmentID := idgen.GenerateID()
 			hour := int16(0) // Hour doesn't matter for slot-based traces
 			dbObjectID := helpers.MakeDBObjectID(item.OrganizationID, "", args.IngestDateint, hour, segmentID, "traces")
 

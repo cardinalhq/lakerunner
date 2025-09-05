@@ -87,12 +87,12 @@ func (ps *ProcessedSegment) UploadToS3(ctx context.Context, s3client *awsclient.
 }
 
 // ScheduleCleanupIfUploaded schedules S3 deletion if the segment was uploaded
-func (ps *ProcessedSegment) ScheduleCleanupIfUploaded(ctx context.Context, mdb s3helper.ObjectCleanupStore, orgID uuid.UUID, instanceNum int16, bucket string) error {
+func (ps *ProcessedSegment) ScheduleCleanupIfUploaded(ctx context.Context, mdb cloudstorage.ObjectCleanupStore, orgID uuid.UUID, instanceNum int16, bucket string) error {
 	if !ps.Uploaded {
 		return nil // Nothing to clean up
 	}
 
-	return s3helper.ScheduleS3Delete(ctx, mdb, orgID, instanceNum, bucket, ps.ObjectID)
+	return cloudstorage.ScheduleS3Delete(ctx, mdb, orgID, instanceNum, bucket, ps.ObjectID)
 }
 
 // GetDateintHour returns the dateint and hour from the segment's start timestamp
@@ -159,7 +159,7 @@ func (segments ProcessedSegments) UploadAll(ctx context.Context, s3client *awscl
 }
 
 // ScheduleCleanupAll schedules cleanup for all uploaded segments
-func (segments ProcessedSegments) ScheduleCleanupAll(ctx context.Context, mdb s3helper.ObjectCleanupStore, orgID uuid.UUID, instanceNum int16, bucket string) {
+func (segments ProcessedSegments) ScheduleCleanupAll(ctx context.Context, mdb cloudstorage.ObjectCleanupStore, orgID uuid.UUID, instanceNum int16, bucket string) {
 	for _, segment := range segments {
 		if err := segment.ScheduleCleanupIfUploaded(ctx, mdb, orgID, instanceNum, bucket); err != nil {
 			slog.Error("Failed to schedule S3 cleanup for segment",
@@ -297,7 +297,7 @@ func uploadSingleMetricResult(
 	}
 
 	// Generate segment ID and object ID
-	segmentID := s3helper.GenerateID()
+	segmentID := idgen.GenerateID()
 
 	// Extract dateint and hour from actual timestamp data
 	filestats, err := ExtractFileMetadata(ctx, result)

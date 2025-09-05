@@ -20,10 +20,10 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/filecrunch"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
@@ -53,7 +53,7 @@ func downloadAndOpenTraceSegments(
 			return nil, err
 		}
 
-		hour := s3helper.HourFromMillis(seg.StartTs)
+		hour := helpers.HourFromMillis(seg.StartTs)
 		objectID := helpers.MakeDBObjectID(sp.OrganizationID, sp.CollectorName, dateint, hour, seg.SegmentID, "traces")
 
 		// Download the trace segment
@@ -238,9 +238,9 @@ func packTraceSegment(
 		return err
 	}
 
-	newSegmentID := s3helper.GenerateID()
+	newSegmentID := idgen.GenerateID()
 	newObjectID := helpers.MakeDBObjectID(
-		sp.OrganizationID, sp.CollectorName, dateint, s3helper.HourFromMillis(stats.FirstTS), newSegmentID, "traces",
+		sp.OrganizationID, sp.CollectorName, dateint, helpers.HourFromMillis(stats.FirstTS), newSegmentID, "traces",
 	)
 
 	ll.Info("Uploading compacted file to S3",
@@ -276,7 +276,7 @@ func packTraceSegment(
 
 	// Schedule old segments for deletion
 	for _, oid := range objectIDs {
-		if err := s3helper.ScheduleS3Delete(ctx, mdb, sp.OrganizationID, sp.InstanceNum, sp.Bucket, oid); err != nil {
+		if err := cloudstorage.ScheduleS3Delete(ctx, mdb, sp.OrganizationID, sp.InstanceNum, sp.Bucket, oid); err != nil {
 			ll.Error("Failed to schedule segment deletion",
 				slog.String("objectID", oid),
 				slog.String("error", err.Error()))

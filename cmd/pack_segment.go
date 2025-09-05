@@ -25,10 +25,10 @@ import (
 
 	"github.com/parquet-go/parquet-go"
 
-	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/filecrunch"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
@@ -72,8 +72,8 @@ func downloadAndOpen(
 			return nil, err
 		}
 
-		good := helpers.MakeDBObjectID(sp.OrganizationID, sp.CollectorName, dateint, s3helper.HourFromMillis(seg.StartTs), seg.SegmentID, "logs")
-		bad := helpers.MakeDBObjectIDbad(sp.OrganizationID, dateint, s3helper.HourFromMillis(seg.StartTs), seg.SegmentID, "logs")
+		good := helpers.MakeDBObjectID(sp.OrganizationID, sp.CollectorName, dateint, helpers.HourFromMillis(seg.StartTs), seg.SegmentID, "logs")
+		bad := helpers.MakeDBObjectIDbad(sp.OrganizationID, dateint, helpers.HourFromMillis(seg.StartTs), seg.SegmentID, "logs")
 
 		objectID, tmpfile, _, err := chooseObjectID(ctx, fetcher, bucket, good, bad, tmpdir)
 		if err != nil {
@@ -433,9 +433,9 @@ func packSegment(
 		return err
 	}
 
-	newSegmentID := s3helper.GenerateID()
+	newSegmentID := idgen.GenerateID()
 	newObjectID := helpers.MakeDBObjectID(
-		sp.OrganizationID, sp.CollectorName, dateint, s3helper.HourFromMillis(stats.FirstTS), newSegmentID, "logs",
+		sp.OrganizationID, sp.CollectorName, dateint, helpers.HourFromMillis(stats.FirstTS), newSegmentID, "logs",
 	)
 
 	// Final interruption check before entering critical section
@@ -487,7 +487,7 @@ func packSegment(
 
 	scheduledCount := 0
 	for _, oid := range objectIDs {
-		if err := s3helper.ScheduleS3Delete(ctx, mdb, sp.OrganizationID, sp.InstanceNum, sp.Bucket, oid); err != nil {
+		if err := cloudstorage.ScheduleS3Delete(ctx, mdb, sp.OrganizationID, sp.InstanceNum, sp.Bucket, oid); err != nil {
 			ll.Warn("Failed to schedule deletion for old segment file",
 				slog.Any("error", err),
 				slog.String("objectID", oid))

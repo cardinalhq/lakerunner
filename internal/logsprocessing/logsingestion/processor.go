@@ -25,10 +25,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
@@ -533,10 +533,10 @@ func createAndUploadLogSegments(
 		}
 
 		// Generate segment ID and upload
-		segmentID := s3helper.GenerateID()
+		segmentID := idgen.GenerateID()
 		dateint, _ := helpers.MSToDateintHour(stats.FirstTS)
 		dbObjectID := helpers.MakeDBObjectID(item.OrganizationID, "",
-			dateint, s3helper.HourFromMillis(stats.FirstTS), segmentID, "logs")
+			dateint, helpers.HourFromMillis(stats.FirstTS), segmentID, "logs")
 
 		if err := storageClient.UploadObject(ctx, item.Bucket, dbObjectID, result.FileName); err != nil {
 			return nil, fmt.Errorf("uploading file to S3: %w", err)
