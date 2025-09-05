@@ -66,7 +66,7 @@ func NewIngestLoopContext(ctx context.Context, signal string) (*IngestLoopContex
 		return nil, fmt.Errorf("failed to open LRDB store: %w", err)
 	}
 
-	cloudManagers, err := cloudstorage.NewCloudManagers(ctx)
+	cmgr, err := cloudstorage.NewCloudManagers(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create cloud managers: %w", err)
 	}
@@ -115,7 +115,7 @@ func NewIngestLoopContext(ctx context.Context, signal string) (*IngestLoopContex
 	loopCtx := &IngestLoopContext{
 		mdb:               mdb,
 		sp:                sp,
-		cloudManagers:     cloudManagers,
+		cloudManagers:     cmgr,
 		metricEstimator:   metricEst,
 		logEstimator:      logEst,
 		signal:            signal,
