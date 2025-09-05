@@ -85,7 +85,13 @@ func replaceTable(sql string) string {
   ''::VARCHAR AS "_cardinalhq.level",
   ''::VARCHAR AS "_cardinalhq.fingerprint"
 FROM logs) AS _t`
-	return strings.ReplaceAll(sql, "{table}", base)
+
+	// Substitute table and time placeholders.
+	sql = strings.ReplaceAll(sql, "{table}", base)
+	sql = strings.ReplaceAll(sql, "{start}", "0")
+	sql = strings.ReplaceAll(sql, "{end}", "1") // [0,1) includes ts=0
+
+	return sql
 }
 
 func getString(v any) string {

@@ -52,7 +52,7 @@ func attachLeavesToPlan(t *testing.T, rr promql.RewriteResult, plan promql.Query
 				if !ok {
 					t.Fatalf("unknown __leaf id: %s", m.Value)
 				}
-				be.LogLeaf = leaf
+				be.LogLeaf = &leaf
 				found = true
 				continue // drop __leaf from matchers
 			}

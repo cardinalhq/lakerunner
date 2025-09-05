@@ -233,9 +233,14 @@ func (q *QuerierService) handleLogQuery(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 
-		for i := range plan.Leaves { // index to ensure we mutate, even if slice is of values
-			be := plan.Leaves[i]
+		logLeafByBaseExprID := make(map[string]logql.LogLeaf, len(rr.Leaves))
+		for i := range plan.Leaves {
+			// Take address so we mutate the element in the slice.
+			be := &plan.Leaves[i]
+
 			found := false
+			kept := make([]promql.LabelMatch, 0, len(be.Matchers))
+
 			for _, m := range be.Matchers {
 				if m.Label == promql.LeafMatcher {
 					leaf, ok := rr.Leaves[m.Value]
@@ -243,16 +248,25 @@ func (q *QuerierService) handleLogQuery(w http.ResponseWriter, r *http.Request) 
 						http.Error(w, "unknown __leaf id: "+m.Value, http.StatusBadRequest)
 						return
 					}
-					be.LogLeaf = leaf
+					lcopy := leaf
+					logLeafByBaseExprID[be.ID] = lcopy
+					be.LogLeaf = &lcopy
 					found = true
-					break
+					slog.Info("Found leaf matcher", "leaf", leaf)
+					// Skip adding __leaf back into matchers.
+					continue
 				}
+				kept = append(kept, m)
 			}
+
 			if !found {
 				http.Error(w, "internal: base expr missing __leaf matcher", http.StatusBadRequest)
 				return
 			}
+			// Remove __leaf matcher so it doesn’t appear in downstream SQL.
+			be.Matchers = kept
 		}
+		plan.AttachLogLeaves(logLeafByBaseExprID)
 
 		evalResults, err := q.EvaluateMetricsQuery(r.Context(), qp.OrgUUID, qp.StartTs, qp.EndTs, plan)
 		if err != nil {

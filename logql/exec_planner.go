@@ -334,3 +334,39 @@ func logLeafID(l LogLeaf) string {
 	sum := sha1.Sum([]byte(sb.String()))
 	return hex.EncodeToString(sum[:8])
 }
+
+func (be *LogLeaf) Label() string {
+	out := "{"
+	if len(be.Matchers) > 0 {
+		parts := make([]string, 0, len(be.Matchers))
+		for _, m := range be.Matchers {
+			parts = append(parts, fmt.Sprintf("%s%s%q", m.Label, m.Op, m.Value))
+		}
+		out += strings.Join(parts, ",")
+	}
+	out += "}"
+	if len(be.LineFilters) > 0 {
+		out += " "
+		for _, f := range be.LineFilters {
+			out += fmt.Sprintf(" |%s|%q", f.Op, f.Match)
+		}
+	}
+	if len(be.LabelFilters) > 0 {
+		for _, lf := range be.LabelFilters {
+			out += fmt.Sprintf(" %s%s%q", lf.Label, lf.Op, lf.Value)
+		}
+	}
+	for _, p := range be.Parsers {
+		out += " |> " + p.Type + "()"
+	}
+	if be.Range != "" {
+		out += fmt.Sprintf("[%s]", be.Range)
+	}
+	if be.Offset != "" {
+		out += " offset " + be.Offset
+	}
+	if be.Unwrap {
+		out += " unwrap"
+	}
+	return out
+}

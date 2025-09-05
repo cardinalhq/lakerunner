@@ -103,7 +103,11 @@ func (be *LogLeaf) ToWorkerSQL(limit int, order string) string {
 	push(s0Select, baseRel, nil)
 
 	// Sentinel layer so cache manager can splice segment filter via "AND true".
-	push([]string{mk(layerIdx-1) + ".*"}, mk(layerIdx-1), []string{"1=1", "true"})
+	timePred := fmt.Sprintf(
+		"CAST(%s AS BIGINT) >= {start} AND CAST(%s AS BIGINT) < {end}",
+		tsCol, tsCol,
+	)
+	push([]string{mk(layerIdx-1) + ".*"}, mk(layerIdx-1), []string{"1=1", "true", timePred})
 
 	// Track the current top alias
 	top := func() string { return mk(layerIdx - 1) }

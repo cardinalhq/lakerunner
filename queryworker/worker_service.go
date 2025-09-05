@@ -27,6 +27,7 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
 	"log/slog"
+	"math/big"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -252,8 +253,14 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if req.BaseExpr != nil {
 		workerSql = req.BaseExpr.ToWorkerSQL(req.Step)
 		rowMapper = sketchInputMapper
-		cacheManager = ws.MetricsCM
-		globSize = ws.MetricsGlobSize
+		if req.BaseExpr.LogLeaf != nil {
+			slog.Info("Using logs cache manager for log leaf in metrics query")
+			cacheManager = ws.LogsCM
+			globSize = ws.LogsGlobSize
+		} else {
+			cacheManager = ws.MetricsCM
+			globSize = ws.MetricsGlobSize
+		}
 	} else if req.LogLeaf != nil {
 		workerSql = req.LogLeaf.ToWorkerSQLWithLimit(req.Limit, req.ToOrderString())
 		rowMapper = exemplarMapper
@@ -364,6 +371,9 @@ func toFloat64(v any) (float64, bool) {
 		return float64(n), true
 	case uint:
 		return float64(n), true
+	case *big.Int:
+		f, _ := new(big.Float).SetInt(n).Float64()
+		return f, true
 	default:
 		slog.Error("unexpected type for numeric value", "value", v, "type", fmt.Sprintf("%T", v))
 		return 0, false

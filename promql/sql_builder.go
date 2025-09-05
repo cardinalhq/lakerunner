@@ -92,7 +92,6 @@ func (be *BaseExpr) ToWorkerSQL(step time.Duration) string {
 	}
 }
 
-// promql/buildFromLogLeaf: only the CTE name changes
 func buildFromLogLeaf(be *BaseExpr, wantBytes bool, step time.Duration) string {
 	stepMs := step.Milliseconds()
 	tsCol := "\"_cardinalhq.timestamp\""
@@ -118,7 +117,8 @@ func buildFromLogLeaf(be *BaseExpr, wantBytes bool, step time.Duration) string {
 
 	weight := "1"
 	if wantBytes {
-		weight = fmt.Sprintf("length(%s)", bodyCol)
+		// COALESCE keeps SUM safe if message is NULL in cache
+		weight = fmt.Sprintf("length(COALESCE(%s, ''))", bodyCol)
 	}
 	cols = append(cols, "SUM("+weight+") AS sum")
 

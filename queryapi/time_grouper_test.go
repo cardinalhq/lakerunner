@@ -29,7 +29,6 @@ func mkSeg(id int64, start, end int64) SegmentInfo {
 		StartTs:   start,
 		EndTs:     end,
 		ExprID:    "exprA",
-		Dataset:   "metrics",
 	}
 }
 
