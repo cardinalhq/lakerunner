@@ -29,9 +29,9 @@ import (
 func TestProducer_Send(t *testing.T) {
 	topic := fmt.Sprintf("test-producer-send-%s", uuid.New().String())
 	
-	// Start Kafka container with topic
+	// Use shared Kafka container with topic
 	kafkaContainer := NewKafkaTestContainer(t, topic)
-	defer kafkaContainer.Stop(t)
+	defer kafkaContainer.CleanupAfterTest(t, []string{topic}, []string{"test-reader"})
 
 	config := kafkaContainer.CreateProducerConfig()
 
@@ -78,9 +78,9 @@ func TestProducer_Send(t *testing.T) {
 func TestProducer_BatchSend(t *testing.T) {
 	topic := fmt.Sprintf("test-producer-batch-%s", uuid.New().String())
 	
-	// Start Kafka container with topic
+	// Use shared Kafka container with topic
 	kafkaContainer := NewKafkaTestContainer(t, topic)
-	defer kafkaContainer.Stop(t)
+	defer kafkaContainer.CleanupAfterTest(t, []string{topic}, []string{"test-batch-reader"})
 
 	config := kafkaContainer.CreateProducerConfig()
 
@@ -139,9 +139,9 @@ func TestProducer_BatchSend(t *testing.T) {
 func TestProducer_SendToPartition(t *testing.T) {
 	topic := fmt.Sprintf("test-producer-partition-%s", uuid.New().String())
 	
-	// Start Kafka container with topic
+	// Use shared Kafka container with topic
 	kafkaContainer := NewKafkaTestContainer(t, topic)
-	defer kafkaContainer.Stop(t)
+	defer kafkaContainer.CleanupAfterTest(t, []string{topic}, []string{})
 
 	config := kafkaContainer.CreateProducerConfig()
 
@@ -182,9 +182,9 @@ func TestProducer_SendToPartition(t *testing.T) {
 func TestProducer_GetPartitionCount(t *testing.T) {
 	topic := fmt.Sprintf("test-partition-count-%s", uuid.New().String())
 	
-	// Start Kafka container with topic
+	// Use shared Kafka container with topic
 	kafkaContainer := NewKafkaTestContainer(t, topic)
-	defer kafkaContainer.Stop(t)
+	defer kafkaContainer.CleanupAfterTest(t, []string{topic}, []string{})
 
 	config := kafkaContainer.CreateProducerConfig()
 
@@ -204,9 +204,9 @@ func TestProducer_GetPartitionCount(t *testing.T) {
 func TestProducer_EmptyBatch(t *testing.T) {
 	topic := fmt.Sprintf("test-empty-batch-%s", uuid.New().String())
 	
-	// Start Kafka container with topic
+	// Use shared Kafka container with topic
 	kafkaContainer := NewKafkaTestContainer(t, topic)
-	defer kafkaContainer.Stop(t)
+	defer kafkaContainer.CleanupAfterTest(t, []string{topic}, []string{})
 
 	config := kafkaContainer.CreateProducerConfig()
 

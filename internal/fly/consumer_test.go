@@ -42,9 +42,9 @@ func TestConsumer_Consume(t *testing.T) {
 	topic := fmt.Sprintf("test-consumer-%s", uuid.New().String())
 	groupID := fmt.Sprintf("test-consumer-group-%d", time.Now().UnixNano())
 
-	// Start Kafka container with topic
+	// Use shared Kafka container with topic
 	kafkaContainer := NewKafkaTestContainer(t, topic)
-	defer kafkaContainer.Stop(t)
+	defer kafkaContainer.CleanupAfterTest(t, []string{topic}, []string{groupID})
 
 	// Produce test messages
 	testMessages := []Message{
@@ -109,9 +109,9 @@ func TestConsumer_BatchProcessing(t *testing.T) {
 	topic := fmt.Sprintf("test-consumer-batch-%s", uuid.New().String())
 	groupID := fmt.Sprintf("test-batch-group-%s", uuid.New().String())
 	
-	// Start Kafka container with topic
+	// Use shared Kafka container with topic
 	kafkaContainer := NewKafkaTestContainer(t, topic)
-	defer kafkaContainer.Stop(t)
+	defer kafkaContainer.CleanupAfterTest(t, []string{topic}, []string{groupID})
 
 	// Produce test messages
 	var testMessages []Message
@@ -168,9 +168,9 @@ func TestConsumer_ErrorHandlingAndRetry(t *testing.T) {
 	topic := fmt.Sprintf("test-consumer-error-%s", uuid.New().String())
 	groupID := fmt.Sprintf("test-error-group-%s", uuid.New().String())
 	
-	// Start Kafka container with topic
+	// Use shared Kafka container with topic
 	kafkaContainer := NewKafkaTestContainer(t, topic)
-	defer kafkaContainer.Stop(t)
+	defer kafkaContainer.CleanupAfterTest(t, []string{topic}, []string{groupID})
 
 	// Produce test message
 	testMessages := []Message{{Key: []byte("key1"), Value: []byte("value1")}}
@@ -224,9 +224,9 @@ func TestConsumer_CommitMessages(t *testing.T) {
 	topic := fmt.Sprintf("test-consumer-commit-%s", uuid.New().String())
 	groupID := fmt.Sprintf("test-commit-group-%s", uuid.New().String())
 	
-	// Start Kafka container with topic
+	// Use shared Kafka container with topic
 	kafkaContainer := NewKafkaTestContainer(t, topic)
-	defer kafkaContainer.Stop(t)
+	defer kafkaContainer.CleanupAfterTest(t, []string{topic}, []string{groupID})
 
 	// Produce test messages
 	testMessages := []Message{

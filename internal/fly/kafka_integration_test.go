@@ -27,9 +27,9 @@ import (
 )
 
 func TestKafkaConnectivity(t *testing.T) {
-	// Start Kafka container
+	// Use shared Kafka container
 	kafkaContainer := NewKafkaTestContainer(t, "connectivity-test")
-	defer kafkaContainer.Stop(t)
+	defer kafkaContainer.CleanupAfterTest(t, []string{"connectivity-test"}, []string{})
 
 	// Simple test to verify we can connect to Kafka
 	conn, err := kafka.Dial("tcp", kafkaContainer.Broker())
@@ -53,10 +53,11 @@ func TestKafkaConnectivity(t *testing.T) {
 
 func TestSimpleProducerConsumer(t *testing.T) {
 	topic := fmt.Sprintf("test-simple-integration-%s", uuid.New().String())
+	groupID := fmt.Sprintf("test-integration-%d", time.Now().UnixNano())
 	
-	// Start Kafka container with topic
+	// Use shared Kafka container with topic
 	kafkaContainer := NewKafkaTestContainer(t, topic)
-	defer kafkaContainer.Stop(t)
+	defer kafkaContainer.CleanupAfterTest(t, []string{topic}, []string{groupID})
 
 	// Create a simple writer
 	writer := &kafka.Writer{
@@ -78,7 +79,7 @@ func TestSimpleProducerConsumer(t *testing.T) {
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:  []string{kafkaContainer.Broker()},
 		Topic:    topic,
-		GroupID:  fmt.Sprintf("test-integration-%d", time.Now().UnixNano()),
+		GroupID:  groupID,
 		MinBytes: 1,
 		MaxBytes: 10e6,
 		MaxWait:  1 * time.Second,
