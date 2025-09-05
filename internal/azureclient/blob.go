@@ -19,11 +19,12 @@ import (
 	"fmt"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/service"
 	"go.opentelemetry.io/otel/trace"
 )
 
 type BlobClient struct {
-	ServiceClient *azblob.ServiceClient
+	ServiceClient *service.Client
 	Client        *azblob.Client
 	Tracer        trace.Tracer
 }
@@ -31,7 +32,6 @@ type BlobClient struct {
 type blobConfig struct {
 	StorageAccount string
 	Endpoint       string
-	applyOptions   []func(*azblob.ClientOptions)
 }
 
 type BlobOption func(*blobConfig)
@@ -73,7 +73,7 @@ func (m *Manager) GetBlob(ctx context.Context, opts ...BlobOption) (*BlobClient,
 	if !ok {
 		m.Lock()
 		if client, ok = m.blobClients[key]; !ok {
-			serviceClient, err := azblob.NewServiceClient(bc.Endpoint, m.baseCred, nil)
+			serviceClient, err := service.NewClient(bc.Endpoint, m.baseCred, nil)
 			if err != nil {
 				m.Unlock()
 				return nil, fmt.Errorf("failed to create blob service client: %w", err)

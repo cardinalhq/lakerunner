@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 

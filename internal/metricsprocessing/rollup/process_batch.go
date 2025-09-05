@@ -24,7 +24,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
-	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
@@ -51,7 +50,7 @@ func processBatch(
 	ll *slog.Logger,
 	mdb rollupStore,
 	sp storageprofile.StorageProfileProvider,
-	cloudManagers *cloudstorage.CloudManagers,
+	awsmanager *awsclient.Manager,
 	bundle lrdb.RollupBundleResult,
 ) error {
 	if len(bundle.Items) == 0 {
@@ -104,9 +103,9 @@ func processBatch(
 		return err
 	}
 
-	storageClient, err := cloudstorage.NewClient(ctx, cloudManagers, profile)
+	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
 	if err != nil {
-		ll.Error("Failed to get cloud storage client", slog.Any("error", err))
+		ll.Error("Failed to get S3 client", slog.Any("error", err))
 		return err
 	}
 
@@ -188,7 +187,7 @@ func rollupMetricSegments(
 	tmpdir string,
 	firstSeg lrdb.MetricSeg,
 	profile storageprofile.StorageProfile,
-	storageClient cloudstorage.Client,
+	s3client *awsclient.S3Client,
 	sourceRows []lrdb.MetricSeg,
 	targetFrequency int32,
 	estimatedTargetRecords int64,
@@ -347,7 +346,7 @@ func uploadRolledUpMetricsAtomic(
 	ctx context.Context,
 	ll *slog.Logger,
 	mdb rollupStore,
-	storageClient cloudstorage.Client,
+	s3client *awsclient.S3Client,
 	results []parquetwriter.Result,
 	sourceRows []lrdb.MetricSeg,
 	params RollupUploadParams,

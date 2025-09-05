@@ -25,7 +25,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/cardinalhq/lakerunner/cmd/ingesttraces"
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/helpers"

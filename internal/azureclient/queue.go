@@ -31,7 +31,6 @@ type QueueClient struct {
 type queueConfig struct {
 	StorageAccount string
 	QueueName      string
-	applyOptions   []func(*azqueue.ClientOptions)
 }
 
 type QueueOption func(*queueConfig)
@@ -67,7 +66,7 @@ func (m *Manager) GetQueue(ctx context.Context, opts ...QueueOption) (*QueueClie
 		return nil, fmt.Errorf("queue name is required")
 	}
 
-	key := clientKey{StorageAccount: qc.StorageAccount, QueueName: qc.QueueName}
+	key := clientKey(qc)
 	m.RLock()
 	client, ok := m.queueClients[key]
 	m.RUnlock()

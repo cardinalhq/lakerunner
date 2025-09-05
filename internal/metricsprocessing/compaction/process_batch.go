@@ -21,7 +21,6 @@ import (
 	"os"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
-	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
@@ -33,7 +32,7 @@ func processBatch(
 	ll *slog.Logger,
 	mdb compactionStore,
 	sp storageprofile.StorageProfileProvider,
-	cloudManagers *cloudstorage.CloudManagers,
+	awsmanager *awsclient.Manager,
 	bundle lrdb.CompactionBundleResult,
 ) error {
 	if len(bundle.Items) == 0 {
@@ -71,9 +70,9 @@ func processBatch(
 		return err
 	}
 
-	storageClient, err := cloudstorage.NewClient(ctx, cloudManagers, profile)
+	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
 	if err != nil {
-		ll.Error("Failed to get cloud storage client", slog.Any("error", err))
+		ll.Error("Failed to get S3 client", slog.Any("error", err))
 		return err
 	}
 

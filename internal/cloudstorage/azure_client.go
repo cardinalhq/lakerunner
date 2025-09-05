@@ -22,12 +22,10 @@ import (
 	"path/filepath"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
-	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/bloberror"
 	"github.com/cardinalhq/lakerunner/internal/azureclient"
-	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
 // azureClient implements the Client interface for Azure Blob Storage
@@ -38,25 +36,6 @@ type azureClient struct {
 // newAzureClientFromManager creates an Azure client using the managed BlobClient
 func newAzureClientFromManager(blobClient *azureclient.BlobClient) Client {
 	return &azureClient{client: blobClient.Client}
-}
-
-// newAzureClient creates a new Azure Blob Storage client
-func newAzureClient(ctx context.Context, profile storageprofile.StorageProfile) (Client, error) {
-	if profile.Endpoint == "" {
-		return nil, fmt.Errorf("endpoint is required for Azure blob storage")
-	}
-
-	cred, err := azidentity.NewDefaultAzureCredential(nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Azure credentials: %w", err)
-	}
-
-	client, err := azblob.NewClient(profile.Endpoint, cred, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Azure blob client: %w", err)
-	}
-
-	return &azureClient{client: client}, nil
 }
 
 // DownloadObject downloads a blob from Azure Blob Storage

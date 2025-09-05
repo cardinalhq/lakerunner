@@ -18,8 +18,6 @@ import (
 	"context"
 	"fmt"
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
-	"github.com/cardinalhq/lakerunner/internal/azureclient"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/queryworker"
