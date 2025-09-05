@@ -82,6 +82,7 @@ ON CONFLICT (consumer_group, topic, partition)
 DO UPDATE SET 
     last_processed_offset = EXCLUDED.last_processed_offset,
     updated_at = NOW()
+WHERE kafka_offset_journal.last_processed_offset < EXCLUDED.last_processed_offset
 `
 
 type KafkaJournalUpsertParams struct {
@@ -92,6 +93,7 @@ type KafkaJournalUpsertParams struct {
 }
 
 // Insert or update the last processed offset for a consumer group, topic, and partition
+// Only updates if the new offset is greater than the existing one
 func (q *Queries) KafkaJournalUpsert(ctx context.Context, arg KafkaJournalUpsertParams) error {
 	_, err := q.db.Exec(ctx, kafkaJournalUpsert,
 		arg.ConsumerGroup,

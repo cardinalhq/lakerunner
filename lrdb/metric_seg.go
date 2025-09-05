@@ -17,6 +17,7 @@ package lrdb
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/google/uuid"
 	"github.com/hashicorp/go-multierror"
@@ -170,8 +171,8 @@ func (q *Store) RollupMetricSegs(ctx context.Context, sourceParams RollupSourceP
 	})
 }
 
-// InsertMetricSegmentBatchWithKafkaOffset inserts multiple metric segments and updates Kafka offset in a single transaction
-func (q *Store) InsertMetricSegmentBatchWithKafkaOffset(ctx context.Context, batch MetricSegmentBatch) error {
+// InsertMetricSegmentBatchWithKafkaOffsets inserts multiple metric segments and updates multiple Kafka offsets in a single transaction
+func (q *Store) InsertMetricSegmentBatchWithKafkaOffsets(ctx context.Context, batch MetricSegmentBatch) error {
 	return q.execTx(ctx, func(s *Store) error {
 		// Ensure partitions exist for all segments
 		for _, params := range batch.Segments {
@@ -217,12 +218,44 @@ func (q *Store) InsertMetricSegmentBatchWithKafkaOffset(ctx context.Context, bat
 			return insertErr
 		}
 
-		// Update Kafka offset
-		return s.KafkaJournalUpsert(ctx, KafkaJournalUpsertParams{
-			ConsumerGroup:       batch.KafkaOffset.ConsumerGroup,
-			Topic:               batch.KafkaOffset.Topic,
-			Partition:           batch.KafkaOffset.Partition,
-			LastProcessedOffset: batch.KafkaOffset.Offset,
-		})
+		// Update all Kafka offsets using batch operation
+		if len(batch.KafkaOffsets) > 0 {
+			// Sort offsets to prevent deadlocks - consistent lock acquisition order
+			sort.Slice(batch.KafkaOffsets, func(i, j int) bool {
+				a, b := batch.KafkaOffsets[i], batch.KafkaOffsets[j]
+				if a.ConsumerGroup != b.ConsumerGroup {
+					return a.ConsumerGroup < b.ConsumerGroup
+				}
+				if a.Topic != b.Topic {
+					return a.Topic < b.Topic
+				}
+				return a.Partition < b.Partition
+			})
+
+			// Convert to batch parameters
+			batchOffsetParams := make([]KafkaJournalBatchUpsertParams, len(batch.KafkaOffsets))
+			for i, offset := range batch.KafkaOffsets {
+				batchOffsetParams[i] = KafkaJournalBatchUpsertParams{
+					ConsumerGroup:       offset.ConsumerGroup,
+					Topic:               offset.Topic,
+					Partition:           offset.Partition,
+					LastProcessedOffset: offset.Offset,
+				}
+			}
+
+			// Execute batch upsert
+			result := s.KafkaJournalBatchUpsert(ctx, batchOffsetParams)
+			var offsetErr error
+			result.Exec(func(i int, err error) {
+				if err != nil && offsetErr == nil {
+					offsetErr = err
+				}
+			})
+			if offsetErr != nil {
+				return offsetErr
+			}
+		}
+
+		return nil
 	})
 }

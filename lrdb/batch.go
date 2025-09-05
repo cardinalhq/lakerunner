@@ -788,3 +788,64 @@ func (b *InsertCompactedMetricSegBatchResults) Close() error {
 	b.closed = true
 	return b.br.Close()
 }
+
+const kafkaJournalBatchUpsert = `-- name: KafkaJournalBatchUpsert :batchexec
+INSERT INTO kafka_offset_journal (consumer_group, topic, partition, last_processed_offset, updated_at)
+VALUES ($1, $2, $3, $4, NOW())
+ON CONFLICT (consumer_group, topic, partition)
+DO UPDATE SET 
+    last_processed_offset = EXCLUDED.last_processed_offset,
+    updated_at = NOW()
+WHERE kafka_offset_journal.last_processed_offset < EXCLUDED.last_processed_offset
+`
+
+type KafkaJournalBatchUpsertBatchResults struct {
+	br     pgx.BatchResults
+	tot    int
+	closed bool
+}
+
+type KafkaJournalBatchUpsertParams struct {
+	ConsumerGroup       string `json:"consumer_group"`
+	Topic               string `json:"topic"`
+	Partition           int32  `json:"partition"`
+	LastProcessedOffset int64  `json:"last_processed_offset"`
+}
+
+// Insert or update multiple Kafka journal entries in a single batch operation
+// Only updates if the new offset is greater than the existing one
+func (q *Queries) KafkaJournalBatchUpsert(ctx context.Context, arg []KafkaJournalBatchUpsertParams) *KafkaJournalBatchUpsertBatchResults {
+	batch := &pgx.Batch{}
+	for _, a := range arg {
+		vals := []interface{}{
+			a.ConsumerGroup,
+			a.Topic,
+			a.Partition,
+			a.LastProcessedOffset,
+		}
+		batch.Queue(kafkaJournalBatchUpsert, vals...)
+	}
+	br := q.db.SendBatch(ctx, batch)
+	return &KafkaJournalBatchUpsertBatchResults{br, len(arg), false}
+}
+
+func (b *KafkaJournalBatchUpsertBatchResults) Exec(f func(int, error)) {
+	defer b.br.Close()
+	for t := 0; t < b.tot; t++ {
+		if b.closed {
+			if f != nil {
+				f(t, ErrBatchAlreadyClosed)
+			}
+			continue
+		}
+		_, err := b.br.Exec()
+		if f != nil {
+			f(t, err)
+		}
+	}
+}
+
+func (b *KafkaJournalBatchUpsertBatchResults) Close() error {
+	b.closed = true
+	return b.br.Close()
+}

@@ -23,13 +23,11 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/exemplar"
-	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/processing/ingest"
-	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -89,9 +87,9 @@ func ProcessBatch(
 			slog.Float64("dropRate", float64(result.RowsErrored)/float64(result.RowsRead)*100))
 	}
 
-	// Get storage profile for upload operations
+	// Get storage profile and S3 client
 	firstItem := items[0]
-	profile, err := getStorageProfileForIngestion(ctx, args.StorageProvider, firstItem, cfg)
+	profile, err := args.StorageProvider.GetStorageProfileForOrganizationAndInstance(ctx, firstItem.OrganizationID, firstItem.InstanceNum)
 	if err != nil {
 		return fmt.Errorf("failed to get storage profile: %w", err)
 	}
@@ -143,15 +141,15 @@ func ProcessBatch(
 		slog.Float64("compressionRatio", compressionRatio),
 		slog.String("compressionRatioStr", fmt.Sprintf("%.1f%%", compressionRatio)))
 
-	// Execute the atomic transaction: insert all segments + Kafka offset
+	// Execute the atomic transaction: insert all segments + Kafka offsets
 	batch := lrdb.MetricSegmentBatch{
-		Segments:    segmentParams,
-		KafkaOffset: args.KafkaOffset,
+		Segments:     segmentParams,
+		KafkaOffsets: []lrdb.KafkaOffsetUpdate{args.KafkaOffset},
 	}
 
 	criticalCtx := context.WithoutCancel(ctx)
-	if err := args.DB.InsertMetricSegmentBatchWithKafkaOffset(criticalCtx, batch); err != nil {
-		return fmt.Errorf("failed to insert metric segments with Kafka offset: %w", err)
+	if err := args.DB.InsertMetricSegmentBatchWithKafkaOffsets(criticalCtx, batch); err != nil {
+		return fmt.Errorf("failed to insert metric segments with Kafka offsets: %w", err)
 	}
 
 	// Queue compaction work

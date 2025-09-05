@@ -26,27 +26,27 @@ type KafkaOffsetUpdate struct {
 	Offset        int64
 }
 
-// LogSegmentBatch collects log segments to be inserted with a Kafka offset update
+// LogSegmentBatch collects log segments to be inserted with Kafka offset updates
 type LogSegmentBatch struct {
-	Segments    []InsertLogSegmentParams
-	KafkaOffset KafkaOffsetUpdate
+	Segments     []InsertLogSegmentParams
+	KafkaOffsets []KafkaOffsetUpdate
 }
 
-// MetricSegmentBatch collects metric segments to be inserted with a Kafka offset update
+// MetricSegmentBatch collects metric segments to be inserted with Kafka offset updates
 type MetricSegmentBatch struct {
-	Segments    []InsertMetricSegmentParams
-	KafkaOffset KafkaOffsetUpdate
+	Segments     []InsertMetricSegmentParams
+	KafkaOffsets []KafkaOffsetUpdate
 }
 
-// TraceSegmentBatch collects trace segments to be inserted with a Kafka offset update
+// TraceSegmentBatch collects trace segments to be inserted with Kafka offset updates
 type TraceSegmentBatch struct {
-	Segments    []InsertTraceSegmentDirectParams
-	KafkaOffset KafkaOffsetUpdate
+	Segments     []InsertTraceSegmentDirectParams
+	KafkaOffsets []KafkaOffsetUpdate
 }
 
 // SegmentBatcher interface for database operations that support transactional batch insertion with Kafka offset updates
 type SegmentBatcher interface {
-	InsertLogSegmentBatchWithKafkaOffset(ctx context.Context, batch LogSegmentBatch) error
-	InsertMetricSegmentBatchWithKafkaOffset(ctx context.Context, batch MetricSegmentBatch) error
-	InsertTraceSegmentBatchWithKafkaOffset(ctx context.Context, batch TraceSegmentBatch) error
+	InsertLogSegmentBatchWithKafkaOffsets(ctx context.Context, batch LogSegmentBatch) error
+	InsertMetricSegmentBatchWithKafkaOffsets(ctx context.Context, batch MetricSegmentBatch) error
+	InsertTraceSegmentBatchWithKafkaOffsets(ctx context.Context, batch TraceSegmentBatch) error
 }

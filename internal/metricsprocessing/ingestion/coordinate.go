@@ -144,7 +144,7 @@ func coordinate(
 	firstItem := input.Items[0]
 
 	// Get storage profile and S3 client
-	profile, err := getStorageProfileForIngestion(ctx, sp, firstItem, input.Config)
+	profile, err := sp.GetStorageProfileForOrganizationAndInstance(ctx, firstItem.OrganizationID, firstItem.InstanceNum)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get storage profile: %w", err)
 	}

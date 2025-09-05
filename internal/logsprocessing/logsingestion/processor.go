@@ -35,7 +35,6 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 	"github.com/cardinalhq/lakerunner/internal/processing/ingest"
-	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -226,20 +225,9 @@ func ProcessBatch(ctx context.Context, args ingest.ProcessBatchArgs, item ingest
 		slog.Int("partition", int(args.KafkaOffset.Partition)),
 		slog.Int64("offset", args.KafkaOffset.Offset))
 
-	// Get storage profile and S3 client
-	var profile storageprofile.StorageProfile
-	var err error
-
-	if collectorName := helpers.ExtractCollectorName(item.ObjectID); collectorName != "" {
-		profile, err = args.StorageProvider.GetStorageProfileForOrganizationAndCollector(ctx, item.OrganizationID, collectorName)
-		if err != nil {
-			return fmt.Errorf("failed to get storage profile for collector %s: %w", collectorName, err)
-		}
-	} else {
-		profile, err = args.StorageProvider.GetStorageProfileForOrganizationAndInstance(ctx, item.OrganizationID, item.InstanceNum)
-		if err != nil {
-			return fmt.Errorf("failed to get storage profile: %w", err)
-		}
+	profile, err := args.StorageProvider.GetStorageProfileForOrganizationAndInstance(ctx, item.OrganizationID, item.InstanceNum)
+	if err != nil {
+		return fmt.Errorf("failed to get storage profile: %w", err)
 	}
 
 	s3client, err := args.AWSManager.GetS3ForProfile(ctx, profile)
@@ -468,12 +456,12 @@ func ProcessBatch(ctx context.Context, args ingest.ProcessBatchArgs, item ingest
 
 	// Execute the atomic transaction: insert all segments + Kafka offset
 	batch := lrdb.LogSegmentBatch{
-		Segments:    segmentParams,
-		KafkaOffset: args.KafkaOffset,
+		Segments:     segmentParams,
+		KafkaOffsets: []lrdb.KafkaOffsetUpdate{args.KafkaOffset},
 	}
 
 	criticalCtx := context.WithoutCancel(ctx)
-	if err := args.DB.InsertLogSegmentBatchWithKafkaOffset(criticalCtx, batch); err != nil {
+	if err := args.DB.InsertLogSegmentBatchWithKafkaOffsets(criticalCtx, batch); err != nil {
 		return fmt.Errorf("failed to insert log segments with Kafka offset: %w", err)
 	}
 

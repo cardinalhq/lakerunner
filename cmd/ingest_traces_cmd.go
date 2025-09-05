@@ -271,12 +271,12 @@ func traceIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp st
 
 	// Execute the atomic transaction: insert all segments + Kafka offset
 	batch := lrdb.TraceSegmentBatch{
-		Segments:    segmentParams,
-		KafkaOffset: args.KafkaOffset,
+		Segments:     segmentParams,
+		KafkaOffsets: []lrdb.KafkaOffsetUpdate{args.KafkaOffset},
 	}
 
 	criticalCtx := context.WithoutCancel(ctx)
-	if err := args.DB.InsertTraceSegmentBatchWithKafkaOffset(criticalCtx, batch); err != nil {
+	if err := args.DB.InsertTraceSegmentBatchWithKafkaOffsets(criticalCtx, batch); err != nil {
 		return fmt.Errorf("failed to insert trace segments with Kafka offset: %w", err)
 	}
 

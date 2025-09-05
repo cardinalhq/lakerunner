@@ -14,16 +14,20 @@
 
 package ingestion
 
+import "time"
+
 // Config holds ingestion feature toggles.
 type Config struct {
-	ProcessExemplars   bool `mapstructure:"process_exemplars"`
-	SingleInstanceMode bool `mapstructure:"single_instance_mode"`
+	ProcessExemplars    bool          `mapstructure:"process_exemplars"`
+	SingleInstanceMode  bool          `mapstructure:"single_instance_mode"`
+	MaxAccumulationTime time.Duration `mapstructure:"max_accumulation_time"`
 }
 
 // DefaultConfig returns default settings.
 func DefaultConfig() Config {
 	return Config{
-		ProcessExemplars:   true,
-		SingleInstanceMode: false,
+		ProcessExemplars:    true,
+		SingleInstanceMode:  false,
+		MaxAccumulationTime: 10 * time.Second,
 	}
 }
