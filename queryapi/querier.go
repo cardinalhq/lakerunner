@@ -310,22 +310,21 @@ func (q *QuerierService) handleLogQuery(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
-func (q *QuerierService) handlePromQLValidate(w http.ResponseWriter, r *http.Request) {
-	q.validatePromQL(w, r)
-}
-
 func (q *QuerierService) Run(doneCtx context.Context) error {
 	slog.Info("Starting querier service")
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/metrics/query", q.handlePromQuery)
-	mux.HandleFunc("/api/v1/logs/query", q.handleLogQuery)
-	mux.HandleFunc("/api/v1/promql/validate", q.handlePromQLValidate)
-	mux.HandleFunc("/api/v1/tags/promql", q.handleListPromQLTags)
-	mux.HandleFunc("/api/v1/tags/promql/metricsMetadata", q.handleListPromQLMetricsMetadata)
-	mux.HandleFunc("/api/v1/tags/logql", q.handleListLogQLTags)
+
+	mux.HandleFunc("/api/v1/metrics/metadata", q.handleListPromQLMetricsMetadata)
+	mux.HandleFunc("/api/v1/metrics/tags", q.handleListPromQLTags)
 	mux.HandleFunc("/api/v1/metrics/tagvalues", q.handleGetMetricTagValues)
+	mux.HandleFunc("/api/v1/metrics/query", q.handlePromQuery)
+
+	mux.HandleFunc("/api/v1/logs/tags", q.handleListLogQLTags)
 	mux.HandleFunc("/api/v1/logs/tagvalues", q.handleGetLogTagValues)
+	mux.HandleFunc("/api/v1/logs/query", q.handleLogQuery)
+
+	mux.HandleFunc("/api/v1/promql/validate", q.handlePromQLValidate)
 
 	srv := &http.Server{
 		Addr:    ":8080",
