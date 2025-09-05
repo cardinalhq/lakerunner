@@ -151,7 +151,7 @@ func coordinate(
 
 	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get S3 client: %w", err)
+		return nil, fmt.Errorf("failed to create storage client: %w", err)
 	}
 
 	// Create writer manager
@@ -161,7 +161,7 @@ func coordinate(
 	var batchRowsRead, batchRowsProcessed, batchRowsErrored int64
 
 	// Step 1: Download and validate files
-	validFiles, err := downloadAndValidateFiles(ctx, input.Items, input.TmpDir, s3client)
+	validFiles, err := downloadAndValidateFiles(ctx, input.Items, input.TmpDir, storageClient)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download files: %w", err)
 	}
@@ -327,7 +327,7 @@ func coordinate(
 }
 
 // downloadAndValidateFiles downloads and validates all files in the batch
-func downloadAndValidateFiles(ctx context.Context, items []ingest.IngestItem, tmpdir string, s3client *awsclient.S3Client) ([]fileInfo, error) {
+func downloadAndValidateFiles(ctx context.Context, items []ingest.IngestItem, tmpdir string, storageClient cloudstorage.Client) ([]fileInfo, error) {
 	ll := logctx.FromContext(ctx)
 
 	var validFiles []fileInfo
@@ -352,7 +352,7 @@ func downloadAndValidateFiles(ctx context.Context, items []ingest.IngestItem, tm
 			return nil, fmt.Errorf("creating item tmpdir: %w", err)
 		}
 
-		tmpfilename, _, is404, err := s3helper.DownloadS3Object(ctx, itemTmpdir, s3client, inf.Bucket, inf.ObjectID)
+		tmpfilename, _, is404, err := storageClient.DownloadObject(ctx, itemTmpdir, inf.Bucket, inf.ObjectID)
 		if err != nil {
 			processingSegmentDownloadErrors.Add(ctx, 1, metric.WithAttributes(
 				attribute.String("signal", "metrics"),

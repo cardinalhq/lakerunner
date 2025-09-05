@@ -139,8 +139,9 @@ func compactLogsFor(
 		slog.Int("dateint", int(inf.Dateint())),
 		slog.Int64("workQueueID", inf.ID()))
 
+	ctx = logctx.WithLogger(ctx, ll)
 	t0 := time.Now()
-	err = logCompactItemDo(ctx, ll, mdb, tmpdir, inf, profile, storageClient, rpfEstimate)
+	err = logCompactItemDo(ctx, mdb, tmpdir, inf, profile, storageClient, rpfEstimate)
 
 	if err != nil {
 		ll.Info("Log compaction completed",
@@ -159,7 +160,6 @@ func compactLogsFor(
 
 func logCompactItemDo(
 	ctx context.Context,
-	ll *slog.Logger,
 	mdb lrdb.StoreFull,
 	tmpdir string,
 	inf lockmgr.Workable,
@@ -167,6 +167,8 @@ func logCompactItemDo(
 	storageClient cloudstorage.Client,
 	rpfEstimate int64,
 ) error {
+	ll := logctx.FromContext(ctx)
+
 	// Extract the time range using our normalized helper functions
 	timeRange, ok := helpers.NewTimeRangeFromPgRange(inf.TsRange())
 	if !ok {
@@ -338,7 +340,7 @@ func logCompactItemDo(
 			ll.Info("Starting atomic log compaction operation",
 				slog.Int("segmentCount", len(group)))
 
-			err = packSegment(ctx, ll, tmpdir, storageClient, mdb, group, sp, stdi, inf.InstanceNum())
+			err = packSegment(ctx, tmpdir, storageClient, mdb, group, sp, stdi, inf.InstanceNum())
 
 			if err != nil {
 				ll.Error("Atomic operation failed - will retry entire work item",

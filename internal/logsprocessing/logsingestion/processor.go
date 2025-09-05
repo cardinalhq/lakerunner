@@ -25,8 +25,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
+	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
@@ -244,7 +244,7 @@ func ProcessBatch(ctx context.Context, args ingest.ProcessBatchArgs, item ingest
 
 	s3client, err := args.AWSManager.GetS3ForProfile(ctx, profile)
 	if err != nil {
-		return fmt.Errorf("failed to get S3 client: %w", err)
+		return fmt.Errorf("failed to create storage client: %w", err)
 	}
 
 	// Create writer manager for organizing output by hour/slot
@@ -285,7 +285,7 @@ func ProcessBatch(ctx context.Context, args ingest.ProcessBatchArgs, item ingest
 		return fmt.Errorf("creating item tmpdir: %w", err)
 	}
 
-	tmpfilename, _, is404, err := s3helper.DownloadS3Object(ctx, itemTmpdir, s3client, item.Bucket, item.ObjectID)
+	tmpfilename, _, is404, err := storageClient.DownloadObject(ctx, itemTmpdir, item.Bucket, item.ObjectID)
 	if err != nil {
 		return fmt.Errorf("failed to download file %s: %w", item.ObjectID, err)
 	}
@@ -453,7 +453,7 @@ func ProcessBatch(ctx context.Context, args ingest.ProcessBatchArgs, item ingest
 	}
 
 	// Upload files to S3 and collect segment parameters for batch insertion
-	segmentParams, err := createAndUploadLogSegments(ctx, ll, s3client, results, item, args.IngestDateint)
+	segmentParams, err := createAndUploadLogSegments(ctx, ll, storageClient, results, item, args.IngestDateint)
 	if err != nil {
 		return fmt.Errorf("failed to create and upload log segments: %w", err)
 	}
@@ -510,7 +510,7 @@ func ProcessBatch(ctx context.Context, args ingest.ProcessBatchArgs, item ingest
 func createAndUploadLogSegments(
 	ctx context.Context,
 	ll *slog.Logger,
-	s3client *awsclient.S3Client,
+	storageClient cloudstorage.Client,
 	results []parquetwriter.Result,
 	item ingest.IngestItem,
 	ingestDateint int32,
@@ -538,7 +538,7 @@ func createAndUploadLogSegments(
 		dbObjectID := helpers.MakeDBObjectID(item.OrganizationID, "",
 			dateint, s3helper.HourFromMillis(stats.FirstTS), segmentID, "logs")
 
-		if err := s3helper.UploadS3Object(ctx, s3client, item.Bucket, dbObjectID, result.FileName); err != nil {
+		if err := storageClient.UploadObject(ctx, item.Bucket, dbObjectID, result.FileName); err != nil {
 			return nil, fmt.Errorf("uploading file to S3: %w", err)
 		}
 

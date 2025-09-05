@@ -313,7 +313,6 @@ func executeCriticalSection(
 
 func packSegment(
 	ctx context.Context,
-	ll *slog.Logger,
 	tmpdir string,
 	blobclient cloudstorage.Client,
 	mdb lrdb.StoreFull,
@@ -322,7 +321,8 @@ func packSegment(
 	dateint int32,
 	instanceNum int16,
 ) error {
-	// ll already has operationID from caller
+	ll := logctx.FromContext(ctx)
+
 	if len(group) < 2 {
 		ll.Info("Atomic operation skipped - insufficient segments for compaction",
 			slog.Int("segmentCount", len(group)),

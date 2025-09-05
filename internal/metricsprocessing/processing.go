@@ -24,7 +24,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
@@ -254,14 +253,14 @@ type UploadParams struct {
 // Returns the upload results containing segment IDs and dateints for each uploaded file.
 func UploadMetricResults(
 	ctx context.Context,
-	s3client *awsclient.S3Client,
+	storageClient cloudstorage.Client,
 	mdb lrdb.StoreFull,
 	results []parquetwriter.Result,
 	params UploadParams,
 ) ([]UploadResult, error) {
 	var uploadResults []UploadResult
 	for _, result := range results {
-		uploadResult, err := uploadSingleMetricResult(ctx, s3client, mdb, result, params)
+		uploadResult, err := uploadSingleMetricResult(ctx, storageClient, mdb, result, params)
 		if err != nil {
 			return nil, fmt.Errorf("failed to upload result: %w", err)
 		}
@@ -282,7 +281,7 @@ type UploadResult struct {
 // uploadSingleMetricResult uploads a single parquet file result to S3 and database.
 func uploadSingleMetricResult(
 	ctx context.Context,
-	s3client *awsclient.S3Client,
+	storageClient cloudstorage.Client,
 	mdb lrdb.StoreFull,
 	result parquetwriter.Result,
 	params UploadParams,
@@ -313,7 +312,7 @@ func uploadSingleMetricResult(
 	objID := helpers.MakeDBObjectID(orgUUID, params.CollectorName, filestats.Dateint, filestats.Hour, segmentID, "metrics")
 
 	// Upload to S3
-	if err := s3helper.UploadS3Object(ctx, s3client, params.Bucket, objID, result.FileName); err != nil {
+	if err := storageClient.UploadObject(ctx, params.Bucket, objID, result.FileName); err != nil {
 		return UploadResult{}, fmt.Errorf("uploading file to S3: %w", err)
 	}
 
@@ -347,7 +346,7 @@ func uploadSingleMetricResult(
 	})
 	if err != nil {
 		// Clean up uploaded file on database error
-		if err2 := s3helper.DeleteS3Object(ctx, s3client, params.Bucket, objID); err2 != nil {
+		if err2 := storageClient.DeleteObject(ctx, params.Bucket, objID); err2 != nil {
 			ll.Error("Failed to delete S3 object after insertion failure", slog.Any("error", err2))
 		}
 		return UploadResult{}, fmt.Errorf("inserting metric segment: %w", err)
