@@ -114,8 +114,6 @@ func coordinate(
 		inputRecords += row.RecordCount
 	}
 
-	// Input metrics are tracked in the generic processor
-
 	// Use generic processor for compaction
 	processingInput := metricsprocessing.ProcessingInput{
 		ReaderStack:       readerStack,
