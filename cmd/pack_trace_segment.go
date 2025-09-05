@@ -20,10 +20,11 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
+	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/filecrunch"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -137,9 +138,8 @@ func segmentIDsFromTraceSegments(segments []lrdb.GetTraceSegmentsForCompactionRo
 // packTraceSegment packs a group of trace segments into a single consolidated file
 func packTraceSegment(
 	ctx context.Context,
-	ll *slog.Logger,
 	tmpdir string,
-	s3Client *awsclient.S3Client,
+	blobclient cloudstorage.Client,
 	mdb lrdb.StoreFull,
 	group []lrdb.GetTraceSegmentsForCompactionRow,
 	sp storageprofile.StorageProfile,
@@ -147,12 +147,13 @@ func packTraceSegment(
 	slotID int32,
 	instanceNum int16,
 ) error {
+	ll := logctx.FromContext(ctx)
 
 	if len(group) < 2 {
 		return nil
 	}
 
-	fetcher := objectFetcherAdapter{s3Client: s3Client}
+	fetcher := objectFetcherAdapter{blobclient: blobclient}
 	open := fileOpenerAdapter{}
 	wf := writerFactoryAdapter{}
 
@@ -249,7 +250,7 @@ func packTraceSegment(
 		slog.Int64("recordCount", writeResult.RecordCount),
 		slog.Int("segmentCount", len(usedSegs)))
 
-	if err := s3helper.UploadS3Object(ctx, s3Client, sp.Bucket, newObjectID, writeResult.FileName); err != nil {
+	if err := blobclient.UploadObject(ctx, sp.Bucket, newObjectID, writeResult.FileName); err != nil {
 		ll.Error("S3 upload failed", slog.String("error", err.Error()))
 		return err
 	}
