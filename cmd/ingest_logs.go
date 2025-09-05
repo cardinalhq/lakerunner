@@ -27,8 +27,8 @@ import (
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
 
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
+	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/debugging"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
@@ -276,7 +276,7 @@ func queueLogCompactionForSlot(ctx context.Context, mdb lrdb.StoreFull, inf lrdb
 // Functions removed - now using filereader and parquetwriter packages directly
 
 func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
-	awsmanager *awsclient.Manager, items []lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
+	cloudManagers *cloudstorage.CloudManagers, items []lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
 
 	if len(items) == 0 {
 		return fmt.Errorf("empty batch")
@@ -284,7 +284,7 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 
 	ll.Debug("Processing log batch", slog.Int("batchSize", len(items)))
 
-	// Get storage profile and S3 client
+	// Get storage profile
 	firstItem := items[0]
 	var profile storageprofile.StorageProfile
 	var err error
@@ -301,9 +301,10 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 		}
 	}
 
-	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
+	// Create cloud storage client
+	storageClient, err := cloudstorage.NewClient(ctx, cloudManagers, profile)
 	if err != nil {
-		return fmt.Errorf("failed to get S3 client: %w", err)
+		return fmt.Errorf("failed to create storage client for provider %s: %w", profile.CloudProvider, err)
 	}
 
 	// Create writer manager for organizing output by hour/slot
@@ -339,12 +340,14 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 			return fmt.Errorf("creating item tmpdir: %w", err)
 		}
 
-		tmpfilename, _, is404, err := s3helper.DownloadS3Object(ctx, itemTmpdir, s3client, inf.Bucket, inf.ObjectID)
+		tmpfilename, _, is404, err := storageClient.DownloadObject(ctx, itemTmpdir, inf.Bucket, inf.ObjectID)
 		if err != nil {
-			return fmt.Errorf("failed to download file %s: %w", inf.ObjectID, err)
+			return fmt.Errorf("failed to download file %s from %s: %w", inf.ObjectID, profile.CloudProvider, err)
 		}
 		if is404 {
-			ll.Warn("S3 object not found, skipping", slog.String("objectID", inf.ObjectID))
+			ll.Warn("Object not found in cloud storage, skipping",
+				slog.String("cloudProvider", profile.CloudProvider),
+				slog.String("objectID", inf.ObjectID))
 			continue
 		}
 
@@ -500,8 +503,8 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 		dbObjectID := helpers.MakeDBObjectID(firstItem.OrganizationID, firstItem.CollectorName,
 			dateint, s3helper.HourFromMillis(stats.FirstTS), segmentID, "logs")
 
-		if err := s3helper.UploadS3Object(criticalCtx, s3client, firstItem.Bucket, dbObjectID, result.FileName); err != nil {
-			return fmt.Errorf("failed to upload file to S3: %w", err)
+		if err := storageClient.UploadObject(criticalCtx, firstItem.Bucket, dbObjectID, result.FileName); err != nil {
+			return fmt.Errorf("failed to upload file to %s: %w", profile.CloudProvider, err)
 		}
 		_ = os.Remove(result.FileName)
 

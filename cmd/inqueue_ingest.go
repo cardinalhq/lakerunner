@@ -28,7 +28,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
+	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/estimator"
 	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"github.com/cardinalhq/lakerunner/internal/heartbeat"
@@ -69,7 +69,7 @@ type InqueueBatchProcessingFunction func(
 	tmpdir string,
 	sp storageprofile.StorageProfileProvider,
 	mdb lrdb.StoreFull,
-	awsmanager *awsclient.Manager,
+	cloudManagers *cloudstorage.CloudManagers,
 	items []lrdb.Inqueue,
 	ingest_dateint int32,
 	rpfEstimate int64,
@@ -79,7 +79,7 @@ type IngestLoopContext struct {
 	ctx               context.Context
 	mdb               lrdb.StoreFull
 	sp                storageprofile.StorageProfileProvider
-	awsmanager        *awsclient.Manager
+	cloudManagers     *cloudstorage.CloudManagers
 	metricEstimator   estimator.MetricEstimator
 	logEstimator      estimator.LogEstimator
 	signal            string
@@ -100,9 +100,9 @@ func NewIngestLoopContext(ctx context.Context, signal string) (*IngestLoopContex
 		return nil, fmt.Errorf("failed to open LRDB store: %w", err)
 	}
 
-	awsmanager, err := awsclient.NewManager(ctx)
+	cloudManagers, err := cloudstorage.NewCloudManagers(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create AWS manager: %w", err)
+		return nil, fmt.Errorf("failed to create cloud managers: %w", err)
 	}
 
 	metricEst, err := estimator.NewMetricEstimator(ctx, mdb)
@@ -150,7 +150,7 @@ func NewIngestLoopContext(ctx context.Context, signal string) (*IngestLoopContex
 		ctx:               ctx,
 		mdb:               mdb,
 		sp:                sp,
-		awsmanager:        awsmanager,
+		cloudManagers:     cloudManagers,
 		metricEstimator:   metricEst,
 		logEstimator:      logEst,
 		signal:            signal,
@@ -398,7 +398,7 @@ func ingestFilesBatch(
 			FileSize:       item.FileSize,
 		}
 	}
-	err = batchProcessingFx(ctx, ll, tmpdir, loop.sp, loop.mdb, loop.awsmanager, inqueueBatch, ingestDateint, rpfEstimate, loop)
+	err = batchProcessingFx(ctx, ll, tmpdir, loop.sp, loop.mdb, loop.cloudManagers, inqueueBatch, ingestDateint, rpfEstimate, loop)
 	inqueueDuration.Record(ctx, time.Since(t0).Seconds(),
 		metric.WithAttributeSet(commonAttributes),
 		metric.WithAttributes(

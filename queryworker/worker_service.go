@@ -20,8 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
-	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
+	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/promql"
 	"github.com/cardinalhq/lakerunner/queryapi"
@@ -49,16 +48,16 @@ func NewWorkerService(
 	logsGlobSize int,
 	maxConcurrency int,
 	sp storageprofile.StorageProfileProvider,
-	awsMgr *awsclient.Manager,
+	cloudManagers *cloudstorage.CloudManagers,
 ) *WorkerService {
 	downloader := func(ctx context.Context, profile storageprofile.StorageProfile, keys []string) error {
 		if len(keys) == 0 {
 			return nil
 		}
 
-		s3cli, err := awsMgr.GetS3ForProfile(ctx, profile)
+		storageClient, err := cloudstorage.NewClient(ctx, cloudManagers, profile)
 		if err != nil {
-			return fmt.Errorf("failed to get S3 client for profile %w", err)
+			return fmt.Errorf("failed to create storage client for provider %s: %w", profile.CloudProvider, err)
 		}
 
 		g, gctx := errgroup.WithContext(ctx)
@@ -86,9 +85,10 @@ func NewWorkerService(
 				}
 
 				// IMPORTANT: pass the directory, not the file path
-				tmpfn, _, is404, err := s3helper.DownloadS3Object(gctx, dir, s3cli, profile.Bucket, key)
+				tmpfn, _, is404, err := storageClient.DownloadObject(gctx, dir, profile.Bucket, key)
 				if err != nil {
-					slog.Error("Failed to download S3 object",
+					slog.Error("Failed to download object",
+						slog.String("cloudProvider", profile.CloudProvider),
 						slog.String("bucket", profile.Bucket),
 						slog.String("objectID", key),
 						slog.Any("error", err))
@@ -96,7 +96,8 @@ func NewWorkerService(
 				}
 				if is404 {
 					// Non-fatal skip
-					slog.Info("S3 object not found, skipping",
+					slog.Info("Object not found, skipping",
+						slog.String("cloudProvider", profile.CloudProvider),
 						slog.String("bucket", profile.Bucket),
 						slog.String("objectID", key))
 					return nil
