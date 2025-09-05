@@ -79,8 +79,9 @@ type ExecNode interface {
 // ---------- Planner ----------
 
 type QueryPlan struct {
-	Root   ExecNode
-	Leaves []BaseExpr
+	Root    ExecNode
+	Leaves  []BaseExpr
+	TagName string // Set this to a tag name to get distinct values for that tag
 }
 
 // nearestAggInfo returns info if the expr is *immediately* an Agg node.

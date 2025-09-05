@@ -92,6 +92,7 @@ func (be *BaseExpr) ToWorkerSQL(step time.Duration) string {
 	}
 }
 
+
 func buildFromLogLeaf(be *BaseExpr, wantBytes bool, step time.Duration) string {
 	stepMs := step.Milliseconds()
 	tsCol := "\"_cardinalhq.timestamp\""
@@ -136,6 +137,22 @@ func buildFromLogLeaf(be *BaseExpr, wantBytes bool, step time.Duration) string {
 		" WHERE " + timePredicate +
 		" GROUP BY " + strings.Join(gb, ", ") +
 		" ORDER BY bucket_ts ASC"
+
+	return sql
+}
+
+func (be *BaseExpr) ToWorkerSQLForTagValues(step time.Duration, tagName string) string {
+	// Build WHERE clause with metric name and matchers
+	where := withTime(whereFor(be))
+
+	// Add filter to ensure the tag column exists and is not null
+	tagFilter := fmt.Sprintf(" AND \"%s\" IS NOT NULL", tagName)
+	where += tagFilter
+
+	// Build the SQL query to get distinct tag values
+	sql := "SELECT DISTINCT \"" + tagName + "\" AS tag_value" +
+		" FROM {table}" + where +
+		" ORDER BY tag_value ASC"
 
 	return sql
 }
