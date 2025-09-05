@@ -132,6 +132,24 @@ type ExemplarTrace struct {
 	SpanKind            int32          `json:"span_kind"`
 }
 
+type Inqueue struct {
+	ID             uuid.UUID  `json:"id"`
+	QueueTs        time.Time  `json:"queue_ts"`
+	Priority       int32      `json:"priority"`
+	OrganizationID uuid.UUID  `json:"organization_id"`
+	CollectorName  string     `json:"collector_name"`
+	InstanceNum    int16      `json:"instance_num"`
+	Bucket         string     `json:"bucket"`
+	ObjectID       string     `json:"object_id"`
+	Signal         string     `json:"signal"`
+	Tries          int32      `json:"tries"`
+	ClaimedBy      int64      `json:"claimed_by"`
+	ClaimedAt      *time.Time `json:"claimed_at"`
+	FileSize       int64      `json:"file_size"`
+	HeartbeatedAt  *time.Time `json:"heartbeated_at"`
+	EligibleAt     time.Time  `json:"eligible_at"`
+}
+
 type InqueueJournal struct {
 	ID             int64     `json:"id"`
 	OrganizationID uuid.UUID `json:"organization_id"`
