@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/segmentio/kafka-go"
@@ -149,6 +150,16 @@ func NewConsumerWithOptions(opts ...ConsumerOption) Consumer {
 }
 
 func (c *kafkaConsumer) Consume(ctx context.Context, handler MessageHandler) error {
+	// Log consumer startup details
+	slog.Info("Starting Kafka consumer consumption loop",
+		slog.String("topic", c.config.Topic),
+		slog.String("consumerGroup", c.config.GroupID),
+		slog.Int64("startOffset", c.config.StartOffset),
+		slog.Int("batchSize", c.config.BatchSize),
+		slog.Duration("maxWait", c.config.MaxWait),
+		slog.Int("minBytes", c.config.MinBytes),
+		slog.Int("maxBytes", c.config.MaxBytes))
+
 	batch := make([]ConsumedMessage, 0, c.config.BatchSize)
 
 	for {
@@ -172,6 +183,10 @@ func (c *kafkaConsumer) Consume(ctx context.Context, handler MessageHandler) err
 		if err != nil {
 			if err == context.DeadlineExceeded {
 				// Timeout reached, process batch if we have messages
+				slog.Debug("Consumer fetch timeout, no new messages available",
+					slog.String("topic", c.config.Topic),
+					slog.String("consumerGroup", c.config.GroupID),
+					slog.Int("batchSize", len(batch)))
 				if len(batch) > 0 {
 					if err := c.processBatch(ctx, handler, batch); err != nil {
 						return fmt.Errorf("failed to process batch: %w", err)
@@ -182,6 +197,12 @@ func (c *kafkaConsumer) Consume(ctx context.Context, handler MessageHandler) err
 			}
 			return fmt.Errorf("failed to fetch message: %w", err)
 		}
+
+		slog.Debug("Fetched message from Kafka",
+			slog.String("topic", c.config.Topic),
+			slog.String("consumerGroup", c.config.GroupID),
+			slog.Int("partition", msg.Partition),
+			slog.Int64("offset", msg.Offset))
 
 		batch = append(batch, FromKafkaMessage(msg))
 

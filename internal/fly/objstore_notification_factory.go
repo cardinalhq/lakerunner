@@ -168,6 +168,11 @@ func NewObjStoreNotificationConsumer(factory *Factory, signal string, groupID st
 		return nil, fmt.Errorf("unsupported signal type: %s", signal)
 	}
 
+	logger.Info("Creating Kafka consumer",
+		slog.String("topic", topic),
+		slog.String("consumerGroup", groupID),
+		slog.String("signal", signal))
+
 	consumer, err := factory.CreateConsumer(topic, groupID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka consumer: %w", err)
