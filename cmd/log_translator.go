@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package ingestion
+package cmd
 
 import (
 	"fmt"
@@ -24,18 +24,9 @@ import (
 
 // LogTranslator adds resource metadata to log rows
 type LogTranslator struct {
-	OrgID    string
-	Bucket   string
-	ObjectID string
-}
-
-// NewLogTranslator creates a new LogTranslator
-func NewLogTranslator(orgID, bucket, objectID string) *LogTranslator {
-	return &LogTranslator{
-		OrgID:    orgID,
-		Bucket:   bucket,
-		ObjectID: objectID,
-	}
+	orgID    string
+	bucket   string
+	objectID string
 }
 
 // TranslateRow adds resource fields to each row
@@ -46,9 +37,9 @@ func (t *LogTranslator) TranslateRow(row *filereader.Row) error {
 	}
 
 	// Only set the specific required fields - assume all other fields are properly set
-	(*row)[wkk.NewRowKey("resource.bucket.name")] = t.Bucket
-	(*row)[wkk.NewRowKey("resource.file.name")] = "./" + t.ObjectID
-	(*row)[wkk.NewRowKey("resource.file.type")] = helpers.GetFileType(t.ObjectID)
+	(*row)[wkk.NewRowKey("resource.bucket.name")] = t.bucket
+	(*row)[wkk.NewRowKey("resource.file.name")] = "./" + t.objectID
+	(*row)[wkk.NewRowKey("resource.file.type")] = helpers.GetFileType(t.objectID)
 
 	// Ensure required CardinalhQ fields are set
 	(*row)[wkk.RowKeyCTelemetryType] = "logs"

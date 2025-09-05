@@ -16,8 +16,13 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"os"
+	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
@@ -29,7 +34,10 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
-	"github.com/cardinalhq/lakerunner/internal/logsprocessing/ingestion"
+	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
+	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 	"github.com/cardinalhq/lakerunner/internal/processing/ingest"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
@@ -79,11 +87,6 @@ func init() {
 				return fmt.Errorf("failed to load config: %w", err)
 			}
 
-			// Also set log partitions from config
-			if cfg.Logs.Partitions > 0 {
-				ingestion.SetNumLogPartitions(cfg.Logs.Partitions)
-			}
-
 			kafkaFactory := fly.NewFactory(&cfg.Fly)
 			if !kafkaFactory.IsEnabled() {
 				return fmt.Errorf("Kafka is required for ingestion but is not enabled")
@@ -111,9 +114,174 @@ func init() {
 	rootCmd.AddCommand(cmd)
 }
 
+// hourSlotKey uniquely identifies a writer for a specific hour and slot combination
+type hourSlotKey struct {
+	dateint int32
+	hour    int
+	slot    int
+}
+
+// writerManager manages multiple parquet writers, one per hour/slot combination
+type writerManager struct {
+	writers       map[hourSlotKey]*parquetwriter.UnifiedWriter
+	tmpdir        string
+	orgID         string
+	ingestDateint int32
+	rpfEstimate   int64
+	ll            *slog.Logger
+}
+
+func newWriterManager(tmpdir, orgID string, ingestDateint int32, rpfEstimate int64, ll *slog.Logger) *writerManager {
+	return &writerManager{
+		writers:       make(map[hourSlotKey]*parquetwriter.UnifiedWriter),
+		tmpdir:        tmpdir,
+		orgID:         orgID,
+		ingestDateint: ingestDateint,
+		rpfEstimate:   rpfEstimate,
+		ll:            ll,
+	}
+}
+
+// processBatch efficiently processes an entire batch, grouping rows by hour/slot
+func (wm *writerManager) processBatch(batch *pipeline.Batch) (processedCount, errorCount int64) {
+	// Group rows by hour/slot to minimize writer lookups and enable batch writes
+	batchGroups := make(map[hourSlotKey]*pipeline.Batch)
+
+	// First pass: group rows by hour/slot
+	for i := 0; i < batch.Len(); i++ {
+		row := batch.Get(i)
+		if row == nil {
+			wm.ll.Error("Row is nil - skipping", slog.Int("rowIndex", i))
+			errorCount++
+			continue
+		}
+
+		// Extract timestamp
+		ts, ok := row[wkk.RowKeyCTimestamp].(int64)
+		if !ok {
+			wm.ll.Error("_cardinalhq.timestamp field is missing or not int64 - skipping row", slog.Int("rowIndex", i))
+			errorCount++
+			continue
+		}
+
+		// Determine hour/slot
+		dateint, hour16 := helpers.MSToDateintHour(ts)
+		hour := int(hour16)
+		slot := 0
+		key := hourSlotKey{dateint, hour, slot}
+
+		// Create or get batch for this group
+		if batchGroups[key] == nil {
+			batchGroups[key] = pipeline.GetBatch()
+		}
+
+		// Add row to the appropriate batch group
+		newRow := batchGroups[key].AddRow()
+		for k, v := range row {
+			newRow[k] = v
+		}
+	}
+
+	// Second pass: write each grouped batch to its writer
+	for key, groupedBatch := range batchGroups {
+		writer, err := wm.getWriter(key)
+		if err != nil {
+			wm.ll.Error("Failed to get writer for batch group",
+				slog.Any("key", key),
+				slog.String("error", err.Error()))
+			errorCount += int64(groupedBatch.Len())
+			pipeline.ReturnBatch(groupedBatch)
+			continue
+		}
+
+		// Write the entire batch efficiently
+		if err := writer.WriteBatch(groupedBatch); err != nil {
+			wm.ll.Error("Failed to write batch group",
+				slog.Any("key", key),
+				slog.Int("batchSize", groupedBatch.Len()),
+				slog.String("error", err.Error()))
+			errorCount += int64(groupedBatch.Len())
+		} else {
+			processedCount += int64(groupedBatch.Len())
+		}
+
+		// Return batch to pool
+		pipeline.ReturnBatch(groupedBatch)
+	}
+
+	return processedCount, errorCount
+}
+
+// getWriter returns the writer for a specific hour/slot, creating it if necessary
+func (wm *writerManager) getWriter(key hourSlotKey) (*parquetwriter.UnifiedWriter, error) {
+	if writer, exists := wm.writers[key]; exists {
+		return writer, nil
+	}
+
+	// Create new writer
+	writer, err := factories.NewLogsWriter(wm.tmpdir, wm.rpfEstimate)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create logs writer: %w", err)
+	}
+
+	wm.writers[key] = writer
+	wm.ll.Debug("Created new log writer",
+		slog.String("orgID", wm.orgID),
+		slog.Int("dateint", int(key.dateint)),
+		slog.Int("hour", key.hour),
+		slog.Int("slot", key.slot))
+
+	return writer, nil
+}
+
+// closeAll closes all writers and returns their results
+func (wm *writerManager) closeAll(ctx context.Context) ([]parquetwriter.Result, error) {
+	var allResults []parquetwriter.Result
+	var errs []error
+
+	for key, writer := range wm.writers {
+		results, err := writer.Close(ctx)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("failed to close writer %v: %w", key, err))
+			continue
+		}
+		allResults = append(allResults, results...)
+		wm.ll.Debug("Closed log writer",
+			slog.String("orgID", wm.orgID),
+			slog.Int("dateint", int(key.dateint)),
+			slog.Int("hour", key.hour),
+			slog.Int("slot", key.slot),
+			slog.Int("fileCount", len(results)))
+	}
+
+	if len(errs) > 0 {
+		return allResults, errors.Join(errs...)
+	}
+
+	return allResults, nil
+}
+
 // createLogReader creates the appropriate filereader based on file type
 func createLogReader(filename string) (filereader.Reader, error) {
 	return filereader.ReaderForFile(filename, filereader.SignalTypeLogs)
+}
+
+// queueLogCompactionForSlot queues a log compaction job for a specific slot
+func queueLogCompactionForSlot(ctx context.Context, mdb lrdb.StoreFull, item ingest.IngestItem, slotID int, dateint int32, hourAlignedTS int64) error {
+	startTime := time.UnixMilli(hourAlignedTS).UTC()
+	endTime := startTime.Add(time.Hour)
+
+	return mdb.WorkQueueAdd(ctx, lrdb.WorkQueueAddParams{
+		OrgID:      item.OrganizationID,
+		Instance:   item.InstanceNum,
+		Signal:     lrdb.SignalEnumLogs,
+		Action:     lrdb.ActionEnumCompact,
+		Dateint:    dateint,
+		Frequency:  -1,
+		SlotID:     int32(slotID),
+		TsRange:    helpers.TimeRange{Start: startTime, End: endTime}.ToPgRange(),
+		RunnableAt: time.Now().UTC().Add(5 * time.Minute),
+	})
 }
 
 func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
