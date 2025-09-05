@@ -88,13 +88,19 @@ func (q *QuerierService) handleListLogQLTags(w http.ResponseWriter, r *http.Requ
 	defer cancel()
 
 	tags, err := q.mdb.ListLogQLTags(ctx, p.OrgUUID)
-
 	if err != nil {
 		slog.Error("ListLogQLTags failed", "org", p.OrgUUID, "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
+	strTags := make([]string, 0, len(tags))
+	for _, t := range tags {
+		if s, ok := t.(string); ok {
+			strTags = append(strTags, s)
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(tagsResponse{Tags: tags})
+	_ = json.NewEncoder(w).Encode(tagsResponse{Tags: strTags})
 }

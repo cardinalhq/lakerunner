@@ -75,7 +75,8 @@ type Querier interface {
 	InsertLogSegmentDirect(ctx context.Context, arg InsertLogSegmentParams) error
 	InsertMetricSegmentDirect(ctx context.Context, arg InsertMetricSegmentParams) error
 	InsertTraceSegmentDirect(ctx context.Context, arg InsertTraceSegmentDirectParams) error
-	ListLogQLTags(ctx context.Context, organizationID uuid.UUID) ([]string, error)
+	// If any log record has a body, expose it as a synthetic "_cardinalhq.message" tag key
+	ListLogQLTags(ctx context.Context, organizationID uuid.UUID) ([]interface{}, error)
 	ListLogSegmentsForQuery(ctx context.Context, arg ListLogSegmentsForQueryParams) ([]ListLogSegmentsForQueryRow, error)
 	ListMetricSegmentsForQuery(ctx context.Context, arg ListMetricSegmentsForQueryParams) ([]ListMetricSegmentsForQueryRow, error)
 	ListPromMetricTags(ctx context.Context, arg ListPromMetricTagsParams) ([]string, error)
