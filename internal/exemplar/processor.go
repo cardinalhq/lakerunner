@@ -17,9 +17,12 @@ package exemplar
 import (
 	"context"
 	"log/slog"
+	"strconv"
 	"sync"
 	"time"
 
+	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
+	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 )
 
@@ -35,20 +38,29 @@ const (
 // Tenant holds the caches for each telemetry type for a specific organization
 type Tenant struct {
 	metricCache *LRUCache[pmetric.Metrics]
-	// logCache and traceCache will be added when those telemetry types are implemented
+	logCache    *LRUCache[plog.Logs]
+	// traceCache will be added when traces are implemented
+
+	// TrieClusterManager for fingerprinting (one per organization)
+	trieClusterManager *fingerprinter.TrieClusterManager
 }
 
 // Processor handles exemplar generation from different telemetry types using tenant-based LRU caches
 type Processor struct {
-	tenants       sync.Map // organizationID -> *Tenant
-	logger        *slog.Logger
-	telemetryType TelemetryType
+	tenants sync.Map // organizationID -> *Tenant
+	logger  *slog.Logger
 
-	// Callback for metrics exemplars (logs and traces not implemented yet)
+	// Callback for metrics exemplars
 	sendMetricsExemplars func(ctx context.Context, organizationID string, exemplars []*ExemplarData) error
 
-	// Type-specific configurations
+	// Callback for logs exemplars
+	sendLogsExemplars func(ctx context.Context, organizationID string, exemplars []*ExemplarData) error
+
+	// Configuration for all telemetry types
 	config Config
+
+	// Fingerprinter for log pattern analysis
+	fingerprinter fingerprinter.Fingerprinter
 }
 
 // Config holds configuration for different telemetry types
@@ -94,13 +106,13 @@ func DefaultConfig() Config {
 	}
 }
 
-// NewProcessor creates a new processor for a specific telemetry type
-func NewProcessor(telemetryType TelemetryType, config Config, logger *slog.Logger) *Processor {
+// NewProcessor creates a new unified processor for all telemetry types
+func NewProcessor(config Config, logger *slog.Logger) *Processor {
 	return &Processor{
 		tenants:       sync.Map{},
 		logger:        logger,
-		telemetryType: telemetryType,
 		config:        config,
+		fingerprinter: fingerprinter.NewFingerprinter(),
 	}
 }
 
@@ -110,28 +122,75 @@ func (p *Processor) getTenant(organizationID string) *Tenant {
 	}
 
 	p.logger.Info("Creating new tenant", slog.String("organization_id", organizationID))
-	tenant := &Tenant{}
+	tenant := &Tenant{
+		trieClusterManager: fingerprinter.NewTrieClusterManager(0.5),
+	}
 
-	// Create cache based on processor type
-	switch p.telemetryType {
-	case TelemetryTypeLogs:
-		// Logs not implemented yet
-		p.logger.Debug("Logs processing not implemented yet")
-	case TelemetryTypeMetrics:
-		if p.config.Metrics.Enabled {
-			tenant.metricCache = NewLRUCache(
-				p.config.Metrics.CacheSize,
-				p.config.Metrics.Expiry,
-				p.config.Metrics.ReportInterval,
-				p.createMetricsCallback(organizationID))
-		}
-	case TelemetryTypeTraces:
+	// Create caches for enabled telemetry types
+	if p.config.Logs.Enabled {
+		tenant.logCache = NewLRUCache(
+			p.config.Logs.CacheSize,
+			p.config.Logs.Expiry,
+			p.config.Logs.ReportInterval,
+			p.createLogsCallback(organizationID))
+	}
+
+	if p.config.Metrics.Enabled {
+		tenant.metricCache = NewLRUCache(
+			p.config.Metrics.CacheSize,
+			p.config.Metrics.Expiry,
+			p.config.Metrics.ReportInterval,
+			p.createMetricsCallback(organizationID))
+	}
+
+	if p.config.Traces.Enabled {
 		// Traces not implemented yet
 		p.logger.Debug("Traces processing not implemented yet")
 	}
 
 	p.tenants.Store(organizationID, tenant)
 	return tenant
+}
+
+// createLogsCallback creates a callback function for logs exemplars for a specific organization
+func (p *Processor) createLogsCallback(organizationID string) func([]*Entry[plog.Logs]) {
+	return func(entries []*Entry[plog.Logs]) {
+		p.logger.Info("Processing logs exemplars",
+			slog.String("organization_id", organizationID),
+			slog.Int("count", len(entries)))
+
+		exemplarData := make([]*ExemplarData, 0, len(entries))
+		for _, entry := range entries {
+			data, err := p.marshalLogs(entry.value)
+			if err != nil {
+				p.logger.Error("Failed to marshal logs data", slog.Any("error", err))
+				continue
+			}
+
+			attributes := make(map[string]string)
+			for i := 0; i < len(entry.attributes); i += 2 {
+				if i+1 < len(entry.attributes) {
+					attributes[entry.attributes[i]] = entry.attributes[i+1]
+				}
+			}
+
+			exemplarData = append(exemplarData, &ExemplarData{
+				Attributes:  attributes,
+				PartitionId: entry.key,
+				Payload:     data,
+			})
+		}
+
+		if len(exemplarData) == 0 {
+			return
+		}
+
+		if p.sendLogsExemplars != nil {
+			if err := p.sendLogsExemplars(context.Background(), organizationID, exemplarData); err != nil {
+				p.logger.Error("Failed to send logs exemplars to database", slog.Any("error", err))
+			}
+		}
+	}
 }
 
 // createMetricsCallback creates a callback function for metrics exemplars for a specific organization
@@ -175,6 +234,16 @@ func (p *Processor) createMetricsCallback(organizationID string) func([]*Entry[p
 	}
 }
 
+// plog.Logs -> JSON string
+func (p *Processor) marshalLogs(ld plog.Logs) (string, error) {
+	marshaller := &plog.JSONMarshaler{}
+	bytes, err := marshaller.MarshalLogs(ld)
+	if err != nil {
+		return "", err
+	}
+	return string(bytes), nil
+}
+
 // pmetric.Metrics -> JSON string
 func (p *Processor) marshalMetrics(md pmetric.Metrics) (string, error) {
 	marshaller := &pmetric.JSONMarshaler{}
@@ -183,6 +252,30 @@ func (p *Processor) marshalMetrics(md pmetric.Metrics) (string, error) {
 		return "", err
 	}
 	return string(bytes), nil
+}
+
+// ProcessLogs processes logs and generates exemplars for a specific organization
+func (p *Processor) ProcessLogs(ctx context.Context, ld plog.Logs, organizationID string) error {
+	if !p.config.Logs.Enabled {
+		return nil
+	}
+
+	tenant := p.getTenant(organizationID)
+	if tenant.logCache == nil {
+		return nil
+	}
+
+	for i := range ld.ResourceLogs().Len() {
+		rl := ld.ResourceLogs().At(i)
+		for j := range rl.ScopeLogs().Len() {
+			sl := rl.ScopeLogs().At(j)
+			for k := range sl.LogRecords().Len() {
+				lr := sl.LogRecords().At(k)
+				p.addLogExemplar(tenant, rl, sl, lr)
+			}
+		}
+	}
+	return nil
 }
 
 // ProcessMetrics processes metrics and generates exemplars for a specific organization
@@ -225,6 +318,39 @@ func (p *Processor) addMetricsExemplar(tenant *Tenant, rm pmetric.ResourceMetric
 	tenant.metricCache.Put(exemplarKey, keys, exemplarRecord)
 }
 
+// add a logs exemplar to the organization's cache
+func (p *Processor) addLogExemplar(tenant *Tenant, rl plog.ResourceLogs, sl plog.ScopeLogs, lr plog.LogRecord) {
+	logBody := extractLogBody(lr)
+
+	// Get old fingerprint from attributes (if exists from collector)
+	oldFingerprint := getLogFingerprint(lr)
+
+	// Compute new fingerprint using our TrieClusterManager
+	newFingerprint, _, _, err := p.fingerprinter.Fingerprint(logBody, tenant.trieClusterManager)
+	if err != nil {
+		p.logger.Debug("Error fingerprinting log", slog.Any("error", err))
+		// Fall back to old fingerprint if available, otherwise skip
+		if oldFingerprint != 0 {
+			newFingerprint = oldFingerprint
+		} else {
+			return
+		}
+	}
+
+	extraKeys := []string{
+		fingerprintKey, strconv.FormatInt(newFingerprint, 10),
+		oldFingerprintKey, strconv.FormatInt(oldFingerprint, 10),
+	}
+	keys, exemplarKey := computeExemplarKey(rl.Resource(), extraKeys)
+
+	if tenant.logCache.Contains(exemplarKey) {
+		return
+	}
+
+	exemplarRecord := toLogExemplar(rl, sl, lr)
+	tenant.logCache.Put(exemplarKey, keys, exemplarRecord)
+}
+
 func (p *Processor) Close() error {
 	p.tenants.Range(func(key, value interface{}) bool {
 		if tenant, ok := value.(*Tenant); ok {
@@ -233,7 +359,12 @@ func (p *Processor) Close() error {
 				tenant.metricCache.FlushPending()
 				tenant.metricCache.Close()
 			}
-			// logCache and traceCache will be handled when those telemetry types are implemented
+			if tenant.logCache != nil {
+				// Force flush all pending exemplars before closing
+				tenant.logCache.FlushPending()
+				tenant.logCache.Close()
+			}
+			// traceCache will be handled when traces are implemented
 		}
 		return true
 	})
@@ -245,7 +376,19 @@ func (p *Processor) SetMetricsCallback(callback func(ctx context.Context, organi
 	p.sendMetricsExemplars = callback
 }
 
+// SetLogsCallback updates the sendLogsExemplars callback function
+func (p *Processor) SetLogsCallback(callback func(ctx context.Context, organizationID string, exemplars []*ExemplarData) error) {
+	p.sendLogsExemplars = callback
+}
+
 // NewMetricsProcessor creates a new processor specifically for metrics
+// Deprecated: Use NewProcessor instead for unified processing
 func NewMetricsProcessor(config Config, logger *slog.Logger) *Processor {
-	return NewProcessor(TelemetryTypeMetrics, config, logger)
+	return NewProcessor(config, logger)
+}
+
+// NewLogsProcessor creates a new processor specifically for logs
+// Deprecated: Use NewProcessor instead for unified processing
+func NewLogsProcessor(config Config, logger *slog.Logger) *Processor {
+	return NewProcessor(config, logger)
 }

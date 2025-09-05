@@ -130,18 +130,31 @@ func NewIngestLoopContext(ctx context.Context, signal string) (*IngestLoopContex
 			BatchSize:      100,
 		},
 		Logs: exemplar.TelemetryConfig{
-			Enabled: false, // Logs not implemented yet
+			Enabled:        true,
+			CacheSize:      10000,
+			Expiry:         15 * time.Minute,
+			ReportInterval: 5 * time.Minute,
+			BatchSize:      100,
 		},
 		Traces: exemplar.TelemetryConfig{
 			Enabled: false, // Traces not implemented yet
 		},
 	}
 
-	exemplarProcessor := exemplar.NewMetricsProcessor(config, ll)
+	exemplarProcessor := exemplar.NewProcessor(config, ll)
 
-	exemplarProcessor.SetMetricsCallback(func(ctx context.Context, organizationID string, exemplars []*exemplar.ExemplarData) error {
-		return processMetricsExemplarsDirect(ctx, organizationID, exemplars, mdb)
-	})
+	// Set callbacks for enabled telemetry types
+	if config.Metrics.Enabled {
+		exemplarProcessor.SetMetricsCallback(func(ctx context.Context, organizationID string, exemplars []*exemplar.ExemplarData) error {
+			return processMetricsExemplarsDirect(ctx, organizationID, exemplars, mdb)
+		})
+	}
+
+	if config.Logs.Enabled {
+		exemplarProcessor.SetLogsCallback(func(ctx context.Context, organizationID string, exemplars []*exemplar.ExemplarData) error {
+			return processLogsExemplarsDirect(ctx, organizationID, exemplars, mdb)
+		})
+	}
 
 	var processedItems int64
 	var lastLogTime time.Time
