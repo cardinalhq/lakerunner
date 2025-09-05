@@ -80,7 +80,7 @@ func TestAdminClient_GetTopicInfo(t *testing.T) {
 		nonExistentTopic := fmt.Sprintf("test-topic-nonexistent-%s", uuid.New().String())
 		_, err := adminClient.GetTopicInfo(ctx, nonExistentTopic)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to read partitions")
+		assert.Contains(t, err.Error(), "not found")
 	})
 
 	t.Run("existing topic returns info with correct high water mark", func(t *testing.T) {

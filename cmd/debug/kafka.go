@@ -98,7 +98,9 @@ func getConsumerLagCmd() *cobra.Command {
 
 func getConsumerLag(ctx context.Context, factory *fly.Factory, groupFilter, topicFilter string) ([]PartitionLag, error) {
 	// Create admin client using the factory's config
-	adminClient := fly.NewAdminClient(factory.GetConfig())
+	config := factory.GetConfig()
+	fmt.Printf("Info: Using Kafka brokers: %v\n", config.Brokers)
+	adminClient := fly.NewAdminClient(config)
 
 	// Define the topic/group mappings we're interested in
 	topicGroups := map[string]string{

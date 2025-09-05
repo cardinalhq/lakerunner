@@ -17,6 +17,7 @@ package fly
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/segmentio/kafka-go"
 )
@@ -45,45 +46,88 @@ type ConsumerGroupInfo struct {
 
 // AdminClient provides Kafka administrative operations
 type AdminClient struct {
-	config *Config
+	factory *Factory
 }
 
 // NewAdminClient creates a new Kafka admin client
 func NewAdminClient(config *Config) *AdminClient {
-	return &AdminClient{config: config}
+	return &AdminClient{factory: NewFactory(config)}
 }
 
 // GetTopicInfo retrieves information about a specific topic
 func (a *AdminClient) GetTopicInfo(ctx context.Context, topic string) (*TopicInfo, error) {
-	// Connect to Kafka
-	conn, err := kafka.Dial("tcp", a.config.Brokers[0])
+	// Create Kafka client using centralized factory
+	client, err := a.factory.CreateKafkaClient()
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to Kafka: %w", err)
+		return nil, fmt.Errorf("failed to create Kafka client: %w", err)
 	}
-	defer conn.Close()
 
-	// Get topic partitions
-	partitions, err := conn.ReadPartitions(topic)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read partitions for topic %s: %w", topic, err)
+	// Get metadata for all topics to find our target topic with retry
+	fmt.Printf("Info: Getting metadata for topic %s\n", topic)
+
+	var targetTopic *kafka.Topic
+	maxRetries := 3
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		resp, err := client.Metadata(ctx, &kafka.MetadataRequest{})
+		if err != nil {
+			return nil, fmt.Errorf("failed to get Kafka metadata: %w", err)
+		}
+
+		// Find the specific topic
+		for _, t := range resp.Topics {
+			if t.Name == topic && t.Error == nil && !t.Internal {
+				targetTopic = &t
+				break
+			}
+		}
+
+		if targetTopic != nil {
+			break
+		}
+
+		// If topic not found and we have retries left, wait and try again
+		if attempt < maxRetries-1 {
+			time.Sleep(500 * time.Millisecond)
+		}
 	}
+
+	if targetTopic == nil {
+		return nil, fmt.Errorf("topic %s not found", topic)
+	}
+
+	fmt.Printf("Info: Found %d partitions for topic %s\n", len(targetTopic.Partitions), topic)
 
 	topicInfo := &TopicInfo{
 		Name:       topic,
-		Partitions: make([]PartitionInfo, 0, len(partitions)),
+		Partitions: make([]PartitionInfo, 0, len(targetTopic.Partitions)),
 	}
 
-	// Get high water mark for each partition
-	for _, partition := range partitions {
-		partConn, err := kafka.DialLeader(ctx, "tcp", a.config.Brokers[0], topic, partition.ID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to connect to partition leader for %s:%d: %w", topic, partition.ID, err)
+	// Get high water mark for each partition using authenticated client
+	for _, partition := range targetTopic.Partitions {
+		// Use ListOffsets API through the authenticated client to get high water mark
+		req := &kafka.ListOffsetsRequest{
+			Topics: map[string][]kafka.OffsetRequest{
+				topic: {kafka.LastOffsetOf(partition.ID)},
+			},
 		}
 
-		highWaterMark, err := partConn.ReadLastOffset()
-		partConn.Close()
+		resp, err := client.ListOffsets(ctx, req)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read last offset for %s:%d: %w", topic, partition.ID, err)
+			return nil, fmt.Errorf("failed to list offsets for %s:%d: %w", topic, partition.ID, err)
+		}
+
+		// Extract the high water mark from the response
+		var highWaterMark int64 = 0
+		if topicOffsets, exists := resp.Topics[topic]; exists {
+			for _, partitionOffset := range topicOffsets {
+				if partitionOffset.Partition == partition.ID {
+					if partitionOffset.Error != nil {
+						return nil, fmt.Errorf("failed to get offset for %s:%d: %w", topic, partition.ID, partitionOffset.Error)
+					}
+					highWaterMark = partitionOffset.LastOffset
+					break
+				}
+			}
 		}
 
 		topicInfo.Partitions = append(topicInfo.Partitions, PartitionInfo{
@@ -105,26 +149,48 @@ func (a *AdminClient) GetConsumerGroupLag(ctx context.Context, topic, groupID st
 
 	var result []ConsumerGroupInfo
 
-	// Get committed offset for each partition
-	for _, partition := range topicInfo.Partitions {
-		// Create a temporary reader to get the committed offset
-		reader := kafka.NewReader(kafka.ReaderConfig{
-			Brokers:   a.config.Brokers,
-			Topic:     topic,
-			Partition: partition.ID,
-			GroupID:   groupID,
-		})
+	// Create authenticated client to get committed offsets
+	client, err := a.factory.CreateKafkaClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Kafka client: %w", err)
+	}
 
-		// Get stats which includes offset information
-		stats := reader.Stats()
+	// Get committed offsets for all partitions using OffsetFetch API
+	req := &kafka.OffsetFetchRequest{
+		GroupID: groupID,
+		Topics: map[string][]int{
+			topic: make([]int, len(topicInfo.Partitions)),
+		},
+	}
+
+	// Add all partition IDs to the request
+	for i, partition := range topicInfo.Partitions {
+		req.Topics[topic][i] = partition.ID
+	}
+
+	resp, err := client.OffsetFetch(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch committed offsets for group %s: %w", groupID, err)
+	}
+
+	// Process results for each partition
+	for _, partition := range topicInfo.Partitions {
 		committedOffset := int64(-1)
 
-		// The Offset field in stats gives us the current position
-		if stats.Offset >= 0 {
-			committedOffset = stats.Offset
+		// Find the committed offset for this partition
+		if topicOffsets, exists := resp.Topics[topic]; exists {
+			for _, partitionOffset := range topicOffsets {
+				if partitionOffset.Partition == partition.ID {
+					if partitionOffset.Error != nil {
+						// If there's an error getting the offset, it might mean no commits yet
+						committedOffset = int64(-1)
+					} else {
+						committedOffset = partitionOffset.CommittedOffset
+					}
+					break
+				}
+			}
 		}
-
-		reader.Close()
 
 		// Calculate lag
 		lag := int64(0)
@@ -167,17 +233,24 @@ func (a *AdminClient) GetMultipleConsumerGroupLag(ctx context.Context, topicGrou
 
 // TopicExists checks if a topic exists
 func (a *AdminClient) TopicExists(ctx context.Context, topic string) (bool, error) {
-	conn, err := kafka.Dial("tcp", a.config.Brokers[0])
+	// Create Kafka client using centralized factory
+	client, err := a.factory.CreateKafkaClient()
 	if err != nil {
-		return false, fmt.Errorf("failed to connect to Kafka: %w", err)
-	}
-	defer conn.Close()
-
-	_, err = conn.ReadPartitions(topic)
-	if err != nil {
-		// If we can't read partitions, assume topic doesn't exist
-		return false, nil
+		return false, fmt.Errorf("failed to create Kafka client: %w", err)
 	}
 
-	return true, nil
+	// Get metadata for all topics to find our target topic
+	resp, err := client.Metadata(ctx, &kafka.MetadataRequest{})
+	if err != nil {
+		return false, fmt.Errorf("failed to get Kafka metadata: %w", err)
+	}
+
+	// Check if topic exists
+	for _, t := range resp.Topics {
+		if t.Name == topic && t.Error == nil && !t.Internal {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }

@@ -116,6 +116,44 @@ func (f *Factory) createSASLMechanism() (sasl.Mechanism, error) {
 	}
 }
 
+// CreateTransport creates a centralized kafka.Transport with proper SASL and TLS configuration
+func (f *Factory) CreateTransport() (*kafka.Transport, error) {
+	transport := &kafka.Transport{}
+
+	// Configure SASL if enabled
+	if f.config.SASLEnabled {
+		mechanism, err := f.createSASLMechanism()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create SASL mechanism: %w", err)
+		}
+		transport.SASL = mechanism
+	}
+
+	// Configure TLS if enabled
+	if f.config.TLSEnabled {
+		transport.TLS = &tls.Config{
+			InsecureSkipVerify: f.config.TLSSkipVerify,
+		}
+	}
+
+	return transport, nil
+}
+
+// CreateKafkaClient creates a properly configured kafka.Client with centralized transport
+func (f *Factory) CreateKafkaClient() (*kafka.Client, error) {
+	transport, err := f.CreateTransport()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create transport: %w", err)
+	}
+
+	client := &kafka.Client{
+		Addr:      kafka.TCP(f.config.Brokers[0]),
+		Transport: transport,
+	}
+
+	return client, nil
+}
+
 // IsEnabled returns whether Kafka is enabled
 func (f *Factory) IsEnabled() bool {
 	return f.config.Enabled
