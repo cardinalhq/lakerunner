@@ -321,6 +321,8 @@ func (q *QuerierService) Run(doneCtx context.Context) error {
 	mux.HandleFunc("/api/v1/metrics/query", q.handlePromQuery)
 	mux.HandleFunc("/api/v1/logs/query", q.handleLogQuery)
 	mux.HandleFunc("/api/v1/promql/validate", q.handlePromQLValidate)
+	mux.HandleFunc("/api/v1/tags/promql", q.handleListPromQLTags)
+	mux.HandleFunc("/api/v1/tags/promql/metricsMetadata", q.handleListPromQLMetricsMetadata)
 	mux.HandleFunc("/api/v1/tags/logql", q.handleListLogQLTags)
 	mux.HandleFunc("/api/v1/metrics/tagvalues", q.handleGetMetricTagValues)
 	mux.HandleFunc("/api/v1/logs/tagvalues", q.handleGetLogTagValues)
