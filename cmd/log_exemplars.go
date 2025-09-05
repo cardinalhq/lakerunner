@@ -56,7 +56,7 @@ func processLogsExemplarsDirect(ctx context.Context, organizationID string, exem
 			slog.Error("Failed to parse fingerprint", "error", err, "fingerprint", fingerprintStr)
 			continue
 		}
-		
+
 		// Parse old fingerprint (0 if not present or invalid)
 		var oldFingerprint int64
 		if oldFingerprintStr != "" && oldFingerprintStr != "0" {

@@ -19,7 +19,6 @@ import (
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 
-	"github.com/cardinalhq/lakerunner/internal/buffet"
 	"github.com/cardinalhq/oteltools/pkg/translate"
 	semconv "go.opentelemetry.io/otel/semconv/v1.30.0"
 )
@@ -125,13 +124,6 @@ func getLogFingerprint(lr plog.LogRecord) int64 {
 		return fingerprintField.Int()
 	}
 	return 0
-}
-
-// generateLogFingerprint creates a fingerprint from the log body using LakeRunner's buffet package
-// Deprecated: Use fingerprinter.Fingerprint for complex pattern matching
-func generateLogFingerprint(logBody string) int64 {
-	// Use the same fingerprinting approach as LakeRunner's query system
-	return buffet.ComputeFingerprint("_cardinalhq.message", logBody)
 }
 
 // extractLogBody extracts the log body from a log record

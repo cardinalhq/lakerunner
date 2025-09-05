@@ -40,7 +40,7 @@ type Tenant struct {
 	metricCache *LRUCache[pmetric.Metrics]
 	logCache    *LRUCache[plog.Logs]
 	// traceCache will be added when traces are implemented
-	
+
 	// TrieClusterManager for fingerprinting (one per organization)
 	trieClusterManager *fingerprinter.TrieClusterManager
 }
@@ -58,7 +58,7 @@ type Processor struct {
 
 	// Configuration for all telemetry types
 	config Config
-	
+
 	// Fingerprinter for log pattern analysis
 	fingerprinter fingerprinter.Fingerprinter
 }
@@ -321,10 +321,10 @@ func (p *Processor) addMetricsExemplar(tenant *Tenant, rm pmetric.ResourceMetric
 // add a logs exemplar to the organization's cache
 func (p *Processor) addLogExemplar(tenant *Tenant, rl plog.ResourceLogs, sl plog.ScopeLogs, lr plog.LogRecord) {
 	logBody := extractLogBody(lr)
-	
+
 	// Get old fingerprint from attributes (if exists from collector)
 	oldFingerprint := getLogFingerprint(lr)
-	
+
 	// Compute new fingerprint using our TrieClusterManager
 	newFingerprint, _, _, err := p.fingerprinter.Fingerprint(logBody, tenant.trieClusterManager)
 	if err != nil {
