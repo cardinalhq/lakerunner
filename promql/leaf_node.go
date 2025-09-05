@@ -367,7 +367,12 @@ func (n *LeafNode) Label(tags map[string]any) string {
 	if n.BE.FuncName != "" {
 		out += n.BE.FuncName + "("
 	}
-	out += n.BE.Metric
+	if n.BE.isSyntheticLogMetric() {
+		out += n.BE.LogLeaf.Label()
+		return out + ")"
+	} else {
+		out += n.BE.Metric
+	}
 	if len(n.BE.GroupBy) > 0 {
 		parts := make([]string, 0, len(n.BE.GroupBy))
 		groupByTags := n.BE.GroupBy

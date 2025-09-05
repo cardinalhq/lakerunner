@@ -151,14 +151,18 @@ func (q *QuerierService) handlePromQuery(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	writeSSE, ok := q.sseWriter(w)
-	if !ok {
-		return
-	}
-
 	resultsCh, err := q.EvaluateMetricsQuery(r.Context(), qPayload.OrgUUID, qPayload.StartTs, qPayload.EndTs, plan)
 	if err != nil {
 		http.Error(w, "evaluate error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	q.sendEvalResults(r, w, resultsCh, plan)
+}
+
+func (q *QuerierService) sendEvalResults(r *http.Request, w http.ResponseWriter, resultsCh <-chan map[string]promql.EvalResult, plan promql.QueryPlan) {
+	writeSSE, ok := q.sseWriter(w)
+	if !ok {
 		return
 	}
 
@@ -203,18 +207,85 @@ func (q *QuerierService) handleLogQuery(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "invalid log query expression: "+qp.Q+" "+err.Error(), http.StatusBadRequest)
 		return
 	}
+
 	lplan, err := logql.CompileLog(logAst)
 	if err != nil {
-		http.Error(w, "compile error: "+err.Error(), http.StatusBadRequest)
+		http.Error(w, "cannot compile LogQL: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
+	if logAst.NeedsRewrite() {
+		rr, err := promql.RewriteToPromQL(lplan.Root)
+		if err != nil {
+			http.Error(w, "cannot rewrite to PromQL: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		promExpr, err := promql.FromPromQL(rr.PromQL)
+		if err != nil {
+			http.Error(w, "cannot parse rewritten PromQL: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		plan, err := promql.Compile(promExpr)
+		if err != nil {
+			http.Error(w, "cannot compile rewritten PromQL: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		logLeafByBaseExprID := make(map[string]logql.LogLeaf, len(rr.Leaves))
+		for i := range plan.Leaves {
+			// Take address so we mutate the element in the slice.
+			be := &plan.Leaves[i]
+
+			found := false
+			kept := make([]promql.LabelMatch, 0, len(be.Matchers))
+
+			for _, m := range be.Matchers {
+				if m.Label == promql.LeafMatcher {
+					leaf, ok := rr.Leaves[m.Value]
+					if !ok {
+						http.Error(w, "unknown __leaf id: "+m.Value, http.StatusBadRequest)
+						return
+					}
+					lcopy := leaf
+					logLeafByBaseExprID[be.ID] = lcopy
+					be.LogLeaf = &lcopy
+					found = true
+					slog.Info("Found leaf matcher", "leaf", leaf)
+					// Skip adding __leaf back into matchers.
+					continue
+				}
+				kept = append(kept, m)
+			}
+
+			if !found {
+				http.Error(w, "internal: base expr missing __leaf matcher", http.StatusBadRequest)
+				return
+			}
+			// Remove __leaf matcher so it doesn’t appear in downstream SQL.
+			be.Matchers = kept
+		}
+		plan.AttachLogLeaves(logLeafByBaseExprID)
+
+		evalResults, err := q.EvaluateMetricsQuery(r.Context(), qp.OrgUUID, qp.StartTs, qp.EndTs, plan)
+		if err != nil {
+			http.Error(w, "evaluate error: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		q.sendEvalResults(r, w, evalResults, plan)
+		return
+	}
+
+	// ---- Raw logs path (no rewrite) ----
 	writeSSE, ok := q.sseWriter(w)
 	if !ok {
 		return
 	}
 
-	resultsCh, err := q.EvaluateLogsQuery(r.Context(), qp.OrgUUID, qp.StartTs, qp.EndTs, qp.Reverse, qp.Limit, lplan)
+	resultsCh, err := q.EvaluateLogsQuery(
+		r.Context(), qp.OrgUUID, qp.StartTs, qp.EndTs, qp.Reverse, qp.Limit, lplan,
+	)
 	if err != nil {
 		http.Error(w, "evaluate error: "+err.Error(), http.StatusInternalServerError)
 		return

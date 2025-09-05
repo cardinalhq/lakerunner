@@ -49,6 +49,12 @@ func (be *BaseExpr) ToWorkerSQL(step time.Duration) string {
 		return ""
 	}
 
+	// Synthetic log metric → build from log leaf
+	if be.isSyntheticLogMetric() && be.LogLeaf.ID != "" {
+		wantBytes := be.Metric == SynthLogBytes
+		return buildFromLogLeaf(be, wantBytes, step)
+	}
+
 	// COUNT fast-path: COUNT-by-group with no identity collapse → simple raw bucketing
 	if be.WantCount && equalStringSets(be.CountOnBy, be.GroupBy) {
 		return buildStepOnly(be, []proj{{"COUNT(*)", "count"}}, step)
@@ -84,6 +90,54 @@ func (be *BaseExpr) ToWorkerSQL(step time.Duration) string {
 	default:
 		return ""
 	}
+}
+
+func buildFromLogLeaf(be *BaseExpr, wantBytes bool, step time.Duration) string {
+	stepMs := step.Milliseconds()
+	tsCol := "\"_cardinalhq.timestamp\""
+	bodyCol := "\"_cardinalhq.message\""
+
+	// IMPORTANT: the LogQL pipeline must not end with a trailing ';'
+	pipelineSQL := strings.TrimSpace(be.LogLeaf.ToWorkerSQL(0, ""))
+
+	bucketExpr := fmt.Sprintf(
+		"(CAST(%s AS BIGINT) - (CAST(%s AS BIGINT) %% %d))",
+		tsCol, tsCol, stepMs,
+	)
+
+	cols := []string{bucketExpr + " AS bucket_ts"}
+
+	if len(be.GroupBy) > 0 {
+		qbys := make([]string, 0, len(be.GroupBy))
+		for _, g := range be.GroupBy {
+			qbys = append(qbys, fmt.Sprintf("\"%s\"", g))
+		}
+		cols = append(cols, strings.Join(qbys, ", "))
+	}
+
+	weight := "1"
+	if wantBytes {
+		// COALESCE keeps SUM safe if message is NULL in cache
+		weight = fmt.Sprintf("length(COALESCE(%s, ''))", bodyCol)
+	}
+	cols = append(cols, "SUM("+weight+") AS sum")
+
+	gb := []string{"bucket_ts"}
+	if len(be.GroupBy) > 0 {
+		for _, g := range be.GroupBy {
+			gb = append(gb, fmt.Sprintf("\"%s\"", g))
+		}
+	}
+
+	// CTE name MUST NOT be "logs"
+	sql := "WITH _leaf AS (" + pipelineSQL + ")" +
+		" SELECT " + strings.Join(cols, ", ") +
+		" FROM _leaf" +
+		" WHERE " + timePredicate +
+		" GROUP BY " + strings.Join(gb, ", ") +
+		" ORDER BY bucket_ts ASC"
+
+	return sql
 }
 
 func (be *BaseExpr) ToWorkerSQLForTagValues(step time.Duration, tagName string) string {
@@ -398,10 +452,16 @@ func equalStringSets(a, b []string) bool {
 
 func whereFor(be *BaseExpr) string {
 	var parts []string
-	if be.Metric != "" {
+
+	// For synthetic log metrics, we do NOT filter by metric name at all.
+	if be.Metric != "" && !be.isSyntheticLogMetric() {
 		parts = append(parts, fmt.Sprintf("\"_cardinalhq.name\" = %s", sqlLit(be.Metric)))
 	}
+
 	for _, m := range be.Matchers {
+		if m.Label == LeafMatcher {
+			continue
+		}
 		switch m.Op {
 		case MatchEq:
 			parts = append(parts, fmt.Sprintf("\"%s\" = %s", m.Label, sqlLit(m.Value)))

@@ -25,12 +25,13 @@ import (
 )
 
 // ToWorkerSQLWithLimit is like ToWorkerSQL but (for non-aggregated leaves) appends
-func (be *LogLeaf) ToWorkerSQLWithLimit(step time.Duration, limit int, order string) string {
-	return be.toWorkerSQL(step, limit, order)
+func (be *LogLeaf) ToWorkerSQLWithLimit(limit int, order string) string {
+	return be.ToWorkerSQL(limit, order)
 }
 
-// toWorkerSQL is the internal worker used by both ToWorkerSQL* variants.
-func (be *LogLeaf) toWorkerSQL(step time.Duration, limit int, order string) string {
+// ToWorkerSQL builds the SQL pipeline for a LogLeaf (selector + filters + parsers),
+// projecting any labels needed by filters and by vector aggregation (OutBy).
+func (be *LogLeaf) ToWorkerSQL(limit int, order string) string {
 	const baseRel = "{table}"                 // replace upstream
 	const bodyCol = "\"_cardinalhq.message\"" // quoted column for message text
 	const tsCol = "\"_cardinalhq.timestamp\"" // quoted column for event timestamp
@@ -59,10 +60,30 @@ func (be *LogLeaf) toWorkerSQL(step time.Duration, limit int, order string) stri
 		layers = append(layers, layer{name: alias, sql: sql})
 	}
 
+	// Utility helpers
+	dedupe := func(ss []string) []string {
+		m := make(map[string]struct{}, len(ss))
+		for _, s := range ss {
+			if s == "" {
+				continue
+			}
+			m[s] = struct{}{}
+		}
+		out := make([]string, 0, len(m))
+		for k := range m {
+			out = append(out, k)
+		}
+		sort.Strings(out)
+		return out
+	}
+
+	// Group-by labels we must project later (inside parsers) for vector aggregation
+	groupKeys := dedupe(be.OutBy)
+
 	// ---- s0: minimal base projection ----
 	// Only project columns guaranteed to exist now:
 	//   - message (for parsers)
-	//   - exemplar defaults: id, timestamp, level
+	//   - exemplar defaults: id, timestamp, level, fingerprint
 	//   - matcher columns (since selectors refer to base columns)
 	need := map[string]struct{}{
 		bodyCol:                       {},
@@ -74,6 +95,7 @@ func (be *LogLeaf) toWorkerSQL(step time.Duration, limit int, order string) stri
 	for _, m := range be.Matchers {
 		need[quoteIdent(m.Label)] = struct{}{}
 	}
+
 	var s0Select []string
 	for col := range need {
 		s0Select = append(s0Select, col)
@@ -82,8 +104,11 @@ func (be *LogLeaf) toWorkerSQL(step time.Duration, limit int, order string) stri
 	push(s0Select, baseRel, nil)
 
 	// Sentinel layer so cache manager can splice segment filter via "AND true".
-	// This produces a literal "AND true" in the SQL text, independent of other filters.
-	push([]string{mk(layerIdx-1) + ".*"}, mk(layerIdx-1), []string{"1=1", "true"})
+	timePred := fmt.Sprintf(
+		"CAST(%s AS BIGINT) >= {start} AND CAST(%s AS BIGINT) < {end}",
+		tsCol, tsCol,
+	)
+	push([]string{mk(layerIdx-1) + ".*"}, mk(layerIdx-1), []string{"1=1", "true", timePred})
 
 	// Track the current top alias
 	top := func() string { return mk(layerIdx - 1) }
@@ -96,7 +121,6 @@ func (be *LogLeaf) toWorkerSQL(step time.Duration, limit int, order string) stri
 		}
 		mWhere := buildLabelFilterWhere(mLfs, nil) // nil resolver => use quoteIdent(label)
 		if len(mWhere) > 0 {
-			// keep sentinel in earlier CTE; no need to re-append "true" here
 			push([]string{top() + ".*"}, top(), mWhere)
 		}
 	}
@@ -116,8 +140,14 @@ func (be *LogLeaf) toWorkerSQL(step time.Duration, limit int, order string) stri
 	for _, p := range be.Parsers {
 		switch strings.ToLower(p.Type) {
 		case "label_format", "label-format", "labelformat":
-			for k := range p.Params {
-				futureCreated[k] = struct{}{}
+			if len(p.LabelFormats) > 0 {
+				for _, lf := range p.LabelFormats {
+					futureCreated[lf.Out] = struct{}{}
+				}
+			} else {
+				for k := range p.Params {
+					futureCreated[k] = struct{}{}
+				}
 			}
 		}
 	}
@@ -156,7 +186,7 @@ func (be *LogLeaf) toWorkerSQL(step time.Duration, limit int, order string) stri
 
 		case "regexp":
 			pat := p.Params["pattern"]
-			names := regexCaptureNames(pat)
+			names := regexCaptureNames(pat) // may include groupKeys if named captures match
 			selects := []string{top() + ".*"}
 
 			if len(names) > 0 {
@@ -195,8 +225,10 @@ func (be *LogLeaf) toWorkerSQL(step time.Duration, limit int, order string) stri
 			}
 
 		case "json":
+			// Need keys from filters + group-by, excluding those a future label_format will create
 			needKeys := uniqLabels(remainingLF)
-			needKeys = excludeFuture(needKeys)
+			needKeys = append(needKeys, groupKeys...)
+			needKeys = dedupe(excludeFuture(needKeys))
 
 			selects := []string{top() + ".*"}
 			for _, k := range needKeys {
@@ -216,8 +248,10 @@ func (be *LogLeaf) toWorkerSQL(step time.Duration, limit int, order string) stri
 			}
 
 		case "logfmt":
+			// Need keys from filters + group-by, excluding those a future label_format will create
 			needKeys := uniqLabels(remainingLF)
-			needKeys = excludeFuture(needKeys)
+			needKeys = append(needKeys, groupKeys...)
+			needKeys = dedupe(excludeFuture(needKeys))
 
 			selects := []string{top() + ".*"}
 			for _, k := range needKeys {
@@ -318,7 +352,6 @@ func (be *LogLeaf) toWorkerSQL(step time.Duration, limit int, order string) stri
 		}
 	}
 
-	sb.WriteString(";\n")
 	return sb.String()
 }
 
@@ -715,37 +748,31 @@ func regexCaptureNames(pattern string) []string {
 	// - Named capture groups: (?P<name>...)
 	// - Unnamed capture groups: (...)
 	// We need to be careful to not match non-capturing groups: (?:...)
-	// We'll use a two-step approach: first find all parentheses, then filter out non-capturing ones
 	re := regexp.MustCompile(`\(`)
 	m := re.FindAllStringIndex(pattern, -1)
 	if len(m) == 0 {
 		return nil
 	}
-
-	// Now filter out non-capturing groups and collect capture groups
 	names := make([]string, 0)
 	unnamedIndex := 0
-
 	for _, idx := range m {
 		start := idx[0]
-		// Check if this is a non-capturing group (?:...)
+		// non-capturing?
 		if start+2 < len(pattern) && pattern[start:start+3] == "(?:" {
-			continue // Skip non-capturing groups
+			continue
 		}
-
-		// Check if this is a named capture group (?P<name>...)
+		// named?
 		if start+3 < len(pattern) && pattern[start:start+3] == "(?P" {
-			// Find the closing > for the name
 			nameEnd := strings.Index(pattern[start+3:], ">")
 			if nameEnd != -1 {
 				name := pattern[start+4 : start+3+nameEnd]
 				names = append(names, name)
+				continue
 			}
-		} else {
-			// This is an unnamed capture group
-			names = append(names, fmt.Sprintf("__var_%d", unnamedIndex))
-			unnamedIndex++
 		}
+		// unnamed capture
+		names = append(names, fmt.Sprintf("__var_%d", unnamedIndex))
+		unnamedIndex++
 	}
 	return names
 }
@@ -1009,7 +1036,6 @@ func callFunc(name string, args []arg) (string, string, error) {
 	switch name {
 	// boolean predicates
 	case "hasPrefix":
-		// hasPrefix "prefix" s   or   s | hasPrefix "prefix"
 		if len(args) != 2 {
 			return "", "", fmt.Errorf("hasPrefix needs 2 args")
 		}
@@ -1024,13 +1050,11 @@ func callFunc(name string, args []arg) (string, string, error) {
 		if len(args) != 2 {
 			return "", "", fmt.Errorf("contains needs 2 args")
 		}
-		// DuckDB has contains(haystack, needle) -> bool
 		return fmt.Sprintf("contains(%s, %s)", args[1].sql, args[0].sql), "bool", nil
 	case "match":
 		if len(args) != 2 {
 			return "", "", fmt.Errorf("match needs 2 args")
 		}
-		// Interpret last arg as haystack, first as regex:
 		return fmt.Sprintf("regexp_matches(%s, %s)", args[1].sql, args[0].sql), "bool", nil
 
 	case "eq":

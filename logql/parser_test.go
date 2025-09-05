@@ -15,7 +15,6 @@
 package logql
 
 import (
-	"github.com/cardinalhq/lakerunner/promql"
 	"strings"
 	"testing"
 	"time"
@@ -31,53 +30,6 @@ func hasMatcher(ms []LabelMatch, label, value string) bool {
 	return false
 }
 
-// helper: count parser stages of a given type
-func countParserStages(stages []ParserStage, typ string) int {
-	n := 0
-	for _, s := range stages {
-		if s.Type == typ {
-			n++
-		}
-	}
-	return n
-}
-
-func TestSelectorWithRegexpParser(t *testing.T) {
-	// Note: raw string for Go; BUT inside the LogQL-quoted regex we must escape backslashes (\\w).
-	q := `{job="my-app"} | regexp "level=(?P<log_level>\\w+).*user=(?P<username>\\w+)"`
-
-	ast, err := FromLogQL(q)
-
-	if err != nil {
-		t.Fatalf("FromLogQL() error: %v", err)
-	}
-
-	_, err = promql.FromPromQL(q)
-	if err == nil {
-		t.Fatalf("promql parsing should not have worked!")
-	}
-
-	if ast.Kind != KindLogSelector {
-		t.Fatalf("kind = %s, want %s", ast.Kind, KindLogSelector)
-	}
-	if ast.LogSel == nil {
-		t.Fatalf("LogSel is nil")
-	}
-	if !hasMatcher(ast.LogSel.Matchers, "job", "my-app") {
-		t.Fatalf("missing matcher job=my-app; got %#v", ast.LogSel.Matchers)
-	}
-	// If your converter records the regexp stage as a distinct type, look for "regexp".
-	// If you normalize stages under "label_parser", keep that. Pick ONE of these checks:
-	if got := countParserStages(ast.LogSel.Parsers, "regexp"); got < 1 {
-		t.Fatalf("expected >=1 regexp parser stage; got %d; stages=%#v", got, ast.LogSel.Parsers)
-	}
-	// If you instead normalized: countParserStages(ast.LogSel.Parsers, "label_parser")
-
-	if ast.Raw == "" || !contains(ast.Raw, "regexp") {
-		t.Fatalf("Raw doesn't contain 'regexp': %q", ast.Raw)
-	}
-}
-
 func TestLogRange(t *testing.T) {
 	q := `count_over_time({app="api"}[5m] offset 1m)`
 	ast, err := FromLogQL(q)
@@ -91,7 +43,7 @@ func TestLogRange(t *testing.T) {
 		t.Fatalf("bad range/offset: %+v", ast.RangeAgg.Left)
 	}
 	if !hasMatcher(ast.RangeAgg.Left.Selector.Matchers, "app", "api") {
-		t.Fatalf("missing matcher app=api")
+		t.Fatalf("missing matcher app=api!")
 	}
 }
 

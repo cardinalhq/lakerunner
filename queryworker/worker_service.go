@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/big"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -28,7 +29,6 @@ import (
 	"strings"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
-
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/promql"
 	"github.com/cardinalhq/lakerunner/queryapi"
@@ -288,7 +288,7 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var workerSql string
 	var cacheManager *CacheManager
 	var globSize int
-	var isTagValuesQuery bool
+	var isTagValuesQuery = false
 
 	if req.BaseExpr != nil {
 		if req.TagName != "" {
@@ -297,10 +297,16 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			globSize = ws.MetricsGlobSize
 			isTagValuesQuery = true
 		} else {
+			if req.BaseExpr.LogLeaf != nil {
+				cacheManager = ws.LogsCM
+				globSize = ws.LogsGlobSize
+			} else {
+				cacheManager = ws.MetricsCM
+				globSize = ws.MetricsGlobSize
+			}
 			workerSql = req.BaseExpr.ToWorkerSQL(req.Step)
 			cacheManager = ws.MetricsCM
 			globSize = ws.MetricsGlobSize
-			isTagValuesQuery = false
 		}
 	} else if req.LogLeaf != nil {
 		if req.TagName != "" {
@@ -309,10 +315,9 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			globSize = ws.LogsGlobSize
 			isTagValuesQuery = true
 		} else {
-			workerSql = req.LogLeaf.ToWorkerSQLWithLimit(req.Step, req.Limit, req.ToOrderString())
+			workerSql = req.LogLeaf.ToWorkerSQLWithLimit(req.Limit, req.ToOrderString())
 			cacheManager = ws.LogsCM
 			globSize = ws.LogsGlobSize
-			isTagValuesQuery = false
 		}
 	} else {
 		http.Error(w, "no leaf to evaluate", http.StatusBadRequest)
@@ -475,6 +480,9 @@ func toFloat64(v any) (float64, bool) {
 		return float64(n), true
 	case uint:
 		return float64(n), true
+	case *big.Int:
+		f, _ := new(big.Float).SetInt(n).Float64()
+		return f, true
 	default:
 		slog.Error("unexpected type for numeric value", "value", v, "type", fmt.Sprintf("%T", v))
 		return 0, false

@@ -335,3 +335,144 @@ func logLeafID(l LogLeaf) string {
 	sum := sha1.Sum([]byte(sb.String()))
 	return hex.EncodeToString(sum[:8])
 }
+
+func (be *LogLeaf) Label() string {
+	// --- helpers ---
+	quote := func(s string) string {
+		s = strings.ReplaceAll(s, `"`, `\"`)
+		return `"` + s + `"`
+	}
+	// stable sort for nice deterministic output
+	type kv struct{ k, v string }
+	sortKVs := func(xs []kv) []kv {
+		out := append([]kv(nil), xs...)
+		sort.Slice(out, func(i, j int) bool {
+			if out[i].k != out[j].k {
+				return out[i].k < out[j].k
+			}
+			return out[i].v < out[j].v
+		})
+		return out
+	}
+
+	// --- selector: {k op "v"} ---
+	selector := "{"
+	if len(be.Matchers) > 0 {
+		kvs := make([]kv, 0, len(be.Matchers))
+		for _, m := range be.Matchers {
+			kvs = append(kvs, kv{
+				k: m.Label,
+				v: fmt.Sprintf("%s%s", string(m.Op), quote(m.Value)),
+			})
+		}
+		kvs = sortKVs(kvs)
+		parts := make([]string, len(kvs))
+		for i, p := range kvs {
+			parts[i] = p.k + p.v
+		}
+		selector += strings.Join(parts, ",")
+	}
+	selector += "}"
+
+	// --- line filters: |=, !=, |~, !~ ---
+	lineOp := func(op LineFilterOp) string {
+		switch op {
+		case LineContains:
+			return "|="
+		case LineNotContains:
+			return "!="
+		case LineRegex:
+			return "|~"
+		case LineNotRegex:
+			return "!~"
+		default:
+			return "|?"
+		}
+	}
+	var lineFilters []string
+	for _, lf := range be.LineFilters {
+		lineFilters = append(lineFilters, fmt.Sprintf(`%s %s`, lineOp(lf.Op), quote(lf.Match)))
+	}
+
+	// --- parsers ---
+	var parsers []string
+	for _, p := range be.Parsers {
+		switch strings.ToLower(p.Type) {
+		case "json", "logfmt":
+			parsers = append(parsers, "| "+strings.ToLower(p.Type))
+		case "regexp":
+			if pat, ok := p.Params["pattern"]; ok && pat != "" {
+				parsers = append(parsers, `| regexp `+quote(pat))
+			} else {
+				parsers = append(parsers, "| regexp")
+			}
+		case "label_format", "label-format", "labelformat":
+			// Try to surface what gets created; we may not have the original template, so just list keys.
+			var keys []string
+			if len(p.LabelFormats) > 0 {
+				for _, lf := range p.LabelFormats {
+					keys = append(keys, lf.Out)
+				}
+			} else {
+				for k := range p.Params {
+					keys = append(keys, k)
+				}
+			}
+			sort.Strings(keys)
+			if len(keys) > 0 {
+				parsers = append(parsers, "| label_format("+strings.Join(keys, ",")+")")
+			} else {
+				parsers = append(parsers, "| label_format")
+			}
+		default:
+			// unknown – show type
+			parsers = append(parsers, "| "+p.Type)
+		}
+	}
+
+	// --- label filters (after parsers), e.g. level="ERROR" user=~"a|b" ---
+	var lblFilters []string
+	for _, lf := range be.LabelFilters {
+		var op string
+		switch lf.Op {
+		case MatchEq:
+			op = "="
+		case MatchNe:
+			op = "!="
+		case MatchRe:
+			op = "=~"
+		case MatchNre:
+			op = "!~"
+		default:
+			op = string(lf.Op)
+		}
+		lblFilters = append(lblFilters, fmt.Sprintf(`%s%s%s`, lf.Label, op, quote(lf.Value)))
+	}
+
+	// --- stitch pieces together in LogQL-ish order ---
+	var buf strings.Builder
+	buf.WriteString(selector)
+	if len(lineFilters) > 0 {
+		buf.WriteByte(' ')
+		buf.WriteString(strings.Join(lineFilters, " "))
+	}
+	if len(parsers) > 0 {
+		buf.WriteByte(' ')
+		buf.WriteString(strings.Join(parsers, " "))
+	}
+	if len(lblFilters) > 0 {
+		buf.WriteByte(' ')
+		buf.WriteString(strings.Join(lblFilters, " "))
+	}
+	// range selector applies to the whole stream/pipeline
+	if be.Range != "" {
+		buf.WriteString("[" + be.Range + "]")
+	}
+	if be.Offset != "" {
+		buf.WriteString(" offset " + be.Offset)
+	}
+	if be.Unwrap {
+		buf.WriteString(" | unwrap")
+	}
+	return buf.String()
+}
