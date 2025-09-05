@@ -174,50 +174,6 @@ type LogSeg struct {
 	SlotID         int32                     `json:"slot_id"`
 }
 
-type LrdbExemplarLog struct {
-	CreatedAt           time.Time      `json:"created_at"`
-	UpdatedAt           time.Time      `json:"updated_at"`
-	OrganizationID      uuid.UUID      `json:"organization_id"`
-	ServiceIdentifierID uuid.UUID      `json:"service_identifier_id"`
-	Attributes          map[string]any `json:"attributes"`
-	Exemplar            map[string]any `json:"exemplar"`
-	Fingerprint         int64          `json:"fingerprint"`
-	RelatedFingerprints []int64        `json:"related_fingerprints"`
-}
-
-type LrdbExemplarMetric struct {
-	CreatedAt           time.Time      `json:"created_at"`
-	UpdatedAt           time.Time      `json:"updated_at"`
-	OrganizationID      uuid.UUID      `json:"organization_id"`
-	ServiceIdentifierID uuid.UUID      `json:"service_identifier_id"`
-	Attributes          map[string]any `json:"attributes"`
-	Exemplar            map[string]any `json:"exemplar"`
-	MetricName          string         `json:"metric_name"`
-	MetricType          string         `json:"metric_type"`
-}
-
-type LrdbExemplarTrace struct {
-	CreatedAt           time.Time      `json:"created_at"`
-	UpdatedAt           time.Time      `json:"updated_at"`
-	OrganizationID      uuid.UUID      `json:"organization_id"`
-	ServiceIdentifierID uuid.UUID      `json:"service_identifier_id"`
-	Attributes          map[string]any `json:"attributes"`
-	Exemplar            map[string]any `json:"exemplar"`
-	Fingerprint         int64          `json:"fingerprint"`
-	SpanName            string         `json:"span_name"`
-	SpanKind            int32          `json:"span_kind"`
-}
-
-type LrdbServiceIdentifier struct {
-	ID             uuid.UUID   `json:"id"`
-	CreatedAt      time.Time   `json:"created_at"`
-	UpdatedAt      time.Time   `json:"updated_at"`
-	OrganizationID pgtype.UUID `json:"organization_id"`
-	ServiceName    pgtype.Text `json:"service_name"`
-	ClusterName    pgtype.Text `json:"cluster_name"`
-	Namespace      pgtype.Text `json:"namespace"`
-}
-
 type MetricCompactionQueue struct {
 	ID             int64      `json:"id"`
 	QueueTs        time.Time  `json:"queue_ts"`

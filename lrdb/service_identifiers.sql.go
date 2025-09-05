@@ -14,7 +14,7 @@ import (
 )
 
 const upsertServiceIdentifier = `-- name: UpsertServiceIdentifier :one
-INSERT INTO lrdb_service_identifiers
+INSERT INTO service_identifiers
   (organization_id, service_name, cluster_name, namespace)
   VALUES ($1, $2, $3, $4)
   ON CONFLICT (organization_id, service_name, cluster_name, namespace)

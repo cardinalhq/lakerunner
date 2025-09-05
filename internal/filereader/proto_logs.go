@@ -192,18 +192,6 @@ func (r *ProtoLogsReader) processRow(row map[string]any) (Row, error) {
 	return result, nil
 }
 
-// GetOTELLogs returns the underlying parsed OTEL logs structure.
-// This allows access to the original log body and metadata not available in the row format.
-func (r *ProtoLogsReader) GetOTELLogs() (any, error) {
-	if r.closed {
-		return nil, fmt.Errorf("reader is closed")
-	}
-	if r.logs == nil {
-		return nil, fmt.Errorf("no logs data available")
-	}
-	return r.logs, nil
-}
-
 // Close closes the reader and releases resources.
 func (r *ProtoLogsReader) Close() error {
 	if r.closed {

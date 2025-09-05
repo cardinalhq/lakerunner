@@ -13,7 +13,7 @@ import (
 )
 
 const getExemplarTracesByFingerprint = `-- name: GetExemplarTracesByFingerprint :one
-SELECT created_at, updated_at, organization_id, service_identifier_id, attributes, exemplar, fingerprint, span_name, span_kind FROM lrdb_exemplar_traces 
+SELECT created_at, updated_at, organization_id, service_identifier_id, attributes, exemplar, fingerprint, span_name, span_kind FROM exemplar_traces 
 WHERE organization_id = $1 
   AND fingerprint = $2
 LIMIT 1
@@ -24,9 +24,9 @@ type GetExemplarTracesByFingerprintParams struct {
 	Fingerprint    int64     `json:"fingerprint"`
 }
 
-func (q *Queries) GetExemplarTracesByFingerprint(ctx context.Context, arg GetExemplarTracesByFingerprintParams) (LrdbExemplarTrace, error) {
+func (q *Queries) GetExemplarTracesByFingerprint(ctx context.Context, arg GetExemplarTracesByFingerprintParams) (ExemplarTrace, error) {
 	row := q.db.QueryRow(ctx, getExemplarTracesByFingerprint, arg.OrganizationID, arg.Fingerprint)
-	var i LrdbExemplarTrace
+	var i ExemplarTrace
 	err := row.Scan(
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -42,7 +42,7 @@ func (q *Queries) GetExemplarTracesByFingerprint(ctx context.Context, arg GetExe
 }
 
 const getExemplarTracesByService = `-- name: GetExemplarTracesByService :many
-SELECT created_at, updated_at, organization_id, service_identifier_id, attributes, exemplar, fingerprint, span_name, span_kind FROM lrdb_exemplar_traces 
+SELECT created_at, updated_at, organization_id, service_identifier_id, attributes, exemplar, fingerprint, span_name, span_kind FROM exemplar_traces 
 WHERE organization_id = $1 
   AND service_identifier_id = $2
 ORDER BY created_at DESC
@@ -53,15 +53,15 @@ type GetExemplarTracesByServiceParams struct {
 	ServiceIdentifierID uuid.UUID `json:"service_identifier_id"`
 }
 
-func (q *Queries) GetExemplarTracesByService(ctx context.Context, arg GetExemplarTracesByServiceParams) ([]LrdbExemplarTrace, error) {
+func (q *Queries) GetExemplarTracesByService(ctx context.Context, arg GetExemplarTracesByServiceParams) ([]ExemplarTrace, error) {
 	rows, err := q.db.Query(ctx, getExemplarTracesByService, arg.OrganizationID, arg.ServiceIdentifierID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []LrdbExemplarTrace
+	var items []ExemplarTrace
 	for rows.Next() {
-		var i LrdbExemplarTrace
+		var i ExemplarTrace
 		if err := rows.Scan(
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -84,18 +84,18 @@ func (q *Queries) GetExemplarTracesByService(ctx context.Context, arg GetExempla
 }
 
 const getExemplarTracesCreatedAfter = `-- name: GetExemplarTracesCreatedAfter :many
-SELECT created_at, updated_at, organization_id, service_identifier_id, attributes, exemplar, fingerprint, span_name, span_kind FROM lrdb_exemplar_traces WHERE created_at > $1
+SELECT created_at, updated_at, organization_id, service_identifier_id, attributes, exemplar, fingerprint, span_name, span_kind FROM exemplar_traces WHERE created_at > $1
 `
 
-func (q *Queries) GetExemplarTracesCreatedAfter(ctx context.Context, ts time.Time) ([]LrdbExemplarTrace, error) {
+func (q *Queries) GetExemplarTracesCreatedAfter(ctx context.Context, ts time.Time) ([]ExemplarTrace, error) {
 	rows, err := q.db.Query(ctx, getExemplarTracesCreatedAfter, ts)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []LrdbExemplarTrace
+	var items []ExemplarTrace
 	for rows.Next() {
-		var i LrdbExemplarTrace
+		var i ExemplarTrace
 		if err := rows.Scan(
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -119,7 +119,7 @@ func (q *Queries) GetExemplarTracesCreatedAfter(ctx context.Context, ts time.Tim
 
 const getSpanInfoByFingerprint = `-- name: GetSpanInfoByFingerprint :one
 SELECT exemplar, span_name, span_kind
-FROM lrdb_exemplar_traces
+FROM exemplar_traces
 WHERE organization_id = $1 AND fingerprint = $2
 LIMIT 1
 `

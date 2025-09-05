@@ -25,13 +25,11 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/debugging"
-	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
@@ -358,13 +356,6 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 
 		reader, err = createLogReader(tmpfilename)
 		if err == nil {
-			// Process exemplars if available (before translation to preserve OTEL structure)
-			if loop.exemplarProcessor != nil && shouldProcessLogsExemplars() {
-				if err := processLogsExemplarsFromReader(ctx, reader, loop.exemplarProcessor, firstItem.OrganizationID.String()); err != nil {
-					ll.Warn("Failed to process logs exemplars", slog.Any("error", err))
-				}
-			}
-
 			// Add general translator for non-protobuf files
 			translator := &LogTranslator{
 				orgID:    firstItem.OrganizationID.String(),
@@ -571,36 +562,5 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 		}
 	}
 
-	return nil
-}
-
-// shouldProcessLogsExemplars checks if logs exemplar processing should be enabled
-func shouldProcessLogsExemplars() bool {
-	return helpers.GetBoolEnv("LAKERUNNER_LOGS_EXEMPLARS", true)
-}
-
-// processLogsExemplarsFromReader processes exemplars from a logs reader that supports OTEL
-func processLogsExemplarsFromReader(ctx context.Context, reader filereader.Reader, processor *exemplar.Processor, orgID string) error {
-	// Check if the reader provides OTEL logs
-	if otelProvider, ok := reader.(filereader.OTELLogsProvider); ok {
-		otelLogs, err := otelProvider.GetOTELLogs()
-		if err != nil {
-			return fmt.Errorf("failed to get OTEL logs: %w", err)
-		}
-
-		if logs, ok := otelLogs.(*plog.Logs); ok {
-			if err := processExemplarsFromLogs(ctx, logs, processor, orgID); err != nil {
-				return fmt.Errorf("failed to process exemplars from logs: %w", err)
-			}
-		}
-	}
-	return nil
-}
-
-// processExemplarsFromLogs processes exemplars from parsed plog.Logs
-func processExemplarsFromLogs(ctx context.Context, logs *plog.Logs, processor *exemplar.Processor, customerID string) error {
-	if err := processor.ProcessLogs(ctx, *logs, customerID); err != nil {
-		return fmt.Errorf("failed to process logs through exemplar processor: %w", err)
-	}
 	return nil
 }

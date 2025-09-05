@@ -13,7 +13,7 @@ import (
 )
 
 const getExemplarMetricsByService = `-- name: GetExemplarMetricsByService :many
-SELECT created_at, updated_at, organization_id, service_identifier_id, attributes, exemplar, metric_name, metric_type FROM lrdb_exemplar_metrics 
+SELECT created_at, updated_at, organization_id, service_identifier_id, attributes, exemplar, metric_name, metric_type FROM exemplar_metrics 
 WHERE organization_id = $1 
   AND service_identifier_id = $2
 ORDER BY created_at DESC
@@ -24,15 +24,15 @@ type GetExemplarMetricsByServiceParams struct {
 	ServiceIdentifierID uuid.UUID `json:"service_identifier_id"`
 }
 
-func (q *Queries) GetExemplarMetricsByService(ctx context.Context, arg GetExemplarMetricsByServiceParams) ([]LrdbExemplarMetric, error) {
+func (q *Queries) GetExemplarMetricsByService(ctx context.Context, arg GetExemplarMetricsByServiceParams) ([]ExemplarMetric, error) {
 	rows, err := q.db.Query(ctx, getExemplarMetricsByService, arg.OrganizationID, arg.ServiceIdentifierID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []LrdbExemplarMetric
+	var items []ExemplarMetric
 	for rows.Next() {
-		var i LrdbExemplarMetric
+		var i ExemplarMetric
 		if err := rows.Scan(
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -54,18 +54,18 @@ func (q *Queries) GetExemplarMetricsByService(ctx context.Context, arg GetExempl
 }
 
 const getExemplarMetricsCreatedAfter = `-- name: GetExemplarMetricsCreatedAfter :many
-SELECT created_at, updated_at, organization_id, service_identifier_id, attributes, exemplar, metric_name, metric_type FROM lrdb_exemplar_metrics WHERE created_at > $1
+SELECT created_at, updated_at, organization_id, service_identifier_id, attributes, exemplar, metric_name, metric_type FROM exemplar_metrics WHERE created_at > $1
 `
 
-func (q *Queries) GetExemplarMetricsCreatedAfter(ctx context.Context, ts time.Time) ([]LrdbExemplarMetric, error) {
+func (q *Queries) GetExemplarMetricsCreatedAfter(ctx context.Context, ts time.Time) ([]ExemplarMetric, error) {
 	rows, err := q.db.Query(ctx, getExemplarMetricsCreatedAfter, ts)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []LrdbExemplarMetric
+	var items []ExemplarMetric
 	for rows.Next() {
-		var i LrdbExemplarMetric
+		var i ExemplarMetric
 		if err := rows.Scan(
 			&i.CreatedAt,
 			&i.UpdatedAt,
