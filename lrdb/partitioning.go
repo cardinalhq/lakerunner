@@ -20,11 +20,11 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/cardinalhq/lakerunner/dbase"
+	"github.com/cardinalhq/lakerunner/internal/idgen"
 )
 
 func (q *Queries) ensureLogFPPartition(ctx context.Context, parent string, org_id uuid.UUID, dateint int32) error {
-	partitionTableName := parent + "_" + dbase.UUIDToBase36(org_id)
+	partitionTableName := parent + "_" + idgen.UUIDToBase36(org_id)
 	key := fmt.Sprintf("%s_%d", partitionTableName, dateint)
 	if IsPartitionTableRemembered(key) {
 		return nil
@@ -40,7 +40,7 @@ func (q *Queries) ensureLogFPPartition(ctx context.Context, parent string, org_i
 }
 
 func (q *Queries) ensureTraceFPPartition(ctx context.Context, parent string, org_id uuid.UUID, dateint int32) error {
-	partitionTableName := parent + "_" + dbase.UUIDToBase36(org_id)
+	partitionTableName := parent + "_" + idgen.UUIDToBase36(org_id)
 	key := fmt.Sprintf("%s_%d", partitionTableName, dateint)
 	if IsPartitionTableRemembered(key) {
 		return nil
@@ -56,7 +56,7 @@ func (q *Queries) ensureTraceFPPartition(ctx context.Context, parent string, org
 }
 
 func (q *Queries) ensureMetricSegmentPartition(ctx context.Context, org_id uuid.UUID, dateint int32) error {
-	partitionTableName := "mseg_" + dbase.UUIDToBase36(org_id)
+	partitionTableName := "mseg_" + idgen.UUIDToBase36(org_id)
 	key := fmt.Sprintf("%s_%d", partitionTableName, dateint)
 	if IsPartitionTableRemembered(key) {
 		return nil
