@@ -192,7 +192,7 @@ func (k *KafkaIngestConsumer) processItem(ctx context.Context, notif *messages.O
 		))
 
 	// Create temporary directory for processing
-	tmpdir, err := os.MkdirTemp("", "kafka-ingest-")
+	tmpdir, err := os.MkdirTemp("", "")
 	if err != nil {
 		return fmt.Errorf("creating tmpdir: %w", err)
 	}

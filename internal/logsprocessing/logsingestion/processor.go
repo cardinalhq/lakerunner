@@ -35,6 +35,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 	"github.com/cardinalhq/lakerunner/internal/processing/ingest"
+	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -267,13 +268,7 @@ func ProcessBatch(ctx context.Context, args ingest.ProcessBatchArgs, item ingest
 		return nil
 	}
 
-	// Download file
-	itemTmpdir := fmt.Sprintf("%s/item", args.TmpDir)
-	if err := os.MkdirAll(itemTmpdir, 0755); err != nil {
-		return fmt.Errorf("creating item tmpdir: %w", err)
-	}
-
-	tmpfilename, _, is404, err := storageClient.DownloadObject(ctx, itemTmpdir, item.Bucket, item.ObjectID)
+	tmpfilename, _, is404, err := storageClient.DownloadObject(ctx, args.TmpDir, item.Bucket, item.ObjectID)
 	if err != nil {
 		return fmt.Errorf("failed to download file %s: %w", item.ObjectID, err)
 	}
@@ -434,14 +429,14 @@ func ProcessBatch(ctx context.Context, args ingest.ProcessBatchArgs, item ingest
 
 	// Final interruption check before critical section (S3 uploads + DB inserts)
 	if err := ctx.Err(); err != nil {
-		ll.Info("Context cancelled before S3 upload phase - safe interruption point",
+		ll.Info("Context cancelled before S3 upload phase",
 			slog.Int("resultCount", len(results)),
 			slog.Any("error", err))
 		return NewWorkerInterrupted("context cancelled before S3 upload phase")
 	}
 
 	// Upload files to S3 and collect segment parameters for batch insertion
-	segmentParams, err := createAndUploadLogSegments(ctx, ll, storageClient, results, item, args.IngestDateint)
+	segmentParams, err := createAndUploadLogSegments(ctx, storageClient, results, item, args.IngestDateint, profile)
 	if err != nil {
 		return fmt.Errorf("failed to create and upload log segments: %w", err)
 	}
@@ -459,6 +454,8 @@ func ProcessBatch(ctx context.Context, args ingest.ProcessBatchArgs, item ingest
 		Segments:     segmentParams,
 		KafkaOffsets: []lrdb.KafkaOffsetUpdate{args.KafkaOffset},
 	}
+
+	ll.Info("Log segments uploaded")
 
 	criticalCtx := context.WithoutCancel(ctx)
 	if err := args.DB.InsertLogSegmentBatchWithKafkaOffsets(criticalCtx, batch); err != nil {
@@ -497,12 +494,14 @@ func ProcessBatch(ctx context.Context, args ingest.ProcessBatchArgs, item ingest
 // createAndUploadLogSegments creates log segments from parquet results, uploads them to S3, and returns segment parameters
 func createAndUploadLogSegments(
 	ctx context.Context,
-	ll *slog.Logger,
 	storageClient cloudstorage.Client,
 	results []parquetwriter.Result,
 	item ingest.IngestItem,
 	ingestDateint int32,
+	sp storageprofile.StorageProfile,
 ) ([]lrdb.InsertLogSegmentParams, error) {
+	ll := logctx.FromContext(ctx)
+
 	segmentParams := make([]lrdb.InsertLogSegmentParams, 0, len(results))
 
 	for _, result := range results {
@@ -523,8 +522,7 @@ func createAndUploadLogSegments(
 		// Generate segment ID and upload
 		segmentID := idgen.GenerateID()
 		dateint, _ := helpers.MSToDateintHour(stats.FirstTS)
-		dbObjectID := helpers.MakeDBObjectID(item.OrganizationID, "",
-			dateint, helpers.HourFromMillis(stats.FirstTS), segmentID, "logs")
+		dbObjectID := helpers.MakeDBObjectID(item.OrganizationID, sp.CollectorName, dateint, helpers.HourFromMillis(stats.FirstTS), segmentID, "logs")
 
 		if err := storageClient.UploadObject(ctx, item.Bucket, dbObjectID, result.FileName); err != nil {
 			return nil, fmt.Errorf("uploading file to S3: %w", err)
@@ -533,7 +531,8 @@ func createAndUploadLogSegments(
 		ll.Debug("Log segment stats",
 			slog.Int64("segmentID", segmentID),
 			slog.Int64("recordCount", result.RecordCount),
-			slog.Int64("fileSize", result.FileSize))
+			slog.Int64("fileSize", result.FileSize),
+			slog.String("objectID", dbObjectID))
 
 		// Create segment parameters for database insertion
 		slotID := 0
