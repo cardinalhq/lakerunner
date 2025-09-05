@@ -246,14 +246,27 @@ func (c *kafkaConsumer) CommitMessages(ctx context.Context, messages ...Consumed
 	}
 
 	if c.config.CommitBatch {
-		// Commit only the last message offset (batch commit)
-		lastMsg := messages[len(messages)-1]
-		km := kafka.Message{
-			Topic:     lastMsg.Topic,
-			Partition: lastMsg.Partition,
-			Offset:    lastMsg.Offset,
+		// For batch commit, we need to commit the highest offset for EACH partition
+		// Group messages by partition and find the highest offset for each
+		partitionOffsets := make(map[int]ConsumedMessage)
+		for _, msg := range messages {
+			existing, ok := partitionOffsets[msg.Partition]
+			if !ok || msg.Offset > existing.Offset {
+				partitionOffsets[msg.Partition] = msg
+			}
 		}
-		return c.reader.CommitMessages(ctx, km)
+
+		// Create commit messages for each partition's highest offset
+		kmsgs := make([]kafka.Message, 0, len(partitionOffsets))
+		for _, msg := range partitionOffsets {
+			kmsgs = append(kmsgs, kafka.Message{
+				Topic:     msg.Topic,
+				Partition: msg.Partition,
+				Offset:    msg.Offset,
+			})
+		}
+
+		return c.reader.CommitMessages(ctx, kmsgs...)
 	}
 
 	// Commit all messages individually
