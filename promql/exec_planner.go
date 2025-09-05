@@ -53,14 +53,16 @@ type BaseExpr struct {
 	LogLeaf *logql.LogLeaf `json:"logLeaf,omitempty"`
 }
 
+// Synthetic metric families used by the PromQL rewriter.
 const (
-	LeafMatcher   = `__leaf` // label name for leaf ID in synthetic metrics
-	SynthLogCount = "__logql_logs_total"
-	SynthLogBytes = "__logql_log_bytes_total"
+	SynthLogCount  = "__logql_logs_total"
+	SynthLogBytes  = "__logql_log_bytes_total"
+	SynthLogUnwrap = "__logql_unwrap_value" // numeric samples produced by `unwrap`
+	LeafMatcher    = "__leaf"
 )
 
 func (be *BaseExpr) isSyntheticLogMetric() bool {
-	return be.LogLeaf != nil && be.Metric == SynthLogCount || be.Metric == SynthLogBytes
+	return be.LogLeaf != nil
 }
 
 type ExecHints struct {

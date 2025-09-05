@@ -283,6 +283,21 @@ func TestRewrite_CountOverTime_ByLevel_JSON(t *testing.T) {
 	}
 }
 
+func TestUnwrap(t *testing.T) {
+	q := `avg_over_time({app="api"} |= "request" | json | unwrap latency_ms [1m])`
+	ast, err := logql.FromLogQL(q)
+	if err != nil {
+		t.Fatalf("FromLogQL error: %v", err)
+	}
+	lplan, err := logql.CompileLog(ast)
+	if err != nil {
+		t.Fatalf("CompileLog error: %v", err)
+	}
+	if len(lplan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf in compiled plan, got %d", len(lplan.Leaves))
+	}
+}
+
 // 2) bytes_rate grouped by logfmt field (user)
 // 2) bytes_rate grouped by logfmt field (user)
 func TestRewrite_BytesRate_ByUser_Logfmt(t *testing.T) {
@@ -437,5 +452,334 @@ func TestRewrite_Rate_ByDerivedLabel_LabelFormat(t *testing.T) {
 	}
 	if b0Err != 1 || b0OK != 1 || b1Err != 1 {
 		t.Fatalf("unexpected sums: b0(ERROR)=%d b0(OK)=%d b1(ERROR)=%d; rows=%v", b0Err, b0OK, b1Err, got)
+	}
+}
+
+func f64(v any) float64 {
+	switch x := v.(type) {
+	case float64:
+		return x
+	case float32:
+		return float64(x)
+	case int64:
+		return float64(x)
+	case int32:
+		return float64(x)
+	case int16:
+		return float64(x)
+	case int8:
+		return float64(x)
+	case int:
+		return float64(x)
+	case uint64:
+		return float64(x)
+	case uint32:
+		return float64(x)
+	case uint16:
+		return float64(x)
+	case uint8:
+		return float64(x)
+	case []byte:
+		if n, err := strconv.ParseFloat(string(x), 64); err == nil {
+			return n
+		}
+		return 0
+	default:
+		if n, err := strconv.ParseFloat(fmt.Sprintf("%v", x), 64); err == nil {
+			return n
+		}
+		return 0
+	}
+}
+
+func TestRewrite_Unwrap_Avg_JSON(t *testing.T) {
+	db := openDuckDB(t)
+	// Table must include exemplar defaults the LogQL pipeline always projects.
+	mustExec(t, db, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.fingerprint" TEXT,
+		job TEXT,
+		"_cardinalhq.message"     TEXT
+	);`)
+
+	// Two 1m buckets: [0..60s) and [60..120s)
+	// bucket 0: latency_ms = 100, 200   => avg = 150
+	// bucket 1: latency_ms = 300        => avg = 300
+	mustExec(t, db, `
+	INSERT INTO logs("_cardinalhq.timestamp", job, "_cardinalhq.message") VALUES
+	(10*1000,  'svc', '{"latency_ms":"100","msg":"a"}'),
+	(30*1000,  'svc', '{"latency_ms":"200","msg":"b"}'),
+	(70*1000,  'svc', '{"latency_ms":"300","msg":"c"}');
+	`)
+
+	// LogQL: avg_over_time over 1m on an unwrapped numeric field from JSON
+	q := `avg_over_time({job="svc"} | json | unwrap latency_ms [1m])`
+
+	plan, _ := compileMetricPlanFromLogQL(t, q)
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf in compiled plan, got %d", len(plan.Leaves))
+	}
+	be := plan.Leaves[0]
+
+	step := time.Minute
+	replacedSql := replaceWorkerPlaceholders(be.ToWorkerSQL(step), 0, 120*1000)
+
+	rows := queryAll(t, db, replacedSql)
+	if len(rows) == 0 {
+		t.Fatalf("no rows returned; sql=\n%s", replacedSql)
+	}
+
+	type agg struct {
+		bucket int64
+		avg    float64
+	}
+
+	// The aggregation column should be "avg" (consistent with other tests using "sum").
+	// If your compiler names it differently, adjust the key here.
+	var got []agg
+	for _, r := range rows {
+		avg := r["avg"]
+		if avg == nil {
+			// try a couple of common fallbacks just in case
+			if v, ok := r["avg_over_time"]; ok {
+				avg = v
+			} else if v, ok := r["mean"]; ok {
+				avg = v
+			}
+		}
+		got = append(got, agg{
+			bucket: i64(r["bucket_ts"]),
+			avg:    f64(avg),
+		})
+	}
+
+	var b0Avg, b1Avg float64
+	for _, a := range got {
+		switch a.bucket {
+		case 0:
+			b0Avg = a.avg
+		case 60000:
+			b1Avg = a.avg
+		}
+	}
+
+	if b0Avg == 0 && b1Avg == 0 {
+		t.Fatalf("unexpected zero avgs; rows=%v\nsql=\n%s", rows, replacedSql)
+	}
+
+	// Allow a tiny float slop
+	const eps = 1e-9
+	if !(b0Avg > 150.0-eps && b0Avg < 150.0+eps) || !(b1Avg > 300.0-eps && b1Avg < 300.0+eps) {
+		t.Fatalf("unexpected avgs: bucket0=%v bucket1=%v; rows=%v", b0Avg, b1Avg, rows)
+	}
+}
+
+// avg_over_time on an unwrapped numeric field extracted via logfmt
+func TestRewrite_Unwrap_Avg_Logfmt(t *testing.T) {
+	db := openDuckDB(t)
+	mustExec(t, db, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.fingerprint" TEXT,
+		job TEXT,
+		"_cardinalhq.message"     TEXT
+	);`)
+
+	// Two 1m buckets: [0..60s), [60..120s)
+	// bucket 0: latency_ms = 100, 200 => avg = 150
+	// bucket 1: latency_ms = 300      => avg = 300
+	mustExec(t, db, `
+	INSERT INTO logs("_cardinalhq.timestamp", job, "_cardinalhq.message") VALUES
+	(10*1000,  'svc', 'latency_ms=100 msg=a'),
+	(30*1000,  'svc', 'latency_ms=200 msg=b'),
+	(70*1000,  'svc', 'latency_ms=300 msg=c');
+	`)
+
+	q := `avg_over_time({job="svc"} | logfmt | unwrap latency_ms [1m])`
+
+	plan, _ := compileMetricPlanFromLogQL(t, q)
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf in compiled plan, got %d", len(plan.Leaves))
+	}
+	be := plan.Leaves[0]
+
+	sql := replaceWorkerPlaceholders(be.ToWorkerSQL(time.Minute), 0, 120*1000)
+	rows := queryAll(t, db, sql)
+	if len(rows) == 0 {
+		t.Fatalf("no rows returned; sql=\n%s", sql)
+	}
+
+	type agg struct {
+		bucket int64
+		avg    float64
+	}
+	var got []agg
+	for _, r := range rows {
+		v := r["avg"]
+		if v == nil {
+			if x, ok := r["avg_over_time"]; ok {
+				v = x
+			}
+		}
+		got = append(got, agg{
+			bucket: i64(r["bucket_ts"]),
+			avg:    f64(v),
+		})
+	}
+
+	var b0, b1 float64
+	for _, a := range got {
+		switch a.bucket {
+		case 0:
+			b0 = a.avg
+		case 60000:
+			b1 = a.avg
+		}
+	}
+	if b0 == 0 && b1 == 0 {
+		t.Fatalf("unexpected zero avgs; rows=%v\nsql=\n%s", rows, sql)
+	}
+	const eps = 1e-9
+	if !(b0 > 150.0-eps && b0 < 150.0+eps) || !(b1 > 300.0-eps && b1 < 300.0+eps) {
+		t.Fatalf("unexpected avgs: bucket0=%v bucket1=%v; rows=%v", b0, b1, rows)
+	}
+}
+
+// min_over_time on unwrap duration(...) from JSON (values converted to seconds)
+func TestRewrite_Unwrap_Min_Duration_JSON(t *testing.T) {
+	db := openDuckDB(t)
+	mustExec(t, db, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.fingerprint" TEXT,
+		job TEXT,
+		"_cardinalhq.message"     TEXT
+	);`)
+
+	// bucket 0: 100ms, 200ms -> min = 0.1
+	// bucket 1: 300ms        -> min = 0.3
+	mustExec(t, db, `
+	INSERT INTO logs("_cardinalhq.timestamp", job, "_cardinalhq.message") VALUES
+	(10*1000,  'svc', '{"lat":"100ms","msg":"a"}'),
+	(30*1000,  'svc', '{"lat":"200ms","msg":"b"}'),
+	(70*1000,  'svc', '{"lat":"300ms","msg":"c"}');
+	`)
+
+	q := `min_over_time({job="svc"} | json | unwrap duration(lat) [1m])`
+
+	plan, _ := compileMetricPlanFromLogQL(t, q)
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf in compiled plan, got %d", len(plan.Leaves))
+	}
+	be := plan.Leaves[0]
+
+	sql := replaceWorkerPlaceholders(be.ToWorkerSQL(time.Minute), 0, 120*1000)
+	rows := queryAll(t, db, sql)
+	if len(rows) == 0 {
+		t.Fatalf("no rows returned; sql=\n%s", sql)
+	}
+
+	type agg struct {
+		bucket int64
+		min    float64
+	}
+	var got []agg
+	for _, r := range rows {
+		v := r["min"]
+		if v == nil {
+			if x, ok := r["min_over_time"]; ok {
+				v = x
+			}
+		}
+		got = append(got, agg{
+			bucket: i64(r["bucket_ts"]),
+			min:    f64(v),
+		})
+	}
+
+	var b0, b1 float64
+	for _, a := range got {
+		switch a.bucket {
+		case 0:
+			b0 = a.min
+		case 60000:
+			b1 = a.min
+		}
+	}
+	const eps = 1e-9
+	if !(b0 > 0.1-eps && b0 < 0.1+eps) || !(b1 > 0.3-eps && b1 < 0.3+eps) {
+		t.Fatalf("unexpected mins: bucket0=%v bucket1=%v; rows=%v", b0, b1, rows)
+	}
+}
+
+// max_over_time on unwrap bytes(...) from logfmt (KB are decimal *1000)
+func TestRewrite_Unwrap_Max_Bytes_Logfmt(t *testing.T) {
+	db := openDuckDB(t)
+	mustExec(t, db, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.fingerprint" TEXT,
+		job TEXT,
+		"_cardinalhq.message"     TEXT
+	);`)
+
+	// bucket 0: 1KB, 2KB -> max = 2000
+	// bucket 1: 3KB      -> max = 3000
+	mustExec(t, db, `
+	INSERT INTO logs("_cardinalhq.timestamp", job, "_cardinalhq.message") VALUES
+	(10*1000,  'svc', 'size=1KB path=/a'),
+	(30*1000,  'svc', 'size=2KB path=/b'),
+	(70*1000,  'svc', 'size=3KB path=/c');
+	`)
+
+	q := `max_over_time({job="svc"} | logfmt | unwrap bytes(size) [1m])`
+
+	plan, _ := compileMetricPlanFromLogQL(t, q)
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf in compiled plan, got %d", len(plan.Leaves))
+	}
+	be := plan.Leaves[0]
+
+	sql := replaceWorkerPlaceholders(be.ToWorkerSQL(time.Minute), 0, 120*1000)
+	rows := queryAll(t, db, sql)
+	if len(rows) == 0 {
+		t.Fatalf("no rows returned; sql=\n%s", sql)
+	}
+
+	type agg struct {
+		bucket int64
+		max    float64
+	}
+	var got []agg
+	for _, r := range rows {
+		v := r["max"]
+		if v == nil {
+			if x, ok := r["max_over_time"]; ok {
+				v = x
+			}
+		}
+		got = append(got, agg{
+			bucket: i64(r["bucket_ts"]),
+			max:    f64(v),
+		})
+	}
+
+	var b0, b1 float64
+	for _, a := range got {
+		switch a.bucket {
+		case 0:
+			b0 = a.max
+		case 60000:
+			b1 = a.max
+		}
+	}
+	const eps = 1e-9
+	if !(b0 > 2000.0-eps && b0 < 2000.0+eps) || !(b1 > 3000.0-eps && b1 < 3000.0+eps) {
+		t.Fatalf("unexpected maxes: bucket0=%v bucket1=%v; rows=%v", b0, b1, rows)
 	}
 }

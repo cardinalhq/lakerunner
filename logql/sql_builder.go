@@ -151,6 +151,14 @@ func (be *LogLeaf) ToWorkerSQL(limit int, order string) string {
 			}
 		}
 	}
+	unwrapNeeded := make(map[string]struct{})
+	for _, p := range be.Parsers {
+		if strings.ToLower(p.Type) == "unwrap" {
+			if f := strings.TrimSpace(p.Params["field"]); f != "" {
+				unwrapNeeded[f] = struct{}{}
+			}
+		}
+	}
 	uniqLabels := func(lfs []LabelFilter) []string {
 		set := map[string]struct{}{}
 		for _, lf := range lfs {
@@ -228,6 +236,12 @@ func (be *LogLeaf) ToWorkerSQL(limit int, order string) string {
 			// Need keys from filters + group-by, excluding those a future label_format will create
 			needKeys := uniqLabels(remainingLF)
 			needKeys = append(needKeys, groupKeys...)
+
+			// NEW: ensure fields needed by unwrap are projected by json
+			for f := range unwrapNeeded {
+				needKeys = append(needKeys, f)
+			}
+
 			needKeys = dedupe(excludeFuture(needKeys))
 
 			selects := []string{top() + ".*"}
@@ -248,9 +262,14 @@ func (be *LogLeaf) ToWorkerSQL(limit int, order string) string {
 			}
 
 		case "logfmt":
-			// Need keys from filters + group-by, excluding those a future label_format will create
 			needKeys := uniqLabels(remainingLF)
 			needKeys = append(needKeys, groupKeys...)
+
+			// NEW: ensure fields needed by unwrap are projected by logfmt
+			for f := range unwrapNeeded {
+				needKeys = append(needKeys, f)
+			}
+
 			needKeys = dedupe(excludeFuture(needKeys))
 
 			selects := []string{top() + ".*"}
@@ -305,6 +324,30 @@ func (be *LogLeaf) ToWorkerSQL(limit int, order string) string {
 				push([]string{top() + ".*"}, top(), where)
 			}
 			remainingLF = later
+
+		case "unwrap":
+			field := strings.TrimSpace(p.Params["field"])
+			fn := strings.ToLower(strings.TrimSpace(p.Params["func"]))
+			if field == "" {
+				push([]string{top() + ".*"}, top(), nil)
+				break
+			}
+			col := quoteIdent(field)
+
+			var expr string
+			switch fn {
+			case "duration":
+				expr = unwrapDurationExpr(col)
+			case "bytes":
+				expr = unwrapBytesExpr(col)
+			case "", "identity":
+				fallthrough
+			default:
+				expr = fmt.Sprintf("try_cast(%s AS DOUBLE)", col)
+			}
+
+			selects := []string{top() + ".*", expr + " AS __unwrap_value"}
+			push(selects, top(), nil)
 
 		default:
 			// Unknown parser: pass-through
@@ -1098,4 +1141,42 @@ func jsonPathForKey(k string) string {
 	// Use quoted member: $."resource.service.name"
 	esc := strings.ReplaceAll(k, `"`, `\"`)
 	return `$."` + esc + `"`
+}
+
+// duration strings like "250ms", "2s", "3m", "1.5h" -> seconds as DOUBLE
+func unwrapDurationExpr(col string) string {
+	num := fmt.Sprintf("try_cast(regexp_extract(%s, '([0-9]*\\.?[0-9]+)', 1) AS DOUBLE)", col)
+	unit := fmt.Sprintf("coalesce(regexp_extract(%s, '(ns|us|µs|ms|s|m|h)', 1), 's')", col)
+	return fmt.Sprintf(`CASE %s
+		WHEN 'ns' THEN %s/1e9
+		WHEN 'us' THEN %s/1e6
+		WHEN 'µs' THEN %s/1e6
+		WHEN 'ms' THEN %s/1e3
+		WHEN 's'  THEN %s
+		WHEN 'm'  THEN %s*60
+		WHEN 'h'  THEN %s*3600
+		ELSE try_cast(%s AS DOUBLE) END`,
+		unit, num, num, num, num, num, num, num, col)
+}
+
+// size strings like "10KB", "3MiB", "512", etc. -> bytes as DOUBLE
+func unwrapBytesExpr(col string) string {
+	num := fmt.Sprintf("try_cast(regexp_extract(%s, '([0-9]*\\.?[0-9]+)', 1) AS DOUBLE)", col)
+	unit := fmt.Sprintf("upper(coalesce(regexp_extract(%s, '(B|KB|MB|GB|TB|PB|EB|KIB|MIB|GIB|TIB|PIB|EIB)', 1), 'B'))", col)
+	return fmt.Sprintf(`CASE %s
+		WHEN 'B'   THEN %s
+		WHEN 'KB'  THEN %s*1000
+		WHEN 'MB'  THEN %s*1000*1000
+		WHEN 'GB'  THEN %s*1000*1000*1000
+		WHEN 'TB'  THEN %s*1000*1000*1000*1000
+		WHEN 'PB'  THEN %s*1e15
+		WHEN 'EB'  THEN %s*1e18
+		WHEN 'KIB' THEN %s*1024
+		WHEN 'MIB' THEN %s*1024*1024
+		WHEN 'GIB' THEN %s*1024*1024*1024
+		WHEN 'TIB' THEN %s*1024*1024*1024*1024
+		WHEN 'PIB' THEN %s*1024*1024*1024*1024*1024
+		WHEN 'EIB' THEN %s*1024*1024*1024*1024*1024*1024
+		ELSE try_cast(%s AS DOUBLE) END`,
+		unit, num, num, num, num, num, num, num, num, num, num, num, num, num, col)
 }

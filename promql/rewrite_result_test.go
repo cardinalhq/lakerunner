@@ -262,3 +262,81 @@ func TestRewrite_ErrorOnUnsupportedRangeAgg(t *testing.T) {
 		t.Fatalf("expected error for unsupported range agg, got nil")
 	}
 }
+
+func TestRewrite_AvgOverTime_Unwrap_Simple(t *testing.T) {
+	leaf := logql.LogLeaf{ID: "uw1", Range: "1m"}
+
+	root := &logql.LRangeAggNode{
+		Op:    "avg_over_time",
+		Child: &logql.LLeafNode{Leaf: leaf},
+	}
+
+	rr, err := RewriteToPromQL(root)
+	if err != nil {
+		t.Fatalf("RewriteToPromQL error: %v", err)
+	}
+
+	wantProm := `avg_over_time(` + SynthLogUnwrap + `{` + LeafMatcher + `="uw1"}[1m])`
+	if rr.PromQL != wantProm {
+		t.Fatalf("promql mismatch:\n  want: %s\n  got : %s", wantProm, rr.PromQL)
+	}
+
+	assertLeavesExactly(t, rr, map[string]logql.LogLeaf{
+		"uw1": leaf,
+	})
+}
+
+func TestRewrite_MaxOverTime_Unwrap_WithBy(t *testing.T) {
+	leaf := logql.LogLeaf{ID: "uwBy", Range: "5m"}
+
+	// sum by(category) (max_over_time(<unwrap>[5m]))
+	root := &logql.LAggNode{
+		Op: "sum",
+		By: []string{"category"},
+		Child: &logql.LRangeAggNode{
+			Op:    "max_over_time",
+			Child: &logql.LLeafNode{Leaf: leaf},
+		},
+	}
+
+	rr, err := RewriteToPromQL(root)
+	if err != nil {
+		t.Fatalf("RewriteToPromQL error: %v", err)
+	}
+
+	wantProm := `sum by (category) (max_over_time(` + SynthLogUnwrap + `{` + LeafMatcher + `="uwBy"}[5m]))`
+	if rr.PromQL != wantProm {
+		t.Fatalf("promql mismatch:\n  want: %s\n  got : %s", wantProm, rr.PromQL)
+	}
+
+	assertLeavesExactly(t, rr, map[string]logql.LogLeaf{
+		"uwBy": leaf,
+	})
+}
+
+func TestRewrite_MinOverTime_Unwrap_WithOffset(t *testing.T) {
+	leaf := mkLeaf("uwOff", "2m", "15s")
+
+	root := &logql.LRangeAggNode{
+		Op:    "min_over_time",
+		Child: &logql.LLeafNode{Leaf: leaf},
+	}
+
+	rr, err := RewriteToPromQL(root)
+	if err != nil {
+		t.Fatalf("RewriteToPromQL error: %v", err)
+	}
+
+	wantProm := `min_over_time(` + SynthLogUnwrap + `{` + LeafMatcher + `="uwOff"}[2m]) offset 15s`
+	if rr.PromQL != wantProm {
+		t.Fatalf("promql mismatch:\n  want: %s\n  got : %s", wantProm, rr.PromQL)
+	}
+
+	assertLeavesExactly(t, rr, map[string]logql.LogLeaf{
+		"uwOff": {
+			ID:     "uwOff",
+			Range:  "2m",
+			Offset: "15s",
+		},
+	})
+}

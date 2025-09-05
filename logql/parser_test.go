@@ -219,3 +219,66 @@ outer:
 	}
 	return -1
 }
+
+func TestParse_Unwrap_Identity(t *testing.T) {
+	ast, err := FromLogQL(`avg_over_time({job="svc"} | json | unwrap latency_ms [1m])`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel, _, ok := ast.FirstPipeline()
+	if !ok {
+		t.Fatalf("no pipeline")
+	}
+	found := false
+	for _, p := range sel.Parsers {
+		if p.Type == "unwrap" {
+			if p.Params["func"] != "identity" || p.Params["field"] != "latency_ms" {
+				t.Fatalf("unwrap params = %#v", p.Params)
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("unwrap stage not found")
+	}
+}
+
+func TestParse_Unwrap_Duration_Quoted(t *testing.T) {
+	ast, err := FromLogQL(`min_over_time({job="svc"} | json | unwrap duration(latency_ms) [5m])`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel, _, ok := ast.FirstPipeline()
+	if !ok {
+		t.Fatalf("no pipeline")
+	}
+	var got map[string]string
+	for _, p := range sel.Parsers {
+		if p.Type == "unwrap" {
+			got = p.Params
+		}
+	}
+	if got == nil || got["func"] != "duration" || got["field"] != "latency_ms" {
+		t.Fatalf("unwrap params = %#v", got)
+	}
+}
+
+func TestParse_Unwrap_Base_Case(t *testing.T) {
+	ast, err := FromLogQL("max_over_time({job=\"svc\"} | json | unwrap payload_size [2m])")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel, _, ok := ast.FirstPipeline()
+	if !ok {
+		t.Fatalf("no pipeline")
+	}
+	var got map[string]string
+	for _, p := range sel.Parsers {
+		if p.Type == "unwrap" {
+			got = p.Params
+		}
+	}
+	if got == nil || got["field"] != "payload_size" {
+		t.Fatalf("unwrap params = %#v", got)
+	}
+}
