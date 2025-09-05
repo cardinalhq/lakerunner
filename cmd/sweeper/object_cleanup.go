@@ -115,6 +115,8 @@ func cleanupObj(ctx context.Context, sp storageprofile.StorageProfileProvider, m
 		slog.Int("instanceNum", int(obj.InstanceNum)),
 	)
 
+	ctx = logctx.WithLogger(ctx, ll)
+
 	profile, err := sp.GetStorageProfileForOrganizationAndInstance(ctx, obj.OrganizationID, obj.InstanceNum)
 	if err != nil {
 		ll.Error("Failed to get storage profile", slog.Any("error", err), slog.String("objectID", obj.ObjectID))
@@ -123,13 +125,13 @@ func cleanupObj(ctx context.Context, sp storageprofile.StorageProfileProvider, m
 			attribute.String("bucket", obj.BucketID),
 			attribute.String("organization_id", obj.OrganizationID.String()),
 		))
-		failWork(ctx, ll, mdb, obj.ID)
+		failWork(ctx, mdb, obj.ID)
 		return
 	}
 
 	if profile.Bucket != obj.BucketID {
 		ll.Error("Storage profile bucket mismatch", slog.String("profileBucket", profile.Bucket))
-		failWork(ctx, ll, mdb, obj.ID)
+		failWork(ctx, mdb, obj.ID)
 		return
 	}
 
@@ -141,7 +143,7 @@ func cleanupObj(ctx context.Context, sp storageprofile.StorageProfileProvider, m
 			attribute.String("bucket", obj.BucketID),
 			attribute.String("organization_id", obj.OrganizationID.String()),
 		))
-		failWork(ctx, ll, mdb, obj.ID)
+		failWork(ctx, mdb, obj.ID)
 		return
 	}
 
@@ -152,7 +154,7 @@ func cleanupObj(ctx context.Context, sp storageprofile.StorageProfileProvider, m
 			attribute.String("bucket", obj.BucketID),
 			attribute.String("organization_id", obj.OrganizationID.String()),
 		))
-		failWork(ctx, ll, mdb, obj.ID)
+		failWork(ctx, mdb, obj.ID)
 		return
 	}
 
@@ -163,7 +165,7 @@ func cleanupObj(ctx context.Context, sp storageprofile.StorageProfileProvider, m
 			attribute.String("bucket", obj.BucketID),
 			attribute.String("organization_id", obj.OrganizationID.String()),
 		))
-		failWork(ctx, ll, mdb, obj.ID)
+		failWork(ctx, mdb, obj.ID)
 		return
 	}
 
@@ -174,7 +176,9 @@ func cleanupObj(ctx context.Context, sp storageprofile.StorageProfileProvider, m
 	))
 }
 
-func failWork(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull, id uuid.UUID) {
+func failWork(ctx context.Context, mdb lrdb.StoreFull, id uuid.UUID) {
+	ll := logctx.FromContext(ctx)
+
 	if err := mdb.ObjectCleanupFail(ctx, id); err != nil {
 		ll.Error("Failed to mark object cleanup failed", slog.Any("error", err), slog.String("objectID", id.String()))
 	}
