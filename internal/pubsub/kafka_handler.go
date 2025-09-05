@@ -93,9 +93,6 @@ func handleMessageWithKafka(
 
 		// Lookup instance number from storage profile
 		if collectorName != "" {
-			slog.Info("Looking up storage profile",
-				slog.String("organization_id", item.OrganizationID.String()),
-				slog.String("collector_name", collectorName))
 			profile, err := sp.GetStorageProfileForOrganizationAndCollector(ctx, item.OrganizationID, collectorName)
 			if err != nil {
 				slog.Warn("Failed to lookup storage profile for collector, using default instance",
@@ -103,10 +100,6 @@ func handleMessageWithKafka(
 					slog.String("organization_id", item.OrganizationID.String()),
 					slog.String("collector_name", collectorName))
 			} else {
-				slog.Info("Found storage profile",
-					slog.String("organization_id", item.OrganizationID.String()),
-					slog.String("collector_name", collectorName),
-					slog.Int("instance_num", int(profile.InstanceNum)))
 				instanceNum = profile.InstanceNum
 			}
 		}
