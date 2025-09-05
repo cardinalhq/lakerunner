@@ -18,7 +18,6 @@ package compaction
 
 import (
 	"context"
-	"log/slog"
 	"testing"
 	"time"
 
@@ -36,7 +35,6 @@ import (
 func TestReplaceCompactedSegments_WithCompactMetricSegs(t *testing.T) {
 	ctx := context.Background()
 	db := testhelpers.NewTestLRDBStore(t)
-	ll := slog.Default()
 
 	orgID := uuid.New()
 	now := time.Now()
@@ -97,7 +95,7 @@ func TestReplaceCompactedSegments_WithCompactMetricSegs(t *testing.T) {
 	// Create processed segments for testing
 	segments := make(metricsprocessing.ProcessedSegments, 0, len(results))
 	for _, result := range results {
-		segment, err := metricsprocessing.NewProcessedSegment(result, orgID, "test-collector", ll)
+		segment, err := metricsprocessing.NewProcessedSegment(ctx, result, orgID, "test-collector")
 		require.NoError(t, err)
 		segments = append(segments, segment)
 	}
@@ -105,7 +103,7 @@ func TestReplaceCompactedSegments_WithCompactMetricSegs(t *testing.T) {
 	// Call the function under test
 	inputRecords := int64(2000) // Sum of old segments record count (1000 + 1000)
 	inputBytes := int64(100000) // Sum of old segments file size (50000 + 50000)
-	err := replaceCompactedSegments(ctx, ll, db, segments, oldRows, metadata, inputRecords, inputBytes, int64(1500))
+	err := replaceCompactedSegments(ctx, db, segments, oldRows, metadata, inputRecords, inputBytes, int64(1500))
 	require.NoError(t, err)
 
 	// Verify segments by querying all segments we care about
