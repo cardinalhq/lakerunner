@@ -65,3 +65,30 @@ CREATE TABLE IF NOT EXISTS lrdb_exemplar_traces (
     span_kind INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (organization_id, service_identifier_id, fingerprint)
 );
+
+-- add_to_bigint_list takes a list of BIGINTs, a new element, and a maximum length, and returns a new list.
+-- If the new element is already in the list, the list is left unchanged.
+CREATE OR REPLACE FUNCTION add_to_bigint_list(
+    arr BIGINT[],
+    new_elem BIGINT,
+    max_len INTEGER
+)
+RETURNS BIGINT[] AS $$
+DECLARE
+    result BIGINT[];
+BEGIN
+    IF arr IS NULL THEN
+        result := ARRAY[new_elem];
+    ELSIF new_elem = ANY(arr) THEN
+        result := arr;
+    ELSE
+        result := ARRAY[new_elem] || arr;
+    END IF;
+
+    IF array_length(result, 1) > max_len THEN
+        result := result[1:max_len];
+    END IF;
+
+    RETURN result;
+END;
+$$ LANGUAGE plpgsql;
