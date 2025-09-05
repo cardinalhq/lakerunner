@@ -29,6 +29,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -46,9 +47,9 @@ type ProcessedSegment struct {
 }
 
 // NewProcessedSegment creates a new processed segment bundle from a parquet result
-func NewProcessedSegment(result parquetwriter.Result, orgID uuid.UUID, collectorName string, ll *slog.Logger) (*ProcessedSegment, error) {
+func NewProcessedSegment(ctx context.Context, result parquetwriter.Result, orgID uuid.UUID, collectorName string) (*ProcessedSegment, error) {
 	// Extract metadata from the file
-	metadata, err := ExtractFileMetadata(result, ll)
+	metadata, err := ExtractFileMetadata(ctx, result)
 	if err != nil {
 		return nil, fmt.Errorf("failed to extract file metadata: %w", err)
 	}
@@ -111,10 +112,10 @@ type ProcessedSegments []*ProcessedSegment
 
 // CreateSegmentsFromResults converts parquet writer results into processed segments
 // without uploading them. This is shared between compaction and rollup paths.
-func CreateSegmentsFromResults(results []parquetwriter.Result, orgID uuid.UUID, collectorName string, ll *slog.Logger) (ProcessedSegments, error) {
+func CreateSegmentsFromResults(ctx context.Context, results []parquetwriter.Result, orgID uuid.UUID, collectorName string) (ProcessedSegments, error) {
 	segments := make(ProcessedSegments, 0, len(results))
 	for _, result := range results {
-		segment, err := NewProcessedSegment(result, orgID, collectorName, ll)
+		segment, err := NewProcessedSegment(ctx, result, orgID, collectorName)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create processed segment: %w", err)
 		}
@@ -126,7 +127,9 @@ func CreateSegmentsFromResults(results []parquetwriter.Result, orgID uuid.UUID, 
 // UploadSegments uploads all provided segments to S3. If an error occurs, the
 // returned slice contains only the successfully uploaded segments so callers can
 // schedule cleanup for them.
-func UploadSegments(ctx context.Context, ll *slog.Logger, s3client *awsclient.S3Client, bucket string, segments ProcessedSegments) (ProcessedSegments, error) {
+func UploadSegments(ctx context.Context, s3client *awsclient.S3Client, bucket string, segments ProcessedSegments) (ProcessedSegments, error) {
+	ll := logctx.FromContext(ctx)
+
 	uploaded := make(ProcessedSegments, 0, len(segments))
 	for i, segment := range segments {
 		if ctx.Err() != nil {
@@ -251,7 +254,6 @@ type UploadParams struct {
 // Returns the upload results containing segment IDs and dateints for each uploaded file.
 func UploadMetricResults(
 	ctx context.Context,
-	ll *slog.Logger,
 	s3client *awsclient.S3Client,
 	mdb lrdb.StoreFull,
 	results []parquetwriter.Result,
@@ -259,7 +261,7 @@ func UploadMetricResults(
 ) ([]UploadResult, error) {
 	var uploadResults []UploadResult
 	for _, result := range results {
-		uploadResult, err := uploadSingleMetricResult(ctx, ll, s3client, mdb, result, params)
+		uploadResult, err := uploadSingleMetricResult(ctx, s3client, mdb, result, params)
 		if err != nil {
 			return nil, fmt.Errorf("failed to upload result: %w", err)
 		}
@@ -280,12 +282,13 @@ type UploadResult struct {
 // uploadSingleMetricResult uploads a single parquet file result to S3 and database.
 func uploadSingleMetricResult(
 	ctx context.Context,
-	ll *slog.Logger,
 	s3client *awsclient.S3Client,
 	mdb lrdb.StoreFull,
 	result parquetwriter.Result,
 	params UploadParams,
 ) (UploadResult, error) {
+	ll := logctx.FromContext(ctx)
+
 	// Safety check: should never get empty results from the writer
 	if result.RecordCount == 0 {
 		ll.Error("Received empty result from writer - this should not happen",
@@ -298,7 +301,7 @@ func uploadSingleMetricResult(
 	segmentID := s3helper.GenerateID()
 
 	// Extract dateint and hour from actual timestamp data
-	filestats, err := ExtractFileMetadata(result, ll)
+	filestats, err := ExtractFileMetadata(ctx, result)
 	if err != nil {
 		return UploadResult{}, fmt.Errorf("failed to extract file metadata: %w", err)
 	}
@@ -363,12 +366,13 @@ func uploadSingleMetricResult(
 // and inserts them directly into the database. Returns ProcessedSegments for further use.
 func UploadMetricResultsWithProcessedSegments(
 	ctx context.Context,
-	ll *slog.Logger,
 	s3client *awsclient.S3Client,
 	mdb lrdb.StoreFull,
 	results []parquetwriter.Result,
 	params UploadParams,
 ) (ProcessedSegments, error) {
+	ll := logctx.FromContext(ctx)
+
 	orgUUID, err := uuid.Parse(params.OrganizationID)
 	if err != nil {
 		return nil, fmt.Errorf("invalid organization ID: %w", err)
@@ -385,7 +389,7 @@ func UploadMetricResultsWithProcessedSegments(
 			return nil, fmt.Errorf("received empty result file with 0 records")
 		}
 
-		segment, err := NewProcessedSegment(result, orgUUID, params.CollectorName, ll)
+		segment, err := NewProcessedSegment(ctx, result, orgUUID, params.CollectorName)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create processed segment: %w", err)
 		}

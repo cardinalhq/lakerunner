@@ -24,3 +24,41 @@ func (q *Store) InsertLogSegment(ctx context.Context, params InsertLogSegmentPar
 	}
 	return q.InsertLogSegmentDirect(ctx, params)
 }
+
+// InsertLogSegmentBatchWithKafkaOffset inserts multiple log segments and updates Kafka offset in a single transaction
+func (q *Store) InsertLogSegmentBatchWithKafkaOffset(ctx context.Context, batch LogSegmentBatch) error {
+	return q.execTx(ctx, func(s *Store) error {
+		// Ensure partitions exist for all segments
+		for _, params := range batch.Segments {
+			if err := s.ensureLogFPPartition(ctx, "log_seg", params.OrganizationID, params.Dateint); err != nil {
+				return err
+			}
+		}
+
+		// Convert to batch parameters
+		batchParams := make([]BatchInsertLogSegsParams, len(batch.Segments))
+		for i, params := range batch.Segments {
+			batchParams[i] = BatchInsertLogSegsParams(params)
+		}
+
+		// Insert all segments using batch
+		result := s.BatchInsertLogSegs(ctx, batchParams)
+		var insertErr error
+		result.Exec(func(i int, err error) {
+			if err != nil && insertErr == nil {
+				insertErr = err
+			}
+		})
+		if insertErr != nil {
+			return insertErr
+		}
+
+		// Update Kafka offset
+		return s.KafkaJournalUpsert(ctx, KafkaJournalUpsertParams{
+			ConsumerGroup:       batch.KafkaOffset.ConsumerGroup,
+			Topic:               batch.KafkaOffset.Topic,
+			Partition:           batch.KafkaOffset.Partition,
+			LastProcessedOffset: batch.KafkaOffset.Offset,
+		})
+	})
+}

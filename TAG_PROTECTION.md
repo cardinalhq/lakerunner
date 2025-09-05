@@ -5,10 +5,12 @@ This document describes how Lakerunner enforces controlled releases through GitH
 ## Protected Tag Patterns
 
 ### Protected (Cannot be manually created)
+
 - `v*.*.*` - Production release tags (e.g., `v1.2.3`, `v2.0.1`)
 - Only the "Promote Release" GitHub Action can create these tags
 
 ### Allowed (Can be manually created)
+
 - `v*.*.*-rc*` - Release candidates (e.g., `v1.2.3-rc1`, `v1.2.3-rc2`)
 - `v*.*.*-beta*` - Beta releases (e.g., `v1.2.3-beta1`)
 - `v*.*.*-alpha*` - Alpha releases (e.g., `v1.2.3-alpha1`)
@@ -23,7 +25,8 @@ In GitHub repository settings:
 1. Navigate to **Settings** → **General** → **Tag protection rules**
 2. Click **Add rule**
 3. Configure the rule:
-   ```
+
+   ```text
    Tag name pattern: v[0-9]+.[0-9]+.[0-9]+
    [x] Restrict pushes that create matching tags
    ```
@@ -35,6 +38,7 @@ This prevents anyone (including admins) from manually creating `v1.2.3` style ta
 The promotion workflow needs a token that can bypass tag protection:
 
 #### Option A: GitHub App (Recommended)
+
 1. Create a GitHub App with permissions:
    - **Repository permissions:**
      - Contents: Write
@@ -44,6 +48,7 @@ The promotion workflow needs a token that can bypass tag protection:
 3. Add app credentials to repository secrets
 
 #### Option B: Fine-Grained Personal Access Token
+
 1. Create a fine-grained PAT with:
    - **Resource owner:** Your organization
    - **Repository access:** Selected repositories (lakerunner)
@@ -56,13 +61,14 @@ The promotion workflow needs a token that can bypass tag protection:
 
 Add these secrets to **Settings** → **Secrets and variables** → **Actions**:
 
-```
+```sh
 RELEASE_TOKEN: <your-privileged-token>
 ```
 
 ## How It Works
 
 ### Blocked Actions
+
 ```bash
 # These will be rejected by GitHub:
 git tag v1.2.3
@@ -72,6 +78,7 @@ git push origin v1.2.3
 ```
 
 ### Allowed Actions
+
 ```bash
 # Pre-release tags can still be created manually:
 git tag v1.2.3-rc1
@@ -84,20 +91,24 @@ git push origin v1.2.3-rc1
 ## Release Workflow
 
 ### 1. Create Release Candidate
+
 ```bash
 git tag v1.2.3-rc1
 git push origin v1.2.3-rc1
 ```
+
 - Allowed - triggers RC build workflow
 - Creates: `public.ecr.aws/cardinalhq.io/lakerunner:v1.2.3-rc1`
 
 ### 2. Test Release Candidate
+
 - Deploy RC to staging environment
 - Run integration tests
 - Customer validation
 - Security scanning
 
 ### 3. Promote to Production
+
 - Use **"Promote Release"** GitHub Action workflow
 - Input: RC version → Final version
 - Creates protected tags: `v1.2.3`, `v1.2`, `v1`, `stable`

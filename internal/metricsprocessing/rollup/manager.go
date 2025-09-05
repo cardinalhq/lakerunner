@@ -26,6 +26,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -64,7 +65,6 @@ type Manager struct {
 	db         rollupStore
 	workerID   int64
 	config     config
-	ll         *slog.Logger
 	sp         storageprofile.StorageProfileProvider
 	awsmanager *awsclient.Manager
 }
@@ -80,13 +80,14 @@ func NewManager(
 		db:         db,
 		workerID:   workerID,
 		config:     config,
-		ll:         slog.Default().With(slog.String("component", "metric-rollup-manager")),
 		sp:         sp,
 		awsmanager: awsmanager,
 	}
 }
 
 func (m *Manager) ClaimWork(ctx context.Context) ([]lrdb.MrqClaimBatchRow, error) {
+	ll := logctx.FromContext(ctx)
+
 	// Special case: when batch limit is 1, use the single row claim for compatibility
 	if m.config.BatchLimit == 1 {
 		row, err := m.db.MrqClaimSingleRow(ctx, lrdb.MrqClaimSingleRowParams{
@@ -104,7 +105,7 @@ func (m *Manager) ClaimWork(ctx context.Context) ([]lrdb.MrqClaimBatchRow, error
 		// Convert the single row to a batch row
 		item := lrdb.MrqClaimBatchRow(row)
 
-		m.ll.Info("Claimed single rollup row",
+		ll.Info("Claimed single rollup row",
 			slog.Int64("id", row.ID),
 			slog.Int64("recordCount", row.RecordCount))
 
@@ -122,7 +123,7 @@ func (m *Manager) ClaimWork(ctx context.Context) ([]lrdb.MrqClaimBatchRow, error
 	}
 
 	if len(rows) > 0 {
-		m.ll.Info("Claimed metric rollup batch",
+		ll.Info("Claimed metric rollup batch",
 			slog.Int("workItems", len(rows)))
 	}
 
@@ -130,11 +131,13 @@ func (m *Manager) ClaimWork(ctx context.Context) ([]lrdb.MrqClaimBatchRow, error
 }
 
 func (m *Manager) CompleteWork(ctx context.Context, ids []int64) error {
+	ll := logctx.FromContext(ctx)
+
 	if len(ids) == 0 {
 		return nil
 	}
 	if err := m.db.CompleteRollup(ctx, m.workerID, ids); err != nil {
-		m.ll.Error("Failed to complete work items",
+		ll.Error("Failed to complete work items",
 			slog.Any("ids", ids),
 			slog.Any("error", err))
 		return fmt.Errorf("failed to complete work items: %w", err)
@@ -143,6 +146,8 @@ func (m *Manager) CompleteWork(ctx context.Context, ids []int64) error {
 }
 
 func (m *Manager) ReleaseWork(ctx context.Context, ids []int64) error {
+	ll := logctx.FromContext(ctx)
+
 	if len(ids) == 0 {
 		return nil
 	}
@@ -151,19 +156,21 @@ func (m *Manager) ReleaseWork(ctx context.Context, ids []int64) error {
 		WorkerID: m.workerID,
 		Ids:      ids,
 	}); err != nil {
-		m.ll.Error("Failed to release work items",
+		ll.Error("Failed to release work items",
 			slog.Int("count", len(ids)),
 			slog.Any("error", err))
 		return fmt.Errorf("failed to release work items: %w", err)
 	}
 
-	m.ll.Info("Released work items back to queue for retry",
+	ll.Info("Released work items back to queue for retry",
 		slog.Int("count", len(ids)))
 
 	return nil
 }
 
 func (m *Manager) FailWork(ctx context.Context, ids []int64) error {
+	ll := logctx.FromContext(ctx)
+
 	if len(ids) == 0 {
 		return nil
 	}
@@ -173,13 +180,13 @@ func (m *Manager) FailWork(ctx context.Context, ids []int64) error {
 	err := m.db.CompleteRollup(ctx, m.workerID, ids)
 
 	if err != nil {
-		m.ll.Error("Failed to delete failed work items",
+		ll.Error("Failed to delete failed work items",
 			slog.Int("count", len(ids)),
 			slog.Any("error", err))
 		return fmt.Errorf("failed to delete failed work items: %w", err)
 	}
 
-	m.ll.Warn("Deleted failed work items from queue",
+	ll.Warn("Deleted failed work items from queue",
 		slog.Int("count", len(ids)))
 
 	return nil

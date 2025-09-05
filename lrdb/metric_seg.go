@@ -173,3 +173,60 @@ func (q *Store) RollupMetricSegs(ctx context.Context, sourceParams RollupSourceP
 		return errs.ErrorOrNil()
 	})
 }
+
+// InsertMetricSegmentBatchWithKafkaOffset inserts multiple metric segments and updates Kafka offset in a single transaction
+func (q *Store) InsertMetricSegmentBatchWithKafkaOffset(ctx context.Context, batch MetricSegmentBatch) error {
+	return q.execTx(ctx, func(s *Store) error {
+		// Ensure partitions exist for all segments
+		for _, params := range batch.Segments {
+			if err := s.ensureMetricSegmentPartition(ctx, params.OrganizationID, params.Dateint); err != nil {
+				return err
+			}
+		}
+
+		// Convert to batch parameters
+		batchParams := make([]BatchInsertMetricSegsParams, len(batch.Segments))
+		for i, params := range batch.Segments {
+			batchParams[i] = BatchInsertMetricSegsParams{
+				OrganizationID: params.OrganizationID,
+				Dateint:        params.Dateint,
+				IngestDateint:  params.IngestDateint,
+				FrequencyMs:    params.FrequencyMs,
+				SegmentID:      params.SegmentID,
+				InstanceNum:    params.InstanceNum,
+				SlotID:         params.SlotID,
+				StartTs:        params.StartTs,
+				EndTs:          params.EndTs,
+				RecordCount:    params.RecordCount,
+				FileSize:       params.FileSize,
+				Published:      params.Published,
+				CreatedBy:      params.CreatedBy,
+				Rolledup:       false, // Default for new segments
+				Fingerprints:   params.Fingerprints,
+				SortVersion:    params.SortVersion,
+				SlotCount:      params.SlotCount,
+				Compacted:      params.Compacted,
+			}
+		}
+
+		// Insert all segments using batch
+		result := s.BatchInsertMetricSegs(ctx, batchParams)
+		var insertErr error
+		result.Exec(func(i int, err error) {
+			if err != nil && insertErr == nil {
+				insertErr = err
+			}
+		})
+		if insertErr != nil {
+			return insertErr
+		}
+
+		// Update Kafka offset
+		return s.KafkaJournalUpsert(ctx, KafkaJournalUpsertParams{
+			ConsumerGroup:       batch.KafkaOffset.ConsumerGroup,
+			Topic:               batch.KafkaOffset.Topic,
+			Partition:           batch.KafkaOffset.Partition,
+			LastProcessedOffset: batch.KafkaOffset.Offset,
+		})
+	})
+}

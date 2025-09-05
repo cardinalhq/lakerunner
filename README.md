@@ -14,7 +14,7 @@
 ## Features
 
 - Automatic ingestion from S3 on object creation
-- Event-driven Architecture enabled by S3 Object Notifications. 
+- Event-driven Architecture enabled by S3 Object Notifications.
 - Native support for OpenTelemetry log/metric proto files
 - Seamless ingestion for `OTEL Proto`, `CSV` or `.json.gz` formats.
 - Works with DataDog, FluentBit, or your custom source!
@@ -83,19 +83,16 @@ Navigate to the `Explore` tab, select the `Cardinal` datasource, and try running
 3. [kubectl](https://kubernetes.io/docs/tasks/tools/#kubectl) (`brew install kubectl`)
 4. [Helm](https://helm.sh/docs/intro/install/) 3.14+ (`brew install helm`)
 
-
 We will discuss configuration options in the next section
 
-> **Note:**  
-> Need help? Join the [Lakerunner community on Slack](https://join.slack.com/t/birdhousebycardinalhq/shared_invite/zt-34ds8vt2t-YhGFtoG5NjJX238cMXdLGw) or email us at **support@cardinalhq.io**.  
->  
+> **Note:**
+> Need help? Join the [Lakerunner community on Slack](https://join.slack.com/t/birdhousebycardinalhq/shared_invite/zt-34ds8vt2t-YhGFtoG5NjJX238cMXdLGw) or email us at **support@cardinalhq.io**.
+>
 > **CardinalHQ offers managed Lakerunner deployments.**
-
 
 - You are ready to explore the data! You can use the grafana plugin that is bundled in the helm chart, and optionally setup the [Lakerunner CLI](https://github.com/cardinalhq/lakerunner-cli) from either the [releases page](https://github.com/cardinalhq/lakerunner-cli/releases), or with brew
 
-
-```
+```sh
 brew tap cardinalhq/lakerunner-cli
 brew install lakerunner-cli
 ```
@@ -109,9 +106,6 @@ export LAKERUNNER_QUERY_URL="http://localhost:7101"
 export LAKERUNNER_API_KEY="test-key"
 ```
 
-
 ## Production Deployment
 
 We are actively working on a production deployment for Lakerunner and will soon be rolling out `CloudFormation` templates for AWS, `Azure Resource Manager` (ARM) Templates for Azure, and Google `IaC` Templates for GCP. Stay tuned!
-
-

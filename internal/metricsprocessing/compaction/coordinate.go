@@ -23,6 +23,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
@@ -39,7 +40,6 @@ type CompactionWorkMetadata struct {
 // coordinate handles S3 download, compaction, upload, and database update
 func coordinate(
 	ctx context.Context,
-	ll *slog.Logger,
 	mdb compactionStore,
 	tmpdir string,
 	metadata CompactionWorkMetadata,
@@ -48,6 +48,8 @@ func coordinate(
 	rows []lrdb.MetricSeg,
 	estimatedTargetRecords int64,
 ) error {
+	ll := logctx.FromContext(ctx)
+
 	if len(rows) == 0 {
 		ll.Debug("No segments to compact")
 		return nil
@@ -98,12 +100,11 @@ func coordinate(
 		return newWorkerInterrupted("context cancelled before compaction")
 	}
 
-	readerStack, err := metricsprocessing.CreateReaderStack(
-		ctx, ll, tmpdir, s3client, metadata.OrganizationID, profile, rows)
+	readerStack, err := metricsprocessing.CreateReaderStack(ctx, tmpdir, s3client, metadata.OrganizationID, profile, rows)
 	if err != nil {
 		return err
 	}
-	defer metricsprocessing.CloseReaderStack(ll, readerStack)
+	defer metricsprocessing.CloseReaderStack(ctx, readerStack)
 
 	// Calculate input stats for tracking
 	inputBytes := int64(0)
@@ -120,7 +121,6 @@ func coordinate(
 		ReaderStack:       readerStack,
 		TargetFrequencyMs: metadata.FrequencyMs, // Same frequency for compaction
 		TmpDir:            tmpdir,
-		Logger:            ll,
 		RecordsLimit:      estimatedTargetRecords * 2,
 		EstimatedRecords:  estimatedTargetRecords,
 		Action:            "compact",
@@ -165,12 +165,12 @@ func coordinate(
 	s3Ctx, s3Cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer s3Cancel()
 
-	segments, err := metricsprocessing.CreateSegmentsFromResults(processingResult.RawResults, metadata.OrganizationID, profile.CollectorName, ll)
+	segments, err := metricsprocessing.CreateSegmentsFromResults(ctx, processingResult.RawResults, metadata.OrganizationID, profile.CollectorName)
 	if err != nil {
 		return fmt.Errorf("failed to create processed segments: %w", err)
 	}
 
-	uploadedSegments, err := metricsprocessing.UploadSegments(s3Ctx, ll, s3client, profile.Bucket, segments)
+	uploadedSegments, err := metricsprocessing.UploadSegments(s3Ctx, s3client, profile.Bucket, segments)
 	if err != nil {
 		// If upload failed partway through, we need to clean up any uploaded files
 		if len(uploadedSegments) > 0 {
@@ -188,7 +188,7 @@ func coordinate(
 	dbCtx, dbCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer dbCancel()
 
-	err = replaceCompactedSegments(dbCtx, ll, mdb, segments, rows, metadata, inputRecords, inputBytes, estimatedTargetRecords)
+	err = replaceCompactedSegments(dbCtx, mdb, segments, rows, metadata, inputRecords, inputBytes, estimatedTargetRecords)
 	if err != nil {
 		// Database update failed after successful uploads - schedule cleanup
 		ll.Error("Database update failed after successful S3 upload, scheduling cleanup",
@@ -203,7 +203,6 @@ func coordinate(
 
 func replaceCompactedSegments(
 	ctx context.Context,
-	ll *slog.Logger,
 	mdb compactionStore,
 	segments metricsprocessing.ProcessedSegments,
 	oldRows []lrdb.MetricSeg,
@@ -212,6 +211,8 @@ func replaceCompactedSegments(
 	inputBytes int64,
 	estimatedTargetRecords int64,
 ) error {
+	ll := logctx.FromContext(ctx)
+
 	// Prepare old records for CompactMetricSegs
 	oldRecords := make([]lrdb.CompactMetricSegsOld, len(oldRows))
 	for i, row := range oldRows {
@@ -293,7 +294,6 @@ func replaceCompactedSegments(
 // coordinateBundle handles S3 download, compaction, upload, and database update for bundle-based approach
 func coordinateBundle(
 	ctx context.Context,
-	ll *slog.Logger,
 	mdb compactionStore,
 	tmpdir string,
 	bundle lrdb.CompactionBundleResult,
@@ -301,6 +301,8 @@ func coordinateBundle(
 	s3client *awsclient.S3Client,
 	rows []lrdb.MetricSeg,
 ) error {
+	ll := logctx.FromContext(ctx)
+
 	if len(rows) == 0 {
 		ll.Debug("No segments to compact")
 		return nil
@@ -326,5 +328,5 @@ func coordinateBundle(
 		slog.Int("segmentCount", len(rows)),
 		slog.Int("bundleItems", len(bundle.Items)))
 
-	return coordinate(ctx, ll, mdb, tmpdir, metadata, profile, s3client, rows, bundle.EstimatedTarget)
+	return coordinate(ctx, mdb, tmpdir, metadata, profile, s3client, rows, bundle.EstimatedTarget)
 }

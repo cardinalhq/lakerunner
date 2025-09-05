@@ -15,8 +15,6 @@
 package metricsprocessing
 
 import (
-	"log/slog"
-
 	"github.com/google/uuid"
 
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
@@ -27,7 +25,6 @@ type ProcessingInput struct {
 	ReaderStack       *ReaderStackResult
 	TargetFrequencyMs int32 // Same as source for compact, next level for rollup
 	TmpDir            string
-	Logger            *slog.Logger
 	RecordsLimit      int64  // Maximum records per file
 	EstimatedRecords  int64  // Estimated target records for optimization
 	Action            string // "compact" or "rollup" for metrics

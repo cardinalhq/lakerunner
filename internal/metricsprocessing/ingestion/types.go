@@ -15,8 +15,6 @@
 package ingestion
 
 import (
-	"log/slog"
-
 	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/processing/ingest"
@@ -36,7 +34,6 @@ type input struct {
 	IngestDateint     int32
 	RPFEstimate       int64
 	ExemplarProcessor *exemplar.Processor
-	Logger            *slog.Logger
 	Config            Config
 }
 

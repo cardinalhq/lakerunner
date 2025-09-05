@@ -13,7 +13,9 @@ import (
 
 type Querier interface {
 	BatchDeleteMetricSegs(ctx context.Context, arg []BatchDeleteMetricSegsParams) *BatchDeleteMetricSegsBatchResults
+	BatchInsertLogSegs(ctx context.Context, arg []BatchInsertLogSegsParams) *BatchInsertLogSegsBatchResults
 	BatchInsertMetricSegs(ctx context.Context, arg []BatchInsertMetricSegsParams) *BatchInsertMetricSegsBatchResults
+	BatchInsertTraceSegs(ctx context.Context, arg []BatchInsertTraceSegsParams) *BatchInsertTraceSegsBatchResults
 	BatchMarkMetricSegsRolledup(ctx context.Context, arg []BatchMarkMetricSegsRolledupParams) *BatchMarkMetricSegsRolledupBatchResults
 	// This will upsert a new log exemplar. Attributes, exemplar, and updated_at are always updated
 	// to the provided values. If old_fingerprint is not 0, it is added to the list of related

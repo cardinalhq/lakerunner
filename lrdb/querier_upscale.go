@@ -59,4 +59,5 @@ type StoreFull interface {
 	MetricSegmentInserter
 	TraceSegmentInserter
 	WorkQueueQuerier
+	SegmentBatcher
 }

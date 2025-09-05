@@ -24,3 +24,41 @@ func (q *Store) InsertTraceSegment(ctx context.Context, params InsertTraceSegmen
 	}
 	return q.InsertTraceSegmentDirect(ctx, params)
 }
+
+// InsertTraceSegmentBatchWithKafkaOffset inserts multiple trace segments and updates Kafka offset in a single transaction
+func (q *Store) InsertTraceSegmentBatchWithKafkaOffset(ctx context.Context, batch TraceSegmentBatch) error {
+	return q.execTx(ctx, func(s *Store) error {
+		// Ensure partitions exist for all segments
+		for _, params := range batch.Segments {
+			if err := s.ensureTraceFPPartition(ctx, "trace_seg", params.OrganizationID, params.Dateint); err != nil {
+				return err
+			}
+		}
+
+		// Convert to batch parameters
+		batchParams := make([]BatchInsertTraceSegsParams, len(batch.Segments))
+		for i, params := range batch.Segments {
+			batchParams[i] = BatchInsertTraceSegsParams(params)
+		}
+
+		// Insert all segments using batch
+		result := s.BatchInsertTraceSegs(ctx, batchParams)
+		var insertErr error
+		result.Exec(func(i int, err error) {
+			if err != nil && insertErr == nil {
+				insertErr = err
+			}
+		})
+		if insertErr != nil {
+			return insertErr
+		}
+
+		// Update Kafka offset
+		return s.KafkaJournalUpsert(ctx, KafkaJournalUpsertParams{
+			ConsumerGroup:       batch.KafkaOffset.ConsumerGroup,
+			Topic:               batch.KafkaOffset.Topic,
+			Partition:           batch.KafkaOffset.Partition,
+			LastProcessedOffset: batch.KafkaOffset.Offset,
+		})
+	})
+}

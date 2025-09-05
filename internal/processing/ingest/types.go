@@ -18,6 +18,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/cardinalhq/lakerunner/internal/awsclient"
+	"github.com/cardinalhq/lakerunner/internal/storageprofile"
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 // IngestItem represents a work item for ingestion processing.
@@ -30,4 +34,15 @@ type IngestItem struct {
 	FileSize       int64     `json:"file_size"`
 	QueuedAt       time.Time `json:"queued_at"`
 	CollectorName  string    `json:"collector_name"`
+}
+
+// ProcessBatchArgs contains common arguments for all batch processing functions
+type ProcessBatchArgs struct {
+	TmpDir          string
+	StorageProvider storageprofile.StorageProfileProvider
+	DB              lrdb.StoreFull
+	AWSManager      *awsclient.Manager
+	IngestDateint   int32
+	RPFEstimate     int64
+	KafkaOffset     lrdb.KafkaOffsetUpdate
 }

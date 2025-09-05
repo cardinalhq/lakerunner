@@ -43,7 +43,6 @@ type IngestBatchProcessingFunction func(
 	loop *IngestLoopContext) error
 
 type IngestLoopContext struct {
-	ctx               context.Context
 	mdb               lrdb.StoreFull
 	sp                storageprofile.StorageProfileProvider
 	cloudManagers     *cloudstorage.CloudManagers
@@ -114,7 +113,6 @@ func NewIngestLoopContext(ctx context.Context, signal string) (*IngestLoopContex
 	var lastLogTime time.Time
 
 	loopCtx := &IngestLoopContext{
-		ctx:               ctx,
 		mdb:               mdb,
 		sp:                sp,
 		cloudManagers:     cloudManagers,

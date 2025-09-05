@@ -139,7 +139,7 @@ func (k *KafkaIngestConsumer) Run(ctx context.Context) error {
 					continue
 				}
 
-				if err := k.processItem(ctx, notif); err != nil {
+				if err := k.processItem(ctx, notif, kafkaMsg); err != nil {
 					ll.Error("Failed to process item", slog.Any("error", err))
 					return err // Return error to prevent commit
 				}
@@ -161,7 +161,7 @@ func (k *KafkaIngestConsumer) Run(ctx context.Context) error {
 }
 
 // processItem processes a single Kafka notification
-func (k *KafkaIngestConsumer) processItem(ctx context.Context, notif *messages.ObjStoreNotificationMessage) error {
+func (k *KafkaIngestConsumer) processItem(ctx context.Context, notif *messages.ObjStoreNotificationMessage, kafkaMsg fly.ConsumedMessage) error {
 	ll := logctx.FromContext(ctx)
 	// Convert notification to IngestItem
 	item := ingest.IngestItem{
@@ -195,15 +195,6 @@ func (k *KafkaIngestConsumer) processItem(ctx context.Context, notif *messages.O
 
 	ingestDateint, _ := helpers.MSToDateintHour(time.Now().UTC().UnixMilli())
 
-	itemLogger := ll.With(
-		slog.String("organizationID", item.OrganizationID.String()),
-		slog.Int("instanceNum", int(item.InstanceNum)),
-		slog.String("bucket", item.Bucket),
-		slog.String("objectID", item.ObjectID))
-
-	// Create new context with the item-specific logger
-	ctxWithItemLogger := logctx.WithLogger(ctx, itemLogger)
-
 	// Get RPF estimate for this specific item
 	var rpfEstimate int64
 	switch k.signal {
@@ -215,18 +206,44 @@ func (k *KafkaIngestConsumer) processItem(ctx context.Context, notif *messages.O
 		rpfEstimate = 40_000
 	}
 
-	// Process based on signal type - single item
+	// Prepare Kafka offset for batch transaction
+	kafkaOffset := lrdb.KafkaOffsetUpdate{
+		ConsumerGroup: k.consumerGroup,
+		Topic:         k.topic,
+		Partition:     int32(kafkaMsg.Partition),
+		Offset:        kafkaMsg.Offset,
+	}
+
+	// Process based on signal type - each processor will handle the full flow including batch transaction
 	var processErr error
+
+	// Create common arguments struct
+	args := ingest.ProcessBatchArgs{
+		TmpDir:          tmpdir,
+		StorageProvider: k.loop.sp,
+		DB:              k.loop.mdb,
+		AWSManager:      k.loop.awsmanager,
+		IngestDateint:   ingestDateint,
+		RPFEstimate:     rpfEstimate,
+		KafkaOffset:     kafkaOffset,
+	}
+
+	itemLogger := ll.With(
+		slog.String("organizationID", item.OrganizationID.String()),
+		slog.Int("instanceNum", int(item.InstanceNum)),
+		slog.String("bucket", item.Bucket),
+		slog.String("objectID", item.ObjectID))
+
+	// Create new context with the item-specific logger
+	ctxWithItemLogger := logctx.WithLogger(ctx, itemLogger)
+
 	switch k.signal {
 	case "metrics":
-		processErr = metricsingestion.ProcessBatch(ctxWithItemLogger, tmpdir, k.loop.sp, k.loop.mdb,
-			k.loop.awsmanager, []ingest.IngestItem{item}, ingestDateint, rpfEstimate, k.loop.exemplarProcessor, k.config.Metrics.Ingestion)
+		processErr = metricsingestion.ProcessBatch(ctxWithItemLogger, args, []ingest.IngestItem{item}, k.loop.exemplarProcessor, k.config.Metrics.Ingestion)
 	case "logs":
-		processErr = logsingestion.ProcessBatch(ctxWithItemLogger, tmpdir, k.loop.sp, k.loop.mdb,
-			k.loop.awsmanager, item, ingestDateint, rpfEstimate)
+		processErr = logsingestion.ProcessBatch(ctxWithItemLogger, args, item)
 	case "traces":
-		processErr = traceIngestBatch(ctxWithItemLogger, tmpdir, k.loop.sp, k.loop.mdb,
-			k.loop.awsmanager, item, ingestDateint, rpfEstimate, k.loop)
+		processErr = traceIngestBatch(ctxWithItemLogger, args, item)
 	default:
 		processErr = fmt.Errorf("unsupported signal type: %s", k.signal)
 	}

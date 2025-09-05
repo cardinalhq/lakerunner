@@ -31,6 +31,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/processing/ingest"
@@ -126,11 +127,13 @@ func coordinate(
 	awsmanager *awsclient.Manager,
 	mdb lrdb.StoreFull,
 ) (*result, error) {
+	ll := logctx.FromContext(ctx)
+
 	if len(input.Items) == 0 {
 		return nil, fmt.Errorf("empty batch")
 	}
 
-	input.Logger.Debug("Processing metrics batch", slog.Int("batchSize", len(input.Items)))
+	ll.Debug("Processing metrics batch", slog.Int("batchSize", len(input.Items)))
 
 	// Track segments coming into processing
 	processingSegmentsIn.Add(ctx, int64(len(input.Items)), metric.WithAttributes(
@@ -152,43 +155,43 @@ func coordinate(
 	}
 
 	// Create writer manager
-	wm := newMetricWriterManager(input.TmpDir, profile.OrganizationID.String(), input.IngestDateint, input.RPFEstimate, input.Logger)
+	wm := newMetricWriterManager(ctx, input.TmpDir, profile.OrganizationID.String(), input.IngestDateint, input.RPFEstimate)
 
 	// Track total rows across all files
 	var batchRowsRead, batchRowsProcessed, batchRowsErrored int64
 
 	// Step 1: Download and validate files
-	validFiles, err := downloadAndValidateFiles(ctx, input.Items, input.TmpDir, s3client, input.Logger)
+	validFiles, err := downloadAndValidateFiles(ctx, input.Items, input.TmpDir, s3client)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download files: %w", err)
 	}
 
 	if len(validFiles) == 0 {
-		input.Logger.Warn("No valid files to process in batch")
+		ll.Warn("No valid files to process in batch")
 		results, err := wm.closeAll(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to close writers: %w", err)
 		}
-		input.Logger.Debug("Batch processing summary", slog.Int("outputFiles", len(results)))
+		ll.Debug("Batch processing summary", slog.Int("outputFiles", len(results)))
 		return &result{Results: results, RowsRead: 0, RowsErrored: 0}, nil
 	}
 
 	// Process exemplars from all files if exemplar processor is available
 	if input.ExemplarProcessor != nil && input.Config.ProcessExemplars {
-		input.Logger.Debug("Processing exemplars from all files", slog.Int("fileCount", len(validFiles)))
+		ll.Debug("Processing exemplars from all files", slog.Int("fileCount", len(validFiles)))
 
 		for _, fileInfo := range validFiles {
 			// Create a separate reader just for exemplar processing from this file
 			exemplarReader, err := CreateMetricProtoReader(fileInfo.tmpfilename)
 			if err != nil {
-				input.Logger.Warn("Failed to create exemplar reader, skipping file",
+				ll.Warn("Failed to create exemplar reader, skipping file",
 					slog.String("objectID", fileInfo.item.ObjectID),
 					slog.String("error", err.Error()))
 				continue
 			}
 
 			if err := processExemplarsFromReader(ctx, exemplarReader, input.ExemplarProcessor, profile.OrganizationID.String(), mdb); err != nil {
-				input.Logger.Warn("Failed to process exemplars from file",
+				ll.Warn("Failed to process exemplars from file",
 					slog.String("objectID", fileInfo.item.ObjectID),
 					slog.Any("error", err))
 			}
@@ -198,7 +201,7 @@ func coordinate(
 	}
 
 	// Step 2: Create readers for each file
-	readers, readersToClose, err := createReadersForFiles(validFiles, profile.OrganizationID.String(), input.Logger)
+	readers, readersToClose, err := createReadersForFiles(ctx, validFiles, profile.OrganizationID.String())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create readers: %w", err)
 	}
@@ -207,22 +210,22 @@ func coordinate(
 	defer func() {
 		for _, reader := range readersToClose {
 			if closeErr := reader.Close(); closeErr != nil {
-				input.Logger.Warn("Failed to close reader during cleanup", slog.Any("error", closeErr))
+				ll.Warn("Failed to close reader during cleanup", slog.Any("error", closeErr))
 			}
 		}
 	}()
 
 	if len(readers) == 0 {
-		input.Logger.Warn("No valid readers created for batch")
+		ll.Warn("No valid readers created for batch")
 		results, err := wm.closeAll(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to close writers: %w", err)
 		}
-		input.Logger.Debug("Batch processing summary", slog.Int("outputFiles", len(results)))
+		ll.Debug("Batch processing summary", slog.Int("outputFiles", len(results)))
 		return &result{Results: results, RowsRead: 0, RowsErrored: 0}, nil
 	}
 
-	input.Logger.Debug("Created readers for batch", slog.Int("readerCount", len(readers)))
+	ll.Debug("Created readers for batch", slog.Int("readerCount", len(readers)))
 
 	// Step 3: Set up unified reader pipeline
 	finalReader, err := createUnifiedReader(ctx, readers)
@@ -243,7 +246,7 @@ func coordinate(
 
 		// Process any rows we got (safe because either no error or EOF with final data)
 		if batch != nil {
-			processed, errored := wm.processBatch(batch)
+			processed, errored := wm.processBatch(ctx, batch)
 			batchRowsProcessed += processed
 			batchRowsErrored += errored
 			pipeline.ReturnBatch(batch)
@@ -256,13 +259,13 @@ func coordinate(
 
 	batchRowsRead = finalReader.TotalRowsReturned()
 
-	input.Logger.Debug("Batch processing completed",
+	ll.Debug("Batch processing completed",
 		slog.Int64("rowsRead", batchRowsRead),
 		slog.Int64("rowsProcessed", batchRowsProcessed),
 		slog.Int64("rowsErrored", batchRowsErrored))
 
 	if batchRowsErrored > 0 {
-		input.Logger.Warn("Some rows were dropped due to processing errors",
+		ll.Warn("Some rows were dropped due to processing errors",
 			slog.Int64("rowsErrored", batchRowsErrored))
 	}
 
@@ -272,7 +275,7 @@ func coordinate(
 		return nil, fmt.Errorf("failed to close writers: %w", err)
 	}
 
-	input.Logger.Debug("Batch processing summary",
+	ll.Debug("Batch processing summary",
 		slog.Int64("inputRowsRead", batchRowsRead),
 		slog.Int64("inputRowsProcessed", batchRowsProcessed),
 		slog.Int64("inputRowsErrored", batchRowsErrored),
@@ -324,7 +327,9 @@ func coordinate(
 }
 
 // downloadAndValidateFiles downloads and validates all files in the batch
-func downloadAndValidateFiles(ctx context.Context, items []ingest.IngestItem, tmpdir string, s3client *awsclient.S3Client, ll *slog.Logger) ([]fileInfo, error) {
+func downloadAndValidateFiles(ctx context.Context, items []ingest.IngestItem, tmpdir string, s3client *awsclient.S3Client) ([]fileInfo, error) {
+	ll := logctx.FromContext(ctx)
+
 	var validFiles []fileInfo
 
 	for i, inf := range items {
@@ -378,7 +383,9 @@ func downloadAndValidateFiles(ctx context.Context, items []ingest.IngestItem, tm
 }
 
 // createReadersForFiles creates the reader stack for each file
-func createReadersForFiles(validFiles []fileInfo, orgID string, ll *slog.Logger) ([]filereader.Reader, []filereader.Reader, error) {
+func createReadersForFiles(ctx context.Context, validFiles []fileInfo, orgID string) ([]filereader.Reader, []filereader.Reader, error) {
+	ll := logctx.FromContext(ctx)
+
 	var readers []filereader.Reader
 	var readersToClose []filereader.Reader
 

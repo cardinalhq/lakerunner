@@ -27,6 +27,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -41,13 +42,14 @@ type ReaderStackResult struct {
 
 func CreateReaderStack(
 	ctx context.Context,
-	ll *slog.Logger,
 	tmpdir string,
 	s3client *awsclient.S3Client,
 	orgID uuid.UUID,
 	profile storageprofile.StorageProfile,
 	rows []lrdb.MetricSeg,
 ) (*ReaderStackResult, error) {
+	ll := logctx.FromContext(ctx)
+
 	var readers []filereader.Reader
 	var files []*os.File
 	var downloadedFiles []string
@@ -148,7 +150,9 @@ func CreateReaderStack(
 	}, nil
 }
 
-func CloseReaderStack(ll *slog.Logger, result *ReaderStackResult) {
+func CloseReaderStack(ctx context.Context, result *ReaderStackResult) {
+	ll := logctx.FromContext(ctx)
+
 	if result.MergedReader != nil {
 		if err := result.MergedReader.Close(); err != nil {
 			ll.Error("Failed to close merged reader", slog.Any("error", err))

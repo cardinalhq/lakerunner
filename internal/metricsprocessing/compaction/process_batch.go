@@ -23,18 +23,19 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 func processBatch(
 	ctx context.Context,
-	ll *slog.Logger,
 	mdb compactionStore,
 	sp storageprofile.StorageProfileProvider,
 	awsmanager *awsclient.Manager,
 	bundle lrdb.CompactionBundleResult,
 ) error {
+	ll := logctx.FromContext(ctx)
 	if len(bundle.Items) == 0 {
 		return nil
 	}
@@ -42,6 +43,7 @@ func processBatch(
 	// Generate batch ID and enhance logger
 	batchID := idgen.GenerateShortBase32ID()
 	ll = ll.With(slog.String("batchID", batchID))
+	ctx = logctx.WithLogger(ctx, ll)
 
 	// Log work items we're processing once at the top
 	workItemIDs := make([]int64, len(bundle.Items))
@@ -112,7 +114,7 @@ func processBatch(
 		validSegments = append(validSegments, seg)
 	}
 
-	return coordinateBundle(ctx, ll, mdb, tmpdir, bundle, profile, s3client, validSegments)
+	return coordinateBundle(ctx, mdb, tmpdir, bundle, profile, s3client, validSegments)
 }
 
 // fetchMetricSegsFromBundle retrieves the MetricSeg records corresponding to the bundle items

@@ -216,36 +216,39 @@ func NewWorkerInterrupted(message string) WorkerInterrupted {
 	return WorkerInterrupted{message: message}
 }
 
-// ProcessBatch processes a single ingestion item and returns any WorkerInterrupted error for safe shutdown
-func ProcessBatch(ctx context.Context, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
-	awsmanager *awsclient.Manager, item ingest.IngestItem, ingest_dateint int32, rpfEstimate int64) error {
+// ProcessBatch processes a single ingestion item with atomic transaction including Kafka offset
+func ProcessBatch(ctx context.Context, args ingest.ProcessBatchArgs, item ingest.IngestItem) error {
 
 	ll := logctx.FromContext(ctx)
-	ll.Debug("Processing log item")
+	ll.Debug("Processing log item with Kafka offset",
+		slog.String("consumerGroup", args.KafkaOffset.ConsumerGroup),
+		slog.String("topic", args.KafkaOffset.Topic),
+		slog.Int("partition", int(args.KafkaOffset.Partition)),
+		slog.Int64("offset", args.KafkaOffset.Offset))
 
 	// Get storage profile and S3 client
 	var profile storageprofile.StorageProfile
 	var err error
 
 	if collectorName := helpers.ExtractCollectorName(item.ObjectID); collectorName != "" {
-		profile, err = sp.GetStorageProfileForOrganizationAndCollector(ctx, item.OrganizationID, collectorName)
+		profile, err = args.StorageProvider.GetStorageProfileForOrganizationAndCollector(ctx, item.OrganizationID, collectorName)
 		if err != nil {
 			return fmt.Errorf("failed to get storage profile for collector %s: %w", collectorName, err)
 		}
 	} else {
-		profile, err = sp.GetStorageProfileForOrganizationAndInstance(ctx, item.OrganizationID, item.InstanceNum)
+		profile, err = args.StorageProvider.GetStorageProfileForOrganizationAndInstance(ctx, item.OrganizationID, item.InstanceNum)
 		if err != nil {
 			return fmt.Errorf("failed to get storage profile: %w", err)
 		}
 	}
 
-	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
+	s3client, err := args.AWSManager.GetS3ForProfile(ctx, profile)
 	if err != nil {
 		return fmt.Errorf("failed to get S3 client: %w", err)
 	}
 
 	// Create writer manager for organizing output by hour/slot
-	wm := newWriterManager(tmpdir, item.OrganizationID.String(), ingest_dateint, rpfEstimate, ll)
+	wm := newWriterManager(args.TmpDir, item.OrganizationID.String(), args.IngestDateint, args.RPFEstimate, ll)
 
 	// Track total rows across all files
 	var batchRowsRead, batchRowsProcessed, batchRowsErrored int64
@@ -264,11 +267,20 @@ func ProcessBatch(ctx context.Context, tmpdir string, sp storageprofile.StorageP
 	// Skip database files (processed outputs, not inputs)
 	if strings.HasPrefix(item.ObjectID, "db/") {
 		ll.Debug("Skipping database file", slog.String("objectID", item.ObjectID))
+		// No segments to insert, just update Kafka offset
+		if err := args.DB.KafkaJournalUpsert(ctx, lrdb.KafkaJournalUpsertParams{
+			ConsumerGroup:       args.KafkaOffset.ConsumerGroup,
+			Topic:               args.KafkaOffset.Topic,
+			Partition:           args.KafkaOffset.Partition,
+			LastProcessedOffset: args.KafkaOffset.Offset,
+		}); err != nil {
+			return fmt.Errorf("failed to update Kafka offset: %w", err)
+		}
 		return nil
 	}
 
 	// Download file
-	itemTmpdir := fmt.Sprintf("%s/item", tmpdir)
+	itemTmpdir := fmt.Sprintf("%s/item", args.TmpDir)
 	if err := os.MkdirAll(itemTmpdir, 0755); err != nil {
 		return fmt.Errorf("creating item tmpdir: %w", err)
 	}
@@ -279,6 +291,15 @@ func ProcessBatch(ctx context.Context, tmpdir string, sp storageprofile.StorageP
 	}
 	if is404 {
 		ll.Warn("S3 object not found, skipping", slog.String("objectID", item.ObjectID))
+		// No segments to insert, just update Kafka offset
+		if err := args.DB.KafkaJournalUpsert(ctx, lrdb.KafkaJournalUpsertParams{
+			ConsumerGroup:       args.KafkaOffset.ConsumerGroup,
+			Topic:               args.KafkaOffset.Topic,
+			Partition:           args.KafkaOffset.Partition,
+			LastProcessedOffset: args.KafkaOffset.Offset,
+		}); err != nil {
+			return fmt.Errorf("failed to update Kafka offset: %w", err)
+		}
 		return nil
 	}
 
@@ -300,6 +321,15 @@ func ProcessBatch(ctx context.Context, tmpdir string, sp storageprofile.StorageP
 		ll.Warn("Unsupported or problematic file type, skipping",
 			slog.String("objectID", item.ObjectID),
 			slog.String("error", err.Error()))
+		// No segments to insert, just update Kafka offset
+		if err := args.DB.KafkaJournalUpsert(ctx, lrdb.KafkaJournalUpsertParams{
+			ConsumerGroup:       args.KafkaOffset.ConsumerGroup,
+			Topic:               args.KafkaOffset.Topic,
+			Partition:           args.KafkaOffset.Partition,
+			LastProcessedOffset: args.KafkaOffset.Offset,
+		}); err != nil {
+			return fmt.Errorf("failed to update Kafka offset: %w", err)
+		}
 		return nil
 	}
 
@@ -386,6 +416,15 @@ func ProcessBatch(ctx context.Context, tmpdir string, sp storageprofile.StorageP
 		ll.Warn("No output files generated despite reading rows",
 			slog.Int64("rowsRead", batchRowsRead),
 			slog.Int64("rowsErrored", batchRowsErrored))
+		// No segments to insert, just update Kafka offset
+		if err := args.DB.KafkaJournalUpsert(ctx, lrdb.KafkaJournalUpsertParams{
+			ConsumerGroup:       args.KafkaOffset.ConsumerGroup,
+			Topic:               args.KafkaOffset.Topic,
+			Partition:           args.KafkaOffset.Partition,
+			LastProcessedOffset: args.KafkaOffset.Offset,
+		}); err != nil {
+			return fmt.Errorf("failed to update Kafka offset: %w", err)
+		}
 		return nil
 	}
 
@@ -413,67 +452,40 @@ func ProcessBatch(ctx context.Context, tmpdir string, sp storageprofile.StorageP
 		return NewWorkerInterrupted("context cancelled before S3 upload phase")
 	}
 
-	// Use context without cancellation for critical section to ensure atomic completion
+	// Upload files to S3 and collect segment parameters for batch insertion
+	segmentParams, err := createAndUploadLogSegments(ctx, ll, s3client, results, item, args.IngestDateint)
+	if err != nil {
+		return fmt.Errorf("failed to create and upload log segments: %w", err)
+	}
+
+	ll.Debug("Log ingestion batch summary",
+		slog.Int("inputFileCount", 1),
+		slog.Int64("totalInputBytes", item.FileSize),
+		slog.Int("outputFileCount", len(results)),
+		slog.Int64("rowsRead", batchRowsRead),
+		slog.Int64("rowsProcessed", batchRowsProcessed),
+		slog.Int64("rowsErrored", batchRowsErrored))
+
+	// Execute the atomic transaction: insert all segments + Kafka offset
+	batch := lrdb.LogSegmentBatch{
+		Segments:    segmentParams,
+		KafkaOffset: args.KafkaOffset,
+	}
+
 	criticalCtx := context.WithoutCancel(ctx)
+	if err := args.DB.InsertLogSegmentBatchWithKafkaOffset(criticalCtx, batch); err != nil {
+		return fmt.Errorf("failed to insert log segments with Kafka offset: %w", err)
+	}
 
-	// Upload files and create database segments
+	// Queue compaction work for each segment
 	slotHourTriggers := make(map[hourSlotKey]int64) // Track earliest timestamp per slot/hour for compaction
-
-	for _, result := range results {
-		// Extract metadata from parquetwriter result
-		stats, ok := result.Metadata.(factories.LogsFileStats)
-		if !ok {
-			return fmt.Errorf("expected LogsFileStats metadata, got %T", result.Metadata)
-		}
-
-		// Generate segment ID and upload
-		segmentID := s3helper.GenerateID()
-		dateint, hour16 := helpers.MSToDateintHour(stats.FirstTS)
+	for _, segParams := range segmentParams {
+		dateint, hour16 := helpers.MSToDateintHour(segParams.StartTs)
 		hour := int(hour16)
-		dbObjectID := helpers.MakeDBObjectID(item.OrganizationID, "",
-			dateint, s3helper.HourFromMillis(stats.FirstTS), segmentID, "logs")
-
-		if err := s3helper.UploadS3Object(criticalCtx, s3client, item.Bucket, dbObjectID, result.FileName); err != nil {
-			return fmt.Errorf("failed to upload file to S3: %w", err)
-		}
-		_ = os.Remove(result.FileName)
-
-		slotID := 0
-
-		// Insert log segment into database
-		err := mdb.InsertLogSegment(criticalCtx, lrdb.InsertLogSegmentParams{
-			OrganizationID: item.OrganizationID,
-			Dateint:        dateint,
-			IngestDateint:  ingest_dateint,
-			SegmentID:      segmentID,
-			InstanceNum:    item.InstanceNum,
-			SlotID:         int32(slotID),
-			StartTs:        stats.FirstTS,
-			EndTs:          stats.LastTS + 1, // end is exclusive
-			RecordCount:    result.RecordCount,
-			FileSize:       result.FileSize,
-			CreatedBy:      lrdb.CreatedByIngest,
-			Fingerprints:   stats.Fingerprints,
-		})
-		if err != nil {
-			return fmt.Errorf("failed to insert log segment: %w", err)
-		}
-
-		ll.Debug("Inserted log segment",
-			slog.String("organizationID", item.OrganizationID.String()),
-			slog.Int("dateint", int(dateint)),
-			slog.Int("hour", hour),
-			slog.Int("slot", slotID),
-			slog.String("dbObjectID", dbObjectID),
-			slog.Int64("segmentID", segmentID),
-			slog.Int64("recordCount", result.RecordCount),
-			slog.Int64("fileSize", result.FileSize),
-			slog.Int64("fingerprintCount", int64(len(stats.Fingerprints))))
-
-		// Track slot/hour triggers for compaction work queue (slot is always 0)
-		key := hourSlotKey{dateint: dateint, hour: hour, slot: 0}
-		if existingTS, exists := slotHourTriggers[key]; !exists || stats.FirstTS < existingTS {
-			slotHourTriggers[key] = stats.FirstTS
+		slotID := int(segParams.SlotID)
+		key := hourSlotKey{dateint: dateint, hour: hour, slot: slotID}
+		if existingTS, exists := slotHourTriggers[key]; !exists || segParams.StartTs < existingTS {
+			slotHourTriggers[key] = segParams.StartTs
 		}
 	}
 
@@ -486,10 +498,77 @@ func ProcessBatch(ctx context.Context, tmpdir string, sp storageprofile.StorageP
 			slog.Int64("triggerTS", earliestTS))
 
 		hourAlignedTS := helpers.TruncateToHour(helpers.UnixMillisToTime(earliestTS)).UnixMilli()
-		if err := queueLogCompactionForSlot(criticalCtx, mdb, item, key.slot, key.dateint, hourAlignedTS); err != nil {
+		if err := queueLogCompactionForSlot(criticalCtx, args.DB, item, key.slot, key.dateint, hourAlignedTS); err != nil {
 			return fmt.Errorf("failed to queue log compaction for slot %d: %w", key.slot, err)
 		}
 	}
 
 	return nil
+}
+
+// createAndUploadLogSegments creates log segments from parquet results, uploads them to S3, and returns segment parameters
+func createAndUploadLogSegments(
+	ctx context.Context,
+	ll *slog.Logger,
+	s3client *awsclient.S3Client,
+	results []parquetwriter.Result,
+	item ingest.IngestItem,
+	ingestDateint int32,
+) ([]lrdb.InsertLogSegmentParams, error) {
+	segmentParams := make([]lrdb.InsertLogSegmentParams, 0, len(results))
+
+	for _, result := range results {
+		// Safety check: should never get empty results from the writer
+		if result.RecordCount == 0 {
+			ll.Error("Received empty result from writer - this should not happen",
+				slog.String("fileName", result.FileName),
+				slog.Int64("recordCount", result.RecordCount))
+			return nil, fmt.Errorf("received empty result file with 0 records")
+		}
+
+		// Extract metadata from parquetwriter result
+		stats, ok := result.Metadata.(factories.LogsFileStats)
+		if !ok {
+			return nil, fmt.Errorf("expected LogsFileStats metadata, got %T", result.Metadata)
+		}
+
+		// Generate segment ID and upload
+		segmentID := s3helper.GenerateID()
+		dateint, _ := helpers.MSToDateintHour(stats.FirstTS)
+		dbObjectID := helpers.MakeDBObjectID(item.OrganizationID, "",
+			dateint, s3helper.HourFromMillis(stats.FirstTS), segmentID, "logs")
+
+		if err := s3helper.UploadS3Object(ctx, s3client, item.Bucket, dbObjectID, result.FileName); err != nil {
+			return nil, fmt.Errorf("uploading file to S3: %w", err)
+		}
+
+		ll.Debug("Log segment stats",
+			slog.Int64("segmentID", segmentID),
+			slog.Int64("recordCount", result.RecordCount),
+			slog.Int64("fileSize", result.FileSize))
+
+		// Create segment parameters for database insertion
+		slotID := 0
+		params := lrdb.InsertLogSegmentParams{
+			OrganizationID: item.OrganizationID,
+			Dateint:        dateint,
+			IngestDateint:  ingestDateint,
+			SegmentID:      segmentID,
+			InstanceNum:    item.InstanceNum,
+			SlotID:         int32(slotID),
+			StartTs:        stats.FirstTS,
+			EndTs:          stats.LastTS + 1, // end is exclusive
+			RecordCount:    result.RecordCount,
+			FileSize:       result.FileSize,
+			CreatedBy:      lrdb.CreatedByIngest,
+			Fingerprints:   stats.Fingerprints,
+		}
+
+		segmentParams = append(segmentParams, params)
+
+		// Clean up temp file
+		_ = os.Remove(result.FileName)
+	}
+
+	return segmentParams, nil
 }
