@@ -64,7 +64,7 @@ help:
 	@echo "  make test         - Run all tests with code generation"
 	@echo "  make test-only    - Run tests without code generation"
 	@echo "  make test-integration - Run integration tests (requires test databases)"
-	@echo "  make test-kafka   - Run Kafka tests (requires Kafka on localhost:9092)"
+	@echo "  make test-kafka   - Run Kafka tests (with containerized Kafka)"
 	@echo "  make test-ci      - Run all CI tests"
 	@echo "  make coverage     - Generate test coverage report"
 	@echo "  make coverage-html - Generate HTML coverage report and open in browser"
@@ -170,11 +170,15 @@ test-integration:
 	CONFIGDB_HOST=localhost CONFIGDB_DBNAME=testing_configdb \
 	go test -race -tags=integration ./...
 
-# Run Kafka integration tests (requires running Kafka broker on localhost:9092)
+# Run Kafka integration tests (with containerized Kafka via Gnomock)
 .PHONY: test-kafka
 test-kafka:
-	@echo "Running Kafka integration tests (requires Kafka broker on localhost:9092)..."
-	go test -race -tags=testkafka ./internal/fly -v
+	@echo "Running Kafka integration tests (with containerized Kafka)..."
+	@if [ -z "$$DOCKER_HOST" ] && [ -S $$HOME/.rd/docker.sock ]; then \
+		DOCKER_HOST=unix://$$HOME/.rd/docker.sock go test -race ./internal/fly -timeout=10m; \
+	else \
+		go test -race ./internal/fly -timeout=10m; \
+	fi
 
 .PHONY: test-ci
 test-ci: test test-integration

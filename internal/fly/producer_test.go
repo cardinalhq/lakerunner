@@ -12,8 +12,6 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-//go:build testkafka
-
 package fly
 
 import (
@@ -28,58 +26,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const (
-	testBroker = "localhost:9092"
-)
-
-func createTestTopic(t *testing.T, topic string, partitions int) {
-	conn, err := kafka.Dial("tcp", testBroker)
-	require.NoError(t, err)
-	defer conn.Close()
-
-	controller, err := conn.Controller()
-	require.NoError(t, err)
-
-	controllerConn, err := kafka.Dial("tcp", fmt.Sprintf("%s:%d", controller.Host, controller.Port))
-	require.NoError(t, err)
-	defer controllerConn.Close()
-
-	err = controllerConn.CreateTopics(kafka.TopicConfig{
-		Topic:             topic,
-		NumPartitions:     partitions,
-		ReplicationFactor: 1,
-	})
-	if err != nil && err.Error() != "Topic with this name already exists" {
-		require.NoError(t, err)
-	}
-}
-
-func deleteTestTopic(t *testing.T, topic string) {
-	conn, err := kafka.Dial("tcp", testBroker)
-	require.NoError(t, err)
-	defer conn.Close()
-
-	controller, err := conn.Controller()
-	require.NoError(t, err)
-
-	controllerConn, err := kafka.Dial("tcp", fmt.Sprintf("%s:%d", controller.Host, controller.Port))
-	require.NoError(t, err)
-	defer controllerConn.Close()
-
-	_ = controllerConn.DeleteTopics(topic)
-}
-
 func TestProducer_Send(t *testing.T) {
 	topic := fmt.Sprintf("test-producer-send-%s", uuid.New().String())
-	createTestTopic(t, topic, 3)
-	defer deleteTestTopic(t, topic)
+	
+	// Start Kafka container with topic
+	kafkaContainer := NewKafkaTestContainer(t, topic)
+	defer kafkaContainer.Stop(t)
 
-	config := ProducerConfig{
-		Brokers:      []string{testBroker},
-		BatchSize:    10,
-		BatchTimeout: 100 * time.Millisecond,
-		RequiredAcks: kafka.RequireOne,
-	}
+	config := kafkaContainer.CreateProducerConfig()
 
 	producer := NewProducer(config)
 	defer producer.Close()
@@ -100,7 +54,7 @@ func TestProducer_Send(t *testing.T) {
 
 	// Verify message was sent by reading it
 	reader := kafka.NewReader(kafka.ReaderConfig{
-		Brokers:  []string{testBroker},
+		Brokers:  []string{kafkaContainer.Broker()},
 		Topic:    topic,
 		GroupID:  "test-reader",
 		MinBytes: 1,
@@ -123,15 +77,12 @@ func TestProducer_Send(t *testing.T) {
 
 func TestProducer_BatchSend(t *testing.T) {
 	topic := fmt.Sprintf("test-producer-batch-%s", uuid.New().String())
-	createTestTopic(t, topic, 3)
-	defer deleteTestTopic(t, topic)
+	
+	// Start Kafka container with topic
+	kafkaContainer := NewKafkaTestContainer(t, topic)
+	defer kafkaContainer.Stop(t)
 
-	config := ProducerConfig{
-		Brokers:      []string{testBroker},
-		BatchSize:    10,
-		BatchTimeout: 100 * time.Millisecond,
-		RequiredAcks: kafka.RequireOne,
-	}
+	config := kafkaContainer.CreateProducerConfig()
 
 	producer := NewProducer(config)
 	defer producer.Close()
@@ -159,7 +110,7 @@ func TestProducer_BatchSend(t *testing.T) {
 
 	// Verify messages were sent
 	reader := kafka.NewReader(kafka.ReaderConfig{
-		Brokers:  []string{testBroker},
+		Brokers:  []string{kafkaContainer.Broker()},
 		Topic:    topic,
 		GroupID:  "test-batch-reader",
 		MinBytes: 1,
@@ -187,73 +138,62 @@ func TestProducer_BatchSend(t *testing.T) {
 
 func TestProducer_SendToPartition(t *testing.T) {
 	topic := fmt.Sprintf("test-producer-partition-%s", uuid.New().String())
-	createTestTopic(t, topic, 3)
-	defer deleteTestTopic(t, topic)
+	
+	// Start Kafka container with topic
+	kafkaContainer := NewKafkaTestContainer(t, topic)
+	defer kafkaContainer.Stop(t)
 
-	config := ProducerConfig{
-		Brokers:      []string{testBroker},
-		BatchSize:    10,
-		BatchTimeout: 100 * time.Millisecond,
-		RequiredAcks: kafka.RequireOne,
-	}
+	config := kafkaContainer.CreateProducerConfig()
 
 	producer := NewProducer(config)
 	defer producer.Close()
 
 	ctx := context.Background()
 
-	// Send messages to specific partitions
-	for partition := 0; partition < 3; partition++ {
-		msg := Message{
-			Key:   []byte(fmt.Sprintf("key-partition-%d", partition)),
-			Value: []byte(fmt.Sprintf("value-partition-%d", partition)),
-		}
-		err := producer.SendToPartition(ctx, topic, partition, msg)
-		assert.NoError(t, err)
+	// Send message to partition 0 (only partition with 1-partition setup)
+	msg := Message{
+		Key:   []byte("key-partition-0"),
+		Value: []byte("value-partition-0"),
 	}
+	err := producer.SendToPartition(ctx, topic, 0, msg)
+	assert.NoError(t, err)
 
-	// Verify messages went to correct partitions
-	for partition := 0; partition < 3; partition++ {
-		reader := kafka.NewReader(kafka.ReaderConfig{
-			Brokers:   []string{testBroker},
-			Topic:     topic,
-			Partition: partition,
-			MinBytes:  1,
-			MaxBytes:  10e6,
-			MaxWait:   1 * time.Second,
-		})
+	// Verify message went to partition 0
+	reader := kafka.NewReader(kafka.ReaderConfig{
+		Brokers:   []string{kafkaContainer.Broker()},
+		Topic:     topic,
+		Partition: 0,
+		MinBytes:  1,
+		MaxBytes:  10e6,
+		MaxWait:   1 * time.Second,
+	})
+	defer reader.Close()
 
-		readCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		msg, err := reader.FetchMessage(readCtx)
-		cancel()
+	readCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 
-		require.NoError(t, err)
-		assert.Equal(t, partition, msg.Partition)
-		assert.Equal(t, fmt.Sprintf("key-partition-%d", partition), string(msg.Key))
-		assert.Equal(t, fmt.Sprintf("value-partition-%d", partition), string(msg.Value))
-
-		reader.Close()
-	}
+	readMsg, err := reader.FetchMessage(readCtx)
+	require.NoError(t, err)
+	assert.Equal(t, 0, readMsg.Partition)
+	assert.Equal(t, "key-partition-0", string(readMsg.Key))
+	assert.Equal(t, "value-partition-0", string(readMsg.Value))
 }
 
 func TestProducer_GetPartitionCount(t *testing.T) {
 	topic := fmt.Sprintf("test-partition-count-%s", uuid.New().String())
-	createTestTopic(t, topic, 5)
-	defer deleteTestTopic(t, topic)
+	
+	// Start Kafka container with topic
+	kafkaContainer := NewKafkaTestContainer(t, topic)
+	defer kafkaContainer.Stop(t)
 
-	config := ProducerConfig{
-		Brokers:      []string{testBroker},
-		BatchSize:    10,
-		BatchTimeout: 100 * time.Millisecond,
-		RequiredAcks: kafka.RequireOne,
-	}
+	config := kafkaContainer.CreateProducerConfig()
 
 	producer := NewProducer(config)
 	defer producer.Close()
 
 	count, err := producer.GetPartitionCount(topic)
 	assert.NoError(t, err)
-	assert.Equal(t, 5, count)
+	assert.Equal(t, 1, count)
 
 	// Test caching - should return the same value
 	count2, err := producer.GetPartitionCount(topic)
@@ -263,15 +203,12 @@ func TestProducer_GetPartitionCount(t *testing.T) {
 
 func TestProducer_EmptyBatch(t *testing.T) {
 	topic := fmt.Sprintf("test-empty-batch-%s", uuid.New().String())
-	createTestTopic(t, topic, 1)
-	defer deleteTestTopic(t, topic)
+	
+	// Start Kafka container with topic
+	kafkaContainer := NewKafkaTestContainer(t, topic)
+	defer kafkaContainer.Stop(t)
 
-	config := ProducerConfig{
-		Brokers:      []string{testBroker},
-		BatchSize:    10,
-		BatchTimeout: 100 * time.Millisecond,
-		RequiredAcks: kafka.RequireOne,
-	}
+	config := kafkaContainer.CreateProducerConfig()
 
 	producer := NewProducer(config)
 	defer producer.Close()

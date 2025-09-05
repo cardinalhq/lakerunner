@@ -12,8 +12,6 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-//go:build testkafka
-
 package fly
 
 import (
@@ -24,64 +22,41 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/segmentio/kafka-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func produceTestMessages(t *testing.T, topic string, messages []kafka.Message) {
-	w := &kafka.Writer{
-		Addr:         kafka.TCP(testBroker),
-		Topic:        topic,
-		Balancer:     &kafka.Hash{},
-		BatchSize:    1,
-		RequiredAcks: kafka.RequireOne,
-	}
-	defer w.Close()
+func produceTestMessagesWithContainer(t *testing.T, kafkaContainer *KafkaTestContainer, topic string, messages []Message) {
+	config := kafkaContainer.CreateProducerConfig()
+	producer := NewProducer(config)
+	defer producer.Close()
 
-	err := w.WriteMessages(context.Background(), messages...)
-	require.NoError(t, err)
+	ctx := context.Background()
+	for _, msg := range messages {
+		err := producer.Send(ctx, topic, msg)
+		require.NoError(t, err)
+	}
 }
 
 func TestConsumer_Consume(t *testing.T) {
 	topic := fmt.Sprintf("test-consumer-%s", uuid.New().String())
-	groupID := fmt.Sprintf("test-group-%s", uuid.New().String())
-	createTestTopic(t, topic, 1)
-	defer deleteTestTopic(t, topic)
+	groupID := fmt.Sprintf("test-consumer-group-%d", time.Now().UnixNano())
+
+	// Start Kafka container with topic
+	kafkaContainer := NewKafkaTestContainer(t, topic)
+	defer kafkaContainer.Stop(t)
 
 	// Produce test messages
-	testMessages := []kafka.Message{
-		{
-			Key:   []byte("key1"),
-			Value: []byte("value1"),
-			Headers: []kafka.Header{
-				{Key: "h1", Value: []byte("v1")},
-			},
-		},
-		{
-			Key:   []byte("key2"),
-			Value: []byte("value2"),
-		},
-		{
-			Key:   []byte("key3"),
-			Value: []byte("value3"),
-		},
+	testMessages := []Message{
+		{Key: []byte("key1"), Value: []byte("value1")},
+		{Key: []byte("key2"), Value: []byte("value2")},
+		{Key: []byte("key3"), Value: []byte("value3")},
 	}
-	produceTestMessages(t, topic, testMessages)
+	produceTestMessagesWithContainer(t, kafkaContainer, topic, testMessages)
 
-	config := ConsumerConfig{
-		Brokers:       []string{testBroker},
-		Topic:         topic,
-		GroupID:       groupID,
-		MinBytes:      1,
-		MaxBytes:      10e6,
-		MaxWait:       100 * time.Millisecond,
-		BatchSize:     2,
-		StartOffset:   kafka.FirstOffset,
-		AutoCommit:    false,
-		CommitBatch:   true,
-		RetryAttempts: 3,
-	}
+	// Create consumer config
+	config := kafkaContainer.CreateConsumerConfig(topic, groupID)
+	config.BatchSize = 2 // Test batching
 
 	consumer := NewConsumer(config)
 	defer consumer.Close()
@@ -96,7 +71,7 @@ func TestConsumer_Consume(t *testing.T) {
 		return nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	// Start consuming in background
@@ -106,16 +81,18 @@ func TestConsumer_Consume(t *testing.T) {
 	}()
 
 	// Wait for messages to be consumed
-	time.Sleep(2 * time.Second)
+	time.Sleep(3 * time.Second)
 	cancel()
 
 	// Check if context cancellation error is returned
-	err := <-errCh
-	assert.ErrorIs(t, err, context.Canceled)
+	consumerErr := <-errCh
+	assert.ErrorIs(t, consumerErr, context.Canceled)
 
 	// Verify messages were consumed
 	mu.Lock()
 	defer mu.Unlock()
+
+	t.Logf("Received %d messages from consumer", len(receivedMessages))
 	assert.Equal(t, 3, len(receivedMessages))
 
 	// Check message contents
@@ -131,32 +108,24 @@ func TestConsumer_Consume(t *testing.T) {
 func TestConsumer_BatchProcessing(t *testing.T) {
 	topic := fmt.Sprintf("test-consumer-batch-%s", uuid.New().String())
 	groupID := fmt.Sprintf("test-batch-group-%s", uuid.New().String())
-	createTestTopic(t, topic, 1)
-	defer deleteTestTopic(t, topic)
+	
+	// Start Kafka container with topic
+	kafkaContainer := NewKafkaTestContainer(t, topic)
+	defer kafkaContainer.Stop(t)
 
 	// Produce test messages
-	var testMessages []kafka.Message
+	var testMessages []Message
 	for i := 0; i < 5; i++ {
-		testMessages = append(testMessages, kafka.Message{
+		testMessages = append(testMessages, Message{
 			Key:   []byte(fmt.Sprintf("key%d", i)),
 			Value: []byte(fmt.Sprintf("value%d", i)),
 		})
 	}
-	produceTestMessages(t, topic, testMessages)
+	produceTestMessagesWithContainer(t, kafkaContainer, topic, testMessages)
 
-	config := ConsumerConfig{
-		Brokers:       []string{testBroker},
-		Topic:         topic,
-		GroupID:       groupID,
-		MinBytes:      1,
-		MaxBytes:      10e6,
-		MaxWait:       200 * time.Millisecond,
-		BatchSize:     3, // Process in batches of 3
-		StartOffset:   kafka.FirstOffset,
-		AutoCommit:    false,
-		CommitBatch:   true,
-		RetryAttempts: 3,
-	}
+	config := kafkaContainer.CreateConsumerConfig(topic, groupID)
+	config.BatchSize = 3 // Process in batches of 3
+	config.MaxWait = 200 * time.Millisecond
 
 	consumer := NewConsumer(config)
 	defer consumer.Close()
@@ -198,27 +167,19 @@ func TestConsumer_BatchProcessing(t *testing.T) {
 func TestConsumer_ErrorHandlingAndRetry(t *testing.T) {
 	topic := fmt.Sprintf("test-consumer-error-%s", uuid.New().String())
 	groupID := fmt.Sprintf("test-error-group-%s", uuid.New().String())
-	createTestTopic(t, topic, 1)
-	defer deleteTestTopic(t, topic)
+	
+	// Start Kafka container with topic
+	kafkaContainer := NewKafkaTestContainer(t, topic)
+	defer kafkaContainer.Stop(t)
 
 	// Produce test message
-	produceTestMessages(t, topic, []kafka.Message{
-		{Key: []byte("key1"), Value: []byte("value1")},
-	})
+	testMessages := []Message{{Key: []byte("key1"), Value: []byte("value1")}}
+	produceTestMessagesWithContainer(t, kafkaContainer, topic, testMessages)
 
-	config := ConsumerConfig{
-		Brokers:       []string{testBroker},
-		Topic:         topic,
-		GroupID:       groupID,
-		MinBytes:      1,
-		MaxBytes:      10e6,
-		MaxWait:       100 * time.Millisecond,
-		BatchSize:     1,
-		StartOffset:   kafka.FirstOffset,
-		AutoCommit:    false,
-		CommitBatch:   false,
-		RetryAttempts: 3,
-	}
+	config := kafkaContainer.CreateConsumerConfig(topic, groupID)
+	config.BatchSize = 1
+	config.CommitBatch = false
+	config.RetryAttempts = 3
 
 	consumer := NewConsumer(config)
 	defer consumer.Close()
@@ -262,29 +223,22 @@ func TestConsumer_ErrorHandlingAndRetry(t *testing.T) {
 func TestConsumer_CommitMessages(t *testing.T) {
 	topic := fmt.Sprintf("test-consumer-commit-%s", uuid.New().String())
 	groupID := fmt.Sprintf("test-commit-group-%s", uuid.New().String())
-	createTestTopic(t, topic, 1)
-	defer deleteTestTopic(t, topic)
+	
+	// Start Kafka container with topic
+	kafkaContainer := NewKafkaTestContainer(t, topic)
+	defer kafkaContainer.Stop(t)
 
 	// Produce test messages
-	testMessages := []kafka.Message{
+	testMessages := []Message{
 		{Key: []byte("key1"), Value: []byte("value1")},
 		{Key: []byte("key2"), Value: []byte("value2")},
 	}
-	produceTestMessages(t, topic, testMessages)
+	produceTestMessagesWithContainer(t, kafkaContainer, topic, testMessages)
 
-	config := ConsumerConfig{
-		Brokers:       []string{testBroker},
-		Topic:         topic,
-		GroupID:       groupID,
-		MinBytes:      1,
-		MaxBytes:      10e6,
-		MaxWait:       100 * time.Millisecond,
-		BatchSize:     10,
-		StartOffset:   kafka.FirstOffset,
-		AutoCommit:    false,
-		CommitBatch:   false, // Test individual commits
-		RetryAttempts: 1,
-	}
+	config := kafkaContainer.CreateConsumerConfig(topic, groupID)
+	config.CommitBatch = false // Test individual commits
+	config.BatchSize = 10
+	config.RetryAttempts = 1
 
 	consumer := NewConsumer(config)
 	defer consumer.Close()

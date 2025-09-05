@@ -12,8 +12,6 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-//go:build testkafka
-
 package fly
 
 import (
@@ -22,15 +20,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/segmentio/kafka-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestKafkaConnectivity(t *testing.T) {
+	// Start Kafka container
+	kafkaContainer := NewKafkaTestContainer(t, "connectivity-test")
+	defer kafkaContainer.Stop(t)
+
 	// Simple test to verify we can connect to Kafka
-	conn, err := kafka.Dial("tcp", "localhost:9092")
-	require.NoError(t, err, "Failed to connect to Kafka at localhost:9092")
+	conn, err := kafka.Dial("tcp", kafkaContainer.Broker())
+	require.NoError(t, err, "Failed to connect to Kafka container")
 	defer conn.Close()
 
 	// Get broker info
@@ -49,32 +52,15 @@ func TestKafkaConnectivity(t *testing.T) {
 }
 
 func TestSimpleProducerConsumer(t *testing.T) {
-	topic := "test-simple-integration"
-
-	// Create topic first
-	conn, err := kafka.Dial("tcp", "localhost:9092")
-	require.NoError(t, err)
-
-	controller, err := conn.Controller()
-	require.NoError(t, err)
-	conn.Close()
-
-	controllerConn, err := kafka.Dial("tcp", fmt.Sprintf("%s:%d", controller.Host, controller.Port))
-	require.NoError(t, err)
-
-	err = controllerConn.CreateTopics(kafka.TopicConfig{
-		Topic:             topic,
-		NumPartitions:     1,
-		ReplicationFactor: 1,
-	})
-	if err != nil {
-		t.Logf("Topic creation error (might already exist): %v", err)
-	}
-	controllerConn.Close()
+	topic := fmt.Sprintf("test-simple-integration-%s", uuid.New().String())
+	
+	// Start Kafka container with topic
+	kafkaContainer := NewKafkaTestContainer(t, topic)
+	defer kafkaContainer.Stop(t)
 
 	// Create a simple writer
 	writer := &kafka.Writer{
-		Addr:     kafka.TCP("localhost:9092"),
+		Addr:     kafka.TCP(kafkaContainer.Broker()),
 		Topic:    topic,
 		Balancer: &kafka.LeastBytes{},
 	}
@@ -82,7 +68,7 @@ func TestSimpleProducerConsumer(t *testing.T) {
 
 	// Write a message
 	ctx := context.Background()
-	err = writer.WriteMessages(ctx, kafka.Message{
+	err := writer.WriteMessages(ctx, kafka.Message{
 		Key:   []byte("test-key"),
 		Value: []byte("test-value"),
 	})
@@ -90,9 +76,9 @@ func TestSimpleProducerConsumer(t *testing.T) {
 
 	// Create a simple reader
 	reader := kafka.NewReader(kafka.ReaderConfig{
-		Brokers:  []string{"localhost:9092"},
+		Brokers:  []string{kafkaContainer.Broker()},
 		Topic:    topic,
-		GroupID:  "test-group",
+		GroupID:  fmt.Sprintf("test-integration-%d", time.Now().UnixNano()),
 		MinBytes: 1,
 		MaxBytes: 10e6,
 		MaxWait:  1 * time.Second,
