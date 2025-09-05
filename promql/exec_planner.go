@@ -18,6 +18,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
+	"github.com/cardinalhq/lakerunner/logql"
 	"sort"
 	"strings"
 	"time"
@@ -48,6 +49,18 @@ type BaseExpr struct {
 
 	// Identity hints for COUNT (what to keep from the parent's "by")
 	CountOnBy []string `json:"countOnBy,omitempty"`
+
+	LogLeaf logql.LogLeaf `json:"logLeaf,omitempty"`
+}
+
+const (
+	LeafMatcher   = `__leaf` // label name for leaf ID in synthetic metrics
+	SynthLogCount = "__logql_logs_total"
+	SynthLogBytes = "__logql_log_bytes_total"
+)
+
+func (be *BaseExpr) isSyntheticLogMetric() bool {
+	return be.Metric == SynthLogCount || be.Metric == SynthLogBytes
 }
 
 type ExecHints struct {

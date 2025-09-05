@@ -16,12 +16,10 @@ package logql
 
 import (
 	"database/sql"
+	_ "github.com/marcboeker/go-duckdb/v2"
 	"log/slog"
 	"strings"
 	"testing"
-	"time"
-
-	_ "github.com/marcboeker/go-duckdb/v2"
 )
 
 func openDuckDB(t *testing.T) *sql.DB {
@@ -110,7 +108,7 @@ func TestToWorkerSQL_Fingerprint_Present(t *testing.T) {
 	mustExec(t, db, `INSERT INTO logs VALUES ('hello'), ('world');`)
 
 	leaf := LogLeaf{} // no parsers/filters; just pass-through with defaults
-	sql := replaceTable(leaf.ToWorkerSQLWithLimit(0, 0, "desc"))
+	sql := replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc"))
 
 	// Should include the sentinel so CacheManager can splice segment filter.
 	if !strings.Contains(sql, "AND true") {
@@ -151,7 +149,7 @@ func TestToWorkerSQL_Regexp_ExtractOnly(t *testing.T) {
 		}},
 	}
 
-	sql := replaceTable(leaf.ToWorkerSQLWithLimit(0, 0, "desc"))
+	sql := replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc"))
 	if !strings.Contains(sql, "AND true") {
 		t.Fatalf("expected sentinel AND true in generated SQL:\n%s", sql)
 	}
@@ -190,7 +188,7 @@ func TestToWorkerSQL_Regexp_ExtractWithGeneratedRegex(t *testing.T) {
 		}},
 	}
 
-	sql := replaceTable(leaf.ToWorkerSQLWithLimit(0, 0, "desc"))
+	sql := replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc"))
 	if !strings.Contains(sql, "AND true") {
 		t.Fatalf("expected sentinel AND true in generated SQL:\n%s", sql)
 	}
@@ -236,7 +234,7 @@ func TestToWorkerSQL_Regexp_WithFilters(t *testing.T) {
 		},
 	}
 
-	rows := queryAll(t, db, replaceTable(leaf.ToWorkerSQLWithLimit(0, 0, "desc")))
+	rows := queryAll(t, db, replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc")))
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row after filters, got %d", len(rows))
 	}
@@ -265,7 +263,7 @@ func TestToWorkerSQL_JSON_WithFilters(t *testing.T) {
 			{Label: "user", Op: MatchRe, Value: "(alice|bob)"},
 		},
 	}
-	rows := queryAll(t, db, replaceTable(leaf.ToWorkerSQLWithLimit(time.Second, 0, "desc")))
+	rows := queryAll(t, db, replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc")))
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row after filters, got %d", len(rows))
 	}
@@ -298,7 +296,7 @@ func TestToWorkerSQL_Logfmt_WithFilters(t *testing.T) {
 		},
 	}
 
-	rows := queryAll(t, db, replaceTable(leaf.toWorkerSQL(0, 0, "desc")))
+	rows := queryAll(t, db, replaceTable(leaf.ToWorkerSQL(0, "desc")))
 
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row after logfmt filters, got %d", len(rows))
@@ -323,7 +321,7 @@ func TestToWorkerSQL_MatchersOnly_FilterApplied(t *testing.T) {
 		},
 	}
 
-	sql := replaceTable(leaf.ToWorkerSQLWithLimit(0, 0, "desc"))
+	sql := replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc"))
 
 	if !strings.Contains(sql, "job = 'my-app'") {
 		t.Fatalf("generated SQL missing matcher WHERE: \n%s", sql)
@@ -364,7 +362,7 @@ func TestToWorkerSQL_MatchersThenJSON_FilterApplied_FromLogQL(t *testing.T) {
 	}
 	leaf := plan.Leaves[0]
 
-	replacedSql := replaceTable(leaf.ToWorkerSQLWithLimit(0, 0, "desc"))
+	replacedSql := replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc"))
 
 	if !strings.Contains(replacedSql, "job = 'my-app'") {
 		t.Fatalf("generated SQL missing matcher WHERE:\n%s", replacedSql)
@@ -412,7 +410,7 @@ func TestToWorkerSQL_LabelFormat_Conditional_FromLogQL(t *testing.T) {
 	}
 	leaf := plan.Leaves[0]
 
-	replacedSql := replaceTable(leaf.ToWorkerSQLWithLimit(0, 0, "desc"))
+	replacedSql := replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc"))
 
 	if !strings.Contains(replacedSql, `job = 'my-app'`) {
 		t.Fatalf("generated SQL missing selector matcher WHERE clause:\n%s", replacedSql)

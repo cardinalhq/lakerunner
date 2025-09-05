@@ -58,6 +58,25 @@ type LogAST struct {
 	Raw       string       `json:"raw"`
 }
 
+func (a *LogAST) NeedsRewrite() bool {
+	switch a.Kind {
+	case KindRangeAgg:
+		return true
+	case KindLogRange:
+		return true // range over logs → rewrite
+	case KindVectorAgg:
+		if a.VectorAgg != nil {
+			return a.VectorAgg.Left.NeedsRewrite()
+		}
+		return false
+	case KindBinOp:
+		return a.BinOp != nil &&
+			a.BinOp.LHS.NeedsRewrite() || a.BinOp.RHS.NeedsRewrite()
+	default:
+		return false
+	}
+}
+
 type LabelFilter struct {
 	Label string  `json:"label"`
 	Op    MatchOp `json:"op"` // =, !=, =~, !~

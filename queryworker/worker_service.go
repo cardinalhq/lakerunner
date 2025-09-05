@@ -255,7 +255,7 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		cacheManager = ws.MetricsCM
 		globSize = ws.MetricsGlobSize
 	} else if req.LogLeaf != nil {
-		workerSql = req.LogLeaf.ToWorkerSQLWithLimit(req.Step, req.Limit, req.ToOrderString())
+		workerSql = req.LogLeaf.ToWorkerSQLWithLimit(req.Limit, req.ToOrderString())
 		rowMapper = exemplarMapper
 		cacheManager = ws.LogsCM
 		globSize = ws.LogsGlobSize
