@@ -19,10 +19,12 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 
@@ -125,6 +127,9 @@ func (ps *SQSService) Run(doneCtx context.Context) error {
 func (ps *SQSService) pollSQS(doneCtx context.Context, sqsClient *awsclient.SQSClient, queueURL string) {
 	slog.Info("Starting SQS polling loop", slog.String("queueURL", queueURL))
 
+	// Configure concurrency - can be made configurable via env var if needed
+	const maxConcurrentMessages = 10
+
 	for {
 		select {
 		case <-doneCtx.Done():
@@ -144,21 +149,91 @@ func (ps *SQSService) pollSQS(doneCtx context.Context, sqsClient *awsclient.SQSC
 			continue
 		}
 
-		for _, message := range result.Messages {
-			if message.Body != nil {
-				err := ps.kafkaHandler.HandleMessage(context.Background(), []byte(*message.Body))
-				if err != nil {
-					slog.Error("Failed to handle S3 event with Kafka", slog.Any("error", err))
-				}
+		if len(result.Messages) == 0 {
+			// No messages, continue to next poll
+			continue
+		}
+
+		// Process messages concurrently
+		ps.processMessagesConcurrently(doneCtx, sqsClient, queueURL, result.Messages, maxConcurrentMessages)
+	}
+}
+
+// processMessagesConcurrently processes SQS messages in parallel with controlled concurrency
+func (ps *SQSService) processMessagesConcurrently(doneCtx context.Context, sqsClient *awsclient.SQSClient, queueURL string, messages []types.Message, maxConcurrent int) {
+	// Create semaphore for controlling concurrency
+	sem := make(chan struct{}, maxConcurrent)
+	var wg sync.WaitGroup
+
+	// Track successful messages for potential batch deletion in future
+	var successfulMessages []types.Message
+	var successMutex sync.Mutex
+
+	for _, message := range messages {
+		// Check if context is cancelled
+		select {
+		case <-doneCtx.Done():
+			slog.Info("Context cancelled, stopping message processing")
+			return
+		default:
+		}
+
+		wg.Add(1)
+		sem <- struct{}{} // Acquire semaphore
+
+		go func(msg types.Message) {
+			defer wg.Done()
+			defer func() { <-sem }() // Release semaphore
+
+			if msg.Body == nil {
+				slog.Warn("Received SQS message with nil body")
+				return
 			}
-			_, err := sqsClient.Client.DeleteMessage(context.Background(), &sqs.DeleteMessageInput{
+
+			// Process message with timeout
+			msgCtx, cancel := context.WithTimeout(doneCtx, 30*time.Second)
+			defer cancel()
+
+			err := ps.kafkaHandler.HandleMessage(msgCtx, []byte(*msg.Body))
+			if err != nil {
+				slog.Error("Failed to handle S3 event with Kafka, leaving message in SQS for retry",
+					slog.Any("error", err),
+					slog.String("messageId", *msg.MessageId))
+				return // Don't delete message from SQS if Kafka handling failed
+			}
+
+			// Track successful message
+			successMutex.Lock()
+			successfulMessages = append(successfulMessages, msg)
+			successMutex.Unlock()
+
+			// Delete message from SQS after successful processing
+			// Using a separate context for deletion to ensure it completes even if main context is cancelled
+			deleteCtx, deleteCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer deleteCancel()
+
+			_, err = sqsClient.Client.DeleteMessage(deleteCtx, &sqs.DeleteMessageInput{
 				QueueUrl:      aws.String(queueURL),
-				ReceiptHandle: message.ReceiptHandle,
+				ReceiptHandle: msg.ReceiptHandle,
 			})
 			if err != nil {
-				slog.Error("Failed to delete SQS message", slog.Any("error", err))
+				slog.Error("Failed to delete SQS message after successful Kafka handling",
+					slog.Any("error", err),
+					slog.String("messageId", *msg.MessageId))
+			} else {
+				slog.Debug("Successfully processed and deleted SQS message",
+					slog.String("messageId", *msg.MessageId))
 			}
-		}
+		}(message)
+	}
+
+	// Wait for all messages to be processed
+	wg.Wait()
+
+	if len(successfulMessages) > 0 {
+		slog.Info("Batch processing completed",
+			slog.Int("total_messages", len(messages)),
+			slog.Int("successful_messages", len(successfulMessages)))
 	}
 }
 
