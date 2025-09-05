@@ -101,10 +101,6 @@ type CompactMetricSegsParams struct {
 	IngestDateint int32
 	// FrequencyMs is the frequency in milliseconds at which the metrics are collected.
 	FrequencyMs int32
-	// Published indicates whether the new segments are marked as published.
-	Published bool
-	// Rolledup indicates whether the new segments are marked as rolledup.
-	Rolledup bool
 	// OldRecords contains the segments to be deleted.
 	OldRecords []CompactMetricSegsOld
 	// NewRecords contains the segments to be inserted.
@@ -134,10 +130,10 @@ func (q *Store) RollupMetricSegs(ctx context.Context, sourceParams RollupSourceP
 			IngestDateint:  targetParams.IngestDateint,
 			InstanceNum:    targetParams.InstanceNum,
 			OrganizationID: targetParams.OrganizationID,
-			Published:      true,
 			RecordCount:    newRec.RecordCount,
-			Rolledup:       false,
+			Published:      true,
 			Compacted:      true,
+			Rolledup:       false,
 			SegmentID:      newRec.SegmentID,
 			SlotCount:      targetParams.SlotCount,
 			SlotID:         targetParams.SlotID,
@@ -199,13 +195,13 @@ func (q *Store) InsertMetricSegmentBatchWithKafkaOffset(ctx context.Context, bat
 				EndTs:          params.EndTs,
 				RecordCount:    params.RecordCount,
 				FileSize:       params.FileSize,
-				Published:      params.Published,
 				CreatedBy:      params.CreatedBy,
-				Rolledup:       false, // Default for new segments
+				Published:      params.Published,
+				Compacted:      params.Compacted,
+				Rolledup:       false,
 				Fingerprints:   params.Fingerprints,
 				SortVersion:    params.SortVersion,
 				SlotCount:      params.SlotCount,
-				Compacted:      params.Compacted,
 			}
 		}
 

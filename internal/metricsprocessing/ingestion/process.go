@@ -239,9 +239,9 @@ func createAndUploadSegments(ctx context.Context, s3client *awsclient.S3Client, 
 			FileSize:       result.FileSize,
 			CreatedBy:      uploadParams.CreatedBy,
 			Published:      true,
+			Compacted:      false,
 			Fingerprints:   segment.Fingerprints,
 			SortVersion:    lrdb.CurrentMetricSortVersion,
-			Compacted:      false,
 		}
 
 		segmentParams = append(segmentParams, params)

@@ -242,8 +242,6 @@ func replaceCompactedSegments(
 		SlotCount:      1,
 		IngestDateint:  metricsprocessing.GetIngestDateint(oldRows),
 		FrequencyMs:    metadata.FrequencyMs,
-		Published:      true,
-		Rolledup:       false,
 		OldRecords:     oldRecords,
 		NewRecords:     newRecords,
 		CreatedBy:      lrdb.CreatedByCompact,
