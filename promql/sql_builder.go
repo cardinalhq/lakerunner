@@ -92,7 +92,6 @@ func (be *BaseExpr) ToWorkerSQL(step time.Duration) string {
 	}
 }
 
-
 func buildFromLogLeaf(be *BaseExpr, wantBytes bool, step time.Duration) string {
 	stepMs := step.Milliseconds()
 	tsCol := "\"_cardinalhq.timestamp\""

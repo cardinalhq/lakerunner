@@ -20,13 +20,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
-
-	"github.com/cardinalhq/lakerunner/internal/storageprofile"
-	"github.com/cardinalhq/lakerunner/promql"
-	"github.com/cardinalhq/lakerunner/queryapi"
-	"github.com/google/uuid"
-	"golang.org/x/sync/errgroup"
 	"log/slog"
 	"math/big"
 	"net/http"
@@ -34,6 +27,13 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
+	"github.com/cardinalhq/lakerunner/internal/storageprofile"
+	"github.com/cardinalhq/lakerunner/promql"
+	"github.com/cardinalhq/lakerunner/queryapi"
+	"github.com/google/uuid"
+	"golang.org/x/sync/errgroup"
 )
 
 // WorkerService wires HTTP → CacheManager → SSE.
@@ -288,7 +288,7 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var workerSql string
 	var cacheManager *CacheManager
 	var globSize int
-	var isTagValuesQuery bool
+	var isTagValuesQuery = false
 
 	if req.BaseExpr != nil {
 		if req.TagName != "" {
@@ -297,10 +297,16 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			globSize = ws.MetricsGlobSize
 			isTagValuesQuery = true
 		} else {
+			if req.BaseExpr.LogLeaf != nil {
+				cacheManager = ws.LogsCM
+				globSize = ws.LogsGlobSize
+			} else {
+				cacheManager = ws.MetricsCM
+				globSize = ws.MetricsGlobSize
+			}
 			workerSql = req.BaseExpr.ToWorkerSQL(req.Step)
 			cacheManager = ws.MetricsCM
 			globSize = ws.MetricsGlobSize
-			isTagValuesQuery = false
 		}
 	} else if req.LogLeaf != nil {
 		if req.TagName != "" {
@@ -312,7 +318,6 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			workerSql = req.LogLeaf.ToWorkerSQLWithLimit(req.Limit, req.ToOrderString())
 			cacheManager = ws.LogsCM
 			globSize = ws.LogsGlobSize
-			isTagValuesQuery = false
 		}
 	} else {
 		http.Error(w, "no leaf to evaluate", http.StatusBadRequest)
