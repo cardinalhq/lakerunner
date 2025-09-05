@@ -291,7 +291,7 @@ func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
 
 			// Replace {table} with cached table; replace sentinel "AND true" with segment filter.
 			cacheSQL := ""
-			if request.BaseExpr.LogLeaf != nil {
+			if request.BaseExpr != nil && request.BaseExpr.LogLeaf != nil {
 				cacheBase := fmt.Sprintf("(SELECT * FROM %s WHERE segment_id IN (%s))", w.sink.table, inList)
 				cacheSQL = strings.Replace(userSQL, "{table}", cacheBase, 1)
 			} else {
@@ -299,7 +299,7 @@ func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
 				cacheSQL = strings.Replace(cacheSQL, "AND true", "AND segment_id IN ("+inList+")", 1)
 			}
 
-			slog.Info("Querying cached segments", slog.Int("numSegments", len(ids)), slog.String("sql", cacheSQL))
+			//slog.Info("Querying cached segments", slog.Int("numSegments", len(ids)), slog.String("sql", cacheSQL))
 			rows, conn, err := w.sink.db.QueryContext(ctx, cacheSQL)
 			if err != nil {
 				return

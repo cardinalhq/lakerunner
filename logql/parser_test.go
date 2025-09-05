@@ -30,17 +30,6 @@ func hasMatcher(ms []LabelMatch, label, value string) bool {
 	return false
 }
 
-// helper: count parser stages of a given type
-func countParserStages(stages []ParserStage, typ string) int {
-	n := 0
-	for _, s := range stages {
-		if s.Type == typ {
-			n++
-		}
-	}
-	return n
-}
-
 func TestLogRange(t *testing.T) {
 	q := `count_over_time({app="api"}[5m] offset 1m)`
 	ast, err := FromLogQL(q)
