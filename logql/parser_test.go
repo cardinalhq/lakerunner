@@ -43,7 +43,7 @@ func TestLogRange(t *testing.T) {
 		t.Fatalf("bad range/offset: %+v", ast.RangeAgg.Left)
 	}
 	if !hasMatcher(ast.RangeAgg.Left.Selector.Matchers, "app", "api") {
-		t.Fatalf("missing matcher app=api")
+		t.Fatalf("missing matcher app=api!")
 	}
 }
 
