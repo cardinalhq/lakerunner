@@ -12,93 +12,31 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package cmd
+package logsingestion
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"maps"
+	"os"
+	"strings"
+	"time"
 
-	"github.com/spf13/cobra"
-	"go.opentelemetry.io/otel/attribute"
-
+	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
-	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
-	"github.com/cardinalhq/lakerunner/internal/debugging"
-	"github.com/cardinalhq/lakerunner/internal/fly"
-	"github.com/cardinalhq/lakerunner/internal/healthcheck"
+	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
+	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
+	"github.com/cardinalhq/lakerunner/internal/pipeline"
+	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
+	"github.com/cardinalhq/lakerunner/internal/processing/ingest"
+	"github.com/cardinalhq/lakerunner/internal/storageprofile"
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
-
-func init() {
-	cmd := &cobra.Command{
-		Use:   "ingest-logs",
-		Short: "Ingest logs from Kafka",
-		RunE: func(_ *cobra.Command, _ []string) error {
-			helpers.SetupTempDir()
-
-			servicename := "lakerunner-ingest-logs"
-			addlAttrs := attribute.NewSet(
-				attribute.String("signal", "logs"),
-				attribute.String("action", "ingest"),
-			)
-			ctx, doneFx, err := setupTelemetry(servicename, &addlAttrs)
-			if err != nil {
-				return fmt.Errorf("failed to setup telemetry: %w", err)
-			}
-
-			defer func() {
-				if err := doneFx(); err != nil {
-					slog.Error("Error shutting down telemetry", slog.Any("error", err))
-				}
-			}()
-
-			go diskUsageLoop(ctx)
-
-			// Start pprof server
-			go debugging.RunPprof(ctx)
-
-			// Start health check server
-			healthConfig := healthcheck.GetConfigFromEnv()
-			healthServer := healthcheck.NewServer(healthConfig)
-
-			go func() {
-				if err := healthServer.Start(ctx); err != nil {
-					slog.Error("Health check server stopped", slog.Any("error", err))
-				}
-			}()
-
-			// Kafka is required for ingestion
-			cfg, err := config.Load()
-			if err != nil {
-				return fmt.Errorf("failed to load config: %w", err)
-			}
-
-			kafkaFactory := fly.NewFactory(&cfg.Fly)
-			if !kafkaFactory.IsEnabled() {
-				return fmt.Errorf("Kafka is required for ingestion but is not enabled")
-			}
-
-			slog.Info("Starting logs ingestion with Kafka consumer")
-
-			consumer, err := NewKafkaIngestConsumer(kafkaFactory, cfg, "logs", "lakerunner.ingest.logs")
-			if err != nil {
-				return fmt.Errorf("failed to create Kafka consumer: %w", err)
-			}
-			defer func() {
-				if err := consumer.Close(); err != nil {
-					slog.Error("Error closing Kafka consumer", slog.Any("error", err))
-				}
-			}()
-
-			// Mark as healthy once consumer is created and about to start
-			healthServer.SetStatus(healthcheck.StatusHealthy)
-
-			return consumer.Run(ctx)
-		},
-	}
-
-	rootCmd.AddCommand(cmd)
-}
 
 // hourSlotKey uniquely identifies a writer for a specific hour and slot combination
 type hourSlotKey struct {
@@ -130,7 +68,6 @@ func newWriterManager(tmpdir, orgID string, ingestDateint int32, rpfEstimate int
 
 // processBatch efficiently processes an entire batch, grouping rows by hour/slot
 func (wm *writerManager) processBatch(batch *pipeline.Batch) (processedCount, errorCount int64) {
-	// Group rows by hour/slot to minimize writer lookups and enable batch writes
 	batchGroups := make(map[hourSlotKey]*pipeline.Batch)
 
 	// First pass: group rows by hour/slot
@@ -163,9 +100,7 @@ func (wm *writerManager) processBatch(batch *pipeline.Batch) (processedCount, er
 
 		// Add row to the appropriate batch group
 		newRow := batchGroups[key].AddRow()
-		for k, v := range row {
-			newRow[k] = v
-		}
+		maps.Copy(newRow, row)
 	}
 
 	// Second pass: write each grouped batch to its writer
@@ -180,7 +115,6 @@ func (wm *writerManager) processBatch(batch *pipeline.Batch) (processedCount, er
 			continue
 		}
 
-		// Write the entire batch efficiently
 		if err := writer.WriteBatch(groupedBatch); err != nil {
 			wm.ll.Error("Failed to write batch group",
 				slog.Any("key", key),
@@ -191,7 +125,6 @@ func (wm *writerManager) processBatch(batch *pipeline.Batch) (processedCount, er
 			processedCount += int64(groupedBatch.Len())
 		}
 
-		// Return batch to pool
 		pipeline.ReturnBatch(groupedBatch)
 	}
 
@@ -204,7 +137,6 @@ func (wm *writerManager) getWriter(key hourSlotKey) (*parquetwriter.UnifiedWrite
 		return writer, nil
 	}
 
-	// Create new writer
 	writer, err := factories.NewLogsWriter(wm.tmpdir, wm.rpfEstimate)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create logs writer: %w", err)
@@ -270,16 +202,26 @@ func queueLogCompactionForSlot(ctx context.Context, mdb lrdb.StoreFull, item ing
 	})
 }
 
-func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
-	cloudManagers *cloudstorage.CloudManagers, items []lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
+// WorkerInterrupted is returned when processing is safely interrupted
+type WorkerInterrupted struct {
+	message string
+}
+
+func (e WorkerInterrupted) Error() string {
+	return e.message
+}
+
+func NewWorkerInterrupted(message string) WorkerInterrupted {
+	return WorkerInterrupted{message: message}
+}
+
+// ProcessBatch processes a single ingestion item and returns any WorkerInterrupted error for safe shutdown
+func ProcessBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
+	awsmanager *awsclient.Manager, item ingest.IngestItem, ingest_dateint int32, rpfEstimate int64) error {
 
 	ll.Debug("Processing log item")
 
-	// Convert IngestItem to Inqueue for compatibility with existing code
-	inqueueItems := ConvertIngestItemsToInqueue([]IngestItem{item})
-
-	// Get storage profile
-	firstItem := items[0]
+	// Get storage profile and S3 client
 	var profile storageprofile.StorageProfile
 	var err error
 
@@ -295,10 +237,9 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 		}
 	}
 
-	// Create cloud storage client
-	storageClient, err := cloudstorage.NewClient(ctx, cloudManagers, profile)
+	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
 	if err != nil {
-		return fmt.Errorf("failed to create storage client for provider %s: %w", profile.CloudProvider, err)
+		return fmt.Errorf("failed to get S3 client: %w", err)
 	}
 
 	// Create writer manager for organizing output by hour/slot
@@ -307,122 +248,11 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 	// Track total rows across all files
 	var batchRowsRead, batchRowsProcessed, batchRowsErrored int64
 
-	// Process each file in the batch
-	for _, inf := range inqueueItems {
-		// Check for context cancellation before processing each file
-		if err := ctx.Err(); err != nil {
-			ll.Info("Context cancelled during batch processing - safe interruption point",
-				slog.String("itemID", inf.ID.String()),
-				slog.Any("error", err))
-			return NewWorkerInterrupted("context cancelled during file processing")
-		}
-
-		ll.Debug("Processing batch item with filereader",
-			slog.String("itemID", inf.ID.String()),
-			slog.String("objectID", inf.ObjectID),
-			slog.Int64("fileSize", inf.FileSize))
-
-		// Skip database files (processed outputs, not inputs)
-		if strings.HasPrefix(inf.ObjectID, "db/") {
-			ll.Debug("Skipping database file", slog.String("objectID", inf.ObjectID))
-			continue
-		}
-
-		// Download file
-		itemTmpdir := fmt.Sprintf("%s/item_%s", tmpdir, inf.ID.String())
-		if err := os.MkdirAll(itemTmpdir, 0755); err != nil {
-			return fmt.Errorf("creating item tmpdir: %w", err)
-		}
-
-		tmpfilename, _, is404, err := storageClient.DownloadObject(ctx, itemTmpdir, inf.Bucket, inf.ObjectID)
-		if err != nil {
-			return fmt.Errorf("failed to download file %s from %s: %w", inf.ObjectID, profile.CloudProvider, err)
-		}
-		if is404 {
-			ll.Warn("Object not found in cloud storage, skipping",
-				slog.String("cloudProvider", profile.CloudProvider),
-				slog.String("objectID", inf.ObjectID))
-			continue
-		}
-
-		// Create appropriate reader for the file type
-		var reader filereader.Reader
-
-		reader, err = createLogReader(tmpfilename)
-		if err == nil {
-			// Add general translator for non-protobuf files
-			translator := &LogTranslator{
-				orgID:    item.OrganizationID.String(),
-				bucket:   inf.Bucket,
-				objectID: inf.ObjectID,
-			}
-			reader, err = filereader.NewTranslatingReader(reader, translator, 1000)
-		}
-
-		if err != nil {
-			ll.Warn("Unsupported or problematic file type, skipping",
-				slog.String("objectID", inf.ObjectID),
-				slog.String("error", err.Error()))
-			continue
-		}
-
-		// Process all rows from the file
-		var processedCount, errorCount int64
-		for {
-			batch, err := reader.Next(ctx)
-
-			// Process any rows we got, even if EOF
-			if batch != nil {
-				batchProcessed, batchErrors := wm.processBatch(batch)
-				processedCount += batchProcessed
-				errorCount += batchErrors
-				pipeline.ReturnBatch(batch)
-
-				if batchErrors > 0 {
-					ll.Warn("Some rows failed to process in batch",
-						slog.String("objectID", inf.ObjectID),
-						slog.Int64("processedRows", batchProcessed),
-						slog.Int64("errorRows", batchErrors))
-				}
-			}
-
-			// Break after processing if we hit EOF or other errors
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				if closeErr := reader.Close(); closeErr != nil {
-					ll.Warn("Failed to close reader after read error", slog.String("objectID", inf.ObjectID), slog.Any("error", closeErr))
-				}
-				return fmt.Errorf("failed to read from file %s: %w", inf.ObjectID, err)
-			}
-		}
-
-		// Get total rows read from the reader
-		fileRowsRead := reader.TotalRowsReturned()
-
-		ll.Debug("File processing completed",
-			slog.String("objectID", inf.ObjectID),
-			slog.Int64("rowsRead", fileRowsRead),
-			slog.Int64("rowsProcessed", processedCount),
-			slog.Int64("rowsErrored", errorCount))
-
-		if errorCount > 0 {
-			ll.Warn("Some rows were dropped due to processing errors",
-				slog.String("objectID", inf.ObjectID),
-				slog.Int64("droppedRows", errorCount),
-				slog.Float64("dropRate", float64(errorCount)/float64(fileRowsRead)*100))
-		}
-		if closeErr := reader.Close(); closeErr != nil {
-			ll.Warn("Failed to close reader", slog.String("objectID", inf.ObjectID), slog.Any("error", closeErr))
-		}
-
-		// Update batch totals
-		batchRowsRead += fileRowsRead
-		batchRowsProcessed += processedCount
-		batchRowsErrored += errorCount
-
-		ll.Debug("Completed processing file", slog.String("objectID", inf.ObjectID))
+	// Check for context cancellation before processing
+	if err := ctx.Err(); err != nil {
+		ll.Info("Context cancelled during batch processing - safe interruption point",
+			slog.Any("error", err))
+		return NewWorkerInterrupted("context cancelled during file processing")
 	}
 
 	ll.Debug("Processing batch item with filereader",
@@ -601,15 +431,14 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 		dbObjectID := helpers.MakeDBObjectID(item.OrganizationID, "",
 			dateint, s3helper.HourFromMillis(stats.FirstTS), segmentID, "logs")
 
-		if err := storageClient.UploadObject(criticalCtx, firstItem.Bucket, dbObjectID, result.FileName); err != nil {
-			return fmt.Errorf("failed to upload file to %s: %w", profile.CloudProvider, err)
+		if err := s3helper.UploadS3Object(criticalCtx, s3client, item.Bucket, dbObjectID, result.FileName); err != nil {
+			return fmt.Errorf("failed to upload file to S3: %w", err)
 		}
 		_ = os.Remove(result.FileName)
 
 		slotID := 0
 
 		// Insert log segment into database
-		resultLastTS := stats.LastTS + 1 // end is exclusive
 		err := mdb.InsertLogSegment(criticalCtx, lrdb.InsertLogSegmentParams{
 			OrganizationID: item.OrganizationID,
 			Dateint:        dateint,
@@ -618,7 +447,7 @@ func logIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp stor
 			InstanceNum:    item.InstanceNum,
 			SlotID:         int32(slotID),
 			StartTs:        stats.FirstTS,
-			EndTs:          resultLastTS,
+			EndTs:          stats.LastTS + 1, // end is exclusive
 			RecordCount:    result.RecordCount,
 			FileSize:       result.FileSize,
 			CreatedBy:      lrdb.CreatedByIngest,

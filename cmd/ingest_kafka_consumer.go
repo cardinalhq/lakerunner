@@ -25,14 +25,12 @@ import (
 	"go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/config"
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
-	"github.com/cardinalhq/lakerunner/internal/metricsprocessing/ingestion"
+	"github.com/cardinalhq/lakerunner/internal/logsprocessing/logsingestion"
+	metricsingestion "github.com/cardinalhq/lakerunner/internal/metricsprocessing/ingestion"
 	"github.com/cardinalhq/lakerunner/internal/processing/ingest"
-	"github.com/cardinalhq/lakerunner/internal/storageprofile"
-	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 // KafkaIngestConsumer handles consuming object storage notifications from Kafka and processing them
@@ -170,13 +168,13 @@ func (k *KafkaIngestConsumer) processItem(ctx context.Context, notif *messages.O
 	var processErr error
 	switch k.signal {
 	case "metrics":
-		processErr = ingestion.ProcessBatch(ctx, ll, tmpdir, k.loop.sp, k.loop.mdb,
+		processErr = metricsingestion.ProcessBatch(ctx, ll, tmpdir, k.loop.sp, k.loop.mdb,
 			k.loop.awsmanager, []ingest.IngestItem{item}, ingestDateint, rpfEstimate, k.loop.exemplarProcessor, k.config.Metrics.Ingestion)
 	case "logs":
-		processErr = processLogsBatch(ctx, ll, tmpdir, k.loop.sp, k.loop.mdb,
-			k.loop.awsmanager, item, ingestDateint, rpfEstimate, k.loop)
+		processErr = logsingestion.ProcessBatch(ctx, ll, tmpdir, k.loop.sp, k.loop.mdb,
+			k.loop.awsmanager, item, ingestDateint, rpfEstimate)
 	case "traces":
-		processErr = processTracesBatch(ctx, ll, tmpdir, k.loop.sp, k.loop.mdb,
+		processErr = traceIngestBatch(ctx, ll, tmpdir, k.loop.sp, k.loop.mdb,
 			k.loop.awsmanager, item, ingestDateint, rpfEstimate, k.loop)
 	default:
 		processErr = fmt.Errorf("unsupported signal type: %s", k.signal)
@@ -210,23 +208,4 @@ func (k *KafkaIngestConsumer) Close() error {
 	}
 
 	return firstErr
-}
-
-// Helper functions to handle signal-specific processing
-// These are stubs that should be implemented based on your actual processing logic
-
-func processLogsBatch(ctx context.Context, ll *slog.Logger, tmpdir string,
-	sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
-	awsmanager *awsclient.Manager, item ingest.IngestItem,
-	ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
-	// Call the existing logIngestBatch function from ingest_logs.go
-	return logIngestBatch(ctx, ll, tmpdir, sp, mdb, awsmanager, item, ingest_dateint, rpfEstimate, loop)
-}
-
-func processTracesBatch(ctx context.Context, ll *slog.Logger, tmpdir string,
-	sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
-	awsmanager *awsclient.Manager, item ingest.IngestItem,
-	ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
-	// Call the existing traceIngestBatch function from ingest_traces_cmd.go
-	return traceIngestBatch(ctx, ll, tmpdir, sp, mdb, awsmanager, item, ingest_dateint, rpfEstimate, loop)
 }

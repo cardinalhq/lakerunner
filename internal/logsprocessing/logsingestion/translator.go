@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package cmd
+package logsingestion
 
 import (
 	"fmt"
@@ -27,6 +27,15 @@ type LogTranslator struct {
 	orgID    string
 	bucket   string
 	objectID string
+}
+
+// NewLogTranslator creates a new LogTranslator with the specified metadata
+func NewLogTranslator(orgID, bucket, objectID string) *LogTranslator {
+	return &LogTranslator{
+		orgID:    orgID,
+		bucket:   bucket,
+		objectID: objectID,
+	}
 }
 
 // TranslateRow adds resource fields to each row

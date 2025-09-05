@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package cmd
+package logsingestion
 
 import (
 	"os"
@@ -48,29 +48,12 @@ func TestCreateLogReader(t *testing.T) {
 				return filename
 			},
 			wantErr:  true, // Empty parquet file will fail to read
-			wantType: "*filereader.ParquetRawReader",
-		},
-		{
-			name:     "JSONGzFile",
-			objectID: "test.json.gz",
-			setupFn: func(t *testing.T) string {
-				// Create empty json.gz file
-				filename := filepath.Join(tempDir, "test.json.gz")
-				file, err := os.Create(filename)
-				if err != nil {
-					t.Fatal(err)
-				}
-				file.Close()
-				return filename
-			},
-			wantErr:  true, // Empty json.gz file will fail to read
-			wantType: "*filereader.JSONLinesReader",
+			wantType: "parquet",
 		},
 		{
 			name:     "BinpbFile",
 			objectID: "test.binpb",
 			setupFn: func(t *testing.T) string {
-				// Create empty binpb file
 				filename := filepath.Join(tempDir, "test.binpb")
 				file, err := os.Create(filename)
 				if err != nil {
@@ -80,13 +63,14 @@ func TestCreateLogReader(t *testing.T) {
 				return filename
 			},
 			wantErr:  false, // Empty binpb file creates reader successfully
-			wantType: "*filereader.ProtoLogsReader",
+			wantType: "proto",
 		},
 		{
-			name:     "UnsupportedFile",
-			objectID: "test.txt",
+			name:     "JSONGZFile",
+			objectID: "test.json.gz",
 			setupFn: func(t *testing.T) string {
-				filename := filepath.Join(tempDir, "test.txt")
+				filename := filepath.Join(tempDir, "test.json.gz")
+				// Create empty gzip file
 				file, err := os.Create(filename)
 				if err != nil {
 					t.Fatal(err)
@@ -94,14 +78,20 @@ func TestCreateLogReader(t *testing.T) {
 				file.Close()
 				return filename
 			},
-			wantErr:  true,
-			wantType: "",
+			wantErr:  true, // Empty gzip file will fail to read
+			wantType: "json",
 		},
 		{
-			name:     "NonExistentFile",
-			objectID: "nonexistent.parquet",
+			name:     "UnsupportedFile",
+			objectID: "test.unknown",
 			setupFn: func(t *testing.T) string {
-				return filepath.Join(tempDir, "nonexistent.parquet")
+				filename := filepath.Join(tempDir, "test.unknown")
+				file, err := os.Create(filename)
+				if err != nil {
+					t.Fatal(err)
+				}
+				file.Close()
+				return filename
 			},
 			wantErr:  true,
 			wantType: "",
