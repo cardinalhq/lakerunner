@@ -27,19 +27,22 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 // Aggressive loop for object cleanup.
 // If work was done: tiny delay; else a slightly longer pause. Errors are logged and retried.
-func objectCleanerLoop(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, awsmanager *awsclient.Manager) error {
+func objectCleanerLoop(ctx context.Context, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, cmgr *cloudstorage.CloudManagers) error {
 	const (
 		delayIfNoWork = 5 * time.Second
 		delayIfError  = 5 * time.Second
 	)
+
+	ll := logctx.FromContext(ctx)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -47,7 +50,7 @@ func objectCleanerLoop(ctx context.Context, ll *slog.Logger, sp storageprofile.S
 		default:
 		}
 
-		didWork, err := runObjCleaner(ctx, ll, sp, mdb, awsmanager)
+		didWork, err := runObjCleaner(ctx, ll, sp, mdb, cmgr)
 		switch {
 		case err != nil:
 			ll.Error("Failed to run object cleaner", slog.Any("error", err))
@@ -69,7 +72,7 @@ func objectCleanerLoop(ctx context.Context, ll *slog.Logger, sp storageprofile.S
 	}
 }
 
-func runObjCleaner(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, awsmanager *awsclient.Manager) (bool, error) {
+func runObjCleaner(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, cmgr *cloudstorage.CloudManagers) (bool, error) {
 	const maxrows = 1000
 	objs, err := mdb.ObjectCleanupGet(ctx, maxrows)
 	if err != nil {
@@ -91,7 +94,7 @@ func runObjCleaner(ctx context.Context, ll *slog.Logger, sp storageprofile.Stora
 		go func() {
 			defer wg.Done()
 			for obj := range jobs {
-				cleanupObj(ctx, ll, sp, mdb, awsmanager, obj)
+				cleanupObj(ctx, sp, mdb, cmgr, obj)
 			}
 		}()
 	}
@@ -104,8 +107,8 @@ func runObjCleaner(ctx context.Context, ll *slog.Logger, sp storageprofile.Stora
 	return didwork, nil
 }
 
-func cleanupObj(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, awsmanager *awsclient.Manager, obj lrdb.ObjectCleanupGetRow) {
-	ll = ll.With(
+func cleanupObj(ctx context.Context, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, cmgr *cloudstorage.CloudManagers, obj lrdb.ObjectCleanupGetRow) {
+	ll := logctx.FromContext(ctx).With(
 		slog.String("objectID", obj.ObjectID),
 		slog.String("bucketID", obj.BucketID),
 		slog.String("organizationID", obj.OrganizationID.String()),
@@ -130,7 +133,7 @@ func cleanupObj(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageP
 		return
 	}
 
-	storageClient, err := cloudstorage.NewClient(ctx, &cloudstorage.CloudManagers{AWS: awsmanager}, profile)
+	storageClient, err := cloudstorage.NewClient(ctx, cmgr, profile)
 	if err != nil {
 		ll.Error("Failed to get storage client", slog.Any("error", err))
 		objectCleanupCounter.Add(ctx, 1, metric.WithAttributes(
