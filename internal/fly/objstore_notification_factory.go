@@ -255,6 +255,32 @@ func (c *ObjStoreNotificationConsumer) Commit(ctx context.Context, messages []Co
 	return c.consumer.CommitMessages(ctx, messages...)
 }
 
+// ConsumeWithMetadata reads and processes object storage notifications with access to Kafka metadata
+func (c *ObjStoreNotificationConsumer) ConsumeWithMetadata(ctx context.Context, handler func(context.Context, []*messages.ObjStoreNotificationMessage, []ConsumedMessage) error) error {
+	// Create a message handler that unmarshals object storage notifications and preserves metadata
+	messageHandler := func(ctx context.Context, consumedMessages []ConsumedMessage) error {
+		notifications := make([]*messages.ObjStoreNotificationMessage, 0, len(consumedMessages))
+		validMessages := make([]ConsumedMessage, 0, len(consumedMessages))
+
+		for _, msg := range consumedMessages {
+			notification := &messages.ObjStoreNotificationMessage{}
+			if err := notification.Unmarshal(msg.Value); err != nil {
+				c.logger.Error("Failed to unmarshal notification", slog.Any("error", err))
+				continue
+			}
+			notifications = append(notifications, notification)
+			validMessages = append(validMessages, msg)
+		}
+
+		if len(notifications) > 0 {
+			return handler(ctx, notifications, validMessages)
+		}
+		return nil
+	}
+
+	return c.consumer.Consume(ctx, messageHandler)
+}
+
 // Close closes the consumer
 func (c *ObjStoreNotificationConsumer) Close() error {
 	return c.consumer.Close()

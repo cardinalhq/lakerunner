@@ -1,3 +1,5 @@
+//go:build kafkatest
+
 // Copyright (C) 2025 CardinalHQ, Inc
 //
 // This program is free software: you can redistribute it and/or modify
@@ -28,7 +30,7 @@ import (
 
 func TestProducer_Send(t *testing.T) {
 	topic := fmt.Sprintf("test-producer-send-%s", uuid.New().String())
-	
+
 	// Use shared Kafka container with topic
 	kafkaContainer := NewKafkaTestContainer(t, topic)
 	defer kafkaContainer.CleanupAfterTest(t, []string{topic}, []string{"test-reader"})
@@ -77,7 +79,7 @@ func TestProducer_Send(t *testing.T) {
 
 func TestProducer_BatchSend(t *testing.T) {
 	topic := fmt.Sprintf("test-producer-batch-%s", uuid.New().String())
-	
+
 	// Use shared Kafka container with topic
 	kafkaContainer := NewKafkaTestContainer(t, topic)
 	defer kafkaContainer.CleanupAfterTest(t, []string{topic}, []string{"test-batch-reader"})
@@ -138,7 +140,7 @@ func TestProducer_BatchSend(t *testing.T) {
 
 func TestProducer_SendToPartition(t *testing.T) {
 	topic := fmt.Sprintf("test-producer-partition-%s", uuid.New().String())
-	
+
 	// Use shared Kafka container with topic
 	kafkaContainer := NewKafkaTestContainer(t, topic)
 	defer kafkaContainer.CleanupAfterTest(t, []string{topic}, []string{})
@@ -181,7 +183,7 @@ func TestProducer_SendToPartition(t *testing.T) {
 
 func TestProducer_GetPartitionCount(t *testing.T) {
 	topic := fmt.Sprintf("test-partition-count-%s", uuid.New().String())
-	
+
 	// Use shared Kafka container with topic
 	kafkaContainer := NewKafkaTestContainer(t, topic)
 	defer kafkaContainer.CleanupAfterTest(t, []string{topic}, []string{})
@@ -203,7 +205,7 @@ func TestProducer_GetPartitionCount(t *testing.T) {
 
 func TestProducer_EmptyBatch(t *testing.T) {
 	topic := fmt.Sprintf("test-empty-batch-%s", uuid.New().String())
-	
+
 	// Use shared Kafka container with topic
 	kafkaContainer := NewKafkaTestContainer(t, topic)
 	defer kafkaContainer.CleanupAfterTest(t, []string{topic}, []string{})

@@ -25,6 +25,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/estimator"
 	"github.com/cardinalhq/lakerunner/internal/exemplar"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/processing/ingest"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
@@ -32,7 +33,6 @@ import (
 
 type IngestBatchProcessingFunction func(
 	ctx context.Context,
-	ll *slog.Logger,
 	tmpdir string,
 	sp storageprofile.StorageProfileProvider,
 	mdb lrdb.StoreFull,
@@ -50,7 +50,6 @@ type IngestLoopContext struct {
 	metricEstimator   estimator.MetricEstimator
 	logEstimator      estimator.LogEstimator
 	signal            string
-	ll                *slog.Logger
 	exemplarProcessor *exemplar.Processor
 	processedItems    *int64
 	lastLogTime       *time.Time
@@ -61,6 +60,7 @@ func NewIngestLoopContext(ctx context.Context, signal string) (*IngestLoopContex
 		slog.String("signal", signal),
 		slog.String("action", "ingest"),
 	)
+	ctx = logctx.WithLogger(ctx, ll)
 
 	mdb, err := dbopen.LRDBStore(ctx)
 	if err != nil {
@@ -104,7 +104,7 @@ func NewIngestLoopContext(ctx context.Context, signal string) (*IngestLoopContex
 		},
 	}
 
-	exemplarProcessor := exemplar.NewMetricsProcessor(config, ll)
+	exemplarProcessor := exemplar.NewMetricsProcessor(config)
 
 	exemplarProcessor.SetMetricsCallback(func(ctx context.Context, organizationID string, exemplars []*exemplar.ExemplarData) error {
 		return processMetricsExemplarsDirect(ctx, organizationID, exemplars, mdb)
@@ -121,7 +121,6 @@ func NewIngestLoopContext(ctx context.Context, signal string) (*IngestLoopContex
 		metricEstimator:   metricEst,
 		logEstimator:      logEst,
 		signal:            signal,
-		ll:                ll,
 		exemplarProcessor: exemplarProcessor,
 		processedItems:    &processedItems,
 		lastLogTime:       &lastLogTime,

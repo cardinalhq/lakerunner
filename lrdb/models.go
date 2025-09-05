@@ -141,6 +141,20 @@ type InqueueJournal struct {
 	UpdatedAt      time.Time `json:"updated_at"`
 }
 
+// Tracks the last successfully processed Kafka message offset per consumer group/topic/partition to enable exactly-once processing semantics
+type KafkaOffsetJournal struct {
+	// Kafka consumer group name (e.g., lakerunner.ingest.metrics)
+	ConsumerGroup string `json:"consumer_group"`
+	// Kafka topic name (e.g., lakerunner.objstore.ingest.metrics)
+	Topic string `json:"topic"`
+	// Kafka partition number within the topic
+	Partition int32 `json:"partition"`
+	// Last Kafka message offset that was successfully processed and committed to storage
+	LastProcessedOffset int64 `json:"last_processed_offset"`
+	// Timestamp when this offset was last updated
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 type LogSeg struct {
 	OrganizationID uuid.UUID                 `json:"organization_id"`
 	Dateint        int32                     `json:"dateint"`

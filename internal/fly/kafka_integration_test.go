@@ -1,3 +1,5 @@
+//go:build kafkatest
+
 // Copyright (C) 2025 CardinalHQ, Inc
 //
 // This program is free software: you can redistribute it and/or modify
@@ -54,7 +56,7 @@ func TestKafkaConnectivity(t *testing.T) {
 func TestSimpleProducerConsumer(t *testing.T) {
 	topic := fmt.Sprintf("test-simple-integration-%s", uuid.New().String())
 	groupID := fmt.Sprintf("test-integration-%d", time.Now().UnixNano())
-	
+
 	// Use shared Kafka container with topic
 	kafkaContainer := NewKafkaTestContainer(t, topic)
 	defer kafkaContainer.CleanupAfterTest(t, []string{topic}, []string{groupID})

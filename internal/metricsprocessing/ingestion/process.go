@@ -23,6 +23,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/processing/ingest"
@@ -33,7 +34,6 @@ import (
 // ProcessBatch processes a batch of metric ingest items
 func ProcessBatch(
 	ctx context.Context,
-	ll *slog.Logger,
 	tmpdir string,
 	sp storageprofile.StorageProfileProvider,
 	mdb lrdb.StoreFull,
@@ -45,7 +45,7 @@ func ProcessBatch(
 	cfg Config,
 ) error {
 	batchID := idgen.GenerateShortBase32ID()
-	ll = ll.With(slog.String("batchID", batchID))
+	ll := logctx.FromContext(ctx).With(slog.String("batchID", batchID))
 
 	objectIDs := make([]string, len(items))
 	for i, item := range items {

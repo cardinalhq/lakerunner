@@ -29,6 +29,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
@@ -216,9 +217,10 @@ func NewWorkerInterrupted(message string) WorkerInterrupted {
 }
 
 // ProcessBatch processes a single ingestion item and returns any WorkerInterrupted error for safe shutdown
-func ProcessBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
+func ProcessBatch(ctx context.Context, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
 	awsmanager *awsclient.Manager, item ingest.IngestItem, ingest_dateint int32, rpfEstimate int64) error {
 
+	ll := logctx.FromContext(ctx)
 	ll.Debug("Processing log item")
 
 	// Get storage profile and S3 client

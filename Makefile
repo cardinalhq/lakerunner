@@ -175,9 +175,9 @@ test-integration:
 test-kafka:
 	@echo "Running Kafka integration tests (with containerized Kafka)..."
 	@if [ -z "$$DOCKER_HOST" ] && [ -S $$HOME/.rd/docker.sock ]; then \
-		DOCKER_HOST=unix://$$HOME/.rd/docker.sock go test -race ./internal/fly -timeout=10m; \
+		DOCKER_HOST=unix://$$HOME/.rd/docker.sock go test -race -tags=kafkatest ./internal/fly -timeout=10m; \
 	else \
-		go test -race ./internal/fly -timeout=10m; \
+		go test -race -tags=kafkatest ./internal/fly -timeout=10m; \
 	fi
 
 .PHONY: test-ci

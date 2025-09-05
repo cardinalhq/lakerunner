@@ -1,3 +1,5 @@
+//go:build kafkatest
+
 // Copyright (C) 2025 CardinalHQ, Inc
 //
 // This program is free software: you can redistribute it and/or modify
@@ -108,7 +110,7 @@ func TestConsumer_Consume(t *testing.T) {
 func TestConsumer_BatchProcessing(t *testing.T) {
 	topic := fmt.Sprintf("test-consumer-batch-%s", uuid.New().String())
 	groupID := fmt.Sprintf("test-batch-group-%s", uuid.New().String())
-	
+
 	// Use shared Kafka container with topic
 	kafkaContainer := NewKafkaTestContainer(t, topic)
 	defer kafkaContainer.CleanupAfterTest(t, []string{topic}, []string{groupID})
@@ -167,7 +169,7 @@ func TestConsumer_BatchProcessing(t *testing.T) {
 func TestConsumer_ErrorHandlingAndRetry(t *testing.T) {
 	topic := fmt.Sprintf("test-consumer-error-%s", uuid.New().String())
 	groupID := fmt.Sprintf("test-error-group-%s", uuid.New().String())
-	
+
 	// Use shared Kafka container with topic
 	kafkaContainer := NewKafkaTestContainer(t, topic)
 	defer kafkaContainer.CleanupAfterTest(t, []string{topic}, []string{groupID})
@@ -223,7 +225,7 @@ func TestConsumer_ErrorHandlingAndRetry(t *testing.T) {
 func TestConsumer_CommitMessages(t *testing.T) {
 	topic := fmt.Sprintf("test-consumer-commit-%s", uuid.New().String())
 	groupID := fmt.Sprintf("test-commit-group-%s", uuid.New().String())
-	
+
 	// Use shared Kafka container with topic
 	kafkaContainer := NewKafkaTestContainer(t, topic)
 	defer kafkaContainer.CleanupAfterTest(t, []string{topic}, []string{groupID})

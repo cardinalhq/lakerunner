@@ -25,6 +25,8 @@ type Querier interface {
 	BatchUpsertExemplarTraces(ctx context.Context, arg []BatchUpsertExemplarTracesParams) *BatchUpsertExemplarTracesBatchResults
 	CompactLogSegments(ctx context.Context, arg CompactLogSegmentsParams) error
 	CompactTraceSegments(ctx context.Context, arg CompactTraceSegmentsParams) error
+	// Clean up old offset entries (older than specified timestamp)
+	DeleteOldKafkaOffsets(ctx context.Context, cutoffTime time.Time) error
 	// Retrieves all existing metric pack estimates for EWMA calculations
 	GetAllMetricPackEstimates(ctx context.Context) ([]MetricPackEstimate, error)
 	GetExemplarLogsByFingerprint(ctx context.Context, arg GetExemplarLogsByFingerprintParams) (ExemplarLog, error)
@@ -35,6 +37,8 @@ type Querier interface {
 	GetExemplarTracesByFingerprint(ctx context.Context, arg GetExemplarTracesByFingerprintParams) (ExemplarTrace, error)
 	GetExemplarTracesByService(ctx context.Context, arg GetExemplarTracesByServiceParams) ([]ExemplarTrace, error)
 	GetExemplarTracesCreatedAfter(ctx context.Context, ts time.Time) ([]ExemplarTrace, error)
+	// Get all offset entries for a specific consumer group (useful for monitoring)
+	GetKafkaOffsetsByConsumerGroup(ctx context.Context, consumerGroup string) ([]KafkaOffsetJournal, error)
 	GetLogSegmentsForCompaction(ctx context.Context, arg GetLogSegmentsForCompactionParams) ([]GetLogSegmentsForCompactionRow, error)
 	GetMetricSegsByIds(ctx context.Context, arg GetMetricSegsByIdsParams) ([]MetricSeg, error)
 	GetMetricType(ctx context.Context, arg GetMetricTypeParams) (string, error)

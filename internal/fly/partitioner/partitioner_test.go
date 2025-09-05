@@ -17,8 +17,9 @@ package partitioner
 import (
 	"testing"
 
-	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/cardinalhq/lakerunner/internal/fly"
 )
 
 func TestRandomPartitioner(t *testing.T) {

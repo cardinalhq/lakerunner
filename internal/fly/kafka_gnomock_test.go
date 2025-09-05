@@ -1,3 +1,5 @@
+//go:build kafkatest
+
 // Copyright (C) 2025 CardinalHQ, Inc
 //
 // This program is free software: you can redistribute it and/or modify
@@ -42,7 +44,7 @@ type KafkaTestContainer struct {
 func TestMain(m *testing.M) {
 	// Start shared Kafka container
 	preset := kafkapreset.Preset() // No initial topics - we'll create them as needed
-	
+
 	container, err := gnomock.Start(
 		preset,
 		gnomock.WithDebugMode(), // Enable debug for better troubleshooting
@@ -95,7 +97,7 @@ func (k *KafkaTestContainer) Broker() string {
 // CreateTopics creates topics on the shared container
 func (k *KafkaTestContainer) CreateTopics(t *testing.T, topics ...string) {
 	t.Helper()
-	
+
 	conn, err := kafka.Dial("tcp", k.broker)
 	require.NoError(t, err, "Failed to connect to Kafka for topic creation")
 	defer conn.Close()
@@ -133,7 +135,7 @@ func (k *KafkaTestContainer) CleanupAfterTest(t *testing.T, topics []string, con
 // deleteTopic removes a topic from Kafka
 func (k *KafkaTestContainer) deleteTopic(t *testing.T, topic string) {
 	t.Helper()
-	
+
 	conn, err := kafka.Dial("tcp", k.broker)
 	if err != nil {
 		t.Logf("Failed to connect to Kafka for topic deletion: %v", err)
@@ -150,7 +152,7 @@ func (k *KafkaTestContainer) deleteTopic(t *testing.T, topic string) {
 // deleteConsumerGroup removes a consumer group
 func (k *KafkaTestContainer) deleteConsumerGroup(t *testing.T, groupID string) {
 	t.Helper()
-	
+
 	// Create a temporary consumer to trigger group coordinator metadata, then close it
 	// This helps ensure the group is properly cleaned up
 	reader := kafka.NewReader(kafka.ReaderConfig{
@@ -158,7 +160,7 @@ func (k *KafkaTestContainer) deleteConsumerGroup(t *testing.T, groupID string) {
 		GroupID: groupID,
 		Topic:   "__consumer_offsets", // Use internal topic to trigger coordinator
 	})
-	
+
 	// Close immediately to cleanup the group
 	if err := reader.Close(); err != nil {
 		t.Logf("Warning: Failed to cleanup consumer group %s: %v", groupID, err)
