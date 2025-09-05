@@ -63,8 +63,6 @@ func (a *AdminClient) GetTopicInfo(ctx context.Context, topic string) (*TopicInf
 	}
 
 	// Get metadata for all topics to find our target topic with retry
-	// fmt.Printf("Info: Getting metadata for topic %s\n", topic)
-
 	var targetTopic *kafka.Topic
 	maxRetries := 3
 	for attempt := 0; attempt < maxRetries; attempt++ {
@@ -94,8 +92,6 @@ func (a *AdminClient) GetTopicInfo(ctx context.Context, topic string) (*TopicInf
 	if targetTopic == nil {
 		return nil, fmt.Errorf("topic %s not found", topic)
 	}
-
-	// fmt.Printf("Info: Found %d partitions for topic %s\n", len(targetTopic.Partitions), topic)
 
 	topicInfo := &TopicInfo{
 		Name:       topic,
