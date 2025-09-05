@@ -54,7 +54,6 @@ func TestCompactMetricSegs_BasicReplacement(t *testing.T) {
 			RecordCount:    1000,
 			FileSize:       50000,
 			CreatedBy:      lrdb.CreatedByIngest,
-			Published:      true,
 			Fingerprints:   []int64{100 + int64(i), 200 + int64(i)},
 			SortVersion:    lrdb.CurrentMetricSortVersion,
 			SlotCount:      1,
@@ -73,8 +72,6 @@ func TestCompactMetricSegs_BasicReplacement(t *testing.T) {
 		SlotCount:      1,
 		IngestDateint:  20250830,
 		FrequencyMs:    5000,
-		Published:      true,
-		Rolledup:       false,
 		OldRecords: []lrdb.CompactMetricSegsOld{
 			{SegmentID: oldSegmentIDs[0], SlotID: 0},
 			{SegmentID: oldSegmentIDs[1], SlotID: 0},
@@ -153,8 +150,6 @@ func TestCompactMetricSegs_InitialInsert(t *testing.T) {
 		SlotCount:      1,
 		IngestDateint:  20250830,
 		FrequencyMs:    5000,
-		Published:      true,
-		Rolledup:       false,
 		OldRecords:     []lrdb.CompactMetricSegsOld{}, // Empty - no segments to replace
 		NewRecords: []lrdb.CompactMetricSegsNew{
 			{
@@ -214,7 +209,6 @@ func TestCompactMetricSegs_DeletionOnly(t *testing.T) {
 			RecordCount:    1000,
 			FileSize:       50000,
 			CreatedBy:      lrdb.CreatedByIngest,
-			Published:      true,
 			Fingerprints:   []int64{},
 			SortVersion:    lrdb.CurrentMetricSortVersion,
 			SlotCount:      1,
@@ -232,8 +226,6 @@ func TestCompactMetricSegs_DeletionOnly(t *testing.T) {
 		SlotCount:      1,
 		IngestDateint:  20250830,
 		FrequencyMs:    5000,
-		Published:      false,
-		Rolledup:       false,
 		OldRecords: []lrdb.CompactMetricSegsOld{
 			{SegmentID: segmentIDs[0], SlotID: 0},
 			{SegmentID: segmentIDs[1], SlotID: 0},
@@ -286,7 +278,6 @@ func TestCompactMetricSegs_MultipleNewSegments(t *testing.T) {
 			RecordCount:    10000,
 			FileSize:       500000,
 			CreatedBy:      lrdb.CreatedByIngest,
-			Published:      true,
 			Fingerprints:   []int64{int64(i * 100), int64(i*100 + 1)},
 			SortVersion:    lrdb.CurrentMetricSortVersion,
 			SlotCount:      1,
@@ -305,8 +296,6 @@ func TestCompactMetricSegs_MultipleNewSegments(t *testing.T) {
 		SlotCount:      1,
 		IngestDateint:  20250830,
 		FrequencyMs:    5000,
-		Published:      true,
-		Rolledup:       false,
 		OldRecords: []lrdb.CompactMetricSegsOld{
 			{SegmentID: oldSegmentIDs[0], SlotID: 0},
 			{SegmentID: oldSegmentIDs[1], SlotID: 0},
@@ -397,7 +386,6 @@ func TestCompactMetricSegs_IdempotentOperation(t *testing.T) {
 			RecordCount:    1000,
 			FileSize:       50000,
 			CreatedBy:      lrdb.CreatedByIngest,
-			Published:      true,
 			Fingerprints:   []int64{},
 			SortVersion:    lrdb.CurrentMetricSortVersion,
 			SlotCount:      1,
@@ -415,8 +403,6 @@ func TestCompactMetricSegs_IdempotentOperation(t *testing.T) {
 		SlotCount:      1,
 		IngestDateint:  20250830,
 		FrequencyMs:    5000,
-		Published:      true,
-		Rolledup:       false,
 		OldRecords: []lrdb.CompactMetricSegsOld{
 			{SegmentID: oldSegmentIDs[0], SlotID: 0},
 			{SegmentID: oldSegmentIDs[1], SlotID: 0},
@@ -547,8 +533,6 @@ func TestCompactMetricSegs_CrossFrequencyIsolation(t *testing.T) {
 		SlotCount:      1,
 		IngestDateint:  20250830,
 		FrequencyMs:    5000, // Only affects 5000ms segments
-		Published:      true,
-		Rolledup:       false,
 		OldRecords: []lrdb.CompactMetricSegsOld{
 			{SegmentID: seg5000, SlotID: 0},
 		},

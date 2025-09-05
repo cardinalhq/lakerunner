@@ -22,7 +22,6 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/segmentio/kafka-go"
 	"github.com/spf13/cobra"
 
 	"github.com/cardinalhq/lakerunner/config"
@@ -98,9 +97,8 @@ func getConsumerLagCmd() *cobra.Command {
 }
 
 func getConsumerLag(ctx context.Context, factory *fly.Factory, groupFilter, topicFilter string) ([]PartitionLag, error) {
-	cfg := factory.GetConfig()
-
-	var allLags []PartitionLag
+	// Create admin client using the factory's config
+	adminClient := fly.NewAdminClient(factory.GetConfig())
 
 	// Define the topic/group mappings we're interested in
 	topicGroups := map[string]string{
@@ -109,104 +107,47 @@ func getConsumerLag(ctx context.Context, factory *fly.Factory, groupFilter, topi
 		"lakerunner.objstore.ingest.traces":  "lakerunner.ingest.traces",
 	}
 
-	for topic, groupID := range topicGroups {
-		// Apply filters
-		if groupFilter != "" && groupID != groupFilter {
-			continue
+	// Apply filters
+	if groupFilter != "" || topicFilter != "" {
+		filteredTopicGroups := make(map[string]string)
+		for topic, groupID := range topicGroups {
+			if groupFilter != "" && groupID != groupFilter {
+				continue
+			}
+			if topicFilter != "" && topic != topicFilter {
+				continue
+			}
+			filteredTopicGroups[topic] = groupID
 		}
-		if topicFilter != "" && topic != topicFilter {
-			continue
-		}
+		topicGroups = filteredTopicGroups
+	}
 
-		topicLags, err := getTopicLag(ctx, cfg, topic, groupID)
-		if err != nil {
-			fmt.Printf("Warning: failed to get lag for topic %s, group %s: %v\n", topic, groupID, err)
-			continue
-		}
-		allLags = append(allLags, topicLags...)
+	// Get lag information using the admin client
+	lagInfos, err := adminClient.GetMultipleConsumerGroupLag(ctx, topicGroups)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get consumer group lag: %w", err)
+	}
+
+	// Convert to our output format
+	var lags []PartitionLag
+	for _, lagInfo := range lagInfos {
+		lags = append(lags, PartitionLag{
+			Topic:         lagInfo.Topic,
+			Partition:     lagInfo.Partition,
+			CurrentOffset: lagInfo.CommittedOffset,
+			HighWaterMark: lagInfo.HighWaterMark,
+			Lag:           lagInfo.Lag,
+			ConsumerGroup: lagInfo.GroupID,
+		})
 	}
 
 	// Sort by topic, then partition
-	sort.Slice(allLags, func(i, j int) bool {
-		if allLags[i].Topic != allLags[j].Topic {
-			return allLags[i].Topic < allLags[j].Topic
+	sort.Slice(lags, func(i, j int) bool {
+		if lags[i].Topic != lags[j].Topic {
+			return lags[i].Topic < lags[j].Topic
 		}
-		return allLags[i].Partition < allLags[j].Partition
+		return lags[i].Partition < lags[j].Partition
 	})
-
-	return allLags, nil
-}
-
-func getTopicLag(ctx context.Context, cfg *fly.Config, topic, groupID string) ([]PartitionLag, error) {
-	// Connect to get topic metadata
-	conn, err := kafka.Dial("tcp", cfg.Brokers[0])
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect: %w", err)
-	}
-	defer conn.Close()
-
-	// Get topic partitions
-	partitions, err := conn.ReadPartitions(topic)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read partitions for topic %s: %w", topic, err)
-	}
-
-	var lags []PartitionLag
-
-	for _, partition := range partitions {
-		// Get high water mark (latest offset)
-		partConn, err := kafka.DialLeader(ctx, "tcp", cfg.Brokers[0], topic, partition.ID)
-		if err != nil {
-			fmt.Printf("Warning: failed to connect to partition leader for %s:%d: %v\n", topic, partition.ID, err)
-			continue
-		}
-
-		// Get the last offset (high water mark)
-		lastOffset, err := partConn.ReadLastOffset()
-		if err != nil {
-			partConn.Close()
-			fmt.Printf("Warning: failed to read last offset for %s:%d: %v\n", topic, partition.ID, err)
-			continue
-		}
-		partConn.Close()
-
-		// Get committed offset for this consumer group using a temporary reader
-		reader := kafka.NewReader(kafka.ReaderConfig{
-			Brokers:   cfg.Brokers,
-			Topic:     topic,
-			Partition: partition.ID, // Specify exact partition
-			GroupID:   groupID,
-		})
-
-		// Try to get stats which includes offset information
-		stats := reader.Stats()
-		committedOffset := int64(-1)
-
-		// The Offset field in stats gives us the current position
-		if stats.Offset >= 0 {
-			committedOffset = stats.Offset
-		}
-
-		reader.Close()
-
-		// Calculate lag
-		lag := int64(0)
-		if committedOffset >= 0 {
-			lag = max(lastOffset-committedOffset, 0)
-		} else {
-			// If no committed offset, lag is the total messages in partition
-			lag = lastOffset
-		}
-
-		lags = append(lags, PartitionLag{
-			Topic:         topic,
-			Partition:     partition.ID,
-			CurrentOffset: committedOffset,
-			HighWaterMark: lastOffset,
-			Lag:           lag,
-			ConsumerGroup: groupID,
-		})
-	}
 
 	return lags, nil
 }
