@@ -151,7 +151,7 @@ func NewConsumerWithOptions(opts ...ConsumerOption) Consumer {
 
 func (c *kafkaConsumer) Consume(ctx context.Context, handler MessageHandler) error {
 	// Log consumer startup details
-	slog.Info("Starting Kafka consumer consumption loop",
+	slog.Debug("Starting Kafka consumer consumption loop",
 		slog.String("topic", c.config.Topic),
 		slog.String("consumerGroup", c.config.GroupID),
 		slog.Int64("startOffset", c.config.StartOffset),
@@ -183,10 +183,6 @@ func (c *kafkaConsumer) Consume(ctx context.Context, handler MessageHandler) err
 		if err != nil {
 			if err == context.DeadlineExceeded {
 				// Timeout reached, process batch if we have messages
-				slog.Debug("Consumer fetch timeout, no new messages available",
-					slog.String("topic", c.config.Topic),
-					slog.String("consumerGroup", c.config.GroupID),
-					slog.Int("batchSize", len(batch)))
 				if len(batch) > 0 {
 					if err := c.processBatch(ctx, handler, batch); err != nil {
 						return fmt.Errorf("failed to process batch: %w", err)
