@@ -373,6 +373,91 @@ func TestBuildStepAgg_RespectsMetricFilter_IgnoresOtherMetrics(t *testing.T) {
 	}
 }
 
+func TestToWorkerSQLForTagValues(t *testing.T) {
+	db := openDuckDB(t)
+	createMetricsTable(t, db, true)
+
+	// Insert test data with different tag values
+	mustExec(t, db, `INSERT INTO metrics VALUES
+	 (    0, 'cpu_usage', 1.0, 1, 1.0, 1.0, 'pod1'),
+	 ( 1000, 'cpu_usage', 2.0, 1, 2.0, 2.0, 'pod2'),
+	 ( 2000, 'cpu_usage', 3.0, 1, 3.0, 3.0, 'pod1'),
+	 ( 3000, 'memory_usage', 4.0, 1, 4.0, 4.0, 'pod3'),
+	 ( 4000, 'cpu_usage', 5.0, 1, 5.0, 5.0, 'pod2')`)
+
+	// Test basic tag values query
+	be := &BaseExpr{
+		Metric: "cpu_usage",
+	}
+	sql := replaceStartEnd(replaceTableMetrics(be.ToWorkerSQLForTagValues(10*time.Second, "pod")), 0, 5000)
+
+	rows := queryAll(t, db, sql)
+
+	// Should return distinct pod values for cpu_usage metric
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 distinct pod values, got %d\nsql:\n%s", len(rows), sql)
+	}
+
+	got := make(map[string]bool)
+	for _, r := range rows {
+		got[asString(r["tag_value"])] = true
+	}
+
+	expected := map[string]bool{"pod1": true, "pod2": true}
+	for k, v := range expected {
+		if !got[k] {
+			t.Fatalf("missing expected pod value: %s", k)
+		}
+		if !v {
+			t.Fatalf("unexpected pod value: %s", k)
+		}
+	}
+}
+
+func TestToWorkerSQLForTagValues_WithMatchers(t *testing.T) {
+	db := openDuckDB(t)
+	// Create a custom table with both pod and region columns
+	mustDropTable(db, "metrics")
+	mustExec(t, db, `CREATE TABLE metrics(
+		"_cardinalhq.timestamp" BIGINT,
+		"_cardinalhq.name"     TEXT,
+		rollup_sum    DOUBLE,
+		rollup_count  BIGINT,
+		rollup_min    DOUBLE,
+		rollup_max    DOUBLE,
+		"pod"         TEXT,
+		"region"      TEXT
+	)`)
+
+	// Insert test data with different tag values
+	mustExec(t, db, `INSERT INTO metrics VALUES
+	 (    0, 'cpu_usage', 1.0, 1, 1.0, 1.0, 'pod1', 'us-east-1'),
+	 ( 1000, 'cpu_usage', 2.0, 1, 2.0, 2.0, 'pod2', 'us-west-1'),
+	 ( 2000, 'cpu_usage', 3.0, 1, 3.0, 3.0, 'pod1', 'us-east-1'),
+	 ( 3000, 'memory_usage', 4.0, 1, 4.0, 4.0, 'pod3', 'us-central-1'),
+	 ( 4000, 'cpu_usage', 5.0, 1, 5.0, 5.0, 'pod2', 'us-west-1')`)
+
+	// Test with matchers
+	be := &BaseExpr{
+		Metric: "cpu_usage",
+		Matchers: []LabelMatch{
+			{Label: "region", Op: MatchEq, Value: "us-east-1"},
+		},
+	}
+	sql := replaceStartEnd(replaceTableMetrics(be.ToWorkerSQLForTagValues(10*time.Second, "pod")), 0, 5000)
+
+	rows := queryAll(t, db, sql)
+
+	// Should return only pod1 (the one with us-east-1 region)
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 distinct pod value, got %d\nsql:\n%s", len(rows), sql)
+	}
+
+	if asString(rows[0]["tag_value"]) != "pod1" {
+		t.Fatalf("expected pod1, got %s", asString(rows[0]["tag_value"]))
+	}
+}
+
 // --- small helpers ---
 
 func asString(v any) string {

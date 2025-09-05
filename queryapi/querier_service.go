@@ -15,10 +15,11 @@
 package queryapi
 
 import (
+	"time"
+
 	"github.com/cardinalhq/lakerunner/logql"
 	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/cardinalhq/lakerunner/promql"
-	"time"
 
 	"github.com/google/uuid"
 )
@@ -36,6 +37,8 @@ type PushDownRequest struct {
 	LogLeaf  *logql.LogLeaf   `json:"logLeaf"`
 	Limit    int              `json:"limit"`
 	Reverse  bool             `json:"reverse"`
+
+	TagName string `json:"tagName"` // Set this to a tag name to get distinct values for that tag
 }
 
 func (p *PushDownRequest) ToOrderString() string {

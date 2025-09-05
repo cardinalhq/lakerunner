@@ -82,8 +82,9 @@ type LogLeaf struct {
 // -------- Plan --------
 
 type LQueryPlan struct {
-	Root   LExecNode
-	Leaves []LogLeaf
+	Root    LExecNode
+	Leaves  []LogLeaf
+	TagName string // Set this to a tag name to get distinct values for that tag
 }
 
 // -------- Planner --------
