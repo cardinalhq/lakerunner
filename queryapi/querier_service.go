@@ -17,6 +17,7 @@ package queryapi
 import (
 	"time"
 
+	"github.com/cardinalhq/lakerunner/internal/orgapikey"
 	"github.com/cardinalhq/lakerunner/logql"
 	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/cardinalhq/lakerunner/promql"
@@ -51,8 +52,9 @@ func (p *PushDownRequest) ToOrderString() string {
 type QuerierService struct {
 	mdb             lrdb.StoreFull
 	workerDiscovery WorkerDiscovery
+	apiKeyProvider  orgapikey.OrganizationAPIKeyProvider
 }
 
-func NewQuerierService(mdb lrdb.StoreFull, workerDiscovery WorkerDiscovery) (*QuerierService, error) {
-	return &QuerierService{mdb: mdb, workerDiscovery: workerDiscovery}, nil
+func NewQuerierService(mdb lrdb.StoreFull, workerDiscovery WorkerDiscovery, apiKeyProvider orgapikey.OrganizationAPIKeyProvider) (*QuerierService, error) {
+	return &QuerierService{mdb: mdb, workerDiscovery: workerDiscovery, apiKeyProvider: apiKeyProvider}, nil
 }
