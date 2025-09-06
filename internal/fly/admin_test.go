@@ -18,6 +18,7 @@ package fly
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -159,29 +160,78 @@ func TestAdminClient_GetConsumerGroupLag(t *testing.T) {
 		consumedCount := 0
 		targetConsume := messageCount / 2
 
-		err := consumer.Consume(ctx, func(ctx context.Context, messages []ConsumedMessage) error {
-			for range messages {
-				consumedCount++
-				if consumedCount >= targetConsume {
+		// Create a cancellable context for controlled consumer shutdown
+		consumerCtx, cancelConsumer := context.WithCancel(ctx)
+		defer cancelConsumer()
+
+		// Run consumer in a goroutine
+		consumeErr := make(chan error, 1)
+		go func() {
+			err := consumer.Consume(consumerCtx, func(ctx context.Context, messages []ConsumedMessage) error {
+				for range messages {
+					consumedCount++
+					if consumedCount >= targetConsume {
+						// Cancel the context to stop consuming after this batch
+						go func() {
+							// Give a moment for the handler to return and commit
+							time.Sleep(100 * time.Millisecond)
+							cancelConsumer()
+						}()
+						break
+					}
+				}
+				// Return nil to allow the consumer to commit the messages
+				return nil
+			})
+			consumeErr <- err
+		}()
+
+		// Wait for consumer to finish or timeout
+		select {
+		case err := <-consumeErr:
+			// Expect context.Canceled when we stop consuming (may be wrapped)
+			assert.True(t, errors.Is(err, context.Canceled) || err == nil, "Consumer should stop gracefully")
+		case <-time.After(5 * time.Second):
+			cancelConsumer()
+			<-consumeErr // Wait for consumer to finish
+		}
+
+		// Wait for offsets to be committed with a timeout
+		maxWaitTime := 10 * time.Second
+		checkInterval := 100 * time.Millisecond
+		deadline := time.Now().Add(maxWaitTime)
+
+		var lags []ConsumerGroupInfo
+		var lastErr error
+		offsetsCommitted := false
+
+		for time.Now().Before(deadline) {
+			lags, lastErr = adminClient.GetConsumerGroupLag(ctx, topic, groupID)
+			if lastErr != nil {
+				time.Sleep(checkInterval)
+				continue
+			}
+
+			// Check if offsets have been committed
+			if len(lags) > 0 {
+				allHaveOffsets := true
+				for _, lag := range lags {
+					if lag.CommittedOffset < 0 {
+						allHaveOffsets = false
+						break
+					}
+				}
+				if allHaveOffsets {
+					offsetsCommitted = true
 					break
 				}
 			}
-			// Stop consuming when we've consumed enough
-			if consumedCount >= targetConsume {
-				return context.Canceled
-			}
-			return nil
-		})
 
-		// Expect context.Canceled when we stop consuming
-		assert.True(t, err == context.Canceled || err == nil, "Consumer should stop gracefully")
+			time.Sleep(checkInterval)
+		}
 
-		// Give Kafka a moment to commit offsets
-		time.Sleep(2 * time.Second)
-
-		// Now check lag
-		lags, err := adminClient.GetConsumerGroupLag(ctx, topic, groupID)
-		require.NoError(t, err)
+		require.NoError(t, lastErr, "Failed to get consumer group lag")
+		require.True(t, offsetsCommitted, "Offsets should be committed within %v", maxWaitTime)
 		require.Greater(t, len(lags), 0, "Should have lag info for at least one partition")
 
 		// Verify that lag is now reduced
