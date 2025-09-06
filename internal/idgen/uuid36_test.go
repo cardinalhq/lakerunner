@@ -146,7 +146,7 @@ func TestBase36ToUUID(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := Base36ToUUID(tt.base36)
+			got, err := base36ToUUID(tt.base36)
 			if tt.wantErr {
 				assert.Error(t, err)
 				return
@@ -181,7 +181,7 @@ func TestRoundTripConversion(t *testing.T) {
 		original := uuid.New()
 
 		base36 := UUIDToBase36(original)
-		recovered, err := Base36ToUUID(base36)
+		recovered, err := base36ToUUID(base36)
 
 		require.NoError(t, err, "Round trip conversion should not produce an error")
 		assert.Equal(t, original, recovered, "Round trip conversion should preserve UUID value")
@@ -213,7 +213,7 @@ func TestBase36ToUUID_EdgeCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := Base36ToUUID(tt.base36)
+			_, err := base36ToUUID(tt.base36)
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {
@@ -246,7 +246,7 @@ func BenchmarkBase36ToUUID(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = Base36ToUUID(base36)
+		_, _ = base36ToUUID(base36)
 	}
 }
 
@@ -256,6 +256,6 @@ func BenchmarkRoundTrip(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		base36 := UUIDToBase36(id)
-		_, _ = Base36ToUUID(base36)
+		_, _ = base36ToUUID(base36)
 	}
 }

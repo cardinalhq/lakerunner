@@ -15,7 +15,6 @@
 package helpers
 
 import (
-	"fmt"
 	"sync"
 
 	"github.com/DataDog/sketches-go/ddsketch"
@@ -51,25 +50,4 @@ func DecodeSketch(data []byte) (*ddsketch.DDSketch, error) {
 		return nil, err
 	}
 	return ddsketch.DecodeDDSketch(data, store.DenseStoreConstructor, m)
-}
-
-// Merge merges one sketch into another.
-func Merge(sketch *ddsketch.DDSketch, other *ddsketch.DDSketch) error {
-	return sketch.MergeWith(other)
-}
-
-// MergeEncodedSketch merges two encoded sketches and returns the encoded result.
-func MergeEncodedSketch(a, b []byte) ([]byte, error) {
-	skA, err := DecodeSketch(a)
-	if err != nil {
-		return nil, fmt.Errorf("decoding sketch A: %w", err)
-	}
-	skB, err := DecodeSketch(b)
-	if err != nil {
-		return nil, fmt.Errorf("decoding sketch B: %w", err)
-	}
-	if err := Merge(skA, skB); err != nil {
-		return nil, fmt.Errorf("merging sketches: %w", err)
-	}
-	return EncodeSketch(skA), nil
 }

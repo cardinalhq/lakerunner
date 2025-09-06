@@ -33,9 +33,9 @@ func UUIDToBase36(id uuid.UUID) string {
 	return ret
 }
 
-// Base36ToUUID converts a base36 string (assumed to be 25 characters long)
+// base36ToUUID converts a base36 string (assumed to be 25 characters long)
 // back into a uuid.UUID.
-func Base36ToUUID(s string) (uuid.UUID, error) {
+func base36ToUUID(s string) (uuid.UUID, error) {
 	bi, ok := new(big.Int).SetString(s, 36)
 	if !ok {
 		return uuid.Nil, fmt.Errorf("invalid base36 string: %s", s)
