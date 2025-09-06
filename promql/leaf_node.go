@@ -304,6 +304,7 @@ func (n *LeafNode) evalRangeAwareScalar(key string, in SketchInput, stepMs, rang
 		covered := w.coveredMs(ts, stepMs)
 		var out float64
 		if covered < rangeMs {
+			slog.Info("Insufficient coverage", "coveredMs", covered, "requiredMs", rangeMs)
 			out = math.NaN()
 		} else if n.BE.FuncName == "min_over_time" {
 			out = w.min()

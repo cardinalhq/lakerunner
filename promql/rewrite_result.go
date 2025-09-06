@@ -61,6 +61,13 @@ func RewriteToPromQL(root logql.LExecNode) (RewriteResult, error) {
 					fam, promOp = SynthLogBytes, "increase"
 				case "bytes_rate":
 					fam, promOp = SynthLogBytes, "rate"
+				case "min_over_time":
+					fam, promOp = SynthLogUnwrap, "min_over_time"
+				case "max_over_time":
+					fam, promOp = SynthLogUnwrap, "max_over_time"
+				case "avg_over_time":
+					fam, promOp = SynthLogUnwrap, "avg_over_time"
+
 				default:
 					return "", fmt.Errorf("unsupported range agg: %s", t.Op)
 				}

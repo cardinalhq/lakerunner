@@ -51,8 +51,7 @@ func (be *BaseExpr) ToWorkerSQL(step time.Duration) string {
 
 	// Synthetic log metric → build from log leaf
 	if be.isSyntheticLogMetric() && be.LogLeaf.ID != "" {
-		wantBytes := be.Metric == SynthLogBytes
-		return buildFromLogLeaf(be, wantBytes, step)
+		return buildFromLogLeaf(be, step)
 	}
 
 	// COUNT fast-path: COUNT-by-group with no identity collapse → simple raw bucketing
@@ -92,12 +91,11 @@ func (be *BaseExpr) ToWorkerSQL(step time.Duration) string {
 	}
 }
 
-func buildFromLogLeaf(be *BaseExpr, wantBytes bool, step time.Duration) string {
+func buildFromLogLeaf(be *BaseExpr, step time.Duration) string {
 	stepMs := step.Milliseconds()
 	tsCol := "\"_cardinalhq.timestamp\""
 	bodyCol := "\"_cardinalhq.message\""
 
-	// IMPORTANT: the LogQL pipeline must not end with a trailing ';'
 	pipelineSQL := strings.TrimSpace(be.LogLeaf.ToWorkerSQL(0, ""))
 
 	bucketExpr := fmt.Sprintf(
@@ -106,7 +104,6 @@ func buildFromLogLeaf(be *BaseExpr, wantBytes bool, step time.Duration) string {
 	)
 
 	cols := []string{bucketExpr + " AS bucket_ts"}
-
 	if len(be.GroupBy) > 0 {
 		qbys := make([]string, 0, len(be.GroupBy))
 		for _, g := range be.GroupBy {
@@ -115,13 +112,6 @@ func buildFromLogLeaf(be *BaseExpr, wantBytes bool, step time.Duration) string {
 		cols = append(cols, strings.Join(qbys, ", "))
 	}
 
-	weight := "1"
-	if wantBytes {
-		// COALESCE keeps SUM safe if message is NULL in cache
-		weight = fmt.Sprintf("length(COALESCE(%s, ''))", bodyCol)
-	}
-	cols = append(cols, "SUM("+weight+") AS sum")
-
 	gb := []string{"bucket_ts"}
 	if len(be.GroupBy) > 0 {
 		for _, g := range be.GroupBy {
@@ -129,7 +119,37 @@ func buildFromLogLeaf(be *BaseExpr, wantBytes bool, step time.Duration) string {
 		}
 	}
 
-	// CTE name MUST NOT be "logs"
+	switch be.Metric {
+	case SynthLogUnwrap:
+		var aggFn, alias string
+		switch strings.ToLower(be.FuncName) {
+		case "min_over_time":
+			aggFn, alias = "MIN", "min"
+		case "max_over_time":
+			aggFn, alias = "MAX", "max"
+		case "avg_over_time":
+			aggFn, alias = "AVG", "avg"
+		default:
+			aggFn, alias = "AVG", "avg"
+		}
+		cols = append(cols, fmt.Sprintf("%s(__unwrap_value) AS %s", aggFn, alias))
+
+		sql := "WITH _leaf AS (" + pipelineSQL + ")" +
+			" SELECT " + strings.Join(cols, ", ") +
+			" FROM _leaf" +
+			" WHERE " + timePredicate + " AND __unwrap_value IS NOT NULL" +
+			" GROUP BY " + strings.Join(gb, ", ") +
+			" ORDER BY bucket_ts ASC"
+		return sql
+
+	case SynthLogBytes:
+		weight := fmt.Sprintf("length(COALESCE(%s, ''))", bodyCol)
+		cols = append(cols, "SUM("+weight+") AS sum")
+
+	default:
+		cols = append(cols, "SUM(1) AS sum")
+	}
+
 	sql := "WITH _leaf AS (" + pipelineSQL + ")" +
 		" SELECT " + strings.Join(cols, ", ") +
 		" FROM _leaf" +

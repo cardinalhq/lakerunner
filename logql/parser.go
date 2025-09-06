@@ -70,8 +70,7 @@ func (a *LogAST) NeedsRewrite() bool {
 		}
 		return false
 	case KindBinOp:
-		return a.BinOp != nil &&
-			a.BinOp.LHS.NeedsRewrite() || a.BinOp.RHS.NeedsRewrite()
+		return a.BinOp != nil && (a.BinOp.LHS.NeedsRewrite() || a.BinOp.RHS.NeedsRewrite())
 	default:
 		return false
 	}
@@ -82,7 +81,7 @@ type LabelFilter struct {
 	Op    MatchOp `json:"op"` // =, !=, =~, !~
 	Value string  `json:"value"`
 
-	// NEW: where did this appear in the pipeline?
+	// Where did this appear in the pipeline?
 	AfterParser bool `json:"afterParser,omitempty"` // true if it appeared after some parser
 	ParserIdx   *int `json:"parserIdx,omitempty"`   // index in LogSelector.Parsers (0-based), if AfterParser
 }
@@ -94,16 +93,17 @@ type LabelFormatExpr struct {
 }
 
 type ParserStage struct {
-	Type         string            `json:"type"`                   // json|logfmt|regexp|label_fmt|keep_labels|...
+	Type         string            `json:"type"`                   // json|logfmt|regexp|label_format|keep_labels|...
 	Params       map[string]string `json:"params"`                 // optional (e.g. regexp pattern)
-	Filters      []LabelFilter     `json:"filters,omitempty"`      // NEW: label filters that follow this parser
+	Filters      []LabelFilter     `json:"filters,omitempty"`      // label filters that follow this parser
 	LabelFormats []LabelFormatExpr `json:"labelFormats,omitempty"` // ONLY for label_format
 }
+
 type LogSelector struct {
 	Matchers     []LabelMatch  `json:"matchers"`
 	LineFilters  []LineFilter  `json:"lineFilters,omitempty"`
 	LabelFilters []LabelFilter `json:"labelFilters,omitempty"`
-	Parsers      []ParserStage `json:"parsers,omitempty"` // json, logfmt, regexp, label_fmt, keep/drop, etc.
+	Parsers      []ParserStage `json:"parsers,omitempty"` // json, logfmt, regexp, label_format, keep/drop, unwrap, etc.
 }
 
 type LogRange struct {
@@ -197,6 +197,17 @@ func fromSyntax(e logql.Expr) (LogAST, error) {
 		if err != nil {
 			return LogAST{}, err
 		}
+
+		// Capture unwrap from the AST node and append as a parser stage
+		if v.Unwrap != nil {
+			uw := cleanStage(v.Unwrap.String())
+			if p, ok := parseUnwrapParams(uw); ok {
+				ls.Parsers = append(ls.Parsers, ParserStage{Type: "unwrap", Params: p})
+			} else if p, ok := parseUnwrapInner(uw); ok {
+				ls.Parsers = append(ls.Parsers, ParserStage{Type: "unwrap", Params: p})
+			}
+		}
+
 		lr := LogRange{
 			Selector: ls,
 			Range:    promDur(v.Interval),
@@ -235,8 +246,7 @@ func fromSyntax(e logql.Expr) (LogAST, error) {
 			return LogAST{}, err
 		}
 		va := VectorAgg{
-			// Loki does have v.Operation, but fallback to first token keeps us resilient.
-			Op:   firstToken(e.String()),
+			Op:   firstToken(e.String()), // Loki has v.Operation; token keeps us resilient
 			Left: left,
 		}
 		if v.Grouping != nil && len(v.Grouping.Groups) > 0 {
@@ -250,7 +260,6 @@ func fromSyntax(e logql.Expr) (LogAST, error) {
 
 	// <sample> <op> <sample>
 	case *logql.BinOpExpr:
-		// Left side is the embedded SampleExpr field (not LHS).
 		lhs, err := fromSyntax(v.SampleExpr)
 		if err != nil {
 			return LogAST{}, err
@@ -262,35 +271,22 @@ func fromSyntax(e logql.Expr) (LogAST, error) {
 		return LogAST{Kind: KindBinOp, BinOp: &BinOp{Op: v.Op, LHS: lhs, RHS: rhs}, Raw: e.String()}, nil
 
 	case *logql.LiteralExpr:
-		// Loki v3.5+: numeric literal (e.g., `2`)
 		val, err := v.Value()
 		if err != nil {
 			return LogAST{}, err
 		}
 		vec := Vector{Literal: &val}
-		return LogAST{
-			Kind:   KindVector, // treat as numeric vector literal
-			Vector: &vec,
-			Scalar: &val, // optional convenience
-			Raw:    e.String(),
-		}, nil
+		return LogAST{Kind: KindVector, Vector: &vec, Scalar: &val, Raw: e.String()}, nil
 
 	case *logql.VectorExpr:
-		// Older Loki: numeric literal was VectorExpr
 		val, err := v.Value()
 		if err != nil {
 			return LogAST{}, err
 		}
 		vec := Vector{Literal: &val}
-		return LogAST{
-			Kind:   KindVector,
-			Vector: &vec,
-			Scalar: &val,
-			Raw:    e.String(),
-		}, nil
+		return LogAST{Kind: KindVector, Vector: &vec, Scalar: &val, Raw: e.String()}, nil
 
 	// Pure selector (matchers, maybe with pipeline / stages).
-	// Handle as a *last* specific case so it doesn’t swallow other kinds.
 	case logql.LogSelectorExpr:
 		ls, err := buildSelector(v)
 		if err != nil {
@@ -299,7 +295,6 @@ func fromSyntax(e logql.Expr) (LogAST, error) {
 		return LogAST{Kind: KindLogSelector, LogSel: &ls, Raw: e.String()}, nil
 
 	default:
-		// Fallback: keep the rendered form; you can extend coverage here incrementally.
 		return LogAST{Kind: KindOpaque, Raw: e.String()}, nil
 	}
 }
@@ -314,7 +309,6 @@ func toLineFilterOp(t lqllog.LineMatchType) LineFilterOp {
 		return LineRegex // |~
 	case lqllog.LineMatchNotRegexp:
 		return LineNotRegex // !~
-	// Loki also has pattern variants; treat them like regex by default:
 	case lqllog.LineMatchPattern:
 		return LineRegex
 	case lqllog.LineMatchNotPattern:
@@ -330,11 +324,9 @@ func addLineFilterFromSyntax(ls *LogSelector, lineFilterList []logql.LineFilterE
 
 	var visit func(logql.LineFilterExpr)
 	visit = func(lf logql.LineFilterExpr) {
-		// walk left first to preserve pipeline order (left → right)
 		if lf.Left != nil {
 			visit(*lf.Left)
 		}
-		// de-dupe by (type, match)
 		key := fmt.Sprintf("%d\x00%s", lf.Ty, lf.Match)
 		if _, ok := seen[key]; ok {
 			return
@@ -346,13 +338,13 @@ func addLineFilterFromSyntax(ls *LogSelector, lineFilterList []logql.LineFilterE
 			Match: lf.Match,
 		})
 	}
-
 	for _, lf := range lineFilterList {
 		visit(lf)
 	}
 }
 
-// Let this now return error
+// Adds parser stages and label filters based on the *string* form of the selector pipeline.
+// We still need this because some stages (json/logfmt/regexp/label_format) are only present there.
 func addParsersAndLabelFiltersFromString(s string, ls *LogSelector) error {
 	lastParser := -1
 
@@ -365,8 +357,6 @@ func addParsersAndLabelFiltersFromString(s string, ls *LogSelector) error {
 				compiled := make([]LabelFormatExpr, 0, len(params))
 				for outName, raw := range params {
 					tmpl := normalizeLabelFormatLiteral(raw)
-
-					// parse+validate+compile to SQL (returns error on bad template)
 					sqlExpr, err := buildLabelFormatExprTemplate(tmpl, func(col string) string { return quoteIdent(col) })
 					if err != nil {
 						return fmt.Errorf("label_format %s: %w", outName, err)
@@ -406,16 +396,18 @@ func buildSelector(sel logql.LogSelectorExpr) (LogSelector, error) {
 		Matchers: toLabelMatches(sel.Matchers()),
 	}
 	addLineFilterFromSyntax(&ls, logql.ExtractLineFilters(sel))
+
+	// Parse stages & label filters from the *string* pipeline (json/logfmt/regexp/etc.)
 	if err := addParsersAndLabelFiltersFromString(sel.String(), &ls); err != nil {
 		return LogSelector{}, err
 	}
+
 	sort.Slice(ls.Matchers, func(i, j int) bool { return ls.Matchers[i].Label < ls.Matchers[j].Label })
 	return ls, nil
 }
 
 // splitPipelineStages splits the string form of a selector on top-level '|' after the matcher block.
 func splitPipelineStages(selStr string) []string {
-	// Always drop the matcher block (from start through first '}').
 	if i := strings.IndexByte(selStr, '}'); i >= 0 {
 		selStr = selStr[i+1:]
 	}
@@ -423,8 +415,8 @@ func splitPipelineStages(selStr string) []string {
 	var out []string
 	var buf []rune
 
-	inDQ := false // inside double-quoted string
-	inBT := false // inside backtick-quoted template (label_format)
+	inDQ := false
+	inBT := false
 	esc := false
 	paren := 0
 
@@ -437,7 +429,6 @@ func splitPipelineStages(selStr string) []string {
 	}
 
 	for _, r := range selStr {
-		// Inside a double-quoted string
 		if inDQ {
 			buf = append(buf, r)
 			if esc {
@@ -449,7 +440,6 @@ func splitPipelineStages(selStr string) []string {
 			}
 			continue
 		}
-		// Inside a backtick-quoted template
 		if inBT {
 			buf = append(buf, r)
 			if esc {
@@ -478,7 +468,6 @@ func splitPipelineStages(selStr string) []string {
 			}
 			buf = append(buf, r)
 		case '|':
-			// Only split on top-level pipes
 			if paren == 0 {
 				flush()
 				continue
@@ -501,9 +490,9 @@ func looksLikeParser(stage string) (string, map[string]string, bool) {
 	switch head[0] {
 	case "json", "logfmt", "line_format", "label_replace", "keep_labels", "drop_labels", "decolorize":
 		return head[0], map[string]string{}, true
+
 	case "regexp":
 		params := map[string]string{}
-		// Extract first quoted string (pattern) if present
 		if i := strings.Index(stage, "\""); i >= 0 {
 			if j := strings.LastIndex(stage, "\""); j > i {
 				if pat, err := strconv.Unquote(stage[i : j+1]); err == nil {
@@ -514,12 +503,109 @@ func looksLikeParser(stage string) (string, map[string]string, bool) {
 		return "regexp", params, true
 
 	case "label_format", "label-format", "labelformat":
-		// Normalize to label_format and parse assignments
 		return "label_format", parseLabelFormatParams(stage), true
+
+	case "unwrap":
+		if p, ok := parseUnwrapParams(stage); ok {
+			return "unwrap", p, true
+		}
+		return "", nil, false
 
 	default:
 		return "", nil, false
 	}
+}
+
+// parseUnwrapParams parses pipeline chunks like:
+//
+//	"unwrap payload_size"
+//	"unwrap bytes(payload_size)"
+//	"unwrap duration(\"latency_ms\")"   (quotes/backticks allowed)
+//
+// Returns {"func":"bytes|duration", "field":"..."} or {"func":"bytes","field":"payload_size"} for bare.
+func parseUnwrapParams(stage string) (map[string]string, bool) {
+	s := cleanStage(stage)
+	if !strings.HasPrefix(s, "unwrap") {
+		return nil, false
+	}
+	rest := strings.TrimSpace(s[len("unwrap"):])
+	if rest == "" {
+		return nil, false
+	}
+
+	// function form: unwrap <fn>(<arg>)
+	if strings.HasPrefix(rest, "duration") || strings.HasPrefix(rest, "bytes") {
+		var fn string
+		if strings.HasPrefix(rest, "duration") {
+			fn = "duration"
+			rest = strings.TrimSpace(rest[len("duration"):])
+		} else {
+			fn = "bytes"
+			rest = strings.TrimSpace(rest[len("bytes"):])
+		}
+		if len(rest) < 2 || rest[0] != '(' || rest[len(rest)-1] != ')' {
+			return nil, false
+		}
+		arg := strings.TrimSpace(rest[1 : len(rest)-1])
+		arg = normalizeLabelFormatLiteral(arg) // strips outer quotes/backticks if any
+		if arg == "" {
+			return nil, false
+		}
+		return map[string]string{"func": fn, "field": arg}, true
+	}
+
+	// bare form: unwrap <identifier>   → default to bytes
+	tok := rest
+	if i := strings.IndexAny(rest, " \t"); i >= 0 {
+		tok = rest[:i]
+	}
+	tok = strings.TrimSpace(tok)
+	if tok == "" {
+		return nil, false
+	}
+	tok = normalizeLabelFormatLiteral(tok)
+	return map[string]string{"func": "identity", "field": tok}, true
+}
+
+// parseUnwrapInner parses what Loki returns from v.Unwrap.String():
+//
+//	"payload_size"
+//	"bytes(payload_size)"
+//	"duration(latency_ms)"
+func parseUnwrapInner(s string) (map[string]string, bool) {
+	s = cleanStage(s)
+	if s == "" {
+		return nil, false
+	}
+
+	// function form without "unwrap" prefix
+	if strings.HasPrefix(s, "duration") || strings.HasPrefix(s, "bytes") {
+		fn := "bytes"
+		rest := s
+		if strings.HasPrefix(s, "duration") {
+			fn = "duration"
+			rest = strings.TrimSpace(s[len("duration"):])
+		} else if strings.HasPrefix(s, "bytes") {
+			fn = "bytes"
+			rest = strings.TrimSpace(s[len("bytes"):])
+		}
+		if len(rest) < 2 || rest[0] != '(' || rest[len(rest)-1] != ')' {
+			return nil, false
+		}
+		arg := strings.TrimSpace(rest[1 : len(rest)-1])
+		arg = normalizeLabelFormatLiteral(arg)
+		if arg == "" {
+			return nil, false
+		}
+		return map[string]string{"func": fn, "field": arg}, true
+	}
+
+	// bare identifier → default to bytes
+	field := normalizeLabelFormatLiteral(s)
+	if field == "" {
+		return nil, false
+	}
+	return map[string]string{"func": "identity", "field": field}, true
 }
 
 // parseLabelFormatParams parses: label_format a=`tmpl` b="str" c=unquoted
@@ -530,7 +616,6 @@ func parseLabelFormatParams(stage string) map[string]string {
 	s := strings.TrimSpace(stage)
 
 	// strip the head token (label_format / label-format / labelformat)
-	// find first whitespace after the head
 	i := strings.IndexAny(s, " \t")
 	if i < 0 {
 		return params
@@ -564,7 +649,6 @@ func parseLabelFormatParams(stage string) map[string]string {
 	for _, r := range s {
 		switch {
 		case readingValue:
-			// inside value
 			if inBacktick {
 				val.WriteRune(r)
 				if !esc && r == '`' {
@@ -581,36 +665,28 @@ func parseLabelFormatParams(stage string) map[string]string {
 				esc = !esc && r == '\\'
 				continue
 			}
-
-			// not in quotes: check for separator
 			if r == ',' || r == ' ' || r == '\t' {
 				flushPair()
 				continue
 			}
-
-			// opening quote types
 			if r == '`' {
 				inBacktick = true
-				val.WriteRune(r) // keep wrapper; builder knows to strip
+				val.WriteRune(r)
 				continue
 			}
 			if r == '"' {
 				inQuote = true
-				val.WriteRune(r) // keep wrapper; builder knows to strip
+				val.WriteRune(r)
 				continue
 			}
-
 			val.WriteRune(r)
 
 		default:
-			// reading the key until '=' outside quotes
 			if r == '=' && !haveKey {
 				haveKey = true
 				readingValue = true
-				// skip whitespace is handled naturally in value loop
 				continue
 			}
-			// separators without a value → ignore
 			if r == ',' {
 				continue
 			}
@@ -619,7 +695,6 @@ func parseLabelFormatParams(stage string) map[string]string {
 			}
 		}
 	}
-	// finalize last pair
 	if readingValue || key.Len() > 0 {
 		flushPair()
 	}
@@ -632,7 +707,6 @@ func tryParseLabelFilter(stage string) (LabelFilter, bool) {
 	if s == "" {
 		return LabelFilter{}, false
 	}
-	// Prefer longest ops first
 	for _, op := range []string{"=~", "!~", "!=", "="} {
 		if i := strings.Index(s, op); i >= 0 {
 			lab := strings.TrimSpace(s[:i])
@@ -640,7 +714,6 @@ func tryParseLabelFilter(stage string) (LabelFilter, bool) {
 			if lab == "" || val == "" {
 				return LabelFilter{}, false
 			}
-			// Unquote value if it's "...".
 			if len(val) >= 2 && val[0] == '"' && val[len(val)-1] == '"' {
 				if u, err := strconv.Unquote(val); err == nil {
 					val = u
@@ -672,7 +745,6 @@ func toLabelMatches(ms []*labels.Matcher) []LabelMatch {
 		if m.Name == "__name__" {
 			continue
 		}
-
 		out = append(out, LabelMatch{Label: normalizeLabelName(m.Name), Op: toMatchOp(m.Type), Value: m.Value})
 	}
 	return out
@@ -700,7 +772,6 @@ func promDur(d time.Duration) string {
 	return model.Duration(d).String()
 }
 
-// very small helper to get the function/keyword name at the start of an expr string
 var fnNameRe = regexp.MustCompile(`^\s*([a-zA-Z_][a-zA-Z0-9_]*)`)
 
 func firstToken(s string) string {
@@ -801,7 +872,7 @@ func toMatchOpString(op string) MatchOp {
 	}
 }
 
-// Normalize backticks / \" etc. (reuse this in both parser & builder if you want)
+// Normalize backticks / \" etc.
 func normalizeLabelFormatLiteral(s string) string {
 	if n := len(s); n >= 2 {
 		if (s[0] == '`' && s[n-1] == '`') || (s[0] == '"' && s[n-1] == '"') {
@@ -810,6 +881,28 @@ func normalizeLabelFormatLiteral(s string) string {
 	}
 	if strings.Contains(s, `\"`) {
 		s = strings.ReplaceAll(s, `\"`, `"`)
+	}
+	return s
+}
+
+//// --- unwrap pre-normalization ----------------------------------------------
+//func preNormalizeUnwrap(in string) string {
+//	// unwrap <fn>("field")
+//	reDQ := regexp.MustCompile(`(?i)\bunwrap\s+(duration|bytes)\s*$begin:math:text$\\s*"([^"]+)"\\s*$end:math:text$`)
+//	in = reDQ.ReplaceAllString(in, "unwrap $1($2)")
+//
+//	// unwrap <fn>(`field`)
+//	reBT := regexp.MustCompile("(?i)\\bunwrap\\s+(duration|bytes)\\s*\\(\\s*`([^`]*)`\\s*\\)")
+//	in = reBT.ReplaceAllString(in, "unwrap $1($2)")
+//
+//	return in
+//}
+
+// cleanStage trims a leading pipe and surrounding spaces: "| foo" -> "foo".
+func cleanStage(s string) string {
+	s = strings.TrimSpace(s)
+	if strings.HasPrefix(s, "|") {
+		s = strings.TrimSpace(s[1:])
 	}
 	return s
 }
