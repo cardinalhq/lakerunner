@@ -854,3 +854,550 @@ func TestRewrite_Unwrap_Max_Duration_Regexp(t *testing.T) {
 		t.Fatalf("unexpected maxes: bucket0=%v bucket1=%v; rows=%v\nsql=\n%s", b0, b1, rows, sql)
 	}
 }
+
+func TestRewrite_SumByPod_Rate_ServiceFilter(t *testing.T) {
+	db := openDuckDB(t)
+	mustExec(t, db, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.fingerprint" TEXT,
+		"_cardinalhq.message"     TEXT,
+		"resource.service.name"   TEXT,
+		"resource.k8s.pod.name"   TEXT,
+		"log.source"              TEXT
+	);`)
+
+	// Two 1m buckets: [0..60s) and [60..120s)
+	// We create two streams per pod (log.source = 'a' | 'b') so sum by(pod) actually sums.
+	mustExec(t, db, `
+	INSERT INTO logs("_cardinalhq.timestamp","_cardinalhq.message","resource.service.name","resource.k8s.pod.name","log.source") VALUES
+	-- Pod A, bucket 0 (3)
+	(10*1000,  'evt', 'api-gateway', 'api-7f', 'a'),
+	(20*1000,  'evt', 'api-gateway', 'api-7f', 'b'),
+	(40*1000,  'evt', 'api-gateway', 'api-7f', 'b'),
+
+	-- Pod A, bucket 1 (6)
+	(65*1000,  'evt', 'api-gateway', 'api-7f', 'a'),
+	(70*1000,  'evt', 'api-gateway', 'api-7f', 'a'),
+	(80*1000,  'evt', 'api-gateway', 'api-7f', 'b'),
+	(90*1000,  'evt', 'api-gateway', 'api-7f', 'b'),
+	(100*1000, 'evt', 'api-gateway', 'api-7f', 'b'),
+	(110*1000, 'evt', 'api-gateway', 'api-7f', 'a'),
+
+	-- Pod B, bucket 0 (2)
+	(15*1000,  'evt', 'api-gateway', 'api-9x', 'a'),
+	(55*1000,  'evt', 'api-gateway', 'api-9x', 'b'),
+
+	-- Pod B, bucket 1 (1)
+	(75*1000,  'evt', 'api-gateway', 'api-9x', 'a');
+	`)
+
+	// Worker SQL for: sum by (resource_k8s_pod_name)(rate({resource_service_name="api-gateway"}[5m]))
+	// NOTE: Worker returns SUMs per bucket; top-level query-api converts to rate later.
+	q := `sum by (resource_k8s_pod_name)(rate({resource_service_name="api-gateway"}[5m]))`
+
+	plan, _ := compileMetricPlanFromLogQL(t, q)
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf in compiled plan, got %d", len(plan.Leaves))
+	}
+	be := plan.Leaves[0]
+
+	sql := replaceWorkerPlaceholders(be.ToWorkerSQL(time.Minute), 0, 120*1000)
+	rows := queryAll(t, db, sql)
+	if len(rows) == 0 {
+		t.Fatalf("no rows returned; sql=\n%s", sql)
+	}
+
+	// Pull the numeric value (worker should expose it as "sum").
+	getVal := func(r map[string]any) float64 {
+		if v, ok := r["sum"]; ok && v != nil {
+			return f64(v)
+		}
+		if v, ok := r["value"]; ok && v != nil {
+			return f64(v)
+		}
+		for k, v := range r { // fallback for variant aliases
+			if strings.HasPrefix(k, "sum_") {
+				return f64(v)
+			}
+		}
+		return f64(nil)
+	}
+
+	type key struct {
+		bucket int64
+		pod    string
+	}
+	got := map[key]float64{}
+	for _, r := range rows {
+		b := i64(r["bucket_ts"])
+		pod := ""
+		if v, ok := r[`resource.k8s.pod.name`]; ok && v != nil {
+			pod = fmt.Sprint(v)
+		} else if v, ok := r[`resource_k8s_pod_name`]; ok && v != nil {
+			pod = fmt.Sprint(v)
+		} else {
+			t.Fatalf("missing pod label column in row: %v\nsql=\n%s", r, sql)
+		}
+		got[key{bucket: b, pod: pod}] = getVal(r)
+	}
+
+	const (
+		b0 = int64(0)
+		b1 = int64(60000)
+	)
+	// EXPECT COUNTS (worker sum), NOT RATES. query-api will divide by the range later.
+	exp := map[key]float64{
+		{bucket: b0, pod: "api-7f"}: 3,
+		{bucket: b1, pod: "api-7f"}: 6,
+		{bucket: b0, pod: "api-9x"}: 2,
+		{bucket: b1, pod: "api-9x"}: 1,
+	}
+
+	for k, want := range exp {
+		gotv, ok := got[k]
+		if !ok {
+			t.Fatalf("missing bucket/pod %v in results; rows=%v\nsql=\n%s", k, rows, sql)
+		}
+		if gotv != want {
+			t.Fatalf("unexpected sum for %v: got=%v want=%v; rows=%v\nsql=\n%s", k, gotv, want, rows, sql)
+		}
+	}
+}
+
+// --- label_format -----------------------------------------------------------
+// Group by a label created via label_format: svc = {{ .resource.service.name }}
+func TestRewrite_SumBy_LabelFormat_Service(t *testing.T) {
+	db := openDuckDB(t)
+	mustExec(t, db, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.fingerprint" TEXT,
+		"_cardinalhq.message"     TEXT,
+		"resource.service.name"   TEXT
+	);`)
+
+	// Two buckets [0..60s), [60..120s)
+	mustExec(t, db, `
+	INSERT INTO logs("_cardinalhq.timestamp","_cardinalhq.message","resource.service.name") VALUES
+	(10*1000,  'm', 'svc-a'),
+	(20*1000,  'm', 'svc-a'),
+	(40*1000,  'm', 'svc-b'),
+
+	(70*1000,  'm', 'svc-a'),
+	(80*1000,  'm', 'svc-b'),
+	(90*1000,  'm', 'svc-b');`)
+
+	// Group by the label created by label_format; template references a dotted base column.
+	q := "sum by (svc)(count_over_time({resource_service_name=~\"svc-.*\"} | label_format svc=`{{ .resource.service.name }}` [1m]))"
+
+	plan, _ := compileMetricPlanFromLogQL(t, q)
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf, got %d", len(plan.Leaves))
+	}
+	be := plan.Leaves[0]
+
+	sql := replaceWorkerPlaceholders(be.ToWorkerSQL(time.Minute), 0, 120*1000)
+	rows := queryAll(t, db, sql)
+	if len(rows) == 0 {
+		t.Fatalf("no rows; sql=\n%s", sql)
+	}
+
+	type key struct {
+		bucket int64
+		svc    string
+	}
+	got := map[key]int64{}
+	for _, r := range rows {
+		b := i64(r["bucket_ts"])
+		svc := s(r["svc"])
+		sum := i64(r["sum"])
+		got[key{b, svc}] = sum
+	}
+
+	exp := map[key]int64{
+		{0, "svc-a"}:     2,
+		{0, "svc-b"}:     1,
+		{60000, "svc-a"}: 1,
+		{60000, "svc-b"}: 2,
+	}
+	for k, want := range exp {
+		if got[k] != want {
+			t.Fatalf("unexpected sum for %v: got=%v want=%v; rows=%v\nsql=\n%s", k, got[k], want, rows, sql)
+		}
+	}
+}
+
+// --- json -------------------------------------------------------------------
+// Group by JSON-extracted label: user
+func TestRewrite_SumBy_JSON_User(t *testing.T) {
+	db := openDuckDB(t)
+	mustExec(t, db, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.fingerprint" TEXT,
+		job TEXT,
+		"_cardinalhq.message"     TEXT
+	);`)
+
+	// Two buckets:
+	// bucket 0: users alice(2), bob(1)
+	// bucket 1: users alice(1), carol(1)
+	mustExec(t, db, `
+	INSERT INTO logs("_cardinalhq.timestamp", job, "_cardinalhq.message") VALUES
+	(10*1000,  'svc', '{"user":"alice","msg":"a"}'),
+	(25*1000,  'svc', '{"user":"alice","msg":"b"}'),
+	(50*1000,  'svc', '{"user":"bob","msg":"c"}'),
+
+	(70*1000,  'svc', '{"user":"alice","msg":"d"}'),
+	(95*1000,  'svc', '{"user":"carol","msg":"e"}');`)
+
+	q := `sum by (user)(count_over_time({job="svc"} | json [1m]))`
+
+	plan, _ := compileMetricPlanFromLogQL(t, q)
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf, got %d", len(plan.Leaves))
+	}
+	be := plan.Leaves[0]
+
+	sql := replaceWorkerPlaceholders(be.ToWorkerSQL(time.Minute), 0, 120*1000)
+	rows := queryAll(t, db, sql)
+	if len(rows) == 0 {
+		t.Fatalf("no rows; sql=\n%s", sql)
+	}
+
+	type key struct {
+		bucket int64
+		user   string
+	}
+	got := map[key]int64{}
+	for _, r := range rows {
+		b := i64(r["bucket_ts"])
+		u := s(r["user"])
+		sum := i64(r["sum"])
+		got[key{b, u}] = sum
+	}
+
+	exp := map[key]int64{
+		{0, "alice"}:     2,
+		{0, "bob"}:       1,
+		{60000, "alice"}: 1,
+		{60000, "carol"}: 1,
+	}
+	for k, want := range exp {
+		if got[k] != want {
+			t.Fatalf("unexpected sum for %v: got=%v want=%v; rows=%v\nsql=\n%s", k, got[k], want, rows, sql)
+		}
+	}
+}
+
+// --- regexp -----------------------------------------------------------------
+// Group by a named capture created by regexp: (?P<pod>...)
+func TestRewrite_SumBy_Regexp_Pod(t *testing.T) {
+	db := openDuckDB(t)
+	mustExec(t, db, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.fingerprint" TEXT,
+		job TEXT,
+		"_cardinalhq.message"     TEXT
+	);`)
+
+	// Messages embed "pod=<name>"
+	mustExec(t, db, `
+	INSERT INTO logs("_cardinalhq.timestamp", job, "_cardinalhq.message") VALUES
+	(10*1000,  'svc', 'pod=api-7f src=a'),
+	(20*1000,  'svc', 'pod=api-7f src=b'),
+	(40*1000,  'svc', 'pod=api-9x src=b'),
+
+	(70*1000,  'svc', 'pod=api-7f src=a'),
+	(90*1000,  'svc', 'pod=api-9x src=b');`)
+
+	// Named capture "pod"
+	q := `sum by (pod)(count_over_time({job="svc"} | regexp "pod=(?P<pod>[^\\s]+)" [1m]))`
+
+	plan, _ := compileMetricPlanFromLogQL(t, q)
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf, got %d", len(plan.Leaves))
+	}
+	be := plan.Leaves[0]
+
+	sql := replaceWorkerPlaceholders(be.ToWorkerSQL(time.Minute), 0, 120*1000)
+	rows := queryAll(t, db, sql)
+	if len(rows) == 0 {
+		t.Fatalf("no rows; sql=\n%s", sql)
+	}
+
+	type key struct {
+		bucket int64
+		pod    string
+	}
+	got := map[key]int64{}
+	for _, r := range rows {
+		b := i64(r["bucket_ts"])
+		pod := s(r["pod"])
+		sum := i64(r["sum"])
+		got[key{b, pod}] = sum
+	}
+
+	exp := map[key]int64{
+		{0, "api-7f"}:     2,
+		{0, "api-9x"}:     1,
+		{60000, "api-7f"}: 1,
+		{60000, "api-9x"}: 1,
+	}
+	for k, want := range exp {
+		if got[k] != want {
+			t.Fatalf("unexpected sum for %v: got=%v want=%v; rows=%v\nsql=\n%s", k, got[k], want, rows, sql)
+		}
+	}
+}
+
+// --- logfmt (pattern-like) --------------------------------------------------
+// Group by a key parsed from logfmt: svc=<name>
+func TestRewrite_SumBy_Logfmt_Svc(t *testing.T) {
+	db := openDuckDB(t)
+	mustExec(t, db, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.fingerprint" TEXT,
+		job TEXT,
+		"_cardinalhq.message"     TEXT
+	);`)
+
+	// Messages like: "svc=api user=alice" etc.
+	mustExec(t, db, `
+	INSERT INTO logs("_cardinalhq.timestamp", job, "_cardinalhq.message") VALUES
+	(10*1000,  'svc', 'svc=api user=a'),
+	(25*1000,  'svc', 'svc=api user=b'),
+	(45*1000,  'svc', 'svc=auth user=c'),
+
+	(70*1000,  'svc', 'svc=api user=d'),
+	(95*1000,  'svc', 'svc=auth user=e');`)
+
+	q := `sum by (svc)(count_over_time({job="svc"} | logfmt [1m]))`
+
+	plan, _ := compileMetricPlanFromLogQL(t, q)
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf, got %d", len(plan.Leaves))
+	}
+	be := plan.Leaves[0]
+
+	sql := replaceWorkerPlaceholders(be.ToWorkerSQL(time.Minute), 0, 120*1000)
+	rows := queryAll(t, db, sql)
+	if len(rows) == 0 {
+		t.Fatalf("no rows; sql=\n%s", sql)
+	}
+
+	type key struct {
+		bucket int64
+		svc    string
+	}
+	got := map[key]int64{}
+	for _, r := range rows {
+		b := i64(r["bucket_ts"])
+		svc := s(r["svc"])
+		sum := i64(r["sum"])
+		got[key{b, svc}] = sum
+	}
+
+	exp := map[key]int64{
+		{0, "api"}:      2,
+		{0, "auth"}:     1,
+		{60000, "api"}:  1,
+		{60000, "auth"}: 1,
+	}
+	for k, want := range exp {
+		if got[k] != want {
+			t.Fatalf("unexpected sum for %v: got=%v want=%v; rows=%v\nsql=\n%s", k, got[k], want, rows, sql)
+		}
+	}
+}
+
+//  1. Group-by a BASE label (job) while a parser is present and a parser-created
+//     label is used in a filter (json + user="alice")
+func TestRewrite_CountOverTime_ByBaseJob_WithJSONFilter(t *testing.T) {
+	db := openDuckDB(t)
+	mustExec(t, db, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.fingerprint" TEXT,
+		job TEXT,
+		"_cardinalhq.message"     TEXT
+	);`)
+
+	// bucket 0: (svc, alice), (svc, bob), (api, alice)
+	// bucket 1: (svc, alice), (api, carol)
+	mustExec(t, db, `
+	INSERT INTO logs("_cardinalhq.timestamp", job, "_cardinalhq.message") VALUES
+	(10*1000,  'svc', '{"user":"alice"}'),
+	(20*1000,  'svc', '{"user":"bob"}'),
+	(30*1000,  'api', '{"user":"alice"}'),
+	(70*1000,  'svc', '{"user":"alice"}'),
+	(90*1000,  'api', '{"user":"carol"}');`)
+
+	// Keep only rows with user="alice" (parser-created), but group by base label "job".
+	q := `sum by (job) (count_over_time({job=~".+"} | json | user="alice" [1m]))`
+
+	plan, _ := compileMetricPlanFromLogQL(t, q)
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf, got %d", len(plan.Leaves))
+	}
+	be := plan.Leaves[0]
+
+	sql := replaceWorkerPlaceholders(be.ToWorkerSQL(time.Minute), 0, 120*1000)
+	rows := queryAll(t, db, sql)
+
+	type key struct {
+		bucket int64
+		job    string
+	}
+	got := map[key]int64{}
+	for _, r := range rows {
+		got[key{
+			bucket: i64(r["bucket_ts"]),
+			job:    s(r["job"]),
+		}] = i64(r["sum"])
+	}
+
+	exp := map[key]int64{
+		{0, "svc"}:     1, // (10s, svc, alice)
+		{0, "api"}:     1, // (30s, api, alice)
+		{60000, "svc"}: 1, // (70s, svc, alice)
+	}
+	for k, want := range exp {
+		if got[k] != want {
+			t.Fatalf("unexpected sum for %v: got=%v want=%v; rows=%v\nsql=\n%s", k, got[k], want, rows, sql)
+		}
+	}
+}
+
+//  2. Matcher on a parser-created label (json), grouped by that same label.
+//     Only rows with user="alice" should remain.
+func TestRewrite_CountOverTime_ByUser_JSON_WithParserMatcher(t *testing.T) {
+	db := openDuckDB(t)
+	mustExec(t, db, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.fingerprint" TEXT,
+		job TEXT,
+		"_cardinalhq.message"     TEXT
+	);`)
+
+	// bucket 0: alice, bob, alice  -> alice x2
+	// bucket 1: alice, bob         -> alice x1
+	mustExec(t, db, `
+	INSERT INTO logs("_cardinalhq.timestamp", job, "_cardinalhq.message") VALUES
+	(10*1000,  'svc', '{"user":"alice"}'),
+	(20*1000,  'svc', '{"user":"bob"}'),
+	(40*1000,  'svc', '{"user":"alice"}'),
+	(70*1000,  'svc', '{"user":"alice"}'),
+	(90*1000,  'svc', '{"user":"bob"}');`)
+
+	q := `sum by (user) (count_over_time({job="svc"} | json | user="alice" [1m]))`
+
+	plan, _ := compileMetricPlanFromLogQL(t, q)
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf, got %d", len(plan.Leaves))
+	}
+	be := plan.Leaves[0]
+
+	sql := replaceWorkerPlaceholders(be.ToWorkerSQL(time.Minute), 0, 120*1000)
+	rows := queryAll(t, db, sql)
+
+	type key struct {
+		bucket int64
+		user   string
+	}
+	got := map[key]int64{}
+	for _, r := range rows {
+		got[key{
+			bucket: i64(r["bucket_ts"]),
+			user:   s(r["user"]),
+		}] = i64(r["sum"])
+	}
+
+	exp := map[key]int64{
+		{0, "alice"}:     2,
+		{60000, "alice"}: 1,
+	}
+	for k, want := range exp {
+		if got[k] != want {
+			t.Fatalf("unexpected sum for %v: got=%v want=%v; rows=%v\nsql=\n%s", k, got[k], want, rows, sql)
+		}
+	}
+}
+
+//  3. Multiple group keys: sum by (user, svc) with logfmt parser.
+//     Validates projection & GROUP BY for multi-key aggregation.
+func TestRewrite_CountOverTime_ByUserSvc_Logfmt_MultiGroup(t *testing.T) {
+	db := openDuckDB(t)
+	mustExec(t, db, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.fingerprint" TEXT,
+		job TEXT,
+		"_cardinalhq.message"     TEXT
+	);`)
+
+	// bucket 0:
+	//   svc=api  user=a
+	//   svc=api  user=b
+	//   svc=auth user=a
+	// bucket 1:
+	//   svc=api  user=a
+	//   svc=auth user=b
+	mustExec(t, db, `
+	INSERT INTO logs("_cardinalhq.timestamp", job, "_cardinalhq.message") VALUES
+	(10*1000,  'svc', 'svc=api user=a'),
+	(25*1000,  'svc', 'svc=api user=b'),
+	(50*1000,  'svc', 'svc=auth user=a'),
+	(70*1000,  'svc', 'svc=api user=a'),
+	(95*1000,  'svc', 'svc=auth user=b');`)
+
+	q := `sum by (user, svc) (count_over_time({job="svc"} | logfmt [1m]))`
+
+	plan, _ := compileMetricPlanFromLogQL(t, q)
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf, got %d", len(plan.Leaves))
+	}
+	be := plan.Leaves[0]
+
+	sql := replaceWorkerPlaceholders(be.ToWorkerSQL(time.Minute), 0, 120*1000)
+	rows := queryAll(t, db, sql)
+
+	type key struct {
+		bucket int64
+		user   string
+		svc    string
+	}
+	got := map[key]int64{}
+	for _, r := range rows {
+		got[key{
+			bucket: i64(r["bucket_ts"]),
+			user:   s(r["user"]),
+			svc:    s(r["svc"]),
+		}] = i64(r["sum"])
+	}
+
+	exp := map[key]int64{
+		{0, "a", "api"}:      1,
+		{0, "b", "api"}:      1,
+		{0, "a", "auth"}:     1,
+		{60000, "a", "api"}:  1,
+		{60000, "b", "auth"}: 1,
+	}
+	for k, want := range exp {
+		if got[k] != want {
+			t.Fatalf("unexpected sum for %v: got=%v want=%v; rows=%v\nsql=\n%s", k, got[k], want, rows, sql)
+		}
+	}
+}

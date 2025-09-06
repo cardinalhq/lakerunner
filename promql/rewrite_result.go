@@ -95,11 +95,25 @@ func RewriteToPromQL(root logql.LExecNode) (RewriteResult, error) {
 			if err != nil {
 				return "", err
 			}
+			byList := make([]string, 0, len(t.By))
+			for _, b := range t.By {
+				if strings.Contains(b, ".") {
+					b = "\"" + b + "\""
+				}
+				byList = append(byList, b)
+			}
+			withoutList := make([]string, 0, len(t.Without))
+			for _, b := range t.Without {
+				if strings.Contains(b, ".") {
+					b = "\"" + b + "\""
+				}
+				withoutList = append(withoutList, b)
+			}
 			var grp string
-			if len(t.By) > 0 {
-				grp = " by (" + strings.Join(t.By, ",") + ")"
-			} else if len(t.Without) > 0 {
-				grp = " without (" + strings.Join(t.Without, ",") + ")"
+			if len(byList) > 0 {
+				grp = " by (" + strings.Join(byList, ",") + ")"
+			} else if len(withoutList) > 0 {
+				grp = " without (" + strings.Join(withoutList, ",") + ")"
 			}
 			return fmt.Sprintf(`%s%s (%s)`, t.Op, grp, child), nil
 
