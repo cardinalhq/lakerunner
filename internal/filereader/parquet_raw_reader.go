@@ -19,8 +19,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
-	"strconv"
 
 	"github.com/parquet-go/parquet-go"
 	"go.opentelemetry.io/otel/attribute"
@@ -31,6 +29,8 @@ import (
 )
 
 // ParquetRawReader reads rows from a generic Parquet stream.
+// This reader provides raw parquet data without any opinionated transformations.
+// Use wrapper readers like CookedMetricTranslatingReader for domain-specific logic.
 type ParquetRawReader struct {
 	pf        *parquet.File
 	pfr       *parquet.GenericReader[map[string]any]
@@ -40,44 +40,15 @@ type ParquetRawReader struct {
 	batchSize int
 }
 
-// shouldDropRowForInvalidRollupFields checks if a row has NaN or invalid rollup fields that should be dropped.
-// This filters corrupted data at the parquet source level to isolate data quality issues.
-func shouldDropRowForInvalidRollupFields(ctx context.Context, row map[string]any) bool {
-	// List of rollup fields to validate
-	rollupFields := []string{
-		"rollup_sum", "rollup_count", "rollup_avg", "rollup_min", "rollup_max",
-		"rollup_p25", "rollup_p50", "rollup_p75", "rollup_p90", "rollup_p95", "rollup_p99",
-	}
-
-	for _, fieldName := range rollupFields {
-		if value, exists := row[fieldName]; exists {
-			if floatVal, ok := value.(float64); ok {
-				if math.IsNaN(floatVal) || math.IsInf(floatVal, 0) {
-					rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
-						attribute.String("reader", "ParquetRawReader"),
-						attribute.String("reason", "NaN"),
-					))
-					return true
-				}
-			}
-		}
-	}
-
-	return false
-}
-
 // NewParquetRawReader creates a new ParquetRawReader for the given io.ReaderAt.
-// The caller is responsible for closing the underlying reader.
 func NewParquetRawReader(reader io.ReaderAt, size int64, batchSize int) (*ParquetRawReader, error) {
 	pf, err := parquet.OpenFile(reader, size)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open parquet file: %w", err)
 	}
 
-	// Use the file's schema to create a GenericReader
 	pfr := parquet.NewGenericReader[map[string]any](pf, pf.Schema())
 
-	// Check if file has data
 	if pf.NumRows() == 0 {
 		return nil, fmt.Errorf("parquet file has no rows")
 	}
@@ -125,65 +96,22 @@ func (r *ParquetRawReader) Next(ctx context.Context) (*Batch, error) {
 
 	batch := pipeline.GetBatch()
 
-	// Transfer ownership instead of copying to reduce memory pressure
-	// Also perform defensive conversion of _cardinalhq.tid field
-	validRows := 0
+	// Transfer raw parquet data to batch without any transformations
 	for i := 0; i < n; i++ {
 		row := parquetRows[i]
 
-		// Check and convert _cardinalhq.tid field if present
-		if tidValue, exists := row["_cardinalhq.tid"]; exists {
-			switch v := tidValue.(type) {
-			case string:
-				// Convert string to int64
-				if tidInt64, err := strconv.ParseInt(v, 10, 64); err == nil {
-					row["_cardinalhq.tid"] = tidInt64
-				} else {
-					// Drop row if conversion fails
-					rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
-						attribute.String("reader", "ParquetRawReader"),
-						attribute.String("reason", "invalid_tid_conversion"),
-					))
-					continue
-				}
-			case int64:
-				// Already correct type, no conversion needed
-			default:
-				// Drop row if _cardinalhq.tid is neither string nor int64
-				rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
-					attribute.String("reader", "ParquetRawReader"),
-					attribute.String("reason", "invalid_tid_type"),
-				))
-				continue
-			}
-		}
-
-		// Convert sketch field from string to []byte if needed (parquet sometimes returns byte fields as strings)
-		if sketchValue, exists := row["sketch"]; exists {
-			if sketchStr, ok := sketchValue.(string); ok {
-				row["sketch"] = []byte(sketchStr)
-			}
-			// If it's already []byte or nil, leave it as-is
-		}
-
-		// Filter out rows with NaN or invalid rollup fields - this indicates corrupted data from parquet source
-		if shouldDropRowForInvalidRollupFields(ctx, row) {
-			continue
-		}
-
-		// Use AddRow and copy the data
+		// Add raw row to batch, converting keys to RowKey type
 		batchRow := batch.AddRow()
 		for k, v := range row {
 			batchRow[wkk.NewRowKeyFromBytes([]byte(k))] = v
 		}
-		validRows++
 	}
 
-	// Only increment rowCount for successfully processed rows
-	r.rowCount += int64(validRows)
+	// Increment rowCount for all rows read
+	r.rowCount += int64(n)
 
 	// Track rows output to downstream
-	rowsOutCounter.Add(ctx, int64(validRows), otelmetric.WithAttributes(
+	rowsOutCounter.Add(ctx, int64(n), otelmetric.WithAttributes(
 		attribute.String("reader", "ParquetRawReader"),
 	))
 
@@ -192,17 +120,7 @@ func (r *ParquetRawReader) Next(ctx context.Context) (*Batch, error) {
 		r.exhausted = true
 	}
 
-	// Return EOF if no valid rows remain
-	if validRows == 0 {
-		pipeline.ReturnBatch(batch)
-		if r.exhausted {
-			return nil, io.EOF
-		}
-		// If we dropped all rows but haven't reached EOF, try reading more
-		return r.Next(ctx)
-	}
-
-	// Return valid batch without EOF (EOF will be returned on next call if exhausted)
+	// Return batch with all raw data
 	return batch, nil
 }
 

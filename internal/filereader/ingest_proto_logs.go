@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
@@ -28,9 +29,10 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
-// ProtoLogsReader reads rows from OpenTelemetry protobuf logs format.
-// Returns raw OTEL log data without signal-specific transformations.
-type ProtoLogsReader struct {
+// IngestProtoLogsReader reads rows from OpenTelemetry protobuf logs format.
+//
+// Implements OTELLogsProvider interface.
+type IngestProtoLogsReader struct {
 	closed    bool
 	rowCount  int64
 	batchSize int
@@ -42,17 +44,16 @@ type ProtoLogsReader struct {
 	logIndex      int
 }
 
-var _ Reader = (*ProtoLogsReader)(nil)
-var _ OTELLogsProvider = (*ProtoLogsReader)(nil)
+var _ Reader = (*IngestProtoLogsReader)(nil)
+var _ OTELLogsProvider = (*IngestProtoLogsReader)(nil)
 
-// NewProtoLogsReader creates a new ProtoLogsReader for the given io.Reader.
-// The caller is responsible for closing the underlying reader.
-func NewProtoLogsReader(reader io.Reader, batchSize int) (*ProtoLogsReader, error) {
+// NewIngestProtoLogsReader creates a new IngestProtoLogsReader for the given io.Reader.
+func NewIngestProtoLogsReader(reader io.Reader, batchSize int) (*IngestProtoLogsReader, error) {
 	if batchSize <= 0 {
 		batchSize = 1000
 	}
 
-	protoReader := &ProtoLogsReader{
+	protoReader := &IngestProtoLogsReader{
 		batchSize: batchSize,
 	}
 
@@ -66,7 +67,7 @@ func NewProtoLogsReader(reader io.Reader, batchSize int) (*ProtoLogsReader, erro
 }
 
 // Next returns the next batch of rows from the OTEL logs.
-func (r *ProtoLogsReader) Next(ctx context.Context) (*Batch, error) {
+func (r *IngestProtoLogsReader) Next(ctx context.Context) (*Batch, error) {
 	if r.closed {
 		return nil, fmt.Errorf("reader is closed")
 	}
@@ -87,23 +88,18 @@ func (r *ProtoLogsReader) Next(ctx context.Context) (*Batch, error) {
 			return nil, err
 		}
 
-		// Track log records read from proto
 		rowsInCounter.Add(ctx, 1, otelmetric.WithAttributes(
-			attribute.String("reader", "ProtoLogsReader"),
+			attribute.String("reader", "IngestProtoLogsReader"),
 		))
 
 		batchRow := batch.AddRow()
-		for k, v := range row {
-			batchRow[k] = v
-		}
+		maps.Copy(batchRow, row)
 	}
 
-	// Update row count with successfully read rows
 	if batch.Len() > 0 {
 		r.rowCount += int64(batch.Len())
-		// Track rows output to downstream
 		rowsOutCounter.Add(ctx, int64(batch.Len()), otelmetric.WithAttributes(
-			attribute.String("reader", "ProtoLogsReader"),
+			attribute.String("reader", "IngestProtoLogsReader"),
 		))
 		return batch, nil
 	}
@@ -113,7 +109,7 @@ func (r *ProtoLogsReader) Next(ctx context.Context) (*Batch, error) {
 }
 
 // getLogRow handles reading the next log row.
-func (r *ProtoLogsReader) getLogRow() (Row, error) {
+func (r *IngestProtoLogsReader) getLogRow() (Row, error) {
 	if r.logs == nil {
 		return nil, io.EOF
 	}
@@ -127,22 +123,15 @@ func (r *ProtoLogsReader) getLogRow() (Row, error) {
 
 			if r.logIndex < sl.LogRecords().Len() {
 				logRecord := sl.LogRecords().At(r.logIndex)
-
-				// Build row for this log record
 				row := r.buildLogRow(rl, sl, logRecord)
-
-				// Advance to next log record
 				r.logIndex++
-
 				return r.processRow(row)
 			}
 
-			// Move to next scope, reset log index
 			r.scopeIndex++
 			r.logIndex = 0
 		}
 
-		// Move to next resource, reset scope and log indices
 		r.resourceIndex++
 		r.scopeIndex = 0
 		r.logIndex = 0
@@ -152,31 +141,27 @@ func (r *ProtoLogsReader) getLogRow() (Row, error) {
 }
 
 // buildLogRow creates a row from a single log record and its context.
-func (r *ProtoLogsReader) buildLogRow(rl plog.ResourceLogs, sl plog.ScopeLogs, logRecord plog.LogRecord) map[string]any {
+func (r *IngestProtoLogsReader) buildLogRow(rl plog.ResourceLogs, sl plog.ScopeLogs, logRecord plog.LogRecord) map[string]any {
 	ret := map[string]any{}
 
-	// Add resource attributes with prefix
 	rl.Resource().Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
 		ret[prefixAttribute(name, "resource")] = value
 		return true
 	})
 
-	// Add scope attributes with prefix
 	sl.Scope().Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
 		ret[prefixAttribute(name, "scope")] = value
 		return true
 	})
 
-	// Add log attributes with prefix
 	logRecord.Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
 		ret[prefixAttribute(name, "log")] = value
 		return true
 	})
 
-	// Add basic log fields
 	ret["_cardinalhq.message"] = logRecord.Body().AsString()
 	ret["_cardinalhq.timestamp"] = logRecord.Timestamp().AsTime().UnixMilli()
 	ret["observed_timestamp"] = logRecord.ObservedTimestamp().AsTime().UnixMilli()
@@ -186,8 +171,7 @@ func (r *ProtoLogsReader) buildLogRow(rl plog.ResourceLogs, sl plog.ScopeLogs, l
 	return ret
 }
 
-// processRow applies any processing to a row.
-func (r *ProtoLogsReader) processRow(row map[string]any) (Row, error) {
+func (r *IngestProtoLogsReader) processRow(row map[string]any) (Row, error) {
 	result := make(Row)
 	for k, v := range row {
 		result[wkk.NewRowKey(k)] = v
@@ -197,7 +181,7 @@ func (r *ProtoLogsReader) processRow(row map[string]any) (Row, error) {
 
 // GetOTELLogs returns the underlying parsed OTEL logs structure.
 // This allows access to the original log body and metadata not available in the row format.
-func (r *ProtoLogsReader) GetOTELLogs() (*plog.Logs, error) {
+func (r *IngestProtoLogsReader) GetOTELLogs() (*plog.Logs, error) {
 	if r.closed {
 		return nil, fmt.Errorf("reader is closed")
 	}
@@ -208,7 +192,7 @@ func (r *ProtoLogsReader) GetOTELLogs() (*plog.Logs, error) {
 }
 
 // Close closes the reader and releases resources.
-func (r *ProtoLogsReader) Close() error {
+func (r *IngestProtoLogsReader) Close() error {
 	if r.closed {
 		return nil
 	}
@@ -221,7 +205,7 @@ func (r *ProtoLogsReader) Close() error {
 }
 
 // TotalRowsReturned returns the total number of rows that have been successfully returned via Next().
-func (r *ProtoLogsReader) TotalRowsReturned() int64 {
+func (r *IngestProtoLogsReader) TotalRowsReturned() int64 {
 	return r.rowCount
 }
 

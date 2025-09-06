@@ -12,9 +12,9 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-//go:build memoryanalysis
+//go:build experimental && memoryanalysis
 
-package filereader
+package experimental
 
 import (
 	"bytes"
@@ -25,6 +25,8 @@ import (
 	"runtime"
 	"testing"
 	"time"
+
+	"github.com/cardinalhq/lakerunner/internal/filereader"
 )
 
 // TestResourceCleanupValidation validates that all readers properly clean up resources
@@ -44,7 +46,7 @@ func TestResourceCleanupValidation(t *testing.T) {
 	t.Run("ParquetRaw_CleanupValidation", func(t *testing.T) {
 		testReaderCleanup(t, "ParquetRaw", func() error {
 			reader := bytes.NewReader(data)
-			pr, err := NewParquetRawReader(reader, int64(len(data)), 1000)
+			pr, err := filereader.NewParquetRawReader(reader, int64(len(data)), 1000)
 			if err != nil {
 				return err
 			}
@@ -304,7 +306,7 @@ func TestStabilizedMemoryMeasurement(t *testing.T) {
 	}{
 		{"ParquetRaw", func() error {
 			reader := bytes.NewReader(data)
-			pr, err := NewParquetRawReader(reader, int64(len(data)), 1000)
+			pr, err := filereader.NewParquetRawReader(reader, int64(len(data)), 1000)
 			if err != nil {
 				return err
 			}
@@ -491,7 +493,7 @@ func TestSequentialReaderExecution(t *testing.T) {
 	// Test ParquetRaw first
 	t.Logf("\n--- Testing ParquetRaw Reader ---")
 	reader := bytes.NewReader(data)
-	pr, err := NewParquetRawReader(reader, int64(len(data)), 1000)
+	pr, err := filereader.NewParquetRawReader(reader, int64(len(data)), 1000)
 	if err != nil {
 		t.Fatalf("Failed to create ParquetRaw reader: %v", err)
 	}

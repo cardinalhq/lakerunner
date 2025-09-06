@@ -1,3 +1,5 @@
+//go:build experimental
+
 // Copyright (C) 2025 CardinalHQ, Inc
 //
 // This program is free software: you can redistribute it and/or modify
@@ -12,7 +14,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package filereader
+package experimental
 
 import (
 	"bytes"
@@ -25,6 +27,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
@@ -250,7 +253,7 @@ func TestParquetReadersTypeAnalysis(t *testing.T) {
 
 func readAllRowsParquetRaw(data []byte, size int64) ([]map[wkk.RowKey]interface{}, error) {
 	reader := bytes.NewReader(data)
-	parquetReader, err := NewParquetRawReader(reader, size, 1000)
+	parquetReader, err := filereader.NewParquetRawReader(reader, size, 1000)
 	if err != nil {
 		return nil, err
 	}
@@ -354,7 +357,7 @@ func getFirstRowArrow(data []byte, size int64) (map[wkk.RowKey]interface{}, erro
 
 func readNRowsParquetRaw(data []byte, size int64, n int) ([]map[wkk.RowKey]interface{}, error) {
 	reader := bytes.NewReader(data)
-	parquetReader, err := NewParquetRawReader(reader, size, 1000)
+	parquetReader, err := filereader.NewParquetRawReader(reader, size, 1000)
 	if err != nil {
 		return nil, err
 	}

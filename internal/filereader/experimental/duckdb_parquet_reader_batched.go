@@ -1,3 +1,5 @@
+//go:build experimental
+
 // Copyright (C) 2025 CardinalHQ, Inc
 //
 // This program is free software: you can redistribute it and/or modify
@@ -12,7 +14,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package filereader
+package experimental
 
 import (
 	"context"
@@ -23,10 +25,11 @@ import (
 	"strconv"
 	"strings"
 
-	"go.opentelemetry.io/otel/attribute"
-	otelmetric "go.opentelemetry.io/otel/metric"
+	// "go.opentelemetry.io/otel/attribute" // TODO: needed for prod use
+	// otelmetric "go.opentelemetry.io/otel/metric" // TODO: needed for prod use
 
 	"github.com/cardinalhq/lakerunner/internal/duckdbx"
+	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
@@ -153,10 +156,11 @@ func (r *DuckDBParquetBatchedReader) shouldDropRow(ctx context.Context, values [
 		if idx >= 0 && idx < len(values) {
 			if v, ok := values[idx].(float64); ok {
 				if math.IsNaN(v) || math.IsInf(v, 0) {
-					rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
-						attribute.String("reader", "DuckDBParquetBatchedReader"),
-						attribute.String("reason", "NaN"),
-					))
+					// TODO: rowsDroppedCounter needed for prod use
+					// rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
+					//	attribute.String("reader", "DuckDBParquetBatchedReader"),
+					//	attribute.String("reason", "NaN"),
+					// ))
 					return true
 				}
 			}
@@ -166,7 +170,7 @@ func (r *DuckDBParquetBatchedReader) shouldDropRow(ctx context.Context, values [
 }
 
 // Next returns the next batch of rows from the parquet file using SQL-level batching
-func (r *DuckDBParquetBatchedReader) Next(ctx context.Context) (*Batch, error) {
+func (r *DuckDBParquetBatchedReader) Next(ctx context.Context) (*filereader.Batch, error) {
 	if r.closed {
 		return nil, errors.New("reader is closed")
 	}
@@ -210,10 +214,11 @@ func (r *DuckDBParquetBatchedReader) Next(ctx context.Context) (*Batch, error) {
 			case string:
 				tidInt, err := strconv.ParseInt(v, 10, 64)
 				if err != nil {
-					rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
-						attribute.String("reader", "DuckDBParquetBatchedReader"),
-						attribute.String("reason", "invalid_tid_conversion"),
-					))
+					// TODO: rowsDroppedCounter needed for prod use
+					// rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
+					//	attribute.String("reader", "DuckDBParquetBatchedReader"),
+					//	attribute.String("reason", "invalid_tid_conversion"),
+					// ))
 					continue
 				}
 				values[r.idxTID] = tidInt
@@ -222,10 +227,11 @@ func (r *DuckDBParquetBatchedReader) Next(ctx context.Context) (*Batch, error) {
 			case nil:
 				// Null value is fine
 			default:
-				rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
-					attribute.String("reader", "DuckDBParquetBatchedReader"),
-					attribute.String("reason", "invalid_tid_type"),
-				))
+				// TODO: rowsDroppedCounter needed for prod use
+				// rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
+				//	attribute.String("reader", "DuckDBParquetBatchedReader"),
+				//	attribute.String("reason", "invalid_tid_type"),
+				// ))
 				continue
 			}
 		}

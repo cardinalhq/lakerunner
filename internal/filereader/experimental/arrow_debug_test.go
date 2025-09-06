@@ -1,3 +1,5 @@
+//go:build experimental
+
 // Copyright (C) 2025 CardinalHQ, Inc
 //
 // This program is free software: you can redistribute it and/or modify
@@ -12,7 +14,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package filereader
+package experimental
 
 import (
 	"bytes"
@@ -21,6 +23,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
@@ -134,7 +137,7 @@ func TestCompareArrowAndParquetSchemas(t *testing.T) {
 
 	// Get schema info from ParquetRaw reader
 	reader := bytes.NewReader(data)
-	parquetReader, err := NewParquetRawReader(reader, int64(len(data)), 1000)
+	parquetReader, err := filereader.NewParquetRawReader(reader, int64(len(data)), 1000)
 	if err != nil {
 		t.Fatalf("Failed to create ParquetRaw reader: %v", err)
 	}

@@ -31,21 +31,21 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
-func TestNewProtoLogsReader_InvalidData(t *testing.T) {
+func TestNewIngestProtoLogsReader_InvalidData(t *testing.T) {
 	// Test with invalid protobuf data
 	invalidData := []byte("not a protobuf")
 	reader := bytes.NewReader(invalidData)
 
-	_, err := NewProtoLogsReader(reader, 1000)
+	_, err := NewIngestProtoLogsReader(reader, 1000)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to parse proto to OTEL logs")
 }
 
-func TestNewProtoLogsReader_EmptyData(t *testing.T) {
+func TestNewIngestProtoLogsReader_EmptyData(t *testing.T) {
 	// Test with empty data
 	emptyReader := bytes.NewReader([]byte{})
 
-	reader, err := NewProtoLogsReader(emptyReader, 1000)
+	reader, err := NewIngestProtoLogsReader(emptyReader, 1000)
 	// Empty data may create a valid but empty logs object
 	if err != nil {
 		assert.Contains(t, err.Error(), "failed to parse proto to OTEL logs")
@@ -61,9 +61,9 @@ func TestNewProtoLogsReader_EmptyData(t *testing.T) {
 	}
 }
 
-func TestProtoLogsReader_EmptySlice(t *testing.T) {
+func TestIngestProtoLogsReader_EmptySlice(t *testing.T) {
 	syntheticData := createSyntheticLogData()
-	reader, err := NewProtoLogsReader(bytes.NewReader(syntheticData), 1000)
+	reader, err := NewIngestProtoLogsReader(bytes.NewReader(syntheticData), 1000)
 	require.NoError(t, err)
 	defer reader.Close()
 
@@ -76,9 +76,9 @@ func TestProtoLogsReader_EmptySlice(t *testing.T) {
 	}
 }
 
-func TestProtoLogsReader_Close(t *testing.T) {
+func TestIngestProtoLogsReader_Close(t *testing.T) {
 	syntheticData := createSyntheticLogData()
-	reader, err := NewProtoLogsReader(bytes.NewReader(syntheticData), 1)
+	reader, err := NewIngestProtoLogsReader(bytes.NewReader(syntheticData), 1)
 	require.NoError(t, err)
 
 	// Should be able to read before closing
@@ -222,13 +222,13 @@ func createSyntheticLogData() []byte {
 	return data
 }
 
-// Test ProtoLogsReader with synthetic log data
-func TestProtoLogsReader_SyntheticData(t *testing.T) {
+// Test IngestProtoLogsReader with synthetic log data
+func TestIngestProtoLogsReader_SyntheticData(t *testing.T) {
 	// Create synthetic log data
 	syntheticData := createSyntheticLogData()
 	reader := bytes.NewReader(syntheticData)
 
-	protoReader, err := NewProtoLogsReader(reader, 1000)
+	protoReader, err := NewIngestProtoLogsReader(reader, 1000)
 	require.NoError(t, err)
 	require.NotNil(t, protoReader)
 	defer protoReader.Close()
@@ -289,7 +289,7 @@ func TestProtoLogsReader_SyntheticData(t *testing.T) {
 	}
 
 	// Test batched reading with a new reader instance
-	protoReader2, err := NewProtoLogsReader(bytes.NewReader(syntheticData), 1000)
+	protoReader2, err := NewIngestProtoLogsReader(bytes.NewReader(syntheticData), 1000)
 	require.NoError(t, err)
 	defer protoReader2.Close()
 
@@ -319,7 +319,7 @@ func TestProtoLogsReader_SyntheticData(t *testing.T) {
 	assert.Equal(t, len(allRows), totalBatchedRows, "Batched reading should read same number of rows")
 
 	// Test single row reading
-	protoReader3, err := NewProtoLogsReader(bytes.NewReader(syntheticData), 1)
+	protoReader3, err := NewIngestProtoLogsReader(bytes.NewReader(syntheticData), 1)
 	require.NoError(t, err)
 	defer protoReader3.Close()
 
@@ -350,13 +350,13 @@ func TestProtoLogsReader_SyntheticData(t *testing.T) {
 	t.Logf("Successfully read %d synthetic log rows (expected 5)", len(allRows))
 }
 
-// Test ProtoLogsReader synthetic data field analysis
-func TestProtoLogsReader_SyntheticDataFields(t *testing.T) {
+// Test IngestProtoLogsReader synthetic data field analysis
+func TestIngestProtoLogsReader_SyntheticDataFields(t *testing.T) {
 	// Create synthetic log data
 	syntheticData := createSyntheticLogData()
 	reader := bytes.NewReader(syntheticData)
 
-	protoReader, err := NewProtoLogsReader(reader, 1000)
+	protoReader, err := NewIngestProtoLogsReader(reader, 1000)
 	require.NoError(t, err)
 	defer protoReader.Close()
 
@@ -407,8 +407,8 @@ func TestProtoLogsReader_SyntheticDataFields(t *testing.T) {
 	assert.Equal(t, 1, severityNumbers[int32(plog.SeverityNumberFatal)], "Should have 1 FATAL severity number")
 }
 
-// Test ProtoLogsReader with structured Go-based synthetic data
-func TestProtoLogsReader_SyntheticStructuredData(t *testing.T) {
+// Test IngestProtoLogsReader with structured Go-based synthetic data
+func TestIngestProtoLogsReader_SyntheticStructuredData(t *testing.T) {
 	builder := signalbuilder.NewLogBuilder()
 
 	// Use Go struct instead of YAML to avoid parsing ambiguity
@@ -492,9 +492,9 @@ func TestProtoLogsReader_SyntheticStructuredData(t *testing.T) {
 	data, err := marshaler.MarshalLogs(logs)
 	require.NoError(t, err, "Should successfully marshal logs to protobuf")
 
-	// Test ProtoLogsReader with this structured data
+	// Test IngestProtoLogsReader with this structured data
 	reader := bytes.NewReader(data)
-	protoReader, err := NewProtoLogsReader(reader, 1000)
+	protoReader, err := NewIngestProtoLogsReader(reader, 1000)
 	require.NoError(t, err)
 	require.NotNil(t, protoReader)
 	defer protoReader.Close()
@@ -562,8 +562,8 @@ func TestProtoLogsReader_SyntheticStructuredData(t *testing.T) {
 	t.Logf("Successfully read %d structured log rows", len(allRows))
 }
 
-// Test ProtoLogsReader with multi-resource synthetic data
-func TestProtoLogsReader_MultiResourceSyntheticData(t *testing.T) {
+// Test IngestProtoLogsReader with multi-resource synthetic data
+func TestIngestProtoLogsReader_MultiResourceSyntheticData(t *testing.T) {
 	builder := signalbuilder.NewLogBuilder()
 
 	// Add logs from multiple services/resources
@@ -651,7 +651,7 @@ func TestProtoLogsReader_MultiResourceSyntheticData(t *testing.T) {
 	require.NoError(t, err)
 
 	reader := bytes.NewReader(data)
-	protoReader, err := NewProtoLogsReader(reader, 1000)
+	protoReader, err := NewIngestProtoLogsReader(reader, 1000)
 	require.NoError(t, err)
 	defer protoReader.Close()
 

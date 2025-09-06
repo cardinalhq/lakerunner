@@ -12,9 +12,9 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-//go:build memoryanalysis
+//go:build experimental && memoryanalysis
 
-package filereader
+package experimental
 
 import (
 	"context"
@@ -22,6 +22,8 @@ import (
 	"runtime"
 	"testing"
 	"time"
+
+	"github.com/cardinalhq/lakerunner/internal/filereader"
 )
 
 // TestHighVolumeMemoryFootprint tests memory usage with 200 iterations
@@ -32,9 +34,9 @@ func TestHighVolumeMemoryFootprint(t *testing.T) {
 
 	readers := []struct {
 		name    string
-		factory func() (Reader, error)
+		factory func() (filereader.Reader, error)
 	}{
-		{"ParquetRaw", func() (Reader, error) {
+		{"ParquetRaw", func() (filereader.Reader, error) {
 			file, err := os.Open(testFile)
 			if err != nil {
 				return nil, err
@@ -44,14 +46,14 @@ func TestHighVolumeMemoryFootprint(t *testing.T) {
 				file.Close()
 				return nil, err
 			}
-			reader, err := NewParquetRawReader(file, stat.Size(), 1000)
+			reader, err := filereader.NewParquetRawReader(file, stat.Size(), 1000)
 			if err != nil {
 				file.Close()
 				return nil, err
 			}
 			return &fileClosingReader{Reader: reader, file: file}, nil
 		}},
-		{"Arrow", func() (Reader, error) {
+		{"Arrow", func() (filereader.Reader, error) {
 			file, err := os.Open(testFile)
 			if err != nil {
 				return nil, err

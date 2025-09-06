@@ -37,6 +37,8 @@ import (
 // IngestProtoMetricsReader reads rows from OpenTelemetry protobuf metrics format for ingestion.
 // This reader is specifically designed for metric ingestion and should not be used for
 // compaction or rollup operations.
+//
+// Implements OTELMetricsProvider interface.
 type IngestProtoMetricsReader struct {
 	closed    bool
 	rowCount  int64
@@ -56,7 +58,6 @@ var _ Reader = (*IngestProtoMetricsReader)(nil)
 var _ OTELMetricsProvider = (*IngestProtoMetricsReader)(nil)
 
 // NewIngestProtoMetricsReader creates a new IngestProtoMetricsReader for the given io.Reader.
-// The caller is responsible for closing the underlying reader.
 func NewIngestProtoMetricsReader(reader io.Reader, batchSize int) (*IngestProtoMetricsReader, error) {
 	metrics, err := parseProtoToOtelMetrics(reader)
 	if err != nil {
@@ -110,10 +111,8 @@ func (r *IngestProtoMetricsReader) Next(ctx context.Context) (*Batch, error) {
 		maps.Copy(batchRow, row)
 	}
 
-	// Update row count with successfully read rows
 	if batch.Len() > 0 {
 		r.rowCount += int64(batch.Len())
-		// Track rows output to downstream
 		rowsOutCounter.Add(ctx, int64(batch.Len()), otelmetric.WithAttributes(
 			attribute.String("reader", "IngestProtoMetricsReader"),
 		))
@@ -200,30 +199,25 @@ func (r *IngestProtoMetricsReader) getDatapointCount(metric pmetric.Metric) int 
 // buildDatapointRow populates the provided row with data from a single datapoint and its context.
 // Returns (dropped, error) where dropped indicates if the datapoint was filtered out.
 func (r *IngestProtoMetricsReader) buildDatapointRow(ctx context.Context, row Row, rm pmetric.ResourceMetrics, sm pmetric.ScopeMetrics, metric pmetric.Metric, datapointIndex int) (bool, error) {
-	// Add resource attributes with prefix
 	rm.Resource().Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
 		row[wkk.NewRowKey(prefixAttribute(name, "resource"))] = value
 		return true
 	})
 
-	// Add scope attributes with prefix
 	sm.Scope().Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
 		row[wkk.NewRowKey(prefixAttribute(name, "scope"))] = value
 		return true
 	})
 
-	// Add scope URL and name
 	row[wkk.NewRowKey("_cardinalhq.scope_url")] = sm.Scope().Version()
 	row[wkk.NewRowKey("_cardinalhq.scope_name")] = sm.Scope().Name()
 
-	// Basic metric fields
 	row[wkk.RowKeyCName] = metric.Name()
 	row[wkk.NewRowKey("_cardinalhq.description")] = metric.Description()
 	row[wkk.NewRowKey("_cardinalhq.unit")] = metric.Unit()
 
-	// Add CardinalHQ metric type field
 	switch metric.Type() {
 	case pmetric.MetricTypeGauge:
 		row[wkk.RowKeyCMetricType] = "gauge"
@@ -239,7 +233,6 @@ func (r *IngestProtoMetricsReader) buildDatapointRow(ctx context.Context, row Ro
 		row[wkk.RowKeyCMetricType] = "gauge"
 	}
 
-	// Add datapoint-specific fields based on metric type
 	switch metric.Type() {
 	case pmetric.MetricTypeGauge:
 		dp := metric.Gauge().DataPoints().At(datapointIndex)
@@ -270,21 +263,18 @@ func (r *IngestProtoMetricsReader) buildDatapointRow(ctx context.Context, row Ro
 // addNumberDatapointFields adds fields from a NumberDataPoint to the row.
 // Returns (dropped, error) where dropped indicates if the datapoint was filtered out.
 func (r *IngestProtoMetricsReader) addNumberDatapointFields(ctx context.Context, ret Row, dp pmetric.NumberDataPoint, metricType string) (bool, error) {
-	// Add datapoint attributes
 	dp.Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
 		ret[wkk.NewRowKey(prefixAttribute(name, "metric"))] = value
 		return true
 	})
 
-	// Use Timestamp if available, fallback to StartTimestamp
 	if dp.Timestamp() != 0 {
 		ret[wkk.RowKeyCTimestamp] = dp.Timestamp().AsTime().UnixMilli()
 	} else {
 		ret[wkk.RowKeyCTimestamp] = dp.StartTimestamp().AsTime().UnixMilli()
 	}
 
-	// Get the actual value
 	var value float64
 	if dp.ValueType() == pmetric.NumberDataPointValueTypeInt {
 		value = float64(dp.IntValue())
@@ -292,24 +282,23 @@ func (r *IngestProtoMetricsReader) addNumberDatapointFields(ctx context.Context,
 		value = dp.DoubleValue()
 	}
 
-	// Check for NaN values and skip this datapoint if found
 	if math.IsNaN(value) || math.IsInf(value, 0) {
 		rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
 			attribute.String("reader", "IngestProtoMetricsReader"),
 			attribute.String("metric_type", metricType),
 			attribute.String("reason", "nan_or_inf"),
 		))
-		return true, nil // dropped=true, no error
+		return true, nil
 	}
 
 	// Use CardinalHQ single-value pattern for gauges/sums
-	ret[wkk.RowKeySketch] = []byte{} // Empty sketch for single values
-	ret[wkk.RowKeyRollupAvg] = value // For single value, all stats are the same
+	ret[wkk.RowKeySketch] = []byte{}
+	ret[wkk.RowKeyRollupAvg] = value
 	ret[wkk.RowKeyRollupMax] = value
 	ret[wkk.RowKeyRollupMin] = value
 	ret[wkk.RowKeyRollupCount] = float64(1)
-	ret[wkk.RowKeyRollupSum] = value // Single value: sum equals the value
-	ret[wkk.RowKeyRollupP25] = value // All percentiles are the single value
+	ret[wkk.RowKeyRollupSum] = value
+	ret[wkk.RowKeyRollupP25] = value
 	ret[wkk.RowKeyRollupP50] = value
 	ret[wkk.RowKeyRollupP75] = value
 	ret[wkk.RowKeyRollupP90] = value
@@ -320,7 +309,6 @@ func (r *IngestProtoMetricsReader) addNumberDatapointFields(ctx context.Context,
 }
 
 func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ctx context.Context, ret Row, dp pmetric.HistogramDataPoint) (bool, error) {
-	// 0) Bail if there are no counts at all
 	hasCounts := false
 	for i := 0; i < dp.BucketCounts().Len(); i++ {
 		if dp.BucketCounts().At(i) > 0 {
@@ -334,41 +322,36 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ctx context.Conte
 			attribute.String("metric_type", "histogram"),
 			attribute.String("reason", "no_counts"),
 		))
-		return true, nil // dropped, not an error
+		return true, nil
 	}
 
-	// 1) Attributes
 	dp.Attributes().Range(func(name string, v pcommon.Value) bool {
 		ret[wkk.NewRowKey(prefixAttribute(name, "metric"))] = v.AsString()
 		return true
 	})
 
-	// 2) Timestamps
 	if dp.Timestamp() != 0 {
 		ret[wkk.RowKeyCTimestamp] = dp.Timestamp().AsTime().UnixMilli()
 	} else {
 		ret[wkk.RowKeyCTimestamp] = dp.StartTimestamp().AsTime().UnixMilli()
 	}
 
-	// 3) Build the sketch
 	const alpha = 0.01
 	sketch, err := ddsketch.NewDefaultDDSketch(alpha)
 	if err != nil {
 		return false, fmt.Errorf("failed to create sketch for histogram: %w", err)
 	}
 
-	// Gather OTel explicit bounds & counts
 	m := dp.ExplicitBounds().Len()
-	n := dp.BucketCounts().Len() // usually m+1
+	n := dp.BucketCounts().Len()
 	if n == 0 {
 		rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
 			attribute.String("reader", "IngestProtoMetricsReader"),
 			attribute.String("metric_type", "histogram"),
 			attribute.String("reason", "no_bucket_counts"),
 		))
-		return true, nil // dropped, not an error
+		return true, nil
 	}
-	// Note: m == 0 is valid (single bucket from -inf to +inf)
 
 	bounds := make([]float64, m)
 	for i := range m {
@@ -379,7 +362,6 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ctx context.Conte
 		counts[i] = dp.BucketCounts().At(i)
 	}
 
-	// 3a) Import finite buckets via ImportStandardHistogram.
 	// OTel buckets: (-inf,b0], (b0,b1], ... (b[m-2],b[m-1]], (b[m-1], +inf)
 	// Handle special case: single bucket spanning -inf to +inf (no explicit bounds)
 	if m == 0 && n == 1 {
@@ -428,7 +410,6 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ctx context.Conte
 			}
 		}
 
-		// 3b) Handle underflow (-inf, b0] and overflow (b[m-1], +inf) by adding
 		// single representatives near the edges. Use γ so this plays nicely with DDSketch mapping.
 		if m > 0 {
 			gamma := (1 + alpha) / (1 - alpha)
@@ -475,7 +456,6 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ctx context.Conte
 		}
 	}
 
-	// 4) Rollup statistics from the (now non-empty) sketch
 	maxvalue, err := sketch.GetMaxValue()
 	if err != nil {
 		return false, fmt.Errorf("failed to get max value from non-empty sketch: %w", err)
@@ -508,28 +488,24 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ctx context.Conte
 	ret[wkk.RowKeyRollupP95] = quantiles[4]
 	ret[wkk.RowKeyRollupP99] = quantiles[5]
 
-	// 5) Encode the sketch
 	ret[wkk.RowKeySketch] = helpers.EncodeSketch(sketch)
 	return false, nil
 }
 
 // addExponentialHistogramDatapointFields adds fields from an ExponentialHistogramDataPoint to the row.
 func (r *IngestProtoMetricsReader) addExponentialHistogramDatapointFields(ctx context.Context, ret Row, dp pmetric.ExponentialHistogramDataPoint) (bool, error) {
-	// Add datapoint attributes
 	dp.Attributes().Range(func(name string, v pcommon.Value) bool {
 		value := v.AsString()
 		ret[wkk.NewRowKey(prefixAttribute(name, "metric"))] = value
 		return true
 	})
 
-	// Use Timestamp if available, fallback to StartTimestamp
 	if dp.Timestamp() != 0 {
 		ret[wkk.RowKeyCTimestamp] = dp.Timestamp().AsTime().UnixMilli()
 	} else {
 		ret[wkk.RowKeyCTimestamp] = dp.StartTimestamp().AsTime().UnixMilli()
 	}
 
-	// Extract exponential histogram data
 	var positiveBuckets, negativeBuckets []uint64
 	if dp.Positive().BucketCounts().Len() > 0 {
 		positiveBuckets = make([]uint64, dp.Positive().BucketCounts().Len())
@@ -544,7 +520,6 @@ func (r *IngestProtoMetricsReader) addExponentialHistogramDatapointFields(ctx co
 		}
 	}
 
-	// Convert exponential histogram to value/count pairs
 	expHist := metricmath.ExpHist{
 		Scale:     dp.Scale(),
 		ZeroCount: dp.ZeroCount(),
@@ -555,7 +530,6 @@ func (r *IngestProtoMetricsReader) addExponentialHistogramDatapointFields(ctx co
 	}
 	counts, values := metricmath.ConvertExponentialHistogramToValues(expHist)
 
-	// Check if histogram has any data - if not, drop this datapoint
 	hasData := false
 	for _, count := range counts {
 		if count > 0 {
@@ -565,32 +539,27 @@ func (r *IngestProtoMetricsReader) addExponentialHistogramDatapointFields(ctx co
 	}
 
 	if !hasData {
-		// Drop exponential histogram datapoints with no data
 		rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
 			attribute.String("reader", "IngestProtoMetricsReader"),
 			attribute.String("metric_type", "exponential_histogram"),
 			attribute.String("reason", "no_data"),
 		))
-		return true, nil // dropped, not an error
+		return true, nil
 	}
 
-	// Create sketch for exponential histogram (only for histograms with data)
 	sketch, err := ddsketch.NewDefaultDDSketch(0.01)
 	if err != nil {
 		return false, fmt.Errorf("failed to create sketch for exponential histogram: %w", err)
 	}
 
-	// Add histogram data to sketch
 	for i, count := range counts {
 		if count > 0 {
 			if err := sketch.AddWithCount(values[i], count); err != nil {
-				// Log error but continue processing other buckets
 				continue
 			}
 		}
 	}
 
-	// Generate rollup statistics from sketch (sketch always has data at this point)
 	maxvalue, err := sketch.GetMaxValue()
 	if err != nil {
 		return false, fmt.Errorf("failed to get max value from non-empty sketch: %w", err)
@@ -623,7 +592,6 @@ func (r *IngestProtoMetricsReader) addExponentialHistogramDatapointFields(ctx co
 	ret[wkk.RowKeyRollupP95] = quantiles[4]
 	ret[wkk.RowKeyRollupP99] = quantiles[5]
 
-	// Encode the sketch (always has data at this point)
 	ret[wkk.RowKeySketch] = helpers.EncodeSketch(sketch)
 	return false, nil
 }

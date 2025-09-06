@@ -12,9 +12,9 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-//go:build memoryanalysis
+//go:build experimental && memoryanalysis
 
-package filereader
+package experimental
 
 import (
 	"context"
@@ -23,11 +23,13 @@ import (
 	"runtime"
 	"testing"
 	"time"
+
+	"github.com/cardinalhq/lakerunner/internal/filereader"
 )
 
 // fileClosingReader wraps a reader to close the underlying file when the reader is closed
 type fileClosingReader struct {
-	Reader
+	filereader.Reader
 	file io.Closer
 }
 
@@ -47,9 +49,9 @@ func TestLinearMemoryGrowth(t *testing.T) {
 
 	readers := []struct {
 		name    string
-		factory func() (Reader, error)
+		factory func() (filereader.Reader, error)
 	}{
-		{"ParquetRaw", func() (Reader, error) {
+		{"ParquetRaw", func() (filereader.Reader, error) {
 			file, err := os.Open(testFile)
 			if err != nil {
 				return nil, err
@@ -59,17 +61,17 @@ func TestLinearMemoryGrowth(t *testing.T) {
 				file.Close()
 				return nil, err
 			}
-			reader, err := NewParquetRawReader(file, stat.Size(), 1000)
+			reader, err := filereader.NewParquetRawReader(file, stat.Size(), 1000)
 			if err != nil {
 				file.Close()
 				return nil, err
 			}
 			return &fileClosingReader{Reader: reader, file: file}, nil
 		}},
-		{"DuckDB", func() (Reader, error) {
+		{"DuckDB", func() (filereader.Reader, error) {
 			return NewDuckDBParquetRawReader([]string{testFile}, 1000)
 		}},
-		{"Arrow", func() (Reader, error) {
+		{"Arrow", func() (filereader.Reader, error) {
 			file, err := os.Open(testFile)
 			if err != nil {
 				return nil, err
@@ -135,7 +137,7 @@ type memoryGrowthResult struct {
 	nativeGrowth int64
 }
 
-func measureMemoryGrowthOverIterations(t *testing.T, factory func() (Reader, error), iterations int) memoryGrowthResult {
+func measureMemoryGrowthOverIterations(t *testing.T, factory func() (filereader.Reader, error), iterations int) memoryGrowthResult {
 	// Establish baseline
 	runtime.GC()
 	runtime.GC()
@@ -194,9 +196,9 @@ func TestMemoryGrowthPerIteration(t *testing.T) {
 
 	readers := []struct {
 		name    string
-		factory func() (Reader, error)
+		factory func() (filereader.Reader, error)
 	}{
-		{"ParquetRaw", func() (Reader, error) {
+		{"ParquetRaw", func() (filereader.Reader, error) {
 			file, err := os.Open(testFile)
 			if err != nil {
 				return nil, err
@@ -206,17 +208,17 @@ func TestMemoryGrowthPerIteration(t *testing.T) {
 				file.Close()
 				return nil, err
 			}
-			reader, err := NewParquetRawReader(file, stat.Size(), 1000)
+			reader, err := filereader.NewParquetRawReader(file, stat.Size(), 1000)
 			if err != nil {
 				file.Close()
 				return nil, err
 			}
 			return &fileClosingReader{Reader: reader, file: file}, nil
 		}},
-		{"DuckDB", func() (Reader, error) {
+		{"DuckDB", func() (filereader.Reader, error) {
 			return NewDuckDBParquetRawReader([]string{testFile}, 1000)
 		}},
-		{"Arrow", func() (Reader, error) {
+		{"Arrow", func() (filereader.Reader, error) {
 			file, err := os.Open(testFile)
 			if err != nil {
 				return nil, err

@@ -1,3 +1,5 @@
+//go:build experimental
+
 // Copyright (C) 2025 CardinalHQ, Inc
 //
 // This program is free software: you can redistribute it and/or modify
@@ -12,7 +14,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package filereader
+package experimental
 
 import (
 	"bytes"
@@ -23,6 +25,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/cardinalhq/lakerunner/internal/filereader"
 )
 
 // ReaderBenchmarkData holds preloaded test data and metadata
@@ -54,7 +58,7 @@ func loadReaderBenchmarkData(b *testing.B) *ReaderBenchmarkData {
 
 	// Get actual row count from a quick read
 	reader := bytes.NewReader(data)
-	parquetReader, err := NewParquetRawReader(reader, int64(len(data)), 1000)
+	parquetReader, err := filereader.NewParquetRawReader(reader, int64(len(data)), 1000)
 	if err != nil {
 		b.Fatalf("Failed to create reader for %s: %v", testFile, err)
 	}
@@ -203,7 +207,7 @@ func BenchmarkParquetRawReader(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		reader := bytes.NewReader(data.Data)
-		parquetReader, err := NewParquetRawReader(reader, data.Size, 1000)
+		parquetReader, err := filereader.NewParquetRawReader(reader, data.Size, 1000)
 		if err != nil {
 			b.Fatalf("Failed to create ParquetRawReader: %v", err)
 		}
@@ -361,7 +365,7 @@ func benchmarkParquetRawReaderInternal(b *testing.B, data *ReaderBenchmarkData) 
 	ms := captureDetailedMemStatsBefore()
 
 	reader := bytes.NewReader(data.Data)
-	parquetReader, err := NewParquetRawReader(reader, data.Size, 1000)
+	parquetReader, err := filereader.NewParquetRawReader(reader, data.Size, 1000)
 	if err != nil {
 		b.Fatalf("Failed to create ParquetRawReader: %v", err)
 	}
@@ -458,7 +462,7 @@ func BenchmarkReadersWithDifferentBatchSizes(b *testing.B) {
 			}{
 				{"ParquetRaw", func() (int64, error) {
 					reader := bytes.NewReader(data.Data)
-					pr, err := NewParquetRawReader(reader, data.Size, batchSize)
+					pr, err := filereader.NewParquetRawReader(reader, data.Size, batchSize)
 					if err != nil {
 						return 0, err
 					}
@@ -560,7 +564,7 @@ func BenchmarkReadersGCPressure(b *testing.B) {
 	}{
 		{"ParquetRaw", func() error {
 			reader := bytes.NewReader(data.Data)
-			pr, err := NewParquetRawReader(reader, data.Size, 1000)
+			pr, err := filereader.NewParquetRawReader(reader, data.Size, 1000)
 			if err != nil {
 				return err
 			}

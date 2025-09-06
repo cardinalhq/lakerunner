@@ -12,9 +12,9 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-//go:build memoryanalysis
+//go:build experimental && memoryanalysis
 
-package filereader
+package experimental
 
 import (
 	"context"
@@ -30,12 +30,12 @@ func TestDuckDBBatchingComparison(t *testing.T) {
 
 	readers := []struct {
 		name    string
-		factory func() (Reader, error)
+		factory func() (filereader.Reader, error)
 	}{
-		{"DuckDB_Original", func() (Reader, error) {
+		{"DuckDB_Original", func() (filereader.Reader, error) {
 			return NewDuckDBParquetRawReader([]string{testFile}, 1000)
 		}},
-		{"DuckDB_Batched", func() (Reader, error) {
+		{"DuckDB_Batched", func() (filereader.Reader, error) {
 			return NewDuckDBParquetBatchedReader([]string{testFile}, 1000)
 		}},
 	}

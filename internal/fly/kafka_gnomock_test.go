@@ -17,6 +17,7 @@
 package fly
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -62,6 +63,13 @@ func TestMain(m *testing.M) {
 		broker:    broker,
 	}
 
+	// Wait for Kafka to be fully ready
+	if !waitForKafkaReady(broker, 10*time.Second) {
+		fmt.Fprintf(os.Stderr, "Kafka container did not become ready within timeout\n")
+		gnomock.Stop(container)
+		os.Exit(1)
+	}
+
 	// Run tests
 	code := m.Run()
 
@@ -94,7 +102,7 @@ func (k *KafkaTestContainer) Broker() string {
 	return k.broker
 }
 
-// CreateTopics creates topics on the shared container
+// CreateTopics creates topics on the shared container and waits for them to be ready
 func (k *KafkaTestContainer) CreateTopics(t *testing.T, topics ...string) {
 	t.Helper()
 
@@ -102,6 +110,7 @@ func (k *KafkaTestContainer) CreateTopics(t *testing.T, topics ...string) {
 	require.NoError(t, err, "Failed to connect to Kafka for topic creation")
 	defer conn.Close()
 
+	// Create all topics
 	for _, topic := range topics {
 		err = conn.CreateTopics(kafka.TopicConfig{
 			Topic:             topic,
@@ -115,6 +124,9 @@ func (k *KafkaTestContainer) CreateTopics(t *testing.T, topics ...string) {
 			}
 		}
 	}
+
+	// Wait for all topics to be ready
+	k.WaitForTopicsReady(t, topics...)
 }
 
 // CleanupAfterTest removes topics and consumer groups created during the test
@@ -197,4 +209,56 @@ func (k *KafkaTestContainer) CreateConsumerConfig(topic, groupID string) Consume
 		CommitBatch:   true,
 		RetryAttempts: 3,
 	}
+}
+
+// WaitForTopicsReady waits for topics to be available and ready
+func (k *KafkaTestContainer) WaitForTopicsReady(t *testing.T, topics ...string) {
+	t.Helper()
+
+	maxWaitTime := 10 * time.Second
+	checkInterval := 100 * time.Millisecond
+	deadline := time.Now().Add(maxWaitTime)
+
+	config := &Config{
+		Brokers: []string{k.broker},
+	}
+	adminClient := NewAdminClient(config)
+
+	ctx, cancel := context.WithTimeout(context.Background(), maxWaitTime)
+	defer cancel()
+
+	for _, topic := range topics {
+		topicReady := false
+		for time.Now().Before(deadline) {
+			exists, err := adminClient.TopicExists(ctx, topic)
+			if err == nil && exists {
+				// Verify we can get topic info (ensures metadata is available)
+				info, err := adminClient.GetTopicInfo(ctx, topic)
+				if err == nil && info != nil && len(info.Partitions) > 0 {
+					topicReady = true
+					break
+				}
+			}
+			time.Sleep(checkInterval)
+		}
+		require.True(t, topicReady, "Topic %s was not ready within %v", topic, maxWaitTime)
+	}
+}
+
+// waitForKafkaReady waits for the Kafka broker to be fully ready
+func waitForKafkaReady(broker string, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		conn, err := kafka.Dial("tcp", broker)
+		if err == nil {
+			// Try to get metadata to ensure broker is fully operational
+			_, err = conn.ApiVersions()
+			conn.Close()
+			if err == nil {
+				return true
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return false
 }
