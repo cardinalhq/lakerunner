@@ -451,7 +451,7 @@ func (b *BatchMarkMetricSegsRolledupBatchResults) Close() error {
 }
 
 const batchUpsertExemplarLogs = `-- name: BatchUpsertExemplarLogs :batchone
-INSERT INTO exemplar_logs
+INSERT INTO lrdb_exemplar_logs
             ( organization_id,  service_identifier_id,  fingerprint,  attributes,  exemplar)
 VALUES      ($1, $2, $3, $4, $5)
 ON CONFLICT ( organization_id,  service_identifier_id,  fingerprint)
@@ -462,8 +462,8 @@ DO UPDATE SET
   related_fingerprints = CASE
     WHEN $6::BIGINT != 0
       AND $3 != $6
-      THEN add_to_bigint_list(exemplar_logs.related_fingerprints, $6, 100)
-    ELSE exemplar_logs.related_fingerprints
+      THEN add_to_bigint_list(lrdb_exemplar_logs.related_fingerprints, $6, 100)
+    ELSE lrdb_exemplar_logs.related_fingerprints
   END
 RETURNING (created_at = updated_at) as is_new
 `
@@ -529,7 +529,7 @@ func (b *BatchUpsertExemplarLogsBatchResults) Close() error {
 }
 
 const batchUpsertExemplarMetrics = `-- name: BatchUpsertExemplarMetrics :batchone
-INSERT INTO exemplar_metrics
+INSERT INTO lrdb_exemplar_metrics
             ( organization_id,  service_identifier_id,  metric_name,  metric_type,  attributes,  exemplar)
 VALUES      ($1, $2, $3, $4, $5, $6)
 ON CONFLICT ( organization_id,  service_identifier_id,  metric_name,  metric_type)
@@ -596,7 +596,7 @@ func (b *BatchUpsertExemplarMetricsBatchResults) Close() error {
 }
 
 const batchUpsertExemplarTraces = `-- name: BatchUpsertExemplarTraces :batchone
-INSERT INTO exemplar_traces
+INSERT INTO lrdb_exemplar_traces
 ( organization_id
 , service_identifier_id
 , fingerprint

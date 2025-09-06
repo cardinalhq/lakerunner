@@ -480,15 +480,12 @@ func getFileFormat(filename string) string {
 // processExemplarsFromReader processes exemplars from a metrics reader that supports OTEL
 func processExemplarsFromReader(_ context.Context, reader filereader.Reader, processor *exemplar.Processor, orgID string, mdb lrdb.StoreFull) error {
 	if otelProvider, ok := reader.(filereader.OTELMetricsProvider); ok {
-		otelMetrics, err := otelProvider.GetOTELMetrics()
+		metrics, err := otelProvider.GetOTELMetrics()
 		if err != nil {
 			return fmt.Errorf("failed to get OTEL metrics: %w", err)
 		}
-
-		if metrics, ok := otelMetrics.(*pmetric.Metrics); ok {
-			if err := processExemplarsFromMetrics(metrics, processor, orgID); err != nil {
-				return fmt.Errorf("failed to process exemplars from metrics: %w", err)
-			}
+		if err := processExemplarsFromMetrics(metrics, processor, orgID); err != nil {
+			return fmt.Errorf("failed to process exemplars from metrics: %w", err)
 		}
 	}
 	return nil

@@ -25,7 +25,10 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/collector/pdata/plog"
+
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
+	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
@@ -217,7 +220,7 @@ func NewWorkerInterrupted(message string) WorkerInterrupted {
 }
 
 // ProcessBatch processes a single ingestion item with atomic transaction including Kafka offset
-func ProcessBatch(ctx context.Context, args ingest.ProcessBatchArgs, item ingest.IngestItem) error {
+func ProcessBatch(ctx context.Context, args ingest.ProcessBatchArgs, item ingest.IngestItem, exemplarProcessor *exemplar.Processor) error {
 	ll := logctx.FromContext(ctx)
 
 	ll.Debug("Processing log item with Kafka offset",
@@ -291,6 +294,18 @@ func ProcessBatch(ctx context.Context, args ingest.ProcessBatchArgs, item ingest
 
 	reader, err = createLogReader(tmpfilename)
 	if err == nil {
+		// Process exemplars if available (before translation to preserve OTEL structure)
+		if exemplarProcessor != nil && shouldProcessLogsExemplars() {
+			if otelProvider, ok := reader.(filereader.OTELLogsProvider); ok {
+				logs, err := otelProvider.GetOTELLogs()
+				if err == nil {
+					if err := processExemplarsFromLogs(ctx, logs, exemplarProcessor, item.OrganizationID.String()); err != nil {
+						ll.Warn("Failed to process logs exemplars", slog.Any("error", err))
+					}
+				}
+			}
+		}
+
 		// Add general translator for non-protobuf files
 		translator := &LogTranslator{
 			orgID:    item.OrganizationID.String(),
@@ -558,4 +573,21 @@ func createAndUploadLogSegments(
 	}
 
 	return segmentParams, nil
+}
+
+// shouldProcessLogsExemplars checks if logs exemplar processing should be enabled
+func shouldProcessLogsExemplars() bool {
+	envVal := os.Getenv("LAKERUNNER_LOGS_EXEMPLARS")
+	if envVal == "" {
+		return true // default to true
+	}
+	return envVal == "true" || envVal == "1"
+}
+
+// processExemplarsFromLogs processes exemplars from parsed plog.Logs
+func processExemplarsFromLogs(ctx context.Context, logs *plog.Logs, processor *exemplar.Processor, customerID string) error {
+	if err := processor.ProcessLogs(ctx, *logs, customerID); err != nil {
+		return fmt.Errorf("failed to process logs through exemplar processor: %w", err)
+	}
+	return nil
 }
