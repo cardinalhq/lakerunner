@@ -443,6 +443,9 @@ func dedupeStrings(ss []string) []string {
 }
 
 func isBaseCol(q string) bool {
+	if strings.HasPrefix(q, "\"resource.") || strings.HasPrefix(q, "\"log.") {
+		return true
+	}
 	switch q {
 	case "\"_cardinalhq.message\"", "\"_cardinalhq.timestamp\"", "\"_cardinalhq.id\"", "\"_cardinalhq.level\"", "\"_cardinalhq.fingerprint\"":
 		return true

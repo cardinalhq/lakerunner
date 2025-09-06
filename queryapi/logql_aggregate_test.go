@@ -1401,3 +1401,81 @@ func TestRewrite_CountOverTime_ByUserSvc_Logfmt_MultiGroup(t *testing.T) {
 		}
 	}
 }
+
+//  4. Group by a BASE column (resource.k8s.pod.name) while json is present and used
+//     in a filter. With the "mark all non-base groupKeys as parser-created" assumption,
+//     s0 won't project the pod column and the query will fail to bind.
+//     Once fixed (only mark truly parser-created keys), this should pass.
+func TestRewrite_CountOverTime_ByBasePod_WithJSONFilter(t *testing.T) {
+	db := openDuckDB(t)
+	mustExec(t, db, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.fingerprint" TEXT,
+		"_cardinalhq.message"     TEXT,
+		"resource.service.name"   TEXT,
+		"resource.k8s.pod.name"   TEXT
+	);`)
+
+	// Two 1m buckets: [0..60s) and [60..120s)
+	// bucket 0: (pod=api-7f, alice), (pod=api-7f, bob), (pod=api-9x, alice)
+	// bucket 1: (pod=api-7f, alice), (pod=api-9x, bob)
+	mustExec(t, db, `
+	INSERT INTO logs("_cardinalhq.timestamp","_cardinalhq.message","resource.service.name","resource.k8s.pod.name") VALUES
+	(10*1000,  '{"user":"alice"}', 'api-gateway', 'api-7f'),
+	(20*1000,  '{"user":"bob"}',   'api-gateway', 'api-7f'),
+	(40*1000,  '{"user":"alice"}', 'api-gateway', 'api-9x'),
+	(70*1000,  '{"user":"alice"}', 'api-gateway', 'api-7f'),
+	(90*1000,  '{"user":"bob"}',   'api-gateway', 'api-9x');`)
+
+	// Keep only rows with user="alice" (parser-created), but group by the BASE pod label.
+	// IMPORTANT: matcher only references resource_service_name (so pod is NOT pulled in via matchers).
+	q := `sum by (resource_k8s_pod_name) (count_over_time({resource_service_name="api-gateway"} | json | user="alice" [1m]))`
+
+	plan, _ := compileMetricPlanFromLogQL(t, q)
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf in compiled plan, got %d", len(plan.Leaves))
+	}
+	be := plan.Leaves[0]
+
+	sql := replaceWorkerPlaceholders(be.ToWorkerSQL(time.Minute), 0, 120*1000)
+
+	// This call will currently FAIL with a DuckDB binder error because the column
+	// "resource.k8s.pod.name" (or its underscored alias) isn't projected in s0.
+	// After fixing the assumption (only mark parser-created keys as such), it will pass.
+	rows := queryAll(t, db, sql)
+
+	type key struct {
+		bucket int64
+		pod    string
+	}
+	got := map[key]int64{}
+	for _, r := range rows {
+		// Allow either dotted or underscored naming depending on rewrite
+		pod := ""
+		if v, ok := r[`resource.k8s.pod.name`]; ok && v != nil {
+			pod = fmt.Sprint(v)
+		} else if v, ok := r[`resource_k8s_pod_name`]; ok && v != nil {
+			pod = fmt.Sprint(v)
+		} else {
+			t.Fatalf("missing pod label column in row: %v\nsql=\n%s", r, sql)
+		}
+
+		got[key{
+			bucket: i64(r["bucket_ts"]),
+			pod:    pod,
+		}] = i64(r["sum"])
+	}
+
+	exp := map[key]int64{
+		{0, "api-7f"}:     1, // (10s, alice)
+		{0, "api-9x"}:     1, // (40s, alice)
+		{60000, "api-7f"}: 1, // (70s, alice)
+	}
+	for k, want := range exp {
+		if got[k] != want {
+			t.Fatalf("unexpected sum for %v: got=%v want=%v; rows=%v\nsql=\n%s", k, got[k], want, rows, sql)
+		}
+	}
+}
