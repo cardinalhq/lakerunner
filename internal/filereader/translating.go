@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 
 	"go.opentelemetry.io/otel/attribute"
 	otelmetric "go.opentelemetry.io/otel/metric"
@@ -85,9 +86,7 @@ func (tr *TranslatingReader) Next(ctx context.Context) (*Batch, error) {
 		sourceRow := batch.Get(i)
 		// Copy row to make it mutable
 		row := make(Row)
-		for k, v := range sourceRow {
-			row[k] = v
-		}
+		maps.Copy(row, sourceRow)
 
 		if translateErr := tr.translator.TranslateRow(&row); translateErr != nil {
 			// TODO: Add logging here when we have access to a logger
@@ -105,9 +104,7 @@ func (tr *TranslatingReader) Next(ctx context.Context) (*Batch, error) {
 
 		// Add translated row to new batch
 		translatedRow := translatedBatch.AddRow()
-		for k, v := range row {
-			translatedRow[k] = v
-		}
+		maps.Copy(translatedRow, row)
 	}
 
 	// Return original batch to pool since we created a new one

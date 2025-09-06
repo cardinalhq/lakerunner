@@ -49,7 +49,6 @@ type Reader interface {
 // RowTranslator transforms rows from one format to another.
 type RowTranslator interface {
 	// TranslateRow transforms a row in-place by modifying the provided row pointer.
-	// This eliminates confusing reference semantics and makes mutations explicit.
 	TranslateRow(row *Row) error
 }
 

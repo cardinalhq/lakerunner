@@ -333,8 +333,8 @@ func TestParquetRawReader_WithTranslator(t *testing.T) {
 	}
 }
 
-// TestProtoLogsReader_WithTranslator tests TranslatingReader with ProtoLogsReader for comparison
-func TestProtoLogsReader_WithTranslator(t *testing.T) {
+// TestIngestProtoLogsReader_WithTranslator tests TranslatingReader with IngestProtoLogsReader for comparison
+func TestIngestProtoLogsReader_WithTranslator(t *testing.T) {
 	filename := createSyntheticLogsFile(t, true)
 
 	// Create base proto reader
@@ -355,7 +355,7 @@ func TestProtoLogsReader_WithTranslator(t *testing.T) {
 	if batch != nil {
 		n = batch.Len()
 	}
-	t.Logf("TranslatingReader with ProtoLogsReader: n=%d, err=%v", n, err)
+	t.Logf("TranslatingReader with IngestProtoLogsReader: n=%d, err=%v", n, err)
 
 	if err != nil && err != io.EOF {
 		t.Fatalf("Read failed: %v", err)
