@@ -250,8 +250,6 @@ func TestDatabaseProvider_GetStorageProfileForOrganization_Error(t *testing.T) {
 	assert.Error(t, err)
 }
 
-// Test removed - GetByCollectorName method was removed
-
 func TestDatabaseProvider_GetStorageProfilesByBucketName(t *testing.T) {
 	tests := []struct {
 		name       string

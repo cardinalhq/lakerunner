@@ -16,6 +16,7 @@ package lrdb
 
 import (
 	"context"
+	"sort"
 )
 
 func (q *Store) InsertLogSegment(ctx context.Context, params InsertLogSegmentParams) error {
@@ -23,4 +24,74 @@ func (q *Store) InsertLogSegment(ctx context.Context, params InsertLogSegmentPar
 		return err
 	}
 	return q.InsertLogSegmentDirect(ctx, params)
+}
+
+// InsertLogSegmentBatchWithKafkaOffsets inserts multiple log segments and updates multiple Kafka offsets in a single transaction
+func (q *Store) InsertLogSegmentBatchWithKafkaOffsets(ctx context.Context, batch LogSegmentBatch) error {
+	return q.execTx(ctx, func(s *Store) error {
+		// Ensure partitions exist for all segments
+		for _, params := range batch.Segments {
+			if err := s.ensureLogFPPartition(ctx, "log_seg", params.OrganizationID, params.Dateint); err != nil {
+				return err
+			}
+		}
+
+		// Convert to batch parameters
+		batchParams := make([]BatchInsertLogSegsParams, len(batch.Segments))
+		for i, params := range batch.Segments {
+			batchParams[i] = BatchInsertLogSegsParams(params)
+		}
+
+		// Insert all segments using batch
+		result := s.BatchInsertLogSegs(ctx, batchParams)
+		var insertErr error
+		result.Exec(func(i int, err error) {
+			if err != nil && insertErr == nil {
+				insertErr = err
+			}
+		})
+		if insertErr != nil {
+			return insertErr
+		}
+
+		// Update all Kafka offsets using batch operation
+		if len(batch.KafkaOffsets) > 0 {
+			// Sort offsets to prevent deadlocks - consistent lock acquisition order
+			sort.Slice(batch.KafkaOffsets, func(i, j int) bool {
+				a, b := batch.KafkaOffsets[i], batch.KafkaOffsets[j]
+				if a.ConsumerGroup != b.ConsumerGroup {
+					return a.ConsumerGroup < b.ConsumerGroup
+				}
+				if a.Topic != b.Topic {
+					return a.Topic < b.Topic
+				}
+				return a.Partition < b.Partition
+			})
+
+			// Convert to batch parameters
+			batchOffsetParams := make([]KafkaJournalBatchUpsertParams, len(batch.KafkaOffsets))
+			for i, offset := range batch.KafkaOffsets {
+				batchOffsetParams[i] = KafkaJournalBatchUpsertParams{
+					ConsumerGroup:       offset.ConsumerGroup,
+					Topic:               offset.Topic,
+					Partition:           offset.Partition,
+					LastProcessedOffset: offset.Offset,
+				}
+			}
+
+			// Execute batch upsert
+			result := s.KafkaJournalBatchUpsert(ctx, batchOffsetParams)
+			var offsetErr error
+			result.Exec(func(i int, err error) {
+				if err != nil && offsetErr == nil {
+					offsetErr = err
+				}
+			})
+			if offsetErr != nil {
+				return offsetErr
+			}
+		}
+
+		return nil
+	})
 }

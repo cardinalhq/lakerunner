@@ -9,24 +9,9 @@ import (
 	"context"
 )
 
-const inqueueScalingDepth = `-- name: InqueueScalingDepth :one
-SELECT COALESCE(COUNT(*), 0) AS count
-FROM inqueue 
-WHERE signal = $1 
-  AND claimed_at IS NULL
-`
-
-// Get queue depth for ingest scaling by signal
-func (q *Queries) InqueueScalingDepth(ctx context.Context, signal string) (interface{}, error) {
-	row := q.db.QueryRow(ctx, inqueueScalingDepth, signal)
-	var count interface{}
-	err := row.Scan(&count)
-	return count, err
-}
-
 const metricCompactionQueueScalingDepth = `-- name: MetricCompactionQueueScalingDepth :one
 SELECT COALESCE(COUNT(*), 0) AS count
-FROM metric_compaction_queue 
+FROM metric_compaction_queue
 WHERE claimed_at IS NULL
 `
 
@@ -40,7 +25,7 @@ func (q *Queries) MetricCompactionQueueScalingDepth(ctx context.Context) (interf
 
 const metricRollupQueueScalingDepth = `-- name: MetricRollupQueueScalingDepth :one
 SELECT COALESCE(COUNT(*), 0) AS count
-FROM metric_rollup_queue 
+FROM metric_rollup_queue
 WHERE claimed_at IS NULL
 `
 
@@ -54,10 +39,10 @@ func (q *Queries) MetricRollupQueueScalingDepth(ctx context.Context) (interface{
 
 const workQueueScalingDepth = `-- name: WorkQueueScalingDepth :one
 SELECT COALESCE(COUNT(*), 0) AS count
-FROM work_queue 
-WHERE needs_run = true 
-  AND runnable_at <= now() 
-  AND signal = $1 
+FROM work_queue
+WHERE needs_run = true
+  AND runnable_at <= now()
+  AND signal = $1
   AND action = $2
 `
 

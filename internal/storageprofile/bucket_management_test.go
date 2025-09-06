@@ -455,7 +455,7 @@ func TestBucketConfiguration_RoleBasedBehavior(t *testing.T) {
 				BucketName:    "role-bucket",
 				CloudProvider: "aws",
 				Region:        "us-west-2",
-				Role:          stringPtr("arn:aws:iam::123456789:role/LakeRunner"),
+				Role:          stringPtr("arn:aws:iam::123456789:role/Lakerunner"),
 			},
 			expectedHosted: false,
 		},

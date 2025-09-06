@@ -80,3 +80,8 @@ func (sf *SonyFlakeGenerator) NextBase32ID() string {
 func NextBase32ID() string {
 	return DefaultFlakeGenerator.NextBase32ID()
 }
+
+// GenerateID is a convenience function that uses the default generator to create int64 IDs.
+func GenerateID() int64 {
+	return DefaultFlakeGenerator.NextID()
+}

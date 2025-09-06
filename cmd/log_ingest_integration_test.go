@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/cardinalhq/lakerunner/internal/filereader"
+	"github.com/cardinalhq/lakerunner/internal/logsprocessing/logsingestion"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
@@ -30,11 +31,7 @@ import (
 // with the new *Row interface and produces the expected output for parquetwriter.
 func TestLogTranslatorIntegration(t *testing.T) {
 	// Create LogTranslator
-	translator := &LogTranslator{
-		orgID:    "test-org-123",
-		bucket:   "test-bucket",
-		objectID: "test-logs.json.gz",
-	}
+	translator := logsingestion.NewLogTranslator("test-org-123", "test-bucket", "test-logs.json.gz")
 
 	tests := []struct {
 		name     string
@@ -135,11 +132,7 @@ func TestLogTranslatorWithParquetWriter(t *testing.T) {
 	tmpdir := t.TempDir()
 
 	// Create LogTranslator
-	translator := &LogTranslator{
-		orgID:    "test-org",
-		bucket:   "test-bucket",
-		objectID: "integration-test.json.gz",
-	}
+	translator := logsingestion.NewLogTranslator("test-org", "test-bucket", "integration-test.json.gz")
 
 	// Create logs writer
 	writer, err := factories.NewLogsWriter(tmpdir, 50)
@@ -206,11 +199,7 @@ func TestLogTranslatorWithParquetWriter(t *testing.T) {
 
 // TestLogTranslatorErrorHandling verifies error handling in the new interface.
 func TestLogTranslatorErrorHandling(t *testing.T) {
-	translator := &LogTranslator{
-		orgID:    "test-org",
-		bucket:   "test-bucket",
-		objectID: "error-test.json.gz",
-	}
+	translator := logsingestion.NewLogTranslator("test-org", "test-bucket", "error-test.json.gz")
 
 	// Test with nil row (should not panic)
 	var nilRow *filereader.Row

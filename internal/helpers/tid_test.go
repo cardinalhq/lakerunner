@@ -252,8 +252,6 @@ func TestComputeTID_NewBehavior(t *testing.T) {
 		assert.Equal(t, tid1, tid3, "TID should be deterministic")
 	})
 
-	// Test removed - no longer relevant since parameter was removed
-
 	t.Run("Empty values are filtered", func(t *testing.T) {
 		tags1 := map[string]any{
 			"_cardinalhq.name": "metric1",

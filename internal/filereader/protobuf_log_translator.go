@@ -20,7 +20,7 @@ import (
 
 	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
 
-	"github.com/cardinalhq/lakerunner/cmd/ingestlogs"
+	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
@@ -103,7 +103,7 @@ func (t *ProtoBinLogTranslator) TranslateRow(row *Row) error {
 	// Add resource fields
 	(*row)[wkk.NewRowKey("resource.bucket.name")] = t.bucket
 	(*row)[wkk.NewRowKey("resource.file.name")] = "./" + t.objectID
-	(*row)[wkk.NewRowKey("resource.file.type")] = ingestlogs.GetFileType(t.objectID)
+	(*row)[wkk.NewRowKey("resource.file.type")] = helpers.GetFileType(t.objectID)
 
 	return nil
 }

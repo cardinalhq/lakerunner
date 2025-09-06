@@ -100,6 +100,34 @@ SELECT
   fa.fingerprints
 FROM fingerprint_array AS fa;
 
+-- name: BatchInsertLogSegs :batchexec
+INSERT INTO log_seg (
+  organization_id,
+  dateint,
+  ingest_dateint,
+  segment_id,
+  instance_num,
+  slot_id,
+  ts_range,
+  record_count,
+  file_size,
+  created_by,
+  fingerprints
+)
+VALUES (
+  @organization_id,
+  @dateint,
+  @ingest_dateint,
+  @segment_id,
+  @instance_num,
+  @slot_id,
+  int8range(@start_ts, @end_ts, '[)'),
+  @record_count,
+  @file_size,
+  @created_by,
+  @fingerprints::bigint[]
+);
+
 -- name: ListLogSegmentsForQuery :many
 SELECT
     t.fp::bigint                    AS fingerprint,

@@ -197,16 +197,15 @@ func TestInQueueStatusWithoutDB(t *testing.T) {
 
 	ctx := context.Background()
 
-	// This will fail because we don't have a database connection in the test
-	// but it tests that the GRPC plumbing works
-	_, err := client.InQueueStatus(ctx, &adminproto.InQueueStatusRequest{})
-	if err == nil {
-		t.Error("Expected error due to missing database connection")
+	// Should return empty response for backward compatibility
+	resp, err := client.InQueueStatus(ctx, &adminproto.InQueueStatusRequest{})
+	if err != nil {
+		t.Errorf("Expected no error, got %v", err)
 	}
 
-	// Check that error message contains database connection failure
-	if err != nil && err.Error() == "" {
-		t.Error("Expected non-empty error message")
+	// Should return empty items
+	if resp == nil || len(resp.Items) != 0 {
+		t.Error("Expected empty items in response")
 	}
 }
 

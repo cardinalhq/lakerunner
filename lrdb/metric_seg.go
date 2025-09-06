@@ -17,6 +17,7 @@ package lrdb
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/google/uuid"
 	"github.com/hashicorp/go-multierror"
@@ -101,10 +102,6 @@ type CompactMetricSegsParams struct {
 	IngestDateint int32
 	// FrequencyMs is the frequency in milliseconds at which the metrics are collected.
 	FrequencyMs int32
-	// Published indicates whether the new segments are marked as published.
-	Published bool
-	// Rolledup indicates whether the new segments are marked as rolledup.
-	Rolledup bool
 	// OldRecords contains the segments to be deleted.
 	OldRecords []CompactMetricSegsOld
 	// NewRecords contains the segments to be inserted.
@@ -134,10 +131,10 @@ func (q *Store) RollupMetricSegs(ctx context.Context, sourceParams RollupSourceP
 			IngestDateint:  targetParams.IngestDateint,
 			InstanceNum:    targetParams.InstanceNum,
 			OrganizationID: targetParams.OrganizationID,
-			Published:      true,
 			RecordCount:    newRec.RecordCount,
-			Rolledup:       false,
+			Published:      true,
 			Compacted:      true,
+			Rolledup:       false,
 			SegmentID:      newRec.SegmentID,
 			SlotCount:      targetParams.SlotCount,
 			SlotID:         targetParams.SlotID,
@@ -171,5 +168,94 @@ func (q *Store) RollupMetricSegs(ctx context.Context, sourceParams RollupSourceP
 		}
 
 		return errs.ErrorOrNil()
+	})
+}
+
+// InsertMetricSegmentBatchWithKafkaOffsets inserts multiple metric segments and updates multiple Kafka offsets in a single transaction
+func (q *Store) InsertMetricSegmentBatchWithKafkaOffsets(ctx context.Context, batch MetricSegmentBatch) error {
+	return q.execTx(ctx, func(s *Store) error {
+		// Ensure partitions exist for all segments
+		for _, params := range batch.Segments {
+			if err := s.ensureMetricSegmentPartition(ctx, params.OrganizationID, params.Dateint); err != nil {
+				return err
+			}
+		}
+
+		// Convert to batch parameters
+		batchParams := make([]BatchInsertMetricSegsParams, len(batch.Segments))
+		for i, params := range batch.Segments {
+			batchParams[i] = BatchInsertMetricSegsParams{
+				OrganizationID: params.OrganizationID,
+				Dateint:        params.Dateint,
+				IngestDateint:  params.IngestDateint,
+				FrequencyMs:    params.FrequencyMs,
+				SegmentID:      params.SegmentID,
+				InstanceNum:    params.InstanceNum,
+				SlotID:         params.SlotID,
+				StartTs:        params.StartTs,
+				EndTs:          params.EndTs,
+				RecordCount:    params.RecordCount,
+				FileSize:       params.FileSize,
+				CreatedBy:      params.CreatedBy,
+				Published:      params.Published,
+				Compacted:      params.Compacted,
+				Rolledup:       false,
+				Fingerprints:   params.Fingerprints,
+				SortVersion:    params.SortVersion,
+				SlotCount:      params.SlotCount,
+			}
+		}
+
+		// Insert all segments using batch
+		result := s.BatchInsertMetricSegs(ctx, batchParams)
+		var insertErr error
+		result.Exec(func(i int, err error) {
+			if err != nil && insertErr == nil {
+				insertErr = err
+			}
+		})
+		if insertErr != nil {
+			return insertErr
+		}
+
+		// Update all Kafka offsets using batch operation
+		if len(batch.KafkaOffsets) > 0 {
+			// Sort offsets to prevent deadlocks - consistent lock acquisition order
+			sort.Slice(batch.KafkaOffsets, func(i, j int) bool {
+				a, b := batch.KafkaOffsets[i], batch.KafkaOffsets[j]
+				if a.ConsumerGroup != b.ConsumerGroup {
+					return a.ConsumerGroup < b.ConsumerGroup
+				}
+				if a.Topic != b.Topic {
+					return a.Topic < b.Topic
+				}
+				return a.Partition < b.Partition
+			})
+
+			// Convert to batch parameters
+			batchOffsetParams := make([]KafkaJournalBatchUpsertParams, len(batch.KafkaOffsets))
+			for i, offset := range batch.KafkaOffsets {
+				batchOffsetParams[i] = KafkaJournalBatchUpsertParams{
+					ConsumerGroup:       offset.ConsumerGroup,
+					Topic:               offset.Topic,
+					Partition:           offset.Partition,
+					LastProcessedOffset: offset.Offset,
+				}
+			}
+
+			// Execute batch upsert
+			result := s.KafkaJournalBatchUpsert(ctx, batchOffsetParams)
+			var offsetErr error
+			result.Exec(func(i int, err error) {
+				if err != nil && offsetErr == nil {
+					offsetErr = err
+				}
+			})
+			if offsetErr != nil {
+				return offsetErr
+			}
+		}
+
+		return nil
 	})
 }

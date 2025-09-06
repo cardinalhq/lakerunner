@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
@@ -33,22 +34,21 @@ type metricWriterManager struct {
 	orgID         string
 	ingestDateint int32
 	rpfEstimate   int64
-	ll            *slog.Logger
 }
 
-func newMetricWriterManager(tmpdir, orgID string, ingestDateint int32, rpfEstimate int64, ll *slog.Logger) *metricWriterManager {
+func newMetricWriterManager(ctx context.Context, tmpdir, orgID string, ingestDateint int32, rpfEstimate int64) *metricWriterManager {
 	return &metricWriterManager{
 		writers:       make(map[minuteSlotKey]*parquetwriter.UnifiedWriter),
 		tmpdir:        tmpdir,
 		orgID:         orgID,
 		ingestDateint: ingestDateint,
 		rpfEstimate:   rpfEstimate,
-		ll:            ll,
 	}
 }
 
 // processBatch efficiently processes an entire batch, grouping rows by minute boundary
-func (wm *metricWriterManager) processBatch(batch *pipeline.Batch) (processedCount, errorCount int64) {
+func (wm *metricWriterManager) processBatch(ctx context.Context, batch *pipeline.Batch) (processedCount, errorCount int64) {
+	ll := logctx.FromContext(ctx)
 	// Group rows by minute boundary to minimize writer lookups and enable batch writes
 	batchGroups := make(map[minuteSlotKey]*pipeline.Batch)
 
@@ -56,7 +56,7 @@ func (wm *metricWriterManager) processBatch(batch *pipeline.Batch) (processedCou
 	for i := 0; i < batch.Len(); i++ {
 		row := batch.Get(i)
 		if row == nil {
-			wm.ll.Error("Row is nil - skipping", slog.Int("rowIndex", i))
+			ll.Error("Row is nil - skipping", slog.Int("rowIndex", i))
 			errorCount++
 			continue
 		}
@@ -64,7 +64,7 @@ func (wm *metricWriterManager) processBatch(batch *pipeline.Batch) (processedCou
 		// Extract timestamp
 		ts, ok := row[wkk.RowKeyCTimestamp].(int64)
 		if !ok {
-			wm.ll.Error("_cardinalhq.timestamp field is missing or not int64 - skipping row", slog.Int("rowIndex", i))
+			ll.Error("_cardinalhq.timestamp field is missing or not int64 - skipping row", slog.Int("rowIndex", i))
 			errorCount++
 			continue
 		}
@@ -90,7 +90,7 @@ func (wm *metricWriterManager) processBatch(batch *pipeline.Batch) (processedCou
 	for key, groupedBatch := range batchGroups {
 		writer, err := wm.getWriter(key)
 		if err != nil {
-			wm.ll.Error("Failed to get writer for batch group",
+			ll.Error("Failed to get writer for batch group",
 				slog.Any("key", key),
 				slog.String("error", err.Error()))
 			errorCount += int64(groupedBatch.Len())
@@ -100,7 +100,7 @@ func (wm *metricWriterManager) processBatch(batch *pipeline.Batch) (processedCou
 
 		// Write the entire batch efficiently
 		if err := writer.WriteBatch(groupedBatch); err != nil {
-			wm.ll.Error("Failed to write batch group",
+			ll.Error("Failed to write batch group",
 				slog.Any("key", key),
 				slog.Int("batchSize", groupedBatch.Len()),
 				slog.String("error", err.Error()))

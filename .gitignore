@@ -14,7 +14,7 @@
 
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out
-coverage.html
+coverage.*
 
 # Dependency directories (remove the comment below to include it)
 # vendor/
@@ -26,3 +26,4 @@ bin
 dist
 vendor
 queryworker/db/metrics_cached.ddb
+**/*.prof

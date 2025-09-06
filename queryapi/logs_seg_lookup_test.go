@@ -16,14 +16,16 @@ package queryapi
 
 import (
 	"context"
-	"github.com/cardinalhq/lakerunner/internal/buffet"
 	"slices"
 	"testing"
 	"time"
 
+	"github.com/cardinalhq/lakerunner/internal/buffet"
+
+	"github.com/google/uuid"
+
 	"github.com/cardinalhq/lakerunner/logql"
 	"github.com/cardinalhq/lakerunner/lrdb"
-	"github.com/google/uuid"
 )
 
 const wantFreq = int64(10 * time.Second / time.Millisecond)

@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -99,7 +98,6 @@ func TestAggregateMetrics_Compaction_RealData(t *testing.T) {
 		ReaderStack:       readerStack,
 		TargetFrequencyMs: 10000, // 10s - same as source for compaction
 		TmpDir:            tmpDir,
-		Logger:            slog.Default(),
 		RecordsLimit:      100000,
 		EstimatedRecords:  50000,
 		Action:            "compact",
@@ -218,7 +216,6 @@ func TestAggregateMetrics_EmptyInput(t *testing.T) {
 		ReaderStack:       nil,
 		TargetFrequencyMs: 10000,
 		TmpDir:            tmpDir,
-		Logger:            slog.Default(),
 		RecordsLimit:      100000,
 		EstimatedRecords:  0,
 		Action:            "compact",
@@ -256,7 +253,6 @@ func TestAggregateMetrics_BatchProcessing(t *testing.T) {
 		ReaderStack:       readerStack,
 		TargetFrequencyMs: 10000,
 		TmpDir:            tmpDir,
-		Logger:            slog.Default(),
 		RecordsLimit:      100000,
 		EstimatedRecords:  500,
 		Action:            "compact",
@@ -333,7 +329,6 @@ func TestAggregateMetrics_ErrorHandling(t *testing.T) {
 		ReaderStack:       readerStack,
 		TargetFrequencyMs: 10000,
 		TmpDir:            tmpDir,
-		Logger:            slog.Default(),
 		RecordsLimit:      100000,
 		EstimatedRecords:  500,
 		Action:            "compact",
@@ -400,7 +395,6 @@ func BenchmarkAggregateMetrics_RealData(b *testing.B) {
 			ReaderStack:       readerStack,
 			TargetFrequencyMs: 10000,
 			TmpDir:            tmpDir,
-			Logger:            slog.Default(),
 			RecordsLimit:      100000,
 			EstimatedRecords:  50000,
 			Action:            "compact",

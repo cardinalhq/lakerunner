@@ -19,51 +19,48 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/google/uuid"
+
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/exemplar"
-	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
-	"github.com/cardinalhq/lakerunner/internal/storageprofile"
+	"github.com/cardinalhq/lakerunner/internal/processing/ingest"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-// ProcessBatch processes a batch of metric ingest items
+// ProcessBatch processes a batch of metric ingest items with atomic transaction including Kafka offset
 func ProcessBatch(
 	ctx context.Context,
-	ll *slog.Logger,
-	tmpdir string,
-	sp storageprofile.StorageProfileProvider,
-	mdb lrdb.StoreFull,
-	awsmanager *awsclient.Manager,
-	items []lrdb.Inqueue,
-	ingestDateint int32,
-	rpfEstimate int64,
+	args ingest.ProcessBatchArgs,
+	items []ingest.IngestItem,
 	exemplarProcessor *exemplar.Processor,
+	cfg Config,
 ) error {
 	batchID := idgen.GenerateShortBase32ID()
-	ll = ll.With(slog.String("batchID", batchID))
+	ll := logctx.FromContext(ctx).With(slog.String("batchID", batchID))
 
-	itemIDs := make([]string, len(items))
+	objectIDs := make([]string, len(items))
 	for i, item := range items {
-		itemIDs[i] = item.ID.String()
+		objectIDs[i] = item.ObjectID
 	}
 	ll.Debug("Processing ingestion batch",
 		slog.Int("itemCount", len(items)),
-		slog.Any("itemIDs", itemIDs))
+		slog.Any("objectIDs", objectIDs))
 	// Prepare input
 	ingestionInput := input{
 		Items:             items,
-		TmpDir:            tmpdir,
-		IngestDateint:     ingestDateint,
-		RPFEstimate:       rpfEstimate,
+		TmpDir:            args.TmpDir,
+		IngestDateint:     args.IngestDateint,
+		RPFEstimate:       args.RPFEstimate,
 		ExemplarProcessor: exemplarProcessor,
-		Logger:            ll,
+		Config:            cfg,
 	}
 
-	// Execute ingestion
-	result, err := coordinate(ctx, ingestionInput, sp, awsmanager, mdb)
+	// Execute ingestion without database writes (we'll do batch transaction later)
+	result, err := coordinate(ctx, ingestionInput, args.StorageProvider, args.AWSManager, nil)
 	if err != nil {
 		return fmt.Errorf("ingestion failed: %w", err)
 	}
@@ -72,6 +69,15 @@ func ProcessBatch(
 		ll.Warn("No output files generated despite reading rows",
 			slog.Int64("rowsRead", result.RowsRead),
 			slog.Int64("rowsErrored", result.RowsErrored))
+		// No segments to insert, just update Kafka offset
+		if err := args.DB.KafkaJournalUpsert(ctx, lrdb.KafkaJournalUpsertParams{
+			ConsumerGroup:       args.KafkaOffset.ConsumerGroup,
+			Topic:               args.KafkaOffset.Topic,
+			Partition:           args.KafkaOffset.Partition,
+			LastProcessedOffset: args.KafkaOffset.Offset,
+		}); err != nil {
+			return fmt.Errorf("failed to update Kafka offset: %w", err)
+		}
 		return nil
 	}
 
@@ -81,26 +87,47 @@ func ProcessBatch(
 			slog.Float64("dropRate", float64(result.RowsErrored)/float64(result.RowsRead)*100))
 	}
 
-	// Get storage profile for upload operations
+	// Get storage profile and S3 client
 	firstItem := items[0]
-	profile, err := getStorageProfileForIngestion(ctx, sp, firstItem)
+	profile, err := args.StorageProvider.GetStorageProfileForOrganizationAndInstance(ctx, firstItem.OrganizationID, firstItem.InstanceNum)
 	if err != nil {
 		return fmt.Errorf("failed to get storage profile: %w", err)
 	}
 
-	// Calculate input size from bundle
+	// Upload results to S3 and collect segment parameters
+	s3client, err := args.AWSManager.GetS3ForProfile(ctx, profile)
+	if err != nil {
+		return fmt.Errorf("failed to get S3 client: %w", err)
+	}
+
+	uploadParams := metricsprocessing.UploadParams{
+		OrganizationID: profile.OrganizationID.String(),
+		InstanceNum:    profile.InstanceNum,
+		Dateint:        0,     // Will be calculated from timestamps
+		FrequencyMs:    10000, // 10 second blocks
+		IngestDateint:  args.IngestDateint,
+		CollectorName:  profile.CollectorName,
+		Bucket:         profile.Bucket,
+		CreatedBy:      lrdb.CreatedByIngest,
+	}
+
+	// Create segments and upload to S3, collecting segment parameters
+	segmentParams, err := createAndUploadSegments(ctx, s3client, result.Results, uploadParams)
+	if err != nil {
+		return fmt.Errorf("failed to create and upload segments: %w", err)
+	}
+
+	// Calculate input/output size metrics
 	var totalInputSize int64
 	for _, item := range items {
 		totalInputSize += item.FileSize
 	}
 
-	// Calculate output size
 	var totalOutputSize int64
 	for _, r := range result.Results {
 		totalOutputSize += r.FileSize
 	}
 
-	// Calculate compression ratio (output/input * 100)
 	var compressionRatio float64
 	if totalInputSize > 0 {
 		compressionRatio = (float64(totalOutputSize) / float64(totalInputSize)) * 100
@@ -114,72 +141,41 @@ func ProcessBatch(
 		slog.Float64("compressionRatio", compressionRatio),
 		slog.String("compressionRatioStr", fmt.Sprintf("%.1f%%", compressionRatio)))
 
-	// Upload results and queue work
-	return uploadAndQueue(ctx, ll, awsmanager, mdb, result.Results, profile, ingestDateint)
-}
-
-// uploadAndQueue uploads the results and queues follow-up work
-func uploadAndQueue(
-	ctx context.Context,
-	ll *slog.Logger,
-	awsmanager *awsclient.Manager,
-	mdb lrdb.StoreFull,
-	results []parquetwriter.Result,
-	profile storageprofile.StorageProfile,
-	ingestDateint int32,
-) error {
-	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
-	if err != nil {
-		return fmt.Errorf("failed to get S3 client: %w", err)
+	// Execute the atomic transaction: insert all segments + Kafka offsets
+	batch := lrdb.MetricSegmentBatch{
+		Segments:     segmentParams,
+		KafkaOffsets: []lrdb.KafkaOffsetUpdate{args.KafkaOffset},
 	}
 
-	// Upload results and update database
-	uploadParams := metricsprocessing.UploadParams{
-		OrganizationID: profile.OrganizationID.String(),
-		InstanceNum:    profile.InstanceNum,
-		Dateint:        0,     // Will be calculated from timestamps
-		FrequencyMs:    10000, // 10 second blocks
-		IngestDateint:  ingestDateint,
-		CollectorName:  profile.CollectorName,
-		Bucket:         profile.Bucket,
-		CreatedBy:      lrdb.CreatedByIngest,
-	}
-
-	// Use context without cancellation for critical section to ensure atomic completion
 	criticalCtx := context.WithoutCancel(ctx)
-	segments, err := metricsprocessing.UploadMetricResultsWithProcessedSegments(criticalCtx, ll, s3client, mdb, results, uploadParams)
-	if err != nil {
-		return fmt.Errorf("failed to upload results: %w", err)
+	if err := args.DB.InsertMetricSegmentBatchWithKafkaOffsets(criticalCtx, batch); err != nil {
+		return fmt.Errorf("failed to insert metric segments with Kafka offsets: %w", err)
 	}
 
-	// Queue compaction for each uploaded segment (rollup will be queued during compaction)
-	if err := segments.QueueCompactionWork(criticalCtx, mdb, profile.OrganizationID, profile.InstanceNum, 10000); err != nil {
-		return fmt.Errorf("failed to queue compaction work: %w", err)
+	// Queue compaction work
+	for _, segParams := range segmentParams {
+		if err := args.DB.McqQueueWork(criticalCtx, lrdb.McqQueueWorkParams{
+			OrganizationID: segParams.OrganizationID,
+			Dateint:        segParams.Dateint,
+			FrequencyMs:    segParams.FrequencyMs,
+			SegmentID:      segParams.SegmentID,
+			InstanceNum:    segParams.InstanceNum,
+			RecordCount:    segParams.RecordCount,
+		}); err != nil {
+			return fmt.Errorf("failed to queue compaction work: %w", err)
+		}
 	}
 
 	return nil
 }
 
-// ShouldProcessExemplars checks if exemplar processing should be enabled
-// Returns false if LAKERUNNER_METRICS_EXEMPLARS is set to "false", "0", or "off"
-func ShouldProcessExemplars() bool {
-	return helpers.GetBoolEnv("LAKERUNNER_METRICS_EXEMPLARS", true)
-}
-
-// shouldUseSingleInstanceMode checks if single instance mode is enabled
-// Returns true if LAKERUNNER_SINGLE_INSTANCE_NUM is set to "true" or "1"
-func shouldUseSingleInstanceMode() bool {
-	return helpers.GetBoolEnv("LAKERUNNER_SINGLE_INSTANCE_NUM", false)
-}
-
 // getStorageProfileForIngestion gets the appropriate storage profile for ingestion
-// based on the LAKERUNNER_SINGLE_INSTANCE_NUM environment variable setting
 func getStorageProfileForIngestion(
 	ctx context.Context,
 	sp storageprofile.StorageProfileProvider,
-	firstItem lrdb.Inqueue,
+	firstItem ingest.IngestItem,
 ) (storageprofile.StorageProfile, error) {
-	if shouldUseSingleInstanceMode() {
+	if cfg.SingleInstanceMode {
 		return sp.GetLowestInstanceStorageProfile(ctx, firstItem.OrganizationID, firstItem.Bucket)
 	}
 
@@ -187,4 +183,67 @@ func getStorageProfileForIngestion(
 		return sp.GetStorageProfileForOrganizationAndCollector(ctx, firstItem.OrganizationID, collectorName)
 	}
 	return sp.GetStorageProfileForOrganizationAndInstance(ctx, firstItem.OrganizationID, firstItem.InstanceNum)
+}
+
+// createAndUploadSegments creates segments from parquet results, uploads them to S3, and returns segment parameters
+func createAndUploadSegments(ctx context.Context, s3client *awsclient.S3Client, results []parquetwriter.Result, uploadParams metricsprocessing.UploadParams) ([]lrdb.InsertMetricSegmentParams, error) {
+	ll := logctx.FromContext(ctx)
+
+	orgUUID, err := uuid.Parse(uploadParams.OrganizationID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid organization ID: %w", err)
+	}
+
+	segmentParams := make([]lrdb.InsertMetricSegmentParams, 0, len(results))
+
+	for _, result := range results {
+		// Safety check: should never get empty results from the writer
+		if result.RecordCount == 0 {
+			ll.Error("Received empty result from writer - this should not happen",
+				slog.String("fileName", result.FileName),
+				slog.Int64("recordCount", result.RecordCount))
+			return nil, fmt.Errorf("received empty result file with 0 records")
+		}
+
+		segment, err := metricsprocessing.NewProcessedSegment(ctx, result, orgUUID, uploadParams.CollectorName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create processed segment: %w", err)
+		}
+
+		// Upload to S3
+		if err := segment.UploadToS3(ctx, s3client, uploadParams.Bucket); err != nil {
+			return nil, fmt.Errorf("uploading file to S3: %w", err)
+		}
+
+		ll.Debug("Metric segment stats",
+			slog.Int64("segmentID", segment.SegmentID),
+			slog.Int64("recordCount", result.RecordCount),
+			slog.Int64("fileSize", result.FileSize))
+
+		// Create segment parameters for database insertion
+		dateint, _ := segment.GetDateintHour()
+		params := lrdb.InsertMetricSegmentParams{
+			OrganizationID: orgUUID,
+			Dateint:        dateint,
+			IngestDateint:  uploadParams.IngestDateint,
+			FrequencyMs:    int32(uploadParams.FrequencyMs),
+			SegmentID:      segment.SegmentID,
+			InstanceNum:    uploadParams.InstanceNum,
+			SlotID:         0, // Will be calculated based on segment ID
+			SlotCount:      1,
+			StartTs:        segment.StartTs,
+			EndTs:          segment.EndTs,
+			RecordCount:    result.RecordCount,
+			FileSize:       result.FileSize,
+			CreatedBy:      uploadParams.CreatedBy,
+			Published:      true,
+			Compacted:      false,
+			Fingerprints:   segment.Fingerprints,
+			SortVersion:    lrdb.CurrentMetricSortVersion,
+		}
+
+		segmentParams = append(segmentParams, params)
+	}
+
+	return segmentParams, nil
 }

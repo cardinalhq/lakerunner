@@ -18,14 +18,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"slices"
+	"time"
+
+	"github.com/google/uuid"
+
 	"github.com/cardinalhq/lakerunner/internal/buffet"
 	"github.com/cardinalhq/lakerunner/logql"
 	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/cardinalhq/lakerunner/promql"
-	"github.com/google/uuid"
-	"log/slog"
-	"slices"
-	"time"
 
 	"github.com/google/codesearch/index"
 	"github.com/google/codesearch/regexp"

@@ -15,13 +15,13 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
+	"log/slog"
+
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/queryworker"
-	"log/slog"
 
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
@@ -36,7 +36,7 @@ func init() {
 		RunE: func(_ *cobra.Command, _ []string) error {
 			servicename := "query-worker"
 			addlAttrs := attribute.NewSet()
-			doneCtx, doneFx, err := setupTelemetry(servicename, &addlAttrs)
+			ctx, doneFx, err := setupTelemetry(servicename, &addlAttrs)
 			if err != nil {
 				return fmt.Errorf("failed to setup telemetry: %w", err)
 			}
@@ -52,12 +52,12 @@ func init() {
 			healthServer := healthcheck.NewServer(healthConfig)
 
 			go func() {
-				if err := healthServer.Start(doneCtx); err != nil {
+				if err := healthServer.Start(ctx); err != nil {
 					slog.Error("Health check server stopped", slog.Any("error", err))
 				}
 			}()
 
-			cdb, err := dbopen.ConfigDBStore(context.Background())
+			cdb, err := dbopen.ConfigDBStore(ctx)
 			sp := storageprofile.NewStorageProfileProvider(cdb)
 
 			if err != nil {
@@ -65,15 +65,15 @@ func init() {
 				return fmt.Errorf("failed to create query-worker service: %w", err)
 			}
 
-			cloudManagers, err := cloudstorage.NewCloudManagers(context.Background())
+			cmgr, err := cloudstorage.NewCloudManagers(ctx)
 			if err != nil {
 				return fmt.Errorf("failed to create cloud managers: %w", err)
 			}
 
 			healthServer.SetStatus(healthcheck.StatusHealthy)
 
-			worker := queryworker.NewWorkerService(5, 5, 12, sp, cloudManagers)
-			return worker.Run(doneCtx)
+			worker := queryworker.NewWorkerService(5, 5, 12, sp, cmgr)
+			return worker.Run(ctx)
 		},
 	}
 

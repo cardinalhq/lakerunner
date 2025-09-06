@@ -74,7 +74,7 @@ func runLoop(
 		mcqHeartbeater := newMCQHeartbeater(mdb, manager.workerID, itemIDs)
 		cancel := mcqHeartbeater.Start(ctx)
 
-		err = processBatch(ctx, ll, mdb, sp, awsmanager, *bundle)
+		err = processBatch(ctx, mdb, sp, awsmanager, *bundle)
 
 		// Stop heartbeating before handling results
 		cancel()

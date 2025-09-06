@@ -16,14 +16,7 @@ package pubsub
 
 import (
 	"context"
-
-	"github.com/cardinalhq/lakerunner/lrdb"
 )
-
-// InqueueInserter defines the interface for inserting work into the inqueue
-type InqueueInserter interface {
-	PutInqueueWork(ctx context.Context, arg lrdb.PutInqueueWorkParams) error
-}
 
 // Service defines the interface for pubsub services
 type Service interface {

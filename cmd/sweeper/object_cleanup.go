@@ -27,19 +27,22 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
-	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
+	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 // Aggressive loop for object cleanup.
 // If work was done: tiny delay; else a slightly longer pause. Errors are logged and retried.
-func objectCleanerLoop(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, awsmanager *awsclient.Manager) error {
+func objectCleanerLoop(ctx context.Context, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, cmgr *cloudstorage.CloudManagers) error {
 	const (
 		delayIfNoWork = 5 * time.Second
 		delayIfError  = 5 * time.Second
 	)
+
+	ll := logctx.FromContext(ctx)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -47,7 +50,7 @@ func objectCleanerLoop(ctx context.Context, ll *slog.Logger, sp storageprofile.S
 		default:
 		}
 
-		didWork, err := runObjCleaner(ctx, ll, sp, mdb, awsmanager)
+		didWork, err := runObjCleaner(ctx, ll, sp, mdb, cmgr)
 		switch {
 		case err != nil:
 			ll.Error("Failed to run object cleaner", slog.Any("error", err))
@@ -69,7 +72,7 @@ func objectCleanerLoop(ctx context.Context, ll *slog.Logger, sp storageprofile.S
 	}
 }
 
-func runObjCleaner(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, awsmanager *awsclient.Manager) (bool, error) {
+func runObjCleaner(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, cmgr *cloudstorage.CloudManagers) (bool, error) {
 	const maxrows = 1000
 	objs, err := mdb.ObjectCleanupGet(ctx, maxrows)
 	if err != nil {
@@ -91,7 +94,7 @@ func runObjCleaner(ctx context.Context, ll *slog.Logger, sp storageprofile.Stora
 		go func() {
 			defer wg.Done()
 			for obj := range jobs {
-				cleanupObj(ctx, ll, sp, mdb, awsmanager, obj)
+				cleanupObj(ctx, sp, mdb, cmgr, obj)
 			}
 		}()
 	}
@@ -104,13 +107,15 @@ func runObjCleaner(ctx context.Context, ll *slog.Logger, sp storageprofile.Stora
 	return didwork, nil
 }
 
-func cleanupObj(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, awsmanager *awsclient.Manager, obj lrdb.ObjectCleanupGetRow) {
-	ll = ll.With(
+func cleanupObj(ctx context.Context, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, cmgr *cloudstorage.CloudManagers, obj lrdb.ObjectCleanupGetRow) {
+	ll := logctx.FromContext(ctx).With(
 		slog.String("objectID", obj.ObjectID),
 		slog.String("bucketID", obj.BucketID),
 		slog.String("organizationID", obj.OrganizationID.String()),
 		slog.Int("instanceNum", int(obj.InstanceNum)),
 	)
+
+	ctx = logctx.WithLogger(ctx, ll)
 
 	profile, err := sp.GetStorageProfileForOrganizationAndInstance(ctx, obj.OrganizationID, obj.InstanceNum)
 	if err != nil {
@@ -120,36 +125,36 @@ func cleanupObj(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageP
 			attribute.String("bucket", obj.BucketID),
 			attribute.String("organization_id", obj.OrganizationID.String()),
 		))
-		failWork(ctx, ll, mdb, obj.ID)
+		failWork(ctx, mdb, obj.ID)
 		return
 	}
 
 	if profile.Bucket != obj.BucketID {
 		ll.Error("Storage profile bucket mismatch", slog.String("profileBucket", profile.Bucket))
-		failWork(ctx, ll, mdb, obj.ID)
+		failWork(ctx, mdb, obj.ID)
 		return
 	}
 
-	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
+	storageClient, err := cloudstorage.NewClient(ctx, cmgr, profile)
 	if err != nil {
-		ll.Error("Failed to get S3 client", slog.Any("error", err))
+		ll.Error("Failed to get storage client", slog.Any("error", err))
 		objectCleanupCounter.Add(ctx, 1, metric.WithAttributes(
 			attribute.String("status", "failure"),
 			attribute.String("bucket", obj.BucketID),
 			attribute.String("organization_id", obj.OrganizationID.String()),
 		))
-		failWork(ctx, ll, mdb, obj.ID)
+		failWork(ctx, mdb, obj.ID)
 		return
 	}
 
-	if err := s3helper.DeleteS3Object(ctx, s3client, profile.Bucket, obj.ObjectID); err != nil {
+	if err := storageClient.DeleteObject(ctx, profile.Bucket, obj.ObjectID); err != nil {
 		ll.Error("Failed to delete S3 object", slog.Any("error", err), slog.String("objectID", obj.ObjectID))
 		objectCleanupCounter.Add(ctx, 1, metric.WithAttributes(
 			attribute.String("status", "failure"),
 			attribute.String("bucket", obj.BucketID),
 			attribute.String("organization_id", obj.OrganizationID.String()),
 		))
-		failWork(ctx, ll, mdb, obj.ID)
+		failWork(ctx, mdb, obj.ID)
 		return
 	}
 
@@ -160,7 +165,7 @@ func cleanupObj(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageP
 			attribute.String("bucket", obj.BucketID),
 			attribute.String("organization_id", obj.OrganizationID.String()),
 		))
-		failWork(ctx, ll, mdb, obj.ID)
+		failWork(ctx, mdb, obj.ID)
 		return
 	}
 
@@ -171,7 +176,9 @@ func cleanupObj(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageP
 	))
 }
 
-func failWork(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull, id uuid.UUID) {
+func failWork(ctx context.Context, mdb lrdb.StoreFull, id uuid.UUID) {
+	ll := logctx.FromContext(ctx)
+
 	if err := mdb.ObjectCleanupFail(ctx, id); err != nil {
 		ll.Error("Failed to mark object cleanup failed", slog.Any("error", err), slog.String("objectID", id.String()))
 	}

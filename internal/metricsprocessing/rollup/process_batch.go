@@ -26,6 +26,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
@@ -47,7 +48,6 @@ type RollupUploadParams struct {
 
 func processBatch(
 	ctx context.Context,
-	ll *slog.Logger,
 	mdb rollupStore,
 	sp storageprofile.StorageProfileProvider,
 	awsmanager *awsclient.Manager,
@@ -59,7 +59,7 @@ func processBatch(
 
 	// Generate batch ID and enhance logger
 	batchID := idgen.GenerateShortBase32ID()
-	ll = ll.With(slog.String("batchID", batchID))
+	ll := logctx.FromContext(ctx).With(slog.String("batchID", batchID))
 
 	// Log work items we're processing once at the top
 	workItemIDs := make([]int64, len(bundle.Items))
@@ -156,7 +156,7 @@ func processBatch(
 		return nil
 	}
 
-	err = rollupMetricSegments(ctx, ll, mdb, tmpdir, firstSeg, profile, s3client, sourceRows, targetFrequency, bundle.EstimatedTarget)
+	err = rollupMetricSegments(ctx, mdb, tmpdir, firstSeg, profile, s3client, sourceRows, targetFrequency, bundle.EstimatedTarget)
 
 	elapsed := time.Since(t0)
 
@@ -182,7 +182,6 @@ func processBatch(
 
 func rollupMetricSegments(
 	ctx context.Context,
-	ll *slog.Logger,
 	mdb rollupStore,
 	tmpdir string,
 	firstSeg lrdb.MetricSeg,
@@ -192,6 +191,8 @@ func rollupMetricSegments(
 	targetFrequency int32,
 	estimatedTargetRecords int64,
 ) error {
+	ll := logctx.FromContext(ctx)
+
 	if len(sourceRows) == 0 {
 		ll.Info("No source segments found for rollup, skipping rollup operation",
 			slog.Int("sourceFrequencyMs", int(firstSeg.FrequencyMs)),
@@ -203,8 +204,7 @@ func rollupMetricSegments(
 
 	// Track download time
 	downloadStart := time.Now()
-	readerStack, err := metricsprocessing.CreateReaderStack(
-		ctx, ll, tmpdir, s3client, firstSeg.OrganizationID, profile, sourceRows)
+	readerStack, err := metricsprocessing.CreateReaderStack(ctx, tmpdir, s3client, firstSeg.OrganizationID, profile, sourceRows)
 	if err != nil {
 		return err
 	}
@@ -223,7 +223,7 @@ func rollupMetricSegments(
 		return nil
 	}
 
-	defer metricsprocessing.CloseReaderStack(ll, readerStack)
+	defer metricsprocessing.CloseReaderStack(ctx, readerStack)
 
 	// Calculate input statistics from source segments
 	inputBytes := int64(0)
@@ -248,7 +248,6 @@ func rollupMetricSegments(
 		ReaderStack:       readerStack,
 		TargetFrequencyMs: targetFrequency, // Target frequency for rollup
 		TmpDir:            tmpdir,
-		Logger:            ll,
 		RecordsLimit:      estimatedTargetRecords,
 		EstimatedRecords:  estimatedTargetRecords,
 		Action:            "rollup",
@@ -301,7 +300,7 @@ func rollupMetricSegments(
 
 	// Track upload time
 	uploadStart := time.Now()
-	err = uploadRolledUpMetricsAtomic(criticalCtx, ll, mdb, s3client, processingResult.RawResults, sourceRows, rollupParams)
+	err = uploadRolledUpMetricsAtomic(criticalCtx, mdb, s3client, processingResult.RawResults, sourceRows, rollupParams)
 	if err != nil {
 		return fmt.Errorf("failed to upload rolled-up metrics: %w", err)
 	}
@@ -344,15 +343,16 @@ func fetchMetricSegsFromCandidates(ctx context.Context, db rollupStore, candidat
 
 func uploadRolledUpMetricsAtomic(
 	ctx context.Context,
-	ll *slog.Logger,
 	mdb rollupStore,
 	s3client *awsclient.S3Client,
 	results []parquetwriter.Result,
 	sourceRows []lrdb.MetricSeg,
 	params RollupUploadParams,
 ) error {
+	ll := logctx.FromContext(ctx)
+
 	// Create processed segments from results
-	segments, err := metricsprocessing.CreateSegmentsFromResults(results, params.OrganizationID, params.CollectorName, ll)
+	segments, err := metricsprocessing.CreateSegmentsFromResults(ctx, results, params.OrganizationID, params.CollectorName)
 	if err != nil {
 		return fmt.Errorf("failed to create processed segment: %w", err)
 	}
@@ -371,7 +371,7 @@ func uploadRolledUpMetricsAtomic(
 		slog.String("bucket", params.Bucket),
 		slog.Int("segmentCount", len(segments)))
 
-	if _, err := metricsprocessing.UploadSegments(ctx, ll, s3client, params.Bucket, segments); err != nil {
+	if _, err := metricsprocessing.UploadSegments(ctx, s3client, params.Bucket, segments); err != nil {
 		ll.Error("Atomic operation failed during S3 upload - no changes made",
 			slog.Any("error", err))
 		return fmt.Errorf("uploading new S3 objects: %w", err)

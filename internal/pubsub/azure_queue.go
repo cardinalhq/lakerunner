@@ -26,6 +26,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azqueue"
+
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/internal/azureclient"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"

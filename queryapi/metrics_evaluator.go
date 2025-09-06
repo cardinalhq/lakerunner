@@ -18,14 +18,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/cardinalhq/lakerunner/internal/buffet"
-	"github.com/cardinalhq/lakerunner/lrdb"
-	"github.com/cardinalhq/lakerunner/promql"
-	"github.com/google/uuid"
-	"github.com/prometheus/common/model"
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/prometheus/common/model"
+
+	"github.com/cardinalhq/lakerunner/internal/buffet"
+	"github.com/cardinalhq/lakerunner/lrdb"
+	"github.com/cardinalhq/lakerunner/promql"
 )
 
 // registration for the coordinator

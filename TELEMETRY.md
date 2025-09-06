@@ -1,6 +1,6 @@
 # Telemetry Documentation
 
-This document describes all telemetry metrics emitted by LakeRunner services.
+This document describes all telemetry metrics emitted by Lakerunner services.
 
 ## Common Attributes
 

@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"go.opentelemetry.io/collector/pdata/pmetric"
+
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 )
 
 // TelemetryType represents the type of telemetry being processed
@@ -41,7 +43,6 @@ type Tenant struct {
 // Processor handles exemplar generation from different telemetry types using tenant-based LRU caches
 type Processor struct {
 	tenants       sync.Map // organizationID -> *Tenant
-	logger        *slog.Logger
 	telemetryType TelemetryType
 
 	// Callback for metrics exemplars (logs and traces not implemented yet)
@@ -95,39 +96,39 @@ func DefaultConfig() Config {
 }
 
 // NewProcessor creates a new processor for a specific telemetry type
-func NewProcessor(telemetryType TelemetryType, config Config, logger *slog.Logger) *Processor {
+func NewProcessor(telemetryType TelemetryType, config Config) *Processor {
 	return &Processor{
 		tenants:       sync.Map{},
-		logger:        logger,
 		telemetryType: telemetryType,
 		config:        config,
 	}
 }
 
-func (p *Processor) getTenant(organizationID string) *Tenant {
+func (p *Processor) getTenant(ctx context.Context, organizationID string) *Tenant {
+	ll := logctx.FromContext(ctx)
 	if existing, ok := p.tenants.Load(organizationID); ok {
 		return existing.(*Tenant)
 	}
 
-	p.logger.Info("Creating new tenant", slog.String("organization_id", organizationID))
+	ll.Info("Creating new tenant", slog.String("organization_id", organizationID))
 	tenant := &Tenant{}
 
 	// Create cache based on processor type
 	switch p.telemetryType {
 	case TelemetryTypeLogs:
 		// Logs not implemented yet
-		p.logger.Debug("Logs processing not implemented yet")
+		ll.Debug("Logs processing not implemented yet")
 	case TelemetryTypeMetrics:
 		if p.config.Metrics.Enabled {
 			tenant.metricCache = NewLRUCache(
 				p.config.Metrics.CacheSize,
 				p.config.Metrics.Expiry,
 				p.config.Metrics.ReportInterval,
-				p.createMetricsCallback(organizationID))
+				p.createMetricsCallback(ctx, organizationID))
 		}
 	case TelemetryTypeTraces:
 		// Traces not implemented yet
-		p.logger.Debug("Traces processing not implemented yet")
+		ll.Debug("Traces processing not implemented yet")
 	}
 
 	p.tenants.Store(organizationID, tenant)
@@ -135,9 +136,10 @@ func (p *Processor) getTenant(organizationID string) *Tenant {
 }
 
 // createMetricsCallback creates a callback function for metrics exemplars for a specific organization
-func (p *Processor) createMetricsCallback(organizationID string) func([]*Entry[pmetric.Metrics]) {
+func (p *Processor) createMetricsCallback(ctx context.Context, organizationID string) func([]*Entry[pmetric.Metrics]) {
 	return func(entries []*Entry[pmetric.Metrics]) {
-		p.logger.Info("Processing metrics exemplars",
+		ll := logctx.FromContext(ctx)
+		ll.Info("Processing metrics exemplars",
 			slog.String("organization_id", organizationID),
 			slog.Int("count", len(entries)))
 
@@ -145,7 +147,7 @@ func (p *Processor) createMetricsCallback(organizationID string) func([]*Entry[p
 		for _, entry := range entries {
 			data, err := p.marshalMetrics(entry.value)
 			if err != nil {
-				p.logger.Error("Failed to marshal metrics data", slog.Any("error", err))
+				ll.Error("Failed to marshal metrics data", slog.Any("error", err))
 				continue
 			}
 
@@ -169,7 +171,7 @@ func (p *Processor) createMetricsCallback(organizationID string) func([]*Entry[p
 
 		if p.sendMetricsExemplars != nil {
 			if err := p.sendMetricsExemplars(context.Background(), organizationID, exemplarData); err != nil {
-				p.logger.Error("Failed to send exemplars to database", slog.Any("error", err))
+				ll.Error("Failed to send exemplars to database", slog.Any("error", err))
 			}
 		}
 	}
@@ -191,7 +193,7 @@ func (p *Processor) ProcessMetrics(ctx context.Context, md pmetric.Metrics, orga
 		return nil
 	}
 
-	tenant := p.getTenant(organizationID)
+	tenant := p.getTenant(ctx, organizationID)
 	if tenant.metricCache == nil {
 		return nil
 	}
@@ -246,6 +248,6 @@ func (p *Processor) SetMetricsCallback(callback func(ctx context.Context, organi
 }
 
 // NewMetricsProcessor creates a new processor specifically for metrics
-func NewMetricsProcessor(config Config, logger *slog.Logger) *Processor {
-	return NewProcessor(TelemetryTypeMetrics, config, logger)
+func NewMetricsProcessor(config Config) *Processor {
+	return NewProcessor(TelemetryTypeMetrics, config)
 }

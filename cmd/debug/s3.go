@@ -26,7 +26,8 @@ import (
 	"golang.org/x/exp/slog"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
-	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
+	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
+	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
 func GetS3Cmd() *cobra.Command {
@@ -137,22 +138,27 @@ func getS3LSCmd() *cobra.Command {
 func runS3Cat(bucketID string, objectID string, region string, role string) error {
 	ctx := context.Background()
 
-	// Initialize AWS S3 client
-	mgr, err := awsclient.NewManager(ctx)
+	// Initialize cloud storage client
+	awsManager, err := awsclient.NewManager(ctx)
 	if err != nil {
 		return err
 	}
 
-	var opts []awsclient.S3Option
-	if role != "" {
-		opts = append(opts, awsclient.WithRole(role))
+	cloudManagers := &cloudstorage.CloudManagers{
+		AWS: awsManager,
 	}
-	if region != "" {
-		opts = append(opts, awsclient.WithRegion(region))
+
+	// Create a storage profile for the debug operation
+	profile := storageprofile.StorageProfile{
+		CloudProvider: "aws",
+		Bucket:        bucketID,
+		Region:        region,
+		Role:          role,
 	}
-	s3client, err := mgr.GetS3(ctx, opts...)
+
+	storageClient, err := cloudstorage.NewClient(ctx, cloudManagers, profile)
 	if err != nil {
-		return fmt.Errorf("failed to get S3 client: %w", err)
+		return fmt.Errorf("failed to create storage client: %w", err)
 	}
 
 	tmpdir, err := os.MkdirTemp("", "")
@@ -161,7 +167,7 @@ func runS3Cat(bucketID string, objectID string, region string, role string) erro
 	}
 	defer os.RemoveAll(tmpdir)
 
-	fn, size, is404, err := s3helper.DownloadS3Object(ctx, tmpdir, s3client, bucketID, objectID)
+	fn, size, is404, err := storageClient.DownloadObject(ctx, tmpdir, bucketID, objectID)
 	if err != nil {
 		return fmt.Errorf("failed to download S3 object: %w", err)
 	}

@@ -18,54 +18,21 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"sync/atomic"
 	"time"
-
-	"github.com/google/uuid"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
-	"go.opentelemetry.io/otel/trace"
 
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/estimator"
 	"github.com/cardinalhq/lakerunner/internal/exemplar"
-	"github.com/cardinalhq/lakerunner/internal/heartbeat"
-	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
+	"github.com/cardinalhq/lakerunner/internal/processing/ingest"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
-	"github.com/cardinalhq/lakerunner/internal/workqueue"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-// InqueueHeartbeatStore defines the minimal interface needed for inqueue heartbeat operations
-type InqueueHeartbeatStore interface {
-	TouchInqueueWork(ctx context.Context, params lrdb.TouchInqueueWorkParams) error
-}
-
-// newInqueueHeartbeater creates a new heartbeater for the given claimed inqueue items
-func newInqueueHeartbeater(db InqueueHeartbeatStore, workerID int64, items []uuid.UUID) *heartbeat.Heartbeater {
-	if len(items) == 0 {
-		// Return a no-op heartbeater for empty items
-		return heartbeat.New(func(ctx context.Context) error {
-			return nil // No-op
-		}, time.Minute, slog.Default().With("component", "inqueue_heartbeater", "worker_id", workerID, "item_count", 0))
-	}
-
-	heartbeatFunc := func(ctx context.Context) error {
-		return db.TouchInqueueWork(ctx, lrdb.TouchInqueueWorkParams{
-			Ids:       items,
-			ClaimedBy: workerID,
-		})
-	}
-
-	logger := slog.Default().With("component", "inqueue_heartbeater", "worker_id", workerID, "item_count", len(items))
-	return heartbeat.New(heartbeatFunc, time.Minute, logger)
-}
-
-type InqueueBatchProcessingFunction func(
+type IngestBatchProcessingFunction func(
 	ctx context.Context,
-	ll *slog.Logger,
 	tmpdir string,
 	sp storageprofile.StorageProfileProvider,
 	mdb lrdb.StoreFull,
@@ -76,14 +43,12 @@ type InqueueBatchProcessingFunction func(
 	loop *IngestLoopContext) error
 
 type IngestLoopContext struct {
-	ctx               context.Context
 	mdb               lrdb.StoreFull
 	sp                storageprofile.StorageProfileProvider
 	cloudManagers     *cloudstorage.CloudManagers
 	metricEstimator   estimator.MetricEstimator
 	logEstimator      estimator.LogEstimator
 	signal            string
-	ll                *slog.Logger
 	exemplarProcessor *exemplar.Processor
 	processedItems    *int64
 	lastLogTime       *time.Time
@@ -94,13 +59,14 @@ func NewIngestLoopContext(ctx context.Context, signal string) (*IngestLoopContex
 		slog.String("signal", signal),
 		slog.String("action", "ingest"),
 	)
+	ctx = logctx.WithLogger(ctx, ll)
 
 	mdb, err := dbopen.LRDBStore(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open LRDB store: %w", err)
 	}
 
-	cloudManagers, err := cloudstorage.NewCloudManagers(ctx)
+	cmgr, err := cloudstorage.NewCloudManagers(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create cloud managers: %w", err)
 	}
@@ -137,7 +103,7 @@ func NewIngestLoopContext(ctx context.Context, signal string) (*IngestLoopContex
 		},
 	}
 
-	exemplarProcessor := exemplar.NewMetricsProcessor(config, ll)
+	exemplarProcessor := exemplar.NewMetricsProcessor(config)
 
 	exemplarProcessor.SetMetricsCallback(func(ctx context.Context, organizationID string, exemplars []*exemplar.ExemplarData) error {
 		return processMetricsExemplarsDirect(ctx, organizationID, exemplars, mdb)
@@ -147,14 +113,12 @@ func NewIngestLoopContext(ctx context.Context, signal string) (*IngestLoopContex
 	var lastLogTime time.Time
 
 	loopCtx := &IngestLoopContext{
-		ctx:               ctx,
 		mdb:               mdb,
 		sp:                sp,
-		cloudManagers:     cloudManagers,
+		cloudManagers:     cmgr,
 		metricEstimator:   metricEst,
 		logEstimator:      logEst,
 		signal:            signal,
-		ll:                ll,
 		exemplarProcessor: exemplarProcessor,
 		processedItems:    &processedItems,
 		lastLogTime:       &lastLogTime,

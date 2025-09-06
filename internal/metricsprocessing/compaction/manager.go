@@ -24,12 +24,13 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 type compactionStore interface {
-	s3helper.ObjectCleanupStore
+	cloudstorage.ObjectCleanupStore
 	ClaimCompactionBundle(ctx context.Context, p lrdb.BundleParams) (lrdb.CompactionBundleResult, error)
 	McqCompleteDelete(ctx context.Context, arg lrdb.McqCompleteDeleteParams) error
 	McqDeferItems(ctx context.Context, arg lrdb.McqDeferItemsParams) error
@@ -101,7 +102,6 @@ type Manager struct {
 	db         compactionStore
 	workerID   int64
 	config     config
-	ll         *slog.Logger
 	sp         storageprofile.StorageProfileProvider
 	awsmanager *awsclient.Manager
 }
@@ -117,7 +117,6 @@ func NewManager(
 		db:         db,
 		workerID:   workerID,
 		config:     config,
-		ll:         slog.Default().With(slog.String("component", "metric-compaction-manager")),
 		sp:         sp,
 		awsmanager: awsmanager,
 	}
@@ -125,6 +124,8 @@ func NewManager(
 
 // ClaimWork returns the bundle and estimated target records for writers
 func (m *Manager) ClaimWork(ctx context.Context) (*lrdb.CompactionBundleResult, error) {
+	ll := logctx.FromContext(ctx)
+
 	bundleParams := lrdb.BundleParams{
 		WorkerID:    m.workerID,
 		OverFactor:  m.config.OverFactor,
@@ -141,7 +142,7 @@ func (m *Manager) ClaimWork(ctx context.Context) (*lrdb.CompactionBundleResult, 
 	}
 
 	if len(bundle.Items) > 0 {
-		m.ll.Info("Claimed compaction work bundle",
+		ll.Info("Claimed compaction work bundle",
 			slog.Int("workItems", len(bundle.Items)),
 			slog.Int64("estimatedTarget", bundle.EstimatedTarget))
 	}
@@ -150,6 +151,8 @@ func (m *Manager) ClaimWork(ctx context.Context) (*lrdb.CompactionBundleResult, 
 }
 
 func (m *Manager) CompleteWork(ctx context.Context, items []lrdb.McqFetchCandidatesRow) error {
+	ll := logctx.FromContext(ctx)
+
 	ids := make([]int64, len(items))
 	for i, item := range items {
 		ids[i] = item.ID
@@ -159,7 +162,7 @@ func (m *Manager) CompleteWork(ctx context.Context, items []lrdb.McqFetchCandida
 		WorkerID: m.workerID,
 		Ids:      ids,
 	}); err != nil {
-		m.ll.Error("Failed to complete work items",
+		ll.Error("Failed to complete work items",
 			slog.Int("count", len(items)),
 			slog.Any("error", err))
 		return fmt.Errorf("failed to complete work items: %w", err)
@@ -168,6 +171,8 @@ func (m *Manager) CompleteWork(ctx context.Context, items []lrdb.McqFetchCandida
 }
 
 func (m *Manager) ReleaseWork(ctx context.Context, items []lrdb.McqFetchCandidatesRow) error {
+	ll := logctx.FromContext(ctx)
+
 	if len(items) == 0 {
 		return nil
 	}
@@ -181,19 +186,21 @@ func (m *Manager) ReleaseWork(ctx context.Context, items []lrdb.McqFetchCandidat
 		WorkerID: m.workerID,
 		Ids:      ids,
 	}); err != nil {
-		m.ll.Error("Failed to release work items",
+		ll.Error("Failed to release work items",
 			slog.Int("count", len(items)),
 			slog.Any("error", err))
 		return fmt.Errorf("failed to release work items: %w", err)
 	}
 
-	m.ll.Info("Released work items back to queue for retry",
+	ll.Info("Released work items back to queue for retry",
 		slog.Int("count", len(items)))
 
 	return nil
 }
 
 func (m *Manager) FailWork(ctx context.Context, items []lrdb.McqFetchCandidatesRow) error {
+	ll := logctx.FromContext(ctx)
+
 	if len(items) == 0 {
 		return nil
 	}
@@ -211,13 +218,13 @@ func (m *Manager) FailWork(ctx context.Context, items []lrdb.McqFetchCandidatesR
 	})
 
 	if err != nil {
-		m.ll.Error("Failed to delete failed work items",
+		ll.Error("Failed to delete failed work items",
 			slog.Int("count", len(items)),
 			slog.Any("error", err))
 		return fmt.Errorf("failed to delete failed work items: %w", err)
 	}
 
-	m.ll.Warn("Deleted failed work items from queue",
+	ll.Warn("Deleted failed work items from queue",
 		slog.Int("count", len(items)))
 
 	return nil

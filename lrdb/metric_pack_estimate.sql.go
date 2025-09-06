@@ -47,6 +47,50 @@ func (q *Queries) GetAllMetricPackEstimates(ctx context.Context) ([]MetricPackEs
 	return items, nil
 }
 
+const getMetricPackEstimateForOrg = `-- name: GetMetricPackEstimateForOrg :many
+SELECT
+  organization_id,
+  frequency_ms,
+  target_records,
+  updated_at
+FROM metric_pack_estimate
+WHERE (organization_id = $1 OR organization_id = '00000000-0000-0000-0000-000000000000')
+  AND frequency_ms = $2
+ORDER BY organization_id DESC
+`
+
+type GetMetricPackEstimateForOrgParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	FrequencyMs    int32     `json:"frequency_ms"`
+}
+
+// Gets metric pack estimate for specific org with fallback to default (all zeros)
+// Returns up to 2 rows: one for the specific org and one for the default
+func (q *Queries) GetMetricPackEstimateForOrg(ctx context.Context, arg GetMetricPackEstimateForOrgParams) ([]MetricPackEstimate, error) {
+	rows, err := q.db.Query(ctx, getMetricPackEstimateForOrg, arg.OrganizationID, arg.FrequencyMs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MetricPackEstimate
+	for rows.Next() {
+		var i MetricPackEstimate
+		if err := rows.Scan(
+			&i.OrganizationID,
+			&i.FrequencyMs,
+			&i.TargetRecords,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const upsertMetricPackEstimate = `-- name: UpsertMetricPackEstimate :exec
 INSERT INTO metric_pack_estimate (organization_id, frequency_ms, target_records, updated_at)
 VALUES ($1, $2, $3, now())
