@@ -783,3 +783,74 @@ func TestRewrite_Unwrap_Max_Bytes_Logfmt(t *testing.T) {
 		t.Fatalf("unexpected maxes: bucket0=%v bucket1=%v; rows=%v", b0, b1, rows)
 	}
 }
+
+func TestRewrite_Unwrap_Max_Duration_Regexp(t *testing.T) {
+	db := openDuckDB(t)
+	mustExec(t, db, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.fingerprint" TEXT,
+		job TEXT,
+		"_cardinalhq.message"     TEXT
+	);`)
+
+	// Two 1m buckets: [0..60s) and [60..120s)
+	// bucket 0 messages contain 2 ms and 4 ms -> max = 4 ms = 0.004 s
+	// bucket 1 message contains 3 ms         -> max = 3 ms = 0.003 s
+	mustExec(t, db, `
+	INSERT INTO logs("_cardinalhq.timestamp", job, "_cardinalhq.message") VALUES
+	(10*1000,  'kafka', '[LocalLog partition=__cluster_metadata-0, dir=/tmp/kafka-logs] Rolled new log segment at offset 111 in 2 ms.'),
+	(30*1000,  'kafka', '[LocalLog partition=__cluster_metadata-0, dir=/tmp/kafka-logs] Rolled new log segment at offset 222 in 4 ms.'),
+	(70*1000,  'kafka', '[LocalLog partition=__cluster_metadata-0, dir=/tmp/kafka-logs] Rolled new log segment at offset 333 in 3 ms.');
+	`)
+
+	// LogQL: max_over_time on an unwrapped duration captured by regexp
+	// NOTE: unwrap duration(...) yields seconds as DOUBLE, so we expect 0.004 and 0.003.
+	q := `max_over_time({job="kafka"} |= "Rolled new log segment" | regexp "in (?P<roll_dur>[0-9]+(?:\\.[0-9]+)?\\s*(?:ns|us|µs|ms|s|m|h))" | unwrap duration(roll_dur) [5m])`
+
+	plan, _ := compileMetricPlanFromLogQL(t, q)
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf in compiled plan, got %d", len(plan.Leaves))
+	}
+	be := plan.Leaves[0]
+
+	sql := replaceWorkerPlaceholders(be.ToWorkerSQL(time.Minute), 0, 120*1000)
+	rows := queryAll(t, db, sql)
+	if len(rows) == 0 {
+		t.Fatalf("no rows returned; sql=\n%s", sql)
+	}
+
+	type agg struct {
+		bucket int64
+		max    float64
+	}
+	var got []agg
+	for _, r := range rows {
+		v := r["max"]
+		if v == nil {
+			if x, ok := r["max_over_time"]; ok {
+				v = x
+			}
+		}
+		got = append(got, agg{
+			bucket: i64(r["bucket_ts"]),
+			max:    f64(v),
+		})
+	}
+
+	var b0, b1 float64
+	for _, a := range got {
+		switch a.bucket {
+		case 0:
+			b0 = a.max
+		case 60000:
+			b1 = a.max
+		}
+	}
+
+	const eps = 1e-9
+	if !(b0 > 0.004-eps && b0 < 0.004+eps) || !(b1 > 0.003-eps && b1 < 0.003+eps) {
+		t.Fatalf("unexpected maxes: bucket0=%v bucket1=%v; rows=%v\nsql=\n%s", b0, b1, rows, sql)
+	}
+}

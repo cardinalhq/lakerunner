@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"strings"
 
@@ -179,6 +180,9 @@ func (q *QuerierService) sendEvalResults(r *http.Request, w http.ResponseWriter,
 			}
 			for k, v := range res {
 				label := plan.Root.Label(v.Tags)
+				if math.IsNaN(v.Value.Num) {
+					continue
+				}
 				ed := evalData{
 					Key:       k,
 					Tags:      v.Tags,

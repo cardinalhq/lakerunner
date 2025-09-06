@@ -249,6 +249,41 @@ func TestPlanner_RegexpPipelineLeaf_WithLabelFilters_AttachedToParser(t *testing
 	}
 }
 
+func TestPlannerWithUnwrap(t *testing.T) {
+	q := `max_over_time(
+  {job="kafka"} |= "Rolled new log segment"
+  | regexp "in (?P<roll_dur>[0-9]+(?:\\.[0-9]+)?\\s*(?:ns|us|µs|ms|s|m|h))"
+  | unwrap duration(roll_dur)
+  [5m]
+)`
+	ast, err := FromLogQL(q)
+	if err != nil {
+		t.Fatalf("FromLogQL() error: %v", err)
+	}
+	plan, err := CompileLog(ast)
+	if err != nil {
+		t.Fatalf("CompileLog() error: %v", err)
+	}
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf, got %d; plan=%#v", len(plan.Leaves), plan)
+	}
+	leaf := plan.Leaves[0]
+	rootLeaf, ok := plan.Root.(*LRangeAggNode)
+	if !ok {
+		t.Fatalf("root is not *LRangeAggNode, got %T", plan.Root)
+	}
+	if rootLeaf.Child == nil {
+		t.Fatalf("root range agg has nil child")
+	}
+	childLeaf, ok := rootLeaf.Child.(*LLeafNode)
+	if !ok {
+		t.Fatalf("root range agg child is not *LLeafNode, got %T", rootLeaf.Child)
+	}
+	if childLeaf.Leaf.ID != leaf.ID {
+		t.Fatalf("root leaf ID mismatch: got %s, want %s", childLeaf.Leaf.ID, leaf.ID)
+	}
+}
+
 func TestPlanner_JSONPipelineLeaf_WithLabelFilters_AttachedToParser(t *testing.T) {
 	q := `{job="my-app"} | json | level="ERROR" | user=~"(alice|bob)"`
 

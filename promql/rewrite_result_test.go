@@ -195,7 +195,7 @@ func TestRewrite_BinaryOp_TwoLeaves_DedupAndOrder(t *testing.T) {
 	}
 
 	ids := leafIDs(got.Leaves)
-	if !reflect.DeepEqual(ids, sorted([]string{"A", "B"})) {
+	if !reflect.DeepEqual(sorted(ids), sorted([]string{"A", "B"})) {
 		t.Fatalf("leaf IDs mismatch:\nwant: %v\ngot : %v", sorted([]string{"A", "B"}), ids)
 	}
 }

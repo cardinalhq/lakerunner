@@ -605,33 +605,27 @@ func (be *LogLeaf) buildTagValuesQueryWithParsers(step time.Duration, tagName st
 			names := regexCaptureNames(pat)
 			selects := []string{top() + ".*"}
 
-			if len(names) > 0 {
-				quotedNames := make([]string, len(names))
-				for i, name := range names {
-					quotedNames[i] = fmt.Sprintf("'%s'", name)
+			// Project each *named* capture directly by its position.
+			for i, name := range names {
+				if strings.HasPrefix(name, "__var_") {
+					continue // skip unnamed captures
 				}
+				idx := i + 1 // regexp group positions are 1-based
 				selects = append(selects,
-					fmt.Sprintf("regexp_extract(%s, %s, [%s]) AS __extracted_struct",
-						bodyCol, sqlQuote(pat), strings.Join(quotedNames, ", ")))
+					fmt.Sprintf("regexp_extract(%s, %s, %d) AS %s",
+						bodyCol, sqlQuote(pat), idx, quoteIdent(name)))
 			}
 			push(selects, top(), nil)
 
-			// Extract individual columns from the `__extracted_struct` in a separate CTE
+			// Apply label filters that target these extracted names now.
 			if len(names) > 0 {
-				extractSelects := []string{top() + ".*"}
+				created := make(map[string]struct{})
 				for _, name := range names {
 					if strings.HasPrefix(name, "__var_") {
 						continue
 					}
-					extractSelects = append(extractSelects,
-						fmt.Sprintf("__extracted_struct.%s AS %s", quoteIdent(name), quoteIdent(name)))
+					created[name] = struct{}{}
 				}
-				push(extractSelects, top(), nil)
-			}
-
-			// Apply label filters that target these extracted names now.
-			if len(names) > 0 {
-				created := mkSet(names)
 				now, later := partitionByNames(remainingLF, created)
 				if len(now) > 0 {
 					where := buildLabelFilterWhere(now, nil)
