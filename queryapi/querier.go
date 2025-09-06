@@ -326,6 +326,7 @@ func (q *QuerierService) Run(doneCtx context.Context) error {
 	mux.HandleFunc("/api/v1/logs/query", q.apiKeyMiddleware(q.handleLogQuery))
 
 	mux.HandleFunc("/api/v1/promql/validate", q.handlePromQLValidate)
+	mux.HandleFunc("/api/v1/logql/validate", q.handleLogQLValidate)
 
 	srv := &http.Server{
 		Addr:    ":8080",
