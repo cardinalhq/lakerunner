@@ -1479,3 +1479,76 @@ func TestRewrite_CountOverTime_ByBasePod_WithJSONFilter(t *testing.T) {
 		}
 	}
 }
+
+// Group by one PARSED (json) label and one BASE label (pod)
+func TestRewrite_CountOverTime_ByUserAndBasePod_JSON(t *testing.T) {
+	db := openDuckDB(t)
+	mustExec(t, db, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.fingerprint" TEXT,
+		"_cardinalhq.message"     TEXT,
+		"resource.service.name"   TEXT,
+		"resource.k8s.pod.name"   TEXT
+	);`)
+
+	// Two 1m buckets: [0..60s) and [60..120s)
+	// bucket 0: (pod=api-7f, alice), (pod=api-7f, bob), (pod=api-9x, alice)
+	// bucket 1: (pod=api-7f, alice), (pod=api-9x, bob)
+	mustExec(t, db, `
+	INSERT INTO logs("_cardinalhq.timestamp","_cardinalhq.message","resource.service.name","resource.k8s.pod.name") VALUES
+	(10*1000,  '{"user":"alice"}', 'api-gateway', 'api-7f'),
+	(20*1000,  '{"user":"bob"}',   'api-gateway', 'api-7f'),
+	(40*1000,  '{"user":"alice"}', 'api-gateway', 'api-9x'),
+	(70*1000,  '{"user":"alice"}', 'api-gateway', 'api-7f'),
+	(90*1000,  '{"user":"bob"}',   'api-gateway', 'api-9x');`)
+
+	// Group by parsed json label (user) AND base label (pod).
+	q := `sum by (user, resource_k8s_pod_name) (count_over_time({resource_service_name="api-gateway"} | json [1m]))`
+
+	plan, _ := compileMetricPlanFromLogQL(t, q)
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf in compiled plan, got %d", len(plan.Leaves))
+	}
+	be := plan.Leaves[0]
+
+	sql := replaceWorkerPlaceholders(be.ToWorkerSQL(time.Minute), 0, 120*1000)
+	rows := queryAll(t, db, sql)
+
+	type key struct {
+		bucket int64
+		user   string
+		pod    string
+	}
+	got := map[key]int64{}
+	for _, r := range rows {
+		// Allow either dotted or underscored naming for pod depending on rewrite
+		pod := ""
+		if v, ok := r[`resource.k8s.pod.name`]; ok && v != nil {
+			pod = fmt.Sprint(v)
+		} else if v, ok := r[`resource_k8s_pod_name`]; ok && v != nil {
+			pod = fmt.Sprint(v)
+		} else {
+			t.Fatalf("missing pod label column in row: %v\nsql=\n%s", r, sql)
+		}
+		got[key{
+			bucket: i64(r["bucket_ts"]),
+			user:   s(r["user"]),
+			pod:    pod,
+		}] = i64(r["sum"])
+	}
+
+	exp := map[key]int64{
+		{0, "alice", "api-7f"}:     1,
+		{0, "bob", "api-7f"}:       1,
+		{0, "alice", "api-9x"}:     1,
+		{60000, "alice", "api-7f"}: 1,
+		{60000, "bob", "api-9x"}:   1,
+	}
+	for k, want := range exp {
+		if got[k] != want {
+			t.Fatalf("unexpected sum for %v: got=%v want=%v; rows=%v\nsql=\n%s", k, got[k], want, rows, sql)
+		}
+	}
+}
