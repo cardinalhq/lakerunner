@@ -27,6 +27,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/cardinalhq/lakerunner/configdb"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 )
 
 // FileReader interface for testable file operations
@@ -63,22 +64,22 @@ type DatabaseQueries interface {
 }
 
 // InitializeConfig loads and imports storage profiles and API keys
-func InitializeConfig(ctx context.Context, storageProfileFile, apiKeysFile string, qtx *configdb.Queries, logger *slog.Logger, replace bool) error {
+func InitializeConfig(ctx context.Context, storageProfileFile, apiKeysFile string, qtx *configdb.Queries, replace bool) error {
 	fileReader := OSFileReader{}
-	return InitializeConfigWithDependencies(ctx, storageProfileFile, apiKeysFile, qtx, fileReader, logger, replace)
+	return InitializeConfigWithDependencies(ctx, storageProfileFile, apiKeysFile, qtx, fileReader, replace)
 }
 
 // InitializeConfigWithDependencies loads and imports with injectable dependencies for testing
-func InitializeConfigWithDependencies(ctx context.Context, storageProfileFile, apiKeysFile string, qtx DatabaseQueries, fileReader FileReader, logger *slog.Logger, replace bool) error {
+func InitializeConfigWithDependencies(ctx context.Context, storageProfileFile, apiKeysFile string, qtx DatabaseQueries, fileReader FileReader, replace bool) error {
 
 	// Load and import storage profiles
-	if err := loadAndImportStorageProfilesWithReader(ctx, storageProfileFile, qtx, fileReader, logger, replace); err != nil {
+	if err := loadAndImportStorageProfilesWithReader(ctx, storageProfileFile, qtx, fileReader, replace); err != nil {
 		return fmt.Errorf("failed to import storage profiles: %w", err)
 	}
 
 	// Load and import API keys if provided
 	if apiKeysFile != "" {
-		if err := loadAndImportAPIKeysWithReader(ctx, apiKeysFile, qtx, fileReader, logger, replace); err != nil {
+		if err := loadAndImportAPIKeysWithReader(ctx, apiKeysFile, qtx, fileReader, replace); err != nil {
 			return fmt.Errorf("failed to import API keys: %w", err)
 		}
 	}
@@ -86,16 +87,18 @@ func InitializeConfigWithDependencies(ctx context.Context, storageProfileFile, a
 	return nil
 }
 
-func loadAndImportStorageProfilesWithReader(ctx context.Context, filename string, qtx DatabaseQueries, fileReader FileReader, logger *slog.Logger, replace bool) error {
+func loadAndImportStorageProfilesWithReader(ctx context.Context, filename string, qtx DatabaseQueries, fileReader FileReader, replace bool) error {
 	contents, err := loadFileContentsWithReader(filename, fileReader)
 	if err != nil {
 		return err
 	}
 
-	return importStorageProfiles(ctx, contents, qtx, logger, replace)
+	return importStorageProfiles(ctx, contents, qtx, replace)
 }
 
-func loadAndImportAPIKeysWithReader(ctx context.Context, filename string, qtx DatabaseQueries, fileReader FileReader, logger *slog.Logger, replace bool) error {
+func loadAndImportAPIKeysWithReader(ctx context.Context, filename string, qtx DatabaseQueries, fileReader FileReader, replace bool) error {
+	ll := logctx.FromContext(ctx)
+
 	contents, err := loadFileContentsWithReader(filename, fileReader)
 	if err != nil {
 		return err
@@ -108,9 +111,9 @@ func loadAndImportAPIKeysWithReader(ctx context.Context, filename string, qtx Da
 		return fmt.Errorf("failed to parse API keys YAML: %w", err)
 	}
 
-	logger.Info("Loaded API keys configuration", slog.Int("organizations", len(apiKeysConfig)))
+	ll.Info("Loaded API keys configuration", slog.Int("organizations", len(apiKeysConfig)))
 
-	return importAPIKeys(ctx, apiKeysConfig, qtx, logger, replace)
+	return importAPIKeys(ctx, apiKeysConfig, qtx, replace)
 }
 
 func loadFileContentsWithReader(filename string, fileReader FileReader) ([]byte, error) {
@@ -131,7 +134,9 @@ func loadFileContentsWithReader(filename string, fileReader FileReader) ([]byte,
 	return contents, nil
 }
 
-func importStorageProfiles(ctx context.Context, contents []byte, qtx DatabaseQueries, logger *slog.Logger, replace bool) error {
+func importStorageProfiles(ctx context.Context, contents []byte, qtx DatabaseQueries, replace bool) error {
+	ll := logctx.FromContext(ctx)
+
 	var profiles []StorageProfile
 	dec := yaml.NewDecoder(bytes.NewReader(contents))
 	dec.KnownFields(true)
@@ -139,7 +144,7 @@ func importStorageProfiles(ctx context.Context, contents []byte, qtx DatabaseQue
 		return fmt.Errorf("failed to parse YAML configuration: %w", err)
 	}
 
-	logger.Info("Loaded storage profile configuration", slog.Int("profiles", len(profiles)))
+	ll.Info("Loaded storage profile configuration", slog.Int("profiles", len(profiles)))
 
 	// In replace mode, clear existing data first (mirror sync like sweeper)
 	if replace {
@@ -152,7 +157,7 @@ func importStorageProfiles(ctx context.Context, contents []byte, qtx DatabaseQue
 		if err := qtx.ClearBucketConfigurations(ctx); err != nil {
 			return fmt.Errorf("failed to clear bucket configurations: %w", err)
 		}
-		logger.Info("Cleared existing storage profile configuration for replace")
+		ll.Info("Cleared existing storage profile configuration for replace")
 	}
 
 	// Group profiles by bucket to create bucket configurations
@@ -187,7 +192,7 @@ func importStorageProfiles(ctx context.Context, contents []byte, qtx DatabaseQue
 		if err != nil {
 			return fmt.Errorf("failed to create bucket configuration for %s: %w", bucketName, err)
 		}
-		logger.Info("Created bucket configuration", slog.String("bucket", bucketName))
+		ll.Info("Created bucket configuration", slog.String("bucket", bucketName))
 
 		// Create organization bucket mappings for each profile
 		for _, profile := range bucketProfileList {
@@ -210,7 +215,7 @@ func importStorageProfiles(ctx context.Context, contents []byte, qtx DatabaseQue
 				return fmt.Errorf("failed to create organization bucket mapping %s->%s: %w",
 					profile.OrganizationID, bucketConfig.ID, err)
 			}
-			logger.Info("Created organization bucket mapping",
+			ll.Info("Created organization bucket mapping",
 				slog.String("org_id", profile.OrganizationID.String()),
 				slog.String("bucket", bucketName))
 		}
@@ -219,13 +224,15 @@ func importStorageProfiles(ctx context.Context, contents []byte, qtx DatabaseQue
 	return nil
 }
 
-func importAPIKeys(ctx context.Context, apiKeysConfig APIKeysConfig, qtx DatabaseQueries, logger *slog.Logger, replace bool) error {
+func importAPIKeys(ctx context.Context, apiKeysConfig APIKeysConfig, qtx DatabaseQueries, replace bool) error {
+	ll := logctx.FromContext(ctx)
+
 	// Note: We skip SyncOrganizations() during migration/initialization
 	// as it depends on legacy c_organizations table. Organization IDs
 	// in YAML are assumed to be valid.
 
 	// Ensure organizations exist for the API keys we're importing
-	if err := ensureOrganizationsFromAPIKeys(ctx, apiKeysConfig, qtx, logger); err != nil {
+	if err := ensureOrganizationsFromAPIKeys(ctx, apiKeysConfig, qtx); err != nil {
 		return fmt.Errorf("failed to ensure organizations exist: %w", err)
 	}
 
@@ -237,7 +244,7 @@ func importAPIKeys(ctx context.Context, apiKeysConfig APIKeysConfig, qtx Databas
 		if err := qtx.ClearOrganizationAPIKeys(ctx); err != nil {
 			return fmt.Errorf("failed to clear organization API keys: %w", err)
 		}
-		logger.Info("Cleared existing API keys for replace")
+		ll.Info("Cleared existing API keys for replace")
 	}
 	for _, orgKeys := range apiKeysConfig {
 		for _, key := range orgKeys.Keys {
@@ -260,7 +267,7 @@ func importAPIKeys(ctx context.Context, apiKeysConfig APIKeysConfig, qtx Databas
 				return fmt.Errorf("failed to create API key mapping: %w", err)
 			}
 
-			logger.Info("Created organization API key",
+			ll.Info("Created organization API key",
 				slog.String("org_id", orgKeys.OrganizationID.String()),
 				slog.String("key_name", fmt.Sprintf("imported-key-%s", key[:8])))
 		}
@@ -274,7 +281,9 @@ func hashAPIKey(apiKey string) string {
 	return fmt.Sprintf("%x", h)
 }
 
-func ensureOrganizationsFromAPIKeys(ctx context.Context, apiKeysConfig APIKeysConfig, qtx DatabaseQueries, logger *slog.Logger) error {
+func ensureOrganizationsFromAPIKeys(ctx context.Context, apiKeysConfig APIKeysConfig, qtx DatabaseQueries) error {
+	ll := logctx.FromContext(ctx)
+
 	// Create a set of unique organization IDs from the API keys config
 	orgIDs := make(map[string]bool)
 	for _, orgKeys := range apiKeysConfig {
@@ -297,7 +306,7 @@ func ensureOrganizationsFromAPIKeys(ctx context.Context, apiKeysConfig APIKeysCo
 			return fmt.Errorf("failed to ensure organization %s exists: %w", orgIDStr, err)
 		}
 
-		logger.Info("Ensured organization exists", slog.String("org_id", orgIDStr))
+		ll.Info("Ensured organization exists", slog.String("org_id", orgIDStr))
 	}
 
 	return nil

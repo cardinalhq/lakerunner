@@ -15,7 +15,6 @@
 package lockmgr
 
 import (
-	"log/slog"
 	"testing"
 	"time"
 
@@ -38,11 +37,4 @@ func TestWithHeartbeatInterval_LessThanMinimum(t *testing.T) {
 	assert.Equal(t, 10*time.Second, m.heartbeatInterval, "expected heartbeatInterval to be adjusted to 10 seconds")
 }
 
-func TestWithLogger(t *testing.T) {
-	ll := slog.Default()
-	opt := WithLogger(ll)
-	m := &wqManager{}
-	assert.NotEqual(t, ll, m.ll, "expected logger to be different before applying option")
-	opt.apply(m)
-	assert.Equal(t, ll, m.ll, "expected logger to be set correctly")
-}
+// TestWithLogger removed as logger option is no longer available

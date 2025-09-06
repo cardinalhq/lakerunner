@@ -198,7 +198,7 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 	go func() {
 		defer wg.Done()
 		if err := periodicLoop(ctx, time.Minute, func(c context.Context) error {
-			return runWorkqueueExpiry(c, slog.Default(), mdb)
+			return runWorkqueueExpiry(c, mdb)
 		}); err != nil && !errors.Is(err, context.Canceled) {
 			errCh <- err
 		}
@@ -209,7 +209,7 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 	go func() {
 		defer wg.Done()
 		if err := periodicLoop(ctx, time.Minute, func(c context.Context) error {
-			return runInqueueExpiry(c, slog.Default(), mdb)
+			return runInqueueExpiry(c, mdb)
 		}); err != nil && !errors.Is(err, context.Canceled) {
 			errCh <- err
 		}
@@ -220,7 +220,7 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 	go func() {
 		defer wg.Done()
 		if err := periodicLoop(ctx, time.Minute, func(c context.Context) error {
-			return runMCQExpiry(c, slog.Default(), mdb)
+			return runMCQExpiry(c, mdb)
 		}); err != nil && !errors.Is(err, context.Canceled) {
 			errCh <- err
 		}
@@ -231,7 +231,7 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 	go func() {
 		defer wg.Done()
 		if err := periodicLoop(ctx, time.Minute, func(c context.Context) error {
-			return runMRQExpiry(c, slog.Default(), mdb)
+			return runMRQExpiry(c, mdb)
 		}); err != nil && !errors.Is(err, context.Canceled) {
 			errCh <- err
 		}
@@ -241,7 +241,7 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := workqueueGCLoop(ctx, slog.Default(), mdb); err != nil && !errors.Is(err, context.Canceled) {
+		if err := workqueueGCLoop(ctx, mdb); err != nil && !errors.Is(err, context.Canceled) {
 			errCh <- err
 		}
 	}()
@@ -253,7 +253,7 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 			defer wg.Done()
 			slog.Info("Starting legacy table sync goroutine", slog.Duration("period", legacyTablesSyncPeriod))
 			if err := periodicLoop(ctx, legacyTablesSyncPeriod, func(c context.Context) error {
-				return runLegacyTablesSync(c, slog.Default(), cdb, cdbPool)
+				return runLegacyTablesSync(c, cdb, cdbPool)
 			}); err != nil && !errors.Is(err, context.Canceled) {
 				errCh <- err
 			}
@@ -265,7 +265,7 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 	go func() {
 		defer wg.Done()
 		if err := periodicLoop(ctx, metricEstimateUpdatePeriod, func(c context.Context) error {
-			return runMetricEstimateUpdate(c, slog.Default(), mdb)
+			return runMetricEstimateUpdate(c, mdb)
 		}); err != nil && !errors.Is(err, context.Canceled) {
 			errCh <- err
 		}

@@ -20,6 +20,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 )
 
 // MessageResult represents the result of an async message send
@@ -36,7 +38,7 @@ type AsyncProducer interface {
 	// BatchSendAsync sends messages asynchronously with individual callbacks
 	BatchSendAsync(ctx context.Context, topic string, messages []Message, callbacks []func(error))
 	// Close waits for pending messages and closes the producer
-	Close() error
+	Close(ctx context.Context) error
 }
 
 type asyncProducer struct {
@@ -47,7 +49,6 @@ type asyncProducer struct {
 	closing   chan struct{}
 	closed    bool
 	closeMu   sync.Mutex
-	logger    *slog.Logger
 }
 
 type asyncWork struct {
@@ -58,7 +59,7 @@ type asyncWork struct {
 }
 
 // NewAsyncProducer creates a new async producer with the specified number of workers
-func NewAsyncProducer(producer Producer, workers int, logger *slog.Logger) AsyncProducer {
+func NewAsyncProducer(producer Producer, workers int) AsyncProducer {
 	if workers <= 0 {
 		workers = 10
 	}
@@ -68,7 +69,6 @@ func NewAsyncProducer(producer Producer, workers int, logger *slog.Logger) Async
 		workers:   workers,
 		workQueue: make(chan *asyncWork, workers*10), // Buffer for smooth operation
 		closing:   make(chan struct{}),
-		logger:    logger,
 	}
 
 	// Start worker goroutines
@@ -99,7 +99,7 @@ func (ap *asyncProducer) worker(id int) {
 			}
 
 			if err != nil {
-				ap.logger.Debug("Async worker failed to send message",
+				logctx.FromContext(work.ctx).Debug("Async worker failed to send message",
 					slog.Int("worker_id", id),
 					slog.String("topic", work.topic),
 					slog.Any("error", err))
@@ -172,7 +172,9 @@ func (ap *asyncProducer) BatchSendAsync(ctx context.Context, topic string, messa
 	}
 }
 
-func (ap *asyncProducer) Close() error {
+func (ap *asyncProducer) Close(ctx context.Context) error {
+	ll := logctx.FromContext(ctx)
+
 	ap.closeMu.Lock()
 	if ap.closed {
 		ap.closeMu.Unlock()
@@ -195,7 +197,7 @@ func (ap *asyncProducer) Close() error {
 	case <-done:
 		// All workers finished
 	case <-time.After(30 * time.Second):
-		ap.logger.Warn("Timeout waiting for async producer workers to finish")
+		ll.Warn("Timeout waiting for async producer workers to finish")
 	}
 
 	// Close the work queue
@@ -217,7 +219,6 @@ type AsyncBatchProducer struct {
 	closing chan struct{}
 	closed  bool
 	wg      sync.WaitGroup
-	logger  *slog.Logger
 }
 
 type pendingMessage struct {
@@ -227,7 +228,7 @@ type pendingMessage struct {
 }
 
 // NewAsyncBatchProducer creates a producer that batches messages for efficiency
-func NewAsyncBatchProducer(producer Producer, batchSize int, interval time.Duration, logger *slog.Logger) *AsyncBatchProducer {
+func NewAsyncBatchProducer(ctx context.Context, producer Producer, batchSize int, interval time.Duration) *AsyncBatchProducer {
 	if batchSize <= 0 {
 		batchSize = 100
 	}
@@ -241,11 +242,10 @@ func NewAsyncBatchProducer(producer Producer, batchSize int, interval time.Durat
 		interval:  interval,
 		pending:   make(map[string][]*pendingMessage),
 		closing:   make(chan struct{}),
-		logger:    logger,
 	}
 
 	abp.wg.Add(1)
-	go abp.flusher()
+	go abp.flusher(ctx)
 
 	return abp
 }
@@ -271,18 +271,20 @@ func (abp *AsyncBatchProducer) SendAsync(ctx context.Context, topic string, mess
 
 	// Flush if we've reached batch size
 	if len(abp.pending[topic]) >= abp.batchSize {
-		abp.flushTopic(topic)
+		abp.flushTopic(ctx, topic)
 	} else if abp.timer == nil {
 		// Start timer for interval-based flush
 		abp.timer = time.AfterFunc(abp.interval, func() {
 			abp.mu.Lock()
 			defer abp.mu.Unlock()
-			abp.flushAll()
+			abp.flushAll(ctx)
 		})
 	}
 }
 
-func (abp *AsyncBatchProducer) flushTopic(topic string) {
+func (abp *AsyncBatchProducer) flushTopic(ctx context.Context, topic string) {
+	ll := logctx.FromContext(ctx)
+
 	messages := abp.pending[topic]
 	if len(messages) == 0 {
 		return
@@ -315,26 +317,26 @@ func (abp *AsyncBatchProducer) flushTopic(topic string) {
 		}
 
 		if err != nil {
-			abp.logger.Error("Failed to send batch",
+			ll.Error("Failed to send batch",
 				slog.String("topic", topic),
 				slog.Int("count", len(messages)),
 				slog.Any("error", err))
 		} else {
-			abp.logger.Debug("Successfully sent batch",
+			ll.Debug("Successfully sent batch",
 				slog.String("topic", topic),
 				slog.Int("count", len(messages)))
 		}
 	}()
 }
 
-func (abp *AsyncBatchProducer) flushAll() {
+func (abp *AsyncBatchProducer) flushAll(ctx context.Context) {
 	for topic := range abp.pending {
-		abp.flushTopic(topic)
+		abp.flushTopic(ctx, topic)
 	}
 	abp.timer = nil
 }
 
-func (abp *AsyncBatchProducer) flusher() {
+func (abp *AsyncBatchProducer) flusher(ctx context.Context) {
 	defer abp.wg.Done()
 
 	ticker := time.NewTicker(abp.interval)
@@ -344,20 +346,22 @@ func (abp *AsyncBatchProducer) flusher() {
 		select {
 		case <-ticker.C:
 			abp.mu.Lock()
-			abp.flushAll()
+			abp.flushAll(ctx)
 			abp.mu.Unlock()
 
 		case <-abp.closing:
 			// Final flush
 			abp.mu.Lock()
-			abp.flushAll()
+			abp.flushAll(ctx)
 			abp.mu.Unlock()
 			return
 		}
 	}
 }
 
-func (abp *AsyncBatchProducer) Close() error {
+func (abp *AsyncBatchProducer) Close(ctx context.Context) error {
+	ll := logctx.FromContext(ctx)
+
 	abp.mu.Lock()
 	if abp.closed {
 		abp.mu.Unlock()
@@ -371,7 +375,7 @@ func (abp *AsyncBatchProducer) Close() error {
 	}
 
 	// Flush remaining messages
-	abp.flushAll()
+	abp.flushAll(ctx)
 	abp.mu.Unlock()
 
 	// Signal flusher to stop
@@ -388,7 +392,7 @@ func (abp *AsyncBatchProducer) Close() error {
 	case <-done:
 		// All operations finished
 	case <-time.After(30 * time.Second):
-		abp.logger.Warn("Timeout waiting for async batch producer to finish")
+		ll.Warn("Timeout waiting for async batch producer to finish")
 	}
 
 	// Close underlying producer

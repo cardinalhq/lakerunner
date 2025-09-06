@@ -58,7 +58,7 @@ func NewAzureQueueService(kafkaFactory *fly.Factory) (*AzureQueueService, error)
 	}
 	sp := storageprofile.NewStorageProfileProvider(cdb)
 
-	kafkaHandler, err := NewKafkaHandler(kafkaFactory, "gcp", sp, slog.Default())
+	kafkaHandler, err := NewKafkaHandler(kafkaFactory, "gcp", sp)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka handler: %w", err)
 	}

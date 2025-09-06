@@ -17,7 +17,6 @@ package heartbeat
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -34,7 +33,7 @@ func TestHeartbeater_BasicOperation(t *testing.T) {
 		return nil
 	}
 
-	heartbeater := New(heartbeatFunc, 50*time.Millisecond, nil)
+	heartbeater := New(heartbeatFunc, 50*time.Millisecond)
 	cancel := heartbeater.Start(context.Background())
 
 	// Let it run for a bit
@@ -55,7 +54,7 @@ func TestHeartbeater_InitialHeartbeat(t *testing.T) {
 		return nil
 	}
 
-	heartbeater := New(heartbeatFunc, 1*time.Hour, nil) // Long interval
+	heartbeater := New(heartbeatFunc, 1*time.Hour) // Long interval
 	cancel := heartbeater.Start(context.Background())
 
 	// Give it just enough time for the initial call
@@ -77,7 +76,7 @@ func TestHeartbeater_ContextCancellation(t *testing.T) {
 	}
 
 	ctx, parentCancel := context.WithCancel(context.Background())
-	heartbeater := New(heartbeatFunc, 50*time.Millisecond, nil)
+	heartbeater := New(heartbeatFunc, 50*time.Millisecond)
 	cancel := heartbeater.Start(ctx)
 	defer cancel()
 
@@ -112,7 +111,7 @@ func TestHeartbeater_HeartbeatError(t *testing.T) {
 		return nil
 	}
 
-	heartbeater := New(heartbeatFunc, 50*time.Millisecond, nil)
+	heartbeater := New(heartbeatFunc, 50*time.Millisecond)
 	cancel := heartbeater.Start(context.Background())
 
 	// Let it run through multiple calls including the error
@@ -133,7 +132,7 @@ func TestHeartbeater_CancelFunction(t *testing.T) {
 		return nil
 	}
 
-	heartbeater := New(heartbeatFunc, 50*time.Millisecond, nil)
+	heartbeater := New(heartbeatFunc, 50*time.Millisecond)
 	cancel := heartbeater.Start(context.Background())
 
 	// Let it run briefly
@@ -161,8 +160,8 @@ func TestHeartbeater_WithCustomLogger(t *testing.T) {
 		return nil
 	}
 
-	logger := slog.New(slog.NewTextHandler(nil, nil))
-	heartbeater := New(heartbeatFunc, 50*time.Millisecond, logger)
+	// Test removed as logger is no longer a parameter
+	heartbeater := New(heartbeatFunc, 50*time.Millisecond)
 	cancel := heartbeater.Start(context.Background())
 
 	time.Sleep(75 * time.Millisecond)
@@ -183,7 +182,7 @@ func TestHeartbeater_NilLogger(t *testing.T) {
 
 	// Should not panic with nil logger
 	require.NotPanics(t, func() {
-		heartbeater := New(heartbeatFunc, 50*time.Millisecond, nil)
+		heartbeater := New(heartbeatFunc, 50*time.Millisecond)
 		cancel := heartbeater.Start(context.Background())
 		time.Sleep(75 * time.Millisecond)
 		cancel()

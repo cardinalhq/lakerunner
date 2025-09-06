@@ -17,14 +17,15 @@ package lockmgr
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"log/slog"
 
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -52,7 +53,6 @@ type wqManager struct {
 
 	// defaults but set via options
 	heartbeatInterval time.Duration
-	ll                *slog.Logger
 
 	// currently acquired work item IDs
 	acquiredIDs []int64
@@ -180,10 +180,6 @@ func (m *wqManager) runLoop(ctx context.Context) {
 		close(m.done) // Signal that manager is shut down
 	})
 
-	if m.ll == nil {
-		m.ll = slog.Default()
-	}
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -256,7 +252,8 @@ func (m *wqManager) heartbeat(ctx context.Context) {
 		WorkerID: m.workerID,
 	})
 	if err != nil {
-		m.ll.Error("failed to heartbeat work queue (continuing)", "error", err)
+		ll := logctx.FromContext(ctx)
+		ll.Error("failed to heartbeat work queue (continuing)", slog.Any("error", err))
 		return
 	}
 }

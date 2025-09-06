@@ -50,7 +50,6 @@ type Tenant struct {
 // Processor handles exemplar generation from different telemetry types using tenant-based LRU caches
 type Processor struct {
 	tenants sync.Map // organizationID -> *Tenant
-	logger  *slog.Logger
 
 	// Callback for metrics exemplars
 	sendMetricsExemplars func(ctx context.Context, organizationID string, exemplars []*ExemplarData) error
@@ -110,10 +109,9 @@ func DefaultConfig() Config {
 
 // NewProcessor creates a new processor for a specific telemetry type
 // NewProcessor creates a new unified processor for all telemetry types
-func NewProcessor(config Config, logger *slog.Logger) *Processor {
+func NewProcessor(config Config) *Processor {
 	return &Processor{
 		tenants:       sync.Map{},
-		logger:        logger,
 		config:        config,
 		fingerprinter: fingerprinter.NewFingerprinter(),
 	}
@@ -278,7 +276,7 @@ func (p *Processor) ProcessLogs(ctx context.Context, ld plog.Logs, organizationI
 			sl := rl.ScopeLogs().At(j)
 			for k := range sl.LogRecords().Len() {
 				lr := sl.LogRecords().At(k)
-				p.addLogExemplar(tenant, rl, sl, lr)
+				p.addLogExemplar(ctx, tenant, rl, sl, lr)
 			}
 		}
 	}
@@ -310,7 +308,9 @@ func (p *Processor) ProcessMetrics(ctx context.Context, md pmetric.Metrics, orga
 }
 
 // add a logs exemplar to the organization's cache
-func (p *Processor) addLogExemplar(tenant *Tenant, rl plog.ResourceLogs, sl plog.ScopeLogs, lr plog.LogRecord) {
+func (p *Processor) addLogExemplar(ctx context.Context, tenant *Tenant, rl plog.ResourceLogs, sl plog.ScopeLogs, lr plog.LogRecord) {
+	ll := logctx.FromContext(ctx)
+
 	logBody := extractLogBody(lr)
 
 	// Get old fingerprint from attributes (if exists from collector)
@@ -319,7 +319,7 @@ func (p *Processor) addLogExemplar(tenant *Tenant, rl plog.ResourceLogs, sl plog
 	// Compute new fingerprint using our TrieClusterManager
 	newFingerprint, _, _, err := p.fingerprinter.Fingerprint(logBody, tenant.trieClusterManager)
 	if err != nil {
-		p.logger.Debug("Error fingerprinting log", slog.Any("error", err))
+		ll.Debug("Error fingerprinting log", slog.Any("error", err))
 		// Fall back to old fingerprint if available, otherwise skip
 		if oldFingerprint != 0 {
 			newFingerprint = oldFingerprint
@@ -386,16 +386,4 @@ func (p *Processor) SetMetricsCallback(callback func(ctx context.Context, organi
 // SetLogsCallback updates the sendLogsExemplars callback function
 func (p *Processor) SetLogsCallback(callback func(ctx context.Context, organizationID string, exemplars []*ExemplarData) error) {
 	p.sendLogsExemplars = callback
-}
-
-// NewMetricsProcessor creates a new processor specifically for metrics
-// Deprecated: Use NewProcessor instead for unified processing
-func NewMetricsProcessor(config Config, logger *slog.Logger) *Processor {
-	return NewProcessor(config, logger)
-}
-
-// NewLogsProcessor creates a new processor specifically for logs
-// Deprecated: Use NewProcessor instead for unified processing
-func NewLogsProcessor(config Config, logger *slog.Logger) *Processor {
-	return NewProcessor(config, logger)
 }

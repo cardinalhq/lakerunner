@@ -25,6 +25,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/workqueue"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -36,7 +37,9 @@ const (
 	gcCutoffAge  time.Duration = 10 * 24 * time.Hour
 )
 
-func runWorkqueueExpiry(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull) error {
+func runWorkqueueExpiry(ctx context.Context, mdb lrdb.StoreFull) error {
+	ll := logctx.FromContext(ctx)
+
 	// Calculate stale expiration based on heartbeat interval
 	// Items are considered stale after missing the configured number of heartbeats
 	staleExpirationTime := time.Duration(workqueue.StaleExpiryMultiplier) * workqueue.DefaultHeartbeatInterval
@@ -70,12 +73,14 @@ func runWorkqueueExpiry(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull
 	return nil
 }
 
-func runInqueueExpiry(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull) error {
+func runInqueueExpiry(ctx context.Context, mdb lrdb.StoreFull) error {
 	// TODO: Replace with Kafka consumer lag monitoring
 	return nil
 }
 
-func runMCQExpiry(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull) error {
+func runMCQExpiry(ctx context.Context, mdb lrdb.StoreFull) error {
+	ll := logctx.FromContext(ctx)
+
 	// Calculate cutoff time for MCQ items based on heartbeat logic
 	// Items are considered stale if they haven't heartbeated for 5 minutes
 	// This allows for ~5 missed heartbeats (1 minute interval) plus buffer
@@ -103,7 +108,9 @@ func runMCQExpiry(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull) erro
 	return nil
 }
 
-func runMRQExpiry(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull) error {
+func runMRQExpiry(ctx context.Context, mdb lrdb.StoreFull) error {
+	ll := logctx.FromContext(ctx)
+
 	// Calculate cutoff time for MRQ items based on heartbeat logic
 	// Items are considered stale if they haven't heartbeated for 5 minutes
 	// This allows for ~5 missed heartbeats (1 minute interval) plus buffer
@@ -124,7 +131,9 @@ func runMRQExpiry(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull) erro
 	return nil
 }
 
-func workqueueGCLoop(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull) error {
+func workqueueGCLoop(ctx context.Context, mdb lrdb.StoreFull) error {
+	ll := logctx.FromContext(ctx)
+
 	runOnce := func() {
 		cutoff := time.Now().Add(-gcCutoffAge).UTC()
 

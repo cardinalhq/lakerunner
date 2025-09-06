@@ -17,7 +17,6 @@ package bootstrap
 import (
 	"context"
 	"fmt"
-	"log/slog"
 
 	"github.com/spf13/cobra"
 
@@ -47,7 +46,7 @@ func GetBootstrapCmd() *cobra.Command {
 			defer configDBPool.Close()
 
 			// Run import
-			return bootstrap.ImportFromYAML(ctx, bootstrapFile, configDBPool, slog.Default())
+			return bootstrap.ImportFromYAML(ctx, bootstrapFile, configDBPool)
 		},
 	}
 	importCmd.Flags().StringVar(&bootstrapFile, "file", "", "YAML file to import (required)")

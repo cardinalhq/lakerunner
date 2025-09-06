@@ -79,7 +79,7 @@ func init() {
 
 			slog.Info("Starting metrics ingestion with Kafka consumer")
 
-			consumer, err := NewKafkaIngestConsumer(kafkaFactory, cfg, "metrics", "lakerunner.ingest.metrics")
+			consumer, err := NewKafkaIngestConsumer(ctx, kafkaFactory, cfg, "metrics", "lakerunner.ingest.metrics")
 			if err != nil {
 				return fmt.Errorf("failed to create Kafka consumer: %w", err)
 			}

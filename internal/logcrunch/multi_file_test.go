@@ -15,8 +15,7 @@
 package logcrunch
 
 import (
-	"io"
-	"log/slog"
+	"context"
 	"os"
 	"testing"
 	"time"
@@ -76,8 +75,7 @@ func TestMultipleFilesPerHour(t *testing.T) {
 	const smallRpfEstimate = 50 // Force 3 files: 50 + 50 + 50
 	ingestDateint := int32(20230101)
 
-	ll := slog.New(slog.NewTextHandler(io.Discard, nil))
-	results, err := buffet.ProcessAndSplit(ll, fh, tmpdir, ingestDateint, smallRpfEstimate)
+	results, err := buffet.ProcessAndSplit(context.Background(), fh, tmpdir, ingestDateint, smallRpfEstimate)
 	require.NoError(t, err)
 
 	// Should get multiple files for the same hour
@@ -177,8 +175,7 @@ func TestSingleFileWhenUnderLimit(t *testing.T) {
 	const largeRpfEstimate = 1000
 	ingestDateint := int32(20230101)
 
-	ll := slog.New(slog.NewTextHandler(io.Discard, nil))
-	results, err := buffet.ProcessAndSplit(ll, fh, tmpdir, ingestDateint, largeRpfEstimate)
+	results, err := buffet.ProcessAndSplit(context.Background(), fh, tmpdir, ingestDateint, largeRpfEstimate)
 	require.NoError(t, err)
 
 	// Should get exactly one file

@@ -61,16 +61,12 @@ type KafkaIngestConsumer struct {
 }
 
 // NewKafkaIngestConsumer creates a new Kafka-based ingest consumer
-func NewKafkaIngestConsumer(factory *fly.Factory, cfg *config.Config, signal string, groupID string) (*KafkaIngestConsumer, error) {
+func NewKafkaIngestConsumer(ctx context.Context, factory *fly.Factory, cfg *config.Config, signal string, groupID string) (*KafkaIngestConsumer, error) {
 	if !factory.IsEnabled() {
 		return nil, fmt.Errorf("Kafka is not enabled for ingestion")
 	}
 
-	// Logger will be retrieved from context using logctx.FromContext()
-	// Create a temporary logger for consumer creation
-	tempLogger := slog.Default().With("component", "kafka_ingest_consumer", "signal", signal)
-
-	consumer, err := fly.NewObjStoreNotificationConsumer(factory, signal, groupID, tempLogger)
+	consumer, err := fly.NewObjStoreNotificationConsumer(ctx, factory, signal, groupID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka consumer: %w", err)
 	}
