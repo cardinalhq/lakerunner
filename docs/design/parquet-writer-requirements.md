@@ -1,10 +1,10 @@
 # Parquet Writer Requirements by Signal Type
 
-This document defines the specific requirements and constraints for writing Parquet files for each signal type (logs, metrics, traces) in LakeRunner.
+This document defines the specific requirements and constraints for writing Parquet files for each signal type (logs, metrics, traces) in Lakerunner.
 
 ## Overview
 
-LakeRunner processes three types of telemetry signals, each with different characteristics that affect how they should be written to Parquet files:
+Lakerunner processes three types of telemetry signals, each with different characteristics that affect how they should be written to Parquet files:
 
 - **Metrics**: Time-series data with TID ordering requirements
 - **Logs**: Event data with timestamp ordering requirements  

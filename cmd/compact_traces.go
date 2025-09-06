@@ -23,8 +23,9 @@ import (
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
 
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
+	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/internal/tracecompaction"
 	"github.com/cardinalhq/lakerunner/lockmgr"
@@ -72,24 +73,25 @@ var compactTracesDoneCtx context.Context
 
 func compactTracesFor(
 	ctx context.Context,
-	ll *slog.Logger,
 	tmpdir string,
-	awsmanager *awsclient.Manager,
+	cmgr cloudstorage.ClientProvider,
 	sp storageprofile.StorageProfileProvider,
 	mdb lrdb.StoreFull,
 	inf lockmgr.Workable,
 	rpfEstimate int64, // rows-per-file estimate (from ingest stats), same as logs
 	_ any,
 ) error {
+	ll := logctx.FromContext(ctx)
+
 	profile, err := sp.GetStorageProfileForOrganizationAndInstance(ctx, inf.OrganizationID(), inf.InstanceNum())
 	if err != nil {
 		ll.Error("Failed to get storage profile", slog.Any("error", err))
 		return err
 	}
 
-	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
+	storageClient, err := cloudstorage.NewClient(ctx, cmgr, profile)
 	if err != nil {
-		ll.Error("Failed to get S3 client", slog.Any("error", err))
+		ll.Error("Failed to get storage client", slog.Any("error", err))
 		return err
 	}
 
@@ -169,7 +171,7 @@ func compactTracesFor(
 		// - group segments by rowsPerFileEstimate into ~targetFileSize outputs
 		// - be conservative near boundaries
 		// - optionally filter obviously-bad segments (empty, oversized, etc.)
-		recorder := compactionMetricRecorder{logger: ll}
+		recorder := compactionMetricRecorder{}
 		packed, err := tracecompaction.PackTraceSegmentsWithEstimate(
 			ctx,
 			segments,
@@ -249,7 +251,7 @@ func compactTracesFor(
 			ll.Info("Starting atomic trace compaction operation",
 				slog.Int("segmentCount", len(group)))
 
-			if err := packTraceSegment(ctx, ll, tmpdir, s3client, mdb, group, profile, inf.Dateint(), inf.SlotId(), inf.InstanceNum()); err != nil {
+			if err := packTraceSegment(ctx, tmpdir, storageClient, mdb, group, profile, inf.Dateint(), inf.SlotId(), inf.InstanceNum()); err != nil {
 				ll.Error("Atomic operation failed - will retry entire work item",
 					slog.Any("error", err),
 					slog.Int("failedAtGroup", i))

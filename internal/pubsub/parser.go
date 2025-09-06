@@ -20,15 +20,16 @@ import (
 	"log/slog"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
-	"github.com/cardinalhq/lakerunner/lrdb"
+	"github.com/cardinalhq/lakerunner/internal/processing/ingest"
 )
 
 // EventParser defines the interface for parsing different types of storage events
 type EventParser interface {
-	Parse(raw []byte) ([]lrdb.Inqueue, error)
+	Parse(raw []byte) ([]ingest.IngestItem, error)
 	GetEventType() string
 }
 
@@ -39,7 +40,7 @@ func (p *S3EventParser) GetEventType() string {
 	return "S3"
 }
 
-func (p *S3EventParser) Parse(raw []byte) ([]lrdb.Inqueue, error) {
+func (p *S3EventParser) Parse(raw []byte) ([]ingest.IngestItem, error) {
 	var evt struct {
 		Records []struct {
 			S3 struct {
@@ -58,7 +59,7 @@ func (p *S3EventParser) Parse(raw []byte) ([]lrdb.Inqueue, error) {
 		return nil, fmt.Errorf("failed to parse S3 event: %w", err)
 	}
 
-	out := make([]lrdb.Inqueue, 0, len(evt.Records))
+	out := make([]ingest.IngestItem, 0, len(evt.Records))
 	for _, rec := range evt.Records {
 		item, err := p.parseS3Record(rec.S3.Bucket.Name, rec.S3.Object.Key, rec.S3.Object.Size)
 		if err != nil {
@@ -72,7 +73,7 @@ func (p *S3EventParser) Parse(raw []byte) ([]lrdb.Inqueue, error) {
 	return out, nil
 }
 
-func (p *S3EventParser) parseS3Record(bucketName, key string, size int64) (*lrdb.Inqueue, error) {
+func (p *S3EventParser) parseS3Record(bucketName, key string, size int64) (*ingest.IngestItem, error) {
 	key, err := url.QueryUnescape(key)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unescape key: %w", err)
@@ -98,7 +99,7 @@ func (p *AzureEventGridParser) GetEventType() string {
 	return "Azure"
 }
 
-func (p *AzureEventGridParser) Parse(raw []byte) ([]lrdb.Inqueue, error) {
+func (p *AzureEventGridParser) Parse(raw []byte) ([]ingest.IngestItem, error) {
 	var evt struct {
 		EventType string `json:"eventType"`
 		Subject   string `json:"subject"`
@@ -114,7 +115,7 @@ func (p *AzureEventGridParser) Parse(raw []byte) ([]lrdb.Inqueue, error) {
 
 	// Only process blob created events
 	if evt.EventType != "Microsoft.Storage.BlobCreated" {
-		return []lrdb.Inqueue{}, nil
+		return []ingest.IngestItem{}, nil
 	}
 
 	// Extract container and blob path from subject
@@ -136,14 +137,14 @@ func (p *AzureEventGridParser) Parse(raw []byte) ([]lrdb.Inqueue, error) {
 		return nil, err
 	}
 	if parsedItem == nil {
-		return []lrdb.Inqueue{}, nil
+		return []ingest.IngestItem{}, nil
 	}
 
 	// Merge parsed information with Azure event data
 	parsedItem.FileSize = evt.Data.ContentLength
 	parsedItem.Bucket = containerName
 
-	return []lrdb.Inqueue{*parsedItem}, nil
+	return []ingest.IngestItem{*parsedItem}, nil
 }
 
 // GCPStorageEventParser handles GCP Cloud Storage events
@@ -153,7 +154,7 @@ func (p *GCPStorageEventParser) GetEventType() string {
 	return "GCP"
 }
 
-func (p *GCPStorageEventParser) Parse(raw []byte) ([]lrdb.Inqueue, error) {
+func (p *GCPStorageEventParser) Parse(raw []byte) ([]ingest.IngestItem, error) {
 	var evt struct {
 		Kind string `json:"kind"`
 		Name string `json:"name"`
@@ -179,7 +180,7 @@ func (p *GCPStorageEventParser) Parse(raw []byte) ([]lrdb.Inqueue, error) {
 		return nil, err
 	}
 	if item == nil {
-		return []lrdb.Inqueue{}, nil
+		return []ingest.IngestItem{}, nil
 	}
 
 	slog.Info("Parsed GCP storage event",
@@ -189,11 +190,11 @@ func (p *GCPStorageEventParser) Parse(raw []byte) ([]lrdb.Inqueue, error) {
 		slog.String("collector", item.CollectorName),
 		slog.String("organization_id", item.OrganizationID.String()))
 
-	return []lrdb.Inqueue{*item}, nil
+	return []ingest.IngestItem{*item}, nil
 }
 
 // parseObjectKey is a shared method for parsing object keys regardless of event source
-func parseObjectKey(bucketName, key string) (*lrdb.Inqueue, error) {
+func parseObjectKey(bucketName, key string) (*ingest.IngestItem, error) {
 	if strings.HasSuffix(key, "/") {
 		return nil, fmt.Errorf("skipping directory key: %s", key)
 	}
@@ -233,7 +234,7 @@ func parseObjectKey(bucketName, key string) (*lrdb.Inqueue, error) {
 		telem = "logs" // Default to logs for unknown prefixes
 	}
 
-	return &lrdb.Inqueue{
+	return &ingest.IngestItem{
 		OrganizationID: orgID,
 		InstanceNum:    -1,
 		Bucket:         bucketName,
@@ -241,6 +242,7 @@ func parseObjectKey(bucketName, key string) (*lrdb.Inqueue, error) {
 		Signal:         telem,
 		CollectorName:  collector,
 		FileSize:       0,
+		QueuedAt:       time.Now(),
 	}, nil
 }
 
@@ -274,7 +276,7 @@ func (f *EventParserFactory) NewParser(raw []byte) (EventParser, error) {
 	return nil, fmt.Errorf("unable to determine event type from content")
 }
 
-func parseS3LikeEvents(raw []byte) ([]lrdb.Inqueue, error) {
+func parseS3LikeEvents(raw []byte) ([]ingest.IngestItem, error) {
 	factory := &EventParserFactory{}
 	parser, err := factory.NewParser(raw)
 	if err != nil {

@@ -12,20 +12,6 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-// Copyright (C) 2025 CardinalHQ, Inc
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Affero General Public License as
-// published by the GNU Affero General Public License, version 3.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR ANY PURPOSE. See the
-// GNU Affero General Public License for more details.
-//
-// You should have received a copy of the GNU Affero General Public License
-// along with this program. If not, see <http://www.gnu.org/licenses/>.
-
 package ingesttraces
 
 import (
@@ -37,10 +23,10 @@ import (
 	mapset "github.com/deckarep/golang-set/v2"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
-	"github.com/cardinalhq/lakerunner/cmd/ingestlogs"
 	"github.com/cardinalhq/lakerunner/fileconv/proto"
 	"github.com/cardinalhq/lakerunner/fileconv/translate"
 	"github.com/cardinalhq/lakerunner/internal/buffet"
+	"github.com/cardinalhq/lakerunner/internal/helpers"
 )
 
 // ConvertProtoFile converts a protobuf file to the standardized format
@@ -71,7 +57,7 @@ func ConvertProtoFile(tmpfilename, tmpdir, bucket, objectID string, rpfEstimate 
 	baseitems := map[string]string{
 		"resource.bucket.name": bucket,
 		"resource.file.name":   "./" + objectID,
-		"resource.file.type":   ingestlogs.GetFileType(objectID),
+		"resource.file.type":   helpers.GetFileType(objectID),
 	}
 
 	// Add base items to schema

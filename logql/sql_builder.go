@@ -25,12 +25,465 @@ import (
 )
 
 // ToWorkerSQLWithLimit is like ToWorkerSQL but (for non-aggregated leaves) appends
-func (be *LogLeaf) ToWorkerSQLWithLimit(step time.Duration, limit int, order string) string {
-	return be.toWorkerSQL(step, limit, order)
+func (be *LogLeaf) ToWorkerSQLWithLimit(limit int, order string) string {
+	return be.ToWorkerSQL(limit, order)
 }
 
-// toWorkerSQL is the internal worker used by both ToWorkerSQL* variants.
-func (be *LogLeaf) toWorkerSQL(step time.Duration, limit int, order string) string {
+// ToWorkerSQL builds the SQL pipeline for a LogLeaf (selector + filters + parsers),
+// projecting any labels needed by filters and by vector aggregation (OutBy).
+func (be *LogLeaf) ToWorkerSQL(limit int, order string) string {
+	const baseRel = "{table}"                 // replace upstream
+	const bodyCol = "\"_cardinalhq.message\"" // quoted column for message text
+	const tsCol = "\"_cardinalhq.timestamp\"" // quoted column for event timestamp
+
+	type layer struct {
+		name string
+		sql  string
+	}
+
+	var layers []layer
+	mk := func(i int) string { return fmt.Sprintf("s%d", i) }
+
+	layerIdx := 0
+	push := func(selectList []string, from string, whereConds []string) {
+		alias := mk(layerIdx)
+		layerIdx++
+		if len(selectList) == 0 {
+			selectList = []string{"*"}
+		}
+		sl := strings.Join(selectList, ", ")
+		var where string
+		if len(whereConds) > 0 {
+			where = " WHERE " + strings.Join(whereConds, " AND ")
+		}
+		sql := fmt.Sprintf("%s AS (\n  SELECT %s\n  FROM %s%s\n)", alias, sl, from, where)
+		layers = append(layers, layer{name: alias, sql: sql})
+	}
+
+	// Utility helpers
+	dedupe := func(ss []string) []string {
+		m := make(map[string]struct{}, len(ss))
+		for _, s := range ss {
+			if s == "" {
+				continue
+			}
+			m[s] = struct{}{}
+		}
+		out := make([]string, 0, len(m))
+		for k := range m {
+			out = append(out, k)
+		}
+		sort.Strings(out)
+		return out
+	}
+
+	// Group-by labels we must project later (inside parsers) for vector aggregation
+	groupKeys := dedupe(be.OutBy)
+
+	// ---- s0: minimal base projection ----
+	// Only project columns guaranteed to exist now:
+	//   - message (for parsers)
+	//   - exemplar defaults: id, timestamp, level, fingerprint
+	//   - matcher columns (since selectors refer to base columns)
+	need := map[string]struct{}{
+		bodyCol:                       {},
+		tsCol:                         {},
+		"\"_cardinalhq.id\"":          {},
+		"\"_cardinalhq.level\"":       {},
+		"\"_cardinalhq.fingerprint\"": {},
+	}
+	for _, m := range be.Matchers {
+		need[quoteIdent(m.Label)] = struct{}{}
+	}
+
+	var s0Select []string
+	for col := range need {
+		s0Select = append(s0Select, col)
+	}
+	sort.Strings(s0Select)
+	push(s0Select, baseRel, nil)
+
+	// Sentinel layer so cache manager can splice segment filter via "AND true".
+	timePred := fmt.Sprintf(
+		"CAST(%s AS BIGINT) >= {start} AND CAST(%s AS BIGINT) < {end}",
+		tsCol, tsCol,
+	)
+	push([]string{mk(layerIdx-1) + ".*"}, mk(layerIdx-1), []string{"1=1", "true", timePred})
+
+	// Track the current top alias
+	top := func() string { return mk(layerIdx - 1) }
+
+	// Apply selector matchers early (WHERE on current top).
+	if len(be.Matchers) > 0 {
+		mLfs := make([]LabelFilter, 0, len(be.Matchers))
+		for _, m := range be.Matchers {
+			mLfs = append(mLfs, LabelFilter{Label: m.Label, Op: m.Op, Value: m.Value})
+		}
+		mWhere := buildLabelFilterWhere(mLfs, nil) // nil resolver => use quoteIdent(label)
+		if len(mWhere) > 0 {
+			push([]string{top() + ".*"}, top(), mWhere)
+		}
+	}
+
+	// Line filters (pre-parser) -> WHERE on current top
+	lineWhere := buildLineFilterWhere(be.LineFilters, bodyCol)
+	if len(lineWhere) > 0 {
+		push([]string{top() + ".*"}, top(), lineWhere)
+	}
+
+	// Collect label filters that aren't tied to a parser (or we can't tell) yet.
+	remainingLF := make([]LabelFilter, 0, len(be.LabelFilters))
+	remainingLF = append(remainingLF, be.LabelFilters...)
+
+	// -------- Pre-scan for labels that will be created by any later label_format stage --------
+	futureCreated := make(map[string]struct{})
+	for _, p := range be.Parsers {
+		switch strings.ToLower(p.Type) {
+		case "label_format", "label-format", "labelformat":
+			if len(p.LabelFormats) > 0 {
+				for _, lf := range p.LabelFormats {
+					futureCreated[lf.Out] = struct{}{}
+				}
+			} else {
+				for k := range p.Params {
+					futureCreated[k] = struct{}{}
+				}
+			}
+		}
+	}
+	unwrapNeeded := make(map[string]struct{})
+	for _, p := range be.Parsers {
+		if strings.ToLower(p.Type) == "unwrap" {
+			if f := strings.TrimSpace(p.Params["field"]); f != "" {
+				unwrapNeeded[f] = struct{}{}
+			}
+		}
+	}
+	uniqLabels := func(lfs []LabelFilter) []string {
+		set := map[string]struct{}{}
+		for _, lf := range lfs {
+			set[lf.Label] = struct{}{}
+		}
+		out := make([]string, 0, len(set))
+		for k := range set {
+			out = append(out, k)
+		}
+		sort.Strings(out)
+		return out
+	}
+	excludeFuture := func(keys []string) []string {
+		out := make([]string, 0, len(keys))
+		for _, k := range keys {
+			if _, later := futureCreated[k]; !later {
+				out = append(out, k)
+			}
+		}
+		return out
+	}
+	mkSet := func(keys []string) map[string]struct{} {
+		m := make(map[string]struct{}, len(keys))
+		for _, k := range keys {
+			m[k] = struct{}{}
+		}
+		return m
+	}
+
+	// Emit parser/transform layers left→right.
+	for _, p := range be.Parsers {
+		switch strings.ToLower(p.Type) {
+
+		case "regexp":
+			pat := p.Params["pattern"]
+			names := regexCaptureNames(pat) // may include groupKeys if named captures match
+			selects := []string{top() + ".*"}
+
+			if len(names) > 0 {
+				quotedNames := make([]string, len(names))
+				for i, name := range names {
+					quotedNames[i] = fmt.Sprintf("'%s'", name)
+				}
+				selects = append(selects,
+					fmt.Sprintf("regexp_extract(%s, %s, [%s]) AS __extracted_struct",
+						bodyCol, sqlQuote(pat), strings.Join(quotedNames, ", ")))
+			}
+			push(selects, top(), nil)
+
+			// Extract individual columns from the `__extracted_struct` in a separate CTE
+			if len(names) > 0 {
+				extractSelects := []string{top() + ".*"}
+				for _, name := range names {
+					if strings.HasPrefix(name, "__var_") {
+						continue
+					}
+					extractSelects = append(extractSelects,
+						fmt.Sprintf("__extracted_struct.%s AS %s", quoteIdent(name), quoteIdent(name)))
+				}
+				push(extractSelects, top(), nil)
+			}
+
+			// Apply label filters that target these extracted names now.
+			if len(names) > 0 {
+				created := mkSet(names)
+				now, later := partitionByNames(remainingLF, created)
+				if len(now) > 0 {
+					where := buildLabelFilterWhere(now, nil)
+					push([]string{top() + ".*"}, top(), where)
+				}
+				remainingLF = later
+			}
+
+		case "json":
+			// Need keys from filters + group-by, excluding those a future label_format will create
+			needKeys := uniqLabels(remainingLF)
+			needKeys = append(needKeys, groupKeys...)
+
+			// NEW: ensure fields needed by unwrap are projected by json
+			for f := range unwrapNeeded {
+				needKeys = append(needKeys, f)
+			}
+
+			needKeys = dedupe(excludeFuture(needKeys))
+
+			selects := []string{top() + ".*"}
+			for _, k := range needKeys {
+				path := jsonPathForKey(k)
+				selects = append(selects, fmt.Sprintf("json_extract_string(%s, %s) AS %s", bodyCol, sqlQuote(path), quoteIdent(k)))
+			}
+			push(selects, top(), nil)
+
+			if len(needKeys) > 0 {
+				created := mkSet(needKeys)
+				now, later := partitionByNames(remainingLF, created)
+				if len(now) > 0 {
+					where := buildLabelFilterWhere(now, nil)
+					push([]string{top() + ".*"}, top(), where)
+				}
+				remainingLF = later
+			}
+
+		case "logfmt":
+			needKeys := uniqLabels(remainingLF)
+			needKeys = append(needKeys, groupKeys...)
+
+			// NEW: ensure fields needed by unwrap are projected by logfmt
+			for f := range unwrapNeeded {
+				needKeys = append(needKeys, f)
+			}
+
+			needKeys = dedupe(excludeFuture(needKeys))
+
+			selects := []string{top() + ".*"}
+			for _, k := range needKeys {
+				reKey := fmt.Sprintf(`(?:^|\s)%s=([^\s]+)`, regexp.QuoteMeta(k))
+				selects = append(selects,
+					fmt.Sprintf("regexp_extract(%s, %s, 1) AS %s", bodyCol, sqlQuote(reKey), quoteIdent(k)))
+			}
+			push(selects, top(), nil)
+
+			if len(needKeys) > 0 {
+				created := mkSet(needKeys)
+				now, later := partitionByNames(remainingLF, created)
+				if len(now) > 0 {
+					where := buildLabelFilterWhere(now, nil)
+					push([]string{top() + ".*"}, top(), where)
+				}
+				remainingLF = later
+			}
+
+		case "label_format", "label-format", "labelformat":
+			selects := []string{top() + ".*"}
+			created := make(map[string]struct{})
+
+			if len(p.LabelFormats) > 0 {
+				for _, lf := range p.LabelFormats {
+					selects = append(selects, fmt.Sprintf("(%s) AS %s", lf.SQL, quoteIdent(lf.Out)))
+					created[lf.Out] = struct{}{}
+				}
+			} else {
+				keys := make([]string, 0, len(p.Params))
+				for k := range p.Params {
+					keys = append(keys, k)
+				}
+				sort.Strings(keys)
+				for _, outName := range keys {
+					tmpl := p.Params[outName]
+					expr, err := buildLabelFormatExprTemplate(tmpl, func(s string) string { return quoteIdent(s) })
+					if err != nil {
+						expr = "''"
+					}
+					selects = append(selects, fmt.Sprintf("(%s) AS %s", expr, quoteIdent(outName)))
+					created[outName] = struct{}{}
+				}
+			}
+
+			push(selects, top(), nil)
+
+			now, later := partitionByNames(remainingLF, created)
+			if len(now) > 0 {
+				where := buildLabelFilterWhere(now, nil)
+				push([]string{top() + ".*"}, top(), where)
+			}
+			remainingLF = later
+
+		case "unwrap":
+			field := strings.TrimSpace(p.Params["field"])
+			fn := strings.ToLower(strings.TrimSpace(p.Params["func"]))
+			if field == "" {
+				push([]string{top() + ".*"}, top(), nil)
+				break
+			}
+			col := quoteIdent(field)
+
+			var expr string
+			switch fn {
+			case "duration":
+				expr = unwrapDurationExpr(col)
+			case "bytes":
+				expr = unwrapBytesExpr(col)
+			case "", "identity":
+				fallthrough
+			default:
+				expr = fmt.Sprintf("try_cast(%s AS DOUBLE)", col)
+			}
+
+			selects := []string{top() + ".*", expr + " AS __unwrap_value"}
+			push(selects, top(), nil)
+
+		default:
+			// Unknown parser: pass-through
+			push([]string{top() + ".*"}, top(), nil)
+		}
+	}
+
+	// Any label filters we didn’t place yet? (i.e., on base columns) apply at the end.
+	if len(remainingLF) > 0 {
+		where := buildLabelFilterWhere(remainingLF, nil)
+		if len(where) > 0 {
+			push([]string{top() + ".*"}, top(), where)
+		}
+	}
+
+	// Final SELECT
+	var sb strings.Builder
+	sb.WriteString("WITH\n")
+	for i, l := range layers {
+		sb.WriteString("  ")
+		sb.WriteString(l.sql)
+		if i != len(layers)-1 {
+			sb.WriteString(",\n")
+		} else {
+			sb.WriteString("\n")
+		}
+	}
+	finalAlias := mk(layerIdx - 1)
+	sb.WriteString("SELECT * FROM ")
+	sb.WriteString(finalAlias)
+
+	// Exemplars (non-aggregated): ORDER/LIMIT
+	if be.RangeAggOp == "" {
+		dir := strings.ToUpper(strings.TrimSpace(order))
+		if dir != "ASC" && dir != "DESC" {
+			dir = "DESC"
+		}
+		sb.WriteString(" ORDER BY ")
+		sb.WriteString(tsCol)
+		sb.WriteByte(' ')
+		sb.WriteString(dir)
+
+		if limit > 0 {
+			sb.WriteString(fmt.Sprintf(" LIMIT %d", limit))
+		}
+	}
+
+	return sb.String()
+}
+
+func (be *LogLeaf) ToWorkerSQLForTagValues(step time.Duration, tagName string) string {
+	const baseRel = "{table}"                 // replace upstream
+	const bodyCol = "\"_cardinalhq.message\"" // quoted column for message text
+	const tsCol = "\"_cardinalhq.timestamp\"" // quoted column for event timestamp
+
+	// Check if the tagName is created by any parser
+	tagCreatedByParser := false
+	for _, p := range be.Parsers {
+		switch strings.ToLower(p.Type) {
+		case "regexp":
+			pat := p.Params["pattern"]
+			names := regexCaptureNames(pat)
+			for _, name := range names {
+				if name == tagName {
+					tagCreatedByParser = true
+					break
+				}
+			}
+		case "json":
+			// For JSON, we need to check if the tagName matches any JSON path
+			if _, exists := p.Params[tagName]; exists {
+				tagCreatedByParser = true
+			}
+		case "logfmt":
+			// For logfmt, check if the tagName is in the params
+			if _, exists := p.Params[tagName]; exists {
+				tagCreatedByParser = true
+			}
+		}
+	}
+
+	// If the tag is created by a parser, we need to build a more complex query
+	if tagCreatedByParser {
+		return be.buildTagValuesQueryWithParsers(step, tagName)
+	}
+
+	// For tags that exist in the base table, use a simpler query
+	var whereConds []string
+
+	// Add time range filter
+	whereConds = append(whereConds, fmt.Sprintf("%s >= {start} AND %s <= {end}", tsCol, tsCol))
+
+	// Apply selector matchers
+	if len(be.Matchers) > 0 {
+		mLfs := make([]LabelFilter, 0, len(be.Matchers))
+		for _, m := range be.Matchers {
+			mLfs = append(mLfs, LabelFilter{Label: m.Label, Op: m.Op, Value: m.Value})
+		}
+		mWhere := buildLabelFilterWhere(mLfs, nil) // nil resolver => use quoteIdent(label)
+		whereConds = append(whereConds, mWhere...)
+	}
+
+	// Apply line filters
+	lineWhere := buildLineFilterWhere(be.LineFilters, bodyCol)
+	whereConds = append(whereConds, lineWhere...)
+
+	// Apply label filters that don't depend on parsers
+	remainingLF := make([]LabelFilter, 0, len(be.LabelFilters))
+	for _, lf := range be.LabelFilters {
+		if lf.Label != tagName {
+			remainingLF = append(remainingLF, lf)
+		}
+	}
+	if len(remainingLF) > 0 {
+		lfWhere := buildLabelFilterWhere(remainingLF, nil)
+		whereConds = append(whereConds, lfWhere...)
+	}
+
+	// Add filter to ensure the tag column exists and is not null
+	whereConds = append(whereConds, fmt.Sprintf("%s IS NOT NULL", quoteIdent(tagName)))
+
+	// Build the final SQL query
+	var whereClause string
+	if len(whereConds) > 0 {
+		whereClause = " WHERE " + strings.Join(whereConds, " AND ")
+	}
+
+	sql := "SELECT DISTINCT " + quoteIdent(tagName) + " AS tag_value" +
+		" FROM " + baseRel + whereClause +
+		" ORDER BY tag_value ASC"
+
+	return sql
+}
+
+// buildTagValuesQueryWithParsers builds a complex query when the tag is extracted by parsers
+func (be *LogLeaf) buildTagValuesQueryWithParsers(step time.Duration, tagName string) string {
 	const baseRel = "{table}"                 // replace upstream
 	const bodyCol = "\"_cardinalhq.message\"" // quoted column for message text
 	const tsCol = "\"_cardinalhq.timestamp\"" // quoted column for event timestamp
@@ -60,16 +513,11 @@ func (be *LogLeaf) toWorkerSQL(step time.Duration, limit int, order string) stri
 	}
 
 	// ---- s0: minimal base projection ----
-	// Only project columns guaranteed to exist now:
-	//   - message (for parsers)
-	//   - exemplar defaults: id, timestamp, level
-	//   - matcher columns (since selectors refer to base columns)
 	need := map[string]struct{}{
-		bodyCol:                       {},
-		tsCol:                         {},
-		"\"_cardinalhq.id\"":          {},
-		"\"_cardinalhq.level\"":       {},
-		"\"_cardinalhq.fingerprint\"": {},
+		bodyCol:                 {},
+		tsCol:                   {},
+		"\"_cardinalhq.id\"":    {},
+		"\"_cardinalhq.level\"": {},
 	}
 	for _, m := range be.Matchers {
 		need[quoteIdent(m.Label)] = struct{}{}
@@ -82,7 +530,6 @@ func (be *LogLeaf) toWorkerSQL(step time.Duration, limit int, order string) stri
 	push(s0Select, baseRel, nil)
 
 	// Sentinel layer so cache manager can splice segment filter via "AND true".
-	// This produces a literal "AND true" in the SQL text, independent of other filters.
 	push([]string{mk(layerIdx-1) + ".*"}, mk(layerIdx-1), []string{"1=1", "true"})
 
 	// Track the current top alias
@@ -96,7 +543,6 @@ func (be *LogLeaf) toWorkerSQL(step time.Duration, limit int, order string) stri
 		}
 		mWhere := buildLabelFilterWhere(mLfs, nil) // nil resolver => use quoteIdent(label)
 		if len(mWhere) > 0 {
-			// keep sentinel in earlier CTE; no need to re-append "true" here
 			push([]string{top() + ".*"}, top(), mWhere)
 		}
 	}
@@ -159,33 +605,27 @@ func (be *LogLeaf) toWorkerSQL(step time.Duration, limit int, order string) stri
 			names := regexCaptureNames(pat)
 			selects := []string{top() + ".*"}
 
-			if len(names) > 0 {
-				quotedNames := make([]string, len(names))
-				for i, name := range names {
-					quotedNames[i] = fmt.Sprintf("'%s'", name)
+			// Project each *named* capture directly by its position.
+			for i, name := range names {
+				if strings.HasPrefix(name, "__var_") {
+					continue // skip unnamed captures
 				}
+				idx := i + 1 // regexp group positions are 1-based
 				selects = append(selects,
-					fmt.Sprintf("regexp_extract(%s, %s, [%s]) AS __extracted_struct",
-						bodyCol, sqlQuote(pat), strings.Join(quotedNames, ", ")))
+					fmt.Sprintf("regexp_extract(%s, %s, %d) AS %s",
+						bodyCol, sqlQuote(pat), idx, quoteIdent(name)))
 			}
 			push(selects, top(), nil)
 
-			// Extract individual columns from the `__extracted_struct` in a separate CTE
+			// Apply label filters that target these extracted names now.
 			if len(names) > 0 {
-				extractSelects := []string{top() + ".*"}
+				created := make(map[string]struct{})
 				for _, name := range names {
 					if strings.HasPrefix(name, "__var_") {
 						continue
 					}
-					extractSelects = append(extractSelects,
-						fmt.Sprintf("__extracted_struct.%s AS %s", quoteIdent(name), quoteIdent(name)))
+					created[name] = struct{}{}
 				}
-				push(extractSelects, top(), nil)
-			}
-
-			// Apply label filters that target these extracted names now.
-			if len(names) > 0 {
-				created := mkSet(names)
 				now, later := partitionByNames(remainingLF, created)
 				if len(now) > 0 {
 					where := buildLabelFilterWhere(now, nil)
@@ -197,6 +637,20 @@ func (be *LogLeaf) toWorkerSQL(step time.Duration, limit int, order string) stri
 		case "json":
 			needKeys := uniqLabels(remainingLF)
 			needKeys = excludeFuture(needKeys)
+
+			// Always include the tagName if it's in the parser params
+			if _, exists := p.Params[tagName]; exists {
+				found := false
+				for _, k := range needKeys {
+					if k == tagName {
+						found = true
+						break
+					}
+				}
+				if !found {
+					needKeys = append(needKeys, tagName)
+				}
+			}
 
 			selects := []string{top() + ".*"}
 			for _, k := range needKeys {
@@ -219,6 +673,20 @@ func (be *LogLeaf) toWorkerSQL(step time.Duration, limit int, order string) stri
 			needKeys := uniqLabels(remainingLF)
 			needKeys = excludeFuture(needKeys)
 
+			// Always include the tagName if it's in the parser params
+			if _, exists := p.Params[tagName]; exists {
+				found := false
+				for _, k := range needKeys {
+					if k == tagName {
+						found = true
+						break
+					}
+				}
+				if !found {
+					needKeys = append(needKeys, tagName)
+				}
+			}
+
 			selects := []string{top() + ".*"}
 			for _, k := range needKeys {
 				reKey := fmt.Sprintf(`(?:^|\s)%s=([^\s]+)`, regexp.QuoteMeta(k))
@@ -239,87 +707,62 @@ func (be *LogLeaf) toWorkerSQL(step time.Duration, limit int, order string) stri
 
 		case "label_format", "label-format", "labelformat":
 			selects := []string{top() + ".*"}
-			created := make(map[string]struct{})
-
-			if len(p.LabelFormats) > 0 {
-				for _, lf := range p.LabelFormats {
-					selects = append(selects, fmt.Sprintf("(%s) AS %s", lf.SQL, quoteIdent(lf.Out)))
-					created[lf.Out] = struct{}{}
-				}
-			} else {
-				keys := make([]string, 0, len(p.Params))
-				for k := range p.Params {
-					keys = append(keys, k)
-				}
-				sort.Strings(keys)
-				for _, outName := range keys {
-					tmpl := p.Params[outName]
-					expr, err := buildLabelFormatExprTemplate(tmpl, func(s string) string { return quoteIdent(s) })
-					if err != nil {
-						expr = "''"
-					}
-					selects = append(selects, fmt.Sprintf("(%s) AS %s", expr, quoteIdent(outName)))
-					created[outName] = struct{}{}
-				}
+			for k, v := range p.Params {
+				selects = append(selects, fmt.Sprintf("(%s) AS %s", v, quoteIdent(k)))
 			}
-
 			push(selects, top(), nil)
 
+			// Apply label filters that target these new labels now.
+			created := mkSet(keys(p.Params))
 			now, later := partitionByNames(remainingLF, created)
 			if len(now) > 0 {
 				where := buildLabelFilterWhere(now, nil)
 				push([]string{top() + ".*"}, top(), where)
 			}
 			remainingLF = later
-
-		default:
-			// Unknown parser: pass-through
-			push([]string{top() + ".*"}, top(), nil)
 		}
 	}
 
-	// Any label filters we didn’t place yet? (i.e., on base columns) apply at the end.
+	// Apply any remaining label filters
 	if len(remainingLF) > 0 {
 		where := buildLabelFilterWhere(remainingLF, nil)
-		if len(where) > 0 {
-			push([]string{top() + ".*"}, top(), where)
-		}
+		push([]string{top() + ".*"}, top(), where)
 	}
 
-	// Final SELECT
+	// Add time range filter
+	timeWhere := []string{fmt.Sprintf("%s >= {start} AND %s <= {end}", tsCol, tsCol)}
+	push([]string{top() + ".*"}, top(), timeWhere)
+
+	// Add filter to ensure the tag column exists and is not null
+	nullWhere := []string{fmt.Sprintf("%s IS NOT NULL", quoteIdent(tagName))}
+	push([]string{top() + ".*"}, top(), nullWhere)
+
+	// Build the final SQL query
 	var sb strings.Builder
-	sb.WriteString("WITH\n")
-	for i, l := range layers {
-		sb.WriteString("  ")
-		sb.WriteString(l.sql)
-		if i != len(layers)-1 {
+	sb.WriteString("WITH ")
+	for i, layer := range layers {
+		if i > 0 {
 			sb.WriteString(",\n")
-		} else {
-			sb.WriteString("\n")
 		}
-	}
-	finalAlias := mk(layerIdx - 1)
-	sb.WriteString("SELECT * FROM ")
-	sb.WriteString(finalAlias)
-
-	// Exemplars (non-aggregated): ORDER/LIMIT
-	if be.RangeAggOp == "" {
-		dir := strings.ToUpper(strings.TrimSpace(order))
-		if dir != "ASC" && dir != "DESC" {
-			dir = "DESC"
-		}
-		sb.WriteString(" ORDER BY ")
-		sb.WriteString(tsCol)
-		sb.WriteByte(' ')
-		sb.WriteString(dir)
-
-		if limit > 0 {
-			sb.WriteString(fmt.Sprintf(" LIMIT %d", limit))
-		}
+		sb.WriteString(layer.sql)
 	}
 
-	sb.WriteString(";\n")
+	sb.WriteString("\nSELECT DISTINCT ")
+	sb.WriteString(quoteIdent(tagName))
+	sb.WriteString(" AS tag_value FROM ")
+	sb.WriteString(mk(layerIdx - 1))
+	sb.WriteString(" ORDER BY tag_value ASC")
+
 	return sb.String()
+}
+
+// Helper function to get keys from a map
+func keys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 // ---------- helpers ----------
@@ -342,37 +785,31 @@ func regexCaptureNames(pattern string) []string {
 	// - Named capture groups: (?P<name>...)
 	// - Unnamed capture groups: (...)
 	// We need to be careful to not match non-capturing groups: (?:...)
-	// We'll use a two-step approach: first find all parentheses, then filter out non-capturing ones
 	re := regexp.MustCompile(`\(`)
 	m := re.FindAllStringIndex(pattern, -1)
 	if len(m) == 0 {
 		return nil
 	}
-
-	// Now filter out non-capturing groups and collect capture groups
 	names := make([]string, 0)
 	unnamedIndex := 0
-
 	for _, idx := range m {
 		start := idx[0]
-		// Check if this is a non-capturing group (?:...)
+		// non-capturing?
 		if start+2 < len(pattern) && pattern[start:start+3] == "(?:" {
-			continue // Skip non-capturing groups
+			continue
 		}
-
-		// Check if this is a named capture group (?P<name>...)
+		// named?
 		if start+3 < len(pattern) && pattern[start:start+3] == "(?P" {
-			// Find the closing > for the name
 			nameEnd := strings.Index(pattern[start+3:], ">")
 			if nameEnd != -1 {
 				name := pattern[start+4 : start+3+nameEnd]
 				names = append(names, name)
+				continue
 			}
-		} else {
-			// This is an unnamed capture group
-			names = append(names, fmt.Sprintf("__var_%d", unnamedIndex))
-			unnamedIndex++
 		}
+		// unnamed capture
+		names = append(names, fmt.Sprintf("__var_%d", unnamedIndex))
+		unnamedIndex++
 	}
 	return names
 }
@@ -636,7 +1073,6 @@ func callFunc(name string, args []arg) (string, string, error) {
 	switch name {
 	// boolean predicates
 	case "hasPrefix":
-		// hasPrefix "prefix" s   or   s | hasPrefix "prefix"
 		if len(args) != 2 {
 			return "", "", fmt.Errorf("hasPrefix needs 2 args")
 		}
@@ -651,13 +1087,11 @@ func callFunc(name string, args []arg) (string, string, error) {
 		if len(args) != 2 {
 			return "", "", fmt.Errorf("contains needs 2 args")
 		}
-		// DuckDB has contains(haystack, needle) -> bool
 		return fmt.Sprintf("contains(%s, %s)", args[1].sql, args[0].sql), "bool", nil
 	case "match":
 		if len(args) != 2 {
 			return "", "", fmt.Errorf("match needs 2 args")
 		}
-		// Interpret last arg as haystack, first as regex:
 		return fmt.Sprintf("regexp_matches(%s, %s)", args[1].sql, args[0].sql), "bool", nil
 
 	case "eq":
@@ -701,4 +1135,42 @@ func jsonPathForKey(k string) string {
 	// Use quoted member: $."resource.service.name"
 	esc := strings.ReplaceAll(k, `"`, `\"`)
 	return `$."` + esc + `"`
+}
+
+// duration strings like "250ms", "2s", "3m", "1.5h" -> seconds as DOUBLE
+func unwrapDurationExpr(col string) string {
+	num := fmt.Sprintf("try_cast(regexp_extract(%s, '([0-9]*\\.?[0-9]+)', 1) AS DOUBLE)", col)
+	unit := fmt.Sprintf("coalesce(regexp_extract(%s, '(ns|us|µs|ms|s|m|h)', 1), 's')", col)
+	return fmt.Sprintf(`CASE %s
+		WHEN 'ns' THEN %s/1e9
+		WHEN 'us' THEN %s/1e6
+		WHEN 'µs' THEN %s/1e6
+		WHEN 'ms' THEN %s/1e3
+		WHEN 's'  THEN %s
+		WHEN 'm'  THEN %s*60
+		WHEN 'h'  THEN %s*3600
+		ELSE try_cast(%s AS DOUBLE) END`,
+		unit, num, num, num, num, num, num, num, col)
+}
+
+// size strings like "10KB", "3MiB", "512", etc. -> bytes as DOUBLE
+func unwrapBytesExpr(col string) string {
+	num := fmt.Sprintf("try_cast(regexp_extract(%s, '([0-9]*\\.?[0-9]+)', 1) AS DOUBLE)", col)
+	unit := fmt.Sprintf("upper(coalesce(regexp_extract(%s, '(B|KB|MB|GB|TB|PB|EB|KIB|MIB|GIB|TIB|PIB|EIB)', 1), 'B'))", col)
+	return fmt.Sprintf(`CASE %s
+		WHEN 'B'   THEN %s
+		WHEN 'KB'  THEN %s*1000
+		WHEN 'MB'  THEN %s*1000*1000
+		WHEN 'GB'  THEN %s*1000*1000*1000
+		WHEN 'TB'  THEN %s*1000*1000*1000*1000
+		WHEN 'PB'  THEN %s*1e15
+		WHEN 'EB'  THEN %s*1e18
+		WHEN 'KIB' THEN %s*1024
+		WHEN 'MIB' THEN %s*1024*1024
+		WHEN 'GIB' THEN %s*1024*1024*1024
+		WHEN 'TIB' THEN %s*1024*1024*1024*1024
+		WHEN 'PIB' THEN %s*1024*1024*1024*1024*1024
+		WHEN 'EIB' THEN %s*1024*1024*1024*1024*1024*1024
+		ELSE try_cast(%s AS DOUBLE) END`,
+		unit, num, num, num, num, num, num, num, num, num, num, num, num, num, col)
 }

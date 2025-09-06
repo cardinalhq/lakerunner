@@ -27,21 +27,22 @@ import (
 	"google.golang.org/api/option"
 
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
+	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
 type GCPPubSubService struct {
-	tracer trace.Tracer
-	sp     storageprofile.StorageProfileProvider
-	mdb    InqueueInserter
-	client *pubsub.Client
-	sub    *pubsub.Subscription
+	tracer       trace.Tracer
+	sp           storageprofile.StorageProfileProvider
+	client       *pubsub.Client
+	sub          *pubsub.Subscription
+	kafkaHandler *KafkaHandler
 }
 
 // Ensure GCPPubSubService implements Backend interface
 var _ Backend = (*GCPPubSubService)(nil)
 
-func NewGCPPubSubService() (*GCPPubSubService, error) {
+func NewGCPPubSubService(kafkaFactory *fly.Factory) (*GCPPubSubService, error) {
 	projectID := os.Getenv("GCP_PROJECT_ID")
 	if projectID == "" {
 		return nil, fmt.Errorf("GCP_PROJECT_ID environment variable is required")
@@ -72,19 +73,26 @@ func NewGCPPubSubService() (*GCPPubSubService, error) {
 	}
 	sp := storageprofile.NewStorageProfileProvider(cdb)
 
-	mdb, err := dbopen.LRDBStore(context.Background())
-	if err != nil {
-		slog.Error("Failed to connect to lr database", slog.Any("error", err))
-		return nil, fmt.Errorf("failed to connect to lr database: %w", err)
+	// Kafka is required
+	if !kafkaFactory.IsEnabled() {
+		return nil, fmt.Errorf("Kafka is required for pubsub services but is not enabled")
 	}
 
-	return &GCPPubSubService{
-		tracer: otel.Tracer("github.com/cardinalhq/lakerunner/internal/pubsub/gcp-pubsub"),
-		sp:     sp,
-		mdb:    mdb,
-		client: client,
-		sub:    sub,
-	}, nil
+	kafkaHandler, err := NewKafkaHandler(kafkaFactory, "gcp", sp, slog.Default())
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Kafka handler: %w", err)
+	}
+
+	service := &GCPPubSubService{
+		tracer:       otel.Tracer("github.com/cardinalhq/lakerunner/internal/pubsub/gcp-pubsub"),
+		sp:           sp,
+		client:       client,
+		sub:          sub,
+		kafkaHandler: kafkaHandler,
+	}
+
+	slog.Info("GCP Pub/Sub service initialized with Kafka support")
+	return service, nil
 }
 
 func (ps *GCPPubSubService) GetName() string {
@@ -97,10 +105,15 @@ func (ps *GCPPubSubService) Run(doneCtx context.Context) error {
 	// Start the receive loop
 	err := ps.sub.Receive(doneCtx, ps.messageHandler)
 
-	// Ensure client is closed on exit
+	// Ensure client and Kafka handler are closed on exit
 	defer func() {
 		if err := ps.client.Close(); err != nil {
 			slog.Error("Failed to close GCP Pub/Sub client", slog.Any("error", err))
+		}
+		if ps.kafkaHandler != nil {
+			if err := ps.kafkaHandler.Close(); err != nil {
+				slog.Error("Failed to close Kafka handler", slog.Any("error", err))
+			}
 		}
 	}()
 
@@ -120,8 +133,9 @@ func (ps *GCPPubSubService) messageHandler(ctx context.Context, msg *pubsub.Mess
 		))
 	defer span.End()
 
-	// Process the message
-	err := handleMessage(ctx, msg.Data, ps.sp, ps.mdb)
+	// Process the message with Kafka
+	err := ps.kafkaHandler.HandleMessage(ctx, msg.Data)
+
 	if err != nil {
 		// Record error in span
 		span.RecordError(err)

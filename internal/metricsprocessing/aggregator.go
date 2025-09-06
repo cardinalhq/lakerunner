@@ -25,13 +25,14 @@ import (
 	"go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/filereader"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 )
 
 // AggregateMetrics is the generic aggregation pipeline for both compaction and rollup
 func AggregateMetrics(ctx context.Context, input ProcessingInput) (*ProcessingResult, error) {
-	ll := input.Logger
+	ll := logctx.FromContext(ctx)
 
 	// Validate input
 	if input.ReaderStack == nil || len(input.ReaderStack.Readers) == 0 {

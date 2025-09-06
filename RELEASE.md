@@ -1,6 +1,6 @@
-# LakeRunner Release Process
+# Lakerunner Release Process
 
-This document outlines the recommended release process for LakeRunner, following our semantic versioning strategy.
+This document outlines the recommended release process for Lakerunner, following our semantic versioning strategy.
 
 ## Release Types
 

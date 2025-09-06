@@ -15,6 +15,8 @@
 package metricsprocessing
 
 import (
+	"context"
+
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -22,14 +24,15 @@ import (
 // ConvertResultsToProcessedSegments converts parquet writer results to ProcessedSegments
 // This is used when we already have the metadata available from the context
 func ConvertResultsToProcessedSegments(
+	ctx context.Context,
 	results []parquetwriter.Result,
-	ctx ProcessingContext,
+	pctx ProcessingContext,
 	collectorName string,
 ) (ProcessedSegments, error) {
 	segments := make(ProcessedSegments, 0, len(results))
 
 	for _, result := range results {
-		segment, err := NewProcessedSegment(result, ctx.OrganizationID, collectorName, nil)
+		segment, err := NewProcessedSegment(ctx, result, pctx.OrganizationID, collectorName)
 		if err != nil {
 			return nil, err
 		}

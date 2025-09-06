@@ -18,14 +18,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"slices"
+	"time"
+
+	"github.com/google/uuid"
+
 	"github.com/cardinalhq/lakerunner/internal/buffet"
 	"github.com/cardinalhq/lakerunner/logql"
 	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/cardinalhq/lakerunner/promql"
-	"github.com/google/uuid"
-	"log/slog"
-	"slices"
-	"time"
 
 	"github.com/google/codesearch/index"
 	"github.com/google/codesearch/regexp"
@@ -60,7 +62,7 @@ func (q *QuerierService) EvaluateLogsQuery(
 
 		for _, leaf := range queryPlan.Leaves {
 			for _, dih := range dateIntHours {
-				segments, err := q.lookupLogsSegments(ctx, dih, leaf, startTs, endTs, DefaultLogStep, orgID, q.mdb.ListLogSegmentsForQuery)
+				segments, err := q.lookupLogsSegments(ctx, dih, leaf, startTs, endTs, orgID, q.mdb.ListLogSegmentsForQuery)
 				slog.Info("lookupLogsSegments", "dih", dih, "leaf", leaf, "found", len(segments))
 				if err != nil {
 					slog.Error("failed to lookup log segments", "err", err, "dih", dih, "leaf", leaf)
@@ -185,7 +187,6 @@ func (q *QuerierService) lookupLogsSegments(
 	dih DateIntHours,
 	leaf logql.LogLeaf,
 	startTs, endTs int64,
-	stepDuration time.Duration,
 	orgUUID uuid.UUID,
 	lookupFunc SegmentLookupFunc,
 ) ([]SegmentInfo, error) {
@@ -259,10 +260,9 @@ func (q *QuerierService) lookupLogsSegments(
 			SegmentID:      row.SegmentID,
 			StartTs:        row.StartTs,
 			EndTs:          row.EndTs,
-			Dataset:        "logs",
 			OrganizationID: orgUUID,
 			InstanceNum:    row.InstanceNum,
-			Frequency:      stepDuration.Milliseconds(),
+			Frequency:      10000,
 		}
 		fpToSegments[row.Fingerprint] = append(fpToSegments[row.Fingerprint], seg)
 	}

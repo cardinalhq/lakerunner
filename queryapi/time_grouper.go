@@ -29,7 +29,6 @@ type SegmentInfo struct {
 	StartTs        int64     `json:"startTs"`
 	EndTs          int64     `json:"endTs"`
 	ExprID         string    `json:"exprId"`
-	Dataset        string    `json:"dataset"`
 	OrganizationID uuid.UUID `json:"organizationID"`
 	InstanceNum    int16     `json:"instanceNum"`
 	Frequency      int64     `json:"frequency"`

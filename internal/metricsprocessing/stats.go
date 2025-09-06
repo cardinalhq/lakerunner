@@ -15,10 +15,12 @@
 package metricsprocessing
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"time"
 
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
 )
@@ -33,7 +35,9 @@ type FileMetadata struct {
 }
 
 // ExtractFileMetadata extracts and validates metadata from a parquet file result
-func ExtractFileMetadata(file parquetwriter.Result, ll *slog.Logger) (*FileMetadata, error) {
+func ExtractFileMetadata(ctx context.Context, file parquetwriter.Result) (*FileMetadata, error) {
+	ll := logctx.FromContext(ctx)
+
 	stats, ok := file.Metadata.(factories.MetricsFileStats)
 	if !ok {
 		ll.Error("Failed to extract MetricsFileStats from result metadata",

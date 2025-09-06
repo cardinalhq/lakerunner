@@ -64,7 +64,7 @@ func TestDDBSink_IngestParquetBatch(t *testing.T) {
 
 	// Step 6: Optionally query segment_id column to check distinct values
 	db := sink.db
-	rows, conn, err := db.QueryContext(ctx, `SELECT DISTINCT segment_id FROM cached`)
+	rows, conn, err := db.QueryContext(ctx, `SELECT DISTINCT segment_id FROM metrics_cached`)
 	require.NoError(t, err, "query segment_id failed")
 	defer rows.Close()
 	defer conn.Close()

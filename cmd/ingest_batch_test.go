@@ -18,78 +18,155 @@ import (
 	"os"
 	"testing"
 
-	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/config"
 )
 
 func TestBatchConfigurationDefaults(t *testing.T) {
+	// Clear any environment variables that might interfere
+	oldBatch := os.Getenv("LAKERUNNER_BATCH_TARGET_SIZE_BYTES")
+	oldMax := os.Getenv("LAKERUNNER_BATCH_MAX_BATCH_SIZE")
+	defer func() {
+		if oldBatch != "" {
+			os.Setenv("LAKERUNNER_BATCH_TARGET_SIZE_BYTES", oldBatch)
+		}
+		if oldMax != "" {
+			os.Setenv("LAKERUNNER_BATCH_MAX_BATCH_SIZE", oldMax)
+		}
+	}()
+	os.Unsetenv("LAKERUNNER_BATCH_TARGET_SIZE_BYTES")
+	os.Unsetenv("LAKERUNNER_BATCH_MAX_BATCH_SIZE")
+
 	// Test that batch configuration returns expected defaults
-	logsSize := helpers.GetBatchSizeForSignal("logs")
-	if logsSize != 1 {
-		t.Errorf("Expected default logs batch size of 1, got %d", logsSize)
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Failed to load config: %v", err)
 	}
 
-	metricsSize := helpers.GetBatchSizeForSignal("metrics")
-	if metricsSize != 1 {
-		t.Errorf("Expected default metrics batch size of 1, got %d", metricsSize)
+	expectedTargetSize := int64(100 * 1024 * 1024) // 100MB default
+	if cfg.Batch.TargetSizeBytes != expectedTargetSize {
+		t.Errorf("Expected default target size of %d bytes, got %d", expectedTargetSize, cfg.Batch.TargetSizeBytes)
 	}
 
-	tracesSize := helpers.GetBatchSizeForSignal("traces")
-	if tracesSize != 1 {
-		t.Errorf("Expected default traces batch size of 1, got %d", tracesSize)
+	expectedMaxBatch := 100 // Default from config
+	if cfg.Batch.MaxBatchSize != expectedMaxBatch {
+		t.Errorf("Expected default max batch size of %d, got %d", expectedMaxBatch, cfg.Batch.MaxBatchSize)
 	}
 
-	targetSize := helpers.GetTargetSizeBytes()
-	expectedSize := int64(1024 * 1024) // 1MB
-	if targetSize != expectedSize {
-		t.Errorf("Expected default target size of %d bytes, got %d", expectedSize, targetSize)
-	}
-
-	maxBatch := helpers.GetMaxBatchSize()
-	if maxBatch != 20 {
-		t.Errorf("Expected default max batch size of 20, got %d", maxBatch)
+	expectedMaxTotal := int64(1024 * 1024 * 1024) // 1GB default
+	if cfg.Batch.MaxTotalSize != expectedMaxTotal {
+		t.Errorf("Expected default max total size of %d bytes, got %d", expectedMaxTotal, cfg.Batch.MaxTotalSize)
 	}
 }
 
 func TestBatchConfigurationWithEnvironment(t *testing.T) {
+	// Save original environment variables
+	oldTargetSize := os.Getenv("LAKERUNNER_BATCH_TARGET_SIZE_BYTES")
+	oldMaxBatch := os.Getenv("LAKERUNNER_BATCH_MAX_BATCH_SIZE")
+	oldMaxTotal := os.Getenv("LAKERUNNER_BATCH_MAX_TOTAL_SIZE")
+	oldMaxAge := os.Getenv("LAKERUNNER_BATCH_MAX_AGE_SECONDS")
+	oldMinBatch := os.Getenv("LAKERUNNER_BATCH_MIN_BATCH_SIZE")
+
 	// Set environment variables
-	os.Setenv("LAKERUNNER_LOGS_BATCH_SIZE", "5")
-	os.Setenv("LAKERUNNER_METRICS_BATCH_SIZE", "10")
-	os.Setenv("LAKERUNNER_TRACES_BATCH_SIZE", "15")
-	os.Setenv("LAKERUNNER_TARGET_SIZE_BYTES", "2097152")
-	os.Setenv("LAKERUNNER_MAX_BATCH_SIZE", "50")
+	os.Setenv("LAKERUNNER_BATCH_TARGET_SIZE_BYTES", "2097152") // 2MB
+	os.Setenv("LAKERUNNER_BATCH_MAX_BATCH_SIZE", "50")
+	os.Setenv("LAKERUNNER_BATCH_MAX_TOTAL_SIZE", "104857600") // 100MB
+	os.Setenv("LAKERUNNER_BATCH_MAX_AGE_SECONDS", "600")      // 10 minutes
+	os.Setenv("LAKERUNNER_BATCH_MIN_BATCH_SIZE", "5")
 
 	defer func() {
-		os.Unsetenv("LAKERUNNER_LOGS_BATCH_SIZE")
-		os.Unsetenv("LAKERUNNER_METRICS_BATCH_SIZE")
-		os.Unsetenv("LAKERUNNER_TRACES_BATCH_SIZE")
-		os.Unsetenv("LAKERUNNER_TARGET_SIZE_BYTES")
-		os.Unsetenv("LAKERUNNER_MAX_BATCH_SIZE")
+		// Restore original environment variables
+		if oldTargetSize != "" {
+			os.Setenv("LAKERUNNER_BATCH_TARGET_SIZE_BYTES", oldTargetSize)
+		} else {
+			os.Unsetenv("LAKERUNNER_BATCH_TARGET_SIZE_BYTES")
+		}
+		if oldMaxBatch != "" {
+			os.Setenv("LAKERUNNER_BATCH_MAX_BATCH_SIZE", oldMaxBatch)
+		} else {
+			os.Unsetenv("LAKERUNNER_BATCH_MAX_BATCH_SIZE")
+		}
+		if oldMaxTotal != "" {
+			os.Setenv("LAKERUNNER_BATCH_MAX_TOTAL_SIZE", oldMaxTotal)
+		} else {
+			os.Unsetenv("LAKERUNNER_BATCH_MAX_TOTAL_SIZE")
+		}
+		if oldMaxAge != "" {
+			os.Setenv("LAKERUNNER_BATCH_MAX_AGE_SECONDS", oldMaxAge)
+		} else {
+			os.Unsetenv("LAKERUNNER_BATCH_MAX_AGE_SECONDS")
+		}
+		if oldMinBatch != "" {
+			os.Setenv("LAKERUNNER_BATCH_MIN_BATCH_SIZE", oldMinBatch)
+		} else {
+			os.Unsetenv("LAKERUNNER_BATCH_MIN_BATCH_SIZE")
+		}
 	}()
 
+	// Load config with environment variables
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Failed to load config: %v", err)
+	}
+
 	// Test configured values
-	logsSize := helpers.GetBatchSizeForSignal("logs")
-	if logsSize != 5 {
-		t.Errorf("Expected configured logs batch size of 5, got %d", logsSize)
+	expectedTargetSize := int64(2 * 1024 * 1024) // 2MB
+	if cfg.Batch.TargetSizeBytes != expectedTargetSize {
+		t.Errorf("Expected configured target size of %d bytes, got %d", expectedTargetSize, cfg.Batch.TargetSizeBytes)
 	}
 
-	metricsSize := helpers.GetBatchSizeForSignal("metrics")
-	if metricsSize != 10 {
-		t.Errorf("Expected configured metrics batch size of 10, got %d", metricsSize)
+	if cfg.Batch.MaxBatchSize != 50 {
+		t.Errorf("Expected configured max batch size of 50, got %d", cfg.Batch.MaxBatchSize)
 	}
 
-	tracesSize := helpers.GetBatchSizeForSignal("traces")
-	if tracesSize != 15 {
-		t.Errorf("Expected configured traces batch size of 15, got %d", tracesSize)
+	expectedMaxTotal := int64(100 * 1024 * 1024) // 100MB
+	if cfg.Batch.MaxTotalSize != expectedMaxTotal {
+		t.Errorf("Expected configured max total size of %d bytes, got %d", expectedMaxTotal, cfg.Batch.MaxTotalSize)
 	}
 
-	targetSize := helpers.GetTargetSizeBytes()
-	expectedSize := int64(2 * 1024 * 1024) // 2MB
-	if targetSize != expectedSize {
-		t.Errorf("Expected configured target size of %d bytes, got %d", expectedSize, targetSize)
+	if cfg.Batch.MaxAgeSeconds != 600 {
+		t.Errorf("Expected configured max age of 600 seconds, got %d", cfg.Batch.MaxAgeSeconds)
 	}
 
-	maxBatch := helpers.GetMaxBatchSize()
-	if maxBatch != 50 {
-		t.Errorf("Expected configured max batch size of 50, got %d", maxBatch)
+	if cfg.Batch.MinBatchSize != 5 {
+		t.Errorf("Expected configured min batch size of 5, got %d", cfg.Batch.MinBatchSize)
+	}
+}
+
+func TestLogsAndTracesPartitionConfiguration(t *testing.T) {
+	// Save original environment variables
+	oldLogs := os.Getenv("LAKERUNNER_LOGS_PARTITIONS")
+	oldTraces := os.Getenv("LAKERUNNER_TRACES_PARTITIONS")
+
+	// Set environment variables
+	os.Setenv("LAKERUNNER_LOGS_PARTITIONS", "256")
+	os.Setenv("LAKERUNNER_TRACES_PARTITIONS", "512")
+
+	defer func() {
+		// Restore original environment variables
+		if oldLogs != "" {
+			os.Setenv("LAKERUNNER_LOGS_PARTITIONS", oldLogs)
+		} else {
+			os.Unsetenv("LAKERUNNER_LOGS_PARTITIONS")
+		}
+		if oldTraces != "" {
+			os.Setenv("LAKERUNNER_TRACES_PARTITIONS", oldTraces)
+		} else {
+			os.Unsetenv("LAKERUNNER_TRACES_PARTITIONS")
+		}
+	}()
+
+	// Load config with environment variables
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Failed to load config: %v", err)
+	}
+
+	// Test configured values
+	if cfg.Logs.Partitions != 256 {
+		t.Errorf("Expected configured logs partitions of 256, got %d", cfg.Logs.Partitions)
+	}
+
+	if cfg.Traces.Partitions != 512 {
+		t.Errorf("Expected configured traces partitions of 512, got %d", cfg.Traces.Partitions)
 	}
 }

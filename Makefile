@@ -46,7 +46,50 @@ all_deps := $(shell find . -name '*.go' | grep -v _test) Makefile
 .PHONY: all
 all: gofmt ${TARGETS}
 
-# name of the buildx builder we’ll always (re)create
+#
+# Help target - display available make targets
+#
+.PHONY: help
+help:
+	@echo "Lakerunner Makefile Targets"
+	@echo "============================"
+	@echo ""
+	@echo "Building:"
+	@echo "  make              - Run tests and build locally (default)"
+	@echo "  make local        - Build all binaries locally"
+	@echo "  make docker       - Build Docker images"
+	@echo "  make docker-multi - Build multi-arch Docker images"
+	@echo ""
+	@echo "Testing:"
+	@echo "  make test         - Run all tests with code generation"
+	@echo "  make test-only    - Run tests without code generation"
+	@echo "  make test-integration - Run integration tests (requires test databases)"
+	@echo "  make test-kafka   - Run Kafka tests (with containerized Kafka)"
+	@echo "  make test-ci      - Run all CI tests"
+	@echo "  make coverage     - Generate test coverage report"
+	@echo "  make coverage-html - Generate HTML coverage report and open in browser"
+	@echo ""
+	@echo "Code Quality:"
+	@echo "  make check        - Run all pre-commit checks"
+	@echo "  make lint         - Run golangci-lint"
+	@echo "  make fmt          - Format code with gofmt and goimports"
+	@echo "  make gofmt        - Format code with gofmt only"
+	@echo "  make imports-fix  - Fix import organization"
+	@echo "  make license-check - Check license headers"
+	@echo ""
+	@echo "Code Generation:"
+	@echo "  make generate     - Generate all code (SQL, protobuf, etc.)"
+	@echo ""
+	@echo "Database:"
+	@echo "  make new-lrdb-migration name=<name> - Create new LRDB migration"
+	@echo "  make new-configdb-migration name=<name> - Create new ConfigDB migration"
+	@echo "  make check-migration-integrity - Verify migration files"
+	@echo ""
+	@echo "Utilities:"
+	@echo "  make clean        - Clean build artifacts"
+	@echo "  make help         - Show this help message"
+
+# name of the buildx builder we'll always (re)create
 BUILDER := lakerunner-builder
 
 # convenience recipe to always start with a clean builder
@@ -126,6 +169,12 @@ test-integration:
 	LRDB_HOST=localhost LRDB_DBNAME=testing_lrdb \
 	CONFIGDB_HOST=localhost CONFIGDB_DBNAME=testing_configdb \
 	go test -race -tags=integration ./...
+
+# Run Kafka integration tests (with containerized Kafka via Gnomock)
+.PHONY: test-kafka
+test-kafka:
+	@echo "Running Kafka integration tests (with containerized Kafka)..."
+	go test -race -tags=kafkatest ./internal/fly -timeout=10m
 
 .PHONY: test-ci
 test-ci: test test-integration

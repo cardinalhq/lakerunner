@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -52,8 +51,11 @@ func loadTestDataFiles(t *testing.T) ([]filereader.Reader, []*os.File) {
 		stat, err := f.Stat()
 		require.NoError(t, err, "Failed to stat test file: %s", file.Name())
 
-		reader, err := filereader.NewParquetRawReader(f, stat.Size(), 1000)
+		rawReader, err := filereader.NewParquetRawReader(f, stat.Size(), 1000)
 		require.NoError(t, err, "Failed to create parquet reader for: %s", file.Name())
+
+		// Wrap with CookedMetricTranslatingReader for metric files
+		reader := filereader.NewCookedMetricTranslatingReader(rawReader)
 
 		readers = append(readers, reader)
 		openFiles = append(openFiles, f)
@@ -99,7 +101,6 @@ func TestAggregateMetrics_Compaction_RealData(t *testing.T) {
 		ReaderStack:       readerStack,
 		TargetFrequencyMs: 10000, // 10s - same as source for compaction
 		TmpDir:            tmpDir,
-		Logger:            slog.Default(),
 		RecordsLimit:      100000,
 		EstimatedRecords:  50000,
 		Action:            "compact",
@@ -218,7 +219,6 @@ func TestAggregateMetrics_EmptyInput(t *testing.T) {
 		ReaderStack:       nil,
 		TargetFrequencyMs: 10000,
 		TmpDir:            tmpDir,
-		Logger:            slog.Default(),
 		RecordsLimit:      100000,
 		EstimatedRecords:  0,
 		Action:            "compact",
@@ -256,7 +256,6 @@ func TestAggregateMetrics_BatchProcessing(t *testing.T) {
 		ReaderStack:       readerStack,
 		TargetFrequencyMs: 10000,
 		TmpDir:            tmpDir,
-		Logger:            slog.Default(),
 		RecordsLimit:      100000,
 		EstimatedRecords:  500,
 		Action:            "compact",
@@ -333,7 +332,6 @@ func TestAggregateMetrics_ErrorHandling(t *testing.T) {
 		ReaderStack:       readerStack,
 		TargetFrequencyMs: 10000,
 		TmpDir:            tmpDir,
-		Logger:            slog.Default(),
 		RecordsLimit:      100000,
 		EstimatedRecords:  500,
 		Action:            "compact",
@@ -400,7 +398,6 @@ func BenchmarkAggregateMetrics_RealData(b *testing.B) {
 			ReaderStack:       readerStack,
 			TargetFrequencyMs: 10000,
 			TmpDir:            tmpDir,
-			Logger:            slog.Default(),
 			RecordsLimit:      100000,
 			EstimatedRecords:  50000,
 			Action:            "compact",

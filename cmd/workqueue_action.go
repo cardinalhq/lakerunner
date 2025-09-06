@@ -31,9 +31,10 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
+	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/estimator"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lockmgr"
 	"github.com/cardinalhq/lakerunner/lrdb"
@@ -41,9 +42,8 @@ import (
 
 type RunqueueProcessingFunction func(
 	ctx context.Context,
-	ll *slog.Logger,
 	tmpdir string,
-	awsmanager *awsclient.Manager,
+	cmgr cloudstorage.ClientProvider,
 	sp storageprofile.StorageProfileProvider,
 	mdb lrdb.StoreFull,
 	inf lockmgr.Workable,
@@ -60,31 +60,17 @@ const (
 	WorkResultInterrupted
 )
 
-// Legacy function type for old implementations
-type LegacyRunqueueProcessingFunction func(
-	ctx context.Context,
-	ll *slog.Logger,
-	tmpdir string,
-	awsmanager *awsclient.Manager,
-	sp storageprofile.StorageProfileProvider,
-	mdb lrdb.StoreFull,
-	inf lockmgr.Workable,
-	rpfEstimate int64,
-	args any,
-) (WorkResult, error)
-
 type RunqueueLoopContext struct {
 	ctx             context.Context
 	wqm             lockmgr.WorkQueueManager
 	mdb             lrdb.StoreFull
 	sp              storageprofile.StorageProfileProvider
-	awsmanager      *awsclient.Manager
+	cmgr            cloudstorage.ClientProvider
 	metricEstimator estimator.MetricEstimator
 	logEstimator    estimator.LogEstimator
 	traceEstimator  estimator.TraceEstimator
 	signal          string
 	action          string
-	ll              *slog.Logger
 	processedItems  *int64
 	lastLogTime     *time.Time
 }
@@ -100,7 +86,7 @@ func NewRunqueueLoopContext(ctx context.Context, signal string, action string) (
 		return nil, fmt.Errorf("failed to open LRDB store: %w", err)
 	}
 
-	awsmanager, err := awsclient.NewManager(ctx)
+	cmgr, err := cloudstorage.NewCloudManagers(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create AWS manager: %w", err)
 	}
@@ -142,13 +128,12 @@ func NewRunqueueLoopContext(ctx context.Context, signal string, action string) (
 		wqm:             wqm,
 		mdb:             mdb,
 		sp:              sp,
-		awsmanager:      awsmanager,
+		cmgr:            cmgr,
 		metricEstimator: metricEst,
 		logEstimator:    logEst,
 		traceEstimator:  traceEst,
 		signal:          signal,
 		action:          action,
-		ll:              ll,
 		processedItems:  &processedItems,
 		lastLogTime:     &lastLogTime,
 	}
@@ -267,6 +252,7 @@ func workqueueProcess(
 	loop *RunqueueLoopContext,
 	pfx RunqueueProcessingFunction,
 	args any) error {
+	ll := logctx.FromContext(workerCtx)
 
 	ctx, span := tracer.Start(workerCtx, "workqueueProcess", trace.WithAttributes(commonAttributes.ToSlice()...))
 	defer span.End()
@@ -288,7 +274,7 @@ func workqueueProcess(
 		metric.WithAttributeSet(commonAttributes),
 	)
 
-	ll := loop.ll.With(
+	ll = ll.With(
 		slog.Int64("workQueueID", inf.ID()),
 		slog.Int("tries", int(inf.Tries())),
 		slog.String("organizationID", inf.OrganizationID().String()),
@@ -331,7 +317,7 @@ func workqueueProcess(
 		recordsPerFile = 40_000 // Default for all signals
 	}
 	t0 = time.Now()
-	err = pfx(workerCtx, ll, tmpdir, loop.awsmanager, loop.sp, loop.mdb, inf, recordsPerFile, args)
+	err = pfx(workerCtx, tmpdir, loop.cmgr, loop.sp, loop.mdb, inf, recordsPerFile, args)
 	workqueueDuration.Record(ctx, time.Since(t0).Seconds(),
 		metric.WithAttributeSet(commonAttributes),
 		metric.WithAttributes(

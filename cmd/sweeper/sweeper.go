@@ -31,7 +31,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/configdb"
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
+	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
@@ -39,7 +39,6 @@ var (
 	objectCleanupCounter     metric.Int64Counter
 	legacyTableSyncCounter   metric.Int64Counter
 	workQueueExpiryCounter   metric.Int64Counter
-	inqueueExpiryCounter     metric.Int64Counter
 	mcqExpiryCounter         metric.Int64Counter
 	mrqExpiryCounter         metric.Int64Counter
 	signalLockCleanupCounter metric.Int64Counter
@@ -73,14 +72,6 @@ func init() {
 	)
 	if err != nil {
 		panic(fmt.Errorf("failed to create workqueue_expiry_total counter: %w", err))
-	}
-
-	inqueueExpiryCounter, err = meter.Int64Counter(
-		"lakerunner.sweeper.inqueue_expiry_total",
-		metric.WithDescription("Count of inqueue items expired due to staleness"),
-	)
-	if err != nil {
-		panic(fmt.Errorf("failed to create inqueue_expiry_total counter: %w", err))
 	}
 
 	mcqExpiryCounter, err = meter.Int64Counter(
@@ -181,7 +172,7 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 		}
 	}
 
-	awsmanager, err := awsclient.NewManager(ctx)
+	cmgr, err := cloudstorage.NewCloudManagers(ctx)
 	if err != nil {
 		return err
 	}
@@ -197,7 +188,7 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := objectCleanerLoop(ctx, slog.Default(), cmd.sp, mdb, awsmanager); err != nil && !errors.Is(err, context.Canceled) {
+		if err := objectCleanerLoop(ctx, cmd.sp, mdb, cmgr); err != nil && !errors.Is(err, context.Canceled) {
 			errCh <- err
 		}
 	}()

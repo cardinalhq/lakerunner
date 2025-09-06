@@ -18,14 +18,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/cardinalhq/lakerunner/internal/buffet"
-	"github.com/cardinalhq/lakerunner/lrdb"
-	"github.com/cardinalhq/lakerunner/promql"
-	"github.com/google/uuid"
-	"github.com/prometheus/common/model"
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/prometheus/common/model"
+
+	"github.com/cardinalhq/lakerunner/internal/buffet"
+	"github.com/cardinalhq/lakerunner/lrdb"
+	"github.com/cardinalhq/lakerunner/promql"
 )
 
 // registration for the coordinator
@@ -180,7 +182,15 @@ func (q *QuerierService) EvaluateMetricsQuery(
 			}
 
 			for _, dih := range dateIntHoursRange(effStart, effEnd, time.UTC, false) {
-				segments, err := q.lookupMetricsSegments(ctx, dih, leaf, effStart, effEnd, stepDuration, orgID)
+				var segments []SegmentInfo
+				if leaf.LogLeaf != nil {
+					// logs query
+					segments, err = q.lookupLogsSegments(ctx, dih, *leaf.LogLeaf, effStart, effEnd, orgID, q.mdb.ListLogSegmentsForQuery)
+					slog.Info("Logs Metadata Query for segments", "numSegments", len(segments))
+				} else {
+					// metrics query
+					segments, err = q.lookupMetricsSegments(ctx, dih, leaf, effStart, effEnd, stepDuration, orgID)
+				}
 				if err != nil {
 					slog.Error("failed to get segment infos", "dateInt", dih.DateInt, "err", err)
 					continue
@@ -219,7 +229,7 @@ func (q *QuerierService) EvaluateMetricsQuery(
 
 				// per-leaf: per-worker pushdowns → merge (per leaf)
 				leafChans := make([]<-chan promql.SketchInput, 0, len(segmentsByLeaf))
-				for leafID, segsForLeaf := range segmentsByLeaf {
+				for leafID, segmentsForLeaf := range segmentsByLeaf {
 					leaf := leavesByID[leafID]
 					offMs, err := parseOffsetMs(leaf.Offset)
 					if err != nil {
@@ -228,9 +238,9 @@ func (q *QuerierService) EvaluateMetricsQuery(
 					}
 
 					// build worker mapping for only this leaf’s segments
-					segmentIDs := make([]int64, 0, len(segsForLeaf))
-					segmentMap := make(map[int64]SegmentInfo, len(segsForLeaf))
-					for _, s := range segsForLeaf {
+					segmentIDs := make([]int64, 0, len(segmentsForLeaf))
+					segmentMap := make(map[int64]SegmentInfo, len(segmentsForLeaf))
+					for _, s := range segmentsForLeaf {
 						segmentIDs = append(segmentIDs, s.SegmentID)
 						segmentMap[s.SegmentID] = s
 					}
@@ -244,12 +254,12 @@ func (q *QuerierService) EvaluateMetricsQuery(
 						workerGroups[m.Worker] = append(workerGroups[m.Worker], segmentMap[m.SegmentID])
 					}
 					if len(workerGroups) == 0 {
-						slog.Error("no worker assignments for leaf segments; skipping leaf", "leafID", leafID, "numLeafSegments", len(segsForLeaf))
+						slog.Error("no worker assignments for leaf segments; skipping leaf", "leafID", leafID, "numLeafSegments", len(segmentsForLeaf))
 						continue
 					}
 
 					slog.Info("Pushing down segments",
-						"groupIndex", gi, "leafID", leafID, "leafSegments", len(segsForLeaf),
+						"groupIndex", gi, "leafID", leafID, "leafSegments", len(segmentsForLeaf),
 						"groupStart", group.StartTs, "groupEnd", group.EndTs)
 
 					workerChans := make([]<-chan promql.SketchInput, 0, len(workerGroups))
@@ -417,7 +427,6 @@ func (q *QuerierService) lookupMetricsSegments(ctx context.Context,
 			SegmentID:      row.SegmentID,
 			StartTs:        row.StartTs,
 			EndTs:          row.EndTs,
-			Dataset:        "metrics",
 			OrganizationID: orgUUID,
 			InstanceNum:    row.InstanceNum,
 			Frequency:      stepDuration.Milliseconds(),

@@ -15,26 +15,23 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
 
-	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/debugging"
+	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
-	"github.com/cardinalhq/lakerunner/internal/metricsprocessing/ingestion"
-	"github.com/cardinalhq/lakerunner/internal/storageprofile"
-	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 func init() {
 	cmd := &cobra.Command{
 		Use:   "ingest-metrics",
-		Short: "Ingest metrics from the inqueue table",
+		Short: "Ingest metrics from the inqueue table or Kafka",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			helpers.SetupTempDir()
 
@@ -69,27 +66,35 @@ func init() {
 				}
 			}()
 
-			loop, err := NewIngestLoopContext(ctx, "metrics")
+			// Kafka is required for ingestion
+			cfg, err := config.Load()
 			if err != nil {
-				return fmt.Errorf("failed to create ingest loop context: %w", err)
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+
+			kafkaFactory := fly.NewFactory(&cfg.Fly)
+			if !kafkaFactory.IsEnabled() {
+				return fmt.Errorf("Kafka is required for ingestion but is not enabled")
+			}
+
+			slog.Info("Starting metrics ingestion with Kafka consumer")
+
+			consumer, err := NewKafkaIngestConsumer(kafkaFactory, cfg, "metrics", "lakerunner.ingest.metrics")
+			if err != nil {
+				return fmt.Errorf("failed to create Kafka consumer: %w", err)
 			}
 			defer func() {
-				if err := loop.Close(); err != nil {
-					slog.Error("Error closing ingest loop context", slog.Any("error", err))
+				if err := consumer.Close(); err != nil {
+					slog.Error("Error closing Kafka consumer", slog.Any("error", err))
 				}
 			}()
 
-			// Mark as healthy once loop is created and about to start
+			// Mark as healthy once consumer is created and about to start
 			healthServer.SetStatus(healthcheck.StatusHealthy)
 
-			return IngestLoopWithBatch(loop, nil, metricIngestBatch)
+			return consumer.Run(ctx)
 		},
 	}
 
 	rootCmd.AddCommand(cmd)
-}
-
-func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
-	cloudManagers *cloudstorage.CloudManagers, items []lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
-	return ingestion.ProcessBatch(ctx, ll, tmpdir, sp, mdb, cloudManagers.AWS, items, ingest_dateint, rpfEstimate, loop.exemplarProcessor)
 }

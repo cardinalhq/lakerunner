@@ -18,26 +18,21 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
-	"log/slog"
-	"os"
-	"strconv"
 )
 
 // NumTracePartitions is the number of partitions/slots for trace processing.
 // Can be configured via LAKERUNNER_TRACE_PARTITIONS environment variable, defaults to 1.
 // Compaction compacts all files in a slot - so increase this to increase parallelism.
 // However, more slots means more individual files, so for smaller customers it's better to keep it low.
-var NumTracePartitions = func() int {
-	if partitionsStr := os.Getenv("LAKERUNNER_TRACE_PARTITIONS"); partitionsStr != "" {
-		if partitions, err := strconv.Atoi(partitionsStr); err == nil && partitions > 0 {
-			return partitions
-		}
-		// Log warning if invalid value, fall back to default
-		slog.Warn("Invalid LAKERUNNER_TRACE_PARTITIONS value, using default",
-			"value", partitionsStr, "default", 1)
+// This should be configured from the parent cmd package that uses this.
+var NumTracePartitions = 1
+
+// SetNumTracePartitions sets the number of trace partitions
+func SetNumTracePartitions(n int) {
+	if n > 0 {
+		NumTracePartitions = n
 	}
-	return 1
-}()
+}
 
 // determineSlot determines which partition slot a trace should go to.
 // This ensures that the same trace ID always goes to the same slot for consistency.

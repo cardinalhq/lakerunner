@@ -196,6 +196,12 @@ func UnixMillisToTime(ms int64) time.Time {
 	return time.Unix(sec, nsec).UTC()
 }
 
+// HourFromMillis extracts the hour component from a Unix timestamp in milliseconds
+func HourFromMillis(ms int64) int16 {
+	t := UnixMillisToTime(ms)
+	return int16(t.Hour())
+}
+
 // FormatDuration formats a duration in a compact, human-readable way.
 // Examples: "50s", "1m30s", "1h30m", "2h"
 func FormatDuration(d time.Duration) string {

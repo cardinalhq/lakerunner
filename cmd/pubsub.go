@@ -21,6 +21,8 @@ import (
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
 
+	"github.com/cardinalhq/lakerunner/config"
+	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/pubsub"
 )
 
@@ -51,7 +53,13 @@ func init() {
 				}
 			}()
 
-			service, err := pubsub.NewHTTPService()
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+
+			kafkaFactory := fly.NewFactory(&cfg.Fly)
+			service, err := pubsub.NewHTTPService(kafkaFactory)
 			if err != nil {
 				return fmt.Errorf("failed to create HTTP pubsub service: %w", err)
 			}
@@ -80,7 +88,13 @@ func init() {
 				}
 			}()
 
-			service, err := pubsub.NewSQSService()
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+
+			kafkaFactory := fly.NewFactory(&cfg.Fly)
+			service, err := pubsub.NewSQSService(kafkaFactory)
 			if err != nil {
 				return fmt.Errorf("failed to create SQS pubsub service: %w", err)
 			}
@@ -108,7 +122,13 @@ func init() {
 				}
 			}()
 
-			backend, err := pubsub.NewBackend(doneCtx, pubsub.BackendTypeGCPPubSub)
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+
+			kafkaFactory := fly.NewFactory(&cfg.Fly)
+			backend, err := pubsub.NewBackend(doneCtx, pubsub.BackendTypeGCPPubSub, kafkaFactory)
 			if err != nil {
 				return fmt.Errorf("failed to create GCP Pub/Sub backend: %w", err)
 			}
@@ -137,7 +157,14 @@ func init() {
 				}
 			}()
 
-			backend, err := pubsub.NewBackend(doneCtx, pubsub.BackendTypeAzure)
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+
+			kafkaFactory := fly.NewFactory(&cfg.Fly)
+
+			backend, err := pubsub.NewBackend(doneCtx, pubsub.BackendTypeAzure, kafkaFactory)
 			if err != nil {
 				return fmt.Errorf("failed to create Azure Queue Storage backend: %w", err)
 			}

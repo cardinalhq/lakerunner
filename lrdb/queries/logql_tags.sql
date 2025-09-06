@@ -1,7 +1,7 @@
 -- name: ListLogQLTags :many
 WITH src AS (
   SELECT exemplar::jsonb AS exemplar
-  FROM exemplar_logs
+  FROM lrdb_exemplar_logs
   WHERE organization_id = sqlc.arg(organization_id)
 ),
 res_keys AS (

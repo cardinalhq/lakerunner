@@ -62,9 +62,15 @@ type Exemplar struct {
 	Tags      map[string]any `json:"tags"`
 }
 
+type TagValue struct {
+	Value string `json:"value"`
+}
+
 func (ex Exemplar) GetTimestamp() int64 { return ex.Timestamp }
 
 func (si SketchInput) GetTimestamp() int64 { return si.Timestamp }
+
+func (tv TagValue) GetTimestamp() int64 { return -1 }
 
 type SketchGroup struct {
 	Timestamp int64

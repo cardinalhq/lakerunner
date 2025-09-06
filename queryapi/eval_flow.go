@@ -16,8 +16,9 @@ package queryapi
 
 import (
 	"context"
-	"github.com/cardinalhq/lakerunner/promql"
 	"time"
+
+	"github.com/cardinalhq/lakerunner/promql"
 )
 
 // EvalFlowOptions tunes buffering / aggregation behavior.

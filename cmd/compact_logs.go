@@ -25,11 +25,12 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
+	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/constants"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/logcrunch"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lockmgr"
 	"github.com/cardinalhq/lakerunner/lrdb"
@@ -88,11 +89,11 @@ func init() {
 var compactLogsDoneCtx context.Context
 
 // compactionMetricRecorder implements logcrunch.MetricRecorder for recording compaction metrics
-type compactionMetricRecorder struct {
-	logger *slog.Logger
-}
+type compactionMetricRecorder struct{}
 
 func (r compactionMetricRecorder) RecordFilteredSegments(ctx context.Context, count int64, organizationID, instanceNum, signal, action, reason string) {
+	ll := logctx.FromContext(ctx)
+
 	segmentsFilteredCounter.Add(ctx, count,
 		metric.WithAttributes(
 			attribute.String("signal", signal),
@@ -101,7 +102,7 @@ func (r compactionMetricRecorder) RecordFilteredSegments(ctx context.Context, co
 		))
 
 	// Add detailed logging for each filtering reason
-	r.logger.Info("Segments filtered during packing",
+	ll.Info("Segments filtered during packing",
 		slog.Int64("count", count),
 		slog.String("reason", reason),
 		slog.String("organizationID", organizationID),
@@ -110,24 +111,25 @@ func (r compactionMetricRecorder) RecordFilteredSegments(ctx context.Context, co
 
 func compactLogsFor(
 	ctx context.Context,
-	ll *slog.Logger,
 	tmpdir string,
-	awsmanager *awsclient.Manager,
+	cmgr cloudstorage.ClientProvider,
 	sp storageprofile.StorageProfileProvider,
 	mdb lrdb.StoreFull,
 	inf lockmgr.Workable,
 	rpfEstimate int64,
 	_ any,
 ) error {
+	ll := logctx.FromContext(ctx)
+
 	profile, err := sp.GetStorageProfileForOrganizationAndInstance(ctx, inf.OrganizationID(), inf.InstanceNum())
 	if err != nil {
 		ll.Error("Failed to get storage profile", slog.Any("error", err))
 		return err
 	}
 
-	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
+	storageClient, err := cloudstorage.NewClient(ctx, cmgr, profile)
 	if err != nil {
-		ll.Error("Failed to get S3 client", slog.Any("error", err))
+		ll.Error("Failed to get storage client", slog.Any("error", err))
 		return err
 	}
 
@@ -137,8 +139,9 @@ func compactLogsFor(
 		slog.Int("dateint", int(inf.Dateint())),
 		slog.Int64("workQueueID", inf.ID()))
 
+	ctx = logctx.WithLogger(ctx, ll)
 	t0 := time.Now()
-	err = logCompactItemDo(ctx, ll, mdb, tmpdir, inf, profile, s3client, rpfEstimate)
+	err = logCompactItemDo(ctx, mdb, tmpdir, inf, profile, storageClient, rpfEstimate)
 
 	if err != nil {
 		ll.Info("Log compaction completed",
@@ -157,14 +160,15 @@ func compactLogsFor(
 
 func logCompactItemDo(
 	ctx context.Context,
-	ll *slog.Logger,
 	mdb lrdb.StoreFull,
 	tmpdir string,
 	inf lockmgr.Workable,
 	sp storageprofile.StorageProfile,
-	s3client *awsclient.S3Client,
+	storageClient cloudstorage.Client,
 	rpfEstimate int64,
 ) error {
+	ll := logctx.FromContext(ctx)
+
 	// Extract the time range using our normalized helper functions
 	timeRange, ok := helpers.NewTimeRangeFromPgRange(inf.TsRange())
 	if !ok {
@@ -265,7 +269,7 @@ func logCompactItemDo(
 		// Allow for 110% of target capacity to account for compression variability
 		// This gives us 10% tolerance above the target file size
 		adjustedEstimate := rpfEstimate * 11 / 10
-		recorder := compactionMetricRecorder{logger: ll}
+		recorder := compactionMetricRecorder{}
 		packed, err := logcrunch.PackSegments(ctx, segments, adjustedEstimate, recorder,
 			inf.OrganizationID().String(), fmt.Sprintf("%d", inf.InstanceNum()), "logs", "compact")
 		if err != nil {
@@ -336,7 +340,7 @@ func logCompactItemDo(
 			ll.Info("Starting atomic log compaction operation",
 				slog.Int("segmentCount", len(group)))
 
-			err = packSegment(ctx, ll, tmpdir, s3client, mdb, group, sp, stdi, inf.InstanceNum())
+			err = packSegment(ctx, tmpdir, storageClient, mdb, group, sp, stdi, inf.InstanceNum())
 
 			if err != nil {
 				ll.Error("Atomic operation failed - will retry entire work item",

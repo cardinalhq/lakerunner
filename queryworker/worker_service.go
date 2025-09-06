@@ -20,18 +20,21 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
-	"github.com/cardinalhq/lakerunner/internal/storageprofile"
-	"github.com/cardinalhq/lakerunner/promql"
-	"github.com/cardinalhq/lakerunner/queryapi"
-	"github.com/google/uuid"
-	"golang.org/x/sync/errgroup"
 	"log/slog"
+	"math/big"
 	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/google/uuid"
+	"golang.org/x/sync/errgroup"
+
+	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
+	"github.com/cardinalhq/lakerunner/internal/storageprofile"
+	"github.com/cardinalhq/lakerunner/promql"
+	"github.com/cardinalhq/lakerunner/queryapi"
 )
 
 // WorkerService wires HTTP → CacheManager → SSE.
@@ -48,7 +51,7 @@ func NewWorkerService(
 	logsGlobSize int,
 	maxConcurrency int,
 	sp storageprofile.StorageProfileProvider,
-	cloudManagers *cloudstorage.CloudManagers,
+	cloudManagers cloudstorage.ClientProvider,
 ) *WorkerService {
 	downloader := func(ctx context.Context, profile storageprofile.StorageProfile, keys []string) error {
 		if len(keys) == 0 {
@@ -233,6 +236,44 @@ func exemplarMapper(request queryapi.PushDownRequest, cols []string, row *sql.Ro
 	return exemplar, nil
 }
 
+func tagValuesMapper(request queryapi.PushDownRequest, cols []string, row *sql.Rows) (promql.Timestamped, error) {
+	vals := make([]interface{}, len(cols))
+	ptrs := make([]interface{}, len(cols))
+	for i := range vals {
+		ptrs[i] = &vals[i]
+	}
+
+	if err := row.Scan(ptrs...); err != nil {
+		slog.Error("failed to scan row", "err", err)
+		return promql.TagValue{}, fmt.Errorf("failed to scan row: %w", err)
+	}
+
+	tagValue := promql.TagValue{}
+	for i, col := range cols {
+		switch col {
+		case "tag_value":
+			if vals[i] != nil {
+				tagValue.Value = asString(vals[i])
+			}
+		}
+	}
+
+	return tagValue, nil
+}
+
+func asString(v any) string {
+	switch x := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return x
+	case []byte:
+		return string(x)
+	default:
+		return fmt.Sprintf("%v", x)
+	}
+}
+
 // ServeHttp serves SSE with merged, sorted points from cache+S3.
 func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var req queryapi.PushDownRequest
@@ -246,19 +287,37 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var workerSql string
-	var rowMapper RowMapper[promql.Timestamped]
 	var cacheManager *CacheManager
 	var globSize int
+	var isTagValuesQuery = false
+
 	if req.BaseExpr != nil {
-		workerSql = req.BaseExpr.ToWorkerSQL(req.Step)
-		rowMapper = sketchInputMapper
-		cacheManager = ws.MetricsCM
-		globSize = ws.MetricsGlobSize
+		if req.TagName != "" {
+			workerSql = req.BaseExpr.ToWorkerSQLForTagValues(req.Step, req.TagName)
+			cacheManager = ws.MetricsCM
+			globSize = ws.MetricsGlobSize
+			isTagValuesQuery = true
+		} else {
+			workerSql = req.BaseExpr.ToWorkerSQL(req.Step)
+			if req.BaseExpr.LogLeaf != nil {
+				cacheManager = ws.LogsCM
+				globSize = ws.LogsGlobSize
+			} else {
+				cacheManager = ws.MetricsCM
+				globSize = ws.MetricsGlobSize
+			}
+		}
 	} else if req.LogLeaf != nil {
-		workerSql = req.LogLeaf.ToWorkerSQLWithLimit(req.Step, req.Limit, req.ToOrderString())
-		rowMapper = exemplarMapper
-		cacheManager = ws.LogsCM
-		globSize = ws.LogsGlobSize
+		if req.TagName != "" {
+			workerSql = req.LogLeaf.ToWorkerSQLForTagValues(req.Step, req.TagName)
+			cacheManager = ws.LogsCM
+			globSize = ws.LogsGlobSize
+			isTagValuesQuery = true
+		} else {
+			workerSql = req.LogLeaf.ToWorkerSQLWithLimit(req.Limit, req.ToOrderString())
+			cacheManager = ws.LogsCM
+			globSize = ws.LogsGlobSize
+		}
 	} else {
 		http.Error(w, "no leaf to evaluate", http.StatusBadRequest)
 		return
@@ -280,18 +339,75 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	workerSql = strings.ReplaceAll(workerSql, "{start}", fmt.Sprintf("%d", req.StartTs))
 	workerSql = strings.ReplaceAll(workerSql, "{end}", fmt.Sprintf("%d", req.EndTs))
 
-	responseChannel, err := EvaluatePushDown[promql.Timestamped](r.Context(), cacheManager, req, workerSql, globSize, rowMapper)
-	if err != nil {
-		slog.Error("failed to query cache", "error", err)
-		http.Error(w, "query failed: "+err.Error(), http.StatusInternalServerError)
+	if isTagValuesQuery {
+		// Handle tag values query
+		tagValuesChannel, err := EvaluatePushDown(r.Context(), cacheManager, req, workerSql, globSize, tagValuesMapper)
+		if err != nil {
+			slog.Error("failed to query cache", "error", err)
+			http.Error(w, "query failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Convert TagValue channel to Timestamped channel
+		responseChannel := make(chan promql.Timestamped, 100)
+		go func() {
+			defer close(responseChannel)
+			for tv := range tagValuesChannel {
+				responseChannel <- tv
+			}
+		}()
+
+		// Process the response
+		ws.processResponse(w, responseChannel, r.Context())
+		return
+
+	} else if req.BaseExpr != nil {
+		// Handle metrics query
+		sketchChannel, err := EvaluatePushDown(r.Context(), cacheManager, req, workerSql, globSize, sketchInputMapper)
+		if err != nil {
+			slog.Error("failed to query cache", "error", err)
+			http.Error(w, "query failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Convert SketchInput channel to Timestamped channel
+		responseChannel := make(chan promql.Timestamped, 100)
+		go func() {
+			defer close(responseChannel)
+			for si := range sketchChannel {
+				responseChannel <- si
+			}
+		}()
+
+		// Process the response
+		ws.processResponse(w, responseChannel, r.Context())
+		return
+
+	} else if req.LogLeaf != nil {
+		// Handle logs query
+		exemplarChannel, err := EvaluatePushDown(r.Context(), cacheManager, req, workerSql, globSize, exemplarMapper)
+		if err != nil {
+			slog.Error("failed to query cache", "error", err)
+			http.Error(w, "query failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Convert Exemplar channel to Timestamped channel
+		responseChannel := make(chan promql.Timestamped, 100)
+		go func() {
+			defer close(responseChannel)
+			for ex := range exemplarChannel {
+				responseChannel <- ex
+			}
+		}()
+
+		// Process the response
+		ws.processResponse(w, responseChannel, r.Context())
 		return
 	}
+}
 
-	if err != nil {
-		http.Error(w, "query failed: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
+func (ws *WorkerService) processResponse(w http.ResponseWriter, responseChannel <-chan promql.Timestamped, ctx context.Context) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
@@ -326,7 +442,6 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Stream until channel closes or client disconnects.
-	ctx := r.Context()
 	for {
 		select {
 		case <-ctx.Done():
@@ -364,6 +479,9 @@ func toFloat64(v any) (float64, bool) {
 		return float64(n), true
 	case uint:
 		return float64(n), true
+	case *big.Int:
+		f, _ := new(big.Float).SetInt(n).Float64()
+		return f, true
 	default:
 		slog.Error("unexpected type for numeric value", "value", v, "type", fmt.Sprintf("%T", v))
 		return 0, false

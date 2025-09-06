@@ -17,17 +17,19 @@ package pubsub
 import (
 	"context"
 	"fmt"
+
+	"github.com/cardinalhq/lakerunner/internal/fly"
 )
 
 // NewBackend creates a new Backend implementation based on the specified type
-func NewBackend(ctx context.Context, backendType BackendType) (Backend, error) {
+func NewBackend(ctx context.Context, backendType BackendType, kafkaFactory *fly.Factory) (Backend, error) {
 	switch backendType {
 	case BackendTypeSQS:
-		return NewSQSService()
+		return NewSQSService(kafkaFactory)
 	case BackendTypeGCPPubSub:
-		return NewGCPPubSubService()
+		return NewGCPPubSubService(kafkaFactory)
 	case BackendTypeAzure:
-		return NewAzureQueueService()
+		return NewAzureQueueService(kafkaFactory)
 	default:
 		return nil, fmt.Errorf("unsupported backend type: %s", backendType)
 	}

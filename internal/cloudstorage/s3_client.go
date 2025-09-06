@@ -18,7 +18,6 @@ import (
 	"context"
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
-	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 )
 
 // s3Client wraps the existing S3 implementation
@@ -26,17 +25,17 @@ type s3Client struct {
 	awsS3Client *awsclient.S3Client
 }
 
-// DownloadObject reuses existing s3helper.DownloadS3Object
+// DownloadObject downloads an object from S3 to a temporary file
 func (c *s3Client) DownloadObject(ctx context.Context, tmpdir, bucket, key string) (string, int64, bool, error) {
-	return s3helper.DownloadS3Object(ctx, tmpdir, c.awsS3Client, bucket, key)
+	return downloadS3Object(ctx, tmpdir, c.awsS3Client, bucket, key)
 }
 
-// UploadObject reuses existing s3helper.UploadS3Object
+// UploadObject uploads a file to S3
 func (c *s3Client) UploadObject(ctx context.Context, bucket, key, sourceFilename string) error {
-	return s3helper.UploadS3Object(ctx, c.awsS3Client, bucket, key, sourceFilename)
+	return uploadS3Object(ctx, c.awsS3Client, bucket, key, sourceFilename)
 }
 
-// DeleteObject reuses existing s3helper.DeleteS3Object
+// DeleteObject deletes an object from S3
 func (c *s3Client) DeleteObject(ctx context.Context, bucket, key string) error {
-	return s3helper.DeleteS3Object(ctx, c.awsS3Client, bucket, key)
+	return deleteS3Object(ctx, c.awsS3Client, bucket, key)
 }

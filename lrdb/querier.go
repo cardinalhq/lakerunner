@@ -13,7 +13,9 @@ import (
 
 type Querier interface {
 	BatchDeleteMetricSegs(ctx context.Context, arg []BatchDeleteMetricSegsParams) *BatchDeleteMetricSegsBatchResults
+	BatchInsertLogSegs(ctx context.Context, arg []BatchInsertLogSegsParams) *BatchInsertLogSegsBatchResults
 	BatchInsertMetricSegs(ctx context.Context, arg []BatchInsertMetricSegsParams) *BatchInsertMetricSegsBatchResults
+	BatchInsertTraceSegs(ctx context.Context, arg []BatchInsertTraceSegsParams) *BatchInsertTraceSegsBatchResults
 	BatchMarkMetricSegsRolledup(ctx context.Context, arg []BatchMarkMetricSegsRolledupParams) *BatchMarkMetricSegsRolledupBatchResults
 	// This will upsert a new log exemplar. Attributes, exemplar, and updated_at are always updated
 	// to the provided values. If old_fingerprint is not 0, it is added to the list of related
@@ -23,61 +25,49 @@ type Querier interface {
 	BatchUpsertExemplarLogs(ctx context.Context, arg []BatchUpsertExemplarLogsParams) *BatchUpsertExemplarLogsBatchResults
 	BatchUpsertExemplarMetrics(ctx context.Context, arg []BatchUpsertExemplarMetricsParams) *BatchUpsertExemplarMetricsBatchResults
 	BatchUpsertExemplarTraces(ctx context.Context, arg []BatchUpsertExemplarTracesParams) *BatchUpsertExemplarTracesBatchResults
-	// 1) Safety net: if any single file already meets/exceeds the cap, take that file alone
-	// 2) One seed (oldest/highest-priority) per group (org, instance) within signal
-	// 3) Order groups globally by their seed (priority DESC, queue_ts ASC)
-	// 4) Attach age flags + caps per group (using params only; no per-row estimator here)
-	// 5) All ready rows in each group for that signal (selection only; claim happens later)
-	// 6) Greedy pack within each group, ordered by priority/queue_ts
-	// 7) Keep only rows that fit under caps
-	// 8) Totals per group (what we’d actually claim)
-	// 9) Eligibility: any group with positive size (greedy batching)
-	// 10) Pick earliest eligible group globally
-	// 11) Rows to claim for the winner group
-	// 12) Final chosen IDs: prefer big_single if present; else packed group rows
-	// 13) Atomic optimistic claim (no window funcs here)
-	ClaimInqueueWorkBatch(ctx context.Context, arg ClaimInqueueWorkBatchParams) ([]ClaimInqueueWorkBatchRow, error)
-	CleanupInqueueWork(ctx context.Context, cutoffTime *time.Time) ([]Inqueue, error)
 	CompactLogSegments(ctx context.Context, arg CompactLogSegmentsParams) error
 	CompactTraceSegments(ctx context.Context, arg CompactTraceSegmentsParams) error
-	DeleteInqueueWork(ctx context.Context, arg DeleteInqueueWorkParams) error
+	// Clean up old offset entries (older than specified timestamp)
+	DeleteOldKafkaOffsets(ctx context.Context, cutoffTime time.Time) error
 	// Retrieves all existing metric pack estimates for EWMA calculations
 	GetAllMetricPackEstimates(ctx context.Context) ([]MetricPackEstimate, error)
-	GetExemplarLogsByFingerprint(ctx context.Context, arg GetExemplarLogsByFingerprintParams) (ExemplarLog, error)
-	GetExemplarLogsByService(ctx context.Context, arg GetExemplarLogsByServiceParams) ([]ExemplarLog, error)
-	GetExemplarLogsCreatedAfter(ctx context.Context, ts time.Time) ([]ExemplarLog, error)
-	GetExemplarMetricsByService(ctx context.Context, arg GetExemplarMetricsByServiceParams) ([]ExemplarMetric, error)
-	GetExemplarMetricsCreatedAfter(ctx context.Context, ts time.Time) ([]ExemplarMetric, error)
-	GetExemplarTracesByFingerprint(ctx context.Context, arg GetExemplarTracesByFingerprintParams) (ExemplarTrace, error)
-	GetExemplarTracesByService(ctx context.Context, arg GetExemplarTracesByServiceParams) ([]ExemplarTrace, error)
-	GetExemplarTracesCreatedAfter(ctx context.Context, ts time.Time) ([]ExemplarTrace, error)
+	GetExemplarLogsByFingerprint(ctx context.Context, arg GetExemplarLogsByFingerprintParams) (LrdbExemplarLog, error)
+	GetExemplarLogsByService(ctx context.Context, arg GetExemplarLogsByServiceParams) ([]LrdbExemplarLog, error)
+	GetExemplarLogsCreatedAfter(ctx context.Context, ts time.Time) ([]LrdbExemplarLog, error)
+	GetExemplarMetricsByService(ctx context.Context, arg GetExemplarMetricsByServiceParams) ([]LrdbExemplarMetric, error)
+	GetExemplarMetricsCreatedAfter(ctx context.Context, ts time.Time) ([]LrdbExemplarMetric, error)
+	GetExemplarTracesByFingerprint(ctx context.Context, arg GetExemplarTracesByFingerprintParams) (LrdbExemplarTrace, error)
+	GetExemplarTracesByService(ctx context.Context, arg GetExemplarTracesByServiceParams) ([]LrdbExemplarTrace, error)
+	GetExemplarTracesCreatedAfter(ctx context.Context, ts time.Time) ([]LrdbExemplarTrace, error)
+	// Get all offset entries for a specific consumer group (useful for monitoring)
+	GetKafkaOffsetsByConsumerGroup(ctx context.Context, consumerGroup string) ([]KafkaOffsetJournal, error)
 	GetLogSegmentsForCompaction(ctx context.Context, arg GetLogSegmentsForCompactionParams) ([]GetLogSegmentsForCompactionRow, error)
+	// Gets metric pack estimate for specific org with fallback to default (all zeros)
+	// Returns up to 2 rows: one for the specific org and one for the default
+	GetMetricPackEstimateForOrg(ctx context.Context, arg GetMetricPackEstimateForOrgParams) ([]MetricPackEstimate, error)
 	GetMetricSegsByIds(ctx context.Context, arg GetMetricSegsByIdsParams) ([]MetricSeg, error)
+	GetMetricType(ctx context.Context, arg GetMetricTypeParams) (string, error)
 	GetSpanInfoByFingerprint(ctx context.Context, arg GetSpanInfoByFingerprintParams) (GetSpanInfoByFingerprintRow, error)
 	GetTraceSegmentsForCompaction(ctx context.Context, arg GetTraceSegmentsForCompactionParams) ([]GetTraceSegmentsForCompactionRow, error)
-	// Claim a bundle of items
-	InqueueClaimBundle(ctx context.Context, arg InqueueClaimBundleParams) error
-	// Defer items by pushing their eligible_at forward
-	InqueueDeferItems(ctx context.Context, arg InqueueDeferItemsParams) error
-	// Fetch all eligible candidates matching the grouping key
-	InqueueFetchCandidates(ctx context.Context, arg InqueueFetchCandidatesParams) ([]InqueueFetchCandidatesRow, error)
-	// Get full details for claimed bundle items
-	InqueueGetBundleItems(ctx context.Context, dollar_1 []uuid.UUID) ([]InqueueGetBundleItemsRow, error)
-	InqueueJournalDelete(ctx context.Context, arg InqueueJournalDeleteParams) error
-	InqueueJournalUpsert(ctx context.Context, arg InqueueJournalUpsertParams) (bool, error)
-	// Pick the oldest eligible item for a given signal
-	InqueuePickHead(ctx context.Context, dollar_1 string) (InqueuePickHeadRow, error)
-	// Get queue depth for ingest scaling by signal
-	InqueueScalingDepth(ctx context.Context, signal string) (interface{}, error)
-	InqueueSummary(ctx context.Context) ([]InqueueSummaryRow, error)
 	InsertCompactedMetricSeg(ctx context.Context, arg []InsertCompactedMetricSegParams) *InsertCompactedMetricSegBatchResults
 	InsertLogSegmentDirect(ctx context.Context, arg InsertLogSegmentParams) error
 	InsertMetricSegmentDirect(ctx context.Context, arg InsertMetricSegmentParams) error
 	InsertTraceSegmentDirect(ctx context.Context, arg InsertTraceSegmentDirectParams) error
 	// If any log record has a body, expose it as a synthetic "_cardinalhq.message" tag key
 	ListLogQLTags(ctx context.Context, organizationID uuid.UUID) ([]interface{}, error)
+	// Insert or update multiple Kafka journal entries in a single batch operation
+	// Only updates if the new offset is greater than the existing one
+	KafkaJournalBatchUpsert(ctx context.Context, arg []KafkaJournalBatchUpsertParams) *KafkaJournalBatchUpsertBatchResults
+	// Get the last processed offset for a specific consumer group, topic, and partition
+	KafkaJournalGetLastProcessed(ctx context.Context, arg KafkaJournalGetLastProcessedParams) (int64, error)
+	// Insert or update the last processed offset for a consumer group, topic, and partition
+	// Only updates if the new offset is greater than the existing one
+	KafkaJournalUpsert(ctx context.Context, arg KafkaJournalUpsertParams) error
+	// ListLogQLTags(ctx context.Context, organizationID uuid.UUID) ([]string, error)
 	ListLogSegmentsForQuery(ctx context.Context, arg ListLogSegmentsForQueryParams) ([]ListLogSegmentsForQueryRow, error)
 	ListMetricSegmentsForQuery(ctx context.Context, arg ListMetricSegmentsForQueryParams) ([]ListMetricSegmentsForQueryRow, error)
+	ListPromMetricTags(ctx context.Context, arg ListPromMetricTagsParams) ([]string, error)
+	ListPromMetrics(ctx context.Context, organizationID uuid.UUID) ([]ListPromMetricsRow, error)
 	// Returns an estimate of the number of log segments, accounting for per-file overhead.
 	LogSegEstimator(ctx context.Context, arg LogSegEstimatorParams) ([]LogSegEstimatorRow, error)
 	MarkMetricSegsCompactedByKeys(ctx context.Context, arg MarkMetricSegsCompactedByKeysParams) error
@@ -115,11 +105,8 @@ type Querier interface {
 	ObjectCleanupComplete(ctx context.Context, id uuid.UUID) error
 	ObjectCleanupFail(ctx context.Context, id uuid.UUID) error
 	ObjectCleanupGet(ctx context.Context, maxrows int32) ([]ObjectCleanupGetRow, error)
-	PutInqueueWork(ctx context.Context, arg PutInqueueWorkParams) error
-	ReleaseInqueueWork(ctx context.Context, arg ReleaseInqueueWorkParams) error
 	SetMetricSegCompacted(ctx context.Context, arg SetMetricSegCompactedParams) error
 	SignalLockCleanup(ctx context.Context) (int32, error)
-	TouchInqueueWork(ctx context.Context, arg TouchInqueueWorkParams) error
 	// Returns an estimate of the number of trace segments, accounting for per-file overhead.
 	TraceSegEstimator(ctx context.Context, arg TraceSegEstimatorParams) ([]TraceSegEstimatorRow, error)
 	// Updates or inserts a single metric pack estimate

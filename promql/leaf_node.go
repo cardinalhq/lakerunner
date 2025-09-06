@@ -304,6 +304,7 @@ func (n *LeafNode) evalRangeAwareScalar(key string, in SketchInput, stepMs, rang
 		covered := w.coveredMs(ts, stepMs)
 		var out float64
 		if covered < rangeMs {
+			slog.Info("Insufficient coverage", "coveredMs", covered, "requiredMs", rangeMs)
 			out = math.NaN()
 		} else if n.BE.FuncName == "min_over_time" {
 			out = w.min()
@@ -367,7 +368,12 @@ func (n *LeafNode) Label(tags map[string]any) string {
 	if n.BE.FuncName != "" {
 		out += n.BE.FuncName + "("
 	}
-	out += n.BE.Metric
+	if n.BE.isSyntheticLogMetric() {
+		out += n.BE.LogLeaf.Label()
+		return out + ")"
+	} else {
+		out += n.BE.Metric
+	}
 	if len(n.BE.GroupBy) > 0 {
 		parts := make([]string, 0, len(n.BE.GroupBy))
 		groupByTags := n.BE.GroupBy

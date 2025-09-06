@@ -18,6 +18,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
+	"github.com/cardinalhq/lakerunner/logql"
 	"sort"
 	"strings"
 	"time"
@@ -48,6 +49,20 @@ type BaseExpr struct {
 
 	// Identity hints for COUNT (what to keep from the parent's "by")
 	CountOnBy []string `json:"countOnBy,omitempty"`
+
+	LogLeaf *logql.LogLeaf `json:"logLeaf,omitempty"`
+}
+
+// Synthetic metric families used by the PromQL rewriter.
+const (
+	SynthLogCount  = "__logql_logs_total"
+	SynthLogBytes  = "__logql_log_bytes_total"
+	SynthLogUnwrap = "__logql_unwrap_value" // numeric samples produced by `unwrap`
+	LeafMatcher    = "__leaf"
+)
+
+func (be *BaseExpr) isSyntheticLogMetric() bool {
+	return be.LogLeaf != nil
 }
 
 type ExecHints struct {
@@ -66,8 +81,9 @@ type ExecNode interface {
 // ---------- Planner ----------
 
 type QueryPlan struct {
-	Root   ExecNode
-	Leaves []BaseExpr
+	Root    ExecNode
+	Leaves  []BaseExpr
+	TagName string // Set this to a tag name to get distinct values for that tag
 }
 
 // nearestAggInfo returns info if the expr is *immediately* an Agg node.
@@ -436,4 +452,38 @@ func baseExprID(b BaseExpr) string {
 	}
 	sum := sha1.Sum([]byte(sb.String()))
 	return hex.EncodeToString(sum[:8])
+}
+
+// AttachLogLeaves updates LogLeaf on both the flat plan.Leaves slice and
+func (p *QueryPlan) AttachLogLeaves(logLeafByBaseExprID map[string]logql.LogLeaf) {
+	var walk func(ExecNode)
+	walk = func(n ExecNode) {
+		switch t := n.(type) {
+		case *LeafNode:
+			if lf, ok := logLeafByBaseExprID[t.BE.ID]; ok {
+				lcopy := lf
+				t.BE.LogLeaf = &lcopy
+			}
+		case *AggNode:
+			walk(t.Child)
+		case *TopKNode:
+			walk(t.Child)
+		case *BottomKNode:
+			walk(t.Child)
+		case *QuantileNode:
+			walk(t.Child)
+		case *ScalarOfNode:
+			walk(t.Child)
+		case *UnaryNode:
+			walk(t.Child)
+		case *ClampMinNode:
+			walk(t.Child)
+		case *ClampMaxNode:
+			walk(t.Child)
+		case *BinaryNode:
+			walk(t.LHS)
+			walk(t.RHS)
+		}
+	}
+	walk(p.Root)
 }

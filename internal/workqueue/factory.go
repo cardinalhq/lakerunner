@@ -32,23 +32,3 @@ func NewWorkqueueHandlerFromLRDB(
 	adapter := NewLRDBWorkQueueAdapter(store)
 	return NewWorkqueueHandler(workItem, adapter, opts...)
 }
-
-// NewInqueueHandlerFromLRDB creates an InqueueHandler from lrdb types for backward compatibility
-func NewInqueueHandlerFromLRDB(
-	item lrdb.Inqueue,
-	store lrdb.StoreFull,
-	maxWorkRetries int,
-	opts ...HandlerOption,
-) *InqueueHandler {
-	workItem := InqueueItem{
-		ID:             item.ID,
-		OrganizationID: item.OrganizationID,
-		Bucket:         item.Bucket,
-		ObjectID:       item.ObjectID,
-		ClaimedBy:      item.ClaimedBy,
-		Tries:          item.Tries,
-		InstanceNum:    item.InstanceNum,
-	}
-	adapter := NewLRDBInqueueAdapter(store)
-	return NewInqueueHandler(workItem, adapter, maxWorkRetries, opts...)
-}

@@ -59,14 +59,3 @@ func ConfigDBStore(ctx context.Context) (configdb.QuerierFull, error) {
 	configStore := configdb.NewStore(pool)
 	return configStore, nil
 }
-
-// ConfigDBStoreForAdmin connects to ConfigDB with admin-friendly migration checking
-// that warns and continues instead of failing on migration mismatches
-func ConfigDBStoreForAdmin(ctx context.Context) (configdb.QuerierFull, error) {
-	pool, err := ConnectToConfigDB(ctx, WarnOnMigrationMismatch())
-	if err != nil {
-		return nil, err
-	}
-	configStore := configdb.NewStore(pool)
-	return configStore, nil
-}

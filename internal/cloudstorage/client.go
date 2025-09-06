@@ -16,7 +16,6 @@ package cloudstorage
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
@@ -34,24 +33,16 @@ type Client interface {
 	DeleteObject(ctx context.Context, bucket, key string) error
 }
 
-// NewClient creates a new cloud storage client using unified cloud managers
-func NewClient(ctx context.Context, managers *CloudManagers, profile storageprofile.StorageProfile) (Client, error) {
-	switch profile.CloudProvider {
-	case "aws", "gcp", "": // Empty defaults to AWS for backward compatibility
-		// Both AWS and GCP use the S3 client - reuse existing GetS3ForProfile
-		awsS3Client, err := managers.AWS.GetS3ForProfile(ctx, profile)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create S3 client: %w", err)
-		}
-		return &s3Client{awsS3Client: awsS3Client}, nil
-	case "azure":
-		// Use Azure Blob Storage client via manager
-		azureBlobClient, err := managers.Azure.GetBlobForProfile(ctx, profile)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create Azure blob client: %w", err)
-		}
-		return newAzureClientFromManager(azureBlobClient), nil
-	default:
-		return nil, fmt.Errorf("unsupported cloud provider: %s", profile.CloudProvider)
-	}
+// ClientProvider creates cloud storage clients based on a storage profile.
+// Implementations may target real cloud providers or local filesystem mocks
+// used for testing.
+type ClientProvider interface {
+	NewClient(ctx context.Context, profile storageprofile.StorageProfile) (Client, error)
+}
+
+// NewClient delegates client creation to the provided ClientProvider. It is a
+// convenience wrapper to preserve existing call sites that expect a package
+// level function.
+func NewClient(ctx context.Context, provider ClientProvider, profile storageprofile.StorageProfile) (Client, error) {
+	return provider.NewClient(ctx, profile)
 }

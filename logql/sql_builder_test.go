@@ -16,6 +16,7 @@ package logql
 
 import (
 	"database/sql"
+	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
@@ -87,7 +88,11 @@ func replaceTable(sql string) string {
   ''::VARCHAR AS "_cardinalhq.level",
   ''::VARCHAR AS "_cardinalhq.fingerprint"
 FROM logs) AS _t`
-	return strings.ReplaceAll(sql, "{table}", base)
+
+	// Substitute table and time placeholders.
+	sql = strings.ReplaceAll(sql, "{table}", base)
+
+	return sql
 }
 
 func getString(v any) string {
@@ -110,7 +115,7 @@ func TestToWorkerSQL_Fingerprint_Present(t *testing.T) {
 	mustExec(t, db, `INSERT INTO logs VALUES ('hello'), ('world');`)
 
 	leaf := LogLeaf{} // no parsers/filters; just pass-through with defaults
-	sql := replaceTable(leaf.ToWorkerSQLWithLimit(0, 0, "desc"))
+	sql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc")), 0, 5000)
 
 	// Should include the sentinel so CacheManager can splice segment filter.
 	if !strings.Contains(sql, "AND true") {
@@ -131,6 +136,32 @@ func TestToWorkerSQL_Fingerprint_Present(t *testing.T) {
 }
 
 // ---------------- Existing tests adjusted to use new replaceTable ----------
+func replaceStartEnd(sql string, start, end int64) string {
+	s := strings.ReplaceAll(sql, "{start}", fmt.Sprintf("%d", start))
+	s = strings.ReplaceAll(s, "{end}", fmt.Sprintf("%d", end))
+	return s
+}
+
+func mustDropTable(db *sql.DB, name string) {
+	_, _ = db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS %s", name))
+}
+
+// Sets up a minimal logs table used by tag values tests.
+func createLogsTable(t *testing.T, db *sql.DB) {
+	t.Helper()
+	mustDropTable(db, "logs")
+	stmt := `CREATE TABLE logs(
+		"_cardinalhq.timestamp" BIGINT,
+		"_cardinalhq.id"       TEXT,
+		"_cardinalhq.level"    TEXT,
+		"_cardinalhq.message"  TEXT,
+		"level"                TEXT,
+		"service"              TEXT,
+		"pod"                  TEXT,
+		"user"                 TEXT
+	);`
+	mustExec(t, db, stmt)
+}
 
 func TestToWorkerSQL_Regexp_ExtractOnly(t *testing.T) {
 	db := openDuckDB(t)
@@ -151,7 +182,7 @@ func TestToWorkerSQL_Regexp_ExtractOnly(t *testing.T) {
 		}},
 	}
 
-	sql := replaceTable(leaf.ToWorkerSQLWithLimit(0, 0, "desc"))
+	sql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc")), 0, 5000)
 	if !strings.Contains(sql, "AND true") {
 		t.Fatalf("expected sentinel AND true in generated SQL:\n%s", sql)
 	}
@@ -190,7 +221,7 @@ func TestToWorkerSQL_Regexp_ExtractWithGeneratedRegex(t *testing.T) {
 		}},
 	}
 
-	sql := replaceTable(leaf.ToWorkerSQLWithLimit(0, 0, "desc"))
+	sql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc")), 0, 5000)
 	if !strings.Contains(sql, "AND true") {
 		t.Fatalf("expected sentinel AND true in generated SQL:\n%s", sql)
 	}
@@ -236,7 +267,7 @@ func TestToWorkerSQL_Regexp_WithFilters(t *testing.T) {
 		},
 	}
 
-	rows := queryAll(t, db, replaceTable(leaf.ToWorkerSQLWithLimit(0, 0, "desc")))
+	rows := queryAll(t, db, replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc")), 0, 5000))
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row after filters, got %d", len(rows))
 	}
@@ -265,7 +296,7 @@ func TestToWorkerSQL_JSON_WithFilters(t *testing.T) {
 			{Label: "user", Op: MatchRe, Value: "(alice|bob)"},
 		},
 	}
-	rows := queryAll(t, db, replaceTable(leaf.ToWorkerSQLWithLimit(time.Second, 0, "desc")))
+	rows := queryAll(t, db, replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc")), 0, 5000))
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row after filters, got %d", len(rows))
 	}
@@ -298,7 +329,7 @@ func TestToWorkerSQL_Logfmt_WithFilters(t *testing.T) {
 		},
 	}
 
-	rows := queryAll(t, db, replaceTable(leaf.toWorkerSQL(0, 0, "desc")))
+	rows := queryAll(t, db, replaceStartEnd(replaceTable(leaf.ToWorkerSQL(0, "desc")), 0, 5000))
 
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row after logfmt filters, got %d", len(rows))
@@ -323,7 +354,7 @@ func TestToWorkerSQL_MatchersOnly_FilterApplied(t *testing.T) {
 		},
 	}
 
-	sql := replaceTable(leaf.ToWorkerSQLWithLimit(0, 0, "desc"))
+	sql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc")), 0, 5000)
 
 	if !strings.Contains(sql, "job = 'my-app'") {
 		t.Fatalf("generated SQL missing matcher WHERE: \n%s", sql)
@@ -364,7 +395,7 @@ func TestToWorkerSQL_MatchersThenJSON_FilterApplied_FromLogQL(t *testing.T) {
 	}
 	leaf := plan.Leaves[0]
 
-	replacedSql := replaceTable(leaf.ToWorkerSQLWithLimit(0, 0, "desc"))
+	replacedSql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc")), 0, 5000)
 
 	if !strings.Contains(replacedSql, "job = 'my-app'") {
 		t.Fatalf("generated SQL missing matcher WHERE:\n%s", replacedSql)
@@ -412,7 +443,7 @@ func TestToWorkerSQL_LabelFormat_Conditional_FromLogQL(t *testing.T) {
 	}
 	leaf := plan.Leaves[0]
 
-	replacedSql := replaceTable(leaf.ToWorkerSQLWithLimit(0, 0, "desc"))
+	replacedSql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc")), 0, 5000)
 
 	if !strings.Contains(replacedSql, `job = 'my-app'`) {
 		t.Fatalf("generated SQL missing selector matcher WHERE clause:\n%s", replacedSql)
@@ -447,6 +478,376 @@ func TestToWorkerSQL_LabelFormat_Conditional_FromLogQL(t *testing.T) {
 		}
 		if p.api != "ERROR" {
 			t.Fatalf("derived label mismatch: response=%q -> api=%q (want ERROR)", p.resp, p.api)
+		}
+	}
+}
+
+func TestToWorkerSQLForTagValues_Basic(t *testing.T) {
+	db := openDuckDB(t)
+	createLogsTable(t, db)
+
+	// Insert test data with different tag values
+	mustExec(t, db, `INSERT INTO logs VALUES
+	 (0, 'id1', 'info', 'test message 1', 'info', 'api', 'pod1', NULL),
+	 (1000, 'id2', 'error', 'test message 2', 'error', 'api', 'pod2', NULL),
+	 (2000, 'id3', 'info', 'test message 3', 'info', 'web', 'pod1', NULL),
+	 (3000, 'id4', 'debug', 'test message 4', 'debug', 'api', 'pod3', NULL),
+	 (4000, 'id5', 'info', 'test message 5', 'info', 'web', 'pod2', NULL)`)
+
+	// Test basic tag values query
+	be := &LogLeaf{}
+	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagValues(10*time.Second, "pod")), 0, 5000)
+
+	rows := queryAll(t, db, sql)
+
+	// Should return distinct pod values
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 distinct pod values, got %d\nsql:\n%s", len(rows), sql)
+	}
+
+	got := make(map[string]bool)
+	for _, r := range rows {
+		got[getString(r["tag_value"])] = true
+	}
+
+	expected := map[string]bool{"pod1": true, "pod2": true, "pod3": true}
+	for k, v := range expected {
+		if !got[k] {
+			t.Fatalf("missing expected pod value: %s", k)
+		}
+		if !v {
+			t.Fatalf("unexpected pod value: %s", k)
+		}
+	}
+}
+
+func TestToWorkerSQLForTagValues_WithMatchers(t *testing.T) {
+	db := openDuckDB(t)
+	createLogsTable(t, db)
+
+	// Insert test data with different tag values
+	mustExec(t, db, `INSERT INTO logs VALUES
+	 (0, 'id1', 'info', 'test message 1', 'info', 'api', 'pod1', NULL),
+	 (1000, 'id2', 'error', 'test message 2', 'error', 'api', 'pod2', NULL),
+	 (2000, 'id3', 'info', 'test message 3', 'info', 'web', 'pod1', NULL),
+	 (3000, 'id4', 'debug', 'test message 4', 'debug', 'api', 'pod3', NULL),
+	 (4000, 'id5', 'info', 'test message 5', 'info', 'web', 'pod2', NULL)`)
+
+	// Test with matchers - only get pod values for service=api
+	be := &LogLeaf{
+		Matchers: []LabelMatch{
+			{Label: "service", Op: MatchEq, Value: "api"},
+		},
+	}
+	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagValues(10*time.Second, "pod")), 0, 5000)
+
+	rows := queryAll(t, db, sql)
+
+	// Should return only pod values for service=api
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 distinct pod values for service=api, got %d\nsql:\n%s", len(rows), sql)
+	}
+
+	got := make(map[string]bool)
+	for _, r := range rows {
+		got[getString(r["tag_value"])] = true
+	}
+
+	expected := map[string]bool{"pod1": true, "pod2": true, "pod3": true}
+	for k, v := range expected {
+		if !got[k] {
+			t.Fatalf("missing expected pod value: %s", k)
+		}
+		if !v {
+			t.Fatalf("unexpected pod value: %s", k)
+		}
+	}
+}
+
+func TestToWorkerSQLForTagValues_WithLineFilters(t *testing.T) {
+	db := openDuckDB(t)
+	createLogsTable(t, db)
+
+	// Insert test data with different tag values
+	mustExec(t, db, `INSERT INTO logs VALUES
+	 (0, 'id1', 'info', 'error occurred', 'info', 'api', 'pod1', NULL),
+	 (1000, 'id2', 'error', 'test message', 'error', 'api', 'pod2', NULL),
+	 (2000, 'id3', 'info', 'error occurred', 'info', 'web', 'pod1', NULL),
+	 (3000, 'id4', 'debug', 'test message', 'debug', 'api', 'pod3', NULL),
+	 (4000, 'id5', 'info', 'error occurred', 'info', 'web', 'pod2', NULL)`)
+
+	// Test with line filters - only get pod values for messages containing "error"
+	be := &LogLeaf{
+		LineFilters: []LineFilter{
+			{Op: LineContains, Match: "error"},
+		},
+	}
+	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagValues(10*time.Second, "pod")), 0, 5000)
+
+	rows := queryAll(t, db, sql)
+
+	// Should return only pod values for messages containing "error"
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 distinct pod values for messages containing 'error', got %d\nsql:\n%s", len(rows), sql)
+	}
+
+	got := make(map[string]bool)
+	for _, r := range rows {
+		got[getString(r["tag_value"])] = true
+	}
+
+	expected := map[string]bool{"pod1": true, "pod2": true}
+	for k, v := range expected {
+		if !got[k] {
+			t.Fatalf("missing expected pod value: %s", k)
+		}
+		if !v {
+			t.Fatalf("unexpected pod value: %s", k)
+		}
+	}
+}
+
+func TestToWorkerSQLForTagValues_WithLabelFilters(t *testing.T) {
+	db := openDuckDB(t)
+	createLogsTable(t, db)
+
+	// Insert test data with different tag values
+	mustExec(t, db, `INSERT INTO logs VALUES
+	 (0, 'id1', 'info', 'test message 1', 'info', 'api', 'pod1', NULL),
+	 (1000, 'id2', 'error', 'test message 2', 'error', 'api', 'pod2', NULL),
+	 (2000, 'id3', 'info', 'test message 3', 'info', 'web', 'pod1', NULL),
+	 (3000, 'id4', 'debug', 'test message 4', 'debug', 'api', 'pod3', NULL),
+	 (4000, 'id5', 'info', 'test message 5', 'info', 'web', 'pod2', NULL)`)
+
+	// Test with label filters - only get pod values for level=info
+	be := &LogLeaf{
+		LabelFilters: []LabelFilter{
+			{Label: "level", Op: MatchEq, Value: "info"},
+		},
+	}
+	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagValues(10*time.Second, "pod")), 0, 5000)
+
+	rows := queryAll(t, db, sql)
+
+	// Should return only pod values for level=info
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 distinct pod values for level=info, got %d\nsql:\n%s", len(rows), sql)
+	}
+
+	got := make(map[string]bool)
+	for _, r := range rows {
+		got[getString(r["tag_value"])] = true
+	}
+
+	expected := map[string]bool{"pod1": true, "pod2": true}
+	for k, v := range expected {
+		if !got[k] {
+			t.Fatalf("missing expected pod value: %s", k)
+		}
+		if !v {
+			t.Fatalf("unexpected pod value: %s", k)
+		}
+	}
+}
+
+func TestToWorkerSQLForTagValues_WithRegexpParser(t *testing.T) {
+	db := openDuckDB(t)
+	createLogsTable(t, db)
+
+	// Insert test data with messages that can be parsed by regexp
+	mustExec(t, db, `INSERT INTO logs VALUES
+	 (0, 'id1', 'info', 'user=alice action=login', 'info', NULL, NULL, NULL),
+	 (1000, 'id2', 'info', 'user=bob action=logout', 'info', NULL, NULL, NULL),
+	 (2000, 'id3', 'error', 'user=charlie action=login', 'error', NULL, NULL, NULL),
+	 (3000, 'id4', 'info', 'user=alice action=view', 'info', NULL, NULL, NULL),
+	 (4000, 'id5', 'debug', 'user=david action=login', 'debug', NULL, NULL, NULL)`)
+
+	// Test with regexp parser to extract user field
+	be := &LogLeaf{
+		Parsers: []ParserStage{
+			{
+				Type: "regexp",
+				Params: map[string]string{
+					"pattern": "user=(?P<user>\\w+)",
+				},
+			},
+		},
+	}
+	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagValues(10*time.Second, "user")), 0, 5000)
+
+	rows := queryAll(t, db, sql)
+
+	// Should return distinct user values extracted by regexp
+	if len(rows) != 4 {
+		t.Fatalf("expected 4 distinct user values, got %d\nsql:\n%s", len(rows), sql)
+	}
+
+	got := make(map[string]bool)
+	for _, r := range rows {
+		got[getString(r["tag_value"])] = true
+	}
+
+	expected := map[string]bool{"alice": true, "bob": true, "charlie": true, "david": true}
+	for k, v := range expected {
+		if !got[k] {
+			t.Fatalf("missing expected user value: %s", k)
+		}
+		if !v {
+			t.Fatalf("unexpected user value: %s", k)
+		}
+	}
+}
+
+func TestToWorkerSQLForTagValues_WithJSONParser(t *testing.T) {
+	db := openDuckDB(t)
+	createLogsTable(t, db)
+
+	// Insert test data with JSON messages
+	mustExec(t, db, `INSERT INTO logs VALUES
+	 (0, 'id1', 'info', '{"user":"alice","action":"login"}', 'info', NULL, NULL, NULL),
+	 (1000, 'id2', 'info', '{"user":"bob","action":"logout"}', 'info', NULL, NULL, NULL),
+	 (2000, 'id3', 'error', '{"user":"charlie","action":"login"}', 'error', NULL, NULL, NULL),
+	 (3000, 'id4', 'info', '{"user":"alice","action":"view"}', 'info', NULL, NULL, NULL),
+	 (4000, 'id5', 'debug', '{"user":"david","action":"login"}', 'debug', NULL, NULL, NULL)`)
+
+	// Test with JSON parser to extract user field
+	be := &LogLeaf{
+		Parsers: []ParserStage{
+			{
+				Type: "json",
+				Params: map[string]string{
+					"user": "user",
+				},
+			},
+		},
+	}
+	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagValues(10*time.Second, "user")), 0, 5000)
+
+	rows := queryAll(t, db, sql)
+
+	// Should return distinct user values extracted by JSON parser
+	if len(rows) != 4 {
+		t.Fatalf("expected 4 distinct user values, got %d\nsql:\n%s", len(rows), sql)
+	}
+
+	got := make(map[string]bool)
+	for _, r := range rows {
+		got[getString(r["tag_value"])] = true
+	}
+
+	expected := map[string]bool{"alice": true, "bob": true, "charlie": true, "david": true}
+	for k, v := range expected {
+		if !got[k] {
+			t.Fatalf("missing expected user value: %s", k)
+		}
+		if !v {
+			t.Fatalf("unexpected user value: %s", k)
+		}
+	}
+}
+
+func TestToWorkerSQLForTagValues_WithLogfmtParser(t *testing.T) {
+	db := openDuckDB(t)
+	createLogsTable(t, db)
+
+	// Insert test data with logfmt messages
+	mustExec(t, db, `INSERT INTO logs VALUES
+	 (0, 'id1', 'info', 'user=alice action=login', 'info', NULL, NULL, NULL),
+	 (1000, 'id2', 'info', 'user=bob action=logout', 'info', NULL, NULL, NULL),
+	 (2000, 'id3', 'error', 'user=charlie action=login', 'error', NULL, NULL, NULL),
+	 (3000, 'id4', 'info', 'user=alice action=view', 'info', NULL, NULL, NULL),
+	 (4000, 'id5', 'debug', 'user=david action=login', 'debug', NULL, NULL, NULL)`)
+
+	// Test with logfmt parser to extract user field
+	be := &LogLeaf{
+		Parsers: []ParserStage{
+			{
+				Type: "logfmt",
+				Params: map[string]string{
+					"user": "user",
+				},
+			},
+		},
+	}
+	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagValues(10*time.Second, "user")), 0, 5000)
+
+	rows := queryAll(t, db, sql)
+
+	// Should return distinct user values extracted by logfmt parser
+	if len(rows) != 4 {
+		t.Fatalf("expected 4 distinct user values, got %d\nsql:\n%s", len(rows), sql)
+	}
+
+	got := make(map[string]bool)
+	for _, r := range rows {
+		got[getString(r["tag_value"])] = true
+	}
+
+	expected := map[string]bool{"alice": true, "bob": true, "charlie": true, "david": true}
+	for k, v := range expected {
+		if !got[k] {
+			t.Fatalf("missing expected user value: %s", k)
+		}
+		if !v {
+			t.Fatalf("unexpected user value: %s", k)
+		}
+	}
+}
+
+func TestToWorkerSQLForTagValues_ComplexQuery(t *testing.T) {
+	db := openDuckDB(t)
+	createLogsTable(t, db)
+
+	// Insert test data with complex structure
+	mustExec(t, db, `INSERT INTO logs VALUES
+	 (0, 'id1', 'info', '{"user":"alice","action":"login","status":"success","level":"info"}', 'info', 'api', NULL, NULL),
+	 (1000, 'id2', 'error', '{"user":"bob","action":"login","status":"failed","level":"error"}', 'error', 'api', NULL, NULL),
+	 (2000, 'id3', 'info', '{"user":"alice","action":"view","status":"success","level":"info"}', 'info', 'web', NULL, NULL),
+	 (3000, 'id4', 'debug', '{"user":"charlie","action":"login","status":"success","level":"debug"}', 'debug', 'api', NULL, NULL),
+	 (4000, 'id5', 'info', '{"user":"david","action":"logout","status":"success","level":"info"}', 'info', 'web', NULL, NULL)`)
+
+	// Test complex query with matchers, line filters, and JSON parser
+	be := &LogLeaf{
+		Matchers: []LabelMatch{
+			{Label: "service", Op: MatchEq, Value: "api"},
+		},
+		LineFilters: []LineFilter{
+			{Op: LineContains, Match: "login"},
+		},
+		Parsers: []ParserStage{
+			{
+				Type: "json",
+				Params: map[string]string{
+					"user": "user",
+				},
+			},
+		},
+		LabelFilters: []LabelFilter{
+			{Label: "level", Op: MatchEq, Value: "info"},
+		},
+	}
+	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagValues(10*time.Second, "user")), 0, 5000)
+
+	rows := queryAll(t, db, sql)
+
+	// Should return only user values for service=api, messages containing "login", and level=info
+	// This should only match the first record: alice
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 distinct user value, got %d\nsql:\n%s", len(rows), sql)
+	}
+
+	got := make(map[string]bool)
+	for _, r := range rows {
+		got[getString(r["tag_value"])] = true
+	}
+
+	expected := map[string]bool{"alice": true}
+	for k, v := range expected {
+		if !got[k] {
+			t.Fatalf("missing expected user value: %s", k)
+		}
+		if !v {
+			t.Fatalf("unexpected user value: %s", k)
 		}
 	}
 }

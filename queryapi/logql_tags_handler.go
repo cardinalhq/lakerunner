@@ -28,9 +28,8 @@ import (
 )
 
 type logqlTagsPayload struct {
-	OrgID string `json:"orgId"`
-	S     string `json:"s"`
-	E     string `json:"e"`
+	S string `json:"s"`
+	E string `json:"e"`
 
 	OrgUUID uuid.UUID `json:"-"`
 	StartTs int64     `json:"-"`
@@ -58,16 +57,14 @@ func readLogQLTagsPayload(w http.ResponseWriter, r *http.Request) *logqlTagsPayl
 		http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
 		return nil
 	}
-	if p.OrgID == "" {
-		http.Error(w, "missing orgId", http.StatusBadRequest)
+
+	// Get orgId from context (set by middleware)
+	orgUUID, ok := GetOrgIDFromContext(r.Context())
+	if !ok {
+		http.Error(w, "organization ID not found in context", http.StatusInternalServerError)
 		return nil
 	}
-	u, err := uuid.Parse(p.OrgID)
-	if err != nil {
-		http.Error(w, "invalid orgId: "+err.Error(), http.StatusBadRequest)
-		return nil
-	}
-	p.OrgUUID = u
+	p.OrgUUID = orgUUID
 
 	st, en, err := dateutils.ToStartEnd(p.S, p.E)
 	if err != nil {

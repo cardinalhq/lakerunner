@@ -20,7 +20,7 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
+	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
@@ -29,7 +29,7 @@ func runLoop(
 	manager *Manager,
 	mdb compactionStore,
 	sp storageprofile.StorageProfileProvider,
-	awsmanager *awsclient.Manager,
+	cmgr cloudstorage.ClientProvider,
 ) error {
 	ll := slog.Default().With(slog.String("component", "metric-compaction-loop"))
 
@@ -74,7 +74,7 @@ func runLoop(
 		mcqHeartbeater := newMCQHeartbeater(mdb, manager.workerID, itemIDs)
 		cancel := mcqHeartbeater.Start(ctx)
 
-		err = processBatch(ctx, ll, mdb, sp, awsmanager, *bundle)
+		err = processBatch(ctx, mdb, sp, cmgr, *bundle)
 
 		// Stop heartbeating before handling results
 		cancel()

@@ -30,11 +30,6 @@ type MockQueries struct {
 	mock.Mock
 }
 
-func (m *MockQueries) InqueueScalingDepth(ctx context.Context, signal string) (interface{}, error) {
-	args := m.Called(ctx, signal)
-	return args.Get(0), args.Error(1)
-}
-
 func (m *MockQueries) WorkQueueScalingDepth(ctx context.Context, arg lrdb.WorkQueueScalingDepthParams) (interface{}, error) {
 	args := m.Called(ctx, arg)
 	return args.Get(0), args.Error(1)
@@ -144,7 +139,7 @@ func TestService_GetMetrics(t *testing.T) {
 			name:        "ingest-logs success",
 			serviceType: "ingest-logs",
 			mockSetup: func(m *MockQueries) {
-				m.On("InqueueScalingDepth", mock.Anything, "logs").Return(int64(5), nil)
+				// No mock needed - returns constant
 			},
 			expectedValue: 5.0,
 			expectError:   false,
@@ -153,18 +148,18 @@ func TestService_GetMetrics(t *testing.T) {
 			name:        "ingest-metrics success",
 			serviceType: "ingest-metrics",
 			mockSetup: func(m *MockQueries) {
-				m.On("InqueueScalingDepth", mock.Anything, "metrics").Return(int64(12), nil)
+				// No mock needed - returns constant
 			},
-			expectedValue: 12.0,
+			expectedValue: 5.0,
 			expectError:   false,
 		},
 		{
 			name:        "ingest-traces success",
 			serviceType: "ingest-traces",
 			mockSetup: func(m *MockQueries) {
-				m.On("InqueueScalingDepth", mock.Anything, "traces").Return(int64(3), nil)
+				// No mock needed - returns constant
 			},
-			expectedValue: 3.0,
+			expectedValue: 5.0,
 			expectError:   false,
 		},
 		{
@@ -209,15 +204,7 @@ func TestService_GetMetrics(t *testing.T) {
 			expectedValue: 2.0,
 			expectError:   false,
 		},
-		{
-			name:        "ingest-logs database error",
-			serviceType: "ingest-logs",
-			mockSetup: func(m *MockQueries) {
-				m.On("InqueueScalingDepth", mock.Anything, "logs").Return(int64(0), assert.AnError)
-			},
-			expectedValue: 0,
-			expectError:   true,
-		},
+		// Note: ingest-* services return constant values now (no database errors possible)
 		{
 			name:        "unsupported service type",
 			serviceType: "unknown-service",
@@ -292,9 +279,9 @@ func TestService_getQueueDepth(t *testing.T) {
 			name:        "ingest-logs",
 			serviceType: "ingest-logs",
 			mockSetup: func(m *MockQueries) {
-				m.On("InqueueScalingDepth", mock.Anything, "logs").Return(int64(10), nil)
+				// No mock needed - returns constant
 			},
-			expectedCount: 10,
+			expectedCount: 5,
 			expectError:   false,
 		},
 		{

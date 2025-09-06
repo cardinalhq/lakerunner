@@ -20,7 +20,8 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
+	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -30,7 +31,7 @@ func runLoop(
 	manager *Manager,
 	mdb rollupStore,
 	sp storageprofile.StorageProfileProvider,
-	awsmanager *awsclient.Manager,
+	cmgr cloudstorage.ClientProvider,
 ) error {
 	ll := slog.Default().With(slog.String("component", "metric-rollup-loop"))
 
@@ -76,7 +77,7 @@ func runLoop(
 		}
 
 		// Process the batch of claimed work items
-		processBatchOfItems(ctx, ll, manager, mdb, sp, awsmanager, claimedWork)
+		processBatchOfItems(ctx, manager, mdb, sp, cmgr, claimedWork)
 
 		runtime.GC()
 	}
@@ -84,13 +85,14 @@ func runLoop(
 
 func processBatchOfItems(
 	ctx context.Context,
-	ll *slog.Logger,
 	manager *Manager,
 	mdb rollupStore,
 	sp storageprofile.StorageProfileProvider,
-	awsmanager *awsclient.Manager,
+	cmgr cloudstorage.ClientProvider,
 	claimedWork []lrdb.MrqClaimBatchRow,
 ) {
+	ll := logctx.FromContext(ctx)
+
 	// Track active items that still need heartbeating
 	tracker := &activeItemsTracker{
 		items: make([]int64, len(claimedWork)),
@@ -163,7 +165,7 @@ func processBatchOfItems(
 		}
 
 		// Process the single item
-		err := processBatch(ctx, ll, mdb, sp, awsmanager, bundleResult)
+		err := processBatch(ctx, mdb, sp, cmgr, bundleResult)
 
 		if err != nil {
 			ll.Error("Failed to process rollup work item",

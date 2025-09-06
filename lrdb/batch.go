@@ -80,6 +80,100 @@ func (b *BatchDeleteMetricSegsBatchResults) Close() error {
 	return b.br.Close()
 }
 
+const batchInsertLogSegs = `-- name: BatchInsertLogSegs :batchexec
+INSERT INTO log_seg (
+  organization_id,
+  dateint,
+  ingest_dateint,
+  segment_id,
+  instance_num,
+  slot_id,
+  ts_range,
+  record_count,
+  file_size,
+  created_by,
+  fingerprints
+)
+VALUES (
+  $1,
+  $2,
+  $3,
+  $4,
+  $5,
+  $6,
+  int8range($7, $8, '[)'),
+  $9,
+  $10,
+  $11,
+  $12::bigint[]
+)
+`
+
+type BatchInsertLogSegsBatchResults struct {
+	br     pgx.BatchResults
+	tot    int
+	closed bool
+}
+
+type BatchInsertLogSegsParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Dateint        int32     `json:"dateint"`
+	IngestDateint  int32     `json:"ingest_dateint"`
+	SegmentID      int64     `json:"segment_id"`
+	InstanceNum    int16     `json:"instance_num"`
+	SlotID         int32     `json:"slot_id"`
+	StartTs        int64     `json:"start_ts"`
+	EndTs          int64     `json:"end_ts"`
+	RecordCount    int64     `json:"record_count"`
+	FileSize       int64     `json:"file_size"`
+	CreatedBy      CreatedBy `json:"created_by"`
+	Fingerprints   []int64   `json:"fingerprints"`
+}
+
+func (q *Queries) BatchInsertLogSegs(ctx context.Context, arg []BatchInsertLogSegsParams) *BatchInsertLogSegsBatchResults {
+	batch := &pgx.Batch{}
+	for _, a := range arg {
+		vals := []interface{}{
+			a.OrganizationID,
+			a.Dateint,
+			a.IngestDateint,
+			a.SegmentID,
+			a.InstanceNum,
+			a.SlotID,
+			a.StartTs,
+			a.EndTs,
+			a.RecordCount,
+			a.FileSize,
+			a.CreatedBy,
+			a.Fingerprints,
+		}
+		batch.Queue(batchInsertLogSegs, vals...)
+	}
+	br := q.db.SendBatch(ctx, batch)
+	return &BatchInsertLogSegsBatchResults{br, len(arg), false}
+}
+
+func (b *BatchInsertLogSegsBatchResults) Exec(f func(int, error)) {
+	defer b.br.Close()
+	for t := 0; t < b.tot; t++ {
+		if b.closed {
+			if f != nil {
+				f(t, ErrBatchAlreadyClosed)
+			}
+			continue
+		}
+		_, err := b.br.Exec()
+		if f != nil {
+			f(t, err)
+		}
+	}
+}
+
+func (b *BatchInsertLogSegsBatchResults) Close() error {
+	b.closed = true
+	return b.br.Close()
+}
+
 const batchInsertMetricSegs = `-- name: BatchInsertMetricSegs :batchexec
 INSERT INTO metric_seg (
   organization_id,
@@ -198,6 +292,100 @@ func (b *BatchInsertMetricSegsBatchResults) Close() error {
 	return b.br.Close()
 }
 
+const batchInsertTraceSegs = `-- name: BatchInsertTraceSegs :batchexec
+INSERT INTO trace_seg (
+  organization_id,
+  dateint,
+  ingest_dateint,
+  segment_id,
+  instance_num,
+  slot_id,
+  ts_range,
+  record_count,
+  file_size,
+  created_by,
+  fingerprints
+)
+VALUES (
+  $1,
+  $2,
+  $3,
+  $4,
+  $5,
+  $6,
+  int8range($7, $8, '[)'),
+  $9,
+  $10,
+  $11,
+  $12::bigint[]
+)
+`
+
+type BatchInsertTraceSegsBatchResults struct {
+	br     pgx.BatchResults
+	tot    int
+	closed bool
+}
+
+type BatchInsertTraceSegsParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Dateint        int32     `json:"dateint"`
+	IngestDateint  int32     `json:"ingest_dateint"`
+	SegmentID      int64     `json:"segment_id"`
+	InstanceNum    int16     `json:"instance_num"`
+	SlotID         int32     `json:"slot_id"`
+	StartTs        int64     `json:"start_ts"`
+	EndTs          int64     `json:"end_ts"`
+	RecordCount    int64     `json:"record_count"`
+	FileSize       int64     `json:"file_size"`
+	CreatedBy      CreatedBy `json:"created_by"`
+	Fingerprints   []int64   `json:"fingerprints"`
+}
+
+func (q *Queries) BatchInsertTraceSegs(ctx context.Context, arg []BatchInsertTraceSegsParams) *BatchInsertTraceSegsBatchResults {
+	batch := &pgx.Batch{}
+	for _, a := range arg {
+		vals := []interface{}{
+			a.OrganizationID,
+			a.Dateint,
+			a.IngestDateint,
+			a.SegmentID,
+			a.InstanceNum,
+			a.SlotID,
+			a.StartTs,
+			a.EndTs,
+			a.RecordCount,
+			a.FileSize,
+			a.CreatedBy,
+			a.Fingerprints,
+		}
+		batch.Queue(batchInsertTraceSegs, vals...)
+	}
+	br := q.db.SendBatch(ctx, batch)
+	return &BatchInsertTraceSegsBatchResults{br, len(arg), false}
+}
+
+func (b *BatchInsertTraceSegsBatchResults) Exec(f func(int, error)) {
+	defer b.br.Close()
+	for t := 0; t < b.tot; t++ {
+		if b.closed {
+			if f != nil {
+				f(t, ErrBatchAlreadyClosed)
+			}
+			continue
+		}
+		_, err := b.br.Exec()
+		if f != nil {
+			f(t, err)
+		}
+	}
+}
+
+func (b *BatchInsertTraceSegsBatchResults) Close() error {
+	b.closed = true
+	return b.br.Close()
+}
+
 const batchMarkMetricSegsRolledup = `-- name: BatchMarkMetricSegsRolledup :batchexec
 UPDATE public.metric_seg
    SET rolledup = true
@@ -263,7 +451,7 @@ func (b *BatchMarkMetricSegsRolledupBatchResults) Close() error {
 }
 
 const batchUpsertExemplarLogs = `-- name: BatchUpsertExemplarLogs :batchone
-INSERT INTO exemplar_logs
+INSERT INTO lrdb_exemplar_logs
             ( organization_id,  service_identifier_id,  fingerprint,  attributes,  exemplar)
 VALUES      ($1, $2, $3, $4, $5)
 ON CONFLICT ( organization_id,  service_identifier_id,  fingerprint)
@@ -274,8 +462,8 @@ DO UPDATE SET
   related_fingerprints = CASE
     WHEN $6::BIGINT != 0
       AND $3 != $6
-      THEN add_to_bigint_list(exemplar_logs.related_fingerprints, $6, 100)
-    ELSE exemplar_logs.related_fingerprints
+      THEN add_to_bigint_list(lrdb_exemplar_logs.related_fingerprints, $6, 100)
+    ELSE lrdb_exemplar_logs.related_fingerprints
   END
 RETURNING (created_at = updated_at) as is_new
 `
@@ -341,7 +529,7 @@ func (b *BatchUpsertExemplarLogsBatchResults) Close() error {
 }
 
 const batchUpsertExemplarMetrics = `-- name: BatchUpsertExemplarMetrics :batchone
-INSERT INTO exemplar_metrics
+INSERT INTO lrdb_exemplar_metrics
             ( organization_id,  service_identifier_id,  metric_name,  metric_type,  attributes,  exemplar)
 VALUES      ($1, $2, $3, $4, $5, $6)
 ON CONFLICT ( organization_id,  service_identifier_id,  metric_name,  metric_type)
@@ -408,7 +596,7 @@ func (b *BatchUpsertExemplarMetricsBatchResults) Close() error {
 }
 
 const batchUpsertExemplarTraces = `-- name: BatchUpsertExemplarTraces :batchone
-INSERT INTO exemplar_traces
+INSERT INTO lrdb_exemplar_traces
 ( organization_id
 , service_identifier_id
 , fingerprint
@@ -597,6 +785,67 @@ func (b *InsertCompactedMetricSegBatchResults) Exec(f func(int, error)) {
 }
 
 func (b *InsertCompactedMetricSegBatchResults) Close() error {
+	b.closed = true
+	return b.br.Close()
+}
+
+const kafkaJournalBatchUpsert = `-- name: KafkaJournalBatchUpsert :batchexec
+INSERT INTO kafka_offset_journal (consumer_group, topic, partition, last_processed_offset, updated_at)
+VALUES ($1, $2, $3, $4, NOW())
+ON CONFLICT (consumer_group, topic, partition)
+DO UPDATE SET 
+    last_processed_offset = EXCLUDED.last_processed_offset,
+    updated_at = NOW()
+WHERE kafka_offset_journal.last_processed_offset < EXCLUDED.last_processed_offset
+`
+
+type KafkaJournalBatchUpsertBatchResults struct {
+	br     pgx.BatchResults
+	tot    int
+	closed bool
+}
+
+type KafkaJournalBatchUpsertParams struct {
+	ConsumerGroup       string `json:"consumer_group"`
+	Topic               string `json:"topic"`
+	Partition           int32  `json:"partition"`
+	LastProcessedOffset int64  `json:"last_processed_offset"`
+}
+
+// Insert or update multiple Kafka journal entries in a single batch operation
+// Only updates if the new offset is greater than the existing one
+func (q *Queries) KafkaJournalBatchUpsert(ctx context.Context, arg []KafkaJournalBatchUpsertParams) *KafkaJournalBatchUpsertBatchResults {
+	batch := &pgx.Batch{}
+	for _, a := range arg {
+		vals := []interface{}{
+			a.ConsumerGroup,
+			a.Topic,
+			a.Partition,
+			a.LastProcessedOffset,
+		}
+		batch.Queue(kafkaJournalBatchUpsert, vals...)
+	}
+	br := q.db.SendBatch(ctx, batch)
+	return &KafkaJournalBatchUpsertBatchResults{br, len(arg), false}
+}
+
+func (b *KafkaJournalBatchUpsertBatchResults) Exec(f func(int, error)) {
+	defer b.br.Close()
+	for t := 0; t < b.tot; t++ {
+		if b.closed {
+			if f != nil {
+				f(t, ErrBatchAlreadyClosed)
+			}
+			continue
+		}
+		_, err := b.br.Exec()
+		if f != nil {
+			f(t, err)
+		}
+	}
+}
+
+func (b *KafkaJournalBatchUpsertBatchResults) Close() error {
 	b.closed = true
 	return b.br.Close()
 }

@@ -84,7 +84,7 @@ func NewDDBSink(dataset string, ctx context.Context) (*DDBSink, error) {
 	s := &DDBSink{
 		db:        db,
 		parquetDb: parquetDb,
-		table:     "cached",
+		table:     fmt.Sprintf("%s_cached", dataset),
 		schema: schemaCache{
 			index: make(map[string]int),
 		},
@@ -92,7 +92,7 @@ func NewDDBSink(dataset string, ctx context.Context) (*DDBSink, error) {
 
 	// Create table (idempotent). Keep minimal schema for compatibility.
 	_, conn, err := s.db.ExecContext(ctx,
-		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (ts BIGINT);`, ident("cached")),
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (ts BIGINT);`, ident(s.table)),
 	)
 	if err != nil {
 		_ = db.Close()

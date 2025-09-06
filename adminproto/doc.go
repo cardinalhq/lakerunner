@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-// Package adminproto contains protobuf definitions for the LakeRunner admin service.
+// Package adminproto contains protobuf definitions for the Lakerunner admin service.
 // This package provides GRPC service definitions and message types for administrative
 // operations like health checks and system inspection.
 //

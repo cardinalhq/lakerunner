@@ -21,19 +21,18 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"strings"
 
 	"github.com/cardinalhq/oteltools/pkg/dateutils"
 	"github.com/google/uuid"
 
-	"github.com/cardinalhq/lakerunner/promql"
-	// import your logql package (adjust path if different)
 	"github.com/cardinalhq/lakerunner/logql"
+	"github.com/cardinalhq/lakerunner/promql"
 )
 
 type queryPayload struct {
-	OrgID   string `json:"orgId"`
 	S       string `json:"s"`
 	E       string `json:"e"`
 	Q       string `json:"q"`
@@ -46,7 +45,7 @@ type queryPayload struct {
 	EndTs   int64     `json:"-"`
 }
 
-func readQueryPayload(w http.ResponseWriter, r *http.Request) *queryPayload {
+func readQueryPayload(w http.ResponseWriter, r *http.Request, allowEmptyQuery bool) *queryPayload {
 	if r.Method != http.MethodPost {
 		http.Error(w, "only POST method is allowed", http.StatusMethodNotAllowed)
 		return nil
@@ -62,20 +61,19 @@ func readQueryPayload(w http.ResponseWriter, r *http.Request) *queryPayload {
 			http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
 			return nil
 		}
-		if p.OrgID == "" {
-			http.Error(w, "missing orgId", http.StatusBadRequest)
-			return nil
-		}
-		if p.Q == "" {
-			http.Error(w, "missing query expression", http.StatusBadRequest)
-			return nil
-		}
-		orgId, err := uuid.Parse(p.OrgID)
-		if err != nil {
-			http.Error(w, "invalid orgId: "+err.Error(), http.StatusBadRequest)
+
+		// Get orgId from context (set by middleware)
+		orgId, ok := GetOrgIDFromContext(r.Context())
+		if !ok {
+			http.Error(w, "organization ID not found in context", http.StatusInternalServerError)
 			return nil
 		}
 		p.OrgUUID = orgId
+
+		if p.Q == "" && !allowEmptyQuery {
+			http.Error(w, "missing query expression", http.StatusBadRequest)
+			return nil
+		}
 		st, en, err := dateutils.ToStartEnd(p.S, p.E)
 		if err != nil {
 			http.Error(w, "invalid start/end time: "+err.Error(), http.StatusBadRequest)
@@ -134,7 +132,7 @@ type evalData struct {
 }
 
 func (q *QuerierService) handlePromQuery(w http.ResponseWriter, r *http.Request) {
-	qPayload := readQueryPayload(w, r)
+	qPayload := readQueryPayload(w, r, false)
 	if qPayload == nil {
 		return
 	}
@@ -151,14 +149,18 @@ func (q *QuerierService) handlePromQuery(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	writeSSE, ok := q.sseWriter(w)
-	if !ok {
-		return
-	}
-
 	resultsCh, err := q.EvaluateMetricsQuery(r.Context(), qPayload.OrgUUID, qPayload.StartTs, qPayload.EndTs, plan)
 	if err != nil {
 		http.Error(w, "evaluate error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	q.sendEvalResults(r, w, resultsCh, plan)
+}
+
+func (q *QuerierService) sendEvalResults(r *http.Request, w http.ResponseWriter, resultsCh <-chan map[string]promql.EvalResult, plan promql.QueryPlan) {
+	writeSSE, ok := q.sseWriter(w)
+	if !ok {
 		return
 	}
 
@@ -175,6 +177,9 @@ func (q *QuerierService) handlePromQuery(w http.ResponseWriter, r *http.Request)
 			}
 			for k, v := range res {
 				label := plan.Root.Label(v.Tags)
+				if math.IsNaN(v.Value.Num) {
+					continue
+				}
 				ed := evalData{
 					Key:       k,
 					Tags:      v.Tags,
@@ -193,7 +198,7 @@ func (q *QuerierService) handlePromQuery(w http.ResponseWriter, r *http.Request)
 }
 
 func (q *QuerierService) handleLogQuery(w http.ResponseWriter, r *http.Request) {
-	qp := readQueryPayload(w, r)
+	qp := readQueryPayload(w, r, false)
 	if qp == nil {
 		return
 	}
@@ -203,18 +208,85 @@ func (q *QuerierService) handleLogQuery(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "invalid log query expression: "+qp.Q+" "+err.Error(), http.StatusBadRequest)
 		return
 	}
+
 	lplan, err := logql.CompileLog(logAst)
 	if err != nil {
-		http.Error(w, "compile error: "+err.Error(), http.StatusBadRequest)
+		http.Error(w, "cannot compile LogQL: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
+	if logAst.NeedsRewrite() {
+		rr, err := promql.RewriteToPromQL(lplan.Root)
+		if err != nil {
+			http.Error(w, "cannot rewrite to PromQL: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		promExpr, err := promql.FromPromQL(rr.PromQL)
+		if err != nil {
+			http.Error(w, "cannot parse rewritten PromQL: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		plan, err := promql.Compile(promExpr)
+		if err != nil {
+			http.Error(w, "cannot compile rewritten PromQL: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		logLeafByBaseExprID := make(map[string]logql.LogLeaf, len(rr.Leaves))
+		for i := range plan.Leaves {
+			// Take address so we mutate the element in the slice.
+			be := &plan.Leaves[i]
+
+			found := false
+			kept := make([]promql.LabelMatch, 0, len(be.Matchers))
+
+			for _, m := range be.Matchers {
+				if m.Label == promql.LeafMatcher {
+					leaf, ok := rr.Leaves[m.Value]
+					if !ok {
+						http.Error(w, "unknown __leaf id: "+m.Value, http.StatusBadRequest)
+						return
+					}
+					lcopy := leaf
+					logLeafByBaseExprID[be.ID] = lcopy
+					be.LogLeaf = &lcopy
+					found = true
+					slog.Info("Found leaf matcher", "leaf", leaf)
+					// Skip adding __leaf back into matchers.
+					continue
+				}
+				kept = append(kept, m)
+			}
+
+			if !found {
+				http.Error(w, "internal: base expr missing __leaf matcher", http.StatusBadRequest)
+				return
+			}
+			// Remove __leaf matcher so it doesn’t appear in downstream SQL.
+			be.Matchers = kept
+		}
+		plan.AttachLogLeaves(logLeafByBaseExprID)
+
+		evalResults, err := q.EvaluateMetricsQuery(r.Context(), qp.OrgUUID, qp.StartTs, qp.EndTs, plan)
+		if err != nil {
+			http.Error(w, "evaluate error: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		q.sendEvalResults(r, w, evalResults, plan)
+		return
+	}
+
+	// ---- Raw logs path (no rewrite) ----
 	writeSSE, ok := q.sseWriter(w)
 	if !ok {
 		return
 	}
 
-	resultsCh, err := q.EvaluateLogsQuery(r.Context(), qp.OrgUUID, qp.StartTs, qp.EndTs, qp.Reverse, qp.Limit, lplan)
+	resultsCh, err := q.EvaluateLogsQuery(
+		r.Context(), qp.OrgUUID, qp.StartTs, qp.EndTs, qp.Reverse, qp.Limit, lplan,
+	)
 	if err != nil {
 		http.Error(w, "evaluate error: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -239,18 +311,21 @@ func (q *QuerierService) handleLogQuery(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
-func (q *QuerierService) handlePromQLValidate(w http.ResponseWriter, r *http.Request) {
-	q.validatePromQL(w, r)
-}
-
 func (q *QuerierService) Run(doneCtx context.Context) error {
 	slog.Info("Starting querier service")
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/metrics/query", q.handlePromQuery)
-	mux.HandleFunc("/api/v1/logs/query", q.handleLogQuery)
+
+	mux.HandleFunc("/api/v1/metrics/metadata", q.apiKeyMiddleware(q.handleListPromQLMetricsMetadata))
+	mux.HandleFunc("/api/v1/metrics/tags", q.apiKeyMiddleware(q.handleListPromQLTags))
+	mux.HandleFunc("/api/v1/metrics/tagvalues", q.apiKeyMiddleware(q.handleGetMetricTagValues))
+	mux.HandleFunc("/api/v1/metrics/query", q.apiKeyMiddleware(q.handlePromQuery))
+
+	mux.HandleFunc("/api/v1/logs/tags", q.apiKeyMiddleware(q.handleListLogQLTags))
+	mux.HandleFunc("/api/v1/logs/tagvalues", q.apiKeyMiddleware(q.handleGetLogTagValues))
+	mux.HandleFunc("/api/v1/logs/query", q.apiKeyMiddleware(q.handleLogQuery))
+
 	mux.HandleFunc("/api/v1/promql/validate", q.handlePromQLValidate)
-	mux.HandleFunc("/api/v1/tags/logql", q.handleListLogQLTags)
 
 	srv := &http.Server{
 		Addr:    ":8080",

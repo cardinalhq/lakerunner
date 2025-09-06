@@ -27,11 +27,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/cardinalhq/lakerunner/internal/duckdbx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/promql"
 	"github.com/cardinalhq/lakerunner/queryapi"
-	"github.com/google/uuid"
 )
 
 const (
@@ -262,27 +263,6 @@ func EvaluatePushDown[T promql.Timestamped](
 	return promql.MergeSorted(ctx, ChannelBufferSize, request.Reverse, request.Limit, outs...), nil
 }
 
-//func sortSegments(segments []queryapi.SegmentInfo, request queryapi.PushDownRequest) {
-//	sort.Slice(segments, func(i, j int) bool {
-//		if request.Reverse {
-//			if segments[i].DateInt != segments[j].DateInt {
-//				return segments[i].DateInt > segments[j].DateInt
-//			}
-//			if segments[i].Hour != segments[j].Hour {
-//				return segments[i].Hour > segments[j].Hour
-//			}
-//			return segments[i].EndTs > segments[j].EndTs
-//		}
-//		if segments[i].DateInt != segments[j].DateInt {
-//			return segments[i].DateInt < segments[j].DateInt
-//		}
-//		if segments[i].Hour != segments[j].Hour {
-//			return segments[i].Hour < segments[j].Hour
-//		}
-//		return segments[i].EndTs < segments[j].EndTs
-//	})
-//}
-
 func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
 	request queryapi.PushDownRequest,
 	cachedIDs []int64,
@@ -311,9 +291,16 @@ func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
 			inList := strings.Join(idLits, ",")
 
 			// Replace {table} with cached table; replace sentinel "AND true" with segment filter.
-			cacheSQL := strings.Replace(userSQL, "{table}", w.sink.table, 1)
-			cacheSQL = strings.Replace(cacheSQL, "AND true", "AND segment_id IN ("+inList+")", 1)
+			cacheSQL := ""
+			if request.LogLeaf != nil || (request.BaseExpr != nil && request.BaseExpr.LogLeaf != nil) {
+				cacheBase := fmt.Sprintf("(SELECT * FROM %s WHERE segment_id IN (%s))", w.sink.table, inList)
+				cacheSQL = strings.Replace(userSQL, "{table}", cacheBase, 1)
+			} else {
+				cacheSQL = strings.Replace(userSQL, "{table}", w.sink.table, 1)
+				cacheSQL = strings.Replace(cacheSQL, "AND true", "AND segment_id IN ("+inList+")", 1)
+			}
 
+			//slog.Info("Querying cached segments", slog.Int("numSegments", len(ids)), slog.String("sql", cacheSQL))
 			rows, conn, err := w.sink.db.QueryContext(ctx, cacheSQL)
 			if err != nil {
 				return

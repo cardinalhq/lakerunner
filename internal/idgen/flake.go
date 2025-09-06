@@ -29,7 +29,7 @@ var DefaultFlakeGenerator *SonyFlakeGenerator
 
 func init() {
 	var err error
-	DefaultFlakeGenerator, err = NewFlakeGenerator()
+	DefaultFlakeGenerator, err = newFlakeGenerator()
 	if err != nil {
 		panic(err)
 	}
@@ -39,7 +39,8 @@ type SonyFlakeGenerator struct {
 	sf *sonyflake.Sonyflake
 }
 
-func NewFlakeGenerator() (*SonyFlakeGenerator, error) {
+// newFlakeGenerator creates a SonyFlakeGenerator.
+func newFlakeGenerator() (*SonyFlakeGenerator, error) {
 	settings := sonyflake.Settings{
 		StartTime: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC),
 	}
@@ -79,4 +80,9 @@ func (sf *SonyFlakeGenerator) NextBase32ID() string {
 // NextBase32ID is a convenience function that uses the default generator.
 func NextBase32ID() string {
 	return DefaultFlakeGenerator.NextBase32ID()
+}
+
+// GenerateID is a convenience function that uses the default generator to create int64 IDs.
+func GenerateID() int64 {
+	return DefaultFlakeGenerator.NextID()
 }

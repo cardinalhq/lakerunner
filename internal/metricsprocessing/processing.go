@@ -24,11 +24,11 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
-	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
+	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -46,9 +46,9 @@ type ProcessedSegment struct {
 }
 
 // NewProcessedSegment creates a new processed segment bundle from a parquet result
-func NewProcessedSegment(result parquetwriter.Result, orgID uuid.UUID, collectorName string, ll *slog.Logger) (*ProcessedSegment, error) {
+func NewProcessedSegment(ctx context.Context, result parquetwriter.Result, orgID uuid.UUID, collectorName string) (*ProcessedSegment, error) {
 	// Extract metadata from the file
-	metadata, err := ExtractFileMetadata(result, ll)
+	metadata, err := ExtractFileMetadata(ctx, result)
 	if err != nil {
 		return nil, fmt.Errorf("failed to extract file metadata: %w", err)
 	}
@@ -72,12 +72,12 @@ func NewProcessedSegment(result parquetwriter.Result, orgID uuid.UUID, collector
 }
 
 // UploadToS3 uploads the segment file to S3 and marks it as uploaded
-func (ps *ProcessedSegment) UploadToS3(ctx context.Context, s3client *awsclient.S3Client, bucket string) error {
+func (ps *ProcessedSegment) UploadToS3(ctx context.Context, blobclient cloudstorage.Client, bucket string) error {
 	if ps.Uploaded {
 		return fmt.Errorf("segment %d already uploaded", ps.SegmentID)
 	}
 
-	err := s3helper.UploadS3Object(ctx, s3client, bucket, ps.ObjectID, ps.Result.FileName)
+	err := blobclient.UploadObject(ctx, bucket, ps.ObjectID, ps.Result.FileName)
 	if err != nil {
 		return fmt.Errorf("failed to upload segment %d to S3: %w", ps.SegmentID, err)
 	}
@@ -87,12 +87,12 @@ func (ps *ProcessedSegment) UploadToS3(ctx context.Context, s3client *awsclient.
 }
 
 // ScheduleCleanupIfUploaded schedules S3 deletion if the segment was uploaded
-func (ps *ProcessedSegment) ScheduleCleanupIfUploaded(ctx context.Context, mdb s3helper.ObjectCleanupStore, orgID uuid.UUID, instanceNum int16, bucket string) error {
+func (ps *ProcessedSegment) ScheduleCleanupIfUploaded(ctx context.Context, mdb cloudstorage.ObjectCleanupStore, orgID uuid.UUID, instanceNum int16, bucket string) error {
 	if !ps.Uploaded {
 		return nil // Nothing to clean up
 	}
 
-	return s3helper.ScheduleS3Delete(ctx, mdb, orgID, instanceNum, bucket, ps.ObjectID)
+	return cloudstorage.ScheduleS3Delete(ctx, mdb, orgID, instanceNum, bucket, ps.ObjectID)
 }
 
 // GetDateintHour returns the dateint and hour from the segment's start timestamp
@@ -111,10 +111,10 @@ type ProcessedSegments []*ProcessedSegment
 
 // CreateSegmentsFromResults converts parquet writer results into processed segments
 // without uploading them. This is shared between compaction and rollup paths.
-func CreateSegmentsFromResults(results []parquetwriter.Result, orgID uuid.UUID, collectorName string, ll *slog.Logger) (ProcessedSegments, error) {
+func CreateSegmentsFromResults(ctx context.Context, results []parquetwriter.Result, orgID uuid.UUID, collectorName string) (ProcessedSegments, error) {
 	segments := make(ProcessedSegments, 0, len(results))
 	for _, result := range results {
-		segment, err := NewProcessedSegment(result, orgID, collectorName, ll)
+		segment, err := NewProcessedSegment(ctx, result, orgID, collectorName)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create processed segment: %w", err)
 		}
@@ -126,7 +126,9 @@ func CreateSegmentsFromResults(results []parquetwriter.Result, orgID uuid.UUID, 
 // UploadSegments uploads all provided segments to S3. If an error occurs, the
 // returned slice contains only the successfully uploaded segments so callers can
 // schedule cleanup for them.
-func UploadSegments(ctx context.Context, ll *slog.Logger, s3client *awsclient.S3Client, bucket string, segments ProcessedSegments) (ProcessedSegments, error) {
+func UploadSegments(ctx context.Context, blobclient cloudstorage.Client, bucket string, segments ProcessedSegments) (ProcessedSegments, error) {
+	ll := logctx.FromContext(ctx)
+
 	uploaded := make(ProcessedSegments, 0, len(segments))
 	for i, segment := range segments {
 		if ctx.Err() != nil {
@@ -134,7 +136,7 @@ func UploadSegments(ctx context.Context, ll *slog.Logger, s3client *awsclient.S3
 			return uploaded, ctx.Err()
 		}
 
-		if err := segment.UploadToS3(ctx, s3client, bucket); err != nil {
+		if err := segment.UploadToS3(ctx, blobclient, bucket); err != nil {
 			ll.Error("Failed to upload segment", slog.String("bucket", bucket), slog.String("objectID", segment.ObjectID), slog.Int("completedUploads", i), slog.Any("error", err))
 			return uploaded, fmt.Errorf("uploading file %s: %w", segment.ObjectID, err)
 		}
@@ -147,9 +149,9 @@ func UploadSegments(ctx context.Context, ll *slog.Logger, s3client *awsclient.S3
 }
 
 // UploadAll uploads all segments to S3, stopping on first error
-func (segments ProcessedSegments) UploadAll(ctx context.Context, s3client *awsclient.S3Client, bucket string) error {
+func (segments ProcessedSegments) UploadAll(ctx context.Context, blobclient cloudstorage.Client, bucket string) error {
 	for _, segment := range segments {
-		if err := segment.UploadToS3(ctx, s3client, bucket); err != nil {
+		if err := segment.UploadToS3(ctx, blobclient, bucket); err != nil {
 			return err
 		}
 	}
@@ -157,7 +159,7 @@ func (segments ProcessedSegments) UploadAll(ctx context.Context, s3client *awscl
 }
 
 // ScheduleCleanupAll schedules cleanup for all uploaded segments
-func (segments ProcessedSegments) ScheduleCleanupAll(ctx context.Context, mdb s3helper.ObjectCleanupStore, orgID uuid.UUID, instanceNum int16, bucket string) {
+func (segments ProcessedSegments) ScheduleCleanupAll(ctx context.Context, mdb cloudstorage.ObjectCleanupStore, orgID uuid.UUID, instanceNum int16, bucket string) {
 	for _, segment := range segments {
 		if err := segment.ScheduleCleanupIfUploaded(ctx, mdb, orgID, instanceNum, bucket); err != nil {
 			slog.Error("Failed to schedule S3 cleanup for segment",
@@ -251,15 +253,14 @@ type UploadParams struct {
 // Returns the upload results containing segment IDs and dateints for each uploaded file.
 func UploadMetricResults(
 	ctx context.Context,
-	ll *slog.Logger,
-	s3client *awsclient.S3Client,
+	storageClient cloudstorage.Client,
 	mdb lrdb.StoreFull,
 	results []parquetwriter.Result,
 	params UploadParams,
 ) ([]UploadResult, error) {
 	var uploadResults []UploadResult
 	for _, result := range results {
-		uploadResult, err := uploadSingleMetricResult(ctx, ll, s3client, mdb, result, params)
+		uploadResult, err := uploadSingleMetricResult(ctx, storageClient, mdb, result, params)
 		if err != nil {
 			return nil, fmt.Errorf("failed to upload result: %w", err)
 		}
@@ -280,12 +281,13 @@ type UploadResult struct {
 // uploadSingleMetricResult uploads a single parquet file result to S3 and database.
 func uploadSingleMetricResult(
 	ctx context.Context,
-	ll *slog.Logger,
-	s3client *awsclient.S3Client,
+	storageClient cloudstorage.Client,
 	mdb lrdb.StoreFull,
 	result parquetwriter.Result,
 	params UploadParams,
 ) (UploadResult, error) {
+	ll := logctx.FromContext(ctx)
+
 	// Safety check: should never get empty results from the writer
 	if result.RecordCount == 0 {
 		ll.Error("Received empty result from writer - this should not happen",
@@ -295,10 +297,10 @@ func uploadSingleMetricResult(
 	}
 
 	// Generate segment ID and object ID
-	segmentID := s3helper.GenerateID()
+	segmentID := idgen.GenerateID()
 
 	// Extract dateint and hour from actual timestamp data
-	filestats, err := ExtractFileMetadata(result, ll)
+	filestats, err := ExtractFileMetadata(ctx, result)
 	if err != nil {
 		return UploadResult{}, fmt.Errorf("failed to extract file metadata: %w", err)
 	}
@@ -310,7 +312,7 @@ func uploadSingleMetricResult(
 	objID := helpers.MakeDBObjectID(orgUUID, params.CollectorName, filestats.Dateint, filestats.Hour, segmentID, "metrics")
 
 	// Upload to S3
-	if err := s3helper.UploadS3Object(ctx, s3client, params.Bucket, objID, result.FileName); err != nil {
+	if err := storageClient.UploadObject(ctx, params.Bucket, objID, result.FileName); err != nil {
 		return UploadResult{}, fmt.Errorf("uploading file to S3: %w", err)
 	}
 
@@ -344,7 +346,7 @@ func uploadSingleMetricResult(
 	})
 	if err != nil {
 		// Clean up uploaded file on database error
-		if err2 := s3helper.DeleteS3Object(ctx, s3client, params.Bucket, objID); err2 != nil {
+		if err2 := storageClient.DeleteObject(ctx, params.Bucket, objID); err2 != nil {
 			ll.Error("Failed to delete S3 object after insertion failure", slog.Any("error", err2))
 		}
 		return UploadResult{}, fmt.Errorf("inserting metric segment: %w", err)
@@ -363,12 +365,13 @@ func uploadSingleMetricResult(
 // and inserts them directly into the database. Returns ProcessedSegments for further use.
 func UploadMetricResultsWithProcessedSegments(
 	ctx context.Context,
-	ll *slog.Logger,
-	s3client *awsclient.S3Client,
+	blobclient cloudstorage.Client,
 	mdb lrdb.StoreFull,
 	results []parquetwriter.Result,
 	params UploadParams,
 ) (ProcessedSegments, error) {
+	ll := logctx.FromContext(ctx)
+
 	orgUUID, err := uuid.Parse(params.OrganizationID)
 	if err != nil {
 		return nil, fmt.Errorf("invalid organization ID: %w", err)
@@ -385,13 +388,13 @@ func UploadMetricResultsWithProcessedSegments(
 			return nil, fmt.Errorf("received empty result file with 0 records")
 		}
 
-		segment, err := NewProcessedSegment(result, orgUUID, params.CollectorName, ll)
+		segment, err := NewProcessedSegment(ctx, result, orgUUID, params.CollectorName)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create processed segment: %w", err)
 		}
 
 		// Upload to S3
-		if err := segment.UploadToS3(ctx, s3client, params.Bucket); err != nil {
+		if err := segment.UploadToS3(ctx, blobclient, params.Bucket); err != nil {
 			return nil, fmt.Errorf("uploading file to S3: %w", err)
 		}
 

@@ -27,7 +27,6 @@ import (
 	"github.com/parquet-go/parquet-go"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
 	"github.com/cardinalhq/lakerunner/internal/buffet"
 	"github.com/cardinalhq/lakerunner/internal/filecrunch"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
@@ -170,10 +169,10 @@ func mkSeg(segID int64, startMs int64) lrdb.GetLogSegmentsForCompactionRow {
 }
 
 func goodKey(sp storageprofile.StorageProfile, dateint int32, seg lrdb.GetLogSegmentsForCompactionRow) string {
-	return helpers.MakeDBObjectID(sp.OrganizationID, sp.CollectorName, dateint, s3helper.HourFromMillis(seg.StartTs), seg.SegmentID, "logs")
+	return helpers.MakeDBObjectID(sp.OrganizationID, sp.CollectorName, dateint, helpers.HourFromMillis(seg.StartTs), seg.SegmentID, "logs")
 }
 func badKey(sp storageprofile.StorageProfile, dateint int32, seg lrdb.GetLogSegmentsForCompactionRow) string {
-	return helpers.MakeDBObjectIDbad(sp.OrganizationID, dateint, s3helper.HourFromMillis(seg.StartTs), seg.SegmentID, "logs")
+	return helpers.MakeDBObjectIDbad(sp.OrganizationID, dateint, helpers.HourFromMillis(seg.StartTs), seg.SegmentID, "logs")
 }
 
 // --- tests ---

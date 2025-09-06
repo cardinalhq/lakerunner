@@ -38,7 +38,7 @@ type promQLValidateErrorResponse struct {
 	Near   string `json:"near,omitempty"`   // small slice of the query around the error
 }
 
-func (q *QuerierService) validatePromQL(w http.ResponseWriter, r *http.Request) {
+func (q *QuerierService) handlePromQLValidate(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	var req promQLValidateRequest

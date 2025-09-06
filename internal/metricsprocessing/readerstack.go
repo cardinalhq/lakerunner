@@ -23,10 +23,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
-	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
+	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -41,13 +41,14 @@ type ReaderStackResult struct {
 
 func CreateReaderStack(
 	ctx context.Context,
-	ll *slog.Logger,
 	tmpdir string,
-	s3client *awsclient.S3Client,
+	blobclient cloudstorage.Client,
 	orgID uuid.UUID,
 	profile storageprofile.StorageProfile,
 	rows []lrdb.MetricSeg,
 ) (*ReaderStackResult, error) {
+	ll := logctx.FromContext(ctx)
+
 	var readers []filereader.Reader
 	var files []*os.File
 	var downloadedFiles []string
@@ -67,7 +68,7 @@ func CreateReaderStack(
 		dateint, hour := helpers.MSToDateintHour(row.TsRange.Lower.Int64)
 		objectID := helpers.MakeDBObjectID(orgID, profile.CollectorName, dateint, hour, row.SegmentID, "metrics")
 
-		fn, _, is404, err := s3helper.DownloadS3Object(ctx, tmpdir, s3client, profile.Bucket, objectID)
+		fn, _, is404, err := blobclient.DownloadObject(ctx, tmpdir, profile.Bucket, objectID)
 		if err != nil {
 			ll.Error("Failed to download S3 object", slog.String("objectID", objectID), slog.Any("error", err))
 			return nil, err
@@ -97,7 +98,7 @@ func CreateReaderStack(
 			return nil, fmt.Errorf("statting parquet file %s: %w", fn, err)
 		}
 
-		reader, err := filereader.NewParquetRawReader(file, stat.Size(), 1000)
+		reader, err := filereader.NewCookedMetricParquetReader(file, stat.Size(), 1000)
 		if err != nil {
 			file.Close()
 			ll.Error("Failed to create parquet reader", slog.String("file", fn), slog.Any("error", err))
@@ -148,7 +149,9 @@ func CreateReaderStack(
 	}, nil
 }
 
-func CloseReaderStack(ll *slog.Logger, result *ReaderStackResult) {
+func CloseReaderStack(ctx context.Context, result *ReaderStackResult) {
+	ll := logctx.FromContext(ctx)
+
 	if result.MergedReader != nil {
 		if err := result.MergedReader.Close(); err != nil {
 			ll.Error("Failed to close merged reader", slog.Any("error", err))

@@ -14,7 +14,7 @@ import (
 const listLogQLTags = `-- name: ListLogQLTags :many
 WITH src AS (
   SELECT exemplar::jsonb AS exemplar
-  FROM exemplar_logs
+  FROM lrdb_exemplar_logs
   WHERE organization_id = $1
 ),
 res_keys AS (

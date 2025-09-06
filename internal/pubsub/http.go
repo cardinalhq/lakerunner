@@ -27,17 +27,18 @@ import (
 
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/internal/constants"
+	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
 type HTTPService struct {
-	sp       storageprofile.StorageProfileProvider
-	workChan chan []byte
-	tracer   trace.Tracer
-	mdb      InqueueInserter
+	sp           storageprofile.StorageProfileProvider
+	workChan     chan []byte
+	tracer       trace.Tracer
+	kafkaHandler *KafkaHandler
 }
 
-func NewHTTPService() (*HTTPService, error) {
+func NewHTTPService(kafkaFactory *fly.Factory) (*HTTPService, error) {
 	cdb, err := dbopen.ConfigDBStore(context.Background())
 	if err != nil {
 		slog.Error("Failed to connect to configdb", slog.Any("error", err))
@@ -45,18 +46,25 @@ func NewHTTPService() (*HTTPService, error) {
 	}
 	sp := storageprofile.NewStorageProfileProvider(cdb)
 
-	mdb, err := dbopen.LRDBStore(context.Background())
-	if err != nil {
-		slog.Error("Failed to connect to lr database", slog.Any("error", err))
-		return nil, fmt.Errorf("failed to connect to lr database: %w", err)
+	// Kafka is required
+	if !kafkaFactory.IsEnabled() {
+		return nil, fmt.Errorf("Kafka is required for pubsub services but is not enabled")
 	}
 
-	return &HTTPService{
-		sp:       sp,
-		mdb:      mdb,
-		workChan: make(chan []byte, 100), // Buffered channel to handle incoming requests
-		tracer:   otel.Tracer("github.com/cardinalhq/lakerunner/internal/pubsub"),
-	}, nil
+	kafkaHandler, err := NewKafkaHandler(kafkaFactory, "http", sp, slog.Default())
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Kafka handler: %w", err)
+	}
+
+	service := &HTTPService{
+		sp:           sp,
+		workChan:     make(chan []byte, 100), // Buffered channel to handle incoming requests
+		tracer:       otel.Tracer("github.com/cardinalhq/lakerunner/internal/pubsub"),
+		kafkaHandler: kafkaHandler,
+	}
+
+	slog.Info("HTTP pubsub service initialized with Kafka support")
+	return service, nil
 }
 
 func (ps *HTTPService) Run(doneCtx context.Context) error {
@@ -84,6 +92,13 @@ func (ps *HTTPService) Run(doneCtx context.Context) error {
 	}
 
 	close(ps.workChan)
+
+	// Close Kafka handler if it exists
+	if ps.kafkaHandler != nil {
+		if err := ps.kafkaHandler.Close(); err != nil {
+			slog.Error("Failed to close Kafka handler", slog.Any("error", err))
+		}
+	}
 
 	return nil
 }
@@ -121,8 +136,8 @@ func (ps *HTTPService) Process(ctx context.Context) {
 			ctx, span = ps.tracer.Start(ctx, "HTTPService.Process")
 			defer span.End()
 
-			if err := handleMessage(ctx, msg, ps.sp, ps.mdb); err != nil {
-				slog.Error("Failed to handle message", slog.Any("error", err))
+			if err := ps.kafkaHandler.HandleMessage(ctx, msg); err != nil {
+				slog.Error("Failed to handle message with Kafka", slog.Any("error", err))
 			}
 		}()
 	}

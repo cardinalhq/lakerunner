@@ -49,6 +49,11 @@ func (be *BaseExpr) ToWorkerSQL(step time.Duration) string {
 		return ""
 	}
 
+	// Synthetic log metric → build from log leaf
+	if be.isSyntheticLogMetric() && be.LogLeaf.ID != "" {
+		return buildFromLogLeaf(be, step)
+	}
+
 	// COUNT fast-path: COUNT-by-group with no identity collapse → simple raw bucketing
 	if be.WantCount && equalStringSets(be.CountOnBy, be.GroupBy) {
 		return buildStepOnly(be, []proj{{"COUNT(*)", "count"}}, step)
@@ -84,6 +89,91 @@ func (be *BaseExpr) ToWorkerSQL(step time.Duration) string {
 	default:
 		return ""
 	}
+}
+
+func buildFromLogLeaf(be *BaseExpr, step time.Duration) string {
+	stepMs := step.Milliseconds()
+	tsCol := "\"_cardinalhq.timestamp\""
+	bodyCol := "\"_cardinalhq.message\""
+
+	pipelineSQL := strings.TrimSpace(be.LogLeaf.ToWorkerSQL(0, ""))
+
+	bucketExpr := fmt.Sprintf(
+		"(CAST(%s AS BIGINT) - (CAST(%s AS BIGINT) %% %d))",
+		tsCol, tsCol, stepMs,
+	)
+
+	cols := []string{bucketExpr + " AS bucket_ts"}
+	if len(be.GroupBy) > 0 {
+		qbys := make([]string, 0, len(be.GroupBy))
+		for _, g := range be.GroupBy {
+			qbys = append(qbys, fmt.Sprintf("\"%s\"", g))
+		}
+		cols = append(cols, strings.Join(qbys, ", "))
+	}
+
+	gb := []string{"bucket_ts"}
+	if len(be.GroupBy) > 0 {
+		for _, g := range be.GroupBy {
+			gb = append(gb, fmt.Sprintf("\"%s\"", g))
+		}
+	}
+
+	switch be.Metric {
+	case SynthLogUnwrap:
+		var aggFn, alias string
+		switch strings.ToLower(be.FuncName) {
+		case "min_over_time":
+			aggFn, alias = "MIN", "min"
+		case "max_over_time":
+			aggFn, alias = "MAX", "max"
+		case "avg_over_time":
+			aggFn, alias = "AVG", "avg"
+		default:
+			aggFn, alias = "AVG", "avg"
+		}
+		cols = append(cols, fmt.Sprintf("%s(__unwrap_value) AS %s", aggFn, alias))
+
+		sql := "WITH _leaf AS (" + pipelineSQL + ")" +
+			" SELECT " + strings.Join(cols, ", ") +
+			" FROM _leaf" +
+			" WHERE " + timePredicate + " AND __unwrap_value IS NOT NULL" +
+			" GROUP BY " + strings.Join(gb, ", ") +
+			" ORDER BY bucket_ts ASC"
+		return sql
+
+	case SynthLogBytes:
+		weight := fmt.Sprintf("length(COALESCE(%s, ''))", bodyCol)
+		cols = append(cols, "SUM("+weight+") AS sum")
+
+	default:
+		cols = append(cols, "SUM(1) AS sum")
+	}
+
+	sql := "WITH _leaf AS (" + pipelineSQL + ")" +
+		" SELECT " + strings.Join(cols, ", ") +
+		" FROM _leaf" +
+		" WHERE " + timePredicate +
+		" GROUP BY " + strings.Join(gb, ", ") +
+		" ORDER BY bucket_ts ASC"
+
+	return sql
+}
+
+func (be *BaseExpr) ToWorkerSQLForTagValues(step time.Duration, tagName string) string {
+	// Build WHERE clause with metric name and matchers
+	where := withTime(whereFor(be))
+
+	// Add filter to ensure the tag column exists and is not null
+	tagFilter := fmt.Sprintf(" AND \"%s\" IS NOT NULL", tagName)
+	where += tagFilter
+
+	// Build the SQL query to get distinct tag values
+	sql := "SELECT DISTINCT \"" + tagName + "\" AS tag_value" +
+		" FROM {table}" + where +
+		" ORDER BY tag_value ASC"
+
+	return sql
 }
 
 func buildStepAggNoWindow(be *BaseExpr, need need, step time.Duration) string {
@@ -382,10 +472,16 @@ func equalStringSets(a, b []string) bool {
 
 func whereFor(be *BaseExpr) string {
 	var parts []string
-	if be.Metric != "" {
+
+	// For synthetic log metrics, we do NOT filter by metric name at all.
+	if be.Metric != "" && !be.isSyntheticLogMetric() {
 		parts = append(parts, fmt.Sprintf("\"_cardinalhq.name\" = %s", sqlLit(be.Metric)))
 	}
+
 	for _, m := range be.Matchers {
+		if m.Label == LeafMatcher {
+			continue
+		}
 		switch m.Op {
 		case MatchEq:
 			parts = append(parts, fmt.Sprintf("\"%s\" = %s", m.Label, sqlLit(m.Value)))

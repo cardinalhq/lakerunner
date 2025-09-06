@@ -15,10 +15,12 @@
 package queryapi
 
 import (
+	"time"
+
+	"github.com/cardinalhq/lakerunner/internal/orgapikey"
 	"github.com/cardinalhq/lakerunner/logql"
 	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/cardinalhq/lakerunner/promql"
-	"time"
 
 	"github.com/google/uuid"
 )
@@ -36,6 +38,8 @@ type PushDownRequest struct {
 	LogLeaf  *logql.LogLeaf   `json:"logLeaf"`
 	Limit    int              `json:"limit"`
 	Reverse  bool             `json:"reverse"`
+
+	TagName string `json:"tagName"` // Set this to a tag name to get distinct values for that tag
 }
 
 func (p *PushDownRequest) ToOrderString() string {
@@ -48,8 +52,9 @@ func (p *PushDownRequest) ToOrderString() string {
 type QuerierService struct {
 	mdb             lrdb.StoreFull
 	workerDiscovery WorkerDiscovery
+	apiKeyProvider  orgapikey.OrganizationAPIKeyProvider
 }
 
-func NewQuerierService(mdb lrdb.StoreFull, workerDiscovery WorkerDiscovery) (*QuerierService, error) {
-	return &QuerierService{mdb: mdb, workerDiscovery: workerDiscovery}, nil
+func NewQuerierService(mdb lrdb.StoreFull, workerDiscovery WorkerDiscovery, apiKeyProvider orgapikey.OrganizationAPIKeyProvider) (*QuerierService, error) {
+	return &QuerierService{mdb: mdb, workerDiscovery: workerDiscovery, apiKeyProvider: apiKeyProvider}, nil
 }
