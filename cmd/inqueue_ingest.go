@@ -95,7 +95,7 @@ func NewIngestLoopContext(ctx context.Context, signal string) (*IngestLoopContex
 		},
 	}
 
-	exemplarProcessor := exemplar.NewProcessor(config, ll)
+	exemplarProcessor := exemplar.NewProcessor(config)
 
 	// Set callbacks for enabled telemetry types
 	if config.Metrics.Enabled {

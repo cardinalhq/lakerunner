@@ -54,7 +54,6 @@ func (t *Tenant) GetTrieClusterManager() *fingerprinter.TrieClusterManager {
 // Processor handles exemplar generation from different telemetry types using tenant-based LRU caches
 type Processor struct {
 	tenants sync.Map // organizationID -> *Tenant
-	logger  *slog.Logger
 
 	// Callback for metrics exemplars
 	sendMetricsExemplars func(ctx context.Context, organizationID string, exemplars []*ExemplarData) error
@@ -111,10 +110,9 @@ func DefaultConfig() Config {
 
 // NewProcessor creates a new processor for a specific telemetry type
 // NewProcessor creates a new unified processor for all telemetry types
-func NewProcessor(config Config, logger *slog.Logger) *Processor {
+func NewProcessor(config Config) *Processor {
 	return &Processor{
 		tenants: sync.Map{},
-		logger:  logger,
 		config:  config,
 	}
 }

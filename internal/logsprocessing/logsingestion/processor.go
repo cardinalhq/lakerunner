@@ -54,29 +54,28 @@ type writerManager struct {
 	orgID         string
 	ingestDateint int32
 	rpfEstimate   int64
-	ll            *slog.Logger
 }
 
-func newWriterManager(tmpdir, orgID string, ingestDateint int32, rpfEstimate int64, ll *slog.Logger) *writerManager {
+func newWriterManager(tmpdir, orgID string, ingestDateint int32, rpfEstimate int64) *writerManager {
 	return &writerManager{
 		writers:       make(map[hourSlotKey]*parquetwriter.UnifiedWriter),
 		tmpdir:        tmpdir,
 		orgID:         orgID,
 		ingestDateint: ingestDateint,
 		rpfEstimate:   rpfEstimate,
-		ll:            ll,
 	}
 }
 
 // processBatch efficiently processes an entire batch, grouping rows by hour/slot
-func (wm *writerManager) processBatch(batch *pipeline.Batch) (processedCount, errorCount int64) {
+func (wm *writerManager) processBatch(ctx context.Context, batch *pipeline.Batch) (processedCount, errorCount int64) {
+	ll := logctx.FromContext(ctx)
 	batchGroups := make(map[hourSlotKey]*pipeline.Batch)
 
 	// First pass: group rows by hour/slot
 	for i := 0; i < batch.Len(); i++ {
 		row := batch.Get(i)
 		if row == nil {
-			wm.ll.Error("Row is nil - skipping", slog.Int("rowIndex", i))
+			ll.Error("Row is nil - skipping", slog.Int("rowIndex", i))
 			errorCount++
 			continue
 		}
@@ -84,7 +83,7 @@ func (wm *writerManager) processBatch(batch *pipeline.Batch) (processedCount, er
 		// Extract timestamp
 		ts, ok := row[wkk.RowKeyCTimestamp].(int64)
 		if !ok {
-			wm.ll.Error("_cardinalhq.timestamp field is missing or not int64 - skipping row", slog.Int("rowIndex", i))
+			ll.Error("_cardinalhq.timestamp field is missing or not int64 - skipping row", slog.Int("rowIndex", i))
 			errorCount++
 			continue
 		}
@@ -107,9 +106,9 @@ func (wm *writerManager) processBatch(batch *pipeline.Batch) (processedCount, er
 
 	// Second pass: write each grouped batch to its writer
 	for key, groupedBatch := range batchGroups {
-		writer, err := wm.getWriter(key)
+		writer, err := wm.getWriter(ctx, key)
 		if err != nil {
-			wm.ll.Error("Failed to get writer for batch group",
+			ll.Error("Failed to get writer for batch group",
 				slog.Any("key", key),
 				slog.String("error", err.Error()))
 			errorCount += int64(groupedBatch.Len())
@@ -118,7 +117,7 @@ func (wm *writerManager) processBatch(batch *pipeline.Batch) (processedCount, er
 		}
 
 		if err := writer.WriteBatch(groupedBatch); err != nil {
-			wm.ll.Error("Failed to write batch group",
+			ll.Error("Failed to write batch group",
 				slog.Any("key", key),
 				slog.Int("batchSize", groupedBatch.Len()),
 				slog.String("error", err.Error()))
@@ -134,7 +133,8 @@ func (wm *writerManager) processBatch(batch *pipeline.Batch) (processedCount, er
 }
 
 // getWriter returns the writer for a specific hour/slot, creating it if necessary
-func (wm *writerManager) getWriter(key hourSlotKey) (*parquetwriter.UnifiedWriter, error) {
+func (wm *writerManager) getWriter(ctx context.Context, key hourSlotKey) (*parquetwriter.UnifiedWriter, error) {
+	ll := logctx.FromContext(ctx)
 	if writer, exists := wm.writers[key]; exists {
 		return writer, nil
 	}
@@ -145,7 +145,7 @@ func (wm *writerManager) getWriter(key hourSlotKey) (*parquetwriter.UnifiedWrite
 	}
 
 	wm.writers[key] = writer
-	wm.ll.Debug("Created new log writer",
+	ll.Debug("Created new log writer",
 		slog.String("orgID", wm.orgID),
 		slog.Int("dateint", int(key.dateint)),
 		slog.Int("hour", key.hour),
@@ -156,6 +156,7 @@ func (wm *writerManager) getWriter(key hourSlotKey) (*parquetwriter.UnifiedWrite
 
 // closeAll closes all writers and returns their results
 func (wm *writerManager) closeAll(ctx context.Context) ([]parquetwriter.Result, error) {
+	ll := logctx.FromContext(ctx)
 	var allResults []parquetwriter.Result
 	var errs []error
 
@@ -166,7 +167,7 @@ func (wm *writerManager) closeAll(ctx context.Context) ([]parquetwriter.Result, 
 			continue
 		}
 		allResults = append(allResults, results...)
-		wm.ll.Debug("Closed log writer",
+		ll.Debug("Closed log writer",
 			slog.String("orgID", wm.orgID),
 			slog.Int("dateint", int(key.dateint)),
 			slog.Int("hour", key.hour),
@@ -242,7 +243,7 @@ func ProcessBatch(ctx context.Context, args ingest.ProcessBatchArgs, item ingest
 	}
 
 	// Create writer manager for organizing output by hour/slot
-	wm := newWriterManager(args.TmpDir, item.OrganizationID.String(), args.IngestDateint, args.RPFEstimate, ll)
+	wm := newWriterManager(args.TmpDir, item.OrganizationID.String(), args.IngestDateint, args.RPFEstimate)
 
 	// Track total rows across all files
 	var batchRowsRead, batchRowsProcessed, batchRowsErrored int64
@@ -328,7 +329,7 @@ func ProcessBatch(ctx context.Context, args ingest.ProcessBatchArgs, item ingest
 
 		// Process any rows we got, even if EOF
 		if batch != nil {
-			batchProcessed, batchErrors := wm.processBatch(batch)
+			batchProcessed, batchErrors := wm.processBatch(ctx, batch)
 			processedCount += batchProcessed
 			errorCount += batchErrors
 			pipeline.ReturnBatch(batch)

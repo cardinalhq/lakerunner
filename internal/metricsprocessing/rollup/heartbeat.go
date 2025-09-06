@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/cardinalhq/lakerunner/internal/heartbeat"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -67,14 +68,13 @@ func (a *activeItemsTracker) GetActive() []int64 {
 
 // newMRQHeartbeaterWithTracker creates a heartbeater with an active items tracker
 func newMRQHeartbeaterWithTracker(db mrqHeartbeatStore, workerID int64, tracker *activeItemsTracker) *heartbeat.Heartbeater {
-	logger := slog.Default().With("component", "mrq_heartbeater", "worker_id", workerID)
-
 	heartbeatFunc := func(ctx context.Context) error {
+		ll := logctx.FromContext(ctx)
 		activeItems := tracker.GetActive()
 
 		// If no active items left, nothing to heartbeat
 		if len(activeItems) == 0 {
-			logger.Debug("No active items to heartbeat, all completed")
+			ll.Debug("No active items to heartbeat, all completed")
 			return nil
 		}
 
@@ -88,7 +88,7 @@ func newMRQHeartbeaterWithTracker(db mrqHeartbeatStore, workerID int64, tracker 
 
 		expectedCount := int64(len(activeItems))
 		if updatedCount != expectedCount {
-			logger.Error("Heartbeat did not update all expected rows",
+			ll.Error("Heartbeat did not update all expected rows",
 				slog.Int64("expected", expectedCount),
 				slog.Int64("updated", updatedCount),
 				slog.Int64("missing", expectedCount-updatedCount))
@@ -96,11 +96,11 @@ func newMRQHeartbeaterWithTracker(db mrqHeartbeatStore, workerID int64, tracker 
 			return fmt.Errorf("heartbeat updated %d rows, expected %d", updatedCount, expectedCount)
 		}
 
-		logger.Debug("Heartbeat successful",
+		ll.Debug("Heartbeat successful",
 			slog.Int("activeItems", len(activeItems)))
 
 		return nil
 	}
 
-	return heartbeat.New(heartbeatFunc, time.Minute, logger)
+	return heartbeat.New(heartbeatFunc, time.Minute)
 }

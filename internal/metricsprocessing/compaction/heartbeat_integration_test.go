@@ -28,6 +28,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/cardinalhq/lakerunner/internal/heartbeat"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/cardinalhq/lakerunner/testhelpers"
 )
@@ -38,13 +39,13 @@ func newTestMCQHeartbeater(db lrdb.StoreFull, workerID int64, items []int64) *he
 		// Return a no-op heartbeater for empty items
 		return heartbeat.New(func(ctx context.Context) error {
 			return nil // No-op
-		}, time.Minute, slog.Default().With("component", "mcq_heartbeater", "worker_id", workerID, "item_count", 0))
+		}, time.Minute)
 	}
 
 	expectedCount := int64(len(items))
-	logger := slog.Default().With("component", "mcq_heartbeater", "worker_id", workerID, "item_count", expectedCount)
 
 	heartbeatFunc := func(ctx context.Context) error {
+		ll := logctx.FromContext(ctx)
 		updatedCount, err := db.McqHeartbeat(ctx, lrdb.McqHeartbeatParams{
 			WorkerID: workerID,
 			Ids:      items,
@@ -54,7 +55,7 @@ func newTestMCQHeartbeater(db lrdb.StoreFull, workerID int64, items []int64) *he
 		}
 
 		if updatedCount != expectedCount {
-			logger.Error("Heartbeat did not update all expected rows",
+			ll.Error("Heartbeat did not update all expected rows",
 				slog.Int64("expected", expectedCount),
 				slog.Int64("updated", updatedCount),
 				slog.Int64("missing", expectedCount-updatedCount))
@@ -65,7 +66,7 @@ func newTestMCQHeartbeater(db lrdb.StoreFull, workerID int64, items []int64) *he
 		return nil
 	}
 
-	return heartbeat.New(heartbeatFunc, time.Minute, logger)
+	return heartbeat.New(heartbeatFunc, time.Minute)
 }
 
 func TestMCQHeartbeater_Integration(t *testing.T) {

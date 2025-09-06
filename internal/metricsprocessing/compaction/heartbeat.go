@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/cardinalhq/lakerunner/internal/heartbeat"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -35,13 +36,13 @@ func newMCQHeartbeater(db mcqHeartbeatStore, workerID int64, items []int64) *hea
 		// Return a no-op heartbeater for empty items
 		return heartbeat.New(func(ctx context.Context) error {
 			return nil // No-op
-		}, time.Minute, slog.Default().With("component", "mcq_heartbeater", "worker_id", workerID, "item_count", 0))
+		}, time.Minute)
 	}
 
 	expectedCount := int64(len(items))
-	logger := slog.Default().With("component", "mcq_heartbeater", "worker_id", workerID, "item_count", expectedCount)
 
 	heartbeatFunc := func(ctx context.Context) error {
+		ll := logctx.FromContext(ctx)
 		updatedCount, err := db.McqHeartbeat(ctx, lrdb.McqHeartbeatParams{
 			WorkerID: workerID,
 			Ids:      items,
@@ -51,7 +52,7 @@ func newMCQHeartbeater(db mcqHeartbeatStore, workerID int64, items []int64) *hea
 		}
 
 		if updatedCount != expectedCount {
-			logger.Error("Heartbeat did not update all expected rows",
+			ll.Error("Heartbeat did not update all expected rows",
 				slog.Int64("expected", expectedCount),
 				slog.Int64("updated", updatedCount),
 				slog.Int64("missing", expectedCount-updatedCount))
@@ -62,5 +63,5 @@ func newMCQHeartbeater(db mcqHeartbeatStore, workerID int64, items []int64) *hea
 		return nil
 	}
 
-	return heartbeat.New(heartbeatFunc, time.Minute, logger)
+	return heartbeat.New(heartbeatFunc, time.Minute)
 }

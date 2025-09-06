@@ -26,13 +26,16 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/cardinalhq/lakerunner/configdb"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 )
 
 const SupportedVersion = 2
 
 // ImportFromYAML imports configuration from a YAML file into the database
-func ImportFromYAML(ctx context.Context, filePath string, configDBPool *pgxpool.Pool, logger *slog.Logger) error {
-	logger.Info("Starting bootstrap import from YAML", slog.String("file", filePath))
+func ImportFromYAML(ctx context.Context, filePath string, configDBPool *pgxpool.Pool) error {
+	ll := logctx.FromContext(ctx)
+
+	ll.Info("Starting bootstrap import from YAML", slog.String("file", filePath))
 
 	// Read and parse YAML file
 	config, err := loadConfig(filePath)
@@ -45,7 +48,7 @@ func ImportFromYAML(ctx context.Context, filePath string, configDBPool *pgxpool.
 		return fmt.Errorf("unsupported config version %d, expected %d", config.Version, SupportedVersion)
 	}
 
-	logger.Info("Loaded bootstrap configuration",
+	ll.Info("Loaded bootstrap configuration",
 		slog.Int("buckets", len(config.BucketConfigurations)),
 		slog.Int("org_buckets", len(config.OrganizationBuckets)),
 		slog.Int("prefix_mappings", len(config.BucketPrefixMappings)),
@@ -60,39 +63,39 @@ func ImportFromYAML(ctx context.Context, filePath string, configDBPool *pgxpool.
 	}
 	defer func() {
 		if err := tx.Rollback(ctx); err != nil {
-			logger.Warn("Failed to rollback transaction", slog.Any("error", err))
+			ll.Warn("Failed to rollback transaction", slog.Any("error", err))
 		}
 	}()
 
 	qtx := configdb.New(tx)
 
 	// Import bucket configurations
-	if err := importBucketConfigurations(ctx, config.BucketConfigurations, qtx, logger); err != nil {
+	if err := importBucketConfigurations(ctx, config.BucketConfigurations, qtx); err != nil {
 		return fmt.Errorf("failed to import bucket configurations: %w", err)
 	}
 
 	// Import organization bucket mappings
-	if err := importOrganizationBuckets(ctx, config.OrganizationBuckets, qtx, logger); err != nil {
+	if err := importOrganizationBuckets(ctx, config.OrganizationBuckets, qtx); err != nil {
 		return fmt.Errorf("failed to import organization buckets: %w", err)
 	}
 
 	// Import bucket prefix mappings
-	if err := importBucketPrefixMappings(ctx, config.BucketPrefixMappings, qtx, logger); err != nil {
+	if err := importBucketPrefixMappings(ctx, config.BucketPrefixMappings, qtx); err != nil {
 		return fmt.Errorf("failed to import bucket prefix mappings: %w", err)
 	}
 
 	// Import admin API keys
-	if err := importAdminAPIKeys(ctx, config.AdminAPIKeys, qtx, logger); err != nil {
+	if err := importAdminAPIKeys(ctx, config.AdminAPIKeys, qtx); err != nil {
 		return fmt.Errorf("failed to import admin API keys: %w", err)
 	}
 
 	// Import organization API keys
-	if err := importOrganizationAPIKeys(ctx, config.OrganizationAPIKeys, qtx, logger); err != nil {
+	if err := importOrganizationAPIKeys(ctx, config.OrganizationAPIKeys, qtx); err != nil {
 		return fmt.Errorf("failed to import organization API keys: %w", err)
 	}
 
 	// Import organization API key mappings
-	if err := importOrganizationAPIKeyMappings(ctx, config.OrganizationAPIKeyMapping, qtx, logger); err != nil {
+	if err := importOrganizationAPIKeyMappings(ctx, config.OrganizationAPIKeyMapping, qtx); err != nil {
 		return fmt.Errorf("failed to import organization API key mappings: %w", err)
 	}
 
@@ -101,7 +104,7 @@ func ImportFromYAML(ctx context.Context, filePath string, configDBPool *pgxpool.
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	logger.Info("Bootstrap import completed successfully")
+	ll.Info("Bootstrap import completed successfully")
 	return nil
 }
 
@@ -121,7 +124,9 @@ func loadConfig(filePath string) (*BootstrapConfig, error) {
 	return &config, nil
 }
 
-func importBucketConfigurations(ctx context.Context, configs []BucketConfiguration, qtx *configdb.Queries, logger *slog.Logger) error {
+func importBucketConfigurations(ctx context.Context, configs []BucketConfiguration, qtx *configdb.Queries) error {
+	ll := logctx.FromContext(ctx)
+
 	for _, config := range configs {
 		_, err := qtx.UpsertBucketConfiguration(ctx, configdb.UpsertBucketConfigurationParams{
 			BucketName:    config.BucketName,
@@ -135,12 +140,14 @@ func importBucketConfigurations(ctx context.Context, configs []BucketConfigurati
 		if err != nil {
 			return fmt.Errorf("failed to import bucket %s: %w", config.BucketName, err)
 		}
-		logger.Info("Imported bucket configuration", slog.String("bucket", config.BucketName))
+		ll.Info("Imported bucket configuration", slog.String("bucket", config.BucketName))
 	}
 	return nil
 }
 
-func importOrganizationBuckets(ctx context.Context, mappings []OrganizationBucket, qtx *configdb.Queries, logger *slog.Logger) error {
+func importOrganizationBuckets(ctx context.Context, mappings []OrganizationBucket, qtx *configdb.Queries) error {
+	ll := logctx.FromContext(ctx)
+
 	for _, mapping := range mappings {
 		// Use values from config if provided, otherwise use defaults
 		instanceNum := int16(1)
@@ -161,14 +168,16 @@ func importOrganizationBuckets(ctx context.Context, mappings []OrganizationBucke
 			return fmt.Errorf("failed to import organization bucket mapping %s->%s: %w",
 				mapping.OrganizationID, mapping.BucketID, err)
 		}
-		logger.Info("Imported organization bucket mapping",
+		ll.Info("Imported organization bucket mapping",
 			slog.String("org_id", mapping.OrganizationID.String()),
 			slog.String("bucket_id", mapping.BucketID.String()))
 	}
 	return nil
 }
 
-func importBucketPrefixMappings(ctx context.Context, mappings []BucketPrefixMapping, qtx *configdb.Queries, logger *slog.Logger) error {
+func importBucketPrefixMappings(ctx context.Context, mappings []BucketPrefixMapping, qtx *configdb.Queries) error {
+	ll := logctx.FromContext(ctx)
+
 	for _, mapping := range mappings {
 		_, err := qtx.CreateBucketPrefixMapping(ctx, configdb.CreateBucketPrefixMappingParams{
 			BucketID:       mapping.BucketID,
@@ -179,7 +188,7 @@ func importBucketPrefixMappings(ctx context.Context, mappings []BucketPrefixMapp
 		if err != nil {
 			return fmt.Errorf("failed to import bucket prefix mapping %s: %w", mapping.PathPrefix, err)
 		}
-		logger.Info("Imported bucket prefix mapping",
+		ll.Info("Imported bucket prefix mapping",
 			slog.String("bucket_id", mapping.BucketID.String()),
 			slog.String("prefix", mapping.PathPrefix),
 			slog.String("signal", mapping.Signal))
@@ -187,7 +196,9 @@ func importBucketPrefixMappings(ctx context.Context, mappings []BucketPrefixMapp
 	return nil
 }
 
-func importAdminAPIKeys(ctx context.Context, keys []AdminAPIKey, qtx *configdb.Queries, logger *slog.Logger) error {
+func importAdminAPIKeys(ctx context.Context, keys []AdminAPIKey, qtx *configdb.Queries) error {
+	ll := logctx.FromContext(ctx)
+
 	for _, key := range keys {
 		keyHash := hashAPIKey(key.Key)
 		_, err := qtx.UpsertAdminAPIKey(ctx, configdb.UpsertAdminAPIKeyParams{
@@ -198,12 +209,14 @@ func importAdminAPIKeys(ctx context.Context, keys []AdminAPIKey, qtx *configdb.Q
 		if err != nil {
 			return fmt.Errorf("failed to import admin API key %s: %w", key.Name, err)
 		}
-		logger.Info("Imported admin API key", slog.String("name", key.Name))
+		ll.Info("Imported admin API key", slog.String("name", key.Name))
 	}
 	return nil
 }
 
-func importOrganizationAPIKeys(ctx context.Context, keys []OrganizationAPIKey, qtx *configdb.Queries, logger *slog.Logger) error {
+func importOrganizationAPIKeys(ctx context.Context, keys []OrganizationAPIKey, qtx *configdb.Queries) error {
+	ll := logctx.FromContext(ctx)
+
 	for _, key := range keys {
 		keyHash := hashAPIKey(key.Key)
 		_, err := qtx.UpsertOrganizationAPIKey(ctx, configdb.UpsertOrganizationAPIKeyParams{
@@ -214,12 +227,14 @@ func importOrganizationAPIKeys(ctx context.Context, keys []OrganizationAPIKey, q
 		if err != nil {
 			return fmt.Errorf("failed to import organization API key %s: %w", key.Name, err)
 		}
-		logger.Info("Imported organization API key", slog.String("name", key.Name))
+		ll.Info("Imported organization API key", slog.String("name", key.Name))
 	}
 	return nil
 }
 
-func importOrganizationAPIKeyMappings(ctx context.Context, mappings []OrganizationAPIKeyMapping, qtx *configdb.Queries, logger *slog.Logger) error {
+func importOrganizationAPIKeyMappings(ctx context.Context, mappings []OrganizationAPIKeyMapping, qtx *configdb.Queries) error {
+	ll := logctx.FromContext(ctx)
+
 	for _, mapping := range mappings {
 		if err := qtx.UpsertOrganizationAPIKeyMapping(ctx, configdb.UpsertOrganizationAPIKeyMappingParams{
 			ApiKeyID:       mapping.APIKeyID,
@@ -228,7 +243,7 @@ func importOrganizationAPIKeyMappings(ctx context.Context, mappings []Organizati
 			return fmt.Errorf("failed to import organization API key mapping %s->%s: %w",
 				mapping.APIKeyID, mapping.OrganizationID, err)
 		}
-		logger.Info("Imported organization API key mapping",
+		ll.Info("Imported organization API key mapping",
 			slog.String("api_key_id", mapping.APIKeyID.String()),
 			slog.String("org_id", mapping.OrganizationID.String()))
 	}

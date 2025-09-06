@@ -21,23 +21,25 @@ import (
 	"github.com/google/uuid"
 )
 
-// ObjStoreNotificationMessage represents an object storage file notification event
+// MetricSegmentNotificationMessage represents a metric segment processing notification
 // Using short JSON keys to minimize message size for high-volume Kafka usage
-type ObjStoreNotificationMessage struct {
-	OrganizationID uuid.UUID `json:"o"` // org_id
-	InstanceNum    int16     `json:"i"` // instance_num
-	Bucket         string    `json:"b"` // bucket
-	ObjectID       string    `json:"k"` // key/object_id
-	FileSize       int64     `json:"s"` // size
-	QueuedAt       time.Time `json:"t"` // timestamp
+type MetricSegmentNotificationMessage struct {
+	OrganizationID uuid.UUID `json:"o"`  // organization_id
+	DateInt        int32     `json:"d"`  // dateint
+	FrequencyMs    int64     `json:"f"`  // frequency_ms
+	SegmentID      uuid.UUID `json:"s"`  // segment_id
+	InstanceNum    int16     `json:"i"`  // instance_num
+	SlotID         int32     `json:"si"` // slot_id
+	SlotCount      int32     `json:"sc"` // slot_count
+	QueuedAt       time.Time `json:"t"`  // queued_at timestamp for lag tracking
 }
 
 // Marshal converts the message to JSON bytes
-func (m *ObjStoreNotificationMessage) Marshal() ([]byte, error) {
+func (m *MetricSegmentNotificationMessage) Marshal() ([]byte, error) {
 	return json.Marshal(m)
 }
 
-// Unmarshal converts JSON bytes to ObjStoreNotificationMessage
-func (m *ObjStoreNotificationMessage) Unmarshal(data []byte) error {
+// Unmarshal converts JSON bytes to MetricSegmentNotificationMessage
+func (m *MetricSegmentNotificationMessage) Unmarshal(data []byte) error {
 	return json.Unmarshal(data, m)
 }

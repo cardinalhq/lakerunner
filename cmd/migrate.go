@@ -196,7 +196,7 @@ func initializeIfNeededFunc() error {
 
 	qtx := configdb.New(tx)
 
-	if err := initialize.InitializeConfig(ctx, configFile, apiKeysFile, qtx, slog.Default(), false); err != nil {
+	if err := initialize.InitializeConfig(ctx, configFile, apiKeysFile, qtx, false); err != nil {
 		return err
 	}
 
