@@ -21,8 +21,6 @@ import (
 	"strings"
 )
 
-// Keep your existing imports/utilities (quoteIdent, buildLabelFilterWhere, etc.)
-
 func (be *LogLeaf) ToWorkerSQL(limit int, order string) string {
 	const baseRel = "{table}"
 	const bodyCol = "\"_cardinalhq.message\""
@@ -73,7 +71,7 @@ func (be *LogLeaf) ToWorkerSQL(limit int, order string) string {
 	}
 
 	// 7) Final SELECT (exemplars → ORDER/LIMIT only when no range agg)
-	return finalizeSelect(&pb, tsCol, be.RangeAggOp == "", order)
+	return finalizeSelect(&pb, tsCol, be.RangeAggOp == "", order, limit)
 }
 
 /* ---------------- helpers ---------------- */
@@ -102,7 +100,8 @@ func (p *pipelineBuilder) push(selectList []string, from string, whereConds []st
 	p.layers = append(p.layers, struct{ name, sql string }{name: alias, sql: sql})
 }
 
-func finalizeSelect(p *pipelineBuilder, tsCol string, wantOrder bool, order string) string {
+// change signature to accept limit
+func finalizeSelect(p *pipelineBuilder, tsCol string, wantOrder bool, order string, limit int) string {
 	var sb strings.Builder
 	sb.WriteString("WITH\n")
 	for i, l := range p.layers {
@@ -126,6 +125,11 @@ func finalizeSelect(p *pipelineBuilder, tsCol string, wantOrder bool, order stri
 		sb.WriteString(tsCol)
 		sb.WriteByte(' ')
 		sb.WriteString(dir)
+
+		// <-- use limit here
+		if limit > 0 {
+			sb.WriteString(fmt.Sprintf(" LIMIT %d", limit))
+		}
 	}
 	return sb.String()
 }
