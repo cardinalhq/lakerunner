@@ -1,3 +1,5 @@
+//go:build experimental
+
 // Copyright (C) 2025 CardinalHQ, Inc
 //
 // This program is free software: you can redistribute it and/or modify
@@ -12,7 +14,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package filereader
+package experimental
 
 import (
 	"context"
@@ -27,6 +29,7 @@ import (
 	"github.com/apache/arrow-go/v18/parquet/file"
 	"github.com/apache/arrow-go/v18/parquet/pqarrow"
 
+	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
@@ -72,7 +75,7 @@ func NewArrowCookedReader(ctx context.Context, r parquet.ReaderAtSeeker, batchSi
 }
 
 // Next returns the next batch of rows from the parquet file.
-func (r *ArrowCookedReader) Next(ctx context.Context) (*Batch, error) {
+func (r *ArrowCookedReader) Next(ctx context.Context) (*filereader.Batch, error) {
 	if r.closed {
 		return nil, errors.New("reader is closed")
 	}

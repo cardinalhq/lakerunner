@@ -12,9 +12,9 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-//go:build memoryanalysis
+//go:build experimental && memoryanalysis
 
-package filereader
+package experimental
 
 import (
 	"bytes"
@@ -29,6 +29,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cardinalhq/lakerunner/internal/filereader"
 )
 
 // SystemMemStats captures system-level memory usage
@@ -215,7 +217,7 @@ func TestTotalMemoryFootprintComparison(t *testing.T) {
 	}{
 		{"ParquetRaw", func() (int64, error) {
 			reader := bytes.NewReader(data)
-			pr, err := NewParquetRawReader(reader, int64(len(data)), 1000)
+			pr, err := filereader.NewParquetRawReader(reader, int64(len(data)), 1000)
 			if err != nil {
 				return 0, err
 			}
@@ -342,7 +344,7 @@ func BenchmarkTotalMemoryFootprint(b *testing.B) {
 	}{
 		{"ParquetRaw", func() (int64, error) {
 			reader := bytes.NewReader(data)
-			pr, err := NewParquetRawReader(reader, int64(len(data)), 1000)
+			pr, err := filereader.NewParquetRawReader(reader, int64(len(data)), 1000)
 			if err != nil {
 				return 0, err
 			}
@@ -482,7 +484,7 @@ func TestMemoryLeakDetection(t *testing.T) {
 	}{
 		{"ParquetRaw", func() error {
 			reader := bytes.NewReader(data)
-			pr, err := NewParquetRawReader(reader, int64(len(data)), 1000)
+			pr, err := filereader.NewParquetRawReader(reader, int64(len(data)), 1000)
 			if err != nil {
 				return err
 			}
@@ -624,7 +626,7 @@ func TestPeakMemoryUsage(t *testing.T) {
 	t.Run("ParquetRaw_Peak", func(t *testing.T) {
 		measurePeakMemory(t, "ParquetRaw", func() error {
 			reader := bytes.NewReader(data)
-			pr, err := NewParquetRawReader(reader, int64(len(data)), 1000)
+			pr, err := filereader.NewParquetRawReader(reader, int64(len(data)), 1000)
 			if err != nil {
 				return err
 			}
