@@ -23,8 +23,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
-	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
+	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
@@ -43,7 +42,7 @@ type ReaderStackResult struct {
 func CreateReaderStack(
 	ctx context.Context,
 	tmpdir string,
-	s3client *awsclient.S3Client,
+	blobclient cloudstorage.Client,
 	orgID uuid.UUID,
 	profile storageprofile.StorageProfile,
 	rows []lrdb.MetricSeg,
@@ -69,7 +68,7 @@ func CreateReaderStack(
 		dateint, hour := helpers.MSToDateintHour(row.TsRange.Lower.Int64)
 		objectID := helpers.MakeDBObjectID(orgID, profile.CollectorName, dateint, hour, row.SegmentID, "metrics")
 
-		fn, _, is404, err := s3helper.DownloadS3Object(ctx, tmpdir, s3client, profile.Bucket, objectID)
+		fn, _, is404, err := blobclient.DownloadObject(ctx, tmpdir, profile.Bucket, objectID)
 		if err != nil {
 			ll.Error("Failed to download S3 object", slog.String("objectID", objectID), slog.Any("error", err))
 			return nil, err

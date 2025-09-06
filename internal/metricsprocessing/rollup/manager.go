@@ -24,8 +24,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
-	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
+	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
@@ -62,26 +61,20 @@ func GetConfigFromEnv() config {
 }
 
 type Manager struct {
-	db         rollupStore
-	workerID   int64
-	config     config
-	sp         storageprofile.StorageProfileProvider
-	awsmanager *awsclient.Manager
+	db       rollupStore
+	workerID int64
+	config   config
+	sp       storageprofile.StorageProfileProvider
+	cmgr     *cloudstorage.CloudManagers
 }
 
-func NewManager(
-	db rollupStore,
-	workerID int64,
-	config config,
-	sp storageprofile.StorageProfileProvider,
-	awsmanager *awsclient.Manager,
-) *Manager {
+func NewManager(db rollupStore, workerID int64, config config, sp storageprofile.StorageProfileProvider, cmgr *cloudstorage.CloudManagers) *Manager {
 	return &Manager{
-		db:         db,
-		workerID:   workerID,
-		config:     config,
-		sp:         sp,
-		awsmanager: awsmanager,
+		db:       db,
+		workerID: workerID,
+		config:   config,
+		sp:       sp,
+		cmgr:     cmgr,
 	}
 }
 
@@ -193,5 +186,5 @@ func (m *Manager) FailWork(ctx context.Context, ids []int64) error {
 }
 
 func (m *Manager) Run(ctx context.Context) error {
-	return runLoop(ctx, m, m.db, m.sp, m.awsmanager)
+	return runLoop(ctx, m, m.db, m.sp, m.cmgr)
 }

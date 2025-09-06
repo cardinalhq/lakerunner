@@ -21,7 +21,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
+	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
@@ -60,7 +60,7 @@ func ProcessBatch(
 	}
 
 	// Execute ingestion without database writes (we'll do batch transaction later)
-	result, err := coordinate(ctx, ingestionInput, args.StorageProvider, args.AWSManager, nil)
+	result, err := coordinate(ctx, ingestionInput, args.StorageProvider, args.CloudManager, nil)
 	if err != nil {
 		return fmt.Errorf("ingestion failed: %w", err)
 	}
@@ -95,9 +95,9 @@ func ProcessBatch(
 	}
 
 	// Upload results to S3 and collect segment parameters
-	s3client, err := args.AWSManager.GetS3ForProfile(ctx, profile)
+	storageClient, err := cloudstorage.NewClient(ctx, args.CloudManager, profile)
 	if err != nil {
-		return fmt.Errorf("failed to get S3 client: %w", err)
+		return fmt.Errorf("failed to create storage client: %w", err)
 	}
 
 	uploadParams := metricsprocessing.UploadParams{
@@ -112,7 +112,7 @@ func ProcessBatch(
 	}
 
 	// Create segments and upload to S3, collecting segment parameters
-	segmentParams, err := createAndUploadSegments(ctx, s3client, result.Results, uploadParams)
+	segmentParams, err := createAndUploadSegments(ctx, storageClient, result.Results, uploadParams)
 	if err != nil {
 		return fmt.Errorf("failed to create and upload segments: %w", err)
 	}
@@ -169,24 +169,8 @@ func ProcessBatch(
 	return nil
 }
 
-// getStorageProfileForIngestion gets the appropriate storage profile for ingestion
-func getStorageProfileForIngestion(
-	ctx context.Context,
-	sp storageprofile.StorageProfileProvider,
-	firstItem ingest.IngestItem,
-) (storageprofile.StorageProfile, error) {
-	if cfg.SingleInstanceMode {
-		return sp.GetLowestInstanceStorageProfile(ctx, firstItem.OrganizationID, firstItem.Bucket)
-	}
-
-	if collectorName := helpers.ExtractCollectorName(firstItem.ObjectID); collectorName != "" {
-		return sp.GetStorageProfileForOrganizationAndCollector(ctx, firstItem.OrganizationID, collectorName)
-	}
-	return sp.GetStorageProfileForOrganizationAndInstance(ctx, firstItem.OrganizationID, firstItem.InstanceNum)
-}
-
 // createAndUploadSegments creates segments from parquet results, uploads them to S3, and returns segment parameters
-func createAndUploadSegments(ctx context.Context, s3client *awsclient.S3Client, results []parquetwriter.Result, uploadParams metricsprocessing.UploadParams) ([]lrdb.InsertMetricSegmentParams, error) {
+func createAndUploadSegments(ctx context.Context, blobclient cloudstorage.Client, results []parquetwriter.Result, uploadParams metricsprocessing.UploadParams) ([]lrdb.InsertMetricSegmentParams, error) {
 	ll := logctx.FromContext(ctx)
 
 	orgUUID, err := uuid.Parse(uploadParams.OrganizationID)
@@ -211,7 +195,7 @@ func createAndUploadSegments(ctx context.Context, s3client *awsclient.S3Client, 
 		}
 
 		// Upload to S3
-		if err := segment.UploadToS3(ctx, s3client, uploadParams.Bucket); err != nil {
+		if err := segment.UploadToS3(ctx, blobclient, uploadParams.Bucket); err != nil {
 			return nil, fmt.Errorf("uploading file to S3: %w", err)
 		}
 

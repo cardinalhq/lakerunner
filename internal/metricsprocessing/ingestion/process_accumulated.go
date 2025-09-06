@@ -50,12 +50,7 @@ func initRPFEstimateCache() {
 }
 
 // ProcessAccumulatedBatch processes an accumulated batch of metrics with multiple readers
-func ProcessAccumulatedBatch(
-	ctx context.Context,
-	args ingest.ProcessBatchArgs,
-	manager *AccumulatorManager,
-	cfg Config,
-) error {
+func ProcessAccumulatedBatch(ctx context.Context, args ingest.ProcessBatchArgs, manager *AccumulatorManager, cfg Config) error {
 	ll := logctx.FromContext(ctx)
 
 	if !manager.HasData() {

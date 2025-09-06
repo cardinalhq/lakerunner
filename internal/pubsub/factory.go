@@ -27,9 +27,9 @@ func NewBackend(ctx context.Context, backendType BackendType, kafkaFactory *fly.
 	case BackendTypeSQS:
 		return NewSQSService(kafkaFactory)
 	case BackendTypeGCPPubSub:
-		return NewGCPPubSubService()
+		return NewGCPPubSubService(kafkaFactory)
 	case BackendTypeAzure:
-		return NewAzureQueueService()
+		return NewAzureQueueService(kafkaFactory)
 	default:
 		return nil, fmt.Errorf("unsupported backend type: %s", backendType)
 	}

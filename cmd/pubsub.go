@@ -157,7 +157,14 @@ func init() {
 				}
 			}()
 
-			backend, err := pubsub.NewBackend(doneCtx, pubsub.BackendTypeAzure)
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+
+			kafkaFactory := fly.NewFactory(&cfg.Fly)
+
+			backend, err := pubsub.NewBackend(doneCtx, pubsub.BackendTypeAzure, kafkaFactory)
 			if err != nil {
 				return fmt.Errorf("failed to create Azure Queue Storage backend: %w", err)
 			}

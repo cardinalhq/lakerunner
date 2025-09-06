@@ -20,7 +20,7 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
+	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
@@ -31,7 +31,7 @@ func runLoop(
 	manager *Manager,
 	mdb rollupStore,
 	sp storageprofile.StorageProfileProvider,
-	awsmanager *awsclient.Manager,
+	cmgr *cloudstorage.CloudManagers,
 ) error {
 	ll := slog.Default().With(slog.String("component", "metric-rollup-loop"))
 
@@ -77,7 +77,7 @@ func runLoop(
 		}
 
 		// Process the batch of claimed work items
-		processBatchOfItems(ctx, manager, mdb, sp, awsmanager, claimedWork)
+		processBatchOfItems(ctx, manager, mdb, sp, cmgr, claimedWork)
 
 		runtime.GC()
 	}
@@ -88,7 +88,7 @@ func processBatchOfItems(
 	manager *Manager,
 	mdb rollupStore,
 	sp storageprofile.StorageProfileProvider,
-	awsmanager *awsclient.Manager,
+	cmgr *cloudstorage.CloudManagers,
 	claimedWork []lrdb.MrqClaimBatchRow,
 ) {
 	ll := logctx.FromContext(ctx)
@@ -165,7 +165,7 @@ func processBatchOfItems(
 		}
 
 		// Process the single item
-		err := processBatch(ctx, mdb, sp, awsmanager, bundleResult)
+		err := processBatch(ctx, mdb, sp, cmgr, bundleResult)
 
 		if err != nil {
 			ll.Error("Failed to process rollup work item",

@@ -99,7 +99,7 @@ func (p *AzureEventGridParser) GetEventType() string {
 	return "Azure"
 }
 
-func (p *AzureEventGridParser) Parse(raw []byte) ([]lrdb.Inqueue, error) {
+func (p *AzureEventGridParser) Parse(raw []byte) ([]ingest.IngestItem, error) {
 	var evt struct {
 		EventType string `json:"eventType"`
 		Subject   string `json:"subject"`
@@ -115,7 +115,7 @@ func (p *AzureEventGridParser) Parse(raw []byte) ([]lrdb.Inqueue, error) {
 
 	// Only process blob created events
 	if evt.EventType != "Microsoft.Storage.BlobCreated" {
-		return []lrdb.Inqueue{}, nil
+		return []ingest.IngestItem{}, nil
 	}
 
 	// Extract container and blob path from subject
@@ -137,14 +137,14 @@ func (p *AzureEventGridParser) Parse(raw []byte) ([]lrdb.Inqueue, error) {
 		return nil, err
 	}
 	if parsedItem == nil {
-		return []lrdb.Inqueue{}, nil
+		return []ingest.IngestItem{}, nil
 	}
 
 	// Merge parsed information with Azure event data
 	parsedItem.FileSize = evt.Data.ContentLength
 	parsedItem.Bucket = containerName
 
-	return []lrdb.Inqueue{*parsedItem}, nil
+	return []ingest.IngestItem{*parsedItem}, nil
 }
 
 // GCPStorageEventParser handles GCP Cloud Storage events
