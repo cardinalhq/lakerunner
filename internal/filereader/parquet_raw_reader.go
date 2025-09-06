@@ -67,17 +67,14 @@ func shouldDropRowForInvalidRollupFields(ctx context.Context, row map[string]any
 }
 
 // NewParquetRawReader creates a new ParquetRawReader for the given io.ReaderAt.
-// The caller is responsible for closing the underlying reader.
 func NewParquetRawReader(reader io.ReaderAt, size int64, batchSize int) (*ParquetRawReader, error) {
 	pf, err := parquet.OpenFile(reader, size)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open parquet file: %w", err)
 	}
 
-	// Use the file's schema to create a GenericReader
 	pfr := parquet.NewGenericReader[map[string]any](pf, pf.Schema())
 
-	// Check if file has data
 	if pf.NumRows() == 0 {
 		return nil, fmt.Errorf("parquet file has no rows")
 	}
