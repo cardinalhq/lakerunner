@@ -13,7 +13,7 @@ import (
 
 const getMetricType = `-- name: GetMetricType :one
 SELECT metric_type
-FROM exemplar_metrics
+FROM lrdb_exemplar_metrics
 WHERE organization_id = $1
   AND metric_name = $2
 ORDER BY 1
@@ -35,7 +35,7 @@ func (q *Queries) GetMetricType(ctx context.Context, arg GetMetricTypeParams) (s
 const listPromMetricTags = `-- name: ListPromMetricTags :many
 WITH src AS (
   SELECT exemplar
-  FROM exemplar_metrics
+  FROM lrdb_exemplar_metrics
   WHERE organization_id = $1
     AND metric_name = $2
 ),
@@ -100,7 +100,7 @@ const listPromMetrics = `-- name: ListPromMetrics :many
 SELECT DISTINCT
   metric_name,
   metric_type
-FROM exemplar_metrics
+FROM lrdb_exemplar_metrics
 WHERE organization_id = $1
 ORDER BY metric_name
 `
