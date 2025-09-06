@@ -340,3 +340,90 @@ func TestRewrite_MinOverTime_Unwrap_WithOffset(t *testing.T) {
 		},
 	})
 }
+
+func TestRewrite_Grouping_QuotesDotLabels_By(t *testing.T) {
+	leaf := logql.LogLeaf{ID: "idDotBy", Range: "1m"}
+
+	// sum by("resource.cluster","_cardinalhq.foo",plain) (rate(...))
+	root := &logql.LAggNode{
+		Op: "sum",
+		By: []string{"resource.cluster", "_cardinalhq.foo", "plain"},
+		Child: &logql.LRangeAggNode{
+			Op:    "rate",
+			Child: &logql.LLeafNode{Leaf: leaf},
+		},
+	}
+
+	got, err := RewriteToPromQL(root)
+	if err != nil {
+		t.Fatalf("RewriteToPromQL error: %v", err)
+	}
+
+	want := `sum by ("resource.cluster","_cardinalhq.foo",plain) (rate(` + SynthLogCount + `{` + LeafMatcher + `="idDotBy"}[1m]))`
+	if got.PromQL != want {
+		t.Fatalf("promql mismatch:\nwant: %s\ngot : %s", want, got.PromQL)
+	}
+
+	// leaves map contains the single referenced leaf
+	if len(got.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf, got %d", len(got.Leaves))
+	}
+	if !reflect.DeepEqual(got.Leaves["idDotBy"], leaf) {
+		t.Fatalf("leaf mismatch: want %#v got %#v", leaf, got.Leaves["idDotBy"])
+	}
+}
+
+func TestRewrite_Grouping_QuotesDotLabels_Without(t *testing.T) {
+	leaf := logql.LogLeaf{ID: "idDotWo", Range: "2m"}
+
+	// sum without("log.level","_cardinalhq.foo",plain) (increase(...))
+	root := &logql.LAggNode{
+		Op:      "sum",
+		Without: []string{"log.level", "_cardinalhq.foo", "plain"},
+		Child: &logql.LRangeAggNode{
+			Op:    "bytes_over_time",
+			Child: &logql.LLeafNode{Leaf: leaf},
+		},
+	}
+
+	got, err := RewriteToPromQL(root)
+	if err != nil {
+		t.Fatalf("RewriteToPromQL error: %v", err)
+	}
+
+	want := `sum without ("log.level","_cardinalhq.foo",plain) (increase(` + SynthLogBytes + `{` + LeafMatcher + `="idDotWo"}[2m]))`
+	if got.PromQL != want {
+		t.Fatalf("promql mismatch:\nwant: %s\ngot : %s", want, got.PromQL)
+	}
+
+	if len(got.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf, got %d", len(got.Leaves))
+	}
+	if !reflect.DeepEqual(got.Leaves["idDotWo"], leaf) {
+		t.Fatalf("leaf mismatch: want %#v got %#v", leaf, got.Leaves["idDotWo"])
+	}
+}
+
+func TestRewrite_Grouping_Mixed_NoDotNotQuoted(t *testing.T) {
+	leaf := logql.LogLeaf{ID: "plainOnly", Range: "30s"}
+
+	// Only plain label → no quotes expected
+	root := &logql.LAggNode{
+		Op: "max",
+		By: []string{"plain"},
+		Child: &logql.LRangeAggNode{
+			Op:    "rate",
+			Child: &logql.LLeafNode{Leaf: leaf},
+		},
+	}
+
+	got, err := RewriteToPromQL(root)
+	if err != nil {
+		t.Fatalf("RewriteToPromQL error: %v", err)
+	}
+
+	want := `max by (plain) (rate(` + SynthLogCount + `{` + LeafMatcher + `="plainOnly"}[30s]))`
+	if got.PromQL != want {
+		t.Fatalf("promql mismatch:\nwant: %s\ngot : %s", want, got.PromQL)
+	}
+}
