@@ -231,10 +231,14 @@ func fromSyntax(e logql.Expr) (LogAST, error) {
 			Left:  *left.LogRange,
 		}
 		if v.Grouping != nil && len(v.Grouping.Groups) > 0 {
+			norm := make([]string, 0, len(v.Grouping.Groups))
+			for _, g := range v.Grouping.Groups {
+				norm = append(norm, normalizeLabelName(g))
+			}
 			if v.Grouping.Without {
-				ra.Without = append([]string(nil), v.Grouping.Groups...)
+				ra.Without = norm
 			} else {
-				ra.By = append([]string(nil), v.Grouping.Groups...)
+				ra.By = norm
 			}
 		}
 		return LogAST{Kind: KindRangeAgg, RangeAgg: &ra, Raw: e.String()}, nil
@@ -250,10 +254,14 @@ func fromSyntax(e logql.Expr) (LogAST, error) {
 			Left: left,
 		}
 		if v.Grouping != nil && len(v.Grouping.Groups) > 0 {
+			norm := make([]string, 0, len(v.Grouping.Groups))
+			for _, g := range v.Grouping.Groups {
+				norm = append(norm, normalizeLabelName(g))
+			}
 			if v.Grouping.Without {
-				va.Without = append([]string(nil), v.Grouping.Groups...)
+				va.Without = norm
 			} else {
-				va.By = append([]string(nil), v.Grouping.Groups...)
+				va.By = norm
 			}
 		}
 		return LogAST{Kind: KindVectorAgg, VectorAgg: &va, Raw: e.String()}, nil
