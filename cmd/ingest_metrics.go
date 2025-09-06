@@ -21,7 +21,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
 
-	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/debugging"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
@@ -97,9 +97,4 @@ func init() {
 	}
 
 	rootCmd.AddCommand(cmd)
-}
-
-func metricIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
-	cloudManagers *cloudstorage.CloudManagers, items []lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
-	return ingestion.ProcessBatch(ctx, ll, tmpdir, sp, mdb, cloudManagers.AWS, items, ingest_dateint, rpfEstimate, loop.exemplarProcessor)
 }

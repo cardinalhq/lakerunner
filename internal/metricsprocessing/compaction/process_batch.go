@@ -20,7 +20,7 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
+	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
@@ -32,7 +32,7 @@ func processBatch(
 	ctx context.Context,
 	mdb compactionStore,
 	sp storageprofile.StorageProfileProvider,
-	awsmanager *awsclient.Manager,
+	cmgr *cloudstorage.CloudManagers,
 	bundle lrdb.CompactionBundleResult,
 ) error {
 	ll := logctx.FromContext(ctx)
@@ -72,7 +72,7 @@ func processBatch(
 		return err
 	}
 
-	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
+	blobclient, err := cloudstorage.NewClient(ctx, cmgr, profile)
 	if err != nil {
 		ll.Error("Failed to get S3 client", slog.Any("error", err))
 		return err
@@ -114,7 +114,7 @@ func processBatch(
 		validSegments = append(validSegments, seg)
 	}
 
-	return coordinateBundle(ctx, mdb, tmpdir, bundle, profile, s3client, validSegments)
+	return coordinateBundle(ctx, mdb, tmpdir, bundle, profile, blobclient, validSegments)
 }
 
 // fetchMetricSegsFromBundle retrieves the MetricSeg records corresponding to the bundle items

@@ -29,19 +29,20 @@ import (
 
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/internal/azureclient"
+	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
 type AzureQueueService struct {
-	tracer   trace.Tracer
-	azureMgr *azureclient.Manager
-	sp       storageprofile.StorageProfileProvider
-	mdb      InqueueInserter
+	tracer       trace.Tracer
+	azureMgr     *azureclient.Manager
+	sp           storageprofile.StorageProfileProvider
+	kafkaHandler *KafkaHandler
 }
 
 var _ Backend = (*AzureQueueService)(nil)
 
-func NewAzureQueueService() (*AzureQueueService, error) {
+func NewAzureQueueService(kafkaFactory *fly.Factory) (*AzureQueueService, error) {
 	azureMgr, err := azureclient.NewManager(context.Background(),
 		azureclient.WithAssumeRoleSessionName("pubsub-azure"),
 	)
@@ -57,17 +58,16 @@ func NewAzureQueueService() (*AzureQueueService, error) {
 	}
 	sp := storageprofile.NewStorageProfileProvider(cdb)
 
-	mdb, err := dbopen.LRDBStore(context.Background())
+	kafkaHandler, err := NewKafkaHandler(kafkaFactory, "gcp", sp, slog.Default())
 	if err != nil {
-		slog.Error("Failed to connect to lr database", slog.Any("error", err))
-		return nil, fmt.Errorf("failed to connect to lr database: %w", err)
+		return nil, fmt.Errorf("failed to create Kafka handler: %w", err)
 	}
 
 	return &AzureQueueService{
-		tracer:   otel.Tracer("github.com/cardinalhq/lakerunner/internal/pubsub/azure"),
-		azureMgr: azureMgr,
-		sp:       sp,
-		mdb:      mdb,
+		tracer:       otel.Tracer("github.com/cardinalhq/lakerunner/internal/pubsub/azure"),
+		azureMgr:     azureMgr,
+		sp:           sp,
+		kafkaHandler: kafkaHandler,
 	}, nil
 }
 
@@ -131,7 +131,7 @@ func (ps *AzureQueueService) pollQueue(doneCtx context.Context, queueClient *azu
 			if message.MessageText != nil {
 				msgBytes := decodeIfBase64(*message.MessageText)
 
-				err := handleMessage(context.Background(), msgBytes, ps.sp, ps.mdb)
+				err := ps.kafkaHandler.HandleMessage(doneCtx, msgBytes)
 				if err != nil {
 					slog.Error("Failed to handle Azure Queue message",
 						slog.Any("error", err),

@@ -218,8 +218,8 @@ func NewWorkerInterrupted(message string) WorkerInterrupted {
 
 // ProcessBatch processes a single ingestion item with atomic transaction including Kafka offset
 func ProcessBatch(ctx context.Context, args ingest.ProcessBatchArgs, item ingest.IngestItem) error {
-
 	ll := logctx.FromContext(ctx)
+
 	ll.Debug("Processing log item with Kafka offset",
 		slog.String("consumerGroup", args.KafkaOffset.ConsumerGroup),
 		slog.String("topic", args.KafkaOffset.Topic),
@@ -231,7 +231,7 @@ func ProcessBatch(ctx context.Context, args ingest.ProcessBatchArgs, item ingest
 		return fmt.Errorf("failed to get storage profile: %w", err)
 	}
 
-	s3client, err := args.AWSManager.GetS3ForProfile(ctx, profile)
+	blobclient, err := cloudstorage.NewClient(ctx, args.CloudManager, profile)
 	if err != nil {
 		return fmt.Errorf("failed to create storage client: %w", err)
 	}
@@ -268,7 +268,7 @@ func ProcessBatch(ctx context.Context, args ingest.ProcessBatchArgs, item ingest
 		return nil
 	}
 
-	tmpfilename, _, is404, err := storageClient.DownloadObject(ctx, args.TmpDir, item.Bucket, item.ObjectID)
+	tmpfilename, _, is404, err := blobclient.DownloadObject(ctx, args.TmpDir, item.Bucket, item.ObjectID)
 	if err != nil {
 		return fmt.Errorf("failed to download file %s: %w", item.ObjectID, err)
 	}
@@ -436,7 +436,7 @@ func ProcessBatch(ctx context.Context, args ingest.ProcessBatchArgs, item ingest
 	}
 
 	// Upload files to S3 and collect segment parameters for batch insertion
-	segmentParams, err := createAndUploadLogSegments(ctx, storageClient, results, item, args.IngestDateint, profile)
+	segmentParams, err := createAndUploadLogSegments(ctx, blobclient, results, item, args.IngestDateint, profile)
 	if err != nil {
 		return fmt.Errorf("failed to create and upload log segments: %w", err)
 	}

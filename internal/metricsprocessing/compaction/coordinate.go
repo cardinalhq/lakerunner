@@ -22,7 +22,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
+	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
@@ -44,7 +44,7 @@ func coordinate(
 	tmpdir string,
 	metadata CompactionWorkMetadata,
 	profile storageprofile.StorageProfile,
-	s3client *awsclient.S3Client,
+	blobclient cloudstorage.Client,
 	rows []lrdb.MetricSeg,
 	estimatedTargetRecords int64,
 ) error {
@@ -100,7 +100,7 @@ func coordinate(
 		return newWorkerInterrupted("context cancelled before compaction")
 	}
 
-	readerStack, err := metricsprocessing.CreateReaderStack(ctx, tmpdir, s3client, metadata.OrganizationID, profile, rows)
+	readerStack, err := metricsprocessing.CreateReaderStack(ctx, tmpdir, blobclient, metadata.OrganizationID, profile, rows)
 	if err != nil {
 		return err
 	}
@@ -168,7 +168,7 @@ func coordinate(
 		return fmt.Errorf("failed to create processed segments: %w", err)
 	}
 
-	uploadedSegments, err := metricsprocessing.UploadSegments(s3Ctx, s3client, profile.Bucket, segments)
+	uploadedSegments, err := metricsprocessing.UploadSegments(s3Ctx, blobclient, profile.Bucket, segments)
 	if err != nil {
 		// If upload failed partway through, we need to clean up any uploaded files
 		if len(uploadedSegments) > 0 {
@@ -294,7 +294,7 @@ func coordinateBundle(
 	tmpdir string,
 	bundle lrdb.CompactionBundleResult,
 	profile storageprofile.StorageProfile,
-	s3client *awsclient.S3Client,
+	blobclient cloudstorage.Client,
 	rows []lrdb.MetricSeg,
 ) error {
 	ll := logctx.FromContext(ctx)
@@ -324,5 +324,5 @@ func coordinateBundle(
 		slog.Int("segmentCount", len(rows)),
 		slog.Int("bundleItems", len(bundle.Items)))
 
-	return coordinate(ctx, mdb, tmpdir, metadata, profile, s3client, rows, bundle.EstimatedTarget)
+	return coordinate(ctx, mdb, tmpdir, metadata, profile, blobclient, rows, bundle.EstimatedTarget)
 }

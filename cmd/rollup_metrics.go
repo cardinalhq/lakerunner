@@ -22,7 +22,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
+	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/debugging"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
@@ -78,7 +78,7 @@ func init() {
 				return fmt.Errorf("failed to open ConfigDB store: %w", err)
 			}
 
-			awsmanager, err := awsclient.NewManager(ctx)
+			cmgr, err := cloudstorage.NewCloudManagers(ctx)
 			if err != nil {
 				return fmt.Errorf("failed to create AWS manager: %w", err)
 			}
@@ -86,7 +86,7 @@ func init() {
 			sp := storageprofile.NewStorageProfileProvider(cdb)
 
 			config := rollup.GetConfigFromEnv()
-			manager := rollup.NewManager(mdb, myInstanceID, config, sp, awsmanager)
+			manager := rollup.NewManager(mdb, myInstanceID, config, sp, cmgr)
 
 			healthServer.SetStatus(healthcheck.StatusHealthy)
 

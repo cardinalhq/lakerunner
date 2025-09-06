@@ -25,8 +25,9 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/cardinalhq/lakerunner/cmd/ingesttraces"
-	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
+	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
@@ -101,18 +102,14 @@ func init() {
 	rootCmd.AddCommand(cmd)
 }
 
-func traceIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull,
-	cloudManagers *cloudstorage.CloudManagers, items []lrdb.Inqueue, ingest_dateint int32, rpfEstimate int64, loop *IngestLoopContext) error {
-
+func traceIngestBatch(ctx context.Context, args ingest.ProcessBatchArgs, item ingest.IngestItem, ingest_dateint int32, rpfEstimate int64) error {
 	ll := logctx.FromContext(ctx)
+
 	ll.Debug("Processing trace item with Kafka offset",
 		slog.String("consumerGroup", args.KafkaOffset.ConsumerGroup),
 		slog.String("topic", args.KafkaOffset.Topic),
 		slog.Int("partition", int(args.KafkaOffset.Partition)),
 		slog.Int64("offset", args.KafkaOffset.Offset))
-
-	// Convert IngestItem to Inqueue for compatibility with existing code
-	inqueueItems := ConvertIngestItemsToInqueue([]IngestItem{item})
 
 	// Get storage profile
 	var profile storageprofile.StorageProfile
@@ -128,7 +125,7 @@ func traceIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp st
 	}
 
 	// Create cloud storage client
-	storageClient, err := cloudstorage.NewClient(ctx, cloudManagers, profile)
+	storageClient, err := cloudstorage.NewClient(ctx, args.CloudManager, profile)
 	if err != nil {
 		return fmt.Errorf("failed to create storage client for provider %s: %w", profile.CloudProvider, err)
 	}
@@ -139,29 +136,6 @@ func traceIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp st
 	ll.Debug("Processing batch item",
 		slog.String("objectID", item.ObjectID),
 		slog.Int64("fileSize", item.FileSize))
-
-	itemTmpdir := fmt.Sprintf("%s/item", args.TmpDir)
-	if err := os.MkdirAll(itemTmpdir, 0755); err != nil {
-		return fmt.Errorf("creating item tmpdir: %w", err)
-	}
-
-	tmpfilename, _, is404, err := s3helper.DownloadS3Object(ctx, itemTmpdir, s3client, item.Bucket, item.ObjectID)
-	if err != nil {
-		return fmt.Errorf("failed to download file %s: %w", item.ObjectID, err)
-	}
-	if is404 {
-		ll.Warn("S3 object not found, skipping", slog.String("objectID", item.ObjectID))
-		// No segments to insert, just update Kafka offset
-		if err := args.DB.KafkaJournalUpsert(ctx, lrdb.KafkaJournalUpsertParams{
-			ConsumerGroup:       args.KafkaOffset.ConsumerGroup,
-			Topic:               args.KafkaOffset.Topic,
-			Partition:           args.KafkaOffset.Partition,
-			LastProcessedOffset: args.KafkaOffset.Offset,
-		}); err != nil {
-			return fmt.Errorf("failed to update Kafka offset: %w", err)
-		}
-		return nil
-	}
 
 	// Convert file if not already in otel-raw format
 	if !strings.HasPrefix(item.ObjectID, "otel-raw/") {
@@ -179,16 +153,33 @@ func traceIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp st
 			return nil
 		}
 
-		tmpfilename, _, is404, err := storageClient.DownloadObject(ctx, itemTmpdir, inf.Bucket, inf.ObjectID)
+		tmpfilename, _, is404, err := storageClient.DownloadObject(ctx, args.TmpDir, item.Bucket, item.ObjectID)
 		if err != nil {
-			return fmt.Errorf("failed to download file %s from %s: %w", inf.ObjectID, profile.CloudProvider, err)
+			return fmt.Errorf("failed to download file %s from %s: %w", item.ObjectID, profile.CloudProvider, err)
 		}
 		if is404 {
 			ll.Warn("Object not found in cloud storage, skipping",
 				slog.String("cloudProvider", profile.CloudProvider),
-				slog.String("itemID", inf.ID.String()),
-				slog.String("objectID", inf.ObjectID))
-			continue
+				slog.String("objectID", item.ObjectID))
+			// No segments to insert for missing file, just update Kafka offset
+			if err := args.DB.KafkaJournalUpsert(ctx, lrdb.KafkaJournalUpsertParams{
+				ConsumerGroup:       args.KafkaOffset.ConsumerGroup,
+				Topic:               args.KafkaOffset.Topic,
+				Partition:           args.KafkaOffset.Partition,
+				LastProcessedOffset: args.KafkaOffset.Offset,
+			}); err != nil {
+				return fmt.Errorf("failed to update Kafka offset: %w", err)
+			}
+			return nil
+		}
+
+		// Clean up temp file when done
+		defer os.Remove(tmpfilename)
+
+		// Convert the protobuf file to trace format
+		results, err := ingesttraces.ConvertProtoFile(tmpfilename, args.TmpDir, item.Bucket, item.ObjectID, rpfEstimate, ingest_dateint, item.OrganizationID.String())
+		if err != nil {
+			return fmt.Errorf("failed to convert proto file %s: %w", item.ObjectID, err)
 		}
 
 		// Group results by slot
@@ -229,7 +220,7 @@ func traceIngestBatch(ctx context.Context, ll *slog.Logger, tmpdir string, sp st
 			hour := int16(0) // Hour doesn't matter for slot-based traces
 			dbObjectID := helpers.MakeDBObjectID(item.OrganizationID, "", args.IngestDateint, hour, segmentID, "traces")
 
-			if err := storageClient.UploadObject(ctx, firstItem.Bucket, dbObjectID, result.FileName); err != nil {
+			if err := storageClient.UploadObject(ctx, item.Bucket, dbObjectID, result.FileName); err != nil {
 				return fmt.Errorf("failed to upload trace file to %s: %w", profile.CloudProvider, err)
 			}
 

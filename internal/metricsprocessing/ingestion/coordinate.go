@@ -27,8 +27,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
-	"github.com/cardinalhq/lakerunner/internal/awsclient/s3helper"
+	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
@@ -124,7 +123,7 @@ func coordinate(
 	ctx context.Context,
 	input input,
 	sp storageprofile.StorageProfileProvider,
-	awsmanager *awsclient.Manager,
+	cmgr *cloudstorage.CloudManagers,
 	mdb lrdb.StoreFull,
 ) (*result, error) {
 	ll := logctx.FromContext(ctx)
@@ -149,7 +148,7 @@ func coordinate(
 		return nil, fmt.Errorf("failed to get storage profile: %w", err)
 	}
 
-	s3client, err := awsmanager.GetS3ForProfile(ctx, profile)
+	blobclient, err := cloudstorage.NewClient(ctx, cmgr, profile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create storage client: %w", err)
 	}
@@ -161,7 +160,7 @@ func coordinate(
 	var batchRowsRead, batchRowsProcessed, batchRowsErrored int64
 
 	// Step 1: Download and validate files
-	validFiles, err := downloadAndValidateFiles(ctx, input.Items, input.TmpDir, storageClient)
+	validFiles, err := downloadAndValidateFiles(ctx, input.Items, input.TmpDir, blobclient)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download files: %w", err)
 	}

@@ -231,7 +231,7 @@ func (k *KafkaIngestConsumer) processItem(ctx context.Context, notif *messages.O
 		TmpDir:          tmpdir,
 		StorageProvider: k.loop.sp,
 		DB:              k.loop.mdb,
-		AWSManager:      k.loop.awsmanager,
+		CloudManager:    k.loop.cloudManagers,
 		IngestDateint:   ingestDateint,
 		RPFEstimate:     rpfEstimate,
 		KafkaOffset:     kafkaOffset,
@@ -252,7 +252,7 @@ func (k *KafkaIngestConsumer) processItem(ctx context.Context, notif *messages.O
 	case "logs":
 		processErr = logsingestion.ProcessBatch(ctxWithItemLogger, args, item)
 	case "traces":
-		processErr = traceIngestBatch(ctxWithItemLogger, args, item)
+		processErr = traceIngestBatch(ctxWithItemLogger, args, item, args.IngestDateint, args.RPFEstimate)
 	default:
 		processErr = fmt.Errorf("unsupported signal type: %s", k.signal)
 	}

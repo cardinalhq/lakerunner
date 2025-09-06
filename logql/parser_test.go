@@ -18,8 +18,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/cardinalhq/lakerunner/promql"
 )
 
 // helper: find label matcher (label -> value) in a selector

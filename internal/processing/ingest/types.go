@@ -19,7 +19,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/cardinalhq/lakerunner/internal/awsclient"
+	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -41,7 +41,7 @@ type ProcessBatchArgs struct {
 	TmpDir          string
 	StorageProvider storageprofile.StorageProfileProvider
 	DB              lrdb.StoreFull
-	AWSManager      *awsclient.Manager
+	CloudManager    *cloudstorage.CloudManagers
 	IngestDateint   int32
 	RPFEstimate     int64
 	KafkaOffset     lrdb.KafkaOffsetUpdate
