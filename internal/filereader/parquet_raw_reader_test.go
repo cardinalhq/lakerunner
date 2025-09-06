@@ -374,18 +374,17 @@ func TestIngestProtoLogsReader_WithTranslator(t *testing.T) {
 
 func TestParquetRawReader_CompactTestFiles(t *testing.T) {
 	// Test files from compact-test-0001 with expected record counts
-	// Note: ParquetRawReader now returns all rows without filtering.
-	// NaN filtering is done by CookedMetricTranslatingReader.
+	// ParquetRawReader returns all rows without filtering
 	expectedCounts := map[string]int64{
 		"tbl_299476429685392687.parquet": 227,
-		"tbl_299476441865651503.parquet": 227, // Previously 226 with NaN filtering
+		"tbl_299476441865651503.parquet": 227,
 		"tbl_299476446630380847.parquet": 227,
 		"tbl_299476458558980900.parquet": 231,
-		"tbl_299476464716219172.parquet": 227, // Previously 226 with NaN filtering
+		"tbl_299476464716219172.parquet": 227,
 		"tbl_299476475503969060.parquet": 227,
 		"tbl_299476481342440751.parquet": 227,
 		"tbl_299476495972173103.parquet": 231,
-		"tbl_299476496878142244.parquet": 227, // Previously 226 with NaN filtering
+		"tbl_299476496878142244.parquet": 227,
 		"tbl_299476509242950436.parquet": 227,
 		"tbl_299476513621803812.parquet": 227,
 		"tbl_299476526607368996.parquet": 227,
@@ -499,17 +498,17 @@ func TestParquetRawReader_TIDConversion(t *testing.T) {
 }
 
 func TestDiskSortingReader_WithParquetCompactTestFiles(t *testing.T) {
-	// Test DiskSortingReader(CookedMetricTranslatingReader(ParquetReader)) combination with compact test files
-	// Note: Some files have 226 instead of 227 due to NaN filtering
+	// Test DiskSortingReader(CookedMetricTranslatingReader(ParquetReader)) combination
+	// CookedMetricTranslatingReader filters out rows with NaN values
 	expectedCounts := map[string]int64{
 		"tbl_299476429685392687.parquet": 227,
 		"tbl_299476441865651503.parquet": 226, // 1 NaN row filtered
 		"tbl_299476446630380847.parquet": 227,
-		"tbl_299476458558980900.parquet": 231, // Special case with 231 records
+		"tbl_299476458558980900.parquet": 231,
 		"tbl_299476464716219172.parquet": 226, // 1 NaN row filtered
 		"tbl_299476475503969060.parquet": 227,
 		"tbl_299476481342440751.parquet": 227,
-		"tbl_299476495972173103.parquet": 231, // Special case with 231 records
+		"tbl_299476495972173103.parquet": 231,
 		"tbl_299476496878142244.parquet": 226, // 1 NaN row filtered
 		"tbl_299476509242950436.parquet": 227,
 		"tbl_299476513621803812.parquet": 227,

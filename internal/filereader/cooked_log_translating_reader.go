@@ -17,7 +17,6 @@ package filereader
 import (
 	"context"
 	"io"
-	"strconv"
 
 	"go.opentelemetry.io/otel/attribute"
 	otelmetric "go.opentelemetry.io/otel/metric"
@@ -88,23 +87,6 @@ func (r *CookedLogTranslatingReader) Next(ctx context.Context) (*Batch, error) {
 
 // shouldDropRow checks if a row should be dropped based on log-specific criteria.
 func (r *CookedLogTranslatingReader) shouldDropRow(ctx context.Context, row pipeline.Row) bool {
-	// Check and validate _cardinalhq.tid field
-	if tidValue, exists := row[wkk.RowKeyCTID]; exists {
-		switch tidValue.(type) {
-		case int64:
-			// Valid type
-		case string:
-			// Will be converted in transformRow
-		default:
-			// Invalid type, drop row
-			rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
-				attribute.String("reader", "CookedLogTranslatingReader"),
-				attribute.String("reason", "invalid_tid_type"),
-			))
-			return true
-		}
-	}
-
 	// Check for required log fields
 	if _, hasTimestamp := row[wkk.RowKeyCTimestamp]; !hasTimestamp {
 		rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
@@ -119,18 +101,6 @@ func (r *CookedLogTranslatingReader) shouldDropRow(ctx context.Context, row pipe
 
 // transformRow applies log-specific transformations to a row in place.
 func (r *CookedLogTranslatingReader) transformRow(row pipeline.Row) {
-	// Convert _cardinalhq.tid from string to int64 if needed
-	if tidValue, exists := row[wkk.RowKeyCTID]; exists {
-		if tidStr, ok := tidValue.(string); ok {
-			if tidInt64, err := strconv.ParseInt(tidStr, 10, 64); err == nil {
-				row[wkk.RowKeyCTID] = tidInt64
-			} else {
-				// Remove invalid tid field rather than keeping bad data
-				delete(row, wkk.RowKeyCTID)
-			}
-		}
-	}
-
 	// Ensure fingerprint is bytes if present
 	if fpValue, exists := row[wkk.RowKeyCFingerprint]; exists {
 		if fpStr, ok := fpValue.(string); ok {

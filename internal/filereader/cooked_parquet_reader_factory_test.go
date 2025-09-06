@@ -71,16 +71,18 @@ func TestNewCookedLogParquetReader(t *testing.T) {
 	batch, err := reader.Next(context.Background())
 	require.NoError(t, err)
 	require.NotNil(t, batch)
+	assert.Greater(t, batch.Len(), 0, "should have at least one row")
 
-	found := false
-	for i := 0; i < batch.Len(); i++ {
-		row := batch.Get(i)
-		if tidVal, ok := row[wkk.RowKeyCTID]; ok {
-			_, isInt64 := tidVal.(int64)
-			assert.True(t, isInt64)
-			found = true
-			break
-		}
+	// Verify log-specific fields are present and properly formatted
+	row := batch.Get(0)
+
+	// Check for required timestamp field
+	timestamp, hasTimestamp := row[wkk.RowKeyCTimestamp]
+	assert.True(t, hasTimestamp, "should have _cardinalhq.timestamp")
+	assert.IsType(t, int64(0), timestamp, "timestamp should be int64")
+
+	// Check message field if present
+	if message, hasMessage := row[wkk.RowKeyCMessage]; hasMessage {
+		assert.IsType(t, "", message, "message should be string")
 	}
-	assert.True(t, found, "expected row with _cardinalhq.tid")
 }
