@@ -15,15 +15,17 @@
 package queryapi
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/cardinalhq/lakerunner/logql"
 	"github.com/cardinalhq/lakerunner/promql"
 )
 
 func (q *QuerierService) handleGetMetricTagValues(w http.ResponseWriter, r *http.Request) {
-	qPayload := readQueryPayload(w, r)
+	qPayload := readQueryPayload(w, r, false)
 	if qPayload == nil {
 		return
 	}
@@ -77,9 +79,15 @@ func (q *QuerierService) handleGetMetricTagValues(w http.ResponseWriter, r *http
 }
 
 func (q *QuerierService) handleGetLogTagValues(w http.ResponseWriter, r *http.Request) {
-	qp := readQueryPayload(w, r)
+	qp := readQueryPayload(w, r, true)
 	if qp == nil {
 		return
+	}
+
+	tagName := r.URL.Query().Get("tagName")
+	if qp.Q == "" {
+		// If no query expression, use a default query that does an exists check for the requested tag
+		qp.Q = fmt.Sprintf("{%s=~\".+\"}", strings.ReplaceAll(tagName, ".", "_"))
 	}
 
 	logAst, err := logql.FromLogQL(qp.Q)
@@ -88,7 +96,7 @@ func (q *QuerierService) handleGetLogTagValues(w http.ResponseWriter, r *http.Re
 		return
 	}
 	lplan, err := logql.CompileLog(logAst)
-	lplan.TagName = r.URL.Query().Get("tagName")
+	lplan.TagName = tagName
 	if err != nil {
 		http.Error(w, "compile error: "+err.Error(), http.StatusBadRequest)
 		return

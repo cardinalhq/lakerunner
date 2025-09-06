@@ -33,7 +33,6 @@ import (
 )
 
 type queryPayload struct {
-	OrgID   string `json:"orgId"`
 	S       string `json:"s"`
 	E       string `json:"e"`
 	Q       string `json:"q"`
@@ -46,7 +45,7 @@ type queryPayload struct {
 	EndTs   int64     `json:"-"`
 }
 
-func readQueryPayload(w http.ResponseWriter, r *http.Request) *queryPayload {
+func readQueryPayload(w http.ResponseWriter, r *http.Request, allowEmptyQuery bool) *queryPayload {
 	if r.Method != http.MethodPost {
 		http.Error(w, "only POST method is allowed", http.StatusMethodNotAllowed)
 		return nil
@@ -71,7 +70,7 @@ func readQueryPayload(w http.ResponseWriter, r *http.Request) *queryPayload {
 		}
 		p.OrgUUID = orgId
 
-		if p.Q == "" {
+		if p.Q == "" && !allowEmptyQuery {
 			http.Error(w, "missing query expression", http.StatusBadRequest)
 			return nil
 		}
@@ -133,7 +132,7 @@ type evalData struct {
 }
 
 func (q *QuerierService) handlePromQuery(w http.ResponseWriter, r *http.Request) {
-	qPayload := readQueryPayload(w, r)
+	qPayload := readQueryPayload(w, r, false)
 	if qPayload == nil {
 		return
 	}
@@ -199,7 +198,7 @@ func (q *QuerierService) sendEvalResults(r *http.Request, w http.ResponseWriter,
 }
 
 func (q *QuerierService) handleLogQuery(w http.ResponseWriter, r *http.Request) {
-	qp := readQueryPayload(w, r)
+	qp := readQueryPayload(w, r, false)
 	if qp == nil {
 		return
 	}
