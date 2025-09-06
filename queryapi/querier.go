@@ -27,9 +27,8 @@ import (
 	"github.com/cardinalhq/oteltools/pkg/dateutils"
 	"github.com/google/uuid"
 
-	"github.com/cardinalhq/lakerunner/promql"
-	// import your logql package (adjust path if different)
 	"github.com/cardinalhq/lakerunner/logql"
+	"github.com/cardinalhq/lakerunner/promql"
 )
 
 type queryPayload struct {
@@ -62,20 +61,19 @@ func readQueryPayload(w http.ResponseWriter, r *http.Request) *queryPayload {
 			http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
 			return nil
 		}
-		if p.OrgID == "" {
-			http.Error(w, "missing orgId", http.StatusBadRequest)
+
+		// Get orgId from context (set by middleware)
+		orgId, ok := GetOrgIDFromContext(r.Context())
+		if !ok {
+			http.Error(w, "organization ID not found in context", http.StatusInternalServerError)
 			return nil
 		}
+		p.OrgUUID = orgId
+
 		if p.Q == "" {
 			http.Error(w, "missing query expression", http.StatusBadRequest)
 			return nil
 		}
-		orgId, err := uuid.Parse(p.OrgID)
-		if err != nil {
-			http.Error(w, "invalid orgId: "+err.Error(), http.StatusBadRequest)
-			return nil
-		}
-		p.OrgUUID = orgId
 		st, en, err := dateutils.ToStartEnd(p.S, p.E)
 		if err != nil {
 			http.Error(w, "invalid start/end time: "+err.Error(), http.StatusBadRequest)
@@ -315,14 +313,14 @@ func (q *QuerierService) Run(doneCtx context.Context) error {
 
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/api/v1/metrics/metadata", q.handleListPromQLMetricsMetadata)
-	mux.HandleFunc("/api/v1/metrics/tags", q.handleListPromQLTags)
-	mux.HandleFunc("/api/v1/metrics/tagvalues", q.handleGetMetricTagValues)
-	mux.HandleFunc("/api/v1/metrics/query", q.handlePromQuery)
+	mux.HandleFunc("/api/v1/metrics/metadata", q.apiKeyMiddleware(q.handleListPromQLMetricsMetadata))
+	mux.HandleFunc("/api/v1/metrics/tags", q.apiKeyMiddleware(q.handleListPromQLTags))
+	mux.HandleFunc("/api/v1/metrics/tagvalues", q.apiKeyMiddleware(q.handleGetMetricTagValues))
+	mux.HandleFunc("/api/v1/metrics/query", q.apiKeyMiddleware(q.handlePromQuery))
 
-	mux.HandleFunc("/api/v1/logs/tags", q.handleListLogQLTags)
-	mux.HandleFunc("/api/v1/logs/tagvalues", q.handleGetLogTagValues)
-	mux.HandleFunc("/api/v1/logs/query", q.handleLogQuery)
+	mux.HandleFunc("/api/v1/logs/tags", q.apiKeyMiddleware(q.handleListLogQLTags))
+	mux.HandleFunc("/api/v1/logs/tagvalues", q.apiKeyMiddleware(q.handleGetLogTagValues))
+	mux.HandleFunc("/api/v1/logs/query", q.apiKeyMiddleware(q.handleLogQuery))
 
 	mux.HandleFunc("/api/v1/promql/validate", q.handlePromQLValidate)
 

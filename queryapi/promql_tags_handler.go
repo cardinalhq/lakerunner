@@ -23,13 +23,10 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/google/uuid"
-
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 type promTagsReq struct {
-	OrgID  string `json:"orgId"`
 	Metric string `json:"metric,omitempty"`
 }
 
@@ -57,22 +54,10 @@ func (q *QuerierService) handleListPromQLMetricsMetadata(w http.ResponseWriter, 
 		return
 	}
 
-	var req promTagsReq
-	body, _ := io.ReadAll(r.Body)
-	defer r.Body.Close()
-	if err := json.Unmarshal(body, &req); err != nil {
-		http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	orgID := strings.TrimSpace(req.OrgID)
-	if orgID == "" {
-		http.Error(w, "missing orgId", http.StatusBadRequest)
-		return
-	}
-	orgUUID, err := uuid.Parse(orgID)
-	if err != nil {
-		http.Error(w, "invalid orgId: "+err.Error(), http.StatusBadRequest)
+	// Get orgId from context (set by middleware)
+	orgUUID, ok := GetOrgIDFromContext(r.Context())
+	if !ok {
+		http.Error(w, "organization ID not found in context", http.StatusInternalServerError)
 		return
 	}
 
@@ -114,20 +99,16 @@ func (q *QuerierService) handleListPromQLTags(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	orgID := strings.TrimSpace(req.OrgID)
-	metric := strings.TrimSpace(req.Metric)
-	if orgID == "" {
-		http.Error(w, "missing orgId", http.StatusBadRequest)
-		return
-	}
-	if metric == "" {
-		http.Error(w, "missing metric", http.StatusBadRequest)
+	// Get orgId from context (set by middleware)
+	orgUUID, ok := GetOrgIDFromContext(r.Context())
+	if !ok {
+		http.Error(w, "organization ID not found in context", http.StatusInternalServerError)
 		return
 	}
 
-	orgUUID, err := uuid.Parse(orgID)
-	if err != nil {
-		http.Error(w, "invalid orgId: "+err.Error(), http.StatusBadRequest)
+	metric := strings.TrimSpace(req.Metric)
+	if metric == "" {
+		http.Error(w, "missing metric", http.StatusBadRequest)
 		return
 	}
 

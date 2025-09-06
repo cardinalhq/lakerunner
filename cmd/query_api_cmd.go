@@ -20,6 +20,7 @@ import (
 	"log/slog"
 
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
+	"github.com/cardinalhq/lakerunner/internal/orgapikey"
 	"github.com/cardinalhq/lakerunner/queryapi"
 
 	"github.com/spf13/cobra"
@@ -62,6 +63,16 @@ func init() {
 				return fmt.Errorf("failed to connect to lr database: %w", err)
 			}
 
+			// Connect to configdb for API key validation
+			cdb, err := dbopen.ConfigDBStore(context.Background())
+			if err != nil {
+				slog.Error("Failed to connect to config database", slog.Any("error", err))
+				return fmt.Errorf("failed to connect to config database: %w", err)
+			}
+
+			// Create API key provider
+			apiKeyProvider := orgapikey.NewDBProvider(cdb)
+
 			// Create and start worker discovery
 			workerDiscovery, err := queryapi.CreateWorkerDiscovery()
 			if err != nil {
@@ -79,7 +90,7 @@ func init() {
 				}
 			}()
 
-			querier, err := queryapi.NewQuerierService(mdb, workerDiscovery)
+			querier, err := queryapi.NewQuerierService(mdb, workerDiscovery, apiKeyProvider)
 			if err != nil {
 				slog.Error("Failed to create querier service", slog.Any("error", err))
 				return fmt.Errorf("failed to create querier service: %w", err)
