@@ -250,7 +250,7 @@ func (k *KafkaIngestConsumer) processItem(ctx context.Context, notif *messages.O
 	case "metrics":
 		processErr = metricsingestion.ProcessBatch(ctxWithItemLogger, args, []ingest.IngestItem{item}, k.loop.exemplarProcessor, k.config.Metrics.Ingestion)
 	case "logs":
-		processErr = logsingestion.ProcessBatch(ctxWithItemLogger, args, item)
+		processErr = logsingestion.ProcessBatch(ctxWithItemLogger, args, item, k.loop.exemplarProcessor)
 	case "traces":
 		processErr = traceIngestBatch(ctxWithItemLogger, args, item, args.IngestDateint, args.RPFEstimate)
 	default:

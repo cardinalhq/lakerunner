@@ -42,6 +42,9 @@ type ProtoLogsReader struct {
 	logIndex      int
 }
 
+var _ Reader = (*ProtoLogsReader)(nil)
+var _ OTELLogsProvider = (*ProtoLogsReader)(nil)
+
 // NewProtoLogsReader creates a new ProtoLogsReader for the given io.Reader.
 // The caller is responsible for closing the underlying reader.
 func NewProtoLogsReader(reader io.Reader, batchSize int) (*ProtoLogsReader, error) {
@@ -190,6 +193,18 @@ func (r *ProtoLogsReader) processRow(row map[string]any) (Row, error) {
 		result[wkk.NewRowKey(k)] = v
 	}
 	return result, nil
+}
+
+// GetOTELLogs returns the underlying parsed OTEL logs structure.
+// This allows access to the original log body and metadata not available in the row format.
+func (r *ProtoLogsReader) GetOTELLogs() (*plog.Logs, error) {
+	if r.closed {
+		return nil, fmt.Errorf("reader is closed")
+	}
+	if r.logs == nil {
+		return nil, fmt.Errorf("no logs data available")
+	}
+	return r.logs, nil
 }
 
 // Close closes the reader and releases resources.

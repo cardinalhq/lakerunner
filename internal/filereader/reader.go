@@ -21,6 +21,8 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
+	"go.opentelemetry.io/collector/pdata/plog"
+	"go.opentelemetry.io/collector/pdata/pmetric"
 )
 
 // Row represents a single row of data as a map of column names to values.
@@ -56,7 +58,15 @@ type RowTranslator interface {
 type OTELMetricsProvider interface {
 	// GetOTELMetrics returns the underlying parsed OTEL metrics structure.
 	// This allows access to exemplars and other metadata not available in the row format.
-	GetOTELMetrics() (any, error)
+	GetOTELMetrics() (*pmetric.Metrics, error)
+}
+
+// OTELLogsProvider provides access to the underlying OpenTelemetry logs structure.
+// This is used when the original OTEL structure is needed for processing (e.g., exemplars).
+type OTELLogsProvider interface {
+	// GetOTELLogs returns the underlying parsed OTEL logs structure.
+	// This allows access to the original log body and metadata not available in the row format.
+	GetOTELLogs() (*plog.Logs, error)
 }
 
 // Batch represents a collection of rows with clear ownership semantics.

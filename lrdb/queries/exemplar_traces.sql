@@ -1,5 +1,5 @@
 -- name: BatchUpsertExemplarTraces :batchone
-INSERT INTO exemplar_traces
+INSERT INTO lrdb_exemplar_traces
 ( organization_id
 , service_identifier_id
 , fingerprint
@@ -29,22 +29,22 @@ DO UPDATE SET
 RETURNING (created_at = updated_at) AS is_new;
 
 -- name: GetExemplarTracesCreatedAfter :many
-SELECT * FROM exemplar_traces WHERE created_at > @ts;
+SELECT * FROM lrdb_exemplar_traces WHERE created_at > @ts;
 
 -- name: GetExemplarTracesByService :many
-SELECT * FROM exemplar_traces 
+SELECT * FROM lrdb_exemplar_traces 
 WHERE organization_id = @organization_id 
   AND service_identifier_id = @service_identifier_id
 ORDER BY created_at DESC;
 
 -- name: GetSpanInfoByFingerprint :one
 SELECT exemplar, span_name, span_kind
-FROM exemplar_traces
+FROM lrdb_exemplar_traces
 WHERE organization_id = @organization_id AND fingerprint = @fingerprint
 LIMIT 1;
 
 -- name: GetExemplarTracesByFingerprint :one
-SELECT * FROM exemplar_traces 
+SELECT * FROM lrdb_exemplar_traces 
 WHERE organization_id = @organization_id 
   AND fingerprint = @fingerprint
 LIMIT 1; 
