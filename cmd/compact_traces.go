@@ -171,7 +171,7 @@ func compactTracesFor(
 		// - group segments by rowsPerFileEstimate into ~targetFileSize outputs
 		// - be conservative near boundaries
 		// - optionally filter obviously-bad segments (empty, oversized, etc.)
-		recorder := compactionMetricRecorder{logger: ll}
+		recorder := compactionMetricRecorder{}
 		packed, err := tracecompaction.PackTraceSegmentsWithEstimate(
 			ctx,
 			segments,

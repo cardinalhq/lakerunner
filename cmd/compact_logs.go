@@ -89,11 +89,11 @@ func init() {
 var compactLogsDoneCtx context.Context
 
 // compactionMetricRecorder implements logcrunch.MetricRecorder for recording compaction metrics
-type compactionMetricRecorder struct {
-	logger *slog.Logger
-}
+type compactionMetricRecorder struct{}
 
 func (r compactionMetricRecorder) RecordFilteredSegments(ctx context.Context, count int64, organizationID, instanceNum, signal, action, reason string) {
+	ll := logctx.FromContext(ctx)
+
 	segmentsFilteredCounter.Add(ctx, count,
 		metric.WithAttributes(
 			attribute.String("signal", signal),
@@ -102,7 +102,7 @@ func (r compactionMetricRecorder) RecordFilteredSegments(ctx context.Context, co
 		))
 
 	// Add detailed logging for each filtering reason
-	r.logger.Info("Segments filtered during packing",
+	ll.Info("Segments filtered during packing",
 		slog.Int64("count", count),
 		slog.String("reason", reason),
 		slog.String("organizationID", organizationID),
@@ -269,7 +269,7 @@ func logCompactItemDo(
 		// Allow for 110% of target capacity to account for compression variability
 		// This gives us 10% tolerance above the target file size
 		adjustedEstimate := rpfEstimate * 11 / 10
-		recorder := compactionMetricRecorder{logger: ll}
+		recorder := compactionMetricRecorder{}
 		packed, err := logcrunch.PackSegments(ctx, segments, adjustedEstimate, recorder,
 			inf.OrganizationID().String(), fmt.Sprintf("%d", inf.InstanceNum()), "logs", "compact")
 		if err != nil {
