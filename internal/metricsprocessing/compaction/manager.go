@@ -102,10 +102,10 @@ type Manager struct {
 	workerID int64
 	config   config
 	sp       storageprofile.StorageProfileProvider
-	cmgr     *cloudstorage.CloudManagers
+	cmgr     cloudstorage.ClientProvider
 }
 
-func NewManager(db compactionStore, workerID int64, config config, sp storageprofile.StorageProfileProvider, cmgr *cloudstorage.CloudManagers) *Manager {
+func NewManager(db compactionStore, workerID int64, config config, sp storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider) *Manager {
 	return &Manager{
 		db:       db,
 		workerID: workerID,

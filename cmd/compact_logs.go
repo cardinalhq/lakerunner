@@ -112,7 +112,7 @@ func (r compactionMetricRecorder) RecordFilteredSegments(ctx context.Context, co
 func compactLogsFor(
 	ctx context.Context,
 	tmpdir string,
-	cmgr *cloudstorage.CloudManagers,
+	cmgr cloudstorage.ClientProvider,
 	sp storageprofile.StorageProfileProvider,
 	mdb lrdb.StoreFull,
 	inf lockmgr.Workable,

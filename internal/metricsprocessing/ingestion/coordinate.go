@@ -123,7 +123,7 @@ func coordinate(
 	ctx context.Context,
 	input input,
 	sp storageprofile.StorageProfileProvider,
-	cmgr *cloudstorage.CloudManagers,
+	cmgr cloudstorage.ClientProvider,
 	mdb lrdb.StoreFull,
 ) (*result, error) {
 	ll := logctx.FromContext(ctx)

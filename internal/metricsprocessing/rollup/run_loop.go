@@ -31,7 +31,7 @@ func runLoop(
 	manager *Manager,
 	mdb rollupStore,
 	sp storageprofile.StorageProfileProvider,
-	cmgr *cloudstorage.CloudManagers,
+	cmgr cloudstorage.ClientProvider,
 ) error {
 	ll := slog.Default().With(slog.String("component", "metric-rollup-loop"))
 
@@ -88,7 +88,7 @@ func processBatchOfItems(
 	manager *Manager,
 	mdb rollupStore,
 	sp storageprofile.StorageProfileProvider,
-	cmgr *cloudstorage.CloudManagers,
+	cmgr cloudstorage.ClientProvider,
 	claimedWork []lrdb.MrqClaimBatchRow,
 ) {
 	ll := logctx.FromContext(ctx)

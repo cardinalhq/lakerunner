@@ -41,7 +41,7 @@ type ProcessBatchArgs struct {
 	TmpDir          string
 	StorageProvider storageprofile.StorageProfileProvider
 	DB              lrdb.StoreFull
-	CloudManager    *cloudstorage.CloudManagers
+	CloudManager    cloudstorage.ClientProvider
 	IngestDateint   int32
 	RPFEstimate     int64
 	KafkaOffset     lrdb.KafkaOffsetUpdate

@@ -32,7 +32,7 @@ func processBatch(
 	ctx context.Context,
 	mdb compactionStore,
 	sp storageprofile.StorageProfileProvider,
-	cmgr *cloudstorage.CloudManagers,
+	cmgr cloudstorage.ClientProvider,
 	bundle lrdb.CompactionBundleResult,
 ) error {
 	ll := logctx.FromContext(ctx)

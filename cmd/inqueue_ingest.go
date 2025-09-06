@@ -33,7 +33,7 @@ import (
 type IngestLoopContext struct {
 	mdb               lrdb.StoreFull
 	sp                storageprofile.StorageProfileProvider
-	cloudManagers     *cloudstorage.CloudManagers
+	cloudManagers     cloudstorage.ClientProvider
 	metricEstimator   estimator.MetricEstimator
 	logEstimator      estimator.LogEstimator
 	signal            string

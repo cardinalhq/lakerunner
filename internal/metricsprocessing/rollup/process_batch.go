@@ -50,7 +50,7 @@ func processBatch(
 	ctx context.Context,
 	mdb rollupStore,
 	sp storageprofile.StorageProfileProvider,
-	cmgr *cloudstorage.CloudManagers,
+	cmgr cloudstorage.ClientProvider,
 	bundle lrdb.RollupBundleResult,
 ) error {
 	if len(bundle.Items) == 0 {
