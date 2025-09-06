@@ -28,12 +28,13 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/google/uuid"
+	"golang.org/x/sync/errgroup"
+
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/promql"
 	"github.com/cardinalhq/lakerunner/queryapi"
-	"github.com/google/uuid"
-	"golang.org/x/sync/errgroup"
 )
 
 // WorkerService wires HTTP → CacheManager → SSE.
@@ -50,7 +51,7 @@ func NewWorkerService(
 	logsGlobSize int,
 	maxConcurrency int,
 	sp storageprofile.StorageProfileProvider,
-	cloudManagers *cloudstorage.CloudManagers,
+	cloudManagers cloudstorage.ClientProvider,
 ) *WorkerService {
 	downloader := func(ctx context.Context, profile storageprofile.StorageProfile, keys []string) error {
 		if len(keys) == 0 {

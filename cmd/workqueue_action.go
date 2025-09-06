@@ -43,7 +43,7 @@ import (
 type RunqueueProcessingFunction func(
 	ctx context.Context,
 	tmpdir string,
-	cmgr *cloudstorage.CloudManagers,
+	cmgr cloudstorage.ClientProvider,
 	sp storageprofile.StorageProfileProvider,
 	mdb lrdb.StoreFull,
 	inf lockmgr.Workable,
@@ -65,7 +65,7 @@ type RunqueueLoopContext struct {
 	wqm             lockmgr.WorkQueueManager
 	mdb             lrdb.StoreFull
 	sp              storageprofile.StorageProfileProvider
-	cmgr            *cloudstorage.CloudManagers
+	cmgr            cloudstorage.ClientProvider
 	metricEstimator estimator.MetricEstimator
 	logEstimator    estimator.LogEstimator
 	traceEstimator  estimator.TraceEstimator

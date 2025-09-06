@@ -35,7 +35,7 @@ import (
 
 // Aggressive loop for object cleanup.
 // If work was done: tiny delay; else a slightly longer pause. Errors are logged and retried.
-func objectCleanerLoop(ctx context.Context, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, cmgr *cloudstorage.CloudManagers) error {
+func objectCleanerLoop(ctx context.Context, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, cmgr cloudstorage.ClientProvider) error {
 	const (
 		delayIfNoWork = 5 * time.Second
 		delayIfError  = 5 * time.Second
@@ -72,7 +72,7 @@ func objectCleanerLoop(ctx context.Context, sp storageprofile.StorageProfileProv
 	}
 }
 
-func runObjCleaner(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, cmgr *cloudstorage.CloudManagers) (bool, error) {
+func runObjCleaner(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, cmgr cloudstorage.ClientProvider) (bool, error) {
 	const maxrows = 1000
 	objs, err := mdb.ObjectCleanupGet(ctx, maxrows)
 	if err != nil {
@@ -107,7 +107,7 @@ func runObjCleaner(ctx context.Context, ll *slog.Logger, sp storageprofile.Stora
 	return didwork, nil
 }
 
-func cleanupObj(ctx context.Context, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, cmgr *cloudstorage.CloudManagers, obj lrdb.ObjectCleanupGetRow) {
+func cleanupObj(ctx context.Context, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, cmgr cloudstorage.ClientProvider, obj lrdb.ObjectCleanupGetRow) {
 	ll := logctx.FromContext(ctx).With(
 		slog.String("objectID", obj.ObjectID),
 		slog.String("bucketID", obj.BucketID),

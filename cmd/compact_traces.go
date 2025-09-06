@@ -74,7 +74,7 @@ var compactTracesDoneCtx context.Context
 func compactTracesFor(
 	ctx context.Context,
 	tmpdir string,
-	cmgr *cloudstorage.CloudManagers,
+	cmgr cloudstorage.ClientProvider,
 	sp storageprofile.StorageProfileProvider,
 	mdb lrdb.StoreFull,
 	inf lockmgr.Workable,

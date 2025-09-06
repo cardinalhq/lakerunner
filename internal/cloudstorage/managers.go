@@ -20,16 +20,23 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/azureclient"
+	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
 // CloudManagers holds all cloud provider managers for unified access
+// CloudManagers holds all cloud provider managers for unified access. It
+// implements ClientProvider to allow callers to create storage clients without
+// depending on the concrete struct, enabling easier testing.
 type CloudManagers struct {
 	AWS   *awsclient.Manager
 	Azure *azureclient.Manager
 }
 
+// Ensure CloudManagers implements ClientProvider
+var _ ClientProvider = (*CloudManagers)(nil)
+
 // NewCloudManagers creates managers for all supported cloud providers
-func NewCloudManagers(ctx context.Context) (*CloudManagers, error) {
+func NewCloudManagers(ctx context.Context) (ClientProvider, error) {
 	// Create AWS manager - required for S3-compatible storage (AWS, GCP)
 	awsManager, err := awsclient.NewManager(ctx)
 	if err != nil {
@@ -46,4 +53,24 @@ func NewCloudManagers(ctx context.Context) (*CloudManagers, error) {
 		AWS:   awsManager,
 		Azure: azureManager,
 	}, nil
+}
+
+// NewClient creates a storage Client for the given profile.
+func (m *CloudManagers) NewClient(ctx context.Context, profile storageprofile.StorageProfile) (Client, error) {
+	switch profile.CloudProvider {
+	case "aws", "gcp", "":
+		awsS3Client, err := m.AWS.GetS3ForProfile(ctx, profile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create S3 client: %w", err)
+		}
+		return &s3Client{awsS3Client: awsS3Client}, nil
+	case "azure":
+		azureBlobClient, err := m.Azure.GetBlobForProfile(ctx, profile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Azure blob client: %w", err)
+		}
+		return newAzureClientFromManager(azureBlobClient), nil
+	default:
+		return nil, fmt.Errorf("unsupported cloud provider: %s", profile.CloudProvider)
+	}
 }
