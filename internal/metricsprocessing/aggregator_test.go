@@ -51,8 +51,11 @@ func loadTestDataFiles(t *testing.T) ([]filereader.Reader, []*os.File) {
 		stat, err := f.Stat()
 		require.NoError(t, err, "Failed to stat test file: %s", file.Name())
 
-		reader, err := filereader.NewParquetRawReader(f, stat.Size(), 1000)
+		rawReader, err := filereader.NewParquetRawReader(f, stat.Size(), 1000)
 		require.NoError(t, err, "Failed to create parquet reader for: %s", file.Name())
+
+		// Wrap with CookedMetricTranslatingReader for metric files
+		reader := filereader.NewCookedMetricTranslatingReader(rawReader)
 
 		readers = append(readers, reader)
 		openFiles = append(openFiles, f)

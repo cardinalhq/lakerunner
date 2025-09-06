@@ -278,6 +278,19 @@ func (b *Batch) ReplaceRow(index int, newRow Row) {
 	b.rows[index] = newRow
 }
 
+// SwapRows efficiently swaps two rows within a batch without allocations.
+// This is useful for readers that need to rearrange data without copying.
+// Returns false if either index is invalid.
+func (b *Batch) SwapRows(index1, index2 int) bool {
+	if index1 < 0 || index1 >= b.validLen || index2 < 0 || index2 >= b.validLen {
+		return false // Invalid indices
+	}
+
+	// Simple pointer swap
+	b.rows[index1], b.rows[index2] = b.rows[index2], b.rows[index1]
+	return true
+}
+
 // getPooledRow gets a clean row from the pool
 func getPooledRow() Row {
 	row := rowPool.Get().(Row)

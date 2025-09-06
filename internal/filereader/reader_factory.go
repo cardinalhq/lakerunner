@@ -121,6 +121,7 @@ func ReaderForFileWithOptions(filename string, opts ReaderOptions) (Reader, erro
 }
 
 // createParquetReader creates a ParquetRawReader for the given file.
+// For cooked parquet files (metrics/logs), it wraps the reader with the appropriate translating reader.
 func createParquetReader(filename string, opts ReaderOptions) (Reader, error) {
 	file, err := os.Open(filename)
 	if err != nil {
@@ -137,6 +138,21 @@ func createParquetReader(filename string, opts ReaderOptions) (Reader, error) {
 	if err != nil {
 		file.Close()
 		return nil, err
+	}
+
+	// Check if this is a cooked parquet file and wrap with appropriate translator
+	// Cooked files contain opinionated metric/log formats that need transformation
+	// Only apply translator for files that explicitly contain "cooked" in the name
+	if strings.Contains(filename, "cooked") {
+		switch opts.SignalType {
+		case SignalTypeMetrics:
+			return NewCookedMetricTranslatingReader(reader), nil
+		case SignalTypeLogs:
+			return NewCookedLogTranslatingReader(reader), nil
+		default:
+			// For traces or unknown types, return raw reader
+			return reader, nil
+		}
 	}
 
 	return reader, nil
