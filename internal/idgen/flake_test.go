@@ -23,7 +23,7 @@ import (
 )
 
 func TestSonyFlakeGenerator_NextID(t *testing.T) {
-	gen, err := NewFlakeGenerator()
+	gen, err := newFlakeGenerator()
 	require.NoError(t, err, "failed to create SonyFlakeGenerator")
 
 	// Check that subsequent IDs are increasing
@@ -33,7 +33,7 @@ func TestSonyFlakeGenerator_NextID(t *testing.T) {
 }
 
 func TestSonyFlakeGenerator_NextBase32ID(t *testing.T) {
-	gen, err := NewFlakeGenerator()
+	gen, err := newFlakeGenerator()
 	require.NoError(t, err, "failed to create SonyFlakeGenerator")
 
 	// Generate base32 IDs
