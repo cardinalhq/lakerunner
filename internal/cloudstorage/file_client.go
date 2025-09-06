@@ -58,7 +58,9 @@ func (c *fileClient) DownloadObject(ctx context.Context, tmpdir, bucket, key str
 		}
 		return "", 0, false, err
 	}
-	dst, err := os.CreateTemp(tmpdir, "lr-file-*")
+	// Preserve the original filename to maintain file extensions for downstream type detection
+	filename := filepath.Base(key)
+	dst, err := os.CreateTemp(tmpdir, "*-"+filename)
 	if err != nil {
 		return "", 0, false, err
 	}
