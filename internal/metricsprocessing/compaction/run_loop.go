@@ -27,7 +27,7 @@ import (
 func runLoop(
 	ctx context.Context,
 	manager *Manager,
-	mdb compactionStore,
+	mdb CompactionStore,
 	sp storageprofile.StorageProfileProvider,
 	cmgr cloudstorage.ClientProvider,
 ) error {
@@ -74,7 +74,7 @@ func runLoop(
 		mcqHeartbeater := newMCQHeartbeater(mdb, manager.workerID, itemIDs)
 		cancel := mcqHeartbeater.Start(ctx)
 
-		err = processBatch(ctx, mdb, sp, cmgr, *bundle)
+		err = ProcessBatch(ctx, mdb, sp, cmgr, *bundle)
 
 		// Stop heartbeating before handling results
 		cancel()

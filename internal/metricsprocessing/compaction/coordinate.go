@@ -40,7 +40,7 @@ type CompactionWorkMetadata struct {
 // coordinate handles S3 download, compaction, upload, and database update
 func coordinate(
 	ctx context.Context,
-	mdb compactionStore,
+	mdb CompactionStore,
 	tmpdir string,
 	metadata CompactionWorkMetadata,
 	profile storageprofile.StorageProfile,
@@ -201,7 +201,7 @@ func coordinate(
 
 func replaceCompactedSegments(
 	ctx context.Context,
-	mdb compactionStore,
+	mdb CompactionStore,
 	segments metricsprocessing.ProcessedSegments,
 	oldRows []lrdb.MetricSeg,
 	metadata CompactionWorkMetadata,
@@ -290,7 +290,7 @@ func replaceCompactedSegments(
 // coordinateBundle handles S3 download, compaction, upload, and database update for bundle-based approach
 func coordinateBundle(
 	ctx context.Context,
-	mdb compactionStore,
+	mdb CompactionStore,
 	tmpdir string,
 	bundle lrdb.CompactionBundleResult,
 	profile storageprofile.StorageProfile,

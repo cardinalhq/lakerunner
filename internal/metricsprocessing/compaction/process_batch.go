@@ -28,9 +28,11 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-func processBatch(
+// ProcessBatch processes a batch of compaction work items
+// This is exported for use by the Kafka consumer
+func ProcessBatch(
 	ctx context.Context,
-	mdb compactionStore,
+	mdb CompactionStore,
 	sp storageprofile.StorageProfileProvider,
 	cmgr cloudstorage.ClientProvider,
 	bundle lrdb.CompactionBundleResult,
@@ -119,7 +121,7 @@ func processBatch(
 
 // fetchMetricSegsFromBundle retrieves the MetricSeg records corresponding to the bundle items
 // by querying segments using the full available key fields for safety and efficiency.
-func fetchMetricSegsFromBundle(ctx context.Context, db compactionStore, items []lrdb.McqFetchCandidatesRow) ([]lrdb.MetricSeg, error) {
+func fetchMetricSegsFromBundle(ctx context.Context, db CompactionStore, items []lrdb.McqFetchCandidatesRow) ([]lrdb.MetricSeg, error) {
 	if len(items) == 0 {
 		return nil, nil
 	}

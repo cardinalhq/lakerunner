@@ -22,8 +22,10 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/debugging"
+	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing/compaction"
@@ -35,6 +37,11 @@ func init() {
 		Use:   "compact-metrics",
 		Short: "Roll up metrics",
 		RunE: func(_ *cobra.Command, _ []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+
 			helpers.SetupTempDir()
 
 			servicename := "lakerunner-compact-metrics"
@@ -85,12 +92,34 @@ func init() {
 
 			sp := storageprofile.NewStorageProfileProvider(cdb)
 
-			config := compaction.GetConfigFromEnv()
-			manager := compaction.NewManager(mdb, myInstanceID, config, sp, cmgr)
+			manager := compaction.NewManager(mdb, myInstanceID, &cfg.Metrics.Compaction, sp, cmgr)
 
-			healthServer.SetStatus(healthcheck.StatusHealthy)
+			// Check if Kafka is enabled
+			kafkaFactory := fly.NewFactory(&cfg.Fly)
+			if kafkaFactory.IsEnabled() {
+				slog.Info("Starting metrics compaction with Kafka consumer")
 
-			return manager.Run(ctx)
+				// Create Kafka consumer for compaction
+				consumer, err := NewKafkaCompactionConsumer(ctx, kafkaFactory, cfg, manager, mdb)
+				if err != nil {
+					return fmt.Errorf("failed to create Kafka compaction consumer: %w", err)
+				}
+				defer func() {
+					if err := consumer.Close(); err != nil {
+						slog.Error("Error closing Kafka consumer", slog.Any("error", err))
+					}
+				}()
+
+				healthServer.SetStatus(healthcheck.StatusHealthy)
+
+				// Run the Kafka consumer
+				return consumer.Run(ctx)
+			} else {
+				// Fall back to the old polling-based approach
+				slog.Info("Starting metrics compaction with polling (Kafka not enabled)")
+				healthServer.SetStatus(healthcheck.StatusHealthy)
+				return manager.Run(ctx)
+			}
 		},
 	}
 

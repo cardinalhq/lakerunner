@@ -26,8 +26,8 @@ import (
 type MetricSegmentNotificationMessage struct {
 	OrganizationID uuid.UUID `json:"o"`  // organization_id
 	DateInt        int32     `json:"d"`  // dateint
-	FrequencyMs    int64     `json:"f"`  // frequency_ms
-	SegmentID      uuid.UUID `json:"s"`  // segment_id
+	FrequencyMs    int32     `json:"f"`  // frequency_ms
+	SegmentID      int64     `json:"s"`  // segment_id
 	InstanceNum    int16     `json:"i"`  // instance_num
 	SlotID         int32     `json:"si"` // slot_id
 	SlotCount      int32     `json:"sc"` // slot_count
