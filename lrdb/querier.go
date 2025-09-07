@@ -45,6 +45,8 @@ type Querier interface {
 	// Gets metric pack estimate for specific org with fallback to default (all zeros)
 	// Returns up to 2 rows: one for the specific org and one for the default
 	GetMetricPackEstimateForOrg(ctx context.Context, arg GetMetricPackEstimateForOrgParams) ([]MetricPackEstimate, error)
+	// Fetch a single metric segment by its complete primary key
+	GetMetricSegByPrimaryKey(ctx context.Context, arg GetMetricSegByPrimaryKeyParams) (MetricSeg, error)
 	GetMetricSegsByIds(ctx context.Context, arg GetMetricSegsByIdsParams) ([]MetricSeg, error)
 	GetMetricType(ctx context.Context, arg GetMetricTypeParams) (string, error)
 	GetSpanInfoByFingerprint(ctx context.Context, arg GetSpanInfoByFingerprintParams) (GetSpanInfoByFingerprintRow, error)

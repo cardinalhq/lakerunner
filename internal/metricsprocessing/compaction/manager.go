@@ -18,23 +18,24 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
-	"strconv"
 	"time"
 
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-type compactionStore interface {
+// CompactionStore is the interface for database operations needed by compaction
+type CompactionStore interface {
 	cloudstorage.ObjectCleanupStore
 	ClaimCompactionBundle(ctx context.Context, p lrdb.BundleParams) (lrdb.CompactionBundleResult, error)
 	McqCompleteDelete(ctx context.Context, arg lrdb.McqCompleteDeleteParams) error
 	McqDeferItems(ctx context.Context, arg lrdb.McqDeferItemsParams) error
 	McqHeartbeat(ctx context.Context, arg lrdb.McqHeartbeatParams) (int64, error)
 	McqRelease(ctx context.Context, arg lrdb.McqReleaseParams) error
+	GetMetricSegByPrimaryKey(ctx context.Context, arg lrdb.GetMetricSegByPrimaryKeyParams) (lrdb.MetricSeg, error)
 	GetMetricSegsByIds(ctx context.Context, arg lrdb.GetMetricSegsByIdsParams) ([]lrdb.MetricSeg, error)
 	CompactMetricSegs(ctx context.Context, args lrdb.CompactMetricSegsParams) error
 	MarkMetricSegsCompactedByKeys(ctx context.Context, arg lrdb.MarkMetricSegsCompactedByKeysParams) error
@@ -42,7 +43,7 @@ type compactionStore interface {
 	MrqQueueWork(ctx context.Context, arg lrdb.MrqQueueWorkParams) error // For queueing rollup work
 }
 
-type config struct {
+type Config struct {
 	OverFactor  float64
 	BatchLimit  int32
 	Grace       time.Duration
@@ -51,43 +52,33 @@ type config struct {
 	MaxAttempts int
 }
 
-func GetConfigFromEnv() config {
-	overFactor := 1.20
-	if env := os.Getenv("LAKERUNNER_METRIC_COMPACTION_OVER_FACTOR"); env != "" {
-		if val, err := strconv.ParseFloat(env, 64); err == nil && val > 1.0 {
-			overFactor = val
-		}
+func ConfigFromViper(cfg *config.CompactionConfig) Config {
+	overFactor := cfg.OverFactor
+	if overFactor <= 1.0 {
+		overFactor = 1.20
 	}
 
-	batchLimit := int32(100)
-	if env := os.Getenv("LAKERUNNER_METRIC_COMPACTION_BATCH_LIMIT"); env != "" {
-		if val, err := strconv.Atoi(env); err == nil && val > 0 {
-			batchLimit = int32(val)
-		}
+	batchLimit := int32(cfg.BatchLimit)
+	if batchLimit <= 0 {
+		batchLimit = 100
 	}
 
-	grace := 5 * time.Minute
-	if env := os.Getenv("LAKERUNNER_METRIC_COMPACTION_GRACE_MINUTES"); env != "" {
-		if val, err := strconv.Atoi(env); err == nil && val > 0 {
-			grace = time.Duration(val) * time.Minute
-		}
+	grace := time.Duration(cfg.GraceMinutes) * time.Minute
+	if grace <= 0 {
+		grace = 5 * time.Minute
 	}
 
-	deferBase := 30 * time.Second
-	if env := os.Getenv("LAKERUNNER_METRIC_COMPACTION_DEFER_SECONDS"); env != "" {
-		if val, err := strconv.Atoi(env); err == nil && val > 0 {
-			deferBase = time.Duration(val) * time.Second
-		}
+	deferBase := time.Duration(cfg.DeferSeconds) * time.Second
+	if deferBase <= 0 {
+		deferBase = 30 * time.Second
 	}
 
-	maxAttempts := 5
-	if env := os.Getenv("LAKERUNNER_METRIC_COMPACTION_MAX_ATTEMPTS"); env != "" {
-		if val, err := strconv.Atoi(env); err == nil && val > 0 {
-			maxAttempts = val
-		}
+	maxAttempts := cfg.MaxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = 5
 	}
 
-	return config{
+	return Config{
 		OverFactor:  overFactor,
 		BatchLimit:  batchLimit,
 		Grace:       grace,
@@ -97,19 +88,52 @@ func GetConfigFromEnv() config {
 	}
 }
 
+// GetConfigFromEnv is deprecated - use ConfigFromViper with config.Load() instead
+// This function is kept for backward compatibility
+func GetConfigFromEnv() Config {
+	cfg, err := config.Load()
+	if err != nil {
+		// Fall back to defaults if config loading fails
+		return Config{
+			OverFactor:  1.20,
+			BatchLimit:  100,
+			Grace:       5 * time.Minute,
+			DeferBase:   30 * time.Second,
+			Jitter:      10 * time.Second,
+			MaxAttempts: 5,
+		}
+	}
+	return ConfigFromViper(&cfg.Metrics.Compaction)
+}
+
 type Manager struct {
-	db       compactionStore
+	db       CompactionStore
 	workerID int64
-	config   config
+	config   Config
 	sp       storageprofile.StorageProfileProvider
 	cmgr     cloudstorage.ClientProvider
 }
 
-func NewManager(db compactionStore, workerID int64, config config, sp storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider) *Manager {
+// GetDB returns the database store
+func (m *Manager) GetDB() CompactionStore {
+	return m.db
+}
+
+// GetStorageProfileProvider returns the storage profile provider
+func (m *Manager) GetStorageProfileProvider() storageprofile.StorageProfileProvider {
+	return m.sp
+}
+
+// GetCloudManager returns the cloud storage client provider
+func (m *Manager) GetCloudManager() cloudstorage.ClientProvider {
+	return m.cmgr
+}
+
+func NewManager(db CompactionStore, workerID int64, cfg *config.CompactionConfig, sp storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider) *Manager {
 	return &Manager{
 		db:       db,
 		workerID: workerID,
-		config:   config,
+		config:   ConfigFromViper(cfg),
 		sp:       sp,
 		cmgr:     cmgr,
 	}
