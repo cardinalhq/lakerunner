@@ -27,6 +27,7 @@ type LogSegmentUpserter interface {
 type MetricSegmentInserter interface {
 	InsertMetricSegment(ctx context.Context, params InsertMetricSegmentParams) error
 	CompactMetricSegs(ctx context.Context, args CompactMetricSegsParams) error
+	CompactMetricSegsWithKafkaOffsets(ctx context.Context, params CompactMetricSegsParams, kafkaOffsets []KafkaOffsetUpdate) error
 	RollupMetricSegs(ctx context.Context, sourceParams RollupSourceParams, targetParams RollupTargetParams, sourceSegmentIDs []int64, newRecords []RollupNewRecord) error
 	ClaimRollupBundle(ctx context.Context, params BundleParams) (*RollupBundleResult, error)
 	CompleteRollup(ctx context.Context, workerID int64, ids []int64) error

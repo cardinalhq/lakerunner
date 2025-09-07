@@ -275,7 +275,10 @@ func (k *KafkaIngestConsumer) RunWithAccumulation(ctx context.Context) error {
 	ll := logctx.FromContext(ctx)
 
 	// Create accumulator manager
-	manager := metricsingestion.NewAccumulatorManager(k.config.Metrics.Ingestion.MaxAccumulationTime)
+	manager, err := metricsingestion.NewAccumulatorManager(k.config.Metrics.Ingestion.MaxAccumulationTime)
+	if err != nil {
+		return fmt.Errorf("failed to create accumulator manager: %w", err)
+	}
 	defer manager.Close()
 
 	// Disable auto-commit for manual control
@@ -330,7 +333,7 @@ func (k *KafkaIngestConsumer) RunWithAccumulation(ctx context.Context) error {
 				}
 
 				// Process file to sorted reader
-				reader, metadata, err := k.processFileToSortedReader(ctx, notif)
+				reader, metadata, err := k.processFileToSortedReader(ctx, notif, manager.GetTmpDir())
 				if err != nil {
 					ll.Error("Failed to process file to sorted reader",
 						slog.String("objectID", notif.ObjectID),
@@ -359,7 +362,10 @@ func (k *KafkaIngestConsumer) RunWithAccumulation(ctx context.Context) error {
 				}
 
 				// Reset for next accumulation window
-				manager.Reset()
+				if err := manager.Reset(); err != nil {
+					ll.Error("Failed to reset manager", slog.Any("error", err))
+					return err
+				}
 			}
 
 			// Return nil to indicate successful processing (consumer will auto-commit)
@@ -384,7 +390,7 @@ func (k *KafkaIngestConsumer) RunWithAccumulation(ctx context.Context) error {
 }
 
 // processFileToSortedReader processes a single file to a sorted reader for accumulation
-func (k *KafkaIngestConsumer) processFileToSortedReader(ctx context.Context, notif *messages.ObjStoreNotificationMessage) (filereader.Reader, metricsingestion.ReaderMetadata, error) {
+func (k *KafkaIngestConsumer) processFileToSortedReader(ctx context.Context, notif *messages.ObjStoreNotificationMessage, tmpDir string) (filereader.Reader, metricsingestion.ReaderMetadata, error) {
 	ll := logctx.FromContext(ctx)
 
 	// Create IngestItem from notification
@@ -398,30 +404,21 @@ func (k *KafkaIngestConsumer) processFileToSortedReader(ctx context.Context, not
 		QueuedAt:       notif.QueuedAt,
 	}
 
-	// Create temp directory
-	tmpDir, err := os.MkdirTemp("", "kafka-accumulate-*")
-	if err != nil {
-		return nil, metricsingestion.ReaderMetadata{}, fmt.Errorf("creating tmpdir: %w", err)
-	}
-
 	// Get storage profile for downloading
 	profile, err := k.loop.sp.GetStorageProfileForOrganizationAndInstance(ctx, item.OrganizationID, item.InstanceNum)
 	if err != nil {
-		os.RemoveAll(tmpDir)
 		return nil, metricsingestion.ReaderMetadata{}, fmt.Errorf("failed to get storage profile: %w", err)
 	}
 
 	// Get storage client
 	storageClient, err := cloudstorage.NewClient(ctx, k.loop.cloudManagers, profile)
 	if err != nil {
-		os.RemoveAll(tmpDir)
 		return nil, metricsingestion.ReaderMetadata{}, fmt.Errorf("failed to create storage client: %w", err)
 	}
 
 	// Process the file to a sorted reader
 	reader, metadata, err := metricsingestion.ProcessFileToSortedReader(ctx, item, tmpDir, storageClient)
 	if err != nil {
-		os.RemoveAll(tmpDir)
 		return nil, metricsingestion.ReaderMetadata{}, err
 	}
 
@@ -450,22 +447,11 @@ func (k *KafkaIngestConsumer) flushAccumulator(ctx context.Context, manager *met
 		return nil
 	}
 
-	// Create temp directory for processing
-	tmpDir, err := os.MkdirTemp("", "kafka-flush-*")
-	if err != nil {
-		return fmt.Errorf("creating tmpdir: %w", err)
-	}
-	defer func() {
-		if err := os.RemoveAll(tmpDir); err != nil {
-			ll.Error("Failed to clean up tmpdir", slog.Any("error", err))
-		}
-	}()
-
 	ingestDateint, _ := helpers.MSToDateintHour(time.Now().UTC().UnixMilli())
 
-	// Prepare batch arguments
+	// Prepare batch arguments - use manager's tmpDir
 	args := ingest.ProcessBatchArgs{
-		TmpDir:          tmpDir,
+		TmpDir:          manager.GetTmpDir(),
 		StorageProvider: k.loop.sp,
 		DB:              k.loop.mdb,
 		CloudManager:    k.loop.cloudManagers,
@@ -482,9 +468,6 @@ func (k *KafkaIngestConsumer) flushAccumulator(ctx context.Context, manager *met
 	if err := metricsingestion.ProcessAccumulatedBatch(ctx, args, manager, k.config.Metrics.Ingestion, k.producer); err != nil {
 		return fmt.Errorf("failed to process accumulated batch: %w", err)
 	}
-
-	ll.Info("Successfully flushed accumulated batch",
-		slog.Int("accumulatorCount", len(manager.GetAccumulators())))
 
 	return nil
 }
