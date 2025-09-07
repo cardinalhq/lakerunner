@@ -192,12 +192,12 @@ func (s *CompactionStrategy) GetOutputTopics(key accumulation.AccumulationKey) [
 
 // GetConsumerGroup returns the consumer group name
 func (s *CompactionStrategy) GetConsumerGroup() string {
-	return "compact-metrics"
+	return "lakerunner.compact.metrics"
 }
 
 // GetSourceTopic returns the source Kafka topic
 func (s *CompactionStrategy) GetSourceTopic() string {
-	return "metric-segments"
+	return "lakerunner.segments.metrics.compact"
 }
 
 // GetMaxAccumulationTime returns the max accumulation time
