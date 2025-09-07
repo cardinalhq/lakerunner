@@ -169,16 +169,13 @@ func fetchSegment(ctx context.Context, db CompactionStore, notification *message
 
 // updateKafkaOffset updates the Kafka offset in the database
 func updateKafkaOffset(ctx context.Context, db CompactionStore, kafkaOffset *lrdb.KafkaOffsetUpdate) error {
-	// This should be done in the same transaction as the compaction results
-	// For now, this is a placeholder
-	return nil
-}
-
-// KafkaCompactionMetadata extends CompactionWorkMetadata with Kafka-specific fields
-type KafkaCompactionMetadata struct {
-	CompactionWorkMetadata
-	SlotID    int32
-	SlotCount int32
+	// Update the Kafka offset to mark this message as processed
+	return db.KafkaJournalUpsert(ctx, lrdb.KafkaJournalUpsertParams{
+		ConsumerGroup:       kafkaOffset.ConsumerGroup,
+		Topic:               kafkaOffset.Topic,
+		Partition:           kafkaOffset.Partition,
+		LastProcessedOffset: kafkaOffset.Offset,
+	})
 }
 
 // performCompaction performs the actual compaction work
@@ -192,12 +189,30 @@ func performCompaction(
 	metadata CompactionWorkMetadata,
 	kafkaOffset *lrdb.KafkaOffsetUpdate,
 ) error {
-	// This would call the existing compaction logic
-	// For now, this is a placeholder that needs to be implemented
-	// It should:
-	// 1. Download and merge the segments
-	// 2. Create compacted output
-	// 3. Upload to storage
-	// 4. Update database with results and Kafka offset in same transaction
-	return fmt.Errorf("performCompaction not yet implemented")
+	ll := logctx.FromContext(ctx)
+
+	// Use the existing coordinate function to perform the actual compaction
+	// For a single segment, this will just mark it as compacted
+	// For multiple segments (shouldn't happen with Kafka), it would merge them
+	err := coordinate(ctx, db, tmpdir, metadata, profile, blobclient, segments, 0)
+	if err != nil {
+		return fmt.Errorf("compaction failed: %w", err)
+	}
+
+	// Update Kafka offset after successful compaction
+	if kafkaOffset != nil {
+		err = updateKafkaOffset(ctx, db, kafkaOffset)
+		if err != nil {
+			// This is a critical error - we've done the work but can't record the offset
+			// The message will be reprocessed, but the compaction check will prevent duplicate work
+			ll.Error("Failed to update Kafka offset after successful compaction",
+				slog.Any("error", err),
+				slog.String("topic", kafkaOffset.Topic),
+				slog.Int("partition", int(kafkaOffset.Partition)),
+				slog.Int64("offset", kafkaOffset.Offset))
+			return fmt.Errorf("failed to update Kafka offset: %w", err)
+		}
+	}
+
+	return nil
 }

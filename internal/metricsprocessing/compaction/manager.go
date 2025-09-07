@@ -41,6 +41,9 @@ type CompactionStore interface {
 	MarkMetricSegsCompactedByKeys(ctx context.Context, arg lrdb.MarkMetricSegsCompactedByKeysParams) error
 	SetMetricSegCompacted(ctx context.Context, arg lrdb.SetMetricSegCompactedParams) error
 	MrqQueueWork(ctx context.Context, arg lrdb.MrqQueueWorkParams) error // For queueing rollup work
+	// Kafka offset tracking
+	KafkaJournalGetLastProcessed(ctx context.Context, params lrdb.KafkaJournalGetLastProcessedParams) (int64, error)
+	KafkaJournalUpsert(ctx context.Context, params lrdb.KafkaJournalUpsertParams) error
 }
 
 type Config struct {

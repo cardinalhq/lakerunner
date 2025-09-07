@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package cmd
+package compaction
 
 import (
 	"context"
@@ -23,21 +23,30 @@ import (
 	"sync"
 	"time"
 
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
-
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
-	"github.com/cardinalhq/lakerunner/internal/metricsprocessing/compaction"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
+
+// PartitionState tracks the offset state for a Kafka partition
+type PartitionState struct {
+	lastSeenOffset  int64
+	lastKnownOffset int64 // From DB
+	needsDBCheck    bool
+}
+
+// KafkaJournalDB interface for Kafka offset tracking operations
+type KafkaJournalDB interface {
+	KafkaJournalGetLastProcessed(ctx context.Context, params lrdb.KafkaJournalGetLastProcessedParams) (int64, error)
+	KafkaJournalUpsert(ctx context.Context, params lrdb.KafkaJournalUpsertParams) error
+}
 
 // KafkaCompactionConsumer handles consuming metric segment notifications from Kafka for compaction
 type KafkaCompactionConsumer struct {
 	consumer        fly.Consumer
-	manager         *compaction.Manager
+	manager         *Manager
 	kafkaJournalDB  KafkaJournalDB
 	config          *config.Config
 	consumerGroup   string
@@ -47,11 +56,7 @@ type KafkaCompactionConsumer struct {
 }
 
 // NewKafkaCompactionConsumer creates a new Kafka-based compaction consumer
-func NewKafkaCompactionConsumer(ctx context.Context, factory *fly.Factory, cfg *config.Config, manager *compaction.Manager, kafkaJournalDB KafkaJournalDB) (*KafkaCompactionConsumer, error) {
-	if !factory.IsEnabled() {
-		return nil, fmt.Errorf("Kafka is not enabled for compaction")
-	}
-
+func NewKafkaCompactionConsumer(ctx context.Context, factory *fly.Factory, cfg *config.Config, manager *Manager, kafkaJournalDB KafkaJournalDB) (*KafkaCompactionConsumer, error) {
 	// Create consumer for metric compaction topic
 	consumerGroup := "lakerunner.compact.metrics"
 	topic := "lakerunner.segments.metrics.compact"
@@ -127,14 +132,10 @@ func (k *KafkaCompactionConsumer) Run(ctx context.Context) error {
 				}
 
 				// Log lag metrics
-				lag := time.Since(notification.QueuedAt).Seconds()
-				if compactionLag != nil {
-					compactionLag.Record(ctx, lag,
-						metric.WithAttributeSet(commonAttributes),
-						metric.WithAttributes(
-							attribute.String("signal", "metrics"),
-						))
-				}
+				lag := time.Since(notification.QueuedAt)
+				ll.Debug("Message processing lag",
+					slog.Duration("lag", lag),
+					slog.Int64("segmentID", notification.SegmentID))
 			}
 
 			return nil // Success - consumer will commit offsets
@@ -172,7 +173,7 @@ func (k *KafkaCompactionConsumer) processCompactionWork(ctx context.Context, not
 	}
 
 	// Process the Kafka message using the new Kafka-specific processing function
-	err := compaction.ProcessKafkaMessage(ctx, notification, k.manager.GetDB(), k.manager.GetStorageProfileProvider(), k.manager.GetCloudManager(), kafkaOffset)
+	err := ProcessKafkaMessage(ctx, notification, k.manager.GetDB(), k.manager.GetStorageProfileProvider(), k.manager.GetCloudManager(), kafkaOffset)
 	if err != nil {
 		ll.Error("Failed to process compaction from Kafka",
 			slog.Any("error", err),
@@ -239,22 +240,4 @@ func (k *KafkaCompactionConsumer) Close() error {
 		return k.consumer.Close()
 	}
 	return nil
-}
-
-// Define compactionLag metric if not already defined
-var compactionLag metric.Float64Histogram
-
-func init() {
-	// Initialize compaction lag metric
-	if meter != nil {
-		var err error
-		compactionLag, err = meter.Float64Histogram(
-			"lakerunner.compaction.lag",
-			metric.WithDescription("Time between message queuing and processing for compaction"),
-			metric.WithUnit("s"),
-		)
-		if err != nil {
-			slog.Error("Failed to create compaction lag metric", slog.Any("error", err))
-		}
-	}
 }
