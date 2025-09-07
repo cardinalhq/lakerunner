@@ -18,8 +18,9 @@ import (
 	"context"
 	"time"
 
-	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"log/slog"
+
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 )
 
 const (

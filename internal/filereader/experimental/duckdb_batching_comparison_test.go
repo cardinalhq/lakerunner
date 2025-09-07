@@ -21,6 +21,8 @@ import (
 	"runtime"
 	"testing"
 	"time"
+
+	"github.com/cardinalhq/lakerunner/internal/filereader"
 )
 
 // TestDuckDBBatchingComparison compares memory usage between the original

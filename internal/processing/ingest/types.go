@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
+	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -38,11 +39,12 @@ type IngestItem struct {
 
 // ProcessBatchArgs contains common arguments for all batch processing functions
 type ProcessBatchArgs struct {
-	TmpDir          string
-	StorageProvider storageprofile.StorageProfileProvider
-	DB              lrdb.StoreFull
-	CloudManager    cloudstorage.ClientProvider
-	IngestDateint   int32
-	RPFEstimate     int64
-	KafkaOffset     lrdb.KafkaOffsetUpdate
+	TmpDir            string
+	StorageProvider   storageprofile.StorageProfileProvider
+	DB                lrdb.StoreFull
+	CloudManager      cloudstorage.ClientProvider
+	IngestDateint     int32
+	RPFEstimate       int64
+	KafkaOffset       lrdb.KafkaOffsetUpdate
+	ExemplarProcessor *exemplar.Processor
 }

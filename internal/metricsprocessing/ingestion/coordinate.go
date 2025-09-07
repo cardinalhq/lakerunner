@@ -22,7 +22,6 @@ import (
 	"os"
 	"strings"
 
-	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -176,7 +175,7 @@ func coordinate(
 	}
 
 	// Step 2: Create readers for each file (and process exemplars if configured)
-	readers, readersToClose, err := createReadersForFiles(ctx, validFiles, profile.OrganizationID.String(), input.ExemplarProcessor, input.Config.ProcessExemplars, mdb)
+	readers, readersToClose, err := createReadersForFiles(ctx, validFiles, profile.OrganizationID.String(), input.ExemplarProcessor, mdb)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create readers: %w", err)
 	}
@@ -358,7 +357,7 @@ func downloadAndValidateFiles(ctx context.Context, items []ingest.IngestItem, tm
 }
 
 // createReadersForFiles creates the reader stack for each file and optionally processes exemplars
-func createReadersForFiles(ctx context.Context, validFiles []fileInfo, orgID string, exemplarProcessor *exemplar.Processor, processExemplars bool, mdb lrdb.StoreFull) ([]filereader.Reader, []filereader.Reader, error) {
+func createReadersForFiles(ctx context.Context, validFiles []fileInfo, orgID string, exemplarProcessor *exemplar.Processor, mdb lrdb.StoreFull) ([]filereader.Reader, []filereader.Reader, error) {
 	ll := logctx.FromContext(ctx)
 
 	var readers []filereader.Reader
@@ -379,7 +378,7 @@ func createReadersForFiles(ctx context.Context, validFiles []fileInfo, orgID str
 		}
 
 		// Process exemplars from this reader if requested (do this before wrapping with other readers)
-		if exemplarProcessor != nil && processExemplars {
+		if exemplarProcessor != nil {
 			if err := processExemplarsFromReader(ctx, reader, exemplarProcessor, orgID, mdb); err != nil {
 				// Just log error and continue - don't fail the whole file
 				ll.Warn("Failed to process exemplars from file",
@@ -470,18 +469,10 @@ func processExemplarsFromReader(_ context.Context, reader filereader.Reader, pro
 		if err != nil {
 			return fmt.Errorf("failed to get OTEL metrics: %w", err)
 		}
-		if err := processExemplarsFromMetrics(metrics, processor, orgID); err != nil {
-			return fmt.Errorf("failed to process exemplars from metrics: %w", err)
+		ctx := context.Background()
+		if err := processor.ProcessMetrics(ctx, *metrics, orgID); err != nil {
+			return fmt.Errorf("failed to process metrics through exemplar processor: %w", err)
 		}
-	}
-	return nil
-}
-
-// processExemplarsFromMetrics processes exemplars from parsed pmetric.Metrics
-func processExemplarsFromMetrics(metrics *pmetric.Metrics, processor *exemplar.Processor, customerID string) error {
-	ctx := context.Background()
-	if err := processor.ProcessMetrics(ctx, *metrics, customerID); err != nil {
-		return fmt.Errorf("failed to process metrics through exemplar processor: %w", err)
 	}
 	return nil
 }

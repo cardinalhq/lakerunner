@@ -16,8 +16,9 @@ package promql
 
 import (
 	"fmt"
-	"github.com/cardinalhq/lakerunner/logql"
 	"strings"
+
+	"github.com/cardinalhq/lakerunner/logql"
 )
 
 type RewriteResult struct {

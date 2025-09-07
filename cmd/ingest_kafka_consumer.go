@@ -417,7 +417,7 @@ func (k *KafkaIngestConsumer) processFileToSortedReader(ctx context.Context, not
 	}
 
 	// Process the file to a sorted reader
-	reader, metadata, err := metricsingestion.ProcessFileToSortedReader(ctx, item, tmpDir, storageClient)
+	reader, metadata, err := metricsingestion.ProcessFileToSortedReader(ctx, item, tmpDir, storageClient, k.loop.exemplarProcessor, k.loop.mdb)
 	if err != nil {
 		return nil, metricsingestion.ReaderMetadata{}, err
 	}
@@ -451,12 +451,13 @@ func (k *KafkaIngestConsumer) flushAccumulator(ctx context.Context, manager *met
 
 	// Prepare batch arguments - use manager's tmpDir
 	args := ingest.ProcessBatchArgs{
-		TmpDir:          manager.GetTmpDir(),
-		StorageProvider: k.loop.sp,
-		DB:              k.loop.mdb,
-		CloudManager:    k.loop.cloudManagers,
-		IngestDateint:   ingestDateint,
-		RPFEstimate:     40_000, // Will be overridden per org/instance
+		TmpDir:            manager.GetTmpDir(),
+		StorageProvider:   k.loop.sp,
+		DB:                k.loop.mdb,
+		CloudManager:      k.loop.cloudManagers,
+		IngestDateint:     ingestDateint,
+		RPFEstimate:       40_000, // Will be overridden per org/instance
+		ExemplarProcessor: k.loop.exemplarProcessor,
 		KafkaOffset: lrdb.KafkaOffsetUpdate{
 			ConsumerGroup: k.consumerGroup,
 			Topic:         k.topic,

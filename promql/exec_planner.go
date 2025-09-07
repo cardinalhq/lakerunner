@@ -18,10 +18,11 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
-	"github.com/cardinalhq/lakerunner/logql"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/cardinalhq/lakerunner/logql"
 )
 
 // ---------- Exec nodes & plumbing (planning-time only) ----------

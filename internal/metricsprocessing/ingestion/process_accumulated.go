@@ -25,6 +25,7 @@ import (
 	"github.com/jellydator/ttlcache/v3"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
+	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
@@ -279,7 +280,7 @@ func getStorageProfileForOrgInstance(
 }
 
 // ProcessFileToSortedReader processes a single file to a sorted reader
-func ProcessFileToSortedReader(ctx context.Context, item ingest.IngestItem, tmpDir string, storageClient cloudstorage.Client) (filereader.Reader, ReaderMetadata, error) {
+func ProcessFileToSortedReader(ctx context.Context, item ingest.IngestItem, tmpDir string, storageClient cloudstorage.Client, exemplarProcessor *exemplar.Processor, mdb lrdb.StoreFull) (filereader.Reader, ReaderMetadata, error) {
 	ll := logctx.FromContext(ctx)
 
 	// Download file directly to the shared tmpDir
@@ -299,6 +300,16 @@ func ProcessFileToSortedReader(ctx context.Context, item ingest.IngestItem, tmpD
 	reader, err := CreateMetricProtoReader(tmpfilename)
 	if err != nil {
 		return nil, ReaderMetadata{}, fmt.Errorf("failed to create proto reader: %w", err)
+	}
+
+	// Process exemplars from this reader if exemplar processor is provided (do this before wrapping with other readers)
+	if exemplarProcessor != nil {
+		if err := processExemplarsFromReader(ctx, reader, exemplarProcessor, item.OrganizationID.String(), mdb); err != nil {
+			// Just log error and continue - don't fail the whole file
+			ll.Warn("Failed to process exemplars from file",
+				slog.String("objectID", item.ObjectID),
+				slog.Any("error", err))
+		}
 	}
 
 	// Add translation
