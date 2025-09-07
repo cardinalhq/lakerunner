@@ -39,11 +39,14 @@ type CompactionStore interface {
 	KafkaJournalUpsert(ctx context.Context, params lrdb.KafkaJournalUpsertParams) error
 	// Metric estimates
 	GetMetricEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32) int64
+	// Add RollupMetricSegs to satisfy accumulation.Store interface (won't be used for compaction)
+	RollupMetricSegs(ctx context.Context, sourceParams lrdb.RollupSourceParams, targetParams lrdb.RollupTargetParams, sourceSegmentIDs []int64, newRecords []lrdb.RollupNewRecord) error
 }
 
 // Config holds configuration for compaction
 type Config struct {
-	TargetFileSizeBytes int64 // Target file size in bytes for compaction
+	TargetFileSizeBytes int64  // Target file size in bytes for compaction
+	MaxAccumulationTime string // Maximum time to accumulate work before flushing
 }
 
 func ConfigFromViper(cfg *config.CompactionConfig) Config {
@@ -53,6 +56,7 @@ func ConfigFromViper(cfg *config.CompactionConfig) Config {
 	}
 	return Config{
 		TargetFileSizeBytes: targetSize,
+		MaxAccumulationTime: "30s", // Default accumulation time
 	}
 }
 

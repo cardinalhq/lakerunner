@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package compaction
+package accumulation
 
 import (
 	"context"
@@ -23,43 +23,38 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
-	"github.com/cardinalhq/lakerunner/internal/metricsprocessing/accumulation"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 )
 
-// CompactionWriterManager manages a parquet writer for compaction
-type CompactionWriterManager struct {
+// WriterManager manages parquet writers for accumulation
+type WriterManager struct {
 	writer               *parquetwriter.UnifiedWriter
 	tmpDir               string
 	targetRecordsPerFile int64
 }
 
-// NewCompactionWriterManager creates a new writer manager for compaction
-func NewCompactionWriterManager(tmpDir string, targetRecordsPerFile int64) *CompactionWriterManager {
-	return &CompactionWriterManager{
+// NewWriterManager creates a new writer manager
+func NewWriterManager(tmpDir string, targetRecordsPerFile int64) *WriterManager {
+	return &WriterManager{
 		tmpDir:               tmpDir,
 		targetRecordsPerFile: targetRecordsPerFile,
 	}
 }
 
-// ProcessReaders processes a stack of readers through the writer manager
-func (m *CompactionWriterManager) ProcessReaders(
-	ctx context.Context,
-	readerStack []filereader.Reader,
-	key accumulation.AccumulationKey,
-) error {
+// ProcessReaders processes readers through the writer with a specific target frequency
+func (wm *WriterManager) ProcessReaders(ctx context.Context, readers []filereader.Reader, key AccumulationKey, targetFrequency int32) error {
 	// Use the existing metricsprocessing functions to create the reader pipeline
 	keyProvider := metricsprocessing.GetCurrentMetricSortKeyProvider()
-	mergeReader, err := filereader.NewMergesortReader(ctx, readerStack, keyProvider, 1000)
+	mergeReader, err := filereader.NewMergesortReader(ctx, readers, keyProvider, 1000)
 	if err != nil {
 		return fmt.Errorf("creating mergesort reader: %w", err)
 	}
 	defer mergeReader.Close()
 
 	// Add aggregation
-	aggregatingReader, err := filereader.NewAggregatingMetricsReader(mergeReader, int64(key.FrequencyMs), 1000)
+	aggregatingReader, err := filereader.NewAggregatingMetricsReader(mergeReader, int64(targetFrequency), 1000)
 	if err != nil {
 		return fmt.Errorf("creating aggregating reader: %w", err)
 	}
@@ -75,7 +70,7 @@ func (m *CompactionWriterManager) ProcessReaders(
 		}
 
 		if batch != nil {
-			if err := m.processBatch(ctx, batch); err != nil {
+			if err := wm.processBatch(ctx, batch); err != nil {
 				pipeline.ReturnBatch(batch)
 				return fmt.Errorf("processing batch: %w", err)
 			}
@@ -91,12 +86,12 @@ func (m *CompactionWriterManager) ProcessReaders(
 }
 
 // processBatch processes a batch of rows
-func (m *CompactionWriterManager) processBatch(ctx context.Context, batch *pipeline.Batch) error {
-	if err := m.ensureWriter(ctx); err != nil {
+func (wm *WriterManager) processBatch(ctx context.Context, batch *pipeline.Batch) error {
+	if err := wm.ensureWriter(ctx); err != nil {
 		return fmt.Errorf("ensuring writer: %w", err)
 	}
 
-	if err := m.writer.WriteBatch(batch); err != nil {
+	if err := wm.writer.WriteBatch(batch); err != nil {
 		return fmt.Errorf("writing batch: %w", err)
 	}
 
@@ -104,32 +99,32 @@ func (m *CompactionWriterManager) processBatch(ctx context.Context, batch *pipel
 }
 
 // ensureWriter creates the writer if it doesn't exist
-func (m *CompactionWriterManager) ensureWriter(_ context.Context) error {
-	if m.writer != nil {
+func (wm *WriterManager) ensureWriter(_ context.Context) error {
+	if wm.writer != nil {
 		return nil
 	}
 
 	// Create writer with the target records per file estimate
-	writer, err := factories.NewMetricsWriter(m.tmpDir, m.targetRecordsPerFile)
+	writer, err := factories.NewMetricsWriter(wm.tmpDir, wm.targetRecordsPerFile)
 	if err != nil {
 		return fmt.Errorf("creating metrics writer: %w", err)
 	}
 
-	m.writer = writer
+	wm.writer = writer
 	return nil
 }
 
-// FlushAll closes the writer and returns the results
-func (m *CompactionWriterManager) FlushAll(ctx context.Context) (metricsprocessing.ProcessingResult, error) {
+// FlushAll flushes all writers and returns the processing result
+func (wm *WriterManager) FlushAll(ctx context.Context) (metricsprocessing.ProcessingResult, error) {
 	ll := logctx.FromContext(ctx)
 
-	if m.writer == nil {
+	if wm.writer == nil {
 		// No writer was created, return empty results
 		return metricsprocessing.ProcessingResult{}, nil
 	}
 
 	// Close the writer and get all the files it created
-	results, err := m.writer.Close(ctx)
+	results, err := wm.writer.Close(ctx)
 	if err != nil {
 		return metricsprocessing.ProcessingResult{}, fmt.Errorf("closing writer: %w", err)
 	}
@@ -142,13 +137,13 @@ func (m *CompactionWriterManager) FlushAll(ctx context.Context) (metricsprocessi
 		totalBytes += result.FileSize
 	}
 
-	ll.Info("Flushed compaction writer",
+	ll.Info("Flushed accumulation writer",
 		slog.Int("fileCount", len(results)),
 		slog.Int64("totalRecords", totalRecords),
 		slog.Int64("totalBytes", totalBytes))
 
 	// Clear writer reference
-	m.writer = nil
+	wm.writer = nil
 
 	// Return ProcessingResult
 	return metricsprocessing.ProcessingResult{
@@ -159,15 +154,4 @@ func (m *CompactionWriterManager) FlushAll(ctx context.Context) (metricsprocessi
 			OutputBytes:    totalBytes,
 		},
 	}, nil
-}
-
-// Close closes the writer and cleans up resources
-func (m *CompactionWriterManager) Close(ctx context.Context) error {
-	if m.writer != nil {
-		if _, err := m.writer.Close(ctx); err != nil {
-			return err
-		}
-		m.writer = nil
-	}
-	return nil
 }

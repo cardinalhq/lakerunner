@@ -29,6 +29,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
+	"github.com/cardinalhq/lakerunner/internal/metricsprocessing/accumulation"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -42,17 +43,19 @@ type PartitionState struct {
 
 // KafkaAccumulatedRollupConsumer handles consuming and accumulating metric rollup notifications from Kafka
 type KafkaAccumulatedRollupConsumer struct {
-	consumer        fly.Consumer
-	rollupManager   *RollupManager
-	db              rollupStore
-	sp              storageprofile.StorageProfileProvider
-	cmgr            cloudstorage.ClientProvider
-	config          *config.Config
-	consumerGroup   string
-	topic           string
-	lastFlushTime   time.Time
-	partitionStates map[int]*PartitionState
-	stateMutex      sync.RWMutex
+	consumer            fly.Consumer
+	accManager          *accumulation.Manager
+	strategy            *RollupStrategy
+	store               rollupStore
+	sp                  storageprofile.StorageProfileProvider
+	cmgr                cloudstorage.ClientProvider
+	config              *config.Config
+	consumerGroup       string
+	topic               string
+	lastFlushTime       time.Time
+	maxAccumulationTime time.Duration
+	partitionStates     map[int]*PartitionState
+	stateMutex          sync.RWMutex
 }
 
 // NewKafkaAccumulatedRollupConsumer creates a new accumulator-based Kafka rollup consumer
@@ -64,32 +67,52 @@ func NewKafkaAccumulatedRollupConsumer(
 	sp storageprofile.StorageProfileProvider,
 	cmgr cloudstorage.ClientProvider,
 ) (*KafkaAccumulatedRollupConsumer, error) {
-	consumerGroup := "lakerunner.rollup.metrics"
-	topic := "lakerunner.segments.metrics.rollup"
+	// Create strategy with default config
+	rollupConfig := Config{
+		TargetFileSizeBytes: 100 * 1024 * 1024, // 100MB default
+		MaxAccumulationTime: "30s",
+	}
+	strategy := NewRollupStrategy(rollupConfig)
+
+	// Parse max accumulation time
+	maxAccumulationTime, err := time.ParseDuration(rollupConfig.MaxAccumulationTime)
+	if err != nil {
+		return nil, fmt.Errorf("invalid max accumulation time: %w", err)
+	}
+
+	// Create shared accumulation manager
+	accManager, err := accumulation.NewManager(
+		strategy,
+		db,
+		maxAccumulationTime,
+		rollupConfig.TargetFileSizeBytes,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create accumulation manager: %w", err)
+	}
+
+	consumerGroup := strategy.GetConsumerGroup()
+	topic := strategy.GetSourceTopic()
 
 	consumer, err := factory.CreateConsumer(topic, consumerGroup)
 	if err != nil {
+		accManager.Close()
 		return nil, fmt.Errorf("failed to create Kafka consumer: %w", err)
 	}
 
-	// Create rollup manager with centralized temp directory management
-	rollupManager, err := NewRollupManager(db)
-	if err != nil {
-		consumer.Close()
-		return nil, fmt.Errorf("failed to create rollup manager: %w", err)
-	}
-
 	return &KafkaAccumulatedRollupConsumer{
-		consumer:        consumer,
-		rollupManager:   rollupManager,
-		db:              db,
-		sp:              sp,
-		cmgr:            cmgr,
-		config:          cfg,
-		consumerGroup:   consumerGroup,
-		topic:           topic,
-		lastFlushTime:   time.Now(),
-		partitionStates: make(map[int]*PartitionState),
+		consumer:            consumer,
+		accManager:          accManager,
+		strategy:            strategy,
+		store:               db,
+		sp:                  sp,
+		cmgr:                cmgr,
+		config:              cfg,
+		consumerGroup:       consumerGroup,
+		topic:               topic,
+		lastFlushTime:       time.Now(),
+		maxAccumulationTime: maxAccumulationTime,
+		partitionStates:     make(map[int]*PartitionState),
 	}, nil
 }
 
@@ -113,7 +136,7 @@ func (k *KafkaAccumulatedRollupConsumer) Run(ctx context.Context) error {
 			case <-ctx.Done():
 				return
 			case <-flushTicker.C:
-				if k.rollupManager.ShouldFlush() {
+				if k.accManager.ShouldFlush() {
 					select {
 					case flushChan <- struct{}{}:
 					default:
@@ -190,15 +213,8 @@ func (k *KafkaAccumulatedRollupConsumer) Run(ctx context.Context) error {
 					Offset:        kafkaMsg.Offset,
 				}
 
-				// Add to accumulator
-				if err := AddRollupWorkFromKafka(
-					ctx,
-					&notification,
-					k.rollupManager,
-					k.db,
-					k.sp,
-					kafkaOffset,
-				); err != nil {
+				// Add to accumulator using the shared framework
+				if err := k.accManager.AddWorkFromKafka(ctx, &notification, k.sp, kafkaOffset); err != nil {
 					// Log warning and skip this message - don't fail the whole batch
 					ll.Warn("Skipping segment due to rollup work error",
 						slog.Any("error", err),
@@ -209,7 +225,7 @@ func (k *KafkaAccumulatedRollupConsumer) Run(ctx context.Context) error {
 			}
 
 			// Check if we should flush based on accumulation state
-			if k.rollupManager.ShouldFlush() {
+			if k.accManager.ShouldFlush() {
 				if err := k.flushAccumulated(ctx); err != nil {
 					// Log error but don't fail - we'll retry the flush next time
 					ll.Error("Failed to flush accumulated work, will retry on next batch",
@@ -242,28 +258,81 @@ func (k *KafkaAccumulatedRollupConsumer) Run(ctx context.Context) error {
 func (k *KafkaAccumulatedRollupConsumer) flushAccumulated(ctx context.Context) error {
 	ll := logctx.FromContext(ctx)
 
-	if !k.rollupManager.HasWork() {
+	// Always reset at the end, regardless of success or failure
+	defer func() {
+		if err := k.accManager.Reset(); err != nil {
+			ll.Error("Failed to reset accumulation manager", slog.Any("error", err))
+		}
+	}()
+
+	if !k.accManager.HasWork() {
 		ll.Debug("No accumulated work to flush")
-		return nil
+		// Still need to update Kafka offsets if any
+		return k.updateKafkaOffsets(ctx)
 	}
 
-	ll.Info("Flushing accumulated rollup work")
+	startTime := time.Now()
+	ll.Info("Starting accumulated rollup processing")
 
-	err := ProcessAccumulatedRollup(
-		ctx,
-		k.rollupManager,
-		k.db,
-		k.sp,
-		k.cmgr,
-		k.consumerGroup,
-		k.topic,
-	)
+	// Process each accumulator
+	for key, accumulator := range k.accManager.GetAccumulators() {
+		work := accumulator.GetWork()
+		if len(work) == 0 {
+			continue
+		}
 
-	if err != nil {
-		return fmt.Errorf("failed to process accumulated rollup: %w", err)
+		ll.Debug("Processing rollup accumulator",
+			slog.String("organizationID", key.OrganizationID.String()),
+			slog.Int("dateint", int(key.Dateint)),
+			slog.Int("sourceFrequencyMs", int(key.FrequencyMs)),
+			slog.Int("workCount", len(work)))
+
+		// Get storage profile from first work item
+		profile := work[0].Profile
+
+		// Create blob client for this org/instance
+		blobclient, err := cloudstorage.NewClient(ctx, k.cmgr, profile)
+		if err != nil {
+			ll.Error("Failed to create storage client",
+				slog.String("organizationID", key.OrganizationID.String()),
+				slog.Any("error", err))
+			return fmt.Errorf("failed to create storage client: %w", err)
+		}
+
+		// Process the accumulator using shared framework
+		if err := accumulation.FlushAccumulator(ctx, accumulator, k.store, blobclient, k.accManager.GetTmpDir(), k.strategy); err != nil {
+			ll.Error("Failed to flush accumulator",
+				slog.String("organizationID", key.OrganizationID.String()),
+				slog.Any("error", err))
+			return fmt.Errorf("failed to flush accumulator: %w", err)
+		}
 	}
+
+	// Update Kafka offsets after successful processing
+	if err := k.updateKafkaOffsets(ctx); err != nil {
+		return fmt.Errorf("failed to update Kafka offsets: %w", err)
+	}
+
+	ll.Info("Completed accumulated rollup processing",
+		slog.Duration("duration", time.Since(startTime)))
 
 	k.lastFlushTime = time.Now()
+	return nil
+}
+
+// updateKafkaOffsets updates Kafka offsets in the database
+func (k *KafkaAccumulatedRollupConsumer) updateKafkaOffsets(ctx context.Context) error {
+	offsetUpdates := k.accManager.GetKafkaOffsetUpdates(k.consumerGroup, k.topic)
+	for _, update := range offsetUpdates {
+		if err := k.store.KafkaJournalUpsert(ctx, lrdb.KafkaJournalUpsertParams{
+			ConsumerGroup:       update.ConsumerGroup,
+			Topic:               update.Topic,
+			Partition:           update.Partition,
+			LastProcessedOffset: update.Offset,
+		}); err != nil {
+			return fmt.Errorf("failed to update Kafka offset for partition %d: %w", update.Partition, err)
+		}
+	}
 	return nil
 }
 
@@ -282,7 +351,7 @@ func (k *KafkaAccumulatedRollupConsumer) shouldProcessMessage(ctx context.Contex
 
 	if state.needsDBCheck || offset != state.lastSeenOffset+1 {
 		// Either first time or gap detected - check DB
-		dbOffset, err := k.db.KafkaJournalGetLastProcessed(ctx, lrdb.KafkaJournalGetLastProcessedParams{
+		dbOffset, err := k.store.KafkaJournalGetLastProcessed(ctx, lrdb.KafkaJournalGetLastProcessedParams{
 			ConsumerGroup: k.consumerGroup,
 			Topic:         k.topic,
 			Partition:     int32(partition),
@@ -324,9 +393,9 @@ func (k *KafkaAccumulatedRollupConsumer) Close() error {
 		logctx.FromContext(ctx).Error("Failed to flush remaining work during shutdown", slog.Any("error", err))
 	}
 
-	// Close the rollup manager
-	if err := k.rollupManager.Close(); err != nil {
-		logctx.FromContext(ctx).Error("Failed to close rollup manager", slog.Any("error", err))
+	// Close the accumulation manager
+	if err := k.accManager.Close(); err != nil {
+		logctx.FromContext(ctx).Error("Failed to close accumulation manager", slog.Any("error", err))
 	}
 
 	// Close the Kafka consumer

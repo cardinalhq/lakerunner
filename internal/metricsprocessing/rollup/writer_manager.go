@@ -23,6 +23,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
+	"github.com/cardinalhq/lakerunner/internal/metricsprocessing/accumulation"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
@@ -47,7 +48,7 @@ func NewRollupWriterManager(tmpDir string, targetRecordsPerFile int64) *RollupWr
 func (m *RollupWriterManager) ProcessRollup(
 	ctx context.Context,
 	readerStack []filereader.Reader,
-	key RollupKey,
+	key accumulation.AccumulationKey,
 	targetFrequency int32,
 ) error {
 	// Use the existing metricsprocessing functions to create the reader pipeline
