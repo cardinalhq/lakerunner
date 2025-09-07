@@ -162,6 +162,15 @@ func coordinateWithKafkaOffset(
 		outputBytes += segment.Result.FileSize
 	}
 
+	// Calculate reduction metrics
+	var segmentReduction, sizeReduction float64
+	if len(oldRows) > 0 {
+		segmentReduction = 1.0 - (float64(len(segments)) / float64(len(oldRows)))
+	}
+	if inputBytes > 0 {
+		sizeReduction = 1.0 - (float64(outputBytes) / float64(inputBytes))
+	}
+
 	ll.Info("Compaction complete with Kafka offset update",
 		slog.Int("inputSegments", len(oldRows)),
 		slog.Int("outputSegments", len(segments)),
@@ -169,6 +178,8 @@ func coordinateWithKafkaOffset(
 		slog.Int64("outputRecords", outputRecords),
 		slog.Int64("inputBytes", inputBytes),
 		slog.Int64("outputBytes", outputBytes),
+		slog.Float64("segmentReduction", segmentReduction),
+		slog.Float64("sizeReduction", sizeReduction),
 		slog.Int64("targetRecords", estimatedTargetRecords))
 
 	return nil
