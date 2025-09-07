@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"sync"
 	"time"
 
@@ -100,16 +101,24 @@ type AccumulatorManager struct {
 	kafkaOffsets        map[int32]int64 // Track highest offset per partition
 	mu                  sync.Mutex
 	totalReadersCount   int
+	tmpDir              string // Temp directory for this accumulation cycle
 }
 
 // NewAccumulatorManager creates a new accumulator manager
-func NewAccumulatorManager(maxAccumulationTime time.Duration) *AccumulatorManager {
+func NewAccumulatorManager(maxAccumulationTime time.Duration) (*AccumulatorManager, error) {
+	// Create temp directory for this accumulation cycle
+	tmpDir, err := os.MkdirTemp("", "")
+	if err != nil {
+		return nil, fmt.Errorf("creating accumulator tmpdir: %w", err)
+	}
+
 	return &AccumulatorManager{
 		accumulators:        make(map[OrgInstanceKey]*OrgInstanceAccumulator),
 		maxAccumulationTime: maxAccumulationTime,
 		globalStartTime:     time.Now(),
 		kafkaOffsets:        make(map[int32]int64),
-	}
+		tmpDir:              tmpDir,
+	}, nil
 }
 
 // GetOrCreateAccumulator gets or creates an accumulator for the given key
@@ -215,8 +224,15 @@ func (m *AccumulatorManager) GetHighestOffsets() map[int32]int64 {
 	return offsets
 }
 
+// GetTmpDir returns the temp directory for this accumulation cycle
+func (m *AccumulatorManager) GetTmpDir() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.tmpDir
+}
+
 // Reset resets the manager for a new accumulation window
-func (m *AccumulatorManager) Reset() {
+func (m *AccumulatorManager) Reset() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -225,11 +241,27 @@ func (m *AccumulatorManager) Reset() {
 		acc.Close()
 	}
 
+	// Clean up old temp directory
+	if m.tmpDir != "" {
+		if err := os.RemoveAll(m.tmpDir); err != nil {
+			return fmt.Errorf("removing old tmpdir: %w", err)
+		}
+	}
+
+	// Create new temp directory for next accumulation cycle
+	tmpDir, err := os.MkdirTemp("", "")
+	if err != nil {
+		return fmt.Errorf("creating new tmpdir: %w", err)
+	}
+
 	// Reset state
 	m.accumulators = make(map[OrgInstanceKey]*OrgInstanceAccumulator)
 	m.globalStartTime = time.Now()
 	m.kafkaOffsets = make(map[int32]int64)
 	m.totalReadersCount = 0
+	m.tmpDir = tmpDir
+
+	return nil
 }
 
 // Close closes all accumulators and their readers
@@ -243,6 +275,14 @@ func (m *AccumulatorManager) Close() error {
 			firstErr = err
 		}
 	}
+
+	// Clean up temp directory
+	if m.tmpDir != "" {
+		if err := os.RemoveAll(m.tmpDir); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+
 	return firstErr
 }
 
@@ -255,23 +295,25 @@ func (m *AccumulatorManager) HasData() bool {
 }
 
 // FlushAccumulator processes a single accumulator and returns parquet results
-func FlushAccumulator(ctx context.Context, acc *OrgInstanceAccumulator, tmpDir string, ingestDateint int32, rpfEstimate int64) ([]parquetwriter.Result, error) {
+func FlushAccumulator(ctx context.Context, acc *OrgInstanceAccumulator, tmpDir string, ingestDateint int32, rpfEstimate int64) ([]parquetwriter.Result, int64, error) {
 	if len(acc.readers) == 0 {
-		return nil, nil
+		return nil, 0, nil
 	}
 
 	// Create unified reader from accumulated sorted readers
+	var inputRowCount int64
+
 	keyProvider := metricsprocessing.GetCurrentMetricSortKeyProvider()
 	mergeReader, err := filereader.NewMergesortReader(ctx, acc.readers, keyProvider, 1000)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create mergesort reader: %w", err)
+		return nil, 0, fmt.Errorf("failed to create mergesort reader: %w", err)
 	}
 
 	// Add aggregation
 	var finalReader filereader.Reader
 	finalReader, err = filereader.NewAggregatingMetricsReader(mergeReader, 10000, 1000)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create aggregating reader: %w", err)
+		return nil, 0, fmt.Errorf("failed to create aggregating reader: %w", err)
 	}
 
 	// Create or reuse writer manager for this (org, instance)
@@ -293,10 +335,11 @@ func FlushAccumulator(ctx context.Context, acc *OrgInstanceAccumulator, tmpDir s
 			if batch != nil {
 				pipeline.ReturnBatch(batch)
 			}
-			return nil, fmt.Errorf("failed to read from unified pipeline: %w", readErr)
+			return nil, 0, fmt.Errorf("failed to read from unified pipeline: %w", readErr)
 		}
 
 		if batch != nil {
+			inputRowCount += int64(batch.Len())
 			acc.writerManager.processBatch(ctx, batch)
 			pipeline.ReturnBatch(batch)
 		}
@@ -309,8 +352,8 @@ func FlushAccumulator(ctx context.Context, acc *OrgInstanceAccumulator, tmpDir s
 	// Close writers and get results
 	results, err := acc.writerManager.closeAll(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to close writers: %w", err)
+		return nil, 0, fmt.Errorf("failed to close writers: %w", err)
 	}
 
-	return results, nil
+	return results, inputRowCount, nil
 }
