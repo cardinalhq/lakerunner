@@ -26,6 +26,7 @@ import (
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
+	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -91,6 +92,9 @@ func (k *KafkaCompactionConsumer) Run(ctx context.Context) error {
 
 		// Consume messages with metadata for proper offset tracking
 		err := k.consumer.Consume(ctx, func(ctx context.Context, kafkaMessages []fly.ConsumedMessage) error {
+			ll := logctx.FromContext(ctx).With(slog.String("batchID", idgen.GenerateShortBase32ID()))
+			ctx = logctx.WithLogger(ctx, ll)
+
 			if len(kafkaMessages) == 0 {
 				return nil
 			}
@@ -130,12 +134,6 @@ func (k *KafkaCompactionConsumer) Run(ctx context.Context) error {
 						slog.Int64("segmentID", notification.SegmentID))
 					return err // Return error to prevent commit
 				}
-
-				// Log lag metrics
-				lag := time.Since(notification.QueuedAt)
-				ll.Debug("Message processing lag",
-					slog.Duration("lag", lag),
-					slog.Int64("segmentID", notification.SegmentID))
 			}
 
 			return nil // Success - consumer will commit offsets

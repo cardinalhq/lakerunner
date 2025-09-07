@@ -24,7 +24,6 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
-	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
@@ -42,10 +41,7 @@ func ProcessKafkaMessage(
 ) error {
 	ll := logctx.FromContext(ctx)
 
-	// Generate batch ID for tracking
-	batchID := idgen.GenerateShortBase32ID()
 	ll = ll.With(
-		slog.String("batchID", batchID),
 		slog.String("organizationID", notification.OrganizationID.String()),
 		slog.Int("dateint", int(notification.DateInt)),
 		slog.Int("frequencyMs", int(notification.FrequencyMs)),
@@ -57,21 +53,13 @@ func ProcessKafkaMessage(
 	)
 	ctx = logctx.WithLogger(ctx, ll)
 
-	// Check if this is a wanted frequency
 	if !helpers.IsWantedFrequency(int32(notification.FrequencyMs)) {
 		ll.Debug("Skipping compaction for unwanted frequency")
-		// Still need to update Kafka offset to mark as processed
-		if kafkaOffset != nil {
-			return updateKafkaOffset(ctx, db, kafkaOffset)
-		}
 		return nil
 	}
 
-	// Get RPF estimate for this org/frequency to determine if we should skip compaction
+	// We do not need a fallback, GetMetricEstimate will return a default for us if needed.
 	rpfEstimate := db.GetMetricEstimate(ctx, notification.OrganizationID, int32(notification.FrequencyMs))
-	if rpfEstimate == 0 {
-		rpfEstimate = 40_000 // Default fallback
-	}
 
 	// Short-circuit check: Skip compaction for segments that are already at or near target size
 	// This avoids unnecessary compaction of segments that are already well-sized
@@ -86,8 +74,8 @@ func ProcessKafkaMessage(
 			slog.Int64("recordCount", notification.RecordCount),
 			slog.Int64("rpfEstimate", rpfEstimate))
 
-		// Mark the segment as compacted using single-segment update with full primary key
-		// We do NOT update Kafka offset here - if we replay, we'll make the same decision
+		// If we replay, we will make the same decision again, which is idempotent.
+		// The kafka offset will be updated when we process a batch of segments that includes this one.
 		err := db.SetSingleMetricSegCompacted(ctx, lrdb.SetSingleMetricSegCompactedParams{
 			OrganizationID: notification.OrganizationID,
 			Dateint:        notification.DateInt,
@@ -103,9 +91,6 @@ func ProcessKafkaMessage(
 				slog.Any("error", err))
 			return fmt.Errorf("failed to mark segment as compacted: %w", err)
 		}
-
-		// NOTE: We intentionally do NOT update the Kafka offset here
-		// This allows replay safety - if we replay this message, we'll make the same decision
 		return nil
 	}
 
@@ -123,7 +108,6 @@ func ProcessKafkaMessage(
 		return fmt.Errorf("failed to create storage client: %w", err)
 	}
 
-	// Create temporary directory
 	tmpdir, err := os.MkdirTemp("", "")
 	if err != nil {
 		ll.Error("Failed to create temporary directory", slog.Any("error", err))
@@ -137,20 +121,16 @@ func ProcessKafkaMessage(
 
 	ll.Info("Processing metric compaction from Kafka notification")
 
-	// Fetch the single segment specified in the notification
 	segment, err := fetchSegment(ctx, db, notification)
 	if err != nil {
 		ll.Error("Failed to fetch segment", slog.Any("error", err))
 		return fmt.Errorf("failed to fetch segment: %w", err)
 	}
 
-	// Check if segment exists
+	// Check if segment exists.  We will not update the offset here, that
+	// will still happen after our processing batch selection and windows close.
 	if segment == nil {
 		ll.Warn("Segment not found for compaction")
-		// Still need to update Kafka offset to avoid reprocessing
-		if kafkaOffset != nil {
-			return updateKafkaOffset(ctx, db, kafkaOffset)
-		}
 		return nil
 	}
 
@@ -164,19 +144,19 @@ func ProcessKafkaMessage(
 		return nil
 	}
 
-	// Create a slice with the single segment for processing
 	validSegments := []lrdb.MetricSeg{*segment}
 
-	// Create metadata for the compaction work
 	metadata := CompactionWorkMetadata{
 		OrganizationID: notification.OrganizationID,
 		Dateint:        notification.DateInt,
 		FrequencyMs:    int32(notification.FrequencyMs),
 		InstanceNum:    notification.InstanceNum,
+		IngestDateint:  segment.IngestDateint,
 	}
 
-	// Perform the actual compaction
-	err = performCompaction(ctx, db, tmpdir, profile, blobclient, validSegments, metadata, kafkaOffset)
+	estimatedTarget := db.GetMetricEstimate(ctx, metadata.OrganizationID, metadata.FrequencyMs)
+
+	err = coordinateWithKafkaOffset(ctx, db, tmpdir, metadata, profile, blobclient, validSegments, estimatedTarget, kafkaOffset)
 	if err != nil {
 		ll.Error("Failed to perform compaction", slog.Any("error", err))
 		return fmt.Errorf("compaction failed: %w", err)
@@ -190,7 +170,6 @@ func ProcessKafkaMessage(
 
 // fetchSegment retrieves a single segment using the primary key fields from the notification
 func fetchSegment(ctx context.Context, db CompactionStore, notification *messages.MetricSegmentNotificationMessage) (*lrdb.MetricSeg, error) {
-	// Use the single-row fetcher with all primary key fields
 	segment, err := db.GetMetricSegByPrimaryKey(ctx, lrdb.GetMetricSegByPrimaryKeyParams{
 		OrganizationID: notification.OrganizationID,
 		Dateint:        notification.DateInt,
@@ -201,9 +180,7 @@ func fetchSegment(ctx context.Context, db CompactionStore, notification *message
 		SlotCount:      notification.SlotCount,
 	})
 	if err != nil {
-		// Check if it's a not found error
 		if err == sql.ErrNoRows {
-			// Segment not found
 			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to fetch segment: %w", err)
@@ -214,53 +191,10 @@ func fetchSegment(ctx context.Context, db CompactionStore, notification *message
 
 // updateKafkaOffset updates the Kafka offset in the database
 func updateKafkaOffset(ctx context.Context, db CompactionStore, kafkaOffset *lrdb.KafkaOffsetUpdate) error {
-	// Update the Kafka offset to mark this message as processed
 	return db.KafkaJournalUpsert(ctx, lrdb.KafkaJournalUpsertParams{
 		ConsumerGroup:       kafkaOffset.ConsumerGroup,
 		Topic:               kafkaOffset.Topic,
 		Partition:           kafkaOffset.Partition,
 		LastProcessedOffset: kafkaOffset.Offset,
 	})
-}
-
-// performCompaction performs the actual compaction work
-func performCompaction(
-	ctx context.Context,
-	db CompactionStore,
-	tmpdir string,
-	profile storageprofile.StorageProfile,
-	blobclient cloudstorage.Client,
-	segments []lrdb.MetricSeg,
-	metadata CompactionWorkMetadata,
-	kafkaOffset *lrdb.KafkaOffsetUpdate,
-) error {
-	ll := logctx.FromContext(ctx)
-
-	// Get the metric estimate for this organization and frequency
-	estimatedTarget := db.GetMetricEstimate(ctx, metadata.OrganizationID, metadata.FrequencyMs)
-
-	// Use the existing coordinate function to perform the actual compaction
-	// For a single segment, this will just mark it as compacted
-	// For multiple segments (shouldn't happen with Kafka), it would merge them
-	err := coordinate(ctx, db, tmpdir, metadata, profile, blobclient, segments, estimatedTarget)
-	if err != nil {
-		return fmt.Errorf("compaction failed: %w", err)
-	}
-
-	// Update Kafka offset after successful compaction
-	if kafkaOffset != nil {
-		err = updateKafkaOffset(ctx, db, kafkaOffset)
-		if err != nil {
-			// This is a critical error - we've done the work but can't record the offset
-			// The message will be reprocessed, but the compaction check will prevent duplicate work
-			ll.Error("Failed to update Kafka offset after successful compaction",
-				slog.Any("error", err),
-				slog.String("topic", kafkaOffset.Topic),
-				slog.Int("partition", int(kafkaOffset.Partition)),
-				slog.Int64("offset", kafkaOffset.Offset))
-			return fmt.Errorf("failed to update Kafka offset: %w", err)
-		}
-	}
-
-	return nil
 }

@@ -30,6 +30,7 @@ type CompactionStore interface {
 	cloudstorage.ObjectCleanupStore
 	GetMetricSegByPrimaryKey(ctx context.Context, arg lrdb.GetMetricSegByPrimaryKeyParams) (lrdb.MetricSeg, error)
 	CompactMetricSegs(ctx context.Context, args lrdb.CompactMetricSegsParams) error
+	CompactMetricSegsWithKafkaOffsets(ctx context.Context, params lrdb.CompactMetricSegsParams, kafkaOffsets []lrdb.KafkaOffsetUpdate) error // New atomic transaction
 	SetMetricSegCompacted(ctx context.Context, arg lrdb.SetMetricSegCompactedParams) error
 	SetSingleMetricSegCompacted(ctx context.Context, arg lrdb.SetSingleMetricSegCompactedParams) error     // For single segment with full PK
 	MarkMetricSegsCompactedByKeys(ctx context.Context, arg lrdb.MarkMetricSegsCompactedByKeysParams) error // For batch marking
