@@ -35,4 +35,7 @@ type rollupStore interface {
 	RollupMetricSegs(ctx context.Context, sourceParams lrdb.RollupSourceParams, targetParams lrdb.RollupTargetParams, sourceSegmentIDs []int64, newRecords []lrdb.RollupNewRecord) error
 	// Metric estimates
 	GetMetricEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32) int64
+	// Add CompactMetricSegs and SetSingleMetricSegCompacted to satisfy accumulation.Store interface (won't be used for rollup)
+	CompactMetricSegs(ctx context.Context, params lrdb.CompactMetricSegsParams) error
+	SetSingleMetricSegCompacted(ctx context.Context, params lrdb.SetSingleMetricSegCompactedParams) error
 }

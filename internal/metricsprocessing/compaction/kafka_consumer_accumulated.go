@@ -24,10 +24,13 @@ import (
 	"time"
 
 	"github.com/cardinalhq/lakerunner/config"
+	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
+	"github.com/cardinalhq/lakerunner/internal/metricsprocessing/accumulation"
+	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -41,8 +44,11 @@ type PartitionState struct {
 // KafkaAccumulatedCompactionConsumer handles consuming and accumulating metric segment notifications from Kafka
 type KafkaAccumulatedCompactionConsumer struct {
 	consumer            fly.Consumer
-	manager             *Manager
-	compactionManager   *CompactionManager
+	accManager          *accumulation.Manager
+	strategy            *CompactionStrategy
+	store               CompactionStore
+	sp                  storageprofile.StorageProfileProvider
+	cmgr                cloudstorage.ClientProvider
 	config              *config.Config
 	consumerGroup       string
 	topic               string
@@ -60,25 +66,38 @@ func NewKafkaAccumulatedCompactionConsumer(
 	manager *Manager,
 	maxAccumulationTime time.Duration,
 ) (*KafkaAccumulatedCompactionConsumer, error) {
-	consumerGroup := "lakerunner.compact.metrics"
-	topic := "lakerunner.segments.metrics.compact"
+	// Create strategy
+	compactionConfig := manager.GetConfig()
+	compactionConfig.MaxAccumulationTime = maxAccumulationTime.String()
+	strategy := NewCompactionStrategy(compactionConfig)
+
+	// Create shared accumulation manager
+	accManager, err := accumulation.NewManager(
+		strategy,
+		manager.GetDB(),
+		maxAccumulationTime,
+		compactionConfig.TargetFileSizeBytes,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create accumulation manager: %w", err)
+	}
+
+	consumerGroup := strategy.GetConsumerGroup()
+	topic := strategy.GetSourceTopic()
 
 	consumer, err := factory.CreateConsumer(topic, consumerGroup)
 	if err != nil {
+		accManager.Close()
 		return nil, fmt.Errorf("failed to create Kafka consumer: %w", err)
-	}
-
-	// Create compaction manager with centralized temp directory management
-	compactionManager, err := NewCompactionManager(maxAccumulationTime, manager.GetDB())
-	if err != nil {
-		consumer.Close()
-		return nil, fmt.Errorf("failed to create compaction manager: %w", err)
 	}
 
 	return &KafkaAccumulatedCompactionConsumer{
 		consumer:            consumer,
-		manager:             manager,
-		compactionManager:   compactionManager,
+		accManager:          accManager,
+		strategy:            strategy,
+		store:               manager.GetDB(),
+		sp:                  manager.GetStorageProfileProvider(),
+		cmgr:                manager.GetCloudManager(),
 		config:              cfg,
 		consumerGroup:       consumerGroup,
 		topic:               topic,
@@ -108,7 +127,7 @@ func (k *KafkaAccumulatedCompactionConsumer) Run(ctx context.Context) error {
 			case <-ctx.Done():
 				return
 			case <-flushTicker.C:
-				if k.compactionManager.ShouldFlush() {
+				if k.accManager.ShouldFlush() {
 					select {
 					case flushChan <- struct{}{}:
 					default:
@@ -185,16 +204,8 @@ func (k *KafkaAccumulatedCompactionConsumer) Run(ctx context.Context) error {
 					Offset:        kafkaMsg.Offset,
 				}
 
-				// Add to accumulator
-				if err := AddCompactionWorkFromKafka(
-					ctx,
-					&notification,
-					k.compactionManager,
-					k.manager.GetDB(),
-					k.manager.GetStorageProfileProvider(),
-					k.manager.GetConfig(),
-					kafkaOffset,
-				); err != nil {
+				// Add to accumulator using the shared framework
+				if err := k.accManager.AddWorkFromKafka(ctx, &notification, k.sp, kafkaOffset); err != nil {
 					// Log warning and skip this message - don't fail the whole batch
 					ll.Warn("Skipping segment due to compaction work error",
 						slog.Any("error", err),
@@ -205,7 +216,7 @@ func (k *KafkaAccumulatedCompactionConsumer) Run(ctx context.Context) error {
 			}
 
 			// Check if we should flush based on accumulation state
-			if k.compactionManager.ShouldFlush() {
+			if k.accManager.ShouldFlush() {
 				if err := k.flushAccumulated(ctx); err != nil {
 					// Log error but don't fail - we'll retry the flush next time
 					ll.Error("Failed to flush accumulated work, will retry on next batch",
@@ -238,28 +249,81 @@ func (k *KafkaAccumulatedCompactionConsumer) Run(ctx context.Context) error {
 func (k *KafkaAccumulatedCompactionConsumer) flushAccumulated(ctx context.Context) error {
 	ll := logctx.FromContext(ctx)
 
-	if !k.compactionManager.HasWork() {
+	// Always reset at the end, regardless of success or failure
+	defer func() {
+		if err := k.accManager.Reset(); err != nil {
+			ll.Error("Failed to reset accumulation manager", slog.Any("error", err))
+		}
+	}()
+
+	if !k.accManager.HasWork() {
 		ll.Debug("No accumulated work to flush")
-		return nil
+		// Still need to update Kafka offsets if any
+		return k.updateKafkaOffsets(ctx)
 	}
 
-	ll.Info("Flushing accumulated compaction work")
+	startTime := time.Now()
+	ll.Info("Starting accumulated compaction processing")
 
-	err := ProcessAccumulatedCompaction(
-		ctx,
-		k.compactionManager,
-		k.manager.GetDB(),
-		k.manager.GetStorageProfileProvider(),
-		k.manager.GetCloudManager(),
-		k.consumerGroup,
-		k.topic,
-	)
+	// Process each accumulator
+	for key, accumulator := range k.accManager.GetAccumulators() {
+		work := accumulator.GetWork()
+		if len(work) == 0 {
+			continue
+		}
 
-	if err != nil {
-		return fmt.Errorf("failed to process accumulated compaction: %w", err)
+		ll.Debug("Processing compaction accumulator",
+			slog.String("organizationID", key.OrganizationID.String()),
+			slog.Int("dateint", int(key.Dateint)),
+			slog.Int("frequencyMs", int(key.FrequencyMs)),
+			slog.Int("workCount", len(work)))
+
+		// Get storage profile from first work item
+		profile := work[0].Profile
+
+		// Create blob client for this org/instance
+		blobclient, err := cloudstorage.NewClient(ctx, k.cmgr, profile)
+		if err != nil {
+			ll.Error("Failed to create storage client",
+				slog.String("organizationID", key.OrganizationID.String()),
+				slog.Any("error", err))
+			return fmt.Errorf("failed to create storage client: %w", err)
+		}
+
+		// Process the accumulator using shared framework
+		if err := accumulation.FlushAccumulator(ctx, accumulator, k.store, blobclient, k.accManager.GetTmpDir(), k.strategy); err != nil {
+			ll.Error("Failed to flush accumulator",
+				slog.String("organizationID", key.OrganizationID.String()),
+				slog.Any("error", err))
+			return fmt.Errorf("failed to flush accumulator: %w", err)
+		}
 	}
+
+	// Update Kafka offsets after successful processing
+	if err := k.updateKafkaOffsets(ctx); err != nil {
+		return fmt.Errorf("failed to update Kafka offsets: %w", err)
+	}
+
+	ll.Info("Completed accumulated compaction processing",
+		slog.Duration("duration", time.Since(startTime)))
 
 	k.lastFlushTime = time.Now()
+	return nil
+}
+
+// updateKafkaOffsets updates Kafka offsets in the database
+func (k *KafkaAccumulatedCompactionConsumer) updateKafkaOffsets(ctx context.Context) error {
+	offsetUpdates := k.accManager.GetKafkaOffsetUpdates(k.consumerGroup, k.topic)
+	for _, update := range offsetUpdates {
+		if err := k.store.KafkaJournalUpsert(ctx, lrdb.KafkaJournalUpsertParams{
+			ConsumerGroup:       update.ConsumerGroup,
+			Topic:               update.Topic,
+			Partition:           update.Partition,
+			LastProcessedOffset: update.Offset,
+		}); err != nil {
+			return fmt.Errorf("failed to update Kafka offset for partition %d: %w", update.Partition, err)
+		}
+	}
 	return nil
 }
 
@@ -278,7 +342,7 @@ func (k *KafkaAccumulatedCompactionConsumer) shouldProcessMessage(ctx context.Co
 
 	if state.needsDBCheck || offset != state.lastSeenOffset+1 {
 		// Either first time or gap detected - check DB
-		dbOffset, err := k.manager.GetDB().KafkaJournalGetLastProcessed(ctx, lrdb.KafkaJournalGetLastProcessedParams{
+		dbOffset, err := k.store.KafkaJournalGetLastProcessed(ctx, lrdb.KafkaJournalGetLastProcessedParams{
 			ConsumerGroup: k.consumerGroup,
 			Topic:         k.topic,
 			Partition:     int32(partition),
@@ -320,9 +384,9 @@ func (k *KafkaAccumulatedCompactionConsumer) Close() error {
 		logctx.FromContext(ctx).Error("Failed to flush remaining work during shutdown", slog.Any("error", err))
 	}
 
-	// Close the compaction manager
-	if err := k.compactionManager.Close(); err != nil {
-		logctx.FromContext(ctx).Error("Failed to close compaction manager", slog.Any("error", err))
+	// Close the accumulation manager
+	if err := k.accManager.Close(); err != nil {
+		logctx.FromContext(ctx).Error("Failed to close accumulation manager", slog.Any("error", err))
 	}
 
 	// Close the Kafka consumer
