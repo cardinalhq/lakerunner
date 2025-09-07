@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"sync"
 	"time"
@@ -25,6 +26,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/cardinalhq/lakerunner/internal/filereader"
+	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
@@ -112,6 +115,9 @@ func NewAccumulatorManager(maxAccumulationTime time.Duration) (*AccumulatorManag
 		return nil, fmt.Errorf("creating accumulator tmpdir: %w", err)
 	}
 
+	// Check disk space and warn if less than 80% free
+	checkDiskSpaceWarning(tmpDir)
+
 	return &AccumulatorManager{
 		accumulators:        make(map[OrgInstanceKey]*OrgInstanceAccumulator),
 		maxAccumulationTime: maxAccumulationTime,
@@ -181,7 +187,35 @@ func (m *AccumulatorManager) ShouldFlush() bool {
 		return true
 	}
 
+	// Check disk space - flush if more than 50% full
+	if m.isDiskSpaceLow() {
+		return true
+	}
+
 	// Could add additional conditions here (memory pressure, reader count, etc.)
+	return false
+}
+
+// isDiskSpaceLow checks if disk space is more than 50% full
+func (m *AccumulatorManager) isDiskSpaceLow() bool {
+	usage, err := helpers.DiskUsage(m.tmpDir)
+	if err != nil {
+		// If we can't check disk space, assume it's OK and log warning
+		logctx.FromContext(context.Background()).Warn("Failed to check disk usage",
+			slog.String("tmpDir", m.tmpDir),
+			slog.Any("error", err))
+		return false
+	}
+
+	usedPercent := float64(usage.UsedBytes) / float64(usage.TotalBytes) * 100
+	if usedPercent > 50 {
+		logctx.FromContext(context.Background()).Warn("Disk space is more than 50% full, triggering flush",
+			slog.Float64("usedPercent", usedPercent),
+			slog.Uint64("freeBytes", usage.FreeBytes),
+			slog.Uint64("totalBytes", usage.TotalBytes))
+		return true
+	}
+
 	return false
 }
 
@@ -253,6 +287,9 @@ func (m *AccumulatorManager) Reset() error {
 	if err != nil {
 		return fmt.Errorf("creating new tmpdir: %w", err)
 	}
+
+	// Check disk space and warn if less than 80% free
+	checkDiskSpaceWarning(tmpDir)
 
 	// Reset state
 	m.accumulators = make(map[OrgInstanceKey]*OrgInstanceAccumulator)
@@ -356,4 +393,24 @@ func FlushAccumulator(ctx context.Context, acc *OrgInstanceAccumulator, tmpDir s
 	}
 
 	return results, inputRowCount, nil
+}
+
+// checkDiskSpaceWarning logs a warning if disk space is less than 80% free
+func checkDiskSpaceWarning(tmpDir string) {
+	usage, err := helpers.DiskUsage(tmpDir)
+	if err != nil {
+		logctx.FromContext(context.Background()).Warn("Failed to check disk usage at startup",
+			slog.String("tmpDir", tmpDir),
+			slog.Any("error", err))
+		return
+	}
+
+	freePercent := float64(usage.FreeBytes) / float64(usage.TotalBytes) * 100
+	if freePercent < 80 {
+		logctx.FromContext(context.Background()).Warn("Disk space is less than 80% free at startup - cleanup may be needed",
+			slog.Float64("freePercent", freePercent),
+			slog.Uint64("freeBytes", usage.FreeBytes),
+			slog.Uint64("totalBytes", usage.TotalBytes),
+			slog.String("tmpDir", tmpDir))
+	}
 }
