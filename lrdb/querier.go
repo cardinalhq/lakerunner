@@ -53,6 +53,8 @@ type Querier interface {
 	InsertLogSegmentDirect(ctx context.Context, arg InsertLogSegmentParams) error
 	InsertMetricSegmentDirect(ctx context.Context, arg InsertMetricSegmentParams) error
 	InsertTraceSegmentDirect(ctx context.Context, arg InsertTraceSegmentDirectParams) error
+	// If any log record has a body, expose it as a synthetic "_cardinalhq.message" tag key
+	ListLogQLTags(ctx context.Context, organizationID uuid.UUID) ([]interface{}, error)
 	// Insert or update multiple Kafka journal entries in a single batch operation
 	// Only updates if the new offset is greater than the existing one
 	KafkaJournalBatchUpsert(ctx context.Context, arg []KafkaJournalBatchUpsertParams) *KafkaJournalBatchUpsertBatchResults
@@ -61,7 +63,7 @@ type Querier interface {
 	// Insert or update the last processed offset for a consumer group, topic, and partition
 	// Only updates if the new offset is greater than the existing one
 	KafkaJournalUpsert(ctx context.Context, arg KafkaJournalUpsertParams) error
-	ListLogQLTags(ctx context.Context, organizationID uuid.UUID) ([]string, error)
+	// ListLogQLTags(ctx context.Context, organizationID uuid.UUID) ([]string, error)
 	ListLogSegmentsForQuery(ctx context.Context, arg ListLogSegmentsForQueryParams) ([]ListLogSegmentsForQueryRow, error)
 	ListMetricSegmentsForQuery(ctx context.Context, arg ListMetricSegmentsForQueryParams) ([]ListMetricSegmentsForQueryRow, error)
 	ListPromMetricTags(ctx context.Context, arg ListPromMetricTagsParams) ([]string, error)
