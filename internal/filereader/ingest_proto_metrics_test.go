@@ -979,14 +979,8 @@ func ValidateMetricsReaderContract(t *testing.T, rows []Row) {
 
 		// Validate sketch content based on metric type
 		sketchBytes := sketch.([]byte)
-		switch metricType {
-		case "histogram":
-			// For histograms, sketch must have content (len > 0)
-			assert.Greater(t, len(sketchBytes), 0, "Row %d histogram must have non-empty sketch", i)
-		case "gauge", "count":
-			// For single-value metrics (gauge/count), sketch should be empty
-			assert.Equal(t, 0, len(sketchBytes), "Row %d single-value metric should have empty sketch", i)
-		}
+		// All metrics should now have sketches
+		assert.Greater(t, len(sketchBytes), 0, "Row %d (%s) must have non-empty sketch", i, metricType)
 	}
 }
 
@@ -998,4 +992,262 @@ func contains(slice []string, item string) bool {
 		}
 	}
 	return false
+}
+
+// TestIngestProtoMetrics_SummarySupport tests that summary data points are properly converted
+func TestIngestProtoMetrics_SummarySupport(t *testing.T) {
+	// Create test data with summary metrics using pmetric API
+	metrics := pmetric.NewMetrics()
+	resourceMetrics := metrics.ResourceMetrics().AppendEmpty()
+	resourceMetrics.Resource().Attributes().PutStr("service.name", "summary-test-service")
+
+	scopeMetrics := resourceMetrics.ScopeMetrics().AppendEmpty()
+	scopeMetrics.Scope().SetName("summary-test-meter")
+
+	// Create a summary metric
+	metric := scopeMetrics.Metrics().AppendEmpty()
+	metric.SetName("http.request.duration")
+	metric.SetDescription("HTTP request duration")
+	metric.SetUnit("ms")
+
+	summary := metric.SetEmptySummary()
+
+	// First data point with quantiles
+	dp1 := summary.DataPoints().AppendEmpty()
+	dp1.Attributes().PutStr("method", "GET")
+	dp1.Attributes().PutStr("status", "200")
+	dp1.SetStartTimestamp(pcommon.NewTimestampFromTime(time.Unix(1700000000, 0)))
+	dp1.SetTimestamp(pcommon.NewTimestampFromTime(time.Unix(1700000010, 0)))
+	dp1.SetCount(100)
+	dp1.SetSum(1500.0)
+
+	// Add quantile values
+	qv := dp1.QuantileValues()
+	q0 := qv.AppendEmpty()
+	q0.SetQuantile(0.0)
+	q0.SetValue(5.0)
+	q25 := qv.AppendEmpty()
+	q25.SetQuantile(0.25)
+	q25.SetValue(10.0)
+	q50 := qv.AppendEmpty()
+	q50.SetQuantile(0.5)
+	q50.SetValue(15.0)
+	q75 := qv.AppendEmpty()
+	q75.SetQuantile(0.75)
+	q75.SetValue(20.0)
+	q90 := qv.AppendEmpty()
+	q90.SetQuantile(0.9)
+	q90.SetValue(25.0)
+	q95 := qv.AppendEmpty()
+	q95.SetQuantile(0.95)
+	q95.SetValue(30.0)
+	q99 := qv.AppendEmpty()
+	q99.SetQuantile(0.99)
+	q99.SetValue(50.0)
+	q100 := qv.AppendEmpty()
+	q100.SetQuantile(1.0)
+	q100.SetValue(100.0)
+
+	// Second data point with at least one quantile (otherwise it will be dropped)
+	dp2 := summary.DataPoints().AppendEmpty()
+	dp2.Attributes().PutStr("method", "POST")
+	dp2.Attributes().PutStr("status", "201")
+	dp2.SetStartTimestamp(pcommon.NewTimestampFromTime(time.Unix(1700000000, 0)))
+	dp2.SetTimestamp(pcommon.NewTimestampFromTime(time.Unix(1700000010, 0)))
+	dp2.SetCount(50)
+	dp2.SetSum(750.0)
+
+	// Add at least one quantile so it won't be dropped
+	q2 := dp2.QuantileValues().AppendEmpty()
+	q2.SetQuantile(0.5)
+	q2.SetValue(15.0)
+
+	// Marshal to protobuf
+	marshaler := pmetric.ProtoMarshaler{}
+	data, err := marshaler.MarshalMetrics(metrics)
+	require.NoError(t, err)
+
+	reader, err := NewIngestProtoMetricsReader(bytes.NewReader(data), len(data))
+	require.NoError(t, err)
+	defer reader.Close()
+
+	// Read first batch
+	batch, err := reader.Next(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, batch)
+
+	// Should have 2 rows for the 2 summary data points
+	require.Equal(t, 2, batch.Len())
+
+	// Check first data point (with quantiles)
+	row1 := batch.Get(0)
+	assert.Equal(t, "http.request.duration", row1[wkk.RowKeyCName])
+	assert.Equal(t, "histogram", row1[wkk.RowKeyCMetricType]) // Summaries are treated as histograms
+
+	// Debug: print all keys to see what attributes exist
+	// Look for m.method and m.status
+	foundMethod := false
+	foundStatus := false
+	for k, v := range row1 {
+		if v == "GET" {
+			t.Logf("Found GET at key: %v", k)
+			foundMethod = true
+		}
+		if v == "200" {
+			t.Logf("Found 200 at key: %v", k)
+			foundStatus = true
+		}
+	}
+	if !foundMethod || !foundStatus {
+		t.Logf("Method or status not found with expected values")
+	}
+
+	// Check attributes - verify they exist (the keys might be different objects)
+	// Since we found the values above, we know the attributes are there
+	assert.True(t, foundMethod, "Should have method attribute with value GET")
+	assert.True(t, foundStatus, "Should have status attribute with value 200")
+
+	// Check that we have a sketch
+	sketch1, ok := row1[wkk.RowKeySketch].([]byte)
+	assert.True(t, ok, "First row should have a sketch")
+	assert.NotEmpty(t, sketch1, "First row sketch should not be empty")
+
+	// Check rollup values (these will be approximations from the sketch)
+	assert.InDelta(t, 1500.0, row1[wkk.RowKeyRollupSum], 150.0, "Sum should be approximately 1500")
+	assert.InDelta(t, 100.0, row1[wkk.RowKeyRollupCount], 5.0, "Count should be approximately 100")
+	assert.InDelta(t, 15.0, row1[wkk.RowKeyRollupAvg], 2.0, "Average should be approximately 15")
+
+	// Check percentiles (should roughly match the quantile values provided)
+	assert.InDelta(t, 10.0, row1[wkk.RowKeyRollupP25], 5.0, "P25 should be approximately 10")
+	assert.InDelta(t, 15.0, row1[wkk.RowKeyRollupP50], 5.0, "P50 should be approximately 15")
+	assert.InDelta(t, 20.0, row1[wkk.RowKeyRollupP75], 5.0, "P75 should be approximately 20")
+	assert.InDelta(t, 30.0, row1[wkk.RowKeyRollupP95], 10.0, "P95 should be approximately 30")
+	assert.InDelta(t, 50.0, row1[wkk.RowKeyRollupP99], 15.0, "P99 should be approximately 50")
+
+	// Check second data point (without quantiles, using fallback)
+	row2 := batch.Get(1)
+	assert.Equal(t, "http.request.duration", row2[wkk.RowKeyCName])
+
+	// Check attributes exist
+	foundMethod2 := false
+	foundStatus2 := false
+	for _, v := range row2 {
+		if v == "POST" {
+			foundMethod2 = true
+		}
+		if v == "201" {
+			foundStatus2 = true
+		}
+	}
+	assert.True(t, foundMethod2, "Should have method attribute with value POST")
+	assert.True(t, foundStatus2, "Should have status attribute with value 201")
+
+	// Check that we have a sketch (created from the single quantile)
+	sketch2, ok := row2[wkk.RowKeySketch].([]byte)
+	assert.True(t, ok, "Second row should have a sketch")
+	assert.NotEmpty(t, sketch2, "Second row sketch should not be empty")
+
+	// The interpolation will create values around the single quantile (15.0)
+	assert.Greater(t, row2[wkk.RowKeyRollupCount].(float64), 0.0, "Count should be greater than 0")
+	assert.Greater(t, row2[wkk.RowKeyRollupSum].(float64), 0.0, "Sum should be greater than 0")
+
+	// The median should be approximately 15 (the single quantile we provided at 0.5)
+	assert.InDelta(t, 15.0, row2[wkk.RowKeyRollupP50], 5.0, "P50 should be approximately 15")
+
+	// Should be EOF on next read
+	_, err = reader.Next(context.Background())
+	assert.Equal(t, io.EOF, err)
+}
+
+// TestIngestProtoMetrics_SummaryEdgeCases tests edge cases for summary data points
+func TestIngestProtoMetrics_SummaryEdgeCases(t *testing.T) {
+	testCases := []struct {
+		name        string
+		setupDP     func(dp pmetric.SummaryDataPoint)
+		shouldDrop  bool
+		description string
+	}{
+		{
+			name: "empty_summary",
+			setupDP: func(dp pmetric.SummaryDataPoint) {
+				// No count, sum, or quantiles - just timestamp
+				dp.SetTimestamp(pcommon.NewTimestampFromTime(time.Unix(1700000010, 0)))
+			},
+			shouldDrop:  true,
+			description: "Summary with no data should be dropped",
+		},
+		{
+			name: "summary_with_single_quantile",
+			setupDP: func(dp pmetric.SummaryDataPoint) {
+				dp.SetTimestamp(pcommon.NewTimestampFromTime(time.Unix(1700000010, 0)))
+				dp.SetCount(10)
+				dp.SetSum(100.0)
+				qv := dp.QuantileValues().AppendEmpty()
+				qv.SetQuantile(0.5)
+				qv.SetValue(10.0)
+			},
+			shouldDrop:  false,
+			description: "Summary with single quantile should be processed",
+		},
+		{
+			name: "summary_only_count_and_sum",
+			setupDP: func(dp pmetric.SummaryDataPoint) {
+				dp.SetTimestamp(pcommon.NewTimestampFromTime(time.Unix(1700000010, 0)))
+				dp.SetCount(20)
+				dp.SetSum(200.0)
+				// No quantiles
+			},
+			shouldDrop:  true,
+			description: "Summary with only count and sum should be dropped (no quantiles)",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create metrics with pmetric API
+			metrics := pmetric.NewMetrics()
+			resourceMetrics := metrics.ResourceMetrics().AppendEmpty()
+			resourceMetrics.Resource().Attributes().PutStr("service.name", "edge-case-test")
+
+			scopeMetrics := resourceMetrics.ScopeMetrics().AppendEmpty()
+			scopeMetrics.Scope().SetName("test-meter")
+
+			metric := scopeMetrics.Metrics().AppendEmpty()
+			metric.SetName("test.summary")
+			metric.SetDescription("Test summary metric")
+			metric.SetUnit("ms")
+
+			summary := metric.SetEmptySummary()
+			dp := summary.DataPoints().AppendEmpty()
+			tc.setupDP(dp)
+
+			// Marshal to protobuf
+			marshaler := pmetric.ProtoMarshaler{}
+			data, err := marshaler.MarshalMetrics(metrics)
+			require.NoError(t, err)
+
+			reader, err := NewIngestProtoMetricsReader(bytes.NewReader(data), len(data))
+			require.NoError(t, err)
+			defer reader.Close()
+
+			batch, err := reader.Next(context.Background())
+			if tc.shouldDrop {
+				// Should either get empty batch or EOF
+				if err != io.EOF {
+					require.NoError(t, err)
+					assert.Equal(t, 0, batch.Len(), tc.description)
+				}
+			} else {
+				require.NoError(t, err)
+				require.NotNil(t, batch)
+				assert.Greater(t, batch.Len(), 0, tc.description)
+
+				// Verify we have a sketch
+				row := batch.Get(0)
+				sketch, ok := row[wkk.RowKeySketch].([]byte)
+				assert.True(t, ok, "Row should have a sketch")
+				assert.NotEmpty(t, sketch, "Sketch should not be empty")
+			}
+		})
+	}
 }
