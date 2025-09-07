@@ -198,9 +198,5 @@ func AddCompactionWorkFromKafka(
 	// Add to accumulator
 	manager.AddCompactionWork(ctx, notification, []lrdb.MetricSeg{segment}, profile, kafkaOffset)
 
-	ll.Debug("Added compaction work to accumulator",
-		slog.Int64("segmentID", notification.SegmentID),
-		slog.String("organizationID", notification.OrganizationID.String()))
-
 	return nil
 }

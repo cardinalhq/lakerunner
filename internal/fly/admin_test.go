@@ -320,6 +320,199 @@ func TestAdminClient_GetMultipleConsumerGroupLag(t *testing.T) {
 	})
 }
 
+func TestAdminClient_GetAllConsumerGroupLags(t *testing.T) {
+	topic1 := fmt.Sprintf("test-batch-lag-1-%s", uuid.New().String())
+	topic2 := fmt.Sprintf("test-batch-lag-2-%s", uuid.New().String())
+	topic3 := fmt.Sprintf("test-batch-lag-3-%s", uuid.New().String())
+	group1 := fmt.Sprintf("test-batch-group-1-%d", time.Now().UnixNano())
+	group2 := fmt.Sprintf("test-batch-group-2-%d", time.Now().UnixNano())
+	group3 := fmt.Sprintf("test-batch-group-3-%d", time.Now().UnixNano())
+
+	// Use shared Kafka container with all topics
+	kafkaContainer := NewKafkaTestContainer(t, topic1, topic2, topic3)
+	defer kafkaContainer.CleanupAfterTest(t, []string{topic1, topic2, topic3}, []string{group1, group2, group3})
+
+	// Create admin client
+	config := &Config{
+		Brokers: []string{kafkaContainer.Broker()},
+	}
+	adminClient := NewAdminClient(config)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Produce messages to all topics
+	for i := 0; i < 5; i++ {
+		produceTestMessage(t, kafkaContainer, topic1, fmt.Sprintf("key%d", i), fmt.Sprintf("value%d", i))
+		produceTestMessage(t, kafkaContainer, topic2, fmt.Sprintf("key%d", i), fmt.Sprintf("value%d", i))
+		produceTestMessage(t, kafkaContainer, topic3, fmt.Sprintf("key%d", i), fmt.Sprintf("value%d", i))
+	}
+
+	// Create consumers for different combinations of topics/groups
+	// For simpler testing, have each group consume all messages from their topics
+	// group1 consumes from topic1 and topic2
+	consumeAllMessages(t, kafkaContainer, topic1, group1)
+	consumeAllMessages(t, kafkaContainer, topic2, group1)
+
+	// group2 consumes only from topic1
+	consumeAllMessages(t, kafkaContainer, topic1, group2)
+
+	// group3 consumes from topic2 and topic3
+	consumeAllMessages(t, kafkaContainer, topic2, group3)
+	consumeAllMessages(t, kafkaContainer, topic3, group3)
+
+	t.Run("batch fetch all consumer group lags", func(t *testing.T) {
+		topics := []string{topic1, topic2, topic3}
+		groups := []string{group1, group2, group3}
+
+		lags, err := adminClient.GetAllConsumerGroupLags(ctx, topics, groups)
+		require.NoError(t, err)
+
+		// Should have results for multiple topic/group combinations
+		assert.Greater(t, len(lags), 0, "Should have lag results")
+
+		// Track which combinations we found
+		foundCombinations := make(map[string]bool)
+		for _, lag := range lags {
+			key := fmt.Sprintf("%s:%s", lag.Topic, lag.GroupID)
+			foundCombinations[key] = true
+
+			// Verify lag structure
+			assert.GreaterOrEqual(t, lag.Partition, 0)
+			assert.GreaterOrEqual(t, lag.HighWaterMark, int64(5), "Should have at least 5 messages per topic")
+
+			// Check that groups that consumed all messages have no lag
+			if lag.Topic == topic1 && lag.GroupID == group1 {
+				assert.Equal(t, int64(5), lag.CommittedOffset, "group1 should have consumed all messages from topic1")
+				assert.Equal(t, int64(0), lag.Lag, "group1 should have no lag for topic1")
+			}
+			if lag.Topic == topic2 && lag.GroupID == group1 {
+				assert.Equal(t, int64(5), lag.CommittedOffset, "group1 should have consumed all messages from topic2")
+				assert.Equal(t, int64(0), lag.Lag, "group1 should have no lag for topic2")
+			}
+			if lag.Topic == topic1 && lag.GroupID == group2 {
+				assert.Equal(t, int64(5), lag.CommittedOffset, "group2 should have consumed all messages from topic1")
+				assert.Equal(t, int64(0), lag.Lag, "group2 should have no lag for topic1")
+			}
+			if lag.Topic == topic3 && lag.GroupID == group3 {
+				assert.Equal(t, int64(5), lag.CommittedOffset, "group3 should have consumed all messages from topic3")
+				assert.Equal(t, int64(0), lag.Lag, "group3 should have no lag for topic3")
+			}
+		}
+
+		// Verify we got the expected combinations
+		assert.True(t, foundCombinations[fmt.Sprintf("%s:%s", topic1, group1)], "Should have group1 consuming topic1")
+		assert.True(t, foundCombinations[fmt.Sprintf("%s:%s", topic2, group1)], "Should have group1 consuming topic2")
+		assert.True(t, foundCombinations[fmt.Sprintf("%s:%s", topic1, group2)], "Should have group2 consuming topic1")
+		assert.True(t, foundCombinations[fmt.Sprintf("%s:%s", topic2, group3)], "Should have group3 consuming topic2")
+		assert.True(t, foundCombinations[fmt.Sprintf("%s:%s", topic3, group3)], "Should have group3 consuming topic3")
+
+		// Should NOT have combinations where groups haven't consumed
+		assert.False(t, foundCombinations[fmt.Sprintf("%s:%s", topic3, group1)], "group1 should not have consumed topic3")
+		assert.False(t, foundCombinations[fmt.Sprintf("%s:%s", topic2, group2)], "group2 should not have consumed topic2")
+		assert.False(t, foundCombinations[fmt.Sprintf("%s:%s", topic3, group2)], "group2 should not have consumed topic3")
+		assert.False(t, foundCombinations[fmt.Sprintf("%s:%s", topic1, group3)], "group3 should not have consumed topic1")
+	})
+
+	t.Run("handles empty topic list", func(t *testing.T) {
+		lags, err := adminClient.GetAllConsumerGroupLags(ctx, []string{}, []string{group1})
+		require.NoError(t, err)
+		assert.Empty(t, lags, "Should return empty result for empty topic list")
+	})
+
+	t.Run("handles empty group list", func(t *testing.T) {
+		lags, err := adminClient.GetAllConsumerGroupLags(ctx, []string{topic1}, []string{})
+		require.NoError(t, err)
+		assert.Empty(t, lags, "Should return empty result for empty group list")
+	})
+
+	t.Run("handles non-existent topics gracefully", func(t *testing.T) {
+		nonExistentTopic := fmt.Sprintf("non-existent-%s", uuid.New().String())
+		topics := []string{topic1, nonExistentTopic}
+		groups := []string{group1}
+
+		lags, err := adminClient.GetAllConsumerGroupLags(ctx, topics, groups)
+		require.NoError(t, err)
+
+		// Should still get results for the existing topic
+		foundExisting := false
+		for _, lag := range lags {
+			if lag.Topic == topic1 {
+				foundExisting = true
+				break
+			}
+			// Should not have any results for non-existent topic
+			assert.NotEqual(t, nonExistentTopic, lag.Topic)
+		}
+		assert.True(t, foundExisting, "Should have results for existing topic")
+	})
+
+	t.Run("handles non-existent groups gracefully", func(t *testing.T) {
+		nonExistentGroup := fmt.Sprintf("non-existent-group-%s", uuid.New().String())
+		topics := []string{topic1}
+		groups := []string{group1, nonExistentGroup}
+
+		lags, err := adminClient.GetAllConsumerGroupLags(ctx, topics, groups)
+		require.NoError(t, err)
+
+		// Should get results for the existing group
+		foundExisting := false
+		for _, lag := range lags {
+			if lag.GroupID == group1 {
+				foundExisting = true
+			}
+			// Non-existent group will show up but with no committed offsets
+			if lag.GroupID == nonExistentGroup {
+				// This group never consumed, so it shouldn't appear in results
+				// since we skip entries with CommittedOffset < 0
+				t.Error("Should not have results for non-existent group")
+			}
+		}
+		assert.True(t, foundExisting, "Should have results for existing group")
+	})
+}
+
+// Helper function to consume all available messages from a topic
+func consumeAllMessages(t *testing.T, kafkaContainer *KafkaTestContainer, topic, groupID string) {
+	t.Helper()
+	config := kafkaContainer.CreateConsumerConfig(topic, groupID)
+	consumer := NewConsumer(config)
+	defer consumer.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	consumedCount := 0
+	consumeErr := make(chan error, 1)
+
+	// Run consumer in a goroutine - it will consume until no more messages arrive
+	go func() {
+		err := consumer.Consume(ctx, func(ctx context.Context, messages []ConsumedMessage) error {
+			consumedCount += len(messages)
+			// Continue consuming - timeout will stop us when no more messages come
+			return nil
+		})
+		consumeErr <- err
+	}()
+
+	// Wait for timeout (meaning no more messages)
+	select {
+	case err := <-consumeErr:
+		// Expect context.DeadlineExceeded when we've consumed everything
+		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) && err != nil {
+			require.NoError(t, err)
+		}
+	case <-time.After(6 * time.Second):
+		cancel()
+		<-consumeErr
+	}
+
+	// Wait for offsets to be committed
+	time.Sleep(500 * time.Millisecond)
+
+	t.Logf("Consumed %d messages from topic %s for group %s", consumedCount, topic, groupID)
+}
+
 // Helper function to produce a single test message
 func produceTestMessage(t *testing.T, kafkaContainer *KafkaTestContainer, topic, key, value string) {
 	t.Helper()

@@ -194,12 +194,6 @@ func (c *kafkaConsumer) Consume(ctx context.Context, handler MessageHandler) err
 			return fmt.Errorf("failed to fetch message: %w", err)
 		}
 
-		slog.Debug("Fetched message from Kafka",
-			slog.String("topic", c.config.Topic),
-			slog.String("consumerGroup", c.config.GroupID),
-			slog.Int("partition", msg.Partition),
-			slog.Int64("offset", msg.Offset))
-
 		batch = append(batch, FromKafkaMessage(msg))
 
 		// Process batch when full

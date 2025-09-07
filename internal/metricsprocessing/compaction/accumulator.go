@@ -338,8 +338,6 @@ func FlushAccumulator(
 	blobclient cloudstorage.Client,
 	tmpDir string,
 ) error {
-	ll := logctx.FromContext(ctx)
-
 	work := acc.GetWork()
 	if len(work) == 0 {
 		return nil
@@ -352,12 +350,6 @@ func FlushAccumulator(
 
 	// Process each work item
 	for _, w := range work {
-		ll.Debug("Processing compaction work",
-			slog.String("organizationID", w.Metadata.OrganizationID.String()),
-			slog.Int("segmentCount", len(w.Segments)),
-			slog.Int("dateint", int(w.Metadata.Dateint)),
-			slog.Int("frequencyMs", int(w.Metadata.FrequencyMs)))
-
 		// Create reader stack from segments
 		readerStack, err := metricsprocessing.CreateReaderStack(ctx, tmpDir, blobclient, w.Metadata.OrganizationID, w.Profile, w.Segments)
 		if err != nil {

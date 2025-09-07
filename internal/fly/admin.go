@@ -17,6 +17,7 @@ package fly
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/segmentio/kafka-go"
@@ -249,4 +250,137 @@ func (a *AdminClient) TopicExists(ctx context.Context, topic string) (bool, erro
 	}
 
 	return false, nil
+}
+
+// GetAllConsumerGroupLags efficiently retrieves lag information for multiple groups and topics in batch
+func (a *AdminClient) GetAllConsumerGroupLags(ctx context.Context, topics []string, groups []string) ([]ConsumerGroupInfo, error) {
+	// Create authenticated client
+	client, err := a.factory.CreateKafkaClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Kafka client: %w", err)
+	}
+
+	// First, get metadata for all topics to determine partitions and high water marks
+	topicPartitions := make(map[string][]int)
+	highWaterMarks := make(map[string]map[int]int64) // topic -> partition -> high water mark
+
+	// Build list offset requests for all topics at once
+	listOffsetReqs := make(map[string][]kafka.OffsetRequest)
+
+	for _, topic := range topics {
+		// Get metadata to find partitions
+		resp, err := client.Metadata(ctx, &kafka.MetadataRequest{
+			Topics: []string{topic},
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to get metadata for topic %s: %v\n", topic, err)
+			continue
+		}
+
+		// Find the topic in response
+		var found bool
+		for _, t := range resp.Topics {
+			if t.Name == topic && t.Error == nil && !t.Internal {
+				partitions := make([]int, 0, len(t.Partitions))
+				offsetReqs := make([]kafka.OffsetRequest, 0, len(t.Partitions))
+
+				for _, p := range t.Partitions {
+					partitions = append(partitions, p.ID)
+					offsetReqs = append(offsetReqs, kafka.LastOffsetOf(p.ID))
+				}
+
+				topicPartitions[topic] = partitions
+				listOffsetReqs[topic] = offsetReqs
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			fmt.Fprintf(os.Stderr, "Warning: topic %s not found\n", topic)
+		}
+	}
+
+	// Batch fetch all high water marks
+	if len(listOffsetReqs) > 0 {
+		listOffsetsResp, err := client.ListOffsets(ctx, &kafka.ListOffsetsRequest{
+			Topics: listOffsetReqs,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to list offsets: %w", err)
+		}
+
+		// Store high water marks
+		for topic, partitionOffsets := range listOffsetsResp.Topics {
+			if highWaterMarks[topic] == nil {
+				highWaterMarks[topic] = make(map[int]int64)
+			}
+			for _, po := range partitionOffsets {
+				if po.Error == nil {
+					highWaterMarks[topic][po.Partition] = po.LastOffset
+				}
+			}
+		}
+	}
+
+	// Now fetch committed offsets for all groups
+	var result []ConsumerGroupInfo
+
+	for _, groupID := range groups {
+		// Build request for all topics and partitions for this group
+		offsetFetchTopics := make(map[string][]int)
+		for topic, partitions := range topicPartitions {
+			offsetFetchTopics[topic] = partitions
+		}
+
+		if len(offsetFetchTopics) == 0 {
+			continue
+		}
+
+		// Fetch all offsets for this group in one request
+		offsetResp, err := client.OffsetFetch(ctx, &kafka.OffsetFetchRequest{
+			GroupID: groupID,
+			Topics:  offsetFetchTopics,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to fetch offsets for group %s: %v\n", groupID, err)
+			continue
+		}
+
+		// Process the response
+		for topic, partitionOffsets := range offsetResp.Topics {
+			hwmMap, exists := highWaterMarks[topic]
+			if !exists {
+				continue
+			}
+
+			for _, po := range partitionOffsets {
+				// Skip if there's an error or no committed offset
+				if po.Error != nil || po.CommittedOffset < 0 {
+					continue
+				}
+
+				hwm, exists := hwmMap[po.Partition]
+				if !exists {
+					continue
+				}
+
+				lag := int64(0)
+				if po.CommittedOffset >= 0 {
+					lag = max(hwm-po.CommittedOffset, 0)
+				}
+
+				result = append(result, ConsumerGroupInfo{
+					GroupID:         groupID,
+					Topic:           topic,
+					Partition:       po.Partition,
+					CommittedOffset: po.CommittedOffset,
+					HighWaterMark:   hwm,
+					Lag:             lag,
+				})
+			}
+		}
+	}
+
+	return result, nil
 }
