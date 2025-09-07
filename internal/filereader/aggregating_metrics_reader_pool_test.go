@@ -19,8 +19,10 @@ import (
 	"io"
 	"testing"
 
+	"github.com/DataDog/sketches-go/ddsketch"
 	"github.com/stretchr/testify/require"
 
+	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
@@ -32,10 +34,16 @@ func runAggregation(t *testing.T) {
 	rows := make([]Row, 200)
 	baseTs := int64(1700000000000)
 	for i := range rows {
+		// Create a sketch for each test row
+		sketch, err := ddsketch.NewDefaultDDSketch(0.01)
+		require.NoError(t, err)
+		require.NoError(t, sketch.Add(float64(i)))
+
 		rows[i] = Row{
 			wkk.RowKeyCName:       "metric",
 			wkk.RowKeyCTID:        int64(1),
 			wkk.RowKeyCTimestamp:  baseTs + int64(i*1000),
+			wkk.RowKeySketch:      helpers.EncodeSketch(sketch),
 			wkk.RowKeyRollupSum:   float64(i),
 			wkk.RowKeyRollupCount: int64(1),
 			wkk.RowKeyRollupMin:   float64(i),

@@ -22,10 +22,12 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/DataDog/sketches-go/ddsketch"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/cardinalhq/lakerunner/internal/filereader"
+	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
@@ -294,6 +296,12 @@ func (m *mockBatchReader) Next(ctx context.Context) (*filereader.Batch, error) {
 		row[wkk.RowKeyCName] = fmt.Sprintf("test.metric.%d", i)
 		row[wkk.RowKeyCTID] = int64(i)
 		row[wkk.RowKeyCTimestamp] = int64(10000 * (m.currentBatch + 1))
+
+		// Create a sketch for the value
+		sketch, _ := ddsketch.NewDefaultDDSketch(0.01)
+		_ = sketch.Add(float64(i))
+		row[wkk.RowKeySketch] = helpers.EncodeSketch(sketch)
+
 		row[wkk.RowKeyRollupSum] = float64(i)
 		row[wkk.RowKeyRollupCount] = 1.0
 		row[wkk.RowKeyRollupMin] = float64(i)
@@ -361,6 +369,12 @@ func (e *errorBatchReader) Next(ctx context.Context) (*filereader.Batch, error) 
 	row[wkk.RowKeyCName] = "test.metric"
 	row[wkk.RowKeyCTID] = int64(1)
 	row[wkk.RowKeyCTimestamp] = int64(10000)
+
+	// Create a sketch for the value
+	sketch, _ := ddsketch.NewDefaultDDSketch(0.01)
+	_ = sketch.Add(1.0)
+	row[wkk.RowKeySketch] = helpers.EncodeSketch(sketch)
+
 	row[wkk.RowKeyRollupSum] = 1.0
 	row[wkk.RowKeyRollupCount] = 1.0
 
