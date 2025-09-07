@@ -314,9 +314,13 @@ func FlushAccumulator(
 		return nil
 	}
 
-	if acc.writerManager == nil {
-		acc.writerManager = NewCompactionWriterManager(tmpDir, acc.rpfEstimate)
+	// Always create a fresh writer manager for each flush cycle
+	// to avoid reusing closed writers
+	if acc.writerManager != nil {
+		// Clean up any previous writer manager
+		_ = acc.writerManager.Close(ctx)
 	}
+	acc.writerManager = NewCompactionWriterManager(tmpDir, acc.rpfEstimate)
 
 	for _, w := range work {
 		readerStack, err := metricsprocessing.CreateReaderStack(ctx, tmpDir, blobclient, w.Key.OrganizationID, w.Profile, w.Segments)
@@ -339,7 +343,7 @@ func FlushAccumulator(
 		return fmt.Errorf("uploading and updating database: %w", err)
 	}
 
-	// Reset writer manager after successful flush to prevent reuse of closed writers
+	// Clear writer manager reference - it's already closed from FlushAll
 	acc.writerManager = nil
 
 	return nil

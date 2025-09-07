@@ -33,7 +33,6 @@ type RollupWriterManager struct {
 	writer               *parquetwriter.UnifiedWriter
 	tmpDir               string
 	targetRecordsPerFile int64
-	closed               bool
 }
 
 // NewRollupWriterManager creates a new writer manager for rollup
@@ -93,10 +92,6 @@ func (m *RollupWriterManager) ProcessRollup(
 
 // processBatch processes a batch of rows
 func (m *RollupWriterManager) processBatch(ctx context.Context, batch *pipeline.Batch) error {
-	if m.closed {
-		return fmt.Errorf("writer manager is closed")
-	}
-
 	if err := m.ensureWriter(ctx); err != nil {
 		return fmt.Errorf("ensuring writer: %w", err)
 	}
@@ -128,10 +123,6 @@ func (m *RollupWriterManager) ensureWriter(_ context.Context) error {
 func (m *RollupWriterManager) FlushAll(ctx context.Context) (metricsprocessing.ProcessingResult, error) {
 	ll := logctx.FromContext(ctx)
 
-	if m.closed {
-		return metricsprocessing.ProcessingResult{}, fmt.Errorf("writer manager already closed")
-	}
-
 	if m.writer == nil {
 		// No writer was created, return empty results
 		return metricsprocessing.ProcessingResult{}, nil
@@ -156,8 +147,7 @@ func (m *RollupWriterManager) FlushAll(ctx context.Context) (metricsprocessing.P
 		slog.Int64("totalRecords", totalRecords),
 		slog.Int64("totalBytes", totalBytes))
 
-	// Mark as closed and clear writer reference
-	m.closed = true
+	// Clear writer reference
 	m.writer = nil
 
 	// Return ProcessingResult
@@ -179,6 +169,5 @@ func (m *RollupWriterManager) Close(ctx context.Context) error {
 		}
 		m.writer = nil
 	}
-	m.closed = true
 	return nil
 }
