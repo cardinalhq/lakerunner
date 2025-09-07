@@ -388,7 +388,7 @@ func TestCompactionFullCycle(t *testing.T) {
 	require.NotEmpty(t, accumulators, "Should have at least one accumulator")
 
 	for key, acc := range accumulators {
-		err = accumulation.FlushAccumulator(ctx, acc, mockStore, mockBlobClient, manager.GetTmpDir(), strategy)
+		err = accumulation.FlushAccumulator(ctx, acc, mockStore, mockBlobClient, manager.GetTmpDir(), strategy, nil)
 		require.NoError(t, err, "Flush should succeed for accumulator %v", key)
 	}
 

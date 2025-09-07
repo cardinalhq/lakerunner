@@ -24,6 +24,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
+	"github.com/cardinalhq/lakerunner/internal/fly"
+	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/lrdb"
@@ -73,6 +75,7 @@ func FlushAccumulator(
 	blobclient cloudstorage.Client,
 	tmpDir string,
 	strategy Strategy,
+	kafkaProducer fly.Producer,
 ) error {
 	work := acc.GetWork()
 	if len(work) == 0 {
@@ -114,7 +117,7 @@ func FlushAccumulator(
 	acc.writerManager = nil
 
 	// Upload and update database
-	if err := uploadAndUpdateDatabase(ctx, db, blobclient, acc.key, work, result, strategy); err != nil {
+	if err := uploadAndUpdateDatabase(ctx, db, blobclient, acc.key, work, result, strategy, kafkaProducer); err != nil {
 		return fmt.Errorf("uploading and updating database: %w", err)
 	}
 
@@ -135,6 +138,7 @@ func uploadAndUpdateDatabase(
 	work []AccumulationWork,
 	result metricsprocessing.ProcessingResult,
 	strategy Strategy,
+	kafkaProducer fly.Producer,
 ) error {
 	ll := logctx.FromContext(ctx)
 
@@ -218,6 +222,65 @@ func uploadAndUpdateDatabase(
 		slog.Int("inputSegments", len(oldRecords)),
 		slog.Int("outputSegments", len(newRecords)),
 		slog.Float64("segmentReduction", segmentReduction))
+
+	// Send Kafka notifications for output topics if producer is available
+	if kafkaProducer != nil {
+		outputTopics := strategy.GetOutputTopics(key)
+		if len(outputTopics) > 0 {
+			// Send notification for each new segment to each output topic
+			for _, newRecord := range newRecords {
+				notification := messages.MetricSegmentNotificationMessage{
+					OrganizationID: newRecord.OrganizationID,
+					DateInt:        newRecord.Dateint,
+					FrequencyMs:    newRecord.FrequencyMs,
+					SegmentID:      newRecord.SegmentID,
+					InstanceNum:    newRecord.InstanceNum,
+					SlotID:         newRecord.SlotID,
+					SlotCount:      newRecord.SlotCount,
+					RecordCount:    newRecord.RecordCount,
+					FileSize:       newRecord.FileSize,
+					QueuedAt:       time.Now(),
+				}
+
+				msgBytes, err := notification.Marshal()
+				if err != nil {
+					ll.Error("Failed to marshal segment notification",
+						slog.Int64("segmentID", newRecord.SegmentID),
+						slog.Any("error", err))
+					continue
+				}
+
+				// Calculate rollup interval start time for consistent key generation
+				// Use the segment's timestamp range to determine the rollup interval
+				var rollupStartTime int64
+				if newRecord.TsRange.Valid && newRecord.TsRange.Lower.Valid {
+					// Calculate the start of the rollup interval based on frequency
+					rollupStartTime = (newRecord.TsRange.Lower.Int64 / int64(newRecord.FrequencyMs)) * int64(newRecord.FrequencyMs)
+				} else {
+					// Fallback: use dateint-based calculation if timestamp range is not available
+					rollupStartTime = int64(newRecord.Dateint) * 24 * 60 * 60 * 1000 // Convert dateint to milliseconds
+				}
+
+				kafkaMessage := fly.Message{
+					Key:   fmt.Appendf(nil, "%s-%d-%d-%d", newRecord.OrganizationID.String(), newRecord.Dateint, newRecord.FrequencyMs, rollupStartTime),
+					Value: msgBytes,
+				}
+
+				for _, topic := range outputTopics {
+					if err := kafkaProducer.Send(ctx, topic, kafkaMessage); err != nil {
+						ll.Error("Failed to send segment notification to Kafka topic",
+							slog.String("topic", topic),
+							slog.Int64("segmentID", newRecord.SegmentID),
+							slog.Any("error", err))
+					} else {
+						ll.Debug("Sent segment notification to Kafka topic",
+							slog.String("topic", topic),
+							slog.Int64("segmentID", newRecord.SegmentID))
+					}
+				}
+			}
+		}
+	}
 
 	return nil
 }

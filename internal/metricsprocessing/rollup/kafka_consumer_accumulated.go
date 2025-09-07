@@ -44,6 +44,7 @@ type PartitionState struct {
 // KafkaAccumulatedRollupConsumer handles consuming and accumulating metric rollup notifications from Kafka
 type KafkaAccumulatedRollupConsumer struct {
 	consumer            fly.Consumer
+	kafkaProducer       fly.Producer
 	accManager          *accumulation.Manager
 	strategy            *RollupStrategy
 	store               rollupStore
@@ -100,8 +101,16 @@ func NewKafkaAccumulatedRollupConsumer(
 		return nil, fmt.Errorf("failed to create Kafka consumer: %w", err)
 	}
 
+	producer, err := factory.CreateProducer()
+	if err != nil {
+		consumer.Close()
+		accManager.Close()
+		return nil, fmt.Errorf("failed to create Kafka producer: %w", err)
+	}
+
 	return &KafkaAccumulatedRollupConsumer{
 		consumer:            consumer,
+		kafkaProducer:       producer,
 		accManager:          accManager,
 		strategy:            strategy,
 		store:               db,
@@ -294,7 +303,7 @@ func (k *KafkaAccumulatedRollupConsumer) flushAccumulated(ctx context.Context) e
 		}
 
 		// Process the accumulator using shared framework
-		if err := accumulation.FlushAccumulator(ctx, accumulator, k.store, blobclient, k.accManager.GetTmpDir(), k.strategy); err != nil {
+		if err := accumulation.FlushAccumulator(ctx, accumulator, k.store, blobclient, k.accManager.GetTmpDir(), k.strategy, k.kafkaProducer); err != nil {
 			ll.Error("Failed to flush accumulator",
 				slog.String("organizationID", key.OrganizationID.String()),
 				slog.Any("error", err))
@@ -390,6 +399,13 @@ func (k *KafkaAccumulatedRollupConsumer) Close() error {
 	// Close the accumulation manager
 	if err := k.accManager.Close(); err != nil {
 		logctx.FromContext(ctx).Error("Failed to close accumulation manager", slog.Any("error", err))
+	}
+
+	// Close the Kafka producer
+	if k.kafkaProducer != nil {
+		if err := k.kafkaProducer.Close(); err != nil {
+			logctx.FromContext(ctx).Error("Failed to close Kafka producer", slog.Any("error", err))
+		}
 	}
 
 	// Close the Kafka consumer
