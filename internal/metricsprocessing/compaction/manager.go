@@ -34,7 +34,6 @@ type CompactionStore interface {
 	SetMetricSegCompacted(ctx context.Context, arg lrdb.SetMetricSegCompactedParams) error
 	SetSingleMetricSegCompacted(ctx context.Context, arg lrdb.SetSingleMetricSegCompactedParams) error     // For single segment with full PK
 	MarkMetricSegsCompactedByKeys(ctx context.Context, arg lrdb.MarkMetricSegsCompactedByKeysParams) error // For batch marking
-	MrqQueueWork(ctx context.Context, arg lrdb.MrqQueueWorkParams) error                                   // For queueing rollup work
 	// Kafka offset tracking
 	KafkaJournalGetLastProcessed(ctx context.Context, params lrdb.KafkaJournalGetLastProcessedParams) (int64, error)
 	KafkaJournalUpsert(ctx context.Context, params lrdb.KafkaJournalUpsertParams) error

@@ -35,11 +35,6 @@ func (m *MockQueries) WorkQueueScalingDepth(ctx context.Context, arg lrdb.WorkQu
 	return args.Get(0), args.Error(1)
 }
 
-func (m *MockQueries) MetricRollupQueueScalingDepth(ctx context.Context) (interface{}, error) {
-	args := m.Called(ctx)
-	return args.Get(0), args.Error(1)
-}
-
 func TestService_IsActive(t *testing.T) {
 	service := &Service{}
 
@@ -159,9 +154,9 @@ func TestService_GetMetrics(t *testing.T) {
 			name:        "rollup-metrics success",
 			serviceType: "rollup-metrics",
 			mockSetup: func(m *MockQueries) {
-				m.On("MetricRollupQueueScalingDepth", mock.Anything).Return(int64(15), nil)
+				// No mock needed - returns fixed value
 			},
-			expectedValue: 15.0,
+			expectedValue: 5.0,
 			expectError:   false,
 		},
 		{
@@ -272,9 +267,9 @@ func TestService_getQueueDepth(t *testing.T) {
 			name:        "rollup-metrics",
 			serviceType: "rollup-metrics",
 			mockSetup: func(m *MockQueries) {
-				m.On("MetricRollupQueueScalingDepth", mock.Anything).Return(int64(18), nil)
+				// No mock needed - returns fixed value
 			},
-			expectedCount: 18,
+			expectedCount: 5,
 			expectError:   false,
 		},
 		{

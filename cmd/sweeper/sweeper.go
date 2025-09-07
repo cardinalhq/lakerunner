@@ -39,7 +39,6 @@ var (
 	objectCleanupCounter     metric.Int64Counter
 	legacyTableSyncCounter   metric.Int64Counter
 	workQueueExpiryCounter   metric.Int64Counter
-	mrqExpiryCounter         metric.Int64Counter
 	signalLockCleanupCounter metric.Int64Counter
 	legacyTableSyncDuration  metric.Float64Histogram
 	metricEstimateCounter    metric.Int64Counter
@@ -71,14 +70,6 @@ func init() {
 	)
 	if err != nil {
 		panic(fmt.Errorf("failed to create workqueue_expiry_total counter: %w", err))
-	}
-
-	mrqExpiryCounter, err = meter.Int64Counter(
-		"lakerunner.sweeper.mrq_expiry_total",
-		metric.WithDescription("Count of MRQ items expired due to stale heartbeats"),
-	)
-	if err != nil {
-		panic(fmt.Errorf("failed to create mrq_expiry_total counter: %w", err))
 	}
 
 	signalLockCleanupCounter, err = meter.Int64Counter(
@@ -201,17 +192,6 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 		defer wg.Done()
 		if err := periodicLoop(ctx, time.Minute, func(c context.Context) error {
 			return runInqueueExpiry(c, mdb)
-		}); err != nil && !errors.Is(err, context.Canceled) {
-			errCh <- err
-		}
-	}()
-
-	// Periodic: MRQ expiry
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		if err := periodicLoop(ctx, time.Minute, func(c context.Context) error {
-			return runMRQExpiry(c, mdb)
 		}); err != nil && !errors.Is(err, context.Canceled) {
 			errCh <- err
 		}

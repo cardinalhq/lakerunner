@@ -72,22 +72,9 @@ type Querier interface {
 	LogSegEstimator(ctx context.Context, arg LogSegEstimatorParams) ([]LogSegEstimatorRow, error)
 	MarkMetricSegsCompactedByKeys(ctx context.Context, arg MarkMetricSegsCompactedByKeysParams) error
 	MarkMetricSegsRolledupByKeys(ctx context.Context, arg MarkMetricSegsRolledupByKeysParams) error
-	// Get queue depth for metric rollup scaling
-	MetricRollupQueueScalingDepth(ctx context.Context) (interface{}, error)
 	// Returns an estimate of the number of metric segments, accounting for per-file overhead.
 	// Uses frequency_ms to provide more accurate estimates based on collection frequency.
 	MetricSegEstimator(ctx context.Context, arg MetricSegEstimatorParams) ([]MetricSegEstimatorRow, error)
-	MrqClaimBatch(ctx context.Context, arg MrqClaimBatchParams) ([]MrqClaimBatchRow, error)
-	MrqClaimBundle(ctx context.Context, arg MrqClaimBundleParams) error
-	MrqClaimSingleRow(ctx context.Context, arg MrqClaimSingleRowParams) (MrqClaimSingleRowRow, error)
-	MrqCompleteDelete(ctx context.Context, arg MrqCompleteDeleteParams) error
-	MrqDeferItems(ctx context.Context, arg MrqDeferItemsParams) error
-	MrqFetchCandidates(ctx context.Context, arg MrqFetchCandidatesParams) ([]MrqFetchCandidatesRow, error)
-	MrqHeartbeat(ctx context.Context, arg MrqHeartbeatParams) (int64, error)
-	MrqPickHead(ctx context.Context) (MrqPickHeadRow, error)
-	MrqQueueWork(ctx context.Context, arg MrqQueueWorkParams) error
-	MrqReclaimTimeouts(ctx context.Context, arg MrqReclaimTimeoutsParams) (int64, error)
-	MrqRelease(ctx context.Context, arg MrqReleaseParams) error
 	ObjectCleanupAdd(ctx context.Context, arg ObjectCleanupAddParams) error
 	ObjectCleanupBucketSummary(ctx context.Context) ([]ObjectCleanupBucketSummaryRow, error)
 	ObjectCleanupComplete(ctx context.Context, id uuid.UUID) error

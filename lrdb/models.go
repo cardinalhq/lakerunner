@@ -178,26 +178,6 @@ type MetricPackEstimate struct {
 	UpdatedAt      time.Time `json:"updated_at"`
 }
 
-type MetricRollupQueue struct {
-	ID             int64      `json:"id"`
-	QueueTs        time.Time  `json:"queue_ts"`
-	Priority       int32      `json:"priority"`
-	OrganizationID uuid.UUID  `json:"organization_id"`
-	Dateint        int32      `json:"dateint"`
-	FrequencyMs    int32      `json:"frequency_ms"`
-	InstanceNum    int16      `json:"instance_num"`
-	SlotID         int32      `json:"slot_id"`
-	SlotCount      int32      `json:"slot_count"`
-	Tries          int32      `json:"tries"`
-	ClaimedBy      int64      `json:"claimed_by"`
-	ClaimedAt      *time.Time `json:"claimed_at"`
-	HeartbeatedAt  *time.Time `json:"heartbeated_at"`
-	SegmentID      int64      `json:"segment_id"`
-	RecordCount    int64      `json:"record_count"`
-	RollupGroup    int64      `json:"rollup_group"`
-	EligibleAt     time.Time  `json:"eligible_at"`
-}
-
 type MetricSeg struct {
 	OrganizationID uuid.UUID                 `json:"organization_id"`
 	Dateint        int32                     `json:"dateint"`
