@@ -52,7 +52,10 @@ EXISTING_MIGRATIONS=$(git ls-tree -r --name-only "$MERGE_BASE" -- lrdb/migration
 
 # Get list of new migrations created in current branch (these can be freely modified)
 # Only consider properly named .up.sql and .down.sql files
-NEW_MIGRATIONS=$(git diff --name-only --diff-filter=A "$MERGE_BASE..HEAD" -- lrdb/migrations/ configdb/migrations/ | grep -E '\.(up|down)\.sql$' || true)
+# Include both committed and uncommitted new files
+COMMITTED_NEW=$(git diff --name-only --diff-filter=A "$MERGE_BASE..HEAD" -- lrdb/migrations/ configdb/migrations/ | grep -E '\.(up|down)\.sql$' || true)
+UNCOMMITTED_NEW=$(git ls-files --others --exclude-standard -- lrdb/migrations/ configdb/migrations/ | grep -E '\.(up|down)\.sql$' || true)
+NEW_MIGRATIONS=$(echo -e "$COMMITTED_NEW\n$UNCOMMITTED_NEW" | sort -u | grep -v '^$' || true)
 
 if [ -z "$EXISTING_MIGRATIONS" ]; then
     # No existing migrations to check - silently succeed
@@ -93,50 +96,38 @@ extract_migration_name() {
 
 # Check for up/down pair completeness for ALL migrations (existing + new)
 echo "Checking migration up/down pairs..."
-ALL_MIGRATIONS=$(find lrdb/migrations/ configdb/migrations/ -name "*.sql" 2>/dev/null | sort || true)
 
-# Get unique migration names (without .up/.down.sql suffix)
-MIGRATION_NAMES=$(echo "$ALL_MIGRATIONS" | while IFS= read -r migration; do
-    if [ -n "$migration" ]; then
-        extract_migration_name "$migration"
-    fi
-done | sort -u)
-
-# Check that every migration has both up and down
-while IFS= read -r migration_name; do
-    if [ -n "$migration_name" ]; then
-        up_file=""
-        down_file=""
-
-        # Look for up and down files for this migration
-        while IFS= read -r migration; do
-            if [ -n "$migration" ]; then
-                current_name=$(extract_migration_name "$migration")
-                if [ "$current_name" = "$migration_name" ]; then
-                    if [[ "$migration" == *".up.sql" ]]; then
-                        up_file="$migration"
-                    elif [[ "$migration" == *".down.sql" ]]; then
-                        down_file="$migration"
-                    fi
+# Use find with -exec to check pairs directly, avoiding multiple passes
+# This is the most efficient approach - single filesystem traversal
+for dir in lrdb/migrations configdb/migrations; do
+    if [ -d "$dir" ]; then
+        for up_file in "$dir"/*.up.sql; do
+            if [ -f "$up_file" ]; then
+                down_file="${up_file%.up.sql}.down.sql"
+                if [ ! -f "$down_file" ]; then
+                    migration_name=$(extract_migration_name "$up_file")
+                    echo "VIOLATION: Missing down migration for $migration_name"
+                    echo "   Found up file: $up_file"
+                    echo "   Expected: $down_file"
+                    VIOLATIONS_FOUND=true
                 fi
             fi
-        done <<< "$ALL_MIGRATIONS"
-
-        if [ -z "$up_file" ]; then
-            echo "VIOLATION: Missing up migration for $migration_name"
-            echo "   Found down file: $down_file"
-            echo "   Expected: $migration_name.up.sql"
-            VIOLATIONS_FOUND=true
-        fi
-
-        if [ -z "$down_file" ]; then
-            echo "VIOLATION: Missing down migration for $migration_name"
-            echo "   Found up file: $up_file"
-            echo "   Expected: $migration_name.down.sql"
-            VIOLATIONS_FOUND=true
-        fi
+        done
+        
+        for down_file in "$dir"/*.down.sql; do
+            if [ -f "$down_file" ]; then
+                up_file="${down_file%.down.sql}.up.sql"
+                if [ ! -f "$up_file" ]; then
+                    migration_name=$(extract_migration_name "$down_file")
+                    echo "VIOLATION: Missing up migration for $migration_name"
+                    echo "   Found down file: $down_file"
+                    echo "   Expected: $up_file"
+                    VIOLATIONS_FOUND=true
+                fi
+            fi
+        done
     fi
-done <<< "$MIGRATION_NAMES"
+done
 
 # Check sequential ordering of new migrations
 echo "Checking migration timestamp ordering..."
@@ -169,42 +160,59 @@ if [ -n "$NEW_MIGRATIONS" ]; then
 fi
 
 echo "Checking existing migration integrity..."
-while IFS= read -r migration; do
-    # Skip if this migration is new in the current branch (can be freely modified)
-    if echo "$NEW_MIGRATIONS" | grep -q "^$migration$"; then
-        continue
-    fi
 
-    # Skip incorrectly named files (only check .up.sql and .down.sql)
-    if [[ ! "$migration" =~ \.(up|down)\.sql$ ]]; then
-        continue
-    fi
+# Use git diff-tree to efficiently find what changed
+# This gets us only the files that actually differ from merge base
+CHANGED_FILES=$(git diff-tree -r --name-only --diff-filter=AMD "$MERGE_BASE" HEAD -- 'lrdb/migrations/*.sql' 'configdb/migrations/*.sql' | grep -E '\.(up|down)\.sql$' || true)
 
-    if [ -f "$migration" ]; then
-        # Get normalized content from both versions
+# Also check uncommitted changes
+UNCOMMITTED=$(git status --porcelain -- 'lrdb/migrations/*.sql' 'configdb/migrations/*.sql' | awk '{print $2}' | grep -E '\.(up|down)\.sql$' || true)
+
+# Combine and deduplicate
+ALL_CHANGED=$(echo -e "$CHANGED_FILES\n$UNCOMMITTED" | sort -u | grep -v '^$' || true)
+
+if [ -n "$ALL_CHANGED" ]; then
+    while IFS= read -r migration; do
+        # Skip if this migration is new (doesn't exist at merge base)
+        if ! git ls-tree "$MERGE_BASE" -- "$migration" | grep -q .; then
+            continue
+        fi
+        
+        # Check if file was deleted
+        if [ ! -f "$migration" ]; then
+            echo "VIOLATION: $migration has been deleted"
+            echo "   This migration existed before your branch and cannot be deleted."
+            VIOLATIONS_FOUND=true
+            continue
+        fi
+        
+        # File exists and existed before - compare content
         BASE_CONTENT=$(git show "$MERGE_BASE:$migration")
         CURRENT_CONTENT=$(cat "$migration")
-
+        
+        # Quick hash check first
+        BASE_HASH=$(echo "$BASE_CONTENT" | shasum -a 256 | cut -d' ' -f1)
+        CURRENT_HASH=$(echo "$CURRENT_CONTENT" | shasum -a 256 | cut -d' ' -f1)
+        
+        if [ "$BASE_HASH" = "$CURRENT_HASH" ]; then
+            continue
+        fi
+        
+        # Hashes differ - check if it's just whitespace/comments
         BASE_NORMALIZED=$(normalize_sql "$BASE_CONTENT")
         CURRENT_NORMALIZED=$(normalize_sql "$CURRENT_CONTENT")
-
+        
         if [ "$BASE_NORMALIZED" != "$CURRENT_NORMALIZED" ]; then
             echo "VIOLATION: $migration has substantive changes beyond comments/whitespace"
             echo "   This migration existed before your branch and cannot be substantially modified."
             echo ""
             echo "   Diff of normalized content:"
-            # Show the diff of normalized content to help identify the issue
             diff -u <(echo "$BASE_NORMALIZED") <(echo "$CURRENT_NORMALIZED") || true
             echo ""
             VIOLATIONS_FOUND=true
         fi
-    else
-        # File was deleted
-        echo "VIOLATION: $migration has been deleted"
-        echo "   This migration existed before your branch and cannot be deleted."
-        VIOLATIONS_FOUND=true
-    fi
-done <<< "$EXISTING_MIGRATIONS"
+    done <<< "$ALL_CHANGED"
+fi
 
 if [ "$VIOLATIONS_FOUND" = true ]; then
     echo ""
