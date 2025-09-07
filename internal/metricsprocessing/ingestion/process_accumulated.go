@@ -206,9 +206,11 @@ func ProcessAccumulatedBatch(ctx context.Context, args ingest.ProcessBatchArgs, 
 		return fmt.Errorf("failed to insert metric segments with Kafka offsets: %w", err)
 	}
 
-	// Send compaction notifications to Kafka (replaced MCQ)
+	// Send notifications to Kafka topics (replaced MCQ)
 	if kafkaProducer != nil {
 		compactionTopic := "lakerunner.segments.metrics.compact"
+		rollupTopic := "lakerunner.segments.metrics.rollup"
+		
 		for _, segParams := range allSegmentParams {
 			// Create the notification message
 			notification := messages.MetricSegmentNotificationMessage{
@@ -227,18 +229,28 @@ func ProcessAccumulatedBatch(ctx context.Context, args ingest.ProcessBatchArgs, 
 			// Marshal the message
 			msgBytes, err := notification.Marshal()
 			if err != nil {
-				ll.Error("Failed to marshal compaction notification",
+				ll.Error("Failed to marshal segment notification",
 					slog.Int64("segmentID", segParams.SegmentID),
 					slog.Any("error", err))
 				continue // Continue with other segments
 			}
 
-			// Send to Kafka
-			if err := kafkaProducer.Send(criticalCtx, compactionTopic, fly.Message{
+			kafkaMessage := fly.Message{
 				Key:   fmt.Appendf(nil, "%s-%d-%d", segParams.OrganizationID.String(), segParams.Dateint, segParams.SegmentID),
 				Value: msgBytes,
-			}); err != nil {
+			}
+
+			// Send to compaction topic
+			if err := kafkaProducer.Send(criticalCtx, compactionTopic, kafkaMessage); err != nil {
 				ll.Error("Failed to send compaction notification to Kafka",
+					slog.Int64("segmentID", segParams.SegmentID),
+					slog.Any("error", err))
+				// Continue with other segments
+			}
+
+			// Send to rollup topic
+			if err := kafkaProducer.Send(criticalCtx, rollupTopic, kafkaMessage); err != nil {
+				ll.Error("Failed to send rollup notification to Kafka",
 					slog.Int64("segmentID", segParams.SegmentID),
 					slog.Any("error", err))
 				// Continue with other segments
