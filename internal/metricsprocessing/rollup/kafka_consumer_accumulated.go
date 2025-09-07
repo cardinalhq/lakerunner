@@ -166,9 +166,8 @@ func (k *KafkaAccumulatedRollupConsumer) Run(ctx context.Context) error {
 			// Continue consuming messages
 		}
 
-		// Consume messages with timeout to allow periodic flush checks
-		consumeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		err := k.consumer.Consume(consumeCtx, func(ctx context.Context, kafkaMessages []fly.ConsumedMessage) error {
+		// Consume messages - Kafka has built-in polling timeout (~500ms)
+		err := k.consumer.Consume(ctx, func(ctx context.Context, kafkaMessages []fly.ConsumedMessage) error {
 			ll := logctx.FromContext(ctx).With(slog.String("batchID", idgen.GenerateShortBase32ID()))
 			ctx = logctx.WithLogger(ctx, ll)
 
@@ -237,13 +236,8 @@ func (k *KafkaAccumulatedRollupConsumer) Run(ctx context.Context) error {
 
 			return nil // Success - messages added to accumulator
 		})
-		cancel()
 
 		if err != nil {
-			if err == context.DeadlineExceeded {
-				// Timeout is expected for periodic flush checks
-				continue
-			}
 			if err == context.Canceled {
 				return ctx.Err()
 			}
