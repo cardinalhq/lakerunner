@@ -50,6 +50,7 @@ type PartitionState struct {
 // KafkaIngestConsumer handles consuming object storage notifications from Kafka and processing them
 type KafkaIngestConsumer struct {
 	consumer        *fly.ObjStoreNotificationConsumer
+	producer        fly.Producer
 	loop            *IngestLoopContext
 	kafkaJournalDB  KafkaJournalDB
 	signal          string
@@ -67,9 +68,17 @@ func NewKafkaIngestConsumer(ctx context.Context, factory *fly.Factory, cfg *conf
 		return nil, fmt.Errorf("failed to create Kafka consumer: %w", err)
 	}
 
+	// Create Kafka producer for sending compaction notifications
+	producer, err := factory.CreateProducer()
+	if err != nil {
+		consumer.Close()
+		return nil, fmt.Errorf("failed to create Kafka producer: %w", err)
+	}
+
 	loop, err := NewIngestLoopContext(context.Background(), signal)
 	if err != nil {
 		consumer.Close()
+		producer.Close()
 		return nil, fmt.Errorf("failed to create ingest loop context: %w", err)
 	}
 
@@ -78,6 +87,7 @@ func NewKafkaIngestConsumer(ctx context.Context, factory *fly.Factory, cfg *conf
 
 	return &KafkaIngestConsumer{
 		consumer:        consumer,
+		producer:        producer,
 		loop:            loop,
 		kafkaJournalDB:  loop.mdb,
 		signal:          signal,
@@ -240,7 +250,7 @@ func (k *KafkaIngestConsumer) processItem(ctx context.Context, notif *messages.O
 
 	switch k.signal {
 	case "metrics":
-		processErr = metricsingestion.ProcessBatch(ctxWithItemLogger, args, []ingest.IngestItem{item}, k.loop.exemplarProcessor, k.config.Metrics.Ingestion)
+		processErr = metricsingestion.ProcessBatch(ctxWithItemLogger, args, []ingest.IngestItem{item}, k.loop.exemplarProcessor, k.config.Metrics.Ingestion, k.producer)
 	case "logs":
 		processErr = logsingestion.ProcessBatch(ctxWithItemLogger, args, item, k.loop.exemplarProcessor)
 	case "traces":
@@ -469,7 +479,7 @@ func (k *KafkaIngestConsumer) flushAccumulator(ctx context.Context, manager *met
 	}
 
 	// Process the accumulated batch
-	if err := metricsingestion.ProcessAccumulatedBatch(ctx, args, manager, k.config.Metrics.Ingestion); err != nil {
+	if err := metricsingestion.ProcessAccumulatedBatch(ctx, args, manager, k.config.Metrics.Ingestion, k.producer); err != nil {
 		return fmt.Errorf("failed to process accumulated batch: %w", err)
 	}
 
@@ -479,12 +489,18 @@ func (k *KafkaIngestConsumer) flushAccumulator(ctx context.Context, manager *met
 	return nil
 }
 
-// Close closes the Kafka consumer and loop context
+// Close closes the Kafka consumer, producer and loop context
 func (k *KafkaIngestConsumer) Close() error {
 	var firstErr error
 
 	if k.consumer != nil {
 		if err := k.consumer.Close(); err != nil {
+			firstErr = err
+		}
+	}
+
+	if k.producer != nil {
+		if err := k.producer.Close(); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}

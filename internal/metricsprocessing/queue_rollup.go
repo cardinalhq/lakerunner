@@ -16,7 +16,6 @@ package metricsprocessing
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -42,23 +41,28 @@ func QueueMetricRollup(ctx context.Context, mdb RollupWorkQueuer, organizationID
 	// Calculate when the rollup work should become eligible
 	eligibleAt := calculateRollupEligibleTime(frequencyMs, startTs, nextFrequency)
 
-	err := mdb.MrqQueueWork(ctx, lrdb.MrqQueueWorkParams{
-		OrganizationID: organizationID,
-		Dateint:        dateint,
-		FrequencyMs:    frequencyMs,
-		InstanceNum:    instanceNum,
-		SlotID:         slotID,
-		SlotCount:      slotCount,
-		SegmentID:      segmentID,
-		RecordCount:    recordCount,
-		RollupGroup:    rollupGroup,
-		Priority:       frequencyMs,
-		EligibleAt:     eligibleAt,
-	})
+	// TODO: Replace MRQ with Kafka-based rollup notifications
+	// For now, commenting out MRQ queueing as we transition to Kafka
+	_ = eligibleAt  // silence unused variable warning
+	_ = rollupGroup // silence unused variable warning
 
-	if err != nil {
-		return fmt.Errorf("failed to queue metric rollup work: %w", err)
-	}
+	// err := mdb.MrqQueueWork(ctx, lrdb.MrqQueueWorkParams{
+	// 	OrganizationID: organizationID,
+	// 	Dateint:        dateint,
+	// 	FrequencyMs:    frequencyMs,
+	// 	InstanceNum:    instanceNum,
+	// 	SlotID:         slotID,
+	// 	SlotCount:      slotCount,
+	// 	SegmentID:      segmentID,
+	// 	RecordCount:    recordCount,
+	// 	RollupGroup:    rollupGroup,
+	// 	Priority:       frequencyMs,
+	// 	EligibleAt:     eligibleAt,
+	// })
+	//
+	// if err != nil {
+	// 	return fmt.Errorf("failed to queue metric rollup work: %w", err)
+	// }
 
 	return nil
 }

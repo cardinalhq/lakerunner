@@ -18,11 +18,14 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/exemplar"
+	"github.com/cardinalhq/lakerunner/internal/fly"
+	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
@@ -38,6 +41,7 @@ func ProcessBatch(
 	items []ingest.IngestItem,
 	exemplarProcessor *exemplar.Processor,
 	cfg Config,
+	kafkaProducer fly.Producer, // Add Kafka producer for sending compaction messages
 ) error {
 	batchID := idgen.GenerateShortBase32ID()
 	ll := logctx.FromContext(ctx).With(slog.String("batchID", batchID))
@@ -152,18 +156,42 @@ func ProcessBatch(
 		return fmt.Errorf("failed to insert metric segments with Kafka offsets: %w", err)
 	}
 
-	// Queue compaction work
-	for _, segParams := range segmentParams {
-		if err := args.DB.McqQueueWork(criticalCtx, lrdb.McqQueueWorkParams{
-			OrganizationID: segParams.OrganizationID,
-			Dateint:        segParams.Dateint,
-			FrequencyMs:    segParams.FrequencyMs,
-			SegmentID:      segParams.SegmentID,
-			InstanceNum:    segParams.InstanceNum,
-			RecordCount:    segParams.RecordCount,
-		}); err != nil {
-			return fmt.Errorf("failed to queue compaction work: %w", err)
+	// Send compaction notifications to Kafka (replaced MCQ)
+	if kafkaProducer != nil {
+		compactionTopic := "lakerunner.segments.metrics.compact"
+		for _, segParams := range segmentParams {
+			// Create the notification message
+			notification := messages.MetricSegmentNotificationMessage{
+				OrganizationID: segParams.OrganizationID,
+				DateInt:        segParams.Dateint,
+				FrequencyMs:    segParams.FrequencyMs,
+				SegmentID:      segParams.SegmentID,
+				InstanceNum:    segParams.InstanceNum,
+				SlotID:         segParams.SlotID,
+				SlotCount:      segParams.SlotCount,
+				RecordCount:    segParams.RecordCount,
+				FileSize:       segParams.FileSize,
+				QueuedAt:       time.Now(),
+			}
+
+			// Marshal the message
+			msgBytes, err := notification.Marshal()
+			if err != nil {
+				return fmt.Errorf("failed to marshal compaction notification: %w", err)
+			}
+
+			// Send to Kafka
+			if err := kafkaProducer.Send(criticalCtx, compactionTopic, fly.Message{
+				Key:   []byte(fmt.Sprintf("%s-%d-%d", segParams.OrganizationID.String(), segParams.Dateint, segParams.SegmentID)),
+				Value: msgBytes,
+			}); err != nil {
+				return fmt.Errorf("failed to send compaction notification to Kafka: %w", err)
+			}
 		}
+		ll.Debug("Sent compaction notifications to Kafka",
+			slog.Int("count", len(segmentParams)))
+	} else {
+		ll.Warn("No Kafka producer provided - compaction notifications will not be sent")
 	}
 
 	return nil

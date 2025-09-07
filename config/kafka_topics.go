@@ -16,8 +16,12 @@ package config
 
 var (
 	KafkaTopics = []string{
-		"lakerunner.objstore.ingest.metrics",
 		"lakerunner.objstore.ingest.logs",
+		"lakerunner.objstore.ingest.metrics",
 		"lakerunner.objstore.ingest.traces",
+		"lakerunner.segments.logs.compact",
+		"lakerunner.segments.metrics.compact",
+		"lakerunner.segments.metrics.rollup",
+		"lakerunner.segments.traces.compact",
 	}
 )

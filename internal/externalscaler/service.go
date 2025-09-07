@@ -37,7 +37,6 @@ import (
 // QueriesInterface defines the methods needed for scaling queries
 type QueriesInterface interface {
 	WorkQueueScalingDepth(ctx context.Context, arg lrdb.WorkQueueScalingDepthParams) (interface{}, error)
-	MetricCompactionQueueScalingDepth(ctx context.Context) (interface{}, error)
 	MetricRollupQueueScalingDepth(ctx context.Context) (interface{}, error)
 }
 
@@ -90,8 +89,6 @@ func (s *Service) getQueueDepth(ctx context.Context, serviceType string) (int64,
 	case "ingest-traces":
 		// TODO: Replace with Kafka consumer lag metrics for ingestion scaling
 		result, err = int64(5), nil
-	case "compact-metrics":
-		result, err = s.queries.MetricCompactionQueueScalingDepth(ctx)
 	case "compact-logs":
 		result, err = s.queries.WorkQueueScalingDepth(ctx, lrdb.WorkQueueScalingDepthParams{
 			Signal: lrdb.SignalEnumLogs,
@@ -224,7 +221,7 @@ func (s *Service) IsActive(ctx context.Context, req *ScaledObjectRef) (*IsActive
 	}
 
 	switch serviceType {
-	case "compact-metrics", "compact-logs", "compact-traces", "rollup-metrics":
+	case "compact-logs", "compact-traces", "rollup-metrics":
 		return &IsActiveResponse{Result: true}, nil
 	case "ingest-logs", "ingest-metrics", "ingest-traces":
 		return &IsActiveResponse{Result: true}, nil

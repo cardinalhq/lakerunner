@@ -72,18 +72,6 @@ type Querier interface {
 	LogSegEstimator(ctx context.Context, arg LogSegEstimatorParams) ([]LogSegEstimatorRow, error)
 	MarkMetricSegsCompactedByKeys(ctx context.Context, arg MarkMetricSegsCompactedByKeysParams) error
 	MarkMetricSegsRolledupByKeys(ctx context.Context, arg MarkMetricSegsRolledupByKeysParams) error
-	McqClaimBundle(ctx context.Context, arg McqClaimBundleParams) error
-	McqCleanupExpired(ctx context.Context, cutoffTime *time.Time) ([]MetricCompactionQueue, error)
-	McqCompleteDelete(ctx context.Context, arg McqCompleteDeleteParams) error
-	McqDeferItems(ctx context.Context, arg McqDeferItemsParams) error
-	McqFetchCandidates(ctx context.Context, arg McqFetchCandidatesParams) ([]McqFetchCandidatesRow, error)
-	McqHeartbeat(ctx context.Context, arg McqHeartbeatParams) (int64, error)
-	McqPickHead(ctx context.Context) (McqPickHeadRow, error)
-	McqQueueWork(ctx context.Context, arg McqQueueWorkParams) error
-	McqReclaimTimeouts(ctx context.Context, arg McqReclaimTimeoutsParams) (int64, error)
-	McqRelease(ctx context.Context, arg McqReleaseParams) error
-	// Get queue depth for metric compaction scaling
-	MetricCompactionQueueScalingDepth(ctx context.Context) (interface{}, error)
 	// Get queue depth for metric rollup scaling
 	MetricRollupQueueScalingDepth(ctx context.Context) (interface{}, error)
 	// Returns an estimate of the number of metric segments, accounting for per-file overhead.
@@ -106,6 +94,7 @@ type Querier interface {
 	ObjectCleanupFail(ctx context.Context, id uuid.UUID) error
 	ObjectCleanupGet(ctx context.Context, maxrows int32) ([]ObjectCleanupGetRow, error)
 	SetMetricSegCompacted(ctx context.Context, arg SetMetricSegCompactedParams) error
+	SetSingleMetricSegCompacted(ctx context.Context, arg SetSingleMetricSegCompactedParams) error
 	SignalLockCleanup(ctx context.Context) (int32, error)
 	// Returns an estimate of the number of trace segments, accounting for per-file overhead.
 	TraceSegEstimator(ctx context.Context, arg TraceSegEstimatorParams) ([]TraceSegEstimatorRow, error)

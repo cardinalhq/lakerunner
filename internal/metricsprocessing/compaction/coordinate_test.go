@@ -32,9 +32,21 @@ import (
 	"github.com/cardinalhq/lakerunner/testhelpers"
 )
 
+// testCompactionStore wraps lrdb.StoreFull to implement CompactionStore interface
+type testCompactionStore struct {
+	lrdb.StoreFull
+}
+
+// GetMetricEstimate implements the missing method for tests
+func (t *testCompactionStore) GetMetricEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32) int64 {
+	// Return a default estimate for tests
+	return 40000
+}
+
 func TestReplaceCompactedSegments_WithCompactMetricSegs(t *testing.T) {
 	ctx := context.Background()
-	db := testhelpers.NewTestLRDBStore(t)
+	dbStore := testhelpers.NewTestLRDBStore(t)
+	db := &testCompactionStore{StoreFull: dbStore}
 
 	orgID := uuid.New()
 	now := time.Now()

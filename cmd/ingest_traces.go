@@ -73,10 +73,8 @@ func init() {
 				return fmt.Errorf("failed to load config: %w", err)
 			}
 
-			// Also set trace partitions from config
-			if cfg.Traces.Partitions > 0 {
-				ingesttraces.SetNumTracePartitions(cfg.Traces.Partitions)
-			}
+			// Trace partitions will be auto-determined from Kafka topic
+			// No longer setting from config
 
 			kafkaFactory := fly.NewFactory(&cfg.Fly)
 			slog.Info("Starting traces ingestion with Kafka consumer")

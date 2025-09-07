@@ -173,7 +173,7 @@ func (k *KafkaCompactionConsumer) processCompactionWork(ctx context.Context, not
 	}
 
 	// Process the Kafka message using the new Kafka-specific processing function
-	err := ProcessKafkaMessage(ctx, notification, k.manager.GetDB(), k.manager.GetStorageProfileProvider(), k.manager.GetCloudManager(), kafkaOffset)
+	err := ProcessKafkaMessage(ctx, notification, k.manager.GetDB(), k.manager.GetStorageProfileProvider(), k.manager.GetCloudManager(), k.manager.GetConfig(), kafkaOffset)
 	if err != nil {
 		ll.Error("Failed to process compaction from Kafka",
 			slog.Any("error", err),

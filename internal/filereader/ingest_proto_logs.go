@@ -17,11 +17,12 @@ package filereader
 import (
 	"context"
 	"fmt"
+	"io"
+	"maps"
+
 	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
 	"github.com/cardinalhq/oteltools/pkg/translate"
-	"io"
-	"maps"
 
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"

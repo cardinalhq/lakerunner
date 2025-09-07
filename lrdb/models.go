@@ -171,23 +171,6 @@ type LrdbServiceIdentifier struct {
 	Namespace      pgtype.Text `json:"namespace"`
 }
 
-type MetricCompactionQueue struct {
-	ID             int64      `json:"id"`
-	QueueTs        time.Time  `json:"queue_ts"`
-	Priority       int32      `json:"priority"`
-	OrganizationID uuid.UUID  `json:"organization_id"`
-	Dateint        int32      `json:"dateint"`
-	FrequencyMs    int32      `json:"frequency_ms"`
-	SegmentID      int64      `json:"segment_id"`
-	InstanceNum    int16      `json:"instance_num"`
-	RecordCount    int64      `json:"record_count"`
-	Tries          int32      `json:"tries"`
-	ClaimedBy      int64      `json:"claimed_by"`
-	ClaimedAt      *time.Time `json:"claimed_at"`
-	HeartbeatedAt  *time.Time `json:"heartbeated_at"`
-	EligibleAt     time.Time  `json:"eligible_at"`
-}
-
 type MetricPackEstimate struct {
 	OrganizationID uuid.UUID `json:"organization_id"`
 	FrequencyMs    int32     `json:"frequency_ms"`
