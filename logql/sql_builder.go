@@ -21,7 +21,6 @@ import (
 	"strings"
 	"text/template"
 	"text/template/parse"
-	"time"
 )
 
 // ToWorkerSQLWithLimit is like ToWorkerSQL but (for non-aggregated leaves) appends
@@ -29,7 +28,7 @@ func (be *LogLeaf) ToWorkerSQLWithLimit(limit int, order string) string {
 	return be.ToWorkerSQL(limit, order)
 }
 
-func (be *LogLeaf) ToWorkerSQLForTagValues(step time.Duration, tagName string) string {
+func (be *LogLeaf) ToWorkerSQLForTagValues(tagName string) string {
 	const baseRel = "{table}"                 // replace upstream
 	const bodyCol = "\"_cardinalhq.message\"" // quoted column for message text
 	const tsCol = "\"_cardinalhq.timestamp\"" // quoted column for event timestamp
@@ -62,7 +61,7 @@ func (be *LogLeaf) ToWorkerSQLForTagValues(step time.Duration, tagName string) s
 
 	// If the tag is created by a parser, we need to build a more complex query
 	if tagCreatedByParser {
-		return be.buildTagValuesQueryWithParsers(step, tagName)
+		return be.buildTagValuesQueryWithParsers(tagName)
 	}
 
 	// For tags that exist in the base table, use a simpler query
@@ -114,7 +113,7 @@ func (be *LogLeaf) ToWorkerSQLForTagValues(step time.Duration, tagName string) s
 }
 
 // buildTagValuesQueryWithParsers builds a complex query when the tag is extracted by parsers
-func (be *LogLeaf) buildTagValuesQueryWithParsers(step time.Duration, tagName string) string {
+func (be *LogLeaf) buildTagValuesQueryWithParsers(tagName string) string {
 	const baseRel = "{table}"                 // replace upstream
 	const bodyCol = "\"_cardinalhq.message\"" // quoted column for message text
 	const tsCol = "\"_cardinalhq.timestamp\"" // quoted column for event timestamp

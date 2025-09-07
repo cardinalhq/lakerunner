@@ -389,7 +389,7 @@ func TestToWorkerSQLForTagValues(t *testing.T) {
 	be := &BaseExpr{
 		Metric: "cpu_usage",
 	}
-	sql := replaceStartEnd(replaceTableMetrics(be.ToWorkerSQLForTagValues(10*time.Second, "pod")), 0, 5000)
+	sql := replaceStartEnd(replaceTableMetrics(be.ToWorkerSQLForTagValues("pod")), 0, 5000)
 
 	rows := queryAll(t, db, sql)
 
@@ -444,7 +444,7 @@ func TestToWorkerSQLForTagValues_WithMatchers(t *testing.T) {
 			{Label: "region", Op: MatchEq, Value: "us-east-1"},
 		},
 	}
-	sql := replaceStartEnd(replaceTableMetrics(be.ToWorkerSQLForTagValues(10*time.Second, "pod")), 0, 5000)
+	sql := replaceStartEnd(replaceTableMetrics(be.ToWorkerSQLForTagValues("pod")), 0, 5000)
 
 	rows := queryAll(t, db, sql)
 

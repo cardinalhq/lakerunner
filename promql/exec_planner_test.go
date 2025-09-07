@@ -590,6 +590,60 @@ func TestCompile_SimpleQuantile_WantDDS(t *testing.T) {
 	}
 }
 
+func TestSimpleHistogramQuantile(t *testing.T) {
+	q := `histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, service))`
+	root := mustParse(t, q)
+
+	res, err := Compile(root)
+	if err != nil {
+		t.Fatalf("Compile error: %v", err)
+	}
+
+	// Root: QuantileNode(0.95)
+	qnode, ok := res.Root.(*HistogramQuantileNode)
+	if !ok {
+		t.Fatalf("root not QuantileNode, got %T", res.Root)
+	}
+	if qnode.Q != 0.95 {
+		t.Fatalf("Quantile.Q=%v, want 0.95", qnode.Q)
+	}
+
+	// Under Quantile: Agg(sum by le,service)
+	innerAgg, ok := qnode.Child.(*AggNode)
+	if !ok {
+		t.Fatalf("quantile child not AggNode, got %T", qnode.Child)
+	}
+	if innerAgg.Op != AggSum {
+		t.Fatalf("inner agg op = %v, want sum", innerAgg.Op)
+	}
+	wantBy := []string{"le", "service"}
+	if !reflect.DeepEqual(sorted(innerAgg.By), sorted(wantBy)) {
+		t.Fatalf("inner agg by = %#v, want %v", innerAgg.By, wantBy)
+	}
+
+	// Leaf: rate(http_request_duration_seconds_bucket[5m])
+	leaf, ok := innerAgg.Child.(*LeafNode)
+	if !ok {
+		t.Fatalf("inner agg child not LeafNode, got %T", innerAgg.Child)
+	}
+	be := leaf.BE
+	if be.Metric != "http_request_duration_seconds_bucket" {
+		t.Fatalf("metric=%q, want http_request_duration_seconds_bucket", be.Metric)
+	}
+	if be.FuncName != "rate" || be.Range != "5m" {
+		t.Fatalf("leaf wrong func/range: %+v", be)
+	}
+	// No special count/topk hints on leaf here (quantile runs at the API over scalars).
+	if be.WantCount || be.WantTopK {
+		t.Fatalf("unexpected hints on leaf: %+v", be)
+	}
+
+	// Expect one leaf
+	if len(res.Leaves) != 1 {
+		t.Fatalf("want 1 leaf, got %d", len(res.Leaves))
+	}
+}
+
 func TestCompile_TopK_HistogramQuantile(t *testing.T) {
 	q := `topk(5, histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, service)))`
 	root := mustParse(t, q)

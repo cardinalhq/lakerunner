@@ -293,7 +293,7 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if req.BaseExpr != nil {
 		if req.TagName != "" {
-			workerSql = req.BaseExpr.ToWorkerSQLForTagValues(req.Step, req.TagName)
+			workerSql = req.BaseExpr.ToWorkerSQLForTagValues(req.TagName)
 			cacheManager = ws.MetricsCM
 			globSize = ws.MetricsGlobSize
 			isTagValuesQuery = true
@@ -309,7 +309,7 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	} else if req.LogLeaf != nil {
 		if req.TagName != "" {
-			workerSql = req.LogLeaf.ToWorkerSQLForTagValues(req.Step, req.TagName)
+			workerSql = req.LogLeaf.ToWorkerSQLForTagValues(req.TagName)
 			cacheManager = ws.LogsCM
 			globSize = ws.LogsGlobSize
 			isTagValuesQuery = true

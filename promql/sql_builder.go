@@ -160,7 +160,7 @@ func buildFromLogLeaf(be *BaseExpr, step time.Duration) string {
 	return sql
 }
 
-func (be *BaseExpr) ToWorkerSQLForTagValues(step time.Duration, tagName string) string {
+func (be *BaseExpr) ToWorkerSQLForTagValues(tagName string) string {
 	// Build WHERE clause with metric name and matchers
 	where := withTime(whereFor(be))
 
