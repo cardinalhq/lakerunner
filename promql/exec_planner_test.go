@@ -554,6 +554,42 @@ func TestCompile_QuantileOverTime_WantDDS(t *testing.T) {
 	}
 }
 
+func TestCompile_SimpleQuantile_WantDDS(t *testing.T) {
+	q := `quantile(0.95, http_request_duration_seconds)`
+	root := mustParse(t, q)
+
+	res, err := Compile(root)
+	if err != nil {
+		t.Fatalf("Compile error: %v", err)
+	}
+
+	// Expect a single leaf (range-vector func pushed down)
+	quantileNode, ok := res.Root.(*QuantileNode)
+	if !ok {
+		t.Fatalf("root not LeafNode, got %T", res.Root)
+	}
+
+	leaf, ok := quantileNode.Child.(*LeafNode)
+	if !ok {
+		t.Fatalf("quantile child not LeafNode, got %T", quantileNode.Child)
+	}
+	be := leaf.BE
+	if be.Metric != "http_request_duration_seconds" {
+		t.Fatalf("leaf metric=%q, want http_request_duration_seconds", be.Metric)
+	}
+	// Critical: worker should return DDSketch
+
+	if len(res.Leaves) != 1 {
+		t.Fatalf("want 1 leaf, got %d", len(res.Leaves))
+	}
+	if quantileNode.Q != 0.95 {
+		t.Fatalf("Quantile.Q=%v, want 0.95", quantileNode.Q)
+	}
+	if be.FuncName != "" || be.Range != "" {
+		t.Fatalf("leaf wrong func/range: %+v", be)
+	}
+}
+
 func TestCompile_TopK_HistogramQuantile(t *testing.T) {
 	q := `topk(5, histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, service)))`
 	root := mustParse(t, q)
@@ -573,7 +609,7 @@ func TestCompile_TopK_HistogramQuantile(t *testing.T) {
 	}
 
 	// Child: QuantileNode(0.95)
-	qnode, ok := topkNode.Child.(*QuantileNode)
+	qnode, ok := topkNode.Child.(*HistogramQuantileNode)
 	if !ok {
 		t.Fatalf("topk child not QuantileNode, got %T", topkNode.Child)
 	}

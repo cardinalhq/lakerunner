@@ -26,8 +26,10 @@ import (
 
 // QuantileNode computes value-at-quantile from DDSketch child (e.g. histogram_quantile).
 type QuantileNode struct {
-	Q     float64 // 0..1
-	Child ExecNode
+	Q       float64
+	By      []string
+	Without []string
+	Child   ExecNode
 }
 
 func (n *QuantileNode) Hints() ExecHints { return n.Child.Hints() }

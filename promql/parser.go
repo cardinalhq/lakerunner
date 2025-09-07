@@ -38,7 +38,8 @@ type Expr struct {
 	BinOp     *BinaryExpr        `json:"binop,omitempty"`
 	HistQuant *HistogramQuantile `json:"histogramQuantile,omitempty"`
 	ClampMin  *ClampMinExpr      `json:"clampMin,omitempty"`
-	ClampMax  *ClampMaxExpr      `json:"clampMax,omitempty"` // NEW
+	ClampMax  *ClampMaxExpr      `json:"clampMax,omitempty"`
+	Quantile  *SimpleQuantile    `json:"quantile,omitempty"`
 }
 
 type ExprKind string
@@ -51,6 +52,7 @@ const (
 	KindTopK              ExprKind = "topk"
 	KindBottomK           ExprKind = "bottomk"
 	KindBinary            ExprKind = "binary"
+	KindQuantile          ExprKind = "quantile"
 	KindHistogramQuantile ExprKind = "histogram_quantile"
 	KindClampMin          ExprKind = "clamp_min"
 	KindClampMax          ExprKind = "clamp_max" // NEW
@@ -152,6 +154,13 @@ type HistogramQuantile struct {
 type ClampMinExpr struct {
 	Min  float64 `json:"min"`
 	Expr Expr    `json:"expr"`
+}
+
+type SimpleQuantile struct {
+	Q       float64  `json:"q"`
+	Expr    Expr     `json:"expr"`
+	By      []string `json:"by,omitempty"`
+	Without []string `json:"without,omitempty"`
 }
 
 // ClampMaxExpr ClampMax (NEW)
@@ -404,6 +413,26 @@ func fromNode(n promparser.Node) (Expr, error) {
 				return Expr{Kind: KindTopK, TopK: &TopKExpr{K: k, Expr: inner}}, nil
 			}
 			return Expr{Kind: KindBottomK, BottomK: &TopKExpr{K: k, Expr: inner}}, nil
+
+		case promparser.QUANTILE:
+			if v.Param == nil {
+				return Expr{}, errUnsupported("quantile param", "missing")
+			}
+			num, ok := v.Param.(*promparser.NumberLiteral)
+			if !ok {
+				return Expr{}, errUnsupported("quantile param", "non-number")
+			}
+			qe := SimpleQuantile{
+				Q:    num.Val,
+				Expr: inner,
+			}
+			// by / without
+			if v.Without {
+				qe.Without = v.Grouping
+			} else if len(v.Grouping) > 0 {
+				qe.By = v.Grouping
+			}
+			return Expr{Kind: KindQuantile, Quantile: &qe}, nil
 		}
 
 		// Regular aggregations (sum/avg/min/max/count) with by/without

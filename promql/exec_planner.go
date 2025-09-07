@@ -180,6 +180,27 @@ func Compile(root Expr) (QueryPlan, error) {
 
 	compile = func(e Expr, c ctx) (ExecNode, error) {
 		switch e.Kind {
+		case KindQuantile:
+			c2 := c
+			// Parent output grouping comes from e.Quant (by/without)
+			if len(e.Quantile.By) > 0 {
+				c2.outGroup = e.Quantile.By
+				c2.outWO = nil
+			} else if len(e.Quantile.Without) > 0 {
+				c2.outWO = e.Quantile.Without
+				c2.outGroup = nil
+			}
+			child, err := compile(e.Quantile.Expr, c2)
+			if err != nil {
+				return nil, err
+			}
+			return &QuantileNode{
+				Q:       e.Quantile.Q,
+				By:      c2.outGroup,
+				Without: c2.outWO,
+				Child:   child,
+			}, nil
+
 		case KindSelector:
 			n, be := buildLeaf(*e.Selector, c)
 			leaves = append(leaves, be)
@@ -342,7 +363,8 @@ func Compile(root Expr) (QueryPlan, error) {
 			if err != nil {
 				return nil, err
 			}
-			return &QuantileNode{Q: e.HistQuant.Q, Child: child}, nil
+
+			return &HistogramQuantileNode{Q: e.HistQuant.Q, Child: child}, nil
 
 		case KindClampMin:
 			child, err := compile(e.ClampMin.Expr, c)
@@ -483,6 +505,8 @@ func (p *QueryPlan) AttachLogLeaves(logLeafByBaseExprID map[string]logql.LogLeaf
 		case *BinaryNode:
 			walk(t.LHS)
 			walk(t.RHS)
+		case *HistogramQuantileNode:
+			walk(t.Child)
 		}
 	}
 	walk(p.Root)
