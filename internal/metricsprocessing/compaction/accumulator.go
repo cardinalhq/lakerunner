@@ -41,19 +41,10 @@ type CompactionKey struct {
 	InstanceNum    int16
 }
 
-// CompactionWorkMetadata holds the basic metadata needed for compaction work
-type CompactionWorkMetadata struct {
-	OrganizationID uuid.UUID
-	Dateint        int32
-	FrequencyMs    int32
-	InstanceNum    int16
-	IngestDateint  int32
-}
-
 // CompactionWork represents work to be compacted
 type CompactionWork struct {
 	Segments []lrdb.MetricSeg
-	Metadata CompactionWorkMetadata
+	Key      CompactionKey
 	Profile  storageprofile.StorageProfile
 }
 
@@ -62,7 +53,7 @@ type CompactionAccumulator struct {
 	key           CompactionKey
 	work          []CompactionWork
 	writerManager *CompactionWriterManager
-	rpfEstimate   int64 // Cached RPF estimate for this key
+	rpfEstimate   int64
 	startTime     time.Time
 	mu            sync.Mutex
 }
@@ -98,9 +89,9 @@ type CompactionManager struct {
 	globalStartTime     time.Time
 	kafkaOffsets        map[int32]int64 // Track highest offset per partition
 	mu                  sync.Mutex
-	tmpDir              string // Temp directory for this accumulation cycle
+	tmpDir              string
 	totalWorkCount      int
-	db                  CompactionStore // For fetching RPF estimates
+	db                  CompactionStore
 }
 
 // NewCompactionManager creates a new compaction manager
@@ -161,22 +152,10 @@ func (m *CompactionManager) AddCompactionWork(
 
 	acc := m.getOrCreateAccumulatorLocked(ctx, key)
 
-	// Get IngestDateint from first segment (all segments should have same IngestDateint)
-	ingestDateint := int32(0)
-	if len(segments) > 0 {
-		ingestDateint = segments[0].IngestDateint
-	}
-
 	work := CompactionWork{
 		Segments: segments,
-		Metadata: CompactionWorkMetadata{
-			OrganizationID: notification.OrganizationID,
-			Dateint:        notification.DateInt,
-			FrequencyMs:    notification.FrequencyMs,
-			InstanceNum:    notification.InstanceNum,
-			IngestDateint:  ingestDateint,
-		},
-		Profile: profile,
+		Key:      key,
+		Profile:  profile,
 	}
 
 	acc.AddWork(work)
@@ -196,7 +175,6 @@ func (m *CompactionManager) getOrCreateAccumulatorLocked(ctx context.Context, ke
 		return acc
 	}
 
-	// Fetch RPF estimate once for this accumulator
 	rpfEstimate := m.db.GetMetricEstimate(ctx, key.OrganizationID, key.FrequencyMs)
 
 	acc := NewCompactionAccumulator(key, rpfEstimate)
@@ -209,12 +187,10 @@ func (m *CompactionManager) ShouldFlush() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Flush if time window exceeded
 	if time.Since(m.globalStartTime) >= m.maxAccumulationTime {
 		return true
 	}
 
-	// Check disk space - flush if more than 50% full
 	if m.isDiskSpaceLow() {
 		return true
 	}
@@ -289,23 +265,19 @@ func (m *CompactionManager) Reset() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Clean up old temp directory
 	if m.tmpDir != "" {
 		if err := os.RemoveAll(m.tmpDir); err != nil {
 			return fmt.Errorf("removing old tmpdir: %w", err)
 		}
 	}
 
-	// Create new temp directory for next accumulation cycle
-	tmpDir, err := os.MkdirTemp("", "compaction-")
+	tmpDir, err := os.MkdirTemp("", "")
 	if err != nil {
 		return fmt.Errorf("creating new tmpdir: %w", err)
 	}
 
-	// Check disk space and warn if less than 80% free
 	checkDiskSpaceWarning(tmpDir)
 
-	// Reset state
 	m.accumulators = make(map[CompactionKey]*CompactionAccumulator)
 	m.globalStartTime = time.Now()
 	m.kafkaOffsets = make(map[int32]int64)
@@ -320,7 +292,6 @@ func (m *CompactionManager) Close() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Clean up temp directory
 	if m.tmpDir != "" {
 		if err := os.RemoveAll(m.tmpDir); err != nil {
 			return err
@@ -343,36 +314,33 @@ func FlushAccumulator(
 		return nil
 	}
 
-	// Initialize writer manager if needed (using cached RPF estimate)
 	if acc.writerManager == nil {
 		acc.writerManager = NewCompactionWriterManager(tmpDir, acc.rpfEstimate)
 	}
 
-	// Process each work item
 	for _, w := range work {
-		// Create reader stack from segments
-		readerStack, err := metricsprocessing.CreateReaderStack(ctx, tmpDir, blobclient, w.Metadata.OrganizationID, w.Profile, w.Segments)
+		readerStack, err := metricsprocessing.CreateReaderStack(ctx, tmpDir, blobclient, w.Key.OrganizationID, w.Profile, w.Segments)
 		if err != nil {
 			return fmt.Errorf("creating reader stack: %w", err)
 		}
 		defer metricsprocessing.CloseReaderStack(ctx, readerStack)
 
-		// Process through writer manager
-		if err := acc.writerManager.ProcessReaders(ctx, readerStack.Readers, w.Metadata); err != nil {
+		if err := acc.writerManager.ProcessReaders(ctx, readerStack.Readers, w.Key); err != nil {
 			return fmt.Errorf("processing readers: %w", err)
 		}
 	}
 
-	// Flush all writers and get results
-	results, err := acc.writerManager.FlushAll(ctx)
+	result, err := acc.writerManager.FlushAll(ctx)
 	if err != nil {
 		return fmt.Errorf("flushing writers: %w", err)
 	}
 
-	// Upload results and update database
-	if err := uploadAndUpdateDatabase(ctx, db, blobclient, acc.key, work, results); err != nil {
+	if err := uploadAndUpdateDatabase(ctx, db, blobclient, acc.key, work, result); err != nil {
 		return fmt.Errorf("uploading and updating database: %w", err)
 	}
+
+	// Reset writer manager after successful flush to prevent reuse of closed writers
+	acc.writerManager = nil
 
 	return nil
 }
@@ -384,11 +352,11 @@ func uploadAndUpdateDatabase(
 	blobclient cloudstorage.Client,
 	key CompactionKey,
 	work []CompactionWork,
-	results []metricsprocessing.ProcessingResult,
+	result metricsprocessing.ProcessingResult,
 ) error {
 	ll := logctx.FromContext(ctx)
 
-	if len(results) == 0 {
+	if len(result.RawResults) == 0 {
 		ll.Warn("No output files from compaction",
 			slog.String("organizationID", key.OrganizationID.String()),
 			slog.Int("dateint", int(key.Dateint)))
@@ -406,11 +374,9 @@ func uploadAndUpdateDatabase(
 		}
 	}
 
-	// Get profile from first work item (all should have same profile for this key)
 	profile := work[0].Profile
 
-	// Upload segments
-	segments, err := metricsprocessing.CreateSegmentsFromResults(ctx, results[0].RawResults, key.OrganizationID, profile.CollectorName)
+	segments, err := metricsprocessing.CreateSegmentsFromResults(ctx, result.RawResults, key.OrganizationID, profile.CollectorName)
 	if err != nil {
 		return fmt.Errorf("creating segments: %w", err)
 	}
@@ -438,14 +404,17 @@ func uploadAndUpdateDatabase(
 		}
 	}
 
-	// Update database atomically
+	// Update database atomically - use current dateint for when we added this data to our index
+	now := time.Now()
+	currentDateint := int32(now.Year()*10000 + int(now.Month())*100 + now.Day())
+
 	err = db.CompactMetricSegs(ctx, lrdb.CompactMetricSegsParams{
 		OrganizationID: key.OrganizationID,
 		Dateint:        key.Dateint,
 		InstanceNum:    key.InstanceNum,
 		SlotID:         0, // compaction is terminal, single slot
 		SlotCount:      1,
-		IngestDateint:  work[0].Metadata.IngestDateint,
+		IngestDateint:  currentDateint,
 		FrequencyMs:    key.FrequencyMs,
 		CreatedBy:      lrdb.CreatedByCompact,
 		OldRecords:     oldRecords,

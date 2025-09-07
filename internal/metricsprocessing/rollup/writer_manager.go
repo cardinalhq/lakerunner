@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package compaction
+package rollup
 
 import (
 	"context"
@@ -28,27 +28,28 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 )
 
-// CompactionWriterManager manages a parquet writer for compaction
-type CompactionWriterManager struct {
+// RollupWriterManager manages a parquet writer for rollup
+type RollupWriterManager struct {
 	writer               *parquetwriter.UnifiedWriter
 	tmpDir               string
 	targetRecordsPerFile int64
 	closed               bool
 }
 
-// NewCompactionWriterManager creates a new writer manager for compaction
-func NewCompactionWriterManager(tmpDir string, targetRecordsPerFile int64) *CompactionWriterManager {
-	return &CompactionWriterManager{
+// NewRollupWriterManager creates a new writer manager for rollup
+func NewRollupWriterManager(tmpDir string, targetRecordsPerFile int64) *RollupWriterManager {
+	return &RollupWriterManager{
 		tmpDir:               tmpDir,
 		targetRecordsPerFile: targetRecordsPerFile,
 	}
 }
 
-// ProcessReaders processes a stack of readers through the writer manager
-func (m *CompactionWriterManager) ProcessReaders(
+// ProcessRollup processes metric records through the rollup pipeline
+func (m *RollupWriterManager) ProcessRollup(
 	ctx context.Context,
 	readerStack []filereader.Reader,
-	key CompactionKey,
+	key RollupKey,
+	targetFrequency int32,
 ) error {
 	// Use the existing metricsprocessing functions to create the reader pipeline
 	keyProvider := metricsprocessing.GetCurrentMetricSortKeyProvider()
@@ -58,8 +59,8 @@ func (m *CompactionWriterManager) ProcessReaders(
 	}
 	defer mergeReader.Close()
 
-	// Add aggregation
-	aggregatingReader, err := filereader.NewAggregatingMetricsReader(mergeReader, int64(key.FrequencyMs), 1000)
+	// Add aggregation for the target frequency
+	aggregatingReader, err := filereader.NewAggregatingMetricsReader(mergeReader, int64(targetFrequency), 1000)
 	if err != nil {
 		return fmt.Errorf("creating aggregating reader: %w", err)
 	}
@@ -91,7 +92,7 @@ func (m *CompactionWriterManager) ProcessReaders(
 }
 
 // processBatch processes a batch of rows
-func (m *CompactionWriterManager) processBatch(ctx context.Context, batch *pipeline.Batch) error {
+func (m *RollupWriterManager) processBatch(ctx context.Context, batch *pipeline.Batch) error {
 	if m.closed {
 		return fmt.Errorf("writer manager is closed")
 	}
@@ -108,7 +109,7 @@ func (m *CompactionWriterManager) processBatch(ctx context.Context, batch *pipel
 }
 
 // ensureWriter creates the writer if it doesn't exist
-func (m *CompactionWriterManager) ensureWriter(_ context.Context) error {
+func (m *RollupWriterManager) ensureWriter(_ context.Context) error {
 	if m.writer != nil {
 		return nil
 	}
@@ -124,7 +125,7 @@ func (m *CompactionWriterManager) ensureWriter(_ context.Context) error {
 }
 
 // FlushAll closes the writer and returns the results
-func (m *CompactionWriterManager) FlushAll(ctx context.Context) (metricsprocessing.ProcessingResult, error) {
+func (m *RollupWriterManager) FlushAll(ctx context.Context) (metricsprocessing.ProcessingResult, error) {
 	ll := logctx.FromContext(ctx)
 
 	if m.closed {
@@ -150,7 +151,7 @@ func (m *CompactionWriterManager) FlushAll(ctx context.Context) (metricsprocessi
 		totalBytes += result.FileSize
 	}
 
-	ll.Info("Flushed compaction writer",
+	ll.Info("Flushed rollup writer",
 		slog.Int("fileCount", len(results)),
 		slog.Int64("totalRecords", totalRecords),
 		slog.Int64("totalBytes", totalBytes))
@@ -171,7 +172,7 @@ func (m *CompactionWriterManager) FlushAll(ctx context.Context) (metricsprocessi
 }
 
 // Close closes the writer and cleans up resources
-func (m *CompactionWriterManager) Close(ctx context.Context) error {
+func (m *RollupWriterManager) Close(ctx context.Context) error {
 	if m.writer != nil {
 		if _, err := m.writer.Close(ctx); err != nil {
 			return err
@@ -181,3 +182,4 @@ func (m *CompactionWriterManager) Close(ctx context.Context) error {
 	m.closed = true
 	return nil
 }
+

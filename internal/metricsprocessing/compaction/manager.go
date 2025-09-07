@@ -58,11 +58,10 @@ func ConfigFromViper(cfg *config.CompactionConfig) Config {
 }
 
 type Manager struct {
-	db       CompactionStore
-	workerID int64
-	config   Config
-	sp       storageprofile.StorageProfileProvider
-	cmgr     cloudstorage.ClientProvider
+	db     CompactionStore
+	config Config
+	sp     storageprofile.StorageProfileProvider
+	cmgr   cloudstorage.ClientProvider
 }
 
 // GetDB returns the database store
@@ -85,12 +84,11 @@ func (m *Manager) GetConfig() Config {
 	return m.config
 }
 
-func NewManager(db CompactionStore, workerID int64, cfg *config.CompactionConfig, sp storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider) *Manager {
+func NewManager(db CompactionStore, cfg *config.CompactionConfig, sp storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider) *Manager {
 	return &Manager{
-		db:       db,
-		workerID: workerID,
-		config:   ConfigFromViper(cfg),
-		sp:       sp,
-		cmgr:     cmgr,
+		db:     db,
+		config: ConfigFromViper(cfg),
+		sp:     sp,
+		cmgr:   cmgr,
 	}
 }
