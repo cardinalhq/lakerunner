@@ -62,11 +62,6 @@ func NewSQSService(kafkaFactory *fly.Factory) (*SQSService, error) {
 	}
 	sp := storageprofile.NewStorageProfileProvider(cdb)
 
-	// Kafka is required
-	if !kafkaFactory.IsEnabled() {
-		return nil, fmt.Errorf("Kafka is required for pubsub services but is not enabled")
-	}
-
 	kafkaHandler, err := NewKafkaHandler(kafkaFactory, "sqs", sp)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka handler: %w", err)

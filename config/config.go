@@ -139,7 +139,6 @@ func Load() (*Config, error) {
 	if b := v.GetString("fly.brokers"); b != "" {
 		cfg.Fly.Brokers = strings.Split(b, ",")
 	}
-	cfg.Fly.Enabled = v.GetBool("fly.enabled")
 
 	// Also check DEBUG environment variable (without prefix)
 	if os.Getenv("DEBUG") != "" {
@@ -154,7 +153,7 @@ func Load() (*Config, error) {
 func bindEnvs(v *viper.Viper, cfg any, parts ...string) {
 	val := reflect.ValueOf(cfg)
 	typ := reflect.TypeOf(cfg)
-	if typ.Kind() == reflect.Ptr {
+	if typ.Kind() == reflect.Pointer {
 		val = val.Elem()
 		typ = typ.Elem()
 	}

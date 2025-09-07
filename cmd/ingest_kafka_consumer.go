@@ -62,10 +62,6 @@ type KafkaIngestConsumer struct {
 
 // NewKafkaIngestConsumer creates a new Kafka-based ingest consumer
 func NewKafkaIngestConsumer(ctx context.Context, factory *fly.Factory, cfg *config.Config, signal string, groupID string) (*KafkaIngestConsumer, error) {
-	if !factory.IsEnabled() {
-		return nil, fmt.Errorf("Kafka is not enabled for ingestion")
-	}
-
 	consumer, err := fly.NewObjStoreNotificationConsumer(ctx, factory, signal, groupID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka consumer: %w", err)
@@ -83,7 +79,7 @@ func NewKafkaIngestConsumer(ctx context.Context, factory *fly.Factory, cfg *conf
 	return &KafkaIngestConsumer{
 		consumer:        consumer,
 		loop:            loop,
-		kafkaJournalDB:  loop.mdb, // Pass the full mdb as the KafkaJournalDB interface
+		kafkaJournalDB:  loop.mdb,
 		signal:          signal,
 		config:          cfg,
 		consumerGroup:   groupID,

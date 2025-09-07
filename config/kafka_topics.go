@@ -14,23 +14,10 @@
 
 package config
 
-import (
-	"testing"
-
-	"github.com/stretchr/testify/require"
+var (
+	KafkaTopics = []string{
+		"lakerunner.objstore.ingest.metrics",
+		"lakerunner.objstore.ingest.logs",
+		"lakerunner.objstore.ingest.traces",
+	}
 )
-
-func TestLoadEnvOverride(t *testing.T) {
-	t.Setenv("LAKERUNNER_FLY_BROKERS", "broker1:9092,broker2:9092")
-	t.Setenv("LAKERUNNER_FLY_SASL_ENABLED", "true")
-	t.Setenv("LAKERUNNER_FLY_SASL_USERNAME", "alice")
-	t.Setenv("LAKERUNNER_METRICS_INGESTION_PROCESS_EXEMPLARS", "false")
-
-	cfg, err := Load()
-	require.NoError(t, err)
-
-	require.Equal(t, []string{"broker1:9092", "broker2:9092"}, cfg.Fly.Brokers)
-	require.True(t, cfg.Fly.SASLEnabled)
-	require.Equal(t, "alice", cfg.Fly.SASLUsername)
-	require.False(t, cfg.Metrics.Ingestion.ProcessExemplars)
-}

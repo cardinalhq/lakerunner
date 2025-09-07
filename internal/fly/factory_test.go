@@ -25,7 +25,6 @@ import (
 func TestNewFactory(t *testing.T) {
 	config := &Config{
 		Brokers: []string{"broker1:9092", "broker2:9092"},
-		Enabled: true,
 	}
 
 	factory := NewFactory(config)
@@ -202,11 +201,6 @@ func TestFactory_CreateConsumerWithService(t *testing.T) {
 	consumer.Close()
 }
 
-func TestFactory_IsEnabled(t *testing.T) {
-	factory := NewFactory(&Config{Enabled: true})
-	assert.True(t, factory.IsEnabled())
-}
-
 func TestManager_Lifecycle(t *testing.T) {
 	config := &Config{
 		Brokers: []string{"localhost:9092"},
@@ -306,7 +300,6 @@ func TestFactoryIntegration(t *testing.T) {
 
 	config := &Config{
 		Brokers:              []string{"localhost:9092"},
-		Enabled:              true,
 		ProducerBatchSize:    10,
 		ProducerBatchTimeout: 100000000, // 100ms
 		ConsumerBatchSize:    10,
@@ -315,7 +308,6 @@ func TestFactoryIntegration(t *testing.T) {
 	}
 
 	factory := NewFactory(config)
-	assert.True(t, factory.IsEnabled())
 
 	// Test producer creation
 	producer, err := factory.CreateProducer()

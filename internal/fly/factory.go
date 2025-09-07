@@ -161,11 +161,6 @@ func (f *Factory) CreateKafkaClient() (*kafka.Client, error) {
 	return client, nil
 }
 
-// IsEnabled returns whether Kafka is enabled
-func (f *Factory) IsEnabled() bool {
-	return f.config.Enabled
-}
-
 // GetConfig returns the underlying configuration
 func (f *Factory) GetConfig() *Config {
 	return f.config

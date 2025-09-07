@@ -94,32 +94,25 @@ func init() {
 
 			manager := compaction.NewManager(mdb, myInstanceID, &cfg.Metrics.Compaction, sp, cmgr)
 
-			// Check if Kafka is enabled
+			// Kafka is always required for compaction
 			kafkaFactory := fly.NewFactory(&cfg.Fly)
-			if kafkaFactory.IsEnabled() {
-				slog.Info("Starting metrics compaction with Kafka consumer")
+			slog.Info("Starting metrics compaction with Kafka consumer")
 
-				// Create Kafka consumer for compaction
-				consumer, err := NewKafkaCompactionConsumer(ctx, kafkaFactory, cfg, manager, mdb)
-				if err != nil {
-					return fmt.Errorf("failed to create Kafka compaction consumer: %w", err)
-				}
-				defer func() {
-					if err := consumer.Close(); err != nil {
-						slog.Error("Error closing Kafka consumer", slog.Any("error", err))
-					}
-				}()
-
-				healthServer.SetStatus(healthcheck.StatusHealthy)
-
-				// Run the Kafka consumer
-				return consumer.Run(ctx)
-			} else {
-				// Fall back to the old polling-based approach
-				slog.Info("Starting metrics compaction with polling (Kafka not enabled)")
-				healthServer.SetStatus(healthcheck.StatusHealthy)
-				return manager.Run(ctx)
+			// Create Kafka consumer for compaction
+			consumer, err := compaction.NewKafkaCompactionConsumer(ctx, kafkaFactory, cfg, manager, mdb)
+			if err != nil {
+				return fmt.Errorf("failed to create Kafka compaction consumer: %w", err)
 			}
+			defer func() {
+				if err := consumer.Close(); err != nil {
+					slog.Error("Error closing Kafka consumer", slog.Any("error", err))
+				}
+			}()
+
+			healthServer.SetStatus(healthcheck.StatusHealthy)
+
+			// Run the Kafka consumer
+			return consumer.Run(ctx)
 		},
 	}
 

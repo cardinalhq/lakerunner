@@ -65,9 +65,6 @@ func getConsumerLagCmd() *cobra.Command {
 			}
 
 			factory := fly.NewFactory(&cfg.Fly)
-			if !factory.IsEnabled() {
-				return fmt.Errorf("Kafka is not enabled in configuration")
-			}
 
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()

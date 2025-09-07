@@ -32,10 +32,6 @@ type ObjStoreNotificationProducer struct {
 
 // NewObjStoreNotificationProducer creates a new object storage notification producer
 func NewObjStoreNotificationProducer(factory *Factory) (*ObjStoreNotificationProducer, error) {
-	if !factory.IsEnabled() {
-		return nil, fmt.Errorf("Kafka is not enabled")
-	}
-
 	producer, err := factory.CreateProducer()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka producer: %w", err)
@@ -113,10 +109,6 @@ type ObjStoreNotificationConsumer struct {
 // NewObjStoreNotificationConsumer creates a new object storage notification consumer for a specific signal
 func NewObjStoreNotificationConsumer(ctx context.Context, factory *Factory, signal string, groupID string) (*ObjStoreNotificationConsumer, error) {
 	ll := logctx.FromContext(ctx)
-
-	if !factory.IsEnabled() {
-		return nil, fmt.Errorf("Kafka is not enabled")
-	}
 
 	// Determine topic based on signal
 	var topic string
