@@ -199,17 +199,23 @@ func (k *KafkaAccumulatedRollupConsumer) Run(ctx context.Context) error {
 					k.sp,
 					kafkaOffset,
 				); err != nil {
-					ll.Error("Failed to add rollup work to accumulator",
+					// Log warning and skip this message - don't fail the whole batch
+					ll.Warn("Skipping segment due to rollup work error",
 						slog.Any("error", err),
-						slog.Int64("segmentID", notification.SegmentID))
-					return err // Return error to prevent commit
+						slog.Int64("segmentID", notification.SegmentID),
+						slog.String("organizationID", notification.OrganizationID.String()))
+					continue // Skip this message but continue processing others
 				}
 			}
 
 			// Check if we should flush based on accumulation state
 			if k.rollupManager.ShouldFlush() {
 				if err := k.flushAccumulated(ctx); err != nil {
-					return fmt.Errorf("failed to flush accumulated work: %w", err)
+					// Log error but don't fail - we'll retry the flush next time
+					ll.Error("Failed to flush accumulated work, will retry on next batch",
+						slog.Any("error", err))
+					// Don't return error - we still want to commit the Kafka offsets
+					// The data remains in the accumulator and will be retried on the next flush
 				}
 			}
 
