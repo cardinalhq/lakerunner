@@ -23,6 +23,8 @@ import (
 	"runtime"
 	"testing"
 	"time"
+
+	"github.com/cardinalhq/lakerunner/internal/filereader"
 )
 
 // TestDuckDBMemoryPatterns tests different batch sizes to understand

@@ -15,9 +15,10 @@
 package promql
 
 import (
-	"github.com/cardinalhq/lakerunner/logql"
 	"reflect"
 	"testing"
+
+	"github.com/cardinalhq/lakerunner/logql"
 )
 
 // --- helpers ---------------------------------------------------------------

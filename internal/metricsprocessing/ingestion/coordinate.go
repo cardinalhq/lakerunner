@@ -17,11 +17,12 @@ package ingestion
 import (
 	"context"
 	"fmt"
-	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"io"
 	"log/slog"
 	"os"
 	"strings"
+
+	"github.com/cardinalhq/lakerunner/internal/exemplar"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -356,13 +357,8 @@ func downloadAndValidateFiles(ctx context.Context, items []ingest.IngestItem, tm
 	return validFiles, nil
 }
 
-<<<<<<< HEAD
 // createReadersForFiles creates the reader stack for each file
 func createReadersForFiles(ctx context.Context, validFiles []fileInfo, orgID string, processor *exemplar.Processor) ([]filereader.Reader, []filereader.Reader, error) {
-=======
-// createReadersForFiles creates the reader stack for each file and optionally processes exemplars
-func createReadersForFiles(ctx context.Context, validFiles []fileInfo, orgID string, exemplarProcessor *exemplar.Processor, processExemplars bool, mdb lrdb.StoreFull) ([]filereader.Reader, []filereader.Reader, error) {
->>>>>>> c36df0b (exemplars once)
 	ll := logctx.FromContext(ctx)
 
 	var readers []filereader.Reader
@@ -387,7 +383,7 @@ func createReadersForFiles(ctx context.Context, validFiles []fileInfo, orgID str
 		}
 
 		// Process exemplars from this reader if requested (do this before wrapping with other readers)
-		if exemplarProcessor != nil && processExemplars {
+		if exemplarProcessor != nil {
 			if err := processExemplarsFromReader(ctx, reader, exemplarProcessor, orgID, mdb); err != nil {
 				// Just log error and continue - don't fail the whole file
 				ll.Warn("Failed to process exemplars from file",

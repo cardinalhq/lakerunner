@@ -19,9 +19,10 @@ import (
 	"fmt"
 	"time"
 
+	"log/slog"
+
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
-	"log/slog"
 )
 
 // ObjStoreNotificationProducer manages Kafka producer for object storage notifications

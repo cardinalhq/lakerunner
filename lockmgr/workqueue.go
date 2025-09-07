@@ -22,8 +22,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"log/slog"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/lrdb"

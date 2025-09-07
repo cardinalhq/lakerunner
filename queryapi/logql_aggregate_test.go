@@ -17,12 +17,14 @@ package queryapi
 import (
 	"database/sql"
 	"fmt"
+
+	_ "github.com/marcboeker/go-duckdb/v2"
+
 	"github.com/cardinalhq/lakerunner/logql"
 	"github.com/cardinalhq/lakerunner/promql"
-	_ "github.com/marcboeker/go-duckdb/v2"
-	"sort"
 
 	"log/slog"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
