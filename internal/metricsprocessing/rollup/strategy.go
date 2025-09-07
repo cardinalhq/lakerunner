@@ -165,18 +165,30 @@ func (s *RollupStrategy) GetSourceSegments(ctx context.Context, db accumulation.
 
 // GetOutputTopics returns the output Kafka topics for rolled-up segments
 func (s *RollupStrategy) GetOutputTopics(key accumulation.AccumulationKey) []string {
-	// Rollup produces output to metric-segments topic for the target frequency
-	return []string{"metric-segments"}
+	// Always send to compact topic for the written segments
+	topics := []string{"lakerunner.segments.metrics.compact"}
+
+	// Get the target frequency we just wrote
+	targetFrequency := s.GetTargetFrequency(key)
+
+	// Check if there's a higher rollup frequency beyond the target
+	// (e.g., if we just wrote 5min segments, check if there's a 1hr rollup)
+	if _, hasNext := config.GetTargetRollupFrequency(targetFrequency); hasNext {
+		// Also send to rollup topic to continue the rollup chain
+		topics = append(topics, "lakerunner.segments.metrics.rollup")
+	}
+
+	return topics
 }
 
 // GetConsumerGroup returns the consumer group name
 func (s *RollupStrategy) GetConsumerGroup() string {
-	return "rollup-metrics"
+	return "lakerunner.rollup.metrics"
 }
 
 // GetSourceTopic returns the source Kafka topic
 func (s *RollupStrategy) GetSourceTopic() string {
-	return "metric-segments"
+	return "lakerunner.segments.metrics.rollup"
 }
 
 // GetMaxAccumulationTime returns the max accumulation time

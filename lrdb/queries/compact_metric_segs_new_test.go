@@ -228,8 +228,8 @@ func TestCompactMetricSegs_DeletionOnly(t *testing.T) {
 			{SegmentID: segmentIDs[0], SlotID: 0},
 			{SegmentID: segmentIDs[1], SlotID: 0},
 		},
-		NewRecords:  []lrdb.CompactMetricSegsNew{}, // Empty - no new segments
-		CreatedBy: lrdb.CreatedByIngest,
+		NewRecords: []lrdb.CompactMetricSegsNew{}, // Empty - no new segments
+		CreatedBy:  lrdb.CreatedByIngest,
 	})
 	require.NoError(t, err)
 
