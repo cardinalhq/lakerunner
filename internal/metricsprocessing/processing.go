@@ -179,16 +179,6 @@ func (segments ProcessedSegments) SegmentIDs() []int64 {
 	return ids
 }
 
-// QueueCompactionWork queues compaction work for all segments
-func (segments ProcessedSegments) QueueCompactionWork(ctx context.Context, mdb CompactionWorkQueuer, orgID uuid.UUID, instanceNum int16, frequency int32) error {
-	for _, segment := range segments {
-		if err := QueueMetricCompaction(ctx, mdb, orgID, segment.GetDateint(), frequency, instanceNum, segment.SegmentID, segment.Result.RecordCount, segment.StartTs, segment.EndTs); err != nil {
-			return fmt.Errorf("queueing compaction work for segment %d: %w", segment.SegmentID, err)
-		}
-	}
-	return nil
-}
-
 // QueueRollupWork queues rollup work for all segments
 func (segments ProcessedSegments) QueueRollupWork(ctx context.Context, mdb RollupWorkQueuer, orgID uuid.UUID, instanceNum int16, frequency int32, slotID int32, slotCount int32) error {
 	for _, segment := range segments {

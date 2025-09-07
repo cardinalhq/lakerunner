@@ -444,9 +444,11 @@ func uploadRolledUpMetricsAtomic(
 		slog.Int("targetFrequencyMs", int(params.FrequencyMs)))
 
 	// Queue compaction and rollup work for all processed segments
-	if err := segments.QueueCompactionWork(ctx, mdb, params.OrganizationID, params.InstanceNum, params.FrequencyMs); err != nil {
-		ll.Error("Failed to queue compaction work for rolled-up segments", slog.Any("error", err))
-	}
+	// TODO: Replace with Kafka-based compaction notifications
+	// Compaction is now handled via Kafka messages sent during ingestion
+	// if err := segments.QueueCompactionWork(ctx, mdb, params.OrganizationID, params.InstanceNum, params.FrequencyMs); err != nil {
+	// 	ll.Error("Failed to queue compaction work for rolled-up segments", slog.Any("error", err))
+	// }
 
 	if err := segments.QueueRollupWork(ctx, mdb, params.OrganizationID, params.InstanceNum, params.FrequencyMs, params.SlotID, params.SlotCount); err != nil {
 		ll.Error("Failed to queue rollup work for rolled-up segments", slog.Any("error", err))

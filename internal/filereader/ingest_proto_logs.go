@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"time"
 
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
@@ -163,8 +164,25 @@ func (r *IngestProtoLogsReader) buildLogRow(rl plog.ResourceLogs, sl plog.ScopeL
 	})
 
 	ret["_cardinalhq.message"] = logRecord.Body().AsString()
-	ret["_cardinalhq.timestamp"] = logRecord.Timestamp().AsTime().UnixMilli()
-	ret["observed_timestamp"] = logRecord.ObservedTimestamp().AsTime().UnixMilli()
+
+	// Handle timestamp with validation - reject Unix epoch (0)
+	timestamp := logRecord.Timestamp().AsTime().UnixMilli()
+	observedTimestamp := logRecord.ObservedTimestamp().AsTime().UnixMilli()
+
+	// Use primary timestamp if valid (not Unix epoch)
+	if timestamp > 0 {
+		ret["_cardinalhq.timestamp"] = timestamp
+	} else if observedTimestamp > 0 {
+		// Fall back to observed timestamp if primary is invalid
+		ret["_cardinalhq.timestamp"] = observedTimestamp
+	} else {
+		// Both timestamps invalid - use current time as last resort
+		// This prevents 1970-01-01 dates in the output
+		ret["_cardinalhq.timestamp"] = time.Now().UnixMilli()
+	}
+
+	// Still preserve observed_timestamp for reference
+	ret["observed_timestamp"] = observedTimestamp
 	ret["_cardinalhq.level"] = logRecord.SeverityText()
 	ret["severity_number"] = int64(logRecord.SeverityNumber())
 

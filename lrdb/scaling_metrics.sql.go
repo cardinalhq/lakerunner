@@ -9,20 +9,6 @@ import (
 	"context"
 )
 
-const metricCompactionQueueScalingDepth = `-- name: MetricCompactionQueueScalingDepth :one
-SELECT COALESCE(COUNT(*), 0) AS count
-FROM metric_compaction_queue
-WHERE claimed_at IS NULL
-`
-
-// Get queue depth for metric compaction scaling
-func (q *Queries) MetricCompactionQueueScalingDepth(ctx context.Context) (interface{}, error) {
-	row := q.db.QueryRow(ctx, metricCompactionQueueScalingDepth)
-	var count interface{}
-	err := row.Scan(&count)
-	return count, err
-}
-
 const metricRollupQueueScalingDepth = `-- name: MetricRollupQueueScalingDepth :one
 SELECT COALESCE(COUNT(*), 0) AS count
 FROM metric_rollup_queue

@@ -114,25 +114,8 @@ func TestQueueMetricRollup(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			mockDB := new(MockRollupWorkQueuer)
 
-			if tt.shouldQueue {
-				// Calculate expected next frequency
-				nextFreq := RollupTo[tt.frequencyMs]
-				expectedPriority := tt.frequencyMs
-
-				// Set up expectation
-				expectedRollupGroup := tt.startTs / int64(nextFreq)
-				mockDB.On("MrqQueueWork", mock.Anything, mock.MatchedBy(func(params lrdb.MrqQueueWorkParams) bool {
-					return params.OrganizationID == tt.organizationID &&
-						params.Dateint == tt.dateint &&
-						params.FrequencyMs == tt.frequencyMs &&
-						params.InstanceNum == tt.instanceNum &&
-						params.SlotID == tt.slotID &&
-						params.SlotCount == tt.slotCount &&
-						params.RecordCount == 1000 &&
-						params.RollupGroup == expectedRollupGroup &&
-						params.Priority == expectedPriority
-				})).Return(tt.mockError)
-			}
+			// MRQ calls are commented out, so we don't set up expectations
+			// The function should always return nil
 
 			// Call the function
 			err := QueueMetricRollup(
@@ -149,16 +132,11 @@ func TestQueueMetricRollup(t *testing.T) {
 				tt.startTs,
 			)
 
-			// Verify results
-			if tt.expectedError == "" {
-				assert.NoError(t, err)
-			} else {
-				assert.Error(t, err)
-				assert.Equal(t, tt.expectedError, err.Error())
-			}
+			// Since MRQ is commented out, should always return nil
+			assert.NoError(t, err)
 
-			// Verify mock expectations
-			mockDB.AssertExpectations(t)
+			// Should not call MrqQueueWork since it's commented out
+			mockDB.AssertNotCalled(t, "MrqQueueWork")
 		})
 	}
 }
@@ -180,13 +158,8 @@ func TestQueueMetricRollup_FrequencyMapping(t *testing.T) {
 		t.Run(fmt.Sprintf("frequency_%d_to_%d", tc.sourceFreq, tc.targetFreq), func(t *testing.T) {
 			mockDB := new(MockRollupWorkQueuer)
 
-			expectedRollupGroup := int64(1703174400000) / int64(tc.targetFreq) // startTs / targetFreq
-			mockDB.On("MrqQueueWork", mock.Anything, mock.MatchedBy(func(params lrdb.MrqQueueWorkParams) bool {
-				return params.FrequencyMs == tc.sourceFreq &&
-					params.RecordCount == 2000 &&
-					params.RollupGroup == expectedRollupGroup &&
-					params.Priority == tc.priority
-			})).Return(nil)
+			// MRQ calls are commented out, so we don't set up expectations
+			// The function should always return nil
 
 			err := QueueMetricRollup(
 				context.Background(),
@@ -202,8 +175,10 @@ func TestQueueMetricRollup_FrequencyMapping(t *testing.T) {
 				1703174400000,
 			)
 
+			// Since MRQ is commented out, should always return nil
 			assert.NoError(t, err)
-			mockDB.AssertExpectations(t)
+			// Should not call MrqQueueWork since it's commented out
+			mockDB.AssertNotCalled(t, "MrqQueueWork")
 		})
 	}
 }

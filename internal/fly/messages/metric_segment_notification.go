@@ -31,6 +31,8 @@ type MetricSegmentNotificationMessage struct {
 	InstanceNum    int16     `json:"i"`  // instance_num
 	SlotID         int32     `json:"si"` // slot_id
 	SlotCount      int32     `json:"sc"` // slot_count
+	RecordCount    int64     `json:"rc"` // record_count for early filtering
+	FileSize       int64     `json:"fs"` // file_size for early filtering
 	QueuedAt       time.Time `json:"t"`  // queued_at timestamp for lag tracking
 }
 

@@ -38,7 +38,6 @@ type rollupStore interface {
 	MrqRelease(ctx context.Context, arg lrdb.MrqReleaseParams) error
 	GetMetricSegsByIds(ctx context.Context, params lrdb.GetMetricSegsByIdsParams) ([]lrdb.MetricSeg, error)
 	RollupMetricSegs(ctx context.Context, sourceParams lrdb.RollupSourceParams, targetParams lrdb.RollupTargetParams, sourceSegmentIDs []int64, newRecords []lrdb.RollupNewRecord) error
-	McqQueueWork(ctx context.Context, arg lrdb.McqQueueWorkParams) error
 	MrqQueueWork(ctx context.Context, arg lrdb.MrqQueueWorkParams) error
 	MrqClaimSingleRow(ctx context.Context, arg lrdb.MrqClaimSingleRowParams) (lrdb.MrqClaimSingleRowRow, error)
 }

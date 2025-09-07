@@ -37,6 +37,7 @@ func ProcessKafkaMessage(
 	db CompactionStore,
 	sp storageprofile.StorageProfileProvider,
 	cmgr cloudstorage.ClientProvider,
+	cfg Config,
 	kafkaOffset *lrdb.KafkaOffsetUpdate,
 ) error {
 	ll := logctx.FromContext(ctx)
@@ -51,6 +52,8 @@ func ProcessKafkaMessage(
 		slog.Int64("segmentID", notification.SegmentID),
 		slog.Int("slotID", int(notification.SlotID)),
 		slog.Int("slotCount", int(notification.SlotCount)),
+		slog.Int64("recordCount", notification.RecordCount),
+		slog.Int64("fileSize", notification.FileSize),
 	)
 	ctx = logctx.WithLogger(ctx, ll)
 
@@ -61,6 +64,48 @@ func ProcessKafkaMessage(
 		if kafkaOffset != nil {
 			return updateKafkaOffset(ctx, db, kafkaOffset)
 		}
+		return nil
+	}
+
+	// Get RPF estimate for this org/frequency to determine if we should skip compaction
+	rpfEstimate := db.GetMetricEstimate(ctx, notification.OrganizationID, int32(notification.FrequencyMs))
+	if rpfEstimate == 0 {
+		rpfEstimate = 40_000 // Default fallback
+	}
+
+	// Short-circuit check: Skip compaction for segments that are already at or near target size
+	// This avoids unnecessary compaction of segments that are already well-sized
+	// Check if segment is already large enough to skip compaction (80% of target)
+	fileSizeThreshold := cfg.TargetFileSizeBytes * 80 / 100 // 80% of target size
+
+	if notification.FileSize >= fileSizeThreshold || notification.RecordCount >= rpfEstimate {
+		ll.Info("Short-circuiting compaction for already-optimized segment",
+			slog.Int64("segmentID", notification.SegmentID),
+			slog.Int64("fileSize", notification.FileSize),
+			slog.Int64("fileSizeThreshold", fileSizeThreshold),
+			slog.Int64("recordCount", notification.RecordCount),
+			slog.Int64("rpfEstimate", rpfEstimate))
+
+		// Mark the segment as compacted using single-segment update with full primary key
+		// We do NOT update Kafka offset here - if we replay, we'll make the same decision
+		err := db.SetSingleMetricSegCompacted(ctx, lrdb.SetSingleMetricSegCompactedParams{
+			OrganizationID: notification.OrganizationID,
+			Dateint:        notification.DateInt,
+			FrequencyMs:    notification.FrequencyMs,
+			SegmentID:      notification.SegmentID,
+			InstanceNum:    notification.InstanceNum,
+			SlotID:         notification.SlotID,
+			SlotCount:      notification.SlotCount,
+		})
+		if err != nil {
+			ll.Error("Failed to mark already-optimized segment as compacted",
+				slog.Int64("segmentID", notification.SegmentID),
+				slog.Any("error", err))
+			return fmt.Errorf("failed to mark segment as compacted: %w", err)
+		}
+
+		// NOTE: We intentionally do NOT update the Kafka offset here
+		// This allows replay safety - if we replay this message, we'll make the same decision
 		return nil
 	}
 

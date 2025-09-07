@@ -58,11 +58,11 @@ type DuckDBConfig struct {
 }
 
 type LogsConfig struct {
-	Partitions int `mapstructure:"partitions"`
+	// Partitions will be auto-determined from Kafka topic
 }
 
 type TracesConfig struct {
-	Partitions int `mapstructure:"partitions"`
+	// Partitions will be auto-determined from Kafka topic
 }
 
 type AdminConfig struct {
@@ -70,11 +70,7 @@ type AdminConfig struct {
 }
 
 type CompactionConfig struct {
-	OverFactor   float64 `mapstructure:"over_factor"`
-	BatchLimit   int     `mapstructure:"batch_limit"`
-	GraceMinutes int     `mapstructure:"grace_minutes"`
-	DeferSeconds int     `mapstructure:"defer_seconds"`
-	MaxAttempts  int     `mapstructure:"max_attempts"`
+	TargetFileSizeBytes int64 `mapstructure:"target_file_size_bytes"` // Target file size in bytes for compaction (default: 1048576 = 1MB)
 }
 
 type RollupConfig struct {
@@ -92,11 +88,7 @@ func Load() (*Config, error) {
 		Metrics: MetricsConfig{
 			Ingestion: ingestion.DefaultConfig(),
 			Compaction: CompactionConfig{
-				OverFactor:   2.0,
-				BatchLimit:   100,
-				GraceMinutes: 5,
-				DeferSeconds: 0,
-				MaxAttempts:  3,
+				TargetFileSizeBytes: 1024 * 1024, // Default 1MB
 			},
 			Rollup: RollupConfig{
 				BatchLimit: 100,
@@ -113,12 +105,8 @@ func Load() (*Config, error) {
 			ExtensionsPath:  "",
 			HTTPFSExtension: "",
 		},
-		Logs: LogsConfig{
-			Partitions: 128,
-		},
-		Traces: TracesConfig{
-			Partitions: 128,
-		},
+		Logs:   LogsConfig{},
+		Traces: TracesConfig{},
 		Admin: AdminConfig{
 			InitialAPIKey: "",
 		},
