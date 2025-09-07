@@ -211,10 +211,13 @@ func FlushRollupAccumulator(
 		return nil
 	}
 
-	// Initialize writer manager if needed
-	if acc.writerManager == nil {
-		acc.writerManager = NewRollupWriterManager(tmpDir, acc.rpfEstimate)
+	// Always create a fresh writer manager for each flush cycle
+	// to avoid reusing closed writers
+	if acc.writerManager != nil {
+		// Clean up any previous writer manager
+		_ = acc.writerManager.Close(ctx)
 	}
+	acc.writerManager = NewRollupWriterManager(tmpDir, acc.rpfEstimate)
 
 	// Collect source segments
 	sourceSegments := make([]lrdb.MetricSeg, len(work))
@@ -248,7 +251,7 @@ func FlushRollupAccumulator(
 		return fmt.Errorf("uploading rollup results: %w", err)
 	}
 
-	// Reset writer manager after successful flush to prevent reuse of closed writers
+	// Clear writer manager reference - it's already closed from FlushAll
 	acc.writerManager = nil
 
 	return nil

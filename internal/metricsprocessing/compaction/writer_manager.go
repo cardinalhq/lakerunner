@@ -33,7 +33,6 @@ type CompactionWriterManager struct {
 	writer               *parquetwriter.UnifiedWriter
 	tmpDir               string
 	targetRecordsPerFile int64
-	closed               bool
 }
 
 // NewCompactionWriterManager creates a new writer manager for compaction
@@ -92,10 +91,6 @@ func (m *CompactionWriterManager) ProcessReaders(
 
 // processBatch processes a batch of rows
 func (m *CompactionWriterManager) processBatch(ctx context.Context, batch *pipeline.Batch) error {
-	if m.closed {
-		return fmt.Errorf("writer manager is closed")
-	}
-
 	if err := m.ensureWriter(ctx); err != nil {
 		return fmt.Errorf("ensuring writer: %w", err)
 	}
@@ -127,10 +122,6 @@ func (m *CompactionWriterManager) ensureWriter(_ context.Context) error {
 func (m *CompactionWriterManager) FlushAll(ctx context.Context) (metricsprocessing.ProcessingResult, error) {
 	ll := logctx.FromContext(ctx)
 
-	if m.closed {
-		return metricsprocessing.ProcessingResult{}, fmt.Errorf("writer manager already closed")
-	}
-
 	if m.writer == nil {
 		// No writer was created, return empty results
 		return metricsprocessing.ProcessingResult{}, nil
@@ -155,8 +146,7 @@ func (m *CompactionWriterManager) FlushAll(ctx context.Context) (metricsprocessi
 		slog.Int64("totalRecords", totalRecords),
 		slog.Int64("totalBytes", totalBytes))
 
-	// Mark as closed and clear writer reference
-	m.closed = true
+	// Clear writer reference
 	m.writer = nil
 
 	// Return ProcessingResult
@@ -178,6 +168,5 @@ func (m *CompactionWriterManager) Close(ctx context.Context) error {
 		}
 		m.writer = nil
 	}
-	m.closed = true
 	return nil
 }
