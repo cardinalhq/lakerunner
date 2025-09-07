@@ -26,6 +26,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
+	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
@@ -180,9 +181,9 @@ func (segments ProcessedSegments) SegmentIDs() []int64 {
 }
 
 // QueueRollupWork queues rollup work for all segments
-func (segments ProcessedSegments) QueueRollupWork(ctx context.Context, mdb RollupWorkQueuer, orgID uuid.UUID, instanceNum int16, frequency int32, slotID int32, slotCount int32) error {
+func (segments ProcessedSegments) QueueRollupWork(ctx context.Context, kafkaProducer fly.Producer, orgID uuid.UUID, instanceNum int16, frequency int32, slotID int32, slotCount int32) error {
 	for _, segment := range segments {
-		if err := QueueMetricRollup(ctx, mdb, orgID, segment.GetDateint(), frequency, instanceNum, slotID, slotCount, segment.SegmentID, segment.Result.RecordCount, segment.StartTs); err != nil {
+		if err := QueueMetricRollup(ctx, kafkaProducer, orgID, segment.GetDateint(), frequency, instanceNum, slotID, slotCount, segment.SegmentID, segment.Result.RecordCount, segment.Result.FileSize); err != nil {
 			return fmt.Errorf("queueing rollup work for segment %d: %w", segment.SegmentID, err)
 		}
 	}

@@ -22,8 +22,10 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/debugging"
+	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing/rollup"
@@ -85,12 +87,25 @@ func init() {
 
 			sp := storageprofile.NewStorageProfileProvider(cdb)
 
-			config := rollup.GetConfigFromEnv()
-			manager := rollup.NewManager(mdb, myInstanceID, config, sp, cmgr)
+			// Get main config
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+
+			// Create Kafka factory
+			kafkaFactory := fly.NewFactory(&cfg.Fly)
+
+			// Create Kafka-based rollup consumer
+			consumer, err := rollup.NewKafkaAccumulatedRollupConsumer(ctx, kafkaFactory, cfg, mdb, sp, cmgr)
+			if err != nil {
+				return fmt.Errorf("failed to create rollup consumer: %w", err)
+			}
+			defer consumer.Close()
 
 			healthServer.SetStatus(healthcheck.StatusHealthy)
 
-			return manager.Run(ctx)
+			return consumer.Run(ctx)
 		},
 	}
 

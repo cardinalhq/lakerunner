@@ -28,6 +28,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing/compaction"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
@@ -92,7 +93,10 @@ func init() {
 
 			sp := storageprofile.NewStorageProfileProvider(cdb)
 
-			manager := compaction.NewManager(mdb, myInstanceID, &cfg.Metrics.Compaction, sp, cmgr)
+			ll := logctx.FromContext(ctx).With("instanceID", myInstanceID)
+			ctx = logctx.WithLogger(ctx, ll)
+
+			manager := compaction.NewManager(mdb, &cfg.Metrics.Compaction, sp, cmgr)
 
 			// Kafka is always required for compaction
 			kafkaFactory := fly.NewFactory(&cfg.Fly)
