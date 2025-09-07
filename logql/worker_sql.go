@@ -443,15 +443,10 @@ func dedupeStrings(ss []string) []string {
 }
 
 func isBaseCol(q string) bool {
-	if strings.HasPrefix(q, "\"resource.") || strings.HasPrefix(q, "\"log.") {
+	if strings.HasPrefix(q, "\"resource.") || strings.HasPrefix(q, "\"log.") || strings.HasPrefix(q, "\"_cardinalhq") {
 		return true
 	}
-	switch q {
-	case "\"_cardinalhq.message\"", "\"_cardinalhq.timestamp\"", "\"_cardinalhq.id\"", "\"_cardinalhq.level\"", "\"_cardinalhq.fingerprint\"":
-		return true
-	default:
-		return false
-	}
+	return false
 }
 
 func sortedKeys(m map[string]string) []string {
