@@ -191,10 +191,13 @@ func performCompaction(
 ) error {
 	ll := logctx.FromContext(ctx)
 
+	// Get the metric estimate for this organization and frequency
+	estimatedTarget := db.GetMetricEstimate(ctx, metadata.OrganizationID, metadata.FrequencyMs)
+
 	// Use the existing coordinate function to perform the actual compaction
 	// For a single segment, this will just mark it as compacted
 	// For multiple segments (shouldn't happen with Kafka), it would merge them
-	err := coordinate(ctx, db, tmpdir, metadata, profile, blobclient, segments, 0)
+	err := coordinate(ctx, db, tmpdir, metadata, profile, blobclient, segments, estimatedTarget)
 	if err != nil {
 		return fmt.Errorf("compaction failed: %w", err)
 	}

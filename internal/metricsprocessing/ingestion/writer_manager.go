@@ -27,30 +27,40 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
+// writerKey identifies a unique writer for a specific org/instance/dateint/minute combination
+type writerKey struct {
+	orgID       string
+	instanceNum int16
+	dateint     int32
+	minute      int
+}
+
 // metricWriterManager manages parquet writers for metrics
 type metricWriterManager struct {
-	writers       map[minuteSlotKey]*parquetwriter.UnifiedWriter
+	writers       map[writerKey]*parquetwriter.UnifiedWriter
 	tmpdir        string
 	orgID         string
+	instanceNum   int16
 	ingestDateint int32
 	rpfEstimate   int64
 }
 
-func newMetricWriterManager(ctx context.Context, tmpdir, orgID string, ingestDateint int32, rpfEstimate int64) *metricWriterManager {
+func newMetricWriterManager(ctx context.Context, tmpdir, orgID string, instanceNum int16, ingestDateint int32, rpfEstimate int64) *metricWriterManager {
 	return &metricWriterManager{
-		writers:       make(map[minuteSlotKey]*parquetwriter.UnifiedWriter),
+		writers:       make(map[writerKey]*parquetwriter.UnifiedWriter),
 		tmpdir:        tmpdir,
 		orgID:         orgID,
+		instanceNum:   instanceNum,
 		ingestDateint: ingestDateint,
 		rpfEstimate:   rpfEstimate,
 	}
 }
 
-// processBatch efficiently processes an entire batch, grouping rows by minute boundary
+// processBatch efficiently processes an entire batch, grouping rows by org/instance/dateint/minute
 func (wm *metricWriterManager) processBatch(ctx context.Context, batch *pipeline.Batch) (processedCount, errorCount int64) {
 	ll := logctx.FromContext(ctx)
-	// Group rows by minute boundary to minimize writer lookups and enable batch writes
-	batchGroups := make(map[minuteSlotKey]*pipeline.Batch)
+	// Group rows by writer key to minimize writer lookups and enable batch writes
+	batchGroups := make(map[writerKey]*pipeline.Batch)
 
 	// First pass: group rows by minute boundary
 	for i := 0; i < batch.Len(); i++ {
@@ -71,8 +81,14 @@ func (wm *metricWriterManager) processBatch(ctx context.Context, batch *pipeline
 
 		// Calculate minute boundary
 		dateint, minute := wm.timestampToMinuteBoundary(ts)
-		slot := 0
-		key := minuteSlotKey{dateint, minute, slot}
+		// Use the manager's org_id and instance_num for the key
+		// (all rows in a batch should belong to the same org/instance)
+		key := writerKey{
+			orgID:       wm.orgID,
+			instanceNum: wm.instanceNum,
+			dateint:     dateint,
+			minute:      minute,
+		}
 
 		// Create or get batch for this group
 		if batchGroups[key] == nil {
@@ -124,8 +140,8 @@ func (wm *metricWriterManager) timestampToMinuteBoundary(ts int64) (int32, int) 
 	return dateint, minute
 }
 
-// getWriter returns the writer for a specific minute boundary, creating it if necessary
-func (wm *metricWriterManager) getWriter(key minuteSlotKey) (*parquetwriter.UnifiedWriter, error) {
+// getWriter returns the writer for a specific writer key, creating it if necessary
+func (wm *metricWriterManager) getWriter(key writerKey) (*parquetwriter.UnifiedWriter, error) {
 	if writer, exists := wm.writers[key]; exists {
 		return writer, nil
 	}
