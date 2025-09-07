@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"sync"
 	"time"
 
@@ -77,7 +76,9 @@ func ProcessAccumulatedBatch(ctx context.Context, args ingest.ProcessBatchArgs, 
 	// Collect all segment parameters from all (org, instance) accumulators
 	var allSegmentParams []lrdb.InsertMetricSegmentParams
 	var totalInputSize, totalOutputSize int64
-	var totalRowsProcessed int64
+	var totalInputRows, totalOutputRows int64
+	var inputFileCount int
+	var maxSlotCount int32
 
 	// Process each (org, instance) accumulator independently
 	for key, accumulator := range manager.GetAccumulators() {
@@ -94,10 +95,11 @@ func ProcessAccumulatedBatch(ctx context.Context, args ingest.ProcessBatchArgs, 
 		rpfEstimate := getRPFEstimate(ctx, args, key.OrganizationID)
 
 		// Process this accumulator
-		results, err := FlushAccumulator(ctx, accumulator, args.TmpDir, args.IngestDateint, rpfEstimate)
+		results, inputRows, err := FlushAccumulator(ctx, accumulator, args.TmpDir, args.IngestDateint, rpfEstimate)
 		if err != nil {
 			return fmt.Errorf("failed to flush accumulator for %v: %w", key, err)
 		}
+		totalInputRows += inputRows
 
 		if len(results) == 0 {
 			ll.Warn("No output files generated for accumulator",
@@ -141,10 +143,17 @@ func ProcessAccumulatedBatch(ctx context.Context, args ingest.ProcessBatchArgs, 
 		// Update metrics
 		for _, metadata := range accumulator.readerMetadata {
 			totalInputSize += metadata.FileSize
+			inputFileCount++
 		}
 		for _, result := range results {
 			totalOutputSize += result.FileSize
-			totalRowsProcessed += result.RecordCount
+			totalOutputRows += result.RecordCount
+		}
+		// Track max slot count from segments
+		for _, segParams := range segmentParams {
+			if segParams.SlotCount > maxSlotCount {
+				maxSlotCount = segParams.SlotCount
+			}
 		}
 	}
 
@@ -165,20 +174,22 @@ func ProcessAccumulatedBatch(ctx context.Context, args ingest.ProcessBatchArgs, 
 		return nil
 	}
 
-	// Log compression ratio
-	var compressionRatio float64
+	// Calculate compression reduction percentage (e.g., 0.5 for 50% reduction)
+	var compressionReduction float64
 	if totalInputSize > 0 {
-		compressionRatio = (float64(totalOutputSize) / float64(totalInputSize)) * 100
+		compressionReduction = 1.0 - (float64(totalOutputSize) / float64(totalInputSize))
 	}
 
 	ll.Info("Accumulated batch processing summary",
 		slog.Int("accumulatorCount", len(manager.GetAccumulators())),
-		slog.Int("segmentCount", len(allSegmentParams)),
+		slog.Int("inputSegmentCount", inputFileCount),
+		slog.Int("outputSegmentCount", len(allSegmentParams)),
 		slog.Int64("totalInputBytes", totalInputSize),
 		slog.Int64("totalOutputBytes", totalOutputSize),
-		slog.Int64("totalRows", totalRowsProcessed),
-		slog.Float64("compressionRatio", compressionRatio),
-		slog.String("compressionRatioStr", fmt.Sprintf("%.1f%%", compressionRatio)))
+		slog.Int64("inputRows", totalInputRows),
+		slog.Int64("outputRows", totalOutputRows),
+		slog.Float64("compressionReduction", compressionReduction),
+		slog.Int("slotCount", int(maxSlotCount)))
 
 	// Get all Kafka offset updates
 	offsetUpdates := manager.GetKafkaOffsetUpdates(args.KafkaOffset.ConsumerGroup, args.KafkaOffset.Topic)
@@ -223,7 +234,7 @@ func ProcessAccumulatedBatch(ctx context.Context, args ingest.ProcessBatchArgs, 
 
 			// Send to Kafka
 			if err := kafkaProducer.Send(criticalCtx, compactionTopic, fly.Message{
-				Key:   []byte(fmt.Sprintf("%s-%d-%d", segParams.OrganizationID.String(), segParams.Dateint, segParams.SegmentID)),
+				Key:   fmt.Appendf(nil, "%s-%d-%d", segParams.OrganizationID.String(), segParams.Dateint, segParams.SegmentID),
 				Value: msgBytes,
 			}); err != nil {
 				ll.Error("Failed to send compaction notification to Kafka",
@@ -271,14 +282,8 @@ func getStorageProfileForOrgInstance(
 func ProcessFileToSortedReader(ctx context.Context, item ingest.IngestItem, tmpDir string, storageClient cloudstorage.Client) (filereader.Reader, ReaderMetadata, error) {
 	ll := logctx.FromContext(ctx)
 
-	// Create temp directory for this file
-	itemTmpDir, err := os.MkdirTemp(tmpDir, "item-*")
-	if err != nil {
-		return nil, ReaderMetadata{}, fmt.Errorf("creating item tmpdir: %w", err)
-	}
-
-	// Download file
-	tmpfilename, _, is404, err := storageClient.DownloadObject(ctx, itemTmpDir, item.Bucket, item.ObjectID)
+	// Download file directly to the shared tmpDir
+	tmpfilename, _, is404, err := storageClient.DownloadObject(ctx, tmpDir, item.Bucket, item.ObjectID)
 	if err != nil {
 		return nil, ReaderMetadata{}, fmt.Errorf("failed to download file %s: %w", item.ObjectID, err)
 	}
