@@ -1067,7 +1067,7 @@ func TestIngestProtoMetrics_SummarySupport(t *testing.T) {
 	data, err := marshaler.MarshalMetrics(metrics)
 	require.NoError(t, err)
 
-	reader, err := NewIngestProtoMetricsReader(bytes.NewReader(data), len(data))
+	reader, err := NewIngestProtoMetricsReader(bytes.NewReader(data), ReaderOptions{})
 	require.NoError(t, err)
 	defer reader.Close()
 
@@ -1226,7 +1226,7 @@ func TestIngestProtoMetrics_SummaryEdgeCases(t *testing.T) {
 			data, err := marshaler.MarshalMetrics(metrics)
 			require.NoError(t, err)
 
-			reader, err := NewIngestProtoMetricsReader(bytes.NewReader(data), len(data))
+			reader, err := NewIngestProtoMetricsReader(bytes.NewReader(data), ReaderOptions{})
 			require.NoError(t, err)
 			defer reader.Close()
 

@@ -107,9 +107,6 @@ type CompactMetricSegsParams struct {
 	// NewRecords contains the segments to be inserted.
 	NewRecords []CompactMetricSegsNew
 	CreatedBy  CreatedBy
-	// SortVersion indicates the sort order of the data in the new segments.
-	// 0: Unknown/unsorted, 1: Sorted by [name, tid, timestamp]
-	SortVersion int16
 }
 
 // RollupMetricSegs marks source segments as rolled up and atomically replaces target segments.
