@@ -285,7 +285,7 @@ func (k *KafkaAccumulatedCompactionConsumer) flushAccumulated(ctx context.Contex
 		}
 
 		// Process the accumulator using shared framework
-		if err := accumulation.FlushAccumulator(ctx, accumulator, k.store, blobclient, k.accManager.GetTmpDir(), k.strategy); err != nil {
+		if err := accumulation.FlushAccumulator(ctx, accumulator, k.store, blobclient, k.accManager.GetTmpDir(), k.strategy, nil); err != nil {
 			ll.Error("Failed to flush accumulator",
 				slog.String("organizationID", key.OrganizationID.String()),
 				slog.Any("error", err))
