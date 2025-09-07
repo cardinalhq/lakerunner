@@ -86,8 +86,7 @@ func TestCompactMetricSegs_BasicReplacement(t *testing.T) {
 				Fingerprints: []int64{100, 101, 200, 201}, // Combined fingerprints
 			},
 		},
-		CreatedBy:   lrdb.CreatedByCompact,
-		SortVersion: lrdb.CurrentMetricSortVersion,
+		CreatedBy: lrdb.CreatedByCompact,
 	})
 	require.NoError(t, err)
 
@@ -161,8 +160,7 @@ func TestCompactMetricSegs_InitialInsert(t *testing.T) {
 				Fingerprints: []int64{1, 2, 3},
 			},
 		},
-		CreatedBy:   lrdb.CreatedByIngest,
-		SortVersion: lrdb.CurrentMetricSortVersion,
+		CreatedBy: lrdb.CreatedByIngest,
 	})
 	require.NoError(t, err)
 
@@ -231,8 +229,7 @@ func TestCompactMetricSegs_DeletionOnly(t *testing.T) {
 			{SegmentID: segmentIDs[1], SlotID: 0},
 		},
 		NewRecords:  []lrdb.CompactMetricSegsNew{}, // Empty - no new segments
-		CreatedBy:   lrdb.CreatedByIngest,
-		SortVersion: lrdb.CurrentMetricSortVersion,
+		CreatedBy: lrdb.CreatedByIngest,
 	})
 	require.NoError(t, err)
 
@@ -319,8 +316,7 @@ func TestCompactMetricSegs_MultipleNewSegments(t *testing.T) {
 				Fingerprints: []int64{200, 201},
 			},
 		},
-		CreatedBy:   lrdb.CreatedByCompact,
-		SortVersion: lrdb.CurrentMetricSortVersion,
+		CreatedBy: lrdb.CreatedByCompact,
 	})
 	require.NoError(t, err)
 
@@ -417,8 +413,7 @@ func TestCompactMetricSegs_IdempotentOperation(t *testing.T) {
 				Fingerprints: []int64{},
 			},
 		},
-		CreatedBy:   lrdb.CreatedByCompact,
-		SortVersion: lrdb.CurrentMetricSortVersion,
+		CreatedBy: lrdb.CreatedByCompact,
 	}
 
 	// First compaction
@@ -546,8 +541,7 @@ func TestCompactMetricSegs_CrossFrequencyIsolation(t *testing.T) {
 				Fingerprints: []int64{},
 			},
 		},
-		CreatedBy:   lrdb.CreatedByCompact,
-		SortVersion: lrdb.CurrentMetricSortVersion,
+		CreatedBy: lrdb.CreatedByCompact,
 	})
 	require.NoError(t, err)
 
