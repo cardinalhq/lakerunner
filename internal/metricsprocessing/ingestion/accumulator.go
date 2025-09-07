@@ -280,6 +280,7 @@ func FlushAccumulator(ctx context.Context, acc *OrgInstanceAccumulator, tmpDir s
 			ctx,
 			tmpDir,
 			acc.key.OrganizationID.String(),
+			int16(acc.key.InstanceNum),
 			ingestDateint,
 			rpfEstimate,
 		)

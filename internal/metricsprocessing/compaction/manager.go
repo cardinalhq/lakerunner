@@ -20,6 +20,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
@@ -44,6 +46,8 @@ type CompactionStore interface {
 	// Kafka offset tracking
 	KafkaJournalGetLastProcessed(ctx context.Context, params lrdb.KafkaJournalGetLastProcessedParams) (int64, error)
 	KafkaJournalUpsert(ctx context.Context, params lrdb.KafkaJournalUpsertParams) error
+	// Metric estimates
+	GetMetricEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32) int64
 }
 
 type Config struct {

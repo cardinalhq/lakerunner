@@ -154,7 +154,7 @@ func coordinate(
 	}
 
 	// Create writer manager
-	wm := newMetricWriterManager(ctx, input.TmpDir, profile.OrganizationID.String(), input.IngestDateint, input.RPFEstimate)
+	wm := newMetricWriterManager(ctx, input.TmpDir, profile.OrganizationID.String(), firstItem.InstanceNum, input.IngestDateint, input.RPFEstimate)
 
 	// Track total rows across all files
 	var batchRowsRead, batchRowsProcessed, batchRowsErrored int64

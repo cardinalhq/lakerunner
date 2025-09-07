@@ -53,6 +53,7 @@ func getConsumerLagCmd() *cobra.Command {
 	var groupFilter string
 	var topicFilter string
 	var jsonOutput bool
+	var detailed bool
 
 	cmd := &cobra.Command{
 		Use:   "consumer-lag",
@@ -82,13 +83,17 @@ func getConsumerLagCmd() *cobra.Command {
 			if jsonOutput {
 				return printLagJSON(lags)
 			}
-			return printLagTable(lags)
+			if detailed {
+				return printLagTableDetailed(lags)
+			}
+			return printLagSummary(lags)
 		},
 	}
 
 	cmd.Flags().StringVar(&groupFilter, "group", "", "Filter by consumer group (optional)")
 	cmd.Flags().StringVar(&topicFilter, "topic", "", "Filter by topic (optional)")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
+	cmd.Flags().BoolVar(&detailed, "detailed", false, "Show detailed partition-level information")
 
 	return cmd
 }
@@ -150,7 +155,85 @@ func getConsumerLag(ctx context.Context, factory *fly.Factory, groupFilter, topi
 	return lags, nil
 }
 
-func printLagTable(lags []PartitionLag) error {
+func printLagSummary(lags []PartitionLag) error {
+	if len(lags) == 0 {
+		return nil
+	}
+
+	// Group by topic and consumer group
+	type Summary struct {
+		Topic           string
+		ConsumerGroup   string
+		TotalLag        int64
+		PartitionCount  int
+		ValidPartitions int
+	}
+
+	summaries := make(map[string]*Summary)
+	warnings := []string{}
+
+	for _, lag := range lags {
+		key := fmt.Sprintf("%s:%s", lag.Topic, lag.ConsumerGroup)
+		if _, exists := summaries[key]; !exists {
+			summaries[key] = &Summary{
+				Topic:         lag.Topic,
+				ConsumerGroup: lag.ConsumerGroup,
+			}
+		}
+
+		summaries[key].PartitionCount++
+
+		// Check for N/A or 0 current offset
+		if lag.CurrentOffset <= 0 {
+			warningMsg := fmt.Sprintf("WARNING: Partition %d of topic %s has current_offset=%d, high=%d, lag=%d (excluded from calculations)",
+				lag.Partition, lag.Topic, lag.CurrentOffset, lag.HighWaterMark, lag.Lag)
+			warnings = append(warnings, warningMsg)
+		} else {
+			summaries[key].TotalLag += lag.Lag
+			summaries[key].ValidPartitions++
+		}
+	}
+
+	// Convert map to slice and sort
+	var sortedSummaries []*Summary
+	for _, summary := range summaries {
+		sortedSummaries = append(sortedSummaries, summary)
+	}
+	sort.Slice(sortedSummaries, func(i, j int) bool {
+		if sortedSummaries[i].Topic != sortedSummaries[j].Topic {
+			return sortedSummaries[i].Topic < sortedSummaries[j].Topic
+		}
+		return sortedSummaries[i].ConsumerGroup < sortedSummaries[j].ConsumerGroup
+	})
+
+	// Print warnings first
+	for _, warning := range warnings {
+		fmt.Fprintln(os.Stderr, warning)
+	}
+	if len(warnings) > 0 {
+		fmt.Fprintln(os.Stderr) // Add blank line after warnings
+	}
+
+	// Print summary table
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "TOPIC\tCONSUMER GROUP\tTOTAL LAG\tPARTITIONS")
+
+	for _, summary := range sortedSummaries {
+		partitionInfo := fmt.Sprintf("%d", summary.PartitionCount)
+		if summary.ValidPartitions < summary.PartitionCount {
+			partitionInfo = fmt.Sprintf("%d (%d valid)", summary.PartitionCount, summary.ValidPartitions)
+		}
+		fmt.Fprintf(w, "%s\t%s\t%d\t%s\n",
+			summary.Topic,
+			summary.ConsumerGroup,
+			summary.TotalLag,
+			partitionInfo)
+	}
+
+	return w.Flush()
+}
+
+func printLagTableDetailed(lags []PartitionLag) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "TOPIC\tPARTITION\tCURRENT OFFSET\tHIGH WATER MARK\tLAG\tCONSUMER GROUP")
 
