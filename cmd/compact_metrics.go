@@ -96,12 +96,19 @@ func init() {
 
 			// Kafka is always required for compaction
 			kafkaFactory := fly.NewFactory(&cfg.Fly)
-			slog.Info("Starting metrics compaction with Kafka consumer")
+			slog.Info("Starting metrics compaction with accumulated Kafka consumer",
+				slog.Duration("maxAccumulationTime", cfg.Metrics.Compaction.MaxAccumulationTime))
 
-			// Create Kafka consumer for compaction
-			consumer, err := compaction.NewKafkaCompactionConsumer(ctx, kafkaFactory, cfg, manager, mdb)
+			// Create accumulated Kafka consumer for compaction
+			consumer, err := compaction.NewKafkaAccumulatedCompactionConsumer(
+				ctx,
+				kafkaFactory,
+				cfg,
+				manager,
+				cfg.Metrics.Compaction.MaxAccumulationTime,
+			)
 			if err != nil {
-				return fmt.Errorf("failed to create Kafka compaction consumer: %w", err)
+				return fmt.Errorf("failed to create Kafka accumulated compaction consumer: %w", err)
 			}
 			defer func() {
 				if err := consumer.Close(); err != nil {

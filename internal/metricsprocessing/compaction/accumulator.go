@@ -41,6 +41,15 @@ type CompactionKey struct {
 	InstanceNum    int16
 }
 
+// CompactionWorkMetadata holds the basic metadata needed for compaction work
+type CompactionWorkMetadata struct {
+	OrganizationID uuid.UUID
+	Dateint        int32
+	FrequencyMs    int32
+	InstanceNum    int16
+	IngestDateint  int32
+}
+
 // CompactionWork represents work to be compacted
 type CompactionWork struct {
 	Segments []lrdb.MetricSeg

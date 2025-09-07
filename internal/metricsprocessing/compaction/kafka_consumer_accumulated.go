@@ -16,8 +16,11 @@ package compaction
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/cardinalhq/lakerunner/config"
@@ -27,6 +30,13 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
+
+// PartitionState tracks the offset state for a Kafka partition
+type PartitionState struct {
+	lastSeenOffset  int64
+	lastKnownOffset int64 // From DB
+	needsDBCheck    bool
+}
 
 // KafkaAccumulatedCompactionConsumer handles consuming and accumulating metric segment notifications from Kafka
 type KafkaAccumulatedCompactionConsumer struct {
@@ -38,6 +48,8 @@ type KafkaAccumulatedCompactionConsumer struct {
 	topic               string
 	lastFlushTime       time.Time
 	maxAccumulationTime time.Duration
+	partitionStates     map[int]*PartitionState
+	stateMutex          sync.RWMutex
 }
 
 // NewKafkaAccumulatedCompactionConsumer creates a new accumulator-based Kafka compaction consumer
@@ -72,6 +84,7 @@ func NewKafkaAccumulatedCompactionConsumer(
 		topic:               topic,
 		lastFlushTime:       time.Now(),
 		maxAccumulationTime: maxAccumulationTime,
+		partitionStates:     make(map[int]*PartitionState),
 	}, nil
 }
 
@@ -147,6 +160,21 @@ func (k *KafkaAccumulatedCompactionConsumer) Run(ctx context.Context) error {
 						slog.Int("partition", kafkaMsg.Partition),
 						slog.Int64("offset", kafkaMsg.Offset))
 					continue // Skip malformed messages
+				}
+
+				// Check if we should process this message based on offset tracking
+				shouldProcess, err := k.shouldProcessMessage(ctx, kafkaMsg.Partition, kafkaMsg.Offset)
+				if err != nil {
+					ll.Error("Failed to check if message should be processed", slog.Any("error", err))
+					return err
+				}
+
+				if !shouldProcess {
+					ll.Debug("Skipping already processed message",
+						slog.Int("partition", kafkaMsg.Partition),
+						slog.Int64("offset", kafkaMsg.Offset),
+						slog.Int64("segmentID", notification.SegmentID))
+					continue
 				}
 
 				// Create Kafka offset update
@@ -227,6 +255,53 @@ func (k *KafkaAccumulatedCompactionConsumer) flushAccumulated(ctx context.Contex
 
 	k.lastFlushTime = time.Now()
 	return nil
+}
+
+// shouldProcessMessage checks if a message should be processed based on offset tracking
+func (k *KafkaAccumulatedCompactionConsumer) shouldProcessMessage(ctx context.Context, partition int, offset int64) (bool, error) {
+	ll := logctx.FromContext(ctx)
+	k.stateMutex.Lock()
+	defer k.stateMutex.Unlock()
+
+	state := k.partitionStates[partition]
+	if state == nil {
+		// First time seeing this partition - check DB
+		state = &PartitionState{needsDBCheck: true}
+		k.partitionStates[partition] = state
+	}
+
+	if state.needsDBCheck || offset != state.lastSeenOffset+1 {
+		// Either first time or gap detected - check DB
+		dbOffset, err := k.manager.GetDB().KafkaJournalGetLastProcessed(ctx, lrdb.KafkaJournalGetLastProcessedParams{
+			ConsumerGroup: k.consumerGroup,
+			Topic:         k.topic,
+			Partition:     int32(partition),
+		})
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				// No previous offset recorded - this is the first message
+				state.lastKnownOffset = -1
+			} else {
+				return false, fmt.Errorf("failed to get last processed offset: %w", err)
+			}
+		} else {
+			state.lastKnownOffset = dbOffset
+		}
+
+		state.needsDBCheck = false
+		ll.Debug("Checked DB for partition offset",
+			slog.Int("partition", partition),
+			slog.Int64("db_offset", state.lastKnownOffset),
+			slog.Int64("message_offset", offset))
+
+		if offset <= state.lastKnownOffset {
+			state.lastSeenOffset = offset
+			return false, nil // Already processed
+		}
+	}
+
+	state.lastSeenOffset = offset
+	return true, nil
 }
 
 // Close closes the Kafka consumer and cleans up resources

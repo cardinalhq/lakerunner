@@ -18,6 +18,7 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/spf13/viper"
 
@@ -70,7 +71,8 @@ type AdminConfig struct {
 }
 
 type CompactionConfig struct {
-	TargetFileSizeBytes int64 `mapstructure:"target_file_size_bytes"` // Target file size in bytes for compaction (default: 1048576 = 1MB)
+	TargetFileSizeBytes int64         `mapstructure:"target_file_size_bytes"` // Target file size in bytes for compaction (default: 1048576 = 1MB)
+	MaxAccumulationTime time.Duration `mapstructure:"max_accumulation_time"`  // Maximum time to accumulate segments before compacting
 }
 
 type RollupConfig struct {
@@ -88,7 +90,8 @@ func Load() (*Config, error) {
 		Metrics: MetricsConfig{
 			Ingestion: ingestion.DefaultConfig(),
 			Compaction: CompactionConfig{
-				TargetFileSizeBytes: 1024 * 1024, // Default 1MB
+				TargetFileSizeBytes: 1024 * 1024,      // Default 1MB
+				MaxAccumulationTime: 30 * time.Second, // Default 30 seconds for compaction
 			},
 			Rollup: RollupConfig{
 				BatchLimit: 100,
