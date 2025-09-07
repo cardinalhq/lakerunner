@@ -78,29 +78,6 @@ func runInqueueExpiry(ctx context.Context, mdb lrdb.StoreFull) error {
 	return nil
 }
 
-func runMRQExpiry(ctx context.Context, mdb lrdb.StoreFull) error {
-	ll := logctx.FromContext(ctx)
-
-	// Calculate cutoff time for MRQ items based on heartbeat logic
-	// Items are considered stale if they haven't heartbeated for 5 minutes
-	// This allows for ~5 missed heartbeats (1 minute interval) plus buffer
-	mrqStaleTimeout := 5 * time.Minute
-
-	count, err := mdb.MrqReclaimTimeouts(ctx, lrdb.MrqReclaimTimeoutsParams{
-		MaxAge:  mrqStaleTimeout,
-		MaxRows: 1000, // Reasonable batch size
-	})
-	if err != nil {
-		ll.Error("Failed to reclaim MRQ timeouts", slog.Any("error", err))
-		return err
-	}
-	if count > 0 {
-		ll.Info("Reclaimed MRQ timeout items", slog.Int64("count", count))
-		mrqExpiryCounter.Add(ctx, count)
-	}
-	return nil
-}
-
 func workqueueGCLoop(ctx context.Context, mdb lrdb.StoreFull) error {
 	ll := logctx.FromContext(ctx)
 

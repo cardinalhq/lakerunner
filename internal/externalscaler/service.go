@@ -37,7 +37,6 @@ import (
 // QueriesInterface defines the methods needed for scaling queries
 type QueriesInterface interface {
 	WorkQueueScalingDepth(ctx context.Context, arg lrdb.WorkQueueScalingDepthParams) (interface{}, error)
-	MetricRollupQueueScalingDepth(ctx context.Context) (interface{}, error)
 }
 
 type Service struct {
@@ -100,7 +99,9 @@ func (s *Service) getQueueDepth(ctx context.Context, serviceType string) (int64,
 			Action: lrdb.ActionEnumCompact,
 		})
 	case "rollup-metrics":
-		result, err = s.queries.MetricRollupQueueScalingDepth(ctx)
+		// TODO: Implement proper metric rollup queue scaling when needed
+		// For now, return a fixed value of 5
+		return 5, nil
 	default:
 		return 0, fmt.Errorf("unsupported service type: %s", serviceType)
 	}

@@ -182,4 +182,3 @@ func (m *RollupWriterManager) Close(ctx context.Context) error {
 	m.closed = true
 	return nil
 }
-
