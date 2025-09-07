@@ -42,6 +42,13 @@ func ProcessAccumulatedRollup(
 ) error {
 	ll := logctx.FromContext(ctx)
 
+	// Always reset at the end, regardless of success or failure
+	defer func() {
+		if err := manager.Reset(); err != nil {
+			ll.Error("Failed to reset rollup manager", slog.Any("error", err))
+		}
+	}()
+
 	if !manager.HasWork() {
 		ll.Debug("No rollup work to process")
 		// Still need to update Kafka offsets if any
@@ -105,12 +112,7 @@ func ProcessAccumulatedRollup(
 	ll.Info("Completed accumulated rollup processing",
 		slog.Duration("duration", time.Since(startTime)))
 
-	// Reset the manager for the next accumulation cycle
-	if err := manager.Reset(); err != nil {
-		ll.Error("Failed to reset rollup manager", slog.Any("error", err))
-		// Don't fail the overall operation for reset errors
-	}
-
+	// Note: Reset is called in the defer at the beginning of this function
 	return nil
 }
 
@@ -211,13 +213,10 @@ func FlushRollupAccumulator(
 		return nil
 	}
 
-	// Always create a fresh writer manager for each flush cycle
-	// to avoid reusing closed writers
-	if acc.writerManager != nil {
-		// Clean up any previous writer manager
-		_ = acc.writerManager.Close(ctx)
+	// Create writer manager if needed (will be nil after previous flush)
+	if acc.writerManager == nil {
+		acc.writerManager = NewRollupWriterManager(tmpDir, acc.rpfEstimate)
 	}
-	acc.writerManager = NewRollupWriterManager(tmpDir, acc.rpfEstimate)
 
 	// Collect source segments
 	sourceSegments := make([]lrdb.MetricSeg, len(work))
@@ -243,16 +242,23 @@ func FlushRollupAccumulator(
 	// Flush all writers and get results
 	result, err := acc.writerManager.FlushAll(ctx)
 	if err != nil {
+		// Clear writer manager even on error to prevent reuse
+		acc.writerManager = nil
 		return fmt.Errorf("flushing writers: %w", err)
 	}
+
+	// Clear writer manager before upload to prevent reuse even if upload fails
+	acc.writerManager = nil
 
 	// Upload results and update database
 	if err := uploadRollupResults(ctx, db, blobclient, acc.key, sourceSegments, result, profile, targetFrequency); err != nil {
 		return fmt.Errorf("uploading rollup results: %w", err)
 	}
 
-	// Clear writer manager reference - it's already closed from FlushAll
-	acc.writerManager = nil
+	// Clear the work after successful processing
+	acc.mu.Lock()
+	acc.work = nil
+	acc.mu.Unlock()
 
 	return nil
 }

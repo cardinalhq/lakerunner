@@ -41,6 +41,13 @@ func ProcessAccumulatedCompaction(
 ) error {
 	ll := logctx.FromContext(ctx)
 
+	// Always reset at the end, regardless of success or failure
+	defer func() {
+		if err := manager.Reset(); err != nil {
+			ll.Error("Failed to reset compaction manager", slog.Any("error", err))
+		}
+	}()
+
 	if !manager.HasWork() {
 		ll.Debug("No compaction work to process")
 		// Still need to update Kafka offsets if any
@@ -92,12 +99,7 @@ func ProcessAccumulatedCompaction(
 	ll.Info("Completed accumulated compaction processing",
 		slog.Duration("duration", time.Since(startTime)))
 
-	// Reset the manager for the next accumulation cycle
-	if err := manager.Reset(); err != nil {
-		ll.Error("Failed to reset compaction manager", slog.Any("error", err))
-		// Don't fail the overall operation for reset errors
-	}
-
+	// Note: Reset is called in the defer at the beginning of this function
 	return nil
 }
 

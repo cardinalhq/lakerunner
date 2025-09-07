@@ -79,7 +79,10 @@ func (a *CompactionAccumulator) AddWork(work CompactionWork) {
 func (a *CompactionAccumulator) GetWork() []CompactionWork {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.work
+	// Return a copy to avoid race conditions
+	result := make([]CompactionWork, len(a.work))
+	copy(result, a.work)
+	return result
 }
 
 // CompactionManager manages multiple compaction accumulators and temp directories
@@ -314,13 +317,10 @@ func FlushAccumulator(
 		return nil
 	}
 
-	// Always create a fresh writer manager for each flush cycle
-	// to avoid reusing closed writers
-	if acc.writerManager != nil {
-		// Clean up any previous writer manager
-		_ = acc.writerManager.Close(ctx)
+	// Create writer manager if needed (will be nil after previous flush)
+	if acc.writerManager == nil {
+		acc.writerManager = NewCompactionWriterManager(tmpDir, acc.rpfEstimate)
 	}
-	acc.writerManager = NewCompactionWriterManager(tmpDir, acc.rpfEstimate)
 
 	for _, w := range work {
 		readerStack, err := metricsprocessing.CreateReaderStack(ctx, tmpDir, blobclient, w.Key.OrganizationID, w.Profile, w.Segments)
@@ -336,15 +336,22 @@ func FlushAccumulator(
 
 	result, err := acc.writerManager.FlushAll(ctx)
 	if err != nil {
+		// Clear writer manager even on error to prevent reuse
+		acc.writerManager = nil
 		return fmt.Errorf("flushing writers: %w", err)
 	}
+
+	// Clear writer manager before upload to prevent reuse even if upload fails
+	acc.writerManager = nil
 
 	if err := uploadAndUpdateDatabase(ctx, db, blobclient, acc.key, work, result); err != nil {
 		return fmt.Errorf("uploading and updating database: %w", err)
 	}
 
-	// Clear writer manager reference - it's already closed from FlushAll
-	acc.writerManager = nil
+	// Clear the work after successful processing
+	acc.mu.Lock()
+	acc.work = nil
+	acc.mu.Unlock()
 
 	return nil
 }
