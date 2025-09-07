@@ -49,7 +49,7 @@ func (q *Store) CompactMetricSegs(ctx context.Context, args CompactMetricSegsPar
 			CreatedBy:      args.CreatedBy,
 			SlotID:         args.SlotID,
 			Fingerprints:   r.Fingerprints,
-			SortVersion:    args.SortVersion,
+			SortVersion:    CurrentMetricSortVersion,
 			SlotCount:      args.SlotCount,
 		}
 	}

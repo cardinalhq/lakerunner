@@ -175,32 +175,8 @@ func coordinate(
 		return &result{Results: results, RowsRead: 0, RowsErrored: 0}, nil
 	}
 
-	// Process exemplars from all files if exemplar processor is available
-	if input.ExemplarProcessor != nil && input.Config.ProcessExemplars {
-		ll.Debug("Processing exemplars from all files", slog.Int("fileCount", len(validFiles)))
-
-		for _, fileInfo := range validFiles {
-			// Create a separate reader just for exemplar processing from this file
-			exemplarReader, err := CreateMetricProtoReader(fileInfo.tmpfilename)
-			if err != nil {
-				ll.Warn("Failed to create exemplar reader, skipping file",
-					slog.String("objectID", fileInfo.item.ObjectID),
-					slog.String("error", err.Error()))
-				continue
-			}
-
-			if err := processExemplarsFromReader(ctx, exemplarReader, input.ExemplarProcessor, profile.OrganizationID.String(), mdb); err != nil {
-				ll.Warn("Failed to process exemplars from file",
-					slog.String("objectID", fileInfo.item.ObjectID),
-					slog.Any("error", err))
-			}
-
-			exemplarReader.Close()
-		}
-	}
-
-	// Step 2: Create readers for each file
-	readers, readersToClose, err := createReadersForFiles(ctx, validFiles, profile.OrganizationID.String())
+	// Step 2: Create readers for each file (and process exemplars if configured)
+	readers, readersToClose, err := createReadersForFiles(ctx, validFiles, profile.OrganizationID.String(), input.ExemplarProcessor, input.Config.ProcessExemplars, mdb)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create readers: %w", err)
 	}
@@ -381,8 +357,8 @@ func downloadAndValidateFiles(ctx context.Context, items []ingest.IngestItem, tm
 	return validFiles, nil
 }
 
-// createReadersForFiles creates the reader stack for each file
-func createReadersForFiles(ctx context.Context, validFiles []fileInfo, orgID string) ([]filereader.Reader, []filereader.Reader, error) {
+// createReadersForFiles creates the reader stack for each file and optionally processes exemplars
+func createReadersForFiles(ctx context.Context, validFiles []fileInfo, orgID string, exemplarProcessor *exemplar.Processor, processExemplars bool, mdb lrdb.StoreFull) ([]filereader.Reader, []filereader.Reader, error) {
 	ll := logctx.FromContext(ctx)
 
 	var readers []filereader.Reader
@@ -400,6 +376,16 @@ func createReadersForFiles(ctx context.Context, validFiles []fileInfo, orgID str
 				slog.String("objectID", fileInfo.item.ObjectID),
 				slog.String("error", err.Error()))
 			continue
+		}
+
+		// Process exemplars from this reader if requested (do this before wrapping with other readers)
+		if exemplarProcessor != nil && processExemplars {
+			if err := processExemplarsFromReader(ctx, reader, exemplarProcessor, orgID, mdb); err != nil {
+				// Just log error and continue - don't fail the whole file
+				ll.Warn("Failed to process exemplars from file",
+					slog.String("objectID", fileInfo.item.ObjectID),
+					slog.Any("error", err))
+			}
 		}
 
 		// Step 2b: Add translation (adds TID and truncates timestamp)
