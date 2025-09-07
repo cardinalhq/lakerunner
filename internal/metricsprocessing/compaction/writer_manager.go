@@ -62,8 +62,6 @@ func (m *CompactionWriterManager) ProcessReaders(
 	readerStack []filereader.Reader,
 	metadata CompactionWorkMetadata,
 ) error {
-	ll := logctx.FromContext(ctx)
-
 	// Use the existing metricsprocessing functions to create the reader pipeline
 	keyProvider := metricsprocessing.GetCurrentMetricSortKeyProvider()
 	mergeReader, err := filereader.NewMergesortReader(ctx, readerStack, keyProvider, 1000)
@@ -101,9 +99,6 @@ func (m *CompactionWriterManager) ProcessReaders(
 			break
 		}
 	}
-
-	ll.Debug("Processed readers through writer manager",
-		slog.Int("writerCount", len(m.writers)))
 
 	return nil
 }
