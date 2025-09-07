@@ -455,11 +455,18 @@ func uploadAndUpdateDatabase(
 		return fmt.Errorf("updating database: %w", err)
 	}
 
+	// Calculate segment reduction
+	var segmentReduction float64
+	if len(oldRecords) > 0 {
+		segmentReduction = 1.0 - (float64(len(newRecords)) / float64(len(oldRecords)))
+	}
+
 	ll.Info("Compaction complete",
 		slog.String("organizationID", key.OrganizationID.String()),
 		slog.Int("dateint", int(key.Dateint)),
 		slog.Int("inputSegments", len(oldRecords)),
-		slog.Int("outputSegments", len(newRecords)))
+		slog.Int("outputSegments", len(newRecords)),
+		slog.Float64("segmentReduction", segmentReduction))
 
 	return nil
 }

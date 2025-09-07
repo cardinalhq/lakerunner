@@ -174,10 +174,10 @@ func ProcessAccumulatedBatch(ctx context.Context, args ingest.ProcessBatchArgs, 
 		return nil
 	}
 
-	// Calculate compression reduction percentage (e.g., 0.5 for 50% reduction)
-	var compressionReduction float64
+	// Calculate size reduction percentage (e.g., 0.5 for 50% reduction)
+	var sizeReduction float64
 	if totalInputSize > 0 {
-		compressionReduction = 1.0 - (float64(totalOutputSize) / float64(totalInputSize))
+		sizeReduction = 1.0 - (float64(totalOutputSize) / float64(totalInputSize))
 	}
 
 	ll.Info("Accumulated batch processing summary",
@@ -188,7 +188,7 @@ func ProcessAccumulatedBatch(ctx context.Context, args ingest.ProcessBatchArgs, 
 		slog.Int64("totalOutputBytes", totalOutputSize),
 		slog.Int64("inputRows", totalInputRows),
 		slog.Int64("outputRows", totalOutputRows),
-		slog.Float64("compressionReduction", compressionReduction),
+		slog.Float64("sizeReduction", sizeReduction),
 		slog.Int("slotCount", int(maxSlotCount)))
 
 	// Get all Kafka offset updates

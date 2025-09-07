@@ -132,9 +132,10 @@ func ProcessBatch(
 		totalOutputSize += r.FileSize
 	}
 
-	var compressionRatio float64
+	// Calculate size reduction percentage (e.g., 0.5 for 50% reduction)
+	var sizeReduction float64
 	if totalInputSize > 0 {
-		compressionRatio = (float64(totalOutputSize) / float64(totalInputSize)) * 100
+		sizeReduction = 1.0 - (float64(totalOutputSize) / float64(totalInputSize))
 	}
 
 	ll.Debug("Metrics ingestion batch summary",
@@ -142,8 +143,7 @@ func ProcessBatch(
 		slog.Int64("totalInputBytes", totalInputSize),
 		slog.Int("outputFileCount", len(result.Results)),
 		slog.Int64("totalOutputBytes", totalOutputSize),
-		slog.Float64("compressionRatio", compressionRatio),
-		slog.String("compressionRatioStr", fmt.Sprintf("%.1f%%", compressionRatio)))
+		slog.Float64("sizeReduction", sizeReduction))
 
 	// Execute the atomic transaction: insert all segments + Kafka offsets
 	batch := lrdb.MetricSegmentBatch{
