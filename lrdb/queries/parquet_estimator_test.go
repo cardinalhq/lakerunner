@@ -18,6 +18,7 @@ package queries
 
 import (
 	"context"
+	"math"
 	"testing"
 	"time"
 
@@ -127,7 +128,7 @@ func TestMetricSegEstimator(t *testing.T) {
 			// bytes_per_record = (file_size - overhead) / record_count
 			actualBPRAfterOverhead := float64(tc.fileSize-estimatedOverhead) / float64(tc.recordCount)
 			// target_records = CEIL((target_bytes - overhead) / bytes_per_record)
-			expectedRecordsFloat := effectiveTargetBytes / actualBPRAfterOverhead
+			expectedRecordsFloat := float64(effectiveTargetBytes) / actualBPRAfterOverhead
 			expectedRecordsCeil := int64(expectedRecordsFloat)
 			if expectedRecordsFloat > float64(expectedRecordsCeil) {
 				expectedRecordsCeil++
@@ -228,7 +229,7 @@ func TestMetricSegEstimatorMultipleFiles(t *testing.T) {
 	avgBPRAfterOverhead := float64(totalFileSize-totalOverhead) / float64(totalRecords) // (495,000 - 45,000) / 3,000 = 150.0
 	effectiveTargetBytes := config.TargetFileSize - estimatedOverhead                   // Target - overhead
 	expectedRecordsFloat := float64(effectiveTargetBytes) / avgBPRAfterOverhead         // 985,000 / 150 = 6,566.67
-	expectedRecords := int64(expectedRecordsFloat + 0.5)                                // ceil(6566.67) = 6567
+	expectedRecords := int64(math.Ceil(expectedRecordsFloat))                           // ceil(6566.67) = 6567
 
 	t.Logf("Total file size: %d bytes", totalFileSize)
 	t.Logf("Total records: %d", totalRecords)
