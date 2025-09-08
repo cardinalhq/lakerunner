@@ -19,62 +19,45 @@ import (
 	"time"
 
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
-	"github.com/cardinalhq/lakerunner/lrdb"
-	"github.com/google/uuid"
 )
 
-// CompactionKey represents the key for grouping messages for compaction
-type CompactionKey struct {
-	OrganizationID uuid.UUID
-	DateInt        int32
-	FrequencyMs    int32
-	InstanceNum    int16
+
+type Processor[M messages.GroupableMessage, K comparable] interface {
+	Process(ctx context.Context, group *AccumulationGroup[K], kafkaCommitData *KafkaCommitData, recordCountEstimate int64) error
+	GetTargetRecordCount(ctx context.Context, groupingKey K) int64
 }
 
-type Processor interface {
-	Process(ctx context.Context, group *AccumulationGroup[CompactionKey], kafkaCommitData *KafkaCommitData, recordCountEstimate int64) error
+// OffsetCallbacks defines simple callbacks for offset storage (implemented by the message source)
+type OffsetCallbacks[K comparable] interface {
+	// GetLastProcessedOffset returns the last processed offset for this key, or -1 if never seen
+	GetLastProcessedOffset(ctx context.Context, metadata *MessageMetadata, groupingKey K) (int64, error)
+	// MarkOffsetsProcessed records that these offsets have been processed for this key
+	MarkOffsetsProcessed(ctx context.Context, key K, offsets map[int32]int64) error
 }
 
-// GathererStore defines the interface for querying Kafka offset information and estimates
-type GathererStore interface {
-	KafkaJournalGetLastProcessedWithOrgInstance(ctx context.Context, params lrdb.KafkaJournalGetLastProcessedWithOrgInstanceParams) (int64, error)
-	GetMetricEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32) int64
-}
-
-// Gatherer processes a stream of MetricSegmentNotificationMessage from Kafka
+// Gatherer processes a stream of GroupableMessage from Kafka
 // and feeds them into a Hunter instance for accumulation
-type Gatherer struct {
-	hunter          *Hunter[CompactionKey]
-	metadataTracker *MetadataTracker
-	offsetTracker   *OffsetTracker
-	compactor       Processor
-	store           GathererStore
+type Gatherer[M messages.GroupableMessage, K comparable] struct {
+	hunter          *Hunter[M, K]
+	metadataTracker *MetadataTracker[K]
+	processor       Processor[M, K]
+	offsetCallbacks OffsetCallbacks[K]
 }
 
-// NewGatherer creates a new Gatherer instance for compaction
-func NewGatherer(topic, consumerGroup string, store GathererStore, compactor Processor) *Gatherer {
-	keyMapper := func(msg *messages.MetricSegmentNotificationMessage) CompactionKey {
-		return CompactionKey{
-			OrganizationID: msg.OrganizationID,
-			DateInt:        msg.DateInt,
-			FrequencyMs:    msg.FrequencyMs,
-			InstanceNum:    msg.InstanceNum,
-		}
-	}
-
-	return &Gatherer{
-		hunter:          NewHunter(keyMapper),
-		metadataTracker: NewMetadataTracker(topic, consumerGroup),
-		offsetTracker:   NewOffsetTracker(store),
-		compactor:       compactor,
-		store:           store,
+// NewGatherer creates a new generic Gatherer instance
+func NewGatherer[M messages.GroupableMessage, K comparable](topic, consumerGroup string, processor Processor[M, K], offsetCallbacks OffsetCallbacks[K]) *Gatherer[M, K] {
+	return &Gatherer[M, K]{
+		hunter:          NewHunter[M, K](),
+		metadataTracker: NewMetadataTracker[K](topic, consumerGroup),
+		processor:       processor,
+		offsetCallbacks: offsetCallbacks,
 	}
 }
 
-// ProcessMessage processes a single MetricSegmentNotificationMessage
+// ProcessMessage processes a single GroupableMessage
 // Checks offset tracking to determine if message should be processed
-// If the target record count threshold is reached, it calls the compactor and tracks metadata
-func (g *Gatherer) ProcessMessage(ctx context.Context, msg *messages.MetricSegmentNotificationMessage, metadata *MessageMetadata) error {
+// If the target record count threshold is reached, it calls the processor and tracks metadata
+func (g *Gatherer[M, K]) ProcessMessage(ctx context.Context, msg M, metadata *MessageMetadata) error {
 	// Validate topic and consumer group match expectations
 	if metadata.Topic != g.metadataTracker.topic {
 		return &ConfigMismatchError{
@@ -91,19 +74,22 @@ func (g *Gatherer) ProcessMessage(ctx context.Context, msg *messages.MetricSegme
 		}
 	}
 
+	// Get the grouping key from the message
+	groupingKey := msg.GroupingKey().(K)
+
 	// Check if we should process this message based on offset tracking
-	shouldProcess, err := g.offsetTracker.ShouldProcessMessage(ctx, metadata, msg.OrganizationID, msg.InstanceNum)
+	lastProcessedOffset, err := g.offsetCallbacks.GetLastProcessedOffset(ctx, metadata, groupingKey)
 	if err != nil {
 		return err
 	}
 
-	if !shouldProcess {
+	if metadata.Offset <= lastProcessedOffset {
 		// Drop this message - already processed
 		return nil
 	}
 
-	// Get dynamic estimate for this org/frequency combination
-	targetRecordCount := g.store.GetMetricEstimate(ctx, msg.OrganizationID, msg.FrequencyMs)
+	// Get dynamic estimate from the processor
+	targetRecordCount := g.processor.GetTargetRecordCount(ctx, groupingKey)
 
 	// Process the message through the hunter
 	result := g.hunter.AddMessage(msg, metadata, targetRecordCount)
@@ -112,20 +98,27 @@ func (g *Gatherer) ProcessMessage(ctx context.Context, msg *messages.MetricSegme
 		// Create Kafka commit data from the actual messages in the Hunter list
 		kafkaCommitData := g.createKafkaCommitDataFromGroup(result.Group)
 
-		// Call the compactor with the accumulated group, commit data, and record count estimate
-		if err := g.compactor.Process(ctx, result.Group, kafkaCommitData, result.Group.TotalRecordCount); err != nil {
+		// Call the processor with the accumulated group, commit data, and record count estimate
+		if err := g.processor.Process(ctx, result.Group, kafkaCommitData, result.Group.TotalRecordCount); err != nil {
 			return err
 		}
 
 		// Track the metadata for calculating safe Kafka consumer group commits
 		g.metadataTracker.TrackMetadata(result.Group)
+		
+		// Mark offsets as processed for this key
+		if kafkaCommitData != nil {
+			if err := g.offsetCallbacks.MarkOffsetsProcessed(ctx, result.Group.Key, kafkaCommitData.Offsets); err != nil {
+				return err
+			}
+		}
 	}
 
 	return nil
 }
 
 // createKafkaCommitDataFromGroup creates KafkaCommitData from the actual messages in a Hunter group
-func (g *Gatherer) createKafkaCommitDataFromGroup(group *AccumulationGroup[CompactionKey]) *KafkaCommitData {
+func (g *Gatherer[M, K]) createKafkaCommitDataFromGroup(group *AccumulationGroup[K]) *KafkaCommitData {
 	if len(group.Messages) == 0 {
 		return nil
 	}
@@ -152,13 +145,13 @@ func (g *Gatherer) createKafkaCommitDataFromGroup(group *AccumulationGroup[Compa
 }
 
 // GetMetadataTracker returns the metadata tracker for accessing commit information
-func (g *Gatherer) GetMetadataTracker() *MetadataTracker {
+func (g *Gatherer[M, K]) GetMetadataTracker() *MetadataTracker[K] {
 	return g.metadataTracker
 }
 
 // FlushStaleGroups processes all groups that haven't been updated for longer than the specified duration
 // This is used for periodic flushing to handle groups that may never reach the record count threshold
-func (g *Gatherer) FlushStaleGroups(ctx context.Context, olderThan time.Duration) error {
+func (g *Gatherer[M, K]) FlushStaleGroups(ctx context.Context, olderThan time.Duration) error {
 	staleGroups := g.hunter.SelectStaleGroups(olderThan)
 
 	for _, group := range staleGroups {
@@ -166,12 +159,19 @@ func (g *Gatherer) FlushStaleGroups(ctx context.Context, olderThan time.Duration
 		kafkaCommitData := g.createKafkaCommitDataFromGroup(group)
 
 		// Call the processor with the group, commit data, and record count estimate
-		if err := g.compactor.Process(ctx, group, kafkaCommitData, group.TotalRecordCount); err != nil {
+		if err := g.processor.Process(ctx, group, kafkaCommitData, group.TotalRecordCount); err != nil {
 			return err
 		}
 
 		// Track the metadata for calculating safe Kafka consumer group commits
 		g.metadataTracker.TrackMetadata(group)
+		
+		// Mark offsets as processed for this key
+		if kafkaCommitData != nil {
+			if err := g.offsetCallbacks.MarkOffsetsProcessed(ctx, group.Key, kafkaCommitData.Offsets); err != nil {
+				return err
+			}
+		}
 	}
 
 	return nil

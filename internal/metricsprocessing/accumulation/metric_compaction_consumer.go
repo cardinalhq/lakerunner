@@ -30,9 +30,9 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
-// KafkaAccumulationConsumer handles Kafka messages using the new accumulation-based approach
-type KafkaAccumulationConsumer struct {
-	gatherer      *Gatherer
+// MetricCompactionConsumer handles metric compaction Kafka messages using accumulation-based approach
+type MetricCompactionConsumer struct {
+	gatherer      *Gatherer[*messages.MetricCompactionMessage, messages.CompactionKey]
 	consumer      fly.Consumer
 	flushTicker   *time.Ticker
 	done          chan struct{}
@@ -41,15 +41,15 @@ type KafkaAccumulationConsumer struct {
 	consumerGroup string
 }
 
-// NewKafkaAccumulationConsumer creates a new accumulation-based Kafka compaction consumer
-func NewKafkaAccumulationConsumer(
+// NewMetricCompactionConsumer creates a new metric compaction consumer
+func NewMetricCompactionConsumer(
 	ctx context.Context,
 	factory *fly.Factory,
 	cfg *config.Config,
 	store CompactionStore,
 	storageProvider storageprofile.StorageProfileProvider,
 	cmgr cloudstorage.ClientProvider,
-) (*KafkaAccumulationConsumer, error) {
+) (*MetricCompactionConsumer, error) {
 	ll := logctx.FromContext(ctx)
 
 	// Create MetricCompactor
@@ -58,8 +58,6 @@ func NewKafkaAccumulationConsumer(
 	// Create Gatherer - using hardcoded consumer group and topic
 	consumerGroup := "lakerunner.compact.metrics"
 	topic := "lakerunner.segments.metrics.compact"
-
-	gatherer := NewGatherer(topic, consumerGroup, store, compactor)
 
 	// Create Kafka consumer
 	consumerName := "lakerunner-compaction-accumulator"
@@ -71,8 +69,7 @@ func NewKafkaAccumulationConsumer(
 	// Set up periodic flushing (every minute, flush groups older than 5 minutes)
 	flushTicker := time.NewTicker(1 * time.Minute)
 
-	kafkaConsumer := &KafkaAccumulationConsumer{
-		gatherer:      gatherer,
+	mcc := &MetricCompactionConsumer{
 		consumer:      consumer,
 		flushTicker:   flushTicker,
 		done:          make(chan struct{}),
@@ -81,16 +78,22 @@ func NewKafkaAccumulationConsumer(
 		consumerGroup: consumerGroup,
 	}
 
+	// Create reusable offset callbacks for org/instance offset management
+	offsetCallbacks := NewOrgInstanceOffsetCallbacks(store)
+
+	// Create Gatherer using the reusable offset callbacks
+	mcc.gatherer = NewGatherer[*messages.MetricCompactionMessage, messages.CompactionKey](topic, consumerGroup, compactor, offsetCallbacks)
+
 	ll.Info("Created new Kafka accumulation consumer",
 		slog.String("consumerName", consumerName),
 		slog.String("topic", topic),
 		slog.String("consumerGroup", consumerGroup))
 
-	return kafkaConsumer, nil
+	return mcc, nil
 }
 
 // Run starts the Kafka consumer and periodic flushing
-func (c *KafkaAccumulationConsumer) Run(ctx context.Context) error {
+func (c *MetricCompactionConsumer) Run(ctx context.Context) error {
 	ll := logctx.FromContext(ctx).With("consumer", c.consumerName)
 	ll.Info("Starting Kafka accumulation consumer")
 
@@ -111,9 +114,9 @@ func (c *KafkaAccumulationConsumer) Run(ctx context.Context) error {
 
 		// Process each message
 		for _, kafkaMsg := range kafkaMessages {
-			var notification messages.MetricSegmentNotificationMessage
+			var notification messages.MetricCompactionMessage
 			if err := notification.Unmarshal(kafkaMsg.Value); err != nil {
-				ll.Error("Failed to unmarshal metric segment notification",
+				ll.Error("Failed to unmarshal metric compaction message",
 					slog.Any("error", err),
 					slog.Int("partition", kafkaMsg.Partition),
 					slog.Int64("offset", kafkaMsg.Offset))
@@ -155,7 +158,7 @@ func (c *KafkaAccumulationConsumer) Run(ctx context.Context) error {
 }
 
 // Close stops the consumer and cleans up resources
-func (c *KafkaAccumulationConsumer) Close() error {
+func (c *MetricCompactionConsumer) Close() error {
 	close(c.done)
 	c.flushTicker.Stop()
 
@@ -166,7 +169,7 @@ func (c *KafkaAccumulationConsumer) Close() error {
 }
 
 // periodicFlush runs every minute and flushes stale groups (older than 5 minutes)
-func (c *KafkaAccumulationConsumer) periodicFlush(ctx context.Context) {
+func (c *MetricCompactionConsumer) periodicFlush(ctx context.Context) {
 	ll := logctx.FromContext(ctx)
 
 	for {
@@ -185,3 +188,4 @@ func (c *KafkaAccumulationConsumer) periodicFlush(ctx context.Context) {
 		}
 	}
 }
+

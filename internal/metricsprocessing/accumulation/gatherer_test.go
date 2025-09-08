@@ -17,15 +17,16 @@ package accumulation
 import (
 	"context"
 	"testing"
+	"time"
 
-	"github.com/cardinalhq/lakerunner/lrdb"
+	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 )
 
-// MockCompactor implements Compactor for testing
+// MockCompactor implements Processor for testing
 type MockCompactor struct {
-	groups     []*AccumulationGroup[CompactionKey]
+	groups     []*AccumulationGroup[messages.CompactionKey]
 	commitData []*KafkaCommitData
 	estimates  []int64
 }
@@ -34,55 +35,62 @@ func NewMockCompactor() *MockCompactor {
 	return &MockCompactor{}
 }
 
-func (m *MockCompactor) Process(ctx context.Context, group *AccumulationGroup[CompactionKey], kafkaCommitData *KafkaCommitData, recordCountEstimate int64) error {
+func (m *MockCompactor) Process(ctx context.Context, group *AccumulationGroup[messages.CompactionKey], kafkaCommitData *KafkaCommitData, recordCountEstimate int64) error {
 	m.groups = append(m.groups, group)
 	m.commitData = append(m.commitData, kafkaCommitData)
 	m.estimates = append(m.estimates, recordCountEstimate)
 	return nil
 }
 
-// MockOffsetStore implements OffsetStore for testing
-type MockOffsetStore struct {
+func (m *MockCompactor) GetTargetRecordCount(ctx context.Context, groupingKey messages.CompactionKey) int64 {
+	return 10000 // Default estimate for tests
+}
+
+// MockOffsetCallbacks implements OffsetCallbacks for testing
+type MockOffsetCallbacks struct {
 	offsets map[string]int64 // key: "topic:partition:consumer_group:org_id:instance_num" -> offset
 }
 
-func NewMockOffsetStore() *MockOffsetStore {
-	return &MockOffsetStore{
+func NewMockOffsetCallbacks() *MockOffsetCallbacks {
+	return &MockOffsetCallbacks{
 		offsets: make(map[string]int64),
 	}
 }
 
-// Update MockOffsetStore to implement GathererStore (both offset and estimate functionality)
-func (m *MockOffsetStore) GetMetricEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32) int64 {
-	// Default estimate similar to old CompactionTargetRecordCount
-	return 10000
-}
-
-func (m *MockOffsetStore) KafkaJournalGetLastProcessedWithOrgInstance(ctx context.Context, params lrdb.KafkaJournalGetLastProcessedWithOrgInstanceParams) (int64, error) {
-	key := params.Topic + ":" + string(rune(params.Partition)) + ":" + params.ConsumerGroup + ":" + params.OrganizationID.String() + ":" + string(rune(params.InstanceNum))
+func (m *MockOffsetCallbacks) GetLastProcessedOffset(ctx context.Context, metadata *MessageMetadata, groupingKey messages.CompactionKey) (int64, error) {
+	key := metadata.Topic + ":" + string(rune(metadata.Partition)) + ":" + metadata.ConsumerGroup + ":" + groupingKey.OrganizationID.String() + ":" + string(rune(groupingKey.InstanceNum))
 	offset, exists := m.offsets[key]
 	if !exists {
-		// Return error to simulate no row found
-		return 0, assert.AnError
+		// Return -1 if no row found (never seen before)
+		return -1, nil
 	}
 	return offset, nil
 }
 
-func (m *MockOffsetStore) SetOffset(topic string, partition int32, consumerGroup string, orgID uuid.UUID, instanceNum int16, offset int64) {
+func (m *MockOffsetCallbacks) MarkOffsetsProcessed(ctx context.Context, key messages.CompactionKey, offsets map[int32]int64) error {
+	// Store the highest offset per partition for this key
+	for partition, offset := range offsets {
+		keyStr := "topic:" + string(rune(partition)) + ":group:" + key.OrganizationID.String() + ":" + string(rune(key.InstanceNum))
+		m.offsets[keyStr] = offset
+	}
+	return nil
+}
+
+func (m *MockOffsetCallbacks) SetOffset(topic string, partition int32, consumerGroup string, orgID uuid.UUID, instanceNum int16, offset int64) {
 	key := topic + ":" + string(rune(partition)) + ":" + consumerGroup + ":" + orgID.String() + ":" + string(rune(instanceNum))
 	m.offsets[key] = offset
 }
 
 func TestGatherer_CreateKafkaCommitDataFromGroup(t *testing.T) {
-	store := NewMockOffsetStore()
+	offsetCallbacks := NewMockOffsetCallbacks()
 	compactor := NewMockCompactor()
 	orgID := uuid.New()
 
-	gatherer := NewGatherer("test-topic", "test-group", store, compactor)
+	gatherer := NewGatherer[*messages.MetricCompactionMessage, messages.CompactionKey]("test-topic", "test-group", compactor, offsetCallbacks)
 
 	// Create a group with messages from multiple partitions
-	group := &AccumulationGroup[CompactionKey]{
-		Key: CompactionKey{
+	group := &AccumulationGroup[messages.CompactionKey]{
+		Key: messages.CompactionKey{
 			OrganizationID: orgID,
 			InstanceNum:    1,
 			DateInt:        20250108,
@@ -118,11 +126,11 @@ func TestGatherer_CreateKafkaCommitDataFromGroup(t *testing.T) {
 }
 
 func TestGatherer_ProcessMessage_Integration(t *testing.T) {
-	store := NewMockOffsetStore()
+	offsetCallbacks := NewMockOffsetCallbacks()
 	compactor := NewMockCompactor()
 	orgID := uuid.New()
 
-	gatherer := NewGatherer("test-topic", "test-group", store, compactor)
+	gatherer := NewGatherer[*messages.MetricCompactionMessage, messages.CompactionKey]("test-topic", "test-group", compactor, offsetCallbacks)
 
 	// Add messages until threshold is reached
 	for i := 0; i < 200; i++ { // Should trigger at CompactionTargetRecordCount=10000
@@ -155,10 +163,10 @@ func TestGatherer_ProcessMessage_Integration(t *testing.T) {
 }
 
 func TestGatherer_OffsetDeduplication(t *testing.T) {
-	store := NewMockOffsetStore()
+	offsetCallbacks := NewMockOffsetCallbacks()
 	orgID := uuid.New()
 
-	gatherer := NewGatherer("test-topic", "test-group", store, NewMockCompactor())
+	gatherer := NewGatherer[*messages.MetricCompactionMessage, messages.CompactionKey]("test-topic", "test-group", NewMockCompactor(), offsetCallbacks)
 
 	// Process message with offset 100
 	msg1 := createTestMessage(orgID, 1, 20250108, 60000, 1, 4, 50)
@@ -177,24 +185,24 @@ func TestGatherer_OffsetDeduplication(t *testing.T) {
 }
 
 func TestGatherer_MultipleOrgsMinimumOffset(t *testing.T) {
-	store := NewMockOffsetStore()
+	offsetCallbacks := NewMockOffsetCallbacks()
 
 	// Create gatherers for different organizations
 	orgA := uuid.New()
 	orgB := uuid.New()
 
-	gathererA := NewGatherer("test-topic", "test-group", store, NewMockCompactor())
-	gathererB := NewGatherer("test-topic", "test-group", store, NewMockCompactor())
+	gathererA := NewGatherer[*messages.MetricCompactionMessage, messages.CompactionKey]("test-topic", "test-group", NewMockCompactor(), offsetCallbacks)
+	gathererB := NewGatherer[*messages.MetricCompactionMessage, messages.CompactionKey]("test-topic", "test-group", NewMockCompactor(), offsetCallbacks)
 
 	// Use the same metadata tracker to simulate shared consumer group
-	sharedTracker := NewMetadataTracker("test-topic", "test-group")
+	sharedTracker := NewMetadataTracker[messages.CompactionKey]("test-topic", "test-group")
 	gathererA.metadataTracker = sharedTracker
 	gathererB.metadataTracker = sharedTracker
 
 	// Process messages from both orgs to different offsets
 	// Org A processes to offset 75
-	groupA := &AccumulationGroup[CompactionKey]{
-		Key: CompactionKey{OrganizationID: orgA, InstanceNum: 1},
+	groupA := &AccumulationGroup[messages.CompactionKey]{
+		Key: messages.CompactionKey{OrganizationID: orgA, InstanceNum: 1},
 		Messages: []*AccumulatedMessage{{
 			Message:  createTestMessage(orgA, 1, 20250108, 60000, 1, 4, 50),
 			Metadata: createTestMetadata("test-topic", 0, "test-group", 75),
@@ -203,8 +211,8 @@ func TestGatherer_MultipleOrgsMinimumOffset(t *testing.T) {
 	sharedTracker.TrackMetadata(groupA)
 
 	// Org B processes to offset 65
-	groupB := &AccumulationGroup[CompactionKey]{
-		Key: CompactionKey{OrganizationID: orgB, InstanceNum: 1},
+	groupB := &AccumulationGroup[messages.CompactionKey]{
+		Key: messages.CompactionKey{OrganizationID: orgB, InstanceNum: 1},
 		Messages: []*AccumulatedMessage{{
 			Message:  createTestMessage(orgB, 1, 20250108, 60000, 1, 4, 50),
 			Metadata: createTestMetadata("test-topic", 0, "test-group", 65),
@@ -219,10 +227,10 @@ func TestGatherer_MultipleOrgsMinimumOffset(t *testing.T) {
 }
 
 func TestGatherer_ValidatesTopicAndConsumerGroup(t *testing.T) {
-	store := NewMockOffsetStore()
+	offsetCallbacks := NewMockOffsetCallbacks()
 	orgID := uuid.New()
 
-	gatherer := NewGatherer("expected-topic", "expected-group", store, NewMockCompactor())
+	gatherer := NewGatherer[*messages.MetricCompactionMessage, messages.CompactionKey]("expected-topic", "expected-group", NewMockCompactor(), offsetCallbacks)
 
 	msg := createTestMessage(orgID, 1, 20250108, 60000, 1, 4, 50)
 
@@ -249,4 +257,29 @@ func TestGatherer_ValidatesTopicAndConsumerGroup(t *testing.T) {
 	correctMetadata := createTestMetadata("expected-topic", 0, "expected-group", 100)
 	err = gatherer.ProcessMessage(context.Background(), msg, correctMetadata)
 	assert.NoError(t, err)
+}
+
+// Helper functions for testing
+func createTestMessage(orgID uuid.UUID, instanceNum int16, dateInt int32, frequencyMs int32, slotID int32, slotCount int32, recordCount int64) *messages.MetricCompactionMessage {
+	return &messages.MetricCompactionMessage{
+		OrganizationID: orgID,
+		DateInt:        dateInt,
+		FrequencyMs:    frequencyMs,
+		SegmentID:      123,
+		InstanceNum:    instanceNum,
+		SlotID:         slotID,
+		SlotCount:      slotCount,
+		Records:        recordCount,
+		FileSize:       1000,
+		QueuedAt:       time.Now(),
+	}
+}
+
+func createTestMetadata(topic string, partition int32, consumerGroup string, offset int64) *MessageMetadata {
+	return &MessageMetadata{
+		Topic:         topic,
+		Partition:     partition,
+		ConsumerGroup: consumerGroup,
+		Offset:        offset,
+	}
 }

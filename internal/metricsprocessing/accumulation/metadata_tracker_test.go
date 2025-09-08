@@ -17,12 +17,13 @@ package accumulation
 import (
 	"testing"
 
+	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestMetadataTracker_SafeCommitOffsets(t *testing.T) {
-	tracker := NewMetadataTracker("test-topic", "test-group")
+	tracker := NewMetadataTracker[messages.CompactionKey]("test-topic", "test-group")
 
 	orgA := uuid.New()
 	orgB := uuid.New()
@@ -30,16 +31,16 @@ func TestMetadataTracker_SafeCommitOffsets(t *testing.T) {
 
 	// Simulate processing messages from different orgs on different partitions
 	// Partition 0: OrgA=10, OrgB=15, OrgC=54
-	tracker.partitionOffsets[0] = map[OrgInstanceKey]int64{
-		{OrganizationID: orgA, InstanceNum: 1}: 10,
-		{OrganizationID: orgB, InstanceNum: 1}: 15,
-		{OrganizationID: orgC, InstanceNum: 1}: 54,
+	tracker.partitionOffsets[0] = map[messages.CompactionKey]int64{
+		{OrganizationID: orgA, InstanceNum: 1, DateInt: 20250108, FrequencyMs: 60000}: 10,
+		{OrganizationID: orgB, InstanceNum: 1, DateInt: 20250108, FrequencyMs: 60000}: 15,
+		{OrganizationID: orgC, InstanceNum: 1, DateInt: 20250108, FrequencyMs: 60000}: 54,
 	}
 
 	// Partition 1: OrgA=20, OrgB=25
-	tracker.partitionOffsets[1] = map[OrgInstanceKey]int64{
-		{OrganizationID: orgA, InstanceNum: 1}: 20,
-		{OrganizationID: orgB, InstanceNum: 1}: 25,
+	tracker.partitionOffsets[1] = map[messages.CompactionKey]int64{
+		{OrganizationID: orgA, InstanceNum: 1, DateInt: 20250108, FrequencyMs: 60000}: 20,
+		{OrganizationID: orgB, InstanceNum: 1, DateInt: 20250108, FrequencyMs: 60000}: 25,
 	}
 
 	// Get safe commit offsets - should be minimums
@@ -57,7 +58,7 @@ func TestMetadataTracker_SafeCommitOffsets(t *testing.T) {
 }
 
 func TestMetadataTracker_OnlyAdvancingOffsets(t *testing.T) {
-	tracker := NewMetadataTracker("test-topic", "test-group")
+	tracker := NewMetadataTracker[messages.CompactionKey]("test-topic", "test-group")
 
 	orgA := uuid.New()
 	orgB := uuid.New()
@@ -67,13 +68,13 @@ func TestMetadataTracker_OnlyAdvancingOffsets(t *testing.T) {
 	tracker.lastCommittedOffsets[1] = 30
 
 	// Current processed offsets
-	tracker.partitionOffsets[0] = map[OrgInstanceKey]int64{
-		{OrganizationID: orgA, InstanceNum: 1}: 10, // Behind committed offset
-		{OrganizationID: orgB, InstanceNum: 1}: 12, // Behind committed offset
+	tracker.partitionOffsets[0] = map[messages.CompactionKey]int64{
+		{OrganizationID: orgA, InstanceNum: 1, DateInt: 20250108, FrequencyMs: 60000}: 10, // Behind committed offset
+		{OrganizationID: orgB, InstanceNum: 1, DateInt: 20250108, FrequencyMs: 60000}: 12, // Behind committed offset
 	}
-	tracker.partitionOffsets[1] = map[OrgInstanceKey]int64{
-		{OrganizationID: orgA, InstanceNum: 1}: 35, // Ahead of committed offset
-		{OrganizationID: orgB, InstanceNum: 1}: 40, // Ahead of committed offset
+	tracker.partitionOffsets[1] = map[messages.CompactionKey]int64{
+		{OrganizationID: orgA, InstanceNum: 1, DateInt: 20250108, FrequencyMs: 60000}: 35, // Ahead of committed offset
+		{OrganizationID: orgB, InstanceNum: 1, DateInt: 20250108, FrequencyMs: 60000}: 40, // Ahead of committed offset
 	}
 
 	commitData := tracker.GetSafeCommitOffsets()
@@ -85,14 +86,14 @@ func TestMetadataTracker_OnlyAdvancingOffsets(t *testing.T) {
 }
 
 func TestMetadataTracker_NoAdvancement(t *testing.T) {
-	tracker := NewMetadataTracker("test-topic", "test-group")
+	tracker := NewMetadataTracker[messages.CompactionKey]("test-topic", "test-group")
 
 	orgA := uuid.New()
 
 	// Set committed offset higher than current processed
 	tracker.lastCommittedOffsets[0] = 50
-	tracker.partitionOffsets[0] = map[OrgInstanceKey]int64{
-		{OrganizationID: orgA, InstanceNum: 1}: 30,
+	tracker.partitionOffsets[0] = map[messages.CompactionKey]int64{
+		{OrganizationID: orgA, InstanceNum: 1, DateInt: 20250108, FrequencyMs: 60000}: 30,
 	}
 
 	commitData := tracker.GetSafeCommitOffsets()
@@ -102,7 +103,7 @@ func TestMetadataTracker_NoAdvancement(t *testing.T) {
 }
 
 func TestMetadataTracker_MarkOffsetsCommitted(t *testing.T) {
-	tracker := NewMetadataTracker("test-topic", "test-group")
+	tracker := NewMetadataTracker[messages.CompactionKey]("test-topic", "test-group")
 
 	// Set some initial committed offsets
 	tracker.lastCommittedOffsets[0] = 10
@@ -124,16 +125,18 @@ func TestMetadataTracker_MarkOffsetsCommitted(t *testing.T) {
 }
 
 func TestMetadataTracker_TrackMetadata(t *testing.T) {
-	tracker := NewMetadataTracker("test-topic", "test-group")
+	tracker := NewMetadataTracker[messages.CompactionKey]("test-topic", "test-group")
 
 	orgA := uuid.New()
 	orgB := uuid.New()
 
 	// Create a group with multiple messages
-	group := &AccumulationGroup[CompactionKey]{
-		Key: CompactionKey{
+	group := &AccumulationGroup[messages.CompactionKey]{
+		Key: messages.CompactionKey{
 			OrganizationID: orgA,
 			InstanceNum:    1,
+			DateInt:        20250108,
+			FrequencyMs:    60000,
 		},
 		Messages: []*AccumulatedMessage{
 			{
@@ -161,7 +164,7 @@ func TestMetadataTracker_TrackMetadata(t *testing.T) {
 	tracker.TrackMetadata(group)
 
 	// Check that the highest offsets were tracked correctly
-	orgInstanceKeyA := OrgInstanceKey{OrganizationID: orgA, InstanceNum: 1}
+	orgInstanceKeyA := messages.CompactionKey{OrganizationID: orgA, InstanceNum: 1, DateInt: 20250108, FrequencyMs: 60000}
 
 	assert.Contains(t, tracker.partitionOffsets[0], orgInstanceKeyA)
 	assert.Equal(t, int64(105), tracker.partitionOffsets[0][orgInstanceKeyA]) // highest offset on partition 0
@@ -170,10 +173,12 @@ func TestMetadataTracker_TrackMetadata(t *testing.T) {
 	assert.Equal(t, int64(200), tracker.partitionOffsets[1][orgInstanceKeyA]) // offset on partition 1
 
 	// Track metadata from another org on the same partitions
-	group2 := &AccumulationGroup[CompactionKey]{
-		Key: CompactionKey{
+	group2 := &AccumulationGroup[messages.CompactionKey]{
+		Key: messages.CompactionKey{
 			OrganizationID: orgB,
 			InstanceNum:    1,
+			DateInt:        20250108,
+			FrequencyMs:    60000,
 		},
 		Messages: []*AccumulatedMessage{
 			{
@@ -187,7 +192,7 @@ func TestMetadataTracker_TrackMetadata(t *testing.T) {
 
 	tracker.TrackMetadata(group2)
 
-	orgInstanceKeyB := OrgInstanceKey{OrganizationID: orgB, InstanceNum: 1}
+	orgInstanceKeyB := messages.CompactionKey{OrganizationID: orgB, InstanceNum: 1, DateInt: 20250108, FrequencyMs: 60000}
 
 	// Both orgs should be tracked separately
 	assert.Contains(t, tracker.partitionOffsets[0], orgInstanceKeyA)

@@ -28,9 +28,9 @@ type MessageMetadata struct {
 	Offset        int64
 }
 
-// AccumulatedMessage wraps a metric segment notification with its Kafka metadata
+// AccumulatedMessage wraps a GroupableMessage with its Kafka metadata
 type AccumulatedMessage struct {
-	Message  *messages.MetricSegmentNotificationMessage
+	Message  messages.GroupableMessage
 	Metadata *MessageMetadata
 }
 
@@ -50,24 +50,22 @@ type AccumulationResult[K comparable] struct {
 	TriggeringRecord *AccumulatedMessage // The message that caused the threshold to be exceeded
 }
 
-// Hunter accumulates metric segment notifications until a threshold is reached
-type Hunter[K comparable] struct {
-	groups    map[K]*AccumulationGroup[K]
-	keyMapper func(*messages.MetricSegmentNotificationMessage) K
+// Hunter accumulates GroupableMessage until a threshold is reached
+type Hunter[M messages.GroupableMessage, K comparable] struct {
+	groups map[K]*AccumulationGroup[K]
 }
 
-// NewHunter creates a new Hunter instance with a key mapping function
-func NewHunter[K comparable](keyMapper func(*messages.MetricSegmentNotificationMessage) K) *Hunter[K] {
-	return &Hunter[K]{
-		groups:    make(map[K]*AccumulationGroup[K]),
-		keyMapper: keyMapper,
+// NewHunter creates a new Hunter instance
+func NewHunter[M messages.GroupableMessage, K comparable]() *Hunter[M, K] {
+	return &Hunter[M, K]{
+		groups: make(map[K]*AccumulationGroup[K]),
 	}
 }
 
 // AddMessage adds a message to the appropriate accumulation group
 // Returns an AccumulationResult if adding this message would exceed the targetRecordCount
-func (h *Hunter[K]) AddMessage(msg *messages.MetricSegmentNotificationMessage, metadata *MessageMetadata, targetRecordCount int64) *AccumulationResult[K] {
-	key := h.keyMapper(msg)
+func (h *Hunter[M, K]) AddMessage(msg M, metadata *MessageMetadata, targetRecordCount int64) *AccumulationResult[K] {
+	key := msg.GroupingKey().(K)
 
 	group, exists := h.groups[key]
 	now := time.Now()
@@ -91,7 +89,7 @@ func (h *Hunter[K]) AddMessage(msg *messages.MetricSegmentNotificationMessage, m
 	}
 
 	// Check if adding this message would exceed the target
-	newTotalRecordCount := group.TotalRecordCount + msg.RecordCount
+	newTotalRecordCount := group.TotalRecordCount + msg.RecordCount()
 	shouldReturn := newTotalRecordCount >= targetRecordCount && len(group.Messages) > 0
 
 	// Add the message to the group
@@ -122,7 +120,7 @@ func (h *Hunter[K]) AddMessage(msg *messages.MetricSegmentNotificationMessage, m
 
 // SelectGroups calls the selector function for each group and returns those where selector returns true
 // The groups are removed from the hunter when selected
-func (h *Hunter[K]) SelectGroups(selector func(key K, group *AccumulationGroup[K]) bool) []*AccumulationGroup[K] {
+func (h *Hunter[M, K]) SelectGroups(selector func(key K, group *AccumulationGroup[K]) bool) []*AccumulationGroup[K] {
 	var selected []*AccumulationGroup[K]
 	var keysToRemove []K
 
@@ -143,7 +141,7 @@ func (h *Hunter[K]) SelectGroups(selector func(key K, group *AccumulationGroup[K
 
 // SelectStaleGroups selects all groups that haven't been updated for longer than the specified duration
 // This is used for periodic flushing of groups that may never reach the record count threshold
-func (h *Hunter[K]) SelectStaleGroups(olderThan time.Duration) []*AccumulationGroup[K] {
+func (h *Hunter[M, K]) SelectStaleGroups(olderThan time.Duration) []*AccumulationGroup[K] {
 	cutoff := time.Now().Add(-olderThan)
 	return h.SelectGroups(func(key K, group *AccumulationGroup[K]) bool {
 		return group.LastUpdatedAt.Before(cutoff)

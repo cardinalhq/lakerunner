@@ -21,15 +21,27 @@ import (
 	"github.com/google/uuid"
 )
 
-// GroupableMessage interface for messages that can be grouped by the Gatherer
-type GroupableMessage interface {
-	GroupingKey() any
-	RecordCount() int64
+// CompactionKey represents the key for grouping messages for compaction
+type CompactionKey struct {
+	OrganizationID uuid.UUID
+	DateInt        int32
+	FrequencyMs    int32
+	InstanceNum    int16
 }
 
-// MetricSegmentNotificationMessage represents a metric segment processing notification
-// Using short JSON keys to minimize message size for high-volume Kafka usage
-type MetricSegmentNotificationMessage struct {
+// GetOrgID returns the organization ID from the key
+func (k CompactionKey) GetOrgID() uuid.UUID {
+	return k.OrganizationID
+}
+
+// GetInstanceNum returns the instance number from the key
+func (k CompactionKey) GetInstanceNum() int16 {
+	return k.InstanceNum
+}
+
+// MetricCompactionMessage represents a metric segment processing notification for compaction
+// This implements GroupableMessage interface
+type MetricCompactionMessage struct {
 	OrganizationID uuid.UUID `json:"o"`  // organization_id
 	DateInt        int32     `json:"d"`  // dateint
 	FrequencyMs    int32     `json:"f"`  // frequency_ms
@@ -37,18 +49,32 @@ type MetricSegmentNotificationMessage struct {
 	InstanceNum    int16     `json:"i"`  // instance_num
 	SlotID         int32     `json:"si"` // slot_id
 	SlotCount      int32     `json:"sc"` // slot_count
-	RecordCount    int64     `json:"rc"` // record_count for early filtering
+	Records        int64     `json:"rc"` // record_count for early filtering
 	FileSize       int64     `json:"fs"` // file_size for early filtering
 	QueuedAt       time.Time `json:"t"`  // queued_at timestamp for lag tracking
 }
 
+// GroupingKey returns the key used to group messages for compaction
+func (m *MetricCompactionMessage) GroupingKey() any {
+	return CompactionKey{
+		OrganizationID: m.OrganizationID,
+		DateInt:        m.DateInt,
+		FrequencyMs:    m.FrequencyMs,
+		InstanceNum:    m.InstanceNum,
+	}
+}
+
+// RecordCount returns the record count for this message
+func (m *MetricCompactionMessage) RecordCount() int64 {
+	return m.Records
+}
+
 // Marshal converts the message to JSON bytes
-func (m *MetricSegmentNotificationMessage) Marshal() ([]byte, error) {
+func (m *MetricCompactionMessage) Marshal() ([]byte, error) {
 	return json.Marshal(m)
 }
 
-// Unmarshal converts JSON bytes to MetricSegmentNotificationMessage
-func (m *MetricSegmentNotificationMessage) Unmarshal(data []byte) error {
+// Unmarshal converts JSON bytes to MetricCompactionMessage
+func (m *MetricCompactionMessage) Unmarshal(data []byte) error {
 	return json.Unmarshal(data, m)
 }
-

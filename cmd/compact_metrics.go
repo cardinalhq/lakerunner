@@ -101,7 +101,7 @@ func init() {
 			slog.Info("Starting metrics compaction with accumulation consumer")
 
 			// Create accumulation-based Kafka consumer for compaction
-			consumer, err := accumulation.NewKafkaAccumulationConsumer(ctx, kafkaFactory, cfg, mdb, sp, cmgr)
+			consumer, err := accumulation.NewMetricCompactionConsumer(ctx, kafkaFactory, cfg, mdb, sp, cmgr)
 			if err != nil {
 				return fmt.Errorf("failed to create Kafka accumulation consumer: %w", err)
 			}
