@@ -17,6 +17,8 @@ package lrdb
 import (
 	"context"
 	"sort"
+
+	"github.com/google/uuid"
 )
 
 func (q *Store) InsertLogSegment(ctx context.Context, params InsertLogSegmentParams) error {
@@ -76,6 +78,8 @@ func (q *Store) InsertLogSegmentBatchWithKafkaOffsets(ctx context.Context, batch
 					Topic:               offset.Topic,
 					Partition:           offset.Partition,
 					LastProcessedOffset: offset.Offset,
+					InstanceNum:         0,
+					OrganizationID:      uuid.Nil,
 				}
 			}
 

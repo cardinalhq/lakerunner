@@ -13,7 +13,7 @@ import (
 )
 
 const deleteOldKafkaOffsets = `-- name: DeleteOldKafkaOffsets :exec
-DELETE FROM kafka_offset_journal 
+DELETE FROM kafka_offset_journal
 WHERE updated_at < $1
 `
 
@@ -25,7 +25,7 @@ func (q *Queries) DeleteOldKafkaOffsets(ctx context.Context, cutoffTime time.Tim
 
 const getKafkaOffsetsByConsumerGroup = `-- name: GetKafkaOffsetsByConsumerGroup :many
 SELECT consumer_group, topic, partition, last_processed_offset, updated_at
-FROM kafka_offset_journal 
+FROM kafka_offset_journal
 WHERE consumer_group = $1
 ORDER BY topic, partition
 `
@@ -66,8 +66,8 @@ func (q *Queries) GetKafkaOffsetsByConsumerGroup(ctx context.Context, consumerGr
 }
 
 const kafkaJournalGetLastProcessed = `-- name: KafkaJournalGetLastProcessed :one
-SELECT last_processed_offset 
-FROM kafka_offset_journal 
+SELECT last_processed_offset
+FROM kafka_offset_journal
 WHERE consumer_group = $1 AND topic = $2 AND partition = $3
 `
 
@@ -86,12 +86,12 @@ func (q *Queries) KafkaJournalGetLastProcessed(ctx context.Context, arg KafkaJou
 }
 
 const kafkaJournalGetLastProcessedWithOrgInstance = `-- name: KafkaJournalGetLastProcessedWithOrgInstance :one
-SELECT last_processed_offset 
-FROM kafka_offset_journal 
-WHERE consumer_group = $1 
-  AND topic = $2 
-  AND partition = $3 
-  AND organization_id = $4 
+SELECT last_processed_offset
+FROM kafka_offset_journal
+WHERE consumer_group = $1
+  AND topic = $2
+  AND partition = $3
+  AND organization_id = $4
   AND instance_num = $5
 `
 
@@ -121,7 +121,7 @@ const kafkaJournalUpsert = `-- name: KafkaJournalUpsert :exec
 INSERT INTO kafka_offset_journal (consumer_group, topic, partition, last_processed_offset, updated_at)
 VALUES ($1, $2, $3, $4, NOW())
 ON CONFLICT (consumer_group, topic, partition)
-DO UPDATE SET 
+DO UPDATE SET
     last_processed_offset = EXCLUDED.last_processed_offset,
     updated_at = NOW()
 WHERE kafka_offset_journal.last_processed_offset < EXCLUDED.last_processed_offset
@@ -150,7 +150,7 @@ const kafkaJournalUpsertWithOrgInstance = `-- name: KafkaJournalUpsertWithOrgIns
 INSERT INTO kafka_offset_journal (consumer_group, topic, partition, organization_id, instance_num, last_processed_offset, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6, NOW())
 ON CONFLICT (consumer_group, topic, partition, organization_id, instance_num)
-DO UPDATE SET 
+DO UPDATE SET
     last_processed_offset = EXCLUDED.last_processed_offset,
     updated_at = NOW()
 WHERE kafka_offset_journal.last_processed_offset < EXCLUDED.last_processed_offset

@@ -253,6 +253,8 @@ func (q *Store) CompactMetricSegsWithKafkaOffsets(ctx context.Context, params Co
 					Topic:               offset.Topic,
 					Partition:           offset.Partition,
 					LastProcessedOffset: offset.Offset,
+					InstanceNum:         params.InstanceNum,
+					OrganizationID:      params.OrganizationID,
 				}
 			}
 
