@@ -31,6 +31,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
@@ -269,7 +270,7 @@ func TestCompactionFullCycle(t *testing.T) {
 
 	// Create compaction strategy
 	compactionConfig := Config{
-		TargetFileSizeBytes: 100 * 1024 * 1024, // 100MB target
+		TargetFileSizeBytes: config.TargetFileSize, // Default target file size
 		MaxAccumulationTime: "30s",
 	}
 	strategy := NewCompactionStrategy(compactionConfig)

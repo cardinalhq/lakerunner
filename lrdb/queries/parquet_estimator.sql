@@ -3,7 +3,7 @@
 -- Uses frequency_ms to provide more accurate estimates based on collection frequency.
 WITH params AS (
   SELECT 
-    1000000::float8 AS target_bytes,
+    @target_bytes::float8 AS target_bytes,
     15000::float8 AS estimated_overhead_per_file  -- Based on observed 10-18K overhead
 ),
 stats AS (
@@ -47,7 +47,7 @@ CROSS JOIN params p;
 -- Returns an estimate of the number of log segments, accounting for per-file overhead.
 WITH params AS (
   SELECT 
-    1000000::float8 AS target_bytes,
+    @target_bytes::float8 AS target_bytes,
     15000::float8 AS estimated_overhead_per_file  -- Based on observed 10-18K overhead
 ),
 stats AS (
@@ -88,7 +88,7 @@ CROSS JOIN params p;
 -- Returns an estimate of the number of trace segments, accounting for per-file overhead.
 WITH params AS (
   SELECT 
-    1000000::float8 AS target_bytes,
+    @target_bytes::float8 AS target_bytes,
     15000::float8 AS estimated_overhead_per_file  -- Based on observed 10-18K overhead
 ),
 stats AS (
