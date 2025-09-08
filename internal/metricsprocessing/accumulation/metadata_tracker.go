@@ -16,20 +16,12 @@ package accumulation
 
 import (
 	"maps"
-
-	"github.com/google/uuid"
 )
 
-// OrgInstanceKey uniquely identifies an organization/instance combination
-type OrgInstanceKey struct {
-	OrganizationID uuid.UUID
-	InstanceNum    int16
-}
-
 // MetadataTracker tracks the latest offsets seen for Kafka commits
-type MetadataTracker struct {
-	// Track offsets per partition and org/instance: partition -> org/instance -> offset
-	partitionOffsets map[int32]map[OrgInstanceKey]int64
+type MetadataTracker[K comparable] struct {
+	// Track offsets per partition and key: partition -> key -> offset
+	partitionOffsets map[int32]map[K]int64
 	// Last committed Kafka offset per partition
 	lastCommittedOffsets map[int32]int64
 	// Remember the topic and consumer group we're working with
@@ -38,9 +30,9 @@ type MetadataTracker struct {
 }
 
 // NewMetadataTracker creates a new MetadataTracker instance
-func NewMetadataTracker(topic, consumerGroup string) *MetadataTracker {
-	return &MetadataTracker{
-		partitionOffsets:     make(map[int32]map[OrgInstanceKey]int64),
+func NewMetadataTracker[K comparable](topic, consumerGroup string) *MetadataTracker[K] {
+	return &MetadataTracker[K]{
+		partitionOffsets:     make(map[int32]map[K]int64),
 		lastCommittedOffsets: make(map[int32]int64),
 		topic:                topic,
 		consumerGroup:        consumerGroup,
@@ -48,24 +40,19 @@ func NewMetadataTracker(topic, consumerGroup string) *MetadataTracker {
 }
 
 // TrackMetadata tracks the metadata from all accumulated messages to determine commit points
-func (mt *MetadataTracker) TrackMetadata(group *AccumulationGroup[CompactionKey]) {
-	orgInstanceKey := OrgInstanceKey{
-		OrganizationID: group.Key.OrganizationID,
-		InstanceNum:    group.Key.InstanceNum,
-	}
-
+func (mt *MetadataTracker[K]) TrackMetadata(group *AccumulationGroup[K]) {
 	for _, accMsg := range group.Messages {
 		metadata := accMsg.Metadata
 
 		// Initialize map if it doesn't exist
 		if mt.partitionOffsets[metadata.Partition] == nil {
-			mt.partitionOffsets[metadata.Partition] = make(map[OrgInstanceKey]int64)
+			mt.partitionOffsets[metadata.Partition] = make(map[K]int64)
 		}
 
-		// Track the highest offset for this organization/instance combination
-		currentOffset, exists := mt.partitionOffsets[metadata.Partition][orgInstanceKey]
+		// Track the highest offset for this key
+		currentOffset, exists := mt.partitionOffsets[metadata.Partition][group.Key]
 		if !exists || metadata.Offset > currentOffset {
-			mt.partitionOffsets[metadata.Partition][orgInstanceKey] = metadata.Offset
+			mt.partitionOffsets[metadata.Partition][group.Key] = metadata.Offset
 		}
 	}
 }
@@ -77,19 +64,19 @@ type KafkaCommitData struct {
 	Offsets       map[int32]int64 // partition -> offset
 }
 
-// GetSafeCommitOffsets calculates the minimum offsets across all org/instance combinations that can be safely committed to Kafka
+// GetSafeCommitOffsets calculates the minimum offsets across all keys that can be safely committed to Kafka
 // Returns a single struct with all partition offsets that can be advanced
-func (mt *MetadataTracker) GetSafeCommitOffsets() *KafkaCommitData {
+func (mt *MetadataTracker[K]) GetSafeCommitOffsets() *KafkaCommitData {
 	offsets := make(map[int32]int64)
 
-	for partition, orgInstanceOffsets := range mt.partitionOffsets {
-		if len(orgInstanceOffsets) == 0 {
+	for partition, keyOffsets := range mt.partitionOffsets {
+		if len(keyOffsets) == 0 {
 			continue
 		}
 
-		// Find the minimum offset across all org/instance combinations for this partition
+		// Find the minimum offset across all keys for this partition
 		var minOffset int64 = -1
-		for _, offset := range orgInstanceOffsets {
+		for _, offset := range keyOffsets {
 			if minOffset == -1 || offset < minOffset {
 				minOffset = offset
 			}
@@ -120,6 +107,6 @@ func (mt *MetadataTracker) GetSafeCommitOffsets() *KafkaCommitData {
 }
 
 // MarkOffsetsCommitted records that offsets have been successfully committed to Kafka
-func (mt *MetadataTracker) MarkOffsetsCommitted(offsets map[int32]int64) {
+func (mt *MetadataTracker[K]) MarkOffsetsCommitted(offsets map[int32]int64) {
 	maps.Copy(mt.lastCommittedOffsets, offsets)
 }

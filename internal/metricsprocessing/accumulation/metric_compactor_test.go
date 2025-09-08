@@ -24,18 +24,18 @@ import (
 
 func TestValidateGroupConsistency_ValidGroup(t *testing.T) {
 	orgID := uuid.New()
-	key := CompactionKey{
+	key := messages.CompactionKey{
 		OrganizationID: orgID,
 		DateInt:        20250108,
 		FrequencyMs:    60000,
 		InstanceNum:    1,
 	}
 
-	group := &AccumulationGroup[CompactionKey]{
+	group := &AccumulationGroup[messages.CompactionKey]{
 		Key: key,
 		Messages: []*AccumulatedMessage{
 			{
-				Message: &messages.MetricSegmentNotificationMessage{
+				Message: &messages.MetricCompactionMessage{
 					OrganizationID: orgID,
 					DateInt:        20250108,
 					FrequencyMs:    60000,
@@ -44,7 +44,7 @@ func TestValidateGroupConsistency_ValidGroup(t *testing.T) {
 				},
 			},
 			{
-				Message: &messages.MetricSegmentNotificationMessage{
+				Message: &messages.MetricCompactionMessage{
 					OrganizationID: orgID,
 					DateInt:        20250108,
 					FrequencyMs:    60000,
@@ -60,8 +60,8 @@ func TestValidateGroupConsistency_ValidGroup(t *testing.T) {
 }
 
 func TestValidateGroupConsistency_EmptyGroup(t *testing.T) {
-	group := &AccumulationGroup[CompactionKey]{
-		Key:      CompactionKey{},
+	group := &AccumulationGroup[messages.CompactionKey]{
+		Key:      messages.CompactionKey{},
 		Messages: []*AccumulatedMessage{},
 	}
 
@@ -78,18 +78,18 @@ func TestValidateGroupConsistency_InconsistentOrganizationID(t *testing.T) {
 	orgID1 := uuid.New()
 	orgID2 := uuid.New()
 
-	key := CompactionKey{
+	key := messages.CompactionKey{
 		OrganizationID: orgID1,
 		DateInt:        20250108,
 		FrequencyMs:    60000,
 		InstanceNum:    1,
 	}
 
-	group := &AccumulationGroup[CompactionKey]{
+	group := &AccumulationGroup[messages.CompactionKey]{
 		Key: key,
 		Messages: []*AccumulatedMessage{
 			{
-				Message: &messages.MetricSegmentNotificationMessage{
+				Message: &messages.MetricCompactionMessage{
 					OrganizationID: orgID1,
 					DateInt:        20250108,
 					FrequencyMs:    60000,
@@ -98,7 +98,7 @@ func TestValidateGroupConsistency_InconsistentOrganizationID(t *testing.T) {
 				},
 			},
 			{
-				Message: &messages.MetricSegmentNotificationMessage{
+				Message: &messages.MetricCompactionMessage{
 					OrganizationID: orgID2, // Different org ID
 					DateInt:        20250108,
 					FrequencyMs:    60000,
@@ -123,18 +123,18 @@ func TestValidateGroupConsistency_InconsistentOrganizationID(t *testing.T) {
 func TestValidateGroupConsistency_InconsistentInstanceNum(t *testing.T) {
 	orgID := uuid.New()
 
-	key := CompactionKey{
+	key := messages.CompactionKey{
 		OrganizationID: orgID,
 		DateInt:        20250108,
 		FrequencyMs:    60000,
 		InstanceNum:    1,
 	}
 
-	group := &AccumulationGroup[CompactionKey]{
+	group := &AccumulationGroup[messages.CompactionKey]{
 		Key: key,
 		Messages: []*AccumulatedMessage{
 			{
-				Message: &messages.MetricSegmentNotificationMessage{
+				Message: &messages.MetricCompactionMessage{
 					OrganizationID: orgID,
 					DateInt:        20250108,
 					FrequencyMs:    60000,
@@ -143,7 +143,7 @@ func TestValidateGroupConsistency_InconsistentInstanceNum(t *testing.T) {
 				},
 			},
 			{
-				Message: &messages.MetricSegmentNotificationMessage{
+				Message: &messages.MetricCompactionMessage{
 					OrganizationID: orgID,
 					DateInt:        20250108,
 					FrequencyMs:    60000,
@@ -167,18 +167,18 @@ func TestValidateGroupConsistency_InconsistentInstanceNum(t *testing.T) {
 func TestValidateGroupConsistency_InconsistentDateInt(t *testing.T) {
 	orgID := uuid.New()
 
-	key := CompactionKey{
+	key := messages.CompactionKey{
 		OrganizationID: orgID,
 		DateInt:        20250108,
 		FrequencyMs:    60000,
 		InstanceNum:    1,
 	}
 
-	group := &AccumulationGroup[CompactionKey]{
+	group := &AccumulationGroup[messages.CompactionKey]{
 		Key: key,
 		Messages: []*AccumulatedMessage{
 			{
-				Message: &messages.MetricSegmentNotificationMessage{
+				Message: &messages.MetricCompactionMessage{
 					OrganizationID: orgID,
 					DateInt:        20250108,
 					FrequencyMs:    60000,
@@ -187,7 +187,7 @@ func TestValidateGroupConsistency_InconsistentDateInt(t *testing.T) {
 				},
 			},
 			{
-				Message: &messages.MetricSegmentNotificationMessage{
+				Message: &messages.MetricCompactionMessage{
 					OrganizationID: orgID,
 					DateInt:        20250107, // Different date
 					FrequencyMs:    60000,
@@ -211,18 +211,18 @@ func TestValidateGroupConsistency_InconsistentDateInt(t *testing.T) {
 func TestValidateGroupConsistency_InconsistentFrequencyMs(t *testing.T) {
 	orgID := uuid.New()
 
-	key := CompactionKey{
+	key := messages.CompactionKey{
 		OrganizationID: orgID,
 		DateInt:        20250108,
 		FrequencyMs:    60000,
 		InstanceNum:    1,
 	}
 
-	group := &AccumulationGroup[CompactionKey]{
+	group := &AccumulationGroup[messages.CompactionKey]{
 		Key: key,
 		Messages: []*AccumulatedMessage{
 			{
-				Message: &messages.MetricSegmentNotificationMessage{
+				Message: &messages.MetricCompactionMessage{
 					OrganizationID: orgID,
 					DateInt:        20250108,
 					FrequencyMs:    60000,
@@ -231,7 +231,7 @@ func TestValidateGroupConsistency_InconsistentFrequencyMs(t *testing.T) {
 				},
 			},
 			{
-				Message: &messages.MetricSegmentNotificationMessage{
+				Message: &messages.MetricCompactionMessage{
 					OrganizationID: orgID,
 					DateInt:        20250108,
 					FrequencyMs:    30000, // Different frequency
@@ -256,18 +256,18 @@ func TestValidateGroupConsistency_FirstMessageInconsistent(t *testing.T) {
 	orgID1 := uuid.New()
 	orgID2 := uuid.New()
 
-	key := CompactionKey{
+	key := messages.CompactionKey{
 		OrganizationID: orgID1,
 		DateInt:        20250108,
 		FrequencyMs:    60000,
 		InstanceNum:    1,
 	}
 
-	group := &AccumulationGroup[CompactionKey]{
+	group := &AccumulationGroup[messages.CompactionKey]{
 		Key: key,
 		Messages: []*AccumulatedMessage{
 			{
-				Message: &messages.MetricSegmentNotificationMessage{
+				Message: &messages.MetricCompactionMessage{
 					OrganizationID: orgID2, // First message is inconsistent
 					DateInt:        20250108,
 					FrequencyMs:    60000,

@@ -29,6 +29,7 @@ import (
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
+	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
@@ -78,7 +79,7 @@ func NewMetricCompactor(store CompactionStore, storageProvider storageprofile.St
 }
 
 // validateGroupConsistency ensures all messages in a group have consistent org, instance, dateint, and frequency
-func validateGroupConsistency(group *AccumulationGroup[CompactionKey]) error {
+func validateGroupConsistency(group *AccumulationGroup[messages.CompactionKey]) error {
 	if len(group.Messages) == 0 {
 		return &GroupValidationError{
 			Field:   "message_count",
@@ -94,7 +95,13 @@ func validateGroupConsistency(group *AccumulationGroup[CompactionKey]) error {
 
 	// Validate each message against the expected values
 	for i, accMsg := range group.Messages {
-		msg := accMsg.Message
+		msg, ok := accMsg.Message.(*messages.MetricCompactionMessage)
+		if !ok {
+			return &GroupValidationError{
+				Field:   "message_type",
+				Message: fmt.Sprintf("message %d is not a MetricCompactionMessage", i),
+			}
+		}
 
 		if msg.OrganizationID != expectedOrg {
 			return &GroupValidationError{
@@ -137,7 +144,7 @@ func validateGroupConsistency(group *AccumulationGroup[CompactionKey]) error {
 }
 
 // Process implements the Processor interface and performs the 12-step compaction flow
-func (c *MetricCompactor) Process(ctx context.Context, group *AccumulationGroup[CompactionKey], kafkaCommitData *KafkaCommitData, recordCountEstimate int64) error {
+func (c *MetricCompactor) Process(ctx context.Context, group *AccumulationGroup[messages.CompactionKey], kafkaCommitData *KafkaCommitData, recordCountEstimate int64) error {
 	ll := logctx.FromContext(ctx)
 
 	// Calculate group age from Hunter timestamp
@@ -185,7 +192,10 @@ func (c *MetricCompactor) Process(ctx context.Context, group *AccumulationGroup[
 	targetSizeThreshold := config.TargetFileSize * 80 / 100 // 80% of target file size
 
 	for _, accMsg := range group.Messages {
-		msg := accMsg.Message
+		msg, ok := accMsg.Message.(*messages.MetricCompactionMessage)
+		if !ok {
+			continue // Skip non-MetricCompactionMessage messages
+		}
 		segment, err := c.store.GetMetricSeg(ctx, lrdb.GetMetricSegParams{
 			OrganizationID: msg.OrganizationID,
 			Dateint:        msg.DateInt,
@@ -336,7 +346,7 @@ func (c *MetricCompactor) writeFromReader(ctx context.Context, reader filereader
 }
 
 // uploadAndCreateSegments uploads the files and creates new segment records
-func (c *MetricCompactor) uploadAndCreateSegments(ctx context.Context, client cloudstorage.Client, profile storageprofile.StorageProfile, results []parquetwriter.Result, key CompactionKey, inputSegments []lrdb.MetricSeg) ([]lrdb.MetricSeg, error) {
+func (c *MetricCompactor) uploadAndCreateSegments(ctx context.Context, client cloudstorage.Client, profile storageprofile.StorageProfile, results []parquetwriter.Result, key messages.CompactionKey, inputSegments []lrdb.MetricSeg) ([]lrdb.MetricSeg, error) {
 	ll := logctx.FromContext(ctx)
 
 	// Calculate input metrics
@@ -411,7 +421,7 @@ func (c *MetricCompactor) uploadAndCreateSegments(ctx context.Context, client cl
 }
 
 // atomicDatabaseUpdate performs the atomic transaction for step 12
-func (c *MetricCompactor) atomicDatabaseUpdate(ctx context.Context, oldSegments, newSegments []lrdb.MetricSeg, kafkaCommitData *KafkaCommitData, key CompactionKey) error {
+func (c *MetricCompactor) atomicDatabaseUpdate(ctx context.Context, oldSegments, newSegments []lrdb.MetricSeg, kafkaCommitData *KafkaCommitData, key messages.CompactionKey) error {
 	ll := logctx.FromContext(ctx)
 
 	// Prepare Kafka offsets for update
@@ -498,7 +508,7 @@ func (c *MetricCompactor) generateSegmentID() int64 {
 }
 
 // markSegmentsAsCompacted marks the given segments as compacted in the database
-func (c *MetricCompactor) markSegmentsAsCompacted(ctx context.Context, segments []lrdb.MetricSeg, key CompactionKey) error {
+func (c *MetricCompactor) markSegmentsAsCompacted(ctx context.Context, segments []lrdb.MetricSeg, key messages.CompactionKey) error {
 	if len(segments) == 0 {
 		return nil
 	}
@@ -517,4 +527,9 @@ func (c *MetricCompactor) markSegmentsAsCompacted(ctx context.Context, segments 
 		InstanceNum:    key.InstanceNum,
 		SegmentIds:     segmentIDs,
 	})
+}
+
+// GetTargetRecordCount returns the target record count for a grouping key
+func (c *MetricCompactor) GetTargetRecordCount(ctx context.Context, groupingKey messages.CompactionKey) int64 {
+	return c.store.GetMetricEstimate(ctx, groupingKey.OrganizationID, groupingKey.FrequencyMs)
 }

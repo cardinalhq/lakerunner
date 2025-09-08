@@ -15,8 +15,6 @@
 package accumulation
 
 import (
-	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -26,54 +24,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestKey for testing purposes
-type TestKey struct {
-	OrganizationID uuid.UUID
-	InstanceNum    int16
-	DateInt        int32
-	FrequencyMs    int32
-	SlotID         int32
-	SlotCount      int32
-}
-
-// Helper function to create a TestKey from a message
-func testKeyMapper(msg *messages.MetricSegmentNotificationMessage) TestKey {
-	return TestKey{
-		OrganizationID: msg.OrganizationID,
-		InstanceNum:    msg.InstanceNum,
-		DateInt:        msg.DateInt,
-		FrequencyMs:    msg.FrequencyMs,
-		SlotID:         msg.SlotID,
-		SlotCount:      msg.SlotCount,
-	}
-}
-
-func createTestMessage(orgID uuid.UUID, instanceNum int16, dateInt int32, frequencyMs int32, slotID int32, slotCount int32, recordCount int64) *messages.MetricSegmentNotificationMessage {
-	return &messages.MetricSegmentNotificationMessage{
-		OrganizationID: orgID,
-		DateInt:        dateInt,
-		FrequencyMs:    frequencyMs,
-		SegmentID:      123,
-		InstanceNum:    instanceNum,
-		SlotID:         slotID,
-		SlotCount:      slotCount,
-		RecordCount:    recordCount,
-		FileSize:       1000,
-		QueuedAt:       time.Now(),
-	}
-}
-
-func createTestMetadata(topic string, partition int32, consumerGroup string, offset int64) *MessageMetadata {
-	return &MessageMetadata{
-		Topic:         topic,
-		Partition:     partition,
-		ConsumerGroup: consumerGroup,
-		Offset:        offset,
-	}
-}
-
 func TestHunter_AddMessage_BelowThreshold(t *testing.T) {
-	hunter := NewHunter(testKeyMapper)
+	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 	orgID := uuid.New()
 
 	msg := createTestMessage(orgID, 1, 20250108, 60000, 1, 4, 50)
@@ -93,7 +45,7 @@ func TestHunter_AddMessage_BelowThreshold(t *testing.T) {
 }
 
 func TestHunter_AddMessage_ExceedsThreshold(t *testing.T) {
-	hunter := NewHunter(testKeyMapper)
+	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 	orgID := uuid.New()
 
 	// Add first message (50 records)
@@ -121,7 +73,7 @@ func TestHunter_AddMessage_ExceedsThreshold(t *testing.T) {
 }
 
 func TestHunter_AddMessage_DifferentKeys(t *testing.T) {
-	hunter := NewHunter(testKeyMapper)
+	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 	orgID1 := uuid.New()
 	orgID2 := uuid.New()
 
@@ -140,7 +92,7 @@ func TestHunter_AddMessage_DifferentKeys(t *testing.T) {
 }
 
 func TestHunter_AddMessage_SameKeyDifferentPartitions(t *testing.T) {
-	hunter := NewHunter(testKeyMapper)
+	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 	orgID := uuid.New()
 
 	// Messages with same accumulation key but different partitions
@@ -165,7 +117,7 @@ func TestHunter_AddMessage_SameKeyDifferentPartitions(t *testing.T) {
 }
 
 func TestHunter_AddMessage_OffsetTracking(t *testing.T) {
-	hunter := NewHunter(testKeyMapper)
+	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 	orgID := uuid.New()
 
 	// Add message with offset 100
@@ -191,7 +143,7 @@ func TestHunter_AddMessage_OffsetTracking(t *testing.T) {
 }
 
 func TestHunter_AddMessage_MultipleTopics(t *testing.T) {
-	hunter := NewHunter(testKeyMapper)
+	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 	orgID := uuid.New()
 
 	msg1 := createTestMessage(orgID, 1, 20250108, 60000, 1, 4, 50)
@@ -214,31 +166,25 @@ func TestHunter_AddMessage_MultipleTopics(t *testing.T) {
 func TestHunter_TestKey_Equality(t *testing.T) {
 	orgID := uuid.New()
 
-	key1 := TestKey{
+	key1 := messages.CompactionKey{
 		OrganizationID: orgID,
 		InstanceNum:    1,
 		DateInt:        20250108,
 		FrequencyMs:    60000,
-		SlotID:         1,
-		SlotCount:      4,
 	}
 
-	key2 := TestKey{
+	key2 := messages.CompactionKey{
 		OrganizationID: orgID,
 		InstanceNum:    1,
 		DateInt:        20250108,
 		FrequencyMs:    60000,
-		SlotID:         1,
-		SlotCount:      4,
 	}
 
-	key3 := TestKey{
+	key3 := messages.CompactionKey{
 		OrganizationID: orgID,
 		InstanceNum:    2, // Different instance
 		DateInt:        20250108,
 		FrequencyMs:    60000,
-		SlotID:         1,
-		SlotCount:      4,
 	}
 
 	assert.Equal(t, key1, key2)
@@ -246,7 +192,7 @@ func TestHunter_TestKey_Equality(t *testing.T) {
 }
 
 func TestHunter_FirstMessageExceedsThreshold(t *testing.T) {
-	hunter := NewHunter(testKeyMapper)
+	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 	orgID := uuid.New()
 
 	// First message already exceeds threshold, but should not be returned
@@ -267,7 +213,7 @@ func TestHunter_FirstMessageExceedsThreshold(t *testing.T) {
 }
 
 func TestHunter_NewHunter(t *testing.T) {
-	hunter := NewHunter(testKeyMapper)
+	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 
 	assert.NotNil(t, hunter)
 	assert.NotNil(t, hunter.groups)
@@ -275,7 +221,7 @@ func TestHunter_NewHunter(t *testing.T) {
 }
 
 func TestHunter_SelectGroups(t *testing.T) {
-	hunter := NewHunter(testKeyMapper)
+	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 	orgID1 := uuid.New()
 	orgID2 := uuid.New()
 
@@ -295,7 +241,7 @@ func TestHunter_SelectGroups(t *testing.T) {
 	assert.Len(t, hunter.groups, 3)
 
 	// Select only groups from orgID1
-	selectedGroups := hunter.SelectGroups(func(key TestKey, group *AccumulationGroup[TestKey]) bool {
+	selectedGroups := hunter.SelectGroups(func(key messages.CompactionKey, group *AccumulationGroup[messages.CompactionKey]) bool {
 		return key.OrganizationID == orgID1
 	})
 
@@ -317,7 +263,7 @@ func TestHunter_SelectGroups(t *testing.T) {
 }
 
 func TestHunter_SelectGroups_ByRecordCount(t *testing.T) {
-	hunter := NewHunter(testKeyMapper)
+	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 	orgID := uuid.New()
 
 	// Add messages with different record counts
@@ -336,7 +282,7 @@ func TestHunter_SelectGroups_ByRecordCount(t *testing.T) {
 	assert.Len(t, hunter.groups, 3)
 
 	// Select only groups with record count >= 50
-	selectedGroups := hunter.SelectGroups(func(key TestKey, group *AccumulationGroup[TestKey]) bool {
+	selectedGroups := hunter.SelectGroups(func(key messages.CompactionKey, group *AccumulationGroup[messages.CompactionKey]) bool {
 		return group.TotalRecordCount >= 50
 	})
 
@@ -351,7 +297,7 @@ func TestHunter_SelectGroups_ByRecordCount(t *testing.T) {
 }
 
 func TestHunter_SelectGroups_NoMatches(t *testing.T) {
-	hunter := NewHunter(testKeyMapper)
+	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 	orgID := uuid.New()
 
 	msg := createTestMessage(orgID, 1, 20250108, 60000, 1, 4, 50)
@@ -359,7 +305,7 @@ func TestHunter_SelectGroups_NoMatches(t *testing.T) {
 	hunter.AddMessage(msg, metadata, 200)
 
 	// Select with criteria that matches nothing
-	selectedGroups := hunter.SelectGroups(func(key TestKey, group *AccumulationGroup[TestKey]) bool {
+	selectedGroups := hunter.SelectGroups(func(key messages.CompactionKey, group *AccumulationGroup[messages.CompactionKey]) bool {
 		return group.TotalRecordCount > 1000
 	})
 
@@ -370,45 +316,8 @@ func TestHunter_SelectGroups_NoMatches(t *testing.T) {
 	assert.Len(t, hunter.groups, 1)
 }
 
-func TestHunter_CustomKeyType(t *testing.T) {
-	// Example using a string key instead of HunterKey
-	stringKeyMapper := func(msg *messages.MetricSegmentNotificationMessage) string {
-		return msg.OrganizationID.String() + "-" + fmt.Sprintf("%d", msg.InstanceNum)
-	}
-
-	hunter := NewHunter(stringKeyMapper)
-	orgID := uuid.New()
-
-	msg1 := createTestMessage(orgID, 1, 20250108, 60000, 1, 4, 50)
-	metadata1 := createTestMetadata("metrics", 0, "test-group", 100)
-	hunter.AddMessage(msg1, metadata1, 200)
-
-	msg2 := createTestMessage(orgID, 2, 20250108, 60000, 1, 4, 40)
-	metadata2 := createTestMetadata("metrics", 0, "test-group", 101)
-	hunter.AddMessage(msg2, metadata2, 200)
-
-	assert.Len(t, hunter.groups, 2)
-
-	// Select using string key logic
-	selectedGroups := hunter.SelectGroups(func(key string, group *AccumulationGroup[string]) bool {
-		return strings.HasSuffix(key, "-1") // Select keys ending with "-1"
-	})
-
-	assert.Len(t, selectedGroups, 1)
-	assert.Len(t, hunter.groups, 1)
-
-	// Verify the selected group has the right key format
-	assert.Equal(t, orgID.String()+"-1", selectedGroups[0].Key)
-}
-
 func TestHunter_SelectStaleGroups(t *testing.T) {
-	keyMapper := func(msg *messages.MetricSegmentNotificationMessage) TestKey {
-		return TestKey{
-			OrganizationID: msg.OrganizationID,
-			DateInt:        msg.DateInt,
-		}
-	}
-	hunter := NewHunter(keyMapper)
+	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 
 	orgA := uuid.New()
 	orgB := uuid.New()
@@ -431,17 +340,17 @@ func TestHunter_SelectStaleGroups(t *testing.T) {
 	now := time.Now()
 
 	// GroupA: 10 minutes old (stale)
-	keyA := TestKey{OrganizationID: orgA, DateInt: 20250108}
+	keyA := messages.CompactionKey{OrganizationID: orgA, InstanceNum: 1, DateInt: 20250108, FrequencyMs: 60000}
 	hunter.groups[keyA].CreatedAt = now.Add(-10 * time.Minute)
 	hunter.groups[keyA].LastUpdatedAt = now.Add(-10 * time.Minute)
 
 	// GroupB: 2 minutes old (fresh)
-	keyB := TestKey{OrganizationID: orgB, DateInt: 20250108}
+	keyB := messages.CompactionKey{OrganizationID: orgB, InstanceNum: 1, DateInt: 20250108, FrequencyMs: 60000}
 	hunter.groups[keyB].CreatedAt = now.Add(-2 * time.Minute)
 	hunter.groups[keyB].LastUpdatedAt = now.Add(-2 * time.Minute)
 
 	// GroupC: 7 minutes old (stale)
-	keyC := TestKey{OrganizationID: orgC, DateInt: 20250108}
+	keyC := messages.CompactionKey{OrganizationID: orgC, InstanceNum: 1, DateInt: 20250108, FrequencyMs: 60000}
 	hunter.groups[keyC].CreatedAt = now.Add(-7 * time.Minute)
 	hunter.groups[keyC].LastUpdatedAt = now.Add(-7 * time.Minute)
 
@@ -468,13 +377,7 @@ func TestHunter_SelectStaleGroups(t *testing.T) {
 }
 
 func TestHunter_SelectStaleGroups_NoStaleGroups(t *testing.T) {
-	keyMapper := func(msg *messages.MetricSegmentNotificationMessage) TestKey {
-		return TestKey{
-			OrganizationID: msg.OrganizationID,
-			DateInt:        msg.DateInt,
-		}
-	}
-	hunter := NewHunter(keyMapper)
+	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 
 	orgA := uuid.New()
 	msgA := createTestMessage(orgA, 1, 20250108, 60000, 1, 4, 100)
@@ -496,13 +399,7 @@ func TestHunter_SelectStaleGroups_NoStaleGroups(t *testing.T) {
 }
 
 func TestHunter_SelectStaleGroups_EmptyHunter(t *testing.T) {
-	keyMapper := func(msg *messages.MetricSegmentNotificationMessage) TestKey {
-		return TestKey{
-			OrganizationID: msg.OrganizationID,
-			DateInt:        msg.DateInt,
-		}
-	}
-	hunter := NewHunter(keyMapper)
+	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 
 	// No groups in hunter
 	assert.Len(t, hunter.groups, 0)
