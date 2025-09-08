@@ -175,7 +175,7 @@ func (r *IngestProtoLogsReader) buildLogRow(rl plog.ResourceLogs, sl plog.ScopeL
 	if r.trieClusterManager != nil {
 		fingerprint, _, _, err := fingerprinter.Fingerprint(message, r.trieClusterManager)
 		if err == nil {
-			ret["_cardinalhq.fingerprint"] = fingerprint
+			ret["_cardinalhq.fingerprint"] = fmt.Sprintf("%d", fingerprint)
 		}
 	}
 	return ret
