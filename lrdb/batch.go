@@ -792,7 +792,7 @@ func (b *InsertCompactedMetricSegBatchResults) Close() error {
 const kafkaJournalBatchUpsert = `-- name: KafkaJournalBatchUpsert :batchexec
 INSERT INTO kafka_offset_journal (consumer_group, topic, partition, last_processed_offset, organization_id, instance_num, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6, NOW())
-ON CONFLICT (consumer_group, topic, partition)
+ON CONFLICT (consumer_group, topic, partition, organization_id, instance_num)
 DO UPDATE SET
     last_processed_offset = EXCLUDED.last_processed_offset,
     updated_at = NOW()

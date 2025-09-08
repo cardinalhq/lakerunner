@@ -336,6 +336,18 @@ func (q *Store) InsertMetricSegmentBatchWithKafkaOffsets(ctx context.Context, ba
 				return a.Partition < b.Partition
 			})
 
+			// Extract org and instance from first segment, or use defaults if no segments
+			var orgID uuid.UUID
+			var instanceNum int16
+			if len(batch.Segments) > 0 {
+				orgID = batch.Segments[0].OrganizationID
+				instanceNum = batch.Segments[0].InstanceNum
+			} else {
+				// Use defaults when no segments available
+				orgID = uuid.Nil
+				instanceNum = 0
+			}
+
 			// Convert to batch parameters
 			batchOffsetParams := make([]KafkaJournalBatchUpsertParams, len(batch.KafkaOffsets))
 			for i, offset := range batch.KafkaOffsets {
@@ -344,6 +356,8 @@ func (q *Store) InsertMetricSegmentBatchWithKafkaOffsets(ctx context.Context, ba
 					Topic:               offset.Topic,
 					Partition:           offset.Partition,
 					LastProcessedOffset: offset.Offset,
+					OrganizationID:      orgID,
+					InstanceNum:         instanceNum,
 				}
 			}
 
