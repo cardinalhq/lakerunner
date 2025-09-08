@@ -47,10 +47,9 @@ body_key AS (
   CROSS JOIN LATERAL jsonb_array_elements(COALESCE(exemplar->'resourceLogs','[]'::jsonb)) rl
   CROSS JOIN LATERAL jsonb_array_elements(COALESCE(rl->'scopeLogs','[]'::jsonb)) sl
   CROSS JOIN LATERAL jsonb_array_elements(COALESCE(sl->'logRecords','[]'::jsonb)) rec
-  WHERE rec ? 'body'                               -- body exists
-    AND jsonb_typeof(rec->'body') IN ('object')    -- otel "AnyValue" object
+  WHERE rec ? 'body'                               
+    AND jsonb_typeof(rec->'body') IN ('object')   
     AND (
-      -- consider any non-null OTEL AnyValue variant as "present"
       (rec->'body'->>'stringValue') IS NOT NULL OR
       (rec->'body'->>'intValue')    IS NOT NULL OR
       (rec->'body'->>'doubleValue') IS NOT NULL OR
@@ -71,7 +70,6 @@ FROM (
 ORDER BY k
 `
 
-// If any log record has a body, expose it as a synthetic "_cardinalhq.message" tag key
 func (q *Queries) ListLogQLTags(ctx context.Context, organizationID uuid.UUID) ([]interface{}, error) {
 	rows, err := q.db.Query(ctx, listLogQLTags, organizationID)
 	if err != nil {

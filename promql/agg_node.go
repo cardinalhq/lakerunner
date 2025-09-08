@@ -42,6 +42,18 @@ func (n *AggNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalResult
 		return map[string]EvalResult{}
 	}
 
+	var childGroupBy []string
+	if ln, ok := n.Child.(*LeafNode); ok {
+		childGroupBy = ln.BE.GroupBy
+	}
+	childHints := n.Child.Hints()
+	countPassThrough := n.Op == AggCount &&
+		len(n.By) > 0 &&
+		childHints.WantCount &&
+		!childHints.IsLogLeaf &&
+		len(n.Without) == 0 &&
+		equalStringSets(n.By, childGroupBy)
+
 	makeKey := func(tags map[string]any) string {
 		if len(n.By) > 0 {
 			parts := make([]string, 0, len(n.By))
@@ -238,7 +250,17 @@ func (n *AggNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalResult
 				case AggMax:
 					v = r.Value.AggMap[MAX]
 				case AggCount:
-					v = r.Value.AggMap[COUNT]
+					if countPassThrough {
+						if c, ok := r.Value.AggMap[COUNT]; ok {
+							v = c
+						} else if s, ok := r.Value.AggMap[SUM]; ok {
+							v = s
+						} else {
+							v = 0
+						}
+					} else {
+						v = float64(a.count)
+					}
 				default:
 					v = math.NaN()
 				}
@@ -272,7 +294,11 @@ func (n *AggNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalResult
 			case AggMax:
 				v = a.max
 			case AggCount:
-				v = float64(a.count)
+				if countPassThrough {
+					v = a.sum
+				} else {
+					v = float64(a.count)
+				}
 			default:
 				v = math.NaN()
 			}

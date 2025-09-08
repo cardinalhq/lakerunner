@@ -43,6 +43,7 @@ func (n *LeafNode) Hints() ExecHints {
 		WantBottomK: n.BE.WantBottomK,
 		WantCount:   n.BE.WantCount,
 		WantDDS:     n.BE.WantDDS,
+		IsLogLeaf:   n.BE.LogLeaf != nil,
 	}
 }
 
@@ -220,7 +221,12 @@ func (n *LeafNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalResul
 
 		case SketchMAP:
 			k := keyFor(si.SketchTags.Tags)
-			if n.BE.FuncName != "" {
+			if n.BE.WantCount {
+				v = Value{
+					Kind: ValScalar,
+					Num:  si.SketchTags.getAggValue(COUNT),
+				}
+			} else if n.BE.FuncName != "" {
 				num := n.evalRangeAwareScalar(k, si, stepMs, rangeMs)
 				v = Value{Kind: ValScalar, Num: num}
 			} else {
@@ -265,7 +271,8 @@ func (n *LeafNode) evalRangeAwareScalar(key string, in SketchInput, stepMs, rang
 			n.windows[key] = w
 		}
 		w.add(ts, bktSum, bktCnt)
-		w.evict(ts - rangeMs)
+		// Left-open / right-closed: keep (ts-range, ts]  => evict ts < ts-range+step
+		w.evict(ts - rangeMs + stepMs)
 		covered := w.coveredMs(ts, stepMs)
 		sum, cnt := w.sum, w.count
 		n.mu.Unlock()

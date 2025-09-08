@@ -17,12 +17,10 @@ package logql
 import (
 	"database/sql"
 	"fmt"
+	_ "github.com/marcboeker/go-duckdb/v2"
 	"log/slog"
 	"strings"
 	"testing"
-	"time"
-
-	_ "github.com/marcboeker/go-duckdb/v2"
 )
 
 func openDuckDB(t *testing.T) *sql.DB {
@@ -496,7 +494,7 @@ func TestToWorkerSQLForTagValues_Basic(t *testing.T) {
 
 	// Test basic tag values query
 	be := &LogLeaf{}
-	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagValues(10*time.Second, "pod")), 0, 5000)
+	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagValues("pod")), 0, 5000)
 
 	rows := queryAll(t, db, sql)
 
@@ -539,7 +537,7 @@ func TestToWorkerSQLForTagValues_WithMatchers(t *testing.T) {
 			{Label: "service", Op: MatchEq, Value: "api"},
 		},
 	}
-	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagValues(10*time.Second, "pod")), 0, 5000)
+	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagValues("pod")), 0, 5000)
 
 	rows := queryAll(t, db, sql)
 
@@ -582,7 +580,7 @@ func TestToWorkerSQLForTagValues_WithLineFilters(t *testing.T) {
 			{Op: LineContains, Match: "error"},
 		},
 	}
-	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagValues(10*time.Second, "pod")), 0, 5000)
+	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagValues("pod")), 0, 5000)
 
 	rows := queryAll(t, db, sql)
 
@@ -625,7 +623,7 @@ func TestToWorkerSQLForTagValues_WithLabelFilters(t *testing.T) {
 			{Label: "level", Op: MatchEq, Value: "info"},
 		},
 	}
-	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagValues(10*time.Second, "pod")), 0, 5000)
+	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagValues("pod")), 0, 5000)
 
 	rows := queryAll(t, db, sql)
 
@@ -673,7 +671,7 @@ func TestToWorkerSQLForTagValues_WithRegexpParser(t *testing.T) {
 			},
 		},
 	}
-	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagValues(10*time.Second, "user")), 0, 5000)
+	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagValues("user")), 0, 5000)
 
 	rows := queryAll(t, db, sql)
 
@@ -721,7 +719,7 @@ func TestToWorkerSQLForTagValues_WithJSONParser(t *testing.T) {
 			},
 		},
 	}
-	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagValues(10*time.Second, "user")), 0, 5000)
+	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagValues("user")), 0, 5000)
 
 	rows := queryAll(t, db, sql)
 
@@ -769,7 +767,7 @@ func TestToWorkerSQLForTagValues_WithLogfmtParser(t *testing.T) {
 			},
 		},
 	}
-	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagValues(10*time.Second, "user")), 0, 5000)
+	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagValues("user")), 0, 5000)
 
 	rows := queryAll(t, db, sql)
 
@@ -826,7 +824,7 @@ func TestToWorkerSQLForTagValues_ComplexQuery(t *testing.T) {
 			{Label: "level", Op: MatchEq, Value: "info"},
 		},
 	}
-	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagValues(10*time.Second, "user")), 0, 5000)
+	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLForTagValues("user")), 0, 5000)
 
 	rows := queryAll(t, db, sql)
 

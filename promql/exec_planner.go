@@ -70,6 +70,7 @@ type ExecHints struct {
 	WantBottomK bool
 	WantCount   bool
 	WantDDS     bool
+	IsLogLeaf   bool
 }
 
 type ExecNode interface {
@@ -455,7 +456,29 @@ func baseExprID(b BaseExpr) string {
 }
 
 // AttachLogLeaves updates LogLeaf on both the flat plan.Leaves slice and
-func (p *QueryPlan) AttachLogLeaves(logLeafByBaseExprID map[string]logql.LogLeaf) {
+func (p *QueryPlan) AttachLogLeaves(rr RewriteResult) {
+	logLeafByBaseExprID := make(map[string]logql.LogLeaf, len(rr.Leaves))
+	for i := range p.Leaves {
+		// Take address so we mutate the element in the slice.
+		be := &p.Leaves[i]
+
+		kept := make([]LabelMatch, 0, len(be.Matchers))
+
+		for _, m := range be.Matchers {
+			if m.Label == LeafMatcher {
+				leaf, _ := rr.Leaves[m.Value]
+				lcopy := leaf
+				logLeafByBaseExprID[be.ID] = lcopy
+				be.LogLeaf = &lcopy
+				continue
+			}
+			kept = append(kept, m)
+		}
+
+		// Remove __leaf matcher so it doesn’t appear in downstream SQL.
+		be.Matchers = kept
+	}
+
 	var walk func(ExecNode)
 	walk = func(n ExecNode) {
 		switch t := n.(type) {

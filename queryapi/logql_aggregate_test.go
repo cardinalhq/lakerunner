@@ -20,6 +20,7 @@ import (
 	"github.com/cardinalhq/lakerunner/logql"
 	"github.com/cardinalhq/lakerunner/promql"
 	_ "github.com/marcboeker/go-duckdb/v2"
+	"sort"
 
 	"log/slog"
 	"strconv"
@@ -37,35 +38,6 @@ func replaceWorkerPlaceholders(sql string, start, end int64) string {
 	sql = strings.ReplaceAll(sql, "{start}", fmt.Sprintf("%d", start))
 	sql = strings.ReplaceAll(sql, "{end}", fmt.Sprintf("%d", end))
 	return sql
-}
-
-// Map the LogLeafs back into BaseExpr leaves using the __leaf matcher.
-func attachLeavesToPlan(t *testing.T, rr promql.RewriteResult, plan promql.QueryPlan) {
-	t.Helper()
-	for i := range plan.Leaves {
-		be := &plan.Leaves[i] // mutate slice element
-		found := false
-		var kept []promql.LabelMatch
-		for _, m := range be.Matchers {
-			if m.Label == promql.LeafMatcher {
-				leaf, ok := rr.Leaves[m.Value]
-				if !ok {
-					t.Fatalf("unknown __leaf id: %s", m.Value)
-				}
-				be.LogLeaf = &leaf
-				found = true
-				continue // drop __leaf from matchers
-			}
-			kept = append(kept, m)
-		}
-		if !found {
-			t.Fatalf("base expr missing __leaf matcher")
-		}
-		if be.LogLeaf.ID == "" {
-			t.Fatalf("attached LogLeaf has empty ID")
-		}
-		be.Matchers = kept // strip __leaf matcher
-	}
 }
 
 // End-to-end: LogQL -> CompileLog (leaves) -> RewriteToPromQL -> parse PromQL -> Compile
@@ -94,7 +66,7 @@ func compileMetricPlanFromLogQL(t *testing.T, q string) (promql.QueryPlan, promq
 	if err != nil {
 		t.Fatalf("compile rewritten PromQL: %v", err)
 	}
-	attachLeavesToPlan(t, rr, plan)
+	plan.AttachLogLeaves(rr)
 	return plan, rr
 }
 
@@ -1549,6 +1521,292 @@ func TestRewrite_CountOverTime_ByUserAndBasePod_JSON(t *testing.T) {
 	for k, want := range exp {
 		if got[k] != want {
 			t.Fatalf("unexpected sum for %v: got=%v want=%v; rows=%v\nsql=\n%s", k, got[k], want, rows, sql)
+		}
+	}
+}
+
+// Count by pod where a JSON filter matches, two workers, Eval at the coordinator.
+// The outer COUNT should row-count the inner results (presence per pod/bucket → 1).
+func TestLog_CountByPod_WithJSONFilter_TwoWorkers_Eval(t *testing.T) {
+	// --- Worker 1: pod api-7f -------------------------------------------------
+	db1 := openDuckDB(t)
+	mustExec(t, db1, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.fingerprint" TEXT,
+		"_cardinalhq.message"     TEXT,
+		"resource.service.name"   TEXT,
+		"resource.k8s.pod.name"   TEXT
+	);`)
+	// bucket 0: one alice (match), one bob (filtered out)
+	// bucket 1: two alice matches
+	mustExec(t, db1, `
+	INSERT INTO logs("_cardinalhq.timestamp","_cardinalhq.message","resource.service.name","resource.k8s.pod.name") VALUES
+	(10*1000,  '{"user":"alice","m":"x"}', 'api-gateway', 'api-7f'),
+	(20*1000,  '{"user":"bob","m":"y"}',   'api-gateway', 'api-7f'),
+	(70*1000,  '{"user":"alice","m":"z"}', 'api-gateway', 'api-7f'),
+	(80*1000,  '{"user":"alice","m":"w"}', 'api-gateway', 'api-7f');
+	`)
+
+	// --- Worker 2: pod api-9x -------------------------------------------------
+	db2 := openDuckDB(t)
+	mustExec(t, db2, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.fingerprint" TEXT,
+		"_cardinalhq.message"     TEXT,
+		"resource.service.name"   TEXT,
+		"resource.k8s.pod.name"   TEXT
+	);`)
+	// bucket 0: one alice (match)
+	// bucket 1: one alice (match)
+	mustExec(t, db2, `
+	INSERT INTO logs("_cardinalhq.timestamp","_cardinalhq.message","resource.service.name","resource.k8s.pod.name") VALUES
+	(40*1000,  '{"user":"alice","m":"p"}', 'api-gateway', 'api-9x'),
+	(100*1000, '{"user":"alice","m":"q"}', 'api-gateway', 'api-9x');
+	`)
+
+	// LogQL: count by (pod) of count_over_time(...) with a JSON filter user="alice"
+	// Inner count_over_time groups by pod identity via the rewrite (BaseExpr.GroupBy keeps pod),
+	// so each worker emits one row per (bucket,pod) with "sum" (the event count).
+	// At Eval(), outer count by (pod) should produce 1 per pod per bucket (presence).
+	q := `count by (resource_k8s_pod_name)(
+			count_over_time(
+				{resource_service_name="api-gateway"} | json | user="alice" [1m]
+			)
+		)`
+
+	// Compile full plan via LogQL → Rewrite → PromQL.
+	plan, rr := compileMetricPlanFromLogQL(t, q)
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf, got %d", len(plan.Leaves))
+	}
+	leaf := plan.Leaves[0]
+	_ = rr // (kept here to show we used the rewrite path)
+
+	step := time.Minute
+	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000)
+
+	// Run leaf SQL on both workers.
+	rows1 := queryAll(t, db1, workerSQL)
+	rows2 := queryAll(t, db2, workerSQL)
+	if len(rows1) == 0 && len(rows2) == 0 {
+		t.Fatalf("no rows from both workers; sql=\n%s", workerSQL)
+	}
+
+	// Build coordinator inputs per bucket. We pass the inner "sum" (event count),
+	// but outer COUNT (not pass-through) will row-count, so the numeric value is
+	// irrelevant; presence of the row is what matters.
+	type bucket = int64
+	perBucket := map[bucket][]promql.SketchInput{}
+
+	addRows := func(rows []rowmap) {
+		for _, r := range rows {
+			b := i64(r["bucket_ts"])
+			// allow dotted or underscored form
+			pod := s(r[`resource.k8s.pod.name`])
+			count := float64(i64(r["count"])) // inner count_over_time result (may be >0)
+			if count == 0 {
+				continue
+			}
+			perBucket[b] = append(perBucket[b], promql.SketchInput{
+				ExprID:         leaf.ID,
+				OrganizationID: "org-test",
+				Timestamp:      b,
+				Frequency:      int64(step / time.Second),
+				SketchTags: promql.SketchTags{
+					Tags:       map[string]any{"resource.k8s.pod.name": pod},
+					SketchType: promql.SketchMAP,
+					Agg:        map[string]float64{"count": count},
+				},
+			})
+		}
+	}
+	addRows(rows1)
+	addRows(rows2)
+
+	// Deterministic bucket order.
+	var buckets []int64
+	for b := range perBucket {
+		buckets = append(buckets, b)
+	}
+	sort.Slice(buckets, func(i, j int) bool { return buckets[i] < buckets[j] })
+
+	// Evaluate per bucket; expect one result per (bucket,pod) with value==1.
+	type key struct {
+		bucket int64
+		pod    string
+	}
+	got := map[key]int64{}
+
+	for _, b := range buckets {
+		out := plan.Root.Eval(promql.SketchGroup{
+			Timestamp: b,
+			Group:     map[string][]promql.SketchInput{leaf.ID: perBucket[b]},
+		}, step)
+
+		for _, er := range out {
+			pod := s(er.Tags[`resource.k8s.pod.name`])
+			// Outer COUNT (no pass-through) → row count = 1 per (bucket,pod)
+			got[key{b, pod}] = int64(er.Value.Num + 0.5)
+		}
+	}
+
+	const (
+		b0 = int64(0)
+		b1 = int64(60000)
+	)
+	exp := map[key]int64{
+		{b0, "api-7f"}: 1, // worker1 had one alice in bucket0
+		{b0, "api-9x"}: 1, // worker2 had one alice in bucket0
+		{b1, "api-7f"}: 1, // worker1 had two alice in bucket1 (still 1 after outer count)
+		{b1, "api-9x"}: 1, // worker2 had one alice in bucket1
+	}
+	for k, want := range exp {
+		if got[k] != want {
+			t.Fatalf("unexpected count-by-pod for %v: got=%v want=%v\nrows1=%v\nrows2=%v\nsql=\n%s",
+				k, got[k], want, rows1, rows2, workerSQL)
+		}
+	}
+}
+
+func TestLog_SumOfCountsByPod_WithJSONFilter_TwoWorkers_Eval(t *testing.T) {
+	// --- Worker 1: pod api-7f -------------------------------------------------
+	db1 := openDuckDB(t)
+	mustExec(t, db1, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.fingerprint" TEXT,
+		"_cardinalhq.message"     TEXT,
+		"resource.service.name"   TEXT,
+		"resource.k8s.pod.name"   TEXT
+	);`)
+	// bucket 0: one alice (match), one bob (filtered out)
+	// bucket 1: two alice matches
+	mustExec(t, db1, `
+	INSERT INTO logs("_cardinalhq.timestamp","_cardinalhq.message","resource.service.name","resource.k8s.pod.name") VALUES
+	(10*1000,  '{"user":"alice","m":"x"}', 'api-gateway', 'api-7f'),
+	(20*1000,  '{"user":"bob","m":"y"}',   'api-gateway', 'api-7f'),
+	(70*1000,  '{"user":"alice","m":"z"}', 'api-gateway', 'api-7f'),
+	(80*1000,  '{"user":"alice","m":"w"}', 'api-gateway', 'api-7f');
+	`)
+
+	// --- Worker 2: pod api-9x -------------------------------------------------
+	db2 := openDuckDB(t)
+	mustExec(t, db2, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.fingerprint" TEXT,
+		"_cardinalhq.message"     TEXT,
+		"resource.service.name"   TEXT,
+		"resource.k8s.pod.name"   TEXT
+	);`)
+	// bucket 0: one alice (match)
+	// bucket 1: one alice (match)
+	mustExec(t, db2, `
+	INSERT INTO logs("_cardinalhq.timestamp","_cardinalhq.message","resource.service.name","resource.k8s.pod.name") VALUES
+	(40*1000,  '{"user":"alice","m":"p"}', 'api-gateway', 'api-9x'),
+	(100*1000, '{"user":"alice","m":"q"}', 'api-gateway', 'api-9x');
+	`)
+
+	// LogQL: sum by (pod) of count_over_time(...) with a JSON filter user="alice"
+	q := `sum by (resource_k8s_pod_name)(
+			count_over_time(
+				{resource_service_name="api-gateway"} | json | user="alice" [1m]
+			)
+		)`
+
+	// Compile full plan via LogQL → Rewrite → PromQL.
+	plan, rr := compileMetricPlanFromLogQL(t, q)
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf, got %d", len(plan.Leaves))
+	}
+	leaf := plan.Leaves[0]
+	_ = rr // show rewrite path was used
+
+	step := time.Minute
+	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000)
+
+	// Run leaf SQL on both workers.
+	rows1 := queryAll(t, db1, workerSQL)
+	rows2 := queryAll(t, db2, workerSQL)
+	if len(rows1) == 0 && len(rows2) == 0 {
+		t.Fatalf("no rows from both workers; sql=\n%s", workerSQL)
+	}
+
+	// Build coordinator inputs per bucket.
+	type bucket = int64
+	perBucket := map[bucket][]promql.SketchInput{}
+
+	addRows := func(rows []rowmap) {
+		for _, r := range rows {
+			b := i64(r["bucket_ts"])
+			pod := s(r[`resource.k8s.pod.name`])
+			sum := float64(i64(r["sum"]))
+			if sum == 0 {
+				continue
+			}
+			perBucket[b] = append(perBucket[b], promql.SketchInput{
+				ExprID:         leaf.ID,
+				OrganizationID: "org-test",
+				Timestamp:      b,
+				Frequency:      int64(step / time.Second),
+				SketchTags: promql.SketchTags{
+					Tags:       map[string]any{"resource.k8s.pod.name": pod},
+					SketchType: promql.SketchMAP,
+					Agg:        map[string]float64{"sum": sum},
+				},
+			})
+		}
+	}
+	addRows(rows1)
+	addRows(rows2)
+
+	// Deterministic bucket order.
+	var buckets []int64
+	for b := range perBucket {
+		buckets = append(buckets, b)
+	}
+	sort.Slice(buckets, func(i, j int) bool { return buckets[i] < buckets[j] })
+
+	// Evaluate per bucket; expect the actual per-pod line counts.
+	type key struct {
+		bucket int64
+		pod    string
+	}
+	got := map[key]int64{}
+
+	for _, b := range buckets {
+		out := plan.Root.Eval(promql.SketchGroup{
+			Timestamp: b,
+			Group:     map[string][]promql.SketchInput{leaf.ID: perBucket[b]},
+		}, step)
+
+		for _, er := range out {
+			pod := s(er.Tags[`resource.k8s.pod.name`])
+			// sum by (pod) of the inner counts → actual #lines per pod per bucket
+			got[key{b, pod}] = int64(er.Value.Num + 0.5)
+		}
+	}
+
+	const (
+		b0 = int64(0)
+		b1 = int64(60000)
+	)
+	exp := map[key]int64{
+		{b0, "api-7f"}: 1, // worker1 had one alice in bucket0
+		{b0, "api-9x"}: 1, // worker2 had one alice in bucket0
+		{b1, "api-7f"}: 2, // worker1 had two alice in bucket1
+		{b1, "api-9x"}: 1, // worker2 had one alice in bucket1
+	}
+	for k, want := range exp {
+		if got[k] != want {
+			t.Fatalf("unexpected sum-of-counts for %v: got=%v want=%v\nrows1=%v\nrows2=%v\nsql=\n%s",
+				k, got[k], want, rows1, rows2, workerSQL)
 		}
 	}
 }

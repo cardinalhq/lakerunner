@@ -37,8 +37,6 @@ var supportedFuncs = map[string]bool{
 }
 
 // ToWorkerSQL builds a per-step, per-group SQL (DuckDB).
-// - For *_over_time / rate / increase: densify to one row per step, then window (ROWS K-1 PRECEDING).
-// - For raw/instant (no range): you could use buildRawSimple; for your test you’re driving everything through buildWindowed.
 func (be *BaseExpr) ToWorkerSQL(step time.Duration) string {
 	// Sketch-required paths → worker should return sketches
 	if be.WantDDS {
@@ -54,13 +52,12 @@ func (be *BaseExpr) ToWorkerSQL(step time.Duration) string {
 		return buildFromLogLeaf(be, step)
 	}
 
-	// COUNT fast-path: COUNT-by-group with no identity collapse → simple raw bucketing
+	// COUNT path (no HLL): densify steps and count rows per group.
+	// This yields one row per bucket per child-identity group (be.GroupBy).
+	// The API/parent agg can then “count the series” per keep-set (e.g. service).
 	if be.WantCount && equalStringSets(be.CountOnBy, be.GroupBy) {
-		return buildStepOnly(be, []proj{{"COUNT(*)", "count"}}, step)
-	}
-	// Identity collapse (distinct series counting) → HLL/sketch path
-	if be.WantCount && !equalStringSets(be.CountOnBy, be.GroupBy) {
-		return buildCountHLLHash(be, step)
+		// COUNT(rollup_count) avoids counting rows that have no data in the bucket.
+		return buildCountOnly(be, []proj{{"COUNT(rollup_count)", "count"}}, step)
 	}
 
 	switch be.FuncName {
@@ -119,6 +116,11 @@ func buildFromLogLeaf(be *BaseExpr, step time.Duration) string {
 		}
 	}
 
+	aggregationToFetch := "sum"
+	if be.WantCount {
+		aggregationToFetch = "count"
+	}
+
 	switch be.Metric {
 	case SynthLogUnwrap:
 		var aggFn, alias string
@@ -144,10 +146,14 @@ func buildFromLogLeaf(be *BaseExpr, step time.Duration) string {
 
 	case SynthLogBytes:
 		weight := fmt.Sprintf("length(COALESCE(%s, ''))", bodyCol)
-		cols = append(cols, "SUM("+weight+") AS sum")
+		cols = append(cols, "SUM("+weight+") AS "+aggregationToFetch)
 
 	default:
-		cols = append(cols, "SUM(1) AS sum")
+		if be.WantCount {
+			cols = append(cols, "COUNT(*) AS count") // <- this is the key
+		} else {
+			cols = append(cols, "SUM(1) AS sum")
+		}
 	}
 
 	sql := "WITH _leaf AS (" + pipelineSQL + ")" +
@@ -291,80 +297,38 @@ func buildRawSimple(be *BaseExpr, projs []proj, step time.Duration) string {
 	return sql
 }
 
-// buildCountHLLHash: per (bucket_ts, GroupBy..., identity) emit one row with an id_hash.
-// Worker merges rows into one HLL per (bucket_ts, GroupBy...).
-func buildCountHLLHash(be *BaseExpr, step time.Duration) string {
-	stepMs := step.Milliseconds()
-	bucket := fmt.Sprintf("(\"_cardinalhq.timestamp\" - (\"_cardinalhq.timestamp\" %% %d))", stepMs)
-
-	// Align [start, end) to step, as elsewhere
-	alignedStart := fmt.Sprintf("({start} - ({start} %% %d))", stepMs)
-	alignedEndEx := fmt.Sprintf("(({end} - 1) - (({end} - 1) %% %d) + %d)", stepMs, stepMs)
-
-	base := whereFor(be)
-	timeWhere := func() string {
-		tc := fmt.Sprintf("\"_cardinalhq.timestamp\" >= %s AND \"_cardinalhq.timestamp\" < %s", alignedStart, alignedEndEx)
-		if base == "" {
-			return " WHERE " + tc
-		}
-		return base + " AND " + tc
-	}()
-
-	// Build a stable hash over CountOnBy labels.
-	// Use a sentinel for NULLs so NULL != "" (Prom labels never include 0x00).
-	// DuckDB’s hash(...) returns BIGINT; we can cast to unsigned in Go.
-	var idExprParts []string
-	for _, c := range be.CountOnBy {
-		idExprParts = append(idExprParts, fmt.Sprintf("COALESCE(%s, '\x00')", c))
-	}
-	idHashExpr := "hash(" + strings.Join(idExprParts, ", ") + ")"
-
-	// SELECT bucket_ts, <GroupBy...>, id_hash
-	sel := []string{bucket + " AS bucket_ts"}
-	if len(be.GroupBy) > 0 {
-		sel = append(sel, strings.Join(be.GroupBy, ", "))
-	}
-	sel = append(sel, idHashExpr+" AS id_hash")
-
-	// GROUP BY bucket_ts, GroupBy..., id_hash -> one row per identity per bucket
-	gb := []string{"bucket_ts"}
-	if len(be.GroupBy) > 0 {
-		gb = append(gb, be.GroupBy...)
-	}
-	gb = append(gb, "id_hash")
-
-	sql := "SELECT " + strings.Join(sel, ", ") +
-		" FROM {table}" + timeWhere +
-		" GROUP BY " + strings.Join(gb, ", ") +
-		" ORDER BY bucket_ts ASC"
-	return sql
-}
-
-func buildStepOnly(be *BaseExpr, projs []proj, step time.Duration) string {
+func buildCountOnly(be *BaseExpr, projs []proj, step time.Duration) string {
 	stepMs := step.Milliseconds()
 	bucketExpr := fmt.Sprintf("(\"_cardinalhq.timestamp\" - (\"_cardinalhq.timestamp\" %% %d))", stepMs)
 
 	where := withTime(whereFor(be))
 
-	// Densify buckets for the whole query span:
-	// start_aligned = floor(start/step)*step
-	// end_exclusive = floor((end-1)/step)*step + step
+	// Align [start, end) to step boundaries.
 	alignedStart := fmt.Sprintf("({start} - ({start} %% %d))", stepMs)
 	alignedEndExclusive := fmt.Sprintf("(({end} - 1) - (({end} - 1) %% %d) + %d)", stepMs, stepMs)
+
+	// Buckets CTE.
 	buckets := fmt.Sprintf("buckets AS (SELECT range AS bucket_ts FROM range(%s, %s, %d))",
 		alignedStart, alignedEndExclusive, stepMs)
 
-	// Optional groups grid (if grouping).
+	// Quote group-by identifiers once; handle dotted names.
+	quote := func(id string) string { return fmt.Sprintf("\"%s\"", id) }
+	var gbq []string
+	for _, g := range be.GroupBy {
+		gbq = append(gbq, quote(g))
+	}
+
+	// Optional groups grid (distinct group keys across the time span), all quoted.
 	var groupsCTE, gridCTE, gridFrom string
-	if len(be.GroupBy) > 0 {
-		groupsCTE = "groups AS (SELECT DISTINCT " + strings.Join(be.GroupBy, ", ") + " FROM {table}" + where + ")"
-		gridCTE = "grid AS (SELECT bucket_ts, " + strings.Join(be.GroupBy, ", ") + " FROM buckets CROSS JOIN groups)"
+	if len(gbq) > 0 {
+		groupsCTE = "groups AS (SELECT DISTINCT " + strings.Join(gbq, ", ") + " FROM {table}" + where + ")"
+		gridCTE = "grid AS (SELECT bucket_ts, " + strings.Join(gbq, ", ") + " FROM buckets CROSS JOIN groups)"
 		gridFrom = "grid g"
 	} else {
 		gridFrom = "buckets b"
 	}
 
-	// Step aggregates per bucket (+ group).
+	// Step aggregates per bucket (+ group). Decide which interim columns we need.
 	stepCols := []string{bucketExpr + " AS bucket_ts"}
 	needSum, needCount := false, false
 	for _, p := range projs {
@@ -379,21 +343,41 @@ func buildStepOnly(be *BaseExpr, projs []proj, step time.Duration) string {
 		stepCols = append(stepCols, "SUM(rollup_sum) AS step_sum")
 	}
 	if needCount {
+		// For the COUNT fast-path we want “how many input rows (series entries) existed in the step
+		// for that group”. COUNT(rollup_count) or COUNT(*) are both acceptable; rollup_count is present
+		// in this schema and avoids counting NULL-only rows.
 		stepCols = append(stepCols, "COUNT(rollup_count) AS step_count")
 	}
-	if len(be.GroupBy) > 0 {
-		stepCols = append(stepCols, strings.Join(be.GroupBy, ", "))
+	if len(gbq) > 0 {
+		stepCols = append(stepCols, strings.Join(gbq, ", "))
+	}
+
+	// GROUP BY keys for step_aggr.
+	gb := []string{"bucket_ts"}
+	if len(gbq) > 0 {
+		gb = append(gb, gbq...)
 	}
 	stepAgg := "step_aggr AS (SELECT " + strings.Join(stepCols, ", ") +
 		" FROM {table}" + where +
-		groupByClause(be.GroupBy, "bucket_ts") + ")"
+		" GROUP BY " + strings.Join(gb, ", ") + ")"
 
 	// Final select: densified grid LEFT JOIN step_aggr; COALESCE to 0 for gaps.
 	var outCols []string
-	outCols = append(outCols, "bucket_ts")
-	if len(be.GroupBy) > 0 {
-		outCols = append(outCols, strings.Join(be.GroupBy, ", "))
+	// Always select bucket_ts from the grid/buckets side so it's dense.
+	outCols = append(outCols, "g.bucket_ts")
+	if len(gbq) == 0 {
+		// When there is no grouping, grid is actually "buckets b"; keep alias uniform.
+		outCols[0] = "b.bucket_ts"
 	}
+
+	// Include group-by columns from the grid side; they will keep their original (unaliased) column names.
+	if len(gbq) > 0 {
+		for _, c := range gbq {
+			// Selecting g."name.with.dot" preserves the column name as name.with.dot in the result set.
+			outCols = append(outCols, "g."+c)
+		}
+	}
+
 	for _, p := range projs {
 		switch p.alias {
 		case "sum":
@@ -405,12 +389,21 @@ func buildStepOnly(be *BaseExpr, projs []proj, step time.Duration) string {
 		}
 	}
 
-	var joinKeys string
-	if len(be.GroupBy) > 0 {
-		joinKeys = "USING (bucket_ts, " + strings.Join(be.GroupBy, ", ") + ")"
-	} else {
-		joinKeys = "USING (bucket_ts)"
-	}
+	// Build an explicit JOIN ... ON ... so quoted/dotted identifiers work cleanly.
+	joinOn := func() string {
+		var conds []string
+		if len(gbq) == 0 {
+			// buckets b  LEFT JOIN step_aggr sa ON b.bucket_ts = sa.bucket_ts
+			conds = []string{"b.bucket_ts = sa.bucket_ts"}
+		} else {
+			// grid g LEFT JOIN step_aggr sa ON g.bucket_ts = sa.bucket_ts AND g."a" = sa."a" AND ...
+			conds = []string{"g.bucket_ts = sa.bucket_ts"}
+			for _, c := range gbq {
+				conds = append(conds, "g."+c+" = sa."+c)
+			}
+		}
+		return strings.Join(conds, " AND ")
+	}()
 
 	withs := []string{buckets}
 	if groupsCTE != "" {
@@ -421,8 +414,13 @@ func buildStepOnly(be *BaseExpr, projs []proj, step time.Duration) string {
 	sql := "WITH " + strings.Join(withs, ", ") +
 		" SELECT " + strings.Join(outCols, ", ") +
 		" FROM " + gridFrom +
-		" LEFT JOIN step_aggr sa " + joinKeys +
-		" ORDER BY bucket_ts ASC"
+		" LEFT JOIN step_aggr sa ON " + joinOn +
+		" ORDER BY " + func() string {
+		if len(gbq) == 0 {
+			return "b.bucket_ts ASC"
+		}
+		return "g.bucket_ts ASC"
+	}()
 
 	return sql
 }
