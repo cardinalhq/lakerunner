@@ -43,6 +43,7 @@ func (n *LeafNode) Hints() ExecHints {
 		WantBottomK: n.BE.WantBottomK,
 		WantCount:   n.BE.WantCount,
 		WantDDS:     n.BE.WantDDS,
+		IsLogLeaf:   n.BE.LogLeaf != nil,
 	}
 }
 
@@ -220,7 +221,12 @@ func (n *LeafNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalResul
 
 		case SketchMAP:
 			k := keyFor(si.SketchTags.Tags)
-			if n.BE.FuncName != "" {
+			if n.BE.WantCount {
+				v = Value{
+					Kind: ValScalar,
+					Num:  si.SketchTags.getAggValue(COUNT),
+				}
+			} else if n.BE.FuncName != "" {
 				num := n.evalRangeAwareScalar(k, si, stepMs, rangeMs)
 				v = Value{Kind: ValScalar, Num: num}
 			} else {
@@ -251,7 +257,7 @@ func (n *LeafNode) evalRangeAwareScalar(key string, in SketchInput, stepMs, rang
 	ts := in.Timestamp
 
 	switch n.BE.FuncName {
-	case "sum_over_time", "increase", "rate", "avg_over_time":
+	case "sum_over_time", "increase", "rate", "avg_over_time", "count_over_time":
 		bktSum := in.SketchTags.getAggValue(SUM)
 		bktCnt := in.SketchTags.getAggValue(COUNT)
 
@@ -264,8 +270,9 @@ func (n *LeafNode) evalRangeAwareScalar(key string, in SketchInput, stepMs, rang
 			w = &winSumCount{rangeMs: rangeMs}
 			n.windows[key] = w
 		}
+		// Left-open / right-closed: keep (ts-range, ts]  => evict ts < ts-range+step
 		w.add(ts, bktSum, bktCnt)
-		w.evict(ts - rangeMs)
+		w.evict(ts - rangeMs + stepMs)
 		covered := w.coveredMs(ts, stepMs)
 		sum, cnt := w.sum, w.count
 		n.mu.Unlock()
@@ -276,6 +283,8 @@ func (n *LeafNode) evalRangeAwareScalar(key string, in SketchInput, stepMs, rang
 		switch n.BE.FuncName {
 		case "increase", "sum_over_time":
 			return sum
+		case "count_over_time":
+			return cnt
 		case "rate":
 			return sum / (float64(rangeMs) / 1000.0)
 		case "avg_over_time":
@@ -299,8 +308,7 @@ func (n *LeafNode) evalRangeAwareScalar(key string, in SketchInput, stepMs, rang
 			n.windowsMM[key] = w
 		}
 		w.add(ts, bktMin, bktMax)
-		// Left-inclusive window: keep [ts-rangeMs, ts].
-		w.evict(ts - rangeMs)
+		w.evict(ts - rangeMs + stepMs)
 		covered := w.coveredMs(ts, stepMs)
 		var out float64
 		if covered < rangeMs {
@@ -346,6 +354,8 @@ func evalLeafValuePerBucket(be BaseExpr, in SketchInput, stepSecs float64) float
 		return in.SketchTags.getAggValue(MIN)
 	case "max_over_time":
 		return in.SketchTags.getAggValue(MAX)
+	case "count_over_time":
+		return in.SketchTags.getAggValue(COUNT)
 	default:
 		// default to SUM
 		return in.SketchTags.getAggValue(SUM)

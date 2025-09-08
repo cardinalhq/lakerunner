@@ -70,6 +70,7 @@ type ExecHints struct {
 	WantBottomK bool
 	WantCount   bool
 	WantDDS     bool
+	IsLogLeaf   bool
 }
 
 type ExecNode interface {
@@ -230,7 +231,7 @@ func Compile(root Expr) (QueryPlan, error) {
 
 			// Series-producing funcs
 			case "rate", "irate", "increase",
-				"sum_over_time", "avg_over_time", "min_over_time", "max_over_time":
+				"sum_over_time", "avg_over_time", "min_over_time", "max_over_time", "count_over_time":
 				c2.funcName = e.Func.Name
 				if e.Func.Expr != nil {
 					return compile(*e.Func.Expr, c2)
@@ -455,7 +456,29 @@ func baseExprID(b BaseExpr) string {
 }
 
 // AttachLogLeaves updates LogLeaf on both the flat plan.Leaves slice and
-func (p *QueryPlan) AttachLogLeaves(logLeafByBaseExprID map[string]logql.LogLeaf) {
+func (p *QueryPlan) AttachLogLeaves(rr RewriteResult) {
+	logLeafByBaseExprID := make(map[string]logql.LogLeaf, len(rr.Leaves))
+	for i := range p.Leaves {
+		// Take address so we mutate the element in the slice.
+		be := &p.Leaves[i]
+
+		kept := make([]LabelMatch, 0, len(be.Matchers))
+
+		for _, m := range be.Matchers {
+			if m.Label == LeafMatcher {
+				leaf := rr.Leaves[m.Value]
+				lcopy := leaf
+				logLeafByBaseExprID[be.ID] = lcopy
+				be.LogLeaf = &lcopy
+				continue
+			}
+			kept = append(kept, m)
+		}
+
+		// Remove __leaf matcher so it doesn’t appear in downstream SQL.
+		be.Matchers = kept
+	}
+
 	var walk func(ExecNode)
 	walk = func(n ExecNode) {
 		switch t := n.(type) {
