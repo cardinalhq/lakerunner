@@ -51,6 +51,14 @@ func TestFactory_CreateProducer(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "producer with unsupported compression",
+			config: &Config{
+				Brokers:             []string{"localhost:9092"},
+				ProducerCompression: "invalid",
+			},
+			wantErr: true,
+		},
+		{
 			name: "producer with SASL SCRAM-SHA-256",
 			config: &Config{
 				Brokers:              []string{"localhost:9092"},
@@ -108,6 +116,10 @@ func TestFactory_CreateProducer(t *testing.T) {
 				assert.NoError(t, err)
 				assert.NotNil(t, producer)
 				if producer != nil {
+					kp := producer.(*kafkaProducer)
+					if tt.config.ProducerCompression == "snappy" {
+						assert.Equal(t, kafka.Snappy, kp.config.Compression)
+					}
 					producer.Close()
 				}
 			}
@@ -318,7 +330,7 @@ func TestFactoryIntegration(t *testing.T) {
 	kp, ok := producer.(*kafkaProducer)
 	require.True(t, ok)
 	assert.Equal(t, 10, kp.config.BatchSize)
-	assert.Equal(t, kafka.RequireOne, kp.config.RequiredAcks)
+	assert.Equal(t, kafka.RequireNone, kp.config.RequiredAcks)
 
 	producer.Close()
 

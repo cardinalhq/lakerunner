@@ -50,6 +50,7 @@ type ProducerConfig struct {
 	BatchSize    int
 	BatchTimeout time.Duration
 	RequiredAcks kafka.RequiredAcks
+	Compression  kafka.Compression
 
 	// SASL/SCRAM authentication
 	SASLMechanism sasl.Mechanism
@@ -130,6 +131,7 @@ func (p *kafkaProducer) getWriter(topic string) *kafka.Writer {
 		BatchTimeout: p.config.BatchTimeout,
 		RequiredAcks: p.config.RequiredAcks,
 		Transport:    transport,
+		Compression:  p.config.Compression,
 	}
 	p.writers[topic] = w
 	return w
@@ -155,6 +157,7 @@ func (p *kafkaProducer) SendToPartition(ctx context.Context, topic string, parti
 		BatchSize:    1, // send immediately
 		RequiredAcks: p.config.RequiredAcks,
 		Transport:    transport,
+		Compression:  p.config.Compression,
 	}
 	defer w.Close()
 
