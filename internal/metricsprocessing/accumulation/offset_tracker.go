@@ -36,10 +36,8 @@ type OffsetTracker struct {
 	store   OffsetStore
 }
 
-// OffsetStore defines the interface for querying Kafka offset information
-type OffsetStore interface {
-	KafkaJournalGetLastProcessedWithOrgInstance(ctx context.Context, params lrdb.KafkaJournalGetLastProcessedWithOrgInstanceParams) (int64, error)
-}
+// OffsetStore is an alias for GathererStore to maintain backward compatibility
+type OffsetStore = GathererStore
 
 // NewOffsetTracker creates a new OffsetTracker for multiple organization/instance combinations
 func NewOffsetTracker(store OffsetStore) *OffsetTracker {

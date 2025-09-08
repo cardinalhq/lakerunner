@@ -19,11 +19,9 @@ import (
 	"time"
 
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
+	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/google/uuid"
 )
-
-// Target record count for compaction (will be replaced with proper estimator later)
-const CompactionTargetRecordCount = 10000
 
 // CompactionKey represents the key for grouping messages for compaction
 type CompactionKey struct {
@@ -37,6 +35,12 @@ type Processor interface {
 	Process(ctx context.Context, group *AccumulationGroup[CompactionKey], kafkaCommitData *KafkaCommitData, recordCountEstimate int64) error
 }
 
+// GathererStore defines the interface for querying Kafka offset information and estimates
+type GathererStore interface {
+	KafkaJournalGetLastProcessedWithOrgInstance(ctx context.Context, params lrdb.KafkaJournalGetLastProcessedWithOrgInstanceParams) (int64, error)
+	GetMetricEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32) int64
+}
+
 // Gatherer processes a stream of MetricSegmentNotificationMessage from Kafka
 // and feeds them into a Hunter instance for accumulation
 type Gatherer struct {
@@ -44,10 +48,11 @@ type Gatherer struct {
 	metadataTracker *MetadataTracker
 	offsetTracker   *OffsetTracker
 	compactor       Processor
+	store           GathererStore
 }
 
 // NewGatherer creates a new Gatherer instance for compaction
-func NewGatherer(topic, consumerGroup string, store OffsetStore, compactor Processor) *Gatherer {
+func NewGatherer(topic, consumerGroup string, store GathererStore, compactor Processor) *Gatherer {
 	keyMapper := func(msg *messages.MetricSegmentNotificationMessage) CompactionKey {
 		return CompactionKey{
 			OrganizationID: msg.OrganizationID,
@@ -62,6 +67,7 @@ func NewGatherer(topic, consumerGroup string, store OffsetStore, compactor Proce
 		metadataTracker: NewMetadataTracker(topic, consumerGroup),
 		offsetTracker:   NewOffsetTracker(store),
 		compactor:       compactor,
+		store:           store,
 	}
 }
 
@@ -96,8 +102,11 @@ func (g *Gatherer) ProcessMessage(ctx context.Context, msg *messages.MetricSegme
 		return nil
 	}
 
+	// Get dynamic estimate for this org/frequency combination
+	targetRecordCount := g.store.GetMetricEstimate(ctx, msg.OrganizationID, msg.FrequencyMs)
+
 	// Process the message through the hunter
-	result := g.hunter.AddMessage(msg, metadata, CompactionTargetRecordCount)
+	result := g.hunter.AddMessage(msg, metadata, targetRecordCount)
 
 	if result != nil {
 		// Create Kafka commit data from the actual messages in the Hunter list
