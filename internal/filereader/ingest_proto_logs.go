@@ -172,9 +172,11 @@ func (r *IngestProtoLogsReader) buildLogRow(rl plog.ResourceLogs, sl plog.ScopeL
 	ret["observed_timestamp"] = logRecord.ObservedTimestamp().AsTime().UnixMilli()
 	ret["_cardinalhq.level"] = logRecord.SeverityText()
 	ret["severity_number"] = int64(logRecord.SeverityNumber())
-	fingerprint, _, _, err := fingerprinter.Fingerprint(message, r.trieClusterManager)
-	if err == nil {
-		ret["_cardinalhq.fingerprint"] = fingerprint
+	if r.trieClusterManager != nil {
+		fingerprint, _, _, err := fingerprinter.Fingerprint(message, r.trieClusterManager)
+		if err == nil {
+			ret["_cardinalhq.fingerprint"] = fingerprint
+		}
 	}
 	return ret
 }
