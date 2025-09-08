@@ -42,6 +42,7 @@ func (k CompactionKey) GetInstanceNum() int16 {
 // MetricCompactionMessage represents a metric segment processing notification for compaction
 // This implements GroupableMessage interface
 type MetricCompactionMessage struct {
+	Version        int16     `json:"v"`  // message version, current version is 1
 	OrganizationID uuid.UUID `json:"o"`  // organization_id
 	DateInt        int32     `json:"d"`  // dateint
 	FrequencyMs    int32     `json:"f"`  // frequency_ms

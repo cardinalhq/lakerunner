@@ -34,6 +34,26 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
+// Rollup frequency mappings to avoid import cycle with config package
+var rollupFrequencyMappings = map[int32]int32{
+	10_000:    60_000,    // 10 seconds -> 1 minute
+	60_000:    300_000,   // 1 minute -> 5 minutes
+	300_000:   1_200_000, // 5 minutes -> 20 minutes
+	1_200_000: 3_600_000, // 20 minutes -> 1 hour
+}
+
+// isRollupSourceFrequency checks if a frequency is a valid source for rollups
+func isRollupSourceFrequency(frequencyMs int32) bool {
+	_, exists := rollupFrequencyMappings[frequencyMs]
+	return exists
+}
+
+// getTargetRollupFrequency returns the target frequency for a given source frequency
+func getTargetRollupFrequency(sourceFrequencyMs int32) (int32, bool) {
+	target, exists := rollupFrequencyMappings[sourceFrequencyMs]
+	return target, exists
+}
+
 // ProcessBatch processes a batch of metric ingest items with atomic transaction including Kafka offset
 func ProcessBatch(
 	ctx context.Context,
@@ -162,8 +182,13 @@ func ProcessBatch(
 		rollupTopic := "lakerunner.segments.metrics.rollup"
 
 		for _, segParams := range segmentParams {
-			// Create the notification message
-			notification := messages.MetricSegmentNotificationMessage{
+			// Calculate rollup interval start time for consistent key generation
+			rollupStartTime := (segParams.StartTs / int64(segParams.FrequencyMs)) * int64(segParams.FrequencyMs)
+			segmentStartTime := time.Unix(rollupStartTime/1000, (rollupStartTime%1000)*1000000)
+
+			// Create compaction message
+			compactionNotification := messages.MetricCompactionMessage{
+				Version:        1,
 				OrganizationID: segParams.OrganizationID,
 				DateInt:        segParams.Dateint,
 				FrequencyMs:    segParams.FrequencyMs,
@@ -171,28 +196,52 @@ func ProcessBatch(
 				InstanceNum:    segParams.InstanceNum,
 				SlotID:         segParams.SlotID,
 				SlotCount:      segParams.SlotCount,
-				RecordCount:    segParams.RecordCount,
+				Records:        segParams.RecordCount,
 				FileSize:       segParams.FileSize,
 				QueuedAt:       time.Now(),
 			}
 
-			// Marshal the message
-			msgBytes, err := notification.Marshal()
+			// Marshal compaction message
+			compactionMsgBytes, err := compactionNotification.Marshal()
 			if err != nil {
-				return fmt.Errorf("failed to marshal segment notification: %w", err)
+				return fmt.Errorf("failed to marshal compaction notification: %w", err)
 			}
 
-			// Calculate rollup interval start time for consistent key generation
-			rollupStartTime := (segParams.StartTs / int64(segParams.FrequencyMs)) * int64(segParams.FrequencyMs)
+			// Create rollup message if this frequency can be rolled up
+			var rollupMsgBytes []byte
+			if isRollupSourceFrequency(segParams.FrequencyMs) {
+				targetFrequency, _ := getTargetRollupFrequency(segParams.FrequencyMs)
+
+				rollupNotification := messages.MetricRollupMessage{
+					Version:           1,
+					OrganizationID:    segParams.OrganizationID,
+					DateInt:           segParams.Dateint,
+					SourceFrequencyMs: segParams.FrequencyMs,
+					TargetFrequencyMs: targetFrequency,
+					SegmentID:         segParams.SegmentID,
+					InstanceNum:       segParams.InstanceNum,
+					SlotID:            segParams.SlotID,
+					SlotCount:         segParams.SlotCount,
+					Records:           segParams.RecordCount,
+					FileSize:          segParams.FileSize,
+					SegmentStartTime:  segmentStartTime,
+					QueuedAt:          time.Now(),
+				}
+
+				rollupMsgBytes, err = rollupNotification.Marshal()
+				if err != nil {
+					return fmt.Errorf("failed to marshal rollup notification: %w", err)
+				}
+			}
 
 			compactionMessage := fly.Message{
 				Key:   []byte(fmt.Sprintf("%s-%d-%d", segParams.OrganizationID.String(), segParams.Dateint, segParams.SegmentID)),
-				Value: msgBytes,
+				Value: compactionMsgBytes,
 			}
 
 			rollupMessage := fly.Message{
 				Key:   []byte(fmt.Sprintf("%s-%d-%d-%d", segParams.OrganizationID.String(), segParams.Dateint, segParams.FrequencyMs, rollupStartTime)),
-				Value: msgBytes,
+				Value: rollupMsgBytes,
 			}
 
 			// Send to compaction topic
@@ -200,9 +249,11 @@ func ProcessBatch(
 				return fmt.Errorf("failed to send compaction notification to Kafka: %w", err)
 			}
 
-			// Send to rollup topic
-			if err := kafkaProducer.Send(criticalCtx, rollupTopic, rollupMessage); err != nil {
-				return fmt.Errorf("failed to send rollup notification to Kafka: %w", err)
+			// Send to rollup topic only if rollup message was created
+			if rollupMsgBytes != nil {
+				if err := kafkaProducer.Send(criticalCtx, rollupTopic, rollupMessage); err != nil {
+					return fmt.Errorf("failed to send rollup notification to Kafka: %w", err)
+				}
 			}
 		}
 		ll.Debug("Sent segment notifications to Kafka topics",

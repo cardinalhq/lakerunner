@@ -33,27 +33,40 @@ type RollupWorkQueuer interface {
 }
 
 // QueueMetricRollup sends rollup work notification to Kafka for a specific segment
-func QueueMetricRollup(ctx context.Context, kafkaProducer fly.Producer, organizationID uuid.UUID, dateint int32, frequencyMs int32, instanceNum int16, slotID int32, slotCount int32, segmentID int64, recordCount int64, fileSize int64) error {
+func QueueMetricRollup(ctx context.Context, kafkaProducer fly.Producer, organizationID uuid.UUID, dateint int32, frequencyMs int32, instanceNum int16, slotID int32, slotCount int32, segmentID int64, recordCount int64, fileSize int64, segmentStartTime time.Time) error {
 	ll := logctx.FromContext(ctx)
 
-	// Check if this frequency should generate rollup work
-	// Only 10s, 60s, 300s, and 1200s frequencies generate rollup work
-	if frequencyMs != 10_000 && frequencyMs != 60_000 && frequencyMs != 300_000 && frequencyMs != 1_200_000 {
+	// Map source frequencies to target frequencies
+	var targetFrequencyMs int32
+	switch frequencyMs {
+	case 10_000:
+		targetFrequencyMs = 60_000 // 10s -> 1m
+	case 60_000:
+		targetFrequencyMs = 300_000 // 1m -> 5m
+	case 300_000:
+		targetFrequencyMs = 1_200_000 // 5m -> 20m
+	case 1_200_000:
+		targetFrequencyMs = 3_600_000 // 20m -> 1h
+	default:
+		// Not a rollup source frequency
 		return nil
 	}
 
-	// Create rollup notification message using existing MetricSegmentNotificationMessage
-	notification := messages.MetricSegmentNotificationMessage{
-		OrganizationID: organizationID,
-		DateInt:        dateint,
-		FrequencyMs:    frequencyMs,
-		SegmentID:      segmentID,
-		InstanceNum:    instanceNum,
-		SlotID:         slotID,
-		SlotCount:      slotCount,
-		RecordCount:    recordCount,
-		FileSize:       fileSize,
-		QueuedAt:       time.Now(),
+	// Create rollup notification message
+	notification := messages.MetricRollupMessage{
+		Version:           1,
+		OrganizationID:    organizationID,
+		DateInt:           dateint,
+		SourceFrequencyMs: frequencyMs,
+		TargetFrequencyMs: targetFrequencyMs,
+		SegmentID:         segmentID,
+		InstanceNum:       instanceNum,
+		SlotID:            slotID,
+		SlotCount:         slotCount,
+		Records:           recordCount,
+		FileSize:          fileSize,
+		SegmentStartTime:  segmentStartTime,
+		QueuedAt:          time.Now(),
 	}
 
 	// Marshal the message
