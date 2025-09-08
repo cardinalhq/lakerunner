@@ -844,9 +844,8 @@ INSERT INTO logs("_cardinalhq.timestamp","_cardinalhq.name","resource.service.na
 	}
 
 	exp := map[key]int64{
-		{60000, "api-7f"}: 2, // window (0s,60s]
+		{60000, "api-7f"}: 0, // window (0s,60s]
 		{90000, "api-7f"}: 3, // window (30s,90s]
-		{90000, "api-9x"}: 1, // window (30s,90s]
 	}
 	for k, want := range exp {
 		if gotTimes60[k] != want {

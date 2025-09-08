@@ -54,7 +54,7 @@ func RewriteToPromQL(root logql.LExecNode) (RewriteResult, error) {
 				var fam, promOp string
 				switch strings.ToLower(t.Op) {
 				case "count_over_time":
-					fam, promOp = SynthLogCount, "increase"
+					fam, promOp = SynthLogCount, "count_over_time"
 				case "rate":
 					fam, promOp = SynthLogCount, "rate"
 				case "bytes_over_time":

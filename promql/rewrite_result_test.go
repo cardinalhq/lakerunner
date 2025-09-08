@@ -72,7 +72,7 @@ func TestRewrite_CountOverTime(t *testing.T) {
 	}
 
 	// Expect increase on SynthLogCount
-	wantProm := `increase(` + SynthLogCount + `{` + LeafMatcher + `="leafA"}[5m])`
+	wantProm := `count_over_time(` + SynthLogCount + `{` + LeafMatcher + `="leafA"}[5m])`
 	if rr.PromQL != wantProm {
 		t.Fatalf("promql mismatch:\n  want: %s\n  got : %s", wantProm, rr.PromQL)
 	}
@@ -189,7 +189,7 @@ func TestRewrite_BinaryOp_TwoLeaves_DedupAndOrder(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	wantProm := `(increase(__logql_logs_total{__leaf="A"}[5m])) + (rate(__logql_log_bytes_total{__leaf="B"}[5m]))`
+	wantProm := `(count_over_time(__logql_logs_total{__leaf="A"}[5m])) + (rate(__logql_log_bytes_total{__leaf="B"}[5m]))`
 	if got.PromQL != wantProm {
 		t.Fatalf("promql mismatch:\nwant: %s\ngot : %s", wantProm, got.PromQL)
 	}

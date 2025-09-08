@@ -33,7 +33,8 @@ var supportedFuncs = map[string]bool{
 	"increase":           true,
 	"quantile_over_time": false, // needs DDS
 	"histogram_quantile": false, // needs DDS
-	"":                   true,  // raw/instant (we still bucket for step)
+	"count_over_time":    true,
+	"":                   true, // raw/instant (we still bucket for step)
 }
 
 // ToWorkerSQL builds a per-step, per-group SQL (DuckDB).
@@ -62,6 +63,8 @@ func (be *BaseExpr) ToWorkerSQL(step time.Duration) string {
 
 	switch be.FuncName {
 	case "sum_over_time":
+		return buildStepAggNoWindow(be, need{sum: true}, step)
+	case "count_over_time":
 		return buildStepAggNoWindow(be, need{sum: true}, step)
 	case "avg_over_time":
 		return buildStepAggNoWindow(be, need{sum: true, count: true}, step)
@@ -117,7 +120,7 @@ func buildFromLogLeaf(be *BaseExpr, step time.Duration) string {
 	}
 
 	aggregationToFetch := "sum"
-	if be.WantCount {
+	if be.WantCount || be.FuncName == "count_over_time" {
 		aggregationToFetch = "count"
 	}
 
@@ -149,8 +152,8 @@ func buildFromLogLeaf(be *BaseExpr, step time.Duration) string {
 		cols = append(cols, "SUM("+weight+") AS "+aggregationToFetch)
 
 	default:
-		if be.WantCount {
-			cols = append(cols, "COUNT(*) AS count") // <- this is the key
+		if aggregationToFetch == "count" {
+			cols = append(cols, "COUNT(*) AS count")
 		} else {
 			cols = append(cols, "SUM(1) AS sum")
 		}

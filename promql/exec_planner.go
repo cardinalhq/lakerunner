@@ -231,7 +231,7 @@ func Compile(root Expr) (QueryPlan, error) {
 
 			// Series-producing funcs
 			case "rate", "irate", "increase",
-				"sum_over_time", "avg_over_time", "min_over_time", "max_over_time":
+				"sum_over_time", "avg_over_time", "min_over_time", "max_over_time", "count_over_time":
 				c2.funcName = e.Func.Name
 				if e.Func.Expr != nil {
 					return compile(*e.Func.Expr, c2)

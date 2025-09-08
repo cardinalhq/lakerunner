@@ -221,14 +221,14 @@ func TestRewrite_CountOverTime_ByLevel_JSON(t *testing.T) {
 	type agg struct {
 		bucket int64
 		level  string
-		sum    int64
+		count  int64
 	}
 	var got []agg
 	for _, r := range rows {
 		got = append(got, agg{
 			bucket: i64(r["bucket_ts"]),
 			level:  s(r["level"]),
-			sum:    i64(r["sum"]),
+			count:  i64(r["count"]),
 		})
 	}
 
@@ -240,13 +240,13 @@ func TestRewrite_CountOverTime_ByLevel_JSON(t *testing.T) {
 		switch a.bucket {
 		case 0:
 			if a.level == "INFO" {
-				b0Info += a.sum
+				b0Info += a.count
 			} else if a.level == "ERROR" {
-				b0Err += a.sum
+				b0Err += a.count
 			}
 		case 60000:
 			if a.level == "ERROR" {
-				b1Err += a.sum
+				b1Err += a.count
 			}
 		}
 	}
@@ -985,8 +985,8 @@ func TestRewrite_SumBy_LabelFormat_Service(t *testing.T) {
 	for _, r := range rows {
 		b := i64(r["bucket_ts"])
 		svc := s(r["svc"])
-		sum := i64(r["sum"])
-		got[key{b, svc}] = sum
+		count := i64(r["count"])
+		got[key{b, svc}] = count
 	}
 
 	exp := map[key]int64{
@@ -1049,8 +1049,8 @@ func TestRewrite_SumBy_JSON_User(t *testing.T) {
 	for _, r := range rows {
 		b := i64(r["bucket_ts"])
 		u := s(r["user"])
-		sum := i64(r["sum"])
-		got[key{b, u}] = sum
+		count := i64(r["count"])
+		got[key{b, u}] = count
 	}
 
 	exp := map[key]int64{
@@ -1112,8 +1112,8 @@ func TestRewrite_SumBy_Regexp_Pod(t *testing.T) {
 	for _, r := range rows {
 		b := i64(r["bucket_ts"])
 		pod := s(r["pod"])
-		sum := i64(r["sum"])
-		got[key{b, pod}] = sum
+		count := i64(r["count"])
+		got[key{b, pod}] = count
 	}
 
 	exp := map[key]int64{
@@ -1174,8 +1174,8 @@ func TestRewrite_SumBy_Logfmt_Svc(t *testing.T) {
 	for _, r := range rows {
 		b := i64(r["bucket_ts"])
 		svc := s(r["svc"])
-		sum := i64(r["sum"])
-		got[key{b, svc}] = sum
+		count := i64(r["count"])
+		got[key{b, svc}] = count
 	}
 
 	exp := map[key]int64{
@@ -1235,7 +1235,7 @@ func TestRewrite_CountOverTime_ByBaseJob_WithJSONFilter(t *testing.T) {
 		got[key{
 			bucket: i64(r["bucket_ts"]),
 			job:    s(r["job"]),
-		}] = i64(r["sum"])
+		}] = i64(r["count"])
 	}
 
 	exp := map[key]int64{
@@ -1293,7 +1293,7 @@ func TestRewrite_CountOverTime_ByUser_JSON_WithParserMatcher(t *testing.T) {
 		got[key{
 			bucket: i64(r["bucket_ts"]),
 			user:   s(r["user"]),
-		}] = i64(r["sum"])
+		}] = i64(r["count"])
 	}
 
 	exp := map[key]int64{
@@ -1357,7 +1357,7 @@ func TestRewrite_CountOverTime_ByUserSvc_Logfmt_MultiGroup(t *testing.T) {
 			bucket: i64(r["bucket_ts"]),
 			user:   s(r["user"]),
 			svc:    s(r["svc"]),
-		}] = i64(r["sum"])
+		}] = i64(r["count"])
 	}
 
 	exp := map[key]int64{
@@ -1437,7 +1437,7 @@ func TestRewrite_CountOverTime_ByBasePod_WithJSONFilter(t *testing.T) {
 		got[key{
 			bucket: i64(r["bucket_ts"]),
 			pod:    pod,
-		}] = i64(r["sum"])
+		}] = i64(r["count"])
 	}
 
 	exp := map[key]int64{
@@ -1508,7 +1508,7 @@ func TestRewrite_CountOverTime_ByUserAndBasePod_JSON(t *testing.T) {
 			bucket: i64(r["bucket_ts"]),
 			user:   s(r["user"]),
 			pod:    pod,
-		}] = i64(r["sum"])
+		}] = i64(r["count"])
 	}
 
 	exp := map[key]int64{
@@ -1746,8 +1746,8 @@ func TestLog_SumOfCountsByPod_WithJSONFilter_TwoWorkers_Eval(t *testing.T) {
 		for _, r := range rows {
 			b := i64(r["bucket_ts"])
 			pod := s(r[`resource.k8s.pod.name`])
-			sum := float64(i64(r["sum"]))
-			if sum == 0 {
+			count := float64(i64(r["count"]))
+			if count == 0 {
 				continue
 			}
 			perBucket[b] = append(perBucket[b], promql.SketchInput{
@@ -1758,7 +1758,7 @@ func TestLog_SumOfCountsByPod_WithJSONFilter_TwoWorkers_Eval(t *testing.T) {
 				SketchTags: promql.SketchTags{
 					Tags:       map[string]any{"resource.k8s.pod.name": pod},
 					SketchType: promql.SketchMAP,
-					Agg:        map[string]float64{"sum": sum},
+					Agg:        map[string]float64{"count": count},
 				},
 			})
 		}
