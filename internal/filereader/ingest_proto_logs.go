@@ -17,6 +17,7 @@ package filereader
 import (
 	"context"
 	"fmt"
+	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
 	"io"
 	"maps"
 
@@ -38,10 +39,11 @@ type IngestProtoLogsReader struct {
 	batchSize int
 
 	// Streaming iterator state for logs
-	logs          *plog.Logs
-	resourceIndex int
-	scopeIndex    int
-	logIndex      int
+	logs               *plog.Logs
+	resourceIndex      int
+	scopeIndex         int
+	logIndex           int
+	trieClusterManager *fingerprinter.TrieClusterManager
 }
 
 var _ Reader = (*IngestProtoLogsReader)(nil)
@@ -54,7 +56,8 @@ func NewIngestProtoLogsReader(reader io.Reader, batchSize int) (*IngestProtoLogs
 	}
 
 	protoReader := &IngestProtoLogsReader{
-		batchSize: batchSize,
+		batchSize:          batchSize,
+		trieClusterManager: fingerprinter.NewTrieClusterManager(0.5),
 	}
 
 	logs, err := parseProtoToOtelLogs(reader)
@@ -162,12 +165,16 @@ func (r *IngestProtoLogsReader) buildLogRow(rl plog.ResourceLogs, sl plog.ScopeL
 		return true
 	})
 
-	ret["_cardinalhq.message"] = logRecord.Body().AsString()
+	message := logRecord.Body().AsString()
+	ret["_cardinalhq.message"] = message
 	ret["_cardinalhq.timestamp"] = logRecord.Timestamp().AsTime().UnixMilli()
 	ret["observed_timestamp"] = logRecord.ObservedTimestamp().AsTime().UnixMilli()
 	ret["_cardinalhq.level"] = logRecord.SeverityText()
 	ret["severity_number"] = int64(logRecord.SeverityNumber())
-
+	fingerprint, _, _, err := fingerprinter.Fingerprint(message, r.trieClusterManager)
+	if err == nil {
+		ret["_cardinalhq.fingerprint"] = fingerprint
+	}
 	return ret
 }
 
