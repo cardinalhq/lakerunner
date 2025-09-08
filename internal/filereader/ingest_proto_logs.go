@@ -50,16 +50,17 @@ var _ Reader = (*IngestProtoLogsReader)(nil)
 var _ OTELLogsProvider = (*IngestProtoLogsReader)(nil)
 
 // NewIngestProtoLogsReader creates a new IngestProtoLogsReader for the given io.Reader.
-func NewIngestProtoLogsReader(reader io.Reader, batchSize int) (*IngestProtoLogsReader, error) {
+func NewIngestProtoLogsReader(reader io.Reader, opts ReaderOptions) (*IngestProtoLogsReader, error) {
+	batchSize := opts.BatchSize
 	if batchSize <= 0 {
 		batchSize = 1000
 	}
 
 	protoReader := &IngestProtoLogsReader{
-		batchSize:          batchSize,
-		trieClusterManager: fingerprinter.NewTrieClusterManager(0.5),
+		batchSize: batchSize,
 	}
 
+	protoReader.trieClusterManager = opts.TrieClusterManager
 	logs, err := parseProtoToOtelLogs(reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse proto to OTEL logs: %w", err)

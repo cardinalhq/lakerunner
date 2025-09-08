@@ -237,7 +237,7 @@ func createProtoBinaryReader(filename string, opts ReaderOptions) (Reader, error
 func createProtoReaderWithOptions(reader io.Reader, opts ReaderOptions) (Reader, error) {
 	switch opts.SignalType {
 	case SignalTypeLogs:
-		protoReader, err := NewIngestProtoLogsReader(reader, opts.BatchSize)
+		protoReader, err := NewIngestProtoLogsReader(reader, opts)
 		if err != nil {
 			return nil, err
 		}
