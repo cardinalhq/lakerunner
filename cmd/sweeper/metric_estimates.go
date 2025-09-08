@@ -24,6 +24,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -59,6 +60,7 @@ func runMetricEstimateUpdate(ctx context.Context, mdb lrdb.StoreFull) error {
 
 	// Get fresh data from metric segments
 	params := lrdb.MetricSegEstimatorParams{
+		TargetBytes: float64(config.TargetFileSize),
 		DateintLow:  dateintFromTime(lookbackTime),
 		DateintHigh: dateintFromTime(now),
 		MsLow:       lookbackTime.UnixMilli(),

@@ -38,8 +38,7 @@ func SegmentIDsOf(groups [][]lrdb.GetLogSegmentsForCompactionRow) [][]int64 {
 }
 
 const (
-	targetSize        = 1_000_000 // 1 MB
-	targetRecordCount = 40_000    // 40k records
+	targetRecordCount = 40_000 // 40k records
 )
 
 func TestPackSegments_NoSplit(t *testing.T) {

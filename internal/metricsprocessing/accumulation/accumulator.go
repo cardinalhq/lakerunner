@@ -227,7 +227,10 @@ func uploadAndUpdateDatabase(
 	if kafkaProducer != nil {
 		outputTopics := strategy.GetOutputTopics(key)
 		if len(outputTopics) > 0 {
-			// Send notification for each new segment to each output topic
+			// Collect all messages for batch sending
+			messagesByTopic := make(map[string][]fly.Message)
+
+			// Create messages for each new segment to each output topic
 			for _, newRecord := range newRecords {
 				notification := messages.MetricSegmentNotificationMessage{
 					OrganizationID: newRecord.OrganizationID,
@@ -266,17 +269,23 @@ func uploadAndUpdateDatabase(
 					Value: msgBytes,
 				}
 
+				// Add message to each topic's batch
 				for _, topic := range outputTopics {
-					if err := kafkaProducer.Send(ctx, topic, kafkaMessage); err != nil {
-						ll.Error("Failed to send segment notification to Kafka topic",
-							slog.String("topic", topic),
-							slog.Int64("segmentID", newRecord.SegmentID),
-							slog.Any("error", err))
-					} else {
-						ll.Debug("Sent segment notification to Kafka topic",
-							slog.String("topic", topic),
-							slog.Int64("segmentID", newRecord.SegmentID))
-					}
+					messagesByTopic[topic] = append(messagesByTopic[topic], kafkaMessage)
+				}
+			}
+
+			// Send all messages in batches by topic
+			for topic, messages := range messagesByTopic {
+				if err := kafkaProducer.BatchSend(ctx, topic, messages); err != nil {
+					ll.Error("Failed to batch send segment notifications to Kafka topic",
+						slog.String("topic", topic),
+						slog.Int("messageCount", len(messages)),
+						slog.Any("error", err))
+				} else {
+					ll.Debug("Batch sent segment notifications to Kafka topic",
+						slog.String("topic", topic),
+						slog.Int("messageCount", len(messages)))
 				}
 			}
 		}

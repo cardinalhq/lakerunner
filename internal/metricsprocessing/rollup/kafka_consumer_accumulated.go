@@ -70,7 +70,7 @@ func NewKafkaAccumulatedRollupConsumer(
 ) (*KafkaAccumulatedRollupConsumer, error) {
 	// Create strategy with default config
 	rollupConfig := Config{
-		TargetFileSizeBytes: 100 * 1024 * 1024, // 100MB default
+		TargetFileSizeBytes: config.TargetFileSize, // Default target file size
 		MaxAccumulationTime: "30s",
 	}
 	strategy := NewRollupStrategy(rollupConfig)

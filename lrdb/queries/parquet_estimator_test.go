@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/cardinalhq/lakerunner/testhelpers"
 )
@@ -41,7 +42,7 @@ func TestMetricSegEstimator(t *testing.T) {
 	// Formula: bytes_per_record = (total_bytes - (file_count * 15000)) / total_records
 	// Then: target_records = CEIL((1,000,000 - 15,000) / bytes_per_record)
 	const estimatedOverhead = 15_000
-	const targetBytes = 1_000_000
+	const targetBytes = config.TargetFileSize
 	const effectiveTargetBytes = targetBytes - estimatedOverhead // 985,000
 
 	testCases := []struct {
@@ -103,6 +104,7 @@ func TestMetricSegEstimator(t *testing.T) {
 
 			// Run the estimator
 			result, err := db.MetricSegEstimator(ctx, lrdb.MetricSegEstimatorParams{
+				TargetBytes: float64(config.TargetFileSize),
 				DateintLow:  dateint,
 				DateintHigh: dateint,
 				MsLow:       now.Add(-1 * time.Hour).UnixMilli(),
@@ -199,6 +201,7 @@ func TestMetricSegEstimatorMultipleFiles(t *testing.T) {
 
 	// Run the estimator
 	result, err := db.MetricSegEstimator(ctx, lrdb.MetricSegEstimatorParams{
+		TargetBytes: float64(config.TargetFileSize),
 		DateintLow:  dateint,
 		DateintHigh: dateint,
 		MsLow:       now.Add(-1 * time.Hour).UnixMilli(),
@@ -223,7 +226,7 @@ func TestMetricSegEstimatorMultipleFiles(t *testing.T) {
 	fileCount := int64(3)
 	totalOverhead := fileCount * estimatedOverhead                                      // 45,000
 	avgBPRAfterOverhead := float64(totalFileSize-totalOverhead) / float64(totalRecords) // (495,000 - 45,000) / 3,000 = 150.0
-	effectiveTargetBytes := 1_000_000 - estimatedOverhead                               // 985,000
+	effectiveTargetBytes := config.TargetFileSize - estimatedOverhead                   // Target - overhead
 	expectedRecordsFloat := float64(effectiveTargetBytes) / avgBPRAfterOverhead         // 985,000 / 150 = 6,566.67
 	expectedRecords := int64(expectedRecordsFloat + 0.5)                                // ceil(6566.67) = 6567
 

@@ -14,7 +14,7 @@ import (
 const logSegEstimator = `-- name: LogSegEstimator :many
 WITH params AS (
   SELECT 
-    1000000::float8 AS target_bytes,
+    $1::float8 AS target_bytes,
     15000::float8 AS estimated_overhead_per_file  -- Based on observed 10-18K overhead
 ),
 stats AS (
@@ -26,8 +26,8 @@ stats AS (
   FROM log_seg
   WHERE
       record_count > 100
-      AND dateint IN ($1, $2)
-      AND ts_range && int8range($3, $4, '[)')
+      AND dateint IN ($2, $3)
+      AND ts_range && int8range($4, $5, '[)')
   GROUP BY organization_id
 ),
 estimates AS (
@@ -53,10 +53,11 @@ CROSS JOIN params p
 `
 
 type LogSegEstimatorParams struct {
-	DateintLow  int32 `json:"dateint_low"`
-	DateintHigh int32 `json:"dateint_high"`
-	MsLow       int64 `json:"ms_low"`
-	MsHigh      int64 `json:"ms_high"`
+	TargetBytes float64 `json:"target_bytes"`
+	DateintLow  int32   `json:"dateint_low"`
+	DateintHigh int32   `json:"dateint_high"`
+	MsLow       int64   `json:"ms_low"`
+	MsHigh      int64   `json:"ms_high"`
 }
 
 type LogSegEstimatorRow struct {
@@ -67,6 +68,7 @@ type LogSegEstimatorRow struct {
 // Returns an estimate of the number of log segments, accounting for per-file overhead.
 func (q *Queries) LogSegEstimator(ctx context.Context, arg LogSegEstimatorParams) ([]LogSegEstimatorRow, error) {
 	rows, err := q.db.Query(ctx, logSegEstimator,
+		arg.TargetBytes,
 		arg.DateintLow,
 		arg.DateintHigh,
 		arg.MsLow,
@@ -93,7 +95,7 @@ func (q *Queries) LogSegEstimator(ctx context.Context, arg LogSegEstimatorParams
 const metricSegEstimator = `-- name: MetricSegEstimator :many
 WITH params AS (
   SELECT 
-    1000000::float8 AS target_bytes,
+    $1::float8 AS target_bytes,
     15000::float8 AS estimated_overhead_per_file  -- Based on observed 10-18K overhead
 ),
 stats AS (
@@ -106,8 +108,8 @@ stats AS (
   FROM metric_seg
   WHERE
       record_count > 100
-      AND dateint IN ($1, $2)
-      AND ts_range && int8range($3, $4, '[)')
+      AND dateint IN ($2, $3)
+      AND ts_range && int8range($4, $5, '[)')
   GROUP BY organization_id, frequency_ms
 ),
 estimates AS (
@@ -135,10 +137,11 @@ CROSS JOIN params p
 `
 
 type MetricSegEstimatorParams struct {
-	DateintLow  int32 `json:"dateint_low"`
-	DateintHigh int32 `json:"dateint_high"`
-	MsLow       int64 `json:"ms_low"`
-	MsHigh      int64 `json:"ms_high"`
+	TargetBytes float64 `json:"target_bytes"`
+	DateintLow  int32   `json:"dateint_low"`
+	DateintHigh int32   `json:"dateint_high"`
+	MsLow       int64   `json:"ms_low"`
+	MsHigh      int64   `json:"ms_high"`
 }
 
 type MetricSegEstimatorRow struct {
@@ -151,6 +154,7 @@ type MetricSegEstimatorRow struct {
 // Uses frequency_ms to provide more accurate estimates based on collection frequency.
 func (q *Queries) MetricSegEstimator(ctx context.Context, arg MetricSegEstimatorParams) ([]MetricSegEstimatorRow, error) {
 	rows, err := q.db.Query(ctx, metricSegEstimator,
+		arg.TargetBytes,
 		arg.DateintLow,
 		arg.DateintHigh,
 		arg.MsLow,
@@ -177,7 +181,7 @@ func (q *Queries) MetricSegEstimator(ctx context.Context, arg MetricSegEstimator
 const traceSegEstimator = `-- name: TraceSegEstimator :many
 WITH params AS (
   SELECT 
-    1000000::float8 AS target_bytes,
+    $1::float8 AS target_bytes,
     15000::float8 AS estimated_overhead_per_file  -- Based on observed 10-18K overhead
 ),
 stats AS (
@@ -189,8 +193,8 @@ stats AS (
   FROM trace_seg
   WHERE
       record_count > 100
-      AND dateint IN ($1, $2)
-      AND ts_range && int8range($3, $4, '[)')
+      AND dateint IN ($2, $3)
+      AND ts_range && int8range($4, $5, '[)')
   GROUP BY organization_id
 ),
 estimates AS (
@@ -216,10 +220,11 @@ CROSS JOIN params p
 `
 
 type TraceSegEstimatorParams struct {
-	DateintLow  int32 `json:"dateint_low"`
-	DateintHigh int32 `json:"dateint_high"`
-	MsLow       int64 `json:"ms_low"`
-	MsHigh      int64 `json:"ms_high"`
+	TargetBytes float64 `json:"target_bytes"`
+	DateintLow  int32   `json:"dateint_low"`
+	DateintHigh int32   `json:"dateint_high"`
+	MsLow       int64   `json:"ms_low"`
+	MsHigh      int64   `json:"ms_high"`
 }
 
 type TraceSegEstimatorRow struct {
@@ -230,6 +235,7 @@ type TraceSegEstimatorRow struct {
 // Returns an estimate of the number of trace segments, accounting for per-file overhead.
 func (q *Queries) TraceSegEstimator(ctx context.Context, arg TraceSegEstimatorParams) ([]TraceSegEstimatorRow, error) {
 	rows, err := q.db.Query(ctx, traceSegEstimator,
+		arg.TargetBytes,
 		arg.DateintLow,
 		arg.DateintHigh,
 		arg.MsLow,

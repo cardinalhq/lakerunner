@@ -52,7 +52,7 @@ type Config struct {
 func ConfigFromViper(cfg *config.CompactionConfig) Config {
 	targetSize := cfg.TargetFileSizeBytes
 	if targetSize == 0 {
-		targetSize = 1024 * 1024 // Default to 1MB if not configured
+		targetSize = config.TargetFileSize // Default target file size if not configured
 	}
 	return Config{
 		TargetFileSizeBytes: targetSize,

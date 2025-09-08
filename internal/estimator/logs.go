@@ -22,6 +22,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -113,6 +114,7 @@ func (e *logEstimator) updateEstimates(parent context.Context, querier Estimatio
 	low := now.Add(-e.lookback)
 
 	lp := lrdb.LogSegEstimatorParams{
+		TargetBytes: float64(config.TargetFileSize),
 		DateintLow:  dateint(low),
 		DateintHigh: dateint(now),
 		MsLow:       low.UnixMilli(),

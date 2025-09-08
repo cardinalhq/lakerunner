@@ -90,7 +90,7 @@ func Load() (*Config, error) {
 		Metrics: MetricsConfig{
 			Ingestion: ingestion.DefaultConfig(),
 			Compaction: CompactionConfig{
-				TargetFileSizeBytes: 1024 * 1024,      // Default 1MB
+				TargetFileSizeBytes: TargetFileSize,   // Default target file size
 				MaxAccumulationTime: 30 * time.Second, // Default 30 seconds for compaction
 			},
 			Rollup: RollupConfig{
