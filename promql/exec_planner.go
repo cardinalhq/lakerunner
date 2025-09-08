@@ -466,7 +466,7 @@ func (p *QueryPlan) AttachLogLeaves(rr RewriteResult) {
 
 		for _, m := range be.Matchers {
 			if m.Label == LeafMatcher {
-				leaf, _ := rr.Leaves[m.Value]
+				leaf := rr.Leaves[m.Value]
 				lcopy := leaf
 				logLeafByBaseExprID[be.ID] = lcopy
 				be.LogLeaf = &lcopy
