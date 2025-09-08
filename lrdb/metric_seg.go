@@ -361,3 +361,102 @@ func (q *Store) InsertMetricSegmentBatchWithKafkaOffsets(ctx context.Context, ba
 		return nil
 	})
 }
+
+// CompactMetricSegsWithKafkaOffsetsWithOrg marks old segments as compacted, inserts new compacted segments,
+// and updates Kafka offsets with organization and instance tracking in a single transaction
+func (q *Store) CompactMetricSegsWithKafkaOffsetsWithOrg(ctx context.Context, params CompactMetricSegsParams, kafkaOffsets []KafkaOffsetUpdateWithOrg) error {
+	return q.execTx(ctx, func(s *Store) error {
+		// Mark old segments as compacted if any
+		if len(params.OldRecords) > 0 {
+			segIDs := make([]int64, len(params.OldRecords))
+			for i, oldRec := range params.OldRecords {
+				segIDs[i] = oldRec.SegmentID
+			}
+
+			if err := s.MarkMetricSegsCompactedByKeys(ctx, MarkMetricSegsCompactedByKeysParams{
+				OrganizationID: params.OrganizationID,
+				Dateint:        params.Dateint,
+				FrequencyMs:    params.FrequencyMs,
+				InstanceNum:    params.InstanceNum,
+				SegmentIds:     segIDs,
+			}); err != nil {
+				return fmt.Errorf("mark old segments compacted: %w", err)
+			}
+		}
+
+		// Insert new compacted segments if any
+		if len(params.NewRecords) > 0 {
+			// Prepare batch insert parameters
+			newItems := make([]InsertCompactedMetricSegParams, len(params.NewRecords))
+			for i, r := range params.NewRecords {
+				newItems[i] = InsertCompactedMetricSegParams{
+					OrganizationID: params.OrganizationID,
+					Dateint:        params.Dateint,
+					FrequencyMs:    params.FrequencyMs,
+					SegmentID:      r.SegmentID,
+					InstanceNum:    params.InstanceNum,
+					StartTs:        r.StartTs,
+					EndTs:          r.EndTs,
+					RecordCount:    r.RecordCount,
+					FileSize:       r.FileSize,
+					EIngestDateint: params.IngestDateint,
+					Published:      true,
+					Rolledup:       false,
+					CreatedBy:      params.CreatedBy,
+					SlotID:         params.SlotID,
+					Fingerprints:   r.Fingerprints,
+					SortVersion:    CurrentMetricSortVersion,
+					SlotCount:      params.SlotCount,
+				}
+			}
+
+			res := s.InsertCompactedMetricSeg(ctx, newItems)
+			var insertErr error
+			res.Exec(func(i int, err error) {
+				if err != nil && insertErr == nil {
+					insertErr = fmt.Errorf("insert compacted segment %d: %w", i, err)
+				}
+			})
+			if insertErr != nil {
+				return insertErr
+			}
+		}
+
+		// Update Kafka offsets with organization and instance tracking
+		if len(kafkaOffsets) > 0 {
+			// Sort offsets to prevent deadlocks
+			sort.Slice(kafkaOffsets, func(i, j int) bool {
+				a, b := kafkaOffsets[i], kafkaOffsets[j]
+				if a.ConsumerGroup != b.ConsumerGroup {
+					return a.ConsumerGroup < b.ConsumerGroup
+				}
+				if a.Topic != b.Topic {
+					return a.Topic < b.Topic
+				}
+				if a.Partition != b.Partition {
+					return a.Partition < b.Partition
+				}
+				if a.OrganizationID.String() != b.OrganizationID.String() {
+					return a.OrganizationID.String() < b.OrganizationID.String()
+				}
+				return a.InstanceNum < b.InstanceNum
+			})
+
+			// Convert to batch parameters - use KafkaJournalUpsertWithOrgInstance for individual org/instance tracking
+			for _, offset := range kafkaOffsets {
+				if err := s.KafkaJournalUpsertWithOrgInstance(ctx, KafkaJournalUpsertWithOrgInstanceParams{
+					Topic:               offset.Topic,
+					Partition:           offset.Partition,
+					ConsumerGroup:       offset.ConsumerGroup,
+					OrganizationID:      offset.OrganizationID,
+					InstanceNum:         offset.InstanceNum,
+					LastProcessedOffset: offset.Offset,
+				}); err != nil {
+					return fmt.Errorf("update kafka offset for org %s instance %d: %w", offset.OrganizationID, offset.InstanceNum, err)
+				}
+			}
+		}
+
+		return nil
+	})
+}

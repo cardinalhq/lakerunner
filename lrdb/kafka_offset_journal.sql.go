@@ -8,6 +8,8 @@ package lrdb
 import (
 	"context"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const deleteOldKafkaOffsets = `-- name: DeleteOldKafkaOffsets :exec
@@ -28,16 +30,24 @@ WHERE consumer_group = $1
 ORDER BY topic, partition
 `
 
+type GetKafkaOffsetsByConsumerGroupRow struct {
+	ConsumerGroup       string    `json:"consumer_group"`
+	Topic               string    `json:"topic"`
+	Partition           int32     `json:"partition"`
+	LastProcessedOffset int64     `json:"last_processed_offset"`
+	UpdatedAt           time.Time `json:"updated_at"`
+}
+
 // Get all offset entries for a specific consumer group (useful for monitoring)
-func (q *Queries) GetKafkaOffsetsByConsumerGroup(ctx context.Context, consumerGroup string) ([]KafkaOffsetJournal, error) {
+func (q *Queries) GetKafkaOffsetsByConsumerGroup(ctx context.Context, consumerGroup string) ([]GetKafkaOffsetsByConsumerGroupRow, error) {
 	rows, err := q.db.Query(ctx, getKafkaOffsetsByConsumerGroup, consumerGroup)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []KafkaOffsetJournal
+	var items []GetKafkaOffsetsByConsumerGroupRow
 	for rows.Next() {
-		var i KafkaOffsetJournal
+		var i GetKafkaOffsetsByConsumerGroupRow
 		if err := rows.Scan(
 			&i.ConsumerGroup,
 			&i.Topic,
@@ -75,6 +85,38 @@ func (q *Queries) KafkaJournalGetLastProcessed(ctx context.Context, arg KafkaJou
 	return last_processed_offset, err
 }
 
+const kafkaJournalGetLastProcessedWithOrgInstance = `-- name: KafkaJournalGetLastProcessedWithOrgInstance :one
+SELECT last_processed_offset 
+FROM kafka_offset_journal 
+WHERE consumer_group = $1 
+  AND topic = $2 
+  AND partition = $3 
+  AND organization_id = $4 
+  AND instance_num = $5
+`
+
+type KafkaJournalGetLastProcessedWithOrgInstanceParams struct {
+	ConsumerGroup  string    `json:"consumer_group"`
+	Topic          string    `json:"topic"`
+	Partition      int32     `json:"partition"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+	InstanceNum    int16     `json:"instance_num"`
+}
+
+// Get the last processed offset for a specific consumer group, topic, partition, organization, and instance
+func (q *Queries) KafkaJournalGetLastProcessedWithOrgInstance(ctx context.Context, arg KafkaJournalGetLastProcessedWithOrgInstanceParams) (int64, error) {
+	row := q.db.QueryRow(ctx, kafkaJournalGetLastProcessedWithOrgInstance,
+		arg.ConsumerGroup,
+		arg.Topic,
+		arg.Partition,
+		arg.OrganizationID,
+		arg.InstanceNum,
+	)
+	var last_processed_offset int64
+	err := row.Scan(&last_processed_offset)
+	return last_processed_offset, err
+}
+
 const kafkaJournalUpsert = `-- name: KafkaJournalUpsert :exec
 INSERT INTO kafka_offset_journal (consumer_group, topic, partition, last_processed_offset, updated_at)
 VALUES ($1, $2, $3, $4, NOW())
@@ -99,6 +141,39 @@ func (q *Queries) KafkaJournalUpsert(ctx context.Context, arg KafkaJournalUpsert
 		arg.ConsumerGroup,
 		arg.Topic,
 		arg.Partition,
+		arg.LastProcessedOffset,
+	)
+	return err
+}
+
+const kafkaJournalUpsertWithOrgInstance = `-- name: KafkaJournalUpsertWithOrgInstance :exec
+INSERT INTO kafka_offset_journal (consumer_group, topic, partition, organization_id, instance_num, last_processed_offset, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, NOW())
+ON CONFLICT (consumer_group, topic, partition, organization_id, instance_num)
+DO UPDATE SET 
+    last_processed_offset = EXCLUDED.last_processed_offset,
+    updated_at = NOW()
+WHERE kafka_offset_journal.last_processed_offset < EXCLUDED.last_processed_offset
+`
+
+type KafkaJournalUpsertWithOrgInstanceParams struct {
+	ConsumerGroup       string    `json:"consumer_group"`
+	Topic               string    `json:"topic"`
+	Partition           int32     `json:"partition"`
+	OrganizationID      uuid.UUID `json:"organization_id"`
+	InstanceNum         int16     `json:"instance_num"`
+	LastProcessedOffset int64     `json:"last_processed_offset"`
+}
+
+// Insert or update the last processed offset for a consumer group, topic, partition, organization, and instance
+// Only updates if the new offset is greater than the existing one
+func (q *Queries) KafkaJournalUpsertWithOrgInstance(ctx context.Context, arg KafkaJournalUpsertWithOrgInstanceParams) error {
+	_, err := q.db.Exec(ctx, kafkaJournalUpsertWithOrgInstance,
+		arg.ConsumerGroup,
+		arg.Topic,
+		arg.Partition,
+		arg.OrganizationID,
+		arg.InstanceNum,
 		arg.LastProcessedOffset,
 	)
 	return err
