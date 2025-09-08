@@ -190,7 +190,8 @@ func (k *KafkaTestContainer) CreateProducerConfig() ProducerConfig {
 		Brokers:      []string{k.broker},
 		BatchSize:    10,
 		BatchTimeout: 100 * time.Millisecond,
-		RequiredAcks: kafka.RequireOne,
+		RequiredAcks: kafka.RequireNone,
+		Compression:  kafka.Snappy,
 	}
 }
 

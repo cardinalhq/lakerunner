@@ -29,7 +29,7 @@ func TestDefaultConfig(t *testing.T) {
 	assert.Equal(t, "SCRAM-SHA-256", cfg.SASLMechanism)
 	assert.False(t, cfg.TLSEnabled)
 	assert.Equal(t, 100, cfg.ProducerBatchSize)
-	assert.Equal(t, 1*time.Second, cfg.ProducerBatchTimeout)
+	assert.Equal(t, 10*time.Millisecond, cfg.ProducerBatchTimeout)
 	assert.Equal(t, "snappy", cfg.ProducerCompression)
 	assert.Equal(t, "lakerunner", cfg.ConsumerGroupPrefix)
 	assert.Equal(t, 100, cfg.ConsumerBatchSize)

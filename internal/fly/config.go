@@ -58,7 +58,7 @@ func DefaultConfig() *Config {
 		TLSSkipVerify: false,
 
 		ProducerBatchSize:    100,
-		ProducerBatchTimeout: 1 * time.Second,
+		ProducerBatchTimeout: 10 * time.Millisecond,
 		ProducerCompression:  "snappy",
 
 		ConsumerGroupPrefix: "lakerunner",
