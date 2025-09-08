@@ -186,6 +186,12 @@ func (c *MetricCompactor) Process(ctx context.Context, group *AccumulationGroup[
 		if err != nil {
 			ll.Warn("Failed to fetch segment, skipping",
 				slog.Int64("segmentID", msg.SegmentID),
+				slog.String("organizationID", msg.OrganizationID.String()),
+				slog.Int("dateint", int(msg.DateInt)),
+				slog.Int("frequencyMs", int(msg.FrequencyMs)),
+				slog.Int("instanceNum", int(msg.InstanceNum)),
+				slog.Int("slotID", int(msg.SlotID)),
+				slog.Int("slotCount", int(msg.SlotCount)),
 				slog.Any("error", err))
 			continue
 		}
@@ -332,7 +338,7 @@ func (c *MetricCompactor) uploadAndCreateSegments(ctx context.Context, client cl
 				LowerType: pgtype.Inclusive,
 				UpperType: pgtype.Exclusive,
 				Lower:     pgtype.Int8{Int64: stats.FirstTS, Valid: true},
-				Upper:     pgtype.Int8{Int64: stats.LastTS, Valid: true},
+				Upper:     pgtype.Int8{Int64: stats.LastTS + 1, Valid: true},
 				Valid:     true,
 			},
 			RecordCount:  result.RecordCount,
@@ -342,6 +348,7 @@ func (c *MetricCompactor) uploadAndCreateSegments(ctx context.Context, client cl
 			Fingerprints: stats.Fingerprints,
 			SortVersion:  lrdb.CurrentMetricSortVersion,
 			SlotCount:    1,
+			CreatedBy:    lrdb.CreatedByCompact,
 		}
 
 		segments = append(segments, segment)
