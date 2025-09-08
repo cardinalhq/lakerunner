@@ -790,10 +790,10 @@ func (b *InsertCompactedMetricSegBatchResults) Close() error {
 }
 
 const kafkaJournalBatchUpsert = `-- name: KafkaJournalBatchUpsert :batchexec
-INSERT INTO kafka_offset_journal (consumer_group, topic, partition, last_processed_offset, updated_at)
-VALUES ($1, $2, $3, $4, NOW())
+INSERT INTO kafka_offset_journal (consumer_group, topic, partition, last_processed_offset, organization_id, instance_num, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, NOW())
 ON CONFLICT (consumer_group, topic, partition)
-DO UPDATE SET 
+DO UPDATE SET
     last_processed_offset = EXCLUDED.last_processed_offset,
     updated_at = NOW()
 WHERE kafka_offset_journal.last_processed_offset < EXCLUDED.last_processed_offset
@@ -806,10 +806,12 @@ type KafkaJournalBatchUpsertBatchResults struct {
 }
 
 type KafkaJournalBatchUpsertParams struct {
-	ConsumerGroup       string `json:"consumer_group"`
-	Topic               string `json:"topic"`
-	Partition           int32  `json:"partition"`
-	LastProcessedOffset int64  `json:"last_processed_offset"`
+	ConsumerGroup       string    `json:"consumer_group"`
+	Topic               string    `json:"topic"`
+	Partition           int32     `json:"partition"`
+	LastProcessedOffset int64     `json:"last_processed_offset"`
+	OrganizationID      uuid.UUID `json:"organization_id"`
+	InstanceNum         int16     `json:"instance_num"`
 }
 
 // Insert or update multiple Kafka journal entries in a single batch operation
@@ -822,6 +824,8 @@ func (q *Queries) KafkaJournalBatchUpsert(ctx context.Context, arg []KafkaJourna
 			a.Topic,
 			a.Partition,
 			a.LastProcessedOffset,
+			a.OrganizationID,
+			a.InstanceNum,
 		}
 		batch.Queue(kafkaJournalBatchUpsert, vals...)
 	}
