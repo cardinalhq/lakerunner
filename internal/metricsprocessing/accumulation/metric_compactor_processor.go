@@ -144,7 +144,6 @@ func validateGroupConsistency(group *AccumulationGroup[messages.CompactionKey]) 
 	return nil
 }
 
-// Process implements the Processor interface and performs the 12-step compaction flow
 func (c *MetricCompactorProcessor) Process(ctx context.Context, group *AccumulationGroup[messages.CompactionKey], kafkaCommitData *KafkaCommitData, recordCountEstimate int64) error {
 	ll := logctx.FromContext(ctx)
 
@@ -159,7 +158,6 @@ func (c *MetricCompactorProcessor) Process(ctx context.Context, group *Accumulat
 		slog.Int("messageCount", len(group.Messages)),
 		slog.Duration("groupAge", groupAge))
 
-	// Step 0: Validate that all messages in the group have consistent fields
 	if err := validateGroupConsistency(group); err != nil {
 		return fmt.Errorf("group validation failed: %w", err)
 	}
@@ -175,19 +173,16 @@ func (c *MetricCompactorProcessor) Process(ctx context.Context, group *Accumulat
 		}
 	}()
 
-	// Step 1: Get the storage profile for the given org/instance
 	storageProfile, err := c.storageProvider.GetStorageProfileForOrganizationAndInstance(ctx, group.Key.OrganizationID, group.Key.InstanceNum)
 	if err != nil {
 		return fmt.Errorf("get storage profile: %w", err)
 	}
 
-	// Step 2: Make a storage client from that profile
 	storageClient, err := cloudstorage.NewClient(ctx, c.cmgr, storageProfile)
 	if err != nil {
 		return fmt.Errorf("create storage client: %w", err)
 	}
 
-	// Step 3: Fetch the segments from the DB by iterating over messages
 	var activeSegments []lrdb.MetricSeg
 	var segmentsToMarkCompacted []lrdb.MetricSeg
 	targetSizeThreshold := config.TargetFileSize * 80 / 100 // 80% of target file size
@@ -220,7 +215,6 @@ func (c *MetricCompactorProcessor) Process(ctx context.Context, group *Accumulat
 			continue
 		}
 
-		// Step 4: Check if segment is already close to target size and mark as compacted
 		if !segment.Compacted && segment.FileSize >= targetSizeThreshold {
 			ll.Info("Segment already close to target size, marking as compacted",
 				slog.Int64("segmentID", segment.SegmentID),
