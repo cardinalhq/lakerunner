@@ -17,6 +17,7 @@ package metricsprocessing
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -158,8 +159,9 @@ func TestQueueMetricRollup(t *testing.T) {
 			}
 
 			ctx := context.Background()
+			segmentStartTime := time.Now() // Use current time for test
 			err := QueueMetricRollup(ctx, mockProducer, tt.organizationID, tt.dateint, tt.frequencyMs,
-				tt.instanceNum, tt.slotID, tt.slotCount, tt.segmentID, tt.recordCount, tt.fileSize)
+				tt.instanceNum, tt.slotID, tt.slotCount, tt.segmentID, tt.recordCount, tt.fileSize, segmentStartTime)
 
 			assert.NoError(t, err)
 			mockProducer.AssertExpectations(t)
@@ -177,8 +179,9 @@ func TestQueueMetricRollupWithMultipleSegments(t *testing.T) {
 
 	// Queue multiple segments with different frequencies
 	frequencies := []int32{10_000, 60_000, 300_000, 3_600_000} // Only first 3 should send
+	segmentStartTime := time.Now()
 	for i, freq := range frequencies {
-		err := QueueMetricRollup(ctx, mockProducer, orgID, 20240101, freq, 1, 0, 1, int64(i+100), 1000, 10000)
+		err := QueueMetricRollup(ctx, mockProducer, orgID, 20240101, freq, 1, 0, 1, int64(i+100), 1000, 10000, segmentStartTime)
 		assert.NoError(t, err)
 	}
 
@@ -194,8 +197,9 @@ func TestQueueMetricRollupBatch(t *testing.T) {
 	mockProducer.On("Send", mock.Anything, "lakerunner.segments.metrics.rollup", mock.Anything).Return(nil).Times(5)
 
 	// Queue a batch of segments with rollup-eligible frequency
+	segmentStartTime := time.Now()
 	for i := 0; i < 5; i++ {
-		err := QueueMetricRollup(ctx, mockProducer, orgID, 20240101, 10_000, 1, int32(i), 5, int64(i+100), 1000, 10000)
+		err := QueueMetricRollup(ctx, mockProducer, orgID, 20240101, 10_000, 1, int32(i), 5, int64(i+100), 1000, 10000, segmentStartTime)
 		assert.NoError(t, err)
 	}
 

@@ -26,7 +26,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
@@ -40,38 +39,25 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-// GroupValidationError represents an error when messages in a group have inconsistent fields
-type GroupValidationError struct {
-	Field    string
-	Expected interface{}
-	Got      interface{}
-	Message  string
-}
-
-func (e *GroupValidationError) Error() string {
-	return fmt.Sprintf("group validation failed - %s: expected %v, got %v (%s)", e.Field, e.Expected, e.Got, e.Message)
-}
-
-// CompactionStore defines database operations needed for compaction
-type CompactionStore interface {
+// RollupStore defines database operations needed for rollups
+type RollupStore interface {
 	GetMetricSeg(ctx context.Context, params lrdb.GetMetricSegParams) (lrdb.MetricSeg, error)
 	CompactMetricSegsWithKafkaOffsetsWithOrg(ctx context.Context, params lrdb.CompactMetricSegsParams, kafkaOffsets []lrdb.KafkaOffsetUpdateWithOrg) error
 	KafkaJournalGetLastProcessedWithOrgInstance(ctx context.Context, params lrdb.KafkaJournalGetLastProcessedWithOrgInstanceParams) (int64, error)
-	MarkMetricSegsCompactedByKeys(ctx context.Context, params lrdb.MarkMetricSegsCompactedByKeysParams) error
 	GetMetricEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32) int64
 }
 
-// MetricCompactor implements the Processor interface for metric segment compaction
-type MetricCompactor struct {
-	store                CompactionStore
+// MetricRollupProcessor implements the Processor interface for metric rollups
+type MetricRollupProcessor struct {
+	store                RollupStore
 	storageProvider      storageprofile.StorageProfileProvider
 	cmgr                 cloudstorage.ClientProvider
 	targetRecordMultiple int // multiply estimate by this for safety net (e.g., 2)
 }
 
-// NewMetricCompactor creates a new metric compactor instance
-func NewMetricCompactor(store CompactionStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider) *MetricCompactor {
-	return &MetricCompactor{
+// NewMetricRollupProcessor creates a new metric rollup processor instance
+func NewMetricRollupProcessor(store RollupStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider) *MetricRollupProcessor {
+	return &MetricRollupProcessor{
 		store:                store,
 		storageProvider:      storageProvider,
 		cmgr:                 cmgr,
@@ -79,8 +65,8 @@ func NewMetricCompactor(store CompactionStore, storageProvider storageprofile.St
 	}
 }
 
-// validateGroupConsistency ensures all messages in a group have consistent org, instance, dateint, and frequency
-func validateGroupConsistency(group *AccumulationGroup[messages.CompactionKey]) error {
+// validateRollupGroupConsistency ensures all messages in a rollup group have consistent fields
+func validateRollupGroupConsistency(group *AccumulationGroup[messages.RollupKey]) error {
 	if len(group.Messages) == 0 {
 		return &GroupValidationError{
 			Field:   "message_count",
@@ -92,15 +78,18 @@ func validateGroupConsistency(group *AccumulationGroup[messages.CompactionKey]) 
 	expectedOrg := group.Key.OrganizationID
 	expectedInstance := group.Key.InstanceNum
 	expectedDateInt := group.Key.DateInt
-	expectedFrequency := group.Key.FrequencyMs
+	expectedSourceFreq := group.Key.SourceFrequencyMs
+	expectedTargetFreq := group.Key.TargetFrequencyMs
+	expectedSlotID := group.Key.SlotID
+	expectedSlotCount := group.Key.SlotCount
 
 	// Validate each message against the expected values
 	for i, accMsg := range group.Messages {
-		msg, ok := accMsg.Message.(*messages.MetricCompactionMessage)
+		msg, ok := accMsg.Message.(*messages.MetricRollupMessage)
 		if !ok {
 			return &GroupValidationError{
 				Field:   "message_type",
-				Message: fmt.Sprintf("message %d is not a MetricCompactionMessage", i),
+				Message: fmt.Sprintf("message %d is not a MetricRollupMessage", i),
 			}
 		}
 
@@ -131,12 +120,39 @@ func validateGroupConsistency(group *AccumulationGroup[messages.CompactionKey]) 
 			}
 		}
 
-		if msg.FrequencyMs != expectedFrequency {
+		if msg.SourceFrequencyMs != expectedSourceFreq {
 			return &GroupValidationError{
-				Field:    "frequency_ms",
-				Expected: expectedFrequency,
-				Got:      msg.FrequencyMs,
-				Message:  fmt.Sprintf("message %d has inconsistent frequency", i),
+				Field:    "source_frequency_ms",
+				Expected: expectedSourceFreq,
+				Got:      msg.SourceFrequencyMs,
+				Message:  fmt.Sprintf("message %d has inconsistent source frequency", i),
+			}
+		}
+
+		if msg.TargetFrequencyMs != expectedTargetFreq {
+			return &GroupValidationError{
+				Field:    "target_frequency_ms",
+				Expected: expectedTargetFreq,
+				Got:      msg.TargetFrequencyMs,
+				Message:  fmt.Sprintf("message %d has inconsistent target frequency", i),
+			}
+		}
+
+		if msg.SlotID != expectedSlotID {
+			return &GroupValidationError{
+				Field:    "slot_id",
+				Expected: expectedSlotID,
+				Got:      msg.SlotID,
+				Message:  fmt.Sprintf("message %d has inconsistent slot ID", i),
+			}
+		}
+
+		if msg.SlotCount != expectedSlotCount {
+			return &GroupValidationError{
+				Field:    "slot_count",
+				Expected: expectedSlotCount,
+				Got:      msg.SlotCount,
+				Message:  fmt.Sprintf("message %d has inconsistent slot count", i),
 			}
 		}
 	}
@@ -144,28 +160,32 @@ func validateGroupConsistency(group *AccumulationGroup[messages.CompactionKey]) 
 	return nil
 }
 
-// Process implements the Processor interface and performs the 12-step compaction flow
-func (c *MetricCompactor) Process(ctx context.Context, group *AccumulationGroup[messages.CompactionKey], kafkaCommitData *KafkaCommitData, recordCountEstimate int64) error {
+// Process implements the Processor interface and performs rollup aggregation
+func (r *MetricRollupProcessor) Process(ctx context.Context, group *AccumulationGroup[messages.RollupKey], kafkaCommitData *KafkaCommitData, recordCountEstimate int64) error {
 	ll := logctx.FromContext(ctx)
 
 	// Calculate group age from Hunter timestamp
 	groupAge := time.Since(group.CreatedAt)
 
-	ll.Info("Starting compaction",
+	ll.Info("Starting rollup processing",
 		slog.String("organizationID", group.Key.OrganizationID.String()),
 		slog.Int("dateint", int(group.Key.DateInt)),
-		slog.Int("frequencyMs", int(group.Key.FrequencyMs)),
+		slog.Int("sourceFrequencyMs", int(group.Key.SourceFrequencyMs)),
+		slog.Int("targetFrequencyMs", int(group.Key.TargetFrequencyMs)),
 		slog.Int("instanceNum", int(group.Key.InstanceNum)),
+		slog.Int("slotID", int(group.Key.SlotID)),
+		slog.Int("slotCount", int(group.Key.SlotCount)),
+		slog.Int64("truncatedTimebox", group.Key.TruncatedTimebox),
 		slog.Int("messageCount", len(group.Messages)),
 		slog.Duration("groupAge", groupAge))
 
 	// Step 0: Validate that all messages in the group have consistent fields
-	if err := validateGroupConsistency(group); err != nil {
+	if err := validateRollupGroupConsistency(group); err != nil {
 		return fmt.Errorf("group validation failed: %w", err)
 	}
 
-	// Create temporary directory for this compaction run
-	tmpDir, err := os.MkdirTemp("", "compaction-*")
+	// Create temporary directory for this rollup run
+	tmpDir, err := os.MkdirTemp("", "rollup-*")
 	if err != nil {
 		return fmt.Errorf("create temporary directory: %w", err)
 	}
@@ -176,31 +196,29 @@ func (c *MetricCompactor) Process(ctx context.Context, group *AccumulationGroup[
 	}()
 
 	// Step 1: Get the storage profile for the given org/instance
-	storageProfile, err := c.storageProvider.GetStorageProfileForOrganizationAndInstance(ctx, group.Key.OrganizationID, group.Key.InstanceNum)
+	storageProfile, err := r.storageProvider.GetStorageProfileForOrganizationAndInstance(ctx, group.Key.OrganizationID, group.Key.InstanceNum)
 	if err != nil {
 		return fmt.Errorf("get storage profile: %w", err)
 	}
 
 	// Step 2: Make a storage client from that profile
-	storageClient, err := cloudstorage.NewClient(ctx, c.cmgr, storageProfile)
+	storageClient, err := cloudstorage.NewClient(ctx, r.cmgr, storageProfile)
 	if err != nil {
 		return fmt.Errorf("create storage client: %w", err)
 	}
 
 	// Step 3: Fetch the segments from the DB by iterating over messages
-	var activeSegments []lrdb.MetricSeg
-	var segmentsToMarkCompacted []lrdb.MetricSeg
-	targetSizeThreshold := config.TargetFileSize * 80 / 100 // 80% of target file size
-
+	var segments []lrdb.MetricSeg
 	for _, accMsg := range group.Messages {
-		msg, ok := accMsg.Message.(*messages.MetricCompactionMessage)
+		msg, ok := accMsg.Message.(*messages.MetricRollupMessage)
 		if !ok {
-			continue // Skip non-MetricCompactionMessage messages
+			continue // Skip non-MetricRollupMessage messages
 		}
-		segment, err := c.store.GetMetricSeg(ctx, lrdb.GetMetricSegParams{
+
+		segment, err := r.store.GetMetricSeg(ctx, lrdb.GetMetricSegParams{
 			OrganizationID: msg.OrganizationID,
 			Dateint:        msg.DateInt,
-			FrequencyMs:    msg.FrequencyMs,
+			FrequencyMs:    msg.SourceFrequencyMs, // Use source frequency for lookup
 			SegmentID:      msg.SegmentID,
 			InstanceNum:    msg.InstanceNum,
 			SlotID:         msg.SlotID,
@@ -211,7 +229,7 @@ func (c *MetricCompactor) Process(ctx context.Context, group *AccumulationGroup[
 				slog.Int64("segmentID", msg.SegmentID),
 				slog.String("organizationID", msg.OrganizationID.String()),
 				slog.Int("dateint", int(msg.DateInt)),
-				slog.Int("frequencyMs", int(msg.FrequencyMs)),
+				slog.Int("sourceFrequencyMs", int(msg.SourceFrequencyMs)),
 				slog.Int("instanceNum", int(msg.InstanceNum)),
 				slog.Int("slotID", int(msg.SlotID)),
 				slog.Int("slotCount", int(msg.SlotCount)),
@@ -219,53 +237,32 @@ func (c *MetricCompactor) Process(ctx context.Context, group *AccumulationGroup[
 			continue
 		}
 
-		// Step 4: Check if segment is already close to target size and mark as compacted
-		if !segment.Compacted && segment.FileSize >= targetSizeThreshold {
-			ll.Info("Segment already close to target size, marking as compacted",
-				slog.Int64("segmentID", segment.SegmentID),
-				slog.Int64("fileSize", segment.FileSize),
-				slog.Int64("targetSizeThreshold", targetSizeThreshold),
-				slog.Float64("percentOfTarget", float64(segment.FileSize)/float64(config.TargetFileSize)*100))
-			segmentsToMarkCompacted = append(segmentsToMarkCompacted, segment)
-			continue
-		}
-
-		// Step 5: Only include segments not marked as compacted and not being marked now
+		// Only include segments not already compacted/rolled up
 		if !segment.Compacted {
-			activeSegments = append(activeSegments, segment)
+			segments = append(segments, segment)
 		}
 	}
 
-	// Mark large segments as compacted if any
-	if len(segmentsToMarkCompacted) > 0 {
-		if err := c.markSegmentsAsCompacted(ctx, segmentsToMarkCompacted, group.Key); err != nil {
-			ll.Warn("Failed to mark segments as compacted", slog.Any("error", err))
-		} else {
-			ll.Info("Marked segments as compacted",
-				slog.Int("segmentCount", len(segmentsToMarkCompacted)))
-		}
-	}
-
-	if len(activeSegments) == 0 {
-		ll.Info("No active segments to compact")
+	if len(segments) == 0 {
+		ll.Info("No segments to roll up")
 		return nil
 	}
 
-	ll.Info("Found segments to compact",
-		slog.Int("activeSegments", len(activeSegments)))
+	ll.Info("Found segments to roll up",
+		slog.Int("segmentCount", len(segments)))
 
-	// Step 5-8: Use metricsprocessing.CreateReaderStack to handle download and reader creation
-	readerStack, err := metricsprocessing.CreateReaderStack(ctx, tmpDir, storageClient, group.Key.OrganizationID, storageProfile, activeSegments)
+	// Step 4-7: Use metricsprocessing.CreateReaderStack to handle download and reader creation
+	readerStack, err := metricsprocessing.CreateReaderStack(ctx, tmpDir, storageClient, group.Key.OrganizationID, storageProfile, segments)
 	if err != nil {
 		return fmt.Errorf("create reader stack: %w", err)
 	}
 	defer metricsprocessing.CloseReaderStack(ctx, readerStack)
 
-	// Step 8: Create aggregation reader from the merge reader with frequency_ms as window
+	// Step 8: Create aggregation reader from the merge reader with TARGET frequency_ms as window
 	var aggReader filereader.Reader
 	if len(readerStack.Readers) == 1 {
 		// Single reader case
-		aggReader, err = filereader.NewAggregatingMetricsReader(readerStack.Readers[0], int64(group.Key.FrequencyMs), 1000)
+		aggReader, err = filereader.NewAggregatingMetricsReader(readerStack.Readers[0], int64(group.Key.TargetFrequencyMs), 1000)
 	} else if len(readerStack.Readers) > 1 {
 		// Multiple readers - need merge sort first
 		mergeReader, mergeErr := filereader.NewMergesortReader(ctx, readerStack.Readers, &filereader.MetricSortKeyProvider{}, 1000)
@@ -273,9 +270,9 @@ func (c *MetricCompactor) Process(ctx context.Context, group *AccumulationGroup[
 			return fmt.Errorf("create merge sort reader: %w", mergeErr)
 		}
 		defer mergeReader.Close()
-		aggReader, err = filereader.NewAggregatingMetricsReader(mergeReader, int64(group.Key.FrequencyMs), 1000)
+		aggReader, err = filereader.NewAggregatingMetricsReader(mergeReader, int64(group.Key.TargetFrequencyMs), 1000)
 	} else {
-		return fmt.Errorf("no readers available for compaction")
+		return fmt.Errorf("no readers available for rollup")
 	}
 	if err != nil {
 		return fmt.Errorf("create aggregating reader: %w", err)
@@ -283,14 +280,14 @@ func (c *MetricCompactor) Process(ctx context.Context, group *AccumulationGroup[
 	defer aggReader.Close()
 
 	// Step 9: Create parquet writer with estimated max records
-	maxRecords := recordCountEstimate * int64(c.targetRecordMultiple)
+	maxRecords := recordCountEstimate * int64(r.targetRecordMultiple)
 	writer, err := factories.NewMetricsWriter(tmpDir, maxRecords)
 	if err != nil {
 		return fmt.Errorf("create parquet writer: %w", err)
 	}
 
 	// Write from aggregation reader to writer
-	if err := c.writeFromReader(ctx, aggReader, writer); err != nil {
+	if err := r.writeFromReader(ctx, aggReader, writer); err != nil {
 		writer.Abort()
 		return fmt.Errorf("write from reader: %w", err)
 	}
@@ -301,14 +298,14 @@ func (c *MetricCompactor) Process(ctx context.Context, group *AccumulationGroup[
 		return fmt.Errorf("close writer: %w", err)
 	}
 
-	// Step 10: Upload new files and create new metric segments
-	newSegments, err := c.uploadAndCreateSegments(ctx, storageClient, storageProfile, results, group.Key, activeSegments)
+	// Step 10: Upload new files and create new metric segments at target frequency
+	newSegments, err := r.uploadAndCreateRollupSegments(ctx, storageClient, storageProfile, results, group.Key, segments)
 	if err != nil {
-		return fmt.Errorf("upload and create segments: %w", err)
+		return fmt.Errorf("upload and create rollup segments: %w", err)
 	}
 
-	// Step 12: Atomic operation - mark old as compacted, insert new, update Kafka offsets
-	if err := c.atomicDatabaseUpdate(ctx, activeSegments, newSegments, kafkaCommitData, group.Key); err != nil {
+	// Step 11: Atomic operation - mark old as compacted, insert new at target frequency, update Kafka offsets
+	if err := r.atomicDatabaseUpdate(ctx, segments, newSegments, kafkaCommitData, group.Key); err != nil {
 		return fmt.Errorf("atomic database update: %w", err)
 	}
 
@@ -318,8 +315,8 @@ func (c *MetricCompactor) Process(ctx context.Context, group *AccumulationGroup[
 		totalSize += result.FileSize
 	}
 
-	ll.Info("Compaction completed successfully",
-		slog.Int("inputSegments", len(activeSegments)),
+	ll.Info("Rollup completed successfully",
+		slog.Int("inputSegments", len(segments)),
 		slog.Int("outputFiles", len(results)),
 		slog.Int64("outputRecords", totalRecords),
 		slog.Int64("outputFileSize", totalSize))
@@ -328,7 +325,7 @@ func (c *MetricCompactor) Process(ctx context.Context, group *AccumulationGroup[
 }
 
 // writeFromReader writes data from reader to writer
-func (c *MetricCompactor) writeFromReader(ctx context.Context, reader filereader.Reader, writer *parquetwriter.UnifiedWriter) error {
+func (r *MetricRollupProcessor) writeFromReader(ctx context.Context, reader filereader.Reader, writer *parquetwriter.UnifiedWriter) error {
 	for {
 		batch, err := reader.Next(ctx)
 		if err != nil {
@@ -346,8 +343,8 @@ func (c *MetricCompactor) writeFromReader(ctx context.Context, reader filereader
 	return nil
 }
 
-// uploadAndCreateSegments uploads the files and creates new segment records
-func (c *MetricCompactor) uploadAndCreateSegments(ctx context.Context, client cloudstorage.Client, profile storageprofile.StorageProfile, results []parquetwriter.Result, key messages.CompactionKey, inputSegments []lrdb.MetricSeg) ([]lrdb.MetricSeg, error) {
+// uploadAndCreateRollupSegments uploads the rollup files and creates new segment records at target frequency
+func (r *MetricRollupProcessor) uploadAndCreateRollupSegments(ctx context.Context, client cloudstorage.Client, profile storageprofile.StorageProfile, results []parquetwriter.Result, key messages.RollupKey, inputSegments []lrdb.MetricSeg) ([]lrdb.MetricSeg, error) {
 	ll := logctx.FromContext(ctx)
 
 	// Calculate input metrics
@@ -362,7 +359,7 @@ func (c *MetricCompactor) uploadAndCreateSegments(ctx context.Context, client cl
 
 	for _, result := range results {
 		// Generate new segment ID
-		segmentID := c.generateSegmentID()
+		segmentID := r.generateSegmentID()
 
 		// Get metadata from result
 		stats, ok := result.Metadata.(factories.MetricsFileStats)
@@ -371,7 +368,7 @@ func (c *MetricCompactor) uploadAndCreateSegments(ctx context.Context, client cl
 		}
 
 		// Upload the file
-		objectPath := helpers.MakeDBObjectID(key.OrganizationID, profile.CollectorName, key.DateInt, c.getHourFromTimestamp(stats.FirstTS), segmentID, "metrics")
+		objectPath := helpers.MakeDBObjectID(key.OrganizationID, profile.CollectorName, key.DateInt, r.getHourFromTimestamp(stats.FirstTS), segmentID, "metrics")
 		if err := client.UploadObject(ctx, profile.Bucket, objectPath, result.FileName); err != nil {
 			return nil, fmt.Errorf("upload file %s: %w", result.FileName, err)
 		}
@@ -379,15 +376,16 @@ func (c *MetricCompactor) uploadAndCreateSegments(ctx context.Context, client cl
 		// Clean up local file
 		os.Remove(result.FileName)
 
-		// Create new segment record
+		// Create new segment record at TARGET frequency
 		segment := lrdb.MetricSeg{
 			OrganizationID: key.OrganizationID,
 			Dateint:        key.DateInt,
-			IngestDateint:  key.DateInt, // Use same as dateint for compacted segments
-			FrequencyMs:    key.FrequencyMs,
+			IngestDateint:  key.DateInt,           // Use same as dateint for rolled up segments
+			FrequencyMs:    key.TargetFrequencyMs, // Store at target frequency
 			SegmentID:      segmentID,
 			InstanceNum:    key.InstanceNum,
-			SlotID:         0, // Compacted segments don't need slot partitioning
+			SlotID:         key.SlotID,    // Preserve slot information
+			SlotCount:      key.SlotCount, // Preserve slot information
 			TsRange: pgtype.Range[pgtype.Int8]{
 				LowerType: pgtype.Inclusive,
 				UpperType: pgtype.Exclusive,
@@ -398,11 +396,10 @@ func (c *MetricCompactor) uploadAndCreateSegments(ctx context.Context, client cl
 			RecordCount:  result.RecordCount,
 			FileSize:     result.FileSize,
 			Published:    true,
-			Compacted:    true,
+			Compacted:    false,
 			Fingerprints: stats.Fingerprints,
 			SortVersion:  lrdb.CurrentMetricSortVersion,
-			SlotCount:    1,
-			CreatedBy:    lrdb.CreatedByCompact,
+			CreatedBy:    lrdb.CreateByRollup,
 		}
 
 		segments = append(segments, segment)
@@ -411,7 +408,7 @@ func (c *MetricCompactor) uploadAndCreateSegments(ctx context.Context, client cl
 	}
 
 	// Log upload summary
-	ll.Info("Segment upload completed",
+	ll.Info("Rollup segment upload completed",
 		slog.Int("inputFiles", len(inputSegments)),
 		slog.Int64("totalInputSize", totalInputSize),
 		slog.Int("outputSegments", len(segments)),
@@ -421,8 +418,8 @@ func (c *MetricCompactor) uploadAndCreateSegments(ctx context.Context, client cl
 	return segments, nil
 }
 
-// atomicDatabaseUpdate performs the atomic transaction for step 12
-func (c *MetricCompactor) atomicDatabaseUpdate(ctx context.Context, oldSegments, newSegments []lrdb.MetricSeg, kafkaCommitData *KafkaCommitData, key messages.CompactionKey) error {
+// atomicDatabaseUpdate performs the atomic transaction for rollup completion
+func (r *MetricRollupProcessor) atomicDatabaseUpdate(ctx context.Context, oldSegments, newSegments []lrdb.MetricSeg, kafkaCommitData *KafkaCommitData, key messages.RollupKey) error {
 	ll := logctx.FromContext(ctx)
 
 	// Prepare Kafka offsets for update
@@ -439,7 +436,7 @@ func (c *MetricCompactor) atomicDatabaseUpdate(ctx context.Context, oldSegments,
 			})
 
 			// Log each Kafka offset update
-			ll.Info("Updating Kafka consumer group offset",
+			ll.Info("Updating Kafka consumer group offset for rollup",
 				slog.String("consumerGroup", kafkaCommitData.ConsumerGroup),
 				slog.String("topic", kafkaCommitData.Topic),
 				slog.Int("partition", int(partition)),
@@ -479,56 +476,36 @@ func (c *MetricCompactor) atomicDatabaseUpdate(ctx context.Context, oldSegments,
 		}
 	}
 
-	// Perform atomic operation
+	// Perform atomic operation - note this uses the old segments' frequency for the operation
+	// but the new segments are created at the target frequency
 	params := lrdb.CompactMetricSegsParams{
 		OrganizationID: key.OrganizationID,
 		Dateint:        key.DateInt,
-		FrequencyMs:    key.FrequencyMs,
+		FrequencyMs:    key.SourceFrequencyMs,
 		InstanceNum:    key.InstanceNum,
-		SlotID:         0, // Compacted segments don't need slot partitioning
-		SlotCount:      1,
+		SlotID:         key.SlotID,
+		SlotCount:      key.SlotCount,
 		IngestDateint:  key.DateInt,
 		OldRecords:     oldRecords,
 		NewRecords:     newRecords,
-		CreatedBy:      lrdb.CreatedByCompact,
+		CreatedBy:      lrdb.CreateByRollup,
 	}
 
-	return c.store.CompactMetricSegsWithKafkaOffsetsWithOrg(ctx, params, kafkaOffsets)
+	return r.store.CompactMetricSegsWithKafkaOffsetsWithOrg(ctx, params, kafkaOffsets)
 }
 
 // Helper functions
 
-func (c *MetricCompactor) getHourFromTimestamp(timestampMs int64) int16 {
+func (r *MetricRollupProcessor) getHourFromTimestamp(timestampMs int64) int16 {
 	return int16((timestampMs / (1000 * 60 * 60)) % 24)
 }
 
-func (c *MetricCompactor) generateSegmentID() int64 {
+func (r *MetricRollupProcessor) generateSegmentID() int64 {
 	return idgen.GenerateID()
 }
 
-// markSegmentsAsCompacted marks the given segments as compacted in the database
-func (c *MetricCompactor) markSegmentsAsCompacted(ctx context.Context, segments []lrdb.MetricSeg, key messages.CompactionKey) error {
-	if len(segments) == 0 {
-		return nil
-	}
-
-	// Extract segment IDs
-	segmentIDs := make([]int64, len(segments))
-	for i, seg := range segments {
-		segmentIDs[i] = seg.SegmentID
-	}
-
-	// Mark segments as compacted
-	return c.store.MarkMetricSegsCompactedByKeys(ctx, lrdb.MarkMetricSegsCompactedByKeysParams{
-		OrganizationID: key.OrganizationID,
-		Dateint:        key.DateInt,
-		FrequencyMs:    key.FrequencyMs,
-		InstanceNum:    key.InstanceNum,
-		SegmentIds:     segmentIDs,
-	})
-}
-
-// GetTargetRecordCount returns the target record count for a grouping key
-func (c *MetricCompactor) GetTargetRecordCount(ctx context.Context, groupingKey messages.CompactionKey) int64 {
-	return c.store.GetMetricEstimate(ctx, groupingKey.OrganizationID, groupingKey.FrequencyMs)
+// GetTargetRecordCount returns the target record count for a rollup grouping key
+func (r *MetricRollupProcessor) GetTargetRecordCount(ctx context.Context, groupingKey messages.RollupKey) int64 {
+	// Use target frequency for the estimate since that's what we're creating
+	return r.store.GetMetricEstimate(ctx, groupingKey.OrganizationID, groupingKey.TargetFrequencyMs)
 }

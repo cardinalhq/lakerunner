@@ -28,7 +28,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
-	"github.com/cardinalhq/lakerunner/internal/metricsprocessing/rollup"
+	"github.com/cardinalhq/lakerunner/internal/metricsprocessing/accumulation"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
@@ -97,7 +97,7 @@ func init() {
 			kafkaFactory := fly.NewFactory(&cfg.Fly)
 
 			// Create Kafka-based rollup consumer
-			consumer, err := rollup.NewKafkaAccumulatedRollupConsumer(ctx, kafkaFactory, cfg, mdb, sp, cmgr)
+			consumer, err := accumulation.NewMetricRollupConsumer(ctx, kafkaFactory, mdb, sp, cmgr)
 			if err != nil {
 				return fmt.Errorf("failed to create rollup consumer: %w", err)
 			}

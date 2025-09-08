@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -183,7 +184,8 @@ func (segments ProcessedSegments) SegmentIDs() []int64 {
 // QueueRollupWork queues rollup work for all segments
 func (segments ProcessedSegments) QueueRollupWork(ctx context.Context, kafkaProducer fly.Producer, orgID uuid.UUID, instanceNum int16, frequency int32, slotID int32, slotCount int32) error {
 	for _, segment := range segments {
-		if err := QueueMetricRollup(ctx, kafkaProducer, orgID, segment.GetDateint(), frequency, instanceNum, slotID, slotCount, segment.SegmentID, segment.Result.RecordCount, segment.Result.FileSize); err != nil {
+		segmentStartTime := time.Unix(segment.StartTs/1000, (segment.StartTs%1000)*1000000)
+		if err := QueueMetricRollup(ctx, kafkaProducer, orgID, segment.GetDateint(), frequency, instanceNum, slotID, slotCount, segment.SegmentID, segment.Result.RecordCount, segment.Result.FileSize, segmentStartTime); err != nil {
 			return fmt.Errorf("queueing rollup work for segment %d: %w", segment.SegmentID, err)
 		}
 	}
