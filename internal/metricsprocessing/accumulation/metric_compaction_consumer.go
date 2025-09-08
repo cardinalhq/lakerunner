@@ -82,7 +82,7 @@ func NewMetricCompactionConsumer(
 	}
 
 	// Create Gatherer using the consumer itself as offset callbacks
-	mcc.gatherer = NewGatherer[*messages.MetricCompactionMessage, messages.CompactionKey](topic, consumerGroup, compactor, mcc)
+	mcc.gatherer = NewGatherer[*messages.MetricCompactionMessage](topic, consumerGroup, compactor, mcc)
 
 	ll.Info("Created new Kafka accumulation consumer",
 		slog.String("consumerName", consumerName),

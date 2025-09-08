@@ -37,7 +37,7 @@ type writerKey struct {
 
 // metricWriterManager manages parquet writers for metrics
 type metricWriterManager struct {
-	writers       map[writerKey]*parquetwriter.UnifiedWriter
+	writers       map[writerKey]parquetwriter.ParquetWriter
 	tmpdir        string
 	orgID         string
 	instanceNum   int16
@@ -47,7 +47,7 @@ type metricWriterManager struct {
 
 func newMetricWriterManager(ctx context.Context, tmpdir, orgID string, instanceNum int16, ingestDateint int32, rpfEstimate int64) *metricWriterManager {
 	return &metricWriterManager{
-		writers:       make(map[writerKey]*parquetwriter.UnifiedWriter),
+		writers:       make(map[writerKey]parquetwriter.ParquetWriter),
 		tmpdir:        tmpdir,
 		orgID:         orgID,
 		instanceNum:   instanceNum,
@@ -141,7 +141,7 @@ func (wm *metricWriterManager) timestampToMinuteBoundary(ts int64) (int32, int) 
 }
 
 // getWriter returns the writer for a specific writer key, creating it if necessary
-func (wm *metricWriterManager) getWriter(key writerKey) (*parquetwriter.UnifiedWriter, error) {
+func (wm *metricWriterManager) getWriter(key writerKey) (parquetwriter.ParquetWriter, error) {
 	if writer, exists := wm.writers[key]; exists {
 		return writer, nil
 	}

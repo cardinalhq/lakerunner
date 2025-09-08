@@ -43,8 +43,8 @@ import (
 // GroupValidationError represents an error when messages in a group have inconsistent fields
 type GroupValidationError struct {
 	Field    string
-	Expected interface{}
-	Got      interface{}
+	Expected any
+	Got      any
 	Message  string
 }
 
@@ -61,8 +61,8 @@ type CompactionStore interface {
 	GetMetricEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32) int64
 }
 
-// MetricCompactor implements the Processor interface for metric segment compaction
-type MetricCompactor struct {
+// MetricCompactorProcessor implements the Processor interface for metric segment compaction
+type MetricCompactorProcessor struct {
 	store                CompactionStore
 	storageProvider      storageprofile.StorageProfileProvider
 	cmgr                 cloudstorage.ClientProvider
@@ -70,8 +70,8 @@ type MetricCompactor struct {
 }
 
 // NewMetricCompactor creates a new metric compactor instance
-func NewMetricCompactor(store CompactionStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider) *MetricCompactor {
-	return &MetricCompactor{
+func NewMetricCompactor(store CompactionStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider) *MetricCompactorProcessor {
+	return &MetricCompactorProcessor{
 		store:                store,
 		storageProvider:      storageProvider,
 		cmgr:                 cmgr,
@@ -145,7 +145,7 @@ func validateGroupConsistency(group *AccumulationGroup[messages.CompactionKey]) 
 }
 
 // Process implements the Processor interface and performs the 12-step compaction flow
-func (c *MetricCompactor) Process(ctx context.Context, group *AccumulationGroup[messages.CompactionKey], kafkaCommitData *KafkaCommitData, recordCountEstimate int64) error {
+func (c *MetricCompactorProcessor) Process(ctx context.Context, group *AccumulationGroup[messages.CompactionKey], kafkaCommitData *KafkaCommitData, recordCountEstimate int64) error {
 	ll := logctx.FromContext(ctx)
 
 	// Calculate group age from Hunter timestamp
@@ -165,7 +165,7 @@ func (c *MetricCompactor) Process(ctx context.Context, group *AccumulationGroup[
 	}
 
 	// Create temporary directory for this compaction run
-	tmpDir, err := os.MkdirTemp("", "compaction-*")
+	tmpDir, err := os.MkdirTemp("", "")
 	if err != nil {
 		return fmt.Errorf("create temporary directory: %w", err)
 	}
@@ -195,7 +195,8 @@ func (c *MetricCompactor) Process(ctx context.Context, group *AccumulationGroup[
 	for _, accMsg := range group.Messages {
 		msg, ok := accMsg.Message.(*messages.MetricCompactionMessage)
 		if !ok {
-			continue // Skip non-MetricCompactionMessage messages
+			ll.Debug("Skipping non-MetricCompactionMessage message in compaction group")
+			continue
 		}
 		segment, err := c.store.GetMetricSeg(ctx, lrdb.GetMetricSegParams{
 			OrganizationID: msg.OrganizationID,
@@ -230,10 +231,12 @@ func (c *MetricCompactor) Process(ctx context.Context, group *AccumulationGroup[
 			continue
 		}
 
-		// Step 5: Only include segments not marked as compacted and not being marked now
-		if !segment.Compacted {
-			activeSegments = append(activeSegments, segment)
+		if segment.Compacted {
+			ll.Info("Segment already marked as compacted, skipping", slog.Int64("segmentID", segment.SegmentID))
+			continue
 		}
+
+		activeSegments = append(activeSegments, segment)
 	}
 
 	// Mark large segments as compacted if any
@@ -328,7 +331,7 @@ func (c *MetricCompactor) Process(ctx context.Context, group *AccumulationGroup[
 }
 
 // writeFromReader writes data from reader to writer
-func (c *MetricCompactor) writeFromReader(ctx context.Context, reader filereader.Reader, writer *parquetwriter.UnifiedWriter) error {
+func (c *MetricCompactorProcessor) writeFromReader(ctx context.Context, reader filereader.Reader, writer parquetwriter.ParquetWriter) error {
 	for {
 		batch, err := reader.Next(ctx)
 		if err != nil {
@@ -347,7 +350,7 @@ func (c *MetricCompactor) writeFromReader(ctx context.Context, reader filereader
 }
 
 // uploadAndCreateSegments uploads the files and creates new segment records
-func (c *MetricCompactor) uploadAndCreateSegments(ctx context.Context, client cloudstorage.Client, profile storageprofile.StorageProfile, results []parquetwriter.Result, key messages.CompactionKey, inputSegments []lrdb.MetricSeg) ([]lrdb.MetricSeg, error) {
+func (c *MetricCompactorProcessor) uploadAndCreateSegments(ctx context.Context, client cloudstorage.Client, profile storageprofile.StorageProfile, results []parquetwriter.Result, key messages.CompactionKey, inputSegments []lrdb.MetricSeg) ([]lrdb.MetricSeg, error) {
 	ll := logctx.FromContext(ctx)
 
 	// Calculate input metrics
@@ -361,8 +364,7 @@ func (c *MetricCompactor) uploadAndCreateSegments(ctx context.Context, client cl
 	var segmentIDs []int64
 
 	for _, result := range results {
-		// Generate new segment ID
-		segmentID := c.generateSegmentID()
+		segmentID := idgen.GenerateID()
 
 		// Get metadata from result
 		stats, ok := result.Metadata.(factories.MetricsFileStats)
@@ -379,20 +381,23 @@ func (c *MetricCompactor) uploadAndCreateSegments(ctx context.Context, client cl
 		// Clean up local file
 		os.Remove(result.FileName)
 
+		nowDateInt := int32(time.Now().UTC().Year()*10000 + int(time.Now().UTC().Month())*100 + time.Now().UTC().Day())
+
 		// Create new segment record
 		segment := lrdb.MetricSeg{
 			OrganizationID: key.OrganizationID,
 			Dateint:        key.DateInt,
-			IngestDateint:  key.DateInt, // Use same as dateint for compacted segments
+			IngestDateint:  nowDateInt,
 			FrequencyMs:    key.FrequencyMs,
 			SegmentID:      segmentID,
 			InstanceNum:    key.InstanceNum,
 			SlotID:         0, // Compacted segments don't need slot partitioning
+			SlotCount:      1,
 			TsRange: pgtype.Range[pgtype.Int8]{
 				LowerType: pgtype.Inclusive,
 				UpperType: pgtype.Exclusive,
 				Lower:     pgtype.Int8{Int64: stats.FirstTS, Valid: true},
-				Upper:     pgtype.Int8{Int64: stats.LastTS + 1, Valid: true},
+				Upper:     pgtype.Int8{Int64: stats.LastTS, Valid: true},
 				Valid:     true,
 			},
 			RecordCount:  result.RecordCount,
@@ -401,7 +406,6 @@ func (c *MetricCompactor) uploadAndCreateSegments(ctx context.Context, client cl
 			Compacted:    true,
 			Fingerprints: stats.Fingerprints,
 			SortVersion:  lrdb.CurrentMetricSortVersion,
-			SlotCount:    1,
 			CreatedBy:    lrdb.CreatedByCompact,
 		}
 
@@ -422,7 +426,7 @@ func (c *MetricCompactor) uploadAndCreateSegments(ctx context.Context, client cl
 }
 
 // atomicDatabaseUpdate performs the atomic transaction for step 12
-func (c *MetricCompactor) atomicDatabaseUpdate(ctx context.Context, oldSegments, newSegments []lrdb.MetricSeg, kafkaCommitData *KafkaCommitData, key messages.CompactionKey) error {
+func (c *MetricCompactorProcessor) atomicDatabaseUpdate(ctx context.Context, oldSegments, newSegments []lrdb.MetricSeg, kafkaCommitData *KafkaCommitData, key messages.CompactionKey) error {
 	ll := logctx.FromContext(ctx)
 
 	// Prepare Kafka offsets for update
@@ -447,15 +451,7 @@ func (c *MetricCompactor) atomicDatabaseUpdate(ctx context.Context, oldSegments,
 		}
 
 		// Sort to avoid deadlocks
-		sort.Slice(kafkaOffsets, func(i, j int) bool {
-			if kafkaOffsets[i].Topic != kafkaOffsets[j].Topic {
-				return kafkaOffsets[i].Topic < kafkaOffsets[j].Topic
-			}
-			if kafkaOffsets[i].Partition != kafkaOffsets[j].Partition {
-				return kafkaOffsets[i].Partition < kafkaOffsets[j].Partition
-			}
-			return kafkaOffsets[i].ConsumerGroup < kafkaOffsets[j].ConsumerGroup
-		})
+		sortKafkaOffsets(kafkaOffsets)
 	}
 
 	// Convert segments to appropriate types
@@ -479,6 +475,10 @@ func (c *MetricCompactor) atomicDatabaseUpdate(ctx context.Context, oldSegments,
 		}
 	}
 
+	if len(newRecords) == 0 {
+		return fmt.Errorf("no new segments to insert")
+	}
+
 	// Perform atomic operation
 	params := lrdb.CompactMetricSegsParams{
 		OrganizationID: key.OrganizationID,
@@ -498,16 +498,26 @@ func (c *MetricCompactor) atomicDatabaseUpdate(ctx context.Context, oldSegments,
 
 // Helper functions
 
-func (c *MetricCompactor) getHourFromTimestamp(timestampMs int64) int16 {
+// sortKafkaOffsets sorts Kafka offsets to avoid deadlocks in database operations.
+// The sort order is: topic, then partition, then consumer group.
+func sortKafkaOffsets(offsets []lrdb.KafkaOffsetUpdateWithOrg) {
+	sort.Slice(offsets, func(i, j int) bool {
+		if offsets[i].Topic != offsets[j].Topic {
+			return offsets[i].Topic < offsets[j].Topic
+		}
+		if offsets[i].Partition != offsets[j].Partition {
+			return offsets[i].Partition < offsets[j].Partition
+		}
+		return offsets[i].ConsumerGroup < offsets[j].ConsumerGroup
+	})
+}
+
+func (c *MetricCompactorProcessor) getHourFromTimestamp(timestampMs int64) int16 {
 	return int16((timestampMs / (1000 * 60 * 60)) % 24)
 }
 
-func (c *MetricCompactor) generateSegmentID() int64 {
-	return idgen.GenerateID()
-}
-
 // markSegmentsAsCompacted marks the given segments as compacted in the database
-func (c *MetricCompactor) markSegmentsAsCompacted(ctx context.Context, segments []lrdb.MetricSeg, key messages.CompactionKey) error {
+func (c *MetricCompactorProcessor) markSegmentsAsCompacted(ctx context.Context, segments []lrdb.MetricSeg, key messages.CompactionKey) error {
 	if len(segments) == 0 {
 		return nil
 	}
@@ -529,6 +539,6 @@ func (c *MetricCompactor) markSegmentsAsCompacted(ctx context.Context, segments 
 }
 
 // GetTargetRecordCount returns the target record count for a grouping key
-func (c *MetricCompactor) GetTargetRecordCount(ctx context.Context, groupingKey messages.CompactionKey) int64 {
+func (c *MetricCompactorProcessor) GetTargetRecordCount(ctx context.Context, groupingKey messages.CompactionKey) int64 {
 	return c.store.GetMetricEstimate(ctx, groupingKey.OrganizationID, groupingKey.FrequencyMs)
 }

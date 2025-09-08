@@ -53,8 +53,14 @@ func NewMetricIngestConsumer(
 ) (*MetricIngestConsumer, error) {
 	ll := logctx.FromContext(ctx)
 
+	// Create Kafka producer for segment notifications
+	kafkaProducer, err := factory.CreateProducer()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Kafka producer: %w", err)
+	}
+
 	// Create MetricIngestProcessor
-	processor := NewMetricIngestProcessor(store, storageProvider, cmgr)
+	processor := NewMetricIngestProcessor(store, storageProvider, cmgr, kafkaProducer)
 
 	// Create Gatherer - using hardcoded consumer group and topic
 	consumerGroup := "lakerunner.ingest.metrics"

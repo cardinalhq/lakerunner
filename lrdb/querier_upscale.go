@@ -20,7 +20,6 @@ import (
 )
 
 type LogSegmentUpserter interface {
-	//InsertLogFingerprints(ctx context.Context, params InsertLogFingerprintsParams) error
 	InsertLogSegment(ctx context.Context, params InsertLogSegmentParams) error
 }
 

@@ -325,7 +325,7 @@ func (r *MetricRollupProcessor) Process(ctx context.Context, group *Accumulation
 }
 
 // writeFromReader writes data from reader to writer
-func (r *MetricRollupProcessor) writeFromReader(ctx context.Context, reader filereader.Reader, writer *parquetwriter.UnifiedWriter) error {
+func (r *MetricRollupProcessor) writeFromReader(ctx context.Context, reader filereader.Reader, writer parquetwriter.ParquetWriter) error {
 	for {
 		batch, err := reader.Next(ctx)
 		if err != nil {

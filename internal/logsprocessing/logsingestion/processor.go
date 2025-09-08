@@ -49,7 +49,7 @@ type hourSlotKey struct {
 
 // writerManager manages multiple parquet writers, one per hour/slot combination
 type writerManager struct {
-	writers       map[hourSlotKey]*parquetwriter.UnifiedWriter
+	writers       map[hourSlotKey]parquetwriter.ParquetWriter
 	tmpdir        string
 	orgID         string
 	ingestDateint int32
@@ -58,7 +58,7 @@ type writerManager struct {
 
 func newWriterManager(tmpdir, orgID string, ingestDateint int32, rpfEstimate int64) *writerManager {
 	return &writerManager{
-		writers:       make(map[hourSlotKey]*parquetwriter.UnifiedWriter),
+		writers:       make(map[hourSlotKey]parquetwriter.ParquetWriter),
 		tmpdir:        tmpdir,
 		orgID:         orgID,
 		ingestDateint: ingestDateint,
@@ -133,7 +133,7 @@ func (wm *writerManager) processBatch(ctx context.Context, batch *pipeline.Batch
 }
 
 // getWriter returns the writer for a specific hour/slot, creating it if necessary
-func (wm *writerManager) getWriter(ctx context.Context, key hourSlotKey) (*parquetwriter.UnifiedWriter, error) {
+func (wm *writerManager) getWriter(ctx context.Context, key hourSlotKey) (parquetwriter.ParquetWriter, error) {
 	ll := logctx.FromContext(ctx)
 	if writer, exists := wm.writers[key]; exists {
 		return writer, nil
