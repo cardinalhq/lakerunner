@@ -55,7 +55,7 @@ func NewMetricCompactionConsumer(
 	ll := logctx.FromContext(ctx)
 
 	// Create MetricCompactor
-	compactor := NewMetricCompactor(store, storageProvider, cmgr)
+	compactor := NewMetricCompactor(store, storageProvider, cmgr, cfg)
 
 	// Create Gatherer - using hardcoded consumer group and topic
 	consumerGroup := "lakerunner.compact.metrics"

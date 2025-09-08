@@ -25,6 +25,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/lib/pq"
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
@@ -59,6 +60,8 @@ type CompactionStore interface {
 	KafkaJournalGetLastProcessedWithOrgInstance(ctx context.Context, params lrdb.KafkaJournalGetLastProcessedWithOrgInstanceParams) (int64, error)
 	MarkMetricSegsCompactedByKeys(ctx context.Context, params lrdb.MarkMetricSegsCompactedByKeysParams) error
 	GetMetricEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32) int64
+	// Add seg_log functionality
+	InsertSegLog(ctx context.Context, params lrdb.InsertSegLogParams) error
 }
 
 // MetricCompactorProcessor implements the Processor interface for metric segment compaction
@@ -67,15 +70,17 @@ type MetricCompactorProcessor struct {
 	storageProvider      storageprofile.StorageProfileProvider
 	cmgr                 cloudstorage.ClientProvider
 	targetRecordMultiple int // multiply estimate by this for safety net (e.g., 2)
+	cfg                  *config.Config
 }
 
 // NewMetricCompactor creates a new metric compactor instance
-func NewMetricCompactor(store CompactionStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider) *MetricCompactorProcessor {
+func NewMetricCompactor(store CompactionStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, cfg *config.Config) *MetricCompactorProcessor {
 	return &MetricCompactorProcessor{
 		store:                store,
 		storageProvider:      storageProvider,
 		cmgr:                 cmgr,
 		targetRecordMultiple: 2,
+		cfg:                  cfg,
 	}
 }
 
@@ -315,6 +320,14 @@ func (c *MetricCompactorProcessor) Process(ctx context.Context, group *Accumulat
 		totalSize += result.FileSize
 	}
 
+	// Log the compaction operation to seg_log for debugging (if enabled)
+	if c.cfg.SegLog.Enabled {
+		if err := c.logCompactionOperation(ctx, storageProfile, activeSegments, newSegments, results, group.Key); err != nil {
+			// Don't fail the compaction if seg_log fails - this is just for debugging
+			ll.Warn("Failed to log compaction operation to seg_log", slog.Any("error", err))
+		}
+	}
+
 	ll.Info("Compaction completed successfully",
 		slog.Int("inputSegments", len(activeSegments)),
 		slog.Int("outputFiles", len(results)),
@@ -535,4 +548,53 @@ func (c *MetricCompactorProcessor) markSegmentsAsCompacted(ctx context.Context, 
 // GetTargetRecordCount returns the target record count for a grouping key
 func (c *MetricCompactorProcessor) GetTargetRecordCount(ctx context.Context, groupingKey messages.CompactionKey) int64 {
 	return c.store.GetMetricEstimate(ctx, groupingKey.OrganizationID, groupingKey.FrequencyMs)
+}
+
+// logCompactionOperation logs the compaction operation to seg_log for debugging purposes
+func (c *MetricCompactorProcessor) logCompactionOperation(ctx context.Context, storageProfile storageprofile.StorageProfile, inputSegments, outputSegments []lrdb.MetricSeg, results []parquetwriter.Result, key messages.CompactionKey) error {
+	// Extract source object keys from input segments
+	sourceObjectKeys := make([]string, len(inputSegments))
+	var sourceTotalRecords, sourceTotalSize int64
+	for i, seg := range inputSegments {
+		sourceObjectKeys[i] = helpers.MakeDBObjectID(key.OrganizationID, storageProfile.CollectorName, key.DateInt, c.getHourFromTimestamp(seg.TsRange.Lower.Int64), seg.SegmentID, "metrics")
+		sourceTotalRecords += seg.RecordCount
+		sourceTotalSize += seg.FileSize
+	}
+
+	// Extract destination object keys from results/output segments
+	destObjectKeys := make([]string, len(results))
+	var destTotalRecords, destTotalSize int64
+	for i, result := range results {
+		stats, ok := result.Metadata.(factories.MetricsFileStats)
+		if !ok {
+			return fmt.Errorf("unexpected metadata type: %T", result.Metadata)
+		}
+		// Use the segment ID from the corresponding output segment
+		if i < len(outputSegments) {
+			destObjectKeys[i] = helpers.MakeDBObjectID(key.OrganizationID, storageProfile.CollectorName, key.DateInt, c.getHourFromTimestamp(stats.FirstTS), outputSegments[i].SegmentID, "metrics")
+		}
+		destTotalRecords += result.RecordCount
+		destTotalSize += result.FileSize
+	}
+
+	// Create seg_log entry
+	logParams := lrdb.InsertSegLogParams{
+		Signal:             2, // 2 = metrics (based on enum pattern)
+		Action:             2, // 2 = compact (based on enum pattern)
+		OrganizationID:     key.OrganizationID,
+		InstanceNum:        key.InstanceNum,
+		Dateint:            key.DateInt,
+		FrequencyMs:        key.FrequencyMs,
+		SourceCount:        int32(len(inputSegments)),
+		SourceObjectKeys:   pq.StringArray(sourceObjectKeys),
+		SourceTotalRecords: sourceTotalRecords,
+		SourceTotalSize:    sourceTotalSize,
+		DestCount:          int32(len(results)),
+		DestObjectKeys:     pq.StringArray(destObjectKeys),
+		DestTotalRecords:   destTotalRecords,
+		DestTotalSize:      destTotalSize,
+		Metadata:           make(map[string]any), // Empty metadata for now
+	}
+
+	return c.store.InsertSegLog(ctx, logParams)
 }

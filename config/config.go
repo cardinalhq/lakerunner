@@ -37,6 +37,7 @@ type Config struct {
 	Logs    LogsConfig    `mapstructure:"logs"`
 	Traces  TracesConfig  `mapstructure:"traces"`
 	Admin   AdminConfig   `mapstructure:"admin"`
+	SegLog  SegLogConfig  `mapstructure:"seglog"`
 }
 
 type MetricsConfig struct {
@@ -68,6 +69,10 @@ type TracesConfig struct {
 
 type AdminConfig struct {
 	InitialAPIKey string `mapstructure:"initial_api_key"`
+}
+
+type SegLogConfig struct {
+	Enabled bool `mapstructure:"enabled"` // Enable segment log tracing for debugging operations
 }
 
 type CompactionConfig struct {
@@ -112,6 +117,9 @@ func Load() (*Config, error) {
 		Traces: TracesConfig{},
 		Admin: AdminConfig{
 			InitialAPIKey: "",
+		},
+		SegLog: SegLogConfig{
+			Enabled: false, // Disabled by default for production
 		},
 	}
 

@@ -3,7 +3,6 @@ CREATE TABLE IF NOT EXISTS seg_log (
     id              BIGSERIAL       PRIMARY KEY,
 
     -- Required fields
-    created_by      SMALLINT        NOT NULL CHECK (created_by > 0),
     signal          SMALLINT        NOT NULL CHECK (signal > 0),
     action          SMALLINT        NOT NULL CHECK (action > 0),
     created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
@@ -25,7 +24,7 @@ CREATE TABLE IF NOT EXISTS seg_log (
     dest_total_size         BIGINT NOT NULL CHECK (dest_total_size >= 0),
 
     -- Additional debugging context
-    metadata        JSONB NOT NULL DEFAULT '{}'::JSONB,
+    metadata        JSONB NOT NULL DEFAULT '{}'::JSONB
 );
 
 -- Create indexes for common query patterns
@@ -41,7 +40,6 @@ ON seg_log (organization_id, instance_num, signal, action, created_at DESC);
 COMMENT ON TABLE seg_log IS 'Debugging log for segment operations across all signals (logs, metrics, traces) and actions (ingest, compaction, rollups). Not typically enabled in production.';
 
 -- Add column comments for key fields
-COMMENT ON COLUMN seg_log.created_by IS 'Process that created this log entry (1=ingest, 2=compact, 3=rollup)';
 COMMENT ON COLUMN seg_log.signal IS 'Signal type being processed (1=logs, 2=metrics, 3=traces)';
 COMMENT ON COLUMN seg_log.action IS 'Action being performed (1=ingest, 2=compact, 3=rollup)';
 COMMENT ON COLUMN seg_log.organization_id IS 'Organization ID for determining storage bucket/profile';

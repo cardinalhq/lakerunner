@@ -29,6 +29,8 @@ type Querier interface {
 	CompactTraceSegments(ctx context.Context, arg CompactTraceSegmentsParams) error
 	// Clean up old offset entries (older than specified timestamp)
 	DeleteOldKafkaOffsets(ctx context.Context, cutoffTime time.Time) error
+	// Clean up old seg_log entries for maintenance
+	DeleteOldSegLogs(ctx context.Context, cutoffTime time.Time) error
 	// Retrieves all existing metric pack estimates for EWMA calculations
 	GetAllMetricPackEstimates(ctx context.Context) ([]MetricPackEstimate, error)
 	GetExemplarLogsByFingerprint(ctx context.Context, arg GetExemplarLogsByFingerprintParams) (LrdbExemplarLog, error)
@@ -41,6 +43,8 @@ type Querier interface {
 	GetExemplarTracesCreatedAfter(ctx context.Context, ts time.Time) ([]LrdbExemplarTrace, error)
 	// Get all offset entries for a specific consumer group (useful for monitoring)
 	GetKafkaOffsetsByConsumerGroup(ctx context.Context, consumerGroup string) ([]GetKafkaOffsetsByConsumerGroupRow, error)
+	// Get the most recent seg_log entry
+	GetLatestSegLog(ctx context.Context) (SegLog, error)
 	GetLogSegmentsForCompaction(ctx context.Context, arg GetLogSegmentsForCompactionParams) ([]GetLogSegmentsForCompactionRow, error)
 	// Gets metric pack estimate for specific org with fallback to default (all zeros)
 	// Returns up to 2 rows: one for the specific org and one for the default
@@ -51,11 +55,17 @@ type Querier interface {
 	GetMetricSegByPrimaryKey(ctx context.Context, arg GetMetricSegByPrimaryKeyParams) (MetricSeg, error)
 	GetMetricSegsByIds(ctx context.Context, arg GetMetricSegsByIdsParams) ([]MetricSeg, error)
 	GetMetricType(ctx context.Context, arg GetMetricTypeParams) (string, error)
+	// Get a specific seg_log entry by ID
+	GetSegLogByID(ctx context.Context, id int64) (SegLog, error)
+	// Get seg_log entries for debugging, filtered by organization
+	GetSegLogByOrg(ctx context.Context, arg GetSegLogByOrgParams) ([]SegLog, error)
 	GetSpanInfoByFingerprint(ctx context.Context, arg GetSpanInfoByFingerprintParams) (GetSpanInfoByFingerprintRow, error)
 	GetTraceSegmentsForCompaction(ctx context.Context, arg GetTraceSegmentsForCompactionParams) ([]GetTraceSegmentsForCompactionRow, error)
 	InsertCompactedMetricSeg(ctx context.Context, arg []InsertCompactedMetricSegParams) *InsertCompactedMetricSegBatchResults
 	InsertLogSegmentDirect(ctx context.Context, arg InsertLogSegmentParams) error
 	InsertMetricSegmentDirect(ctx context.Context, arg InsertMetricSegmentParams) error
+	// Insert a debugging log entry for segment operations
+	InsertSegLog(ctx context.Context, arg InsertSegLogParams) error
 	InsertTraceSegmentDirect(ctx context.Context, arg InsertTraceSegmentDirectParams) error
 	// Insert or update multiple Kafka journal entries in a single batch operation
 	// Only updates if the new offset is greater than the existing one

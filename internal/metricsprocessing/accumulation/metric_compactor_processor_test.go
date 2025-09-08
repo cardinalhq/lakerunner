@@ -20,6 +20,7 @@ import (
 	"io"
 	"testing"
 
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
@@ -397,7 +398,7 @@ func (m *mockWriter) GetCurrentStats() parquetwriter.WriterStats {
 }
 
 func TestWriteFromReader_Success(t *testing.T) {
-	compactor := &MetricCompactorProcessor{}
+	compactor := &MetricCompactorProcessor{cfg: &config.Config{}}
 
 	mockReader := &mockReader{}
 	mockWriter := &mockWriter{}
@@ -424,7 +425,7 @@ func TestWriteFromReader_Success(t *testing.T) {
 }
 
 func TestWriteFromReader_ReaderError(t *testing.T) {
-	compactor := &MetricCompactorProcessor{}
+	compactor := &MetricCompactorProcessor{cfg: &config.Config{}}
 
 	mockReader := &mockReader{}
 	mockWriter := &mockWriter{}
@@ -445,7 +446,7 @@ func TestWriteFromReader_ReaderError(t *testing.T) {
 }
 
 func TestWriteFromReader_WriterError(t *testing.T) {
-	compactor := &MetricCompactorProcessor{}
+	compactor := &MetricCompactorProcessor{cfg: &config.Config{}}
 
 	mockReader := &mockReader{}
 	mockWriter := &mockWriter{}
@@ -468,7 +469,7 @@ func TestWriteFromReader_WriterError(t *testing.T) {
 }
 
 func TestWriteFromReader_EmptyReader(t *testing.T) {
-	compactor := &MetricCompactorProcessor{}
+	compactor := &MetricCompactorProcessor{cfg: &config.Config{}}
 
 	mockReader := &mockReader{}
 	mockWriter := &mockWriter{}
