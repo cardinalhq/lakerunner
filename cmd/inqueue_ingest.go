@@ -78,7 +78,7 @@ func NewIngestLoopContext(ctx context.Context, signal string) (*IngestLoopContex
 
 	config := exemplar.Config{
 		Metrics: exemplar.TelemetryConfig{
-			Enabled:        os.Getenv("EXEMPLAR_METRICS_DISABLED") != "false",
+			Enabled:        os.Getenv("EXEMPLAR_METRICS_DISABLED") != "true",
 			CacheSize:      10000,
 			Expiry:         15 * time.Minute,
 			ReportInterval: 5 * time.Minute,
