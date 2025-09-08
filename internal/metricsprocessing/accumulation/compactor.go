@@ -21,10 +21,12 @@ import (
 	"log/slog"
 	"os"
 	"sort"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
@@ -53,6 +55,8 @@ type CompactionStore interface {
 	GetMetricSeg(ctx context.Context, params lrdb.GetMetricSegParams) (lrdb.MetricSeg, error)
 	CompactMetricSegsWithKafkaOffsetsWithOrg(ctx context.Context, params lrdb.CompactMetricSegsParams, kafkaOffsets []lrdb.KafkaOffsetUpdateWithOrg) error
 	KafkaJournalGetLastProcessedWithOrgInstance(ctx context.Context, params lrdb.KafkaJournalGetLastProcessedWithOrgInstanceParams) (int64, error)
+	MarkMetricSegsCompactedByKeys(ctx context.Context, params lrdb.MarkMetricSegsCompactedByKeysParams) error
+	GetMetricEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32) int64
 }
 
 // MetricCompactor implements the Processor interface for metric segment compaction
@@ -135,12 +139,17 @@ func validateGroupConsistency(group *AccumulationGroup[CompactionKey]) error {
 // Process implements the Processor interface and performs the 12-step compaction flow
 func (c *MetricCompactor) Process(ctx context.Context, group *AccumulationGroup[CompactionKey], kafkaCommitData *KafkaCommitData, recordCountEstimate int64) error {
 	ll := logctx.FromContext(ctx)
+
+	// Calculate group age from Hunter timestamp
+	groupAge := time.Since(group.CreatedAt)
+
 	ll.Info("Starting compaction",
 		slog.String("organizationID", group.Key.OrganizationID.String()),
 		slog.Int("dateint", int(group.Key.DateInt)),
 		slog.Int("frequencyMs", int(group.Key.FrequencyMs)),
 		slog.Int("instanceNum", int(group.Key.InstanceNum)),
-		slog.Int("messageCount", len(group.Messages)))
+		slog.Int("messageCount", len(group.Messages)),
+		slog.Duration("groupAge", groupAge))
 
 	// Step 0: Validate that all messages in the group have consistent fields
 	if err := validateGroupConsistency(group); err != nil {
@@ -172,6 +181,9 @@ func (c *MetricCompactor) Process(ctx context.Context, group *AccumulationGroup[
 
 	// Step 3: Fetch the segments from the DB by iterating over messages
 	var activeSegments []lrdb.MetricSeg
+	var segmentsToMarkCompacted []lrdb.MetricSeg
+	targetSizeThreshold := config.TargetFileSize * 80 / 100 // 80% of target file size
+
 	for _, accMsg := range group.Messages {
 		msg := accMsg.Message
 		segment, err := c.store.GetMetricSeg(ctx, lrdb.GetMetricSegParams{
@@ -196,9 +208,30 @@ func (c *MetricCompactor) Process(ctx context.Context, group *AccumulationGroup[
 			continue
 		}
 
-		// Step 4: Only include segments not marked as compacted
+		// Step 4: Check if segment is already close to target size and mark as compacted
+		if !segment.Compacted && segment.FileSize >= targetSizeThreshold {
+			ll.Info("Segment already close to target size, marking as compacted",
+				slog.Int64("segmentID", segment.SegmentID),
+				slog.Int64("fileSize", segment.FileSize),
+				slog.Int64("targetSizeThreshold", targetSizeThreshold),
+				slog.Float64("percentOfTarget", float64(segment.FileSize)/float64(config.TargetFileSize)*100))
+			segmentsToMarkCompacted = append(segmentsToMarkCompacted, segment)
+			continue
+		}
+
+		// Step 5: Only include segments not marked as compacted and not being marked now
 		if !segment.Compacted {
 			activeSegments = append(activeSegments, segment)
+		}
+	}
+
+	// Mark large segments as compacted if any
+	if len(segmentsToMarkCompacted) > 0 {
+		if err := c.markSegmentsAsCompacted(ctx, segmentsToMarkCompacted, group.Key); err != nil {
+			ll.Warn("Failed to mark segments as compacted", slog.Any("error", err))
+		} else {
+			ll.Info("Marked segments as compacted",
+				slog.Int("segmentCount", len(segmentsToMarkCompacted)))
 		}
 	}
 
@@ -258,7 +291,7 @@ func (c *MetricCompactor) Process(ctx context.Context, group *AccumulationGroup[
 	}
 
 	// Step 10: Upload new files and create new metric segments
-	newSegments, err := c.uploadAndCreateSegments(ctx, storageClient, storageProfile, results, group.Key)
+	newSegments, err := c.uploadAndCreateSegments(ctx, storageClient, storageProfile, results, group.Key, activeSegments)
 	if err != nil {
 		return fmt.Errorf("upload and create segments: %w", err)
 	}
@@ -303,8 +336,18 @@ func (c *MetricCompactor) writeFromReader(ctx context.Context, reader filereader
 }
 
 // uploadAndCreateSegments uploads the files and creates new segment records
-func (c *MetricCompactor) uploadAndCreateSegments(ctx context.Context, client cloudstorage.Client, profile storageprofile.StorageProfile, results []parquetwriter.Result, key CompactionKey) ([]lrdb.MetricSeg, error) {
+func (c *MetricCompactor) uploadAndCreateSegments(ctx context.Context, client cloudstorage.Client, profile storageprofile.StorageProfile, results []parquetwriter.Result, key CompactionKey, inputSegments []lrdb.MetricSeg) ([]lrdb.MetricSeg, error) {
+	ll := logctx.FromContext(ctx)
+
+	// Calculate input metrics
+	var totalInputSize int64
+	for _, seg := range inputSegments {
+		totalInputSize += seg.FileSize
+	}
+
 	var segments []lrdb.MetricSeg
+	var totalOutputSize int64
+	var segmentIDs []int64
 
 	for _, result := range results {
 		// Generate new segment ID
@@ -352,13 +395,25 @@ func (c *MetricCompactor) uploadAndCreateSegments(ctx context.Context, client cl
 		}
 
 		segments = append(segments, segment)
+		totalOutputSize += result.FileSize
+		segmentIDs = append(segmentIDs, segmentID)
 	}
+
+	// Log upload summary
+	ll.Info("Segment upload completed",
+		slog.Int("inputFiles", len(inputSegments)),
+		slog.Int64("totalInputSize", totalInputSize),
+		slog.Int("outputSegments", len(segments)),
+		slog.Int64("totalOutputSize", totalOutputSize),
+		slog.Any("createdSegmentIDs", segmentIDs))
 
 	return segments, nil
 }
 
 // atomicDatabaseUpdate performs the atomic transaction for step 12
 func (c *MetricCompactor) atomicDatabaseUpdate(ctx context.Context, oldSegments, newSegments []lrdb.MetricSeg, kafkaCommitData *KafkaCommitData, key CompactionKey) error {
+	ll := logctx.FromContext(ctx)
+
 	// Prepare Kafka offsets for update
 	var kafkaOffsets []lrdb.KafkaOffsetUpdateWithOrg
 	if kafkaCommitData != nil {
@@ -371,6 +426,13 @@ func (c *MetricCompactor) atomicDatabaseUpdate(ctx context.Context, oldSegments,
 				InstanceNum:    key.InstanceNum,
 				Offset:         offset,
 			})
+
+			// Log each Kafka offset update
+			ll.Info("Updating Kafka consumer group offset",
+				slog.String("consumerGroup", kafkaCommitData.ConsumerGroup),
+				slog.String("topic", kafkaCommitData.Topic),
+				slog.Int("partition", int(partition)),
+				slog.Int64("newOffset", offset))
 		}
 
 		// Sort to avoid deadlocks
@@ -417,6 +479,7 @@ func (c *MetricCompactor) atomicDatabaseUpdate(ctx context.Context, oldSegments,
 		IngestDateint:  key.DateInt,
 		OldRecords:     oldRecords,
 		NewRecords:     newRecords,
+		CreatedBy:      lrdb.CreatedByCompact,
 	}
 
 	return c.store.CompactMetricSegsWithKafkaOffsetsWithOrg(ctx, params, kafkaOffsets)
@@ -432,4 +495,26 @@ func (c *MetricCompactor) generateSegmentID() int64 {
 	// This would typically use a proper ID generator
 	// For now, use timestamp-based generation
 	return int64(uuid.New().ID())
+}
+
+// markSegmentsAsCompacted marks the given segments as compacted in the database
+func (c *MetricCompactor) markSegmentsAsCompacted(ctx context.Context, segments []lrdb.MetricSeg, key CompactionKey) error {
+	if len(segments) == 0 {
+		return nil
+	}
+
+	// Extract segment IDs
+	segmentIDs := make([]int64, len(segments))
+	for i, seg := range segments {
+		segmentIDs[i] = seg.SegmentID
+	}
+
+	// Mark segments as compacted
+	return c.store.MarkMetricSegsCompactedByKeys(ctx, lrdb.MarkMetricSegsCompactedByKeysParams{
+		OrganizationID: key.OrganizationID,
+		Dateint:        key.DateInt,
+		FrequencyMs:    key.FrequencyMs,
+		InstanceNum:    key.InstanceNum,
+		SegmentIds:     segmentIDs,
+	})
 }

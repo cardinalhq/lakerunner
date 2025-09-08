@@ -52,6 +52,12 @@ func NewMockOffsetStore() *MockOffsetStore {
 	}
 }
 
+// Update MockOffsetStore to implement GathererStore (both offset and estimate functionality)
+func (m *MockOffsetStore) GetMetricEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32) int64 {
+	// Default estimate similar to old CompactionTargetRecordCount
+	return 10000
+}
+
 func (m *MockOffsetStore) KafkaJournalGetLastProcessedWithOrgInstance(ctx context.Context, params lrdb.KafkaJournalGetLastProcessedWithOrgInstanceParams) (int64, error) {
 	key := params.Topic + ":" + string(rune(params.Partition)) + ":" + params.ConsumerGroup + ":" + params.OrganizationID.String() + ":" + string(rune(params.InstanceNum))
 	offset, exists := m.offsets[key]
@@ -145,7 +151,7 @@ func TestGatherer_ProcessMessage_Integration(t *testing.T) {
 	// Should have processed messages from the bundle
 	group := compactor.groups[0]
 	assert.Equal(t, orgID, group.Key.OrganizationID)
-	assert.True(t, group.TotalRecordCount >= CompactionTargetRecordCount)
+	assert.True(t, group.TotalRecordCount >= 10000) // Default estimate
 }
 
 func TestGatherer_OffsetDeduplication(t *testing.T) {

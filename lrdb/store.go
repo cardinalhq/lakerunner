@@ -53,7 +53,8 @@ func (store *Store) Pool() *pgxpool.Pool {
 	return store.connPool
 }
 
-// GetMetricEstimate returns the estimated target records for an organization and frequency
+// GetMetricEstimate returns the estimated target records for an organization and frequency.
+// If no estimate is found, it returns a default value, so this value can be used directly.
 func (store *Store) GetMetricEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32) int64 {
 	return store.estimator.Get(ctx, orgID, frequencyMs)
 }
