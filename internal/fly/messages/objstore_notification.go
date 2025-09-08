@@ -23,6 +23,7 @@ import (
 
 // ObjStoreNotificationMessage represents an object storage file notification event
 // Using short JSON keys to minimize message size for high-volume Kafka usage
+// This implements GroupableMessage interface for ingestion processing
 type ObjStoreNotificationMessage struct {
 	OrganizationID uuid.UUID `json:"o"` // org_id
 	InstanceNum    int16     `json:"i"` // instance_num
@@ -30,6 +31,35 @@ type ObjStoreNotificationMessage struct {
 	ObjectID       string    `json:"k"` // key/object_id
 	FileSize       int64     `json:"s"` // size
 	QueuedAt       time.Time `json:"t"` // timestamp
+}
+
+// IngestKey represents the key for grouping messages for ingestion (signal-agnostic)
+type IngestKey struct {
+	OrganizationID uuid.UUID
+	InstanceNum    int16
+}
+
+// GetOrgID returns the organization ID from the key
+func (k IngestKey) GetOrgID() uuid.UUID {
+	return k.OrganizationID
+}
+
+// GetInstanceNum returns the instance number from the key
+func (k IngestKey) GetInstanceNum() int16 {
+	return k.InstanceNum
+}
+
+// GroupingKey returns the key used to group messages for ingestion
+func (m *ObjStoreNotificationMessage) GroupingKey() any {
+	return IngestKey{
+		OrganizationID: m.OrganizationID,
+		InstanceNum:    m.InstanceNum,
+	}
+}
+
+// RecordCount returns the file size for batching purposes (20MB limit)
+func (m *ObjStoreNotificationMessage) RecordCount() int64 {
+	return m.FileSize
 }
 
 // Marshal converts the message to JSON bytes
