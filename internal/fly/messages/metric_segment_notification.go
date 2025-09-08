@@ -51,4 +51,3 @@ func (m *MetricSegmentNotificationMessage) Marshal() ([]byte, error) {
 func (m *MetricSegmentNotificationMessage) Unmarshal(data []byte) error {
 	return json.Unmarshal(data, m)
 }
-

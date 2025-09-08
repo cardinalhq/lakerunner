@@ -21,7 +21,6 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 )
 
-
 type Processor[M messages.GroupableMessage, K comparable] interface {
 	Process(ctx context.Context, group *AccumulationGroup[K], kafkaCommitData *KafkaCommitData, recordCountEstimate int64) error
 	GetTargetRecordCount(ctx context.Context, groupingKey K) int64
@@ -105,7 +104,7 @@ func (g *Gatherer[M, K]) ProcessMessage(ctx context.Context, msg M, metadata *Me
 
 		// Track the metadata for calculating safe Kafka consumer group commits
 		g.metadataTracker.TrackMetadata(result.Group)
-		
+
 		// Mark offsets as processed for this key
 		if kafkaCommitData != nil {
 			if err := g.offsetCallbacks.MarkOffsetsProcessed(ctx, result.Group.Key, kafkaCommitData.Offsets); err != nil {
@@ -165,7 +164,7 @@ func (g *Gatherer[M, K]) FlushStaleGroups(ctx context.Context, olderThan time.Du
 
 		// Track the metadata for calculating safe Kafka consumer group commits
 		g.metadataTracker.TrackMetadata(group)
-		
+
 		// Mark offsets as processed for this key
 		if kafkaCommitData != nil {
 			if err := g.offsetCallbacks.MarkOffsetsProcessed(ctx, group.Key, kafkaCommitData.Offsets); err != nil {

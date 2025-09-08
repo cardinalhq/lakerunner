@@ -28,12 +28,14 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 // MetricCompactionConsumer handles metric compaction Kafka messages using accumulation-based approach
 type MetricCompactionConsumer struct {
 	gatherer      *Gatherer[*messages.MetricCompactionMessage, messages.CompactionKey]
 	consumer      fly.Consumer
+	store         CompactionStore
 	flushTicker   *time.Ticker
 	done          chan struct{}
 	consumerName  string
@@ -71,6 +73,7 @@ func NewMetricCompactionConsumer(
 
 	mcc := &MetricCompactionConsumer{
 		consumer:      consumer,
+		store:         store,
 		flushTicker:   flushTicker,
 		done:          make(chan struct{}),
 		consumerName:  consumerName,
@@ -78,11 +81,8 @@ func NewMetricCompactionConsumer(
 		consumerGroup: consumerGroup,
 	}
 
-	// Create reusable offset callbacks for org/instance offset management
-	offsetCallbacks := NewOrgInstanceOffsetCallbacks(store)
-
-	// Create Gatherer using the reusable offset callbacks
-	mcc.gatherer = NewGatherer[*messages.MetricCompactionMessage, messages.CompactionKey](topic, consumerGroup, compactor, offsetCallbacks)
+	// Create Gatherer using the consumer itself as offset callbacks
+	mcc.gatherer = NewGatherer[*messages.MetricCompactionMessage, messages.CompactionKey](topic, consumerGroup, compactor, mcc)
 
 	ll.Info("Created new Kafka accumulation consumer",
 		slog.String("consumerName", consumerName),
@@ -157,6 +157,69 @@ func (c *MetricCompactionConsumer) Run(ctx context.Context) error {
 	return nil
 }
 
+// OffsetCallbacks implementation - MetricCompactionConsumer implements OffsetCallbacks interface
+
+// GetLastProcessedOffset returns the last processed offset for this key, or -1 if never seen
+func (c *MetricCompactionConsumer) GetLastProcessedOffset(ctx context.Context, metadata *MessageMetadata, groupingKey messages.CompactionKey) (int64, error) {
+	offset, err := c.store.KafkaJournalGetLastProcessedWithOrgInstance(ctx, lrdb.KafkaJournalGetLastProcessedWithOrgInstanceParams{
+		Topic:          metadata.Topic,
+		Partition:      metadata.Partition,
+		ConsumerGroup:  metadata.ConsumerGroup,
+		OrganizationID: groupingKey.OrganizationID,
+		InstanceNum:    groupingKey.InstanceNum,
+	})
+	if err != nil {
+		// Return -1 if no row found (never seen before)
+		return -1, nil
+	}
+	return offset, nil
+}
+
+// MarkOffsetsProcessed commits the consumer group offsets to Kafka
+func (c *MetricCompactionConsumer) MarkOffsetsProcessed(ctx context.Context, key messages.CompactionKey, offsets map[int32]int64) error {
+	ll := logctx.FromContext(ctx)
+
+	if len(offsets) == 0 {
+		return nil
+	}
+
+	// Create ConsumedMessage objects for each partition/offset to commit
+	commitMessages := make([]fly.ConsumedMessage, 0, len(offsets))
+
+	for partition, offset := range offsets {
+		commitMessages = append(commitMessages, fly.ConsumedMessage{
+			Topic:     c.topic,
+			Partition: int(partition),
+			Offset:    offset,
+			// We don't need the actual message data for commits, just the offset metadata
+		})
+
+		ll.Info("Committing Kafka consumer group offset",
+			slog.String("consumerGroup", c.consumerGroup),
+			slog.String("topic", c.topic),
+			slog.Int("partition", int(partition)),
+			slog.Int64("offset", offset),
+			slog.String("organizationID", key.OrganizationID.String()),
+			slog.Int("instanceNum", int(key.InstanceNum)))
+	}
+
+	// Actually commit to Kafka consumer group
+	if err := c.consumer.CommitMessages(ctx, commitMessages...); err != nil {
+		ll.Error("Failed to commit Kafka consumer group offsets",
+			slog.Any("error", err),
+			slog.String("organizationID", key.OrganizationID.String()),
+			slog.Int("instanceNum", int(key.InstanceNum)))
+		return fmt.Errorf("failed to commit consumer group offsets: %w", err)
+	}
+
+	ll.Debug("Successfully committed Kafka consumer group offsets",
+		slog.Int("offsetCount", len(offsets)),
+		slog.String("organizationID", key.OrganizationID.String()),
+		slog.Int("instanceNum", int(key.InstanceNum)))
+
+	return nil
+}
+
 // Close stops the consumer and cleans up resources
 func (c *MetricCompactionConsumer) Close() error {
 	close(c.done)
@@ -188,4 +251,3 @@ func (c *MetricCompactionConsumer) periodicFlush(ctx context.Context) {
 		}
 	}
 }
-
