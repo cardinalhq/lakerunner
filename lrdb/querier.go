@@ -40,11 +40,13 @@ type Querier interface {
 	GetExemplarTracesByService(ctx context.Context, arg GetExemplarTracesByServiceParams) ([]LrdbExemplarTrace, error)
 	GetExemplarTracesCreatedAfter(ctx context.Context, ts time.Time) ([]LrdbExemplarTrace, error)
 	// Get all offset entries for a specific consumer group (useful for monitoring)
-	GetKafkaOffsetsByConsumerGroup(ctx context.Context, consumerGroup string) ([]KafkaOffsetJournal, error)
+	GetKafkaOffsetsByConsumerGroup(ctx context.Context, consumerGroup string) ([]GetKafkaOffsetsByConsumerGroupRow, error)
 	GetLogSegmentsForCompaction(ctx context.Context, arg GetLogSegmentsForCompactionParams) ([]GetLogSegmentsForCompactionRow, error)
 	// Gets metric pack estimate for specific org with fallback to default (all zeros)
 	// Returns up to 2 rows: one for the specific org and one for the default
 	GetMetricPackEstimateForOrg(ctx context.Context, arg GetMetricPackEstimateForOrgParams) ([]MetricPackEstimate, error)
+	// Get a single segment by its primary key components
+	GetMetricSeg(ctx context.Context, arg GetMetricSegParams) (MetricSeg, error)
 	// Fetch a single metric segment by its complete primary key
 	GetMetricSegByPrimaryKey(ctx context.Context, arg GetMetricSegByPrimaryKeyParams) (MetricSeg, error)
 	GetMetricSegsByIds(ctx context.Context, arg GetMetricSegsByIdsParams) ([]MetricSeg, error)
@@ -60,9 +62,14 @@ type Querier interface {
 	KafkaJournalBatchUpsert(ctx context.Context, arg []KafkaJournalBatchUpsertParams) *KafkaJournalBatchUpsertBatchResults
 	// Get the last processed offset for a specific consumer group, topic, and partition
 	KafkaJournalGetLastProcessed(ctx context.Context, arg KafkaJournalGetLastProcessedParams) (int64, error)
+	// Get the last processed offset for a specific consumer group, topic, partition, organization, and instance
+	KafkaJournalGetLastProcessedWithOrgInstance(ctx context.Context, arg KafkaJournalGetLastProcessedWithOrgInstanceParams) (int64, error)
 	// Insert or update the last processed offset for a consumer group, topic, and partition
 	// Only updates if the new offset is greater than the existing one
 	KafkaJournalUpsert(ctx context.Context, arg KafkaJournalUpsertParams) error
+	// Insert or update the last processed offset for a consumer group, topic, partition, organization, and instance
+	// Only updates if the new offset is greater than the existing one
+	KafkaJournalUpsertWithOrgInstance(ctx context.Context, arg KafkaJournalUpsertWithOrgInstanceParams) error
 	ListLogQLTags(ctx context.Context, organizationID uuid.UUID) ([]interface{}, error)
 	ListLogSegmentsForQuery(ctx context.Context, arg ListLogSegmentsForQueryParams) ([]ListLogSegmentsForQueryRow, error)
 	ListMetricSegmentsForQuery(ctx context.Context, arg ListMetricSegmentsForQueryParams) ([]ListMetricSegmentsForQueryRow, error)

@@ -110,6 +110,10 @@ type KafkaOffsetJournal struct {
 	LastProcessedOffset int64 `json:"last_processed_offset"`
 	// Timestamp when this offset was last updated
 	UpdatedAt time.Time `json:"updated_at"`
+	// Organization UUID for multi-tenant offset tracking
+	OrganizationID uuid.UUID `json:"organization_id"`
+	// Instance number for distributed processing offset tracking
+	InstanceNum int16 `json:"instance_num"`
 }
 
 type LogSeg struct {

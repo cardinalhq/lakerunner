@@ -29,7 +29,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
-	"github.com/cardinalhq/lakerunner/internal/metricsprocessing/compaction"
+	"github.com/cardinalhq/lakerunner/internal/metricsprocessing/accumulation"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
@@ -96,23 +96,14 @@ func init() {
 			ll := logctx.FromContext(ctx).With("instanceID", myInstanceID)
 			ctx = logctx.WithLogger(ctx, ll)
 
-			manager := compaction.NewManager(mdb, &cfg.Metrics.Compaction, sp, cmgr)
-
 			// Kafka is always required for compaction
 			kafkaFactory := fly.NewFactory(&cfg.Fly)
-			slog.Info("Starting metrics compaction with accumulated Kafka consumer",
-				slog.Duration("maxAccumulationTime", cfg.Metrics.Compaction.MaxAccumulationTime))
+			slog.Info("Starting metrics compaction with accumulation consumer")
 
-			// Create accumulated Kafka consumer for compaction
-			consumer, err := compaction.NewKafkaAccumulatedCompactionConsumer(
-				ctx,
-				kafkaFactory,
-				cfg,
-				manager,
-				cfg.Metrics.Compaction.MaxAccumulationTime,
-			)
+			// Create accumulation-based Kafka consumer for compaction
+			consumer, err := accumulation.NewKafkaAccumulationConsumer(ctx, kafkaFactory, cfg, mdb, sp, cmgr)
 			if err != nil {
-				return fmt.Errorf("failed to create Kafka accumulated compaction consumer: %w", err)
+				return fmt.Errorf("failed to create Kafka accumulation consumer: %w", err)
 			}
 			defer func() {
 				if err := consumer.Close(); err != nil {
