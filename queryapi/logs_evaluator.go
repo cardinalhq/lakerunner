@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"slices"
 	"time"
 
@@ -57,12 +58,22 @@ func (q *QuerierService) EvaluateLogsQuery(
 	go func() {
 		defer close(out)
 
+		// If limit <= 0, treat as unlimited.
+		unlimited := limit <= 0
+
+		// Cancellation for the entire pushdown tree.
+		ctxAll, cancelAll := context.WithCancel(ctx)
+		defer cancelAll()
+
+		emitted := 0
+
 		// Partition by dateInt hours for storage listing.
 		dateIntHours := dateIntHoursRange(startTs, endTs, time.UTC, reverse)
 
+	outer:
 		for _, leaf := range queryPlan.Leaves {
 			for _, dih := range dateIntHours {
-				segments, err := q.lookupLogsSegments(ctx, dih, leaf, startTs, endTs, orgID, q.mdb.ListLogSegmentsForQuery)
+				segments, err := q.lookupLogsSegments(ctxAll, dih, leaf, startTs, endTs, orgID, q.mdb.ListLogSegmentsForQuery)
 				slog.Info("lookupLogsSegments", "dih", dih, "leaf", leaf, "found", len(segments))
 				if err != nil {
 					slog.Error("failed to lookup log segments", "err", err, "dih", dih, "leaf", leaf)
@@ -71,16 +82,26 @@ func (q *QuerierService) EvaluateLogsQuery(
 				if len(segments) == 0 {
 					continue
 				}
-				// Form time-contiguous batches sized for the number of workers.
+
 				groups := ComputeReplayBatchesWithWorkers(segments, DefaultLogStep, startTs, endTs, len(workers), reverse)
 				for _, group := range groups {
 					select {
-					case <-ctx.Done():
+					case <-ctxAll.Done():
 						return
 					default:
 					}
 
-					slog.Info("Pushing down segments", "groupSize", len(group.Segments))
+					// Respect global limit across groups
+					remaining := math.MaxInt // large default
+					if !unlimited {
+						remaining = limit - emitted
+						if remaining <= 0 {
+							cancelAll()
+							break outer
+						}
+					}
+
+					slog.Info("Pushing down segments", "groupSize", len(group.Segments), "remaining", remaining)
 
 					// Collect all segment IDs for worker assignment
 					segmentIDs := make([]int64, 0, len(group.Segments))
@@ -90,14 +111,13 @@ func (q *QuerierService) EvaluateLogsQuery(
 						segmentMap[segment.SegmentID] = append(segmentMap[segment.SegmentID], segment)
 					}
 
-					// Get worker assignments for all segments
+					// Get worker assignments
 					mappings, err := q.workerDiscovery.GetWorkersForSegments(orgID, segmentIDs)
 					if err != nil {
 						slog.Error("failed to get worker assignments", "err", err)
 						continue
 					}
 
-					// Group segments by assigned worker
 					workerGroups := make(map[Worker][]SegmentInfo)
 					for _, mapping := range mappings {
 						segmentList := segmentMap[mapping.SegmentID]
@@ -106,6 +126,10 @@ func (q *QuerierService) EvaluateLogsQuery(
 
 					var groupLeafChans []<-chan promql.Timestamped
 					for worker, workerSegments := range workerGroups {
+						reqLimit := 0
+						if !unlimited {
+							reqLimit = remaining
+						}
 						req := PushDownRequest{
 							OrganizationID: orgID,
 							LogLeaf:        &leaf,
@@ -113,35 +137,45 @@ func (q *QuerierService) EvaluateLogsQuery(
 							EndTs:          group.EndTs,
 							Segments:       workerSegments,
 							Step:           stepDuration,
-							Limit:          limit,
+							Limit:          reqLimit,
 							Reverse:        reverse,
 						}
-						ch, err := q.logsPushDown(ctx, worker, req)
+						ch, err := q.logsPushDown(ctxAll, worker, req)
 						if err != nil {
 							slog.Error("pushdown failed", "worker", worker, "err", err)
 							continue
 						}
 						groupLeafChans = append(groupLeafChans, ch)
 					}
-					// No channels for this group — skip.
 					if len(groupLeafChans) == 0 {
 						continue
 					}
 
 					// Merge this group's worker streams by timestamp
-					mergedGroup := promql.MergeSorted(ctx, 1024, reverse, limit, groupLeafChans...)
+					mergeLimit := 0 // unlimited for the merge by default
+					if !unlimited {
+						mergeLimit = remaining
+					}
+					mergedGroup := promql.MergeSorted(ctxAll, 1024, reverse, mergeLimit, groupLeafChans...)
 
-					// Forward group results into final output stream as they arrive.
+					// Forward results (and stop globally when limit hit)
 					for {
 						select {
-						case <-ctx.Done():
+						case <-ctxAll.Done():
 							return
 						case res, ok := <-mergedGroup:
 							if !ok {
-								// Group done, proceed to next group.
+								// Group done
 								goto nextGroup
 							}
 							out <- res
+							if !unlimited {
+								emitted++
+								if emitted >= limit {
+									cancelAll() // stop all remaining work
+									break outer
+								}
+							}
 						}
 					}
 				nextGroup:
