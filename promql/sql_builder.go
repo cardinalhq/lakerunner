@@ -91,7 +91,7 @@ func buildFromLogLeaf(be *BaseExpr, step time.Duration) string {
 	tsCol := "\"_cardinalhq.timestamp\""
 	bodyCol := "\"_cardinalhq.message\""
 
-	pipelineSQL := strings.TrimSpace(be.LogLeaf.ToWorkerSQL(0, ""))
+	pipelineSQL := strings.TrimSpace(be.LogLeaf.ToWorkerSQL(0, "", nil))
 
 	bucketExpr := fmt.Sprintf(
 		"(CAST(%s AS BIGINT) - (CAST(%s AS BIGINT) %% %d))",

@@ -17,10 +17,11 @@ package logql
 import (
 	"database/sql"
 	"fmt"
-	_ "github.com/marcboeker/go-duckdb/v2"
 	"log/slog"
 	"strings"
 	"testing"
+
+	_ "github.com/marcboeker/go-duckdb/v2"
 )
 
 func openDuckDB(t *testing.T) *sql.DB {
@@ -113,7 +114,7 @@ func TestToWorkerSQL_Fingerprint_Present(t *testing.T) {
 	mustExec(t, db, `INSERT INTO logs VALUES ('hello'), ('world');`)
 
 	leaf := LogLeaf{} // no parsers/filters; just pass-through with defaults
-	sql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc")), 0, 5000)
+	sql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc", nil)), 0, 5000)
 
 	// Should include the sentinel so CacheManager can splice segment filter.
 	if !strings.Contains(sql, "AND true") {
@@ -180,7 +181,7 @@ func TestToWorkerSQL_Regexp_ExtractOnly(t *testing.T) {
 		}},
 	}
 
-	sql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc")), 0, 5000)
+	sql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc", nil)), 0, 5000)
 	if !strings.Contains(sql, "AND true") {
 		t.Fatalf("expected sentinel AND true in generated SQL:\n%s", sql)
 	}
@@ -219,7 +220,7 @@ func TestToWorkerSQL_Regexp_ExtractWithGeneratedRegex(t *testing.T) {
 		}},
 	}
 
-	sql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc")), 0, 5000)
+	sql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc", nil)), 0, 5000)
 	if !strings.Contains(sql, "AND true") {
 		t.Fatalf("expected sentinel AND true in generated SQL:\n%s", sql)
 	}
@@ -265,7 +266,7 @@ func TestToWorkerSQL_Regexp_WithFilters(t *testing.T) {
 		},
 	}
 
-	rows := queryAll(t, db, replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc")), 0, 5000))
+	rows := queryAll(t, db, replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc", nil)), 0, 5000))
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row after filters, got %d", len(rows))
 	}
@@ -294,7 +295,7 @@ func TestToWorkerSQL_JSON_WithFilters(t *testing.T) {
 			{Label: "user", Op: MatchRe, Value: "(alice|bob)"},
 		},
 	}
-	rows := queryAll(t, db, replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc")), 0, 5000))
+	rows := queryAll(t, db, replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc", nil)), 0, 5000))
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row after filters, got %d", len(rows))
 	}
@@ -327,7 +328,7 @@ func TestToWorkerSQL_Logfmt_WithFilters(t *testing.T) {
 		},
 	}
 
-	rows := queryAll(t, db, replaceStartEnd(replaceTable(leaf.ToWorkerSQL(0, "desc")), 0, 5000))
+	rows := queryAll(t, db, replaceStartEnd(replaceTable(leaf.ToWorkerSQL(0, "desc", nil)), 0, 5000))
 
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 row after logfmt filters, got %d", len(rows))
@@ -352,7 +353,7 @@ func TestToWorkerSQL_MatchersOnly_FilterApplied(t *testing.T) {
 		},
 	}
 
-	sql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc")), 0, 5000)
+	sql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc", nil)), 0, 5000)
 
 	if !strings.Contains(sql, "job = 'my-app'") {
 		t.Fatalf("generated SQL missing matcher WHERE: \n%s", sql)
@@ -393,7 +394,7 @@ func TestToWorkerSQL_MatchersThenJSON_FilterApplied_FromLogQL(t *testing.T) {
 	}
 	leaf := plan.Leaves[0]
 
-	replacedSql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc")), 0, 5000)
+	replacedSql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc", nil)), 0, 5000)
 
 	if !strings.Contains(replacedSql, "job = 'my-app'") {
 		t.Fatalf("generated SQL missing matcher WHERE:\n%s", replacedSql)
@@ -441,7 +442,7 @@ func TestToWorkerSQL_LabelFormat_Conditional_FromLogQL(t *testing.T) {
 	}
 	leaf := plan.Leaves[0]
 
-	replacedSql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc")), 0, 5000)
+	replacedSql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc", nil)), 0, 5000)
 
 	if !strings.Contains(replacedSql, `job = 'my-app'`) {
 		t.Fatalf("generated SQL missing selector matcher WHERE clause:\n%s", replacedSql)
@@ -846,6 +847,212 @@ func TestToWorkerSQLForTagValues_ComplexQuery(t *testing.T) {
 		}
 		if !v {
 			t.Fatalf("unexpected user value: %s", k)
+		}
+	}
+}
+
+// --- Tests for ToWorkerSQLWithLimit fields parameter ---
+
+func TestToWorkerSQLWithLimit_Fields_Basic(t *testing.T) {
+	db := openDuckDB(t)
+	createLogsTable(t, db)
+
+	// Insert test data
+	mustExec(t, db, `INSERT INTO logs VALUES
+	 (1000, 'id1', 'info', 'test message 1', 'info', 'api', 'pod1', 'user1'),
+	 (2000, 'id2', 'error', 'test message 2', 'error', 'web', 'pod2', 'user2'),
+	 (3000, 'id3', 'debug', 'test message 3', 'debug', 'api', 'pod3', 'user3')`)
+
+	// Test with fields parameter - use matchers to ensure fields are projected
+	be := &LogLeaf{
+		Matchers: []LabelMatch{
+			{Label: "service", Op: MatchEq, Value: "api"},
+		},
+	}
+	fields := []string{"service", "pod", "user"}
+	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLWithLimit(0, "desc", fields)), 0, 5000)
+
+	rows := queryAll(t, db, sql)
+
+	// Should return only rows where service=api (2 rows)
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows (service=api), got %d\nsql:\n%s", len(rows), sql)
+	}
+
+	// Verify that the specified fields are present in the results
+	for i, row := range rows {
+		service := getString(row["service"])
+		pod := getString(row["pod"])
+		user := getString(row["user"])
+
+		// Check that fields are not empty (they should have values from our test data)
+		if service == "" || pod == "" || user == "" {
+			t.Fatalf("row %d missing expected field values: service=%q pod=%q user=%q", i, service, pod, user)
+		}
+
+		// Verify we get the expected values (only api service rows)
+		// Note: ordered by timestamp DESC, so pod3 (3000) comes before pod1 (1000)
+		expectedServices := []string{"api", "api"}
+		expectedPods := []string{"pod3", "pod1"}
+		expectedUsers := []string{"user3", "user1"}
+
+		if service != expectedServices[i] {
+			t.Fatalf("row %d: expected service=%q, got %q", i, expectedServices[i], service)
+		}
+		if pod != expectedPods[i] {
+			t.Fatalf("row %d: expected pod=%q, got %q", i, expectedPods[i], pod)
+		}
+		if user != expectedUsers[i] {
+			t.Fatalf("row %d: expected user=%q, got %q", i, expectedUsers[i], user)
+		}
+	}
+}
+
+func TestToWorkerSQLWithLimit_Fields_WithRegexpParser(t *testing.T) {
+	db := openDuckDB(t)
+	mustExec(t, db, `CREATE TABLE logs("_cardinalhq.message" TEXT);`)
+	mustExec(t, db, `INSERT INTO logs VALUES 
+	('user=alice action=login status=success'),
+	('user=bob action=logout status=success'),
+	('user=charlie action=view status=pending');`)
+
+	// Test with regexp parser and fields parameter
+	be := &LogLeaf{
+		Parsers: []ParserStage{{
+			Type: "regexp",
+			Params: map[string]string{
+				"pattern": `user=(?P<user>\w+).*action=(?P<action>\w+).*status=(?P<status>\w+)`,
+			},
+		}},
+	}
+
+	// Test with fields that are extracted by the regexp parser
+	fields := []string{"user", "action", "status"}
+	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLWithLimit(0, "desc", fields)), 0, 5000)
+
+	rows := queryAll(t, db, sql)
+
+	// Should return all rows with the extracted fields
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d\nsql:\n%s", len(rows), sql)
+	}
+
+	// Verify that the extracted fields are present and correct
+	expectedUsers := []string{"alice", "bob", "charlie"}
+	expectedActions := []string{"login", "logout", "view"}
+	expectedStatuses := []string{"success", "success", "pending"}
+
+	for i, row := range rows {
+		user := getString(row["user"])
+		action := getString(row["action"])
+		status := getString(row["status"])
+
+		if user != expectedUsers[i] {
+			t.Fatalf("row %d: expected user=%q, got %q", i, expectedUsers[i], user)
+		}
+		if action != expectedActions[i] {
+			t.Fatalf("row %d: expected action=%q, got %q", i, expectedActions[i], action)
+		}
+		if status != expectedStatuses[i] {
+			t.Fatalf("row %d: expected status=%q, got %q", i, expectedStatuses[i], status)
+		}
+	}
+}
+
+func TestToWorkerSQLWithLimit_Fields_EmptyFields(t *testing.T) {
+	db := openDuckDB(t)
+	createLogsTable(t, db)
+
+	// Insert test data
+	mustExec(t, db, `INSERT INTO logs VALUES
+	 (1000, 'id1', 'info', 'test message 1', 'info', 'api', 'pod1', 'user1'),
+	 (2000, 'id2', 'error', 'test message 2', 'error', 'web', 'pod2', 'user2')`)
+
+	// Test with empty fields parameter
+	be := &LogLeaf{}
+	fields := []string{}
+	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLWithLimit(0, "desc", fields)), 0, 5000)
+
+	rows := queryAll(t, db, sql)
+
+	// Should return all rows (no additional fields added)
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d\nsql:\n%s", len(rows), sql)
+	}
+
+	// Verify that basic columns are still present
+	for i, row := range rows {
+		message := getString(row["_cardinalhq.message"])
+		if message == "" {
+			t.Fatalf("row %d missing _cardinalhq.message", i)
+		}
+	}
+}
+
+func TestToWorkerSQLWithLimit_Fields_NonExistentFields(t *testing.T) {
+	db := openDuckDB(t)
+	createLogsTable(t, db)
+
+	// Insert test data
+	mustExec(t, db, `INSERT INTO logs VALUES
+	 (1000, 'id1', 'info', 'test message 1', 'info', 'api', 'pod1', 'user1')`)
+
+	// Test with non-existent fields parameter - this should fail at the SQL level
+	be := &LogLeaf{}
+	fields := []string{"nonexistent_field1", "nonexistent_field2"}
+	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLWithLimit(0, "desc", fields)), 0, 5000)
+
+	// This test expects the query to fail because the fields don't exist
+	_, err := db.Query(sql)
+	if err == nil {
+		t.Fatalf("expected query to fail with non-existent fields, but it succeeded\nsql:\n%s", sql)
+	}
+
+	// Verify the error message indicates the field is not found
+	if !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("expected 'not found' error, got: %v", err)
+	}
+}
+
+func TestToWorkerSQLWithLimit_Fields_WithLimit(t *testing.T) {
+	db := openDuckDB(t)
+	createLogsTable(t, db)
+
+	// Insert test data
+	mustExec(t, db, `INSERT INTO logs VALUES
+	 (1000, 'id1', 'info', 'test message 1', 'info', 'api', 'pod1', 'user1'),
+	 (2000, 'id2', 'error', 'test message 2', 'error', 'web', 'pod2', 'user2'),
+	 (3000, 'id3', 'debug', 'test message 3', 'debug', 'api', 'pod3', 'user3'),
+	 (4000, 'id4', 'info', 'test message 4', 'info', 'web', 'pod4', 'user4')`)
+
+	// Test with fields parameter and limit - use matchers to ensure fields are projected
+	be := &LogLeaf{
+		Matchers: []LabelMatch{
+			{Label: "service", Op: MatchEq, Value: "api"},
+		},
+	}
+	fields := []string{"service", "pod"}
+	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLWithLimit(2, "desc", fields)), 0, 5000)
+
+	rows := queryAll(t, db, sql)
+
+	// Should return only 2 rows due to limit (and service=api filter)
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows due to limit and service=api filter, got %d\nsql:\n%s", len(rows), sql)
+	}
+
+	// Verify that the fields are present in the limited results
+	for i, row := range rows {
+		service := getString(row["service"])
+		pod := getString(row["pod"])
+
+		if service == "" || pod == "" {
+			t.Fatalf("row %d missing expected field values: service=%q pod=%q", i, service, pod)
+		}
+
+		// Verify service is api (due to matcher)
+		if service != "api" {
+			t.Fatalf("row %d: expected service=api, got %q", i, service)
 		}
 	}
 }

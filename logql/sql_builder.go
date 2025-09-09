@@ -24,8 +24,8 @@ import (
 )
 
 // ToWorkerSQLWithLimit is like ToWorkerSQL but (for non-aggregated leaves) appends
-func (be *LogLeaf) ToWorkerSQLWithLimit(limit int, order string) string {
-	return be.ToWorkerSQL(limit, order)
+func (be *LogLeaf) ToWorkerSQLWithLimit(limit int, order string, fields []string) string {
+	return be.ToWorkerSQL(limit, order, fields)
 }
 
 func (be *LogLeaf) ToWorkerSQLForTagValues(tagName string) string {

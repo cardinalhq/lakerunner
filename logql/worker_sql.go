@@ -21,13 +21,15 @@ import (
 	"strings"
 )
 
-func (be *LogLeaf) ToWorkerSQL(limit int, order string) string {
+func (be *LogLeaf) ToWorkerSQL(limit int, order string, fields []string) string {
 	const baseRel = "{table}"
 	const bodyCol = "\"_cardinalhq.message\""
 	const tsCol = "\"_cardinalhq.timestamp\""
 
 	// 1) Prepare sets: group keys, parser-created, feature flags
 	groupKeys := dedupeStrings(be.OutBy)
+	// Include fields parameter in the keys that need to be projected
+	allKeys := dedupeStrings(append(groupKeys, fields...))
 	parserCreated, hasJSON, hasLogFmt := analyzeParsers(be)
 
 	// If json/logfmt is present, treat all non-base groupKeys as parser-created
@@ -43,8 +45,16 @@ func (be *LogLeaf) ToWorkerSQL(limit int, order string) string {
 	// 2) Build CTE pipeline
 	pb := newPipelineBuilder()
 
-	// s0: minimal base projection (message, timestamp, exemplar defaults) + matchers + non-parser groupKeys
+	// s0: minimal base projection (message, timestamp, exemplar defaults) + matchers + non-parser groupKeys + fields
 	s0Need := computeS0Need(be, groupKeys, parserCreated)
+
+	// Add fields parameter to s0 if they are base table columns and not being extracted by parsers
+	for _, field := range fields {
+		if _, created := parserCreated[field]; !created {
+			qk := quoteIdent(field)
+			s0Need[qk] = struct{}{}
+		}
+	}
 	pb.push(selectListFromSet(s0Need), baseRel, nil)
 
 	// s1: time window sentinel so segment filters can be spliced
@@ -60,7 +70,7 @@ func (be *LogLeaf) ToWorkerSQL(limit int, order string) string {
 
 	// 5) Emit parsers left→right, pushing label filters as soon as labels exist
 	remainingLF := append([]LabelFilter(nil), be.LabelFilters...)
-	emitParsers(be, &pb, bodyCol, groupKeys, futureCreated, unwrapNeeded, &remainingLF)
+	emitParsers(be, &pb, bodyCol, allKeys, futureCreated, unwrapNeeded, &remainingLF)
 
 	// 6) Any remaining label filters (base columns) → apply at the end
 	if len(remainingLF) > 0 {
@@ -113,6 +123,7 @@ func finalizeSelect(p *pipelineBuilder, tsCol string, wantOrder bool, order stri
 			sb.WriteString("\n")
 		}
 	}
+
 	sb.WriteString("SELECT * FROM ")
 	sb.WriteString(p.top())
 

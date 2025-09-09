@@ -45,6 +45,7 @@ func (q *QuerierService) EvaluateLogsQuery(
 	reverse bool,
 	limit int,
 	queryPlan logql.LQueryPlan,
+	fields []string,
 ) (<-chan promql.Timestamped, error) {
 	workers, err := q.workerDiscovery.GetAllWorkers()
 	if err != nil {
@@ -139,6 +140,7 @@ func (q *QuerierService) EvaluateLogsQuery(
 							Step:           stepDuration,
 							Limit:          reqLimit,
 							Reverse:        reverse,
+							Fields:         fields,
 						}
 						ch, err := q.logsPushDown(ctxAll, worker, req)
 						if err != nil {
