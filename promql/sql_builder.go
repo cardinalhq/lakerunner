@@ -78,12 +78,7 @@ func (be *BaseExpr) ToWorkerSQL(step time.Duration) string {
 		return buildStepAggNoWindow(be, need{sum: true}, step)
 	case "":
 		if be.Range == "" {
-			return buildRawSimple(be, []proj{
-				{"MIN(rollup_min)", "min"},
-				{"MAX(rollup_max)", "max"},
-				{"SUM(rollup_sum)", "sum"},
-				{"COUNT(rollup_count)", "count"},
-			}, step)
+			return buildStepAggNoWindow(be, need{sum: true, min: true, max: true, count: true}, step)
 		}
 		return buildStepAggNoWindow(be, need{sum: true, count: true, min: true, max: true}, step)
 	default:
@@ -274,32 +269,6 @@ const (
 	timePredicate = "\"_cardinalhq.timestamp\" >= {start} AND \"_cardinalhq.timestamp\" < {end}"
 )
 
-// --- (optional) Raw bucketing (no densify) -----------------------------------
-
-// buildRawSimple: bucket by ms and aggregate real rows only.
-// Kept here if you want to switch raw/instant back to simple GROUP BY later.
-func buildRawSimple(be *BaseExpr, projs []proj, step time.Duration) string {
-	stepMs := step.Milliseconds()
-	bucket := fmt.Sprintf("(\"_cardinalhq.timestamp\" - (\"_cardinalhq.timestamp\" %% %d))", stepMs)
-
-	where := withTime(whereFor(be))
-
-	cols := make([]string, 0, 1+len(projs)+len(be.GroupBy))
-	cols = append(cols, bucket+" AS bucket_ts")
-	for _, p := range projs {
-		cols = append(cols, fmt.Sprintf("%s AS %s", p.expr, p.alias))
-	}
-	if len(be.GroupBy) > 0 {
-		cols = append(cols, strings.Join(be.GroupBy, ", "))
-	}
-
-	sql := "SELECT " + strings.Join(cols, ", ") +
-		" FROM {table}" + where +
-		groupByClause(be.GroupBy, "bucket_ts") +
-		" ORDER BY bucket_ts ASC"
-	return sql
-}
-
 func buildCountOnly(be *BaseExpr, projs []proj, step time.Duration) string {
 	stepMs := step.Milliseconds()
 	bucketExpr := fmt.Sprintf("(\"_cardinalhq.timestamp\" - (\"_cardinalhq.timestamp\" %% %d))", stepMs)
@@ -445,14 +414,6 @@ func withTime(where string) string {
 		return " WHERE " + timePredicate
 	}
 	return where + " AND " + timePredicate
-}
-
-func groupByClause(by []string, first string) string {
-	parts := []string{first}
-	if len(by) > 0 {
-		parts = append(parts, by...)
-	}
-	return " GROUP BY " + strings.Join(parts, ", ")
 }
 
 func equalStringSets(a, b []string) bool {
