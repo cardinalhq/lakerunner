@@ -20,6 +20,7 @@ import (
 	"github.com/cardinalhq/lakerunner/logql"
 	"github.com/cardinalhq/lakerunner/promql"
 	_ "github.com/marcboeker/go-duckdb/v2"
+	"math"
 	"sort"
 
 	"log/slog"
@@ -1807,6 +1808,106 @@ func TestLog_SumOfCountsByPod_WithJSONFilter_TwoWorkers_Eval(t *testing.T) {
 		if got[k] != want {
 			t.Fatalf("unexpected sum-of-counts for %v: got=%v want=%v\nrows1=%v\nrows2=%v\nsql=\n%s",
 				k, got[k], want, rows1, rows2, workerSQL)
+		}
+	}
+}
+
+func TestLog_SumRateWithUnwrap_TwoWorkers(t *testing.T) {
+	// ---------------- Worker 1 ----------------
+	db1 := openDuckDB(t)
+	mustExec(t, db1, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.fingerprint" TEXT,
+		"_cardinalhq.message"     TEXT,
+		"resource.service.name"   TEXT
+	);`)
+	// bucket 0 (0..60s): two lines
+	// bucket 1 (60..120s): one line
+	mustExec(t, db1, `
+	INSERT INTO logs("_cardinalhq.timestamp","_cardinalhq.message","resource.service.name") VALUES
+	(10*1000,  'took 10 ms', 'kafka'),
+	(20*1000,  'took 20ms',  'kafka'),
+	(70*1000,  'took 30 ms', 'kafka');
+	`)
+
+	// ---------------- Worker 2 ----------------
+	db2 := openDuckDB(t)
+	mustExec(t, db2, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.fingerprint" TEXT,
+		"_cardinalhq.message"     TEXT,
+		"resource.service.name"   TEXT
+	);`)
+	// bucket 0: one line
+	// bucket 1: one line
+	mustExec(t, db2, `
+	INSERT INTO logs("_cardinalhq.timestamp","_cardinalhq.message","resource.service.name") VALUES
+	(40*1000,  'took 40ms',  'kafka'),
+	(100*1000, 'took 50 ms', 'kafka');
+	`)
+
+	// NOTE: rate() counts lines/sec; unwrap does not affect rate.
+	q := `sum(rate({resource_service_name="kafka"} | regexp "(?P<dur>[0-9]+(?:\\.[0-9]+)?)\\s*(?:ns|us|µs|ms|s|m|h)" | unwrap dur [1m]))`
+
+	plan, _ := compileMetricPlanFromLogQL(t, q)
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf, got %d", len(plan.Leaves))
+	}
+	leaf := plan.Leaves[0]
+
+	step := time.Minute
+	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000)
+
+	// Sanity: pipeline should include regexp + unwrap even if rate ignores the numeric.
+	if !strings.Contains(workerSQL, "regexp_extract") || !strings.Contains(workerSQL, "AS __unwrap_value") {
+		t.Fatalf("expected regexp+unwrap in SQL, got:\n%s", workerSQL)
+	}
+
+	rows1 := queryAll(t, db1, workerSQL)
+	rows2 := queryAll(t, db2, workerSQL)
+	if len(rows1) == 0 && len(rows2) == 0 {
+		t.Fatalf("no rows from both workers; sql=\n%s", workerSQL)
+	}
+
+	// Worker outputs for rate() are line counts per bucket; coordinator divides by window.
+	// Step = 60s.
+	type bucket = int64
+	lineCounts := map[bucket]float64{}
+
+	addRows := func(rows []rowmap) {
+		for _, r := range rows {
+			b := i64(r["bucket_ts"])
+			// Your SQL uses SUM(1) AS sum for rate window aggregation.
+			lineCounts[b] += f64(r["sum"])
+		}
+	}
+	addRows(rows1)
+	addRows(rows2)
+
+	// Convert to per-second rate: lines_in_bucket / 60
+	toRate := func(count float64) float64 { return count / 60.0 }
+
+	const (
+		b0 = int64(0)
+		b1 = int64(60000)
+	)
+	// bucket0: 2 (w1) + 1 (w2) = 3 → 3/60 = 0.05
+	// bucket1: 1 (w1) + 1 (w2) = 2 → 2/60 ≈ 0.0333333
+	exp := map[bucket]float64{
+		b0: 3.0 / 60.0,
+		b1: 2.0 / 60.0,
+	}
+
+	const eps = 1e-9
+	for b, want := range exp {
+		got := toRate(lineCounts[b])
+		if math.Abs(got-want) > eps {
+			t.Fatalf("unexpected sum(rate) at bucket %d: got=%v want=%v\nrows1=%v\nrows2=%v\nsql=\n%s",
+				b, got, want, rows1, rows2, workerSQL)
 		}
 	}
 }

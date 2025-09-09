@@ -216,7 +216,7 @@ func (q *QuerierService) handleLogQuery(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if logAst.NeedsRewrite() {
+	if logAst.IsAggregateExpr() {
 		rr, err := promql.RewriteToPromQL(lplan.Root)
 		if err != nil {
 			http.Error(w, "cannot rewrite to PromQL: "+err.Error(), http.StatusBadRequest)

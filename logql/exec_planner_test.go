@@ -249,6 +249,36 @@ func TestPlanner_RegexpPipelineLeaf_WithLabelFilters_AttachedToParser(t *testing
 	}
 }
 
+func TestPlannerWithNumericComparisons(t *testing.T) {
+	q := `{resource_service_name="kafka"} | regexp "(?P<dur>[0-9]+(?:\\.[0-9]+)?)\\s*(?:ns|us|µs|ms|s|m|h)" | dur > 0`
+	ast, err := FromLogQL(q)
+	if err != nil {
+		t.Fatalf("FromLogQL() error: %v", err)
+	}
+	plan, err := CompileLog(ast)
+	if err != nil {
+		t.Fatalf("CompileLog() error: %v", err)
+	}
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf, got %d; plan=%#v", len(plan.Leaves), plan)
+	}
+	leaf := plan.Leaves[0]
+	rootLeaf, ok := plan.Root.(*LLeafNode)
+	if !ok {
+		t.Fatalf("root is not *LLeafNode, got %T", plan.Root)
+	}
+	if rootLeaf.Leaf.ID != leaf.ID {
+		t.Fatalf("root leaf ID mismatch: got %s, want %s", rootLeaf.Leaf.ID, leaf.ID)
+	}
+	if len(leaf.LabelFilters) != 1 {
+		t.Fatalf("expected 1 line filter, got %d: %#v", len(leaf.LineFilters), leaf.LineFilters)
+	}
+	lf := leaf.LabelFilters[0]
+	if lf.Label != "dur" || lf.Op != MatchGt || lf.Value != "0" {
+		t.Fatalf("line filter mismatch: got %+v", lf)
+	}
+}
+
 func TestPlannerWithUnwrap(t *testing.T) {
 	q := `max_over_time(
   {job="kafka"} |= "Rolled new log segment"

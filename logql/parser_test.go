@@ -47,6 +47,36 @@ func TestLogRange(t *testing.T) {
 	}
 }
 
+func TestNumericComparisonsOnParserFilters(t *testing.T) {
+	expressions := []string{
+		`{resource_service_name="kafka"} | regexp "(?P<dur>[0-9]+(?:\\.[0-9]+)?)\\s*(?:ns|us|µs|ms|s|m|h)" | dur > 0`,
+		`{resource_service_name="kafka"} | regexp "(?P<dur>[0-9]+(?:\\.[0-9]+)?)\\s*(?:ns|us|µs|ms|s|m|h)" | dur < 0`,
+		`{resource_service_name="kafka"} | regexp "(?P<dur>[0-9]+(?:\\.[0-9]+)?)\\s*(?:ns|us|µs|ms|s|m|h)" | dur >= 0`,
+		`{resource_service_name="kafka"} | regexp "(?P<dur>[0-9]+(?:\\.[0-9]+)?)\\s*(?:ns|us|µs|ms|s|m|h)" | dur <= 0`,
+		`{resource_service_name="kafka"} | regexp "(?P<dur>[0-9]+(?:\\.[0-9]+)?)\\s*(?:ns|us|µs|ms|s|m|h)" | dur = 0`,
+	}
+
+	for _, q := range expressions {
+		ast, err := FromLogQL(q)
+		if err != nil {
+			t.Fatalf("FromLogQL() error: %v", err)
+		}
+		if ast.Kind != KindLogSelector {
+			t.Fatalf("kind = %s, want %s", ast.Kind, KindLogSelector)
+		}
+		if ast.LogSel == nil {
+			t.Fatalf("LogSel is nil")
+		}
+		if len(ast.LogSel.Parsers) != 1 {
+			t.Fatalf("expected 1 parser, got %d: %#v", len(ast.LogSel.Parsers), ast.LogSel.Parsers)
+		}
+		p := ast.LogSel.Parsers[0]
+		if len(p.Filters) != 1 {
+			t.Fatalf("expected 1 filter, got %d: %#v", len(p.Filters), p.Filters)
+		}
+	}
+}
+
 func TestRangeAggregationRate(t *testing.T) {
 	q := `rate({app="a"}[5m])`
 	ast, err := FromLogQL(q)

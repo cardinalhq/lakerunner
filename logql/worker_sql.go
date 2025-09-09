@@ -281,6 +281,16 @@ func emitParsers(
 	excludeFuture := func(keys []string) []string {
 		out := make([]string, 0, len(keys))
 		for _, k := range keys {
+			if _, ok := futureCreated[k]; !ok {
+				out = append(out, k)
+			}
+		}
+		return out
+	}
+	// NOTE: futureCreated is a map[string]struct{}, not a func; fix above
+	excludeFuture = func(keys []string) []string {
+		out := make([]string, 0, len(keys))
+		for _, k := range keys {
 			if _, later := futureCreated[k]; !later {
 				out = append(out, k)
 			}
@@ -301,88 +311,129 @@ func emitParsers(
 		case "regexp":
 			pat := p.Params["pattern"]
 			names := regexCaptureNames(pat)
+
+			// s*: run regexp_extract to get a struct of captures (if any)
 			sel := []string{pb.top() + ".*"}
 			if len(names) > 0 {
 				quoted := make([]string, 0, len(names))
 				for _, name := range names {
 					quoted = append(quoted, fmt.Sprintf("'%s'", name))
 				}
-				sel = append(sel, fmt.Sprintf("regexp_extract(%s, %s, [%s]) AS __extracted_struct",
-					bodyCol, sqlQuote(pat), strings.Join(quoted, ", ")))
+				sel = append(sel, fmt.Sprintf(
+					"regexp_extract(%s, %s, [%s]) AS __extracted_struct",
+					bodyCol, sqlQuote(pat), strings.Join(quoted, ", "),
+				))
 			}
 			pb.push(sel, pb.top(), nil)
 
+			// s*: project each capture as a top-level column
 			if len(names) > 0 {
 				extract := []string{pb.top() + ".*"}
 				for _, name := range names {
 					if strings.HasPrefix(name, "__var_") {
 						continue
 					}
-					extract = append(extract, fmt.Sprintf("__extracted_struct.%s AS %s", quoteIdent(name), quoteIdent(name)))
+					extract = append(extract,
+						fmt.Sprintf("__extracted_struct.%s AS %s", quoteIdent(name), quoteIdent(name)))
 				}
 				pb.push(extract, pb.top(), nil)
 
+				// Apply filters that now have their columns created:
 				created := mkSet(names)
-				now, later := partitionByNames(*remainingLF, created)
+				// Merge global remaining filters with this stage's filters, then partition
+				allFilters := append(append([]LabelFilter{}, *remainingLF...), p.Filters...)
+				now, later := partitionByNames(allFilters, created)
+
 				if len(now) > 0 {
 					where := buildLabelFilterWhere(now, nil)
-					pb.push([]string{pb.top() + ".*"}, pb.top(), where)
+					if len(where) > 0 {
+						pb.push([]string{pb.top() + ".*"}, pb.top(), where)
+					}
 				}
+				// Carry un-applied filters forward
 				*remainingLF = later
+			} else {
+				// No captures materialized → nothing new created. Carry stage filters forward.
+				if len(p.Filters) > 0 {
+					*remainingLF = append(*remainingLF, p.Filters...)
+				}
 			}
 
 		case "json":
-			// keys needed by filters + group-by + unwrap, excluding future label_format
-			needKeys := uniqLabels(*remainingLF)
+			// Keys needed by filters + group-by + unwrap, excluding future label_format.
+			// IMPORTANT: include both global remaining filters AND this stage's filters.
+			baseFilters := append(append([]LabelFilter{}, *remainingLF...), p.Filters...)
+			needKeys := uniqLabels(baseFilters)
 			needKeys = append(needKeys, groupKeys...)
 			for f := range unwrapNeeded {
 				needKeys = append(needKeys, f)
 			}
 			needKeys = dedupeStrings(excludeFuture(needKeys))
 
+			// s*: project needed keys from JSON
 			sel := []string{pb.top() + ".*"}
 			for _, k := range needKeys {
 				path := jsonPathForKey(k)
-				sel = append(sel, fmt.Sprintf("json_extract_string(%s, %s) AS %s", bodyCol, sqlQuote(path), quoteIdent(k)))
+				sel = append(sel, fmt.Sprintf("json_extract_string(%s, %s) AS %s",
+					bodyCol, sqlQuote(path), quoteIdent(k)))
 			}
 			pb.push(sel, pb.top(), nil)
 
+			// Apply any filters whose columns now exist
 			if len(needKeys) > 0 {
 				created := mkSet(needKeys)
-				now, later := partitionByNames(*remainingLF, created)
+				allFilters := append(append([]LabelFilter{}, *remainingLF...), p.Filters...)
+				now, later := partitionByNames(allFilters, created)
+
 				if len(now) > 0 {
 					where := buildLabelFilterWhere(now, nil)
-					pb.push([]string{pb.top() + ".*"}, pb.top(), where)
+					if len(where) > 0 {
+						pb.push([]string{pb.top() + ".*"}, pb.top(), where)
+					}
 				}
 				*remainingLF = later
+			} else if len(p.Filters) > 0 {
+				*remainingLF = append(*remainingLF, p.Filters...)
 			}
 
 		case "logfmt":
-			needKeys := uniqLabels(*remainingLF)
+			// Same logic as JSON: include both global remaining filters and this stage's filters.
+			baseFilters := append(append([]LabelFilter{}, *remainingLF...), p.Filters...)
+			needKeys := uniqLabels(baseFilters)
 			needKeys = append(needKeys, groupKeys...)
 			for f := range unwrapNeeded {
 				needKeys = append(needKeys, f)
 			}
 			needKeys = dedupeStrings(excludeFuture(needKeys))
 
+			// s*: extract each needed key via a logfmt-ish regexp
 			sel := []string{pb.top() + ".*"}
 			for _, k := range needKeys {
 				reKey := fmt.Sprintf(`(?:^|\s)%s=([^\s]+)`, regexp.QuoteMeta(k))
-				sel = append(sel, fmt.Sprintf("regexp_extract(%s, %s, 1) AS %s", bodyCol, sqlQuote(reKey), quoteIdent(k)))
+				sel = append(sel, fmt.Sprintf("regexp_extract(%s, %s, 1) AS %s",
+					bodyCol, sqlQuote(reKey), quoteIdent(k)))
 			}
 			pb.push(sel, pb.top(), nil)
 
+			// Apply filters whose columns now exist
 			if len(needKeys) > 0 {
 				created := mkSet(needKeys)
-				now, later := partitionByNames(*remainingLF, created)
+				allFilters := append(append([]LabelFilter{}, *remainingLF...), p.Filters...)
+				now, later := partitionByNames(allFilters, created)
+
 				if len(now) > 0 {
 					where := buildLabelFilterWhere(now, nil)
-					pb.push([]string{pb.top() + ".*"}, pb.top(), where)
+					if len(where) > 0 {
+						pb.push([]string{pb.top() + ".*"}, pb.top(), where)
+					}
 				}
 				*remainingLF = later
+			} else if len(p.Filters) > 0 {
+				*remainingLF = append(*remainingLF, p.Filters...)
 			}
 
 		case "label_format", "label-format", "labelformat":
+			// s*: compute label_format outputs
 			sel := []string{pb.top() + ".*"}
 			created := make(map[string]struct{})
 
@@ -404,14 +455,19 @@ func emitParsers(
 			}
 			pb.push(sel, pb.top(), nil)
 
-			now, later := partitionByNames(*remainingLF, created)
+			// Filters: combine global + stage filters and apply the ones that now exist
+			allFilters := append(append([]LabelFilter{}, *remainingLF...), p.Filters...)
+			now, later := partitionByNames(allFilters, created)
 			if len(now) > 0 {
 				where := buildLabelFilterWhere(now, nil)
-				pb.push([]string{pb.top() + ".*"}, pb.top(), where)
+				if len(where) > 0 {
+					pb.push([]string{pb.top() + ".*"}, pb.top(), where)
+				}
 			}
 			*remainingLF = later
 
 		case "unwrap":
+			// s*: compute __unwrap_value (DOUBLE)
 			field := strings.TrimSpace(p.Params["field"])
 			fn := strings.ToLower(strings.TrimSpace(p.Params["func"]))
 			if field == "" {
@@ -430,8 +486,25 @@ func emitParsers(
 			}
 			pb.push([]string{pb.top() + ".*", expr + " AS __unwrap_value"}, pb.top(), nil)
 
+			// If someone attached filters to unwrap, allow them to target __unwrap_value or the field.
+			// Treat both names as "created".
+			created := map[string]struct{}{"__unwrap_value": {}, field: {}}
+			allFilters := append(append([]LabelFilter{}, *remainingLF...), p.Filters...)
+			now, later := partitionByNames(allFilters, created)
+			if len(now) > 0 {
+				where := buildLabelFilterWhere(now, nil)
+				if len(where) > 0 {
+					pb.push([]string{pb.top() + ".*"}, pb.top(), where)
+				}
+			}
+			*remainingLF = later
+
 		default:
+			// Unknown stage: still allow stage-level filters to be carried forward.
 			pb.push([]string{pb.top() + ".*"}, pb.top(), nil)
+			if len(p.Filters) > 0 {
+				*remainingLF = append(*remainingLF, p.Filters...)
+			}
 		}
 	}
 }

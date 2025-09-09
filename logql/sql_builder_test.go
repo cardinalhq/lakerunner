@@ -17,11 +17,10 @@ package logql
 import (
 	"database/sql"
 	"fmt"
+	_ "github.com/marcboeker/go-duckdb/v2"
 	"log/slog"
 	"strings"
 	"testing"
-
-	_ "github.com/marcboeker/go-duckdb/v2"
 )
 
 func openDuckDB(t *testing.T) *sql.DB {
@@ -203,6 +202,59 @@ func TestToWorkerSQL_Regexp_ExtractOnly(t *testing.T) {
 	}
 }
 
+func TestToWorkerSQL_Regexp_NumericCompare_EmulateGTZero(t *testing.T) {
+	db := openDuckDB(t)
+
+	mustExec(t, db, `CREATE TABLE logs("_cardinalhq.message" TEXT);`)
+
+	mustExec(t, db, `INSERT INTO logs VALUES
+('Rolled new log segment in 1.25 ms'),
+('Rolled new log segment in 0 s'),
+('Some line without a duration'),
+('Rolled new log segment in 8.5 ms'),
+('Rolled new log segment in 0.000 s');`)
+
+	leaf := LogLeaf{
+		Parsers: []ParserStage{
+			{
+				Type: "regexp",
+				Params: map[string]string{
+					// Capture a numeric duration (integer or decimal) followed by a unit.
+					"pattern": `(?P<dur>[0-9]+(?:\.[0-9]+)?)\s*(?:ns|us|µs|ms|s|m|h)`,
+				},
+				Filters: []LabelFilter{
+					{Label: "dur", Op: MatchGt, Value: `0`},
+				},
+			},
+		},
+	}
+
+	sql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc", nil)), 0, 10_000)
+	println(sql)
+	if !strings.Contains(sql, "AND true") {
+		t.Fatalf("expected sentinel AND true in generated SQL:\n%s", sql)
+	}
+
+	rows := queryAll(t, db, sql)
+
+	// Expect exactly the two positive-duration rows to survive.
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows with dur > 0, got %d\nrows=%v\nsql=\n%s", len(rows), rows, sql)
+	}
+
+	// Verify each surviving row has a non-zero 'dur' extracted.
+	for _, r := range rows {
+		durStr := getString(r["dur"])
+		if durStr == "" {
+			t.Fatalf("expected extracted 'dur' in row: %v", r)
+		}
+		// Quick guard against zeros by string check (keeps deps minimal).
+		if durStr == "0" || durStr == "0.0" || durStr == "0.00" || durStr == "0.000" {
+			t.Fatalf("unexpected zero duration passed filter: %v", r)
+		}
+	}
+}
+
 func TestToWorkerSQL_Regexp_ExtractWithGeneratedRegex(t *testing.T) {
 	db := openDuckDB(t)
 	mustExec(t, db, `CREATE TABLE logs("_cardinalhq.message" TEXT);`)
@@ -230,7 +282,7 @@ func TestToWorkerSQL_Regexp_ExtractWithGeneratedRegex(t *testing.T) {
 		t.Fatalf("expected 3 rows, got %d", len(rows))
 	}
 
-	movieIds := []string{}
+	var movieIds []string
 	for _, r := range rows {
 		movieId := getString(r["movieId"])
 		if movieId != "" {

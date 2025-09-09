@@ -58,7 +58,7 @@ type LogAST struct {
 	Raw       string       `json:"raw"`
 }
 
-func (a *LogAST) NeedsRewrite() bool {
+func (a *LogAST) IsAggregateExpr() bool {
 	switch a.Kind {
 	case KindRangeAgg:
 		return true
@@ -66,11 +66,11 @@ func (a *LogAST) NeedsRewrite() bool {
 		return true // range over logs → rewrite
 	case KindVectorAgg:
 		if a.VectorAgg != nil {
-			return a.VectorAgg.Left.NeedsRewrite()
+			return a.VectorAgg.Left.IsAggregateExpr()
 		}
 		return false
 	case KindBinOp:
-		return a.BinOp != nil && (a.BinOp.LHS.NeedsRewrite() || a.BinOp.RHS.NeedsRewrite())
+		return a.BinOp != nil && (a.BinOp.LHS.IsAggregateExpr() || a.BinOp.RHS.IsAggregateExpr())
 	default:
 		return false
 	}
@@ -151,6 +151,10 @@ const (
 	MatchNe  MatchOp = "!="
 	MatchRe  MatchOp = "=~"
 	MatchNre MatchOp = "!~"
+	MatchGt  MatchOp = ">"
+	MatchGte MatchOp = ">="
+	MatchLt  MatchOp = "<"
+	MatchLte MatchOp = "<="
 )
 
 type LineFilter struct {
@@ -715,7 +719,7 @@ func tryParseLabelFilter(stage string) (LabelFilter, bool) {
 	if s == "" {
 		return LabelFilter{}, false
 	}
-	for _, op := range []string{"=~", "!~", "!=", "="} {
+	for _, op := range []string{">=", "<=", ">", "<", "=~", "!~", "!=", "="} {
 		if i := strings.Index(s, op); i >= 0 {
 			lab := strings.TrimSpace(s[:i])
 			val := strings.TrimSpace(s[i+len(op):])
@@ -875,6 +879,14 @@ func toMatchOpString(op string) MatchOp {
 		return MatchRe
 	case "!~":
 		return MatchNre
+	case ">":
+		return MatchGt
+	case ">=":
+		return MatchGte
+	case "<":
+		return MatchLt
+	case "<=":
+		return MatchLte
 	default:
 		return MatchEq
 	}

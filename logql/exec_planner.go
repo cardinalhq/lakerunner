@@ -443,6 +443,14 @@ func (be *LogLeaf) Label() string {
 			op = "=~"
 		case MatchNre:
 			op = "!~"
+		case MatchGt:
+			op = ">"
+		case MatchLt:
+			op = "<"
+		case MatchGte:
+			op = ">="
+		case MatchLte:
+			op = "<="
 		default:
 			op = string(lf.Op)
 		}
