@@ -234,8 +234,8 @@ func (r *MetricRollupProcessor) Process(ctx context.Context, group *Accumulation
 			continue
 		}
 
-		// Only include segments not already compacted/rolled up
-		if !segment.Compacted {
+		// Only include segments not already rolled up
+		if !segment.Rolledup {
 			segments = append(segments, segment)
 		}
 	}
@@ -344,6 +344,7 @@ func (r *MetricRollupProcessor) uploadAndCreateRollupSegments(ctx context.Contex
 			FileSize:     result.FileSize,
 			Published:    true,
 			Compacted:    false,
+			Rolledup:     false,
 			Fingerprints: stats.Fingerprints,
 			SortVersion:  lrdb.CurrentMetricSortVersion,
 			CreatedBy:    lrdb.CreateByRollup,
