@@ -62,8 +62,14 @@ func NewMetricRollupConsumer(
 ) (*MetricRollupConsumer, error) {
 	ll := logctx.FromContext(ctx)
 
+	// Create Kafka producer for sending rollup messages
+	producer, err := factory.CreateProducer()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Kafka producer: %w", err)
+	}
+
 	// Create MetricRollupProcessor
-	processor := NewMetricRollupProcessor(store, storageProvider, cmgr, cfg)
+	processor := NewMetricRollupProcessor(store, storageProvider, cmgr, cfg, producer)
 
 	// Create Gatherer - using hardcoded consumer group and topic for rollups
 	consumerGroup := "lakerunner.rollup.metrics"

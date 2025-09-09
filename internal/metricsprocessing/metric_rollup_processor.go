@@ -26,6 +26,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
+	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
@@ -52,15 +53,17 @@ type MetricRollupProcessor struct {
 	storageProvider storageprofile.StorageProfileProvider
 	cmgr            cloudstorage.ClientProvider
 	cfg             *config.Config
+	kafkaProducer   fly.Producer
 }
 
 // NewMetricRollupProcessor creates a new metric rollup processor instance
-func NewMetricRollupProcessor(store RollupStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, cfg *config.Config) *MetricRollupProcessor {
+func NewMetricRollupProcessor(store RollupStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, cfg *config.Config, kafkaProducer fly.Producer) *MetricRollupProcessor {
 	return &MetricRollupProcessor{
 		store:           store,
 		storageProvider: storageProvider,
 		cmgr:            cmgr,
 		cfg:             cfg,
+		kafkaProducer:   kafkaProducer,
 	}
 }
 
@@ -292,6 +295,18 @@ func (r *MetricRollupProcessor) Process(ctx context.Context, group *Accumulation
 		}
 	}
 
+	// Generate next-level rollup messages if the target frequency can be rolled up further
+	if err := r.queueNextLevelRollups(ctx, newSegments, group.Key); err != nil {
+		// Don't fail the rollup if next-level rollup queueing fails - log and continue
+		ll.Warn("Failed to queue next-level rollup messages", slog.Any("error", err))
+	}
+
+	// Queue compaction messages for the target frequency segments
+	if err := r.queueCompactionMessages(ctx, newSegments, group.Key); err != nil {
+		// Don't fail the rollup if compaction queueing fails - log and continue
+		ll.Warn("Failed to queue compaction messages", slog.Any("error", err))
+	}
+
 	ll.Info("Rollup completed successfully",
 		slog.Int("inputSegments", len(segments)),
 		slog.Int("outputFiles", len(results)),
@@ -478,4 +493,157 @@ func (r *MetricRollupProcessor) getHourFromTimestamp(timestampMs int64) int16 {
 func (r *MetricRollupProcessor) GetTargetRecordCount(ctx context.Context, groupingKey messages.RollupKey) int64 {
 	// Use target frequency for the estimate since that's what we're creating
 	return r.store.GetMetricEstimate(ctx, groupingKey.OrganizationID, groupingKey.TargetFrequencyMs)
+}
+
+// queueNextLevelRollups generates rollup messages for the next level if the target frequency can be rolled up further
+func (r *MetricRollupProcessor) queueNextLevelRollups(ctx context.Context, newSegments []lrdb.MetricSeg, key messages.RollupKey) error {
+	ll := logctx.FromContext(ctx)
+
+	// Check if the target frequency can be rolled up to the next level
+	nextTargetFrequency := r.getNextRollupFrequency(key.TargetFrequencyMs)
+	if nextTargetFrequency == 0 {
+		// No further rollup possible for this frequency
+		ll.Debug("No further rollup needed",
+			slog.Int("targetFrequencyMs", int(key.TargetFrequencyMs)))
+		return nil
+	}
+
+	ll.Info("Queueing next-level rollup messages",
+		slog.Int("segmentCount", len(newSegments)),
+		slog.Int("sourceFrequency", int(key.TargetFrequencyMs)),
+		slog.Int("nextTargetFrequency", int(nextTargetFrequency)))
+
+	// Create rollup messages for each new segment
+	rollupTopic := "lakerunner.segments.metrics.rollup"
+	var queuedCount int
+
+	for _, segment := range newSegments {
+		// Extract segment start time from the timestamp range
+		segmentStartTime := time.Unix(segment.TsRange.Lower.Int64/1000, 0)
+
+		// Create rollup notification for the next level
+		notification := messages.MetricRollupMessage{
+			Version:           1,
+			OrganizationID:    segment.OrganizationID,
+			DateInt:           segment.Dateint,
+			SourceFrequencyMs: key.TargetFrequencyMs,  // Current target becomes next source
+			TargetFrequencyMs: nextTargetFrequency,    // Next rollup target
+			SegmentID:         segment.SegmentID,
+			InstanceNum:       segment.InstanceNum,
+			SlotID:            segment.SlotID,
+			SlotCount:         segment.SlotCount,
+			Records:           segment.RecordCount,
+			FileSize:          segment.FileSize,
+			SegmentStartTime:  segmentStartTime,
+			QueuedAt:          time.Now(),
+		}
+
+		// Marshal the message
+		msgBytes, err := notification.Marshal()
+		if err != nil {
+			return fmt.Errorf("failed to marshal next-level rollup notification: %w", err)
+		}
+
+		// Create Kafka message with target frequency in the key (as corrected earlier)
+		rollupMessage := fly.Message{
+			Key:   []byte(fmt.Sprintf("%s-%d-%d-%d-%d", segment.OrganizationID.String(), segment.Dateint, nextTargetFrequency, segment.InstanceNum, segment.SlotID)),
+			Value: msgBytes,
+		}
+
+		// Send to Kafka rollup topic
+		if err := r.kafkaProducer.Send(ctx, rollupTopic, rollupMessage); err != nil {
+			return fmt.Errorf("failed to send next-level rollup notification to Kafka: %w", err)
+		}
+
+		queuedCount++
+
+		ll.Debug("Sent next-level rollup notification",
+			slog.String("organizationID", segment.OrganizationID.String()),
+			slog.Int("dateint", int(segment.Dateint)),
+			slog.Int("sourceFrequencyMs", int(key.TargetFrequencyMs)),
+			slog.Int("targetFrequencyMs", int(nextTargetFrequency)),
+			slog.Int64("segmentID", segment.SegmentID))
+	}
+
+	ll.Info("Successfully queued next-level rollup messages",
+		slog.Int("queuedCount", queuedCount),
+		slog.Int("sourceFrequency", int(key.TargetFrequencyMs)),
+		slog.Int("targetFrequency", int(nextTargetFrequency)))
+
+	return nil
+}
+
+// queueCompactionMessages generates compaction messages for the target frequency segments
+func (r *MetricRollupProcessor) queueCompactionMessages(ctx context.Context, newSegments []lrdb.MetricSeg, key messages.RollupKey) error {
+	ll := logctx.FromContext(ctx)
+
+	ll.Info("Queueing compaction messages for target frequency",
+		slog.Int("segmentCount", len(newSegments)),
+		slog.Int("targetFrequencyMs", int(key.TargetFrequencyMs)))
+
+	// Create compaction messages for each new segment
+	compactionTopic := "lakerunner.segments.metrics.compact"
+	var queuedCount int
+
+	for _, segment := range newSegments {
+		// Create compaction notification
+		compactionNotification := messages.MetricCompactionMessage{
+			Version:        1,
+			OrganizationID: segment.OrganizationID,
+			DateInt:        segment.Dateint,
+			FrequencyMs:    key.TargetFrequencyMs, // Use target frequency for compaction
+			SegmentID:      segment.SegmentID,
+			InstanceNum:    segment.InstanceNum,
+			SlotID:         segment.SlotID,
+			SlotCount:      segment.SlotCount,
+			Records:        segment.RecordCount,
+			FileSize:       segment.FileSize,
+			QueuedAt:       time.Now(),
+		}
+
+		// Marshal compaction message
+		compactionMsgBytes, err := compactionNotification.Marshal()
+		if err != nil {
+			return fmt.Errorf("failed to marshal compaction notification: %w", err)
+		}
+
+		// Create Kafka message key for proper partitioning
+		compactionMessage := fly.Message{
+			Key:   []byte(fmt.Sprintf("%s-%d-%d-%d-%d", segment.OrganizationID.String(), segment.Dateint, key.TargetFrequencyMs, segment.InstanceNum, segment.SlotID)),
+			Value: compactionMsgBytes,
+		}
+
+		// Send to compaction topic
+		if err := r.kafkaProducer.Send(ctx, compactionTopic, compactionMessage); err != nil {
+			return fmt.Errorf("failed to send compaction notification to Kafka: %w", err)
+		}
+
+		queuedCount++
+
+		ll.Debug("Sent compaction notification",
+			slog.String("organizationID", segment.OrganizationID.String()),
+			slog.Int("dateint", int(segment.Dateint)),
+			slog.Int("frequencyMs", int(key.TargetFrequencyMs)),
+			slog.Int64("segmentID", segment.SegmentID))
+	}
+
+	ll.Info("Successfully queued compaction messages",
+		slog.Int("queuedCount", queuedCount),
+		slog.Int("targetFrequencyMs", int(key.TargetFrequencyMs)))
+
+	return nil
+}
+
+// getNextRollupFrequency returns the next rollup frequency for a given source frequency, or 0 if no further rollup
+func (r *MetricRollupProcessor) getNextRollupFrequency(sourceFrequencyMs int32) int32 {
+	switch sourceFrequencyMs {
+	case 60_000:
+		return 300_000 // 1m -> 5m
+	case 300_000:
+		return 1_200_000 // 5m -> 20m
+	case 1_200_000:
+		return 3_600_000 // 20m -> 1h
+	default:
+		return 0 // No further rollup
+	}
 }

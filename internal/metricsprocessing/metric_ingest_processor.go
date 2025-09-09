@@ -318,6 +318,7 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *Accumulation
 
 			// Create rollup message if this frequency can be rolled up
 			var rollupMsgBytes []byte
+			var rollupMessage fly.Message
 			if isRollupSourceFrequency(segParams.FrequencyMs) {
 				targetFrequency, _ := getTargetRollupFrequency(segParams.FrequencyMs)
 
@@ -341,16 +342,16 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *Accumulation
 				if err != nil {
 					return fmt.Errorf("failed to marshal rollup notification: %w", err)
 				}
+
+				rollupMessage = fly.Message{
+					Key:   []byte(fmt.Sprintf("%s-%d-%d-%d", segParams.OrganizationID.String(), segParams.Dateint, targetFrequency, rollupStartTime)),
+					Value: rollupMsgBytes,
+				}
 			}
 
 			compactionMessage := fly.Message{
 				Key:   []byte(fmt.Sprintf("%s-%d-%d", segParams.OrganizationID.String(), segParams.Dateint, segParams.SegmentID)),
 				Value: compactionMsgBytes,
-			}
-
-			rollupMessage := fly.Message{
-				Key:   []byte(fmt.Sprintf("%s-%d-%d-%d", segParams.OrganizationID.String(), segParams.Dateint, segParams.FrequencyMs, rollupStartTime)),
-				Value: rollupMsgBytes,
 			}
 
 			// Send to compaction topic

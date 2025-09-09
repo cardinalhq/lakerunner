@@ -72,9 +72,9 @@ func QueueMetricRollup(ctx context.Context, kafkaProducer fly.Producer, organiza
 
 	// Send to Kafka rollup topic
 	rollupTopic := "lakerunner.segments.metrics.rollup"
-	// Use dateint and frequency for key instead of segment ID to group rollup intervals
+	// Use dateint and target frequency for key to group rollup intervals by their target frequency
 	if err := kafkaProducer.Send(ctx, rollupTopic, fly.Message{
-		Key:   fmt.Appendf(nil, "%s-%d-%d-%d-%d", organizationID.String(), dateint, frequencyMs, instanceNum, slotID),
+		Key:   fmt.Appendf(nil, "%s-%d-%d-%d-%d", organizationID.String(), dateint, targetFrequencyMs, instanceNum, slotID),
 		Value: msgBytes,
 	}); err != nil {
 		return fmt.Errorf("failed to send rollup notification to Kafka: %w", err)
