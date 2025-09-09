@@ -60,9 +60,6 @@ type Processor struct {
 
 	// Configuration for all telemetry types
 	config Config
-
-	// Fingerprinter for log pattern analysis
-	fingerprinter fingerprinter.Fingerprinter
 }
 
 // Config holds configuration for different telemetry types
@@ -112,10 +109,9 @@ func DefaultConfig() Config {
 // NewProcessor creates a new unified processor for all telemetry types
 func NewProcessor(config Config, logger *slog.Logger) *Processor {
 	return &Processor{
-		tenants:       sync.Map{},
-		logger:        logger,
-		config:        config,
-		fingerprinter: fingerprinter.NewFingerprinter(),
+		tenants: sync.Map{},
+		logger:  logger,
+		config:  config,
 	}
 }
 
@@ -311,26 +307,11 @@ func (p *Processor) ProcessMetrics(ctx context.Context, md pmetric.Metrics, orga
 
 // add a logs exemplar to the organization's cache
 func (p *Processor) addLogExemplar(tenant *Tenant, rl plog.ResourceLogs, sl plog.ScopeLogs, lr plog.LogRecord) {
-	logBody := extractLogBody(lr)
 
 	// Get old fingerprint from attributes (if exists from collector)
-	oldFingerprint := getLogFingerprint(lr)
-
-	// Compute new fingerprint using our TrieClusterManager
-	newFingerprint, _, _, err := p.fingerprinter.Fingerprint(logBody, tenant.trieClusterManager)
-	if err != nil {
-		p.logger.Debug("Error fingerprinting log", slog.Any("error", err))
-		// Fall back to old fingerprint if available, otherwise skip
-		if oldFingerprint != 0 {
-			newFingerprint = oldFingerprint
-		} else {
-			return
-		}
-	}
-
+	fingerprint := getLogFingerprint(lr)
 	extraKeys := []string{
-		fingerprintKey, strconv.FormatInt(newFingerprint, 10),
-		oldFingerprintKey, strconv.FormatInt(oldFingerprint, 10),
+		fingerprintKey, strconv.FormatInt(fingerprint, 10),
 	}
 	keys, exemplarKey := computeExemplarKey(rl.Resource(), extraKeys)
 
