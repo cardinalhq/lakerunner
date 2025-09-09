@@ -196,7 +196,8 @@ func (p *GCPStorageEventParser) Parse(raw []byte) ([]ingest.IngestItem, error) {
 // parseObjectKey is a shared method for parsing object keys regardless of event source
 func parseObjectKey(bucketName, key string) (*ingest.IngestItem, error) {
 	if strings.HasSuffix(key, "/") {
-		return nil, fmt.Errorf("skipping directory key: %s", key)
+		slog.Debug("Skipping directory key", slog.String("key", key), slog.String("bucket", bucketName))
+		return nil, nil
 	}
 
 	parts := strings.Split(key, "/")
