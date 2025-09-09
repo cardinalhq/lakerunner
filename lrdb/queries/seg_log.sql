@@ -6,7 +6,6 @@ INSERT INTO segment_journal (
     organization_id,
     instance_num,
     dateint,
-    frequency_ms,
     source_count,
     source_object_keys,
     source_total_records,
@@ -16,14 +15,19 @@ INSERT INTO segment_journal (
     dest_total_records,
     dest_total_size,
     record_estimate,
-    metadata
+    metadata,
+    source_min_timestamp,
+    source_max_timestamp,
+    dest_min_timestamp,
+    dest_max_timestamp,
+    source_frequency_ms,
+    dest_frequency_ms
 ) VALUES (
     @signal,
     @action,
     @organization_id,
     @instance_num,
     @dateint,
-    @frequency_ms,
     @source_count,
     @source_object_keys,
     @source_total_records,
@@ -33,15 +37,22 @@ INSERT INTO segment_journal (
     @dest_total_records,
     @dest_total_size,
     @record_estimate,
-    @metadata
+    @metadata,
+    @source_min_timestamp,
+    @source_max_timestamp,
+    @dest_min_timestamp,
+    @dest_max_timestamp,
+    @source_frequency_ms,
+    @dest_frequency_ms
 );
 
 -- name: GetSegmentJournalByOrg :many
 -- Get segment_journal entries for debugging, filtered by organization
-SELECT id, signal, action, created_at, organization_id, instance_num, dateint, frequency_ms,
+SELECT id, signal, action, created_at, organization_id, instance_num, dateint,
        source_count, source_object_keys, source_total_records, source_total_size,
        dest_count, dest_object_keys, dest_total_records, dest_total_size,
-       record_estimate, metadata
+       record_estimate, metadata, source_min_timestamp, source_max_timestamp,
+       dest_min_timestamp, dest_max_timestamp, source_frequency_ms, dest_frequency_ms
 FROM segment_journal
 WHERE organization_id = @organization_id
   AND (@signal::smallint IS NULL OR signal = @signal)

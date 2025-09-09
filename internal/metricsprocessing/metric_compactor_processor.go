@@ -24,7 +24,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/lib/pq"
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
@@ -492,54 +491,25 @@ func (c *MetricCompactorProcessor) GetTargetRecordCount(ctx context.Context, gro
 	return c.store.GetMetricEstimate(ctx, groupingKey.OrganizationID, groupingKey.FrequencyMs)
 }
 
-// logCompactionOperation logs the compaction operation to seg_log for debugging purposes
+// logCompactionOperation logs the compaction operation to segment_journal for debugging purposes
 func (c *MetricCompactorProcessor) logCompactionOperation(ctx context.Context, storageProfile storageprofile.StorageProfile, inputSegments, outputSegments []lrdb.MetricSeg, results []parquetwriter.Result, key messages.CompactionKey, recordEstimate int64) error {
-	// Extract source object keys from input segments
-	sourceObjectKeys := make([]string, len(inputSegments))
-	var sourceTotalRecords, sourceTotalSize int64
-	for i, seg := range inputSegments {
-		sourceObjectKeys[i] = helpers.MakeDBObjectID(key.OrganizationID, storageProfile.CollectorName, key.DateInt, c.getHourFromTimestamp(seg.TsRange.Lower.Int64), seg.SegmentID, "metrics")
-		sourceTotalRecords += seg.RecordCount
-		sourceTotalSize += seg.FileSize
-	}
-
-	// Extract destination object keys from results/output segments
-	destObjectKeys := make([]string, len(results))
-	var destTotalRecords, destTotalSize int64
-	for i, result := range results {
-		stats, ok := result.Metadata.(factories.MetricsFileStats)
-		if !ok {
-			return fmt.Errorf("unexpected metadata type: %T", result.Metadata)
-		}
-		// Use the segment ID from the corresponding output segment
-		if i < len(outputSegments) {
-			destObjectKeys[i] = helpers.MakeDBObjectID(key.OrganizationID, storageProfile.CollectorName, key.DateInt, c.getHourFromTimestamp(stats.FirstTS), outputSegments[i].SegmentID, "metrics")
-		}
-		destTotalRecords += result.RecordCount
-		destTotalSize += result.FileSize
-	}
-
-	// Create segment_journal entry
-	logParams := lrdb.InsertSegmentJournalParams{
-		Signal:             2, // 2 = metrics (based on enum pattern)
-		Action:             2, // 2 = compact (based on enum pattern)
-		OrganizationID:     key.OrganizationID,
-		InstanceNum:        key.InstanceNum,
-		Dateint:            key.DateInt,
-		FrequencyMs:        key.FrequencyMs,
-		SourceCount:        int32(len(inputSegments)),
-		SourceObjectKeys:   pq.StringArray(sourceObjectKeys),
-		SourceTotalRecords: sourceTotalRecords,
-		SourceTotalSize:    sourceTotalSize,
-		DestCount:          int32(len(results)),
-		DestObjectKeys:     pq.StringArray(destObjectKeys),
-		DestTotalRecords:   destTotalRecords,
-		DestTotalSize:      destTotalSize,
-		RecordEstimate:     recordEstimate,
-		Metadata:           make(map[string]any), // Empty metadata for now
-	}
-
-	return c.store.InsertSegmentJournal(ctx, logParams)
+	return logSegmentOperation(
+		ctx,
+		c.store,
+		storageProfile,
+		inputSegments,
+		outputSegments,
+		results,
+		key.OrganizationID,
+		storageProfile.CollectorName,
+		key.DateInt,
+		key.InstanceNum,
+		recordEstimate,
+		2,               // 2 = compact
+		key.FrequencyMs, // For compaction, source and dest frequency are same
+		key.FrequencyMs,
+		c.getHourFromTimestamp,
+	)
 }
 
 // performCompaction handles the core compaction logic: creating readers, aggregating, and writing

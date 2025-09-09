@@ -213,7 +213,7 @@ type ObjCleanup struct {
 	Tries          int32     `json:"tries"`
 }
 
-// Debugging journal for segment operations across all signals (logs, metrics, traces) and actions (ingest, compaction, rollups). Not typically enabled in production.
+// Enhanced debugging journal for segment operations. Tracks record counts, time windows, and frequency changes for compaction and rollup debugging.
 type SegmentJournal struct {
 	ID int64 `json:"id"`
 	// Signal type being processed (1=logs, 2=metrics, 3=traces)
@@ -226,9 +226,7 @@ type SegmentJournal struct {
 	// Instance number for determining storage bucket/profile
 	InstanceNum int16 `json:"instance_num"`
 	// Date being processed (YYYYMMDD format)
-	Dateint int32 `json:"dateint"`
-	// Frequency in milliseconds (primarily for metrics operations)
-	FrequencyMs int32 `json:"frequency_ms"`
+	Dateint     int32 `json:"dateint"`
 	SourceCount int32 `json:"source_count"`
 	// S3 object keys for source files (for fetching and testing)
 	SourceObjectKeys []string `json:"source_object_keys"`
@@ -247,6 +245,18 @@ type SegmentJournal struct {
 	Metadata map[string]any `json:"metadata"`
 	// Estimated record count used for compaction planning and comparison with actual results
 	RecordEstimate int64 `json:"record_estimate"`
+	// Minimum timestamp (ms) in source data
+	SourceMinTimestamp int64 `json:"source_min_timestamp"`
+	// Maximum timestamp (ms) in source data
+	SourceMaxTimestamp int64 `json:"source_max_timestamp"`
+	// Minimum timestamp (ms) in destination data
+	DestMinTimestamp int64 `json:"dest_min_timestamp"`
+	// Maximum timestamp (ms) in destination data
+	DestMaxTimestamp int64 `json:"dest_max_timestamp"`
+	// Source frequency in milliseconds
+	SourceFrequencyMs int32 `json:"source_frequency_ms"`
+	// Destination frequency in milliseconds
+	DestFrequencyMs int32 `json:"dest_frequency_ms"`
 }
 
 type SignalLock struct {

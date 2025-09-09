@@ -24,7 +24,7 @@ func (q *Queries) DeleteOldSegmentJournals(ctx context.Context, cutoffTime time.
 }
 
 const getLatestSegmentJournal = `-- name: GetLatestSegmentJournal :one
-SELECT id, signal, action, created_at, organization_id, instance_num, dateint, frequency_ms, source_count, source_object_keys, source_total_records, source_total_size, dest_count, dest_object_keys, dest_total_records, dest_total_size, metadata, record_estimate
+SELECT id, signal, action, created_at, organization_id, instance_num, dateint, source_count, source_object_keys, source_total_records, source_total_size, dest_count, dest_object_keys, dest_total_records, dest_total_size, metadata, record_estimate, source_min_timestamp, source_max_timestamp, dest_min_timestamp, dest_max_timestamp, source_frequency_ms, dest_frequency_ms
 FROM segment_journal
 ORDER BY created_at DESC
 LIMIT 1
@@ -42,7 +42,6 @@ func (q *Queries) GetLatestSegmentJournal(ctx context.Context) (SegmentJournal, 
 		&i.OrganizationID,
 		&i.InstanceNum,
 		&i.Dateint,
-		&i.FrequencyMs,
 		&i.SourceCount,
 		&i.SourceObjectKeys,
 		&i.SourceTotalRecords,
@@ -53,12 +52,18 @@ func (q *Queries) GetLatestSegmentJournal(ctx context.Context) (SegmentJournal, 
 		&i.DestTotalSize,
 		&i.Metadata,
 		&i.RecordEstimate,
+		&i.SourceMinTimestamp,
+		&i.SourceMaxTimestamp,
+		&i.DestMinTimestamp,
+		&i.DestMaxTimestamp,
+		&i.SourceFrequencyMs,
+		&i.DestFrequencyMs,
 	)
 	return i, err
 }
 
 const getSegmentJournalByID = `-- name: GetSegmentJournalByID :one
-SELECT id, signal, action, created_at, organization_id, instance_num, dateint, frequency_ms, source_count, source_object_keys, source_total_records, source_total_size, dest_count, dest_object_keys, dest_total_records, dest_total_size, metadata, record_estimate
+SELECT id, signal, action, created_at, organization_id, instance_num, dateint, source_count, source_object_keys, source_total_records, source_total_size, dest_count, dest_object_keys, dest_total_records, dest_total_size, metadata, record_estimate, source_min_timestamp, source_max_timestamp, dest_min_timestamp, dest_max_timestamp, source_frequency_ms, dest_frequency_ms
 FROM segment_journal
 WHERE id = $1
 `
@@ -75,7 +80,6 @@ func (q *Queries) GetSegmentJournalByID(ctx context.Context, id int64) (SegmentJ
 		&i.OrganizationID,
 		&i.InstanceNum,
 		&i.Dateint,
-		&i.FrequencyMs,
 		&i.SourceCount,
 		&i.SourceObjectKeys,
 		&i.SourceTotalRecords,
@@ -86,15 +90,22 @@ func (q *Queries) GetSegmentJournalByID(ctx context.Context, id int64) (SegmentJ
 		&i.DestTotalSize,
 		&i.Metadata,
 		&i.RecordEstimate,
+		&i.SourceMinTimestamp,
+		&i.SourceMaxTimestamp,
+		&i.DestMinTimestamp,
+		&i.DestMaxTimestamp,
+		&i.SourceFrequencyMs,
+		&i.DestFrequencyMs,
 	)
 	return i, err
 }
 
 const getSegmentJournalByOrg = `-- name: GetSegmentJournalByOrg :many
-SELECT id, signal, action, created_at, organization_id, instance_num, dateint, frequency_ms,
+SELECT id, signal, action, created_at, organization_id, instance_num, dateint,
        source_count, source_object_keys, source_total_records, source_total_size,
        dest_count, dest_object_keys, dest_total_records, dest_total_size,
-       record_estimate, metadata
+       record_estimate, metadata, source_min_timestamp, source_max_timestamp,
+       dest_min_timestamp, dest_max_timestamp, source_frequency_ms, dest_frequency_ms
 FROM segment_journal
 WHERE organization_id = $1
   AND ($2::smallint IS NULL OR signal = $2)
@@ -118,7 +129,6 @@ type GetSegmentJournalByOrgRow struct {
 	OrganizationID     uuid.UUID      `json:"organization_id"`
 	InstanceNum        int16          `json:"instance_num"`
 	Dateint            int32          `json:"dateint"`
-	FrequencyMs        int32          `json:"frequency_ms"`
 	SourceCount        int32          `json:"source_count"`
 	SourceObjectKeys   []string       `json:"source_object_keys"`
 	SourceTotalRecords int64          `json:"source_total_records"`
@@ -129,6 +139,12 @@ type GetSegmentJournalByOrgRow struct {
 	DestTotalSize      int64          `json:"dest_total_size"`
 	RecordEstimate     int64          `json:"record_estimate"`
 	Metadata           map[string]any `json:"metadata"`
+	SourceMinTimestamp int64          `json:"source_min_timestamp"`
+	SourceMaxTimestamp int64          `json:"source_max_timestamp"`
+	DestMinTimestamp   int64          `json:"dest_min_timestamp"`
+	DestMaxTimestamp   int64          `json:"dest_max_timestamp"`
+	SourceFrequencyMs  int32          `json:"source_frequency_ms"`
+	DestFrequencyMs    int32          `json:"dest_frequency_ms"`
 }
 
 // Get segment_journal entries for debugging, filtered by organization
@@ -154,7 +170,6 @@ func (q *Queries) GetSegmentJournalByOrg(ctx context.Context, arg GetSegmentJour
 			&i.OrganizationID,
 			&i.InstanceNum,
 			&i.Dateint,
-			&i.FrequencyMs,
 			&i.SourceCount,
 			&i.SourceObjectKeys,
 			&i.SourceTotalRecords,
@@ -165,6 +180,12 @@ func (q *Queries) GetSegmentJournalByOrg(ctx context.Context, arg GetSegmentJour
 			&i.DestTotalSize,
 			&i.RecordEstimate,
 			&i.Metadata,
+			&i.SourceMinTimestamp,
+			&i.SourceMaxTimestamp,
+			&i.DestMinTimestamp,
+			&i.DestMaxTimestamp,
+			&i.SourceFrequencyMs,
+			&i.DestFrequencyMs,
 		); err != nil {
 			return nil, err
 		}
@@ -183,7 +204,6 @@ INSERT INTO segment_journal (
     organization_id,
     instance_num,
     dateint,
-    frequency_ms,
     source_count,
     source_object_keys,
     source_total_records,
@@ -193,7 +213,13 @@ INSERT INTO segment_journal (
     dest_total_records,
     dest_total_size,
     record_estimate,
-    metadata
+    metadata,
+    source_min_timestamp,
+    source_max_timestamp,
+    dest_min_timestamp,
+    dest_max_timestamp,
+    source_frequency_ms,
+    dest_frequency_ms
 ) VALUES (
     $1,
     $2,
@@ -210,7 +236,12 @@ INSERT INTO segment_journal (
     $13,
     $14,
     $15,
-    $16
+    $16,
+    $17,
+    $18,
+    $19,
+    $20,
+    $21
 )
 `
 
@@ -220,7 +251,6 @@ type InsertSegmentJournalParams struct {
 	OrganizationID     uuid.UUID      `json:"organization_id"`
 	InstanceNum        int16          `json:"instance_num"`
 	Dateint            int32          `json:"dateint"`
-	FrequencyMs        int32          `json:"frequency_ms"`
 	SourceCount        int32          `json:"source_count"`
 	SourceObjectKeys   []string       `json:"source_object_keys"`
 	SourceTotalRecords int64          `json:"source_total_records"`
@@ -231,6 +261,12 @@ type InsertSegmentJournalParams struct {
 	DestTotalSize      int64          `json:"dest_total_size"`
 	RecordEstimate     int64          `json:"record_estimate"`
 	Metadata           map[string]any `json:"metadata"`
+	SourceMinTimestamp int64          `json:"source_min_timestamp"`
+	SourceMaxTimestamp int64          `json:"source_max_timestamp"`
+	DestMinTimestamp   int64          `json:"dest_min_timestamp"`
+	DestMaxTimestamp   int64          `json:"dest_max_timestamp"`
+	SourceFrequencyMs  int32          `json:"source_frequency_ms"`
+	DestFrequencyMs    int32          `json:"dest_frequency_ms"`
 }
 
 // Insert a debugging journal entry for segment operations
@@ -241,7 +277,6 @@ func (q *Queries) InsertSegmentJournal(ctx context.Context, arg InsertSegmentJou
 		arg.OrganizationID,
 		arg.InstanceNum,
 		arg.Dateint,
-		arg.FrequencyMs,
 		arg.SourceCount,
 		arg.SourceObjectKeys,
 		arg.SourceTotalRecords,
@@ -252,6 +287,12 @@ func (q *Queries) InsertSegmentJournal(ctx context.Context, arg InsertSegmentJou
 		arg.DestTotalSize,
 		arg.RecordEstimate,
 		arg.Metadata,
+		arg.SourceMinTimestamp,
+		arg.SourceMaxTimestamp,
+		arg.DestMinTimestamp,
+		arg.DestMaxTimestamp,
+		arg.SourceFrequencyMs,
+		arg.DestFrequencyMs,
 	)
 	return err
 }

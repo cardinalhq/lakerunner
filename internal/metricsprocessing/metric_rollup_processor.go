@@ -24,6 +24,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
@@ -41,6 +42,8 @@ type RollupStore interface {
 	RollupMetricSegsWithKafkaOffsetsWithOrg(ctx context.Context, sourceParams lrdb.RollupSourceParams, targetParams lrdb.RollupTargetParams, sourceSegmentIDs []int64, newRecords []lrdb.RollupNewRecord, kafkaOffsets []lrdb.KafkaOffsetUpdateWithOrg) error
 	KafkaJournalGetLastProcessedWithOrgInstance(ctx context.Context, params lrdb.KafkaJournalGetLastProcessedWithOrgInstanceParams) (int64, error)
 	GetMetricEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32) int64
+	// Add segment_journal functionality
+	InsertSegmentJournal(ctx context.Context, params lrdb.InsertSegmentJournalParams) error
 }
 
 // MetricRollupProcessor implements the Processor interface for metric rollups
@@ -48,14 +51,16 @@ type MetricRollupProcessor struct {
 	store           RollupStore
 	storageProvider storageprofile.StorageProfileProvider
 	cmgr            cloudstorage.ClientProvider
+	cfg             *config.Config
 }
 
 // NewMetricRollupProcessor creates a new metric rollup processor instance
-func NewMetricRollupProcessor(store RollupStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider) *MetricRollupProcessor {
+func NewMetricRollupProcessor(store RollupStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, cfg *config.Config) *MetricRollupProcessor {
 	return &MetricRollupProcessor{
 		store:           store,
 		storageProvider: storageProvider,
 		cmgr:            cmgr,
+		cfg:             cfg,
 	}
 }
 
@@ -279,6 +284,14 @@ func (r *MetricRollupProcessor) Process(ctx context.Context, group *Accumulation
 		totalSize += result.FileSize
 	}
 
+	// Log the rollup operation to segment_journal for debugging (if enabled)
+	if r.cfg.SegLog.Enabled {
+		if err := r.logRollupOperation(ctx, storageProfile, segments, newSegments, results, group.Key, recordCountEstimate); err != nil {
+			// Don't fail the rollup if seg_log fails - this is just for debugging
+			ll.Warn("Failed to log rollup operation to segment_journal", slog.Any("error", err))
+		}
+	}
+
 	ll.Info("Rollup completed successfully",
 		slog.Int("inputSegments", len(segments)),
 		slog.Int("outputFiles", len(results)),
@@ -432,6 +445,27 @@ func (r *MetricRollupProcessor) atomicDatabaseUpdate(ctx context.Context, oldSeg
 
 	// Use the atomic rollup function that handles everything in one transaction
 	return r.store.RollupMetricSegsWithKafkaOffsetsWithOrg(ctx, sourceParams, targetParams, sourceSegmentIDs, newRecords, kafkaOffsets)
+}
+
+// logRollupOperation logs the rollup operation to segment_journal for debugging purposes
+func (r *MetricRollupProcessor) logRollupOperation(ctx context.Context, storageProfile storageprofile.StorageProfile, inputSegments, outputSegments []lrdb.MetricSeg, results []parquetwriter.Result, key messages.RollupKey, recordEstimate int64) error {
+	return logSegmentOperation(
+		ctx,
+		r.store,
+		storageProfile,
+		inputSegments,
+		outputSegments,
+		results,
+		key.OrganizationID,
+		storageProfile.CollectorName,
+		key.DateInt,
+		key.InstanceNum,
+		recordEstimate,
+		3,                     // 3 = rollup
+		key.SourceFrequencyMs, // Source frequency from the rollup key
+		key.TargetFrequencyMs, // Target frequency from the rollup key
+		r.getHourFromTimestamp,
+	)
 }
 
 // Helper functions

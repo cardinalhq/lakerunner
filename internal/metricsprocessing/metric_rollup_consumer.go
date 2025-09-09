@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
@@ -57,11 +58,12 @@ func NewMetricRollupConsumer(
 	store RollupStore,
 	storageProvider storageprofile.StorageProfileProvider,
 	cmgr cloudstorage.ClientProvider,
+	cfg *config.Config,
 ) (*MetricRollupConsumer, error) {
 	ll := logctx.FromContext(ctx)
 
 	// Create MetricRollupProcessor
-	processor := NewMetricRollupProcessor(store, storageProvider, cmgr)
+	processor := NewMetricRollupProcessor(store, storageProvider, cmgr, cfg)
 
 	// Create Gatherer - using hardcoded consumer group and topic for rollups
 	consumerGroup := "lakerunner.rollup.metrics"
