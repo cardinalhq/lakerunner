@@ -39,6 +39,7 @@ func GetLogSegCmd() *cobra.Command {
 	}
 
 	cmd.AddCommand(getLogSegFetchSubCmd())
+	cmd.AddCommand(getLogSegCheckSubCmd())
 
 	return cmd
 }
@@ -178,4 +179,174 @@ func getLogSegFetchSubCmd() *cobra.Command {
 	cmd.Flags().Int64Var(&segLogID, "id", 0, "Segment log ID to fetch (if not specified, fetches the latest record)")
 
 	return cmd
+}
+
+func getLogSegCheckSubCmd() *cobra.Command {
+	var jsonFile string
+
+	cmd := &cobra.Command{
+		Use:   "check",
+		Short: "Validate segment journal data from JSON file",
+		Long:  `Analyzes segment journal JSON file and validates the operation, providing detailed reports for metrics compaction.`,
+		RunE: func(c *cobra.Command, _ []string) error {
+			// Read and parse the JSON file
+			jsonData, err := os.ReadFile(jsonFile)
+			if err != nil {
+				return fmt.Errorf("failed to read JSON file: %w", err)
+			}
+
+			var segLog lrdb.SegmentJournal
+			if err := json.Unmarshal(jsonData, &segLog); err != nil {
+				return fmt.Errorf("failed to parse JSON: %w", err)
+			}
+
+			// Determine signal and action names for display
+			signalName := getSignalName(segLog.Signal)
+			actionName := getActionName(segLog.Action)
+
+			fmt.Printf("Segment Journal Check Report\n")
+			fmt.Printf("============================\n")
+			fmt.Printf("ID: %d\n", segLog.ID)
+			fmt.Printf("Signal: %s (%d)\n", signalName, segLog.Signal)
+			fmt.Printf("Action: %s (%d)\n", actionName, segLog.Action)
+			fmt.Printf("Organization ID: %s\n", segLog.OrganizationID)
+			fmt.Printf("Date: %d\n", segLog.Dateint)
+			fmt.Printf("\n")
+
+			// Check if this is metrics + compact
+			if segLog.Signal == 2 && segLog.Action == 2 {
+				return checkMetricsCompact(&segLog)
+			} else {
+				// For other types, just report basic info
+				fmt.Printf("Operation Type: %s %s\n", signalName, actionName)
+				fmt.Printf("This operation type is not currently validated by the check command.\n")
+				fmt.Printf("Basic info:\n")
+				fmt.Printf("  Source files: %d\n", segLog.SourceCount)
+				fmt.Printf("  Destination files: %d\n", segLog.DestCount)
+				fmt.Printf("  Source records: %d\n", segLog.SourceTotalRecords)
+				fmt.Printf("  Destination records: %d\n", segLog.DestTotalRecords)
+				fmt.Printf("  Source size: %d bytes\n", segLog.SourceTotalSize)
+				fmt.Printf("  Destination size: %d bytes\n", segLog.DestTotalSize)
+			}
+
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&jsonFile, "file", "", "Path to the segment journal JSON file (required)")
+	cmd.MarkFlagRequired("file")
+
+	return cmd
+}
+
+func checkMetricsCompact(segLog *lrdb.SegmentJournal) error {
+	fmt.Printf("Metrics Compaction Validation\n")
+	fmt.Printf("=============================\n")
+
+	var hasErrors bool
+
+	// 1. Check frequencies match
+	fmt.Printf("1. Frequency Check:\n")
+	if segLog.SourceFrequencyMs == segLog.DestFrequencyMs {
+		fmt.Printf("   ✓ Source and destination frequencies match: %d ms\n", segLog.SourceFrequencyMs)
+	} else {
+		fmt.Printf("   ✗ Frequency mismatch! Source: %d ms, Destination: %d ms\n",
+			segLog.SourceFrequencyMs, segLog.DestFrequencyMs)
+		hasErrors = true
+	}
+
+	// 2. Check time ranges match
+	fmt.Printf("\n2. Time Range Check:\n")
+	if segLog.SourceMinTimestamp == segLog.DestMinTimestamp {
+		fmt.Printf("   ✓ Start times match: %d\n", segLog.SourceMinTimestamp)
+	} else {
+		fmt.Printf("   ✗ Start time mismatch! Source: %d, Destination: %d\n",
+			segLog.SourceMinTimestamp, segLog.DestMinTimestamp)
+		hasErrors = true
+	}
+
+	if segLog.SourceMaxTimestamp == segLog.DestMaxTimestamp {
+		fmt.Printf("   ✓ End times match: %d\n", segLog.SourceMaxTimestamp)
+	} else {
+		fmt.Printf("   ✗ End time mismatch! Source: %d, Destination: %d\n",
+			segLog.SourceMaxTimestamp, segLog.DestMaxTimestamp)
+		hasErrors = true
+	}
+
+	// 3. Check record counts
+	fmt.Printf("\n3. Record Count Check:\n")
+	if segLog.DestTotalRecords <= segLog.SourceTotalRecords {
+		recordDiff := segLog.SourceTotalRecords - segLog.DestTotalRecords
+		reductionPct := float64(recordDiff) / float64(segLog.SourceTotalRecords) * 100
+
+		if recordDiff == 0 {
+			fmt.Printf("   ✓ Record counts match exactly: %d\n", segLog.SourceTotalRecords)
+		} else {
+			fmt.Printf("   ✓ Destination records ≤ source records\n")
+			fmt.Printf("     Source: %d records\n", segLog.SourceTotalRecords)
+			fmt.Printf("     Destination: %d records\n", segLog.DestTotalRecords)
+			fmt.Printf("     Difference: %d records (%.2f%% reduction)\n", recordDiff, reductionPct)
+		}
+	} else {
+		fmt.Printf("   ✗ Destination has more records than source!\n")
+		fmt.Printf("     Source: %d records\n", segLog.SourceTotalRecords)
+		fmt.Printf("     Destination: %d records\n", segLog.DestTotalRecords)
+		fmt.Printf("     Excess: %d records\n", segLog.DestTotalRecords-segLog.SourceTotalRecords)
+		hasErrors = true
+	}
+
+	// 4. Reduction summary
+	fmt.Printf("\n4. Compaction Summary:\n")
+
+	// Bytes reduction
+	if segLog.SourceTotalSize > 0 {
+		byteDiff := segLog.SourceTotalSize - segLog.DestTotalSize
+		byteReductionPct := float64(byteDiff) / float64(segLog.SourceTotalSize) * 100
+		fmt.Printf("   Bytes: %d → %d (%d bytes, %.2f%% reduction)\n",
+			segLog.SourceTotalSize, segLog.DestTotalSize, byteDiff, byteReductionPct)
+	}
+
+	// Segment count reduction
+	segCountDiff := segLog.SourceCount - segLog.DestCount
+	if segLog.SourceCount > 0 {
+		segReductionPct := float64(segCountDiff) / float64(segLog.SourceCount) * 100
+		fmt.Printf("   Segments: %d → %d (%d segments, %.2f%% reduction)\n",
+			segLog.SourceCount, segLog.DestCount, segCountDiff, segReductionPct)
+	}
+
+	fmt.Printf("\n")
+	if hasErrors {
+		fmt.Printf("❌ Validation completed with ERRORS\n")
+		return fmt.Errorf("validation failed - see errors above")
+	} else {
+		fmt.Printf("✅ Validation completed successfully\n")
+	}
+
+	return nil
+}
+
+func getSignalName(signal int16) string {
+	switch signal {
+	case 1:
+		return "logs"
+	case 2:
+		return "metrics"
+	case 3:
+		return "traces"
+	default:
+		return "unknown"
+	}
+}
+
+func getActionName(action int16) string {
+	switch action {
+	case 1:
+		return "ingest"
+	case 2:
+		return "compact"
+	case 3:
+		return "rollup"
+	default:
+		return "unknown"
+	}
 }
