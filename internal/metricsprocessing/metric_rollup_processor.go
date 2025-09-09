@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -39,7 +38,7 @@ import (
 // RollupStore defines database operations needed for rollups
 type RollupStore interface {
 	GetMetricSeg(ctx context.Context, params lrdb.GetMetricSegParams) (lrdb.MetricSeg, error)
-	CompactMetricSegsWithKafkaOffsetsWithOrg(ctx context.Context, params lrdb.CompactMetricSegsParams, kafkaOffsets []lrdb.KafkaOffsetUpdateWithOrg) error
+	RollupMetricSegsWithKafkaOffsetsWithOrg(ctx context.Context, sourceParams lrdb.RollupSourceParams, targetParams lrdb.RollupTargetParams, sourceSegmentIDs []int64, newRecords []lrdb.RollupNewRecord, kafkaOffsets []lrdb.KafkaOffsetUpdateWithOrg) error
 	KafkaJournalGetLastProcessedWithOrgInstance(ctx context.Context, params lrdb.KafkaJournalGetLastProcessedWithOrgInstanceParams) (int64, error)
 	GetMetricEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32) int64
 }
@@ -374,7 +373,44 @@ func (r *MetricRollupProcessor) uploadAndCreateRollupSegments(ctx context.Contex
 func (r *MetricRollupProcessor) atomicDatabaseUpdate(ctx context.Context, oldSegments, newSegments []lrdb.MetricSeg, kafkaCommitData *KafkaCommitData, key messages.RollupKey) error {
 	ll := logctx.FromContext(ctx)
 
-	// Prepare Kafka offsets for update
+	// Extract segment IDs from old segments
+	sourceSegmentIDs := make([]int64, len(oldSegments))
+	for i, seg := range oldSegments {
+		sourceSegmentIDs[i] = seg.SegmentID
+	}
+
+	// Convert new segments to RollupNewRecord format
+	newRecords := make([]lrdb.RollupNewRecord, len(newSegments))
+	for i, seg := range newSegments {
+		newRecords[i] = lrdb.RollupNewRecord{
+			SegmentID:    seg.SegmentID,
+			StartTs:      seg.TsRange.Lower.Int64,
+			EndTs:        seg.TsRange.Upper.Int64,
+			RecordCount:  seg.RecordCount,
+			FileSize:     seg.FileSize,
+			Fingerprints: seg.Fingerprints,
+		}
+	}
+
+	sourceParams := lrdb.RollupSourceParams{
+		OrganizationID: key.OrganizationID,
+		Dateint:        key.DateInt,
+		FrequencyMs:    key.SourceFrequencyMs,
+		InstanceNum:    key.InstanceNum,
+	}
+
+	targetParams := lrdb.RollupTargetParams{
+		OrganizationID: key.OrganizationID,
+		Dateint:        key.DateInt,
+		FrequencyMs:    key.TargetFrequencyMs,
+		InstanceNum:    key.InstanceNum,
+		SlotID:         key.SlotID,
+		SlotCount:      key.SlotCount,
+		IngestDateint:  key.DateInt,
+		SortVersion:    lrdb.CurrentMetricSortVersion,
+	}
+
+	// Prepare Kafka offsets for atomic update
 	var kafkaOffsets []lrdb.KafkaOffsetUpdateWithOrg
 	if kafkaCommitData != nil {
 		for partition, offset := range kafkaCommitData.Offsets {
@@ -394,56 +430,10 @@ func (r *MetricRollupProcessor) atomicDatabaseUpdate(ctx context.Context, oldSeg
 				slog.Int("partition", int(partition)),
 				slog.Int64("newOffset", offset))
 		}
-
-		// Sort to avoid deadlocks
-		sort.Slice(kafkaOffsets, func(i, j int) bool {
-			if kafkaOffsets[i].Topic != kafkaOffsets[j].Topic {
-				return kafkaOffsets[i].Topic < kafkaOffsets[j].Topic
-			}
-			if kafkaOffsets[i].Partition != kafkaOffsets[j].Partition {
-				return kafkaOffsets[i].Partition < kafkaOffsets[j].Partition
-			}
-			return kafkaOffsets[i].ConsumerGroup < kafkaOffsets[j].ConsumerGroup
-		})
 	}
 
-	// Convert segments to appropriate types
-	oldRecords := make([]lrdb.CompactMetricSegsOld, len(oldSegments))
-	for i, seg := range oldSegments {
-		oldRecords[i] = lrdb.CompactMetricSegsOld{
-			SegmentID: seg.SegmentID,
-			SlotID:    seg.SlotID,
-		}
-	}
-
-	newRecords := make([]lrdb.CompactMetricSegsNew, len(newSegments))
-	for i, seg := range newSegments {
-		newRecords[i] = lrdb.CompactMetricSegsNew{
-			SegmentID:    seg.SegmentID,
-			StartTs:      seg.TsRange.Lower.Int64,
-			EndTs:        seg.TsRange.Upper.Int64,
-			RecordCount:  seg.RecordCount,
-			FileSize:     seg.FileSize,
-			Fingerprints: seg.Fingerprints,
-		}
-	}
-
-	// Perform atomic operation - note this uses the old segments' frequency for the operation
-	// but the new segments are created at the target frequency
-	params := lrdb.CompactMetricSegsParams{
-		OrganizationID: key.OrganizationID,
-		Dateint:        key.DateInt,
-		FrequencyMs:    key.SourceFrequencyMs,
-		InstanceNum:    key.InstanceNum,
-		SlotID:         key.SlotID,
-		SlotCount:      key.SlotCount,
-		IngestDateint:  key.DateInt,
-		OldRecords:     oldRecords,
-		NewRecords:     newRecords,
-		CreatedBy:      lrdb.CreateByRollup,
-	}
-
-	return r.store.CompactMetricSegsWithKafkaOffsetsWithOrg(ctx, params, kafkaOffsets)
+	// Use the atomic rollup function that handles everything in one transaction
+	return r.store.RollupMetricSegsWithKafkaOffsetsWithOrg(ctx, sourceParams, targetParams, sourceSegmentIDs, newRecords, kafkaOffsets)
 }
 
 // Helper functions

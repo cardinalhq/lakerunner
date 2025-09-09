@@ -28,6 +28,7 @@ type MetricSegmentInserter interface {
 	CompactMetricSegs(ctx context.Context, args CompactMetricSegsParams) error
 	CompactMetricSegsWithKafkaOffsets(ctx context.Context, params CompactMetricSegsParams, kafkaOffsets []KafkaOffsetUpdate) error
 	RollupMetricSegs(ctx context.Context, sourceParams RollupSourceParams, targetParams RollupTargetParams, sourceSegmentIDs []int64, newRecords []RollupNewRecord) error
+	RollupMetricSegsWithKafkaOffsetsWithOrg(ctx context.Context, sourceParams RollupSourceParams, targetParams RollupTargetParams, sourceSegmentIDs []int64, newRecords []RollupNewRecord, kafkaOffsets []KafkaOffsetUpdateWithOrg) error
 }
 
 type TraceSegmentInserter interface {
