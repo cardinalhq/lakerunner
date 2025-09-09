@@ -413,7 +413,7 @@ func (p *MetricIngestProcessor) createReaderStack(ctx context.Context, tmpFilena
 	}
 
 	// Step 3: Add disk-based sorting (after translation so TID is available)
-	keyProvider := metricsprocessing.GetCurrentMetricSortKeyProvider()
+	keyProvider := filereader.GetCurrentMetricSortKeyProvider()
 	reader, err = filereader.NewDiskSortingReader(reader, keyProvider, 1000)
 	if err != nil {
 		reader.Close()
@@ -430,7 +430,7 @@ func (p *MetricIngestProcessor) createUnifiedReader(ctx context.Context, readers
 	if len(readers) == 1 {
 		finalReader = readers[0]
 	} else {
-		keyProvider := metricsprocessing.GetCurrentMetricSortKeyProvider()
+		keyProvider := filereader.GetCurrentMetricSortKeyProvider()
 		multiReader, err := filereader.NewMergesortReader(ctx, readers, keyProvider, 1000)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create multi-source reader: %w", err)

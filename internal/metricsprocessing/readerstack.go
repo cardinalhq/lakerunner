@@ -111,7 +111,7 @@ func CreateReaderStack(
 		sourceSortedWithCompatibleKey := row.SortVersion == lrdb.CurrentMetricSortVersion
 
 		if !sourceSortedWithCompatibleKey {
-			keyProvider := GetCurrentMetricSortKeyProvider()
+			keyProvider := filereader.GetCurrentMetricSortKeyProvider()
 			sortingReader, err := filereader.NewDiskSortingReader(reader, keyProvider, 1000)
 			if err != nil {
 				reader.Close()
@@ -134,7 +134,7 @@ func CreateReaderStack(
 	if len(readers) == 1 {
 		finalReader = readers[0]
 	} else if len(readers) > 1 {
-		keyProvider := GetCurrentMetricSortKeyProvider()
+		keyProvider := filereader.GetCurrentMetricSortKeyProvider()
 		multiReader, err := filereader.NewMergesortReader(ctx, readers, keyProvider, 1000)
 		if err != nil {
 			return nil, fmt.Errorf("creating mergesort reader: %w", err)

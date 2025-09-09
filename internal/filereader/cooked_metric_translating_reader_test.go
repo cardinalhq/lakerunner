@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -204,4 +205,144 @@ func (m *testMockReader) TotalRowsReturned() int64 {
 		total += int64(m.batches[i].Len())
 	}
 	return total
+}
+
+// TestCookedMetricTranslatingReader_ShouldDropRow tests if shouldDropRow is correctly identifying rows to drop
+// from actual parquet files that are showing data loss in production
+func TestCookedMetricTranslatingReader_ShouldDropRow(t *testing.T) {
+	testFiles := []struct {
+		filename        string
+		expectedRecords int
+	}{
+		{"tbl_301228791710090615.parquet", 480},
+		{"tbl_301228792783832948.parquet", 456},
+		{"tbl_301228792733501300.parquet", 1414}, // A larger file for comparison
+	}
+
+	ctx := context.Background()
+
+	for _, testFile := range testFiles {
+		t.Run(testFile.filename, func(t *testing.T) {
+			filePath := filepath.Join("..", "..", "testdata", "metrics", "seglog-990", "source", testFile.filename)
+
+			file, err := os.Open(filePath)
+			require.NoError(t, err, "Should open parquet file")
+			defer file.Close()
+
+			stat, err := file.Stat()
+			require.NoError(t, err, "Should stat parquet file")
+
+			// Create raw reader for testing shouldDropRow
+			rawReader, err := NewParquetRawReader(file, stat.Size(), 1000)
+			require.NoError(t, err, "Should create NewParquetRawReader")
+			defer rawReader.Close()
+
+			// First, read one batch from the raw reader to get sample rows for shouldDropRow testing
+			rawBatch, err := rawReader.Next(ctx)
+			require.NoError(t, err, "Should read from raw reader")
+			require.NotNil(t, rawBatch, "Raw batch should not be nil")
+			require.Greater(t, rawBatch.Len(), 0, "Raw batch should have rows")
+
+			t.Logf("File %s: Raw reader returned %d records for shouldDropRow testing", testFile.filename, rawBatch.Len())
+
+			// Create a temporary cooked reader just for testing shouldDropRow
+			tempCookedReader := NewCookedMetricTranslatingReader(rawReader)
+			defer tempCookedReader.Close()
+
+			// Test shouldDropRow on the first few rows
+			droppedCount := 0
+			totalTested := 0
+			
+			// Test up to 10 rows or all rows if fewer
+			maxToTest := min(10, rawBatch.Len())
+
+			for i := 0; i < maxToTest; i++ {
+				row := rawBatch.Get(i)
+				totalTested++
+				
+				// Test shouldDropRow with the actual row data
+				if tempCookedReader.shouldDropRow(ctx, row) {
+					droppedCount++
+					t.Logf("File %s: Row %d would be DROPPED by shouldDropRow", testFile.filename, i)
+					
+					// Log the row content for debugging
+					t.Logf("File %s: Dropped row data: %+v", testFile.filename, row)
+				} else {
+					t.Logf("File %s: Row %d would be KEPT by shouldDropRow", testFile.filename, i)
+				}
+			}
+
+			dropRate := float64(droppedCount) / float64(totalTested) * 100
+			t.Logf("File %s: Drop rate in first %d rows: %.1f%% (%d/%d)",
+				testFile.filename, totalTested, dropRate, droppedCount, totalTested)
+		})
+	}
+}
+
+// TestCookedMetricTranslatingReader_NextWithSmallFiles focuses specifically on the Next() method behavior
+// of CookedMetricTranslatingReader with small files to verify it works correctly in isolation
+func TestCookedMetricTranslatingReader_NextWithSmallFiles(t *testing.T) {
+	testFiles := []struct {
+		filename        string
+		expectedRecords int
+	}{
+		{"tbl_301228791710090615.parquet", 480},
+		{"tbl_301228792783832948.parquet", 456},
+		{"tbl_301228792733501300.parquet", 1414}, // A larger file for comparison
+	}
+
+	ctx := context.Background()
+
+	for _, testFile := range testFiles {
+		t.Run(testFile.filename, func(t *testing.T) {
+			filePath := filepath.Join("..", "..", "testdata", "metrics", "seglog-990", "source", testFile.filename)
+
+			file, err := os.Open(filePath)
+			require.NoError(t, err, "Should open parquet file")
+			defer file.Close()
+
+			stat, err := file.Stat()
+			require.NoError(t, err, "Should stat parquet file")
+
+			rawReader, err := NewParquetRawReader(file, stat.Size(), 1000)
+			require.NoError(t, err, "Should create NewParquetRawReader")
+			defer rawReader.Close()
+
+			cookedReader := NewCookedMetricTranslatingReader(rawReader)
+			defer cookedReader.Close()
+
+			// Read from the cooked reader and see what exactly happens
+			cookedRecordCount := 0
+			batchNum := 0
+			for {
+				cookedBatch, err := cookedReader.Next(ctx)
+				batchNum++
+				
+				if err != nil {
+					t.Logf("File %s: Batch %d - Got error: %v", testFile.filename, batchNum, err)
+					break // EOF or error
+				}
+				if cookedBatch == nil {
+					t.Logf("File %s: Batch %d - Got nil batch", testFile.filename, batchNum)
+					break
+				}
+				
+				batchSize := cookedBatch.Len()
+				cookedRecordCount += batchSize
+				t.Logf("File %s: Batch %d - Got %d records (total: %d)", testFile.filename, batchNum, batchSize, cookedRecordCount)
+				
+				if batchSize == 0 {
+					t.Logf("File %s: Batch %d - Empty batch, stopping", testFile.filename, batchNum)
+					break
+				}
+			}
+
+			t.Logf("File %s: Cooked reader returned %d records (expected %d)",
+				testFile.filename, cookedRecordCount, testFile.expectedRecords)
+
+			// These tests verify that CookedMetricTranslatingReader works correctly in isolation
+			require.Equal(t, testFile.expectedRecords, cookedRecordCount, 
+				"CookedMetricTranslatingReader should read all records correctly when used in isolation")
+		})
+	}
 }

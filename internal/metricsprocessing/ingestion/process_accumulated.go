@@ -383,7 +383,7 @@ func ProcessFileToSortedReader(ctx context.Context, item ingest.IngestItem, tmpD
 	}
 
 	// Add disk-based sorting
-	keyProvider := metricsprocessing.GetCurrentMetricSortKeyProvider()
+	keyProvider := filereader.GetCurrentMetricSortKeyProvider()
 	reader, err = filereader.NewDiskSortingReader(reader, keyProvider, 1000)
 	if err != nil {
 		reader.Close()

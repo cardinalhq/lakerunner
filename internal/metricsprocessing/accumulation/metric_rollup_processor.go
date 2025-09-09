@@ -251,60 +251,39 @@ func (r *MetricRollupProcessor) Process(ctx context.Context, group *Accumulation
 	ll.Info("Found segments to roll up",
 		slog.Int("segmentCount", len(segments)))
 
-	// Step 4-7: Use metricsprocessing.CreateReaderStack to handle download and reader creation
 	readerStack, err := metricsprocessing.CreateReaderStack(ctx, tmpDir, storageClient, group.Key.OrganizationID, storageProfile, segments)
 	if err != nil {
 		return fmt.Errorf("create reader stack: %w", err)
 	}
 	defer metricsprocessing.CloseReaderStack(ctx, readerStack)
 
-	// Step 8: Create aggregation reader from the merge reader with TARGET frequency_ms as window
-	var aggReader filereader.Reader
-	if len(readerStack.Readers) == 1 {
-		// Single reader case
-		aggReader, err = filereader.NewAggregatingMetricsReader(readerStack.Readers[0], int64(group.Key.TargetFrequencyMs), 1000)
-	} else if len(readerStack.Readers) > 1 {
-		// Multiple readers - need merge sort first
-		mergeReader, mergeErr := filereader.NewMergesortReader(ctx, readerStack.Readers, &filereader.MetricSortKeyProvider{}, 1000)
-		if mergeErr != nil {
-			return fmt.Errorf("create merge sort reader: %w", mergeErr)
-		}
-		defer mergeReader.Close()
-		aggReader, err = filereader.NewAggregatingMetricsReader(mergeReader, int64(group.Key.TargetFrequencyMs), 1000)
-	} else {
-		return fmt.Errorf("no readers available for rollup")
-	}
+	aggReader, err := filereader.NewAggregatingMetricsReader(readerStack.HeadReader, int64(group.Key.TargetFrequencyMs), 1000)
 	if err != nil {
 		return fmt.Errorf("create aggregating reader: %w", err)
 	}
 	defer aggReader.Close()
 
-	// Step 9: Create parquet writer with estimated max records
 	maxRecords := recordCountEstimate * int64(r.targetRecordMultiple)
 	writer, err := factories.NewMetricsWriter(tmpDir, maxRecords)
 	if err != nil {
 		return fmt.Errorf("create parquet writer: %w", err)
 	}
 
-	// Write from aggregation reader to writer
 	if err := r.writeFromReader(ctx, aggReader, writer); err != nil {
 		writer.Abort()
 		return fmt.Errorf("write from reader: %w", err)
 	}
 
-	// Close writer and get results
 	results, err := writer.Close(ctx)
 	if err != nil {
 		return fmt.Errorf("close writer: %w", err)
 	}
 
-	// Step 10: Upload new files and create new metric segments at target frequency
 	newSegments, err := r.uploadAndCreateRollupSegments(ctx, storageClient, storageProfile, results, group.Key, segments)
 	if err != nil {
 		return fmt.Errorf("upload and create rollup segments: %w", err)
 	}
 
-	// Step 11: Atomic operation - mark old as compacted, insert new at target frequency, update Kafka offsets
 	if err := r.atomicDatabaseUpdate(ctx, segments, newSegments, kafkaCommitData, group.Key); err != nil {
 		return fmt.Errorf("atomic database update: %w", err)
 	}

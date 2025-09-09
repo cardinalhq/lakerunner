@@ -1,0 +1,40 @@
+{
+  "id": 990,
+  "signal": 2,
+  "action": 2,
+  "created_at": "2025-09-09T01:59:30.031037Z",
+  "organization_id": "afa841db-4e2d-40c1-89f1-963bf55df31e",
+  "instance_num": 1,
+  "dateint": 20250909,
+  "frequency_ms": 10000,
+  "source_count": 17,
+  "source_object_keys": [
+    "db/afa841db-4e2d-40c1-89f1-963bf55df31e/chq-saas/20250909/metrics/01/tbl_301228693227834211.parquet",
+    "db/afa841db-4e2d-40c1-89f1-963bf55df31e/chq-saas/20250909/metrics/01/tbl_301228693378829155.parquet",
+    "db/afa841db-4e2d-40c1-89f1-963bf55df31e/chq-saas/20250909/metrics/01/tbl_301228696314842838.parquet",
+    "db/afa841db-4e2d-40c1-89f1-963bf55df31e/chq-saas/20250909/metrics/01/tbl_301228709837276535.parquet",
+    "db/afa841db-4e2d-40c1-89f1-963bf55df31e/chq-saas/20250909/metrics/01/tbl_301228720323038934.parquet",
+    "db/afa841db-4e2d-40c1-89f1-963bf55df31e/chq-saas/20250909/metrics/01/tbl_301228729835718516.parquet",
+    "db/afa841db-4e2d-40c1-89f1-963bf55df31e/chq-saas/20250909/metrics/01/tbl_301228729382732298.parquet",
+    "db/afa841db-4e2d-40c1-89f1-963bf55df31e/chq-saas/20250909/metrics/01/tbl_301228762098305891.parquet",
+    "db/afa841db-4e2d-40c1-89f1-963bf55df31e/chq-saas/20250909/metrics/01/tbl_301228765688628523.parquet",
+    "db/afa841db-4e2d-40c1-89f1-963bf55df31e/chq-saas/20250909/metrics/01/tbl_301228771644540279.parquet",
+    "db/afa841db-4e2d-40c1-89f1-963bf55df31e/chq-saas/20250909/metrics/01/tbl_301228787683560291.parquet",
+    "db/afa841db-4e2d-40c1-89f1-963bf55df31e/chq-saas/20250909/metrics/01/tbl_301228791542318455.parquet",
+    "db/afa841db-4e2d-40c1-89f1-963bf55df31e/chq-saas/20250909/metrics/01/tbl_301228791710090615.parquet",
+    "db/afa841db-4e2d-40c1-89f1-963bf55df31e/chq-saas/20250909/metrics/01/tbl_301228792616060788.parquet",
+    "db/afa841db-4e2d-40c1-89f1-963bf55df31e/chq-saas/20250909/metrics/01/tbl_301228792733501300.parquet",
+    "db/afa841db-4e2d-40c1-89f1-963bf55df31e/chq-saas/20250909/metrics/01/tbl_301228792783832948.parquet",
+    "db/afa841db-4e2d-40c1-89f1-963bf55df31e/chq-saas/20250909/metrics/01/tbl_301228813201703434.parquet"
+  ],
+  "source_total_records": 41816,
+  "source_total_size": 2720731,
+  "dest_count": 1,
+  "dest_object_keys": [
+    "db/afa841db-4e2d-40c1-89f1-963bf55df31e/chq-saas/20250909/metrics/01/tbl_301228822982820286.parquet"
+  ],
+  "dest_total_records": 25880,
+  "dest_total_size": 1123901,
+  "metadata": {},
+  "record_estimate": 41816
+}

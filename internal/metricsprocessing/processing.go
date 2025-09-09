@@ -26,7 +26,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
-	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
@@ -192,12 +191,6 @@ func (segments ProcessedSegments) QueueRollupWork(ctx context.Context, kafkaProd
 	return nil
 }
 
-// GetCurrentMetricSortKeyProvider returns the provider for creating sort keys
-// for the current metric sort version. This is the single source of truth for metric sorting.
-func GetCurrentMetricSortKeyProvider() filereader.SortKeyProvider {
-	// This provider corresponds to lrdb.CurrentMetricSortVersion (SortVersionNameTidTimestamp)
-	return &filereader.MetricSortKeyProvider{}
-}
 
 // GetStartEndTimes calculates the time range from a set of metric segments.
 func GetStartEndTimes(rows []lrdb.MetricSeg) (int64, int64) {

@@ -19,7 +19,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
@@ -397,4 +401,311 @@ func TestMergesortReader_RowReuse(t *testing.T) {
 	}
 	// Note: With the new interface, row reuse patterns may be different
 	// This test mainly verifies that the tracking reader works with the new interface
+}
+
+// TestMergesortReader_WithActualParquetReader tests NewMergesortReader with a single actual CookedMetricTranslatingReader
+// This is critical because all existing tests use mock readers, but the production issue is with real parquet readers
+func TestMergesortReader_WithActualParquetReader(t *testing.T) {
+	ctx := context.Background()
+
+	// Test with one of the small files that shows 0 records in production
+	filename := "tbl_301228791710090615.parquet"
+	expectedRecords := 480
+
+	filePath := filepath.Join("..", "..", "testdata", "metrics", "seglog-990", "source", filename)
+
+	file, err := os.Open(filePath)
+	require.NoError(t, err, "Should open parquet file")
+	defer file.Close()
+
+	stat, err := file.Stat()
+	require.NoError(t, err, "Should stat parquet file")
+
+	rawReader, err := NewParquetRawReader(file, stat.Size(), 1000)
+	require.NoError(t, err, "Should create NewParquetRawReader")
+	defer rawReader.Close()
+
+	cookedReader := NewCookedMetricTranslatingReader(rawReader)
+	defer cookedReader.Close()
+
+	t.Logf("Created cooked reader for %s expecting %d records", filename, expectedRecords)
+
+	// Create MergesortReader with single actual parquet reader
+	// Use the same key provider that the production code uses for metrics
+	keyProvider := GetCurrentMetricSortKeyProvider()
+	mergesortReader, err := NewMergesortReader(ctx, []Reader{cookedReader}, keyProvider, 1000)
+	require.NoError(t, err, "Should create NewMergesortReader")
+	defer mergesortReader.Close()
+
+	// Read all records from the mergesort reader
+	totalRecords := 0
+	batchNum := 0
+	for {
+		batch, err := mergesortReader.Next(ctx)
+		batchNum++
+		
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				t.Logf("Batch %d - Got EOF after reading %d total records", batchNum, totalRecords)
+				break
+			}
+			require.NoError(t, err, "Next should not fail")
+		}
+		
+		if batch == nil {
+			t.Logf("Batch %d - Got nil batch after reading %d total records", batchNum, totalRecords)
+			break
+		}
+		
+		batchSize := batch.Len()
+		totalRecords += batchSize
+		t.Logf("Batch %d - Got %d records (total: %d)", batchNum, batchSize, totalRecords)
+		
+		if batchSize == 0 {
+			t.Logf("Batch %d - Empty batch, stopping", batchNum)
+			break
+		}
+	}
+
+	t.Logf("MergesortReader returned %d records (expected %d)", totalRecords, expectedRecords)
+
+	// This is the critical test - NewMergesortReader should not lose any data even with a single reader
+	require.Equal(t, expectedRecords, totalRecords, 
+		"NewMergesortReader should not lose data when wrapping a single actual parquet reader")
+}
+
+// TestMergesortReader_WithMultipleActualParquetReaders tests NewMergesortReader with multiple actual readers
+// This replicates the production scenario where multiple files are merged together
+func TestMergesortReader_WithMultipleActualParquetReaders(t *testing.T) {
+	testFiles := []struct {
+		filename        string
+		expectedRecords int
+	}{
+		{"tbl_301228791710090615.parquet", 480},   // Small file 1
+		{"tbl_301228792783832948.parquet", 456},   // Small file 2
+		{"tbl_301228792733501300.parquet", 1414},  // Larger file for comparison
+	}
+
+	ctx := context.Background()
+
+	// Create readers for multiple files
+	var readers []Reader
+	var expectedTotalRecords int
+
+	for _, testFile := range testFiles {
+		filePath := filepath.Join("..", "..", "testdata", "metrics", "seglog-990", "source", testFile.filename)
+
+		file, err := os.Open(filePath)
+		require.NoError(t, err, "Should open parquet file")
+		defer file.Close()
+
+		stat, err := file.Stat()
+		require.NoError(t, err, "Should stat parquet file")
+
+		rawReader, err := NewParquetRawReader(file, stat.Size(), 1000)
+		require.NoError(t, err, "Should create NewParquetRawReader")
+		defer rawReader.Close()
+
+		cookedReader := NewCookedMetricTranslatingReader(rawReader)
+		defer cookedReader.Close()
+
+		readers = append(readers, cookedReader)
+		expectedTotalRecords += testFile.expectedRecords
+
+		t.Logf("Created reader for %s expecting %d records", testFile.filename, testFile.expectedRecords)
+	}
+
+	t.Logf("Total expected records from %d files: %d", len(testFiles), expectedTotalRecords)
+
+	// Create MergesortReader with multiple actual parquet readers
+	keyProvider := GetCurrentMetricSortKeyProvider()
+	mergesortReader, err := NewMergesortReader(ctx, readers, keyProvider, 1000)
+	require.NoError(t, err, "Should create NewMergesortReader")
+	defer mergesortReader.Close()
+
+	// Read all records from the mergesort reader
+	totalRecords := 0
+	batchNum := 0
+	for {
+		batch, err := mergesortReader.Next(ctx)
+		batchNum++
+		
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				t.Logf("Batch %d - Got EOF after reading %d total records", batchNum, totalRecords)
+				break
+			}
+			require.NoError(t, err, "Next should not fail")
+		}
+		
+		if batch == nil {
+			t.Logf("Batch %d - Got nil batch after reading %d total records", batchNum, totalRecords)
+			break
+		}
+		
+		batchSize := batch.Len()
+		totalRecords += batchSize
+		t.Logf("Batch %d - Got %d records (total: %d)", batchNum, batchSize, totalRecords)
+		
+		if batchSize == 0 {
+			t.Logf("Batch %d - Empty batch, stopping", batchNum)
+			break
+		}
+	}
+
+	t.Logf("MergesortReader returned %d records (expected %d)", totalRecords, expectedTotalRecords)
+
+	// This is the critical test - NewMergesortReader should not lose any data when merging multiple files
+	require.Equal(t, expectedTotalRecords, totalRecords, 
+		"NewMergesortReader should not lose data when merging multiple actual parquet readers")
+}
+
+// TestMergesortReader_WithAllSeglog990Files tests NewMergesortReader with all 17 files from seglog-990
+// This exactly replicates the production scenario to see if we get the same data loss
+func TestMergesortReader_WithAllSeglog990Files(t *testing.T) {
+	ctx := context.Background()
+
+	// Get all parquet files from seglog-990 
+	testdataDir := filepath.Join("..", "..", "testdata", "metrics", "seglog-990", "source")
+	files, err := filepath.Glob(filepath.Join(testdataDir, "*.parquet"))
+	require.NoError(t, err, "Should find parquet files")
+	require.Greater(t, len(files), 0, "Should have test files")
+
+	t.Logf("Found %d parquet files to test", len(files))
+
+	// First, count expected records by reading each file with debug command
+	expectedTotalRecords := 0
+	fileExpectedCounts := make(map[string]int)
+	
+	for _, filePath := range files {
+		filename := filepath.Base(filePath)
+		// We know the counts for our test files from previous investigation
+		var expectedCount int
+		switch filename {
+		case "tbl_301228791710090615.parquet":
+			expectedCount = 480
+		case "tbl_301228792783832948.parquet":
+			expectedCount = 456
+		case "tbl_301228792733501300.parquet":
+			expectedCount = 1414
+		case "tbl_301228792616060788.parquet":
+			expectedCount = 1602
+		case "tbl_301228813201703434.parquet":
+			expectedCount = 1604
+		case "tbl_301228729835718516.parquet":
+			expectedCount = 1623
+		case "tbl_301228762098305891.parquet":
+			expectedCount = 1626
+		case "tbl_301228709837276535.parquet":
+			expectedCount = 2026
+		case "tbl_301228791542318455.parquet":
+			expectedCount = 2039
+		case "tbl_301228787683560291.parquet":
+			expectedCount = 2225
+		case "tbl_301228696314842838.parquet":
+			expectedCount = 2403
+		case "tbl_301228693378829155.parquet":
+			expectedCount = 2841
+		case "tbl_301228720323038934.parquet":
+			expectedCount = 2954
+		case "tbl_301228765688628523.parquet":
+			expectedCount = 3383
+		case "tbl_301228693227834211.parquet":
+			expectedCount = 3477
+		case "tbl_301228729382732298.parquet":
+			expectedCount = 5273
+		case "tbl_301228771644540279.parquet":
+			expectedCount = 6390
+		default:
+			t.Logf("Unknown file %s, skipping", filename)
+			continue
+		}
+		fileExpectedCounts[filename] = expectedCount
+		expectedTotalRecords += expectedCount
+		t.Logf("File %s: expecting %d records", filename, expectedCount)
+	}
+
+	t.Logf("Total expected records from all %d files: %d", len(fileExpectedCounts), expectedTotalRecords)
+
+	// Create readers for all files
+	var readers []Reader
+	for _, filePath := range files {
+		filename := filepath.Base(filePath)
+		if _, exists := fileExpectedCounts[filename]; !exists {
+			continue // Skip unknown files
+		}
+
+		file, err := os.Open(filePath)
+		require.NoError(t, err, "Should open parquet file %s", filename)
+		defer file.Close()
+
+		stat, err := file.Stat()
+		require.NoError(t, err, "Should stat parquet file %s", filename)
+
+		rawReader, err := NewParquetRawReader(file, stat.Size(), 1000)
+		require.NoError(t, err, "Should create NewParquetRawReader for %s", filename)
+		defer rawReader.Close()
+
+		cookedReader := NewCookedMetricTranslatingReader(rawReader)
+		defer cookedReader.Close()
+
+		readers = append(readers, cookedReader)
+	}
+
+	t.Logf("Created %d readers for mergesort", len(readers))
+
+	// Create MergesortReader with all actual parquet readers - just like production
+	keyProvider := GetCurrentMetricSortKeyProvider()
+	mergesortReader, err := NewMergesortReader(ctx, readers, keyProvider, 1000)
+	require.NoError(t, err, "Should create NewMergesortReader")
+	defer mergesortReader.Close()
+
+	// Read all records from the mergesort reader
+	totalRecords := 0
+	batchNum := 0
+	for {
+		batch, err := mergesortReader.Next(ctx)
+		batchNum++
+		
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				t.Logf("Batch %d - Got EOF after reading %d total records", batchNum, totalRecords)
+				break
+			}
+			require.NoError(t, err, "Next should not fail")
+		}
+		
+		if batch == nil {
+			t.Logf("Batch %d - Got nil batch after reading %d total records", batchNum, totalRecords)
+			break
+		}
+		
+		batchSize := batch.Len()
+		totalRecords += batchSize
+		t.Logf("Batch %d - Got %d records (total: %d)", batchNum, batchSize, totalRecords)
+		
+		if batchSize == 0 {
+			t.Logf("Batch %d - Empty batch, stopping", batchNum)
+			break
+		}
+	}
+
+	t.Logf("MergesortReader returned %d records (expected %d)", totalRecords, expectedTotalRecords)
+
+	// Calculate the data loss percentage
+	if expectedTotalRecords > 0 {
+		lossPercentage := float64(expectedTotalRecords-totalRecords) / float64(expectedTotalRecords) * 100
+		t.Logf("Data loss: %.1f%% (%d lost out of %d expected)", lossPercentage, expectedTotalRecords-totalRecords, expectedTotalRecords)
+		
+		// If we see the same ~38% data loss as production, then NewMergesortReader IS the culprit
+		// If we get all records, then the issue is elsewhere in CreateReaderStack
+		if lossPercentage > 30 {
+			t.Logf("*** FOUND THE BUG! *** MergesortReader is losing data just like production!")
+		} else if lossPercentage < 5 {
+			t.Logf("*** MergesortReader works fine *** - the bug is elsewhere in CreateReaderStack")
+		}
+	}
+
+	// For now, let's see what we get rather than failing the test
+	t.Logf("Final result: NewMergesortReader with all 17 files returned %d out of %d expected records", totalRecords, expectedTotalRecords)
 }

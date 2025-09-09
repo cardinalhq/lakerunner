@@ -31,7 +31,6 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
-	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/processing/ingest"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
@@ -408,7 +407,7 @@ func createReadersForFiles(ctx context.Context, validFiles []fileInfo, orgID str
 		}
 
 		// Step 2c: Add disk-based sorting (after translation so TID is available)
-		keyProvider := metricsprocessing.GetCurrentMetricSortKeyProvider()
+		keyProvider := filereader.GetCurrentMetricSortKeyProvider()
 		reader, err = filereader.NewDiskSortingReader(reader, keyProvider, 1000)
 		if err != nil {
 			reader.Close()
@@ -440,7 +439,7 @@ func createUnifiedReader(ctx context.Context, readers []filereader.Reader) (file
 	if len(readers) == 1 {
 		finalReader = readers[0]
 	} else {
-		keyProvider := metricsprocessing.GetCurrentMetricSortKeyProvider()
+		keyProvider := filereader.GetCurrentMetricSortKeyProvider()
 		multiReader, err := filereader.NewMergesortReader(ctx, readers, keyProvider, 1000)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create multi-source reader: %w", err)

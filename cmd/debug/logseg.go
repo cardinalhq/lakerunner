@@ -31,7 +31,6 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/awsclient"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
-	"github.com/cardinalhq/lakerunner/internal/metricsprocessing/accumulation"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
@@ -45,7 +44,6 @@ func GetLogSegCmd() *cobra.Command {
 	}
 
 	cmd.AddCommand(getLogSegFetchSubCmd())
-	cmd.AddCommand(getLogSegTestSubCmd())
 
 	return cmd
 }
@@ -187,133 +185,6 @@ func getLogSegFetchSubCmd() *cobra.Command {
 	return cmd
 }
 
-func getLogSegTestSubCmd() *cobra.Command {
-	var outputDir string
-
-	cmd := &cobra.Command{
-		Use:   "test <segment-journal-dir>",
-		Short: "Test compaction on a segment journal directory",
-		Long:  `Tests compaction logic on source files from a segment journal directory and compares with expected output.`,
-		Args:  cobra.ExactArgs(1),
-		RunE: func(c *cobra.Command, args []string) error {
-			ctx := context.Background()
-			seglogDir := args[0]
-
-			// Default output directory if not specified
-			if outputDir == "" {
-				outputDir = filepath.Join(seglogDir, "test-output")
-			}
-
-			// Create output directory
-			if err := os.MkdirAll(outputDir, 0755); err != nil {
-				return fmt.Errorf("failed to create output directory: %w", err)
-			}
-
-			fmt.Printf("Testing compaction on: %s\n", seglogDir)
-			fmt.Printf("Output directory: %s\n", outputDir)
-
-			// Read the seglog metadata to determine signal type
-			metadataFiles, err := filepath.Glob(filepath.Join(seglogDir, "seglog-*.json"))
-			if err != nil || len(metadataFiles) == 0 {
-				return fmt.Errorf("no seglog metadata file found in %s", seglogDir)
-			}
-
-			metadataContent, err := os.ReadFile(metadataFiles[0])
-			if err != nil {
-				return fmt.Errorf("failed to read metadata file: %w", err)
-			}
-
-			var metadata lrdb.SegmentJournal
-			if err := json.Unmarshal(metadataContent, &metadata); err != nil {
-				return fmt.Errorf("failed to parse metadata: %w", err)
-			}
-
-			// Check signal type - we only support metrics compaction (signal=2)
-			if metadata.Signal != 2 {
-				return fmt.Errorf("unsupported signal type: %d (only metrics compaction supported)", metadata.Signal)
-			}
-
-			// Use the testable metric compactor
-			compactor := accumulation.NewTestableCompactor()
-
-			// Process the files
-			result, err := compactor.CompactSeglog34(ctx, seglogDir, outputDir)
-			if err != nil {
-				return fmt.Errorf("compaction failed: %w", err)
-			}
-
-			// Print results
-			fmt.Printf("\n=== Compaction Results ===\n")
-			fmt.Printf("Input files: %s/source/*.parquet\n", seglogDir)
-			fmt.Printf("Output files: %d\n", len(result.OutputFiles))
-			for i, file := range result.OutputFiles {
-				fmt.Printf("  %d: %s\n", i+1, file)
-			}
-			fmt.Printf("Total records: %d\n", result.TotalRecords)
-			fmt.Printf("Total file size: %d bytes\n", result.TotalFileSize)
-
-			// Compare with expected output from metadata
-			fmt.Printf("\n=== Comparison ===\n")
-			fmt.Printf("Expected source records (metadata): %d\n", metadata.SourceTotalRecords)
-			fmt.Printf("Expected dest records (metadata): %d\n", metadata.DestTotalRecords)
-			fmt.Printf("Our compaction produced: %d\n", result.TotalRecords)
-
-			// Check if we match the original output
-			if result.TotalRecords == metadata.DestTotalRecords {
-				fmt.Printf("Record counts match original output (potential data loss preserved)\n")
-			} else if result.TotalRecords == metadata.SourceTotalRecords {
-				fmt.Printf("All source records preserved (data loss fixed!)\n")
-			} else {
-				fmt.Printf("Different record count than both source and original dest\n")
-			}
-
-			// Calculate data loss metrics
-			originalDataLoss := metadata.SourceTotalRecords - metadata.DestTotalRecords
-			ourDataLoss := metadata.SourceTotalRecords - result.TotalRecords
-
-			fmt.Printf("\n=== Data Loss Analysis ===\n")
-			fmt.Printf("Original compaction lost: %d records (%.1f%%)\n",
-				originalDataLoss,
-				float64(originalDataLoss)/float64(metadata.SourceTotalRecords)*100)
-			fmt.Printf("Our compaction lost: %d records (%.1f%%)\n",
-				ourDataLoss,
-				float64(ourDataLoss)/float64(metadata.SourceTotalRecords)*100)
-
-			if ourDataLoss == 0 {
-				fmt.Printf("Perfect! No data loss in our compaction\n")
-			} else if ourDataLoss < originalDataLoss {
-				fmt.Printf("Improved! Reduced data loss by %d records\n", originalDataLoss-ourDataLoss)
-			} else if ourDataLoss == originalDataLoss {
-				fmt.Printf("Same data loss as original\n")
-			} else {
-				fmt.Printf("Worse! Increased data loss by %d records\n", ourDataLoss-originalDataLoss)
-			}
-
-			// Compare with expected dest files if available
-			expectedDir := filepath.Join(seglogDir, "dest")
-			if entries, err := os.ReadDir(expectedDir); err == nil && len(entries) > 0 {
-				fmt.Printf("\n=== Expected Output Files ===\n")
-				fmt.Printf("Expected files: %d\n", len(entries))
-				for _, entry := range entries {
-					if filepath.Ext(entry.Name()) == ".parquet" {
-						fmt.Printf("  - %s\n", entry.Name())
-					}
-				}
-			}
-
-			// Enhanced analysis: Schema and record-level comparison
-			if err := performEnhancedAnalysis(ctx, seglogDir, result.OutputFiles, metadata); err != nil {
-				fmt.Printf("Warning: Enhanced analysis failed: %v\n", err)
-			}
-
-			return nil
-		},
-	}
-
-	cmd.Flags().StringVarP(&outputDir, "output", "o", "", "Output directory for test results (default: <segment-journal-dir>/test-output)")
-
-	return cmd
-}
 
 // getFirstRowSchema extracts the schema (keys) from the first row of a parquet file
 func getFirstRowSchema(filePath string) ([]string, error) {

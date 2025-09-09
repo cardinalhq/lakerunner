@@ -28,7 +28,6 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
-	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/processing/ingest"
@@ -340,7 +339,7 @@ func FlushAccumulator(ctx context.Context, acc *OrgInstanceAccumulator, tmpDir s
 	// Create unified reader from accumulated sorted readers
 	var inputRowCount int64
 
-	keyProvider := metricsprocessing.GetCurrentMetricSortKeyProvider()
+	keyProvider := filereader.GetCurrentMetricSortKeyProvider()
 	mergeReader, err := filereader.NewMergesortReader(ctx, acc.readers, keyProvider, 1000)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to create mergesort reader: %w", err)

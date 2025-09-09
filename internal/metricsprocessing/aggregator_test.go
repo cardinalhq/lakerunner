@@ -83,7 +83,7 @@ func TestAggregateMetrics_Compaction_RealData(t *testing.T) {
 	}()
 
 	// Create merged reader for multiple files
-	keyProvider := GetCurrentMetricSortKeyProvider()
+	keyProvider := filereader.GetCurrentMetricSortKeyProvider()
 	mergedReader, err := filereader.NewMergesortReader(ctx, readers, keyProvider, 1000)
 	require.NoError(t, err)
 	defer mergedReader.Close()
@@ -399,7 +399,7 @@ func BenchmarkAggregateMetrics_RealData(b *testing.B) {
 
 		// Setup
 		readers, files := loadTestDataFiles(&testing.T{})
-		keyProvider := GetCurrentMetricSortKeyProvider()
+		keyProvider := filereader.GetCurrentMetricSortKeyProvider()
 		mergedReader, _ := filereader.NewMergesortReader(ctx, readers, keyProvider, 1000)
 		tmpDir := b.TempDir()
 
