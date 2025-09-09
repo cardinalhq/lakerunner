@@ -440,7 +440,6 @@ func (r *MetricRollupProcessor) getHourFromTimestamp(timestampMs int64) int16 {
 	return int16((timestampMs / (1000 * 60 * 60)) % 24)
 }
 
-
 // GetTargetRecordCount returns the target record count for a rollup grouping key
 func (r *MetricRollupProcessor) GetTargetRecordCount(ctx context.Context, groupingKey messages.RollupKey) int64 {
 	// Use target frequency for the estimate since that's what we're creating

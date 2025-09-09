@@ -155,19 +155,19 @@ func (h *Hunter[M, K]) SelectGroups(selector func(key K, group *AccumulationGrou
 // Safe for concurrent use.
 func (h *Hunter[M, K]) SelectStaleGroups(lastUpdatedAge, maxAge time.Duration) []*AccumulationGroup[K] {
 	now := time.Now()
-	
+
 	return h.SelectGroups(func(key K, group *AccumulationGroup[K]) bool {
 		// If lastUpdatedAge is 0, flush all groups immediately
 		if lastUpdatedAge == 0 {
 			return true
 		}
-		
+
 		// Check if last update is stale
 		lastUpdatedCutoff := now.Add(-lastUpdatedAge)
 		if group.LastUpdatedAt.Before(lastUpdatedCutoff) {
 			return true
 		}
-		
+
 		// Check if absolute age exceeds maxAge (if maxAge > 0)
 		if maxAge > 0 {
 			createdCutoff := now.Add(-maxAge)
@@ -175,7 +175,7 @@ func (h *Hunter[M, K]) SelectStaleGroups(lastUpdatedAge, maxAge time.Duration) [
 				return true
 			}
 		}
-		
+
 		return false
 	})
 }
