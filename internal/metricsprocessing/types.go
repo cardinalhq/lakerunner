@@ -13,33 +13,3 @@
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 package metricsprocessing
-
-import (
-	"github.com/cardinalhq/lakerunner/config"
-	"github.com/cardinalhq/lakerunner/internal/exemplar"
-	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
-	"github.com/cardinalhq/lakerunner/internal/processing/ingest"
-)
-
-// input contains all parameters needed for metric ingestion
-type input struct {
-	Items             []ingest.IngestItem
-	TmpDir            string
-	IngestDateint     int32
-	RPFEstimate       int64
-	ExemplarProcessor *exemplar.Processor
-	Config            config.IngestionConfig
-}
-
-// result contains the output of metric ingestion
-type result struct {
-	Results     []parquetwriter.Result
-	RowsRead    int64
-	RowsErrored int64
-}
-
-// fileInfo holds information about a downloaded file
-type fileInfo struct {
-	item        ingest.IngestItem
-	tmpfilename string
-}
