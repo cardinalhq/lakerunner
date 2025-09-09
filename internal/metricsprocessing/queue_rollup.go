@@ -27,11 +27,6 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 )
 
-// RollupWorkQueuer defines the interface for queuing metric rollup work
-type RollupWorkQueuer interface {
-	// Placeholder for future interface requirements
-}
-
 // QueueMetricRollup sends rollup work notification to Kafka for a specific segment
 func QueueMetricRollup(ctx context.Context, kafkaProducer fly.Producer, organizationID uuid.UUID, dateint int32, frequencyMs int32, instanceNum int16, slotID int32, slotCount int32, segmentID int64, recordCount int64, fileSize int64, segmentStartTime time.Time) error {
 	ll := logctx.FromContext(ctx)

@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"math"
 	"time"
 
 	"github.com/google/uuid"
@@ -191,36 +190,6 @@ func (segments ProcessedSegments) QueueRollupWork(ctx context.Context, kafkaProd
 	return nil
 }
 
-// GetStartEndTimes calculates the time range from a set of metric segments.
-func GetStartEndTimes(rows []lrdb.MetricSeg) (int64, int64) {
-	startTs := int64(math.MaxInt64)
-	endTs := int64(math.MinInt64)
-	for _, row := range rows {
-		rowStartTs := row.TsRange.Lower.Int64
-		rowEndTs := row.TsRange.Upper.Int64
-		if rowStartTs < startTs {
-			startTs = rowStartTs
-		}
-		if rowEndTs > endTs {
-			endTs = rowEndTs
-		}
-	}
-	return startTs, endTs
-}
-
-// GetIngestDateint returns the maximum ingest dateint from a set of metric segments.
-func GetIngestDateint(rows []lrdb.MetricSeg) int32 {
-	if len(rows) == 0 {
-		return 0
-	}
-	ingestDateint := int32(0)
-	for _, row := range rows {
-		if row.IngestDateint > ingestDateint {
-			ingestDateint = row.IngestDateint
-		}
-	}
-	return ingestDateint
-}
 
 // UploadParams contains parameters for uploading metric files to S3 and database.
 type UploadParams struct {
