@@ -33,11 +33,12 @@ import (
 )
 
 type queryPayload struct {
-	S       string `json:"s"`
-	E       string `json:"e"`
-	Q       string `json:"q"`
-	Reverse bool   `json:"reverse,omitempty"`
-	Limit   int    `json:"limit,omitempty"`
+	S       string   `json:"s"`
+	E       string   `json:"e"`
+	Q       string   `json:"q"`
+	Reverse bool     `json:"reverse,omitempty"`
+	Limit   int      `json:"limit,omitempty"`
+	Fields  []string `json:"fields,omitempty"`
 
 	// derived fields
 	OrgUUID uuid.UUID `json:"-"`
@@ -251,7 +252,7 @@ func (q *QuerierService) handleLogQuery(w http.ResponseWriter, r *http.Request) 
 	}
 
 	resultsCh, err := q.EvaluateLogsQuery(
-		r.Context(), qp.OrgUUID, qp.StartTs, qp.EndTs, qp.Reverse, qp.Limit, lplan,
+		r.Context(), qp.OrgUUID, qp.StartTs, qp.EndTs, qp.Reverse, qp.Limit, lplan, qp.Fields,
 	)
 	if err != nil {
 		http.Error(w, "evaluate error: "+err.Error(), http.StatusInternalServerError)

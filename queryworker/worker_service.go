@@ -314,7 +314,7 @@ func (ws *WorkerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			globSize = ws.LogsGlobSize
 			isTagValuesQuery = true
 		} else {
-			workerSql = req.LogLeaf.ToWorkerSQLWithLimit(req.Limit, req.ToOrderString())
+			workerSql = req.LogLeaf.ToWorkerSQLWithLimit(req.Limit, req.ToOrderString(), req.Fields)
 			cacheManager = ws.LogsCM
 			globSize = ws.LogsGlobSize
 		}

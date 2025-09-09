@@ -38,6 +38,7 @@ type PushDownRequest struct {
 	LogLeaf  *logql.LogLeaf   `json:"logLeaf"`
 	Limit    int              `json:"limit"`
 	Reverse  bool             `json:"reverse"`
+	Fields   []string         `json:"fields,omitempty"`
 
 	TagName string `json:"tagName"` // Set this to a tag name to get distinct values for that tag
 }
