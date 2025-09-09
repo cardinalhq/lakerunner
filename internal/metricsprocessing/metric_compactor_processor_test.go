@@ -804,24 +804,24 @@ func TestCreateAggregatingReader_Seglog990(t *testing.T) {
 		CollectorName: "cluster-1-logs-prometheus-1",
 	}
 
-	readerStack, err := CreateReaderStack(
-		ctx,
-		tmpDir,
-		mockStorage,
-		orgID,
-		profile,
-		rows,
-	)
-	require.NoError(t, err, "Failed to create reader stack")
-	defer CloseReaderStack(ctx, readerStack)
-
 	// Test aggregating reader functionality
+	// Create fresh readers for each subtest to avoid reader reuse issues
 
 	// Test with single reader
 	t.Run("SingleReader", func(t *testing.T) {
+		readerStack, err := CreateReaderStack(
+			ctx,
+			tmpDir,
+			mockStorage,
+			orgID,
+			profile,
+			rows,
+		)
+		require.NoError(t, err, "Failed to create reader stack")
+		defer CloseReaderStack(ctx, readerStack)
+
 		if len(readerStack.Readers) > 0 {
-			singleReaderSlice := []filereader.Reader{readerStack.Readers[0]}
-			aggReader, err := filereader.NewAggregatingMetricsReader(singleReaderSlice[0], int64(metadata.FrequencyMS), 1000)
+			aggReader, err := filereader.NewAggregatingMetricsReader(readerStack.Readers[0], int64(metadata.FrequencyMS), 1000)
 			require.NoError(t, err, "Failed to create aggregating reader with single reader")
 			defer aggReader.Close()
 
@@ -845,6 +845,17 @@ func TestCreateAggregatingReader_Seglog990(t *testing.T) {
 
 	// Test with multiple readers
 	t.Run("MultipleReaders", func(t *testing.T) {
+		readerStack, err := CreateReaderStack(
+			ctx,
+			tmpDir,
+			mockStorage,
+			orgID,
+			profile,
+			rows,
+		)
+		require.NoError(t, err, "Failed to create reader stack")
+		defer CloseReaderStack(ctx, readerStack)
+
 		if len(readerStack.Readers) > 1 {
 			// Use first 3 readers to test merging + aggregation
 			testReaders := readerStack.Readers[:min(3, len(readerStack.Readers))]
@@ -878,6 +889,17 @@ func TestCreateAggregatingReader_Seglog990(t *testing.T) {
 
 	// Test with all readers (this is what the production code does)
 	t.Run("AllReaders", func(t *testing.T) {
+		readerStack, err := CreateReaderStack(
+			ctx,
+			tmpDir,
+			mockStorage,
+			orgID,
+			profile,
+			rows,
+		)
+		require.NoError(t, err, "Failed to create reader stack")
+		defer CloseReaderStack(ctx, readerStack)
+
 		// Create mergesort reader from all readers first
 		sortKeyProvider := &filereader.MetricSortKeyProvider{}
 		mergeReader, err := filereader.NewMergesortReader(ctx, readerStack.Readers, sortKeyProvider, 1000)

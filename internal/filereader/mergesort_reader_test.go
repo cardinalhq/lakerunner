@@ -19,8 +19,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -43,8 +45,8 @@ func TestNewMergesortReader(t *testing.T) {
 	}
 	defer or.Close()
 
-	if len(or.states) != 2 {
-		t.Errorf("Expected 2 states, got %d", len(or.states))
+	if len(or.readers) != 2 {
+		t.Errorf("Expected 2 readers, got %d", len(or.readers))
 	}
 
 	// Test with no readers
@@ -708,4 +710,303 @@ func TestMergesortReader_WithAllSeglog990Files(t *testing.T) {
 
 	// For now, let's see what we get rather than failing the test
 	t.Logf("Final result: NewMergesortReader with all 17 files returned %d out of %d expected records", totalRecords, expectedTotalRecords)
+}
+
+// TestMergesortReader_MetricSortKeyOrdering tests MergesortReader with actual metric sort keys
+// using randomized but reproducible data to ensure proper [name, tid, timestamp] ordering
+func TestMergesortReader_MetricSortKeyOrdering(t *testing.T) {
+	// Use fixed seed for reproducible randomness
+	rng := rand.New(rand.NewSource(42))
+
+	// Define fixed metric names (< 10 as requested)
+	metricNames := []string{
+		"cpu.usage",
+		"memory.usage",
+		"disk.io",
+		"network.bytes",
+		"http.requests",
+		"db.connections",
+		"cache.hits",
+	}
+
+	// Generate test data for multiple readers with interleaved values
+	var allTestData []Row
+	readerCount := 3
+	rowsPerReader := 20
+
+	// Create data for each reader
+	readerData := make([][]Row, readerCount)
+	for readerIdx := range readerCount {
+		for rowIdx := range rowsPerReader {
+			// Pick random metric name
+			metricName := metricNames[rng.Intn(len(metricNames))]
+
+			// Generate random TID (can be positive or negative)
+			tid := rng.Int63()
+			if rng.Float32() < 0.5 {
+				tid = -tid // Make some TIDs negative to test signed ordering
+			}
+
+			// Generate random timestamp in reasonable range
+			timestamp := int64(1700000000000) + rng.Int63n(86400000) // Random within 24 hours
+
+			row := Row{
+				wkk.RowKeyCName:            metricName,
+				wkk.RowKeyCTID:             tid,
+				wkk.RowKeyCTimestamp:       timestamp,
+				wkk.NewRowKey("reader_id"): fmt.Sprintf("reader_%d", readerIdx),
+				wkk.NewRowKey("row_id"):    fmt.Sprintf("row_%d", rowIdx),
+				wkk.NewRowKey("value"):     rng.Float64() * 100,
+			}
+
+			readerData[readerIdx] = append(readerData[readerIdx], row)
+			allTestData = append(allTestData, row)
+		}
+	}
+
+	// Sort all test data using the same logic as MetricSortKey.Compare()
+	// This is our expected output order
+	sort.Slice(allTestData, func(i, j int) bool {
+		row1, row2 := allTestData[i], allTestData[j]
+
+		// Compare names first
+		name1, _ := row1[wkk.RowKeyCName].(string)
+		name2, _ := row2[wkk.RowKeyCName].(string)
+		if name1 != name2 {
+			return name1 < name2
+		}
+
+		// Compare TIDs second (signed int64 comparison)
+		tid1, _ := row1[wkk.RowKeyCTID].(int64)
+		tid2, _ := row2[wkk.RowKeyCTID].(int64)
+		if tid1 != tid2 {
+			return tid1 < tid2
+		}
+
+		// Compare timestamps third
+		ts1, _ := row1[wkk.RowKeyCTimestamp].(int64)
+		ts2, _ := row2[wkk.RowKeyCTimestamp].(int64)
+		return ts1 < ts2
+	})
+
+	t.Logf("Generated %d total rows across %d readers", len(allTestData), readerCount)
+	t.Logf("Sample expected order (first 5):")
+	for i := 0; i < 5 && i < len(allTestData); i++ {
+		row := allTestData[i]
+		t.Logf("  [%s, %d, %d]",
+			row[wkk.RowKeyCName], row[wkk.RowKeyCTID], row[wkk.RowKeyCTimestamp])
+	}
+
+	// Sort each reader's data individually (MergesortReader expects sorted input from each reader)
+	for i := range readerCount {
+		sort.Slice(readerData[i], func(a, b int) bool {
+			row1, row2 := readerData[i][a], readerData[i][b]
+
+			// Compare names first
+			name1, _ := row1[wkk.RowKeyCName].(string)
+			name2, _ := row2[wkk.RowKeyCName].(string)
+			if name1 != name2 {
+				return name1 < name2
+			}
+
+			// Compare TIDs second
+			tid1, _ := row1[wkk.RowKeyCTID].(int64)
+			tid2, _ := row2[wkk.RowKeyCTID].(int64)
+			if tid1 != tid2 {
+				return tid1 < tid2
+			}
+
+			// Compare timestamps third
+			ts1, _ := row1[wkk.RowKeyCTimestamp].(int64)
+			ts2, _ := row2[wkk.RowKeyCTimestamp].(int64)
+			return ts1 < ts2
+		})
+	}
+
+	// Create mock readers with the sorted data
+	readers := make([]Reader, readerCount)
+	for i := range readerCount {
+		readers[i] = newMockReader(fmt.Sprintf("reader_%d", i), readerData[i])
+	}
+
+	// Create MergesortReader with production metric sort key provider
+	keyProvider := GetCurrentMetricSortKeyProvider()
+	mergesortReader, err := NewMergesortReader(context.Background(), readers, keyProvider, 1000)
+	if err != nil {
+		t.Fatalf("NewMergesortReader() error = %v", err)
+	}
+	defer mergesortReader.Close()
+
+	// Read all rows from mergesort reader
+	actualRows, err := readAllRows(mergesortReader)
+	if err != nil {
+		t.Fatalf("readAllRows() error = %v", err)
+	}
+
+	if len(actualRows) != len(allTestData) {
+		t.Fatalf("Expected %d rows, got %d", len(allTestData), len(actualRows))
+	}
+
+	// Verify that the output matches our expected sorted order
+	t.Logf("Verifying sort order of %d rows...", len(actualRows))
+	for i, expectedRow := range allTestData {
+		actualRow := actualRows[i]
+
+		// Check name
+		expectedName, _ := expectedRow[wkk.RowKeyCName].(string)
+		actualName, _ := actualRow[wkk.RowKeyCName].(string)
+		if actualName != expectedName {
+			t.Errorf("Row %d name mismatch: expected %s, got %s", i, expectedName, actualName)
+		}
+
+		// Check TID
+		expectedTID, _ := expectedRow[wkk.RowKeyCTID].(int64)
+		actualTID, _ := actualRow[wkk.RowKeyCTID].(int64)
+		if actualTID != expectedTID {
+			t.Errorf("Row %d TID mismatch: expected %d, got %d", i, expectedTID, actualTID)
+		}
+
+		// Check timestamp
+		expectedTS, _ := expectedRow[wkk.RowKeyCTimestamp].(int64)
+		actualTS, _ := actualRow[wkk.RowKeyCTimestamp].(int64)
+		if actualTS != expectedTS {
+			t.Errorf("Row %d timestamp mismatch: expected %d, got %d", i, expectedTS, actualTS)
+		}
+
+		// Verify ordering is maintained (check against previous row)
+		if i > 0 {
+			prevRow := actualRows[i-1]
+			prevName, _ := prevRow[wkk.RowKeyCName].(string)
+			prevTID, _ := prevRow[wkk.RowKeyCTID].(int64)
+			prevTS, _ := prevRow[wkk.RowKeyCTimestamp].(int64)
+
+			// Check sort order: [name, tid, timestamp]
+			if actualName < prevName {
+				t.Errorf("Row %d sort violation: name %s < previous name %s", i, actualName, prevName)
+			} else if actualName == prevName {
+				if actualTID < prevTID {
+					t.Errorf("Row %d sort violation: TID %d < previous TID %d (same name %s)", i, actualTID, prevTID, actualName)
+				} else if actualTID == prevTID {
+					if actualTS < prevTS {
+						t.Errorf("Row %d sort violation: timestamp %d < previous timestamp %d (same name %s, TID %d)", i, actualTS, prevTS, actualName, actualTID)
+					}
+				}
+			}
+		}
+	}
+
+	// Only log success if we got here without failures
+	if !t.Failed() {
+		t.Logf("✓ All %d rows are in correct [name, TID, timestamp] sort order", len(actualRows))
+	} else {
+		t.Logf("✗ FOUND BUG: MergesortReader is not producing correct sort order!")
+		t.Logf("Expected first 5 rows in order:")
+		for i := 0; i < 5 && i < len(allTestData); i++ {
+			row := allTestData[i]
+			t.Logf("  %d: [%s, %d, %d]", i,
+				row[wkk.RowKeyCName], row[wkk.RowKeyCTID], row[wkk.RowKeyCTimestamp])
+		}
+		t.Logf("Actual first 5 rows returned:")
+		for i := 0; i < 5 && i < len(actualRows); i++ {
+			row := actualRows[i]
+			t.Logf("  %d: [%s, %d, %d]", i,
+				row[wkk.RowKeyCName], row[wkk.RowKeyCTID], row[wkk.RowKeyCTimestamp])
+		}
+		return // Don't continue with reader distribution checks if sort is broken
+	}
+
+	// Additional verification: check that we have data from all readers
+	readerCounts := make(map[string]int)
+	for _, row := range actualRows {
+		readerID, _ := row[wkk.NewRowKey("reader_id")].(string)
+		readerCounts[readerID]++
+	}
+
+	t.Logf("Data distribution across readers:")
+	for readerID, count := range readerCounts {
+		t.Logf("  %s: %d rows", readerID, count)
+	}
+
+	// Verify we got data from all readers
+	for i := 0; i < readerCount; i++ {
+		expectedReaderID := fmt.Sprintf("reader_%d", i)
+		if count, exists := readerCounts[expectedReaderID]; !exists || count == 0 {
+			t.Errorf("Missing data from %s", expectedReaderID)
+		}
+	}
+}
+
+// TestMergesortReader_Advance tests the advance function in isolation
+// to understand how it handles state transitions and key generation
+// SKIPPED: advance is now internal to activeReader
+
+// TestMergesortReader_KeyPoolingBug demonstrates the exact pooling bug in Next()
+func TestMergesortReader_KeyPoolingBug(t *testing.T) {
+	ctx := context.Background()
+
+	// Create two readers with data that should interleave
+	reader1Data := []Row{
+		{wkk.RowKeyCName: "metric_a", wkk.RowKeyCTID: int64(100), wkk.RowKeyCTimestamp: int64(1000), wkk.NewRowKey("source"): "reader1_row1"},
+		{wkk.RowKeyCName: "metric_a", wkk.RowKeyCTID: int64(300), wkk.RowKeyCTimestamp: int64(1000), wkk.NewRowKey("source"): "reader1_row2"},
+	}
+
+	reader2Data := []Row{
+		{wkk.RowKeyCName: "metric_a", wkk.RowKeyCTID: int64(200), wkk.RowKeyCTimestamp: int64(1000), wkk.NewRowKey("source"): "reader2_row1"},
+		{wkk.RowKeyCName: "metric_a", wkk.RowKeyCTID: int64(400), wkk.RowKeyCTimestamp: int64(1000), wkk.NewRowKey("source"): "reader2_row2"},
+	}
+
+	reader1 := newMockReader("reader1", reader1Data)
+	reader2 := newMockReader("reader2", reader2Data)
+
+	keyProvider := GetCurrentMetricSortKeyProvider()
+	mergesortReader, err := NewMergesortReader(ctx, []Reader{reader1, reader2}, keyProvider, 1000)
+	if err != nil {
+		t.Fatalf("NewMergesortReader() error = %v", err)
+	}
+	defer mergesortReader.Close()
+
+	// Expected order based on TID: 100, 200, 300, 400
+	expectedSources := []string{"reader1_row1", "reader2_row1", "reader1_row2", "reader2_row2"}
+	expectedTIDs := []int64{100, 200, 300, 400}
+
+	// Read all data
+	allRows, err := readAllRows(mergesortReader)
+	if err != nil {
+		t.Fatalf("readAllRows() error = %v", err)
+	}
+
+	if len(allRows) != 4 {
+		t.Fatalf("Expected 4 rows, got %d", len(allRows))
+	}
+
+	t.Logf("Actual order returned:")
+	for i, row := range allRows {
+		source := row[wkk.NewRowKey("source")]
+		tid := row[wkk.RowKeyCTID]
+		t.Logf("  %d: %s (TID=%d)", i, source, tid)
+	}
+
+	t.Logf("Expected order:")
+	for i, expectedSource := range expectedSources {
+		t.Logf("  %d: %s (TID=%d)", i, expectedSource, expectedTIDs[i])
+	}
+
+	// Verify the order is correct
+	for i, expectedSource := range expectedSources {
+		actualSource := allRows[i][wkk.NewRowKey("source")]
+		actualTID := allRows[i][wkk.RowKeyCTID].(int64)
+
+		if actualSource != expectedSource {
+			t.Errorf("Row %d source mismatch: expected %s, got %s", i, expectedSource, actualSource)
+		}
+		if actualTID != expectedTIDs[i] {
+			t.Errorf("Row %d TID mismatch: expected %d, got %d", i, expectedTIDs[i], actualTID)
+		}
+	}
+
+	if t.Failed() {
+		t.Logf("✗ CONFIRMED: MergesortReader key pooling bug causes incorrect sort order!")
+	} else {
+		t.Logf("✓ MergesortReader produced correct sort order")
+	}
 }

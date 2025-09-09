@@ -31,12 +31,14 @@ const (
 	SortVersionNameTidTimestamp = 1
 	// SortVersionNameTidTimestampV2 indicates the file is sorted by [metric_name, tid, timestamp] (new TID calculation)
 	SortVersionNameTidTimestampV2 = 2
+	// due to a bug, we will move everyone to 3, same key though...
+	SortVersionNameTidTimestampV3 = 3
 )
 
 // Current metric sort configuration - single source of truth for all metric sorting
 const (
 	// CurrentMetricSortVersion is the sort version used for all newly created metric segments
-	CurrentMetricSortVersion = SortVersionNameTidTimestampV2
+	CurrentMetricSortVersion = SortVersionNameTidTimestampV3
 )
 
 func (q *Store) InsertMetricSegment(ctx context.Context, params InsertMetricSegmentParams) error {

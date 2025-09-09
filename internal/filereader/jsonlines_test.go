@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"maps"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -38,9 +39,7 @@ func readAllRows(reader Reader) ([]Row, error) {
 			for i := 0; i < batch.Len(); i++ {
 				row := batch.Get(i)
 				rowCopy := make(Row)
-				for k, v := range row {
-					rowCopy[k] = v
-				}
+				maps.Copy(rowCopy, row)
 				allRows = append(allRows, rowCopy)
 			}
 		}
