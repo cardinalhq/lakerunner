@@ -50,16 +50,17 @@ var _ Reader = (*IngestProtoLogsReader)(nil)
 var _ OTELLogsProvider = (*IngestProtoLogsReader)(nil)
 
 // NewIngestProtoLogsReader creates a new IngestProtoLogsReader for the given io.Reader.
-func NewIngestProtoLogsReader(reader io.Reader, batchSize int) (*IngestProtoLogsReader, error) {
+func NewIngestProtoLogsReader(reader io.Reader, opts ReaderOptions) (*IngestProtoLogsReader, error) {
+	batchSize := opts.BatchSize
 	if batchSize <= 0 {
 		batchSize = 1000
 	}
 
 	protoReader := &IngestProtoLogsReader{
-		batchSize:          batchSize,
-		trieClusterManager: fingerprinter.NewTrieClusterManager(0.5),
+		batchSize: batchSize,
 	}
 
+	protoReader.trieClusterManager = opts.TrieClusterManager
 	logs, err := parseProtoToOtelLogs(reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse proto to OTEL logs: %w", err)
@@ -171,9 +172,11 @@ func (r *IngestProtoLogsReader) buildLogRow(rl plog.ResourceLogs, sl plog.ScopeL
 	ret["observed_timestamp"] = logRecord.ObservedTimestamp().AsTime().UnixMilli()
 	ret["_cardinalhq.level"] = logRecord.SeverityText()
 	ret["severity_number"] = int64(logRecord.SeverityNumber())
-	fingerprint, _, _, err := fingerprinter.Fingerprint(message, r.trieClusterManager)
-	if err == nil {
-		ret["_cardinalhq.fingerprint"] = fingerprint
+	if r.trieClusterManager != nil {
+		fingerprint, _, _, err := fingerprinter.Fingerprint(message, r.trieClusterManager)
+		if err == nil {
+			ret["_cardinalhq.fingerprint"] = fmt.Sprintf("%d", fingerprint)
+		}
 	}
 	return ret
 }
