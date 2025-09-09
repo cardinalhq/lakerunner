@@ -18,27 +18,23 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
-
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
 )
 
 // ProtoBinLogTranslator handles translation for protobuf binary log files
 type ProtoBinLogTranslator struct {
-	orgID              string
-	bucket             string
-	objectID           string
-	trieClusterManager *fingerprinter.TrieClusterManager
+	orgID    string
+	bucket   string
+	objectID string
 }
 
 // NewProtoBinLogTranslator creates a new protobuf log translator
-func NewProtoBinLogTranslator(orgID, bucket, objectID string, trieClusterManager *fingerprinter.TrieClusterManager) *ProtoBinLogTranslator {
+func NewProtoBinLogTranslator(opts ReaderOptions) *ProtoBinLogTranslator {
 	return &ProtoBinLogTranslator{
-		orgID:              orgID,
-		bucket:             bucket,
-		objectID:           objectID,
-		trieClusterManager: trieClusterManager,
+		orgID:    opts.OrgID,
+		bucket:   opts.Bucket,
+		objectID: opts.ObjectID,
 	}
 }
 
@@ -89,16 +85,16 @@ func (t *ProtoBinLogTranslator) TranslateRow(row *Row) error {
 	}
 
 	// Calculate fingerprint from message
-	fingerprint, err := t.calculateFingerprint(*row)
-	if err != nil {
-		return fmt.Errorf("failed to calculate fingerprint: %w", err)
-	}
+	//fingerprint, err := t.calculateFingerprint(*row)
+	//if err != nil {
+	//	return fmt.Errorf("failed to calculate fingerprint: %w", err)
+	//}
 
-	if fingerprint != 0 {
-		(*row)[wkk.RowKeyCFingerprint] = fingerprint
-	} else {
-		delete(*row, wkk.RowKeyCFingerprint)
-	}
+	//if fingerprint != 0 {
+	//	(*row)[wkk.RowKeyCFingerprint] = fingerprint
+	//} else {
+	//	delete(*row, wkk.RowKeyCFingerprint)
+	//}
 
 	// Add resource fields (only for logs signal)
 	(*row)[wkk.NewRowKey("resource.bucket.name")] = t.bucket
@@ -106,29 +102,6 @@ func (t *ProtoBinLogTranslator) TranslateRow(row *Row) error {
 	(*row)[wkk.NewRowKey("resource.file.type")] = helpers.GetFileType(t.objectID)
 
 	return nil
-}
-
-// calculateFingerprint computes a fingerprint for the protobuf log record
-func (t *ProtoBinLogTranslator) calculateFingerprint(row Row) (int64, error) {
-	var message string
-
-	// Only look at _cardinalhq.message field for protobuf logs
-	if val, ok := row[wkk.RowKeyCMessage]; ok {
-		if str, ok := val.(string); ok && str != "" {
-			message = str
-		}
-	}
-
-	if message == "" {
-		return 0, nil
-	}
-
-	fingerprint, _, _, err := fingerprinter.Fingerprint(message, t.trieClusterManager)
-	if err != nil {
-		return 0, err
-	}
-
-	return fingerprint, nil
 }
 
 // ensureInt64 converts timestamp to int64 if it's not already

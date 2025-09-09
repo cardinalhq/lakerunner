@@ -18,15 +18,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
 	"io"
 	"log/slog"
 	"maps"
 	"os"
 	"strings"
 	"time"
-
-	"go.opentelemetry.io/collector/pdata/plog"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/exemplar"
@@ -185,9 +182,11 @@ func (wm *writerManager) closeAll(ctx context.Context) ([]parquetwriter.Result, 
 }
 
 // createLogReader creates the appropriate filereader based on file type
-func createLogReader(filename string, trieClusterManager *fingerprinter.TrieClusterManager) (filereader.Reader, error) {
+func createLogReader(filename string, processor *exemplar.Processor) (filereader.Reader, error) {
 	options := filereader.ReaderOptions{SignalType: filereader.SignalTypeLogs, BatchSize: 1000}
-	options.TrieClusterManager = trieClusterManager
+	if shouldProcessLogsExemplars() {
+		options.ExemplarProcessor = processor
+	}
 	return filereader.ReaderForFileWithOptions(filename, options)
 }
 
@@ -295,26 +294,8 @@ func ProcessBatch(ctx context.Context, args ingest.ProcessBatchArgs, item ingest
 	// Create appropriate reader for the file type
 	var reader filereader.Reader
 
-	var trieClusterManager *fingerprinter.TrieClusterManager = nil
-	tenant := exemplarProcessor.GetTenant(ctx, item.OrganizationID.String())
-	if tenant != nil {
-		trieClusterManager = tenant.GetTrieClusterManager()
-	}
-
-	reader, err = createLogReader(tmpfilename, trieClusterManager)
+	reader, err = createLogReader(tmpfilename, exemplarProcessor)
 	if err == nil {
-		// Process exemplars if available (before translation to preserve OTEL structure)
-		if exemplarProcessor != nil && shouldProcessLogsExemplars() {
-			if otelProvider, ok := reader.(filereader.OTELLogsProvider); ok {
-				logs, err := otelProvider.GetOTELLogs()
-				if err == nil {
-					if err := processExemplarsFromLogs(ctx, logs, exemplarProcessor, item.OrganizationID.String()); err != nil {
-						ll.Warn("Failed to process logs exemplars", slog.Any("error", err))
-					}
-				}
-			}
-		}
-
 		// Add general translator for non-protobuf files
 		translator := &LogTranslator{
 			orgID:    item.OrganizationID.String(),
@@ -591,12 +572,4 @@ func shouldProcessLogsExemplars() bool {
 		return true // default to true
 	}
 	return envVal == "true" || envVal == "1"
-}
-
-// processExemplarsFromLogs processes exemplars from parsed plog.Logs
-func processExemplarsFromLogs(ctx context.Context, logs *plog.Logs, processor *exemplar.Processor, customerID string) error {
-	if err := processor.ProcessLogs(ctx, *logs, customerID); err != nil {
-		return fmt.Errorf("failed to process logs through exemplar processor: %w", err)
-	}
-	return nil
 }

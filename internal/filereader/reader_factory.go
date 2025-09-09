@@ -17,11 +17,10 @@ package filereader
 import (
 	"compress/gzip"
 	"fmt"
+	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"io"
 	"os"
 	"strings"
-
-	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
 )
 
 type multiReadCloser struct {
@@ -44,10 +43,10 @@ type ReaderOptions struct {
 	SignalType SignalType
 	BatchSize  int // Batch size for readers (default: 1000)
 	// Translation options for protobuf logs and metrics
-	OrgID              string
-	Bucket             string
-	ObjectID           string
-	TrieClusterManager *fingerprinter.TrieClusterManager
+	OrgID             string
+	Bucket            string
+	ObjectID          string
+	ExemplarProcessor *exemplar.Processor
 	// Aggregation options for metrics
 	EnableAggregation   bool  // Enable streaming aggregation
 	AggregationPeriodMs int64 // Aggregation period in milliseconds (e.g., 10000 for 10s)
@@ -55,8 +54,10 @@ type ReaderOptions struct {
 
 // ReaderForFile creates a Reader for the given file based on its extension and signal type.
 // This is a convenience function that uses default options.
-func ReaderForFile(filename string, signalType SignalType) (Reader, error) {
-	return ReaderForFileWithOptions(filename, ReaderOptions{SignalType: signalType, BatchSize: 1000})
+func ReaderForFile(filename string, signalType SignalType, exemplarProcessor *exemplar.Processor) (Reader, error) {
+	options := ReaderOptions{SignalType: signalType, BatchSize: 1000}
+	options.ExemplarProcessor = exemplarProcessor
+	return ReaderForFileWithOptions(filename, options)
 }
 
 // ReaderForMetricAggregation creates a Reader for metrics with aggregation enabled.
@@ -241,14 +242,9 @@ func createProtoReaderWithOptions(reader io.Reader, opts ReaderOptions) (Reader,
 		if err != nil {
 			return nil, err
 		}
-		// Add translation for protobuf logs if options are provided
-		if opts.TrieClusterManager != nil && opts.OrgID != "" {
-			translator := NewProtoBinLogTranslator(opts.OrgID, opts.Bucket, opts.ObjectID, opts.TrieClusterManager)
-			return NewTranslatingReader(protoReader, translator, opts.BatchSize)
-		}
 		return protoReader, nil
 	case SignalTypeMetrics:
-		return NewIngestProtoMetricsReader(reader, opts.BatchSize)
+		return NewIngestProtoMetricsReader(reader, opts)
 	case SignalTypeTraces:
 		return NewProtoTracesReader(reader, opts.BatchSize)
 	default:

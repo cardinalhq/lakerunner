@@ -418,6 +418,7 @@ func (q *QuerierService) lookupMetricsSegments(ctx context.Context,
 		"frequencyMs", stepDuration.Milliseconds(),
 		"orgUUID", orgUUID,
 		"fingerprint", fingerprint,
+		"metric", be.Metric,
 		"numSegments", len(rows))
 	for _, row := range rows {
 		startHour := zeroFilledHour(time.UnixMilli(row.StartTs).UTC().Hour())

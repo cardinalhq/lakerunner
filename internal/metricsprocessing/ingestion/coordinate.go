@@ -17,18 +17,17 @@ package ingestion
 import (
 	"context"
 	"fmt"
+	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"io"
 	"log/slog"
 	"os"
 	"strings"
 
-	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
-	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
@@ -175,32 +174,8 @@ func coordinate(
 		return &result{Results: results, RowsRead: 0, RowsErrored: 0}, nil
 	}
 
-	// Process exemplars from all files if exemplar processor is available
-	if input.ExemplarProcessor != nil && input.Config.ProcessExemplars {
-		ll.Debug("Processing exemplars from all files", slog.Int("fileCount", len(validFiles)))
-
-		for _, fileInfo := range validFiles {
-			// Create a separate reader just for exemplar processing from this file
-			exemplarReader, err := CreateMetricProtoReader(fileInfo.tmpfilename)
-			if err != nil {
-				ll.Warn("Failed to create exemplar reader, skipping file",
-					slog.String("objectID", fileInfo.item.ObjectID),
-					slog.String("error", err.Error()))
-				continue
-			}
-
-			if err := processExemplarsFromReader(ctx, exemplarReader, input.ExemplarProcessor, profile.OrganizationID.String(), mdb); err != nil {
-				ll.Warn("Failed to process exemplars from file",
-					slog.String("objectID", fileInfo.item.ObjectID),
-					slog.Any("error", err))
-			}
-
-			exemplarReader.Close()
-		}
-	}
-
 	// Step 2: Create readers for each file
-	readers, readersToClose, err := createReadersForFiles(ctx, validFiles, profile.OrganizationID.String())
+	readers, readersToClose, err := createReadersForFiles(ctx, validFiles, profile.OrganizationID.String(), input.ExemplarProcessor)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create readers: %w", err)
 	}
@@ -382,19 +357,23 @@ func downloadAndValidateFiles(ctx context.Context, items []ingest.IngestItem, tm
 }
 
 // createReadersForFiles creates the reader stack for each file
-func createReadersForFiles(ctx context.Context, validFiles []fileInfo, orgID string) ([]filereader.Reader, []filereader.Reader, error) {
+func createReadersForFiles(ctx context.Context, validFiles []fileInfo, orgID string, processor *exemplar.Processor) ([]filereader.Reader, []filereader.Reader, error) {
 	ll := logctx.FromContext(ctx)
 
 	var readers []filereader.Reader
 	var readersToClose []filereader.Reader
 
+	opts := filereader.ReaderOptions{
+		BatchSize:         1000,
+		ExemplarProcessor: processor,
+	}
 	for _, fileInfo := range validFiles {
 		// Create stacked reader for this file: ProtoReader -> Translation -> Sorting
 		var reader filereader.Reader
 		var err error
 
 		// Step 2a: Create base proto reader directly (only support binpb/binpb.gz for metrics)
-		reader, err = CreateMetricProtoReader(fileInfo.tmpfilename)
+		reader, err = CreateMetricProtoReader(fileInfo.tmpfilename, opts)
 		if err != nil {
 			ll.Warn("Failed to create proto reader, skipping file",
 				slog.String("objectID", fileInfo.item.ObjectID),
@@ -475,27 +454,4 @@ func getFileFormat(filename string) string {
 		return "binpb"
 	}
 	return "unknown"
-}
-
-// processExemplarsFromReader processes exemplars from a metrics reader that supports OTEL
-func processExemplarsFromReader(_ context.Context, reader filereader.Reader, processor *exemplar.Processor, orgID string, mdb lrdb.StoreFull) error {
-	if otelProvider, ok := reader.(filereader.OTELMetricsProvider); ok {
-		metrics, err := otelProvider.GetOTELMetrics()
-		if err != nil {
-			return fmt.Errorf("failed to get OTEL metrics: %w", err)
-		}
-		if err := processExemplarsFromMetrics(metrics, processor, orgID); err != nil {
-			return fmt.Errorf("failed to process exemplars from metrics: %w", err)
-		}
-	}
-	return nil
-}
-
-// processExemplarsFromMetrics processes exemplars from parsed pmetric.Metrics
-func processExemplarsFromMetrics(metrics *pmetric.Metrics, processor *exemplar.Processor, customerID string) error {
-	ctx := context.Background()
-	if err := processor.ProcessMetrics(ctx, *metrics, customerID); err != nil {
-		return fmt.Errorf("failed to process metrics through exemplar processor: %w", err)
-	}
-	return nil
 }

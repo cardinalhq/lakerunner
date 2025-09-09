@@ -33,25 +33,25 @@ func IsSupportedMetricsFile(objectID string) bool {
 }
 
 // CreateMetricProtoReader creates a protocol buffer reader for metrics files
-func CreateMetricProtoReader(filename string) (filereader.Reader, error) {
+func CreateMetricProtoReader(filename string, opts filereader.ReaderOptions) (filereader.Reader, error) {
 	switch {
 	case strings.HasSuffix(filename, ".binpb.gz"):
-		return createMetricProtoBinaryGzReader(filename)
+		return createMetricProtoBinaryGzReader(filename, opts)
 	case strings.HasSuffix(filename, ".binpb"):
-		return createMetricProtoBinaryReader(filename)
+		return createMetricProtoBinaryReader(filename, opts)
 	default:
 		return nil, fmt.Errorf("unsupported metrics file type: %s (only .binpb and .binpb.gz are supported)", filename)
 	}
 }
 
 // createMetricProtoBinaryReader creates a metrics proto reader for a protobuf file
-func createMetricProtoBinaryReader(filename string) (filereader.Reader, error) {
+func createMetricProtoBinaryReader(filename string, opts filereader.ReaderOptions) (filereader.Reader, error) {
 	file, err := os.Open(filename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open protobuf file: %w", err)
 	}
 
-	reader, err := filereader.NewIngestProtoMetricsReader(file, 1000)
+	reader, err := filereader.NewIngestProtoMetricsReader(file, opts)
 	if err != nil {
 		file.Close()
 		return nil, fmt.Errorf("failed to create metrics proto reader: %w", err)
@@ -61,7 +61,7 @@ func createMetricProtoBinaryReader(filename string) (filereader.Reader, error) {
 }
 
 // createMetricProtoBinaryGzReader creates a metrics proto reader for a gzipped protobuf file
-func createMetricProtoBinaryGzReader(filename string) (filereader.Reader, error) {
+func createMetricProtoBinaryGzReader(filename string, opts filereader.ReaderOptions) (filereader.Reader, error) {
 	file, err := os.Open(filename)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open protobuf.gz file: %w", err)
@@ -73,7 +73,7 @@ func createMetricProtoBinaryGzReader(filename string) (filereader.Reader, error)
 		return nil, fmt.Errorf("failed to create gzip reader: %w", err)
 	}
 
-	reader, err := filereader.NewIngestProtoMetricsReader(gzipReader, 1000)
+	reader, err := filereader.NewIngestProtoMetricsReader(gzipReader, opts)
 	if err != nil {
 		gzipReader.Close()
 		file.Close()

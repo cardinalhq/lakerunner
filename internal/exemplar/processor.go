@@ -64,9 +64,6 @@ type Processor struct {
 
 	// Configuration for all telemetry types
 	config Config
-
-	// Fingerprinter for log pattern analysis
-	fingerprinter fingerprinter.Fingerprinter
 }
 
 // Config holds configuration for different telemetry types
@@ -116,10 +113,9 @@ func DefaultConfig() Config {
 // NewProcessor creates a new unified processor for all telemetry types
 func NewProcessor(config Config, logger *slog.Logger) *Processor {
 	return &Processor{
-		tenants:       sync.Map{},
-		logger:        logger,
-		config:        config,
-		fingerprinter: fingerprinter.NewFingerprinter(),
+		tenants: sync.Map{},
+		logger:  logger,
+		config:  config,
 	}
 }
 
@@ -266,7 +262,7 @@ func (p *Processor) marshalMetrics(md pmetric.Metrics) (string, error) {
 }
 
 // ProcessLogs processes logs and generates exemplars for a specific organization
-func (p *Processor) ProcessLogs(ctx context.Context, ld plog.Logs, organizationID string) error {
+func (p *Processor) ProcessLogs(ctx context.Context, organizationID string, rl plog.ResourceLogs, sl plog.ScopeLogs, lr plog.LogRecord) error {
 	if !p.config.Logs.Enabled {
 		return nil
 	}
@@ -276,21 +272,12 @@ func (p *Processor) ProcessLogs(ctx context.Context, ld plog.Logs, organizationI
 		return nil
 	}
 
-	for i := range ld.ResourceLogs().Len() {
-		rl := ld.ResourceLogs().At(i)
-		for j := range rl.ScopeLogs().Len() {
-			sl := rl.ScopeLogs().At(j)
-			for k := range sl.LogRecords().Len() {
-				lr := sl.LogRecords().At(k)
-				p.addLogExemplar(tenant, rl, sl, lr)
-			}
-		}
-	}
+	p.addLogExemplar(tenant, rl, sl, lr)
 	return nil
 }
 
 // ProcessMetrics processes metrics and generates exemplars for a specific organization
-func (p *Processor) ProcessMetrics(ctx context.Context, md pmetric.Metrics, organizationID string) error {
+func (p *Processor) ProcessMetrics(ctx context.Context, organizationID string, rm pmetric.ResourceMetrics, sm pmetric.ScopeMetrics, m pmetric.Metric) error {
 	if !p.config.Metrics.Enabled {
 		return nil
 	}
@@ -300,41 +287,17 @@ func (p *Processor) ProcessMetrics(ctx context.Context, md pmetric.Metrics, orga
 		return nil
 	}
 
-	for i := range md.ResourceMetrics().Len() {
-		rm := md.ResourceMetrics().At(i)
-		for j := range rm.ScopeMetrics().Len() {
-			sm := rm.ScopeMetrics().At(j)
-			for k := range sm.Metrics().Len() {
-				m := sm.Metrics().At(k)
-				p.addMetricsExemplar(tenant, rm, sm, m, m.Name(), m.Type())
-			}
-		}
-	}
+	p.addMetricsExemplar(tenant, rm, sm, m, m.Name(), m.Type())
 	return nil
 }
 
 // add a logs exemplar to the organization's cache
 func (p *Processor) addLogExemplar(tenant *Tenant, rl plog.ResourceLogs, sl plog.ScopeLogs, lr plog.LogRecord) {
-	logBody := extractLogBody(lr)
 
 	// Get old fingerprint from attributes (if exists from collector)
-	oldFingerprint := getLogFingerprint(lr)
-
-	// Compute new fingerprint using our TrieClusterManager
-	newFingerprint, _, _, err := p.fingerprinter.Fingerprint(logBody, tenant.trieClusterManager)
-	if err != nil {
-		p.logger.Debug("Error fingerprinting log", slog.Any("error", err))
-		// Fall back to old fingerprint if available, otherwise skip
-		if oldFingerprint != 0 {
-			newFingerprint = oldFingerprint
-		} else {
-			return
-		}
-	}
-
+	fingerprint := getLogFingerprint(lr)
 	extraKeys := []string{
-		fingerprintKey, strconv.FormatInt(newFingerprint, 10),
-		oldFingerprintKey, strconv.FormatInt(oldFingerprint, 10),
+		fingerprintKey, strconv.FormatInt(fingerprint, 10),
 	}
 	keys, exemplarKey := computeExemplarKey(rl.Resource(), extraKeys)
 
@@ -390,16 +353,4 @@ func (p *Processor) SetMetricsCallback(callback func(ctx context.Context, organi
 // SetLogsCallback updates the sendLogsExemplars callback function
 func (p *Processor) SetLogsCallback(callback func(ctx context.Context, organizationID string, exemplars []*ExemplarData) error) {
 	p.sendLogsExemplars = callback
-}
-
-// NewMetricsProcessor creates a new processor specifically for metrics
-// Deprecated: Use NewProcessor instead for unified processing
-func NewMetricsProcessor(config Config, logger *slog.Logger) *Processor {
-	return NewProcessor(config, logger)
-}
-
-// NewLogsProcessor creates a new processor specifically for logs
-// Deprecated: Use NewProcessor instead for unified processing
-func NewLogsProcessor(config Config, logger *slog.Logger) *Processor {
-	return NewProcessor(config, logger)
 }

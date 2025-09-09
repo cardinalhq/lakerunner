@@ -24,13 +24,12 @@ import (
 )
 
 const (
-	serviceNameKey    = string(semconv.ServiceNameKey)
-	clusterNameKey    = string(semconv.K8SClusterNameKey)
-	namespaceNameKey  = string(semconv.K8SNamespaceNameKey)
-	metricNameKey     = "metric.name"
-	metricTypeKey     = "metric.type"
-	fingerprintKey    = "fingerprint"
-	oldFingerprintKey = "old_fingerprint"
+	serviceNameKey   = string(semconv.ServiceNameKey)
+	clusterNameKey   = string(semconv.K8SClusterNameKey)
+	namespaceNameKey = string(semconv.K8SNamespaceNameKey)
+	metricNameKey    = "metric.name"
+	metricTypeKey    = "metric.type"
+	fingerprintKey   = "fingerprint"
 )
 
 // getFromResource extracts a value from resource attributes with a default fallback
@@ -124,19 +123,6 @@ func getLogFingerprint(lr plog.LogRecord) int64 {
 		return fingerprintField.Int()
 	}
 	return 0
-}
-
-// extractLogBody extracts the log body from a log record
-func extractLogBody(lr plog.LogRecord) string {
-	body := lr.Body()
-	switch body.Type() {
-	case pcommon.ValueTypeStr:
-		return body.Str()
-	case pcommon.ValueTypeBytes:
-		return string(body.Bytes().AsRaw())
-	default:
-		return body.AsString()
-	}
 }
 
 // toLogExemplar creates a log exemplar containing the full log record

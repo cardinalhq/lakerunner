@@ -261,8 +261,12 @@ func ProcessFileToSortedReader(ctx context.Context, item ingest.IngestItem, tmpD
 		slog.String("objectID", item.ObjectID),
 		slog.Int64("fileSize", item.FileSize))
 
+	opts := filereader.ReaderOptions{
+		BatchSize: 1000,
+	}
+
 	// Create proto reader
-	reader, err := CreateMetricProtoReader(tmpfilename)
+	reader, err := CreateMetricProtoReader(tmpfilename, opts)
 	if err != nil {
 		return nil, ReaderMetadata{}, fmt.Errorf("failed to create proto reader: %w", err)
 	}
