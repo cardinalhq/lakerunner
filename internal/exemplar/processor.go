@@ -47,6 +47,10 @@ type Tenant struct {
 	trieClusterManager *fingerprinter.TrieClusterManager
 }
 
+func (t *Tenant) GetTrieClusterManager() *fingerprinter.TrieClusterManager {
+	return t.trieClusterManager
+}
+
 // Processor handles exemplar generation from different telemetry types using tenant-based LRU caches
 type Processor struct {
 	tenants sync.Map // organizationID -> *Tenant
@@ -115,7 +119,7 @@ func NewProcessor(config Config, logger *slog.Logger) *Processor {
 	}
 }
 
-func (p *Processor) getTenant(ctx context.Context, organizationID string) *Tenant {
+func (p *Processor) GetTenant(ctx context.Context, organizationID string) *Tenant {
 	ll := logctx.FromContext(ctx)
 	if existing, ok := p.tenants.Load(organizationID); ok {
 		return existing.(*Tenant)
@@ -263,7 +267,7 @@ func (p *Processor) ProcessLogs(ctx context.Context, ld plog.Logs, organizationI
 		return nil
 	}
 
-	tenant := p.getTenant(ctx, organizationID)
+	tenant := p.GetTenant(ctx, organizationID)
 	if tenant.logCache == nil {
 		return nil
 	}
@@ -287,7 +291,7 @@ func (p *Processor) ProcessMetrics(ctx context.Context, md pmetric.Metrics, orga
 		return nil
 	}
 
-	tenant := p.getTenant(ctx, organizationID)
+	tenant := p.GetTenant(ctx, organizationID)
 	if tenant.metricCache == nil {
 		return nil
 	}

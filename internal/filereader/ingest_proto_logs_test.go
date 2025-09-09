@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
 	"io"
 	"testing"
 	"time"
@@ -36,7 +37,11 @@ func TestNewIngestProtoLogsReader_InvalidData(t *testing.T) {
 	invalidData := []byte("not a protobuf")
 	reader := bytes.NewReader(invalidData)
 
-	_, err := NewIngestProtoLogsReader(reader, 1000)
+	opts := ReaderOptions{
+		SignalType: SignalTypeLogs,
+		BatchSize:  1000,
+	}
+	_, err := NewIngestProtoLogsReader(reader, opts)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to parse proto to OTEL logs")
 }
@@ -45,7 +50,11 @@ func TestNewIngestProtoLogsReader_EmptyData(t *testing.T) {
 	// Test with empty data
 	emptyReader := bytes.NewReader([]byte{})
 
-	reader, err := NewIngestProtoLogsReader(emptyReader, 1000)
+	opts := ReaderOptions{
+		SignalType: SignalTypeLogs,
+		BatchSize:  1000,
+	}
+	reader, err := NewIngestProtoLogsReader(emptyReader, opts)
 	// Empty data may create a valid but empty logs object
 	if err != nil {
 		assert.Contains(t, err.Error(), "failed to parse proto to OTEL logs")
@@ -63,7 +72,12 @@ func TestNewIngestProtoLogsReader_EmptyData(t *testing.T) {
 
 func TestIngestProtoLogsReader_EmptySlice(t *testing.T) {
 	syntheticData := createSyntheticLogData()
-	reader, err := NewIngestProtoLogsReader(bytes.NewReader(syntheticData), 1000)
+	opts := ReaderOptions{
+		SignalType:         SignalTypeLogs,
+		BatchSize:          1,
+		TrieClusterManager: fingerprinter.NewTrieClusterManager(0.5),
+	}
+	reader, err := NewIngestProtoLogsReader(bytes.NewReader(syntheticData), opts)
 	require.NoError(t, err)
 	defer reader.Close()
 
@@ -78,7 +92,12 @@ func TestIngestProtoLogsReader_EmptySlice(t *testing.T) {
 
 func TestIngestProtoLogsReader_Close(t *testing.T) {
 	syntheticData := createSyntheticLogData()
-	reader, err := NewIngestProtoLogsReader(bytes.NewReader(syntheticData), 1)
+	opts := ReaderOptions{
+		SignalType:         SignalTypeLogs,
+		BatchSize:          1,
+		TrieClusterManager: fingerprinter.NewTrieClusterManager(0.5),
+	}
+	reader, err := NewIngestProtoLogsReader(bytes.NewReader(syntheticData), opts)
 	require.NoError(t, err)
 
 	// Should be able to read before closing
@@ -228,7 +247,12 @@ func TestIngestProtoLogsReader_SyntheticData(t *testing.T) {
 	syntheticData := createSyntheticLogData()
 	reader := bytes.NewReader(syntheticData)
 
-	protoReader, err := NewIngestProtoLogsReader(reader, 1000)
+	opts := ReaderOptions{
+		SignalType:         SignalTypeLogs,
+		BatchSize:          1000,
+		TrieClusterManager: fingerprinter.NewTrieClusterManager(0.5),
+	}
+	protoReader, err := NewIngestProtoLogsReader(reader, opts)
 	require.NoError(t, err)
 	require.NotNil(t, protoReader)
 	defer protoReader.Close()
@@ -289,7 +313,8 @@ func TestIngestProtoLogsReader_SyntheticData(t *testing.T) {
 	}
 
 	// Test batched reading with a new reader instance
-	protoReader2, err := NewIngestProtoLogsReader(bytes.NewReader(syntheticData), 1000)
+
+	protoReader2, err := NewIngestProtoLogsReader(bytes.NewReader(syntheticData), opts)
 	require.NoError(t, err)
 	defer protoReader2.Close()
 
@@ -319,7 +344,9 @@ func TestIngestProtoLogsReader_SyntheticData(t *testing.T) {
 	assert.Equal(t, len(allRows), totalBatchedRows, "Batched reading should read same number of rows")
 
 	// Test single row reading
-	protoReader3, err := NewIngestProtoLogsReader(bytes.NewReader(syntheticData), 1)
+
+	opts.BatchSize = 1
+	protoReader3, err := NewIngestProtoLogsReader(bytes.NewReader(syntheticData), opts)
 	require.NoError(t, err)
 	defer protoReader3.Close()
 
@@ -356,7 +383,12 @@ func TestIngestProtoLogsReader_SyntheticDataFields(t *testing.T) {
 	syntheticData := createSyntheticLogData()
 	reader := bytes.NewReader(syntheticData)
 
-	protoReader, err := NewIngestProtoLogsReader(reader, 1000)
+	opts := ReaderOptions{
+		SignalType:         SignalTypeLogs,
+		BatchSize:          1000,
+		TrieClusterManager: fingerprinter.NewTrieClusterManager(0.5),
+	}
+	protoReader, err := NewIngestProtoLogsReader(reader, opts)
 	require.NoError(t, err)
 	defer protoReader.Close()
 
@@ -494,7 +526,12 @@ func TestIngestProtoLogsReader_SyntheticStructuredData(t *testing.T) {
 
 	// Test IngestProtoLogsReader with this structured data
 	reader := bytes.NewReader(data)
-	protoReader, err := NewIngestProtoLogsReader(reader, 1000)
+	opts := ReaderOptions{
+		SignalType:         SignalTypeLogs,
+		BatchSize:          1,
+		TrieClusterManager: fingerprinter.NewTrieClusterManager(0.5),
+	}
+	protoReader, err := NewIngestProtoLogsReader(reader, opts)
 	require.NoError(t, err)
 	require.NotNil(t, protoReader)
 	defer protoReader.Close()
@@ -651,7 +688,12 @@ func TestIngestProtoLogsReader_MultiResourceSyntheticData(t *testing.T) {
 	require.NoError(t, err)
 
 	reader := bytes.NewReader(data)
-	protoReader, err := NewIngestProtoLogsReader(reader, 1000)
+	opts := ReaderOptions{
+		SignalType:         SignalTypeLogs,
+		BatchSize:          1,
+		TrieClusterManager: fingerprinter.NewTrieClusterManager(0.5),
+	}
+	protoReader, err := NewIngestProtoLogsReader(reader, opts)
 	require.NoError(t, err)
 	defer protoReader.Close()
 

@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
 	"io"
 	"log/slog"
 	"maps"
@@ -184,8 +185,10 @@ func (wm *writerManager) closeAll(ctx context.Context) ([]parquetwriter.Result, 
 }
 
 // createLogReader creates the appropriate filereader based on file type
-func createLogReader(filename string) (filereader.Reader, error) {
-	return filereader.ReaderForFile(filename, filereader.SignalTypeLogs)
+func createLogReader(filename string, trieClusterManager *fingerprinter.TrieClusterManager) (filereader.Reader, error) {
+	options := filereader.ReaderOptions{SignalType: filereader.SignalTypeLogs, BatchSize: 1000}
+	options.TrieClusterManager = trieClusterManager
+	return filereader.ReaderForFileWithOptions(filename, options)
 }
 
 // queueLogCompactionForSlot queues a log compaction job for a specific slot
@@ -292,7 +295,13 @@ func ProcessBatch(ctx context.Context, args ingest.ProcessBatchArgs, item ingest
 	// Create appropriate reader for the file type
 	var reader filereader.Reader
 
-	reader, err = createLogReader(tmpfilename)
+	var trieClusterManager *fingerprinter.TrieClusterManager = nil
+	tenant := exemplarProcessor.GetTenant(ctx, item.OrganizationID.String())
+	if tenant != nil {
+		trieClusterManager = tenant.GetTrieClusterManager()
+	}
+
+	reader, err = createLogReader(tmpfilename, trieClusterManager)
 	if err == nil {
 		// Process exemplars if available (before translation to preserve OTEL structure)
 		if exemplarProcessor != nil && shouldProcessLogsExemplars() {
