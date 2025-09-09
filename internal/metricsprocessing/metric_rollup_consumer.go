@@ -99,7 +99,7 @@ func NewMetricRollupConsumer(
 	}
 
 	// Create Gatherer using the consumer itself as offset callbacks
-	mrc.gatherer = NewGatherer[*messages.MetricRollupMessage, messages.RollupKey](topic, consumerGroup, processor, mrc)
+	mrc.gatherer = NewGatherer[*messages.MetricRollupMessage](topic, consumerGroup, processor, mrc)
 
 	ll.Info("Created new Kafka rollup accumulation consumer",
 		slog.String("consumerName", consumerName),

@@ -87,7 +87,7 @@ func NewMetricIngestConsumer(
 	}
 
 	// Create Gatherer using the consumer itself as offset callbacks
-	mic.gatherer = NewGatherer[*messages.ObjStoreNotificationMessage, messages.IngestKey](topic, consumerGroup, processor, mic)
+	mic.gatherer = NewGatherer[*messages.ObjStoreNotificationMessage](topic, consumerGroup, processor, mic)
 
 	ll.Info("Created new Kafka ingest consumer",
 		slog.String("consumerName", consumerName),

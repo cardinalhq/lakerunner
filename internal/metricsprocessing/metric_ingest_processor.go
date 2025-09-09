@@ -201,7 +201,7 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *Accumulation
 		}
 
 		// Step 3b: Create reader stack: DiskSort(Translation(OTELMetricProto(file)))
-		reader, err := p.createReaderStack(ctx, tmpFilename, msg.OrganizationID.String(), msg.Bucket, msg.ObjectID)
+		reader, err := p.createReaderStack(tmpFilename, msg.OrganizationID.String(), msg.Bucket, msg.ObjectID)
 		if err != nil {
 			ll.Error("Failed to create reader stack", slog.String("objectID", msg.ObjectID), slog.Any("error", err))
 			continue
@@ -373,7 +373,7 @@ func (p *MetricIngestProcessor) GetTargetRecordCount(ctx context.Context, groupi
 }
 
 // createReaderStack creates a reader stack: DiskSort(Translation(OTELMetricProto(file)))
-func (p *MetricIngestProcessor) createReaderStack(ctx context.Context, tmpFilename, orgID, bucket, objectID string) (filereader.Reader, error) {
+func (p *MetricIngestProcessor) createReaderStack(tmpFilename, orgID, bucket, objectID string) (filereader.Reader, error) {
 	// Step 1: Create proto reader for .binpb or .binpb.gz files
 	reader, err := CreateMetricProtoReader(tmpFilename)
 	if err != nil {
