@@ -15,6 +15,7 @@
 package metricsprocessing
 
 import (
+	"sync"
 	"time"
 
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
@@ -39,9 +40,9 @@ type AccumulationGroup[K comparable] struct {
 	Key              K
 	Messages         []*AccumulatedMessage
 	TotalRecordCount int64
-	LatestOffsets    map[string]map[int32]int64 // topic -> partition -> offset
-	CreatedAt        time.Time                  // When this group was first created
-	LastUpdatedAt    time.Time                  // When this group was last modified
+	LatestOffsets    map[int32]int64 // partition -> offset (single topic only)
+	CreatedAt        time.Time       // When this group was first created
+	LastUpdatedAt    time.Time       // When this group was last modified
 }
 
 // AccumulationResult contains the accumulated messages and metadata when threshold is reached
@@ -50,8 +51,10 @@ type AccumulationResult[K comparable] struct {
 	TriggeringRecord *AccumulatedMessage // The message that caused the threshold to be exceeded
 }
 
-// Hunter accumulates GroupableMessage until a threshold is reached
+// Hunter accumulates GroupableMessage until a threshold is reached.
+// All methods are safe for concurrent use by multiple goroutines.
 type Hunter[M messages.GroupableMessage, K comparable] struct {
+	mu     sync.Mutex
 	groups map[K]*AccumulationGroup[K]
 }
 
@@ -62,9 +65,13 @@ func NewHunter[M messages.GroupableMessage, K comparable]() *Hunter[M, K] {
 	}
 }
 
-// AddMessage adds a message to the appropriate accumulation group
-// Returns an AccumulationResult if adding this message would exceed the targetRecordCount
+// AddMessage adds a message to the appropriate accumulation group.
+// Returns an AccumulationResult if adding this message would exceed the targetRecordCount.
+// Safe for concurrent use.
 func (h *Hunter[M, K]) AddMessage(msg M, metadata *MessageMetadata, targetRecordCount int64) *AccumulationResult[K] {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
 	key := msg.GroupingKey().(K)
 
 	group, exists := h.groups[key]
@@ -73,7 +80,7 @@ func (h *Hunter[M, K]) AddMessage(msg M, metadata *MessageMetadata, targetRecord
 		group = &AccumulationGroup[K]{
 			Key:           key,
 			Messages:      make([]*AccumulatedMessage, 0),
-			LatestOffsets: make(map[string]map[int32]int64),
+			LatestOffsets: make(map[int32]int64),
 			CreatedAt:     now,
 			LastUpdatedAt: now,
 		}
@@ -97,11 +104,8 @@ func (h *Hunter[M, K]) AddMessage(msg M, metadata *MessageMetadata, targetRecord
 	group.TotalRecordCount = newTotalRecordCount
 
 	// Update latest offset tracking
-	if group.LatestOffsets[metadata.Topic] == nil {
-		group.LatestOffsets[metadata.Topic] = make(map[int32]int64)
-	}
-	if currentOffset, exists := group.LatestOffsets[metadata.Topic][metadata.Partition]; !exists || metadata.Offset > currentOffset {
-		group.LatestOffsets[metadata.Topic][metadata.Partition] = metadata.Offset
+	if currentOffset, exists := group.LatestOffsets[metadata.Partition]; !exists || metadata.Offset > currentOffset {
+		group.LatestOffsets[metadata.Partition] = metadata.Offset
 	}
 
 	if shouldReturn {
@@ -118,9 +122,13 @@ func (h *Hunter[M, K]) AddMessage(msg M, metadata *MessageMetadata, targetRecord
 	return nil
 }
 
-// SelectGroups calls the selector function for each group and returns those where selector returns true
-// The groups are removed from the hunter when selected
+// SelectGroups calls the selector function for each group and returns those where selector returns true.
+// The groups are removed from the hunter when selected.
+// Safe for concurrent use.
 func (h *Hunter[M, K]) SelectGroups(selector func(key K, group *AccumulationGroup[K]) bool) []*AccumulationGroup[K] {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
 	var selected []*AccumulationGroup[K]
 	var keysToRemove []K
 
@@ -139,8 +147,9 @@ func (h *Hunter[M, K]) SelectGroups(selector func(key K, group *AccumulationGrou
 	return selected
 }
 
-// SelectStaleGroups selects all groups that haven't been updated for longer than the specified duration
-// This is used for periodic flushing of groups that may never reach the record count threshold
+// SelectStaleGroups selects all groups that haven't been updated for longer than the specified duration.
+// This is used for periodic flushing of groups that may never reach the record count threshold.
+// Safe for concurrent use.
 func (h *Hunter[M, K]) SelectStaleGroups(olderThan time.Duration) []*AccumulationGroup[K] {
 	cutoff := time.Now().Add(-olderThan)
 	return h.SelectGroups(func(key K, group *AccumulationGroup[K]) bool {

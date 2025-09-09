@@ -230,6 +230,10 @@ func TestGatherer_ValidatesTopicAndConsumerGroup(t *testing.T) {
 
 	gatherer := NewGatherer[*messages.MetricCompactionMessage]("expected-topic", "expected-group", NewMockCompactor(), offsetCallbacks)
 
+	// Verify Gatherer stores the expected topic and consumer group
+	assert.Equal(t, "expected-topic", gatherer.topic)
+	assert.Equal(t, "expected-group", gatherer.consumerGroup)
+
 	msg := createTestMessage(orgID, 1, 20250108, 60000, 1, 4, 50)
 
 	// Test wrong topic
@@ -255,6 +259,41 @@ func TestGatherer_ValidatesTopicAndConsumerGroup(t *testing.T) {
 	correctMetadata := createTestMetadata("expected-topic", 0, "expected-group", 100)
 	err = gatherer.ProcessMessage(context.Background(), msg, correctMetadata)
 	assert.NoError(t, err)
+}
+
+func TestGatherer_PreventsMixedTopics(t *testing.T) {
+	offsetCallbacks := NewMockOffsetCallbacks()
+	compactor := NewMockCompactor()
+	orgID := uuid.New()
+
+	// Create a gatherer for compaction topic
+	gatherer := NewGatherer[*messages.MetricCompactionMessage]("lakerunner.segments.metrics.compact", "lakerunner.compact.metrics", compactor, offsetCallbacks)
+
+	msg := createTestMessage(orgID, 1, 20250909, 60000, 1, 4, 5000)
+
+	// Should accept compaction messages
+	compactMetadata := createTestMetadata("lakerunner.segments.metrics.compact", 0, "lakerunner.compact.metrics", 100)
+	err := gatherer.ProcessMessage(context.Background(), msg, compactMetadata)
+	assert.NoError(t, err, "Should accept messages from expected compaction topic")
+
+	// Should reject rollup messages (different topic)
+	rollupMetadata := createTestMetadata("lakerunner.segments.metrics.rollup", 0, "lakerunner.compact.metrics", 101)
+	err = gatherer.ProcessMessage(context.Background(), msg, rollupMetadata)
+	assert.Error(t, err, "Should reject messages from rollup topic")
+
+	var configErr *ConfigMismatchError
+	assert.ErrorAs(t, err, &configErr)
+	assert.Equal(t, "topic", configErr.Field)
+	assert.Equal(t, "lakerunner.segments.metrics.compact", configErr.Expected)
+	assert.Equal(t, "lakerunner.segments.metrics.rollup", configErr.Got)
+
+	// Verify only the compaction message was processed
+	assert.Len(t, compactor.groups, 0, "No groups should be processed yet (below threshold)")
+	assert.Len(t, gatherer.hunter.groups, 1, "Should have one accumulation group from valid message")
+
+	t.Logf("Successfully prevented mixed topics: expected=%s, rejected=%s",
+		"lakerunner.segments.metrics.compact",
+		"lakerunner.segments.metrics.rollup")
 }
 
 // Helper functions for testing

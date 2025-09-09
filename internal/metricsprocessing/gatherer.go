@@ -41,6 +41,8 @@ type Gatherer[M messages.GroupableMessage, K comparable] struct {
 	metadataTracker *MetadataTracker[K]
 	processor       Processor[M, K]
 	offsetCallbacks OffsetCallbacks[K]
+	topic           string // Expected topic for validation
+	consumerGroup   string // Expected consumer group for validation
 }
 
 // NewGatherer creates a new generic Gatherer instance
@@ -50,6 +52,8 @@ func NewGatherer[M messages.GroupableMessage, K comparable](topic, consumerGroup
 		metadataTracker: NewMetadataTracker[K](topic, consumerGroup),
 		processor:       processor,
 		offsetCallbacks: offsetCallbacks,
+		topic:           topic,
+		consumerGroup:   consumerGroup,
 	}
 }
 
@@ -58,17 +62,17 @@ func NewGatherer[M messages.GroupableMessage, K comparable](topic, consumerGroup
 // If the target record count threshold is reached, it calls the processor and tracks metadata
 func (g *Gatherer[M, K]) ProcessMessage(ctx context.Context, msg M, metadata *MessageMetadata) error {
 	// Validate topic and consumer group match expectations
-	if metadata.Topic != g.metadataTracker.topic {
+	if metadata.Topic != g.topic {
 		return &ConfigMismatchError{
 			Field:    "topic",
-			Expected: g.metadataTracker.topic,
+			Expected: g.topic,
 			Got:      metadata.Topic,
 		}
 	}
-	if metadata.ConsumerGroup != g.metadataTracker.consumerGroup {
+	if metadata.ConsumerGroup != g.consumerGroup {
 		return &ConfigMismatchError{
 			Field:    "consumer_group",
-			Expected: g.metadataTracker.consumerGroup,
+			Expected: g.consumerGroup,
 			Got:      metadata.ConsumerGroup,
 		}
 	}
