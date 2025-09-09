@@ -54,7 +54,7 @@ func NewProcessedSegment(ctx context.Context, result parquetwriter.Result, orgID
 	}
 
 	// Generate new segment ID
-	segmentID := idgen.DefaultFlakeGenerator.NextID()
+	segmentID := idgen.GenerateID()
 
 	// Construct S3 object ID using actual file timestamps
 	dateint, hour := helpers.MSToDateintHour(metadata.StartTs)

@@ -304,7 +304,7 @@ func (r *MetricRollupProcessor) uploadAndCreateRollupSegments(ctx context.Contex
 	var segmentIDs []int64
 
 	for _, result := range results {
-		segmentID := r.generateSegmentID()
+		segmentID := idgen.GenerateID()
 
 		stats, ok := result.Metadata.(factories.MetricsFileStats)
 		if !ok {
@@ -440,9 +440,6 @@ func (r *MetricRollupProcessor) getHourFromTimestamp(timestampMs int64) int16 {
 	return int16((timestampMs / (1000 * 60 * 60)) % 24)
 }
 
-func (r *MetricRollupProcessor) generateSegmentID() int64 {
-	return idgen.GenerateID()
-}
 
 // GetTargetRecordCount returns the target record count for a rollup grouping key
 func (r *MetricRollupProcessor) GetTargetRecordCount(ctx context.Context, groupingKey messages.RollupKey) int64 {
