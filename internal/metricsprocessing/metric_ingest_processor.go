@@ -359,6 +359,16 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *Accumulation
 		ll.Warn("No Kafka producer provided - segment notifications will not be sent")
 	}
 
+	// Calculate output metrics for telemetry
+	var totalOutputRecords, totalOutputSize int64
+	for _, params := range segmentParams {
+		totalOutputRecords += params.RecordCount
+		totalOutputSize += params.FileSize
+	}
+
+	// Report telemetry - ingestion transforms files into segments
+	ReportTelemetry(ctx, "ingestion", int64(len(group.Messages)), int64(len(segmentParams)), 0, totalOutputRecords, totalInputSize, totalOutputSize)
+
 	ll.Info("Metric ingestion completed successfully",
 		slog.Int("inputFiles", len(group.Messages)),
 		slog.Int64("totalFileSize", totalInputSize),
@@ -558,6 +568,7 @@ func (p *MetricIngestProcessor) uploadAndCreateSegments(ctx context.Context, sto
 	}
 
 	var segmentParams []lrdb.InsertMetricSegmentParams
+	var totalOutputRecords, totalOutputSize int64
 
 	for binStartTs, bin := range timeBins {
 		if bin.Result == nil || bin.Result.RecordCount == 0 {
@@ -629,6 +640,8 @@ func (p *MetricIngestProcessor) uploadAndCreateSegments(ctx context.Context, sto
 		}
 
 		segmentParams = append(segmentParams, params)
+		totalOutputRecords += bin.Result.RecordCount
+		totalOutputSize += bin.Result.FileSize
 	}
 
 	ll.Info("Segment upload completed",

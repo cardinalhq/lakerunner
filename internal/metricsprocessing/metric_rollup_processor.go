@@ -294,13 +294,14 @@ func (r *MetricRollupProcessor) uploadAndCreateRollupSegments(ctx context.Contex
 	ll := logctx.FromContext(ctx)
 
 	// Calculate input metrics
-	var totalInputSize int64
+	var totalInputSize, totalInputRecords int64
 	for _, seg := range inputSegments {
 		totalInputSize += seg.FileSize
+		totalInputRecords += seg.RecordCount
 	}
 
 	var segments []lrdb.MetricSeg
-	var totalOutputSize int64
+	var totalOutputSize, totalOutputRecords int64
 	var segmentIDs []int64
 
 	for _, result := range results {
@@ -350,8 +351,12 @@ func (r *MetricRollupProcessor) uploadAndCreateRollupSegments(ctx context.Contex
 
 		segments = append(segments, segment)
 		totalOutputSize += result.FileSize
+		totalOutputRecords += result.RecordCount
 		segmentIDs = append(segmentIDs, segmentID)
 	}
+
+	// Report telemetry
+	ReportTelemetry(ctx, "rollup", int64(len(inputSegments)), int64(len(segments)), totalInputRecords, totalOutputRecords, totalInputSize, totalOutputSize)
 
 	// Log upload summary
 	ll.Info("Rollup segment upload completed",
