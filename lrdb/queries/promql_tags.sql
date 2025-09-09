@@ -22,13 +22,23 @@ WITH src AS (
     AND metric_name = $2
 ),
 res_keys AS (
-  SELECT DISTINCT ('resource.' || (attr->>'key'))::text AS k
+  SELECT DISTINCT (
+    CASE
+      WHEN (attr->>'key') ~ '^_cardinalhq\.' THEN (attr->>'key')
+      ELSE 'resource.' || (attr->>'key')
+    END
+  ) AS k
   FROM src
   CROSS JOIN LATERAL jsonb_array_elements(coalesce(exemplar->'resourceMetrics','[]'::jsonb)) rm
   CROSS JOIN LATERAL jsonb_array_elements(coalesce(rm->'resource'->'attributes','[]'::jsonb)) attr
 ),
 dp_keys AS (
-  SELECT DISTINCT ('metric.' || (attr->>'key'))::text AS k
+  SELECT DISTINCT (
+    CASE
+      WHEN (attr->>'key') ~ '^_cardinalhq\.' THEN (attr->>'key')
+      ELSE 'metric.' || (attr->>'key')
+    END
+  ) AS k
   FROM src
   CROSS JOIN LATERAL jsonb_array_elements(coalesce(exemplar->'resourceMetrics','[]'::jsonb)) rm
   CROSS JOIN LATERAL jsonb_array_elements(coalesce(rm->'scopeMetrics','[]'::jsonb)) sm

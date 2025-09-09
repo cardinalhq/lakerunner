@@ -138,9 +138,18 @@ func (q *QuerierService) handleListPromQLTags(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	tags := make([]string, len(tagKeys))
+	for i, tag := range tagKeys {
+		if s, ok := tag.(string); ok {
+			tags[i] = s
+		} else {
+			tags[i] = ""
+		}
+	}
+
 	resp := promTagsForMetricResp{
 		Metric: metricItem{Name: metric, Type: mt},
-		Tags:   tagKeys,
+		Tags:   tags,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)

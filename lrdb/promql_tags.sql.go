@@ -40,13 +40,23 @@ WITH src AS (
     AND metric_name = $2
 ),
 res_keys AS (
-  SELECT DISTINCT ('resource.' || (attr->>'key'))::text AS k
+  SELECT DISTINCT (
+    CASE
+      WHEN (attr->>'key') ~ '^_cardinalhq\.' THEN (attr->>'key')
+      ELSE 'resource.' || (attr->>'key')
+    END
+  ) AS k
   FROM src
   CROSS JOIN LATERAL jsonb_array_elements(coalesce(exemplar->'resourceMetrics','[]'::jsonb)) rm
   CROSS JOIN LATERAL jsonb_array_elements(coalesce(rm->'resource'->'attributes','[]'::jsonb)) attr
 ),
 dp_keys AS (
-  SELECT DISTINCT ('metric.' || (attr->>'key'))::text AS k
+  SELECT DISTINCT (
+    CASE
+      WHEN (attr->>'key') ~ '^_cardinalhq\.' THEN (attr->>'key')
+      ELSE 'metric.' || (attr->>'key')
+    END
+  ) AS k
   FROM src
   CROSS JOIN LATERAL jsonb_array_elements(coalesce(exemplar->'resourceMetrics','[]'::jsonb)) rm
   CROSS JOIN LATERAL jsonb_array_elements(coalesce(rm->'scopeMetrics','[]'::jsonb)) sm
@@ -76,15 +86,15 @@ type ListPromMetricTagsParams struct {
 	MetricName     string    `json:"metric_name"`
 }
 
-func (q *Queries) ListPromMetricTags(ctx context.Context, arg ListPromMetricTagsParams) ([]string, error) {
+func (q *Queries) ListPromMetricTags(ctx context.Context, arg ListPromMetricTagsParams) ([]interface{}, error) {
 	rows, err := q.db.Query(ctx, listPromMetricTags, arg.OrganizationID, arg.MetricName)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []string
+	var items []interface{}
 	for rows.Next() {
-		var tag_key string
+		var tag_key interface{}
 		if err := rows.Scan(&tag_key); err != nil {
 			return nil, err
 		}
