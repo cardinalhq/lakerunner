@@ -256,51 +256,10 @@ func (c *MetricCompactorProcessor) Process(ctx context.Context, group *Accumulat
 	ll.Info("Found segments to compact",
 		slog.Int("activeSegments", len(activeSegments)))
 
-	// Step 5-8: Use metricsprocessing.CreateReaderStack to handle download and reader creation
-	readerStack, err := metricsprocessing.CreateReaderStack(ctx, tmpDir, storageClient, group.Key.OrganizationID, storageProfile, activeSegments)
+	// Perform the core compaction logic
+	processedSegments, results, err := c.performCompaction(ctx, tmpDir, storageClient, group.Key, storageProfile, activeSegments, recordCountEstimate)
 	if err != nil {
-		return fmt.Errorf("create reader stack: %w", err)
-	}
-	defer metricsprocessing.CloseReaderStack(ctx, readerStack)
-
-	// Step 8: Create aggregation reader from the merge reader with frequency_ms as window
-	var aggReader filereader.Reader
-	if len(readerStack.Readers) == 1 {
-		// Single reader case
-		aggReader, err = filereader.NewAggregatingMetricsReader(readerStack.Readers[0], int64(group.Key.FrequencyMs), 1000)
-	} else if len(readerStack.Readers) > 1 {
-		// Multiple readers - need merge sort first
-		mergeReader, mergeErr := filereader.NewMergesortReader(ctx, readerStack.Readers, &filereader.MetricSortKeyProvider{}, 1000)
-		if mergeErr != nil {
-			return fmt.Errorf("create merge sort reader: %w", mergeErr)
-		}
-		defer mergeReader.Close()
-		aggReader, err = filereader.NewAggregatingMetricsReader(mergeReader, int64(group.Key.FrequencyMs), 1000)
-	} else {
-		return fmt.Errorf("no readers available for compaction")
-	}
-	if err != nil {
-		return fmt.Errorf("create aggregating reader: %w", err)
-	}
-	defer aggReader.Close()
-
-	// Step 9: Create parquet writer with estimated max records
-	maxRecords := recordCountEstimate * int64(c.targetRecordMultiple)
-	writer, err := factories.NewMetricsWriter(tmpDir, maxRecords)
-	if err != nil {
-		return fmt.Errorf("create parquet writer: %w", err)
-	}
-
-	// Write from aggregation reader to writer
-	if err := c.writeFromReader(ctx, aggReader, writer); err != nil {
-		writer.Abort()
-		return fmt.Errorf("write from reader: %w", err)
-	}
-
-	// Close writer and get results
-	results, err := writer.Close(ctx)
-	if err != nil {
-		return fmt.Errorf("close writer: %w", err)
+		return fmt.Errorf("perform compaction: %w", err)
 	}
 
 	// Step 10: Upload new files and create new metric segments
@@ -322,7 +281,7 @@ func (c *MetricCompactorProcessor) Process(ctx context.Context, group *Accumulat
 
 	// Log the compaction operation to seg_log for debugging (if enabled)
 	if c.cfg.SegLog.Enabled {
-		if err := c.logCompactionOperation(ctx, storageProfile, readerStack.ProcessedSegments, newSegments, results, group.Key, recordCountEstimate); err != nil {
+		if err := c.logCompactionOperation(ctx, storageProfile, processedSegments, newSegments, results, group.Key, recordCountEstimate); err != nil {
 			// Don't fail the compaction if seg_log fails - this is just for debugging
 			ll.Warn("Failed to log compaction operation to seg_log", slog.Any("error", err))
 		}
@@ -598,4 +557,57 @@ func (c *MetricCompactorProcessor) logCompactionOperation(ctx context.Context, s
 	}
 
 	return c.store.InsertSegmentJournal(ctx, logParams)
+}
+
+// performCompaction handles the core compaction logic: creating readers, aggregating, and writing
+// This is extracted to make the logic more testable and debuggable
+func (c *MetricCompactorProcessor) performCompaction(ctx context.Context, tmpDir string, storageClient cloudstorage.Client, compactionKey messages.CompactionKey, storageProfile storageprofile.StorageProfile, activeSegments []lrdb.MetricSeg, recordCountEstimate int64) ([]lrdb.MetricSeg, []parquetwriter.Result, error) {
+	// Step 5-8: Use metricsprocessing.CreateReaderStack to handle download and reader creation
+	readerStack, err := metricsprocessing.CreateReaderStack(ctx, tmpDir, storageClient, compactionKey.OrganizationID, storageProfile, activeSegments)
+	if err != nil {
+		return nil, nil, fmt.Errorf("create reader stack: %w", err)
+	}
+	defer metricsprocessing.CloseReaderStack(ctx, readerStack)
+
+	// Step 8: Create aggregation reader from the merge reader with frequency_ms as window
+	var aggReader filereader.Reader
+	if len(readerStack.Readers) == 1 {
+		// Single reader case
+		aggReader, err = filereader.NewAggregatingMetricsReader(readerStack.Readers[0], int64(compactionKey.FrequencyMs), 1000)
+	} else if len(readerStack.Readers) > 1 {
+		// Multiple readers - need merge sort first
+		mergeReader, mergeErr := filereader.NewMergesortReader(ctx, readerStack.Readers, &filereader.MetricSortKeyProvider{}, 1000)
+		if mergeErr != nil {
+			return nil, nil, fmt.Errorf("create merge sort reader: %w", mergeErr)
+		}
+		defer mergeReader.Close()
+		aggReader, err = filereader.NewAggregatingMetricsReader(mergeReader, int64(compactionKey.FrequencyMs), 1000)
+	} else {
+		return nil, nil, fmt.Errorf("no readers available for compaction")
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("create aggregating reader: %w", err)
+	}
+	defer aggReader.Close()
+
+	// Step 9: Create parquet writer with estimated max records
+	maxRecords := recordCountEstimate * int64(c.targetRecordMultiple)
+	writer, err := factories.NewMetricsWriter(tmpDir, maxRecords)
+	if err != nil {
+		return nil, nil, fmt.Errorf("create parquet writer: %w", err)
+	}
+
+	// Write from aggregation reader to writer
+	if err := c.writeFromReader(ctx, aggReader, writer); err != nil {
+		writer.Abort()
+		return nil, nil, fmt.Errorf("write from reader: %w", err)
+	}
+
+	// Close writer and get results
+	results, err := writer.Close(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("close writer: %w", err)
+	}
+
+	return readerStack.ProcessedSegments, results, nil
 }
