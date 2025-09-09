@@ -12,22 +12,17 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package ingestion
+package metricsprocessing
 
-import "time"
+import "fmt"
 
-// Config holds ingestion feature toggles.
-type Config struct {
-	ProcessExemplars    bool          `mapstructure:"process_exemplars"`
-	SingleInstanceMode  bool          `mapstructure:"single_instance_mode"`
-	MaxAccumulationTime time.Duration `mapstructure:"max_accumulation_time"`
+// ConfigMismatchError represents an error when message metadata doesn't match gatherer configuration
+type ConfigMismatchError struct {
+	Field    string // "topic" or "consumer_group"
+	Expected string
+	Got      string
 }
 
-// DefaultConfig returns default settings.
-func DefaultConfig() Config {
-	return Config{
-		ProcessExemplars:    true,
-		SingleInstanceMode:  false,
-		MaxAccumulationTime: 10 * time.Second,
-	}
+func (e *ConfigMismatchError) Error() string {
+	return fmt.Sprintf("unexpected %s: got %q, expected %q", e.Field, e.Got, e.Expected)
 }

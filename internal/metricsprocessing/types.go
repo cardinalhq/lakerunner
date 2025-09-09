@@ -15,51 +15,31 @@
 package metricsprocessing
 
 import (
-	"github.com/google/uuid"
-
+	"github.com/cardinalhq/lakerunner/config"
+	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
+	"github.com/cardinalhq/lakerunner/internal/processing/ingest"
 )
 
-// ProcessingInput contains all inputs needed for the generic processing pipeline
-type ProcessingInput struct {
-	ReaderStack       *ReaderStackResult
-	TargetFrequencyMs int32 // Same as source for compact, next level for rollup
+// input contains all parameters needed for metric ingestion
+type input struct {
+	Items             []ingest.IngestItem
 	TmpDir            string
-	RecordsLimit      int64  // Maximum records per file
-	EstimatedRecords  int64  // Estimated target records for optimization
-	Action            string // "compact" or "rollup" for metrics
-	InputRecords      int64  // Total input records for metrics tracking
-	InputBytes        int64  // Total input bytes for metrics tracking
+	IngestDateint     int32
+	RPFEstimate       int64
+	ExemplarProcessor *exemplar.Processor
+	Config            config.IngestionConfig
 }
 
-// ProcessingResult contains the output of the processing pipeline
-type ProcessingResult struct {
-	RawResults []parquetwriter.Result // Raw parquet results before conversion
-	Segments   ProcessedSegments      // Processed segments (may be empty until processed)
-	Stats      ProcessingStats        // Statistics about the processing
+// result contains the output of metric ingestion
+type result struct {
+	Results     []parquetwriter.Result
+	RowsRead    int64
+	RowsErrored int64
 }
 
-// ProcessingStats contains statistics about the processing
-type ProcessingStats struct {
-	InputSegments    int
-	OutputSegments   int
-	InputRecords     int64
-	OutputRecords    int64
-	InputBytes       int64
-	OutputBytes      int64
-	CompressionRatio float64
-	TotalRows        int64
-	BatchCount       int
-}
-
-// ProcessingContext contains metadata about the work being processed
-type ProcessingContext struct {
-	OrganizationID uuid.UUID
-	Dateint        int32
-	FrequencyMs    int32 // Source frequency
-	InstanceNum    int16
-	SlotID         int32
-	SlotCount      int32
-	BatchID        string
-	WorkItemIDs    []int64
+// fileInfo holds information about a downloaded file
+type fileInfo struct {
+	item        ingest.IngestItem
+	tmpfilename string
 }

@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package accumulation
+package metricsprocessing
 
 import (
 	"context"
@@ -23,7 +23,6 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
-	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
@@ -55,7 +54,7 @@ type MetricProcessingResult struct {
 // 5. Close writer and return results
 func ProcessMetricsWithAggregation(ctx context.Context, params MetricProcessingParams) (*MetricProcessingResult, error) {
 	// Create reader stack
-	readerStack, err := metricsprocessing.CreateReaderStack(
+	readerStack, err := CreateReaderStack(
 		ctx,
 		params.TmpDir,
 		params.StorageClient,
@@ -66,7 +65,7 @@ func ProcessMetricsWithAggregation(ctx context.Context, params MetricProcessingP
 	if err != nil {
 		return nil, fmt.Errorf("create reader stack: %w", err)
 	}
-	defer metricsprocessing.CloseReaderStack(ctx, readerStack)
+	defer CloseReaderStack(ctx, readerStack)
 
 	// Create aggregating reader from head reader
 	aggReader, err := filereader.NewAggregatingMetricsReader(

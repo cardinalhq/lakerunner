@@ -35,7 +35,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/logsprocessing/logsingestion"
-	metricsingestion "github.com/cardinalhq/lakerunner/internal/metricsprocessing/ingestion"
+	metricsingestion "github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/processing/ingest"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )

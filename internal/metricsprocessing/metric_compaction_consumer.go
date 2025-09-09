@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package accumulation
+package metricsprocessing
 
 import (
 	"context"
@@ -25,16 +25,17 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
+	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-// MetricIngestConsumer handles object store notification messages for metric ingestion
-type MetricIngestConsumer struct {
-	gatherer      *Gatherer[*messages.ObjStoreNotificationMessage, messages.IngestKey]
+// MetricCompactionConsumer handles metric compaction Kafka messages using accumulation-based approach
+type MetricCompactionConsumer struct {
+	gatherer      *Gatherer[*messages.MetricCompactionMessage, messages.CompactionKey]
 	consumer      fly.Consumer
-	store         IngestStore
+	store         CompactionStore
 	flushTicker   *time.Ticker
 	done          chan struct{}
 	consumerName  string
@@ -42,41 +43,35 @@ type MetricIngestConsumer struct {
 	consumerGroup string
 }
 
-// NewMetricIngestConsumer creates a new metric ingest consumer
-func NewMetricIngestConsumer(
+// NewMetricCompactionConsumer creates a new metric compaction consumer
+func NewMetricCompactionConsumer(
 	ctx context.Context,
 	factory *fly.Factory,
 	cfg *config.Config,
-	store IngestStore,
+	store CompactionStore,
 	storageProvider storageprofile.StorageProfileProvider,
 	cmgr cloudstorage.ClientProvider,
-) (*MetricIngestConsumer, error) {
+) (*MetricCompactionConsumer, error) {
 	ll := logctx.FromContext(ctx)
 
-	// Create Kafka producer for segment notifications
-	kafkaProducer, err := factory.CreateProducer()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Kafka producer: %w", err)
-	}
-
-	// Create MetricIngestProcessor
-	processor := NewMetricIngestProcessor(store, storageProvider, cmgr, kafkaProducer)
+	// Create MetricCompactor
+	compactor := NewMetricCompactor(store, storageProvider, cmgr, cfg)
 
 	// Create Gatherer - using hardcoded consumer group and topic
-	consumerGroup := "lakerunner.ingest.metrics"
-	topic := "lakerunner.objstore.notifications"
+	consumerGroup := "lakerunner.compact.metrics"
+	topic := "lakerunner.segments.metrics.compact"
 
 	// Create Kafka consumer
-	consumerName := "lakerunner-ingest-accumulator"
+	consumerName := "lakerunner-compaction-accumulator"
 	consumer, err := factory.CreateConsumer(topic, consumerGroup)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka consumer: %w", err)
 	}
 
-	// Set up periodic flushing (every 30 seconds, flush groups older than 2 minutes)
-	flushTicker := time.NewTicker(30 * time.Second)
+	// Set up periodic flushing (every minute, flush groups older than 5 minutes)
+	flushTicker := time.NewTicker(1 * time.Minute)
 
-	mic := &MetricIngestConsumer{
+	mcc := &MetricCompactionConsumer{
 		consumer:      consumer,
 		store:         store,
 		flushTicker:   flushTicker,
@@ -87,27 +82,27 @@ func NewMetricIngestConsumer(
 	}
 
 	// Create Gatherer using the consumer itself as offset callbacks
-	mic.gatherer = NewGatherer[*messages.ObjStoreNotificationMessage, messages.IngestKey](topic, consumerGroup, processor, mic)
+	mcc.gatherer = NewGatherer[*messages.MetricCompactionMessage](topic, consumerGroup, compactor, mcc)
 
-	ll.Info("Created new Kafka ingest consumer",
+	ll.Info("Created new Kafka accumulation consumer",
 		slog.String("consumerName", consumerName),
 		slog.String("topic", topic),
 		slog.String("consumerGroup", consumerGroup))
 
-	return mic, nil
+	return mcc, nil
 }
 
 // Run starts the Kafka consumer and periodic flushing
-func (c *MetricIngestConsumer) Run(ctx context.Context) error {
+func (c *MetricCompactionConsumer) Run(ctx context.Context) error {
 	ll := logctx.FromContext(ctx).With("consumer", c.consumerName)
-	ll.Info("Starting Kafka ingest consumer")
+	ll.Info("Starting Kafka accumulation consumer")
 
 	// Start periodic flushing goroutine
 	go c.periodicFlush(ctx)
 
 	// Start the Kafka consumer
 	err := c.consumer.Consume(ctx, func(ctx context.Context, kafkaMessages []fly.ConsumedMessage) error {
-		ll := logctx.FromContext(ctx).With(slog.String("batchID", "ingest-"+fmt.Sprintf("%d", time.Now().UnixNano())))
+		ll := logctx.FromContext(ctx).With(slog.String("batchID", idgen.GenerateShortBase32ID()))
 		ctx = logctx.WithLogger(ctx, ll)
 
 		if len(kafkaMessages) == 0 {
@@ -119,13 +114,21 @@ func (c *MetricIngestConsumer) Run(ctx context.Context) error {
 
 		// Process each message
 		for _, kafkaMsg := range kafkaMessages {
-			var notification messages.ObjStoreNotificationMessage
+			var notification messages.MetricCompactionMessage
 			if err := notification.Unmarshal(kafkaMsg.Value); err != nil {
-				ll.Error("Failed to unmarshal object store notification message",
+				ll.Error("Failed to unmarshal metric compaction message",
 					slog.Any("error", err),
 					slog.Int("partition", kafkaMsg.Partition),
 					slog.Int64("offset", kafkaMsg.Offset))
 				continue // Skip malformed messages
+			}
+
+			// Validate message version
+			if notification.Version != 1 {
+				ll.Warn("Unsupported message version, skipping",
+					slog.Int("version", int(notification.Version)),
+					slog.Int64("segmentID", notification.SegmentID))
+				continue
 			}
 
 			// Create MessageMetadata from kafkaMsg
@@ -141,9 +144,10 @@ func (c *MetricIngestConsumer) Run(ctx context.Context) error {
 				ll.Error("Failed to process message",
 					slog.Any("error", err),
 					slog.String("organizationID", notification.OrganizationID.String()),
+					slog.Int("dateint", int(notification.DateInt)),
+					slog.Int("frequencyMs", int(notification.FrequencyMs)),
 					slog.Int("instanceNum", int(notification.InstanceNum)),
-					slog.String("objectID", notification.ObjectID),
-					slog.Int64("fileSize", notification.FileSize))
+					slog.Int64("segmentID", notification.SegmentID))
 				return fmt.Errorf("failed to process message: %w", err)
 			}
 		}
@@ -157,14 +161,14 @@ func (c *MetricIngestConsumer) Run(ctx context.Context) error {
 		return fmt.Errorf("Kafka consumer error: %w", err)
 	}
 
-	ll.Info("Kafka ingest consumer stopped")
+	ll.Info("Kafka accumulation consumer stopped")
 	return nil
 }
 
-// OffsetCallbacks implementation - MetricIngestConsumer implements OffsetCallbacks interface
+// OffsetCallbacks implementation - MetricCompactionConsumer implements OffsetCallbacks interface
 
 // GetLastProcessedOffset returns the last processed offset for this key, or -1 if never seen
-func (c *MetricIngestConsumer) GetLastProcessedOffset(ctx context.Context, metadata *MessageMetadata, groupingKey messages.IngestKey) (int64, error) {
+func (c *MetricCompactionConsumer) GetLastProcessedOffset(ctx context.Context, metadata *MessageMetadata, groupingKey messages.CompactionKey) (int64, error) {
 	offset, err := c.store.KafkaJournalGetLastProcessedWithOrgInstance(ctx, lrdb.KafkaJournalGetLastProcessedWithOrgInstanceParams{
 		Topic:          metadata.Topic,
 		Partition:      metadata.Partition,
@@ -180,7 +184,7 @@ func (c *MetricIngestConsumer) GetLastProcessedOffset(ctx context.Context, metad
 }
 
 // MarkOffsetsProcessed commits the consumer group offsets to Kafka
-func (c *MetricIngestConsumer) MarkOffsetsProcessed(ctx context.Context, key messages.IngestKey, offsets map[int32]int64) error {
+func (c *MetricCompactionConsumer) MarkOffsetsProcessed(ctx context.Context, key messages.CompactionKey, offsets map[int32]int64) error {
 	ll := logctx.FromContext(ctx)
 
 	if len(offsets) == 0 {
@@ -225,7 +229,7 @@ func (c *MetricIngestConsumer) MarkOffsetsProcessed(ctx context.Context, key mes
 }
 
 // Close stops the consumer and cleans up resources
-func (c *MetricIngestConsumer) Close() error {
+func (c *MetricCompactionConsumer) Close() error {
 	close(c.done)
 	c.flushTicker.Stop()
 
@@ -235,8 +239,8 @@ func (c *MetricIngestConsumer) Close() error {
 	return nil
 }
 
-// periodicFlush runs every 30 seconds and flushes stale groups (older than 2 minutes)
-func (c *MetricIngestConsumer) periodicFlush(ctx context.Context) {
+// periodicFlush runs every minute and flushes stale groups (older than 5 minutes)
+func (c *MetricCompactionConsumer) periodicFlush(ctx context.Context) {
 	ll := logctx.FromContext(ctx)
 
 	for {
@@ -249,7 +253,7 @@ func (c *MetricIngestConsumer) periodicFlush(ctx context.Context) {
 			return
 		case <-c.flushTicker.C:
 			ll.Debug("Running periodic flush of stale groups")
-			if err := c.gatherer.FlushStaleGroups(ctx, 2*time.Minute); err != nil {
+			if err := c.gatherer.FlushStaleGroups(ctx, 5*time.Minute); err != nil {
 				ll.Error("Failed to flush stale groups", slog.Any("error", err))
 			}
 		}

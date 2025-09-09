@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package accumulation
+package metricsprocessing
 
 import (
 	"context"
@@ -30,32 +30,12 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-// Rollup frequency mappings to avoid import cycle with config package
-var rollupFrequencyMappings = map[int32]int32{
-	10_000:    60_000,    // 10 seconds -> 1 minute
-	60_000:    300_000,   // 1 minute -> 5 minutes
-	300_000:   1_200_000, // 5 minutes -> 20 minutes
-	1_200_000: 3_600_000, // 20 minutes -> 1 hour
-}
-
 // Rollup accumulation times to avoid import cycle with config package
 var rollupAccumulationTimes = map[int32]time.Duration{
 	10_000:    90 * time.Second,  // 10s->60s: wait max 90 seconds
 	60_000:    200 * time.Second, // 60s->300s: wait max 200 seconds
 	300_000:   5 * time.Minute,   // 5m->20m: wait max 5 minutes
 	1_200_000: 5 * time.Minute,   // 20m->1h: wait max 5 minutes
-}
-
-// isRollupSourceFrequency checks if a frequency is a valid source for rollups
-func isRollupSourceFrequency(frequencyMs int32) bool {
-	_, exists := rollupFrequencyMappings[frequencyMs]
-	return exists
-}
-
-// getTargetRollupFrequency returns the target frequency for a given source frequency
-func getTargetRollupFrequency(sourceFrequencyMs int32) (int32, bool) {
-	target, exists := rollupFrequencyMappings[sourceFrequencyMs]
-	return target, exists
 }
 
 // MetricRollupConsumer handles metric rollup Kafka messages using accumulation-based approach

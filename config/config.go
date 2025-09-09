@@ -23,7 +23,6 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/cardinalhq/lakerunner/internal/fly"
-	ingestion "github.com/cardinalhq/lakerunner/internal/metricsprocessing/ingestion"
 )
 
 // Config aggregates configuration for the application.
@@ -41,7 +40,7 @@ type Config struct {
 }
 
 type MetricsConfig struct {
-	Ingestion  ingestion.Config `mapstructure:"ingestion"`
+	Ingestion  IngestionConfig  `mapstructure:"ingestion"`
 	Compaction CompactionConfig `mapstructure:"compaction"`
 	Rollup     RollupConfig     `mapstructure:"rollup"`
 }
@@ -84,6 +83,22 @@ type RollupConfig struct {
 	BatchLimit int `mapstructure:"batch_limit"`
 }
 
+// IngestionConfig holds ingestion feature toggles.
+type IngestionConfig struct {
+	ProcessExemplars    bool          `mapstructure:"process_exemplars"`
+	SingleInstanceMode  bool          `mapstructure:"single_instance_mode"`
+	MaxAccumulationTime time.Duration `mapstructure:"max_accumulation_time"`
+}
+
+// DefaultIngestionConfig returns default settings for ingestion.
+func DefaultIngestionConfig() IngestionConfig {
+	return IngestionConfig{
+		ProcessExemplars:    true,
+		SingleInstanceMode:  false,
+		MaxAccumulationTime: 10 * time.Second,
+	}
+}
+
 // Load reads configuration from files and environment variables.
 // Environment variables use the prefix "LAKERUNNER" and the dot character
 // in keys is replaced by an underscore. For example, "fly.brokers" becomes
@@ -93,7 +108,7 @@ func Load() (*Config, error) {
 		Debug: false,
 		Fly:   *fly.DefaultConfig(),
 		Metrics: MetricsConfig{
-			Ingestion: ingestion.DefaultConfig(),
+			Ingestion: DefaultIngestionConfig(),
 			Compaction: CompactionConfig{
 				TargetFileSizeBytes: TargetFileSize,   // Default target file size
 				MaxAccumulationTime: 30 * time.Second, // Default 30 seconds for compaction

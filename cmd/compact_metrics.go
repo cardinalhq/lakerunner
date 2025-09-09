@@ -29,7 +29,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
-	"github.com/cardinalhq/lakerunner/internal/metricsprocessing/accumulation"
+	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
@@ -101,7 +101,7 @@ func init() {
 			slog.Info("Starting metrics compaction with accumulation consumer")
 
 			// Create accumulation-based Kafka consumer for compaction
-			consumer, err := accumulation.NewMetricCompactionConsumer(ctx, kafkaFactory, cfg, mdb, sp, cmgr)
+			consumer, err := metricsprocessing.NewMetricCompactionConsumer(ctx, kafkaFactory, cfg, mdb, sp, cmgr)
 			if err != nil {
 				return fmt.Errorf("failed to create Kafka accumulation consumer: %w", err)
 			}

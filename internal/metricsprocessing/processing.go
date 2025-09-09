@@ -190,7 +190,6 @@ func (segments ProcessedSegments) QueueRollupWork(ctx context.Context, kafkaProd
 	return nil
 }
 
-
 // UploadParams contains parameters for uploading metric files to S3 and database.
 type UploadParams struct {
 	OrganizationID string

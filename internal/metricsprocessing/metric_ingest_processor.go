@@ -12,10 +12,9 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package accumulation
+package metricsprocessing
 
 import (
-	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
@@ -23,7 +22,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -34,12 +32,10 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
-	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
-	"github.com/cardinalhq/lakerunner/internal/processing/ingest"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -52,20 +48,6 @@ type IngestStore interface {
 }
 
 // ReaderMetadata contains metadata about a file reader
-type ReaderMetadata struct {
-	ObjectID       string
-	OrganizationID uuid.UUID
-	InstanceNum    int16
-	Bucket         string
-	FileSize       int64
-	IngestItem     ingest.IngestItem
-}
-
-// OrgInstanceKey represents the key for organizing data by org and instance
-type OrgInstanceKey struct {
-	OrganizationID uuid.UUID
-	InstanceNum    int16
-}
 
 // These types are no longer used in the new time-binning approach but kept for compatibility
 // TODO: Remove once all references are cleaned up
@@ -584,7 +566,7 @@ func (p *MetricIngestProcessor) uploadAndCreateSegments(ctx context.Context, sto
 		}
 
 		// Extract file metadata using ExtractFileMetadata
-		metadata, err := metricsprocessing.ExtractFileMetadata(ctx, *bin.Result)
+		metadata, err := ExtractFileMetadata(ctx, *bin.Result)
 		if err != nil {
 			return nil, fmt.Errorf("failed to extract file metadata for bin %d: %w", binStartTs, err)
 		}
@@ -674,129 +656,4 @@ func computeMetricSlot(orgID uuid.UUID, instanceNum int16, frequencyMs int32, tr
 	slotCount = partitionCount
 
 	return slotID, slotCount
-}
-
-// CreateMetricProtoReader creates a protocol buffer reader for metrics files (copied from ingestion package)
-func CreateMetricProtoReader(filename string) (filereader.Reader, error) {
-	switch {
-	case strings.HasSuffix(filename, ".binpb.gz"):
-		return createMetricProtoBinaryGzReader(filename)
-	case strings.HasSuffix(filename, ".binpb"):
-		return createMetricProtoBinaryReader(filename)
-	default:
-		return nil, fmt.Errorf("unsupported metrics file type: %s (only .binpb and .binpb.gz are supported)", filename)
-	}
-}
-
-// createMetricProtoBinaryReader creates a metrics proto reader for a protobuf file
-func createMetricProtoBinaryReader(filename string) (filereader.Reader, error) {
-	file, err := os.Open(filename)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open protobuf file: %w", err)
-	}
-
-	reader, err := filereader.NewIngestProtoMetricsReader(file, 1000)
-	if err != nil {
-		file.Close()
-		return nil, fmt.Errorf("failed to create metrics proto reader: %w", err)
-	}
-
-	return reader, nil
-}
-
-// createMetricProtoBinaryGzReader creates a metrics proto reader for a gzipped protobuf file
-func createMetricProtoBinaryGzReader(filename string) (filereader.Reader, error) {
-	file, err := os.Open(filename)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open protobuf.gz file: %w", err)
-	}
-
-	gzipReader, err := gzip.NewReader(file)
-	if err != nil {
-		file.Close()
-		return nil, fmt.Errorf("failed to create gzip reader: %w", err)
-	}
-
-	reader, err := filereader.NewIngestProtoMetricsReader(gzipReader, 1000)
-	if err != nil {
-		gzipReader.Close()
-		file.Close()
-		return nil, fmt.Errorf("failed to create metrics proto reader: %w", err)
-	}
-
-	return reader, nil
-}
-
-// MetricTranslator adds resource metadata to metric rows (copied from ingestion package)
-type MetricTranslator struct {
-	OrgID    string
-	Bucket   string
-	ObjectID string
-}
-
-// TranslateRow adds resource fields to each row (copied from ingestion package)
-func (t *MetricTranslator) TranslateRow(row *filereader.Row) error {
-	if row == nil {
-		return fmt.Errorf("row cannot be nil")
-	}
-
-	// Only set the specific required fields - assume all other fields are properly set
-	(*row)[wkk.RowKeyCCustomerID] = t.OrgID
-	(*row)[wkk.RowKeyCTelemetryType] = "metrics"
-
-	// Validate required timestamp field - drop row if missing or invalid
-	timestamp, ok := (*row)[wkk.RowKeyCTimestamp].(int64)
-	if !ok {
-		return fmt.Errorf("_cardinalhq.timestamp field is missing or not int64")
-	}
-
-	// Truncate timestamp to nearest 10-second interval
-	const tenSecondsMs = int64(10000)
-	truncatedTimestamp := (timestamp / tenSecondsMs) * tenSecondsMs
-	(*row)[wkk.RowKeyCTimestamp] = truncatedTimestamp
-
-	// Compute and add TID field
-	if _, nameOk := (*row)[wkk.RowKeyCName].(string); !nameOk {
-		return fmt.Errorf("missing or invalid _cardinalhq.name field for TID computation")
-	}
-
-	filterKeys(row)
-
-	rowMap := pipeline.ToStringMap(*row)
-	tid := helpers.ComputeTID(rowMap)
-	(*row)[wkk.RowKeyCTID] = tid
-
-	return nil
-}
-
-var (
-	keepkeys = map[string]bool{
-		"resource.app":                  true,
-		"resource.container.image.name": true,
-		"resource.container.image.tag":  true,
-		"resource.k8s.cluster.name":     true,
-		"resource.k8s.daemonset.name":   true,
-		"resource.k8s.deployment.name":  true,
-		"resource.k8s.namespace.name":   true,
-		"resource.k8s.pod.ip":           true,
-		"resource.k8s.pod.name":         true,
-		"resource.k8s.statefulset.name": true,
-		"resource.service.name":         true,
-		"resource.service.version":      true,
-	}
-)
-
-func filterKeys(row *filereader.Row) {
-	for k := range *row {
-		name := wkk.RowKeyValue(k)
-		if !strings.HasPrefix(name, "resource.") {
-			continue
-		}
-
-		if keepkeys[name] {
-			continue
-		}
-
-		delete(*row, k)
-	}
 }

@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package ingestion
+package metricsprocessing
 
 import (
 	"context"
@@ -22,13 +22,11 @@ import (
 	"os"
 	"strings"
 
-	"github.com/cardinalhq/lakerunner/internal/exemplar"
-
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
+	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
@@ -36,86 +34,6 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
-
-var (
-	meter = otel.Meter("github.com/cardinalhq/lakerunner/internal/metricsprocessing/ingestion")
-
-	fileSortedCounter metric.Int64Counter
-
-	// Processing counters
-	processingSegmentsIn            metric.Int64Counter
-	processingSegmentsOut           metric.Int64Counter
-	processingSegmentDownloadErrors metric.Int64Counter
-	processingRecordsIn             metric.Int64Counter
-	processingRecordsOut            metric.Int64Counter
-	processingBytesIn               metric.Int64Counter
-	processingBytesOut              metric.Int64Counter
-)
-
-func init() {
-	var err error
-
-	fileSortedCounter, err = meter.Int64Counter("lakerunner.processing.input.filetype")
-	if err != nil {
-		panic(fmt.Errorf("failed to create processing.input.filetype counter: %w", err))
-	}
-
-	processingSegmentsIn, err = meter.Int64Counter(
-		"lakerunner.processing.segments.in",
-		metric.WithDescription("Number of segments input to ingestion processing pipeline"),
-	)
-	if err != nil {
-		panic(fmt.Errorf("failed to create processing.segments.in counter: %w", err))
-	}
-
-	processingSegmentsOut, err = meter.Int64Counter(
-		"lakerunner.processing.segments.out",
-		metric.WithDescription("Number of segments output from ingestion processing pipeline"),
-	)
-	if err != nil {
-		panic(fmt.Errorf("failed to create processing.segments.out counter: %w", err))
-	}
-
-	processingSegmentDownloadErrors, err = meter.Int64Counter(
-		"lakerunner.processing.segments.download_errors",
-		metric.WithDescription("Number of segment download errors during ingestion processing"),
-	)
-	if err != nil {
-		panic(fmt.Errorf("failed to create processing.segments.download_errors counter: %w", err))
-	}
-
-	processingRecordsIn, err = meter.Int64Counter(
-		"lakerunner.processing.records.in",
-		metric.WithDescription("Number of records input to ingestion processing pipeline"),
-	)
-	if err != nil {
-		panic(fmt.Errorf("failed to create processing.records.in counter: %w", err))
-	}
-
-	processingRecordsOut, err = meter.Int64Counter(
-		"lakerunner.processing.records.out",
-		metric.WithDescription("Number of records output from ingestion processing pipeline"),
-	)
-	if err != nil {
-		panic(fmt.Errorf("failed to create processing.records.out counter: %w", err))
-	}
-
-	processingBytesIn, err = meter.Int64Counter(
-		"lakerunner.processing.bytes.in",
-		metric.WithDescription("Number of bytes input to ingestion processing pipeline"),
-	)
-	if err != nil {
-		panic(fmt.Errorf("failed to create processing.bytes.in counter: %w", err))
-	}
-
-	processingBytesOut, err = meter.Int64Counter(
-		"lakerunner.processing.bytes.out",
-		metric.WithDescription("Number of bytes output from ingestion processing pipeline"),
-	)
-	if err != nil {
-		panic(fmt.Errorf("failed to create processing.bytes.out counter: %w", err))
-	}
-}
 
 // coordinate handles the complete ingestion process for a batch of metric files
 func coordinate(

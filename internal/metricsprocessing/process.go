@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package ingestion
+package metricsprocessing
 
 import (
 	"context"
@@ -22,13 +22,13 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
-	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/processing/ingest"
 	"github.com/cardinalhq/lakerunner/lrdb"
@@ -60,7 +60,7 @@ func ProcessBatch(
 	args ingest.ProcessBatchArgs,
 	items []ingest.IngestItem,
 	exemplarProcessor *exemplar.Processor,
-	cfg Config,
+	cfg config.IngestionConfig,
 	kafkaProducer fly.Producer, // Add Kafka producer for sending compaction messages
 ) error {
 	batchID := idgen.GenerateShortBase32ID()
@@ -124,7 +124,7 @@ func ProcessBatch(
 		return fmt.Errorf("failed to create storage client: %w", err)
 	}
 
-	uploadParams := metricsprocessing.UploadParams{
+	uploadParams := UploadParams{
 		OrganizationID: profile.OrganizationID.String(),
 		InstanceNum:    profile.InstanceNum,
 		Dateint:        0,     // Will be calculated from timestamps
@@ -266,7 +266,7 @@ func ProcessBatch(
 }
 
 // createAndUploadSegments creates segments from parquet results, uploads them to S3, and returns segment parameters
-func createAndUploadSegments(ctx context.Context, blobclient cloudstorage.Client, results []parquetwriter.Result, uploadParams metricsprocessing.UploadParams) ([]lrdb.InsertMetricSegmentParams, error) {
+func createAndUploadSegments(ctx context.Context, blobclient cloudstorage.Client, results []parquetwriter.Result, uploadParams UploadParams) ([]lrdb.InsertMetricSegmentParams, error) {
 	ll := logctx.FromContext(ctx)
 
 	orgUUID, err := uuid.Parse(uploadParams.OrganizationID)
@@ -285,7 +285,7 @@ func createAndUploadSegments(ctx context.Context, blobclient cloudstorage.Client
 			return nil, fmt.Errorf("received empty result file with 0 records")
 		}
 
-		segment, err := metricsprocessing.NewProcessedSegment(ctx, result, orgUUID, uploadParams.CollectorName)
+		segment, err := NewProcessedSegment(ctx, result, orgUUID, uploadParams.CollectorName)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create processed segment: %w", err)
 		}

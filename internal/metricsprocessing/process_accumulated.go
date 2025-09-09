@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package ingestion
+package metricsprocessing
 
 import (
 	"context"
@@ -32,7 +32,6 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
-	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/processing/ingest"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
@@ -123,7 +122,7 @@ func ProcessAccumulatedBatch(ctx context.Context, args ingest.ProcessBatchArgs, 
 		}
 
 		// Prepare upload parameters
-		uploadParams := metricsprocessing.UploadParams{
+		uploadParams := UploadParams{
 			OrganizationID: profile.OrganizationID.String(),
 			InstanceNum:    profile.InstanceNum,
 			Dateint:        0,     // Will be calculated from timestamps

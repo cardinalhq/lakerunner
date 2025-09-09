@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package accumulation
+package metricsprocessing
 
 import (
 	"context"
@@ -29,7 +29,6 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
-	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
@@ -753,7 +752,7 @@ func TestPerformCompactionSeglog990(t *testing.T) {
 
 func TestCreateAggregatingReader_Seglog990(t *testing.T) {
 	ctx := context.Background()
-	seglogDir := "../../../testdata/metrics/seglog-990/"
+	seglogDir := "../../testdata/metrics/seglog-990/"
 
 	// Read metadata
 	metadataFile := filepath.Join(seglogDir, "seglog-990.json")
@@ -805,7 +804,7 @@ func TestCreateAggregatingReader_Seglog990(t *testing.T) {
 		CollectorName: "cluster-1-logs-prometheus-1",
 	}
 
-	readerStack, err := metricsprocessing.CreateReaderStack(
+	readerStack, err := CreateReaderStack(
 		ctx,
 		tmpDir,
 		mockStorage,
@@ -814,7 +813,7 @@ func TestCreateAggregatingReader_Seglog990(t *testing.T) {
 		rows,
 	)
 	require.NoError(t, err, "Failed to create reader stack")
-	defer metricsprocessing.CloseReaderStack(ctx, readerStack)
+	defer CloseReaderStack(ctx, readerStack)
 
 	// Test aggregating reader functionality
 
