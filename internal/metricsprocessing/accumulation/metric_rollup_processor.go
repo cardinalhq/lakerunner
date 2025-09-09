@@ -156,7 +156,7 @@ func validateRollupGroupConsistency(group *AccumulationGroup[messages.RollupKey]
 }
 
 // Process implements the Processor interface and performs rollup aggregation
-func (r *MetricRollupProcessor) Process(ctx context.Context, group *AccumulationGroup[messages.RollupKey], kafkaCommitData *KafkaCommitData, recordCountEstimate int64) error {
+func (r *MetricRollupProcessor) Process(ctx context.Context, group *AccumulationGroup[messages.RollupKey], kafkaCommitData *KafkaCommitData) error {
 	ll := logctx.FromContext(ctx)
 
 	// Calculate group age from Hunter timestamp
@@ -173,6 +173,8 @@ func (r *MetricRollupProcessor) Process(ctx context.Context, group *Accumulation
 		slog.Int64("truncatedTimebox", group.Key.TruncatedTimebox),
 		slog.Int("messageCount", len(group.Messages)),
 		slog.Duration("groupAge", groupAge))
+
+	recordCountEstimate := r.store.GetMetricEstimate(ctx, group.Key.OrganizationID, group.Key.TargetFrequencyMs)
 
 	// Step 0: Validate that all messages in the group have consistent fields
 	if err := validateRollupGroupConsistency(group); err != nil {

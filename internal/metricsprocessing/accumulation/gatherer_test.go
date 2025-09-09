@@ -28,17 +28,15 @@ import (
 type MockCompactor struct {
 	groups     []*AccumulationGroup[messages.CompactionKey]
 	commitData []*KafkaCommitData
-	estimates  []int64
 }
 
 func NewMockCompactor() *MockCompactor {
 	return &MockCompactor{}
 }
 
-func (m *MockCompactor) Process(ctx context.Context, group *AccumulationGroup[messages.CompactionKey], kafkaCommitData *KafkaCommitData, recordCountEstimate int64) error {
+func (m *MockCompactor) Process(ctx context.Context, group *AccumulationGroup[messages.CompactionKey], kafkaCommitData *KafkaCommitData) error {
 	m.groups = append(m.groups, group)
 	m.commitData = append(m.commitData, kafkaCommitData)
-	m.estimates = append(m.estimates, recordCountEstimate)
 	return nil
 }
 

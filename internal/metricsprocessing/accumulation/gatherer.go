@@ -22,7 +22,7 @@ import (
 )
 
 type Processor[M messages.GroupableMessage, K comparable] interface {
-	Process(ctx context.Context, group *AccumulationGroup[K], kafkaCommitData *KafkaCommitData, recordCountEstimate int64) error
+	Process(ctx context.Context, group *AccumulationGroup[K], kafkaCommitData *KafkaCommitData) error
 	GetTargetRecordCount(ctx context.Context, groupingKey K) int64
 }
 
@@ -98,7 +98,7 @@ func (g *Gatherer[M, K]) ProcessMessage(ctx context.Context, msg M, metadata *Me
 		kafkaCommitData := g.createKafkaCommitDataFromGroup(result.Group)
 
 		// Call the processor with the accumulated group, commit data, and record count estimate
-		if err := g.processor.Process(ctx, result.Group, kafkaCommitData, result.Group.TotalRecordCount); err != nil {
+		if err := g.processor.Process(ctx, result.Group, kafkaCommitData); err != nil {
 			return err
 		}
 
@@ -157,8 +157,7 @@ func (g *Gatherer[M, K]) FlushStaleGroups(ctx context.Context, olderThan time.Du
 		// Create Kafka commit data from the actual messages in the group
 		kafkaCommitData := g.createKafkaCommitDataFromGroup(group)
 
-		// Call the processor with the group, commit data, and record count estimate
-		if err := g.processor.Process(ctx, group, kafkaCommitData, group.TotalRecordCount); err != nil {
+		if err := g.processor.Process(ctx, group, kafkaCommitData); err != nil {
 			return err
 		}
 

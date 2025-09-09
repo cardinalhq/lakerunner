@@ -87,21 +87,19 @@ type TimeBinManager struct {
 
 // MetricIngestProcessor implements the Processor interface for raw metric ingestion
 type MetricIngestProcessor struct {
-	store                IngestStore
-	storageProvider      storageprofile.StorageProfileProvider
-	cmgr                 cloudstorage.ClientProvider
-	kafkaProducer        fly.Producer
-	targetRecordMultiple int // multiply estimate by this for safety net (e.g., 2)
+	store           IngestStore
+	storageProvider storageprofile.StorageProfileProvider
+	cmgr            cloudstorage.ClientProvider
+	kafkaProducer   fly.Producer
 }
 
 // NewMetricIngestProcessor creates a new metric ingest processor instance
 func NewMetricIngestProcessor(store IngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *MetricIngestProcessor {
 	return &MetricIngestProcessor{
-		store:                store,
-		storageProvider:      storageProvider,
-		cmgr:                 cmgr,
-		kafkaProducer:        kafkaProducer,
-		targetRecordMultiple: 2,
+		store:           store,
+		storageProvider: storageProvider,
+		cmgr:            cmgr,
+		kafkaProducer:   kafkaProducer,
 	}
 
 }
@@ -152,7 +150,7 @@ func validateIngestGroupConsistency(group *AccumulationGroup[messages.IngestKey]
 }
 
 // Process implements the Processor interface and performs raw metric ingestion
-func (p *MetricIngestProcessor) Process(ctx context.Context, group *AccumulationGroup[messages.IngestKey], kafkaCommitData *KafkaCommitData, recordCountEstimate int64) error {
+func (p *MetricIngestProcessor) Process(ctx context.Context, group *AccumulationGroup[messages.IngestKey], kafkaCommitData *KafkaCommitData) error {
 	ll := logctx.FromContext(ctx)
 
 	// Calculate group age from Hunter timestamp

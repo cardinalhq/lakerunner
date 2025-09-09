@@ -144,7 +144,7 @@ func validateGroupConsistency(group *AccumulationGroup[messages.CompactionKey]) 
 	return nil
 }
 
-func (c *MetricCompactorProcessor) Process(ctx context.Context, group *AccumulationGroup[messages.CompactionKey], kafkaCommitData *KafkaCommitData, recordCountEstimate int64) error {
+func (c *MetricCompactorProcessor) Process(ctx context.Context, group *AccumulationGroup[messages.CompactionKey], kafkaCommitData *KafkaCommitData) error {
 	ll := logctx.FromContext(ctx)
 
 	// Calculate group age from Hunter timestamp
@@ -157,6 +157,8 @@ func (c *MetricCompactorProcessor) Process(ctx context.Context, group *Accumulat
 		slog.Int("instanceNum", int(group.Key.InstanceNum)),
 		slog.Int("messageCount", len(group.Messages)),
 		slog.Duration("groupAge", groupAge))
+
+	recordCountEstimate := c.store.GetMetricEstimate(ctx, group.Key.OrganizationID, group.Key.FrequencyMs)
 
 	if err := validateGroupConsistency(group); err != nil {
 		return fmt.Errorf("group validation failed: %w", err)
