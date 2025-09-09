@@ -17,7 +17,6 @@ package accumulation
 import (
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"sort"
@@ -29,12 +28,10 @@ import (
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
-	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
-	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
@@ -66,21 +63,19 @@ type CompactionStore interface {
 
 // MetricCompactorProcessor implements the Processor interface for metric segment compaction
 type MetricCompactorProcessor struct {
-	store                CompactionStore
-	storageProvider      storageprofile.StorageProfileProvider
-	cmgr                 cloudstorage.ClientProvider
-	targetRecordMultiple int // multiply estimate by this for safety net (e.g., 2)
-	cfg                  *config.Config
+	store           CompactionStore
+	storageProvider storageprofile.StorageProfileProvider
+	cmgr            cloudstorage.ClientProvider
+	cfg             *config.Config
 }
 
 // NewMetricCompactor creates a new metric compactor instance
 func NewMetricCompactor(store CompactionStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, cfg *config.Config) *MetricCompactorProcessor {
 	return &MetricCompactorProcessor{
-		store:                store,
-		storageProvider:      storageProvider,
-		cmgr:                 cmgr,
-		targetRecordMultiple: 2,
-		cfg:                  cfg,
+		store:           store,
+		storageProvider: storageProvider,
+		cmgr:            cmgr,
+		cfg:             cfg,
 	}
 }
 
@@ -292,25 +287,6 @@ func (c *MetricCompactorProcessor) Process(ctx context.Context, group *Accumulat
 		slog.Int("outputFiles", len(results)),
 		slog.Int64("outputRecords", totalRecords),
 		slog.Int64("outputFileSize", totalSize))
-
-	return nil
-}
-
-// writeFromReader writes data from reader to writer
-func (c *MetricCompactorProcessor) writeFromReader(ctx context.Context, reader filereader.Reader, writer parquetwriter.ParquetWriter) error {
-	for {
-		batch, err := reader.Next(ctx)
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			return fmt.Errorf("read batch: %w", err)
-		}
-
-		if err := writer.WriteBatch(batch); err != nil {
-			return fmt.Errorf("write batch: %w", err)
-		}
-	}
 
 	return nil
 }
@@ -561,33 +537,20 @@ func (c *MetricCompactorProcessor) logCompactionOperation(ctx context.Context, s
 
 // performCompaction handles the core compaction logic: creating readers, aggregating, and writing
 func (c *MetricCompactorProcessor) performCompaction(ctx context.Context, tmpDir string, storageClient cloudstorage.Client, compactionKey messages.CompactionKey, storageProfile storageprofile.StorageProfile, activeSegments []lrdb.MetricSeg, recordCountEstimate int64) ([]lrdb.MetricSeg, []parquetwriter.Result, error) {
-	readerStack, err := metricsprocessing.CreateReaderStack(ctx, tmpDir, storageClient, compactionKey.OrganizationID, storageProfile, activeSegments)
+	params := MetricProcessingParams{
+		TmpDir:         tmpDir,
+		StorageClient:  storageClient,
+		OrganizationID: compactionKey.OrganizationID,
+		StorageProfile: storageProfile,
+		ActiveSegments: activeSegments,
+		FrequencyMs:    compactionKey.FrequencyMs,
+		MaxRecords:     recordCountEstimate * 2, // safety net
+	}
+
+	result, err := ProcessMetricsWithAggregation(ctx, params)
 	if err != nil {
-		return nil, nil, fmt.Errorf("create reader stack: %w", err)
-	}
-	defer metricsprocessing.CloseReaderStack(ctx, readerStack)
-
-	aggReader, err := filereader.NewAggregatingMetricsReader(readerStack.HeadReader, int64(compactionKey.FrequencyMs), 1000)
-	if err != nil {
-		return nil, nil, fmt.Errorf("create aggregating reader: %w", err)
-	}
-	defer aggReader.Close()
-
-	maxRecords := recordCountEstimate * int64(c.targetRecordMultiple)
-	writer, err := factories.NewMetricsWriter(tmpDir, maxRecords)
-	if err != nil {
-		return nil, nil, fmt.Errorf("create parquet writer: %w", err)
+		return nil, nil, err
 	}
 
-	if err := c.writeFromReader(ctx, aggReader, writer); err != nil {
-		writer.Abort()
-		return nil, nil, fmt.Errorf("write from reader: %w", err)
-	}
-
-	results, err := writer.Close(ctx)
-	if err != nil {
-		return nil, nil, fmt.Errorf("close writer: %w", err)
-	}
-
-	return readerStack.ProcessedSegments, results, nil
+	return result.ProcessedSegments, result.Results, nil
 }

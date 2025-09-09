@@ -191,7 +191,6 @@ func (segments ProcessedSegments) QueueRollupWork(ctx context.Context, kafkaProd
 	return nil
 }
 
-
 // GetStartEndTimes calculates the time range from a set of metric segments.
 func GetStartEndTimes(rows []lrdb.MetricSeg) (int64, int64) {
 	startTs := int64(math.MaxInt64)

@@ -582,31 +582,31 @@ func TestDiskSortingReader_WithParquetCompactTestFiles(t *testing.T) {
 func TestParquetRawReaderSmallFiles(t *testing.T) {
 	// Test the small files directly with NewParquetRawReader
 	testFiles := []struct {
-		filename string
+		filename        string
 		expectedRecords int
 	}{
 		{"tbl_301228791710090615.parquet", 480},
 		{"tbl_301228792783832948.parquet", 456},
 		{"tbl_301228792733501300.parquet", 1414}, // A larger file for comparison
 	}
-	
+
 	ctx := context.Background()
-	
+
 	for _, testFile := range testFiles {
 		t.Run(testFile.filename, func(t *testing.T) {
 			filePath := fmt.Sprintf("../../testdata/metrics/seglog-990/source/%s", testFile.filename)
-			
+
 			file, err := os.Open(filePath)
 			require.NoError(t, err, "Should open parquet file")
 			defer file.Close()
-			
+
 			stat, err := file.Stat()
 			require.NoError(t, err, "Should stat parquet file")
-			
+
 			reader, err := NewParquetRawReader(file, stat.Size(), 1000)
 			require.NoError(t, err, "Should create NewParquetRawReader")
 			defer reader.Close()
-			
+
 			recordCount := 0
 			for {
 				batch, err := reader.Next(ctx)
@@ -617,22 +617,22 @@ func TestParquetRawReaderSmallFiles(t *testing.T) {
 					}
 					require.NoError(t, err, "Next should not fail")
 				}
-				
+
 				if batch == nil {
 					t.Logf("File %s: Got nil batch after reading %d records", testFile.filename, recordCount)
 					break
 				}
-				
+
 				batchSize := batch.Len()
 				recordCount += batchSize
 				t.Logf("File %s: Read batch of %d records (total: %d)", testFile.filename, batchSize, recordCount)
-				
+
 				if batchSize == 0 {
 					t.Logf("File %s: Got empty batch, stopping", testFile.filename)
 					break
 				}
 			}
-			
+
 			t.Logf("File %s: Final count %d, expected %d", testFile.filename, recordCount, testFile.expectedRecords)
 			require.Equal(t, testFile.expectedRecords, recordCount, "Should read correct number of records from %s", testFile.filename)
 		})

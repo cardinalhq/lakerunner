@@ -17,7 +17,6 @@ package accumulation
 import (
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"sort"
@@ -27,12 +26,10 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
-	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
-	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
@@ -49,19 +46,17 @@ type RollupStore interface {
 
 // MetricRollupProcessor implements the Processor interface for metric rollups
 type MetricRollupProcessor struct {
-	store                RollupStore
-	storageProvider      storageprofile.StorageProfileProvider
-	cmgr                 cloudstorage.ClientProvider
-	targetRecordMultiple int // multiply estimate by this for safety net (e.g., 2)
+	store           RollupStore
+	storageProvider storageprofile.StorageProfileProvider
+	cmgr            cloudstorage.ClientProvider
 }
 
 // NewMetricRollupProcessor creates a new metric rollup processor instance
 func NewMetricRollupProcessor(store RollupStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider) *MetricRollupProcessor {
 	return &MetricRollupProcessor{
-		store:                store,
-		storageProvider:      storageProvider,
-		cmgr:                 cmgr,
-		targetRecordMultiple: 2,
+		store:           store,
+		storageProvider: storageProvider,
+		cmgr:            cmgr,
 	}
 }
 
@@ -251,33 +246,22 @@ func (r *MetricRollupProcessor) Process(ctx context.Context, group *Accumulation
 	ll.Info("Found segments to roll up",
 		slog.Int("segmentCount", len(segments)))
 
-	readerStack, err := metricsprocessing.CreateReaderStack(ctx, tmpDir, storageClient, group.Key.OrganizationID, storageProfile, segments)
-	if err != nil {
-		return fmt.Errorf("create reader stack: %w", err)
-	}
-	defer metricsprocessing.CloseReaderStack(ctx, readerStack)
-
-	aggReader, err := filereader.NewAggregatingMetricsReader(readerStack.HeadReader, int64(group.Key.TargetFrequencyMs), 1000)
-	if err != nil {
-		return fmt.Errorf("create aggregating reader: %w", err)
-	}
-	defer aggReader.Close()
-
-	maxRecords := recordCountEstimate * int64(r.targetRecordMultiple)
-	writer, err := factories.NewMetricsWriter(tmpDir, maxRecords)
-	if err != nil {
-		return fmt.Errorf("create parquet writer: %w", err)
+	params := MetricProcessingParams{
+		TmpDir:         tmpDir,
+		StorageClient:  storageClient,
+		OrganizationID: group.Key.OrganizationID,
+		StorageProfile: storageProfile,
+		ActiveSegments: segments,
+		FrequencyMs:    group.Key.TargetFrequencyMs,
+		MaxRecords:     recordCountEstimate * 2, // safety net
 	}
 
-	if err := r.writeFromReader(ctx, aggReader, writer); err != nil {
-		writer.Abort()
-		return fmt.Errorf("write from reader: %w", err)
+	result, err := ProcessMetricsWithAggregation(ctx, params)
+	if err != nil {
+		return err
 	}
 
-	results, err := writer.Close(ctx)
-	if err != nil {
-		return fmt.Errorf("close writer: %w", err)
-	}
+	results := result.Results
 
 	newSegments, err := r.uploadAndCreateRollupSegments(ctx, storageClient, storageProfile, results, group.Key, segments)
 	if err != nil {
@@ -299,25 +283,6 @@ func (r *MetricRollupProcessor) Process(ctx context.Context, group *Accumulation
 		slog.Int("outputFiles", len(results)),
 		slog.Int64("outputRecords", totalRecords),
 		slog.Int64("outputFileSize", totalSize))
-
-	return nil
-}
-
-// writeFromReader writes data from reader to writer
-func (r *MetricRollupProcessor) writeFromReader(ctx context.Context, reader filereader.Reader, writer parquetwriter.ParquetWriter) error {
-	for {
-		batch, err := reader.Next(ctx)
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			return fmt.Errorf("read batch: %w", err)
-		}
-
-		if err := writer.WriteBatch(batch); err != nil {
-			return fmt.Errorf("write batch: %w", err)
-		}
-	}
 
 	return nil
 }

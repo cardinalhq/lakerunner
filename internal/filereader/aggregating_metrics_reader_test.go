@@ -877,39 +877,39 @@ func TestAggregatingMetricsReader_Seglog990DataLoss(t *testing.T) {
 	// This test uses multiple files merged together (like production) to trigger the aggregation issue
 	ctx := context.Background()
 	seglogDir := "../../testdata/metrics/seglog-990/"
-	
+
 	// Read ALL parquet files and merge them
 	sourceDir := filepath.Join(seglogDir, "source")
 	files, err := os.ReadDir(sourceDir)
 	require.NoError(t, err, "Failed to read source directory")
 	require.Greater(t, len(files), 0, "No source files found")
-	
+
 	// Create readers for ALL files to fully replicate production scenario
 	var readers []Reader
 	var totalInputCount int64
-	
+
 	for _, fileInfo := range files {
 		if !strings.HasSuffix(fileInfo.Name(), ".parquet") {
 			continue // Skip non-parquet files
 		}
-		
+
 		testFile := filepath.Join(sourceDir, fileInfo.Name())
 		file, err := os.Open(testFile)
 		require.NoError(t, err, "Failed to open test file %s", fileInfo.Name())
 		defer file.Close()
-		
+
 		stat, err := file.Stat()
 		require.NoError(t, err, "Failed to stat test file")
-		
+
 		// Create parquet reader
 		rawReader, err := NewParquetRawReader(file, stat.Size(), 1000)
 		require.NoError(t, err, "Failed to create parquet reader")
 		defer rawReader.Close()
-		
+
 		// Create translating reader
 		cookingReader := NewCookedMetricTranslatingReader(rawReader)
 		defer cookingReader.Close()
-		
+
 		// Count input records for this file
 		fileInputCount := int64(0)
 		for {
@@ -922,40 +922,40 @@ func TestAggregatingMetricsReader_Seglog990DataLoss(t *testing.T) {
 			}
 			fileInputCount += int64(batch.Len())
 		}
-		
+
 		t.Logf("Input file %s has %d records", fileInfo.Name(), fileInputCount)
 		totalInputCount += fileInputCount
-		
+
 		// Reset the reader for aggregation test
 		file.Close()
 		file, err = os.Open(testFile)
 		require.NoError(t, err, "Failed to reopen test file")
 		defer file.Close()
-		
+
 		rawReader, err = NewParquetRawReader(file, stat.Size(), 1000)
 		require.NoError(t, err, "Failed to create parquet reader")
 		defer rawReader.Close()
-		
+
 		cookingReader = NewCookedMetricTranslatingReader(rawReader)
 		defer cookingReader.Close()
-		
+
 		readers = append(readers, cookingReader)
 	}
-	
+
 	t.Logf("Total input from %d files: %d records", len(readers), totalInputCount)
 	require.Greater(t, totalInputCount, int64(0), "Test files should have records")
-	
+
 	// Create mergesort reader to combine all files (like production)
 	keyProvider := GetCurrentMetricSortKeyProvider()
 	mergedReader, err := NewMergesortReader(ctx, readers, keyProvider, 1000)
 	require.NoError(t, err, "Failed to create mergesort reader")
 	defer mergedReader.Close()
-	
+
 	// Create aggregating reader on the merged stream (same as production: 10000ms = 10s aggregation)
 	aggregatingReader, err := NewAggregatingMetricsReader(mergedReader, 10000, 1000)
 	require.NoError(t, err, "Failed to create aggregating reader")
 	defer aggregatingReader.Close()
-	
+
 	// Count output records
 	outputCount := int64(0)
 	for {
@@ -968,19 +968,19 @@ func TestAggregatingMetricsReader_Seglog990DataLoss(t *testing.T) {
 		}
 		outputCount += int64(batch.Len())
 	}
-	
+
 	t.Logf("Output from aggregating reader: %d records", outputCount)
-	
+
 	// Calculate data loss
 	dataLoss := totalInputCount - outputCount
 	dataLossPercent := float64(dataLoss) / float64(totalInputCount) * 100
-	
+
 	t.Logf("Data loss: %d records (%.1f%%)", dataLoss, dataLossPercent)
 	t.Logf("This replicates the production scenario with multiple merged files")
-	
+
 	// The key assertion: we should get SOME output records
 	require.Greater(t, outputCount, int64(0), "Aggregating reader should produce some records")
-	
+
 	// Document the data loss for investigation
 	if dataLossPercent > 10.0 {
 		t.Logf("⚠️  Data loss detected: %.1f%% - this replicates the production issue", dataLossPercent)
@@ -998,39 +998,39 @@ func TestAggregatingMetricsReader_ProductionDoubleResourceBug(t *testing.T) {
 	// This creates a resource conflict where both operations read from same readers
 	ctx := context.Background()
 	seglogDir := "../../testdata/metrics/seglog-990/"
-	
+
 	// Read ALL parquet files and create the readers (like CreateReaderStack)
 	sourceDir := filepath.Join(seglogDir, "source")
 	files, err := os.ReadDir(sourceDir)
 	require.NoError(t, err, "Failed to read source directory")
 	require.Greater(t, len(files), 0, "No source files found")
-	
+
 	// Create readers for ALL files
 	var originalReaders []Reader
 	var totalInputCount int64
-	
+
 	for _, fileInfo := range files {
 		if !strings.HasSuffix(fileInfo.Name(), ".parquet") {
 			continue // Skip non-parquet files
 		}
-		
+
 		testFile := filepath.Join(sourceDir, fileInfo.Name())
 		file, err := os.Open(testFile)
 		require.NoError(t, err, "Failed to open test file %s", fileInfo.Name())
 		defer file.Close()
-		
+
 		stat, err := file.Stat()
 		require.NoError(t, err, "Failed to stat test file")
-		
+
 		// Create parquet reader
 		rawReader, err := NewParquetRawReader(file, stat.Size(), 1000)
 		require.NoError(t, err, "Failed to create parquet reader")
 		defer rawReader.Close()
-		
+
 		// Create translating reader
 		cookingReader := NewCookedMetricTranslatingReader(rawReader)
 		defer cookingReader.Close()
-		
+
 		// Count input records for this file
 		fileInputCount := int64(0)
 		for {
@@ -1043,50 +1043,50 @@ func TestAggregatingMetricsReader_ProductionDoubleResourceBug(t *testing.T) {
 			}
 			fileInputCount += int64(batch.Len())
 		}
-		
+
 		t.Logf("Input file %s has %d records", fileInfo.Name(), fileInputCount)
 		totalInputCount += fileInputCount
-		
+
 		// Reset the reader for the test
 		file.Close()
 		file, err = os.Open(testFile)
 		require.NoError(t, err, "Failed to reopen test file")
 		defer file.Close()
-		
+
 		rawReader, err = NewParquetRawReader(file, stat.Size(), 1000)
 		require.NoError(t, err, "Failed to create parquet reader")
 		defer rawReader.Close()
-		
+
 		cookingReader = NewCookedMetricTranslatingReader(rawReader)
 		defer cookingReader.Close()
-		
+
 		originalReaders = append(originalReaders, cookingReader)
 	}
-	
+
 	t.Logf("Total input from %d files: %d records", len(originalReaders), totalInputCount)
 	require.Equal(t, int64(41816), totalInputCount, "Should have exactly 41,816 records from seglog-990")
-	
+
 	// *** THIS IS THE PRODUCTION BUG ***
 	// Step 1: CreateReaderStack creates a merge (but result is ignored by createAggregatingReader)
 	keyProvider := GetCurrentMetricSortKeyProvider()
 	createReaderStackMerge, err := NewMergesortReader(ctx, originalReaders, keyProvider, 1000)
 	require.NoError(t, err, "Failed to create CreateReaderStack merge reader")
 	defer createReaderStackMerge.Close()
-	
+
 	// In production, this merged reader is created but then createAggregatingReader ignores it
 	// and works directly on the original readers, causing the resource conflict
-	
-	// Step 2: createAggregatingReader tries to merge the SAME original readers again 
+
+	// Step 2: createAggregatingReader tries to merge the SAME original readers again
 	// This is where the bug happens - reading from readers that are already being consumed
 	createAggregatingMerge, err := NewMergesortReader(ctx, originalReaders, &MetricSortKeyProvider{}, 1000)
 	require.NoError(t, err, "Failed to create createAggregatingReader merge reader")
 	defer createAggregatingMerge.Close()
-	
+
 	// Step 3: Aggregation (works fine if it gets data)
 	aggregatingReader, err := NewAggregatingMetricsReader(createAggregatingMerge, 10000, 1000)
 	require.NoError(t, err, "Failed to create aggregating reader")
 	defer aggregatingReader.Close()
-	
+
 	// Count output records
 	outputCount := int64(0)
 	for {
@@ -1099,22 +1099,22 @@ func TestAggregatingMetricsReader_ProductionDoubleResourceBug(t *testing.T) {
 		}
 		outputCount += int64(batch.Len())
 	}
-	
+
 	t.Logf("Output from resource-conflicted readers: %d records", outputCount)
-	
+
 	// Calculate data loss
 	dataLoss := totalInputCount - outputCount
 	dataLossPercent := float64(dataLoss) / float64(totalInputCount) * 100
-	
+
 	t.Logf("Data loss: %d records (%.1f%%)", dataLoss, dataLossPercent)
 	t.Logf("This replicates the production resource conflict bug:")
-	t.Logf("  - CreateReaderStack creates merge reader from original readers")  
+	t.Logf("  - CreateReaderStack creates merge reader from original readers")
 	t.Logf("  - createAggregatingReader ALSO tries to read from SAME original readers")
 	t.Logf("  - This creates a resource conflict/race condition")
-	
+
 	// The key assertion: we should get SOME output records
 	require.Greater(t, outputCount, int64(0), "Should produce some records")
-	
+
 	// Document the data loss for investigation
 	if dataLossPercent > 40.0 {
 		t.Logf("🎯 PRODUCTION BUG REPRODUCED: %.1f%% data loss!", dataLossPercent)

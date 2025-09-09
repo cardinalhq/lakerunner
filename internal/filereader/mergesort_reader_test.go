@@ -443,7 +443,7 @@ func TestMergesortReader_WithActualParquetReader(t *testing.T) {
 	for {
 		batch, err := mergesortReader.Next(ctx)
 		batchNum++
-		
+
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				t.Logf("Batch %d - Got EOF after reading %d total records", batchNum, totalRecords)
@@ -451,16 +451,16 @@ func TestMergesortReader_WithActualParquetReader(t *testing.T) {
 			}
 			require.NoError(t, err, "Next should not fail")
 		}
-		
+
 		if batch == nil {
 			t.Logf("Batch %d - Got nil batch after reading %d total records", batchNum, totalRecords)
 			break
 		}
-		
+
 		batchSize := batch.Len()
 		totalRecords += batchSize
 		t.Logf("Batch %d - Got %d records (total: %d)", batchNum, batchSize, totalRecords)
-		
+
 		if batchSize == 0 {
 			t.Logf("Batch %d - Empty batch, stopping", batchNum)
 			break
@@ -470,7 +470,7 @@ func TestMergesortReader_WithActualParquetReader(t *testing.T) {
 	t.Logf("MergesortReader returned %d records (expected %d)", totalRecords, expectedRecords)
 
 	// This is the critical test - NewMergesortReader should not lose any data even with a single reader
-	require.Equal(t, expectedRecords, totalRecords, 
+	require.Equal(t, expectedRecords, totalRecords,
 		"NewMergesortReader should not lose data when wrapping a single actual parquet reader")
 }
 
@@ -481,9 +481,9 @@ func TestMergesortReader_WithMultipleActualParquetReaders(t *testing.T) {
 		filename        string
 		expectedRecords int
 	}{
-		{"tbl_301228791710090615.parquet", 480},   // Small file 1
-		{"tbl_301228792783832948.parquet", 456},   // Small file 2
-		{"tbl_301228792733501300.parquet", 1414},  // Larger file for comparison
+		{"tbl_301228791710090615.parquet", 480},  // Small file 1
+		{"tbl_301228792783832948.parquet", 456},  // Small file 2
+		{"tbl_301228792733501300.parquet", 1414}, // Larger file for comparison
 	}
 
 	ctx := context.Background()
@@ -529,7 +529,7 @@ func TestMergesortReader_WithMultipleActualParquetReaders(t *testing.T) {
 	for {
 		batch, err := mergesortReader.Next(ctx)
 		batchNum++
-		
+
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				t.Logf("Batch %d - Got EOF after reading %d total records", batchNum, totalRecords)
@@ -537,16 +537,16 @@ func TestMergesortReader_WithMultipleActualParquetReaders(t *testing.T) {
 			}
 			require.NoError(t, err, "Next should not fail")
 		}
-		
+
 		if batch == nil {
 			t.Logf("Batch %d - Got nil batch after reading %d total records", batchNum, totalRecords)
 			break
 		}
-		
+
 		batchSize := batch.Len()
 		totalRecords += batchSize
 		t.Logf("Batch %d - Got %d records (total: %d)", batchNum, batchSize, totalRecords)
-		
+
 		if batchSize == 0 {
 			t.Logf("Batch %d - Empty batch, stopping", batchNum)
 			break
@@ -556,7 +556,7 @@ func TestMergesortReader_WithMultipleActualParquetReaders(t *testing.T) {
 	t.Logf("MergesortReader returned %d records (expected %d)", totalRecords, expectedTotalRecords)
 
 	// This is the critical test - NewMergesortReader should not lose any data when merging multiple files
-	require.Equal(t, expectedTotalRecords, totalRecords, 
+	require.Equal(t, expectedTotalRecords, totalRecords,
 		"NewMergesortReader should not lose data when merging multiple actual parquet readers")
 }
 
@@ -565,7 +565,7 @@ func TestMergesortReader_WithMultipleActualParquetReaders(t *testing.T) {
 func TestMergesortReader_WithAllSeglog990Files(t *testing.T) {
 	ctx := context.Background()
 
-	// Get all parquet files from seglog-990 
+	// Get all parquet files from seglog-990
 	testdataDir := filepath.Join("..", "..", "testdata", "metrics", "seglog-990", "source")
 	files, err := filepath.Glob(filepath.Join(testdataDir, "*.parquet"))
 	require.NoError(t, err, "Should find parquet files")
@@ -576,7 +576,7 @@ func TestMergesortReader_WithAllSeglog990Files(t *testing.T) {
 	// First, count expected records by reading each file with debug command
 	expectedTotalRecords := 0
 	fileExpectedCounts := make(map[string]int)
-	
+
 	for _, filePath := range files {
 		filename := filepath.Base(filePath)
 		// We know the counts for our test files from previous investigation
@@ -666,7 +666,7 @@ func TestMergesortReader_WithAllSeglog990Files(t *testing.T) {
 	for {
 		batch, err := mergesortReader.Next(ctx)
 		batchNum++
-		
+
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				t.Logf("Batch %d - Got EOF after reading %d total records", batchNum, totalRecords)
@@ -674,16 +674,16 @@ func TestMergesortReader_WithAllSeglog990Files(t *testing.T) {
 			}
 			require.NoError(t, err, "Next should not fail")
 		}
-		
+
 		if batch == nil {
 			t.Logf("Batch %d - Got nil batch after reading %d total records", batchNum, totalRecords)
 			break
 		}
-		
+
 		batchSize := batch.Len()
 		totalRecords += batchSize
 		t.Logf("Batch %d - Got %d records (total: %d)", batchNum, batchSize, totalRecords)
-		
+
 		if batchSize == 0 {
 			t.Logf("Batch %d - Empty batch, stopping", batchNum)
 			break
@@ -696,7 +696,7 @@ func TestMergesortReader_WithAllSeglog990Files(t *testing.T) {
 	if expectedTotalRecords > 0 {
 		lossPercentage := float64(expectedTotalRecords-totalRecords) / float64(expectedTotalRecords) * 100
 		t.Logf("Data loss: %.1f%% (%d lost out of %d expected)", lossPercentage, expectedTotalRecords-totalRecords, expectedTotalRecords)
-		
+
 		// If we see the same ~38% data loss as production, then NewMergesortReader IS the culprit
 		// If we get all records, then the issue is elsewhere in CreateReaderStack
 		if lossPercentage > 30 {

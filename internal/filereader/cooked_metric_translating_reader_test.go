@@ -252,19 +252,19 @@ func TestCookedMetricTranslatingReader_ShouldDropRow(t *testing.T) {
 			// Test shouldDropRow on the first few rows
 			droppedCount := 0
 			totalTested := 0
-			
+
 			// Test up to 10 rows or all rows if fewer
 			maxToTest := min(10, rawBatch.Len())
 
 			for i := 0; i < maxToTest; i++ {
 				row := rawBatch.Get(i)
 				totalTested++
-				
+
 				// Test shouldDropRow with the actual row data
 				if tempCookedReader.shouldDropRow(ctx, row) {
 					droppedCount++
 					t.Logf("File %s: Row %d would be DROPPED by shouldDropRow", testFile.filename, i)
-					
+
 					// Log the row content for debugging
 					t.Logf("File %s: Dropped row data: %+v", testFile.filename, row)
 				} else {
@@ -317,7 +317,7 @@ func TestCookedMetricTranslatingReader_NextWithSmallFiles(t *testing.T) {
 			for {
 				cookedBatch, err := cookedReader.Next(ctx)
 				batchNum++
-				
+
 				if err != nil {
 					t.Logf("File %s: Batch %d - Got error: %v", testFile.filename, batchNum, err)
 					break // EOF or error
@@ -326,11 +326,11 @@ func TestCookedMetricTranslatingReader_NextWithSmallFiles(t *testing.T) {
 					t.Logf("File %s: Batch %d - Got nil batch", testFile.filename, batchNum)
 					break
 				}
-				
+
 				batchSize := cookedBatch.Len()
 				cookedRecordCount += batchSize
 				t.Logf("File %s: Batch %d - Got %d records (total: %d)", testFile.filename, batchNum, batchSize, cookedRecordCount)
-				
+
 				if batchSize == 0 {
 					t.Logf("File %s: Batch %d - Empty batch, stopping", testFile.filename, batchNum)
 					break
@@ -341,7 +341,7 @@ func TestCookedMetricTranslatingReader_NextWithSmallFiles(t *testing.T) {
 				testFile.filename, cookedRecordCount, testFile.expectedRecords)
 
 			// These tests verify that CookedMetricTranslatingReader works correctly in isolation
-			require.Equal(t, testFile.expectedRecords, cookedRecordCount, 
+			require.Equal(t, testFile.expectedRecords, cookedRecordCount,
 				"CookedMetricTranslatingReader should read all records correctly when used in isolation")
 		})
 	}
