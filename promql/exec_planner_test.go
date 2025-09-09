@@ -55,6 +55,25 @@ func TestForDots(t *testing.T) {
 	}
 }
 
+func TestForMaxOnGauge(t *testing.T) {
+	q := `max({__name__="container.cpu.usage"})`
+	root := mustParse(t, q)
+	res, err := Compile(root)
+	if err != nil {
+		t.Fatalf("Compile error: %v", err)
+	}
+	if len(res.Leaves) != 1 {
+		t.Fatalf("want 1 leaf, got %d", len(res.Leaves))
+	}
+	if res.Leaves[0].Metric != "container.cpu.usage" {
+		t.Fatalf("metric name mismatch, got %q", res.Leaves[0].Metric)
+	}
+	_, ok := res.Root.(*AggNode)
+	if !ok {
+		t.Fatalf("root not AggNode, got %T", res.Root)
+	}
+}
+
 func TestCompile_TopK_Then_OuterSum(t *testing.T) {
 	q := `sum by (job) ( topk(5, sum by (job, endpoint) (rate(http_requests_total[5m]))) )`
 	root := mustParse(t, q)

@@ -176,10 +176,14 @@ func fromNode(n promparser.Node) (Expr, error) {
 	switch v := n.(type) {
 
 	case *promparser.VectorSelector:
+		metricName := v.Name
+		if metricName == "" {
+			metricName = getMetricNameFromLabelMatchers(v)
+		}
 		return Expr{
 			Kind: KindSelector,
 			Selector: &Selector{
-				Metric:   v.Name,
+				Metric:   metricName,
 				Matchers: toMatchers(v.LabelMatchers),
 				Offset:   promDur(v.OriginalOffset),
 			},
@@ -189,12 +193,7 @@ func fromNode(n promparser.Node) (Expr, error) {
 		vs := v.VectorSelector.(*promparser.VectorSelector)
 		metricName := vs.Name
 		if metricName == "" {
-			for _, m := range vs.LabelMatchers {
-				if m.Name == "__name__" && m.Type == labels.MatchEqual {
-					metricName = m.Value
-					break
-				}
-			}
+			metricName = getMetricNameFromLabelMatchers(vs)
 		}
 		inner := Expr{
 			Kind: KindSelector,
@@ -464,6 +463,19 @@ func fromNode(n promparser.Node) (Expr, error) {
 	default:
 		return Expr{}, errUnsupported("node", fmt.Sprintf("%T", n))
 	}
+}
+
+func getMetricNameFromLabelMatchers(vs *promparser.VectorSelector) string {
+	metricName := vs.Name
+	if metricName == "" {
+		for _, m := range vs.LabelMatchers {
+			if m.Name == "__name__" && m.Type == labels.MatchEqual {
+				metricName = m.Value
+				break
+			}
+		}
+	}
+	return metricName
 }
 
 // promDur formats time.Duration like PromQL ("1m", "5m", "2h5m") and returns "" if zero.
