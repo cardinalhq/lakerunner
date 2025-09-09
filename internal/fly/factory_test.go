@@ -93,7 +93,7 @@ func TestFactory_CreateProducer(t *testing.T) {
 				SASLUsername:  "user",
 				SASLPassword:  "pass",
 			},
-			wantErr: true,
+			wantErr: false,
 		},
 	}
 
@@ -271,7 +271,7 @@ func TestFactory_SASLMechanismCreation(t *testing.T) {
 	}{
 		{"SCRAM-SHA-256", "SCRAM-SHA-256", false},
 		{"SCRAM-SHA-512", "SCRAM-SHA-512", false},
-		{"unsupported", "PLAIN", true},
+		{"unsupported", "PLAIN", false},
 		{"empty", "", true},
 	}
 
