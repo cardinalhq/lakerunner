@@ -31,6 +31,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
@@ -238,13 +239,11 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *Accumulation
 		return nil
 	}
 
-	// Step 9-11: Upload files and create segments
 	segmentParams, err := p.uploadAndCreateSegments(ctx, storageClient, nowDateInt, timeBins, storageProfile)
 	if err != nil {
 		return fmt.Errorf("failed to upload and create segments: %w", err)
 	}
 
-	// Step 12: Execute atomic database transaction
 	// Convert KafkaCommitData to KafkaOffsetUpdate slice
 	var kafkaOffsets []lrdb.KafkaOffsetUpdate
 	if kafkaCommitData != nil {
@@ -265,6 +264,24 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *Accumulation
 
 	criticalCtx := context.WithoutCancel(ctx)
 	if err := p.store.InsertMetricSegmentBatchWithKafkaOffsets(criticalCtx, batch); err != nil {
+		// Log detailed segment information for debugging
+		segmentIDs := make([]int64, len(segmentParams))
+		var totalRecords, totalSize int64
+		for i, seg := range segmentParams {
+			segmentIDs[i] = seg.SegmentID
+			totalRecords += seg.RecordCount
+			totalSize += seg.FileSize
+		}
+
+		ll.Error("Failed to insert metric segments with Kafka offsets",
+			slog.Any("error", err),
+			slog.Any("segmentIDs", segmentIDs),
+			slog.Int("segmentCount", len(segmentParams)),
+			slog.Int64("totalRecords", totalRecords),
+			slog.Int64("totalSize", totalSize),
+			slog.String("organizationID", group.Key.OrganizationID.String()),
+			slog.Int("instanceNum", int(group.Key.InstanceNum)))
+
 		return fmt.Errorf("failed to insert metric segments with Kafka offsets: %w", err)
 	}
 
@@ -583,8 +600,7 @@ func (p *MetricIngestProcessor) uploadAndCreateSegments(ctx context.Context, sto
 			collectorName = storageProfile.CollectorName
 		}
 
-		// Generate segment ID (use start timestamp as segment ID)
-		segmentID := binStartTs
+		segmentID := idgen.GenerateID()
 
 		// Generate upload path using metadata dateint and hour
 		uploadPath := helpers.MakeDBObjectID(
