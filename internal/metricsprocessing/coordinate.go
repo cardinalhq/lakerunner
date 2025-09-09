@@ -275,7 +275,7 @@ func downloadAndValidateFiles(ctx context.Context, items []ingest.IngestItem, tm
 }
 
 // createReadersForFiles creates the reader stack for each file
-func createReadersForFiles(ctx context.Context, validFiles []fileInfo, orgID string, processor *exemplar.Processor) ([]filereader.Reader, []filereader.Reader, error) {
+func createReadersForFiles(ctx context.Context, validFiles []fileInfo, orgID string, exemplarProcessor *exemplar.Processor) ([]filereader.Reader, []filereader.Reader, error) {
 	ll := logctx.FromContext(ctx)
 
 	var readers []filereader.Reader
@@ -283,7 +283,7 @@ func createReadersForFiles(ctx context.Context, validFiles []fileInfo, orgID str
 
 	opts := filereader.ReaderOptions{
 		BatchSize:         1000,
-		ExemplarProcessor: processor,
+		ExemplarProcessor: exemplarProcessor,
 	}
 	for _, fileInfo := range validFiles {
 		// Create stacked reader for this file: ProtoReader -> Translation -> Sorting
