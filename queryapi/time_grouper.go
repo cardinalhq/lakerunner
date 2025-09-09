@@ -236,6 +236,5 @@ func TargetSize(totalSegments, workers int) int {
 	if workers <= 0 {
 		return totalSegments
 	}
-	// Keep previous cap behavior (max ~30 per batch) to avoid huge groups.
-	return int(math.Min(30, math.Ceil(float64(totalSegments)/float64(workers))))
+	return int(math.Ceil(float64(totalSegments) / float64(workers)))
 }
