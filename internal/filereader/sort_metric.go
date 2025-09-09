@@ -133,3 +133,90 @@ func MakeMetricSortKey(row Row) *MetricSortKey {
 	key.Timestamp, key.TsOk = row[wkk.RowKeyCTimestamp].(int64)
 	return key
 }
+
+// NonPooledMetricSortKey is like MetricSortKey but doesn't use object pools
+// This is safer for long-lived keys that are retained during sorting operations
+type NonPooledMetricSortKey struct {
+	Name      string
+	Tid       int64
+	Timestamp int64
+	NameOk    bool
+	TidOk     bool
+	TsOk      bool
+}
+
+// Compare implements SortKey interface for NonPooledMetricSortKey
+func (k *NonPooledMetricSortKey) Compare(other SortKey) int {
+	o, ok := other.(*NonPooledMetricSortKey)
+	if !ok {
+		panic("NonPooledMetricSortKey.Compare: other key is not NonPooledMetricSortKey")
+	}
+
+	// Compare name field
+	if !k.NameOk || !o.NameOk {
+		if !k.NameOk && !o.NameOk {
+			return 0
+		}
+		if !k.NameOk {
+			return 1
+		}
+		return -1
+	}
+	if cmp := strings.Compare(k.Name, o.Name); cmp != 0 {
+		return cmp
+	}
+
+	// Compare TID field
+	if !k.TidOk || !o.TidOk {
+		if !k.TidOk && !o.TidOk {
+			return 0
+		}
+		if !k.TidOk {
+			return 1
+		}
+		return -1
+	}
+	if k.Tid < o.Tid {
+		return -1
+	}
+	if k.Tid > o.Tid {
+		return 1
+	}
+
+	// Compare timestamp field
+	if !k.TsOk || !o.TsOk {
+		if !k.TsOk && !o.TsOk {
+			return 0
+		}
+		if !k.TsOk {
+			return 1
+		}
+		return -1
+	}
+	if k.Timestamp < o.Timestamp {
+		return -1
+	}
+	if k.Timestamp > o.Timestamp {
+		return 1
+	}
+
+	return 0
+}
+
+// Release is a no-op for non-pooled keys
+func (k *NonPooledMetricSortKey) Release() {
+	// No pooling, nothing to release
+}
+
+// NonPooledMetricSortKeyProvider creates NonPooledMetricSortKey instances
+// This is safer for long-lived keys that are retained during sorting operations
+type NonPooledMetricSortKeyProvider struct{}
+
+// MakeKey implements SortKeyProvider interface for metrics without using pools
+func (p *NonPooledMetricSortKeyProvider) MakeKey(row Row) SortKey {
+	key := &NonPooledMetricSortKey{}
+	key.Name, key.NameOk = row[wkk.RowKeyCName].(string)
+	key.Tid, key.TidOk = row[wkk.RowKeyCTID].(int64)
+	key.Timestamp, key.TsOk = row[wkk.RowKeyCTimestamp].(int64)
+	return key
+}

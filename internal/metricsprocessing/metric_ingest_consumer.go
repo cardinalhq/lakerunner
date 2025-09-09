@@ -64,7 +64,7 @@ func NewMetricIngestConsumer(
 
 	// Create Gatherer - using hardcoded consumer group and topic
 	consumerGroup := "lakerunner.ingest.metrics"
-	topic := "lakerunner.objstore.notifications"
+	topic := "lakerunner.objstore.ingest.metrics"
 
 	// Create Kafka consumer
 	consumerName := "lakerunner-ingest-accumulator"
