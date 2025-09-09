@@ -304,10 +304,8 @@ func (r *MetricRollupProcessor) uploadAndCreateRollupSegments(ctx context.Contex
 	var segmentIDs []int64
 
 	for _, result := range results {
-		// Generate new segment ID
 		segmentID := r.generateSegmentID()
 
-		// Get metadata from result
 		stats, ok := result.Metadata.(factories.MetricsFileStats)
 		if !ok {
 			return nil, fmt.Errorf("unexpected metadata type: %T", result.Metadata)
