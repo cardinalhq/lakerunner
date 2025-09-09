@@ -196,21 +196,18 @@ func TestHunter_FirstMessageExceedsThreshold(t *testing.T) {
 	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 	orgID := uuid.New()
 
-	// First message already exceeds threshold, but should not be returned
-	// since shouldReturn checks len(group.Messages) > 0 before adding
+	// First message already exceeds threshold and should be returned immediately
 	msg := createTestMessage(orgID, 1, 20250108, 60000, 1, 4, 150)
 	metadata := createTestMetadata("metrics", 0, "test-group", 100)
 	result := hunter.AddMessage(msg, metadata, 100)
 
-	// Should not return since this is the first message in the group
-	assert.Nil(t, result)
+	// Should return since the message exceeds the threshold
+	assert.NotNil(t, result)
+	assert.Equal(t, int64(150), result.Group.TotalRecordCount)
+	assert.Len(t, result.Group.Messages, 1)
 
-	assert.Len(t, hunter.groups, 1)
-
-	for _, group := range hunter.groups {
-		assert.Len(t, group.Messages, 1)
-		assert.Equal(t, int64(150), group.TotalRecordCount)
-	}
+	// Group should be removed from hunter after being returned
+	assert.Len(t, hunter.groups, 0)
 }
 
 func TestHunter_NewHunter(t *testing.T) {
@@ -356,7 +353,7 @@ func TestHunter_SelectStaleGroups(t *testing.T) {
 	hunter.groups[keyC].LastUpdatedAt = now.Add(-7 * time.Minute)
 
 	// Select groups older than 5 minutes
-	staleGroups := hunter.SelectStaleGroups(5 * time.Minute)
+	staleGroups := hunter.SelectStaleGroups(5*time.Minute, 0)
 
 	// Should return groups A and C (both older than 5 minutes)
 	assert.Len(t, staleGroups, 2)
@@ -390,7 +387,7 @@ func TestHunter_SelectStaleGroups_NoStaleGroups(t *testing.T) {
 	assert.Len(t, hunter.groups, 1)
 
 	// Select groups older than 5 minutes (should find none)
-	staleGroups := hunter.SelectStaleGroups(5 * time.Minute)
+	staleGroups := hunter.SelectStaleGroups(5*time.Minute, 0)
 
 	// Should return no groups
 	assert.Len(t, staleGroups, 0)
@@ -406,7 +403,7 @@ func TestHunter_SelectStaleGroups_EmptyHunter(t *testing.T) {
 	assert.Len(t, hunter.groups, 0)
 
 	// Select stale groups from empty hunter
-	staleGroups := hunter.SelectStaleGroups(5 * time.Minute)
+	staleGroups := hunter.SelectStaleGroups(5*time.Minute, 0)
 
 	// Should return empty slice
 	assert.Len(t, staleGroups, 0)
@@ -508,7 +505,7 @@ func TestHunter_MetricCompactionMessage_AccumulationScaffolding(t *testing.T) {
 	}
 	assert.Len(t, hunter.groups, 1, "Hunter should have exactly one group after batch addition of small messages")
 	// now, cause our periodic flush to pick it up
-	staleGroups := hunter.SelectStaleGroups(0 * time.Minute)
+	staleGroups := hunter.SelectStaleGroups(0, 0)
 	assert.Len(t, staleGroups, 1, "Should have exactly one stale group after flush")
 	assert.Len(t, hunter.groups, 0, "Hunter should be empty after stale group is returned")
 
@@ -541,7 +538,7 @@ func TestHunter_MetricCompactionMessage_AccumulationScaffolding(t *testing.T) {
 	}
 
 	// Flush all groups as stale
-	allStaleGroups := hunter.SelectStaleGroups(0 * time.Minute)
+	allStaleGroups := hunter.SelectStaleGroups(0, 0)
 	assert.Len(t, allStaleGroups, 4, "Should have exactly 4 stale groups after flush")
 	assert.Len(t, hunter.groups, 0, "Hunter should be empty after all stale groups are returned")
 

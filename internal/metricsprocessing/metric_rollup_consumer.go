@@ -295,7 +295,7 @@ func (c *MetricRollupConsumer) periodicFlush(ctx context.Context) {
 			// Use a more aggressive flush time for rollups since they have tighter time windows
 			// We'll flush groups that are older than half their target accumulation time
 			flushAge := 2 * time.Minute // Default aggressive flush
-			if err := c.gatherer.FlushStaleGroups(ctx, flushAge); err != nil {
+			if err := c.gatherer.FlushStaleGroups(ctx, flushAge, 0); err != nil {
 				ll.Error("Failed to flush stale rollup groups", slog.Any("error", err))
 			}
 		}

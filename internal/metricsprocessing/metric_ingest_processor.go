@@ -47,11 +47,6 @@ type IngestStore interface {
 	GetMetricEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32) int64
 }
 
-// ReaderMetadata contains metadata about a file reader
-
-// These types are no longer used in the new time-binning approach but kept for compatibility
-// TODO: Remove once all references are cleaned up
-
 // TimeBin represents a 60-second time bin with its writer and metadata
 type TimeBin struct {
 	StartTs int64 // Start timestamp of the bin (inclusive)
@@ -379,7 +374,7 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *Accumulation
 
 // GetTargetRecordCount returns the target file size limit (20MB) for accumulation
 func (p *MetricIngestProcessor) GetTargetRecordCount(ctx context.Context, groupingKey messages.IngestKey) int64 {
-	return 20 * 1024 * 1024 // 20MB file size limit instead of record count
+	return 5 * 1024 * 1024 // 5MB file size limit instead of record count
 }
 
 // createReaderStack creates a reader stack: DiskSort(Translation(OTELMetricProto(file)))

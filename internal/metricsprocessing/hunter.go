@@ -97,7 +97,7 @@ func (h *Hunter[M, K]) AddMessage(msg M, metadata *MessageMetadata, targetRecord
 
 	// Check if adding this message would exceed the target
 	newTotalRecordCount := group.TotalRecordCount + msg.RecordCount()
-	shouldReturn := newTotalRecordCount >= targetRecordCount && len(group.Messages) > 0
+	shouldReturn := newTotalRecordCount >= targetRecordCount
 
 	// Add the message to the group
 	group.Messages = append(group.Messages, accMsg)
@@ -147,12 +147,35 @@ func (h *Hunter[M, K]) SelectGroups(selector func(key K, group *AccumulationGrou
 	return selected
 }
 
-// SelectStaleGroups selects all groups that haven't been updated for longer than the specified duration.
+// SelectStaleGroups selects all groups that haven't been updated for longer than lastUpdatedAge duration,
+// or that are older than maxAge since creation (if maxAge > 0).
+// If lastUpdatedAge is 0, all groups are selected immediately.
+// If maxAge is 0, absolute age is not checked.
 // This is used for periodic flushing of groups that may never reach the record count threshold.
 // Safe for concurrent use.
-func (h *Hunter[M, K]) SelectStaleGroups(olderThan time.Duration) []*AccumulationGroup[K] {
-	cutoff := time.Now().Add(-olderThan)
+func (h *Hunter[M, K]) SelectStaleGroups(lastUpdatedAge, maxAge time.Duration) []*AccumulationGroup[K] {
+	now := time.Now()
+	
 	return h.SelectGroups(func(key K, group *AccumulationGroup[K]) bool {
-		return group.LastUpdatedAt.Before(cutoff)
+		// If lastUpdatedAge is 0, flush all groups immediately
+		if lastUpdatedAge == 0 {
+			return true
+		}
+		
+		// Check if last update is stale
+		lastUpdatedCutoff := now.Add(-lastUpdatedAge)
+		if group.LastUpdatedAt.Before(lastUpdatedCutoff) {
+			return true
+		}
+		
+		// Check if absolute age exceeds maxAge (if maxAge > 0)
+		if maxAge > 0 {
+			createdCutoff := now.Add(-maxAge)
+			if group.CreatedAt.Before(createdCutoff) {
+				return true
+			}
+		}
+		
+		return false
 	})
 }

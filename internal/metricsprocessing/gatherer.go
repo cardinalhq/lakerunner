@@ -152,10 +152,11 @@ func (g *Gatherer[M, K]) GetMetadataTracker() *MetadataTracker[K] {
 	return g.metadataTracker
 }
 
-// FlushStaleGroups processes all groups that haven't been updated for longer than the specified duration
-// This is used for periodic flushing to handle groups that may never reach the record count threshold
-func (g *Gatherer[M, K]) FlushStaleGroups(ctx context.Context, olderThan time.Duration) error {
-	staleGroups := g.hunter.SelectStaleGroups(olderThan)
+// FlushStaleGroups processes all groups that haven't been updated for longer than lastUpdatedAge duration,
+// or that are older than maxAge since creation (if maxAge > 0).
+// This is used for periodic flushing to handle groups that may never reach the record count threshold.
+func (g *Gatherer[M, K]) FlushStaleGroups(ctx context.Context, lastUpdatedAge, maxAge time.Duration) error {
+	staleGroups := g.hunter.SelectStaleGroups(lastUpdatedAge, maxAge)
 
 	for _, group := range staleGroups {
 		// Create Kafka commit data from the actual messages in the group

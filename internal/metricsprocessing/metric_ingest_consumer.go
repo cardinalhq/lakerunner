@@ -73,8 +73,8 @@ func NewMetricIngestConsumer(
 		return nil, fmt.Errorf("failed to create Kafka consumer: %w", err)
 	}
 
-	// Set up periodic flushing (every 30 seconds, flush groups older than 2 minutes)
-	flushTicker := time.NewTicker(30 * time.Second)
+	// Set up periodic flushing (every 10 seconds, flush groups older than 20 seconds)
+	flushTicker := time.NewTicker(10 * time.Second)
 
 	mic := &MetricIngestConsumer{
 		consumer:      consumer,
@@ -235,7 +235,7 @@ func (c *MetricIngestConsumer) Close() error {
 	return nil
 }
 
-// periodicFlush runs every 30 seconds and flushes stale groups (older than 2 minutes)
+// periodicFlush runs every 10 seconds and flushes stale groups (older than 20 seconds)
 func (c *MetricIngestConsumer) periodicFlush(ctx context.Context) {
 	ll := logctx.FromContext(ctx)
 
@@ -249,7 +249,7 @@ func (c *MetricIngestConsumer) periodicFlush(ctx context.Context) {
 			return
 		case <-c.flushTicker.C:
 			ll.Debug("Running periodic flush of stale groups")
-			if err := c.gatherer.FlushStaleGroups(ctx, 2*time.Minute); err != nil {
+			if err := c.gatherer.FlushStaleGroups(ctx, 20*time.Second, 20*time.Second); err != nil {
 				ll.Error("Failed to flush stale groups", slog.Any("error", err))
 			}
 		}
