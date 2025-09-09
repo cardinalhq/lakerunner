@@ -60,8 +60,8 @@ type CompactionStore interface {
 	KafkaJournalGetLastProcessedWithOrgInstance(ctx context.Context, params lrdb.KafkaJournalGetLastProcessedWithOrgInstanceParams) (int64, error)
 	MarkMetricSegsCompactedByKeys(ctx context.Context, params lrdb.MarkMetricSegsCompactedByKeysParams) error
 	GetMetricEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32) int64
-	// Add seg_log functionality
-	InsertSegLog(ctx context.Context, params lrdb.InsertSegLogParams) error
+	// Add segment_journal functionality
+	InsertSegmentJournal(ctx context.Context, params lrdb.InsertSegmentJournalParams) error
 }
 
 // MetricCompactorProcessor implements the Processor interface for metric segment compaction
@@ -322,7 +322,7 @@ func (c *MetricCompactorProcessor) Process(ctx context.Context, group *Accumulat
 
 	// Log the compaction operation to seg_log for debugging (if enabled)
 	if c.cfg.SegLog.Enabled {
-		if err := c.logCompactionOperation(ctx, storageProfile, activeSegments, newSegments, results, group.Key); err != nil {
+		if err := c.logCompactionOperation(ctx, storageProfile, readerStack.ProcessedSegments, newSegments, results, group.Key, recordCountEstimate); err != nil {
 			// Don't fail the compaction if seg_log fails - this is just for debugging
 			ll.Warn("Failed to log compaction operation to seg_log", slog.Any("error", err))
 		}
@@ -551,7 +551,7 @@ func (c *MetricCompactorProcessor) GetTargetRecordCount(ctx context.Context, gro
 }
 
 // logCompactionOperation logs the compaction operation to seg_log for debugging purposes
-func (c *MetricCompactorProcessor) logCompactionOperation(ctx context.Context, storageProfile storageprofile.StorageProfile, inputSegments, outputSegments []lrdb.MetricSeg, results []parquetwriter.Result, key messages.CompactionKey) error {
+func (c *MetricCompactorProcessor) logCompactionOperation(ctx context.Context, storageProfile storageprofile.StorageProfile, inputSegments, outputSegments []lrdb.MetricSeg, results []parquetwriter.Result, key messages.CompactionKey, recordEstimate int64) error {
 	// Extract source object keys from input segments
 	sourceObjectKeys := make([]string, len(inputSegments))
 	var sourceTotalRecords, sourceTotalSize int64
@@ -577,8 +577,8 @@ func (c *MetricCompactorProcessor) logCompactionOperation(ctx context.Context, s
 		destTotalSize += result.FileSize
 	}
 
-	// Create seg_log entry
-	logParams := lrdb.InsertSegLogParams{
+	// Create segment_journal entry
+	logParams := lrdb.InsertSegmentJournalParams{
 		Signal:             2, // 2 = metrics (based on enum pattern)
 		Action:             2, // 2 = compact (based on enum pattern)
 		OrganizationID:     key.OrganizationID,
@@ -593,8 +593,9 @@ func (c *MetricCompactorProcessor) logCompactionOperation(ctx context.Context, s
 		DestObjectKeys:     pq.StringArray(destObjectKeys),
 		DestTotalRecords:   destTotalRecords,
 		DestTotalSize:      destTotalSize,
+		RecordEstimate:     recordEstimate,
 		Metadata:           make(map[string]any), // Empty metadata for now
 	}
 
-	return c.store.InsertSegLog(ctx, logParams)
+	return c.store.InsertSegmentJournal(ctx, logParams)
 }

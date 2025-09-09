@@ -213,8 +213,8 @@ type ObjCleanup struct {
 	Tries          int32     `json:"tries"`
 }
 
-// Debugging log for segment operations across all signals (logs, metrics, traces) and actions (ingest, compaction, rollups). Not typically enabled in production.
-type SegLog struct {
+// Debugging journal for segment operations across all signals (logs, metrics, traces) and actions (ingest, compaction, rollups). Not typically enabled in production.
+type SegmentJournal struct {
 	ID int64 `json:"id"`
 	// Signal type being processed (1=logs, 2=metrics, 3=traces)
 	Signal int16 `json:"signal"`
@@ -245,6 +245,8 @@ type SegLog struct {
 	DestTotalSize int64 `json:"dest_total_size"`
 	// Additional debugging information in JSON format
 	Metadata map[string]any `json:"metadata"`
+	// Estimated record count used for compaction planning and comparison with actual results
+	RecordEstimate int64 `json:"record_estimate"`
 }
 
 type SignalLock struct {

@@ -12,31 +12,28 @@ import (
 	"github.com/google/uuid"
 )
 
-const deleteOldSegLogs = `-- name: DeleteOldSegLogs :exec
-DELETE FROM seg_log
+const deleteOldSegmentJournals = `-- name: DeleteOldSegmentJournals :exec
+DELETE FROM segment_journal
 WHERE created_at < $1
 `
 
-// Clean up old seg_log entries for maintenance
-func (q *Queries) DeleteOldSegLogs(ctx context.Context, cutoffTime time.Time) error {
-	_, err := q.db.Exec(ctx, deleteOldSegLogs, cutoffTime)
+// Clean up old segment_journal entries for maintenance
+func (q *Queries) DeleteOldSegmentJournals(ctx context.Context, cutoffTime time.Time) error {
+	_, err := q.db.Exec(ctx, deleteOldSegmentJournals, cutoffTime)
 	return err
 }
 
-const getLatestSegLog = `-- name: GetLatestSegLog :one
-SELECT id, signal, action, created_at, organization_id, instance_num, dateint, frequency_ms,
-       source_count, source_object_keys, source_total_records, source_total_size,
-       dest_count, dest_object_keys, dest_total_records, dest_total_size,
-       metadata
-FROM seg_log
+const getLatestSegmentJournal = `-- name: GetLatestSegmentJournal :one
+SELECT id, signal, action, created_at, organization_id, instance_num, dateint, frequency_ms, source_count, source_object_keys, source_total_records, source_total_size, dest_count, dest_object_keys, dest_total_records, dest_total_size, metadata, record_estimate
+FROM segment_journal
 ORDER BY created_at DESC
 LIMIT 1
 `
 
-// Get the most recent seg_log entry
-func (q *Queries) GetLatestSegLog(ctx context.Context) (SegLog, error) {
-	row := q.db.QueryRow(ctx, getLatestSegLog)
-	var i SegLog
+// Get the most recent segment_journal entry
+func (q *Queries) GetLatestSegmentJournal(ctx context.Context) (SegmentJournal, error) {
+	row := q.db.QueryRow(ctx, getLatestSegmentJournal)
+	var i SegmentJournal
 	err := row.Scan(
 		&i.ID,
 		&i.Signal,
@@ -55,23 +52,21 @@ func (q *Queries) GetLatestSegLog(ctx context.Context) (SegLog, error) {
 		&i.DestTotalRecords,
 		&i.DestTotalSize,
 		&i.Metadata,
+		&i.RecordEstimate,
 	)
 	return i, err
 }
 
-const getSegLogByID = `-- name: GetSegLogByID :one
-SELECT id, signal, action, created_at, organization_id, instance_num, dateint, frequency_ms,
-       source_count, source_object_keys, source_total_records, source_total_size,
-       dest_count, dest_object_keys, dest_total_records, dest_total_size,
-       metadata
-FROM seg_log
+const getSegmentJournalByID = `-- name: GetSegmentJournalByID :one
+SELECT id, signal, action, created_at, organization_id, instance_num, dateint, frequency_ms, source_count, source_object_keys, source_total_records, source_total_size, dest_count, dest_object_keys, dest_total_records, dest_total_size, metadata, record_estimate
+FROM segment_journal
 WHERE id = $1
 `
 
-// Get a specific seg_log entry by ID
-func (q *Queries) GetSegLogByID(ctx context.Context, id int64) (SegLog, error) {
-	row := q.db.QueryRow(ctx, getSegLogByID, id)
-	var i SegLog
+// Get a specific segment_journal entry by ID
+func (q *Queries) GetSegmentJournalByID(ctx context.Context, id int64) (SegmentJournal, error) {
+	row := q.db.QueryRow(ctx, getSegmentJournalByID, id)
+	var i SegmentJournal
 	err := row.Scan(
 		&i.ID,
 		&i.Signal,
@@ -90,16 +85,17 @@ func (q *Queries) GetSegLogByID(ctx context.Context, id int64) (SegLog, error) {
 		&i.DestTotalRecords,
 		&i.DestTotalSize,
 		&i.Metadata,
+		&i.RecordEstimate,
 	)
 	return i, err
 }
 
-const getSegLogByOrg = `-- name: GetSegLogByOrg :many
+const getSegmentJournalByOrg = `-- name: GetSegmentJournalByOrg :many
 SELECT id, signal, action, created_at, organization_id, instance_num, dateint, frequency_ms,
        source_count, source_object_keys, source_total_records, source_total_size,
        dest_count, dest_object_keys, dest_total_records, dest_total_size,
-       metadata
-FROM seg_log
+       record_estimate, metadata
+FROM segment_journal
 WHERE organization_id = $1
   AND ($2::smallint IS NULL OR signal = $2)
   AND ($3::smallint IS NULL OR action = $3)
@@ -107,16 +103,37 @@ ORDER BY created_at DESC
 LIMIT $4
 `
 
-type GetSegLogByOrgParams struct {
+type GetSegmentJournalByOrgParams struct {
 	OrganizationID uuid.UUID `json:"organization_id"`
 	Signal         int16     `json:"signal"`
 	Action         int16     `json:"action"`
 	LimitVal       int32     `json:"limit_val"`
 }
 
-// Get seg_log entries for debugging, filtered by organization
-func (q *Queries) GetSegLogByOrg(ctx context.Context, arg GetSegLogByOrgParams) ([]SegLog, error) {
-	rows, err := q.db.Query(ctx, getSegLogByOrg,
+type GetSegmentJournalByOrgRow struct {
+	ID                 int64          `json:"id"`
+	Signal             int16          `json:"signal"`
+	Action             int16          `json:"action"`
+	CreatedAt          time.Time      `json:"created_at"`
+	OrganizationID     uuid.UUID      `json:"organization_id"`
+	InstanceNum        int16          `json:"instance_num"`
+	Dateint            int32          `json:"dateint"`
+	FrequencyMs        int32          `json:"frequency_ms"`
+	SourceCount        int32          `json:"source_count"`
+	SourceObjectKeys   []string       `json:"source_object_keys"`
+	SourceTotalRecords int64          `json:"source_total_records"`
+	SourceTotalSize    int64          `json:"source_total_size"`
+	DestCount          int32          `json:"dest_count"`
+	DestObjectKeys     []string       `json:"dest_object_keys"`
+	DestTotalRecords   int64          `json:"dest_total_records"`
+	DestTotalSize      int64          `json:"dest_total_size"`
+	RecordEstimate     int64          `json:"record_estimate"`
+	Metadata           map[string]any `json:"metadata"`
+}
+
+// Get segment_journal entries for debugging, filtered by organization
+func (q *Queries) GetSegmentJournalByOrg(ctx context.Context, arg GetSegmentJournalByOrgParams) ([]GetSegmentJournalByOrgRow, error) {
+	rows, err := q.db.Query(ctx, getSegmentJournalByOrg,
 		arg.OrganizationID,
 		arg.Signal,
 		arg.Action,
@@ -126,9 +143,9 @@ func (q *Queries) GetSegLogByOrg(ctx context.Context, arg GetSegLogByOrgParams) 
 		return nil, err
 	}
 	defer rows.Close()
-	var items []SegLog
+	var items []GetSegmentJournalByOrgRow
 	for rows.Next() {
-		var i SegLog
+		var i GetSegmentJournalByOrgRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.Signal,
@@ -146,6 +163,7 @@ func (q *Queries) GetSegLogByOrg(ctx context.Context, arg GetSegLogByOrgParams) 
 			&i.DestObjectKeys,
 			&i.DestTotalRecords,
 			&i.DestTotalSize,
+			&i.RecordEstimate,
 			&i.Metadata,
 		); err != nil {
 			return nil, err
@@ -158,8 +176,8 @@ func (q *Queries) GetSegLogByOrg(ctx context.Context, arg GetSegLogByOrgParams) 
 	return items, nil
 }
 
-const insertSegLog = `-- name: InsertSegLog :exec
-INSERT INTO seg_log (
+const insertSegmentJournal = `-- name: InsertSegmentJournal :exec
+INSERT INTO segment_journal (
     signal,
     action,
     organization_id,
@@ -174,6 +192,7 @@ INSERT INTO seg_log (
     dest_object_keys,
     dest_total_records,
     dest_total_size,
+    record_estimate,
     metadata
 ) VALUES (
     $1,
@@ -190,11 +209,12 @@ INSERT INTO seg_log (
     $12,
     $13,
     $14,
-    $15
+    $15,
+    $16
 )
 `
 
-type InsertSegLogParams struct {
+type InsertSegmentJournalParams struct {
 	Signal             int16          `json:"signal"`
 	Action             int16          `json:"action"`
 	OrganizationID     uuid.UUID      `json:"organization_id"`
@@ -209,12 +229,13 @@ type InsertSegLogParams struct {
 	DestObjectKeys     []string       `json:"dest_object_keys"`
 	DestTotalRecords   int64          `json:"dest_total_records"`
 	DestTotalSize      int64          `json:"dest_total_size"`
+	RecordEstimate     int64          `json:"record_estimate"`
 	Metadata           map[string]any `json:"metadata"`
 }
 
-// Insert a debugging log entry for segment operations
-func (q *Queries) InsertSegLog(ctx context.Context, arg InsertSegLogParams) error {
-	_, err := q.db.Exec(ctx, insertSegLog,
+// Insert a debugging journal entry for segment operations
+func (q *Queries) InsertSegmentJournal(ctx context.Context, arg InsertSegmentJournalParams) error {
+	_, err := q.db.Exec(ctx, insertSegmentJournal,
 		arg.Signal,
 		arg.Action,
 		arg.OrganizationID,
@@ -229,6 +250,7 @@ func (q *Queries) InsertSegLog(ctx context.Context, arg InsertSegLogParams) erro
 		arg.DestObjectKeys,
 		arg.DestTotalRecords,
 		arg.DestTotalSize,
+		arg.RecordEstimate,
 		arg.Metadata,
 	)
 	return err
