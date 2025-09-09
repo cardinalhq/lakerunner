@@ -20,6 +20,7 @@ import (
 
 	"github.com/segmentio/kafka-go"
 	"github.com/segmentio/kafka-go/sasl"
+	"github.com/segmentio/kafka-go/sasl/plain"
 	"github.com/segmentio/kafka-go/sasl/scram"
 )
 
@@ -111,6 +112,12 @@ func (f *Factory) createSASLMechanism() (sasl.Mechanism, error) {
 		return scram.Mechanism(scram.SHA256, f.config.SASLUsername, f.config.SASLPassword)
 	case "SCRAM-SHA-512":
 		return scram.Mechanism(scram.SHA512, f.config.SASLUsername, f.config.SASLPassword)
+	case "PLAIN":
+		// Support for GCP Managed Kafka and other SASL/PLAIN systems
+		return plain.Mechanism{
+			Username: f.config.SASLUsername,
+			Password: f.config.SASLPassword,
+		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported SASL mechanism: %s", f.config.SASLMechanism)
 	}

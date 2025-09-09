@@ -21,9 +21,9 @@ type Config struct {
 	// Broker configuration
 	Brokers []string `mapstructure:"brokers"`
 
-	// SASL/SCRAM authentication
+	// SASL authentication
 	SASLEnabled   bool   `mapstructure:"sasl_enabled"`
-	SASLMechanism string `mapstructure:"sasl_mechanism"` // "SCRAM-SHA-256" or "SCRAM-SHA-512"
+	SASLMechanism string `mapstructure:"sasl_mechanism"` // "PLAIN", "SCRAM-SHA-256" or "SCRAM-SHA-512"
 	SASLUsername  string `mapstructure:"sasl_username"`
 	SASLPassword  string `mapstructure:"sasl_password"`
 
