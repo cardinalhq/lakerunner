@@ -19,7 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
+	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"io"
 	"testing"
 	"time"
@@ -73,9 +73,9 @@ func TestNewIngestProtoLogsReader_EmptyData(t *testing.T) {
 func TestIngestProtoLogsReader_EmptySlice(t *testing.T) {
 	syntheticData := createSyntheticLogData()
 	opts := ReaderOptions{
-		SignalType:         SignalTypeLogs,
-		BatchSize:          1,
-		TrieClusterManager: fingerprinter.NewTrieClusterManager(0.5),
+		SignalType:        SignalTypeLogs,
+		BatchSize:         1,
+		ExemplarProcessor: exemplar.NewProcessor(exemplar.Config{}, nil),
 	}
 	reader, err := NewIngestProtoLogsReader(bytes.NewReader(syntheticData), opts)
 	require.NoError(t, err)
@@ -93,9 +93,9 @@ func TestIngestProtoLogsReader_EmptySlice(t *testing.T) {
 func TestIngestProtoLogsReader_Close(t *testing.T) {
 	syntheticData := createSyntheticLogData()
 	opts := ReaderOptions{
-		SignalType:         SignalTypeLogs,
-		BatchSize:          1,
-		TrieClusterManager: fingerprinter.NewTrieClusterManager(0.5),
+		SignalType:        SignalTypeLogs,
+		BatchSize:         1,
+		ExemplarProcessor: exemplar.NewProcessor(exemplar.Config{}, nil),
 	}
 	reader, err := NewIngestProtoLogsReader(bytes.NewReader(syntheticData), opts)
 	require.NoError(t, err)
@@ -248,9 +248,9 @@ func TestIngestProtoLogsReader_SyntheticData(t *testing.T) {
 	reader := bytes.NewReader(syntheticData)
 
 	opts := ReaderOptions{
-		SignalType:         SignalTypeLogs,
-		BatchSize:          1000,
-		TrieClusterManager: fingerprinter.NewTrieClusterManager(0.5),
+		SignalType:        SignalTypeLogs,
+		BatchSize:         1000,
+		ExemplarProcessor: exemplar.NewProcessor(exemplar.Config{}, nil),
 	}
 	protoReader, err := NewIngestProtoLogsReader(reader, opts)
 	require.NoError(t, err)
@@ -384,9 +384,9 @@ func TestIngestProtoLogsReader_SyntheticDataFields(t *testing.T) {
 	reader := bytes.NewReader(syntheticData)
 
 	opts := ReaderOptions{
-		SignalType:         SignalTypeLogs,
-		BatchSize:          1000,
-		TrieClusterManager: fingerprinter.NewTrieClusterManager(0.5),
+		SignalType:        SignalTypeLogs,
+		BatchSize:         1000,
+		ExemplarProcessor: exemplar.NewProcessor(exemplar.Config{}, nil),
 	}
 	protoReader, err := NewIngestProtoLogsReader(reader, opts)
 	require.NoError(t, err)
@@ -527,9 +527,9 @@ func TestIngestProtoLogsReader_SyntheticStructuredData(t *testing.T) {
 	// Test IngestProtoLogsReader with this structured data
 	reader := bytes.NewReader(data)
 	opts := ReaderOptions{
-		SignalType:         SignalTypeLogs,
-		BatchSize:          1,
-		TrieClusterManager: fingerprinter.NewTrieClusterManager(0.5),
+		SignalType:        SignalTypeLogs,
+		BatchSize:         1,
+		ExemplarProcessor: exemplar.NewProcessor(exemplar.Config{}, nil),
 	}
 	protoReader, err := NewIngestProtoLogsReader(reader, opts)
 	require.NoError(t, err)
@@ -688,10 +688,11 @@ func TestIngestProtoLogsReader_MultiResourceSyntheticData(t *testing.T) {
 	require.NoError(t, err)
 
 	reader := bytes.NewReader(data)
+
 	opts := ReaderOptions{
-		SignalType:         SignalTypeLogs,
-		BatchSize:          1,
-		TrieClusterManager: fingerprinter.NewTrieClusterManager(0.5),
+		SignalType:        SignalTypeLogs,
+		BatchSize:         1,
+		ExemplarProcessor: exemplar.NewProcessor(exemplar.Config{}, nil),
 	}
 	protoReader, err := NewIngestProtoLogsReader(reader, opts)
 	require.NoError(t, err)

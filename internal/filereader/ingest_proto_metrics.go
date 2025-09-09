@@ -17,6 +17,7 @@ package filereader
 import (
 	"context"
 	"fmt"
+	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"io"
 	"log/slog"
 	"maps"
@@ -45,7 +46,9 @@ type IngestProtoMetricsReader struct {
 	batchSize int
 
 	// Store the original OTEL metrics for exemplar processing
-	otelMetrics *pmetric.Metrics
+	orgId             string
+	otelMetrics       *pmetric.Metrics
+	exemplarProcessor *exemplar.Processor
 
 	// Streaming iterator state for metrics
 	resourceIndex  int
@@ -58,29 +61,32 @@ var _ Reader = (*IngestProtoMetricsReader)(nil)
 var _ OTELMetricsProvider = (*IngestProtoMetricsReader)(nil)
 
 // NewIngestProtoMetricsReader creates a new IngestProtoMetricsReader for the given io.Reader.
-func NewIngestProtoMetricsReader(reader io.Reader, batchSize int) (*IngestProtoMetricsReader, error) {
+func NewIngestProtoMetricsReader(reader io.Reader, opts ReaderOptions) (*IngestProtoMetricsReader, error) {
 	metrics, err := parseProtoToOtelMetrics(reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse proto to OTEL metrics: %w", err)
 	}
 
-	return NewIngestProtoMetricsReaderFromMetrics(metrics, batchSize)
+	return NewIngestProtoMetricsReaderFromMetrics(metrics, opts)
 }
 
 // NewIngestProtoMetricsReaderFromMetrics creates a new IngestProtoMetricsReader from pre-parsed OTEL metrics.
 // This is useful when you need to access the raw OTEL structure for processing (e.g., exemplars)
 // while also reading rows from the same data.
-func NewIngestProtoMetricsReaderFromMetrics(metrics *pmetric.Metrics, batchSize int) (*IngestProtoMetricsReader, error) {
+func NewIngestProtoMetricsReaderFromMetrics(metrics *pmetric.Metrics, opts ReaderOptions) (*IngestProtoMetricsReader, error) {
 	if metrics == nil {
 		return nil, fmt.Errorf("metrics cannot be nil")
 	}
-	if batchSize <= 0 {
+	batchSize := opts.BatchSize
+	if opts.BatchSize <= 0 {
 		batchSize = 1000 // Default batch size
 	}
 
 	return &IngestProtoMetricsReader{
-		otelMetrics: metrics,
-		batchSize:   batchSize,
+		otelMetrics:       metrics,
+		orgId:             opts.OrgID,
+		exemplarProcessor: opts.ExemplarProcessor,
+		batchSize:         batchSize,
 	}, nil
 }
 
@@ -148,6 +154,12 @@ func (r *IngestProtoMetricsReader) getMetricRow(ctx context.Context, row Row) er
 					))
 					dropped, err := r.buildDatapointRow(ctx, row, rm, sm, metric, r.datapointIndex)
 					r.datapointIndex++
+					if r.exemplarProcessor != nil {
+						err = r.exemplarProcessor.ProcessMetrics(ctx, r.orgId, rm, sm, metric)
+						if err != nil {
+							continue // Skip exemplar errors
+						}
+					}
 
 					if err != nil {
 						slog.Error("Failed to build datapoint row", "error", err)

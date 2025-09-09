@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
 	"io"
 	"os"
 	"strconv"
@@ -340,7 +339,6 @@ func TestIngestProtoLogsReader_WithTranslator(t *testing.T) {
 
 	// Create base proto reader
 	options := ReaderOptions{SignalType: SignalTypeLogs}
-	options.TrieClusterManager = fingerprinter.NewTrieClusterManager(0.5)
 	baseReader, err := createProtoBinaryGzReader(filename, options)
 	require.NoError(t, err)
 	defer baseReader.Close()

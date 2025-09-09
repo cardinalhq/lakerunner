@@ -86,7 +86,11 @@ func TestIngestProtoMetrics_New_InvalidData(t *testing.T) {
 	invalidData := []byte("not a protobuf")
 	reader := bytes.NewReader(invalidData)
 
-	_, err := NewIngestProtoMetricsReader(reader, 1000)
+	opts := ReaderOptions{
+		BatchSize:         1000,
+		ExemplarProcessor: nil,
+	}
+	_, err := NewIngestProtoMetricsReader(reader, opts)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to parse proto to OTEL metrics")
 }
@@ -95,7 +99,11 @@ func TestIngestProtoMetrics_New_EmptyData(t *testing.T) {
 	// Test with empty data
 	emptyReader := bytes.NewReader([]byte{})
 
-	reader, err := NewIngestProtoMetricsReader(emptyReader, 1000)
+	opts := ReaderOptions{
+		BatchSize:         1000,
+		ExemplarProcessor: nil,
+	}
+	reader, err := NewIngestProtoMetricsReader(emptyReader, opts)
 	// Empty data may create a valid but empty metrics object
 	if err != nil {
 		assert.Contains(t, err.Error(), "failed to parse proto to OTEL metrics")
@@ -113,7 +121,11 @@ func TestIngestProtoMetrics_New_EmptyData(t *testing.T) {
 
 func TestIngestProtoMetrics_EmptySlice(t *testing.T) {
 	syntheticData := createSimpleSyntheticMetrics()
-	reader, err := NewIngestProtoMetricsReader(bytes.NewReader(syntheticData), 1000)
+	opts := ReaderOptions{
+		BatchSize:         1000,
+		ExemplarProcessor: nil,
+	}
+	reader, err := NewIngestProtoMetricsReader(bytes.NewReader(syntheticData), opts)
 	require.NoError(t, err)
 	defer reader.Close()
 
@@ -126,7 +138,11 @@ func TestIngestProtoMetrics_EmptySlice(t *testing.T) {
 
 func TestIngestProtoMetrics_Close(t *testing.T) {
 	syntheticData := createSimpleSyntheticMetrics()
-	reader, err := NewIngestProtoMetricsReader(bytes.NewReader(syntheticData), 1000)
+	opts := ReaderOptions{
+		BatchSize:         1000,
+		ExemplarProcessor: nil,
+	}
+	reader, err := NewIngestProtoMetricsReader(bytes.NewReader(syntheticData), opts)
 	require.NoError(t, err)
 
 	// Should be able to read before closing
@@ -175,7 +191,11 @@ func TestIngestProtoMetrics_RowReusedAndCleared(t *testing.T) {
 	data, err := marshaler.MarshalMetrics(metrics)
 	require.NoError(t, err)
 
-	reader, err := NewIngestProtoMetricsReader(bytes.NewReader(data), 1)
+	opts := ReaderOptions{
+		BatchSize:         1,
+		ExemplarProcessor: nil,
+	}
+	reader, err := NewIngestProtoMetricsReader(bytes.NewReader(data), opts)
 	require.NoError(t, err)
 	defer reader.Close()
 
@@ -239,7 +259,11 @@ func TestIngestProtoMetrics_ExponentialHistogram(t *testing.T) {
 	ex.SetSpanID(pcommon.SpanID([8]byte{2}))
 	ex.FilteredAttributes().PutStr("foo", "bar")
 
-	reader, err := NewIngestProtoMetricsReaderFromMetrics(&metrics, 1000)
+	opts := ReaderOptions{
+		BatchSize:         1000,
+		ExemplarProcessor: nil,
+	}
+	reader, err := NewIngestProtoMetricsReaderFromMetrics(&metrics, opts)
 	require.NoError(t, err)
 	defer reader.Close()
 
@@ -419,7 +443,11 @@ func TestIngestProtoMetrics_SyntheticMultiTypeMetrics(t *testing.T) {
 	require.NoError(t, err, "Should successfully marshal metrics")
 
 	reader := bytes.NewReader(data)
-	protoReader, err := NewIngestProtoMetricsReader(reader, 1000)
+	opts := ReaderOptions{
+		BatchSize:         1000,
+		ExemplarProcessor: nil,
+	}
+	protoReader, err := NewIngestProtoMetricsReader(reader, opts)
 	require.NoError(t, err)
 	require.NotNil(t, protoReader)
 	defer protoReader.Close()
@@ -466,7 +494,7 @@ func TestIngestProtoMetrics_SyntheticMultiTypeMetrics(t *testing.T) {
 	assert.Equal(t, 2, metricNames["http_request_duration_seconds"], "Should have 2 duration datapoints")
 
 	// Test batched reading with a new reader instance
-	protoReader2, err := NewIngestProtoMetricsReader(bytes.NewReader(data), 1000)
+	protoReader2, err := NewIngestProtoMetricsReader(bytes.NewReader(data), opts)
 	require.NoError(t, err)
 	defer protoReader2.Close()
 
@@ -496,7 +524,10 @@ func TestIngestProtoMetrics_SyntheticMultiTypeMetrics(t *testing.T) {
 	assert.Equal(t, len(allRows), totalBatchedRows, "Batched reading should read same number of rows")
 
 	// Test single row reading
-	protoReader3, err := NewIngestProtoMetricsReader(bytes.NewReader(data), 1)
+	opts1 := ReaderOptions{
+		BatchSize: 1,
+	}
+	protoReader3, err := NewIngestProtoMetricsReader(bytes.NewReader(data), opts1)
 	require.NoError(t, err)
 	defer protoReader3.Close()
 
@@ -629,7 +660,11 @@ func TestIngestProtoMetrics_SyntheticMultiResourceMetrics(t *testing.T) {
 	require.NoError(t, err)
 
 	reader := bytes.NewReader(data)
-	protoReader, err := NewIngestProtoMetricsReader(reader, 1000)
+	opts := ReaderOptions{
+		BatchSize:         1000,
+		ExemplarProcessor: nil,
+	}
+	protoReader, err := NewIngestProtoMetricsReader(reader, opts)
 	require.NoError(t, err)
 	defer protoReader.Close()
 
@@ -735,7 +770,11 @@ func TestIngestProtoMetrics_SyntheticEdgeCases(t *testing.T) {
 	require.NoError(t, err)
 
 	reader := bytes.NewReader(data)
-	protoReader, err := NewIngestProtoMetricsReader(reader, 1000)
+	opts := ReaderOptions{
+		BatchSize:         1000,
+		ExemplarProcessor: nil,
+	}
+	protoReader, err := NewIngestProtoMetricsReader(reader, opts)
 	require.NoError(t, err)
 	defer protoReader.Close()
 
@@ -777,7 +816,11 @@ func TestIngestProtoMetrics_HistogramAlwaysHasSketch(t *testing.T) {
 	// This test verifies that histograms don't cause "Empty sketch without valid rollup_sum" errors
 
 	syntheticData := createSimpleSyntheticMetrics()
-	reader, err := NewIngestProtoMetricsReader(bytes.NewReader(syntheticData), 1000)
+	opts := ReaderOptions{
+		BatchSize:         1000,
+		ExemplarProcessor: nil,
+	}
+	reader, err := NewIngestProtoMetricsReader(bytes.NewReader(syntheticData), opts)
 	require.NoError(t, err)
 	defer reader.Close()
 
@@ -803,7 +846,11 @@ func TestIngestProtoMetrics_HistogramAlwaysHasSketch(t *testing.T) {
 func TestIngestProtoMetrics_ContractCompliance(t *testing.T) {
 	// Test that IngestProtoMetricsReader complies with the 11-point contract
 	syntheticData := createSimpleSyntheticMetrics()
-	reader, err := NewIngestProtoMetricsReader(bytes.NewReader(syntheticData), 1000)
+	opts := ReaderOptions{
+		BatchSize:         1000,
+		ExemplarProcessor: nil,
+	}
+	reader, err := NewIngestProtoMetricsReader(bytes.NewReader(syntheticData), opts)
 	require.NoError(t, err)
 	defer reader.Close()
 

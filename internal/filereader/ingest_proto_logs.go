@@ -17,7 +17,9 @@ package filereader
 import (
 	"context"
 	"fmt"
+	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
+	"github.com/cardinalhq/oteltools/pkg/translate"
 	"io"
 	"maps"
 
@@ -43,7 +45,9 @@ type IngestProtoLogsReader struct {
 	resourceIndex      int
 	scopeIndex         int
 	logIndex           int
+	exemplarProcessor  *exemplar.Processor
 	trieClusterManager *fingerprinter.TrieClusterManager
+	orgId              string
 }
 
 var _ Reader = (*IngestProtoLogsReader)(nil)
@@ -57,10 +61,11 @@ func NewIngestProtoLogsReader(reader io.Reader, opts ReaderOptions) (*IngestProt
 	}
 
 	protoReader := &IngestProtoLogsReader{
-		batchSize: batchSize,
+		batchSize:         batchSize,
+		exemplarProcessor: opts.ExemplarProcessor,
+		orgId:             opts.OrgID,
 	}
 
-	protoReader.trieClusterManager = opts.TrieClusterManager
 	logs, err := parseProtoToOtelLogs(reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse proto to OTEL logs: %w", err)
@@ -79,7 +84,7 @@ func (r *IngestProtoLogsReader) Next(ctx context.Context) (*Batch, error) {
 	batch := pipeline.GetBatch()
 
 	for batch.Len() < r.batchSize {
-		row, err := r.getLogRow()
+		row, err := r.getLogRow(ctx)
 		if err != nil {
 			if err == io.EOF {
 				if batch.Len() == 0 {
@@ -113,7 +118,7 @@ func (r *IngestProtoLogsReader) Next(ctx context.Context) (*Batch, error) {
 }
 
 // getLogRow handles reading the next log row.
-func (r *IngestProtoLogsReader) getLogRow() (Row, error) {
+func (r *IngestProtoLogsReader) getLogRow(ctx context.Context) (Row, error) {
 	if r.logs == nil {
 		return nil, io.EOF
 	}
@@ -128,6 +133,12 @@ func (r *IngestProtoLogsReader) getLogRow() (Row, error) {
 			if r.logIndex < sl.LogRecords().Len() {
 				logRecord := sl.LogRecords().At(r.logIndex)
 				row := r.buildLogRow(rl, sl, logRecord)
+				if r.exemplarProcessor != nil {
+					err := r.exemplarProcessor.ProcessLogs(ctx, r.orgId, rl, sl, logRecord)
+					if err != nil {
+						continue // Skip exemplar errors
+					}
+				}
 				r.logIndex++
 				return r.processRow(row)
 			}
@@ -167,16 +178,17 @@ func (r *IngestProtoLogsReader) buildLogRow(rl plog.ResourceLogs, sl plog.ScopeL
 	})
 
 	message := logRecord.Body().AsString()
-	ret["_cardinalhq.message"] = message
-	ret["_cardinalhq.timestamp"] = logRecord.Timestamp().AsTime().UnixMilli()
+	ret[translate.CardinalFieldMessage] = message
+	ret[translate.CardinalFieldTimestamp] = logRecord.Timestamp().AsTime().UnixMilli()
 	ret["observed_timestamp"] = logRecord.ObservedTimestamp().AsTime().UnixMilli()
 	ret["_cardinalhq.level"] = logRecord.SeverityText()
 	ret["severity_number"] = int64(logRecord.SeverityNumber())
 	if r.trieClusterManager != nil {
 		fingerprint, _, _, err := fingerprinter.Fingerprint(message, r.trieClusterManager)
 		if err == nil {
-			ret["_cardinalhq.fingerprint"] = fmt.Sprintf("%d", fingerprint)
+			ret[translate.CardinalFieldFingerprint] = fmt.Sprintf("%d", fingerprint)
 		}
+		logRecord.Attributes().PutInt(translate.CardinalFieldFingerprint, fingerprint)
 	}
 	return ret
 }
