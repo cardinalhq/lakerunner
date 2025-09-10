@@ -37,7 +37,6 @@ type logReaderStackResult struct {
 	DownloadedFiles   []string
 	ProcessedSegments []lrdb.LogSeg // Segments that were actually processed
 	HeadReader        filereader.Reader
-	MergedReader      filereader.Reader
 }
 
 func createLogReaderStack(
@@ -111,19 +110,11 @@ func createLogReaderStack(
 		processedSegments = append(processedSegments, row)
 	}
 
-	var finalReader filereader.Reader
-	var mergedReader filereader.Reader
-
-	if len(readers) == 1 {
-		finalReader = readers[0]
-	} else if len(readers) > 1 {
-		keyProvider := &filereader.TimestampSortKeyProvider{}
-		multiReader, err := filereader.NewMergesortReader(ctx, readers, keyProvider, 1000)
-		if err != nil {
-			return nil, fmt.Errorf("creating mergesort reader: %w", err)
-		}
-		finalReader = multiReader
-		mergedReader = multiReader
+	// Always use merge sort reader for consistency
+	keyProvider := &filereader.TimestampSortKeyProvider{}
+	mergedReader, err := filereader.NewMergesortReader(ctx, readers, keyProvider, 1000)
+	if err != nil {
+		return nil, fmt.Errorf("creating mergesort reader: %w", err)
 	}
 
 	return &logReaderStackResult{
@@ -131,17 +122,16 @@ func createLogReaderStack(
 		Files:             files,
 		DownloadedFiles:   downloadedFiles,
 		ProcessedSegments: processedSegments,
-		HeadReader:        finalReader,
-		MergedReader:      mergedReader,
+		HeadReader:        mergedReader,
 	}, nil
 }
 
 func (result *logReaderStackResult) Close(ctx context.Context) {
 	ll := logctx.FromContext(ctx)
 
-	if result.MergedReader != nil {
-		if err := result.MergedReader.Close(); err != nil {
-			ll.Error("Failed to close merged reader", slog.Any("error", err))
+	if result.HeadReader != nil {
+		if err := result.HeadReader.Close(); err != nil {
+			ll.Error("Failed to close head reader", slog.Any("error", err))
 		}
 	}
 	for _, reader := range result.Readers {

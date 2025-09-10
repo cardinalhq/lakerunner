@@ -70,7 +70,7 @@ func processLogsWithSorting(ctx context.Context, params logProcessingParams) (*l
 	}
 
 	// Write from reader to writer
-	if err := writeFromReader(ctx, readerStack.MergedReader, writer); err != nil {
+	if err := writeFromReader(ctx, readerStack.HeadReader, writer); err != nil {
 		writer.Abort()
 		return nil, fmt.Errorf("write from reader: %w", err)
 	}
