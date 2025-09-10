@@ -42,7 +42,7 @@ func ensureKafkaTopics() error {
 	}
 
 	var kafkaTopicsFile string
-	
+
 	// Check KAFKA_TOPICS_FILE environment variable first
 	if kafkaTopicsFileEnv := os.Getenv("KAFKA_TOPICS_FILE"); kafkaTopicsFileEnv != "" {
 		kafkaTopicsFile = kafkaTopicsFileEnv
@@ -78,7 +78,7 @@ func ensureKafkaTopics() error {
 
 	// Use existing Kafka factory
 	factory := fly.NewFactory(&appConfig.Fly)
-	
+
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -147,12 +147,12 @@ func createTopics(ctx context.Context, factory *fly.Factory, topics []TopicConfi
 
 		// Add custom config
 		for key, value := range topic.Config {
-			kafkaConfig.ConfigEntries = append(kafkaConfig.ConfigEntries, 
+			kafkaConfig.ConfigEntries = append(kafkaConfig.ConfigEntries,
 				kafka.ConfigEntry{ConfigName: key, ConfigValue: value})
 		}
 
 		toCreate = append(toCreate, kafkaConfig)
-		slog.Info("Will create topic", 
+		slog.Info("Will create topic",
 			slog.String("name", topic.Name),
 			slog.Int("partitions", topic.Partitions))
 	}
@@ -180,7 +180,7 @@ func validateKafkaConfig() error {
 
 	// Check individual broker configuration
 	var missing []string
-	
+
 	// For Kafka, we require at least one broker
 	if os.Getenv("LAKERUNNER_FLY_BROKERS") == "" {
 		missing = append(missing, "LAKERUNNER_FLY_BROKERS")
