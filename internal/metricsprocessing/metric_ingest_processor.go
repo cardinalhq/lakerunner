@@ -48,15 +48,15 @@ type IngestStore interface {
 	GetMetricEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32) int64
 }
 
-// TimeBin represents a 60-second time bin with its writer and metadata
+// TimeBin represents a 60-second file group containing 10s aggregated data points
 type TimeBin struct {
-	StartTs int64 // Start timestamp of the bin (inclusive)
-	EndTs   int64 // End timestamp of the bin (exclusive)
+	StartTs int64 // Start timestamp of the file group (inclusive)
+	EndTs   int64 // End timestamp of the file group (exclusive)
 	Writer  parquetwriter.ParquetWriter
 	Result  *parquetwriter.Result // Result after writer is closed
 }
 
-// TimeBinManager manages multiple time bins
+// TimeBinManager manages multiple file groups (60s-aligned files containing 10s data)
 type TimeBinManager struct {
 	bins        map[int64]*TimeBin // Key is start timestamp (60s aligned)
 	tmpDir      string
@@ -462,7 +462,7 @@ func (p *MetricIngestProcessor) createUnifiedReader(ctx context.Context, readers
 	return finalReader, nil
 }
 
-// processRowsWithTimeBinning processes rows using 60s time-based binning
+// processRowsWithTimeBinning groups 10s aggregated data into 60s-aligned files
 func (p *MetricIngestProcessor) processRowsWithTimeBinning(ctx context.Context, reader filereader.Reader, tmpDir string, storageProfile storageprofile.StorageProfile) (map[int64]*TimeBin, error) {
 	ll := logctx.FromContext(ctx)
 
@@ -503,13 +503,14 @@ func (p *MetricIngestProcessor) processRowsWithTimeBinning(ctx context.Context, 
 					continue
 				}
 
-				// Calculate 60-second aligned bin
-				binStartTs := (ts / 60000) * 60000 // Truncate to 60s boundary
+				// Group 10s aggregated data into 60s-aligned files
+				// Since data is already aggregated to 10s, we group 6 data points per file
+				fileGroupStartTs := (ts / 60000) * 60000
 
 				// Get or create time bin
-				bin, err := binManager.getOrCreateBin(ctx, binStartTs)
+				bin, err := binManager.getOrCreateBin(ctx, fileGroupStartTs)
 				if err != nil {
-					ll.Error("Failed to get/create time bin", slog.Int64("binStartTs", binStartTs), slog.Any("error", err))
+					ll.Error("Failed to get/create time bin", slog.Int64("fileGroupStartTs", fileGroupStartTs), slog.Any("error", err))
 					continue
 				}
 
@@ -522,8 +523,8 @@ func (p *MetricIngestProcessor) processRowsWithTimeBinning(ctx context.Context, 
 
 				// Write to the bin's writer
 				if err := bin.Writer.WriteBatch(singleRowBatch); err != nil {
-					ll.Error("Failed to write row to time bin",
-						slog.Int64("binStartTs", binStartTs),
+					ll.Error("Failed to write row to file group",
+						slog.Int64("fileGroupStartTs", fileGroupStartTs),
 						slog.Any("error", err))
 				} else {
 					totalRowsProcessed++
@@ -539,9 +540,9 @@ func (p *MetricIngestProcessor) processRowsWithTimeBinning(ctx context.Context, 
 		}
 	}
 
-	ll.Info("Time binning completed",
+	ll.Info("File grouping completed",
 		slog.Int64("rowsProcessed", totalRowsProcessed),
-		slog.Int("binsCreated", len(binManager.bins)))
+		slog.Int("fileGroupsCreated", len(binManager.bins)))
 
 	// Close all writers and collect results
 	for binStartTs, bin := range binManager.bins {
@@ -605,7 +606,7 @@ func (p *MetricIngestProcessor) uploadAndCreateSegments(ctx context.Context, sto
 
 	for binStartTs, bin := range timeBins {
 		if bin.Result == nil || bin.Result.RecordCount == 0 {
-			ll.Debug("Skipping empty time bin", slog.Int64("binStartTs", binStartTs))
+			ll.Debug("Skipping empty file group", slog.Int64("fileGroupStartTs", binStartTs))
 			continue
 		}
 
