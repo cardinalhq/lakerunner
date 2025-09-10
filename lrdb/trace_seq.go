@@ -16,9 +16,6 @@ package lrdb
 
 import (
 	"context"
-	"sort"
-
-	"github.com/google/uuid"
 )
 
 func (q *Store) InsertTraceSegment(ctx context.Context, params InsertTraceSegmentDirectParams) error {
@@ -31,21 +28,18 @@ func (q *Store) InsertTraceSegment(ctx context.Context, params InsertTraceSegmen
 // InsertTraceSegmentBatchWithKafkaOffsets inserts multiple trace segments and updates multiple Kafka offsets in a single transaction
 func (q *Store) InsertTraceSegmentBatchWithKafkaOffsets(ctx context.Context, batch TraceSegmentBatch) error {
 	return q.execTx(ctx, func(s *Store) error {
-		// Ensure partitions exist for all segments
 		for _, params := range batch.Segments {
 			if err := s.ensureTraceFPPartition(ctx, "trace_seg", params.OrganizationID, params.Dateint); err != nil {
 				return err
 			}
 		}
 
-		// Convert to batch parameters
-		batchParams := make([]BatchInsertTraceSegsParams, len(batch.Segments))
+		batchParams := make([]batchInsertTraceSegsDirectParams, len(batch.Segments))
 		for i, params := range batch.Segments {
-			batchParams[i] = BatchInsertTraceSegsParams(params)
+			batchParams[i] = batchInsertTraceSegsDirectParams(params)
 		}
 
-		// Insert all segments using batch
-		result := s.BatchInsertTraceSegs(ctx, batchParams)
+		result := s.batchInsertTraceSegsDirect(ctx, batchParams)
 		var insertErr error
 		result.Exec(func(i int, err error) {
 			if err != nil && insertErr == nil {
@@ -56,33 +50,9 @@ func (q *Store) InsertTraceSegmentBatchWithKafkaOffsets(ctx context.Context, bat
 			return insertErr
 		}
 
-		// Update all Kafka offsets using batch operation
 		if len(batch.KafkaOffsets) > 0 {
-			// Sort offsets to prevent deadlocks - consistent lock acquisition order
-			sort.Slice(batch.KafkaOffsets, func(i, j int) bool {
-				a, b := batch.KafkaOffsets[i], batch.KafkaOffsets[j]
-				if a.ConsumerGroup != b.ConsumerGroup {
-					return a.ConsumerGroup < b.ConsumerGroup
-				}
-				if a.Topic != b.Topic {
-					return a.Topic < b.Topic
-				}
-				return a.Partition < b.Partition
-			})
+			SortKafkaOffsets(batch.KafkaOffsets)
 
-			// Extract org and instance from first segment, or use defaults if no segments
-			var orgID uuid.UUID
-			var instanceNum int16
-			if len(batch.Segments) > 0 {
-				orgID = batch.Segments[0].OrganizationID
-				instanceNum = batch.Segments[0].InstanceNum
-			} else {
-				// Use defaults when no segments available
-				orgID = uuid.Nil
-				instanceNum = 0
-			}
-
-			// Convert to batch parameters
 			batchOffsetParams := make([]KafkaJournalBatchUpsertParams, len(batch.KafkaOffsets))
 			for i, offset := range batch.KafkaOffsets {
 				batchOffsetParams[i] = KafkaJournalBatchUpsertParams{
@@ -90,12 +60,11 @@ func (q *Store) InsertTraceSegmentBatchWithKafkaOffsets(ctx context.Context, bat
 					Topic:               offset.Topic,
 					Partition:           offset.Partition,
 					LastProcessedOffset: offset.Offset,
-					OrganizationID:      orgID,
-					InstanceNum:         instanceNum,
+					OrganizationID:      offset.OrganizationID,
+					InstanceNum:         offset.InstanceNum,
 				}
 			}
 
-			// Execute batch upsert
 			result := s.KafkaJournalBatchUpsert(ctx, batchOffsetParams)
 			var offsetErr error
 			result.Exec(func(i int, err error) {

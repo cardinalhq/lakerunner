@@ -25,7 +25,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/prometheus/common/model"
 
-	"github.com/cardinalhq/lakerunner/internal/buffet"
 	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/cardinalhq/lakerunner/promql"
 )
@@ -397,7 +396,7 @@ func (q *QuerierService) lookupMetricsSegments(ctx context.Context,
 
 	var allSegments []SegmentInfo
 
-	fingerprint := buffet.ComputeFingerprint("_cardinalhq.name", be.Metric)
+	fingerprint := computeFingerprint("_cardinalhq.name", be.Metric)
 
 	rows, err := q.mdb.ListMetricSegmentsForQuery(ctx, lrdb.ListMetricSegmentsForQueryParams{
 		Int8range:      startTs,

@@ -13,8 +13,6 @@ import (
 
 type Querier interface {
 	BatchDeleteMetricSegs(ctx context.Context, arg []BatchDeleteMetricSegsParams) *BatchDeleteMetricSegsBatchResults
-	BatchInsertLogSegs(ctx context.Context, arg []BatchInsertLogSegsParams) *BatchInsertLogSegsBatchResults
-	BatchInsertTraceSegs(ctx context.Context, arg []BatchInsertTraceSegsParams) *BatchInsertTraceSegsBatchResults
 	BatchMarkMetricSegsRolledup(ctx context.Context, arg []BatchMarkMetricSegsRolledupParams) *BatchMarkMetricSegsRolledupBatchResults
 	// This will upsert a new log exemplar. Attributes, exemplar, and updated_at are always updated
 	// to the provided values. If old_fingerprint is not 0, it is added to the list of related
@@ -26,11 +24,15 @@ type Querier interface {
 	BatchUpsertExemplarTraces(ctx context.Context, arg []BatchUpsertExemplarTracesParams) *BatchUpsertExemplarTracesBatchResults
 	CompactLogSegments(ctx context.Context, arg CompactLogSegmentsParams) error
 	CompactTraceSegments(ctx context.Context, arg CompactTraceSegmentsParams) error
-	// Retrieves all existing metric pack estimates for EWMA calculations
-	GetAllMetricPackEstimates(ctx context.Context) ([]MetricPackEstimate, error)
+	// Retrieves all pack estimates for a specific signal type
+	GetAllBySignal(ctx context.Context, signal string) ([]GetAllBySignalRow, error)
+	// Retrieves all existing pack estimates for EWMA calculations across all signals
+	GetAllPackEstimates(ctx context.Context) ([]GetAllPackEstimatesRow, error)
 	// Get the most recent segment_journal entry
 	GetLatestSegmentJournal(ctx context.Context) (SegmentJournal, error)
-	GetLogSegmentsForCompaction(ctx context.Context, arg GetLogSegmentsForCompactionParams) ([]GetLogSegmentsForCompactionRow, error)
+	GetLogSeg(ctx context.Context, arg GetLogSegParams) (LogSeg, error)
+	// Retrieves metric pack estimates for EWMA calculations (backward compatibility)
+	GetMetricPackEstimates(ctx context.Context) ([]GetMetricPackEstimatesRow, error)
 	GetMetricSeg(ctx context.Context, arg GetMetricSegParams) (MetricSeg, error)
 	GetMetricSegsByIds(ctx context.Context, arg GetMetricSegsByIdsParams) ([]MetricSeg, error)
 	GetMetricType(ctx context.Context, arg GetMetricTypeParams) (string, error)
@@ -40,13 +42,13 @@ type Querier interface {
 	// Insert a debugging journal entry for segment operations
 	InsertSegmentJournal(ctx context.Context, arg InsertSegmentJournalParams) error
 	InsertTraceSegmentDirect(ctx context.Context, arg InsertTraceSegmentDirectParams) error
+	// Get the last processed offset for a specific consumer group, topic, partition, organization, and instance
+	KafkaGetLastProcessed(ctx context.Context, arg KafkaGetLastProcessedParams) (int64, error)
 	// Insert or update multiple Kafka journal entries in a single batch operation
 	// Only updates if the new offset is greater than the existing one
 	KafkaJournalBatchUpsert(ctx context.Context, arg []KafkaJournalBatchUpsertParams) *KafkaJournalBatchUpsertBatchResults
 	// Get the last processed offset for a specific consumer group, topic, and partition
 	KafkaJournalGetLastProcessed(ctx context.Context, arg KafkaJournalGetLastProcessedParams) (int64, error)
-	// Get the last processed offset for a specific consumer group, topic, partition, organization, and instance
-	KafkaJournalGetLastProcessedWithOrgInstance(ctx context.Context, arg KafkaJournalGetLastProcessedWithOrgInstanceParams) (int64, error)
 	// Insert or update the last processed offset for a consumer group, topic, and partition
 	// Only updates if the new offset is greater than the existing one
 	KafkaJournalUpsert(ctx context.Context, arg KafkaJournalUpsertParams) error
@@ -60,6 +62,7 @@ type Querier interface {
 	ListPromMetrics(ctx context.Context, organizationID uuid.UUID) ([]ListPromMetricsRow, error)
 	// Returns an estimate of the number of log segments, accounting for per-file overhead.
 	LogSegEstimator(ctx context.Context, arg LogSegEstimatorParams) ([]LogSegEstimatorRow, error)
+	MarkLogSegsCompactedByKeys(ctx context.Context, arg MarkLogSegsCompactedByKeysParams) error
 	MarkMetricSegsCompactedByKeys(ctx context.Context, arg MarkMetricSegsCompactedByKeysParams) error
 	MarkMetricSegsRolledupByKeys(ctx context.Context, arg MarkMetricSegsRolledupByKeysParams) error
 	// Returns an estimate of the number of metric segments, accounting for per-file overhead.
@@ -73,8 +76,10 @@ type Querier interface {
 	SignalLockCleanup(ctx context.Context) (int32, error)
 	// Returns an estimate of the number of trace segments, accounting for per-file overhead.
 	TraceSegEstimator(ctx context.Context, arg TraceSegEstimatorParams) ([]TraceSegEstimatorRow, error)
-	// Updates or inserts a single metric pack estimate
+	// Updates or inserts a single metric pack estimate (backward compatibility)
 	UpsertMetricPackEstimate(ctx context.Context, arg UpsertMetricPackEstimateParams) error
+	// Updates or inserts a single pack estimate for any signal type
+	UpsertPackEstimate(ctx context.Context, arg UpsertPackEstimateParams) error
 	UpsertServiceIdentifier(ctx context.Context, arg UpsertServiceIdentifierParams) (UpsertServiceIdentifierRow, error)
 	WorkQueueAddDirect(ctx context.Context, arg WorkQueueAddParams) error
 	WorkQueueClaimDirect(ctx context.Context, arg WorkQueueClaimParams) (WorkQueueClaimRow, error)
@@ -93,6 +98,8 @@ type Querier interface {
 	// Get queue depth for work queue scaling by signal and action
 	WorkQueueScalingDepth(ctx context.Context, arg WorkQueueScalingDepthParams) (interface{}, error)
 	WorkQueueSummary(ctx context.Context) ([]WorkQueueSummaryRow, error)
+	batchInsertLogSegsDirect(ctx context.Context, arg []batchInsertLogSegsDirectParams) *batchInsertLogSegsDirectBatchResults
+	batchInsertTraceSegsDirect(ctx context.Context, arg []batchInsertTraceSegsDirectParams) *batchInsertTraceSegsDirectBatchResults
 	insertLogSegmentDirect(ctx context.Context, arg InsertLogSegmentParams) error
 	insertMetricSegDirect(ctx context.Context, arg InsertMetricSegmentParams) error
 	insertMetricSegsDirect(ctx context.Context, arg []InsertMetricSegsParams) *insertMetricSegsDirectBatchResults

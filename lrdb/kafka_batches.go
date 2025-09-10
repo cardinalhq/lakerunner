@@ -16,20 +16,13 @@ package lrdb
 
 import (
 	"context"
+	"sort"
 
 	"github.com/google/uuid"
 )
 
 // KafkaOffsetUpdate contains the information needed to update the Kafka offset journal
 type KafkaOffsetUpdate struct {
-	ConsumerGroup string
-	Topic         string
-	Partition     int32
-	Offset        int64
-}
-
-// KafkaOffsetUpdateWithOrg contains enhanced Kafka offset information including organization and instance tracking
-type KafkaOffsetUpdateWithOrg struct {
 	ConsumerGroup  string
 	Topic          string
 	Partition      int32
@@ -61,4 +54,20 @@ type SegmentBatcher interface {
 	InsertLogSegmentBatchWithKafkaOffsets(ctx context.Context, batch LogSegmentBatch) error
 	InsertMetricSegmentBatchWithKafkaOffsets(ctx context.Context, batch MetricSegmentBatch) error
 	InsertTraceSegmentBatchWithKafkaOffsets(ctx context.Context, batch TraceSegmentBatch) error
+}
+
+// SortKafkaOffsets sorts Kafka offsets to prevent deadlocks in database operations.
+// The sort order is: consumer group, then topic, then partition.
+// This ensures consistent lock acquisition order across all database operations.
+func SortKafkaOffsets(offsets []KafkaOffsetUpdate) {
+	sort.Slice(offsets, func(i, j int) bool {
+		a, b := offsets[i], offsets[j]
+		if a.ConsumerGroup != b.ConsumerGroup {
+			return a.ConsumerGroup < b.ConsumerGroup
+		}
+		if a.Topic != b.Topic {
+			return a.Topic < b.Topic
+		}
+		return a.Partition < b.Partition
+	})
 }

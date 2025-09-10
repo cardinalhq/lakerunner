@@ -7,7 +7,6 @@ package lrdb
 
 import (
 	"context"
-	"time"
 
 	"github.com/google/uuid"
 )
@@ -20,7 +19,7 @@ WITH
      WHERE organization_id = $1
        AND dateint        = $2
        AND instance_num   = $5
-       AND segment_id     = ANY($12::bigint[])
+       AND segment_id     = ANY($14::bigint[])
   ),
   fingerprint_array AS (
     SELECT coalesce(
@@ -34,7 +33,7 @@ WITH
      WHERE organization_id = $1
        AND dateint        = $2
        AND instance_num   = $5
-       AND segment_id     = ANY($12::bigint[])
+       AND segment_id     = ANY($14::bigint[])
   )
 INSERT INTO log_seg (
   organization_id,
@@ -47,7 +46,9 @@ INSERT INTO log_seg (
   file_size,
   ts_range,
   created_by,
-  fingerprints
+  fingerprints,
+  published,
+  compacted
 )
 SELECT
   $1,
@@ -60,7 +61,9 @@ SELECT
   $8,
   int8range($9, $10, '[)'),
   $11,
-  fa.fingerprints
+  fa.fingerprints,
+  $12,
+  $13
 FROM fingerprint_array AS fa
 `
 
@@ -76,6 +79,8 @@ type CompactLogSegmentsParams struct {
 	NewStartTs     int64     `json:"new_start_ts"`
 	NewEndTs       int64     `json:"new_end_ts"`
 	CreatedBy      CreatedBy `json:"created_by"`
+	Published      bool      `json:"published"`
+	Compacted      bool      `json:"compacted"`
 	OldSegmentIds  []int64   `json:"old_segment_ids"`
 }
 
@@ -92,97 +97,57 @@ func (q *Queries) CompactLogSegments(ctx context.Context, arg CompactLogSegments
 		arg.NewStartTs,
 		arg.NewEndTs,
 		arg.CreatedBy,
+		arg.Published,
+		arg.Compacted,
 		arg.OldSegmentIds,
 	)
 	return err
 }
 
-const getLogSegmentsForCompaction = `-- name: GetLogSegmentsForCompaction :many
-SELECT
-  segment_id,
-  lower(ts_range)::bigint AS start_ts,
-  upper(ts_range)::bigint AS end_ts,
-  file_size,
-  record_count,
-  ingest_dateint,
-  created_at,
-  slot_id
+const getLogSeg = `-- name: GetLogSeg :one
+SELECT organization_id, dateint, segment_id, instance_num, fingerprints, record_count, file_size, ingest_dateint, ts_range, created_by, created_at, slot_id, compacted, published
 FROM log_seg
 WHERE organization_id = $1
-  AND dateint         = $2
-  AND instance_num    = $3
-  AND slot_id         = $4
-  AND file_size > 0
-  AND record_count > 0
-  AND file_size <= $5
-  AND (created_at, segment_id) > ($6, $7::bigint)
-  AND ts_range && int8range($8, $9, '[)')
-ORDER BY created_at, segment_id
-LIMIT $10
+  AND dateint = $2
+  AND segment_id = $3
+  AND instance_num = $4
+  AND slot_id = $5
 `
 
-type GetLogSegmentsForCompactionParams struct {
-	OrganizationID  uuid.UUID `json:"organization_id"`
-	Dateint         int32     `json:"dateint"`
-	InstanceNum     int16     `json:"instance_num"`
-	SlotID          int32     `json:"slot_id"`
-	MaxFileSize     int64     `json:"max_file_size"`
-	CursorCreatedAt time.Time `json:"cursor_created_at"`
-	CursorSegmentID int64     `json:"cursor_segment_id"`
-	HourStartTs     int64     `json:"hour_start_ts"`
-	HourEndTs       int64     `json:"hour_end_ts"`
-	Maxrows         int32     `json:"maxrows"`
+type GetLogSegParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Dateint        int32     `json:"dateint"`
+	SegmentID      int64     `json:"segment_id"`
+	InstanceNum    int16     `json:"instance_num"`
+	SlotID         int32     `json:"slot_id"`
 }
 
-type GetLogSegmentsForCompactionRow struct {
-	SegmentID     int64     `json:"segment_id"`
-	StartTs       int64     `json:"start_ts"`
-	EndTs         int64     `json:"end_ts"`
-	FileSize      int64     `json:"file_size"`
-	RecordCount   int64     `json:"record_count"`
-	IngestDateint int32     `json:"ingest_dateint"`
-	CreatedAt     time.Time `json:"created_at"`
-	SlotID        int32     `json:"slot_id"`
-}
-
-func (q *Queries) GetLogSegmentsForCompaction(ctx context.Context, arg GetLogSegmentsForCompactionParams) ([]GetLogSegmentsForCompactionRow, error) {
-	rows, err := q.db.Query(ctx, getLogSegmentsForCompaction,
+func (q *Queries) GetLogSeg(ctx context.Context, arg GetLogSegParams) (LogSeg, error) {
+	row := q.db.QueryRow(ctx, getLogSeg,
 		arg.OrganizationID,
 		arg.Dateint,
+		arg.SegmentID,
 		arg.InstanceNum,
 		arg.SlotID,
-		arg.MaxFileSize,
-		arg.CursorCreatedAt,
-		arg.CursorSegmentID,
-		arg.HourStartTs,
-		arg.HourEndTs,
-		arg.Maxrows,
 	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []GetLogSegmentsForCompactionRow
-	for rows.Next() {
-		var i GetLogSegmentsForCompactionRow
-		if err := rows.Scan(
-			&i.SegmentID,
-			&i.StartTs,
-			&i.EndTs,
-			&i.FileSize,
-			&i.RecordCount,
-			&i.IngestDateint,
-			&i.CreatedAt,
-			&i.SlotID,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+	var i LogSeg
+	err := row.Scan(
+		&i.OrganizationID,
+		&i.Dateint,
+		&i.SegmentID,
+		&i.InstanceNum,
+		&i.Fingerprints,
+		&i.RecordCount,
+		&i.FileSize,
+		&i.IngestDateint,
+		&i.TsRange,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.SlotID,
+		&i.Compacted,
+		&i.Published,
+	)
+	return i, err
 }
 
 const listLogSegmentsForQuery = `-- name: ListLogSegmentsForQuery :many
@@ -197,9 +162,10 @@ FROM log_seg AS s
     unnest(s.fingerprints) AS t(fp)
 WHERE
     s.organization_id = $1
-  AND s.dateint      = $2
+  AND s.dateint       = $2
+  AND s.published     = true
   AND s.fingerprints && $3::BIGINT[]
-  AND t.fp           = ANY($3::BIGINT[])
+  AND t.fp            = ANY($3::BIGINT[])
   AND ts_range && int8range($4, $5, '[)')
 `
 
@@ -251,6 +217,33 @@ func (q *Queries) ListLogSegmentsForQuery(ctx context.Context, arg ListLogSegmen
 	return items, nil
 }
 
+const markLogSegsCompactedByKeys = `-- name: MarkLogSegsCompactedByKeys :exec
+UPDATE log_seg
+SET compacted = true, published = false
+WHERE organization_id = $1
+  AND dateint         = $2
+  AND instance_num    = $3
+  AND segment_id      = ANY($4::bigint[])
+  AND compacted       = false
+`
+
+type MarkLogSegsCompactedByKeysParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Dateint        int32     `json:"dateint"`
+	InstanceNum    int16     `json:"instance_num"`
+	SegmentIds     []int64   `json:"segment_ids"`
+}
+
+func (q *Queries) MarkLogSegsCompactedByKeys(ctx context.Context, arg MarkLogSegsCompactedByKeysParams) error {
+	_, err := q.db.Exec(ctx, markLogSegsCompactedByKeys,
+		arg.OrganizationID,
+		arg.Dateint,
+		arg.InstanceNum,
+		arg.SegmentIds,
+	)
+	return err
+}
+
 const insertLogSegmentDirect = `-- name: insertLogSegmentDirect :exec
 INSERT INTO log_seg (
   organization_id,
@@ -263,7 +256,9 @@ INSERT INTO log_seg (
   record_count,
   file_size,
   created_by,
-  fingerprints
+  fingerprints,
+  published,
+  compacted
 )
 VALUES (
   $1,
@@ -276,7 +271,9 @@ VALUES (
   $9,
   $10,
   $11,
-  $12::bigint[]
+  $12::bigint[],
+  $13,
+  $14
 )
 `
 
@@ -293,6 +290,8 @@ type InsertLogSegmentParams struct {
 	FileSize       int64     `json:"file_size"`
 	CreatedBy      CreatedBy `json:"created_by"`
 	Fingerprints   []int64   `json:"fingerprints"`
+	Published      bool      `json:"published"`
+	Compacted      bool      `json:"compacted"`
 }
 
 func (q *Queries) insertLogSegmentDirect(ctx context.Context, arg InsertLogSegmentParams) error {
@@ -309,6 +308,8 @@ func (q *Queries) insertLogSegmentDirect(ctx context.Context, arg InsertLogSegme
 		arg.FileSize,
 		arg.CreatedBy,
 		arg.Fingerprints,
+		arg.Published,
+		arg.Compacted,
 	)
 	return err
 }

@@ -125,7 +125,7 @@ func (a *MetricsStatsAccumulator) Finalize() any {
 		"_cardinalhq.name": a.metricNames,
 	}
 
-	// Generate fingerprints using the same approach as buffet
+	// Generate fingerprints using the same approach
 	fingerprintSet := fingerprint.ToFingerprints(tagValuesByName)
 	fingerprints := fingerprintSet.ToSlice()
 	slices.Sort(fingerprints)

@@ -32,7 +32,7 @@ import (
 )
 
 func TestGetHourFromTimestamp(t *testing.T) {
-	compactor := &MetricCompactorProcessor{}
+	compactor := &MetricCompactionProcessor{}
 
 	tests := []struct {
 		name        string
@@ -94,12 +94,12 @@ func (m *mockCompactionStore) GetMetricSeg(ctx context.Context, params lrdb.GetM
 	return args.Get(0).(lrdb.MetricSeg), args.Error(1)
 }
 
-func (m *mockCompactionStore) CompactMetricSegsWithKafkaOffsetsWithOrg(ctx context.Context, params lrdb.CompactMetricSegsParams, kafkaOffsets []lrdb.KafkaOffsetUpdateWithOrg) error {
+func (m *mockCompactionStore) CompactMetricSegsWithKafkaOffsets(ctx context.Context, params lrdb.CompactMetricSegsParams, kafkaOffsets []lrdb.KafkaOffsetUpdate) error {
 	args := m.Called(ctx, params, kafkaOffsets)
 	return args.Error(0)
 }
 
-func (m *mockCompactionStore) KafkaJournalGetLastProcessedWithOrgInstance(ctx context.Context, params lrdb.KafkaJournalGetLastProcessedWithOrgInstanceParams) (int64, error) {
+func (m *mockCompactionStore) KafkaGetLastProcessed(ctx context.Context, params lrdb.KafkaGetLastProcessedParams) (int64, error) {
 	args := m.Called(ctx, params)
 	return args.Get(0).(int64), args.Error(1)
 }
@@ -123,7 +123,7 @@ func (m *mockCompactionStore) InsertSegmentJournal(ctx context.Context, params l
 
 func TestMarkSegmentsAsCompacted(t *testing.T) {
 	ctx := context.Background()
-	compactor := &MetricCompactorProcessor{}
+	compactor := &MetricCompactionProcessor{}
 	mockStore := &mockCompactionStore{}
 	compactor.store = mockStore
 
@@ -186,7 +186,7 @@ func TestMarkSegmentsAsCompacted(t *testing.T) {
 
 func TestGetTargetRecordCount(t *testing.T) {
 	ctx := context.Background()
-	compactor := &MetricCompactorProcessor{}
+	compactor := &MetricCompactionProcessor{}
 	mockStore := &mockCompactionStore{}
 	compactor.store = mockStore
 
@@ -249,7 +249,7 @@ func TestGetTargetRecordCount(t *testing.T) {
 
 func TestAtomicDatabaseUpdate(t *testing.T) {
 	ctx := context.Background()
-	compactor := &MetricCompactorProcessor{}
+	compactor := &MetricCompactionProcessor{}
 	mockStore := &mockCompactionStore{}
 	compactor.store = mockStore
 
@@ -342,7 +342,7 @@ func TestAtomicDatabaseUpdate(t *testing.T) {
 			CreatedBy: lrdb.CreatedByCompact,
 		}
 
-		mockStore.On("CompactMetricSegsWithKafkaOffsetsWithOrg", ctx, expectedParams, mock.MatchedBy(func(offsets []lrdb.KafkaOffsetUpdateWithOrg) bool {
+		mockStore.On("CompactMetricSegsWithKafkaOffsets", ctx, expectedParams, mock.MatchedBy(func(offsets []lrdb.KafkaOffsetUpdate) bool {
 			// Check that offsets contain expected data (don't care about order since sorting is tested separately)
 			if len(offsets) != 3 {
 				return false
@@ -401,7 +401,7 @@ func TestAtomicDatabaseUpdate(t *testing.T) {
 			CreatedBy: lrdb.CreatedByCompact,
 		}
 
-		mockStore.On("CompactMetricSegsWithKafkaOffsetsWithOrg", ctx, expectedParams, []lrdb.KafkaOffsetUpdateWithOrg(nil)).Return(nil).Once()
+		mockStore.On("CompactMetricSegsWithKafkaOffsets", ctx, expectedParams, []lrdb.KafkaOffsetUpdate(nil)).Return(nil).Once()
 
 		err := compactor.atomicDatabaseUpdate(ctx, oldSegments, newSegments, nil, key)
 
@@ -421,7 +421,7 @@ func TestAtomicDatabaseUpdate(t *testing.T) {
 	t.Run("database operation error", func(t *testing.T) {
 		expectedError := assert.AnError
 
-		mockStore.On("CompactMetricSegsWithKafkaOffsetsWithOrg", ctx, mock.Anything, []lrdb.KafkaOffsetUpdateWithOrg(nil)).Return(expectedError).Once()
+		mockStore.On("CompactMetricSegsWithKafkaOffsets", ctx, mock.Anything, []lrdb.KafkaOffsetUpdate(nil)).Return(expectedError).Once()
 
 		err := compactor.atomicDatabaseUpdate(ctx, oldSegments, newSegments, nil, key)
 
@@ -435,13 +435,13 @@ func TestSortKafkaOffsets(t *testing.T) {
 	orgID := uuid.New()
 
 	t.Run("empty slice", func(t *testing.T) {
-		var offsets []lrdb.KafkaOffsetUpdateWithOrg
-		sortKafkaOffsets(offsets)
+		var offsets []lrdb.KafkaOffsetUpdate
+		lrdb.SortKafkaOffsets(offsets)
 		assert.Empty(t, offsets)
 	})
 
 	t.Run("single offset", func(t *testing.T) {
-		offsets := []lrdb.KafkaOffsetUpdateWithOrg{
+		offsets := []lrdb.KafkaOffsetUpdate{
 			{
 				Topic:          "topic1",
 				Partition:      0,
@@ -451,85 +451,15 @@ func TestSortKafkaOffsets(t *testing.T) {
 				Offset:         100,
 			},
 		}
-		expected := make([]lrdb.KafkaOffsetUpdateWithOrg, len(offsets))
+		expected := make([]lrdb.KafkaOffsetUpdate, len(offsets))
 		copy(expected, offsets)
 
-		sortKafkaOffsets(offsets)
+		lrdb.SortKafkaOffsets(offsets)
 		assert.Equal(t, expected, offsets)
 	})
 
-	t.Run("sort by topic", func(t *testing.T) {
-		offsets := []lrdb.KafkaOffsetUpdateWithOrg{
-			{
-				Topic:          "ztopic",
-				Partition:      0,
-				ConsumerGroup:  "group1",
-				OrganizationID: orgID,
-				InstanceNum:    1,
-				Offset:         100,
-			},
-			{
-				Topic:          "atopic",
-				Partition:      0,
-				ConsumerGroup:  "group1",
-				OrganizationID: orgID,
-				InstanceNum:    1,
-				Offset:         200,
-			},
-			{
-				Topic:          "mtopic",
-				Partition:      0,
-				ConsumerGroup:  "group1",
-				OrganizationID: orgID,
-				InstanceNum:    1,
-				Offset:         300,
-			},
-		}
-
-		sortKafkaOffsets(offsets)
-
-		assert.Equal(t, "atopic", offsets[0].Topic)
-		assert.Equal(t, "mtopic", offsets[1].Topic)
-		assert.Equal(t, "ztopic", offsets[2].Topic)
-	})
-
-	t.Run("sort by partition when topics are same", func(t *testing.T) {
-		offsets := []lrdb.KafkaOffsetUpdateWithOrg{
-			{
-				Topic:          "topic1",
-				Partition:      5,
-				ConsumerGroup:  "group1",
-				OrganizationID: orgID,
-				InstanceNum:    1,
-				Offset:         100,
-			},
-			{
-				Topic:          "topic1",
-				Partition:      1,
-				ConsumerGroup:  "group1",
-				OrganizationID: orgID,
-				InstanceNum:    1,
-				Offset:         200,
-			},
-			{
-				Topic:          "topic1",
-				Partition:      3,
-				ConsumerGroup:  "group1",
-				OrganizationID: orgID,
-				InstanceNum:    1,
-				Offset:         300,
-			},
-		}
-
-		sortKafkaOffsets(offsets)
-
-		assert.Equal(t, int32(1), offsets[0].Partition)
-		assert.Equal(t, int32(3), offsets[1].Partition)
-		assert.Equal(t, int32(5), offsets[2].Partition)
-	})
-
-	t.Run("sort by consumer group when topic and partition are same", func(t *testing.T) {
-		offsets := []lrdb.KafkaOffsetUpdateWithOrg{
+	t.Run("sort by consumer group", func(t *testing.T) {
+		offsets := []lrdb.KafkaOffsetUpdate{
 			{
 				Topic:          "topic1",
 				Partition:      0,
@@ -556,16 +486,86 @@ func TestSortKafkaOffsets(t *testing.T) {
 			},
 		}
 
-		sortKafkaOffsets(offsets)
+		lrdb.SortKafkaOffsets(offsets)
 
 		assert.Equal(t, "agroup", offsets[0].ConsumerGroup)
 		assert.Equal(t, "mgroup", offsets[1].ConsumerGroup)
 		assert.Equal(t, "zgroup", offsets[2].ConsumerGroup)
 	})
 
+	t.Run("sort by topic when consumer groups are same", func(t *testing.T) {
+		offsets := []lrdb.KafkaOffsetUpdate{
+			{
+				Topic:          "ztopic",
+				Partition:      0,
+				ConsumerGroup:  "group1",
+				OrganizationID: orgID,
+				InstanceNum:    1,
+				Offset:         100,
+			},
+			{
+				Topic:          "atopic",
+				Partition:      0,
+				ConsumerGroup:  "group1",
+				OrganizationID: orgID,
+				InstanceNum:    1,
+				Offset:         200,
+			},
+			{
+				Topic:          "mtopic",
+				Partition:      0,
+				ConsumerGroup:  "group1",
+				OrganizationID: orgID,
+				InstanceNum:    1,
+				Offset:         300,
+			},
+		}
+
+		lrdb.SortKafkaOffsets(offsets)
+
+		assert.Equal(t, "atopic", offsets[0].Topic)
+		assert.Equal(t, "mtopic", offsets[1].Topic)
+		assert.Equal(t, "ztopic", offsets[2].Topic)
+	})
+
+	t.Run("sort by partition when consumer groups and topics are same", func(t *testing.T) {
+		offsets := []lrdb.KafkaOffsetUpdate{
+			{
+				Topic:          "topic1",
+				Partition:      5,
+				ConsumerGroup:  "group1",
+				OrganizationID: orgID,
+				InstanceNum:    1,
+				Offset:         100,
+			},
+			{
+				Topic:          "topic1",
+				Partition:      1,
+				ConsumerGroup:  "group1",
+				OrganizationID: orgID,
+				InstanceNum:    1,
+				Offset:         200,
+			},
+			{
+				Topic:          "topic1",
+				Partition:      3,
+				ConsumerGroup:  "group1",
+				OrganizationID: orgID,
+				InstanceNum:    1,
+				Offset:         300,
+			},
+		}
+
+		lrdb.SortKafkaOffsets(offsets)
+
+		assert.Equal(t, int32(1), offsets[0].Partition)
+		assert.Equal(t, int32(3), offsets[1].Partition)
+		assert.Equal(t, int32(5), offsets[2].Partition)
+	})
+
 	t.Run("complex mixed sort", func(t *testing.T) {
-		offsets := []lrdb.KafkaOffsetUpdateWithOrg{
-			// Should be last: ztopic, partition 0, group1
+		offsets := []lrdb.KafkaOffsetUpdate{
+			// Should be 3rd: group1, ztopic, partition 0
 			{
 				Topic:          "ztopic",
 				Partition:      0,
@@ -574,7 +574,7 @@ func TestSortKafkaOffsets(t *testing.T) {
 				InstanceNum:    1,
 				Offset:         500,
 			},
-			// Should be 4th: btopic, partition 2, group1
+			// Should be 2nd: group1, btopic, partition 2
 			{
 				Topic:          "btopic",
 				Partition:      2,
@@ -583,7 +583,7 @@ func TestSortKafkaOffsets(t *testing.T) {
 				InstanceNum:    1,
 				Offset:         400,
 			},
-			// Should be 2nd: btopic, partition 0, groupz
+			// Should be 5th: groupz, btopic, partition 0
 			{
 				Topic:          "btopic",
 				Partition:      0,
@@ -592,7 +592,7 @@ func TestSortKafkaOffsets(t *testing.T) {
 				InstanceNum:    1,
 				Offset:         200,
 			},
-			// Should be first: btopic, partition 0, groupa
+			// Should be 4th: groupa, btopic, partition 0
 			{
 				Topic:          "btopic",
 				Partition:      0,
@@ -601,7 +601,7 @@ func TestSortKafkaOffsets(t *testing.T) {
 				InstanceNum:    1,
 				Offset:         100,
 			},
-			// Should be 3rd: btopic, partition 1, group1
+			// Should be 1st: group1, btopic, partition 1
 			{
 				Topic:          "btopic",
 				Partition:      1,
@@ -612,20 +612,20 @@ func TestSortKafkaOffsets(t *testing.T) {
 			},
 		}
 
-		sortKafkaOffsets(offsets)
+		lrdb.SortKafkaOffsets(offsets)
 
-		// Verify the sorted order
+		// Verify the sorted order (ConsumerGroup → Topic → Partition)
 		expected := []struct {
 			topic         string
 			partition     int32
 			consumerGroup string
 			offset        int64
 		}{
-			{"btopic", 0, "groupa", 100},
-			{"btopic", 0, "groupz", 200},
-			{"btopic", 1, "group1", 300},
-			{"btopic", 2, "group1", 400},
-			{"ztopic", 0, "group1", 500},
+			{"btopic", 1, "group1", 300}, // 1st: group1, btopic, partition 1
+			{"btopic", 2, "group1", 400}, // 2nd: group1, btopic, partition 2
+			{"ztopic", 0, "group1", 500}, // 3rd: group1, ztopic, partition 0
+			{"btopic", 0, "groupa", 100}, // 4th: groupa, btopic, partition 0
+			{"btopic", 0, "groupz", 200}, // 5th: groupz, btopic, partition 0
 		}
 
 		require.Len(t, offsets, 5)
@@ -660,7 +660,7 @@ func (m *mockStorageClient) DeleteObject(ctx context.Context, bucket, objectPath
 
 func TestUploadAndCreateSegments(t *testing.T) {
 	ctx := context.Background()
-	compactor := &MetricCompactorProcessor{}
+	compactor := &MetricCompactionProcessor{}
 	mockClient := &mockStorageClient{}
 
 	// Test data

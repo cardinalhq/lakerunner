@@ -42,13 +42,6 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-// IngestStore defines database operations needed for ingestion
-type IngestStore interface {
-	InsertMetricSegmentBatchWithKafkaOffsets(ctx context.Context, batch lrdb.MetricSegmentBatch) error
-	KafkaJournalGetLastProcessedWithOrgInstance(ctx context.Context, params lrdb.KafkaJournalGetLastProcessedWithOrgInstanceParams) (int64, error)
-	GetMetricEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32) int64
-}
-
 // TimeBin represents a 60-second file group containing 10s aggregated data points
 type TimeBin struct {
 	StartTs int64 // Start timestamp of the file group (inclusive)
@@ -66,14 +59,14 @@ type TimeBinManager struct {
 
 // MetricIngestProcessor implements the Processor interface for raw metric ingestion
 type MetricIngestProcessor struct {
-	store           IngestStore
+	store           MetricIngestStore
 	storageProvider storageprofile.StorageProfileProvider
 	cmgr            cloudstorage.ClientProvider
 	kafkaProducer   fly.Producer
 }
 
 // newMetricIngestProcessor creates a new metric ingest processor instance
-func newMetricIngestProcessor(store IngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *MetricIngestProcessor {
+func newMetricIngestProcessor(store MetricIngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *MetricIngestProcessor {
 	return &MetricIngestProcessor{
 		store:           store,
 		storageProvider: storageProvider,
@@ -174,7 +167,7 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 	var readersToClose []filereader.Reader
 	var totalInputSize int64
 
-	nowDateInt := int32(time.Now().UTC().Year()*10000 + int(time.Now().UTC().Month())*100 + time.Now().UTC().Day())
+	nowDateInt := helpers.CurrentDateInt()
 
 	for _, accMsg := range group.Messages {
 		msg, ok := accMsg.Message.(*messages.ObjStoreNotificationMessage)
@@ -250,10 +243,12 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 	if kafkaCommitData != nil {
 		for partition, offset := range kafkaCommitData.Offsets {
 			kafkaOffsets = append(kafkaOffsets, lrdb.KafkaOffsetUpdate{
-				ConsumerGroup: kafkaCommitData.ConsumerGroup,
-				Topic:         kafkaCommitData.Topic,
-				Partition:     partition,
-				Offset:        offset,
+				ConsumerGroup:  kafkaCommitData.ConsumerGroup,
+				Topic:          kafkaCommitData.Topic,
+				Partition:      partition,
+				Offset:         offset,
+				OrganizationID: group.Key.OrganizationID,
+				InstanceNum:    group.Key.InstanceNum,
 			})
 		}
 	}
@@ -331,7 +326,7 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 			}
 
 			compactionMessage := fly.Message{
-				Key:   fmt.Appendf(nil, "%s-%d-%d", segParams.OrganizationID.String(), segParams.Dateint, segParams.SegmentID),
+				Key:   fmt.Appendf(nil, "%s-%d-%d", segParams.OrganizationID.String(), segParams.Dateint, segParams.StartTs/300000),
 				Value: compactionMsgBytes,
 			}
 
@@ -468,7 +463,7 @@ func (p *MetricIngestProcessor) processRowsWithTimeBinning(ctx context.Context, 
 	ll := logctx.FromContext(ctx)
 
 	// Get RPF estimate for this org/instance
-	rpfEstimate := p.getRPFEstimate(ctx, storageProfile.OrganizationID)
+	rpfEstimate := p.store.GetMetricEstimate(ctx, storageProfile.OrganizationID, 10000) // 10 second blocks
 
 	// Create time bin manager
 	binManager := &TimeBinManager{
@@ -632,18 +627,12 @@ func (p *MetricIngestProcessor) uploadAndCreateSegments(ctx context.Context, sto
 		bin := validBin.bin
 		metadata := validBin.metadata
 
-		// Generate upload path using pathnames utility
-		collectorName := helpers.ExtractCollectorName("otel-raw/" + storageProfile.OrganizationID.String())
-		if collectorName == "" {
-			collectorName = storageProfile.CollectorName
-		}
-
 		segmentID := batchSegmentIDs[i]
 
 		// Generate upload path using metadata dateint and hour
 		uploadPath := helpers.MakeDBObjectID(
 			storageProfile.OrganizationID,
-			collectorName,
+			storageProfile.CollectorName,
 			metadata.Dateint,
 			metadata.Hour,
 			segmentID,
@@ -697,11 +686,6 @@ func (p *MetricIngestProcessor) uploadAndCreateSegments(ctx context.Context, sto
 		slog.Int("totalSegments", len(segmentParams)))
 
 	return segmentParams, nil
-}
-
-// getRPFEstimate gets the RPF estimate for a specific org using the store's estimator
-func (p *MetricIngestProcessor) getRPFEstimate(ctx context.Context, orgID uuid.UUID) int64 {
-	return p.store.GetMetricEstimate(ctx, orgID, 10000) // 10 second blocks
 }
 
 // computeMetricSlot determines the slot_id and slot_count for a metric segment

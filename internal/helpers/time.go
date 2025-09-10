@@ -313,6 +313,13 @@ func RangeBounds[T int | int16 | int32 | int64 | pgtype.Int8 | time.Time | pgtyp
 	return lower, upper, true
 }
 
+// CurrentDateInt returns the current UTC date in YYYYMMDD format.
+// This is used throughout the codebase for IngestDateint fields.
+func CurrentDateInt() int32 {
+	now := time.Now().UTC()
+	return int32(now.Year()*10000 + int(now.Month())*100 + now.Day())
+}
+
 // FormatTSRange formats a PostgreSQL timestamp range in a clean, readable format.
 // Returns "YYYY-MM-DDTHH:MM:SS duration" or "-" for invalid ranges.
 // Examples: "2025-08-23T13:59:00 1h", "2025-08-23T14:02:00 50s"

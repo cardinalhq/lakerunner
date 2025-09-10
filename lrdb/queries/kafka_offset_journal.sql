@@ -27,7 +27,7 @@ DO UPDATE SET
 WHERE kafka_offset_journal.last_processed_offset < EXCLUDED.last_processed_offset;
 
 
--- name: KafkaJournalGetLastProcessedWithOrgInstance :one
+-- name: KafkaGetLastProcessed :one
 -- Get the last processed offset for a specific consumer group, topic, partition, organization, and instance
 SELECT last_processed_offset
 FROM kafka_offset_journal

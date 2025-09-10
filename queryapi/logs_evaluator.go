@@ -25,7 +25,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/cardinalhq/lakerunner/internal/buffet"
 	"github.com/cardinalhq/lakerunner/logql"
 	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/cardinalhq/lakerunner/promql"
@@ -231,7 +230,7 @@ func (q *QuerierService) lookupLogsSegments(
 
 	for _, lm := range leaf.Matchers {
 		label, val := lm.Label, lm.Value
-		if !slices.Contains(buffet.DimensionsToIndex, label) {
+		if !slices.Contains(dimensionsToIndex, label) {
 			addExistsNode(label, fpsToFetch, &root)
 			continue
 		}
@@ -248,7 +247,7 @@ func (q *QuerierService) lookupLogsSegments(
 			continue
 		}
 		label, val := lf.Label, lf.Value
-		if !slices.Contains(buffet.DimensionsToIndex, label) {
+		if !slices.Contains(dimensionsToIndex, label) {
 			addExistsNode(label, fpsToFetch, &root)
 			continue
 		}
@@ -322,12 +321,12 @@ func addAndNodeFromPattern(label, pattern string, fps map[int64]struct{}, root *
 }
 
 func addExistsNode(label string, fps map[int64]struct{}, root **TrigramQuery) {
-	fp := buffet.ComputeFingerprint(label, buffet.ExistsRegex)
+	fp := computeFingerprint(label, existsRegex)
 	fps[fp] = struct{}{}
 	tq := &TrigramQuery{
 		Op:        index.QAnd,
 		fieldName: label,
-		Trigram:   []string{buffet.ExistsRegex},
+		Trigram:   []string{existsRegex},
 	}
 	slog.Info("Adding exists node", "label", label, "fp", fp)
 	*root = &TrigramQuery{Op: index.QAnd, Sub: []*TrigramQuery{*root, tq}}
@@ -390,7 +389,7 @@ func computeSegmentSet(q *TrigramQuery, fpToSegs map[int64][]SegmentInfo) map[Se
 		}
 		sets := make([]map[SegmentInfo]struct{}, 0, len(q.Trigram))
 		for _, tri := range q.Trigram {
-			fp := buffet.ComputeFingerprint(q.fieldName, tri)
+			fp := computeFingerprint(q.fieldName, tri)
 			set := make(map[SegmentInfo]struct{})
 			for _, s := range fpToSegs[fp] {
 				set[s] = struct{}{}
@@ -401,7 +400,7 @@ func computeSegmentSet(q *TrigramQuery, fpToSegs map[int64][]SegmentInfo) map[Se
 	case index.QOr:
 		out := make(map[SegmentInfo]struct{})
 		for _, tri := range q.Trigram {
-			fp := buffet.ComputeFingerprint(q.fieldName, tri)
+			fp := computeFingerprint(q.fieldName, tri)
 			for _, s := range fpToSegs[fp] {
 				out[s] = struct{}{}
 			}
@@ -474,7 +473,7 @@ func buildLabelTrigram(label, pattern string) (*index.Query, []int64) {
 	if len(tq.Trigram) > 0 {
 		fps = make([]int64, 0, len(tq.Trigram))
 		for _, tri := range tq.Trigram {
-			fps = append(fps, buffet.ComputeFingerprint(label, tri))
+			fps = append(fps, computeFingerprint(label, tri))
 		}
 		return tq, dedupeInt64(fps)
 	}
@@ -492,7 +491,7 @@ func buildLabelTrigram(label, pattern string) (*index.Query, []int64) {
 		}
 		if len(q.Trigram) > 0 {
 			for _, tri := range q.Trigram {
-				fps = append(fps, buffet.ComputeFingerprint(label, tri))
+				fps = append(fps, computeFingerprint(label, tri))
 			}
 		}
 		for _, ch := range q.Sub {

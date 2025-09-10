@@ -231,6 +231,28 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 		}
 	}()
 
+	// Periodic: log estimate updates
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := periodicLoop(ctx, metricEstimateUpdatePeriod, func(c context.Context) error {
+			return runLogEstimateUpdate(c, mdb)
+		}); err != nil && !errors.Is(err, context.Canceled) {
+			errCh <- err
+		}
+	}()
+
+	// Periodic: trace estimate updates
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := periodicLoop(ctx, metricEstimateUpdatePeriod, func(c context.Context) error {
+			return runTraceEstimateUpdate(c, mdb)
+		}); err != nil && !errors.Is(err, context.Canceled) {
+			errCh <- err
+		}
+	}()
+
 	// Wait for cancellation or the first hard error
 	select {
 	case <-ctx.Done():

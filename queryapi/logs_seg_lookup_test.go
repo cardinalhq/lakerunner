@@ -20,8 +20,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cardinalhq/lakerunner/internal/buffet"
-
 	"github.com/google/uuid"
 
 	"github.com/cardinalhq/lakerunner/logql"
@@ -48,7 +46,7 @@ func TestLookupLogsSegments_CoarseOnly_LineNotContains(t *testing.T) {
 	}
 
 	// Expected coarse fingerprint for the message field
-	expFP := buffet.ComputeFingerprint("_cardinalhq.message", buffet.ExistsRegex)
+	expFP := computeFingerprint("_cardinalhq.message", existsRegex)
 
 	// Capture the params we send to the DB lookup.
 	var gotParams lrdb.ListLogSegmentsForQueryParams

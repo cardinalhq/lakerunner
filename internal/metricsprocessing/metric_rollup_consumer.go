@@ -76,7 +76,7 @@ func NewMetricRollupConsumer(
 	topic := "lakerunner.segments.metrics.rollup"
 
 	// Create Kafka consumer
-	consumerName := "lakerunner-rollup-accumulator"
+	consumerName := "lakerunner-metric-rollup"
 	consumer, err := factory.CreateConsumer(topic, consumerGroup)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka consumer: %w", err)
@@ -214,7 +214,7 @@ func (c *MetricRollupConsumer) Run(ctx context.Context) error {
 
 // GetLastProcessedOffset returns the last processed offset for this key, or -1 if never seen
 func (c *MetricRollupConsumer) GetLastProcessedOffset(ctx context.Context, metadata *messageMetadata, groupingKey messages.RollupKey) (int64, error) {
-	offset, err := c.store.KafkaJournalGetLastProcessedWithOrgInstance(ctx, lrdb.KafkaJournalGetLastProcessedWithOrgInstanceParams{
+	offset, err := c.store.KafkaGetLastProcessed(ctx, lrdb.KafkaGetLastProcessedParams{
 		Topic:          metadata.Topic,
 		Partition:      metadata.Partition,
 		ConsumerGroup:  metadata.ConsumerGroup,

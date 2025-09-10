@@ -32,9 +32,19 @@ type MockEstimatorStore struct {
 	mock.Mock
 }
 
-func (m *MockEstimatorStore) GetAllMetricPackEstimates(ctx context.Context) ([]MetricPackEstimate, error) {
+func (m *MockEstimatorStore) GetAllPackEstimates(ctx context.Context) ([]GetAllPackEstimatesRow, error) {
 	args := m.Called(ctx)
-	return args.Get(0).([]MetricPackEstimate), args.Error(1)
+	return args.Get(0).([]GetAllPackEstimatesRow), args.Error(1)
+}
+
+func (m *MockEstimatorStore) GetAllBySignal(ctx context.Context, signal string) ([]GetAllBySignalRow, error) {
+	args := m.Called(ctx, signal)
+	return args.Get(0).([]GetAllBySignalRow), args.Error(1)
+}
+
+func (m *MockEstimatorStore) GetMetricPackEstimates(ctx context.Context) ([]GetMetricPackEstimatesRow, error) {
+	args := m.Called(ctx)
+	return args.Get(0).([]GetMetricPackEstimatesRow), args.Error(1)
 }
 
 func TestNewMetricPackEstimator(t *testing.T) {
@@ -55,7 +65,7 @@ func TestMetricPackEstimator_Get_HardcodedFallback(t *testing.T) {
 	defer estimator.Stop()
 
 	// Setup mock to return error
-	mockStore.On("GetAllMetricPackEstimates", mock.Anything).Return([]MetricPackEstimate{}, errors.New("database error"))
+	mockStore.On("GetAllBySignal", mock.Anything, "metrics").Return([]GetAllBySignalRow{}, errors.New("database error"))
 
 	orgID := uuid.New()
 	result := estimator.Get(context.Background(), orgID, 60000)
@@ -75,7 +85,7 @@ func TestMetricPackEstimator_Get_OrganizationSpecificEstimate(t *testing.T) {
 	frequency := int32(60000)
 
 	// Setup mock data with org-specific estimate
-	estimates := []MetricPackEstimate{
+	estimates := []GetAllBySignalRow{
 		{
 			OrganizationID: orgID,
 			FrequencyMs:    frequency,
@@ -83,7 +93,7 @@ func TestMetricPackEstimator_Get_OrganizationSpecificEstimate(t *testing.T) {
 			UpdatedAt:      time.Now(),
 		},
 	}
-	mockStore.On("GetAllMetricPackEstimates", mock.Anything).Return(estimates, nil)
+	mockStore.On("GetAllBySignal", mock.Anything, "metrics").Return(estimates, nil)
 
 	result := estimator.Get(context.Background(), orgID, frequency)
 
@@ -102,7 +112,7 @@ func TestMetricPackEstimator_Get_UUIDZeroFallback(t *testing.T) {
 	frequency := int32(60000)
 
 	// Setup mock data with only UUID zero default (no org-specific)
-	estimates := []MetricPackEstimate{
+	estimates := []GetAllBySignalRow{
 		{
 			OrganizationID: zeroUUID, // Default for all orgs
 			FrequencyMs:    frequency,
@@ -110,7 +120,7 @@ func TestMetricPackEstimator_Get_UUIDZeroFallback(t *testing.T) {
 			UpdatedAt:      time.Now(),
 		},
 	}
-	mockStore.On("GetAllMetricPackEstimates", mock.Anything).Return(estimates, nil)
+	mockStore.On("GetAllBySignal", mock.Anything, "metrics").Return(estimates, nil)
 
 	result := estimator.Get(context.Background(), orgID, frequency)
 
@@ -127,7 +137,7 @@ func TestMetricPackEstimator_Get_UltimateFallback(t *testing.T) {
 	frequency := int32(60000)
 
 	// Setup mock data with no matching estimates
-	estimates := []MetricPackEstimate{
+	estimates := []GetAllBySignalRow{
 		{
 			OrganizationID: uuid.New(), // Different org
 			FrequencyMs:    300000,     // Different frequency
@@ -135,7 +145,7 @@ func TestMetricPackEstimator_Get_UltimateFallback(t *testing.T) {
 			UpdatedAt:      time.Now(),
 		},
 	}
-	mockStore.On("GetAllMetricPackEstimates", mock.Anything).Return(estimates, nil)
+	mockStore.On("GetAllBySignal", mock.Anything, "metrics").Return(estimates, nil)
 
 	result := estimator.Get(context.Background(), orgID, frequency)
 
@@ -153,7 +163,7 @@ func TestMetricPackEstimator_Get_NilTargetRecords(t *testing.T) {
 	frequency := int32(60000)
 
 	// Setup mock data with nil TargetRecords (should be ignored)
-	estimates := []MetricPackEstimate{
+	estimates := []GetAllBySignalRow{
 		{
 			OrganizationID: orgID,
 			FrequencyMs:    frequency,
@@ -161,7 +171,7 @@ func TestMetricPackEstimator_Get_NilTargetRecords(t *testing.T) {
 			UpdatedAt:      time.Now(),
 		},
 	}
-	mockStore.On("GetAllMetricPackEstimates", mock.Anything).Return(estimates, nil)
+	mockStore.On("GetAllBySignal", mock.Anything, "metrics").Return(estimates, nil)
 
 	result := estimator.Get(context.Background(), orgID, frequency)
 
@@ -179,7 +189,7 @@ func TestMetricPackEstimator_Caching(t *testing.T) {
 	expectedEstimate := int64(1500000)
 	frequency := int32(60000)
 
-	estimates := []MetricPackEstimate{
+	estimates := []GetAllBySignalRow{
 		{
 			OrganizationID: orgID,
 			FrequencyMs:    frequency,
@@ -189,7 +199,7 @@ func TestMetricPackEstimator_Caching(t *testing.T) {
 	}
 
 	// Mock should be called only once due to caching
-	mockStore.On("GetAllMetricPackEstimates", mock.Anything).Return(estimates, nil).Once()
+	mockStore.On("GetAllBySignal", mock.Anything, "metrics").Return(estimates, nil).Once()
 
 	// First call - should hit database
 	result1 := estimator.Get(context.Background(), orgID, frequency)
@@ -216,7 +226,7 @@ func TestMetricPackEstimator_CachingMultipleOrganizations(t *testing.T) {
 	defaultEstimate := int64(500000)
 	frequency := int32(60000)
 
-	estimates := []MetricPackEstimate{
+	estimates := []GetAllBySignalRow{
 		{
 			OrganizationID: org1,
 			FrequencyMs:    frequency,
@@ -237,8 +247,8 @@ func TestMetricPackEstimator_CachingMultipleOrganizations(t *testing.T) {
 		},
 	}
 
-	// Should be called once per organization
-	mockStore.On("GetAllMetricPackEstimates", mock.Anything).Return(estimates, nil).Times(2)
+	// Should be called once since we cache all estimates for the signal
+	mockStore.On("GetAllBySignal", mock.Anything, "metrics").Return(estimates, nil).Once()
 
 	// First org - should cache org1, org2, and zero UUID estimates
 	result1 := estimator.Get(context.Background(), org1, frequency)
@@ -268,7 +278,7 @@ func TestMetricPackEstimator_ConcurrentAccess(t *testing.T) {
 	expectedEstimate := int64(1500000)
 	frequency := int32(60000)
 
-	estimates := []MetricPackEstimate{
+	estimates := []GetAllBySignalRow{
 		{
 			OrganizationID: orgID,
 			FrequencyMs:    frequency,
@@ -277,7 +287,7 @@ func TestMetricPackEstimator_ConcurrentAccess(t *testing.T) {
 		},
 	}
 
-	mockStore.On("GetAllMetricPackEstimates", mock.Anything).Return(estimates, nil)
+	mockStore.On("GetAllBySignal", mock.Anything, "metrics").Return(estimates, nil)
 
 	// Test concurrent access
 	const numGoroutines = 10
@@ -312,7 +322,7 @@ func TestMetricPackEstimator_ClearCache(t *testing.T) {
 	expectedEstimate := int64(1500000)
 	frequency := int32(60000)
 
-	estimates := []MetricPackEstimate{
+	estimates := []GetAllBySignalRow{
 		{
 			OrganizationID: orgID,
 			FrequencyMs:    frequency,
@@ -322,7 +332,7 @@ func TestMetricPackEstimator_ClearCache(t *testing.T) {
 	}
 
 	// Mock should be called twice - once before clear, once after
-	mockStore.On("GetAllMetricPackEstimates", mock.Anything).Return(estimates, nil).Times(2)
+	mockStore.On("GetAllBySignal", mock.Anything, "metrics").Return(estimates, nil).Times(2)
 
 	// First call - populates cache
 	result1 := estimator.Get(context.Background(), orgID, frequency)
@@ -347,7 +357,7 @@ func TestMetricPackEstimator_TTLExpiration(t *testing.T) {
 	expectedEstimate := int64(1500000)
 	frequency := int32(60000)
 
-	estimates := []MetricPackEstimate{
+	estimates := []GetAllBySignalRow{
 		{
 			OrganizationID: orgID,
 			FrequencyMs:    frequency,
@@ -356,7 +366,7 @@ func TestMetricPackEstimator_TTLExpiration(t *testing.T) {
 		},
 	}
 
-	mockStore.On("GetAllMetricPackEstimates", mock.Anything).Return(estimates, nil)
+	mockStore.On("GetAllBySignal", mock.Anything, "metrics").Return(estimates, nil)
 
 	// First call - populates cache
 	result1 := estimator.Get(context.Background(), orgID, frequency)
@@ -385,7 +395,7 @@ func TestMetricPackEstimator_MultipleFrequencies(t *testing.T) {
 	estimate1 := int64(1000000)
 	estimate2 := int64(2000000)
 
-	estimates := []MetricPackEstimate{
+	estimates := []GetAllBySignalRow{
 		{
 			OrganizationID: orgID,
 			FrequencyMs:    freq1,
@@ -400,13 +410,13 @@ func TestMetricPackEstimator_MultipleFrequencies(t *testing.T) {
 		},
 	}
 
-	mockStore.On("GetAllMetricPackEstimates", mock.Anything).Return(estimates, nil).Once()
+	mockStore.On("GetAllBySignal", mock.Anything, "metrics").Return(estimates, nil).Once()
 
 	// First frequency
 	result1 := estimator.Get(context.Background(), orgID, freq1)
 	assert.Equal(t, estimate1, result1)
 
-	// Second frequency - should hit cache since we cache all estimates for an org at once
+	// Second frequency - should hit cache since we cache all estimates for the signal at once
 	result2 := estimator.Get(context.Background(), orgID, freq2)
 	assert.Equal(t, estimate2, result2)
 

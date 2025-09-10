@@ -676,7 +676,7 @@ func TestPerformCompactionSeglog990(t *testing.T) {
 	}
 
 	// Create processor and test performCompaction
-	processor := &MetricCompactorProcessor{}
+	processor := &MetricCompactionProcessor{}
 
 	t.Logf("\nTesting performCompaction with:")
 	t.Logf("  Input segments: %d", len(activeSegments))
@@ -810,7 +810,7 @@ func TestCreateAggregatingReader_Seglog990(t *testing.T) {
 
 	// Test with single reader
 	t.Run("SingleReader", func(t *testing.T) {
-		readerStack, err := createReaderStack(
+		readerStack, err := createMetricReaderStack(
 			ctx,
 			tmpDir,
 			mockStorage,
@@ -819,7 +819,7 @@ func TestCreateAggregatingReader_Seglog990(t *testing.T) {
 			rows,
 		)
 		require.NoError(t, err, "Failed to create reader stack")
-		defer closeReaderStack(ctx, readerStack)
+		defer readerStack.Close(ctx)
 
 		if len(readerStack.Readers) > 0 {
 			aggReader, err := filereader.NewAggregatingMetricsReader(readerStack.Readers[0], int64(metadata.FrequencyMS), 1000)
@@ -846,7 +846,7 @@ func TestCreateAggregatingReader_Seglog990(t *testing.T) {
 
 	// Test with multiple readers
 	t.Run("MultipleReaders", func(t *testing.T) {
-		readerStack, err := createReaderStack(
+		readerStack, err := createMetricReaderStack(
 			ctx,
 			tmpDir,
 			mockStorage,
@@ -855,7 +855,7 @@ func TestCreateAggregatingReader_Seglog990(t *testing.T) {
 			rows,
 		)
 		require.NoError(t, err, "Failed to create reader stack")
-		defer closeReaderStack(ctx, readerStack)
+		defer readerStack.Close(ctx)
 
 		if len(readerStack.Readers) > 1 {
 			// Use first 3 readers to test merging + aggregation
@@ -890,7 +890,7 @@ func TestCreateAggregatingReader_Seglog990(t *testing.T) {
 
 	// Test with all readers (this is what the production code does)
 	t.Run("AllReaders", func(t *testing.T) {
-		readerStack, err := createReaderStack(
+		readerStack, err := createMetricReaderStack(
 			ctx,
 			tmpDir,
 			mockStorage,
@@ -899,7 +899,7 @@ func TestCreateAggregatingReader_Seglog990(t *testing.T) {
 			rows,
 		)
 		require.NoError(t, err, "Failed to create reader stack")
-		defer closeReaderStack(ctx, readerStack)
+		defer readerStack.Close(ctx)
 
 		// Create mergesort reader from all readers first
 		sortKeyProvider := &filereader.MetricSortKeyProvider{}
