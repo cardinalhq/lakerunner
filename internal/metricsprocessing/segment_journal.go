@@ -116,3 +116,87 @@ func logSegmentOperation(
 
 	return store.InsertSegmentJournal(ctx, logParams)
 }
+
+// logLogSegmentOperation logs log segment operations (compaction) to segment_journal for debugging
+func logLogSegmentOperation(
+	ctx context.Context,
+	store segmentJournalStore,
+	inputSegments, outputSegments []lrdb.LogSeg,
+	results []parquetwriter.Result,
+	orgID uuid.UUID,
+	collectorName string,
+	dateInt int32,
+	instanceNum int16,
+	recordEstimate int64,
+	getHourFromTimestamp func(int64) int16,
+) error {
+	// Extract source object keys from input segments and calculate time bounds
+	sourceObjectKeys := make([]string, len(inputSegments))
+	var sourceTotalRecords, sourceTotalSize int64
+	var sourceMinTimestamp, sourceMaxTimestamp int64 = int64(^uint64(0) >> 1), 0 // Initialize with max int64 and 0
+	for i, seg := range inputSegments {
+		sourceObjectKeys[i] = helpers.MakeDBObjectID(orgID, collectorName, dateInt, getHourFromTimestamp(seg.TsRange.Lower.Int64), seg.SegmentID, "logs")
+		sourceTotalRecords += seg.RecordCount
+		sourceTotalSize += seg.FileSize
+
+		// Update time bounds
+		if seg.TsRange.Lower.Int64 < sourceMinTimestamp {
+			sourceMinTimestamp = seg.TsRange.Lower.Int64
+		}
+		if seg.TsRange.Upper.Int64 > sourceMaxTimestamp {
+			sourceMaxTimestamp = seg.TsRange.Upper.Int64
+		}
+	}
+
+	// Extract destination object keys from results/output segments and calculate dest time bounds
+	destObjectKeys := make([]string, len(results))
+	var destTotalRecords, destTotalSize int64
+	var destMinTimestamp, destMaxTimestamp int64 = int64(^uint64(0) >> 1), 0 // Initialize with max int64 and 0
+	for i, result := range results {
+		stats, ok := result.Metadata.(factories.LogsFileStats)
+		if !ok {
+			return fmt.Errorf("unexpected metadata type: %T", result.Metadata)
+		}
+		// Use the segment ID from the corresponding output segment
+		if i < len(outputSegments) {
+			destObjectKeys[i] = helpers.MakeDBObjectID(orgID, collectorName, dateInt, getHourFromTimestamp(stats.FirstTS), outputSegments[i].SegmentID, "logs")
+		}
+		destTotalRecords += result.RecordCount
+		destTotalSize += result.FileSize
+
+		// Update dest time bounds
+		if stats.FirstTS < destMinTimestamp {
+			destMinTimestamp = stats.FirstTS
+		}
+		if stats.LastTS > destMaxTimestamp {
+			destMaxTimestamp = stats.LastTS
+		}
+	}
+
+	// Create segment_journal entry
+	logParams := lrdb.InsertSegmentJournalParams{
+		Signal:             1, // 1 = logs (based on enum pattern)
+		Action:             2, // 2 = compact (logs only do compaction, no rollup)
+		OrganizationID:     orgID,
+		InstanceNum:        instanceNum,
+		Dateint:            dateInt,
+		SourceCount:        int32(len(inputSegments)),
+		SourceObjectKeys:   sourceObjectKeys,
+		SourceTotalRecords: sourceTotalRecords,
+		SourceTotalSize:    sourceTotalSize,
+		DestCount:          int32(len(results)),
+		DestObjectKeys:     destObjectKeys,
+		DestTotalRecords:   destTotalRecords,
+		DestTotalSize:      destTotalSize,
+		RecordEstimate:     recordEstimate,
+		Metadata:           make(map[string]any), // Empty metadata for now
+		SourceMinTimestamp: sourceMinTimestamp,
+		SourceMaxTimestamp: sourceMaxTimestamp,
+		DestMinTimestamp:   destMinTimestamp,
+		DestMaxTimestamp:   destMaxTimestamp,
+		SourceFrequencyMs:  0, // Logs don't have frequency
+		DestFrequencyMs:    0, // Logs don't have frequency
+	}
+
+	return store.InsertSegmentJournal(ctx, logParams)
+}

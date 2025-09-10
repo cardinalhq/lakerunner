@@ -17,7 +17,6 @@ package metricsprocessing
 import (
 	"context"
 	"fmt"
-	"io"
 
 	"github.com/google/uuid"
 
@@ -54,7 +53,7 @@ type metricProcessingResult struct {
 // 5. Close writer and return results
 func processMetricsWithAggregation(ctx context.Context, params metricProcessingParams) (*metricProcessingResult, error) {
 	// Create reader stack
-	readerStack, err := createReaderStack(
+	readerStack, err := createMetricReaderStack(
 		ctx,
 		params.TmpDir,
 		params.StorageClient,
@@ -65,7 +64,7 @@ func processMetricsWithAggregation(ctx context.Context, params metricProcessingP
 	if err != nil {
 		return nil, fmt.Errorf("create reader stack: %w", err)
 	}
-	defer closeReaderStack(ctx, readerStack)
+	defer readerStack.Close(ctx)
 
 	// Create aggregating reader from head reader
 	aggReader, err := filereader.NewAggregatingMetricsReader(
@@ -100,22 +99,4 @@ func processMetricsWithAggregation(ctx context.Context, params metricProcessingP
 		ProcessedSegments: readerStack.ProcessedSegments,
 		Results:           results,
 	}, nil
-}
-
-// writeFromReader writes data from a reader to a writer - shared utility function
-func writeFromReader(ctx context.Context, reader filereader.Reader, writer parquetwriter.ParquetWriter) error {
-	for {
-		batch, err := reader.Next(ctx)
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			return fmt.Errorf("read batch: %w", err)
-		}
-
-		if err := writer.WriteBatch(batch); err != nil {
-			return fmt.Errorf("write batch: %w", err)
-		}
-	}
-	return nil
 }

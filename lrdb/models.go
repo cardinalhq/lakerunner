@@ -129,6 +129,8 @@ type LogSeg struct {
 	CreatedBy      CreatedBy                 `json:"created_by"`
 	CreatedAt      time.Time                 `json:"created_at"`
 	SlotID         int32                     `json:"slot_id"`
+	Compacted      bool                      `json:"compacted"`
+	Published      bool                      `json:"published"`
 }
 
 type LrdbExemplarLog struct {

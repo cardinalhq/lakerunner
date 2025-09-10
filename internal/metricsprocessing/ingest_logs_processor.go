@@ -156,7 +156,7 @@ func (p *LogIngestProcessor) Process(ctx context.Context, group *accumulationGro
 	var readersToClose []filereader.Reader
 	var totalInputSize int64
 
-	nowDateInt := int32(time.Now().UTC().Year()*10000 + int(time.Now().UTC().Month())*100 + time.Now().UTC().Day())
+	nowDateInt := helpers.CurrentDateInt()
 
 	for _, accMsg := range group.Messages {
 		msg, ok := accMsg.Message.(*messages.ObjStoreNotificationMessage)
@@ -339,7 +339,6 @@ func (p *LogIngestProcessor) createLogReaderStack(tmpFilename, orgID, bucket, ob
 		return nil, fmt.Errorf("failed to create log reader: %w", err)
 	}
 
-	// Step 2: Add translation (adds TID and other fields)
 	translator := &LogTranslator{
 		orgID:    orgID,
 		bucket:   bucket,
@@ -354,7 +353,6 @@ func (p *LogIngestProcessor) createLogReaderStack(tmpFilename, orgID, bucket, ob
 	return reader, nil
 }
 
-// createLogReader creates the appropriate filereader based on file type
 func (p *LogIngestProcessor) createLogReader(filename string) (filereader.Reader, error) {
 	options := filereader.ReaderOptions{
 		SignalType: filereader.SignalTypeLogs,
@@ -370,7 +368,6 @@ func (p *LogIngestProcessor) createUnifiedLogReader(ctx context.Context, readers
 	if len(readers) == 1 {
 		finalReader = readers[0]
 	} else {
-		// Use TimestampSortKeyProvider for logs (sort by timestamp only)
 		keyProvider := &filereader.TimestampSortKeyProvider{}
 		multiReader, err := filereader.NewMergesortReader(ctx, readers, keyProvider, 1000)
 		if err != nil {
@@ -580,6 +577,8 @@ func (p *LogIngestProcessor) uploadAndCreateLogSegments(ctx context.Context, sto
 			FileSize:       bin.Result.FileSize,
 			CreatedBy:      lrdb.CreatedByIngest,
 			Fingerprints:   stats.Fingerprints,
+			Published:      true,  // Mark ingested segments as published
+			Compacted:      false, // New segments are not compacted
 		}
 
 		segmentParams = append(segmentParams, params)

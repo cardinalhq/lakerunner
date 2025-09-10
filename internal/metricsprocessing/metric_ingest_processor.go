@@ -167,7 +167,7 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 	var readersToClose []filereader.Reader
 	var totalInputSize int64
 
-	nowDateInt := int32(time.Now().UTC().Year()*10000 + int(time.Now().UTC().Month())*100 + time.Now().UTC().Day())
+	nowDateInt := helpers.CurrentDateInt()
 
 	for _, accMsg := range group.Messages {
 		msg, ok := accMsg.Message.(*messages.ObjStoreNotificationMessage)

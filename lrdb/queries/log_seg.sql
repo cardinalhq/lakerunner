@@ -10,7 +10,9 @@ INSERT INTO log_seg (
   record_count,
   file_size,
   created_by,
-  fingerprints
+  fingerprints,
+  published,
+  compacted
 )
 VALUES (
   @organization_id,
@@ -23,31 +25,19 @@ VALUES (
   @record_count,
   @file_size,
   @created_by,
-  @fingerprints::bigint[]
+  @fingerprints::bigint[],
+  @published,
+  @compacted
 );
 
--- name: GetLogSegmentsForCompaction :many
-SELECT
-  segment_id,
-  lower(ts_range)::bigint AS start_ts,
-  upper(ts_range)::bigint AS end_ts,
-  file_size,
-  record_count,
-  ingest_dateint,
-  created_at,
-  slot_id
+-- name: GetLogSeg :one
+SELECT *
 FROM log_seg
 WHERE organization_id = @organization_id
-  AND dateint         = @dateint
-  AND instance_num    = @instance_num
-  AND slot_id         = @slot_id
-  AND file_size > 0
-  AND record_count > 0
-  AND file_size <= @max_file_size
-  AND (created_at, segment_id) > (@cursor_created_at, @cursor_segment_id::bigint)
-  AND ts_range && int8range(@hour_start_ts, @hour_end_ts, '[)')
-ORDER BY created_at, segment_id
-LIMIT @maxrows;
+  AND dateint = @dateint
+  AND segment_id = @segment_id
+  AND instance_num = @instance_num
+  AND slot_id = @slot_id;
 
 -- name: CompactLogSegments :exec
 WITH
@@ -84,7 +74,9 @@ INSERT INTO log_seg (
   file_size,
   ts_range,
   created_by,
-  fingerprints
+  fingerprints,
+  published,
+  compacted
 )
 SELECT
   @organization_id,
@@ -97,7 +89,9 @@ SELECT
   @new_file_size,
   int8range(@new_start_ts, @new_end_ts, '[)'),
   @created_by,
-  fa.fingerprints
+  fa.fingerprints,
+  @published,
+  @compacted
 FROM fingerprint_array AS fa;
 
 -- name: batchInsertLogSegsDirect :batchexec
@@ -112,7 +106,9 @@ INSERT INTO log_seg (
   record_count,
   file_size,
   created_by,
-  fingerprints
+  fingerprints,
+  published,
+  compacted
 )
 VALUES (
   @organization_id,
@@ -125,8 +121,19 @@ VALUES (
   @record_count,
   @file_size,
   @created_by,
-  @fingerprints::bigint[]
+  @fingerprints::bigint[],
+  @published,
+  @compacted
 );
+
+-- name: MarkLogSegsCompactedByKeys :exec
+UPDATE log_seg
+SET compacted = true, published = false
+WHERE organization_id = @organization_id
+  AND dateint         = @dateint
+  AND instance_num    = @instance_num
+  AND segment_id      = ANY(@segment_ids::bigint[])
+  AND compacted       = false;
 
 -- name: ListLogSegmentsForQuery :many
 SELECT
@@ -141,6 +148,7 @@ FROM log_seg AS s
 WHERE
     s.organization_id = @organization_id
   AND s.dateint      = @dateint
+  AND s.published   = true
   AND s.fingerprints && @fingerprints::BIGINT[]
   AND t.fp           = ANY(@fingerprints::BIGINT[])
   AND ts_range && int8range(@s, @e, '[)');

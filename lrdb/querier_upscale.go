@@ -21,6 +21,7 @@ import (
 
 type LogSegmentUpserter interface {
 	InsertLogSegment(ctx context.Context, params InsertLogSegmentParams) error
+	CompactLogSegsWithKafkaOffsets(ctx context.Context, params CompactLogSegsParams, kafkaOffsets []KafkaOffsetUpdate) error
 }
 
 type MetricSegmentInserter interface {

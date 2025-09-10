@@ -30,7 +30,7 @@ type Querier interface {
 	GetAllPackEstimates(ctx context.Context) ([]GetAllPackEstimatesRow, error)
 	// Get the most recent segment_journal entry
 	GetLatestSegmentJournal(ctx context.Context) (SegmentJournal, error)
-	GetLogSegmentsForCompaction(ctx context.Context, arg GetLogSegmentsForCompactionParams) ([]GetLogSegmentsForCompactionRow, error)
+	GetLogSeg(ctx context.Context, arg GetLogSegParams) (LogSeg, error)
 	// Retrieves metric pack estimates for EWMA calculations (backward compatibility)
 	GetMetricPackEstimates(ctx context.Context) ([]GetMetricPackEstimatesRow, error)
 	GetMetricSeg(ctx context.Context, arg GetMetricSegParams) (MetricSeg, error)
@@ -62,6 +62,7 @@ type Querier interface {
 	ListPromMetrics(ctx context.Context, organizationID uuid.UUID) ([]ListPromMetricsRow, error)
 	// Returns an estimate of the number of log segments, accounting for per-file overhead.
 	LogSegEstimator(ctx context.Context, arg LogSegEstimatorParams) ([]LogSegEstimatorRow, error)
+	MarkLogSegsCompactedByKeys(ctx context.Context, arg MarkLogSegsCompactedByKeysParams) error
 	MarkMetricSegsCompactedByKeys(ctx context.Context, arg MarkMetricSegsCompactedByKeysParams) error
 	MarkMetricSegsRolledupByKeys(ctx context.Context, arg MarkMetricSegsRolledupByKeysParams) error
 	// Returns an estimate of the number of metric segments, accounting for per-file overhead.
