@@ -80,8 +80,8 @@ func runMetricEstimatesSummary(local bool) error {
 		return fmt.Errorf("failed to connect to lrdb: %w", err)
 	}
 
-	// Get all metric pack estimates
-	estimates, err := store.GetAllMetricPackEstimates(ctx)
+	// Get metric pack estimates using the new efficient method
+	estimates, err := store.GetAllBySignal(ctx, "metrics")
 	if err != nil {
 		return fmt.Errorf("failed to get metric pack estimates: %w", err)
 	}

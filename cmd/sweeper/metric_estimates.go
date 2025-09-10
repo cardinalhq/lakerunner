@@ -44,15 +44,15 @@ func runMetricEstimateUpdate(ctx context.Context, mdb lrdb.StoreFull) error {
 
 	ll.Info("Starting metric estimate update", slog.Time("lookback_start", lookbackTime))
 
-	// Load existing estimates
-	existingEstimates, err := mdb.GetAllMetricPackEstimates(ctx)
+	// Load existing metric estimates
+	existingEstimates, err := mdb.GetAllBySignal(ctx, "metrics")
 	if err != nil {
-		ll.Error("Failed to get existing metric pack estimates", slog.Any("error", err))
+		ll.Error("Failed to get existing metric estimates", slog.Any("error", err))
 		return err
 	}
 
-	// Create map of existing estimates for quick lookup
-	existingMap := make(map[string]lrdb.MetricPackEstimate)
+	// Create map of existing metric estimates for quick lookup
+	existingMap := make(map[string]lrdb.GetAllBySignalRow)
 	for _, est := range existingEstimates {
 		key := fmt.Sprintf("%s-%d", est.OrganizationID.String(), est.FrequencyMs)
 		existingMap[key] = est
@@ -143,6 +143,250 @@ func runMetricEstimateUpdate(ctx context.Context, mdb lrdb.StoreFull) error {
 	))
 
 	ll.Info("Completed metric estimate update",
+		slog.Int64("updates_applied", updateCount),
+		slog.Int("data_points_processed", len(segmentData)))
+
+	return nil
+}
+
+func runLogEstimateUpdate(ctx context.Context, mdb lrdb.StoreFull) error {
+	ll := logctx.FromContext(ctx)
+
+	// Constants for EWMA calculation
+	const (
+		alpha           = 0.2 // EWMA smoothing factor (20% new data, 80% old data)
+		lookbackMinutes = 10
+	)
+
+	now := time.Now().UTC()
+	lookbackTime := now.Add(-time.Duration(lookbackMinutes) * time.Minute)
+
+	ll.Info("Starting log estimate update", slog.Time("lookback_start", lookbackTime))
+
+	// Load existing log estimates
+	existingEstimates, err := mdb.GetAllBySignal(ctx, "logs")
+	if err != nil {
+		ll.Error("Failed to get existing log estimates", slog.Any("error", err))
+		return err
+	}
+
+	// Create map of existing log estimates for quick lookup (logs use frequency_ms=-1)
+	existingMap := make(map[string]lrdb.GetAllBySignalRow)
+	for _, est := range existingEstimates {
+		if est.FrequencyMs == -1 {
+			key := est.OrganizationID.String()
+			existingMap[key] = est
+		}
+	}
+
+	// Get fresh data from log segments
+	params := lrdb.LogSegEstimatorParams{
+		TargetBytes: float64(config.TargetFileSize),
+		DateintLow:  dateintFromTime(lookbackTime),
+		DateintHigh: dateintFromTime(now),
+		MsLow:       lookbackTime.UnixMilli(),
+		MsHigh:      now.UnixMilli(),
+	}
+
+	segmentData, err := mdb.LogSegEstimator(ctx, params)
+	if err != nil {
+		ll.Error("Failed to get log segment estimator data", slog.Any("error", err))
+		return err
+	}
+
+	if len(segmentData) == 0 {
+		ll.Info("No log segment data found for estimate update")
+		return nil
+	}
+
+	var updateCount int64
+
+	// Process each segment data point
+	for _, data := range segmentData {
+		if data.EstimatedRecords <= 0 {
+			ll.Warn("Skipping non-positive estimated records",
+				slog.String("org_id", data.OrganizationID.String()),
+				slog.String("signal", "logs"),
+				slog.Int64("estimated_records", data.EstimatedRecords))
+			continue
+		}
+
+		key := data.OrganizationID.String()
+
+		var newTargetRecords int64
+
+		if existing, exists := existingMap[key]; exists {
+			// Apply EWMA: new = alpha * current + (1 - alpha) * old
+			if existing.TargetRecords != nil && *existing.TargetRecords > 0 {
+				oldValue := float64(*existing.TargetRecords)
+				newValue := float64(data.EstimatedRecords)
+				ewma := alpha*newValue + (1-alpha)*oldValue
+				newTargetRecords = int64(math.Round(ewma))
+			} else {
+				// First valid value for this key
+				newTargetRecords = data.EstimatedRecords
+			}
+		} else {
+			// New organization for logs
+			newTargetRecords = data.EstimatedRecords
+		}
+
+		// Update the estimate in the database
+		if err := mdb.UpsertPackEstimate(ctx, lrdb.UpsertPackEstimateParams{
+			OrganizationID: data.OrganizationID,
+			FrequencyMs:    -1,
+			Signal:         "logs",
+			TargetRecords:  &newTargetRecords,
+		}); err != nil {
+			ll.Error("Failed to upsert log pack estimate",
+				slog.Any("error", err),
+				slog.String("org_id", data.OrganizationID.String()))
+			continue
+		}
+
+		updateCount++
+
+		ll.Debug("Updated log pack estimate",
+			slog.String("org_id", data.OrganizationID.String()),
+			slog.String("signal", "logs"),
+			slog.Int64("old_target", func() int64 {
+				if existing, exists := existingMap[key]; exists && existing.TargetRecords != nil {
+					return *existing.TargetRecords
+				}
+				return 0
+			}()),
+			slog.Int64("new_estimate", data.EstimatedRecords),
+			slog.Int64("new_target", newTargetRecords))
+	}
+
+	metricEstimateCounter.Add(ctx, updateCount, metric.WithAttributes(
+		attribute.String("status", "success"),
+		attribute.String("signal", "logs"),
+	))
+
+	ll.Info("Completed log estimate update",
+		slog.Int64("updates_applied", updateCount),
+		slog.Int("data_points_processed", len(segmentData)))
+
+	return nil
+}
+
+func runTraceEstimateUpdate(ctx context.Context, mdb lrdb.StoreFull) error {
+	ll := logctx.FromContext(ctx)
+
+	// Constants for EWMA calculation
+	const (
+		alpha           = 0.2 // EWMA smoothing factor (20% new data, 80% old data)
+		lookbackMinutes = 10
+	)
+
+	now := time.Now().UTC()
+	lookbackTime := now.Add(-time.Duration(lookbackMinutes) * time.Minute)
+
+	ll.Info("Starting trace estimate update", slog.Time("lookback_start", lookbackTime))
+
+	// Load existing trace estimates
+	existingEstimates, err := mdb.GetAllBySignal(ctx, "traces")
+	if err != nil {
+		ll.Error("Failed to get existing trace estimates", slog.Any("error", err))
+		return err
+	}
+
+	// Create map of existing trace estimates for quick lookup (traces use frequency_ms=-1)
+	existingMap := make(map[string]lrdb.GetAllBySignalRow)
+	for _, est := range existingEstimates {
+		if est.FrequencyMs == -1 {
+			key := est.OrganizationID.String()
+			existingMap[key] = est
+		}
+	}
+
+	// Get fresh data from trace segments
+	params := lrdb.TraceSegEstimatorParams{
+		TargetBytes: float64(config.TargetFileSize),
+		DateintLow:  dateintFromTime(lookbackTime),
+		DateintHigh: dateintFromTime(now),
+		MsLow:       lookbackTime.UnixMilli(),
+		MsHigh:      now.UnixMilli(),
+	}
+
+	segmentData, err := mdb.TraceSegEstimator(ctx, params)
+	if err != nil {
+		ll.Error("Failed to get trace segment estimator data", slog.Any("error", err))
+		return err
+	}
+
+	if len(segmentData) == 0 {
+		ll.Info("No trace segment data found for estimate update")
+		return nil
+	}
+
+	var updateCount int64
+
+	// Process each segment data point
+	for _, data := range segmentData {
+		if data.EstimatedRecords <= 0 {
+			ll.Warn("Skipping non-positive estimated records",
+				slog.String("org_id", data.OrganizationID.String()),
+				slog.String("signal", "traces"),
+				slog.Int64("estimated_records", data.EstimatedRecords))
+			continue
+		}
+
+		key := data.OrganizationID.String()
+
+		var newTargetRecords int64
+
+		if existing, exists := existingMap[key]; exists {
+			// Apply EWMA: new = alpha * current + (1 - alpha) * old
+			if existing.TargetRecords != nil && *existing.TargetRecords > 0 {
+				oldValue := float64(*existing.TargetRecords)
+				newValue := float64(data.EstimatedRecords)
+				ewma := alpha*newValue + (1-alpha)*oldValue
+				newTargetRecords = int64(math.Round(ewma))
+			} else {
+				// First valid value for this key
+				newTargetRecords = data.EstimatedRecords
+			}
+		} else {
+			// New organization for traces
+			newTargetRecords = data.EstimatedRecords
+		}
+
+		// Update the estimate in the database
+		if err := mdb.UpsertPackEstimate(ctx, lrdb.UpsertPackEstimateParams{
+			OrganizationID: data.OrganizationID,
+			FrequencyMs:    -1,
+			Signal:         "traces",
+			TargetRecords:  &newTargetRecords,
+		}); err != nil {
+			ll.Error("Failed to upsert trace pack estimate",
+				slog.Any("error", err),
+				slog.String("org_id", data.OrganizationID.String()))
+			continue
+		}
+
+		updateCount++
+
+		ll.Debug("Updated trace pack estimate",
+			slog.String("org_id", data.OrganizationID.String()),
+			slog.String("signal", "traces"),
+			slog.Int64("old_target", func() int64 {
+				if existing, exists := existingMap[key]; exists && existing.TargetRecords != nil {
+					return *existing.TargetRecords
+				}
+				return 0
+			}()),
+			slog.Int64("new_estimate", data.EstimatedRecords),
+			slog.Int64("new_target", newTargetRecords))
+	}
+
+	metricEstimateCounter.Add(ctx, updateCount, metric.WithAttributes(
+		attribute.String("status", "success"),
+		attribute.String("signal", "traces"),
+	))
+
+	ll.Info("Completed trace estimate update",
 		slog.Int64("updates_applied", updateCount),
 		slog.Int("data_points_processed", len(segmentData)))
 

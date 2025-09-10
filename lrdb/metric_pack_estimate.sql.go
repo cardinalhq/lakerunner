@@ -7,30 +7,129 @@ package lrdb
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
 
-const getAllMetricPackEstimates = `-- name: GetAllMetricPackEstimates :many
+const getAllBySignal = `-- name: GetAllBySignal :many
 SELECT
   organization_id,
   frequency_ms,
   target_records,
   updated_at
-FROM metric_pack_estimate
+FROM pack_estimate
+WHERE signal = $1
 ORDER BY organization_id, frequency_ms
 `
 
-// Retrieves all existing metric pack estimates for EWMA calculations
-func (q *Queries) GetAllMetricPackEstimates(ctx context.Context) ([]MetricPackEstimate, error) {
-	rows, err := q.db.Query(ctx, getAllMetricPackEstimates)
+type GetAllBySignalRow struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	FrequencyMs    int32     `json:"frequency_ms"`
+	TargetRecords  *int64    `json:"target_records"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+// Retrieves all pack estimates for a specific signal type
+func (q *Queries) GetAllBySignal(ctx context.Context, signal string) ([]GetAllBySignalRow, error) {
+	rows, err := q.db.Query(ctx, getAllBySignal, signal)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []MetricPackEstimate
+	var items []GetAllBySignalRow
 	for rows.Next() {
-		var i MetricPackEstimate
+		var i GetAllBySignalRow
+		if err := rows.Scan(
+			&i.OrganizationID,
+			&i.FrequencyMs,
+			&i.TargetRecords,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getAllPackEstimates = `-- name: GetAllPackEstimates :many
+SELECT
+  organization_id,
+  frequency_ms,
+  signal,
+  target_records,
+  updated_at
+FROM pack_estimate
+ORDER BY organization_id, frequency_ms, signal
+`
+
+type GetAllPackEstimatesRow struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	FrequencyMs    int32     `json:"frequency_ms"`
+	Signal         string    `json:"signal"`
+	TargetRecords  *int64    `json:"target_records"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+// Retrieves all existing pack estimates for EWMA calculations across all signals
+func (q *Queries) GetAllPackEstimates(ctx context.Context) ([]GetAllPackEstimatesRow, error) {
+	rows, err := q.db.Query(ctx, getAllPackEstimates)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetAllPackEstimatesRow
+	for rows.Next() {
+		var i GetAllPackEstimatesRow
+		if err := rows.Scan(
+			&i.OrganizationID,
+			&i.FrequencyMs,
+			&i.Signal,
+			&i.TargetRecords,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getMetricPackEstimates = `-- name: GetMetricPackEstimates :many
+SELECT
+  organization_id,
+  frequency_ms,
+  target_records,
+  updated_at
+FROM pack_estimate
+WHERE signal = 'metrics'
+ORDER BY organization_id, frequency_ms
+`
+
+type GetMetricPackEstimatesRow struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	FrequencyMs    int32     `json:"frequency_ms"`
+	TargetRecords  *int64    `json:"target_records"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+// Retrieves metric pack estimates for EWMA calculations (backward compatibility)
+func (q *Queries) GetMetricPackEstimates(ctx context.Context) ([]GetMetricPackEstimatesRow, error) {
+	rows, err := q.db.Query(ctx, getMetricPackEstimates)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetMetricPackEstimatesRow
+	for rows.Next() {
+		var i GetMetricPackEstimatesRow
 		if err := rows.Scan(
 			&i.OrganizationID,
 			&i.FrequencyMs,
@@ -48,9 +147,9 @@ func (q *Queries) GetAllMetricPackEstimates(ctx context.Context) ([]MetricPackEs
 }
 
 const upsertMetricPackEstimate = `-- name: UpsertMetricPackEstimate :exec
-INSERT INTO metric_pack_estimate (organization_id, frequency_ms, target_records, updated_at)
-VALUES ($1, $2, $3, now())
-ON CONFLICT (organization_id, frequency_ms)
+INSERT INTO pack_estimate (organization_id, frequency_ms, signal, target_records, updated_at)
+VALUES ($1, $2, 'metrics', $3, now())
+ON CONFLICT (organization_id, frequency_ms, signal)
 DO UPDATE SET
   target_records = EXCLUDED.target_records,
   updated_at = now()
@@ -62,8 +161,35 @@ type UpsertMetricPackEstimateParams struct {
 	TargetRecords  *int64    `json:"target_records"`
 }
 
-// Updates or inserts a single metric pack estimate
+// Updates or inserts a single metric pack estimate (backward compatibility)
 func (q *Queries) UpsertMetricPackEstimate(ctx context.Context, arg UpsertMetricPackEstimateParams) error {
 	_, err := q.db.Exec(ctx, upsertMetricPackEstimate, arg.OrganizationID, arg.FrequencyMs, arg.TargetRecords)
+	return err
+}
+
+const upsertPackEstimate = `-- name: UpsertPackEstimate :exec
+INSERT INTO pack_estimate (organization_id, frequency_ms, signal, target_records, updated_at)
+VALUES ($1, $2, $3, $4, now())
+ON CONFLICT (organization_id, frequency_ms, signal)
+DO UPDATE SET
+  target_records = EXCLUDED.target_records,
+  updated_at = now()
+`
+
+type UpsertPackEstimateParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	FrequencyMs    int32     `json:"frequency_ms"`
+	Signal         string    `json:"signal"`
+	TargetRecords  *int64    `json:"target_records"`
+}
+
+// Updates or inserts a single pack estimate for any signal type
+func (q *Queries) UpsertPackEstimate(ctx context.Context, arg UpsertPackEstimateParams) error {
+	_, err := q.db.Exec(ctx, upsertPackEstimate,
+		arg.OrganizationID,
+		arg.FrequencyMs,
+		arg.Signal,
+		arg.TargetRecords,
+	)
 	return err
 }

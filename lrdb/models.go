@@ -175,13 +175,6 @@ type LrdbServiceIdentifier struct {
 	Namespace      pgtype.Text `json:"namespace"`
 }
 
-type MetricPackEstimate struct {
-	OrganizationID uuid.UUID `json:"organization_id"`
-	FrequencyMs    int32     `json:"frequency_ms"`
-	TargetRecords  *int64    `json:"target_records"`
-	UpdatedAt      time.Time `json:"updated_at"`
-}
-
 type MetricSeg struct {
 	OrganizationID uuid.UUID                 `json:"organization_id"`
 	Dateint        int32                     `json:"dateint"`
@@ -211,6 +204,14 @@ type ObjCleanup struct {
 	BucketID       string    `json:"bucket_id"`
 	ObjectID       string    `json:"object_id"`
 	Tries          int32     `json:"tries"`
+}
+
+type PackEstimate struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	FrequencyMs    int32     `json:"frequency_ms"`
+	TargetRecords  *int64    `json:"target_records"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	Signal         string    `json:"signal"`
 }
 
 // Enhanced debugging journal for segment operations. Tracks record counts, time windows, and frequency changes for compaction and rollup debugging.
