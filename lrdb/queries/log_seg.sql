@@ -1,4 +1,4 @@
--- name: InsertLogSegmentDirect :exec
+-- name: insertLogSegmentDirect :exec
 INSERT INTO log_seg (
   organization_id,
   dateint,

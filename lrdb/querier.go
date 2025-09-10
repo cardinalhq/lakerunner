@@ -14,7 +14,6 @@ import (
 type Querier interface {
 	BatchDeleteMetricSegs(ctx context.Context, arg []BatchDeleteMetricSegsParams) *BatchDeleteMetricSegsBatchResults
 	BatchInsertLogSegs(ctx context.Context, arg []BatchInsertLogSegsParams) *BatchInsertLogSegsBatchResults
-	BatchInsertMetricSegs(ctx context.Context, arg []BatchInsertMetricSegsParams) *BatchInsertMetricSegsBatchResults
 	BatchInsertTraceSegs(ctx context.Context, arg []BatchInsertTraceSegsParams) *BatchInsertTraceSegsBatchResults
 	BatchMarkMetricSegsRolledup(ctx context.Context, arg []BatchMarkMetricSegsRolledupParams) *BatchMarkMetricSegsRolledupBatchResults
 	// This will upsert a new log exemplar. Attributes, exemplar, and updated_at are always updated
@@ -32,16 +31,12 @@ type Querier interface {
 	// Get the most recent segment_journal entry
 	GetLatestSegmentJournal(ctx context.Context) (SegmentJournal, error)
 	GetLogSegmentsForCompaction(ctx context.Context, arg GetLogSegmentsForCompactionParams) ([]GetLogSegmentsForCompactionRow, error)
-	// Get a single segment by its primary key components
 	GetMetricSeg(ctx context.Context, arg GetMetricSegParams) (MetricSeg, error)
 	GetMetricSegsByIds(ctx context.Context, arg GetMetricSegsByIdsParams) ([]MetricSeg, error)
 	GetMetricType(ctx context.Context, arg GetMetricTypeParams) (string, error)
 	// Get a specific segment_journal entry by ID
 	GetSegmentJournalByID(ctx context.Context, id int64) (SegmentJournal, error)
 	GetTraceSegmentsForCompaction(ctx context.Context, arg GetTraceSegmentsForCompactionParams) ([]GetTraceSegmentsForCompactionRow, error)
-	InsertCompactedMetricSeg(ctx context.Context, arg []InsertCompactedMetricSegParams) *InsertCompactedMetricSegBatchResults
-	InsertLogSegmentDirect(ctx context.Context, arg InsertLogSegmentParams) error
-	InsertMetricSegmentDirect(ctx context.Context, arg InsertMetricSegmentParams) error
 	// Insert a debugging journal entry for segment operations
 	InsertSegmentJournal(ctx context.Context, arg InsertSegmentJournalParams) error
 	InsertTraceSegmentDirect(ctx context.Context, arg InsertTraceSegmentDirectParams) error
@@ -98,6 +93,9 @@ type Querier interface {
 	// Get queue depth for work queue scaling by signal and action
 	WorkQueueScalingDepth(ctx context.Context, arg WorkQueueScalingDepthParams) (interface{}, error)
 	WorkQueueSummary(ctx context.Context) ([]WorkQueueSummaryRow, error)
+	insertLogSegmentDirect(ctx context.Context, arg InsertLogSegmentParams) error
+	insertMetricSegDirect(ctx context.Context, arg InsertMetricSegmentParams) error
+	insertMetricSegsDirect(ctx context.Context, arg []InsertMetricSegsParams) *insertMetricSegsDirectBatchResults
 }
 
 var _ Querier = (*Queries)(nil)

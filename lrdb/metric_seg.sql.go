@@ -33,7 +33,6 @@ type GetMetricSegParams struct {
 	SlotCount      int32     `json:"slot_count"`
 }
 
-// Get a single segment by its primary key components
 func (q *Queries) GetMetricSeg(ctx context.Context, arg GetMetricSegParams) (MetricSeg, error) {
 	row := q.db.QueryRow(ctx, getMetricSeg,
 		arg.OrganizationID,
@@ -130,88 +129,6 @@ func (q *Queries) GetMetricSegsByIds(ctx context.Context, arg GetMetricSegsByIds
 		return nil, err
 	}
 	return items, nil
-}
-
-const insertMetricSegmentDirect = `-- name: InsertMetricSegmentDirect :exec
-INSERT INTO metric_seg (
-  organization_id,
-  dateint,
-  ingest_dateint,
-  frequency_ms,
-  segment_id,
-  instance_num,
-  slot_id,
-  ts_range,
-  record_count,
-  file_size,
-  created_by,
-  published,
-  fingerprints,
-  sort_version,
-  slot_count,
-  compacted
-)
-VALUES (
-  $1,
-  $2,
-  $3,
-  $4,
-  $5,
-  $6,
-  $7,
-  int8range($8, $9, '[)'),
-  $10,
-  $11,
-  $12,
-  $13,
-  $14::bigint[],
-  $15,
-  $16,
-  $17
-)
-`
-
-type InsertMetricSegmentParams struct {
-	OrganizationID uuid.UUID `json:"organization_id"`
-	Dateint        int32     `json:"dateint"`
-	IngestDateint  int32     `json:"ingest_dateint"`
-	FrequencyMs    int32     `json:"frequency_ms"`
-	SegmentID      int64     `json:"segment_id"`
-	InstanceNum    int16     `json:"instance_num"`
-	SlotID         int32     `json:"slot_id"`
-	StartTs        int64     `json:"start_ts"`
-	EndTs          int64     `json:"end_ts"`
-	RecordCount    int64     `json:"record_count"`
-	FileSize       int64     `json:"file_size"`
-	CreatedBy      CreatedBy `json:"created_by"`
-	Published      bool      `json:"published"`
-	Fingerprints   []int64   `json:"fingerprints"`
-	SortVersion    int16     `json:"sort_version"`
-	SlotCount      int32     `json:"slot_count"`
-	Compacted      bool      `json:"compacted"`
-}
-
-func (q *Queries) InsertMetricSegmentDirect(ctx context.Context, arg InsertMetricSegmentParams) error {
-	_, err := q.db.Exec(ctx, insertMetricSegmentDirect,
-		arg.OrganizationID,
-		arg.Dateint,
-		arg.IngestDateint,
-		arg.FrequencyMs,
-		arg.SegmentID,
-		arg.InstanceNum,
-		arg.SlotID,
-		arg.StartTs,
-		arg.EndTs,
-		arg.RecordCount,
-		arg.FileSize,
-		arg.CreatedBy,
-		arg.Published,
-		arg.Fingerprints,
-		arg.SortVersion,
-		arg.SlotCount,
-		arg.Compacted,
-	)
-	return err
 }
 
 const listMetricSegmentsForQuery = `-- name: ListMetricSegmentsForQuery :many
@@ -334,6 +251,92 @@ func (q *Queries) MarkMetricSegsRolledupByKeys(ctx context.Context, arg MarkMetr
 		arg.FrequencyMs,
 		arg.InstanceNum,
 		arg.SegmentIds,
+	)
+	return err
+}
+
+const insertMetricSegDirect = `-- name: insertMetricSegDirect :exec
+INSERT INTO metric_seg (
+  organization_id,
+  dateint,
+  ingest_dateint,
+  frequency_ms,
+  segment_id,
+  instance_num,
+  slot_id,
+  ts_range,
+  record_count,
+  file_size,
+  created_by,
+  published,
+  rolledup,
+  fingerprints,
+  sort_version,
+  slot_count,
+  compacted
+)
+VALUES (
+  $1,
+  $2,
+  $3,
+  $4,
+  $5,
+  $6,
+  $7,
+  int8range($8, $9, '[)'),
+  $10,
+  $11,
+  $12,
+  $13,
+  $14,
+  $15::bigint[],
+  $16,
+  $17,
+  $18
+)
+`
+
+type InsertMetricSegmentParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Dateint        int32     `json:"dateint"`
+	IngestDateint  int32     `json:"ingest_dateint"`
+	FrequencyMs    int32     `json:"frequency_ms"`
+	SegmentID      int64     `json:"segment_id"`
+	InstanceNum    int16     `json:"instance_num"`
+	SlotID         int32     `json:"slot_id"`
+	StartTs        int64     `json:"start_ts"`
+	EndTs          int64     `json:"end_ts"`
+	RecordCount    int64     `json:"record_count"`
+	FileSize       int64     `json:"file_size"`
+	CreatedBy      CreatedBy `json:"created_by"`
+	Published      bool      `json:"published"`
+	Rolledup       bool      `json:"rolledup"`
+	Fingerprints   []int64   `json:"fingerprints"`
+	SortVersion    int16     `json:"sort_version"`
+	SlotCount      int32     `json:"slot_count"`
+	Compacted      bool      `json:"compacted"`
+}
+
+func (q *Queries) insertMetricSegDirect(ctx context.Context, arg InsertMetricSegmentParams) error {
+	_, err := q.db.Exec(ctx, insertMetricSegDirect,
+		arg.OrganizationID,
+		arg.Dateint,
+		arg.IngestDateint,
+		arg.FrequencyMs,
+		arg.SegmentID,
+		arg.InstanceNum,
+		arg.SlotID,
+		arg.StartTs,
+		arg.EndTs,
+		arg.RecordCount,
+		arg.FileSize,
+		arg.CreatedBy,
+		arg.Published,
+		arg.Rolledup,
+		arg.Fingerprints,
+		arg.SortVersion,
+		arg.SlotCount,
+		arg.Compacted,
 	)
 	return err
 }

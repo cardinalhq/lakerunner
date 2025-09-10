@@ -174,124 +174,6 @@ func (b *BatchInsertLogSegsBatchResults) Close() error {
 	return b.br.Close()
 }
 
-const batchInsertMetricSegs = `-- name: BatchInsertMetricSegs :batchexec
-INSERT INTO metric_seg (
-  organization_id,
-  dateint,
-  ingest_dateint,
-  frequency_ms,
-  segment_id,
-  instance_num,
-  slot_id,
-  ts_range,
-  record_count,
-  file_size,
-  published,
-  created_by,
-  rolledup,
-  fingerprints,
-  sort_version,
-  slot_count,
-  compacted
-)
-VALUES (
-  $1,
-  $2,
-  $3,
-  $4,
-  $5,
-  $6,
-  $7,
-  int8range($8, $9, '[)'),
-  $10,
-  $11,
-  $12,
-  $13,
-  $14,
-  $15::bigint[],
-  $16,
-  $17,
-  $18
-)
-`
-
-type BatchInsertMetricSegsBatchResults struct {
-	br     pgx.BatchResults
-	tot    int
-	closed bool
-}
-
-type BatchInsertMetricSegsParams struct {
-	OrganizationID uuid.UUID `json:"organization_id"`
-	Dateint        int32     `json:"dateint"`
-	IngestDateint  int32     `json:"ingest_dateint"`
-	FrequencyMs    int32     `json:"frequency_ms"`
-	SegmentID      int64     `json:"segment_id"`
-	InstanceNum    int16     `json:"instance_num"`
-	SlotID         int32     `json:"slot_id"`
-	StartTs        int64     `json:"start_ts"`
-	EndTs          int64     `json:"end_ts"`
-	RecordCount    int64     `json:"record_count"`
-	FileSize       int64     `json:"file_size"`
-	Published      bool      `json:"published"`
-	CreatedBy      CreatedBy `json:"created_by"`
-	Rolledup       bool      `json:"rolledup"`
-	Fingerprints   []int64   `json:"fingerprints"`
-	SortVersion    int16     `json:"sort_version"`
-	SlotCount      int32     `json:"slot_count"`
-	Compacted      bool      `json:"compacted"`
-}
-
-func (q *Queries) BatchInsertMetricSegs(ctx context.Context, arg []BatchInsertMetricSegsParams) *BatchInsertMetricSegsBatchResults {
-	batch := &pgx.Batch{}
-	for _, a := range arg {
-		vals := []interface{}{
-			a.OrganizationID,
-			a.Dateint,
-			a.IngestDateint,
-			a.FrequencyMs,
-			a.SegmentID,
-			a.InstanceNum,
-			a.SlotID,
-			a.StartTs,
-			a.EndTs,
-			a.RecordCount,
-			a.FileSize,
-			a.Published,
-			a.CreatedBy,
-			a.Rolledup,
-			a.Fingerprints,
-			a.SortVersion,
-			a.SlotCount,
-			a.Compacted,
-		}
-		batch.Queue(batchInsertMetricSegs, vals...)
-	}
-	br := q.db.SendBatch(ctx, batch)
-	return &BatchInsertMetricSegsBatchResults{br, len(arg), false}
-}
-
-func (b *BatchInsertMetricSegsBatchResults) Exec(f func(int, error)) {
-	defer b.br.Close()
-	for t := 0; t < b.tot; t++ {
-		if b.closed {
-			if f != nil {
-				f(t, ErrBatchAlreadyClosed)
-			}
-			continue
-		}
-		_, err := b.br.Exec()
-		if f != nil {
-			f(t, err)
-		}
-	}
-}
-
-func (b *BatchInsertMetricSegsBatchResults) Close() error {
-	b.closed = true
-	return b.br.Close()
-}
-
 const batchInsertTraceSegs = `-- name: BatchInsertTraceSegs :batchexec
 INSERT INTO trace_seg (
   organization_id,
@@ -683,112 +565,6 @@ func (b *BatchUpsertExemplarTracesBatchResults) Close() error {
 	return b.br.Close()
 }
 
-const insertCompactedMetricSeg = `-- name: InsertCompactedMetricSeg :batchexec
-INSERT INTO metric_seg (
-  organization_id, dateint, frequency_ms, segment_id, instance_num,
-  ts_range, record_count, file_size, ingest_dateint,
-  published, rolledup, created_at, created_by, slot_id,
-  fingerprints, sort_version, slot_count, compacted
-)
-VALUES (
-  $1,
-  $2,
-  $3,
-  $4,
-  $5,
-  int8range($6, $7, '[)'),  -- half-open; change to '[]' if you store inclusive end
-  $8,
-  $9,
-  $10,
-  $11,            -- typically true for new compacted output
-  $12,             -- pass as needed
-  now(),
-  $13,
-  $14,
-  $15::bigint[],  -- per-row bigint[]; bind as []int64
-  $16,
-  $17,
-  false                  -- new segments are not compacted
-)
-ON CONFLICT (organization_id, dateint, frequency_ms, segment_id, instance_num, slot_id, slot_count)
-DO NOTHING
-`
-
-type InsertCompactedMetricSegBatchResults struct {
-	br     pgx.BatchResults
-	tot    int
-	closed bool
-}
-
-type InsertCompactedMetricSegParams struct {
-	OrganizationID uuid.UUID `json:"organization_id"`
-	Dateint        int32     `json:"dateint"`
-	FrequencyMs    int32     `json:"frequency_ms"`
-	SegmentID      int64     `json:"segment_id"`
-	InstanceNum    int16     `json:"instance_num"`
-	StartTs        int64     `json:"start_ts"`
-	EndTs          int64     `json:"end_ts"`
-	RecordCount    int64     `json:"record_count"`
-	FileSize       int64     `json:"file_size"`
-	EIngestDateint int32     `json:"e_ingest_dateint"`
-	Published      bool      `json:"published"`
-	Rolledup       bool      `json:"rolledup"`
-	CreatedBy      CreatedBy `json:"created_by"`
-	SlotID         int32     `json:"slot_id"`
-	Fingerprints   []int64   `json:"fingerprints"`
-	SortVersion    int16     `json:"sort_version"`
-	SlotCount      int32     `json:"slot_count"`
-}
-
-func (q *Queries) InsertCompactedMetricSeg(ctx context.Context, arg []InsertCompactedMetricSegParams) *InsertCompactedMetricSegBatchResults {
-	batch := &pgx.Batch{}
-	for _, a := range arg {
-		vals := []interface{}{
-			a.OrganizationID,
-			a.Dateint,
-			a.FrequencyMs,
-			a.SegmentID,
-			a.InstanceNum,
-			a.StartTs,
-			a.EndTs,
-			a.RecordCount,
-			a.FileSize,
-			a.EIngestDateint,
-			a.Published,
-			a.Rolledup,
-			a.CreatedBy,
-			a.SlotID,
-			a.Fingerprints,
-			a.SortVersion,
-			a.SlotCount,
-		}
-		batch.Queue(insertCompactedMetricSeg, vals...)
-	}
-	br := q.db.SendBatch(ctx, batch)
-	return &InsertCompactedMetricSegBatchResults{br, len(arg), false}
-}
-
-func (b *InsertCompactedMetricSegBatchResults) Exec(f func(int, error)) {
-	defer b.br.Close()
-	for t := 0; t < b.tot; t++ {
-		if b.closed {
-			if f != nil {
-				f(t, ErrBatchAlreadyClosed)
-			}
-			continue
-		}
-		_, err := b.br.Exec()
-		if f != nil {
-			f(t, err)
-		}
-	}
-}
-
-func (b *InsertCompactedMetricSegBatchResults) Close() error {
-	b.closed = true
-	return b.br.Close()
-}
-
 const kafkaJournalBatchUpsert = `-- name: KafkaJournalBatchUpsert :batchexec
 INSERT INTO kafka_offset_journal (consumer_group, topic, partition, last_processed_offset, organization_id, instance_num, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6, NOW())
@@ -850,6 +626,126 @@ func (b *KafkaJournalBatchUpsertBatchResults) Exec(f func(int, error)) {
 }
 
 func (b *KafkaJournalBatchUpsertBatchResults) Close() error {
+	b.closed = true
+	return b.br.Close()
+}
+
+const insertMetricSegsDirect = `-- name: insertMetricSegsDirect :batchexec
+INSERT INTO metric_seg (
+  organization_id,
+  dateint,
+  ingest_dateint,
+  frequency_ms,
+  segment_id,
+  instance_num,
+  slot_id,
+  ts_range,
+  record_count,
+  file_size,
+  published,
+  created_by,
+  rolledup,
+  fingerprints,
+  sort_version,
+  slot_count,
+  compacted
+)
+VALUES (
+  $1,
+  $2,
+  $3,
+  $4,
+  $5,
+  $6,
+  $7,
+  int8range($8, $9, '[)'),
+  $10,
+  $11,
+  $12,
+  $13,
+  $14,
+  $15::bigint[],
+  $16,
+  $17,
+  $18
+)
+ON CONFLICT (organization_id, dateint, frequency_ms, segment_id, instance_num, slot_id, slot_count)
+DO NOTHING
+`
+
+type insertMetricSegsDirectBatchResults struct {
+	br     pgx.BatchResults
+	tot    int
+	closed bool
+}
+
+type InsertMetricSegsParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Dateint        int32     `json:"dateint"`
+	IngestDateint  int32     `json:"ingest_dateint"`
+	FrequencyMs    int32     `json:"frequency_ms"`
+	SegmentID      int64     `json:"segment_id"`
+	InstanceNum    int16     `json:"instance_num"`
+	SlotID         int32     `json:"slot_id"`
+	StartTs        int64     `json:"start_ts"`
+	EndTs          int64     `json:"end_ts"`
+	RecordCount    int64     `json:"record_count"`
+	FileSize       int64     `json:"file_size"`
+	Published      bool      `json:"published"`
+	CreatedBy      CreatedBy `json:"created_by"`
+	Rolledup       bool      `json:"rolledup"`
+	Fingerprints   []int64   `json:"fingerprints"`
+	SortVersion    int16     `json:"sort_version"`
+	SlotCount      int32     `json:"slot_count"`
+	Compacted      bool      `json:"compacted"`
+}
+
+func (q *Queries) insertMetricSegsDirect(ctx context.Context, arg []InsertMetricSegsParams) *insertMetricSegsDirectBatchResults {
+	batch := &pgx.Batch{}
+	for _, a := range arg {
+		vals := []interface{}{
+			a.OrganizationID,
+			a.Dateint,
+			a.IngestDateint,
+			a.FrequencyMs,
+			a.SegmentID,
+			a.InstanceNum,
+			a.SlotID,
+			a.StartTs,
+			a.EndTs,
+			a.RecordCount,
+			a.FileSize,
+			a.Published,
+			a.CreatedBy,
+			a.Rolledup,
+			a.Fingerprints,
+			a.SortVersion,
+			a.SlotCount,
+			a.Compacted,
+		}
+		batch.Queue(insertMetricSegsDirect, vals...)
+	}
+	br := q.db.SendBatch(ctx, batch)
+	return &insertMetricSegsDirectBatchResults{br, len(arg), false}
+}
+
+func (b *insertMetricSegsDirectBatchResults) Exec(f func(int, error)) {
+	defer b.br.Close()
+	for t := 0; t < b.tot; t++ {
+		if b.closed {
+			if f != nil {
+				f(t, ErrBatchAlreadyClosed)
+			}
+			continue
+		}
+		_, err := b.br.Exec()
+		if f != nil {
+			f(t, err)
+		}
+	}
+}
+
+func (b *insertMetricSegsDirectBatchResults) Close() error {
 	b.closed = true
 	return b.br.Close()
 }
