@@ -32,6 +32,13 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
+// compactionMetricRecorder is a placeholder for metrics recording during compaction
+type compactionMetricRecorder struct{}
+
+func (r compactionMetricRecorder) RecordFilteredSegments(ctx context.Context, count int64, organizationID, instanceNum, signal, action, reason string) {
+	// TODO: Implement actual metrics recording if needed
+}
+
 func init() {
 	cmd := &cobra.Command{
 		Use:   "compact-traces",

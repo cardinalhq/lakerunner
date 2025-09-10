@@ -47,8 +47,6 @@ var (
 	workqueueFetchDuration metric.Float64Histogram
 	workqueueLag           metric.Float64Histogram
 
-	segmentsFilteredCounter metric.Int64Counter
-
 	// existsGauge is a gauge that indicates if the service is running (1) or not (0).
 	// It is set to 1, and never changes.  This is unused, but is here to ensure
 	// that the counter is not murdered by the garbage collector.
@@ -171,15 +169,6 @@ func setupGlobalMetrics() {
 		panic(fmt.Errorf("failed to create workqueue.lag histogram: %w", err))
 	}
 	workqueueLag = m
-
-	sc, err := meter.Int64Counter(
-		"lakerunner.processing.segments.filtered",
-		metric.WithDescription("Number of segments filtered out during processing pipeline"),
-	)
-	if err != nil {
-		panic(fmt.Errorf("failed to create segments.filtered counter: %w", err))
-	}
-	segmentsFilteredCounter = sc
 
 	mg, err := meter.Int64Gauge(
 		"lakerunner.exists",
