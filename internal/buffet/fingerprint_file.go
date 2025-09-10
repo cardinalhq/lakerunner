@@ -16,6 +16,7 @@ package buffet
 
 import (
 	"container/heap"
+	"context"
 	"encoding/gob"
 	"errors"
 	"fmt"
@@ -29,6 +30,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/filecrunch"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 )
 
 const maxRowsSortBuffer = 5000
@@ -60,7 +62,9 @@ type gs struct {
 // fingerprints them, buffers each group to disk, sorts each buffer by
 // `_cardinalhq.timestamp`, and finally merge-sorts the buffers into Parquet
 // files in time order.
-func ProcessAndSplit(ll *slog.Logger, fh *filecrunch.FileHandle, tmpdir string, ingestDateint int32, rpfEstimate int64) (map[SplitKey]HourlyResult, error) {
+func ProcessAndSplit(ctx context.Context, fh *filecrunch.FileHandle, tmpdir string, ingestDateint int32, rpfEstimate int64) (map[SplitKey]HourlyResult, error) {
+	ll := logctx.FromContext(ctx)
+
 	groups := make(map[SplitKey]*gs)
 
 	// 1st pass: read input and write sorted chunks to disk per group.

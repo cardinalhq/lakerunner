@@ -75,7 +75,7 @@ func TestIngestProtoLogsReader_EmptySlice(t *testing.T) {
 	opts := ReaderOptions{
 		SignalType:        SignalTypeLogs,
 		BatchSize:         1,
-		ExemplarProcessor: exemplar.NewProcessor(exemplar.Config{}, nil),
+		ExemplarProcessor: exemplar.NewProcessor(exemplar.Config{}),
 	}
 	reader, err := NewIngestProtoLogsReader(bytes.NewReader(syntheticData), opts)
 	require.NoError(t, err)
@@ -95,7 +95,7 @@ func TestIngestProtoLogsReader_Close(t *testing.T) {
 	opts := ReaderOptions{
 		SignalType:        SignalTypeLogs,
 		BatchSize:         1,
-		ExemplarProcessor: exemplar.NewProcessor(exemplar.Config{}, nil),
+		ExemplarProcessor: exemplar.NewProcessor(exemplar.Config{}),
 	}
 	reader, err := NewIngestProtoLogsReader(bytes.NewReader(syntheticData), opts)
 	require.NoError(t, err)
@@ -250,7 +250,7 @@ func TestIngestProtoLogsReader_SyntheticData(t *testing.T) {
 	opts := ReaderOptions{
 		SignalType:        SignalTypeLogs,
 		BatchSize:         1000,
-		ExemplarProcessor: exemplar.NewProcessor(exemplar.Config{}, nil),
+		ExemplarProcessor: exemplar.NewProcessor(exemplar.Config{}),
 	}
 	protoReader, err := NewIngestProtoLogsReader(reader, opts)
 	require.NoError(t, err)
@@ -386,7 +386,7 @@ func TestIngestProtoLogsReader_SyntheticDataFields(t *testing.T) {
 	opts := ReaderOptions{
 		SignalType:        SignalTypeLogs,
 		BatchSize:         1000,
-		ExemplarProcessor: exemplar.NewProcessor(exemplar.Config{}, nil),
+		ExemplarProcessor: exemplar.NewProcessor(exemplar.Config{}),
 	}
 	protoReader, err := NewIngestProtoLogsReader(reader, opts)
 	require.NoError(t, err)
@@ -529,7 +529,7 @@ func TestIngestProtoLogsReader_SyntheticStructuredData(t *testing.T) {
 	opts := ReaderOptions{
 		SignalType:        SignalTypeLogs,
 		BatchSize:         1,
-		ExemplarProcessor: exemplar.NewProcessor(exemplar.Config{}, nil),
+		ExemplarProcessor: exemplar.NewProcessor(exemplar.Config{}),
 	}
 	protoReader, err := NewIngestProtoLogsReader(reader, opts)
 	require.NoError(t, err)
@@ -692,7 +692,7 @@ func TestIngestProtoLogsReader_MultiResourceSyntheticData(t *testing.T) {
 	opts := ReaderOptions{
 		SignalType:        SignalTypeLogs,
 		BatchSize:         1,
-		ExemplarProcessor: exemplar.NewProcessor(exemplar.Config{}, nil),
+		ExemplarProcessor: exemplar.NewProcessor(exemplar.Config{}),
 	}
 	protoReader, err := NewIngestProtoLogsReader(reader, opts)
 	require.NoError(t, err)

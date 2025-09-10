@@ -17,25 +17,22 @@ package fly
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"time"
 
+	"log/slog"
+
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 )
 
 // ObjStoreNotificationProducer manages Kafka producer for object storage notifications
 type ObjStoreNotificationProducer struct {
 	producer Producer
-	logger   *slog.Logger
 	config   *Config
 }
 
 // NewObjStoreNotificationProducer creates a new object storage notification producer
-func NewObjStoreNotificationProducer(factory *Factory, logger *slog.Logger) (*ObjStoreNotificationProducer, error) {
-	if !factory.IsEnabled() {
-		return nil, fmt.Errorf("Kafka is not enabled")
-	}
-
+func NewObjStoreNotificationProducer(factory *Factory) (*ObjStoreNotificationProducer, error) {
 	producer, err := factory.CreateProducer()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka producer: %w", err)
@@ -43,52 +40,14 @@ func NewObjStoreNotificationProducer(factory *Factory, logger *slog.Logger) (*Ob
 
 	return &ObjStoreNotificationProducer{
 		producer: producer,
-		logger:   logger.With("component", "objstore_notification_producer"),
 		config:   factory.GetConfig(),
 	}, nil
 }
 
-// SendNotification sends a single object storage notification to the appropriate Kafka topic
-func (p *ObjStoreNotificationProducer) SendNotification(ctx context.Context, signal string, notification *messages.ObjStoreNotificationMessage) error {
-	// Set queued timestamp if not set
-	if notification.QueuedAt.IsZero() {
-		notification.QueuedAt = time.Now()
-	}
-
-	// Marshal the message
-	data, err := notification.Marshal()
-	if err != nil {
-		return fmt.Errorf("failed to marshal notification: %w", err)
-	}
-
-	// Create Kafka message with random partitioning (empty key)
-	msg := &Message{
-		Key:   nil, // Random partitioning as requested
-		Value: data,
-		Headers: map[string]string{
-			"organization_id": notification.OrganizationID.String(),
-			"timestamp":       notification.QueuedAt.Format(time.RFC3339),
-		},
-	}
-
-	// Determine topic based on signal
-	topic := fmt.Sprintf("lakerunner.objstore.ingest.%s", signal)
-	if err := p.producer.Send(ctx, topic, *msg); err != nil {
-		return fmt.Errorf("failed to send notification to Kafka topic %s: %w", topic, err)
-	}
-
-	p.logger.Debug("Sent object storage notification to Kafka",
-		slog.String("topic", topic),
-		slog.String("signal", signal),
-		slog.String("organization_id", notification.OrganizationID.String()),
-		slog.String("bucket", notification.Bucket),
-		slog.String("object_id", notification.ObjectID))
-
-	return nil
-}
-
 // SendBatch sends multiple object storage notifications as a batch
 func (p *ObjStoreNotificationProducer) SendBatch(ctx context.Context, signal string, notifications []messages.ObjStoreNotificationMessage) error {
+	ll := logctx.FromContext(ctx)
+
 	// Determine topic based on signal
 	topic := fmt.Sprintf("lakerunner.objstore.ingest.%s", signal)
 	messages := make([]Message, 0, len(notifications))
@@ -102,7 +61,7 @@ func (p *ObjStoreNotificationProducer) SendBatch(ctx context.Context, signal str
 		// Marshal the message
 		data, err := notification.Marshal()
 		if err != nil {
-			p.logger.Error("Failed to marshal notification",
+			ll.Error("Failed to marshal notification",
 				slog.Any("error", err),
 				slog.String("organization_id", notification.OrganizationID.String()))
 			continue
@@ -129,7 +88,7 @@ func (p *ObjStoreNotificationProducer) SendBatch(ctx context.Context, signal str
 	if err := p.producer.BatchSend(ctx, topic, messages); err != nil {
 		return fmt.Errorf("failed to send batch to Kafka topic %s: %w", topic, err)
 	}
-	p.logger.Debug("Sent batch of object storage notifications to Kafka",
+	ll.Debug("Sent batch of object storage notifications to Kafka",
 		slog.String("topic", topic),
 		slog.String("signal", signal),
 		slog.Int("count", len(messages)))
@@ -146,14 +105,11 @@ func (p *ObjStoreNotificationProducer) Close() error {
 type ObjStoreNotificationConsumer struct {
 	consumer Consumer
 	signal   string
-	logger   *slog.Logger
 }
 
 // NewObjStoreNotificationConsumer creates a new object storage notification consumer for a specific signal
-func NewObjStoreNotificationConsumer(factory *Factory, signal string, groupID string, logger *slog.Logger) (*ObjStoreNotificationConsumer, error) {
-	if !factory.IsEnabled() {
-		return nil, fmt.Errorf("Kafka is not enabled")
-	}
+func NewObjStoreNotificationConsumer(ctx context.Context, factory *Factory, signal string, groupID string) (*ObjStoreNotificationConsumer, error) {
+	ll := logctx.FromContext(ctx)
 
 	// Determine topic based on signal
 	var topic string
@@ -168,7 +124,7 @@ func NewObjStoreNotificationConsumer(factory *Factory, signal string, groupID st
 		return nil, fmt.Errorf("unsupported signal type: %s", signal)
 	}
 
-	logger.Debug("Creating Kafka consumer",
+	ll.Debug("Creating Kafka consumer",
 		slog.String("topic", topic),
 		slog.String("consumerGroup", groupID),
 		slog.String("signal", signal))
@@ -181,19 +137,20 @@ func NewObjStoreNotificationConsumer(factory *Factory, signal string, groupID st
 	return &ObjStoreNotificationConsumer{
 		consumer: consumer,
 		signal:   signal,
-		logger:   logger.With("component", "objstore_notification_consumer", "signal", signal),
 	}, nil
 }
 
 // Consume reads and processes object storage notifications using a handler
 func (c *ObjStoreNotificationConsumer) Consume(ctx context.Context, handler func(context.Context, []*messages.ObjStoreNotificationMessage) error) error {
+	ll := logctx.FromContext(ctx)
+
 	// Create a message handler that unmarshals object storage notifications
 	messageHandler := func(ctx context.Context, consumedMessages []ConsumedMessage) error {
 		notifications := make([]*messages.ObjStoreNotificationMessage, 0, len(consumedMessages))
 		for _, msg := range consumedMessages {
 			notification := &messages.ObjStoreNotificationMessage{}
 			if err := notification.Unmarshal(msg.Value); err != nil {
-				c.logger.Error("Failed to unmarshal notification", slog.Any("error", err))
+				ll.Error("Failed to unmarshal notification", slog.Any("error", err))
 				continue
 			}
 			notifications = append(notifications, notification)
@@ -210,6 +167,8 @@ func (c *ObjStoreNotificationConsumer) Consume(ctx context.Context, handler func
 
 // ConsumeBatch reads a batch of object storage notifications by running the consumer with a batch handler
 func (c *ObjStoreNotificationConsumer) ConsumeBatch(ctx context.Context, maxSize int) ([]*messages.ObjStoreNotificationMessage, error) {
+	ll := logctx.FromContext(ctx)
+
 	var result []*messages.ObjStoreNotificationMessage
 	var consumeErr error
 
@@ -228,7 +187,7 @@ func (c *ObjStoreNotificationConsumer) ConsumeBatch(ctx context.Context, maxSize
 
 			notification := &messages.ObjStoreNotificationMessage{}
 			if err := notification.Unmarshal(msg.Value); err != nil {
-				c.logger.Error("Failed to unmarshal notification", slog.Any("error", err))
+				ll.Error("Failed to unmarshal notification", slog.Any("error", err))
 				continue
 			}
 			result = append(result, notification)
@@ -262,6 +221,8 @@ func (c *ObjStoreNotificationConsumer) Commit(ctx context.Context, messages []Co
 
 // ConsumeWithMetadata reads and processes object storage notifications with access to Kafka metadata
 func (c *ObjStoreNotificationConsumer) ConsumeWithMetadata(ctx context.Context, handler func(context.Context, []*messages.ObjStoreNotificationMessage, []ConsumedMessage) error) error {
+	ll := logctx.FromContext(ctx)
+
 	// Create a message handler that unmarshals object storage notifications and preserves metadata
 	messageHandler := func(ctx context.Context, consumedMessages []ConsumedMessage) error {
 		notifications := make([]*messages.ObjStoreNotificationMessage, 0, len(consumedMessages))
@@ -270,7 +231,7 @@ func (c *ObjStoreNotificationConsumer) ConsumeWithMetadata(ctx context.Context, 
 		for _, msg := range consumedMessages {
 			notification := &messages.ObjStoreNotificationMessage{}
 			if err := notification.Unmarshal(msg.Value); err != nil {
-				c.logger.Error("Failed to unmarshal notification", slog.Any("error", err))
+				ll.Error("Failed to unmarshal notification", slog.Any("error", err))
 				continue
 			}
 			notifications = append(notifications, notification)
@@ -295,15 +256,13 @@ func (c *ObjStoreNotificationConsumer) Close() error {
 type ObjStoreNotificationManager struct {
 	factory   *Factory
 	producers map[string]*ObjStoreNotificationProducer // Keyed by source (sqs, http, gcp, azure)
-	logger    *slog.Logger
 }
 
 // NewObjStoreNotificationManager creates a new object storage notification manager
-func NewObjStoreNotificationManager(factory *Factory, logger *slog.Logger) *ObjStoreNotificationManager {
+func NewObjStoreNotificationManager(factory *Factory) *ObjStoreNotificationManager {
 	return &ObjStoreNotificationManager{
 		factory:   factory,
 		producers: make(map[string]*ObjStoreNotificationProducer),
-		logger:    logger.With("component", "objstore_notification_manager"),
 	}
 }
 
@@ -313,7 +272,7 @@ func (m *ObjStoreNotificationManager) GetProducer(source string) (*ObjStoreNotif
 		return producer, nil
 	}
 
-	producer, err := NewObjStoreNotificationProducer(m.factory, m.logger.With("source", source))
+	producer, err := NewObjStoreNotificationProducer(m.factory)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create producer for source %s: %w", source, err)
 	}

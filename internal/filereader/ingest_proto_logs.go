@@ -17,11 +17,12 @@ package filereader
 import (
 	"context"
 	"fmt"
+	"io"
+	"maps"
+
 	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
 	"github.com/cardinalhq/oteltools/pkg/translate"
-	"io"
-	"maps"
 
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
@@ -41,13 +42,12 @@ type IngestProtoLogsReader struct {
 	batchSize int
 
 	// Streaming iterator state for logs
-	logs               *plog.Logs
-	resourceIndex      int
-	scopeIndex         int
-	logIndex           int
-	exemplarProcessor  *exemplar.Processor
-	trieClusterManager *fingerprinter.TrieClusterManager
-	orgId              string
+	logs              *plog.Logs
+	resourceIndex     int
+	scopeIndex        int
+	logIndex          int
+	exemplarProcessor *exemplar.Processor
+	orgId             string
 }
 
 var _ Reader = (*IngestProtoLogsReader)(nil)
@@ -132,7 +132,7 @@ func (r *IngestProtoLogsReader) getLogRow(ctx context.Context) (Row, error) {
 
 			if r.logIndex < sl.LogRecords().Len() {
 				logRecord := sl.LogRecords().At(r.logIndex)
-				row := r.buildLogRow(rl, sl, logRecord)
+				row := r.buildLogRow(ctx, rl, sl, logRecord)
 				if r.exemplarProcessor != nil {
 					err := r.exemplarProcessor.ProcessLogs(ctx, r.orgId, rl, sl, logRecord)
 					if err != nil {
@@ -156,7 +156,7 @@ func (r *IngestProtoLogsReader) getLogRow(ctx context.Context) (Row, error) {
 }
 
 // buildLogRow creates a row from a single log record and its context.
-func (r *IngestProtoLogsReader) buildLogRow(rl plog.ResourceLogs, sl plog.ScopeLogs, logRecord plog.LogRecord) map[string]any {
+func (r *IngestProtoLogsReader) buildLogRow(ctx context.Context, rl plog.ResourceLogs, sl plog.ScopeLogs, logRecord plog.LogRecord) map[string]any {
 	ret := map[string]any{}
 
 	rl.Resource().Attributes().Range(func(name string, v pcommon.Value) bool {
@@ -183,8 +183,10 @@ func (r *IngestProtoLogsReader) buildLogRow(rl plog.ResourceLogs, sl plog.ScopeL
 	ret["observed_timestamp"] = logRecord.ObservedTimestamp().AsTime().UnixMilli()
 	ret["_cardinalhq.level"] = logRecord.SeverityText()
 	ret["severity_number"] = int64(logRecord.SeverityNumber())
-	if r.trieClusterManager != nil {
-		fingerprint, _, _, err := fingerprinter.Fingerprint(message, r.trieClusterManager)
+	if r.exemplarProcessor != nil {
+		tenant := r.exemplarProcessor.GetTenant(ctx, r.orgId)
+		trieClusterManager := tenant.GetTrieClusterManager()
+		fingerprint, _, _, err := fingerprinter.Fingerprint(message, trieClusterManager)
 		if err == nil {
 			ret[translate.CardinalFieldFingerprint] = fmt.Sprintf("%d", fingerprint)
 		}

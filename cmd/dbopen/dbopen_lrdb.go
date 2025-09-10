@@ -51,7 +51,7 @@ func ConnectTolrdb(ctx context.Context, opts ...Options) (*pgxpool.Pool, error) 
 	return pool, nil
 }
 
-func LRDBStore(ctx context.Context) (lrdb.StoreFull, error) {
+func LRDBStore(ctx context.Context) (*lrdb.Store, error) {
 	pool, err := ConnectTolrdb(ctx)
 	if err != nil {
 		return nil, err
@@ -62,7 +62,7 @@ func LRDBStore(ctx context.Context) (lrdb.StoreFull, error) {
 
 // LRDBStoreForAdmin connects to LRDB with admin-friendly migration checking
 // that warns and continues instead of failing on migration mismatches
-func LRDBStoreForAdmin(ctx context.Context) (lrdb.StoreFull, error) {
+func LRDBStoreForAdmin(ctx context.Context) (*lrdb.Store, error) {
 	pool, err := ConnectTolrdb(ctx, WarnOnMigrationMismatch())
 	if err != nil {
 		return nil, err

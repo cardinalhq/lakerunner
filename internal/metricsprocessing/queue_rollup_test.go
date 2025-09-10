@@ -16,24 +16,43 @@ package metricsprocessing
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 
-	"github.com/cardinalhq/lakerunner/lrdb"
+	"github.com/cardinalhq/lakerunner/internal/fly"
 )
 
-// MockRollupWorkQueuer is a mock implementation of RollupWorkQueuer
-type MockRollupWorkQueuer struct {
+// MockKafkaProducer is a mock implementation of fly.Producer
+type MockKafkaProducer struct {
 	mock.Mock
 }
 
-func (m *MockRollupWorkQueuer) MrqQueueWork(ctx context.Context, arg lrdb.MrqQueueWorkParams) error {
-	args := m.Called(ctx, arg)
+func (m *MockKafkaProducer) Send(ctx context.Context, topic string, msg fly.Message) error {
+	args := m.Called(ctx, topic, msg)
+	return args.Error(0)
+}
+
+func (m *MockKafkaProducer) BatchSend(ctx context.Context, topic string, msgs []fly.Message) error {
+	args := m.Called(ctx, topic, msgs)
+	return args.Error(0)
+}
+
+func (m *MockKafkaProducer) Close() error {
+	args := m.Called()
+	return args.Error(0)
+}
+
+func (m *MockKafkaProducer) GetPartitionCount(topic string) (int, error) {
+	args := m.Called(topic)
+	return args.Int(0), args.Error(1)
+}
+
+func (m *MockKafkaProducer) SendToPartition(ctx context.Context, topic string, partition int, msg fly.Message) error {
+	args := m.Called(ctx, topic, partition, msg)
 	return args.Error(0)
 }
 
@@ -46,187 +65,143 @@ func TestQueueMetricRollup(t *testing.T) {
 		instanceNum    int16
 		slotID         int32
 		slotCount      int32
-		startTs        int64
-		endTs          int64
-		mockError      error
-		expectedError  string
-		shouldQueue    bool
+		segmentID      int64
+		recordCount    int64
+		fileSize       int64
+		expectSend     bool
 	}{
 		{
-			name:           "successful queuing - 10s to 1min rollup",
-			organizationID: uuid.MustParse("12345678-1234-5678-9012-123456789012"),
-			dateint:        20231201,
-			frequencyMs:    10000, // 10 seconds -> rolls up to 60 seconds
+			name:           "10s frequency should queue rollup",
+			organizationID: uuid.New(),
+			dateint:        20240101,
+			frequencyMs:    10_000,
 			instanceNum:    1,
-			slotID:         5,
-			slotCount:      10,
-			startTs:        1703174400000, // 2023-12-21 12:00:00 UTC in milliseconds
-			endTs:          1703174410000, // 2023-12-21 12:00:10 UTC in milliseconds
-			mockError:      nil,
-			expectedError:  "",
-			shouldQueue:    true,
-		},
-		{
-			name:           "successful queuing - 1min to 5min rollup",
-			organizationID: uuid.MustParse("12345678-1234-5678-9012-123456789012"),
-			dateint:        20231201,
-			frequencyMs:    60000, // 1 minute -> rolls up to 5 minutes
-			instanceNum:    2,
-			slotID:         3,
-			slotCount:      8,
-			startTs:        1703174400000,
-			endTs:          1703174460000,
-			mockError:      nil,
-			expectedError:  "",
-			shouldQueue:    true,
-		},
-		{
-			name:           "no rollup needed - 1 hour frequency",
-			organizationID: uuid.MustParse("12345678-1234-5678-9012-123456789012"),
-			dateint:        20231201,
-			frequencyMs:    3600000, // 1 hour has no next rollup level
-			instanceNum:    1,
-			slotID:         1,
+			slotID:         0,
 			slotCount:      1,
-			startTs:        1703174400000,
-			endTs:          1703178000000,
-			mockError:      nil,
-			expectedError:  "",
-			shouldQueue:    false,
+			segmentID:      123,
+			recordCount:    1000,
+			fileSize:       10000,
+			expectSend:     true,
 		},
 		{
-			name:           "database error",
-			organizationID: uuid.MustParse("12345678-1234-5678-9012-123456789012"),
-			dateint:        20231201,
-			frequencyMs:    10000,
+			name:           "60s frequency should queue rollup",
+			organizationID: uuid.New(),
+			dateint:        20240101,
+			frequencyMs:    60_000,
 			instanceNum:    1,
-			slotID:         1,
+			slotID:         0,
 			slotCount:      1,
-			startTs:        1703174400000,
-			endTs:          1703174410000,
-			mockError:      errors.New("database connection error"),
-			expectedError:  "failed to queue metric rollup work: database connection error",
-			shouldQueue:    true,
+			segmentID:      124,
+			recordCount:    1000,
+			fileSize:       10000,
+			expectSend:     true,
+		},
+		{
+			name:           "300s frequency should queue rollup",
+			organizationID: uuid.New(),
+			dateint:        20240101,
+			frequencyMs:    300_000,
+			instanceNum:    1,
+			slotID:         0,
+			slotCount:      1,
+			segmentID:      125,
+			recordCount:    1000,
+			fileSize:       10000,
+			expectSend:     true,
+		},
+		{
+			name:           "1200s frequency should queue rollup",
+			organizationID: uuid.New(),
+			dateint:        20240101,
+			frequencyMs:    1_200_000,
+			instanceNum:    1,
+			slotID:         0,
+			slotCount:      1,
+			segmentID:      126,
+			recordCount:    1000,
+			fileSize:       10000,
+			expectSend:     true,
+		},
+		{
+			name:           "3600s frequency should not queue rollup",
+			organizationID: uuid.New(),
+			dateint:        20240101,
+			frequencyMs:    3_600_000,
+			instanceNum:    1,
+			slotID:         0,
+			slotCount:      1,
+			segmentID:      127,
+			recordCount:    1000,
+			fileSize:       10000,
+			expectSend:     false,
+		},
+		{
+			name:           "unknown frequency should not queue rollup",
+			organizationID: uuid.New(),
+			dateint:        20240101,
+			frequencyMs:    7_200_000,
+			instanceNum:    1,
+			slotID:         0,
+			slotCount:      1,
+			segmentID:      128,
+			recordCount:    1000,
+			fileSize:       10000,
+			expectSend:     false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockDB := new(MockRollupWorkQueuer)
+			mockProducer := new(MockKafkaProducer)
 
-			if tt.shouldQueue {
-				// Calculate expected next frequency
-				nextFreq := RollupTo[tt.frequencyMs]
-				expectedPriority := tt.frequencyMs
-
-				// Set up expectation
-				expectedRollupGroup := tt.startTs / int64(nextFreq)
-				mockDB.On("MrqQueueWork", mock.Anything, mock.MatchedBy(func(params lrdb.MrqQueueWorkParams) bool {
-					return params.OrganizationID == tt.organizationID &&
-						params.Dateint == tt.dateint &&
-						params.FrequencyMs == tt.frequencyMs &&
-						params.InstanceNum == tt.instanceNum &&
-						params.SlotID == tt.slotID &&
-						params.SlotCount == tt.slotCount &&
-						params.RecordCount == 1000 &&
-						params.RollupGroup == expectedRollupGroup &&
-						params.Priority == expectedPriority
-				})).Return(tt.mockError)
+			if tt.expectSend {
+				mockProducer.On("Send", mock.Anything, "lakerunner.segments.metrics.rollup", mock.Anything).Return(nil)
 			}
 
-			// Call the function
-			err := QueueMetricRollup(
-				context.Background(),
-				mockDB,
-				tt.organizationID,
-				tt.dateint,
-				tt.frequencyMs,
-				tt.instanceNum,
-				tt.slotID,
-				tt.slotCount,
-				12345, // segmentID
-				1000,  // recordCount
-				tt.startTs,
-			)
-
-			// Verify results
-			if tt.expectedError == "" {
-				assert.NoError(t, err)
-			} else {
-				assert.Error(t, err)
-				assert.Equal(t, tt.expectedError, err.Error())
-			}
-
-			// Verify mock expectations
-			mockDB.AssertExpectations(t)
-		})
-	}
-}
-
-func TestQueueMetricRollup_FrequencyMapping(t *testing.T) {
-	// Test the rollup frequency mapping
-	testCases := []struct {
-		sourceFreq int32
-		targetFreq int32
-		priority   int32
-	}{
-		{10000, 60000, 10000},       // 10s -> 1min
-		{60000, 300000, 60000},      // 1min -> 5min
-		{300000, 1200000, 300000},   // 5min -> 20min
-		{1200000, 3600000, 1200000}, // 20min -> 1hour
-	}
-
-	for _, tc := range testCases {
-		t.Run(fmt.Sprintf("frequency_%d_to_%d", tc.sourceFreq, tc.targetFreq), func(t *testing.T) {
-			mockDB := new(MockRollupWorkQueuer)
-
-			expectedRollupGroup := int64(1703174400000) / int64(tc.targetFreq) // startTs / targetFreq
-			mockDB.On("MrqQueueWork", mock.Anything, mock.MatchedBy(func(params lrdb.MrqQueueWorkParams) bool {
-				return params.FrequencyMs == tc.sourceFreq &&
-					params.RecordCount == 2000 &&
-					params.RollupGroup == expectedRollupGroup &&
-					params.Priority == tc.priority
-			})).Return(nil)
-
-			err := QueueMetricRollup(
-				context.Background(),
-				mockDB,
-				uuid.New(),
-				20231201,
-				tc.sourceFreq,
-				1,
-				1,
-				1,
-				67890, // segmentID
-				2000,  // recordCount
-				1703174400000,
-			)
+			ctx := context.Background()
+			segmentStartTime := time.Now() // Use current time for test
+			err := QueueMetricRollup(ctx, mockProducer, tt.organizationID, tt.dateint, tt.frequencyMs,
+				tt.instanceNum, tt.slotID, tt.slotCount, tt.segmentID, tt.recordCount, tt.fileSize, segmentStartTime)
 
 			assert.NoError(t, err)
-			mockDB.AssertExpectations(t)
+			mockProducer.AssertExpectations(t)
 		})
 	}
 }
 
-func TestQueueMetricRollup_NoRollupForUnknownFrequency(t *testing.T) {
-	// Test that unknown frequencies don't queue rollup work
-	mockDB := new(MockRollupWorkQueuer)
-	// No expectations set - should not call MrqQueueWork
+func TestQueueMetricRollupWithMultipleSegments(t *testing.T) {
+	mockProducer := new(MockKafkaProducer)
+	ctx := context.Background()
+	orgID := uuid.New()
 
-	err := QueueMetricRollup(
-		context.Background(),
-		mockDB,
-		uuid.New(),
-		20231201,
-		999999, // Unknown frequency
-		1,
-		1,
-		1,
-		11111, // segmentID
-		3000,  // recordCount
-		1703174400000,
-	)
+	// Expect 3 sends for the rollup-eligible frequencies
+	mockProducer.On("Send", mock.Anything, "lakerunner.segments.metrics.rollup", mock.Anything).Return(nil).Times(3)
 
-	assert.NoError(t, err)
-	mockDB.AssertExpectations(t) // Should pass with no expectations
+	// Queue multiple segments with different frequencies
+	frequencies := []int32{10_000, 60_000, 300_000, 3_600_000} // Only first 3 should send
+	segmentStartTime := time.Now()
+	for i, freq := range frequencies {
+		err := QueueMetricRollup(ctx, mockProducer, orgID, 20240101, freq, 1, 0, 1, int64(i+100), 1000, 10000, segmentStartTime)
+		assert.NoError(t, err)
+	}
+
+	mockProducer.AssertExpectations(t)
+}
+
+func TestQueueMetricRollupBatch(t *testing.T) {
+	mockProducer := new(MockKafkaProducer)
+	ctx := context.Background()
+	orgID := uuid.New()
+
+	// Set up expectation for each individual send
+	mockProducer.On("Send", mock.Anything, "lakerunner.segments.metrics.rollup", mock.Anything).Return(nil).Times(5)
+
+	// Queue a batch of segments with rollup-eligible frequency
+	segmentStartTime := time.Now()
+	for i := 0; i < 5; i++ {
+		err := QueueMetricRollup(ctx, mockProducer, orgID, 20240101, 10_000, 1, int32(i), 5, int64(i+100), 1000, 10000, segmentStartTime)
+		assert.NoError(t, err)
+	}
+
+	mockProducer.AssertExpectations(t)
 }

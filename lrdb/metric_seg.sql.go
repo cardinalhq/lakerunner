@@ -11,6 +11,63 @@ import (
 	"github.com/google/uuid"
 )
 
+const getMetricSeg = `-- name: GetMetricSeg :one
+SELECT organization_id, dateint, frequency_ms, segment_id, instance_num, ts_range, record_count, file_size, ingest_dateint, published, rolledup, created_at, created_by, slot_id, fingerprints, sort_version, slot_count, compacted
+FROM metric_seg
+WHERE organization_id = $1
+  AND dateint = $2
+  AND frequency_ms = $3
+  AND segment_id = $4
+  AND instance_num = $5
+  AND slot_id = $6
+  AND slot_count = $7
+`
+
+type GetMetricSegParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Dateint        int32     `json:"dateint"`
+	FrequencyMs    int32     `json:"frequency_ms"`
+	SegmentID      int64     `json:"segment_id"`
+	InstanceNum    int16     `json:"instance_num"`
+	SlotID         int32     `json:"slot_id"`
+	SlotCount      int32     `json:"slot_count"`
+}
+
+// Get a single segment by its primary key components
+func (q *Queries) GetMetricSeg(ctx context.Context, arg GetMetricSegParams) (MetricSeg, error) {
+	row := q.db.QueryRow(ctx, getMetricSeg,
+		arg.OrganizationID,
+		arg.Dateint,
+		arg.FrequencyMs,
+		arg.SegmentID,
+		arg.InstanceNum,
+		arg.SlotID,
+		arg.SlotCount,
+	)
+	var i MetricSeg
+	err := row.Scan(
+		&i.OrganizationID,
+		&i.Dateint,
+		&i.FrequencyMs,
+		&i.SegmentID,
+		&i.InstanceNum,
+		&i.TsRange,
+		&i.RecordCount,
+		&i.FileSize,
+		&i.IngestDateint,
+		&i.Published,
+		&i.Rolledup,
+		&i.CreatedAt,
+		&i.CreatedBy,
+		&i.SlotID,
+		&i.Fingerprints,
+		&i.SortVersion,
+		&i.SlotCount,
+		&i.Compacted,
+	)
+	return i, err
+}
+
 const getMetricSegsByIds = `-- name: GetMetricSegsByIds :many
 SELECT organization_id, dateint, frequency_ms, segment_id, instance_num, ts_range, record_count, file_size, ingest_dateint, published, rolledup, created_at, created_by, slot_id, fingerprints, sort_version, slot_count, compacted
 FROM metric_seg

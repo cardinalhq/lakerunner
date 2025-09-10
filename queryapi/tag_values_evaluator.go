@@ -22,9 +22,10 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/cardinalhq/lakerunner/logql"
 	"github.com/cardinalhq/lakerunner/promql"
-	"github.com/google/uuid"
 )
 
 func (q *QuerierService) EvaluateMetricTagValuesQuery(

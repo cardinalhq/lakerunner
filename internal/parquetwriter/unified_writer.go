@@ -29,6 +29,8 @@ type UnifiedWriter struct {
 	closed   bool
 }
 
+var _ ParquetWriter = (*UnifiedWriter)(nil)
+
 // NewUnifiedWriter creates a new unified Parquet writer with the given configuration.
 func NewUnifiedWriter(config WriterConfig) (*UnifiedWriter, error) {
 	// Validate configuration
@@ -113,10 +115,4 @@ func (w *UnifiedWriter) GetCurrentStats() WriterStats {
 	stats.RecordsPerFile = w.config.RecordsPerFile
 
 	return stats
-}
-
-// WriterStats contains current statistics about a writer's state.
-type WriterStats struct {
-	Closed         bool
-	RecordsPerFile int64
 }

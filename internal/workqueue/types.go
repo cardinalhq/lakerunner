@@ -16,7 +16,6 @@ package workqueue
 
 import (
 	"context"
-	"log/slog"
 	"time"
 )
 
@@ -39,15 +38,7 @@ type Config struct {
 type HandlerOption func(*handlerOptions)
 
 type handlerOptions struct {
-	logger *slog.Logger
 	config *Config
-}
-
-// WithLogger sets the logger for handlers
-func WithLogger(logger *slog.Logger) HandlerOption {
-	return func(opts *handlerOptions) {
-		opts.logger = logger
-	}
 }
 
 // WithConfig sets the configuration for handlers

@@ -50,7 +50,7 @@ func objectCleanerLoop(ctx context.Context, sp storageprofile.StorageProfileProv
 		default:
 		}
 
-		didWork, err := runObjCleaner(ctx, ll, sp, mdb, cmgr)
+		didWork, err := runObjCleaner(ctx, sp, mdb, cmgr)
 		switch {
 		case err != nil:
 			ll.Error("Failed to run object cleaner", slog.Any("error", err))
@@ -72,7 +72,7 @@ func objectCleanerLoop(ctx context.Context, sp storageprofile.StorageProfileProv
 	}
 }
 
-func runObjCleaner(ctx context.Context, ll *slog.Logger, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, cmgr cloudstorage.ClientProvider) (bool, error) {
+func runObjCleaner(ctx context.Context, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, cmgr cloudstorage.ClientProvider) (bool, error) {
 	const maxrows = 1000
 	objs, err := mdb.ObjectCleanupGet(ctx, maxrows)
 	if err != nil {

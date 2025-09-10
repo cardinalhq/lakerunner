@@ -86,3 +86,50 @@ func NextBase32ID() string {
 func GenerateID() int64 {
 	return DefaultFlakeGenerator.NextID()
 }
+
+// GenerateBatchIDs generates a batch of unique int64 IDs with collision detection.
+// This ensures uniqueness within the batch, which is critical for database operations
+// where multiple segments are created in the same transaction.
+func GenerateBatchIDs(count int) []int64 {
+	return DefaultFlakeGenerator.NextBatchIDs(count)
+}
+
+// NextBatchIDs generates a batch of unique IDs with collision detection
+func (sf *SonyFlakeGenerator) NextBatchIDs(count int) []int64 {
+	if count <= 0 {
+		return nil
+	}
+
+	ids := make([]int64, count)
+	seen := make(map[int64]bool, count)
+
+	for i := 0; i < count; i++ {
+		var id int64
+		attempts := 0
+		maxAttempts := 100 // Prevent infinite loops
+
+		// Generate IDs until we get a unique one within this batch
+		for {
+			id = sf.NextID()
+			if !seen[id] {
+				break
+			}
+			attempts++
+			if attempts >= maxAttempts {
+				// Fallback: use base ID + sequential offset if we can't get unique IDs
+				// This should be extremely rare with SonyFlake
+				baseID := sf.NextID()
+				for j := i; j < count; j++ {
+					ids[j] = baseID + int64(j-i)
+					seen[ids[j]] = true
+				}
+				return ids
+			}
+		}
+
+		ids[i] = id
+		seen[id] = true
+	}
+
+	return ids
+}

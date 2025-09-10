@@ -25,7 +25,7 @@ var (
 	RollupNotifications = map[int32]int32{
 		10_000:    60_000,    // 10 seconds feeds 1m
 		60_000:    300_000,   // 1 minute feeds 5m
-		300_000:   1_200_000, // 5 minutes feeds 15m
+		300_000:   1_200_000, // 5 minutes feeds 20m
 		1_200_000: 3_600_000, // 20 minutes feeds 1h
 	}
 

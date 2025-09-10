@@ -21,11 +21,16 @@ import (
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
 
+	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/config"
+	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/debugging"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
+	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
+	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
 func init() {
@@ -33,6 +38,11 @@ func init() {
 		Use:   "ingest-metrics",
 		Short: "Ingest metrics from the inqueue table or Kafka",
 		RunE: func(_ *cobra.Command, _ []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+
 			helpers.SetupTempDir()
 
 			servicename := "lakerunner-ingest-metrics"
@@ -66,22 +76,34 @@ func init() {
 				}
 			}()
 
-			// Kafka is required for ingestion
-			cfg, err := config.Load()
+			mdb, err := dbopen.LRDBStore(ctx)
 			if err != nil {
-				return fmt.Errorf("failed to load config: %w", err)
+				return fmt.Errorf("failed to open LRDB store: %w", err)
 			}
 
+			cdb, err := dbopen.ConfigDBStore(ctx)
+			if err != nil {
+				return fmt.Errorf("failed to open ConfigDB store: %w", err)
+			}
+
+			cmgr, err := cloudstorage.NewCloudManagers(ctx)
+			if err != nil {
+				return fmt.Errorf("failed to create cloud managers: %w", err)
+			}
+
+			sp := storageprofile.NewStorageProfileProvider(cdb)
+
+			ll := logctx.FromContext(ctx).With("instanceID", myInstanceID)
+			ctx = logctx.WithLogger(ctx, ll)
+
+			// Kafka is always required for ingestion
 			kafkaFactory := fly.NewFactory(&cfg.Fly)
-			if !kafkaFactory.IsEnabled() {
-				return fmt.Errorf("Kafka is required for ingestion but is not enabled")
-			}
+			slog.Info("Starting metrics ingestion with accumulation consumer")
 
-			slog.Info("Starting metrics ingestion with Kafka consumer")
-
-			consumer, err := NewKafkaIngestConsumer(kafkaFactory, cfg, "metrics", "lakerunner.ingest.metrics")
+			// Create accumulation-based Kafka consumer for ingestion
+			consumer, err := metricsprocessing.NewMetricIngestConsumer(ctx, kafkaFactory, cfg, mdb, sp, cmgr)
 			if err != nil {
-				return fmt.Errorf("failed to create Kafka consumer: %w", err)
+				return fmt.Errorf("failed to create Kafka ingest consumer: %w", err)
 			}
 			defer func() {
 				if err := consumer.Close(); err != nil {
@@ -89,9 +111,9 @@ func init() {
 				}
 			}()
 
-			// Mark as healthy once consumer is created and about to start
 			healthServer.SetStatus(healthcheck.StatusHealthy)
 
+			// Run the Kafka consumer
 			return consumer.Run(ctx)
 		},
 	}

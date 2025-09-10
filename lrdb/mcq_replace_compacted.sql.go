@@ -101,3 +101,39 @@ func (q *Queries) SetMetricSegCompacted(ctx context.Context, arg SetMetricSegCom
 	)
 	return err
 }
+
+const setSingleMetricSegCompacted = `-- name: SetSingleMetricSegCompacted :exec
+UPDATE metric_seg
+SET compacted = true
+WHERE organization_id = $1
+  AND dateint         = $2
+  AND frequency_ms    = $3
+  AND segment_id      = $4
+  AND instance_num    = $5
+  AND slot_id         = $6
+  AND slot_count      = $7
+  AND compacted       = false
+`
+
+type SetSingleMetricSegCompactedParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Dateint        int32     `json:"dateint"`
+	FrequencyMs    int32     `json:"frequency_ms"`
+	SegmentID      int64     `json:"segment_id"`
+	InstanceNum    int16     `json:"instance_num"`
+	SlotID         int32     `json:"slot_id"`
+	SlotCount      int32     `json:"slot_count"`
+}
+
+func (q *Queries) SetSingleMetricSegCompacted(ctx context.Context, arg SetSingleMetricSegCompactedParams) error {
+	_, err := q.db.Exec(ctx, setSingleMetricSegCompacted,
+		arg.OrganizationID,
+		arg.Dateint,
+		arg.FrequencyMs,
+		arg.SegmentID,
+		arg.InstanceNum,
+		arg.SlotID,
+		arg.SlotCount,
+	)
+	return err
+}

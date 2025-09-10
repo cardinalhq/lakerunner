@@ -120,3 +120,15 @@ WHERE ts_range && int8range($1, $2, '[)')
   AND organization_id = $5
   AND fingerprints && @fingerprints::BIGINT[]
   AND published = true;
+
+-- name: GetMetricSeg :one
+-- Get a single segment by its primary key components
+SELECT *
+FROM metric_seg
+WHERE organization_id = @organization_id
+  AND dateint = @dateint
+  AND frequency_ms = @frequency_ms
+  AND segment_id = @segment_id
+  AND instance_num = @instance_num
+  AND slot_id = @slot_id
+  AND slot_count = @slot_count;

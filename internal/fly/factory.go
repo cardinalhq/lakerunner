@@ -17,6 +17,7 @@ package fly
 import (
 	"crypto/tls"
 	"fmt"
+	"strings"
 
 	"github.com/segmentio/kafka-go"
 	"github.com/segmentio/kafka-go/sasl"
@@ -38,11 +39,28 @@ func NewFactory(config *Config) *Factory {
 
 // CreateProducer creates a new Kafka producer
 func (f *Factory) CreateProducer() (Producer, error) {
+	var compression kafka.Compression
+	switch strings.ToLower(f.config.ProducerCompression) {
+	case "", "none", "uncompressed":
+		compression = 0
+	case "gzip":
+		compression = kafka.Gzip
+	case "snappy":
+		compression = kafka.Snappy
+	case "lz4":
+		compression = kafka.Lz4
+	case "zstd":
+		compression = kafka.Zstd
+	default:
+		return nil, fmt.Errorf("unsupported compression: %s", f.config.ProducerCompression)
+	}
+
 	cfg := ProducerConfig{
 		Brokers:      f.config.Brokers,
 		BatchSize:    f.config.ProducerBatchSize,
 		BatchTimeout: f.config.ProducerBatchTimeout,
-		RequiredAcks: kafka.RequireOne,
+		RequiredAcks: kafka.RequireNone,
+		Compression:  compression,
 	}
 
 	// Configure SASL/SCRAM if enabled
@@ -159,11 +177,6 @@ func (f *Factory) CreateKafkaClient() (*kafka.Client, error) {
 	}
 
 	return client, nil
-}
-
-// IsEnabled returns whether Kafka is enabled
-func (f *Factory) IsEnabled() bool {
-	return f.config.Enabled
 }
 
 // GetConfig returns the underlying configuration

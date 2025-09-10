@@ -31,7 +31,6 @@ import (
 
 // KafkaNotificationSender sends object storage notifications to Kafka
 type KafkaNotificationSender interface {
-	SendNotification(ctx context.Context, signal string, notification *messages.ObjStoreNotificationMessage) error
 	SendBatch(ctx context.Context, signal string, notifications []messages.ObjStoreNotificationMessage) error
 }
 
@@ -147,7 +146,6 @@ type KafkaHandler struct {
 	manager *fly.ObjStoreNotificationManager
 	source  string
 	sp      storageprofile.StorageProfileProvider
-	logger  *slog.Logger
 }
 
 // NewKafkaHandler creates a new Kafka handler for pubsub notifications
@@ -155,15 +153,13 @@ func NewKafkaHandler(
 	factory *fly.Factory,
 	source string,
 	sp storageprofile.StorageProfileProvider,
-	logger *slog.Logger,
 ) (*KafkaHandler, error) {
-	manager := fly.NewObjStoreNotificationManager(factory, logger)
+	manager := fly.NewObjStoreNotificationManager(factory)
 
 	return &KafkaHandler{
 		manager: manager,
 		source:  source,
 		sp:      sp,
-		logger:  logger.With("component", "kafka_handler", "source", source),
 	}, nil
 }
 

@@ -17,74 +17,74 @@ package metricsprocessing
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
 
-	"github.com/cardinalhq/lakerunner/lrdb"
+	"github.com/cardinalhq/lakerunner/internal/fly"
+	"github.com/cardinalhq/lakerunner/internal/fly/messages"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 )
 
-// RollupWorkQueuer defines the interface for queuing metric rollup work
-type RollupWorkQueuer interface {
-	MrqQueueWork(ctx context.Context, arg lrdb.MrqQueueWorkParams) error
-}
+// QueueMetricRollup sends rollup work notification to Kafka for a specific segment
+func QueueMetricRollup(ctx context.Context, kafkaProducer fly.Producer, organizationID uuid.UUID, dateint int32, frequencyMs int32, instanceNum int16, slotID int32, slotCount int32, segmentID int64, recordCount int64, fileSize int64, segmentStartTime time.Time) error {
+	ll := logctx.FromContext(ctx)
 
-// QueueMetricRollup queues rollup work for a specific segment at the next frequency level
-func QueueMetricRollup(ctx context.Context, mdb RollupWorkQueuer, organizationID uuid.UUID, dateint int32, frequencyMs int32, instanceNum int16, slotID int32, slotCount int32, segmentID int64, recordCount int64, startTs int64) error {
-	nextFrequency, exists := RollupTo[frequencyMs]
-	if !exists {
+	// Map source frequencies to target frequencies
+	var targetFrequencyMs int32
+	switch frequencyMs {
+	case 10_000:
+		targetFrequencyMs = 60_000 // 10s -> 1m
+	case 60_000:
+		targetFrequencyMs = 300_000 // 1m -> 5m
+	case 300_000:
+		targetFrequencyMs = 1_200_000 // 5m -> 20m
+	case 1_200_000:
+		targetFrequencyMs = 3_600_000 // 20m -> 1h
+	default:
+		// Not a rollup source frequency
 		return nil
 	}
 
-	// Calculate rollup group: segment start time divided by target rollup frequency
-	rollupGroup := startTs / int64(nextFrequency)
-
-	// Calculate when the rollup work should become eligible
-	eligibleAt := calculateRollupEligibleTime(frequencyMs, startTs, nextFrequency)
-
-	err := mdb.MrqQueueWork(ctx, lrdb.MrqQueueWorkParams{
-		OrganizationID: organizationID,
-		Dateint:        dateint,
-		FrequencyMs:    frequencyMs,
-		InstanceNum:    instanceNum,
-		SlotID:         slotID,
-		SlotCount:      slotCount,
-		SegmentID:      segmentID,
-		RecordCount:    recordCount,
-		RollupGroup:    rollupGroup,
-		Priority:       frequencyMs,
-		EligibleAt:     eligibleAt,
-	})
-
-	if err != nil {
-		return fmt.Errorf("failed to queue metric rollup work: %w", err)
+	// Create rollup notification message
+	notification := messages.MetricRollupMessage{
+		Version:           1,
+		OrganizationID:    organizationID,
+		DateInt:           dateint,
+		SourceFrequencyMs: frequencyMs,
+		TargetFrequencyMs: targetFrequencyMs,
+		SegmentID:         segmentID,
+		InstanceNum:       instanceNum,
+		SlotID:            slotID,
+		SlotCount:         slotCount,
+		Records:           recordCount,
+		FileSize:          fileSize,
+		SegmentStartTime:  segmentStartTime,
+		QueuedAt:          time.Now(),
 	}
+
+	// Marshal the message
+	msgBytes, err := notification.Marshal()
+	if err != nil {
+		return fmt.Errorf("failed to marshal rollup notification: %w", err)
+	}
+
+	// Send to Kafka rollup topic
+	rollupTopic := "lakerunner.segments.metrics.rollup"
+	// Use dateint and target frequency for key to group rollup intervals by their target frequency
+	if err := kafkaProducer.Send(ctx, rollupTopic, fly.Message{
+		Key:   fmt.Appendf(nil, "%s-%d-%d-%d-%d", organizationID.String(), dateint, targetFrequencyMs, instanceNum, slotID),
+		Value: msgBytes,
+	}); err != nil {
+		return fmt.Errorf("failed to send rollup notification to Kafka: %w", err)
+	}
+
+	ll.Debug("Sent rollup notification to Kafka",
+		slog.String("organizationID", organizationID.String()),
+		slog.Int("dateint", int(dateint)),
+		slog.Int("frequencyMs", int(frequencyMs)),
+		slog.Int64("segmentID", segmentID))
 
 	return nil
-}
-
-// calculateRollupEligibleTime determines when rollup work should become eligible based on frequency
-func calculateRollupEligibleTime(currentFrequencyMs int32, startTs int64, nextFrequencyMs int32) time.Time {
-	now := time.Now()
-
-	switch currentFrequencyMs {
-	case 10_000: // 10s rollups
-		// Schedule 120s past the end of the current 60s interval
-		currentMinute := now.Truncate(time.Minute)
-		nextMinute := currentMinute.Add(time.Minute)
-		return nextMinute.Add(2 * time.Minute) // 120s delay
-
-	case 60_000: // 60s rollups (1m)
-		// Schedule 2m past the end of the next 5m interval
-		current5Min := now.Truncate(5 * time.Minute)
-		next5Min := current5Min.Add(5 * time.Minute)
-		return next5Min.Add(2 * time.Minute) // 2m delay
-
-	default: // 5m+ rollups
-		// Schedule 10m past the end of the respective next-level window
-		windowDuration := time.Duration(nextFrequencyMs) * time.Millisecond
-		currentWindow := now.Truncate(windowDuration)
-		nextWindow := currentWindow.Add(windowDuration)
-		return nextWindow.Add(10 * time.Minute) // 10m delay
-	}
 }

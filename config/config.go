@@ -18,11 +18,11 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/spf13/viper"
 
 	"github.com/cardinalhq/lakerunner/internal/fly"
-	ingestion "github.com/cardinalhq/lakerunner/internal/metricsprocessing/ingestion"
 )
 
 // Config aggregates configuration for the application.
@@ -36,10 +36,11 @@ type Config struct {
 	Logs    LogsConfig    `mapstructure:"logs"`
 	Traces  TracesConfig  `mapstructure:"traces"`
 	Admin   AdminConfig   `mapstructure:"admin"`
+	SegLog  SegLogConfig  `mapstructure:"seglog"`
 }
 
 type MetricsConfig struct {
-	Ingestion  ingestion.Config `mapstructure:"ingestion"`
+	Ingestion  IngestionConfig  `mapstructure:"ingestion"`
 	Compaction CompactionConfig `mapstructure:"compaction"`
 	Rollup     RollupConfig     `mapstructure:"rollup"`
 }
@@ -58,27 +59,44 @@ type DuckDBConfig struct {
 }
 
 type LogsConfig struct {
-	Partitions int `mapstructure:"partitions"`
+	// Partitions will be auto-determined from Kafka topic
 }
 
 type TracesConfig struct {
-	Partitions int `mapstructure:"partitions"`
+	// Partitions will be auto-determined from Kafka topic
 }
 
 type AdminConfig struct {
 	InitialAPIKey string `mapstructure:"initial_api_key"`
 }
 
+type SegLogConfig struct {
+	Enabled bool `mapstructure:"enabled"` // Enable segment log tracing for debugging operations
+}
+
 type CompactionConfig struct {
-	OverFactor   float64 `mapstructure:"over_factor"`
-	BatchLimit   int     `mapstructure:"batch_limit"`
-	GraceMinutes int     `mapstructure:"grace_minutes"`
-	DeferSeconds int     `mapstructure:"defer_seconds"`
-	MaxAttempts  int     `mapstructure:"max_attempts"`
+	TargetFileSizeBytes int64         `mapstructure:"target_file_size_bytes"` // Target file size in bytes for compaction (default: 1048576 = 1MB)
+	MaxAccumulationTime time.Duration `mapstructure:"max_accumulation_time"`  // Maximum time to accumulate segments before compacting
 }
 
 type RollupConfig struct {
 	BatchLimit int `mapstructure:"batch_limit"`
+}
+
+// IngestionConfig holds ingestion feature toggles.
+type IngestionConfig struct {
+	ProcessExemplars    bool          `mapstructure:"process_exemplars"`
+	SingleInstanceMode  bool          `mapstructure:"single_instance_mode"`
+	MaxAccumulationTime time.Duration `mapstructure:"max_accumulation_time"`
+}
+
+// DefaultIngestionConfig returns default settings for ingestion.
+func DefaultIngestionConfig() IngestionConfig {
+	return IngestionConfig{
+		ProcessExemplars:    true,
+		SingleInstanceMode:  false,
+		MaxAccumulationTime: 10 * time.Second,
+	}
 }
 
 // Load reads configuration from files and environment variables.
@@ -90,13 +108,10 @@ func Load() (*Config, error) {
 		Debug: false,
 		Fly:   *fly.DefaultConfig(),
 		Metrics: MetricsConfig{
-			Ingestion: ingestion.DefaultConfig(),
+			Ingestion: DefaultIngestionConfig(),
 			Compaction: CompactionConfig{
-				OverFactor:   2.0,
-				BatchLimit:   100,
-				GraceMinutes: 5,
-				DeferSeconds: 0,
-				MaxAttempts:  3,
+				TargetFileSizeBytes: TargetFileSize,   // Default target file size
+				MaxAccumulationTime: 30 * time.Second, // Default 30 seconds for compaction
 			},
 			Rollup: RollupConfig{
 				BatchLimit: 100,
@@ -113,14 +128,13 @@ func Load() (*Config, error) {
 			ExtensionsPath:  "",
 			HTTPFSExtension: "",
 		},
-		Logs: LogsConfig{
-			Partitions: 128,
-		},
-		Traces: TracesConfig{
-			Partitions: 128,
-		},
+		Logs:   LogsConfig{},
+		Traces: TracesConfig{},
 		Admin: AdminConfig{
 			InitialAPIKey: "",
+		},
+		SegLog: SegLogConfig{
+			Enabled: false, // Disabled by default for production
 		},
 	}
 
@@ -139,7 +153,6 @@ func Load() (*Config, error) {
 	if b := v.GetString("fly.brokers"); b != "" {
 		cfg.Fly.Brokers = strings.Split(b, ",")
 	}
-	cfg.Fly.Enabled = v.GetBool("fly.enabled")
 
 	// Also check DEBUG environment variable (without prefix)
 	if os.Getenv("DEBUG") != "" {
@@ -154,7 +167,7 @@ func Load() (*Config, error) {
 func bindEnvs(v *viper.Viper, cfg any, parts ...string) {
 	val := reflect.ValueOf(cfg)
 	typ := reflect.TypeOf(cfg)
-	if typ.Kind() == reflect.Ptr {
+	if typ.Kind() == reflect.Pointer {
 		val = val.Elem()
 		typ = typ.Elem()
 	}

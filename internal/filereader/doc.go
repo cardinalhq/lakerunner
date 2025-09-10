@@ -120,7 +120,7 @@
 //
 // MemorySortingReader - For smaller datasets (high memory usage, no disk I/O):
 //
-//	reader := NewMemorySortingReader(rawReader, &MetricSortKeyProvider{})
+//	reader := NewMemorySortingReader(rawReader, &NonPooledMetricSortKeyProvider{})
 //
 // DiskSortingReader - For larger datasets (moderate memory usage, 2x disk I/O):
 //

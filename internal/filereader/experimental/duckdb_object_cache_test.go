@@ -21,6 +21,8 @@ import (
 	"runtime"
 	"testing"
 	"time"
+
+	"github.com/cardinalhq/lakerunner/internal/filereader"
 )
 
 // TestDuckDBObjectCacheEffect tests if the object cache helps with

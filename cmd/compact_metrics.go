@@ -22,11 +22,14 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/debugging"
+	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
-	"github.com/cardinalhq/lakerunner/internal/metricsprocessing/compaction"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
+	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
@@ -35,6 +38,11 @@ func init() {
 		Use:   "compact-metrics",
 		Short: "Roll up metrics",
 		RunE: func(_ *cobra.Command, _ []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+
 			helpers.SetupTempDir()
 
 			servicename := "lakerunner-compact-metrics"
@@ -85,12 +93,28 @@ func init() {
 
 			sp := storageprofile.NewStorageProfileProvider(cdb)
 
-			config := compaction.GetConfigFromEnv()
-			manager := compaction.NewManager(mdb, myInstanceID, config, sp, cmgr)
+			ll := logctx.FromContext(ctx).With("instanceID", myInstanceID)
+			ctx = logctx.WithLogger(ctx, ll)
+
+			// Kafka is always required for compaction
+			kafkaFactory := fly.NewFactory(&cfg.Fly)
+			slog.Info("Starting metrics compaction with accumulation consumer")
+
+			// Create accumulation-based Kafka consumer for compaction
+			consumer, err := metricsprocessing.NewMetricCompactionConsumer(ctx, kafkaFactory, cfg, mdb, sp, cmgr)
+			if err != nil {
+				return fmt.Errorf("failed to create Kafka accumulation consumer: %w", err)
+			}
+			defer func() {
+				if err := consumer.Close(); err != nil {
+					slog.Error("Error closing Kafka consumer", slog.Any("error", err))
+				}
+			}()
 
 			healthServer.SetStatus(healthcheck.StatusHealthy)
 
-			return manager.Run(ctx)
+			// Run the Kafka consumer
+			return consumer.Run(ctx)
 		},
 	}
 

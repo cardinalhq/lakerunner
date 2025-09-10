@@ -83,14 +83,14 @@ func benchmarkSortingReader(b *testing.B, createReaderFunc func([]Row) (Reader, 
 func BenchmarkMemorySortingReader(b *testing.B) {
 	benchmarkSortingReader(b, func(rows []Row) (Reader, error) {
 		mockReader := NewMockReader(rows)
-		return NewMemorySortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
+		return NewMemorySortingReader(mockReader, &NonPooledMetricSortKeyProvider{}, 1000)
 	})
 }
 
 func BenchmarkDiskSortingReader(b *testing.B) {
 	benchmarkSortingReader(b, func(rows []Row) (Reader, error) {
 		mockReader := NewMockReader(rows)
-		return NewDiskSortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
+		return NewDiskSortingReader(mockReader, &NonPooledMetricSortKeyProvider{}, 1000)
 	})
 }
 
@@ -132,27 +132,27 @@ func benchmarkSortingReaderWithSize(b *testing.B, numRows int, createReaderFunc 
 func BenchmarkMemorySortingReader_LargeDataset(b *testing.B) {
 	benchmarkSortingReaderWithSize(b, 10000, func(rows []Row) (Reader, error) {
 		mockReader := NewMockReader(rows)
-		return NewMemorySortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
+		return NewMemorySortingReader(mockReader, &NonPooledMetricSortKeyProvider{}, 1000)
 	})
 }
 
 func BenchmarkDiskSortingReader_LargeDataset(b *testing.B) {
 	benchmarkSortingReaderWithSize(b, 10000, func(rows []Row) (Reader, error) {
 		mockReader := NewMockReader(rows)
-		return NewDiskSortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
+		return NewDiskSortingReader(mockReader, &NonPooledMetricSortKeyProvider{}, 1000)
 	})
 }
 
 func BenchmarkMemorySortingReader_VeryLargeDataset(b *testing.B) {
 	benchmarkSortingReaderWithSize(b, 100000, func(rows []Row) (Reader, error) {
 		mockReader := NewMockReader(rows)
-		return NewMemorySortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
+		return NewMemorySortingReader(mockReader, &NonPooledMetricSortKeyProvider{}, 1000)
 	})
 }
 
 func BenchmarkDiskSortingReader_VeryLargeDataset(b *testing.B) {
 	benchmarkSortingReaderWithSize(b, 100000, func(rows []Row) (Reader, error) {
 		mockReader := NewMockReader(rows)
-		return NewDiskSortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
+		return NewDiskSortingReader(mockReader, &NonPooledMetricSortKeyProvider{}, 1000)
 	})
 }

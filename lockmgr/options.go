@@ -15,7 +15,6 @@
 package lockmgr
 
 import (
-	"log/slog"
 	"time"
 )
 
@@ -39,16 +38,4 @@ func (h *heartbeatIntervalOption) apply(m *wqManager) {
 // If the interval is set to less than 10 seconds, it will be adjusted to 10 seconds.
 func WithHeartbeatInterval(d time.Duration) Options {
 	return &heartbeatIntervalOption{d: d}
-}
-
-type loggerOption struct {
-	ll *slog.Logger
-}
-
-func (l *loggerOption) apply(m *wqManager) {
-	m.ll = l.ll
-}
-
-func WithLogger(ll *slog.Logger) Options {
-	return &loggerOption{ll: ll}
 }

@@ -47,6 +47,17 @@ type QueueOperations[H any, C QueueItem] interface {
 	GetGroupingKey(head H) string
 }
 
+type BundleParams struct {
+	WorkerID      int64
+	TargetRecords int64
+	OverFactor    float64       // e.g., 1.20
+	BatchLimit    int32         // candidates to inspect
+	Grace         time.Duration // tail rule
+	DeferBase     time.Duration // how long to defer when not enough (before jitter)
+	Jitter        time.Duration // add random [0..Jitter)
+	MaxAttempts   int           // how many different keys to try before giving up
+}
+
 // ClaimBundle handles the generic bundle claiming logic
 // Returns claimed items, estimated target, and error
 func ClaimBundle[H any, C QueueItem](
@@ -131,7 +142,7 @@ func ClaimBundle[H any, C QueueItem](
 					for i, c := range cands {
 						deferIDs[i] = c.GetID()
 					}
-					if err := ops.DeferItems(ctx, deferIDs, params.deferInterval()); err != nil {
+					if err := ops.DeferItems(ctx, deferIDs, 5*time.Minute); err != nil {
 						return nil, estimatedTarget, fmt.Errorf("defer items (attempt %d): %w", attempt+1, err)
 					}
 					// Try another key instead of returning

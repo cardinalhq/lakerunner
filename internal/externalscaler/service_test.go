@@ -35,16 +35,6 @@ func (m *MockQueries) WorkQueueScalingDepth(ctx context.Context, arg lrdb.WorkQu
 	return args.Get(0), args.Error(1)
 }
 
-func (m *MockQueries) MetricCompactionQueueScalingDepth(ctx context.Context) (interface{}, error) {
-	args := m.Called(ctx)
-	return args.Get(0), args.Error(1)
-}
-
-func (m *MockQueries) MetricRollupQueueScalingDepth(ctx context.Context) (interface{}, error) {
-	args := m.Called(ctx)
-	return args.Get(0), args.Error(1)
-}
-
 func TestService_IsActive(t *testing.T) {
 	service := &Service{}
 
@@ -56,7 +46,6 @@ func TestService_IsActive(t *testing.T) {
 		{"ingest-logs", "ingest-logs", true},
 		{"ingest-metrics", "ingest-metrics", true},
 		{"ingest-traces", "ingest-traces", true},
-		{"compact-metrics", "compact-metrics", true},
 		{"compact-logs", "compact-logs", true},
 		{"compact-traces", "compact-traces", true},
 		{"rollup-metrics", "rollup-metrics", true},
@@ -95,7 +84,6 @@ func TestService_GetMetricSpec(t *testing.T) {
 		expectError        bool
 	}{
 		{"ingest-logs", "ingest-logs", "ingest-logs-queue-depth", false},
-		{"compact-metrics", "compact-metrics", "compact-metrics-queue-depth", false},
 		{"rollup-metrics", "rollup-metrics", "rollup-metrics-queue-depth", false},
 		{"missing-service-type", "", "", true},
 	}
@@ -163,21 +151,12 @@ func TestService_GetMetrics(t *testing.T) {
 			expectError:   false,
 		},
 		{
-			name:        "compact-metrics success",
-			serviceType: "compact-metrics",
-			mockSetup: func(m *MockQueries) {
-				m.On("MetricCompactionQueueScalingDepth", mock.Anything).Return(int64(8), nil)
-			},
-			expectedValue: 8.0,
-			expectError:   false,
-		},
-		{
 			name:        "rollup-metrics success",
 			serviceType: "rollup-metrics",
 			mockSetup: func(m *MockQueries) {
-				m.On("MetricRollupQueueScalingDepth", mock.Anything).Return(int64(15), nil)
+				// No mock needed - returns fixed value
 			},
-			expectedValue: 15.0,
+			expectedValue: 5.0,
 			expectError:   false,
 		},
 		{
@@ -285,21 +264,12 @@ func TestService_getQueueDepth(t *testing.T) {
 			expectError:   false,
 		},
 		{
-			name:        "compact-metrics",
-			serviceType: "compact-metrics",
-			mockSetup: func(m *MockQueries) {
-				m.On("MetricCompactionQueueScalingDepth", mock.Anything).Return(int64(25), nil)
-			},
-			expectedCount: 25,
-			expectError:   false,
-		},
-		{
 			name:        "rollup-metrics",
 			serviceType: "rollup-metrics",
 			mockSetup: func(m *MockQueries) {
-				m.On("MetricRollupQueueScalingDepth", mock.Anything).Return(int64(18), nil)
+				// No mock needed - returns fixed value
 			},
-			expectedCount: 18,
+			expectedCount: 5,
 			expectError:   false,
 		},
 		{

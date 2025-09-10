@@ -17,8 +17,6 @@ package logcrunch
 import (
 	"context"
 	"fmt"
-	"io"
-	"log/slog"
 	"os"
 	"sort"
 	"testing"
@@ -73,8 +71,7 @@ func TestHourBasedProcessing_EndToEnd(t *testing.T) {
 	require.NoError(t, err)
 	defer fh.Close()
 
-	ll := slog.New(slog.NewTextHandler(io.Discard, nil))
-	results, err := buffet.ProcessAndSplit(ll, fh, tmpDir, 20230101, 1000)
+	results, err := buffet.ProcessAndSplit(context.Background(), fh, tmpDir, 20230101, 1000)
 	require.NoError(t, err)
 
 	// Should have 3 splits (3 different hours)

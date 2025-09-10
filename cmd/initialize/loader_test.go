@@ -17,7 +17,6 @@ package initialize
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strings"
 	"testing"
 
@@ -163,7 +162,6 @@ func TestLoadFileContentsWithReader_FileReadError(t *testing.T) {
 func TestImportStorageProfiles_Success(t *testing.T) {
 	mockDB := new(MockDatabaseQueries)
 	ctx := context.Background()
-	logger := slog.Default()
 
 	orgID := uuid.New()
 	bucketID := uuid.New()
@@ -196,7 +194,7 @@ func TestImportStorageProfiles_Success(t *testing.T) {
 			params.CollectorName == "default"
 	})).Return(nil)
 
-	err := importStorageProfiles(ctx, []byte(yamlContent), mockDB, logger, false)
+	err := importStorageProfiles(ctx, []byte(yamlContent), mockDB, false)
 
 	assert.NoError(t, err)
 	mockDB.AssertExpectations(t)
@@ -205,7 +203,6 @@ func TestImportStorageProfiles_Success(t *testing.T) {
 func TestImportStorageProfiles_WithReplace(t *testing.T) {
 	mockDB := new(MockDatabaseQueries)
 	ctx := context.Background()
-	logger := slog.Default()
 
 	orgID := uuid.New()
 	bucketID := uuid.New()
@@ -242,7 +239,7 @@ func TestImportStorageProfiles_WithReplace(t *testing.T) {
 			params.CollectorName == "default"
 	})).Return(nil)
 
-	err := importStorageProfiles(ctx, []byte(yamlContent), mockDB, logger, true)
+	err := importStorageProfiles(ctx, []byte(yamlContent), mockDB, true)
 
 	assert.NoError(t, err)
 	mockDB.AssertExpectations(t)
@@ -251,11 +248,10 @@ func TestImportStorageProfiles_WithReplace(t *testing.T) {
 func TestImportStorageProfiles_InvalidYAML(t *testing.T) {
 	mockDB := new(MockDatabaseQueries)
 	ctx := context.Background()
-	logger := slog.Default()
 
 	invalidYaml := `invalid: yaml: content: [unclosed`
 
-	err := importStorageProfiles(ctx, []byte(invalidYaml), mockDB, logger, false)
+	err := importStorageProfiles(ctx, []byte(invalidYaml), mockDB, false)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to parse YAML configuration")
@@ -265,7 +261,6 @@ func TestImportStorageProfiles_InvalidYAML(t *testing.T) {
 func TestImportAPIKeys_Success(t *testing.T) {
 	mockDB := new(MockDatabaseQueries)
 	ctx := context.Background()
-	logger := slog.Default()
 
 	orgID := uuid.New()
 	apiKeyID := uuid.New()
@@ -305,7 +300,7 @@ func TestImportAPIKeys_Success(t *testing.T) {
 			params.OrganizationID == orgID
 	})).Return(nil)
 
-	err := importAPIKeys(ctx, apiKeysConfig, mockDB, logger, true)
+	err := importAPIKeys(ctx, apiKeysConfig, mockDB, true)
 
 	assert.NoError(t, err)
 	mockDB.AssertExpectations(t)
@@ -314,7 +309,6 @@ func TestImportAPIKeys_Success(t *testing.T) {
 func TestImportAPIKeys_DatabaseError(t *testing.T) {
 	mockDB := new(MockDatabaseQueries)
 	ctx := context.Background()
-	logger := slog.Default()
 
 	orgID := uuid.New()
 	testAPIKey := "test-api-key-error"
@@ -331,7 +325,7 @@ func TestImportAPIKeys_DatabaseError(t *testing.T) {
 		return params.ID == orgID && params.Enabled == true
 	})).Return(configdb.Organization{}, fmt.Errorf("organization upsert failed"))
 
-	err := importAPIKeys(ctx, apiKeysConfig, mockDB, logger, false)
+	err := importAPIKeys(ctx, apiKeysConfig, mockDB, false)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to ensure organizations exist")
@@ -342,7 +336,6 @@ func TestInitializeConfigWithDependencies_Success(t *testing.T) {
 	mockDB := new(MockDatabaseQueries)
 	mockReader := new(MockFileReader)
 	ctx := context.Background()
-	logger := slog.Default()
 
 	orgID := uuid.New()
 	bucketID := uuid.New()
@@ -391,7 +384,7 @@ func TestInitializeConfigWithDependencies_Success(t *testing.T) {
 	mockDB.On("UpsertOrganizationAPIKey", ctx, mock.AnythingOfType("configdb.UpsertOrganizationAPIKeyParams")).Return(upsertAPIKeyRow2, nil)
 	mockDB.On("UpsertOrganizationAPIKeyMapping", ctx, mock.AnythingOfType("configdb.UpsertOrganizationAPIKeyMappingParams")).Return(nil)
 
-	err := InitializeConfigWithDependencies(ctx, "storage.yaml", "apikeys.yaml", mockDB, mockReader, logger, false)
+	err := InitializeConfigWithDependencies(ctx, "storage.yaml", "apikeys.yaml", mockDB, mockReader, false)
 
 	assert.NoError(t, err)
 	mockDB.AssertExpectations(t)
@@ -417,7 +410,6 @@ func TestHashAPIKey(t *testing.T) {
 func TestImportStorageProfiles_MultipleProfiles(t *testing.T) {
 	mockDB := new(MockDatabaseQueries)
 	ctx := context.Background()
-	logger := slog.Default()
 
 	orgID1 := uuid.New()
 	orgID2 := uuid.New()
@@ -457,7 +449,7 @@ func TestImportStorageProfiles_MultipleProfiles(t *testing.T) {
 		return params.OrganizationID == orgID2 && params.BucketID == bucketID
 	})).Return(nil)
 
-	err := importStorageProfiles(ctx, []byte(yamlContent), mockDB, logger, false)
+	err := importStorageProfiles(ctx, []byte(yamlContent), mockDB, false)
 
 	assert.NoError(t, err)
 	mockDB.AssertExpectations(t)
@@ -466,7 +458,6 @@ func TestImportStorageProfiles_MultipleProfiles(t *testing.T) {
 func TestImportAPIKeys_MultipleKeys(t *testing.T) {
 	mockDB := new(MockDatabaseQueries)
 	ctx := context.Background()
-	logger := slog.Default()
 
 	orgID := uuid.New()
 	apiKeyID1 := uuid.New()
@@ -519,7 +510,7 @@ func TestImportAPIKeys_MultipleKeys(t *testing.T) {
 		return params.ApiKeyID == apiKeyID2 && params.OrganizationID == orgID
 	})).Return(nil)
 
-	err := importAPIKeys(ctx, apiKeysConfig, mockDB, logger, false)
+	err := importAPIKeys(ctx, apiKeysConfig, mockDB, false)
 
 	assert.NoError(t, err)
 	mockDB.AssertExpectations(t)

@@ -20,12 +20,12 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"math"
+	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
-	"github.com/cardinalhq/lakerunner/internal/filereader"
+	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
@@ -54,7 +54,7 @@ func NewProcessedSegment(ctx context.Context, result parquetwriter.Result, orgID
 	}
 
 	// Generate new segment ID
-	segmentID := idgen.DefaultFlakeGenerator.NextID()
+	segmentID := idgen.GenerateID()
 
 	// Construct S3 object ID using actual file timestamps
 	dateint, hour := helpers.MSToDateintHour(metadata.StartTs)
@@ -179,62 +179,15 @@ func (segments ProcessedSegments) SegmentIDs() []int64 {
 	return ids
 }
 
-// QueueCompactionWork queues compaction work for all segments
-func (segments ProcessedSegments) QueueCompactionWork(ctx context.Context, mdb CompactionWorkQueuer, orgID uuid.UUID, instanceNum int16, frequency int32) error {
-	for _, segment := range segments {
-		if err := QueueMetricCompaction(ctx, mdb, orgID, segment.GetDateint(), frequency, instanceNum, segment.SegmentID, segment.Result.RecordCount, segment.StartTs, segment.EndTs); err != nil {
-			return fmt.Errorf("queueing compaction work for segment %d: %w", segment.SegmentID, err)
-		}
-	}
-	return nil
-}
-
 // QueueRollupWork queues rollup work for all segments
-func (segments ProcessedSegments) QueueRollupWork(ctx context.Context, mdb RollupWorkQueuer, orgID uuid.UUID, instanceNum int16, frequency int32, slotID int32, slotCount int32) error {
+func (segments ProcessedSegments) QueueRollupWork(ctx context.Context, kafkaProducer fly.Producer, orgID uuid.UUID, instanceNum int16, frequency int32, slotID int32, slotCount int32) error {
 	for _, segment := range segments {
-		if err := QueueMetricRollup(ctx, mdb, orgID, segment.GetDateint(), frequency, instanceNum, slotID, slotCount, segment.SegmentID, segment.Result.RecordCount, segment.StartTs); err != nil {
+		segmentStartTime := time.Unix(segment.StartTs/1000, (segment.StartTs%1000)*1000000)
+		if err := QueueMetricRollup(ctx, kafkaProducer, orgID, segment.GetDateint(), frequency, instanceNum, slotID, slotCount, segment.SegmentID, segment.Result.RecordCount, segment.Result.FileSize, segmentStartTime); err != nil {
 			return fmt.Errorf("queueing rollup work for segment %d: %w", segment.SegmentID, err)
 		}
 	}
 	return nil
-}
-
-// GetCurrentMetricSortKeyProvider returns the provider for creating sort keys
-// for the current metric sort version. This is the single source of truth for metric sorting.
-func GetCurrentMetricSortKeyProvider() filereader.SortKeyProvider {
-	// This provider corresponds to lrdb.CurrentMetricSortVersion (SortVersionNameTidTimestamp)
-	return &filereader.MetricSortKeyProvider{}
-}
-
-// GetStartEndTimes calculates the time range from a set of metric segments.
-func GetStartEndTimes(rows []lrdb.MetricSeg) (int64, int64) {
-	startTs := int64(math.MaxInt64)
-	endTs := int64(math.MinInt64)
-	for _, row := range rows {
-		rowStartTs := row.TsRange.Lower.Int64
-		rowEndTs := row.TsRange.Upper.Int64
-		if rowStartTs < startTs {
-			startTs = rowStartTs
-		}
-		if rowEndTs > endTs {
-			endTs = rowEndTs
-		}
-	}
-	return startTs, endTs
-}
-
-// GetIngestDateint returns the maximum ingest dateint from a set of metric segments.
-func GetIngestDateint(rows []lrdb.MetricSeg) int32 {
-	if len(rows) == 0 {
-		return 0
-	}
-	ingestDateint := int32(0)
-	for _, row := range rows {
-		if row.IngestDateint > ingestDateint {
-			ingestDateint = row.IngestDateint
-		}
-	}
-	return ingestDateint
 }
 
 // UploadParams contains parameters for uploading metric files to S3 and database.

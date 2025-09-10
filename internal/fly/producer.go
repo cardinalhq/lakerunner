@@ -50,6 +50,7 @@ type ProducerConfig struct {
 	BatchSize    int
 	BatchTimeout time.Duration
 	RequiredAcks kafka.RequiredAcks
+	Compression  kafka.Compression
 
 	// SASL/SCRAM authentication
 	SASLMechanism sasl.Mechanism
@@ -130,6 +131,7 @@ func (p *kafkaProducer) getWriter(topic string) *kafka.Writer {
 		BatchTimeout: p.config.BatchTimeout,
 		RequiredAcks: p.config.RequiredAcks,
 		Transport:    transport,
+		Compression:  p.config.Compression,
 	}
 	p.writers[topic] = w
 	return w
@@ -138,12 +140,10 @@ func (p *kafkaProducer) getWriter(topic string) *kafka.Writer {
 func (p *kafkaProducer) Send(ctx context.Context, topic string, message Message) error {
 	w := p.getWriter(topic)
 	km := message.ToKafkaMessage()
-	// Don't set km.Topic - it's already set in the writer
 	return w.WriteMessages(ctx, km)
 }
 
 func (p *kafkaProducer) SendToPartition(ctx context.Context, topic string, partition int, message Message) error {
-	// Create a transport with SASL/TLS if configured
 	transport := &kafka.Transport{
 		SASL: p.config.SASLMechanism,
 		TLS:  p.config.TLSConfig,
@@ -157,12 +157,11 @@ func (p *kafkaProducer) SendToPartition(ctx context.Context, topic string, parti
 		BatchSize:    1, // send immediately
 		RequiredAcks: p.config.RequiredAcks,
 		Transport:    transport,
+		Compression:  p.config.Compression,
 	}
 	defer w.Close()
 
 	km := message.ToKafkaMessage()
-	// Don't set km.Topic - it's already set in the writer
-	// Don't set km.Partition - it's read-only
 	return w.WriteMessages(ctx, km)
 }
 
@@ -204,7 +203,6 @@ func (p *kafkaProducer) BatchSend(ctx context.Context, topic string, messages []
 	kmsgs := make([]kafka.Message, len(messages))
 	for i, msg := range messages {
 		km := msg.ToKafkaMessage()
-		// Don't set km.Topic - it's already set in the writer
 		kmsgs[i] = km
 	}
 	return w.WriteMessages(ctx, kmsgs...)

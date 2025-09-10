@@ -17,7 +17,6 @@ package lockmgr
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -95,7 +94,6 @@ func TestNewWorkQueueManager(t *testing.T) {
 			minimumPriority: 5,
 			opts: []Options{
 				WithHeartbeatInterval(30 * time.Second),
-				WithLogger(slog.Default()),
 			},
 			wantInterface: true,
 		},
@@ -623,7 +621,6 @@ func TestWorkQueueManager_ContextCancellation(t *testing.T) {
 
 func TestWorkQueueManager_Options(t *testing.T) {
 	mockDB := &mockWorkQueueDB{}
-	logger := slog.Default()
 
 	mgr := NewWorkQueueManager(
 		mockDB,
@@ -633,7 +630,6 @@ func TestWorkQueueManager_Options(t *testing.T) {
 		[]int32{1000},
 		5,
 		WithHeartbeatInterval(30*time.Second),
-		WithLogger(logger),
 	)
 
 	assert.NotNil(t, mgr)

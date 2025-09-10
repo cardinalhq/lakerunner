@@ -30,9 +30,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/cardinalhq/lakerunner/configdb"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 )
 
-func runLegacyTablesSync(ctx context.Context, ll *slog.Logger, cdb configdb.QuerierFull, cdbPool *pgxpool.Pool) (err error) {
+func runLegacyTablesSync(ctx context.Context, cdb configdb.QuerierFull, cdbPool *pgxpool.Pool) (err error) {
+	ll := logctx.FromContext(ctx)
+
 	start := time.Now()
 	defer func() {
 		duration := time.Since(start).Seconds()
@@ -145,7 +148,7 @@ func runLegacyTablesSync(ctx context.Context, ll *slog.Logger, cdb configdb.Quer
 	ll.Debug("Successfully synced organizations")
 
 	// Sync organization API keys from c_organization_api_keys to our organization tables
-	if err = syncOrganizationAPIKeys(ctx, ll, qtx); err != nil {
+	if err = syncOrganizationAPIKeys(ctx, qtx); err != nil {
 		return
 	}
 
@@ -162,7 +165,9 @@ func runLegacyTablesSync(ctx context.Context, ll *slog.Logger, cdb configdb.Quer
 	return nil
 }
 
-func syncOrganizationAPIKeys(ctx context.Context, ll *slog.Logger, qtx *configdb.Queries) error {
+func syncOrganizationAPIKeys(ctx context.Context, qtx *configdb.Queries) error {
+	ll := logctx.FromContext(ctx)
+
 	ll.Debug("Starting organization API keys sync")
 
 	// Get all organization API keys from c_ table

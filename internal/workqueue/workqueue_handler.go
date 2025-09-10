@@ -16,8 +16,11 @@ package workqueue
 
 import (
 	"context"
-	"log/slog"
 	"time"
+
+	"log/slog"
+
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 )
 
 const (
@@ -32,7 +35,6 @@ const (
 )
 
 type WorkqueueHandler struct {
-	logger   *slog.Logger
 	config   *Config
 	store    WorkQueueStore
 	workItem WorkItem
@@ -44,7 +46,6 @@ func NewWorkqueueHandler(
 	opts ...HandlerOption,
 ) *WorkqueueHandler {
 	options := &handlerOptions{
-		logger: slog.Default(),
 		config: &Config{
 			MaxWorkRetries:     10,
 			WorkFailRequeueTTL: 1 * time.Minute,
@@ -57,7 +58,6 @@ func NewWorkqueueHandler(
 	}
 
 	return &WorkqueueHandler{
-		logger:   options.logger,
 		config:   options.config,
 		store:    store,
 		workItem: workItem,
@@ -65,16 +65,18 @@ func NewWorkqueueHandler(
 }
 
 func (h *WorkqueueHandler) CompleteWork(ctx context.Context) error {
+	ll := logctx.FromContext(ctx)
 	if err := h.store.CompleteWork(ctx, h.workItem.ID, h.workItem.WorkerID); err != nil {
-		h.logger.Error("CompleteWork failed", slog.Any("error", err))
+		ll.Error("CompleteWork failed", slog.Any("error", err))
 		return err
 	}
 	return nil
 }
 
 func (h *WorkqueueHandler) RetryWork(ctx context.Context) error {
+	ll := logctx.FromContext(ctx)
 	if err := h.store.FailWork(ctx, h.workItem.ID, h.workItem.WorkerID, int32(h.config.MaxWorkRetries), h.config.WorkFailRequeueTTL); err != nil {
-		h.logger.Error("FailWork failed", slog.Any("error", err))
+		ll.Error("FailWork failed", slog.Any("error", err))
 		return err
 	}
 	return nil
