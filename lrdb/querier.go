@@ -7,9 +7,8 @@ package lrdb
 import (
 	"context"
 
-	"time"
-
 	"github.com/google/uuid"
+	"time"
 )
 
 type Querier interface {
