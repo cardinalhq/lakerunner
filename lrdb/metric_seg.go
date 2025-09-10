@@ -45,7 +45,7 @@ func (q *Store) InsertMetricSegment(ctx context.Context, params InsertMetricSegm
 	if err := q.ensureMetricSegmentPartition(ctx, params.OrganizationID, params.Dateint); err != nil {
 		return err
 	}
-	return q.InsertMetricSegmentDirect(ctx, params)
+	return q.insertMetricSegDirect(ctx, params)
 }
 
 type CompactMetricSegsOld struct {
@@ -118,9 +118,9 @@ func (q *Store) RollupMetricSegs(ctx context.Context, sourceParams RollupSourceP
 		return fmt.Errorf("ensure partition: %w", err)
 	}
 
-	newItems := make([]BatchInsertMetricSegsParams, len(newRecords))
+	newItems := make([]InsertMetricSegsParams, len(newRecords))
 	for i, newRec := range newRecords {
-		newItems[i] = BatchInsertMetricSegsParams{
+		newItems[i] = InsertMetricSegsParams{
 			CreatedBy:      CreateByRollup,
 			Dateint:        targetParams.Dateint,
 			EndTs:          newRec.EndTs,
@@ -157,7 +157,7 @@ func (q *Store) RollupMetricSegs(ctx context.Context, sourceParams RollupSourceP
 		}
 
 		if len(newItems) > 0 {
-			result := s.BatchInsertMetricSegs(ctx, newItems)
+			result := s.insertMetricSegsDirect(ctx, newItems)
 			result.Exec(func(i int, err error) {
 				if err != nil {
 					err = fmt.Errorf("error inserting new target segment %d, keys %v: %w", i, newItems[i], err)
@@ -198,30 +198,31 @@ func (q *Store) CompactMetricSegsWithKafkaOffsets(ctx context.Context, params Co
 				return fmt.Errorf("ensure partition: %w", err)
 			}
 
-			newItems := make([]InsertCompactedMetricSegParams, len(params.NewRecords))
+			newItems := make([]InsertMetricSegsParams, len(params.NewRecords))
 			for i, r := range params.NewRecords {
-				newItems[i] = InsertCompactedMetricSegParams{
+				newItems[i] = InsertMetricSegsParams{
 					OrganizationID: params.OrganizationID,
 					Dateint:        params.Dateint,
+					IngestDateint:  params.IngestDateint,
 					FrequencyMs:    params.FrequencyMs,
 					SegmentID:      r.SegmentID,
 					InstanceNum:    params.InstanceNum,
+					SlotID:         params.SlotID,
 					StartTs:        r.StartTs,
 					EndTs:          r.EndTs,
 					RecordCount:    r.RecordCount,
 					FileSize:       r.FileSize,
-					EIngestDateint: params.IngestDateint,
 					Published:      true,
-					Rolledup:       false,
 					CreatedBy:      params.CreatedBy,
-					SlotID:         params.SlotID,
+					Rolledup:       false,
 					Fingerprints:   r.Fingerprints,
 					SortVersion:    CurrentMetricSortVersion,
 					SlotCount:      params.SlotCount,
+					Compacted:      false,
 				}
 			}
 
-			res := s.InsertCompactedMetricSeg(ctx, newItems)
+			res := s.insertMetricSegsDirect(ctx, newItems)
 			var insertErr error
 			res.Exec(func(i int, err error) {
 				if err != nil && insertErr == nil {
@@ -288,9 +289,9 @@ func (q *Store) InsertMetricSegmentBatchWithKafkaOffsets(ctx context.Context, ba
 		}
 
 		// Convert to batch parameters
-		batchParams := make([]BatchInsertMetricSegsParams, len(batch.Segments))
+		batchParams := make([]InsertMetricSegsParams, len(batch.Segments))
 		for i, params := range batch.Segments {
-			batchParams[i] = BatchInsertMetricSegsParams{
+			batchParams[i] = InsertMetricSegsParams{
 				OrganizationID: params.OrganizationID,
 				Dateint:        params.Dateint,
 				IngestDateint:  params.IngestDateint,
@@ -313,7 +314,7 @@ func (q *Store) InsertMetricSegmentBatchWithKafkaOffsets(ctx context.Context, ba
 		}
 
 		// Insert all segments using batch
-		result := s.BatchInsertMetricSegs(ctx, batchParams)
+		result := s.insertMetricSegsDirect(ctx, batchParams)
 		var insertErr error
 		result.Exec(func(i int, err error) {
 			if err != nil && insertErr == nil {
@@ -405,30 +406,31 @@ func (q *Store) CompactMetricSegsWithKafkaOffsetsWithOrg(ctx context.Context, pa
 		// Insert new compacted segments if any
 		if len(params.NewRecords) > 0 {
 			// Prepare batch insert parameters
-			newItems := make([]InsertCompactedMetricSegParams, len(params.NewRecords))
+			newItems := make([]InsertMetricSegsParams, len(params.NewRecords))
 			for i, r := range params.NewRecords {
-				newItems[i] = InsertCompactedMetricSegParams{
+				newItems[i] = InsertMetricSegsParams{
 					OrganizationID: params.OrganizationID,
 					Dateint:        params.Dateint,
+					IngestDateint:  params.IngestDateint,
 					FrequencyMs:    params.FrequencyMs,
 					SegmentID:      r.SegmentID,
 					InstanceNum:    params.InstanceNum,
+					SlotID:         params.SlotID,
 					StartTs:        r.StartTs,
 					EndTs:          r.EndTs,
 					RecordCount:    r.RecordCount,
 					FileSize:       r.FileSize,
-					EIngestDateint: params.IngestDateint,
 					Published:      true,
-					Rolledup:       false,
 					CreatedBy:      params.CreatedBy,
-					SlotID:         params.SlotID,
+					Rolledup:       false,
 					Fingerprints:   r.Fingerprints,
 					SortVersion:    CurrentMetricSortVersion,
 					SlotCount:      params.SlotCount,
+					Compacted:      false,
 				}
 			}
 
-			res := s.InsertCompactedMetricSeg(ctx, newItems)
+			res := s.insertMetricSegsDirect(ctx, newItems)
 			var insertErr error
 			res.Exec(func(i int, err error) {
 				if err != nil && insertErr == nil {
@@ -503,9 +505,9 @@ func (q *Store) RollupMetricSegsWithKafkaOffsetsWithOrg(ctx context.Context, sou
 				return fmt.Errorf("ensure partition: %w", err)
 			}
 
-			newItems := make([]BatchInsertMetricSegsParams, len(newRecords))
+			newItems := make([]InsertMetricSegsParams, len(newRecords))
 			for i, newRec := range newRecords {
-				newItems[i] = BatchInsertMetricSegsParams{
+				newItems[i] = InsertMetricSegsParams{
 					CreatedBy:      CreateByRollup,
 					Dateint:        targetParams.Dateint,
 					EndTs:          newRec.EndTs,
@@ -527,7 +529,7 @@ func (q *Store) RollupMetricSegsWithKafkaOffsetsWithOrg(ctx context.Context, sou
 				}
 			}
 
-			result := s.BatchInsertMetricSegs(ctx, newItems)
+			result := s.insertMetricSegsDirect(ctx, newItems)
 			var insertErr error
 			result.Exec(func(i int, err error) {
 				if err != nil && insertErr == nil {

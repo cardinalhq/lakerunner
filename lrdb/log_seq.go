@@ -25,7 +25,7 @@ func (q *Store) InsertLogSegment(ctx context.Context, params InsertLogSegmentPar
 	if err := q.ensureLogFPPartition(ctx, "log_seg", params.OrganizationID, params.Dateint); err != nil {
 		return err
 	}
-	return q.InsertLogSegmentDirect(ctx, params)
+	return q.insertLogSegmentDirect(ctx, params)
 }
 
 // InsertLogSegmentBatchWithKafkaOffsets inserts multiple log segments and updates multiple Kafka offsets in a single transaction

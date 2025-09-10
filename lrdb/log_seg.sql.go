@@ -185,68 +185,6 @@ func (q *Queries) GetLogSegmentsForCompaction(ctx context.Context, arg GetLogSeg
 	return items, nil
 }
 
-const insertLogSegmentDirect = `-- name: InsertLogSegmentDirect :exec
-INSERT INTO log_seg (
-  organization_id,
-  dateint,
-  ingest_dateint,
-  segment_id,
-  instance_num,
-  slot_id,
-  ts_range,
-  record_count,
-  file_size,
-  created_by,
-  fingerprints
-)
-VALUES (
-  $1,
-  $2,
-  $3,
-  $4,
-  $5,
-  $6,
-  int8range($7, $8, '[)'),
-  $9,
-  $10,
-  $11,
-  $12::bigint[]
-)
-`
-
-type InsertLogSegmentParams struct {
-	OrganizationID uuid.UUID `json:"organization_id"`
-	Dateint        int32     `json:"dateint"`
-	IngestDateint  int32     `json:"ingest_dateint"`
-	SegmentID      int64     `json:"segment_id"`
-	InstanceNum    int16     `json:"instance_num"`
-	SlotID         int32     `json:"slot_id"`
-	StartTs        int64     `json:"start_ts"`
-	EndTs          int64     `json:"end_ts"`
-	RecordCount    int64     `json:"record_count"`
-	FileSize       int64     `json:"file_size"`
-	CreatedBy      CreatedBy `json:"created_by"`
-	Fingerprints   []int64   `json:"fingerprints"`
-}
-
-func (q *Queries) InsertLogSegmentDirect(ctx context.Context, arg InsertLogSegmentParams) error {
-	_, err := q.db.Exec(ctx, insertLogSegmentDirect,
-		arg.OrganizationID,
-		arg.Dateint,
-		arg.IngestDateint,
-		arg.SegmentID,
-		arg.InstanceNum,
-		arg.SlotID,
-		arg.StartTs,
-		arg.EndTs,
-		arg.RecordCount,
-		arg.FileSize,
-		arg.CreatedBy,
-		arg.Fingerprints,
-	)
-	return err
-}
-
 const listLogSegmentsForQuery = `-- name: ListLogSegmentsForQuery :many
 SELECT
     t.fp::bigint                    AS fingerprint,
@@ -311,4 +249,66 @@ func (q *Queries) ListLogSegmentsForQuery(ctx context.Context, arg ListLogSegmen
 		return nil, err
 	}
 	return items, nil
+}
+
+const insertLogSegmentDirect = `-- name: insertLogSegmentDirect :exec
+INSERT INTO log_seg (
+  organization_id,
+  dateint,
+  ingest_dateint,
+  segment_id,
+  instance_num,
+  slot_id,
+  ts_range,
+  record_count,
+  file_size,
+  created_by,
+  fingerprints
+)
+VALUES (
+  $1,
+  $2,
+  $3,
+  $4,
+  $5,
+  $6,
+  int8range($7, $8, '[)'),
+  $9,
+  $10,
+  $11,
+  $12::bigint[]
+)
+`
+
+type InsertLogSegmentParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Dateint        int32     `json:"dateint"`
+	IngestDateint  int32     `json:"ingest_dateint"`
+	SegmentID      int64     `json:"segment_id"`
+	InstanceNum    int16     `json:"instance_num"`
+	SlotID         int32     `json:"slot_id"`
+	StartTs        int64     `json:"start_ts"`
+	EndTs          int64     `json:"end_ts"`
+	RecordCount    int64     `json:"record_count"`
+	FileSize       int64     `json:"file_size"`
+	CreatedBy      CreatedBy `json:"created_by"`
+	Fingerprints   []int64   `json:"fingerprints"`
+}
+
+func (q *Queries) insertLogSegmentDirect(ctx context.Context, arg InsertLogSegmentParams) error {
+	_, err := q.db.Exec(ctx, insertLogSegmentDirect,
+		arg.OrganizationID,
+		arg.Dateint,
+		arg.IngestDateint,
+		arg.SegmentID,
+		arg.InstanceNum,
+		arg.SlotID,
+		arg.StartTs,
+		arg.EndTs,
+		arg.RecordCount,
+		arg.FileSize,
+		arg.CreatedBy,
+		arg.Fingerprints,
+	)
+	return err
 }

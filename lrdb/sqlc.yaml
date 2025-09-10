@@ -23,8 +23,9 @@ sql:
         emit_sql_as_comment: false
         out: "."
         rename:
-          InsertLogSegmentDirectParams: InsertLogSegmentParams
-          InsertMetricSegmentDirectParams: InsertMetricSegmentParams
+          insertLogSegmentDirectParams: InsertLogSegmentParams
+          insertMetricSegDirectParams: InsertMetricSegmentParams
+          insertMetricSegsDirectParams: InsertMetricSegsParams
           WorkQueueAddDirectParams: WorkQueueAddParams
           WorkQueueClaimDirectParams: WorkQueueClaimParams
           WorkQueueClaimDirectRow: WorkQueueClaimRow

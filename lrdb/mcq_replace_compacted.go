@@ -32,25 +32,27 @@ func (q *Store) CompactMetricSegs(ctx context.Context, args CompactMetricSegsPar
 		segIDs[i] = oldRec.SegmentID
 	}
 
-	newItems := make([]InsertCompactedMetricSegParams, len(args.NewRecords))
+	newItems := make([]InsertMetricSegsParams, len(args.NewRecords))
 	for i, r := range args.NewRecords {
-		newItems[i] = InsertCompactedMetricSegParams{
+		newItems[i] = InsertMetricSegsParams{
 			OrganizationID: args.OrganizationID,
 			Dateint:        args.Dateint,
+			IngestDateint:  args.IngestDateint,
 			FrequencyMs:    args.FrequencyMs,
 			SegmentID:      r.SegmentID,
 			InstanceNum:    args.InstanceNum,
+			SlotID:         args.SlotID,
 			StartTs:        r.StartTs,
 			EndTs:          r.EndTs,
 			RecordCount:    r.RecordCount,
 			FileSize:       r.FileSize,
-			EIngestDateint: args.IngestDateint,
 			Published:      true,
 			CreatedBy:      args.CreatedBy,
-			SlotID:         args.SlotID,
+			Rolledup:       false,
 			Fingerprints:   r.Fingerprints,
 			SortVersion:    CurrentMetricSortVersion,
 			SlotCount:      args.SlotCount,
+			Compacted:      false,
 		}
 	}
 
@@ -68,7 +70,7 @@ func (q *Store) CompactMetricSegs(ctx context.Context, args CompactMetricSegsPar
 		}
 
 		if len(newItems) > 0 {
-			res := s.InsertCompactedMetricSeg(ctx, newItems)
+			res := s.insertMetricSegsDirect(ctx, newItems)
 			var errs *multierror.Error
 			res.Exec(func(i int, err error) {
 				if err != nil {
