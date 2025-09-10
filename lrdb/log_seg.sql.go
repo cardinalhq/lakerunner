@@ -162,10 +162,10 @@ FROM log_seg AS s
     unnest(s.fingerprints) AS t(fp)
 WHERE
     s.organization_id = $1
-  AND s.dateint      = $2
-  AND s.published   = true
+  AND s.dateint       = $2
+  AND s.published     = true
   AND s.fingerprints && $3::BIGINT[]
-  AND t.fp           = ANY($3::BIGINT[])
+  AND t.fp            = ANY($3::BIGINT[])
   AND ts_range && int8range($4, $5, '[)')
 `
 
