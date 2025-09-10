@@ -9,11 +9,3 @@ DO UPDATE SET
   updated_at = now()
 RETURNING (created_at = updated_at) as is_new;
 
--- name: GetExemplarMetricsCreatedAfter :many
-SELECT * FROM lrdb_exemplar_metrics WHERE created_at > @ts;
-
--- name: GetExemplarMetricsByService :many
-SELECT * FROM lrdb_exemplar_metrics 
-WHERE organization_id = @organization_id 
-  AND service_identifier_id = @service_identifier_id
-ORDER BY created_at DESC;

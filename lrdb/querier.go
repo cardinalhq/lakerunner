@@ -6,9 +6,9 @@ package lrdb
 
 import (
 	"context"
-	"time"
 
 	"github.com/google/uuid"
+	"time"
 )
 
 type Querier interface {
@@ -27,39 +27,17 @@ type Querier interface {
 	BatchUpsertExemplarTraces(ctx context.Context, arg []BatchUpsertExemplarTracesParams) *BatchUpsertExemplarTracesBatchResults
 	CompactLogSegments(ctx context.Context, arg CompactLogSegmentsParams) error
 	CompactTraceSegments(ctx context.Context, arg CompactTraceSegmentsParams) error
-	// Clean up old offset entries (older than specified timestamp)
-	DeleteOldKafkaOffsets(ctx context.Context, cutoffTime time.Time) error
-	// Clean up old segment_journal entries for maintenance
-	DeleteOldSegmentJournals(ctx context.Context, cutoffTime time.Time) error
 	// Retrieves all existing metric pack estimates for EWMA calculations
 	GetAllMetricPackEstimates(ctx context.Context) ([]MetricPackEstimate, error)
-	GetExemplarLogsByFingerprint(ctx context.Context, arg GetExemplarLogsByFingerprintParams) (LrdbExemplarLog, error)
-	GetExemplarLogsByService(ctx context.Context, arg GetExemplarLogsByServiceParams) ([]LrdbExemplarLog, error)
-	GetExemplarLogsCreatedAfter(ctx context.Context, ts time.Time) ([]LrdbExemplarLog, error)
-	GetExemplarMetricsByService(ctx context.Context, arg GetExemplarMetricsByServiceParams) ([]LrdbExemplarMetric, error)
-	GetExemplarMetricsCreatedAfter(ctx context.Context, ts time.Time) ([]LrdbExemplarMetric, error)
-	GetExemplarTracesByFingerprint(ctx context.Context, arg GetExemplarTracesByFingerprintParams) (LrdbExemplarTrace, error)
-	GetExemplarTracesByService(ctx context.Context, arg GetExemplarTracesByServiceParams) ([]LrdbExemplarTrace, error)
-	GetExemplarTracesCreatedAfter(ctx context.Context, ts time.Time) ([]LrdbExemplarTrace, error)
-	// Get all offset entries for a specific consumer group (useful for monitoring)
-	GetKafkaOffsetsByConsumerGroup(ctx context.Context, consumerGroup string) ([]GetKafkaOffsetsByConsumerGroupRow, error)
 	// Get the most recent segment_journal entry
 	GetLatestSegmentJournal(ctx context.Context) (SegmentJournal, error)
 	GetLogSegmentsForCompaction(ctx context.Context, arg GetLogSegmentsForCompactionParams) ([]GetLogSegmentsForCompactionRow, error)
-	// Gets metric pack estimate for specific org with fallback to default (all zeros)
-	// Returns up to 2 rows: one for the specific org and one for the default
-	GetMetricPackEstimateForOrg(ctx context.Context, arg GetMetricPackEstimateForOrgParams) ([]MetricPackEstimate, error)
 	// Get a single segment by its primary key components
 	GetMetricSeg(ctx context.Context, arg GetMetricSegParams) (MetricSeg, error)
-	// Fetch a single metric segment by its complete primary key
-	GetMetricSegByPrimaryKey(ctx context.Context, arg GetMetricSegByPrimaryKeyParams) (MetricSeg, error)
 	GetMetricSegsByIds(ctx context.Context, arg GetMetricSegsByIdsParams) ([]MetricSeg, error)
 	GetMetricType(ctx context.Context, arg GetMetricTypeParams) (string, error)
 	// Get a specific segment_journal entry by ID
 	GetSegmentJournalByID(ctx context.Context, id int64) (SegmentJournal, error)
-	// Get segment_journal entries for debugging, filtered by organization
-	GetSegmentJournalByOrg(ctx context.Context, arg GetSegmentJournalByOrgParams) ([]GetSegmentJournalByOrgRow, error)
-	GetSpanInfoByFingerprint(ctx context.Context, arg GetSpanInfoByFingerprintParams) (GetSpanInfoByFingerprintRow, error)
 	GetTraceSegmentsForCompaction(ctx context.Context, arg GetTraceSegmentsForCompactionParams) ([]GetTraceSegmentsForCompactionRow, error)
 	InsertCompactedMetricSeg(ctx context.Context, arg []InsertCompactedMetricSegParams) *InsertCompactedMetricSegBatchResults
 	InsertLogSegmentDirect(ctx context.Context, arg InsertLogSegmentParams) error
@@ -97,8 +75,6 @@ type Querier interface {
 	ObjectCleanupComplete(ctx context.Context, id uuid.UUID) error
 	ObjectCleanupFail(ctx context.Context, id uuid.UUID) error
 	ObjectCleanupGet(ctx context.Context, maxrows int32) ([]ObjectCleanupGetRow, error)
-	SetMetricSegCompacted(ctx context.Context, arg SetMetricSegCompactedParams) error
-	SetSingleMetricSegCompacted(ctx context.Context, arg SetSingleMetricSegCompactedParams) error
 	SignalLockCleanup(ctx context.Context) (int32, error)
 	// Returns an estimate of the number of trace segments, accounting for per-file overhead.
 	TraceSegEstimator(ctx context.Context, arg TraceSegEstimatorParams) ([]TraceSegEstimatorRow, error)

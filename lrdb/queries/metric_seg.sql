@@ -133,17 +133,6 @@ WHERE organization_id = @organization_id
   AND slot_id = @slot_id
   AND slot_count = @slot_count;
 
--- name: GetMetricSegByPrimaryKey :one
--- Fetch a single metric segment by its complete primary key
-SELECT * FROM metric_seg
-WHERE organization_id = @organization_id
-  AND dateint = @dateint
-  AND frequency_ms = @frequency_ms
-  AND segment_id = @segment_id
-  AND instance_num = @instance_num
-  AND slot_id = @slot_id
-  AND slot_count = @slot_count;
-
 -- name: MarkMetricSegsCompactedByKeys :exec
 UPDATE metric_seg
 SET compacted = true,
@@ -155,27 +144,6 @@ WHERE organization_id = @organization_id
   AND segment_id      = ANY(@segment_ids::bigint[])
   AND compacted       = false;
 
--- name: SetMetricSegCompacted :exec
-UPDATE metric_seg
-SET compacted = true
-WHERE organization_id = @organization_id
-  AND dateint         = @dateint
-  AND frequency_ms    = @frequency_ms
-  AND instance_num    = @instance_num
-  AND segment_id      = ANY(@segment_ids::bigint[])
-  AND compacted       = false;
-
--- name: SetSingleMetricSegCompacted :exec
-UPDATE metric_seg
-SET compacted = true
-WHERE organization_id = @organization_id
-  AND dateint         = @dateint
-  AND frequency_ms    = @frequency_ms
-  AND segment_id      = @segment_id
-  AND instance_num    = @instance_num
-  AND slot_id         = @slot_id
-  AND slot_count      = @slot_count
-  AND compacted       = false;
 
 -- name: MarkMetricSegsRolledupByKeys :exec
 UPDATE metric_seg

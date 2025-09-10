@@ -20,17 +20,4 @@ DO UPDATE SET
   END
 RETURNING (created_at = updated_at) as is_new;
 
--- name: GetExemplarLogsCreatedAfter :many
-SELECT * FROM lrdb_exemplar_logs WHERE created_at > @ts;
-
--- name: GetExemplarLogsByService :many
-SELECT * FROM lrdb_exemplar_logs 
-WHERE organization_id = @organization_id 
-  AND service_identifier_id = @service_identifier_id
-ORDER BY created_at DESC;
-
--- name: GetExemplarLogsByFingerprint :one
-SELECT * FROM lrdb_exemplar_logs 
-WHERE organization_id = @organization_id 
-  AND fingerprint = @fingerprint
-LIMIT 1; 
+ 

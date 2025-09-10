@@ -7,63 +7,9 @@ package lrdb
 
 import (
 	"context"
-	"time"
 
 	"github.com/google/uuid"
 )
-
-const deleteOldKafkaOffsets = `-- name: DeleteOldKafkaOffsets :exec
-DELETE FROM kafka_offset_journal
-WHERE updated_at < $1
-`
-
-// Clean up old offset entries (older than specified timestamp)
-func (q *Queries) DeleteOldKafkaOffsets(ctx context.Context, cutoffTime time.Time) error {
-	_, err := q.db.Exec(ctx, deleteOldKafkaOffsets, cutoffTime)
-	return err
-}
-
-const getKafkaOffsetsByConsumerGroup = `-- name: GetKafkaOffsetsByConsumerGroup :many
-SELECT consumer_group, topic, partition, last_processed_offset, updated_at
-FROM kafka_offset_journal
-WHERE consumer_group = $1
-ORDER BY topic, partition
-`
-
-type GetKafkaOffsetsByConsumerGroupRow struct {
-	ConsumerGroup       string    `json:"consumer_group"`
-	Topic               string    `json:"topic"`
-	Partition           int32     `json:"partition"`
-	LastProcessedOffset int64     `json:"last_processed_offset"`
-	UpdatedAt           time.Time `json:"updated_at"`
-}
-
-// Get all offset entries for a specific consumer group (useful for monitoring)
-func (q *Queries) GetKafkaOffsetsByConsumerGroup(ctx context.Context, consumerGroup string) ([]GetKafkaOffsetsByConsumerGroupRow, error) {
-	rows, err := q.db.Query(ctx, getKafkaOffsetsByConsumerGroup, consumerGroup)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []GetKafkaOffsetsByConsumerGroupRow
-	for rows.Next() {
-		var i GetKafkaOffsetsByConsumerGroupRow
-		if err := rows.Scan(
-			&i.ConsumerGroup,
-			&i.Topic,
-			&i.Partition,
-			&i.LastProcessedOffset,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
 
 const kafkaJournalGetLastProcessed = `-- name: KafkaJournalGetLastProcessed :one
 SELECT last_processed_offset

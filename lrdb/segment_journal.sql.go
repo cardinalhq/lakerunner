@@ -7,21 +7,9 @@ package lrdb
 
 import (
 	"context"
-	"time"
 
 	"github.com/google/uuid"
 )
-
-const deleteOldSegmentJournals = `-- name: DeleteOldSegmentJournals :exec
-DELETE FROM segment_journal
-WHERE created_at < $1
-`
-
-// Clean up old segment_journal entries for maintenance
-func (q *Queries) DeleteOldSegmentJournals(ctx context.Context, cutoffTime time.Time) error {
-	_, err := q.db.Exec(ctx, deleteOldSegmentJournals, cutoffTime)
-	return err
-}
 
 const getLatestSegmentJournal = `-- name: GetLatestSegmentJournal :one
 SELECT id, signal, action, created_at, organization_id, instance_num, dateint, source_count, source_object_keys, source_total_records, source_total_size, dest_count, dest_object_keys, dest_total_records, dest_total_size, metadata, record_estimate, source_min_timestamp, source_max_timestamp, dest_min_timestamp, dest_max_timestamp, source_frequency_ms, dest_frequency_ms
@@ -98,103 +86,6 @@ func (q *Queries) GetSegmentJournalByID(ctx context.Context, id int64) (SegmentJ
 		&i.DestFrequencyMs,
 	)
 	return i, err
-}
-
-const getSegmentJournalByOrg = `-- name: GetSegmentJournalByOrg :many
-SELECT id, signal, action, created_at, organization_id, instance_num, dateint,
-       source_count, source_object_keys, source_total_records, source_total_size,
-       dest_count, dest_object_keys, dest_total_records, dest_total_size,
-       record_estimate, metadata, source_min_timestamp, source_max_timestamp,
-       dest_min_timestamp, dest_max_timestamp, source_frequency_ms, dest_frequency_ms
-FROM segment_journal
-WHERE organization_id = $1
-  AND ($2::smallint IS NULL OR signal = $2)
-  AND ($3::smallint IS NULL OR action = $3)
-ORDER BY created_at DESC
-LIMIT $4
-`
-
-type GetSegmentJournalByOrgParams struct {
-	OrganizationID uuid.UUID `json:"organization_id"`
-	Signal         int16     `json:"signal"`
-	Action         int16     `json:"action"`
-	LimitVal       int32     `json:"limit_val"`
-}
-
-type GetSegmentJournalByOrgRow struct {
-	ID                 int64          `json:"id"`
-	Signal             int16          `json:"signal"`
-	Action             int16          `json:"action"`
-	CreatedAt          time.Time      `json:"created_at"`
-	OrganizationID     uuid.UUID      `json:"organization_id"`
-	InstanceNum        int16          `json:"instance_num"`
-	Dateint            int32          `json:"dateint"`
-	SourceCount        int32          `json:"source_count"`
-	SourceObjectKeys   []string       `json:"source_object_keys"`
-	SourceTotalRecords int64          `json:"source_total_records"`
-	SourceTotalSize    int64          `json:"source_total_size"`
-	DestCount          int32          `json:"dest_count"`
-	DestObjectKeys     []string       `json:"dest_object_keys"`
-	DestTotalRecords   int64          `json:"dest_total_records"`
-	DestTotalSize      int64          `json:"dest_total_size"`
-	RecordEstimate     int64          `json:"record_estimate"`
-	Metadata           map[string]any `json:"metadata"`
-	SourceMinTimestamp int64          `json:"source_min_timestamp"`
-	SourceMaxTimestamp int64          `json:"source_max_timestamp"`
-	DestMinTimestamp   int64          `json:"dest_min_timestamp"`
-	DestMaxTimestamp   int64          `json:"dest_max_timestamp"`
-	SourceFrequencyMs  int32          `json:"source_frequency_ms"`
-	DestFrequencyMs    int32          `json:"dest_frequency_ms"`
-}
-
-// Get segment_journal entries for debugging, filtered by organization
-func (q *Queries) GetSegmentJournalByOrg(ctx context.Context, arg GetSegmentJournalByOrgParams) ([]GetSegmentJournalByOrgRow, error) {
-	rows, err := q.db.Query(ctx, getSegmentJournalByOrg,
-		arg.OrganizationID,
-		arg.Signal,
-		arg.Action,
-		arg.LimitVal,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []GetSegmentJournalByOrgRow
-	for rows.Next() {
-		var i GetSegmentJournalByOrgRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.Signal,
-			&i.Action,
-			&i.CreatedAt,
-			&i.OrganizationID,
-			&i.InstanceNum,
-			&i.Dateint,
-			&i.SourceCount,
-			&i.SourceObjectKeys,
-			&i.SourceTotalRecords,
-			&i.SourceTotalSize,
-			&i.DestCount,
-			&i.DestObjectKeys,
-			&i.DestTotalRecords,
-			&i.DestTotalSize,
-			&i.RecordEstimate,
-			&i.Metadata,
-			&i.SourceMinTimestamp,
-			&i.SourceMaxTimestamp,
-			&i.DestMinTimestamp,
-			&i.DestMaxTimestamp,
-			&i.SourceFrequencyMs,
-			&i.DestFrequencyMs,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const insertSegmentJournal = `-- name: InsertSegmentJournal :exec
