@@ -302,3 +302,15 @@ func ensureOrganizationsFromAPIKeys(ctx context.Context, apiKeysConfig APIKeysCo
 
 	return nil
 }
+
+// LoadFileContentsWithReader loads file contents using the provided FileReader
+func LoadFileContentsWithReader(filename string, fileReader FileReader) ([]byte, error) {
+	return loadFileContentsWithReader(filename, fileReader)
+}
+
+// UnmarshalYAML unmarshals YAML data into the provided interface
+func UnmarshalYAML(data []byte, v interface{}) error {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	return dec.Decode(v)
+}
