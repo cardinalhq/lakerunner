@@ -35,7 +35,7 @@ import (
 type MetricCompactionConsumer struct {
 	gatherer      *gatherer[*messages.MetricCompactionMessage, messages.CompactionKey]
 	consumer      fly.Consumer
-	store         CompactionStore
+	store         MetricCompactionStore
 	flushTicker   *time.Ticker
 	done          chan struct{}
 	consumerName  string
@@ -48,7 +48,7 @@ func NewMetricCompactionConsumer(
 	ctx context.Context,
 	factory *fly.Factory,
 	cfg *config.Config,
-	store CompactionStore,
+	store MetricCompactionStore,
 	storageProvider storageprofile.StorageProfileProvider,
 	cmgr cloudstorage.ClientProvider,
 ) (*MetricCompactionConsumer, error) {

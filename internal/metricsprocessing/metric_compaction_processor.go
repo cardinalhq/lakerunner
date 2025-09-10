@@ -48,28 +48,27 @@ func (e *GroupValidationError) Error() string {
 	return fmt.Sprintf("group validation failed - %s: expected %v, got %v (%s)", e.Field, e.Expected, e.Got, e.Message)
 }
 
-// CompactionStore defines database operations needed for compaction
-type CompactionStore interface {
+// MetricCompactionStore defines database operations needed for compaction
+type MetricCompactionStore interface {
 	GetMetricSeg(ctx context.Context, params lrdb.GetMetricSegParams) (lrdb.MetricSeg, error)
 	CompactMetricSegsWithKafkaOffsets(ctx context.Context, params lrdb.CompactMetricSegsParams, kafkaOffsets []lrdb.KafkaOffsetUpdate) error
 	KafkaGetLastProcessed(ctx context.Context, params lrdb.KafkaGetLastProcessedParams) (int64, error)
 	MarkMetricSegsCompactedByKeys(ctx context.Context, params lrdb.MarkMetricSegsCompactedByKeysParams) error
 	GetMetricEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32) int64
-	// Add segment_journal functionality
 	InsertSegmentJournal(ctx context.Context, params lrdb.InsertSegmentJournalParams) error
 }
 
-// MetricCompactorProcessor implements the Processor interface for metric segment compaction
-type MetricCompactorProcessor struct {
-	store           CompactionStore
+// MetricCompactionProcessor implements the Processor interface for metric segment compaction
+type MetricCompactionProcessor struct {
+	store           MetricCompactionStore
 	storageProvider storageprofile.StorageProfileProvider
 	cmgr            cloudstorage.ClientProvider
 	cfg             *config.Config
 }
 
 // newMetricCompactor creates a new metric compactor instance
-func newMetricCompactor(store CompactionStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, cfg *config.Config) *MetricCompactorProcessor {
-	return &MetricCompactorProcessor{
+func newMetricCompactor(store MetricCompactionStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, cfg *config.Config) *MetricCompactionProcessor {
+	return &MetricCompactionProcessor{
 		store:           store,
 		storageProvider: storageProvider,
 		cmgr:            cmgr,
@@ -142,7 +141,7 @@ func validateGroupConsistency(group *accumulationGroup[messages.CompactionKey]) 
 	return nil
 }
 
-func (c *MetricCompactorProcessor) Process(ctx context.Context, group *accumulationGroup[messages.CompactionKey], kafkaCommitData *KafkaCommitData) error {
+func (c *MetricCompactionProcessor) Process(ctx context.Context, group *accumulationGroup[messages.CompactionKey], kafkaCommitData *KafkaCommitData) error {
 	ll := logctx.FromContext(ctx)
 
 	// Calculate group age from Hunter timestamp
@@ -292,7 +291,7 @@ func (c *MetricCompactorProcessor) Process(ctx context.Context, group *accumulat
 }
 
 // uploadAndCreateSegments uploads the files and creates new segment records
-func (c *MetricCompactorProcessor) uploadAndCreateSegments(ctx context.Context, client cloudstorage.Client, profile storageprofile.StorageProfile, results []parquetwriter.Result, key messages.CompactionKey, inputSegments []lrdb.MetricSeg) ([]lrdb.MetricSeg, error) {
+func (c *MetricCompactionProcessor) uploadAndCreateSegments(ctx context.Context, client cloudstorage.Client, profile storageprofile.StorageProfile, results []parquetwriter.Result, key messages.CompactionKey, inputSegments []lrdb.MetricSeg) ([]lrdb.MetricSeg, error) {
 	ll := logctx.FromContext(ctx)
 
 	// Calculate input metrics
@@ -374,7 +373,7 @@ func (c *MetricCompactorProcessor) uploadAndCreateSegments(ctx context.Context, 
 }
 
 // atomicDatabaseUpdate performs the atomic transaction for step 12
-func (c *MetricCompactorProcessor) atomicDatabaseUpdate(ctx context.Context, oldSegments, newSegments []lrdb.MetricSeg, kafkaCommitData *KafkaCommitData, key messages.CompactionKey) error {
+func (c *MetricCompactionProcessor) atomicDatabaseUpdate(ctx context.Context, oldSegments, newSegments []lrdb.MetricSeg, kafkaCommitData *KafkaCommitData, key messages.CompactionKey) error {
 	ll := logctx.FromContext(ctx)
 
 	// Prepare Kafka offsets for update
@@ -484,12 +483,12 @@ func (c *MetricCompactorProcessor) atomicDatabaseUpdate(ctx context.Context, old
 
 // Helper functions
 
-func (c *MetricCompactorProcessor) getHourFromTimestamp(timestampMs int64) int16 {
+func (c *MetricCompactionProcessor) getHourFromTimestamp(timestampMs int64) int16 {
 	return int16((timestampMs / (1000 * 60 * 60)) % 24)
 }
 
 // markSegmentsAsCompacted marks the given segments as compacted in the database
-func (c *MetricCompactorProcessor) markSegmentsAsCompacted(ctx context.Context, segments []lrdb.MetricSeg, key messages.CompactionKey) error {
+func (c *MetricCompactionProcessor) markSegmentsAsCompacted(ctx context.Context, segments []lrdb.MetricSeg, key messages.CompactionKey) error {
 	if len(segments) == 0 {
 		return nil
 	}
@@ -509,12 +508,12 @@ func (c *MetricCompactorProcessor) markSegmentsAsCompacted(ctx context.Context, 
 }
 
 // GetTargetRecordCount returns the target record count for a grouping key
-func (c *MetricCompactorProcessor) GetTargetRecordCount(ctx context.Context, groupingKey messages.CompactionKey) int64 {
+func (c *MetricCompactionProcessor) GetTargetRecordCount(ctx context.Context, groupingKey messages.CompactionKey) int64 {
 	return c.store.GetMetricEstimate(ctx, groupingKey.OrganizationID, groupingKey.FrequencyMs)
 }
 
 // logCompactionOperation logs the compaction operation to segment_journal for debugging purposes
-func (c *MetricCompactorProcessor) logCompactionOperation(ctx context.Context, storageProfile storageprofile.StorageProfile, inputSegments, outputSegments []lrdb.MetricSeg, results []parquetwriter.Result, key messages.CompactionKey, recordEstimate int64) error {
+func (c *MetricCompactionProcessor) logCompactionOperation(ctx context.Context, storageProfile storageprofile.StorageProfile, inputSegments, outputSegments []lrdb.MetricSeg, results []parquetwriter.Result, key messages.CompactionKey, recordEstimate int64) error {
 	return logSegmentOperation(
 		ctx,
 		c.store,
@@ -534,7 +533,7 @@ func (c *MetricCompactorProcessor) logCompactionOperation(ctx context.Context, s
 }
 
 // performCompaction handles the core compaction logic: creating readers, aggregating, and writing
-func (c *MetricCompactorProcessor) performCompaction(ctx context.Context, tmpDir string, storageClient cloudstorage.Client, compactionKey messages.CompactionKey, storageProfile storageprofile.StorageProfile, activeSegments []lrdb.MetricSeg, recordCountEstimate int64) ([]lrdb.MetricSeg, []parquetwriter.Result, error) {
+func (c *MetricCompactionProcessor) performCompaction(ctx context.Context, tmpDir string, storageClient cloudstorage.Client, compactionKey messages.CompactionKey, storageProfile storageprofile.StorageProfile, activeSegments []lrdb.MetricSeg, recordCountEstimate int64) ([]lrdb.MetricSeg, []parquetwriter.Result, error) {
 	params := metricProcessingParams{
 		TmpDir:         tmpDir,
 		StorageClient:  storageClient,

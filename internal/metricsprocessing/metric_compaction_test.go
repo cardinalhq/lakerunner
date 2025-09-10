@@ -32,7 +32,7 @@ import (
 )
 
 func TestGetHourFromTimestamp(t *testing.T) {
-	compactor := &MetricCompactorProcessor{}
+	compactor := &MetricCompactionProcessor{}
 
 	tests := []struct {
 		name        string
@@ -123,7 +123,7 @@ func (m *mockCompactionStore) InsertSegmentJournal(ctx context.Context, params l
 
 func TestMarkSegmentsAsCompacted(t *testing.T) {
 	ctx := context.Background()
-	compactor := &MetricCompactorProcessor{}
+	compactor := &MetricCompactionProcessor{}
 	mockStore := &mockCompactionStore{}
 	compactor.store = mockStore
 
@@ -186,7 +186,7 @@ func TestMarkSegmentsAsCompacted(t *testing.T) {
 
 func TestGetTargetRecordCount(t *testing.T) {
 	ctx := context.Background()
-	compactor := &MetricCompactorProcessor{}
+	compactor := &MetricCompactionProcessor{}
 	mockStore := &mockCompactionStore{}
 	compactor.store = mockStore
 
@@ -249,7 +249,7 @@ func TestGetTargetRecordCount(t *testing.T) {
 
 func TestAtomicDatabaseUpdate(t *testing.T) {
 	ctx := context.Background()
-	compactor := &MetricCompactorProcessor{}
+	compactor := &MetricCompactionProcessor{}
 	mockStore := &mockCompactionStore{}
 	compactor.store = mockStore
 
@@ -660,7 +660,7 @@ func (m *mockStorageClient) DeleteObject(ctx context.Context, bucket, objectPath
 
 func TestUploadAndCreateSegments(t *testing.T) {
 	ctx := context.Background()
-	compactor := &MetricCompactorProcessor{}
+	compactor := &MetricCompactionProcessor{}
 	mockClient := &mockStorageClient{}
 
 	// Test data

@@ -676,7 +676,7 @@ func TestPerformCompactionSeglog990(t *testing.T) {
 	}
 
 	// Create processor and test performCompaction
-	processor := &MetricCompactorProcessor{}
+	processor := &MetricCompactionProcessor{}
 
 	t.Logf("\nTesting performCompaction with:")
 	t.Logf("  Input segments: %d", len(activeSegments))
