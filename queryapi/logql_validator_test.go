@@ -53,13 +53,13 @@ func TestHandleLogQLValidate(t *testing.T) {
 			name:           "Invalid LogQL - missing closing brace",
 			query:          `{app="api"`,
 			expectedValid:  false,
-			expectedStatus: http.StatusOK,
+			expectedStatus: http.StatusBadRequest,
 		},
 		{
 			name:           "Invalid LogQL - syntax error",
 			query:          `{invalid`,
 			expectedValid:  false,
-			expectedStatus: http.StatusOK,
+			expectedStatus: http.StatusBadRequest,
 		},
 		{
 			name:           "Empty query",
