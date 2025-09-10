@@ -129,6 +129,10 @@ func buildFromLogLeaf(be *BaseExpr, step time.Duration) string {
 			aggFn, alias = "MAX", "max"
 		case "avg_over_time":
 			aggFn, alias = "AVG", "avg"
+		case "sum_over_time":
+			aggFn, alias = "SUM", "sum"
+		case "rate":
+			aggFn, alias = "SUM", "sum"
 		default:
 			aggFn, alias = "AVG", "avg"
 		}

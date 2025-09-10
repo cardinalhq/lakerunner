@@ -1812,7 +1812,7 @@ func TestLog_SumOfCountsByPod_WithJSONFilter_TwoWorkers_Eval(t *testing.T) {
 	}
 }
 
-func TestLog_SumRateWithUnwrap_TwoWorkers(t *testing.T) {
+func TestLog_SumRateCounter_Unwrap_TwoWorkers_Eval(t *testing.T) {
 	// ---------------- Worker 1 ----------------
 	db1 := openDuckDB(t)
 	mustExec(t, db1, `CREATE TABLE logs(
@@ -1823,8 +1823,8 @@ func TestLog_SumRateWithUnwrap_TwoWorkers(t *testing.T) {
 		"_cardinalhq.message"     TEXT,
 		"resource.service.name"   TEXT
 	);`)
-	// bucket 0 (0..60s): two lines
-	// bucket 1 (60..120s): one line
+	// bucket 0 (0..60s): 10 + 20
+	// bucket 1 (60..120s): 30
 	mustExec(t, db1, `
 	INSERT INTO logs("_cardinalhq.timestamp","_cardinalhq.message","resource.service.name") VALUES
 	(10*1000,  'took 10 ms', 'kafka'),
@@ -1842,16 +1842,16 @@ func TestLog_SumRateWithUnwrap_TwoWorkers(t *testing.T) {
 		"_cardinalhq.message"     TEXT,
 		"resource.service.name"   TEXT
 	);`)
-	// bucket 0: one line
-	// bucket 1: one line
+	// bucket 0: 40
+	// bucket 1: 50
 	mustExec(t, db2, `
 	INSERT INTO logs("_cardinalhq.timestamp","_cardinalhq.message","resource.service.name") VALUES
 	(40*1000,  'took 40ms',  'kafka'),
 	(100*1000, 'took 50 ms', 'kafka');
 	`)
 
-	// NOTE: rate() counts lines/sec; unwrap does not affect rate.
-	q := `sum(rate({resource_service_name="kafka"} | regexp "(?P<dur>[0-9]+(?:\\.[0-9]+)?)\\s*(?:ns|us|µs|ms|s|m|h)" | unwrap dur [1m]))`
+	// Coordinator expression: sum(rate_counter(... unwrap dur [1m]))
+	q := `sum(rate_counter({resource_service_name="kafka"} | regexp "(?P<dur>[0-9]+(?:\\.[0-9]+)?)\\s*(?:ns|us|µs|ms|s|m|h)" | unwrap dur [1m]))`
 
 	plan, _ := compileMetricPlanFromLogQL(t, q)
 	if len(plan.Leaves) != 1 {
@@ -1862,52 +1862,91 @@ func TestLog_SumRateWithUnwrap_TwoWorkers(t *testing.T) {
 	step := time.Minute
 	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000)
 
-	// Sanity: pipeline should include regexp + unwrap even if rate ignores the numeric.
+	// Sanity: pipeline should include regexp + unwrap and aggregate the numeric.
 	if !strings.Contains(workerSQL, "regexp_extract") || !strings.Contains(workerSQL, "AS __unwrap_value") {
 		t.Fatalf("expected regexp+unwrap in SQL, got:\n%s", workerSQL)
 	}
+	if !strings.Contains(workerSQL, "SUM(__unwrap_value)") {
+		t.Fatalf("expected SUM(__unwrap_value) in SQL, got:\n%s", workerSQL)
+	}
 
+	// Run leaf SQL on both workers (per-bucket numeric SUMs from the 1m window).
 	rows1 := queryAll(t, db1, workerSQL)
 	rows2 := queryAll(t, db2, workerSQL)
 	if len(rows1) == 0 && len(rows2) == 0 {
 		t.Fatalf("no rows from both workers; sql=\n%s", workerSQL)
 	}
 
-	// Worker outputs for rate() are line counts per bucket; coordinator divides by window.
-	// Step = 60s.
+	// Build coordinator inputs per bucket for the leaf.
+	// rate_counter expects the *sum per window* so it can compute delta/step.
 	type bucket = int64
-	lineCounts := map[bucket]float64{}
+	perBucket := map[bucket][]promql.SketchInput{}
+
+	getSum := func(r rowmap) float64 {
+		if v, ok := r["sum"]; ok {
+			return f64(v)
+		}
+		t.Fatalf("sum column not found in row: %v", r)
+		return 0
+	}
 
 	addRows := func(rows []rowmap) {
 		for _, r := range rows {
 			b := i64(r["bucket_ts"])
-			// Your SQL uses SUM(1) AS sum for rate window aggregation.
-			lineCounts[b] += f64(r["sum"])
+			sum := getSum(r)
+			// No group-by labels here; we want global sum(rate_counter(...)).
+			perBucket[b] = append(perBucket[b], promql.SketchInput{
+				ExprID:         leaf.ID,
+				OrganizationID: "org-test",
+				Timestamp:      b,
+				Frequency:      int64(step / time.Second),
+				SketchTags: promql.SketchTags{
+					Tags:       map[string]any{}, // global
+					SketchType: promql.SketchMAP,
+					Agg:        map[string]float64{"sum": sum},
+				},
+			})
 		}
 	}
 	addRows(rows1)
 	addRows(rows2)
 
-	// Convert to per-second rate: lines_in_bucket / 60
-	toRate := func(count float64) float64 { return count / 60.0 }
+	// Deterministic bucket order.
+	var buckets []int64
+	for b := range perBucket {
+		buckets = append(buckets, b)
+	}
+	sort.Slice(buckets, func(i, j int) bool { return buckets[i] < buckets[j] })
+
+	// Evaluate per bucket; coordinator should compute the per-second rate of the window sums,
+	// then outer sum(...) (no groups → a single series).
+	got := map[bucket]float64{}
+	for _, b := range buckets {
+		out := plan.Root.Eval(promql.SketchGroup{
+			Timestamp: b,
+			Group:     map[string][]promql.SketchInput{leaf.ID: perBucket[b]},
+		}, step)
+
+		if len(out) != 1 {
+			t.Fatalf("expected 1 output series at bucket %d, got %d: %v", b, len(out), out)
+		}
+		got[b] = out["default"].Value.Num
+	}
 
 	const (
 		b0 = int64(0)
 		b1 = int64(60000)
 	)
-	// bucket0: 2 (w1) + 1 (w2) = 3 → 3/60 = 0.05
-	// bucket1: 1 (w1) + 1 (w2) = 2 → 2/60 ≈ 0.0333333
 	exp := map[bucket]float64{
-		b0: 3.0 / 60.0,
-		b1: 2.0 / 60.0,
+		b0: 70.0 / 60.0,
+		b1: 80.0 / 60.0,
 	}
 
 	const eps = 1e-9
 	for b, want := range exp {
-		got := toRate(lineCounts[b])
-		if math.Abs(got-want) > eps {
-			t.Fatalf("unexpected sum(rate) at bucket %d: got=%v want=%v\nrows1=%v\nrows2=%v\nsql=\n%s",
-				b, got, want, rows1, rows2, workerSQL)
+		if math.Abs(got[b]-want) > eps {
+			t.Fatalf("unexpected sum(rate_counter unwrap) at bucket %d: got=%v want=%v\nrows1=%v\nrows2=%v\nsql=\n%s",
+				b, got[b], want, rows1, rows2, workerSQL)
 		}
 	}
 }
