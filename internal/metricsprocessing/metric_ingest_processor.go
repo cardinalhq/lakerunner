@@ -329,12 +329,23 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *Accumulation
 				return fmt.Errorf("failed to marshal compaction notification: %w", err)
 			}
 
+			compactionMessage := fly.Message{
+				Key:   fmt.Appendf(nil, "%s-%d-%d", segParams.OrganizationID.String(), segParams.Dateint, segParams.SegmentID),
+				Value: compactionMsgBytes,
+			}
+
+			// Send to compaction topic
+			if err := p.kafkaProducer.Send(criticalCtx, compactionTopic, compactionMessage); err != nil {
+				return fmt.Errorf("failed to send compaction notification to Kafka: %w", err)
+			} else {
+				ll.Debug("Sent compaction notification", slog.Any("message", compactionNotification))
+			}
+
 			// Create rollup message if this frequency can be rolled up
 			var rollupMsgBytes []byte
 			var rollupMessage fly.Message
-			if isRollupSourceFrequency(segParams.FrequencyMs) {
-				targetFrequency, _ := getTargetRollupFrequency(segParams.FrequencyMs)
-
+			targetFrequency, ok := getTargetRollupFrequency(segParams.FrequencyMs)
+			if ok {
 				rollupNotification := messages.MetricRollupMessage{
 					Version:           1,
 					OrganizationID:    segParams.OrganizationID,
@@ -357,30 +368,18 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *Accumulation
 				}
 
 				rollupMessage = fly.Message{
-					Key:   []byte(fmt.Sprintf("%s-%d-%d-%d", segParams.OrganizationID.String(), segParams.Dateint, targetFrequency, rollupStartTime)),
+					Key:   fmt.Appendf(nil, "%s-%d-%d-%d", segParams.OrganizationID.String(), segParams.Dateint, targetFrequency, rollupStartTime),
 					Value: rollupMsgBytes,
 				}
-			}
 
-			compactionMessage := fly.Message{
-				Key:   []byte(fmt.Sprintf("%s-%d-%d", segParams.OrganizationID.String(), segParams.Dateint, segParams.SegmentID)),
-				Value: compactionMsgBytes,
-			}
-
-			// Send to compaction topic
-			if err := p.kafkaProducer.Send(criticalCtx, compactionTopic, compactionMessage); err != nil {
-				return fmt.Errorf("failed to send compaction notification to Kafka: %w", err)
-			}
-
-			// Send to rollup topic only if rollup message was created
-			if rollupMsgBytes != nil {
+				// Send to rollup topic only if rollup message was created
 				if err := p.kafkaProducer.Send(criticalCtx, rollupTopic, rollupMessage); err != nil {
 					return fmt.Errorf("failed to send rollup notification to Kafka: %w", err)
+				} else {
+					ll.Debug("Sent rollup notification", slog.Any("message", rollupNotification))
 				}
 			}
 		}
-		ll.Debug("Sent segment notifications to Kafka topics",
-			slog.Int("count", len(segmentParams)))
 	} else {
 		ll.Warn("No Kafka producer provided - segment notifications will not be sent")
 	}
