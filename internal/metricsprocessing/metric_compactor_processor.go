@@ -537,7 +537,6 @@ func (c *MetricCompactorProcessor) logCompactionOperation(ctx context.Context, s
 	return logSegmentOperation(
 		ctx,
 		c.store,
-		storageProfile,
 		inputSegments,
 		outputSegments,
 		results,

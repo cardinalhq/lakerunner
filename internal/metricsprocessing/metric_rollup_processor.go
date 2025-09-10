@@ -504,7 +504,6 @@ func (r *MetricRollupProcessor) logRollupOperation(ctx context.Context, storageP
 	return logSegmentOperation(
 		ctx,
 		r.store,
-		storageProfile,
 		inputSegments,
 		outputSegments,
 		results,

@@ -23,7 +23,6 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
-	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -36,7 +35,6 @@ type segmentJournalStore interface {
 func logSegmentOperation(
 	ctx context.Context,
 	store segmentJournalStore,
-	storageProfile storageprofile.StorageProfile,
 	inputSegments, outputSegments []lrdb.MetricSeg,
 	results []parquetwriter.Result,
 	orgID uuid.UUID,
