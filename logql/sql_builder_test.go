@@ -17,10 +17,11 @@ package logql
 import (
 	"database/sql"
 	"fmt"
-	_ "github.com/marcboeker/go-duckdb/v2"
 	"log/slog"
 	"strings"
 	"testing"
+
+	_ "github.com/marcboeker/go-duckdb/v2"
 )
 
 func openDuckDB(t *testing.T) *sql.DB {

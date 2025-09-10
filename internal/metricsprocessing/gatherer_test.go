@@ -19,9 +19,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 )
 
 // MockCompactor implements Processor for testing
