@@ -26,7 +26,7 @@ import (
 
 // MockCompactor implements Processor for testing
 type MockCompactor struct {
-	groups     []*AccumulationGroup[messages.CompactionKey]
+	groups     []*accumulationGroup[messages.CompactionKey]
 	commitData []*KafkaCommitData
 }
 
@@ -34,7 +34,7 @@ func NewMockCompactor() *MockCompactor {
 	return &MockCompactor{}
 }
 
-func (m *MockCompactor) Process(ctx context.Context, group *AccumulationGroup[messages.CompactionKey], kafkaCommitData *KafkaCommitData) error {
+func (m *MockCompactor) Process(ctx context.Context, group *accumulationGroup[messages.CompactionKey], kafkaCommitData *KafkaCommitData) error {
 	m.groups = append(m.groups, group)
 	m.commitData = append(m.commitData, kafkaCommitData)
 	return nil
@@ -55,7 +55,7 @@ func NewMockOffsetCallbacks() *MockOffsetCallbacks {
 	}
 }
 
-func (m *MockOffsetCallbacks) GetLastProcessedOffset(ctx context.Context, metadata *MessageMetadata, groupingKey messages.CompactionKey) (int64, error) {
+func (m *MockOffsetCallbacks) GetLastProcessedOffset(ctx context.Context, metadata *messageMetadata, groupingKey messages.CompactionKey) (int64, error) {
 	key := metadata.Topic + ":" + string(rune(metadata.Partition)) + ":" + metadata.ConsumerGroup + ":" + groupingKey.OrganizationID.String() + ":" + string(rune(groupingKey.InstanceNum))
 	offset, exists := m.offsets[key]
 	if !exists {
@@ -87,14 +87,14 @@ func TestGatherer_CreateKafkaCommitDataFromGroup(t *testing.T) {
 	gatherer := newGatherer[*messages.MetricCompactionMessage]("test-topic", "test-group", compactor, offsetCallbacks)
 
 	// Create a group with messages from multiple partitions
-	group := &AccumulationGroup[messages.CompactionKey]{
+	group := &accumulationGroup[messages.CompactionKey]{
 		Key: messages.CompactionKey{
 			OrganizationID: orgID,
 			InstanceNum:    1,
 			DateInt:        20250108,
 			FrequencyMs:    60000,
 		},
-		Messages: []*AccumulatedMessage{
+		Messages: []*accumulatedMessage{
 			{
 				Message:  createTestMessage(orgID, 1, 20250108, 60000, 1, 4, 50),
 				Metadata: createTestMetadata("test-topic", 0, "test-group", 100),
@@ -135,7 +135,7 @@ func TestGatherer_ProcessMessage_Integration(t *testing.T) {
 		msg := createTestMessage(orgID, 1, 20250108, 60000, 1, 4, 50) // 50 records each
 		metadata := createTestMetadata("test-topic", 0, "test-group", int64(i))
 
-		err := gatherer.ProcessMessage(context.Background(), msg, metadata)
+		err := gatherer.processMessage(context.Background(), msg, metadata)
 		assert.NoError(t, err)
 
 		if len(compactor.groups) > 0 {
@@ -170,11 +170,11 @@ func TestGatherer_OffsetDeduplication(t *testing.T) {
 	msg1 := createTestMessage(orgID, 1, 20250108, 60000, 1, 4, 50)
 	metadata1 := createTestMetadata("test-topic", 0, "test-group", 100)
 
-	err1 := gatherer.ProcessMessage(context.Background(), msg1, metadata1)
+	err1 := gatherer.processMessage(context.Background(), msg1, metadata1)
 	assert.NoError(t, err1)
 
 	// Try to process same message again - should be dropped by offset tracker
-	err2 := gatherer.ProcessMessage(context.Background(), msg1, metadata1)
+	err2 := gatherer.processMessage(context.Background(), msg1, metadata1)
 	assert.NoError(t, err2)
 
 	// Verify only one message was actually processed by hunter
@@ -199,27 +199,27 @@ func TestGatherer_MultipleOrgsMinimumOffset(t *testing.T) {
 
 	// Process messages from both orgs to different offsets
 	// Org A processes to offset 75
-	groupA := &AccumulationGroup[messages.CompactionKey]{
+	groupA := &accumulationGroup[messages.CompactionKey]{
 		Key: messages.CompactionKey{OrganizationID: orgA, InstanceNum: 1},
-		Messages: []*AccumulatedMessage{{
+		Messages: []*accumulatedMessage{{
 			Message:  createTestMessage(orgA, 1, 20250108, 60000, 1, 4, 50),
 			Metadata: createTestMetadata("test-topic", 0, "test-group", 75),
 		}},
 	}
-	sharedTracker.TrackMetadata(groupA)
+	sharedTracker.trackMetadata(groupA)
 
 	// Org B processes to offset 65
-	groupB := &AccumulationGroup[messages.CompactionKey]{
+	groupB := &accumulationGroup[messages.CompactionKey]{
 		Key: messages.CompactionKey{OrganizationID: orgB, InstanceNum: 1},
-		Messages: []*AccumulatedMessage{{
+		Messages: []*accumulatedMessage{{
 			Message:  createTestMessage(orgB, 1, 20250108, 60000, 1, 4, 50),
 			Metadata: createTestMetadata("test-topic", 0, "test-group", 65),
 		}},
 	}
-	sharedTracker.TrackMetadata(groupB)
+	sharedTracker.trackMetadata(groupB)
 
 	// Safe commit should be minimum (65)
-	commitData := sharedTracker.GetSafeCommitOffsets()
+	commitData := sharedTracker.getSafeCommitOffsets()
 	assert.NotNil(t, commitData)
 	assert.Equal(t, int64(65), commitData.Offsets[0]) // min(75, 65) = 65
 }
@@ -238,7 +238,7 @@ func TestGatherer_ValidatesTopicAndConsumerGroup(t *testing.T) {
 
 	// Test wrong topic
 	wrongTopicMetadata := createTestMetadata("wrong-topic", 0, "expected-group", 100)
-	err := gatherer.ProcessMessage(context.Background(), msg, wrongTopicMetadata)
+	err := gatherer.processMessage(context.Background(), msg, wrongTopicMetadata)
 	assert.Error(t, err)
 	var configErr *ConfigMismatchError
 	assert.ErrorAs(t, err, &configErr)
@@ -248,7 +248,7 @@ func TestGatherer_ValidatesTopicAndConsumerGroup(t *testing.T) {
 
 	// Test wrong consumer group
 	wrongGroupMetadata := createTestMetadata("expected-topic", 0, "wrong-group", 100)
-	err = gatherer.ProcessMessage(context.Background(), msg, wrongGroupMetadata)
+	err = gatherer.processMessage(context.Background(), msg, wrongGroupMetadata)
 	assert.Error(t, err)
 	assert.ErrorAs(t, err, &configErr)
 	assert.Equal(t, "consumer_group", configErr.Field)
@@ -257,7 +257,7 @@ func TestGatherer_ValidatesTopicAndConsumerGroup(t *testing.T) {
 
 	// Test correct topic and group
 	correctMetadata := createTestMetadata("expected-topic", 0, "expected-group", 100)
-	err = gatherer.ProcessMessage(context.Background(), msg, correctMetadata)
+	err = gatherer.processMessage(context.Background(), msg, correctMetadata)
 	assert.NoError(t, err)
 }
 
@@ -273,12 +273,12 @@ func TestGatherer_PreventsMixedTopics(t *testing.T) {
 
 	// Should accept compaction messages
 	compactMetadata := createTestMetadata("lakerunner.segments.metrics.compact", 0, "lakerunner.compact.metrics", 100)
-	err := gatherer.ProcessMessage(context.Background(), msg, compactMetadata)
+	err := gatherer.processMessage(context.Background(), msg, compactMetadata)
 	assert.NoError(t, err, "Should accept messages from expected compaction topic")
 
 	// Should reject rollup messages (different topic)
 	rollupMetadata := createTestMetadata("lakerunner.segments.metrics.rollup", 0, "lakerunner.compact.metrics", 101)
-	err = gatherer.ProcessMessage(context.Background(), msg, rollupMetadata)
+	err = gatherer.processMessage(context.Background(), msg, rollupMetadata)
 	assert.Error(t, err, "Should reject messages from rollup topic")
 
 	var configErr *ConfigMismatchError
@@ -312,8 +312,8 @@ func createTestMessage(orgID uuid.UUID, instanceNum int16, dateInt int32, freque
 	}
 }
 
-func createTestMetadata(topic string, partition int32, consumerGroup string, offset int64) *MessageMetadata {
-	return &MessageMetadata{
+func createTestMetadata(topic string, partition int32, consumerGroup string, offset int64) *messageMetadata {
+	return &messageMetadata{
 		Topic:         topic,
 		Partition:     partition,
 		ConsumerGroup: consumerGroup,

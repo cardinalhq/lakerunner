@@ -32,7 +32,7 @@ import (
 
 // MetricIngestConsumer handles object store notification messages for metric ingestion
 type MetricIngestConsumer struct {
-	gatherer      *Gatherer[*messages.ObjStoreNotificationMessage, messages.IngestKey]
+	gatherer      *gatherer[*messages.ObjStoreNotificationMessage, messages.IngestKey]
 	consumer      fly.Consumer
 	store         IngestStore
 	flushTicker   *time.Ticker
@@ -129,7 +129,7 @@ func (c *MetricIngestConsumer) Run(ctx context.Context) error {
 			}
 
 			// Create MessageMetadata from kafkaMsg
-			metadata := &MessageMetadata{
+			metadata := &messageMetadata{
 				Topic:         c.topic,
 				Partition:     int32(kafkaMsg.Partition),
 				ConsumerGroup: c.consumerGroup,
@@ -137,7 +137,7 @@ func (c *MetricIngestConsumer) Run(ctx context.Context) error {
 			}
 
 			// Process the message through the gatherer
-			if err := c.gatherer.ProcessMessage(ctx, &notification, metadata); err != nil {
+			if err := c.gatherer.processMessage(ctx, &notification, metadata); err != nil {
 				ll.Error("Failed to process message",
 					slog.Any("error", err),
 					slog.String("organizationID", notification.OrganizationID.String()),
@@ -164,7 +164,7 @@ func (c *MetricIngestConsumer) Run(ctx context.Context) error {
 // OffsetCallbacks implementation - MetricIngestConsumer implements OffsetCallbacks interface
 
 // GetLastProcessedOffset returns the last processed offset for this key, or -1 if never seen
-func (c *MetricIngestConsumer) GetLastProcessedOffset(ctx context.Context, metadata *MessageMetadata, groupingKey messages.IngestKey) (int64, error) {
+func (c *MetricIngestConsumer) GetLastProcessedOffset(ctx context.Context, metadata *messageMetadata, groupingKey messages.IngestKey) (int64, error) {
 	offset, err := c.store.KafkaJournalGetLastProcessedWithOrgInstance(ctx, lrdb.KafkaJournalGetLastProcessedWithOrgInstanceParams{
 		Topic:          metadata.Topic,
 		Partition:      metadata.Partition,
@@ -249,7 +249,7 @@ func (c *MetricIngestConsumer) periodicFlush(ctx context.Context) {
 			return
 		case <-c.flushTicker.C:
 			ll.Debug("Running periodic flush of stale groups")
-			if _, err := c.gatherer.FlushStaleGroups(ctx, 20*time.Second, 20*time.Second); err != nil {
+			if _, err := c.gatherer.flushStaleGroups(ctx, 20*time.Second, 20*time.Second); err != nil {
 				ll.Error("Failed to flush stale groups", slog.Any("error", err))
 			}
 		}

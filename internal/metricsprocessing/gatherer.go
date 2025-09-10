@@ -21,33 +21,33 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 )
 
-type Processor[M messages.GroupableMessage, K comparable] interface {
-	Process(ctx context.Context, group *AccumulationGroup[K], kafkaCommitData *KafkaCommitData) error
+type processor[M messages.GroupableMessage, K comparable] interface {
+	Process(ctx context.Context, group *accumulationGroup[K], kafkaCommitData *KafkaCommitData) error
 	GetTargetRecordCount(ctx context.Context, groupingKey K) int64
 }
 
-// OffsetCallbacks defines simple callbacks for offset storage (implemented by the message source)
-type OffsetCallbacks[K comparable] interface {
+// offsetCallbacks defines simple callbacks for offset storage (implemented by the message source)
+type offsetCallbacks[K comparable] interface {
 	// GetLastProcessedOffset returns the last processed offset for this key, or -1 if never seen
-	GetLastProcessedOffset(ctx context.Context, metadata *MessageMetadata, groupingKey K) (int64, error)
+	GetLastProcessedOffset(ctx context.Context, metadata *messageMetadata, groupingKey K) (int64, error)
 	// MarkOffsetsProcessed records that these offsets have been processed for this key
 	MarkOffsetsProcessed(ctx context.Context, key K, offsets map[int32]int64) error
 }
 
-// Gatherer processes a stream of GroupableMessage from Kafka
+// gatherer processes a stream of GroupableMessage from Kafka
 // and feeds them into a Hunter instance for accumulation
-type Gatherer[M messages.GroupableMessage, K comparable] struct {
-	hunter          *Hunter[M, K]
-	metadataTracker *MetadataTracker[K]
-	processor       Processor[M, K]
-	offsetCallbacks OffsetCallbacks[K]
+type gatherer[M messages.GroupableMessage, K comparable] struct {
+	hunter          *hunter[M, K]
+	metadataTracker *metadataTracker[K]
+	processor       processor[M, K]
+	offsetCallbacks offsetCallbacks[K]
 	topic           string // Expected topic for validation
 	consumerGroup   string // Expected consumer group for validation
 }
 
 // newGatherer creates a new generic Gatherer instance
-func newGatherer[M messages.GroupableMessage, K comparable](topic, consumerGroup string, processor Processor[M, K], offsetCallbacks OffsetCallbacks[K]) *Gatherer[M, K] {
-	return &Gatherer[M, K]{
+func newGatherer[M messages.GroupableMessage, K comparable](topic, consumerGroup string, processor processor[M, K], offsetCallbacks offsetCallbacks[K]) *gatherer[M, K] {
+	return &gatherer[M, K]{
 		hunter:          newHunter[M, K](),
 		metadataTracker: newMetadataTracker[K](topic, consumerGroup),
 		processor:       processor,
@@ -57,10 +57,10 @@ func newGatherer[M messages.GroupableMessage, K comparable](topic, consumerGroup
 	}
 }
 
-// ProcessMessage processes a single GroupableMessage
+// processMessage processes a single GroupableMessage
 // Checks offset tracking to determine if message should be processed
 // If the target record count threshold is reached, it calls the processor and tracks metadata
-func (g *Gatherer[M, K]) ProcessMessage(ctx context.Context, msg M, metadata *MessageMetadata) error {
+func (g *gatherer[M, K]) processMessage(ctx context.Context, msg M, metadata *messageMetadata) error {
 	// Validate topic and consumer group match expectations
 	if metadata.Topic != g.topic {
 		return &ConfigMismatchError{
@@ -95,7 +95,7 @@ func (g *Gatherer[M, K]) ProcessMessage(ctx context.Context, msg M, metadata *Me
 	targetRecordCount := g.processor.GetTargetRecordCount(ctx, groupingKey)
 
 	// Process the message through the hunter
-	result := g.hunter.AddMessage(msg, metadata, targetRecordCount)
+	result := g.hunter.addMessage(msg, metadata, targetRecordCount)
 
 	if result != nil {
 		// Create Kafka commit data from the actual messages in the Hunter list
@@ -107,7 +107,7 @@ func (g *Gatherer[M, K]) ProcessMessage(ctx context.Context, msg M, metadata *Me
 		}
 
 		// Track the metadata for calculating safe Kafka consumer group commits
-		g.metadataTracker.TrackMetadata(result.Group)
+		g.metadataTracker.trackMetadata(result.Group)
 
 		// Mark offsets as processed for this key
 		if kafkaCommitData != nil {
@@ -121,7 +121,7 @@ func (g *Gatherer[M, K]) ProcessMessage(ctx context.Context, msg M, metadata *Me
 }
 
 // createKafkaCommitDataFromGroup creates KafkaCommitData from the actual messages in a Hunter group
-func (g *Gatherer[M, K]) createKafkaCommitDataFromGroup(group *AccumulationGroup[K]) *KafkaCommitData {
+func (g *gatherer[M, K]) createKafkaCommitDataFromGroup(group *accumulationGroup[K]) *KafkaCommitData {
 	if len(group.Messages) == 0 {
 		return nil
 	}
@@ -147,16 +147,11 @@ func (g *Gatherer[M, K]) createKafkaCommitDataFromGroup(group *AccumulationGroup
 	}
 }
 
-// GetMetadataTracker returns the metadata tracker for accessing commit information
-func (g *Gatherer[M, K]) GetMetadataTracker() *MetadataTracker[K] {
-	return g.metadataTracker
-}
-
-// FlushStaleGroups processes all groups that haven't been updated for longer than lastUpdatedAge duration,
+// flushStaleGroups processes all groups that haven't been updated for longer than lastUpdatedAge duration,
 // or that are older than maxAge since creation (if maxAge > 0).
 // This is used for periodic flushing to handle groups that may never reach the record count threshold.
-func (g *Gatherer[M, K]) FlushStaleGroups(ctx context.Context, lastUpdatedAge, maxAge time.Duration) (int, error) {
-	staleGroups := g.hunter.SelectStaleGroups(lastUpdatedAge, maxAge)
+func (g *gatherer[M, K]) flushStaleGroups(ctx context.Context, lastUpdatedAge, maxAge time.Duration) (int, error) {
+	staleGroups := g.hunter.selectStaleGroups(lastUpdatedAge, maxAge)
 
 	emitted := 0
 
@@ -170,7 +165,7 @@ func (g *Gatherer[M, K]) FlushStaleGroups(ctx context.Context, lastUpdatedAge, m
 		emitted++
 
 		// Track the metadata for calculating safe Kafka consumer group commits
-		g.metadataTracker.TrackMetadata(group)
+		g.metadataTracker.trackMetadata(group)
 
 		// Mark offsets as processed for this key
 		if kafkaCommitData != nil {

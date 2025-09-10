@@ -68,7 +68,7 @@ func newMetricRollupProcessor(store RollupStore, storageProvider storageprofile.
 }
 
 // validateRollupGroupConsistency ensures all messages in a rollup group have consistent fields
-func validateRollupGroupConsistency(group *AccumulationGroup[messages.RollupKey]) error {
+func validateRollupGroupConsistency(group *accumulationGroup[messages.RollupKey]) error {
 	if len(group.Messages) == 0 {
 		return &GroupValidationError{
 			Field:   "message_count",
@@ -163,7 +163,7 @@ func validateRollupGroupConsistency(group *AccumulationGroup[messages.RollupKey]
 }
 
 // Process implements the Processor interface and performs rollup aggregation
-func (r *MetricRollupProcessor) Process(ctx context.Context, group *AccumulationGroup[messages.RollupKey], kafkaCommitData *KafkaCommitData) error {
+func (r *MetricRollupProcessor) Process(ctx context.Context, group *accumulationGroup[messages.RollupKey], kafkaCommitData *KafkaCommitData) error {
 	ll := logctx.FromContext(ctx)
 
 	// Calculate group age from Hunter timestamp
@@ -255,7 +255,7 @@ func (r *MetricRollupProcessor) Process(ctx context.Context, group *Accumulation
 	ll.Info("Found segments to roll up",
 		slog.Int("segmentCount", len(segments)))
 
-	params := MetricProcessingParams{
+	params := metricProcessingParams{
 		TmpDir:         tmpDir,
 		StorageClient:  storageClient,
 		OrganizationID: group.Key.OrganizationID,
@@ -265,7 +265,7 @@ func (r *MetricRollupProcessor) Process(ctx context.Context, group *Accumulation
 		MaxRecords:     recordCountEstimate * 2, // safety net
 	}
 
-	result, err := ProcessMetricsWithAggregation(ctx, params)
+	result, err := processMetricsWithAggregation(ctx, params)
 	if err != nil {
 		return err
 	}
@@ -385,7 +385,7 @@ func (r *MetricRollupProcessor) uploadAndCreateRollupSegments(ctx context.Contex
 	}
 
 	// Report telemetry
-	ReportTelemetry(ctx, "rollup", int64(len(inputSegments)), int64(len(segments)), totalInputRecords, totalOutputRecords, totalInputSize, totalOutputSize)
+	reportTelemetry(ctx, "rollup", int64(len(inputSegments)), int64(len(segments)), totalInputRecords, totalOutputRecords, totalInputSize, totalOutputSize)
 
 	// Log upload summary
 	ll.Info("Rollup segment upload completed",

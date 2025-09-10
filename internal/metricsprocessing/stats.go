@@ -25,8 +25,8 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
 )
 
-// FileMetadata contains extracted metadata from a parquet file result
-type FileMetadata struct {
+// fileMetadata contains extracted metadata from a parquet file result
+type fileMetadata struct {
 	Fingerprints []int64
 	StartTs      int64 // Inclusive start timestamp
 	EndTs        int64 // Exclusive end timestamp (LastTS + 1)
@@ -35,7 +35,7 @@ type FileMetadata struct {
 }
 
 // extractFileMetadata extracts and validates metadata from a parquet file result
-func extractFileMetadata(ctx context.Context, file parquetwriter.Result) (*FileMetadata, error) {
+func extractFileMetadata(ctx context.Context, file parquetwriter.Result) (*fileMetadata, error) {
 	ll := logctx.FromContext(ctx)
 
 	stats, ok := file.Metadata.(factories.MetricsFileStats)
@@ -59,7 +59,7 @@ func extractFileMetadata(ctx context.Context, file parquetwriter.Result) (*FileM
 	dateint := int32(t.Year()*10000 + int(t.Month())*100 + t.Day())
 	hour := int16(t.Hour())
 
-	return &FileMetadata{
+	return &fileMetadata{
 		Fingerprints: stats.Fingerprints,
 		StartTs:      stats.FirstTS,
 		EndTs:        stats.LastTS + 1, // Database expects end-exclusive range [start, end)

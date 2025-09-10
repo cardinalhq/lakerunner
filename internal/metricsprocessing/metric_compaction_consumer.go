@@ -33,7 +33,7 @@ import (
 
 // MetricCompactionConsumer handles metric compaction Kafka messages using accumulation-based approach
 type MetricCompactionConsumer struct {
-	gatherer      *Gatherer[*messages.MetricCompactionMessage, messages.CompactionKey]
+	gatherer      *gatherer[*messages.MetricCompactionMessage, messages.CompactionKey]
 	consumer      fly.Consumer
 	store         CompactionStore
 	flushTicker   *time.Ticker
@@ -132,7 +132,7 @@ func (c *MetricCompactionConsumer) Run(ctx context.Context) error {
 			}
 
 			// Create MessageMetadata from kafkaMsg
-			metadata := &MessageMetadata{
+			metadata := &messageMetadata{
 				Topic:         c.topic,
 				Partition:     int32(kafkaMsg.Partition),
 				ConsumerGroup: c.consumerGroup,
@@ -140,7 +140,7 @@ func (c *MetricCompactionConsumer) Run(ctx context.Context) error {
 			}
 
 			// Process the message through the gatherer
-			if err := c.gatherer.ProcessMessage(ctx, &notification, metadata); err != nil {
+			if err := c.gatherer.processMessage(ctx, &notification, metadata); err != nil {
 				ll.Error("Failed to process message",
 					slog.Any("error", err),
 					slog.String("organizationID", notification.OrganizationID.String()),
@@ -168,7 +168,7 @@ func (c *MetricCompactionConsumer) Run(ctx context.Context) error {
 // OffsetCallbacks implementation - MetricCompactionConsumer implements OffsetCallbacks interface
 
 // GetLastProcessedOffset returns the last processed offset for this key, or -1 if never seen
-func (c *MetricCompactionConsumer) GetLastProcessedOffset(ctx context.Context, metadata *MessageMetadata, groupingKey messages.CompactionKey) (int64, error) {
+func (c *MetricCompactionConsumer) GetLastProcessedOffset(ctx context.Context, metadata *messageMetadata, groupingKey messages.CompactionKey) (int64, error) {
 	offset, err := c.store.KafkaJournalGetLastProcessedWithOrgInstance(ctx, lrdb.KafkaJournalGetLastProcessedWithOrgInstanceParams{
 		Topic:          metadata.Topic,
 		Partition:      metadata.Partition,
@@ -253,7 +253,7 @@ func (c *MetricCompactionConsumer) periodicFlush(ctx context.Context) {
 			return
 		case <-c.flushTicker.C:
 			ll.Debug("Running periodic flush of stale groups")
-			if _, err := c.gatherer.FlushStaleGroups(ctx, 1*time.Minute, 0); err != nil {
+			if _, err := c.gatherer.flushStaleGroups(ctx, 1*time.Minute, 0); err != nil {
 				ll.Error("Failed to flush stale groups", slog.Any("error", err))
 			}
 		}

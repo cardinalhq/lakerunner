@@ -33,7 +33,7 @@ var (
 	processingBytesOut    metric.Int64Counter
 )
 
-func ReportTelemetry(ctx context.Context, action string, segmentsIn, segmentsOut, recordsIn, recordsOut, bytesIn, bytesOut int64) {
+func reportTelemetry(ctx context.Context, action string, segmentsIn, segmentsOut, recordsIn, recordsOut, bytesIn, bytesOut int64) {
 	attrset := attribute.NewSet(
 		attribute.String("action", action),
 		attribute.String("signal", "metrics"),

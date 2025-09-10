@@ -49,9 +49,9 @@ func TestValidateGroupConsistency_ValidGroup(t *testing.T) {
 		InstanceNum:    1,
 	}
 
-	group := &AccumulationGroup[messages.CompactionKey]{
+	group := &accumulationGroup[messages.CompactionKey]{
 		Key: key,
-		Messages: []*AccumulatedMessage{
+		Messages: []*accumulatedMessage{
 			{
 				Message: &messages.MetricCompactionMessage{
 					OrganizationID: orgID,
@@ -78,9 +78,9 @@ func TestValidateGroupConsistency_ValidGroup(t *testing.T) {
 }
 
 func TestValidateGroupConsistency_EmptyGroup(t *testing.T) {
-	group := &AccumulationGroup[messages.CompactionKey]{
+	group := &accumulationGroup[messages.CompactionKey]{
 		Key:      messages.CompactionKey{},
-		Messages: []*AccumulatedMessage{},
+		Messages: []*accumulatedMessage{},
 	}
 
 	err := validateGroupConsistency(group)
@@ -103,9 +103,9 @@ func TestValidateGroupConsistency_InconsistentOrganizationID(t *testing.T) {
 		InstanceNum:    1,
 	}
 
-	group := &AccumulationGroup[messages.CompactionKey]{
+	group := &accumulationGroup[messages.CompactionKey]{
 		Key: key,
-		Messages: []*AccumulatedMessage{
+		Messages: []*accumulatedMessage{
 			{
 				Message: &messages.MetricCompactionMessage{
 					OrganizationID: orgID1,
@@ -148,9 +148,9 @@ func TestValidateGroupConsistency_InconsistentInstanceNum(t *testing.T) {
 		InstanceNum:    1,
 	}
 
-	group := &AccumulationGroup[messages.CompactionKey]{
+	group := &accumulationGroup[messages.CompactionKey]{
 		Key: key,
-		Messages: []*AccumulatedMessage{
+		Messages: []*accumulatedMessage{
 			{
 				Message: &messages.MetricCompactionMessage{
 					OrganizationID: orgID,
@@ -192,9 +192,9 @@ func TestValidateGroupConsistency_InconsistentDateInt(t *testing.T) {
 		InstanceNum:    1,
 	}
 
-	group := &AccumulationGroup[messages.CompactionKey]{
+	group := &accumulationGroup[messages.CompactionKey]{
 		Key: key,
-		Messages: []*AccumulatedMessage{
+		Messages: []*accumulatedMessage{
 			{
 				Message: &messages.MetricCompactionMessage{
 					OrganizationID: orgID,
@@ -236,9 +236,9 @@ func TestValidateGroupConsistency_InconsistentFrequencyMs(t *testing.T) {
 		InstanceNum:    1,
 	}
 
-	group := &AccumulationGroup[messages.CompactionKey]{
+	group := &accumulationGroup[messages.CompactionKey]{
 		Key: key,
-		Messages: []*AccumulatedMessage{
+		Messages: []*accumulatedMessage{
 			{
 				Message: &messages.MetricCompactionMessage{
 					OrganizationID: orgID,
@@ -281,9 +281,9 @@ func TestValidateGroupConsistency_FirstMessageInconsistent(t *testing.T) {
 		InstanceNum:    1,
 	}
 
-	group := &AccumulationGroup[messages.CompactionKey]{
+	group := &accumulationGroup[messages.CompactionKey]{
 		Key: key,
-		Messages: []*AccumulatedMessage{
+		Messages: []*accumulatedMessage{
 			{
 				Message: &messages.MetricCompactionMessage{
 					OrganizationID: orgID2, // First message is inconsistent
@@ -326,9 +326,9 @@ func TestValidateGroupConsistency_WrongMessageType(t *testing.T) {
 		InstanceNum:    1,
 	}
 
-	group := &AccumulationGroup[messages.CompactionKey]{
+	group := &accumulationGroup[messages.CompactionKey]{
 		Key: key,
-		Messages: []*AccumulatedMessage{
+		Messages: []*accumulatedMessage{
 			{
 				Message: &MockMessage{key: key}, // Wrong message type
 			},
@@ -426,7 +426,7 @@ func TestWriteFromReader_Success(t *testing.T) {
 	mockWriter.On("WriteBatch", batch2).Return(nil).Once()
 
 	// Execute
-	err := WriteFromReader(context.Background(), mockReader, mockWriter)
+	err := writeFromReader(context.Background(), mockReader, mockWriter)
 
 	// Verify
 	assert.NoError(t, err)
@@ -445,7 +445,7 @@ func TestWriteFromReader_ReaderError(t *testing.T) {
 	mockReader.On("Next", mock.Anything).Return(nil, expectedError).Once()
 
 	// Execute
-	err := WriteFromReader(context.Background(), mockReader, mockWriter)
+	err := writeFromReader(context.Background(), mockReader, mockWriter)
 
 	// Verify
 	assert.Error(t, err)
@@ -467,7 +467,7 @@ func TestWriteFromReader_WriterError(t *testing.T) {
 	mockWriter.On("WriteBatch", batch).Return(expectedError).Once()
 
 	// Execute
-	err := WriteFromReader(context.Background(), mockReader, mockWriter)
+	err := writeFromReader(context.Background(), mockReader, mockWriter)
 
 	// Verify
 	assert.Error(t, err)
@@ -485,7 +485,7 @@ func TestWriteFromReader_EmptyReader(t *testing.T) {
 	mockReader.On("Next", mock.Anything).Return(nil, io.EOF).Once()
 
 	// Execute
-	err := WriteFromReader(context.Background(), mockReader, mockWriter)
+	err := writeFromReader(context.Background(), mockReader, mockWriter)
 
 	// Verify
 	assert.NoError(t, err)
@@ -809,7 +809,7 @@ func TestCreateAggregatingReader_Seglog990(t *testing.T) {
 
 	// Test with single reader
 	t.Run("SingleReader", func(t *testing.T) {
-		readerStack, err := CreateReaderStack(
+		readerStack, err := createReaderStack(
 			ctx,
 			tmpDir,
 			mockStorage,
@@ -818,7 +818,7 @@ func TestCreateAggregatingReader_Seglog990(t *testing.T) {
 			rows,
 		)
 		require.NoError(t, err, "Failed to create reader stack")
-		defer CloseReaderStack(ctx, readerStack)
+		defer closeReaderStack(ctx, readerStack)
 
 		if len(readerStack.Readers) > 0 {
 			aggReader, err := filereader.NewAggregatingMetricsReader(readerStack.Readers[0], int64(metadata.FrequencyMS), 1000)
@@ -845,7 +845,7 @@ func TestCreateAggregatingReader_Seglog990(t *testing.T) {
 
 	// Test with multiple readers
 	t.Run("MultipleReaders", func(t *testing.T) {
-		readerStack, err := CreateReaderStack(
+		readerStack, err := createReaderStack(
 			ctx,
 			tmpDir,
 			mockStorage,
@@ -854,7 +854,7 @@ func TestCreateAggregatingReader_Seglog990(t *testing.T) {
 			rows,
 		)
 		require.NoError(t, err, "Failed to create reader stack")
-		defer CloseReaderStack(ctx, readerStack)
+		defer closeReaderStack(ctx, readerStack)
 
 		if len(readerStack.Readers) > 1 {
 			// Use first 3 readers to test merging + aggregation
@@ -889,7 +889,7 @@ func TestCreateAggregatingReader_Seglog990(t *testing.T) {
 
 	// Test with all readers (this is what the production code does)
 	t.Run("AllReaders", func(t *testing.T) {
-		readerStack, err := CreateReaderStack(
+		readerStack, err := createReaderStack(
 			ctx,
 			tmpDir,
 			mockStorage,
@@ -898,7 +898,7 @@ func TestCreateAggregatingReader_Seglog990(t *testing.T) {
 			rows,
 		)
 		require.NoError(t, err, "Failed to create reader stack")
-		defer CloseReaderStack(ctx, readerStack)
+		defer closeReaderStack(ctx, readerStack)
 
 		// Create mergesort reader from all readers first
 		sortKeyProvider := &filereader.MetricSortKeyProvider{}

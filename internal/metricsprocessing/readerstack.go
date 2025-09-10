@@ -31,7 +31,7 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-type ReaderStackResult struct {
+type readerStackResult struct {
 	Readers           []filereader.Reader
 	Files             []*os.File
 	DownloadedFiles   []string
@@ -40,14 +40,14 @@ type ReaderStackResult struct {
 	MergedReader      filereader.Reader
 }
 
-func CreateReaderStack(
+func createReaderStack(
 	ctx context.Context,
 	tmpdir string,
 	blobclient cloudstorage.Client,
 	orgID uuid.UUID,
 	profile storageprofile.StorageProfile,
 	rows []lrdb.MetricSeg,
-) (*ReaderStackResult, error) {
+) (*readerStackResult, error) {
 	ll := logctx.FromContext(ctx)
 
 	var readers []filereader.Reader
@@ -143,7 +143,7 @@ func CreateReaderStack(
 		mergedReader = multiReader
 	}
 
-	return &ReaderStackResult{
+	return &readerStackResult{
 		Readers:           readers,
 		Files:             files,
 		DownloadedFiles:   downloadedFiles,
@@ -153,7 +153,7 @@ func CreateReaderStack(
 	}, nil
 }
 
-func CloseReaderStack(ctx context.Context, result *ReaderStackResult) {
+func closeReaderStack(ctx context.Context, result *readerStackResult) {
 	ll := logctx.FromContext(ctx)
 
 	if result.MergedReader != nil {

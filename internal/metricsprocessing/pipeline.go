@@ -29,8 +29,8 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-// MetricProcessingParams contains the parameters needed for metric processing
-type MetricProcessingParams struct {
+// metricProcessingParams contains the parameters needed for metric processing
+type metricProcessingParams struct {
 	TmpDir         string
 	StorageClient  cloudstorage.Client
 	OrganizationID uuid.UUID
@@ -40,21 +40,21 @@ type MetricProcessingParams struct {
 	MaxRecords     int64
 }
 
-// MetricProcessingResult contains the results of metric processing
-type MetricProcessingResult struct {
+// metricProcessingResult contains the results of metric processing
+type metricProcessingResult struct {
 	ProcessedSegments []lrdb.MetricSeg
 	Results           []parquetwriter.Result
 }
 
-// ProcessMetricsWithAggregation performs the common pattern of:
+// processMetricsWithAggregation performs the common pattern of:
 // 1. Create reader stack from segments
 // 2. Create aggregating reader from head reader
 // 3. Create metrics writer
 // 4. Write from reader to writer
 // 5. Close writer and return results
-func ProcessMetricsWithAggregation(ctx context.Context, params MetricProcessingParams) (*MetricProcessingResult, error) {
+func processMetricsWithAggregation(ctx context.Context, params metricProcessingParams) (*metricProcessingResult, error) {
 	// Create reader stack
-	readerStack, err := CreateReaderStack(
+	readerStack, err := createReaderStack(
 		ctx,
 		params.TmpDir,
 		params.StorageClient,
@@ -65,7 +65,7 @@ func ProcessMetricsWithAggregation(ctx context.Context, params MetricProcessingP
 	if err != nil {
 		return nil, fmt.Errorf("create reader stack: %w", err)
 	}
-	defer CloseReaderStack(ctx, readerStack)
+	defer closeReaderStack(ctx, readerStack)
 
 	// Create aggregating reader from head reader
 	aggReader, err := filereader.NewAggregatingMetricsReader(
@@ -85,7 +85,7 @@ func ProcessMetricsWithAggregation(ctx context.Context, params MetricProcessingP
 	}
 
 	// Write from reader to writer
-	if err := WriteFromReader(ctx, aggReader, writer); err != nil {
+	if err := writeFromReader(ctx, aggReader, writer); err != nil {
 		writer.Abort()
 		return nil, fmt.Errorf("write from reader: %w", err)
 	}
@@ -96,14 +96,14 @@ func ProcessMetricsWithAggregation(ctx context.Context, params MetricProcessingP
 		return nil, fmt.Errorf("close writer: %w", err)
 	}
 
-	return &MetricProcessingResult{
+	return &metricProcessingResult{
 		ProcessedSegments: readerStack.ProcessedSegments,
 		Results:           results,
 	}, nil
 }
 
-// WriteFromReader writes data from a reader to a writer - shared utility function
-func WriteFromReader(ctx context.Context, reader filereader.Reader, writer parquetwriter.ParquetWriter) error {
+// writeFromReader writes data from a reader to a writer - shared utility function
+func writeFromReader(ctx context.Context, reader filereader.Reader, writer parquetwriter.ParquetWriter) error {
 	for {
 		batch, err := reader.Next(ctx)
 		if err != nil {

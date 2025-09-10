@@ -41,7 +41,7 @@ var rollupAccumulationTimes = map[int32]time.Duration{
 
 // MetricRollupConsumer handles metric rollup Kafka messages using accumulation-based approach
 type MetricRollupConsumer struct {
-	gatherer      *Gatherer[*messages.MetricRollupMessage, messages.RollupKey]
+	gatherer      *gatherer[*messages.MetricRollupMessage, messages.RollupKey]
 	consumer      fly.Consumer
 	store         RollupStore
 	flushTicker   *time.Ticker
@@ -158,14 +158,14 @@ func (c *MetricRollupConsumer) Run(ctx context.Context) error {
 			}
 
 			// Validate that this is a valid rollup transition
-			if !isRollupSourceFrequency(notification.SourceFrequencyMs) {
+			if !config.IsRollupSourceFrequency(notification.SourceFrequencyMs) {
 				ll.Warn("Invalid source frequency for rollup, skipping",
 					slog.Int("sourceFrequencyMs", int(notification.SourceFrequencyMs)),
 					slog.Int64("segmentID", notification.SegmentID))
 				continue
 			}
 
-			expectedTarget, exists := getTargetRollupFrequency(notification.SourceFrequencyMs)
+			expectedTarget, exists := config.GetTargetRollupFrequency(notification.SourceFrequencyMs)
 			if !exists || expectedTarget != notification.TargetFrequencyMs {
 				ll.Warn("Invalid rollup frequency transition, skipping",
 					slog.Int("sourceFrequencyMs", int(notification.SourceFrequencyMs)),
@@ -176,7 +176,7 @@ func (c *MetricRollupConsumer) Run(ctx context.Context) error {
 			}
 
 			// Create MessageMetadata from kafkaMsg
-			metadata := &MessageMetadata{
+			metadata := &messageMetadata{
 				Topic:         c.topic,
 				Partition:     int32(kafkaMsg.Partition),
 				ConsumerGroup: c.consumerGroup,
@@ -184,7 +184,7 @@ func (c *MetricRollupConsumer) Run(ctx context.Context) error {
 			}
 
 			// Process the message through the gatherer
-			if err := c.gatherer.ProcessMessage(ctx, &notification, metadata); err != nil {
+			if err := c.gatherer.processMessage(ctx, &notification, metadata); err != nil {
 				ll.Error("Failed to process rollup message",
 					slog.Any("error", err),
 					slog.String("organizationID", notification.OrganizationID.String()),
@@ -213,7 +213,7 @@ func (c *MetricRollupConsumer) Run(ctx context.Context) error {
 // OffsetCallbacks implementation - MetricRollupConsumer implements OffsetCallbacks interface
 
 // GetLastProcessedOffset returns the last processed offset for this key, or -1 if never seen
-func (c *MetricRollupConsumer) GetLastProcessedOffset(ctx context.Context, metadata *MessageMetadata, groupingKey messages.RollupKey) (int64, error) {
+func (c *MetricRollupConsumer) GetLastProcessedOffset(ctx context.Context, metadata *messageMetadata, groupingKey messages.RollupKey) (int64, error) {
 	offset, err := c.store.KafkaJournalGetLastProcessedWithOrgInstance(ctx, lrdb.KafkaJournalGetLastProcessedWithOrgInstanceParams{
 		Topic:          metadata.Topic,
 		Partition:      metadata.Partition,
@@ -303,7 +303,7 @@ func (c *MetricRollupConsumer) periodicFlush(ctx context.Context) {
 			// Use a more aggressive flush time for rollups since they have tighter time windows
 			// We'll flush groups that are older than half their target accumulation time
 			flushAge := 1 * time.Minute // Default aggressive flush
-			if _, err := c.gatherer.FlushStaleGroups(ctx, flushAge, 0); err != nil {
+			if _, err := c.gatherer.flushStaleGroups(ctx, flushAge, 0); err != nil {
 				ll.Error("Failed to flush stale rollup groups", slog.Any("error", err))
 			}
 		}

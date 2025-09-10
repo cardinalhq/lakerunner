@@ -21,54 +21,54 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 )
 
-// MessageMetadata contains Kafka metadata for a message
-type MessageMetadata struct {
+// messageMetadata contains Kafka metadata for a message
+type messageMetadata struct {
 	Topic         string
 	Partition     int32
 	ConsumerGroup string
 	Offset        int64
 }
 
-// AccumulatedMessage wraps a GroupableMessage with its Kafka metadata
-type AccumulatedMessage struct {
+// accumulatedMessage wraps a GroupableMessage with its Kafka metadata
+type accumulatedMessage struct {
 	Message  messages.GroupableMessage
-	Metadata *MessageMetadata
+	Metadata *messageMetadata
 }
 
-// AccumulationGroup holds messages and their metadata for a specific key
-type AccumulationGroup[K comparable] struct {
+// accumulationGroup holds messages and their metadata for a specific key
+type accumulationGroup[K comparable] struct {
 	Key              K
-	Messages         []*AccumulatedMessage
+	Messages         []*accumulatedMessage
 	TotalRecordCount int64
 	LatestOffsets    map[int32]int64 // partition -> offset (single topic only)
 	CreatedAt        time.Time       // When this group was first created
 	LastUpdatedAt    time.Time       // When this group was last modified
 }
 
-// AccumulationResult contains the accumulated messages and metadata when threshold is reached
-type AccumulationResult[K comparable] struct {
-	Group            *AccumulationGroup[K]
-	TriggeringRecord *AccumulatedMessage // The message that caused the threshold to be exceeded
+// accumulationResult contains the accumulated messages and metadata when threshold is reached
+type accumulationResult[K comparable] struct {
+	Group            *accumulationGroup[K]
+	TriggeringRecord *accumulatedMessage // The message that caused the threshold to be exceeded
 }
 
-// Hunter accumulates GroupableMessage until a threshold is reached.
+// hunter accumulates GroupableMessage until a threshold is reached.
 // All methods are safe for concurrent use by multiple goroutines.
-type Hunter[M messages.GroupableMessage, K comparable] struct {
+type hunter[M messages.GroupableMessage, K comparable] struct {
 	mu     sync.Mutex
-	groups map[K]*AccumulationGroup[K]
+	groups map[K]*accumulationGroup[K]
 }
 
 // newHunter creates a new Hunter instance
-func newHunter[M messages.GroupableMessage, K comparable]() *Hunter[M, K] {
-	return &Hunter[M, K]{
-		groups: make(map[K]*AccumulationGroup[K]),
+func newHunter[M messages.GroupableMessage, K comparable]() *hunter[M, K] {
+	return &hunter[M, K]{
+		groups: make(map[K]*accumulationGroup[K]),
 	}
 }
 
-// AddMessage adds a message to the appropriate accumulation group.
+// addMessage adds a message to the appropriate accumulation group.
 // Returns an AccumulationResult if adding this message would exceed the targetRecordCount.
 // Safe for concurrent use.
-func (h *Hunter[M, K]) AddMessage(msg M, metadata *MessageMetadata, targetRecordCount int64) *AccumulationResult[K] {
+func (h *hunter[M, K]) addMessage(msg M, metadata *messageMetadata, targetRecordCount int64) *accumulationResult[K] {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -77,9 +77,9 @@ func (h *Hunter[M, K]) AddMessage(msg M, metadata *MessageMetadata, targetRecord
 	group, exists := h.groups[key]
 	now := time.Now()
 	if !exists {
-		group = &AccumulationGroup[K]{
+		group = &accumulationGroup[K]{
 			Key:           key,
-			Messages:      make([]*AccumulatedMessage, 0),
+			Messages:      make([]*accumulatedMessage, 0),
 			LatestOffsets: make(map[int32]int64),
 			CreatedAt:     now,
 			LastUpdatedAt: now,
@@ -90,7 +90,7 @@ func (h *Hunter[M, K]) AddMessage(msg M, metadata *MessageMetadata, targetRecord
 		group.LastUpdatedAt = now
 	}
 
-	accMsg := &AccumulatedMessage{
+	accMsg := &accumulatedMessage{
 		Message:  msg,
 		Metadata: metadata,
 	}
@@ -113,7 +113,7 @@ func (h *Hunter[M, K]) AddMessage(msg M, metadata *MessageMetadata, targetRecord
 		delete(h.groups, key)
 
 		// Return the original group without copying
-		return &AccumulationResult[K]{
+		return &accumulationResult[K]{
 			Group:            group,
 			TriggeringRecord: accMsg,
 		}
@@ -122,14 +122,14 @@ func (h *Hunter[M, K]) AddMessage(msg M, metadata *MessageMetadata, targetRecord
 	return nil
 }
 
-// SelectGroups calls the selector function for each group and returns those where selector returns true.
+// selectGroups calls the selector function for each group and returns those where selector returns true.
 // The groups are removed from the hunter when selected.
 // Safe for concurrent use.
-func (h *Hunter[M, K]) SelectGroups(selector func(key K, group *AccumulationGroup[K]) bool) []*AccumulationGroup[K] {
+func (h *hunter[M, K]) selectGroups(selector func(key K, group *accumulationGroup[K]) bool) []*accumulationGroup[K] {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	var selected []*AccumulationGroup[K]
+	var selected []*accumulationGroup[K]
 	var keysToRemove []K
 
 	for key, group := range h.groups {
@@ -147,16 +147,16 @@ func (h *Hunter[M, K]) SelectGroups(selector func(key K, group *AccumulationGrou
 	return selected
 }
 
-// SelectStaleGroups selects all groups that haven't been updated for longer than lastUpdatedAge duration,
+// selectStaleGroups selects all groups that haven't been updated for longer than lastUpdatedAge duration,
 // or that are older than maxAge since creation (if maxAge > 0).
 // If lastUpdatedAge is 0, all groups are selected immediately.
 // If maxAge is 0, absolute age is not checked.
 // This is used for periodic flushing of groups that may never reach the record count threshold.
 // Safe for concurrent use.
-func (h *Hunter[M, K]) SelectStaleGroups(lastUpdatedAge, maxAge time.Duration) []*AccumulationGroup[K] {
+func (h *hunter[M, K]) selectStaleGroups(lastUpdatedAge, maxAge time.Duration) []*accumulationGroup[K] {
 	now := time.Now()
 
-	return h.SelectGroups(func(key K, group *AccumulationGroup[K]) bool {
+	return h.selectGroups(func(key K, group *accumulationGroup[K]) bool {
 		// If lastUpdatedAge is 0, flush all groups immediately
 		if lastUpdatedAge == 0 {
 			return true

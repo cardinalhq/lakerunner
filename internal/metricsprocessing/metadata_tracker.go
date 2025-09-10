@@ -18,8 +18,8 @@ import (
 	"maps"
 )
 
-// MetadataTracker tracks the latest offsets seen for Kafka commits
-type MetadataTracker[K comparable] struct {
+// metadataTracker tracks the latest offsets seen for Kafka commits
+type metadataTracker[K comparable] struct {
 	// Track offsets per partition and key: partition -> key -> offset
 	partitionOffsets map[int32]map[K]int64
 	// Last committed Kafka offset per partition
@@ -30,8 +30,8 @@ type MetadataTracker[K comparable] struct {
 }
 
 // newMetadataTracker creates a new MetadataTracker instance
-func newMetadataTracker[K comparable](topic, consumerGroup string) *MetadataTracker[K] {
-	return &MetadataTracker[K]{
+func newMetadataTracker[K comparable](topic, consumerGroup string) *metadataTracker[K] {
+	return &metadataTracker[K]{
 		partitionOffsets:     make(map[int32]map[K]int64),
 		lastCommittedOffsets: make(map[int32]int64),
 		topic:                topic,
@@ -39,8 +39,8 @@ func newMetadataTracker[K comparable](topic, consumerGroup string) *MetadataTrac
 	}
 }
 
-// TrackMetadata tracks the metadata from all accumulated messages to determine commit points
-func (mt *MetadataTracker[K]) TrackMetadata(group *AccumulationGroup[K]) {
+// trackMetadata tracks the metadata from all accumulated messages to determine commit points
+func (mt *metadataTracker[K]) trackMetadata(group *accumulationGroup[K]) {
 	for _, accMsg := range group.Messages {
 		metadata := accMsg.Metadata
 
@@ -64,9 +64,9 @@ type KafkaCommitData struct {
 	Offsets       map[int32]int64 // partition -> offset
 }
 
-// GetSafeCommitOffsets calculates the minimum offsets across all keys that can be safely committed to Kafka
+// getSafeCommitOffsets calculates the minimum offsets across all keys that can be safely committed to Kafka
 // Returns a single struct with all partition offsets that can be advanced
-func (mt *MetadataTracker[K]) GetSafeCommitOffsets() *KafkaCommitData {
+func (mt *metadataTracker[K]) getSafeCommitOffsets() *KafkaCommitData {
 	offsets := make(map[int32]int64)
 
 	for partition, keyOffsets := range mt.partitionOffsets {
@@ -106,7 +106,7 @@ func (mt *MetadataTracker[K]) GetSafeCommitOffsets() *KafkaCommitData {
 	}
 }
 
-// MarkOffsetsCommitted records that offsets have been successfully committed to Kafka
-func (mt *MetadataTracker[K]) MarkOffsetsCommitted(offsets map[int32]int64) {
+// markOffsetsCommitted records that offsets have been successfully committed to Kafka
+func (mt *metadataTracker[K]) markOffsetsCommitted(offsets map[int32]int64) {
 	maps.Copy(mt.lastCommittedOffsets, offsets)
 }
