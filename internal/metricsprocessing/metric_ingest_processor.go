@@ -326,7 +326,7 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 			}
 
 			compactionMessage := fly.Message{
-				Key:   fmt.Appendf(nil, "%s-%d-%d", segParams.OrganizationID.String(), segParams.Dateint, segParams.SegmentID),
+				Key:   fmt.Appendf(nil, "%s-%d-%d", segParams.OrganizationID.String(), segParams.Dateint, segParams.StartTs/300000),
 				Value: compactionMsgBytes,
 			}
 

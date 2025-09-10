@@ -22,8 +22,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/fly"
@@ -270,21 +268,43 @@ func (p *LogIngestProcessor) Process(ctx context.Context, group *accumulationGro
 		return fmt.Errorf("failed to insert log segments with Kafka offsets: %w", err)
 	}
 
-	// Queue compaction work for each segment
-	for _, segParams := range segmentParams {
-		dateint, hour16 := helpers.MSToDateintHour(segParams.StartTs)
-		hour := int(hour16)
-		slotID := int(segParams.SlotID)
+	// Send compaction notifications to Kafka topic
+	if p.kafkaProducer != nil {
+		compactionTopic := "lakerunner.segments.logs.compact"
 
-		ll.Debug("Queueing log compaction for segment",
-			slog.Int("slotID", slotID),
-			slog.Int("dateint", int(dateint)),
-			slog.Int("hour", hour),
-			slog.Int64("segmentID", segParams.SegmentID))
+		for _, segParams := range segmentParams {
+			// Create log compaction message
+			compactionNotification := messages.LogCompactionMessage{
+				Version:        1,
+				OrganizationID: segParams.OrganizationID,
+				DateInt:        segParams.Dateint,
+				SegmentID:      segParams.SegmentID,
+				InstanceNum:    segParams.InstanceNum,
+				SlotID:         segParams.SlotID,
+				Records:        segParams.RecordCount,
+				FileSize:       segParams.FileSize,
+				StartTs:        segParams.StartTs,
+				EndTs:          segParams.EndTs,
+				QueuedAt:       time.Now(),
+			}
 
-		hourAlignedTS := helpers.TruncateToHour(helpers.UnixMillisToTime(segParams.StartTs)).UnixMilli()
-		if err := p.queueLogCompactionForSlot(criticalCtx, group.Key.OrganizationID, group.Key.InstanceNum, slotID, dateint, hourAlignedTS); err != nil {
-			return fmt.Errorf("failed to queue log compaction for slot %d: %w", slotID, err)
+			// Marshal compaction message
+			compactionMsgBytes, err := compactionNotification.Marshal()
+			if err != nil {
+				return fmt.Errorf("failed to marshal log compaction notification: %w", err)
+			}
+
+			compactionMessage := fly.Message{
+				Key:   fmt.Appendf(nil, "%s-%d-%d", segParams.OrganizationID.String(), segParams.InstanceNum, segParams.StartTs/300000),
+				Value: compactionMsgBytes,
+			}
+
+			// Send to compaction topic
+			if err := p.kafkaProducer.Send(criticalCtx, compactionTopic, compactionMessage); err != nil {
+				return fmt.Errorf("failed to send log compaction notification to Kafka: %w", err)
+			} else {
+				ll.Debug("Sent log compaction notification", slog.Any("message", compactionNotification))
+			}
 		}
 	}
 
@@ -569,24 +589,6 @@ func (p *LogIngestProcessor) uploadAndCreateLogSegments(ctx context.Context, sto
 		slog.Int("totalSegments", len(segmentParams)))
 
 	return segmentParams, nil
-}
-
-// queueLogCompactionForSlot queues a log compaction job for a specific slot
-func (p *LogIngestProcessor) queueLogCompactionForSlot(ctx context.Context, orgID uuid.UUID, instanceNum int16, slotID int, dateint int32, hourAlignedTS int64) error {
-	startTime := time.UnixMilli(hourAlignedTS).UTC()
-	endTime := startTime.Add(time.Hour)
-
-	return p.store.WorkQueueAdd(ctx, lrdb.WorkQueueAddParams{
-		OrgID:      orgID,
-		Instance:   instanceNum,
-		Signal:     lrdb.SignalEnumLogs,
-		Action:     lrdb.ActionEnumCompact,
-		Dateint:    dateint,
-		Frequency:  -1,
-		SlotID:     int32(slotID),
-		TsRange:    helpers.TimeRange{Start: startTime, End: endTime}.ToPgRange(),
-		RunnableAt: time.Now().UTC().Add(5 * time.Minute),
-	})
 }
 
 // LogTranslator adds resource metadata to log rows
