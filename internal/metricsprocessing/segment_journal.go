@@ -23,20 +23,18 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter/factories"
-	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-// SegmentJournalStore defines the interface for logging to segment_journal
-type SegmentJournalStore interface {
+// segmentJournalStore defines the interface for logging to segment_journal
+type segmentJournalStore interface {
 	InsertSegmentJournal(ctx context.Context, params lrdb.InsertSegmentJournalParams) error
 }
 
 // logSegmentOperation logs segment operations (compaction or rollup) to segment_journal for debugging
 func logSegmentOperation(
 	ctx context.Context,
-	store SegmentJournalStore,
-	storageProfile storageprofile.StorageProfile,
+	store segmentJournalStore,
 	inputSegments, outputSegments []lrdb.MetricSeg,
 	results []parquetwriter.Result,
 	orgID uuid.UUID,

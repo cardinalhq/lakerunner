@@ -26,6 +26,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/fly"
@@ -71,8 +72,8 @@ type MetricIngestProcessor struct {
 	kafkaProducer   fly.Producer
 }
 
-// NewMetricIngestProcessor creates a new metric ingest processor instance
-func NewMetricIngestProcessor(store IngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *MetricIngestProcessor {
+// newMetricIngestProcessor creates a new metric ingest processor instance
+func newMetricIngestProcessor(store IngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *MetricIngestProcessor {
 	return &MetricIngestProcessor{
 		store:           store,
 		storageProvider: storageProvider,
@@ -83,7 +84,7 @@ func NewMetricIngestProcessor(store IngestStore, storageProvider storageprofile.
 }
 
 // validateIngestGroupConsistency ensures all messages in an ingest group have consistent fields
-func validateIngestGroupConsistency(group *AccumulationGroup[messages.IngestKey]) error {
+func validateIngestGroupConsistency(group *accumulationGroup[messages.IngestKey]) error {
 	if len(group.Messages) == 0 {
 		return &GroupValidationError{
 			Field:   "message_count",
@@ -128,7 +129,7 @@ func validateIngestGroupConsistency(group *AccumulationGroup[messages.IngestKey]
 }
 
 // Process implements the Processor interface and performs raw metric ingestion
-func (p *MetricIngestProcessor) Process(ctx context.Context, group *AccumulationGroup[messages.IngestKey], kafkaCommitData *KafkaCommitData) error {
+func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulationGroup[messages.IngestKey], kafkaCommitData *KafkaCommitData) error {
 	ll := logctx.FromContext(ctx)
 
 	// Calculate group age from Hunter timestamp
@@ -344,7 +345,7 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *Accumulation
 			// Create rollup message if this frequency can be rolled up
 			var rollupMsgBytes []byte
 			var rollupMessage fly.Message
-			targetFrequency, ok := getTargetRollupFrequency(segParams.FrequencyMs)
+			targetFrequency, ok := config.GetTargetRollupFrequency(segParams.FrequencyMs)
 			if ok {
 				rollupNotification := messages.MetricRollupMessage{
 					Version:           1,
@@ -392,7 +393,7 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *Accumulation
 	}
 
 	// Report telemetry - ingestion transforms files into segments
-	ReportTelemetry(ctx, "ingestion", int64(len(group.Messages)), int64(len(segmentParams)), 0, totalOutputRecords, totalInputSize, totalOutputSize)
+	reportTelemetry(ctx, "ingestion", int64(len(group.Messages)), int64(len(segmentParams)), 0, totalOutputRecords, totalInputSize, totalOutputSize)
 
 	ll.Info("Metric ingestion completed successfully",
 		slog.Int("inputFiles", len(group.Messages)),
@@ -410,7 +411,7 @@ func (p *MetricIngestProcessor) GetTargetRecordCount(ctx context.Context, groupi
 // createReaderStack creates a reader stack: DiskSort(Translation(OTELMetricProto(file)))
 func (p *MetricIngestProcessor) createReaderStack(tmpFilename, orgID, bucket, objectID string) (filereader.Reader, error) {
 	// Step 1: Create proto reader for .binpb or .binpb.gz files
-	reader, err := CreateMetricProtoReader(tmpFilename, filereader.ReaderOptions{})
+	reader, err := createMetricProtoReader(tmpFilename, filereader.ReaderOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create proto reader: %w", err)
 	}
@@ -600,7 +601,7 @@ func (p *MetricIngestProcessor) uploadAndCreateSegments(ctx context.Context, sto
 	type validBin struct {
 		binStartTs int64
 		bin        *TimeBin
-		metadata   *FileMetadata
+		metadata   *fileMetadata
 	}
 	var validBins []validBin
 
@@ -611,7 +612,7 @@ func (p *MetricIngestProcessor) uploadAndCreateSegments(ctx context.Context, sto
 		}
 
 		// Extract file metadata using ExtractFileMetadata
-		metadata, err := ExtractFileMetadata(ctx, *bin.Result)
+		metadata, err := extractFileMetadata(ctx, *bin.Result)
 		if err != nil {
 			return nil, fmt.Errorf("failed to extract file metadata for bin %d: %w", binStartTs, err)
 		}

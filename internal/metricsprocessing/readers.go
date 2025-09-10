@@ -23,17 +23,8 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 )
 
-// IsSupportedMetricsFile checks if the file is a supported metrics file type
-func IsSupportedMetricsFile(objectID string) bool {
-	if !strings.HasPrefix(objectID, "otel-raw/") {
-		return false
-	}
-
-	return strings.HasSuffix(objectID, ".binpb") || strings.HasSuffix(objectID, ".binpb.gz")
-}
-
-// CreateMetricProtoReader creates a protocol buffer reader for metrics files
-func CreateMetricProtoReader(filename string, opts filereader.ReaderOptions) (filereader.Reader, error) {
+// createMetricProtoReader creates a protocol buffer reader for metrics files
+func createMetricProtoReader(filename string, opts filereader.ReaderOptions) (filereader.Reader, error) {
 	switch {
 	case strings.HasSuffix(filename, ".binpb.gz"):
 		return createMetricProtoBinaryGzReader(filename, opts)
