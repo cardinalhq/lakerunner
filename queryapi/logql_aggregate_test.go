@@ -17,6 +17,7 @@ package queryapi
 import (
 	"database/sql"
 	"fmt"
+	"math"
 
 	_ "github.com/marcboeker/go-duckdb/v2"
 
