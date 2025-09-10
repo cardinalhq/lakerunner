@@ -426,7 +426,7 @@ func TestAtomicDatabaseUpdate(t *testing.T) {
 		err := compactor.atomicDatabaseUpdate(ctx, oldSegments, newSegments, nil, key)
 
 		require.Error(t, err)
-		assert.Equal(t, expectedError, err)
+		assert.ErrorIs(t, err, expectedError)
 		mockStore.AssertExpectations(t)
 	})
 }

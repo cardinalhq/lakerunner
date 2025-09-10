@@ -462,7 +462,41 @@ func (r *MetricRollupProcessor) atomicDatabaseUpdate(ctx context.Context, oldSeg
 	}
 
 	// Use the atomic rollup function that handles everything in one transaction
-	return r.store.RollupMetricSegsWithKafkaOffsetsWithOrg(ctx, sourceParams, targetParams, sourceSegmentIDs, newRecords, kafkaOffsets)
+	if err := r.store.RollupMetricSegsWithKafkaOffsetsWithOrg(ctx, sourceParams, targetParams, sourceSegmentIDs, newRecords, kafkaOffsets); err != nil {
+		ll := logctx.FromContext(ctx)
+
+		// Log unique keys for debugging database failures
+		ll.Error("Failed RollupMetricSegsWithKafkaOffsetsWithOrg",
+			slog.Any("error", err),
+			slog.String("organization_id", key.OrganizationID.String()),
+			slog.Int("dateint", int(key.DateInt)),
+			slog.Int("source_frequency_ms", int(key.SourceFrequencyMs)),
+			slog.Int("target_frequency_ms", int(key.TargetFrequencyMs)),
+			slog.Int("instance_num", int(key.InstanceNum)),
+			slog.Int("slot_id", int(key.SlotID)),
+			slog.Int("slot_count", int(key.SlotCount)),
+			slog.Int("source_segments_count", len(sourceSegmentIDs)),
+			slog.Int("new_segments_count", len(newRecords)))
+
+		// Log segment IDs for additional context
+		if len(sourceSegmentIDs) > 0 {
+			ll.Error("RollupMetricSegs source segment IDs",
+				slog.Any("source_segment_ids", sourceSegmentIDs))
+		}
+
+		if len(newRecords) > 0 {
+			newSegmentIDs := make([]int64, len(newRecords))
+			for i, record := range newRecords {
+				newSegmentIDs[i] = record.SegmentID
+			}
+			ll.Error("RollupMetricSegs new segment IDs",
+				slog.Any("new_segment_ids", newSegmentIDs))
+		}
+
+		return fmt.Errorf("failed to rollup metric segments: %w", err)
+	}
+
+	return nil
 }
 
 // logRollupOperation logs the rollup operation to segment_journal for debugging purposes

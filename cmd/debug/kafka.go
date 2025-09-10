@@ -413,7 +413,7 @@ Examples:
 	cmd.Flags().IntVar(&maxMessages, "max", 0, "Maximum number of messages to read (0 = unlimited)")
 	cmd.Flags().DurationVar(&timeout, "timeout", 30*time.Second, "Timeout for reading messages")
 	cmd.Flags().String("topic", "", "Topic to tail (required)")
-	cmd.MarkFlagRequired("topic")
+	_ = cmd.MarkFlagRequired("topic")
 
 	return cmd
 }

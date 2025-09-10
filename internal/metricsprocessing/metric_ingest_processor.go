@@ -275,12 +275,25 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *Accumulation
 
 		ll.Error("Failed to insert metric segments with Kafka offsets",
 			slog.Any("error", err),
-			slog.Any("segmentIDs", segmentIDs),
+			slog.String("organization_id", group.Key.OrganizationID.String()),
+			slog.Int("instance_num", int(group.Key.InstanceNum)),
 			slog.Int("segmentCount", len(segmentParams)),
 			slog.Int64("totalRecords", totalRecords),
 			slog.Int64("totalSize", totalSize),
-			slog.String("organizationID", group.Key.OrganizationID.String()),
-			slog.Int("instanceNum", int(group.Key.InstanceNum)))
+			slog.Any("segment_ids", segmentIDs))
+
+		// Log individual segment keys for debugging database failures
+		for i, seg := range segmentParams {
+			ll.Error("InsertMetricSegment segment details",
+				slog.Int("segment_index", i),
+				slog.String("organization_id", seg.OrganizationID.String()),
+				slog.Int("dateint", int(seg.Dateint)),
+				slog.Int("frequency_ms", int(seg.FrequencyMs)),
+				slog.Int64("segment_id", seg.SegmentID),
+				slog.Int("instance_num", int(seg.InstanceNum)),
+				slog.Int("slot_id", int(seg.SlotID)),
+				slog.Int("slot_count", int(seg.SlotCount)))
+		}
 
 		return fmt.Errorf("failed to insert metric segments with Kafka offsets: %w", err)
 	}

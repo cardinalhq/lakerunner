@@ -444,7 +444,45 @@ func (c *MetricCompactorProcessor) atomicDatabaseUpdate(ctx context.Context, old
 		CreatedBy:      lrdb.CreatedByCompact,
 	}
 
-	return c.store.CompactMetricSegsWithKafkaOffsetsWithOrg(ctx, params, kafkaOffsets)
+	// Perform atomic operation
+	if err := c.store.CompactMetricSegsWithKafkaOffsetsWithOrg(ctx, params, kafkaOffsets); err != nil {
+		ll := logctx.FromContext(ctx)
+
+		// Log unique keys for debugging database failures
+		ll.Error("Failed CompactMetricSegsWithKafkaOffsetsWithOrg",
+			slog.Any("error", err),
+			slog.String("organization_id", key.OrganizationID.String()),
+			slog.Int("dateint", int(key.DateInt)),
+			slog.Int("frequency_ms", int(key.FrequencyMs)),
+			slog.Int("instance_num", int(key.InstanceNum)),
+			slog.Int("slot_id", int(params.SlotID)),
+			slog.Int("slot_count", int(params.SlotCount)),
+			slog.Int("old_segments_count", len(oldSegments)),
+			slog.Int("new_segments_count", len(newSegments)))
+
+		// Log segment IDs for additional context
+		if len(oldSegments) > 0 {
+			oldSegmentIDs := make([]int64, len(oldSegments))
+			for i, seg := range oldSegments {
+				oldSegmentIDs[i] = seg.SegmentID
+			}
+			ll.Error("CompactMetricSegs old segment IDs",
+				slog.Any("old_segment_ids", oldSegmentIDs))
+		}
+
+		if len(newSegments) > 0 {
+			newSegmentIDs := make([]int64, len(newSegments))
+			for i, seg := range newSegments {
+				newSegmentIDs[i] = seg.SegmentID
+			}
+			ll.Error("CompactMetricSegs new segment IDs",
+				slog.Any("new_segment_ids", newSegmentIDs))
+		}
+
+		return fmt.Errorf("failed to compact metric segments: %w", err)
+	}
+
+	return nil
 }
 
 // Helper functions

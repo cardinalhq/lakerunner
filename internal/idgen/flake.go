@@ -99,15 +99,15 @@ func (sf *SonyFlakeGenerator) NextBatchIDs(count int) []int64 {
 	if count <= 0 {
 		return nil
 	}
-	
+
 	ids := make([]int64, count)
 	seen := make(map[int64]bool, count)
-	
+
 	for i := 0; i < count; i++ {
 		var id int64
 		attempts := 0
 		maxAttempts := 100 // Prevent infinite loops
-		
+
 		// Generate IDs until we get a unique one within this batch
 		for {
 			id = sf.NextID()
@@ -126,10 +126,10 @@ func (sf *SonyFlakeGenerator) NextBatchIDs(count int) []int64 {
 				return ids
 			}
 		}
-		
+
 		ids[i] = id
 		seen[id] = true
 	}
-	
+
 	return ids
 }
