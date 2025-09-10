@@ -66,8 +66,6 @@ func TestHunter_AddMessage_ExceedsThreshold(t *testing.T) {
 	result2 := hunter.addMessage(msg2, metadata2, 100)
 
 	require.NotNil(t, result2)
-	assert.Equal(t, msg2, result2.TriggeringRecord.Message)
-	assert.Equal(t, metadata2, result2.TriggeringRecord.Metadata)
 
 	group := result2.Group
 	assert.Len(t, group.Messages, 2)
@@ -495,10 +493,6 @@ func TestHunter_MetricCompactionMessage_AccumulationScaffolding(t *testing.T) {
 	assert.Equal(t, int64(102), returnedGroup.LatestOffsets[0], "Returned group should have latest offset")
 	assert.Equal(t, expectedKey, returnedGroup.Key, "Returned group should have correct key")
 	assert.Len(t, hunter.groups, 0, "Should have exactly 0 groups after group emission")
-
-	// Check triggering record - should be the last message added
-	assert.Equal(t, int64(4000), result3.TriggeringRecord.Message.RecordCount(), "Triggering message should have 4000 records")
-	assert.Equal(t, int64(102), result3.TriggeringRecord.Metadata.Offset, "Triggering metadata should have offset 102")
 
 	// Check Hunter state after processing
 	assert.Len(t, hunter.groups, 0, "Hunter should be empty after group is returned")

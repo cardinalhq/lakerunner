@@ -47,8 +47,7 @@ type accumulationGroup[K comparable] struct {
 
 // accumulationResult contains the accumulated messages and metadata when threshold is reached
 type accumulationResult[K comparable] struct {
-	Group            *accumulationGroup[K]
-	TriggeringRecord *accumulatedMessage // The message that caused the threshold to be exceeded
+	Group *accumulationGroup[K]
 }
 
 // hunter accumulates GroupableMessage until a threshold is reached.
@@ -95,28 +94,21 @@ func (h *hunter[M, K]) addMessage(msg M, metadata *messageMetadata, targetRecord
 		Metadata: metadata,
 	}
 
-	// Check if adding this message would exceed the target
-	newTotalRecordCount := group.TotalRecordCount + msg.RecordCount()
-	shouldReturn := newTotalRecordCount >= targetRecordCount
-
 	// Add the message to the group
 	group.Messages = append(group.Messages, accMsg)
-	group.TotalRecordCount = newTotalRecordCount
+	group.TotalRecordCount += msg.RecordCount()
 
 	// Update latest offset tracking
 	if currentOffset, exists := group.LatestOffsets[metadata.Partition]; !exists || metadata.Offset > currentOffset {
 		group.LatestOffsets[metadata.Partition] = metadata.Offset
 	}
 
-	if shouldReturn {
+	if group.TotalRecordCount >= targetRecordCount {
 		// Remove the group from the hunter since we're returning it
 		delete(h.groups, key)
 
 		// Return the original group without copying
-		return &accumulationResult[K]{
-			Group:            group,
-			TriggeringRecord: accMsg,
-		}
+		return &accumulationResult[K]{Group: group}
 	}
 
 	return nil

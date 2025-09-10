@@ -147,8 +147,8 @@ FROM log_seg AS s
     unnest(s.fingerprints) AS t(fp)
 WHERE
     s.organization_id = @organization_id
-  AND s.dateint      = @dateint
-  AND s.published   = true
+  AND s.dateint       = @dateint
+  AND s.published     = true
   AND s.fingerprints && @fingerprints::BIGINT[]
-  AND t.fp           = ANY(@fingerprints::BIGINT[])
+  AND t.fp            = ANY(@fingerprints::BIGINT[])
   AND ts_range && int8range(@s, @e, '[)');
