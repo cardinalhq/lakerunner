@@ -15,9 +15,8 @@
 package buffet
 
 import (
+	"context"
 	"fmt"
-	"io"
-	"log/slog"
 	"math"
 	"os"
 	"sort"
@@ -141,8 +140,7 @@ func TestProcessAndSplitSortsByTimestamp(t *testing.T) {
 	fh, err := filecrunch.LoadSchemaForFile(inputFile.Name())
 	require.NoError(t, err)
 	defer fh.Close()
-	ll := slog.New(slog.NewTextHandler(io.Discard, nil))
-	res, err := ProcessAndSplit(ll, fh, tmpDir, 0, 0)
+	res, err := ProcessAndSplit(context.Background(), fh, tmpDir, 0, 0)
 	require.NoError(t, err)
 	require.Len(t, res, 1)
 	for _, hr := range res {
@@ -286,8 +284,7 @@ func TestProcessAndSplit_HourBoundaries(t *testing.T) {
 			require.NoError(t, err)
 			defer fh.Close()
 
-			ll := slog.New(slog.NewTextHandler(io.Discard, nil))
-			results, err := ProcessAndSplit(ll, fh, tmpDir, 20230101, 1000)
+			results, err := ProcessAndSplit(context.Background(), fh, tmpDir, 20230101, 1000)
 			require.NoError(t, err)
 
 			// Validate number of splits

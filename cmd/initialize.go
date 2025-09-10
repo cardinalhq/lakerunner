@@ -95,7 +95,7 @@ func runInitialize(configFile string, apiKeysFile string, replace bool) error {
 	qtx := configdb.New(tx)
 
 	// Use initialize package for business logic
-	if err := initialize.InitializeConfig(ctx, configFile, apiKeysFile, qtx, slog.Default(), replace); err != nil {
+	if err := initialize.InitializeConfig(ctx, configFile, apiKeysFile, qtx, replace); err != nil {
 		return err
 	}
 

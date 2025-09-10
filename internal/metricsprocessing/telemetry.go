@@ -15,9 +15,11 @@
 package metricsprocessing
 
 import (
+	"context"
 	"log"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
 
@@ -30,6 +32,19 @@ var (
 	processingBytesIn     metric.Int64Counter
 	processingBytesOut    metric.Int64Counter
 )
+
+func ReportTelemetry(ctx context.Context, action string, segmentsIn, segmentsOut, recordsIn, recordsOut, bytesIn, bytesOut int64) {
+	attrset := attribute.NewSet(
+		attribute.String("action", action),
+		attribute.String("signal", "metrics"),
+	)
+	processingSegmentsIn.Add(ctx, segmentsIn, metric.WithAttributeSet(attrset))
+	processingSegmentsOut.Add(ctx, segmentsOut, metric.WithAttributeSet(attrset))
+	processingRecordsIn.Add(ctx, recordsIn, metric.WithAttributeSet(attrset))
+	processingRecordsOut.Add(ctx, recordsOut, metric.WithAttributeSet(attrset))
+	processingBytesIn.Add(ctx, bytesIn, metric.WithAttributeSet(attrset))
+	processingBytesOut.Add(ctx, bytesOut, metric.WithAttributeSet(attrset))
+}
 
 func init() {
 	meter := otel.Meter("github.com/cardinalhq/lakerunner/internal/metricsprocessing")
@@ -83,4 +98,5 @@ func init() {
 	if err != nil {
 		log.Fatalf("failed to create processing.bytes.out counter: %v", err)
 	}
+
 }

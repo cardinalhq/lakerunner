@@ -16,8 +16,11 @@ package heartbeat
 
 import (
 	"context"
-	"log/slog"
 	"time"
+
+	"log/slog"
+
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 )
 
 // HeartbeatFunc is the function signature for heartbeat callbacks
@@ -26,19 +29,13 @@ type HeartbeatFunc func(ctx context.Context) error
 // Heartbeater manages periodic execution of a heartbeat function
 type Heartbeater struct {
 	heartbeatFunc HeartbeatFunc
-	ll            *slog.Logger
 	interval      time.Duration
 }
 
 // New creates a new generic heartbeater with the given callback function
-func New(heartbeatFunc HeartbeatFunc, interval time.Duration, logger *slog.Logger) *Heartbeater {
-	if logger == nil {
-		logger = slog.Default()
-	}
-
+func New(heartbeatFunc HeartbeatFunc, interval time.Duration) *Heartbeater {
 	return &Heartbeater{
 		heartbeatFunc: heartbeatFunc,
-		ll:            logger.With("component", "heartbeater"),
 		interval:      interval,
 	}
 }
@@ -55,7 +52,8 @@ func (h *Heartbeater) Start(ctx context.Context) context.CancelFunc {
 
 // run is the main heartbeat loop
 func (h *Heartbeater) run(ctx context.Context) {
-	h.ll.Debug("Starting heartbeat loop", "interval", h.interval)
+	ll := logctx.FromContext(ctx)
+	ll.Debug("Starting heartbeat loop", slog.Duration("interval", h.interval))
 
 	// Send initial heartbeat immediately
 	h.sendHeartbeat(ctx)
@@ -66,7 +64,7 @@ func (h *Heartbeater) run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			h.ll.Debug("Context cancelled, stopping heartbeat loop")
+			ll.Debug("Context cancelled, stopping heartbeat loop")
 			return
 		case <-ticker.C:
 			h.sendHeartbeat(ctx)
@@ -76,16 +74,17 @@ func (h *Heartbeater) run(ctx context.Context) {
 
 // sendHeartbeat calls the configured heartbeat function
 func (h *Heartbeater) sendHeartbeat(ctx context.Context) {
-	h.ll.Debug("Sending heartbeat")
+	ll := logctx.FromContext(ctx)
+	ll.Debug("Sending heartbeat")
 
 	err := h.heartbeatFunc(ctx)
 	if err != nil {
 		if ctx.Err() != nil {
 			return
 		}
-		h.ll.Error("Failed to send heartbeat (continuing)", "error", err)
+		ll.Error("Failed to send heartbeat (continuing)", slog.Any("error", err))
 		return
 	}
 
-	h.ll.Debug("Heartbeat sent successfully")
+	ll.Debug("Heartbeat sent successfully")
 }

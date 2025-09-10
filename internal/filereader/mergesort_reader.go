@@ -26,123 +26,36 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 )
 
-// mergesortReaderState holds the state for a single reader in the ordered merge.
-type mergesortReaderState struct {
+// activeReader represents a reader that has data available for merging
+type activeReader struct {
 	reader       Reader
-	currentBatch *Batch
-	batchIndex   int
-	done         bool
-	index        int
-	err          error
-	currentKey   SortKey // cached key for current row
+	currentKey   SortKey // Our owned reference to the current sort key
+	currentRow   Row     // Cache of current row
+	currentBatch *Batch  // Current batch from reader
+	batchIndex   int     // Index within current batch
+	index        int     // Original reader index for error reporting
 }
 
-// getCurrentRow returns the current row from the reader state, if available.
-func (state *mergesortReaderState) getCurrentRow() Row {
-	if state.done || state.err != nil || state.currentBatch == nil || state.batchIndex >= state.currentBatch.Len() {
-		return nil
+// advance loads the next row from this reader, updating the key and row cache
+func (ar *activeReader) advance(ctx context.Context, keyProvider SortKeyProvider) error {
+	// Release old key
+	if ar.currentKey != nil {
+		ar.currentKey.Release()
+		ar.currentKey = nil
 	}
-	return state.currentBatch.Get(state.batchIndex)
-}
-
-// consumeCurrentRow advances to the next row in the current batch.
-func (state *mergesortReaderState) consumeCurrentRow() {
-	if state.currentBatch != nil && state.batchIndex < state.currentBatch.Len() {
-		state.batchIndex++
-	}
-}
-
-// MergesortReader implements merge-sort style reading across multiple pre-sorted readers.
-// It assumes each individual reader returns rows in sorted order according to the
-// provided SortKeyProvider.
-type MergesortReader struct {
-	states      []*mergesortReaderState
-	keyProvider SortKeyProvider
-	closed      bool
-	rowCount    int64
-	batchSize   int
-}
-
-// NewMergesortReader creates a new MergesortReader that merges rows from multiple readers
-// in sorted order. The selector function determines which row should be returned next.
-//
-// Requirements:
-// - Each reader must return rows in sorted order (according to the selector logic)
-// - The selector function must be consistent (same inputs -> same output)
-// - Readers will be closed when the MergesortReader is closed
-func NewMergesortReader(ctx context.Context, readers []Reader, keyProvider SortKeyProvider, batchSize int) (*MergesortReader, error) {
-	if len(readers) == 0 {
-		return nil, errors.New("at least one reader is required")
-	}
-	if keyProvider == nil {
-		return nil, errors.New("keyProvider is required")
-	}
-
-	if batchSize <= 0 {
-		batchSize = 1000
-	}
-
-	states := make([]*mergesortReaderState, len(readers))
-	for i, reader := range readers {
-		states[i] = &mergesortReaderState{
-			reader: reader,
-			index:  i,
-		}
-	}
-
-	or := &MergesortReader{
-		states:      states,
-		keyProvider: keyProvider,
-		batchSize:   batchSize,
-	}
-
-	// Prime all readers by loading their first rows
-	if err := or.primeReaders(ctx); err != nil {
-		or.Close()
-		return nil, fmt.Errorf("failed to prime readers: %w", err)
-	}
-
-	return or, nil
-}
-
-// primeReaders loads the first batch from each reader.
-func (or *MergesortReader) primeReaders(ctx context.Context) error {
-	for _, state := range or.states {
-		if err := or.advance(ctx, state); err != nil {
-			return fmt.Errorf("failed to prime reader %d: %w", state.index, err)
-		}
-	}
-	return nil
-}
-
-// advance loads the next batch or moves to the next row in the current batch for the given reader state.
-func (or *MergesortReader) advance(ctx context.Context, state *mergesortReaderState) error {
-	if state.done || state.err != nil {
-		return state.err
-	}
-
-	// Release old key if moving to next row
-	if state.currentKey != nil {
-		state.currentKey.Release()
-		state.currentKey = nil
-	}
+	ar.currentRow = nil
 
 	// Check if we need to load a new batch
-	if state.currentBatch == nil || state.batchIndex >= state.currentBatch.Len() {
-		// Return old batch to pool before getting a new one
-		if state.currentBatch != nil {
-			pipeline.ReturnBatch(state.currentBatch)
-			state.currentBatch = nil
+	if ar.currentBatch == nil || ar.batchIndex >= ar.currentBatch.Len() {
+		// Return old batch to pool
+		if ar.currentBatch != nil {
+			pipeline.ReturnBatch(ar.currentBatch)
+			ar.currentBatch = nil
 		}
 
-		batch, err := state.reader.Next(ctx)
+		batch, err := ar.reader.Next(ctx)
 		if err != nil {
-			if errors.Is(err, io.EOF) {
-				state.done = true
-				return nil
-			}
-			state.err = err
-			return err
+			return err // EOF or other error
 		}
 
 		// Track rows read from underlying readers
@@ -154,18 +67,99 @@ func (or *MergesortReader) advance(ctx context.Context, state *mergesortReaderSt
 
 		if batch.Len() == 0 {
 			pipeline.ReturnBatch(batch)
-			state.done = true
-			return nil
+			return io.EOF
 		}
 
-		state.currentBatch = batch
-		state.batchIndex = 0
+		ar.currentBatch = batch
+		ar.batchIndex = 0
 	}
 
-	// Compute sort key for current row
-	if !state.done && state.currentBatch != nil && state.batchIndex < state.currentBatch.Len() {
-		currentRow := state.currentBatch.Get(state.batchIndex)
-		state.currentKey = or.keyProvider.MakeKey(currentRow)
+	// Cache current row and generate key
+	ar.currentRow = ar.currentBatch.Get(ar.batchIndex)
+	if ar.currentRow != nil {
+		ar.currentKey = keyProvider.MakeKey(ar.currentRow)
+	}
+
+	return nil
+}
+
+// consume advances to the next row in the current batch
+func (ar *activeReader) consume() {
+	ar.batchIndex++
+}
+
+// cleanup releases resources held by this active reader
+func (ar *activeReader) cleanup() {
+	if ar.currentKey != nil {
+		ar.currentKey.Release()
+		ar.currentKey = nil
+	}
+	if ar.currentBatch != nil {
+		pipeline.ReturnBatch(ar.currentBatch)
+		ar.currentBatch = nil
+	}
+}
+
+// MergesortReader implements merge-sort style reading across multiple pre-sorted readers.
+// It assumes each individual reader returns rows in sorted order according to the
+// provided SortKeyProvider.
+type MergesortReader struct {
+	readers       []Reader        // Original readers
+	activeReaders []*activeReader // Readers with data available
+	keyProvider   SortKeyProvider
+	closed        bool
+	rowCount      int64
+	batchSize     int
+}
+
+// NewMergesortReader creates a new MergesortReader that merges rows from multiple readers
+// in sorted order using the new algorithm with active reader management.
+func NewMergesortReader(ctx context.Context, readers []Reader, keyProvider SortKeyProvider, batchSize int) (*MergesortReader, error) {
+	if len(readers) == 0 {
+		return nil, errors.New("no readers provided")
+	}
+	if keyProvider == nil {
+		return nil, errors.New("keyProvider cannot be nil")
+	}
+
+	or := &MergesortReader{
+		readers:     readers,
+		keyProvider: keyProvider,
+		batchSize:   batchSize,
+	}
+
+	// Prime all readers - read first row from each and create keys
+	if err := or.primeReaders(ctx); err != nil {
+		or.Close() // Clean up any partially initialized state
+		return nil, err
+	}
+
+	return or, nil
+}
+
+// primeReaders initializes all readers by loading their first row and sort key
+func (or *MergesortReader) primeReaders(ctx context.Context) error {
+	// Initialize activeReaders slice
+	or.activeReaders = make([]*activeReader, 0, len(or.readers))
+
+	// Prime each reader - read first row and create key
+	for i, reader := range or.readers {
+		ar := &activeReader{
+			reader: reader,
+			index:  i,
+		}
+
+		// Try to advance to first row
+		err := ar.advance(ctx, or.keyProvider)
+		if err == io.EOF {
+			// Reader is empty, skip it
+			continue
+		} else if err != nil {
+			return fmt.Errorf("failed to prime reader %d: %w", i, err)
+		}
+
+		// Reader has data, add to active list
+		or.activeReaders = append(or.activeReaders, ar)
 	}
 
 	return nil
@@ -180,36 +174,9 @@ func (or *MergesortReader) Next(ctx context.Context) (*Batch, error) {
 	batch := pipeline.GetBatch()
 
 	for batch.Len() < or.batchSize {
-		// Find the reader state with the smallest sort key
-		var selectedState *mergesortReaderState
-		var minKey SortKey
-
-		for _, state := range or.states {
-			if !state.done && state.err == nil && state.currentKey != nil {
-				if minKey == nil || state.currentKey.Compare(minKey) < 0 {
-					if minKey != nil {
-						minKey.Release()
-					}
-					selectedState = state
-					minKey = state.currentKey
-				}
-			}
-		}
-
-		// No more active readers
-		if selectedState == nil {
-			// Release minKey if we allocated one
-			if minKey != nil {
-				minKey.Release()
-			}
-
-			// Check if any reader had an error
-			for _, state := range or.states {
-				if state.err != nil {
-					pipeline.ReturnBatch(batch)
-					return nil, fmt.Errorf("reader %d error: %w", state.index, state.err)
-				}
-			}
+		// Find the active reader with the smallest sort key
+		if len(or.activeReaders) == 0 {
+			// No more active readers
 			if batch.Len() == 0 {
 				pipeline.ReturnBatch(batch)
 				return nil, io.EOF
@@ -217,24 +184,33 @@ func (or *MergesortReader) Next(ctx context.Context) (*Batch, error) {
 			break
 		}
 
-		// Release the minKey (we don't need to hold it)
-		if minKey != nil {
-			minKey.Release()
+		// Find reader with minimum key
+		minIndex := 0
+		for i := 1; i < len(or.activeReaders); i++ {
+			if or.activeReaders[i].currentKey.Compare(or.activeReaders[minIndex].currentKey) < 0 {
+				minIndex = i
+			}
 		}
-		currentRow := selectedState.getCurrentRow()
-		if currentRow != nil {
-			// Copy the row to the batch
-			row := batch.AddRow()
-			for k, v := range currentRow {
-				row[k] = v
-			}
 
-			// Consume the current row and advance if needed
-			selectedState.consumeCurrentRow()
-			if err := or.advance(ctx, selectedState); err != nil {
-				pipeline.ReturnBatch(batch)
-				return nil, fmt.Errorf("failed to advance reader %d: %w", selectedState.index, err)
-			}
+		selectedReader := or.activeReaders[minIndex]
+
+		// Copy the row to the batch
+		row := batch.AddRow()
+		for k, v := range selectedReader.currentRow {
+			row[k] = v
+		}
+
+		// Advance the selected reader to its next row
+		selectedReader.consume()
+		err := selectedReader.advance(ctx, or.keyProvider)
+		if err == io.EOF {
+			// Reader is exhausted, remove from active list
+			selectedReader.cleanup()
+			or.activeReaders = append(or.activeReaders[:minIndex], or.activeReaders[minIndex+1:]...)
+		} else if err != nil {
+			// Reader error
+			pipeline.ReturnBatch(batch)
+			return nil, fmt.Errorf("failed to advance reader %d: %w", selectedReader.index, err)
 		}
 	}
 
@@ -260,48 +236,32 @@ func (or *MergesortReader) Close() error {
 	or.closed = true
 
 	var errs []error
-	for i, state := range or.states {
-		// Return any remaining batches to the pool
-		if state.currentBatch != nil {
-			pipeline.ReturnBatch(state.currentBatch)
-			state.currentBatch = nil
-		}
 
-		// Release cached sort key
-		if state.currentKey != nil {
-			state.currentKey.Release()
-			state.currentKey = nil
-		}
+	// Clean up active readers
+	for _, ar := range or.activeReaders {
+		ar.cleanup()
+	}
+	or.activeReaders = nil
 
-		if state.reader != nil {
-			if err := state.reader.Close(); err != nil {
-				errs = append(errs, fmt.Errorf("failed to close reader %d: %w", i, err))
-			}
+	// Close original readers
+	for i, reader := range or.readers {
+		if err := reader.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("reader %d: %w", i, err))
 		}
 	}
 
 	if len(errs) > 0 {
-		return errors.Join(errs...)
+		return fmt.Errorf("errors closing readers: %v", errs)
 	}
 	return nil
 }
 
-// ActiveReaderCount returns the number of readers that still have data to read.
-func (or *MergesortReader) ActiveReaderCount() int {
-	if or.closed {
-		return 0
-	}
-
-	count := 0
-	for _, state := range or.states {
-		if !state.done && state.err == nil {
-			count++
-		}
-	}
-	return count
-}
-
-// TotalRowsReturned returns the total number of rows that have been successfully returned via Next() from all readers.
+// TotalRowsReturned returns the total number of rows returned by this reader.
 func (or *MergesortReader) TotalRowsReturned() int64 {
 	return or.rowCount
+}
+
+// ActiveReaderCount returns the number of readers that still have data available.
+func (or *MergesortReader) ActiveReaderCount() int {
+	return len(or.activeReaders)
 }

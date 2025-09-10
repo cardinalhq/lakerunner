@@ -52,7 +52,7 @@ func TestDiskSortingReader_BasicSorting(t *testing.T) {
 	}
 
 	mockReader := NewMockReader(testRows)
-	sortingReader, err := NewDiskSortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
+	sortingReader, err := NewDiskSortingReader(mockReader, &NonPooledMetricSortKeyProvider{}, 1000)
 	require.NoError(t, err)
 	defer sortingReader.Close()
 
@@ -100,7 +100,7 @@ func TestDiskSortingReader_TypePreservation(t *testing.T) {
 	}
 
 	mockReader := NewMockReader([]Row{testRow})
-	sortingReader, err := NewDiskSortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
+	sortingReader, err := NewDiskSortingReader(mockReader, &NonPooledMetricSortKeyProvider{}, 1000)
 	require.NoError(t, err)
 	defer sortingReader.Close()
 
@@ -125,7 +125,7 @@ func TestDiskSortingReader_TypePreservation(t *testing.T) {
 
 func TestDiskSortingReader_EmptyInput(t *testing.T) {
 	mockReader := NewMockReader([]Row{})
-	sortingReader, err := NewDiskSortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
+	sortingReader, err := NewDiskSortingReader(mockReader, &NonPooledMetricSortKeyProvider{}, 1000)
 	require.NoError(t, err)
 	defer sortingReader.Close()
 
@@ -151,7 +151,7 @@ func TestDiskSortingReader_MissingFields(t *testing.T) {
 	}
 
 	mockReader := NewMockReader(testRows)
-	sortingReader, err := NewDiskSortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
+	sortingReader, err := NewDiskSortingReader(mockReader, &NonPooledMetricSortKeyProvider{}, 1000)
 	require.NoError(t, err)
 	defer sortingReader.Close()
 
@@ -174,7 +174,7 @@ func TestDiskSortingReader_CleanupOnError(t *testing.T) {
 		readError: fmt.Errorf("simulated read error"),
 	}
 
-	sortingReader, err := NewDiskSortingReader(mockReader, &MetricSortKeyProvider{}, 1000)
+	sortingReader, err := NewDiskSortingReader(mockReader, &NonPooledMetricSortKeyProvider{}, 1000)
 	require.NoError(t, err)
 
 	tempFileName := sortingReader.tempFile.Name()

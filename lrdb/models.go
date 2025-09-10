@@ -110,6 +110,10 @@ type KafkaOffsetJournal struct {
 	LastProcessedOffset int64 `json:"last_processed_offset"`
 	// Timestamp when this offset was last updated
 	UpdatedAt time.Time `json:"updated_at"`
+	// Organization UUID for multi-tenant offset tracking
+	OrganizationID uuid.UUID `json:"organization_id"`
+	// Instance number for distributed processing offset tracking
+	InstanceNum int16 `json:"instance_num"`
 }
 
 type LogSeg struct {
@@ -171,48 +175,11 @@ type LrdbServiceIdentifier struct {
 	Namespace      pgtype.Text `json:"namespace"`
 }
 
-type MetricCompactionQueue struct {
-	ID             int64      `json:"id"`
-	QueueTs        time.Time  `json:"queue_ts"`
-	Priority       int32      `json:"priority"`
-	OrganizationID uuid.UUID  `json:"organization_id"`
-	Dateint        int32      `json:"dateint"`
-	FrequencyMs    int32      `json:"frequency_ms"`
-	SegmentID      int64      `json:"segment_id"`
-	InstanceNum    int16      `json:"instance_num"`
-	RecordCount    int64      `json:"record_count"`
-	Tries          int32      `json:"tries"`
-	ClaimedBy      int64      `json:"claimed_by"`
-	ClaimedAt      *time.Time `json:"claimed_at"`
-	HeartbeatedAt  *time.Time `json:"heartbeated_at"`
-	EligibleAt     time.Time  `json:"eligible_at"`
-}
-
 type MetricPackEstimate struct {
 	OrganizationID uuid.UUID `json:"organization_id"`
 	FrequencyMs    int32     `json:"frequency_ms"`
 	TargetRecords  *int64    `json:"target_records"`
 	UpdatedAt      time.Time `json:"updated_at"`
-}
-
-type MetricRollupQueue struct {
-	ID             int64      `json:"id"`
-	QueueTs        time.Time  `json:"queue_ts"`
-	Priority       int32      `json:"priority"`
-	OrganizationID uuid.UUID  `json:"organization_id"`
-	Dateint        int32      `json:"dateint"`
-	FrequencyMs    int32      `json:"frequency_ms"`
-	InstanceNum    int16      `json:"instance_num"`
-	SlotID         int32      `json:"slot_id"`
-	SlotCount      int32      `json:"slot_count"`
-	Tries          int32      `json:"tries"`
-	ClaimedBy      int64      `json:"claimed_by"`
-	ClaimedAt      *time.Time `json:"claimed_at"`
-	HeartbeatedAt  *time.Time `json:"heartbeated_at"`
-	SegmentID      int64      `json:"segment_id"`
-	RecordCount    int64      `json:"record_count"`
-	RollupGroup    int64      `json:"rollup_group"`
-	EligibleAt     time.Time  `json:"eligible_at"`
 }
 
 type MetricSeg struct {
@@ -244,6 +211,52 @@ type ObjCleanup struct {
 	BucketID       string    `json:"bucket_id"`
 	ObjectID       string    `json:"object_id"`
 	Tries          int32     `json:"tries"`
+}
+
+// Enhanced debugging journal for segment operations. Tracks record counts, time windows, and frequency changes for compaction and rollup debugging.
+type SegmentJournal struct {
+	ID int64 `json:"id"`
+	// Signal type being processed (1=logs, 2=metrics, 3=traces)
+	Signal int16 `json:"signal"`
+	// Action being performed (1=ingest, 2=compact, 3=rollup)
+	Action    int16     `json:"action"`
+	CreatedAt time.Time `json:"created_at"`
+	// Organization ID for determining storage bucket/profile
+	OrganizationID uuid.UUID `json:"organization_id"`
+	// Instance number for determining storage bucket/profile
+	InstanceNum int16 `json:"instance_num"`
+	// Date being processed (YYYYMMDD format)
+	Dateint     int32 `json:"dateint"`
+	SourceCount int32 `json:"source_count"`
+	// S3 object keys for source files (for fetching and testing)
+	SourceObjectKeys []string `json:"source_object_keys"`
+	// Total records from all source files
+	SourceTotalRecords int64 `json:"source_total_records"`
+	// Total bytes from all source files
+	SourceTotalSize int64 `json:"source_total_size"`
+	DestCount       int32 `json:"dest_count"`
+	// S3 object keys for destination files (for verification)
+	DestObjectKeys []string `json:"dest_object_keys"`
+	// Total records in all destination files
+	DestTotalRecords int64 `json:"dest_total_records"`
+	// Total bytes in all destination files
+	DestTotalSize int64 `json:"dest_total_size"`
+	// Additional debugging information in JSON format
+	Metadata map[string]any `json:"metadata"`
+	// Estimated record count used for compaction planning and comparison with actual results
+	RecordEstimate int64 `json:"record_estimate"`
+	// Minimum timestamp (ms) in source data
+	SourceMinTimestamp int64 `json:"source_min_timestamp"`
+	// Maximum timestamp (ms) in source data
+	SourceMaxTimestamp int64 `json:"source_max_timestamp"`
+	// Minimum timestamp (ms) in destination data
+	DestMinTimestamp int64 `json:"dest_min_timestamp"`
+	// Maximum timestamp (ms) in destination data
+	DestMaxTimestamp int64 `json:"dest_max_timestamp"`
+	// Source frequency in milliseconds
+	SourceFrequencyMs int32 `json:"source_frequency_ms"`
+	// Destination frequency in milliseconds
+	DestFrequencyMs int32 `json:"dest_frequency_ms"`
 }
 
 type SignalLock struct {

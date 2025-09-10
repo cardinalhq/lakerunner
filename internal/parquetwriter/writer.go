@@ -39,6 +39,12 @@ type ParquetWriter interface {
 	// Abort stops processing and cleans up any temporary files.
 	// Can be called multiple times safely.
 	Abort()
+
+	// Config returns the configuration used by this writer.
+	Config() WriterConfig
+
+	// GetCurrentStats returns current statistics about the writer's state.
+	GetCurrentStats() WriterStats
 }
 
 // Result contains metadata about a single output Parquet file.
@@ -59,10 +65,14 @@ type Result struct {
 	Metadata any
 }
 
+// WriterStats contains current statistics about a writer's state.
+type WriterStats struct {
+	Closed         bool
+	RecordsPerFile int64
+}
+
 // Common errors returned by writers
 var (
-	ErrWriterClosed    = errors.New("parquetwriter: writer is already closed")
-	ErrInvalidRow      = errors.New("parquetwriter: row contains invalid data")
-	ErrSchemaViolation = errors.New("parquetwriter: row violates schema")
-	ErrWriteFailed     = errors.New("parquetwriter: failed to write data")
+	ErrWriterClosed = errors.New("parquetwriter: writer is already closed")
+	ErrInvalidRow   = errors.New("parquetwriter: row contains invalid data")
 )

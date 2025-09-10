@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"maps"
 	"math"
+	"sort"
 
 	"github.com/DataDog/sketches-go/ddsketch"
 	"go.opentelemetry.io/collector/pdata/pcommon"
@@ -259,17 +260,155 @@ func (r *IngestProtoMetricsReader) buildDatapointRow(ctx context.Context, row Ro
 		dp := metric.ExponentialHistogram().DataPoints().At(datapointIndex)
 		return r.addExponentialHistogramDatapointFields(ctx, row, dp)
 	case pmetric.MetricTypeSummary:
-		// TODO: Implement proper summary handling with sketches and rollup fields
-		// For now, drop these data points to avoid downstream processing issues
-		rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
-			attribute.String("reader", "IngestProtoMetricsReader"),
-			attribute.String("metric_type", "summary"),
-			attribute.String("reason", "not_implemented"),
-		))
-		return true, nil // dropped, not an error
+		dp := metric.Summary().DataPoints().At(datapointIndex)
+		return r.addSummaryDatapointFields(ctx, row, dp)
 	}
 
 	return false, nil
+}
+
+// SummaryToDDSketch approximates a DDSketch from an OTel Summary data point.
+// Returns nil and no error if the summary has no quantile values.
+func summaryToDDSketch(dp pmetric.SummaryDataPoint) (*ddsketch.DDSketch, error) {
+	const maxSamples = 2048
+
+	s, err := ddsketch.NewDefaultDDSketch(0.01)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create sketch for summary: %w", err)
+	}
+
+	// Pull quantiles
+	nq := dp.QuantileValues().Len()
+	if nq == 0 {
+		return s, nil
+	}
+	type qv struct{ q, v float64 }
+	qs := make([]qv, 0, nq)
+	for i := 0; i < nq; i++ {
+		it := dp.QuantileValues().At(i)
+		q, v := it.Quantile(), it.Value()
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			continue
+		}
+		// Clamp q to [0,1]
+		if q < 0 {
+			q = 0
+		} else if q > 1 {
+			q = 1
+		}
+		qs = append(qs, qv{q, v})
+	}
+	if len(qs) == 0 {
+		return s, nil
+	}
+	sort.Slice(qs, func(i, j int) bool { return qs[i].q < qs[j].q })
+
+	// Ensure endpoints for coverage of [0,1]
+	if qs[0].q > 0 {
+		qs = append([]qv{{0, qs[0].v}}, qs...)
+	}
+	if qs[len(qs)-1].q < 1 {
+		last := qs[len(qs)-1]
+		qs = append(qs, qv{1, last.v})
+	}
+
+	// Deduplicate non-monotone or repeated quantiles (keep first)
+	dst := qs[:1]
+	for i := 1; i < len(qs); i++ {
+		if qs[i].q > dst[len(dst)-1].q {
+			dst = append(dst, qs[i])
+		}
+	}
+	qs = dst
+	if len(qs) == 1 {
+		// Single point: just add one representative
+		_ = s.Add(qs[0].v)
+		return s, nil
+	}
+
+	// Build segments
+	type seg struct{ qL, qR, vL, vR float64 }
+	segs := make([]seg, 0, len(qs)-1)
+	totalMass := 0.0
+	for i := 0; i+1 < len(qs); i++ {
+		qL, qR := qs[i].q, qs[i+1].q
+		if qR <= qL {
+			continue
+		}
+		segs = append(segs, seg{qL, qR, qs[i].v, qs[i+1].v})
+		totalMass += (qR - qL)
+	}
+	if totalMass == 0 || len(segs) == 0 {
+		// Degenerate—dump endpoints
+		for _, p := range qs {
+			_ = s.Add(p.v)
+		}
+		return s, nil
+	}
+
+	// Sampling budget: distribute proportionally by mass; gently cap by dp.Count
+	count := float64(dp.Count())
+	budget := float64(maxSamples)
+	if count > 0 && count < budget {
+		// Don’t invent more samples than the actual count (soft cap).
+		budget = count
+	}
+	if budget < float64(len(segs)) {
+		budget = float64(len(segs))
+	}
+
+	lin := func(vL, vR, t float64) float64 { return vL + t*(vR-vL) }
+	loglin := func(vL, vR, t float64) float64 {
+		// If either endpoint non-positive, fall back to linear.
+		if vL <= 0 || vR <= 0 {
+			return lin(vL, vR, t)
+		}
+		return math.Exp(math.Log(vL) + t*(math.Log(vR)-math.Log(vL)))
+	}
+
+	remaining := int(budget)
+	for i, g := range segs {
+		w := (g.qR - g.qL) / totalMass
+		n := int(math.Round(w * budget))
+		if n == 0 {
+			n = 1
+		}
+		if n > remaining {
+			n = remaining
+		}
+		remaining -= n
+
+		for k := 1; k <= n; k++ {
+			// Evenly spaced internal points per segment
+			t := (float64(k) - 0.5) / float64(n)
+			val := loglin(g.vL, g.vR, t)
+			if !math.IsNaN(val) && !math.IsInf(val, 0) {
+				_ = s.Add(val)
+			}
+		}
+		if remaining <= 0 && i < len(segs)-1 {
+			break
+		}
+	}
+
+	// Optional sanity anchors when mean is wildly off.
+	// If dp.Sum() and dp.Count() are set and the reconstructed mean differs a lot,
+	// you can nudge the sketch by adding a few values near the global mean.
+	if dp.Count() > 0 {
+		targetMean := dp.Sum() / float64(dp.Count())
+		if sCount, sSum := s.GetCount(), s.GetSum(); sCount > 0 {
+			gotMean := sSum / sCount
+			relErr := math.Abs(gotMean-targetMean) / math.Max(1e-12, targetMean)
+			if relErr > 0.25 { // tolerate 25% drift; tune to taste
+				anchor := targetMean
+				// Add a couple of anchors; this won't distort quantiles much on large n.
+				_ = s.Add(anchor)
+				_ = s.Add(anchor)
+			}
+		}
+	}
+
+	return s, nil
 }
 
 // addNumberDatapointFields adds fields from a NumberDataPoint to the row.
@@ -303,8 +442,19 @@ func (r *IngestProtoMetricsReader) addNumberDatapointFields(ctx context.Context,
 		return true, nil
 	}
 
-	// Use CardinalHQ single-value pattern for gauges/sums
-	ret[wkk.RowKeySketch] = []byte{}
+	const alpha = 0.01
+	sketch, err := ddsketch.NewDefaultDDSketch(alpha)
+	if err != nil {
+		return false, fmt.Errorf("failed to create sketch for %s: %w", metricType, err)
+	}
+	if err := sketch.Add(value); err != nil {
+		return false, fmt.Errorf("failed to add value to sketch: %w", err)
+	}
+
+	// Encode the sketch
+	sketchBytes := helpers.EncodeSketch(sketch)
+
+	ret[wkk.RowKeySketch] = sketchBytes
 	ret[wkk.RowKeyRollupAvg] = value
 	ret[wkk.RowKeyRollupMax] = value
 	ret[wkk.RowKeyRollupMin] = value
@@ -604,6 +754,95 @@ func (r *IngestProtoMetricsReader) addExponentialHistogramDatapointFields(ctx co
 	ret[wkk.RowKeyRollupP95] = quantiles[4]
 	ret[wkk.RowKeyRollupP99] = quantiles[5]
 
+	ret[wkk.RowKeySketch] = helpers.EncodeSketch(sketch)
+	return false, nil
+}
+
+// addSummaryDatapointFields adds fields from a SummaryDataPoint to the row.
+// Returns (dropped, error) where dropped indicates if the datapoint was filtered out.
+func (r *IngestProtoMetricsReader) addSummaryDatapointFields(ctx context.Context, ret Row, dp pmetric.SummaryDataPoint) (bool, error) {
+	// Add attributes
+	dp.Attributes().Range(func(name string, v pcommon.Value) bool {
+		value := v.AsString()
+		ret[wkk.NewRowKey(prefixAttribute(name, "metric"))] = value
+		return true
+	})
+
+	// Set timestamp
+	if dp.Timestamp() != 0 {
+		ret[wkk.RowKeyCTimestamp] = dp.Timestamp().AsTime().UnixMilli()
+	} else {
+		ret[wkk.RowKeyCTimestamp] = dp.StartTimestamp().AsTime().UnixMilli()
+	}
+
+	// Check if we got any data in the sketch (no quantiles)
+	if dp.Count() == 0 || dp.QuantileValues().Len() == 0 {
+		rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
+			attribute.String("reader", "IngestProtoMetricsReader"),
+			attribute.String("metric_type", "summary"),
+			attribute.String("reason", "summary_no_quantiles"),
+		))
+		return true, nil // drop the row
+	}
+
+	// Convert summary to DDSketch
+	sketch, err := summaryToDDSketch(dp)
+	if err != nil {
+		rowsDroppedCounter.Add(ctx, 1, otelmetric.WithAttributes(
+			attribute.String("reader", "IngestProtoMetricsReader"),
+			attribute.String("metric_type", "summary"),
+			attribute.String("reason", "sketch_conversion_failed"),
+		))
+		return true, nil // drop the row
+	}
+
+	// Update rollup fields from the sketch
+	count := sketch.GetCount()
+	sum := sketch.GetSum()
+
+	ret[wkk.RowKeyRollupCount] = count
+	ret[wkk.RowKeyRollupSum] = sum
+	ret[wkk.RowKeyRollupAvg] = sum / count
+
+	// Get min and max
+	minVal, err := sketch.GetMinValue()
+	if err == nil {
+		ret[wkk.RowKeyRollupMin] = minVal
+	} else {
+		ret[wkk.RowKeyRollupMin] = 0.0
+	}
+
+	maxVal, err := sketch.GetMaxValue()
+	if err == nil {
+		ret[wkk.RowKeyRollupMax] = maxVal
+	} else {
+		ret[wkk.RowKeyRollupMax] = 0.0
+	}
+
+	// Get percentiles
+	quantiles := []float64{0.25, 0.50, 0.75, 0.90, 0.95, 0.99}
+	for i, q := range quantiles {
+		val, err := sketch.GetValueAtQuantile(q)
+		if err != nil {
+			val = 0.0
+		}
+		switch i {
+		case 0:
+			ret[wkk.RowKeyRollupP25] = val
+		case 1:
+			ret[wkk.RowKeyRollupP50] = val
+		case 2:
+			ret[wkk.RowKeyRollupP75] = val
+		case 3:
+			ret[wkk.RowKeyRollupP90] = val
+		case 4:
+			ret[wkk.RowKeyRollupP95] = val
+		case 5:
+			ret[wkk.RowKeyRollupP99] = val
+		}
+	}
+
+	// Encode and store the sketch
 	ret[wkk.RowKeySketch] = helpers.EncodeSketch(sketch)
 	return false, nil
 }

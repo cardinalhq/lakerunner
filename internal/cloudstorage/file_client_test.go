@@ -21,8 +21,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/stretchr/testify/require"
+
+	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
 func TestFileClientLifecycle(t *testing.T) {

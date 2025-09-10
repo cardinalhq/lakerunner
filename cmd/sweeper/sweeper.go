@@ -39,8 +39,6 @@ var (
 	objectCleanupCounter     metric.Int64Counter
 	legacyTableSyncCounter   metric.Int64Counter
 	workQueueExpiryCounter   metric.Int64Counter
-	mcqExpiryCounter         metric.Int64Counter
-	mrqExpiryCounter         metric.Int64Counter
 	signalLockCleanupCounter metric.Int64Counter
 	legacyTableSyncDuration  metric.Float64Histogram
 	metricEstimateCounter    metric.Int64Counter
@@ -72,22 +70,6 @@ func init() {
 	)
 	if err != nil {
 		panic(fmt.Errorf("failed to create workqueue_expiry_total counter: %w", err))
-	}
-
-	mcqExpiryCounter, err = meter.Int64Counter(
-		"lakerunner.sweeper.mcq_expiry_total",
-		metric.WithDescription("Count of MCQ items expired due to stale heartbeats"),
-	)
-	if err != nil {
-		panic(fmt.Errorf("failed to create mcq_expiry_total counter: %w", err))
-	}
-
-	mrqExpiryCounter, err = meter.Int64Counter(
-		"lakerunner.sweeper.mrq_expiry_total",
-		metric.WithDescription("Count of MRQ items expired due to stale heartbeats"),
-	)
-	if err != nil {
-		panic(fmt.Errorf("failed to create mrq_expiry_total counter: %w", err))
 	}
 
 	signalLockCleanupCounter, err = meter.Int64Counter(
@@ -198,7 +180,7 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 	go func() {
 		defer wg.Done()
 		if err := periodicLoop(ctx, time.Minute, func(c context.Context) error {
-			return runWorkqueueExpiry(c, slog.Default(), mdb)
+			return runWorkqueueExpiry(c, mdb)
 		}); err != nil && !errors.Is(err, context.Canceled) {
 			errCh <- err
 		}
@@ -209,29 +191,7 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 	go func() {
 		defer wg.Done()
 		if err := periodicLoop(ctx, time.Minute, func(c context.Context) error {
-			return runInqueueExpiry(c, slog.Default(), mdb)
-		}); err != nil && !errors.Is(err, context.Canceled) {
-			errCh <- err
-		}
-	}()
-
-	// Periodic: MCQ expiry
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		if err := periodicLoop(ctx, time.Minute, func(c context.Context) error {
-			return runMCQExpiry(c, slog.Default(), mdb)
-		}); err != nil && !errors.Is(err, context.Canceled) {
-			errCh <- err
-		}
-	}()
-
-	// Periodic: MRQ expiry
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		if err := periodicLoop(ctx, time.Minute, func(c context.Context) error {
-			return runMRQExpiry(c, slog.Default(), mdb)
+			return runInqueueExpiry(c, mdb)
 		}); err != nil && !errors.Is(err, context.Canceled) {
 			errCh <- err
 		}
@@ -241,7 +201,7 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := workqueueGCLoop(ctx, slog.Default(), mdb); err != nil && !errors.Is(err, context.Canceled) {
+		if err := workqueueGCLoop(ctx, mdb); err != nil && !errors.Is(err, context.Canceled) {
 			errCh <- err
 		}
 	}()
@@ -253,7 +213,7 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 			defer wg.Done()
 			slog.Info("Starting legacy table sync goroutine", slog.Duration("period", legacyTablesSyncPeriod))
 			if err := periodicLoop(ctx, legacyTablesSyncPeriod, func(c context.Context) error {
-				return runLegacyTablesSync(c, slog.Default(), cdb, cdbPool)
+				return runLegacyTablesSync(c, cdb, cdbPool)
 			}); err != nil && !errors.Is(err, context.Canceled) {
 				errCh <- err
 			}
@@ -265,7 +225,7 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 	go func() {
 		defer wg.Done()
 		if err := periodicLoop(ctx, metricEstimateUpdatePeriod, func(c context.Context) error {
-			return runMetricEstimateUpdate(c, slog.Default(), mdb)
+			return runMetricEstimateUpdate(c, mdb)
 		}); err != nil && !errors.Is(err, context.Canceled) {
 			errCh <- err
 		}

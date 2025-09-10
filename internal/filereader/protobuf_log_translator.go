@@ -45,14 +45,20 @@ func (t *ProtoBinLogTranslator) TranslateRow(row *Row) error {
 	}
 
 	// Handle timestamp: use timestamp, fallback to observed_timestamp
+	// NOTE: _cardinalhq.timestamp should already be validated by ingest_proto_logs.go
+	// This is a secondary validation for other readers that may not have done it
 	if _, ok := (*row)[wkk.RowKeyCTimestamp]; !ok {
 		var timestamp int64
 		if ts, exists := (*row)[wkk.NewRowKey("timestamp")]; exists {
 			timestamp = ensureInt64(ts)
 		}
-		if timestamp == 0 || timestamp == -1 {
+		// Reject Unix epoch (0) and invalid timestamps (-1)
+		if timestamp <= 0 {
 			if obsTs, exists := (*row)[wkk.NewRowKey("observed_timestamp")]; exists {
-				timestamp = ensureInt64(obsTs)
+				obsTimestamp := ensureInt64(obsTs)
+				if obsTimestamp > 0 {
+					timestamp = obsTimestamp
+				}
 			}
 		}
 		if timestamp > 0 {
@@ -62,6 +68,7 @@ func (t *ProtoBinLogTranslator) TranslateRow(row *Row) error {
 			}
 			(*row)[wkk.RowKeyCTimestamp] = timestamp
 		} else {
+			// Use current time as last resort to avoid 1970-01-01 dates
 			(*row)[wkk.RowKeyCTimestamp] = time.Now().UnixMilli()
 		}
 	}

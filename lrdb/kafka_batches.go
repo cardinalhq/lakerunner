@@ -16,6 +16,8 @@ package lrdb
 
 import (
 	"context"
+
+	"github.com/google/uuid"
 )
 
 // KafkaOffsetUpdate contains the information needed to update the Kafka offset journal
@@ -24,6 +26,16 @@ type KafkaOffsetUpdate struct {
 	Topic         string
 	Partition     int32
 	Offset        int64
+}
+
+// KafkaOffsetUpdateWithOrg contains enhanced Kafka offset information including organization and instance tracking
+type KafkaOffsetUpdateWithOrg struct {
+	ConsumerGroup  string
+	Topic          string
+	Partition      int32
+	Offset         int64
+	OrganizationID uuid.UUID
+	InstanceNum    int16
 }
 
 // LogSegmentBatch collects log segments to be inserted with Kafka offset updates

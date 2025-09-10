@@ -29,6 +29,8 @@ type Querier interface {
 	CompactTraceSegments(ctx context.Context, arg CompactTraceSegmentsParams) error
 	// Clean up old offset entries (older than specified timestamp)
 	DeleteOldKafkaOffsets(ctx context.Context, cutoffTime time.Time) error
+	// Clean up old segment_journal entries for maintenance
+	DeleteOldSegmentJournals(ctx context.Context, cutoffTime time.Time) error
 	// Retrieves all existing metric pack estimates for EWMA calculations
 	GetAllMetricPackEstimates(ctx context.Context) ([]MetricPackEstimate, error)
 	GetExemplarLogsByFingerprint(ctx context.Context, arg GetExemplarLogsByFingerprintParams) (LrdbExemplarLog, error)
@@ -40,27 +42,44 @@ type Querier interface {
 	GetExemplarTracesByService(ctx context.Context, arg GetExemplarTracesByServiceParams) ([]LrdbExemplarTrace, error)
 	GetExemplarTracesCreatedAfter(ctx context.Context, ts time.Time) ([]LrdbExemplarTrace, error)
 	// Get all offset entries for a specific consumer group (useful for monitoring)
-	GetKafkaOffsetsByConsumerGroup(ctx context.Context, consumerGroup string) ([]KafkaOffsetJournal, error)
+	GetKafkaOffsetsByConsumerGroup(ctx context.Context, consumerGroup string) ([]GetKafkaOffsetsByConsumerGroupRow, error)
+	// Get the most recent segment_journal entry
+	GetLatestSegmentJournal(ctx context.Context) (SegmentJournal, error)
 	GetLogSegmentsForCompaction(ctx context.Context, arg GetLogSegmentsForCompactionParams) ([]GetLogSegmentsForCompactionRow, error)
 	// Gets metric pack estimate for specific org with fallback to default (all zeros)
 	// Returns up to 2 rows: one for the specific org and one for the default
 	GetMetricPackEstimateForOrg(ctx context.Context, arg GetMetricPackEstimateForOrgParams) ([]MetricPackEstimate, error)
+	// Get a single segment by its primary key components
+	GetMetricSeg(ctx context.Context, arg GetMetricSegParams) (MetricSeg, error)
+	// Fetch a single metric segment by its complete primary key
+	GetMetricSegByPrimaryKey(ctx context.Context, arg GetMetricSegByPrimaryKeyParams) (MetricSeg, error)
 	GetMetricSegsByIds(ctx context.Context, arg GetMetricSegsByIdsParams) ([]MetricSeg, error)
 	GetMetricType(ctx context.Context, arg GetMetricTypeParams) (string, error)
+	// Get a specific segment_journal entry by ID
+	GetSegmentJournalByID(ctx context.Context, id int64) (SegmentJournal, error)
+	// Get segment_journal entries for debugging, filtered by organization
+	GetSegmentJournalByOrg(ctx context.Context, arg GetSegmentJournalByOrgParams) ([]GetSegmentJournalByOrgRow, error)
 	GetSpanInfoByFingerprint(ctx context.Context, arg GetSpanInfoByFingerprintParams) (GetSpanInfoByFingerprintRow, error)
 	GetTraceSegmentsForCompaction(ctx context.Context, arg GetTraceSegmentsForCompactionParams) ([]GetTraceSegmentsForCompactionRow, error)
 	InsertCompactedMetricSeg(ctx context.Context, arg []InsertCompactedMetricSegParams) *InsertCompactedMetricSegBatchResults
 	InsertLogSegmentDirect(ctx context.Context, arg InsertLogSegmentParams) error
 	InsertMetricSegmentDirect(ctx context.Context, arg InsertMetricSegmentParams) error
+	// Insert a debugging journal entry for segment operations
+	InsertSegmentJournal(ctx context.Context, arg InsertSegmentJournalParams) error
 	InsertTraceSegmentDirect(ctx context.Context, arg InsertTraceSegmentDirectParams) error
 	// Insert or update multiple Kafka journal entries in a single batch operation
 	// Only updates if the new offset is greater than the existing one
 	KafkaJournalBatchUpsert(ctx context.Context, arg []KafkaJournalBatchUpsertParams) *KafkaJournalBatchUpsertBatchResults
 	// Get the last processed offset for a specific consumer group, topic, and partition
 	KafkaJournalGetLastProcessed(ctx context.Context, arg KafkaJournalGetLastProcessedParams) (int64, error)
+	// Get the last processed offset for a specific consumer group, topic, partition, organization, and instance
+	KafkaJournalGetLastProcessedWithOrgInstance(ctx context.Context, arg KafkaJournalGetLastProcessedWithOrgInstanceParams) (int64, error)
 	// Insert or update the last processed offset for a consumer group, topic, and partition
 	// Only updates if the new offset is greater than the existing one
 	KafkaJournalUpsert(ctx context.Context, arg KafkaJournalUpsertParams) error
+	// Insert or update the last processed offset for a consumer group, topic, partition, organization, and instance
+	// Only updates if the new offset is greater than the existing one
+	KafkaJournalUpsertWithOrgInstance(ctx context.Context, arg KafkaJournalUpsertWithOrgInstanceParams) error
 	ListLogQLTags(ctx context.Context, organizationID uuid.UUID) ([]interface{}, error)
 	ListLogSegmentsForQuery(ctx context.Context, arg ListLogSegmentsForQueryParams) ([]ListLogSegmentsForQueryRow, error)
 	ListMetricSegmentsForQuery(ctx context.Context, arg ListMetricSegmentsForQueryParams) ([]ListMetricSegmentsForQueryRow, error)
@@ -70,40 +89,16 @@ type Querier interface {
 	LogSegEstimator(ctx context.Context, arg LogSegEstimatorParams) ([]LogSegEstimatorRow, error)
 	MarkMetricSegsCompactedByKeys(ctx context.Context, arg MarkMetricSegsCompactedByKeysParams) error
 	MarkMetricSegsRolledupByKeys(ctx context.Context, arg MarkMetricSegsRolledupByKeysParams) error
-	McqClaimBundle(ctx context.Context, arg McqClaimBundleParams) error
-	McqCleanupExpired(ctx context.Context, cutoffTime *time.Time) ([]MetricCompactionQueue, error)
-	McqCompleteDelete(ctx context.Context, arg McqCompleteDeleteParams) error
-	McqDeferItems(ctx context.Context, arg McqDeferItemsParams) error
-	McqFetchCandidates(ctx context.Context, arg McqFetchCandidatesParams) ([]McqFetchCandidatesRow, error)
-	McqHeartbeat(ctx context.Context, arg McqHeartbeatParams) (int64, error)
-	McqPickHead(ctx context.Context) (McqPickHeadRow, error)
-	McqQueueWork(ctx context.Context, arg McqQueueWorkParams) error
-	McqReclaimTimeouts(ctx context.Context, arg McqReclaimTimeoutsParams) (int64, error)
-	McqRelease(ctx context.Context, arg McqReleaseParams) error
-	// Get queue depth for metric compaction scaling
-	MetricCompactionQueueScalingDepth(ctx context.Context) (interface{}, error)
-	// Get queue depth for metric rollup scaling
-	MetricRollupQueueScalingDepth(ctx context.Context) (interface{}, error)
 	// Returns an estimate of the number of metric segments, accounting for per-file overhead.
 	// Uses frequency_ms to provide more accurate estimates based on collection frequency.
 	MetricSegEstimator(ctx context.Context, arg MetricSegEstimatorParams) ([]MetricSegEstimatorRow, error)
-	MrqClaimBatch(ctx context.Context, arg MrqClaimBatchParams) ([]MrqClaimBatchRow, error)
-	MrqClaimBundle(ctx context.Context, arg MrqClaimBundleParams) error
-	MrqClaimSingleRow(ctx context.Context, arg MrqClaimSingleRowParams) (MrqClaimSingleRowRow, error)
-	MrqCompleteDelete(ctx context.Context, arg MrqCompleteDeleteParams) error
-	MrqDeferItems(ctx context.Context, arg MrqDeferItemsParams) error
-	MrqFetchCandidates(ctx context.Context, arg MrqFetchCandidatesParams) ([]MrqFetchCandidatesRow, error)
-	MrqHeartbeat(ctx context.Context, arg MrqHeartbeatParams) (int64, error)
-	MrqPickHead(ctx context.Context) (MrqPickHeadRow, error)
-	MrqQueueWork(ctx context.Context, arg MrqQueueWorkParams) error
-	MrqReclaimTimeouts(ctx context.Context, arg MrqReclaimTimeoutsParams) (int64, error)
-	MrqRelease(ctx context.Context, arg MrqReleaseParams) error
 	ObjectCleanupAdd(ctx context.Context, arg ObjectCleanupAddParams) error
 	ObjectCleanupBucketSummary(ctx context.Context) ([]ObjectCleanupBucketSummaryRow, error)
 	ObjectCleanupComplete(ctx context.Context, id uuid.UUID) error
 	ObjectCleanupFail(ctx context.Context, id uuid.UUID) error
 	ObjectCleanupGet(ctx context.Context, maxrows int32) ([]ObjectCleanupGetRow, error)
 	SetMetricSegCompacted(ctx context.Context, arg SetMetricSegCompactedParams) error
+	SetSingleMetricSegCompacted(ctx context.Context, arg SetSingleMetricSegCompactedParams) error
 	SignalLockCleanup(ctx context.Context) (int32, error)
 	// Returns an estimate of the number of trace segments, accounting for per-file overhead.
 	TraceSegEstimator(ctx context.Context, arg TraceSegEstimatorParams) ([]TraceSegEstimatorRow, error)

@@ -42,9 +42,6 @@ type Config struct {
 	ConsumerMaxWait     time.Duration `mapstructure:"consumer_max_wait"`
 	ConsumerMinBytes    int           `mapstructure:"consumer_min_bytes"`
 	ConsumerMaxBytes    int           `mapstructure:"consumer_max_bytes"`
-
-	// Feature flag
-	Enabled bool `mapstructure:"enabled"`
 }
 
 // DefaultConfig returns a default configuration
@@ -61,7 +58,7 @@ func DefaultConfig() *Config {
 		TLSSkipVerify: false,
 
 		ProducerBatchSize:    100,
-		ProducerBatchTimeout: 1 * time.Second,
+		ProducerBatchTimeout: 10 * time.Millisecond,
 		ProducerCompression:  "snappy",
 
 		ConsumerGroupPrefix: "lakerunner",
@@ -69,8 +66,6 @@ func DefaultConfig() *Config {
 		ConsumerMaxWait:     500 * time.Millisecond,
 		ConsumerMinBytes:    10 * 1024,        // 10KB
 		ConsumerMaxBytes:    10 * 1024 * 1024, // 10MB
-
-		Enabled: false,
 	}
 }
 

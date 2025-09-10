@@ -19,7 +19,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
+	"os"
+	"path/filepath"
+	"sort"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/cardinalhq/lakerunner/internal/pipeline"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
@@ -39,8 +45,8 @@ func TestNewMergesortReader(t *testing.T) {
 	}
 	defer or.Close()
 
-	if len(or.states) != 2 {
-		t.Errorf("Expected 2 states, got %d", len(or.states))
+	if len(or.readers) != 2 {
+		t.Errorf("Expected 2 readers, got %d", len(or.readers))
 	}
 
 	// Test with no readers
@@ -397,4 +403,610 @@ func TestMergesortReader_RowReuse(t *testing.T) {
 	}
 	// Note: With the new interface, row reuse patterns may be different
 	// This test mainly verifies that the tracking reader works with the new interface
+}
+
+// TestMergesortReader_WithActualParquetReader tests NewMergesortReader with a single actual CookedMetricTranslatingReader
+// This is critical because all existing tests use mock readers, but the production issue is with real parquet readers
+func TestMergesortReader_WithActualParquetReader(t *testing.T) {
+	ctx := context.Background()
+
+	// Test with one of the small files that shows 0 records in production
+	filename := "tbl_301228791710090615.parquet"
+	expectedRecords := 480
+
+	filePath := filepath.Join("..", "..", "testdata", "metrics", "seglog-990", "source", filename)
+
+	file, err := os.Open(filePath)
+	require.NoError(t, err, "Should open parquet file")
+	defer file.Close()
+
+	stat, err := file.Stat()
+	require.NoError(t, err, "Should stat parquet file")
+
+	rawReader, err := NewParquetRawReader(file, stat.Size(), 1000)
+	require.NoError(t, err, "Should create NewParquetRawReader")
+	defer rawReader.Close()
+
+	cookedReader := NewCookedMetricTranslatingReader(rawReader)
+	defer cookedReader.Close()
+
+	t.Logf("Created cooked reader for %s expecting %d records", filename, expectedRecords)
+
+	// Create MergesortReader with single actual parquet reader
+	// Use the same key provider that the production code uses for metrics
+	keyProvider := GetCurrentMetricSortKeyProvider()
+	mergesortReader, err := NewMergesortReader(ctx, []Reader{cookedReader}, keyProvider, 1000)
+	require.NoError(t, err, "Should create NewMergesortReader")
+	defer mergesortReader.Close()
+
+	// Read all records from the mergesort reader
+	totalRecords := 0
+	batchNum := 0
+	for {
+		batch, err := mergesortReader.Next(ctx)
+		batchNum++
+
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				t.Logf("Batch %d - Got EOF after reading %d total records", batchNum, totalRecords)
+				break
+			}
+			require.NoError(t, err, "Next should not fail")
+		}
+
+		if batch == nil {
+			t.Logf("Batch %d - Got nil batch after reading %d total records", batchNum, totalRecords)
+			break
+		}
+
+		batchSize := batch.Len()
+		totalRecords += batchSize
+		t.Logf("Batch %d - Got %d records (total: %d)", batchNum, batchSize, totalRecords)
+
+		if batchSize == 0 {
+			t.Logf("Batch %d - Empty batch, stopping", batchNum)
+			break
+		}
+	}
+
+	t.Logf("MergesortReader returned %d records (expected %d)", totalRecords, expectedRecords)
+
+	// This is the critical test - NewMergesortReader should not lose any data even with a single reader
+	require.Equal(t, expectedRecords, totalRecords,
+		"NewMergesortReader should not lose data when wrapping a single actual parquet reader")
+}
+
+// TestMergesortReader_WithMultipleActualParquetReaders tests NewMergesortReader with multiple actual readers
+// This replicates the production scenario where multiple files are merged together
+func TestMergesortReader_WithMultipleActualParquetReaders(t *testing.T) {
+	testFiles := []struct {
+		filename        string
+		expectedRecords int
+	}{
+		{"tbl_301228791710090615.parquet", 480},  // Small file 1
+		{"tbl_301228792783832948.parquet", 456},  // Small file 2
+		{"tbl_301228792733501300.parquet", 1414}, // Larger file for comparison
+	}
+
+	ctx := context.Background()
+
+	// Create readers for multiple files
+	var readers []Reader
+	var expectedTotalRecords int
+
+	for _, testFile := range testFiles {
+		filePath := filepath.Join("..", "..", "testdata", "metrics", "seglog-990", "source", testFile.filename)
+
+		file, err := os.Open(filePath)
+		require.NoError(t, err, "Should open parquet file")
+		defer file.Close()
+
+		stat, err := file.Stat()
+		require.NoError(t, err, "Should stat parquet file")
+
+		rawReader, err := NewParquetRawReader(file, stat.Size(), 1000)
+		require.NoError(t, err, "Should create NewParquetRawReader")
+		defer rawReader.Close()
+
+		cookedReader := NewCookedMetricTranslatingReader(rawReader)
+		defer cookedReader.Close()
+
+		readers = append(readers, cookedReader)
+		expectedTotalRecords += testFile.expectedRecords
+
+		t.Logf("Created reader for %s expecting %d records", testFile.filename, testFile.expectedRecords)
+	}
+
+	t.Logf("Total expected records from %d files: %d", len(testFiles), expectedTotalRecords)
+
+	// Create MergesortReader with multiple actual parquet readers
+	keyProvider := GetCurrentMetricSortKeyProvider()
+	mergesortReader, err := NewMergesortReader(ctx, readers, keyProvider, 1000)
+	require.NoError(t, err, "Should create NewMergesortReader")
+	defer mergesortReader.Close()
+
+	// Read all records from the mergesort reader
+	totalRecords := 0
+	batchNum := 0
+	for {
+		batch, err := mergesortReader.Next(ctx)
+		batchNum++
+
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				t.Logf("Batch %d - Got EOF after reading %d total records", batchNum, totalRecords)
+				break
+			}
+			require.NoError(t, err, "Next should not fail")
+		}
+
+		if batch == nil {
+			t.Logf("Batch %d - Got nil batch after reading %d total records", batchNum, totalRecords)
+			break
+		}
+
+		batchSize := batch.Len()
+		totalRecords += batchSize
+		t.Logf("Batch %d - Got %d records (total: %d)", batchNum, batchSize, totalRecords)
+
+		if batchSize == 0 {
+			t.Logf("Batch %d - Empty batch, stopping", batchNum)
+			break
+		}
+	}
+
+	t.Logf("MergesortReader returned %d records (expected %d)", totalRecords, expectedTotalRecords)
+
+	// This is the critical test - NewMergesortReader should not lose any data when merging multiple files
+	require.Equal(t, expectedTotalRecords, totalRecords,
+		"NewMergesortReader should not lose data when merging multiple actual parquet readers")
+}
+
+// TestMergesortReader_WithAllSeglog990Files tests NewMergesortReader with all 17 files from seglog-990
+// This exactly replicates the production scenario to see if we get the same data loss
+func TestMergesortReader_WithAllSeglog990Files(t *testing.T) {
+	ctx := context.Background()
+
+	// Get all parquet files from seglog-990
+	testdataDir := filepath.Join("..", "..", "testdata", "metrics", "seglog-990", "source")
+	files, err := filepath.Glob(filepath.Join(testdataDir, "*.parquet"))
+	require.NoError(t, err, "Should find parquet files")
+	require.Greater(t, len(files), 0, "Should have test files")
+
+	t.Logf("Found %d parquet files to test", len(files))
+
+	// First, count expected records by reading each file with debug command
+	expectedTotalRecords := 0
+	fileExpectedCounts := make(map[string]int)
+
+	for _, filePath := range files {
+		filename := filepath.Base(filePath)
+		// We know the counts for our test files from previous investigation
+		var expectedCount int
+		switch filename {
+		case "tbl_301228791710090615.parquet":
+			expectedCount = 480
+		case "tbl_301228792783832948.parquet":
+			expectedCount = 456
+		case "tbl_301228792733501300.parquet":
+			expectedCount = 1414
+		case "tbl_301228792616060788.parquet":
+			expectedCount = 1602
+		case "tbl_301228813201703434.parquet":
+			expectedCount = 1604
+		case "tbl_301228729835718516.parquet":
+			expectedCount = 1623
+		case "tbl_301228762098305891.parquet":
+			expectedCount = 1626
+		case "tbl_301228709837276535.parquet":
+			expectedCount = 2026
+		case "tbl_301228791542318455.parquet":
+			expectedCount = 2039
+		case "tbl_301228787683560291.parquet":
+			expectedCount = 2225
+		case "tbl_301228696314842838.parquet":
+			expectedCount = 2403
+		case "tbl_301228693378829155.parquet":
+			expectedCount = 2841
+		case "tbl_301228720323038934.parquet":
+			expectedCount = 2954
+		case "tbl_301228765688628523.parquet":
+			expectedCount = 3383
+		case "tbl_301228693227834211.parquet":
+			expectedCount = 3477
+		case "tbl_301228729382732298.parquet":
+			expectedCount = 5273
+		case "tbl_301228771644540279.parquet":
+			expectedCount = 6390
+		default:
+			t.Logf("Unknown file %s, skipping", filename)
+			continue
+		}
+		fileExpectedCounts[filename] = expectedCount
+		expectedTotalRecords += expectedCount
+		t.Logf("File %s: expecting %d records", filename, expectedCount)
+	}
+
+	t.Logf("Total expected records from all %d files: %d", len(fileExpectedCounts), expectedTotalRecords)
+
+	// Create readers for all files
+	var readers []Reader
+	for _, filePath := range files {
+		filename := filepath.Base(filePath)
+		if _, exists := fileExpectedCounts[filename]; !exists {
+			continue // Skip unknown files
+		}
+
+		file, err := os.Open(filePath)
+		require.NoError(t, err, "Should open parquet file %s", filename)
+		defer file.Close()
+
+		stat, err := file.Stat()
+		require.NoError(t, err, "Should stat parquet file %s", filename)
+
+		rawReader, err := NewParquetRawReader(file, stat.Size(), 1000)
+		require.NoError(t, err, "Should create NewParquetRawReader for %s", filename)
+		defer rawReader.Close()
+
+		cookedReader := NewCookedMetricTranslatingReader(rawReader)
+		defer cookedReader.Close()
+
+		readers = append(readers, cookedReader)
+	}
+
+	t.Logf("Created %d readers for mergesort", len(readers))
+
+	// Create MergesortReader with all actual parquet readers - just like production
+	keyProvider := GetCurrentMetricSortKeyProvider()
+	mergesortReader, err := NewMergesortReader(ctx, readers, keyProvider, 1000)
+	require.NoError(t, err, "Should create NewMergesortReader")
+	defer mergesortReader.Close()
+
+	// Read all records from the mergesort reader
+	totalRecords := 0
+	batchNum := 0
+	for {
+		batch, err := mergesortReader.Next(ctx)
+		batchNum++
+
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				t.Logf("Batch %d - Got EOF after reading %d total records", batchNum, totalRecords)
+				break
+			}
+			require.NoError(t, err, "Next should not fail")
+		}
+
+		if batch == nil {
+			t.Logf("Batch %d - Got nil batch after reading %d total records", batchNum, totalRecords)
+			break
+		}
+
+		batchSize := batch.Len()
+		totalRecords += batchSize
+		t.Logf("Batch %d - Got %d records (total: %d)", batchNum, batchSize, totalRecords)
+
+		if batchSize == 0 {
+			t.Logf("Batch %d - Empty batch, stopping", batchNum)
+			break
+		}
+	}
+
+	t.Logf("MergesortReader returned %d records (expected %d)", totalRecords, expectedTotalRecords)
+
+	// Calculate the data loss percentage
+	if expectedTotalRecords > 0 {
+		lossPercentage := float64(expectedTotalRecords-totalRecords) / float64(expectedTotalRecords) * 100
+		t.Logf("Data loss: %.1f%% (%d lost out of %d expected)", lossPercentage, expectedTotalRecords-totalRecords, expectedTotalRecords)
+
+		// If we see the same ~38% data loss as production, then NewMergesortReader IS the culprit
+		// If we get all records, then the issue is elsewhere in CreateReaderStack
+		if lossPercentage > 30 {
+			t.Logf("*** FOUND THE BUG! *** MergesortReader is losing data just like production!")
+		} else if lossPercentage < 5 {
+			t.Logf("*** MergesortReader works fine *** - the bug is elsewhere in CreateReaderStack")
+		}
+	}
+
+	// For now, let's see what we get rather than failing the test
+	t.Logf("Final result: NewMergesortReader with all 17 files returned %d out of %d expected records", totalRecords, expectedTotalRecords)
+}
+
+// TestMergesortReader_MetricSortKeyOrdering tests MergesortReader with actual metric sort keys
+// using randomized but reproducible data to ensure proper [name, tid, timestamp] ordering
+func TestMergesortReader_MetricSortKeyOrdering(t *testing.T) {
+	// Use fixed seed for reproducible randomness
+	rng := rand.New(rand.NewSource(42))
+
+	// Define fixed metric names (< 10 as requested)
+	metricNames := []string{
+		"cpu.usage",
+		"memory.usage",
+		"disk.io",
+		"network.bytes",
+		"http.requests",
+		"db.connections",
+		"cache.hits",
+	}
+
+	// Generate test data for multiple readers with interleaved values
+	var allTestData []Row
+	readerCount := 3
+	rowsPerReader := 20
+
+	// Create data for each reader
+	readerData := make([][]Row, readerCount)
+	for readerIdx := range readerCount {
+		for rowIdx := range rowsPerReader {
+			// Pick random metric name
+			metricName := metricNames[rng.Intn(len(metricNames))]
+
+			// Generate random TID (can be positive or negative)
+			tid := rng.Int63()
+			if rng.Float32() < 0.5 {
+				tid = -tid // Make some TIDs negative to test signed ordering
+			}
+
+			// Generate random timestamp in reasonable range
+			timestamp := int64(1700000000000) + rng.Int63n(86400000) // Random within 24 hours
+
+			row := Row{
+				wkk.RowKeyCName:            metricName,
+				wkk.RowKeyCTID:             tid,
+				wkk.RowKeyCTimestamp:       timestamp,
+				wkk.NewRowKey("reader_id"): fmt.Sprintf("reader_%d", readerIdx),
+				wkk.NewRowKey("row_id"):    fmt.Sprintf("row_%d", rowIdx),
+				wkk.NewRowKey("value"):     rng.Float64() * 100,
+			}
+
+			readerData[readerIdx] = append(readerData[readerIdx], row)
+			allTestData = append(allTestData, row)
+		}
+	}
+
+	// Sort all test data using the same logic as MetricSortKey.Compare()
+	// This is our expected output order
+	sort.Slice(allTestData, func(i, j int) bool {
+		row1, row2 := allTestData[i], allTestData[j]
+
+		// Compare names first
+		name1, _ := row1[wkk.RowKeyCName].(string)
+		name2, _ := row2[wkk.RowKeyCName].(string)
+		if name1 != name2 {
+			return name1 < name2
+		}
+
+		// Compare TIDs second (signed int64 comparison)
+		tid1, _ := row1[wkk.RowKeyCTID].(int64)
+		tid2, _ := row2[wkk.RowKeyCTID].(int64)
+		if tid1 != tid2 {
+			return tid1 < tid2
+		}
+
+		// Compare timestamps third
+		ts1, _ := row1[wkk.RowKeyCTimestamp].(int64)
+		ts2, _ := row2[wkk.RowKeyCTimestamp].(int64)
+		return ts1 < ts2
+	})
+
+	t.Logf("Generated %d total rows across %d readers", len(allTestData), readerCount)
+	t.Logf("Sample expected order (first 5):")
+	for i := 0; i < 5 && i < len(allTestData); i++ {
+		row := allTestData[i]
+		t.Logf("  [%s, %d, %d]",
+			row[wkk.RowKeyCName], row[wkk.RowKeyCTID], row[wkk.RowKeyCTimestamp])
+	}
+
+	// Sort each reader's data individually (MergesortReader expects sorted input from each reader)
+	for i := range readerCount {
+		sort.Slice(readerData[i], func(a, b int) bool {
+			row1, row2 := readerData[i][a], readerData[i][b]
+
+			// Compare names first
+			name1, _ := row1[wkk.RowKeyCName].(string)
+			name2, _ := row2[wkk.RowKeyCName].(string)
+			if name1 != name2 {
+				return name1 < name2
+			}
+
+			// Compare TIDs second
+			tid1, _ := row1[wkk.RowKeyCTID].(int64)
+			tid2, _ := row2[wkk.RowKeyCTID].(int64)
+			if tid1 != tid2 {
+				return tid1 < tid2
+			}
+
+			// Compare timestamps third
+			ts1, _ := row1[wkk.RowKeyCTimestamp].(int64)
+			ts2, _ := row2[wkk.RowKeyCTimestamp].(int64)
+			return ts1 < ts2
+		})
+	}
+
+	// Create mock readers with the sorted data
+	readers := make([]Reader, readerCount)
+	for i := range readerCount {
+		readers[i] = newMockReader(fmt.Sprintf("reader_%d", i), readerData[i])
+	}
+
+	// Create MergesortReader with production metric sort key provider
+	keyProvider := GetCurrentMetricSortKeyProvider()
+	mergesortReader, err := NewMergesortReader(context.Background(), readers, keyProvider, 1000)
+	if err != nil {
+		t.Fatalf("NewMergesortReader() error = %v", err)
+	}
+	defer mergesortReader.Close()
+
+	// Read all rows from mergesort reader
+	actualRows, err := readAllRows(mergesortReader)
+	if err != nil {
+		t.Fatalf("readAllRows() error = %v", err)
+	}
+
+	if len(actualRows) != len(allTestData) {
+		t.Fatalf("Expected %d rows, got %d", len(allTestData), len(actualRows))
+	}
+
+	// Verify that the output matches our expected sorted order
+	t.Logf("Verifying sort order of %d rows...", len(actualRows))
+	for i, expectedRow := range allTestData {
+		actualRow := actualRows[i]
+
+		// Check name
+		expectedName, _ := expectedRow[wkk.RowKeyCName].(string)
+		actualName, _ := actualRow[wkk.RowKeyCName].(string)
+		if actualName != expectedName {
+			t.Errorf("Row %d name mismatch: expected %s, got %s", i, expectedName, actualName)
+		}
+
+		// Check TID
+		expectedTID, _ := expectedRow[wkk.RowKeyCTID].(int64)
+		actualTID, _ := actualRow[wkk.RowKeyCTID].(int64)
+		if actualTID != expectedTID {
+			t.Errorf("Row %d TID mismatch: expected %d, got %d", i, expectedTID, actualTID)
+		}
+
+		// Check timestamp
+		expectedTS, _ := expectedRow[wkk.RowKeyCTimestamp].(int64)
+		actualTS, _ := actualRow[wkk.RowKeyCTimestamp].(int64)
+		if actualTS != expectedTS {
+			t.Errorf("Row %d timestamp mismatch: expected %d, got %d", i, expectedTS, actualTS)
+		}
+
+		// Verify ordering is maintained (check against previous row)
+		if i > 0 {
+			prevRow := actualRows[i-1]
+			prevName, _ := prevRow[wkk.RowKeyCName].(string)
+			prevTID, _ := prevRow[wkk.RowKeyCTID].(int64)
+			prevTS, _ := prevRow[wkk.RowKeyCTimestamp].(int64)
+
+			// Check sort order: [name, tid, timestamp]
+			if actualName < prevName {
+				t.Errorf("Row %d sort violation: name %s < previous name %s", i, actualName, prevName)
+			} else if actualName == prevName {
+				if actualTID < prevTID {
+					t.Errorf("Row %d sort violation: TID %d < previous TID %d (same name %s)", i, actualTID, prevTID, actualName)
+				} else if actualTID == prevTID {
+					if actualTS < prevTS {
+						t.Errorf("Row %d sort violation: timestamp %d < previous timestamp %d (same name %s, TID %d)", i, actualTS, prevTS, actualName, actualTID)
+					}
+				}
+			}
+		}
+	}
+
+	// Only log success if we got here without failures
+	if !t.Failed() {
+		t.Logf("✓ All %d rows are in correct [name, TID, timestamp] sort order", len(actualRows))
+	} else {
+		t.Logf("✗ FOUND BUG: MergesortReader is not producing correct sort order!")
+		t.Logf("Expected first 5 rows in order:")
+		for i := 0; i < 5 && i < len(allTestData); i++ {
+			row := allTestData[i]
+			t.Logf("  %d: [%s, %d, %d]", i,
+				row[wkk.RowKeyCName], row[wkk.RowKeyCTID], row[wkk.RowKeyCTimestamp])
+		}
+		t.Logf("Actual first 5 rows returned:")
+		for i := 0; i < 5 && i < len(actualRows); i++ {
+			row := actualRows[i]
+			t.Logf("  %d: [%s, %d, %d]", i,
+				row[wkk.RowKeyCName], row[wkk.RowKeyCTID], row[wkk.RowKeyCTimestamp])
+		}
+		return // Don't continue with reader distribution checks if sort is broken
+	}
+
+	// Additional verification: check that we have data from all readers
+	readerCounts := make(map[string]int)
+	for _, row := range actualRows {
+		readerID, _ := row[wkk.NewRowKey("reader_id")].(string)
+		readerCounts[readerID]++
+	}
+
+	t.Logf("Data distribution across readers:")
+	for readerID, count := range readerCounts {
+		t.Logf("  %s: %d rows", readerID, count)
+	}
+
+	// Verify we got data from all readers
+	for i := 0; i < readerCount; i++ {
+		expectedReaderID := fmt.Sprintf("reader_%d", i)
+		if count, exists := readerCounts[expectedReaderID]; !exists || count == 0 {
+			t.Errorf("Missing data from %s", expectedReaderID)
+		}
+	}
+}
+
+// TestMergesortReader_Advance tests the advance function in isolation
+// to understand how it handles state transitions and key generation
+// SKIPPED: advance is now internal to activeReader
+
+// TestMergesortReader_KeyPoolingBug demonstrates the exact pooling bug in Next()
+func TestMergesortReader_KeyPoolingBug(t *testing.T) {
+	ctx := context.Background()
+
+	// Create two readers with data that should interleave
+	reader1Data := []Row{
+		{wkk.RowKeyCName: "metric_a", wkk.RowKeyCTID: int64(100), wkk.RowKeyCTimestamp: int64(1000), wkk.NewRowKey("source"): "reader1_row1"},
+		{wkk.RowKeyCName: "metric_a", wkk.RowKeyCTID: int64(300), wkk.RowKeyCTimestamp: int64(1000), wkk.NewRowKey("source"): "reader1_row2"},
+	}
+
+	reader2Data := []Row{
+		{wkk.RowKeyCName: "metric_a", wkk.RowKeyCTID: int64(200), wkk.RowKeyCTimestamp: int64(1000), wkk.NewRowKey("source"): "reader2_row1"},
+		{wkk.RowKeyCName: "metric_a", wkk.RowKeyCTID: int64(400), wkk.RowKeyCTimestamp: int64(1000), wkk.NewRowKey("source"): "reader2_row2"},
+	}
+
+	reader1 := newMockReader("reader1", reader1Data)
+	reader2 := newMockReader("reader2", reader2Data)
+
+	keyProvider := GetCurrentMetricSortKeyProvider()
+	mergesortReader, err := NewMergesortReader(ctx, []Reader{reader1, reader2}, keyProvider, 1000)
+	if err != nil {
+		t.Fatalf("NewMergesortReader() error = %v", err)
+	}
+	defer mergesortReader.Close()
+
+	// Expected order based on TID: 100, 200, 300, 400
+	expectedSources := []string{"reader1_row1", "reader2_row1", "reader1_row2", "reader2_row2"}
+	expectedTIDs := []int64{100, 200, 300, 400}
+
+	// Read all data
+	allRows, err := readAllRows(mergesortReader)
+	if err != nil {
+		t.Fatalf("readAllRows() error = %v", err)
+	}
+
+	if len(allRows) != 4 {
+		t.Fatalf("Expected 4 rows, got %d", len(allRows))
+	}
+
+	t.Logf("Actual order returned:")
+	for i, row := range allRows {
+		source := row[wkk.NewRowKey("source")]
+		tid := row[wkk.RowKeyCTID]
+		t.Logf("  %d: %s (TID=%d)", i, source, tid)
+	}
+
+	t.Logf("Expected order:")
+	for i, expectedSource := range expectedSources {
+		t.Logf("  %d: %s (TID=%d)", i, expectedSource, expectedTIDs[i])
+	}
+
+	// Verify the order is correct
+	for i, expectedSource := range expectedSources {
+		actualSource := allRows[i][wkk.NewRowKey("source")]
+		actualTID := allRows[i][wkk.RowKeyCTID].(int64)
+
+		if actualSource != expectedSource {
+			t.Errorf("Row %d source mismatch: expected %s, got %s", i, expectedSource, actualSource)
+		}
+		if actualTID != expectedTIDs[i] {
+			t.Errorf("Row %d TID mismatch: expected %d, got %d", i, expectedTIDs[i], actualTID)
+		}
+	}
+
+	if t.Failed() {
+		t.Logf("✗ CONFIRMED: MergesortReader key pooling bug causes incorrect sort order!")
+	} else {
+		t.Logf("✓ MergesortReader produced correct sort order")
+	}
 }

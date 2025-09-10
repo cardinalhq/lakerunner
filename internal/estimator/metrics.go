@@ -22,6 +22,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -174,6 +175,7 @@ func (e *metricEstimator) updateEstimates(parent context.Context, querier Estima
 	low := now.Add(-e.lookback)
 
 	mp := lrdb.MetricSegEstimatorParams{
+		TargetBytes: float64(config.TargetFileSize),
 		DateintLow:  dateint(low),
 		DateintHigh: dateint(now),
 		MsLow:       low.UnixMilli(),

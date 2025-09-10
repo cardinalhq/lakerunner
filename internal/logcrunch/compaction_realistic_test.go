@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
@@ -121,12 +122,12 @@ func TestPackSegments_ProductionData(t *testing.T) {
 		avgBytesPerRecord, usedSegments)
 
 	// Calculate realistic record counts for different target file sizes
-	targetFileSize := int64(1_100_000) // From cmd/root.go
+	targetFileSize := config.TargetFileSize // Target file size from config
 	recordsForTargetSize := calculateRecordCountForFileSize(targetFileSize, avgBytesPerRecord)
 	recordsFor90Percent := calculateRecordCountForFileSize(targetFileSize*9/10, avgBytesPerRecord) // 90% threshold used in compaction
 
-	t.Logf("Records for target file size (1.1MB): %d", recordsForTargetSize)
-	t.Logf("Records for 90%% threshold (990KB): %d", recordsFor90Percent)
+	t.Logf("Records for target file size (%d bytes): %d", targetFileSize, recordsForTargetSize)
+	t.Logf("Records for 90%% threshold (%d bytes): %d", targetFileSize*9/10, recordsFor90Percent)
 
 	tests := []struct {
 		name                 string
@@ -139,22 +140,22 @@ func TestPackSegments_ProductionData(t *testing.T) {
 			name:                 "Production data with realistic target size",
 			segments:             productionSegments,
 			estimatedRecordCount: recordsForTargetSize,
-			expectedGroups:       2, // Actually creates 2 groups due to greedy packing
-			description:          "Production segments pack into 2 groups under realistic target size",
+			expectedGroups:       1, // With 2MB target, all segments fit in 1 group
+			description:          "Production segments pack into 1 group under 2MB target size",
 		},
 		{
 			name:                 "Production data with 90% threshold (compaction query limit)",
 			segments:             productionSegments,
 			estimatedRecordCount: recordsFor90Percent,
-			expectedGroups:       2, // Same as target size due to greedy algorithm
-			description:          "Production segments create 2 groups under 90% file size threshold",
+			expectedGroups:       1, // With 2MB target, still fits in 1 group
+			description:          "Production segments create 1 group under 90% of 2MB threshold",
 		},
 		{
 			name:                 "Half target size forces more groups",
 			segments:             productionSegments,
 			estimatedRecordCount: recordsForTargetSize / 2,
-			expectedGroups:       3, // Actually creates 3 groups
-			description:          "Smaller threshold forces segments into 3 groups",
+			expectedGroups:       2, // Half of 2MB target creates 2 groups
+			description:          "Smaller threshold forces segments into 2 groups",
 		},
 		{
 			name:                 "Very small threshold",
@@ -167,7 +168,7 @@ func TestPackSegments_ProductionData(t *testing.T) {
 			name:                 "Quarter target size",
 			segments:             productionSegments,
 			estimatedRecordCount: recordsForTargetSize / 4,
-			expectedGroups:       5, // Creates 5 groups with updated calculation
+			expectedGroups:       3, // Quarter of 2MB target creates 3 groups
 			description:          "Quarter threshold creates multiple groups, larger segments go solo",
 		},
 	}

@@ -25,7 +25,6 @@ import (
 func TestNewFactory(t *testing.T) {
 	config := &Config{
 		Brokers: []string{"broker1:9092", "broker2:9092"},
-		Enabled: true,
 	}
 
 	factory := NewFactory(config)
@@ -50,6 +49,14 @@ func TestFactory_CreateProducer(t *testing.T) {
 				TLSEnabled:           false,
 			},
 			wantErr: false,
+		},
+		{
+			name: "producer with unsupported compression",
+			config: &Config{
+				Brokers:             []string{"localhost:9092"},
+				ProducerCompression: "invalid",
+			},
+			wantErr: true,
 		},
 		{
 			name: "producer with SASL SCRAM-SHA-256",
@@ -109,6 +116,10 @@ func TestFactory_CreateProducer(t *testing.T) {
 				assert.NoError(t, err)
 				assert.NotNil(t, producer)
 				if producer != nil {
+					kp := producer.(*kafkaProducer)
+					if tt.config.ProducerCompression == "snappy" {
+						assert.Equal(t, kafka.Snappy, kp.config.Compression)
+					}
 					producer.Close()
 				}
 			}
@@ -200,11 +211,6 @@ func TestFactory_CreateConsumerWithService(t *testing.T) {
 	assert.Equal(t, "lakerunner.ingest", kc.config.GroupID)
 
 	consumer.Close()
-}
-
-func TestFactory_IsEnabled(t *testing.T) {
-	factory := NewFactory(&Config{Enabled: true})
-	assert.True(t, factory.IsEnabled())
 }
 
 func TestManager_Lifecycle(t *testing.T) {
@@ -306,7 +312,6 @@ func TestFactoryIntegration(t *testing.T) {
 
 	config := &Config{
 		Brokers:              []string{"localhost:9092"},
-		Enabled:              true,
 		ProducerBatchSize:    10,
 		ProducerBatchTimeout: 100000000, // 100ms
 		ConsumerBatchSize:    10,
@@ -315,7 +320,6 @@ func TestFactoryIntegration(t *testing.T) {
 	}
 
 	factory := NewFactory(config)
-	assert.True(t, factory.IsEnabled())
 
 	// Test producer creation
 	producer, err := factory.CreateProducer()
@@ -326,7 +330,7 @@ func TestFactoryIntegration(t *testing.T) {
 	kp, ok := producer.(*kafkaProducer)
 	require.True(t, ok)
 	assert.Equal(t, 10, kp.config.BatchSize)
-	assert.Equal(t, kafka.RequireOne, kp.config.RequiredAcks)
+	assert.Equal(t, kafka.RequireNone, kp.config.RequiredAcks)
 
 	producer.Close()
 

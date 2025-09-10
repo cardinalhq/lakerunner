@@ -24,10 +24,14 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
+	"github.com/cardinalhq/lakerunner/config"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-func runMetricEstimateUpdate(ctx context.Context, ll *slog.Logger, mdb lrdb.StoreFull) error {
+func runMetricEstimateUpdate(ctx context.Context, mdb lrdb.StoreFull) error {
+	ll := logctx.FromContext(ctx)
+
 	// Constants for EWMA calculation
 	const (
 		alpha                = 0.2 // EWMA smoothing factor (20% new data, 80% old data)
@@ -56,6 +60,7 @@ func runMetricEstimateUpdate(ctx context.Context, ll *slog.Logger, mdb lrdb.Stor
 
 	// Get fresh data from metric segments
 	params := lrdb.MetricSegEstimatorParams{
+		TargetBytes: float64(config.TargetFileSize),
 		DateintLow:  dateintFromTime(lookbackTime),
 		DateintHigh: dateintFromTime(now),
 		MsLow:       lookbackTime.UnixMilli(),
