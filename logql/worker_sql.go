@@ -365,6 +365,9 @@ func emitParsers(
 				sel = append(sel, fmt.Sprintf("json_extract_string(%s, %s) AS %s",
 					bodyCol, sqlQuote(path), quoteIdent(k)))
 			}
+			if len(needKeys) == 0 {
+				sel = append(sel, fmt.Sprintf("to_json(%s) AS __json", bodyCol))
+			}
 			pb.push(sel, pb.top(), nil)
 
 			// Apply any filters whose columns now exist
@@ -382,9 +385,6 @@ func emitParsers(
 				*remainingLF = later
 			} else if len(p.Filters) > 0 {
 				*remainingLF = append(*remainingLF, p.Filters...)
-			} else {
-				sel = append(sel, fmt.Sprintf("to_json(%s) AS __extracted_struct", bodyCol))
-				pb.push(sel, pb.top(), nil)
 			}
 
 		case "logfmt":

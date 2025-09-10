@@ -359,31 +359,28 @@ func TestToWorkerSQL_JSON_WithFilters(t *testing.T) {
 	}
 }
 
-//func TestToWorkerSQL_JSON_WithNOFilters(t *testing.T) {
-//	db := openDuckDB(t)
-//	mustExec(t, db, `CREATE TABLE logs("_cardinalhq.message" TEXT);`)
-//	mustExec(t, db, `INSERT INTO logs VALUES
-//('{"level":"INFO","user":"alice","msg":"hello"}'),
-//('{"level":"ERROR","user":"bob","msg":"boom"}'),
-//('{"level":"ERROR","user":"carol","msg":"warn"}');`)
-//
-//	leaf := LogLeaf{
-//		Parsers: []ParserStage{{
-//			Type:   "json",
-//			Params: map[string]string{},
-//		}},
-//	}
-//	replacedSql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc", []string{"foo"})), 0, 5000)
-//	rows := queryAll(t, db, replacedSql)
-//	if len(rows) != 1 {
-//		t.Fatalf("expected 1 row after filters, got %d", len(rows))
-//	}
-//	lv := getString(rows[0]["level"])
-//	us := getString(rows[0]["user"])
-//	if lv != "ERROR" || us != "bob" {
-//		t.Fatalf("wrong row selected: level=%q user=%q", lv, us)
-//	}
-//}
+func TestToWorkerSQL_JSON_WithNOFilters(t *testing.T) {
+	db := openDuckDB(t)
+	mustExec(t, db, `CREATE TABLE logs("_cardinalhq.message" TEXT);`)
+	mustExec(t, db, `INSERT INTO logs VALUES
+('{"level":"INFO","user":"alice","msg":"hello"}'),
+('{"level":"ERROR","user":"bob","msg":"boom"}'),
+('{"level":"ERROR","user":"carol","msg":"warn"}');`)
+
+	leaf := LogLeaf{
+		Parsers: []ParserStage{{
+			Type:   "json",
+			Params: map[string]string{},
+		}},
+	}
+	replacedSql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc", nil)), 0, 5000)
+	rows := queryAll(t, db, replacedSql)
+
+	k := rows[0]["__json"]
+	if k == nil {
+		t.Fatalf("expected __json to be present")
+	}
+}
 
 func TestToWorkerSQL_Logfmt_WithFilters(t *testing.T) {
 	db := openDuckDB(t)
