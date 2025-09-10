@@ -742,7 +742,7 @@ func TestUploadAndCreateSegments(t *testing.T) {
 		// Verify timestamp range
 		assert.True(t, seg1.TsRange.Valid)
 		assert.Equal(t, int64(1640995200000), seg1.TsRange.Lower.Int64)
-		assert.Equal(t, int64(1640998800000), seg1.TsRange.Upper.Int64)
+		assert.Equal(t, int64(1640998800001), seg1.TsRange.Upper.Int64) // +1 to ensure non-empty range
 
 		// Verify second segment
 		seg2 := segments[1]
