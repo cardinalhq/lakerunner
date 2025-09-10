@@ -68,6 +68,62 @@ func (q *Queries) GetMetricSeg(ctx context.Context, arg GetMetricSegParams) (Met
 	return i, err
 }
 
+const getMetricSegByPrimaryKey = `-- name: GetMetricSegByPrimaryKey :one
+SELECT organization_id, dateint, frequency_ms, segment_id, instance_num, ts_range, record_count, file_size, ingest_dateint, published, rolledup, created_at, created_by, slot_id, fingerprints, sort_version, slot_count, compacted FROM metric_seg
+WHERE organization_id = $1
+  AND dateint = $2
+  AND frequency_ms = $3
+  AND segment_id = $4
+  AND instance_num = $5
+  AND slot_id = $6
+  AND slot_count = $7
+`
+
+type GetMetricSegByPrimaryKeyParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Dateint        int32     `json:"dateint"`
+	FrequencyMs    int32     `json:"frequency_ms"`
+	SegmentID      int64     `json:"segment_id"`
+	InstanceNum    int16     `json:"instance_num"`
+	SlotID         int32     `json:"slot_id"`
+	SlotCount      int32     `json:"slot_count"`
+}
+
+// Fetch a single metric segment by its complete primary key
+func (q *Queries) GetMetricSegByPrimaryKey(ctx context.Context, arg GetMetricSegByPrimaryKeyParams) (MetricSeg, error) {
+	row := q.db.QueryRow(ctx, getMetricSegByPrimaryKey,
+		arg.OrganizationID,
+		arg.Dateint,
+		arg.FrequencyMs,
+		arg.SegmentID,
+		arg.InstanceNum,
+		arg.SlotID,
+		arg.SlotCount,
+	)
+	var i MetricSeg
+	err := row.Scan(
+		&i.OrganizationID,
+		&i.Dateint,
+		&i.FrequencyMs,
+		&i.SegmentID,
+		&i.InstanceNum,
+		&i.TsRange,
+		&i.RecordCount,
+		&i.FileSize,
+		&i.IngestDateint,
+		&i.Published,
+		&i.Rolledup,
+		&i.CreatedAt,
+		&i.CreatedBy,
+		&i.SlotID,
+		&i.Fingerprints,
+		&i.SortVersion,
+		&i.SlotCount,
+		&i.Compacted,
+	)
+	return i, err
+}
+
 const getMetricSegsByIds = `-- name: GetMetricSegsByIds :many
 SELECT organization_id, dateint, frequency_ms, segment_id, instance_num, ts_range, record_count, file_size, ingest_dateint, published, rolledup, created_at, created_by, slot_id, fingerprints, sort_version, slot_count, compacted
 FROM metric_seg
@@ -275,4 +331,131 @@ func (q *Queries) ListMetricSegmentsForQuery(ctx context.Context, arg ListMetric
 		return nil, err
 	}
 	return items, nil
+}
+
+const markMetricSegsCompactedByKeys = `-- name: MarkMetricSegsCompactedByKeys :exec
+UPDATE metric_seg
+SET compacted = true,
+    published = false
+WHERE organization_id = $1
+  AND dateint         = $2
+  AND frequency_ms    = $3
+  AND instance_num    = $4
+  AND segment_id      = ANY($5::bigint[])
+  AND compacted       = false
+`
+
+type MarkMetricSegsCompactedByKeysParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Dateint        int32     `json:"dateint"`
+	FrequencyMs    int32     `json:"frequency_ms"`
+	InstanceNum    int16     `json:"instance_num"`
+	SegmentIds     []int64   `json:"segment_ids"`
+}
+
+func (q *Queries) MarkMetricSegsCompactedByKeys(ctx context.Context, arg MarkMetricSegsCompactedByKeysParams) error {
+	_, err := q.db.Exec(ctx, markMetricSegsCompactedByKeys,
+		arg.OrganizationID,
+		arg.Dateint,
+		arg.FrequencyMs,
+		arg.InstanceNum,
+		arg.SegmentIds,
+	)
+	return err
+}
+
+const markMetricSegsRolledupByKeys = `-- name: MarkMetricSegsRolledupByKeys :exec
+UPDATE metric_seg
+SET rolledup = true
+WHERE organization_id = $1
+  AND dateint         = $2
+  AND frequency_ms    = $3
+  AND instance_num    = $4
+  AND segment_id      = ANY($5::bigint[])
+  AND rolledup        = false
+`
+
+type MarkMetricSegsRolledupByKeysParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Dateint        int32     `json:"dateint"`
+	FrequencyMs    int32     `json:"frequency_ms"`
+	InstanceNum    int16     `json:"instance_num"`
+	SegmentIds     []int64   `json:"segment_ids"`
+}
+
+func (q *Queries) MarkMetricSegsRolledupByKeys(ctx context.Context, arg MarkMetricSegsRolledupByKeysParams) error {
+	_, err := q.db.Exec(ctx, markMetricSegsRolledupByKeys,
+		arg.OrganizationID,
+		arg.Dateint,
+		arg.FrequencyMs,
+		arg.InstanceNum,
+		arg.SegmentIds,
+	)
+	return err
+}
+
+const setMetricSegCompacted = `-- name: SetMetricSegCompacted :exec
+UPDATE metric_seg
+SET compacted = true
+WHERE organization_id = $1
+  AND dateint         = $2
+  AND frequency_ms    = $3
+  AND instance_num    = $4
+  AND segment_id      = ANY($5::bigint[])
+  AND compacted       = false
+`
+
+type SetMetricSegCompactedParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Dateint        int32     `json:"dateint"`
+	FrequencyMs    int32     `json:"frequency_ms"`
+	InstanceNum    int16     `json:"instance_num"`
+	SegmentIds     []int64   `json:"segment_ids"`
+}
+
+func (q *Queries) SetMetricSegCompacted(ctx context.Context, arg SetMetricSegCompactedParams) error {
+	_, err := q.db.Exec(ctx, setMetricSegCompacted,
+		arg.OrganizationID,
+		arg.Dateint,
+		arg.FrequencyMs,
+		arg.InstanceNum,
+		arg.SegmentIds,
+	)
+	return err
+}
+
+const setSingleMetricSegCompacted = `-- name: SetSingleMetricSegCompacted :exec
+UPDATE metric_seg
+SET compacted = true
+WHERE organization_id = $1
+  AND dateint         = $2
+  AND frequency_ms    = $3
+  AND segment_id      = $4
+  AND instance_num    = $5
+  AND slot_id         = $6
+  AND slot_count      = $7
+  AND compacted       = false
+`
+
+type SetSingleMetricSegCompactedParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Dateint        int32     `json:"dateint"`
+	FrequencyMs    int32     `json:"frequency_ms"`
+	SegmentID      int64     `json:"segment_id"`
+	InstanceNum    int16     `json:"instance_num"`
+	SlotID         int32     `json:"slot_id"`
+	SlotCount      int32     `json:"slot_count"`
+}
+
+func (q *Queries) SetSingleMetricSegCompacted(ctx context.Context, arg SetSingleMetricSegCompactedParams) error {
+	_, err := q.db.Exec(ctx, setSingleMetricSegCompacted,
+		arg.OrganizationID,
+		arg.Dateint,
+		arg.FrequencyMs,
+		arg.SegmentID,
+		arg.InstanceNum,
+		arg.SlotID,
+		arg.SlotCount,
+	)
+	return err
 }
