@@ -67,7 +67,7 @@ func groupingKeyToOffsetKey(gk TestGroupingKey, env string) TestOffsetKey {
 }
 
 func TestMetadataTracker_SafeCommitOffsets(t *testing.T) {
-	tracker := NewMetadataTracker[TestGroupingKey]("test-topic", "test-group")
+	tracker := newMetadataTracker[TestGroupingKey]("test-topic", "test-group")
 
 	customerA := uuid.New()
 	customerB := uuid.New()
@@ -102,7 +102,7 @@ func TestMetadataTracker_SafeCommitOffsets(t *testing.T) {
 }
 
 func TestMetadataTracker_OnlyAdvancingOffsets(t *testing.T) {
-	tracker := NewMetadataTracker[TestGroupingKey]("test-topic", "test-group")
+	tracker := newMetadataTracker[TestGroupingKey]("test-topic", "test-group")
 
 	orgA := uuid.New()
 	orgB := uuid.New()
@@ -130,7 +130,7 @@ func TestMetadataTracker_OnlyAdvancingOffsets(t *testing.T) {
 }
 
 func TestMetadataTracker_NoAdvancement(t *testing.T) {
-	tracker := NewMetadataTracker[TestGroupingKey]("test-topic", "test-group")
+	tracker := newMetadataTracker[TestGroupingKey]("test-topic", "test-group")
 
 	orgA := uuid.New()
 
@@ -147,7 +147,7 @@ func TestMetadataTracker_NoAdvancement(t *testing.T) {
 }
 
 func TestMetadataTracker_MarkOffsetsCommitted(t *testing.T) {
-	tracker := NewMetadataTracker[TestGroupingKey]("test-topic", "test-group")
+	tracker := newMetadataTracker[TestGroupingKey]("test-topic", "test-group")
 
 	// Set some initial committed offsets
 	tracker.lastCommittedOffsets[0] = 10
@@ -169,7 +169,7 @@ func TestMetadataTracker_MarkOffsetsCommitted(t *testing.T) {
 }
 
 func TestMetadataTracker_TrackMetadata(t *testing.T) {
-	tracker := NewMetadataTracker[TestGroupingKey]("test-topic", "test-group")
+	tracker := newMetadataTracker[TestGroupingKey]("test-topic", "test-group")
 
 	customerA := uuid.New()
 	customerB := uuid.New()

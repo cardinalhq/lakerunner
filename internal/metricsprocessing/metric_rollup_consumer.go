@@ -69,7 +69,7 @@ func NewMetricRollupConsumer(
 	}
 
 	// Create MetricRollupProcessor
-	processor := NewMetricRollupProcessor(store, storageProvider, cmgr, cfg, producer)
+	processor := newMetricRollupProcessor(store, storageProvider, cmgr, cfg, producer)
 
 	// Create Gatherer - using hardcoded consumer group and topic for rollups
 	consumerGroup := "lakerunner.rollup.metrics"
@@ -107,7 +107,7 @@ func NewMetricRollupConsumer(
 	}
 
 	// Create Gatherer using the consumer itself as offset callbacks
-	mrc.gatherer = NewGatherer[*messages.MetricRollupMessage](topic, consumerGroup, processor, mrc)
+	mrc.gatherer = newGatherer[*messages.MetricRollupMessage](topic, consumerGroup, processor, mrc)
 
 	ll.Info("Created new Kafka rollup accumulation consumer",
 		slog.String("consumerName", consumerName),

@@ -68,8 +68,8 @@ type MetricCompactorProcessor struct {
 	cfg             *config.Config
 }
 
-// NewMetricCompactor creates a new metric compactor instance
-func NewMetricCompactor(store CompactionStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, cfg *config.Config) *MetricCompactorProcessor {
+// newMetricCompactor creates a new metric compactor instance
+func newMetricCompactor(store CompactionStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, cfg *config.Config) *MetricCompactorProcessor {
 	return &MetricCompactorProcessor{
 		store:           store,
 		storageProvider: storageProvider,

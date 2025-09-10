@@ -34,8 +34,8 @@ type FileMetadata struct {
 	Hour         int16 // Hour of day (0-23)
 }
 
-// ExtractFileMetadata extracts and validates metadata from a parquet file result
-func ExtractFileMetadata(ctx context.Context, file parquetwriter.Result) (*FileMetadata, error) {
+// extractFileMetadata extracts and validates metadata from a parquet file result
+func extractFileMetadata(ctx context.Context, file parquetwriter.Result) (*FileMetadata, error) {
 	ll := logctx.FromContext(ctx)
 
 	stats, ok := file.Metadata.(factories.MetricsFileStats)

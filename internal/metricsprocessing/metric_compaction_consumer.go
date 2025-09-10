@@ -55,7 +55,7 @@ func NewMetricCompactionConsumer(
 	ll := logctx.FromContext(ctx)
 
 	// Create MetricCompactor
-	compactor := NewMetricCompactor(store, storageProvider, cmgr, cfg)
+	compactor := newMetricCompactor(store, storageProvider, cmgr, cfg)
 
 	// Create Gatherer - using hardcoded consumer group and topic
 	consumerGroup := "lakerunner.compact.metrics"
@@ -82,7 +82,7 @@ func NewMetricCompactionConsumer(
 	}
 
 	// Create Gatherer using the consumer itself as offset callbacks
-	mcc.gatherer = NewGatherer[*messages.MetricCompactionMessage](topic, consumerGroup, compactor, mcc)
+	mcc.gatherer = newGatherer[*messages.MetricCompactionMessage](topic, consumerGroup, compactor, mcc)
 
 	ll.Info("Created new Kafka accumulation consumer",
 		slog.String("consumerName", consumerName),

@@ -29,8 +29,8 @@ type MetadataTracker[K comparable] struct {
 	consumerGroup string
 }
 
-// NewMetadataTracker creates a new MetadataTracker instance
-func NewMetadataTracker[K comparable](topic, consumerGroup string) *MetadataTracker[K] {
+// newMetadataTracker creates a new MetadataTracker instance
+func newMetadataTracker[K comparable](topic, consumerGroup string) *MetadataTracker[K] {
 	return &MetadataTracker[K]{
 		partitionOffsets:     make(map[int32]map[K]int64),
 		lastCommittedOffsets: make(map[int32]int64),

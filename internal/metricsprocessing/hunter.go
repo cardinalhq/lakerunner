@@ -58,8 +58,8 @@ type Hunter[M messages.GroupableMessage, K comparable] struct {
 	groups map[K]*AccumulationGroup[K]
 }
 
-// NewHunter creates a new Hunter instance
-func NewHunter[M messages.GroupableMessage, K comparable]() *Hunter[M, K] {
+// newHunter creates a new Hunter instance
+func newHunter[M messages.GroupableMessage, K comparable]() *Hunter[M, K] {
 	return &Hunter[M, K]{
 		groups: make(map[K]*AccumulationGroup[K]),
 	}

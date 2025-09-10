@@ -60,7 +60,7 @@ func NewMetricIngestConsumer(
 	}
 
 	// Create MetricIngestProcessor
-	processor := NewMetricIngestProcessor(store, storageProvider, cmgr, kafkaProducer)
+	processor := newMetricIngestProcessor(store, storageProvider, cmgr, kafkaProducer)
 
 	// Create Gatherer - using hardcoded consumer group and topic
 	consumerGroup := "lakerunner.ingest.metrics"
@@ -87,7 +87,7 @@ func NewMetricIngestConsumer(
 	}
 
 	// Create Gatherer using the consumer itself as offset callbacks
-	mic.gatherer = NewGatherer[*messages.ObjStoreNotificationMessage](topic, consumerGroup, processor, mic)
+	mic.gatherer = newGatherer[*messages.ObjStoreNotificationMessage](topic, consumerGroup, processor, mic)
 
 	ll.Info("Created new Kafka ingest consumer",
 		slog.String("consumerName", consumerName),

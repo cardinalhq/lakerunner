@@ -45,11 +45,11 @@ type Gatherer[M messages.GroupableMessage, K comparable] struct {
 	consumerGroup   string // Expected consumer group for validation
 }
 
-// NewGatherer creates a new generic Gatherer instance
-func NewGatherer[M messages.GroupableMessage, K comparable](topic, consumerGroup string, processor Processor[M, K], offsetCallbacks OffsetCallbacks[K]) *Gatherer[M, K] {
+// newGatherer creates a new generic Gatherer instance
+func newGatherer[M messages.GroupableMessage, K comparable](topic, consumerGroup string, processor Processor[M, K], offsetCallbacks OffsetCallbacks[K]) *Gatherer[M, K] {
 	return &Gatherer[M, K]{
-		hunter:          NewHunter[M, K](),
-		metadataTracker: NewMetadataTracker[K](topic, consumerGroup),
+		hunter:          newHunter[M, K](),
+		metadataTracker: newMetadataTracker[K](topic, consumerGroup),
 		processor:       processor,
 		offsetCallbacks: offsetCallbacks,
 		topic:           topic,

@@ -71,8 +71,8 @@ type MetricIngestProcessor struct {
 	kafkaProducer   fly.Producer
 }
 
-// NewMetricIngestProcessor creates a new metric ingest processor instance
-func NewMetricIngestProcessor(store IngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *MetricIngestProcessor {
+// newMetricIngestProcessor creates a new metric ingest processor instance
+func newMetricIngestProcessor(store IngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *MetricIngestProcessor {
 	return &MetricIngestProcessor{
 		store:           store,
 		storageProvider: storageProvider,
@@ -410,7 +410,7 @@ func (p *MetricIngestProcessor) GetTargetRecordCount(ctx context.Context, groupi
 // createReaderStack creates a reader stack: DiskSort(Translation(OTELMetricProto(file)))
 func (p *MetricIngestProcessor) createReaderStack(tmpFilename, orgID, bucket, objectID string) (filereader.Reader, error) {
 	// Step 1: Create proto reader for .binpb or .binpb.gz files
-	reader, err := CreateMetricProtoReader(tmpFilename, filereader.ReaderOptions{})
+	reader, err := createMetricProtoReader(tmpFilename, filereader.ReaderOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create proto reader: %w", err)
 	}
@@ -611,7 +611,7 @@ func (p *MetricIngestProcessor) uploadAndCreateSegments(ctx context.Context, sto
 		}
 
 		// Extract file metadata using ExtractFileMetadata
-		metadata, err := ExtractFileMetadata(ctx, *bin.Result)
+		metadata, err := extractFileMetadata(ctx, *bin.Result)
 		if err != nil {
 			return nil, fmt.Errorf("failed to extract file metadata for bin %d: %w", binStartTs, err)
 		}

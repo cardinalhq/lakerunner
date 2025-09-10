@@ -30,7 +30,7 @@ import (
 )
 
 func TestHunter_AddMessage_BelowThreshold(t *testing.T) {
-	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
+	hunter := newHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 	orgID := uuid.New()
 
 	msg := createTestMessage(orgID, 1, 20250108, 60000, 1, 4, 50)
@@ -50,7 +50,7 @@ func TestHunter_AddMessage_BelowThreshold(t *testing.T) {
 }
 
 func TestHunter_AddMessage_ExceedsThreshold(t *testing.T) {
-	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
+	hunter := newHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 	orgID := uuid.New()
 
 	// Add first message (50 records)
@@ -78,7 +78,7 @@ func TestHunter_AddMessage_ExceedsThreshold(t *testing.T) {
 }
 
 func TestHunter_AddMessage_DifferentKeys(t *testing.T) {
-	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
+	hunter := newHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 	orgID1 := uuid.New()
 	orgID2 := uuid.New()
 
@@ -97,7 +97,7 @@ func TestHunter_AddMessage_DifferentKeys(t *testing.T) {
 }
 
 func TestHunter_AddMessage_SameKeyDifferentPartitions(t *testing.T) {
-	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
+	hunter := newHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 	orgID := uuid.New()
 
 	// Messages with same accumulation key but different partitions
@@ -122,7 +122,7 @@ func TestHunter_AddMessage_SameKeyDifferentPartitions(t *testing.T) {
 }
 
 func TestHunter_AddMessage_OffsetTracking(t *testing.T) {
-	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
+	hunter := newHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 	orgID := uuid.New()
 
 	// Add message with offset 100
@@ -148,7 +148,7 @@ func TestHunter_AddMessage_OffsetTracking(t *testing.T) {
 }
 
 func TestHunter_AddMessage_DifferentPartitions(t *testing.T) {
-	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
+	hunter := newHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 	orgID := uuid.New()
 
 	msg1 := createTestMessage(orgID, 1, 20250108, 60000, 1, 4, 50)
@@ -198,7 +198,7 @@ func TestHunter_TestKey_Equality(t *testing.T) {
 }
 
 func TestHunter_FirstMessageExceedsThreshold(t *testing.T) {
-	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
+	hunter := newHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 	orgID := uuid.New()
 
 	// First message already exceeds threshold and should be returned immediately
@@ -216,7 +216,7 @@ func TestHunter_FirstMessageExceedsThreshold(t *testing.T) {
 }
 
 func TestHunter_NewHunter(t *testing.T) {
-	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
+	hunter := newHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 
 	assert.NotNil(t, hunter)
 	assert.NotNil(t, hunter.groups)
@@ -224,7 +224,7 @@ func TestHunter_NewHunter(t *testing.T) {
 }
 
 func TestHunter_SelectGroups(t *testing.T) {
-	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
+	hunter := newHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 	orgID1 := uuid.New()
 	orgID2 := uuid.New()
 
@@ -266,7 +266,7 @@ func TestHunter_SelectGroups(t *testing.T) {
 }
 
 func TestHunter_SelectGroups_ByRecordCount(t *testing.T) {
-	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
+	hunter := newHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 	orgID := uuid.New()
 
 	// Add messages with different record counts
@@ -300,7 +300,7 @@ func TestHunter_SelectGroups_ByRecordCount(t *testing.T) {
 }
 
 func TestHunter_SelectGroups_NoMatches(t *testing.T) {
-	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
+	hunter := newHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 	orgID := uuid.New()
 
 	msg := createTestMessage(orgID, 1, 20250108, 60000, 1, 4, 50)
@@ -320,7 +320,7 @@ func TestHunter_SelectGroups_NoMatches(t *testing.T) {
 }
 
 func TestHunter_SelectStaleGroups(t *testing.T) {
-	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
+	hunter := newHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 
 	orgA := uuid.New()
 	orgB := uuid.New()
@@ -380,7 +380,7 @@ func TestHunter_SelectStaleGroups(t *testing.T) {
 }
 
 func TestHunter_SelectStaleGroups_NoStaleGroups(t *testing.T) {
-	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
+	hunter := newHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 
 	orgA := uuid.New()
 	msgA := createTestMessage(orgA, 1, 20250108, 60000, 1, 4, 100)
@@ -402,7 +402,7 @@ func TestHunter_SelectStaleGroups_NoStaleGroups(t *testing.T) {
 }
 
 func TestHunter_SelectStaleGroups_EmptyHunter(t *testing.T) {
-	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
+	hunter := newHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 
 	// No groups in hunter
 	assert.Len(t, hunter.groups, 0)
@@ -453,7 +453,7 @@ func kmeta(offset int64) *MessageMetadata {
 
 func TestHunter_MetricCompactionMessage_AccumulationScaffolding(t *testing.T) {
 	// Create Hunter using the same types as metric compaction consumer
-	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
+	hunter := newHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 	orgID := uuid.New()
 	targetRecordCount := int64(10000) // 10k threshold
 
@@ -624,7 +624,7 @@ func TestHunter_RealDataFromFile(t *testing.T) {
 	offsetCallbacks := NewMockOffsetCallbacks()
 
 	// Create gatherer
-	gatherer := NewGatherer[*messages.MetricCompactionMessage](
+	gatherer := newGatherer[*messages.MetricCompactionMessage](
 		"lakerunner.segments.metrics.compact",
 		"lakerunner.compact.metrics",
 		processor,

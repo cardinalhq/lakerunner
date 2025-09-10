@@ -56,8 +56,8 @@ type MetricRollupProcessor struct {
 	kafkaProducer   fly.Producer
 }
 
-// NewMetricRollupProcessor creates a new metric rollup processor instance
-func NewMetricRollupProcessor(store RollupStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, cfg *config.Config, kafkaProducer fly.Producer) *MetricRollupProcessor {
+// newMetricRollupProcessor creates a new metric rollup processor instance
+func newMetricRollupProcessor(store RollupStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, cfg *config.Config, kafkaProducer fly.Producer) *MetricRollupProcessor {
 	return &MetricRollupProcessor{
 		store:           store,
 		storageProvider: storageProvider,
