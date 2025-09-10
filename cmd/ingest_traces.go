@@ -15,38 +15,34 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
-	"os"
-	"strings"
 
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
 
-	"github.com/cardinalhq/lakerunner/cmd/ingesttraces"
+	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
+	"github.com/cardinalhq/lakerunner/internal/debugging"
 	"github.com/cardinalhq/lakerunner/internal/fly"
+	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
-	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
-	"github.com/cardinalhq/lakerunner/internal/processing/ingest"
+	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
-	"github.com/cardinalhq/lakerunner/lrdb"
 )
-
-// SlotHourBoundary combines slot ID with hour boundary for trace compaction
-type SlotHourBoundary struct {
-	SlotID       int
-	HourBoundary helpers.HourBoundary
-}
 
 func init() {
 	cmd := &cobra.Command{
 		Use:   "ingest-traces",
-		Short: "Ingest traces from the inqueue table",
+		Short: "Ingest traces from the inqueue table or Kafka",
 		RunE: func(_ *cobra.Command, _ []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+
 			helpers.SetupTempDir()
 
 			servicename := "lakerunner-ingest-traces"
@@ -54,7 +50,7 @@ func init() {
 				attribute.String("signal", "traces"),
 				attribute.String("action", "ingest"),
 			)
-			doneCtx, doneFx, err := setupTelemetry(servicename, &addlAttrs)
+			ctx, doneFx, err := setupTelemetry(servicename, &addlAttrs)
 			if err != nil {
 				return fmt.Errorf("failed to setup telemetry: %w", err)
 			}
@@ -65,23 +61,45 @@ func init() {
 				}
 			}()
 
-			go diskUsageLoop(doneCtx)
+			go diskUsageLoop(ctx)
 
-			// Load configuration
-			cfg, err := config.Load()
+			go debugging.RunPprof(ctx)
+
+			healthConfig := healthcheck.GetConfigFromEnv()
+			healthServer := healthcheck.NewServer(healthConfig)
+
+			go func() {
+				if err := healthServer.Start(ctx); err != nil {
+					slog.Error("Health check server stopped", slog.Any("error", err))
+				}
+			}()
+
+			mdb, err := dbopen.LRDBStore(ctx)
 			if err != nil {
-				return fmt.Errorf("failed to load config: %w", err)
+				return fmt.Errorf("failed to open LRDB store: %w", err)
 			}
 
-			// Trace partitions will be auto-determined from Kafka topic
-			// No longer setting from config
+			cdb, err := dbopen.ConfigDBStore(ctx)
+			if err != nil {
+				return fmt.Errorf("failed to open ConfigDB store: %w", err)
+			}
+
+			cmgr, err := cloudstorage.NewCloudManagers(ctx)
+			if err != nil {
+				return fmt.Errorf("failed to create cloud managers: %w", err)
+			}
+
+			sp := storageprofile.NewStorageProfileProvider(cdb)
+
+			ll := logctx.FromContext(ctx).With("instanceID", myInstanceID)
+			ctx = logctx.WithLogger(ctx, ll)
 
 			kafkaFactory := fly.NewFactory(&cfg.Fly)
-			slog.Info("Starting traces ingestion with Kafka consumer")
+			slog.Info("Starting traces ingestion with accumulation consumer")
 
-			consumer, err := NewKafkaIngestConsumer(doneCtx, kafkaFactory, cfg, "traces", "lakerunner.ingest.traces")
+			consumer, err := metricsprocessing.NewTraceIngestConsumer(ctx, kafkaFactory, cfg, mdb, sp, cmgr)
 			if err != nil {
-				return fmt.Errorf("failed to create Kafka consumer: %w", err)
+				return fmt.Errorf("failed to create Kafka ingest consumer: %w", err)
 			}
 			defer func() {
 				if err := consumer.Close(); err != nil {
@@ -89,181 +107,11 @@ func init() {
 				}
 			}()
 
-			return consumer.Run(doneCtx)
+			healthServer.SetStatus(healthcheck.StatusHealthy)
+
+			return consumer.Run(ctx)
 		},
 	}
 
 	rootCmd.AddCommand(cmd)
-}
-
-func traceIngestBatch(ctx context.Context, args ingest.ProcessBatchArgs, item ingest.IngestItem, ingest_dateint int32, rpfEstimate int64) error {
-	ll := logctx.FromContext(ctx)
-
-	ll.Debug("Processing trace item with Kafka offset",
-		slog.String("consumerGroup", args.KafkaOffset.ConsumerGroup),
-		slog.String("topic", args.KafkaOffset.Topic),
-		slog.Int("partition", int(args.KafkaOffset.Partition)),
-		slog.Int64("offset", args.KafkaOffset.Offset))
-
-	// Get storage profile
-	var profile storageprofile.StorageProfile
-	var err error
-
-	if collectorName := helpers.ExtractCollectorName(item.ObjectID); collectorName != "" {
-		profile, err = args.StorageProvider.GetStorageProfileForOrganizationAndCollector(ctx, item.OrganizationID, collectorName)
-	} else {
-		profile, err = args.StorageProvider.GetStorageProfileForOrganizationAndInstance(ctx, item.OrganizationID, item.InstanceNum)
-	}
-	if err != nil {
-		return fmt.Errorf("failed to get storage profile: %w", err)
-	}
-
-	// Create cloud storage client
-	storageClient, err := cloudstorage.NewClient(ctx, args.CloudManager, profile)
-	if err != nil {
-		return fmt.Errorf("failed to create storage client for provider %s: %w", profile.CloudProvider, err)
-	}
-
-	// Collect all trace file results from all items, grouped by slot
-	slotResults := make(map[int][]ingesttraces.TraceFileResult)
-
-	ll.Debug("Processing batch item",
-		slog.String("objectID", item.ObjectID),
-		slog.Int64("fileSize", item.FileSize))
-
-	// Convert file if not already in otel-raw format
-	if !strings.HasPrefix(item.ObjectID, "otel-raw/") {
-		if strings.HasPrefix(item.ObjectID, "db/") {
-			ll.Debug("Skipping database file", slog.String("objectID", item.ObjectID))
-			// No segments to insert, just update Kafka offset
-			if err := args.DB.KafkaJournalUpsert(ctx, lrdb.KafkaJournalUpsertParams{
-				ConsumerGroup:       args.KafkaOffset.ConsumerGroup,
-				Topic:               args.KafkaOffset.Topic,
-				Partition:           args.KafkaOffset.Partition,
-				LastProcessedOffset: args.KafkaOffset.Offset,
-			}); err != nil {
-				return fmt.Errorf("failed to update Kafka offset: %w", err)
-			}
-			return nil
-		}
-
-		tmpfilename, _, is404, err := storageClient.DownloadObject(ctx, args.TmpDir, item.Bucket, item.ObjectID)
-		if err != nil {
-			return fmt.Errorf("failed to download file %s from %s: %w", item.ObjectID, profile.CloudProvider, err)
-		}
-		if is404 {
-			ll.Warn("Object not found in cloud storage, skipping",
-				slog.String("cloudProvider", profile.CloudProvider),
-				slog.String("objectID", item.ObjectID))
-			// No segments to insert for missing file, just update Kafka offset
-			if err := args.DB.KafkaJournalUpsert(ctx, lrdb.KafkaJournalUpsertParams{
-				ConsumerGroup:       args.KafkaOffset.ConsumerGroup,
-				Topic:               args.KafkaOffset.Topic,
-				Partition:           args.KafkaOffset.Partition,
-				LastProcessedOffset: args.KafkaOffset.Offset,
-			}); err != nil {
-				return fmt.Errorf("failed to update Kafka offset: %w", err)
-			}
-			return nil
-		}
-
-		// Clean up temp file when done
-		defer os.Remove(tmpfilename)
-
-		// Convert the protobuf file to trace format
-		results, err := ingesttraces.ConvertProtoFile(tmpfilename, args.TmpDir, item.Bucket, item.ObjectID, rpfEstimate, ingest_dateint, item.OrganizationID.String())
-		if err != nil {
-			return fmt.Errorf("failed to convert proto file %s: %w", item.ObjectID, err)
-		}
-
-		// Group results by slot
-		for _, result := range results {
-			slotResults[result.SlotID] = append(slotResults[result.SlotID], result)
-		}
-	}
-
-	if len(slotResults) == 0 {
-		ll.Debug("No trace files to process in batch")
-		// No segments to insert, just update Kafka offset
-		if err := args.DB.KafkaJournalUpsert(ctx, lrdb.KafkaJournalUpsertParams{
-			ConsumerGroup:       args.KafkaOffset.ConsumerGroup,
-			Topic:               args.KafkaOffset.Topic,
-			Partition:           args.KafkaOffset.Partition,
-			LastProcessedOffset: args.KafkaOffset.Offset,
-		}); err != nil {
-			return fmt.Errorf("failed to update Kafka offset: %w", err)
-		}
-		return nil
-	}
-
-	// Upload all files to S3 and collect segment parameters for batch insertion
-	var segmentParams []lrdb.InsertTraceSegmentDirectParams
-
-	for slotID, results := range slotResults {
-		if len(results) == 0 {
-			continue
-		}
-
-		ll.Debug("Processing slot from batch",
-			slog.Int("slotID", slotID),
-			slog.Int("fileCount", len(results)))
-
-		// Upload each result file and collect parameters
-		for _, result := range results {
-			segmentID := idgen.GenerateID()
-			hour := int16(0) // Hour doesn't matter for slot-based traces
-			dbObjectID := helpers.MakeDBObjectID(item.OrganizationID, "", args.IngestDateint, hour, segmentID, "traces")
-
-			if err := storageClient.UploadObject(ctx, item.Bucket, dbObjectID, result.FileName); err != nil {
-				return fmt.Errorf("failed to upload trace file to %s: %w", profile.CloudProvider, err)
-			}
-
-			// Clean up temp file
-			_ = os.Remove(result.FileName)
-
-			// Collect parameters for batch insertion
-			params := lrdb.InsertTraceSegmentDirectParams{
-				OrganizationID: item.OrganizationID,
-				Dateint:        args.IngestDateint,
-				IngestDateint:  args.IngestDateint,
-				SegmentID:      segmentID,
-				InstanceNum:    item.InstanceNum,
-				SlotID:         int32(result.SlotID),
-				StartTs:        result.MinTimestamp,
-				EndTs:          result.MaxTimestamp,
-				RecordCount:    result.RecordCount,
-				FileSize:       result.FileSize,
-				CreatedBy:      lrdb.CreatedByIngest,
-				Fingerprints:   []int64{}, // TODO: Extract fingerprints
-			}
-			segmentParams = append(segmentParams, params)
-
-			ll.Debug("Trace segment stats",
-				slog.Int64("segmentID", segmentID),
-				slog.Int("slotID", result.SlotID),
-				slog.Int64("recordCount", result.RecordCount),
-				slog.Int64("fileSize", result.FileSize),
-				slog.Int64("startTs", result.MinTimestamp),
-				slog.Int64("endTs", result.MaxTimestamp))
-		}
-	}
-
-	ll.Debug("Trace ingestion batch summary",
-		slog.Int("inputFileCount", 1),
-		slog.Int64("totalInputBytes", item.FileSize),
-		slog.Int("outputFileCount", len(segmentParams)),
-		slog.Int("slotsProcessed", len(slotResults)))
-
-	// Execute the atomic transaction: insert all segments + Kafka offset
-	batch := lrdb.TraceSegmentBatch{
-		Segments:     segmentParams,
-		KafkaOffsets: []lrdb.KafkaOffsetUpdate{args.KafkaOffset},
-	}
-
-	criticalCtx := context.WithoutCancel(ctx)
-	if err := args.DB.InsertTraceSegmentBatchWithKafkaOffsets(criticalCtx, batch); err != nil {
-		return fmt.Errorf("failed to insert trace segments with Kafka offset: %w", err)
-	}
-
-	return nil
 }

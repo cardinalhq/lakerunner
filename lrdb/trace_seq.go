@@ -18,11 +18,11 @@ import (
 	"context"
 )
 
-func (q *Store) InsertTraceSegment(ctx context.Context, params InsertTraceSegmentDirectParams) error {
+func (q *Store) InsertTraceSegment(ctx context.Context, params InsertTraceSegmentParams) error {
 	if err := q.ensureTraceFPPartition(ctx, "trace_seg", params.OrganizationID, params.Dateint); err != nil {
 		return err
 	}
-	return q.InsertTraceSegmentDirect(ctx, params)
+	return q.insertTraceSegmentDirect(ctx, params)
 }
 
 // InsertTraceSegmentBatchWithKafkaOffsets inserts multiple trace segments and updates multiple Kafka offsets in a single transaction

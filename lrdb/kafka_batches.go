@@ -45,7 +45,7 @@ type MetricSegmentBatch struct {
 
 // TraceSegmentBatch collects trace segments to be inserted with Kafka offset updates
 type TraceSegmentBatch struct {
-	Segments     []InsertTraceSegmentDirectParams
+	Segments     []InsertTraceSegmentParams
 	KafkaOffsets []KafkaOffsetUpdate
 }
 

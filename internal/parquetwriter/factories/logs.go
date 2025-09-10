@@ -19,6 +19,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/internal/fingerprint"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
+	mapset "github.com/deckarep/golang-set/v2"
 )
 
 // NewLogsWriter creates a writer optimized for logs data.
@@ -42,13 +43,13 @@ type LogsStatsProvider struct{}
 
 func (p *LogsStatsProvider) NewAccumulator() parquetwriter.StatsAccumulator {
 	return &LogsStatsAccumulator{
-		fingerprints: make(map[int64]bool),
+		fingerprints: mapset.NewSet[int64](),
 	}
 }
 
 // LogsStatsAccumulator collects logs-specific statistics.
 type LogsStatsAccumulator struct {
-	fingerprints map[int64]bool
+	fingerprints mapset.Set[int64]
 	firstTS      int64
 	lastTS       int64
 	first        bool
@@ -74,21 +75,15 @@ func (a *LogsStatsAccumulator) Add(row map[string]any) {
 	// Generate comprehensive fingerprints for the row
 	rowFingerprints := fingerprint.GenerateRowFingerprints(row)
 	for _, fp := range rowFingerprints.ToSlice() {
-		a.fingerprints[fp] = true
+		a.fingerprints.Add(fp)
 	}
 }
 
 func (a *LogsStatsAccumulator) Finalize() any {
-	// Extract unique fingerprints from the map
-	fingerprints := make([]int64, 0, len(a.fingerprints))
-	for fp := range a.fingerprints {
-		fingerprints = append(fingerprints, fp)
-	}
-
 	return LogsFileStats{
 		FirstTS:      a.firstTS,
 		LastTS:       a.lastTS,
-		Fingerprints: fingerprints,
+		Fingerprints: a.fingerprints.ToSlice(),
 	}
 }
 

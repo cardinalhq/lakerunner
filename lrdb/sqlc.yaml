@@ -26,6 +26,7 @@ sql:
           insertLogSegmentDirectParams: InsertLogSegmentParams
           insertMetricSegDirectParams: InsertMetricSegmentParams
           insertMetricSegsDirectParams: InsertMetricSegsParams
+          insertTraceSegmentDirectParams: InsertTraceSegmentParams
           WorkQueueAddDirectParams: WorkQueueAddParams
           WorkQueueClaimDirectParams: WorkQueueClaimParams
           WorkQueueClaimDirectRow: WorkQueueClaimRow

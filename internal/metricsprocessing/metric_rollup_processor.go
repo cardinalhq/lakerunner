@@ -189,7 +189,7 @@ func (r *MetricRollupProcessor) Process(ctx context.Context, group *accumulation
 	}
 
 	// Create temporary directory for this rollup run
-	tmpDir, err := os.MkdirTemp("", "rollup-*")
+	tmpDir, err := os.MkdirTemp("", "")
 	if err != nil {
 		return fmt.Errorf("create temporary directory: %w", err)
 	}

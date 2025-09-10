@@ -20,6 +20,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
@@ -37,31 +38,146 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-// DateintBin represents a file group containing logs for a specific dateint
-type DateintBin struct {
+// TraceIDTimestampSortKey represents a sort key based on trace_id first, then timestamp
+type TraceIDTimestampSortKey struct {
+	TraceID   string
+	Timestamp int64
+	TraceOk   bool
+	TsOk      bool
+}
+
+// Compare implements filereader.SortKey interface for TraceIDTimestampSortKey
+func (k *TraceIDTimestampSortKey) Compare(other filereader.SortKey) int {
+	o, ok := other.(*TraceIDTimestampSortKey)
+	if !ok {
+		panic("TraceIDTimestampSortKey.Compare: other key is not TraceIDTimestampSortKey")
+	}
+
+	// Handle missing trace IDs - put them at the end
+	if !k.TraceOk || !o.TraceOk {
+		if !k.TraceOk && !o.TraceOk {
+			// Neither has trace ID, fall back to timestamp comparison
+			if !k.TsOk || !o.TsOk {
+				if !k.TsOk && !o.TsOk {
+					return 0
+				}
+				if !k.TsOk {
+					return 1
+				}
+				return -1
+			}
+			if k.Timestamp < o.Timestamp {
+				return -1
+			}
+			if k.Timestamp > o.Timestamp {
+				return 1
+			}
+			return 0
+		}
+		if !k.TraceOk {
+			return 1
+		}
+		return -1
+	}
+
+	// Compare trace IDs first
+	if k.TraceID < o.TraceID {
+		return -1
+	}
+	if k.TraceID > o.TraceID {
+		return 1
+	}
+
+	// Same trace ID, compare timestamps
+	if !k.TsOk || !o.TsOk {
+		if !k.TsOk && !o.TsOk {
+			return 0
+		}
+		if !k.TsOk {
+			return 1
+		}
+		return -1
+	}
+
+	if k.Timestamp < o.Timestamp {
+		return -1
+	}
+	if k.Timestamp > o.Timestamp {
+		return 1
+	}
+	return 0
+}
+
+// Release returns the TraceIDTimestampSortKey to the pool for reuse
+func (k *TraceIDTimestampSortKey) Release() {
+	putTraceIDTimestampSortKey(k)
+}
+
+// traceIDTimestampSortKeyPool is a pool of reusable TraceIDTimestampSortKey instances
+var traceIDTimestampSortKeyPool = sync.Pool{
+	New: func() any {
+		return &TraceIDTimestampSortKey{}
+	},
+}
+
+// getTraceIDTimestampSortKey gets a TraceIDTimestampSortKey from the pool
+func getTraceIDTimestampSortKey() *TraceIDTimestampSortKey {
+	return traceIDTimestampSortKeyPool.Get().(*TraceIDTimestampSortKey)
+}
+
+// putTraceIDTimestampSortKey returns a TraceIDTimestampSortKey to the pool after resetting it
+func putTraceIDTimestampSortKey(key *TraceIDTimestampSortKey) {
+	*key = TraceIDTimestampSortKey{}
+	traceIDTimestampSortKeyPool.Put(key)
+}
+
+// TraceIDTimestampSortKeyProvider creates TraceIDTimestampSortKey instances from rows
+type TraceIDTimestampSortKeyProvider struct{}
+
+// MakeKey implements filereader.SortKeyProvider interface for trace ID + timestamp sorting
+func (p *TraceIDTimestampSortKeyProvider) MakeKey(row filereader.Row) filereader.SortKey {
+	key := getTraceIDTimestampSortKey()
+	
+	// Get trace_id from the common keys
+	traceIDKey := wkk.NewRowKey("trace_id")
+	if traceIDValue, ok := row[traceIDKey]; ok {
+		if traceIDStr, ok := traceIDValue.(string); ok {
+			key.TraceID = traceIDStr
+			key.TraceOk = true
+		}
+	}
+	
+	// Get timestamp from CardinalhQ timestamp
+	key.Timestamp, key.TsOk = row[wkk.RowKeyCTimestamp].(int64)
+	
+	return key
+}
+
+// TraceDateintBin represents a file group containing traces for a specific dateint
+type TraceDateintBin struct {
 	Dateint int32 // The dateint for this bin
 	Writer  parquetwriter.ParquetWriter
 	Result  *parquetwriter.Result // Result after writer is closed
 }
 
-// DateintBinManager manages multiple file groups, one per dateint
-type DateintBinManager struct {
-	bins        map[int32]*DateintBin // Key is dateint
+// TraceDateintBinManager manages multiple file groups, one per dateint
+type TraceDateintBinManager struct {
+	bins        map[int32]*TraceDateintBin // Key is dateint
 	tmpDir      string
 	rpfEstimate int64
 }
 
-// LogIngestProcessor implements the Processor interface for raw log ingestion
-type LogIngestProcessor struct {
-	store           LogIngestStore
+// TraceIngestProcessor implements the Processor interface for raw trace ingestion
+type TraceIngestProcessor struct {
+	store           TraceIngestStore
 	storageProvider storageprofile.StorageProfileProvider
 	cmgr            cloudstorage.ClientProvider
 	kafkaProducer   fly.Producer
 }
 
-// newLogIngestProcessor creates a new log ingest processor instance
-func newLogIngestProcessor(store LogIngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *LogIngestProcessor {
-	return &LogIngestProcessor{
+// newTraceIngestProcessor creates a new trace ingest processor instance
+func newTraceIngestProcessor(store TraceIngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *TraceIngestProcessor {
+	return &TraceIngestProcessor{
 		store:           store,
 		storageProvider: storageProvider,
 		cmgr:            cmgr,
@@ -69,8 +185,8 @@ func newLogIngestProcessor(store LogIngestStore, storageProvider storageprofile.
 	}
 }
 
-// validateLogIngestGroupConsistency ensures all messages in a log ingest group have consistent fields
-func validateLogIngestGroupConsistency(group *accumulationGroup[messages.IngestKey]) error {
+// validateTraceIngestGroupConsistency ensures all messages in a trace ingest group have consistent fields
+func validateTraceIngestGroupConsistency(group *accumulationGroup[messages.IngestKey]) error {
 	if len(group.Messages) == 0 {
 		return &GroupValidationError{
 			Field:   "message_count",
@@ -114,20 +230,20 @@ func validateLogIngestGroupConsistency(group *accumulationGroup[messages.IngestK
 	return nil
 }
 
-// Process implements the Processor interface and performs raw log ingestion
-func (p *LogIngestProcessor) Process(ctx context.Context, group *accumulationGroup[messages.IngestKey], kafkaCommitData *KafkaCommitData) error {
+// Process implements the Processor interface and performs raw trace ingestion
+func (p *TraceIngestProcessor) Process(ctx context.Context, group *accumulationGroup[messages.IngestKey], kafkaCommitData *KafkaCommitData) error {
 	ll := logctx.FromContext(ctx)
 
 	// Calculate group age from Hunter timestamp
 	groupAge := time.Since(group.CreatedAt)
 
-	ll.Info("Starting log ingestion",
+	ll.Info("Starting trace ingestion",
 		slog.String("organizationID", group.Key.OrganizationID.String()),
 		slog.Int("instanceNum", int(group.Key.InstanceNum)),
 		slog.Int("messageCount", len(group.Messages)),
 		slog.Duration("groupAge", groupAge))
 
-	if err := validateLogIngestGroupConsistency(group); err != nil {
+	if err := validateTraceIngestGroupConsistency(group); err != nil {
 		return fmt.Errorf("group validation failed: %w", err)
 	}
 
@@ -164,7 +280,7 @@ func (p *LogIngestProcessor) Process(ctx context.Context, group *accumulationGro
 			continue // Skip non-ObjStoreNotificationMessage messages
 		}
 
-		ll.Debug("Processing raw log file",
+		ll.Debug("Processing raw trace file",
 			slog.String("objectID", msg.ObjectID),
 			slog.Int64("fileSize", msg.FileSize))
 
@@ -178,7 +294,7 @@ func (p *LogIngestProcessor) Process(ctx context.Context, group *accumulationGro
 			continue
 		}
 
-		reader, err := p.createLogReaderStack(tmpFilename, msg.OrganizationID.String(), msg.Bucket, msg.ObjectID)
+		reader, err := p.createTraceReaderStack(tmpFilename, msg.OrganizationID.String(), msg.Bucket, msg.ObjectID)
 		if err != nil {
 			ll.Error("Failed to create reader stack", slog.String("objectID", msg.ObjectID), slog.Any("error", err))
 			continue
@@ -202,7 +318,7 @@ func (p *LogIngestProcessor) Process(ctx context.Context, group *accumulationGro
 		return nil
 	}
 
-	finalReader, err := p.createUnifiedLogReader(ctx, readers)
+	finalReader, err := p.createUnifiedTraceReader(ctx, readers)
 	if err != nil {
 		return fmt.Errorf("failed to create unified reader: %w", err)
 	}
@@ -217,7 +333,7 @@ func (p *LogIngestProcessor) Process(ctx context.Context, group *accumulationGro
 		return nil
 	}
 
-	segmentParams, err := p.uploadAndCreateLogSegments(ctx, storageClient, nowDateInt, dateintBins, storageProfile)
+	segmentParams, err := p.uploadAndCreateTraceSegments(ctx, storageClient, nowDateInt, dateintBins, storageProfile)
 	if err != nil {
 		return fmt.Errorf("failed to upload and create segments: %w", err)
 	}
@@ -237,13 +353,13 @@ func (p *LogIngestProcessor) Process(ctx context.Context, group *accumulationGro
 		}
 	}
 
-	batch := lrdb.LogSegmentBatch{
+	batch := lrdb.TraceSegmentBatch{
 		Segments:     segmentParams,
 		KafkaOffsets: kafkaOffsets,
 	}
 
 	criticalCtx := context.WithoutCancel(ctx)
-	if err := p.store.InsertLogSegmentBatchWithKafkaOffsets(criticalCtx, batch); err != nil {
+	if err := p.store.InsertTraceSegmentBatchWithKafkaOffsets(criticalCtx, batch); err != nil {
 		// Log detailed segment information for debugging
 		segmentIDs := make([]int64, len(segmentParams))
 		var totalRecords, totalSize int64
@@ -253,7 +369,7 @@ func (p *LogIngestProcessor) Process(ctx context.Context, group *accumulationGro
 			totalSize += seg.FileSize
 		}
 
-		ll.Error("Failed to insert log segments with Kafka offsets",
+		ll.Error("Failed to insert trace segments with Kafka offsets",
 			slog.Any("error", err),
 			slog.String("organization_id", group.Key.OrganizationID.String()),
 			slog.Int("instance_num", int(group.Key.InstanceNum)),
@@ -262,16 +378,16 @@ func (p *LogIngestProcessor) Process(ctx context.Context, group *accumulationGro
 			slog.Int64("totalSize", totalSize),
 			slog.Any("segment_ids", segmentIDs))
 
-		return fmt.Errorf("failed to insert log segments with Kafka offsets: %w", err)
+		return fmt.Errorf("failed to insert trace segments with Kafka offsets: %w", err)
 	}
 
 	// Send compaction notifications to Kafka topic
 	if p.kafkaProducer != nil {
-		compactionTopic := "lakerunner.segments.logs.compact"
+		compactionTopic := "lakerunner.segments.traces.compact"
 
 		for _, segParams := range segmentParams {
-			// Create log compaction message
-			compactionNotification := messages.LogCompactionMessage{
+			// Create trace compaction message
+			compactionNotification := messages.TraceCompactionMessage{
 				Version:        1,
 				OrganizationID: segParams.OrganizationID,
 				DateInt:        segParams.Dateint,
@@ -288,19 +404,19 @@ func (p *LogIngestProcessor) Process(ctx context.Context, group *accumulationGro
 			// Marshal compaction message
 			compactionMsgBytes, err := compactionNotification.Marshal()
 			if err != nil {
-				return fmt.Errorf("failed to marshal log compaction notification: %w", err)
+				return fmt.Errorf("failed to marshal trace compaction notification: %w", err)
 			}
 
 			compactionMessage := fly.Message{
-				Key:   fmt.Appendf(nil, "%s-%d-%d", segParams.OrganizationID.String(), segParams.InstanceNum, segParams.StartTs/300000),
+				Key:   fmt.Appendf(nil, "%s-%d-%d-%d", segParams.OrganizationID.String(), segParams.InstanceNum, segParams.SlotID, segParams.StartTs/300000),
 				Value: compactionMsgBytes,
 			}
 
 			// Send to compaction topic
 			if err := p.kafkaProducer.Send(criticalCtx, compactionTopic, compactionMessage); err != nil {
-				return fmt.Errorf("failed to send log compaction notification to Kafka: %w", err)
+				return fmt.Errorf("failed to send trace compaction notification to Kafka: %w", err)
 			} else {
-				ll.Debug("Sent log compaction notification", slog.Any("message", compactionNotification))
+				ll.Debug("Sent trace compaction notification", slog.Any("message", compactionNotification))
 			}
 		}
 	}
@@ -315,7 +431,7 @@ func (p *LogIngestProcessor) Process(ctx context.Context, group *accumulationGro
 	// Report telemetry - ingestion transforms files into segments
 	reportTelemetry(ctx, "ingestion", int64(len(group.Messages)), int64(len(segmentParams)), 0, totalOutputRecords, totalInputSize, totalOutputSize)
 
-	ll.Info("Log ingestion completed successfully",
+	ll.Info("Trace ingestion completed successfully",
 		slog.Int("inputFiles", len(group.Messages)),
 		slog.Int64("totalFileSize", totalInputSize),
 		slog.Int("outputSegments", len(segmentParams)))
@@ -324,18 +440,18 @@ func (p *LogIngestProcessor) Process(ctx context.Context, group *accumulationGro
 }
 
 // GetTargetRecordCount returns the target file size limit (5MB) for accumulation
-func (p *LogIngestProcessor) GetTargetRecordCount(ctx context.Context, groupingKey messages.IngestKey) int64 {
+func (p *TraceIngestProcessor) GetTargetRecordCount(ctx context.Context, groupingKey messages.IngestKey) int64 {
 	return 5 * 1024 * 1024 // 5MB file size limit instead of record count
 }
 
-// createLogReaderStack creates a reader stack: Translation(LogReader(file))
-func (p *LogIngestProcessor) createLogReaderStack(tmpFilename, orgID, bucket, objectID string) (filereader.Reader, error) {
-	reader, err := p.createLogReader(tmpFilename)
+// createTraceReaderStack creates a reader stack: Translation(TraceReader(file))
+func (p *TraceIngestProcessor) createTraceReaderStack(tmpFilename, orgID, bucket, objectID string) (filereader.Reader, error) {
+	reader, err := p.createTraceReader(tmpFilename)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create log reader: %w", err)
+		return nil, fmt.Errorf("failed to create trace reader: %w", err)
 	}
 
-	translator := &LogTranslator{
+	translator := &TraceTranslator{
 		orgID:    orgID,
 		bucket:   bucket,
 		objectID: objectID,
@@ -349,22 +465,22 @@ func (p *LogIngestProcessor) createLogReaderStack(tmpFilename, orgID, bucket, ob
 	return reader, nil
 }
 
-func (p *LogIngestProcessor) createLogReader(filename string) (filereader.Reader, error) {
+func (p *TraceIngestProcessor) createTraceReader(filename string) (filereader.Reader, error) {
 	options := filereader.ReaderOptions{
-		SignalType: filereader.SignalTypeLogs,
+		SignalType: filereader.SignalTypeTraces,
 		BatchSize:  1000,
 	}
 	return filereader.ReaderForFileWithOptions(filename, options)
 }
 
-// createUnifiedLogReader creates a unified reader from multiple readers
-func (p *LogIngestProcessor) createUnifiedLogReader(ctx context.Context, readers []filereader.Reader) (filereader.Reader, error) {
+// createUnifiedTraceReader creates a unified reader from multiple readers
+func (p *TraceIngestProcessor) createUnifiedTraceReader(ctx context.Context, readers []filereader.Reader) (filereader.Reader, error) {
 	var finalReader filereader.Reader
 
 	if len(readers) == 1 {
 		finalReader = readers[0]
 	} else {
-		keyProvider := &filereader.TimestampSortKeyProvider{}
+		keyProvider := &TraceIDTimestampSortKeyProvider{}
 		multiReader, err := filereader.NewMergesortReader(ctx, readers, keyProvider, 1000)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create multi-source reader: %w", err)
@@ -375,16 +491,16 @@ func (p *LogIngestProcessor) createUnifiedLogReader(ctx context.Context, readers
 	return finalReader, nil
 }
 
-// processRowsWithDateintBinning groups logs by dateint only (no aggregation, no time window)
-func (p *LogIngestProcessor) processRowsWithDateintBinning(ctx context.Context, reader filereader.Reader, tmpDir string, storageProfile storageprofile.StorageProfile) (map[int32]*DateintBin, error) {
+// processRowsWithDateintBinning groups traces by dateint only (no aggregation, no time window)
+func (p *TraceIngestProcessor) processRowsWithDateintBinning(ctx context.Context, reader filereader.Reader, tmpDir string, storageProfile storageprofile.StorageProfile) (map[int32]*TraceDateintBin, error) {
 	ll := logctx.FromContext(ctx)
 
-	// Get RPF estimate for this org/instance - use logs estimator logic
-	rpfEstimate := p.store.GetLogEstimate(ctx, storageProfile.OrganizationID)
+	// Get RPF estimate for this org/instance - use trace estimator logic
+	rpfEstimate := p.store.GetTraceEstimate(ctx, storageProfile.OrganizationID)
 
 	// Create dateint bin manager
-	binManager := &DateintBinManager{
-		bins:        make(map[int32]*DateintBin),
+	binManager := &TraceDateintBinManager{
+		bins:        make(map[int32]*TraceDateintBin),
 		tmpDir:      tmpDir,
 		rpfEstimate: rpfEstimate,
 	}
@@ -416,11 +532,11 @@ func (p *LogIngestProcessor) processRowsWithDateintBinning(ctx context.Context, 
 					continue
 				}
 
-				// Group logs by dateint only - no time aggregation
+				// Group traces by dateint only - no time aggregation
 				dateint, _ := helpers.MSToDateintHour(ts)
 
 				// Get or create dateint bin
-				bin, err := binManager.getOrCreateBin(ctx, dateint)
+				bin, err := binManager.getOrCreateBin(dateint)
 				if err != nil {
 					ll.Error("Failed to get/create dateint bin", slog.Int("dateint", int(dateint)), slog.Any("error", err))
 					continue
@@ -452,15 +568,15 @@ func (p *LogIngestProcessor) processRowsWithDateintBinning(ctx context.Context, 
 		}
 	}
 
-	ll.Info("Log binning completed",
+	ll.Info("Trace slot binning completed",
 		slog.Int64("rowsProcessed", totalRowsProcessed),
-		slog.Int("dateintBinsCreated", len(binManager.bins)))
+		slog.Int("slotBinsCreated", len(binManager.bins)))
 
 	// Close all writers and collect results
-	for binDateint, bin := range binManager.bins {
+	for binSlotID, bin := range binManager.bins {
 		results, err := bin.Writer.Close(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("failed to close writer for bin %d: %w", binDateint, err)
+			return nil, fmt.Errorf("failed to close writer for slot %d: %w", binSlotID, err)
 		}
 
 		if len(results) > 0 {
@@ -473,18 +589,18 @@ func (p *LogIngestProcessor) processRowsWithDateintBinning(ctx context.Context, 
 }
 
 // getOrCreateBin gets or creates a dateint bin for the given dateint
-func (manager *DateintBinManager) getOrCreateBin(_ context.Context, dateint int32) (*DateintBin, error) {
+func (manager *TraceDateintBinManager) getOrCreateBin(dateint int32) (*TraceDateintBin, error) {
 	if bin, exists := manager.bins[dateint]; exists {
 		return bin, nil
 	}
 
 	// Create new writer for this dateint bin
-	writer, err := factories.NewLogsWriter(manager.tmpDir, manager.rpfEstimate)
+	writer, err := factories.NewTracesWriter(manager.tmpDir, 0, manager.rpfEstimate) // Use slot 0 for traces
 	if err != nil {
 		return nil, fmt.Errorf("failed to create writer for dateint bin: %w", err)
 	}
 
-	bin := &DateintBin{
+	bin := &TraceDateintBin{
 		Dateint: dateint,
 		Writer:  writer,
 	}
@@ -493,17 +609,17 @@ func (manager *DateintBinManager) getOrCreateBin(_ context.Context, dateint int3
 	return bin, nil
 }
 
-// uploadAndCreateLogSegments uploads dateint bins to S3 and creates segment parameters
-func (p *LogIngestProcessor) uploadAndCreateLogSegments(ctx context.Context, storageClient cloudstorage.Client, nowDateInt int32, dateintBins map[int32]*DateintBin, storageProfile storageprofile.StorageProfile) ([]lrdb.InsertLogSegmentParams, error) {
+// uploadAndCreateTraceSegments uploads dateint bins to S3 and creates segment parameters
+func (p *TraceIngestProcessor) uploadAndCreateTraceSegments(ctx context.Context, storageClient cloudstorage.Client, nowDateInt int32, dateintBins map[int32]*TraceDateintBin, storageProfile storageprofile.StorageProfile) ([]lrdb.InsertTraceSegmentParams, error) {
 	ll := logctx.FromContext(ctx)
 
-	var segmentParams []lrdb.InsertLogSegmentParams
+	var segmentParams []lrdb.InsertTraceSegmentParams
 
 	// First, collect all valid bins to know how many IDs we need
 	type validBin struct {
 		dateint int32
-		bin     *DateintBin
-		stats   factories.LogsFileStats
+		bin     *TraceDateintBin
+		stats   factories.TracesFileStats
 	}
 	var validBins []validBin
 
@@ -514,9 +630,9 @@ func (p *LogIngestProcessor) uploadAndCreateLogSegments(ctx context.Context, sto
 		}
 
 		// Extract file stats from parquetwriter result
-		stats, ok := bin.Result.Metadata.(factories.LogsFileStats)
+		stats, ok := bin.Result.Metadata.(factories.TracesFileStats)
 		if !ok {
-			return nil, fmt.Errorf("expected LogsFileStats metadata, got %T", bin.Result.Metadata)
+			return nil, fmt.Errorf("expected TracesFileStats metadata, got %T", bin.Result.Metadata)
 		}
 
 		validBins = append(validBins, validBin{
@@ -530,72 +646,63 @@ func (p *LogIngestProcessor) uploadAndCreateLogSegments(ctx context.Context, sto
 	batchSegmentIDs := idgen.GenerateBatchIDs(len(validBins))
 
 	for i, validBin := range validBins {
-		dateint := validBin.dateint
-		bin := validBin.bin
-		stats := validBin.stats
-
 		segmentID := batchSegmentIDs[i]
 
-		// Generate upload path using stats dateint and hour
-		uploadPath := helpers.MakeDBObjectID(
+		// Generate upload path using helpers.MakeDBObjectID
+		uploadKey := helpers.MakeDBObjectID(
 			storageProfile.OrganizationID,
 			storageProfile.CollectorName,
-			dateint,
-			helpers.HourFromMillis(stats.FirstTS),
+			validBin.dateint,
+			helpers.HourFromMillis(validBin.stats.FirstTS),
 			segmentID,
-			"logs",
+			"traces",
 		)
 
-		// Upload file to S3
-		uploadErr := storageClient.UploadObject(ctx, storageProfile.Bucket, uploadPath, bin.Result.FileName)
-		if uploadErr != nil {
-			return nil, fmt.Errorf("failed to upload file %s to %s: %w", bin.Result.FileName, uploadPath, uploadErr)
+		err := storageClient.UploadObject(ctx, storageProfile.Bucket, uploadKey, validBin.bin.Result.FileName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to upload trace segment for dateint %d: %w", validBin.dateint, err)
 		}
 
-		ll.Debug("Uploaded log segment",
-			slog.String("uploadPath", uploadPath),
+		ll.Info("Uploaded trace segment",
+			slog.String("uploadKey", uploadKey),
 			slog.Int64("segmentID", segmentID),
-			slog.Int64("recordCount", bin.Result.RecordCount),
-			slog.Int64("fileSize", bin.Result.FileSize))
+			slog.Int64("recordCount", validBin.bin.Result.RecordCount))
 
-		// Create segment parameters for database insertion using extracted stats
-		slotID := int32(0) // Use slot 0 for logs
-		params := lrdb.InsertLogSegmentParams{
+		// Create segment parameters with slot_id = 0
+		segmentParam := lrdb.InsertTraceSegmentParams{
 			OrganizationID: storageProfile.OrganizationID,
-			Dateint:        dateint,
-			IngestDateint:  nowDateInt,
 			SegmentID:      segmentID,
+			Dateint:        validBin.dateint,
+			IngestDateint:  nowDateInt,
+			SlotID:         0, // Always 0 for traces
 			InstanceNum:    storageProfile.InstanceNum,
-			SlotID:         slotID,
-			StartTs:        stats.FirstTS,
-			EndTs:          stats.LastTS + 1, // end is exclusive
-			RecordCount:    bin.Result.RecordCount,
-			FileSize:       bin.Result.FileSize,
+			StartTs:        validBin.stats.FirstTS,
+			EndTs:          validBin.stats.LastTS + 1, // end is exclusive
+			RecordCount:    validBin.bin.Result.RecordCount,
+			FileSize:       validBin.bin.Result.FileSize,
 			CreatedBy:      lrdb.CreatedByIngest,
-			Fingerprints:   stats.Fingerprints,
-			Published:      true,  // Mark ingested segments as published
-			Compacted:      false, // New segments are not compacted
+			Fingerprints:   validBin.stats.Fingerprints,
 		}
 
-		segmentParams = append(segmentParams, params)
+		segmentParams = append(segmentParams, segmentParam)
 	}
 
-	ll.Info("Log segment upload completed",
+	ll.Info("Trace segment upload completed",
 		slog.Int("totalSegments", len(segmentParams)))
 
 	return segmentParams, nil
 }
 
-// LogTranslator adds resource metadata to log rows
-type LogTranslator struct {
+// TraceTranslator adds resource metadata to trace rows
+type TraceTranslator struct {
 	orgID    string
 	bucket   string
 	objectID string
 }
 
-// NewLogTranslator creates a new LogTranslator with the specified metadata
-func NewLogTranslator(orgID, bucket, objectID string) *LogTranslator {
-	return &LogTranslator{
+// NewTraceTranslator creates a new TraceTranslator with the specified metadata
+func NewTraceTranslator(orgID, bucket, objectID string) *TraceTranslator {
+	return &TraceTranslator{
 		orgID:    orgID,
 		bucket:   bucket,
 		objectID: objectID,
@@ -603,20 +710,13 @@ func NewLogTranslator(orgID, bucket, objectID string) *LogTranslator {
 }
 
 // TranslateRow adds resource fields to each row
-func (t *LogTranslator) TranslateRow(row *filereader.Row) error {
+func (t *TraceTranslator) TranslateRow(row *filereader.Row) error {
 	if row == nil {
 		return fmt.Errorf("row cannot be nil")
 	}
 
-	// Only set the specific required fields - assume all other fields are properly set
-	(*row)[wkk.NewRowKey("resource.bucket.name")] = t.bucket
-	(*row)[wkk.NewRowKey("resource.file.name")] = "./" + t.objectID
-	(*row)[wkk.NewRowKey("resource.file.type")] = helpers.GetFileType(t.objectID)
-
 	// Ensure required CardinalhQ fields are set
-	(*row)[wkk.RowKeyCTelemetryType] = "logs"
-	(*row)[wkk.RowKeyCName] = "log.events"
-	(*row)[wkk.RowKeyCValue] = float64(1)
+	(*row)[wkk.RowKeyCTelemetryType] = "traces"
 
 	return nil
 }

@@ -140,7 +140,7 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 	}
 
 	// Create temporary directory for this ingestion run
-	tmpDir, err := os.MkdirTemp("", "ingest-*")
+	tmpDir, err := os.MkdirTemp("", "")
 	if err != nil {
 		return fmt.Errorf("create temporary directory: %w", err)
 	}

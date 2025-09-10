@@ -38,10 +38,8 @@ type Querier interface {
 	GetMetricType(ctx context.Context, arg GetMetricTypeParams) (string, error)
 	// Get a specific segment_journal entry by ID
 	GetSegmentJournalByID(ctx context.Context, id int64) (SegmentJournal, error)
-	GetTraceSegmentsForCompaction(ctx context.Context, arg GetTraceSegmentsForCompactionParams) ([]GetTraceSegmentsForCompactionRow, error)
 	// Insert a debugging journal entry for segment operations
 	InsertSegmentJournal(ctx context.Context, arg InsertSegmentJournalParams) error
-	InsertTraceSegmentDirect(ctx context.Context, arg InsertTraceSegmentDirectParams) error
 	// Get the last processed offset for a specific consumer group, topic, partition, organization, and instance
 	KafkaGetLastProcessed(ctx context.Context, arg KafkaGetLastProcessedParams) (int64, error)
 	// Insert or update multiple Kafka journal entries in a single batch operation
@@ -103,6 +101,7 @@ type Querier interface {
 	insertLogSegmentDirect(ctx context.Context, arg InsertLogSegmentParams) error
 	insertMetricSegDirect(ctx context.Context, arg InsertMetricSegmentParams) error
 	insertMetricSegsDirect(ctx context.Context, arg []InsertMetricSegsParams) *insertMetricSegsDirectBatchResults
+	insertTraceSegmentDirect(ctx context.Context, arg InsertTraceSegmentParams) error
 }
 
 var _ Querier = (*Queries)(nil)
