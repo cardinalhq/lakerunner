@@ -80,194 +80,6 @@ func (b *BatchDeleteMetricSegsBatchResults) Close() error {
 	return b.br.Close()
 }
 
-const batchInsertLogSegs = `-- name: BatchInsertLogSegs :batchexec
-INSERT INTO log_seg (
-  organization_id,
-  dateint,
-  ingest_dateint,
-  segment_id,
-  instance_num,
-  slot_id,
-  ts_range,
-  record_count,
-  file_size,
-  created_by,
-  fingerprints
-)
-VALUES (
-  $1,
-  $2,
-  $3,
-  $4,
-  $5,
-  $6,
-  int8range($7, $8, '[)'),
-  $9,
-  $10,
-  $11,
-  $12::bigint[]
-)
-`
-
-type BatchInsertLogSegsBatchResults struct {
-	br     pgx.BatchResults
-	tot    int
-	closed bool
-}
-
-type BatchInsertLogSegsParams struct {
-	OrganizationID uuid.UUID `json:"organization_id"`
-	Dateint        int32     `json:"dateint"`
-	IngestDateint  int32     `json:"ingest_dateint"`
-	SegmentID      int64     `json:"segment_id"`
-	InstanceNum    int16     `json:"instance_num"`
-	SlotID         int32     `json:"slot_id"`
-	StartTs        int64     `json:"start_ts"`
-	EndTs          int64     `json:"end_ts"`
-	RecordCount    int64     `json:"record_count"`
-	FileSize       int64     `json:"file_size"`
-	CreatedBy      CreatedBy `json:"created_by"`
-	Fingerprints   []int64   `json:"fingerprints"`
-}
-
-func (q *Queries) BatchInsertLogSegs(ctx context.Context, arg []BatchInsertLogSegsParams) *BatchInsertLogSegsBatchResults {
-	batch := &pgx.Batch{}
-	for _, a := range arg {
-		vals := []interface{}{
-			a.OrganizationID,
-			a.Dateint,
-			a.IngestDateint,
-			a.SegmentID,
-			a.InstanceNum,
-			a.SlotID,
-			a.StartTs,
-			a.EndTs,
-			a.RecordCount,
-			a.FileSize,
-			a.CreatedBy,
-			a.Fingerprints,
-		}
-		batch.Queue(batchInsertLogSegs, vals...)
-	}
-	br := q.db.SendBatch(ctx, batch)
-	return &BatchInsertLogSegsBatchResults{br, len(arg), false}
-}
-
-func (b *BatchInsertLogSegsBatchResults) Exec(f func(int, error)) {
-	defer b.br.Close()
-	for t := 0; t < b.tot; t++ {
-		if b.closed {
-			if f != nil {
-				f(t, ErrBatchAlreadyClosed)
-			}
-			continue
-		}
-		_, err := b.br.Exec()
-		if f != nil {
-			f(t, err)
-		}
-	}
-}
-
-func (b *BatchInsertLogSegsBatchResults) Close() error {
-	b.closed = true
-	return b.br.Close()
-}
-
-const batchInsertTraceSegs = `-- name: BatchInsertTraceSegs :batchexec
-INSERT INTO trace_seg (
-  organization_id,
-  dateint,
-  ingest_dateint,
-  segment_id,
-  instance_num,
-  slot_id,
-  ts_range,
-  record_count,
-  file_size,
-  created_by,
-  fingerprints
-)
-VALUES (
-  $1,
-  $2,
-  $3,
-  $4,
-  $5,
-  $6,
-  int8range($7, $8, '[)'),
-  $9,
-  $10,
-  $11,
-  $12::bigint[]
-)
-`
-
-type BatchInsertTraceSegsBatchResults struct {
-	br     pgx.BatchResults
-	tot    int
-	closed bool
-}
-
-type BatchInsertTraceSegsParams struct {
-	OrganizationID uuid.UUID `json:"organization_id"`
-	Dateint        int32     `json:"dateint"`
-	IngestDateint  int32     `json:"ingest_dateint"`
-	SegmentID      int64     `json:"segment_id"`
-	InstanceNum    int16     `json:"instance_num"`
-	SlotID         int32     `json:"slot_id"`
-	StartTs        int64     `json:"start_ts"`
-	EndTs          int64     `json:"end_ts"`
-	RecordCount    int64     `json:"record_count"`
-	FileSize       int64     `json:"file_size"`
-	CreatedBy      CreatedBy `json:"created_by"`
-	Fingerprints   []int64   `json:"fingerprints"`
-}
-
-func (q *Queries) BatchInsertTraceSegs(ctx context.Context, arg []BatchInsertTraceSegsParams) *BatchInsertTraceSegsBatchResults {
-	batch := &pgx.Batch{}
-	for _, a := range arg {
-		vals := []interface{}{
-			a.OrganizationID,
-			a.Dateint,
-			a.IngestDateint,
-			a.SegmentID,
-			a.InstanceNum,
-			a.SlotID,
-			a.StartTs,
-			a.EndTs,
-			a.RecordCount,
-			a.FileSize,
-			a.CreatedBy,
-			a.Fingerprints,
-		}
-		batch.Queue(batchInsertTraceSegs, vals...)
-	}
-	br := q.db.SendBatch(ctx, batch)
-	return &BatchInsertTraceSegsBatchResults{br, len(arg), false}
-}
-
-func (b *BatchInsertTraceSegsBatchResults) Exec(f func(int, error)) {
-	defer b.br.Close()
-	for t := 0; t < b.tot; t++ {
-		if b.closed {
-			if f != nil {
-				f(t, ErrBatchAlreadyClosed)
-			}
-			continue
-		}
-		_, err := b.br.Exec()
-		if f != nil {
-			f(t, err)
-		}
-	}
-}
-
-func (b *BatchInsertTraceSegsBatchResults) Close() error {
-	b.closed = true
-	return b.br.Close()
-}
-
 const batchMarkMetricSegsRolledup = `-- name: BatchMarkMetricSegsRolledup :batchexec
 UPDATE public.metric_seg
    SET rolledup = true
@@ -626,6 +438,194 @@ func (b *KafkaJournalBatchUpsertBatchResults) Exec(f func(int, error)) {
 }
 
 func (b *KafkaJournalBatchUpsertBatchResults) Close() error {
+	b.closed = true
+	return b.br.Close()
+}
+
+const batchInsertLogSegsDirect = `-- name: batchInsertLogSegsDirect :batchexec
+INSERT INTO log_seg (
+  organization_id,
+  dateint,
+  ingest_dateint,
+  segment_id,
+  instance_num,
+  slot_id,
+  ts_range,
+  record_count,
+  file_size,
+  created_by,
+  fingerprints
+)
+VALUES (
+  $1,
+  $2,
+  $3,
+  $4,
+  $5,
+  $6,
+  int8range($7, $8, '[)'),
+  $9,
+  $10,
+  $11,
+  $12::bigint[]
+)
+`
+
+type batchInsertLogSegsDirectBatchResults struct {
+	br     pgx.BatchResults
+	tot    int
+	closed bool
+}
+
+type batchInsertLogSegsDirectParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Dateint        int32     `json:"dateint"`
+	IngestDateint  int32     `json:"ingest_dateint"`
+	SegmentID      int64     `json:"segment_id"`
+	InstanceNum    int16     `json:"instance_num"`
+	SlotID         int32     `json:"slot_id"`
+	StartTs        int64     `json:"start_ts"`
+	EndTs          int64     `json:"end_ts"`
+	RecordCount    int64     `json:"record_count"`
+	FileSize       int64     `json:"file_size"`
+	CreatedBy      CreatedBy `json:"created_by"`
+	Fingerprints   []int64   `json:"fingerprints"`
+}
+
+func (q *Queries) batchInsertLogSegsDirect(ctx context.Context, arg []batchInsertLogSegsDirectParams) *batchInsertLogSegsDirectBatchResults {
+	batch := &pgx.Batch{}
+	for _, a := range arg {
+		vals := []interface{}{
+			a.OrganizationID,
+			a.Dateint,
+			a.IngestDateint,
+			a.SegmentID,
+			a.InstanceNum,
+			a.SlotID,
+			a.StartTs,
+			a.EndTs,
+			a.RecordCount,
+			a.FileSize,
+			a.CreatedBy,
+			a.Fingerprints,
+		}
+		batch.Queue(batchInsertLogSegsDirect, vals...)
+	}
+	br := q.db.SendBatch(ctx, batch)
+	return &batchInsertLogSegsDirectBatchResults{br, len(arg), false}
+}
+
+func (b *batchInsertLogSegsDirectBatchResults) Exec(f func(int, error)) {
+	defer b.br.Close()
+	for t := 0; t < b.tot; t++ {
+		if b.closed {
+			if f != nil {
+				f(t, ErrBatchAlreadyClosed)
+			}
+			continue
+		}
+		_, err := b.br.Exec()
+		if f != nil {
+			f(t, err)
+		}
+	}
+}
+
+func (b *batchInsertLogSegsDirectBatchResults) Close() error {
+	b.closed = true
+	return b.br.Close()
+}
+
+const batchInsertTraceSegsDirect = `-- name: batchInsertTraceSegsDirect :batchexec
+INSERT INTO trace_seg (
+  organization_id,
+  dateint,
+  ingest_dateint,
+  segment_id,
+  instance_num,
+  slot_id,
+  ts_range,
+  record_count,
+  file_size,
+  created_by,
+  fingerprints
+)
+VALUES (
+  $1,
+  $2,
+  $3,
+  $4,
+  $5,
+  $6,
+  int8range($7, $8, '[)'),
+  $9,
+  $10,
+  $11,
+  $12::bigint[]
+)
+`
+
+type batchInsertTraceSegsDirectBatchResults struct {
+	br     pgx.BatchResults
+	tot    int
+	closed bool
+}
+
+type batchInsertTraceSegsDirectParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Dateint        int32     `json:"dateint"`
+	IngestDateint  int32     `json:"ingest_dateint"`
+	SegmentID      int64     `json:"segment_id"`
+	InstanceNum    int16     `json:"instance_num"`
+	SlotID         int32     `json:"slot_id"`
+	StartTs        int64     `json:"start_ts"`
+	EndTs          int64     `json:"end_ts"`
+	RecordCount    int64     `json:"record_count"`
+	FileSize       int64     `json:"file_size"`
+	CreatedBy      CreatedBy `json:"created_by"`
+	Fingerprints   []int64   `json:"fingerprints"`
+}
+
+func (q *Queries) batchInsertTraceSegsDirect(ctx context.Context, arg []batchInsertTraceSegsDirectParams) *batchInsertTraceSegsDirectBatchResults {
+	batch := &pgx.Batch{}
+	for _, a := range arg {
+		vals := []interface{}{
+			a.OrganizationID,
+			a.Dateint,
+			a.IngestDateint,
+			a.SegmentID,
+			a.InstanceNum,
+			a.SlotID,
+			a.StartTs,
+			a.EndTs,
+			a.RecordCount,
+			a.FileSize,
+			a.CreatedBy,
+			a.Fingerprints,
+		}
+		batch.Queue(batchInsertTraceSegsDirect, vals...)
+	}
+	br := q.db.SendBatch(ctx, batch)
+	return &batchInsertTraceSegsDirectBatchResults{br, len(arg), false}
+}
+
+func (b *batchInsertTraceSegsDirectBatchResults) Exec(f func(int, error)) {
+	defer b.br.Close()
+	for t := 0; t < b.tot; t++ {
+		if b.closed {
+			if f != nil {
+				f(t, ErrBatchAlreadyClosed)
+			}
+			continue
+		}
+		_, err := b.br.Exec()
+		if f != nil {
+			f(t, err)
+		}
+	}
+}
+
+func (b *batchInsertTraceSegsDirectBatchResults) Close() error {
 	b.closed = true
 	return b.br.Close()
 }

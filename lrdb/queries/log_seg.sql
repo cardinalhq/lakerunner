@@ -100,7 +100,7 @@ SELECT
   fa.fingerprints
 FROM fingerprint_array AS fa;
 
--- name: BatchInsertLogSegs :batchexec
+-- name: batchInsertLogSegsDirect :batchexec
 INSERT INTO log_seg (
   organization_id,
   dateint,

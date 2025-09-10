@@ -13,8 +13,6 @@ import (
 
 type Querier interface {
 	BatchDeleteMetricSegs(ctx context.Context, arg []BatchDeleteMetricSegsParams) *BatchDeleteMetricSegsBatchResults
-	BatchInsertLogSegs(ctx context.Context, arg []BatchInsertLogSegsParams) *BatchInsertLogSegsBatchResults
-	BatchInsertTraceSegs(ctx context.Context, arg []BatchInsertTraceSegsParams) *BatchInsertTraceSegsBatchResults
 	BatchMarkMetricSegsRolledup(ctx context.Context, arg []BatchMarkMetricSegsRolledupParams) *BatchMarkMetricSegsRolledupBatchResults
 	// This will upsert a new log exemplar. Attributes, exemplar, and updated_at are always updated
 	// to the provided values. If old_fingerprint is not 0, it is added to the list of related
@@ -40,13 +38,13 @@ type Querier interface {
 	// Insert a debugging journal entry for segment operations
 	InsertSegmentJournal(ctx context.Context, arg InsertSegmentJournalParams) error
 	InsertTraceSegmentDirect(ctx context.Context, arg InsertTraceSegmentDirectParams) error
+	// Get the last processed offset for a specific consumer group, topic, partition, organization, and instance
+	KafkaGetLastProcessed(ctx context.Context, arg KafkaGetLastProcessedParams) (int64, error)
 	// Insert or update multiple Kafka journal entries in a single batch operation
 	// Only updates if the new offset is greater than the existing one
 	KafkaJournalBatchUpsert(ctx context.Context, arg []KafkaJournalBatchUpsertParams) *KafkaJournalBatchUpsertBatchResults
 	// Get the last processed offset for a specific consumer group, topic, and partition
 	KafkaJournalGetLastProcessed(ctx context.Context, arg KafkaJournalGetLastProcessedParams) (int64, error)
-	// Get the last processed offset for a specific consumer group, topic, partition, organization, and instance
-	KafkaJournalGetLastProcessedWithOrgInstance(ctx context.Context, arg KafkaJournalGetLastProcessedWithOrgInstanceParams) (int64, error)
 	// Insert or update the last processed offset for a consumer group, topic, and partition
 	// Only updates if the new offset is greater than the existing one
 	KafkaJournalUpsert(ctx context.Context, arg KafkaJournalUpsertParams) error
@@ -93,6 +91,8 @@ type Querier interface {
 	// Get queue depth for work queue scaling by signal and action
 	WorkQueueScalingDepth(ctx context.Context, arg WorkQueueScalingDepthParams) (interface{}, error)
 	WorkQueueSummary(ctx context.Context) ([]WorkQueueSummaryRow, error)
+	batchInsertLogSegsDirect(ctx context.Context, arg []batchInsertLogSegsDirectParams) *batchInsertLogSegsDirectBatchResults
+	batchInsertTraceSegsDirect(ctx context.Context, arg []batchInsertTraceSegsDirectParams) *batchInsertTraceSegsDirectBatchResults
 	insertLogSegmentDirect(ctx context.Context, arg InsertLogSegmentParams) error
 	insertMetricSegDirect(ctx context.Context, arg InsertMetricSegmentParams) error
 	insertMetricSegsDirect(ctx context.Context, arg []InsertMetricSegsParams) *insertMetricSegsDirectBatchResults

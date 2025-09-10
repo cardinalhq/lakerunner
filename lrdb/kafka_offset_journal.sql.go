@@ -11,6 +11,38 @@ import (
 	"github.com/google/uuid"
 )
 
+const kafkaGetLastProcessed = `-- name: KafkaGetLastProcessed :one
+SELECT last_processed_offset
+FROM kafka_offset_journal
+WHERE consumer_group = $1
+  AND topic = $2
+  AND partition = $3
+  AND organization_id = $4
+  AND instance_num = $5
+`
+
+type KafkaGetLastProcessedParams struct {
+	ConsumerGroup  string    `json:"consumer_group"`
+	Topic          string    `json:"topic"`
+	Partition      int32     `json:"partition"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+	InstanceNum    int16     `json:"instance_num"`
+}
+
+// Get the last processed offset for a specific consumer group, topic, partition, organization, and instance
+func (q *Queries) KafkaGetLastProcessed(ctx context.Context, arg KafkaGetLastProcessedParams) (int64, error) {
+	row := q.db.QueryRow(ctx, kafkaGetLastProcessed,
+		arg.ConsumerGroup,
+		arg.Topic,
+		arg.Partition,
+		arg.OrganizationID,
+		arg.InstanceNum,
+	)
+	var last_processed_offset int64
+	err := row.Scan(&last_processed_offset)
+	return last_processed_offset, err
+}
+
 const kafkaJournalGetLastProcessed = `-- name: KafkaJournalGetLastProcessed :one
 SELECT last_processed_offset
 FROM kafka_offset_journal
@@ -26,38 +58,6 @@ type KafkaJournalGetLastProcessedParams struct {
 // Get the last processed offset for a specific consumer group, topic, and partition
 func (q *Queries) KafkaJournalGetLastProcessed(ctx context.Context, arg KafkaJournalGetLastProcessedParams) (int64, error) {
 	row := q.db.QueryRow(ctx, kafkaJournalGetLastProcessed, arg.ConsumerGroup, arg.Topic, arg.Partition)
-	var last_processed_offset int64
-	err := row.Scan(&last_processed_offset)
-	return last_processed_offset, err
-}
-
-const kafkaJournalGetLastProcessedWithOrgInstance = `-- name: KafkaJournalGetLastProcessedWithOrgInstance :one
-SELECT last_processed_offset
-FROM kafka_offset_journal
-WHERE consumer_group = $1
-  AND topic = $2
-  AND partition = $3
-  AND organization_id = $4
-  AND instance_num = $5
-`
-
-type KafkaJournalGetLastProcessedWithOrgInstanceParams struct {
-	ConsumerGroup  string    `json:"consumer_group"`
-	Topic          string    `json:"topic"`
-	Partition      int32     `json:"partition"`
-	OrganizationID uuid.UUID `json:"organization_id"`
-	InstanceNum    int16     `json:"instance_num"`
-}
-
-// Get the last processed offset for a specific consumer group, topic, partition, organization, and instance
-func (q *Queries) KafkaJournalGetLastProcessedWithOrgInstance(ctx context.Context, arg KafkaJournalGetLastProcessedWithOrgInstanceParams) (int64, error) {
-	row := q.db.QueryRow(ctx, kafkaJournalGetLastProcessedWithOrgInstance,
-		arg.ConsumerGroup,
-		arg.Topic,
-		arg.Partition,
-		arg.OrganizationID,
-		arg.InstanceNum,
-	)
 	var last_processed_offset int64
 	err := row.Scan(&last_processed_offset)
 	return last_processed_offset, err
