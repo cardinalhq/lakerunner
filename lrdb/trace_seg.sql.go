@@ -11,88 +11,75 @@ import (
 	"github.com/google/uuid"
 )
 
-const compactTraceSegments = `-- name: CompactTraceSegments :exec
-WITH
-  all_fp AS (
-    SELECT unnest(fingerprints) AS fp
-      FROM trace_seg
-     WHERE organization_id = $1
-       AND dateint        = $2
-       AND instance_num   = $5
-       AND slot_id = $6
-       AND segment_id     = ANY($12::bigint[])
-  ),
-  fingerprint_array AS (
-    SELECT coalesce(
-      array_agg(DISTINCT fp ORDER BY fp),
-      '{}'::bigint[]
-    ) AS fingerprints
-    FROM all_fp
-  ),
-  deleted_seg AS (
-    DELETE FROM trace_seg
-     WHERE organization_id = $1
-       AND dateint        = $2
-       AND instance_num   = $5
-       AND segment_id     = ANY($12::bigint[])
-  )
-INSERT INTO trace_seg (
-  organization_id,
-  dateint,
-  ingest_dateint,
-  segment_id,
-  instance_num,
-  slot_id,
-  record_count,
-  file_size,
-  ts_range,
-  created_by,
-  fingerprints
-)
-SELECT
-  $1,
-  $2,
-  $3,
-  $4,
-  $5,
-  $6,
-  $7,
-  $8,
-  int8range($9, $10, '[)'),
-  $11,
-  fa.fingerprints
-FROM fingerprint_array AS fa
+const getTraceSeg = `-- name: GetTraceSeg :one
+SELECT organization_id, dateint, segment_id, instance_num, slot_id, fingerprints, record_count, file_size, ingest_dateint, ts_range, created_by, created_at, compacted, published
+FROM trace_seg
+WHERE organization_id = $1
+  AND dateint = $2
+  AND segment_id = $3
+  AND instance_num = $4
 `
 
-type CompactTraceSegmentsParams struct {
+type GetTraceSegParams struct {
 	OrganizationID uuid.UUID `json:"organization_id"`
 	Dateint        int32     `json:"dateint"`
-	IngestDateint  int32     `json:"ingest_dateint"`
-	NewSegmentID   int64     `json:"new_segment_id"`
+	SegmentID      int64     `json:"segment_id"`
 	InstanceNum    int16     `json:"instance_num"`
-	SlotID         int32     `json:"slot_id"`
-	NewRecordCount int64     `json:"new_record_count"`
-	NewFileSize    int64     `json:"new_file_size"`
-	NewStartTs     int64     `json:"new_start_ts"`
-	NewEndTs       int64     `json:"new_end_ts"`
-	CreatedBy      CreatedBy `json:"created_by"`
-	OldSegmentIds  []int64   `json:"old_segment_ids"`
 }
 
-func (q *Queries) CompactTraceSegments(ctx context.Context, arg CompactTraceSegmentsParams) error {
-	_, err := q.db.Exec(ctx, compactTraceSegments,
+func (q *Queries) GetTraceSeg(ctx context.Context, arg GetTraceSegParams) (TraceSeg, error) {
+	row := q.db.QueryRow(ctx, getTraceSeg,
 		arg.OrganizationID,
 		arg.Dateint,
-		arg.IngestDateint,
-		arg.NewSegmentID,
+		arg.SegmentID,
+		arg.InstanceNum,
+	)
+	var i TraceSeg
+	err := row.Scan(
+		&i.OrganizationID,
+		&i.Dateint,
+		&i.SegmentID,
+		&i.InstanceNum,
+		&i.SlotID,
+		&i.Fingerprints,
+		&i.RecordCount,
+		&i.FileSize,
+		&i.IngestDateint,
+		&i.TsRange,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.Compacted,
+		&i.Published,
+	)
+	return i, err
+}
+
+const markTraceSegsCompactedByKeys = `-- name: MarkTraceSegsCompactedByKeys :exec
+UPDATE trace_seg
+SET compacted = true, published = false
+WHERE organization_id = $1
+  AND dateint         = $2
+  AND instance_num    = $3
+  AND slot_id         = $4
+  AND segment_id      = ANY($5::bigint[])
+  AND compacted       = false
+`
+
+type MarkTraceSegsCompactedByKeysParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Dateint        int32     `json:"dateint"`
+	InstanceNum    int16     `json:"instance_num"`
+	SlotID         int32     `json:"slot_id"`
+	SegmentIds     []int64   `json:"segment_ids"`
+}
+
+func (q *Queries) MarkTraceSegsCompactedByKeys(ctx context.Context, arg MarkTraceSegsCompactedByKeysParams) error {
+	_, err := q.db.Exec(ctx, markTraceSegsCompactedByKeys,
+		arg.OrganizationID,
+		arg.Dateint,
 		arg.InstanceNum,
 		arg.SlotID,
-		arg.NewRecordCount,
-		arg.NewFileSize,
-		arg.NewStartTs,
-		arg.NewEndTs,
-		arg.CreatedBy,
-		arg.OldSegmentIds,
+		arg.SegmentIds,
 	)
 	return err
 }

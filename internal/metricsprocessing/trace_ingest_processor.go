@@ -137,7 +137,7 @@ type TraceIDTimestampSortKeyProvider struct{}
 // MakeKey implements filereader.SortKeyProvider interface for trace ID + timestamp sorting
 func (p *TraceIDTimestampSortKeyProvider) MakeKey(row filereader.Row) filereader.SortKey {
 	key := getTraceIDTimestampSortKey()
-	
+
 	// Get trace_id from the common keys
 	traceIDKey := wkk.NewRowKey("trace_id")
 	if traceIDValue, ok := row[traceIDKey]; ok {
@@ -146,10 +146,10 @@ func (p *TraceIDTimestampSortKeyProvider) MakeKey(row filereader.Row) filereader
 			key.TraceOk = true
 		}
 	}
-	
+
 	// Get timestamp from CardinalhQ timestamp
 	key.Timestamp, key.TsOk = row[wkk.RowKeyCTimestamp].(int64)
-	
+
 	return key
 }
 

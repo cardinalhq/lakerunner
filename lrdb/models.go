@@ -290,6 +290,8 @@ type TraceSeg struct {
 	TsRange        pgtype.Range[pgtype.Int8] `json:"ts_range"`
 	CreatedBy      CreatedBy                 `json:"created_by"`
 	CreatedAt      time.Time                 `json:"created_at"`
+	Compacted      bool                      `json:"compacted"`
+	Published      bool                      `json:"published"`
 }
 
 type WorkQueue struct {
