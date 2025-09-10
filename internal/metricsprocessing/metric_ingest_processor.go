@@ -627,18 +627,12 @@ func (p *MetricIngestProcessor) uploadAndCreateSegments(ctx context.Context, sto
 		bin := validBin.bin
 		metadata := validBin.metadata
 
-		// Generate upload path using pathnames utility
-		collectorName := helpers.ExtractCollectorName("otel-raw/" + storageProfile.OrganizationID.String())
-		if collectorName == "" {
-			collectorName = storageProfile.CollectorName
-		}
-
 		segmentID := batchSegmentIDs[i]
 
 		// Generate upload path using metadata dateint and hour
 		uploadPath := helpers.MakeDBObjectID(
 			storageProfile.OrganizationID,
-			collectorName,
+			storageProfile.CollectorName,
 			metadata.Dateint,
 			metadata.Hour,
 			segmentID,
@@ -693,7 +687,6 @@ func (p *MetricIngestProcessor) uploadAndCreateSegments(ctx context.Context, sto
 
 	return segmentParams, nil
 }
-
 
 // computeMetricSlot determines the slot_id and slot_count for a metric segment
 // based on orgID, instanceNum, frequency, and truncated 60s timestamp
