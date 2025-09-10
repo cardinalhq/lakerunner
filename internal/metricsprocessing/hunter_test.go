@@ -23,20 +23,21 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 )
 
 func TestHunter_AddMessage_BelowThreshold(t *testing.T) {
-	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
+	hunter := newHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 	orgID := uuid.New()
 
 	msg := createTestMessage(orgID, 1, 20250108, 60000, 1, 4, 50)
 	metadata := createTestMetadata("metrics", 0, "test-group", 100)
 
-	result := hunter.AddMessage(msg, metadata, 100)
+	result := hunter.addMessage(msg, metadata, 100)
 
 	assert.Nil(t, result)
 
@@ -50,19 +51,19 @@ func TestHunter_AddMessage_BelowThreshold(t *testing.T) {
 }
 
 func TestHunter_AddMessage_ExceedsThreshold(t *testing.T) {
-	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
+	hunter := newHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 	orgID := uuid.New()
 
 	// Add first message (50 records)
 	msg1 := createTestMessage(orgID, 1, 20250108, 60000, 1, 4, 50)
 	metadata1 := createTestMetadata("metrics", 0, "test-group", 100)
-	result1 := hunter.AddMessage(msg1, metadata1, 100)
+	result1 := hunter.addMessage(msg1, metadata1, 100)
 	assert.Nil(t, result1)
 
 	// Add second message that will exceed threshold (60 records, total = 110)
 	msg2 := createTestMessage(orgID, 1, 20250108, 60000, 1, 4, 60)
 	metadata2 := createTestMetadata("metrics", 0, "test-group", 101)
-	result2 := hunter.AddMessage(msg2, metadata2, 100)
+	result2 := hunter.addMessage(msg2, metadata2, 100)
 
 	require.NotNil(t, result2)
 	assert.Equal(t, msg2, result2.TriggeringRecord.Message)
@@ -78,37 +79,37 @@ func TestHunter_AddMessage_ExceedsThreshold(t *testing.T) {
 }
 
 func TestHunter_AddMessage_DifferentKeys(t *testing.T) {
-	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
+	hunter := newHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 	orgID1 := uuid.New()
 	orgID2 := uuid.New()
 
 	// Messages with different organization IDs should create separate groups
 	msg1 := createTestMessage(orgID1, 1, 20250108, 60000, 1, 4, 50)
 	metadata1 := createTestMetadata("metrics", 0, "test-group", 100)
-	result1 := hunter.AddMessage(msg1, metadata1, 100)
+	result1 := hunter.addMessage(msg1, metadata1, 100)
 	assert.Nil(t, result1)
 
 	msg2 := createTestMessage(orgID2, 1, 20250108, 60000, 1, 4, 50)
 	metadata2 := createTestMetadata("metrics", 0, "test-group", 101)
-	result2 := hunter.AddMessage(msg2, metadata2, 100)
+	result2 := hunter.addMessage(msg2, metadata2, 100)
 	assert.Nil(t, result2)
 
 	assert.Len(t, hunter.groups, 2)
 }
 
 func TestHunter_AddMessage_SameKeyDifferentPartitions(t *testing.T) {
-	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
+	hunter := newHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 	orgID := uuid.New()
 
 	// Messages with same accumulation key but different partitions
 	msg1 := createTestMessage(orgID, 1, 20250108, 60000, 1, 4, 50)
 	metadata1 := createTestMetadata("metrics", 0, "test-group", 100)
-	result1 := hunter.AddMessage(msg1, metadata1, 200)
+	result1 := hunter.addMessage(msg1, metadata1, 200)
 	assert.Nil(t, result1)
 
 	msg2 := createTestMessage(orgID, 1, 20250108, 60000, 1, 4, 60)
 	metadata2 := createTestMetadata("metrics", 1, "test-group", 200)
-	result2 := hunter.AddMessage(msg2, metadata2, 200)
+	result2 := hunter.addMessage(msg2, metadata2, 200)
 	assert.Nil(t, result2)
 
 	assert.Len(t, hunter.groups, 1)
@@ -122,23 +123,23 @@ func TestHunter_AddMessage_SameKeyDifferentPartitions(t *testing.T) {
 }
 
 func TestHunter_AddMessage_OffsetTracking(t *testing.T) {
-	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
+	hunter := newHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 	orgID := uuid.New()
 
 	// Add message with offset 100
 	msg1 := createTestMessage(orgID, 1, 20250108, 60000, 1, 4, 30)
 	metadata1 := createTestMetadata("metrics", 0, "test-group", 100)
-	hunter.AddMessage(msg1, metadata1, 200)
+	hunter.addMessage(msg1, metadata1, 200)
 
 	// Add message with higher offset 150
 	msg2 := createTestMessage(orgID, 1, 20250108, 60000, 1, 4, 30)
 	metadata2 := createTestMetadata("metrics", 0, "test-group", 150)
-	hunter.AddMessage(msg2, metadata2, 200)
+	hunter.addMessage(msg2, metadata2, 200)
 
 	// Add message with lower offset 120 (should not update latest offset)
 	msg3 := createTestMessage(orgID, 1, 20250108, 60000, 1, 4, 30)
 	metadata3 := createTestMetadata("metrics", 0, "test-group", 120)
-	hunter.AddMessage(msg3, metadata3, 200)
+	hunter.addMessage(msg3, metadata3, 200)
 
 	assert.Len(t, hunter.groups, 1)
 
@@ -148,16 +149,16 @@ func TestHunter_AddMessage_OffsetTracking(t *testing.T) {
 }
 
 func TestHunter_AddMessage_DifferentPartitions(t *testing.T) {
-	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
+	hunter := newHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 	orgID := uuid.New()
 
 	msg1 := createTestMessage(orgID, 1, 20250108, 60000, 1, 4, 50)
 	metadata1 := createTestMetadata("metrics", 0, "group1", 100)
-	hunter.AddMessage(msg1, metadata1, 200)
+	hunter.addMessage(msg1, metadata1, 200)
 
 	msg2 := createTestMessage(orgID, 1, 20250108, 60000, 1, 4, 50)
 	metadata2 := createTestMetadata("metrics", 1, "group1", 200) // Same topic, different partition
-	hunter.AddMessage(msg2, metadata2, 200)
+	hunter.addMessage(msg2, metadata2, 200)
 
 	assert.Len(t, hunter.groups, 1)
 
@@ -198,13 +199,13 @@ func TestHunter_TestKey_Equality(t *testing.T) {
 }
 
 func TestHunter_FirstMessageExceedsThreshold(t *testing.T) {
-	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
+	hunter := newHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 	orgID := uuid.New()
 
 	// First message already exceeds threshold and should be returned immediately
 	msg := createTestMessage(orgID, 1, 20250108, 60000, 1, 4, 150)
 	metadata := createTestMetadata("metrics", 0, "test-group", 100)
-	result := hunter.AddMessage(msg, metadata, 100)
+	result := hunter.addMessage(msg, metadata, 100)
 
 	// Should return since the message exceeds the threshold
 	assert.NotNil(t, result)
@@ -216,7 +217,7 @@ func TestHunter_FirstMessageExceedsThreshold(t *testing.T) {
 }
 
 func TestHunter_NewHunter(t *testing.T) {
-	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
+	hunter := newHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 
 	assert.NotNil(t, hunter)
 	assert.NotNil(t, hunter.groups)
@@ -224,27 +225,27 @@ func TestHunter_NewHunter(t *testing.T) {
 }
 
 func TestHunter_SelectGroups(t *testing.T) {
-	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
+	hunter := newHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 	orgID1 := uuid.New()
 	orgID2 := uuid.New()
 
 	// Add messages for two different organizations
 	msg1 := createTestMessage(orgID1, 1, 20250108, 60000, 1, 4, 50)
 	metadata1 := createTestMetadata("metrics", 0, "test-group", 100)
-	hunter.AddMessage(msg1, metadata1, 200)
+	hunter.addMessage(msg1, metadata1, 200)
 
 	msg2 := createTestMessage(orgID2, 1, 20250108, 60000, 1, 4, 40)
 	metadata2 := createTestMetadata("metrics", 0, "test-group", 101)
-	hunter.AddMessage(msg2, metadata2, 200)
+	hunter.addMessage(msg2, metadata2, 200)
 
 	msg3 := createTestMessage(orgID1, 2, 20250108, 60000, 1, 4, 30) // Different instance
 	metadata3 := createTestMetadata("metrics", 0, "test-group", 102)
-	hunter.AddMessage(msg3, metadata3, 200)
+	hunter.addMessage(msg3, metadata3, 200)
 
 	assert.Len(t, hunter.groups, 3)
 
 	// Select only groups from orgID1
-	selectedGroups := hunter.SelectGroups(func(key messages.CompactionKey, group *AccumulationGroup[messages.CompactionKey]) bool {
+	selectedGroups := hunter.selectGroups(func(key messages.CompactionKey, group *accumulationGroup[messages.CompactionKey]) bool {
 		return key.OrganizationID == orgID1
 	})
 
@@ -266,26 +267,26 @@ func TestHunter_SelectGroups(t *testing.T) {
 }
 
 func TestHunter_SelectGroups_ByRecordCount(t *testing.T) {
-	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
+	hunter := newHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 	orgID := uuid.New()
 
 	// Add messages with different record counts
 	msg1 := createTestMessage(orgID, 1, 20250108, 60000, 1, 4, 100)
 	metadata1 := createTestMetadata("metrics", 0, "test-group", 100)
-	hunter.AddMessage(msg1, metadata1, 200)
+	hunter.addMessage(msg1, metadata1, 200)
 
 	msg2 := createTestMessage(orgID, 2, 20250108, 60000, 1, 4, 50)
 	metadata2 := createTestMetadata("metrics", 0, "test-group", 101)
-	hunter.AddMessage(msg2, metadata2, 200)
+	hunter.addMessage(msg2, metadata2, 200)
 
 	msg3 := createTestMessage(orgID, 3, 20250108, 60000, 1, 4, 25)
 	metadata3 := createTestMetadata("metrics", 0, "test-group", 102)
-	hunter.AddMessage(msg3, metadata3, 200)
+	hunter.addMessage(msg3, metadata3, 200)
 
 	assert.Len(t, hunter.groups, 3)
 
 	// Select only groups with record count >= 50
-	selectedGroups := hunter.SelectGroups(func(key messages.CompactionKey, group *AccumulationGroup[messages.CompactionKey]) bool {
+	selectedGroups := hunter.selectGroups(func(key messages.CompactionKey, group *accumulationGroup[messages.CompactionKey]) bool {
 		return group.TotalRecordCount >= 50
 	})
 
@@ -300,15 +301,15 @@ func TestHunter_SelectGroups_ByRecordCount(t *testing.T) {
 }
 
 func TestHunter_SelectGroups_NoMatches(t *testing.T) {
-	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
+	hunter := newHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 	orgID := uuid.New()
 
 	msg := createTestMessage(orgID, 1, 20250108, 60000, 1, 4, 50)
 	metadata := createTestMetadata("metrics", 0, "test-group", 100)
-	hunter.AddMessage(msg, metadata, 200)
+	hunter.addMessage(msg, metadata, 200)
 
 	// Select with criteria that matches nothing
-	selectedGroups := hunter.SelectGroups(func(key messages.CompactionKey, group *AccumulationGroup[messages.CompactionKey]) bool {
+	selectedGroups := hunter.selectGroups(func(key messages.CompactionKey, group *accumulationGroup[messages.CompactionKey]) bool {
 		return group.TotalRecordCount > 1000
 	})
 
@@ -320,7 +321,7 @@ func TestHunter_SelectGroups_NoMatches(t *testing.T) {
 }
 
 func TestHunter_SelectStaleGroups(t *testing.T) {
-	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
+	hunter := newHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 
 	orgA := uuid.New()
 	orgB := uuid.New()
@@ -332,9 +333,9 @@ func TestHunter_SelectStaleGroups(t *testing.T) {
 	msgC := createTestMessage(orgC, 1, 20250108, 60000, 1, 4, 100)
 
 	// Add messages to create groups
-	hunter.AddMessage(msgA, &MessageMetadata{Topic: "test", Partition: 0, Offset: 1}, 10000)
-	hunter.AddMessage(msgB, &MessageMetadata{Topic: "test", Partition: 0, Offset: 2}, 10000)
-	hunter.AddMessage(msgC, &MessageMetadata{Topic: "test", Partition: 0, Offset: 3}, 10000)
+	hunter.addMessage(msgA, &messageMetadata{Topic: "test", Partition: 0, Offset: 1}, 10000)
+	hunter.addMessage(msgB, &messageMetadata{Topic: "test", Partition: 0, Offset: 2}, 10000)
+	hunter.addMessage(msgC, &messageMetadata{Topic: "test", Partition: 0, Offset: 3}, 10000)
 
 	// Verify all groups were created
 	assert.Len(t, hunter.groups, 3)
@@ -358,7 +359,7 @@ func TestHunter_SelectStaleGroups(t *testing.T) {
 	hunter.groups[keyC].LastUpdatedAt = now.Add(-7 * time.Minute)
 
 	// Select groups older than 5 minutes
-	staleGroups := hunter.SelectStaleGroups(5*time.Minute, 0)
+	staleGroups := hunter.selectStaleGroups(5*time.Minute, 0)
 
 	// Should return groups A and C (both older than 5 minutes)
 	assert.Len(t, staleGroups, 2)
@@ -380,19 +381,19 @@ func TestHunter_SelectStaleGroups(t *testing.T) {
 }
 
 func TestHunter_SelectStaleGroups_NoStaleGroups(t *testing.T) {
-	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
+	hunter := newHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 
 	orgA := uuid.New()
 	msgA := createTestMessage(orgA, 1, 20250108, 60000, 1, 4, 100)
 
 	// Add message to create a group
-	hunter.AddMessage(msgA, &MessageMetadata{Topic: "test", Partition: 0, Offset: 1}, 10000)
+	hunter.addMessage(msgA, &messageMetadata{Topic: "test", Partition: 0, Offset: 1}, 10000)
 
 	// Group is fresh (just created)
 	assert.Len(t, hunter.groups, 1)
 
 	// Select groups older than 5 minutes (should find none)
-	staleGroups := hunter.SelectStaleGroups(5*time.Minute, 0)
+	staleGroups := hunter.selectStaleGroups(5*time.Minute, 0)
 
 	// Should return no groups
 	assert.Len(t, staleGroups, 0)
@@ -402,13 +403,13 @@ func TestHunter_SelectStaleGroups_NoStaleGroups(t *testing.T) {
 }
 
 func TestHunter_SelectStaleGroups_EmptyHunter(t *testing.T) {
-	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
+	hunter := newHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 
 	// No groups in hunter
 	assert.Len(t, hunter.groups, 0)
 
 	// Select stale groups from empty hunter
-	staleGroups := hunter.SelectStaleGroups(5*time.Minute, 0)
+	staleGroups := hunter.selectStaleGroups(5*time.Minute, 0)
 
 	// Should return empty slice
 	assert.Len(t, staleGroups, 0)
@@ -437,8 +438,8 @@ func compactMessage(orgID uuid.UUID, segmentID int64, instanceNum int16, slotID,
 }
 
 // Helper function for creating Kafka metadata with varying offset
-func createKafkaMetadata(offset int64) *MessageMetadata {
-	return &MessageMetadata{
+func createKafkaMetadata(offset int64) *messageMetadata {
+	return &messageMetadata{
 		Topic:         "lakerunner.segments.metrics.compact",
 		Partition:     0,
 		ConsumerGroup: "lakerunner.compact.metrics",
@@ -447,13 +448,13 @@ func createKafkaMetadata(offset int64) *MessageMetadata {
 }
 
 // Short helper for creating Kafka metadata
-func kmeta(offset int64) *MessageMetadata {
+func kmeta(offset int64) *messageMetadata {
 	return createKafkaMetadata(offset)
 }
 
 func TestHunter_MetricCompactionMessage_AccumulationScaffolding(t *testing.T) {
 	// Create Hunter using the same types as metric compaction consumer
-	hunter := NewHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
+	hunter := newHunter[*messages.MetricCompactionMessage, messages.CompactionKey]()
 	orgID := uuid.New()
 	targetRecordCount := int64(10000) // 10k threshold
 
@@ -465,7 +466,7 @@ func TestHunter_MetricCompactionMessage_AccumulationScaffolding(t *testing.T) {
 		FrequencyMs:    60000,
 	}
 
-	result1 := hunter.AddMessage(compactMessage(orgID, 123456789, 15, 1, 4, 4000), kmeta(100), targetRecordCount)
+	result1 := hunter.addMessage(compactMessage(orgID, 123456789, 15, 1, 4, 4000), kmeta(100), targetRecordCount)
 	assert.Nil(t, result1, "First message should not trigger (below threshold)")
 	assert.Len(t, hunter.groups, 1, "Should have exactly one group after first message")
 
@@ -475,7 +476,7 @@ func TestHunter_MetricCompactionMessage_AccumulationScaffolding(t *testing.T) {
 	assert.Equal(t, int64(4000), group.TotalRecordCount, "Group should have 4000 records")
 	assert.Equal(t, int64(100), group.LatestOffsets[0], "Should track offset 100")
 
-	result2 := hunter.AddMessage(compactMessage(orgID, 123456790, 15, 1, 4, 4000), kmeta(101), targetRecordCount)
+	result2 := hunter.addMessage(compactMessage(orgID, 123456790, 15, 1, 4, 4000), kmeta(101), targetRecordCount)
 	assert.Nil(t, result2, "Second message should not trigger (still below threshold)")
 	assert.Len(t, hunter.groups, 1, "Should have exactly one group after second message")
 
@@ -484,7 +485,7 @@ func TestHunter_MetricCompactionMessage_AccumulationScaffolding(t *testing.T) {
 	assert.Equal(t, int64(8000), group.TotalRecordCount, "Group should have 8000 total records (4000+4000)")
 	assert.Equal(t, int64(101), group.LatestOffsets[0], "Should track latest offset 101")
 
-	result3 := hunter.AddMessage(compactMessage(orgID, 123456791, 15, 1, 4, 4000), kmeta(102), targetRecordCount)
+	result3 := hunter.addMessage(compactMessage(orgID, 123456791, 15, 1, 4, 4000), kmeta(102), targetRecordCount)
 	require.NotNil(t, result3, "Third message should trigger processing (exceeds threshold)")
 
 	// Check returned group state
@@ -505,12 +506,12 @@ func TestHunter_MetricCompactionMessage_AccumulationScaffolding(t *testing.T) {
 	// Now batch-add 15 too-small messages to not exceed threshold, and ensure that we have one group
 	// at the end.
 	for i := range 15 {
-		result := hunter.AddMessage(compactMessage(orgID, int64(200000000+i), 15, 1, 4, 100), kmeta(int64(200+i)), targetRecordCount)
+		result := hunter.addMessage(compactMessage(orgID, int64(200000000+i), 15, 1, 4, 100), kmeta(int64(200+i)), targetRecordCount)
 		assert.Nil(t, result, "Message %d should not trigger (%d < 10000)", i+1, (i+1)*100)
 	}
 	assert.Len(t, hunter.groups, 1, "Hunter should have exactly one group after batch addition of small messages")
 	// now, cause our periodic flush to pick it up
-	staleGroups := hunter.SelectStaleGroups(0, 0)
+	staleGroups := hunter.selectStaleGroups(0, 0)
 	assert.Len(t, staleGroups, 1, "Should have exactly one stale group after flush")
 	assert.Len(t, hunter.groups, 0, "Hunter should be empty after stale group is returned")
 
@@ -521,7 +522,7 @@ func TestHunter_MetricCompactionMessage_AccumulationScaffolding(t *testing.T) {
 
 	for orgIdx, testOrgID := range orgIDs {
 		for i := range 15 {
-			result := hunter.AddMessage(compactMessage(testOrgID, int64(300000000+orgIdx*1000+i), instanceNums[orgIdx], 1, 4, 100), kmeta(int64(300+orgIdx*100+i)), targetRecordCount)
+			result := hunter.addMessage(compactMessage(testOrgID, int64(300000000+orgIdx*1000+i), instanceNums[orgIdx], 1, 4, 100), kmeta(int64(300+orgIdx*100+i)), targetRecordCount)
 			assert.Nil(t, result, "Org %d message %d should not trigger", orgIdx+1, i+1)
 		}
 	}
@@ -543,7 +544,7 @@ func TestHunter_MetricCompactionMessage_AccumulationScaffolding(t *testing.T) {
 	}
 
 	// Flush all groups as stale
-	allStaleGroups := hunter.SelectStaleGroups(0, 0)
+	allStaleGroups := hunter.selectStaleGroups(0, 0)
 	assert.Len(t, allStaleGroups, 4, "Should have exactly 4 stale groups after flush")
 	assert.Len(t, hunter.groups, 0, "Hunter should be empty after all stale groups are returned")
 
@@ -599,18 +600,18 @@ func TestHunter_RealDataFromFile(t *testing.T) {
 
 	// Create mock processor to track what gets processed
 	type ProcessedGroup struct {
-		Group           *AccumulationGroup[messages.CompactionKey]
+		Group           *accumulationGroup[messages.CompactionKey]
 		KafkaCommitData *KafkaCommitData
 	}
 
 	var processedGroups []ProcessedGroup
 	mockProcessor := &struct {
-		groups  []*AccumulationGroup[messages.CompactionKey]
+		groups  []*accumulationGroup[messages.CompactionKey]
 		commits []*KafkaCommitData
 	}{}
 
 	// Create a processor function that captures the groups
-	processFunc := func(ctx context.Context, group *AccumulationGroup[messages.CompactionKey], kafkaCommitData *KafkaCommitData) error {
+	processFunc := func(ctx context.Context, group *accumulationGroup[messages.CompactionKey], kafkaCommitData *KafkaCommitData) error {
 		mockProcessor.groups = append(mockProcessor.groups, group)
 		mockProcessor.commits = append(mockProcessor.commits, kafkaCommitData)
 		processedGroups = append(processedGroups, ProcessedGroup{Group: group, KafkaCommitData: kafkaCommitData})
@@ -624,7 +625,7 @@ func TestHunter_RealDataFromFile(t *testing.T) {
 	offsetCallbacks := NewMockOffsetCallbacks()
 
 	// Create gatherer
-	gatherer := NewGatherer[*messages.MetricCompactionMessage](
+	gatherer := newGatherer[*messages.MetricCompactionMessage](
 		"lakerunner.segments.metrics.compact",
 		"lakerunner.compact.metrics",
 		processor,
@@ -683,7 +684,7 @@ func TestHunter_RealDataFromFile(t *testing.T) {
 		}
 
 		// Create metadata for this message
-		metadata := &MessageMetadata{
+		metadata := &messageMetadata{
 			Topic:         "lakerunner.segments.metrics.compact",
 			Partition:     int32(i % 4), // Distribute across 4 partitions
 			ConsumerGroup: "lakerunner.compact.metrics",
@@ -691,7 +692,7 @@ func TestHunter_RealDataFromFile(t *testing.T) {
 		}
 
 		// Process message through gatherer
-		err = gatherer.ProcessMessage(ctx, msg, metadata)
+		err = gatherer.processMessage(ctx, msg, metadata)
 		require.NoError(t, err, "Failed to process message %d", i)
 
 		totalMessagesProcessed++
@@ -700,7 +701,7 @@ func TestHunter_RealDataFromFile(t *testing.T) {
 	t.Logf("Processed %d messages with total record count: %d", totalMessagesProcessed, totalRecordCount)
 
 	// Flush any remaining groups
-	n, err := gatherer.FlushStaleGroups(ctx, 0, 0) // Flush all groups immediately
+	n, err := gatherer.flushStaleGroups(ctx, 0, 0) // Flush all groups immediately
 	require.NoError(t, err, "Failed to flush stale groups")
 	t.Logf("Flushed %d stale groups", n)
 
@@ -742,10 +743,10 @@ func TestHunter_RealDataFromFile(t *testing.T) {
 
 // MockProcessorWithFunc is a processor that uses a function for processing
 type MockProcessorWithFunc struct {
-	ProcessFunc func(ctx context.Context, group *AccumulationGroup[messages.CompactionKey], kafkaCommitData *KafkaCommitData) error
+	ProcessFunc func(ctx context.Context, group *accumulationGroup[messages.CompactionKey], kafkaCommitData *KafkaCommitData) error
 }
 
-func (m *MockProcessorWithFunc) Process(ctx context.Context, group *AccumulationGroup[messages.CompactionKey], kafkaCommitData *KafkaCommitData) error {
+func (m *MockProcessorWithFunc) Process(ctx context.Context, group *accumulationGroup[messages.CompactionKey], kafkaCommitData *KafkaCommitData) error {
 	return m.ProcessFunc(ctx, group, kafkaCommitData)
 }
 

@@ -68,8 +68,8 @@ type MetricCompactorProcessor struct {
 	cfg             *config.Config
 }
 
-// NewMetricCompactor creates a new metric compactor instance
-func NewMetricCompactor(store CompactionStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, cfg *config.Config) *MetricCompactorProcessor {
+// newMetricCompactor creates a new metric compactor instance
+func newMetricCompactor(store CompactionStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, cfg *config.Config) *MetricCompactorProcessor {
 	return &MetricCompactorProcessor{
 		store:           store,
 		storageProvider: storageProvider,
@@ -79,7 +79,7 @@ func NewMetricCompactor(store CompactionStore, storageProvider storageprofile.St
 }
 
 // validateGroupConsistency ensures all messages in a group have consistent org, instance, dateint, and frequency
-func validateGroupConsistency(group *AccumulationGroup[messages.CompactionKey]) error {
+func validateGroupConsistency(group *accumulationGroup[messages.CompactionKey]) error {
 	if len(group.Messages) == 0 {
 		return &GroupValidationError{
 			Field:   "message_count",
@@ -143,7 +143,7 @@ func validateGroupConsistency(group *AccumulationGroup[messages.CompactionKey]) 
 	return nil
 }
 
-func (c *MetricCompactorProcessor) Process(ctx context.Context, group *AccumulationGroup[messages.CompactionKey], kafkaCommitData *KafkaCommitData) error {
+func (c *MetricCompactorProcessor) Process(ctx context.Context, group *accumulationGroup[messages.CompactionKey], kafkaCommitData *KafkaCommitData) error {
 	ll := logctx.FromContext(ctx)
 
 	// Calculate group age from Hunter timestamp
@@ -363,7 +363,7 @@ func (c *MetricCompactorProcessor) uploadAndCreateSegments(ctx context.Context, 
 	}
 
 	// Report telemetry
-	ReportTelemetry(ctx, "compaction", int64(len(inputSegments)), int64(len(segments)), totalInputRecords, totalOutputRecords, totalInputSize, totalOutputSize)
+	reportTelemetry(ctx, "compaction", int64(len(inputSegments)), int64(len(segments)), totalInputRecords, totalOutputRecords, totalInputSize, totalOutputSize)
 
 	// Log upload summary
 	ll.Info("Segment upload completed",
@@ -537,7 +537,6 @@ func (c *MetricCompactorProcessor) logCompactionOperation(ctx context.Context, s
 	return logSegmentOperation(
 		ctx,
 		c.store,
-		storageProfile,
 		inputSegments,
 		outputSegments,
 		results,
@@ -555,7 +554,7 @@ func (c *MetricCompactorProcessor) logCompactionOperation(ctx context.Context, s
 
 // performCompaction handles the core compaction logic: creating readers, aggregating, and writing
 func (c *MetricCompactorProcessor) performCompaction(ctx context.Context, tmpDir string, storageClient cloudstorage.Client, compactionKey messages.CompactionKey, storageProfile storageprofile.StorageProfile, activeSegments []lrdb.MetricSeg, recordCountEstimate int64) ([]lrdb.MetricSeg, []parquetwriter.Result, error) {
-	params := MetricProcessingParams{
+	params := metricProcessingParams{
 		TmpDir:         tmpDir,
 		StorageClient:  storageClient,
 		OrganizationID: compactionKey.OrganizationID,
@@ -565,7 +564,7 @@ func (c *MetricCompactorProcessor) performCompaction(ctx context.Context, tmpDir
 		MaxRecords:     recordCountEstimate * 2, // safety net
 	}
 
-	result, err := ProcessMetricsWithAggregation(ctx, params)
+	result, err := processMetricsWithAggregation(ctx, params)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -20,9 +20,10 @@ import (
 	"io"
 	"maps"
 
-	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
 	"github.com/cardinalhq/oteltools/pkg/translate"
+
+	"github.com/cardinalhq/lakerunner/internal/exemplar"
 
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"

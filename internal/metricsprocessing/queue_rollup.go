@@ -22,27 +22,19 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 )
 
-// QueueMetricRollup sends rollup work notification to Kafka for a specific segment
-func QueueMetricRollup(ctx context.Context, kafkaProducer fly.Producer, organizationID uuid.UUID, dateint int32, frequencyMs int32, instanceNum int16, slotID int32, slotCount int32, segmentID int64, recordCount int64, fileSize int64, segmentStartTime time.Time) error {
+// queueMetricRollup sends rollup work notification to Kafka for a specific segment
+func queueMetricRollup(ctx context.Context, kafkaProducer fly.Producer, organizationID uuid.UUID, dateint int32, frequencyMs int32, instanceNum int16, slotID int32, slotCount int32, segmentID int64, recordCount int64, fileSize int64, segmentStartTime time.Time) error {
 	ll := logctx.FromContext(ctx)
 
-	// Map source frequencies to target frequencies
-	var targetFrequencyMs int32
-	switch frequencyMs {
-	case 10_000:
-		targetFrequencyMs = 60_000 // 10s -> 1m
-	case 60_000:
-		targetFrequencyMs = 300_000 // 1m -> 5m
-	case 300_000:
-		targetFrequencyMs = 1_200_000 // 5m -> 20m
-	case 1_200_000:
-		targetFrequencyMs = 3_600_000 // 20m -> 1h
-	default:
+	// Check if this frequency needs rollup and get target frequency
+	targetFrequencyMs, exists := config.GetTargetRollupFrequency(frequencyMs)
+	if !exists {
 		// Not a rollup source frequency
 		return nil
 	}

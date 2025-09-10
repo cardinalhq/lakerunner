@@ -67,7 +67,7 @@ func groupingKeyToOffsetKey(gk TestGroupingKey, env string) TestOffsetKey {
 }
 
 func TestMetadataTracker_SafeCommitOffsets(t *testing.T) {
-	tracker := NewMetadataTracker[TestGroupingKey]("test-topic", "test-group")
+	tracker := newMetadataTracker[TestGroupingKey]("test-topic", "test-group")
 
 	customerA := uuid.New()
 	customerB := uuid.New()
@@ -88,7 +88,7 @@ func TestMetadataTracker_SafeCommitOffsets(t *testing.T) {
 	}
 
 	// Get safe commit offsets - should be minimums
-	commitData := tracker.GetSafeCommitOffsets()
+	commitData := tracker.getSafeCommitOffsets()
 
 	assert.NotNil(t, commitData)
 	assert.Equal(t, "test-topic", commitData.Topic)
@@ -102,7 +102,7 @@ func TestMetadataTracker_SafeCommitOffsets(t *testing.T) {
 }
 
 func TestMetadataTracker_OnlyAdvancingOffsets(t *testing.T) {
-	tracker := NewMetadataTracker[TestGroupingKey]("test-topic", "test-group")
+	tracker := newMetadataTracker[TestGroupingKey]("test-topic", "test-group")
 
 	orgA := uuid.New()
 	orgB := uuid.New()
@@ -121,7 +121,7 @@ func TestMetadataTracker_OnlyAdvancingOffsets(t *testing.T) {
 		{CustomerID: orgB, ServiceName: "web", Region: "us-west"}: 40, // Ahead of committed offset
 	}
 
-	commitData := tracker.GetSafeCommitOffsets()
+	commitData := tracker.getSafeCommitOffsets()
 
 	// Should only return partition 1 since partition 0 can't advance (min=10 < committed=15)
 	assert.NotNil(t, commitData)
@@ -130,7 +130,7 @@ func TestMetadataTracker_OnlyAdvancingOffsets(t *testing.T) {
 }
 
 func TestMetadataTracker_NoAdvancement(t *testing.T) {
-	tracker := NewMetadataTracker[TestGroupingKey]("test-topic", "test-group")
+	tracker := newMetadataTracker[TestGroupingKey]("test-topic", "test-group")
 
 	orgA := uuid.New()
 
@@ -140,14 +140,14 @@ func TestMetadataTracker_NoAdvancement(t *testing.T) {
 		{CustomerID: orgA, ServiceName: "api", Region: "us-east"}: 30,
 	}
 
-	commitData := tracker.GetSafeCommitOffsets()
+	commitData := tracker.getSafeCommitOffsets()
 
 	// Should return nil since no offsets can advance
 	assert.Nil(t, commitData)
 }
 
 func TestMetadataTracker_MarkOffsetsCommitted(t *testing.T) {
-	tracker := NewMetadataTracker[TestGroupingKey]("test-topic", "test-group")
+	tracker := newMetadataTracker[TestGroupingKey]("test-topic", "test-group")
 
 	// Set some initial committed offsets
 	tracker.lastCommittedOffsets[0] = 10
@@ -160,7 +160,7 @@ func TestMetadataTracker_MarkOffsetsCommitted(t *testing.T) {
 		2: 5, // New partition
 	}
 
-	tracker.MarkOffsetsCommitted(newOffsets)
+	tracker.markOffsetsCommitted(newOffsets)
 
 	// Check that all offsets were updated correctly
 	assert.Equal(t, int64(25), tracker.lastCommittedOffsets[0])
@@ -169,33 +169,33 @@ func TestMetadataTracker_MarkOffsetsCommitted(t *testing.T) {
 }
 
 func TestMetadataTracker_TrackMetadata(t *testing.T) {
-	tracker := NewMetadataTracker[TestGroupingKey]("test-topic", "test-group")
+	tracker := newMetadataTracker[TestGroupingKey]("test-topic", "test-group")
 
 	customerA := uuid.New()
 	customerB := uuid.New()
 
 	// Create a group with multiple messages using TestGroupingKey
-	group := &AccumulationGroup[TestGroupingKey]{
+	group := &accumulationGroup[TestGroupingKey]{
 		Key: TestGroupingKey{
 			CustomerID:  customerA,
 			ServiceName: "api-service",
 			Region:      "us-east",
 		},
-		Messages: []*AccumulatedMessage{
+		Messages: []*accumulatedMessage{
 			{
-				Metadata: &MessageMetadata{
+				Metadata: &messageMetadata{
 					Partition: 0,
 					Offset:    100,
 				},
 			},
 			{
-				Metadata: &MessageMetadata{
+				Metadata: &messageMetadata{
 					Partition: 0,
 					Offset:    105,
 				},
 			},
 			{
-				Metadata: &MessageMetadata{
+				Metadata: &messageMetadata{
 					Partition: 1,
 					Offset:    200,
 				},
@@ -204,7 +204,7 @@ func TestMetadataTracker_TrackMetadata(t *testing.T) {
 	}
 
 	// Track the metadata
-	tracker.TrackMetadata(group)
+	tracker.trackMetadata(group)
 
 	// Check that the highest offsets were tracked correctly
 	groupingKeyA := TestGroupingKey{CustomerID: customerA, ServiceName: "api-service", Region: "us-east"}
@@ -216,15 +216,15 @@ func TestMetadataTracker_TrackMetadata(t *testing.T) {
 	assert.Equal(t, int64(200), tracker.partitionOffsets[1][groupingKeyA]) // offset on partition 1
 
 	// Track metadata from another customer on the same partitions
-	group2 := &AccumulationGroup[TestGroupingKey]{
+	group2 := &accumulationGroup[TestGroupingKey]{
 		Key: TestGroupingKey{
 			CustomerID:  customerB,
 			ServiceName: "web-service",
 			Region:      "us-west",
 		},
-		Messages: []*AccumulatedMessage{
+		Messages: []*accumulatedMessage{
 			{
-				Metadata: &MessageMetadata{
+				Metadata: &messageMetadata{
 					Partition: 0,
 					Offset:    90, // Lower than orgA
 				},
@@ -232,7 +232,7 @@ func TestMetadataTracker_TrackMetadata(t *testing.T) {
 		},
 	}
 
-	tracker.TrackMetadata(group2)
+	tracker.trackMetadata(group2)
 
 	groupingKeyB := TestGroupingKey{CustomerID: customerB, ServiceName: "web-service", Region: "us-west"}
 
