@@ -67,5 +67,5 @@ func (q *QuerierService) handleLogQLValidate(w http.ResponseWriter, r *http.Requ
 
 func (q *QuerierService) sendError(w http.ResponseWriter, err error) {
 	w.WriteHeader(http.StatusBadRequest)
-	json.NewEncoder(w).Encode(logQLValidateResponse{Valid: false, Error: err.Error()})
+	_ = json.NewEncoder(w).Encode(logQLValidateResponse{Valid: false, Error: err.Error()})
 }
