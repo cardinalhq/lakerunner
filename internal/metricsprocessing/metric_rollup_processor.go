@@ -331,8 +331,11 @@ func (r *MetricRollupProcessor) uploadAndCreateRollupSegments(ctx context.Contex
 	var totalOutputSize, totalOutputRecords int64
 	var segmentIDs []int64
 
-	for _, result := range results {
-		segmentID := idgen.GenerateID()
+	// Generate unique batch IDs for all results to avoid collisions
+	batchSegmentIDs := idgen.GenerateBatchIDs(len(results))
+
+	for i, result := range results {
+		segmentID := batchSegmentIDs[i]
 
 		stats, ok := result.Metadata.(factories.MetricsFileStats)
 		if !ok {
@@ -526,8 +529,8 @@ func (r *MetricRollupProcessor) queueNextLevelRollups(ctx context.Context, newSe
 			Version:           1,
 			OrganizationID:    segment.OrganizationID,
 			DateInt:           segment.Dateint,
-			SourceFrequencyMs: key.TargetFrequencyMs,  // Current target becomes next source
-			TargetFrequencyMs: nextTargetFrequency,    // Next rollup target
+			SourceFrequencyMs: key.TargetFrequencyMs, // Current target becomes next source
+			TargetFrequencyMs: nextTargetFrequency,   // Next rollup target
 			SegmentID:         segment.SegmentID,
 			InstanceNum:       segment.InstanceNum,
 			SlotID:            segment.SlotID,

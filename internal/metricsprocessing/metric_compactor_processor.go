@@ -307,8 +307,11 @@ func (c *MetricCompactorProcessor) uploadAndCreateSegments(ctx context.Context, 
 	var totalOutputSize, totalOutputRecords int64
 	var segmentIDs []int64
 
-	for _, result := range results {
-		segmentID := idgen.GenerateID()
+	// Generate unique batch IDs for all results to avoid collisions
+	batchSegmentIDs := idgen.GenerateBatchIDs(len(results))
+
+	for i, result := range results {
+		segmentID := batchSegmentIDs[i]
 
 		// Get metadata from result
 		stats, ok := result.Metadata.(factories.MetricsFileStats)

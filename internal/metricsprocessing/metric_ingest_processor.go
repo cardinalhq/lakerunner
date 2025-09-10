@@ -583,6 +583,14 @@ func (p *MetricIngestProcessor) uploadAndCreateSegments(ctx context.Context, sto
 	var segmentParams []lrdb.InsertMetricSegmentParams
 	var totalOutputRecords, totalOutputSize int64
 
+	// First, collect all valid bins to know how many IDs we need
+	type validBin struct {
+		binStartTs int64
+		bin        *TimeBin
+		metadata   *FileMetadata
+	}
+	var validBins []validBin
+
 	for binStartTs, bin := range timeBins {
 		if bin.Result == nil || bin.Result.RecordCount == 0 {
 			ll.Debug("Skipping empty time bin", slog.Int64("binStartTs", binStartTs))
@@ -595,13 +603,28 @@ func (p *MetricIngestProcessor) uploadAndCreateSegments(ctx context.Context, sto
 			return nil, fmt.Errorf("failed to extract file metadata for bin %d: %w", binStartTs, err)
 		}
 
+		validBins = append(validBins, validBin{
+			binStartTs: binStartTs,
+			bin:        bin,
+			metadata:   metadata,
+		})
+	}
+
+	// Generate unique batch IDs for all valid bins to avoid collisions
+	batchSegmentIDs := idgen.GenerateBatchIDs(len(validBins))
+
+	for i, validBin := range validBins {
+		binStartTs := validBin.binStartTs
+		bin := validBin.bin
+		metadata := validBin.metadata
+
 		// Generate upload path using pathnames utility
 		collectorName := helpers.ExtractCollectorName("otel-raw/" + storageProfile.OrganizationID.String())
 		if collectorName == "" {
 			collectorName = storageProfile.CollectorName
 		}
 
-		segmentID := idgen.GenerateID()
+		segmentID := batchSegmentIDs[i]
 
 		// Generate upload path using metadata dateint and hour
 		uploadPath := helpers.MakeDBObjectID(
