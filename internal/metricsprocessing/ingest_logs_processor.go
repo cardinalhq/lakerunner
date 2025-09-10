@@ -521,18 +521,12 @@ func (p *LogIngestProcessor) uploadAndCreateLogSegments(ctx context.Context, sto
 		bin := validBin.bin
 		stats := validBin.stats
 
-		// Generate upload path using pathnames utility
-		collectorName := helpers.ExtractCollectorName("logs-raw/" + storageProfile.OrganizationID.String())
-		if collectorName == "" {
-			collectorName = storageProfile.CollectorName
-		}
-
 		segmentID := batchSegmentIDs[i]
 
 		// Generate upload path using stats dateint and hour
 		uploadPath := helpers.MakeDBObjectID(
 			storageProfile.OrganizationID,
-			collectorName,
+			storageProfile.CollectorName,
 			dateint,
 			helpers.HourFromMillis(stats.FirstTS),
 			segmentID,
@@ -576,7 +570,6 @@ func (p *LogIngestProcessor) uploadAndCreateLogSegments(ctx context.Context, sto
 
 	return segmentParams, nil
 }
-
 
 // queueLogCompactionForSlot queues a log compaction job for a specific slot
 func (p *LogIngestProcessor) queueLogCompactionForSlot(ctx context.Context, orgID uuid.UUID, instanceNum int16, slotID int, dateint int32, hourAlignedTS int64) error {
