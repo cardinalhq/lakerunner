@@ -63,10 +63,8 @@ func init() {
 
 			go diskUsageLoop(ctx)
 
-			// Start pprof server
 			go debugging.RunPprof(ctx)
 
-			// Start health check server
 			healthConfig := healthcheck.GetConfigFromEnv()
 			healthServer := healthcheck.NewServer(healthConfig)
 
@@ -96,11 +94,9 @@ func init() {
 			ll := logctx.FromContext(ctx).With("instanceID", myInstanceID)
 			ctx = logctx.WithLogger(ctx, ll)
 
-			// Kafka is always required for ingestion
 			kafkaFactory := fly.NewFactory(&cfg.Fly)
 			slog.Info("Starting metrics ingestion with accumulation consumer")
 
-			// Create accumulation-based Kafka consumer for ingestion
 			consumer, err := metricsprocessing.NewMetricIngestConsumer(ctx, kafkaFactory, cfg, mdb, sp, cmgr)
 			if err != nil {
 				return fmt.Errorf("failed to create Kafka ingest consumer: %w", err)
@@ -113,7 +109,6 @@ func init() {
 
 			healthServer.SetStatus(healthcheck.StatusHealthy)
 
-			// Run the Kafka consumer
 			return consumer.Run(ctx)
 		},
 	}

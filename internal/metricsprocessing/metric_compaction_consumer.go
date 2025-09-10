@@ -62,7 +62,7 @@ func NewMetricCompactionConsumer(
 	topic := "lakerunner.segments.metrics.compact"
 
 	// Create Kafka consumer
-	consumerName := "lakerunner-compaction-accumulator"
+	consumerName := "lakerunner-metric-compaction"
 	consumer, err := factory.CreateConsumer(topic, consumerGroup)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka consumer: %w", err)
@@ -169,7 +169,7 @@ func (c *MetricCompactionConsumer) Run(ctx context.Context) error {
 
 // GetLastProcessedOffset returns the last processed offset for this key, or -1 if never seen
 func (c *MetricCompactionConsumer) GetLastProcessedOffset(ctx context.Context, metadata *messageMetadata, groupingKey messages.CompactionKey) (int64, error) {
-	offset, err := c.store.KafkaJournalGetLastProcessedWithOrgInstance(ctx, lrdb.KafkaJournalGetLastProcessedWithOrgInstanceParams{
+	offset, err := c.store.KafkaGetLastProcessed(ctx, lrdb.KafkaGetLastProcessedParams{
 		Topic:          metadata.Topic,
 		Partition:      metadata.Partition,
 		ConsumerGroup:  metadata.ConsumerGroup,

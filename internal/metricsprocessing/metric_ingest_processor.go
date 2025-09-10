@@ -42,13 +42,6 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-// IngestStore defines database operations needed for ingestion
-type IngestStore interface {
-	InsertMetricSegmentBatchWithKafkaOffsets(ctx context.Context, batch lrdb.MetricSegmentBatch) error
-	KafkaJournalGetLastProcessedWithOrgInstance(ctx context.Context, params lrdb.KafkaJournalGetLastProcessedWithOrgInstanceParams) (int64, error)
-	GetMetricEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32) int64
-}
-
 // TimeBin represents a 60-second file group containing 10s aggregated data points
 type TimeBin struct {
 	StartTs int64 // Start timestamp of the file group (inclusive)
@@ -66,14 +59,14 @@ type TimeBinManager struct {
 
 // MetricIngestProcessor implements the Processor interface for raw metric ingestion
 type MetricIngestProcessor struct {
-	store           IngestStore
+	store           MetricIngestStore
 	storageProvider storageprofile.StorageProfileProvider
 	cmgr            cloudstorage.ClientProvider
 	kafkaProducer   fly.Producer
 }
 
 // newMetricIngestProcessor creates a new metric ingest processor instance
-func newMetricIngestProcessor(store IngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *MetricIngestProcessor {
+func newMetricIngestProcessor(store MetricIngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *MetricIngestProcessor {
 	return &MetricIngestProcessor{
 		store:           store,
 		storageProvider: storageProvider,
@@ -250,10 +243,12 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 	if kafkaCommitData != nil {
 		for partition, offset := range kafkaCommitData.Offsets {
 			kafkaOffsets = append(kafkaOffsets, lrdb.KafkaOffsetUpdate{
-				ConsumerGroup: kafkaCommitData.ConsumerGroup,
-				Topic:         kafkaCommitData.Topic,
-				Partition:     partition,
-				Offset:        offset,
+				ConsumerGroup:  kafkaCommitData.ConsumerGroup,
+				Topic:          kafkaCommitData.Topic,
+				Partition:      partition,
+				Offset:         offset,
+				OrganizationID: group.Key.OrganizationID,
+				InstanceNum:    group.Key.InstanceNum,
 			})
 		}
 	}

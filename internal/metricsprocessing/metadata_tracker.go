@@ -16,10 +16,13 @@ package metricsprocessing
 
 import (
 	"maps"
+	"sync"
 )
 
 // metadataTracker tracks the latest offsets seen for Kafka commits
 type metadataTracker[K comparable] struct {
+	mu sync.RWMutex
+
 	// Track offsets per partition and key: partition -> key -> offset
 	partitionOffsets map[int32]map[K]int64
 	// Last committed Kafka offset per partition
@@ -41,6 +44,9 @@ func newMetadataTracker[K comparable](topic, consumerGroup string) *metadataTrac
 
 // trackMetadata tracks the metadata from all accumulated messages to determine commit points
 func (mt *metadataTracker[K]) trackMetadata(group *accumulationGroup[K]) {
+	mt.mu.Lock()
+	defer mt.mu.Unlock()
+
 	for _, accMsg := range group.Messages {
 		metadata := accMsg.Metadata
 
@@ -68,6 +74,9 @@ type KafkaCommitData struct {
 // Returns a single struct with all partition offsets that can be advanced
 func (mt *metadataTracker[K]) getSafeCommitOffsets() *KafkaCommitData {
 	offsets := make(map[int32]int64)
+
+	mt.mu.Lock()
+	defer mt.mu.Unlock()
 
 	for partition, keyOffsets := range mt.partitionOffsets {
 		if len(keyOffsets) == 0 {
@@ -108,5 +117,8 @@ func (mt *metadataTracker[K]) getSafeCommitOffsets() *KafkaCommitData {
 
 // markOffsetsCommitted records that offsets have been successfully committed to Kafka
 func (mt *metadataTracker[K]) markOffsetsCommitted(offsets map[int32]int64) {
+	mt.mu.Lock()
+	defer mt.mu.Unlock()
+
 	maps.Copy(mt.lastCommittedOffsets, offsets)
 }

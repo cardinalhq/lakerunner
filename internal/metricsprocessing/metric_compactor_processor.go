@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"sort"
 	"time"
 
 	"github.com/google/uuid"
@@ -52,8 +51,8 @@ func (e *GroupValidationError) Error() string {
 // CompactionStore defines database operations needed for compaction
 type CompactionStore interface {
 	GetMetricSeg(ctx context.Context, params lrdb.GetMetricSegParams) (lrdb.MetricSeg, error)
-	CompactMetricSegsWithKafkaOffsetsWithOrg(ctx context.Context, params lrdb.CompactMetricSegsParams, kafkaOffsets []lrdb.KafkaOffsetUpdateWithOrg) error
-	KafkaJournalGetLastProcessedWithOrgInstance(ctx context.Context, params lrdb.KafkaJournalGetLastProcessedWithOrgInstanceParams) (int64, error)
+	CompactMetricSegsWithKafkaOffsets(ctx context.Context, params lrdb.CompactMetricSegsParams, kafkaOffsets []lrdb.KafkaOffsetUpdate) error
+	KafkaGetLastProcessed(ctx context.Context, params lrdb.KafkaGetLastProcessedParams) (int64, error)
 	MarkMetricSegsCompactedByKeys(ctx context.Context, params lrdb.MarkMetricSegsCompactedByKeysParams) error
 	GetMetricEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32) int64
 	// Add segment_journal functionality
@@ -381,10 +380,10 @@ func (c *MetricCompactorProcessor) atomicDatabaseUpdate(ctx context.Context, old
 	ll := logctx.FromContext(ctx)
 
 	// Prepare Kafka offsets for update
-	var kafkaOffsets []lrdb.KafkaOffsetUpdateWithOrg
+	var kafkaOffsets []lrdb.KafkaOffsetUpdate
 	if kafkaCommitData != nil {
 		for partition, offset := range kafkaCommitData.Offsets {
-			kafkaOffsets = append(kafkaOffsets, lrdb.KafkaOffsetUpdateWithOrg{
+			kafkaOffsets = append(kafkaOffsets, lrdb.KafkaOffsetUpdate{
 				Topic:          kafkaCommitData.Topic,
 				Partition:      partition,
 				ConsumerGroup:  kafkaCommitData.ConsumerGroup,
@@ -402,7 +401,7 @@ func (c *MetricCompactorProcessor) atomicDatabaseUpdate(ctx context.Context, old
 		}
 
 		// Sort to avoid deadlocks
-		sortKafkaOffsets(kafkaOffsets)
+		lrdb.SortKafkaOffsets(kafkaOffsets)
 	}
 
 	// Convert segments to appropriate types
@@ -445,7 +444,7 @@ func (c *MetricCompactorProcessor) atomicDatabaseUpdate(ctx context.Context, old
 	}
 
 	// Perform atomic operation
-	if err := c.store.CompactMetricSegsWithKafkaOffsetsWithOrg(ctx, params, kafkaOffsets); err != nil {
+	if err := c.store.CompactMetricSegsWithKafkaOffsets(ctx, params, kafkaOffsets); err != nil {
 		ll := logctx.FromContext(ctx)
 
 		// Log unique keys for debugging database failures
@@ -487,20 +486,6 @@ func (c *MetricCompactorProcessor) atomicDatabaseUpdate(ctx context.Context, old
 
 // Helper functions
 
-// sortKafkaOffsets sorts Kafka offsets to avoid deadlocks in database operations.
-// The sort order is: topic, then partition, then consumer group.
-func sortKafkaOffsets(offsets []lrdb.KafkaOffsetUpdateWithOrg) {
-	sort.Slice(offsets, func(i, j int) bool {
-		if offsets[i].Topic != offsets[j].Topic {
-			return offsets[i].Topic < offsets[j].Topic
-		}
-		if offsets[i].Partition != offsets[j].Partition {
-			return offsets[i].Partition < offsets[j].Partition
-		}
-		return offsets[i].ConsumerGroup < offsets[j].ConsumerGroup
-	})
-}
-
 func (c *MetricCompactorProcessor) getHourFromTimestamp(timestampMs int64) int16 {
 	return int16((timestampMs / (1000 * 60 * 60)) % 24)
 }
@@ -511,13 +496,11 @@ func (c *MetricCompactorProcessor) markSegmentsAsCompacted(ctx context.Context, 
 		return nil
 	}
 
-	// Extract segment IDs
 	segmentIDs := make([]int64, len(segments))
 	for i, seg := range segments {
 		segmentIDs[i] = seg.SegmentID
 	}
 
-	// Mark segments as compacted
 	return c.store.MarkMetricSegsCompactedByKeys(ctx, lrdb.MarkMetricSegsCompactedByKeysParams{
 		OrganizationID: key.OrganizationID,
 		Dateint:        key.DateInt,
