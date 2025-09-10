@@ -15,6 +15,11 @@
 package metricsprocessing
 
 import (
+	"bufio"
+	"context"
+	"os"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -552,4 +557,198 @@ func TestHunter_MetricCompactionMessage_AccumulationScaffolding(t *testing.T) {
 	assert.Len(t, orgCounts, 4, "Should have groups for all 4 organizations")
 
 	t.Logf("Multi-org accumulation completed: 4 orgs × 15 messages × 100 records = %d total records", 4*15*100)
+}
+
+func TestHunter_RealDataFromFile(t *testing.T) {
+	// Read real data from testdata
+	file, err := os.Open("testdata/metric_compaction_data.txt")
+	require.NoError(t, err, "Failed to open testdata/metric_compaction_data.txt")
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+
+	// Skip header lines
+	var lineCount int
+	var dataRows [][]string
+	for scanner.Scan() {
+		lineCount++
+		line := strings.TrimSpace(scanner.Text())
+
+		// Skip header and separator lines
+		if lineCount <= 2 || strings.HasPrefix(line, "----") || line == "" {
+			continue
+		}
+
+		// Parse the table row - split by | and trim spaces
+		parts := strings.Split(line, "|")
+		if len(parts) != 9 {
+			continue // Skip malformed lines (now expecting 9 columns)
+		}
+
+		var row []string
+		for _, part := range parts {
+			row = append(row, strings.TrimSpace(part))
+		}
+		dataRows = append(dataRows, row)
+	}
+
+	require.NoError(t, scanner.Err(), "Error reading file")
+	require.Greater(t, len(dataRows), 0, "Should have parsed some data rows")
+
+	t.Logf("Parsed %d data rows from testdata/metric_compaction_data.txt", len(dataRows))
+
+	// Create mock processor to track what gets processed
+	type ProcessedGroup struct {
+		Group           *AccumulationGroup[messages.CompactionKey]
+		KafkaCommitData *KafkaCommitData
+	}
+
+	var processedGroups []ProcessedGroup
+	mockProcessor := &struct {
+		groups  []*AccumulationGroup[messages.CompactionKey]
+		commits []*KafkaCommitData
+	}{}
+
+	// Create a processor function that captures the groups
+	processFunc := func(ctx context.Context, group *AccumulationGroup[messages.CompactionKey], kafkaCommitData *KafkaCommitData) error {
+		mockProcessor.groups = append(mockProcessor.groups, group)
+		mockProcessor.commits = append(mockProcessor.commits, kafkaCommitData)
+		processedGroups = append(processedGroups, ProcessedGroup{Group: group, KafkaCommitData: kafkaCommitData})
+		return nil
+	}
+
+	// Create a mock processor that implements the Processor interface
+	processor := &MockProcessorWithFunc{ProcessFunc: processFunc}
+
+	// Create mock offset callbacks
+	offsetCallbacks := NewMockOffsetCallbacks()
+
+	// Create gatherer
+	gatherer := NewGatherer[*messages.MetricCompactionMessage](
+		"lakerunner.segments.metrics.compact",
+		"lakerunner.compact.metrics",
+		processor,
+		offsetCallbacks,
+	)
+
+	ctx := context.Background()
+	var totalMessagesProcessed int
+	var totalRecordCount int64
+
+	// Convert each row to MetricCompactionMessage and feed through gatherer
+	for i, row := range dataRows {
+		// Parse the row: organization_id, dateint, frequency_ms, segment_id, instance_num, slot_id, slot_count, record_count, file_size
+		orgID, err := uuid.Parse(row[0])
+		require.NoError(t, err, "Failed to parse organization_id from row %d: %s", i, row[0])
+
+		dateInt, err := strconv.ParseInt(row[1], 10, 32)
+		require.NoError(t, err, "Failed to parse dateint from row %d: %s", i, row[1])
+
+		frequencyMs, err := strconv.ParseInt(row[2], 10, 32)
+		require.NoError(t, err, "Failed to parse frequency_ms from row %d: %s", i, row[2])
+
+		segmentID, err := strconv.ParseInt(row[3], 10, 64)
+		require.NoError(t, err, "Failed to parse segment_id from row %d: %s", i, row[3])
+
+		instanceNum, err := strconv.ParseInt(row[4], 10, 16)
+		require.NoError(t, err, "Failed to parse instance_num from row %d: %s", i, row[4])
+
+		slotID, err := strconv.ParseInt(row[5], 10, 32)
+		require.NoError(t, err, "Failed to parse slot_id from row %d: %s", i, row[5])
+
+		slotCount, err := strconv.ParseInt(row[6], 10, 32)
+		require.NoError(t, err, "Failed to parse slot_count from row %d: %s", i, row[6])
+
+		recordCount, err := strconv.ParseInt(row[7], 10, 64)
+		require.NoError(t, err, "Failed to parse record_count from row %d: %s", i, row[7])
+
+		fileSize, err := strconv.ParseInt(row[8], 10, 64)
+		require.NoError(t, err, "Failed to parse file_size from row %d: %s", i, row[8])
+
+		// Use actual record count from data
+		totalRecordCount += recordCount
+
+		msg := &messages.MetricCompactionMessage{
+			Version:        1,
+			OrganizationID: orgID,
+			DateInt:        int32(dateInt),
+			FrequencyMs:    int32(frequencyMs),
+			SegmentID:      segmentID,
+			InstanceNum:    int16(instanceNum),
+			SlotID:         int32(slotID),
+			SlotCount:      int32(slotCount),
+			Records:        recordCount,
+			FileSize:       fileSize,
+			QueuedAt:       time.Now(),
+		}
+
+		// Create metadata for this message
+		metadata := &MessageMetadata{
+			Topic:         "lakerunner.segments.metrics.compact",
+			Partition:     int32(i % 4), // Distribute across 4 partitions
+			ConsumerGroup: "lakerunner.compact.metrics",
+			Offset:        int64(i + 1000), // Offset starts at 1000
+		}
+
+		// Process message through gatherer
+		err = gatherer.ProcessMessage(ctx, msg, metadata)
+		require.NoError(t, err, "Failed to process message %d", i)
+
+		totalMessagesProcessed++
+	}
+
+	t.Logf("Processed %d messages with total record count: %d", totalMessagesProcessed, totalRecordCount)
+
+	// Flush any remaining groups
+	n, err := gatherer.FlushStaleGroups(ctx, 0, 0) // Flush all groups immediately
+	require.NoError(t, err, "Failed to flush stale groups")
+	t.Logf("Flushed %d stale groups", n)
+
+	// Verify all messages were processed
+	var totalProcessedRecords int64
+	var totalProcessedMessages int
+	groupingKeySummary := make(map[messages.CompactionKey]int)
+
+	for _, processed := range processedGroups {
+		group := processed.Group
+		totalProcessedRecords += group.TotalRecordCount
+		totalProcessedMessages += len(group.Messages)
+		groupingKeySummary[group.Key]++
+
+		t.Logf("Processed group: Org=%s, Instance=%d, DateInt=%d, FreqMs=%d, Messages=%d, Records=%d",
+			group.Key.OrganizationID.String()[:8],
+			group.Key.InstanceNum,
+			group.Key.DateInt,
+			group.Key.FrequencyMs,
+			len(group.Messages),
+			group.TotalRecordCount)
+	}
+
+	// Verify we got all the data back
+	assert.Equal(t, totalRecordCount, totalProcessedRecords, "All records should be processed")
+	assert.Equal(t, totalMessagesProcessed, totalProcessedMessages, "All messages should be processed")
+	assert.Greater(t, len(processedGroups), 0, "Should have processed some groups")
+
+	t.Logf("Summary: %d input messages -> %d processed groups with %d total records",
+		totalMessagesProcessed, len(processedGroups), totalProcessedRecords)
+
+	// Print grouping key summary
+	t.Logf("Grouping key summary (%d unique keys):", len(groupingKeySummary))
+	for key, count := range groupingKeySummary {
+		t.Logf("  Org=%s, Instance=%d, DateInt=%d, FreqMs=%d: %d groups",
+			key.OrganizationID.String()[:8], key.InstanceNum, key.DateInt, key.FrequencyMs, count)
+	}
+}
+
+// MockProcessorWithFunc is a processor that uses a function for processing
+type MockProcessorWithFunc struct {
+	ProcessFunc func(ctx context.Context, group *AccumulationGroup[messages.CompactionKey], kafkaCommitData *KafkaCommitData) error
+}
+
+func (m *MockProcessorWithFunc) Process(ctx context.Context, group *AccumulationGroup[messages.CompactionKey], kafkaCommitData *KafkaCommitData) error {
+	return m.ProcessFunc(ctx, group, kafkaCommitData)
+}
+
+func (m *MockProcessorWithFunc) GetTargetRecordCount(ctx context.Context, groupingKey messages.CompactionKey) int64 {
+	return 10000000 // Default target for testing
 }

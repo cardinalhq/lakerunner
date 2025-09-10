@@ -32,7 +32,6 @@ require (
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/jackc/pgx/v5 v5.7.5
 	github.com/jellydator/ttlcache/v3 v3.4.0
-	github.com/lib/pq v1.10.9
 	github.com/marcboeker/go-duckdb/v2 v2.3.5
 	github.com/oklog/ulid/v2 v2.1.1
 	github.com/orlangure/gnomock v0.32.0
@@ -421,6 +420,7 @@ require (
 	github.com/ldez/usetesting v0.4.2 // indirect
 	github.com/leonklingele/grouper v1.1.2 // indirect
 	github.com/letsencrypt/boulder v0.0.0-20240620165639-de9c06129bec // indirect
+	github.com/lib/pq v1.10.9 // indirect
 	github.com/lucasb-eyer/go-colorful v1.2.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20250317134145-8bc96cf8fc35 // indirect
 	github.com/macabu/inamedparam v0.1.3 // indirect

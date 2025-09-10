@@ -155,16 +155,19 @@ func (g *Gatherer[M, K]) GetMetadataTracker() *MetadataTracker[K] {
 // FlushStaleGroups processes all groups that haven't been updated for longer than lastUpdatedAge duration,
 // or that are older than maxAge since creation (if maxAge > 0).
 // This is used for periodic flushing to handle groups that may never reach the record count threshold.
-func (g *Gatherer[M, K]) FlushStaleGroups(ctx context.Context, lastUpdatedAge, maxAge time.Duration) error {
+func (g *Gatherer[M, K]) FlushStaleGroups(ctx context.Context, lastUpdatedAge, maxAge time.Duration) (int, error) {
 	staleGroups := g.hunter.SelectStaleGroups(lastUpdatedAge, maxAge)
+
+	emitted := 0
 
 	for _, group := range staleGroups {
 		// Create Kafka commit data from the actual messages in the group
 		kafkaCommitData := g.createKafkaCommitDataFromGroup(group)
 
 		if err := g.processor.Process(ctx, group, kafkaCommitData); err != nil {
-			return err
+			return emitted, err
 		}
+		emitted++
 
 		// Track the metadata for calculating safe Kafka consumer group commits
 		g.metadataTracker.TrackMetadata(group)
@@ -172,10 +175,10 @@ func (g *Gatherer[M, K]) FlushStaleGroups(ctx context.Context, lastUpdatedAge, m
 		// Mark offsets as processed for this key
 		if kafkaCommitData != nil {
 			if err := g.offsetCallbacks.MarkOffsetsProcessed(ctx, group.Key, kafkaCommitData.Offsets); err != nil {
-				return err
+				return emitted, err
 			}
 		}
 	}
 
-	return nil
+	return emitted, nil
 }

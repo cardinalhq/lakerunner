@@ -253,7 +253,7 @@ func (c *MetricCompactionConsumer) periodicFlush(ctx context.Context) {
 			return
 		case <-c.flushTicker.C:
 			ll.Debug("Running periodic flush of stale groups")
-			if err := c.gatherer.FlushStaleGroups(ctx, 5*time.Minute, 0); err != nil {
+			if _, err := c.gatherer.FlushStaleGroups(ctx, 1*time.Minute, 0); err != nil {
 				ll.Error("Failed to flush stale groups", slog.Any("error", err))
 			}
 		}
