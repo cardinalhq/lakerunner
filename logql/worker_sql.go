@@ -49,8 +49,10 @@ func (be *LogLeaf) ToWorkerSQL(limit int, order string, fields []string) string 
 
 	// Add fields parameter to s0 if they are base table columns and not being extracted by parsers
 	for _, field := range fields {
-		qk := quoteIdent(field)
-		s0Need[qk] = struct{}{}
+		if _, created := parserCreated[field]; !created {
+			qk := quoteIdent(field)
+			s0Need[qk] = struct{}{}
+		}
 	}
 	pb.push(selectListFromSet(s0Need), baseRel, nil)
 
@@ -380,6 +382,9 @@ func emitParsers(
 				*remainingLF = later
 			} else if len(p.Filters) > 0 {
 				*remainingLF = append(*remainingLF, p.Filters...)
+			} else {
+				sel = append(sel, fmt.Sprintf("to_json(%s) AS __extracted_struct", bodyCol))
+				pb.push(sel, pb.top(), nil)
 			}
 
 		case "logfmt":

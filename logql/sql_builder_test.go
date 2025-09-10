@@ -1008,7 +1008,6 @@ func TestToWorkerSQLWithLimit_Fields_WithRegexpParser(t *testing.T) {
 	// Test with fields that are extracted by the regexp parser
 	fields := []string{"user", "action", "status"}
 	sql := replaceStartEnd(replaceTable(be.ToWorkerSQLWithLimit(0, "desc", fields)), 0, 5000)
-
 	rows := queryAll(t, db, sql)
 
 	// Should return all rows with the extracted fields
