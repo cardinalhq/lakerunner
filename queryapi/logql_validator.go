@@ -16,8 +16,9 @@ package queryapi
 
 import (
 	"encoding/json"
-	"github.com/cardinalhq/lakerunner/logql"
 	"net/http"
+
+	"github.com/cardinalhq/lakerunner/logql"
 )
 
 type logQLValidateRequest struct {
@@ -66,5 +67,5 @@ func (q *QuerierService) handleLogQLValidate(w http.ResponseWriter, r *http.Requ
 
 func (q *QuerierService) sendError(w http.ResponseWriter, err error) {
 	w.WriteHeader(http.StatusBadRequest)
-	err = json.NewEncoder(w).Encode(logQLValidateResponse{Valid: false, Error: err.Error()})
+	json.NewEncoder(w).Encode(logQLValidateResponse{Valid: false, Error: err.Error()})
 }
