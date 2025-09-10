@@ -17,6 +17,7 @@ package queryapi
 import (
 	"database/sql"
 	"fmt"
+	"math"
 
 	_ "github.com/marcboeker/go-duckdb/v2"
 
@@ -1809,6 +1810,145 @@ func TestLog_SumOfCountsByPod_WithJSONFilter_TwoWorkers_Eval(t *testing.T) {
 		if got[k] != want {
 			t.Fatalf("unexpected sum-of-counts for %v: got=%v want=%v\nrows1=%v\nrows2=%v\nsql=\n%s",
 				k, got[k], want, rows1, rows2, workerSQL)
+		}
+	}
+}
+
+func TestLog_SumRateCounter_Unwrap_TwoWorkers_Eval(t *testing.T) {
+	// ---------------- Worker 1 ----------------
+	db1 := openDuckDB(t)
+	mustExec(t, db1, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.fingerprint" TEXT,
+		"_cardinalhq.message"     TEXT,
+		"resource.service.name"   TEXT
+	);`)
+	// bucket 0 (0..60s): 10 + 20
+	// bucket 1 (60..120s): 30
+	mustExec(t, db1, `
+	INSERT INTO logs("_cardinalhq.timestamp","_cardinalhq.message","resource.service.name") VALUES
+	(10*1000,  'took 10 ms', 'kafka'),
+	(20*1000,  'took 20ms',  'kafka'),
+	(70*1000,  'took 30 ms', 'kafka');
+	`)
+
+	// ---------------- Worker 2 ----------------
+	db2 := openDuckDB(t)
+	mustExec(t, db2, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.fingerprint" TEXT,
+		"_cardinalhq.message"     TEXT,
+		"resource.service.name"   TEXT
+	);`)
+	// bucket 0: 40
+	// bucket 1: 50
+	mustExec(t, db2, `
+	INSERT INTO logs("_cardinalhq.timestamp","_cardinalhq.message","resource.service.name") VALUES
+	(40*1000,  'took 40ms',  'kafka'),
+	(100*1000, 'took 50 ms', 'kafka');
+	`)
+
+	// Coordinator expression: sum(rate_counter(... unwrap dur [1m]))
+	q := `sum(rate_counter({resource_service_name="kafka"} | regexp "(?P<dur>[0-9]+(?:\\.[0-9]+)?)\\s*(?:ns|us|µs|ms|s|m|h)" | unwrap dur [1m]))`
+
+	plan, _ := compileMetricPlanFromLogQL(t, q)
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf, got %d", len(plan.Leaves))
+	}
+	leaf := plan.Leaves[0]
+
+	step := time.Minute
+	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000)
+
+	// Sanity: pipeline should include regexp + unwrap and aggregate the numeric.
+	if !strings.Contains(workerSQL, "regexp_extract") || !strings.Contains(workerSQL, "AS __unwrap_value") {
+		t.Fatalf("expected regexp+unwrap in SQL, got:\n%s", workerSQL)
+	}
+	if !strings.Contains(workerSQL, "SUM(__unwrap_value)") {
+		t.Fatalf("expected SUM(__unwrap_value) in SQL, got:\n%s", workerSQL)
+	}
+
+	// Run leaf SQL on both workers (per-bucket numeric SUMs from the 1m window).
+	rows1 := queryAll(t, db1, workerSQL)
+	rows2 := queryAll(t, db2, workerSQL)
+	if len(rows1) == 0 && len(rows2) == 0 {
+		t.Fatalf("no rows from both workers; sql=\n%s", workerSQL)
+	}
+
+	// Build coordinator inputs per bucket for the leaf.
+	// rate_counter expects the *sum per window* so it can compute delta/step.
+	type bucket = int64
+	perBucket := map[bucket][]promql.SketchInput{}
+
+	getSum := func(r rowmap) float64 {
+		if v, ok := r["sum"]; ok {
+			return f64(v)
+		}
+		t.Fatalf("sum column not found in row: %v", r)
+		return 0
+	}
+
+	addRows := func(rows []rowmap) {
+		for _, r := range rows {
+			b := i64(r["bucket_ts"])
+			sum := getSum(r)
+			// No group-by labels here; we want global sum(rate_counter(...)).
+			perBucket[b] = append(perBucket[b], promql.SketchInput{
+				ExprID:         leaf.ID,
+				OrganizationID: "org-test",
+				Timestamp:      b,
+				Frequency:      int64(step / time.Second),
+				SketchTags: promql.SketchTags{
+					Tags:       map[string]any{}, // global
+					SketchType: promql.SketchMAP,
+					Agg:        map[string]float64{"sum": sum},
+				},
+			})
+		}
+	}
+	addRows(rows1)
+	addRows(rows2)
+
+	// Deterministic bucket order.
+	var buckets []int64
+	for b := range perBucket {
+		buckets = append(buckets, b)
+	}
+	sort.Slice(buckets, func(i, j int) bool { return buckets[i] < buckets[j] })
+
+	// Evaluate per bucket; coordinator should compute the per-second rate of the window sums,
+	// then outer sum(...) (no groups → a single series).
+	got := map[bucket]float64{}
+	for _, b := range buckets {
+		out := plan.Root.Eval(promql.SketchGroup{
+			Timestamp: b,
+			Group:     map[string][]promql.SketchInput{leaf.ID: perBucket[b]},
+		}, step)
+
+		if len(out) != 1 {
+			t.Fatalf("expected 1 output series at bucket %d, got %d: %v", b, len(out), out)
+		}
+		got[b] = out["default"].Value.Num
+	}
+
+	const (
+		b0 = int64(0)
+		b1 = int64(60000)
+	)
+	exp := map[bucket]float64{
+		b0: 70.0 / 60.0,
+		b1: 80.0 / 60.0,
+	}
+
+	const eps = 1e-9
+	for b, want := range exp {
+		if math.Abs(got[b]-want) > eps {
+			t.Fatalf("unexpected sum(rate_counter unwrap) at bucket %d: got=%v want=%v\nrows1=%v\nrows2=%v\nsql=\n%s",
+				b, got[b], want, rows1, rows2, workerSQL)
 		}
 	}
 }

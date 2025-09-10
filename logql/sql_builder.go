@@ -461,25 +461,50 @@ func buildLineFilterWhere(lfs []LineFilter, bodyCol string) []string {
 	return where
 }
 
-func buildLabelFilterWhere(lfs []LabelFilter, colResolver func(string) string) []string {
-	var where []string
+var numLitRE = regexp.MustCompile(`^\s*-?(?:\d+(?:\.\d*)?|\.\d+)\s*$`)
+
+func asNumericSQL(lit string) string {
+	// If it's a bare numeric, pass through unchanged.
+	if numLitRE.MatchString(lit) {
+		return strings.TrimSpace(lit)
+	}
+	// Fall back to casting a string literal → DOUBLE (safe + predictable).
+	return fmt.Sprintf("try_cast(%s AS DOUBLE)", sqlQuote(lit))
+}
+
+func buildLabelFilterWhere(lfs []LabelFilter, colOverride map[string]string) []string {
+	var out []string
 	for _, lf := range lfs {
-		col := lf.Label
-		if colResolver != nil {
-			col = colResolver(lf.Label)
+		col := quoteIdent(lf.Label)
+		if colOverride != nil {
+			if alt, ok := colOverride[lf.Label]; ok && alt != "" {
+				col = alt
+			}
 		}
+
 		switch lf.Op {
 		case MatchEq:
-			where = append(where, fmt.Sprintf("%s = %s", quoteIdent(col), sqlQuote(lf.Value)))
+			out = append(out, fmt.Sprintf("%s = %s", col, sqlQuote(lf.Value)))
 		case MatchNe:
-			where = append(where, fmt.Sprintf("%s <> %s", quoteIdent(col), sqlQuote(lf.Value)))
+			out = append(out, fmt.Sprintf("%s <> %s", col, sqlQuote(lf.Value)))
 		case MatchRe:
-			where = append(where, fmt.Sprintf("regexp_matches(%s, %s)", quoteIdent(col), sqlQuote(lf.Value)))
+			out = append(out, fmt.Sprintf("regexp_matches(%s, %s)", col, sqlQuote(lf.Value)))
 		case MatchNre:
-			where = append(where, fmt.Sprintf("NOT regexp_matches(%s, %s)", quoteIdent(col), sqlQuote(lf.Value)))
+			out = append(out, fmt.Sprintf("NOT regexp_matches(%s, %s)", col, sqlQuote(lf.Value)))
+
+		case MatchGt, MatchLt, MatchGte, MatchLte:
+			rhs := asNumericSQL(lf.Value)
+			out = append(out, fmt.Sprintf("try_cast(%s AS DOUBLE) %s %s", col, string(lf.Op), rhs))
+
+		default:
+			// Fallback to equality to be conservative
+			out = append(out, fmt.Sprintf("%s = %s", col, sqlQuote(lf.Value)))
 		}
 	}
-	return where
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // Partition label filters by whether their Label is in "created" (new columns just projected).
