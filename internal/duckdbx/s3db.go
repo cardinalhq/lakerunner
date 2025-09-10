@@ -246,8 +246,8 @@ func (p *bucketPool) newConn(ctx context.Context) (*pooledConn, error) {
 		return nil, err
 	}
 
-	// create S3 secret for this bucket (serialize DDL)
-	if err := seedS3SecretFromEnv(ctx, conn, p.bucket, p.region, p.endpoint); err != nil {
+	// create cloud storage secret for this bucket (serialize DDL)
+	if err := seedCloudSecretFromEnv(ctx, conn, p.bucket, p.region, p.endpoint); err != nil {
 		_ = conn.Close()
 		_ = db.Close()
 		return nil, err
@@ -297,9 +297,9 @@ func (s *S3DB) setupConn(ctx context.Context, conn *sql.Conn) error {
 		return fmt.Errorf("enable_object_cache: %w", err)
 	}
 
-	// LOAD httpfs (serialize LOAD across engines)
+	// LOAD extensions (serialize LOAD across engines)
 	duckdbDDLMu.Lock()
-	err := s.loadHTTPFS(ctx, conn)
+	err := s.loadExtensions(ctx, conn)
 	duckdbDDLMu.Unlock()
 	return err
 }
@@ -329,9 +329,20 @@ func (s *S3DB) ensureInstall(ctx context.Context) error {
 		}
 		duckdbDDLMu.Lock()
 		_, _ = conn.ExecContext(ctx, "INSTALL httpfs;")
+		_, _ = conn.ExecContext(ctx, "INSTALL azure;")
 		duckdbDDLMu.Unlock()
 	})
 	return s.installErr
+}
+
+func (s *S3DB) loadExtensions(ctx context.Context, conn *sql.Conn) error {
+	if err := s.loadHTTPFS(ctx, conn); err != nil {
+		return err
+	}
+	if err := s.loadAzure(ctx, conn); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *S3DB) loadHTTPFS(ctx context.Context, conn *sql.Conn) error {
@@ -354,7 +365,128 @@ func (s *S3DB) loadHTTPFS(ctx context.Context, conn *sql.Conn) error {
 	return nil
 }
 
+func (s *S3DB) loadAzure(ctx context.Context, conn *sql.Conn) error {
+	if base := os.Getenv("LAKERUNNER_EXTENSIONS_PATH"); base != "" {
+		path := os.Getenv("LAKERUNNER_AZURE_EXTENSION")
+		if path == "" {
+			path = filepath.Join(base, "azure.duckdb_extension")
+		}
+		if _, err := os.Stat(path); err != nil {
+			return fmt.Errorf("azure extension not found at %s: %w", path, err)
+		}
+		if _, err := conn.ExecContext(ctx, fmt.Sprintf("LOAD '%s';", escapeSingle(path))); err != nil {
+			return fmt.Errorf("LOAD azure (air-gapped): %w", err)
+		}
+		// Configure Azure transport to use curl for better compatibility
+		if _, err := conn.ExecContext(ctx, "SET azure_transport_option_type = 'curl';"); err != nil {
+			return fmt.Errorf("set azure transport option: %w", err)
+		}
+		return nil
+	}
+	if _, err := conn.ExecContext(ctx, "LOAD azure;"); err != nil {
+		return fmt.Errorf("LOAD azure: %w", err)
+	}
+	// Configure Azure transport to use curl for better compatibility
+	if _, err := conn.ExecContext(ctx, "SET azure_transport_option_type = 'curl';"); err != nil {
+		return fmt.Errorf("set azure transport option: %w", err)
+	}
+	return nil
+}
+
 // CREATE OR REPLACE SECRET for a bucket (serialized).
+// Detects cloud provider based on environment variables and creates appropriate secret.
+func seedCloudSecretFromEnv(ctx context.Context, conn *sql.Conn, bucket, region string, endpoint string) error {
+	// Check for Azure credentials first
+	if hasAzureCredentials() {
+		return seedAzureSecretFromEnv(ctx, conn, bucket, region, endpoint)
+	}
+
+	// Fall back to S3/AWS
+	return seedS3SecretFromEnv(ctx, conn, bucket, region, endpoint)
+}
+
+// Check if Azure credentials are available
+func hasAzureCredentials() bool {
+	authType := os.Getenv("AZURE_AUTH_TYPE")
+	return authType != ""
+}
+
+// CREATE OR REPLACE SECRET for Azure Blob Storage (serialized).
+func seedAzureSecretFromEnv(ctx context.Context, conn *sql.Conn, container, region string, endpoint string) error {
+	authType := os.Getenv("AZURE_AUTH_TYPE")
+	if authType == "" {
+		return fmt.Errorf("AZURE_AUTH_TYPE not set")
+	}
+
+	// For Azure, storage account must be extracted from endpoint
+	if endpoint == "" {
+		return fmt.Errorf("Azure storage profiles require an endpoint to extract storage account name")
+	}
+
+	storageAccount := extractStorageAccountFromEndpoint(endpoint)
+	secretName := "secret_" + strings.ReplaceAll(container, "-", "_")
+
+	var b strings.Builder
+	_, _ = fmt.Fprintf(&b, "CREATE OR REPLACE SECRET %s (\n", quoteIdent(secretName))
+	_, _ = fmt.Fprintf(&b, "  TYPE azure,\n")
+
+	switch authType {
+	case "service_principal":
+		clientId := os.Getenv("AZURE_CLIENT_ID")
+		clientSecret := os.Getenv("AZURE_CLIENT_SECRET")
+		tenantId := os.Getenv("AZURE_TENANT_ID")
+
+		if clientId == "" || clientSecret == "" || tenantId == "" {
+			return fmt.Errorf("missing Azure service principal credentials: AZURE_CLIENT_ID/AZURE_CLIENT_SECRET/AZURE_TENANT_ID")
+		}
+
+		_, _ = fmt.Fprintf(&b, "  PROVIDER service_principal,\n")
+		_, _ = fmt.Fprintf(&b, "  TENANT_ID '%s',\n", escapeSingle(tenantId))
+		_, _ = fmt.Fprintf(&b, "  CLIENT_ID '%s',\n", escapeSingle(clientId))
+		_, _ = fmt.Fprintf(&b, "  CLIENT_SECRET '%s',\n", escapeSingle(clientSecret))
+		_, _ = fmt.Fprintf(&b, "  ACCOUNT_NAME '%s'\n", escapeSingle(storageAccount))
+
+	case "connection_string":
+		connectionString := os.Getenv("AZURE_STORAGE_CONNECTION_STRING")
+		if connectionString == "" {
+			return fmt.Errorf("missing Azure connection string: AZURE_STORAGE_CONNECTION_STRING")
+		}
+
+		_, _ = fmt.Fprintf(&b, "  PROVIDER connection_string,\n")
+		_, _ = fmt.Fprintf(&b, "  CONNECTION_STRING '%s'\n", escapeSingle(connectionString))
+
+	case "credential_chain":
+		// For managed identity, workload identity, etc.
+		_, _ = fmt.Fprintf(&b, "  PROVIDER credential_chain,\n")
+		_, _ = fmt.Fprintf(&b, "  ACCOUNT_NAME '%s'\n", escapeSingle(storageAccount))
+
+	default:
+		return fmt.Errorf("unsupported Azure auth type: %s", authType)
+	}
+
+	_, _ = fmt.Fprintf(&b, ");")
+
+	duckdbDDLMu.Lock()
+	_, err := conn.ExecContext(ctx, b.String())
+	duckdbDDLMu.Unlock()
+	return err
+}
+
+// Extract storage account name from Azure Blob endpoint
+func extractStorageAccountFromEndpoint(endpoint string) string {
+	// Remove protocol
+	endpoint = strings.TrimPrefix(endpoint, "https://")
+	endpoint = strings.TrimPrefix(endpoint, "http://")
+
+	// Extract storage account name (first part before the dot)
+	if idx := strings.Index(endpoint, "."); idx > 0 {
+		return endpoint[:idx]
+	}
+
+	return endpoint
+}
+
+// CREATE OR REPLACE SECRET for AWS S3 (serialized).
 func seedS3SecretFromEnv(ctx context.Context, conn *sql.Conn, bucket, region string, endpoint string) error {
 	keyID := os.Getenv("S3_ACCESS_KEY_ID")
 	secret := os.Getenv("S3_SECRET_ACCESS_KEY")

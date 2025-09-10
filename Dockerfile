@@ -33,10 +33,12 @@ RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/* && 
         fi; \
     done
 
-# Download httpfs extension
+# Download httpfs and azure extensions
 RUN mkdir -p /app/extensions && \
     curl -fsSL "https://extensions.duckdb.org/${DUCKDB_VERSION}/linux_${TARGETARCH}/httpfs.duckdb_extension.gz" \
-    | gunzip -c > /app/extensions/httpfs.duckdb_extension
+    | gunzip -c > /app/extensions/httpfs.duckdb_extension && \
+    curl -fsSL "https://extensions.duckdb.org/${DUCKDB_VERSION}/linux_${TARGETARCH}/azure.duckdb_extension.gz" \
+    | gunzip -c > /app/extensions/azure.duckdb_extension
 
 # ========= Runtime Image =========
 FROM gcr.io/distroless/cc-debian12:nonroot
@@ -44,14 +46,16 @@ FROM gcr.io/distroless/cc-debian12:nonroot
 # Copy the pre-built binary from goreleaser
 COPY --chmod=755 lakerunner /app/bin/lakerunner
 
-# Copy httpfs extension
+# Copy httpfs and azure extensions
 COPY --from=extensions /app/extensions/httpfs.duckdb_extension /app/extensions/httpfs.duckdb_extension
+COPY --from=extensions /app/extensions/azure.duckdb_extension /app/extensions/azure.duckdb_extension
 
 # Copy curl binary and its runtime dependencies
 COPY --from=extensions /usr/bin/curl /usr/bin/curl
 COPY --from=extensions /runtime-deps/ /
 
-# Set environment variable for extension location
+# Set environment variables for extension locations
 ENV LAKERUNNER_HTTPFS_EXTENSION=/app/extensions/httpfs.duckdb_extension
+ENV LAKERUNNER_AZURE_EXTENSION=/app/extensions/azure.duckdb_extension
 
 CMD ["/app/bin/lakerunner"]

@@ -216,7 +216,12 @@ func EvaluatePushDown[T promql.Timestamped](
 					cachedIDs = append(cachedIDs, seg.SegmentID)
 				} else {
 					bucket := profile.Bucket
-					prefix := "s3://" + bucket + "/"
+					var prefix string
+					if profile.CloudProvider == "azure" {
+						prefix = "azure://" + bucket + "/"
+					} else {
+						prefix = "s3://" + bucket + "/"
+					}
 					s3URIs = append(s3URIs, prefix+objectId)
 					s3LocalPaths = append(s3LocalPaths, objectId)
 					s3IDs = append(s3IDs, seg.SegmentID)
