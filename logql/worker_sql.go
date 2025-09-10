@@ -29,7 +29,6 @@ func (be *LogLeaf) ToWorkerSQL(limit int, order string, fields []string) string 
 	// 1) Prepare sets: group keys, parser-created, feature flags
 	groupKeys := dedupeStrings(be.OutBy)
 	// Include fields parameter in the keys that need to be projected
-	allKeys := dedupeStrings(append(groupKeys, fields...))
 	parserCreated, hasJSON, hasLogFmt := analyzeParsers(be)
 
 	// If json/logfmt is present, treat all non-base groupKeys as parser-created
@@ -50,10 +49,8 @@ func (be *LogLeaf) ToWorkerSQL(limit int, order string, fields []string) string 
 
 	// Add fields parameter to s0 if they are base table columns and not being extracted by parsers
 	for _, field := range fields {
-		if _, created := parserCreated[field]; !created {
-			qk := quoteIdent(field)
-			s0Need[qk] = struct{}{}
-		}
+		qk := quoteIdent(field)
+		s0Need[qk] = struct{}{}
 	}
 	pb.push(selectListFromSet(s0Need), baseRel, nil)
 
@@ -70,7 +67,7 @@ func (be *LogLeaf) ToWorkerSQL(limit int, order string, fields []string) string 
 
 	// 5) Emit parsers left→right, pushing label filters as soon as labels exist
 	remainingLF := append([]LabelFilter(nil), be.LabelFilters...)
-	emitParsers(be, &pb, bodyCol, allKeys, futureCreated, unwrapNeeded, &remainingLF)
+	emitParsers(be, &pb, bodyCol, groupKeys, futureCreated, unwrapNeeded, &remainingLF)
 
 	// 6) Any remaining label filters (base columns) → apply at the end
 	if len(remainingLF) > 0 {
@@ -281,16 +278,6 @@ func emitParsers(
 	excludeFuture := func(keys []string) []string {
 		out := make([]string, 0, len(keys))
 		for _, k := range keys {
-			if _, ok := futureCreated[k]; !ok {
-				out = append(out, k)
-			}
-		}
-		return out
-	}
-	// NOTE: futureCreated is a map[string]struct{}, not a func; fix above
-	excludeFuture = func(keys []string) []string {
-		out := make([]string, 0, len(keys))
-		for _, k := range keys {
 			if _, later := futureCreated[k]; !later {
 				out = append(out, k)
 			}
@@ -361,7 +348,6 @@ func emitParsers(
 
 		case "json":
 			// Keys needed by filters + group-by + unwrap, excluding future label_format.
-			// IMPORTANT: include both global remaining filters AND this stage's filters.
 			baseFilters := append(append([]LabelFilter{}, *remainingLF...), p.Filters...)
 			needKeys := uniqLabels(baseFilters)
 			needKeys = append(needKeys, groupKeys...)
