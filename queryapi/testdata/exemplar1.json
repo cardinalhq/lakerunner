@@ -1,0 +1,150 @@
+{
+  "resourceLogs": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "lakerunner-ingest-logs"
+            }
+          },
+          {
+            "key": "telemetry.sdk.language",
+            "value": {
+              "stringValue": "go"
+            }
+          },
+          {
+            "key": "telemetry.sdk.name",
+            "value": {
+              "stringValue": "opentelemetry"
+            }
+          },
+          {
+            "key": "telemetry.sdk.version",
+            "value": {
+              "stringValue": "1.37.0"
+            }
+          },
+          {
+            "key": "_cardinalhq.customer_id",
+            "value": {
+              "stringValue": "050070cb-7ccc-46a3-b444-c9e1d918d1c9"
+            }
+          },
+          {
+            "key": "_cardinalhq.collector_id",
+            "value": {
+              "stringValue": "chq-saas"
+            }
+          },
+          {
+            "key": "k8s.cluster.name",
+            "value": {
+              "stringValue": "unknown"
+            }
+          },
+          {
+            "key": "k8s.namespace.name",
+            "value": {
+              "stringValue": "unknown"
+            }
+          },
+          {
+            "key": "_cardinalhq.bucket_prefix",
+            "value": {
+              "stringValue": "otel-raw/050070cb-7ccc-46a3-b444-c9e1d918d1c9/chq-saas"
+            }
+          }
+        ]
+      },
+      "scopeLogs": [
+        {
+          "scope": {
+            "name": "lakerunner-ingest-logs"
+          },
+          "logRecords": [
+            {
+              "body": {
+                "stringValue": "traces export: failed to send to https://customer-intake-otelhttp.us-east-2.aws.test.cardinalhq.net/v1/traces: 401 Unauthorized (body: \b\u0010\u0012\u0015authentication denied)"
+              },
+              "attributes": [
+                {
+                  "key": "service",
+                  "value": {
+                    "stringValue": "lakerunner-ingest-logs"
+                  }
+                },
+                {
+                  "key": "_cardinalhq.id",
+                  "value": {
+                    "stringValue": "AUSDFYSDF"
+                  }
+                },
+                {
+                  "key": "instanceID",
+                  "value": {
+                    "intValue": "299272259992814362"
+                  }
+                },
+                {
+                  "key": "cardinalhq.stats_customer_id",
+                  "value": {
+                    "stringValue": "050070cb-7ccc-46a3-b444-c9e1d918d1c9"
+                  }
+                },
+                {
+                  "key": "cardinalhq.stats_collector_id",
+                  "value": {
+                    "stringValue": ""
+                  }
+                },
+                {
+                  "key": "cardinalhq.stats_collector_name",
+                  "value": {
+                    "stringValue": ""
+                  }
+                },
+                {
+                  "key": "_cardinalhq.customer_id",
+                  "value": {
+                    "stringValue": "050070cb-7ccc-46a3-b444-c9e1d918d1c9"
+                  }
+                },
+                {
+                  "key": "_cardinalhq.collector_id",
+                  "value": {
+                    "stringValue": "chq-saas"
+                  }
+                },
+                {
+                  "key": "_cardinalhq.json",
+                  "value": {
+                    "kvlistValue": {}
+                  }
+                },
+                {
+                  "key": "_cardinalhq.fingerprint",
+                  "value": {
+                    "intValue": "8586175357998219854"
+                  }
+                },
+                {
+                  "key": "_cardinalhq.level",
+                  "value": {
+                    "stringValue": "INFO"
+                  }
+                }
+              ],
+              "severityText": "INFO",
+              "timeUnixNano": "1756224943253439433",
+              "severityNumber": 9,
+              "observedTimeUnixNano": "1756224943253472893"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
