@@ -16,29 +16,18 @@ package queryapi
 
 import (
 	"encoding/json"
+	"github.com/cardinalhq/lakerunner/logql"
 	"net/http"
-	"strconv"
-	"strings"
-
-	"github.com/grafana/loki/v3/pkg/logql/syntax"
-	logqlmodel "github.com/grafana/loki/v3/pkg/logqlmodel"
 )
 
 type logQLValidateRequest struct {
-	Query string `json:"query"`
+	Query    string `json:"query"`
+	Exemplar string `json:"exemplar,omitempty"`
 }
 
 type logQLValidateResponse struct {
-	Valid bool `json:"valid"`
-}
-
-type logQLValidateErrorResponse struct {
-	Valid  bool   `json:"valid"`
-	Error  string `json:"error"`            // parser error message
-	Pos    string `json:"pos,omitempty"`    // "line:col" (from ParseError)
-	Line   int    `json:"line,omitempty"`   // numeric line (1-based)
-	Column int    `json:"column,omitempty"` // numeric column (1-based, bytes)
-	Near   string `json:"near,omitempty"`   // small slice of the query around the error
+	Valid bool   `json:"valid"`
+	Error string `json:"error,omitempty"`
 }
 
 func (q *QuerierService) handleLogQLValidate(w http.ResponseWriter, r *http.Request) {
@@ -47,75 +36,35 @@ func (q *QuerierService) handleLogQLValidate(w http.ResponseWriter, r *http.Requ
 	var req logQLValidateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Query == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(logQLValidateErrorResponse{
-			Valid: false, Error: "Missing or invalid JSON body; expected {\"query\": \"...\"}",
+		_ = json.NewEncoder(w).Encode(logQLValidateResponse{
+			Valid: false, Error: `Missing or invalid JSON body; expected {"query":"...", "exemplar":"... (optional)"}`,
 		})
 		return
 	}
 
-	_, err := syntax.ParseExpr(req.Query)
-	if err == nil {
+	// If there’s no exemplar, we just check the syntax/compile path.
+	if req.Exemplar == "" {
+		// Basic compile sanity (no DB work).
+		if _, err := logql.FromLogQL(req.Query); err != nil {
+			q.sendError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(logQLValidateResponse{Valid: true})
 		return
 	}
 
-	// If it's a LogQL parse error, expose line/column and a little context
-	if pe, ok := err.(logqlmodel.ParseError); ok {
-		// Extract line and column from the error message
-		// Format is typically "parse error at line X, col Y: message"
-		line, col := parseErrorPosition(pe.Error())
-
-		// Get a slice of the query around the error position
-		near := sliceSafe(req.Query, col-10, col+10)
-
-		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(logQLValidateErrorResponse{
-			Valid:  false,
-			Error:  pe.Error(),
-			Pos:    strconv.Itoa(line) + ":" + strconv.Itoa(col),
-			Line:   line,
-			Column: col,
-			Near:   near,
-		})
+	// Full-path validation with exemplar → ingest → run worker SQL.
+	if _, err := ValidateLogQLAgainstExemplar(r.Context(), req.Query, req.Exemplar); err != nil {
+		q.sendError(w, err)
 		return
 	}
 
-	// Fallback for non-parse errors
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(logQLValidateErrorResponse{Valid: false, Error: err.Error()})
+	_ = json.NewEncoder(w).Encode(logQLValidateResponse{Valid: true})
 }
 
-// parseErrorPosition extracts line and column from LogQL parse error messages
-// Format: "parse error at line X, col Y: message"
-func parseErrorPosition(errMsg string) (line, col int) {
-	// Default to line 1, col 1 if parsing fails
-	line, col = 1, 1
-
-	// Look for "at line X, col Y" pattern
-	parts := strings.Split(errMsg, "at line ")
-	if len(parts) < 2 {
-		return
-	}
-
-	// Extract the part after "at line "
-	linePart := parts[1]
-
-	// Split by comma to separate line and column
-	lineColParts := strings.Split(linePart, ", col ")
-	if len(lineColParts) < 2 {
-		return
-	}
-
-	// Parse line number
-	if l, err := strconv.Atoi(strings.TrimSpace(lineColParts[0])); err == nil {
-		line = l
-	}
-
-	// Parse column number (everything before the colon)
-	colPart := strings.Split(lineColParts[1], ":")[0]
-	if c, err := strconv.Atoi(strings.TrimSpace(colPart)); err == nil {
-		col = c
-	}
-
-	return
+func (q *QuerierService) sendError(w http.ResponseWriter, err error) {
+	w.WriteHeader(http.StatusBadRequest)
+	err = json.NewEncoder(w).Encode(logQLValidateResponse{Valid: false, Error: err.Error()})
 }
