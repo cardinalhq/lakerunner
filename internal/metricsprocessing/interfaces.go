@@ -39,4 +39,5 @@ type LogIngestStore interface {
 	IngestStore
 	InsertLogSegmentBatchWithKafkaOffsets(ctx context.Context, batch lrdb.LogSegmentBatch) error
 	WorkQueueAdd(ctx context.Context, params lrdb.WorkQueueAddParams) error
+	GetLogEstimate(ctx context.Context, orgID uuid.UUID) int64
 }

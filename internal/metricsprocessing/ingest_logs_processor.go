@@ -367,7 +367,7 @@ func (p *LogIngestProcessor) processRowsWithDateintBinning(ctx context.Context, 
 	ll := logctx.FromContext(ctx)
 
 	// Get RPF estimate for this org/instance - use logs estimator logic
-	rpfEstimate := p.getLogRPFEstimate(ctx, storageProfile.OrganizationID, storageProfile.InstanceNum)
+	rpfEstimate := p.store.GetLogEstimate(ctx, storageProfile.OrganizationID)
 
 	// Create dateint bin manager
 	binManager := &DateintBinManager{
@@ -577,11 +577,6 @@ func (p *LogIngestProcessor) uploadAndCreateLogSegments(ctx context.Context, sto
 	return segmentParams, nil
 }
 
-func (p *LogIngestProcessor) getLogRPFEstimate(ctx context.Context, orgID uuid.UUID, instanceNum int16) int64 {
-
-	// For logs, use a fixed estimate for now - could be enhanced with a log-specific estimator later
-	return 40_000 // Default logs RPF estimate
-}
 
 // queueLogCompactionForSlot queues a log compaction job for a specific slot
 func (p *LogIngestProcessor) queueLogCompactionForSlot(ctx context.Context, orgID uuid.UUID, instanceNum int16, slotID int, dateint int32, hourAlignedTS int64) error {

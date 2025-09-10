@@ -361,10 +361,8 @@ func (c *MetricCompactorProcessor) uploadAndCreateSegments(ctx context.Context, 
 		segmentIDs = append(segmentIDs, segmentID)
 	}
 
-	// Report telemetry
 	reportTelemetry(ctx, "compaction", int64(len(inputSegments)), int64(len(segments)), totalInputRecords, totalOutputRecords, totalInputSize, totalOutputSize)
 
-	// Log upload summary
 	ll.Info("Segment upload completed",
 		slog.Int("inputFiles", len(inputSegments)),
 		slog.Int64("totalInputSize", totalInputSize),

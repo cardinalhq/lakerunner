@@ -59,6 +59,15 @@ func (store *Store) GetMetricEstimate(ctx context.Context, orgID uuid.UUID, freq
 	return store.estimator.Get(ctx, orgID, frequencyMs)
 }
 
+// GetLogEstimate returns the estimated target records for an organization for logs.
+// If no estimate is found, it returns a default value, so this value can be used directly.
+func (store *Store) GetLogEstimate(ctx context.Context, orgID uuid.UUID) int64 {
+	if logEstimator, ok := store.estimator.(LogEstimator); ok {
+		return logEstimator.GetLog(ctx, orgID)
+	}
+	return store.estimator.(*PackEstimator).GetLog(ctx, orgID)
+}
+
 // Close stops the background goroutines and cleans up resources
 func (store *Store) Close() {
 	if estimator, ok := store.estimator.(*MetricPackEstimator); ok {
