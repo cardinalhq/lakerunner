@@ -262,21 +262,6 @@ type SegmentJournal struct {
 	DestFrequencyMs int32 `json:"dest_frequency_ms"`
 }
 
-type SignalLock struct {
-	ID             int64                            `json:"id"`
-	WorkID         *int64                           `json:"work_id"`
-	OrganizationID uuid.UUID                        `json:"organization_id"`
-	InstanceNum    int16                            `json:"instance_num"`
-	Dateint        int32                            `json:"dateint"`
-	FrequencyMs    int32                            `json:"frequency_ms"`
-	Signal         SignalEnum                       `json:"signal"`
-	TsRange        pgtype.Range[pgtype.Timestamptz] `json:"ts_range"`
-	ClaimedBy      int64                            `json:"claimed_by"`
-	ClaimedAt      *time.Time                       `json:"claimed_at"`
-	HeartbeatedAt  time.Time                        `json:"heartbeated_at"`
-	SlotID         int32                            `json:"slot_id"`
-}
-
 type TraceSeg struct {
 	OrganizationID uuid.UUID                 `json:"organization_id"`
 	Dateint        int32                     `json:"dateint"`
@@ -292,23 +277,4 @@ type TraceSeg struct {
 	CreatedAt      time.Time                 `json:"created_at"`
 	Compacted      bool                      `json:"compacted"`
 	Published      bool                      `json:"published"`
-}
-
-type WorkQueue struct {
-	ID             int64                            `json:"id"`
-	Priority       int32                            `json:"priority"`
-	RunnableAt     time.Time                        `json:"runnable_at"`
-	OrganizationID uuid.UUID                        `json:"organization_id"`
-	InstanceNum    int16                            `json:"instance_num"`
-	Dateint        int32                            `json:"dateint"`
-	FrequencyMs    int32                            `json:"frequency_ms"`
-	Signal         SignalEnum                       `json:"signal"`
-	Action         ActionEnum                       `json:"action"`
-	NeedsRun       bool                             `json:"needs_run"`
-	Tries          int32                            `json:"tries"`
-	TsRange        pgtype.Range[pgtype.Timestamptz] `json:"ts_range"`
-	ClaimedBy      int64                            `json:"claimed_by"`
-	ClaimedAt      *time.Time                       `json:"claimed_at"`
-	HeartbeatedAt  time.Time                        `json:"heartbeated_at"`
-	SlotID         int32                            `json:"slot_id"`
 }

@@ -140,146 +140,6 @@ func (x *PingResponse) GetServerId() string {
 	return ""
 }
 
-type WorkQueueStatusRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *WorkQueueStatusRequest) Reset() {
-	*x = WorkQueueStatusRequest{}
-	mi := &file_admin_proto_msgTypes[2]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *WorkQueueStatusRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*WorkQueueStatusRequest) ProtoMessage() {}
-
-func (x *WorkQueueStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_admin_proto_msgTypes[2]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use WorkQueueStatusRequest.ProtoReflect.Descriptor instead.
-func (*WorkQueueStatusRequest) Descriptor() ([]byte, []int) {
-	return file_admin_proto_rawDescGZIP(), []int{2}
-}
-
-type WorkQueueStatusResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Items         []*WorkQueueItem       `protobuf:"bytes,1,rep,name=items,proto3" json:"items,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *WorkQueueStatusResponse) Reset() {
-	*x = WorkQueueStatusResponse{}
-	mi := &file_admin_proto_msgTypes[3]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *WorkQueueStatusResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*WorkQueueStatusResponse) ProtoMessage() {}
-
-func (x *WorkQueueStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_admin_proto_msgTypes[3]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use WorkQueueStatusResponse.ProtoReflect.Descriptor instead.
-func (*WorkQueueStatusResponse) Descriptor() ([]byte, []int) {
-	return file_admin_proto_rawDescGZIP(), []int{3}
-}
-
-func (x *WorkQueueStatusResponse) GetItems() []*WorkQueueItem {
-	if x != nil {
-		return x.Items
-	}
-	return nil
-}
-
-type WorkQueueItem struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Count         int64                  `protobuf:"varint,1,opt,name=count,proto3" json:"count,omitempty"`
-	Signal        string                 `protobuf:"bytes,2,opt,name=signal,proto3" json:"signal,omitempty"`
-	Action        string                 `protobuf:"bytes,3,opt,name=action,proto3" json:"action,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *WorkQueueItem) Reset() {
-	*x = WorkQueueItem{}
-	mi := &file_admin_proto_msgTypes[4]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *WorkQueueItem) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*WorkQueueItem) ProtoMessage() {}
-
-func (x *WorkQueueItem) ProtoReflect() protoreflect.Message {
-	mi := &file_admin_proto_msgTypes[4]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use WorkQueueItem.ProtoReflect.Descriptor instead.
-func (*WorkQueueItem) Descriptor() ([]byte, []int) {
-	return file_admin_proto_rawDescGZIP(), []int{4}
-}
-
-func (x *WorkQueueItem) GetCount() int64 {
-	if x != nil {
-		return x.Count
-	}
-	return 0
-}
-
-func (x *WorkQueueItem) GetSignal() string {
-	if x != nil {
-		return x.Signal
-	}
-	return ""
-}
-
-func (x *WorkQueueItem) GetAction() string {
-	if x != nil {
-		return x.Action
-	}
-	return ""
-}
-
 type InQueueStatusRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -288,7 +148,7 @@ type InQueueStatusRequest struct {
 
 func (x *InQueueStatusRequest) Reset() {
 	*x = InQueueStatusRequest{}
-	mi := &file_admin_proto_msgTypes[5]
+	mi := &file_admin_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -300,7 +160,7 @@ func (x *InQueueStatusRequest) String() string {
 func (*InQueueStatusRequest) ProtoMessage() {}
 
 func (x *InQueueStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_admin_proto_msgTypes[5]
+	mi := &file_admin_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -313,7 +173,7 @@ func (x *InQueueStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InQueueStatusRequest.ProtoReflect.Descriptor instead.
 func (*InQueueStatusRequest) Descriptor() ([]byte, []int) {
-	return file_admin_proto_rawDescGZIP(), []int{5}
+	return file_admin_proto_rawDescGZIP(), []int{2}
 }
 
 type InQueueStatusResponse struct {
@@ -325,7 +185,7 @@ type InQueueStatusResponse struct {
 
 func (x *InQueueStatusResponse) Reset() {
 	*x = InQueueStatusResponse{}
-	mi := &file_admin_proto_msgTypes[6]
+	mi := &file_admin_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -337,7 +197,7 @@ func (x *InQueueStatusResponse) String() string {
 func (*InQueueStatusResponse) ProtoMessage() {}
 
 func (x *InQueueStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_admin_proto_msgTypes[6]
+	mi := &file_admin_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -350,7 +210,7 @@ func (x *InQueueStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InQueueStatusResponse.ProtoReflect.Descriptor instead.
 func (*InQueueStatusResponse) Descriptor() ([]byte, []int) {
-	return file_admin_proto_rawDescGZIP(), []int{6}
+	return file_admin_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *InQueueStatusResponse) GetItems() []*InQueueItem {
@@ -370,7 +230,7 @@ type InQueueItem struct {
 
 func (x *InQueueItem) Reset() {
 	*x = InQueueItem{}
-	mi := &file_admin_proto_msgTypes[7]
+	mi := &file_admin_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -382,7 +242,7 @@ func (x *InQueueItem) String() string {
 func (*InQueueItem) ProtoMessage() {}
 
 func (x *InQueueItem) ProtoReflect() protoreflect.Message {
-	mi := &file_admin_proto_msgTypes[7]
+	mi := &file_admin_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -395,7 +255,7 @@ func (x *InQueueItem) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InQueueItem.ProtoReflect.Descriptor instead.
 func (*InQueueItem) Descriptor() ([]byte, []int) {
-	return file_admin_proto_rawDescGZIP(), []int{7}
+	return file_admin_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *InQueueItem) GetCount() int64 {
@@ -423,7 +283,7 @@ type Organization struct {
 
 func (x *Organization) Reset() {
 	*x = Organization{}
-	mi := &file_admin_proto_msgTypes[8]
+	mi := &file_admin_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -435,7 +295,7 @@ func (x *Organization) String() string {
 func (*Organization) ProtoMessage() {}
 
 func (x *Organization) ProtoReflect() protoreflect.Message {
-	mi := &file_admin_proto_msgTypes[8]
+	mi := &file_admin_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -448,7 +308,7 @@ func (x *Organization) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Organization.ProtoReflect.Descriptor instead.
 func (*Organization) Descriptor() ([]byte, []int) {
-	return file_admin_proto_rawDescGZIP(), []int{8}
+	return file_admin_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *Organization) GetId() string {
@@ -480,7 +340,7 @@ type ListOrganizationsRequest struct {
 
 func (x *ListOrganizationsRequest) Reset() {
 	*x = ListOrganizationsRequest{}
-	mi := &file_admin_proto_msgTypes[9]
+	mi := &file_admin_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -492,7 +352,7 @@ func (x *ListOrganizationsRequest) String() string {
 func (*ListOrganizationsRequest) ProtoMessage() {}
 
 func (x *ListOrganizationsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_admin_proto_msgTypes[9]
+	mi := &file_admin_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -505,7 +365,7 @@ func (x *ListOrganizationsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListOrganizationsRequest.ProtoReflect.Descriptor instead.
 func (*ListOrganizationsRequest) Descriptor() ([]byte, []int) {
-	return file_admin_proto_rawDescGZIP(), []int{9}
+	return file_admin_proto_rawDescGZIP(), []int{6}
 }
 
 type ListOrganizationsResponse struct {
@@ -517,7 +377,7 @@ type ListOrganizationsResponse struct {
 
 func (x *ListOrganizationsResponse) Reset() {
 	*x = ListOrganizationsResponse{}
-	mi := &file_admin_proto_msgTypes[10]
+	mi := &file_admin_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -529,7 +389,7 @@ func (x *ListOrganizationsResponse) String() string {
 func (*ListOrganizationsResponse) ProtoMessage() {}
 
 func (x *ListOrganizationsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_admin_proto_msgTypes[10]
+	mi := &file_admin_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -542,7 +402,7 @@ func (x *ListOrganizationsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListOrganizationsResponse.ProtoReflect.Descriptor instead.
 func (*ListOrganizationsResponse) Descriptor() ([]byte, []int) {
-	return file_admin_proto_rawDescGZIP(), []int{10}
+	return file_admin_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ListOrganizationsResponse) GetOrganizations() []*Organization {
@@ -562,7 +422,7 @@ type CreateOrganizationRequest struct {
 
 func (x *CreateOrganizationRequest) Reset() {
 	*x = CreateOrganizationRequest{}
-	mi := &file_admin_proto_msgTypes[11]
+	mi := &file_admin_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -574,7 +434,7 @@ func (x *CreateOrganizationRequest) String() string {
 func (*CreateOrganizationRequest) ProtoMessage() {}
 
 func (x *CreateOrganizationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_admin_proto_msgTypes[11]
+	mi := &file_admin_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -587,7 +447,7 @@ func (x *CreateOrganizationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateOrganizationRequest.ProtoReflect.Descriptor instead.
 func (*CreateOrganizationRequest) Descriptor() ([]byte, []int) {
-	return file_admin_proto_rawDescGZIP(), []int{11}
+	return file_admin_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *CreateOrganizationRequest) GetName() string {
@@ -613,7 +473,7 @@ type CreateOrganizationResponse struct {
 
 func (x *CreateOrganizationResponse) Reset() {
 	*x = CreateOrganizationResponse{}
-	mi := &file_admin_proto_msgTypes[12]
+	mi := &file_admin_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -625,7 +485,7 @@ func (x *CreateOrganizationResponse) String() string {
 func (*CreateOrganizationResponse) ProtoMessage() {}
 
 func (x *CreateOrganizationResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_admin_proto_msgTypes[12]
+	mi := &file_admin_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -638,7 +498,7 @@ func (x *CreateOrganizationResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateOrganizationResponse.ProtoReflect.Descriptor instead.
 func (*CreateOrganizationResponse) Descriptor() ([]byte, []int) {
-	return file_admin_proto_rawDescGZIP(), []int{12}
+	return file_admin_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *CreateOrganizationResponse) GetOrganization() *Organization {
@@ -659,7 +519,7 @@ type UpdateOrganizationRequest struct {
 
 func (x *UpdateOrganizationRequest) Reset() {
 	*x = UpdateOrganizationRequest{}
-	mi := &file_admin_proto_msgTypes[13]
+	mi := &file_admin_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -671,7 +531,7 @@ func (x *UpdateOrganizationRequest) String() string {
 func (*UpdateOrganizationRequest) ProtoMessage() {}
 
 func (x *UpdateOrganizationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_admin_proto_msgTypes[13]
+	mi := &file_admin_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -684,7 +544,7 @@ func (x *UpdateOrganizationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateOrganizationRequest.ProtoReflect.Descriptor instead.
 func (*UpdateOrganizationRequest) Descriptor() ([]byte, []int) {
-	return file_admin_proto_rawDescGZIP(), []int{13}
+	return file_admin_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *UpdateOrganizationRequest) GetId() string {
@@ -717,7 +577,7 @@ type UpdateOrganizationResponse struct {
 
 func (x *UpdateOrganizationResponse) Reset() {
 	*x = UpdateOrganizationResponse{}
-	mi := &file_admin_proto_msgTypes[14]
+	mi := &file_admin_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -729,7 +589,7 @@ func (x *UpdateOrganizationResponse) String() string {
 func (*UpdateOrganizationResponse) ProtoMessage() {}
 
 func (x *UpdateOrganizationResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_admin_proto_msgTypes[14]
+	mi := &file_admin_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -742,7 +602,7 @@ func (x *UpdateOrganizationResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateOrganizationResponse.ProtoReflect.Descriptor instead.
 func (*UpdateOrganizationResponse) Descriptor() ([]byte, []int) {
-	return file_admin_proto_rawDescGZIP(), []int{14}
+	return file_admin_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *UpdateOrganizationResponse) GetOrganization() *Organization {
@@ -763,14 +623,7 @@ const file_admin_proto_rawDesc = "" +
 	"\fPingResponse\x12\x18\n" +
 	"\amessage\x18\x01 \x01(\tR\amessage\x12\x1c\n" +
 	"\ttimestamp\x18\x02 \x01(\x03R\ttimestamp\x12\x1b\n" +
-	"\tserver_id\x18\x03 \x01(\tR\bserverId\"\x18\n" +
-	"\x16WorkQueueStatusRequest\"J\n" +
-	"\x17WorkQueueStatusResponse\x12/\n" +
-	"\x05items\x18\x01 \x03(\v2\x19.adminproto.WorkQueueItemR\x05items\"U\n" +
-	"\rWorkQueueItem\x12\x14\n" +
-	"\x05count\x18\x01 \x01(\x03R\x05count\x12\x16\n" +
-	"\x06signal\x18\x02 \x01(\tR\x06signal\x12\x16\n" +
-	"\x06action\x18\x03 \x01(\tR\x06action\"\x16\n" +
+	"\tserver_id\x18\x03 \x01(\tR\bserverId\"\x16\n" +
 	"\x14InQueueStatusRequest\"F\n" +
 	"\x15InQueueStatusResponse\x12-\n" +
 	"\x05items\x18\x01 \x03(\v2\x17.adminproto.InQueueItemR\x05items\"J\n" +
@@ -794,10 +647,9 @@ const file_admin_proto_rawDesc = "" +
 	"\x04name\x18\x02 \x01(\v2\x1c.google.protobuf.StringValueR\x04name\x124\n" +
 	"\aenabled\x18\x03 \x01(\v2\x1a.google.protobuf.BoolValueR\aenabled\"Z\n" +
 	"\x1aUpdateOrganizationResponse\x12<\n" +
-	"\forganization\x18\x01 \x01(\v2\x18.adminproto.OrganizationR\forganization2\xa7\x04\n" +
+	"\forganization\x18\x01 \x01(\v2\x18.adminproto.OrganizationR\forganization2\xcb\x03\n" +
 	"\fAdminService\x129\n" +
-	"\x04Ping\x12\x17.adminproto.PingRequest\x1a\x18.adminproto.PingResponse\x12Z\n" +
-	"\x0fWorkQueueStatus\x12\".adminproto.WorkQueueStatusRequest\x1a#.adminproto.WorkQueueStatusResponse\x12T\n" +
+	"\x04Ping\x12\x17.adminproto.PingRequest\x1a\x18.adminproto.PingResponse\x12T\n" +
 	"\rInQueueStatus\x12 .adminproto.InQueueStatusRequest\x1a!.adminproto.InQueueStatusResponse\x12`\n" +
 	"\x11ListOrganizations\x12$.adminproto.ListOrganizationsRequest\x1a%.adminproto.ListOrganizationsResponse\x12c\n" +
 	"\x12CreateOrganization\x12%.adminproto.CreateOrganizationRequest\x1a&.adminproto.CreateOrganizationResponse\x12c\n" +
@@ -815,51 +667,45 @@ func file_admin_proto_rawDescGZIP() []byte {
 	return file_admin_proto_rawDescData
 }
 
-var file_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_admin_proto_goTypes = []any{
 	(*PingRequest)(nil),                // 0: adminproto.PingRequest
 	(*PingResponse)(nil),               // 1: adminproto.PingResponse
-	(*WorkQueueStatusRequest)(nil),     // 2: adminproto.WorkQueueStatusRequest
-	(*WorkQueueStatusResponse)(nil),    // 3: adminproto.WorkQueueStatusResponse
-	(*WorkQueueItem)(nil),              // 4: adminproto.WorkQueueItem
-	(*InQueueStatusRequest)(nil),       // 5: adminproto.InQueueStatusRequest
-	(*InQueueStatusResponse)(nil),      // 6: adminproto.InQueueStatusResponse
-	(*InQueueItem)(nil),                // 7: adminproto.InQueueItem
-	(*Organization)(nil),               // 8: adminproto.Organization
-	(*ListOrganizationsRequest)(nil),   // 9: adminproto.ListOrganizationsRequest
-	(*ListOrganizationsResponse)(nil),  // 10: adminproto.ListOrganizationsResponse
-	(*CreateOrganizationRequest)(nil),  // 11: adminproto.CreateOrganizationRequest
-	(*CreateOrganizationResponse)(nil), // 12: adminproto.CreateOrganizationResponse
-	(*UpdateOrganizationRequest)(nil),  // 13: adminproto.UpdateOrganizationRequest
-	(*UpdateOrganizationResponse)(nil), // 14: adminproto.UpdateOrganizationResponse
-	(*wrapperspb.StringValue)(nil),     // 15: google.protobuf.StringValue
-	(*wrapperspb.BoolValue)(nil),       // 16: google.protobuf.BoolValue
+	(*InQueueStatusRequest)(nil),       // 2: adminproto.InQueueStatusRequest
+	(*InQueueStatusResponse)(nil),      // 3: adminproto.InQueueStatusResponse
+	(*InQueueItem)(nil),                // 4: adminproto.InQueueItem
+	(*Organization)(nil),               // 5: adminproto.Organization
+	(*ListOrganizationsRequest)(nil),   // 6: adminproto.ListOrganizationsRequest
+	(*ListOrganizationsResponse)(nil),  // 7: adminproto.ListOrganizationsResponse
+	(*CreateOrganizationRequest)(nil),  // 8: adminproto.CreateOrganizationRequest
+	(*CreateOrganizationResponse)(nil), // 9: adminproto.CreateOrganizationResponse
+	(*UpdateOrganizationRequest)(nil),  // 10: adminproto.UpdateOrganizationRequest
+	(*UpdateOrganizationResponse)(nil), // 11: adminproto.UpdateOrganizationResponse
+	(*wrapperspb.StringValue)(nil),     // 12: google.protobuf.StringValue
+	(*wrapperspb.BoolValue)(nil),       // 13: google.protobuf.BoolValue
 }
 var file_admin_proto_depIdxs = []int32{
-	4,  // 0: adminproto.WorkQueueStatusResponse.items:type_name -> adminproto.WorkQueueItem
-	7,  // 1: adminproto.InQueueStatusResponse.items:type_name -> adminproto.InQueueItem
-	8,  // 2: adminproto.ListOrganizationsResponse.organizations:type_name -> adminproto.Organization
-	8,  // 3: adminproto.CreateOrganizationResponse.organization:type_name -> adminproto.Organization
-	15, // 4: adminproto.UpdateOrganizationRequest.name:type_name -> google.protobuf.StringValue
-	16, // 5: adminproto.UpdateOrganizationRequest.enabled:type_name -> google.protobuf.BoolValue
-	8,  // 6: adminproto.UpdateOrganizationResponse.organization:type_name -> adminproto.Organization
-	0,  // 7: adminproto.AdminService.Ping:input_type -> adminproto.PingRequest
-	2,  // 8: adminproto.AdminService.WorkQueueStatus:input_type -> adminproto.WorkQueueStatusRequest
-	5,  // 9: adminproto.AdminService.InQueueStatus:input_type -> adminproto.InQueueStatusRequest
-	9,  // 10: adminproto.AdminService.ListOrganizations:input_type -> adminproto.ListOrganizationsRequest
-	11, // 11: adminproto.AdminService.CreateOrganization:input_type -> adminproto.CreateOrganizationRequest
-	13, // 12: adminproto.AdminService.UpdateOrganization:input_type -> adminproto.UpdateOrganizationRequest
-	1,  // 13: adminproto.AdminService.Ping:output_type -> adminproto.PingResponse
-	3,  // 14: adminproto.AdminService.WorkQueueStatus:output_type -> adminproto.WorkQueueStatusResponse
-	6,  // 15: adminproto.AdminService.InQueueStatus:output_type -> adminproto.InQueueStatusResponse
-	10, // 16: adminproto.AdminService.ListOrganizations:output_type -> adminproto.ListOrganizationsResponse
-	12, // 17: adminproto.AdminService.CreateOrganization:output_type -> adminproto.CreateOrganizationResponse
-	14, // 18: adminproto.AdminService.UpdateOrganization:output_type -> adminproto.UpdateOrganizationResponse
-	13, // [13:19] is the sub-list for method output_type
-	7,  // [7:13] is the sub-list for method input_type
-	7,  // [7:7] is the sub-list for extension type_name
-	7,  // [7:7] is the sub-list for extension extendee
-	0,  // [0:7] is the sub-list for field type_name
+	4,  // 0: adminproto.InQueueStatusResponse.items:type_name -> adminproto.InQueueItem
+	5,  // 1: adminproto.ListOrganizationsResponse.organizations:type_name -> adminproto.Organization
+	5,  // 2: adminproto.CreateOrganizationResponse.organization:type_name -> adminproto.Organization
+	12, // 3: adminproto.UpdateOrganizationRequest.name:type_name -> google.protobuf.StringValue
+	13, // 4: adminproto.UpdateOrganizationRequest.enabled:type_name -> google.protobuf.BoolValue
+	5,  // 5: adminproto.UpdateOrganizationResponse.organization:type_name -> adminproto.Organization
+	0,  // 6: adminproto.AdminService.Ping:input_type -> adminproto.PingRequest
+	2,  // 7: adminproto.AdminService.InQueueStatus:input_type -> adminproto.InQueueStatusRequest
+	6,  // 8: adminproto.AdminService.ListOrganizations:input_type -> adminproto.ListOrganizationsRequest
+	8,  // 9: adminproto.AdminService.CreateOrganization:input_type -> adminproto.CreateOrganizationRequest
+	10, // 10: adminproto.AdminService.UpdateOrganization:input_type -> adminproto.UpdateOrganizationRequest
+	1,  // 11: adminproto.AdminService.Ping:output_type -> adminproto.PingResponse
+	3,  // 12: adminproto.AdminService.InQueueStatus:output_type -> adminproto.InQueueStatusResponse
+	7,  // 13: adminproto.AdminService.ListOrganizations:output_type -> adminproto.ListOrganizationsResponse
+	9,  // 14: adminproto.AdminService.CreateOrganization:output_type -> adminproto.CreateOrganizationResponse
+	11, // 15: adminproto.AdminService.UpdateOrganization:output_type -> adminproto.UpdateOrganizationResponse
+	11, // [11:16] is the sub-list for method output_type
+	6,  // [6:11] is the sub-list for method input_type
+	6,  // [6:6] is the sub-list for extension type_name
+	6,  // [6:6] is the sub-list for extension extendee
+	0,  // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_admin_proto_init() }
@@ -873,7 +719,7 @@ func file_admin_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_admin_proto_rawDesc), len(file_admin_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   15,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

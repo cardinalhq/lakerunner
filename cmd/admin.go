@@ -33,7 +33,6 @@ import (
 	"github.com/cardinalhq/lakerunner/cmd/admin/orgapikeys"
 	"github.com/cardinalhq/lakerunner/cmd/admin/storageprofiles"
 	"github.com/cardinalhq/lakerunner/cmd/admin/traces"
-	"github.com/cardinalhq/lakerunner/cmd/admin/workqueue"
 )
 
 var (
@@ -75,7 +74,6 @@ func init() {
 	pingCmd.Flags().StringVar(&adminAddr, "addr", ":9091", "Address of the admin service")
 
 	// Get subcommands from their respective packages
-	workqueueCmd := getWorkQueueCmd()
 	objcleanupCmd := getObjCleanupCmd()
 	bootstrapCmd := bootstrap.GetBootstrapCmd()
 	orgCmd := organizations.GetOrganizationsCmd()
@@ -90,7 +88,6 @@ func init() {
 	// Add subcommands to admin command
 	adminCmd.AddCommand(serveCmd)
 	adminCmd.AddCommand(pingCmd)
-	adminCmd.AddCommand(workqueueCmd)
 	adminCmd.AddCommand(objcleanupCmd)
 	adminCmd.AddCommand(bootstrapCmd)
 	adminCmd.AddCommand(orgCmd)
@@ -108,7 +105,6 @@ func init() {
 			adminAPIKey = os.Getenv("ADMIN_API_KEY")
 		}
 		// Pass the API key to subcommands
-		workqueue.SetAPIKey(adminAPIKey)
 		objcleanup.SetAPIKey(adminAPIKey)
 		organizations.SetAPIKey(adminAPIKey)
 		orgapikeys.SetAPIKey(adminAPIKey)
@@ -124,16 +120,6 @@ func init() {
 	adminCmd.PersistentFlags().StringVar(&adminAPIKey, "api-key", "", "Admin API key (can also be set via ADMIN_API_KEY environment variable)")
 
 	rootCmd.AddCommand(adminCmd)
-}
-
-func getWorkQueueCmd() *cobra.Command {
-	workqueueCmd := &cobra.Command{
-		Use:   "workqueue",
-		Short: "Workqueue administrative commands",
-	}
-
-	workqueueCmd.AddCommand(workqueue.GetStatusCmd())
-	return workqueueCmd
 }
 
 func getObjCleanupCmd() *cobra.Command {

@@ -37,19 +37,11 @@ import (
 var (
 	commonAttributes attribute.Set
 
-	meter  = otel.Meter("github.com/cardinalhq/lakerunner")
-	tracer = otel.Tracer("github.com/cardinalhq/lakerunner")
+	meter = otel.Meter("github.com/cardinalhq/lakerunner")
 
 	myInstanceID int64
 
-	workqueueDuration      metric.Float64Histogram
-	workqueueFetchDuration metric.Float64Histogram
-	workqueueLag           metric.Float64Histogram
-
-	// existsGauge is a gauge that indicates if the service is running (1) or not (0).
-	// It is set to 1, and never changes.  This is unused, but is here to ensure
-	// that the counter is not murdered by the garbage collector.
-	// nolint:unused
+	//nolint:unused
 	existsGauge metric.Int64Gauge
 )
 
@@ -129,36 +121,6 @@ func setupTelemetry(servicename string, addlAttrs *attribute.Set) (context.Conte
 }
 
 func setupGlobalMetrics() {
-	m, err := meter.Float64Histogram(
-		"lakerunner.workqueue.request.delay",
-		metric.WithUnit("ms"),
-		metric.WithDescription("The delay in ms for a request for new work to be returned"),
-	)
-	if err != nil {
-		panic(fmt.Errorf("failed to create queue.request.delay histogram: %w", err))
-	}
-	workqueueFetchDuration = m
-
-	m, err = meter.Float64Histogram(
-		"lakerunner.workqueue.duration",
-		metric.WithUnit("s"),
-		metric.WithDescription("The duration in seconds for a work item to be processed"),
-	)
-	if err != nil {
-		panic(fmt.Errorf("failed to create work.duration histogram: %w", err))
-	}
-	workqueueDuration = m
-
-	m, err = meter.Float64Histogram(
-		"lakerunner.workqueue.lag",
-		metric.WithUnit("s"),
-		metric.WithDescription("The lag in seconds for a work item to be processed in the work queue"),
-	)
-	if err != nil {
-		panic(fmt.Errorf("failed to create workqueue.lag histogram: %w", err))
-	}
-	workqueueLag = m
-
 	mg, err := meter.Int64Gauge(
 		"lakerunner.exists",
 		metric.WithDescription("Indicates if the service is running (1) or not (0)"),

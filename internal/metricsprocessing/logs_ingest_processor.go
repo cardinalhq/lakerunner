@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
+	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
@@ -53,19 +54,22 @@ type DateintBinManager struct {
 
 // LogIngestProcessor implements the Processor interface for raw log ingestion
 type LogIngestProcessor struct {
-	store           LogIngestStore
-	storageProvider storageprofile.StorageProfileProvider
-	cmgr            cloudstorage.ClientProvider
-	kafkaProducer   fly.Producer
+	store             LogIngestStore
+	storageProvider   storageprofile.StorageProfileProvider
+	cmgr              cloudstorage.ClientProvider
+	kafkaProducer     fly.Producer
+	exemplarProcessor *exemplar.Processor
 }
 
 // newLogIngestProcessor creates a new log ingest processor instance
 func newLogIngestProcessor(store LogIngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *LogIngestProcessor {
+	exemplarProcessor := exemplar.NewProcessor(exemplar.DefaultConfig())
 	return &LogIngestProcessor{
-		store:           store,
-		storageProvider: storageProvider,
-		cmgr:            cmgr,
-		kafkaProducer:   kafkaProducer,
+		store:             store,
+		storageProvider:   storageProvider,
+		cmgr:              cmgr,
+		kafkaProducer:     kafkaProducer,
+		exemplarProcessor: exemplarProcessor,
 	}
 }
 
@@ -351,8 +355,9 @@ func (p *LogIngestProcessor) createLogReaderStack(tmpFilename, orgID, bucket, ob
 
 func (p *LogIngestProcessor) createLogReader(filename string) (filereader.Reader, error) {
 	options := filereader.ReaderOptions{
-		SignalType: filereader.SignalTypeLogs,
-		BatchSize:  1000,
+		SignalType:        filereader.SignalTypeLogs,
+		BatchSize:         1000,
+		ExemplarProcessor: p.exemplarProcessor,
 	}
 	return filereader.ReaderForFileWithOptions(filename, options)
 }

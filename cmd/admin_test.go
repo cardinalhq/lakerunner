@@ -17,9 +17,7 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"io"
 	"net"
-	"os"
 	"strings"
 	"testing"
 
@@ -44,15 +42,6 @@ func (m *mockAdminService) Ping(ctx context.Context, req *adminproto.PingRequest
 		Message:   response,
 		Timestamp: 1234567890,
 		ServerId:  "mock-server",
-	}, nil
-}
-
-func (m *mockAdminService) WorkQueueStatus(ctx context.Context, req *adminproto.WorkQueueStatusRequest) (*adminproto.WorkQueueStatusResponse, error) {
-	return &adminproto.WorkQueueStatusResponse{
-		Items: []*adminproto.WorkQueueItem{
-			{Count: 5, Signal: "logs", Action: "compact"},
-			{Count: 3, Signal: "metrics", Action: "rollup"},
-		},
 	}, nil
 }
 
@@ -102,69 +91,6 @@ func createMockClient(t *testing.T) adminproto.AdminServiceClient {
 	}
 
 	return adminproto.NewAdminServiceClient(conn)
-}
-
-func TestRunAdminWorkQueueStatusOutput(t *testing.T) {
-	cleanup := setupMockServer(t)
-	defer cleanup()
-
-	client := createMockClient(t)
-
-	// Capture stdout
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	// Test the status call
-	ctx := context.Background()
-	resp, err := client.WorkQueueStatus(ctx, &adminproto.WorkQueueStatusRequest{})
-	if err != nil {
-		t.Fatalf("WorkQueueStatus failed: %v", err)
-	}
-
-	// Verify response
-	if len(resp.Items) != 2 {
-		t.Errorf("Expected 2 items, got %d", len(resp.Items))
-	}
-
-	if resp.Items[0].Count != 5 || resp.Items[0].Signal != "logs" || resp.Items[0].Action != "compact" {
-		t.Errorf("Unexpected first item: %+v", resp.Items[0])
-	}
-
-	if resp.Items[1].Count != 3 || resp.Items[1].Signal != "metrics" || resp.Items[1].Action != "rollup" {
-		t.Errorf("Unexpected second item: %+v", resp.Items[1])
-	}
-
-	// Test table formatting by simulating the output generation
-	if len(resp.Items) > 0 {
-		colWidths := []int{len("Count"), len("Signal"), len("Action")}
-
-		for _, item := range resp.Items {
-			countStr := fmt.Sprintf("%d", item.Count)
-			if len(countStr) > colWidths[0] {
-				colWidths[0] = len(countStr)
-			}
-			if len(item.Signal) > colWidths[1] {
-				colWidths[1] = len(item.Signal)
-			}
-			if len(item.Action) > colWidths[2] {
-				colWidths[2] = len(item.Action)
-			}
-		}
-
-		// Verify table structure makes sense
-		if colWidths[0] < 1 || colWidths[1] < 1 || colWidths[2] < 1 {
-			t.Error("Column widths should be at least 1")
-		}
-	}
-
-	// Restore stdout
-	w.Close()
-	os.Stdout = old
-
-	// Read captured output (though we're not really using it in this test)
-	out, _ := io.ReadAll(r)
-	_ = string(out) // Ignore output for now, just testing the logic
 }
 
 func TestRunAdminInQueueStatusOutput(t *testing.T) {

@@ -21,8 +21,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-
-	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 // MockQueries is a mock implementation of QueriesInterface
@@ -30,10 +28,7 @@ type MockQueries struct {
 	mock.Mock
 }
 
-func (m *MockQueries) WorkQueueScalingDepth(ctx context.Context, arg lrdb.WorkQueueScalingDepthParams) (interface{}, error) {
-	args := m.Called(ctx, arg)
-	return args.Get(0), args.Error(1)
-}
+// No methods needed for mock - external scaler uses fixed values
 
 func TestService_IsActive(t *testing.T) {
 	service := &Service{}
@@ -163,24 +158,18 @@ func TestService_GetMetrics(t *testing.T) {
 			name:        "compact-logs success",
 			serviceType: "compact-logs",
 			mockSetup: func(m *MockQueries) {
-				m.On("WorkQueueScalingDepth", mock.Anything, lrdb.WorkQueueScalingDepthParams{
-					Signal: lrdb.SignalEnumLogs,
-					Action: lrdb.ActionEnumCompact,
-				}).Return(int64(7), nil)
+				// No mock setup needed - uses fixed values
 			},
-			expectedValue: 7.0,
+			expectedValue: 3.0, // Fixed value from service
 			expectError:   false,
 		},
 		{
 			name:        "compact-traces success",
 			serviceType: "compact-traces",
 			mockSetup: func(m *MockQueries) {
-				m.On("WorkQueueScalingDepth", mock.Anything, lrdb.WorkQueueScalingDepthParams{
-					Signal: lrdb.SignalEnumTraces,
-					Action: lrdb.ActionEnumCompact,
-				}).Return(int64(2), nil)
+				// No mock setup needed - uses fixed values
 			},
-			expectedValue: 2.0,
+			expectedValue: 3.0, // Fixed value from service
 			expectError:   false,
 		},
 		// Note: ingest-* services return constant values now (no database errors possible)
