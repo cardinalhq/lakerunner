@@ -29,6 +29,7 @@ type LExecNode interface{}
 type LAggNode struct {
 	// Vector aggregation (sum/avg/min/max/count … by/without)
 	Op      string
+	Param   *int // e.g. 3 for topk(3, ...)
 	By      []string
 	Without []string
 	Child   LExecNode
@@ -179,7 +180,7 @@ func CompileLog(root LogAST) (LQueryPlan, error) {
 			if err != nil {
 				return nil, err
 			}
-			return &LAggNode{Op: ast.VectorAgg.Op, By: c2.outBy, Without: c2.outWO, Child: child}, nil
+			return &LAggNode{Op: ast.VectorAgg.Op, Param: ast.VectorAgg.Param, By: c2.outBy, Without: c2.outWO, Child: child}, nil
 
 		case KindBinOp:
 			if ast.BinOp == nil {

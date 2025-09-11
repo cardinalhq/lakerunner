@@ -120,6 +120,12 @@ func RewriteToPromQL(root logql.LExecNode) (RewriteResult, error) {
 			} else if len(withoutList) > 0 {
 				grp = " without (" + strings.Join(withoutList, ",") + ")"
 			}
+
+			// Handle parameterized functions like topk(3, ...), bottomk(5, ...)
+			if t.Param != nil && (t.Op == "topk" || t.Op == "bottomk") {
+				return fmt.Sprintf(`%s(%d, %s)`, t.Op, *t.Param, child), nil
+			}
+
 			return fmt.Sprintf(`%s%s (%s)`, t.Op, grp, child), nil
 
 		case *logql.LBinOpNode:
