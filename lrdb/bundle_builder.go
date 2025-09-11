@@ -16,10 +16,11 @@ package lrdb
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // QueueItem represents a work item that can be bundled
@@ -77,7 +78,7 @@ func ClaimBundle[H any, C QueueItem](
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		// 1) Pick head
 		head, err := ops.PickHead(ctx)
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, estimatedTarget, nil // no work available
 		}
 		if err != nil {

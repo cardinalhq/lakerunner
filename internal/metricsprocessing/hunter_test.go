@@ -685,7 +685,7 @@ func TestHunter_RealDataFromFile(t *testing.T) {
 	t.Logf("Processed %d messages with total record count: %d", totalMessagesProcessed, totalRecordCount)
 
 	// Flush any remaining groups
-	n, err := gatherer.flushStaleGroups(ctx, 0, 0) // Flush all groups immediately
+	n, err := gatherer.processIdleGroups(ctx, 0, 0) // Flush all groups immediately
 	require.NoError(t, err, "Failed to flush stale groups")
 	t.Logf("Flushed %d stale groups", n)
 

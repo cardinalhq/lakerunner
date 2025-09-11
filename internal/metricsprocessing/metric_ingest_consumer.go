@@ -16,34 +16,22 @@ package metricsprocessing
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
-	"github.com/cardinalhq/lakerunner/internal/idgen"
-	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
-	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-// MetricIngestConsumer handles object store notification messages for metric ingestion
+// MetricIngestConsumer handles object store notification messages for metric ingestion using CommonConsumer
 type MetricIngestConsumer struct {
-	gatherer      *gatherer[*messages.ObjStoreNotificationMessage, messages.IngestKey]
-	consumer      fly.Consumer
-	store         MetricIngestStore
-	flushTicker   *time.Ticker
-	done          chan struct{}
-	consumerName  string
-	topic         string
-	consumerGroup string
+	*CommonConsumer[*messages.ObjStoreNotificationMessage, messages.IngestKey]
 }
 
-// NewMetricIngestConsumer creates a new metric ingest consumer
+// NewMetricIngestConsumer creates a new metric ingest consumer using the common consumer framework
 func NewMetricIngestConsumer(
 	ctx context.Context,
 	factory *fly.Factory,
@@ -52,7 +40,6 @@ func NewMetricIngestConsumer(
 	storageProvider storageprofile.StorageProfileProvider,
 	cmgr cloudstorage.ClientProvider,
 ) (*MetricIngestConsumer, error) {
-	ll := logctx.FromContext(ctx)
 
 	// Create Kafka producer for segment notifications
 	kafkaProducer, err := factory.CreateProducer()
@@ -63,196 +50,30 @@ func NewMetricIngestConsumer(
 	// Create MetricIngestProcessor
 	processor := newMetricIngestProcessor(store, storageProvider, cmgr, kafkaProducer)
 
-	// Create Gatherer - using hardcoded consumer group and topic
-	consumerGroup := "lakerunner.ingest.metrics"
-	topic := "lakerunner.objstore.ingest.metrics"
+	// Configure the consumer
+	consumerConfig := CommonConsumerConfig{
+		ConsumerName:  "lakerunner-metric-ingest-v2",
+		Topic:         "lakerunner.objstore.ingest.metrics",
+		ConsumerGroup: "lakerunner.ingest.metrics",
+		FlushInterval: 10 * time.Second,
+		StaleAge:      20 * time.Second,
+		MaxAge:        20 * time.Second,
+	}
 
-	// Create Kafka consumer
-	consumerName := "lakerunner-metric-ingest"
-	consumer, err := factory.CreateConsumer(topic, consumerGroup)
+	// Create common consumer
+	commonConsumer, err := NewCommonConsumer[*messages.ObjStoreNotificationMessage](
+		ctx,
+		factory,
+		cfg,
+		consumerConfig,
+		store,
+		processor,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create Kafka consumer: %w", err)
+		return nil, fmt.Errorf("failed to create common consumer: %w", err)
 	}
 
-	// Set up periodic flushing (every 10 seconds, flush groups older than 20 seconds)
-	flushTicker := time.NewTicker(10 * time.Second)
-
-	mic := &MetricIngestConsumer{
-		consumer:      consumer,
-		store:         store,
-		flushTicker:   flushTicker,
-		done:          make(chan struct{}),
-		consumerName:  consumerName,
-		topic:         topic,
-		consumerGroup: consumerGroup,
-	}
-
-	// Create Gatherer using the consumer itself as offset callbacks
-	mic.gatherer = newGatherer[*messages.ObjStoreNotificationMessage](topic, consumerGroup, processor, mic)
-
-	ll.Info("Created new Kafka ingest consumer",
-		slog.String("consumerName", consumerName),
-		slog.String("topic", topic),
-		slog.String("consumerGroup", consumerGroup))
-
-	return mic, nil
-}
-
-// Run starts the Kafka consumer and periodic flushing
-func (c *MetricIngestConsumer) Run(ctx context.Context) error {
-	ll := logctx.FromContext(ctx).With("consumer", c.consumerName)
-	ll.Info("Starting Kafka ingest consumer")
-
-	// Start periodic flushing goroutine
-	go c.periodicFlush(ctx)
-
-	// Start the Kafka consumer
-	err := c.consumer.Consume(ctx, func(ctx context.Context, kafkaMessages []fly.ConsumedMessage) error {
-		ll := logctx.FromContext(ctx).With(slog.String("batchID", idgen.GenerateShortBase32ID()))
-		ctx = logctx.WithLogger(ctx, ll)
-
-		if len(kafkaMessages) == 0 {
-			return nil
-		}
-
-		ll.Debug("Processing Kafka message batch",
-			slog.Int("messageCount", len(kafkaMessages)))
-
-		// Process each message
-		for _, kafkaMsg := range kafkaMessages {
-			var notification messages.ObjStoreNotificationMessage
-			if err := notification.Unmarshal(kafkaMsg.Value); err != nil {
-				ll.Error("Failed to unmarshal object store notification message",
-					slog.Any("error", err),
-					slog.Int("partition", kafkaMsg.Partition),
-					slog.Int64("offset", kafkaMsg.Offset))
-				continue // Skip malformed messages
-			}
-
-			// Create MessageMetadata from kafkaMsg
-			metadata := &messageMetadata{
-				Topic:         c.topic,
-				Partition:     int32(kafkaMsg.Partition),
-				ConsumerGroup: c.consumerGroup,
-				Offset:        kafkaMsg.Offset,
-			}
-
-			// Process the message through the gatherer
-			if err := c.gatherer.processMessage(ctx, &notification, metadata); err != nil {
-				ll.Error("Failed to process message",
-					slog.Any("error", err),
-					slog.String("organizationID", notification.OrganizationID.String()),
-					slog.Int("instanceNum", int(notification.InstanceNum)),
-					slog.String("objectID", notification.ObjectID),
-					slog.Int64("fileSize", notification.FileSize))
-				return fmt.Errorf("failed to process message: %w", err)
-			}
-		}
-
-		// Commit the messages after successful processing
-		return c.consumer.CommitMessages(ctx, kafkaMessages...)
-	})
-
-	if err != nil && !errors.Is(err, context.Canceled) {
-		ll.Error("Kafka consumer stopped with error", slog.Any("error", err))
-		return fmt.Errorf("Kafka consumer error: %w", err)
-	}
-
-	ll.Info("Kafka ingest consumer stopped")
-	return nil
-}
-
-// OffsetCallbacks implementation - MetricIngestConsumer implements OffsetCallbacks interface
-
-// GetLastProcessedOffset returns the last processed offset for this key, or -1 if never seen
-func (c *MetricIngestConsumer) GetLastProcessedOffset(ctx context.Context, metadata *messageMetadata, groupingKey messages.IngestKey) (int64, error) {
-	offset, err := c.store.KafkaGetLastProcessed(ctx, lrdb.KafkaGetLastProcessedParams{
-		Topic:          metadata.Topic,
-		Partition:      metadata.Partition,
-		ConsumerGroup:  metadata.ConsumerGroup,
-		OrganizationID: groupingKey.OrganizationID,
-		InstanceNum:    groupingKey.InstanceNum,
-	})
-	if err != nil {
-		// Return -1 if no row found (never seen before)
-		return -1, nil
-	}
-	return offset, nil
-}
-
-// MarkOffsetsProcessed commits the consumer group offsets to Kafka
-func (c *MetricIngestConsumer) MarkOffsetsProcessed(ctx context.Context, key messages.IngestKey, offsets map[int32]int64) error {
-	ll := logctx.FromContext(ctx)
-
-	if len(offsets) == 0 {
-		return nil
-	}
-
-	// Create ConsumedMessage objects for each partition/offset to commit
-	commitMessages := make([]fly.ConsumedMessage, 0, len(offsets))
-
-	for partition, offset := range offsets {
-		commitMessages = append(commitMessages, fly.ConsumedMessage{
-			Topic:     c.topic,
-			Partition: int(partition),
-			Offset:    offset,
-			// We don't need the actual message data for commits, just the offset metadata
-		})
-
-		ll.Info("Committing Kafka consumer group offset",
-			slog.String("consumerGroup", c.consumerGroup),
-			slog.String("topic", c.topic),
-			slog.Int("partition", int(partition)),
-			slog.Int64("offset", offset),
-			slog.String("organizationID", key.OrganizationID.String()),
-			slog.Int("instanceNum", int(key.InstanceNum)))
-	}
-
-	// Actually commit to Kafka consumer group
-	if err := c.consumer.CommitMessages(ctx, commitMessages...); err != nil {
-		ll.Error("Failed to commit Kafka consumer group offsets",
-			slog.Any("error", err),
-			slog.String("organizationID", key.OrganizationID.String()),
-			slog.Int("instanceNum", int(key.InstanceNum)))
-		return fmt.Errorf("failed to commit consumer group offsets: %w", err)
-	}
-
-	ll.Debug("Successfully committed Kafka consumer group offsets",
-		slog.Int("offsetCount", len(offsets)),
-		slog.String("organizationID", key.OrganizationID.String()),
-		slog.Int("instanceNum", int(key.InstanceNum)))
-
-	return nil
-}
-
-// Close stops the consumer and cleans up resources
-func (c *MetricIngestConsumer) Close() error {
-	close(c.done)
-	c.flushTicker.Stop()
-
-	if c.consumer != nil {
-		return c.consumer.Close()
-	}
-	return nil
-}
-
-// periodicFlush runs every 10 seconds and flushes stale groups (older than 20 seconds)
-func (c *MetricIngestConsumer) periodicFlush(ctx context.Context) {
-	ll := logctx.FromContext(ctx)
-
-	for {
-		select {
-		case <-ctx.Done():
-			ll.Info("Periodic flush stopping due to context cancellation")
-			return
-		case <-c.done:
-			ll.Info("Periodic flush stopping due to consumer shutdown")
-			return
-		case <-c.flushTicker.C:
-			ll.Debug("Running periodic flush of stale groups")
-			if _, err := c.gatherer.flushStaleGroups(ctx, 20*time.Second, 20*time.Second); err != nil {
-				ll.Error("Failed to flush stale groups", slog.Any("error", err))
-			}
-		}
-	}
+	return &MetricIngestConsumer{
+		CommonConsumer: commonConsumer,
+	}, nil
 }

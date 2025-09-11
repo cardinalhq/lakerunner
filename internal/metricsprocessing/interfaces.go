@@ -51,3 +51,36 @@ type TraceIngestStore interface {
 	InsertTraceSegmentBatchWithKafkaOffsets(ctx context.Context, batch lrdb.TraceSegmentBatch) error
 	GetTraceEstimate(ctx context.Context, orgID uuid.UUID) int64
 }
+
+// CompactionStore defines common database operations needed for compaction (Kafka journaling)
+type CompactionStore interface {
+	KafkaGetLastProcessed(ctx context.Context, params lrdb.KafkaGetLastProcessedParams) (int64, error)
+	InsertSegmentJournal(ctx context.Context, params lrdb.InsertSegmentJournalParams) error
+}
+
+// LogCompactionStore defines database operations needed for log compaction
+type LogCompactionStore interface {
+	CompactionStore
+	GetLogSeg(ctx context.Context, params lrdb.GetLogSegParams) (lrdb.LogSeg, error)
+	CompactLogSegsWithKafkaOffsets(ctx context.Context, params lrdb.CompactLogSegsParams, kafkaOffsets []lrdb.KafkaOffsetUpdate) error
+	MarkLogSegsCompactedByKeys(ctx context.Context, params lrdb.MarkLogSegsCompactedByKeysParams) error
+	GetLogEstimate(ctx context.Context, orgID uuid.UUID) int64
+}
+
+// MetricCompactionStore defines database operations needed for metric compaction
+type MetricCompactionStore interface {
+	CompactionStore
+	GetMetricSeg(ctx context.Context, params lrdb.GetMetricSegParams) (lrdb.MetricSeg, error)
+	CompactMetricSegsWithKafkaOffsets(ctx context.Context, params lrdb.CompactMetricSegsParams, kafkaOffsets []lrdb.KafkaOffsetUpdate) error
+	MarkMetricSegsCompactedByKeys(ctx context.Context, params lrdb.MarkMetricSegsCompactedByKeysParams) error
+	GetMetricEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32) int64
+}
+
+// TraceCompactionStore defines database operations needed for trace compaction
+type TraceCompactionStore interface {
+	CompactionStore
+	GetTraceSeg(ctx context.Context, params lrdb.GetTraceSegParams) (lrdb.TraceSeg, error)
+	CompactTraceSegsWithKafkaOffsets(ctx context.Context, params lrdb.CompactTraceSegsParams, kafkaOffsets []lrdb.KafkaOffsetUpdate) error
+	MarkTraceSegsCompactedByKeys(ctx context.Context, params lrdb.MarkTraceSegsCompactedByKeysParams) error
+	GetTraceEstimate(ctx context.Context, orgID uuid.UUID) int64
+}

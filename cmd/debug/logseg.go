@@ -16,7 +16,6 @@ package debug
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -24,6 +23,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/parquet-go/parquet-go"
 	"github.com/spf13/cobra"
 
@@ -76,7 +76,7 @@ func getLogSegFetchSubCmd() *cobra.Command {
 				// Get the latest record
 				segLog, err = lrdbStore.GetLatestSegmentJournal(ctx)
 				if err != nil {
-					if err == sql.ErrNoRows {
+					if err == pgx.ErrNoRows {
 						return fmt.Errorf("no segment_journal entries found")
 					}
 					return fmt.Errorf("failed to query latest segment_journal: %w", err)
@@ -87,7 +87,7 @@ func getLogSegFetchSubCmd() *cobra.Command {
 				// Get specific record by ID
 				segLog, err = lrdbStore.GetSegmentJournalByID(ctx, segLogID)
 				if err != nil {
-					if err == sql.ErrNoRows {
+					if err == pgx.ErrNoRows {
 						return fmt.Errorf("segment_journal entry with id %d not found", segLogID)
 					}
 					return fmt.Errorf("failed to query segment_journal: %w", err)
@@ -669,10 +669,10 @@ func isMetricKeyLessOrEqual(key1, key2 MetricKey) bool {
 func extractSortVersionFromFilename(filename string) int16 {
 	// Look for version patterns in filename like "_v2" or "_sort2"
 	if strings.Contains(filename, "_v2") || strings.Contains(filename, "_sort2") {
-		return lrdb.SortVersionNameTidTimestampV2
+		return lrdb.MetricSortVersionNameTidTimestampV2
 	}
 	if strings.Contains(filename, "_v1") || strings.Contains(filename, "_sort1") {
-		return lrdb.SortVersionNameTidTimestamp
+		return lrdb.MetricSortVersionNameTidTimestamp
 	}
 	// Default to current version for new files
 	return lrdb.CurrentMetricSortVersion

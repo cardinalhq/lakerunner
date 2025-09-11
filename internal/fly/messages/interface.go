@@ -14,8 +14,42 @@
 
 package messages
 
+import "github.com/google/uuid"
+
 // GroupableMessage interface for messages that can be grouped by the Gatherer
 type GroupableMessage interface {
 	GroupingKey() any
 	RecordCount() int64
 }
+
+// Unmarshaler defines the interface for messages that can be unmarshaled from bytes
+type Unmarshaler interface {
+	Unmarshal([]byte) error
+}
+
+// CompactionKeyProvider defines the interface for grouping keys that provide organization and instance info
+type CompactionKeyProvider interface {
+	GetOrgID() uuid.UUID
+	GetInstanceNum() int16
+}
+
+// CompactionMessage defines the complete interface for compaction messages
+type CompactionMessage interface {
+	GroupableMessage
+	Unmarshaler
+}
+
+// CompactionKeyInterface defines the complete interface for compaction keys
+type CompactionKeyInterface interface {
+	comparable
+	CompactionKeyProvider
+}
+
+// Ensure our keys implement the CompactionKeyProvider interface
+var (
+	_ CompactionKeyProvider = CompactionKey{}
+	_ CompactionKeyProvider = LogCompactionKey{}
+	_ CompactionKeyProvider = TraceCompactionKey{}
+	_ CompactionKeyProvider = IngestKey{}
+	_ CompactionKeyProvider = RollupKey{}
+)

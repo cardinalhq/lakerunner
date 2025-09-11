@@ -147,10 +147,10 @@ func (g *gatherer[M, K]) createKafkaCommitDataFromGroup(group *accumulationGroup
 	}
 }
 
-// flushStaleGroups processes all groups that haven't been updated for longer than lastUpdatedAge duration,
+// processIdleGroups processes all groups that haven't been updated for longer than lastUpdatedAge duration,
 // or that are older than maxAge since creation (if maxAge > 0).
 // This is used for periodic flushing to handle groups that may never reach the record count threshold.
-func (g *gatherer[M, K]) flushStaleGroups(ctx context.Context, lastUpdatedAge, maxAge time.Duration) (int, error) {
+func (g *gatherer[M, K]) processIdleGroups(ctx context.Context, lastUpdatedAge, maxAge time.Duration) (int, error) {
 	staleGroups := g.hunter.selectStaleGroups(lastUpdatedAge, maxAge)
 
 	emitted := 0

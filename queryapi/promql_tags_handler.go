@@ -15,7 +15,6 @@
 package queryapi
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -24,6 +23,7 @@ import (
 	"strings"
 
 	"github.com/cardinalhq/lakerunner/lrdb"
+	"github.com/jackc/pgx/v5"
 )
 
 type promTagsReq struct {
@@ -119,7 +119,7 @@ func (q *QuerierService) handleListPromQLTags(w http.ResponseWriter, r *http.Req
 		MetricName:     metric,
 	})
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, pgx.ErrNoRows) {
 			http.Error(w, "metric not found for org", http.StatusNotFound)
 			return
 		}
