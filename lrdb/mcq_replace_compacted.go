@@ -41,7 +41,6 @@ func (q *Store) CompactMetricSegs(ctx context.Context, args CompactMetricSegsPar
 			FrequencyMs:    args.FrequencyMs,
 			SegmentID:      r.SegmentID,
 			InstanceNum:    args.InstanceNum,
-			SlotID:         args.SlotID,
 			StartTs:        r.StartTs,
 			EndTs:          r.EndTs,
 			RecordCount:    r.RecordCount,
@@ -51,7 +50,6 @@ func (q *Store) CompactMetricSegs(ctx context.Context, args CompactMetricSegsPar
 			Rolledup:       false,
 			Fingerprints:   r.Fingerprints,
 			SortVersion:    CurrentMetricSortVersion,
-			SlotCount:      args.SlotCount,
 			Compacted:      false,
 		}
 	}

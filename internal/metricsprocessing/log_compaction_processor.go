@@ -198,7 +198,6 @@ func (c *LogCompactionProcessor) performLogCompaction(ctx context.Context, tmpDi
 			Dateint:        msg.DateInt,
 			SegmentID:      msg.SegmentID,
 			InstanceNum:    msg.InstanceNum,
-			SlotID:         msg.SlotID,
 		})
 		if err != nil {
 			ll.Warn("Failed to fetch segment, skipping",
@@ -337,7 +336,6 @@ func (c *LogCompactionProcessor) uploadAndCreateLogSegments(ctx context.Context,
 			IngestDateint:  nowDateInt,
 			SegmentID:      segmentID,
 			InstanceNum:    key.InstanceNum,
-			SlotID:         0, // not used for compacted log files
 			TsRange: pgtype.Range[pgtype.Int8]{
 				LowerType: pgtype.Inclusive,
 				UpperType: pgtype.Exclusive,

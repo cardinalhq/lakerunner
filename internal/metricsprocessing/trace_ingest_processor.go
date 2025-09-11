@@ -393,7 +393,6 @@ func (p *TraceIngestProcessor) Process(ctx context.Context, group *accumulationG
 				DateInt:        segParams.Dateint,
 				SegmentID:      segParams.SegmentID,
 				InstanceNum:    segParams.InstanceNum,
-				SlotID:         segParams.SlotID,
 				Records:        segParams.RecordCount,
 				FileSize:       segParams.FileSize,
 				StartTs:        segParams.StartTs,
@@ -408,7 +407,7 @@ func (p *TraceIngestProcessor) Process(ctx context.Context, group *accumulationG
 			}
 
 			compactionMessage := fly.Message{
-				Key:   fmt.Appendf(nil, "%s-%d-%d-%d", segParams.OrganizationID.String(), segParams.InstanceNum, segParams.SlotID, segParams.StartTs/300000),
+				Key:   fmt.Appendf(nil, "%s-%d-%d", segParams.OrganizationID.String(), segParams.InstanceNum, segParams.StartTs/300000),
 				Value: compactionMsgBytes,
 			}
 
@@ -683,7 +682,6 @@ func (p *TraceIngestProcessor) uploadAndCreateTraceSegments(ctx context.Context,
 			SegmentID:      segmentID,
 			Dateint:        validBin.dateint,
 			IngestDateint:  nowDateInt,
-			SlotID:         0, // Always 0 for traces
 			InstanceNum:    storageProfile.InstanceNum,
 			StartTs:        validBin.stats.FirstTS,
 			EndTs:          validBin.stats.LastTS + 1, // end is exclusive

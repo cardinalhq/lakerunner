@@ -128,7 +128,6 @@ type LogSeg struct {
 	TsRange        pgtype.Range[pgtype.Int8] `json:"ts_range"`
 	CreatedBy      CreatedBy                 `json:"created_by"`
 	CreatedAt      time.Time                 `json:"created_at"`
-	SlotID         int32                     `json:"slot_id"`
 	Compacted      bool                      `json:"compacted"`
 	Published      bool                      `json:"published"`
 }
@@ -191,10 +190,8 @@ type MetricSeg struct {
 	Rolledup       bool                      `json:"rolledup"`
 	CreatedAt      time.Time                 `json:"created_at"`
 	CreatedBy      CreatedBy                 `json:"created_by"`
-	SlotID         int32                     `json:"slot_id"`
 	Fingerprints   []int64                   `json:"fingerprints"`
 	SortVersion    int16                     `json:"sort_version"`
-	SlotCount      int32                     `json:"slot_count"`
 	Compacted      bool                      `json:"compacted"`
 }
 
@@ -267,7 +264,6 @@ type TraceSeg struct {
 	Dateint        int32                     `json:"dateint"`
 	SegmentID      int64                     `json:"segment_id"`
 	InstanceNum    int16                     `json:"instance_num"`
-	SlotID         int32                     `json:"slot_id"`
 	Fingerprints   []int64                   `json:"fingerprints"`
 	RecordCount    int64                     `json:"record_count"`
 	FileSize       int64                     `json:"file_size"`

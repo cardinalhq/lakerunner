@@ -82,8 +82,6 @@ func validateRollupGroupConsistency(group *accumulationGroup[messages.RollupKey]
 	expectedDateInt := group.Key.DateInt
 	expectedSourceFreq := group.Key.SourceFrequencyMs
 	expectedTargetFreq := group.Key.TargetFrequencyMs
-	expectedSlotID := group.Key.SlotID
-	expectedSlotCount := group.Key.SlotCount
 
 	// Validate each message against the expected values
 	for i, accMsg := range group.Messages {
@@ -140,23 +138,6 @@ func validateRollupGroupConsistency(group *accumulationGroup[messages.RollupKey]
 			}
 		}
 
-		if msg.SlotID != expectedSlotID {
-			return &GroupValidationError{
-				Field:    "slot_id",
-				Expected: expectedSlotID,
-				Got:      msg.SlotID,
-				Message:  fmt.Sprintf("message %d has inconsistent slot ID", i),
-			}
-		}
-
-		if msg.SlotCount != expectedSlotCount {
-			return &GroupValidationError{
-				Field:    "slot_count",
-				Expected: expectedSlotCount,
-				Got:      msg.SlotCount,
-				Message:  fmt.Sprintf("message %d has inconsistent slot count", i),
-			}
-		}
 	}
 
 	return nil
@@ -175,8 +156,6 @@ func (r *MetricRollupProcessor) Process(ctx context.Context, group *accumulation
 		slog.Int("sourceFrequencyMs", int(group.Key.SourceFrequencyMs)),
 		slog.Int("targetFrequencyMs", int(group.Key.TargetFrequencyMs)),
 		slog.Int("instanceNum", int(group.Key.InstanceNum)),
-		slog.Int("slotID", int(group.Key.SlotID)),
-		slog.Int("slotCount", int(group.Key.SlotCount)),
 		slog.Int64("truncatedTimebox", group.Key.TruncatedTimebox),
 		slog.Int("messageCount", len(group.Messages)),
 		slog.Duration("groupAge", groupAge))
@@ -225,8 +204,6 @@ func (r *MetricRollupProcessor) Process(ctx context.Context, group *accumulation
 			FrequencyMs:    msg.SourceFrequencyMs, // Use source frequency for lookup
 			SegmentID:      msg.SegmentID,
 			InstanceNum:    msg.InstanceNum,
-			SlotID:         msg.SlotID,
-			SlotCount:      msg.SlotCount,
 		})
 		if err != nil {
 			ll.Warn("Failed to fetch segment, skipping",
@@ -235,8 +212,6 @@ func (r *MetricRollupProcessor) Process(ctx context.Context, group *accumulation
 				slog.Int("dateint", int(msg.DateInt)),
 				slog.Int("sourceFrequencyMs", int(msg.SourceFrequencyMs)),
 				slog.Int("instanceNum", int(msg.InstanceNum)),
-				slog.Int("slotID", int(msg.SlotID)),
-				slog.Int("slotCount", int(msg.SlotCount)),
 				slog.Any("error", err))
 			continue
 		}
@@ -359,8 +334,6 @@ func (r *MetricRollupProcessor) uploadAndCreateRollupSegments(ctx context.Contex
 			FrequencyMs:    key.TargetFrequencyMs, // Store at target frequency
 			SegmentID:      segmentID,
 			InstanceNum:    key.InstanceNum,
-			SlotID:         key.SlotID,    // Preserve slot information
-			SlotCount:      key.SlotCount, // Preserve slot information
 			TsRange: pgtype.Range[pgtype.Int8]{
 				LowerType: pgtype.Inclusive,
 				UpperType: pgtype.Exclusive,
@@ -433,8 +406,6 @@ func (r *MetricRollupProcessor) atomicDatabaseUpdate(ctx context.Context, oldSeg
 		Dateint:        key.DateInt,
 		FrequencyMs:    key.TargetFrequencyMs,
 		InstanceNum:    key.InstanceNum,
-		SlotID:         key.SlotID,
-		SlotCount:      key.SlotCount,
 		IngestDateint:  key.DateInt,
 		SortVersion:    lrdb.CurrentMetricSortVersion,
 	}
@@ -473,8 +444,6 @@ func (r *MetricRollupProcessor) atomicDatabaseUpdate(ctx context.Context, oldSeg
 			slog.Int("source_frequency_ms", int(key.SourceFrequencyMs)),
 			slog.Int("target_frequency_ms", int(key.TargetFrequencyMs)),
 			slog.Int("instance_num", int(key.InstanceNum)),
-			slog.Int("slot_id", int(key.SlotID)),
-			slog.Int("slot_count", int(key.SlotCount)),
 			slog.Int("source_segments_count", len(sourceSegmentIDs)),
 			slog.Int("new_segments_count", len(newRecords)))
 
@@ -566,8 +535,6 @@ func (r *MetricRollupProcessor) queueNextLevelRollups(ctx context.Context, newSe
 			TargetFrequencyMs: nextTargetFrequency,   // Next rollup target
 			SegmentID:         segment.SegmentID,
 			InstanceNum:       segment.InstanceNum,
-			SlotID:            segment.SlotID,
-			SlotCount:         segment.SlotCount,
 			Records:           segment.RecordCount,
 			FileSize:          segment.FileSize,
 			SegmentStartTime:  segmentStartTime,
@@ -582,7 +549,7 @@ func (r *MetricRollupProcessor) queueNextLevelRollups(ctx context.Context, newSe
 
 		// Create Kafka message with target frequency in the key (as corrected earlier)
 		rollupMessage := fly.Message{
-			Key:   []byte(fmt.Sprintf("%s-%d-%d-%d-%d", segment.OrganizationID.String(), segment.Dateint, nextTargetFrequency, segment.InstanceNum, segment.SlotID)),
+			Key:   []byte(fmt.Sprintf("%s-%d-%d-%d", segment.OrganizationID.String(), segment.Dateint, nextTargetFrequency, segment.InstanceNum)),
 			Value: msgBytes,
 		}
 
@@ -630,8 +597,6 @@ func (r *MetricRollupProcessor) queueCompactionMessages(ctx context.Context, new
 			FrequencyMs:    key.TargetFrequencyMs, // Use target frequency for compaction
 			SegmentID:      segment.SegmentID,
 			InstanceNum:    segment.InstanceNum,
-			SlotID:         segment.SlotID,
-			SlotCount:      segment.SlotCount,
 			Records:        segment.RecordCount,
 			FileSize:       segment.FileSize,
 			QueuedAt:       time.Now(),
@@ -645,7 +610,7 @@ func (r *MetricRollupProcessor) queueCompactionMessages(ctx context.Context, new
 
 		// Create Kafka message key for proper partitioning
 		compactionMessage := fly.Message{
-			Key:   []byte(fmt.Sprintf("%s-%d-%d-%d-%d", segment.OrganizationID.String(), segment.Dateint, key.TargetFrequencyMs, segment.InstanceNum, segment.SlotID)),
+			Key:   []byte(fmt.Sprintf("%s-%d-%d-%d", segment.OrganizationID.String(), segment.Dateint, key.TargetFrequencyMs, segment.InstanceNum)),
 			Value: compactionMsgBytes,
 		}
 

@@ -670,7 +670,6 @@ func TestPerformCompactionSeglog990(t *testing.T) {
 			Rolledup:      false,
 			CreatedAt:     time.Now(),
 			CreatedBy:     lrdb.CreatedByIngest, // These are ingested segments
-			SlotID:        1,
 			Fingerprints:  []int64{},
 		}
 	}

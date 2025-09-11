@@ -286,8 +286,7 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 				slog.Int("frequency_ms", int(seg.FrequencyMs)),
 				slog.Int64("segment_id", seg.SegmentID),
 				slog.Int("instance_num", int(seg.InstanceNum)),
-				slog.Int("slot_id", int(seg.SlotID)),
-				slog.Int("slot_count", int(seg.SlotCount)))
+			)
 		}
 
 		return fmt.Errorf("failed to insert metric segments with Kafka offsets: %w", err)
@@ -311,8 +310,6 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 				FrequencyMs:    segParams.FrequencyMs,
 				SegmentID:      segParams.SegmentID,
 				InstanceNum:    segParams.InstanceNum,
-				SlotID:         segParams.SlotID,
-				SlotCount:      segParams.SlotCount,
 				Records:        segParams.RecordCount,
 				FileSize:       segParams.FileSize,
 				QueuedAt:       time.Now(),
@@ -349,8 +346,6 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 					TargetFrequencyMs: targetFrequency,
 					SegmentID:         segParams.SegmentID,
 					InstanceNum:       segParams.InstanceNum,
-					SlotID:            segParams.SlotID,
-					SlotCount:         segParams.SlotCount,
 					Records:           segParams.RecordCount,
 					FileSize:          segParams.FileSize,
 					SegmentStartTime:  segmentStartTime,
@@ -581,13 +576,6 @@ func (manager *TimeBinManager) getOrCreateBin(_ context.Context, binStartTs int6
 func (p *MetricIngestProcessor) uploadAndCreateSegments(ctx context.Context, storageClient cloudstorage.Client, nowDateInt int32, timeBins map[int64]*TimeBin, storageProfile storageprofile.StorageProfile) ([]lrdb.InsertMetricSegmentParams, error) {
 	ll := logctx.FromContext(ctx)
 
-	// Get partition count once per batch for rollup topic
-	rollupTopic := "lakerunner.segments.metrics.rollup"
-	partitionCount, err := p.kafkaProducer.GetPartitionCount(rollupTopic)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get partition count for topic %s: %w", rollupTopic, err)
-	}
-
 	var segmentParams []lrdb.InsertMetricSegmentParams
 	var totalOutputRecords, totalOutputSize int64
 
@@ -622,7 +610,6 @@ func (p *MetricIngestProcessor) uploadAndCreateSegments(ctx context.Context, sto
 	batchSegmentIDs := idgen.GenerateBatchIDs(len(validBins))
 
 	for i, validBin := range validBins {
-		binStartTs := validBin.binStartTs
 		bin := validBin.bin
 		metadata := validBin.metadata
 
@@ -644,16 +631,11 @@ func (p *MetricIngestProcessor) uploadAndCreateSegments(ctx context.Context, sto
 			return nil, fmt.Errorf("failed to upload file %s to %s: %w", bin.Result.FileName, uploadPath, uploadErr)
 		}
 
-		// Compute slot_id and slot_count based on partition count
-		slotID, slotCount := computeMetricSlot(storageProfile.OrganizationID, storageProfile.InstanceNum, 60000, binStartTs, int32(partitionCount))
-
 		ll.Debug("Uploaded segment",
 			slog.String("uploadPath", uploadPath),
 			slog.Int64("segmentID", segmentID),
 			slog.Int64("recordCount", bin.Result.RecordCount),
-			slog.Int64("fileSize", bin.Result.FileSize),
-			slog.Int("slotID", int(slotID)),
-			slog.Int("slotCount", int(slotCount)))
+			slog.Int64("fileSize", bin.Result.FileSize))
 
 		// Create segment parameters for database insertion using extracted metadata
 		params := lrdb.InsertMetricSegmentParams{
@@ -663,8 +645,6 @@ func (p *MetricIngestProcessor) uploadAndCreateSegments(ctx context.Context, sto
 			FrequencyMs:    10000, // 10 seconds
 			SegmentID:      segmentID,
 			InstanceNum:    storageProfile.InstanceNum,
-			SlotID:         slotID,
-			SlotCount:      slotCount,
 			StartTs:        metadata.StartTs,
 			EndTs:          metadata.EndTs,
 			RecordCount:    bin.Result.RecordCount,

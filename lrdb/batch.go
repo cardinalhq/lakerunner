@@ -24,7 +24,6 @@ DELETE FROM public.metric_seg
    AND frequency_ms    = $3
    AND segment_id      = $4
    AND instance_num    = $5
-   AND slot_id         = $6
 `
 
 type BatchDeleteMetricSegsBatchResults struct {
@@ -39,7 +38,6 @@ type BatchDeleteMetricSegsParams struct {
 	FrequencyMs    int32     `json:"frequency_ms"`
 	SegmentID      int64     `json:"segment_id"`
 	InstanceNum    int16     `json:"instance_num"`
-	SlotID         int32     `json:"slot_id"`
 }
 
 func (q *Queries) BatchDeleteMetricSegs(ctx context.Context, arg []BatchDeleteMetricSegsParams) *BatchDeleteMetricSegsBatchResults {
@@ -51,7 +49,6 @@ func (q *Queries) BatchDeleteMetricSegs(ctx context.Context, arg []BatchDeleteMe
 			a.FrequencyMs,
 			a.SegmentID,
 			a.InstanceNum,
-			a.SlotID,
 		}
 		batch.Queue(batchDeleteMetricSegs, vals...)
 	}
@@ -88,7 +85,6 @@ UPDATE public.metric_seg
    AND frequency_ms    = $3
    AND segment_id      = $4
    AND instance_num    = $5
-   AND slot_id         = $6
 `
 
 type BatchMarkMetricSegsRolledupBatchResults struct {
@@ -103,7 +99,6 @@ type BatchMarkMetricSegsRolledupParams struct {
 	FrequencyMs    int32     `json:"frequency_ms"`
 	SegmentID      int64     `json:"segment_id"`
 	InstanceNum    int16     `json:"instance_num"`
-	SlotID         int32     `json:"slot_id"`
 }
 
 func (q *Queries) BatchMarkMetricSegsRolledup(ctx context.Context, arg []BatchMarkMetricSegsRolledupParams) *BatchMarkMetricSegsRolledupBatchResults {
@@ -115,7 +110,6 @@ func (q *Queries) BatchMarkMetricSegsRolledup(ctx context.Context, arg []BatchMa
 			a.FrequencyMs,
 			a.SegmentID,
 			a.InstanceNum,
-			a.SlotID,
 		}
 		batch.Queue(batchMarkMetricSegsRolledup, vals...)
 	}
@@ -449,7 +443,6 @@ INSERT INTO log_seg (
   ingest_dateint,
   segment_id,
   instance_num,
-  slot_id,
   ts_range,
   record_count,
   file_size,
@@ -464,14 +457,13 @@ VALUES (
   $3,
   $4,
   $5,
-  $6,
-  int8range($7, $8, '[)'),
+  int8range($6, $7, '[)'),
+  $8,
   $9,
   $10,
-  $11,
-  $12::bigint[],
-  $13,
-  $14
+  $11::bigint[],
+  $12,
+  $13
 )
 `
 
@@ -487,7 +479,6 @@ type batchInsertLogSegsDirectParams struct {
 	IngestDateint  int32     `json:"ingest_dateint"`
 	SegmentID      int64     `json:"segment_id"`
 	InstanceNum    int16     `json:"instance_num"`
-	SlotID         int32     `json:"slot_id"`
 	StartTs        int64     `json:"start_ts"`
 	EndTs          int64     `json:"end_ts"`
 	RecordCount    int64     `json:"record_count"`
@@ -507,7 +498,6 @@ func (q *Queries) batchInsertLogSegsDirect(ctx context.Context, arg []batchInser
 			a.IngestDateint,
 			a.SegmentID,
 			a.InstanceNum,
-			a.SlotID,
 			a.StartTs,
 			a.EndTs,
 			a.RecordCount,
@@ -551,7 +541,6 @@ INSERT INTO trace_seg (
   ingest_dateint,
   segment_id,
   instance_num,
-  slot_id,
   ts_range,
   record_count,
   file_size,
@@ -566,14 +555,13 @@ VALUES (
   $3,
   $4,
   $5,
-  $6,
-  int8range($7, $8, '[)'),
+  int8range($6, $7, '[)'),
+  $8,
   $9,
   $10,
-  $11,
-  $12::bigint[],
-  $13,
-  $14
+  $11::bigint[],
+  $12,
+  $13
 )
 `
 
@@ -589,7 +577,6 @@ type batchInsertTraceSegsDirectParams struct {
 	IngestDateint  int32     `json:"ingest_dateint"`
 	SegmentID      int64     `json:"segment_id"`
 	InstanceNum    int16     `json:"instance_num"`
-	SlotID         int32     `json:"slot_id"`
 	StartTs        int64     `json:"start_ts"`
 	EndTs          int64     `json:"end_ts"`
 	RecordCount    int64     `json:"record_count"`
@@ -609,7 +596,6 @@ func (q *Queries) batchInsertTraceSegsDirect(ctx context.Context, arg []batchIns
 			a.IngestDateint,
 			a.SegmentID,
 			a.InstanceNum,
-			a.SlotID,
 			a.StartTs,
 			a.EndTs,
 			a.RecordCount,
@@ -654,7 +640,6 @@ INSERT INTO metric_seg (
   frequency_ms,
   segment_id,
   instance_num,
-  slot_id,
   ts_range,
   record_count,
   file_size,
@@ -663,7 +648,6 @@ INSERT INTO metric_seg (
   rolledup,
   fingerprints,
   sort_version,
-  slot_count,
   compacted
 )
 VALUES (
@@ -673,19 +657,17 @@ VALUES (
   $4,
   $5,
   $6,
-  $7,
-  int8range($8, $9, '[)'),
+  int8range($7, $8, '[)'),
+  $9,
   $10,
   $11,
   $12,
   $13,
-  $14,
-  $15::bigint[],
-  $16,
-  $17,
-  $18
+  $14::bigint[],
+  $15,
+  $16
 )
-ON CONFLICT (organization_id, dateint, frequency_ms, segment_id, instance_num, slot_id, slot_count)
+ON CONFLICT (organization_id, dateint, frequency_ms, segment_id, instance_num)
 DO NOTHING
 `
 
@@ -702,7 +684,6 @@ type InsertMetricSegsParams struct {
 	FrequencyMs    int32     `json:"frequency_ms"`
 	SegmentID      int64     `json:"segment_id"`
 	InstanceNum    int16     `json:"instance_num"`
-	SlotID         int32     `json:"slot_id"`
 	StartTs        int64     `json:"start_ts"`
 	EndTs          int64     `json:"end_ts"`
 	RecordCount    int64     `json:"record_count"`
@@ -712,7 +693,6 @@ type InsertMetricSegsParams struct {
 	Rolledup       bool      `json:"rolledup"`
 	Fingerprints   []int64   `json:"fingerprints"`
 	SortVersion    int16     `json:"sort_version"`
-	SlotCount      int32     `json:"slot_count"`
 	Compacted      bool      `json:"compacted"`
 }
 
@@ -726,7 +706,6 @@ func (q *Queries) insertMetricSegsDirect(ctx context.Context, arg []InsertMetric
 			a.FrequencyMs,
 			a.SegmentID,
 			a.InstanceNum,
-			a.SlotID,
 			a.StartTs,
 			a.EndTs,
 			a.RecordCount,
@@ -736,7 +715,6 @@ func (q *Queries) insertMetricSegsDirect(ctx context.Context, arg []InsertMetric
 			a.Rolledup,
 			a.Fingerprints,
 			a.SortVersion,
-			a.SlotCount,
 			a.Compacted,
 		}
 		batch.Queue(insertMetricSegsDirect, vals...)

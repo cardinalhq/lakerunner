@@ -5,7 +5,6 @@ INSERT INTO trace_seg (
   ingest_dateint,
   segment_id,
   instance_num,
-  slot_id,
   ts_range,
   record_count,
   file_size,
@@ -20,7 +19,6 @@ VALUES (
   @ingest_dateint,
   @segment_id,
   @instance_num,
-  @slot_id,
   int8range(@start_ts, @end_ts, '[)'),
   @record_count,
   @file_size,
@@ -37,7 +35,6 @@ INSERT INTO trace_seg (
   ingest_dateint,
   segment_id,
   instance_num,
-  slot_id,
   ts_range,
   record_count,
   file_size,
@@ -52,7 +49,6 @@ VALUES (
   @ingest_dateint,
   @segment_id,
   @instance_num,
-  @slot_id,
   int8range(@start_ts, @end_ts, '[)'),
   @record_count,
   @file_size,
@@ -76,6 +72,5 @@ SET compacted = true, published = false
 WHERE organization_id = @organization_id
   AND dateint         = @dateint
   AND instance_num    = @instance_num
-  AND slot_id         = @slot_id
   AND segment_id      = ANY(@segment_ids::bigint[])
   AND compacted       = false;

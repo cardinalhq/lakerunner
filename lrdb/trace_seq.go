@@ -27,7 +27,6 @@ type CompactTraceSegsParams struct {
 	Dateint        int32
 	IngestDateint  int32
 	InstanceNum    int16
-	SlotID         int32 // Traces include slot ID unlike logs
 	NewRecords     []CompactTraceSegsNew
 	OldRecords     []CompactTraceSegsOld
 	CreatedBy      CreatedBy
@@ -62,7 +61,6 @@ func (q *Store) CompactTraceSegsWithKafkaOffsets(ctx context.Context, params Com
 				OrganizationID: params.OrganizationID,
 				Dateint:        params.Dateint,
 				InstanceNum:    params.InstanceNum,
-				SlotID:         params.SlotID,
 				SegmentIds:     segIDs,
 			}); err != nil {
 				return fmt.Errorf("mark old trace segments compacted: %w", err)
@@ -78,7 +76,6 @@ func (q *Store) CompactTraceSegsWithKafkaOffsets(ctx context.Context, params Com
 					IngestDateint:  params.IngestDateint,
 					SegmentID:      r.SegmentID,
 					InstanceNum:    params.InstanceNum,
-					SlotID:         params.SlotID, // Traces preserve slot ID for partitioning
 					StartTs:        r.StartTs,
 					EndTs:          r.EndTs,
 					RecordCount:    r.RecordCount,

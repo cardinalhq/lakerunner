@@ -12,7 +12,7 @@ import (
 )
 
 const getTraceSeg = `-- name: GetTraceSeg :one
-SELECT organization_id, dateint, segment_id, instance_num, slot_id, fingerprints, record_count, file_size, ingest_dateint, ts_range, created_by, created_at, compacted, published
+SELECT organization_id, dateint, segment_id, instance_num, fingerprints, record_count, file_size, ingest_dateint, ts_range, created_by, created_at, compacted, published
 FROM trace_seg
 WHERE organization_id = $1
   AND dateint = $2
@@ -40,7 +40,6 @@ func (q *Queries) GetTraceSeg(ctx context.Context, arg GetTraceSegParams) (Trace
 		&i.Dateint,
 		&i.SegmentID,
 		&i.InstanceNum,
-		&i.SlotID,
 		&i.Fingerprints,
 		&i.RecordCount,
 		&i.FileSize,
@@ -60,8 +59,7 @@ SET compacted = true, published = false
 WHERE organization_id = $1
   AND dateint         = $2
   AND instance_num    = $3
-  AND slot_id         = $4
-  AND segment_id      = ANY($5::bigint[])
+  AND segment_id      = ANY($4::bigint[])
   AND compacted       = false
 `
 
@@ -69,7 +67,6 @@ type MarkTraceSegsCompactedByKeysParams struct {
 	OrganizationID uuid.UUID `json:"organization_id"`
 	Dateint        int32     `json:"dateint"`
 	InstanceNum    int16     `json:"instance_num"`
-	SlotID         int32     `json:"slot_id"`
 	SegmentIds     []int64   `json:"segment_ids"`
 }
 
@@ -78,7 +75,6 @@ func (q *Queries) MarkTraceSegsCompactedByKeys(ctx context.Context, arg MarkTrac
 		arg.OrganizationID,
 		arg.Dateint,
 		arg.InstanceNum,
-		arg.SlotID,
 		arg.SegmentIds,
 	)
 	return err
@@ -91,7 +87,6 @@ INSERT INTO trace_seg (
   ingest_dateint,
   segment_id,
   instance_num,
-  slot_id,
   ts_range,
   record_count,
   file_size,
@@ -106,14 +101,13 @@ VALUES (
   $3,
   $4,
   $5,
-  $6,
-  int8range($7, $8, '[)'),
+  int8range($6, $7, '[)'),
+  $8,
   $9,
   $10,
-  $11,
-  $12::bigint[],
-  $13,
-  $14
+  $11::bigint[],
+  $12,
+  $13
 )
 `
 
@@ -123,7 +117,6 @@ type InsertTraceSegmentParams struct {
 	IngestDateint  int32     `json:"ingest_dateint"`
 	SegmentID      int64     `json:"segment_id"`
 	InstanceNum    int16     `json:"instance_num"`
-	SlotID         int32     `json:"slot_id"`
 	StartTs        int64     `json:"start_ts"`
 	EndTs          int64     `json:"end_ts"`
 	RecordCount    int64     `json:"record_count"`
@@ -141,7 +134,6 @@ func (q *Queries) insertTraceSegmentDirect(ctx context.Context, arg InsertTraceS
 		arg.IngestDateint,
 		arg.SegmentID,
 		arg.InstanceNum,
-		arg.SlotID,
 		arg.StartTs,
 		arg.EndTs,
 		arg.RecordCount,

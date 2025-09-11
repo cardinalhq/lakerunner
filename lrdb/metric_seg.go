@@ -48,7 +48,6 @@ func (q *Store) InsertMetricSegment(ctx context.Context, params InsertMetricSegm
 
 type CompactMetricSegsOld struct {
 	SegmentID int64
-	SlotID    int32
 }
 
 type CompactMetricSegsNew struct {
@@ -72,8 +71,6 @@ type RollupTargetParams struct {
 	Dateint        int32
 	FrequencyMs    int32
 	InstanceNum    int16
-	SlotID         int32
-	SlotCount      int32
 	IngestDateint  int32
 	SortVersion    int16
 }
@@ -94,10 +91,6 @@ type CompactMetricSegsParams struct {
 	Dateint int32
 	// InstanceNum is the instance number for which the segments are being replaced.
 	InstanceNum int16
-	// SlotID is the slot identifier for partitioning.
-	SlotID int32
-	// SlotCount is the number of slots.
-	SlotCount int32
 	// IngestDateint is the date in YYYYMMDD format when the segments were ingested.
 	IngestDateint int32
 	// FrequencyMs is the frequency in milliseconds at which the metrics are collected.
@@ -127,7 +120,6 @@ func (q *Store) InsertMetricSegmentBatchWithKafkaOffsets(ctx context.Context, ba
 				FrequencyMs:    params.FrequencyMs,
 				SegmentID:      params.SegmentID,
 				InstanceNum:    params.InstanceNum,
-				SlotID:         params.SlotID,
 				StartTs:        params.StartTs,
 				EndTs:          params.EndTs,
 				RecordCount:    params.RecordCount,
@@ -138,7 +130,6 @@ func (q *Store) InsertMetricSegmentBatchWithKafkaOffsets(ctx context.Context, ba
 				Rolledup:       false,
 				Fingerprints:   params.Fingerprints,
 				SortVersion:    params.SortVersion,
-				SlotCount:      params.SlotCount,
 			}
 		}
 
@@ -218,7 +209,6 @@ func (q *Store) CompactMetricSegsWithKafkaOffsets(ctx context.Context, params Co
 					FrequencyMs:    params.FrequencyMs,
 					SegmentID:      r.SegmentID,
 					InstanceNum:    params.InstanceNum,
-					SlotID:         params.SlotID,
 					StartTs:        r.StartTs,
 					EndTs:          r.EndTs,
 					RecordCount:    r.RecordCount,
@@ -228,7 +218,6 @@ func (q *Store) CompactMetricSegsWithKafkaOffsets(ctx context.Context, params Co
 					Rolledup:       false,
 					Fingerprints:   r.Fingerprints,
 					SortVersion:    CurrentMetricSortVersion,
-					SlotCount:      params.SlotCount,
 					Compacted:      false,
 				}
 			}
@@ -310,8 +299,6 @@ func (q *Store) RollupMetricSegsWithKafkaOffsets(ctx context.Context, sourcePara
 					Compacted:      false,
 					Rolledup:       false,
 					SegmentID:      newRec.SegmentID,
-					SlotCount:      targetParams.SlotCount,
-					SlotID:         targetParams.SlotID,
 					SortVersion:    targetParams.SortVersion,
 					StartTs:        newRec.StartTs,
 				}
