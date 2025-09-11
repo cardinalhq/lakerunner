@@ -36,7 +36,7 @@ import (
 
 // QueriesInterface defines the methods needed for scaling queries
 type QueriesInterface interface {
-	WorkQueueScalingDepth(ctx context.Context, arg lrdb.WorkQueueScalingDepthParams) (interface{}, error)
+	// No methods needed - external scaler will use fixed values for now
 }
 
 type Service struct {
@@ -89,15 +89,13 @@ func (s *Service) getQueueDepth(ctx context.Context, serviceType string) (int64,
 		// TODO: Replace with Kafka consumer lag metrics for ingestion scaling
 		result, err = int64(5), nil
 	case "compact-logs":
-		result, err = s.queries.WorkQueueScalingDepth(ctx, lrdb.WorkQueueScalingDepthParams{
-			Signal: lrdb.SignalEnumLogs,
-			Action: lrdb.ActionEnumCompact,
-		})
+		// TODO: Implement proper segment-based scaling metrics when compaction system is redesigned
+		// For now, return a fixed value to keep the scaler working
+		result, err = int64(3), nil
 	case "compact-traces":
-		result, err = s.queries.WorkQueueScalingDepth(ctx, lrdb.WorkQueueScalingDepthParams{
-			Signal: lrdb.SignalEnumTraces,
-			Action: lrdb.ActionEnumCompact,
-		})
+		// TODO: Implement proper segment-based scaling metrics when compaction system is redesigned
+		// For now, return a fixed value to keep the scaler working
+		result, err = int64(3), nil
 	case "rollup-metrics":
 		// TODO: Implement proper metric rollup queue scaling when needed
 		// For now, return a fixed value of 5

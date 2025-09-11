@@ -36,12 +36,10 @@ import (
 )
 
 var (
-	objectCleanupCounter     metric.Int64Counter
-	legacyTableSyncCounter   metric.Int64Counter
-	workQueueExpiryCounter   metric.Int64Counter
-	signalLockCleanupCounter metric.Int64Counter
-	legacyTableSyncDuration  metric.Float64Histogram
-	metricEstimateCounter    metric.Int64Counter
+	objectCleanupCounter    metric.Int64Counter
+	legacyTableSyncCounter  metric.Int64Counter
+	legacyTableSyncDuration metric.Float64Histogram
+	metricEstimateCounter   metric.Int64Counter
 )
 
 func init() {
@@ -62,22 +60,6 @@ func init() {
 	)
 	if err != nil {
 		panic(fmt.Errorf("failed to create legacy_table_sync_total counter: %w", err))
-	}
-
-	workQueueExpiryCounter, err = meter.Int64Counter(
-		"lakerunner.sweeper.workqueue_expiry_total",
-		metric.WithDescription("Count of work queue items expired due to staleness"),
-	)
-	if err != nil {
-		panic(fmt.Errorf("failed to create workqueue_expiry_total counter: %w", err))
-	}
-
-	signalLockCleanupCounter, err = meter.Int64Counter(
-		"lakerunner.sweeper.signal_lock_cleanup_total",
-		metric.WithDescription("Count of orphaned signal locks cleaned up"),
-	)
-	if err != nil {
-		panic(fmt.Errorf("failed to create signal_lock_cleanup_total counter: %w", err))
 	}
 
 	legacyTableSyncDuration, err = meter.Float64Histogram(
@@ -171,37 +153,6 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 	go func() {
 		defer wg.Done()
 		if err := objectCleanerLoop(ctx, cmd.sp, mdb, cmgr); err != nil && !errors.Is(err, context.Canceled) {
-			errCh <- err
-		}
-	}()
-
-	// Periodic: workqueue expiry
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		if err := periodicLoop(ctx, time.Minute, func(c context.Context) error {
-			return runWorkqueueExpiry(c, mdb)
-		}); err != nil && !errors.Is(err, context.Canceled) {
-			errCh <- err
-		}
-	}()
-
-	// Periodic: inqueue expiry
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		if err := periodicLoop(ctx, time.Minute, func(c context.Context) error {
-			return runInqueueExpiry(c, mdb)
-		}); err != nil && !errors.Is(err, context.Canceled) {
-			errCh <- err
-		}
-	}()
-
-	// Periodic: workqueue GC
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		if err := workqueueGCLoop(ctx, mdb); err != nil && !errors.Is(err, context.Canceled) {
 			errCh <- err
 		}
 	}()

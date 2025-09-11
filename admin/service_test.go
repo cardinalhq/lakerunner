@@ -118,52 +118,6 @@ func TestPing(t *testing.T) {
 	}
 }
 
-func TestWorkQueueStatusWithoutDB(t *testing.T) {
-	// Save original database environment variables
-	originalLRDBVars := map[string]string{
-		"LRDB_HOST":     os.Getenv("LRDB_HOST"),
-		"LRDB_USER":     os.Getenv("LRDB_USER"),
-		"LRDB_PASSWORD": os.Getenv("LRDB_PASSWORD"),
-		"LRDB_DBNAME":   os.Getenv("LRDB_DBNAME"),
-		"LRDB_URL":      os.Getenv("LRDB_URL"),
-	}
-
-	// Temporarily unset database environment variables to force database connection failure
-	os.Unsetenv("LRDB_HOST")
-	os.Unsetenv("LRDB_USER")
-	os.Unsetenv("LRDB_PASSWORD")
-	os.Unsetenv("LRDB_DBNAME")
-	os.Unsetenv("LRDB_URL")
-
-	// Restore environment variables when test completes
-	defer func() {
-		for key, value := range originalLRDBVars {
-			if value != "" {
-				os.Setenv(key, value)
-			} else {
-				os.Unsetenv(key)
-			}
-		}
-	}()
-
-	client, cleanup := setupTestServer(t)
-	defer cleanup()
-
-	ctx := context.Background()
-
-	// This will fail because we don't have a database connection in the test
-	// but it tests that the GRPC plumbing works
-	_, err := client.WorkQueueStatus(ctx, &adminproto.WorkQueueStatusRequest{})
-	if err == nil {
-		t.Error("Expected error due to missing database connection")
-	}
-
-	// Check that error message contains database connection failure
-	if err != nil && err.Error() == "" {
-		t.Error("Expected non-empty error message")
-	}
-}
-
 func TestInQueueStatusWithoutDB(t *testing.T) {
 	// Save original database environment variables
 	originalLRDBVars := map[string]string{

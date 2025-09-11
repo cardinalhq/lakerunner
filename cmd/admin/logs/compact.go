@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/spf13/cobra"
 
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
@@ -139,39 +138,5 @@ func runLogCompact(orgID uuid.UUID, instance int16, slotID int32, startTime time
 }
 
 func queueSingleLogCompact(ctx context.Context, store lrdb.StoreFull, orgID uuid.UUID, instance int16, slotID int32, hourTime time.Time, dryRun bool) error {
-	dateint, hour16 := helpers.MSToDateintHour(hourTime.UnixMilli())
-	endTime := hourTime.Add(time.Hour)
-
-	params := lrdb.WorkQueueAddParams{
-		OrgID:     orgID,
-		Instance:  instance,
-		Signal:    lrdb.SignalEnumLogs,
-		Action:    lrdb.ActionEnumCompact,
-		Dateint:   dateint,
-		Frequency: -1, // Always -1 for logs
-		SlotID:    slotID,
-		TsRange: pgtype.Range[pgtype.Timestamptz]{
-			LowerType: pgtype.Inclusive,
-			UpperType: pgtype.Exclusive,
-			Lower:     pgtype.Timestamptz{Time: hourTime.UTC(), Valid: true},
-			Upper:     pgtype.Timestamptz{Time: endTime.UTC(), Valid: true},
-			Valid:     true,
-		},
-		RunnableAt: time.Now().UTC().Add(30 * time.Second), // Give it a little time to settle
-		Priority:   100,                                    // Standard priority for logs
-	}
-
-	if dryRun {
-		fmt.Printf("[DRY-RUN] Would queue log compaction: org=%s, instance=%d, slot=%d, dateint=%d, hour=%d, time_range=%v to %v, priority=%d\n",
-			orgID, instance, slotID, dateint, hour16, hourTime.Format(time.RFC3339), endTime.Format(time.RFC3339), params.Priority)
-	} else {
-		if err := store.WorkQueueAdd(ctx, params); err != nil {
-			return fmt.Errorf("failed to add work queue item: %w", err)
-		}
-
-		fmt.Printf("Queued log compaction: org=%s, instance=%d, slot=%d, dateint=%d, hour=%d, time_range=%v to %v\n",
-			orgID, instance, slotID, dateint, hour16, hourTime.Format(time.RFC3339), endTime.Format(time.RFC3339))
-	}
-
-	return nil
+	return fmt.Errorf("log compaction queueing is no longer supported - work queue system has been removed")
 }

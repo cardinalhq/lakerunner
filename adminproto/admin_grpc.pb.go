@@ -34,7 +34,6 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	AdminService_Ping_FullMethodName               = "/adminproto.AdminService/Ping"
-	AdminService_WorkQueueStatus_FullMethodName    = "/adminproto.AdminService/WorkQueueStatus"
 	AdminService_InQueueStatus_FullMethodName      = "/adminproto.AdminService/InQueueStatus"
 	AdminService_ListOrganizations_FullMethodName  = "/adminproto.AdminService/ListOrganizations"
 	AdminService_CreateOrganization_FullMethodName = "/adminproto.AdminService/CreateOrganization"
@@ -47,8 +46,6 @@ const (
 type AdminServiceClient interface {
 	// Ping endpoint for connectivity testing
 	Ping(ctx context.Context, in *PingRequest, opts ...grpc.CallOption) (*PingResponse, error)
-	// Get workqueue status/summary
-	WorkQueueStatus(ctx context.Context, in *WorkQueueStatusRequest, opts ...grpc.CallOption) (*WorkQueueStatusResponse, error)
 	// Get inqueue status/summary
 	InQueueStatus(ctx context.Context, in *InQueueStatusRequest, opts ...grpc.CallOption) (*InQueueStatusResponse, error)
 	// List organizations in the system
@@ -71,16 +68,6 @@ func (c *adminServiceClient) Ping(ctx context.Context, in *PingRequest, opts ...
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PingResponse)
 	err := c.cc.Invoke(ctx, AdminService_Ping_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *adminServiceClient) WorkQueueStatus(ctx context.Context, in *WorkQueueStatusRequest, opts ...grpc.CallOption) (*WorkQueueStatusResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(WorkQueueStatusResponse)
-	err := c.cc.Invoke(ctx, AdminService_WorkQueueStatus_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -133,8 +120,6 @@ func (c *adminServiceClient) UpdateOrganization(ctx context.Context, in *UpdateO
 type AdminServiceServer interface {
 	// Ping endpoint for connectivity testing
 	Ping(context.Context, *PingRequest) (*PingResponse, error)
-	// Get workqueue status/summary
-	WorkQueueStatus(context.Context, *WorkQueueStatusRequest) (*WorkQueueStatusResponse, error)
 	// Get inqueue status/summary
 	InQueueStatus(context.Context, *InQueueStatusRequest) (*InQueueStatusResponse, error)
 	// List organizations in the system
@@ -155,9 +140,6 @@ type UnimplementedAdminServiceServer struct{}
 
 func (UnimplementedAdminServiceServer) Ping(context.Context, *PingRequest) (*PingResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Ping not implemented")
-}
-func (UnimplementedAdminServiceServer) WorkQueueStatus(context.Context, *WorkQueueStatusRequest) (*WorkQueueStatusResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method WorkQueueStatus not implemented")
 }
 func (UnimplementedAdminServiceServer) InQueueStatus(context.Context, *InQueueStatusRequest) (*InQueueStatusResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method InQueueStatus not implemented")
@@ -206,24 +188,6 @@ func _AdminService_Ping_Handler(srv interface{}, ctx context.Context, dec func(i
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(AdminServiceServer).Ping(ctx, req.(*PingRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _AdminService_WorkQueueStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(WorkQueueStatusRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(AdminServiceServer).WorkQueueStatus(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: AdminService_WorkQueueStatus_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(AdminServiceServer).WorkQueueStatus(ctx, req.(*WorkQueueStatusRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -310,10 +274,6 @@ var AdminService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Ping",
 			Handler:    _AdminService_Ping_Handler,
-		},
-		{
-			MethodName: "WorkQueueStatus",
-			Handler:    _AdminService_WorkQueueStatus_Handler,
 		},
 		{
 			MethodName: "InQueueStatus",

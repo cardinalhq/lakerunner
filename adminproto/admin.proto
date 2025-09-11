@@ -24,8 +24,6 @@ service AdminService {
   // Ping endpoint for connectivity testing
   rpc Ping(PingRequest) returns (PingResponse);
 
-  // Get workqueue status/summary
-  rpc WorkQueueStatus(WorkQueueStatusRequest) returns (WorkQueueStatusResponse);
 
   // Get inqueue status/summary
   rpc InQueueStatus(InQueueStatusRequest) returns (InQueueStatusResponse);
@@ -50,19 +48,6 @@ message PingResponse {
   string server_id = 3;
 }
 
-message WorkQueueStatusRequest {
-  // Empty for now, can be extended
-}
-
-message WorkQueueStatusResponse {
-  repeated WorkQueueItem items = 1;
-}
-
-message WorkQueueItem {
-  int64 count = 1;
-  string signal = 2;
-  string action = 3;
-}
 
 message InQueueStatusRequest {
   // Empty for now, can be extended

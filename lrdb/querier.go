@@ -8,7 +8,6 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"time"
 )
 
 type Querier interface {
@@ -72,7 +71,6 @@ type Querier interface {
 	ObjectCleanupComplete(ctx context.Context, id uuid.UUID) error
 	ObjectCleanupFail(ctx context.Context, id uuid.UUID) error
 	ObjectCleanupGet(ctx context.Context, maxrows int32) ([]ObjectCleanupGetRow, error)
-	SignalLockCleanup(ctx context.Context) (int32, error)
 	// Returns an estimate of the number of trace segments, accounting for per-file overhead.
 	TraceSegEstimator(ctx context.Context, arg TraceSegEstimatorParams) ([]TraceSegEstimatorRow, error)
 	// Updates or inserts a single metric pack estimate (backward compatibility)
@@ -80,23 +78,6 @@ type Querier interface {
 	// Updates or inserts a single pack estimate for any signal type
 	UpsertPackEstimate(ctx context.Context, arg UpsertPackEstimateParams) error
 	UpsertServiceIdentifier(ctx context.Context, arg UpsertServiceIdentifierParams) (UpsertServiceIdentifierRow, error)
-	WorkQueueAddDirect(ctx context.Context, arg WorkQueueAddParams) error
-	WorkQueueClaimDirect(ctx context.Context, arg WorkQueueClaimParams) (WorkQueueClaimRow, error)
-	WorkQueueCleanupDirect(ctx context.Context, lockTtlDead time.Duration) ([]WorkQueueCleanupRow, error)
-	WorkQueueCompleteDirect(ctx context.Context, arg WorkQueueCompleteParams) error
-	WorkQueueDeleteDirect(ctx context.Context, arg WorkQueueDeleteParams) error
-	// First, return unclaimed summaries
-	// Then, return claimed details
-	WorkQueueExtendedStatus(ctx context.Context) ([]WorkQueueExtendedStatusRow, error)
-	WorkQueueFailDirect(ctx context.Context, arg WorkQueueFailParams) error
-	WorkQueueGC(ctx context.Context, arg WorkQueueGCParams) (int32, error)
-	WorkQueueGlobalLock(ctx context.Context) error
-	// 1) heart-beat the work_queue
-	WorkQueueHeartbeatDirect(ctx context.Context, arg WorkQueueHeartbeatParams) error
-	WorkQueueOrphanedSignalLockCleanup(ctx context.Context, maxrows int32) (int32, error)
-	// Get queue depth for work queue scaling by signal and action
-	WorkQueueScalingDepth(ctx context.Context, arg WorkQueueScalingDepthParams) (interface{}, error)
-	WorkQueueSummary(ctx context.Context) ([]WorkQueueSummaryRow, error)
 	batchInsertLogSegsDirect(ctx context.Context, arg []batchInsertLogSegsDirectParams) *batchInsertLogSegsDirectBatchResults
 	batchInsertTraceSegsDirect(ctx context.Context, arg []batchInsertTraceSegsDirectParams) *batchInsertTraceSegsDirectBatchResults
 	insertLogSegmentDirect(ctx context.Context, arg InsertLogSegmentParams) error

@@ -115,33 +115,6 @@ func (s *Service) Ping(ctx context.Context, req *adminproto.PingRequest) (*admin
 	}, nil
 }
 
-func (s *Service) WorkQueueStatus(ctx context.Context, req *adminproto.WorkQueueStatusRequest) (*adminproto.WorkQueueStatusResponse, error) {
-	slog.Debug("Received workqueue status request")
-
-	store, err := dbopen.LRDBStore(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to lrdb: %w", err)
-	}
-
-	results, err := store.WorkQueueSummary(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query work queue summary: %w", err)
-	}
-
-	items := make([]*adminproto.WorkQueueItem, len(results))
-	for i, result := range results {
-		items[i] = &adminproto.WorkQueueItem{
-			Count:  result.Count,
-			Signal: string(result.Signal),
-			Action: string(result.Action),
-		}
-	}
-
-	return &adminproto.WorkQueueStatusResponse{
-		Items: items,
-	}, nil
-}
-
 func (s *Service) InQueueStatus(ctx context.Context, req *adminproto.InQueueStatusRequest) (*adminproto.InQueueStatusResponse, error) {
 	slog.Debug("Received inqueue status request")
 
