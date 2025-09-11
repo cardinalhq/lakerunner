@@ -66,16 +66,6 @@ type MetricCompactionProcessor struct {
 	cfg             *config.Config
 }
 
-// newMetricCompactor creates a new metric compactor instance
-func newMetricCompactor(store MetricCompactionStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, cfg *config.Config) *MetricCompactionProcessor {
-	return &MetricCompactionProcessor{
-		store:           store,
-		storageProvider: storageProvider,
-		cmgr:            cmgr,
-		cfg:             cfg,
-	}
-}
-
 // validateGroupConsistency ensures all messages in a group have consistent org, instance, dateint, and frequency
 func validateGroupConsistency(group *accumulationGroup[messages.CompactionKey]) error {
 	if len(group.Messages) == 0 {

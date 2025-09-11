@@ -66,16 +66,6 @@ type LogCompactionProcessor struct {
 	cfg             *config.Config
 }
 
-// newLogCompactor creates a new log compactor instance
-func newLogCompactor(store LogCompactionStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, cfg *config.Config) *LogCompactionProcessor {
-	return &LogCompactionProcessor{
-		store:           store,
-		storageProvider: storageProvider,
-		cmgr:            cmgr,
-		cfg:             cfg,
-	}
-}
-
 // validateLogGroupConsistency ensures all messages in a group have consistent org, instance, and dateint
 func validateLogGroupConsistency(group *accumulationGroup[messages.LogCompactionKey]) error {
 	if len(group.Messages) == 0 {

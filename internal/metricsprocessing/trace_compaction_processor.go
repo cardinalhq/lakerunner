@@ -67,16 +67,6 @@ type TraceCompactionProcessor struct {
 	cfg             *config.Config
 }
 
-// newTraceCompactor creates a new trace compactor instance
-func newTraceCompactor(store TraceCompactionStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, cfg *config.Config) *TraceCompactionProcessor {
-	return &TraceCompactionProcessor{
-		store:           store,
-		storageProvider: storageProvider,
-		cmgr:            cmgr,
-		cfg:             cfg,
-	}
-}
-
 // validateTraceGroupConsistency ensures all messages in a group have consistent org, instance, and dateint
 func validateTraceGroupConsistency(group *accumulationGroup[messages.TraceCompactionKey]) error {
 	if len(group.Messages) == 0 {
