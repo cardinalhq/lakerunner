@@ -25,7 +25,8 @@ func (q *Store) InsertLogSegment(ctx context.Context, params InsertLogSegmentPar
 	return q.insertLogSegmentDirect(ctx, params)
 }
 
-// InsertLogSegmentBatchWithKafkaOffsets inserts multiple log segments and updates multiple Kafka offsets in a single transaction
+// InsertLogSegmentBatchWithKafkaOffsets inserts multiple log segments and updates multiple Kafka offsets in a single transaction.
+// Deadlocks are avoided by sorting Kafka offsets before processing.
 func (q *Store) InsertLogSegmentBatchWithKafkaOffsets(ctx context.Context, batch LogSegmentBatch) error {
 	return q.execTx(ctx, func(s *Store) error {
 		for _, params := range batch.Segments {

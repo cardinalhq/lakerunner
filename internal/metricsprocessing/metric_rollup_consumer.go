@@ -41,7 +41,7 @@ var rollupAccumulationTimes = map[int32]time.Duration{
 
 // MetricRollupConsumer handles metric rollup Kafka messages using accumulation-based approach
 type MetricRollupConsumer struct {
-	gatherer      *gatherer[*messages.MetricRollupMessage, messages.RollupKey]
+	gatherer      MessageGatherer[*messages.MetricRollupMessage, messages.RollupKey]
 	consumer      fly.Consumer
 	store         RollupStore
 	flushTicker   *time.Ticker
@@ -303,7 +303,7 @@ func (c *MetricRollupConsumer) periodicFlush(ctx context.Context) {
 			// Use a more aggressive flush time for rollups since they have tighter time windows
 			// We'll flush groups that are older than half their target accumulation time
 			flushAge := 1 * time.Minute // Default aggressive flush
-			if _, err := c.gatherer.flushStaleGroups(ctx, flushAge, 0); err != nil {
+			if _, err := c.gatherer.processIdleGroups(ctx, flushAge, 0); err != nil {
 				ll.Error("Failed to flush stale rollup groups", slog.Any("error", err))
 			}
 		}

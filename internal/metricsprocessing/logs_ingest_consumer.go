@@ -33,7 +33,7 @@ import (
 
 // LogIngestConsumer handles object store notification messages for log ingestion
 type LogIngestConsumer struct {
-	gatherer      *gatherer[*messages.ObjStoreNotificationMessage, messages.IngestKey]
+	gatherer      MessageGatherer[*messages.ObjStoreNotificationMessage, messages.IngestKey]
 	consumer      fly.Consumer
 	store         LogIngestStore
 	flushTicker   *time.Ticker
@@ -250,7 +250,7 @@ func (c *LogIngestConsumer) periodicFlush(ctx context.Context) {
 			return
 		case <-c.flushTicker.C:
 			ll.Debug("Running periodic flush of stale groups")
-			if _, err := c.gatherer.flushStaleGroups(ctx, 20*time.Second, 20*time.Second); err != nil {
+			if _, err := c.gatherer.processIdleGroups(ctx, 20*time.Second, 20*time.Second); err != nil {
 				ll.Error("Failed to flush stale groups", slog.Any("error", err))
 			}
 		}

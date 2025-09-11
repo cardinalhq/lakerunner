@@ -48,7 +48,8 @@ type CompactTraceSegsNew struct {
 }
 
 // CompactTraceSegsWithKafkaOffsets marks old trace segments as compacted, inserts new compacted segments,
-// and updates Kafka offsets in a single transaction
+// and updates Kafka offsets in a single transaction.
+// Deadlocks are avoided by sorting Kafka offsets before processing.
 func (q *Store) CompactTraceSegsWithKafkaOffsets(ctx context.Context, params CompactTraceSegsParams, kafkaOffsets []KafkaOffsetUpdate) error {
 	return q.execTx(ctx, func(s *Store) error {
 		if len(params.OldRecords) > 0 {

@@ -33,7 +33,7 @@ import (
 
 // LogCompactionConsumer handles log compaction Kafka messages using accumulation-based approach
 type LogCompactionConsumer struct {
-	gatherer      *gatherer[*messages.LogCompactionMessage, messages.LogCompactionKey]
+	gatherer      MessageGatherer[*messages.LogCompactionMessage, messages.LogCompactionKey]
 	consumer      fly.Consumer
 	store         LogCompactionStore
 	flushTicker   *time.Ticker
@@ -252,7 +252,7 @@ func (c *LogCompactionConsumer) periodicFlush(ctx context.Context) {
 			return
 		case <-c.flushTicker.C:
 			ll.Debug("Running periodic flush of stale groups")
-			if _, err := c.gatherer.flushStaleGroups(ctx, 1*time.Minute, 1*time.Minute); err != nil {
+			if _, err := c.gatherer.processIdleGroups(ctx, 1*time.Minute, 1*time.Minute); err != nil {
 				ll.Error("Failed to flush stale groups", slog.Any("error", err))
 			}
 		}

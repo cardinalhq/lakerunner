@@ -669,10 +669,10 @@ func isMetricKeyLessOrEqual(key1, key2 MetricKey) bool {
 func extractSortVersionFromFilename(filename string) int16 {
 	// Look for version patterns in filename like "_v2" or "_sort2"
 	if strings.Contains(filename, "_v2") || strings.Contains(filename, "_sort2") {
-		return lrdb.SortVersionNameTidTimestampV2
+		return lrdb.MetricSortVersionNameTidTimestampV2
 	}
 	if strings.Contains(filename, "_v1") || strings.Contains(filename, "_sort1") {
-		return lrdb.SortVersionNameTidTimestamp
+		return lrdb.MetricSortVersionNameTidTimestamp
 	}
 	// Default to current version for new files
 	return lrdb.CurrentMetricSortVersion

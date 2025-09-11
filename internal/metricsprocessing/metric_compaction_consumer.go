@@ -33,7 +33,7 @@ import (
 
 // MetricCompactionConsumer handles metric compaction Kafka messages using accumulation-based approach
 type MetricCompactionConsumer struct {
-	gatherer      *gatherer[*messages.MetricCompactionMessage, messages.CompactionKey]
+	gatherer      MessageGatherer[*messages.MetricCompactionMessage, messages.CompactionKey]
 	consumer      fly.Consumer
 	store         MetricCompactionStore
 	flushTicker   *time.Ticker
@@ -253,7 +253,7 @@ func (c *MetricCompactionConsumer) periodicFlush(ctx context.Context) {
 			return
 		case <-c.flushTicker.C:
 			ll.Debug("Running periodic flush of stale groups")
-			if _, err := c.gatherer.flushStaleGroups(ctx, 1*time.Minute, 0); err != nil {
+			if _, err := c.gatherer.processIdleGroups(ctx, 1*time.Minute, 0); err != nil {
 				ll.Error("Failed to flush stale groups", slog.Any("error", err))
 			}
 		}

@@ -33,7 +33,7 @@ import (
 
 // TraceIngestConsumer handles object store notification messages for trace ingestion
 type TraceIngestConsumer struct {
-	gatherer      *gatherer[*messages.ObjStoreNotificationMessage, messages.IngestKey]
+	gatherer      MessageGatherer[*messages.ObjStoreNotificationMessage, messages.IngestKey]
 	consumer      fly.Consumer
 	processor     *TraceIngestProcessor
 	store         TraceIngestStore
@@ -250,7 +250,7 @@ func (c *TraceIngestConsumer) periodicFlush(ctx context.Context) {
 			return
 		case <-c.flushTicker.C:
 			ll.Debug("Running periodic flush of stale groups")
-			if _, err := c.gatherer.flushStaleGroups(ctx, 20*time.Second, 20*time.Second); err != nil {
+			if _, err := c.gatherer.processIdleGroups(ctx, 20*time.Second, 20*time.Second); err != nil {
 				ll.Error("Failed to flush stale groups", slog.Any("error", err))
 			}
 		}

@@ -23,20 +23,20 @@ import (
 
 // Sort version constants for metric segments
 const (
-	// SortVersionUnknown indicates the file's sort order is unknown or unsorted (legacy files)
-	SortVersionUnknown = 0
-	// SortVersionNameTidTimestamp indicates the file is sorted by [metric_name, tid, timestamp] (old TID calculation)
-	SortVersionNameTidTimestamp = 1
-	// SortVersionNameTidTimestampV2 indicates the file is sorted by [metric_name, tid, timestamp] (new TID calculation)
-	SortVersionNameTidTimestampV2 = 2
+	// MetricSortVersionUnknown indicates the file's sort order is unknown or unsorted (legacy files)
+	MetricSortVersionUnknown = 0
+	// MetricSortVersionNameTidTimestamp indicates the file is sorted by [metric_name, tid, timestamp] (old TID calculation)
+	MetricSortVersionNameTidTimestamp = 1
+	// MetricSortVersionNameTidTimestampV2 indicates the file is sorted by [metric_name, tid, timestamp] (new TID calculation)
+	MetricSortVersionNameTidTimestampV2 = 2
 	// due to a bug, we will move everyone to 3, same key though...
-	SortVersionNameTidTimestampV3 = 3
+	MetricSortVersionNameTidTimestampV3 = 3
 )
 
 // Current metric sort configuration - single source of truth for all metric sorting
 const (
 	// CurrentMetricSortVersion is the sort version used for all newly created metric segments
-	CurrentMetricSortVersion = SortVersionNameTidTimestampV3
+	CurrentMetricSortVersion = MetricSortVersionNameTidTimestampV3
 )
 
 func (q *Store) InsertMetricSegment(ctx context.Context, params InsertMetricSegmentParams) error {
@@ -175,7 +175,8 @@ func (q *Store) InsertMetricSegmentBatchWithKafkaOffsets(ctx context.Context, ba
 }
 
 // CompactMetricSegsWithKafkaOffsets marks old segments as compacted, inserts new compacted segments,
-// and updates Kafka offsets in a single transaction
+// and updates Kafka offsets in a single transaction.
+// Deadlocks are avoided by sorting Kafka offsets before processing.
 func (q *Store) CompactMetricSegsWithKafkaOffsets(ctx context.Context, params CompactMetricSegsParams, kafkaOffsets []KafkaOffsetUpdate) error {
 	return q.execTx(ctx, func(s *Store) error {
 		// Mark old segments as compacted if any

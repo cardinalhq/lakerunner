@@ -33,7 +33,7 @@ import (
 
 // TraceCompactionConsumer handles trace compaction Kafka messages using accumulation-based approach
 type TraceCompactionConsumer struct {
-	gatherer      *gatherer[*messages.TraceCompactionMessage, messages.TraceCompactionKey]
+	gatherer      MessageGatherer[*messages.TraceCompactionMessage, messages.TraceCompactionKey]
 	consumer      fly.Consumer
 	store         TraceCompactionStore
 	flushTicker   *time.Ticker
@@ -251,7 +251,7 @@ func (c *TraceCompactionConsumer) periodicFlush(ctx context.Context) {
 			return
 		case <-c.flushTicker.C:
 			ll.Debug("Running periodic flush of stale groups")
-			if _, err := c.gatherer.flushStaleGroups(ctx, 1*time.Minute, 1*time.Minute); err != nil {
+			if _, err := c.gatherer.processIdleGroups(ctx, 1*time.Minute, 1*time.Minute); err != nil {
 				ll.Error("Failed to flush stale groups", slog.Any("error", err))
 			}
 		}
