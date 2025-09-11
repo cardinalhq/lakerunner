@@ -44,3 +44,12 @@ type CompactionKeyInterface interface {
 	comparable
 	CompactionKeyProvider
 }
+
+// Ensure our keys implement the CompactionKeyProvider interface
+var (
+	_ CompactionKeyProvider = CompactionKey{}
+	_ CompactionKeyProvider = LogCompactionKey{}
+	_ CompactionKeyProvider = TraceCompactionKey{}
+	_ CompactionKeyProvider = IngestKey{}
+	_ CompactionKeyProvider = RollupKey{}
+)
