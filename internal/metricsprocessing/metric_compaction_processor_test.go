@@ -663,15 +663,13 @@ func TestPerformCompactionSeglog990(t *testing.T) {
 				UpperType: pgtype.Exclusive,
 				Valid:     true,
 			},
-			RecordCount:   0, // Will be determined during processing
-			FileSize:      0, // Will be determined during processing
-			IngestDateint: int32(metadata.Dateint),
-			Published:     true,
-			Rolledup:      false,
-			CreatedAt:     time.Now(),
-			CreatedBy:     lrdb.CreatedByIngest, // These are ingested segments
-			SlotID:        1,
-			Fingerprints:  []int64{},
+			RecordCount:  0, // Will be determined during processing
+			FileSize:     0, // Will be determined during processing
+			Published:    true,
+			Rolledup:     false,
+			CreatedAt:    time.Now(),
+			CreatedBy:    lrdb.CreatedByIngest, // These are ingested segments
+			Fingerprints: []int64{},
 		}
 	}
 

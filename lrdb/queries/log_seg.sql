@@ -2,10 +2,8 @@
 INSERT INTO log_seg (
   organization_id,
   dateint,
-  ingest_dateint,
   segment_id,
   instance_num,
-  slot_id,
   ts_range,
   record_count,
   file_size,
@@ -17,10 +15,8 @@ INSERT INTO log_seg (
 VALUES (
   @organization_id,
   @dateint,
-  @ingest_dateint,
   @segment_id,
   @instance_num,
-  @slot_id,
   int8range(@start_ts, @end_ts, '[)'),
   @record_count,
   @file_size,
@@ -36,8 +32,7 @@ FROM log_seg
 WHERE organization_id = @organization_id
   AND dateint = @dateint
   AND segment_id = @segment_id
-  AND instance_num = @instance_num
-  AND slot_id = @slot_id;
+  AND instance_num = @instance_num;
 
 -- name: CompactLogSegments :exec
 WITH
@@ -66,10 +61,8 @@ WITH
 INSERT INTO log_seg (
   organization_id,
   dateint,
-  ingest_dateint,
   segment_id,
   instance_num,
-  slot_id,
   record_count,
   file_size,
   ts_range,
@@ -81,10 +74,8 @@ INSERT INTO log_seg (
 SELECT
   @organization_id,
   @dateint,
-  @ingest_dateint,
   @new_segment_id,
   @instance_num,
-  @slot_id,
   @new_record_count,
   @new_file_size,
   int8range(@new_start_ts, @new_end_ts, '[)'),
@@ -98,10 +89,8 @@ FROM fingerprint_array AS fa;
 INSERT INTO log_seg (
   organization_id,
   dateint,
-  ingest_dateint,
   segment_id,
   instance_num,
-  slot_id,
   ts_range,
   record_count,
   file_size,
@@ -113,10 +102,8 @@ INSERT INTO log_seg (
 VALUES (
   @organization_id,
   @dateint,
-  @ingest_dateint,
   @segment_id,
   @instance_num,
-  @slot_id,
   int8range(@start_ts, @end_ts, '[)'),
   @record_count,
   @file_size,

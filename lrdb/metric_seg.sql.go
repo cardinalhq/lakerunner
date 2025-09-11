@@ -12,15 +12,13 @@ import (
 )
 
 const getMetricSeg = `-- name: GetMetricSeg :one
-SELECT organization_id, dateint, frequency_ms, segment_id, instance_num, ts_range, record_count, file_size, ingest_dateint, published, rolledup, created_at, created_by, slot_id, fingerprints, sort_version, slot_count, compacted
+SELECT organization_id, dateint, frequency_ms, segment_id, instance_num, ts_range, record_count, file_size, ingest_dateint, published, rolledup, created_at, created_by, fingerprints, sort_version, compacted
 FROM metric_seg
 WHERE organization_id = $1
   AND dateint = $2
   AND frequency_ms = $3
   AND segment_id = $4
   AND instance_num = $5
-  AND slot_id = $6
-  AND slot_count = $7
 `
 
 type GetMetricSegParams struct {
@@ -29,8 +27,6 @@ type GetMetricSegParams struct {
 	FrequencyMs    int32     `json:"frequency_ms"`
 	SegmentID      int64     `json:"segment_id"`
 	InstanceNum    int16     `json:"instance_num"`
-	SlotID         int32     `json:"slot_id"`
-	SlotCount      int32     `json:"slot_count"`
 }
 
 func (q *Queries) GetMetricSeg(ctx context.Context, arg GetMetricSegParams) (MetricSeg, error) {
@@ -40,8 +36,6 @@ func (q *Queries) GetMetricSeg(ctx context.Context, arg GetMetricSegParams) (Met
 		arg.FrequencyMs,
 		arg.SegmentID,
 		arg.InstanceNum,
-		arg.SlotID,
-		arg.SlotCount,
 	)
 	var i MetricSeg
 	err := row.Scan(
@@ -58,17 +52,15 @@ func (q *Queries) GetMetricSeg(ctx context.Context, arg GetMetricSegParams) (Met
 		&i.Rolledup,
 		&i.CreatedAt,
 		&i.CreatedBy,
-		&i.SlotID,
 		&i.Fingerprints,
 		&i.SortVersion,
-		&i.SlotCount,
 		&i.Compacted,
 	)
 	return i, err
 }
 
 const getMetricSegsByIds = `-- name: GetMetricSegsByIds :many
-SELECT organization_id, dateint, frequency_ms, segment_id, instance_num, ts_range, record_count, file_size, ingest_dateint, published, rolledup, created_at, created_by, slot_id, fingerprints, sort_version, slot_count, compacted
+SELECT organization_id, dateint, frequency_ms, segment_id, instance_num, ts_range, record_count, file_size, ingest_dateint, published, rolledup, created_at, created_by, fingerprints, sort_version, compacted
 FROM metric_seg
 WHERE organization_id = $1
   AND dateint = $2
@@ -115,10 +107,8 @@ func (q *Queries) GetMetricSegsByIds(ctx context.Context, arg GetMetricSegsByIds
 			&i.Rolledup,
 			&i.CreatedAt,
 			&i.CreatedBy,
-			&i.SlotID,
 			&i.Fingerprints,
 			&i.SortVersion,
-			&i.SlotCount,
 			&i.Compacted,
 		); err != nil {
 			return nil, err
@@ -259,11 +249,9 @@ const insertMetricSegDirect = `-- name: insertMetricSegDirect :exec
 INSERT INTO metric_seg (
   organization_id,
   dateint,
-  ingest_dateint,
   frequency_ms,
   segment_id,
   instance_num,
-  slot_id,
   ts_range,
   record_count,
   file_size,
@@ -272,7 +260,6 @@ INSERT INTO metric_seg (
   rolledup,
   fingerprints,
   sort_version,
-  slot_count,
   compacted
 )
 VALUES (
@@ -281,29 +268,24 @@ VALUES (
   $3,
   $4,
   $5,
-  $6,
-  $7,
-  int8range($8, $9, '[)'),
+  int8range($6, $7, '[)'),
+  $8,
+  $9,
   $10,
   $11,
   $12,
-  $13,
+  $13::bigint[],
   $14,
-  $15::bigint[],
-  $16,
-  $17,
-  $18
+  $15
 )
 `
 
 type InsertMetricSegmentParams struct {
 	OrganizationID uuid.UUID `json:"organization_id"`
 	Dateint        int32     `json:"dateint"`
-	IngestDateint  int32     `json:"ingest_dateint"`
 	FrequencyMs    int32     `json:"frequency_ms"`
 	SegmentID      int64     `json:"segment_id"`
 	InstanceNum    int16     `json:"instance_num"`
-	SlotID         int32     `json:"slot_id"`
 	StartTs        int64     `json:"start_ts"`
 	EndTs          int64     `json:"end_ts"`
 	RecordCount    int64     `json:"record_count"`
@@ -313,7 +295,6 @@ type InsertMetricSegmentParams struct {
 	Rolledup       bool      `json:"rolledup"`
 	Fingerprints   []int64   `json:"fingerprints"`
 	SortVersion    int16     `json:"sort_version"`
-	SlotCount      int32     `json:"slot_count"`
 	Compacted      bool      `json:"compacted"`
 }
 
@@ -321,11 +302,9 @@ func (q *Queries) insertMetricSegDirect(ctx context.Context, arg InsertMetricSeg
 	_, err := q.db.Exec(ctx, insertMetricSegDirect,
 		arg.OrganizationID,
 		arg.Dateint,
-		arg.IngestDateint,
 		arg.FrequencyMs,
 		arg.SegmentID,
 		arg.InstanceNum,
-		arg.SlotID,
 		arg.StartTs,
 		arg.EndTs,
 		arg.RecordCount,
@@ -335,7 +314,6 @@ func (q *Queries) insertMetricSegDirect(ctx context.Context, arg InsertMetricSeg
 		arg.Rolledup,
 		arg.Fingerprints,
 		arg.SortVersion,
-		arg.SlotCount,
 		arg.Compacted,
 	)
 	return err

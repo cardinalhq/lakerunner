@@ -44,11 +44,9 @@ func TestCompactMetricSegs_BasicReplacement(t *testing.T) {
 		err := db.InsertMetricSegment(ctx, lrdb.InsertMetricSegmentParams{
 			OrganizationID: orgID,
 			Dateint:        20250830,
-			IngestDateint:  20250830,
 			FrequencyMs:    5000,
 			SegmentID:      segmentID,
 			InstanceNum:    1,
-			SlotID:         0,
 			StartTs:        now.Add(time.Duration(i) * time.Minute).UnixMilli(),
 			EndTs:          now.Add(time.Duration(i+1) * time.Minute).UnixMilli(),
 			RecordCount:    1000,
@@ -56,7 +54,6 @@ func TestCompactMetricSegs_BasicReplacement(t *testing.T) {
 			CreatedBy:      lrdb.CreatedByIngest,
 			Fingerprints:   []int64{100 + int64(i), 200 + int64(i)},
 			SortVersion:    lrdb.CurrentMetricSortVersion,
-			SlotCount:      1,
 			Compacted:      false,
 		})
 		require.NoError(t, err)
@@ -68,13 +65,10 @@ func TestCompactMetricSegs_BasicReplacement(t *testing.T) {
 		OrganizationID: orgID,
 		Dateint:        20250830,
 		InstanceNum:    1,
-		SlotID:         0,
-		SlotCount:      1,
-		IngestDateint:  20250830,
 		FrequencyMs:    5000,
 		OldRecords: []lrdb.CompactMetricSegsOld{
-			{SegmentID: oldSegmentIDs[0], SlotID: 0},
-			{SegmentID: oldSegmentIDs[1], SlotID: 0},
+			{SegmentID: oldSegmentIDs[0]},
+			{SegmentID: oldSegmentIDs[1]},
 		},
 		NewRecords: []lrdb.CompactMetricSegsNew{
 			{
@@ -145,9 +139,6 @@ func TestCompactMetricSegs_InitialInsert(t *testing.T) {
 		OrganizationID: orgID,
 		Dateint:        20250830,
 		InstanceNum:    1,
-		SlotID:         0,
-		SlotCount:      1,
-		IngestDateint:  20250830,
 		FrequencyMs:    5000,
 		OldRecords:     []lrdb.CompactMetricSegsOld{}, // Empty - no segments to replace
 		NewRecords: []lrdb.CompactMetricSegsNew{
@@ -197,11 +188,9 @@ func TestCompactMetricSegs_DeletionOnly(t *testing.T) {
 		err := db.InsertMetricSegment(ctx, lrdb.InsertMetricSegmentParams{
 			OrganizationID: orgID,
 			Dateint:        20250830,
-			IngestDateint:  20250830,
 			FrequencyMs:    5000,
 			SegmentID:      segmentID,
 			InstanceNum:    1,
-			SlotID:         0,
 			StartTs:        now.UnixMilli(),
 			EndTs:          now.Add(time.Hour).UnixMilli(),
 			RecordCount:    1000,
@@ -209,7 +198,6 @@ func TestCompactMetricSegs_DeletionOnly(t *testing.T) {
 			CreatedBy:      lrdb.CreatedByIngest,
 			Fingerprints:   []int64{},
 			SortVersion:    lrdb.CurrentMetricSortVersion,
-			SlotCount:      1,
 			Compacted:      false,
 		})
 		require.NoError(t, err)
@@ -220,13 +208,10 @@ func TestCompactMetricSegs_DeletionOnly(t *testing.T) {
 		OrganizationID: orgID,
 		Dateint:        20250830,
 		InstanceNum:    1,
-		SlotID:         0,
-		SlotCount:      1,
-		IngestDateint:  20250830,
 		FrequencyMs:    5000,
 		OldRecords: []lrdb.CompactMetricSegsOld{
-			{SegmentID: segmentIDs[0], SlotID: 0},
-			{SegmentID: segmentIDs[1], SlotID: 0},
+			{SegmentID: segmentIDs[0]},
+			{SegmentID: segmentIDs[1]},
 		},
 		NewRecords: []lrdb.CompactMetricSegsNew{}, // Empty - no new segments
 		CreatedBy:  lrdb.CreatedByIngest,
@@ -265,11 +250,9 @@ func TestCompactMetricSegs_MultipleNewSegments(t *testing.T) {
 		err := db.InsertMetricSegment(ctx, lrdb.InsertMetricSegmentParams{
 			OrganizationID: orgID,
 			Dateint:        20250830,
-			IngestDateint:  20250830,
 			FrequencyMs:    5000,
 			SegmentID:      segmentID,
 			InstanceNum:    1,
-			SlotID:         0,
 			StartTs:        now.Add(time.Duration(i) * time.Hour).UnixMilli(),
 			EndTs:          now.Add(time.Duration(i+1) * time.Hour).UnixMilli(),
 			RecordCount:    10000,
@@ -277,7 +260,6 @@ func TestCompactMetricSegs_MultipleNewSegments(t *testing.T) {
 			CreatedBy:      lrdb.CreatedByIngest,
 			Fingerprints:   []int64{int64(i * 100), int64(i*100 + 1)},
 			SortVersion:    lrdb.CurrentMetricSortVersion,
-			SlotCount:      1,
 			Compacted:      false,
 		})
 		require.NoError(t, err)
@@ -289,14 +271,11 @@ func TestCompactMetricSegs_MultipleNewSegments(t *testing.T) {
 		OrganizationID: orgID,
 		Dateint:        20250830,
 		InstanceNum:    1,
-		SlotID:         0,
-		SlotCount:      1,
-		IngestDateint:  20250830,
 		FrequencyMs:    5000,
 		OldRecords: []lrdb.CompactMetricSegsOld{
-			{SegmentID: oldSegmentIDs[0], SlotID: 0},
-			{SegmentID: oldSegmentIDs[1], SlotID: 0},
-			{SegmentID: oldSegmentIDs[2], SlotID: 0},
+			{SegmentID: oldSegmentIDs[0]},
+			{SegmentID: oldSegmentIDs[1]},
+			{SegmentID: oldSegmentIDs[2]},
 		},
 		NewRecords: []lrdb.CompactMetricSegsNew{
 			{
@@ -372,11 +351,9 @@ func TestCompactMetricSegs_IdempotentOperation(t *testing.T) {
 		err := db.InsertMetricSegment(ctx, lrdb.InsertMetricSegmentParams{
 			OrganizationID: orgID,
 			Dateint:        20250830,
-			IngestDateint:  20250830,
 			FrequencyMs:    5000,
 			SegmentID:      segmentID,
 			InstanceNum:    1,
-			SlotID:         0,
 			StartTs:        now.Add(time.Duration(i) * time.Minute).UnixMilli(),
 			EndTs:          now.Add(time.Duration(i+1) * time.Minute).UnixMilli(),
 			RecordCount:    1000,
@@ -384,7 +361,6 @@ func TestCompactMetricSegs_IdempotentOperation(t *testing.T) {
 			CreatedBy:      lrdb.CreatedByIngest,
 			Fingerprints:   []int64{},
 			SortVersion:    lrdb.CurrentMetricSortVersion,
-			SlotCount:      1,
 			Compacted:      false,
 		})
 		require.NoError(t, err)
@@ -395,13 +371,10 @@ func TestCompactMetricSegs_IdempotentOperation(t *testing.T) {
 		OrganizationID: orgID,
 		Dateint:        20250830,
 		InstanceNum:    1,
-		SlotID:         0,
-		SlotCount:      1,
-		IngestDateint:  20250830,
 		FrequencyMs:    5000,
 		OldRecords: []lrdb.CompactMetricSegsOld{
-			{SegmentID: oldSegmentIDs[0], SlotID: 0},
-			{SegmentID: oldSegmentIDs[1], SlotID: 0},
+			{SegmentID: oldSegmentIDs[0]},
+			{SegmentID: oldSegmentIDs[1]},
 		},
 		NewRecords: []lrdb.CompactMetricSegsNew{
 			{
@@ -479,11 +452,9 @@ func TestCompactMetricSegs_CrossFrequencyIsolation(t *testing.T) {
 	err := db.InsertMetricSegment(ctx, lrdb.InsertMetricSegmentParams{
 		OrganizationID: orgID,
 		Dateint:        20250830,
-		IngestDateint:  20250830,
 		FrequencyMs:    5000, // 5 second frequency
 		SegmentID:      seg5000,
 		InstanceNum:    1,
-		SlotID:         0,
 		StartTs:        now.UnixMilli(),
 		EndTs:          now.Add(time.Minute).UnixMilli(),
 		RecordCount:    1000,
@@ -492,7 +463,6 @@ func TestCompactMetricSegs_CrossFrequencyIsolation(t *testing.T) {
 		Published:      true,
 		Fingerprints:   []int64{},
 		SortVersion:    lrdb.CurrentMetricSortVersion,
-		SlotCount:      1,
 		Compacted:      false,
 	})
 	require.NoError(t, err)
@@ -500,11 +470,9 @@ func TestCompactMetricSegs_CrossFrequencyIsolation(t *testing.T) {
 	err = db.InsertMetricSegment(ctx, lrdb.InsertMetricSegmentParams{
 		OrganizationID: orgID,
 		Dateint:        20250830,
-		IngestDateint:  20250830,
 		FrequencyMs:    10000, // 10 second frequency
 		SegmentID:      seg10000,
 		InstanceNum:    1,
-		SlotID:         0,
 		StartTs:        now.UnixMilli(),
 		EndTs:          now.Add(time.Minute).UnixMilli(),
 		RecordCount:    2000,
@@ -513,7 +481,6 @@ func TestCompactMetricSegs_CrossFrequencyIsolation(t *testing.T) {
 		Published:      true,
 		Fingerprints:   []int64{},
 		SortVersion:    lrdb.CurrentMetricSortVersion,
-		SlotCount:      1,
 		Compacted:      false,
 	})
 	require.NoError(t, err)
@@ -524,12 +491,9 @@ func TestCompactMetricSegs_CrossFrequencyIsolation(t *testing.T) {
 		OrganizationID: orgID,
 		Dateint:        20250830,
 		InstanceNum:    1,
-		SlotID:         0,
-		SlotCount:      1,
-		IngestDateint:  20250830,
 		FrequencyMs:    5000, // Only affects 5000ms segments
 		OldRecords: []lrdb.CompactMetricSegsOld{
-			{SegmentID: seg5000, SlotID: 0},
+			{SegmentID: seg5000},
 		},
 		NewRecords: []lrdb.CompactMetricSegsNew{
 			{

@@ -281,7 +281,6 @@ func (p *LogIngestProcessor) Process(ctx context.Context, group *accumulationGro
 				DateInt:        segParams.Dateint,
 				SegmentID:      segParams.SegmentID,
 				InstanceNum:    segParams.InstanceNum,
-				SlotID:         segParams.SlotID,
 				Records:        segParams.RecordCount,
 				FileSize:       segParams.FileSize,
 				StartTs:        segParams.StartTs,
@@ -564,14 +563,11 @@ func (p *LogIngestProcessor) uploadAndCreateLogSegments(ctx context.Context, sto
 			slog.Int64("fileSize", bin.Result.FileSize))
 
 		// Create segment parameters for database insertion using extracted stats
-		slotID := int32(0) // Use slot 0 for logs
 		params := lrdb.InsertLogSegmentParams{
 			OrganizationID: storageProfile.OrganizationID,
 			Dateint:        dateint,
-			IngestDateint:  nowDateInt,
 			SegmentID:      segmentID,
 			InstanceNum:    storageProfile.InstanceNum,
-			SlotID:         slotID,
 			StartTs:        stats.FirstTS,
 			EndTs:          stats.LastTS + 1, // end is exclusive
 			RecordCount:    bin.Result.RecordCount,

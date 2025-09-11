@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
+	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
@@ -169,19 +170,22 @@ type TraceDateintBinManager struct {
 
 // TraceIngestProcessor implements the Processor interface for raw trace ingestion
 type TraceIngestProcessor struct {
-	store           TraceIngestStore
-	storageProvider storageprofile.StorageProfileProvider
-	cmgr            cloudstorage.ClientProvider
-	kafkaProducer   fly.Producer
+	store             TraceIngestStore
+	storageProvider   storageprofile.StorageProfileProvider
+	cmgr              cloudstorage.ClientProvider
+	kafkaProducer     fly.Producer
+	exemplarProcessor *exemplar.Processor
 }
 
 // newTraceIngestProcessor creates a new trace ingest processor instance
 func newTraceIngestProcessor(store TraceIngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *TraceIngestProcessor {
+	exemplarProcessor := exemplar.NewProcessor(exemplar.DefaultConfig())
 	return &TraceIngestProcessor{
-		store:           store,
-		storageProvider: storageProvider,
-		cmgr:            cmgr,
-		kafkaProducer:   kafkaProducer,
+		store:             store,
+		storageProvider:   storageProvider,
+		cmgr:              cmgr,
+		kafkaProducer:     kafkaProducer,
+		exemplarProcessor: exemplarProcessor,
 	}
 }
 
@@ -393,7 +397,6 @@ func (p *TraceIngestProcessor) Process(ctx context.Context, group *accumulationG
 				DateInt:        segParams.Dateint,
 				SegmentID:      segParams.SegmentID,
 				InstanceNum:    segParams.InstanceNum,
-				SlotID:         segParams.SlotID,
 				Records:        segParams.RecordCount,
 				FileSize:       segParams.FileSize,
 				StartTs:        segParams.StartTs,
@@ -408,7 +411,7 @@ func (p *TraceIngestProcessor) Process(ctx context.Context, group *accumulationG
 			}
 
 			compactionMessage := fly.Message{
-				Key:   fmt.Appendf(nil, "%s-%d-%d-%d", segParams.OrganizationID.String(), segParams.InstanceNum, segParams.SlotID, segParams.StartTs/300000),
+				Key:   fmt.Appendf(nil, "%s-%d-%d", segParams.OrganizationID.String(), segParams.InstanceNum, segParams.StartTs/300000),
 				Value: compactionMsgBytes,
 			}
 
@@ -467,8 +470,9 @@ func (p *TraceIngestProcessor) createTraceReaderStack(tmpFilename, orgID, bucket
 
 func (p *TraceIngestProcessor) createTraceReader(filename string) (filereader.Reader, error) {
 	options := filereader.ReaderOptions{
-		SignalType: filereader.SignalTypeTraces,
-		BatchSize:  1000,
+		SignalType:        filereader.SignalTypeTraces,
+		BatchSize:         1000,
+		ExemplarProcessor: p.exemplarProcessor,
 	}
 	return filereader.ReaderForFileWithOptions(filename, options)
 }
@@ -573,10 +577,10 @@ func (p *TraceIngestProcessor) processRowsWithDateintBinning(ctx context.Context
 		slog.Int("slotBinsCreated", len(binManager.bins)))
 
 	// Close all writers and collect results
-	for binSlotID, bin := range binManager.bins {
+	for slot, bin := range binManager.bins {
 		results, err := bin.Writer.Close(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("failed to close writer for slot %d: %w", binSlotID, err)
+			return nil, fmt.Errorf("failed to close writer for slot %d: %w", slot, err)
 		}
 
 		if len(results) > 0 {
@@ -597,7 +601,7 @@ func (manager *TraceDateintBinManager) getOrCreateBin(dateint int32) (*TraceDate
 	}
 
 	// Create new writer for this dateint bin
-	writer, err := factories.NewTracesWriter(manager.tmpDir, 0, manager.rpfEstimate) // Use slot 0 for traces
+	writer, err := factories.NewTracesWriter(manager.tmpDir, manager.rpfEstimate)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create writer for dateint bin: %w", err)
 	}
@@ -677,13 +681,11 @@ func (p *TraceIngestProcessor) uploadAndCreateTraceSegments(ctx context.Context,
 			slog.Int64("segmentID", segmentID),
 			slog.Int64("recordCount", validBin.result.RecordCount))
 
-		// Create segment parameters with slot_id = 0
+		// Create segment parameters
 		segmentParam := lrdb.InsertTraceSegmentParams{
 			OrganizationID: storageProfile.OrganizationID,
 			SegmentID:      segmentID,
 			Dateint:        validBin.dateint,
-			IngestDateint:  nowDateInt,
-			SlotID:         0, // Always 0 for traces
 			InstanceNum:    storageProfile.InstanceNum,
 			StartTs:        validBin.stats.FirstTS,
 			EndTs:          validBin.stats.LastTS + 1, // end is exclusive

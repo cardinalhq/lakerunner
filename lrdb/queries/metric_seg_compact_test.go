@@ -41,11 +41,9 @@ func TestMarkMetricSegsCompactedByKeys_SingleSegment(t *testing.T) {
 	err := db.InsertMetricSegment(ctx, lrdb.InsertMetricSegmentParams{
 		OrganizationID: orgID,
 		Dateint:        20250830,
-		IngestDateint:  20250830,
 		FrequencyMs:    5000,
 		SegmentID:      segmentID,
 		InstanceNum:    1,
-		SlotID:         0,
 		StartTs:        now.UnixMilli(),
 		EndTs:          now.Add(time.Hour).UnixMilli(),
 		RecordCount:    1000,
@@ -54,7 +52,6 @@ func TestMarkMetricSegsCompactedByKeys_SingleSegment(t *testing.T) {
 		Published:      true,
 		Fingerprints:   []int64{123, 456},
 		SortVersion:    lrdb.CurrentMetricSortVersion,
-		SlotCount:      1,
 		Compacted:      false,
 	})
 	require.NoError(t, err)
@@ -99,11 +96,9 @@ func TestMarkMetricSegsCompactedByKeys_MultipleSegments(t *testing.T) {
 		err := db.InsertMetricSegment(ctx, lrdb.InsertMetricSegmentParams{
 			OrganizationID: orgID,
 			Dateint:        20250830,
-			IngestDateint:  20250830,
 			FrequencyMs:    5000,
 			SegmentID:      segmentID,
 			InstanceNum:    1,
-			SlotID:         0,
 			StartTs:        now.UnixMilli(),
 			EndTs:          now.Add(time.Hour).UnixMilli(),
 			RecordCount:    1000,
@@ -112,7 +107,6 @@ func TestMarkMetricSegsCompactedByKeys_MultipleSegments(t *testing.T) {
 			Published:      true,
 			Fingerprints:   []int64{123, 456},
 			SortVersion:    lrdb.CurrentMetricSortVersion,
-			SlotCount:      1,
 			Compacted:      false,
 		})
 		require.NoError(t, err)
@@ -169,11 +163,9 @@ func TestMarkMetricSegsCompactedByKeys_OnlyMatchingKeys(t *testing.T) {
 	err := db.InsertMetricSegment(ctx, lrdb.InsertMetricSegmentParams{
 		OrganizationID: orgID,
 		Dateint:        20250830,
-		IngestDateint:  20250830,
 		FrequencyMs:    5000,
 		SegmentID:      segmentID1,
 		InstanceNum:    1,
-		SlotID:         0,
 		StartTs:        now.UnixMilli(),
 		EndTs:          now.Add(time.Hour).UnixMilli(),
 		RecordCount:    1000,
@@ -182,7 +174,6 @@ func TestMarkMetricSegsCompactedByKeys_OnlyMatchingKeys(t *testing.T) {
 		Published:      true,
 		Fingerprints:   []int64{123, 456},
 		SortVersion:    lrdb.CurrentMetricSortVersion,
-		SlotCount:      1,
 		Compacted:      false,
 	})
 	require.NoError(t, err)
@@ -190,11 +181,9 @@ func TestMarkMetricSegsCompactedByKeys_OnlyMatchingKeys(t *testing.T) {
 	err = db.InsertMetricSegment(ctx, lrdb.InsertMetricSegmentParams{
 		OrganizationID: orgID,
 		Dateint:        20250830,
-		IngestDateint:  20250830,
 		FrequencyMs:    10000, // Different frequency
 		SegmentID:      segmentID2,
 		InstanceNum:    1,
-		SlotID:         0,
 		StartTs:        now.UnixMilli(),
 		EndTs:          now.Add(time.Hour).UnixMilli(),
 		RecordCount:    1000,
@@ -203,7 +192,6 @@ func TestMarkMetricSegsCompactedByKeys_OnlyMatchingKeys(t *testing.T) {
 		Published:      true,
 		Fingerprints:   []int64{789, 101},
 		SortVersion:    lrdb.CurrentMetricSortVersion,
-		SlotCount:      1,
 		Compacted:      false,
 	})
 	require.NoError(t, err)
@@ -256,11 +244,9 @@ func TestMarkMetricSegsCompactedByKeys_AlreadyCompacted(t *testing.T) {
 	err := db.InsertMetricSegment(ctx, lrdb.InsertMetricSegmentParams{
 		OrganizationID: orgID,
 		Dateint:        20250830,
-		IngestDateint:  20250830,
 		FrequencyMs:    5000,
 		SegmentID:      segmentID,
 		InstanceNum:    1,
-		SlotID:         0,
 		StartTs:        now.UnixMilli(),
 		EndTs:          now.Add(time.Hour).UnixMilli(),
 		RecordCount:    1000,
@@ -269,7 +255,6 @@ func TestMarkMetricSegsCompactedByKeys_AlreadyCompacted(t *testing.T) {
 		Published:      false, // Already unpublished
 		Fingerprints:   []int64{123, 456},
 		SortVersion:    lrdb.CurrentMetricSortVersion,
-		SlotCount:      1,
 		Compacted:      true, // Already compacted
 	})
 	require.NoError(t, err)

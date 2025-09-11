@@ -37,3 +37,14 @@ func NewCookedLogParquetReader(r io.ReaderAt, size int64, batchSize int) (Reader
 	}
 	return NewCookedLogTranslatingReader(raw), nil
 }
+
+// NewCookedTraceParquetReader creates a reader for cooked trace parquet files.
+// It wraps a ParquetRawReader with CookedTraceTranslatingReader to apply
+// trace-specific filtering and transformations.
+func NewCookedTraceParquetReader(r io.ReaderAt, size int64, batchSize int) (Reader, error) {
+	raw, err := NewParquetRawReader(r, size, batchSize)
+	if err != nil {
+		return nil, err
+	}
+	return NewCookedTraceTranslatingReader(raw), nil
+}

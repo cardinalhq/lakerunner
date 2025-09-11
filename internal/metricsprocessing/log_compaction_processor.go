@@ -198,7 +198,6 @@ func (c *LogCompactionProcessor) performLogCompaction(ctx context.Context, tmpDi
 			Dateint:        msg.DateInt,
 			SegmentID:      msg.SegmentID,
 			InstanceNum:    msg.InstanceNum,
-			SlotID:         msg.SlotID,
 		})
 		if err != nil {
 			ll.Warn("Failed to fetch segment, skipping",
@@ -329,15 +328,11 @@ func (c *LogCompactionProcessor) uploadAndCreateLogSegments(ctx context.Context,
 			return nil, fmt.Errorf("upload file %s: %w", result.FileName, err)
 		}
 
-		nowDateInt := helpers.CurrentDateInt()
-
 		segment := lrdb.LogSeg{
 			OrganizationID: key.OrganizationID,
 			Dateint:        key.DateInt,
-			IngestDateint:  nowDateInt,
 			SegmentID:      segmentID,
 			InstanceNum:    key.InstanceNum,
-			SlotID:         0, // not used for compacted log files
 			TsRange: pgtype.Range[pgtype.Int8]{
 				LowerType: pgtype.Inclusive,
 				UpperType: pgtype.Exclusive,
@@ -444,7 +439,6 @@ func (c *LogCompactionProcessor) atomicLogDatabaseUpdate(ctx context.Context, ol
 	params := lrdb.CompactLogSegsParams{
 		OrganizationID: key.OrganizationID,
 		Dateint:        key.DateInt,
-		IngestDateint:  newSegments[0].IngestDateint, // Use first new segment's ingest date
 		InstanceNum:    key.InstanceNum,
 		OldRecords:     oldRecords,
 		NewRecords:     newRecords,

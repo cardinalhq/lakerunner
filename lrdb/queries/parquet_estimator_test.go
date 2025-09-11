@@ -85,11 +85,9 @@ func TestMetricSegEstimator(t *testing.T) {
 			err := db.InsertMetricSegment(ctx, lrdb.InsertMetricSegmentParams{
 				OrganizationID: testOrgID,
 				Dateint:        dateint,
-				IngestDateint:  dateint,
 				FrequencyMs:    10000,           // 10s frequency
 				SegmentID:      int64(1000 + i), // unique segment ID
 				InstanceNum:    1,
-				SlotID:         0,
 				StartTs:        now.Add(-30 * time.Minute).UnixMilli(),
 				EndTs:          now.Add(-29 * time.Minute).UnixMilli(),
 				RecordCount:    tc.recordCount,
@@ -98,7 +96,6 @@ func TestMetricSegEstimator(t *testing.T) {
 				Published:      true,
 				Fingerprints:   []int64{123, 456},
 				SortVersion:    lrdb.CurrentMetricSortVersion,
-				SlotCount:      1,
 				Compacted:      false,
 			})
 			require.NoError(t, err)
@@ -181,11 +178,9 @@ func TestMetricSegEstimatorMultipleFiles(t *testing.T) {
 		err := db.InsertMetricSegment(ctx, lrdb.InsertMetricSegmentParams{
 			OrganizationID: orgID,
 			Dateint:        dateint,
-			IngestDateint:  dateint,
 			FrequencyMs:    10000,
 			SegmentID:      int64(2000 + i), // unique segment ID
 			InstanceNum:    1,
-			SlotID:         0,
 			StartTs:        now.Add(time.Duration(-30+i) * time.Minute).UnixMilli(),
 			EndTs:          now.Add(time.Duration(-29+i) * time.Minute).UnixMilli(),
 			RecordCount:    f.recordCount,
@@ -194,7 +189,6 @@ func TestMetricSegEstimatorMultipleFiles(t *testing.T) {
 			Published:      true,
 			Fingerprints:   []int64{123, 456},
 			SortVersion:    lrdb.CurrentMetricSortVersion,
-			SlotCount:      1,
 			Compacted:      false,
 		})
 		require.NoError(t, err)

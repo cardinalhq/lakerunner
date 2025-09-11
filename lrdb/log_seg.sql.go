@@ -18,8 +18,8 @@ WITH
       FROM log_seg
      WHERE organization_id = $1
        AND dateint        = $2
-       AND instance_num   = $5
-       AND segment_id     = ANY($14::bigint[])
+       AND instance_num   = $4
+       AND segment_id     = ANY($12::bigint[])
   ),
   fingerprint_array AS (
     SELECT coalesce(
@@ -32,16 +32,14 @@ WITH
     DELETE FROM log_seg
      WHERE organization_id = $1
        AND dateint        = $2
-       AND instance_num   = $5
-       AND segment_id     = ANY($14::bigint[])
+       AND instance_num   = $4
+       AND segment_id     = ANY($12::bigint[])
   )
 INSERT INTO log_seg (
   organization_id,
   dateint,
-  ingest_dateint,
   segment_id,
   instance_num,
-  slot_id,
   record_count,
   file_size,
   ts_range,
@@ -57,23 +55,19 @@ SELECT
   $4,
   $5,
   $6,
-  $7,
-  $8,
-  int8range($9, $10, '[)'),
-  $11,
+  int8range($7, $8, '[)'),
+  $9,
   fa.fingerprints,
-  $12,
-  $13
+  $10,
+  $11
 FROM fingerprint_array AS fa
 `
 
 type CompactLogSegmentsParams struct {
 	OrganizationID uuid.UUID `json:"organization_id"`
 	Dateint        int32     `json:"dateint"`
-	IngestDateint  int32     `json:"ingest_dateint"`
 	NewSegmentID   int64     `json:"new_segment_id"`
 	InstanceNum    int16     `json:"instance_num"`
-	SlotID         int32     `json:"slot_id"`
 	NewRecordCount int64     `json:"new_record_count"`
 	NewFileSize    int64     `json:"new_file_size"`
 	NewStartTs     int64     `json:"new_start_ts"`
@@ -88,10 +82,8 @@ func (q *Queries) CompactLogSegments(ctx context.Context, arg CompactLogSegments
 	_, err := q.db.Exec(ctx, compactLogSegments,
 		arg.OrganizationID,
 		arg.Dateint,
-		arg.IngestDateint,
 		arg.NewSegmentID,
 		arg.InstanceNum,
-		arg.SlotID,
 		arg.NewRecordCount,
 		arg.NewFileSize,
 		arg.NewStartTs,
@@ -105,13 +97,12 @@ func (q *Queries) CompactLogSegments(ctx context.Context, arg CompactLogSegments
 }
 
 const getLogSeg = `-- name: GetLogSeg :one
-SELECT organization_id, dateint, segment_id, instance_num, fingerprints, record_count, file_size, ingest_dateint, ts_range, created_by, created_at, slot_id, compacted, published
+SELECT organization_id, dateint, segment_id, instance_num, fingerprints, record_count, file_size, ingest_dateint, ts_range, created_by, created_at, compacted, published
 FROM log_seg
 WHERE organization_id = $1
   AND dateint = $2
   AND segment_id = $3
   AND instance_num = $4
-  AND slot_id = $5
 `
 
 type GetLogSegParams struct {
@@ -119,7 +110,6 @@ type GetLogSegParams struct {
 	Dateint        int32     `json:"dateint"`
 	SegmentID      int64     `json:"segment_id"`
 	InstanceNum    int16     `json:"instance_num"`
-	SlotID         int32     `json:"slot_id"`
 }
 
 func (q *Queries) GetLogSeg(ctx context.Context, arg GetLogSegParams) (LogSeg, error) {
@@ -128,7 +118,6 @@ func (q *Queries) GetLogSeg(ctx context.Context, arg GetLogSegParams) (LogSeg, e
 		arg.Dateint,
 		arg.SegmentID,
 		arg.InstanceNum,
-		arg.SlotID,
 	)
 	var i LogSeg
 	err := row.Scan(
@@ -143,7 +132,6 @@ func (q *Queries) GetLogSeg(ctx context.Context, arg GetLogSegParams) (LogSeg, e
 		&i.TsRange,
 		&i.CreatedBy,
 		&i.CreatedAt,
-		&i.SlotID,
 		&i.Compacted,
 		&i.Published,
 	)
@@ -248,10 +236,8 @@ const insertLogSegmentDirect = `-- name: insertLogSegmentDirect :exec
 INSERT INTO log_seg (
   organization_id,
   dateint,
-  ingest_dateint,
   segment_id,
   instance_num,
-  slot_id,
   ts_range,
   record_count,
   file_size,
@@ -265,25 +251,21 @@ VALUES (
   $2,
   $3,
   $4,
-  $5,
-  $6,
-  int8range($7, $8, '[)'),
+  int8range($5, $6, '[)'),
+  $7,
+  $8,
   $9,
-  $10,
+  $10::bigint[],
   $11,
-  $12::bigint[],
-  $13,
-  $14
+  $12
 )
 `
 
 type InsertLogSegmentParams struct {
 	OrganizationID uuid.UUID `json:"organization_id"`
 	Dateint        int32     `json:"dateint"`
-	IngestDateint  int32     `json:"ingest_dateint"`
 	SegmentID      int64     `json:"segment_id"`
 	InstanceNum    int16     `json:"instance_num"`
-	SlotID         int32     `json:"slot_id"`
 	StartTs        int64     `json:"start_ts"`
 	EndTs          int64     `json:"end_ts"`
 	RecordCount    int64     `json:"record_count"`
@@ -298,10 +280,8 @@ func (q *Queries) insertLogSegmentDirect(ctx context.Context, arg InsertLogSegme
 	_, err := q.db.Exec(ctx, insertLogSegmentDirect,
 		arg.OrganizationID,
 		arg.Dateint,
-		arg.IngestDateint,
 		arg.SegmentID,
 		arg.InstanceNum,
-		arg.SlotID,
 		arg.StartTs,
 		arg.EndTs,
 		arg.RecordCount,

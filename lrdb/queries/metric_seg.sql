@@ -2,11 +2,9 @@
 INSERT INTO metric_seg (
   organization_id,
   dateint,
-  ingest_dateint,
   frequency_ms,
   segment_id,
   instance_num,
-  slot_id,
   ts_range,
   record_count,
   file_size,
@@ -15,17 +13,14 @@ INSERT INTO metric_seg (
   rolledup,
   fingerprints,
   sort_version,
-  slot_count,
   compacted
 )
 VALUES (
   @organization_id,
   @dateint,
-  @ingest_dateint,
   @frequency_ms,
   @segment_id,
   @instance_num,
-  @slot_id,
   int8range(@start_ts, @end_ts, '[)'),
   @record_count,
   @file_size,
@@ -34,7 +29,6 @@ VALUES (
   @rolledup,
   @fingerprints::bigint[],
   @sort_version,
-  @slot_count,
   @compacted
 );
 
@@ -52,11 +46,9 @@ ORDER BY segment_id;
 INSERT INTO metric_seg (
   organization_id,
   dateint,
-  ingest_dateint,
   frequency_ms,
   segment_id,
   instance_num,
-  slot_id,
   ts_range,
   record_count,
   file_size,
@@ -65,17 +57,14 @@ INSERT INTO metric_seg (
   rolledup,
   fingerprints,
   sort_version,
-  slot_count,
   compacted
 )
 VALUES (
   @organization_id,
   @dateint,
-  @ingest_dateint,
   @frequency_ms,
   @segment_id,
   @instance_num,
-  @slot_id,
   int8range(@start_ts, @end_ts, '[)'),
   @record_count,
   @file_size,
@@ -84,10 +73,9 @@ VALUES (
   @rolledup,
   @fingerprints::bigint[],
   @sort_version,
-  @slot_count,
   @compacted
 )
-ON CONFLICT (organization_id, dateint, frequency_ms, segment_id, instance_num, slot_id, slot_count)
+ON CONFLICT (organization_id, dateint, frequency_ms, segment_id, instance_num)
 DO NOTHING;
 
 -- name: BatchMarkMetricSegsRolledup :batchexec
@@ -98,7 +86,6 @@ UPDATE public.metric_seg
    AND frequency_ms    = @frequency_ms
    AND segment_id      = @segment_id
    AND instance_num    = @instance_num
-   AND slot_id         = @slot_id
 ;
 
 -- name: BatchDeleteMetricSegs :batchexec
@@ -108,7 +95,6 @@ DELETE FROM public.metric_seg
    AND frequency_ms    = @frequency_ms
    AND segment_id      = @segment_id
    AND instance_num    = @instance_num
-   AND slot_id         = @slot_id
 ;
 
 -- name: ListMetricSegmentsForQuery :many
@@ -132,9 +118,7 @@ WHERE organization_id = @organization_id
   AND dateint = @dateint
   AND frequency_ms = @frequency_ms
   AND segment_id = @segment_id
-  AND instance_num = @instance_num
-  AND slot_id = @slot_id
-  AND slot_count = @slot_count;
+  AND instance_num = @instance_num;
 
 -- name: MarkMetricSegsCompactedByKeys :exec
 UPDATE metric_seg

@@ -73,10 +73,8 @@ func (q *Store) CompactLogSegsWithKafkaOffsets(ctx context.Context, params Compa
 				newItems[i] = batchInsertLogSegsDirectParams{
 					OrganizationID: params.OrganizationID,
 					Dateint:        params.Dateint,
-					IngestDateint:  params.IngestDateint,
 					SegmentID:      r.SegmentID,
 					InstanceNum:    params.InstanceNum,
-					SlotID:         0, // Compacted log segments don't need slot partitioning
 					StartTs:        r.StartTs,
 					EndTs:          r.EndTs,
 					RecordCount:    r.RecordCount,

@@ -29,7 +29,7 @@ import (
 )
 
 // queueMetricRollup sends rollup work notification to Kafka for a specific segment
-func queueMetricRollup(ctx context.Context, kafkaProducer fly.Producer, organizationID uuid.UUID, dateint int32, frequencyMs int32, instanceNum int16, slotID int32, slotCount int32, segmentID int64, recordCount int64, fileSize int64, segmentStartTime time.Time) error {
+func queueMetricRollup(ctx context.Context, kafkaProducer fly.Producer, organizationID uuid.UUID, dateint int32, frequencyMs int32, instanceNum int16, segmentID int64, recordCount int64, fileSize int64, segmentStartTime time.Time) error {
 	ll := logctx.FromContext(ctx)
 
 	// Check if this frequency needs rollup and get target frequency
@@ -48,8 +48,6 @@ func queueMetricRollup(ctx context.Context, kafkaProducer fly.Producer, organiza
 		TargetFrequencyMs: targetFrequencyMs,
 		SegmentID:         segmentID,
 		InstanceNum:       instanceNum,
-		SlotID:            slotID,
-		SlotCount:         slotCount,
 		Records:           recordCount,
 		FileSize:          fileSize,
 		SegmentStartTime:  segmentStartTime,
@@ -66,7 +64,7 @@ func queueMetricRollup(ctx context.Context, kafkaProducer fly.Producer, organiza
 	rollupTopic := "lakerunner.segments.metrics.rollup"
 	// Use dateint and target frequency for key to group rollup intervals by their target frequency
 	if err := kafkaProducer.Send(ctx, rollupTopic, fly.Message{
-		Key:   fmt.Appendf(nil, "%s-%d-%d-%d-%d", organizationID.String(), dateint, targetFrequencyMs, instanceNum, slotID),
+		Key:   fmt.Appendf(nil, "%s-%d-%d-%d", organizationID.String(), dateint, targetFrequencyMs, instanceNum),
 		Value: msgBytes,
 	}); err != nil {
 		return fmt.Errorf("failed to send rollup notification to Kafka: %w", err)

@@ -63,8 +63,6 @@ func TestQueueMetricRollup(t *testing.T) {
 		dateint        int32
 		frequencyMs    int32
 		instanceNum    int16
-		slotID         int32
-		slotCount      int32
 		segmentID      int64
 		recordCount    int64
 		fileSize       int64
@@ -76,8 +74,6 @@ func TestQueueMetricRollup(t *testing.T) {
 			dateint:        20240101,
 			frequencyMs:    10_000,
 			instanceNum:    1,
-			slotID:         0,
-			slotCount:      1,
 			segmentID:      123,
 			recordCount:    1000,
 			fileSize:       10000,
@@ -89,8 +85,6 @@ func TestQueueMetricRollup(t *testing.T) {
 			dateint:        20240101,
 			frequencyMs:    60_000,
 			instanceNum:    1,
-			slotID:         0,
-			slotCount:      1,
 			segmentID:      124,
 			recordCount:    1000,
 			fileSize:       10000,
@@ -102,8 +96,6 @@ func TestQueueMetricRollup(t *testing.T) {
 			dateint:        20240101,
 			frequencyMs:    300_000,
 			instanceNum:    1,
-			slotID:         0,
-			slotCount:      1,
 			segmentID:      125,
 			recordCount:    1000,
 			fileSize:       10000,
@@ -115,8 +107,6 @@ func TestQueueMetricRollup(t *testing.T) {
 			dateint:        20240101,
 			frequencyMs:    1_200_000,
 			instanceNum:    1,
-			slotID:         0,
-			slotCount:      1,
 			segmentID:      126,
 			recordCount:    1000,
 			fileSize:       10000,
@@ -128,8 +118,6 @@ func TestQueueMetricRollup(t *testing.T) {
 			dateint:        20240101,
 			frequencyMs:    3_600_000,
 			instanceNum:    1,
-			slotID:         0,
-			slotCount:      1,
 			segmentID:      127,
 			recordCount:    1000,
 			fileSize:       10000,
@@ -141,8 +129,6 @@ func TestQueueMetricRollup(t *testing.T) {
 			dateint:        20240101,
 			frequencyMs:    7_200_000,
 			instanceNum:    1,
-			slotID:         0,
-			slotCount:      1,
 			segmentID:      128,
 			recordCount:    1000,
 			fileSize:       10000,
@@ -161,7 +147,7 @@ func TestQueueMetricRollup(t *testing.T) {
 			ctx := context.Background()
 			segmentStartTime := time.Now() // Use current time for test
 			err := queueMetricRollup(ctx, mockProducer, tt.organizationID, tt.dateint, tt.frequencyMs,
-				tt.instanceNum, tt.slotID, tt.slotCount, tt.segmentID, tt.recordCount, tt.fileSize, segmentStartTime)
+				tt.instanceNum, tt.segmentID, tt.recordCount, tt.fileSize, segmentStartTime)
 
 			assert.NoError(t, err)
 			mockProducer.AssertExpectations(t)
@@ -181,7 +167,7 @@ func TestQueueMetricRollupWithMultipleSegments(t *testing.T) {
 	frequencies := []int32{10_000, 60_000, 300_000, 3_600_000} // Only first 3 should send
 	segmentStartTime := time.Now()
 	for i, freq := range frequencies {
-		err := queueMetricRollup(ctx, mockProducer, orgID, 20240101, freq, 1, 0, 1, int64(i+100), 1000, 10000, segmentStartTime)
+		err := queueMetricRollup(ctx, mockProducer, orgID, 20240101, freq, 1, int64(i+100), 1000, 10000, segmentStartTime)
 		assert.NoError(t, err)
 	}
 
@@ -199,7 +185,7 @@ func TestQueueMetricRollupBatch(t *testing.T) {
 	// Queue a batch of segments with rollup-eligible frequency
 	segmentStartTime := time.Now()
 	for i := range 5 {
-		err := queueMetricRollup(ctx, mockProducer, orgID, 20240101, 10_000, 1, int32(i), 5, int64(i+100), 1000, 10000, segmentStartTime)
+		err := queueMetricRollup(ctx, mockProducer, orgID, 20240101, 10_000, 1, int64(i+100), 1000, 10000, segmentStartTime)
 		assert.NoError(t, err)
 	}
 

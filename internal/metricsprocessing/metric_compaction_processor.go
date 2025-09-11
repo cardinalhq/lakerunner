@@ -198,8 +198,6 @@ func (c *MetricCompactionProcessor) Process(ctx context.Context, group *accumula
 			FrequencyMs:    msg.FrequencyMs,
 			SegmentID:      msg.SegmentID,
 			InstanceNum:    msg.InstanceNum,
-			SlotID:         msg.SlotID,
-			SlotCount:      msg.SlotCount,
 		})
 		if err != nil {
 			ll.Warn("Failed to fetch segment, skipping",
@@ -208,8 +206,6 @@ func (c *MetricCompactionProcessor) Process(ctx context.Context, group *accumula
 				slog.Int("dateint", int(msg.DateInt)),
 				slog.Int("frequencyMs", int(msg.FrequencyMs)),
 				slog.Int("instanceNum", int(msg.InstanceNum)),
-				slog.Int("slotID", int(msg.SlotID)),
-				slog.Int("slotCount", int(msg.SlotCount)),
 				slog.Any("error", err))
 			continue
 		}
@@ -326,18 +322,13 @@ func (c *MetricCompactionProcessor) uploadAndCreateSegments(ctx context.Context,
 		// Clean up local file
 		os.Remove(result.FileName)
 
-		nowDateInt := helpers.CurrentDateInt()
-
 		// Create new segment record
 		segment := lrdb.MetricSeg{
 			OrganizationID: key.OrganizationID,
 			Dateint:        key.DateInt,
-			IngestDateint:  nowDateInt,
 			FrequencyMs:    key.FrequencyMs,
 			SegmentID:      segmentID,
 			InstanceNum:    key.InstanceNum,
-			SlotID:         0, // Compacted segments don't need slot partitioning
-			SlotCount:      1,
 			TsRange: pgtype.Range[pgtype.Int8]{
 				LowerType: pgtype.Inclusive,
 				UpperType: pgtype.Exclusive,
@@ -406,7 +397,6 @@ func (c *MetricCompactionProcessor) atomicDatabaseUpdate(ctx context.Context, ol
 	for i, seg := range oldSegments {
 		oldRecords[i] = lrdb.CompactMetricSegsOld{
 			SegmentID: seg.SegmentID,
-			SlotID:    seg.SlotID,
 		}
 	}
 
@@ -432,9 +422,6 @@ func (c *MetricCompactionProcessor) atomicDatabaseUpdate(ctx context.Context, ol
 		Dateint:        key.DateInt,
 		FrequencyMs:    key.FrequencyMs,
 		InstanceNum:    key.InstanceNum,
-		SlotID:         0, // Compacted segments don't need slot partitioning
-		SlotCount:      1,
-		IngestDateint:  key.DateInt,
 		OldRecords:     oldRecords,
 		NewRecords:     newRecords,
 		CreatedBy:      lrdb.CreatedByCompact,
@@ -451,8 +438,6 @@ func (c *MetricCompactionProcessor) atomicDatabaseUpdate(ctx context.Context, ol
 			slog.Int("dateint", int(key.DateInt)),
 			slog.Int("frequency_ms", int(key.FrequencyMs)),
 			slog.Int("instance_num", int(key.InstanceNum)),
-			slog.Int("slot_id", int(params.SlotID)),
-			slog.Int("slot_count", int(params.SlotCount)),
 			slog.Int("old_segments_count", len(oldSegments)),
 			slog.Int("new_segments_count", len(newSegments)))
 

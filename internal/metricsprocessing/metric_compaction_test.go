@@ -265,11 +265,9 @@ func TestAtomicDatabaseUpdate(t *testing.T) {
 	oldSegments := []lrdb.MetricSeg{
 		{
 			SegmentID: 12345,
-			SlotID:    1,
 		},
 		{
 			SegmentID: 67890,
-			SlotID:    2,
 		},
 	}
 
@@ -314,12 +312,9 @@ func TestAtomicDatabaseUpdate(t *testing.T) {
 			Dateint:        20240101,
 			FrequencyMs:    10000,
 			InstanceNum:    1,
-			SlotID:         0,
-			SlotCount:      1,
-			IngestDateint:  20240101,
 			OldRecords: []lrdb.CompactMetricSegsOld{
-				{SegmentID: 12345, SlotID: 1},
-				{SegmentID: 67890, SlotID: 2},
+				{SegmentID: 12345},
+				{SegmentID: 67890},
 			},
 			NewRecords: []lrdb.CompactMetricSegsNew{
 				{
@@ -373,12 +368,9 @@ func TestAtomicDatabaseUpdate(t *testing.T) {
 			Dateint:        20240101,
 			FrequencyMs:    10000,
 			InstanceNum:    1,
-			SlotID:         0,
-			SlotCount:      1,
-			IngestDateint:  20240101,
 			OldRecords: []lrdb.CompactMetricSegsOld{
-				{SegmentID: 12345, SlotID: 1},
-				{SegmentID: 67890, SlotID: 2},
+				{SegmentID: 12345},
+				{SegmentID: 67890},
 			},
 			NewRecords: []lrdb.CompactMetricSegsNew{
 				{
@@ -729,8 +721,6 @@ func TestUploadAndCreateSegments(t *testing.T) {
 		assert.Equal(t, int32(20240101), seg1.Dateint)
 		assert.Equal(t, int32(10000), seg1.FrequencyMs)
 		assert.Equal(t, int16(1), seg1.InstanceNum)
-		assert.Equal(t, int32(0), seg1.SlotID) // Compacted segments use 0
-		assert.Equal(t, int32(1), seg1.SlotCount)
 		assert.Equal(t, int64(5000), seg1.RecordCount)
 		assert.Equal(t, int64(2048000), seg1.FileSize)
 		assert.True(t, seg1.Published)

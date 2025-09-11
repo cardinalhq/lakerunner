@@ -35,7 +35,6 @@ func GetCompactCmd() *cobra.Command {
 	var (
 		orgIDStr   string
 		instance   int16
-		slotID     int32
 		timeStr    string
 		endTimeStr string
 		dryRun     bool
@@ -70,13 +69,12 @@ Times will be aligned to hour boundaries as logs are processed hourly.`,
 				endTime = &t
 			}
 
-			return runLogCompact(orgID, instance, slotID, startTime, endTime, dryRun)
+			return runLogCompact(orgID, instance, startTime, endTime, dryRun)
 		},
 	}
 
 	compactCmd.Flags().StringVar(&orgIDStr, "org-id", "", "Organization ID (required)")
 	compactCmd.Flags().Int16Var(&instance, "instance", 0, "Instance number (required)")
-	compactCmd.Flags().Int32Var(&slotID, "slot-id", 0, "Slot ID (required)")
 	compactCmd.Flags().StringVar(&timeStr, "time", "", "Start time in RFC3339 format (required)")
 	compactCmd.Flags().StringVar(&endTimeStr, "end-time", "", "End time in RFC3339 format (optional, for time ranges)")
 	compactCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview what would be queued without actually adding work items")
@@ -93,7 +91,7 @@ func SetAPIKey(key string) {
 	_ = key // apiKey for future use
 }
 
-func runLogCompact(orgID uuid.UUID, instance int16, slotID int32, startTime time.Time, endTime *time.Time, dryRun bool) error {
+func runLogCompact(orgID uuid.UUID, instance int16, startTime time.Time, endTime *time.Time, dryRun bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -111,7 +109,7 @@ func runLogCompact(orgID uuid.UUID, instance int16, slotID int32, startTime time
 
 	// If no end time, queue single item
 	if endTime == nil {
-		return queueSingleLogCompact(ctx, store, orgID, instance, slotID, alignedStart, dryRun)
+		return queueSingleLogCompact(ctx, store, orgID, instance, alignedStart, dryRun)
 	}
 
 	// Queue items for time range
@@ -120,7 +118,7 @@ func runLogCompact(orgID uuid.UUID, instance int16, slotID int32, startTime time
 
 	var queuedCount int
 	for current.Before(alignedEnd) || current.Equal(alignedEnd) {
-		if err := queueSingleLogCompact(ctx, store, orgID, instance, slotID, current, dryRun); err != nil {
+		if err := queueSingleLogCompact(ctx, store, orgID, instance, current, dryRun); err != nil {
 			return fmt.Errorf("failed to queue log compaction for time %v: %w", current, err)
 		}
 		queuedCount++
@@ -137,6 +135,6 @@ func runLogCompact(orgID uuid.UUID, instance int16, slotID int32, startTime time
 	return nil
 }
 
-func queueSingleLogCompact(ctx context.Context, store lrdb.StoreFull, orgID uuid.UUID, instance int16, slotID int32, hourTime time.Time, dryRun bool) error {
+func queueSingleLogCompact(ctx context.Context, store lrdb.StoreFull, orgID uuid.UUID, instance int16, hourTime time.Time, dryRun bool) error {
 	return fmt.Errorf("log compaction queueing is no longer supported - work queue system has been removed")
 }
