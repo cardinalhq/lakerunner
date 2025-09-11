@@ -189,7 +189,7 @@ func (r *IngestProtoLogsReader) buildLogRow(ctx context.Context, rl plog.Resourc
 		trieClusterManager := tenant.GetTrieClusterManager()
 		fingerprint, _, _, err := fingerprinter.Fingerprint(message, trieClusterManager)
 		if err == nil {
-			ret[translate.CardinalFieldFingerprint] = fmt.Sprintf("%d", fingerprint)
+			ret[translate.CardinalFieldFingerprint] = fingerprint
 		}
 		logRecord.Attributes().PutInt(translate.CardinalFieldFingerprint, fingerprint)
 	}

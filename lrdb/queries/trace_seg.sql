@@ -10,7 +10,9 @@ INSERT INTO trace_seg (
   record_count,
   file_size,
   created_by,
-  fingerprints
+  fingerprints,
+  published,
+  compacted
 )
 VALUES (
   @organization_id,
@@ -23,7 +25,9 @@ VALUES (
   @record_count,
   @file_size,
   @created_by,
-  @fingerprints::bigint[]
+  @fingerprints::bigint[],
+  @published,
+  @compacted
 );
 
 -- name: batchInsertTraceSegsDirect :batchexec
@@ -38,7 +42,9 @@ INSERT INTO trace_seg (
   record_count,
   file_size,
   created_by,
-  fingerprints
+  fingerprints,
+  published,
+  compacted
 )
 VALUES (
   @organization_id,
@@ -51,7 +57,9 @@ VALUES (
   @record_count,
   @file_size,
   @created_by,
-  @fingerprints::bigint[]
+  @fingerprints::bigint[],
+  @published,
+  @compacted
 );
 
 -- name: GetTraceSeg :one

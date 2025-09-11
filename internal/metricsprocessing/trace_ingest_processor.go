@@ -682,6 +682,8 @@ func (p *TraceIngestProcessor) uploadAndCreateTraceSegments(ctx context.Context,
 			FileSize:       validBin.bin.Result.FileSize,
 			CreatedBy:      lrdb.CreatedByIngest,
 			Fingerprints:   validBin.stats.Fingerprints,
+			Published:      true,
+			Compacted:      false,
 		}
 
 		segmentParams = append(segmentParams, segmentParam)
