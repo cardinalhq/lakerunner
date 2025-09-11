@@ -16,12 +16,13 @@ package metricsprocessing
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
 	"reflect"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/fly"
@@ -220,7 +221,7 @@ func (c *CommonConsumer[M, K]) GetLastProcessedOffset(ctx context.Context, metad
 	})
 	if err != nil {
 		// Return -1 if no row found (never seen before), but propagate other errors
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return -1, nil
 		}
 		return -1, fmt.Errorf("failed to get last processed offset: %w", err)

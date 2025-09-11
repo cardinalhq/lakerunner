@@ -16,7 +16,6 @@ package debug
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -24,6 +23,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/parquet-go/parquet-go"
 	"github.com/spf13/cobra"
 
@@ -76,7 +76,7 @@ func getLogSegFetchSubCmd() *cobra.Command {
 				// Get the latest record
 				segLog, err = lrdbStore.GetLatestSegmentJournal(ctx)
 				if err != nil {
-					if err == sql.ErrNoRows {
+					if err == pgx.ErrNoRows {
 						return fmt.Errorf("no segment_journal entries found")
 					}
 					return fmt.Errorf("failed to query latest segment_journal: %w", err)
@@ -87,7 +87,7 @@ func getLogSegFetchSubCmd() *cobra.Command {
 				// Get specific record by ID
 				segLog, err = lrdbStore.GetSegmentJournalByID(ctx, segLogID)
 				if err != nil {
-					if err == sql.ErrNoRows {
+					if err == pgx.ErrNoRows {
 						return fmt.Errorf("segment_journal entry with id %d not found", segLogID)
 					}
 					return fmt.Errorf("failed to query segment_journal: %w", err)

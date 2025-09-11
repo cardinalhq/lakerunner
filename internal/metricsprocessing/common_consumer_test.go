@@ -16,7 +16,6 @@ package metricsprocessing
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -24,6 +23,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -256,7 +256,7 @@ func TestCommonConsumer_OffsetCallbacks(t *testing.T) {
 func TestCommonConsumer_GetLastProcessedOffset_DatabaseError(t *testing.T) {
 	ctx := context.Background()
 
-	// Create mock store that returns a database error (not sql.ErrNoRows)
+	// Create mock store that returns a database error (not pgx.ErrNoRows)
 	mockStore := &MockCommonConsumerStore{}
 
 	orgID := uuid.New()
@@ -305,7 +305,7 @@ func TestCommonConsumer_GetLastProcessedOffset_DatabaseError(t *testing.T) {
 func TestCommonConsumer_GetLastProcessedOffset_NoRowsFound(t *testing.T) {
 	ctx := context.Background()
 
-	// Create mock store that returns sql.ErrNoRows (expected case)
+	// Create mock store that returns pgx.ErrNoRows (expected case)
 	mockStore := &MockCommonConsumerStore{}
 
 	orgID := uuid.New()
@@ -314,14 +314,14 @@ func TestCommonConsumer_GetLastProcessedOffset_NoRowsFound(t *testing.T) {
 	partition := int32(0)
 	consumerGroup := "test-group"
 
-	// Mock sql.ErrNoRows (this is expected and should return -1, nil)
+	// Mock pgx.ErrNoRows (this is expected and should return -1, nil)
 	mockStore.On("KafkaGetLastProcessed", ctx, lrdb.KafkaGetLastProcessedParams{
 		Topic:          topic,
 		Partition:      partition,
 		ConsumerGroup:  consumerGroup,
 		OrganizationID: orgID,
 		InstanceNum:    instanceNum,
-	}).Return(int64(0), sql.ErrNoRows)
+	}).Return(int64(0), pgx.ErrNoRows)
 
 	consumer := &CommonConsumer[*messages.MetricCompactionMessage, messages.CompactionKey]{
 		store: mockStore,
@@ -1183,7 +1183,7 @@ func TestCommonConsumer_ProcessKafkaMessage_ReflectionHandlesPointerTypes(t *tes
 		Message: fly.Message{
 			Value: msgBytes,
 		},
-		Topic:     "test.topic", 
+		Topic:     "test.topic",
 		Partition: 1,
 		Offset:    200,
 	}
@@ -1191,9 +1191,9 @@ func TestCommonConsumer_ProcessKafkaMessage_ReflectionHandlesPointerTypes(t *tes
 	// Verify that the message passed to gatherer is properly instantiated and populated
 	mockGatherer.On("processMessage", ctx, mock.MatchedBy(func(msg *messages.MetricCompactionMessage) bool {
 		// This would fail with the old implementation because msg would be nil
-		return msg != nil && 
-			msg.InstanceNum == 42 && 
-			msg.FrequencyMs == 5000 && 
+		return msg != nil &&
+			msg.InstanceNum == 42 &&
+			msg.FrequencyMs == 5000 &&
 			msg.SegmentID == 99999 &&
 			msg.OrganizationID == originalMsg.OrganizationID
 	}), mock.Anything).Return(nil)
