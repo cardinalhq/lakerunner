@@ -18,12 +18,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"slices"
-	"strings"
-	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -62,26 +58,17 @@ func init() {
 	}
 }
 
-type orgDateintState struct {
-	OrganizationID   uuid.UUID
-	DateInt          int32
-	LastScanned      time.Time
-	ConsecutiveEmpty int
-	ScanInterval     time.Duration
-}
-
 type metricCleanupManager struct {
 	ageThreshold  time.Duration
-	orgDateints   map[string]*orgDateintState
-	mu            sync.RWMutex
+	tracker       *orgDateintTracker
 	lastRefresh   time.Time
 	refreshPeriod time.Duration
 }
 
 func newMetricCleanupManager() *metricCleanupManager {
 	return &metricCleanupManager{
-		ageThreshold:  time.Minute,
-		orgDateints:   make(map[string]*orgDateintState),
+		ageThreshold:  time.Hour,
+		tracker:       newOrgDateintTracker(),
 		refreshPeriod: time.Hour,
 	}
 }
@@ -94,7 +81,7 @@ func metricCleanupLoop(ctx context.Context, sp storageprofile.StorageProfileProv
 	ll.Info("Starting metric segment cleanup loop")
 
 	// Initial refresh
-	if err := manager.refreshOrgDateints(ctx, mdb, cdb); err != nil {
+	if err := manager.tracker.refreshOrgDateints(ctx, mdb, cdb, "metric"); err != nil {
 		ll.Error("Failed initial org-dateint refresh", slog.Any("error", err))
 		return err
 	}
@@ -108,8 +95,10 @@ func metricCleanupLoop(ctx context.Context, sp storageprofile.StorageProfileProv
 
 		// Periodic refresh of org-dateint list
 		if time.Since(manager.lastRefresh) > manager.refreshPeriod {
-			if err := manager.refreshOrgDateints(ctx, mdb, cdb); err != nil {
+			if err := manager.tracker.refreshOrgDateints(ctx, mdb, cdb, "metric"); err != nil {
 				ll.Error("Failed to refresh org-dateint list", slog.Any("error", err))
+			} else {
+				manager.lastRefresh = time.Now()
 			}
 		}
 
@@ -125,102 +114,9 @@ func metricCleanupLoop(ctx context.Context, sp storageprofile.StorageProfileProv
 	}
 }
 
-func (m *metricCleanupManager) refreshOrgDateints(ctx context.Context, mdb lrdb.StoreFull, cdb configdb.QuerierFull) error {
-	ll := logctx.FromContext(ctx)
-
-	// Use partition discovery to get org-dateint combinations directly from partition metadata
-	orgDateints, err := mdb.ParseMetricPartitions(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to parse metric partitions: %w", err)
-	}
-
-	// Filter to only enabled organizations
-	orgs, err := cdb.ListEnabledOrganizations(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get enabled organizations: %w", err)
-	}
-
-	enabledOrgs := make(map[string]bool)
-	for _, org := range orgs {
-		enabledOrgs[org.ID.String()] = true
-	}
-
-	newOrgDateints := make(map[string]*orgDateintState)
-	currentTime := time.Now()
-
-	// Group by organization and sort dateints (most recent first)
-	orgDateintMap := make(map[string][]int32)
-	for _, od := range orgDateints {
-		// Skip disabled organizations
-		if !enabledOrgs[od.OrganizationID.String()] {
-			continue
-		}
-		orgDateintMap[od.OrganizationID.String()] = append(orgDateintMap[od.OrganizationID.String()], od.Dateint)
-	}
-
-	// Sort dateints for each org (most recent first)
-	for orgStr, dateints := range orgDateintMap {
-		slices.SortFunc(dateints, func(a, b int32) int {
-			return int(b - a) // Reverse order: larger dateint first
-		})
-
-		orgUUID, _ := uuid.Parse(orgStr)
-
-		for i, dateInt := range dateints {
-			key := fmt.Sprintf("%s-%d", orgStr, dateInt)
-
-			m.mu.RLock()
-			existing := m.orgDateints[key]
-			m.mu.RUnlock()
-
-			state := &orgDateintState{
-				OrganizationID: orgUUID,
-				DateInt:        dateInt,
-				ScanInterval:   time.Minute,
-			}
-
-			if existing != nil {
-				// Preserve existing state
-				state.LastScanned = existing.LastScanned
-				state.ConsecutiveEmpty = existing.ConsecutiveEmpty
-				state.ScanInterval = existing.ScanInterval
-			} else {
-				// New org-dateint, prioritize recent ones
-				if i < 2 {
-					// Most recent 2 dateints start with shorter interval
-					state.LastScanned = currentTime.Add(-30 * time.Second)
-				} else {
-					// Older dateints start with longer interval
-					state.LastScanned = currentTime.Add(-10 * time.Minute)
-					state.ScanInterval = 10 * time.Minute
-				}
-			}
-
-			newOrgDateints[key] = state
-		}
-	}
-
-	m.mu.Lock()
-	m.orgDateints = newOrgDateints
-	m.lastRefresh = currentTime
-	m.mu.Unlock()
-
-	ll.Info("Refreshed org-dateint list via partition discovery", slog.Int("total_combinations", len(newOrgDateints)))
-	return nil
-}
-
 func (m *metricCleanupManager) processAllOrgDateints(ctx context.Context, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, cmgr cloudstorage.ClientProvider) bool {
 	processedAny := false
-	currentTime := time.Now()
-
-	m.mu.RLock()
-	var candidates []*orgDateintState
-	for _, state := range m.orgDateints {
-		if currentTime.Sub(state.LastScanned) >= state.ScanInterval {
-			candidates = append(candidates, state)
-		}
-	}
-	m.mu.RUnlock()
+	candidates := m.tracker.getCandidates()
 
 	for _, state := range candidates {
 		processed := m.processOrgDateint(ctx, sp, mdb, cmgr, state)
@@ -228,33 +124,8 @@ func (m *metricCleanupManager) processAllOrgDateints(ctx context.Context, sp sto
 			processedAny = true
 		}
 
-		// Update state
-		m.mu.Lock()
-		key := fmt.Sprintf("%s-%d", state.OrganizationID.String(), state.DateInt)
-		if currentState := m.orgDateints[key]; currentState != nil {
-			currentState.LastScanned = currentTime
-			if !processed {
-				currentState.ConsecutiveEmpty++
-				// Exponential backoff: 1m -> 5m -> 15m -> 30m -> 1h (max)
-				switch {
-				case currentState.ConsecutiveEmpty <= 2:
-					currentState.ScanInterval = time.Minute
-				case currentState.ConsecutiveEmpty <= 5:
-					currentState.ScanInterval = 5 * time.Minute
-				case currentState.ConsecutiveEmpty <= 10:
-					currentState.ScanInterval = 15 * time.Minute
-				case currentState.ConsecutiveEmpty <= 20:
-					currentState.ScanInterval = 30 * time.Minute
-				default:
-					currentState.ScanInterval = time.Hour
-				}
-			} else {
-				// Reset backoff on activity
-				currentState.ConsecutiveEmpty = 0
-				currentState.ScanInterval = time.Minute
-			}
-		}
-		m.mu.Unlock()
+		// Update state using the tracker
+		m.tracker.updateState(state.OrganizationID, state.DateInt, processed)
 	}
 
 	return processedAny
@@ -314,23 +185,10 @@ func (m *metricCleanupManager) processMetricSegment(ctx context.Context, sp stor
 		return false
 	}
 
-	storageClient, err := cloudstorage.NewClient(ctx, cmgr, profile)
-	if err != nil {
-		ll.Error("Failed to get storage client", slog.Any("error", err))
+	objectKey := m.generateMetricObjectKey(segment, profile.CollectorName)
+
+	if err := deleteSegmentObject(ctx, sp, cmgr, segment.OrganizationID, segment.InstanceNum, objectKey); err != nil {
 		return false
-	}
-
-	objectKey := m.generateMetricObjectKey(segment, &profile)
-
-	if err := storageClient.DeleteObject(ctx, profile.Bucket, objectKey); err != nil {
-		if strings.Contains(err.Error(), "NoSuchKey") || strings.Contains(err.Error(), "404") {
-			ll.Debug("S3 object already deleted", slog.String("object_key", objectKey))
-		} else {
-			ll.Error("Failed to delete S3 object", slog.Any("error", err), slog.String("object_key", objectKey))
-			return false
-		}
-	} else {
-		ll.Debug("Successfully deleted S3 object", slog.String("object_key", objectKey))
 	}
 
 	if err := mdb.MetricSegmentCleanupDelete(ctx, lrdb.MetricSegmentCleanupDeleteParams{
@@ -347,21 +205,23 @@ func (m *metricCleanupManager) processMetricSegment(ctx context.Context, sp stor
 	metricCleanupCounter.Add(ctx, 1, metric.WithAttributes(
 		attribute.String("status", "success"),
 		attribute.String("organization_id", segment.OrganizationID.String()),
+		attribute.Int("instance_num", int(segment.InstanceNum)),
 	))
 
 	metricCleanupBytes.Add(ctx, segment.FileSize, metric.WithAttributes(
 		attribute.String("organization_id", segment.OrganizationID.String()),
+		attribute.Int("instance_num", int(segment.InstanceNum)),
 	))
 
 	return true
 }
 
-func (m *metricCleanupManager) generateMetricObjectKey(segment lrdb.MetricSegmentCleanupGetRow, profile *storageprofile.StorageProfile) string {
+func (m *metricCleanupManager) generateMetricObjectKey(segment lrdb.MetricSegmentCleanupGetRow, collectorName string) string {
 	hour := helpers.HourFromMillis(segment.TsRangeLower)
 
 	return helpers.MakeDBObjectID(
 		segment.OrganizationID,
-		profile.CollectorName,
+		collectorName,
 		segment.Dateint,
 		hour,
 		segment.SegmentID,

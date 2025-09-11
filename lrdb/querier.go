@@ -70,11 +70,6 @@ type Querier interface {
 	MetricSegEstimator(ctx context.Context, arg MetricSegEstimatorParams) ([]MetricSegEstimatorRow, error)
 	MetricSegmentCleanupDelete(ctx context.Context, arg MetricSegmentCleanupDeleteParams) error
 	MetricSegmentCleanupGet(ctx context.Context, arg MetricSegmentCleanupGetParams) ([]MetricSegmentCleanupGetRow, error)
-	ObjectCleanupAdd(ctx context.Context, arg ObjectCleanupAddParams) error
-	ObjectCleanupBucketSummary(ctx context.Context) ([]ObjectCleanupBucketSummaryRow, error)
-	ObjectCleanupComplete(ctx context.Context, id uuid.UUID) error
-	ObjectCleanupFail(ctx context.Context, id uuid.UUID) error
-	ObjectCleanupGet(ctx context.Context, maxrows int32) ([]ObjectCleanupGetRow, error)
 	// Returns an estimate of the number of trace segments, accounting for per-file overhead.
 	TraceSegEstimator(ctx context.Context, arg TraceSegEstimatorParams) ([]TraceSegEstimatorRow, error)
 	TraceSegmentCleanupDelete(ctx context.Context, arg TraceSegmentCleanupDeleteParams) error

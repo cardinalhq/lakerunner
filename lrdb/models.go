@@ -195,16 +195,6 @@ type MetricSeg struct {
 	Compacted      bool                      `json:"compacted"`
 }
 
-type ObjCleanup struct {
-	ID             uuid.UUID `json:"id"`
-	DeleteAt       time.Time `json:"delete_at"`
-	OrganizationID uuid.UUID `json:"organization_id"`
-	InstanceNum    int16     `json:"instance_num"`
-	BucketID       string    `json:"bucket_id"`
-	ObjectID       string    `json:"object_id"`
-	Tries          int32     `json:"tries"`
-}
-
 type PackEstimate struct {
 	OrganizationID uuid.UUID `json:"organization_id"`
 	FrequencyMs    int32     `json:"frequency_ms"`
