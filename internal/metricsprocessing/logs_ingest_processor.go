@@ -336,7 +336,7 @@ func (p *LogIngestProcessor) GetTargetRecordCount(ctx context.Context, groupingK
 
 // createLogReaderStack creates a reader stack: Translation(LogReader(file))
 func (p *LogIngestProcessor) createLogReaderStack(tmpFilename, orgID, bucket, objectID string) (filereader.Reader, error) {
-	reader, err := p.createLogReader(tmpFilename)
+	reader, err := p.createLogReader(tmpFilename, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create log reader: %w", err)
 	}
@@ -355,11 +355,12 @@ func (p *LogIngestProcessor) createLogReaderStack(tmpFilename, orgID, bucket, ob
 	return reader, nil
 }
 
-func (p *LogIngestProcessor) createLogReader(filename string) (filereader.Reader, error) {
+func (p *LogIngestProcessor) createLogReader(filename, orgId string) (filereader.Reader, error) {
 	options := filereader.ReaderOptions{
 		SignalType:        filereader.SignalTypeLogs,
 		BatchSize:         1000,
 		ExemplarProcessor: p.exemplarProcessor,
+		OrgID:             orgId,
 	}
 	return filereader.ReaderForFileWithOptions(filename, options)
 }

@@ -54,18 +54,20 @@ type ReaderOptions struct {
 
 // ReaderForFile creates a Reader for the given file based on its extension and signal type.
 // This is a convenience function that uses default options.
-func ReaderForFile(filename string, signalType SignalType, exemplarProcessor *exemplars.Processor) (Reader, error) {
+func ReaderForFile(filename string, signalType SignalType, orgId string, exemplarProcessor *exemplars.Processor) (Reader, error) {
 	options := ReaderOptions{SignalType: signalType, BatchSize: 1000}
 	options.ExemplarProcessor = exemplarProcessor
+	options.OrgID = orgId
 	return ReaderForFileWithOptions(filename, options)
 }
 
 // ReaderForMetricAggregation creates a Reader for metrics with aggregation enabled.
-func ReaderForMetricAggregation(filename string, aggregationPeriodMs int64) (Reader, error) {
+func ReaderForMetricAggregation(filename, orgId string, aggregationPeriodMs int64) (Reader, error) {
 	opts := ReaderOptions{
 		SignalType:          SignalTypeMetrics,
 		BatchSize:           1000,
 		EnableAggregation:   true,
+		OrgID:               orgId,
 		AggregationPeriodMs: aggregationPeriodMs,
 	}
 	return ReaderForFileWithOptions(filename, opts)

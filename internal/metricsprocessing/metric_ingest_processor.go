@@ -398,7 +398,8 @@ func (p *MetricIngestProcessor) GetTargetRecordCount(ctx context.Context, groupi
 // createReaderStack creates a reader stack: DiskSort(Translation(OTELMetricProto(file)))
 func (p *MetricIngestProcessor) createReaderStack(tmpFilename, orgID, bucket, objectID string) (filereader.Reader, error) {
 	// Step 1: Create proto reader for .binpb or .binpb.gz files
-	reader, err := createMetricProtoReader(tmpFilename, filereader.ReaderOptions{ExemplarProcessor: p.exemplarProcessor})
+	reader, err := createMetricProtoReader(tmpFilename, filereader.ReaderOptions{ExemplarProcessor: p.exemplarProcessor,
+		OrgID: orgID})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create proto reader: %w", err)
 	}
