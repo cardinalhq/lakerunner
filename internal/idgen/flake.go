@@ -15,10 +15,13 @@
 package idgen
 
 import (
+	"crypto/sha1"
 	"encoding/base32"
 	"encoding/binary"
 	"errors"
+	"log/slog"
 	"math/rand/v2"
+	"os"
 	"strings"
 	"time"
 
@@ -39,10 +42,36 @@ type SonyFlakeGenerator struct {
 	sf *sonyflake.Sonyflake
 }
 
+// machineID returns a deterministic 16-bit machine ID based on POD_NAME and POD_IP.
+// If it cannot determine a stable ID (e.g. no env vars or hash -> 0), it logs a warning
+// and falls back to generating a random 16-bit ID from crypto/rand.
+func machineID() (uint16, error) {
+	podName := os.Getenv("POD_NAME")
+	podIP := os.Getenv("POD_IP")
+
+	var id uint16
+	if podName != "" || podIP != "" {
+		combined := podName + "|" + podIP
+		h := sha1.Sum([]byte(combined))
+		id = binary.BigEndian.Uint16(h[0:2])
+	}
+
+	if id == 0 {
+		slog.Warn("machineID: POD_NAME/POD_IP not set or hash resulted in 0, falling back to random ID")
+		id = uint16(rand.Uint32())
+		if id == 0 {
+			id = 1
+		}
+	}
+
+	return id, nil
+}
+
 // newFlakeGenerator creates a SonyFlakeGenerator.
 func newFlakeGenerator() (*SonyFlakeGenerator, error) {
 	settings := sonyflake.Settings{
-		StartTime: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC),
+		StartTime: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+		MachineID: machineID,
 	}
 
 	sf, err := sonyflake.New(settings)
