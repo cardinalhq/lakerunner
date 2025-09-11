@@ -151,8 +151,7 @@ func (c *TraceCompactionConsumer) Run(ctx context.Context) error {
 			}
 		}
 
-		// Commit the messages after successful processing
-		return c.consumer.CommitMessages(ctx, kafkaMessages...)
+		return nil
 	})
 
 	if err != nil && !errors.Is(err, context.Canceled) {

@@ -150,9 +150,7 @@ func (c *TraceIngestConsumer) Run(ctx context.Context) error {
 				return fmt.Errorf("failed to process message: %w", err)
 			}
 		}
-
-		// Commit the messages after successful processing
-		return c.consumer.CommitMessages(ctx, kafkaMessages...)
+		return nil
 	})
 
 	if err != nil && !errors.Is(err, context.Canceled) {

@@ -157,7 +157,7 @@ func (p *TraceIDTimestampSortKeyProvider) MakeKey(row filereader.Row) filereader
 type TraceDateintBin struct {
 	Dateint int32 // The dateint for this bin
 	Writer  parquetwriter.ParquetWriter
-	Result  *parquetwriter.Result // Result after writer is closed
+	Results []*parquetwriter.Result // Results after writer is closed (can be multiple files)
 }
 
 // TraceDateintBinManager manages multiple file groups, one per dateint
@@ -580,8 +580,10 @@ func (p *TraceIngestProcessor) processRowsWithDateintBinning(ctx context.Context
 		}
 
 		if len(results) > 0 {
-			// Should typically be one result per writer
-			bin.Result = &results[0]
+			// Store all results - writer may emit multiple files when data exceeds RecordsPerFile
+			for i := range results {
+				bin.Results = append(bin.Results, &results[i])
+			}
 		}
 	}
 
@@ -615,31 +617,38 @@ func (p *TraceIngestProcessor) uploadAndCreateTraceSegments(ctx context.Context,
 
 	var segmentParams []lrdb.InsertTraceSegmentParams
 
-	// First, collect all valid bins to know how many IDs we need
+	// First, collect all valid results to know how many IDs we need
 	type validBin struct {
 		dateint int32
-		bin     *TraceDateintBin
+		result  *parquetwriter.Result
 		stats   factories.TracesFileStats
 	}
 	var validBins []validBin
 
 	for dateint, bin := range dateintBins {
-		if bin.Result == nil || bin.Result.RecordCount == 0 {
+		if len(bin.Results) == 0 {
 			ll.Debug("Skipping empty dateint bin", slog.Int("dateint", int(dateint)))
 			continue
 		}
 
-		// Extract file stats from parquetwriter result
-		stats, ok := bin.Result.Metadata.(factories.TracesFileStats)
-		if !ok {
-			return nil, fmt.Errorf("expected TracesFileStats metadata, got %T", bin.Result.Metadata)
-		}
+		// Process each result separately - writer may have created multiple files
+		for _, result := range bin.Results {
+			if result.RecordCount == 0 {
+				continue
+			}
 
-		validBins = append(validBins, validBin{
-			dateint: dateint,
-			bin:     bin,
-			stats:   stats,
-		})
+			// Extract file stats from parquetwriter result
+			stats, ok := result.Metadata.(factories.TracesFileStats)
+			if !ok {
+				return nil, fmt.Errorf("expected TracesFileStats metadata, got %T", result.Metadata)
+			}
+
+			validBins = append(validBins, validBin{
+				dateint: dateint,
+				result:  result,
+				stats:   stats,
+			})
+		}
 	}
 
 	// Generate unique batch IDs for all valid bins to avoid collisions
@@ -658,7 +667,7 @@ func (p *TraceIngestProcessor) uploadAndCreateTraceSegments(ctx context.Context,
 			"traces",
 		)
 
-		err := storageClient.UploadObject(ctx, storageProfile.Bucket, uploadKey, validBin.bin.Result.FileName)
+		err := storageClient.UploadObject(ctx, storageProfile.Bucket, uploadKey, validBin.result.FileName)
 		if err != nil {
 			return nil, fmt.Errorf("failed to upload trace segment for dateint %d: %w", validBin.dateint, err)
 		}
@@ -666,7 +675,7 @@ func (p *TraceIngestProcessor) uploadAndCreateTraceSegments(ctx context.Context,
 		ll.Info("Uploaded trace segment",
 			slog.String("uploadKey", uploadKey),
 			slog.Int64("segmentID", segmentID),
-			slog.Int64("recordCount", validBin.bin.Result.RecordCount))
+			slog.Int64("recordCount", validBin.result.RecordCount))
 
 		// Create segment parameters with slot_id = 0
 		segmentParam := lrdb.InsertTraceSegmentParams{
@@ -678,8 +687,8 @@ func (p *TraceIngestProcessor) uploadAndCreateTraceSegments(ctx context.Context,
 			InstanceNum:    storageProfile.InstanceNum,
 			StartTs:        validBin.stats.FirstTS,
 			EndTs:          validBin.stats.LastTS + 1, // end is exclusive
-			RecordCount:    validBin.bin.Result.RecordCount,
-			FileSize:       validBin.bin.Result.FileSize,
+			RecordCount:    validBin.result.RecordCount,
+			FileSize:       validBin.result.FileSize,
 			CreatedBy:      lrdb.CreatedByIngest,
 			Fingerprints:   validBin.stats.Fingerprints,
 			Published:      true,
