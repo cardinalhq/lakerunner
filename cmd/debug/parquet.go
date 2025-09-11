@@ -24,8 +24,6 @@ import (
 
 	"github.com/parquet-go/parquet-go"
 	"github.com/spf13/cobra"
-
-	"github.com/cardinalhq/lakerunner/internal/filecrunch"
 )
 
 func GetParquetCmd() *cobra.Command {
@@ -221,7 +219,7 @@ func convertByteSlices(row map[string]any) map[string]any {
 }
 
 func runParquetSchemaFromMetadata(filename string) error {
-	fh, err := filecrunch.LoadSchemaForFile(filename)
+	fh, err := LoadSchemaForFile(filename)
 	if err != nil {
 		return fmt.Errorf("failed to load schema for file %s: %w", filename, err)
 	}
