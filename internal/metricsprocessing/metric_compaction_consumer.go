@@ -26,20 +26,20 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
-// MetricCompactionConsumerV2 handles metric compaction using the generic framework
-type MetricCompactionConsumerV2 struct {
+// MetricCompactionConsumer handles metric compaction using the generic framework
+type MetricCompactionConsumer struct {
 	*CommonConsumer[*messages.MetricCompactionMessage, messages.CompactionKey]
 }
 
-// NewMetricCompactionConsumerV2 creates a new metric compaction consumer using the generic framework
-func NewMetricCompactionConsumerV2(
+// NewMetricCompactionConsumer creates a new metric compaction consumer using the generic framework
+func NewMetricCompactionConsumer(
 	ctx context.Context,
 	factory *fly.Factory,
 	cfg *config.Config,
 	store MetricCompactionStore,
 	storageProvider storageprofile.StorageProfileProvider,
 	cmgr cloudstorage.ClientProvider,
-) (*MetricCompactionConsumerV2, error) {
+) (*MetricCompactionConsumer, error) {
 
 	// Create processor
 	processor := NewMetricCompactionProcessor(store, storageProvider, cmgr, cfg)
@@ -55,7 +55,7 @@ func NewMetricCompactionConsumerV2(
 	}
 
 	// Create generic consumer
-	genericConsumer, err := NewCommonConsumer[*messages.MetricCompactionMessage, messages.CompactionKey](
+	genericConsumer, err := NewCommonConsumer[*messages.MetricCompactionMessage](
 		ctx,
 		factory,
 		cfg,
@@ -67,7 +67,7 @@ func NewMetricCompactionConsumerV2(
 		return nil, fmt.Errorf("failed to create generic compaction consumer: %w", err)
 	}
 
-	return &MetricCompactionConsumerV2{
+	return &MetricCompactionConsumer{
 		CommonConsumer: genericConsumer,
 	}, nil
 }

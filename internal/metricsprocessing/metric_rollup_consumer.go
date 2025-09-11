@@ -27,27 +27,27 @@ import (
 )
 
 // Rollup accumulation times to avoid import cycle with config package
-var rollupAccumulationTimesV2 = map[int32]time.Duration{
+var rollupAccumulationTimes = map[int32]time.Duration{
 	10_000:    90 * time.Second,  // 10s->60s: wait max 90 seconds
 	60_000:    200 * time.Second, // 60s->300s: wait max 200 seconds
 	300_000:   5 * time.Minute,   // 5m->20m: wait max 5 minutes
 	1_200_000: 5 * time.Minute,   // 20m->1h: wait max 5 minutes
 }
 
-// MetricRollupConsumerV2 handles metric rollup using CommonConsumer
-type MetricRollupConsumerV2 struct {
+// MetricRollupConsumer handles metric rollup using CommonConsumer
+type MetricRollupConsumer struct {
 	*CommonConsumer[*messages.MetricRollupMessage, messages.RollupKey]
 }
 
-// NewMetricRollupConsumerV2 creates a new metric rollup consumer using the common consumer framework
-func NewMetricRollupConsumerV2(
+// NewMetricRollupConsumer creates a new metric rollup consumer using the common consumer framework
+func NewMetricRollupConsumer(
 	ctx context.Context,
 	factory *fly.Factory,
 	store RollupStore,
 	storageProvider storageprofile.StorageProfileProvider,
 	cmgr cloudstorage.ClientProvider,
 	cfg *config.Config,
-) (*MetricRollupConsumerV2, error) {
+) (*MetricRollupConsumer, error) {
 
 	// Create Kafka producer for sending rollup messages
 	producer, err := factory.CreateProducer()
@@ -61,7 +61,7 @@ func NewMetricRollupConsumerV2(
 	// Get the accumulation time based on rollup frequencies
 	// We'll use the longest accumulation time as a default
 	maxAccumulationTime := time.Duration(0)
-	for _, accTime := range rollupAccumulationTimesV2 {
+	for _, accTime := range rollupAccumulationTimes {
 		maxAccumulationTime = max(maxAccumulationTime, accTime)
 	}
 	if maxAccumulationTime == 0 {
@@ -82,7 +82,7 @@ func NewMetricRollupConsumerV2(
 	}
 
 	// Create common consumer
-	commonConsumer, err := NewCommonConsumer[*messages.MetricRollupMessage, messages.RollupKey](
+	commonConsumer, err := NewCommonConsumer[*messages.MetricRollupMessage](
 		ctx,
 		factory,
 		cfg,
@@ -94,7 +94,7 @@ func NewMetricRollupConsumerV2(
 		return nil, fmt.Errorf("failed to create common consumer: %w", err)
 	}
 
-	return &MetricRollupConsumerV2{
+	return &MetricRollupConsumer{
 		CommonConsumer: commonConsumer,
 	}, nil
 }

@@ -55,7 +55,7 @@ func NewLogCompactionConsumer(
 	}
 
 	// Create generic consumer
-	genericConsumer, err := NewCommonConsumer[*messages.LogCompactionMessage, messages.LogCompactionKey](
+	genericConsumer, err := NewCommonConsumer[*messages.LogCompactionMessage](
 		ctx,
 		factory,
 		cfg,

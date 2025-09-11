@@ -97,7 +97,7 @@ func init() {
 			kafkaFactory := fly.NewFactory(&cfg.Fly)
 			slog.Info("Starting metrics compaction with accumulation consumer")
 
-			consumer, err := metricsprocessing.NewMetricCompactionConsumerV2(ctx, kafkaFactory, cfg, mdb, sp, cmgr)
+			consumer, err := metricsprocessing.NewMetricCompactionConsumer(ctx, kafkaFactory, cfg, mdb, sp, cmgr)
 			if err != nil {
 				return fmt.Errorf("failed to create Kafka accumulation consumer: %w", err)
 			}

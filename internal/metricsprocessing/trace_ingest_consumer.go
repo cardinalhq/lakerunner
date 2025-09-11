@@ -26,20 +26,20 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
-// TraceIngestConsumerV2 handles object store notification messages for trace ingestion using CommonConsumer
-type TraceIngestConsumerV2 struct {
+// TraceIngestConsumer handles object store notification messages for trace ingestion using CommonConsumer
+type TraceIngestConsumer struct {
 	*CommonConsumer[*messages.ObjStoreNotificationMessage, messages.IngestKey]
 }
 
-// NewTraceIngestConsumerV2 creates a new trace ingest consumer using the common consumer framework
-func NewTraceIngestConsumerV2(
+// NewTraceIngestConsumer creates a new trace ingest consumer using the common consumer framework
+func NewTraceIngestConsumer(
 	ctx context.Context,
 	factory *fly.Factory,
 	cfg *config.Config,
 	store TraceIngestStore,
 	storageProvider storageprofile.StorageProfileProvider,
 	cmgr cloudstorage.ClientProvider,
-) (*TraceIngestConsumerV2, error) {
+) (*TraceIngestConsumer, error) {
 
 	// Create Kafka producer for segment notifications
 	kafkaProducer, err := factory.CreateProducer()
@@ -61,7 +61,7 @@ func NewTraceIngestConsumerV2(
 	}
 
 	// Create common consumer
-	commonConsumer, err := NewCommonConsumer[*messages.ObjStoreNotificationMessage, messages.IngestKey](
+	commonConsumer, err := NewCommonConsumer[*messages.ObjStoreNotificationMessage](
 		ctx,
 		factory,
 		cfg,
@@ -73,7 +73,7 @@ func NewTraceIngestConsumerV2(
 		return nil, fmt.Errorf("failed to create common consumer: %w", err)
 	}
 
-	return &TraceIngestConsumerV2{
+	return &TraceIngestConsumer{
 		CommonConsumer: commonConsumer,
 	}, nil
 }

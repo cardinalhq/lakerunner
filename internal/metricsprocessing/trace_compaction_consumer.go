@@ -26,20 +26,20 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
-// TraceCompactionConsumerV2 handles trace compaction using the common consumer framework
-type TraceCompactionConsumerV2 struct {
+// TraceCompactionConsumer handles trace compaction using the common consumer framework
+type TraceCompactionConsumer struct {
 	*CommonConsumer[*messages.TraceCompactionMessage, messages.TraceCompactionKey]
 }
 
-// NewTraceCompactionConsumerV2 creates a new trace compaction consumer using the common consumer framework
-func NewTraceCompactionConsumerV2(
+// NewTraceCompactionConsumer creates a new trace compaction consumer using the common consumer framework
+func NewTraceCompactionConsumer(
 	ctx context.Context,
 	factory *fly.Factory,
 	cfg *config.Config,
 	store TraceCompactionStore,
 	storageProvider storageprofile.StorageProfileProvider,
 	cmgr cloudstorage.ClientProvider,
-) (*TraceCompactionConsumerV2, error) {
+) (*TraceCompactionConsumer, error) {
 
 	// Create processor
 	processor := NewTraceCompactionProcessor(store, storageProvider, cmgr, cfg)
@@ -67,7 +67,7 @@ func NewTraceCompactionConsumerV2(
 		return nil, fmt.Errorf("failed to create common consumer: %w", err)
 	}
 
-	return &TraceCompactionConsumerV2{
+	return &TraceCompactionConsumer{
 		CommonConsumer: commonConsumer,
 	}, nil
 }

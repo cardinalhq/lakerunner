@@ -26,20 +26,20 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
-// LogIngestConsumerV2 handles object store notification messages for log ingestion using CommonConsumer
-type LogIngestConsumerV2 struct {
+// LogIngestConsumer handles object store notification messages for log ingestion using CommonConsumer
+type LogIngestConsumer struct {
 	*CommonConsumer[*messages.ObjStoreNotificationMessage, messages.IngestKey]
 }
 
-// NewLogIngestConsumerV2 creates a new log ingest consumer using the common consumer framework
-func NewLogIngestConsumerV2(
+// NewLogIngestConsumer creates a new log ingest consumer using the common consumer framework
+func NewLogIngestConsumer(
 	ctx context.Context,
 	factory *fly.Factory,
 	cfg *config.Config,
 	store LogIngestStore,
 	storageProvider storageprofile.StorageProfileProvider,
 	cmgr cloudstorage.ClientProvider,
-) (*LogIngestConsumerV2, error) {
+) (*LogIngestConsumer, error) {
 
 	// Create Kafka producer for segment notifications
 	kafkaProducer, err := factory.CreateProducer()
@@ -61,7 +61,7 @@ func NewLogIngestConsumerV2(
 	}
 
 	// Create common consumer
-	commonConsumer, err := NewCommonConsumer[*messages.ObjStoreNotificationMessage, messages.IngestKey](
+	commonConsumer, err := NewCommonConsumer[*messages.ObjStoreNotificationMessage](
 		ctx,
 		factory,
 		cfg,
@@ -73,7 +73,7 @@ func NewLogIngestConsumerV2(
 		return nil, fmt.Errorf("failed to create common consumer: %w", err)
 	}
 
-	return &LogIngestConsumerV2{
+	return &LogIngestConsumer{
 		CommonConsumer: commonConsumer,
 	}, nil
 }

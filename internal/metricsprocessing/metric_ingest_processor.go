@@ -17,11 +17,12 @@ package metricsprocessing
 import (
 	"context"
 	"fmt"
-	"github.com/cardinalhq/lakerunner/internal/exemplars"
 	"io"
 	"log/slog"
 	"os"
 	"time"
+
+	"github.com/cardinalhq/lakerunner/internal/exemplars"
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
@@ -77,7 +78,6 @@ func newMetricIngestProcessor(store MetricIngestStore, storageProvider storagepr
 		kafkaProducer:     kafkaProducer,
 		exemplarProcessor: exemplarProcessor,
 	}
-
 }
 
 // validateIngestGroupConsistency ensures all messages in an ingest group have consistent fields

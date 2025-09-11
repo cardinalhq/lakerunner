@@ -97,7 +97,7 @@ func init() {
 			kafkaFactory := fly.NewFactory(&cfg.Fly)
 			slog.Info("Starting logs ingestion with accumulation consumer")
 
-			consumer, err := metricsprocessing.NewLogIngestConsumerV2(ctx, kafkaFactory, cfg, mdb, sp, cmgr)
+			consumer, err := metricsprocessing.NewLogIngestConsumer(ctx, kafkaFactory, cfg, mdb, sp, cmgr)
 			if err != nil {
 				return fmt.Errorf("failed to create Kafka ingest consumer: %w", err)
 			}

@@ -26,20 +26,20 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
-// MetricIngestConsumerV2 handles object store notification messages for metric ingestion using CommonConsumer
-type MetricIngestConsumerV2 struct {
+// MetricIngestConsumer handles object store notification messages for metric ingestion using CommonConsumer
+type MetricIngestConsumer struct {
 	*CommonConsumer[*messages.ObjStoreNotificationMessage, messages.IngestKey]
 }
 
-// NewMetricIngestConsumerV2 creates a new metric ingest consumer using the common consumer framework
-func NewMetricIngestConsumerV2(
+// NewMetricIngestConsumer creates a new metric ingest consumer using the common consumer framework
+func NewMetricIngestConsumer(
 	ctx context.Context,
 	factory *fly.Factory,
 	cfg *config.Config,
 	store MetricIngestStore,
 	storageProvider storageprofile.StorageProfileProvider,
 	cmgr cloudstorage.ClientProvider,
-) (*MetricIngestConsumerV2, error) {
+) (*MetricIngestConsumer, error) {
 
 	// Create Kafka producer for segment notifications
 	kafkaProducer, err := factory.CreateProducer()
@@ -47,7 +47,7 @@ func NewMetricIngestConsumerV2(
 		return nil, fmt.Errorf("failed to create Kafka producer: %w", err)
 	}
 
-	// Create MetricIngestProcessor (reusing existing)
+	// Create MetricIngestProcessor
 	processor := newMetricIngestProcessor(store, storageProvider, cmgr, kafkaProducer)
 
 	// Configure the consumer
@@ -61,7 +61,7 @@ func NewMetricIngestConsumerV2(
 	}
 
 	// Create common consumer
-	commonConsumer, err := NewCommonConsumer[*messages.ObjStoreNotificationMessage, messages.IngestKey](
+	commonConsumer, err := NewCommonConsumer[*messages.ObjStoreNotificationMessage](
 		ctx,
 		factory,
 		cfg,
@@ -73,7 +73,7 @@ func NewMetricIngestConsumerV2(
 		return nil, fmt.Errorf("failed to create common consumer: %w", err)
 	}
 
-	return &MetricIngestConsumerV2{
+	return &MetricIngestConsumer{
 		CommonConsumer: commonConsumer,
 	}, nil
 }
