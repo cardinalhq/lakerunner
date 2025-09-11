@@ -37,6 +37,9 @@ type TraceSegmentInserter interface {
 
 type QuerierFull interface {
 	Querier
+	ParseMetricPartitions(ctx context.Context) ([]OrgDateintInfo, error)
+	ParseLogPartitions(ctx context.Context) ([]OrgDateintInfo, error)
+	ParseTracePartitions(ctx context.Context) ([]OrgDateintInfo, error)
 }
 
 type StoreFull interface {

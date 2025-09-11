@@ -146,7 +146,7 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 		slog.Bool("syncLegacyTables", cmd.syncLegacyTables))
 
 	var wg sync.WaitGroup
-	errCh := make(chan error, 8)
+	errCh := make(chan error, 10)
 
 	// Aggressive object delete loop
 	wg.Add(1)
@@ -200,6 +200,33 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 		if err := periodicLoop(ctx, metricEstimateUpdatePeriod, func(c context.Context) error {
 			return runTraceEstimateUpdate(c, mdb)
 		}); err != nil && !errors.Is(err, context.Canceled) {
+			errCh <- err
+		}
+	}()
+
+	// Metric segment cleanup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := metricCleanupLoop(ctx, cmd.sp, mdb, cdb, cmgr); err != nil && !errors.Is(err, context.Canceled) {
+			errCh <- err
+		}
+	}()
+
+	// Log segment cleanup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := logCleanupLoop(ctx, cmd.sp, mdb, cdb, cmgr); err != nil && !errors.Is(err, context.Canceled) {
+			errCh <- err
+		}
+	}()
+
+	// Trace segment cleanup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := traceCleanupLoop(ctx, cmd.sp, mdb, cdb, cmgr); err != nil && !errors.Is(err, context.Canceled) {
 			errCh <- err
 		}
 	}()
