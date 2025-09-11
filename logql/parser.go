@@ -127,6 +127,7 @@ type Vector struct {
 
 type VectorAgg struct {
 	Op      string   `json:"op"`
+	Param   *int     `json:"param,omitempty"` // e.g. 3 for topk(3, ...)
 	By      []string `json:"by,omitempty"`
 	Without []string `json:"without,omitempty"`
 	Left    LogAST   `json:"left"` // vector or sample expression
@@ -257,6 +258,12 @@ func fromSyntax(e logql.Expr) (LogAST, error) {
 			Op:   firstToken(e.String()), // Loki has v.Operation; token keeps us resilient
 			Left: left,
 		}
+
+		// Extract parameter for functions like topk(3, ...), bottomk(5, ...)
+		if v.Params != 0 {
+			va.Param = &v.Params
+		}
+
 		if v.Grouping != nil && len(v.Grouping.Groups) > 0 {
 			norm := make([]string, 0, len(v.Grouping.Groups))
 			for _, g := range v.Grouping.Groups {

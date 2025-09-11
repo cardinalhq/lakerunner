@@ -428,3 +428,61 @@ func TestRewrite_Grouping_Mixed_NoDotNotQuoted(t *testing.T) {
 		t.Fatalf("promql mismatch:\nwant: %s\ngot : %s", want, got.PromQL)
 	}
 }
+
+func TestRewrite_TopK(t *testing.T) {
+	leaf := logql.LogLeaf{ID: "topkNoGroup", Range: "2m"}
+	k := 5
+
+	// topk(5, rate(<leaf>[2m]))
+	root := &logql.LAggNode{
+		Op:    "topk",
+		Param: &k,
+		Child: &logql.LRangeAggNode{
+			Op:    "rate",
+			Child: &logql.LLeafNode{Leaf: leaf},
+		},
+	}
+
+	rr, err := RewriteToPromQL(root)
+	if err != nil {
+		t.Fatalf("RewriteToPromQL error: %v", err)
+	}
+
+	wantProm := `topk(5, rate(` + SynthLogCount + `{` + LeafMatcher + `="topkNoGroup"}[2m]))`
+	if rr.PromQL != wantProm {
+		t.Fatalf("promql mismatch:\n  want: %s\n  got : %s", wantProm, rr.PromQL)
+	}
+
+	assertLeavesExactly(t, rr, map[string]logql.LogLeaf{
+		"topkNoGroup": leaf,
+	})
+}
+
+func TestRewrite_BottomK(t *testing.T) {
+	leaf := logql.LogLeaf{ID: "bottomkNoGroup", Range: "1m"}
+	k := 3
+
+	// bottomk(3, count_over_time(<leaf>[1m]))
+	root := &logql.LAggNode{
+		Op:    "bottomk",
+		Param: &k,
+		Child: &logql.LRangeAggNode{
+			Op:    "count_over_time",
+			Child: &logql.LLeafNode{Leaf: leaf},
+		},
+	}
+
+	rr, err := RewriteToPromQL(root)
+	if err != nil {
+		t.Fatalf("RewriteToPromQL error: %v", err)
+	}
+
+	wantProm := `bottomk(3, count_over_time(` + SynthLogCount + `{` + LeafMatcher + `="bottomkNoGroup"}[1m]))`
+	if rr.PromQL != wantProm {
+		t.Fatalf("promql mismatch:\n  want: %s\n  got : %s", wantProm, rr.PromQL)
+	}
+
+	assertLeavesExactly(t, rr, map[string]logql.LogLeaf{
+		"bottomkNoGroup": leaf,
+	})
+}
