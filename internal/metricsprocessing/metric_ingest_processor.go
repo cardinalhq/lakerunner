@@ -28,6 +28,7 @@ import (
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
+	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
@@ -59,19 +60,24 @@ type TimeBinManager struct {
 
 // MetricIngestProcessor implements the Processor interface for raw metric ingestion
 type MetricIngestProcessor struct {
-	store           MetricIngestStore
-	storageProvider storageprofile.StorageProfileProvider
-	cmgr            cloudstorage.ClientProvider
-	kafkaProducer   fly.Producer
+	store             MetricIngestStore
+	storageProvider   storageprofile.StorageProfileProvider
+	cmgr              cloudstorage.ClientProvider
+	kafkaProducer     fly.Producer
+	exemplarProcessor *exemplar.Processor
 }
 
 // newMetricIngestProcessor creates a new metric ingest processor instance
 func newMetricIngestProcessor(store MetricIngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *MetricIngestProcessor {
+
+	exemplarProcessor := exemplar.NewProcessor(exemplar.DefaultConfig())
+
 	return &MetricIngestProcessor{
-		store:           store,
-		storageProvider: storageProvider,
-		cmgr:            cmgr,
-		kafkaProducer:   kafkaProducer,
+		store:             store,
+		storageProvider:   storageProvider,
+		cmgr:              cmgr,
+		kafkaProducer:     kafkaProducer,
+		exemplarProcessor: exemplarProcessor,
 	}
 
 }
@@ -85,7 +91,6 @@ func validateIngestGroupConsistency(group *accumulationGroup[messages.IngestKey]
 		}
 	}
 
-	// Get expected values from the group key
 	expectedOrg := group.Key.OrganizationID
 	expectedInstance := group.Key.InstanceNum
 
@@ -134,7 +139,6 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 		slog.Int("messageCount", len(group.Messages)),
 		slog.Duration("groupAge", groupAge))
 
-	// Step 0: Validate that all messages in the group have consistent fields
 	if err := validateIngestGroupConsistency(group); err != nil {
 		return fmt.Errorf("group validation failed: %w", err)
 	}
@@ -150,19 +154,16 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 		}
 	}()
 
-	// Step 1: Get storage profile
 	storageProfile, err := p.storageProvider.GetStorageProfileForOrganizationAndInstance(ctx, group.Key.OrganizationID, group.Key.InstanceNum)
 	if err != nil {
 		return fmt.Errorf("get storage profile: %w", err)
 	}
 
-	// Step 2: Create storage client
 	storageClient, err := cloudstorage.NewClient(ctx, p.cmgr, storageProfile)
 	if err != nil {
 		return fmt.Errorf("create storage client: %w", err)
 	}
 
-	// Step 3: Download files and create readers
 	var readers []filereader.Reader
 	var readersToClose []filereader.Reader
 	var totalInputSize int64
@@ -179,7 +180,6 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 			slog.String("objectID", msg.ObjectID),
 			slog.Int64("fileSize", msg.FileSize))
 
-		// Step 3a: Download file
 		tmpFilename, _, is404, err := storageClient.DownloadObject(ctx, tmpDir, msg.Bucket, msg.ObjectID)
 		if err != nil {
 			ll.Error("Failed to download file", slog.String("objectID", msg.ObjectID), slog.Any("error", err))
@@ -190,7 +190,6 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 			continue
 		}
 
-		// Step 3b: Create reader stack: DiskSort(Translation(OTELMetricProto(file)))
 		reader, err := p.createReaderStack(tmpFilename, msg.OrganizationID.String(), msg.Bucket, msg.ObjectID)
 		if err != nil {
 			ll.Error("Failed to create reader stack", slog.String("objectID", msg.ObjectID), slog.Any("error", err))
@@ -406,7 +405,7 @@ func (p *MetricIngestProcessor) GetTargetRecordCount(ctx context.Context, groupi
 // createReaderStack creates a reader stack: DiskSort(Translation(OTELMetricProto(file)))
 func (p *MetricIngestProcessor) createReaderStack(tmpFilename, orgID, bucket, objectID string) (filereader.Reader, error) {
 	// Step 1: Create proto reader for .binpb or .binpb.gz files
-	reader, err := createMetricProtoReader(tmpFilename, filereader.ReaderOptions{})
+	reader, err := createMetricProtoReader(tmpFilename, filereader.ReaderOptions{ExemplarProcessor: p.exemplarProcessor})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create proto reader: %w", err)
 	}
