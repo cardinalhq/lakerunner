@@ -85,7 +85,7 @@ func replaceTable(sql string) string {
   0::BIGINT   AS "_cardinalhq.timestamp",
   ''::VARCHAR AS "_cardinalhq.id",
   ''::VARCHAR AS "_cardinalhq.level",
-  ''::VARCHAR AS "_cardinalhq.fingerprint"
+  -4446492996171837732::BIGINT   AS "_cardinalhq.fingerprint"
 FROM logs) AS _t`
 
 	// Substitute table and time placeholders.
@@ -131,6 +131,40 @@ func TestToWorkerSQL_Fingerprint_Present(t *testing.T) {
 		_ = getString(r["_cardinalhq.id"])
 		_ = getString(r["_cardinalhq.level"])
 		_ = getString(r["_cardinalhq.fingerprint"]) // must exist even if empty
+	}
+}
+
+func TestToWorkerSQL_Fingerprint_AsString(t *testing.T) {
+	db := openDuckDB(t)
+	mustExec(t, db, `CREATE TABLE logs("_cardinalhq.message" TEXT);`)
+	mustExec(t, db, `INSERT INTO logs VALUES ('hello'), ('world');`)
+
+	leaf := LogLeaf{}
+	sql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc", nil)), 0, 5000)
+
+	rows := queryAll(t, db, sql)
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(rows))
+	}
+
+	// Verify that fingerprint is returned as a string (not int64)
+	for i, r := range rows {
+		fingerprint := r["_cardinalhq.fingerprint"]
+		if fingerprint == nil {
+			t.Fatalf("row %d: fingerprint is nil", i)
+		}
+
+		// Check that it's a string type
+		switch v := fingerprint.(type) {
+		case string:
+			if v != "-4446492996171837732" {
+				t.Fatalf("row %d: expected fingerprint to be '-4446492996171837732' (string), got %q", i, v)
+			}
+		case int64:
+			t.Fatalf("row %d: fingerprint is still int64 (%d), should be string", i, v)
+		default:
+			t.Fatalf("row %d: fingerprint has unexpected type %T: %v", i, fingerprint, fingerprint)
+		}
 	}
 }
 

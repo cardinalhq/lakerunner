@@ -178,11 +178,11 @@ func analyzeParsers(be *LogLeaf) (parserCreated map[string]struct{}, hasJSON, ha
 func computeS0Need(be *LogLeaf, groupKeys []string, parserCreated map[string]struct{}) map[string]struct{} {
 	// base columns always in s0
 	need := map[string]struct{}{
-		"\"_cardinalhq.message\"":     {},
-		"\"_cardinalhq.timestamp\"":   {},
-		"\"_cardinalhq.id\"":          {},
-		"\"_cardinalhq.level\"":       {},
-		"\"_cardinalhq.fingerprint\"": {},
+		"\"_cardinalhq.message\"":   {},
+		"\"_cardinalhq.timestamp\"": {},
+		"\"_cardinalhq.id\"":        {},
+		"\"_cardinalhq.level\"":     {},
+		"CAST(\"_cardinalhq.fingerprint\" AS VARCHAR) AS \"_cardinalhq.fingerprint\"": {},
 	}
 	// matchers must exist before parsers
 	for _, m := range be.Matchers {
