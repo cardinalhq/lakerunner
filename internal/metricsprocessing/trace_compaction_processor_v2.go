@@ -52,7 +52,7 @@ func NewTraceCompactionProcessorV2(
 // Process implements the processor interface for trace compaction
 func (p *TraceCompactionProcessorV2) Process(ctx context.Context, group *accumulationGroup[messages.TraceCompactionKey], kafkaCommitData *KafkaCommitData) error {
 	ll := logctx.FromContext(ctx)
-	
+
 	// Calculate group age from Hunter timestamp
 	groupAge := time.Since(group.CreatedAt)
 

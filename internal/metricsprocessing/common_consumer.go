@@ -170,13 +170,14 @@ func (c *CommonConsumer[M, K]) processKafkaMessage(ctx context.Context, kafkaMsg
 	var notification M
 
 	// Use reflection to create the underlying struct when M is a pointer type
-	rt := reflect.TypeOf(notification)
+	// Use (*M)(nil) to get the concrete type even when M is a pointer type
+	rt := reflect.TypeOf((*M)(nil)).Elem()
 	if rt.Kind() == reflect.Ptr {
 		// M is a pointer type, create the underlying struct
 		notification = reflect.New(rt.Elem()).Interface().(M)
 	} else {
 		// M is a value type, create it directly
-		notification = reflect.New(rt).Elem().Interface().(M)
+		notification = reflect.New(rt).Interface().(M)
 	}
 
 	if err := notification.Unmarshal(kafkaMsg.Value); err != nil {

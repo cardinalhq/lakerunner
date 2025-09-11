@@ -55,7 +55,7 @@ func NewMetricCompactionConsumerV2(
 	}
 
 	// Create generic consumer
-	genericConsumer, err := NewCommonConsumer[*messages.MetricCompactionMessage](
+	genericConsumer, err := NewCommonConsumer[*messages.MetricCompactionMessage, messages.CompactionKey](
 		ctx,
 		factory,
 		cfg,
