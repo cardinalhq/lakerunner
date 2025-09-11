@@ -23,7 +23,6 @@ type Querier interface {
 	BatchUpsertExemplarMetrics(ctx context.Context, arg []BatchUpsertExemplarMetricsParams) *BatchUpsertExemplarMetricsBatchResults
 	BatchUpsertExemplarTraces(ctx context.Context, arg []BatchUpsertExemplarTracesParams) *BatchUpsertExemplarTracesBatchResults
 	CompactLogSegments(ctx context.Context, arg CompactLogSegmentsParams) error
-	CompactTraceSegments(ctx context.Context, arg CompactTraceSegmentsParams) error
 	// Retrieves all pack estimates for a specific signal type
 	GetAllBySignal(ctx context.Context, signal string) ([]GetAllBySignalRow, error)
 	// Retrieves all existing pack estimates for EWMA calculations across all signals
@@ -38,10 +37,9 @@ type Querier interface {
 	GetMetricType(ctx context.Context, arg GetMetricTypeParams) (string, error)
 	// Get a specific segment_journal entry by ID
 	GetSegmentJournalByID(ctx context.Context, id int64) (SegmentJournal, error)
-	GetTraceSegmentsForCompaction(ctx context.Context, arg GetTraceSegmentsForCompactionParams) ([]GetTraceSegmentsForCompactionRow, error)
+	GetTraceSeg(ctx context.Context, arg GetTraceSegParams) (TraceSeg, error)
 	// Insert a debugging journal entry for segment operations
 	InsertSegmentJournal(ctx context.Context, arg InsertSegmentJournalParams) error
-	InsertTraceSegmentDirect(ctx context.Context, arg InsertTraceSegmentDirectParams) error
 	// Get the last processed offset for a specific consumer group, topic, partition, organization, and instance
 	KafkaGetLastProcessed(ctx context.Context, arg KafkaGetLastProcessedParams) (int64, error)
 	// Insert or update multiple Kafka journal entries in a single batch operation
@@ -65,6 +63,7 @@ type Querier interface {
 	MarkLogSegsCompactedByKeys(ctx context.Context, arg MarkLogSegsCompactedByKeysParams) error
 	MarkMetricSegsCompactedByKeys(ctx context.Context, arg MarkMetricSegsCompactedByKeysParams) error
 	MarkMetricSegsRolledupByKeys(ctx context.Context, arg MarkMetricSegsRolledupByKeysParams) error
+	MarkTraceSegsCompactedByKeys(ctx context.Context, arg MarkTraceSegsCompactedByKeysParams) error
 	// Returns an estimate of the number of metric segments, accounting for per-file overhead.
 	// Uses frequency_ms to provide more accurate estimates based on collection frequency.
 	MetricSegEstimator(ctx context.Context, arg MetricSegEstimatorParams) ([]MetricSegEstimatorRow, error)
@@ -103,6 +102,7 @@ type Querier interface {
 	insertLogSegmentDirect(ctx context.Context, arg InsertLogSegmentParams) error
 	insertMetricSegDirect(ctx context.Context, arg InsertMetricSegmentParams) error
 	insertMetricSegsDirect(ctx context.Context, arg []InsertMetricSegsParams) *insertMetricSegsDirectBatchResults
+	insertTraceSegmentDirect(ctx context.Context, arg InsertTraceSegmentParams) error
 }
 
 var _ Querier = (*Queries)(nil)

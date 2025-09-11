@@ -17,7 +17,6 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -26,12 +25,6 @@ var (
 	Version = "dev"
 	Commit  = "unknown"
 	Date    = "unknown"
-)
-
-const (
-	workSleepTime  = 2 * time.Second
-	maxWorkRetries = 100
-	targetFileSize = 1_100_000
 )
 
 // rootCmd represents the base command when called without any subcommands

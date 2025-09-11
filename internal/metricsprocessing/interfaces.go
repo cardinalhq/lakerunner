@@ -40,3 +40,10 @@ type LogIngestStore interface {
 	InsertLogSegmentBatchWithKafkaOffsets(ctx context.Context, batch lrdb.LogSegmentBatch) error
 	GetLogEstimate(ctx context.Context, orgID uuid.UUID) int64
 }
+
+// TraceIngestStore defines database operations needed for trace ingestion
+type TraceIngestStore interface {
+	IngestStore
+	InsertTraceSegmentBatchWithKafkaOffsets(ctx context.Context, batch lrdb.TraceSegmentBatch) error
+	GetTraceEstimate(ctx context.Context, orgID uuid.UUID) int64
+}

@@ -16,13 +16,119 @@ package lrdb
 
 import (
 	"context"
+	"fmt"
+
+	"github.com/google/uuid"
 )
 
-func (q *Store) InsertTraceSegment(ctx context.Context, params InsertTraceSegmentDirectParams) error {
+// CompactTraceSegsParams defines the parameters for trace segment compaction with Kafka offsets
+type CompactTraceSegsParams struct {
+	OrganizationID uuid.UUID
+	Dateint        int32
+	IngestDateint  int32
+	InstanceNum    int16
+	SlotID         int32 // Traces include slot ID unlike logs
+	NewRecords     []CompactTraceSegsNew
+	OldRecords     []CompactTraceSegsOld
+	CreatedBy      CreatedBy
+}
+
+// CompactTraceSegsOld represents an old trace segment to be marked as compacted
+type CompactTraceSegsOld struct {
+	SegmentID int64
+}
+
+// CompactTraceSegsNew represents a new compacted trace segment to be inserted
+type CompactTraceSegsNew struct {
+	SegmentID    int64
+	StartTs      int64
+	EndTs        int64
+	RecordCount  int64
+	FileSize     int64
+	Fingerprints []int64
+}
+
+// CompactTraceSegsWithKafkaOffsets marks old trace segments as compacted, inserts new compacted segments,
+// and updates Kafka offsets in a single transaction
+func (q *Store) CompactTraceSegsWithKafkaOffsets(ctx context.Context, params CompactTraceSegsParams, kafkaOffsets []KafkaOffsetUpdate) error {
+	return q.execTx(ctx, func(s *Store) error {
+		if len(params.OldRecords) > 0 {
+			segIDs := make([]int64, len(params.OldRecords))
+			for i, oldRec := range params.OldRecords {
+				segIDs[i] = oldRec.SegmentID
+			}
+
+			if err := s.MarkTraceSegsCompactedByKeys(ctx, MarkTraceSegsCompactedByKeysParams{
+				OrganizationID: params.OrganizationID,
+				Dateint:        params.Dateint,
+				InstanceNum:    params.InstanceNum,
+				SlotID:         params.SlotID,
+				SegmentIds:     segIDs,
+			}); err != nil {
+				return fmt.Errorf("mark old trace segments compacted: %w", err)
+			}
+		}
+
+		if len(params.NewRecords) > 0 {
+			newItems := make([]batchInsertTraceSegsDirectParams, len(params.NewRecords))
+			for i, r := range params.NewRecords {
+				newItems[i] = batchInsertTraceSegsDirectParams{
+					OrganizationID: params.OrganizationID,
+					Dateint:        params.Dateint,
+					IngestDateint:  params.IngestDateint,
+					SegmentID:      r.SegmentID,
+					InstanceNum:    params.InstanceNum,
+					SlotID:         params.SlotID, // Traces preserve slot ID for partitioning
+					StartTs:        r.StartTs,
+					EndTs:          r.EndTs,
+					RecordCount:    r.RecordCount,
+					FileSize:       r.FileSize,
+					CreatedBy:      params.CreatedBy,
+					Fingerprints:   r.Fingerprints,
+				}
+			}
+
+			res := s.batchInsertTraceSegsDirect(ctx, newItems)
+			var insertErr error
+			res.Exec(func(i int, err error) {
+				if err != nil && insertErr == nil {
+					insertErr = fmt.Errorf("insert compacted trace segment %d: %w", i, err)
+				}
+			})
+			if insertErr != nil {
+				return insertErr
+			}
+		}
+
+		// Update Kafka offsets with organization and instance tracking
+		if len(kafkaOffsets) > 0 {
+			// Sort offsets to prevent deadlocks
+			SortKafkaOffsets(kafkaOffsets)
+
+			// Convert to batch parameters - use KafkaJournalUpsertWithOrgInstance for individual org/instance tracking
+			for _, offset := range kafkaOffsets {
+				if err := s.KafkaJournalUpsertWithOrgInstance(ctx, KafkaJournalUpsertWithOrgInstanceParams{
+					Topic:               offset.Topic,
+					Partition:           offset.Partition,
+					ConsumerGroup:       offset.ConsumerGroup,
+					OrganizationID:      offset.OrganizationID,
+					InstanceNum:         offset.InstanceNum,
+					LastProcessedOffset: offset.Offset,
+				}); err != nil {
+					return fmt.Errorf("update kafka offset for org %s instance %d: %w", offset.OrganizationID, offset.InstanceNum, err)
+				}
+			}
+		}
+
+		return nil
+	})
+}
+
+func (q *Store) InsertTraceSegment(ctx context.Context, params InsertTraceSegmentParams) error {
 	if err := q.ensureTraceFPPartition(ctx, "trace_seg", params.OrganizationID, params.Dateint); err != nil {
 		return err
 	}
-	return q.InsertTraceSegmentDirect(ctx, params)
+	return q.insertTraceSegmentDirect(ctx, params)
 }
 
 // InsertTraceSegmentBatchWithKafkaOffsets inserts multiple trace segments and updates multiple Kafka offsets in a single transaction

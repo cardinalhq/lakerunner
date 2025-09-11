@@ -32,7 +32,8 @@ type MetricSegmentInserter interface {
 }
 
 type TraceSegmentInserter interface {
-	InsertTraceSegment(ctx context.Context, params InsertTraceSegmentDirectParams) error
+	InsertTraceSegment(ctx context.Context, params InsertTraceSegmentParams) error
+	CompactTraceSegsWithKafkaOffsets(ctx context.Context, params CompactTraceSegsParams, kafkaOffsets []KafkaOffsetUpdate) error
 }
 
 type QuerierFull interface {

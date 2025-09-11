@@ -175,15 +175,16 @@ func (r *ProtoTracesReader) buildSpanRow(rs ptrace.ResourceSpans, ss ptrace.Scop
 	})
 
 	// Basic span fields - raw data only
-	ret["trace_id"] = span.TraceID().String()
-	ret["span_id"] = span.SpanID().String()
-	ret["parent_span_id"] = span.ParentSpanID().String()
-	ret["name"] = span.Name()
-	ret["kind"] = span.Kind().String()
-	ret["status_code"] = span.Status().Code().String()
-	ret["status_message"] = span.Status().Message()
-	ret["start_timestamp"] = span.StartTimestamp().AsTime().UnixMilli()
-	ret["end_timestamp"] = span.EndTimestamp().AsTime().UnixMilli()
+	ret["_cardinalhq.span_trace_id"] = span.TraceID().String()
+	ret["_cardinalhq.span_id"] = span.SpanID().String()
+	ret["_cardinalhq.parent_span_id"] = span.ParentSpanID().String()
+	ret["_cardinalhq.name"] = span.Name()
+	ret["_cardinalhq.kind"] = span.Kind().String()
+	ret["_cardinalhq.status_code"] = span.Status().Code().String()
+	ret["_cardinalhq.status_message"] = span.Status().Message()
+	ret["_cardinalhq.timestamp"] = span.StartTimestamp().AsTime().UnixMilli()
+	ret["_cardinalhq.end_timestamp"] = span.EndTimestamp().AsTime().UnixMilli()
+	ret["_cardinalhq.span_duration"] = span.EndTimestamp().AsTime().Sub(span.StartTimestamp().AsTime()).Milliseconds()
 
 	return ret
 }

@@ -68,6 +68,13 @@ func (store *Store) GetLogEstimate(ctx context.Context, orgID uuid.UUID) int64 {
 	return store.estimator.(*PackEstimator).GetLog(ctx, orgID)
 }
 
+func (store *Store) GetTraceEstimate(ctx context.Context, orgID uuid.UUID) int64 {
+	if traceEstimator, ok := store.estimator.(TraceEstimator); ok {
+		return traceEstimator.GetTrace(ctx, orgID)
+	}
+	return store.estimator.(*PackEstimator).GetTrace(ctx, orgID)
+}
+
 // Close stops the background goroutines and cleans up resources
 func (store *Store) Close() {
 	if estimator, ok := store.estimator.(*MetricPackEstimator); ok {

@@ -25,6 +25,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
+	"github.com/cardinalhq/lakerunner/internal/idgen"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
@@ -107,7 +108,7 @@ func (c *LogIngestConsumer) Run(ctx context.Context) error {
 
 	// Start the Kafka consumer
 	err := c.consumer.Consume(ctx, func(ctx context.Context, kafkaMessages []fly.ConsumedMessage) error {
-		ll := logctx.FromContext(ctx).With(slog.String("batchID", "ingest-logs-"+fmt.Sprintf("%d", time.Now().UnixNano())))
+		ll := logctx.FromContext(ctx).With(slog.String("batchID", idgen.GenerateShortBase32ID()))
 		ctx = logctx.WithLogger(ctx, ll)
 
 		if len(kafkaMessages) == 0 {

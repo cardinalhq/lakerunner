@@ -15,10 +15,9 @@
 package factories
 
 import (
-	"fmt"
-	"slices"
-
+	"github.com/cardinalhq/lakerunner/internal/fingerprint"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
+	mapset "github.com/deckarep/golang-set/v2"
 )
 
 // NewTracesWriter creates a writer optimized for traces data.
@@ -34,38 +33,32 @@ func NewTracesWriter(tmpdir string, slotID int32, recordsPerFile int64) (parquet
 		NoSplitGroups: false, // Allow splitting within slots for size management
 
 		RecordsPerFile: recordsPerFile,
-		StatsProvider:  &TracesStatsProvider{SlotID: slotID},
+		StatsProvider:  &TracesStatsProvider{},
 	}
 
 	return parquetwriter.NewUnifiedWriter(config)
 }
 
 // TracesStatsProvider collects trace-specific statistics.
-type TracesStatsProvider struct {
-	SlotID int32
-}
+type TracesStatsProvider struct{}
 
 func (p *TracesStatsProvider) NewAccumulator() parquetwriter.StatsAccumulator {
 	return &TracesStatsAccumulator{
-		slotID:     p.SlotID,
-		spansSeen:  make(map[string]bool),
-		tracesSeen: make(map[string]bool),
+		fingerprints: mapset.NewSet[int64](),
 	}
 }
 
 // TracesStatsAccumulator collects traces-specific statistics.
 type TracesStatsAccumulator struct {
-	slotID     int32
-	spansSeen  map[string]bool
-	tracesSeen map[string]bool
-	firstTS    int64
-	lastTS     int64
-	first      bool
+	firstTS      int64
+	lastTS       int64
+	first        bool
+	fingerprints mapset.Set[int64]
 }
 
 func (a *TracesStatsAccumulator) Add(row map[string]any) {
 	// Track timestamp range
-	if startTime, ok := row["_cardinalhq.start_time_unix_ns"].(int64); ok {
+	if startTime, ok := row["_cardinalhq.timestamp"].(int64); ok {
 		if !a.first {
 			a.firstTS = startTime
 			a.lastTS = startTime
@@ -80,61 +73,24 @@ func (a *TracesStatsAccumulator) Add(row map[string]any) {
 		}
 	}
 
-	// Track unique traces
-	if traceID, ok := row["_cardinalhq.trace_id"].(string); ok {
-		a.tracesSeen[traceID] = true
-	}
-
-	// Track unique spans
-	if spanID, ok := row["_cardinalhq.span_id"].(string); ok {
-		a.spansSeen[spanID] = true
+	// Generate comprehensive fingerprints for the row
+	rowFingerprints := fingerprint.GenerateRowFingerprints(row)
+	for _, fp := range rowFingerprints.ToSlice() {
+		a.fingerprints.Add(fp)
 	}
 }
 
 func (a *TracesStatsAccumulator) Finalize() any {
-	// Extract sorted list of span IDs from the map
-	spanIDs := make([]string, 0, len(a.spansSeen))
-	for spanID := range a.spansSeen {
-		spanIDs = append(spanIDs, spanID)
-	}
-	slices.Sort(spanIDs)
-
-	// Extract sorted list of trace IDs from the map
-	traceIDs := make([]string, 0, len(a.tracesSeen))
-	for traceID := range a.tracesSeen {
-		traceIDs = append(traceIDs, traceID)
-	}
-	slices.Sort(traceIDs)
-
 	return TracesFileStats{
-		SlotID:     a.slotID,
-		SpanCount:  int64(len(a.spansSeen)),
-		TraceCount: int64(len(a.tracesSeen)),
-		FirstTS:    a.firstTS,
-		LastTS:     a.lastTS,
-		SpanIDs:    spanIDs,
-		TraceIDs:   traceIDs,
+		FirstTS:      a.firstTS,
+		LastTS:       a.lastTS,
+		Fingerprints: a.fingerprints.ToSlice(),
 	}
 }
 
 // TracesFileStats contains statistics about a traces file.
 type TracesFileStats struct {
-	SlotID     int32    // Slot ID for this file
-	SpanCount  int64    // Number of unique spans
-	TraceCount int64    // Number of unique traces
-	FirstTS    int64    // Earliest start time
-	LastTS     int64    // Latest start time
-	SpanIDs    []string // Actual list of unique span IDs in this file
-	TraceIDs   []string // Actual list of unique trace IDs in this file
-}
-
-// ValidateTracesRow checks that a row has the required fields for traces processing.
-func ValidateTracesRow(row map[string]any) error {
-	if _, ok := row["_cardinalhq.trace_id"]; !ok {
-		return fmt.Errorf("missing required field: _cardinalhq.trace_id")
-	}
-	if _, ok := row["_cardinalhq.span_id"]; !ok {
-		return fmt.Errorf("missing required field: _cardinalhq.span_id")
-	}
-	return nil
+	FirstTS      int64   // Earliest start time
+	LastTS       int64   // Latest start time
+	Fingerprints []int64 // Fingerprints of spans in this file
 }

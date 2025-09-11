@@ -26,7 +26,6 @@ import (
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
-	"github.com/cardinalhq/lakerunner/internal/constants"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/idgen"
@@ -185,7 +184,7 @@ func (c *LogCompactionProcessor) performLogCompaction(ctx context.Context, tmpDi
 
 	var activeSegments []lrdb.LogSeg
 	var segmentsToMarkCompacted []lrdb.LogSeg
-	targetSizeThreshold := constants.LogCompactionTargetSizeBytes * 80 / 100 // 80% of target file size
+	targetSizeThreshold := config.TargetFileSize * 80 / 100 // 80% of target file size
 
 	for _, accMsg := range group.Messages {
 		msg, ok := accMsg.Message.(*messages.LogCompactionMessage)
@@ -221,7 +220,7 @@ func (c *LogCompactionProcessor) performLogCompaction(ctx context.Context, tmpDi
 				slog.Int64("segmentID", segment.SegmentID),
 				slog.Int64("fileSize", segment.FileSize),
 				slog.Int64("targetSizeThreshold", targetSizeThreshold),
-				slog.Float64("percentOfTarget", float64(segment.FileSize)/float64(constants.LogCompactionTargetSizeBytes)*100))
+				slog.Float64("percentOfTarget", float64(segment.FileSize)/float64(config.TargetFileSize)*100))
 			segmentsToMarkCompacted = append(segmentsToMarkCompacted, segment)
 			continue
 		}
@@ -349,6 +348,7 @@ func (c *LogCompactionProcessor) uploadAndCreateLogSegments(ctx context.Context,
 			RecordCount:  result.RecordCount,
 			FileSize:     result.FileSize,
 			Compacted:    true,
+			Published:    true,
 			Fingerprints: stats.Fingerprints,
 			CreatedBy:    lrdb.CreatedByCompact,
 		}
