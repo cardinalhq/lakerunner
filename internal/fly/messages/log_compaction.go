@@ -46,7 +46,6 @@ type LogCompactionMessage struct {
 	DateInt        int32     `json:"d"`  // dateint
 	SegmentID      int64     `json:"s"`  // segment_id
 	InstanceNum    int16     `json:"i"`  // instance_num
-	SlotID         int32     `json:"si"` // slot_id (always 0 for logs)
 	Records        int64     `json:"rc"` // record_count for early filtering
 	FileSize       int64     `json:"fs"` // file_size for early filtering
 	StartTs        int64     `json:"st"` // start timestamp

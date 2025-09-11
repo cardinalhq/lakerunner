@@ -572,10 +572,10 @@ func (p *TraceIngestProcessor) processRowsWithDateintBinning(ctx context.Context
 		slog.Int("slotBinsCreated", len(binManager.bins)))
 
 	// Close all writers and collect results
-	for binSlotID, bin := range binManager.bins {
+	for slot, bin := range binManager.bins {
 		results, err := bin.Writer.Close(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("failed to close writer for slot %d: %w", binSlotID, err)
+			return nil, fmt.Errorf("failed to close writer for slot %d: %w", slot, err)
 		}
 
 		if len(results) > 0 {
@@ -596,7 +596,7 @@ func (manager *TraceDateintBinManager) getOrCreateBin(dateint int32) (*TraceDate
 	}
 
 	// Create new writer for this dateint bin
-	writer, err := factories.NewTracesWriter(manager.tmpDir, 0, manager.rpfEstimate) // Use slot 0 for traces
+	writer, err := factories.NewTracesWriter(manager.tmpDir, manager.rpfEstimate)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create writer for dateint bin: %w", err)
 	}
@@ -676,7 +676,7 @@ func (p *TraceIngestProcessor) uploadAndCreateTraceSegments(ctx context.Context,
 			slog.Int64("segmentID", segmentID),
 			slog.Int64("recordCount", validBin.result.RecordCount))
 
-		// Create segment parameters with slot_id = 0
+		// Create segment parameters
 		segmentParam := lrdb.InsertTraceSegmentParams{
 			OrganizationID: storageProfile.OrganizationID,
 			SegmentID:      segmentID,

@@ -206,8 +206,6 @@ func (c *MetricCompactionProcessor) Process(ctx context.Context, group *accumula
 				slog.Int("dateint", int(msg.DateInt)),
 				slog.Int("frequencyMs", int(msg.FrequencyMs)),
 				slog.Int("instanceNum", int(msg.InstanceNum)),
-				slog.Int("slotID", int(msg.SlotID)),
-				slog.Int("slotCount", int(msg.SlotCount)),
 				slog.Any("error", err))
 			continue
 		}

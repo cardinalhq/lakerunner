@@ -76,7 +76,7 @@ func newTraceCompactor(store TraceCompactionStore, storageProvider storageprofil
 	}
 }
 
-// validateTraceGroupConsistency ensures all messages in a group have consistent org, instance, dateint, and slot
+// validateTraceGroupConsistency ensures all messages in a group have consistent org, instance, and dateint
 func validateTraceGroupConsistency(group *accumulationGroup[messages.TraceCompactionKey]) error {
 	if len(group.Messages) == 0 {
 		return &TraceGroupValidationError{
@@ -88,7 +88,6 @@ func validateTraceGroupConsistency(group *accumulationGroup[messages.TraceCompac
 	expectedOrg := group.Key.OrganizationID
 	expectedInstance := group.Key.InstanceNum
 	expectedDateInt := group.Key.DateInt
-	expectedSlotID := group.Key.SlotID
 
 	for i, accMsg := range group.Messages {
 		msg, ok := accMsg.Message.(*messages.TraceCompactionMessage)
@@ -126,14 +125,6 @@ func validateTraceGroupConsistency(group *accumulationGroup[messages.TraceCompac
 			}
 		}
 
-		if msg.SlotID != expectedSlotID {
-			return &TraceGroupValidationError{
-				Field:    "slot_id",
-				Expected: expectedSlotID,
-				Got:      msg.SlotID,
-				Message:  fmt.Sprintf("message %d has inconsistent slot ID", i),
-			}
-		}
 	}
 
 	return nil
@@ -149,7 +140,6 @@ func (p *TraceCompactionProcessor) Process(ctx context.Context, group *accumulat
 		slog.String("organizationID", group.Key.OrganizationID.String()),
 		slog.Int("instanceNum", int(group.Key.InstanceNum)),
 		slog.Int("dateint", int(group.Key.DateInt)),
-		slog.Int("slotID", int(group.Key.SlotID)),
 		slog.Int("messageCount", len(group.Messages)),
 		slog.Duration("groupAge", groupAge))
 
@@ -488,9 +478,7 @@ func processTracesWithSorting(ctx context.Context, params traceProcessingParams)
 	defer readerStack.Close()
 
 	// Create traces writer
-	// Use a default slot ID for compaction (we can handle multiple slots)
-	slotID := int32(0) // Default slot for compaction
-	writer, err := factories.NewTracesWriter(params.TmpDir, slotID, params.MaxRecords)
+	writer, err := factories.NewTracesWriter(params.TmpDir, params.MaxRecords)
 	if err != nil {
 		return nil, fmt.Errorf("create trace writer: %w", err)
 	}

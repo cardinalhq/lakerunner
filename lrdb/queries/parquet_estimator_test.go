@@ -89,7 +89,7 @@ func TestMetricSegEstimator(t *testing.T) {
 				FrequencyMs:    10000,           // 10s frequency
 				SegmentID:      int64(1000 + i), // unique segment ID
 				InstanceNum:    1,
-					StartTs:        now.Add(-30 * time.Minute).UnixMilli(),
+				StartTs:        now.Add(-30 * time.Minute).UnixMilli(),
 				EndTs:          now.Add(-29 * time.Minute).UnixMilli(),
 				RecordCount:    tc.recordCount,
 				FileSize:       tc.fileSize,
@@ -97,7 +97,7 @@ func TestMetricSegEstimator(t *testing.T) {
 				Published:      true,
 				Fingerprints:   []int64{123, 456},
 				SortVersion:    lrdb.CurrentMetricSortVersion,
-					Compacted:      false,
+				Compacted:      false,
 			})
 			require.NoError(t, err)
 

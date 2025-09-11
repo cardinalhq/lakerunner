@@ -28,7 +28,7 @@ writer, err := factories.NewMetricsWriter("/tmp", 200)
 writer, err := factories.NewLogsWriter("/tmp", 150)
 
 // Traces (slot-grouped, start time ordered)
-writer, err := factories.NewTracesWriter("/tmp", slotID, 300)
+writer, err := factories.NewTracesWriter("/tmp", 300)
 
 // Unlimited file size (single file, no splitting)
 writer, err := factories.NewMetricsWriter("/tmp", parquetwriter.NoRecordLimitPerFile)
@@ -69,4 +69,4 @@ writer, err := parquetwriter.NewUnifiedWriter(config)
 
 - **Metrics**: `MetricsFileStats{TIDCount, MinTID, MaxTID, TIDs[]}`
 - **Logs**: `LogsFileStats{FingerprintCount, FirstTS, LastTS, Fingerprints[]}`
-- **Traces**: `TracesFileStats{SlotID, SpanCount, TraceCount, FirstTS, LastTS, SpanIDs[], TraceIDs[]}`
+- **Traces**: `TracesFileStats{SpanCount, TraceCount, FirstTS, LastTS, SpanIDs[], TraceIDs[]}`

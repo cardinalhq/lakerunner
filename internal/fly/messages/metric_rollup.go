@@ -28,8 +28,6 @@ type RollupKey struct {
 	SourceFrequencyMs int32
 	TargetFrequencyMs int32
 	InstanceNum       int16
-	SlotID            int32
-	SlotCount         int32
 	TruncatedTimebox  int64 // Start time of target frequency window
 }
 
@@ -53,8 +51,6 @@ type MetricRollupMessage struct {
 	TargetFrequencyMs int32     `json:"tf"` // target frequency_ms
 	SegmentID         int64     `json:"s"`  // segment_id
 	InstanceNum       int16     `json:"i"`  // instance_num
-	SlotID            int32     `json:"si"` // slot_id
-	SlotCount         int32     `json:"sc"` // slot_count
 	Records           int64     `json:"rc"` // record_count for early filtering
 	FileSize          int64     `json:"fs"` // file_size for early filtering
 	SegmentStartTime  time.Time `json:"st"` // segment start time for truncated timebox calculation
@@ -73,8 +69,6 @@ func (m *MetricRollupMessage) GroupingKey() any {
 		SourceFrequencyMs: m.SourceFrequencyMs,
 		TargetFrequencyMs: m.TargetFrequencyMs,
 		InstanceNum:       m.InstanceNum,
-		SlotID:            m.SlotID,
-		SlotCount:         m.SlotCount,
 		TruncatedTimebox:  truncatedTimebox,
 	}
 }
