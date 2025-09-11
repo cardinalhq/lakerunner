@@ -82,6 +82,8 @@ func (q *Store) CompactTraceSegsWithKafkaOffsets(ctx context.Context, params Com
 					FileSize:       r.FileSize,
 					CreatedBy:      params.CreatedBy,
 					Fingerprints:   r.Fingerprints,
+					Compacted:      true,
+					Published:      true,
 				}
 			}
 

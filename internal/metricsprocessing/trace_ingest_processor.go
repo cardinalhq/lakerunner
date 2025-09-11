@@ -276,8 +276,6 @@ func (p *TraceIngestProcessor) Process(ctx context.Context, group *accumulationG
 	var readersToClose []filereader.Reader
 	var totalInputSize int64
 
-	nowDateInt := helpers.CurrentDateInt()
-
 	for _, accMsg := range group.Messages {
 		msg, ok := accMsg.Message.(*messages.ObjStoreNotificationMessage)
 		if !ok {
@@ -337,7 +335,7 @@ func (p *TraceIngestProcessor) Process(ctx context.Context, group *accumulationG
 		return nil
 	}
 
-	segmentParams, err := p.uploadAndCreateTraceSegments(ctx, storageClient, nowDateInt, dateintBins, storageProfile)
+	segmentParams, err := p.uploadAndCreateTraceSegments(ctx, storageClient, dateintBins, storageProfile)
 	if err != nil {
 		return fmt.Errorf("failed to upload and create segments: %w", err)
 	}
@@ -616,7 +614,7 @@ func (manager *TraceDateintBinManager) getOrCreateBin(dateint int32) (*TraceDate
 }
 
 // uploadAndCreateTraceSegments uploads dateint bins to S3 and creates segment parameters
-func (p *TraceIngestProcessor) uploadAndCreateTraceSegments(ctx context.Context, storageClient cloudstorage.Client, nowDateInt int32, dateintBins map[int32]*TraceDateintBin, storageProfile storageprofile.StorageProfile) ([]lrdb.InsertTraceSegmentParams, error) {
+func (p *TraceIngestProcessor) uploadAndCreateTraceSegments(ctx context.Context, storageClient cloudstorage.Client, dateintBins map[int32]*TraceDateintBin, storageProfile storageprofile.StorageProfile) ([]lrdb.InsertTraceSegmentParams, error) {
 	ll := logctx.FromContext(ctx)
 
 	var segmentParams []lrdb.InsertTraceSegmentParams

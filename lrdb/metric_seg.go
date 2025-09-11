@@ -217,7 +217,7 @@ func (q *Store) CompactMetricSegsWithKafkaOffsets(ctx context.Context, params Co
 					Rolledup:       false,
 					Fingerprints:   r.Fingerprints,
 					SortVersion:    CurrentMetricSortVersion,
-					Compacted:      false,
+					Compacted:      true,
 				}
 			}
 
