@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
@@ -309,8 +310,8 @@ func (p *TraceCompactionProcessor) performTraceCompaction(ctx context.Context, t
 			SegmentID:    seg.SegmentID,
 			RecordCount:  seg.RecordCount,
 			FileSize:     seg.FileSize,
-			StartTs:      0, // TODO: Extract from segment metadata
-			EndTs:        0, // TODO: Extract from segment metadata
+			StartTs:      seg.TsRange.Lower.Int64,
+			EndTs:        seg.TsRange.Upper.Int64,
 			Fingerprints: seg.Fingerprints,
 		}
 	}
@@ -389,12 +390,19 @@ func (p *TraceCompactionProcessor) uploadAndCreateTraceSegments(ctx context.Cont
 			Dateint:        key.DateInt,
 			SegmentID:      segmentID,
 			InstanceNum:    key.InstanceNum,
-			Fingerprints:   stats.Fingerprints,
-			RecordCount:    result.RecordCount,
-			FileSize:       result.FileSize,
-			CreatedBy:      lrdb.CreatedByCompact,
-			Compacted:      true,
-			Published:      true,
+			TsRange: pgtype.Range[pgtype.Int8]{
+				LowerType: pgtype.Inclusive,
+				UpperType: pgtype.Exclusive,
+				Lower:     pgtype.Int8{Int64: stats.FirstTS, Valid: true},
+				Upper:     pgtype.Int8{Int64: stats.LastTS + 1, Valid: true},
+				Valid:     true,
+			},
+			RecordCount:  result.RecordCount,
+			FileSize:     result.FileSize,
+			Compacted:    true,
+			Published:    true,
+			Fingerprints: stats.Fingerprints,
+			CreatedBy:    lrdb.CreatedByCompact,
 		}
 
 		segments = append(segments, segment)
@@ -510,7 +518,130 @@ func processTracesWithSorting(ctx context.Context, params traceProcessingParams)
 
 // createTraceReaderStack creates a reader stack for trace segments
 func createTraceReaderStack(ctx context.Context, tmpDir string, storageClient cloudstorage.Client, storageProfile storageprofile.StorageProfile, segments []lrdb.TraceSeg) (filereader.Reader, error) {
-	// This function would need to be implemented similar to createLogReaderStack
-	// but for trace segments. For now, return an error to indicate it needs implementation.
-	return nil, fmt.Errorf("createTraceReaderStack not implemented yet")
+	ll := logctx.FromContext(ctx)
+
+	var readers []filereader.Reader
+	var files []*os.File
+
+	if len(segments) == 0 {
+		return nil, fmt.Errorf("no trace segments provided to create reader stack")
+	}
+
+	// Download and create readers for each trace segment
+	for _, segment := range segments {
+		if ctx.Err() != nil {
+			ll.Info("Context cancelled during trace segment download",
+				slog.Int64("segmentID", segment.SegmentID),
+				slog.Any("error", ctx.Err()))
+			return nil, fmt.Errorf("context cancelled during trace segment download: %w", ctx.Err())
+		}
+
+		dateint, hour := helpers.MSToDateintHour(segment.TsRange.Lower.Int64)
+		objectID := helpers.MakeDBObjectID(segment.OrganizationID, storageProfile.CollectorName, dateint, hour, segment.SegmentID, "traces")
+
+		fn, _, is404, err := storageClient.DownloadObject(ctx, tmpDir, storageProfile.Bucket, objectID)
+		if err != nil {
+			ll.Error("Failed to download trace S3 object", slog.String("objectID", objectID), slog.Any("error", err))
+			return nil, err
+		}
+		if is404 {
+			ll.Info("Trace S3 object not found, skipping",
+				slog.String("bucket", storageProfile.Bucket),
+				slog.String("objectID", objectID),
+				slog.Int64("segmentID", segment.SegmentID))
+			continue
+		}
+
+		file, err := os.Open(fn)
+		if err != nil {
+			ll.Error("Failed to open trace parquet file", slog.String("file", fn), slog.Any("error", err))
+			return nil, fmt.Errorf("opening trace parquet file %s: %w", fn, err)
+		}
+
+		stat, err := file.Stat()
+		if err != nil {
+			file.Close()
+			ll.Error("Failed to stat trace parquet file", slog.String("file", fn), slog.Any("error", err))
+			return nil, fmt.Errorf("statting trace parquet file %s: %w", fn, err)
+		}
+
+		reader, err := filereader.NewCookedTraceParquetReader(file, stat.Size(), 1000)
+		if err != nil {
+			file.Close()
+			ll.Error("Failed to create trace parquet reader", slog.String("file", fn), slog.Any("error", err))
+			return nil, fmt.Errorf("creating trace parquet reader for %s: %w", fn, err)
+		}
+
+		readers = append(readers, reader)
+		files = append(files, file)
+	}
+
+	if len(readers) == 0 {
+		return nil, fmt.Errorf("no valid trace readers created")
+	}
+
+	// Use merge sort reader for consistency, sorting by timestamp
+	keyProvider := &filereader.TimestampSortKeyProvider{}
+	mergedReader, err := filereader.NewMergesortReader(ctx, readers, keyProvider, 1000)
+	if err != nil {
+		// Clean up resources on error
+		for _, reader := range readers {
+			reader.Close()
+		}
+		for _, file := range files {
+			file.Close()
+		}
+		return nil, fmt.Errorf("creating trace mergesort reader: %w", err)
+	}
+
+	// Create a wrapper that will handle cleanup when closed
+	wrapper := &traceReaderStackWrapper{
+		headReader: mergedReader,
+		readers:    readers,
+		files:      files,
+	}
+
+	return wrapper, nil
+}
+
+// traceReaderStackWrapper wraps a merged reader and handles cleanup of underlying resources
+type traceReaderStackWrapper struct {
+	headReader filereader.Reader
+	readers    []filereader.Reader
+	files      []*os.File
+}
+
+func (w *traceReaderStackWrapper) Next(ctx context.Context) (*filereader.Batch, error) {
+	return w.headReader.Next(ctx)
+}
+
+func (w *traceReaderStackWrapper) Close() error {
+	ll := logctx.FromContext(context.Background())
+
+	if w.headReader != nil {
+		if err := w.headReader.Close(); err != nil {
+			ll.Error("Failed to close trace head reader", slog.Any("error", err))
+		}
+	}
+
+	for _, reader := range w.readers {
+		if err := reader.Close(); err != nil {
+			ll.Error("Failed to close trace reader", slog.Any("error", err))
+		}
+	}
+
+	for _, file := range w.files {
+		if err := file.Close(); err != nil {
+			ll.Error("Failed to close trace file", slog.String("file", file.Name()), slog.Any("error", err))
+		}
+	}
+
+	return nil
+}
+
+func (w *traceReaderStackWrapper) TotalRowsReturned() int64 {
+	if w.headReader != nil {
+		return w.headReader.TotalRowsReturned()
+	}
+	return 0
 }

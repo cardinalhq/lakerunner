@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
+	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
@@ -169,19 +170,22 @@ type TraceDateintBinManager struct {
 
 // TraceIngestProcessor implements the Processor interface for raw trace ingestion
 type TraceIngestProcessor struct {
-	store           TraceIngestStore
-	storageProvider storageprofile.StorageProfileProvider
-	cmgr            cloudstorage.ClientProvider
-	kafkaProducer   fly.Producer
+	store             TraceIngestStore
+	storageProvider   storageprofile.StorageProfileProvider
+	cmgr              cloudstorage.ClientProvider
+	kafkaProducer     fly.Producer
+	exemplarProcessor *exemplar.Processor
 }
 
 // newTraceIngestProcessor creates a new trace ingest processor instance
 func newTraceIngestProcessor(store TraceIngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *TraceIngestProcessor {
+	exemplarProcessor := exemplar.NewProcessor(exemplar.DefaultConfig())
 	return &TraceIngestProcessor{
-		store:           store,
-		storageProvider: storageProvider,
-		cmgr:            cmgr,
-		kafkaProducer:   kafkaProducer,
+		store:             store,
+		storageProvider:   storageProvider,
+		cmgr:              cmgr,
+		kafkaProducer:     kafkaProducer,
+		exemplarProcessor: exemplarProcessor,
 	}
 }
 
@@ -466,8 +470,9 @@ func (p *TraceIngestProcessor) createTraceReaderStack(tmpFilename, orgID, bucket
 
 func (p *TraceIngestProcessor) createTraceReader(filename string) (filereader.Reader, error) {
 	options := filereader.ReaderOptions{
-		SignalType: filereader.SignalTypeTraces,
-		BatchSize:  1000,
+		SignalType:        filereader.SignalTypeTraces,
+		BatchSize:         1000,
+		ExemplarProcessor: p.exemplarProcessor,
 	}
 	return filereader.ReaderForFileWithOptions(filename, options)
 }
