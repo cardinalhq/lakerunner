@@ -17,6 +17,7 @@ package metricsprocessing
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"testing"
@@ -28,6 +29,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/cardinalhq/lakerunner/config"
+	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -943,6 +945,263 @@ func TestMetricCompactionProcessorV2_ProcessWorkInterface(t *testing.T) {
 	// Verify the parameters are the expected types
 	assert.IsType(t, group, group)
 	assert.IsType(t, kafkaCommitData, kafkaCommitData)
+}
+
+// MockFlyConsumer for testing
+type MockFlyConsumer struct {
+	mock.Mock
+}
+
+func (m *MockFlyConsumer) Consume(ctx context.Context, handler fly.MessageHandler) error {
+	args := m.Called(ctx, handler)
+	return args.Error(0)
+}
+
+func (m *MockFlyConsumer) CommitMessages(ctx context.Context, messages ...fly.ConsumedMessage) error {
+	args := m.Called(ctx, messages)
+	return args.Error(0)
+}
+
+func (m *MockFlyConsumer) Close() error {
+	args := m.Called()
+	return args.Error(0)
+}
+
+// MockFlyConsumerFactory for testing
+type MockFlyConsumerFactory struct {
+	mock.Mock
+}
+
+func (m *MockFlyConsumerFactory) CreateConsumer(topic, consumerGroup string) (fly.Consumer, error) {
+	args := m.Called(topic, consumerGroup)
+	return args.Get(0).(fly.Consumer), args.Error(1)
+}
+
+func TestNewCommonConsumerWithComponents(t *testing.T) {
+	ctx := context.Background()
+	mockConsumer := &MockFlyConsumer{}
+	mockStore := &MockCommonConsumerStore{}
+	mockProcessor := &MockProcessor{}
+
+	consumerConfig := CommonConsumerConfig{
+		ConsumerName:  "test-consumer",
+		Topic:         "test.topic",
+		ConsumerGroup: "test-group",
+		FlushInterval: 100 * time.Millisecond,
+		StaleAge:      30 * time.Second,
+		MaxAge:        5 * time.Minute,
+	}
+
+	// Mock Close method
+	mockConsumer.On("Close").Return(nil)
+
+	consumer := NewCommonConsumerWithComponents[*messages.MetricCompactionMessage](
+		ctx, mockConsumer, consumerConfig, mockStore, mockProcessor,
+	)
+
+	assert.NotNil(t, consumer)
+	assert.Equal(t, mockStore, consumer.store)
+	assert.Equal(t, mockConsumer, consumer.consumer)
+	assert.Equal(t, consumerConfig, consumer.config)
+	assert.NotNil(t, consumer.gatherer)
+	assert.NotNil(t, consumer.done)
+	assert.NotNil(t, consumer.idleCheckTicker)
+
+	consumer.Close()
+	mockConsumer.AssertExpectations(t)
+}
+
+func TestCommonConsumer_BuildCommitMessages(t *testing.T) {
+	consumerConfig := CommonConsumerConfig{
+		Topic:         "test.topic",
+		ConsumerGroup: "test-group",
+	}
+
+	consumer := &CommonConsumer[*messages.MetricCompactionMessage, messages.CompactionKey]{
+		config: consumerConfig,
+	}
+
+	offsets := map[int32]int64{
+		0: 100,
+		2: 300,
+		1: 200,
+	}
+
+	commitMessages := consumer.buildCommitMessages(offsets)
+
+	assert.Len(t, commitMessages, 3)
+
+	for _, msg := range commitMessages {
+		assert.Equal(t, "test.topic", msg.Topic)
+	}
+
+	for partition, expectedOffset := range offsets {
+		found := false
+		for _, msg := range commitMessages {
+			if msg.Partition == int(partition) && msg.Offset == expectedOffset {
+				found = true
+				break
+			}
+		}
+		assert.True(t, found, "Expected to find partition %d with offset %d", partition, expectedOffset)
+	}
+}
+
+func TestCommonConsumer_MarkOffsetsProcessed_WithOffsets(t *testing.T) {
+	ctx := context.Background()
+	mockConsumer := &MockFlyConsumer{}
+
+	consumer := &CommonConsumer[*messages.MetricCompactionMessage, messages.CompactionKey]{
+		consumer: mockConsumer,
+		config: CommonConsumerConfig{
+			Topic:         "test.topic",
+			ConsumerGroup: "test-group",
+		},
+	}
+
+	key := messages.CompactionKey{
+		OrganizationID: uuid.New(),
+		InstanceNum:    1,
+		DateInt:        20250115,
+		FrequencyMs:    10000,
+	}
+
+	offsets := map[int32]int64{
+		0: 100,
+		1: 200,
+	}
+
+	mockConsumer.On("CommitMessages", ctx, mock.MatchedBy(func(msgs []fly.ConsumedMessage) bool {
+		if len(msgs) != 2 {
+			return false
+		}
+		for _, msg := range msgs {
+			if msg.Topic != "test.topic" {
+				return false
+			}
+			expectedOffset, exists := offsets[int32(msg.Partition)]
+			if !exists || msg.Offset != expectedOffset {
+				return false
+			}
+		}
+		return true
+	})).Return(nil)
+
+	err := consumer.MarkOffsetsProcessed(ctx, key, offsets)
+	assert.NoError(t, err)
+
+	mockConsumer.AssertExpectations(t)
+}
+
+func TestCommonConsumer_ProcessKafkaMessage_CorrectInstantiation(t *testing.T) {
+	// This test verifies the P0 bug fix for message instantiation
+	ctx := context.Background()
+	mockGatherer := &MockMessageGatherer{}
+
+	consumer := &CommonConsumer[*messages.MetricCompactionMessage, messages.CompactionKey]{
+		gatherer: mockGatherer,
+		config: CommonConsumerConfig{
+			Topic:         "test.topic",
+			ConsumerGroup: "test-group",
+		},
+	}
+
+	// Create a valid MetricCompactionMessage
+	originalMsg := &messages.MetricCompactionMessage{
+		OrganizationID: uuid.New(),
+		InstanceNum:    1,
+		DateInt:        20250115,
+		FrequencyMs:    10000,
+		SegmentID:      12345,
+	}
+
+	// Marshal it to JSON bytes
+	msgBytes, err := json.Marshal(originalMsg)
+	require.NoError(t, err)
+
+	// Create Kafka message
+	kafkaMsg := fly.ConsumedMessage{
+		Message: fly.Message{
+			Value: msgBytes,
+		},
+		Topic:     "test.topic",
+		Partition: 2,
+		Offset:    150,
+	}
+
+	// Mock gatherer to succeed and capture the unmarshaled message
+	var capturedMsg *messages.MetricCompactionMessage
+	mockGatherer.On("processMessage", ctx, mock.MatchedBy(func(msg *messages.MetricCompactionMessage) bool {
+		capturedMsg = msg
+		return msg != nil && msg.SegmentID == 12345
+	}), mock.MatchedBy(func(metadata *messageMetadata) bool {
+		return metadata.Topic == "test.topic" && metadata.Partition == 2 && metadata.Offset == 150
+	})).Return(nil)
+
+	ll := slog.Default()
+
+	err = consumer.processKafkaMessage(ctx, kafkaMsg, ll)
+	assert.NoError(t, err)
+
+	// Verify the message was properly unmarshaled
+	require.NotNil(t, capturedMsg, "Message should not be nil")
+	assert.Equal(t, originalMsg.OrganizationID, capturedMsg.OrganizationID)
+	assert.Equal(t, originalMsg.InstanceNum, capturedMsg.InstanceNum)
+	assert.Equal(t, originalMsg.DateInt, capturedMsg.DateInt)
+	assert.Equal(t, originalMsg.FrequencyMs, capturedMsg.FrequencyMs)
+	assert.Equal(t, originalMsg.SegmentID, capturedMsg.SegmentID)
+
+	mockGatherer.AssertExpectations(t)
+}
+
+func TestCommonConsumer_ProcessKafkaMessage_ReflectionHandlesPointerTypes(t *testing.T) {
+	// This test ensures our reflection-based instantiation works for pointer types
+	ctx := context.Background()
+	mockGatherer := &MockMessageGatherer{}
+
+	consumer := &CommonConsumer[*messages.MetricCompactionMessage, messages.CompactionKey]{
+		gatherer: mockGatherer,
+		config: CommonConsumerConfig{
+			Topic:         "test.topic",
+			ConsumerGroup: "test-group",
+		},
+	}
+
+	// Create a valid message with specific field values to verify unmarshaling
+	originalMsg := &messages.MetricCompactionMessage{
+		OrganizationID: uuid.New(),
+		InstanceNum:    42,
+		DateInt:        20250115,
+		FrequencyMs:    5000,
+		SegmentID:      99999,
+	}
+
+	msgBytes, err := json.Marshal(originalMsg)
+	require.NoError(t, err)
+
+	kafkaMsg := fly.ConsumedMessage{
+		Message: fly.Message{
+			Value: msgBytes,
+		},
+		Topic:     "test.topic", 
+		Partition: 1,
+		Offset:    200,
+	}
+
+	// Verify that the message passed to gatherer is properly instantiated and populated
+	mockGatherer.On("processMessage", ctx, mock.MatchedBy(func(msg *messages.MetricCompactionMessage) bool {
+		// This would fail with the old implementation because msg would be nil
+		return msg != nil && 
+			msg.InstanceNum == 42 && 
+			msg.FrequencyMs == 5000 && 
+			msg.SegmentID == 99999 &&
+			msg.OrganizationID == originalMsg.OrganizationID
+	}), mock.Anything).Return(nil)
+
+	err = consumer.processKafkaMessage(ctx, kafkaMsg, slog.Default())
+	assert.NoError(t, err)
+
+	mockGatherer.AssertExpectations(t)
 }
 
 func TestLogCompactionProcessorV2_ProcessWorkInterface(t *testing.T) {

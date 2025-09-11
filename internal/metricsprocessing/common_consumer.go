@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"time"
 
 	"github.com/cardinalhq/lakerunner/config"
@@ -61,23 +62,39 @@ type CommonConsumer[M messages.CompactionMessage, K messages.CompactionKeyInterf
 	config          CommonConsumerConfig
 }
 
+// FlyCounsumerFactory defines the interface for creating Kafka consumers (for testability)
+type FlyConsumerFactory interface {
+	CreateConsumer(topic, consumerGroup string) (fly.Consumer, error)
+}
+
 // NewCommonConsumer creates a new generic common consumer
 func NewCommonConsumer[M messages.CompactionMessage, K messages.CompactionKeyInterface](
 	ctx context.Context,
-	factory *fly.Factory,
+	factory FlyConsumerFactory,
 	cfg *config.Config,
 	consumerConfig CommonConsumerConfig,
 	store CommonConsumerStore,
 	processor processor[M, K],
 ) (*CommonConsumer[M, K], error) {
-	ll := logctx.FromContext(ctx)
-
 	// Create Kafka consumer
 	consumer, err := factory.CreateConsumer(consumerConfig.Topic, consumerConfig.ConsumerGroup)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka consumer: %w", err)
 	}
 
+	return NewCommonConsumerWithComponents[M](
+		ctx, consumer, consumerConfig, store, processor,
+	), nil
+}
+
+// NewCommonConsumerWithComponents creates a consumer with provided components (for testability)
+func NewCommonConsumerWithComponents[M messages.CompactionMessage, K messages.CompactionKeyInterface](
+	ctx context.Context,
+	consumer fly.Consumer,
+	consumerConfig CommonConsumerConfig,
+	store CommonConsumerStore,
+	processor processor[M, K],
+) *CommonConsumer[M, K] {
 	// Set up periodic flushing
 	flushTicker := time.NewTicker(consumerConfig.FlushInterval)
 
@@ -92,12 +109,7 @@ func NewCommonConsumer[M messages.CompactionMessage, K messages.CompactionKeyInt
 	// Create Gatherer using the consumer itself as offset callbacks
 	cc.gatherer = newGatherer[M](consumerConfig.Topic, consumerConfig.ConsumerGroup, processor, cc)
 
-	ll.Info("Created new generic common consumer",
-		slog.String("consumerName", consumerConfig.ConsumerName),
-		slog.String("topic", consumerConfig.Topic),
-		slog.String("consumerGroup", consumerConfig.ConsumerGroup))
-
-	return cc, nil
+	return cc
 }
 
 // Run starts the Kafka consumer and periodic flushing
@@ -109,50 +121,7 @@ func (c *CommonConsumer[M, K]) Run(ctx context.Context) error {
 	go c.idleCheck(ctx)
 
 	// Start the Kafka consumer
-	err := c.consumer.Consume(ctx, func(ctx context.Context, kafkaMessages []fly.ConsumedMessage) error {
-		ll := logctx.FromContext(ctx).With(slog.String("batchID", idgen.GenerateShortBase32ID()))
-		ctx = logctx.WithLogger(ctx, ll)
-
-		if len(kafkaMessages) == 0 {
-			return nil
-		}
-
-		ll.Debug("Processing Kafka message batch",
-			slog.Int("messageCount", len(kafkaMessages)))
-
-		// Process each message
-		for _, kafkaMsg := range kafkaMessages {
-			// Create a new instance of M for unmarshaling
-			notification := new(M)
-			if err := (*notification).Unmarshal(kafkaMsg.Value); err != nil {
-				ll.Error("Failed to unmarshal compaction message",
-					slog.Any("error", err),
-					slog.Int("partition", kafkaMsg.Partition),
-					slog.Int64("offset", kafkaMsg.Offset))
-				continue // Skip malformed messages
-			}
-
-			// Create MessageMetadata from kafkaMsg
-			metadata := &messageMetadata{
-				Topic:         c.config.Topic,
-				Partition:     int32(kafkaMsg.Partition),
-				ConsumerGroup: c.config.ConsumerGroup,
-				Offset:        kafkaMsg.Offset,
-			}
-
-			// Process the message through the gatherer
-			if err := c.gatherer.processMessage(ctx, *notification, metadata); err != nil {
-				ll.Error("Failed to process message",
-					slog.Any("error", err),
-					slog.Int("partition", kafkaMsg.Partition),
-					slog.Int64("offset", kafkaMsg.Offset))
-				return fmt.Errorf("failed to process message: %w", err)
-			}
-		}
-
-		// Commit the messages after successful processing
-		return c.consumer.CommitMessages(ctx, kafkaMessages...)
-	})
+	err := c.consumer.Consume(ctx, c.buildMessageHandler())
 
 	if err != nil && !errors.Is(err, context.Canceled) {
 		ll.Error("Kafka consumer stopped with error", slog.Any("error", err))
@@ -160,6 +129,80 @@ func (c *CommonConsumer[M, K]) Run(ctx context.Context) error {
 	}
 
 	ll.Info("Generic common consumer stopped")
+	return nil
+}
+
+// buildMessageHandler creates the message processing function (extracted for testability)
+func (c *CommonConsumer[M, K]) buildMessageHandler() func(context.Context, []fly.ConsumedMessage) error {
+	return func(ctx context.Context, kafkaMessages []fly.ConsumedMessage) error {
+		return c.processKafkaMessageBatch(ctx, kafkaMessages)
+	}
+}
+
+// processKafkaMessageBatch handles a batch of Kafka messages (extracted for testability)
+func (c *CommonConsumer[M, K]) processKafkaMessageBatch(ctx context.Context, kafkaMessages []fly.ConsumedMessage) error {
+	ll := logctx.FromContext(ctx).With(slog.String("batchID", idgen.GenerateShortBase32ID()))
+	ctx = logctx.WithLogger(ctx, ll)
+
+	if len(kafkaMessages) == 0 {
+		return nil
+	}
+
+	ll.Debug("Processing Kafka message batch",
+		slog.Int("messageCount", len(kafkaMessages)))
+
+	// Process each message
+	for _, kafkaMsg := range kafkaMessages {
+		if err := c.processKafkaMessage(ctx, kafkaMsg, ll); err != nil {
+			return err
+		}
+	}
+
+	// Commit the messages after successful processing
+	return c.consumer.CommitMessages(ctx, kafkaMessages...)
+}
+
+// processKafkaMessage handles a single Kafka message (extracted for testability)
+func (c *CommonConsumer[M, K]) processKafkaMessage(ctx context.Context, kafkaMsg fly.ConsumedMessage, ll *slog.Logger) error {
+	// Create a new instance of M for unmarshaling
+	// When M is *SomeMessage, we need to create SomeMessage{}, not **SomeMessage
+	var notification M
+
+	// Use reflection to create the underlying struct when M is a pointer type
+	rt := reflect.TypeOf(notification)
+	if rt.Kind() == reflect.Ptr {
+		// M is a pointer type, create the underlying struct
+		notification = reflect.New(rt.Elem()).Interface().(M)
+	} else {
+		// M is a value type, create it directly
+		notification = reflect.New(rt).Elem().Interface().(M)
+	}
+
+	if err := notification.Unmarshal(kafkaMsg.Value); err != nil {
+		ll.Error("Failed to unmarshal compaction message",
+			slog.Any("error", err),
+			slog.Int("partition", kafkaMsg.Partition),
+			slog.Int64("offset", kafkaMsg.Offset))
+		return nil // Skip malformed messages
+	}
+
+	// Create MessageMetadata from kafkaMsg
+	metadata := &messageMetadata{
+		Topic:         c.config.Topic,
+		Partition:     int32(kafkaMsg.Partition),
+		ConsumerGroup: c.config.ConsumerGroup,
+		Offset:        kafkaMsg.Offset,
+	}
+
+	// Process the message through the gatherer
+	if err := c.gatherer.processMessage(ctx, notification, metadata); err != nil {
+		ll.Error("Failed to process message",
+			slog.Any("error", err),
+			slog.Int("partition", kafkaMsg.Partition),
+			slog.Int64("offset", kafkaMsg.Offset))
+		return fmt.Errorf("failed to process message: %w", err)
+	}
+
 	return nil
 }
 
@@ -194,23 +237,18 @@ func (c *CommonConsumer[M, K]) MarkOffsetsProcessed(ctx context.Context, key K, 
 	}
 
 	// Create ConsumedMessage objects for each partition/offset to commit
-	commitMessages := make([]fly.ConsumedMessage, 0, len(offsets))
+	commitMessages := c.buildCommitMessages(offsets)
 
-	for partition, offset := range offsets {
-		commitMessages = append(commitMessages, fly.ConsumedMessage{
-			Topic:     c.config.Topic,
-			Partition: int(partition),
-			Offset:    offset,
-		})
-
+	// Log all commit messages
+	for _, msg := range commitMessages {
 		orgID := key.GetOrgID()
 		instanceNum := key.GetInstanceNum()
 
 		ll.Info("Committing Kafka consumer group offset",
 			slog.String("consumerGroup", c.config.ConsumerGroup),
 			slog.String("topic", c.config.Topic),
-			slog.Int("partition", int(partition)),
-			slog.Int64("offset", offset),
+			slog.Int("partition", msg.Partition),
+			slog.Int64("offset", msg.Offset),
 			slog.String("organizationID", orgID.String()),
 			slog.Int("instanceNum", int(instanceNum)))
 	}
@@ -230,6 +268,21 @@ func (c *CommonConsumer[M, K]) MarkOffsetsProcessed(ctx context.Context, key K, 
 		slog.Int("offsetCount", len(offsets)))
 
 	return nil
+}
+
+// buildCommitMessages creates ConsumedMessage objects for committing offsets (extracted for testability)
+func (c *CommonConsumer[M, K]) buildCommitMessages(offsets map[int32]int64) []fly.ConsumedMessage {
+	commitMessages := make([]fly.ConsumedMessage, 0, len(offsets))
+
+	for partition, offset := range offsets {
+		commitMessages = append(commitMessages, fly.ConsumedMessage{
+			Topic:     c.config.Topic,
+			Partition: int(partition),
+			Offset:    offset,
+		})
+	}
+
+	return commitMessages
 }
 
 // Close stops the consumer and cleans up resources
