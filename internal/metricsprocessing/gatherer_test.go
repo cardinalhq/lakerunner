@@ -97,15 +97,15 @@ func TestGatherer_CreateKafkaCommitDataFromGroup(t *testing.T) {
 		},
 		Messages: []*accumulatedMessage{
 			{
-				Message:  createTestMessage(orgID, 1, 20250108, 60000, 1, 4, 50),
+				Message:  createTestMessage(orgID, 1, 20250108, 60000, 50),
 				Metadata: createTestMetadata("test-topic", 0, "test-group", 100),
 			},
 			{
-				Message:  createTestMessage(orgID, 1, 20250108, 60000, 1, 4, 30),
+				Message:  createTestMessage(orgID, 1, 20250108, 60000, 30),
 				Metadata: createTestMetadata("test-topic", 0, "test-group", 105), // Higher offset for same partition
 			},
 			{
-				Message:  createTestMessage(orgID, 1, 20250108, 60000, 1, 4, 25),
+				Message:  createTestMessage(orgID, 1, 20250108, 60000, 25),
 				Metadata: createTestMetadata("test-topic", 1, "test-group", 200), // Different partition
 			},
 		},
@@ -133,7 +133,7 @@ func TestGatherer_ProcessMessage_Integration(t *testing.T) {
 
 	// Add messages until threshold is reached
 	for i := 0; i < 200; i++ { // Should trigger at CompactionTargetRecordCount=10000
-		msg := createTestMessage(orgID, 1, 20250108, 60000, 1, 4, 50) // 50 records each
+		msg := createTestMessage(orgID, 1, 20250108, 60000, 50) // 50 records each
 		metadata := createTestMetadata("test-topic", 0, "test-group", int64(i))
 
 		err := gatherer.processMessage(context.Background(), msg, metadata)
@@ -168,7 +168,7 @@ func TestGatherer_OffsetDeduplication(t *testing.T) {
 	gatherer := newGatherer[*messages.MetricCompactionMessage]("test-topic", "test-group", NewMockCompactor(), offsetCallbacks)
 
 	// Process message with offset 100
-	msg1 := createTestMessage(orgID, 1, 20250108, 60000, 1, 4, 50)
+	msg1 := createTestMessage(orgID, 1, 20250108, 60000, 50)
 	metadata1 := createTestMetadata("test-topic", 0, "test-group", 100)
 
 	err1 := gatherer.processMessage(context.Background(), msg1, metadata1)
@@ -203,7 +203,7 @@ func TestGatherer_MultipleOrgsMinimumOffset(t *testing.T) {
 	groupA := &accumulationGroup[messages.CompactionKey]{
 		Key: messages.CompactionKey{OrganizationID: orgA, InstanceNum: 1},
 		Messages: []*accumulatedMessage{{
-			Message:  createTestMessage(orgA, 1, 20250108, 60000, 1, 4, 50),
+			Message:  createTestMessage(orgA, 1, 20250108, 60000, 50),
 			Metadata: createTestMetadata("test-topic", 0, "test-group", 75),
 		}},
 	}
@@ -213,7 +213,7 @@ func TestGatherer_MultipleOrgsMinimumOffset(t *testing.T) {
 	groupB := &accumulationGroup[messages.CompactionKey]{
 		Key: messages.CompactionKey{OrganizationID: orgB, InstanceNum: 1},
 		Messages: []*accumulatedMessage{{
-			Message:  createTestMessage(orgB, 1, 20250108, 60000, 1, 4, 50),
+			Message:  createTestMessage(orgB, 1, 20250108, 60000, 50),
 			Metadata: createTestMetadata("test-topic", 0, "test-group", 65),
 		}},
 	}
@@ -235,7 +235,7 @@ func TestGatherer_ValidatesTopicAndConsumerGroup(t *testing.T) {
 	assert.Equal(t, "expected-topic", gatherer.topic)
 	assert.Equal(t, "expected-group", gatherer.consumerGroup)
 
-	msg := createTestMessage(orgID, 1, 20250108, 60000, 1, 4, 50)
+	msg := createTestMessage(orgID, 1, 20250108, 60000, 50)
 
 	// Test wrong topic
 	wrongTopicMetadata := createTestMetadata("wrong-topic", 0, "expected-group", 100)
@@ -270,7 +270,7 @@ func TestGatherer_PreventsMixedTopics(t *testing.T) {
 	// Create a gatherer for compaction topic
 	gatherer := newGatherer[*messages.MetricCompactionMessage]("lakerunner.segments.metrics.compact", "lakerunner.compact.metrics", compactor, offsetCallbacks)
 
-	msg := createTestMessage(orgID, 1, 20250909, 60000, 1, 4, 5000)
+	msg := createTestMessage(orgID, 1, 20250909, 60000, 5000)
 
 	// Should accept compaction messages
 	compactMetadata := createTestMetadata("lakerunner.segments.metrics.compact", 0, "lakerunner.compact.metrics", 100)
@@ -298,15 +298,13 @@ func TestGatherer_PreventsMixedTopics(t *testing.T) {
 }
 
 // Helper functions for testing
-func createTestMessage(orgID uuid.UUID, instanceNum int16, dateInt int32, frequencyMs int32, slotID int32, slotCount int32, recordCount int64) *messages.MetricCompactionMessage {
+func createTestMessage(orgID uuid.UUID, instanceNum int16, dateInt int32, frequencyMs int32, recordCount int64) *messages.MetricCompactionMessage {
 	return &messages.MetricCompactionMessage{
 		OrganizationID: orgID,
 		DateInt:        dateInt,
 		FrequencyMs:    frequencyMs,
 		SegmentID:      123,
 		InstanceNum:    instanceNum,
-		SlotID:         slotID,
-		SlotCount:      slotCount,
 		Records:        recordCount,
 		FileSize:       1000,
 		QueuedAt:       time.Now(),
