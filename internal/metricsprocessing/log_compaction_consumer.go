@@ -26,27 +26,27 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
-// LogCompactionConsumerV2 handles log compaction using the generic framework
-type LogCompactionConsumerV2 struct {
+// LogCompactionConsumer handles log compaction using the generic framework
+type LogCompactionConsumer struct {
 	*CommonConsumer[*messages.LogCompactionMessage, messages.LogCompactionKey]
 }
 
-// NewLogCompactionConsumerV2 creates a new log compaction consumer using the generic framework
-func NewLogCompactionConsumerV2(
+// NewLogCompactionConsumer creates a new log compaction consumer using the generic framework
+func NewLogCompactionConsumer(
 	ctx context.Context,
 	factory *fly.Factory,
 	cfg *config.Config,
 	store LogCompactionStore,
 	storageProvider storageprofile.StorageProfileProvider,
 	cmgr cloudstorage.ClientProvider,
-) (*LogCompactionConsumerV2, error) {
+) (*LogCompactionConsumer, error) {
 
 	// Create processor
-	processor := NewLogCompactionProcessorV2(store, storageProvider, cmgr, cfg)
+	processor := NewLogCompactionProcessor(store, storageProvider, cmgr, cfg)
 
 	// Configure the consumer
 	consumerConfig := CommonConsumerConfig{
-		ConsumerName:  "lakerunner-log-compaction-v2",
+		ConsumerName:  "lakerunner-log-compaction",
 		Topic:         "lakerunner.segments.logs.compact",
 		ConsumerGroup: "lakerunner.compact.logs",
 		FlushInterval: 1 * time.Minute,
@@ -67,7 +67,7 @@ func NewLogCompactionConsumerV2(
 		return nil, fmt.Errorf("failed to create generic compaction consumer: %w", err)
 	}
 
-	return &LogCompactionConsumerV2{
+	return &LogCompactionConsumer{
 		CommonConsumer: genericConsumer,
 	}, nil
 }

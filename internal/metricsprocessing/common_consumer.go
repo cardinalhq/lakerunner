@@ -63,7 +63,7 @@ type CommonConsumer[M messages.CompactionMessage, K messages.CompactionKeyInterf
 	config          CommonConsumerConfig
 }
 
-// FlyCounsumerFactory defines the interface for creating Kafka consumers (for testability)
+// FlyConsumerFactory defines the interface for creating Kafka consumers (for testability)
 type FlyConsumerFactory interface {
 	CreateConsumer(topic, consumerGroup string) (fly.Consumer, error)
 }

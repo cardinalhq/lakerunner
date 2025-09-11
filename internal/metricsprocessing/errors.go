@@ -26,3 +26,15 @@ type ConfigMismatchError struct {
 func (e *ConfigMismatchError) Error() string {
 	return fmt.Sprintf("unexpected %s: got %q, expected %q", e.Field, e.Got, e.Expected)
 }
+
+// GroupValidationError represents an error when message group validation fails
+type GroupValidationError struct {
+	Field    string      // field that failed validation
+	Expected interface{} // expected value
+	Got      interface{} // actual value
+	Message  string      // description of the validation failure
+}
+
+func (e *GroupValidationError) Error() string {
+	return fmt.Sprintf("group validation failed for %s: %s", e.Field, e.Message)
+}

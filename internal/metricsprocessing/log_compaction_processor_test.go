@@ -63,18 +63,18 @@ func (m *MockLogCompactionStore) InsertSegmentJournal(ctx context.Context, param
 	return args.Error(0)
 }
 
-func TestLogCompactionProcessorV2_New(t *testing.T) {
+func TestLogCompactionProcessor_New(t *testing.T) {
 	store := &MockLogCompactionStore{}
-	processor := NewLogCompactionProcessorV2(store, nil, nil, &config.Config{})
+	processor := NewLogCompactionProcessor(store, nil, nil, &config.Config{})
 
 	assert.NotNil(t, processor)
 	assert.Equal(t, store, processor.store)
 	assert.NotNil(t, processor.CommonProcessorBase)
 }
 
-func TestLogCompactionProcessorV2_GetTargetRecordCount(t *testing.T) {
+func TestLogCompactionProcessor_GetTargetRecordCount(t *testing.T) {
 	mockStore := &MockLogCompactionStore{}
-	processor := NewLogCompactionProcessorV2(mockStore, nil, nil, &config.Config{})
+	processor := NewLogCompactionProcessor(mockStore, nil, nil, &config.Config{})
 
 	orgID := uuid.New()
 	expectedCount := int64(3000)
@@ -93,9 +93,9 @@ func TestLogCompactionProcessorV2_GetTargetRecordCount(t *testing.T) {
 	mockStore.AssertExpectations(t)
 }
 
-func TestLogCompactionProcessorV2_markLogSegmentsAsCompacted_EmptySegments(t *testing.T) {
+func TestLogCompactionProcessor_markLogSegmentsAsCompacted_EmptySegments(t *testing.T) {
 	mockStore := &MockLogCompactionStore{}
-	processor := NewLogCompactionProcessorV2(mockStore, nil, nil, &config.Config{})
+	processor := NewLogCompactionProcessor(mockStore, nil, nil, &config.Config{})
 
 	key := messages.LogCompactionKey{
 		OrganizationID: uuid.New(),
@@ -110,9 +110,9 @@ func TestLogCompactionProcessorV2_markLogSegmentsAsCompacted_EmptySegments(t *te
 	mockStore.AssertNotCalled(t, "MarkLogSegsCompactedByKeys")
 }
 
-func TestLogCompactionProcessorV2_markLogSegmentsAsCompacted_WithSegments(t *testing.T) {
+func TestLogCompactionProcessor_markLogSegmentsAsCompacted_WithSegments(t *testing.T) {
 	mockStore := &MockLogCompactionStore{}
-	processor := NewLogCompactionProcessorV2(mockStore, nil, nil, &config.Config{})
+	processor := NewLogCompactionProcessor(mockStore, nil, nil, &config.Config{})
 
 	key := messages.LogCompactionKey{
 		OrganizationID: uuid.New(),
@@ -140,8 +140,8 @@ func TestLogCompactionProcessorV2_markLogSegmentsAsCompacted_WithSegments(t *tes
 	mockStore.AssertExpectations(t)
 }
 
-func TestLogCompactionProcessorV2_getHourFromTimestamp(t *testing.T) {
-	processor := NewLogCompactionProcessorV2(nil, nil, nil, &config.Config{})
+func TestLogCompactionProcessor_getHourFromTimestamp(t *testing.T) {
+	processor := NewLogCompactionProcessor(nil, nil, nil, &config.Config{})
 
 	tests := []struct {
 		name        string
@@ -173,9 +173,9 @@ func TestLogCompactionProcessorV2_getHourFromTimestamp(t *testing.T) {
 	}
 }
 
-func TestLogCompactionProcessorV2_performLogCompactionCore_ParameterConstruction(t *testing.T) {
+func TestLogCompactionProcessor_performLogCompactionCore_ParameterConstruction(t *testing.T) {
 	// This test verifies that the method exists with the correct signature
-	processor := NewLogCompactionProcessorV2(nil, nil, nil, &config.Config{})
+	processor := NewLogCompactionProcessor(nil, nil, nil, &config.Config{})
 
 	key := messages.LogCompactionKey{
 		OrganizationID: uuid.New(),
@@ -189,7 +189,7 @@ func TestLogCompactionProcessorV2_performLogCompactionCore_ParameterConstruction
 	}
 
 	// Test that the method exists and has the expected signature
-	assert.IsType(t, &LogCompactionProcessorV2{}, processor)
+	assert.IsType(t, &LogCompactionProcessor{}, processor)
 	assert.NotNil(t, processor.performLogCompactionCore)
 
 	// Test the parameter construction logic by verifying inputs

@@ -828,10 +828,10 @@ func TestNewMetricProcessorV2(t *testing.T) {
 
 	// We can't easily test the full consumer creation without Kafka,
 	// but we can test that the constructor has the right parameters
-	assert.NotNil(t, NewMetricCompactionProcessorV2)
+	assert.NotNil(t, NewMetricCompactionProcessor)
 
 	// Test the processor creation
-	processor := NewMetricCompactionProcessorV2(mockStore, nil, nil, &config.Config{})
+	processor := NewMetricCompactionProcessor(mockStore, nil, nil, &config.Config{})
 	assert.NotNil(t, processor)
 	assert.Equal(t, mockStore, processor.store)
 }
@@ -842,10 +842,10 @@ func TestNewLogProcessorV2(t *testing.T) {
 
 	// We can't easily test the full consumer creation without Kafka,
 	// but we can test that the constructor has the right parameters
-	assert.NotNil(t, NewLogCompactionProcessorV2)
+	assert.NotNil(t, NewLogCompactionProcessor)
 
 	// Test the processor creation
-	processor := NewLogCompactionProcessorV2(mockStore, nil, nil, &config.Config{})
+	processor := NewLogCompactionProcessor(mockStore, nil, nil, &config.Config{})
 	assert.NotNil(t, processor)
 	assert.Equal(t, mockStore, processor.store)
 }
@@ -886,8 +886,8 @@ func TestCommonProcessor_InterfaceImplementation(t *testing.T) {
 	metricStore := &MockMetricCompactionStore{}
 	logStore := &MockLogCompactionStore{}
 
-	metricProcessor := NewMetricCompactionProcessorV2(metricStore, nil, nil, &config.Config{})
-	logProcessor := NewLogCompactionProcessorV2(logStore, nil, nil, &config.Config{})
+	metricProcessor := NewMetricCompactionProcessor(metricStore, nil, nil, &config.Config{})
+	logProcessor := NewLogCompactionProcessor(logStore, nil, nil, &config.Config{})
 
 	// Test that they implement the interface by calling GetTargetRecordCount
 	ctx := context.Background()
@@ -915,10 +915,10 @@ func TestCommonProcessor_InterfaceImplementation(t *testing.T) {
 	logStore.AssertExpectations(t)
 }
 
-func TestMetricCompactionProcessorV2_ProcessWorkInterface(t *testing.T) {
+func TestMetricCompactionProcessor_ProcessWorkInterface(t *testing.T) {
 	// Test that the processor implements the CompactionProcessor interface
 	// by verifying ProcessWork method exists with correct signature
-	processor := NewMetricCompactionProcessorV2(&MockMetricCompactionStore{}, nil, nil, &config.Config{})
+	processor := NewMetricCompactionProcessor(&MockMetricCompactionStore{}, nil, nil, &config.Config{})
 
 	// Test that we can create the group structure that ProcessWork expects
 	group := &accumulationGroup[messages.CompactionKey]{
@@ -1204,9 +1204,9 @@ func TestCommonConsumer_ProcessKafkaMessage_ReflectionHandlesPointerTypes(t *tes
 	mockGatherer.AssertExpectations(t)
 }
 
-func TestLogCompactionProcessorV2_ProcessWorkInterface(t *testing.T) {
+func TestLogCompactionProcessor_ProcessWorkInterface(t *testing.T) {
 	// Test that the processor implements the CompactionProcessor interface
-	processor := NewLogCompactionProcessorV2(&MockLogCompactionStore{}, nil, nil, &config.Config{})
+	processor := NewLogCompactionProcessor(&MockLogCompactionStore{}, nil, nil, &config.Config{})
 
 	// Test that we can create the group structure that ProcessWork expects
 	group := &accumulationGroup[messages.LogCompactionKey]{

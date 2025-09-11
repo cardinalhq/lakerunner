@@ -26,36 +26,36 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
-// MetricCompactionConsumerV2 handles metric compaction using the generic framework
-type MetricCompactionConsumerV2 struct {
-	*CommonConsumer[*messages.MetricCompactionMessage, messages.CompactionKey]
+// TraceCompactionConsumerV2 handles trace compaction using the common consumer framework
+type TraceCompactionConsumerV2 struct {
+	*CommonConsumer[*messages.TraceCompactionMessage, messages.TraceCompactionKey]
 }
 
-// NewMetricCompactionConsumerV2 creates a new metric compaction consumer using the generic framework
-func NewMetricCompactionConsumerV2(
+// NewTraceCompactionConsumerV2 creates a new trace compaction consumer using the common consumer framework
+func NewTraceCompactionConsumerV2(
 	ctx context.Context,
 	factory *fly.Factory,
 	cfg *config.Config,
-	store MetricCompactionStore,
+	store TraceCompactionStore,
 	storageProvider storageprofile.StorageProfileProvider,
 	cmgr cloudstorage.ClientProvider,
-) (*MetricCompactionConsumerV2, error) {
+) (*TraceCompactionConsumerV2, error) {
 
 	// Create processor
-	processor := NewMetricCompactionProcessorV2(store, storageProvider, cmgr, cfg)
+	processor := NewTraceCompactionProcessor(store, storageProvider, cmgr, cfg)
 
 	// Configure the consumer
 	consumerConfig := CommonConsumerConfig{
-		ConsumerName:  "lakerunner-metric-compaction-v2",
-		Topic:         "lakerunner.segments.metrics.compact",
-		ConsumerGroup: "lakerunner.compact.metrics",
+		ConsumerName:  "lakerunner-trace-compaction-v2",
+		Topic:         "lakerunner.segments.traces.compact",
+		ConsumerGroup: "lakerunner.compact.traces",
 		FlushInterval: 1 * time.Minute,
 		StaleAge:      1 * time.Minute,
 		MaxAge:        5 * time.Minute,
 	}
 
-	// Create generic consumer
-	genericConsumer, err := NewCommonConsumer[*messages.MetricCompactionMessage, messages.CompactionKey](
+	// Create common consumer
+	commonConsumer, err := NewCommonConsumer[*messages.TraceCompactionMessage, messages.TraceCompactionKey](
 		ctx,
 		factory,
 		cfg,
@@ -64,10 +64,10 @@ func NewMetricCompactionConsumerV2(
 		processor,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create generic compaction consumer: %w", err)
+		return nil, fmt.Errorf("failed to create common consumer: %w", err)
 	}
 
-	return &MetricCompactionConsumerV2{
-		CommonConsumer: genericConsumer,
+	return &TraceCompactionConsumerV2{
+		CommonConsumer: commonConsumer,
 	}, nil
 }
