@@ -85,23 +85,23 @@ type TelemetryConfig struct {
 func DefaultConfig() Config {
 	return Config{
 		Logs: TelemetryConfig{
-			Enabled:        false,
+			Enabled:        true,
 			CacheSize:      1000,
-			Expiry:         1 * time.Minute,
+			Expiry:         5 * time.Minute,
 			ReportInterval: 1 * time.Minute,
 			BatchSize:      100,
 		},
 		Metrics: TelemetryConfig{
 			Enabled:        true,
 			CacheSize:      1000,
-			Expiry:         1 * time.Minute,
+			Expiry:         5 * time.Minute,
 			ReportInterval: 1 * time.Minute,
 			BatchSize:      100,
 		},
 		Traces: TelemetryConfig{
 			Enabled:        false,
 			CacheSize:      1000,
-			Expiry:         1 * time.Minute,
+			Expiry:         5 * time.Minute,
 			ReportInterval: 1 * time.Minute,
 			BatchSize:      100,
 		},
