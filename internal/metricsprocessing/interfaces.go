@@ -32,6 +32,8 @@ type MetricIngestStore interface {
 	IngestStore
 	InsertMetricSegmentBatchWithKafkaOffsets(ctx context.Context, batch lrdb.MetricSegmentBatch) error
 	GetMetricEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32) int64
+	BatchUpsertExemplarMetrics(ctx context.Context, batch []lrdb.BatchUpsertExemplarMetricsParams) *lrdb.BatchUpsertExemplarMetricsBatchResults
+	UpsertServiceIdentifier(ctx context.Context, arg lrdb.UpsertServiceIdentifierParams) (lrdb.UpsertServiceIdentifierRow, error)
 }
 
 // LogIngestStore defines database operations needed for log ingestion
@@ -39,6 +41,8 @@ type LogIngestStore interface {
 	IngestStore
 	InsertLogSegmentBatchWithKafkaOffsets(ctx context.Context, batch lrdb.LogSegmentBatch) error
 	GetLogEstimate(ctx context.Context, orgID uuid.UUID) int64
+	BatchUpsertExemplarLogs(ctx context.Context, batch []lrdb.BatchUpsertExemplarLogsParams) *lrdb.BatchUpsertExemplarLogsBatchResults
+	UpsertServiceIdentifier(ctx context.Context, arg lrdb.UpsertServiceIdentifierParams) (lrdb.UpsertServiceIdentifierRow, error)
 }
 
 // TraceIngestStore defines database operations needed for trace ingestion
