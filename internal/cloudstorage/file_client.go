@@ -108,3 +108,18 @@ func (c *fileClient) DeleteObject(ctx context.Context, bucket, key string) error
 	}
 	return nil
 }
+
+// DeleteObjects removes multiple files at bucket/key locations
+// File system doesn't have native batch delete, so we mimic it with individual calls
+func (c *fileClient) DeleteObjects(ctx context.Context, bucket string, keys []string) ([]string, error) {
+	var failed []string
+
+	for _, key := range keys {
+		if err := c.DeleteObject(ctx, bucket, key); err != nil {
+			// Continue trying to delete other files even if one fails
+			failed = append(failed, key)
+		}
+	}
+
+	return failed, nil
+}

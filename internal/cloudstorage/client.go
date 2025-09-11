@@ -31,6 +31,10 @@ type Client interface {
 
 	// DeleteObject deletes an object from cloud storage
 	DeleteObject(ctx context.Context, bucket, key string) error
+
+	// DeleteObjects deletes multiple objects from cloud storage in a single batch operation
+	// Returns any keys that failed to delete and any error encountered
+	DeleteObjects(ctx context.Context, bucket string, keys []string) (failed []string, err error)
 }
 
 // ClientProvider creates cloud storage clients based on a storage profile.
