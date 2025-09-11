@@ -312,7 +312,6 @@ func TestAtomicDatabaseUpdate(t *testing.T) {
 			Dateint:        20240101,
 			FrequencyMs:    10000,
 			InstanceNum:    1,
-			IngestDateint:  20240101,
 			OldRecords: []lrdb.CompactMetricSegsOld{
 				{SegmentID: 12345},
 				{SegmentID: 67890},
@@ -369,7 +368,6 @@ func TestAtomicDatabaseUpdate(t *testing.T) {
 			Dateint:        20240101,
 			FrequencyMs:    10000,
 			InstanceNum:    1,
-			IngestDateint:  20240101,
 			OldRecords: []lrdb.CompactMetricSegsOld{
 				{SegmentID: 12345},
 				{SegmentID: 67890},

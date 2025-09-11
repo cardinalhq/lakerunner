@@ -298,7 +298,6 @@ func (p *TraceCompactionProcessor) performTraceCompaction(ctx context.Context, t
 	compactTraceSegsParams := lrdb.CompactTraceSegsParams{
 		OrganizationID: group.Key.OrganizationID,
 		Dateint:        group.Key.DateInt,
-		IngestDateint:  group.Key.DateInt, // Use same dateint for ingest
 		InstanceNum:    group.Key.InstanceNum,
 		CreatedBy:      lrdb.CreatedByCompact,
 		NewRecords:     make([]lrdb.CompactTraceSegsNew, len(newSegments)),
@@ -393,7 +392,6 @@ func (p *TraceCompactionProcessor) uploadAndCreateTraceSegments(ctx context.Cont
 			Fingerprints:   stats.Fingerprints,
 			RecordCount:    result.RecordCount,
 			FileSize:       result.FileSize,
-			IngestDateint:  helpers.CurrentDateInt(),
 			CreatedBy:      lrdb.CreatedByCompact,
 			Compacted:      true,
 			Published:      true,

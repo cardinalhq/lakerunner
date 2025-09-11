@@ -37,7 +37,6 @@ func (q *Store) CompactMetricSegs(ctx context.Context, args CompactMetricSegsPar
 		newItems[i] = InsertMetricSegsParams{
 			OrganizationID: args.OrganizationID,
 			Dateint:        args.Dateint,
-			IngestDateint:  args.IngestDateint,
 			FrequencyMs:    args.FrequencyMs,
 			SegmentID:      r.SegmentID,
 			InstanceNum:    args.InstanceNum,

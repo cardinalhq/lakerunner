@@ -116,7 +116,6 @@ func (q *Store) InsertMetricSegmentBatchWithKafkaOffsets(ctx context.Context, ba
 			batchParams[i] = InsertMetricSegsParams{
 				OrganizationID: params.OrganizationID,
 				Dateint:        params.Dateint,
-				IngestDateint:  params.IngestDateint,
 				FrequencyMs:    params.FrequencyMs,
 				SegmentID:      params.SegmentID,
 				InstanceNum:    params.InstanceNum,
@@ -205,7 +204,6 @@ func (q *Store) CompactMetricSegsWithKafkaOffsets(ctx context.Context, params Co
 				newItems[i] = InsertMetricSegsParams{
 					OrganizationID: params.OrganizationID,
 					Dateint:        params.Dateint,
-					IngestDateint:  params.IngestDateint,
 					FrequencyMs:    params.FrequencyMs,
 					SegmentID:      r.SegmentID,
 					InstanceNum:    params.InstanceNum,
@@ -291,7 +289,6 @@ func (q *Store) RollupMetricSegsWithKafkaOffsets(ctx context.Context, sourcePara
 					FileSize:       newRec.FileSize,
 					Fingerprints:   newRec.Fingerprints,
 					FrequencyMs:    targetParams.FrequencyMs,
-					IngestDateint:  targetParams.IngestDateint,
 					InstanceNum:    targetParams.InstanceNum,
 					OrganizationID: targetParams.OrganizationID,
 					RecordCount:    newRec.RecordCount,

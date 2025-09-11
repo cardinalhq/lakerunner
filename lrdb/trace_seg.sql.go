@@ -84,7 +84,6 @@ const insertTraceSegmentDirect = `-- name: insertTraceSegmentDirect :exec
 INSERT INTO trace_seg (
   organization_id,
   dateint,
-  ingest_dateint,
   segment_id,
   instance_num,
   ts_range,
@@ -100,21 +99,19 @@ VALUES (
   $2,
   $3,
   $4,
-  $5,
-  int8range($6, $7, '[)'),
+  int8range($5, $6, '[)'),
+  $7,
   $8,
   $9,
-  $10,
-  $11::bigint[],
-  $12,
-  $13
+  $10::bigint[],
+  $11,
+  $12
 )
 `
 
 type InsertTraceSegmentParams struct {
 	OrganizationID uuid.UUID `json:"organization_id"`
 	Dateint        int32     `json:"dateint"`
-	IngestDateint  int32     `json:"ingest_dateint"`
 	SegmentID      int64     `json:"segment_id"`
 	InstanceNum    int16     `json:"instance_num"`
 	StartTs        int64     `json:"start_ts"`
@@ -131,7 +128,6 @@ func (q *Queries) insertTraceSegmentDirect(ctx context.Context, arg InsertTraceS
 	_, err := q.db.Exec(ctx, insertTraceSegmentDirect,
 		arg.OrganizationID,
 		arg.Dateint,
-		arg.IngestDateint,
 		arg.SegmentID,
 		arg.InstanceNum,
 		arg.StartTs,

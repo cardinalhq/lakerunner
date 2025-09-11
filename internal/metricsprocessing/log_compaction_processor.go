@@ -328,12 +328,9 @@ func (c *LogCompactionProcessor) uploadAndCreateLogSegments(ctx context.Context,
 			return nil, fmt.Errorf("upload file %s: %w", result.FileName, err)
 		}
 
-		nowDateInt := helpers.CurrentDateInt()
-
 		segment := lrdb.LogSeg{
 			OrganizationID: key.OrganizationID,
 			Dateint:        key.DateInt,
-			IngestDateint:  nowDateInt,
 			SegmentID:      segmentID,
 			InstanceNum:    key.InstanceNum,
 			TsRange: pgtype.Range[pgtype.Int8]{
@@ -442,7 +439,6 @@ func (c *LogCompactionProcessor) atomicLogDatabaseUpdate(ctx context.Context, ol
 	params := lrdb.CompactLogSegsParams{
 		OrganizationID: key.OrganizationID,
 		Dateint:        key.DateInt,
-		IngestDateint:  newSegments[0].IngestDateint, // Use first new segment's ingest date
 		InstanceNum:    key.InstanceNum,
 		OldRecords:     oldRecords,
 		NewRecords:     newRecords,

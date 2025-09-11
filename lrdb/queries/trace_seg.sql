@@ -2,7 +2,6 @@
 INSERT INTO trace_seg (
   organization_id,
   dateint,
-  ingest_dateint,
   segment_id,
   instance_num,
   ts_range,
@@ -16,7 +15,6 @@ INSERT INTO trace_seg (
 VALUES (
   @organization_id,
   @dateint,
-  @ingest_dateint,
   @segment_id,
   @instance_num,
   int8range(@start_ts, @end_ts, '[)'),
@@ -32,7 +30,6 @@ VALUES (
 INSERT INTO trace_seg (
   organization_id,
   dateint,
-  ingest_dateint,
   segment_id,
   instance_num,
   ts_range,
@@ -46,7 +43,6 @@ INSERT INTO trace_seg (
 VALUES (
   @organization_id,
   @dateint,
-  @ingest_dateint,
   @segment_id,
   @instance_num,
   int8range(@start_ts, @end_ts, '[)'),

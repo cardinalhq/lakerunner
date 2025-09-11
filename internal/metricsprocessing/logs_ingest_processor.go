@@ -566,7 +566,6 @@ func (p *LogIngestProcessor) uploadAndCreateLogSegments(ctx context.Context, sto
 		params := lrdb.InsertLogSegmentParams{
 			OrganizationID: storageProfile.OrganizationID,
 			Dateint:        dateint,
-			IngestDateint:  nowDateInt,
 			SegmentID:      segmentID,
 			InstanceNum:    storageProfile.InstanceNum,
 			StartTs:        stats.FirstTS,

@@ -73,7 +73,6 @@ func (q *Store) CompactLogSegsWithKafkaOffsets(ctx context.Context, params Compa
 				newItems[i] = batchInsertLogSegsDirectParams{
 					OrganizationID: params.OrganizationID,
 					Dateint:        params.Dateint,
-					IngestDateint:  params.IngestDateint,
 					SegmentID:      r.SegmentID,
 					InstanceNum:    params.InstanceNum,
 					StartTs:        r.StartTs,

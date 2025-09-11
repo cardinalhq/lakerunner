@@ -2,7 +2,6 @@
 INSERT INTO metric_seg (
   organization_id,
   dateint,
-  ingest_dateint,
   frequency_ms,
   segment_id,
   instance_num,
@@ -19,7 +18,6 @@ INSERT INTO metric_seg (
 VALUES (
   @organization_id,
   @dateint,
-  @ingest_dateint,
   @frequency_ms,
   @segment_id,
   @instance_num,
@@ -48,7 +46,6 @@ ORDER BY segment_id;
 INSERT INTO metric_seg (
   organization_id,
   dateint,
-  ingest_dateint,
   frequency_ms,
   segment_id,
   instance_num,
@@ -65,7 +62,6 @@ INSERT INTO metric_seg (
 VALUES (
   @organization_id,
   @dateint,
-  @ingest_dateint,
   @frequency_ms,
   @segment_id,
   @instance_num,

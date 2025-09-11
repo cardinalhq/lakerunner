@@ -249,7 +249,6 @@ const insertMetricSegDirect = `-- name: insertMetricSegDirect :exec
 INSERT INTO metric_seg (
   organization_id,
   dateint,
-  ingest_dateint,
   frequency_ms,
   segment_id,
   instance_num,
@@ -269,23 +268,21 @@ VALUES (
   $3,
   $4,
   $5,
-  $6,
-  int8range($7, $8, '[)'),
+  int8range($6, $7, '[)'),
+  $8,
   $9,
   $10,
   $11,
   $12,
-  $13,
-  $14::bigint[],
-  $15,
-  $16
+  $13::bigint[],
+  $14,
+  $15
 )
 `
 
 type InsertMetricSegmentParams struct {
 	OrganizationID uuid.UUID `json:"organization_id"`
 	Dateint        int32     `json:"dateint"`
-	IngestDateint  int32     `json:"ingest_dateint"`
 	FrequencyMs    int32     `json:"frequency_ms"`
 	SegmentID      int64     `json:"segment_id"`
 	InstanceNum    int16     `json:"instance_num"`
@@ -305,7 +302,6 @@ func (q *Queries) insertMetricSegDirect(ctx context.Context, arg InsertMetricSeg
 	_, err := q.db.Exec(ctx, insertMetricSegDirect,
 		arg.OrganizationID,
 		arg.Dateint,
-		arg.IngestDateint,
 		arg.FrequencyMs,
 		arg.SegmentID,
 		arg.InstanceNum,

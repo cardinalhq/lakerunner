@@ -440,7 +440,6 @@ const batchInsertLogSegsDirect = `-- name: batchInsertLogSegsDirect :batchexec
 INSERT INTO log_seg (
   organization_id,
   dateint,
-  ingest_dateint,
   segment_id,
   instance_num,
   ts_range,
@@ -456,14 +455,13 @@ VALUES (
   $2,
   $3,
   $4,
-  $5,
-  int8range($6, $7, '[)'),
+  int8range($5, $6, '[)'),
+  $7,
   $8,
   $9,
-  $10,
-  $11::bigint[],
-  $12,
-  $13
+  $10::bigint[],
+  $11,
+  $12
 )
 `
 
@@ -476,7 +474,6 @@ type batchInsertLogSegsDirectBatchResults struct {
 type batchInsertLogSegsDirectParams struct {
 	OrganizationID uuid.UUID `json:"organization_id"`
 	Dateint        int32     `json:"dateint"`
-	IngestDateint  int32     `json:"ingest_dateint"`
 	SegmentID      int64     `json:"segment_id"`
 	InstanceNum    int16     `json:"instance_num"`
 	StartTs        int64     `json:"start_ts"`
@@ -495,7 +492,6 @@ func (q *Queries) batchInsertLogSegsDirect(ctx context.Context, arg []batchInser
 		vals := []interface{}{
 			a.OrganizationID,
 			a.Dateint,
-			a.IngestDateint,
 			a.SegmentID,
 			a.InstanceNum,
 			a.StartTs,
@@ -538,7 +534,6 @@ const batchInsertTraceSegsDirect = `-- name: batchInsertTraceSegsDirect :batchex
 INSERT INTO trace_seg (
   organization_id,
   dateint,
-  ingest_dateint,
   segment_id,
   instance_num,
   ts_range,
@@ -554,14 +549,13 @@ VALUES (
   $2,
   $3,
   $4,
-  $5,
-  int8range($6, $7, '[)'),
+  int8range($5, $6, '[)'),
+  $7,
   $8,
   $9,
-  $10,
-  $11::bigint[],
-  $12,
-  $13
+  $10::bigint[],
+  $11,
+  $12
 )
 `
 
@@ -574,7 +568,6 @@ type batchInsertTraceSegsDirectBatchResults struct {
 type batchInsertTraceSegsDirectParams struct {
 	OrganizationID uuid.UUID `json:"organization_id"`
 	Dateint        int32     `json:"dateint"`
-	IngestDateint  int32     `json:"ingest_dateint"`
 	SegmentID      int64     `json:"segment_id"`
 	InstanceNum    int16     `json:"instance_num"`
 	StartTs        int64     `json:"start_ts"`
@@ -593,7 +586,6 @@ func (q *Queries) batchInsertTraceSegsDirect(ctx context.Context, arg []batchIns
 		vals := []interface{}{
 			a.OrganizationID,
 			a.Dateint,
-			a.IngestDateint,
 			a.SegmentID,
 			a.InstanceNum,
 			a.StartTs,
@@ -636,7 +628,6 @@ const insertMetricSegsDirect = `-- name: insertMetricSegsDirect :batchexec
 INSERT INTO metric_seg (
   organization_id,
   dateint,
-  ingest_dateint,
   frequency_ms,
   segment_id,
   instance_num,
@@ -656,16 +647,15 @@ VALUES (
   $3,
   $4,
   $5,
-  $6,
-  int8range($7, $8, '[)'),
+  int8range($6, $7, '[)'),
+  $8,
   $9,
   $10,
   $11,
   $12,
-  $13,
-  $14::bigint[],
-  $15,
-  $16
+  $13::bigint[],
+  $14,
+  $15
 )
 ON CONFLICT (organization_id, dateint, frequency_ms, segment_id, instance_num)
 DO NOTHING
@@ -680,7 +670,6 @@ type insertMetricSegsDirectBatchResults struct {
 type InsertMetricSegsParams struct {
 	OrganizationID uuid.UUID `json:"organization_id"`
 	Dateint        int32     `json:"dateint"`
-	IngestDateint  int32     `json:"ingest_dateint"`
 	FrequencyMs    int32     `json:"frequency_ms"`
 	SegmentID      int64     `json:"segment_id"`
 	InstanceNum    int16     `json:"instance_num"`
@@ -702,7 +691,6 @@ func (q *Queries) insertMetricSegsDirect(ctx context.Context, arg []InsertMetric
 		vals := []interface{}{
 			a.OrganizationID,
 			a.Dateint,
-			a.IngestDateint,
 			a.FrequencyMs,
 			a.SegmentID,
 			a.InstanceNum,

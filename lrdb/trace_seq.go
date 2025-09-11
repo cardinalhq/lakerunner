@@ -73,7 +73,6 @@ func (q *Store) CompactTraceSegsWithKafkaOffsets(ctx context.Context, params Com
 				newItems[i] = batchInsertTraceSegsDirectParams{
 					OrganizationID: params.OrganizationID,
 					Dateint:        params.Dateint,
-					IngestDateint:  params.IngestDateint,
 					SegmentID:      r.SegmentID,
 					InstanceNum:    params.InstanceNum,
 					StartTs:        r.StartTs,

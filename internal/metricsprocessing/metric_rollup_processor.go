@@ -330,7 +330,6 @@ func (r *MetricRollupProcessor) uploadAndCreateRollupSegments(ctx context.Contex
 		segment := lrdb.MetricSeg{
 			OrganizationID: key.OrganizationID,
 			Dateint:        key.DateInt,
-			IngestDateint:  key.DateInt,           // Use same as dateint for rolled up segments
 			FrequencyMs:    key.TargetFrequencyMs, // Store at target frequency
 			SegmentID:      segmentID,
 			InstanceNum:    key.InstanceNum,
@@ -406,7 +405,6 @@ func (r *MetricRollupProcessor) atomicDatabaseUpdate(ctx context.Context, oldSeg
 		Dateint:        key.DateInt,
 		FrequencyMs:    key.TargetFrequencyMs,
 		InstanceNum:    key.InstanceNum,
-		IngestDateint:  key.DateInt,
 		SortVersion:    lrdb.CurrentMetricSortVersion,
 	}
 

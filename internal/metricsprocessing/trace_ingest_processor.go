@@ -681,7 +681,6 @@ func (p *TraceIngestProcessor) uploadAndCreateTraceSegments(ctx context.Context,
 			OrganizationID: storageProfile.OrganizationID,
 			SegmentID:      segmentID,
 			Dateint:        validBin.dateint,
-			IngestDateint:  nowDateInt,
 			InstanceNum:    storageProfile.InstanceNum,
 			StartTs:        validBin.stats.FirstTS,
 			EndTs:          validBin.stats.LastTS + 1, // end is exclusive

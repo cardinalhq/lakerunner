@@ -637,7 +637,6 @@ func (p *MetricIngestProcessor) uploadAndCreateSegments(ctx context.Context, sto
 		params := lrdb.InsertMetricSegmentParams{
 			OrganizationID: storageProfile.OrganizationID,
 			Dateint:        metadata.Dateint,
-			IngestDateint:  nowDateInt,
 			FrequencyMs:    10000, // 10 seconds
 			SegmentID:      segmentID,
 			InstanceNum:    storageProfile.InstanceNum,

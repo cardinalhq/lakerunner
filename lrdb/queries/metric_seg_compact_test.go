@@ -41,7 +41,6 @@ func TestMarkMetricSegsCompactedByKeys_SingleSegment(t *testing.T) {
 	err := db.InsertMetricSegment(ctx, lrdb.InsertMetricSegmentParams{
 		OrganizationID: orgID,
 		Dateint:        20250830,
-		IngestDateint:  20250830,
 		FrequencyMs:    5000,
 		SegmentID:      segmentID,
 		InstanceNum:    1,
@@ -97,7 +96,6 @@ func TestMarkMetricSegsCompactedByKeys_MultipleSegments(t *testing.T) {
 		err := db.InsertMetricSegment(ctx, lrdb.InsertMetricSegmentParams{
 			OrganizationID: orgID,
 			Dateint:        20250830,
-			IngestDateint:  20250830,
 			FrequencyMs:    5000,
 			SegmentID:      segmentID,
 			InstanceNum:    1,
@@ -165,7 +163,6 @@ func TestMarkMetricSegsCompactedByKeys_OnlyMatchingKeys(t *testing.T) {
 	err := db.InsertMetricSegment(ctx, lrdb.InsertMetricSegmentParams{
 		OrganizationID: orgID,
 		Dateint:        20250830,
-		IngestDateint:  20250830,
 		FrequencyMs:    5000,
 		SegmentID:      segmentID1,
 		InstanceNum:    1,
@@ -184,7 +181,6 @@ func TestMarkMetricSegsCompactedByKeys_OnlyMatchingKeys(t *testing.T) {
 	err = db.InsertMetricSegment(ctx, lrdb.InsertMetricSegmentParams{
 		OrganizationID: orgID,
 		Dateint:        20250830,
-		IngestDateint:  20250830,
 		FrequencyMs:    10000, // Different frequency
 		SegmentID:      segmentID2,
 		InstanceNum:    1,
@@ -248,7 +244,6 @@ func TestMarkMetricSegsCompactedByKeys_AlreadyCompacted(t *testing.T) {
 	err := db.InsertMetricSegment(ctx, lrdb.InsertMetricSegmentParams{
 		OrganizationID: orgID,
 		Dateint:        20250830,
-		IngestDateint:  20250830,
 		FrequencyMs:    5000,
 		SegmentID:      segmentID,
 		InstanceNum:    1,

@@ -85,7 +85,6 @@ func TestMetricSegEstimator(t *testing.T) {
 			err := db.InsertMetricSegment(ctx, lrdb.InsertMetricSegmentParams{
 				OrganizationID: testOrgID,
 				Dateint:        dateint,
-				IngestDateint:  dateint,
 				FrequencyMs:    10000,           // 10s frequency
 				SegmentID:      int64(1000 + i), // unique segment ID
 				InstanceNum:    1,
@@ -179,7 +178,6 @@ func TestMetricSegEstimatorMultipleFiles(t *testing.T) {
 		err := db.InsertMetricSegment(ctx, lrdb.InsertMetricSegmentParams{
 			OrganizationID: orgID,
 			Dateint:        dateint,
-			IngestDateint:  dateint,
 			FrequencyMs:    10000,
 			SegmentID:      int64(2000 + i), // unique segment ID
 			InstanceNum:    1,

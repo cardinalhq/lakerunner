@@ -322,13 +322,10 @@ func (c *MetricCompactionProcessor) uploadAndCreateSegments(ctx context.Context,
 		// Clean up local file
 		os.Remove(result.FileName)
 
-		nowDateInt := helpers.CurrentDateInt()
-
 		// Create new segment record
 		segment := lrdb.MetricSeg{
 			OrganizationID: key.OrganizationID,
 			Dateint:        key.DateInt,
-			IngestDateint:  nowDateInt,
 			FrequencyMs:    key.FrequencyMs,
 			SegmentID:      segmentID,
 			InstanceNum:    key.InstanceNum,
@@ -425,7 +422,6 @@ func (c *MetricCompactionProcessor) atomicDatabaseUpdate(ctx context.Context, ol
 		Dateint:        key.DateInt,
 		FrequencyMs:    key.FrequencyMs,
 		InstanceNum:    key.InstanceNum,
-		IngestDateint:  key.DateInt,
 		OldRecords:     oldRecords,
 		NewRecords:     newRecords,
 		CreatedBy:      lrdb.CreatedByCompact,

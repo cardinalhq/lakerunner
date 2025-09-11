@@ -2,7 +2,6 @@
 INSERT INTO log_seg (
   organization_id,
   dateint,
-  ingest_dateint,
   segment_id,
   instance_num,
   ts_range,
@@ -16,7 +15,6 @@ INSERT INTO log_seg (
 VALUES (
   @organization_id,
   @dateint,
-  @ingest_dateint,
   @segment_id,
   @instance_num,
   int8range(@start_ts, @end_ts, '[)'),
@@ -63,7 +61,6 @@ WITH
 INSERT INTO log_seg (
   organization_id,
   dateint,
-  ingest_dateint,
   segment_id,
   instance_num,
   record_count,
@@ -77,7 +74,6 @@ INSERT INTO log_seg (
 SELECT
   @organization_id,
   @dateint,
-  @ingest_dateint,
   @new_segment_id,
   @instance_num,
   @new_record_count,
@@ -93,7 +89,6 @@ FROM fingerprint_array AS fa;
 INSERT INTO log_seg (
   organization_id,
   dateint,
-  ingest_dateint,
   segment_id,
   instance_num,
   ts_range,
@@ -107,7 +102,6 @@ INSERT INTO log_seg (
 VALUES (
   @organization_id,
   @dateint,
-  @ingest_dateint,
   @segment_id,
   @instance_num,
   int8range(@start_ts, @end_ts, '[)'),
