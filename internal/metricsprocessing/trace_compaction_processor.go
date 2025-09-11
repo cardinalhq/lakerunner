@@ -481,7 +481,7 @@ func processTracesWithSorting(ctx context.Context, params traceProcessingParams)
 	if err != nil {
 		return nil, fmt.Errorf("create trace reader stack: %w", err)
 	}
-	defer readerStack.Close()
+	defer readerStack.Close(ctx)
 
 	// Create traces writer
 	writer, err := factories.NewTracesWriter(params.TmpDir, params.MaxRecords)
@@ -489,19 +489,10 @@ func processTracesWithSorting(ctx context.Context, params traceProcessingParams)
 		return nil, fmt.Errorf("create trace writer: %w", err)
 	}
 
-	// Process all data from reader to writer
-	for {
-		batch, err := readerStack.Next(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("read batch from trace reader stack: %w", err)
-		}
-		if batch == nil {
-			break
-		}
-
-		if err := writer.WriteBatch(batch); err != nil {
-			return nil, fmt.Errorf("write batch to trace writer: %w", err)
-		}
+	// Write from reader to writer
+	if err := writeFromReader(ctx, readerStack.HeadReader, writer); err != nil {
+		writer.Abort()
+		return nil, fmt.Errorf("write from reader: %w", err)
 	}
 
 	// Close writer and get results
@@ -511,17 +502,46 @@ func processTracesWithSorting(ctx context.Context, params traceProcessingParams)
 	}
 
 	return &traceProcessingResult{
-		ProcessedSegments: params.ActiveSegments,
+		ProcessedSegments: readerStack.ProcessedSegments,
 		Results:           results,
 	}, nil
 }
 
+// traceReaderStackResult holds the result of creating a trace reader stack
+type traceReaderStackResult struct {
+	Readers           []filereader.Reader
+	Files             []*os.File
+	ProcessedSegments []lrdb.TraceSeg
+	HeadReader        filereader.Reader
+}
+
+func (result *traceReaderStackResult) Close(ctx context.Context) {
+	ll := logctx.FromContext(ctx)
+
+	if result.HeadReader != nil {
+		if err := result.HeadReader.Close(); err != nil {
+			ll.Error("Failed to close trace head reader", slog.Any("error", err))
+		}
+	}
+	for _, reader := range result.Readers {
+		if err := reader.Close(); err != nil {
+			ll.Error("Failed to close trace reader", slog.Any("error", err))
+		}
+	}
+	for _, file := range result.Files {
+		if err := file.Close(); err != nil {
+			ll.Error("Failed to close trace file", slog.String("file", file.Name()), slog.Any("error", err))
+		}
+	}
+}
+
 // createTraceReaderStack creates a reader stack for trace segments
-func createTraceReaderStack(ctx context.Context, tmpDir string, storageClient cloudstorage.Client, storageProfile storageprofile.StorageProfile, segments []lrdb.TraceSeg) (filereader.Reader, error) {
+func createTraceReaderStack(ctx context.Context, tmpDir string, storageClient cloudstorage.Client, storageProfile storageprofile.StorageProfile, segments []lrdb.TraceSeg) (*traceReaderStackResult, error) {
 	ll := logctx.FromContext(ctx)
 
 	var readers []filereader.Reader
 	var files []*os.File
+	var processedSegments []lrdb.TraceSeg
 
 	if len(segments) == 0 {
 		return nil, fmt.Errorf("no trace segments provided to create reader stack")
@@ -574,6 +594,7 @@ func createTraceReaderStack(ctx context.Context, tmpDir string, storageClient cl
 
 		readers = append(readers, reader)
 		files = append(files, file)
+		processedSegments = append(processedSegments, segment)
 	}
 
 	if len(readers) == 0 {
@@ -594,54 +615,10 @@ func createTraceReaderStack(ctx context.Context, tmpDir string, storageClient cl
 		return nil, fmt.Errorf("creating trace mergesort reader: %w", err)
 	}
 
-	// Create a wrapper that will handle cleanup when closed
-	wrapper := &traceReaderStackWrapper{
-		headReader: mergedReader,
-		readers:    readers,
-		files:      files,
-	}
-
-	return wrapper, nil
-}
-
-// traceReaderStackWrapper wraps a merged reader and handles cleanup of underlying resources
-type traceReaderStackWrapper struct {
-	headReader filereader.Reader
-	readers    []filereader.Reader
-	files      []*os.File
-}
-
-func (w *traceReaderStackWrapper) Next(ctx context.Context) (*filereader.Batch, error) {
-	return w.headReader.Next(ctx)
-}
-
-func (w *traceReaderStackWrapper) Close() error {
-	ll := logctx.FromContext(context.Background())
-
-	if w.headReader != nil {
-		if err := w.headReader.Close(); err != nil {
-			ll.Error("Failed to close trace head reader", slog.Any("error", err))
-		}
-	}
-
-	for _, reader := range w.readers {
-		if err := reader.Close(); err != nil {
-			ll.Error("Failed to close trace reader", slog.Any("error", err))
-		}
-	}
-
-	for _, file := range w.files {
-		if err := file.Close(); err != nil {
-			ll.Error("Failed to close trace file", slog.String("file", file.Name()), slog.Any("error", err))
-		}
-	}
-
-	return nil
-}
-
-func (w *traceReaderStackWrapper) TotalRowsReturned() int64 {
-	if w.headReader != nil {
-		return w.headReader.TotalRowsReturned()
-	}
-	return 0
+	return &traceReaderStackResult{
+		Readers:           readers,
+		Files:             files,
+		ProcessedSegments: processedSegments,
+		HeadReader:        mergedReader,
+	}, nil
 }
