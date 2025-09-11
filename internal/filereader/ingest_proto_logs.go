@@ -17,13 +17,12 @@ package filereader
 import (
 	"context"
 	"fmt"
+	"github.com/cardinalhq/lakerunner/internal/exemplars"
 	"io"
 	"maps"
 
 	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
 	"github.com/cardinalhq/oteltools/pkg/translate"
-
-	"github.com/cardinalhq/lakerunner/internal/exemplar"
 
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
@@ -47,7 +46,7 @@ type IngestProtoLogsReader struct {
 	resourceIndex     int
 	scopeIndex        int
 	logIndex          int
-	exemplarProcessor *exemplar.Processor
+	exemplarProcessor *exemplars.Processor
 	orgId             string
 }
 

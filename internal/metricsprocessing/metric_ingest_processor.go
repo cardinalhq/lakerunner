@@ -17,6 +17,7 @@ package metricsprocessing
 import (
 	"context"
 	"fmt"
+	"github.com/cardinalhq/lakerunner/internal/exemplars"
 	"io"
 	"log/slog"
 	"os"
@@ -24,7 +25,6 @@ import (
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
-	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
@@ -60,13 +60,15 @@ type MetricIngestProcessor struct {
 	storageProvider   storageprofile.StorageProfileProvider
 	cmgr              cloudstorage.ClientProvider
 	kafkaProducer     fly.Producer
-	exemplarProcessor *exemplar.Processor
+	exemplarProcessor *exemplars.Processor
 }
 
 // newMetricIngestProcessor creates a new metric ingest processor instance
 func newMetricIngestProcessor(store MetricIngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *MetricIngestProcessor {
-
-	exemplarProcessor := exemplar.NewProcessor(exemplar.DefaultConfig())
+	exemplarProcessor := exemplars.NewProcessor(exemplars.DefaultConfig())
+	exemplarProcessor.SetMetricsCallback(func(ctx context.Context, organizationID string, exemplars []*exemplars.ExemplarData) error {
+		return processMetricsExemplarsDirect(ctx, organizationID, exemplars, store)
+	})
 
 	return &MetricIngestProcessor{
 		store:             store,

@@ -17,11 +17,10 @@ package filereader
 import (
 	"compress/gzip"
 	"fmt"
+	"github.com/cardinalhq/lakerunner/internal/exemplars"
 	"io"
 	"os"
 	"strings"
-
-	"github.com/cardinalhq/lakerunner/internal/exemplar"
 )
 
 type multiReadCloser struct {
@@ -47,7 +46,7 @@ type ReaderOptions struct {
 	OrgID             string
 	Bucket            string
 	ObjectID          string
-	ExemplarProcessor *exemplar.Processor
+	ExemplarProcessor *exemplars.Processor
 	// Aggregation options for metrics
 	EnableAggregation   bool  // Enable streaming aggregation
 	AggregationPeriodMs int64 // Aggregation period in milliseconds (e.g., 10000 for 10s)
@@ -55,7 +54,7 @@ type ReaderOptions struct {
 
 // ReaderForFile creates a Reader for the given file based on its extension and signal type.
 // This is a convenience function that uses default options.
-func ReaderForFile(filename string, signalType SignalType, exemplarProcessor *exemplar.Processor) (Reader, error) {
+func ReaderForFile(filename string, signalType SignalType, exemplarProcessor *exemplars.Processor) (Reader, error) {
 	options := ReaderOptions{SignalType: signalType, BatchSize: 1000}
 	options.ExemplarProcessor = exemplarProcessor
 	return ReaderForFileWithOptions(filename, options)

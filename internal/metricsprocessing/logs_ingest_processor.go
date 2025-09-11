@@ -17,13 +17,13 @@ package metricsprocessing
 import (
 	"context"
 	"fmt"
+	"github.com/cardinalhq/lakerunner/internal/exemplars"
 	"io"
 	"log/slog"
 	"os"
 	"time"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
-	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
@@ -58,12 +58,15 @@ type LogIngestProcessor struct {
 	storageProvider   storageprofile.StorageProfileProvider
 	cmgr              cloudstorage.ClientProvider
 	kafkaProducer     fly.Producer
-	exemplarProcessor *exemplar.Processor
+	exemplarProcessor *exemplars.Processor
 }
 
 // newLogIngestProcessor creates a new log ingest processor instance
 func newLogIngestProcessor(store LogIngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *LogIngestProcessor {
-	exemplarProcessor := exemplar.NewProcessor(exemplar.DefaultConfig())
+	exemplarProcessor := exemplars.NewProcessor(exemplars.DefaultConfig())
+	exemplarProcessor.SetLogsCallback(func(ctx context.Context, organizationID string, exemplars []*exemplars.ExemplarData) error {
+		return processLogsExemplarsDirect(ctx, organizationID, exemplars, store)
+	})
 	return &LogIngestProcessor{
 		store:             store,
 		storageProvider:   storageProvider,

@@ -15,12 +15,12 @@
 package ingest
 
 import (
+	"github.com/cardinalhq/lakerunner/internal/exemplars"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
-	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
@@ -46,5 +46,5 @@ type ProcessBatchArgs struct {
 	IngestDateint     int32
 	RPFEstimate       int64
 	KafkaOffset       lrdb.KafkaOffsetUpdate
-	ExemplarProcessor *exemplar.Processor
+	ExemplarProcessor *exemplars.Processor
 }

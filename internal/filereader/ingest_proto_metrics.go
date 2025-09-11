@@ -17,13 +17,12 @@ package filereader
 import (
 	"context"
 	"fmt"
+	"github.com/cardinalhq/lakerunner/internal/exemplars"
 	"io"
 	"log/slog"
 	"maps"
 	"math"
 	"sort"
-
-	"github.com/cardinalhq/lakerunner/internal/exemplar"
 
 	"github.com/DataDog/sketches-go/ddsketch"
 	"go.opentelemetry.io/collector/pdata/pcommon"
@@ -50,7 +49,7 @@ type IngestProtoMetricsReader struct {
 	// Store the original OTEL metrics for exemplar processing
 	orgId             string
 	otelMetrics       *pmetric.Metrics
-	exemplarProcessor *exemplar.Processor
+	exemplarProcessor *exemplars.Processor
 
 	// Streaming iterator state for metrics
 	resourceIndex  int

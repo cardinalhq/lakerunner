@@ -17,6 +17,7 @@ package metricsprocessing
 import (
 	"context"
 	"fmt"
+	"github.com/cardinalhq/lakerunner/internal/exemplars"
 	"io"
 	"log/slog"
 	"os"
@@ -24,7 +25,6 @@ import (
 	"time"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
-	"github.com/cardinalhq/lakerunner/internal/exemplar"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
@@ -174,12 +174,12 @@ type TraceIngestProcessor struct {
 	storageProvider   storageprofile.StorageProfileProvider
 	cmgr              cloudstorage.ClientProvider
 	kafkaProducer     fly.Producer
-	exemplarProcessor *exemplar.Processor
+	exemplarProcessor *exemplars.Processor
 }
 
 // newTraceIngestProcessor creates a new trace ingest processor instance
 func newTraceIngestProcessor(store TraceIngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *TraceIngestProcessor {
-	exemplarProcessor := exemplar.NewProcessor(exemplar.DefaultConfig())
+	exemplarProcessor := exemplars.NewProcessor(exemplars.DefaultConfig())
 	return &TraceIngestProcessor{
 		store:             store,
 		storageProvider:   storageProvider,

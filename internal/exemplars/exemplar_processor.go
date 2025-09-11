@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-package exemplar
+package exemplars
 
 import (
 	"context"
@@ -30,12 +30,6 @@ import (
 
 // TelemetryType represents the type of telemetry being processed
 type TelemetryType string
-
-const (
-	TelemetryTypeLogs    TelemetryType = "logs"
-	TelemetryTypeMetrics TelemetryType = "metrics"
-	TelemetryTypeTraces  TelemetryType = "traces"
-)
 
 // Tenant holds the caches for each telemetry type for a specific organization
 type Tenant struct {
@@ -108,7 +102,6 @@ func DefaultConfig() Config {
 	}
 }
 
-// NewProcessor creates a new processor for a specific telemetry type
 // NewProcessor creates a new unified processor for all telemetry types
 func NewProcessor(config Config) *Processor {
 	return &Processor{
