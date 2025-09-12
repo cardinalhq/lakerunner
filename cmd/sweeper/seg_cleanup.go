@@ -15,7 +15,6 @@
 package sweeper
 
 import (
-	"container/heap"
 	"context"
 	"fmt"
 	"log/slog"
@@ -33,194 +32,50 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-// WorkResult indicates the outcome of performing work
-type WorkResult int
-
-const (
-	WorkResultNoWork  WorkResult = iota // No work was done, increase backoff
-	WorkResultLittle                    // Some work was done, moderate backoff
-	WorkResultMaxWork                   // Maximum work was done, reset backoff
-	WorkResultDropped                   // Work item should be dropped/removed
-)
-
-// WorkItem represents a cleanup task that can perform work
-type WorkItem interface {
-	// Perform executes the work and returns the result
-	Perform(ctx context.Context) WorkResult
-
-	// GetNextRunTime returns when this work should next be executed
-	GetNextRunTime() time.Time
-
-	// SetNextRunTime updates when this work should next be executed
-	SetNextRunTime(t time.Time)
-
-	// GetKey returns a unique key for this work item (for tracking)
-	GetKey() string
-
-	// UpdateBackoff adjusts the backoff based on work result
-	UpdateBackoff(result WorkResult)
-}
-
-// WorkItemHeap implements heap.Interface for WorkItem
-type WorkItemHeap []WorkItem
-
-func (h WorkItemHeap) Len() int           { return len(h) }
-func (h WorkItemHeap) Less(i, j int) bool { return h[i].GetNextRunTime().Before(h[j].GetNextRunTime()) }
-func (h WorkItemHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
-
-func (h *WorkItemHeap) Push(x any) {
-	*h = append(*h, x.(WorkItem))
-}
-
-func (h *WorkItemHeap) Pop() any {
-	old := *h
-	n := len(old)
-	item := old[n-1]
-	*h = old[0 : n-1]
-	return item
-}
-
-// WorkScheduler manages cleanup work items using separate heaps per signal type
-type WorkScheduler struct {
-	logHeap       WorkItemHeap
-	metricHeap    WorkItemHeap
-	traceHeap     WorkItemHeap
+// CleanupManager manages the domain-specific cleanup logic for a signal type
+type CleanupManager struct {
+	scheduler     *WorkScheduler
 	knownDateints map[string]bool // Track known org-dateint combinations
+	sp            storageprofile.StorageProfileProvider
+	mdb           lrdb.StoreFull
+	cmgr          cloudstorage.ClientProvider
+	signalType    string
 	mu            sync.Mutex
-	wakeupCh      chan struct{} // Signal when new work is added
-
-	// Dependencies for creating work items
-	sp   storageprofile.StorageProfileProvider
-	mdb  lrdb.StoreFull
-	cmgr cloudstorage.ClientProvider
 }
 
-// newWorkScheduler creates a new work scheduler
-func newWorkScheduler(sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, cmgr cloudstorage.ClientProvider) *WorkScheduler {
-	return &WorkScheduler{
-		logHeap:       make(WorkItemHeap, 0),
-		metricHeap:    make(WorkItemHeap, 0),
-		traceHeap:     make(WorkItemHeap, 0),
+// newCleanupManager creates a new cleanup manager for a signal type
+func newCleanupManager(sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, cmgr cloudstorage.ClientProvider, signalType string) *CleanupManager {
+	return &CleanupManager{
+		scheduler:     newWorkScheduler(),
 		knownDateints: make(map[string]bool),
-		wakeupCh:      make(chan struct{}, 1),
 		sp:            sp,
 		mdb:           mdb,
 		cmgr:          cmgr,
+		signalType:    signalType,
 	}
 }
 
-// popNextWorkItem returns the next work item that's ready to run, or nil if none ready
-func (s *WorkScheduler) popNextWorkItem() WorkItem {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// Check all heaps and find the earliest ready work item
-	var earliestItem WorkItem
-	var earliestHeap *WorkItemHeap
-
-	heaps := []*WorkItemHeap{&s.logHeap, &s.metricHeap, &s.traceHeap}
-
-	for _, h := range heaps {
-		if h.Len() > 0 {
-			item := (*h)[0]
-			if time.Now().After(item.GetNextRunTime()) || time.Now().Equal(item.GetNextRunTime()) {
-				if earliestItem == nil || item.GetNextRunTime().Before(earliestItem.GetNextRunTime()) {
-					earliestItem = item
-					earliestHeap = h
-				}
-			}
-		}
-	}
-
-	if earliestItem == nil {
-		return nil
-	}
-
-	// Pop the item and check if its org-dateint still exists
-	item := heap.Pop(earliestHeap).(WorkItem)
-
-	// If this org-dateint was deleted, don't return it
-	if !s.knownDateints[item.GetKey()] {
-		// Try the next item recursively
-		return s.popNextWorkItem()
-	}
-
-	return item
-}
-
-// rescheduleWorkItem reschedules a work item based on processing results
-func (s *WorkScheduler) rescheduleWorkItem(item WorkItem, result WorkResult) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// Only reschedule if the org-dateint still exists
-	if !s.knownDateints[item.GetKey()] {
-		return
-	}
-
-	// Drop items that should be dropped
-	if result == WorkResultDropped {
-		return
-	}
-
-	// Update backoff based on result
-	item.UpdateBackoff(result)
-
-	// Add back to appropriate heap
-	switch item.(type) {
-	case *LogCleanupWorkItem:
-		heap.Push(&s.logHeap, item)
-	case *MetricCleanupWorkItem:
-		heap.Push(&s.metricHeap, item)
-	case *TraceCleanupWorkItem:
-		heap.Push(&s.traceHeap, item)
-	}
-
-	s.signalWakeup()
-}
-
-// getNextWakeupTime returns when the scheduler should next check for work
-func (s *WorkScheduler) getNextWakeupTime() *time.Time {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	var earliestTime *time.Time
-
-	heaps := []*WorkItemHeap{&s.logHeap, &s.metricHeap, &s.traceHeap}
-
-	for _, h := range heaps {
-		if h.Len() > 0 {
-			itemTime := (*h)[0].GetNextRunTime()
-			if earliestTime == nil || itemTime.Before(*earliestTime) {
-				earliestTime = &itemTime
-			}
-		}
-	}
-
-	return earliestTime
-}
-
-// refreshPartitions updates the known partitions and adds new work items
-func (s *WorkScheduler) refreshPartitions(ctx context.Context, mdb lrdb.StoreFull, cdb configdb.QuerierFull, signalType string) error {
+// refreshPartitions discovers partitions and adds new work items to the scheduler
+func (cm *CleanupManager) refreshPartitions(ctx context.Context, cdb configdb.QuerierFull) error {
 	ll := logctx.FromContext(ctx)
 
 	// Get current partitions
 	var orgDateints []lrdb.OrgDateintInfo
 	var err error
 
-	switch signalType {
+	switch cm.signalType {
 	case "metric":
-		orgDateints, err = mdb.ParseMetricPartitions(ctx)
+		orgDateints, err = cm.mdb.ParseMetricPartitions(ctx)
 	case "log":
-		orgDateints, err = mdb.ParseLogPartitions(ctx)
+		orgDateints, err = cm.mdb.ParseLogPartitions(ctx)
 	case "trace":
-		orgDateints, err = mdb.ParseTracePartitions(ctx)
+		orgDateints, err = cm.mdb.ParseTracePartitions(ctx)
 	default:
-		return fmt.Errorf("unknown signal type: %s", signalType)
+		return fmt.Errorf("unknown signal type: %s", cm.signalType)
 	}
 
 	if err != nil {
-		return fmt.Errorf("failed to parse %s partitions: %w", signalType, err)
+		return fmt.Errorf("failed to parse %s partitions: %w", cm.signalType, err)
 	}
 
 	// Filter to only enabled organizations
@@ -234,8 +89,8 @@ func (s *WorkScheduler) refreshPartitions(ctx context.Context, mdb lrdb.StoreFul
 		enabledOrgs[org.ID.String()] = true
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
 
 	// Create new known dateints map
 	newKnownDateints := make(map[string]bool)
@@ -264,7 +119,7 @@ func (s *WorkScheduler) refreshPartitions(ctx context.Context, mdb lrdb.StoreFul
 			newKnownDateints[key] = true
 
 			// Add work item if it's new
-			if !s.knownDateints[key] {
+			if !cm.knownDateints[key] {
 				var nextRunTime time.Time
 				if i < 2 {
 					// Most recent 2 dateints start immediately
@@ -275,80 +130,72 @@ func (s *WorkScheduler) refreshPartitions(ctx context.Context, mdb lrdb.StoreFul
 				}
 
 				var item WorkItem
-				switch signalType {
+				switch cm.signalType {
 				case "log":
 					item = &LogCleanupWorkItem{
 						OrganizationID:   orgUUID,
 						DateInt:          dateInt,
 						NextRunTime:      nextRunTime,
 						ConsecutiveEmpty: 0,
-						sp:               s.sp,
-						mdb:              s.mdb,
-						cmgr:             s.cmgr,
+						sp:               cm.sp,
+						mdb:              cm.mdb,
+						cmgr:             cm.cmgr,
 					}
-					heap.Push(&s.logHeap, item)
 				case "metric":
 					item = &MetricCleanupWorkItem{
 						OrganizationID:   orgUUID,
 						DateInt:          dateInt,
 						NextRunTime:      nextRunTime,
 						ConsecutiveEmpty: 0,
-						sp:               s.sp,
-						mdb:              s.mdb,
-						cmgr:             s.cmgr,
+						sp:               cm.sp,
+						mdb:              cm.mdb,
+						cmgr:             cm.cmgr,
 					}
-					heap.Push(&s.metricHeap, item)
 				case "trace":
 					item = &TraceCleanupWorkItem{
 						OrganizationID:   orgUUID,
 						DateInt:          dateInt,
 						NextRunTime:      nextRunTime,
 						ConsecutiveEmpty: 0,
-						sp:               s.sp,
-						mdb:              s.mdb,
-						cmgr:             s.cmgr,
+						sp:               cm.sp,
+						mdb:              cm.mdb,
+						cmgr:             cm.cmgr,
 					}
-					heap.Push(&s.traceHeap, item)
+				}
+				if item != nil {
+					cm.scheduler.addWorkItem(item)
 				}
 			}
 		}
 	}
 
 	// Update known dateints (this will mark deleted ones as unknown)
-	s.knownDateints = newKnownDateints
+	cm.knownDateints = newKnownDateints
 
 	ll.Info("Refreshed partition list via discovery",
-		slog.String("signal_type", signalType),
+		slog.String("signal_type", cm.signalType),
 		slog.Int("total_combinations", len(newKnownDateints)))
 
-	s.signalWakeup()
 	return nil
 }
 
-// signalWakeup signals the scheduler to wake up (non-blocking)
-func (s *WorkScheduler) signalWakeup() {
-	select {
-	case s.wakeupCh <- struct{}{}:
-	default:
-		// Channel already has signal, no need to add another
-	}
-}
-
-// makeOrgDateintKey creates a consistent key for org-dateint combinations
-func makeOrgDateintKey(orgID uuid.UUID, dateInt int32) string {
-	return fmt.Sprintf("%s-%d", orgID.String(), dateInt)
+// isKnown checks if an org-dateint combination is still known
+func (cm *CleanupManager) isKnown(key string) bool {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	return cm.knownDateints[key]
 }
 
 // runScheduledCleanupLoop runs the unified cleanup loop using the heap-based scheduler
 func runScheduledCleanupLoop(ctx context.Context, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, cdb configdb.QuerierFull, cmgr cloudstorage.ClientProvider, signalType string) error {
-	scheduler := newWorkScheduler(sp, mdb, cmgr)
+	manager := newCleanupManager(sp, mdb, cmgr, signalType)
 	ll := logctx.FromContext(ctx).With(slog.String("signal_type", signalType))
 	ctx = logctx.WithLogger(ctx, ll)
 
 	ll.Info("Starting heap-based cleanup loop")
 
 	// Initial partition refresh
-	if err := scheduler.refreshPartitions(ctx, mdb, cdb, signalType); err != nil {
+	if err := manager.refreshPartitions(ctx, cdb); err != nil {
 		ll.Error("Failed initial partition refresh", slog.Any("error", err))
 		return err
 	}
@@ -365,7 +212,7 @@ func runScheduledCleanupLoop(ctx context.Context, sp storageprofile.StorageProfi
 
 		// Periodic partition refresh
 		if time.Since(lastPartitionRefresh) > partitionRefreshInterval {
-			if err := scheduler.refreshPartitions(ctx, mdb, cdb, signalType); err != nil {
+			if err := manager.refreshPartitions(ctx, cdb); err != nil {
 				ll.Error("Failed to refresh partitions", slog.Any("error", err))
 			} else {
 				lastPartitionRefresh = time.Now()
@@ -373,18 +220,23 @@ func runScheduledCleanupLoop(ctx context.Context, sp storageprofile.StorageProfi
 		}
 
 		// Get next work item
-		workItem := scheduler.popNextWorkItem()
+		workItem := manager.scheduler.popNextWorkItem()
 		if workItem != nil {
+			// Check if work item is still valid before processing
+			if !manager.isKnown(workItem.GetKey()) {
+				continue // Skip invalid work items
+			}
+
 			// Process the work item using its Perform method
 			result := workItem.Perform(ctx)
 
 			// Reschedule based on results
-			scheduler.rescheduleWorkItem(workItem, result)
+			manager.scheduler.rescheduleWorkItem(workItem, result)
 			continue
 		}
 
 		// No work ready - calculate sleep time
-		nextWakeup := scheduler.getNextWakeupTime()
+		nextWakeup := manager.scheduler.getNextWakeupTime()
 		if nextWakeup == nil {
 			// No work scheduled, wait for partition refresh or new work
 			sleepDuration := time.Until(lastPartitionRefresh.Add(partitionRefreshInterval))
@@ -396,7 +248,7 @@ func runScheduledCleanupLoop(ctx context.Context, sp storageprofile.StorageProfi
 			timer := time.NewTimer(sleepDuration)
 			select {
 			case <-timer.C:
-			case <-scheduler.wakeupCh:
+			case <-manager.scheduler.wakeupCh:
 				timer.Stop()
 			case <-ctx.Done():
 				timer.Stop()
@@ -413,7 +265,7 @@ func runScheduledCleanupLoop(ctx context.Context, sp storageprofile.StorageProfi
 				timer := time.NewTimer(sleepDuration)
 				select {
 				case <-timer.C:
-				case <-scheduler.wakeupCh:
+				case <-manager.scheduler.wakeupCh:
 					timer.Stop()
 				case <-ctx.Done():
 					timer.Stop()
@@ -422,6 +274,11 @@ func runScheduledCleanupLoop(ctx context.Context, sp storageprofile.StorageProfi
 			}
 		}
 	}
+}
+
+// makeOrgDateintKey creates a consistent key for org-dateint combinations
+func makeOrgDateintKey(orgID uuid.UUID, dateInt int32) string {
+	return fmt.Sprintf("%s-%d", orgID.String(), dateInt)
 }
 func deleteSegmentObject(ctx context.Context, sp storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, orgID uuid.UUID, instanceNum int16, objectKey string) error {
 	ll := logctx.FromContext(ctx)
