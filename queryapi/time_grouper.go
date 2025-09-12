@@ -65,6 +65,8 @@ func ComputeReplayBatchesWithWorkers(
 // then splits each band by count to form groups. Each group's Start/End is
 // derived from its contained segments and finally clamped to [queryStart, queryEnd].
 // Within a group, segments are merged by (SegmentID, ExprID) before clamping.
+// Finally, **tiling is applied per-band only** (forward or reverse) to avoid
+// overlap/duplication across groups **without inventing cross-band gaps**.
 func ComputeReplayBatches(
 	segments []SegmentInfo,
 	step time.Duration, // only to derive epsilon; not used for alignment
@@ -79,7 +81,7 @@ func ComputeReplayBatches(
 		targetSize = len(segments)
 	}
 
-	// Helpful input logging
+	// Helpful input logging (safe in tests/dev)
 	for _, s := range segments {
 		slog.Info("Input Segment",
 			slog.Int64("segmentID", s.SegmentID),
@@ -111,14 +113,15 @@ func ComputeReplayBatches(
 	// 1) Coalesce into contiguous bands.
 	bands := coalesceBands(segments, closeGapEpsMs)
 
-	// 2) Reverse band order if needed.
+	// 2) Reverse band order if needed (for final emission order).
 	if reverseSort {
 		for i, j := 0, len(bands)-1; i < j; i, j = i+1, j-1 {
 			bands[i], bands[j] = bands[j], bands[i]
 		}
 	}
 
-	// 3) Chunk each band by count. IMPORTANT: in reverse mode we emit latest chunk first.
+	// 3) For each band: split into count-sized chunks in traversal order,
+	//    finalize each chunk into a group, then TILE **within that band** only.
 	var out []SegmentGroup
 	for _, band := range bands {
 		n := len(band)
@@ -126,14 +129,13 @@ func ComputeReplayBatches(
 			continue
 		}
 
+		// Build pre-tiling groups for this band.
+		var bandGroups []SegmentGroup
 		if n <= targetSize {
 			if g, ok := finalizeGroup(band, queryStartTs, queryEndTs); ok {
-				out = append(out, g)
+				bandGroups = append(bandGroups, g)
 			}
-			continue
-		}
-
-		if !reverseSort {
+		} else if !reverseSort {
 			// Forward: oldest→newest
 			for i := 0; i < n; i += targetSize {
 				j := i + targetSize
@@ -141,27 +143,50 @@ func ComputeReplayBatches(
 					j = n
 				}
 				if g, ok := finalizeGroup(band[i:j], queryStartTs, queryEndTs); ok {
-					out = append(out, g)
+					bandGroups = append(bandGroups, g)
 				}
 			}
 		} else {
-			// Reverse: newest→oldest (this fixes your failing test)
+			// Reverse: newest→oldest
 			for i := n; i > 0; i -= targetSize {
 				j := i - targetSize
 				if j < 0 {
 					j = 0
 				}
 				if g, ok := finalizeGroup(band[j:i], queryStartTs, queryEndTs); ok {
-					out = append(out, g)
+					bandGroups = append(bandGroups, g)
 				}
 			}
 		}
+
+		if len(bandGroups) == 0 {
+			continue
+		}
+
+		// Ensure band groups are in traversal order we expect.
+		if !reverseSort {
+			sort.Slice(bandGroups, func(i, j int) bool {
+				if bandGroups[i].StartTs == bandGroups[j].StartTs {
+					return bandGroups[i].EndTs < bandGroups[j].EndTs
+				}
+				return bandGroups[i].StartTs < bandGroups[j].StartTs
+			})
+		} else {
+			sort.Slice(bandGroups, func(i, j int) bool {
+				if bandGroups[i].StartTs == bandGroups[j].StartTs {
+					return bandGroups[i].EndTs > bandGroups[j].EndTs
+				}
+				return bandGroups[i].StartTs > bandGroups[j].StartTs
+			})
+		}
+
+		// **Key fix**: tile within this band only (zero-overlap, zero-gap within band).
+		bandGroups = tileBandEdges(bandGroups, reverseSort)
+
+		out = append(out, bandGroups...)
 	}
 
-	// 4) Tile edges to avoid overlap/duplication across groups without inventing gaps.
-	out = tileGroupEdges(out, queryStartTs, queryEndTs, reverseSort)
-
-	// Debug log groups.
+	// Debug log resulting groups.
 	for _, group := range out {
 		slog.Info("Segment Group",
 			slog.Int("numSegments", len(group.Segments)),
@@ -268,38 +293,53 @@ func finalizeGroup(chunk []SegmentInfo, qStart, qEnd int64) (SegmentGroup, bool)
 	}, true
 }
 
-// tileGroupEdges enforces non-overlapping consecutive groups by trimming the edge
-// against the previous emission edge, preserving order. This avoids duplicates
-// without fabricating step-aligned gaps.
-func tileGroupEdges(groups []SegmentGroup, qStart, qEnd int64, reverse bool) []SegmentGroup {
+// tileBandEdges enforces zero-overlap, zero-gap windows **within one band**,
+// preserving real gaps between bands. Works for forward (oldest→newest)
+// and reverse (newest→oldest) traversal.
+func tileBandEdges(groups []SegmentGroup, reverse bool) []SegmentGroup {
 	if len(groups) == 0 {
 		return groups
 	}
 	out := make([]SegmentGroup, 0, len(groups))
 
-	edge := qStart
-	if reverse {
-		edge = qEnd
+	// We iterate in the provided order. For i==0 we emit as-is.
+	// We maintain an "edge" that subsequent groups must align to.
+	var edge int64
+	if !reverse {
+		edge = groups[0].StartTs // forward: first group's start
+	} else {
+		edge = groups[0].StartTs // reverse: we want the next group's END to hit this group's START
 	}
 
-	for _, g := range groups {
+	for idx, g := range groups {
 		gs, ge := g.StartTs, g.EndTs
-		if reverse {
-			// Trim forward edge (end) to not cross the previous edge in reverse walk.
-			if ge > edge {
-				ge = edge
+
+		if idx == 0 {
+			// Emit first as-is; set edge for subsequent groups.
+			out = append(out, g)
+			if !reverse {
+				edge = ge // next group's start must be this end
+			} else {
+				edge = gs // next group's end must be this start
 			}
-		} else {
-			// Trim backward edge (start) to not cross the previous edge in forward walk.
-			if gs < edge {
-				gs = edge
-			}
-		}
-		if gs >= ge {
 			continue
 		}
 
-		// Trim member segments to the tiled window as well.
+		if !reverse {
+			// Forward: force start to current edge.
+			if ge <= edge {
+				continue // fully before/at edge after tiling → skip
+			}
+			gs = edge
+		} else {
+			// Reverse: force end to current edge.
+			if gs >= edge {
+				continue // fully after/at edge after tiling → skip
+			}
+			ge = edge
+		}
+
+		// Trim member segments to the tiled window.
 		segs := make([]SegmentInfo, 0, len(g.Segments))
 		for _, s := range g.Segments {
 			if s.StartTs < gs {
@@ -312,7 +352,7 @@ func tileGroupEdges(groups []SegmentGroup, qStart, qEnd int64, reverse bool) []S
 				segs = append(segs, s)
 			}
 		}
-		if len(segs) == 0 {
+		if len(segs) == 0 || gs >= ge {
 			continue
 		}
 
@@ -322,11 +362,11 @@ func tileGroupEdges(groups []SegmentGroup, qStart, qEnd int64, reverse bool) []S
 			Segments: segs,
 		})
 
-		// Advance tiling edge: half-open semantics across groups.
-		if reverse {
-			edge = gs
-		} else {
+		// Advance band-local tiling edge.
+		if !reverse {
 			edge = ge
+		} else {
+			edge = gs
 		}
 	}
 	return out
