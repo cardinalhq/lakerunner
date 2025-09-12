@@ -232,11 +232,8 @@ func runScheduledCleanupLoop(ctx context.Context, sp storageprofile.StorageProfi
 		// Get next work item
 		workItem := manager.scheduler.popNextWorkItem()
 		if workItem != nil {
-			ll.Debug("Processing work item", slog.String("key", workItem.GetKey()))
-
 			// Process the work item using its Perform method
 			rescheduleIn := workItem.Perform(ctx)
-			ll.Debug("Work item completed", slog.String("key", workItem.GetKey()), slog.Duration("reschedule_in", rescheduleIn))
 
 			// Reschedule based on returned duration
 			manager.rescheduleWorkItem(workItem, rescheduleIn)

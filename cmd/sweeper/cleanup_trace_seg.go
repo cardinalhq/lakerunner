@@ -16,7 +16,9 @@ package sweeper
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -67,10 +69,14 @@ func (w *TraceCleanupWorkItem) Perform(ctx context.Context) time.Duration {
 		return w.calculateBackoff()
 	}
 
-	// Process segments
+	// Process segments with batching for better performance
 	processed := 0
+	totalBytes := int64(0)
+	s3ObjectsToDelete := make(map[string][]string) // instanceKey -> []objectKeys
+	dbRecordsToDelete := make([]lrdb.TraceSegmentCleanupDeleteParams, 0, len(segments))
+
+	// Prepare batches
 	for _, segment := range segments {
-		// Get storage profile and delete from storage/database
 		profile, err := w.sp.GetStorageProfileForOrganizationAndInstance(ctx, segment.OrganizationID, segment.InstanceNum)
 		if err != nil {
 			ll.Error("Failed to get storage profile", slog.Any("error", err))
@@ -86,31 +92,74 @@ func (w *TraceCleanupWorkItem) Perform(ctx context.Context) time.Duration {
 			"traces",
 		)
 
-		if err := deleteSegmentObject(ctx, w.sp, w.cmgr, segment.OrganizationID, segment.InstanceNum, objectKey); err != nil {
-			continue
-		}
+		// Group S3 deletions by instance
+		instanceKey := fmt.Sprintf("%s-%d", segment.OrganizationID.String(), segment.InstanceNum)
+		s3ObjectsToDelete[instanceKey] = append(s3ObjectsToDelete[instanceKey], objectKey)
 
-		// Delete from database
-		if err := w.mdb.TraceSegmentCleanupDelete(ctx, lrdb.TraceSegmentCleanupDeleteParams{
+		// Collect DB deletion params
+		dbRecordsToDelete = append(dbRecordsToDelete, lrdb.TraceSegmentCleanupDeleteParams{
 			OrganizationID: segment.OrganizationID,
 			Dateint:        segment.Dateint,
 			SegmentID:      segment.SegmentID,
 			InstanceNum:    segment.InstanceNum,
-		}); err != nil {
-			ll.Error("Failed to delete segment from database", slog.Any("error", err))
+		})
+
+		totalBytes += segment.FileSize
+		processed++
+	}
+
+	// Execute S3 deletions
+	s3DeletedCount := 0
+	for instanceKey, objectKeys := range s3ObjectsToDelete {
+		parts := strings.Split(instanceKey, "-")
+		if len(parts) != 2 {
 			continue
 		}
+		orgID, _ := uuid.Parse(parts[0])
+		instanceNum := int16(0)
 
-		processed++
+		for _, segment := range segments {
+			if segment.OrganizationID == orgID {
+				instanceNum = segment.InstanceNum
+				break
+			}
+		}
 
-		// Update metrics
-		traceCleanupCounter.Add(ctx, 1, metric.WithAttributes(
-			attribute.String("organization_id", segment.OrganizationID.String()),
-		))
-		traceCleanupBytes.Add(ctx, segment.FileSize, metric.WithAttributes(
-			attribute.String("organization_id", segment.OrganizationID.String()),
-		))
+		for _, objectKey := range objectKeys {
+			if err := deleteSegmentObject(ctx, w.sp, w.cmgr, orgID, instanceNum, objectKey); err == nil {
+				s3DeletedCount++
+			}
+		}
 	}
+
+	// Execute database deletions
+	dbDeletedCount := 0
+	for _, params := range dbRecordsToDelete {
+		if err := w.mdb.TraceSegmentCleanupDelete(ctx, params); err != nil {
+			ll.Error("Failed to delete segment from database", slog.Any("error", err))
+		} else {
+			dbDeletedCount++
+		}
+	}
+
+	// Update metrics
+	if dbDeletedCount > 0 {
+		traceCleanupCounter.Add(ctx, int64(dbDeletedCount), metric.WithAttributes(
+			attribute.String("organization_id", w.OrganizationID.String()),
+		))
+		traceCleanupBytes.Add(ctx, totalBytes, metric.WithAttributes(
+			attribute.String("organization_id", w.OrganizationID.String()),
+		))
+
+		ll.Info("Completed trace segment cleanup batch",
+			slog.Int("segments_processed", dbDeletedCount),
+			slog.Int("s3_objects_deleted", s3DeletedCount),
+			slog.Int64("bytes_cleaned", totalBytes),
+			slog.String("org_id", w.OrganizationID.String()),
+			slog.Int("dateint", int(w.DateInt)))
+	}
+
+	processed = dbDeletedCount // Use actual successful deletions
 
 	if processed > 0 {
 		w.ConsecutiveEmpty = 0
