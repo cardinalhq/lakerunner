@@ -27,8 +27,8 @@ type SegmentInfo struct {
 	DateInt        int       `json:"dateInt"`
 	Hour           string    `json:"hour"`
 	SegmentID      int64     `json:"segmentId"`
-	StartTs        int64     `json:"startTs"`
-	EndTs          int64     `json:"endTs"`
+	StartTs        int64     `json:"startTs"` // millis
+	EndTs          int64     `json:"endTs"`   // millis; treat as inclusive for coalescing
 	ExprID         string    `json:"exprId"`
 	OrganizationID uuid.UUID `json:"organizationID"`
 	InstanceNum    int16     `json:"instanceNum"`
@@ -41,11 +41,10 @@ type SegmentGroup struct {
 	Segments []SegmentInfo
 }
 
-// ComputeReplayBatchesWithWorkers public entrypoint. Computes a per-group target size
-// from total #segments and worker count (capped), then delegates.
+// ComputeReplayBatchesWithWorkers: pick a target size from total/worker count.
 func ComputeReplayBatchesWithWorkers(
 	segments []SegmentInfo,
-	step time.Duration,
+	step time.Duration, // used only to pick a sensible epsilon; no step snapping
 	queryStartTs, queryEndTs int64,
 	workers int,
 	reverseSort bool,
@@ -61,13 +60,14 @@ func ComputeReplayBatchesWithWorkers(
 	)
 }
 
-// ComputeReplayBatches builds aligned time windows, orders them, then packs groups
-// purely by segment-count (ignoring time gaps) to match the Scala behavior.
-// On flush, it merges per (SegmentID, ExprID), clamps to [queryStartTs, queryEndTs],
-// and *seals* each segment to the group window.
+// ComputeReplayBatches builds coverage bands from the data (no step alignment),
+// merges near-touching segments with a small epsilon to avoid micro-gaps,
+// then splits each band by count to form groups. Each group's Start/End is
+// derived from its contained segments and finally clamped to [queryStart, queryEnd].
+// Within a group, segments are merged by (SegmentID, ExprID) before clamping.
 func ComputeReplayBatches(
 	segments []SegmentInfo,
-	step time.Duration,
+	step time.Duration, // only to derive epsilon; not used for alignment
 	queryStartTs, queryEndTs int64,
 	targetSize int,
 	reverseSort bool,
@@ -75,289 +75,260 @@ func ComputeReplayBatches(
 	if len(segments) == 0 {
 		return nil
 	}
-	for _, s := range segments {
-		startTime := time.UnixMilli(s.StartTs).UTC().Format(time.RFC3339)
-		endTime := time.UnixMilli(s.EndTs).UTC().Format(time.RFC3339)
-		slog.Info("Input Segment", slog.Int64("segmentID", s.SegmentID),
-			slog.String("startTime", startTime),
-			slog.String("endTime", endTime))
-	}
 	if targetSize <= 0 {
 		targetSize = len(segments)
 	}
 
+	// Helpful input logging
+	for _, s := range segments {
+		slog.Info("Input Segment",
+			slog.Int64("segmentID", s.SegmentID),
+			slog.String("startTime", time.UnixMilli(s.StartTs).UTC().Format(time.RFC3339)),
+			slog.String("endTime", time.UnixMilli(s.EndTs).UTC().Format(time.RFC3339)))
+	}
+
+	// Sort by start asc, then end asc.
+	sort.Slice(segments, func(i, j int) bool {
+		if segments[i].StartTs == segments[j].StartTs {
+			return segments[i].EndTs < segments[j].EndTs
+		}
+		return segments[i].StartTs < segments[j].StartTs
+	})
+
+	// Choose epsilon to close tiny gaps.
 	stepMs := step.Milliseconds()
 	if stepMs <= 0 {
-		stepMs = 1
+		stepMs = 1000 // default 1s
+	}
+	closeGapEpsMs := stepMs / 8
+	if closeGapEpsMs < 1 {
+		closeGapEpsMs = 1
+	}
+	if closeGapEpsMs > 2000 {
+		closeGapEpsMs = 2000
 	}
 
-	// 1) Build aligned windows by exact (start,end) buckets.
-	windows := buildWindows(segments, stepMs)
+	// 1) Coalesce into contiguous bands.
+	bands := coalesceBands(segments, closeGapEpsMs)
 
-	// 2) Order the windows by EndTs (Scala sorts by endTs; ties by startTs).
-	sort.Slice(windows, func(i, j int) bool {
-		if windows[i].EndTs == windows[j].EndTs {
-			return windows[i].StartTs < windows[j].StartTs
-		}
-		return windows[i].EndTs < windows[j].EndTs
-	})
-	if reverseSort && len(windows) > 1 {
-		for i, j := 0, len(windows)-1; i < j; i, j = i+1, j-1 {
-			windows[i], windows[j] = windows[j], windows[i]
+	// 2) Reverse band order if needed.
+	if reverseSort {
+		for i, j := 0, len(bands)-1; i < j; i, j = i+1, j-1 {
+			bands[i], bands[j] = bands[j], bands[i]
 		}
 	}
 
-	// 3) Pack ignoring gaps; flush when we’ve accumulated >= targetSize segments.
-	out := packByCount(windows, targetSize, queryStartTs, queryEndTs, reverseSort)
-	// let's log the segment groups for debugging purposes
+	// 3) Chunk each band by count. IMPORTANT: in reverse mode we emit latest chunk first.
+	var out []SegmentGroup
+	for _, band := range bands {
+		n := len(band)
+		if n == 0 {
+			continue
+		}
+
+		if n <= targetSize {
+			if g, ok := finalizeGroup(band, queryStartTs, queryEndTs); ok {
+				out = append(out, g)
+			}
+			continue
+		}
+
+		if !reverseSort {
+			// Forward: oldest→newest
+			for i := 0; i < n; i += targetSize {
+				j := i + targetSize
+				if j > n {
+					j = n
+				}
+				if g, ok := finalizeGroup(band[i:j], queryStartTs, queryEndTs); ok {
+					out = append(out, g)
+				}
+			}
+		} else {
+			// Reverse: newest→oldest (this fixes your failing test)
+			for i := n; i > 0; i -= targetSize {
+				j := i - targetSize
+				if j < 0 {
+					j = 0
+				}
+				if g, ok := finalizeGroup(band[j:i], queryStartTs, queryEndTs); ok {
+					out = append(out, g)
+				}
+			}
+		}
+	}
+
+	// 4) Tile edges to avoid overlap/duplication across groups without inventing gaps.
+	out = tileGroupEdges(out, queryStartTs, queryEndTs, reverseSort)
+
+	// Debug log groups.
 	for _, group := range out {
-		startStr := time.UnixMilli(group.StartTs).UTC().Format(time.RFC3339)
-		endStr := time.UnixMilli(group.EndTs).UTC().Format(time.RFC3339)
-		slog.Info("Segment Group", slog.Int("numSegments", len(group.Segments)),
-			slog.String("startTime", startStr),
-			slog.String("endTime", endStr))
+		slog.Info("Segment Group",
+			slog.Int("numSegments", len(group.Segments)),
+			slog.String("startTime", time.UnixMilli(group.StartTs).UTC().Format(time.RFC3339)),
+			slog.String("endTime", time.UnixMilli(group.EndTs).UTC().Format(time.RFC3339)))
 	}
+
 	return out
 }
 
-// ---- internals ----
-
-func alignDown(ts, stepMs int64) int64 {
-	return ts - (ts % stepMs)
-}
-func alignUp(ts, stepMs int64) int64 {
-	if r := ts % stepMs; r == 0 {
-		return ts
-	}
-	return ts + (stepMs - (ts % stepMs))
-}
-
-// buildWindows aligns each segment to step boundaries and buckets by (alignedStart, alignedEnd).
-// We *don’t* clamp to the query here; clamping happens at flush to mimic Scala’s merge behavior.
-func buildWindows(segs []SegmentInfo, stepMs int64) []SegmentGroup {
-	type key struct{ s, e int64 }
-	buckets := make(map[key][]SegmentInfo, len(segs))
-
-	for _, s := range segs {
-		as := alignDown(s.StartTs, stepMs)
-		ae := alignUp(s.EndTs, stepMs)
-		if as >= ae {
-			continue
-		}
-		s2 := s
-		s2.StartTs = as
-		s2.EndTs = ae
-		k := key{as, ae}
-		buckets[k] = append(buckets[k], s2)
-	}
-
-	wins := make([]SegmentGroup, 0, len(buckets))
-	for k, list := range buckets {
-		wins = append(wins, SegmentGroup{
-			StartTs:  k.s,
-			EndTs:    k.e,
-			Segments: list,
-		})
-	}
-	return wins
-}
-
-// packByCount partitions contiguously with zero overlap across groups,
-// supports forward (oldest→newest) and reverse (newest→oldest), and
-// promotes a later "bridge" window to avoid premature flushes caused
-// by sorting-by-EndTs.
-func packByCount(wins []SegmentGroup, minGroupSize int, qStart, qEnd int64, reverse bool) []SegmentGroup {
-	if len(wins) == 0 {
+// coalesceBands merges a sorted slice of segments into contiguous "bands" where
+// each band’s coverage is continuous within epsilon. Returns a slice of bands;
+// each band is a []SegmentInfo preserving order.
+func coalesceBands(segs []SegmentInfo, epsMs int64) [][]SegmentInfo {
+	if len(segs) == 0 {
 		return nil
 	}
-	if minGroupSize <= 0 {
-		minGroupSize = len(wins)
-	}
+	var bands [][]SegmentInfo
 
-	var out []SegmentGroup
+	cur := []SegmentInfo{segs[0]}
+	curEnd := segs[0].EndTs
 
-	var (
-		parts             []SegmentInfo
-		currGS, currGE    int64 // envelope of windows in the current group
-		firstEnd, lastEnd int64 // end of first added window; end of last added window
-		count             int
-		haveGrp           bool
-		prevEdge          int64 // tiling edge from previous group
-	)
-	if reverse {
-		prevEdge = qEnd
-	} else {
-		prevEdge = qStart
-	}
-
-	reset := func() {
-		parts = parts[:0]
-		count = 0
-		haveGrp = false
-		currGS, currGE, firstEnd, lastEnd = 0, 0, 0, 0
-	}
-
-	emit := func(gs, ge int64) {
-		// Clamp group window to query range.
-		if gs < qStart {
-			gs = qStart
+	for i := 1; i < len(segs); i++ {
+		s := segs[i]
+		// Merge if overlapping or touching within epsilon.
+		if s.StartTs <= curEnd+epsMs {
+			cur = append(cur, s)
+			if s.EndTs > curEnd {
+				curEnd = s.EndTs
+			}
+		} else {
+			bands = append(bands, cur)
+			cur = []SegmentInfo{s}
+			curEnd = s.EndTs
 		}
-		if ge > qEnd {
-			ge = qEnd
+	}
+	bands = append(bands, cur)
+	return bands
+}
+
+// finalizeGroup merges by (SegmentID, ExprID) inside a chunk, computes envelope,
+// clamps to [qStart,qEnd], drops empty results, and returns a SegmentGroup.
+func finalizeGroup(chunk []SegmentInfo, qStart, qEnd int64) (SegmentGroup, bool) {
+	if len(chunk) == 0 {
+		return SegmentGroup{}, false
+	}
+
+	// Merge per (SegmentID, ExprID).
+	type key struct {
+		id   int64
+		expr string
+	}
+	merged := make(map[key]SegmentInfo, len(chunk))
+	for _, s := range chunk {
+		k := key{s.SegmentID, s.ExprID}
+		if m, ok := merged[k]; ok {
+			if s.StartTs < m.StartTs {
+				m.StartTs = s.StartTs
+			}
+			if s.EndTs > m.EndTs {
+				m.EndTs = s.EndTs
+			}
+			merged[k] = m
+		} else {
+			merged[k] = s
+		}
+	}
+
+	// Compute envelope & clamp each segment.
+	var gs, ge int64
+	first := true
+	outSegs := make([]SegmentInfo, 0, len(merged))
+	for _, v := range merged {
+		if v.StartTs < qStart {
+			v.StartTs = qStart
+		}
+		if v.EndTs > qEnd {
+			v.EndTs = qEnd
+		}
+		// Keep only if still non-empty after clamp. Use Start<End (half-open group window later).
+		if v.StartTs < v.EndTs {
+			outSegs = append(outSegs, v)
+			if first {
+				gs, ge = v.StartTs, v.EndTs
+				first = false
+			} else {
+				if v.StartTs < gs {
+					gs = v.StartTs
+				}
+				if v.EndTs > ge {
+					ge = v.EndTs
+				}
+			}
+		}
+	}
+	if len(outSegs) == 0 || gs >= ge {
+		return SegmentGroup{}, false
+	}
+
+	return SegmentGroup{
+		StartTs:  gs,
+		EndTs:    ge,
+		Segments: outSegs,
+	}, true
+}
+
+// tileGroupEdges enforces non-overlapping consecutive groups by trimming the edge
+// against the previous emission edge, preserving order. This avoids duplicates
+// without fabricating step-aligned gaps.
+func tileGroupEdges(groups []SegmentGroup, qStart, qEnd int64, reverse bool) []SegmentGroup {
+	if len(groups) == 0 {
+		return groups
+	}
+	out := make([]SegmentGroup, 0, len(groups))
+
+	edge := qStart
+	if reverse {
+		edge = qEnd
+	}
+
+	for _, g := range groups {
+		gs, ge := g.StartTs, g.EndTs
+		if reverse {
+			// Trim forward edge (end) to not cross the previous edge in reverse walk.
+			if ge > edge {
+				ge = edge
+			}
+		} else {
+			// Trim backward edge (start) to not cross the previous edge in forward walk.
+			if gs < edge {
+				gs = edge
+			}
 		}
 		if gs >= ge {
-			return
+			continue
 		}
 
-		// Merge per (SegmentID, ExprID).
-		type key struct {
-			id   int64
-			expr string
-		}
-		merged := make(map[key]SegmentInfo, len(parts))
-		for _, s := range parts {
-			k := key{s.SegmentID, s.ExprID}
-			if m, ok := merged[k]; ok {
-				if s.StartTs < m.StartTs {
-					m.StartTs = s.StartTs
-				}
-				if s.EndTs > m.EndTs {
-					m.EndTs = s.EndTs
-				}
-				merged[k] = m
-			} else {
-				merged[k] = s
+		// Trim member segments to the tiled window as well.
+		segs := make([]SegmentInfo, 0, len(g.Segments))
+		for _, s := range g.Segments {
+			if s.StartTs < gs {
+				s.StartTs = gs
 			}
+			if s.EndTs > ge {
+				s.EndTs = ge
+			}
+			if s.StartTs < s.EndTs {
+				segs = append(segs, s)
+			}
+		}
+		if len(segs) == 0 {
+			continue
 		}
 
-		// Clamp each merged segment to [gs, ge].
-		segs := make([]SegmentInfo, 0, len(merged))
-		for _, v := range merged {
-			if v.StartTs < gs {
-				v.StartTs = gs
-			}
-			if v.EndTs > ge {
-				v.EndTs = ge
-			}
-			if v.StartTs < v.EndTs {
-				segs = append(segs, v)
-			}
-		}
+		out = append(out, SegmentGroup{
+			StartTs:  gs,
+			EndTs:    ge,
+			Segments: segs,
+		})
 
-		if len(segs) > 0 {
-			out = append(out, SegmentGroup{StartTs: gs, EndTs: ge, Segments: segs})
-		}
-	}
-
-	flush := func() {
-		if !haveGrp || len(parts) == 0 {
-			reset()
-			return
-		}
-		var gs, ge int64
+		// Advance tiling edge: half-open semantics across groups.
 		if reverse {
-			// Emit full contiguous span we’ve accumulated, but tile backward.
-			gs = currGS
-			ge = firstEnd
-			if ge > prevEdge {
-				ge = prevEdge
-			}
+			edge = gs
 		} else {
-			// Emit full contiguous span, but tile forward.
-			gs = currGS
-			if gs < prevEdge {
-				gs = prevEdge
-			}
-			ge = lastEnd
-		}
-		if gs < ge {
-			emit(gs, ge)
-			// Advance tiling edge: no overlaps across groups.
-			if reverse {
-				prevEdge = gs
-			} else {
-				prevEdge = ge
-			}
-		}
-		reset()
-	}
-
-	addWindow := func(w SegmentGroup) {
-		if !haveGrp {
-			haveGrp = true
-			currGS = w.StartTs
-			currGE = w.EndTs
-			firstEnd = w.EndTs
-		} else {
-			if w.StartTs < currGS {
-				currGS = w.StartTs
-			}
-			if w.EndTs > currGE {
-				currGE = w.EndTs
-			}
-		}
-		lastEnd = w.EndTs
-		parts = append(parts, w.Segments...)
-		count += len(w.Segments)
-	}
-
-	overlapsOrTouches := func(aStart, aEnd, bStart, bEnd int64) bool {
-		// Treat touching as contiguous: [aStart,aEnd] meets [bStart,bEnd] if
-		// bStart <= aEnd and bEnd >= aStart (not a strict gap on either side).
-		return !(bStart > aEnd || bEnd < aStart)
-	}
-
-	// Main: iterate with bridge-promotion when a non-overlap would force a flush.
-	for i := 0; i < len(wins); i++ {
-		w := wins[i]
-		if !haveGrp {
-			addWindow(w)
-		} else {
-			introducesGap := !overlapsOrTouches(currGS, currGE, w.StartTs, w.EndTs)
-			if introducesGap {
-				// Look ahead for any window that bridges the current envelope.
-				bridged := false
-				if !reverse {
-					// Forward: any later window with StartTs <= currGE overlaps/touches.
-					for j := i + 1; j < len(wins); j++ {
-						if overlapsOrTouches(currGS, currGE, wins[j].StartTs, wins[j].EndTs) {
-							// Promote the bridge to current position.
-							wins[i], wins[j] = wins[j], wins[i]
-							w = wins[i]
-							bridged = true
-							break
-						}
-					}
-				} else {
-					// Reverse: any later window with EndTs >= currGS overlaps/touches.
-					for j := i + 1; j < len(wins); j++ {
-						if overlapsOrTouches(currGS, currGE, wins[j].StartTs, wins[j].EndTs) {
-							wins[i], wins[j] = wins[j], wins[i]
-							w = wins[i]
-							bridged = true
-							break
-						}
-					}
-				}
-				if bridged {
-					addWindow(w)
-				} else {
-					// No bridge exists → end the current group cleanly, start new.
-					flush()
-					addWindow(w)
-				}
-			} else {
-				addWindow(w)
-			}
-		}
-
-		// Size-driven flush (tiling enforced via prevEdge).
-		if count >= minGroupSize {
-			flush()
+			edge = ge
 		}
 	}
-	flush()
-
 	return out
 }
 
