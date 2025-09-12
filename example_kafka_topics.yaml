@@ -1,56 +1,30 @@
-# Example Kafka Topics Configuration for LakeRunner
-# This file demonstrates the kafka-sync configuration format used by LakeRunner
-# 
-# Usage:
-#   export KAFKA_TOPICS_FILE=example_kafka_topics.yaml
-#   ./bin/lakerunner setup
-
-# Default settings applied to all topics unless overridden
 defaults:
   partitionCount: 16
-  replicationFactor: 3
+  replicationFactor: 2
   topicConfig:
-    retention.ms: "7200000"        # 2 hours retention
-    segment.ms: "3600000"          # 1 hour segments
-    cleanup.policy: "delete"
-
-# Define the topics to be created/managed
+    cleanup.policy: delete
+    max.message.bytes: "10485760"
+    retention.ms: "604800000"
 topics:
-  # Telemetry data topics
-  - name: telemetry-logs
-    partitionCount: 32
-    replicationFactor: 3
-    config:
-      retention.ms: "86400000"     # 24 hours for logs
-      max.message.bytes: "10485760" # 10MB max message size
-
-  - name: telemetry-metrics
-    partitionCount: 16
-    replicationFactor: 3
-    config:
-      retention.ms: "604800000"    # 7 days for metrics
-      cleanup.policy: "delete"
-
-  # Notification topics
-  - name: system-alerts
-    partitionCount: 8
-    replicationFactor: 3
-    config:
-      retention.ms: "2592000000"   # 30 days for alerts
-
-  # Processing coordination topics
-  - name: work-queue
-    partitionCount: 4
-    replicationFactor: 3
-    config:
-      cleanup.policy: "compact"    # Compacted for work coordination
-      min.cleanable.dirty.ratio: "0.1"
-
-  # Compact topic using defaults for everything except cleanup policy
-  - name: state-store
-    config:
-      cleanup.policy: "compact"
-
-# Timeout for Kafka operations (optional, defaults to reasonable values)
-operationTimeout: 30s
-rebalanceOperationTimeout: 60s
+- name: lakerunner.boxer.logs.compact
+  partitionCount: 16
+- name: lakerunner.boxer.metrics.compact
+  partitionCount: 16
+- name: lakerunner.boxer.metrics.rollup
+  partitionCount: 16
+- name: lakerunner.boxer.traces.compact
+  partitionCount: 16
+- name: lakerunner.objstore.ingest.logs
+  partitionCount: 16
+- name: lakerunner.objstore.ingest.metrics
+  partitionCount: 16
+- name: lakerunner.objstore.ingest.traces
+  partitionCount: 16
+- name: lakerunner.segments.logs.compact
+  partitionCount: 4
+- name: lakerunner.segments.metrics.compact
+  partitionCount: 4
+- name: lakerunner.segments.metrics.rollup
+  partitionCount: 4
+- name: lakerunner.segments.traces.compact
+  partitionCount: 4
