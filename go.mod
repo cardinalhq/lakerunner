@@ -183,6 +183,7 @@ require (
 	github.com/caarlos0/go-shellwords v1.0.12 // indirect
 	github.com/caarlos0/go-version v0.2.0 // indirect
 	github.com/caarlos0/log v0.4.8 // indirect
+	github.com/cardinalhq/kafka-sync v0.1.0 // indirect
 	github.com/carlmjohnson/versioninfo v0.22.5 // indirect
 	github.com/catenacyber/perfsprint v0.8.2 // indirect
 	github.com/cavaliergopher/cpio v1.0.1 // indirect

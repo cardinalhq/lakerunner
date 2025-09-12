@@ -17,12 +17,14 @@ package metricsprocessing
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
@@ -34,12 +36,16 @@ var rollupAccumulationTimes = map[int32]time.Duration{
 	1_200_000: 5 * time.Minute,   // 20m->1h: wait max 5 minutes
 }
 
-// MetricRollupConsumer handles metric rollup using CommonConsumer
+// MetricRollupConsumer consumes MetricRollupBundle messages from boxer
 type MetricRollupConsumer struct {
-	*CommonConsumer[*messages.MetricRollupMessage, messages.RollupKey]
+	consumer      fly.Consumer
+	store         RollupStore
+	processor     *MetricRollupProcessor
+	cfg           *config.Config
+	stopRequested bool
 }
 
-// NewMetricRollupConsumer creates a new metric rollup consumer using the common consumer framework
+// NewMetricRollupConsumer creates a consumer that processes MetricRollupBundle messages from boxer
 func NewMetricRollupConsumer(
 	ctx context.Context,
 	factory *fly.Factory,
@@ -49,52 +55,78 @@ func NewMetricRollupConsumer(
 	cfg *config.Config,
 ) (*MetricRollupConsumer, error) {
 
-	// Create Kafka producer for sending rollup messages
 	producer, err := factory.CreateProducer()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka producer: %w", err)
 	}
 
-	// Create MetricRollupProcessor (reusing existing)
 	processor := newMetricRollupProcessor(store, storageProvider, cmgr, cfg, producer)
 
-	// Get the accumulation time based on rollup frequencies
-	// We'll use the longest accumulation time as a default
-	maxAccumulationTime := time.Duration(0)
-	for _, accTime := range rollupAccumulationTimes {
-		maxAccumulationTime = max(maxAccumulationTime, accTime)
-	}
-	if maxAccumulationTime == 0 {
-		maxAccumulationTime = 5 * time.Minute // Fallback
-	}
-
-	// Set up periodic flushing - flush more frequently for rollups since they have tighter time windows
-	flushInterval := max(maxAccumulationTime/2, 30*time.Second)
-
-	// Configure the consumer
-	consumerConfig := CommonConsumerConfig{
-		ConsumerName:  "lakerunner-metric-rollup-v2",
-		Topic:         "lakerunner.segments.metrics.rollup",
-		ConsumerGroup: "lakerunner.rollup.metrics",
-		FlushInterval: flushInterval,
-		StaleAge:      maxAccumulationTime,
-		MaxAge:        maxAccumulationTime,
-	}
-
-	// Create common consumer
-	commonConsumer, err := NewCommonConsumer[*messages.MetricRollupMessage](
-		ctx,
-		factory,
-		cfg,
-		consumerConfig,
-		store,
-		processor,
-	)
+	consumer, err := factory.CreateConsumer("lakerunner.segments.metrics.rollup", "lakerunner.rollup.metrics")
 	if err != nil {
-		return nil, fmt.Errorf("failed to create common consumer: %w", err)
+		return nil, fmt.Errorf("failed to create Kafka consumer: %w", err)
 	}
 
 	return &MetricRollupConsumer{
-		CommonConsumer: commonConsumer,
+		consumer:  consumer,
+		store:     store,
+		processor: processor,
+		cfg:       cfg,
 	}, nil
+}
+
+func (c *MetricRollupConsumer) Run(ctx context.Context) error {
+	ll := logctx.FromContext(ctx)
+	ll.Info("Starting metric rollup consumer (bundle mode)")
+
+	handler := func(handlerCtx context.Context, msgs []fly.ConsumedMessage) error {
+		for _, msg := range msgs {
+			if err := c.processMessage(handlerCtx, msg); err != nil {
+				ll.Error("Error processing message", slog.Any("error", err))
+				return err // Return error to prevent committing bad batch
+			}
+		}
+		return nil
+	}
+
+	return c.consumer.Consume(ctx, handler)
+}
+
+func (c *MetricRollupConsumer) processMessage(ctx context.Context, msg fly.ConsumedMessage) error {
+	ll := logctx.FromContext(ctx)
+
+	var bundle messages.MetricRollupBundle
+	if err := bundle.Unmarshal(msg.Value); err != nil {
+		ll.Info("Dropping message that failed to unmarshal as bundle", slog.Any("error", err))
+		return nil
+	}
+
+	if len(bundle.Messages) == 0 {
+		ll.Info("Dropping empty message bundle")
+		return nil
+	}
+
+	firstMsg := bundle.Messages[0]
+	ll.Info("Processing rollup bundle",
+		slog.String("organizationID", firstMsg.OrganizationID.String()),
+		slog.Int("dateint", int(firstMsg.DateInt)),
+		slog.Int("sourceFrequencyMs", int(firstMsg.SourceFrequencyMs)),
+		slog.Int("targetFrequencyMs", int(firstMsg.TargetFrequencyMs)),
+		slog.Int("instanceNum", int(firstMsg.InstanceNum)),
+		slog.Int("messageCount", len(bundle.Messages)))
+
+	if err := c.processor.ProcessBundle(ctx, &bundle, int32(msg.Partition), msg.Offset); err != nil {
+		return fmt.Errorf("failed to process bundle: %w", err)
+	}
+
+	return nil
+}
+
+// Close stops the consumer
+func (c *MetricRollupConsumer) Close() error {
+	c.stopRequested = true
+	if c.consumer != nil {
+		return c.consumer.Close()
+	}
+	return nil
 }

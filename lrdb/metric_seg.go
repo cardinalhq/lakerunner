@@ -148,14 +148,7 @@ func (q *Store) InsertMetricSegmentBatchWithKafkaOffsets(ctx context.Context, ba
 
 			batchOffsetParams := make([]KafkaJournalBatchUpsertParams, len(batch.KafkaOffsets))
 			for i, offset := range batch.KafkaOffsets {
-				batchOffsetParams[i] = KafkaJournalBatchUpsertParams{
-					ConsumerGroup:       offset.ConsumerGroup,
-					Topic:               offset.Topic,
-					Partition:           offset.Partition,
-					LastProcessedOffset: offset.Offset,
-					OrganizationID:      offset.OrganizationID,
-					InstanceNum:         offset.InstanceNum,
-				}
+				batchOffsetParams[i] = KafkaJournalBatchUpsertParams(offset)
 			}
 
 			result := s.KafkaJournalBatchUpsert(ctx, batchOffsetParams)
@@ -246,7 +239,7 @@ func (q *Store) CompactMetricSegsWithKafkaOffsets(ctx context.Context, params Co
 					ConsumerGroup:       offset.ConsumerGroup,
 					OrganizationID:      offset.OrganizationID,
 					InstanceNum:         offset.InstanceNum,
-					LastProcessedOffset: offset.Offset,
+					LastProcessedOffset: offset.LastProcessedOffset,
 				}); err != nil {
 					return fmt.Errorf("update kafka offset for org %s instance %d: %w", offset.OrganizationID, offset.InstanceNum, err)
 				}
@@ -327,7 +320,7 @@ func (q *Store) RollupMetricSegsWithKafkaOffsets(ctx context.Context, sourcePara
 					ConsumerGroup:       offset.ConsumerGroup,
 					OrganizationID:      offset.OrganizationID,
 					InstanceNum:         offset.InstanceNum,
-					LastProcessedOffset: offset.Offset,
+					LastProcessedOffset: offset.LastProcessedOffset,
 				}); err != nil {
 					return fmt.Errorf("update kafka offset for org %s instance %d: %w", offset.OrganizationID, offset.InstanceNum, err)
 				}

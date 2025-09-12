@@ -111,7 +111,7 @@ func (q *Store) CompactLogSegsWithKafkaOffsets(ctx context.Context, params Compa
 					ConsumerGroup:       offset.ConsumerGroup,
 					OrganizationID:      offset.OrganizationID,
 					InstanceNum:         offset.InstanceNum,
-					LastProcessedOffset: offset.Offset,
+					LastProcessedOffset: offset.LastProcessedOffset,
 				}); err != nil {
 					return fmt.Errorf("update kafka offset for org %s instance %d: %w", offset.OrganizationID, offset.InstanceNum, err)
 				}

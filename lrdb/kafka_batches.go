@@ -23,12 +23,12 @@ import (
 
 // KafkaOffsetUpdate contains the information needed to update the Kafka offset journal
 type KafkaOffsetUpdate struct {
-	ConsumerGroup  string
-	Topic          string
-	Partition      int32
-	Offset         int64
-	OrganizationID uuid.UUID
-	InstanceNum    int16
+	ConsumerGroup       string
+	Topic               string
+	Partition           int32
+	LastProcessedOffset int64
+	OrganizationID      uuid.UUID
+	InstanceNum         int16
 }
 
 // LogSegmentBatch collects log segments to be inserted with Kafka offset updates
@@ -60,6 +60,19 @@ type SegmentBatcher interface {
 // The sort order is: consumer group, then topic, then partition.
 // This ensures consistent lock acquisition order across all database operations.
 func SortKafkaOffsets(offsets []KafkaOffsetUpdate) {
+	sort.Slice(offsets, func(i, j int) bool {
+		a, b := offsets[i], offsets[j]
+		if a.ConsumerGroup != b.ConsumerGroup {
+			return a.ConsumerGroup < b.ConsumerGroup
+		}
+		if a.Topic != b.Topic {
+			return a.Topic < b.Topic
+		}
+		return a.Partition < b.Partition
+	})
+}
+
+func SortKafkaOffsetsBatch(offsets []KafkaJournalBatchUpsertParams) {
 	sort.Slice(offsets, func(i, j int) bool {
 		a, b := offsets[i], offsets[j]
 		if a.ConsumerGroup != b.ConsumerGroup {

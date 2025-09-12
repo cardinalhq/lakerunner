@@ -18,6 +18,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/segmentio/kafka-go"
 	"github.com/segmentio/kafka-go/sasl"
@@ -177,6 +178,36 @@ func (f *Factory) CreateKafkaClient() (*kafka.Client, error) {
 	}
 
 	return client, nil
+}
+
+// CreateDialer creates an authenticated Kafka dialer for administrative operations
+func (f *Factory) CreateDialer() (*kafka.Dialer, error) {
+	dialer := &kafka.Dialer{
+		Timeout: 10 * time.Second,
+	}
+
+	// Configure SASL if enabled
+	if f.config.SASLEnabled {
+		mechanism, err := f.createSASLMechanism()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create SASL mechanism: %w", err)
+		}
+		dialer.SASLMechanism = mechanism
+	}
+
+	// Configure TLS if enabled
+	if f.config.TLSEnabled {
+		dialer.TLS = &tls.Config{
+			InsecureSkipVerify: f.config.TLSSkipVerify,
+		}
+	}
+
+	return dialer, nil
+}
+
+// CreateTopicSyncer creates a topic syncer for managing Kafka topics
+func (f *Factory) CreateTopicSyncer() *TopicSyncer {
+	return NewTopicSyncer(f)
 }
 
 // GetConfig returns the underlying configuration

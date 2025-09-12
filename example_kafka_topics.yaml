@@ -1,0 +1,30 @@
+defaults:
+  partitionCount: 16
+  replicationFactor: 2
+  topicConfig:
+    cleanup.policy: delete
+    max.message.bytes: "10485760"
+    retention.ms: "604800000"
+topics:
+- name: lakerunner.boxer.logs.compact
+  partitionCount: 16
+- name: lakerunner.boxer.metrics.compact
+  partitionCount: 16
+- name: lakerunner.boxer.metrics.rollup
+  partitionCount: 16
+- name: lakerunner.boxer.traces.compact
+  partitionCount: 16
+- name: lakerunner.objstore.ingest.logs
+  partitionCount: 16
+- name: lakerunner.objstore.ingest.metrics
+  partitionCount: 16
+- name: lakerunner.objstore.ingest.traces
+  partitionCount: 16
+- name: lakerunner.segments.logs.compact
+  partitionCount: 4
+- name: lakerunner.segments.metrics.compact
+  partitionCount: 4
+- name: lakerunner.segments.metrics.rollup
+  partitionCount: 4
+- name: lakerunner.segments.traces.compact
+  partitionCount: 4

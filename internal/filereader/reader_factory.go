@@ -17,10 +17,11 @@ package filereader
 import (
 	"compress/gzip"
 	"fmt"
-	"github.com/cardinalhq/lakerunner/internal/exemplars"
 	"io"
 	"os"
 	"strings"
+
+	"github.com/cardinalhq/lakerunner/internal/exemplars"
 )
 
 type multiReadCloser struct {

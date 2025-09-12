@@ -22,8 +22,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 type promTagsReq struct {

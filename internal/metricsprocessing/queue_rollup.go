@@ -60,8 +60,8 @@ func queueMetricRollup(ctx context.Context, kafkaProducer fly.Producer, organiza
 		return fmt.Errorf("failed to marshal rollup notification: %w", err)
 	}
 
-	// Send to Kafka rollup topic
-	rollupTopic := "lakerunner.segments.metrics.rollup"
+	// Send to Kafka boxer topic (which will bundle and forward to rollup topic)
+	rollupTopic := "lakerunner.boxer.metrics.rollup"
 	// Use dateint and target frequency for key to group rollup intervals by their target frequency
 	if err := kafkaProducer.Send(ctx, rollupTopic, fly.Message{
 		Key:   fmt.Appendf(nil, "%s-%d-%d-%d", organizationID.String(), dateint, targetFrequencyMs, instanceNum),

@@ -17,12 +17,13 @@ package metricsprocessing
 import (
 	"context"
 	"fmt"
-	"github.com/cardinalhq/lakerunner/internal/exemplars"
 	"io"
 	"log/slog"
 	"os"
 	"sync"
 	"time"
+
+	"github.com/cardinalhq/lakerunner/internal/exemplars"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/filereader"
@@ -345,12 +346,12 @@ func (p *TraceIngestProcessor) Process(ctx context.Context, group *accumulationG
 	if kafkaCommitData != nil {
 		for partition, offset := range kafkaCommitData.Offsets {
 			kafkaOffsets = append(kafkaOffsets, lrdb.KafkaOffsetUpdate{
-				ConsumerGroup:  kafkaCommitData.ConsumerGroup,
-				Topic:          kafkaCommitData.Topic,
-				Partition:      partition,
-				Offset:         offset,
-				OrganizationID: group.Key.OrganizationID,
-				InstanceNum:    group.Key.InstanceNum,
+				ConsumerGroup:       kafkaCommitData.ConsumerGroup,
+				Topic:               kafkaCommitData.Topic,
+				Partition:           partition,
+				LastProcessedOffset: offset,
+				OrganizationID:      group.Key.OrganizationID,
+				InstanceNum:         group.Key.InstanceNum,
 			})
 		}
 	}

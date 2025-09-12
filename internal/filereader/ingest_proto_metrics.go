@@ -17,12 +17,13 @@ package filereader
 import (
 	"context"
 	"fmt"
-	"github.com/cardinalhq/lakerunner/internal/exemplars"
 	"io"
 	"log/slog"
 	"maps"
 	"math"
 	"sort"
+
+	"github.com/cardinalhq/lakerunner/internal/exemplars"
 
 	"github.com/DataDog/sketches-go/ddsketch"
 	"go.opentelemetry.io/collector/pdata/pcommon"

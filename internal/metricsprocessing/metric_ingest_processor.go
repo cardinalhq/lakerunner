@@ -240,12 +240,12 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 	if kafkaCommitData != nil {
 		for partition, offset := range kafkaCommitData.Offsets {
 			kafkaOffsets = append(kafkaOffsets, lrdb.KafkaOffsetUpdate{
-				ConsumerGroup:  kafkaCommitData.ConsumerGroup,
-				Topic:          kafkaCommitData.Topic,
-				Partition:      partition,
-				Offset:         offset,
-				OrganizationID: group.Key.OrganizationID,
-				InstanceNum:    group.Key.InstanceNum,
+				ConsumerGroup:       kafkaCommitData.ConsumerGroup,
+				Topic:               kafkaCommitData.Topic,
+				Partition:           partition,
+				LastProcessedOffset: offset,
+				OrganizationID:      group.Key.OrganizationID,
+				InstanceNum:         group.Key.InstanceNum,
 			})
 		}
 	}
@@ -293,7 +293,7 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 	// Send notifications to Kafka topics
 	if p.kafkaProducer != nil {
 		compactionTopic := "lakerunner.segments.metrics.compact"
-		rollupTopic := "lakerunner.segments.metrics.rollup"
+		rollupTopic := "lakerunner.boxer.metrics.rollup"
 
 		for _, segParams := range segmentParams {
 			// Calculate rollup interval start time for consistent key generation
