@@ -39,3 +39,8 @@ func (c *s3Client) UploadObject(ctx context.Context, bucket, key, sourceFilename
 func (c *s3Client) DeleteObject(ctx context.Context, bucket, key string) error {
 	return deleteS3Object(ctx, c.awsS3Client, bucket, key)
 }
+
+// DeleteObjects deletes multiple objects from S3 in a batch operation
+func (c *s3Client) DeleteObjects(ctx context.Context, bucket string, keys []string) ([]string, error) {
+	return deleteS3Objects(ctx, c.awsS3Client, bucket, keys)
+}

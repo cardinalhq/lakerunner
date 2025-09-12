@@ -36,7 +36,6 @@ import (
 )
 
 var (
-	objectCleanupCounter    metric.Int64Counter
 	legacyTableSyncCounter  metric.Int64Counter
 	legacyTableSyncDuration metric.Float64Histogram
 	metricEstimateCounter   metric.Int64Counter
@@ -46,14 +45,6 @@ func init() {
 	meter := otel.Meter("github.com/cardinalhq/lakerunner/cmd/sweeper")
 
 	var err error
-	objectCleanupCounter, err = meter.Int64Counter(
-		"lakerunner.sweeper.object_cleanup_total",
-		metric.WithDescription("Count of objects processed during cleanup"),
-	)
-	if err != nil {
-		panic(fmt.Errorf("failed to create object_cleanup_total counter: %w", err))
-	}
-
 	legacyTableSyncCounter, err = meter.Int64Counter(
 		"lakerunner.sweeper.legacy_table_sync_total",
 		metric.WithDescription("Count of legacy table synchronization runs"),
@@ -146,16 +137,7 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 		slog.Bool("syncLegacyTables", cmd.syncLegacyTables))
 
 	var wg sync.WaitGroup
-	errCh := make(chan error, 8)
-
-	// Aggressive object delete loop
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		if err := objectCleanerLoop(ctx, cmd.sp, mdb, cmgr); err != nil && !errors.Is(err, context.Canceled) {
-			errCh <- err
-		}
-	}()
+	errCh := make(chan error, 10)
 
 	// Periodic: legacy table sync if enabled
 	if cmd.syncLegacyTables {
@@ -204,6 +186,33 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 		}
 	}()
 
+	// Metric segment cleanup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := runScheduledCleanupLoop(ctx, cmd.sp, mdb, cdb, cmgr, "metric"); err != nil && !errors.Is(err, context.Canceled) {
+			errCh <- err
+		}
+	}()
+
+	// Log segment cleanup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := runScheduledCleanupLoop(ctx, cmd.sp, mdb, cdb, cmgr, "log"); err != nil && !errors.Is(err, context.Canceled) {
+			errCh <- err
+		}
+	}()
+
+	// Trace segment cleanup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := runScheduledCleanupLoop(ctx, cmd.sp, mdb, cdb, cmgr, "trace"); err != nil && !errors.Is(err, context.Canceled) {
+			errCh <- err
+		}
+	}()
+
 	// Wait for cancellation or the first hard error
 	select {
 	case <-ctx.Done():
@@ -236,16 +245,5 @@ func periodicLoop(ctx context.Context, period time.Duration, f func(context.Cont
 				// keep going; periodic tasks should be resilient
 			}
 		}
-	}
-}
-
-func sleepCtx(ctx context.Context, d time.Duration) bool {
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return true
-	case <-t.C:
-		return false
 	}
 }

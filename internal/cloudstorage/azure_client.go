@@ -113,3 +113,18 @@ func (c *azureClient) DeleteObject(ctx context.Context, bucket, key string) erro
 	}
 	return nil
 }
+
+// DeleteObjects deletes multiple blobs from Azure Blob Storage
+// Azure doesn't have native batch delete, so we mimic it with individual calls
+func (c *azureClient) DeleteObjects(ctx context.Context, bucket string, keys []string) ([]string, error) {
+	var failed []string
+
+	for _, key := range keys {
+		if err := c.DeleteObject(ctx, bucket, key); err != nil {
+			// Continue trying to delete other objects even if one fails
+			failed = append(failed, key)
+		}
+	}
+
+	return failed, nil
+}

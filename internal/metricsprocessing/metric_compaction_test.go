@@ -650,6 +650,11 @@ func (m *mockStorageClient) DeleteObject(ctx context.Context, bucket, objectPath
 	return args.Error(0)
 }
 
+func (m *mockStorageClient) DeleteObjects(ctx context.Context, bucket string, keys []string) ([]string, error) {
+	args := m.Called(ctx, bucket, keys)
+	return args.Get(0).([]string), args.Error(1)
+}
+
 func TestUploadAndCreateSegments(t *testing.T) {
 	ctx := context.Background()
 	compactor := &MetricCompactionProcessor{}

@@ -209,3 +209,62 @@ func deleteS3Object(ctx context.Context, s3client *awsclient.S3Client, bucketID,
 	}
 	return nil
 }
+
+func deleteS3Objects(ctx context.Context, s3client *awsclient.S3Client, bucketID string, objectKeys []string) ([]string, error) {
+	if len(objectKeys) == 0 {
+		return nil, nil
+	}
+
+	var span trace.Span
+	ctx, span = s3client.Tracer.Start(ctx, "cloudstorage.deleteS3Objects",
+		trace.WithAttributes(
+			attribute.String("bucketID", bucketID),
+			attribute.Int("object_count", len(objectKeys)),
+		),
+	)
+	defer span.End()
+
+	// S3 batch delete supports up to 1000 objects per request
+	const maxBatchSize = 1000
+	var allFailed []string
+
+	for i := 0; i < len(objectKeys); i += maxBatchSize {
+		end := i + maxBatchSize
+		if end > len(objectKeys) {
+			end = len(objectKeys)
+		}
+		batch := objectKeys[i:end]
+
+		// Build the delete request
+		objects := make([]types.ObjectIdentifier, len(batch))
+		for j, key := range batch {
+			objects[j] = types.ObjectIdentifier{
+				Key: aws.String(key),
+			}
+		}
+
+		deleteInput := &s3.DeleteObjectsInput{
+			Bucket: aws.String(bucketID),
+			Delete: &types.Delete{
+				Objects: objects,
+				Quiet:   aws.Bool(false), // Return info about deleted and failed objects
+			},
+		}
+
+		result, err := s3client.Client.DeleteObjects(ctx, deleteInput)
+		if err != nil {
+			// If the entire batch fails, consider all keys failed
+			allFailed = append(allFailed, batch...)
+			continue
+		}
+
+		// Collect keys that failed to delete
+		for _, failed := range result.Errors {
+			if failed.Key != nil {
+				allFailed = append(allFailed, *failed.Key)
+			}
+		}
+	}
+
+	return allFailed, nil
+}
