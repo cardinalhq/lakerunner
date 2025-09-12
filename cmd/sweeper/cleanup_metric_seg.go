@@ -16,9 +16,7 @@ package sweeper
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -72,7 +70,7 @@ func (w *MetricCleanupWorkItem) Perform(ctx context.Context) time.Duration {
 	// Process segments with batching for better performance
 	processed := 0
 	totalBytes := int64(0)
-	s3ObjectsToDelete := make(map[string][]string) // instanceKey -> []objectKeys
+	s3ObjectsToDelete := make(map[InstanceKey][]string) // instanceKey -> []objectKeys
 	dbRecordsToDelete := make([]lrdb.MetricSegmentCleanupDeleteParams, 0, len(segments))
 
 	// Prepare batches
@@ -93,7 +91,10 @@ func (w *MetricCleanupWorkItem) Perform(ctx context.Context) time.Duration {
 		)
 
 		// Group S3 deletions by instance
-		instanceKey := fmt.Sprintf("%s-%d", segment.OrganizationID.String(), segment.InstanceNum)
+		instanceKey := InstanceKey{
+			OrganizationID: segment.OrganizationID,
+			InstanceNum:    segment.InstanceNum,
+		}
 		s3ObjectsToDelete[instanceKey] = append(s3ObjectsToDelete[instanceKey], objectKey)
 
 		// Collect DB deletion params
@@ -113,29 +114,8 @@ func (w *MetricCleanupWorkItem) Perform(ctx context.Context) time.Duration {
 	s3DeletedCount := 0
 	s3FailedCount := 0
 	for instanceKey, objectKeys := range s3ObjectsToDelete {
-		parts := strings.Split(instanceKey, "-")
-		if len(parts) != 2 {
-			ll.Error("Invalid instance key format", slog.String("instance_key", instanceKey))
-			s3FailedCount += len(objectKeys)
-			continue
-		}
-		orgID, err := uuid.Parse(parts[0])
-		if err != nil {
-			ll.Error("Failed to parse organization ID", slog.String("org_id", parts[0]), slog.Any("error", err))
-			s3FailedCount += len(objectKeys)
-			continue
-		}
-		instanceNum := int16(0)
-
-		for _, segment := range segments {
-			if segment.OrganizationID == orgID {
-				instanceNum = segment.InstanceNum
-				break
-			}
-		}
-
-		// Batch delete objects for this instance
-		deleted, _, failed, err := batchDeleteSegmentObjects(ctx, w.sp, w.cmgr, orgID, instanceNum, objectKeys)
+		// Batch delete objects for this instance using the typed key
+		deleted, _, failed, err := batchDeleteSegmentObjects(ctx, w.sp, w.cmgr, instanceKey.OrganizationID, instanceKey.InstanceNum, objectKeys)
 		if err != nil {
 			ll.Error("Failed to batch delete objects", slog.Any("error", err), slog.Int("object_count", len(objectKeys)))
 			s3FailedCount += len(objectKeys)

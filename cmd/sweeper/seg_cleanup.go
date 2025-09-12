@@ -285,6 +285,12 @@ func makeOrgDateintKey(orgID uuid.UUID, dateInt int32) string {
 	return fmt.Sprintf("%s-%d", orgID.String(), dateInt)
 }
 
+// InstanceKey represents an organization and instance number combination
+type InstanceKey struct {
+	OrganizationID uuid.UUID
+	InstanceNum    int16
+}
+
 // batchDeleteSegmentObjects performs batch deletion of objects grouped by storage profile
 // Returns (actuallyDeleted, alreadyMissing, failed, error)
 func batchDeleteSegmentObjects(ctx context.Context, sp storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, orgID uuid.UUID, instanceNum int16, objectKeys []string) (int, int, int, error) {
@@ -308,18 +314,34 @@ func batchDeleteSegmentObjects(ctx context.Context, sp storageprofile.StoragePro
 
 	failed, err := storageClient.DeleteObjects(ctx, profile.Bucket, objectKeys)
 	if err != nil {
-		ll.Error("Failed to batch delete S3 objects", slog.Any("error", err), slog.Int("object_count", len(objectKeys)))
+		ll.Error("Failed to batch delete S3 objects",
+			slog.Any("error", err),
+			slog.Int("object_count", len(objectKeys)),
+			slog.String("bucket", profile.Bucket),
+			slog.String("org_id", orgID.String()),
+			slog.Int("instance_num", int(instanceNum)))
 		return 0, 0, len(objectKeys), err
 	}
 
 	actuallyDeleted := len(objectKeys) - len(failed)
 
-	// For now, we can't easily distinguish between "already missing" and "failed to delete"
-	// from the batch API, so we count all failures as "failed"
-	ll.Debug("Batch deleted S3 objects",
-		slog.Int("total_objects", len(objectKeys)),
-		slog.Int("actually_deleted", actuallyDeleted),
-		slog.Int("failed", len(failed)))
+	// Log details about what failed if there were failures
+	if len(failed) > 0 {
+		ll.Warn("Some S3 objects failed to delete in batch operation",
+			slog.Int("total_objects", len(objectKeys)),
+			slog.Int("actually_deleted", actuallyDeleted),
+			slog.Int("failed_count", len(failed)),
+			slog.Any("failed_keys", failed),
+			slog.String("bucket", profile.Bucket),
+			slog.String("org_id", orgID.String()),
+			slog.Int("instance_num", int(instanceNum)))
+	} else {
+		ll.Debug("Successfully batch deleted all S3 objects",
+			slog.Int("total_objects", len(objectKeys)),
+			slog.String("bucket", profile.Bucket),
+			slog.String("org_id", orgID.String()),
+			slog.Int("instance_num", int(instanceNum)))
+	}
 
 	return actuallyDeleted, 0, len(failed), nil
 }
