@@ -26,14 +26,21 @@ import (
 )
 
 func ensureKafkaTopics(ctx context.Context) error {
+	return ensureKafkaTopicsWithFile(ctx, "")
+}
+
+func ensureKafkaTopicsWithFile(ctx context.Context, flagKafkaTopicsFile string) error {
 	if err := validateKafkaConfig(); err != nil {
 		return fmt.Errorf("Kafka configuration validation failed: %w", err)
 	}
 
 	var kafkaTopicsFile string
 
-	// Check KAFKA_TOPICS_FILE environment variable first
-	if kafkaTopicsFileEnv := os.Getenv("KAFKA_TOPICS_FILE"); kafkaTopicsFileEnv != "" {
+	// Priority order: command-line flag > environment variable > default location
+	if flagKafkaTopicsFile != "" {
+		kafkaTopicsFile = flagKafkaTopicsFile
+		slog.Info("Using Kafka topics file from command-line flag", slog.String("file", kafkaTopicsFile))
+	} else if kafkaTopicsFileEnv := os.Getenv("KAFKA_TOPICS_FILE"); kafkaTopicsFileEnv != "" {
 		kafkaTopicsFile = kafkaTopicsFileEnv
 		slog.Info("Using Kafka topics file from KAFKA_TOPICS_FILE", slog.String("file", kafkaTopicsFile))
 	} else {

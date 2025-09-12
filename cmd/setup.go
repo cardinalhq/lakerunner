@@ -23,10 +23,12 @@ import (
 
 var skipDB bool
 var skipKafka bool
+var kafkaTopicsFile string
 
 func init() {
 	SetupCmd.Flags().BoolVar(&skipDB, "skip-db", false, "Skip database migrations")
 	SetupCmd.Flags().BoolVar(&skipKafka, "skip-kafka", false, "Skip Kafka topic setup")
+	SetupCmd.Flags().StringVar(&kafkaTopicsFile, "kafka-topics", "", "Path to Kafka topics YAML configuration file")
 
 	// Inherit migrate command flags for database operations
 	SetupCmd.Flags().StringVar(&databases, "databases", "lrdb,configdb", "Comma-separated list of databases to migrate (lrdb,configdb)")
@@ -61,7 +63,7 @@ func setup(cmd *cobra.Command, args []string) error {
 	// Run Kafka topic setup unless skipped
 	if !skipKafka {
 		slog.Info("Setting up Kafka topics")
-		if err := ensureKafkaTopics(ctx); err != nil {
+		if err := ensureKafkaTopicsWithFile(ctx, kafkaTopicsFile); err != nil {
 			return fmt.Errorf("Kafka topic setup failed: %w", err)
 		}
 	} else {
