@@ -32,12 +32,12 @@ import (
 
 func init() {
 	cmd := &cobra.Command{
-		Use:   "boxer",
-		Short: "Metrics rollup boxer (middle tier)",
+		Use:   "boxer-rollup-metrics",
+		Short: "Metrics rollup boxer",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			helpers.SetupTempDir()
 
-			servicename := "lakerunner-boxer"
+			servicename := "lakerunner-boxer-metrics-rollup"
 			addlAttrs := attribute.NewSet(
 				attribute.String("signal", "metrics"),
 				attribute.String("action", "boxer"),
