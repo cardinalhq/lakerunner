@@ -109,14 +109,22 @@ func (w *MetricCleanupWorkItem) Perform(ctx context.Context) time.Duration {
 		processed++
 	}
 
-	// Execute S3 deletions
+	// Execute S3 deletions using batch operations
 	s3DeletedCount := 0
+	s3FailedCount := 0
 	for instanceKey, objectKeys := range s3ObjectsToDelete {
 		parts := strings.Split(instanceKey, "-")
 		if len(parts) != 2 {
+			ll.Error("Invalid instance key format", slog.String("instance_key", instanceKey))
+			s3FailedCount += len(objectKeys)
 			continue
 		}
-		orgID, _ := uuid.Parse(parts[0])
+		orgID, err := uuid.Parse(parts[0])
+		if err != nil {
+			ll.Error("Failed to parse organization ID", slog.String("org_id", parts[0]), slog.Any("error", err))
+			s3FailedCount += len(objectKeys)
+			continue
+		}
 		instanceNum := int16(0)
 
 		for _, segment := range segments {
@@ -126,10 +134,14 @@ func (w *MetricCleanupWorkItem) Perform(ctx context.Context) time.Duration {
 			}
 		}
 
-		for _, objectKey := range objectKeys {
-			if err := deleteSegmentObject(ctx, w.sp, w.cmgr, orgID, instanceNum, objectKey); err == nil {
-				s3DeletedCount++
-			}
+		// Batch delete objects for this instance
+		deleted, _, failed, err := batchDeleteSegmentObjects(ctx, w.sp, w.cmgr, orgID, instanceNum, objectKeys)
+		if err != nil {
+			ll.Error("Failed to batch delete objects", slog.Any("error", err), slog.Int("object_count", len(objectKeys)))
+			s3FailedCount += len(objectKeys)
+		} else {
+			s3DeletedCount += deleted
+			s3FailedCount += failed
 		}
 	}
 
@@ -155,6 +167,7 @@ func (w *MetricCleanupWorkItem) Perform(ctx context.Context) time.Duration {
 		ll.Info("Completed metric segment cleanup batch",
 			slog.Int("segments_processed", dbDeletedCount),
 			slog.Int("s3_objects_deleted", s3DeletedCount),
+			slog.Int("s3_objects_failed", s3FailedCount),
 			slog.Int64("bytes_cleaned", totalBytes),
 			slog.String("org_id", w.OrganizationID.String()),
 			slog.Int("dateint", int(w.DateInt)))
