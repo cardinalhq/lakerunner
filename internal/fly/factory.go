@@ -205,6 +205,11 @@ func (f *Factory) CreateDialer() (*kafka.Dialer, error) {
 	return dialer, nil
 }
 
+// CreateTopicSyncer creates a topic syncer for managing Kafka topics
+func (f *Factory) CreateTopicSyncer() *TopicSyncer {
+	return NewTopicSyncer(f.config)
+}
+
 // GetConfig returns the underlying configuration
 func (f *Factory) GetConfig() *Config {
 	return f.config

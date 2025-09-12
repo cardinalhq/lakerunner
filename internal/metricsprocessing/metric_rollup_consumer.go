@@ -101,6 +101,11 @@ func (c *MetricRollupConsumer) processMessage(ctx context.Context, msg fly.Consu
 		return nil
 	}
 
+	if len(bundle.Messages) == 0 {
+		ll.Info("Dropping empty message bundle")
+		return nil
+	}
+
 	firstMsg := bundle.Messages[0]
 	ll.Info("Processing rollup bundle",
 		slog.String("organizationID", firstMsg.OrganizationID.String()),
