@@ -103,10 +103,12 @@ func ComputeReplayBatches(
 	// 3) Pack ignoring gaps; flush when we’ve accumulated >= targetSize segments.
 	out := packByCount(windows, targetSize, queryStartTs, queryEndTs)
 	// let's log the segment groups for debugging purposes
-	for i, group := range out {
+	for _, group := range out {
 		startStr := time.UnixMilli(group.StartTs).UTC().Format(time.RFC3339)
 		endStr := time.UnixMilli(group.EndTs).UTC().Format(time.RFC3339)
-		slog.Info("Segment Group %d: StartTs=%s, EndTs=%s, NumSegments=%d", i, startStr, endStr, len(group.Segments))
+		slog.Info("Segment Group", slog.Int("numSegments", len(group.Segments)),
+			slog.String("startTime", startStr),
+			slog.String("endTime", endStr))
 	}
 	return out
 }
@@ -153,10 +155,15 @@ func buildWindows(segs []SegmentInfo, stepMs int64) []SegmentGroup {
 	return wins
 }
 
-// packByCount merges windows by accumulating segment count until >= minGroupSize.
-// On flush, it merges parts by (SegmentID, ExprID), computes the group window as
-// minStart..maxEnd across the parts, clamps to [qStart,qEnd], and seals segments
-// to that group window.
+// packByCount (no gaps):
+//   - Accumulates windows until either:
+//     a) adding the next window would introduce a gap (strictly w.StartTs > currGE), or
+//     b) we've reached >= minGroupSize segments.
+//   - A "gap" means a strict hole in time; overlaps or touching edges are fine.
+//   - On flush: merges parts per (SegmentID, ExprID), computes the group window from
+//     the accumulated windows, clamps to [qStart,qEnd], and clamps each merged segment
+//     to the same final window. Since groups are contiguous, sealing to [gs,ge] is safe
+//     and does not introduce artificial holes.
 func packByCount(wins []SegmentGroup, minGroupSize int, qStart, qEnd int64) []SegmentGroup {
 	if len(wins) == 0 {
 		return nil
@@ -166,25 +173,23 @@ func packByCount(wins []SegmentGroup, minGroupSize int, qStart, qEnd int64) []Se
 	}
 
 	var out []SegmentGroup
-	var parts []SegmentInfo
+
+	var parts []SegmentInfo // accumulated segments in current group
+	var currGS, currGE int64
 	count := 0
+	haveGroup := false
 
 	flush := func() {
-		if len(parts) == 0 {
+		if !haveGroup || len(parts) == 0 {
+			// nothing to flush
+			parts = parts[:0]
+			count = 0
+			haveGroup = false
 			return
 		}
 
-		// Compute window across all parts.
-		gs, ge := parts[0].StartTs, parts[0].EndTs
-		for _, p := range parts[1:] {
-			if p.StartTs < gs {
-				gs = p.StartTs
-			}
-			if p.EndTs > ge {
-				ge = p.EndTs
-			}
-		}
-		// Clamp to query.
+		// Clamp the contiguous group window to the query range.
+		gs, ge := currGS, currGE
 		if gs < qStart {
 			gs = qStart
 		}
@@ -192,12 +197,15 @@ func packByCount(wins []SegmentGroup, minGroupSize int, qStart, qEnd int64) []Se
 			ge = qEnd
 		}
 		if gs >= ge {
+			// No overlap with query window.
 			parts = parts[:0]
 			count = 0
+			haveGroup = false
 			return
 		}
 
-		// Merge per (SegmentID, ExprID) by widening to the group window.
+		// Merge per (SegmentID, ExprID). Because this group is contiguous,
+		// sealing to [gs,ge] does not create hidden gaps.
 		type key struct {
 			id   int64
 			expr string
@@ -205,35 +213,94 @@ func packByCount(wins []SegmentGroup, minGroupSize int, qStart, qEnd int64) []Se
 		merged := make(map[key]SegmentInfo, len(parts))
 		for _, s := range parts {
 			k := key{s.SegmentID, s.ExprID}
-			if _, ok := merged[k]; !ok {
-				ss := s
-				ss.StartTs = gs
-				ss.EndTs = ge
-				merged[k] = ss
+			if m, ok := merged[k]; ok {
+				// widen to cover this part
+				if s.StartTs < m.StartTs {
+					m.StartTs = s.StartTs
+				}
+				if s.EndTs > m.EndTs {
+					m.EndTs = s.EndTs
+				}
+				merged[k] = m
+			} else {
+				merged[k] = s
 			}
-			// Already sealed to gs..ge; nothing else to do.
 		}
 
+		// Seal each merged segment to the (contiguous) group window, then clamp to [gs,ge].
 		segs := make([]SegmentInfo, 0, len(merged))
 		for _, v := range merged {
-			segs = append(segs, v)
+			if v.StartTs < gs {
+				v.StartTs = gs
+			}
+			if v.EndTs > ge {
+				v.EndTs = ge
+			}
+			// skip empty post-clamp
+			if v.StartTs < v.EndTs {
+				segs = append(segs, v)
+			}
 		}
-		out = append(out, SegmentGroup{
-			StartTs:  gs,
-			EndTs:    ge,
-			Segments: segs,
-		})
+
+		if len(segs) > 0 {
+			out = append(out, SegmentGroup{
+				StartTs:  gs,
+				EndTs:    ge,
+				Segments: segs,
+			})
+		}
+
+		// reset
 		parts = parts[:0]
 		count = 0
+		haveGroup = false
 	}
 
-	for _, w := range wins {
+	addWindow := func(w SegmentGroup) {
+		// Initialize current group window
+		if !haveGroup {
+			currGS, currGE = w.StartTs, w.EndTs
+			haveGroup = true
+		} else {
+			// Extend current contiguous window (overlap or touch is fine).
+			if w.EndTs > currGE {
+				currGE = w.EndTs
+			}
+			if w.StartTs < currGS {
+				currGS = w.StartTs
+			}
+		}
 		parts = append(parts, w.Segments...)
 		count += len(w.Segments)
+	}
+
+	for i, w := range wins {
+		if !haveGroup {
+			addWindow(w)
+		} else {
+			// If adding w would introduce a *gap*, flush first.
+			// Gap = next start strictly greater than current end.
+			if w.StartTs > currGE {
+				flush()
+				addWindow(w)
+			} else {
+				// Overlap or contiguous (w.StartTs <= currGE): safe to extend.
+				addWindow(w)
+			}
+		}
+
+		// If we've reached the target size, flush early — but never with gaps.
+		// (We only ever extend contiguously, so this is safe.)
 		if count >= minGroupSize {
 			flush()
+			// If there are more windows, the next iteration will start a new group.
 		}
+
+		// Edge case: last window; fall through to final flush after loop.
+		_ = i
 	}
+
+	// Flush any remainder.
 	flush()
 
 	return out

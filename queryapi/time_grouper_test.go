@@ -204,3 +204,74 @@ func TestNoDuplicationAcrossGroups(t *testing.T) {
 		t.Fatalf("segment duplicated across groups: %+v", seen)
 	}
 }
+
+func assertNoInternalGaps(t *testing.T, b SegmentGroup, step time.Duration) {
+	t.Helper()
+	stepMs := step.Milliseconds()
+	for t0 := b.StartTs; t0 < b.EndTs; t0 += stepMs {
+		t1 := t0 + stepMs
+		covered := false
+		for _, s := range b.Segments {
+			if s.StartTs <= t0 && s.EndTs >= t1 {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			t.Fatalf("internal gap in group [%d, %d) at bucket [%d, %d)",
+				b.StartTs, b.EndTs, t0, t1)
+		}
+	}
+}
+
+func TestComputeReplayBatches_SplitsOnGap_NoInternalHoles(t *testing.T) {
+	base := time.Unix(0, 0).UTC()
+	step := time.Minute
+
+	// Query window: [0m, 4m)
+	qStart := ts(base, 0)
+	qEnd := ts(base, 4*step)
+
+	// Two non-contiguous 1m windows:
+	//   s0: [0,1m)
+	//   s1: [3,4m)   ← 2-minute hole between them
+	segs := []SegmentInfo{
+		mkSeg(10, ts(base, 0), ts(base, 1*step)),
+		mkSeg(11, ts(base, 3*step), ts(base, 4*step)),
+	}
+
+	// 1 worker → targetSize = ceil(2/1)=2.
+	// Old impl (gap-blind) would pack both into one group [0,4m) with a hole (1–3m).
+	// New impl must split into two groups: [0,1m) and [3,4m).
+	batches := ComputeReplayBatchesWithWorkers(segs, step, qStart, qEnd, 1, false)
+
+	if len(batches) != 2 {
+		t.Fatalf("expected 2 contiguous groups (split on gap), got %d; batches=%+v", len(batches), batches)
+	}
+
+	// Group 0 should be [0,1m)
+	if got, want := batches[0].StartTs, ts(base, 0); got != want {
+		t.Fatalf("batch0 start: got %d want %d", got, want)
+	}
+	if got, want := batches[0].EndTs, ts(base, 1*step); got != want {
+		t.Fatalf("batch0 end: got %d want %d", got, want)
+	}
+	if len(batches[0].Segments) != 1 {
+		t.Fatalf("batch0 segments: got %d want 1", len(batches[0].Segments))
+	}
+
+	// Group 1 should be [3,4m)
+	if got, want := batches[1].StartTs, ts(base, 3*step); got != want {
+		t.Fatalf("batch1 start: got %d want %d", got, want)
+	}
+	if got, want := batches[1].EndTs, ts(base, 4*step); got != want {
+		t.Fatalf("batch1 end: got %d want %d", got, want)
+	}
+	if len(batches[1].Segments) != 1 {
+		t.Fatalf("batch1 segments: got %d want 1", len(batches[1].Segments))
+	}
+
+	// And critically: no internal gaps within each group at 1m granularity.
+	assertNoInternalGaps(t, batches[0], step)
+	assertNoInternalGaps(t, batches[1], step)
+}
