@@ -162,12 +162,8 @@ func buildWindows(segs []SegmentInfo, stepMs int64) []SegmentGroup {
 	return wins
 }
 
-// packByCount partitions contiguously with zero overlap.
-//   - Works for both forward (oldest→newest) and reverse (newest→oldest) ordering.
-//   - Gap detection is symmetric: we flush if the next window neither overlaps nor touches.
-//   - On flush:
-//     forward:  emit [currGS, lastEnd]
-//     reverse:  emit [currGS, firstEnd]   // first window seen in this group (latest end)
+// packByCount partitions contiguously with zero overlap across groups,
+// supporting both forward (oldest→newest) and reverse (newest→oldest).
 func packByCount(wins []SegmentGroup, minGroupSize int, qStart, qEnd int64, reverse bool) []SegmentGroup {
 	if len(wins) == 0 {
 		return nil
@@ -180,11 +176,17 @@ func packByCount(wins []SegmentGroup, minGroupSize int, qStart, qEnd int64, reve
 
 	var (
 		parts             []SegmentInfo
-		currGS, currGE    int64 // envelope of windows in group
-		firstEnd, lastEnd int64
+		currGS, currGE    int64 // envelope of windows in the current group
+		firstEnd, lastEnd int64 // firstEnd: end of first window added; lastEnd: end of last window added
 		count             int
 		haveGrp           bool
+		prevEdge          int64 // tiling edge from previous group
 	)
+	if reverse {
+		prevEdge = qEnd
+	} else {
+		prevEdge = qStart
+	}
 
 	reset := func() {
 		parts = parts[:0]
@@ -193,19 +195,8 @@ func packByCount(wins []SegmentGroup, minGroupSize int, qStart, qEnd int64, reve
 		currGS, currGE, firstEnd, lastEnd = 0, 0, 0, 0
 	}
 
-	flush := func() {
-		if !haveGrp || len(parts) == 0 {
-			reset()
-			return
-		}
-		// Choose boundary depending on traversal direction.
-		ge := lastEnd
-		if reverse {
-			ge = firstEnd
-		}
-		gs := currGS
-
-		// Clamp to query.
+	emit := func(gs, ge int64) {
+		// Clamp to query
 		if gs < qStart {
 			gs = qStart
 		}
@@ -213,11 +204,10 @@ func packByCount(wins []SegmentGroup, minGroupSize int, qStart, qEnd int64, reve
 			ge = qEnd
 		}
 		if gs >= ge {
-			reset()
 			return
 		}
 
-		// Merge per (SegmentID, ExprID) over included windows, then clamp.
+		// Merge per (SegmentID, ExprID)
 		type key struct {
 			id   int64
 			expr string
@@ -238,6 +228,7 @@ func packByCount(wins []SegmentGroup, minGroupSize int, qStart, qEnd int64, reve
 			}
 		}
 
+		// Clamp each merged segment to [gs, ge]
 		segs := make([]SegmentInfo, 0, len(merged))
 		for _, v := range merged {
 			if v.StartTs < gs {
@@ -254,14 +245,48 @@ func packByCount(wins []SegmentGroup, minGroupSize int, qStart, qEnd int64, reve
 		if len(segs) > 0 {
 			out = append(out, SegmentGroup{StartTs: gs, EndTs: ge, Segments: segs})
 		}
+	}
+
+	flush := func() {
+		if !haveGrp || len(parts) == 0 {
+			reset()
+			return
+		}
+		var gs, ge int64
+		if reverse {
+			// Reverse: emit full contiguous span, trimmed by tiling edge on the right.
+			gs = currGS
+			ge = firstEnd
+			if ge > prevEdge {
+				ge = prevEdge
+			}
+		} else {
+			// Forward: start cannot be before the tiling edge.
+			gs = currGS
+			if gs < prevEdge {
+				gs = prevEdge
+			}
+			ge = lastEnd
+		}
+
+		if gs < ge {
+			emit(gs, ge)
+			// advance tiling edge
+			if reverse {
+				prevEdge = gs
+			} else {
+				prevEdge = ge
+			}
+		}
 		reset()
 	}
 
 	addWindow := func(w SegmentGroup) {
 		if !haveGrp {
-			currGS, currGE = w.StartTs, w.EndTs
-			firstEnd = w.EndTs // first window’s end (latest end in reverse traversal)
 			haveGrp = true
+			currGS = w.StartTs
+			currGE = w.EndTs
+			firstEnd = w.EndTs
 		} else {
 			if w.StartTs < currGS {
 				currGS = w.StartTs
@@ -270,7 +295,7 @@ func packByCount(wins []SegmentGroup, minGroupSize int, qStart, qEnd int64, reve
 				currGE = w.EndTs
 			}
 		}
-		lastEnd = w.EndTs // most recently added window’s end (latest end in forward)
+		lastEnd = w.EndTs
 		parts = append(parts, w.Segments...)
 		count += len(w.Segments)
 	}
@@ -279,7 +304,7 @@ func packByCount(wins []SegmentGroup, minGroupSize int, qStart, qEnd int64, reve
 		if !haveGrp {
 			addWindow(w)
 		} else {
-			// Symmetric gap check: new window must overlap or touch current envelope.
+			// Keep groups internally contiguous (overlap or touch required).
 			introducesGap := (w.StartTs > currGE) || (w.EndTs < currGS)
 			if introducesGap {
 				flush()
@@ -288,12 +313,13 @@ func packByCount(wins []SegmentGroup, minGroupSize int, qStart, qEnd int64, reve
 				addWindow(w)
 			}
 		}
-		// Size-driven flush (uses direction-sensitive boundary).
+		// Size-driven flush (tiling enforced via prevEdge).
 		if count >= minGroupSize {
 			flush()
 		}
 	}
 	flush()
+
 	return out
 }
 
