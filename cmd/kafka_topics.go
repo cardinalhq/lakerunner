@@ -104,11 +104,17 @@ func loadKafkaTopicsWithReader(filename string, fileReader initialize.FileReader
 	return topics, nil
 }
 
-func createTopics(_ context.Context, factory *fly.Factory, topics []TopicConfig) error {
-	brokers := factory.GetConfig().Brokers
+func createTopics(ctx context.Context, factory *fly.Factory, topics []TopicConfig) error {
+	config := factory.GetConfig()
 
-	// Connect to first broker
-	conn, err := kafka.Dial("tcp", brokers[0])
+	// Create authenticated dialer using factory
+	dialer, err := factory.CreateDialer()
+	if err != nil {
+		return fmt.Errorf("failed to create authenticated dialer: %w", err)
+	}
+
+	// Connect using the authenticated dialer
+	conn, err := dialer.DialContext(ctx, "tcp", config.Brokers[0])
 	if err != nil {
 		return fmt.Errorf("failed to connect to broker: %w", err)
 	}
@@ -118,7 +124,7 @@ func createTopics(_ context.Context, factory *fly.Factory, topics []TopicConfig)
 	if _, err := conn.Brokers(); err != nil {
 		return fmt.Errorf("failed to get broker metadata: %w", err)
 	}
-	slog.Info("Connected to Kafka", slog.Any("brokers", brokers))
+	slog.Info("Connected to Kafka", slog.Any("brokers", config.Brokers))
 
 	// Get existing topics
 	partitions, err := conn.ReadPartitions()
