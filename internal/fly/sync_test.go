@@ -36,9 +36,9 @@ func TestTopicSyncerCreateTopics(t *testing.T) {
 
 	// Create Factory with test configuration
 	config := &Config{
-		Brokers:           []string{kafkaContainer.Broker()},
-		SASLEnabled:       false,
-		TLSEnabled:        false,
+		Brokers:             []string{kafkaContainer.Broker()},
+		SASLEnabled:         false,
+		TLSEnabled:          false,
 		ConsumerGroupPrefix: "lakerunner",
 	}
 	factory := NewFactory(config)
@@ -63,7 +63,7 @@ func TestTopicSyncerCreateTopics(t *testing.T) {
 				},
 			},
 			{
-				Name:              "test-topic-update", 
+				Name:              "test-topic-update",
 				PartitionCount:    2,
 				ReplicationFactor: 1,
 				Config: map[string]string{
@@ -104,7 +104,7 @@ func TestTopicSyncerCreateTopics(t *testing.T) {
 	assert.True(t, exists, "test-topic-update should exist")
 	assert.Len(t, updateTopicPartitions, 2, "test-topic-update should have 2 partitions")
 
-	t.Logf("Successfully created topics: test-topic-create (%d partitions), test-topic-update (%d partitions)", 
+	t.Logf("Successfully created topics: test-topic-create (%d partitions), test-topic-update (%d partitions)",
 		len(createTopicPartitions), len(updateTopicPartitions))
 }
 
@@ -115,9 +115,9 @@ func TestTopicSyncerInfoMode(t *testing.T) {
 
 	// Create Factory with test configuration
 	config := &Config{
-		Brokers:           []string{kafkaContainer.Broker()},
-		SASLEnabled:       false,
-		TLSEnabled:        false,
+		Brokers:             []string{kafkaContainer.Broker()},
+		SASLEnabled:         false,
+		TLSEnabled:          false,
 		ConsumerGroupPrefix: "lakerunner",
 	}
 	factory := NewFactory(config)
@@ -218,9 +218,9 @@ topics:
 
 	// Create Factory with test configuration
 	config := &Config{
-		Brokers:           []string{kafkaContainer.Broker()},
-		SASLEnabled:       false,
-		TLSEnabled:        false,
+		Brokers:             []string{kafkaContainer.Broker()},
+		SASLEnabled:         false,
+		TLSEnabled:          false,
 		ConsumerGroupPrefix: "lakerunner",
 	}
 	factory := NewFactory(config)
@@ -260,7 +260,7 @@ topics:
 	assert.True(t, exists, "another-topic should exist")
 	assert.Len(t, defaultTopicPartitions, 4, "another-topic should have 4 partitions (from defaults)")
 
-	t.Logf("File-based config test passed: file-config-test (%d partitions), another-topic (%d partitions)", 
+	t.Logf("File-based config test passed: file-config-test (%d partitions), another-topic (%d partitions)",
 		len(fileTopicPartitions), len(defaultTopicPartitions))
 }
 
@@ -271,9 +271,9 @@ func TestTopicSyncerIdempotent(t *testing.T) {
 
 	// Create Factory with test configuration
 	config := &Config{
-		Brokers:           []string{kafkaContainer.Broker()},
-		SASLEnabled:       false,
-		TLSEnabled:        false,
+		Brokers:             []string{kafkaContainer.Broker()},
+		SASLEnabled:         false,
+		TLSEnabled:          false,
 		ConsumerGroupPrefix: "lakerunner",
 	}
 	factory := NewFactory(config)

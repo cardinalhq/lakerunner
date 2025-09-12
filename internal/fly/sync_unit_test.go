@@ -28,9 +28,9 @@ import (
 func TestTopicSyncerConstruction(t *testing.T) {
 	// Test that we can create a TopicSyncer correctly
 	config := &Config{
-		Brokers:           []string{"localhost:9092"},
-		SASLEnabled:       false,
-		TLSEnabled:        false,
+		Brokers:             []string{"localhost:9092"},
+		SASLEnabled:         false,
+		TLSEnabled:          false,
 		ConsumerGroupPrefix: "lakerunner",
 	}
 	factory := NewFactory(config)
@@ -43,11 +43,11 @@ func TestTopicSyncerConstruction(t *testing.T) {
 
 func TestTopicSyncerConnectionConfig(t *testing.T) {
 	tests := []struct {
-		name           string
-		config         *Config
-		expectSASL     bool
-		expectTLS      bool
-		expectBrokers  []string
+		name          string
+		config        *Config
+		expectSASL    bool
+		expectTLS     bool
+		expectBrokers []string
 	}{
 		{
 			name: "no auth",
@@ -167,7 +167,7 @@ operationTimeout: 45s
 
 	// Verify defaults
 	assert.Equal(t, 8, config.Defaults.PartitionCount, "Default partition count should be 8")
-	assert.Equal(t, 2, config.Defaults.ReplicationFactor, "Default replication factor should be 2") 
+	assert.Equal(t, 2, config.Defaults.ReplicationFactor, "Default replication factor should be 2")
 	assert.Equal(t, "86400000", config.Defaults.TopicConfig["retention.ms"], "Default retention should be set")
 	assert.Equal(t, "delete", config.Defaults.TopicConfig["cleanup.policy"], "Default cleanup policy should be set")
 
@@ -182,7 +182,7 @@ operationTimeout: 45s
 	assert.Equal(t, "compact", topic1.Config["cleanup.policy"])
 	assert.Equal(t, "3600000", topic1.Config["retention.ms"])
 
-	// Verify test-topic-2 (uses defaults) 
+	// Verify test-topic-2 (uses defaults)
 	topic2 := config.Topics[1]
 	assert.Equal(t, "test-topic-2", topic2.Name)
 	assert.Equal(t, 0, topic2.PartitionCount, "Should use defaults (0 means use default)")

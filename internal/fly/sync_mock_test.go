@@ -26,9 +26,9 @@ import (
 func TestSyncTopicsInvalidBroker(t *testing.T) {
 	// Test SyncTopics with invalid broker to trigger error paths
 	config := &Config{
-		Brokers:           []string{"invalid-broker:9999"},
-		SASLEnabled:       false,
-		TLSEnabled:        false,
+		Brokers:             []string{"invalid-broker:9999"},
+		SASLEnabled:         false,
+		TLSEnabled:          false,
 		ConsumerGroupPrefix: "lakerunner",
 	}
 	factory := NewFactory(config)
@@ -53,18 +53,18 @@ func TestSyncTopicsInvalidBroker(t *testing.T) {
 	err := syncer.SyncTopics(ctx, topicsConfig, true)
 	assert.Error(t, err, "Should fail with invalid broker")
 	// The error could be from either syncer creation or sync operation
-	assert.True(t, 
+	assert.True(t,
 		(err.Error() == "failed to create syncer: failed to connect to bootstrap server: failed to dial: failed to open connection to invalid-broker:9999: dial tcp: lookup invalid-broker: no such host") ||
-		(err.Error() == "failed to sync topics"),
+			(err.Error() == "failed to sync topics"),
 		"Error should be related to connection failure")
 }
 
 func TestSyncTopicsEmptyTopics(t *testing.T) {
 	// Test SyncTopics with empty topics list
 	config := &Config{
-		Brokers:           []string{"localhost:9092"},
-		SASLEnabled:       false,
-		TLSEnabled:        false,
+		Brokers:             []string{"localhost:9092"},
+		SASLEnabled:         false,
+		TLSEnabled:          false,
 		ConsumerGroupPrefix: "lakerunner",
 	}
 	factory := NewFactory(config)
@@ -89,12 +89,12 @@ func TestSyncTopicsEmptyTopics(t *testing.T) {
 func TestSyncTopicsWithSASL(t *testing.T) {
 	// Test the SASL configuration path in createConnectionConfig
 	config := &Config{
-		Brokers:       []string{"localhost:9092"},
-		SASLEnabled:   true,
-		SASLMechanism: "SCRAM-SHA-256",
-		SASLUsername:  "testuser",
-		SASLPassword:  "testpass",
-		TLSEnabled:    false,
+		Brokers:             []string{"localhost:9092"},
+		SASLEnabled:         true,
+		SASLMechanism:       "SCRAM-SHA-256",
+		SASLUsername:        "testuser",
+		SASLPassword:        "testpass",
+		TLSEnabled:          false,
 		ConsumerGroupPrefix: "lakerunner",
 	}
 	factory := NewFactory(config)
@@ -110,7 +110,7 @@ func TestSyncTopicsWithSASL(t *testing.T) {
 	topicsConfig := &kafkasync.Config{
 		Topics: []kafkasync.Topic{
 			{
-				Name:              "sasl-test-topic", 
+				Name:              "sasl-test-topic",
 				PartitionCount:    1,
 				ReplicationFactor: 1,
 			},
@@ -129,10 +129,10 @@ func TestSyncTopicsWithSASL(t *testing.T) {
 func TestSyncTopicsWithTLS(t *testing.T) {
 	// Test the TLS configuration path
 	config := &Config{
-		Brokers:       []string{"localhost:9093"},
-		SASLEnabled:   false,
-		TLSEnabled:    true,
-		TLSSkipVerify: true,
+		Brokers:             []string{"localhost:9093"},
+		SASLEnabled:         false,
+		TLSEnabled:          true,
+		TLSSkipVerify:       true,
 		ConsumerGroupPrefix: "lakerunner",
 	}
 	factory := NewFactory(config)

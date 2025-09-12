@@ -49,7 +49,7 @@ func TestEnsureKafkaTopicsNoConfigFile(t *testing.T) {
 	// Save and set env vars
 	originalBrokers := os.Getenv("LAKERUNNER_FLY_BROKERS")
 	originalConfigFile := os.Getenv("KAFKA_TOPICS_FILE")
-	
+
 	defer func() {
 		if originalBrokers != "" {
 			os.Setenv("LAKERUNNER_FLY_BROKERS", originalBrokers)
@@ -69,7 +69,7 @@ func TestEnsureKafkaTopicsNoConfigFile(t *testing.T) {
 
 	// Ensure /app/config/kafka_topics.yaml doesn't exist
 	// (This should cause the function to skip gracefully)
-	
+
 	// This should succeed and do nothing when no config file is found
 	// Note: This won't actually connect to Kafka since no file exists
 	// The function should exit early with a log message
@@ -120,9 +120,9 @@ func TestKafkaConfigValidationEdgeCases(t *testing.T) {
 	}()
 
 	tests := []struct {
-		name        string
-		brokers     string
-		shouldPass  bool
+		name       string
+		brokers    string
+		shouldPass bool
 	}{
 		{
 			name:       "single broker",
