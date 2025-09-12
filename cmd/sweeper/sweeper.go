@@ -190,7 +190,7 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := metricCleanupLoop(ctx, cmd.sp, mdb, cdb, cmgr); err != nil && !errors.Is(err, context.Canceled) {
+		if err := runScheduledCleanupLoop(ctx, cmd.sp, mdb, cdb, cmgr, "metric"); err != nil && !errors.Is(err, context.Canceled) {
 			errCh <- err
 		}
 	}()
@@ -199,7 +199,7 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := logCleanupLoop(ctx, cmd.sp, mdb, cdb, cmgr); err != nil && !errors.Is(err, context.Canceled) {
+		if err := runScheduledCleanupLoop(ctx, cmd.sp, mdb, cdb, cmgr, "log"); err != nil && !errors.Is(err, context.Canceled) {
 			errCh <- err
 		}
 	}()
@@ -208,7 +208,7 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := traceCleanupLoop(ctx, cmd.sp, mdb, cdb, cmgr); err != nil && !errors.Is(err, context.Canceled) {
+		if err := runScheduledCleanupLoop(ctx, cmd.sp, mdb, cdb, cmgr, "trace"); err != nil && !errors.Is(err, context.Canceled) {
 			errCh <- err
 		}
 	}()
@@ -245,16 +245,5 @@ func periodicLoop(ctx context.Context, period time.Duration, f func(context.Cont
 				// keep going; periodic tasks should be resilient
 			}
 		}
-	}
-}
-
-func sleepCtx(ctx context.Context, d time.Duration) bool {
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return true
-	case <-t.C:
-		return false
 	}
 }
