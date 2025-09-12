@@ -18,12 +18,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/cardinalhq/lakerunner/internal/exemplars"
-	"github.com/cardinalhq/lakerunner/lrdb"
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 	"log/slog"
 	"strconv"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/cardinalhq/lakerunner/internal/exemplars"
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 func processLogsExemplarsDirect(ctx context.Context, organizationID string, exemplars []*exemplars.ExemplarData, store LogIngestStore) error {

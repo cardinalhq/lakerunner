@@ -15,9 +15,10 @@
 package factories
 
 import (
+	mapset "github.com/deckarep/golang-set/v2"
+
 	"github.com/cardinalhq/lakerunner/internal/fingerprint"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
-	mapset "github.com/deckarep/golang-set/v2"
 )
 
 // NewTracesWriter creates a writer optimized for traces data.

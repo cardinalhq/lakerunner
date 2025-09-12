@@ -17,9 +17,10 @@ package filereader
 import (
 	"context"
 	"fmt"
-	"github.com/cardinalhq/lakerunner/internal/exemplars"
 	"io"
 	"maps"
+
+	"github.com/cardinalhq/lakerunner/internal/exemplars"
 
 	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
 	"github.com/cardinalhq/oteltools/pkg/translate"

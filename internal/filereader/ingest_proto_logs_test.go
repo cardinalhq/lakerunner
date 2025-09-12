@@ -19,10 +19,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/cardinalhq/lakerunner/internal/exemplars"
 	"io"
 	"testing"
 	"time"
+
+	"github.com/cardinalhq/lakerunner/internal/exemplars"
 
 	"github.com/cardinalhq/oteltools/signalbuilder"
 	"github.com/stretchr/testify/assert"

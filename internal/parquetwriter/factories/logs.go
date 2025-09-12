@@ -17,9 +17,10 @@ package factories
 import (
 	"fmt"
 
+	mapset "github.com/deckarep/golang-set/v2"
+
 	"github.com/cardinalhq/lakerunner/internal/fingerprint"
 	"github.com/cardinalhq/lakerunner/internal/parquetwriter"
-	mapset "github.com/deckarep/golang-set/v2"
 )
 
 // NewLogsWriter creates a writer optimized for logs data.

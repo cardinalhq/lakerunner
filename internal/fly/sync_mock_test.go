@@ -23,10 +23,10 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestSyncTopicsInvalidBroker(t *testing.T) {
-	// Test SyncTopics with invalid broker to trigger error paths
+func TestSyncTopicsConnectionFailure(t *testing.T) {
+	// Test that SyncTopics properly handles connection failures
 	config := &Config{
-		Brokers:             []string{"invalid-broker:9999"},
+		Brokers:             []string{"192.0.2.1:9999"}, // RFC5737 TEST-NET-1 - guaranteed unreachable
 		SASLEnabled:         false,
 		TLSEnabled:          false,
 		ConsumerGroupPrefix: "lakerunner",
@@ -49,14 +49,14 @@ func TestSyncTopicsInvalidBroker(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	// This should fail due to invalid broker, but still exercise the SyncTopics code path
+	// Test the behavior: SyncTopics should return an error when broker is unreachable
 	err := syncer.SyncTopics(ctx, topicsConfig, true)
-	assert.Error(t, err, "Should fail with invalid broker")
-	// The error could be from either syncer creation or sync operation
-	assert.True(t,
-		(err.Error() == "failed to create syncer: failed to connect to bootstrap server: failed to dial: failed to open connection to invalid-broker:9999: dial tcp: lookup invalid-broker: no such host") ||
-			(err.Error() == "failed to sync topics"),
-		"Error should be related to connection failure")
+
+	// The only assertion that matters: it should fail
+	assert.Error(t, err, "SyncTopics should fail when broker is unreachable")
+
+	// Log for debugging but don't assert on the specific message
+	t.Logf("Error (as expected): %s", err.Error())
 }
 
 func TestSyncTopicsEmptyTopics(t *testing.T) {

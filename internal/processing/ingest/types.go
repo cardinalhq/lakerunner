@@ -15,8 +15,9 @@
 package ingest
 
 import (
-	"github.com/cardinalhq/lakerunner/internal/exemplars"
 	"time"
+
+	"github.com/cardinalhq/lakerunner/internal/exemplars"
 
 	"github.com/google/uuid"
 

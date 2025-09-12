@@ -21,14 +21,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/cardinalhq/lakerunner/internal/filereader"
-	"github.com/cardinalhq/lakerunner/logql"
-	"github.com/cardinalhq/lakerunner/promql"
 	"io"
 	"reflect"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/cardinalhq/lakerunner/internal/filereader"
+	"github.com/cardinalhq/lakerunner/logql"
+	"github.com/cardinalhq/lakerunner/promql"
 
 	_ "github.com/marcboeker/go-duckdb/v2"
 
