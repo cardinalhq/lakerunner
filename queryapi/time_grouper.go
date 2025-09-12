@@ -15,6 +15,7 @@
 package queryapi
 
 import (
+	"log/slog"
 	"math"
 	"sort"
 	"time"
@@ -101,6 +102,12 @@ func ComputeReplayBatches(
 
 	// 3) Pack ignoring gaps; flush when we’ve accumulated >= targetSize segments.
 	out := packByCount(windows, targetSize, queryStartTs, queryEndTs)
+	// let's log the segment groups for debugging purposes
+	for i, group := range out {
+		startStr := time.UnixMilli(group.StartTs).UTC().Format(time.RFC3339)
+		endStr := time.UnixMilli(group.EndTs).UTC().Format(time.RFC3339)
+		slog.Info("Segment Group %d: StartTs=%s, EndTs=%s, NumSegments=%d", i, startStr, endStr, len(group.Segments))
+	}
 	return out
 }
 
