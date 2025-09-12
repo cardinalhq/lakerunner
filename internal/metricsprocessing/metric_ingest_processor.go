@@ -240,12 +240,12 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 	if kafkaCommitData != nil {
 		for partition, offset := range kafkaCommitData.Offsets {
 			kafkaOffsets = append(kafkaOffsets, lrdb.KafkaOffsetUpdate{
-				ConsumerGroup:  kafkaCommitData.ConsumerGroup,
-				Topic:          kafkaCommitData.Topic,
-				Partition:      partition,
-				Offset:         offset,
-				OrganizationID: group.Key.OrganizationID,
-				InstanceNum:    group.Key.InstanceNum,
+				ConsumerGroup:       kafkaCommitData.ConsumerGroup,
+				Topic:               kafkaCommitData.Topic,
+				Partition:           partition,
+				LastProcessedOffset: offset,
+				OrganizationID:      group.Key.OrganizationID,
+				InstanceNum:         group.Key.InstanceNum,
 			})
 		}
 	}

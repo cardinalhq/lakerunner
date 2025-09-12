@@ -61,7 +61,7 @@ func (q *Store) InsertLogSegmentBatchWithKafkaOffsets(ctx context.Context, batch
 					ConsumerGroup:       offset.ConsumerGroup,
 					Topic:               offset.Topic,
 					Partition:           offset.Partition,
-					LastProcessedOffset: offset.Offset,
+					LastProcessedOffset: offset.LastProcessedOffset,
 					OrganizationID:      offset.OrganizationID,
 					InstanceNum:         offset.InstanceNum,
 				}

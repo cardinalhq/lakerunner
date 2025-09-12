@@ -23,26 +23,24 @@ import (
 
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/config"
-	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/debugging"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
-	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
 func init() {
 	cmd := &cobra.Command{
-		Use:   "rollup-metrics",
-		Short: "Roll up metrics",
+		Use:   "boxer",
+		Short: "Metrics rollup boxer (middle tier)",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			helpers.SetupTempDir()
 
-			servicename := "lakerunner-rollup-metrics"
+			servicename := "lakerunner-boxer"
 			addlAttrs := attribute.NewSet(
 				attribute.String("signal", "metrics"),
-				attribute.String("action", "rollup"),
+				attribute.String("action", "boxer"),
 			)
 			ctx, doneFx, err := setupTelemetry(servicename, &addlAttrs)
 			if err != nil {
@@ -70,36 +68,25 @@ func init() {
 				}
 			}()
 
-			mdb, err := dbopen.LRDBStore(ctx)
-			if err != nil {
-				return fmt.Errorf("failed to open LRDB store: %w", err)
-			}
-
-			cdb, err := dbopen.ConfigDBStore(ctx)
-			if err != nil {
-				return fmt.Errorf("failed to open ConfigDB store: %w", err)
-			}
-
-			cmgr, err := cloudstorage.NewCloudManagers(ctx)
-			if err != nil {
-				return fmt.Errorf("failed to create AWS manager: %w", err)
-			}
-
-			sp := storageprofile.NewStorageProfileProvider(cdb)
-
 			// Get main config
 			cfg, err := config.Load()
 			if err != nil {
 				return fmt.Errorf("failed to load config: %w", err)
 			}
 
+			// Create database connection
+			mdb, err := dbopen.LRDBStore(ctx)
+			if err != nil {
+				return fmt.Errorf("failed to open LRDB store: %w", err)
+			}
+
 			// Create Kafka factory
 			kafkaFactory := fly.NewFactory(&cfg.Fly)
 
-			// Create Kafka-based rollup consumer (now consumes bundles from boxer)
-			consumer, err := metricsprocessing.NewMetricRollupConsumer(ctx, kafkaFactory, mdb, sp, cmgr, cfg)
+			// Create Kafka-based boxer consumer
+			consumer, err := metricsprocessing.NewMetricBoxerConsumer(ctx, kafkaFactory, mdb, cfg)
 			if err != nil {
-				return fmt.Errorf("failed to create rollup consumer: %w", err)
+				return fmt.Errorf("failed to create boxer consumer: %w", err)
 			}
 			defer consumer.Close()
 

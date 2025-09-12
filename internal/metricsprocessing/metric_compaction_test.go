@@ -350,7 +350,7 @@ func TestAtomicDatabaseUpdate(t *testing.T) {
 					offset.OrganizationID != orgID || offset.InstanceNum != 1 {
 					return false
 				}
-				offsetMap[offset.Partition] = offset.Offset
+				offsetMap[offset.Partition] = offset.LastProcessedOffset
 			}
 
 			return offsetMap[0] == 100 && offsetMap[1] == 200 && offsetMap[2] == 150
@@ -435,12 +435,12 @@ func TestSortKafkaOffsets(t *testing.T) {
 	t.Run("single offset", func(t *testing.T) {
 		offsets := []lrdb.KafkaOffsetUpdate{
 			{
-				Topic:          "topic1",
-				Partition:      0,
-				ConsumerGroup:  "group1",
-				OrganizationID: orgID,
-				InstanceNum:    1,
-				Offset:         100,
+				Topic:               "topic1",
+				Partition:           0,
+				ConsumerGroup:       "group1",
+				OrganizationID:      orgID,
+				InstanceNum:         1,
+				LastProcessedOffset: 100,
 			},
 		}
 		expected := make([]lrdb.KafkaOffsetUpdate, len(offsets))
@@ -453,28 +453,28 @@ func TestSortKafkaOffsets(t *testing.T) {
 	t.Run("sort by consumer group", func(t *testing.T) {
 		offsets := []lrdb.KafkaOffsetUpdate{
 			{
-				Topic:          "topic1",
-				Partition:      0,
-				ConsumerGroup:  "zgroup",
-				OrganizationID: orgID,
-				InstanceNum:    1,
-				Offset:         100,
+				Topic:               "topic1",
+				Partition:           0,
+				ConsumerGroup:       "zgroup",
+				OrganizationID:      orgID,
+				InstanceNum:         1,
+				LastProcessedOffset: 100,
 			},
 			{
-				Topic:          "topic1",
-				Partition:      0,
-				ConsumerGroup:  "agroup",
-				OrganizationID: orgID,
-				InstanceNum:    1,
-				Offset:         200,
+				Topic:               "topic1",
+				Partition:           0,
+				ConsumerGroup:       "agroup",
+				OrganizationID:      orgID,
+				InstanceNum:         1,
+				LastProcessedOffset: 200,
 			},
 			{
-				Topic:          "topic1",
-				Partition:      0,
-				ConsumerGroup:  "mgroup",
-				OrganizationID: orgID,
-				InstanceNum:    1,
-				Offset:         300,
+				Topic:               "topic1",
+				Partition:           0,
+				ConsumerGroup:       "mgroup",
+				OrganizationID:      orgID,
+				InstanceNum:         1,
+				LastProcessedOffset: 300,
 			},
 		}
 
@@ -488,28 +488,28 @@ func TestSortKafkaOffsets(t *testing.T) {
 	t.Run("sort by topic when consumer groups are same", func(t *testing.T) {
 		offsets := []lrdb.KafkaOffsetUpdate{
 			{
-				Topic:          "ztopic",
-				Partition:      0,
-				ConsumerGroup:  "group1",
-				OrganizationID: orgID,
-				InstanceNum:    1,
-				Offset:         100,
+				Topic:               "ztopic",
+				Partition:           0,
+				ConsumerGroup:       "group1",
+				OrganizationID:      orgID,
+				InstanceNum:         1,
+				LastProcessedOffset: 100,
 			},
 			{
-				Topic:          "atopic",
-				Partition:      0,
-				ConsumerGroup:  "group1",
-				OrganizationID: orgID,
-				InstanceNum:    1,
-				Offset:         200,
+				Topic:               "atopic",
+				Partition:           0,
+				ConsumerGroup:       "group1",
+				OrganizationID:      orgID,
+				InstanceNum:         1,
+				LastProcessedOffset: 200,
 			},
 			{
-				Topic:          "mtopic",
-				Partition:      0,
-				ConsumerGroup:  "group1",
-				OrganizationID: orgID,
-				InstanceNum:    1,
-				Offset:         300,
+				Topic:               "mtopic",
+				Partition:           0,
+				ConsumerGroup:       "group1",
+				OrganizationID:      orgID,
+				InstanceNum:         1,
+				LastProcessedOffset: 300,
 			},
 		}
 
@@ -523,28 +523,28 @@ func TestSortKafkaOffsets(t *testing.T) {
 	t.Run("sort by partition when consumer groups and topics are same", func(t *testing.T) {
 		offsets := []lrdb.KafkaOffsetUpdate{
 			{
-				Topic:          "topic1",
-				Partition:      5,
-				ConsumerGroup:  "group1",
-				OrganizationID: orgID,
-				InstanceNum:    1,
-				Offset:         100,
+				Topic:               "topic1",
+				Partition:           5,
+				ConsumerGroup:       "group1",
+				OrganizationID:      orgID,
+				InstanceNum:         1,
+				LastProcessedOffset: 100,
 			},
 			{
-				Topic:          "topic1",
-				Partition:      1,
-				ConsumerGroup:  "group1",
-				OrganizationID: orgID,
-				InstanceNum:    1,
-				Offset:         200,
+				Topic:               "topic1",
+				Partition:           1,
+				ConsumerGroup:       "group1",
+				OrganizationID:      orgID,
+				InstanceNum:         1,
+				LastProcessedOffset: 200,
 			},
 			{
-				Topic:          "topic1",
-				Partition:      3,
-				ConsumerGroup:  "group1",
-				OrganizationID: orgID,
-				InstanceNum:    1,
-				Offset:         300,
+				Topic:               "topic1",
+				Partition:           3,
+				ConsumerGroup:       "group1",
+				OrganizationID:      orgID,
+				InstanceNum:         1,
+				LastProcessedOffset: 300,
 			},
 		}
 
@@ -559,48 +559,48 @@ func TestSortKafkaOffsets(t *testing.T) {
 		offsets := []lrdb.KafkaOffsetUpdate{
 			// Should be 3rd: group1, ztopic, partition 0
 			{
-				Topic:          "ztopic",
-				Partition:      0,
-				ConsumerGroup:  "group1",
-				OrganizationID: orgID,
-				InstanceNum:    1,
-				Offset:         500,
+				Topic:               "ztopic",
+				Partition:           0,
+				ConsumerGroup:       "group1",
+				OrganizationID:      orgID,
+				InstanceNum:         1,
+				LastProcessedOffset: 500,
 			},
 			// Should be 2nd: group1, btopic, partition 2
 			{
-				Topic:          "btopic",
-				Partition:      2,
-				ConsumerGroup:  "group1",
-				OrganizationID: orgID,
-				InstanceNum:    1,
-				Offset:         400,
+				Topic:               "btopic",
+				Partition:           2,
+				ConsumerGroup:       "group1",
+				OrganizationID:      orgID,
+				InstanceNum:         1,
+				LastProcessedOffset: 400,
 			},
 			// Should be 5th: groupz, btopic, partition 0
 			{
-				Topic:          "btopic",
-				Partition:      0,
-				ConsumerGroup:  "groupz",
-				OrganizationID: orgID,
-				InstanceNum:    1,
-				Offset:         200,
+				Topic:               "btopic",
+				Partition:           0,
+				ConsumerGroup:       "groupz",
+				OrganizationID:      orgID,
+				InstanceNum:         1,
+				LastProcessedOffset: 200,
 			},
 			// Should be 4th: groupa, btopic, partition 0
 			{
-				Topic:          "btopic",
-				Partition:      0,
-				ConsumerGroup:  "groupa",
-				OrganizationID: orgID,
-				InstanceNum:    1,
-				Offset:         100,
+				Topic:               "btopic",
+				Partition:           0,
+				ConsumerGroup:       "groupa",
+				OrganizationID:      orgID,
+				InstanceNum:         1,
+				LastProcessedOffset: 100,
 			},
 			// Should be 1st: group1, btopic, partition 1
 			{
-				Topic:          "btopic",
-				Partition:      1,
-				ConsumerGroup:  "group1",
-				OrganizationID: orgID,
-				InstanceNum:    1,
-				Offset:         300,
+				Topic:               "btopic",
+				Partition:           1,
+				ConsumerGroup:       "group1",
+				OrganizationID:      orgID,
+				InstanceNum:         1,
+				LastProcessedOffset: 300,
 			},
 		}
 
@@ -625,7 +625,7 @@ func TestSortKafkaOffsets(t *testing.T) {
 			assert.Equal(t, exp.topic, offsets[i].Topic, "mismatch at index %d", i)
 			assert.Equal(t, exp.partition, offsets[i].Partition, "mismatch at index %d", i)
 			assert.Equal(t, exp.consumerGroup, offsets[i].ConsumerGroup, "mismatch at index %d", i)
-			assert.Equal(t, exp.offset, offsets[i].Offset, "mismatch at index %d", i)
+			assert.Equal(t, exp.offset, offsets[i].LastProcessedOffset, "mismatch at index %d", i)
 		}
 	})
 }

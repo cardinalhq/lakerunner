@@ -87,3 +87,20 @@ func (m *MetricRollupMessage) Marshal() ([]byte, error) {
 func (m *MetricRollupMessage) Unmarshal(data []byte) error {
 	return json.Unmarshal(data, m)
 }
+
+// MetricRollupBundle represents a bundled collection of metric rollup messages for boxer processing
+type MetricRollupBundle struct {
+	Version  int16                  `json:"v"` // message version, current version is 1
+	Messages []*MetricRollupMessage `json:"m"` // the bundled rollup messages
+	QueuedAt time.Time              `json:"q"` // when the bundle was queued to boxer topic
+}
+
+// Marshal converts the bundle to JSON bytes
+func (b *MetricRollupBundle) Marshal() ([]byte, error) {
+	return json.Marshal(b)
+}
+
+// Unmarshal converts JSON bytes to MetricRollupBundle
+func (b *MetricRollupBundle) Unmarshal(data []byte) error {
+	return json.Unmarshal(data, b)
+}

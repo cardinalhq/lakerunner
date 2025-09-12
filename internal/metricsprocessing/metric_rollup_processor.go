@@ -67,32 +67,25 @@ func newMetricRollupProcessor(store RollupStore, storageProvider storageprofile.
 	}
 }
 
-// validateRollupGroupConsistency ensures all messages in a rollup group have consistent fields
-func validateRollupGroupConsistency(group *accumulationGroup[messages.RollupKey]) error {
-	if len(group.Messages) == 0 {
+// validateBundleConsistency ensures all messages in a rollup bundle have consistent fields
+func (r *MetricRollupProcessor) validateBundleConsistency(bundle *messages.MetricRollupBundle) error {
+	if len(bundle.Messages) == 0 {
 		return &GroupValidationError{
 			Field:   "message_count",
-			Message: "group cannot be empty",
+			Message: "bundle cannot be empty",
 		}
 	}
 
-	// Get expected values from the group key
-	expectedOrg := group.Key.OrganizationID
-	expectedInstance := group.Key.InstanceNum
-	expectedDateInt := group.Key.DateInt
-	expectedSourceFreq := group.Key.SourceFrequencyMs
-	expectedTargetFreq := group.Key.TargetFrequencyMs
+	// Get expected values from the first message
+	firstMsg := bundle.Messages[0]
+	expectedOrg := firstMsg.OrganizationID
+	expectedInstance := firstMsg.InstanceNum
+	expectedDateInt := firstMsg.DateInt
+	expectedSourceFreq := firstMsg.SourceFrequencyMs
+	expectedTargetFreq := firstMsg.TargetFrequencyMs
 
-	// Validate each message against the expected values
-	for i, accMsg := range group.Messages {
-		msg, ok := accMsg.Message.(*messages.MetricRollupMessage)
-		if !ok {
-			return &GroupValidationError{
-				Field:   "message_type",
-				Message: fmt.Sprintf("message %d is not a MetricRollupMessage", i),
-			}
-		}
-
+	// Validate each message against the expected values (including first message to maintain loop structure)
+	for i, msg := range bundle.Messages {
 		if msg.OrganizationID != expectedOrg {
 			return &GroupValidationError{
 				Field:    "organization_id",
@@ -137,35 +130,42 @@ func validateRollupGroupConsistency(group *accumulationGroup[messages.RollupKey]
 				Message:  fmt.Sprintf("message %d has inconsistent target frequency", i),
 			}
 		}
-
 	}
 
 	return nil
 }
 
-// Process implements the Processor interface and performs rollup aggregation
-func (r *MetricRollupProcessor) Process(ctx context.Context, group *accumulationGroup[messages.RollupKey], kafkaCommitData *KafkaCommitData) error {
+// ProcessBundle processes a MetricRollupBundle directly (simplified interface)
+func (r *MetricRollupProcessor) ProcessBundle(ctx context.Context, bundle *messages.MetricRollupBundle, partition int32, offset int64) error {
 	ll := logctx.FromContext(ctx)
 
-	// Calculate group age from Hunter timestamp
-	groupAge := time.Since(group.CreatedAt)
+	if err := r.validateBundleConsistency(bundle); err != nil {
+		return fmt.Errorf("bundle validation failed: %w", err)
+	}
+
+	firstMsg := bundle.Messages[0]
+
+	targetFrequencyDuration := time.Duration(firstMsg.TargetFrequencyMs) * time.Millisecond
+	truncatedTimebox := firstMsg.SegmentStartTime.Truncate(targetFrequencyDuration).Unix()
+	key := messages.RollupKey{
+		OrganizationID:    firstMsg.OrganizationID,
+		DateInt:           firstMsg.DateInt,
+		SourceFrequencyMs: firstMsg.SourceFrequencyMs,
+		TargetFrequencyMs: firstMsg.TargetFrequencyMs,
+		InstanceNum:       firstMsg.InstanceNum,
+		TruncatedTimebox:  truncatedTimebox,
+	}
 
 	ll.Info("Starting rollup processing",
-		slog.String("organizationID", group.Key.OrganizationID.String()),
-		slog.Int("dateint", int(group.Key.DateInt)),
-		slog.Int("sourceFrequencyMs", int(group.Key.SourceFrequencyMs)),
-		slog.Int("targetFrequencyMs", int(group.Key.TargetFrequencyMs)),
-		slog.Int("instanceNum", int(group.Key.InstanceNum)),
-		slog.Int64("truncatedTimebox", group.Key.TruncatedTimebox),
-		slog.Int("messageCount", len(group.Messages)),
-		slog.Duration("groupAge", groupAge))
+		slog.String("organizationID", firstMsg.OrganizationID.String()),
+		slog.Int("dateint", int(firstMsg.DateInt)),
+		slog.Int("sourceFrequencyMs", int(firstMsg.SourceFrequencyMs)),
+		slog.Int("targetFrequencyMs", int(firstMsg.TargetFrequencyMs)),
+		slog.Int("instanceNum", int(firstMsg.InstanceNum)),
+		slog.Int64("truncatedTimebox", truncatedTimebox),
+		slog.Int("messageCount", len(bundle.Messages)))
 
-	recordCountEstimate := r.store.GetMetricEstimate(ctx, group.Key.OrganizationID, group.Key.TargetFrequencyMs)
-
-	// Step 0: Validate that all messages in the group have consistent fields
-	if err := validateRollupGroupConsistency(group); err != nil {
-		return fmt.Errorf("group validation failed: %w", err)
-	}
+	recordCountEstimate := r.store.GetMetricEstimate(ctx, firstMsg.OrganizationID, firstMsg.TargetFrequencyMs)
 
 	// Create temporary directory for this rollup run
 	tmpDir, err := os.MkdirTemp("", "")
@@ -178,26 +178,18 @@ func (r *MetricRollupProcessor) Process(ctx context.Context, group *accumulation
 		}
 	}()
 
-	// Step 1: Get the storage profile for the given org/instance
-	storageProfile, err := r.storageProvider.GetStorageProfileForOrganizationAndInstance(ctx, group.Key.OrganizationID, group.Key.InstanceNum)
+	storageProfile, err := r.storageProvider.GetStorageProfileForOrganizationAndInstance(ctx, firstMsg.OrganizationID, firstMsg.InstanceNum)
 	if err != nil {
 		return fmt.Errorf("get storage profile: %w", err)
 	}
 
-	// Step 2: Make a storage client from that profile
 	storageClient, err := cloudstorage.NewClient(ctx, r.cmgr, storageProfile)
 	if err != nil {
 		return fmt.Errorf("create storage client: %w", err)
 	}
 
-	// Step 3: Fetch the segments from the DB by iterating over messages
 	var segments []lrdb.MetricSeg
-	for _, accMsg := range group.Messages {
-		msg, ok := accMsg.Message.(*messages.MetricRollupMessage)
-		if !ok {
-			continue // Skip non-MetricRollupMessage messages
-		}
-
+	for _, msg := range bundle.Messages {
 		segment, err := r.store.GetMetricSeg(ctx, lrdb.GetMetricSegParams{
 			OrganizationID: msg.OrganizationID,
 			Dateint:        msg.DateInt,
@@ -233,10 +225,10 @@ func (r *MetricRollupProcessor) Process(ctx context.Context, group *accumulation
 	params := metricProcessingParams{
 		TmpDir:         tmpDir,
 		StorageClient:  storageClient,
-		OrganizationID: group.Key.OrganizationID,
+		OrganizationID: key.OrganizationID,
 		StorageProfile: storageProfile,
 		ActiveSegments: segments,
-		FrequencyMs:    group.Key.TargetFrequencyMs,
+		FrequencyMs:    key.TargetFrequencyMs,
 		MaxRecords:     recordCountEstimate * 2, // safety net
 	}
 
@@ -247,12 +239,21 @@ func (r *MetricRollupProcessor) Process(ctx context.Context, group *accumulation
 
 	results := result.Results
 
-	newSegments, err := r.uploadAndCreateRollupSegments(ctx, storageClient, storageProfile, results, group.Key, segments)
+	newSegments, err := r.uploadAndCreateRollupSegments(ctx, storageClient, storageProfile, results, key, segments)
 	if err != nil {
 		return fmt.Errorf("upload and create rollup segments: %w", err)
 	}
 
-	if err := r.atomicDatabaseUpdate(ctx, segments, newSegments, kafkaCommitData, group.Key); err != nil {
+	// Create simplified Kafka commit data
+	kafkaCommitData := &KafkaCommitData{
+		Topic:         "lakerunner.segments.metrics.rollup",
+		ConsumerGroup: "lakerunner.rollup.metrics",
+		Offsets: map[int32]int64{
+			partition: offset + 1,
+		},
+	}
+
+	if err := r.atomicDatabaseUpdate(ctx, segments, newSegments, kafkaCommitData, key); err != nil {
 		return fmt.Errorf("atomic database update: %w", err)
 	}
 
@@ -264,20 +265,20 @@ func (r *MetricRollupProcessor) Process(ctx context.Context, group *accumulation
 
 	// Log the rollup operation to segment_journal for debugging (if enabled)
 	if r.cfg.SegLog.Enabled {
-		if err := r.logRollupOperation(ctx, storageProfile, segments, newSegments, results, group.Key, recordCountEstimate); err != nil {
+		if err := r.logRollupOperation(ctx, storageProfile, segments, newSegments, results, key, recordCountEstimate); err != nil {
 			// Don't fail the rollup if seg_log fails - this is just for debugging
 			ll.Warn("Failed to log rollup operation to segment_journal", slog.Any("error", err))
 		}
 	}
 
 	// Generate next-level rollup messages if the target frequency can be rolled up further
-	if err := r.queueNextLevelRollups(ctx, newSegments, group.Key); err != nil {
+	if err := r.queueNextLevelRollups(ctx, newSegments, key); err != nil {
 		// Don't fail the rollup if next-level rollup queueing fails - log and continue
 		ll.Warn("Failed to queue next-level rollup messages", slog.Any("error", err))
 	}
 
 	// Queue compaction messages for the target frequency segments
-	if err := r.queueCompactionMessages(ctx, newSegments, group.Key); err != nil {
+	if err := r.queueCompactionMessages(ctx, newSegments, key); err != nil {
 		// Don't fail the rollup if compaction queueing fails - log and continue
 		ll.Warn("Failed to queue compaction messages", slog.Any("error", err))
 	}
@@ -413,12 +414,12 @@ func (r *MetricRollupProcessor) atomicDatabaseUpdate(ctx context.Context, oldSeg
 	if kafkaCommitData != nil {
 		for partition, offset := range kafkaCommitData.Offsets {
 			kafkaOffsets = append(kafkaOffsets, lrdb.KafkaOffsetUpdate{
-				Topic:          kafkaCommitData.Topic,
-				Partition:      partition,
-				ConsumerGroup:  kafkaCommitData.ConsumerGroup,
-				OrganizationID: key.OrganizationID,
-				InstanceNum:    key.InstanceNum,
-				Offset:         offset,
+				Topic:               kafkaCommitData.Topic,
+				Partition:           partition,
+				ConsumerGroup:       kafkaCommitData.ConsumerGroup,
+				OrganizationID:      key.OrganizationID,
+				InstanceNum:         key.InstanceNum,
+				LastProcessedOffset: offset,
 			})
 
 			// Log each Kafka offset update

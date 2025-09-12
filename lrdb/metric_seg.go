@@ -152,7 +152,7 @@ func (q *Store) InsertMetricSegmentBatchWithKafkaOffsets(ctx context.Context, ba
 					ConsumerGroup:       offset.ConsumerGroup,
 					Topic:               offset.Topic,
 					Partition:           offset.Partition,
-					LastProcessedOffset: offset.Offset,
+					LastProcessedOffset: offset.LastProcessedOffset,
 					OrganizationID:      offset.OrganizationID,
 					InstanceNum:         offset.InstanceNum,
 				}
@@ -246,7 +246,7 @@ func (q *Store) CompactMetricSegsWithKafkaOffsets(ctx context.Context, params Co
 					ConsumerGroup:       offset.ConsumerGroup,
 					OrganizationID:      offset.OrganizationID,
 					InstanceNum:         offset.InstanceNum,
-					LastProcessedOffset: offset.Offset,
+					LastProcessedOffset: offset.LastProcessedOffset,
 				}); err != nil {
 					return fmt.Errorf("update kafka offset for org %s instance %d: %w", offset.OrganizationID, offset.InstanceNum, err)
 				}
@@ -327,7 +327,7 @@ func (q *Store) RollupMetricSegsWithKafkaOffsets(ctx context.Context, sourcePara
 					ConsumerGroup:       offset.ConsumerGroup,
 					OrganizationID:      offset.OrganizationID,
 					InstanceNum:         offset.InstanceNum,
-					LastProcessedOffset: offset.Offset,
+					LastProcessedOffset: offset.LastProcessedOffset,
 				}); err != nil {
 					return fmt.Errorf("update kafka offset for org %s instance %d: %w", offset.OrganizationID, offset.InstanceNum, err)
 				}

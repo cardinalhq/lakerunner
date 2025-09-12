@@ -112,7 +112,7 @@ func (q *Store) CompactTraceSegsWithKafkaOffsets(ctx context.Context, params Com
 					ConsumerGroup:       offset.ConsumerGroup,
 					OrganizationID:      offset.OrganizationID,
 					InstanceNum:         offset.InstanceNum,
-					LastProcessedOffset: offset.Offset,
+					LastProcessedOffset: offset.LastProcessedOffset,
 				}); err != nil {
 					return fmt.Errorf("update kafka offset for org %s instance %d: %w", offset.OrganizationID, offset.InstanceNum, err)
 				}
@@ -164,7 +164,7 @@ func (q *Store) InsertTraceSegmentBatchWithKafkaOffsets(ctx context.Context, bat
 					ConsumerGroup:       offset.ConsumerGroup,
 					Topic:               offset.Topic,
 					Partition:           offset.Partition,
-					LastProcessedOffset: offset.Offset,
+					LastProcessedOffset: offset.LastProcessedOffset,
 					OrganizationID:      offset.OrganizationID,
 					InstanceNum:         offset.InstanceNum,
 				}

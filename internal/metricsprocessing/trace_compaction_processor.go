@@ -273,12 +273,12 @@ func (p *TraceCompactionProcessor) atomicTraceDatabaseUpdate(ctx context.Context
 	if kafkaCommitData != nil {
 		for partition, offset := range kafkaCommitData.Offsets {
 			kafkaOffsets = append(kafkaOffsets, lrdb.KafkaOffsetUpdate{
-				Topic:          kafkaCommitData.Topic,
-				Partition:      partition,
-				ConsumerGroup:  kafkaCommitData.ConsumerGroup,
-				OrganizationID: key.OrganizationID,
-				InstanceNum:    key.InstanceNum,
-				Offset:         offset,
+				Topic:               kafkaCommitData.Topic,
+				Partition:           partition,
+				ConsumerGroup:       kafkaCommitData.ConsumerGroup,
+				OrganizationID:      key.OrganizationID,
+				InstanceNum:         key.InstanceNum,
+				LastProcessedOffset: offset,
 			})
 
 			// Log each Kafka offset update
