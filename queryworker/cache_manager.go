@@ -197,7 +197,7 @@ func EvaluatePushDown[T promql.Timestamped](
 			var s3IDs []int64
 			var cachedIDs []int64
 
-			//sortSegments(segments, request)
+			sortSegments(segments, request)
 
 			for _, seg := range segments {
 				objectId := fmt.Sprintf("db/%s/%s/%d/%s/%s/tbl_%d.parquet",
@@ -266,6 +266,27 @@ func EvaluatePushDown[T promql.Timestamped](
 
 	// Merge all sources (cached + S3 batches) in timestamp order.
 	return promql.MergeSorted(ctx, ChannelBufferSize, request.Reverse, request.Limit, outs...), nil
+}
+
+func sortSegments(segments []queryapi.SegmentInfo, request queryapi.PushDownRequest) {
+	sort.Slice(segments, func(i, j int) bool {
+		if request.Reverse {
+			if segments[i].DateInt != segments[j].DateInt {
+				return segments[i].DateInt > segments[j].DateInt
+			}
+			if segments[i].Hour != segments[j].Hour {
+				return segments[i].Hour > segments[j].Hour
+			}
+			return segments[i].EndTs > segments[j].EndTs
+		}
+		if segments[i].DateInt != segments[j].DateInt {
+			return segments[i].DateInt < segments[j].DateInt
+		}
+		if segments[i].Hour != segments[j].Hour {
+			return segments[i].Hour < segments[j].Hour
+		}
+		return segments[i].EndTs < segments[j].EndTs
+	})
 }
 
 func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
