@@ -93,10 +93,19 @@ func buildFromLogLeaf(be *BaseExpr, step time.Duration) string {
 
 	pipelineSQL := strings.TrimSpace(be.LogLeaf.ToWorkerSQL(0, "", nil))
 
+	// Bucket expression used in SELECT/GROUP BY and in the WHERE clamp.
 	bucketExpr := fmt.Sprintf(
 		"(CAST(%s AS BIGINT) - (CAST(%s AS BIGINT) %% %d))",
 		tsCol, tsCol, stepMs,
 	)
+
+	// Align [start,end) to step so we don't lose partial buckets at the edges.
+	alignedStart := fmt.Sprintf("({start} - ({start} %% %d))", stepMs)
+	// endExclusive aligned to the next bucket boundary:
+	alignedEndEx := fmt.Sprintf("(({end} - 1) - (({end} - 1) %% %d) + %d)", stepMs, stepMs)
+	// Clamp the emitted bucket_ts range so adjacent groups don't overlap:
+	floorStart := fmt.Sprintf("({start} - ({start} %% %d))", stepMs)
+	floorEnd := fmt.Sprintf("(({end} - 1) - (({end} - 1) %% %d))", stepMs)
 
 	cols := []string{bucketExpr + " AS bucket_ts"}
 	if len(be.GroupBy) > 0 {
@@ -129,19 +138,24 @@ func buildFromLogLeaf(be *BaseExpr, step time.Duration) string {
 			aggFn, alias = "MAX", "max"
 		case "avg_over_time":
 			aggFn, alias = "AVG", "avg"
-		case "sum_over_time":
-			aggFn, alias = "SUM", "sum"
-		case "rate":
+		case "sum_over_time", "rate":
 			aggFn, alias = "SUM", "sum"
 		default:
 			aggFn, alias = "AVG", "avg"
 		}
 		cols = append(cols, fmt.Sprintf("%s(__unwrap_value) AS %s", aggFn, alias))
 
+		// NOTE the dual clamp:
+		//  - raw time aligned  (>= alignedStart AND < alignedEndEx)
+		//  - bucket range fence(bucketExpr between floorStart and floorEnd)
 		sql := "WITH _leaf AS (" + pipelineSQL + ")" +
 			" SELECT " + strings.Join(cols, ", ") +
 			" FROM _leaf" +
-			" WHERE " + timePredicate + " AND __unwrap_value IS NOT NULL" +
+			" WHERE " +
+			fmt.Sprintf("%s >= %s AND %s < %s", tsCol, alignedStart, tsCol, alignedEndEx) +
+			" AND __unwrap_value IS NOT NULL" +
+			" AND " + bucketExpr + " >= " + floorStart +
+			" AND " + bucketExpr + " <= " + floorEnd +
 			" GROUP BY " + strings.Join(gb, ", ") +
 			" ORDER BY bucket_ts ASC"
 		return sql
@@ -161,7 +175,10 @@ func buildFromLogLeaf(be *BaseExpr, step time.Duration) string {
 	sql := "WITH _leaf AS (" + pipelineSQL + ")" +
 		" SELECT " + strings.Join(cols, ", ") +
 		" FROM _leaf" +
-		" WHERE " + timePredicate +
+		" WHERE " +
+		fmt.Sprintf("%s >= %s AND %s < %s", tsCol, alignedStart, tsCol, alignedEndEx) +
+		" AND " + bucketExpr + " >= " + floorStart +
+		" AND " + bucketExpr + " <= " + floorEnd +
 		" GROUP BY " + strings.Join(gb, ", ") +
 		" ORDER BY bucket_ts ASC"
 
