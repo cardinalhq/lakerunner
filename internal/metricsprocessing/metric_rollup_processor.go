@@ -517,8 +517,8 @@ func (r *MetricRollupProcessor) queueNextLevelRollups(ctx context.Context, newSe
 		slog.Int("sourceFrequency", int(key.TargetFrequencyMs)),
 		slog.Int("nextTargetFrequency", int(nextTargetFrequency)))
 
-	// Create rollup messages for each new segment
-	rollupTopic := "lakerunner.segments.metrics.rollup"
+	// Create rollup messages for each new segment (send to boxer topic)
+	rollupTopic := "lakerunner.boxer.metrics.rollup"
 	var queuedCount int
 
 	for _, segment := range newSegments {
