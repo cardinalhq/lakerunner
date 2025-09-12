@@ -22,20 +22,17 @@ import (
 	"time"
 
 	"github.com/cardinalhq/kafka-sync/kafkasync"
-	"github.com/segmentio/kafka-go/sasl"
-	"github.com/segmentio/kafka-go/sasl/plain"
-	"github.com/segmentio/kafka-go/sasl/scram"
 )
 
 // TopicSyncer handles Kafka topic synchronization using kafka-sync
 type TopicSyncer struct {
-	config *Config
+	factory *Factory
 }
 
 // NewTopicSyncer creates a new topic syncer
-func NewTopicSyncer(config *Config) *TopicSyncer {
+func NewTopicSyncer(factory *Factory) *TopicSyncer {
 	return &TopicSyncer{
-		config: config,
+		factory: factory,
 	}
 }
 
@@ -76,13 +73,14 @@ func (ts *TopicSyncer) SyncTopics(ctx context.Context, topicsConfig *kafkasync.C
 
 // createConnectionConfig creates a kafkasync ConnectionConfig from our fly Config
 func (ts *TopicSyncer) createConnectionConfig() (kafkasync.ConnectionConfig, error) {
+	config := ts.factory.GetConfig()
 	connConfig := kafkasync.ConnectionConfig{
-		BootstrapServers: ts.config.Brokers,
+		BootstrapServers: config.Brokers,
 	}
 
 	// Configure SASL if enabled
-	if ts.config.SASLEnabled {
-		mechanism, err := ts.createSASLMechanism()
+	if config.SASLEnabled {
+		mechanism, err := ts.factory.createSASLMechanism()
 		if err != nil {
 			return connConfig, fmt.Errorf("failed to create SASL mechanism: %w", err)
 		}
@@ -90,30 +88,13 @@ func (ts *TopicSyncer) createConnectionConfig() (kafkasync.ConnectionConfig, err
 	}
 
 	// Configure TLS if enabled
-	if ts.config.TLSEnabled {
+	if config.TLSEnabled {
 		connConfig.TLS = &tls.Config{
-			InsecureSkipVerify: ts.config.TLSSkipVerify,
+			InsecureSkipVerify: config.TLSSkipVerify,
 		}
 	}
 
 	return connConfig, nil
-}
-
-// createSASLMechanism creates the appropriate SASL mechanism based on configuration
-func (ts *TopicSyncer) createSASLMechanism() (sasl.Mechanism, error) {
-	switch ts.config.SASLMechanism {
-	case "SCRAM-SHA-256":
-		return scram.Mechanism(scram.SHA256, ts.config.SASLUsername, ts.config.SASLPassword)
-	case "SCRAM-SHA-512":
-		return scram.Mechanism(scram.SHA512, ts.config.SASLUsername, ts.config.SASLPassword)
-	case "PLAIN":
-		return plain.Mechanism{
-			Username: ts.config.SASLUsername,
-			Password: ts.config.SASLPassword,
-		}, nil
-	default:
-		return nil, fmt.Errorf("unsupported SASL mechanism: %s", ts.config.SASLMechanism)
-	}
 }
 
 // LoadTopicsConfig loads a kafkasync configuration from a file

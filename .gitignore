@@ -27,3 +27,4 @@ dist
 vendor
 queryworker/db/metrics_cached.ddb
 **/*.prof
+.vscode

@@ -1,0 +1,1870 @@
+
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+		<title>fly: Go Coverage Report</title>
+		<style>
+			body {
+				background: black;
+				color: rgb(80, 80, 80);
+			}
+			body, pre, #legend span {
+				font-family: Menlo, monospace;
+				font-weight: bold;
+			}
+			#topbar {
+				background: black;
+				position: fixed;
+				top: 0; left: 0; right: 0;
+				height: 42px;
+				border-bottom: 1px solid rgb(80, 80, 80);
+			}
+			#content {
+				margin-top: 50px;
+			}
+			#nav, #legend {
+				float: left;
+				margin-left: 10px;
+			}
+			#legend {
+				margin-top: 12px;
+			}
+			#nav {
+				margin-top: 10px;
+			}
+			#legend span {
+				margin: 0 5px;
+			}
+			.cov0 { color: rgb(192, 0, 0) }
+.cov1 { color: rgb(128, 128, 128) }
+.cov2 { color: rgb(116, 140, 131) }
+.cov3 { color: rgb(104, 152, 134) }
+.cov4 { color: rgb(92, 164, 137) }
+.cov5 { color: rgb(80, 176, 140) }
+.cov6 { color: rgb(68, 188, 143) }
+.cov7 { color: rgb(56, 200, 146) }
+.cov8 { color: rgb(44, 212, 149) }
+.cov9 { color: rgb(32, 224, 152) }
+.cov10 { color: rgb(20, 236, 155) }
+
+		</style>
+	</head>
+	<body>
+		<div id="topbar">
+			<div id="nav">
+				<select id="files">
+				
+				<option value="file0">github.com/cardinalhq/lakerunner/internal/fly/admin.go (0.0%)</option>
+				
+				<option value="file1">github.com/cardinalhq/lakerunner/internal/fly/config.go (100.0%)</option>
+				
+				<option value="file2">github.com/cardinalhq/lakerunner/internal/fly/consumer.go (5.7%)</option>
+				
+				<option value="file3">github.com/cardinalhq/lakerunner/internal/fly/factory.go (60.2%)</option>
+				
+				<option value="file4">github.com/cardinalhq/lakerunner/internal/fly/message.go (100.0%)</option>
+				
+				<option value="file5">github.com/cardinalhq/lakerunner/internal/fly/objstore_notification_factory.go (0.0%)</option>
+				
+				<option value="file6">github.com/cardinalhq/lakerunner/internal/fly/producer.go (13.1%)</option>
+				
+				<option value="file7">github.com/cardinalhq/lakerunner/internal/fly/sync.go (82.8%)</option>
+				
+				</select>
+			</div>
+			<div id="legend">
+				<span>not tracked</span>
+			
+				<span class="cov0">no coverage</span>
+				<span class="cov1">low coverage</span>
+				<span class="cov2">*</span>
+				<span class="cov3">*</span>
+				<span class="cov4">*</span>
+				<span class="cov5">*</span>
+				<span class="cov6">*</span>
+				<span class="cov7">*</span>
+				<span class="cov8">*</span>
+				<span class="cov9">*</span>
+				<span class="cov10">high coverage</span>
+			
+			</div>
+		</div>
+		<div id="content">
+		
+		<pre class="file" id="file0" style="display: none">// Copyright (C) 2025 CardinalHQ, Inc
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as
+// published by the Free Software Foundation, version 3.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program. If not, see &lt;http://www.gnu.org/licenses/&gt;.
+
+package fly
+
+import (
+        "context"
+        "fmt"
+        "os"
+        "time"
+
+        "github.com/segmentio/kafka-go"
+)
+
+// TopicInfo contains information about a Kafka topic
+type TopicInfo struct {
+        Name       string
+        Partitions []PartitionInfo
+}
+
+// PartitionInfo contains information about a topic partition
+type PartitionInfo struct {
+        ID            int
+        HighWaterMark int64
+}
+
+// ConsumerGroupInfo contains information about a consumer group
+type ConsumerGroupInfo struct {
+        GroupID         string
+        Topic           string
+        Partition       int
+        CommittedOffset int64
+        HighWaterMark   int64
+        Lag             int64
+}
+
+// AdminClient provides Kafka administrative operations
+type AdminClient struct {
+        factory *Factory
+}
+
+// NewAdminClient creates a new Kafka admin client
+func NewAdminClient(config *Config) *AdminClient <span class="cov0" title="0">{
+        return &amp;AdminClient{factory: NewFactory(config)}
+}</span>
+
+// GetTopicInfo retrieves information about a specific topic
+func (a *AdminClient) GetTopicInfo(ctx context.Context, topic string) (*TopicInfo, error) <span class="cov0" title="0">{
+        // Create Kafka client using centralized factory
+        client, err := a.factory.CreateKafkaClient()
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to create Kafka client: %w", err)
+        }</span>
+
+        // Get metadata for all topics to find our target topic with retry
+        <span class="cov0" title="0">var targetTopic *kafka.Topic
+        maxRetries := 3
+        for attempt := 0; attempt &lt; maxRetries; attempt++ </span><span class="cov0" title="0">{
+                resp, err := client.Metadata(ctx, &amp;kafka.MetadataRequest{})
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to get Kafka metadata: %w", err)
+                }</span>
+
+                // Find the specific topic
+                <span class="cov0" title="0">for _, t := range resp.Topics </span><span class="cov0" title="0">{
+                        if t.Name == topic &amp;&amp; t.Error == nil &amp;&amp; !t.Internal </span><span class="cov0" title="0">{
+                                targetTopic = &amp;t
+                                break</span>
+                        }
+                }
+
+                <span class="cov0" title="0">if targetTopic != nil </span><span class="cov0" title="0">{
+                        break</span>
+                }
+
+                // If topic not found and we have retries left, wait and try again
+                <span class="cov0" title="0">if attempt &lt; maxRetries-1 </span><span class="cov0" title="0">{
+                        time.Sleep(500 * time.Millisecond)
+                }</span>
+        }
+
+        <span class="cov0" title="0">if targetTopic == nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("topic %s not found", topic)
+        }</span>
+
+        <span class="cov0" title="0">topicInfo := &amp;TopicInfo{
+                Name:       topic,
+                Partitions: make([]PartitionInfo, 0, len(targetTopic.Partitions)),
+        }
+
+        // Get high water mark for each partition using authenticated client
+        for _, partition := range targetTopic.Partitions </span><span class="cov0" title="0">{
+                // Use ListOffsets API through the authenticated client to get high water mark
+                req := &amp;kafka.ListOffsetsRequest{
+                        Topics: map[string][]kafka.OffsetRequest{
+                                topic: {kafka.LastOffsetOf(partition.ID)},
+                        },
+                }
+
+                resp, err := client.ListOffsets(ctx, req)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to list offsets for %s:%d: %w", topic, partition.ID, err)
+                }</span>
+
+                // Extract the high water mark from the response
+                <span class="cov0" title="0">var highWaterMark int64 = 0
+                if topicOffsets, exists := resp.Topics[topic]; exists </span><span class="cov0" title="0">{
+                        for _, partitionOffset := range topicOffsets </span><span class="cov0" title="0">{
+                                if partitionOffset.Partition == partition.ID </span><span class="cov0" title="0">{
+                                        if partitionOffset.Error != nil </span><span class="cov0" title="0">{
+                                                return nil, fmt.Errorf("failed to get offset for %s:%d: %w", topic, partition.ID, partitionOffset.Error)
+                                        }</span>
+                                        <span class="cov0" title="0">highWaterMark = partitionOffset.LastOffset
+                                        break</span>
+                                }
+                        }
+                }
+
+                <span class="cov0" title="0">topicInfo.Partitions = append(topicInfo.Partitions, PartitionInfo{
+                        ID:            partition.ID,
+                        HighWaterMark: highWaterMark,
+                })</span>
+        }
+
+        <span class="cov0" title="0">return topicInfo, nil</span>
+}
+
+// GetConsumerGroupLag retrieves lag information for a consumer group on a specific topic
+func (a *AdminClient) GetConsumerGroupLag(ctx context.Context, topic, groupID string) ([]ConsumerGroupInfo, error) <span class="cov0" title="0">{
+        // First get topic information
+        topicInfo, err := a.GetTopicInfo(ctx, topic)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to get topic info: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">var result []ConsumerGroupInfo
+
+        // Create authenticated client to get committed offsets
+        client, err := a.factory.CreateKafkaClient()
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to create Kafka client: %w", err)
+        }</span>
+
+        // Get committed offsets for all partitions using OffsetFetch API
+        <span class="cov0" title="0">req := &amp;kafka.OffsetFetchRequest{
+                GroupID: groupID,
+                Topics: map[string][]int{
+                        topic: make([]int, len(topicInfo.Partitions)),
+                },
+        }
+
+        // Add all partition IDs to the request
+        for i, partition := range topicInfo.Partitions </span><span class="cov0" title="0">{
+                req.Topics[topic][i] = partition.ID
+        }</span>
+
+        <span class="cov0" title="0">resp, err := client.OffsetFetch(ctx, req)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to fetch committed offsets for group %s: %w", groupID, err)
+        }</span>
+
+        // Process results for each partition
+        <span class="cov0" title="0">for _, partition := range topicInfo.Partitions </span><span class="cov0" title="0">{
+                committedOffset := int64(-1)
+
+                // Find the committed offset for this partition
+                if topicOffsets, exists := resp.Topics[topic]; exists </span><span class="cov0" title="0">{
+                        for _, partitionOffset := range topicOffsets </span><span class="cov0" title="0">{
+                                if partitionOffset.Partition == partition.ID </span><span class="cov0" title="0">{
+                                        if partitionOffset.Error != nil </span><span class="cov0" title="0">{
+                                                // If there's an error getting the offset, it might mean no commits yet
+                                                committedOffset = int64(-1)
+                                        }</span> else<span class="cov0" title="0"> {
+                                                committedOffset = partitionOffset.CommittedOffset
+                                        }</span>
+                                        <span class="cov0" title="0">break</span>
+                                }
+                        }
+                }
+
+                // Calculate lag
+                <span class="cov0" title="0">lag := int64(0)
+                if committedOffset &gt;= 0 </span><span class="cov0" title="0">{
+                        lag = max(partition.HighWaterMark-committedOffset, 0)
+                }</span> else<span class="cov0" title="0"> {
+                        // If no committed offset, lag is the total messages in partition
+                        lag = partition.HighWaterMark
+                }</span>
+
+                <span class="cov0" title="0">result = append(result, ConsumerGroupInfo{
+                        GroupID:         groupID,
+                        Topic:           topic,
+                        Partition:       partition.ID,
+                        CommittedOffset: committedOffset,
+                        HighWaterMark:   partition.HighWaterMark,
+                        Lag:             lag,
+                })</span>
+        }
+
+        <span class="cov0" title="0">return result, nil</span>
+}
+
+// GetMultipleConsumerGroupLag retrieves lag information for multiple topic/group combinations
+func (a *AdminClient) GetMultipleConsumerGroupLag(ctx context.Context, topicGroups map[string]string) ([]ConsumerGroupInfo, error) <span class="cov0" title="0">{
+        var allLags []ConsumerGroupInfo
+
+        for topic, groupID := range topicGroups </span><span class="cov0" title="0">{
+                lags, err := a.GetConsumerGroupLag(ctx, topic, groupID)
+                if err != nil </span><span class="cov0" title="0">{
+                        // Continue on error but log it
+                        fmt.Printf("Warning: failed to get lag for topic %s, group %s: %v\n", topic, groupID, err)
+                        continue</span>
+                }
+                <span class="cov0" title="0">allLags = append(allLags, lags...)</span>
+        }
+
+        <span class="cov0" title="0">return allLags, nil</span>
+}
+
+// TopicExists checks if a topic exists
+func (a *AdminClient) TopicExists(ctx context.Context, topic string) (bool, error) <span class="cov0" title="0">{
+        // Create Kafka client using centralized factory
+        client, err := a.factory.CreateKafkaClient()
+        if err != nil </span><span class="cov0" title="0">{
+                return false, fmt.Errorf("failed to create Kafka client: %w", err)
+        }</span>
+
+        // Get metadata for all topics to find our target topic
+        <span class="cov0" title="0">resp, err := client.Metadata(ctx, &amp;kafka.MetadataRequest{})
+        if err != nil </span><span class="cov0" title="0">{
+                return false, fmt.Errorf("failed to get Kafka metadata: %w", err)
+        }</span>
+
+        // Check if topic exists
+        <span class="cov0" title="0">for _, t := range resp.Topics </span><span class="cov0" title="0">{
+                if t.Name == topic &amp;&amp; t.Error == nil &amp;&amp; !t.Internal </span><span class="cov0" title="0">{
+                        return true, nil
+                }</span>
+        }
+
+        <span class="cov0" title="0">return false, nil</span>
+}
+
+// GetAllConsumerGroupLags efficiently retrieves lag information for multiple groups and topics in batch
+func (a *AdminClient) GetAllConsumerGroupLags(ctx context.Context, topics []string, groups []string) ([]ConsumerGroupInfo, error) <span class="cov0" title="0">{
+        // Create authenticated client
+        client, err := a.factory.CreateKafkaClient()
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to create Kafka client: %w", err)
+        }</span>
+
+        // First, get metadata for all topics to determine partitions and high water marks
+        <span class="cov0" title="0">topicPartitions := make(map[string][]int)
+        highWaterMarks := make(map[string]map[int]int64) // topic -&gt; partition -&gt; high water mark
+
+        // Build list offset requests for all topics at once
+        listOffsetReqs := make(map[string][]kafka.OffsetRequest)
+
+        for _, topic := range topics </span><span class="cov0" title="0">{
+                // Get metadata to find partitions
+                resp, err := client.Metadata(ctx, &amp;kafka.MetadataRequest{
+                        Topics: []string{topic},
+                })
+                if err != nil </span><span class="cov0" title="0">{
+                        fmt.Fprintf(os.Stderr, "Warning: failed to get metadata for topic %s: %v\n", topic, err)
+                        continue</span>
+                }
+
+                // Find the topic in response
+                <span class="cov0" title="0">var found bool
+                for _, t := range resp.Topics </span><span class="cov0" title="0">{
+                        if t.Name == topic &amp;&amp; t.Error == nil &amp;&amp; !t.Internal </span><span class="cov0" title="0">{
+                                partitions := make([]int, 0, len(t.Partitions))
+                                offsetReqs := make([]kafka.OffsetRequest, 0, len(t.Partitions))
+
+                                for _, p := range t.Partitions </span><span class="cov0" title="0">{
+                                        partitions = append(partitions, p.ID)
+                                        offsetReqs = append(offsetReqs, kafka.LastOffsetOf(p.ID))
+                                }</span>
+
+                                <span class="cov0" title="0">topicPartitions[topic] = partitions
+                                listOffsetReqs[topic] = offsetReqs
+                                found = true
+                                break</span>
+                        }
+                }
+
+                <span class="cov0" title="0">if !found </span><span class="cov0" title="0">{
+                        fmt.Fprintf(os.Stderr, "Warning: topic %s not found\n", topic)
+                }</span>
+        }
+
+        // Batch fetch all high water marks
+        <span class="cov0" title="0">if len(listOffsetReqs) &gt; 0 </span><span class="cov0" title="0">{
+                listOffsetsResp, err := client.ListOffsets(ctx, &amp;kafka.ListOffsetsRequest{
+                        Topics: listOffsetReqs,
+                })
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to list offsets: %w", err)
+                }</span>
+
+                // Store high water marks
+                <span class="cov0" title="0">for topic, partitionOffsets := range listOffsetsResp.Topics </span><span class="cov0" title="0">{
+                        if highWaterMarks[topic] == nil </span><span class="cov0" title="0">{
+                                highWaterMarks[topic] = make(map[int]int64)
+                        }</span>
+                        <span class="cov0" title="0">for _, po := range partitionOffsets </span><span class="cov0" title="0">{
+                                if po.Error == nil </span><span class="cov0" title="0">{
+                                        highWaterMarks[topic][po.Partition] = po.LastOffset
+                                }</span>
+                        }
+                }
+        }
+
+        // Now fetch committed offsets for all groups
+        <span class="cov0" title="0">var result []ConsumerGroupInfo
+
+        for _, groupID := range groups </span><span class="cov0" title="0">{
+                // Build request for all topics and partitions for this group
+                offsetFetchTopics := make(map[string][]int)
+                for topic, partitions := range topicPartitions </span><span class="cov0" title="0">{
+                        offsetFetchTopics[topic] = partitions
+                }</span>
+
+                <span class="cov0" title="0">if len(offsetFetchTopics) == 0 </span><span class="cov0" title="0">{
+                        continue</span>
+                }
+
+                // Fetch all offsets for this group in one request
+                <span class="cov0" title="0">offsetResp, err := client.OffsetFetch(ctx, &amp;kafka.OffsetFetchRequest{
+                        GroupID: groupID,
+                        Topics:  offsetFetchTopics,
+                })
+                if err != nil </span><span class="cov0" title="0">{
+                        fmt.Fprintf(os.Stderr, "Warning: failed to fetch offsets for group %s: %v\n", groupID, err)
+                        continue</span>
+                }
+
+                // Process the response
+                <span class="cov0" title="0">for topic, partitionOffsets := range offsetResp.Topics </span><span class="cov0" title="0">{
+                        hwmMap, exists := highWaterMarks[topic]
+                        if !exists </span><span class="cov0" title="0">{
+                                continue</span>
+                        }
+
+                        <span class="cov0" title="0">for _, po := range partitionOffsets </span><span class="cov0" title="0">{
+                                // Skip if there's an error or no committed offset
+                                if po.Error != nil || po.CommittedOffset &lt; 0 </span><span class="cov0" title="0">{
+                                        continue</span>
+                                }
+
+                                <span class="cov0" title="0">hwm, exists := hwmMap[po.Partition]
+                                if !exists </span><span class="cov0" title="0">{
+                                        continue</span>
+                                }
+
+                                <span class="cov0" title="0">lag := int64(0)
+                                if po.CommittedOffset &gt;= 0 </span><span class="cov0" title="0">{
+                                        lag = max(hwm-po.CommittedOffset, 0)
+                                }</span>
+
+                                <span class="cov0" title="0">result = append(result, ConsumerGroupInfo{
+                                        GroupID:         groupID,
+                                        Topic:           topic,
+                                        Partition:       po.Partition,
+                                        CommittedOffset: po.CommittedOffset,
+                                        HighWaterMark:   hwm,
+                                        Lag:             lag,
+                                })</span>
+                        }
+                }
+        }
+
+        <span class="cov0" title="0">return result, nil</span>
+}
+</pre>
+		
+		<pre class="file" id="file1" style="display: none">// Copyright (C) 2025 CardinalHQ, Inc
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as
+// published by the Free Software Foundation, version 3.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program. If not, see &lt;http://www.gnu.org/licenses/&gt;.
+
+package fly
+
+import "time"
+
+// Config holds the Kafka configuration
+type Config struct {
+        // Broker configuration
+        Brokers []string `mapstructure:"brokers"`
+
+        // SASL authentication
+        SASLEnabled   bool   `mapstructure:"sasl_enabled"`
+        SASLMechanism string `mapstructure:"sasl_mechanism"` // "PLAIN", "SCRAM-SHA-256" or "SCRAM-SHA-512"
+        SASLUsername  string `mapstructure:"sasl_username"`
+        SASLPassword  string `mapstructure:"sasl_password"`
+
+        // TLS configuration
+        TLSEnabled    bool `mapstructure:"tls_enabled"`
+        TLSSkipVerify bool `mapstructure:"tls_skip_verify"`
+
+        // Producer settings
+        ProducerBatchSize    int           `mapstructure:"producer_batch_size"`
+        ProducerBatchTimeout time.Duration `mapstructure:"producer_batch_timeout"`
+        ProducerCompression  string        `mapstructure:"producer_compression"`
+
+        // Consumer settings
+        ConsumerGroupPrefix string        `mapstructure:"consumer_group_prefix"`
+        ConsumerBatchSize   int           `mapstructure:"consumer_batch_size"`
+        ConsumerMaxWait     time.Duration `mapstructure:"consumer_max_wait"`
+        ConsumerMinBytes    int           `mapstructure:"consumer_min_bytes"`
+        ConsumerMaxBytes    int           `mapstructure:"consumer_max_bytes"`
+}
+
+// DefaultConfig returns a default configuration
+func DefaultConfig() *Config <span class="cov1" title="1">{
+        return &amp;Config{
+                Brokers: []string{"localhost:9092"},
+
+                SASLEnabled:   false,
+                SASLMechanism: "SCRAM-SHA-256",
+                SASLUsername:  "",
+                SASLPassword:  "",
+
+                TLSEnabled:    false,
+                TLSSkipVerify: false,
+
+                ProducerBatchSize:    100,
+                ProducerBatchTimeout: 10 * time.Millisecond,
+                ProducerCompression:  "snappy",
+
+                ConsumerGroupPrefix: "lakerunner",
+                ConsumerBatchSize:   100,
+                ConsumerMaxWait:     500 * time.Millisecond,
+                ConsumerMinBytes:    10 * 1024,        // 10KB
+                ConsumerMaxBytes:    10 * 1024 * 1024, // 10MB
+        }
+}</span>
+
+// GetConsumerGroup returns the consumer group name for the given service
+func (c *Config) GetConsumerGroup(service string) string <span class="cov10" title="8">{
+        return c.ConsumerGroupPrefix + "." + service
+}</span>
+</pre>
+		
+		<pre class="file" id="file2" style="display: none">// Copyright (C) 2025 CardinalHQ, Inc
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as
+// published by the Free Software Foundation, version 3.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program. If not, see &lt;http://www.gnu.org/licenses/&gt;.
+
+package fly
+
+import (
+        "context"
+        "crypto/tls"
+        "fmt"
+        "log/slog"
+        "time"
+
+        "github.com/segmentio/kafka-go"
+        "github.com/segmentio/kafka-go/sasl"
+)
+
+// MessageHandler processes consumed messages
+type MessageHandler func(ctx context.Context, messages []ConsumedMessage) error
+
+// Consumer provides high-level Kafka consumer functionality
+type Consumer interface {
+        // Consume from topic with consumer group
+        Consume(ctx context.Context, handler MessageHandler) error
+
+        // CommitMessages after successful processing
+        CommitMessages(ctx context.Context, messages ...ConsumedMessage) error
+
+        // Close the consumer
+        Close() error
+}
+
+// ConsumerConfig contains configuration for the Kafka consumer
+type ConsumerConfig struct {
+        Brokers       []string
+        Topic         string
+        GroupID       string
+        MinBytes      int
+        MaxBytes      int
+        MaxWait       time.Duration
+        BatchSize     int
+        StartOffset   int64
+        AutoCommit    bool
+        CommitBatch   bool
+        RetryAttempts int
+
+        // SASL/SCRAM authentication
+        SASLMechanism sasl.Mechanism
+
+        // TLS configuration
+        TLSConfig *tls.Config
+}
+
+// DefaultConsumerConfig returns a default consumer configuration
+func DefaultConsumerConfig(topic, groupID string) ConsumerConfig <span class="cov0" title="0">{
+        return ConsumerConfig{
+                Brokers:       []string{"localhost:9092"},
+                Topic:         topic,
+                GroupID:       groupID,
+                MinBytes:      10e3, // 10KB
+                MaxBytes:      10e6, // 10MB
+                MaxWait:       500 * time.Millisecond,
+                BatchSize:     100,
+                StartOffset:   kafka.LastOffset,
+                AutoCommit:    false,
+                CommitBatch:   true,
+                RetryAttempts: 3,
+        }
+}</span>
+
+// kafkaConsumer implements the Consumer interface using segmentio/kafka-go
+type kafkaConsumer struct {
+        config ConsumerConfig
+        reader *kafka.Reader
+}
+
+// NewConsumer creates a new Kafka consumer
+func NewConsumer(config ConsumerConfig) Consumer <span class="cov9" title="9">{
+        dialer := &amp;kafka.Dialer{
+                Timeout:       10 * time.Second,
+                SASLMechanism: config.SASLMechanism,
+                TLS:           config.TLSConfig,
+        }
+
+        readerConfig := kafka.ReaderConfig{
+                Brokers:     config.Brokers,
+                Topic:       config.Topic,
+                GroupID:     config.GroupID,
+                MinBytes:    config.MinBytes,
+                MaxBytes:    config.MaxBytes,
+                MaxWait:     config.MaxWait,
+                StartOffset: config.StartOffset,
+                Dialer:      dialer,
+        }
+
+        return &amp;kafkaConsumer{
+                config: config,
+                reader: kafka.NewReader(readerConfig),
+        }
+}</span>
+
+// ConsumerOption is a functional option for creating a consumer
+type ConsumerOption func(*ConsumerConfig)
+
+// WithTopic sets the topic for the consumer
+func WithTopic(topic string) ConsumerOption <span class="cov0" title="0">{
+        return func(c *ConsumerConfig) </span><span class="cov0" title="0">{
+                c.Topic = topic
+        }</span>
+}
+
+// WithConsumerGroup sets the consumer group ID
+func WithConsumerGroup(groupID string) ConsumerOption <span class="cov0" title="0">{
+        return func(c *ConsumerConfig) </span><span class="cov0" title="0">{
+                c.GroupID = groupID
+        }</span>
+}
+
+// WithBatchSize sets the batch size for consumption
+func WithBatchSize(size int) ConsumerOption <span class="cov0" title="0">{
+        return func(c *ConsumerConfig) </span><span class="cov0" title="0">{
+                c.BatchSize = size
+        }</span>
+}
+
+// WithBrokers sets the Kafka brokers
+func WithBrokers(brokers ...string) ConsumerOption <span class="cov0" title="0">{
+        return func(c *ConsumerConfig) </span><span class="cov0" title="0">{
+                c.Brokers = brokers
+        }</span>
+}
+
+// NewConsumerWithOptions creates a consumer with functional options
+func NewConsumerWithOptions(opts ...ConsumerOption) Consumer <span class="cov0" title="0">{
+        config := DefaultConsumerConfig("", "")
+        for _, opt := range opts </span><span class="cov0" title="0">{
+                opt(&amp;config)
+        }</span>
+        <span class="cov0" title="0">return NewConsumer(config)</span>
+}
+
+func (c *kafkaConsumer) Consume(ctx context.Context, handler MessageHandler) error <span class="cov0" title="0">{
+        // Log consumer startup details
+        slog.Debug("Starting Kafka consumer consumption loop",
+                slog.String("topic", c.config.Topic),
+                slog.String("consumerGroup", c.config.GroupID),
+                slog.Int64("startOffset", c.config.StartOffset),
+                slog.Int("batchSize", c.config.BatchSize),
+                slog.Duration("maxWait", c.config.MaxWait),
+                slog.Int("minBytes", c.config.MinBytes),
+                slog.Int("maxBytes", c.config.MaxBytes))
+
+        batch := make([]ConsumedMessage, 0, c.config.BatchSize)
+
+        for </span><span class="cov0" title="0">{
+                select </span>{
+                case &lt;-ctx.Done():<span class="cov0" title="0">
+                        // Process remaining messages before exiting
+                        if len(batch) &gt; 0 </span><span class="cov0" title="0">{
+                                if err := c.processBatch(ctx, handler, batch); err != nil </span><span class="cov0" title="0">{
+                                        return fmt.Errorf("failed to process final batch: %w", err)
+                                }</span>
+                        }
+                        <span class="cov0" title="0">return ctx.Err()</span>
+                default:<span class="cov0" title="0"></span>
+                }
+
+                // Read message with timeout
+                <span class="cov0" title="0">readCtx, cancel := context.WithTimeout(ctx, c.config.MaxWait)
+                msg, err := c.reader.FetchMessage(readCtx)
+                cancel()
+
+                if err != nil </span><span class="cov0" title="0">{
+                        if err == context.DeadlineExceeded </span><span class="cov0" title="0">{
+                                // Timeout reached, process batch if we have messages
+                                if len(batch) &gt; 0 </span><span class="cov0" title="0">{
+                                        if err := c.processBatch(ctx, handler, batch); err != nil </span><span class="cov0" title="0">{
+                                                return fmt.Errorf("failed to process batch: %w", err)
+                                        }</span>
+                                        <span class="cov0" title="0">batch = batch[:0]</span>
+                                }
+                                <span class="cov0" title="0">continue</span>
+                        }
+                        <span class="cov0" title="0">return fmt.Errorf("failed to fetch message: %w", err)</span>
+                }
+
+                <span class="cov0" title="0">batch = append(batch, FromKafkaMessage(msg))
+
+                // Process batch when full
+                if len(batch) &gt;= c.config.BatchSize </span><span class="cov0" title="0">{
+                        if err := c.processBatch(ctx, handler, batch); err != nil </span><span class="cov0" title="0">{
+                                return fmt.Errorf("failed to process batch: %w", err)
+                        }</span>
+                        <span class="cov0" title="0">batch = batch[:0]</span>
+                }
+        }
+}
+
+func (c *kafkaConsumer) processBatch(ctx context.Context, handler MessageHandler, messages []ConsumedMessage) error <span class="cov0" title="0">{
+        var err error
+        for attempt := 0; attempt &lt; c.config.RetryAttempts; attempt++ </span><span class="cov0" title="0">{
+                if attempt &gt; 0 </span><span class="cov0" title="0">{
+                        // Exponential backoff for retries
+                        backoff := time.Duration(1&lt;&lt;uint(attempt-1)) * time.Second
+                        select </span>{
+                        case &lt;-ctx.Done():<span class="cov0" title="0">
+                                return ctx.Err()</span>
+                        case &lt;-time.After(backoff):<span class="cov0" title="0"></span>
+                        }
+                }
+
+                <span class="cov0" title="0">err = handler(ctx, messages)
+                if err == nil </span><span class="cov0" title="0">{
+                        // Success - commit messages
+                        if !c.config.AutoCommit </span><span class="cov0" title="0">{
+                                if commitErr := c.CommitMessages(ctx, messages...); commitErr != nil </span><span class="cov0" title="0">{
+                                        return fmt.Errorf("failed to commit messages: %w", commitErr)
+                                }</span>
+                        }
+                        <span class="cov0" title="0">return nil</span>
+                }
+        }
+
+        <span class="cov0" title="0">return fmt.Errorf("handler failed after %d attempts: %w", c.config.RetryAttempts, err)</span>
+}
+
+func (c *kafkaConsumer) CommitMessages(ctx context.Context, messages ...ConsumedMessage) error <span class="cov0" title="0">{
+        if len(messages) == 0 </span><span class="cov0" title="0">{
+                return nil
+        }</span>
+
+        <span class="cov0" title="0">if c.config.CommitBatch </span><span class="cov0" title="0">{
+                // For batch commit, we need to commit the highest offset for EACH partition
+                // Group messages by partition and find the highest offset for each
+                partitionOffsets := make(map[int]ConsumedMessage)
+                for _, msg := range messages </span><span class="cov0" title="0">{
+                        existing, ok := partitionOffsets[msg.Partition]
+                        if !ok || msg.Offset &gt; existing.Offset </span><span class="cov0" title="0">{
+                                partitionOffsets[msg.Partition] = msg
+                        }</span>
+                }
+
+                // Create commit messages for each partition's highest offset
+                <span class="cov0" title="0">kmsgs := make([]kafka.Message, 0, len(partitionOffsets))
+                for _, msg := range partitionOffsets </span><span class="cov0" title="0">{
+                        kmsgs = append(kmsgs, kafka.Message{
+                                Topic:     msg.Topic,
+                                Partition: msg.Partition,
+                                Offset:    msg.Offset,
+                        })
+                }</span>
+
+                <span class="cov0" title="0">return c.reader.CommitMessages(ctx, kmsgs...)</span>
+        }
+
+        // Commit all messages individually
+        <span class="cov0" title="0">kmsgs := make([]kafka.Message, len(messages))
+        for i, msg := range messages </span><span class="cov0" title="0">{
+                kmsgs[i] = kafka.Message{
+                        Topic:     msg.Topic,
+                        Partition: msg.Partition,
+                        Offset:    msg.Offset,
+                }
+        }</span>
+        <span class="cov0" title="0">return c.reader.CommitMessages(ctx, kmsgs...)</span>
+}
+
+func (c *kafkaConsumer) Close() error <span class="cov10" title="10">{
+        return c.reader.Close()
+}</span>
+</pre>
+		
+		<pre class="file" id="file3" style="display: none">// Copyright (C) 2025 CardinalHQ, Inc
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as
+// published by the Free Software Foundation, version 3.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program. If not, see &lt;http://www.gnu.org/licenses/&gt;.
+
+package fly
+
+import (
+        "crypto/tls"
+        "fmt"
+        "strings"
+        "time"
+
+        "github.com/segmentio/kafka-go"
+        "github.com/segmentio/kafka-go/sasl"
+        "github.com/segmentio/kafka-go/sasl/plain"
+        "github.com/segmentio/kafka-go/sasl/scram"
+)
+
+// Factory creates Kafka producers and consumers with consistent configuration
+type Factory struct {
+        config *Config
+}
+
+// NewFactory creates a new factory with the given configuration
+func NewFactory(config *Config) *Factory <span class="cov10" title="23">{
+        return &amp;Factory{
+                config: config,
+        }
+}</span>
+
+// CreateProducer creates a new Kafka producer
+func (f *Factory) CreateProducer() (Producer, error) <span class="cov7" title="10">{
+        var compression kafka.Compression
+        switch strings.ToLower(f.config.ProducerCompression) </span>{
+        case "", "none", "uncompressed":<span class="cov6" title="8">
+                compression = 0</span>
+        case "gzip":<span class="cov0" title="0">
+                compression = kafka.Gzip</span>
+        case "snappy":<span class="cov1" title="1">
+                compression = kafka.Snappy</span>
+        case "lz4":<span class="cov0" title="0">
+                compression = kafka.Lz4</span>
+        case "zstd":<span class="cov0" title="0">
+                compression = kafka.Zstd</span>
+        default:<span class="cov1" title="1">
+                return nil, fmt.Errorf("unsupported compression: %s", f.config.ProducerCompression)</span>
+        }
+
+        <span class="cov7" title="9">cfg := ProducerConfig{
+                Brokers:      f.config.Brokers,
+                BatchSize:    f.config.ProducerBatchSize,
+                BatchTimeout: f.config.ProducerBatchTimeout,
+                RequiredAcks: kafka.RequireNone,
+                Compression:  compression,
+        }
+
+        // Configure SASL/SCRAM if enabled
+        if f.config.SASLEnabled </span><span class="cov4" title="3">{
+                mechanism, err := f.createSASLMechanism()
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to create SASL mechanism: %w", err)
+                }</span>
+                <span class="cov4" title="3">cfg.SASLMechanism = mechanism</span>
+        }
+
+        // Configure TLS if enabled
+        <span class="cov7" title="9">if f.config.TLSEnabled </span><span class="cov1" title="1">{
+                cfg.TLSConfig = &amp;tls.Config{
+                        InsecureSkipVerify: f.config.TLSSkipVerify,
+                }
+        }</span>
+
+        <span class="cov7" title="9">return NewProducer(cfg), nil</span>
+}
+
+// CreateConsumer creates a new Kafka consumer for the specified topic
+func (f *Factory) CreateConsumer(topic string, groupID string) (Consumer, error) <span class="cov7" title="10">{
+        cfg := ConsumerConfig{
+                Brokers:       f.config.Brokers,
+                Topic:         topic,
+                GroupID:       groupID,
+                MinBytes:      f.config.ConsumerMinBytes,
+                MaxBytes:      f.config.ConsumerMaxBytes,
+                MaxWait:       f.config.ConsumerMaxWait,
+                BatchSize:     f.config.ConsumerBatchSize,
+                StartOffset:   kafka.LastOffset,
+                AutoCommit:    false,
+                CommitBatch:   true,
+                RetryAttempts: 3,
+        }
+
+        // Configure SASL/SCRAM if enabled
+        if f.config.SASLEnabled </span><span class="cov2" title="2">{
+                mechanism, err := f.createSASLMechanism()
+                if err != nil </span><span class="cov1" title="1">{
+                        return nil, fmt.Errorf("failed to create SASL mechanism: %w", err)
+                }</span>
+                <span class="cov1" title="1">cfg.SASLMechanism = mechanism</span>
+        }
+
+        // Configure TLS if enabled
+        <span class="cov7" title="9">if f.config.TLSEnabled </span><span class="cov0" title="0">{
+                cfg.TLSConfig = &amp;tls.Config{
+                        InsecureSkipVerify: f.config.TLSSkipVerify,
+                }
+        }</span>
+
+        <span class="cov7" title="9">return NewConsumer(cfg), nil</span>
+}
+
+// CreateConsumerWithService creates a consumer with a service-based group ID
+func (f *Factory) CreateConsumerWithService(topic string, service string) (Consumer, error) <span class="cov4" title="3">{
+        groupID := f.config.GetConsumerGroup(service)
+        return f.CreateConsumer(topic, groupID)
+}</span>
+
+// createSASLMechanism creates the appropriate SASL mechanism based on configuration
+func (f *Factory) createSASLMechanism() (sasl.Mechanism, error) <span class="cov8" title="13">{
+        switch f.config.SASLMechanism </span>{
+        case "SCRAM-SHA-256":<span class="cov6" title="6">
+                return scram.Mechanism(scram.SHA256, f.config.SASLUsername, f.config.SASLPassword)</span>
+        case "SCRAM-SHA-512":<span class="cov2" title="2">
+                return scram.Mechanism(scram.SHA512, f.config.SASLUsername, f.config.SASLPassword)</span>
+        case "PLAIN":<span class="cov4" title="3">
+                // Support for GCP Managed Kafka and other SASL/PLAIN systems
+                return plain.Mechanism{
+                        Username: f.config.SASLUsername,
+                        Password: f.config.SASLPassword,
+                }, nil</span>
+        default:<span class="cov2" title="2">
+                return nil, fmt.Errorf("unsupported SASL mechanism: %s", f.config.SASLMechanism)</span>
+        }
+}
+
+// CreateTransport creates a centralized kafka.Transport with proper SASL and TLS configuration
+func (f *Factory) CreateTransport() (*kafka.Transport, error) <span class="cov0" title="0">{
+        transport := &amp;kafka.Transport{}
+
+        // Configure SASL if enabled
+        if f.config.SASLEnabled </span><span class="cov0" title="0">{
+                mechanism, err := f.createSASLMechanism()
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to create SASL mechanism: %w", err)
+                }</span>
+                <span class="cov0" title="0">transport.SASL = mechanism</span>
+        }
+
+        // Configure TLS if enabled
+        <span class="cov0" title="0">if f.config.TLSEnabled </span><span class="cov0" title="0">{
+                transport.TLS = &amp;tls.Config{
+                        InsecureSkipVerify: f.config.TLSSkipVerify,
+                }
+        }</span>
+
+        <span class="cov0" title="0">return transport, nil</span>
+}
+
+// CreateKafkaClient creates a properly configured kafka.Client with centralized transport
+func (f *Factory) CreateKafkaClient() (*kafka.Client, error) <span class="cov0" title="0">{
+        transport, err := f.CreateTransport()
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to create transport: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">client := &amp;kafka.Client{
+                Addr:      kafka.TCP(f.config.Brokers[0]),
+                Transport: transport,
+        }
+
+        return client, nil</span>
+}
+
+// CreateDialer creates an authenticated Kafka dialer for administrative operations
+func (f *Factory) CreateDialer() (*kafka.Dialer, error) <span class="cov0" title="0">{
+        dialer := &amp;kafka.Dialer{
+                Timeout: 10 * time.Second,
+        }
+
+        // Configure SASL if enabled
+        if f.config.SASLEnabled </span><span class="cov0" title="0">{
+                mechanism, err := f.createSASLMechanism()
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, fmt.Errorf("failed to create SASL mechanism: %w", err)
+                }</span>
+                <span class="cov0" title="0">dialer.SASLMechanism = mechanism</span>
+        }
+
+        // Configure TLS if enabled
+        <span class="cov0" title="0">if f.config.TLSEnabled </span><span class="cov0" title="0">{
+                dialer.TLS = &amp;tls.Config{
+                        InsecureSkipVerify: f.config.TLSSkipVerify,
+                }
+        }</span>
+
+        <span class="cov0" title="0">return dialer, nil</span>
+}
+
+// CreateTopicSyncer creates a topic syncer for managing Kafka topics
+func (f *Factory) CreateTopicSyncer() *TopicSyncer <span class="cov7" title="9">{
+        return NewTopicSyncer(f)
+}</span>
+
+// GetConfig returns the underlying configuration
+func (f *Factory) GetConfig() *Config <span class="cov7" title="11">{
+        return f.config
+}</span>
+
+// Manager provides lifecycle management for Kafka components
+type Manager struct {
+        factory   *Factory
+        producers []Producer
+        consumers []Consumer
+}
+
+// NewManager creates a new Kafka component manager
+func NewManager(factory *Factory) *Manager <span class="cov2" title="2">{
+        return &amp;Manager{
+                factory:   factory,
+                producers: make([]Producer, 0),
+                consumers: make([]Consumer, 0),
+        }
+}</span>
+
+// CreateProducer creates and tracks a producer
+func (m *Manager) CreateProducer() (Producer, error) <span class="cov4" title="3">{
+        p, err := m.factory.CreateProducer()
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov4" title="3">m.producers = append(m.producers, p)
+        return p, nil</span>
+}
+
+// CreateConsumer creates and tracks a consumer
+func (m *Manager) CreateConsumer(topic string, groupID string) (Consumer, error) <span class="cov4" title="3">{
+        c, err := m.factory.CreateConsumer(topic, groupID)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov4" title="3">m.consumers = append(m.consumers, c)
+        return c, nil</span>
+}
+
+// CreateConsumerWithService creates and tracks a consumer with service-based group ID
+func (m *Manager) CreateConsumerWithService(topic string, service string) (Consumer, error) <span class="cov1" title="1">{
+        c, err := m.factory.CreateConsumerWithService(topic, service)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov1" title="1">m.consumers = append(m.consumers, c)
+        return c, nil</span>
+}
+
+// Close closes all managed components
+func (m *Manager) Close() error <span class="cov2" title="2">{
+        var firstErr error
+
+        // Close producers
+        for _, p := range m.producers </span><span class="cov4" title="3">{
+                if err := p.Close(); err != nil &amp;&amp; firstErr == nil </span><span class="cov0" title="0">{
+                        firstErr = err
+                }</span>
+        }
+
+        // Close consumers
+        <span class="cov2" title="2">for _, c := range m.consumers </span><span class="cov4" title="4">{
+                if err := c.Close(); err != nil &amp;&amp; firstErr == nil </span><span class="cov0" title="0">{
+                        firstErr = err
+                }</span>
+        }
+
+        <span class="cov2" title="2">return firstErr</span>
+}
+</pre>
+		
+		<pre class="file" id="file4" style="display: none">// Copyright (C) 2025 CardinalHQ, Inc
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as
+// published by the Free Software Foundation, version 3.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program. If not, see &lt;http://www.gnu.org/licenses/&gt;.
+
+package fly
+
+import (
+        "time"
+
+        "github.com/segmentio/kafka-go"
+)
+
+// Message represents a Kafka message with headers
+type Message struct {
+        Key     []byte
+        Value   []byte
+        Headers map[string]string
+}
+
+// ConsumedMessage represents a message consumed from Kafka with metadata
+type ConsumedMessage struct {
+        Message
+        Topic     string
+        Partition int
+        Offset    int64
+        Timestamp time.Time
+}
+
+// ToKafkaMessage converts to kafka-go message format
+func (m *Message) ToKafkaMessage() kafka.Message <span class="cov10" title="3">{
+        headers := make([]kafka.Header, 0, len(m.Headers))
+        for k, v := range m.Headers </span><span class="cov6" title="2">{
+                headers = append(headers, kafka.Header{
+                        Key:   k,
+                        Value: []byte(v),
+                })
+        }</span>
+        <span class="cov10" title="3">return kafka.Message{
+                Key:     m.Key,
+                Value:   m.Value,
+                Headers: headers,
+        }</span>
+}
+
+// FromKafkaMessage converts from kafka-go message format
+func FromKafkaMessage(km kafka.Message) ConsumedMessage <span class="cov10" title="3">{
+        headers := make(map[string]string)
+        for _, h := range km.Headers </span><span class="cov6" title="2">{
+                headers[h.Key] = string(h.Value)
+        }</span>
+        <span class="cov10" title="3">return ConsumedMessage{
+                Message: Message{
+                        Key:     km.Key,
+                        Value:   km.Value,
+                        Headers: headers,
+                },
+                Topic:     km.Topic,
+                Partition: km.Partition,
+                Offset:    km.Offset,
+                Timestamp: km.Time,
+        }</span>
+}
+</pre>
+		
+		<pre class="file" id="file5" style="display: none">// Copyright (C) 2025 CardinalHQ, Inc
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as
+// published by the Free Software Foundation, version 3.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program. If not, see &lt;http://www.gnu.org/licenses/&gt;.
+
+package fly
+
+import (
+        "context"
+        "fmt"
+        "time"
+
+        "log/slog"
+
+        "github.com/cardinalhq/lakerunner/internal/fly/messages"
+        "github.com/cardinalhq/lakerunner/internal/logctx"
+)
+
+// ObjStoreNotificationProducer manages Kafka producer for object storage notifications
+type ObjStoreNotificationProducer struct {
+        producer Producer
+        config   *Config
+}
+
+// NewObjStoreNotificationProducer creates a new object storage notification producer
+func NewObjStoreNotificationProducer(factory *Factory) (*ObjStoreNotificationProducer, error) <span class="cov0" title="0">{
+        producer, err := factory.CreateProducer()
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to create Kafka producer: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">return &amp;ObjStoreNotificationProducer{
+                producer: producer,
+                config:   factory.GetConfig(),
+        }, nil</span>
+}
+
+// SendBatch sends multiple object storage notifications as a batch
+func (p *ObjStoreNotificationProducer) SendBatch(ctx context.Context, signal string, notifications []messages.ObjStoreNotificationMessage) error <span class="cov0" title="0">{
+        ll := logctx.FromContext(ctx)
+
+        // Determine topic based on signal
+        topic := fmt.Sprintf("lakerunner.objstore.ingest.%s", signal)
+        messages := make([]Message, 0, len(notifications))
+
+        for _, notification := range notifications </span><span class="cov0" title="0">{
+                // Set defaults
+                if notification.QueuedAt.IsZero() </span><span class="cov0" title="0">{
+                        notification.QueuedAt = time.Now()
+                }</span>
+
+                // Marshal the message
+                <span class="cov0" title="0">data, err := notification.Marshal()
+                if err != nil </span><span class="cov0" title="0">{
+                        ll.Error("Failed to marshal notification",
+                                slog.Any("error", err),
+                                slog.String("organization_id", notification.OrganizationID.String()))
+                        continue</span>
+                }
+
+                // Create Kafka message
+                <span class="cov0" title="0">msg := Message{
+                        Key:   nil, // Random partitioning
+                        Value: data,
+                        Headers: map[string]string{
+                                "organization_id": notification.OrganizationID.String(),
+                                "timestamp":       notification.QueuedAt.Format(time.RFC3339),
+                        },
+                }
+
+                messages = append(messages, msg)</span>
+        }
+
+        <span class="cov0" title="0">if len(messages) == 0 </span><span class="cov0" title="0">{
+                return fmt.Errorf("no valid messages to send")
+        }</span>
+
+        // Send all messages to the topic
+        <span class="cov0" title="0">if err := p.producer.BatchSend(ctx, topic, messages); err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to send batch to Kafka topic %s: %w", topic, err)
+        }</span>
+        <span class="cov0" title="0">ll.Debug("Sent batch of object storage notifications to Kafka",
+                slog.String("topic", topic),
+                slog.String("signal", signal),
+                slog.Int("count", len(messages)))
+
+        return nil</span>
+}
+
+// Close closes the producer
+func (p *ObjStoreNotificationProducer) Close() error <span class="cov0" title="0">{
+        return p.producer.Close()
+}</span>
+
+// ObjStoreNotificationConsumer manages Kafka consumer for object storage notifications
+type ObjStoreNotificationConsumer struct {
+        consumer Consumer
+        signal   string
+}
+
+// NewObjStoreNotificationConsumer creates a new object storage notification consumer for a specific signal
+func NewObjStoreNotificationConsumer(ctx context.Context, factory *Factory, signal string, groupID string) (*ObjStoreNotificationConsumer, error) <span class="cov0" title="0">{
+        ll := logctx.FromContext(ctx)
+
+        // Determine topic based on signal
+        var topic string
+        switch signal </span>{
+        case "metrics":<span class="cov0" title="0">
+                topic = "lakerunner.objstore.ingest.metrics"</span>
+        case "logs":<span class="cov0" title="0">
+                topic = "lakerunner.objstore.ingest.logs"</span>
+        case "traces":<span class="cov0" title="0">
+                topic = "lakerunner.objstore.ingest.traces"</span>
+        default:<span class="cov0" title="0">
+                return nil, fmt.Errorf("unsupported signal type: %s", signal)</span>
+        }
+
+        <span class="cov0" title="0">ll.Debug("Creating Kafka consumer",
+                slog.String("topic", topic),
+                slog.String("consumerGroup", groupID),
+                slog.String("signal", signal))
+
+        consumer, err := factory.CreateConsumer(topic, groupID)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to create Kafka consumer: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">return &amp;ObjStoreNotificationConsumer{
+                consumer: consumer,
+                signal:   signal,
+        }, nil</span>
+}
+
+// Consume reads and processes object storage notifications using a handler
+func (c *ObjStoreNotificationConsumer) Consume(ctx context.Context, handler func(context.Context, []*messages.ObjStoreNotificationMessage) error) error <span class="cov0" title="0">{
+        ll := logctx.FromContext(ctx)
+
+        // Create a message handler that unmarshals object storage notifications
+        messageHandler := func(ctx context.Context, consumedMessages []ConsumedMessage) error </span><span class="cov0" title="0">{
+                notifications := make([]*messages.ObjStoreNotificationMessage, 0, len(consumedMessages))
+                for _, msg := range consumedMessages </span><span class="cov0" title="0">{
+                        notification := &amp;messages.ObjStoreNotificationMessage{}
+                        if err := notification.Unmarshal(msg.Value); err != nil </span><span class="cov0" title="0">{
+                                ll.Error("Failed to unmarshal notification", slog.Any("error", err))
+                                continue</span>
+                        }
+                        <span class="cov0" title="0">notifications = append(notifications, notification)</span>
+                }
+
+                <span class="cov0" title="0">if len(notifications) &gt; 0 </span><span class="cov0" title="0">{
+                        return handler(ctx, notifications)
+                }</span>
+                <span class="cov0" title="0">return nil</span>
+        }
+
+        <span class="cov0" title="0">return c.consumer.Consume(ctx, messageHandler)</span>
+}
+
+// ConsumeBatch reads a batch of object storage notifications by running the consumer with a batch handler
+func (c *ObjStoreNotificationConsumer) ConsumeBatch(ctx context.Context, maxSize int) ([]*messages.ObjStoreNotificationMessage, error) <span class="cov0" title="0">{
+        ll := logctx.FromContext(ctx)
+
+        var result []*messages.ObjStoreNotificationMessage
+        var consumeErr error
+
+        // Create a context with timeout for batch collection
+        timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+        defer cancel()
+
+        // Use the consumer with a handler that collects messages up to maxSize
+        err := c.consumer.Consume(timeoutCtx, func(ctx context.Context, consumedMessages []ConsumedMessage) error </span><span class="cov0" title="0">{
+                for _, msg := range consumedMessages </span><span class="cov0" title="0">{
+                        if len(result) &gt;= maxSize </span><span class="cov0" title="0">{
+                                // Cancel context to stop consuming when we have enough messages
+                                cancel()
+                                return nil
+                        }</span>
+
+                        <span class="cov0" title="0">notification := &amp;messages.ObjStoreNotificationMessage{}
+                        if err := notification.Unmarshal(msg.Value); err != nil </span><span class="cov0" title="0">{
+                                ll.Error("Failed to unmarshal notification", slog.Any("error", err))
+                                continue</span>
+                        }
+                        <span class="cov0" title="0">result = append(result, notification)</span>
+                }
+
+                // Commit the messages after processing
+                <span class="cov0" title="0">if err := c.consumer.CommitMessages(ctx, consumedMessages...); err != nil </span><span class="cov0" title="0">{
+                        consumeErr = err
+                        return err
+                }</span>
+
+                <span class="cov0" title="0">return nil</span>
+        })
+
+        // Check if the error is due to context cancellation (expected when we have enough messages)
+        <span class="cov0" title="0">if err != nil &amp;&amp; err != context.Canceled &amp;&amp; err != context.DeadlineExceeded </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to consume batch: %w", err)
+        }</span>
+
+        <span class="cov0" title="0">if consumeErr != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to commit messages: %w", consumeErr)
+        }</span>
+
+        <span class="cov0" title="0">return result, nil</span>
+}
+
+// Commit commits consumed messages
+func (c *ObjStoreNotificationConsumer) Commit(ctx context.Context, messages []ConsumedMessage) error <span class="cov0" title="0">{
+        return c.consumer.CommitMessages(ctx, messages...)
+}</span>
+
+// ConsumeWithMetadata reads and processes object storage notifications with access to Kafka metadata
+func (c *ObjStoreNotificationConsumer) ConsumeWithMetadata(ctx context.Context, handler func(context.Context, []*messages.ObjStoreNotificationMessage, []ConsumedMessage) error) error <span class="cov0" title="0">{
+        ll := logctx.FromContext(ctx)
+
+        // Create a message handler that unmarshals object storage notifications and preserves metadata
+        messageHandler := func(ctx context.Context, consumedMessages []ConsumedMessage) error </span><span class="cov0" title="0">{
+                notifications := make([]*messages.ObjStoreNotificationMessage, 0, len(consumedMessages))
+                validMessages := make([]ConsumedMessage, 0, len(consumedMessages))
+
+                for _, msg := range consumedMessages </span><span class="cov0" title="0">{
+                        notification := &amp;messages.ObjStoreNotificationMessage{}
+                        if err := notification.Unmarshal(msg.Value); err != nil </span><span class="cov0" title="0">{
+                                ll.Error("Failed to unmarshal notification", slog.Any("error", err))
+                                continue</span>
+                        }
+                        <span class="cov0" title="0">notifications = append(notifications, notification)
+                        validMessages = append(validMessages, msg)</span>
+                }
+
+                <span class="cov0" title="0">if len(notifications) &gt; 0 </span><span class="cov0" title="0">{
+                        return handler(ctx, notifications, validMessages)
+                }</span>
+                <span class="cov0" title="0">return nil</span>
+        }
+
+        <span class="cov0" title="0">return c.consumer.Consume(ctx, messageHandler)</span>
+}
+
+// Close closes the consumer
+func (c *ObjStoreNotificationConsumer) Close() error <span class="cov0" title="0">{
+        return c.consumer.Close()
+}</span>
+
+// ObjStoreNotificationManager provides high-level management for object storage notification processing
+type ObjStoreNotificationManager struct {
+        factory   *Factory
+        producers map[string]*ObjStoreNotificationProducer // Keyed by source (sqs, http, gcp, azure)
+}
+
+// NewObjStoreNotificationManager creates a new object storage notification manager
+func NewObjStoreNotificationManager(factory *Factory) *ObjStoreNotificationManager <span class="cov0" title="0">{
+        return &amp;ObjStoreNotificationManager{
+                factory:   factory,
+                producers: make(map[string]*ObjStoreNotificationProducer),
+        }
+}</span>
+
+// GetProducer gets or creates a producer for the given source
+func (m *ObjStoreNotificationManager) GetProducer(source string) (*ObjStoreNotificationProducer, error) <span class="cov0" title="0">{
+        if producer, exists := m.producers[source]; exists </span><span class="cov0" title="0">{
+                return producer, nil
+        }</span>
+
+        <span class="cov0" title="0">producer, err := NewObjStoreNotificationProducer(m.factory)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("failed to create producer for source %s: %w", source, err)
+        }</span>
+
+        <span class="cov0" title="0">m.producers[source] = producer
+        return producer, nil</span>
+}
+
+// Close closes all producers
+func (m *ObjStoreNotificationManager) Close() error <span class="cov0" title="0">{
+        var firstErr error
+        for source, producer := range m.producers </span><span class="cov0" title="0">{
+                if err := producer.Close(); err != nil &amp;&amp; firstErr == nil </span><span class="cov0" title="0">{
+                        firstErr = fmt.Errorf("failed to close producer for source %s: %w", source, err)
+                }</span>
+        }
+        <span class="cov0" title="0">return firstErr</span>
+}
+</pre>
+		
+		<pre class="file" id="file6" style="display: none">// Copyright (C) 2025 CardinalHQ, Inc
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as
+// published by the Free Software Foundation, version 3.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program. If not, see &lt;http://www.gnu.org/licenses/&gt;.
+
+package fly
+
+import (
+        "context"
+        "crypto/tls"
+        "fmt"
+        "slices"
+        "sync"
+        "time"
+
+        "github.com/segmentio/kafka-go"
+        "github.com/segmentio/kafka-go/sasl"
+)
+
+// Producer provides high-level Kafka producer functionality
+type Producer interface {
+        // Send with automatic partitioning
+        Send(ctx context.Context, topic string, message Message) error
+
+        // SendToPartition for explicit partition control
+        SendToPartition(ctx context.Context, topic string, partition int, message Message) error
+
+        // GetPartitionCount for partition-aware routing
+        GetPartitionCount(topic string) (int, error)
+
+        // BatchSend for efficient bulk operations
+        BatchSend(ctx context.Context, topic string, messages []Message) error
+
+        // Close the producer
+        Close() error
+}
+
+// ProducerConfig contains configuration for the Kafka producer
+type ProducerConfig struct {
+        Brokers      []string
+        BatchSize    int
+        BatchTimeout time.Duration
+        RequiredAcks kafka.RequiredAcks
+        Compression  kafka.Compression
+
+        // SASL/SCRAM authentication
+        SASLMechanism sasl.Mechanism
+
+        // TLS configuration
+        TLSConfig *tls.Config
+}
+
+// kafkaProducer implements the Producer interface using segmentio/kafka-go
+type kafkaProducer struct {
+        config          ProducerConfig
+        writers         map[string]*kafka.Writer
+        writersMu       sync.RWMutex
+        partitionCounts map[string]int
+        partitionMu     sync.RWMutex
+        dialer          *kafka.Dialer
+}
+
+// manualBalancer implements kafka.Balancer to send to a specific partition
+type manualBalancer struct {
+        partition int
+}
+
+func (b *manualBalancer) Balance(msg kafka.Message, partitions ...int) int <span class="cov0" title="0">{
+        // Always return the specified partition if it's valid
+        if slices.Contains(partitions, b.partition) </span><span class="cov0" title="0">{
+                return b.partition
+        }</span>
+        // If the partition doesn't exist, fall back to the first available
+        <span class="cov0" title="0">if len(partitions) &gt; 0 </span><span class="cov0" title="0">{
+                return partitions[0]
+        }</span>
+        <span class="cov0" title="0">return 0</span>
+}
+
+// NewProducer creates a new Kafka producer
+func NewProducer(config ProducerConfig) Producer <span class="cov9" title="10">{
+        dialer := &amp;kafka.Dialer{
+                Timeout:       10 * time.Second,
+                SASLMechanism: config.SASLMechanism,
+                TLS:           config.TLSConfig,
+        }
+
+        return &amp;kafkaProducer{
+                config:          config,
+                writers:         make(map[string]*kafka.Writer),
+                partitionCounts: make(map[string]int),
+                dialer:          dialer,
+        }
+}</span>
+
+func (p *kafkaProducer) getWriter(topic string) *kafka.Writer <span class="cov0" title="0">{
+        p.writersMu.RLock()
+        w, ok := p.writers[topic]
+        p.writersMu.RUnlock()
+        if ok </span><span class="cov0" title="0">{
+                return w
+        }</span>
+
+        <span class="cov0" title="0">p.writersMu.Lock()
+        defer p.writersMu.Unlock()
+
+        // Double-check after acquiring write lock
+        if w, ok := p.writers[topic]; ok </span><span class="cov0" title="0">{
+                return w
+        }</span>
+
+        <span class="cov0" title="0">transport := &amp;kafka.Transport{
+                SASL: p.config.SASLMechanism,
+                TLS:  p.config.TLSConfig,
+        }
+
+        w = &amp;kafka.Writer{
+                Addr:         kafka.TCP(p.config.Brokers...),
+                Topic:        topic,
+                Balancer:     &amp;kafka.Hash{},
+                BatchSize:    p.config.BatchSize,
+                BatchTimeout: p.config.BatchTimeout,
+                RequiredAcks: p.config.RequiredAcks,
+                Transport:    transport,
+                Compression:  p.config.Compression,
+        }
+        p.writers[topic] = w
+        return w</span>
+}
+
+func (p *kafkaProducer) Send(ctx context.Context, topic string, message Message) error <span class="cov0" title="0">{
+        w := p.getWriter(topic)
+        km := message.ToKafkaMessage()
+        return w.WriteMessages(ctx, km)
+}</span>
+
+func (p *kafkaProducer) SendToPartition(ctx context.Context, topic string, partition int, message Message) error <span class="cov0" title="0">{
+        transport := &amp;kafka.Transport{
+                SASL: p.config.SASLMechanism,
+                TLS:  p.config.TLSConfig,
+        }
+
+        // Create a dedicated writer for specific partition using manual balancer
+        w := &amp;kafka.Writer{
+                Addr:         kafka.TCP(p.config.Brokers...),
+                Topic:        topic,
+                Balancer:     &amp;manualBalancer{partition: partition},
+                BatchSize:    1, // send immediately
+                RequiredAcks: p.config.RequiredAcks,
+                Transport:    transport,
+                Compression:  p.config.Compression,
+        }
+        defer w.Close()
+
+        km := message.ToKafkaMessage()
+        return w.WriteMessages(ctx, km)
+}</span>
+
+func (p *kafkaProducer) GetPartitionCount(topic string) (int, error) <span class="cov0" title="0">{
+        p.partitionMu.RLock()
+        count, ok := p.partitionCounts[topic]
+        p.partitionMu.RUnlock()
+        if ok </span><span class="cov0" title="0">{
+                return count, nil
+        }</span>
+
+        // Fetch partition count from broker
+        <span class="cov0" title="0">conn, err := p.dialer.Dial("tcp", p.config.Brokers[0])
+        if err != nil </span><span class="cov0" title="0">{
+                return 0, fmt.Errorf("failed to connect to broker: %w", err)
+        }</span>
+        <span class="cov0" title="0">defer conn.Close()
+
+        partitions, err := conn.ReadPartitions(topic)
+        if err != nil </span><span class="cov0" title="0">{
+                return 0, fmt.Errorf("failed to read partitions for topic %s: %w", topic, err)
+        }</span>
+
+        <span class="cov0" title="0">count = len(partitions)
+
+        p.partitionMu.Lock()
+        p.partitionCounts[topic] = count
+        p.partitionMu.Unlock()
+
+        return count, nil</span>
+}
+
+func (p *kafkaProducer) BatchSend(ctx context.Context, topic string, messages []Message) error <span class="cov0" title="0">{
+        if len(messages) == 0 </span><span class="cov0" title="0">{
+                return nil
+        }</span>
+
+        <span class="cov0" title="0">w := p.getWriter(topic)
+        kmsgs := make([]kafka.Message, len(messages))
+        for i, msg := range messages </span><span class="cov0" title="0">{
+                km := msg.ToKafkaMessage()
+                kmsgs[i] = km
+        }</span>
+        <span class="cov0" title="0">return w.WriteMessages(ctx, kmsgs...)</span>
+}
+
+func (p *kafkaProducer) Close() error <span class="cov10" title="11">{
+        p.writersMu.Lock()
+        defer p.writersMu.Unlock()
+
+        var firstErr error
+        for _, w := range p.writers </span><span class="cov0" title="0">{
+                if err := w.Close(); err != nil &amp;&amp; firstErr == nil </span><span class="cov0" title="0">{
+                        firstErr = err
+                }</span>
+        }
+        <span class="cov10" title="11">p.writers = make(map[string]*kafka.Writer)
+        return firstErr</span>
+}
+</pre>
+		
+		<pre class="file" id="file7" style="display: none">// Copyright (C) 2025 CardinalHQ, Inc
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as
+// published by the Free Software Foundation, version 3.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program. If not, see &lt;http://www.gnu.org/licenses/&gt;.
+
+package fly
+
+import (
+        "context"
+        "crypto/tls"
+        "fmt"
+        "log/slog"
+        "time"
+
+        "github.com/cardinalhq/kafka-sync/kafkasync"
+)
+
+// TopicSyncer handles Kafka topic synchronization using kafka-sync
+type TopicSyncer struct {
+        factory *Factory
+}
+
+// NewTopicSyncer creates a new topic syncer
+func NewTopicSyncer(factory *Factory) *TopicSyncer <span class="cov9" title="9">{
+        return &amp;TopicSyncer{
+                factory: factory,
+        }
+}</span>
+
+// SyncTopics synchronizes Kafka topics according to the provided configuration
+func (ts *TopicSyncer) SyncTopics(ctx context.Context, topicsConfig *kafkasync.Config, fix bool) error <span class="cov6" title="4">{
+        // Create connection configuration
+        connConfig, err := ts.createConnectionConfig()
+        if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to create connection config: %w", err)
+        }</span>
+
+        // Create syncer
+        <span class="cov6" title="4">syncer, err := kafkasync.NewSyncer(connConfig, topicsConfig)
+        if err != nil </span><span class="cov5" title="3">{
+                return fmt.Errorf("failed to create syncer: %w", err)
+        }</span>
+
+        // Determine sync mode
+        <span class="cov1" title="1">mode := kafkasync.SyncModeInfo
+        modeStr := "info"
+        if fix </span><span class="cov0" title="0">{
+                mode = kafkasync.SyncModeFix
+                modeStr = "fix"
+        }</span>
+
+        <span class="cov1" title="1">slog.Info("Starting Kafka topic synchronization",
+                slog.String("mode", modeStr),
+                slog.Int("topic_count", len(topicsConfig.Topics)))
+
+        // Perform sync
+        if err := syncer.Sync(ctx, mode); err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("failed to sync topics: %w", err)
+        }</span>
+
+        <span class="cov1" title="1">slog.Info("Kafka topic synchronization completed")
+        return nil</span>
+}
+
+// createConnectionConfig creates a kafkasync ConnectionConfig from our fly Config
+func (ts *TopicSyncer) createConnectionConfig() (kafkasync.ConnectionConfig, error) <span class="cov10" title="10">{
+        config := ts.factory.GetConfig()
+        connConfig := kafkasync.ConnectionConfig{
+                BootstrapServers: config.Brokers,
+        }
+
+        // Configure SASL if enabled
+        if config.SASLEnabled </span><span class="cov6" title="4">{
+                mechanism, err := ts.factory.createSASLMechanism()
+                if err != nil </span><span class="cov0" title="0">{
+                        return connConfig, fmt.Errorf("failed to create SASL mechanism: %w", err)
+                }</span>
+                <span class="cov6" title="4">connConfig.SASLMechanism = mechanism</span>
+        }
+
+        // Configure TLS if enabled
+        <span class="cov10" title="10">if config.TLSEnabled </span><span class="cov6" title="4">{
+                connConfig.TLS = &amp;tls.Config{
+                        InsecureSkipVerify: config.TLSSkipVerify,
+                }
+        }</span>
+
+        <span class="cov10" title="10">return connConfig, nil</span>
+}
+
+// LoadTopicsConfig loads a kafkasync configuration from a file
+func LoadTopicsConfig(filename string) (*kafkasync.Config, error) <span class="cov5" title="3">{
+        return kafkasync.LoadConfigFromFile(filename)
+}</span>
+
+// CreateDefaultTopicsConfig creates a default topics configuration
+func CreateDefaultTopicsConfig(topics []kafkasync.Topic) *kafkasync.Config <span class="cov1" title="1">{
+        return &amp;kafkasync.Config{
+                Defaults: kafkasync.Defaults{
+                        PartitionCount:    16,
+                        ReplicationFactor: 2,
+                        TopicConfig: map[string]string{
+                                "retention.ms": "7200000", // 2 hours
+                        },
+                },
+                Topics:           topics,
+                OperationTimeout: 30 * time.Second,
+        }
+}</span>
+</pre>
+		
+		</div>
+	</body>
+	<script>
+	(function() {
+		var files = document.getElementById('files');
+		var visible;
+		files.addEventListener('change', onChange, false);
+		function select(part) {
+			if (visible)
+				visible.style.display = 'none';
+			visible = document.getElementById(part);
+			if (!visible)
+				return;
+			files.value = part;
+			visible.style.display = 'block';
+			location.hash = part;
+		}
+		function onChange() {
+			select(files.value);
+			window.scrollTo(0, 0);
+		}
+		if (location.hash != "") {
+			select(location.hash.substr(1));
+		}
+		if (!visible) {
+			select("file0");
+		}
+	})();
+	</script>
+</html>
