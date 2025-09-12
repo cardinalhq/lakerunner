@@ -124,14 +124,25 @@ func (w *TraceCleanupWorkItem) Perform(ctx context.Context) time.Duration {
 		}
 	}
 
-	// Execute database deletions
+	// Execute database deletions using batch operation
 	dbDeletedCount := 0
-	for _, params := range dbRecordsToDelete {
-		if err := w.mdb.TraceSegmentCleanupDelete(ctx, params); err != nil {
-			ll.Error("Failed to delete segment from database", slog.Any("error", err))
-		} else {
-			dbDeletedCount++
+	if len(dbRecordsToDelete) > 0 {
+		// Convert to batch delete parameters
+		batchParams := make([]lrdb.TraceSegmentCleanupBatchDeleteParams, len(dbRecordsToDelete))
+		for i, params := range dbRecordsToDelete {
+			batchParams[i] = lrdb.TraceSegmentCleanupBatchDeleteParams(params)
 		}
+
+		// Execute batch delete
+		batchResults := w.mdb.TraceSegmentCleanupBatchDelete(ctx, batchParams)
+		batchResults.Exec(func(i int, err error) {
+			if err != nil {
+				ll.Error("Failed to delete segment from database in batch", slog.Any("error", err), slog.Int("batch_index", i))
+			} else {
+				dbDeletedCount++
+			}
+		})
+		batchResults.Close()
 	}
 
 	// Update metrics

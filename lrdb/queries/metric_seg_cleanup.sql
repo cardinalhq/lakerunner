@@ -21,3 +21,11 @@ WHERE organization_id = @organization_id
   AND frequency_ms = @frequency_ms
   AND segment_id = @segment_id
   AND instance_num = @instance_num;
+
+-- name: MetricSegmentCleanupBatchDelete :batchexec
+DELETE FROM metric_seg
+WHERE organization_id = @organization_id
+  AND dateint = @dateint
+  AND frequency_ms = @frequency_ms
+  AND segment_id = @segment_id
+  AND instance_num = @instance_num;
