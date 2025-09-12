@@ -25,10 +25,6 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/fly"
 )
 
-func ensureKafkaTopics(ctx context.Context) error {
-	return ensureKafkaTopicsWithFile(ctx, "")
-}
-
 func ensureKafkaTopicsWithFile(ctx context.Context, flagKafkaTopicsFile string) error {
 	if err := validateKafkaConfig(); err != nil {
 		return fmt.Errorf("Kafka configuration validation failed: %w", err)
