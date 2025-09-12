@@ -938,9 +938,8 @@ func TestMetricCompactionProcessor_ProcessWorkInterface(t *testing.T) {
 		Offsets:       map[int32]int64{0: 100},
 	}
 
-	// Test that the method exists - we can't call it without full mocking
-	// but we can verify the interface is satisfied
-	assert.NotNil(t, processor.ProcessWork)
+	// Test that the processor exists and has the right store
+	assert.NotNil(t, processor.store)
 
 	// Verify the parameters are the expected types
 	assert.IsType(t, group, group)

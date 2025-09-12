@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"runtime"
 
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -34,10 +35,12 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-// MetricCompactionProcessor implements compaction processing for metrics using the base framework
+// MetricCompactionProcessor implements compaction processing for metrics
 type MetricCompactionProcessor struct {
-	*CommonProcessorBase[*messages.MetricCompactionMessage, messages.CompactionKey]
-	store MetricCompactionStore
+	store           MetricCompactionStore
+	storageProvider storageprofile.StorageProfileProvider
+	cmgr            cloudstorage.ClientProvider
+	cfg             *config.Config
 }
 
 // NewMetricCompactionProcessor creates a new metric compaction processor
@@ -48,145 +51,11 @@ func NewMetricCompactionProcessor(
 	cfg *config.Config,
 ) *MetricCompactionProcessor {
 	return &MetricCompactionProcessor{
-		CommonProcessorBase: NewCommonProcessorBase[*messages.MetricCompactionMessage, messages.CompactionKey](
-			storageProvider,
-			cmgr,
-			cfg,
-		),
-		store: store,
+		store:           store,
+		storageProvider: storageProvider,
+		cmgr:            cmgr,
+		cfg:             cfg,
 	}
-}
-
-// Process implements the processor interface for metric compaction
-func (p *MetricCompactionProcessor) Process(ctx context.Context, group *accumulationGroup[messages.CompactionKey], kafkaCommitData *KafkaCommitData) error {
-	// Log compaction start with metric-specific fields
-	p.LogCompactionStart(ctx, group, "metrics",
-		slog.String("organizationID", group.Key.OrganizationID.String()),
-		slog.Int("dateint", int(group.Key.DateInt)),
-		slog.Int("frequencyMs", int(group.Key.FrequencyMs)),
-		slog.Int("instanceNum", int(group.Key.InstanceNum)),
-	)
-
-	// Use the base framework for common processing
-	return p.ProcessCore(ctx, group, kafkaCommitData, p)
-}
-
-// ProcessWork handles the metric-specific work logic
-func (p *MetricCompactionProcessor) ProcessWork(
-	ctx context.Context,
-	tmpDir string,
-	storageClient cloudstorage.Client,
-	storageProfile storageprofile.StorageProfile,
-	group *accumulationGroup[messages.CompactionKey],
-	kafkaCommitData *KafkaCommitData,
-) error {
-	ll := logctx.FromContext(ctx)
-
-	recordCountEstimate := p.store.GetMetricEstimate(ctx, group.Key.OrganizationID, group.Key.FrequencyMs)
-
-	// Process segments
-	var activeSegments []lrdb.MetricSeg
-	var segmentsToMarkCompacted []lrdb.MetricSeg
-	targetSizeThreshold := config.TargetFileSize * 80 / 100 // 80% of target file size
-
-	for _, accMsg := range group.Messages {
-		msg, ok := accMsg.Message.(*messages.MetricCompactionMessage)
-		if !ok {
-			ll.Debug("Skipping non-MetricCompactionMessage message in compaction group")
-			continue
-		}
-		segment, err := p.store.GetMetricSeg(ctx, lrdb.GetMetricSegParams{
-			OrganizationID: msg.OrganizationID,
-			Dateint:        msg.DateInt,
-			FrequencyMs:    msg.FrequencyMs,
-			SegmentID:      msg.SegmentID,
-			InstanceNum:    msg.InstanceNum,
-		})
-		if err != nil {
-			ll.Warn("Failed to fetch segment, skipping",
-				slog.Int64("segmentID", msg.SegmentID),
-				slog.String("organizationID", msg.OrganizationID.String()),
-				slog.Int("dateint", int(msg.DateInt)),
-				slog.Int("frequencyMs", int(msg.FrequencyMs)),
-				slog.Int("instanceNum", int(msg.InstanceNum)),
-				slog.Any("error", err))
-			continue
-		}
-
-		if !segment.Compacted && segment.FileSize >= targetSizeThreshold {
-			ll.Info("Segment already close to target size, marking as compacted",
-				slog.Int64("segmentID", segment.SegmentID),
-				slog.Int64("fileSize", segment.FileSize),
-				slog.Int64("targetSizeThreshold", targetSizeThreshold),
-				slog.Float64("percentOfTarget", float64(segment.FileSize)/float64(config.TargetFileSize)*100))
-			segmentsToMarkCompacted = append(segmentsToMarkCompacted, segment)
-			continue
-		}
-
-		if segment.Compacted {
-			ll.Info("Segment already marked as compacted, skipping", slog.Int64("segmentID", segment.SegmentID))
-			continue
-		}
-
-		activeSegments = append(activeSegments, segment)
-	}
-
-	// Mark large segments as compacted if any
-	if len(segmentsToMarkCompacted) > 0 {
-		if err := p.markSegmentsAsCompacted(ctx, segmentsToMarkCompacted, group.Key); err != nil {
-			ll.Warn("Failed to mark segments as compacted", slog.Any("error", err))
-		} else {
-			ll.Info("Marked segments as compacted",
-				slog.Int("segmentCount", len(segmentsToMarkCompacted)))
-		}
-	}
-
-	if len(activeSegments) == 0 {
-		ll.Info("No active segments to compact")
-		return nil
-	}
-
-	ll.Info("Found segments to compact",
-		slog.Int("activeSegments", len(activeSegments)))
-
-	// Perform the core compaction logic
-	processedSegments, results, err := p.performCompaction(ctx, tmpDir, storageClient, group.Key, storageProfile, activeSegments, recordCountEstimate)
-	if err != nil {
-		return fmt.Errorf("perform compaction: %w", err)
-	}
-
-	// Upload new files and create new metric segments
-	newSegments, err := p.uploadAndCreateSegments(ctx, storageClient, storageProfile, results, group.Key, activeSegments)
-	if err != nil {
-		return fmt.Errorf("upload and create segments: %w", err)
-	}
-
-	// Atomic operation - mark old as compacted, insert new, update Kafka offsets
-	if err := p.atomicDatabaseUpdate(ctx, activeSegments, newSegments, kafkaCommitData, group.Key); err != nil {
-		return fmt.Errorf("atomic database update: %w", err)
-	}
-
-	var totalRecords, totalSize int64
-	for _, result := range results {
-		totalRecords += result.RecordCount
-		totalSize += result.FileSize
-	}
-
-	// Log the compaction operation to seg_log for debugging (if enabled)
-	if p.cfg.SegLog.Enabled {
-		if err := p.logCompactionOperation(ctx, storageProfile, processedSegments, newSegments, results, group.Key, recordCountEstimate); err != nil {
-			// Don't fail the compaction if seg_log fails - this is just for debugging
-			ll.Warn("Failed to log compaction operation to seg_log", slog.Any("error", err))
-		}
-	}
-
-	ll.Info("Compaction completed successfully",
-		slog.Int("inputSegments", len(activeSegments)),
-		slog.Int("outputFiles", len(results)),
-		slog.Int64("outputRecords", totalRecords),
-		slog.Int64("outputFileSize", totalSize))
-
-	return nil
 }
 
 // GetTargetRecordCount returns the target record count for a grouping key
@@ -307,7 +176,7 @@ func (p *MetricCompactionProcessor) atomicDatabaseUpdate(ctx context.Context, ol
 			})
 
 			// Log each Kafka offset update
-			ll.Info("Updating Kafka consumer group offset",
+			ll.Debug("Updating Kafka consumer group offset",
 				slog.String("consumerGroup", kafkaCommitData.ConsumerGroup),
 				slog.String("topic", kafkaCommitData.Topic),
 				slog.Int("partition", int(partition)),
@@ -429,4 +298,153 @@ func (p *MetricCompactionProcessor) logCompactionOperation(ctx context.Context, 
 		key.FrequencyMs,
 		p.getHourFromTimestamp,
 	)
+}
+
+// ProcessBundle processes a compaction bundle directly (simplified interface)
+func (p *MetricCompactionProcessor) ProcessBundle(ctx context.Context, key messages.CompactionKey, msgs []*messages.MetricCompactionMessage, partition int32, offset int64) error {
+	ll := logctx.FromContext(ctx)
+
+	defer runtime.GC() // TODO find a way to not need this
+
+	if len(msgs) == 0 {
+		return nil
+	}
+
+	ll.Info("Starting compaction processing",
+		slog.String("organizationID", key.OrganizationID.String()),
+		slog.Int("dateint", int(key.DateInt)),
+		slog.Int("frequencyMs", int(key.FrequencyMs)),
+		slog.Int("instanceNum", int(key.InstanceNum)),
+		slog.Int("messageCount", len(msgs)))
+
+	recordCountEstimate := p.store.GetMetricEstimate(ctx, key.OrganizationID, key.FrequencyMs)
+
+	// Create temporary directory for this compaction run
+	tmpDir, err := os.MkdirTemp("", "")
+	if err != nil {
+		return fmt.Errorf("create temporary directory: %w", err)
+	}
+	defer func() {
+		if cleanupErr := os.RemoveAll(tmpDir); cleanupErr != nil {
+			ll.Warn("Failed to cleanup temporary directory", slog.String("tmpDir", tmpDir), slog.Any("error", cleanupErr))
+		}
+	}()
+
+	storageProfile, err := p.storageProvider.GetStorageProfileForOrganizationAndInstance(ctx, key.OrganizationID, key.InstanceNum)
+	if err != nil {
+		return fmt.Errorf("get storage profile: %w", err)
+	}
+
+	storageClient, err := cloudstorage.NewClient(ctx, p.cmgr, storageProfile)
+	if err != nil {
+		return fmt.Errorf("create storage client: %w", err)
+	}
+
+	// Process segments
+	var activeSegments []lrdb.MetricSeg
+	var segmentsToMarkCompacted []lrdb.MetricSeg
+	targetSizeThreshold := config.TargetFileSize * 80 / 100 // 80% of target file size
+
+	for _, msg := range msgs {
+		segment, err := p.store.GetMetricSeg(ctx, lrdb.GetMetricSegParams{
+			OrganizationID: msg.OrganizationID,
+			Dateint:        msg.DateInt,
+			FrequencyMs:    msg.FrequencyMs,
+			SegmentID:      msg.SegmentID,
+			InstanceNum:    msg.InstanceNum,
+		})
+		if err != nil {
+			ll.Warn("Failed to fetch segment, skipping",
+				slog.Int64("segmentID", msg.SegmentID),
+				slog.String("organizationID", msg.OrganizationID.String()),
+				slog.Int("dateint", int(msg.DateInt)),
+				slog.Int("frequencyMs", int(msg.FrequencyMs)),
+				slog.Int("instanceNum", int(msg.InstanceNum)),
+				slog.Any("error", err))
+			continue
+		}
+
+		if !segment.Compacted && segment.FileSize >= targetSizeThreshold {
+			ll.Info("Segment already close to target size, marking as compacted",
+				slog.Int64("segmentID", segment.SegmentID),
+				slog.Int64("fileSize", segment.FileSize),
+				slog.Int64("targetSizeThreshold", targetSizeThreshold),
+				slog.Float64("percentOfTarget", float64(segment.FileSize)/float64(config.TargetFileSize)*100))
+			segmentsToMarkCompacted = append(segmentsToMarkCompacted, segment)
+			continue
+		}
+
+		if segment.Compacted {
+			ll.Info("Segment already marked as compacted, skipping", slog.Int64("segmentID", segment.SegmentID))
+			continue
+		}
+
+		activeSegments = append(activeSegments, segment)
+	}
+
+	// Mark large segments as compacted if any
+	if len(segmentsToMarkCompacted) > 0 {
+		if err := p.markSegmentsAsCompacted(ctx, segmentsToMarkCompacted, key); err != nil {
+			ll.Warn("Failed to mark segments as compacted", slog.Any("error", err))
+		} else {
+			ll.Info("Marked segments as compacted",
+				slog.Int("segmentCount", len(segmentsToMarkCompacted)))
+		}
+	}
+
+	if len(activeSegments) == 0 {
+		ll.Info("No active segments to compact")
+		return nil
+	}
+
+	ll.Info("Found segments to compact",
+		slog.Int("activeSegments", len(activeSegments)))
+
+	// Perform the core compaction logic
+	processedSegments, results, err := p.performCompaction(ctx, tmpDir, storageClient, key, storageProfile, activeSegments, recordCountEstimate)
+	if err != nil {
+		return fmt.Errorf("perform compaction: %w", err)
+	}
+
+	// Upload new files and create new metric segments
+	newSegments, err := p.uploadAndCreateSegments(ctx, storageClient, storageProfile, results, key, activeSegments)
+	if err != nil {
+		return fmt.Errorf("upload and create segments: %w", err)
+	}
+
+	// Create KafkaCommitData for offset tracking
+	kafkaCommitData := &KafkaCommitData{
+		Topic:         "lakerunner.segments.metrics.compact",
+		ConsumerGroup: "lakerunner.compact.metrics",
+		Offsets: map[int32]int64{
+			partition: offset + 1,
+		},
+	}
+
+	// Atomic operation - mark old as compacted, insert new, update Kafka offsets
+	if err := p.atomicDatabaseUpdate(ctx, activeSegments, newSegments, kafkaCommitData, key); err != nil {
+		return fmt.Errorf("atomic database update: %w", err)
+	}
+
+	var totalRecords, totalSize int64
+	for _, result := range results {
+		totalRecords += result.RecordCount
+		totalSize += result.FileSize
+	}
+
+	// Log the compaction operation to segment_journal for debugging (if enabled)
+	if p.cfg.SegLog.Enabled {
+		if err := p.logCompactionOperation(ctx, storageProfile, processedSegments, newSegments, results, key, recordCountEstimate); err != nil {
+			// Don't fail the compaction if seg_log fails - this is just for debugging
+			ll.Warn("Failed to log compaction operation to segment_journal", slog.Any("error", err))
+		}
+	}
+
+	ll.Info("Compaction completed successfully",
+		slog.Int("inputSegments", len(activeSegments)),
+		slog.Int("outputFiles", len(results)),
+		slog.Int64("outputRecords", totalRecords),
+		slog.Int64("outputFileSize", totalSize))
+
+	return nil
 }

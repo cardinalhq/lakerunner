@@ -34,8 +34,8 @@ type BoxerStore interface {
 	KafkaJournalBatchUpsert(ctx context.Context, arg []lrdb.KafkaJournalBatchUpsertParams) *lrdb.KafkaJournalBatchUpsertBatchResults
 }
 
-// MetricBoxerConsumer handles metric rollup bundling using CommonConsumer
-type MetricBoxerConsumer struct {
+// MetricRollupBoxerConsumer handles metric rollup bundling using CommonConsumer
+type MetricRollupBoxerConsumer struct {
 	*CommonConsumer[*messages.MetricRollupMessage, messages.RollupKey]
 }
 
@@ -45,7 +45,7 @@ func NewMetricBoxerConsumer(
 	factory *fly.Factory,
 	store BoxerStore,
 	cfg *config.Config,
-) (*MetricBoxerConsumer, error) {
+) (*MetricRollupBoxerConsumer, error) {
 
 	// Create Kafka producer for sending rollup bundles
 	producer, err := factory.CreateProducer()
@@ -71,9 +71,9 @@ func NewMetricBoxerConsumer(
 
 	// Configure the consumer - consuming from boxer input topic
 	consumerConfig := CommonConsumerConfig{
-		ConsumerName:  "lakerunner-metric-boxer",
+		ConsumerName:  "lakerunner-boxer-metrics-rollup",
 		Topic:         "lakerunner.boxer.metrics.rollup",
-		ConsumerGroup: "lakerunner.boxer.metrics",
+		ConsumerGroup: "lakerunner.boxer.metrics.rollup",
 		FlushInterval: flushInterval,
 		StaleAge:      maxAccumulationTime,
 		MaxAge:        maxAccumulationTime,
@@ -92,7 +92,7 @@ func NewMetricBoxerConsumer(
 		return nil, fmt.Errorf("failed to create common consumer: %w", err)
 	}
 
-	return &MetricBoxerConsumer{
+	return &MetricRollupBoxerConsumer{
 		CommonConsumer: commonConsumer,
 	}, nil
 }

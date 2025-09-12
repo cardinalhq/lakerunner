@@ -20,6 +20,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"runtime"
 	"sync"
 	"time"
 
@@ -238,6 +239,8 @@ func validateTraceIngestGroupConsistency(group *accumulationGroup[messages.Inges
 // Process implements the Processor interface and performs raw trace ingestion
 func (p *TraceIngestProcessor) Process(ctx context.Context, group *accumulationGroup[messages.IngestKey], kafkaCommitData *KafkaCommitData) error {
 	ll := logctx.FromContext(ctx)
+
+	defer runtime.GC() // TODO find a way to not need this
 
 	// Calculate group age from Hunter timestamp
 	groupAge := time.Since(group.CreatedAt)
