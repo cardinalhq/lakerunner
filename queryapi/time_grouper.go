@@ -163,7 +163,9 @@ func buildWindows(segs []SegmentInfo, stepMs int64) []SegmentGroup {
 }
 
 // packByCount partitions contiguously with zero overlap across groups,
-// supporting both forward (oldest→newest) and reverse (newest→oldest).
+// supports forward (oldest→newest) and reverse (newest→oldest), and
+// promotes a later "bridge" window to avoid premature flushes caused
+// by sorting-by-EndTs.
 func packByCount(wins []SegmentGroup, minGroupSize int, qStart, qEnd int64, reverse bool) []SegmentGroup {
 	if len(wins) == 0 {
 		return nil
@@ -177,7 +179,7 @@ func packByCount(wins []SegmentGroup, minGroupSize int, qStart, qEnd int64, reve
 	var (
 		parts             []SegmentInfo
 		currGS, currGE    int64 // envelope of windows in the current group
-		firstEnd, lastEnd int64 // firstEnd: end of first window added; lastEnd: end of last window added
+		firstEnd, lastEnd int64 // end of first added window; end of last added window
 		count             int
 		haveGrp           bool
 		prevEdge          int64 // tiling edge from previous group
@@ -196,7 +198,7 @@ func packByCount(wins []SegmentGroup, minGroupSize int, qStart, qEnd int64, reve
 	}
 
 	emit := func(gs, ge int64) {
-		// Clamp to query
+		// Clamp group window to query range.
 		if gs < qStart {
 			gs = qStart
 		}
@@ -207,7 +209,7 @@ func packByCount(wins []SegmentGroup, minGroupSize int, qStart, qEnd int64, reve
 			return
 		}
 
-		// Merge per (SegmentID, ExprID)
+		// Merge per (SegmentID, ExprID).
 		type key struct {
 			id   int64
 			expr string
@@ -228,7 +230,7 @@ func packByCount(wins []SegmentGroup, minGroupSize int, qStart, qEnd int64, reve
 			}
 		}
 
-		// Clamp each merged segment to [gs, ge]
+		// Clamp each merged segment to [gs, ge].
 		segs := make([]SegmentInfo, 0, len(merged))
 		for _, v := range merged {
 			if v.StartTs < gs {
@@ -254,24 +256,23 @@ func packByCount(wins []SegmentGroup, minGroupSize int, qStart, qEnd int64, reve
 		}
 		var gs, ge int64
 		if reverse {
-			// Reverse: emit full contiguous span, trimmed by tiling edge on the right.
+			// Emit full contiguous span we’ve accumulated, but tile backward.
 			gs = currGS
 			ge = firstEnd
 			if ge > prevEdge {
 				ge = prevEdge
 			}
 		} else {
-			// Forward: start cannot be before the tiling edge.
+			// Emit full contiguous span, but tile forward.
 			gs = currGS
 			if gs < prevEdge {
 				gs = prevEdge
 			}
 			ge = lastEnd
 		}
-
 		if gs < ge {
 			emit(gs, ge)
-			// advance tiling edge
+			// Advance tiling edge: no overlaps across groups.
 			if reverse {
 				prevEdge = gs
 			} else {
@@ -300,19 +301,56 @@ func packByCount(wins []SegmentGroup, minGroupSize int, qStart, qEnd int64, reve
 		count += len(w.Segments)
 	}
 
-	for _, w := range wins {
+	overlapsOrTouches := func(aStart, aEnd, bStart, bEnd int64) bool {
+		// Treat touching as contiguous: [aStart,aEnd] meets [bStart,bEnd] if
+		// bStart <= aEnd and bEnd >= aStart (not a strict gap on either side).
+		return !(bStart > aEnd || bEnd < aStart)
+	}
+
+	// Main: iterate with bridge-promotion when a non-overlap would force a flush.
+	for i := 0; i < len(wins); i++ {
+		w := wins[i]
 		if !haveGrp {
 			addWindow(w)
 		} else {
-			// Keep groups internally contiguous (overlap or touch required).
-			introducesGap := (w.StartTs > currGE) || (w.EndTs < currGS)
+			introducesGap := !overlapsOrTouches(currGS, currGE, w.StartTs, w.EndTs)
 			if introducesGap {
-				flush()
-				addWindow(w)
+				// Look ahead for any window that bridges the current envelope.
+				bridged := false
+				if !reverse {
+					// Forward: any later window with StartTs <= currGE overlaps/touches.
+					for j := i + 1; j < len(wins); j++ {
+						if overlapsOrTouches(currGS, currGE, wins[j].StartTs, wins[j].EndTs) {
+							// Promote the bridge to current position.
+							wins[i], wins[j] = wins[j], wins[i]
+							w = wins[i]
+							bridged = true
+							break
+						}
+					}
+				} else {
+					// Reverse: any later window with EndTs >= currGS overlaps/touches.
+					for j := i + 1; j < len(wins); j++ {
+						if overlapsOrTouches(currGS, currGE, wins[j].StartTs, wins[j].EndTs) {
+							wins[i], wins[j] = wins[j], wins[i]
+							w = wins[i]
+							bridged = true
+							break
+						}
+					}
+				}
+				if bridged {
+					addWindow(w)
+				} else {
+					// No bridge exists → end the current group cleanly, start new.
+					flush()
+					addWindow(w)
+				}
 			} else {
 				addWindow(w)
 			}
 		}
+
 		// Size-driven flush (tiling enforced via prevEdge).
 		if count >= minGroupSize {
 			flush()
