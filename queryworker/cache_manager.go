@@ -67,7 +67,7 @@ type CacheManager struct {
 	inflight   map[int64]*struct{} // singleflight per segmentID
 
 	profilesByOrgInstanceNum map[uuid.UUID]map[int16]storageprofile.StorageProfile
-	profilesMu               sync.RWMutex // <--- add this
+	profilesMu               sync.RWMutex
 
 	ingestQ    chan ingestJob
 	stopIngest context.CancelFunc
@@ -197,6 +197,7 @@ func EvaluatePushDown[T promql.Timestamped](
 			var s3IDs []int64
 			var cachedIDs []int64
 
+			// Sort by time (StartTs asc/desc), then EndTs, then SegmentID for stability.
 			sortSegments(segments, request)
 
 			for _, seg := range segments {
@@ -237,15 +238,10 @@ func EvaluatePushDown[T promql.Timestamped](
 				"numCached", len(cachedIDs),
 				"numPresent", numPresent)
 
-			// Stream uncached segments directly from S3 (one channel per glob).
+			// Stream uncached segments directly from S3 (interleaved batches).
 			s3Channels, err := streamFromS3(ctx, w, request,
-				profile.Bucket,
-				profile.Region,
-				profile.Endpoint,
-				s3URIs,
-				s3GlobSize,
-				userSQL,
-				mapper)
+				profile.Bucket, profile.Region, profile.Endpoint,
+				s3URIs, s3GlobSize, userSQL, mapper)
 			if err != nil {
 				return nil, fmt.Errorf("stream from S3: %w", err)
 			}
@@ -268,106 +264,111 @@ func EvaluatePushDown[T promql.Timestamped](
 	return promql.MergeSorted(ctx, ChannelBufferSize, request.Reverse, request.Limit, outs...), nil
 }
 
+// Stable time-first ordering (prevents long runs in one batch).
 func sortSegments(segments []queryapi.SegmentInfo, request queryapi.PushDownRequest) {
 	sort.Slice(segments, func(i, j int) bool {
 		if request.Reverse {
-			if segments[i].DateInt != segments[j].DateInt {
-				return segments[i].DateInt > segments[j].DateInt
+			if segments[i].StartTs != segments[j].StartTs {
+				return segments[i].StartTs > segments[j].StartTs
 			}
-			if segments[i].Hour != segments[j].Hour {
-				return segments[i].Hour > segments[j].Hour
+			if segments[i].EndTs != segments[j].EndTs {
+				return segments[i].EndTs > segments[j].EndTs
 			}
-			return segments[i].EndTs > segments[j].EndTs
+			return segments[i].SegmentID > segments[j].SegmentID
 		}
-		if segments[i].DateInt != segments[j].DateInt {
-			return segments[i].DateInt < segments[j].DateInt
+		if segments[i].StartTs != segments[j].StartTs {
+			return segments[i].StartTs < segments[j].StartTs
 		}
-		if segments[i].Hour != segments[j].Hour {
-			return segments[i].Hour < segments[j].Hour
+		if segments[i].EndTs != segments[j].EndTs {
+			return segments[i].EndTs < segments[j].EndTs
 		}
-		return segments[i].EndTs < segments[j].EndTs
+		return segments[i].SegmentID < segments[j].SegmentID
 	})
 }
 
-func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
+func streamCached[T promql.Timestamped](
+	ctx context.Context,
+	w *CacheManager,
 	request queryapi.PushDownRequest,
 	cachedIDs []int64,
-	userSQL string, mapper RowMapper[T]) []<-chan T {
+	userSQL string,
+	mapper RowMapper[T],
+) []<-chan T {
 	outs := make([]<-chan T, 0)
-
-	if len(cachedIDs) > 0 {
-		out := make(chan T, ChannelBufferSize)
-		outs = append(outs, out)
-
-		// Touch lastAccess for cached segments
-		w.mu.Lock()
-		now := time.Now()
-		for _, id := range cachedIDs {
-			w.lastAccess[id] = now
-		}
-		w.mu.Unlock()
-
-		go func(ids []int64, out chan<- T) {
-			defer close(out)
-
-			idLits := make([]string, len(ids))
-			for i, id := range ids {
-				idLits[i] = strconv.FormatInt(id, 10)
-			}
-			inList := strings.Join(idLits, ",")
-
-			// Replace {table} with cached table; replace sentinel "AND true" with segment filter.
-			cacheSQL := ""
-			if request.LogLeaf != nil || (request.BaseExpr != nil && request.BaseExpr.LogLeaf != nil) {
-				cacheBase := fmt.Sprintf("(SELECT * FROM %s WHERE segment_id IN (%s))", w.sink.table, inList)
-				cacheSQL = strings.Replace(userSQL, "{table}", cacheBase, 1)
-			} else {
-				cacheSQL = strings.Replace(userSQL, "{table}", w.sink.table, 1)
-				cacheSQL = strings.Replace(cacheSQL, "AND true", "AND segment_id IN ("+inList+")", 1)
-			}
-
-			slog.Info("Cache SQL", slog.String("sql", cacheSQL))
-
-			//slog.Info("Querying cached segments", slog.Int("numSegments", len(ids)), slog.String("sql", cacheSQL))
-			rows, conn, err := w.sink.db.QueryContext(ctx, cacheSQL)
-			if err != nil {
-				return
-			}
-			defer func(rows *sql.Rows) {
-				err := rows.Close()
-				if err != nil {
-					slog.Error("Error closing rows", slog.Any("error", err))
-				}
-			}(rows)
-
-			defer func(conn *sql.Conn) {
-				err := conn.Close()
-				if err != nil {
-					slog.Error("Error closing connection", slog.Any("error", err))
-				}
-			}(conn)
-
-			cols, err := rows.Columns()
-			if err != nil {
-				slog.Error("failed to get columns", "err", err)
-				return
-			}
-
-			for rows.Next() {
-				select {
-				case <-ctx.Done():
-					return
-				default:
-				}
-				v, mErr := mapper(request, cols, rows)
-				if mErr != nil {
-					return
-				}
-				out <- v
-			}
-			_ = rows.Err()
-		}(cachedIDs, out)
+	if len(cachedIDs) == 0 {
+		return outs
 	}
+
+	out := make(chan T, ChannelBufferSize)
+	outs = append(outs, out)
+
+	// Touch lastAccess for cached segments
+	w.mu.Lock()
+	now := time.Now()
+	for _, id := range cachedIDs {
+		w.lastAccess[id] = now
+	}
+	w.mu.Unlock()
+
+	go func(ids []int64, out chan<- T) {
+		defer close(out)
+
+		idLits := make([]string, len(ids))
+		for i, id := range ids {
+			idLits[i] = strconv.FormatInt(id, 10)
+		}
+		inList := strings.Join(idLits, ",")
+
+		// Replace {table} with cached table; replace sentinel "AND true" with segment filter.
+		cacheSQL := ""
+		if request.LogLeaf != nil || (request.BaseExpr != nil && request.BaseExpr.LogLeaf != nil) {
+			cacheBase := fmt.Sprintf("(SELECT * FROM %s WHERE segment_id IN (%s))", w.sink.table, inList)
+			cacheSQL = strings.Replace(userSQL, "{table}", cacheBase, 1)
+		} else {
+			cacheSQL = strings.Replace(userSQL, "{table}", w.sink.table, 1)
+			cacheSQL = strings.Replace(cacheSQL, "AND true", "AND segment_id IN ("+inList+")", 1)
+		}
+
+		slog.Info("Cache SQL", slog.String("sql", cacheSQL))
+
+		rows, conn, err := w.sink.db.QueryContext(ctx, cacheSQL)
+		if err != nil {
+			slog.Error("Cache query failed", slog.Any("error", err))
+			return
+		}
+		defer func() {
+			if err := rows.Close(); err != nil {
+				slog.Error("Error closing rows", slog.Any("error", err))
+			}
+			if err := conn.Close(); err != nil {
+				slog.Error("Error closing connection", slog.Any("error", err))
+			}
+		}()
+
+		cols, err := rows.Columns()
+		if err != nil {
+			slog.Error("failed to get columns", "err", err)
+			return
+		}
+
+		for rows.Next() {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+			v, mErr := mapper(request, cols, rows)
+			if mErr != nil {
+				slog.Error("Row mapping failed (cache)", slog.Any("error", mErr))
+				return
+			}
+			out <- v
+		}
+		if err := rows.Err(); err != nil {
+			slog.Error("Rows iteration error (cache)", slog.Any("error", err))
+		}
+	}(cachedIDs, out)
+
 	return outs
 }
 
@@ -387,11 +388,14 @@ func streamFromS3[T promql.Timestamped](
 		return []<-chan T{}, nil
 	}
 
+	// Interleave instead of slicing contiguously to avoid head-of-line blocking.
 	batches := chunkStrings(s3URIs, s3GlobSize)
-	//slog.Info("Chunked S3 URIs into batches", slog.Int("batches", len(batches)), slog.Int("incoming", len(s3URIs)))
 	outs := make([]<-chan T, 0, len(batches))
 
 	for _, uris := range batches {
+		if len(uris) == 0 {
+			continue
+		}
 		slog.Info("Streaming from S3", slog.Int("uris", len(uris)))
 		out := make(chan T, ChannelBufferSize)
 		outs = append(outs, out)
@@ -417,12 +421,10 @@ func streamFromS3[T promql.Timestamped](
 			conn, release, err := w.s3Db.GetConnection(ctx, bucket, region, endpoint)
 			connectionAcquireTime := time.Since(start)
 			slog.Info("S3 Connection Acquire Time", "duration", connectionAcquireTime.String(), "bucket", bucket)
-
 			if err != nil {
 				slog.Error("GetConnection failed", slog.String("bucket", bucket), slog.Any("error", err))
 				return
 			}
-			// Ensure rows close before releasing the connection
 			defer release()
 
 			rows, err := conn.QueryContext(ctx, sqlReplaced)
@@ -442,6 +444,12 @@ func streamFromS3[T promql.Timestamped](
 				return
 			}
 
+			var (
+				rowsSeen int
+				firstTs  int64
+				lastTs   int64
+			)
+
 			for rows.Next() {
 				select {
 				case <-ctx.Done():
@@ -450,18 +458,24 @@ func streamFromS3[T promql.Timestamped](
 				}
 				v, mErr := mapper(request, cols, rows)
 				if mErr != nil {
-					slog.Error("Row mapping failed", slog.Any("error", mErr))
+					slog.Error("Row mapping failed (s3)", slog.Any("error", mErr))
 					return
 				}
+				ts := v.GetTimestamp()
+				if rowsSeen == 0 {
+					firstTs = ts
+				}
+				lastTs = ts
+				rowsSeen++
 				out <- v
 			}
 			if err := rows.Err(); err != nil {
-				slog.Error("Rows iteration error", slog.Any("error", err))
+				slog.Error("Rows iteration error (s3)", slog.Any("error", err))
 			}
+			slog.Info("S3 batch stats", "uris", len(urisCopy), "rows", rowsSeen, "firstTs", firstTs, "lastTs", lastTs)
 		}(out)
 	}
 
-	// enqueue is done in EvaluatePushDown(...) after ids/paths are known
 	return outs, nil
 }
 
@@ -514,9 +528,7 @@ func (w *CacheManager) ingestLoop(ctx context.Context) {
 					slog.Error("Failed to download S3 objects", "error", err.Error())
 					w.mu.Lock()
 					for _, id := range job.ids {
-						if wg := w.inflight[id]; wg != nil {
-							delete(w.inflight, id)
-						}
+						delete(w.inflight, id)
 					}
 					w.mu.Unlock()
 					continue
@@ -528,9 +540,7 @@ func (w *CacheManager) ingestLoop(ctx context.Context) {
 				// release inflight on failure
 				w.mu.Lock()
 				for _, id := range job.ids {
-					if wg := w.inflight[id]; wg != nil {
-						delete(w.inflight, id)
-					}
+					delete(w.inflight, id)
 				}
 				w.mu.Unlock()
 				continue
@@ -540,12 +550,9 @@ func (w *CacheManager) ingestLoop(ctx context.Context) {
 			now := time.Now()
 			w.mu.Lock()
 			for _, id := range job.ids {
-				//slog.Info("Marking segment as present", slog.Int64("segmentID", id))
 				w.present[id] = struct{}{}
 				w.lastAccess[id] = now
-				if wg := w.inflight[id]; wg != nil {
-					delete(w.inflight, id)
-				}
+				delete(w.inflight, id)
 			}
 			w.mu.Unlock()
 
@@ -558,17 +565,23 @@ func (w *CacheManager) ingestLoop(ctx context.Context) {
 	}
 }
 
+// Interleaving chunker: compute k=ceil(n/size) buckets, then round-robin.
 func chunkStrings(xs []string, size int) [][]string {
-	if size <= 0 || len(xs) == 0 {
+	if len(xs) == 0 {
 		return nil
 	}
-	var out [][]string
-	for i := 0; i < len(xs); i += size {
-		j := i + size
-		if j > len(xs) {
-			j = len(xs)
-		}
-		out = append(out, xs[i:j])
+	if size <= 0 {
+		// Single batch with everything if size is invalid.
+		return [][]string{append([]string(nil), xs...)}
+	}
+
+	k := (len(xs) + size - 1) / size
+	if k < 1 {
+		k = 1
+	}
+	out := make([][]string, k)
+	for i, v := range xs {
+		out[i%k] = append(out[i%k], v)
 	}
 	return out
 }
