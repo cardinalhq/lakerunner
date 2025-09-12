@@ -415,7 +415,7 @@ func hasAzureCredentials() bool {
 func seedAzureSecretFromEnv(ctx context.Context, conn *sql.Conn, container, region string, endpoint string) error {
 	authType := os.Getenv("AZURE_AUTH_TYPE")
 	if authType == "" {
-		return fmt.Errorf("AZURE_AUTH_TYPE not set")
+		authType = "credential_chain" // Default to credential chain
 	}
 
 	// For Azure, storage account must be extracted from endpoint
@@ -455,13 +455,10 @@ func seedAzureSecretFromEnv(ctx context.Context, conn *sql.Conn, container, regi
 		_, _ = fmt.Fprintf(&b, "  PROVIDER connection_string,\n")
 		_, _ = fmt.Fprintf(&b, "  CONNECTION_STRING '%s'\n", escapeSingle(connectionString))
 
-	case "credential_chain":
-		// For managed identity, workload identity, etc.
+	default:
+		// For managed identity, workload identity, credential_chain, etc.
 		_, _ = fmt.Fprintf(&b, "  PROVIDER credential_chain,\n")
 		_, _ = fmt.Fprintf(&b, "  ACCOUNT_NAME '%s'\n", escapeSingle(storageAccount))
-
-	default:
-		return fmt.Errorf("unsupported Azure auth type: %s", authType)
 	}
 
 	_, _ = fmt.Fprintf(&b, ");")
