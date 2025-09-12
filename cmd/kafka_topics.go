@@ -36,7 +36,7 @@ type TopicConfig struct {
 	Config            map[string]string `yaml:"config,omitempty"`
 }
 
-func ensureKafkaTopics() error {
+func ensureKafkaTopics(ctx context.Context) error {
 	if err := validateKafkaConfig(); err != nil {
 		return fmt.Errorf("Kafka configuration validation failed: %w", err)
 	}
@@ -79,7 +79,7 @@ func ensureKafkaTopics() error {
 	// Use existing Kafka factory
 	factory := fly.NewFactory(&appConfig.Fly)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	return createTopics(ctx, factory, topics)
@@ -104,7 +104,7 @@ func loadKafkaTopicsWithReader(filename string, fileReader initialize.FileReader
 	return topics, nil
 }
 
-func createTopics(ctx context.Context, factory *fly.Factory, topics []TopicConfig) error {
+func createTopics(_ context.Context, factory *fly.Factory, topics []TopicConfig) error {
 	brokers := factory.GetConfig().Brokers
 
 	// Connect to first broker

@@ -44,6 +44,8 @@ var SetupCmd = &cobra.Command{
 }
 
 func setup(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
+
 	slog.Info("Starting LakeRunner setup")
 
 	// Run database migrations unless skipped
@@ -59,7 +61,7 @@ func setup(cmd *cobra.Command, args []string) error {
 	// Run Kafka topic setup unless skipped
 	if !skipKafka {
 		slog.Info("Setting up Kafka topics")
-		if err := ensureKafkaTopics(); err != nil {
+		if err := ensureKafkaTopics(ctx); err != nil {
 			return fmt.Errorf("Kafka topic setup failed: %w", err)
 		}
 	} else {
