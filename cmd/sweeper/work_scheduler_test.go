@@ -28,14 +28,13 @@ import (
 // MockWorkItem is a test implementation of WorkItem
 type MockWorkItem struct {
 	mock.Mock
-	nextRunTime      time.Time
-	key              string
-	consecutiveEmpty int
+	nextRunTime time.Time
+	key         string
 }
 
-func (m *MockWorkItem) Perform(ctx context.Context) WorkResult {
+func (m *MockWorkItem) Perform(ctx context.Context) time.Duration {
 	args := m.Called(ctx)
-	return args.Get(0).(WorkResult)
+	return args.Get(0).(time.Duration)
 }
 
 func (m *MockWorkItem) GetNextRunTime() time.Time {
@@ -48,18 +47,6 @@ func (m *MockWorkItem) SetNextRunTime(t time.Time) {
 
 func (m *MockWorkItem) GetKey() string {
 	return m.key
-}
-
-func (m *MockWorkItem) UpdateBackoff(result WorkResult) {
-	m.Called(result)
-	// Simple implementation for testing
-	switch result {
-	case WorkResultNoWork:
-		m.consecutiveEmpty++
-	case WorkResultLittle, WorkResultMaxWork:
-		m.consecutiveEmpty = 0
-	}
-	m.nextRunTime = updateBackoffTiming(m.consecutiveEmpty)
 }
 
 // Test WorkItemHeap
@@ -179,26 +166,25 @@ func TestWorkScheduler_rescheduleWorkItem(t *testing.T) {
 			nextRunTime: time.Now(),
 			key:         "test-key",
 		}
-		mockItem.On("UpdateBackoff", WorkResultMaxWork).Return()
 
-		scheduler.rescheduleWorkItem(mockItem, WorkResultMaxWork)
+		scheduler.rescheduleWorkItem(mockItem, 5*time.Minute)
 
 		assert.Equal(t, 1, scheduler.heap.Len())
-		mockItem.AssertExpectations(t)
+		// Verify next run time was updated
+		assert.True(t, mockItem.GetNextRunTime().After(time.Now().Add(4*time.Minute)))
 	})
 
-	t.Run("drop work item", func(t *testing.T) {
+	t.Run("drop work item with negative duration", func(t *testing.T) {
 		scheduler := newWorkScheduler()
 		mockItem := &MockWorkItem{
 			nextRunTime: time.Now(),
 			key:         "test-key",
 		}
 
-		scheduler.rescheduleWorkItem(mockItem, WorkResultDropped)
+		scheduler.rescheduleWorkItem(mockItem, -1*time.Second)
 
 		// Should not be added back to heap
 		assert.Equal(t, 0, scheduler.heap.Len())
-		// UpdateBackoff should not be called for dropped items
 	})
 }
 

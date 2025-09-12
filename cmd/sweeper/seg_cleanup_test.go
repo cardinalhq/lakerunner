@@ -16,7 +16,6 @@ package sweeper
 
 import (
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -64,88 +63,6 @@ func TestGetHourFromTimestamp(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			hour := getHourFromTimestamp(tt.timestampMs)
 			assert.Equal(t, tt.expectedHr, hour)
-		})
-	}
-}
-
-func TestUpdateBackoffTiming(t *testing.T) {
-	now := time.Now()
-
-	tests := []struct {
-		name             string
-		consecutiveEmpty int
-		expectedMin      time.Duration
-		expectedMax      time.Duration
-	}{
-		{
-			name:             "0 empty - 1 minute",
-			consecutiveEmpty: 0,
-			expectedMin:      59 * time.Second,
-			expectedMax:      61 * time.Second,
-		},
-		{
-			name:             "2 empty - 1 minute",
-			consecutiveEmpty: 2,
-			expectedMin:      59 * time.Second,
-			expectedMax:      61 * time.Second,
-		},
-		{
-			name:             "3 empty - 5 minutes",
-			consecutiveEmpty: 3,
-			expectedMin:      4*time.Minute + 59*time.Second,
-			expectedMax:      5*time.Minute + 1*time.Second,
-		},
-		{
-			name:             "5 empty - 5 minutes",
-			consecutiveEmpty: 5,
-			expectedMin:      4*time.Minute + 59*time.Second,
-			expectedMax:      5*time.Minute + 1*time.Second,
-		},
-		{
-			name:             "6 empty - 15 minutes",
-			consecutiveEmpty: 6,
-			expectedMin:      14*time.Minute + 59*time.Second,
-			expectedMax:      15*time.Minute + 1*time.Second,
-		},
-		{
-			name:             "10 empty - 15 minutes",
-			consecutiveEmpty: 10,
-			expectedMin:      14*time.Minute + 59*time.Second,
-			expectedMax:      15*time.Minute + 1*time.Second,
-		},
-		{
-			name:             "11 empty - 30 minutes",
-			consecutiveEmpty: 11,
-			expectedMin:      29*time.Minute + 59*time.Second,
-			expectedMax:      30*time.Minute + 1*time.Second,
-		},
-		{
-			name:             "20 empty - 30 minutes",
-			consecutiveEmpty: 20,
-			expectedMin:      29*time.Minute + 59*time.Second,
-			expectedMax:      30*time.Minute + 1*time.Second,
-		},
-		{
-			name:             "21 empty - 1 hour",
-			consecutiveEmpty: 21,
-			expectedMin:      59*time.Minute + 59*time.Second,
-			expectedMax:      60*time.Minute + 1*time.Second,
-		},
-		{
-			name:             "100 empty - 1 hour",
-			consecutiveEmpty: 100,
-			expectedMin:      59*time.Minute + 59*time.Second,
-			expectedMax:      60*time.Minute + 1*time.Second,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := updateBackoffTiming(tt.consecutiveEmpty)
-
-			duration := result.Sub(now)
-			assert.GreaterOrEqual(t, duration, tt.expectedMin, "Duration too short")
-			assert.LessOrEqual(t, duration, tt.expectedMax, "Duration too long")
 		})
 	}
 }

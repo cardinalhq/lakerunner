@@ -42,7 +42,7 @@ type LogCleanupWorkItem struct {
 	cmgr             cloudstorage.ClientProvider
 }
 
-func (w *LogCleanupWorkItem) Perform(ctx context.Context) WorkResult {
+func (w *LogCleanupWorkItem) Perform(ctx context.Context) time.Duration {
 	ll := logctx.FromContext(ctx).With(
 		slog.String("org_id", w.OrganizationID.String()),
 		slog.Int("dateint", int(w.DateInt)),
@@ -58,11 +58,13 @@ func (w *LogCleanupWorkItem) Perform(ctx context.Context) WorkResult {
 	})
 	if err != nil {
 		ll.Error("Failed to get log segments for cleanup", slog.Any("error", err))
-		return WorkResultNoWork
+		w.ConsecutiveEmpty++
+		return w.calculateBackoff()
 	}
 
 	if len(segments) == 0 {
-		return WorkResultNoWork
+		w.ConsecutiveEmpty++
+		return w.calculateBackoff()
 	}
 
 	// Process segments (simplified version)
@@ -111,22 +113,33 @@ func (w *LogCleanupWorkItem) Perform(ctx context.Context) WorkResult {
 	}
 
 	if processed > 0 {
-		return WorkResultMaxWork
+		w.ConsecutiveEmpty = 0
+		if processed >= 1000 {
+			// Hit the limit, likely more work available - retry very quickly
+			return 2 * time.Second
+		}
+		return time.Minute // Normal retry for some work
 	}
-	return WorkResultNoWork
+
+	w.ConsecutiveEmpty++
+	return w.calculateBackoff()
 }
 
 func (w *LogCleanupWorkItem) GetNextRunTime() time.Time  { return w.NextRunTime }
 func (w *LogCleanupWorkItem) SetNextRunTime(t time.Time) { w.NextRunTime = t }
 func (w *LogCleanupWorkItem) GetKey() string             { return makeOrgDateintKey(w.OrganizationID, w.DateInt) }
 
-func (w *LogCleanupWorkItem) UpdateBackoff(result WorkResult) {
-	switch result {
-	case WorkResultNoWork:
-		w.ConsecutiveEmpty++
-	case WorkResultLittle, WorkResultMaxWork:
-		w.ConsecutiveEmpty = 0
+func (w *LogCleanupWorkItem) calculateBackoff() time.Duration {
+	switch {
+	case w.ConsecutiveEmpty <= 2:
+		return time.Minute
+	case w.ConsecutiveEmpty <= 5:
+		return 5 * time.Minute
+	case w.ConsecutiveEmpty <= 10:
+		return 15 * time.Minute
+	case w.ConsecutiveEmpty <= 20:
+		return 30 * time.Minute
+	default:
+		return time.Hour
 	}
-
-	w.NextRunTime = updateBackoffTiming(w.ConsecutiveEmpty)
 }

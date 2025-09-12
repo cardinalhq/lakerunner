@@ -186,6 +186,16 @@ func (cm *CleanupManager) isKnown(key string) bool {
 	return cm.knownDateints[key]
 }
 
+// rescheduleWorkItem reschedules a work item with domain-specific validation
+func (cm *CleanupManager) rescheduleWorkItem(item WorkItem, rescheduleIn time.Duration) {
+	// Only reschedule if the work item is still known, otherwise drop it
+	if !cm.isKnown(item.GetKey()) {
+		return // Drop unknown work items
+	}
+
+	cm.scheduler.rescheduleWorkItem(item, rescheduleIn)
+}
+
 // runScheduledCleanupLoop runs the unified cleanup loop using the heap-based scheduler
 func runScheduledCleanupLoop(ctx context.Context, sp storageprofile.StorageProfileProvider, mdb lrdb.StoreFull, cdb configdb.QuerierFull, cmgr cloudstorage.ClientProvider, signalType string) error {
 	manager := newCleanupManager(sp, mdb, cmgr, signalType)
@@ -222,16 +232,14 @@ func runScheduledCleanupLoop(ctx context.Context, sp storageprofile.StorageProfi
 		// Get next work item
 		workItem := manager.scheduler.popNextWorkItem()
 		if workItem != nil {
-			// Check if work item is still valid before processing
-			if !manager.isKnown(workItem.GetKey()) {
-				continue // Skip invalid work items
-			}
+			ll.Debug("Processing work item", slog.String("key", workItem.GetKey()))
 
 			// Process the work item using its Perform method
-			result := workItem.Perform(ctx)
+			rescheduleIn := workItem.Perform(ctx)
+			ll.Debug("Work item completed", slog.String("key", workItem.GetKey()), slog.Duration("reschedule_in", rescheduleIn))
 
-			// Reschedule based on results
-			manager.scheduler.rescheduleWorkItem(workItem, result)
+			// Reschedule based on returned duration
+			manager.rescheduleWorkItem(workItem, rescheduleIn)
 			continue
 		}
 
@@ -312,20 +320,4 @@ func deleteSegmentObject(ctx context.Context, sp storageprofile.StorageProfilePr
 // getHourFromTimestamp extracts the hour component from a timestamp in milliseconds
 func getHourFromTimestamp(timestampMs int64) int16 {
 	return int16((timestampMs / (1000 * 60 * 60)) % 24)
-}
-
-// updateBackoffTiming calculates the next run time based on consecutive empty results
-func updateBackoffTiming(consecutiveEmpty int) time.Time {
-	switch {
-	case consecutiveEmpty <= 2:
-		return time.Now().Add(time.Minute)
-	case consecutiveEmpty <= 5:
-		return time.Now().Add(5 * time.Minute)
-	case consecutiveEmpty <= 10:
-		return time.Now().Add(15 * time.Minute)
-	case consecutiveEmpty <= 20:
-		return time.Now().Add(30 * time.Minute)
-	default:
-		return time.Now().Add(time.Hour)
-	}
 }

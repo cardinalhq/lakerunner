@@ -21,20 +21,11 @@ import (
 	"time"
 )
 
-// WorkResult indicates the outcome of performing work
-type WorkResult int
-
-const (
-	WorkResultNoWork  WorkResult = iota // No work was done, increase backoff
-	WorkResultLittle                    // Some work was done, moderate backoff
-	WorkResultMaxWork                   // Maximum work was done, reset backoff
-	WorkResultDropped                   // Work item should be dropped/removed
-)
-
 // WorkItem represents a cleanup task that can perform work
 type WorkItem interface {
-	// Perform executes the work and returns the result
-	Perform(ctx context.Context) WorkResult
+	// Perform executes the work and returns the duration until it should run again.
+	// Negative values indicate the work item should be dropped/removed.
+	Perform(ctx context.Context) time.Duration
 
 	// GetNextRunTime returns when this work should next be executed
 	GetNextRunTime() time.Time
@@ -44,9 +35,6 @@ type WorkItem interface {
 
 	// GetKey returns a unique key for this work item (for tracking)
 	GetKey() string
-
-	// UpdateBackoff adjusts the backoff based on work result
-	UpdateBackoff(result WorkResult)
 }
 
 // WorkItemHeap implements heap.Interface for WorkItem
@@ -102,15 +90,15 @@ func (s *WorkScheduler) popNextWorkItem() WorkItem {
 	return heap.Pop(&s.heap).(WorkItem)
 }
 
-// rescheduleWorkItem reschedules a work item based on processing results
-func (s *WorkScheduler) rescheduleWorkItem(item WorkItem, result WorkResult) {
-	// Drop items that should be dropped
-	if result == WorkResultDropped {
+// rescheduleWorkItem reschedules a work item based on the returned duration
+func (s *WorkScheduler) rescheduleWorkItem(item WorkItem, rescheduleIn time.Duration) {
+	// Drop items with negative durations
+	if rescheduleIn < 0 {
 		return
 	}
 
-	// Update backoff based on result
-	item.UpdateBackoff(result)
+	// Set next run time
+	item.SetNextRunTime(time.Now().Add(rescheduleIn))
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
