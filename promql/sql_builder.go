@@ -16,7 +16,9 @@ package promql
 
 import (
 	"fmt"
+	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -92,6 +94,8 @@ func buildFromLogLeaf(be *BaseExpr, step time.Duration) string {
 	bodyCol := "\"_cardinalhq.message\""
 
 	pipelineSQL := strings.TrimSpace(be.LogLeaf.ToWorkerSQL(0, "", nil))
+	pipelineSQL = strings.ReplaceAll(pipelineSQL, "{start}", "0")
+	pipelineSQL = strings.ReplaceAll(pipelineSQL, "{end}", strconv.FormatInt(math.MaxInt64, 10))
 
 	bucketExpr := fmt.Sprintf(
 		"(CAST(%s AS BIGINT) - (CAST(%s AS BIGINT) %% %d))",
