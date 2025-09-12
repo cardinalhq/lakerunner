@@ -148,14 +148,7 @@ func (q *Store) InsertMetricSegmentBatchWithKafkaOffsets(ctx context.Context, ba
 
 			batchOffsetParams := make([]KafkaJournalBatchUpsertParams, len(batch.KafkaOffsets))
 			for i, offset := range batch.KafkaOffsets {
-				batchOffsetParams[i] = KafkaJournalBatchUpsertParams{
-					ConsumerGroup:       offset.ConsumerGroup,
-					Topic:               offset.Topic,
-					Partition:           offset.Partition,
-					LastProcessedOffset: offset.LastProcessedOffset,
-					OrganizationID:      offset.OrganizationID,
-					InstanceNum:         offset.InstanceNum,
-				}
+				batchOffsetParams[i] = KafkaJournalBatchUpsertParams(offset)
 			}
 
 			result := s.KafkaJournalBatchUpsert(ctx, batchOffsetParams)

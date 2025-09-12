@@ -16,6 +16,10 @@ package config
 
 var (
 	KafkaTopics = []string{
+		"lakerunner.boxer.logs.compact",
+		"lakerunner.boxer.metrics.compact",
+		"lakerunner.boxer.metrics.rollup",
+		"lakerunner.boxer.traces.compact",
 		"lakerunner.objstore.ingest.logs",
 		"lakerunner.objstore.ingest.metrics",
 		"lakerunner.objstore.ingest.traces",

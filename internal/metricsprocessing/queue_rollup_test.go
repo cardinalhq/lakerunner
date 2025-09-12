@@ -141,7 +141,7 @@ func TestQueueMetricRollup(t *testing.T) {
 			mockProducer := new(MockKafkaProducer)
 
 			if tt.expectSend {
-				mockProducer.On("Send", mock.Anything, "lakerunner.segments.metrics.rollup", mock.Anything).Return(nil)
+				mockProducer.On("Send", mock.Anything, "lakerunner.boxer.metrics.rollup", mock.Anything).Return(nil)
 			}
 
 			ctx := context.Background()
@@ -161,7 +161,7 @@ func TestQueueMetricRollupWithMultipleSegments(t *testing.T) {
 	orgID := uuid.New()
 
 	// Expect 3 sends for the rollup-eligible frequencies
-	mockProducer.On("Send", mock.Anything, "lakerunner.segments.metrics.rollup", mock.Anything).Return(nil).Times(3)
+	mockProducer.On("Send", mock.Anything, "lakerunner.boxer.metrics.rollup", mock.Anything).Return(nil).Times(3)
 
 	// Queue multiple segments with different frequencies
 	frequencies := []int32{10_000, 60_000, 300_000, 3_600_000} // Only first 3 should send
@@ -180,7 +180,7 @@ func TestQueueMetricRollupBatch(t *testing.T) {
 	orgID := uuid.New()
 
 	// Set up expectation for each individual send
-	mockProducer.On("Send", mock.Anything, "lakerunner.segments.metrics.rollup", mock.Anything).Return(nil).Times(5)
+	mockProducer.On("Send", mock.Anything, "lakerunner.boxer.metrics.rollup", mock.Anything).Return(nil).Times(5)
 
 	// Queue a batch of segments with rollup-eligible frequency
 	segmentStartTime := time.Now()
