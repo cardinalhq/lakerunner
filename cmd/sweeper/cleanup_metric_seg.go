@@ -16,9 +16,7 @@ package sweeper
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -72,7 +70,7 @@ func (w *MetricCleanupWorkItem) Perform(ctx context.Context) time.Duration {
 	// Process segments with batching for better performance
 	processed := 0
 	totalBytes := int64(0)
-	s3ObjectsToDelete := make(map[string][]string) // instanceKey -> []objectKeys
+	s3ObjectsToDelete := make(map[InstanceKey][]string) // instanceKey -> []objectKeys
 	dbRecordsToDelete := make([]lrdb.MetricSegmentCleanupDeleteParams, 0, len(segments))
 
 	// Prepare batches
@@ -93,7 +91,10 @@ func (w *MetricCleanupWorkItem) Perform(ctx context.Context) time.Duration {
 		)
 
 		// Group S3 deletions by instance
-		instanceKey := fmt.Sprintf("%s-%d", segment.OrganizationID.String(), segment.InstanceNum)
+		instanceKey := InstanceKey{
+			OrganizationID: segment.OrganizationID,
+			InstanceNum:    segment.InstanceNum,
+		}
 		s3ObjectsToDelete[instanceKey] = append(s3ObjectsToDelete[instanceKey], objectKey)
 
 		// Collect DB deletion params
@@ -109,38 +110,40 @@ func (w *MetricCleanupWorkItem) Perform(ctx context.Context) time.Duration {
 		processed++
 	}
 
-	// Execute S3 deletions
+	// Execute S3 deletions using batch operations
 	s3DeletedCount := 0
+	s3FailedCount := 0
 	for instanceKey, objectKeys := range s3ObjectsToDelete {
-		parts := strings.Split(instanceKey, "-")
-		if len(parts) != 2 {
-			continue
-		}
-		orgID, _ := uuid.Parse(parts[0])
-		instanceNum := int16(0)
-
-		for _, segment := range segments {
-			if segment.OrganizationID == orgID {
-				instanceNum = segment.InstanceNum
-				break
-			}
-		}
-
-		for _, objectKey := range objectKeys {
-			if err := deleteSegmentObject(ctx, w.sp, w.cmgr, orgID, instanceNum, objectKey); err == nil {
-				s3DeletedCount++
-			}
+		// Batch delete objects for this instance using the typed key
+		deleted, _, failed, err := batchDeleteSegmentObjects(ctx, w.sp, w.cmgr, instanceKey.OrganizationID, instanceKey.InstanceNum, objectKeys)
+		if err != nil {
+			ll.Error("Failed to batch delete objects", slog.Any("error", err), slog.Int("object_count", len(objectKeys)))
+			s3FailedCount += len(objectKeys)
+		} else {
+			s3DeletedCount += deleted
+			s3FailedCount += failed
 		}
 	}
 
-	// Execute database deletions
+	// Execute database deletions using batch operation
 	dbDeletedCount := 0
-	for _, params := range dbRecordsToDelete {
-		if err := w.mdb.MetricSegmentCleanupDelete(ctx, params); err != nil {
-			ll.Error("Failed to delete segment from database", slog.Any("error", err))
-		} else {
-			dbDeletedCount++
+	if len(dbRecordsToDelete) > 0 {
+		// Convert to batch delete parameters
+		batchParams := make([]lrdb.MetricSegmentCleanupBatchDeleteParams, len(dbRecordsToDelete))
+		for i, params := range dbRecordsToDelete {
+			batchParams[i] = lrdb.MetricSegmentCleanupBatchDeleteParams(params)
 		}
+
+		// Execute batch delete
+		batchResults := w.mdb.MetricSegmentCleanupBatchDelete(ctx, batchParams)
+		batchResults.Exec(func(i int, err error) {
+			if err != nil {
+				ll.Error("Failed to delete segment from database in batch", slog.Any("error", err), slog.Int("batch_index", i))
+			} else {
+				dbDeletedCount++
+			}
+		})
+		batchResults.Close()
 	}
 
 	// Update metrics
@@ -155,6 +158,7 @@ func (w *MetricCleanupWorkItem) Perform(ctx context.Context) time.Duration {
 		ll.Info("Completed metric segment cleanup batch",
 			slog.Int("segments_processed", dbDeletedCount),
 			slog.Int("s3_objects_deleted", s3DeletedCount),
+			slog.Int("s3_objects_failed", s3FailedCount),
 			slog.Int64("bytes_cleaned", totalBytes),
 			slog.String("org_id", w.OrganizationID.String()),
 			slog.Int("dateint", int(w.DateInt)))

@@ -19,3 +19,10 @@ WHERE organization_id = @organization_id
   AND dateint = @dateint
   AND segment_id = @segment_id
   AND instance_num = @instance_num;
+
+-- name: LogSegmentCleanupBatchDelete :batchexec
+DELETE FROM log_seg
+WHERE organization_id = @organization_id
+  AND dateint = @dateint
+  AND segment_id = @segment_id
+  AND instance_num = @instance_num;

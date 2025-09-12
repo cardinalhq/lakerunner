@@ -436,6 +436,180 @@ func (b *KafkaJournalBatchUpsertBatchResults) Close() error {
 	return b.br.Close()
 }
 
+const logSegmentCleanupBatchDelete = `-- name: LogSegmentCleanupBatchDelete :batchexec
+DELETE FROM log_seg
+WHERE organization_id = $1
+  AND dateint = $2
+  AND segment_id = $3
+  AND instance_num = $4
+`
+
+type LogSegmentCleanupBatchDeleteBatchResults struct {
+	br     pgx.BatchResults
+	tot    int
+	closed bool
+}
+
+type LogSegmentCleanupBatchDeleteParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Dateint        int32     `json:"dateint"`
+	SegmentID      int64     `json:"segment_id"`
+	InstanceNum    int16     `json:"instance_num"`
+}
+
+func (q *Queries) LogSegmentCleanupBatchDelete(ctx context.Context, arg []LogSegmentCleanupBatchDeleteParams) *LogSegmentCleanupBatchDeleteBatchResults {
+	batch := &pgx.Batch{}
+	for _, a := range arg {
+		vals := []interface{}{
+			a.OrganizationID,
+			a.Dateint,
+			a.SegmentID,
+			a.InstanceNum,
+		}
+		batch.Queue(logSegmentCleanupBatchDelete, vals...)
+	}
+	br := q.db.SendBatch(ctx, batch)
+	return &LogSegmentCleanupBatchDeleteBatchResults{br, len(arg), false}
+}
+
+func (b *LogSegmentCleanupBatchDeleteBatchResults) Exec(f func(int, error)) {
+	defer b.br.Close()
+	for t := 0; t < b.tot; t++ {
+		if b.closed {
+			if f != nil {
+				f(t, ErrBatchAlreadyClosed)
+			}
+			continue
+		}
+		_, err := b.br.Exec()
+		if f != nil {
+			f(t, err)
+		}
+	}
+}
+
+func (b *LogSegmentCleanupBatchDeleteBatchResults) Close() error {
+	b.closed = true
+	return b.br.Close()
+}
+
+const metricSegmentCleanupBatchDelete = `-- name: MetricSegmentCleanupBatchDelete :batchexec
+DELETE FROM metric_seg
+WHERE organization_id = $1
+  AND dateint = $2
+  AND frequency_ms = $3
+  AND segment_id = $4
+  AND instance_num = $5
+`
+
+type MetricSegmentCleanupBatchDeleteBatchResults struct {
+	br     pgx.BatchResults
+	tot    int
+	closed bool
+}
+
+type MetricSegmentCleanupBatchDeleteParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Dateint        int32     `json:"dateint"`
+	FrequencyMs    int32     `json:"frequency_ms"`
+	SegmentID      int64     `json:"segment_id"`
+	InstanceNum    int16     `json:"instance_num"`
+}
+
+func (q *Queries) MetricSegmentCleanupBatchDelete(ctx context.Context, arg []MetricSegmentCleanupBatchDeleteParams) *MetricSegmentCleanupBatchDeleteBatchResults {
+	batch := &pgx.Batch{}
+	for _, a := range arg {
+		vals := []interface{}{
+			a.OrganizationID,
+			a.Dateint,
+			a.FrequencyMs,
+			a.SegmentID,
+			a.InstanceNum,
+		}
+		batch.Queue(metricSegmentCleanupBatchDelete, vals...)
+	}
+	br := q.db.SendBatch(ctx, batch)
+	return &MetricSegmentCleanupBatchDeleteBatchResults{br, len(arg), false}
+}
+
+func (b *MetricSegmentCleanupBatchDeleteBatchResults) Exec(f func(int, error)) {
+	defer b.br.Close()
+	for t := 0; t < b.tot; t++ {
+		if b.closed {
+			if f != nil {
+				f(t, ErrBatchAlreadyClosed)
+			}
+			continue
+		}
+		_, err := b.br.Exec()
+		if f != nil {
+			f(t, err)
+		}
+	}
+}
+
+func (b *MetricSegmentCleanupBatchDeleteBatchResults) Close() error {
+	b.closed = true
+	return b.br.Close()
+}
+
+const traceSegmentCleanupBatchDelete = `-- name: TraceSegmentCleanupBatchDelete :batchexec
+DELETE FROM trace_seg
+WHERE organization_id = $1
+  AND dateint = $2
+  AND segment_id = $3
+  AND instance_num = $4
+`
+
+type TraceSegmentCleanupBatchDeleteBatchResults struct {
+	br     pgx.BatchResults
+	tot    int
+	closed bool
+}
+
+type TraceSegmentCleanupBatchDeleteParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Dateint        int32     `json:"dateint"`
+	SegmentID      int64     `json:"segment_id"`
+	InstanceNum    int16     `json:"instance_num"`
+}
+
+func (q *Queries) TraceSegmentCleanupBatchDelete(ctx context.Context, arg []TraceSegmentCleanupBatchDeleteParams) *TraceSegmentCleanupBatchDeleteBatchResults {
+	batch := &pgx.Batch{}
+	for _, a := range arg {
+		vals := []interface{}{
+			a.OrganizationID,
+			a.Dateint,
+			a.SegmentID,
+			a.InstanceNum,
+		}
+		batch.Queue(traceSegmentCleanupBatchDelete, vals...)
+	}
+	br := q.db.SendBatch(ctx, batch)
+	return &TraceSegmentCleanupBatchDeleteBatchResults{br, len(arg), false}
+}
+
+func (b *TraceSegmentCleanupBatchDeleteBatchResults) Exec(f func(int, error)) {
+	defer b.br.Close()
+	for t := 0; t < b.tot; t++ {
+		if b.closed {
+			if f != nil {
+				f(t, ErrBatchAlreadyClosed)
+			}
+			continue
+		}
+		_, err := b.br.Exec()
+		if f != nil {
+			f(t, err)
+		}
+	}
+}
+
+func (b *TraceSegmentCleanupBatchDeleteBatchResults) Close() error {
+	b.closed = true
+	return b.br.Close()
+}
+
 const batchInsertLogSegsDirect = `-- name: batchInsertLogSegsDirect :batchexec
 INSERT INTO log_seg (
   organization_id,

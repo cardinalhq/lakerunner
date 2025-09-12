@@ -59,6 +59,7 @@ type Querier interface {
 	ListPromMetrics(ctx context.Context, organizationID uuid.UUID) ([]ListPromMetricsRow, error)
 	// Returns an estimate of the number of log segments, accounting for per-file overhead.
 	LogSegEstimator(ctx context.Context, arg LogSegEstimatorParams) ([]LogSegEstimatorRow, error)
+	LogSegmentCleanupBatchDelete(ctx context.Context, arg []LogSegmentCleanupBatchDeleteParams) *LogSegmentCleanupBatchDeleteBatchResults
 	LogSegmentCleanupDelete(ctx context.Context, arg LogSegmentCleanupDeleteParams) error
 	LogSegmentCleanupGet(ctx context.Context, arg LogSegmentCleanupGetParams) ([]LogSegmentCleanupGetRow, error)
 	MarkLogSegsCompactedByKeys(ctx context.Context, arg MarkLogSegsCompactedByKeysParams) error
@@ -68,10 +69,12 @@ type Querier interface {
 	// Returns an estimate of the number of metric segments, accounting for per-file overhead.
 	// Uses frequency_ms to provide more accurate estimates based on collection frequency.
 	MetricSegEstimator(ctx context.Context, arg MetricSegEstimatorParams) ([]MetricSegEstimatorRow, error)
+	MetricSegmentCleanupBatchDelete(ctx context.Context, arg []MetricSegmentCleanupBatchDeleteParams) *MetricSegmentCleanupBatchDeleteBatchResults
 	MetricSegmentCleanupDelete(ctx context.Context, arg MetricSegmentCleanupDeleteParams) error
 	MetricSegmentCleanupGet(ctx context.Context, arg MetricSegmentCleanupGetParams) ([]MetricSegmentCleanupGetRow, error)
 	// Returns an estimate of the number of trace segments, accounting for per-file overhead.
 	TraceSegEstimator(ctx context.Context, arg TraceSegEstimatorParams) ([]TraceSegEstimatorRow, error)
+	TraceSegmentCleanupBatchDelete(ctx context.Context, arg []TraceSegmentCleanupBatchDeleteParams) *TraceSegmentCleanupBatchDeleteBatchResults
 	TraceSegmentCleanupDelete(ctx context.Context, arg TraceSegmentCleanupDeleteParams) error
 	TraceSegmentCleanupGet(ctx context.Context, arg TraceSegmentCleanupGetParams) ([]TraceSegmentCleanupGetRow, error)
 	// Updates or inserts a single metric pack estimate (backward compatibility)

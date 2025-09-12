@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -285,33 +284,66 @@ func runScheduledCleanupLoop(ctx context.Context, sp storageprofile.StorageProfi
 func makeOrgDateintKey(orgID uuid.UUID, dateInt int32) string {
 	return fmt.Sprintf("%s-%d", orgID.String(), dateInt)
 }
-func deleteSegmentObject(ctx context.Context, sp storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, orgID uuid.UUID, instanceNum int16, objectKey string) error {
+
+// InstanceKey represents an organization and instance number combination
+type InstanceKey struct {
+	OrganizationID uuid.UUID
+	InstanceNum    int16
+}
+
+// batchDeleteSegmentObjects performs batch deletion of objects grouped by storage profile
+// Returns (actuallyDeleted, alreadyMissing, failed, error)
+func batchDeleteSegmentObjects(ctx context.Context, sp storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, orgID uuid.UUID, instanceNum int16, objectKeys []string) (int, int, int, error) {
 	ll := logctx.FromContext(ctx)
+
+	if len(objectKeys) == 0 {
+		return 0, 0, 0, nil
+	}
 
 	profile, err := sp.GetStorageProfileForOrganizationAndInstance(ctx, orgID, instanceNum)
 	if err != nil {
 		ll.Error("Failed to get storage profile", slog.Any("error", err))
-		return err
+		return 0, 0, len(objectKeys), err
 	}
 
 	storageClient, err := cloudstorage.NewClient(ctx, cmgr, profile)
 	if err != nil {
 		ll.Error("Failed to get storage client", slog.Any("error", err))
-		return err
+		return 0, 0, len(objectKeys), err
 	}
 
-	if err := storageClient.DeleteObject(ctx, profile.Bucket, objectKey); err != nil {
-		if strings.Contains(err.Error(), "NoSuchKey") || strings.Contains(err.Error(), "404") {
-			ll.Debug("S3 object already deleted", slog.String("object_key", objectKey))
-		} else {
-			ll.Error("Failed to delete S3 object", slog.Any("error", err), slog.String("object_key", objectKey))
-			return err
-		}
+	failed, err := storageClient.DeleteObjects(ctx, profile.Bucket, objectKeys)
+	if err != nil {
+		ll.Error("Failed to batch delete S3 objects",
+			slog.Any("error", err),
+			slog.Int("object_count", len(objectKeys)),
+			slog.String("bucket", profile.Bucket),
+			slog.String("org_id", orgID.String()),
+			slog.Int("instance_num", int(instanceNum)))
+		return 0, 0, len(objectKeys), err
+	}
+
+	actuallyDeleted := len(objectKeys) - len(failed)
+
+	// Log details about what failed if there were failures
+	if len(failed) > 0 {
+		ll.Warn("Some S3 objects failed to delete in batch operation",
+			slog.Int("total_objects", len(objectKeys)),
+			slog.Int("actually_deleted", actuallyDeleted),
+			slog.Int("failed_count", len(failed)),
+			slog.Any("failed_keys", failed),
+			slog.String("bucket", profile.Bucket),
+			slog.String("org_id", orgID.String()),
+			slog.Int("instance_num", int(instanceNum)))
 	} else {
-		ll.Debug("Successfully deleted S3 object", slog.String("object_key", objectKey))
+		ll.Debug("Successfully batch deleted all S3 objects",
+			slog.Int("total_objects", len(objectKeys)),
+			slog.String("bucket", profile.Bucket),
+			slog.String("org_id", orgID.String()),
+			slog.Int("instance_num", int(instanceNum)))
 	}
 
-	return nil
+	return actuallyDeleted, 0, len(failed), nil
 }
 
 // getHourFromTimestamp extracts the hour component from a timestamp in milliseconds
