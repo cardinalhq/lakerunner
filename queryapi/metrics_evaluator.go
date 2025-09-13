@@ -266,8 +266,8 @@ func (q *QuerierService) EvaluateMetricsQuery(
 						req := PushDownRequest{
 							OrganizationID: orgID,
 							BaseExpr:       &leaf,
-							StartTs:        group.StartTs - 10000,
-							EndTs:          group.EndTs,
+							StartTs:        startTs,
+							EndTs:          endTs,
 							Segments:       wsegs,
 							Step:           stepDuration,
 						}
