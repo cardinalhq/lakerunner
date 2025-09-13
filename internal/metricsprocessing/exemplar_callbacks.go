@@ -16,7 +16,6 @@ package metricsprocessing
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -68,12 +67,6 @@ func processLogsExemplarsDirect(ctx context.Context, organizationID string, exem
 			}
 		}
 
-		var exemplarData any
-		if err := json.Unmarshal([]byte(exemplar.Payload), &exemplarData); err != nil {
-			slog.Error("Failed to parse exemplar payload", "error", err)
-			continue
-		}
-
 		params := lrdb.UpsertServiceIdentifierParams{
 			OrganizationID: pgtype.UUID{Bytes: orgID, Valid: true},
 			ServiceName:    pgtype.Text{String: serviceName, Valid: true},
@@ -93,28 +86,13 @@ func processLogsExemplarsDirect(ctx context.Context, organizationID string, exem
 			attributesAny[k] = v
 		}
 
-		var exemplarMap map[string]any
-		if exemplarDataMap, ok := exemplarData.(map[string]any); ok {
-			exemplarMap = exemplarDataMap
-		} else {
-			exemplarBytes, err := json.Marshal(exemplarData)
-			if err != nil {
-				slog.Error("Failed to marshal exemplar data", "error", err)
-				continue
-			}
-			if err := json.Unmarshal(exemplarBytes, &exemplarMap); err != nil {
-				slog.Error("Failed to convert exemplar data to map", "error", err)
-				continue
-			}
-		}
-
 		record := lrdb.BatchUpsertExemplarLogsParams{
 			OrganizationID:      orgID,
 			ServiceIdentifierID: serviceIdentifierID,
 			Fingerprint:         fingerprint,
 			OldFingerprint:      oldFingerprint,
 			Attributes:          attributesAny,
-			Exemplar:            exemplarMap,
+			Exemplar:            exemplar.Payload,
 		}
 		records = append(records, record)
 	}
@@ -158,12 +136,6 @@ func processMetricsExemplarsDirect(ctx context.Context, organizationID string, e
 			continue
 		}
 
-		var exemplarData any
-		if err := json.Unmarshal([]byte(exemplar.Payload), &exemplarData); err != nil {
-			slog.Error("Failed to parse exemplar payload", "error", err)
-			continue
-		}
-
 		params := lrdb.UpsertServiceIdentifierParams{
 			OrganizationID: pgtype.UUID{Bytes: orgID, Valid: true},
 			ServiceName:    pgtype.Text{String: serviceName, Valid: true},
@@ -183,28 +155,13 @@ func processMetricsExemplarsDirect(ctx context.Context, organizationID string, e
 			attributesAny[k] = v
 		}
 
-		var exemplarMap map[string]any
-		if exemplarDataMap, ok := exemplarData.(map[string]any); ok {
-			exemplarMap = exemplarDataMap
-		} else {
-			exemplarBytes, err := json.Marshal(exemplarData)
-			if err != nil {
-				slog.Error("Failed to marshal exemplar data", "error", err)
-				continue
-			}
-			if err := json.Unmarshal(exemplarBytes, &exemplarMap); err != nil {
-				slog.Error("Failed to convert exemplar data to map", "error", err)
-				continue
-			}
-		}
-
 		record := lrdb.BatchUpsertExemplarMetricsParams{
 			OrganizationID:      orgID,
 			ServiceIdentifierID: serviceIdentifierID,
 			MetricName:          metricName,
 			MetricType:          metricType,
 			Attributes:          attributesAny,
-			Exemplar:            exemplarMap,
+			Exemplar:            exemplar.Payload,
 		}
 		records = append(records, record)
 	}
