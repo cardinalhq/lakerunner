@@ -57,6 +57,9 @@ type ProducerConfig struct {
 
 	// TLS configuration
 	TLSConfig *tls.Config
+
+	// Connection settings
+	ConnectionTimeout time.Duration
 }
 
 // kafkaProducer implements the Producer interface using segmentio/kafka-go
@@ -88,8 +91,13 @@ func (b *manualBalancer) Balance(msg kafka.Message, partitions ...int) int {
 
 // NewProducer creates a new Kafka producer
 func NewProducer(config ProducerConfig) Producer {
+	timeout := config.ConnectionTimeout
+	if timeout == 0 {
+		timeout = 10 * time.Second // Default fallback
+	}
+
 	dialer := &kafka.Dialer{
-		Timeout:       10 * time.Second,
+		Timeout:       timeout,
 		SASLMechanism: config.SASLMechanism,
 		TLS:           config.TLSConfig,
 	}
@@ -159,7 +167,7 @@ func (p *kafkaProducer) SendToPartition(ctx context.Context, topic string, parti
 		Transport:    transport,
 		Compression:  p.config.Compression,
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	km := message.ToKafkaMessage()
 	return w.WriteMessages(ctx, km)
@@ -178,7 +186,7 @@ func (p *kafkaProducer) GetPartitionCount(topic string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("failed to connect to broker: %w", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	partitions, err := conn.ReadPartitions(topic)
 	if err != nil {

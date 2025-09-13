@@ -97,9 +97,9 @@ func setupAuthTestServer(t *testing.T, configProvider adminconfig.AdminConfigPro
 	client := adminproto.NewAdminServiceClient(conn)
 
 	cleanup := func() {
-		conn.Close()
+		_ = conn.Close()
 		server.Stop()
-		authLis.Close()
+		_ = authLis.Close()
 	}
 
 	return client, cleanup

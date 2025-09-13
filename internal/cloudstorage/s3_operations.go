@@ -153,7 +153,7 @@ func uploadS3Object(ctx context.Context, s3client *awsclient.S3Client, bucketID,
 	if err != nil {
 		return fmt.Errorf("failed to open temporarily file %s: %w", sourceFilename, err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	stat, err := file.Stat()
 	if err != nil {

@@ -88,19 +88,19 @@ func createLogReaderStack(
 
 		stat, err := file.Stat()
 		if err != nil {
-			file.Close()
+			_ = file.Close()
 			ll.Error("Failed to stat parquet file", slog.String("file", fn), slog.Any("error", err))
 			return nil, fmt.Errorf("statting parquet file %s: %w", fn, err)
 		}
 
 		reader, err := filereader.NewCookedLogParquetReader(file, stat.Size(), 1000)
 		if err != nil {
-			file.Close()
+			_ = file.Close()
 			ll.Error("Failed to create parquet reader", slog.String("file", fn), slog.Any("error", err))
 			return nil, fmt.Errorf("creating parquet reader for %s: %w", fn, err)
 		}
 
-		var finalReader filereader.Reader = reader
+		finalReader := reader
 
 		readers = append(readers, finalReader)
 		files = append(files, file)

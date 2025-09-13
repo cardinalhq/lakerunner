@@ -54,7 +54,7 @@ func (c *azureClient) DownloadObject(ctx context.Context, tmpdir, bucket, key st
 	if err != nil {
 		return "", 0, false, fmt.Errorf("create temp file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// Get the download response
 	resp, err := c.client.DownloadStream(ctx, containerName, blobName, nil)
@@ -66,7 +66,7 @@ func (c *azureClient) DownloadObject(ctx context.Context, tmpdir, bucket, key st
 		}
 		return "", 0, false, fmt.Errorf("download blob %s/%s: %w", containerName, blobName, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Copy the blob content to the temp file
 	size, err := io.Copy(f, resp.Body)
@@ -87,7 +87,7 @@ func (c *azureClient) UploadObject(ctx context.Context, bucket, key, sourceFilen
 	if err != nil {
 		return fmt.Errorf("failed to open source file %s: %w", sourceFilename, err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	// Upload the blob with Parquet content type and metadata
 	_, err = c.client.UploadStream(ctx, containerName, blobName, file, &azblob.UploadStreamOptions{

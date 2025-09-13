@@ -105,7 +105,7 @@ func TestAggregatingMetricsReader_SingleSingleton(t *testing.T) {
 	mockReader := newMockAggregatingMetricsReader(inputRows)
 	aggregatingReader, err := NewAggregatingMetricsReader(mockReader, 10000, 1000) // 10s aggregation
 	require.NoError(t, err)
-	defer aggregatingReader.Close()
+	defer func() { _ = aggregatingReader.Close() }()
 
 	// Read the aggregated result
 	batch, err := aggregatingReader.Next(context.TODO())
@@ -152,7 +152,7 @@ func TestAggregatingMetricsReader_MultipleSingletons(t *testing.T) {
 	mockReader := newMockAggregatingMetricsReader(inputRows)
 	aggregatingReader, err := NewAggregatingMetricsReader(mockReader, 10000, 1000) // 10s aggregation
 	require.NoError(t, err)
-	defer aggregatingReader.Close()
+	defer func() { _ = aggregatingReader.Close() }()
 
 	// Read the aggregated result
 	batch, err := aggregatingReader.Next(context.TODO())
@@ -219,7 +219,7 @@ func TestAggregatingMetricsReader_SketchAndSingletons(t *testing.T) {
 	mockReader := newMockAggregatingMetricsReader(inputRows)
 	aggregatingReader, err := NewAggregatingMetricsReader(mockReader, 10000, 1000) // 10s aggregation
 	require.NoError(t, err)
-	defer aggregatingReader.Close()
+	defer func() { _ = aggregatingReader.Close() }()
 
 	// Read the aggregated result
 	batch, err := aggregatingReader.Next(context.TODO())
@@ -282,7 +282,7 @@ func TestAggregatingMetricsReader_DifferentKeys(t *testing.T) {
 	mockReader := newMockAggregatingMetricsReader(inputRows)
 	aggregatingReader, err := NewAggregatingMetricsReader(mockReader, 10000, 1000) // 10s aggregation
 	require.NoError(t, err)
-	defer aggregatingReader.Close()
+	defer func() { _ = aggregatingReader.Close() }()
 
 	// Read all results
 	var allRows []Row
@@ -339,7 +339,7 @@ func TestAggregatingMetricsReader_InvalidRows(t *testing.T) {
 	mockReader := newMockAggregatingMetricsReader(inputRows)
 	aggregatingReader, err := NewAggregatingMetricsReader(mockReader, 10000, 1000)
 	require.NoError(t, err)
-	defer aggregatingReader.Close()
+	defer func() { _ = aggregatingReader.Close() }()
 
 	// Read all results
 	var allRows []Row
@@ -395,7 +395,7 @@ func TestAggregatingMetricsReader_TimestampTruncation(t *testing.T) {
 	mockReader := newMockAggregatingMetricsReader(inputRows)
 	aggregatingReader, err := NewAggregatingMetricsReader(mockReader, 10000, 1000) // 10s aggregation
 	require.NoError(t, err)
-	defer aggregatingReader.Close()
+	defer func() { _ = aggregatingReader.Close() }()
 
 	// Read all results
 	var allRows []Row
@@ -468,7 +468,7 @@ func TestAggregatingMetricsReader_MultipleSketchesMerging(t *testing.T) {
 	mockReader := newMockAggregatingMetricsReader(inputRows)
 	aggregatingReader, err := NewAggregatingMetricsReader(mockReader, 10000, 1000)
 	require.NoError(t, err)
-	defer aggregatingReader.Close()
+	defer func() { _ = aggregatingReader.Close() }()
 
 	// Read the aggregated result
 	batch, err := aggregatingReader.Next(context.TODO())
@@ -552,7 +552,7 @@ func TestAggregatingMetricsReader_EOFWithData(t *testing.T) {
 	mockReader := newMockEOFReader(inputRows)
 	aggregatingReader, err := NewAggregatingMetricsReader(mockReader, 10000, 1000)
 	require.NoError(t, err)
-	defer aggregatingReader.Close()
+	defer func() { _ = aggregatingReader.Close() }()
 
 	// Read should return the row even though EOF is returned with data
 	batch, err := aggregatingReader.Next(context.TODO())
@@ -596,7 +596,7 @@ func TestAggregatingMetricsReader_DropHistogramWithoutSketch(t *testing.T) {
 	mockReader := newMockAggregatingMetricsReader(inputRows)
 	aggregatingReader, err := NewAggregatingMetricsReader(mockReader, 10000, 1000) // 10s aggregation
 	require.NoError(t, err)
-	defer aggregatingReader.Close()
+	defer func() { _ = aggregatingReader.Close() }()
 
 	// Read the aggregated result
 	batch, err := aggregatingReader.Next(context.TODO())
@@ -637,7 +637,7 @@ func TestAggregatingMetricsReader_PendingRowReset(t *testing.T) {
 	mockReader := newMockAggregatingMetricsReader(inputRows)
 	aggregatingReader, err := NewAggregatingMetricsReader(mockReader, 10000, 1000)
 	require.NoError(t, err)
-	defer aggregatingReader.Close()
+	defer func() { _ = aggregatingReader.Close() }()
 
 	// Read all results - they should be in separate batches since they have different keys
 	var allRows []Row
@@ -713,7 +713,7 @@ func TestAggregatingMetricsReader_ArbitraryRowCountBatchBoundary(t *testing.T) {
 	mockReader := NewMockReader(testRows)
 	aggregatingReader, err := NewAggregatingMetricsReader(mockReader, aggregationPeriodMs, batchSize)
 	require.NoError(t, err)
-	defer aggregatingReader.Close()
+	defer func() { _ = aggregatingReader.Close() }()
 
 	// Read all aggregated rows back and count them
 	totalRead := 0
@@ -803,7 +803,7 @@ func TestAggregatingMetricsReader_NoAggregationPassthrough(t *testing.T) {
 	mockReader := NewMockReader(testRows)
 	aggregatingReader, err := NewAggregatingMetricsReader(mockReader, aggregationPeriodMs, batchSize)
 	require.NoError(t, err)
-	defer aggregatingReader.Close()
+	defer func() { _ = aggregatingReader.Close() }()
 
 	// Read all rows back - they should pass through unchanged
 	var allOutputRows []Row
@@ -896,7 +896,7 @@ func TestAggregatingMetricsReader_Seglog990DataLoss(t *testing.T) {
 		testFile := filepath.Join(sourceDir, fileInfo.Name())
 		file, err := os.Open(testFile)
 		require.NoError(t, err, "Failed to open test file %s", fileInfo.Name())
-		defer file.Close()
+		defer func() { _ = file.Close() }()
 
 		stat, err := file.Stat()
 		require.NoError(t, err, "Failed to stat test file")
@@ -904,11 +904,11 @@ func TestAggregatingMetricsReader_Seglog990DataLoss(t *testing.T) {
 		// Create parquet reader
 		rawReader, err := NewParquetRawReader(file, stat.Size(), 1000)
 		require.NoError(t, err, "Failed to create parquet reader")
-		defer rawReader.Close()
+		defer func() { _ = rawReader.Close() }()
 
 		// Create translating reader
 		cookingReader := NewCookedMetricTranslatingReader(rawReader)
-		defer cookingReader.Close()
+		defer func() { _ = cookingReader.Close() }()
 
 		// Count input records for this file
 		fileInputCount := int64(0)
@@ -927,17 +927,17 @@ func TestAggregatingMetricsReader_Seglog990DataLoss(t *testing.T) {
 		totalInputCount += fileInputCount
 
 		// Reset the reader for aggregation test
-		file.Close()
+		_ = file.Close()
 		file, err = os.Open(testFile)
 		require.NoError(t, err, "Failed to reopen test file")
-		defer file.Close()
+		defer func() { _ = file.Close() }()
 
 		rawReader, err = NewParquetRawReader(file, stat.Size(), 1000)
 		require.NoError(t, err, "Failed to create parquet reader")
-		defer rawReader.Close()
+		defer func() { _ = rawReader.Close() }()
 
 		cookingReader = NewCookedMetricTranslatingReader(rawReader)
-		defer cookingReader.Close()
+		defer func() { _ = cookingReader.Close() }()
 
 		readers = append(readers, cookingReader)
 	}
@@ -949,12 +949,12 @@ func TestAggregatingMetricsReader_Seglog990DataLoss(t *testing.T) {
 	keyProvider := GetCurrentMetricSortKeyProvider()
 	mergedReader, err := NewMergesortReader(ctx, readers, keyProvider, 1000)
 	require.NoError(t, err, "Failed to create mergesort reader")
-	defer mergedReader.Close()
+	defer func() { _ = mergedReader.Close() }()
 
 	// Create aggregating reader on the merged stream (same as production: 10000ms = 10s aggregation)
 	aggregatingReader, err := NewAggregatingMetricsReader(mergedReader, 10000, 1000)
 	require.NoError(t, err, "Failed to create aggregating reader")
-	defer aggregatingReader.Close()
+	defer func() { _ = aggregatingReader.Close() }()
 
 	// Count output records
 	outputCount := int64(0)
@@ -1017,7 +1017,7 @@ func TestAggregatingMetricsReader_ProductionDoubleResourceBug(t *testing.T) {
 		testFile := filepath.Join(sourceDir, fileInfo.Name())
 		file, err := os.Open(testFile)
 		require.NoError(t, err, "Failed to open test file %s", fileInfo.Name())
-		defer file.Close()
+		defer func() { _ = file.Close() }()
 
 		stat, err := file.Stat()
 		require.NoError(t, err, "Failed to stat test file")
@@ -1025,11 +1025,11 @@ func TestAggregatingMetricsReader_ProductionDoubleResourceBug(t *testing.T) {
 		// Create parquet reader
 		rawReader, err := NewParquetRawReader(file, stat.Size(), 1000)
 		require.NoError(t, err, "Failed to create parquet reader")
-		defer rawReader.Close()
+		defer func() { _ = rawReader.Close() }()
 
 		// Create translating reader
 		cookingReader := NewCookedMetricTranslatingReader(rawReader)
-		defer cookingReader.Close()
+		defer func() { _ = cookingReader.Close() }()
 
 		// Count input records for this file
 		fileInputCount := int64(0)
@@ -1048,17 +1048,17 @@ func TestAggregatingMetricsReader_ProductionDoubleResourceBug(t *testing.T) {
 		totalInputCount += fileInputCount
 
 		// Reset the reader for the test
-		file.Close()
+		_ = file.Close()
 		file, err = os.Open(testFile)
 		require.NoError(t, err, "Failed to reopen test file")
-		defer file.Close()
+		defer func() { _ = file.Close() }()
 
 		rawReader, err = NewParquetRawReader(file, stat.Size(), 1000)
 		require.NoError(t, err, "Failed to create parquet reader")
-		defer rawReader.Close()
+		defer func() { _ = rawReader.Close() }()
 
 		cookingReader = NewCookedMetricTranslatingReader(rawReader)
-		defer cookingReader.Close()
+		defer func() { _ = cookingReader.Close() }()
 
 		originalReaders = append(originalReaders, cookingReader)
 	}
@@ -1071,7 +1071,7 @@ func TestAggregatingMetricsReader_ProductionDoubleResourceBug(t *testing.T) {
 	keyProvider := GetCurrentMetricSortKeyProvider()
 	createReaderStackMerge, err := NewMergesortReader(ctx, originalReaders, keyProvider, 1000)
 	require.NoError(t, err, "Failed to create CreateReaderStack merge reader")
-	defer createReaderStackMerge.Close()
+	defer func() { _ = createReaderStackMerge.Close() }()
 
 	// In production, this merged reader is created but then createAggregatingReader ignores it
 	// and works directly on the original readers, causing the resource conflict
@@ -1080,12 +1080,12 @@ func TestAggregatingMetricsReader_ProductionDoubleResourceBug(t *testing.T) {
 	// This is where the bug happens - reading from readers that are already being consumed
 	createAggregatingMerge, err := NewMergesortReader(ctx, originalReaders, &MetricSortKeyProvider{}, 1000)
 	require.NoError(t, err, "Failed to create createAggregatingReader merge reader")
-	defer createAggregatingMerge.Close()
+	defer func() { _ = createAggregatingMerge.Close() }()
 
 	// Step 3: Aggregation (works fine if it gets data)
 	aggregatingReader, err := NewAggregatingMetricsReader(createAggregatingMerge, 10000, 1000)
 	require.NoError(t, err, "Failed to create aggregating reader")
-	defer aggregatingReader.Close()
+	defer func() { _ = aggregatingReader.Close() }()
 
 	// Count output records
 	outputCount := int64(0)

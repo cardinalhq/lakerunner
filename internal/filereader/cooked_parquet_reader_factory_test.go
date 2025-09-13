@@ -30,14 +30,14 @@ func TestNewCookedMetricParquetReader(t *testing.T) {
 	filename := "../../testdata/metrics/compact-test-0001/tbl_299476441865651503.parquet"
 	file, err := os.Open(filename)
 	require.NoError(t, err)
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	stat, err := file.Stat()
 	require.NoError(t, err)
 
 	reader, err := NewCookedMetricParquetReader(file, stat.Size(), 1000)
 	require.NoError(t, err)
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	var count int64
 	for {
@@ -59,14 +59,14 @@ func TestNewCookedLogParquetReader(t *testing.T) {
 	filename := "../../testdata/logs/logs-cooked-0001.parquet"
 	file, err := os.Open(filename)
 	require.NoError(t, err)
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	stat, err := file.Stat()
 	require.NoError(t, err)
 
 	reader, err := NewCookedLogParquetReader(file, stat.Size(), 1000)
 	require.NoError(t, err)
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	batch, err := reader.Next(context.Background())
 	require.NoError(t, err)

@@ -416,7 +416,7 @@ func (p *MetricIngestProcessor) createReaderStack(tmpFilename, orgID, bucket, ob
 	}
 	reader, err = filereader.NewTranslatingReader(reader, translator, 1000)
 	if err != nil {
-		reader.Close()
+		_ = reader.Close()
 		return nil, fmt.Errorf("failed to create translating reader: %w", err)
 	}
 
@@ -424,7 +424,7 @@ func (p *MetricIngestProcessor) createReaderStack(tmpFilename, orgID, bucket, ob
 	keyProvider := filereader.GetCurrentMetricSortKeyProvider()
 	reader, err = filereader.NewDiskSortingReader(reader, keyProvider, 1000)
 	if err != nil {
-		reader.Close()
+		_ = reader.Close()
 		return nil, fmt.Errorf("failed to create sorting reader: %w", err)
 	}
 

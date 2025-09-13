@@ -110,7 +110,7 @@ func TestIngestProtoMetrics_New_EmptyData(t *testing.T) {
 	} else {
 		// If no error, should still be able to use the reader
 		require.NotNil(t, reader)
-		defer reader.Close()
+		defer func() { _ = reader.Close() }()
 
 		// Reading from empty metrics should return EOF immediately
 		batch, readErr := reader.Next(context.TODO())
@@ -127,7 +127,7 @@ func TestIngestProtoMetrics_EmptySlice(t *testing.T) {
 	}
 	reader, err := NewIngestProtoMetricsReader(bytes.NewReader(syntheticData), opts)
 	require.NoError(t, err)
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	// Read with Next should return a batch
 	batch, err := reader.Next(context.TODO())
@@ -197,7 +197,7 @@ func TestIngestProtoMetrics_RowReusedAndCleared(t *testing.T) {
 	}
 	reader, err := NewIngestProtoMetricsReader(bytes.NewReader(data), opts)
 	require.NoError(t, err)
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	batch1, err := reader.Next(context.TODO())
 	require.NoError(t, err)
@@ -265,7 +265,7 @@ func TestIngestProtoMetrics_ExponentialHistogram(t *testing.T) {
 	}
 	reader, err := NewIngestProtoMetricsReaderFromMetrics(&metrics, opts)
 	require.NoError(t, err)
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	batch, err := reader.Next(context.TODO())
 
@@ -450,7 +450,7 @@ func TestIngestProtoMetrics_SyntheticMultiTypeMetrics(t *testing.T) {
 	protoReader, err := NewIngestProtoMetricsReader(reader, opts)
 	require.NoError(t, err)
 	require.NotNil(t, protoReader)
-	defer protoReader.Close()
+	defer func() { _ = protoReader.Close() }()
 
 	// Read all rows
 	allRows, err := readAllRows(protoReader)
@@ -496,7 +496,7 @@ func TestIngestProtoMetrics_SyntheticMultiTypeMetrics(t *testing.T) {
 	// Test batched reading with a new reader instance
 	protoReader2, err := NewIngestProtoMetricsReader(bytes.NewReader(data), opts)
 	require.NoError(t, err)
-	defer protoReader2.Close()
+	defer func() { _ = protoReader2.Close() }()
 
 	// Read in batches
 	var totalBatchedRows int
@@ -529,7 +529,7 @@ func TestIngestProtoMetrics_SyntheticMultiTypeMetrics(t *testing.T) {
 	}
 	protoReader3, err := NewIngestProtoMetricsReader(bytes.NewReader(data), opts1)
 	require.NoError(t, err)
-	defer protoReader3.Close()
+	defer func() { _ = protoReader3.Close() }()
 
 	batch, err := protoReader3.Next(context.TODO())
 	require.NoError(t, err)
@@ -666,7 +666,7 @@ func TestIngestProtoMetrics_SyntheticMultiResourceMetrics(t *testing.T) {
 	}
 	protoReader, err := NewIngestProtoMetricsReader(reader, opts)
 	require.NoError(t, err)
-	defer protoReader.Close()
+	defer func() { _ = protoReader.Close() }()
 
 	// Should read metrics from both services (3 total datapoints)
 	allRows, err := readAllRows(protoReader)
@@ -776,7 +776,7 @@ func TestIngestProtoMetrics_SyntheticEdgeCases(t *testing.T) {
 	}
 	protoReader, err := NewIngestProtoMetricsReader(reader, opts)
 	require.NoError(t, err)
-	defer protoReader.Close()
+	defer func() { _ = protoReader.Close() }()
 
 	// Should read all edge case datapoints
 	allRows, err := readAllRows(protoReader)
@@ -822,7 +822,7 @@ func TestIngestProtoMetrics_HistogramAlwaysHasSketch(t *testing.T) {
 	}
 	reader, err := NewIngestProtoMetricsReader(bytes.NewReader(syntheticData), opts)
 	require.NoError(t, err)
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	// This test mainly verifies that our renaming and basic functionality works
 	// The real fix is tested in production where histograms with empty buckets
@@ -852,7 +852,7 @@ func TestIngestProtoMetrics_ContractCompliance(t *testing.T) {
 	}
 	reader, err := NewIngestProtoMetricsReader(bytes.NewReader(syntheticData), opts)
 	require.NoError(t, err)
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	// Read all available rows
 	var allRows []Row
@@ -1069,7 +1069,7 @@ func TestIngestProtoMetrics_SummarySupport(t *testing.T) {
 
 	reader, err := NewIngestProtoMetricsReader(bytes.NewReader(data), ReaderOptions{})
 	require.NoError(t, err)
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	// Read first batch
 	batch, err := reader.Next(context.Background())
@@ -1228,7 +1228,7 @@ func TestIngestProtoMetrics_SummaryEdgeCases(t *testing.T) {
 
 			reader, err := NewIngestProtoMetricsReader(bytes.NewReader(data), ReaderOptions{})
 			require.NoError(t, err)
-			defer reader.Close()
+			defer func() { _ = reader.Close() }()
 
 			batch, err := reader.Next(context.Background())
 			if tc.shouldDrop {

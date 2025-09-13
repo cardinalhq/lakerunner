@@ -42,6 +42,9 @@ type Config struct {
 	ConsumerMaxWait     time.Duration `mapstructure:"consumer_max_wait"`
 	ConsumerMinBytes    int           `mapstructure:"consumer_min_bytes"`
 	ConsumerMaxBytes    int           `mapstructure:"consumer_max_bytes"`
+
+	// Connection settings
+	ConnectionTimeout time.Duration `mapstructure:"connection_timeout"`
 }
 
 // DefaultConfig returns a default configuration
@@ -66,6 +69,8 @@ func DefaultConfig() *Config {
 		ConsumerMaxWait:     500 * time.Millisecond,
 		ConsumerMinBytes:    10 * 1024,        // 10KB
 		ConsumerMaxBytes:    10 * 1024 * 1024, // 10MB
+
+		ConnectionTimeout: 10 * time.Second,
 	}
 }
 

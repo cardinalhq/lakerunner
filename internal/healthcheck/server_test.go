@@ -45,11 +45,11 @@ func TestStatus_String(t *testing.T) {
 func TestGetConfigFromEnv(t *testing.T) {
 	// Save original environment
 	originalPort := os.Getenv("HEALTH_CHECK_PORT")
-	os.Unsetenv("HEALTH_CHECK_PORT")
+	_ = os.Unsetenv("HEALTH_CHECK_PORT")
 	defer func() {
-		os.Unsetenv("HEALTH_CHECK_PORT")
+		_ = os.Unsetenv("HEALTH_CHECK_PORT")
 		if originalPort != "" {
-			os.Setenv("HEALTH_CHECK_PORT", originalPort)
+			_ = os.Setenv("HEALTH_CHECK_PORT", originalPort)
 		}
 	}()
 
@@ -60,7 +60,7 @@ func TestGetConfigFromEnv(t *testing.T) {
 	}
 
 	// Test custom values
-	os.Setenv("HEALTH_CHECK_PORT", "9090")
+	_ = os.Setenv("HEALTH_CHECK_PORT", "9090")
 
 	config = GetConfigFromEnv()
 	if config.Port != 9090 {
@@ -68,7 +68,7 @@ func TestGetConfigFromEnv(t *testing.T) {
 	}
 
 	// Test invalid port
-	os.Setenv("HEALTH_CHECK_PORT", "invalid")
+	_ = os.Setenv("HEALTH_CHECK_PORT", "invalid")
 	config = GetConfigFromEnv()
 	if config.Port != 8090 {
 		t.Errorf("Expected Port to fallback to 8090 for invalid value, got %d", config.Port)

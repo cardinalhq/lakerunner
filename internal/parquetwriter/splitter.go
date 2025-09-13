@@ -193,7 +193,7 @@ func (s *FileSplitter) streamBinaryToParquet() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("create parquet temp file: %w", err)
 	}
-	defer parquetFile.Close()
+	defer func() { _ = parquetFile.Close() }()
 
 	// Create parquet writer with optimized settings
 	writerConfig, err := parquet.NewWriterConfig(schemabuilder.WriterOptions(s.config.TmpDir, schema)...)
@@ -232,7 +232,7 @@ func (s *FileSplitter) streamBinaryToParquet() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("reopen buffer file for reading: %w", err)
 	}
-	defer bufferFile.Close()
+	defer func() { _ = bufferFile.Close() }()
 
 	// Create decoder to read back the buffered rows
 	decoder := s.codec.NewDecoder(bufferFile)
@@ -316,8 +316,8 @@ func (s *FileSplitter) finishCurrentFile() error {
 func (s *FileSplitter) cleanupCurrentBufferFile() {
 	if s.bufferFile != nil {
 		bufferFileName := s.bufferFile.Name()
-		s.bufferFile.Close()
-		os.Remove(bufferFileName)
+		_ = s.bufferFile.Close()
+		_ = os.Remove(bufferFileName)
 		s.bufferFile = nil
 	}
 
@@ -351,7 +351,7 @@ func (s *FileSplitter) Abort() {
 
 	// Clean up any completed result files too
 	for _, result := range s.results {
-		os.Remove(result.FileName)
+		_ = os.Remove(result.FileName)
 	}
 	s.results = nil
 }

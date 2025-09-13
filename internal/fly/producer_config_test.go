@@ -27,7 +27,7 @@ func TestProducerCompressionConfig(t *testing.T) {
 		Compression: kafka.Snappy,
 	}
 	p := NewProducer(cfg)
-	defer p.Close()
+	defer func() { _ = p.Close() }()
 
 	kp := p.(*kafkaProducer)
 	assert.Equal(t, kafka.Snappy, kp.config.Compression)

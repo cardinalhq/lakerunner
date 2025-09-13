@@ -27,20 +27,20 @@ func TestEnsureKafkaTopicsValidation(t *testing.T) {
 	originalBrokers := os.Getenv("LAKERUNNER_FLY_BROKERS")
 	defer func() {
 		if originalBrokers != "" {
-			os.Setenv("LAKERUNNER_FLY_BROKERS", originalBrokers)
+			_ = os.Setenv("LAKERUNNER_FLY_BROKERS", originalBrokers)
 		} else {
-			os.Unsetenv("LAKERUNNER_FLY_BROKERS")
+			_ = os.Unsetenv("LAKERUNNER_FLY_BROKERS")
 		}
 	}()
 
 	// Test validation failure
-	os.Unsetenv("LAKERUNNER_FLY_BROKERS")
+	_ = os.Unsetenv("LAKERUNNER_FLY_BROKERS")
 	err := validateKafkaConfig()
 	assert.Error(t, err, "Should fail validation when no brokers configured")
 	assert.Contains(t, err.Error(), "LAKERUNNER_FLY_BROKERS", "Error should mention missing broker config")
 
 	// Test validation success
-	os.Setenv("LAKERUNNER_FLY_BROKERS", "localhost:9092")
+	_ = os.Setenv("LAKERUNNER_FLY_BROKERS", "localhost:9092")
 	err = validateKafkaConfig()
 	assert.NoError(t, err, "Should pass validation when brokers configured")
 }
@@ -52,20 +52,20 @@ func TestEnsureKafkaTopicsNoConfigFile(t *testing.T) {
 
 	defer func() {
 		if originalBrokers != "" {
-			os.Setenv("LAKERUNNER_FLY_BROKERS", originalBrokers)
+			_ = os.Setenv("LAKERUNNER_FLY_BROKERS", originalBrokers)
 		} else {
-			os.Unsetenv("LAKERUNNER_FLY_BROKERS")
+			_ = os.Unsetenv("LAKERUNNER_FLY_BROKERS")
 		}
 		if originalConfigFile != "" {
-			os.Setenv("KAFKA_TOPICS_FILE", originalConfigFile)
+			_ = os.Setenv("KAFKA_TOPICS_FILE", originalConfigFile)
 		} else {
-			os.Unsetenv("KAFKA_TOPICS_FILE")
+			_ = os.Unsetenv("KAFKA_TOPICS_FILE")
 		}
 	}()
 
 	// Set up environment for test
-	os.Setenv("LAKERUNNER_FLY_BROKERS", "localhost:9092")
-	os.Unsetenv("KAFKA_TOPICS_FILE")
+	_ = os.Setenv("LAKERUNNER_FLY_BROKERS", "localhost:9092")
+	_ = os.Unsetenv("KAFKA_TOPICS_FILE")
 
 	// Ensure /app/config/kafka_topics.yaml doesn't exist
 	// (This should cause the function to skip gracefully)
@@ -113,9 +113,9 @@ func TestKafkaConfigValidationEdgeCases(t *testing.T) {
 	originalBrokers := os.Getenv("LAKERUNNER_FLY_BROKERS")
 	defer func() {
 		if originalBrokers != "" {
-			os.Setenv("LAKERUNNER_FLY_BROKERS", originalBrokers)
+			_ = os.Setenv("LAKERUNNER_FLY_BROKERS", originalBrokers)
 		} else {
-			os.Unsetenv("LAKERUNNER_FLY_BROKERS")
+			_ = os.Unsetenv("LAKERUNNER_FLY_BROKERS")
 		}
 	}()
 
@@ -149,9 +149,9 @@ func TestKafkaConfigValidationEdgeCases(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.brokers == "" || tt.brokers == "   " {
-				os.Unsetenv("LAKERUNNER_FLY_BROKERS")
+				_ = os.Unsetenv("LAKERUNNER_FLY_BROKERS")
 			} else {
-				os.Setenv("LAKERUNNER_FLY_BROKERS", tt.brokers)
+				_ = os.Setenv("LAKERUNNER_FLY_BROKERS", tt.brokers)
 			}
 
 			err := validateKafkaConfig()

@@ -172,7 +172,7 @@ func duckHasColumn(ctx context.Context, db *sql.DB, table, col string) (bool, er
 	if err != nil {
 		return false, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
 		var name string
@@ -192,7 +192,7 @@ func duckHasAnyNonTSColumn(ctx context.Context, db *sql.DB, table string) (bool,
 	if err != nil {
 		return false, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	hasOther := false
 	for rows.Next() {

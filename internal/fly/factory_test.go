@@ -16,6 +16,7 @@ package fly
 
 import (
 	"testing"
+	"time"
 
 	"github.com/segmentio/kafka-go"
 	"github.com/stretchr/testify/assert"
@@ -120,7 +121,7 @@ func TestFactory_CreateProducer(t *testing.T) {
 					if tt.config.ProducerCompression == "snappy" {
 						assert.Equal(t, kafka.Snappy, kp.config.Compression)
 					}
-					producer.Close()
+					_ = producer.Close()
 				}
 			}
 		})
@@ -143,6 +144,7 @@ func TestFactory_CreateConsumer(t *testing.T) {
 				ConsumerMaxWait:   500000000, // 500ms
 				ConsumerMinBytes:  1024,
 				ConsumerMaxBytes:  1048576,
+				ConnectionTimeout: 50 * time.Millisecond, // Very fast timeout for tests
 			},
 			topic:   "test-topic",
 			groupID: "test-group",
@@ -151,11 +153,12 @@ func TestFactory_CreateConsumer(t *testing.T) {
 		{
 			name: "consumer with SASL",
 			config: &Config{
-				Brokers:       []string{"localhost:9092"},
-				SASLEnabled:   true,
-				SASLMechanism: "SCRAM-SHA-256",
-				SASLUsername:  "user",
-				SASLPassword:  "pass",
+				Brokers:           []string{"localhost:9092"},
+				SASLEnabled:       true,
+				SASLMechanism:     "SCRAM-SHA-256",
+				SASLUsername:      "user",
+				SASLPassword:      "pass",
+				ConnectionTimeout: 50 * time.Millisecond, // Very fast timeout for tests
 			},
 			topic:   "test-topic",
 			groupID: "test-group",
@@ -164,9 +167,10 @@ func TestFactory_CreateConsumer(t *testing.T) {
 		{
 			name: "consumer with invalid SASL",
 			config: &Config{
-				Brokers:       []string{"localhost:9092"},
-				SASLEnabled:   true,
-				SASLMechanism: "INVALID",
+				Brokers:           []string{"localhost:9092"},
+				SASLEnabled:       true,
+				SASLMechanism:     "INVALID",
+				ConnectionTimeout: 50 * time.Millisecond, // Very fast timeout for tests
 			},
 			topic:   "test-topic",
 			groupID: "test-group",
@@ -186,7 +190,7 @@ func TestFactory_CreateConsumer(t *testing.T) {
 				assert.NoError(t, err)
 				assert.NotNil(t, consumer)
 				if consumer != nil {
-					consumer.Close()
+					_ = consumer.Close()
 				}
 			}
 		})
@@ -197,6 +201,7 @@ func TestFactory_CreateConsumerWithService(t *testing.T) {
 	config := &Config{
 		Brokers:             []string{"localhost:9092"},
 		ConsumerGroupPrefix: "lakerunner",
+		ConnectionTimeout:   100 * time.Millisecond, // Fast timeout for tests
 	}
 
 	factory := NewFactory(config)
@@ -210,12 +215,13 @@ func TestFactory_CreateConsumerWithService(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "lakerunner.ingest", kc.config.GroupID)
 
-	consumer.Close()
+	_ = consumer.Close()
 }
 
 func TestManager_Lifecycle(t *testing.T) {
 	config := &Config{
-		Brokers: []string{"localhost:9092"},
+		Brokers:           []string{"localhost:9092"},
+		ConnectionTimeout: 100 * time.Millisecond, // Fast timeout for tests
 	}
 	factory := NewFactory(config)
 	manager := NewManager(factory)
@@ -245,7 +251,8 @@ func TestManager_Lifecycle(t *testing.T) {
 
 func TestManager_CloseWithErrors(t *testing.T) {
 	config := &Config{
-		Brokers: []string{"localhost:9092"},
+		Brokers:           []string{"localhost:9092"},
+		ConnectionTimeout: 100 * time.Millisecond, // Fast timeout for tests
 	}
 	factory := NewFactory(config)
 	manager := NewManager(factory)
@@ -257,8 +264,8 @@ func TestManager_CloseWithErrors(t *testing.T) {
 	_, _ = manager.CreateConsumer("topic2", "group2") // c2
 
 	// Close some manually to simulate already closed
-	p1.Close()
-	c1.Close()
+	_ = p1.Close()
+	_ = c1.Close()
 
 	// Manager close should still work
 	err := manager.Close()
@@ -317,6 +324,7 @@ func TestFactoryIntegration(t *testing.T) {
 		ConsumerBatchSize:    10,
 		ConsumerMaxWait:      100000000, // 100ms
 		ConsumerGroupPrefix:  "test",
+		ConnectionTimeout:    50 * time.Millisecond, // Very fast timeout for tests
 	}
 
 	factory := NewFactory(config)
@@ -332,7 +340,7 @@ func TestFactoryIntegration(t *testing.T) {
 	assert.Equal(t, 10, kp.config.BatchSize)
 	assert.Equal(t, kafka.RequireNone, kp.config.RequiredAcks)
 
-	producer.Close()
+	_ = producer.Close()
 
 	// Test consumer creation
 	consumer, err := factory.CreateConsumer("test-topic", "test-group")
@@ -346,7 +354,7 @@ func TestFactoryIntegration(t *testing.T) {
 	assert.Equal(t, "test-topic", kc.config.Topic)
 	assert.Equal(t, "test-group", kc.config.GroupID)
 
-	consumer.Close()
+	_ = consumer.Close()
 
 	// Test consumer with service
 	consumer2, err := factory.CreateConsumerWithService("test-topic2", "ingest")
@@ -357,5 +365,5 @@ func TestFactoryIntegration(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "test.ingest", kc2.config.GroupID)
 
-	consumer2.Close()
+	_ = consumer2.Close()
 }

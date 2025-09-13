@@ -556,7 +556,7 @@ func TestHunter_RealDataFromFile(t *testing.T) {
 	// Read real data from testdata
 	file, err := os.Open("testdata/metric_compaction_data.txt")
 	require.NoError(t, err, "Failed to open testdata/metric_compaction_data.txt")
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	scanner := bufio.NewScanner(file)
 

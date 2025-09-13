@@ -127,7 +127,7 @@ func runParquetCat(filename string, limit int, keepByteSlices bool) error {
 	if err != nil {
 		return fmt.Errorf("failed to open file %s: %w", filename, err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	stat, err := file.Stat()
 	if err != nil {
@@ -140,7 +140,7 @@ func runParquetCat(filename string, limit int, keepByteSlices bool) error {
 	}
 
 	reader := parquet.NewGenericReader[map[string]any](pf, pf.Schema())
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	rowsOutput := 0
 	batchSize := 1000
@@ -148,10 +148,7 @@ func runParquetCat(filename string, limit int, keepByteSlices bool) error {
 		batchSize = limit
 	}
 
-	for {
-		if limit > 0 && rowsOutput >= limit {
-			break
-		}
+	for limit <= 0 || rowsOutput < limit {
 
 		currentBatchSize := batchSize
 		if limit > 0 && rowsOutput+batchSize > limit {
@@ -246,7 +243,7 @@ func runParquetSchemaFromData(filename string) error {
 	if err != nil {
 		return fmt.Errorf("failed to open file %s: %w", filename, err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	stat, err := file.Stat()
 	if err != nil {
@@ -259,7 +256,7 @@ func runParquetSchemaFromData(filename string) error {
 	}
 
 	reader := parquet.NewGenericReader[map[string]any](pf, pf.Schema())
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	seenColumns := make(map[string]string)
 	rawTypes := make(map[string]string) // Track original types before conversion

@@ -116,7 +116,7 @@ func (p *MetricCompactionProcessor) uploadAndCreateSegments(ctx context.Context,
 		}
 
 		// Clean up local file
-		os.Remove(result.FileName)
+		_ = os.Remove(result.FileName)
 
 		// Create new segment record
 		segment := lrdb.MetricSeg{

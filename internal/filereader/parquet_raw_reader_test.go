@@ -34,14 +34,14 @@ func TestParquetRawReaderNext(t *testing.T) {
 	// Test with a real file to verify Next() behavior
 	file, err := os.Open("../../testdata/logs/logs-cooked-0001.parquet")
 	require.NoError(t, err)
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	stat, err := file.Stat()
 	require.NoError(t, err)
 
 	reader, err := NewParquetRawReader(file, stat.Size(), 10) // Small batch size
 	require.NoError(t, err)
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	var totalRows int64
 	batchCount := 0
@@ -77,7 +77,7 @@ func TestParquetRawReaderNext(t *testing.T) {
 func TestParquetRawReaderBatching(t *testing.T) {
 	file, err := os.Open("../../testdata/logs/logs-cooked-0001.parquet")
 	require.NoError(t, err)
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	stat, err := file.Stat()
 	require.NoError(t, err)
@@ -97,7 +97,7 @@ func TestParquetRawReaderBatching(t *testing.T) {
 		t.Run(fmt.Sprintf("BatchSize%d", tc.batchSize), func(t *testing.T) {
 			reader, err := NewParquetRawReader(file, stat.Size(), tc.batchSize)
 			require.NoError(t, err)
-			defer reader.Close()
+			defer func() { _ = reader.Close() }()
 
 			var totalRows int64
 			batchCount := 0
@@ -126,14 +126,14 @@ func TestParquetRawReaderBatching(t *testing.T) {
 func TestParquetRawReaderWithRealFile(t *testing.T) {
 	file, err := os.Open("../../testdata/logs/logs-cooked-0001.parquet")
 	require.NoError(t, err)
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	stat, err := file.Stat()
 	require.NoError(t, err)
 
 	reader, err := NewParquetRawReader(file, stat.Size(), 1000)
 	require.NoError(t, err)
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	// Read all rows and verify we get the expected count
 	var rowCount int64
@@ -175,14 +175,14 @@ func TestParquetRawReaderMultipleFiles(t *testing.T) {
 		t.Run(filename, func(t *testing.T) {
 			file, err := os.Open(filename)
 			require.NoError(t, err)
-			defer file.Close()
+			defer func() { _ = file.Close() }()
 
 			stat, err := file.Stat()
 			require.NoError(t, err)
 
 			reader, err := NewParquetRawReader(file, stat.Size(), 1000)
 			require.NoError(t, err)
-			defer reader.Close()
+			defer func() { _ = reader.Close() }()
 
 			// Read all rows and count them
 			var totalRows int64
@@ -218,7 +218,7 @@ func TestParquetRawReaderMultipleFiles(t *testing.T) {
 func TestParquetRawReaderClose(t *testing.T) {
 	file, err := os.Open("../../testdata/logs/logs-cooked-0001.parquet")
 	require.NoError(t, err)
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	stat, err := file.Stat()
 	require.NoError(t, err)
@@ -252,7 +252,7 @@ func TestParquetRawReader_SpecificProblemFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create reader for problem file: %v", err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	// Try to read some rows
 	batch, err := reader.Next(context.TODO())
@@ -301,7 +301,7 @@ func TestParquetRawReader_WithTranslator(t *testing.T) {
 	// Create base parquet reader
 	baseReader, err := createParquetReader(filename, ReaderOptions{})
 	require.NoError(t, err)
-	defer baseReader.Close()
+	defer func() { _ = baseReader.Close() }()
 
 	// Create simple translator that just adds a test field
 	translator := &testTranslator{addField: "test.translator", addValue: "parquet"}
@@ -341,7 +341,7 @@ func TestIngestProtoLogsReader_WithTranslator(t *testing.T) {
 	options := ReaderOptions{SignalType: SignalTypeLogs}
 	baseReader, err := createProtoBinaryGzReader(filename, options)
 	require.NoError(t, err)
-	defer baseReader.Close()
+	defer func() { _ = baseReader.Close() }()
 
 	// Create simple translator that just adds a test field
 	translator := &testTranslator{addField: "test.translator", addValue: "proto"}
@@ -397,14 +397,14 @@ func TestParquetRawReader_CompactTestFiles(t *testing.T) {
 
 			file, err := os.Open(fullPath)
 			require.NoError(t, err, "Failed to open file: %s", fullPath)
-			defer file.Close()
+			defer func() { _ = file.Close() }()
 
 			stat, err := file.Stat()
 			require.NoError(t, err)
 
 			reader, err := NewParquetRawReader(file, stat.Size(), 1000)
 			require.NoError(t, err, "Failed to create reader for file: %s", filename)
-			defer reader.Close()
+			defer func() { _ = reader.Close() }()
 
 			var totalRows int64
 			batchCount := 0
@@ -445,14 +445,14 @@ func TestParquetRawReader_TIDConversion(t *testing.T) {
 
 	file, err := os.Open(fullPath)
 	require.NoError(t, err, "Failed to open test file")
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	stat, err := file.Stat()
 	require.NoError(t, err)
 
 	reader, err := NewParquetRawReader(file, stat.Size(), 1000)
 	require.NoError(t, err, "Failed to create reader")
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	// Read first batch
 	batch, err := reader.Next(context.TODO())
@@ -526,7 +526,7 @@ func TestDiskSortingReader_WithParquetCompactTestFiles(t *testing.T) {
 			// Open fresh file for the DiskSortingReader test
 			file, err := os.Open(fullPath)
 			require.NoError(t, err, "Failed to open file: %s", fullPath)
-			defer file.Close()
+			defer func() { _ = file.Close() }()
 
 			stat, err := file.Stat()
 			require.NoError(t, err)
@@ -534,16 +534,16 @@ func TestDiskSortingReader_WithParquetCompactTestFiles(t *testing.T) {
 			// Create the ParquetReader
 			parquetReader, err := NewParquetRawReader(file, stat.Size(), 1000)
 			require.NoError(t, err, "Failed to create ParquetReader for file: %s", filename)
-			defer parquetReader.Close()
+			defer func() { _ = parquetReader.Close() }()
 
 			// Wrap with CookedMetricTranslatingReader to handle metric-specific transformations
 			translatingReader := NewCookedMetricTranslatingReader(parquetReader)
-			defer translatingReader.Close()
+			defer func() { _ = translatingReader.Close() }()
 
 			// Wrap with DiskSortingReader
 			diskSortingReader, err := NewDiskSortingReader(translatingReader, keyProvider, 1000)
 			require.NoError(t, err, "Failed to create DiskSortingReader for file: %s", filename)
-			defer diskSortingReader.Close()
+			defer func() { _ = diskSortingReader.Close() }()
 
 			var totalRows int64
 			batchCount := 0
@@ -598,14 +598,14 @@ func TestParquetRawReaderSmallFiles(t *testing.T) {
 
 			file, err := os.Open(filePath)
 			require.NoError(t, err, "Should open parquet file")
-			defer file.Close()
+			defer func() { _ = file.Close() }()
 
 			stat, err := file.Stat()
 			require.NoError(t, err, "Should stat parquet file")
 
 			reader, err := NewParquetRawReader(file, stat.Size(), 1000)
 			require.NoError(t, err, "Should create NewParquetRawReader")
-			defer reader.Close()
+			defer func() { _ = reader.Close() }()
 
 			recordCount := 0
 			for {

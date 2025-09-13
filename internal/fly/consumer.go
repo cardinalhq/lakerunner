@@ -59,6 +59,9 @@ type ConsumerConfig struct {
 
 	// TLS configuration
 	TLSConfig *tls.Config
+
+	// Connection settings
+	ConnectionTimeout time.Duration
 }
 
 // DefaultConsumerConfig returns a default consumer configuration
@@ -75,6 +78,8 @@ func DefaultConsumerConfig(topic, groupID string) ConsumerConfig {
 		AutoCommit:    false,
 		CommitBatch:   true,
 		RetryAttempts: 3,
+
+		ConnectionTimeout: 10 * time.Second,
 	}
 }
 
@@ -86,8 +91,13 @@ type kafkaConsumer struct {
 
 // NewConsumer creates a new Kafka consumer
 func NewConsumer(config ConsumerConfig) Consumer {
+	timeout := config.ConnectionTimeout
+	if timeout == 0 {
+		timeout = 10 * time.Second // Default fallback
+	}
+
 	dialer := &kafka.Dialer{
-		Timeout:       10 * time.Second,
+		Timeout:       timeout,
 		SASLMechanism: config.SASLMechanism,
 		TLS:           config.TLSConfig,
 	}

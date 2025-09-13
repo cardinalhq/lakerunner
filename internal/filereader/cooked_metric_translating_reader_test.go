@@ -48,7 +48,7 @@ func TestCookedMetricTranslatingReader_NaNFiltering(t *testing.T) {
 
 			file, err := os.Open(fullPath)
 			require.NoError(t, err, "Failed to open file: %s", fullPath)
-			defer file.Close()
+			defer func() { _ = file.Close() }()
 
 			stat, err := file.Stat()
 			require.NoError(t, err)
@@ -56,11 +56,11 @@ func TestCookedMetricTranslatingReader_NaNFiltering(t *testing.T) {
 			// Create raw reader
 			rawReader, err := NewParquetRawReader(file, stat.Size(), 1000)
 			require.NoError(t, err, "Failed to create raw reader")
-			defer rawReader.Close()
+			defer func() { _ = rawReader.Close() }()
 
 			// Wrap with CookedMetricTranslatingReader
 			translatingReader := NewCookedMetricTranslatingReader(rawReader)
-			defer translatingReader.Close()
+			defer func() { _ = translatingReader.Close() }()
 
 			var totalRows int64
 			for {
@@ -103,7 +103,7 @@ func TestCookedMetricTranslatingReader_TIDConversion(t *testing.T) {
 	}
 
 	reader := NewCookedMetricTranslatingReader(mockReader)
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	batch, err := reader.Next(context.TODO())
 	require.NoError(t, err)
@@ -146,7 +146,7 @@ func TestCookedMetricTranslatingReader_SketchConversion(t *testing.T) {
 	}
 
 	reader := NewCookedMetricTranslatingReader(mockReader)
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	batch, err := reader.Next(context.TODO())
 	require.NoError(t, err)
@@ -227,7 +227,7 @@ func TestCookedMetricTranslatingReader_ShouldDropRow(t *testing.T) {
 
 			file, err := os.Open(filePath)
 			require.NoError(t, err, "Should open parquet file")
-			defer file.Close()
+			defer func() { _ = file.Close() }()
 
 			stat, err := file.Stat()
 			require.NoError(t, err, "Should stat parquet file")
@@ -235,7 +235,7 @@ func TestCookedMetricTranslatingReader_ShouldDropRow(t *testing.T) {
 			// Create raw reader for testing shouldDropRow
 			rawReader, err := NewParquetRawReader(file, stat.Size(), 1000)
 			require.NoError(t, err, "Should create NewParquetRawReader")
-			defer rawReader.Close()
+			defer func() { _ = rawReader.Close() }()
 
 			// First, read one batch from the raw reader to get sample rows for shouldDropRow testing
 			rawBatch, err := rawReader.Next(ctx)
@@ -247,7 +247,7 @@ func TestCookedMetricTranslatingReader_ShouldDropRow(t *testing.T) {
 
 			// Create a temporary cooked reader just for testing shouldDropRow
 			tempCookedReader := NewCookedMetricTranslatingReader(rawReader)
-			defer tempCookedReader.Close()
+			defer func() { _ = tempCookedReader.Close() }()
 
 			// Test shouldDropRow on the first few rows
 			droppedCount := 0
@@ -299,17 +299,17 @@ func TestCookedMetricTranslatingReader_NextWithSmallFiles(t *testing.T) {
 
 			file, err := os.Open(filePath)
 			require.NoError(t, err, "Should open parquet file")
-			defer file.Close()
+			defer func() { _ = file.Close() }()
 
 			stat, err := file.Stat()
 			require.NoError(t, err, "Should stat parquet file")
 
 			rawReader, err := NewParquetRawReader(file, stat.Size(), 1000)
 			require.NoError(t, err, "Should create NewParquetRawReader")
-			defer rawReader.Close()
+			defer func() { _ = rawReader.Close() }()
 
 			cookedReader := NewCookedMetricTranslatingReader(rawReader)
-			defer cookedReader.Close()
+			defer func() { _ = cookedReader.Close() }()
 
 			// Read from the cooked reader and see what exactly happens
 			cookedRecordCount := 0

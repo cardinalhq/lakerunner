@@ -76,7 +76,7 @@ func TestNewTranslatingReader(t *testing.T) {
 	reader, err := NewTranslatingReader(mockReader, translator, 1000)
 	require.NoError(t, err)
 	require.NotNil(t, reader)
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	// Verify the reader was initialized properly
 	assert.NotNil(t, reader.reader)
@@ -112,7 +112,7 @@ func TestTranslatingReader_NoopTranslator(t *testing.T) {
 
 	reader, err := NewTranslatingReader(mockReader, translator, 1000)
 	require.NoError(t, err)
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	// Read all rows
 	allRows, err := readAllRows(reader)
@@ -139,7 +139,7 @@ func TestTranslatingReader_SameReferenceVsDifferentReference(t *testing.T) {
 
 		reader, err := NewTranslatingReader(mockReader, translator, 1000)
 		require.NoError(t, err)
-		defer reader.Close()
+		defer func() { _ = reader.Close() }()
 
 		allRows, err := readAllRows(reader)
 		require.NoError(t, err)
@@ -156,7 +156,7 @@ func TestTranslatingReader_SameReferenceVsDifferentReference(t *testing.T) {
 
 		reader, err := NewTranslatingReader(mockReader, translator, 1000)
 		require.NoError(t, err)
-		defer reader.Close()
+		defer func() { _ = reader.Close() }()
 
 		allRows, err := readAllRows(reader)
 		require.NoError(t, err)
@@ -175,7 +175,7 @@ func TestTranslatingReader_SameReferenceVsDifferentReference(t *testing.T) {
 
 		reader, err := NewTranslatingReader(mockReader, translator, 1000)
 		require.NoError(t, err)
-		defer reader.Close()
+		defer func() { _ = reader.Close() }()
 
 		allRows, err := readAllRows(reader)
 		require.NoError(t, err)
@@ -204,7 +204,7 @@ func TestTranslatingReader_TagsTranslator(t *testing.T) {
 
 	reader, err := NewTranslatingReader(mockReader, translator, 1000)
 	require.NoError(t, err)
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	// Read all rows
 	allRows, err := readAllRows(reader)
@@ -242,7 +242,7 @@ func TestTranslatingReader_ChainTranslator(t *testing.T) {
 	mockReader := newMockReader("test", testData)
 	reader, err := NewTranslatingReader(mockReader, chainTranslator, 1000)
 	require.NoError(t, err)
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	// Read all rows
 	allRows, err := readAllRows(reader)
@@ -274,7 +274,7 @@ func TestTranslatingReader_TranslationError(t *testing.T) {
 
 	reader, err := NewTranslatingReader(mockReader, translator, 1000)
 	require.NoError(t, err)
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	// Read should fail on the first row due to translation error
 	batch, err := reader.Next(context.TODO())
@@ -297,7 +297,7 @@ func TestTranslatingReader_PartialTranslationError(t *testing.T) {
 	mockReader := newMockReader("test", testData)
 	reader, err := NewTranslatingReader(mockReader, translator, 1000)
 	require.NoError(t, err)
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	// Read should succeed for first row, then fail on second
 	batch, err := reader.Next(context.TODO())
@@ -318,7 +318,7 @@ func TestTranslatingReader_EmptySlice(t *testing.T) {
 
 	reader, err := NewTranslatingReader(mockReader, translator, 1000)
 	require.NoError(t, err)
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	// Read with empty slice should still work with Next()
 	batch, err := reader.Next(context.TODO())
@@ -342,7 +342,7 @@ func TestTranslatingReader_ReadBatched(t *testing.T) {
 
 	reader, err := NewTranslatingReader(mockReader, translator, 1000)
 	require.NoError(t, err)
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	// Read in batches
 	var totalRows int
@@ -388,7 +388,7 @@ func TestTranslatingReader_TotalRowsReturned(t *testing.T) {
 
 	reader, err := NewTranslatingReader(mockReader, translator, 1000)
 	require.NoError(t, err)
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	// Initially should have 0 rows
 	assert.Equal(t, int64(0), reader.TotalRowsReturned())
@@ -444,7 +444,7 @@ func TestTranslatingReader_UnderlyingReaderError(t *testing.T) {
 
 	reader, err := NewTranslatingReader(mockReader, translator, 1000)
 	require.NoError(t, err)
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	// Read should return error from underlying reader
 	_, err = reader.Next(context.TODO())
@@ -462,7 +462,7 @@ func TestTranslatingReader_EOF(t *testing.T) {
 
 	reader, err := NewTranslatingReader(mockReader, translator, 1000)
 	require.NoError(t, err)
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	// First read should get the row
 	batch, err := reader.Next(context.TODO())

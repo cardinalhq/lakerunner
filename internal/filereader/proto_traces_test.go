@@ -52,7 +52,7 @@ func TestNewProtoTracesReader_EmptyData(t *testing.T) {
 	} else {
 		// If no error, should still be able to use the reader
 		require.NotNil(t, reader)
-		defer reader.Close()
+		defer func() { _ = reader.Close() }()
 
 		// Reading from empty traces should return EOF immediately
 		batch, readErr := reader.Next(context.TODO())
@@ -104,7 +104,7 @@ func TestProtoTracesReader_EmptySlice(t *testing.T) {
 
 	protoReader, err := NewProtoTracesReader(bytes.NewReader(syntheticData), 1000)
 	require.NoError(t, err)
-	defer protoReader.Close()
+	defer func() { _ = protoReader.Close() }()
 
 	// Read with empty slice behavior is no longer applicable with Next() method
 	// Next() returns a batch or nil, not dependent on slice size
@@ -248,7 +248,7 @@ func TestProtoTracesReader_SyntheticData(t *testing.T) {
 	// Create reader
 	protoReader, err := NewProtoTracesReader(bytes.NewReader(protoBytes), 1000)
 	require.NoError(t, err)
-	defer protoReader.Close()
+	defer func() { _ = protoReader.Close() }()
 
 	// Read all rows
 	allRows, err := readAllRows(protoReader)
@@ -335,7 +335,7 @@ func TestProtoTracesReader_SyntheticData(t *testing.T) {
 	// Test batched reading with a new reader instance
 	protoReader2, err := NewProtoTracesReader(bytes.NewReader(protoBytes), 1000)
 	require.NoError(t, err)
-	defer protoReader2.Close()
+	defer func() { _ = protoReader2.Close() }()
 
 	// Read in batches
 	var totalBatchedRows int
@@ -365,7 +365,7 @@ func TestProtoTracesReader_SyntheticData(t *testing.T) {
 	// Test single row reading
 	protoReader3, err := NewProtoTracesReader(bytes.NewReader(protoBytes), 1)
 	require.NoError(t, err)
-	defer protoReader3.Close()
+	defer func() { _ = protoReader3.Close() }()
 
 	batch, err := protoReader3.Next(context.TODO())
 	require.NoError(t, err)
@@ -488,7 +488,7 @@ func TestProtoTracesReader_SyntheticMultiResourceTraces(t *testing.T) {
 
 	protoReader, err := NewProtoTracesReader(bytes.NewReader(protoBytes), 1000)
 	require.NoError(t, err)
-	defer protoReader.Close()
+	defer func() { _ = protoReader.Close() }()
 
 	allRows, err := readAllRows(protoReader)
 	require.NoError(t, err)
@@ -579,7 +579,7 @@ func TestProtoTracesReader_SyntheticEdgeCases(t *testing.T) {
 
 	protoReader, err := NewProtoTracesReader(bytes.NewReader(protoBytes), 1000)
 	require.NoError(t, err)
-	defer protoReader.Close()
+	defer func() { _ = protoReader.Close() }()
 
 	allRows, err := readAllRows(protoReader)
 	require.NoError(t, err)

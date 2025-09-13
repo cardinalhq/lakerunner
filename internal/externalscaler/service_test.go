@@ -186,9 +186,7 @@ func TestService_GetMetrics(t *testing.T) {
 			mockQueries := &MockQueries{}
 			tt.mockSetup(mockQueries)
 
-			service := &Service{
-				queries: mockQueries,
-			}
+			service := &Service{}
 
 			req := &GetMetricsRequest{
 				ScaledObjectRef: &ScaledObjectRef{
@@ -274,9 +272,7 @@ func TestService_getQueueDepth(t *testing.T) {
 			mockQueries := &MockQueries{}
 			tt.mockSetup(mockQueries)
 
-			service := &Service{
-				queries: mockQueries,
-			}
+			service := &Service{}
 
 			count, err := service.getQueueDepth(context.Background(), tt.serviceType)
 

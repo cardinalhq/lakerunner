@@ -36,13 +36,13 @@ func LoadSchemaForFile(filename string) (*FileHandle, error) {
 
 	stat, err := file.Stat()
 	if err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, fmt.Errorf("failed to stat file %s: %w", filename, err)
 	}
 
 	pf, err := parquet.OpenFile(file, stat.Size())
 	if err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, fmt.Errorf("failed to open parquet file: %w", err)
 	}
 

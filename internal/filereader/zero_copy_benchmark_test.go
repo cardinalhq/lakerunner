@@ -127,7 +127,7 @@ func BenchmarkAggregatingMetricsReader_ZeroCopy(b *testing.B) {
 					pipeline.ReturnBatch(batch)
 				}
 
-				aggReader.Close()
+				_ = aggReader.Close()
 			}
 
 			b.ReportMetric(float64(size.totalRows), "rows/op")

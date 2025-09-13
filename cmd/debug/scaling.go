@@ -75,7 +75,7 @@ func runPoll(ctx context.Context, address string, interval time.Duration, servic
 	if err != nil {
 		return fmt.Errorf("failed to connect to external scaler: %w", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	client := externalscaler.NewExternalScalerClient(conn)
 

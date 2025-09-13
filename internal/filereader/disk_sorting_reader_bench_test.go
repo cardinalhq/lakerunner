@@ -71,7 +71,7 @@ func benchmarkSortingReader(b *testing.B, createReaderFunc func([]Row) (Reader, 
 			rowsRead += batch.Len()
 		}
 
-		reader.Close()
+		_ = reader.Close()
 
 		// Sanity check
 		if i == 0 && rowsRead != 1000 {
@@ -120,7 +120,7 @@ func benchmarkSortingReaderWithSize(b *testing.B, numRows int, createReaderFunc 
 			rowsRead += batch.Len()
 		}
 
-		reader.Close()
+		_ = reader.Close()
 
 		// Sanity check
 		if i == 0 && rowsRead != numRows {

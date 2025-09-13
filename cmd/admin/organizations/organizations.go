@@ -337,7 +337,7 @@ func createAdminClient() (adminproto.AdminServiceClient, func(), error) {
 		return nil, nil, fmt.Errorf("failed to connect to admin service: %w", err)
 	}
 
-	cleanup := func() { conn.Close() }
+	cleanup := func() { _ = conn.Close() }
 	client := adminproto.NewAdminServiceClient(conn)
 	return client, cleanup, nil
 }

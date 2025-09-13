@@ -21,15 +21,11 @@ import (
 	"net"
 	"strconv"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
-
-	"github.com/cardinalhq/lakerunner/cmd/dbopen"
-	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 // QueriesInterface defines the methods needed for scaling queries
@@ -41,8 +37,6 @@ type Service struct {
 	UnimplementedExternalScalerServer
 	grpcPort    int
 	healthCheck *health.Server
-	dbPool      *pgxpool.Pool
-	queries     QueriesInterface
 }
 
 type Config struct {
@@ -50,23 +44,13 @@ type Config struct {
 }
 
 func NewService(ctx context.Context, cfg Config) (*Service, error) {
-	dbPool, err := dbopen.ConnectTolrdb(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to LRDB: %w", err)
-	}
-
 	return &Service{
 		grpcPort:    cfg.GRPCPort,
 		healthCheck: health.NewServer(),
-		dbPool:      dbPool,
-		queries:     lrdb.New(dbPool),
 	}, nil
 }
 
 func (s *Service) Close() {
-	if s.dbPool != nil {
-		s.dbPool.Close()
-	}
 }
 
 func (s *Service) getQueueDepth(ctx context.Context, serviceType string) (int64, error) {

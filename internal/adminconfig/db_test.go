@@ -49,8 +49,8 @@ func TestDBProviderValidateAPIKeyInitialAdmin(t *testing.T) {
 		},
 	}
 
-	os.Setenv("LAKERUNNER_INITITAL_ADMIN_API_KEY", "bootkey")
-	defer os.Unsetenv("LAKERUNNER_INITITAL_ADMIN_API_KEY")
+	_ = os.Setenv("LAKERUNNER_INITITAL_ADMIN_API_KEY", "bootkey")
+	defer func() { _ = os.Unsetenv("LAKERUNNER_INITITAL_ADMIN_API_KEY") }()
 
 	provider := NewDBProvider(store)
 
@@ -74,8 +74,8 @@ func TestDBProviderValidateAPIKeyNonEmptyTable(t *testing.T) {
 		},
 	}
 
-	os.Setenv("LAKERUNNER_INITITAL_ADMIN_API_KEY", "bootkey")
-	defer os.Unsetenv("LAKERUNNER_INITITAL_ADMIN_API_KEY")
+	_ = os.Setenv("LAKERUNNER_INITITAL_ADMIN_API_KEY", "bootkey")
+	defer func() { _ = os.Unsetenv("LAKERUNNER_INITITAL_ADMIN_API_KEY") }()
 
 	provider := NewDBProvider(store)
 

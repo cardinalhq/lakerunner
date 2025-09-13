@@ -62,7 +62,7 @@ func TestNewIngestProtoLogsReader_EmptyData(t *testing.T) {
 	} else {
 		// If no error, should still be able to use the reader
 		require.NotNil(t, reader)
-		defer reader.Close()
+		defer func() { _ = reader.Close() }()
 
 		// Reading from empty logs should return EOF immediately
 		batch, readErr := reader.Next(context.TODO())
@@ -80,7 +80,7 @@ func TestIngestProtoLogsReader_EmptySlice(t *testing.T) {
 	}
 	reader, err := NewIngestProtoLogsReader(bytes.NewReader(syntheticData), opts)
 	require.NoError(t, err)
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	// Read with empty slice behavior is no longer applicable with Next() method
 	// Next() returns a batch or nil, not dependent on slice size
@@ -256,7 +256,7 @@ func TestIngestProtoLogsReader_SyntheticData(t *testing.T) {
 	protoReader, err := NewIngestProtoLogsReader(reader, opts)
 	require.NoError(t, err)
 	require.NotNil(t, protoReader)
-	defer protoReader.Close()
+	defer func() { _ = protoReader.Close() }()
 
 	// Read all rows
 	allRows, err := readAllRows(protoReader)
@@ -317,7 +317,7 @@ func TestIngestProtoLogsReader_SyntheticData(t *testing.T) {
 
 	protoReader2, err := NewIngestProtoLogsReader(bytes.NewReader(syntheticData), opts)
 	require.NoError(t, err)
-	defer protoReader2.Close()
+	defer func() { _ = protoReader2.Close() }()
 
 	// Read in batches
 	var totalBatchedRows int
@@ -349,7 +349,7 @@ func TestIngestProtoLogsReader_SyntheticData(t *testing.T) {
 	opts.BatchSize = 1
 	protoReader3, err := NewIngestProtoLogsReader(bytes.NewReader(syntheticData), opts)
 	require.NoError(t, err)
-	defer protoReader3.Close()
+	defer func() { _ = protoReader3.Close() }()
 
 	batch, err := protoReader3.Next(context.TODO())
 	require.NoError(t, err)
@@ -391,7 +391,7 @@ func TestIngestProtoLogsReader_SyntheticDataFields(t *testing.T) {
 	}
 	protoReader, err := NewIngestProtoLogsReader(reader, opts)
 	require.NoError(t, err)
-	defer protoReader.Close()
+	defer func() { _ = protoReader.Close() }()
 
 	// Read all rows and collect log field info
 	allRows, err := readAllRows(protoReader)
@@ -535,7 +535,7 @@ func TestIngestProtoLogsReader_SyntheticStructuredData(t *testing.T) {
 	protoReader, err := NewIngestProtoLogsReader(reader, opts)
 	require.NoError(t, err)
 	require.NotNil(t, protoReader)
-	defer protoReader.Close()
+	defer func() { _ = protoReader.Close() }()
 
 	// Read all rows from structured data
 	allRows, err := readAllRows(protoReader)
@@ -697,7 +697,7 @@ func TestIngestProtoLogsReader_MultiResourceSyntheticData(t *testing.T) {
 	}
 	protoReader, err := NewIngestProtoLogsReader(reader, opts)
 	require.NoError(t, err)
-	defer protoReader.Close()
+	defer func() { _ = protoReader.Close() }()
 
 	// Should read logs from both resources (4 total)
 	allRows, err := readAllRows(protoReader)

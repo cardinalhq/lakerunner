@@ -143,7 +143,7 @@ func (w *MetricCleanupWorkItem) Perform(ctx context.Context) time.Duration {
 				dbDeletedCount++
 			}
 		})
-		batchResults.Close()
+		_ = batchResults.Close()
 	}
 
 	// Update metrics

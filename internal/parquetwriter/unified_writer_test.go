@@ -91,7 +91,7 @@ func TestUnifiedWriter_Basic(t *testing.T) {
 	}
 
 	// Clean up
-	os.Remove(result.FileName)
+	_ = os.Remove(result.FileName)
 }
 
 func TestUnifiedWriter_WriteBatch(t *testing.T) {
@@ -132,7 +132,7 @@ func TestUnifiedWriter_WriteBatch(t *testing.T) {
 	totalRecords := int64(0)
 	for _, result := range results {
 		totalRecords += result.RecordCount
-		os.Remove(result.FileName)
+		_ = os.Remove(result.FileName)
 	}
 
 	if totalRecords != 100 {

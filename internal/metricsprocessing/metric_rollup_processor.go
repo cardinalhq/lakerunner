@@ -344,7 +344,7 @@ func (r *MetricRollupProcessor) uploadAndCreateRollupSegments(ctx context.Contex
 		}
 
 		// Clean up local file
-		os.Remove(result.FileName)
+		_ = os.Remove(result.FileName)
 
 		// Create new segment record at TARGET frequency
 		segment := lrdb.MetricSeg{

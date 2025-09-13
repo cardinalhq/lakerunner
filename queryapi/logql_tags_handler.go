@@ -50,7 +50,7 @@ func readLogQLTagsPayload(w http.ResponseWriter, r *http.Request) *logqlTagsPayl
 		return nil
 	}
 	body, _ := io.ReadAll(r.Body)
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 
 	var p logqlTagsPayload
 	if err := json.Unmarshal(body, &p); err != nil {

@@ -69,7 +69,7 @@ func processMetricsWithAggregation(ctx context.Context, params metricProcessingP
 	if err != nil {
 		return nil, fmt.Errorf("create aggregating reader: %w", err)
 	}
-	defer aggReader.Close()
+	defer func() { _ = aggReader.Close() }()
 
 	// Create metrics writer
 	writer, err := factories.NewMetricsWriter(params.TmpDir, params.MaxRecords)

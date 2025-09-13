@@ -353,7 +353,7 @@ func (p *LogIngestProcessor) createLogReaderStack(tmpFilename, orgID, bucket, ob
 	}
 	reader, err = filereader.NewTranslatingReader(reader, translator, 1000)
 	if err != nil {
-		reader.Close()
+		_ = reader.Close()
 		return nil, fmt.Errorf("failed to create translating reader: %w", err)
 	}
 

@@ -61,7 +61,7 @@ func TestJSONLinesReaderEOFHandling(t *testing.T) {
 
 	reader, err := NewJSONLinesReader(io.NopCloser(bytes.NewReader([]byte(jsonData))), 100)
 	require.NoError(t, err)
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	rows, err := readAllRows(reader)
 	require.NoError(t, err)
@@ -95,7 +95,7 @@ func TestJSONLinesReaderGzipEOFHandling(t *testing.T) {
 	// Test our JSON reader with the gzip reader
 	jsonReader, err := NewJSONLinesReader(gzReader, 100)
 	require.NoError(t, err)
-	defer jsonReader.Close()
+	defer func() { _ = jsonReader.Close() }()
 
 	rows, err := readAllRows(jsonReader)
 	require.NoError(t, err)
@@ -119,7 +119,7 @@ func TestJSONLinesReaderEmptyLinesEOF(t *testing.T) {
 
 	reader, err := NewJSONLinesReader(io.NopCloser(bytes.NewReader([]byte(jsonData))), 100)
 	require.NoError(t, err)
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	rows, err := readAllRows(reader)
 	require.NoError(t, err)
@@ -167,7 +167,7 @@ func TestJSONLinesReaderWithMockEOF(t *testing.T) {
 
 	reader, err := NewJSONLinesReader(mockReader, 100)
 	require.NoError(t, err)
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	// Should read the data successfully
 	batch, err := reader.Next(context.TODO())
@@ -220,7 +220,7 @@ func TestJSONLinesReaderBatchProcessing(t *testing.T) {
 
 	reader, err := NewJSONLinesReader(io.NopCloser(bytes.NewReader([]byte(jsonData))), 100)
 	require.NoError(t, err)
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	// Read all data using Next()
 	allRows, err := readAllRows(reader)

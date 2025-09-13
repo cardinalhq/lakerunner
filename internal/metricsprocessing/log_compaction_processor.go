@@ -269,7 +269,7 @@ func (p *LogCompactionProcessor) uploadAndCreateLogSegments(ctx context.Context,
 		}
 
 		// Clean up local file
-		os.Remove(result.FileName)
+		_ = os.Remove(result.FileName)
 
 		segment := lrdb.LogSeg{
 			OrganizationID: key.OrganizationID,
