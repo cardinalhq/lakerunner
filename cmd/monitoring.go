@@ -95,6 +95,9 @@ func runMonitoringServe(ctx context.Context) error {
 	service, err := externalscaler.NewService(doneCtx, config)
 	if err != nil {
 		slog.Error("Failed to create external scaler service", "error", err)
+		// Mark as ready even if database connection fails - this prevents the pod from being killed
+		// The external scaler will retry database connections when needed
+		healthServer.SetReady(true)
 		return err
 	}
 	defer service.Close()
