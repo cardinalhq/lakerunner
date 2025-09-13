@@ -68,12 +68,6 @@ func processLogsExemplarsDirect(ctx context.Context, organizationID string, exem
 			}
 		}
 
-		var exemplarData any
-		if err := json.Unmarshal([]byte(exemplar.Payload), &exemplarData); err != nil {
-			slog.Error("Failed to parse exemplar payload", "error", err)
-			continue
-		}
-
 		params := lrdb.UpsertServiceIdentifierParams{
 			OrganizationID: pgtype.UUID{Bytes: orgID, Valid: true},
 			ServiceName:    pgtype.Text{String: serviceName, Valid: true},
@@ -94,18 +88,9 @@ func processLogsExemplarsDirect(ctx context.Context, organizationID string, exem
 		}
 
 		var exemplarMap map[string]any
-		if exemplarDataMap, ok := exemplarData.(map[string]any); ok {
-			exemplarMap = exemplarDataMap
-		} else {
-			exemplarBytes, err := json.Marshal(exemplarData)
-			if err != nil {
-				slog.Error("Failed to marshal exemplar data", "error", err)
-				continue
-			}
-			if err := json.Unmarshal(exemplarBytes, &exemplarMap); err != nil {
-				slog.Error("Failed to convert exemplar data to map", "error", err)
-				continue
-			}
+		if err := json.Unmarshal([]byte(exemplar.Payload), &exemplarMap); err != nil {
+			slog.Error("Failed to parse exemplar payload", "error", err)
+			continue
 		}
 
 		record := lrdb.BatchUpsertExemplarLogsParams{
@@ -158,12 +143,6 @@ func processMetricsExemplarsDirect(ctx context.Context, organizationID string, e
 			continue
 		}
 
-		var exemplarData any
-		if err := json.Unmarshal([]byte(exemplar.Payload), &exemplarData); err != nil {
-			slog.Error("Failed to parse exemplar payload", "error", err)
-			continue
-		}
-
 		params := lrdb.UpsertServiceIdentifierParams{
 			OrganizationID: pgtype.UUID{Bytes: orgID, Valid: true},
 			ServiceName:    pgtype.Text{String: serviceName, Valid: true},
@@ -184,18 +163,9 @@ func processMetricsExemplarsDirect(ctx context.Context, organizationID string, e
 		}
 
 		var exemplarMap map[string]any
-		if exemplarDataMap, ok := exemplarData.(map[string]any); ok {
-			exemplarMap = exemplarDataMap
-		} else {
-			exemplarBytes, err := json.Marshal(exemplarData)
-			if err != nil {
-				slog.Error("Failed to marshal exemplar data", "error", err)
-				continue
-			}
-			if err := json.Unmarshal(exemplarBytes, &exemplarMap); err != nil {
-				slog.Error("Failed to convert exemplar data to map", "error", err)
-				continue
-			}
+		if err := json.Unmarshal([]byte(exemplar.Payload), &exemplarMap); err != nil {
+			slog.Error("Failed to parse exemplar payload", "error", err)
+			continue
 		}
 
 		record := lrdb.BatchUpsertExemplarMetricsParams{
