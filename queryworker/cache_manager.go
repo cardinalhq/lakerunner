@@ -208,11 +208,11 @@ func EvaluatePushDown[T promql.Timestamped](
 					seg.Hour,
 					seg.SegmentID)
 
-				//w.mu.RLock()
-				//_, inCache := w.present[seg.SegmentID]
-				//w.mu.RUnlock()
+				w.mu.RLock()
+				_, inCache := w.present[seg.SegmentID]
+				w.mu.RUnlock()
 
-				if false {
+				if inCache {
 					cachedIDs = append(cachedIDs, seg.SegmentID)
 				} else {
 					bucket := profile.Bucket
