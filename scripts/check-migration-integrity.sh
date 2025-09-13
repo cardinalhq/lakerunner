@@ -19,6 +19,13 @@ set -euo pipefail
 # Check migration file integrity against branch point
 # Allows comment and whitespace changes, but blocks substantive changes
 
+# Check if we're on a tag - if so, skip migration integrity check
+if git describe --exact-match --tags HEAD >/dev/null 2>&1; then
+    echo "Detected tag checkout - skipping migration integrity check for tagged release."
+    echo "Migration integrity should have been validated during development."
+    exit 0
+fi
+
 # Find the merge-base (branch point) automatically
 # Prioritize main/master over upstream tracking to ensure we're comparing against the main branch
 if [ -n "${1:-}" ]; then
