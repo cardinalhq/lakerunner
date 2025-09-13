@@ -60,7 +60,6 @@ func NewAdminClient(config *Config) (*AdminClient, error) {
 	return &AdminClient{client: client}, nil
 }
 
-
 // GetTopicInfo retrieves information about a specific topic
 func (a *AdminClient) GetTopicInfo(ctx context.Context, topic string) (*TopicInfo, error) {
 	client := a.client

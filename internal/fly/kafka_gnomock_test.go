@@ -54,15 +54,15 @@ func cleanupExistingKafkaContainers() {
 	containerIDs := strings.Fields(strings.TrimSpace(string(output)))
 	if len(containerIDs) > 0 {
 		fmt.Printf("Cleaning up %d existing Kafka containers...\n", len(containerIDs))
-		
+
 		// Stop containers
 		stopCmd := append([]string{"stop"}, containerIDs...)
 		exec.Command("docker", stopCmd...).Run()
-		
-		// Remove containers  
+
+		// Remove containers
 		rmCmd := append([]string{"rm"}, containerIDs...)
 		exec.Command("docker", rmCmd...).Run()
-		
+
 		fmt.Printf("Cleanup completed\n")
 	}
 }

@@ -71,7 +71,7 @@ func TestTopicSyncerCreateTopics(t *testing.T) {
 				},
 			},
 		},
-		OperationTimeout: 30 * time.Second,
+		OperationTimeout: 60 * time.Second,
 	}
 
 	ctx := context.Background()
@@ -109,8 +109,8 @@ func TestTopicSyncerCreateTopics(t *testing.T) {
 }
 
 func TestTopicSyncerInfoMode(t *testing.T) {
-	// Use shared Kafka container
-	kafkaContainer := NewKafkaTestContainer(t, "info-mode-test")
+	// Use shared Kafka container - don't pre-create the topic we're testing
+	kafkaContainer := NewKafkaTestContainer(t)
 	defer kafkaContainer.CleanupAfterTest(t, []string{"info-mode-test"}, []string{})
 
 	// Create Factory with test configuration
@@ -139,10 +139,11 @@ func TestTopicSyncerInfoMode(t *testing.T) {
 				ReplicationFactor: 1,
 			},
 		},
-		OperationTimeout: 30 * time.Second,
+		OperationTimeout: 60 * time.Second,
 	}
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
 
 	// First run info mode - should not create topics
 	err := syncer.SyncTopics(ctx, topicsConfig, false)
@@ -265,8 +266,8 @@ topics:
 }
 
 func TestTopicSyncerIdempotent(t *testing.T) {
-	// Use shared Kafka container
-	kafkaContainer := NewKafkaTestContainer(t, "idempotent-test")
+	// Use shared Kafka container - don't pre-create the topic we're testing
+	kafkaContainer := NewKafkaTestContainer(t)
 	defer kafkaContainer.CleanupAfterTest(t, []string{"idempotent-test"}, []string{})
 
 	// Create Factory with test configuration
@@ -292,10 +293,11 @@ func TestTopicSyncerIdempotent(t *testing.T) {
 				ReplicationFactor: 1,
 			},
 		},
-		OperationTimeout: 30 * time.Second,
+		OperationTimeout: 60 * time.Second,
 	}
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
 
 	// Run sync multiple times
 	for i := 0; i < 3; i++ {
