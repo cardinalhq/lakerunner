@@ -211,6 +211,9 @@ func (p *Processor) createMetricsCallback(ctx context.Context, organizationID st
 			}
 
 			attributes := p.toAttributes(entry.value.ResourceMetrics().At(0).Resource().Attributes())
+			at := entry.value.ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics().At(0)
+			attributes["metric.name"] = at.Name()
+			attributes["metric.type"] = at.Type().String()
 
 			exemplarData = append(exemplarData, &ExemplarData{
 				Attributes:  attributes,
