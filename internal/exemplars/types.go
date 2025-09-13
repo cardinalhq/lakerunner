@@ -27,9 +27,6 @@ const (
 	serviceNameKey   = string(semconv.ServiceNameKey)
 	clusterNameKey   = string(semconv.K8SClusterNameKey)
 	namespaceNameKey = string(semconv.K8SNamespaceNameKey)
-	metricNameKey    = "metric.name"
-	metricTypeKey    = "metric.type"
-	fingerprintKey   = "fingerprint"
 )
 
 // getFromResource extracts a value from resource attributes with a default fallback
@@ -41,24 +38,6 @@ func getFromResource(attr pcommon.Map, key string) string {
 	return val.AsString()
 }
 
-// computeExemplarKey generates a unique key for an exemplar based on resource attributes and extra keys
-func computeExemplarKey(rl pcommon.Resource, extraKeys []string) ([]string, int64) {
-	keys := []string{
-		clusterNameKey, getFromResource(rl.Attributes(), clusterNameKey),
-		namespaceNameKey, getFromResource(rl.Attributes(), namespaceNameKey),
-		serviceNameKey, getFromResource(rl.Attributes(), serviceNameKey),
-	}
-	keys = append(keys, extraKeys...)
-
-	// Simple hash function for the key
-	hash := int64(0)
-	for _, key := range keys {
-		for _, char := range key {
-			hash = hash*31 + int64(char)
-		}
-	}
-	return keys, hash
-}
 
 // toMetricExemplar creates a copy of the metric data with the first data point as an exemplar
 func toMetricExemplar(rm pmetric.ResourceMetrics, sm pmetric.ScopeMetrics, mm pmetric.Metric, metricType pmetric.MetricType) pmetric.Metrics {

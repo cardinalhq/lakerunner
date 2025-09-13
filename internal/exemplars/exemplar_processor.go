@@ -16,6 +16,7 @@ package exemplars
 
 import (
 	"context"
+	"go.opentelemetry.io/collector/pdata/pcommon"
 	"log/slog"
 	"strconv"
 	"sync"
@@ -163,16 +164,12 @@ func (p *Processor) createLogsCallback(ctx context.Context, organizationID strin
 				continue
 			}
 
-			attributes := make(map[string]string)
-			for i := 0; i < len(entry.attributes); i += 2 {
-				if i+1 < len(entry.attributes) {
-					attributes[entry.attributes[i]] = entry.attributes[i+1]
-				}
-			}
+			resourceAttributes := entry.value.ResourceLogs().At(0).Resource().Attributes()
+			attributes := p.toAttributes(resourceAttributes)
 
 			exemplarData = append(exemplarData, &ExemplarData{
 				Attributes:  attributes,
-				PartitionId: entry.key,
+				PartitionId: 0,
 				Payload:     data,
 			})
 		}
@@ -187,6 +184,14 @@ func (p *Processor) createLogsCallback(ctx context.Context, organizationID strin
 			}
 		}
 	}
+}
+
+func (p *Processor) toAttributes(resourceAttributes pcommon.Map) map[string]string {
+	attributes := make(map[string]string)
+	attributes[serviceNameKey] = getFromResource(resourceAttributes, serviceNameKey)
+	attributes[namespaceNameKey] = getFromResource(resourceAttributes, namespaceNameKey)
+	attributes[clusterNameKey] = getFromResource(resourceAttributes, clusterNameKey)
+	return attributes
 }
 
 // createMetricsCallback creates a callback function for metrics exemplars for a specific organization
@@ -205,16 +210,11 @@ func (p *Processor) createMetricsCallback(ctx context.Context, organizationID st
 				continue
 			}
 
-			attributes := make(map[string]string)
-			for i := 0; i < len(entry.attributes); i += 2 {
-				if i+1 < len(entry.attributes) {
-					attributes[entry.attributes[i]] = entry.attributes[i+1]
-				}
-			}
+			attributes := p.toAttributes(entry.value.ResourceMetrics().At(0).Resource().Attributes())
 
 			exemplarData = append(exemplarData, &ExemplarData{
 				Attributes:  attributes,
-				PartitionId: entry.key,
+				PartitionId: 0,
 				Payload:     data,
 			})
 		}
@@ -287,33 +287,33 @@ func (p *Processor) addLogExemplar(tenant *Tenant, rl plog.ResourceLogs, sl plog
 
 	// Get old fingerprint from attributes (if exists from collector)
 	fingerprint := getLogFingerprint(lr)
-	extraKeys := []string{
-		fingerprintKey, strconv.FormatInt(fingerprint, 10),
-	}
-	keys, exemplarKey := computeExemplarKey(rl.Resource(), extraKeys)
-
-	if tenant.logCache.Contains(exemplarKey) {
+	resource := rl.Resource()
+	clusterName := getFromResource(resource.Attributes(), clusterNameKey)
+	namespaceName := getFromResource(resource.Attributes(), namespaceNameKey)
+	serviceName := getFromResource(resource.Attributes(), serviceNameKey)
+	key := clusterName + "|" + namespaceName + "|" + serviceName + "|" + strconv.FormatInt(fingerprint, 10)
+	if tenant.logCache.Contains(key) {
 		return
 	}
 
 	exemplarRecord := toLogExemplar(rl, sl, lr)
-	tenant.logCache.Put(exemplarKey, keys, exemplarRecord)
+	tenant.logCache.Put(key, exemplarRecord)
 }
 
 // add a metrics exemplar to the organization's cache
 func (p *Processor) addMetricsExemplar(tenant *Tenant, rm pmetric.ResourceMetrics, sm pmetric.ScopeMetrics, mm pmetric.Metric, metricName string, metricType pmetric.MetricType) {
-	extraKeys := []string{
-		metricNameKey, metricName,
-		metricTypeKey, metricType.String(),
-	}
-	keys, exemplarKey := computeExemplarKey(rm.Resource(), extraKeys)
+	resource := rm.Resource()
+	clusterName := getFromResource(resource.Attributes(), clusterNameKey)
+	namespaceName := getFromResource(resource.Attributes(), namespaceNameKey)
+	serviceName := getFromResource(resource.Attributes(), serviceNameKey)
+	key := clusterName + "|" + namespaceName + "|" + serviceName + "|" + metricName + "|" + metricType.String()
 
-	if tenant.metricCache.Contains(exemplarKey) {
+	if tenant.metricCache.Contains(key) {
 		return
 	}
 
 	exemplarRecord := toMetricExemplar(rm, sm, mm, metricType)
-	tenant.metricCache.Put(exemplarKey, keys, exemplarRecord)
+	tenant.metricCache.Put(key, exemplarRecord)
 }
 
 func (p *Processor) Close() error {

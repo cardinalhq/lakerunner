@@ -22,7 +22,7 @@ import (
 
 type LRUCache[T any] struct {
 	capacity        int
-	cache           map[int64]*list.Element
+	cache           map[string]*list.Element
 	list            *list.List
 	mutex           sync.RWMutex
 	expiry          time.Duration
@@ -33,8 +33,7 @@ type LRUCache[T any] struct {
 }
 
 type Entry[T any] struct {
-	key             int64
-	attributes      []string
+	key             string
 	value           T
 	timestamp       time.Time
 	lastPublishTime time.Time
@@ -43,7 +42,7 @@ type Entry[T any] struct {
 func NewLRUCache[T any](capacity int, expiry time.Duration, reportInterval time.Duration, publishCallBack func(expiredItems []*Entry[T])) *LRUCache[T] {
 	lru := &LRUCache[T]{
 		capacity:        capacity,
-		cache:           make(map[int64]*list.Element),
+		cache:           make(map[string]*list.Element),
 		list:            list.New(),
 		reportInterval:  reportInterval,
 		expiry:          expiry,
@@ -107,7 +106,7 @@ func (e *Entry[T]) shouldPublish(expiry time.Duration) bool {
 }
 
 // Contains checks if a key exists in the cache and is not expired
-func (l *LRUCache[T]) Contains(key int64) bool {
+func (l *LRUCache[T]) Contains(key string) bool {
 	l.mutex.RLock()
 	defer l.mutex.RUnlock()
 
@@ -120,7 +119,7 @@ func (l *LRUCache[T]) Contains(key int64) bool {
 	return time.Since(entry.timestamp) <= l.expiry
 }
 
-func (l *LRUCache[T]) Put(key int64, keys []string, exemplar T) {
+func (l *LRUCache[T]) Put(key string, exemplar T) {
 	l.mutex.Lock()
 	defer l.mutex.Unlock()
 
@@ -147,12 +146,8 @@ func (l *LRUCache[T]) Put(key int64, keys []string, exemplar T) {
 		}
 	}
 
-	attrs := make([]string, len(keys))
-	copy(attrs, keys)
-
 	newEntry := &Entry[T]{
 		key:             key,
-		attributes:      attrs,
 		value:           exemplar,
 		timestamp:       now,
 		lastPublishTime: now,
@@ -185,7 +180,7 @@ func (l *LRUCache[T]) FlushPending() {
 
 		// Clear the cache
 		l.list.Init()
-		l.cache = make(map[int64]*list.Element)
-		l.pending = l.pending[:0]
+		l.cache = make(map[string]*list.Element)
+		l.pending = make([]*Entry[T], 0)
 	}
 }
