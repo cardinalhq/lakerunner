@@ -54,7 +54,7 @@ type Config struct {
 }
 
 func NewService(ctx context.Context, cfg Config) (*Service, error) {
-	dbPool, err := dbopen.ConnectTolrdb(ctx)
+	dbPool, err := dbopen.ConnectTolrdb(ctx, dbopen.SkipMigrationCheck())
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to LRDB: %w", err)
 	}
