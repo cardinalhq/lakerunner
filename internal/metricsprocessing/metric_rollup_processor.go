@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"runtime"
 	"time"
 
 	"github.com/google/uuid"
@@ -37,8 +38,8 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-// RollupStore defines database operations needed for rollups
-type RollupStore interface {
+// MetricRollupStore defines database operations needed for rollups
+type MetricRollupStore interface {
 	GetMetricSeg(ctx context.Context, params lrdb.GetMetricSegParams) (lrdb.MetricSeg, error)
 	RollupMetricSegsWithKafkaOffsets(ctx context.Context, sourceParams lrdb.RollupSourceParams, targetParams lrdb.RollupTargetParams, sourceSegmentIDs []int64, newRecords []lrdb.RollupNewRecord, kafkaOffsets []lrdb.KafkaOffsetUpdate) error
 	KafkaGetLastProcessed(ctx context.Context, params lrdb.KafkaGetLastProcessedParams) (int64, error)
@@ -49,7 +50,7 @@ type RollupStore interface {
 
 // MetricRollupProcessor implements the Processor interface for metric rollups
 type MetricRollupProcessor struct {
-	store           RollupStore
+	store           MetricRollupStore
 	storageProvider storageprofile.StorageProfileProvider
 	cmgr            cloudstorage.ClientProvider
 	cfg             *config.Config
@@ -57,7 +58,7 @@ type MetricRollupProcessor struct {
 }
 
 // newMetricRollupProcessor creates a new metric rollup processor instance
-func newMetricRollupProcessor(store RollupStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, cfg *config.Config, kafkaProducer fly.Producer) *MetricRollupProcessor {
+func newMetricRollupProcessor(store MetricRollupStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, cfg *config.Config, kafkaProducer fly.Producer) *MetricRollupProcessor {
 	return &MetricRollupProcessor{
 		store:           store,
 		storageProvider: storageProvider,
@@ -138,6 +139,8 @@ func (r *MetricRollupProcessor) validateBundleConsistency(bundle *messages.Metri
 // ProcessBundle processes a MetricRollupBundle directly (simplified interface)
 func (r *MetricRollupProcessor) ProcessBundle(ctx context.Context, bundle *messages.MetricRollupBundle, partition int32, offset int64) error {
 	ll := logctx.FromContext(ctx)
+
+	defer runtime.GC() // TODO find a way to not need this
 
 	if err := r.validateBundleConsistency(bundle); err != nil {
 		return fmt.Errorf("bundle validation failed: %w", err)
@@ -584,7 +587,7 @@ func (r *MetricRollupProcessor) queueCompactionMessages(ctx context.Context, new
 		slog.Int("targetFrequencyMs", int(key.TargetFrequencyMs)))
 
 	// Create compaction messages for each new segment
-	compactionTopic := "lakerunner.segments.metrics.compact"
+	compactionTopic := "lakerunner.boxer.metrics.compact"
 	var queuedCount int
 
 	for _, segment := range newSegments {

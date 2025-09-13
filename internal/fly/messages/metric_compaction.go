@@ -77,3 +77,20 @@ func (m *MetricCompactionMessage) Marshal() ([]byte, error) {
 func (m *MetricCompactionMessage) Unmarshal(data []byte) error {
 	return json.Unmarshal(data, m)
 }
+
+// MetricCompactionBundle represents a bundled collection of metric compaction messages for boxer processing
+type MetricCompactionBundle struct {
+	Version  int16                      `json:"v"` // message version, current version is 1
+	Messages []*MetricCompactionMessage `json:"m"` // the bundled compaction messages
+	QueuedAt time.Time                  `json:"q"` // when the bundle was queued to boxer topic
+}
+
+// Marshal converts the bundle to JSON bytes
+func (b *MetricCompactionBundle) Marshal() ([]byte, error) {
+	return json.Marshal(b)
+}
+
+// Unmarshal converts JSON bytes to MetricCompactionBundle
+func (b *MetricCompactionBundle) Unmarshal(data []byte) error {
+	return json.Unmarshal(data, b)
+}

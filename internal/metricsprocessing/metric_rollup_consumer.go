@@ -38,23 +38,21 @@ var rollupAccumulationTimes = map[int32]time.Duration{
 
 // MetricRollupConsumer consumes MetricRollupBundle messages from boxer
 type MetricRollupConsumer struct {
-	consumer      fly.Consumer
-	store         RollupStore
-	processor     *MetricRollupProcessor
-	cfg           *config.Config
-	stopRequested bool
+	consumer  fly.Consumer
+	store     MetricRollupStore
+	processor *MetricRollupProcessor
+	cfg       *config.Config
 }
 
 // NewMetricRollupConsumer creates a consumer that processes MetricRollupBundle messages from boxer
 func NewMetricRollupConsumer(
 	ctx context.Context,
+	cfg *config.Config,
 	factory *fly.Factory,
-	store RollupStore,
+	store MetricRollupStore,
 	storageProvider storageprofile.StorageProfileProvider,
 	cmgr cloudstorage.ClientProvider,
-	cfg *config.Config,
 ) (*MetricRollupConsumer, error) {
-
 	producer, err := factory.CreateProducer()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka producer: %w", err)
@@ -124,7 +122,6 @@ func (c *MetricRollupConsumer) processMessage(ctx context.Context, msg fly.Consu
 
 // Close stops the consumer
 func (c *MetricRollupConsumer) Close() error {
-	c.stopRequested = true
 	if c.consumer != nil {
 		return c.consumer.Close()
 	}

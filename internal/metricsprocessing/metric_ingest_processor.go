@@ -20,6 +20,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"runtime"
 	"time"
 
 	"github.com/cardinalhq/lakerunner/internal/exemplars"
@@ -128,6 +129,8 @@ func validateIngestGroupConsistency(group *accumulationGroup[messages.IngestKey]
 func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulationGroup[messages.IngestKey], kafkaCommitData *KafkaCommitData) error {
 	ll := logctx.FromContext(ctx)
 
+	defer runtime.GC() // TODO find a way to not need this
+
 	// Calculate group age from Hunter timestamp
 	groupAge := time.Since(group.CreatedAt)
 
@@ -165,8 +168,6 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 	var readers []filereader.Reader
 	var readersToClose []filereader.Reader
 	var totalInputSize int64
-
-	nowDateInt := helpers.CurrentDateInt()
 
 	for _, accMsg := range group.Messages {
 		msg, ok := accMsg.Message.(*messages.ObjStoreNotificationMessage)
@@ -230,7 +231,7 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 		return nil
 	}
 
-	segmentParams, err := p.uploadAndCreateSegments(ctx, storageClient, nowDateInt, timeBins, storageProfile)
+	segmentParams, err := p.uploadAndCreateSegments(ctx, storageClient, timeBins, storageProfile)
 	if err != nil {
 		return fmt.Errorf("failed to upload and create segments: %w", err)
 	}
@@ -292,7 +293,7 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 
 	// Send notifications to Kafka topics
 	if p.kafkaProducer != nil {
-		compactionTopic := "lakerunner.segments.metrics.compact"
+		compactionTopic := "lakerunner.boxer.metrics.compact"
 		rollupTopic := "lakerunner.boxer.metrics.rollup"
 
 		for _, segParams := range segmentParams {
@@ -572,7 +573,7 @@ func (manager *TimeBinManager) getOrCreateBin(_ context.Context, binStartTs int6
 }
 
 // uploadAndCreateSegments uploads time bins to S3 and creates segment parameters
-func (p *MetricIngestProcessor) uploadAndCreateSegments(ctx context.Context, storageClient cloudstorage.Client, nowDateInt int32, timeBins map[int64]*TimeBin, storageProfile storageprofile.StorageProfile) ([]lrdb.InsertMetricSegmentParams, error) {
+func (p *MetricIngestProcessor) uploadAndCreateSegments(ctx context.Context, storageClient cloudstorage.Client, timeBins map[int64]*TimeBin, storageProfile storageprofile.StorageProfile) ([]lrdb.InsertMetricSegmentParams, error) {
 	ll := logctx.FromContext(ctx)
 
 	var segmentParams []lrdb.InsertMetricSegmentParams

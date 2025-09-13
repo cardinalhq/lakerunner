@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"runtime"
 
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -58,14 +59,14 @@ func NewLogCompactionProcessor(
 
 // Process implements the processor interface for log compaction
 func (p *LogCompactionProcessor) Process(ctx context.Context, group *accumulationGroup[messages.LogCompactionKey], kafkaCommitData *KafkaCommitData) error {
-	// Log compaction start with log-specific fields
+	defer runtime.GC() // TODO find a way to not need this
+
 	p.LogCompactionStart(ctx, group, "logs",
 		slog.String("organizationID", group.Key.OrganizationID.String()),
 		slog.Int("dateint", int(group.Key.DateInt)),
 		slog.Int("instanceNum", int(group.Key.InstanceNum)),
 	)
 
-	// Use the base framework for common processing
 	return p.ProcessCore(ctx, group, kafkaCommitData, p)
 }
 
@@ -183,7 +184,6 @@ func (p *LogCompactionProcessor) GetTargetRecordCount(ctx context.Context, group
 	return p.store.GetLogEstimate(ctx, groupingKey.OrganizationID)
 }
 
-// Helper methods from original processor
 func (p *LogCompactionProcessor) performLogCompactionCore(ctx context.Context, tmpDir string, storageClient cloudstorage.Client, compactionKey messages.LogCompactionKey, storageProfile storageprofile.StorageProfile, activeSegments []lrdb.LogSeg, recordCountEstimate int64) ([]lrdb.LogSeg, []parquetwriter.Result, error) {
 	params := logProcessingParams{
 		TmpDir:         tmpDir,
@@ -221,13 +221,11 @@ func (p *LogCompactionProcessor) uploadAndCreateLogSegments(ctx context.Context,
 	for i, result := range results {
 		segmentID := batchSegmentIDs[i]
 
-		// Get metadata from result
 		stats, ok := result.Metadata.(factories.LogsFileStats)
 		if !ok {
 			return nil, fmt.Errorf("unexpected metadata type: %T", result.Metadata)
 		}
 
-		// Upload the file
 		objectPath := helpers.MakeDBObjectID(key.OrganizationID, profile.CollectorName, key.DateInt, p.getHourFromTimestamp(stats.FirstTS), segmentID, "logs")
 		if err := client.UploadObject(ctx, profile.Bucket, objectPath, result.FileName); err != nil {
 			return nil, fmt.Errorf("upload file %s: %w", result.FileName, err)
@@ -320,7 +318,6 @@ func (p *LogCompactionProcessor) atomicLogDatabaseUpdate(ctx context.Context, ol
 		return fmt.Errorf("no new segments to insert")
 	}
 
-	// Perform atomic operation
 	params := lrdb.CompactLogSegsParams{
 		OrganizationID: key.OrganizationID,
 		Dateint:        key.DateInt,
@@ -330,7 +327,6 @@ func (p *LogCompactionProcessor) atomicLogDatabaseUpdate(ctx context.Context, ol
 		CreatedBy:      lrdb.CreatedByCompact,
 	}
 
-	// Perform atomic operation with Kafka offsets
 	if err := p.store.CompactLogSegsWithKafkaOffsets(ctx, params, kafkaOffsets); err != nil {
 		ll.Error("Failed CompactLogSegsWithKafkaOffsets",
 			slog.Any("error", err),
@@ -340,7 +336,6 @@ func (p *LogCompactionProcessor) atomicLogDatabaseUpdate(ctx context.Context, ol
 			slog.Int("old_segments_count", len(oldSegments)),
 			slog.Int("new_segments_count", len(newSegments)))
 
-		// Log segment IDs for additional context
 		if len(oldSegments) > 0 {
 			oldSegmentIDs := make([]int64, len(oldSegments))
 			for i, seg := range oldSegments {

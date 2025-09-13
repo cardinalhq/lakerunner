@@ -26,22 +26,22 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-// MetricBoxerProcessor implements the Processor interface for boxing metric rollup bundles
-type MetricBoxerProcessor struct {
+// MetricRollupBoxerProcessor implements the Processor interface for boxing metric rollup bundles
+type MetricRollupBoxerProcessor struct {
 	kafkaProducer fly.Producer
 	store         BoxerStore
 }
 
 // newMetricBoxerProcessor creates a new metric boxer processor instance
-func newMetricBoxerProcessor(kafkaProducer fly.Producer, store BoxerStore) *MetricBoxerProcessor {
-	return &MetricBoxerProcessor{
+func newMetricBoxerProcessor(kafkaProducer fly.Producer, store BoxerStore) *MetricRollupBoxerProcessor {
+	return &MetricRollupBoxerProcessor{
 		kafkaProducer: kafkaProducer,
 		store:         store,
 	}
 }
 
 // Process implements the Processor interface and sends the bundle to the rollup topic
-func (b *MetricBoxerProcessor) Process(ctx context.Context, group *accumulationGroup[messages.RollupKey], kafkaCommitData *KafkaCommitData) error {
+func (b *MetricRollupBoxerProcessor) Process(ctx context.Context, group *accumulationGroup[messages.RollupKey], kafkaCommitData *KafkaCommitData) error {
 	ll := logctx.FromContext(ctx)
 
 	// Create a MetricRollupBundle to send to the rollup topic
@@ -98,12 +98,12 @@ func (b *MetricBoxerProcessor) Process(ctx context.Context, group *accumulationG
 }
 
 // GetTargetRecordCount returns the estimated record count for the target frequency
-func (b *MetricBoxerProcessor) GetTargetRecordCount(ctx context.Context, groupingKey messages.RollupKey) int64 {
+func (b *MetricRollupBoxerProcessor) GetTargetRecordCount(ctx context.Context, groupingKey messages.RollupKey) int64 {
 	return b.store.GetMetricEstimate(ctx, groupingKey.OrganizationID, groupingKey.TargetFrequencyMs)
 }
 
 // commitKafkaOffsets commits the Kafka offsets for all messages in the group using batch operation
-func (b *MetricBoxerProcessor) commitKafkaOffsets(ctx context.Context, group *accumulationGroup[messages.RollupKey], kafkaCommitData *KafkaCommitData) error {
+func (b *MetricRollupBoxerProcessor) commitKafkaOffsets(ctx context.Context, group *accumulationGroup[messages.RollupKey], kafkaCommitData *KafkaCommitData) error {
 	if kafkaCommitData == nil || len(kafkaCommitData.Offsets) == 0 {
 		return nil // Nothing to commit
 	}

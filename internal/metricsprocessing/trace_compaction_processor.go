@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"runtime"
 
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -58,6 +59,8 @@ func NewTraceCompactionProcessor(
 
 // Process implements the processor interface for trace compaction
 func (p *TraceCompactionProcessor) Process(ctx context.Context, group *accumulationGroup[messages.TraceCompactionKey], kafkaCommitData *KafkaCommitData) error {
+	defer runtime.GC() // TODO find a way to not need this
+
 	// Log compaction start with trace-specific fields
 	p.LogCompactionStart(ctx, group, "traces",
 		slog.String("organizationID", group.Key.OrganizationID.String()),
