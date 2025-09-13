@@ -67,10 +67,13 @@ func init() {
 				}
 			}
 
+			// Mark as healthy immediately - health is not dependent on database readiness
+			healthServer.SetStatus(healthcheck.StatusHealthy)
+
 			cmd := sweeper.New(myInstanceID, finalSyncLegacyTables)
 
-			// Mark as healthy once sweeper is created and starting
-			healthServer.SetStatus(healthcheck.StatusHealthy)
+			// Mark as ready now that database connections are established and migrations have been checked
+			healthServer.SetReady(true)
 
 			return cmd.Run(ctx)
 		},

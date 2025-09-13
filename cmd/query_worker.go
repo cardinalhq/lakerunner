@@ -57,6 +57,9 @@ func init() {
 				}
 			}()
 
+			// Mark as healthy immediately - health is not dependent on database readiness
+			healthServer.SetStatus(healthcheck.StatusHealthy)
+
 			cdb, err := dbopen.ConfigDBStore(ctx)
 			sp := storageprofile.NewStorageProfileProvider(cdb)
 
@@ -70,7 +73,8 @@ func init() {
 				return fmt.Errorf("failed to create cloud managers: %w", err)
 			}
 
-			healthServer.SetStatus(healthcheck.StatusHealthy)
+			// Mark as ready now that database connections are established and migrations have been checked
+			healthServer.SetReady(true)
 
 			worker := queryworker.NewWorkerService(5, 5, 12, sp, cmgr)
 			return worker.Run(ctx)

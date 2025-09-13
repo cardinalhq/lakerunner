@@ -57,6 +57,9 @@ func init() {
 				}
 			}()
 
+			// Mark as healthy immediately - health is not dependent on database readiness
+			healthServer.SetStatus(healthcheck.StatusHealthy)
+
 			mdb, err := dbopen.LRDBStore(context.Background())
 			if err != nil {
 				slog.Error("Failed to connect to lr database", slog.Any("error", err))
@@ -69,6 +72,9 @@ func init() {
 				slog.Error("Failed to connect to config database", slog.Any("error", err))
 				return fmt.Errorf("failed to connect to config database: %w", err)
 			}
+
+			// Mark as ready now that database connections are established and migrations have been checked
+			healthServer.SetReady(true)
 
 			// Create API key provider
 			apiKeyProvider := orgapikey.NewDBProvider(cdb)
@@ -96,8 +102,7 @@ func init() {
 				return fmt.Errorf("failed to create querier service: %w", err)
 			}
 
-			// Mark as healthy once all services are ready
-			healthServer.SetStatus(healthcheck.StatusHealthy)
+			// All services are now fully initialized
 
 			return querier.Run(doneCtx)
 		},

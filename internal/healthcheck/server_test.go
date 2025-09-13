@@ -115,6 +115,29 @@ func TestServer_SetGetStatus(t *testing.T) {
 	}
 }
 
+func TestServer_SetIsReady(t *testing.T) {
+	server := NewServer(Config{})
+
+	// Test initial ready status
+	ready := server.IsReady()
+	if ready {
+		t.Errorf("Expected initial ready status to be false, got %v", ready)
+	}
+
+	// Test setting ready
+	server.SetReady(true)
+	ready = server.IsReady()
+	if !ready {
+		t.Errorf("Expected ready status to be true, got %v", ready)
+	}
+
+	server.SetReady(false)
+	ready = server.IsReady()
+	if ready {
+		t.Errorf("Expected ready status to be false, got %v", ready)
+	}
+}
+
 func TestHealthEndpoints(t *testing.T) {
 	config := Config{
 		Port: 8090,
@@ -137,24 +160,25 @@ func TestHealthEndpoints(t *testing.T) {
 	tests := []struct {
 		name            string
 		status          Status
+		ready           bool
 		endpoint        string
 		expectedStatus  int
 		expectedHealthy bool
 	}{
-		{"healthz starting", StatusStarting, "/healthz", http.StatusServiceUnavailable, false},
-		{"healthz healthy", StatusHealthy, "/healthz", http.StatusOK, true},
-		{"healthz unhealthy", StatusUnhealthy, "/healthz", http.StatusServiceUnavailable, false},
-		{"readyz starting", StatusStarting, "/readyz", http.StatusServiceUnavailable, false},
-		{"readyz healthy", StatusHealthy, "/readyz", http.StatusOK, true},
-		{"readyz unhealthy", StatusUnhealthy, "/readyz", http.StatusServiceUnavailable, false},
-		{"livez starting", StatusStarting, "/livez", http.StatusOK, true},
-		{"livez healthy", StatusHealthy, "/livez", http.StatusOK, true},
-		{"livez unhealthy", StatusUnhealthy, "/livez", http.StatusServiceUnavailable, false},
+		{"healthz starting", StatusStarting, false, "/healthz", http.StatusServiceUnavailable, false},
+		{"healthz healthy", StatusHealthy, false, "/healthz", http.StatusOK, true},
+		{"healthz unhealthy", StatusUnhealthy, false, "/healthz", http.StatusServiceUnavailable, false},
+		{"readyz not ready", StatusHealthy, false, "/readyz", http.StatusServiceUnavailable, false},
+		{"readyz ready", StatusHealthy, true, "/readyz", http.StatusOK, true},
+		{"livez starting", StatusStarting, false, "/livez", http.StatusOK, true},
+		{"livez healthy", StatusHealthy, false, "/livez", http.StatusOK, true},
+		{"livez unhealthy", StatusUnhealthy, false, "/livez", http.StatusServiceUnavailable, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			server.SetStatus(tt.status)
+			server.SetReady(tt.ready)
 
 			// Create a mock request
 			req, err := http.NewRequest("GET", tt.endpoint, nil)
