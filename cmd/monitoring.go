@@ -16,6 +16,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -23,8 +24,10 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/cardinalhq/lakerunner/internal/externalscaler"
+	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 )
 
 var (
@@ -55,26 +58,54 @@ func init() {
 }
 
 func runMonitoringServe(ctx context.Context) error {
+	servicename := "monitoring"
+	addlAttrs := attribute.NewSet()
+	doneCtx, doneFx, err := setupTelemetry(servicename, &addlAttrs)
+	if err != nil {
+		return fmt.Errorf("failed to setup telemetry: %w", err)
+	}
+
+	defer func() {
+		if err := doneFx(); err != nil {
+			slog.Error("Error shutting down telemetry", slog.Any("error", err))
+		}
+	}()
+
+	// Start health check server
+	healthConfig := healthcheck.Config{Port: monitoringPort}
+	healthServer := healthcheck.NewServer(healthConfig)
+
+	go func() {
+		if err := healthServer.Start(doneCtx); err != nil {
+			slog.Error("Health check server stopped", slog.Any("error", err))
+		}
+	}()
+
+	// Mark as healthy immediately - health is not dependent on database readiness
+	healthServer.SetStatus(healthcheck.StatusHealthy)
+
 	slog.Info("Starting KEDA external scaler service",
 		"http_port", monitoringPort,
 		"grpc_port", monitoringGRPCPort)
 
 	config := externalscaler.Config{
-		Port:     monitoringPort,
 		GRPCPort: monitoringGRPCPort,
 	}
 
-	service, err := externalscaler.NewService(ctx, config)
+	service, err := externalscaler.NewService(doneCtx, config)
 	if err != nil {
 		slog.Error("Failed to create external scaler service", "error", err)
 		return err
 	}
 	defer service.Close()
 
-	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
+	// Mark as ready now that external scaler service is created (database connections established)
+	healthServer.SetReady(true)
+
+	signalCtx, cancel := signal.NotifyContext(doneCtx, syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	if err := service.Start(ctx); err != nil {
+	if err := service.Start(signalCtx); err != nil {
 		slog.Error("External scaler service failed", "error", err)
 		return err
 	}
