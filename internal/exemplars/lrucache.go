@@ -56,9 +56,12 @@ func NewLRUCache[T any](capacity int, expiry time.Duration, reportInterval time.
 }
 
 func (l *LRUCache[T]) startCleanup() {
+	ticker := time.NewTicker(l.reportInterval)
+	defer ticker.Stop()
+
 	for {
 		select {
-		case <-time.NewTicker(l.reportInterval).C:
+		case <-ticker.C:
 			l.cleanupExpiredEntries()
 		case <-l.stopCleanup:
 			return
@@ -68,8 +71,6 @@ func (l *LRUCache[T]) startCleanup() {
 
 func (l *LRUCache[T]) cleanupExpiredEntries() {
 	l.mutex.Lock()
-	defer l.mutex.Unlock()
-
 	now := time.Now()
 
 	for e := l.list.Back(); e != nil; {
@@ -88,10 +89,13 @@ func (l *LRUCache[T]) cleanupExpiredEntries() {
 		}
 	}
 
-	// Add pending items to the list for publishing
-	if len(l.pending) > 0 {
-		l.publishCallBack(l.pending)
-		l.pending = l.pending[:0] // Clear the pending slice
+	batch := l.pending
+	// reset to a small slice to release capacity
+	l.pending = make([]*Entry[T], 0, 16)
+	l.mutex.Unlock()
+
+	if len(batch) > 0 {
+		l.publishCallBack(batch)
 	}
 }
 
@@ -134,7 +138,6 @@ func (l *LRUCache[T]) Put(key int64, keys []string, exemplar T) {
 		back := l.list.Back()
 		if back != nil {
 			entry := back.Value.(*Entry[T])
-			// Only publish if it should be published
 			if entry.shouldPublish(l.expiry) {
 				l.pending = append(l.pending, entry)
 				entry.lastPublishTime = now
@@ -144,16 +147,20 @@ func (l *LRUCache[T]) Put(key int64, keys []string, exemplar T) {
 		}
 	}
 
+	attrs := make([]string, len(keys))
+	copy(attrs, keys)
+
 	newEntry := &Entry[T]{
 		key:             key,
-		attributes:      keys,
+		attributes:      attrs,
 		value:           exemplar,
 		timestamp:       now,
 		lastPublishTime: now,
 	}
 	elem := l.list.PushFront(newEntry)
-	l.pending = append(l.pending, newEntry)
 	l.cache[key] = elem
+
+	l.pending = append(l.pending, newEntry)
 }
 
 func (l *LRUCache[T]) Close() {
