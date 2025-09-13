@@ -76,3 +76,20 @@ func (m *TraceCompactionMessage) Marshal() ([]byte, error) {
 func (m *TraceCompactionMessage) Unmarshal(data []byte) error {
 	return json.Unmarshal(data, m)
 }
+
+// TraceCompactionBundle represents a bundle of trace compaction messages
+type TraceCompactionBundle struct {
+	Version  int16                     `json:"v"` // message version, current version is 1
+	Messages []*TraceCompactionMessage `json:"m"` // the bundled compaction messages
+	QueuedAt time.Time                 `json:"q"` // when the bundle was queued to boxer topic
+}
+
+// Marshal converts the bundle to JSON bytes
+func (b *TraceCompactionBundle) Marshal() ([]byte, error) {
+	return json.Marshal(b)
+}
+
+// Unmarshal converts JSON bytes to TraceCompactionBundle
+func (b *TraceCompactionBundle) Unmarshal(data []byte) error {
+	return json.Unmarshal(data, b)
+}

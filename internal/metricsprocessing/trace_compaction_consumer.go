@@ -17,57 +17,98 @@ package metricsprocessing
 import (
 	"context"
 	"fmt"
-	"time"
+	"log/slog"
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
-// TraceCompactionConsumer handles trace compaction using the common consumer framework
+// TraceCompactionConsumer consumes TraceCompactionBundle messages from boxer
 type TraceCompactionConsumer struct {
-	*CommonConsumer[*messages.TraceCompactionMessage, messages.TraceCompactionKey]
+	consumer  fly.Consumer
+	store     TraceCompactionStore
+	processor *TraceCompactionProcessor
+	cfg       *config.Config
 }
 
-// NewTraceCompactionConsumer creates a new trace compaction consumer using the common consumer framework
+// NewTraceCompactionConsumer creates a consumer that processes TraceCompactionBundle messages from boxer
 func NewTraceCompactionConsumer(
 	ctx context.Context,
-	factory *fly.Factory,
 	cfg *config.Config,
+	factory *fly.Factory,
 	store TraceCompactionStore,
 	storageProvider storageprofile.StorageProfileProvider,
 	cmgr cloudstorage.ClientProvider,
 ) (*TraceCompactionConsumer, error) {
-
-	// Create processor
 	processor := NewTraceCompactionProcessor(store, storageProvider, cmgr, cfg)
 
-	// Configure the consumer
-	consumerConfig := CommonConsumerConfig{
-		ConsumerName:  "lakerunner-trace-compaction-v2",
-		Topic:         "lakerunner.segments.traces.compact",
-		ConsumerGroup: "lakerunner.compact.traces",
-		FlushInterval: 1 * time.Minute,
-		StaleAge:      1 * time.Minute,
-		MaxAge:        5 * time.Minute,
-	}
-
-	// Create common consumer
-	commonConsumer, err := NewCommonConsumer[*messages.TraceCompactionMessage, messages.TraceCompactionKey](
-		ctx,
-		factory,
-		cfg,
-		consumerConfig,
-		store,
-		processor,
-	)
+	consumer, err := factory.CreateConsumer("lakerunner.segments.traces.compact", "lakerunner.compact.traces")
 	if err != nil {
-		return nil, fmt.Errorf("failed to create common consumer: %w", err)
+		return nil, fmt.Errorf("failed to create Kafka consumer: %w", err)
 	}
 
 	return &TraceCompactionConsumer{
-		CommonConsumer: commonConsumer,
+		consumer:  consumer,
+		store:     store,
+		processor: processor,
+		cfg:       cfg,
 	}, nil
+}
+
+func (c *TraceCompactionConsumer) Run(ctx context.Context) error {
+	ll := logctx.FromContext(ctx)
+	ll.Info("Starting trace compaction consumer (bundle mode)")
+
+	handler := func(handlerCtx context.Context, msgs []fly.ConsumedMessage) error {
+		for _, msg := range msgs {
+			if err := c.processMessage(handlerCtx, msg); err != nil {
+				ll.Error("Error processing message", slog.Any("error", err))
+				return err // Return error to prevent committing bad batch
+			}
+		}
+		return nil
+	}
+
+	return c.consumer.Consume(ctx, handler)
+}
+
+func (c *TraceCompactionConsumer) processMessage(ctx context.Context, msg fly.ConsumedMessage) error {
+	ll := logctx.FromContext(ctx)
+
+	var bundle messages.TraceCompactionBundle
+	if err := bundle.Unmarshal(msg.Value); err != nil {
+		ll.Info("Dropping message that failed to unmarshal as bundle", slog.Any("error", err))
+		return nil // Don't fail the batch, just skip this message
+	}
+
+	if len(bundle.Messages) == 0 {
+		ll.Info("Dropping empty message bundle")
+		return nil
+	}
+
+	firstMsg := bundle.Messages[0]
+	key := firstMsg.GroupingKey().(messages.TraceCompactionKey)
+
+	ll.Info("Processing compaction bundle",
+		slog.String("organizationID", key.OrganizationID.String()),
+		slog.Int("dateint", int(key.DateInt)),
+		slog.Int("instanceNum", int(key.InstanceNum)),
+		slog.Int("messageCount", len(bundle.Messages)))
+
+	if err := c.processor.ProcessBundle(ctx, key, bundle.Messages, int32(msg.Partition), msg.Offset); err != nil {
+		return fmt.Errorf("failed to process bundle: %w", err)
+	}
+
+	return nil
+}
+
+func (c *TraceCompactionConsumer) Close() error {
+	if c.consumer != nil {
+		return c.consumer.Close()
+	}
+	return nil
 }

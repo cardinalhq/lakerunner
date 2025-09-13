@@ -1203,31 +1203,26 @@ func TestCommonConsumer_ProcessKafkaMessage_ReflectionHandlesPointerTypes(t *tes
 	mockGatherer.AssertExpectations(t)
 }
 
-func TestLogCompactionProcessor_ProcessWorkInterface(t *testing.T) {
-	// Test that the processor implements the CompactionProcessor interface
+func TestLogCompactionProcessor_ProcessBundleInterface(t *testing.T) {
+	// Test that the processor implements the ProcessBundle interface
 	processor := NewLogCompactionProcessor(&MockLogCompactionStore{}, nil, nil, &config.Config{})
 
-	// Test that we can create the group structure that ProcessWork expects
-	group := &accumulationGroup[messages.LogCompactionKey]{
-		Key: messages.LogCompactionKey{
-			OrganizationID: uuid.New(),
-			InstanceNum:    1,
-			DateInt:        20250115,
-		},
-		Messages:  []*accumulatedMessage{},
-		CreatedAt: time.Now(),
+	key := messages.LogCompactionKey{
+		OrganizationID: uuid.New(),
+		InstanceNum:    1,
+		DateInt:        20250115,
 	}
 
-	kafkaCommitData := &KafkaCommitData{
-		Topic:         "test.topic",
-		ConsumerGroup: "test-group",
-		Offsets:       map[int32]int64{0: 100},
-	}
+	var msgs []*messages.LogCompactionMessage
+	partition := int32(0)
+	offset := int64(100)
 
 	// Test that the method exists
-	assert.NotNil(t, processor.ProcessWork)
+	assert.NotNil(t, processor.ProcessBundle)
 
 	// Verify the parameters are the expected types
-	assert.IsType(t, group, group)
-	assert.IsType(t, kafkaCommitData, kafkaCommitData)
+	assert.IsType(t, key, key)
+	assert.IsType(t, msgs, msgs)
+	assert.IsType(t, partition, partition)
+	assert.IsType(t, offset, offset)
 }

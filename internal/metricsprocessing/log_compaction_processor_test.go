@@ -69,7 +69,7 @@ func TestLogCompactionProcessor_New(t *testing.T) {
 
 	assert.NotNil(t, processor)
 	assert.Equal(t, store, processor.store)
-	assert.NotNil(t, processor.CommonProcessorBase)
+	assert.NotNil(t, processor.cfg)
 }
 
 func TestLogCompactionProcessor_GetTargetRecordCount(t *testing.T) {

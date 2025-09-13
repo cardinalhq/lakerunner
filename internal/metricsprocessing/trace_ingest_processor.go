@@ -389,7 +389,7 @@ func (p *TraceIngestProcessor) Process(ctx context.Context, group *accumulationG
 
 	// Send compaction notifications to Kafka topic
 	if p.kafkaProducer != nil {
-		compactionTopic := "lakerunner.segments.traces.compact"
+		compactionTopic := "lakerunner.boxer.traces.compact"
 
 		for _, segParams := range segmentParams {
 			// Create trace compaction message

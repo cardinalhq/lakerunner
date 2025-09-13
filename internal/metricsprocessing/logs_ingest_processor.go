@@ -275,7 +275,7 @@ func (p *LogIngestProcessor) Process(ctx context.Context, group *accumulationGro
 
 	// Send compaction notifications to Kafka topic
 	if p.kafkaProducer != nil {
-		compactionTopic := "lakerunner.segments.logs.compact"
+		compactionTopic := "lakerunner.boxer.logs.compact"
 
 		for _, segParams := range segmentParams {
 			// Create log compaction message
