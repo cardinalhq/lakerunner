@@ -71,7 +71,7 @@ func WithAllowDirty(allow bool) CheckOption {
 func DefaultCheckOptions() CheckOptions {
 	return CheckOptions{
 		Mode:          CheckModeWait,
-		Timeout:       60 * time.Second,
+		Timeout:       120 * time.Second,
 		RetryInterval: 5 * time.Second,
 		AllowDirty:    false,
 	}

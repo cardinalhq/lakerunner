@@ -63,8 +63,8 @@ func TestGetMigrationCheckConfig(t *testing.T) {
 	if !config.Enabled {
 		t.Error("Expected Enabled to default to true")
 	}
-	if config.Timeout != 60*time.Second {
-		t.Errorf("Expected Timeout to default to 60s, got %v", config.Timeout)
+	if config.Timeout != 120*time.Second {
+		t.Errorf("Expected Timeout to default to 120s, got %v", config.Timeout)
 	}
 	if config.RetryInterval != 5*time.Second {
 		t.Errorf("Expected RetryInterval to default to 5s, got %v", config.RetryInterval)

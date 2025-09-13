@@ -113,7 +113,7 @@ func getMigrationCheckConfig() migrationCheckConfig {
 		enabled = strings.ToLower(val) == "true"
 	}
 
-	timeout := 60 * time.Second
+	timeout := 120 * time.Second
 	if val := os.Getenv("MIGRATION_CHECK_TIMEOUT"); val != "" {
 		if d, err := time.ParseDuration(val); err == nil {
 			timeout = d
@@ -259,8 +259,18 @@ func checkMigrationVersionWithNewOptions(ctx context.Context, pool *pgxpool.Pool
 		}
 
 		if time.Now().After(deadline) {
-			return fmt.Errorf("timeout waiting for %s migration to complete: current version %d, expected %d",
-				dbName, currentVersion, expectedVersion)
+			// Print banner-style warning but continue
+			slog.Error("+-------------------------------------------------------------------------------+")
+			slog.Error("|                                   WARNING                                     |")
+			slog.Error("|                                                                               |")
+			slog.Error(fmt.Sprintf("|  Migration timeout reached for %s database!                                |", dbName))
+			slog.Error(fmt.Sprintf("|  Current version: %d                                                       |", currentVersion))
+			slog.Error(fmt.Sprintf("|  Expected version: %d                                                      |", expectedVersion))
+			slog.Error("|                                                                               |")
+			slog.Error("|  The service will continue to run, but database schema may be inconsistent! |")
+			slog.Error("|  Please check migration status manually and ensure migrations complete.     |")
+			slog.Error("+-------------------------------------------------------------------------------+")
+			return nil
 		}
 
 		slog.Info("Waiting for migrations to complete",
