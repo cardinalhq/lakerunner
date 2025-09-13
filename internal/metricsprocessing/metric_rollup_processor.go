@@ -141,7 +141,10 @@ func (r *MetricRollupProcessor) ProcessBundle(ctx context.Context, bundle *messa
 	defer runtime.GC() // TODO find a way to not need this
 
 	if err := r.validateBundleConsistency(bundle); err != nil {
-		return fmt.Errorf("bundle validation failed: %w", err)
+		ll.Error("Bundle validation failed for metric rollup, skipping bundle",
+			slog.Int("messageCount", len(bundle.Messages)),
+			slog.Any("error", err))
+		return nil
 	}
 
 	firstMsg := bundle.Messages[0]
@@ -235,12 +238,28 @@ func (r *MetricRollupProcessor) ProcessBundle(ctx context.Context, bundle *messa
 
 	results, err := processMetricsWithAggregation(ctx, params)
 	if err != nil {
-		return err
+		ll.Error("Failed to process metrics with aggregation for rollup, skipping bundle",
+			slog.String("organizationID", key.OrganizationID.String()),
+			slog.Int("dateint", int(key.DateInt)),
+			slog.Int("sourceFrequencyMs", int(key.SourceFrequencyMs)),
+			slog.Int("targetFrequencyMs", int(key.TargetFrequencyMs)),
+			slog.Int("instanceNum", int(key.InstanceNum)),
+			slog.Int("segmentCount", len(segments)),
+			slog.Any("error", err))
+		return nil
 	}
 
 	newSegments, err := r.uploadAndCreateRollupSegments(ctx, storageClient, storageProfile, results, key, segments)
 	if err != nil {
-		return fmt.Errorf("upload and create rollup segments: %w", err)
+		ll.Error("Failed to upload and create rollup segments, skipping bundle",
+			slog.String("organizationID", key.OrganizationID.String()),
+			slog.Int("dateint", int(key.DateInt)),
+			slog.Int("sourceFrequencyMs", int(key.SourceFrequencyMs)),
+			slog.Int("targetFrequencyMs", int(key.TargetFrequencyMs)),
+			slog.Int("instanceNum", int(key.InstanceNum)),
+			slog.Int("resultsCount", len(results)),
+			slog.Any("error", err))
+		return nil
 	}
 
 	// Create simplified Kafka commit data
@@ -253,7 +272,16 @@ func (r *MetricRollupProcessor) ProcessBundle(ctx context.Context, bundle *messa
 	}
 
 	if err := r.atomicDatabaseUpdate(ctx, segments, newSegments, kafkaCommitData, key); err != nil {
-		return fmt.Errorf("atomic database update: %w", err)
+		ll.Error("Failed to perform atomic database update for metric rollup, skipping bundle",
+			slog.String("organizationID", key.OrganizationID.String()),
+			slog.Int("dateint", int(key.DateInt)),
+			slog.Int("sourceFrequencyMs", int(key.SourceFrequencyMs)),
+			slog.Int("targetFrequencyMs", int(key.TargetFrequencyMs)),
+			slog.Int("instanceNum", int(key.InstanceNum)),
+			slog.Int("segments", len(segments)),
+			slog.Int("newSegments", len(newSegments)),
+			slog.Any("error", err))
+		return nil
 	}
 
 	var totalRecords, totalSize int64
