@@ -141,5 +141,5 @@ func toLogExemplar(rl plog.ResourceLogs, sl plog.ScopeLogs, lr plog.LogRecord) p
 type ExemplarData struct {
 	Attributes  map[string]string
 	PartitionId int64
-	Payload     string
+	Payload     map[string]any
 }

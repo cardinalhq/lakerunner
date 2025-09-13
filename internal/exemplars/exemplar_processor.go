@@ -16,6 +16,7 @@ package exemplars
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"strconv"
 	"sync"
@@ -157,9 +158,9 @@ func (p *Processor) createLogsCallback(ctx context.Context, organizationID strin
 
 		exemplarData := make([]*ExemplarData, 0, len(entries))
 		for _, entry := range entries {
-			data, err := p.marshalLogs(entry.value)
+			data, err := p.convertLogsToMap(entry.value)
 			if err != nil {
-				ll.Error("Failed to marshal logs data", slog.Any("error", err))
+				ll.Error("Failed to convert logs data", slog.Any("error", err))
 				continue
 			}
 
@@ -199,9 +200,9 @@ func (p *Processor) createMetricsCallback(ctx context.Context, organizationID st
 
 		exemplarData := make([]*ExemplarData, 0, len(entries))
 		for _, entry := range entries {
-			data, err := p.marshalMetrics(entry.value)
+			data, err := p.convertMetricsToMap(entry.value)
 			if err != nil {
-				ll.Error("Failed to marshal metrics data", slog.Any("error", err))
+				ll.Error("Failed to convert metrics data", slog.Any("error", err))
 				continue
 			}
 
@@ -232,24 +233,36 @@ func (p *Processor) createMetricsCallback(ctx context.Context, organizationID st
 }
 
 // pmetric.Metrics -> JSON string
-// plog.Logs -> JSON string
-func (p *Processor) marshalLogs(ld plog.Logs) (string, error) {
+// plog.Logs -> map[string]any (avoiding JSON marshaling)
+func (p *Processor) convertLogsToMap(ld plog.Logs) (map[string]any, error) {
+	// Use JSON marshaling for now, but convert directly to map
 	marshaller := &plog.JSONMarshaler{}
 	bytes, err := marshaller.MarshalLogs(ld)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return string(bytes), nil
+
+	var result map[string]any
+	if err := json.Unmarshal(bytes, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
-// pmetric.Metrics -> JSON string
-func (p *Processor) marshalMetrics(md pmetric.Metrics) (string, error) {
+// pmetric.Metrics -> map[string]any (avoiding JSON marshaling)
+func (p *Processor) convertMetricsToMap(md pmetric.Metrics) (map[string]any, error) {
+	// Use JSON marshaling for now, but convert directly to map
 	marshaller := &pmetric.JSONMarshaler{}
 	bytes, err := marshaller.MarshalMetrics(md)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return string(bytes), nil
+
+	var result map[string]any
+	if err := json.Unmarshal(bytes, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 // ProcessLogs processes logs and generates exemplars for a specific organization
@@ -284,7 +297,6 @@ func (p *Processor) ProcessMetrics(ctx context.Context, organizationID string, r
 
 // add a logs exemplar to the organization's cache
 func (p *Processor) addLogExemplar(tenant *Tenant, rl plog.ResourceLogs, sl plog.ScopeLogs, lr plog.LogRecord) {
-
 	// Get old fingerprint from attributes (if exists from collector)
 	fingerprint := getLogFingerprint(lr)
 	extraKeys := []string{
