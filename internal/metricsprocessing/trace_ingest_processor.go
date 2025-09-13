@@ -181,7 +181,14 @@ type TraceIngestProcessor struct {
 
 // newTraceIngestProcessor creates a new trace ingest processor instance
 func newTraceIngestProcessor(store TraceIngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *TraceIngestProcessor {
-	exemplarProcessor := exemplars.NewProcessor(exemplars.DefaultConfig())
+	var exemplarProcessor *exemplars.Processor
+	// if os.Getenv("DISABLE_EXEMPLARS") != "true" {
+	// 	exemplarProcessor = exemplars.NewProcessor(exemplars.DefaultConfig())
+	// 	exemplarProcessor.SetMetricsCallback(func(ctx context.Context, organizationID string, exemplars []*exemplars.ExemplarData) error {
+	// 		return processTracesExemplarsDirect(ctx, organizationID, exemplars, store)
+	// 	})
+	// }
+
 	return &TraceIngestProcessor{
 		store:             store,
 		storageProvider:   storageProvider,
@@ -463,7 +470,7 @@ func (p *TraceIngestProcessor) createTraceReaderStack(tmpFilename, orgID, bucket
 	}
 	reader, err = filereader.NewTranslatingReader(reader, translator, 1000)
 	if err != nil {
-		reader.Close()
+		_ = reader.Close()
 		return nil, fmt.Errorf("failed to create translating reader: %w", err)
 	}
 

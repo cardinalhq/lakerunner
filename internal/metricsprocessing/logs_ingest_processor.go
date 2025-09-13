@@ -64,10 +64,14 @@ type LogIngestProcessor struct {
 
 // newLogIngestProcessor creates a new log ingest processor instance
 func newLogIngestProcessor(store LogIngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *LogIngestProcessor {
-	exemplarProcessor := exemplars.NewProcessor(exemplars.DefaultConfig())
-	exemplarProcessor.SetLogsCallback(func(ctx context.Context, organizationID string, exemplars []*exemplars.ExemplarData) error {
-		return processLogsExemplarsDirect(ctx, organizationID, exemplars, store)
-	})
+	var exemplarProcessor *exemplars.Processor
+	if os.Getenv("DISABLE_EXEMPLARS") != "true" {
+		exemplarProcessor = exemplars.NewProcessor(exemplars.DefaultConfig())
+		exemplarProcessor.SetMetricsCallback(func(ctx context.Context, organizationID string, exemplars []*exemplars.ExemplarData) error {
+			return processLogsExemplarsDirect(ctx, organizationID, exemplars, store)
+		})
+	}
+
 	return &LogIngestProcessor{
 		store:             store,
 		storageProvider:   storageProvider,
@@ -349,7 +353,7 @@ func (p *LogIngestProcessor) createLogReaderStack(tmpFilename, orgID, bucket, ob
 	}
 	reader, err = filereader.NewTranslatingReader(reader, translator, 1000)
 	if err != nil {
-		reader.Close()
+		_ = reader.Close()
 		return nil, fmt.Errorf("failed to create translating reader: %w", err)
 	}
 

@@ -130,7 +130,7 @@ func NewMergesortReader(ctx context.Context, readers []Reader, keyProvider SortK
 
 	// Prime all readers - read first row from each and create keys
 	if err := or.primeReaders(ctx); err != nil {
-		or.Close() // Clean up any partially initialized state
+		_ = or.Close() // Clean up any partially initialized state
 		return nil, err
 	}
 

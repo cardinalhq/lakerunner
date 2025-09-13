@@ -68,7 +68,7 @@ func init() {
 			fmt.Fprintf(os.Stderr, "GOGC is not set, setting it to 50%%\n")
 		}
 		debug.SetGCPercent(50)
-		os.Setenv("GOGC", "50")
+		_ = os.Setenv("GOGC", "50")
 	}
 }
 

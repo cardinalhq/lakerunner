@@ -292,14 +292,14 @@ func printLagSummary(lags []PartitionLag) error {
 
 	// Print summary table
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "TOPIC\tCONSUMER GROUP\tTOTAL LAG\tPARTITIONS")
+	_, _ = fmt.Fprintln(w, "TOPIC\tCONSUMER GROUP\tTOTAL LAG\tPARTITIONS")
 
 	for _, summary := range sortedSummaries {
 		partitionInfo := fmt.Sprintf("%d", summary.PartitionCount)
 		if summary.ValidPartitions < summary.PartitionCount {
 			partitionInfo = fmt.Sprintf("%d (%d valid)", summary.PartitionCount, summary.ValidPartitions)
 		}
-		fmt.Fprintf(w, "%s\t%s\t%d\t%s\n",
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%s\n",
 			summary.Topic,
 			summary.ConsumerGroup,
 			summary.TotalLag,
@@ -311,7 +311,7 @@ func printLagSummary(lags []PartitionLag) error {
 
 func printLagTableDetailed(lags []PartitionLag) error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "TOPIC\tPARTITION\tCURRENT OFFSET\tHIGH WATER MARK\tLAG\tCONSUMER GROUP")
+	_, _ = fmt.Fprintln(w, "TOPIC\tPARTITION\tCURRENT OFFSET\tHIGH WATER MARK\tLAG\tCONSUMER GROUP")
 
 	for _, lag := range lags {
 		currentOffsetStr := fmt.Sprintf("%d", lag.CurrentOffset)
@@ -319,7 +319,7 @@ func printLagTableDetailed(lags []PartitionLag) error {
 			currentOffsetStr = "N/A"
 		}
 
-		fmt.Fprintf(w, "%s\t%d\t%s\t%d\t%d\t%s\n",
+		_, _ = fmt.Fprintf(w, "%s\t%d\t%s\t%d\t%d\t%s\n",
 			lag.Topic,
 			lag.Partition,
 			currentOffsetStr,
@@ -473,7 +473,7 @@ func tailTopic(ctx context.Context, factory *fly.Factory, topic string, partitio
 	}
 
 	reader := kafka.NewReader(readerConfig)
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	// Seek to the desired offset
 	if err := reader.SetOffset(offset); err != nil {
@@ -507,11 +507,7 @@ func tailTopic(ctx context.Context, factory *fly.Factory, topic string, partitio
 	fmt.Fprintf(os.Stderr, "Press Ctrl+C to stop\n\n")
 
 	messagesRead := 0
-	for {
-		// Check if we've hit our message limit
-		if maxMessages > 0 && messagesRead >= maxMessages {
-			break
-		}
+	for maxMessages <= 0 || messagesRead < maxMessages {
 
 		// Read message with context
 		msg, err := reader.FetchMessage(ctx)

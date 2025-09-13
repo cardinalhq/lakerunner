@@ -91,8 +91,8 @@ func NewDiskSortingReader(reader Reader, keyProvider SortKeyProvider, batchSize 
 	// Create default codec (Binary for compatibility, can use TypeCBOR for better performance)
 	codec, err := rowcodec.New(rowcodec.TypeDefault)
 	if err != nil {
-		tempFile.Close()
-		os.Remove(tempFile.Name())
+		_ = tempFile.Close()
+		_ = os.Remove(tempFile.Name())
 		return nil, fmt.Errorf("failed to create codec: %w", err)
 	}
 
@@ -272,7 +272,7 @@ func (r *DiskSortingReader) Close() error {
 	var fileErr error
 	if r.tempFile != nil {
 		fileName := r.tempFile.Name()
-		r.tempFile.Close()
+		_ = r.tempFile.Close()
 		fileErr = os.Remove(fileName)
 	}
 

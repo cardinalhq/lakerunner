@@ -57,11 +57,12 @@ func (f *Factory) CreateProducer() (Producer, error) {
 	}
 
 	cfg := ProducerConfig{
-		Brokers:      f.config.Brokers,
-		BatchSize:    f.config.ProducerBatchSize,
-		BatchTimeout: f.config.ProducerBatchTimeout,
-		RequiredAcks: kafka.RequireNone,
-		Compression:  compression,
+		Brokers:           f.config.Brokers,
+		BatchSize:         f.config.ProducerBatchSize,
+		BatchTimeout:      f.config.ProducerBatchTimeout,
+		RequiredAcks:      kafka.RequireNone,
+		Compression:       compression,
+		ConnectionTimeout: f.config.ConnectionTimeout,
 	}
 
 	// Configure SASL/SCRAM if enabled
@@ -86,17 +87,18 @@ func (f *Factory) CreateProducer() (Producer, error) {
 // CreateConsumer creates a new Kafka consumer for the specified topic
 func (f *Factory) CreateConsumer(topic string, groupID string) (Consumer, error) {
 	cfg := ConsumerConfig{
-		Brokers:       f.config.Brokers,
-		Topic:         topic,
-		GroupID:       groupID,
-		MinBytes:      f.config.ConsumerMinBytes,
-		MaxBytes:      f.config.ConsumerMaxBytes,
-		MaxWait:       f.config.ConsumerMaxWait,
-		BatchSize:     f.config.ConsumerBatchSize,
-		StartOffset:   kafka.LastOffset,
-		AutoCommit:    false,
-		CommitBatch:   true,
-		RetryAttempts: 3,
+		Brokers:           f.config.Brokers,
+		Topic:             topic,
+		GroupID:           groupID,
+		MinBytes:          f.config.ConsumerMinBytes,
+		MaxBytes:          f.config.ConsumerMaxBytes,
+		MaxWait:           f.config.ConsumerMaxWait,
+		BatchSize:         f.config.ConsumerBatchSize,
+		StartOffset:       kafka.LastOffset,
+		AutoCommit:        false,
+		CommitBatch:       true,
+		RetryAttempts:     3,
+		ConnectionTimeout: f.config.ConnectionTimeout,
 	}
 
 	// Configure SASL/SCRAM if enabled
@@ -182,8 +184,13 @@ func (f *Factory) CreateKafkaClient() (*kafka.Client, error) {
 
 // CreateDialer creates an authenticated Kafka dialer for administrative operations
 func (f *Factory) CreateDialer() (*kafka.Dialer, error) {
+	timeout := f.config.ConnectionTimeout
+	if timeout == 0 {
+		timeout = 10 * time.Second // Default fallback
+	}
+
 	dialer := &kafka.Dialer{
-		Timeout: 10 * time.Second,
+		Timeout: timeout,
 	}
 
 	// Configure SASL if enabled

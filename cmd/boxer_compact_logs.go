@@ -88,7 +88,7 @@ func init() {
 			if err != nil {
 				return fmt.Errorf("failed to create compaction boxer consumer: %w", err)
 			}
-			defer consumer.Close()
+			defer func() { _ = consumer.Close() }()
 
 			healthServer.SetStatus(healthcheck.StatusHealthy)
 

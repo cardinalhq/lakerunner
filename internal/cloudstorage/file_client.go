@@ -64,13 +64,13 @@ func (c *fileClient) DownloadObject(ctx context.Context, tmpdir, bucket, key str
 	if err != nil {
 		return "", 0, false, err
 	}
-	defer dst.Close()
+	defer func() { _ = dst.Close() }()
 
 	f, err := os.Open(src)
 	if err != nil {
 		return "", 0, false, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	if _, err := io.Copy(dst, f); err != nil {
 		return "", 0, false, err
@@ -88,13 +88,13 @@ func (c *fileClient) UploadObject(ctx context.Context, bucket, key, sourceFilena
 	if err != nil {
 		return err
 	}
-	defer src.Close()
+	defer func() { _ = src.Close() }()
 
 	out, err := os.Create(dst)
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	defer func() { _ = out.Close() }()
 
 	_, err = io.Copy(out, src)
 	return err

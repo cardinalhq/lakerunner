@@ -57,7 +57,7 @@ func TestMemorySortingReader_SortsByKey(t *testing.T) {
 	mockReader := NewMockReader(inputRows)
 	sortingReader, err := NewMemorySortingReader(mockReader, &NonPooledMetricSortKeyProvider{}, 1000)
 	require.NoError(t, err)
-	defer sortingReader.Close()
+	defer func() { _ = sortingReader.Close() }()
 
 	// Read all results
 	var allRows []Row
@@ -99,7 +99,7 @@ func TestMemorySortingReader_EmptyInput(t *testing.T) {
 	mockReader := NewMockReader([]Row{})
 	sortingReader, err := NewMemorySortingReader(mockReader, &NonPooledMetricSortKeyProvider{}, 1000)
 	require.NoError(t, err)
-	defer sortingReader.Close()
+	defer func() { _ = sortingReader.Close() }()
 
 	batch, err := sortingReader.Next(context.TODO())
 	assert.Equal(t, io.EOF, err)
@@ -132,7 +132,7 @@ func TestMemorySortingReader_MissingFields(t *testing.T) {
 	mockReader := NewMockReader(inputRows)
 	sortingReader, err := NewMemorySortingReader(mockReader, &NonPooledMetricSortKeyProvider{}, 1000)
 	require.NoError(t, err)
-	defer sortingReader.Close()
+	defer func() { _ = sortingReader.Close() }()
 
 	// Read all results
 	var allRows []Row
@@ -222,7 +222,7 @@ func TestMemorySortingReader_CustomSortFunction(t *testing.T) {
 	mockReader := NewMockReader(inputRows)
 	sortingReader, err := NewMemorySortingReader(mockReader, &reverseTimestampSortKeyProvider{}, 1000)
 	require.NoError(t, err)
-	defer sortingReader.Close()
+	defer func() { _ = sortingReader.Close() }()
 
 	// Read all results
 	var allRows []Row
@@ -266,7 +266,7 @@ func TestMemorySortingReader_TimestampOnlySort(t *testing.T) {
 	mockReader := NewMockReader(inputRows)
 	sortingReader, err := NewMemorySortingReader(mockReader, &TimestampSortKeyProvider{}, 1000)
 	require.NoError(t, err)
-	defer sortingReader.Close()
+	defer func() { _ = sortingReader.Close() }()
 
 	// Read all results
 	var allRows []Row

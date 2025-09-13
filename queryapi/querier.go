@@ -53,7 +53,7 @@ func readQueryPayload(w http.ResponseWriter, r *http.Request, allowEmptyQuery bo
 	}
 	ct := r.Header.Get("Content-Type")
 	body, _ := io.ReadAll(r.Body)
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 
 	switch {
 	case strings.HasPrefix(ct, "application/json"):

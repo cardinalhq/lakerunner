@@ -1001,7 +1001,7 @@ func TestNewCommonConsumerWithComponents(t *testing.T) {
 	assert.NotNil(t, consumer.done)
 	assert.NotNil(t, consumer.idleCheckTicker)
 
-	consumer.Close()
+	_ = consumer.Close()
 	mockConsumer.AssertExpectations(t)
 }
 

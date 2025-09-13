@@ -151,7 +151,7 @@ func queryAll(t *testing.T, db *sql.DB, q string) []rowmap {
 	if err != nil {
 		t.Fatalf("query failed: %v\nsql:\n%s", err, q)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	cols, err := rows.Columns()
 	if err != nil {

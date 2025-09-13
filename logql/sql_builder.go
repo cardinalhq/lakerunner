@@ -550,10 +550,10 @@ func buildLabelFormatExprTemplate(tmpl string, colResolver func(string) string) 
 	if err != nil {
 		return "", fmt.Errorf("parse label_format template: %w", err)
 	}
-	if t.Tree == nil || t.Tree.Root == nil {
+	if t.Tree == nil || t.Root == nil {
 		return "''", nil
 	}
-	return genStringFromList(t.Tree.Root, colResolver)
+	return genStringFromList(t.Root, colResolver)
 }
 
 // ---- Template → SQL (string) ----

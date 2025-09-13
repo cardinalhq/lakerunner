@@ -43,10 +43,10 @@ func TestSyncTopicsConnectionFailure(t *testing.T) {
 				ReplicationFactor: 1,
 			},
 		},
-		OperationTimeout: 1 * time.Second, // Short timeout for faster failure
+		OperationTimeout: 100 * time.Millisecond, // Very short timeout for fast failure
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
 	// Test the behavior: SyncTopics should return an error when broker is unreachable
@@ -73,7 +73,7 @@ func TestSyncTopicsEmptyTopics(t *testing.T) {
 	// Create config with no topics
 	topicsConfig := &kafkasync.Config{
 		Topics:           []kafkasync.Topic{},
-		OperationTimeout: 10 * time.Second,
+		OperationTimeout: 100 * time.Millisecond,
 	}
 
 	ctx := context.Background()
@@ -115,10 +115,10 @@ func TestSyncTopicsWithSASL(t *testing.T) {
 				ReplicationFactor: 1,
 			},
 		},
-		OperationTimeout: 1 * time.Second,
+		OperationTimeout: 100 * time.Millisecond,
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
 	// This will fail due to no real broker, but exercises SASL code path
@@ -154,10 +154,10 @@ func TestSyncTopicsWithTLS(t *testing.T) {
 				ReplicationFactor: 1,
 			},
 		},
-		OperationTimeout: 1 * time.Second,
+		OperationTimeout: 100 * time.Millisecond,
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
 	// This will fail due to no real broker, but exercises TLS code path

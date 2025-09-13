@@ -36,7 +36,7 @@ func TestNewSequentialReader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSequentialReader() error = %v", err)
 	}
-	defer sr.Close()
+	defer func() { _ = sr.Close() }()
 
 	if len(sr.readers) != 2 {
 		t.Errorf("Expected 2 readers, got %d", len(sr.readers))
@@ -79,7 +79,7 @@ func TestSequentialReader_Next(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSequentialReader() error = %v", err)
 	}
-	defer sr.Close()
+	defer func() { _ = sr.Close() }()
 
 	// Expected order: all from r1, then all from r2, skip r3 (empty), then all from r4
 	expectedData := []string{
@@ -121,7 +121,7 @@ func TestSequentialReader_NextBatched(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSequentialReader() error = %v", err)
 	}
-	defer sr.Close()
+	defer func() { _ = sr.Close() }()
 
 	// Read first batch
 	batch, err := sr.Next(context.TODO())
@@ -168,7 +168,7 @@ func TestSequentialReader_CurrentReaderIndex(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSequentialReader() error = %v", err)
 	}
-	defer sr.Close()
+	defer func() { _ = sr.Close() }()
 
 	// Initially reading from reader 0
 	if index := sr.CurrentReaderIndex(); index != 0 {
@@ -220,7 +220,7 @@ func TestSequentialReader_TotalReaderCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSequentialReader() error = %v", err)
 	}
-	defer sr.Close()
+	defer func() { _ = sr.Close() }()
 
 	if count := sr.TotalReaderCount(); count != 3 {
 		t.Errorf("TotalReaderCount() = %d, want 3", count)
@@ -238,7 +238,7 @@ func TestSequentialReader_RemainingReaderCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSequentialReader() error = %v", err)
 	}
-	defer sr.Close()
+	defer func() { _ = sr.Close() }()
 
 	// Initially all 3 readers remaining
 	if count := sr.RemainingReaderCount(); count != 3 {
@@ -330,7 +330,7 @@ func TestSequentialReader_AllEmptyReaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSequentialReader() error = %v", err)
 	}
-	defer sr.Close()
+	defer func() { _ = sr.Close() }()
 
 	// Should immediately return io.EOF
 	batch, err := sr.Next(context.TODO())
@@ -349,7 +349,7 @@ func TestSequentialReader_WithErrors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSequentialReader() error = %v", err)
 	}
-	defer sr.Close()
+	defer func() { _ = sr.Close() }()
 
 	// First read should succeed (from r1)
 	_, err = sr.Next(context.TODO())
@@ -380,7 +380,7 @@ func TestSequentialReader_ReaderWithDelayedError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSequentialReader() error = %v", err)
 	}
-	defer sr.Close()
+	defer func() { _ = sr.Close() }()
 
 	// First read from r1
 	batch, err := sr.Next(context.TODO())

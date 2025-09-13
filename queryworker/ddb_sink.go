@@ -98,7 +98,7 @@ func NewDDBSink(dataset string, ctx context.Context) (*DDBSink, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("create table: %w", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// Ensure segment_id exists (handles pre-existing tables).
 	if err := s.ensureSegmentIDColumn(ctx); err != nil {
@@ -279,7 +279,7 @@ WHERE segment_id IN (
 	if err != nil {
 		return 0, err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	affected, _ := res.RowsAffected()
 	if affected > 0 {
 		s.totalRows.Add(-affected)
@@ -298,7 +298,7 @@ func (s *DDBSink) ensureSegmentIDColumn(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("alter add segment_id: %w", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	return nil
 }
 
@@ -313,8 +313,8 @@ ORDER BY column_index;
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
-	defer conn.Close()
+	defer func() { _ = rows.Close() }()
+	defer func() { _ = conn.Close() }()
 
 	var cols []colDef
 	idx := make(map[string]int)
@@ -391,7 +391,7 @@ func (s *DDBSink) probeParquetSchemaList(ctx context.Context, paths []string) (m
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	colTypes, err := rows.ColumnTypes()
 	if err != nil {

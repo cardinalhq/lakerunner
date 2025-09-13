@@ -73,7 +73,7 @@ func loadBenchmarkData(b *testing.B) {
 
 		// Sample first few rows to get average field count
 		batch, _ := parquetReader.Next(context.TODO())
-		parquetReader.Close()
+		_ = parquetReader.Close()
 
 		totalFields := 0
 		n := 0
@@ -205,7 +205,7 @@ func BenchmarkParquetRawReader_Small(b *testing.B) {
 		}
 
 		totalRows += rowsThisIter
-		reader.Close()
+		_ = reader.Close()
 	}
 
 	ms.captureMemStatsAfter()
@@ -244,7 +244,7 @@ func BenchmarkParquetRawReader_Medium(b *testing.B) {
 		}
 
 		totalRows += rowsThisIter
-		reader.Close()
+		_ = reader.Close()
 	}
 
 	ms.captureMemStatsAfter()
@@ -283,7 +283,7 @@ func BenchmarkParquetRawReader_Large(b *testing.B) {
 		}
 
 		totalRows += rowsThisIter
-		reader.Close()
+		_ = reader.Close()
 	}
 
 	ms.captureMemStatsAfter()
@@ -326,7 +326,7 @@ func BenchmarkParquetRawReader_BatchSizes(b *testing.B) {
 				}
 
 				totalRows += rowsThisIter
-				reader.Close()
+				_ = reader.Close()
 			}
 
 			ms.captureMemStatsAfter()
@@ -347,7 +347,7 @@ func BenchmarkParquetRawReader_MemoryProfile(b *testing.B) {
 	if err != nil {
 		b.Fatalf("Failed to create reader: %v", err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	totalRows := int64(0)
 	iterationCount := 0
@@ -407,7 +407,7 @@ func BenchmarkParquetRawReader_GCPressure(b *testing.B) {
 	if err != nil {
 		b.Fatalf("Failed to create reader: %v", err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	totalRows := int64(0)
 	gcCheckInterval := 50 // Check GC stats every N batches

@@ -75,9 +75,9 @@ func setupTestServer(t *testing.T) (adminproto.AdminServiceClient, func()) {
 	client := adminproto.NewAdminServiceClient(conn)
 
 	cleanup := func() {
-		conn.Close()
+		_ = conn.Close()
 		server.Stop()
-		lis.Close()
+		_ = lis.Close()
 	}
 
 	return client, cleanup
@@ -129,19 +129,19 @@ func TestInQueueStatusWithoutDB(t *testing.T) {
 	}
 
 	// Temporarily unset database environment variables to force database connection failure
-	os.Unsetenv("LRDB_HOST")
-	os.Unsetenv("LRDB_USER")
-	os.Unsetenv("LRDB_PASSWORD")
-	os.Unsetenv("LRDB_DBNAME")
-	os.Unsetenv("LRDB_URL")
+	_ = os.Unsetenv("LRDB_HOST")
+	_ = os.Unsetenv("LRDB_USER")
+	_ = os.Unsetenv("LRDB_PASSWORD")
+	_ = os.Unsetenv("LRDB_DBNAME")
+	_ = os.Unsetenv("LRDB_URL")
 
 	// Restore environment variables when test completes
 	defer func() {
 		for key, value := range originalLRDBVars {
 			if value != "" {
-				os.Setenv(key, value)
+				_ = os.Setenv(key, value)
 			} else {
-				os.Unsetenv(key)
+				_ = os.Unsetenv(key)
 			}
 		}
 	}()
@@ -172,18 +172,18 @@ func TestListOrganizationsWithoutDB(t *testing.T) {
 		"CONFIGDB_URL":      os.Getenv("CONFIGDB_URL"),
 	}
 
-	os.Unsetenv("CONFIGDB_HOST")
-	os.Unsetenv("CONFIGDB_USER")
-	os.Unsetenv("CONFIGDB_PASSWORD")
-	os.Unsetenv("CONFIGDB_DBNAME")
-	os.Unsetenv("CONFIGDB_URL")
+	_ = os.Unsetenv("CONFIGDB_HOST")
+	_ = os.Unsetenv("CONFIGDB_USER")
+	_ = os.Unsetenv("CONFIGDB_PASSWORD")
+	_ = os.Unsetenv("CONFIGDB_DBNAME")
+	_ = os.Unsetenv("CONFIGDB_URL")
 
 	defer func() {
 		for key, value := range originalConfigDBVars {
 			if value != "" {
-				os.Setenv(key, value)
+				_ = os.Setenv(key, value)
 			} else {
-				os.Unsetenv(key)
+				_ = os.Unsetenv(key)
 			}
 		}
 	}()
@@ -212,18 +212,18 @@ func TestCreateOrganizationWithoutDB(t *testing.T) {
 		"CONFIGDB_URL":      os.Getenv("CONFIGDB_URL"),
 	}
 
-	os.Unsetenv("CONFIGDB_HOST")
-	os.Unsetenv("CONFIGDB_USER")
-	os.Unsetenv("CONFIGDB_PASSWORD")
-	os.Unsetenv("CONFIGDB_DBNAME")
-	os.Unsetenv("CONFIGDB_URL")
+	_ = os.Unsetenv("CONFIGDB_HOST")
+	_ = os.Unsetenv("CONFIGDB_USER")
+	_ = os.Unsetenv("CONFIGDB_PASSWORD")
+	_ = os.Unsetenv("CONFIGDB_DBNAME")
+	_ = os.Unsetenv("CONFIGDB_URL")
 
 	defer func() {
 		for key, value := range originalConfigDBVars {
 			if value != "" {
-				os.Setenv(key, value)
+				_ = os.Setenv(key, value)
 			} else {
-				os.Unsetenv(key)
+				_ = os.Unsetenv(key)
 			}
 		}
 	}()

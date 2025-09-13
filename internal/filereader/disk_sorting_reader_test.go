@@ -54,7 +54,7 @@ func TestDiskSortingReader_BasicSorting(t *testing.T) {
 	mockReader := NewMockReader(testRows)
 	sortingReader, err := NewDiskSortingReader(mockReader, &NonPooledMetricSortKeyProvider{}, 1000)
 	require.NoError(t, err)
-	defer sortingReader.Close()
+	defer func() { _ = sortingReader.Close() }()
 
 	// Read all rows
 	var allRows []Row
@@ -102,7 +102,7 @@ func TestDiskSortingReader_TypePreservation(t *testing.T) {
 	mockReader := NewMockReader([]Row{testRow})
 	sortingReader, err := NewDiskSortingReader(mockReader, &NonPooledMetricSortKeyProvider{}, 1000)
 	require.NoError(t, err)
-	defer sortingReader.Close()
+	defer func() { _ = sortingReader.Close() }()
 
 	// Read the row back
 	batch, err := sortingReader.Next(context.TODO())
@@ -127,7 +127,7 @@ func TestDiskSortingReader_EmptyInput(t *testing.T) {
 	mockReader := NewMockReader([]Row{})
 	sortingReader, err := NewDiskSortingReader(mockReader, &NonPooledMetricSortKeyProvider{}, 1000)
 	require.NoError(t, err)
-	defer sortingReader.Close()
+	defer func() { _ = sortingReader.Close() }()
 
 	// Should get EOF immediately
 	_, err = sortingReader.Next(context.TODO())
@@ -153,7 +153,7 @@ func TestDiskSortingReader_MissingFields(t *testing.T) {
 	mockReader := NewMockReader(testRows)
 	sortingReader, err := NewDiskSortingReader(mockReader, &NonPooledMetricSortKeyProvider{}, 1000)
 	require.NoError(t, err)
-	defer sortingReader.Close()
+	defer func() { _ = sortingReader.Close() }()
 
 	// Should succeed - missing fields are handled by the sort function
 	batch, err := sortingReader.Next(context.TODO())
@@ -259,7 +259,7 @@ func TestDiskSortingReader_ArbitraryRowCount(t *testing.T) {
 	mockReader := NewMockReader(testRows)
 	sortingReader, err := NewDiskSortingReader(mockReader, &MetricSortKeyProvider{}, batchSize)
 	require.NoError(t, err)
-	defer sortingReader.Close()
+	defer func() { _ = sortingReader.Close() }()
 
 	// Read all rows back and count them
 	totalRead := 0
@@ -333,7 +333,7 @@ func TestWriteAndIndexAllRowsDoesNotLeakBatches(t *testing.T) {
 	reader := &manyBatchReader{remaining: batchCount}
 	dsr, err := NewDiskSortingReader(reader, &MetricSortKeyProvider{}, 10)
 	require.NoError(t, err)
-	defer dsr.Close()
+	defer func() { _ = dsr.Close() }()
 
 	require.NoError(t, dsr.writeAndIndexAllRows(context.TODO()))
 

@@ -31,7 +31,7 @@ type StorageProfileCacheValue struct {
 func (store *Store) GetStorageProfile(ctx context.Context, params GetStorageProfileParams) (GetStorageProfileRow, error) {
 	loader := ttlcache.LoaderFunc[GetStorageProfileParams, StorageProfileCacheValue](
 		func(cache *ttlcache.Cache[GetStorageProfileParams, StorageProfileCacheValue], key GetStorageProfileParams) *ttlcache.Item[GetStorageProfileParams, StorageProfileCacheValue] {
-			row, err := store.Queries.GetStorageProfileUncached(ctx, key)
+			row, err := store.GetStorageProfileUncached(ctx, key)
 			item := cache.Set(key, StorageProfileCacheValue{
 				GetStorageProfileRow: row,
 				error:                err,
@@ -61,7 +61,7 @@ func (store *Store) GetStorageProfileByCollectorName(ctx context.Context, organi
 				}, ttlcache.DefaultTTL)
 				return item
 			}
-			row, err := store.Queries.GetStorageProfileByCollectorNameUncached(ctx, pgUUID)
+			row, err := store.GetStorageProfileByCollectorNameUncached(ctx, pgUUID)
 			item := cache.Set(key, StorageProfileByNameCacheValue{
 				GetStorageProfileByCollectorNameRow: row,
 				error:                               err,
@@ -84,7 +84,7 @@ type StorageProfilesByBucketNameCacheValue struct {
 func (store *Store) GetStorageProfilesByBucketName(ctx context.Context, bucketName string) ([]GetStorageProfilesByBucketNameRow, error) {
 	loader := ttlcache.LoaderFunc[string, StorageProfilesByBucketNameCacheValue](
 		func(cache *ttlcache.Cache[string, StorageProfilesByBucketNameCacheValue], key string) *ttlcache.Item[string, StorageProfilesByBucketNameCacheValue] {
-			rows, err := store.Queries.GetStorageProfilesByBucketNameUncached(ctx, key)
+			rows, err := store.GetStorageProfilesByBucketNameUncached(ctx, key)
 			item := cache.Set(key, StorageProfilesByBucketNameCacheValue{
 				rows: rows,
 				err:  err,

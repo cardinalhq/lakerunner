@@ -76,7 +76,7 @@ func setupMockServer(t *testing.T) func() {
 
 	cleanup := func() {
 		server.Stop()
-		testLis.Close()
+		_ = testLis.Close()
 	}
 
 	return cleanup

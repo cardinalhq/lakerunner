@@ -19,19 +19,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"net/http"
 	"strconv"
-	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
-
-	"github.com/cardinalhq/lakerunner/cmd/dbopen"
-	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 // QueriesInterface defines the methods needed for scaling queries
@@ -41,37 +35,22 @@ type QueriesInterface interface {
 
 type Service struct {
 	UnimplementedExternalScalerServer
-	port        int
 	grpcPort    int
 	healthCheck *health.Server
-	dbPool      *pgxpool.Pool
-	queries     QueriesInterface
 }
 
 type Config struct {
-	Port     int
 	GRPCPort int
 }
 
 func NewService(ctx context.Context, cfg Config) (*Service, error) {
-	dbPool, err := dbopen.ConnectTolrdb(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to LRDB: %w", err)
-	}
-
 	return &Service{
-		port:        cfg.Port,
 		grpcPort:    cfg.GRPCPort,
 		healthCheck: health.NewServer(),
-		dbPool:      dbPool,
-		queries:     lrdb.New(dbPool),
 	}, nil
 }
 
 func (s *Service) Close() {
-	if s.dbPool != nil {
-		s.dbPool.Close()
-	}
 }
 
 func (s *Service) getQueueDepth(ctx context.Context, serviceType string) (int64, error) {
@@ -121,62 +100,7 @@ func (s *Service) getQueueDepth(ctx context.Context, serviceType string) (int64,
 }
 
 func (s *Service) Start(ctx context.Context) error {
-	errCh := make(chan error, 2)
-
-	go func() {
-		errCh <- s.startHTTPServer(ctx)
-	}()
-
-	go func() {
-		errCh <- s.startGRPCServer(ctx)
-	}()
-
-	select {
-	case err := <-errCh:
-		return err
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-func (s *Service) startHTTPServer(ctx context.Context) error {
-	mux := http.NewServeMux()
-
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"status":"healthy","timestamp":"%s","service":"external-scaler"}`, time.Now().Format(time.RFC3339))
-	})
-
-	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"status":"ready","timestamp":"%s","service":"external-scaler"}`, time.Now().Format(time.RFC3339))
-	})
-
-	mux.HandleFunc("/livez", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"status":"alive","timestamp":"%s","service":"external-scaler"}`, time.Now().Format(time.RFC3339))
-	})
-
-	server := &http.Server{
-		Addr:    ":" + strconv.Itoa(s.port),
-		Handler: mux,
-	}
-
-	go func() {
-		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			slog.Error("HTTP server shutdown failed", "error", err)
-		}
-	}()
-
-	slog.Info("Starting HTTP server", "port", s.port)
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		return fmt.Errorf("HTTP server failed: %w", err)
-	}
-
-	return nil
+	return s.startGRPCServer(ctx)
 }
 
 func (s *Service) startGRPCServer(ctx context.Context) error {

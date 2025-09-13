@@ -44,7 +44,7 @@ func createMetricProtoBinaryReader(filename string, opts filereader.ReaderOption
 
 	reader, err := filereader.NewIngestProtoMetricsReader(file, opts)
 	if err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, fmt.Errorf("failed to create metrics proto reader: %w", err)
 	}
 
@@ -60,14 +60,14 @@ func createMetricProtoBinaryGzReader(filename string, opts filereader.ReaderOpti
 
 	gzipReader, err := gzip.NewReader(file)
 	if err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, fmt.Errorf("failed to create gzip reader: %w", err)
 	}
 
 	reader, err := filereader.NewIngestProtoMetricsReader(gzipReader, opts)
 	if err != nil {
-		gzipReader.Close()
-		file.Close()
+		_ = gzipReader.Close()
+		_ = file.Close()
 		return nil, fmt.Errorf("failed to create metrics proto reader: %w", err)
 	}
 

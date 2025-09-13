@@ -112,13 +112,13 @@ func TestMergesortReader_BufferLeak(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create JSONLinesReader 1: %v", err)
 	}
-	defer reader1.Close()
+	defer func() { _ = reader1.Close() }()
 
 	reader2, err := NewJSONLinesReader(io.NopCloser(strings.NewReader(jsonData2)), 100)
 	if err != nil {
 		t.Fatalf("Failed to create JSONLinesReader 2: %v", err)
 	}
-	defer reader2.Close()
+	defer func() { _ = reader2.Close() }()
 
 	readers := []Reader{reader1, reader2}
 
@@ -127,7 +127,7 @@ func TestMergesortReader_BufferLeak(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create MergesortReader: %v", err)
 	}
-	defer msReader.Close()
+	defer func() { _ = msReader.Close() }()
 
 	// Read all batches
 	batches := readAllBatches(t, msReader)
@@ -156,7 +156,7 @@ func TestSequentialReader_BufferLeak(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create SequentialReader: %v", err)
 	}
-	defer seqReader.Close()
+	defer func() { _ = seqReader.Close() }()
 
 	// Read all batches
 	batches := readAllBatches(t, seqReader)
@@ -187,7 +187,7 @@ func TestJSONLinesReader_BufferLeak(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create JSONLinesReader: %v", err)
 	}
-	defer jsonReader.Close()
+	defer func() { _ = jsonReader.Close() }()
 
 	// Read all batches
 	batches := readAllBatches(t, jsonReader)
@@ -218,7 +218,7 @@ func TestMemorySortingReader_BufferLeak(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create MemorySortingReader: %v", err)
 	}
-	defer sortingReader.Close()
+	defer func() { _ = sortingReader.Close() }()
 
 	// Read all batches
 	batches := readAllBatches(t, sortingReader)
@@ -249,7 +249,7 @@ func TestDiskSortingReader_BufferLeak(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create DiskSortingReader: %v", err)
 	}
-	defer sortingReader.Close()
+	defer func() { _ = sortingReader.Close() }()
 
 	// Read all batches
 	batches := readAllBatches(t, sortingReader)
@@ -276,7 +276,7 @@ func TestAggregatingMetricsReader_BufferLeak(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create AggregatingMetricsReader: %v", err)
 	}
-	defer aggReader.Close()
+	defer func() { _ = aggReader.Close() }()
 
 	// Read all batches
 	batches := readAllBatches(t, aggReader)
@@ -306,7 +306,7 @@ func TestTranslatingReader_BufferLeak(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create TranslatingReader: %v", err)
 	}
-	defer transReader.Close()
+	defer func() { _ = transReader.Close() }()
 
 	// Read all batches
 	batches := readAllBatches(t, transReader)
@@ -344,7 +344,7 @@ func TestStackedReaders_BufferLeak(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create SequentialReader: %v", err)
 	}
-	defer seqReader.Close()
+	defer func() { _ = seqReader.Close() }()
 
 	// Add sorting
 	sortingReader, err := NewMemorySortingReader(
@@ -355,14 +355,14 @@ func TestStackedReaders_BufferLeak(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create MemorySortingReader: %v", err)
 	}
-	defer sortingReader.Close()
+	defer func() { _ = sortingReader.Close() }()
 
 	// Add aggregation
 	aggReader, err := NewAggregatingMetricsReader(sortingReader, 10000, 50)
 	if err != nil {
 		t.Fatalf("Failed to create AggregatingMetricsReader: %v", err)
 	}
-	defer aggReader.Close()
+	defer func() { _ = aggReader.Close() }()
 
 	// Read all batches
 	batches := readAllBatches(t, aggReader)

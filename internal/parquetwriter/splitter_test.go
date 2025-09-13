@@ -176,7 +176,7 @@ func TestFileSplitterWriteBatchRows_SingleBatch(t *testing.T) {
 	}
 
 	// Clean up
-	os.Remove(results[0].FileName)
+	_ = os.Remove(results[0].FileName)
 }
 
 func TestFileSplitterWriteBatchRows_WithStats(t *testing.T) {
@@ -220,7 +220,7 @@ func TestFileSplitterWriteBatchRows_WithStats(t *testing.T) {
 	}
 
 	// Clean up
-	os.Remove(results[0].FileName)
+	_ = os.Remove(results[0].FileName)
 }
 
 func TestFileSplitterWriteBatchRows_FileSplittingByRecordCount(t *testing.T) {
@@ -265,7 +265,7 @@ func TestFileSplitterWriteBatchRows_FileSplittingByRecordCount(t *testing.T) {
 
 	// Clean up
 	for _, result := range results {
-		os.Remove(result.FileName)
+		_ = os.Remove(result.FileName)
 	}
 }
 
@@ -306,7 +306,7 @@ func TestFileSplitterWriteBatchRows_UnlimitedFileMode(t *testing.T) {
 	}
 
 	// Clean up
-	os.Remove(results[0].FileName)
+	_ = os.Remove(results[0].FileName)
 }
 
 func TestFileSplitterWriteBatchRows_WithGroupKeyFunc(t *testing.T) {
@@ -341,7 +341,7 @@ func TestFileSplitterWriteBatchRows_WithGroupKeyFunc(t *testing.T) {
 
 	// Clean up
 	for _, result := range results {
-		os.Remove(result.FileName)
+		_ = os.Remove(result.FileName)
 	}
 }
 
@@ -379,7 +379,7 @@ func TestFileSplitterClose_MultipleTimes(t *testing.T) {
 
 	// Clean up
 	for _, result := range results1 {
-		os.Remove(result.FileName)
+		_ = os.Remove(result.FileName)
 	}
 }
 
@@ -488,7 +488,7 @@ func TestFileSplitterEmptyFileHandling(t *testing.T) {
 
 	// Clean up
 	for _, result := range results {
-		os.Remove(result.FileName)
+		_ = os.Remove(result.FileName)
 	}
 }
 
@@ -529,7 +529,7 @@ func TestFileSplitterTempFileCreation(t *testing.T) {
 
 	// Clean up
 	for _, result := range results {
-		os.Remove(result.FileName)
+		_ = os.Remove(result.FileName)
 	}
 }
 

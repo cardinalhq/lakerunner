@@ -133,13 +133,13 @@ func createParquetReader(filename string, opts ReaderOptions) (Reader, error) {
 
 	stat, err := file.Stat()
 	if err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, fmt.Errorf("failed to stat parquet file: %w", err)
 	}
 
 	reader, err := NewParquetRawReader(file, stat.Size(), opts.BatchSize)
 	if err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, err
 	}
 
@@ -155,7 +155,7 @@ func createJSONGzReader(filename string, opts ReaderOptions) (Reader, error) {
 
 	gzipReader, err := gzip.NewReader(file)
 	if err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, fmt.Errorf("failed to create gzip reader: %w", err)
 	}
 
@@ -166,7 +166,7 @@ func createJSONGzReader(filename string, opts ReaderOptions) (Reader, error) {
 
 	reader, err := NewJSONLinesReader(rc, opts.BatchSize)
 	if err != nil {
-		rc.Close()
+		_ = rc.Close()
 		return nil, err
 	}
 
@@ -182,7 +182,7 @@ func createJSONReader(filename string, opts ReaderOptions) (Reader, error) {
 
 	reader, err := NewJSONLinesReader(file, opts.BatchSize)
 	if err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, err
 	}
 
@@ -198,21 +198,21 @@ func createProtoBinaryGzReader(filename string, opts ReaderOptions) (Reader, err
 
 	gzipReader, err := gzip.NewReader(file)
 	if err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, fmt.Errorf("failed to create gzip reader: %w", err)
 	}
 
 	reader, err := createProtoReaderWithOptions(gzipReader, opts)
 	if err != nil {
-		gzipReader.Close()
-		file.Close()
+		_ = gzipReader.Close()
+		_ = file.Close()
 		return nil, err
 	}
 
 	// Close file handles after reader is constructed since NewIngestProtoMetricsReader
 	// eagerly reads the entire stream into memory and doesn't need the handles
-	gzipReader.Close()
-	file.Close()
+	_ = gzipReader.Close()
+	_ = file.Close()
 
 	return reader, nil
 }
@@ -226,13 +226,13 @@ func createProtoBinaryReader(filename string, opts ReaderOptions) (Reader, error
 
 	reader, err := createProtoReaderWithOptions(file, opts)
 	if err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, err
 	}
 
 	// Close file handle after reader is constructed since NewIngestProtoMetricsReader
 	// eagerly reads the entire stream into memory and doesn't need the handle
-	file.Close()
+	_ = file.Close()
 
 	return reader, nil
 }

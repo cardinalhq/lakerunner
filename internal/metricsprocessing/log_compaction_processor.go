@@ -158,13 +158,25 @@ func (p *LogCompactionProcessor) ProcessBundle(ctx context.Context, key messages
 	// Perform the core compaction logic
 	results, err := p.performLogCompactionCore(ctx, tmpDir, storageClient, key, storageProfile, activeSegments, recordCountEstimate)
 	if err != nil {
-		return fmt.Errorf("perform compaction: %w", err)
+		ll.Error("Failed to perform log compaction core processing, skipping bundle",
+			slog.String("organizationID", key.OrganizationID.String()),
+			slog.Int("dateint", int(key.DateInt)),
+			slog.Int("instanceNum", int(key.InstanceNum)),
+			slog.Int("activeSegments", len(activeSegments)),
+			slog.Any("error", err))
+		return nil
 	}
 
 	// Upload new files and create new log segments
 	newSegments, err := p.uploadAndCreateLogSegments(ctx, storageClient, storageProfile, results, key, activeSegments)
 	if err != nil {
-		return fmt.Errorf("upload and create segments: %w", err)
+		ll.Error("Failed to upload and create log segments, skipping bundle",
+			slog.String("organizationID", key.OrganizationID.String()),
+			slog.Int("dateint", int(key.DateInt)),
+			slog.Int("instanceNum", int(key.InstanceNum)),
+			slog.Int("resultsCount", len(results)),
+			slog.Any("error", err))
+		return nil
 	}
 
 	// Create KafkaCommitData for offset tracking
@@ -178,7 +190,14 @@ func (p *LogCompactionProcessor) ProcessBundle(ctx context.Context, key messages
 
 	// Atomic operation - mark old as compacted, insert new, update Kafka offsets
 	if err := p.atomicLogDatabaseUpdate(ctx, activeSegments, newSegments, kafkaCommitData, key); err != nil {
-		return fmt.Errorf("atomic database update: %w", err)
+		ll.Error("Failed to perform atomic database update, skipping bundle",
+			slog.String("organizationID", key.OrganizationID.String()),
+			slog.Int("dateint", int(key.DateInt)),
+			slog.Int("instanceNum", int(key.InstanceNum)),
+			slog.Int("activeSegments", len(activeSegments)),
+			slog.Int("newSegments", len(newSegments)),
+			slog.Any("error", err))
+		return nil
 	}
 
 	var totalRecords, totalSize int64
@@ -250,7 +269,7 @@ func (p *LogCompactionProcessor) uploadAndCreateLogSegments(ctx context.Context,
 		}
 
 		// Clean up local file
-		os.Remove(result.FileName)
+		_ = os.Remove(result.FileName)
 
 		segment := lrdb.LogSeg{
 			OrganizationID: key.OrganizationID,

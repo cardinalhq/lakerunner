@@ -50,7 +50,7 @@ func GetDuckDBMemoryStats(conn *sql.Conn) ([]MemoryStats, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var stats []returnedMemoryStats
 	for rows.Next() {

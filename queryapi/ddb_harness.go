@@ -138,7 +138,7 @@ func getExistingColumns(ctx context.Context, db execQuerier, table string) (map[
 	if err != nil {
 		return nil, fmt.Errorf("pragma_table_info: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	cols := make(map[string]struct{})
 	for rows.Next() {
@@ -422,7 +422,7 @@ func ValidateLogQLAgainstExemplar(ctx context.Context, query, exemplarJSON strin
 		cfg.manageDB = true
 	}
 	if cfg.manageDB {
-		defer cfg.db.Close()
+		defer func() { _ = cfg.db.Close() }()
 	}
 
 	// 3) Ingest exemplar into DuckDB.
@@ -581,7 +581,7 @@ func queryAllRows(db *sql.DB, q string) ([]rowstruct, error) {
 	if err != nil {
 		return nil, fmt.Errorf("query failed: %v\nsql:\n%s", err, q)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	cols, err := rows.Columns()
 	if err != nil {

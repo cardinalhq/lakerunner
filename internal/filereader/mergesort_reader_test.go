@@ -43,7 +43,7 @@ func TestNewMergesortReader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewMergesortReader() error = %v", err)
 	}
-	defer or.Close()
+	defer func() { _ = or.Close() }()
 
 	if len(or.readers) != 2 {
 		t.Errorf("Expected 2 readers, got %d", len(or.readers))
@@ -85,7 +85,7 @@ func TestMergesortReader_Next(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewMergesortReader() error = %v", err)
 	}
-	defer or.Close()
+	defer func() { _ = or.Close() }()
 
 	// Expected order: 1, 2, 3, 4, 5, 6, 7
 	expectedData := []string{
@@ -134,7 +134,7 @@ func TestMergesortReader_NextBatched(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewMergesortReader() error = %v", err)
 	}
-	defer or.Close()
+	defer func() { _ = or.Close() }()
 
 	// Read first batch (should get both rows)
 	batch, err := or.Next(context.TODO())
@@ -172,7 +172,7 @@ func TestMergesortReader_ActiveReaderCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewMergesortReader() error = %v", err)
 	}
-	defer or.Close()
+	defer func() { _ = or.Close() }()
 
 	// Initially both readers should be active
 	if count := or.ActiveReaderCount(); count != 2 {
@@ -205,7 +205,7 @@ func TestMergesortReader_AllEmptyReaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewMergesortReader() error = %v", err)
 	}
-	defer or.Close()
+	defer func() { _ = or.Close() }()
 
 	// Should immediately return io.EOF
 	batch, err := or.Next(context.TODO())
@@ -359,7 +359,7 @@ func TestMergesortReader_RowReuse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewMergesortReader() error = %v", err)
 	}
-	defer or.Close()
+	defer func() { _ = or.Close() }()
 
 	// Read first batch
 	batch, err := or.Next(context.TODO())
@@ -418,17 +418,17 @@ func TestMergesortReader_WithActualParquetReader(t *testing.T) {
 
 	file, err := os.Open(filePath)
 	require.NoError(t, err, "Should open parquet file")
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	stat, err := file.Stat()
 	require.NoError(t, err, "Should stat parquet file")
 
 	rawReader, err := NewParquetRawReader(file, stat.Size(), 1000)
 	require.NoError(t, err, "Should create NewParquetRawReader")
-	defer rawReader.Close()
+	defer func() { _ = rawReader.Close() }()
 
 	cookedReader := NewCookedMetricTranslatingReader(rawReader)
-	defer cookedReader.Close()
+	defer func() { _ = cookedReader.Close() }()
 
 	t.Logf("Created cooked reader for %s expecting %d records", filename, expectedRecords)
 
@@ -437,7 +437,7 @@ func TestMergesortReader_WithActualParquetReader(t *testing.T) {
 	keyProvider := GetCurrentMetricSortKeyProvider()
 	mergesortReader, err := NewMergesortReader(ctx, []Reader{cookedReader}, keyProvider, 1000)
 	require.NoError(t, err, "Should create NewMergesortReader")
-	defer mergesortReader.Close()
+	defer func() { _ = mergesortReader.Close() }()
 
 	// Read all records from the mergesort reader
 	totalRecords := 0
@@ -499,17 +499,17 @@ func TestMergesortReader_WithMultipleActualParquetReaders(t *testing.T) {
 
 		file, err := os.Open(filePath)
 		require.NoError(t, err, "Should open parquet file")
-		defer file.Close()
+		defer func() { _ = file.Close() }()
 
 		stat, err := file.Stat()
 		require.NoError(t, err, "Should stat parquet file")
 
 		rawReader, err := NewParquetRawReader(file, stat.Size(), 1000)
 		require.NoError(t, err, "Should create NewParquetRawReader")
-		defer rawReader.Close()
+		defer func() { _ = rawReader.Close() }()
 
 		cookedReader := NewCookedMetricTranslatingReader(rawReader)
-		defer cookedReader.Close()
+		defer func() { _ = cookedReader.Close() }()
 
 		readers = append(readers, cookedReader)
 		expectedTotalRecords += testFile.expectedRecords
@@ -523,7 +523,7 @@ func TestMergesortReader_WithMultipleActualParquetReaders(t *testing.T) {
 	keyProvider := GetCurrentMetricSortKeyProvider()
 	mergesortReader, err := NewMergesortReader(ctx, readers, keyProvider, 1000)
 	require.NoError(t, err, "Should create NewMergesortReader")
-	defer mergesortReader.Close()
+	defer func() { _ = mergesortReader.Close() }()
 
 	// Read all records from the mergesort reader
 	totalRecords := 0
@@ -639,17 +639,17 @@ func TestMergesortReader_WithAllSeglog990Files(t *testing.T) {
 
 		file, err := os.Open(filePath)
 		require.NoError(t, err, "Should open parquet file %s", filename)
-		defer file.Close()
+		defer func() { _ = file.Close() }()
 
 		stat, err := file.Stat()
 		require.NoError(t, err, "Should stat parquet file %s", filename)
 
 		rawReader, err := NewParquetRawReader(file, stat.Size(), 1000)
 		require.NoError(t, err, "Should create NewParquetRawReader for %s", filename)
-		defer rawReader.Close()
+		defer func() { _ = rawReader.Close() }()
 
 		cookedReader := NewCookedMetricTranslatingReader(rawReader)
-		defer cookedReader.Close()
+		defer func() { _ = cookedReader.Close() }()
 
 		readers = append(readers, cookedReader)
 	}
@@ -660,7 +660,7 @@ func TestMergesortReader_WithAllSeglog990Files(t *testing.T) {
 	keyProvider := GetCurrentMetricSortKeyProvider()
 	mergesortReader, err := NewMergesortReader(ctx, readers, keyProvider, 1000)
 	require.NoError(t, err, "Should create NewMergesortReader")
-	defer mergesortReader.Close()
+	defer func() { _ = mergesortReader.Close() }()
 
 	// Read all records from the mergesort reader
 	totalRecords := 0
@@ -835,7 +835,7 @@ func TestMergesortReader_MetricSortKeyOrdering(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewMergesortReader() error = %v", err)
 	}
-	defer mergesortReader.Close()
+	defer func() { _ = mergesortReader.Close() }()
 
 	// Read all rows from mergesort reader
 	actualRows, err := readAllRows(mergesortReader)
@@ -963,7 +963,7 @@ func TestMergesortReader_KeyPoolingBug(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewMergesortReader() error = %v", err)
 	}
-	defer mergesortReader.Close()
+	defer func() { _ = mergesortReader.Close() }()
 
 	// Expected order based on TID: 100, 200, 300, 400
 	expectedSources := []string{"reader1_row1", "reader2_row1", "reader1_row2", "reader2_row2"}

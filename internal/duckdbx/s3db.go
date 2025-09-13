@@ -315,7 +315,7 @@ func (s *S3DB) ensureInstall(ctx context.Context) error {
 			s.installErr = err
 			return
 		}
-		defer db.Close()
+		defer func() { _ = db.Close() }()
 		db.SetMaxOpenConns(1)
 		db.SetMaxIdleConns(1)
 		conn, err := db.Conn(ctx)
@@ -323,7 +323,7 @@ func (s *S3DB) ensureInstall(ctx context.Context) error {
 			s.installErr = err
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		if s.memoryLimitMB > 0 {
 			_, _ = conn.ExecContext(ctx, fmt.Sprintf("SET memory_limit='%dMB';", s.memoryLimitMB))
 		}

@@ -115,7 +115,7 @@ func (d *DB) pollMemoryMetrics(ctx context.Context) {
 		}
 
 		stats, err := GetDuckDBMemoryStats(conn)
-		conn.Close()
+		_ = conn.Close()
 		if err != nil {
 			logger.Error("failed to get memory stats", "error", err)
 			return

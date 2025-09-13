@@ -89,7 +89,7 @@ func createSyntheticLogsFile(t *testing.T, compressed bool) string {
 
 	// Clean up the file when test completes
 	t.Cleanup(func() {
-		os.Remove(tmpFile.Name())
+		_ = os.Remove(tmpFile.Name())
 	})
 
 	return tmpFile.Name()
@@ -157,7 +157,7 @@ func createSyntheticMetricsFile(t *testing.T, compressed bool) string {
 
 	// Clean up the file when test completes
 	t.Cleanup(func() {
-		os.Remove(tmpFile.Name())
+		_ = os.Remove(tmpFile.Name())
 	})
 
 	return tmpFile.Name()
@@ -220,7 +220,7 @@ func createSyntheticTracesFile(t *testing.T, compressed bool) string {
 
 	// Clean up the file when test completes
 	t.Cleanup(func() {
-		os.Remove(tmpFile.Name())
+		_ = os.Remove(tmpFile.Name())
 	})
 
 	return tmpFile.Name()
@@ -366,11 +366,11 @@ func TestReaderForFile(t *testing.T) {
 				}
 
 				// Clean up
-				reader.Close()
+				_ = reader.Close()
 			} else {
 				assert.Error(t, err, "Expected error for %s but got success", tt.description)
 				if reader != nil {
-					reader.Close()
+					_ = reader.Close()
 				}
 			}
 		})
@@ -385,13 +385,13 @@ func TestReaderForFileWithOptions(t *testing.T) {
 	// Using ReaderForFile
 	reader1, err1 := ReaderForFile(filename, SignalTypeLogs, "orgId", nil)
 	require.NoError(t, err1)
-	defer reader1.Close()
+	defer func() { _ = reader1.Close() }()
 
 	// Using ReaderForFileWithOptions
 	opts := ReaderOptions{SignalType: SignalTypeLogs}
 	reader2, err2 := ReaderForFileWithOptions(filename, opts)
 	require.NoError(t, err2)
-	defer reader2.Close()
+	defer func() { _ = reader2.Close() }()
 
 	// Both should return the same type
 	assert.Equal(t, getReaderTypeName(reader1), getReaderTypeName(reader2))
@@ -440,7 +440,7 @@ func TestSignalTypeSpecificProtoReaders(t *testing.T) {
 
 			reader, err := ReaderForFile(filename, tt.signalType, "orgId", nil)
 			require.NoError(t, err)
-			defer reader.Close()
+			defer func() { _ = reader.Close() }()
 
 			readerType := getReaderTypeName(reader)
 			assert.Equal(t, tt.readerType, readerType)
@@ -482,7 +482,7 @@ func TestGzippedProtobufSupport(t *testing.T) {
 
 			reader, err := ReaderForFile(filename, tt.signalType, "orgId", nil)
 			require.NoError(t, err, "Should support .binpb.gz files")
-			defer reader.Close()
+			defer func() { _ = reader.Close() }()
 
 			// Verify we can read data
 			batch, readErr := reader.Next(context.TODO())

@@ -153,17 +153,17 @@ func TestSetupAdminConfig(t *testing.T) {
 		{
 			name: "uses ADMIN_CONFIG_FILE environment variable",
 			setup: func() {
-				os.Setenv("ADMIN_CONFIG_FILE", configFile)
+				_ = os.Setenv("ADMIN_CONFIG_FILE", configFile)
 			},
 			cleanup: func() {
-				os.Unsetenv("ADMIN_CONFIG_FILE")
+				_ = os.Unsetenv("ADMIN_CONFIG_FILE")
 			},
 			wantErr: false,
 		},
 		{
 			name: "uses default path when env var not set",
 			setup: func() {
-				os.Unsetenv("ADMIN_CONFIG_FILE")
+				_ = os.Unsetenv("ADMIN_CONFIG_FILE")
 			},
 			cleanup: func() {},
 			// This will succeed because missing file creates empty provider
@@ -172,12 +172,12 @@ func TestSetupAdminConfig(t *testing.T) {
 		{
 			name: "file provider with env variable",
 			setup: func() {
-				os.Setenv("TEST_ADMIN_CONFIG_CONTENT", config)
-				os.Setenv("ADMIN_CONFIG_FILE", "env:TEST_ADMIN_CONFIG_CONTENT")
+				_ = os.Setenv("TEST_ADMIN_CONFIG_CONTENT", config)
+				_ = os.Setenv("ADMIN_CONFIG_FILE", "env:TEST_ADMIN_CONFIG_CONTENT")
 			},
 			cleanup: func() {
-				os.Unsetenv("TEST_ADMIN_CONFIG_CONTENT")
-				os.Unsetenv("ADMIN_CONFIG_FILE")
+				_ = os.Unsetenv("TEST_ADMIN_CONFIG_CONTENT")
+				_ = os.Unsetenv("ADMIN_CONFIG_FILE")
 			},
 			wantErr: false,
 		},

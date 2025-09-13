@@ -165,7 +165,7 @@ func runS3Cat(bucketID string, objectID string, region string, role string) erro
 	if err != nil {
 		return fmt.Errorf("failed to create temporary directory: %w", err)
 	}
-	defer os.RemoveAll(tmpdir)
+	defer func() { _ = os.RemoveAll(tmpdir) }()
 
 	fn, size, is404, err := storageClient.DownloadObject(ctx, tmpdir, bucketID, objectID)
 	if err != nil {

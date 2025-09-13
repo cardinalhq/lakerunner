@@ -67,10 +67,13 @@ type MetricIngestProcessor struct {
 
 // newMetricIngestProcessor creates a new metric ingest processor instance
 func newMetricIngestProcessor(store MetricIngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *MetricIngestProcessor {
-	exemplarProcessor := exemplars.NewProcessor(exemplars.DefaultConfig())
-	exemplarProcessor.SetMetricsCallback(func(ctx context.Context, organizationID string, exemplars []*exemplars.ExemplarData) error {
-		return processMetricsExemplarsDirect(ctx, organizationID, exemplars, store)
-	})
+	var exemplarProcessor *exemplars.Processor
+	if os.Getenv("DISABLE_EXEMPLARS") != "true" {
+		exemplarProcessor = exemplars.NewProcessor(exemplars.DefaultConfig())
+		exemplarProcessor.SetMetricsCallback(func(ctx context.Context, organizationID string, exemplars []*exemplars.ExemplarData) error {
+			return processMetricsExemplarsDirect(ctx, organizationID, exemplars, store)
+		})
+	}
 
 	return &MetricIngestProcessor{
 		store:             store,
@@ -413,7 +416,7 @@ func (p *MetricIngestProcessor) createReaderStack(tmpFilename, orgID, bucket, ob
 	}
 	reader, err = filereader.NewTranslatingReader(reader, translator, 1000)
 	if err != nil {
-		reader.Close()
+		_ = reader.Close()
 		return nil, fmt.Errorf("failed to create translating reader: %w", err)
 	}
 
@@ -421,7 +424,7 @@ func (p *MetricIngestProcessor) createReaderStack(tmpFilename, orgID, bucket, ob
 	keyProvider := filereader.GetCurrentMetricSortKeyProvider()
 	reader, err = filereader.NewDiskSortingReader(reader, keyProvider, 1000)
 	if err != nil {
-		reader.Close()
+		_ = reader.Close()
 		return nil, fmt.Errorf("failed to create sorting reader: %w", err)
 	}
 

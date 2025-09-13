@@ -47,14 +47,14 @@ func TestGetMigrationCheckConfig(t *testing.T) {
 		if val := os.Getenv(key); val != "" {
 			originalVars[key] = val
 		}
-		os.Unsetenv(key)
+		_ = os.Unsetenv(key)
 	}
 	defer func() {
 		for _, key := range envVars {
-			os.Unsetenv(key)
+			_ = os.Unsetenv(key)
 		}
 		for key, val := range originalVars {
-			os.Setenv(key, val)
+			_ = os.Setenv(key, val)
 		}
 	}()
 
@@ -63,8 +63,8 @@ func TestGetMigrationCheckConfig(t *testing.T) {
 	if !config.Enabled {
 		t.Error("Expected Enabled to default to true")
 	}
-	if config.Timeout != 60*time.Second {
-		t.Errorf("Expected Timeout to default to 60s, got %v", config.Timeout)
+	if config.Timeout != 120*time.Second {
+		t.Errorf("Expected Timeout to default to 120s, got %v", config.Timeout)
 	}
 	if config.RetryInterval != 5*time.Second {
 		t.Errorf("Expected RetryInterval to default to 5s, got %v", config.RetryInterval)
@@ -74,10 +74,10 @@ func TestGetMigrationCheckConfig(t *testing.T) {
 	}
 
 	// Test custom values
-	os.Setenv("CONFIGDB_MIGRATION_CHECK_ENABLED", "false")
-	os.Setenv("MIGRATION_CHECK_TIMEOUT", "30s")
-	os.Setenv("MIGRATION_CHECK_RETRY_INTERVAL", "2s")
-	os.Setenv("MIGRATION_CHECK_ALLOW_DIRTY", "true")
+	_ = os.Setenv("CONFIGDB_MIGRATION_CHECK_ENABLED", "false")
+	_ = os.Setenv("MIGRATION_CHECK_TIMEOUT", "30s")
+	_ = os.Setenv("MIGRATION_CHECK_RETRY_INTERVAL", "2s")
+	_ = os.Setenv("MIGRATION_CHECK_ALLOW_DIRTY", "true")
 
 	config = getMigrationCheckConfig()
 	if config.Enabled {

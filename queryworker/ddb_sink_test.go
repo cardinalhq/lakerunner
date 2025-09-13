@@ -51,7 +51,7 @@ func TestDDBSink_IngestParquetBatch(t *testing.T) {
 	// Step 3: Create fresh DDBSink (in-memory or file-backed)
 	sink, err := NewDDBSink("metrics", ctx)
 	require.NoError(t, err, "failed to create DDBSink")
-	defer sink.Close()
+	defer func() { _ = sink.Close() }()
 
 	// Step 4: Ingest parquet files
 	err = sink.IngestParquetBatch(ctx, parquetPaths, segmentIDs)
@@ -66,8 +66,8 @@ func TestDDBSink_IngestParquetBatch(t *testing.T) {
 	db := sink.db
 	rows, conn, err := db.QueryContext(ctx, `SELECT DISTINCT segment_id FROM metrics_cached`)
 	require.NoError(t, err, "query segment_id failed")
-	defer rows.Close()
-	defer conn.Close()
+	defer func() { _ = rows.Close() }()
+	defer func() { _ = conn.Close() }()
 
 	var seenIDs []int64
 	for rows.Next() {

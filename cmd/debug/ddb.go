@@ -66,19 +66,19 @@ func runExtensions(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer ddb.Close()
+	defer func() { _ = ddb.Close() }()
 
 	c, err := ddb.Conn(ctx)
 	if err != nil {
 		return err
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	rows, err := c.QueryContext(ctx, "SELECT extension_name, loaded, installed, extension_version, install_mode FROM duckdb_extensions();")
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	cols, err := rows.Columns()
 	if err != nil {
@@ -218,13 +218,13 @@ func runVersion(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer ddb.Close()
+	defer func() { _ = ddb.Close() }()
 
 	c, err := ddb.Conn(ctx)
 	if err != nil {
 		return err
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	// Get DuckDB version
 	var version string

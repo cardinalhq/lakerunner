@@ -149,7 +149,7 @@ func (d *DB) Conn(ctx context.Context) (*sql.Conn, error) {
 	}
 
 	if err := d.setupConn(ctx, conn); err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return nil, err
 	}
 

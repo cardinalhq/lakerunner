@@ -94,7 +94,17 @@ func (p *TraceCompactionProcessor) ProcessBundle(ctx context.Context, key messag
 	}
 
 	// Process the compaction work
-	return p.ProcessWork(ctx, tmpDir, storageClient, storageProfile, key, msgs, partition, offset)
+	if err := p.ProcessWork(ctx, tmpDir, storageClient, storageProfile, key, msgs, partition, offset); err != nil {
+		ll.Error("Failed to process trace compaction work, skipping bundle",
+			slog.String("organizationID", key.OrganizationID.String()),
+			slog.Int("dateint", int(key.DateInt)),
+			slog.Int("instanceNum", int(key.InstanceNum)),
+			slog.Int("messageCount", len(msgs)),
+			slog.Any("error", err))
+		return nil
+	}
+
+	return nil
 }
 
 // ProcessWork handles the trace-specific work logic
@@ -171,16 +181,35 @@ func (p *TraceCompactionProcessor) ProcessWork(
 
 	results, err := p.performTraceCompactionCore(ctx, tmpDir, storageClient, key, storageProfile, activeSegments, recordCountEstimate)
 	if err != nil {
-		return fmt.Errorf("perform compaction: %w", err)
+		ll.Error("Failed to perform trace compaction core processing",
+			slog.String("organizationID", key.OrganizationID.String()),
+			slog.Int("dateint", int(key.DateInt)),
+			slog.Int("instanceNum", int(key.InstanceNum)),
+			slog.Int("activeSegments", len(activeSegments)),
+			slog.Any("error", err))
+		return err
 	}
 
 	newSegments, err := p.uploadAndCreateTraceSegments(ctx, storageClient, storageProfile, results, key, activeSegments)
 	if err != nil {
-		return fmt.Errorf("upload and create segments: %w", err)
+		ll.Error("Failed to upload and create trace segments",
+			slog.String("organizationID", key.OrganizationID.String()),
+			slog.Int("dateint", int(key.DateInt)),
+			slog.Int("instanceNum", int(key.InstanceNum)),
+			slog.Int("resultsCount", len(results)),
+			slog.Any("error", err))
+		return err
 	}
 
 	if err := p.atomicTraceDatabaseUpdate(ctx, activeSegments, newSegments, key, partition, offset); err != nil {
-		return fmt.Errorf("atomic database update: %w", err)
+		ll.Error("Failed to perform atomic database update for trace compaction",
+			slog.String("organizationID", key.OrganizationID.String()),
+			slog.Int("dateint", int(key.DateInt)),
+			slog.Int("instanceNum", int(key.InstanceNum)),
+			slog.Int("activeSegments", len(activeSegments)),
+			slog.Int("newSegments", len(newSegments)),
+			slog.Any("error", err))
+		return err
 	}
 
 	var totalRecords, totalSize int64

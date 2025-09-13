@@ -34,6 +34,13 @@ const (
 	StatusUnhealthy
 )
 
+type ReadyStatus int32
+
+const (
+	ReadyStatusNotReady ReadyStatus = iota
+	ReadyStatusReady
+)
+
 func (s Status) String() string {
 	switch s {
 	case StatusStarting:
@@ -52,9 +59,10 @@ type Response struct {
 }
 
 type Server struct {
-	port   int
-	status atomic.Int32
-	server *http.Server
+	port        int
+	status      atomic.Int32
+	readyStatus atomic.Int32
+	server      *http.Server
 }
 
 type Config struct {
@@ -91,6 +99,19 @@ func (s *Server) SetStatus(status Status) {
 
 func (s *Server) GetStatus() Status {
 	return Status(s.status.Load())
+}
+
+func (s *Server) SetReady(ready bool) {
+	if ready {
+		s.readyStatus.Store(int32(ReadyStatusReady))
+	} else {
+		s.readyStatus.Store(int32(ReadyStatusNotReady))
+	}
+	slog.Debug("Ready status updated", slog.Bool("ready", ready))
+}
+
+func (s *Server) IsReady() bool {
+	return ReadyStatus(s.readyStatus.Load()) == ReadyStatusReady
 }
 
 func (s *Server) Start(ctx context.Context) error {
@@ -149,13 +170,12 @@ func (s *Server) healthzHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) readyzHandler(w http.ResponseWriter, r *http.Request) {
-	status := s.GetStatus()
-	isHealthy := status == StatusHealthy
-	response := Response{Healthy: isHealthy}
+	isReady := s.IsReady()
+	response := Response{Healthy: isReady}
 
 	w.Header().Set("Content-Type", "application/json")
 
-	if isHealthy {
+	if isReady {
 		w.WriteHeader(http.StatusOK)
 	} else {
 		w.WriteHeader(http.StatusServiceUnavailable)
