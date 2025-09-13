@@ -16,6 +16,7 @@ package exemplars
 
 import (
 	"container/list"
+	"os"
 	"sync"
 	"time"
 )
@@ -51,7 +52,12 @@ func NewLRUCache[T any](capacity int, expiry time.Duration, reportInterval time.
 		pending:         make([]*Entry[T], 0),
 		publishCallBack: publishCallBack,
 	}
-	go lru.startCleanup()
+
+	// Only start the cleanup goroutine if LAKERUNNER_EXEMPLAR_NO_FLUSH is not "true"
+	if os.Getenv("LAKERUNNER_EXEMPLAR_NO_FLUSH") != "true" {
+		go lru.startCleanup()
+	}
+
 	return lru
 }
 
