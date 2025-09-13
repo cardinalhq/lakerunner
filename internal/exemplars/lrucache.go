@@ -16,20 +16,24 @@ package exemplars
 
 import (
 	"container/list"
+	"log/slog"
+	"math/rand"
 	"sync"
 	"time"
 )
 
 type LRUCache[T any] struct {
-	capacity        int
-	cache           map[string]*list.Element
-	list            *list.List
-	mutex           sync.RWMutex
-	expiry          time.Duration
-	reportInterval  time.Duration
-	stopCleanup     chan struct{}
-	publishCallBack func(toPublish []*Entry[T])
-	pending         []*Entry[T]
+	capacity           int
+	cache              map[string]*list.Element
+	list               *list.List
+	mutex              sync.RWMutex
+	expiry             time.Duration
+	reportInterval     time.Duration
+	stopCleanup        chan struct{}
+	publishCallBack    func(toPublish []*Entry[T])
+	pending            []*Entry[T]
+	maxPublishPerSweep int
+	rng                *rand.Rand
 }
 
 type Entry[T any] struct {
@@ -39,16 +43,23 @@ type Entry[T any] struct {
 	lastPublishTime time.Time
 }
 
-func NewLRUCache[T any](capacity int, expiry time.Duration, reportInterval time.Duration, publishCallBack func(expiredItems []*Entry[T])) *LRUCache[T] {
+func NewLRUCache[T any](
+	capacity int,
+	expiry time.Duration,
+	reportInterval time.Duration,
+	publishCallBack func(expiredItems []*Entry[T]),
+) *LRUCache[T] {
 	lru := &LRUCache[T]{
-		capacity:        capacity,
-		cache:           make(map[string]*list.Element),
-		list:            list.New(),
-		reportInterval:  reportInterval,
-		expiry:          expiry,
-		stopCleanup:     make(chan struct{}),
-		pending:         make([]*Entry[T], 0),
-		publishCallBack: publishCallBack,
+		capacity:           capacity,
+		cache:              make(map[string]*list.Element),
+		list:               list.New(),
+		reportInterval:     reportInterval,
+		expiry:             expiry,
+		stopCleanup:        make(chan struct{}),
+		pending:            make([]*Entry[T], 0),
+		publishCallBack:    publishCallBack,
+		maxPublishPerSweep: 100,
+		rng:                rand.New(rand.NewSource(time.Now().UnixNano())), // NEW
 	}
 	go lru.startCleanup()
 	return lru
@@ -72,12 +83,18 @@ func (l *LRUCache[T]) cleanupExpiredEntries() {
 	l.mutex.Lock()
 	now := time.Now()
 
-	for e := l.list.Back(); e != nil; {
+	// Mark entries due for publish this sweep.
+	for e := l.list.Back(); e != nil; e = e.Prev() {
 		entry := e.Value.(*Entry[T])
 		if entry.shouldPublish(l.expiry) {
 			l.pending = append(l.pending, entry)
 			entry.lastPublishTime = now
 		}
+	}
+
+	// Evict truly expired entries (TTL-based) from the LRU tail.
+	for e := l.list.Back(); e != nil; {
+		entry := e.Value.(*Entry[T])
 		if now.Sub(entry.timestamp) > l.expiry {
 			prev := e.Prev()
 			l.list.Remove(e)
@@ -88,21 +105,45 @@ func (l *LRUCache[T]) cleanupExpiredEntries() {
 		}
 	}
 
-	batch := l.pending
-	// reset to a small slice to release capacity
+	// Take a copy of pending for sampling, then reset the shared slice.
+	candidates := l.pending
 	l.pending = make([]*Entry[T], 0, 16)
 	l.mutex.Unlock()
 
-	if len(batch) > 0 {
-		l.publishCallBack(batch)
+	// Randomly pick up to N exemplars to publish.
+	if n := len(candidates); n > 0 {
+		toPublish := reservoirSample(candidates, l.maxPublishPerSweep, l.rng)
+		slog.Debug("Publishing exemplar batch", "candidates", n, "published", len(toPublish))
+		l.publishCallBack(toPublish)
 	}
+}
+
+// reservoirSample picks up to k items uniformly at random without replacement.
+func reservoirSample[T any](in []*T, k int, r *rand.Rand) []*T {
+	n := len(in)
+	if k <= 0 || n == 0 {
+		return nil
+	}
+	if n <= k {
+		// Return a shallow copy to avoid aliasing callers' slice capacity.
+		out := make([]*T, n)
+		copy(out, in)
+		return out
+	}
+	out := make([]*T, k)
+	copy(out, in[:k])
+	for i := k; i < n; i++ {
+		j := r.Intn(i + 1)
+		if j < k {
+			out[j] = in[i]
+		}
+	}
+	return out
 }
 
 // shouldPublish checks if an entry should be published based on expiry
 func (e *Entry[T]) shouldPublish(expiry time.Duration) bool {
-	now := time.Now()
-	sinceLast := now.Sub(e.lastPublishTime)
-	return sinceLast >= expiry
+	return time.Since(e.lastPublishTime) >= expiry
 }
 
 // Contains checks if a key exists in the cache and is not expired
@@ -155,6 +196,7 @@ func (l *LRUCache[T]) Put(key string, exemplar T) {
 	elem := l.list.PushFront(newEntry)
 	l.cache[key] = elem
 
+	// Keep initial behavior: make net-new entries eligible immediately.
 	l.pending = append(l.pending, newEntry)
 }
 
@@ -165,22 +207,12 @@ func (l *LRUCache[T]) Close() {
 // FlushPending forces all pending exemplars to be published via the callback
 func (l *LRUCache[T]) FlushPending() {
 	l.mutex.Lock()
-	defer l.mutex.Unlock()
+	candidates := l.pending
+	l.pending = make([]*Entry[T], 0, 16)
+	l.mutex.Unlock()
 
-	// Get all entries from the cache and mark them for publishing
-	entries := make([]*Entry[T], 0, l.list.Len())
-	for e := l.list.Front(); e != nil; e = e.Next() {
-		entry := e.Value.(*Entry[T])
-		entries = append(entries, entry)
-	}
-
-	if len(entries) > 0 {
-		// Call the callback with all entries
-		l.publishCallBack(entries)
-
-		// Clear the cache
-		l.list.Init()
-		l.cache = make(map[string]*list.Element)
-		l.pending = make([]*Entry[T], 0)
+	if len(candidates) > 0 {
+		toPublish := reservoirSample(candidates, l.maxPublishPerSweep, l.rng)
+		l.publishCallBack(toPublish)
 	}
 }
