@@ -37,18 +37,12 @@ type traceProcessingParams struct {
 	MaxRecords     int64
 }
 
-// traceProcessingResult contains the results of trace processing
-type traceProcessingResult struct {
-	ProcessedSegments []lrdb.TraceSeg
-	Results           []parquetwriter.Result
-}
-
 // processTracesWithSorting performs the common pattern of:
 // 1. Create reader stack from segments
 // 2. Create traces writer (traces don't need aggregation, just sorting)
 // 3. Write from reader to writer
 // 4. Close writer and return results
-func processTracesWithSorting(ctx context.Context, params traceProcessingParams) (*traceProcessingResult, error) {
+func processTracesWithSorting(ctx context.Context, params traceProcessingParams) ([]parquetwriter.Result, error) {
 	// Create reader stack
 	readerStack, err := createTraceReaderStack(
 		ctx,
@@ -81,8 +75,5 @@ func processTracesWithSorting(ctx context.Context, params traceProcessingParams)
 		return nil, fmt.Errorf("close writer: %w", err)
 	}
 
-	return &traceProcessingResult{
-		ProcessedSegments: readerStack.ProcessedSegments,
-		Results:           results,
-	}, nil
+	return results, nil
 }

@@ -32,12 +32,11 @@ import (
 )
 
 type metricReaderStackResult struct {
-	Readers           []filereader.Reader
-	Files             []*os.File
-	DownloadedFiles   []string
-	ProcessedSegments []lrdb.MetricSeg // Segments that were actually processed
-	HeadReader        filereader.Reader
-	MergedReader      filereader.Reader
+	Readers         []filereader.Reader
+	Files           []*os.File
+	DownloadedFiles []string
+	HeadReader      filereader.Reader
+	MergedReader    filereader.Reader
 }
 
 func createMetricReaderStack(
@@ -53,7 +52,6 @@ func createMetricReaderStack(
 	var readers []filereader.Reader
 	var files []*os.File
 	var downloadedFiles []string
-	var processedSegments []lrdb.MetricSeg
 
 	if len(rows) == 0 {
 		return nil, errors.New("no metric segments provided to create reader stack")
@@ -125,7 +123,6 @@ func createMetricReaderStack(
 		readers = append(readers, finalReader)
 		files = append(files, file)
 		downloadedFiles = append(downloadedFiles, fn)
-		processedSegments = append(processedSegments, row)
 	}
 
 	var finalReader filereader.Reader
@@ -144,12 +141,11 @@ func createMetricReaderStack(
 	}
 
 	return &metricReaderStackResult{
-		Readers:           readers,
-		Files:             files,
-		DownloadedFiles:   downloadedFiles,
-		ProcessedSegments: processedSegments,
-		HeadReader:        finalReader,
-		MergedReader:      mergedReader,
+		Readers:         readers,
+		Files:           files,
+		DownloadedFiles: downloadedFiles,
+		HeadReader:      finalReader,
+		MergedReader:    mergedReader,
 	}, nil
 }
 

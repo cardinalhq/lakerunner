@@ -26,19 +26,13 @@ type Querier interface {
 	GetAllBySignal(ctx context.Context, signal string) ([]GetAllBySignalRow, error)
 	// Retrieves all existing pack estimates for EWMA calculations across all signals
 	GetAllPackEstimates(ctx context.Context) ([]GetAllPackEstimatesRow, error)
-	// Get the most recent segment_journal entry
-	GetLatestSegmentJournal(ctx context.Context) (SegmentJournal, error)
 	GetLogSeg(ctx context.Context, arg GetLogSegParams) (LogSeg, error)
 	// Retrieves metric pack estimates for EWMA calculations (backward compatibility)
 	GetMetricPackEstimates(ctx context.Context) ([]GetMetricPackEstimatesRow, error)
 	GetMetricSeg(ctx context.Context, arg GetMetricSegParams) (MetricSeg, error)
 	GetMetricSegsByIds(ctx context.Context, arg GetMetricSegsByIdsParams) ([]MetricSeg, error)
 	GetMetricType(ctx context.Context, arg GetMetricTypeParams) (string, error)
-	// Get a specific segment_journal entry by ID
-	GetSegmentJournalByID(ctx context.Context, id int64) (SegmentJournal, error)
 	GetTraceSeg(ctx context.Context, arg GetTraceSegParams) (TraceSeg, error)
-	// Insert a debugging journal entry for segment operations
-	InsertSegmentJournal(ctx context.Context, arg InsertSegmentJournalParams) error
 	// Get the last processed offset for a specific consumer group, topic, partition, organization, and instance
 	KafkaGetLastProcessed(ctx context.Context, arg KafkaGetLastProcessedParams) (int64, error)
 	// Insert or update multiple Kafka journal entries in a single batch operation

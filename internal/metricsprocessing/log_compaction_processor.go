@@ -156,7 +156,7 @@ func (p *LogCompactionProcessor) ProcessBundle(ctx context.Context, key messages
 		slog.Int("activeSegments", len(activeSegments)))
 
 	// Perform the core compaction logic
-	_, results, err := p.performLogCompactionCore(ctx, tmpDir, storageClient, key, storageProfile, activeSegments, recordCountEstimate)
+	results, err := p.performLogCompactionCore(ctx, tmpDir, storageClient, key, storageProfile, activeSegments, recordCountEstimate)
 	if err != nil {
 		return fmt.Errorf("perform compaction: %w", err)
 	}
@@ -201,7 +201,7 @@ func (p *LogCompactionProcessor) GetTargetRecordCount(ctx context.Context, group
 	return p.store.GetLogEstimate(ctx, groupingKey.OrganizationID)
 }
 
-func (p *LogCompactionProcessor) performLogCompactionCore(ctx context.Context, tmpDir string, storageClient cloudstorage.Client, compactionKey messages.LogCompactionKey, storageProfile storageprofile.StorageProfile, activeSegments []lrdb.LogSeg, recordCountEstimate int64) ([]lrdb.LogSeg, []parquetwriter.Result, error) {
+func (p *LogCompactionProcessor) performLogCompactionCore(ctx context.Context, tmpDir string, storageClient cloudstorage.Client, compactionKey messages.LogCompactionKey, storageProfile storageprofile.StorageProfile, activeSegments []lrdb.LogSeg, recordCountEstimate int64) ([]parquetwriter.Result, error) {
 	params := logProcessingParams{
 		TmpDir:         tmpDir,
 		StorageClient:  storageClient,
@@ -211,12 +211,12 @@ func (p *LogCompactionProcessor) performLogCompactionCore(ctx context.Context, t
 		MaxRecords:     recordCountEstimate * 2, // safety net
 	}
 
-	result, err := processLogsWithSorting(ctx, params)
+	results, err := processLogsWithSorting(ctx, params)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	return result.ProcessedSegments, result.Results, nil
+	return results, nil
 }
 
 func (p *LogCompactionProcessor) uploadAndCreateLogSegments(ctx context.Context, client cloudstorage.Client, profile storageprofile.StorageProfile, results []parquetwriter.Result, key messages.LogCompactionKey, inputSegments []lrdb.LogSeg) ([]lrdb.LogSeg, error) {

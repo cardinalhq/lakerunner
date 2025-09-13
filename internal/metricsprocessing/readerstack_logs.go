@@ -32,11 +32,10 @@ import (
 )
 
 type logReaderStackResult struct {
-	Readers           []filereader.Reader
-	Files             []*os.File
-	DownloadedFiles   []string
-	ProcessedSegments []lrdb.LogSeg // Segments that were actually processed
-	HeadReader        filereader.Reader
+	Readers         []filereader.Reader
+	Files           []*os.File
+	DownloadedFiles []string
+	HeadReader      filereader.Reader
 }
 
 func createLogReaderStack(
@@ -52,7 +51,6 @@ func createLogReaderStack(
 	var readers []filereader.Reader
 	var files []*os.File
 	var downloadedFiles []string
-	var processedSegments []lrdb.LogSeg
 
 	if len(rows) == 0 {
 		return nil, errors.New("no log segments provided to create reader stack")
@@ -107,7 +105,6 @@ func createLogReaderStack(
 		readers = append(readers, finalReader)
 		files = append(files, file)
 		downloadedFiles = append(downloadedFiles, fn)
-		processedSegments = append(processedSegments, row)
 	}
 
 	// Always use merge sort reader for consistency
@@ -118,11 +115,10 @@ func createLogReaderStack(
 	}
 
 	return &logReaderStackResult{
-		Readers:           readers,
-		Files:             files,
-		DownloadedFiles:   downloadedFiles,
-		ProcessedSegments: processedSegments,
-		HeadReader:        mergedReader,
+		Readers:         readers,
+		Files:           files,
+		DownloadedFiles: downloadedFiles,
+		HeadReader:      mergedReader,
 	}, nil
 }
 

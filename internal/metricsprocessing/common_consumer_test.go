@@ -375,11 +375,6 @@ func (m *MockMetricCompactionStore) MarkMetricSegsCompactedByKeys(ctx context.Co
 	return args.Error(0)
 }
 
-func (m *MockMetricCompactionStore) InsertSegmentJournal(ctx context.Context, params lrdb.InsertSegmentJournalParams) error {
-	args := m.Called(ctx, params)
-	return args.Error(0)
-}
-
 func TestCommonProcessorValidationError(t *testing.T) {
 	err := &CommonProcessorValidationError{
 		Field:    "test_field",

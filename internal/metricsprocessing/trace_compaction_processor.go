@@ -169,7 +169,7 @@ func (p *TraceCompactionProcessor) ProcessWork(
 
 	ll.Info("Found segments to compact", slog.Int("activeSegments", len(activeSegments)))
 
-	_, results, err := p.performTraceCompactionCore(ctx, tmpDir, storageClient, key, storageProfile, activeSegments, recordCountEstimate)
+	results, err := p.performTraceCompactionCore(ctx, tmpDir, storageClient, key, storageProfile, activeSegments, recordCountEstimate)
 	if err != nil {
 		return fmt.Errorf("perform compaction: %w", err)
 	}
@@ -203,7 +203,7 @@ func (p *TraceCompactionProcessor) GetTargetRecordCount(ctx context.Context, gro
 }
 
 // Helper methods similar to logs but for traces
-func (p *TraceCompactionProcessor) performTraceCompactionCore(ctx context.Context, tmpDir string, storageClient cloudstorage.Client, compactionKey messages.TraceCompactionKey, storageProfile storageprofile.StorageProfile, activeSegments []lrdb.TraceSeg, recordCountEstimate int64) ([]lrdb.TraceSeg, []parquetwriter.Result, error) {
+func (p *TraceCompactionProcessor) performTraceCompactionCore(ctx context.Context, tmpDir string, storageClient cloudstorage.Client, compactionKey messages.TraceCompactionKey, storageProfile storageprofile.StorageProfile, activeSegments []lrdb.TraceSeg, recordCountEstimate int64) ([]parquetwriter.Result, error) {
 	params := traceProcessingParams{
 		TmpDir:         tmpDir,
 		StorageClient:  storageClient,
@@ -213,12 +213,12 @@ func (p *TraceCompactionProcessor) performTraceCompactionCore(ctx context.Contex
 		MaxRecords:     recordCountEstimate * 2, // safety net
 	}
 
-	result, err := processTracesWithSorting(ctx, params)
+	results, err := processTracesWithSorting(ctx, params)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	return result.ProcessedSegments, result.Results, nil
+	return results, nil
 }
 
 func (p *TraceCompactionProcessor) uploadAndCreateTraceSegments(ctx context.Context, client cloudstorage.Client, profile storageprofile.StorageProfile, results []parquetwriter.Result, key messages.TraceCompactionKey, inputSegments []lrdb.TraceSeg) ([]lrdb.TraceSeg, error) {

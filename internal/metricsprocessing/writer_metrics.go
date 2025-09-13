@@ -39,19 +39,13 @@ type metricProcessingParams struct {
 	MaxRecords     int64
 }
 
-// metricProcessingResult contains the results of metric processing
-type metricProcessingResult struct {
-	ProcessedSegments []lrdb.MetricSeg
-	Results           []parquetwriter.Result
-}
-
 // processMetricsWithAggregation performs the common pattern of:
 // 1. Create reader stack from segments
 // 2. Create aggregating reader from head reader
 // 3. Create metrics writer
 // 4. Write from reader to writer
 // 5. Close writer and return results
-func processMetricsWithAggregation(ctx context.Context, params metricProcessingParams) (*metricProcessingResult, error) {
+func processMetricsWithAggregation(ctx context.Context, params metricProcessingParams) ([]parquetwriter.Result, error) {
 	// Create reader stack
 	readerStack, err := createMetricReaderStack(
 		ctx,
@@ -95,8 +89,5 @@ func processMetricsWithAggregation(ctx context.Context, params metricProcessingP
 		return nil, fmt.Errorf("close writer: %w", err)
 	}
 
-	return &metricProcessingResult{
-		ProcessedSegments: readerStack.ProcessedSegments,
-		Results:           results,
-	}, nil
+	return results, nil
 }

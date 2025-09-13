@@ -32,11 +32,10 @@ import (
 )
 
 type traceReaderStackResult struct {
-	Readers           []filereader.Reader
-	Files             []*os.File
-	DownloadedFiles   []string
-	ProcessedSegments []lrdb.TraceSeg // Segments that were actually processed
-	HeadReader        filereader.Reader
+	Readers         []filereader.Reader
+	Files           []*os.File
+	DownloadedFiles []string
+	HeadReader      filereader.Reader
 }
 
 func createTraceReaderStack(
@@ -52,7 +51,6 @@ func createTraceReaderStack(
 	var readers []filereader.Reader
 	var files []*os.File
 	var downloadedFiles []string
-	var processedSegments []lrdb.TraceSeg
 
 	if len(rows) == 0 {
 		return nil, errors.New("no trace segments provided to create reader stack")
@@ -107,7 +105,6 @@ func createTraceReaderStack(
 		readers = append(readers, finalReader)
 		files = append(files, file)
 		downloadedFiles = append(downloadedFiles, fn)
-		processedSegments = append(processedSegments, row)
 	}
 
 	// Use trace-specific sort key provider for trace compaction
@@ -118,11 +115,10 @@ func createTraceReaderStack(
 	}
 
 	return &traceReaderStackResult{
-		Readers:           readers,
-		Files:             files,
-		DownloadedFiles:   downloadedFiles,
-		ProcessedSegments: processedSegments,
-		HeadReader:        mergedReader,
+		Readers:         readers,
+		Files:           files,
+		DownloadedFiles: downloadedFiles,
+		HeadReader:      mergedReader,
 	}, nil
 }
 
