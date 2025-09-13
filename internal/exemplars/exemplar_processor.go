@@ -82,14 +82,14 @@ func DefaultConfig() Config {
 		Logs: TelemetryConfig{
 			Enabled:        true,
 			CacheSize:      1000,
-			Expiry:         5 * time.Minute,
+			Expiry:         60 * time.Minute,
 			ReportInterval: 1 * time.Minute,
 			BatchSize:      100,
 		},
 		Metrics: TelemetryConfig{
 			Enabled:        true,
 			CacheSize:      1000,
-			Expiry:         5 * time.Minute,
+			Expiry:         60 * time.Minute,
 			ReportInterval: 1 * time.Minute,
 			BatchSize:      100,
 		},
