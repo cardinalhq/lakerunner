@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"net"
 	"strconv"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -31,6 +32,13 @@ import (
 // QueriesInterface defines the methods needed for scaling queries
 type QueriesInterface interface {
 	// No methods needed - external scaler will use fixed values for now
+}
+
+// LagMonitorInterface defines the methods needed for Kafka lag monitoring
+type LagMonitorInterface interface {
+	GetQueueDepth(serviceType string) (int64, error)
+	GetLastUpdate() time.Time
+	IsHealthy() bool
 }
 
 type Service struct {
@@ -53,50 +61,20 @@ func NewService(ctx context.Context, cfg Config) (*Service, error) {
 func (s *Service) Close() {
 }
 
-func (s *Service) getQueueDepth(ctx context.Context, serviceType string) (int64, error) {
-	var result any
-	var err error
-
+func (s *Service) getQueueDepth(_ context.Context, serviceType string) (int64, error) {
+	// Return fixed values for now since we're not using database connections
 	switch serviceType {
-	case "ingest-logs":
-		// TODO: Replace with Kafka consumer lag metrics for ingestion scaling
-		result, err = int64(5), nil
-	case "ingest-metrics":
-		// TODO: Replace with Kafka consumer lag metrics for ingestion scaling
-		result, err = int64(5), nil
-	case "ingest-traces":
-		// TODO: Replace with Kafka consumer lag metrics for ingestion scaling
-		result, err = int64(5), nil
-	case "compact-logs":
-		// TODO: Implement proper segment-based scaling metrics when compaction system is redesigned
-		// For now, return a fixed value to keep the scaler working
-		result, err = int64(3), nil
-	case "compact-traces":
-		// TODO: Implement proper segment-based scaling metrics when compaction system is redesigned
-		// For now, return a fixed value to keep the scaler working
-		result, err = int64(3), nil
-	case "rollup-metrics":
-		// TODO: Implement proper metric rollup queue scaling when needed
-		// For now, return a fixed value of 5
+	case "ingest-logs", "ingest-metrics", "ingest-traces":
 		return 5, nil
+	case "compact-logs", "compact-traces", "compact-metrics":
+		return 3, nil
+	case "rollup-metrics":
+		return 5, nil
+	case "boxer-compact-logs", "boxer-compact-metrics", "boxer-compact-traces", "boxer-rollup-metrics":
+		return 3, nil
 	default:
-		return 0, fmt.Errorf("unsupported service type: %s", serviceType)
+		return 0, fmt.Errorf("unknown service type: %s", serviceType)
 	}
-
-	if err != nil {
-		return 0, fmt.Errorf("failed to execute queue depth query for %s: %w", serviceType, err)
-	}
-
-	count, ok := result.(int64)
-	if !ok {
-		return 0, fmt.Errorf("unexpected result type for %s: %T", serviceType, result)
-	}
-
-	slog.Debug("Queue depth query result",
-		"serviceType", serviceType,
-		"count", count)
-
-	return count, nil
 }
 
 func (s *Service) Start(ctx context.Context) error {
@@ -144,9 +122,11 @@ func (s *Service) IsActive(ctx context.Context, req *ScaledObjectRef) (*IsActive
 	}
 
 	switch serviceType {
-	case "compact-logs", "compact-traces", "rollup-metrics":
+	case "compact-logs", "compact-traces", "compact-metrics", "rollup-metrics":
 		return &IsActiveResponse{Result: true}, nil
 	case "ingest-logs", "ingest-metrics", "ingest-traces":
+		return &IsActiveResponse{Result: true}, nil
+	case "boxer-compact-logs", "boxer-compact-metrics", "boxer-compact-traces", "boxer-rollup-metrics":
 		return &IsActiveResponse{Result: true}, nil
 	default:
 		slog.Warn("unknown service type", "serviceType", serviceType)

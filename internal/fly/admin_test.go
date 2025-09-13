@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/segmentio/kafka-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -40,7 +41,8 @@ func TestAdminClient_TopicExists(t *testing.T) {
 	config := &Config{
 		Brokers: []string{kafkaContainer.Broker()},
 	}
-	adminClient := NewAdminClient(config)
+	adminClient, err := NewAdminClient(config)
+	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -72,7 +74,8 @@ func TestAdminClient_GetTopicInfo(t *testing.T) {
 	config := &Config{
 		Brokers: []string{kafkaContainer.Broker()},
 	}
-	adminClient := NewAdminClient(config)
+	adminClient, err := NewAdminClient(config)
+	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -120,7 +123,8 @@ func TestAdminClient_GetConsumerGroupLag(t *testing.T) {
 	config := &Config{
 		Brokers: []string{kafkaContainer.Broker()},
 	}
-	adminClient := NewAdminClient(config)
+	adminClient, err := NewAdminClient(config)
+	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -260,7 +264,8 @@ func TestAdminClient_GetMultipleConsumerGroupLag(t *testing.T) {
 	config := &Config{
 		Brokers: []string{kafkaContainer.Broker()},
 	}
-	adminClient := NewAdminClient(config)
+	adminClient, err := NewAdminClient(config)
+	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -336,7 +341,8 @@ func TestAdminClient_GetAllConsumerGroupLags(t *testing.T) {
 	config := &Config{
 		Brokers: []string{kafkaContainer.Broker()},
 	}
-	adminClient := NewAdminClient(config)
+	adminClient, err := NewAdminClient(config)
+	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -525,4 +531,240 @@ func produceTestMessage(t *testing.T, kafkaContainer *KafkaTestContainer, topic,
 		Value: []byte(value),
 	})
 	require.NoError(t, err)
+}
+
+func TestCalculateLag(t *testing.T) {
+	tests := []struct {
+		name            string
+		committedOffset int64
+		highWaterMark   int64
+		expectedLag     int64
+	}{
+		{
+			name:            "normal lag calculation",
+			committedOffset: 100,
+			highWaterMark:   150,
+			expectedLag:     50,
+		},
+		{
+			name:            "no lag",
+			committedOffset: 100,
+			highWaterMark:   100,
+			expectedLag:     0,
+		},
+		{
+			name:            "committed ahead of high water mark",
+			committedOffset: 150,
+			highWaterMark:   100,
+			expectedLag:     0, // Should be max(100-150, 0) = 0
+		},
+		{
+			name:            "no committed offset",
+			committedOffset: -1,
+			highWaterMark:   100,
+			expectedLag:     100, // Lag equals high water mark
+		},
+		{
+			name:            "zero high water mark with no committed offset",
+			committedOffset: -1,
+			highWaterMark:   0,
+			expectedLag:     0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lag := calculateLag(tt.committedOffset, tt.highWaterMark)
+			assert.Equal(t, tt.expectedLag, lag)
+		})
+	}
+}
+
+func TestProcessConsumerGroupLags(t *testing.T) {
+	adminClient := &AdminClient{}
+
+	highWaterMarks := HighWaterMarkMap{
+		"topic1": {
+			0: 100,
+			1: 200,
+		},
+		"topic2": {
+			0: 50,
+		},
+	}
+
+	tests := []struct {
+		name         string
+		groupID      string
+		offsetTopics map[string][]kafka.OffsetFetchPartition
+		expected     []ConsumerGroupInfo
+	}{
+		{
+			name:    "successful processing",
+			groupID: "test-group",
+			offsetTopics: map[string][]kafka.OffsetFetchPartition{
+				"topic1": {
+					{
+						Partition:       0,
+						CommittedOffset: 90,
+						Error:           nil,
+					},
+					{
+						Partition:       1,
+						CommittedOffset: 180,
+						Error:           nil,
+					},
+				},
+				"topic2": {
+					{
+						Partition:       0,
+						CommittedOffset: 40,
+						Error:           nil,
+					},
+				},
+			},
+			expected: []ConsumerGroupInfo{
+				{
+					GroupID:         "test-group",
+					Topic:           "topic1",
+					Partition:       0,
+					CommittedOffset: 90,
+					HighWaterMark:   100,
+					Lag:             10,
+				},
+				{
+					GroupID:         "test-group",
+					Topic:           "topic1",
+					Partition:       1,
+					CommittedOffset: 180,
+					HighWaterMark:   200,
+					Lag:             20,
+				},
+				{
+					GroupID:         "test-group",
+					Topic:           "topic2",
+					Partition:       0,
+					CommittedOffset: 40,
+					HighWaterMark:   50,
+					Lag:             10,
+				},
+			},
+		},
+		{
+			name:    "with errors and missing partitions",
+			groupID: "test-group",
+			offsetTopics: map[string][]kafka.OffsetFetchPartition{
+				"topic1": {
+					{
+						Partition:       0,
+						CommittedOffset: 90,
+						Error:           nil,
+					},
+					{
+						Partition:       2, // Not in high water marks
+						CommittedOffset: 10,
+						Error:           nil,
+					},
+				},
+				"topic3": { // Topic not in high water marks
+					{
+						Partition:       0,
+						CommittedOffset: 10,
+						Error:           nil,
+					},
+				},
+			},
+			expected: []ConsumerGroupInfo{
+				{
+					GroupID:         "test-group",
+					Topic:           "topic1",
+					Partition:       0,
+					CommittedOffset: 90,
+					HighWaterMark:   100,
+					Lag:             10,
+				},
+			},
+		},
+		{
+			name:         "empty offset topics",
+			groupID:      "test-group",
+			offsetTopics: map[string][]kafka.OffsetFetchPartition{},
+			expected:     nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := adminClient.processConsumerGroupLags(tt.groupID, tt.offsetTopics, highWaterMarks)
+
+			// Sort both slices by Topic, then Partition for consistent comparison
+			sortConsumerGroupInfo := func(infos []ConsumerGroupInfo) {
+				for i := 0; i < len(infos)-1; i++ {
+					for j := i + 1; j < len(infos); j++ {
+						if infos[i].Topic > infos[j].Topic ||
+							(infos[i].Topic == infos[j].Topic && infos[i].Partition > infos[j].Partition) {
+							infos[i], infos[j] = infos[j], infos[i]
+						}
+					}
+				}
+			}
+
+			sortConsumerGroupInfo(result)
+			sortConsumerGroupInfo(tt.expected)
+
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestTopicPartitionInfo(t *testing.T) {
+	info := TopicPartitionInfo{
+		Topic:      "test-topic",
+		Partitions: []int{0, 1, 2},
+	}
+
+	assert.Equal(t, "test-topic", info.Topic)
+	assert.Equal(t, []int{0, 1, 2}, info.Partitions)
+}
+
+func TestHighWaterMarkMap(t *testing.T) {
+	hwm := make(HighWaterMarkMap)
+	hwm["topic1"] = make(map[int]int64)
+	hwm["topic1"][0] = 100
+	hwm["topic1"][1] = 200
+
+	assert.Equal(t, int64(100), hwm["topic1"][0])
+	assert.Equal(t, int64(200), hwm["topic1"][1])
+
+	// Test accessing non-existent topic
+	_, exists := hwm["non-existent"]
+	assert.False(t, exists)
+}
+
+// Integration test to ensure the refactored function still behaves the same
+func TestGetAllConsumerGroupLags_Refactored(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	// This test requires a running Kafka instance
+	config := &Config{
+		Brokers:     []string{"localhost:9092"},
+		SASLEnabled: false,
+		TLSEnabled:  false,
+	}
+
+	adminClient, err := NewAdminClient(config)
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	// Test with empty inputs
+	result, err := adminClient.GetAllConsumerGroupLags(ctx, []string{}, []string{})
+	require.NoError(t, err)
+	assert.Empty(t, result)
+
+	// Test with non-existent topics and groups
+	result, err = adminClient.GetAllConsumerGroupLags(ctx, []string{"non-existent-topic"}, []string{"non-existent-group"})
+	require.NoError(t, err)
+	assert.Empty(t, result)
 }
