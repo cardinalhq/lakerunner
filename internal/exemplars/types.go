@@ -38,8 +38,7 @@ func getFromResource(attr pcommon.Map, key string) string {
 	return val.AsString()
 }
 
-
-// toMetricExemplar creates a copy of the metric data with the first data point as an exemplar
+// toMetricExemplar creates a copy of the metric data with the first data point as an exemplar.
 func toMetricExemplar(rm pmetric.ResourceMetrics, sm pmetric.ScopeMetrics, mm pmetric.Metric, metricType pmetric.MetricType) pmetric.Metrics {
 	exemplarRecord := pmetric.NewMetrics()
 	copyRm := exemplarRecord.ResourceMetrics().AppendEmpty()
