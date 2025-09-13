@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"runtime"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -34,10 +35,12 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-// LogCompactionProcessor implements compaction processing for logs using the base framework
+// LogCompactionProcessor implements compaction processing for logs
 type LogCompactionProcessor struct {
-	*CommonProcessorBase[*messages.LogCompactionMessage, messages.LogCompactionKey]
-	store LogCompactionStore
+	store           LogCompactionStore
+	storageProvider storageprofile.StorageProfileProvider
+	cmgr            cloudstorage.ClientProvider
+	cfg             *config.Config
 }
 
 // NewLogCompactionProcessor creates a new log compaction processor
@@ -48,53 +51,58 @@ func NewLogCompactionProcessor(
 	cfg *config.Config,
 ) *LogCompactionProcessor {
 	return &LogCompactionProcessor{
-		CommonProcessorBase: NewCommonProcessorBase[*messages.LogCompactionMessage, messages.LogCompactionKey](
-			storageProvider,
-			cmgr,
-			cfg,
-		),
-		store: store,
+		store:           store,
+		storageProvider: storageProvider,
+		cmgr:            cmgr,
+		cfg:             cfg,
 	}
 }
 
-// Process implements the processor interface for log compaction
-func (p *LogCompactionProcessor) Process(ctx context.Context, group *accumulationGroup[messages.LogCompactionKey], kafkaCommitData *KafkaCommitData) error {
-	defer runtime.GC() // TODO find a way to not need this
-
-	p.LogCompactionStart(ctx, group, "logs",
-		slog.String("organizationID", group.Key.OrganizationID.String()),
-		slog.Int("dateint", int(group.Key.DateInt)),
-		slog.Int("instanceNum", int(group.Key.InstanceNum)),
-	)
-
-	return p.ProcessCore(ctx, group, kafkaCommitData, p)
-}
-
-// ProcessWork handles the log-specific work logic
-func (p *LogCompactionProcessor) ProcessWork(
-	ctx context.Context,
-	tmpDir string,
-	storageClient cloudstorage.Client,
-	storageProfile storageprofile.StorageProfile,
-	group *accumulationGroup[messages.LogCompactionKey],
-	kafkaCommitData *KafkaCommitData,
-) error {
+// ProcessBundle processes a compaction bundle directly (simplified interface)
+func (p *LogCompactionProcessor) ProcessBundle(ctx context.Context, key messages.LogCompactionKey, msgs []*messages.LogCompactionMessage, partition int32, offset int64) error {
 	ll := logctx.FromContext(ctx)
 
-	recordCountEstimate := p.store.GetLogEstimate(ctx, group.Key.OrganizationID)
+	defer runtime.GC() // TODO find a way to not need this
+
+	if len(msgs) == 0 {
+		return nil
+	}
+
+	ll.Info("Starting compaction processing",
+		slog.String("organizationID", key.OrganizationID.String()),
+		slog.Int("dateint", int(key.DateInt)),
+		slog.Int("instanceNum", int(key.InstanceNum)),
+		slog.Int("messageCount", len(msgs)))
+
+	recordCountEstimate := p.store.GetLogEstimate(ctx, key.OrganizationID)
+
+	// Create temporary directory for this compaction run
+	tmpDir, err := os.MkdirTemp("", "")
+	if err != nil {
+		return fmt.Errorf("create temporary directory: %w", err)
+	}
+	defer func() {
+		if cleanupErr := os.RemoveAll(tmpDir); cleanupErr != nil {
+			ll.Warn("Failed to cleanup temporary directory", slog.String("tmpDir", tmpDir), slog.Any("error", cleanupErr))
+		}
+	}()
+
+	storageProfile, err := p.storageProvider.GetStorageProfileForOrganizationAndInstance(ctx, key.OrganizationID, key.InstanceNum)
+	if err != nil {
+		return fmt.Errorf("get storage profile: %w", err)
+	}
+
+	storageClient, err := cloudstorage.NewClient(ctx, p.cmgr, storageProfile)
+	if err != nil {
+		return fmt.Errorf("create storage client: %w", err)
+	}
 
 	// Process segments
 	var activeSegments []lrdb.LogSeg
 	var segmentsToMarkCompacted []lrdb.LogSeg
 	targetSizeThreshold := config.TargetFileSize * 80 / 100 // 80% of target file size
 
-	for _, accMsg := range group.Messages {
-		msg, ok := accMsg.Message.(*messages.LogCompactionMessage)
-		if !ok {
-			ll.Debug("Skipping non-LogCompactionMessage message in compaction group")
-			continue
-		}
-
+	for _, msg := range msgs {
 		segment, err := p.store.GetLogSeg(ctx, lrdb.GetLogSegParams{
 			OrganizationID: msg.OrganizationID,
 			Dateint:        msg.DateInt,
@@ -111,12 +119,7 @@ func (p *LogCompactionProcessor) ProcessWork(
 			continue
 		}
 
-		if segment.Compacted {
-			ll.Info("Segment already marked as compacted, skipping", slog.Int64("segmentID", segment.SegmentID))
-			continue
-		}
-
-		if segment.FileSize >= targetSizeThreshold {
+		if !segment.Compacted && segment.FileSize >= targetSizeThreshold {
 			ll.Info("Segment already close to target size, marking as compacted",
 				slog.Int64("segmentID", segment.SegmentID),
 				slog.Int64("fileSize", segment.FileSize),
@@ -126,11 +129,17 @@ func (p *LogCompactionProcessor) ProcessWork(
 			continue
 		}
 
+		if segment.Compacted {
+			ll.Info("Segment already marked as compacted, skipping", slog.Int64("segmentID", segment.SegmentID))
+			continue
+		}
+
 		activeSegments = append(activeSegments, segment)
 	}
 
+	// Mark large segments as compacted if any
 	if len(segmentsToMarkCompacted) > 0 {
-		if err := p.markLogSegmentsAsCompacted(ctx, segmentsToMarkCompacted, group.Key); err != nil {
+		if err := p.markLogSegmentsAsCompacted(ctx, segmentsToMarkCompacted, key); err != nil {
 			ll.Warn("Failed to mark segments as compacted", slog.Any("error", err))
 		} else {
 			ll.Info("Marked segments as compacted",
@@ -143,19 +152,32 @@ func (p *LogCompactionProcessor) ProcessWork(
 		return nil
 	}
 
-	ll.Info("Found segments to compact", slog.Int("activeSegments", len(activeSegments)))
+	ll.Info("Found segments to compact",
+		slog.Int("activeSegments", len(activeSegments)))
 
-	processedSegments, results, err := p.performLogCompactionCore(ctx, tmpDir, storageClient, group.Key, storageProfile, activeSegments, recordCountEstimate)
+	// Perform the core compaction logic
+	results, err := p.performLogCompactionCore(ctx, tmpDir, storageClient, key, storageProfile, activeSegments, recordCountEstimate)
 	if err != nil {
 		return fmt.Errorf("perform compaction: %w", err)
 	}
 
-	newSegments, err := p.uploadAndCreateLogSegments(ctx, storageClient, storageProfile, results, group.Key, activeSegments)
+	// Upload new files and create new log segments
+	newSegments, err := p.uploadAndCreateLogSegments(ctx, storageClient, storageProfile, results, key, activeSegments)
 	if err != nil {
 		return fmt.Errorf("upload and create segments: %w", err)
 	}
 
-	if err := p.atomicLogDatabaseUpdate(ctx, activeSegments, newSegments, kafkaCommitData, group.Key); err != nil {
+	// Create KafkaCommitData for offset tracking
+	kafkaCommitData := &KafkaCommitData{
+		Topic:         "lakerunner.segments.logs.compact",
+		ConsumerGroup: "lakerunner.compact.logs",
+		Offsets: map[int32]int64{
+			partition: offset + 1,
+		},
+	}
+
+	// Atomic operation - mark old as compacted, insert new, update Kafka offsets
+	if err := p.atomicLogDatabaseUpdate(ctx, activeSegments, newSegments, kafkaCommitData, key); err != nil {
 		return fmt.Errorf("atomic database update: %w", err)
 	}
 
@@ -165,17 +187,12 @@ func (p *LogCompactionProcessor) ProcessWork(
 		totalSize += result.FileSize
 	}
 
-	if p.cfg.SegLog.Enabled {
-		if err := p.logLogCompactionOperation(ctx, storageProfile.CollectorName, processedSegments, newSegments, results, group.Key, recordCountEstimate); err != nil {
-			ll.Warn("Failed to log compaction operation to seg_log", slog.Any("error", err))
-		}
-	}
-
 	ll.Info("Log compaction completed successfully",
 		slog.Int("inputSegments", len(activeSegments)),
 		slog.Int("outputFiles", len(results)),
 		slog.Int64("outputRecords", totalRecords),
 		slog.Int64("outputFileSize", totalSize))
+
 	return nil
 }
 
@@ -184,7 +201,7 @@ func (p *LogCompactionProcessor) GetTargetRecordCount(ctx context.Context, group
 	return p.store.GetLogEstimate(ctx, groupingKey.OrganizationID)
 }
 
-func (p *LogCompactionProcessor) performLogCompactionCore(ctx context.Context, tmpDir string, storageClient cloudstorage.Client, compactionKey messages.LogCompactionKey, storageProfile storageprofile.StorageProfile, activeSegments []lrdb.LogSeg, recordCountEstimate int64) ([]lrdb.LogSeg, []parquetwriter.Result, error) {
+func (p *LogCompactionProcessor) performLogCompactionCore(ctx context.Context, tmpDir string, storageClient cloudstorage.Client, compactionKey messages.LogCompactionKey, storageProfile storageprofile.StorageProfile, activeSegments []lrdb.LogSeg, recordCountEstimate int64) ([]parquetwriter.Result, error) {
 	params := logProcessingParams{
 		TmpDir:         tmpDir,
 		StorageClient:  storageClient,
@@ -194,17 +211,18 @@ func (p *LogCompactionProcessor) performLogCompactionCore(ctx context.Context, t
 		MaxRecords:     recordCountEstimate * 2, // safety net
 	}
 
-	result, err := processLogsWithSorting(ctx, params)
+	results, err := processLogsWithSorting(ctx, params)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	return result.ProcessedSegments, result.Results, nil
+	return results, nil
 }
 
 func (p *LogCompactionProcessor) uploadAndCreateLogSegments(ctx context.Context, client cloudstorage.Client, profile storageprofile.StorageProfile, results []parquetwriter.Result, key messages.LogCompactionKey, inputSegments []lrdb.LogSeg) ([]lrdb.LogSeg, error) {
 	ll := logctx.FromContext(ctx)
 
+	// Calculate input metrics
 	var totalInputSize, totalInputRecords int64
 	for _, seg := range inputSegments {
 		totalInputSize += seg.FileSize
@@ -231,6 +249,9 @@ func (p *LogCompactionProcessor) uploadAndCreateLogSegments(ctx context.Context,
 			return nil, fmt.Errorf("upload file %s: %w", result.FileName, err)
 		}
 
+		// Clean up local file
+		os.Remove(result.FileName)
+
 		segment := lrdb.LogSeg{
 			OrganizationID: key.OrganizationID,
 			Dateint:        key.DateInt,
@@ -245,8 +266,8 @@ func (p *LogCompactionProcessor) uploadAndCreateLogSegments(ctx context.Context,
 			},
 			RecordCount:  result.RecordCount,
 			FileSize:     result.FileSize,
-			Compacted:    true,
 			Published:    true,
+			Compacted:    true,
 			Fingerprints: stats.Fingerprints,
 			CreatedBy:    lrdb.CreatedByCompact,
 		}
@@ -380,20 +401,4 @@ func (p *LogCompactionProcessor) markLogSegmentsAsCompacted(ctx context.Context,
 		InstanceNum:    key.InstanceNum,
 		SegmentIds:     segmentIDs,
 	})
-}
-
-func (p *LogCompactionProcessor) logLogCompactionOperation(ctx context.Context, collectorName string, inputSegments []lrdb.LogSeg, outputSegments []lrdb.LogSeg, results []parquetwriter.Result, key messages.LogCompactionKey, recordEstimate int64) error {
-	return logLogSegmentOperation(
-		ctx,
-		p.store,
-		inputSegments,
-		outputSegments,
-		results,
-		key.OrganizationID,
-		collectorName,
-		key.DateInt,
-		key.InstanceNum,
-		recordEstimate,
-		p.getHourFromTimestamp,
-	)
 }

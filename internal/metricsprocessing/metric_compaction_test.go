@@ -114,11 +114,6 @@ func (m *mockCompactionStore) GetMetricEstimate(ctx context.Context, orgID uuid.
 	return args.Get(0).(int64)
 }
 
-func (m *mockCompactionStore) InsertSegmentJournal(ctx context.Context, params lrdb.InsertSegmentJournalParams) error {
-	args := m.Called(ctx, params)
-	return args.Error(0)
-}
-
 // Removed unused mockStorageProvider
 
 func TestMarkSegmentsAsCompacted(t *testing.T) {

@@ -95,11 +95,11 @@ func init() {
 			ctx = logctx.WithLogger(ctx, ll)
 
 			kafkaFactory := fly.NewFactory(&cfg.Fly)
-			slog.Info("Starting log compaction with accumulation consumer")
+			slog.Info("Starting log compaction with bundle consumer")
 
 			consumer, err := metricsprocessing.NewLogCompactionConsumer(ctx, kafkaFactory, cfg, mdb, sp, cmgr)
 			if err != nil {
-				return fmt.Errorf("failed to create Kafka accumulation consumer: %w", err)
+				return fmt.Errorf("failed to create Kafka bundle consumer: %w", err)
 			}
 			defer func() {
 				if err := consumer.Close(); err != nil {

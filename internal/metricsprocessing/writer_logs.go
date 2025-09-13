@@ -37,18 +37,12 @@ type logProcessingParams struct {
 	MaxRecords     int64
 }
 
-// logProcessingResult contains the results of log processing
-type logProcessingResult struct {
-	ProcessedSegments []lrdb.LogSeg
-	Results           []parquetwriter.Result
-}
-
 // processLogsWithSorting performs the common pattern of:
 // 1. Create reader stack from segments
 // 2. Create logs writer (logs don't need aggregation, just sorting)
 // 3. Write from reader to writer
 // 4. Close writer and return results
-func processLogsWithSorting(ctx context.Context, params logProcessingParams) (*logProcessingResult, error) {
+func processLogsWithSorting(ctx context.Context, params logProcessingParams) ([]parquetwriter.Result, error) {
 	// Create reader stack
 	readerStack, err := createLogReaderStack(
 		ctx,
@@ -81,8 +75,5 @@ func processLogsWithSorting(ctx context.Context, params logProcessingParams) (*l
 		return nil, fmt.Errorf("close writer: %w", err)
 	}
 
-	return &logProcessingResult{
-		ProcessedSegments: readerStack.ProcessedSegments,
-		Results:           results,
-	}, nil
+	return results, nil
 }

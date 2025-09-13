@@ -23,32 +23,24 @@ import (
 
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
 	"github.com/cardinalhq/lakerunner/config"
-	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/debugging"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 	"github.com/cardinalhq/lakerunner/internal/helpers"
-	"github.com/cardinalhq/lakerunner/internal/logctx"
 	"github.com/cardinalhq/lakerunner/internal/metricsprocessing"
-	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 )
 
 func init() {
 	cmd := &cobra.Command{
-		Use:   "compact-traces",
-		Short: "Compact traces into optimally sized files",
+		Use:   "boxer-compact-logs",
+		Short: "Log compaction boxer",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			cfg, err := config.Load()
-			if err != nil {
-				return fmt.Errorf("failed to load config: %w", err)
-			}
-
 			helpers.SetupTempDir()
 
-			servicename := "lakerunner-compact-traces"
+			servicename := "lakerunner-boxer-logs-compact"
 			addlAttrs := attribute.NewSet(
-				attribute.String("signal", "traces"),
-				attribute.String("action", "compact"),
+				attribute.String("signal", "logs"),
+				attribute.String("action", "boxer"),
 			)
 			ctx, doneFx, err := setupTelemetry(servicename, &addlAttrs)
 			if err != nil {
@@ -63,8 +55,10 @@ func init() {
 
 			go diskUsageLoop(ctx)
 
+			// Start pprof server
 			go debugging.RunPprof(ctx)
 
+			// Start health check server
 			healthConfig := healthcheck.GetConfigFromEnv()
 			healthServer := healthcheck.NewServer(healthConfig)
 
@@ -74,38 +68,27 @@ func init() {
 				}
 			}()
 
+			// Get main config
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+
+			// Create database connection
 			mdb, err := dbopen.LRDBStore(ctx)
 			if err != nil {
 				return fmt.Errorf("failed to open LRDB store: %w", err)
 			}
 
-			cdb, err := dbopen.ConfigDBStore(ctx)
-			if err != nil {
-				return fmt.Errorf("failed to open ConfigDB store: %w", err)
-			}
-
-			cmgr, err := cloudstorage.NewCloudManagers(ctx)
-			if err != nil {
-				return fmt.Errorf("failed to create cloud managers: %w", err)
-			}
-
-			sp := storageprofile.NewStorageProfileProvider(cdb)
-
-			ll := logctx.FromContext(ctx).With("instanceID", myInstanceID)
-			ctx = logctx.WithLogger(ctx, ll)
-
+			// Create Kafka factory
 			kafkaFactory := fly.NewFactory(&cfg.Fly)
-			slog.Info("Starting trace compaction consumer")
 
-			consumer, err := metricsprocessing.NewTraceCompactionConsumer(ctx, cfg, kafkaFactory, mdb, sp, cmgr)
+			// Create Kafka-based compaction boxer consumer
+			consumer, err := metricsprocessing.NewLogCompactionBoxerConsumer(ctx, kafkaFactory, cfg, mdb)
 			if err != nil {
-				return fmt.Errorf("failed to create Kafka consumer: %w", err)
+				return fmt.Errorf("failed to create compaction boxer consumer: %w", err)
 			}
-			defer func() {
-				if err := consumer.Close(); err != nil {
-					slog.Error("Error closing Kafka consumer", slog.Any("error", err))
-				}
-			}()
+			defer consumer.Close()
 
 			healthServer.SetStatus(healthcheck.StatusHealthy)
 

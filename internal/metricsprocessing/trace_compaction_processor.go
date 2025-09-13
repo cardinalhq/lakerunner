@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"runtime"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -34,10 +35,12 @@ import (
 	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
-// TraceCompactionProcessor implements compaction processing for traces using the base framework
+// TraceCompactionProcessor implements compaction processing for traces
 type TraceCompactionProcessor struct {
-	*CommonProcessorBase[*messages.TraceCompactionMessage, messages.TraceCompactionKey]
-	store TraceCompactionStore
+	store           TraceCompactionStore
+	storageProvider storageprofile.StorageProfileProvider
+	cmgr            cloudstorage.ClientProvider
+	cfg             *config.Config
 }
 
 // NewTraceCompactionProcessor creates a new trace compaction processor
@@ -48,28 +51,50 @@ func NewTraceCompactionProcessor(
 	cfg *config.Config,
 ) *TraceCompactionProcessor {
 	return &TraceCompactionProcessor{
-		CommonProcessorBase: NewCommonProcessorBase[*messages.TraceCompactionMessage, messages.TraceCompactionKey](
-			storageProvider,
-			cmgr,
-			cfg,
-		),
-		store: store,
+		store:           store,
+		storageProvider: storageProvider,
+		cmgr:            cmgr,
+		cfg:             cfg,
 	}
 }
 
-// Process implements the processor interface for trace compaction
-func (p *TraceCompactionProcessor) Process(ctx context.Context, group *accumulationGroup[messages.TraceCompactionKey], kafkaCommitData *KafkaCommitData) error {
+// ProcessBundle processes a bundle of trace compaction messages directly
+func (p *TraceCompactionProcessor) ProcessBundle(ctx context.Context, key messages.TraceCompactionKey, msgs []*messages.TraceCompactionMessage, partition int32, offset int64) error {
 	defer runtime.GC() // TODO find a way to not need this
 
-	// Log compaction start with trace-specific fields
-	p.LogCompactionStart(ctx, group, "traces",
-		slog.String("organizationID", group.Key.OrganizationID.String()),
-		slog.Int("dateint", int(group.Key.DateInt)),
-		slog.Int("instanceNum", int(group.Key.InstanceNum)),
-	)
+	ll := logctx.FromContext(ctx)
 
-	// Use the base framework for common processing
-	return p.ProcessCore(ctx, group, kafkaCommitData, p)
+	// Log compaction start
+	ll.Info("Starting trace compaction bundle processing",
+		slog.String("organizationID", key.OrganizationID.String()),
+		slog.Int("dateint", int(key.DateInt)),
+		slog.Int("instanceNum", int(key.InstanceNum)),
+		slog.Int("messageCount", len(msgs)))
+
+	// Create temporary directory for this compaction run
+	tmpDir, err := os.MkdirTemp("", "")
+	if err != nil {
+		return fmt.Errorf("create temporary directory: %w", err)
+	}
+	defer func() {
+		if cleanupErr := os.RemoveAll(tmpDir); cleanupErr != nil {
+			ll.Warn("Failed to cleanup temporary directory", slog.String("tmpDir", tmpDir), slog.Any("error", cleanupErr))
+		}
+	}()
+
+	// Get storage profile and client
+	storageProfile, err := p.storageProvider.GetStorageProfileForOrganizationAndInstance(ctx, key.OrganizationID, key.InstanceNum)
+	if err != nil {
+		return fmt.Errorf("get storage profile: %w", err)
+	}
+
+	storageClient, err := cloudstorage.NewClient(ctx, p.cmgr, storageProfile)
+	if err != nil {
+		return fmt.Errorf("create storage client: %w", err)
+	}
+
+	// Process the compaction work
+	return p.ProcessWork(ctx, tmpDir, storageClient, storageProfile, key, msgs, partition, offset)
 }
 
 // ProcessWork handles the trace-specific work logic
@@ -78,24 +103,21 @@ func (p *TraceCompactionProcessor) ProcessWork(
 	tmpDir string,
 	storageClient cloudstorage.Client,
 	storageProfile storageprofile.StorageProfile,
-	group *accumulationGroup[messages.TraceCompactionKey],
-	kafkaCommitData *KafkaCommitData,
+	key messages.TraceCompactionKey,
+	msgs []*messages.TraceCompactionMessage,
+	partition int32,
+	offset int64,
 ) error {
 	ll := logctx.FromContext(ctx)
 
-	recordCountEstimate := p.store.GetTraceEstimate(ctx, group.Key.OrganizationID)
+	recordCountEstimate := p.store.GetTraceEstimate(ctx, key.OrganizationID)
 
 	// Process segments
 	var activeSegments []lrdb.TraceSeg
 	var segmentsToMarkCompacted []lrdb.TraceSeg
 	targetSizeThreshold := config.TargetFileSize * 80 / 100 // 80% of target file size
 
-	for _, accMsg := range group.Messages {
-		msg, ok := accMsg.Message.(*messages.TraceCompactionMessage)
-		if !ok {
-			ll.Debug("Skipping non-TraceCompactionMessage message in compaction group")
-			continue
-		}
+	for _, msg := range msgs {
 
 		segment, err := p.store.GetTraceSeg(ctx, lrdb.GetTraceSegParams{
 			OrganizationID: msg.OrganizationID,
@@ -132,7 +154,7 @@ func (p *TraceCompactionProcessor) ProcessWork(
 	}
 
 	if len(segmentsToMarkCompacted) > 0 {
-		if err := p.markTraceSegmentsAsCompacted(ctx, segmentsToMarkCompacted, group.Key); err != nil {
+		if err := p.markTraceSegmentsAsCompacted(ctx, segmentsToMarkCompacted, key); err != nil {
 			ll.Warn("Failed to mark segments as compacted", slog.Any("error", err))
 		} else {
 			ll.Info("Marked segments as compacted",
@@ -147,17 +169,17 @@ func (p *TraceCompactionProcessor) ProcessWork(
 
 	ll.Info("Found segments to compact", slog.Int("activeSegments", len(activeSegments)))
 
-	_, results, err := p.performTraceCompactionCore(ctx, tmpDir, storageClient, group.Key, storageProfile, activeSegments, recordCountEstimate)
+	results, err := p.performTraceCompactionCore(ctx, tmpDir, storageClient, key, storageProfile, activeSegments, recordCountEstimate)
 	if err != nil {
 		return fmt.Errorf("perform compaction: %w", err)
 	}
 
-	newSegments, err := p.uploadAndCreateTraceSegments(ctx, storageClient, storageProfile, results, group.Key, activeSegments)
+	newSegments, err := p.uploadAndCreateTraceSegments(ctx, storageClient, storageProfile, results, key, activeSegments)
 	if err != nil {
 		return fmt.Errorf("upload and create segments: %w", err)
 	}
 
-	if err := p.atomicTraceDatabaseUpdate(ctx, activeSegments, newSegments, kafkaCommitData, group.Key); err != nil {
+	if err := p.atomicTraceDatabaseUpdate(ctx, activeSegments, newSegments, key, partition, offset); err != nil {
 		return fmt.Errorf("atomic database update: %w", err)
 	}
 
@@ -181,7 +203,7 @@ func (p *TraceCompactionProcessor) GetTargetRecordCount(ctx context.Context, gro
 }
 
 // Helper methods similar to logs but for traces
-func (p *TraceCompactionProcessor) performTraceCompactionCore(ctx context.Context, tmpDir string, storageClient cloudstorage.Client, compactionKey messages.TraceCompactionKey, storageProfile storageprofile.StorageProfile, activeSegments []lrdb.TraceSeg, recordCountEstimate int64) ([]lrdb.TraceSeg, []parquetwriter.Result, error) {
+func (p *TraceCompactionProcessor) performTraceCompactionCore(ctx context.Context, tmpDir string, storageClient cloudstorage.Client, compactionKey messages.TraceCompactionKey, storageProfile storageprofile.StorageProfile, activeSegments []lrdb.TraceSeg, recordCountEstimate int64) ([]parquetwriter.Result, error) {
 	params := traceProcessingParams{
 		TmpDir:         tmpDir,
 		StorageClient:  storageClient,
@@ -191,12 +213,12 @@ func (p *TraceCompactionProcessor) performTraceCompactionCore(ctx context.Contex
 		MaxRecords:     recordCountEstimate * 2, // safety net
 	}
 
-	result, err := processTracesWithSorting(ctx, params)
+	results, err := processTracesWithSorting(ctx, params)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	return result.ProcessedSegments, result.Results, nil
+	return results, nil
 }
 
 func (p *TraceCompactionProcessor) uploadAndCreateTraceSegments(ctx context.Context, client cloudstorage.Client, profile storageprofile.StorageProfile, results []parquetwriter.Result, key messages.TraceCompactionKey, inputSegments []lrdb.TraceSeg) ([]lrdb.TraceSeg, error) {
@@ -268,30 +290,26 @@ func (p *TraceCompactionProcessor) uploadAndCreateTraceSegments(ctx context.Cont
 	return segments, nil
 }
 
-func (p *TraceCompactionProcessor) atomicTraceDatabaseUpdate(ctx context.Context, oldSegments, newSegments []lrdb.TraceSeg, kafkaCommitData *KafkaCommitData, key messages.TraceCompactionKey) error {
+func (p *TraceCompactionProcessor) atomicTraceDatabaseUpdate(ctx context.Context, oldSegments, newSegments []lrdb.TraceSeg, key messages.TraceCompactionKey, partition int32, offset int64) error {
 	ll := logctx.FromContext(ctx)
 
 	// Prepare Kafka offsets for update
 	var kafkaOffsets []lrdb.KafkaOffsetUpdate
-	if kafkaCommitData != nil {
-		for partition, offset := range kafkaCommitData.Offsets {
-			kafkaOffsets = append(kafkaOffsets, lrdb.KafkaOffsetUpdate{
-				Topic:               kafkaCommitData.Topic,
-				Partition:           partition,
-				ConsumerGroup:       kafkaCommitData.ConsumerGroup,
-				OrganizationID:      key.OrganizationID,
-				InstanceNum:         key.InstanceNum,
-				LastProcessedOffset: offset,
-			})
+	kafkaOffsets = append(kafkaOffsets, lrdb.KafkaOffsetUpdate{
+		Topic:               "lakerunner.segments.traces.compact",
+		Partition:           partition,
+		ConsumerGroup:       "lakerunner.compact.traces",
+		OrganizationID:      key.OrganizationID,
+		InstanceNum:         key.InstanceNum,
+		LastProcessedOffset: offset,
+	})
 
-			// Log each Kafka offset update
-			ll.Debug("Updating Kafka consumer group offset",
-				slog.String("consumerGroup", kafkaCommitData.ConsumerGroup),
-				slog.String("topic", kafkaCommitData.Topic),
-				slog.Int("partition", int(partition)),
-				slog.Int64("newOffset", offset))
-		}
-	}
+	// Log Kafka offset update
+	ll.Debug("Updating Kafka consumer group offset",
+		slog.String("consumerGroup", "lakerunner.compact.traces"),
+		slog.String("topic", "lakerunner.segments.traces.compact"),
+		slog.Int("partition", int(partition)),
+		slog.Int64("newOffset", offset))
 
 	// Convert segments to appropriate types
 	oldRecords := make([]lrdb.CompactTraceSegsOld, len(oldSegments))

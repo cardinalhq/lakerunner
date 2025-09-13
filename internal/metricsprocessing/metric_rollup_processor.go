@@ -44,8 +44,6 @@ type MetricRollupStore interface {
 	RollupMetricSegsWithKafkaOffsets(ctx context.Context, sourceParams lrdb.RollupSourceParams, targetParams lrdb.RollupTargetParams, sourceSegmentIDs []int64, newRecords []lrdb.RollupNewRecord, kafkaOffsets []lrdb.KafkaOffsetUpdate) error
 	KafkaGetLastProcessed(ctx context.Context, params lrdb.KafkaGetLastProcessedParams) (int64, error)
 	GetMetricEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32) int64
-	// Add segment_journal functionality
-	InsertSegmentJournal(ctx context.Context, params lrdb.InsertSegmentJournalParams) error
 }
 
 // MetricRollupProcessor implements the Processor interface for metric rollups
@@ -235,12 +233,10 @@ func (r *MetricRollupProcessor) ProcessBundle(ctx context.Context, bundle *messa
 		MaxRecords:     recordCountEstimate * 2, // safety net
 	}
 
-	result, err := processMetricsWithAggregation(ctx, params)
+	results, err := processMetricsWithAggregation(ctx, params)
 	if err != nil {
 		return err
 	}
-
-	results := result.Results
 
 	newSegments, err := r.uploadAndCreateRollupSegments(ctx, storageClient, storageProfile, results, key, segments)
 	if err != nil {
@@ -264,14 +260,6 @@ func (r *MetricRollupProcessor) ProcessBundle(ctx context.Context, bundle *messa
 	for _, result := range results {
 		totalRecords += result.RecordCount
 		totalSize += result.FileSize
-	}
-
-	// Log the rollup operation to segment_journal for debugging (if enabled)
-	if r.cfg.SegLog.Enabled {
-		if err := r.logRollupOperation(ctx, storageProfile, segments, newSegments, results, key, recordCountEstimate); err != nil {
-			// Don't fail the rollup if seg_log fails - this is just for debugging
-			ll.Warn("Failed to log rollup operation to segment_journal", slog.Any("error", err))
-		}
 	}
 
 	// Generate next-level rollup messages if the target frequency can be rolled up further
@@ -468,26 +456,6 @@ func (r *MetricRollupProcessor) atomicDatabaseUpdate(ctx context.Context, oldSeg
 	}
 
 	return nil
-}
-
-// logRollupOperation logs the rollup operation to segment_journal for debugging purposes
-func (r *MetricRollupProcessor) logRollupOperation(ctx context.Context, storageProfile storageprofile.StorageProfile, inputSegments, outputSegments []lrdb.MetricSeg, results []parquetwriter.Result, key messages.RollupKey, recordEstimate int64) error {
-	return logSegmentOperation(
-		ctx,
-		r.store,
-		inputSegments,
-		outputSegments,
-		results,
-		key.OrganizationID,
-		storageProfile.CollectorName,
-		key.DateInt,
-		key.InstanceNum,
-		recordEstimate,
-		3,                     // 3 = rollup
-		key.SourceFrequencyMs, // Source frequency from the rollup key
-		key.TargetFrequencyMs, // Target frequency from the rollup key
-		r.getHourFromTimestamp,
-	)
 }
 
 // Helper functions

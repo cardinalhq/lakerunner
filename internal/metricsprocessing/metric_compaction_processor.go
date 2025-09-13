@@ -64,7 +64,7 @@ func (p *MetricCompactionProcessor) GetTargetRecordCount(ctx context.Context, gr
 }
 
 // Helper methods from original processor
-func (p *MetricCompactionProcessor) performCompaction(ctx context.Context, tmpDir string, storageClient cloudstorage.Client, compactionKey messages.CompactionKey, storageProfile storageprofile.StorageProfile, activeSegments []lrdb.MetricSeg, recordCountEstimate int64) ([]lrdb.MetricSeg, []parquetwriter.Result, error) {
+func (p *MetricCompactionProcessor) performCompaction(ctx context.Context, tmpDir string, storageClient cloudstorage.Client, compactionKey messages.CompactionKey, storageProfile storageprofile.StorageProfile, activeSegments []lrdb.MetricSeg, recordCountEstimate int64) ([]parquetwriter.Result, error) {
 	params := metricProcessingParams{
 		TmpDir:         tmpDir,
 		StorageClient:  storageClient,
@@ -75,12 +75,12 @@ func (p *MetricCompactionProcessor) performCompaction(ctx context.Context, tmpDi
 		MaxRecords:     recordCountEstimate * 2, // safety net
 	}
 
-	result, err := processMetricsWithAggregation(ctx, params)
+	results, err := processMetricsWithAggregation(ctx, params)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	return result.ProcessedSegments, result.Results, nil
+	return results, nil
 }
 
 func (p *MetricCompactionProcessor) uploadAndCreateSegments(ctx context.Context, client cloudstorage.Client, profile storageprofile.StorageProfile, results []parquetwriter.Result, key messages.CompactionKey, inputSegments []lrdb.MetricSeg) ([]lrdb.MetricSeg, error) {
@@ -281,25 +281,6 @@ func (p *MetricCompactionProcessor) markSegmentsAsCompacted(ctx context.Context,
 	})
 }
 
-func (p *MetricCompactionProcessor) logCompactionOperation(ctx context.Context, storageProfile storageprofile.StorageProfile, inputSegments, outputSegments []lrdb.MetricSeg, results []parquetwriter.Result, key messages.CompactionKey, recordEstimate int64) error {
-	return logSegmentOperation(
-		ctx,
-		p.store,
-		inputSegments,
-		outputSegments,
-		results,
-		key.OrganizationID,
-		storageProfile.CollectorName,
-		key.DateInt,
-		key.InstanceNum,
-		recordEstimate,
-		2,               // 2 = compact
-		key.FrequencyMs, // For compaction, source and dest frequency are same
-		key.FrequencyMs,
-		p.getHourFromTimestamp,
-	)
-}
-
 // ProcessBundle processes a compaction bundle directly (simplified interface)
 func (p *MetricCompactionProcessor) ProcessBundle(ctx context.Context, key messages.CompactionKey, msgs []*messages.MetricCompactionMessage, partition int32, offset int64) error {
 	ll := logctx.FromContext(ctx)
@@ -401,7 +382,7 @@ func (p *MetricCompactionProcessor) ProcessBundle(ctx context.Context, key messa
 		slog.Int("activeSegments", len(activeSegments)))
 
 	// Perform the core compaction logic
-	processedSegments, results, err := p.performCompaction(ctx, tmpDir, storageClient, key, storageProfile, activeSegments, recordCountEstimate)
+	results, err := p.performCompaction(ctx, tmpDir, storageClient, key, storageProfile, activeSegments, recordCountEstimate)
 	if err != nil {
 		return fmt.Errorf("perform compaction: %w", err)
 	}
@@ -430,14 +411,6 @@ func (p *MetricCompactionProcessor) ProcessBundle(ctx context.Context, key messa
 	for _, result := range results {
 		totalRecords += result.RecordCount
 		totalSize += result.FileSize
-	}
-
-	// Log the compaction operation to segment_journal for debugging (if enabled)
-	if p.cfg.SegLog.Enabled {
-		if err := p.logCompactionOperation(ctx, storageProfile, processedSegments, newSegments, results, key, recordCountEstimate); err != nil {
-			// Don't fail the compaction if seg_log fails - this is just for debugging
-			ll.Warn("Failed to log compaction operation to segment_journal", slog.Any("error", err))
-		}
 	}
 
 	ll.Info("Compaction completed successfully",

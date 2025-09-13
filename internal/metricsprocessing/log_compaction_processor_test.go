@@ -58,18 +58,13 @@ func (m *MockLogCompactionStore) GetLogEstimate(ctx context.Context, orgID uuid.
 	return args.Get(0).(int64)
 }
 
-func (m *MockLogCompactionStore) InsertSegmentJournal(ctx context.Context, params lrdb.InsertSegmentJournalParams) error {
-	args := m.Called(ctx, params)
-	return args.Error(0)
-}
-
 func TestLogCompactionProcessor_New(t *testing.T) {
 	store := &MockLogCompactionStore{}
 	processor := NewLogCompactionProcessor(store, nil, nil, &config.Config{})
 
 	assert.NotNil(t, processor)
 	assert.Equal(t, store, processor.store)
-	assert.NotNil(t, processor.CommonProcessorBase)
+	assert.NotNil(t, processor.cfg)
 }
 
 func TestLogCompactionProcessor_GetTargetRecordCount(t *testing.T) {
