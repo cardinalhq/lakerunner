@@ -63,7 +63,6 @@ func getConsumerLagCmd() *cobra.Command {
 	var topicFilter string
 	var jsonOutput bool
 	var detailed bool
-	var useHardcodedGroups bool
 
 	cmd := &cobra.Command{
 		Use:   "consumer-lag",
@@ -80,7 +79,7 @@ func getConsumerLagCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 
-			lags, err := getConsumerLag(ctx, factory, groupFilter, topicFilter, useHardcodedGroups)
+			lags, err := getConsumerLag(ctx, factory, groupFilter, topicFilter)
 			if err != nil {
 				return err
 			}
@@ -104,117 +103,59 @@ func getConsumerLagCmd() *cobra.Command {
 	cmd.Flags().StringVar(&topicFilter, "topic", "", "Filter by topic substring (optional)")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
 	cmd.Flags().BoolVar(&detailed, "detailed", false, "Show detailed partition-level information")
-	cmd.Flags().BoolVar(&useHardcodedGroups, "use-hardcoded-groups", false, "Use hardcoded group mappings instead of discovering all groups")
 
 	return cmd
 }
 
-func getConsumerLag(ctx context.Context, factory *fly.Factory, groupFilter, topicFilter string, useHardcodedGroups bool) ([]PartitionLag, error) {
+func getConsumerLag(ctx context.Context, factory *fly.Factory, groupFilter, topicFilter string) ([]PartitionLag, error) {
 	// Create admin client using the factory's config
 	conf := factory.GetConfig()
-	adminClient := fly.NewAdminClient(conf)
+	adminClient, err := fly.NewAdminClient(conf)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create admin client: %w", err)
+	}
 
-	var allLags []PartitionLag
+	// Use the consumer lag monitor service mappings
+	monitor, err := fly.NewConsumerLagMonitor(conf, time.Minute) // Poll interval not important here
+	if err != nil {
+		return nil, fmt.Errorf("failed to create consumer lag monitor: %w", err)
+	}
+	serviceMappings := monitor.GetServiceMappings()
 
-	if useHardcodedGroups {
-		// Use the old hardcoded mappings for backwards compatibility
-		topicGroups := map[string]string{
-			"lakerunner.objstore.ingest.metrics": "lakerunner.ingest.metrics",
-			"lakerunner.objstore.ingest.logs":    "lakerunner.ingest.logs",
-			"lakerunner.objstore.ingest.traces":  "lakerunner.ingest.traces",
-		}
-
+	// Build topic groups from service mappings
+	topicGroups := make(map[string]string)
+	for _, mapping := range serviceMappings {
 		// Apply filters
-		if groupFilter != "" || topicFilter != "" {
-			filteredTopicGroups := make(map[string]string)
-			for topic, groupID := range topicGroups {
-				if groupFilter != "" && !strings.Contains(groupID, groupFilter) {
-					continue
-				}
-				if topicFilter != "" && !strings.Contains(topic, topicFilter) {
-					continue
-				}
-				filteredTopicGroups[topic] = groupID
-			}
-			topicGroups = filteredTopicGroups
+		if groupFilter != "" && !strings.Contains(mapping.ConsumerGroup, groupFilter) {
+			continue
 		}
+		if topicFilter != "" && !strings.Contains(mapping.Topic, topicFilter) {
+			continue
+		}
+		topicGroups[mapping.Topic] = mapping.ConsumerGroup
+	}
 
-		// Get lag information using the admin client
-		lagInfos, err := adminClient.GetMultipleConsumerGroupLag(ctx, topicGroups)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get consumer group lag: %w", err)
-		}
+	if len(topicGroups) == 0 {
+		return nil, fmt.Errorf("no topic/group combinations found matching filters")
+	}
 
-		// Convert to our output format
-		for _, lagInfo := range lagInfos {
-			allLags = append(allLags, PartitionLag{
-				Topic:         lagInfo.Topic,
-				Partition:     lagInfo.Partition,
-				CurrentOffset: lagInfo.CommittedOffset,
-				HighWaterMark: lagInfo.HighWaterMark,
-				Lag:           lagInfo.Lag,
-				ConsumerGroup: lagInfo.GroupID,
-			})
-		}
-	} else {
-		// Dynamically discover all topics and groups
-		topics := config.KafkaTopics
-		if topicFilter != "" {
-			// Filter topics if specified
-			filteredTopics := []string{}
-			for _, topic := range topics {
-				if strings.Contains(topic, topicFilter) {
-					filteredTopics = append(filteredTopics, topic)
-				}
-			}
-			topics = filteredTopics
-		}
+	// Get lag information using the admin client
+	lagInfos, err := adminClient.GetMultipleConsumerGroupLag(ctx, topicGroups)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get consumer group lags: %w", err)
+	}
 
-		if len(topics) == 0 {
-			return nil, fmt.Errorf("no topics found matching filter")
-		}
-
-		// Create Kafka client to discover groups
-		client, err := factory.CreateKafkaClient()
-		if err != nil {
-			return nil, fmt.Errorf("failed to create Kafka client: %w", err)
-		}
-
-		// Discover all consumer groups
-		listGroupsResp, err := client.ListGroups(ctx, &kafka.ListGroupsRequest{})
-		if err != nil {
-			return nil, fmt.Errorf("failed to list consumer groups: %w", err)
-		}
-
-		// Filter groups if specified
-		groups := []string{}
-		for _, group := range listGroupsResp.Groups {
-			if groupFilter == "" || strings.Contains(group.GroupID, groupFilter) {
-				groups = append(groups, group.GroupID)
-			}
-		}
-
-		if len(groups) == 0 {
-			return nil, fmt.Errorf("no consumer groups found matching filter")
-		}
-
-		// Use the new optimized batch method to get all lag information at once
-		lagInfos, err := adminClient.GetAllConsumerGroupLags(ctx, topics, groups)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get consumer group lags: %w", err)
-		}
-
-		// Convert to our output format
-		for _, lagInfo := range lagInfos {
-			allLags = append(allLags, PartitionLag{
-				Topic:         lagInfo.Topic,
-				Partition:     lagInfo.Partition,
-				CurrentOffset: lagInfo.CommittedOffset,
-				HighWaterMark: lagInfo.HighWaterMark,
-				Lag:           lagInfo.Lag,
-				ConsumerGroup: lagInfo.GroupID,
-			})
-		}
+	// Convert to our output format
+	var allLags []PartitionLag
+	for _, lagInfo := range lagInfos {
+		allLags = append(allLags, PartitionLag{
+			Topic:         lagInfo.Topic,
+			Partition:     lagInfo.Partition,
+			CurrentOffset: lagInfo.CommittedOffset,
+			HighWaterMark: lagInfo.HighWaterMark,
+			Lag:           lagInfo.Lag,
+			ConsumerGroup: lagInfo.GroupID,
+		})
 	}
 
 	// Sort by topic, group, then partition
@@ -259,12 +200,21 @@ func printLagSummary(lags []PartitionLag) error {
 
 		summaries[key].PartitionCount++
 
-		// Check for N/A or 0 current offset
-		if lag.CurrentOffset <= 0 {
-			warningMsg := fmt.Sprintf("WARNING: Partition %d of topic %s has current_offset=%d, high=%d, lag=%d (excluded from calculations)",
-				lag.Partition, lag.Topic, lag.CurrentOffset, lag.HighWaterMark, lag.Lag)
+		// Check for committed offsets
+		if lag.CurrentOffset < 0 {
+			// No committed offset yet - this is normal for new consumer groups
+			// Include the lag (which equals high water mark) in calculations
+			summaries[key].TotalLag += lag.Lag
+			summaries[key].ValidPartitions++
+		} else if lag.CurrentOffset == 0 && lag.HighWaterMark > 0 {
+			// Consumer has committed offset 0 but there are messages - might be an issue
+			warningMsg := fmt.Sprintf("WARNING: Partition %d of topic %s has committed offset 0 but high_water_mark=%d, lag=%d",
+				lag.Partition, lag.Topic, lag.HighWaterMark, lag.Lag)
 			warnings = append(warnings, warningMsg)
+			summaries[key].TotalLag += lag.Lag
+			summaries[key].ValidPartitions++
 		} else {
+			// Normal case with committed offsets
 			summaries[key].TotalLag += lag.Lag
 			summaries[key].ValidPartitions++
 		}

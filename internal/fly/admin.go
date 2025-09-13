@@ -47,26 +47,27 @@ type ConsumerGroupInfo struct {
 
 // AdminClient provides Kafka administrative operations
 type AdminClient struct {
-	factory *Factory
+	client *kafka.Client
 }
 
 // NewAdminClient creates a new Kafka admin client
-func NewAdminClient(config *Config) *AdminClient {
-	return &AdminClient{factory: NewFactory(config)}
+func NewAdminClient(config *Config) (*AdminClient, error) {
+	factory := NewFactory(config)
+	client, err := factory.CreateKafkaClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Kafka client: %w", err)
+	}
+	return &AdminClient{client: client}, nil
 }
 
 // GetTopicInfo retrieves information about a specific topic
 func (a *AdminClient) GetTopicInfo(ctx context.Context, topic string) (*TopicInfo, error) {
-	// Create Kafka client using centralized factory
-	client, err := a.factory.CreateKafkaClient()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Kafka client: %w", err)
-	}
+	client := a.client
 
 	// Get metadata for all topics to find our target topic with retry
 	var targetTopic *kafka.Topic
 	maxRetries := 3
-	for attempt := 0; attempt < maxRetries; attempt++ {
+	for attempt := range maxRetries {
 		resp, err := client.Metadata(ctx, &kafka.MetadataRequest{})
 		if err != nil {
 			return nil, fmt.Errorf("failed to get Kafka metadata: %w", err)
@@ -146,11 +147,8 @@ func (a *AdminClient) GetConsumerGroupLag(ctx context.Context, topic, groupID st
 
 	var result []ConsumerGroupInfo
 
-	// Create authenticated client to get committed offsets
-	client, err := a.factory.CreateKafkaClient()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Kafka client: %w", err)
-	}
+	// Use client to get committed offsets
+	client := a.client
 
 	// Get committed offsets for all partitions using OffsetFetch API
 	req := &kafka.OffsetFetchRequest{
@@ -230,11 +228,8 @@ func (a *AdminClient) GetMultipleConsumerGroupLag(ctx context.Context, topicGrou
 
 // TopicExists checks if a topic exists
 func (a *AdminClient) TopicExists(ctx context.Context, topic string) (bool, error) {
-	// Create Kafka client using centralized factory
-	client, err := a.factory.CreateKafkaClient()
-	if err != nil {
-		return false, fmt.Errorf("failed to create Kafka client: %w", err)
-	}
+	// Use Kafka client
+	client := a.client
 
 	// Get metadata for all topics to find our target topic
 	resp, err := client.Metadata(ctx, &kafka.MetadataRequest{})
@@ -252,19 +247,18 @@ func (a *AdminClient) TopicExists(ctx context.Context, topic string) (bool, erro
 	return false, nil
 }
 
-// GetAllConsumerGroupLags efficiently retrieves lag information for multiple groups and topics in batch
-func (a *AdminClient) GetAllConsumerGroupLags(ctx context.Context, topics []string, groups []string) ([]ConsumerGroupInfo, error) {
-	// Create authenticated client
-	client, err := a.factory.CreateKafkaClient()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Kafka client: %w", err)
-	}
+// TopicPartitionInfo holds partition information for a topic
+type TopicPartitionInfo struct {
+	Topic      string
+	Partitions []int
+}
 
-	// First, get metadata for all topics to determine partitions and high water marks
-	topicPartitions := make(map[string][]int)
-	highWaterMarks := make(map[string]map[int]int64) // topic -> partition -> high water mark
+// HighWaterMarkMap maps topic -> partition -> high water mark
+type HighWaterMarkMap map[string]map[int]int64
 
-	// Build list offset requests for all topics at once
+// fetchTopicMetadata retrieves topic metadata and partition information
+func (a *AdminClient) fetchTopicMetadata(ctx context.Context, client *kafka.Client, topics []string) ([]TopicPartitionInfo, map[string][]kafka.OffsetRequest, error) {
+	var topicInfo []TopicPartitionInfo
 	listOffsetReqs := make(map[string][]kafka.OffsetRequest)
 
 	for _, topic := range topics {
@@ -289,7 +283,10 @@ func (a *AdminClient) GetAllConsumerGroupLags(ctx context.Context, topics []stri
 					offsetReqs = append(offsetReqs, kafka.LastOffsetOf(p.ID))
 				}
 
-				topicPartitions[topic] = partitions
+				topicInfo = append(topicInfo, TopicPartitionInfo{
+					Topic:      topic,
+					Partitions: partitions,
+				})
 				listOffsetReqs[topic] = offsetReqs
 				found = true
 				break
@@ -301,85 +298,140 @@ func (a *AdminClient) GetAllConsumerGroupLags(ctx context.Context, topics []stri
 		}
 	}
 
-	// Batch fetch all high water marks
-	if len(listOffsetReqs) > 0 {
-		listOffsetsResp, err := client.ListOffsets(ctx, &kafka.ListOffsetsRequest{
-			Topics: listOffsetReqs,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to list offsets: %w", err)
-		}
+	return topicInfo, listOffsetReqs, nil
+}
 
-		// Store high water marks
-		for topic, partitionOffsets := range listOffsetsResp.Topics {
-			if highWaterMarks[topic] == nil {
-				highWaterMarks[topic] = make(map[int]int64)
-			}
-			for _, po := range partitionOffsets {
-				if po.Error == nil {
-					highWaterMarks[topic][po.Partition] = po.LastOffset
-				}
+// fetchHighWaterMarks retrieves high water marks for all topic partitions
+func (a *AdminClient) fetchHighWaterMarks(ctx context.Context, client *kafka.Client, listOffsetReqs map[string][]kafka.OffsetRequest) (HighWaterMarkMap, error) {
+	highWaterMarks := make(HighWaterMarkMap)
+
+	if len(listOffsetReqs) == 0 {
+		return highWaterMarks, nil
+	}
+
+	listOffsetsResp, err := client.ListOffsets(ctx, &kafka.ListOffsetsRequest{
+		Topics: listOffsetReqs,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list offsets: %w", err)
+	}
+
+	// Store high water marks
+	for topic, partitionOffsets := range listOffsetsResp.Topics {
+		if highWaterMarks[topic] == nil {
+			highWaterMarks[topic] = make(map[int]int64)
+		}
+		for _, po := range partitionOffsets {
+			if po.Error == nil {
+				highWaterMarks[topic][po.Partition] = po.LastOffset
 			}
 		}
 	}
 
-	// Now fetch committed offsets for all groups
+	return highWaterMarks, nil
+}
+
+// fetchConsumerGroupOffsets retrieves committed offsets for a single consumer group
+func (a *AdminClient) fetchConsumerGroupOffsets(ctx context.Context, client *kafka.Client, groupID string, topicInfo []TopicPartitionInfo) (map[string][]kafka.OffsetFetchPartition, error) {
+	// Build request for all topics and partitions for this group
+	offsetFetchTopics := make(map[string][]int)
+	for _, info := range topicInfo {
+		offsetFetchTopics[info.Topic] = info.Partitions
+	}
+
+	if len(offsetFetchTopics) == 0 {
+		return nil, nil
+	}
+
+	// Fetch all offsets for this group in one request
+	offsetResp, err := client.OffsetFetch(ctx, &kafka.OffsetFetchRequest{
+		GroupID: groupID,
+		Topics:  offsetFetchTopics,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch offsets for group %s: %w", groupID, err)
+	}
+
+	return offsetResp.Topics, nil
+}
+
+// calculateLag computes the lag for a partition given committed offset and high water mark
+func calculateLag(committedOffset, highWaterMark int64) int64 {
+	if committedOffset >= 0 {
+		return max(highWaterMark-committedOffset, 0)
+	}
+	// If no committed offset, lag is the total messages in partition
+	return highWaterMark
+}
+
+// processConsumerGroupLags processes offset responses and creates ConsumerGroupInfo records
+func (a *AdminClient) processConsumerGroupLags(groupID string, offsetTopics map[string][]kafka.OffsetFetchPartition, highWaterMarks HighWaterMarkMap) []ConsumerGroupInfo {
 	var result []ConsumerGroupInfo
 
-	for _, groupID := range groups {
-		// Build request for all topics and partitions for this group
-		offsetFetchTopics := make(map[string][]int)
-		for topic, partitions := range topicPartitions {
-			offsetFetchTopics[topic] = partitions
-		}
-
-		if len(offsetFetchTopics) == 0 {
+	for topic, partitionOffsets := range offsetTopics {
+		hwmMap, exists := highWaterMarks[topic]
+		if !exists {
 			continue
 		}
 
-		// Fetch all offsets for this group in one request
-		offsetResp, err := client.OffsetFetch(ctx, &kafka.OffsetFetchRequest{
-			GroupID: groupID,
-			Topics:  offsetFetchTopics,
-		})
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to fetch offsets for group %s: %v\n", groupID, err)
-			continue
-		}
+		for _, po := range partitionOffsets {
+			// Skip if there's an error
+			if po.Error != nil {
+				continue
+			}
 
-		// Process the response
-		for topic, partitionOffsets := range offsetResp.Topics {
-			hwmMap, exists := highWaterMarks[topic]
+			hwm, exists := hwmMap[po.Partition]
 			if !exists {
 				continue
 			}
 
-			for _, po := range partitionOffsets {
-				// Skip if there's an error or no committed offset
-				if po.Error != nil || po.CommittedOffset < 0 {
-					continue
-				}
+			lag := calculateLag(po.CommittedOffset, hwm)
 
-				hwm, exists := hwmMap[po.Partition]
-				if !exists {
-					continue
-				}
-
-				lag := int64(0)
-				if po.CommittedOffset >= 0 {
-					lag = max(hwm-po.CommittedOffset, 0)
-				}
-
-				result = append(result, ConsumerGroupInfo{
-					GroupID:         groupID,
-					Topic:           topic,
-					Partition:       po.Partition,
-					CommittedOffset: po.CommittedOffset,
-					HighWaterMark:   hwm,
-					Lag:             lag,
-				})
-			}
+			result = append(result, ConsumerGroupInfo{
+				GroupID:         groupID,
+				Topic:           topic,
+				Partition:       po.Partition,
+				CommittedOffset: po.CommittedOffset,
+				HighWaterMark:   hwm,
+				Lag:             lag,
+			})
 		}
+	}
+
+	return result
+}
+
+// GetAllConsumerGroupLags efficiently retrieves lag information for multiple groups and topics in batch
+func (a *AdminClient) GetAllConsumerGroupLags(ctx context.Context, topics []string, groups []string) ([]ConsumerGroupInfo, error) {
+	// Use client
+	client := a.client
+
+	// Fetch topic metadata and build offset requests
+	topicInfo, listOffsetReqs, err := a.fetchTopicMetadata(ctx, client, topics)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch topic metadata: %w", err)
+	}
+
+	// Batch fetch all high water marks
+	highWaterMarks, err := a.fetchHighWaterMarks(ctx, client, listOffsetReqs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch high water marks: %w", err)
+	}
+
+	// Fetch committed offsets for all groups and process results
+	var result []ConsumerGroupInfo
+	for _, groupID := range groups {
+		offsetTopics, err := a.fetchConsumerGroupOffsets(ctx, client, groupID, topicInfo)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+			continue
+		}
+		if offsetTopics == nil {
+			continue
+		}
+
+		groupLags := a.processConsumerGroupLags(groupID, offsetTopics, highWaterMarks)
+		result = append(result, groupLags...)
 	}
 
 	return result, nil

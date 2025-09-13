@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -41,12 +42,53 @@ type KafkaTestContainer struct {
 	broker    string
 }
 
+// cleanupExistingKafkaContainers removes any hanging Kafka containers
+func cleanupExistingKafkaContainers() {
+	// Find and stop any existing fast-data-dev containers
+	cmd := exec.Command("docker", "ps", "-a", "--filter", "ancestor=lensesio/fast-data-dev:3.6.1-L0", "--format", "{{.ID}}")
+	output, err := cmd.Output()
+	if err != nil {
+		return // Ignore errors, might not have docker or containers
+	}
+
+	containerIDs := strings.Fields(strings.TrimSpace(string(output)))
+	if len(containerIDs) > 0 {
+		fmt.Printf("Cleaning up %d existing Kafka containers...\n", len(containerIDs))
+
+		// Stop containers
+		stopCmd := append([]string{"stop"}, containerIDs...)
+		exec.Command("docker", stopCmd...).Run()
+
+		// Remove containers
+		rmCmd := append([]string{"rm"}, containerIDs...)
+		exec.Command("docker", rmCmd...).Run()
+
+		fmt.Printf("Cleanup completed\n")
+	}
+}
+
 // TestMain sets up and tears down the shared Kafka container
 func TestMain(m *testing.M) {
+	// Ensure cleanup happens even on panic or early exit
+	var container *gnomock.Container
+	defer func() {
+		if container != nil {
+			if err := gnomock.Stop(container); err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to stop shared Kafka container: %v\n", err)
+			} else {
+				fmt.Printf("Shared Kafka container stopped successfully\n")
+			}
+		}
+	}()
+
+	// Clean up any existing containers that might be hanging around
+	cleanupExistingKafkaContainers()
+
 	// Start shared Kafka container
 	preset := kafkapreset.Preset() // No initial topics - we'll create them as needed
 
-	container, err := gnomock.Start(
+	var err error
+	container, err = gnomock.Start(
 		preset,
 		gnomock.WithDebugMode(), // Enable debug for better troubleshooting
 	)
@@ -63,20 +105,16 @@ func TestMain(m *testing.M) {
 		broker:    broker,
 	}
 
-	// Wait for Kafka to be fully ready
-	if !waitForKafkaReady(broker, 10*time.Second) {
+	// Wait for Kafka to be fully ready with a longer timeout
+	if !waitForKafkaReady(broker, 30*time.Second) {
 		fmt.Fprintf(os.Stderr, "Kafka container did not become ready within timeout\n")
-		gnomock.Stop(container)
 		os.Exit(1)
 	}
 
+	fmt.Printf("Kafka container is ready, running tests...\n")
+
 	// Run tests
 	code := m.Run()
-
-	// Cleanup shared container
-	if err := gnomock.Stop(container); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to stop shared Kafka container: %v\n", err)
-	}
 
 	os.Exit(code)
 }
@@ -223,7 +261,8 @@ func (k *KafkaTestContainer) WaitForTopicsReady(t *testing.T, topics ...string) 
 	config := &Config{
 		Brokers: []string{k.broker},
 	}
-	adminClient := NewAdminClient(config)
+	adminClient, err := NewAdminClient(config)
+	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), maxWaitTime)
 	defer cancel()
