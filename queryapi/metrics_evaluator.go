@@ -1,7 +1,7 @@
 // Copyright (C) 2025 CardinalHQ, Inc
 //
 // This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Affero General Public License as
+// it under the terms of the GNU Affero General Public License, as
 // published by the Free Software Foundation, version 3.
 //
 // This program is distributed in the hope that it will be useful,
@@ -100,6 +100,108 @@ func runOrderedCoordinator(ctx context.Context, regs <-chan groupReg) <-chan pro
 		}
 	}()
 	return out
+}
+
+// ---------- window helpers ----------
+
+// splitTimeWindows partitions [start, end) into n contiguous windows.
+// Windows are [w[i], w[i+1)) and cover the whole range. n is clamped to [1..].
+func splitTimeWindows(start, end int64, n int) [][2]int64 {
+	if n <= 1 || end <= start {
+		return [][2]int64{{start, end}}
+	}
+	d := end - start
+	if d < int64(n) {
+		// more windows than milliseconds; collapse to single to avoid degenerate ranges
+		return [][2]int64{{start, end}}
+	}
+	wins := make([][2]int64, 0, n)
+	step := d / int64(n)
+	cur := start
+	for i := 0; i < n-1; i++ {
+		next := cur + step
+		wins = append(wins, [2]int64{cur, next})
+		cur = next
+	}
+	wins = append(wins, [2]int64{cur, end})
+	return wins
+}
+
+// segmentsInWindow returns segments that intersect [ws, we).
+func segmentsInWindow(segments []SegmentInfo, ws, we int64) []SegmentInfo {
+	out := make([]SegmentInfo, 0, len(segments))
+	for _, s := range segments {
+		// overlap if s.StartTs < we && s.EndTs > ws
+		if s.StartTs < we && s.EndTs > ws {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// concatChannels concatenates time-disjoint channels in order, forwarding all elems.
+func concatChannels[T any](ctx context.Context, chans []<-chan T, outBuf int) <-chan T {
+	out := make(chan T, outBuf)
+	go func() {
+		defer close(out)
+		for i := 0; i < len(chans); i++ {
+			ch := chans[i]
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case v, ok := <-ch:
+					if !ok {
+						ch = nil
+						goto nextChan
+					}
+					select {
+					case <-ctx.Done():
+						return
+					case out <- v:
+					}
+				}
+			}
+		nextChan:
+		}
+	}()
+	return out
+}
+
+// chooseWorkerForWindow picks a single worker for a window.
+// Strategy: pick the worker that "owns" the most segments intersecting the window.
+// Pass in a map segmentID -> owning Worker for fast lookup.
+func chooseWorkerForWindow(
+	workers []Worker,
+	ownerBySeg map[int64]Worker,
+	windowSegs []SegmentInfo,
+) (Worker, bool) {
+	if len(workers) == 0 {
+		return Worker{}, false
+	}
+	if len(windowSegs) == 0 {
+		// no segments → pick any worker (they'll return empty fast)
+		return workers[0], true
+	}
+	counts := make(map[Worker]int, len(workers))
+	for _, s := range windowSegs {
+		if w, ok := ownerBySeg[s.SegmentID]; ok {
+			counts[w]++
+		}
+	}
+	// choose max; fallback to first worker
+	var best Worker
+	bestScore := -1
+	for _, w := range workers {
+		if counts[w] > bestScore {
+			best = w
+			bestScore = counts[w]
+		}
+	}
+	if bestScore < 0 {
+		return workers[0], true
+	}
+	return best, true
 }
 
 func (q *QuerierService) EvaluateMetricsQuery(
@@ -213,7 +315,10 @@ func (q *QuerierService) EvaluateMetricsQuery(
 		sem := make(chan struct{}, maxParallel)
 		var regWG sync.WaitGroup
 
-		for gi, group := range groups {
+		for gi, g := range groups {
+			giCopy := gi
+			gCopy := g // capture the group value to avoid races / typing issues
+
 			regWG.Add(1)
 			sem <- struct{}{}
 			go func() {
@@ -222,70 +327,92 @@ func (q *QuerierService) EvaluateMetricsQuery(
 
 				// split group by leaf
 				segmentsByLeaf := make(map[string][]SegmentInfo)
-				for _, s := range group.Segments {
+				for _, s := range gCopy.Segments {
 					segmentsByLeaf[s.ExprID] = append(segmentsByLeaf[s.ExprID], s)
 				}
 
-				// per-leaf: per-worker pushdowns → merge (per leaf)
+				// per-leaf: shard time windows → one worker per window → concat windows
 				leafChans := make([]<-chan promql.SketchInput, 0, len(segmentsByLeaf))
 				for leafID, segmentsForLeaf := range segmentsByLeaf {
 					leaf := leavesByID[leafID]
+
 					offMs, err := parseOffsetMs(leaf.Offset)
 					if err != nil {
 						slog.Error("invalid offset on leaf; ignoring offset", "offset", leaf.Offset, "err", err)
 						offMs = 0
 					}
 
-					// build worker mapping for only this leaf’s segments
+					// candidate workers for this group
+					allWorkers, err := q.workerDiscovery.GetAllWorkers()
+					if err != nil || len(allWorkers) == 0 {
+						slog.Error("no workers available for windows", "err", err)
+						continue
+					}
+
+					// Build owner map (segmentID -> worker) for locality scoring.
 					segmentIDs := make([]int64, 0, len(segmentsForLeaf))
-					segmentMap := make(map[int64]SegmentInfo, len(segmentsForLeaf))
 					for _, s := range segmentsForLeaf {
 						segmentIDs = append(segmentIDs, s.SegmentID)
-						segmentMap[s.SegmentID] = s
 					}
-					mappings, err := q.workerDiscovery.GetWorkersForSegments(orgID, segmentIDs)
-					if err != nil {
-						slog.Error("failed to get worker assignments", "err", err)
-						continue
-					}
-					workerGroups := make(map[Worker][]SegmentInfo)
+					mappings, _ := q.workerDiscovery.GetWorkersForSegments(orgID, segmentIDs)
+					ownerBySeg := make(map[int64]Worker, len(mappings))
 					for _, m := range mappings {
-						workerGroups[m.Worker] = append(workerGroups[m.Worker], segmentMap[m.SegmentID])
-					}
-					if len(workerGroups) == 0 {
-						slog.Error("no worker assignments for leaf segments; skipping leaf", "leafID", leafID, "numLeafSegments", len(segmentsForLeaf))
-						continue
+						ownerBySeg[m.SegmentID] = m.Worker
 					}
 
-					slog.Info("Pushing down segments",
-						"groupIndex", gi, "leafID", leafID, "leafSegments", len(segmentsForLeaf),
-						"groupStart", group.StartTs, "groupEnd", group.EndTs)
+					// Decide how many windows for this leaf/group.
+					numWindows := len(allWorkers)
+					if numWindows > 4 {
+						numWindows = 4
+					}
+					if numWindows < 1 {
+						numWindows = 1
+					}
+					wins := splitTimeWindows(gCopy.StartTs, gCopy.EndTs, numWindows)
+					winChans := make([]<-chan promql.SketchInput, 0, len(wins))
 
-					workerChans := make([]<-chan promql.SketchInput, 0, len(workerGroups))
-					for worker, wsegs := range workerGroups {
+					slog.Info("Window sharding",
+						"groupIndex", giCopy, "leafID", leafID,
+						"windows", len(wins), "groupStart", gCopy.StartTs, "groupEnd", gCopy.EndTs)
+
+					for wi, wbd := range wins {
+						ws, we := wbd[0], wbd[1]
+						wSegs := segmentsInWindow(segmentsForLeaf, ws, we)
+
+						// choose one worker for this window (locality-aware)
+						worker, ok := chooseWorkerForWindow(allWorkers, ownerBySeg, wSegs)
+						if !ok {
+							slog.Error("no worker for window; skipping", "leafID", leafID, "winIndex", wi)
+							continue
+						}
+
 						req := PushDownRequest{
 							OrganizationID: orgID,
 							BaseExpr:       &leaf,
-							StartTs:        group.StartTs,
-							EndTs:          group.EndTs,
-							Segments:       wsegs,
+							StartTs:        ws,
+							EndTs:          we,
+							Segments:       wSegs,
 							Step:           stepDuration,
 						}
 						ch, err := q.metricsPushDown(ctx, worker, req)
 						if err != nil {
-							slog.Error("pushdown failed", "worker", worker, "err", err)
+							slog.Error("pushdown failed", "worker", worker, "err", err, "winIndex", wi)
 							continue
 						}
 						if offMs != 0 {
 							ch = shiftTimestamps(ctx, ch, offMs, 256)
 						}
-						workerChans = append(workerChans, ch)
+						winChans = append(winChans, ch)
 					}
-					if len(workerChans) == 0 {
-						slog.Error("no worker pushdowns survived; skipping leaf", "leafID", leafID)
+
+					if len(winChans) == 0 {
+						slog.Error("no window channels; skipping leaf", "leafID", leafID)
 						continue
 					}
-					leafChans = append(leafChans, promql.MergeSorted(ctx, 1024, false, 0, workerChans...))
+
+					// Concatenate window channels in order (no cross-worker k-way merge).
+					leafChan := concatChannels[promql.SketchInput](ctx, winChans, 1024)
+					leafChans = append(leafChans, leafChan)
 				}
 
 				// if nothing survived, register a closed stream to keep ordering happy
@@ -293,7 +420,7 @@ func (q *QuerierService) EvaluateMetricsQuery(
 					empty := make(chan promql.SketchInput)
 					close(empty)
 					select {
-					case regs <- groupReg{idx: gi, startTs: group.StartTs, endTs: group.EndTs, ch: empty}:
+					case regs <- groupReg{idx: giCopy, startTs: gCopy.StartTs, endTs: gCopy.EndTs, ch: empty}:
 					case <-ctx.Done():
 					}
 					return
@@ -301,15 +428,15 @@ func (q *QuerierService) EvaluateMetricsQuery(
 
 				// merge across leaves within this group and register immediately
 				groupChan := promql.MergeSorted(ctx, 1024, false, 0, leafChans...)
-				slog.Info("Registering group stream", "idx", gi, "groupStart", group.StartTs, "groupEnd", group.EndTs)
+				slog.Info("Registering group stream", "idx", giCopy, "groupStart", gCopy.StartTs, "groupEnd", gCopy.EndTs)
 				select {
-				case regs <- groupReg{idx: gi, startTs: group.StartTs, endTs: group.EndTs, ch: groupChan}:
+				case regs <- groupReg{idx: giCopy, startTs: gCopy.StartTs, endTs: gCopy.EndTs, ch: groupChan}:
 				case <-ctx.Done():
 					// if cancelled, still register a closed stream so coordinator advances
 					empty := make(chan promql.SketchInput)
 					close(empty)
 					select {
-					case regs <- groupReg{idx: gi, startTs: group.StartTs, endTs: group.EndTs, ch: empty}:
+					case regs <- groupReg{idx: giCopy, startTs: gCopy.StartTs, endTs: gCopy.EndTs, ch: empty}:
 					case <-ctx.Done():
 					}
 				}

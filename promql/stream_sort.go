@@ -19,13 +19,19 @@ import (
 	"context"
 )
 
-type Timestamped interface{ GetTimestamp() int64 }
+// Timestamped is the constraint for mergeable items.
+type Timestamped interface {
+	GetTimestamp() int64
+}
 
+// MergeSorted merges N locally-sorted channels into one globally-sorted stream.
+// reverse=false → ascending; reverse=true → descending.
+// limit=0 → unlimited; limit>0 → stop after emitting exactly limit items.
 func MergeSorted[T Timestamped](
 	ctx context.Context,
 	outBuf int,
 	reverse bool,
-	limit int,
+	limit int, // <-- new
 	chans ...<-chan T,
 ) <-chan T {
 	out := make(chan T, outBuf)
@@ -47,7 +53,7 @@ func MergeSorted[T Timestamped](
 		rsp[i] = make(chan headMsg, 1)
 	}
 
-	// Per-source fetchers
+	// Per-source fetchers.
 	for i, ch := range chans {
 		i, ch := i, ch
 		go func() {
@@ -80,7 +86,7 @@ func MergeSorted[T Timestamped](
 
 	go func() {
 		defer close(out)
-		defer func() {
+		defer func() { // unblock/wind-down sources
 			for i := range req {
 				close(req[i])
 			}
@@ -89,18 +95,17 @@ func MergeSorted[T Timestamped](
 		h := &headHeap[T]{reverse: reverse}
 		heap.Init(h)
 
-		open := make([]bool, len(chans))          // source still open (not EOF)
-		inHeap := make([]bool, len(chans))        // source currently has a head in the heap
-		closedPending := make([]bool, len(chans)) // hit EOF while its head was in-heap; close once popped
-		awaiting := make([]bool, len(chans))      // we popped from this source and requested next
-		lastTs := make([]int64, len(chans))       // last emitted timestamp per source (lower bound)
+		open := make([]bool, len(chans))
+		inHeap := make([]bool, len(chans))
+		closedPending := make([]bool, len(chans))
+		awaiting := make([]bool, len(chans))
 
 		openCount := len(chans)
-		initPending := len(chans) // number of sources we haven’t seen a first head (or EOF) from
+		initPending := len(chans)
 		haveHeads := 0
-		emitted := 0
+		emitted := 0 // <-- new
 
-		// Initial request to everyone: we need one lookahead from each to establish lower bounds.
+		// Request the first head from every source.
 		for i := range chans {
 			open[i] = true
 			awaiting[i] = true
@@ -169,86 +174,46 @@ func MergeSorted[T Timestamped](
 			}
 		}
 
-		// Safe-to-emit check:
-		//  - During initialization: require at least one head (or EOF) from every source.
-		//  - After that: allow emitting if the best head's TS >= max lastTs among all sources currently awaiting.
-		canEmit := func(bestTs int64) bool {
-			if initPending > 0 {
-				// Still establishing initial lower bounds — need a response from everyone.
-				return haveHeads == openCount && h.Len() > 0
-			}
-			// Compute lower bound across sources we popped from and are awaiting their next value.
-			var lb int64
-			for i := range chans {
-				if awaiting[i] {
-					if lastTs[i] > lb {
-						lb = lastTs[i]
-					}
-				}
-			}
-			// If no one is awaiting, lb is 0; any head is safe to emit.
-			if reverse {
-				// descending: best must be <= all nexts; our lower bound is an upper bound in this case.
-				// We conservatively still require full-heads on init; after that, descending safe check is:
-				// bestTs <= min(nextPossible[i]) but we only track lastTs (emitted) so mirror isn’t exact.
-				// If you need true descending, prefer to invert timestamps outside and merge ascending.
-				return true // keep behavior simple; or handle descending specifically if you use it.
-			}
-			return bestTs >= lb
-		}
-
 		for {
 			pollAll()
 
-			if h.Len() > 0 {
-				best := (*h).data[0] // peek
-				bestTs := best.val.GetTimestamp()
+			if initPending == 0 && haveHeads == openCount && h.Len() > 0 {
+				best := heap.Pop(h).(head[T])
+				src := best.src
+				inHeap[src] = false
+				haveHeads--
 
-				if canEmit(bestTs) {
-					// Now pop & advance that source
-					best = heap.Pop(h).(head[T])
-					src := best.src
-					inHeap[src] = false
-					haveHeads--
-
-					// Record lower bound for this src (its next >= lastTs[src])
-					lastTs[src] = best.val.GetTimestamp()
-
-					if closedPending[src] {
-						closedPending[src] = false
-						if open[src] {
-							open[src] = false
-							openCount--
-						}
-					} else {
-						awaiting[src] = true
-						select {
-						case <-ctx.Done():
-							return
-						case req[src] <- struct{}{}:
-						}
+				if closedPending[src] {
+					closedPending[src] = false
+					if open[src] {
+						open[src] = false
+						openCount--
 					}
-
-					// Emit
+				} else {
+					awaiting[src] = true
 					select {
 					case <-ctx.Done():
 						return
-					case out <- best.val:
+					case req[src] <- struct{}{}:
 					}
-					emitted++
-					if limit > 0 && emitted >= limit {
-						return
-					}
-					continue
 				}
+
+				// Emit the chosen item.
+				select {
+				case <-ctx.Done():
+					return
+				case out <- best.val:
+				}
+				emitted++ // <-- count it
+				if limit > 0 && emitted >= limit {
+					return // graceful stop: defers close(out) and close(req[*])
+				}
+				continue
 			}
 
-			// Drain condition
 			if openCount == 0 && h.Len() == 0 {
 				return
 			}
-
-			// Progress: block for at least one awaited response if we can't safely emit yet.
 			if !waitOne() {
 				select {
 				case <-ctx.Done():
@@ -271,20 +236,22 @@ type head[T Timestamped] struct {
 
 type headHeap[T Timestamped] struct {
 	data    []head[T]
-	reverse bool
+	reverse bool // when true, choose larger timestamps first
 }
 
-func (h *headHeap[T]) Len() int      { return len(h.data) }
-func (h *headHeap[T]) Swap(i, j int) { h.data[i], h.data[j] = h.data[j], h.data[i] }
+func (h *headHeap[T]) Len() int { return len(h.data) }
+
 func (h *headHeap[T]) Less(i, j int) bool {
 	ti := h.data[i].val.GetTimestamp()
 	tj := h.data[j].val.GetTimestamp()
 	if h.reverse {
-		return ti > tj
+		return ti > tj // max-heap behavior by timestamp
 	}
-	return ti < tj
+	return ti < tj // min-heap behavior by timestamp
 }
-func (h *headHeap[T]) Push(x any) { h.data = append(h.data, x.(head[T])) }
+
+func (h *headHeap[T]) Swap(i, j int) { h.data[i], h.data[j] = h.data[j], h.data[i] }
+func (h *headHeap[T]) Push(x any)    { h.data = append(h.data, x.(head[T])) }
 func (h *headHeap[T]) Pop() any {
 	n := len(h.data)
 	v := h.data[n-1]
