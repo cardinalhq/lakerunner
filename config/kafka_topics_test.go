@@ -15,6 +15,8 @@
 package config
 
 import (
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -28,11 +30,11 @@ func TestTopicRegistry_DefaultConfig(t *testing.T) {
 	registry := cfg.TopicRegistry
 
 	tests := []struct {
-		name               string
-		topicKey           string
-		expectedTopicName  string
+		name                  string
+		topicKey              string
+		expectedTopicName     string
 		expectedConsumerGroup string
-		expectedServiceType string
+		expectedServiceType   string
 	}{
 		{
 			name:                  "objstore ingest logs",
@@ -205,7 +207,7 @@ func TestTopicRegistry_GetObjstoreIngestTopic(t *testing.T) {
 		{"logs", "lakerunner.objstore.ingest.logs"},
 		{"metrics", "lakerunner.objstore.ingest.metrics"},
 		{"traces", "lakerunner.objstore.ingest.traces"},
-		{"LOGS", "lakerunner.objstore.ingest.logs"}, // Test case insensitive
+		{"LOGS", "lakerunner.objstore.ingest.logs"},       // Test case insensitive
 		{"unknown", "lakerunner.objstore.ingest.unknown"}, // Test fallback
 	}
 
@@ -286,20 +288,20 @@ func TestTopicRegistry_GenerateKafkaSyncConfig(t *testing.T) {
 	kafkaConfig := KafkaTopicsConfig{
 		TopicPrefix: "lakerunner",
 		Defaults: TopicCreationConfig{
-			PartitionCount:    intPtr(16),
-			ReplicationFactor: intPtr(2),
+			PartitionCount:    testIntPtr(16),
+			ReplicationFactor: testIntPtr(2),
 			Options: map[string]interface{}{
-				"cleanup.policy":     "delete",
+				"cleanup.policy":    "delete",
 				"max.message.bytes": "10485760",
 				"retention.ms":      "604800000",
 			},
 		},
 		Topics: map[string]TopicCreationConfig{
 			"ingest-logs": {
-				PartitionCount: intPtr(32),
+				PartitionCount: testIntPtr(32),
 			},
 			"compact-logs": {
-				PartitionCount: intPtr(4),
+				PartitionCount: testIntPtr(4),
 				Options: map[string]interface{}{
 					"cleanup.policy": "compact,delete",
 				},
@@ -385,7 +387,152 @@ func TestTopicRegistry_GenerateKafkaSyncConfigFromLoadedConfig(t *testing.T) {
 	}
 }
 
-// intPtr helper function for tests
-func intPtr(i int) *int {
+func TestLoadKafkaTopicsOverride_ValidVersion(t *testing.T) {
+	// Create a temporary file with version 2 format
+	content := `version: 2
+defaults:
+  partitionCount: 8
+  replicationFactor: 1
+  options:
+    "cleanup.policy": "delete"
+workers:
+  ingest-logs:
+    partitionCount: 16
+    options:
+      "segment.ms": "3600000"
+`
+	tmpFile, err := os.CreateTemp("", "kafka_topics_*.yaml")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
+
+	_, err = tmpFile.WriteString(content)
+	require.NoError(t, err)
+	_ = tmpFile.Close()
+
+	// Load the override
+	override, err := LoadKafkaTopicsOverride(tmpFile.Name())
+	require.NoError(t, err)
+
+	// Verify parsing
+	assert.Equal(t, 2, override.Version)
+	assert.Equal(t, 8, *override.Defaults.PartitionCount)
+	assert.Equal(t, 1, *override.Defaults.ReplicationFactor)
+	assert.Equal(t, "delete", override.Defaults.Options["cleanup.policy"])
+	assert.Equal(t, 16, *override.Workers["ingest-logs"].PartitionCount)
+	assert.Equal(t, "3600000", override.Workers["ingest-logs"].Options["segment.ms"])
+}
+
+func TestLoadKafkaTopicsOverride_InvalidVersion(t *testing.T) {
+	// Test with version 1 (unsupported)
+	content := `version: 1
+`
+	tmpFile, err := os.CreateTemp("", "kafka_topics_*.yaml")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
+
+	_, err = tmpFile.WriteString(content)
+	require.NoError(t, err)
+	_ = tmpFile.Close()
+
+	// Should fail with version error
+	_, err = LoadKafkaTopicsOverride(tmpFile.Name())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported kafka topics override file version 1, expected version 2")
+}
+
+func TestLoadKafkaTopicsOverride_StrictModeFailsOnUnknownField(t *testing.T) {
+	// Test with unknown field - should fail in strict mode
+	content := `version: 2
+unknownField: "should fail"
+`
+	tmpFile, err := os.CreateTemp("", "kafka_topics_*.yaml")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
+
+	_, err = tmpFile.WriteString(content)
+	require.NoError(t, err)
+	_ = tmpFile.Close()
+
+	// Should fail due to unknown field in strict mode
+	_, err = LoadKafkaTopicsOverride(tmpFile.Name())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "strict mode")
+}
+
+func TestLoadKafkaTopicsOverride_MissingVersion(t *testing.T) {
+	// Test with no version field
+	content := `defaults:
+  partitionCount: 8
+`
+	tmpFile, err := os.CreateTemp("", "kafka_topics_*.yaml")
+	require.NoError(t, err)
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
+
+	_, err = tmpFile.WriteString(content)
+	require.NoError(t, err)
+	_ = tmpFile.Close()
+
+	// Should fail with version error (0 != 2)
+	_, err = LoadKafkaTopicsOverride(tmpFile.Name())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported kafka topics override file version 0, expected version 2")
+}
+
+func TestMergeKafkaTopicsOverride(t *testing.T) {
+	base := KafkaTopicsConfig{
+		TopicPrefix: "lakerunner",
+		Defaults: TopicCreationConfig{
+			PartitionCount:    testIntPtr(16),
+			ReplicationFactor: testIntPtr(3),
+			Options: map[string]interface{}{
+				"cleanup.policy": "delete",
+				"retention.ms":   "604800000",
+			},
+		},
+		Topics: map[string]TopicCreationConfig{
+			"ingest-logs": {
+				PartitionCount: testIntPtr(32),
+			},
+		},
+	}
+
+	override := &KafkaTopicsOverrideConfig{
+		Version: 2,
+		Defaults: TopicCreationOverrideConfig{
+			PartitionCount: testIntPtr(8), // Override default
+			Options: map[string]interface{}{
+				"max.message.bytes": "5242880",    // Add new option
+				"retention.ms":      "1209600000", // Override existing option
+			},
+		},
+		Workers: map[string]TopicCreationOverrideConfig{
+			"ingest-logs": { // Override existing topic
+				PartitionCount: testIntPtr(64),
+			},
+			"ingest-metrics": { // Add new topic
+				PartitionCount: testIntPtr(12),
+			},
+		},
+	}
+
+	result := MergeKafkaTopicsOverride(base, override)
+
+	// Verify prefix is NOT overridden (remains from base config)
+	assert.Equal(t, "lakerunner", result.TopicPrefix)
+
+	// Verify defaults merge
+	assert.Equal(t, 8, *result.Defaults.PartitionCount)                      // Overridden
+	assert.Equal(t, 3, *result.Defaults.ReplicationFactor)                   // Kept from base
+	assert.Equal(t, "delete", result.Defaults.Options["cleanup.policy"])     // Kept from base
+	assert.Equal(t, "1209600000", result.Defaults.Options["retention.ms"])   // Overridden
+	assert.Equal(t, "5242880", result.Defaults.Options["max.message.bytes"]) // Added from override
+
+	// Verify topics merge
+	assert.Equal(t, 64, *result.Topics["ingest-logs"].PartitionCount)    // Overridden
+	assert.Equal(t, 12, *result.Topics["ingest-metrics"].PartitionCount) // Added from override
+}
+
+// testIntPtr helper function for tests (renamed to avoid conflict with config.go)
+func testIntPtr(i int) *int {
 	return &i
 }
