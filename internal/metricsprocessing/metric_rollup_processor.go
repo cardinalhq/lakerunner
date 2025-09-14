@@ -264,8 +264,8 @@ func (r *MetricRollupProcessor) ProcessBundle(ctx context.Context, bundle *messa
 
 	// Create simplified Kafka commit data
 	kafkaCommitData := &KafkaCommitData{
-		Topic:         "lakerunner.segments.metrics.rollup",
-		ConsumerGroup: "lakerunner.rollup.metrics",
+		Topic:         config.DefaultTopicRegistry().GetTopic(config.TopicSegmentsMetricsRollup),
+		ConsumerGroup: config.DefaultTopicRegistry().GetConsumerGroup(config.TopicSegmentsMetricsRollup),
 		Offsets: map[int32]int64{
 			partition: offset + 1,
 		},
@@ -517,7 +517,7 @@ func (r *MetricRollupProcessor) queueNextLevelRollups(ctx context.Context, newSe
 		slog.Int("nextTargetFrequency", int(nextTargetFrequency)))
 
 	// Create rollup messages for each new segment (send to boxer topic)
-	rollupTopic := "lakerunner.boxer.metrics.rollup"
+	rollupTopic := config.DefaultTopicRegistry().GetTopic(config.TopicBoxerMetricsRollup)
 	var queuedCount int
 
 	for _, segment := range newSegments {
@@ -583,7 +583,7 @@ func (r *MetricRollupProcessor) queueCompactionMessages(ctx context.Context, new
 		slog.Int("targetFrequencyMs", int(key.TargetFrequencyMs)))
 
 	// Create compaction messages for each new segment
-	compactionTopic := "lakerunner.boxer.metrics.compact"
+	compactionTopic := config.DefaultTopicRegistry().GetTopic(config.TopicBoxerMetricsCompact)
 	var queuedCount int
 
 	for _, segment := range newSegments {

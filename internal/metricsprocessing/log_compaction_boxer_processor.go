@@ -21,6 +21,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
@@ -84,7 +85,7 @@ func (p *LogCompactionBoxerProcessor) Process(ctx context.Context, group *accumu
 	}
 
 	// Send to compaction topic
-	compactionTopic := "lakerunner.segments.logs.compact"
+	compactionTopic := config.DefaultTopicRegistry().GetTopic(config.TopicSegmentsLogsCompact)
 	if err := p.kafkaProducer.Send(ctx, compactionTopic, kafkaMessage); err != nil {
 		return fmt.Errorf("failed to send log compaction bundle to Kafka: %w", err)
 	}

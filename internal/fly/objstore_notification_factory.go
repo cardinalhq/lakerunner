@@ -21,6 +21,7 @@ import (
 
 	"log/slog"
 
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
 )
@@ -48,8 +49,9 @@ func NewObjStoreNotificationProducer(factory *Factory) (*ObjStoreNotificationPro
 func (p *ObjStoreNotificationProducer) SendBatch(ctx context.Context, signal string, notifications []messages.ObjStoreNotificationMessage) error {
 	ll := logctx.FromContext(ctx)
 
-	// Determine topic based on signal
-	topic := fmt.Sprintf("lakerunner.objstore.ingest.%s", signal)
+	// Determine topic based on signal using centralized registry
+	registry := config.DefaultTopicRegistry()
+	topic := registry.GetObjstoreIngestTopic(signal)
 	messages := make([]Message, 0, len(notifications))
 
 	for _, notification := range notifications {
@@ -111,18 +113,9 @@ type ObjStoreNotificationConsumer struct {
 func NewObjStoreNotificationConsumer(ctx context.Context, factory *Factory, signal string, groupID string) (*ObjStoreNotificationConsumer, error) {
 	ll := logctx.FromContext(ctx)
 
-	// Determine topic based on signal
-	var topic string
-	switch signal {
-	case "metrics":
-		topic = "lakerunner.objstore.ingest.metrics"
-	case "logs":
-		topic = "lakerunner.objstore.ingest.logs"
-	case "traces":
-		topic = "lakerunner.objstore.ingest.traces"
-	default:
-		return nil, fmt.Errorf("unsupported signal type: %s", signal)
-	}
+	// Determine topic based on signal using centralized registry
+	registry := config.DefaultTopicRegistry()
+	topic := registry.GetObjstoreIngestTopic(signal)
 
 	ll.Debug("Creating Kafka consumer",
 		slog.String("topic", topic),

@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
@@ -80,7 +81,7 @@ func (b *MetricRollupBoxerProcessor) Process(ctx context.Context, group *accumul
 	}
 
 	// Send to rollup topic
-	rollupTopic := "lakerunner.segments.metrics.rollup"
+	rollupTopic := config.DefaultTopicRegistry().GetTopic(config.TopicSegmentsMetricsRollup)
 	if err := b.kafkaProducer.Send(ctx, rollupTopic, bundleMessage); err != nil {
 		return fmt.Errorf("failed to send rollup bundle to rollup topic: %w", err)
 	}

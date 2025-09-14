@@ -29,8 +29,8 @@ func TestLoadEnvOverride(t *testing.T) {
 	cfg, err := Load()
 	require.NoError(t, err)
 
-	require.Equal(t, []string{"broker1:9092", "broker2:9092"}, cfg.Fly.Brokers)
-	require.True(t, cfg.Fly.SASLEnabled)
-	require.Equal(t, "alice", cfg.Fly.SASLUsername)
+	require.Equal(t, []string{"broker1:9092", "broker2:9092"}, cfg.Kafka.Brokers)
+	require.True(t, cfg.Kafka.SASLEnabled)
+	require.Equal(t, "alice", cfg.Kafka.SASLUsername)
 	require.False(t, cfg.Metrics.Ingestion.ProcessExemplars)
 }

@@ -46,7 +46,7 @@ func NewMetricCompactionConsumer(
 ) (*MetricCompactionConsumer, error) {
 	processor := NewMetricCompactionProcessor(store, storageProvider, cmgr, cfg)
 
-	consumer, err := factory.CreateConsumer("lakerunner.segments.metrics.compact", "lakerunner.compact.metrics")
+	consumer, err := factory.CreateConsumer(config.DefaultTopicRegistry().GetTopic(config.TopicSegmentsMetricsCompact), config.DefaultTopicRegistry().GetConsumerGroup(config.TopicSegmentsMetricsCompact))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka consumer: %w", err)
 	}

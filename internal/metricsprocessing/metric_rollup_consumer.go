@@ -60,7 +60,7 @@ func NewMetricRollupConsumer(
 
 	processor := newMetricRollupProcessor(store, storageProvider, cmgr, cfg, producer)
 
-	consumer, err := factory.CreateConsumer("lakerunner.segments.metrics.rollup", "lakerunner.rollup.metrics")
+	consumer, err := factory.CreateConsumer(config.DefaultTopicRegistry().GetTopic(config.TopicSegmentsMetricsRollup), config.DefaultTopicRegistry().GetConsumerGroup(config.TopicSegmentsMetricsRollup))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka consumer: %w", err)
 	}

@@ -94,7 +94,7 @@ func init() {
 			ll := logctx.FromContext(ctx).With("instanceID", myInstanceID)
 			ctx = logctx.WithLogger(ctx, ll)
 
-			kafkaFactory := fly.NewFactory(&cfg.Fly)
+			kafkaFactory := fly.NewFactoryFromKafkaConfig(&cfg.Kafka)
 			slog.Info("Starting traces ingestion with accumulation consumer")
 
 			consumer, err := metricsprocessing.NewTraceIngestConsumer(ctx, kafkaFactory, cfg, mdb, sp, cmgr)

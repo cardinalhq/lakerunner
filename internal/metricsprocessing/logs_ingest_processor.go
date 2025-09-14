@@ -22,6 +22,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/exemplars"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
@@ -279,7 +280,7 @@ func (p *LogIngestProcessor) Process(ctx context.Context, group *accumulationGro
 
 	// Send compaction notifications to Kafka topic
 	if p.kafkaProducer != nil {
-		compactionTopic := "lakerunner.boxer.logs.compact"
+		compactionTopic := config.DefaultTopicRegistry().GetTopic(config.TopicBoxerLogsCompact)
 
 		for _, segParams := range segmentParams {
 			// Create log compaction message

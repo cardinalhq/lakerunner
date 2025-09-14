@@ -58,7 +58,7 @@ func ensureKafkaTopicsWithFile(ctx context.Context, flagKafkaTopicsFile string) 
 	}
 
 	// Create topic syncer
-	factory := fly.NewFactory(&appConfig.Fly)
+	factory := fly.NewFactoryFromKafkaConfig(&appConfig.Kafka)
 	syncer := factory.CreateTopicSyncer()
 
 	// Load topics configuration using kafka-sync

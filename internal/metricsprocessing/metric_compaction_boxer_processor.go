@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
@@ -78,7 +79,7 @@ func (b *MetricCompactionBoxerProcessor) Process(ctx context.Context, group *acc
 	}
 
 	// Send to compaction topic
-	compactionTopic := "lakerunner.segments.metrics.compact"
+	compactionTopic := config.DefaultTopicRegistry().GetTopic(config.TopicSegmentsMetricsCompact)
 	if err := b.kafkaProducer.Send(ctx, compactionTopic, bundleMessage); err != nil {
 		return fmt.Errorf("failed to send compaction bundle to compaction topic: %w", err)
 	}

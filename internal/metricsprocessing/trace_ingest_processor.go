@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/exemplars"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
@@ -396,7 +397,7 @@ func (p *TraceIngestProcessor) Process(ctx context.Context, group *accumulationG
 
 	// Send compaction notifications to Kafka topic
 	if p.kafkaProducer != nil {
-		compactionTopic := "lakerunner.boxer.traces.compact"
+		compactionTopic := config.DefaultTopicRegistry().GetTopic(config.TopicBoxerTracesCompact)
 
 		for _, segParams := range segmentParams {
 			// Create trace compaction message

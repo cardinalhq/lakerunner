@@ -53,8 +53,8 @@ func NewMetricIngestConsumer(
 	// Configure the consumer
 	consumerConfig := CommonConsumerConfig{
 		ConsumerName:  "lakerunner-metric-ingest-v2",
-		Topic:         "lakerunner.objstore.ingest.metrics",
-		ConsumerGroup: "lakerunner.ingest.metrics",
+		Topic:         config.DefaultTopicRegistry().GetTopic(config.TopicObjstoreIngestMetrics),
+		ConsumerGroup: config.DefaultTopicRegistry().GetConsumerGroup(config.TopicObjstoreIngestMetrics),
 		FlushInterval: 10 * time.Second,
 		StaleAge:      20 * time.Second,
 		MaxAge:        20 * time.Second,

@@ -94,7 +94,7 @@ func init() {
 			}
 
 			// Create Kafka factory
-			kafkaFactory := fly.NewFactory(&cfg.Fly)
+			kafkaFactory := fly.NewFactoryFromKafkaConfig(&cfg.Kafka)
 
 			// Create Kafka-based rollup consumer (now consumes bundles from boxer)
 			consumer, err := metricsprocessing.NewMetricRollupConsumer(ctx, cfg, kafkaFactory, mdb, sp, cmgr)

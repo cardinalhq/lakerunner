@@ -181,8 +181,8 @@ func (p *LogCompactionProcessor) ProcessBundle(ctx context.Context, key messages
 
 	// Create KafkaCommitData for offset tracking
 	kafkaCommitData := &KafkaCommitData{
-		Topic:         "lakerunner.segments.logs.compact",
-		ConsumerGroup: "lakerunner.compact.logs",
+		Topic:         config.DefaultTopicRegistry().GetTopic(config.TopicSegmentsLogsCompact),
+		ConsumerGroup: config.DefaultTopicRegistry().GetConsumerGroup(config.TopicSegmentsLogsCompact),
 		Offsets: map[int32]int64{
 			partition: offset + 1,
 		},

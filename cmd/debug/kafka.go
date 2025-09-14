@@ -74,7 +74,7 @@ func getConsumerLagCmd() *cobra.Command {
 				return fmt.Errorf("failed to load config: %w", err)
 			}
 
-			factory := fly.NewFactory(&cfg.Fly)
+			factory := fly.NewFactoryFromKafkaConfig(&cfg.Kafka)
 
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
@@ -333,7 +333,7 @@ Examples:
 				return fmt.Errorf("failed to load config: %w", err)
 			}
 
-			factory := fly.NewFactory(&cfg.Fly)
+			factory := fly.NewFactoryFromKafkaConfig(&cfg.Kafka)
 
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
