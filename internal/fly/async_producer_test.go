@@ -595,9 +595,11 @@ func TestAsyncProducerWriteTimeout(t *testing.T) {
 		Value: []byte("timeout-value"),
 	}
 
+	var callbackInvoked atomic.Bool
 	var sendErr error
 	callback := func(m Message, partition int, offset int64, err error) {
 		sendErr = err
+		callbackInvoked.Store(true)
 	}
 
 	err := producer.SendAsync(ctx, topic, msg, callback)
@@ -607,8 +609,11 @@ func TestAsyncProducerWriteTimeout(t *testing.T) {
 	err = producer.Flush(ctx)
 	require.NoError(t, err)
 
-	// Wait for callback
-	time.Sleep(200 * time.Millisecond)
+	// Wait for callback to be invoked
+	assert.Eventually(t, func() bool {
+		return callbackInvoked.Load()
+	}, 2*time.Second, 10*time.Millisecond, "Callback should be invoked")
+
 	assert.NoError(t, sendErr, "WriteMessages should not timeout with valid broker")
 
 	// Note: To properly test timeout, we'd need to simulate a non-responsive broker
