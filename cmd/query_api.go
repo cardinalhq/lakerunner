@@ -20,6 +20,7 @@ import (
 	"log/slog"
 
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
+	"github.com/cardinalhq/lakerunner/internal/debugging"
 	"github.com/cardinalhq/lakerunner/internal/orgapikey"
 	"github.com/cardinalhq/lakerunner/queryapi"
 
@@ -36,7 +37,7 @@ func init() {
 		RunE: func(_ *cobra.Command, _ []string) error {
 			servicename := "query-api"
 			addlAttrs := attribute.NewSet()
-			doneCtx, doneFx, err := setupTelemetry(servicename, &addlAttrs)
+			ctx, doneFx, err := setupTelemetry(servicename, &addlAttrs)
 			if err != nil {
 				return fmt.Errorf("failed to setup telemetry: %w", err)
 			}
@@ -47,12 +48,18 @@ func init() {
 				}
 			}()
 
+			// Start disk usage monitoring
+			go diskUsageLoop(ctx)
+
+			// Start pprof server
+			go debugging.RunPprof(ctx)
+
 			// Start health check server
 			healthConfig := healthcheck.GetConfigFromEnv()
 			healthServer := healthcheck.NewServer(healthConfig)
 
 			go func() {
-				if err := healthServer.Start(doneCtx); err != nil {
+				if err := healthServer.Start(ctx); err != nil {
 					slog.Error("Health check server stopped", slog.Any("error", err))
 				}
 			}()
@@ -60,14 +67,14 @@ func init() {
 			// Mark as healthy immediately - health is not dependent on database readiness
 			healthServer.SetStatus(healthcheck.StatusHealthy)
 
-			mdb, err := dbopen.LRDBStore(context.Background())
+			mdb, err := dbopen.LRDBStore(ctx)
 			if err != nil {
 				slog.Error("Failed to connect to lr database", slog.Any("error", err))
 				return fmt.Errorf("failed to connect to lr database: %w", err)
 			}
 
 			// Connect to configdb for API key validation
-			cdb, err := dbopen.ConfigDBStore(context.Background())
+			cdb, err := dbopen.ConfigDBStore(ctx)
 			if err != nil {
 				slog.Error("Failed to connect to config database", slog.Any("error", err))
 				return fmt.Errorf("failed to connect to config database: %w", err)
@@ -86,7 +93,7 @@ func init() {
 				return fmt.Errorf("failed to create worker discovery: %w", err)
 			}
 
-			if err := workerDiscovery.Start(doneCtx); err != nil {
+			if err := workerDiscovery.Start(ctx); err != nil {
 				slog.Error("Failed to start worker discovery", slog.Any("error", err))
 				return fmt.Errorf("failed to start worker discovery: %w", err)
 			}
@@ -104,7 +111,7 @@ func init() {
 
 			// All services are now fully initialized
 
-			return querier.Run(doneCtx)
+			return querier.Run(ctx)
 		},
 	}
 

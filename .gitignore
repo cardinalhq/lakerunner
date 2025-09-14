@@ -25,6 +25,6 @@ go.work.sum
 bin
 dist
 vendor
-queryworker/db/metrics_cached.ddb
+**/*.ddb
 **/*.prof
 .vscode

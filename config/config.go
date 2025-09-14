@@ -38,7 +38,6 @@ type Config struct {
 	Logs        LogsConfig        `mapstructure:"logs"`
 	Traces      TracesConfig      `mapstructure:"traces"`
 	Admin       AdminConfig       `mapstructure:"admin"`
-	SegLog      SegLogConfig      `mapstructure:"seglog"`
 	KafkaTopics KafkaTopicsConfig `mapstructure:"kafka_topics"`
 
 	// Derived fields (populated during Load())
@@ -57,22 +56,6 @@ type BatchConfig struct {
 	MaxTotalSize    int64 `mapstructure:"max_total_size"`
 	MaxAgeSeconds   int   `mapstructure:"max_age_seconds"`
 	MinBatchSize    int   `mapstructure:"min_batch_size"`
-}
-
-type DuckDBConfig struct {
-	// Extension paths for air-gapped mode
-	ExtensionsPath  string `mapstructure:"extensions_path"`
-	HTTPFSExtension string `mapstructure:"httpfs_extension"`
-	AzureExtension  string `mapstructure:"azure_extension"`
-	AWSExtension    string `mapstructure:"aws_extension"`
-
-	// Memory and performance settings
-	MemoryLimit          int64  `mapstructure:"memory_limit"`            // Memory limit in MB (0 = unlimited)
-	TempDirectory        string `mapstructure:"temp_directory"`          // Directory for temporary files
-	MaxTempDirectorySize string `mapstructure:"max_temp_directory_size"` // Max size for temp directory
-	S3PoolSize           int    `mapstructure:"s3_pool_size"`            // Connection pool size for S3
-	S3ConnTTLSeconds     int    `mapstructure:"s3_conn_ttl_seconds"`     // Connection TTL in seconds
-	ThreadsPerConn       int    `mapstructure:"threads_per_conn"`        // Threads per connection
 }
 
 type S3Config struct {
@@ -101,10 +84,6 @@ type TracesConfig struct {
 
 type AdminConfig struct {
 	InitialAPIKey string `mapstructure:"initial_api_key"`
-}
-
-type SegLogConfig struct {
-	Enabled bool `mapstructure:"enabled"` // Enable segment log tracing for debugging operations
 }
 
 // TopicCreationConfig holds configuration for creating Kafka topics
@@ -252,18 +231,7 @@ func Load() (*Config, error) {
 			MaxAgeSeconds:   300,                // 5 minutes
 			MinBatchSize:    1,
 		},
-		DuckDB: DuckDBConfig{
-			ExtensionsPath:       "",
-			HTTPFSExtension:      "",
-			AzureExtension:       "",
-			AWSExtension:         "",
-			MemoryLimit:          0,   // No limit by default
-			TempDirectory:        "",  // Empty means use system default
-			MaxTempDirectorySize: "",  // Empty means no limit
-			S3PoolSize:           0,   // 0 means use default calculation in s3db.go
-			S3ConnTTLSeconds:     240, // 4 minutes default
-			ThreadsPerConn:       0,   // 0 means use default calculation
-		},
+		DuckDB: DefaultDuckDBConfig(),
 		S3: S3Config{
 			AccessKeyID:     "",
 			SecretAccessKey: "",
@@ -282,9 +250,6 @@ func Load() (*Config, error) {
 		Traces: TracesConfig{},
 		Admin: AdminConfig{
 			InitialAPIKey: "",
-		},
-		SegLog: SegLogConfig{
-			Enabled: false, // Disabled by default for production
 		},
 		KafkaTopics: KafkaTopicsConfig{
 			TopicPrefix: "lakerunner", // Default topic prefix

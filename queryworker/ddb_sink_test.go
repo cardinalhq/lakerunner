@@ -31,7 +31,7 @@ func TestDDBSink_IngestParquetBatch(t *testing.T) {
 	ctx := context.Background()
 
 	// Step 1: Discover local .parquet files
-	parquetDir := "./db"
+	parquetDir := "./testdata/db"
 	var parquetPaths []string
 	err := filepath.Walk(parquetDir, func(path string, info os.FileInfo, err error) error {
 		if err == nil && !info.IsDir() && strings.HasSuffix(info.Name(), ".parquet") {
@@ -39,8 +39,8 @@ func TestDDBSink_IngestParquetBatch(t *testing.T) {
 		}
 		return nil
 	})
-	require.NoError(t, err, "failed to walk ./db")
-	require.NotEmpty(t, parquetPaths, "no parquet files found under ./db")
+	require.NoError(t, err, "failed to walk ./testdata/db")
+	require.NotEmpty(t, parquetPaths, "no parquet files found under ./	")
 
 	// Step 2: Assign dummy segment IDs
 	segmentIDs := make([]int64, len(parquetPaths))

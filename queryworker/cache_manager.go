@@ -29,6 +29,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/duckdbx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/promql"
@@ -78,14 +79,13 @@ const (
 	MaxRowsDefault = 10000000000 // 10 billion rows (approx 10GB on disk assuming 10 bytes/row)
 )
 
-func NewCacheManager(dl DownloadBatchFunc, dataset string, storageProfileProvider storageprofile.StorageProfileProvider) *CacheManager {
+func NewCacheManager(ctx context.Context, cnf *config.Config, dl DownloadBatchFunc, dataset string, storageProfileProvider storageprofile.StorageProfileProvider) *CacheManager {
 	ddb, err := NewDDBSink(dataset, context.Background())
 	if err != nil {
 		slog.Error("Failed to create DuckDB sink", slog.Any("error", err))
 		return nil
 	}
-	// TODO: Pass config when available in queryworker
-	s3DB, err := duckdbx.NewS3DB("s3", nil)
+	s3DB, err := duckdbx.NewS3DB("s3", cnf)
 	if err != nil {
 		slog.Error("Failed to create S3 DuckDB database", slog.Any("error", err))
 		return nil
