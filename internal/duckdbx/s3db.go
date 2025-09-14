@@ -28,6 +28,8 @@ import (
 	"time"
 
 	_ "github.com/marcboeker/go-duckdb/v2"
+
+	"github.com/cardinalhq/lakerunner/config"
 )
 
 // Global mutex to serialize extension/secret DDL across the process.
@@ -47,6 +49,11 @@ type S3DB struct {
 	ttl            time.Duration
 	totalCores     int
 	threadsPerConn int
+
+	// Config for S3 and Azure credentials
+	s3Config     *config.S3Config
+	azureConfig  *config.AzureConfig
+	duckdbConfig *config.DuckDBConfig
 
 	installOnce sync.Once
 	installErr  error
@@ -76,45 +83,90 @@ type pooledConn struct {
 	expires time.Time
 }
 
-func NewS3DB(dataSourceName string) (*S3DB, error) {
+// NewS3DB creates a new S3DB instance.
+// If cfg is nil, it falls back to environment variables for backward compatibility.
+func NewS3DB(dataSourceName string, cfg *config.Config) (*S3DB, error) {
 	// Prefer in-memory DB unless the caller really wants a file;
 	// treat legacy "s3" as a hint for in-memory.
 	if dataSourceName == "s3" {
 		dataSourceName = ""
 	}
 
-	memoryMB := envInt64("DUCKDB_MEMORY_LIMIT", 0)
+	var memoryMB int64
+	var poolSize int
+	var ttl time.Duration
+	var threadsPerConn int
+	var tempDir, maxTempSize string
+	var s3Cfg *config.S3Config
+	var azureCfg *config.AzureConfig
+	var duckdbCfg *config.DuckDBConfig
 
-	// Default pool: half the cores, capped at 8, min 2.
-	// (Avoid oversubscription when each connection has multiple threads.)
-	poolDefault := min(8, max(2, runtime.GOMAXPROCS(0)/2))
-	poolSize := envIntClamp("DUCKDB_S3_POOL_SIZE", poolDefault, 1, 512)
+	if cfg != nil {
+		// Use config values
+		memoryMB = cfg.DuckDB.MemoryLimit
+		tempDir = cfg.DuckDB.TempDirectory
+		maxTempSize = cfg.DuckDB.MaxTempDirectorySize
 
-	ttl := envDurationSeconds("DUCKDB_S3_CONN_TTL_SECONDS", 240)
+		// Calculate pool size with same logic as before
+		poolDefault := min(8, max(2, runtime.GOMAXPROCS(0)/2))
+		if cfg.DuckDB.S3PoolSize > 0 {
+			poolSize = min(512, max(1, cfg.DuckDB.S3PoolSize))
+		} else {
+			poolSize = poolDefault
+		}
 
-	total := runtime.GOMAXPROCS(0)
-	// Split cores across connections by default; allow explicit override.
-	perConnDefault := max(1, total/max(1, poolSize))
-	threadsPerConn := envIntClamp("DUCKDB_THREADS_PER_CONN", perConnDefault, 1, 256)
+		ttl = time.Duration(cfg.DuckDB.S3ConnTTLSeconds) * time.Second
+
+		total := runtime.GOMAXPROCS(0)
+		perConnDefault := max(1, total/max(1, poolSize))
+		if cfg.DuckDB.ThreadsPerConn > 0 {
+			threadsPerConn = min(256, max(1, cfg.DuckDB.ThreadsPerConn))
+		} else {
+			threadsPerConn = perConnDefault
+		}
+
+		s3Cfg = &cfg.S3
+		azureCfg = &cfg.Azure
+		duckdbCfg = &cfg.DuckDB
+	} else {
+		// Fall back to environment variables for backward compatibility
+		memoryMB = envInt64("DUCKDB_MEMORY_LIMIT", 0)
+
+		poolDefault := min(8, max(2, runtime.GOMAXPROCS(0)/2))
+		poolSize = envIntClamp("DUCKDB_S3_POOL_SIZE", poolDefault, 1, 512)
+
+		ttl = envDurationSeconds("DUCKDB_S3_CONN_TTL_SECONDS", 240)
+
+		total := runtime.GOMAXPROCS(0)
+		perConnDefault := max(1, total/max(1, poolSize))
+		threadsPerConn = envIntClamp("DUCKDB_THREADS_PER_CONN", perConnDefault, 1, 256)
+
+		tempDir = os.Getenv("DUCKDB_TEMP_DIRECTORY")
+		maxTempSize = os.Getenv("DUCKDB_MAX_TEMP_DIRECTORY_SIZE")
+	}
+
 	slog.Info("duckdbx:",
 		"dsn", dataSourceName,
 		"memoryLimitMB", memoryMB,
-		"tempDir", os.Getenv("DUCKDB_TEMP_DIRECTORY"),
-		"maxTempSize", os.Getenv("DUCKDB_MAX_TEMP_DIRECTORY_SIZE"),
+		"tempDir", tempDir,
+		"maxTempSize", maxTempSize,
 		"poolSize", poolSize,
 		"ttl", ttl.String(),
-		"totalCores", total,
+		"totalCores", runtime.GOMAXPROCS(0),
 		"threadsPerConn", threadsPerConn)
 
 	return &S3DB{
 		dsn:            dataSourceName,
 		memoryLimitMB:  memoryMB,
-		tempDir:        os.Getenv("DUCKDB_TEMP_DIRECTORY"),
-		maxTempSize:    os.Getenv("DUCKDB_MAX_TEMP_DIRECTORY_SIZE"),
+		tempDir:        tempDir,
+		maxTempSize:    maxTempSize,
 		poolSize:       poolSize,
 		ttl:            ttl,
-		totalCores:     total,
+		totalCores:     runtime.GOMAXPROCS(0),
 		threadsPerConn: threadsPerConn,
+		s3Config:       s3Cfg,
+		azureConfig:    azureCfg,
+		duckdbConfig:   duckdbCfg,
 		pools:          make(map[string]*bucketPool, 32),
 	}, nil
 }
@@ -247,7 +299,7 @@ func (p *bucketPool) newConn(ctx context.Context) (*pooledConn, error) {
 	}
 
 	// create cloud storage secret for this bucket (serialize DDL)
-	if err := seedCloudSecretFromEnv(ctx, conn, p.bucket, p.region, p.endpoint); err != nil {
+	if err := p.parent.seedCloudSecret(ctx, conn, p.bucket, p.region, p.endpoint); err != nil {
 		_ = conn.Close()
 		_ = db.Close()
 		return nil, err
@@ -306,7 +358,7 @@ func (s *S3DB) setupConn(ctx context.Context, conn *sql.Conn) error {
 
 // Dev-mode best-effort INSTALL once. Air-gapped: only LOAD.
 func (s *S3DB) ensureInstall(ctx context.Context) error {
-	if os.Getenv("LAKERUNNER_EXTENSIONS_PATH") != "" {
+	if s.duckdbConfig != nil && s.duckdbConfig.ExtensionsPath != "" {
 		return nil
 	}
 	s.installOnce.Do(func() {
@@ -329,6 +381,7 @@ func (s *S3DB) ensureInstall(ctx context.Context) error {
 		}
 		duckdbDDLMu.Lock()
 		_, _ = conn.ExecContext(ctx, "INSTALL httpfs;")
+		_, _ = conn.ExecContext(ctx, "INSTALL aws;")
 		_, _ = conn.ExecContext(ctx, "INSTALL azure;")
 		duckdbDDLMu.Unlock()
 	})
@@ -339,6 +392,9 @@ func (s *S3DB) loadExtensions(ctx context.Context, conn *sql.Conn) error {
 	if err := s.loadHTTPFS(ctx, conn); err != nil {
 		return err
 	}
+	if err := s.loadAWS(ctx, conn); err != nil {
+		return err
+	}
 	if err := s.loadAzure(ctx, conn); err != nil {
 		return err
 	}
@@ -346,10 +402,10 @@ func (s *S3DB) loadExtensions(ctx context.Context, conn *sql.Conn) error {
 }
 
 func (s *S3DB) loadHTTPFS(ctx context.Context, conn *sql.Conn) error {
-	if base := os.Getenv("LAKERUNNER_EXTENSIONS_PATH"); base != "" {
-		path := os.Getenv("LAKERUNNER_HTTPFS_EXTENSION")
+	if s.duckdbConfig != nil && s.duckdbConfig.ExtensionsPath != "" {
+		path := s.duckdbConfig.HTTPFSExtension
 		if path == "" {
-			path = filepath.Join(base, "httpfs.duckdb_extension")
+			path = filepath.Join(s.duckdbConfig.ExtensionsPath, "httpfs.duckdb_extension")
 		}
 		if _, err := os.Stat(path); err != nil {
 			return fmt.Errorf("httpfs extension not found at %s: %w", path, err)
@@ -365,11 +421,31 @@ func (s *S3DB) loadHTTPFS(ctx context.Context, conn *sql.Conn) error {
 	return nil
 }
 
-func (s *S3DB) loadAzure(ctx context.Context, conn *sql.Conn) error {
-	if base := os.Getenv("LAKERUNNER_EXTENSIONS_PATH"); base != "" {
-		path := os.Getenv("LAKERUNNER_AZURE_EXTENSION")
+func (s *S3DB) loadAWS(ctx context.Context, conn *sql.Conn) error {
+	if s.duckdbConfig != nil && s.duckdbConfig.ExtensionsPath != "" {
+		path := s.duckdbConfig.AWSExtension
 		if path == "" {
-			path = filepath.Join(base, "azure.duckdb_extension")
+			path = filepath.Join(s.duckdbConfig.ExtensionsPath, "aws.duckdb_extension")
+		}
+		if _, err := os.Stat(path); err != nil {
+			return fmt.Errorf("aws extension not found at %s: %w", path, err)
+		}
+		if _, err := conn.ExecContext(ctx, fmt.Sprintf("LOAD '%s';", escapeSingle(path))); err != nil {
+			return fmt.Errorf("LOAD aws (air-gapped): %w", err)
+		}
+		return nil
+	}
+	if _, err := conn.ExecContext(ctx, "LOAD aws;"); err != nil {
+		return fmt.Errorf("LOAD aws: %w", err)
+	}
+	return nil
+}
+
+func (s *S3DB) loadAzure(ctx context.Context, conn *sql.Conn) error {
+	if s.duckdbConfig != nil && s.duckdbConfig.ExtensionsPath != "" {
+		path := s.duckdbConfig.AzureExtension
+		if path == "" {
+			path = filepath.Join(s.duckdbConfig.ExtensionsPath, "azure.duckdb_extension")
 		}
 		if _, err := os.Stat(path); err != nil {
 			return fmt.Errorf("azure extension not found at %s: %w", path, err)
@@ -394,28 +470,37 @@ func (s *S3DB) loadAzure(ctx context.Context, conn *sql.Conn) error {
 }
 
 // CREATE OR REPLACE SECRET for a bucket (serialized).
-// Detects cloud provider based on environment variables and creates appropriate secret.
-func seedCloudSecretFromEnv(ctx context.Context, conn *sql.Conn, bucket, region string, endpoint string) error {
+// Detects cloud provider based on config and creates appropriate secret.
+func (s *S3DB) seedCloudSecret(ctx context.Context, conn *sql.Conn, bucket, region string, endpoint string) error {
 	// Check for Azure credentials first
-	if hasAzureCredentials() {
-		return seedAzureSecretFromEnv(ctx, conn, bucket, region, endpoint)
+	if s.hasAzureCredentials() {
+		return s.seedAzureSecret(ctx, conn, bucket, region, endpoint)
 	}
 
 	// Fall back to S3/AWS
-	return seedS3SecretFromEnv(ctx, conn, bucket, region, endpoint)
+	return s.seedS3Secret(ctx, conn, bucket, region, endpoint)
 }
 
 // Check if Azure credentials are available
-func hasAzureCredentials() bool {
+func (s *S3DB) hasAzureCredentials() bool {
+	if s.azureConfig != nil && s.azureConfig.AuthType != "" {
+		return true
+	}
+	// Fall back to env var for backward compatibility
 	authType := os.Getenv("AZURE_AUTH_TYPE")
 	return authType != ""
 }
 
 // CREATE OR REPLACE SECRET for Azure Blob Storage (serialized).
-func seedAzureSecretFromEnv(ctx context.Context, conn *sql.Conn, container, region string, endpoint string) error {
-	authType := os.Getenv("AZURE_AUTH_TYPE")
-	if authType == "" {
-		authType = "credential_chain" // Default to credential chain
+func (s *S3DB) seedAzureSecret(ctx context.Context, conn *sql.Conn, container, region string, endpoint string) error {
+	var authType string
+	if s.azureConfig != nil && s.azureConfig.AuthType != "" {
+		authType = s.azureConfig.AuthType
+	} else {
+		authType = os.Getenv("AZURE_AUTH_TYPE")
+		if authType == "" {
+			authType = "credential_chain" // Default to credential chain
+		}
 	}
 
 	// For Azure, storage account must be extracted from endpoint
@@ -432,9 +517,21 @@ func seedAzureSecretFromEnv(ctx context.Context, conn *sql.Conn, container, regi
 
 	switch authType {
 	case "service_principal":
-		clientId := os.Getenv("AZURE_CLIENT_ID")
-		clientSecret := os.Getenv("AZURE_CLIENT_SECRET")
-		tenantId := os.Getenv("AZURE_TENANT_ID")
+		var clientId, clientSecret, tenantId string
+		if s.azureConfig != nil {
+			clientId = s.azureConfig.ClientID
+			clientSecret = s.azureConfig.ClientSecret
+			tenantId = s.azureConfig.TenantID
+		}
+		if clientId == "" {
+			clientId = os.Getenv("AZURE_CLIENT_ID")
+		}
+		if clientSecret == "" {
+			clientSecret = os.Getenv("AZURE_CLIENT_SECRET")
+		}
+		if tenantId == "" {
+			tenantId = os.Getenv("AZURE_TENANT_ID")
+		}
 
 		if clientId == "" || clientSecret == "" || tenantId == "" {
 			return fmt.Errorf("missing Azure service principal credentials: AZURE_CLIENT_ID/AZURE_CLIENT_SECRET/AZURE_TENANT_ID")
@@ -447,7 +544,12 @@ func seedAzureSecretFromEnv(ctx context.Context, conn *sql.Conn, container, regi
 		_, _ = fmt.Fprintf(&b, "  ACCOUNT_NAME '%s'\n", escapeSingle(storageAccount))
 
 	case "connection_string":
-		connectionString := os.Getenv("AZURE_STORAGE_CONNECTION_STRING")
+		var connectionString string
+		if s.azureConfig != nil && s.azureConfig.ConnectionString != "" {
+			connectionString = s.azureConfig.ConnectionString
+		} else {
+			connectionString = os.Getenv("AZURE_STORAGE_CONNECTION_STRING")
+		}
 		if connectionString == "" {
 			return fmt.Errorf("missing Azure connection string: AZURE_STORAGE_CONNECTION_STRING")
 		}
@@ -484,13 +586,31 @@ func extractStorageAccountFromEndpoint(endpoint string) string {
 }
 
 // CREATE OR REPLACE SECRET for AWS S3 (serialized).
-func seedS3SecretFromEnv(ctx context.Context, conn *sql.Conn, bucket, region string, endpoint string) error {
-	keyID := os.Getenv("S3_ACCESS_KEY_ID")
-	secret := os.Getenv("S3_SECRET_ACCESS_KEY")
+func (s *S3DB) seedS3Secret(ctx context.Context, conn *sql.Conn, bucket, region string, endpoint string) error {
+	var keyID, secret string
+	if s.s3Config != nil {
+		keyID = s.s3Config.AccessKeyID
+		secret = s.s3Config.SecretAccessKey
+	}
+	if keyID == "" {
+		keyID = os.Getenv("S3_ACCESS_KEY_ID")
+	}
+	if secret == "" {
+		secret = os.Getenv("S3_SECRET_ACCESS_KEY")
+	}
 	if keyID == "" || secret == "" {
 		return fmt.Errorf("missing AWS creds in env: S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY")
 	}
-	session := os.Getenv("AWS_SESSION_TOKEN")
+	var session string
+	if s.s3Config != nil {
+		session = s.s3Config.SessionToken
+		if region == "" && s.s3Config.Region != "" {
+			region = s.s3Config.Region
+		}
+	}
+	if session == "" {
+		session = os.Getenv("AWS_SESSION_TOKEN")
+	}
 
 	if region == "" {
 		if r := os.Getenv("AWS_REGION"); r != "" {
@@ -516,7 +636,12 @@ func seedS3SecretFromEnv(ctx context.Context, conn *sql.Conn, bucket, region str
 		}
 	}
 
-	urlStyle := os.Getenv("AWS_S3_URL_STYLE")
+	var urlStyle string
+	if s.s3Config != nil && s.s3Config.URLStyle != "" {
+		urlStyle = s.s3Config.URLStyle
+	} else {
+		urlStyle = os.Getenv("AWS_S3_URL_STYLE")
+	}
 	if urlStyle == "" {
 		urlStyle = "path"
 	}

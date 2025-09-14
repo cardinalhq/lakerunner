@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/exemplars"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
@@ -177,10 +178,14 @@ type TraceIngestProcessor struct {
 	cmgr              cloudstorage.ClientProvider
 	kafkaProducer     fly.Producer
 	exemplarProcessor *exemplars.Processor
+	config            *config.Config
 }
 
 // newTraceIngestProcessor creates a new trace ingest processor instance
-func newTraceIngestProcessor(store TraceIngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *TraceIngestProcessor {
+func newTraceIngestProcessor(
+	ctx context.Context,
+	cfg *config.Config,
+	store TraceIngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *TraceIngestProcessor {
 	var exemplarProcessor *exemplars.Processor
 	// if os.Getenv("DISABLE_EXEMPLARS") != "true" {
 	// 	exemplarProcessor = exemplars.NewProcessor(exemplars.DefaultConfig())
@@ -195,6 +200,7 @@ func newTraceIngestProcessor(store TraceIngestStore, storageProvider storageprof
 		cmgr:              cmgr,
 		kafkaProducer:     kafkaProducer,
 		exemplarProcessor: exemplarProcessor,
+		config:            cfg,
 	}
 }
 
@@ -396,7 +402,7 @@ func (p *TraceIngestProcessor) Process(ctx context.Context, group *accumulationG
 
 	// Send compaction notifications to Kafka topic
 	if p.kafkaProducer != nil {
-		compactionTopic := "lakerunner.boxer.traces.compact"
+		compactionTopic := p.config.TopicRegistry.GetTopic(config.TopicBoxerTracesCompact)
 
 		for _, segParams := range segmentParams {
 			// Create trace compaction message

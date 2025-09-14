@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"github.com/cardinalhq/lakerunner/config"
 	"log/slog"
 	"os"
 	"time"
@@ -42,7 +43,7 @@ type AzureQueueService struct {
 
 var _ Backend = (*AzureQueueService)(nil)
 
-func NewAzureQueueService(kafkaFactory *fly.Factory) (*AzureQueueService, error) {
+func NewAzureQueueService(ctx context.Context, cfg *config.Config, kafkaFactory *fly.Factory) (*AzureQueueService, error) {
 	azureMgr, err := azureclient.NewManager(context.Background(),
 		azureclient.WithAssumeRoleSessionName("pubsub-azure"),
 	)
@@ -51,14 +52,14 @@ func NewAzureQueueService(kafkaFactory *fly.Factory) (*AzureQueueService, error)
 		return nil, fmt.Errorf("failed to create Azure manager: %w", err)
 	}
 
-	cdb, err := dbopen.ConfigDBStore(context.Background())
+	cdb, err := dbopen.ConfigDBStore(ctx)
 	if err != nil {
 		slog.Error("Failed to connect to configdb", slog.Any("error", err))
 		return nil, fmt.Errorf("failed to connect to configdb: %w", err)
 	}
 	sp := storageprofile.NewStorageProfileProvider(cdb)
 
-	kafkaHandler, err := NewKafkaHandler(kafkaFactory, "gcp", sp)
+	kafkaHandler, err := NewKafkaHandler(ctx, cfg, kafkaFactory, "gcp", sp)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka handler: %w", err)
 	}

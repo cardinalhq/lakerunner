@@ -48,13 +48,13 @@ func NewMetricIngestConsumer(
 	}
 
 	// Create MetricIngestProcessor
-	processor := newMetricIngestProcessor(store, storageProvider, cmgr, kafkaProducer)
+	processor := newMetricIngestProcessor(ctx, cfg, store, storageProvider, cmgr, kafkaProducer)
 
 	// Configure the consumer
 	consumerConfig := CommonConsumerConfig{
 		ConsumerName:  "lakerunner-metric-ingest-v2",
-		Topic:         "lakerunner.objstore.ingest.metrics",
-		ConsumerGroup: "lakerunner.ingest.metrics",
+		Topic:         cfg.TopicRegistry.GetTopic(config.TopicObjstoreIngestMetrics),
+		ConsumerGroup: cfg.TopicRegistry.GetConsumerGroup(config.TopicObjstoreIngestMetrics),
 		FlushInterval: 10 * time.Second,
 		StaleAge:      20 * time.Second,
 		MaxAge:        20 * time.Second,

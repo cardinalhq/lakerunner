@@ -58,8 +58,11 @@ func init() {
 				return fmt.Errorf("failed to load config: %w", err)
 			}
 
-			kafkaFactory := fly.NewFactory(&cfg.Fly)
-			service, err := pubsub.NewHTTPService(kafkaFactory)
+			kafkaFactory, err := fly.NewFactoryFromKafkaConfig(&cfg.Kafka)
+			if err != nil {
+				return fmt.Errorf("failed to create Kafka factory: %w", err)
+			}
+			service, err := pubsub.NewHTTPService(doneCtx, cfg, kafkaFactory)
 			if err != nil {
 				return fmt.Errorf("failed to create HTTP pubsub service: %w", err)
 			}
@@ -93,8 +96,11 @@ func init() {
 				return fmt.Errorf("failed to load config: %w", err)
 			}
 
-			kafkaFactory := fly.NewFactory(&cfg.Fly)
-			service, err := pubsub.NewSQSService(kafkaFactory)
+			kafkaFactory, err := fly.NewFactoryFromKafkaConfig(&cfg.Kafka)
+			if err != nil {
+				return fmt.Errorf("failed to create Kafka factory: %w", err)
+			}
+			service, err := pubsub.NewSQSService(doneCtx, cfg, kafkaFactory)
 			if err != nil {
 				return fmt.Errorf("failed to create SQS pubsub service: %w", err)
 			}
@@ -127,8 +133,11 @@ func init() {
 				return fmt.Errorf("failed to load config: %w", err)
 			}
 
-			kafkaFactory := fly.NewFactory(&cfg.Fly)
-			backend, err := pubsub.NewBackend(doneCtx, pubsub.BackendTypeGCPPubSub, kafkaFactory)
+			kafkaFactory, err := fly.NewFactoryFromKafkaConfig(&cfg.Kafka)
+			if err != nil {
+				return fmt.Errorf("failed to create Kafka factory: %w", err)
+			}
+			backend, err := pubsub.NewBackend(doneCtx, cfg, pubsub.BackendTypeGCPPubSub, kafkaFactory)
 			if err != nil {
 				return fmt.Errorf("failed to create GCP Pub/Sub backend: %w", err)
 			}
@@ -162,9 +171,12 @@ func init() {
 				return fmt.Errorf("failed to load config: %w", err)
 			}
 
-			kafkaFactory := fly.NewFactory(&cfg.Fly)
+			kafkaFactory, err := fly.NewFactoryFromKafkaConfig(&cfg.Kafka)
+			if err != nil {
+				return fmt.Errorf("failed to create Kafka factory: %w", err)
+			}
 
-			backend, err := pubsub.NewBackend(doneCtx, pubsub.BackendTypeAzure, kafkaFactory)
+			backend, err := pubsub.NewBackend(doneCtx, cfg, pubsub.BackendTypeAzure, kafkaFactory)
 			if err != nil {
 				return fmt.Errorf("failed to create Azure Queue Storage backend: %w", err)
 			}

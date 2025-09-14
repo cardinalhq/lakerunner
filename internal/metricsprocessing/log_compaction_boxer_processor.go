@@ -21,6 +21,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
@@ -30,16 +31,20 @@ import (
 type LogCompactionBoxerProcessor struct {
 	store         LogCompactionStore
 	kafkaProducer fly.Producer
+	config        *config.Config
 }
 
 // newLogCompactionBoxerProcessor creates a new log compaction boxer processor
 func newLogCompactionBoxerProcessor(
+	ctx context.Context,
+	cfg *config.Config,
 	producer fly.Producer,
 	store LogCompactionStore,
 ) *LogCompactionBoxerProcessor {
 	return &LogCompactionBoxerProcessor{
 		store:         store,
 		kafkaProducer: producer,
+		config:        cfg,
 	}
 }
 
@@ -84,7 +89,7 @@ func (p *LogCompactionBoxerProcessor) Process(ctx context.Context, group *accumu
 	}
 
 	// Send to compaction topic
-	compactionTopic := "lakerunner.segments.logs.compact"
+	compactionTopic := p.config.TopicRegistry.GetTopic(config.TopicSegmentsLogsCompact)
 	if err := p.kafkaProducer.Send(ctx, compactionTopic, kafkaMessage); err != nil {
 		return fmt.Errorf("failed to send log compaction bundle to Kafka: %w", err)
 	}

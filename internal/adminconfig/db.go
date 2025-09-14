@@ -18,7 +18,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	"os"
 
 	"github.com/cardinalhq/lakerunner/configdb"
 )
@@ -29,14 +28,16 @@ type adminAPIKeyStore interface {
 }
 
 type dbProvider struct {
-	db adminAPIKeyStore
+	db            adminAPIKeyStore
+	initialAPIKey string
 }
 
 var _ AdminConfigProvider = (*dbProvider)(nil)
 
-func NewDBProvider(db adminAPIKeyStore) AdminConfigProvider {
+func NewDBProvider(db adminAPIKeyStore, initialAPIKey string) AdminConfigProvider {
 	return &dbProvider{
-		db: db,
+		db:            db,
+		initialAPIKey: initialAPIKey,
 	}
 }
 
@@ -56,7 +57,7 @@ func (p *dbProvider) ValidateAPIKey(ctx context.Context, apiKey string) (bool, e
 		return false, nil
 	}
 	if len(keys) == 0 {
-		if initKey := os.Getenv("LAKERUNNER_INITITAL_ADMIN_API_KEY"); initKey != "" && apiKey == initKey {
+		if p.initialAPIKey != "" && apiKey == p.initialAPIKey {
 			return true, nil
 		}
 	}

@@ -44,17 +44,18 @@ func NewLogCompactionBoxerConsumer(
 	}
 
 	// Create LogCompactionBoxer processor
-	processor := newLogCompactionBoxerProcessor(producer, store)
+	processor := newLogCompactionBoxerProcessor(ctx, cfg, producer, store)
 
 	// Set up timing - use shorter accumulation for compaction since it's more time-sensitive
 	maxAccumulationTime := 2 * time.Minute
 	flushInterval := 30 * time.Second
 
 	// Configure the consumer - consuming from boxer compaction input topic
+	registry := cfg.TopicRegistry
 	consumerConfig := CommonConsumerConfig{
 		ConsumerName:  "lakerunner-boxer-logs-compact",
-		Topic:         "lakerunner.boxer.logs.compact",
-		ConsumerGroup: "lakerunner.boxer.logs.compact",
+		Topic:         registry.GetTopic(config.TopicBoxerLogsCompact),
+		ConsumerGroup: registry.GetConsumerGroup(config.TopicBoxerLogsCompact),
 		FlushInterval: flushInterval,
 		StaleAge:      maxAccumulationTime,
 		MaxAge:        maxAccumulationTime,
