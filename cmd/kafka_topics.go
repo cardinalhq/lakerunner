@@ -21,6 +21,7 @@ import (
 	"os"
 
 	"github.com/cardinalhq/kafka-sync/kafkasync"
+
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 )
@@ -33,7 +34,10 @@ func ensureKafkaTopicsWithFile(ctx context.Context, flagKafkaTopicsFile string) 
 	}
 
 	// Create topic syncer
-	factory := fly.NewFactoryFromKafkaConfig(&appConfig.Kafka)
+	factory, err := fly.NewFactoryFromKafkaConfig(&appConfig.Kafka)
+	if err != nil {
+		return fmt.Errorf("failed to create Kafka factory: %w", err)
+	}
 	syncer := factory.CreateTopicSyncer()
 
 	var topicsConfig *kafkasync.Config
