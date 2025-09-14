@@ -568,7 +568,7 @@ func (w *CacheManager) maybeEvictOnce(ctx context.Context) {
 		return
 	}
 	slog.Info("Cache Status", slog.Int64("rowCount", w.sink.RowCount()), slog.Int64("maxRows", w.maxRows), slog.Int64("overRows", over), slog.Float64("usedDiskGB", usedSizeGB))
-	shouldEvict := over > 0 && usedSizeGB >= 8
+	shouldEvict := over > 0 || usedSizeGB >= 8
 
 	if shouldEvict {
 		type ent struct {
