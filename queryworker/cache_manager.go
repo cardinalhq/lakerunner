@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -75,7 +76,7 @@ type CacheManager struct {
 }
 
 const (
-	MaxRowsDefault = 10000000000 // 10 billion rows (approx 10GB on disk assuming 10 bytes/row)
+	MaxRowsDefault = 1000000000 // 1 billion rows (approx 10GB on disk)
 )
 
 func NewCacheManager(dl DownloadBatchFunc, dataset string, storageProfileProvider storageprofile.StorageProfileProvider) *CacheManager {
@@ -559,41 +560,48 @@ func (w *CacheManager) maybeEvictOnce(ctx context.Context) {
 	if w.maxRows <= 0 {
 		return
 	}
+
 	over := w.sink.RowCount() - w.maxRows
-	if over <= 0 {
+	usedSizeGB, err := getUsedDiskSizeInGB()
+	if err != nil {
+		slog.Error("Failed to get used disk size", slog.Any("error", err))
 		return
 	}
+	slog.Info("Cache Status", slog.Int64("rowCount", w.sink.RowCount()), slog.Int64("maxRows", w.maxRows), slog.Int64("overRows", over), slog.Float64("usedDiskGB", usedSizeGB))
+	shouldEvict := over > 0 || usedSizeGB >= 8
 
-	type ent struct {
-		id int64
-		at time.Time
-	}
-	w.mu.Lock()
-	lru := make([]ent, 0, len(w.present))
-	for id := range w.present {
-		lru = append(lru, ent{id: id, at: w.lastAccess[id]})
-	}
-	w.mu.Unlock()
-	if len(lru) == 0 {
-		return
-	}
-
-	sort.Slice(lru, func(i, j int) bool { return lru[i].at.Before(lru[j].at) })
-
-	batch := make([]int64, 0, batchSize)
-
-	for _, e := range lru {
-		if w.sink.RowCount() <= w.maxRows {
-			break
+	if shouldEvict {
+		type ent struct {
+			id int64
+			at time.Time
 		}
-		batch = append(batch, e.id)
-		if len(batch) == batchSize {
+		w.mu.Lock()
+		lru := make([]ent, 0, len(w.present))
+		for id := range w.present {
+			lru = append(lru, ent{id: id, at: w.lastAccess[id]})
+		}
+		w.mu.Unlock()
+		if len(lru) == 0 {
+			return
+		}
+
+		sort.Slice(lru, func(i, j int) bool { return lru[i].at.Before(lru[j].at) })
+
+		batch := make([]int64, 0, batchSize)
+
+		for _, e := range lru {
+			//if w.sink.RowCount() <= w.maxRows {
+			//	break
+			//}
+			batch = append(batch, e.id)
+			if len(batch) == batchSize {
+				w.dropSegments(ctx, batch)
+				batch = batch[:0]
+			}
+		}
+		if len(batch) > 0 && w.sink.RowCount() > w.maxRows {
 			w.dropSegments(ctx, batch)
-			batch = batch[:0]
 		}
-	}
-	if len(batch) > 0 && w.sink.RowCount() > w.maxRows {
-		w.dropSegments(ctx, batch)
 	}
 }
 
@@ -607,4 +615,16 @@ func (w *CacheManager) dropSegments(ctx context.Context, segIDs []int64) {
 		delete(w.lastAccess, id)
 	}
 	w.mu.Unlock()
+}
+
+func getUsedDiskSizeInGB() (float64, error) {
+	var stat syscall.Statfs_t
+
+	err := syscall.Statfs(".", &stat)
+	if err != nil {
+		return 0, err
+	}
+	usedBytes := (stat.Blocks - stat.Bfree) * uint64(stat.Bsize)
+	usedGB := float64(usedBytes) / (1024 * 1024 * 1024)
+	return usedGB, nil
 }

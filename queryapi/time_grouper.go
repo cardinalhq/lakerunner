@@ -94,14 +94,6 @@ func ComputeReplayBatches(
 		targetSize = len(segments)
 	}
 
-	// Helpful input logging (safe in tests/dev)
-	for _, s := range segments {
-		slog.Info("Input Segment",
-			slog.Int64("segmentID", s.SegmentID),
-			slog.String("startTime", time.UnixMilli(s.StartTs).UTC().Format(time.RFC3339)),
-			slog.String("endTime", time.UnixMilli(s.EndTs).UTC().Format(time.RFC3339)))
-	}
-
 	// Sort by start asc, then end asc.
 	sort.Slice(segments, func(i, j int) bool {
 		if segments[i].StartTs == segments[j].StartTs {

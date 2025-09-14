@@ -573,6 +573,120 @@ func TestCompile_QuantileOverTime_WantDDS(t *testing.T) {
 	}
 }
 
+func TestCompile_PercentChange_SumRate_Offset1h(t *testing.T) {
+	q := `100 * ( sum(rate({__name__="api-gateway.movie_play_starts"}[5m])) / clamp_min(sum(rate({__name__="api-gateway.movie_play_starts"}[5m] offset 1h)), 1e-12) - 1 )`
+	root := mustParse(t, q)
+
+	res, err := Compile(root)
+	if err != nil {
+		t.Fatalf("Compile error: %v", err)
+	}
+
+	// Expect exactly two unique leaves.
+	if len(res.Leaves) != 2 {
+		t.Fatalf("want 2 leaves, got %d: %#v", len(res.Leaves), res.Leaves)
+	}
+
+	// Root should be BinaryNode('*')
+	mul, ok := res.Root.(*BinaryNode)
+	if !ok {
+		t.Fatalf("root not BinaryNode, got %T", res.Root)
+	}
+	if mul.Op != OpMul {
+		t.Fatalf("root op=%v, want *", mul.Op)
+	}
+
+	// Right child of * should be (-): ( numerator/denominator - 1 )
+	sub, ok := mul.RHS.(*BinaryNode)
+	if !ok {
+		t.Fatalf("right child of * not BinaryNode, got %T", mul.RHS)
+	}
+	if sub.Op != OpSub {
+		t.Fatalf("sub op=%v, want -", sub.Op)
+	}
+
+	// Left child of (-) should be (/)
+	div, ok := sub.LHS.(*BinaryNode)
+	if !ok {
+		t.Fatalf("left child of - not BinaryNode, got %T", sub.LHS)
+	}
+	if div.Op != OpDiv {
+		t.Fatalf("div op=%v, want /", div.Op)
+	}
+
+	// Numerator: sum(rate(...[5m]))  (no offset)
+	numAgg, ok := div.LHS.(*AggNode)
+	if !ok {
+		t.Fatalf("numerator not AggNode, got %T", div.LHS)
+	}
+	if numAgg.Op != AggSum {
+		t.Fatalf("numerator agg op=%v, want sum", numAgg.Op)
+	}
+	numLeaf, ok := numAgg.Child.(*LeafNode)
+	if !ok {
+		t.Fatalf("numerator child not LeafNode, got %T", numAgg.Child)
+	}
+	if numLeaf.BE.FuncName != "rate" || numLeaf.BE.Range != "5m" || numLeaf.BE.Offset != "" {
+		t.Fatalf("numerator leaf wrong func/range/offset: %+v", numLeaf.BE)
+	}
+	if numLeaf.BE.Metric != "api-gateway.movie_play_starts" {
+		t.Fatalf("numerator metric=%q, want api-gateway.movie_play_starts", numLeaf.BE.Metric)
+	}
+
+	// Denominator: clamp_min(sum(rate(...[5m] offset 1h)), 1e-12)
+	clamp, ok := div.RHS.(*ClampMinNode)
+	if !ok {
+		t.Fatalf("denominator not ClampMinNode, got %T", div.RHS)
+	}
+	if clamp.Min != 1e-12 {
+		t.Fatalf("ClampMin.Min=%v, want 1e-12", clamp.Min)
+	}
+	denAgg, ok := clamp.Child.(*AggNode)
+	if !ok {
+		t.Fatalf("ClampMin child not AggNode, got %T", clamp.Child)
+	}
+	if denAgg.Op != AggSum {
+		t.Fatalf("denominator agg op=%v, want sum", denAgg.Op)
+	}
+	denLeaf, ok := denAgg.Child.(*LeafNode)
+	if !ok {
+		t.Fatalf("denominator agg child not LeafNode, got %T", denAgg.Child)
+	}
+	if denLeaf.BE.FuncName != "rate" || denLeaf.BE.Range != "5m" || denLeaf.BE.Offset != "1h" {
+		t.Fatalf("denominator leaf wrong func/range/offset: %+v", denLeaf.BE)
+	}
+	if denLeaf.BE.Metric != numLeaf.BE.Metric {
+		t.Fatalf("denominator metric=%q, want %q", denLeaf.BE.Metric, numLeaf.BE.Metric)
+	}
+
+	// Leaves slice should correspond to these two BaseExprs (order not guaranteed).
+	gotIDs := []string{res.Leaves[0].ID, res.Leaves[1].ID}
+	wantIDs := []string{numLeaf.BE.ID, denLeaf.BE.ID}
+	if !sameStringSet(gotIDs, wantIDs) {
+		t.Fatalf("plan.Leaves IDs mismatch.\n got=%v\nwant=%v", gotIDs, wantIDs)
+	}
+}
+
+func sameStringSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	m := make(map[string]int, len(a))
+	for _, s := range a {
+		m[s]++
+	}
+	for _, s := range b {
+		if m[s] == 0 {
+			return false
+		}
+		m[s]--
+		if m[s] == 0 {
+			delete(m, s)
+		}
+	}
+	return len(m) == 0
+}
+
 func TestCompile_TopK_HistogramQuantile(t *testing.T) {
 	q := `topk(5, histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, service)))`
 	root := mustParse(t, q)

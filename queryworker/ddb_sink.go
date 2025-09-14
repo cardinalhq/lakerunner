@@ -59,16 +59,12 @@ type colDef struct {
 // It also ensures a `segment_id VARCHAR` column is present (idempotent ALTER)
 // and loads the schema cache.
 func NewDDBSink(dataset string, ctx context.Context) (*DDBSink, error) {
-	dbPath := fmt.Sprintf("./db/%s_cached.ddb", dataset)
-
-	// Best-effort remove previous DB file.
-	_ = os.Remove(dbPath)
-
-	// Clean slate: remove any existing file.
-	// Ensure parent directory exists.
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
-		return nil, fmt.Errorf("mkdir %s: %w", filepath.Dir(dbPath), err)
+	tempDir, err := os.MkdirTemp("", "duckdb-cache-*")
+	if err != nil {
+		return nil, fmt.Errorf("create temp dir: %w", err)
 	}
+
+	dbPath := filepath.Join(tempDir, fmt.Sprintf("%s_cached.ddb", dataset))
 
 	db, err := duckdbx.Open(dbPath,
 		duckdbx.WithMemoryLimitMB(2048),
