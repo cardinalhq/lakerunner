@@ -285,7 +285,8 @@ func (q *QuerierService) EvaluateMetricsQuery(
 						slog.Error("no worker pushdowns survived; skipping leaf", "leafID", leafID)
 						continue
 					}
-					leafChans = append(leafChans, promql.MergeSorted(ctx, 1024, false, 0, workerChans...))
+					//leafChans = append(leafChans, promql.MergeSorted(ctx, 1024, false, 0, workerChans...))
+					leafChans = append(leafChans, workerChans...)
 				}
 
 				// if nothing survived, register a closed stream to keep ordering happy
