@@ -268,7 +268,7 @@ func (tr *TopicRegistry) GenerateKafkaSyncConfig(config KafkaTopicsConfig) Kafka
 			if serviceConfig.ReplicationFactor != nil {
 				topic.ReplicationFactor = *serviceConfig.ReplicationFactor
 			}
-			if serviceConfig.Options != nil && len(serviceConfig.Options) > 0 {
+			if len(serviceConfig.Options) > 0 {
 				topic.TopicConfig = make(map[string]interface{})
 				for k, v := range serviceConfig.Options {
 					topic.TopicConfig[k] = v

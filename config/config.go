@@ -15,12 +15,14 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"reflect"
 	"strings"
 	"time"
 
 	"github.com/spf13/viper"
+	"gopkg.in/yaml.v3"
 )
 
 // Config aggregates configuration for the application.
@@ -85,9 +87,32 @@ type TopicCreationConfig struct {
 }
 
 type KafkaTopicsConfig struct {
-	TopicPrefix string                            `mapstructure:"topicPrefix"` // Topic prefix (default: "lakerunner")
-	Defaults    TopicCreationConfig               `mapstructure:"defaults"`    // Default settings for topic creation
-	Topics      map[string]TopicCreationConfig    `mapstructure:"topics"`      // Per-service-type overrides for topic creation
+	TopicPrefix string                         `mapstructure:"topicPrefix"` // Topic prefix (default: "lakerunner")
+	Defaults    TopicCreationConfig            `mapstructure:"defaults"`    // Default settings for topic creation
+	Topics      map[string]TopicCreationConfig `mapstructure:"topics"`      // Per-service-type overrides for topic creation
+}
+
+// KafkaTopicsOverrideVersion is the current version for override files
+const KafkaTopicsOverrideVersion = 2
+
+// KafkaTopicsOverrideVersionCheck holds just the version field for initial parsing
+type KafkaTopicsOverrideVersionCheck struct {
+	Version int `yaml:"version"`
+}
+
+// TopicCreationOverrideConfig holds configuration for creating Kafka topics in override files
+// Uses yaml tags instead of mapstructure tags
+type TopicCreationOverrideConfig struct {
+	PartitionCount    *int                   `yaml:"partitionCount"`
+	ReplicationFactor *int                   `yaml:"replicationFactor"`
+	Options           map[string]interface{} `yaml:"options"`
+}
+
+// KafkaTopicsOverrideConfig is the full structure for external YAML override files
+type KafkaTopicsOverrideConfig struct {
+	Version  int                                    `yaml:"version"`
+	Defaults TopicCreationOverrideConfig            `yaml:"defaults"`
+	Workers  map[string]TopicCreationOverrideConfig `yaml:"workers"`
 }
 
 // KafkaConfig holds the Kafka configuration (moved from fly package to avoid import cycle)
@@ -278,6 +303,83 @@ func Load() (*Config, error) {
 // GetTopicRegistry returns a TopicRegistry configured with this config's prefix
 func (c *Config) GetTopicRegistry() *TopicRegistry {
 	return NewTopicRegistry(c.KafkaTopics.TopicPrefix)
+}
+
+// LoadKafkaTopicsOverride loads and validates a Kafka topics override configuration from a file
+// This function is separate from the main config loading to avoid blocking service startup
+// when override files have issues - only topic configuration operations will fail
+func LoadKafkaTopicsOverride(filename string) (*KafkaTopicsOverrideConfig, error) {
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read kafka topics override file: %w", err)
+	}
+
+	// First, check version with lenient parsing
+	var versionCheck KafkaTopicsOverrideVersionCheck
+	if err := yaml.Unmarshal(data, &versionCheck); err != nil {
+		return nil, fmt.Errorf("failed to parse version from kafka topics override file: %w", err)
+	}
+
+	// Validate version
+	if versionCheck.Version != KafkaTopicsOverrideVersion {
+		return nil, fmt.Errorf("unsupported kafka topics override file version %d, expected version %d",
+			versionCheck.Version, KafkaTopicsOverrideVersion)
+	}
+
+	// Now parse the full config with strict mode
+	var config KafkaTopicsOverrideConfig
+	decoder := yaml.NewDecoder(strings.NewReader(string(data)))
+	decoder.KnownFields(true) // Enable strict mode - fail on unknown fields
+
+	if err := decoder.Decode(&config); err != nil {
+		return nil, fmt.Errorf("failed to parse kafka topics override file (strict mode): %w", err)
+	}
+
+	return &config, nil
+}
+
+// convertTopicCreationOverrideConfig converts from override config to regular config
+func convertTopicCreationOverrideConfig(override TopicCreationOverrideConfig) TopicCreationConfig {
+	return TopicCreationConfig(override)
+}
+
+// MergeKafkaTopicsOverride merges an override config into the base KafkaTopicsConfig
+func MergeKafkaTopicsOverride(base KafkaTopicsConfig, override *KafkaTopicsOverrideConfig) KafkaTopicsConfig {
+	result := KafkaTopicsConfig{
+		TopicPrefix: base.TopicPrefix,
+		Defaults:    base.Defaults,
+		Topics:      make(map[string]TopicCreationConfig),
+	}
+
+	// Copy base topics
+	for k, v := range base.Topics {
+		result.Topics[k] = v
+	}
+
+	// Note: TopicPrefix is NOT overridden - it comes from main config or environment
+
+	// Merge defaults (override takes precedence for non-nil values)
+	if override.Defaults.PartitionCount != nil {
+		result.Defaults.PartitionCount = override.Defaults.PartitionCount
+	}
+	if override.Defaults.ReplicationFactor != nil {
+		result.Defaults.ReplicationFactor = override.Defaults.ReplicationFactor
+	}
+	if len(override.Defaults.Options) > 0 {
+		if result.Defaults.Options == nil {
+			result.Defaults.Options = make(map[string]interface{})
+		}
+		for k, v := range override.Defaults.Options {
+			result.Defaults.Options[k] = v
+		}
+	}
+
+	// Merge per-topic configs (override completely replaces base for each topic)
+	for topicKey, topicConfig := range override.Workers {
+		result.Topics[topicKey] = convertTopicCreationOverrideConfig(topicConfig)
+	}
+
+	return result
 }
 
 // intPtr returns a pointer to an int value
