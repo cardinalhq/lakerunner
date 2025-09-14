@@ -568,41 +568,40 @@ func (w *CacheManager) maybeEvictOnce(ctx context.Context) {
 		return
 	}
 	slog.Info("Cache Status", slog.Int64("rowCount", w.sink.RowCount()), slog.Int64("maxRows", w.maxRows), slog.Int64("overRows", over), slog.Float64("usedDiskGB", usedSizeGB))
-	if usedSizeGB < 8 || over <= 0 {
-		return
-	}
-	slog.Info("Cache over limit, evicting segments", slog.Int64("overRows", over), slog.Float64("usedDiskGB", usedSizeGB))
+	shouldEvict := over > 0 && usedSizeGB >= 8
 
-	type ent struct {
-		id int64
-		at time.Time
-	}
-	w.mu.Lock()
-	lru := make([]ent, 0, len(w.present))
-	for id := range w.present {
-		lru = append(lru, ent{id: id, at: w.lastAccess[id]})
-	}
-	w.mu.Unlock()
-	if len(lru) == 0 {
-		return
-	}
-
-	sort.Slice(lru, func(i, j int) bool { return lru[i].at.Before(lru[j].at) })
-
-	batch := make([]int64, 0, batchSize)
-
-	for _, e := range lru {
-		//if w.sink.RowCount() <= w.maxRows {
-		//	break
-		//}
-		batch = append(batch, e.id)
-		if len(batch) == batchSize {
-			w.dropSegments(ctx, batch)
-			batch = batch[:0]
+	if shouldEvict {
+		type ent struct {
+			id int64
+			at time.Time
 		}
-	}
-	if len(batch) > 0 && w.sink.RowCount() > w.maxRows {
-		w.dropSegments(ctx, batch)
+		w.mu.Lock()
+		lru := make([]ent, 0, len(w.present))
+		for id := range w.present {
+			lru = append(lru, ent{id: id, at: w.lastAccess[id]})
+		}
+		w.mu.Unlock()
+		if len(lru) == 0 {
+			return
+		}
+
+		sort.Slice(lru, func(i, j int) bool { return lru[i].at.Before(lru[j].at) })
+
+		batch := make([]int64, 0, batchSize)
+
+		for _, e := range lru {
+			//if w.sink.RowCount() <= w.maxRows {
+			//	break
+			//}
+			batch = append(batch, e.id)
+			if len(batch) == batchSize {
+				w.dropSegments(ctx, batch)
+				batch = batch[:0]
+			}
+		}
+		if len(batch) > 0 && w.sink.RowCount() > w.maxRows {
+			w.dropSegments(ctx, batch)
+		}
 	}
 }
 
