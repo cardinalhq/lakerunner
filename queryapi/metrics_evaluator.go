@@ -263,6 +263,7 @@ func (q *QuerierService) EvaluateMetricsQuery(
 
 					workerChans := make([]<-chan promql.SketchInput, 0, len(workerGroups))
 					for worker, wsegs := range workerGroups {
+						slog.Info("Pushdown to worker", "worker", worker, "numSegments", len(wsegs), "leafID", leafID)
 						req := PushDownRequest{
 							OrganizationID: orgID,
 							BaseExpr:       &leaf,
