@@ -277,7 +277,6 @@ func (q *QuerierService) EvaluateMetricsQuery(
 							Step:           stepDuration,
 						}
 
-						// Use the long-lived pushCtx (DON'T defer-cancel per worker).
 						ch, err := q.metricsPushDown(pushCtx, worker, req)
 						if err != nil {
 							slog.Error("pushdown failed", "worker", worker, "err", err)
@@ -287,7 +286,6 @@ func (q *QuerierService) EvaluateMetricsQuery(
 							ch = shiftTimestamps(pushCtx, ch, offMs, 256)
 						}
 
-						// Instrument per-stream delivery (helps catch “trickle” quickly).
 						tag := fmt.Sprintf("g=%d leaf=%s %s:%d", gi, leafID, worker.IP, worker.Port)
 						ch = tapStream(pushCtx, ch, tag)
 
