@@ -12,6 +12,20 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
+// Copyright (C) 2025 CardinalHQ, Inc
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as
+// published by the Free Software Foundation, version 3.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program. If not, see <http://www.gnu.org/licenses/>.
+
 package queryapi
 
 import (
@@ -44,7 +58,7 @@ type SegmentGroup struct {
 // ComputeReplayBatchesWithWorkers: pick a target size from total/worker count.
 func ComputeReplayBatchesWithWorkers(
 	segments []SegmentInfo,
-	step time.Duration, // used only to pick a sensible epsilon; no step snapping
+	step time.Duration, // used for epsilon AND step alignment
 	queryStartTs, queryEndTs int64,
 	workers int,
 	reverseSort bool,
@@ -60,16 +74,15 @@ func ComputeReplayBatchesWithWorkers(
 	)
 }
 
-// ComputeReplayBatches builds coverage bands from the data (no step alignment),
-// merges near-touching segments with a small epsilon to avoid micro-gaps,
-// then splits each band by count to form groups. Each group's Start/End is
-// derived from its contained segments and finally clamped to [queryStart, queryEnd].
-// Within a group, segments are merged by (SegmentID, ExprID) before clamping.
-// Finally, **tiling is applied per-band only** (forward or reverse) to avoid
-// overlap/duplication across groups **without inventing cross-band gaps**.
+// ComputeReplayBatches builds coverage bands from the data, merges near-touching
+// segments with a small epsilon to avoid micro-gaps, then splits each band by
+// count to form groups. Each group's window is derived from its segments and
+// clamped to [queryStart, queryEnd]. **Key fix**: we then step-align group edges
+// so no [T, T+step) bucket straddles two groups (prevents multi-worker "trickle").
+// Within a band we optionally tile edges after snapping to remove any tiny overlaps.
 func ComputeReplayBatches(
 	segments []SegmentInfo,
-	step time.Duration, // only to derive epsilon; not used for alignment
+	step time.Duration, // used for epsilon + alignment
 	queryStartTs, queryEndTs int64,
 	targetSize int,
 	reverseSort bool,
@@ -121,7 +134,7 @@ func ComputeReplayBatches(
 	}
 
 	// 3) For each band: split into count-sized chunks in traversal order,
-	//    finalize each chunk into a group, then TILE **within that band** only.
+	//    finalize each chunk into a group, then **step-align** per-band boundaries.
 	var out []SegmentGroup
 	for _, band := range bands {
 		n := len(band)
@@ -129,7 +142,7 @@ func ComputeReplayBatches(
 			continue
 		}
 
-		// Build pre-tiling groups for this band.
+		// Build pre-align groups for this band.
 		var bandGroups []SegmentGroup
 		if n <= targetSize {
 			if g, ok := finalizeGroup(band, queryStartTs, queryEndTs); ok {
@@ -180,7 +193,11 @@ func ComputeReplayBatches(
 			})
 		}
 
-		// **Key fix**: tile within this band only (zero-overlap, zero-gap within band).
+		// **Key fix**: step-align boundaries within this band so a [T,T+step) bucket
+		// can't be split across adjacent groups.
+		bandGroups = snapGroupsToStep(bandGroups, step, queryStartTs, queryEndTs, reverseSort)
+
+		// Optional: after snapping, tile to ensure zero-overlap/zero-gap within band.
 		bandGroups = tileBandEdges(bandGroups, reverseSort)
 
 		out = append(out, bandGroups...)
@@ -291,6 +308,99 @@ func finalizeGroup(chunk []SegmentInfo, qStart, qEnd int64) (SegmentGroup, bool)
 		EndTs:    ge,
 		Segments: outSegs,
 	}, true
+}
+
+// snapGroupsToStep ensures per-band groups are contiguous **and** step-aligned,
+// so each [T,T+step) bucket belongs to exactly one group. We align forward bands
+// by snapping ENDs up to the next step; reverse bands by snapping STARTs down.
+// We also clamp to the query window to avoid overshoot.
+func snapGroupsToStep(groups []SegmentGroup, step time.Duration, qStart, qEnd int64, reverse bool) []SegmentGroup {
+	if len(groups) == 0 {
+		return groups
+	}
+	stepMs := step.Milliseconds()
+	if stepMs <= 0 {
+		return groups
+	}
+
+	snapUp := func(ms int64) int64 {
+		return ((ms + stepMs - 1) / stepMs) * stepMs
+	}
+	snapDown := func(ms int64) int64 {
+		return (ms / stepMs) * stepMs
+	}
+
+	clamp := func(g SegmentGroup, s, e int64) (SegmentGroup, bool) {
+		if e <= s {
+			return SegmentGroup{}, false
+		}
+		segs := make([]SegmentInfo, 0, len(g.Segments))
+		for _, x := range g.Segments {
+			if x.StartTs < s {
+				x.StartTs = s
+			}
+			if x.EndTs > e {
+				x.EndTs = e
+			}
+			if x.StartTs < x.EndTs {
+				segs = append(segs, x)
+			}
+		}
+		if len(segs) == 0 {
+			return SegmentGroup{}, false
+		}
+		return SegmentGroup{StartTs: s, EndTs: e, Segments: segs}, true
+	}
+
+	out := make([]SegmentGroup, 0, len(groups))
+	if !reverse {
+		// Forward traversal: keep the first group's start; snap its END up to the next step.
+		firstEnd := snapUp(groups[0].EndTs)
+		if firstEnd > qEnd {
+			firstEnd = qEnd
+		}
+		if g, ok := clamp(groups[0], groups[0].StartTs, firstEnd); ok {
+			out = append(out, g)
+		}
+		edge := firstEnd
+		for i := 1; i < len(groups); i++ {
+			end := snapUp(groups[i].EndTs)
+			if end > qEnd {
+				end = qEnd
+			}
+			if end <= edge {
+				continue
+			}
+			if g, ok := clamp(groups[i], edge, end); ok {
+				out = append(out, g)
+				edge = end
+			}
+		}
+	} else {
+		// Reverse traversal: keep the first group's end; snap its START down to the prev step.
+		firstStart := snapDown(groups[0].StartTs)
+		if firstStart < qStart {
+			firstStart = qStart
+		}
+		if g, ok := clamp(groups[0], firstStart, groups[0].EndTs); ok {
+			out = append(out, g)
+		}
+		edge := firstStart
+		for i := 1; i < len(groups); i++ {
+			start := snapDown(groups[i].StartTs)
+			if start < qStart {
+				start = qStart
+			}
+			if start >= edge {
+				continue
+			}
+			if g, ok := clamp(groups[i], start, edge); ok {
+				out = append(out, g)
+				edge = start
+			}
+		}
+	}
+	return out
 }
 
 // tileBandEdges enforces zero-overlap, zero-gap windows **within one band**,
