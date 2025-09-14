@@ -199,3 +199,88 @@ func DefaultTopicRegistry() *TopicRegistry {
 
 // Backward compatibility - keep original KafkaTopics var for existing code
 var KafkaTopics = DefaultTopicRegistry().GetAllTopics()
+
+// KafkaSyncConfig represents the format expected by kafka-sync tool
+type KafkaSyncConfig struct {
+	Defaults KafkaSyncDefaults `yaml:"defaults"`
+	Topics   []KafkaSyncTopic  `yaml:"topics"`
+}
+
+type KafkaSyncDefaults struct {
+	PartitionCount    int                    `yaml:"partitionCount"`
+	ReplicationFactor int                    `yaml:"replicationFactor"`
+	TopicConfig       map[string]interface{} `yaml:"topicConfig"`
+}
+
+type KafkaSyncTopic struct {
+	Name              string                 `yaml:"name"`
+	PartitionCount    int                    `yaml:"partitionCount,omitempty"`
+	ReplicationFactor int                    `yaml:"replicationFactor,omitempty"`
+	TopicConfig       map[string]interface{} `yaml:"topicConfig,omitempty"`
+}
+
+// GenerateKafkaSyncConfig creates a kafka-sync compatible config from our KafkaTopicsConfig
+func (tr *TopicRegistry) GenerateKafkaSyncConfig(config KafkaTopicsConfig) KafkaSyncConfig {
+	// Set up defaults
+	defaults := KafkaSyncDefaults{
+		PartitionCount:    16, // Safe default
+		ReplicationFactor: 3,  // Safe default
+		TopicConfig:       make(map[string]interface{}),
+	}
+
+	// Override with configured defaults
+	if config.Defaults.PartitionCount != nil {
+		defaults.PartitionCount = *config.Defaults.PartitionCount
+	}
+	if config.Defaults.ReplicationFactor != nil {
+		defaults.ReplicationFactor = *config.Defaults.ReplicationFactor
+	}
+	if config.Defaults.Options != nil {
+		for k, v := range config.Defaults.Options {
+			defaults.TopicConfig[k] = v
+		}
+	}
+
+	// Generate topics list from registry
+	var topics []KafkaSyncTopic
+
+	// Get all service mappings to ensure we cover all topics
+	serviceMappings := tr.GetAllServiceMappings()
+
+	// Track topics we've already added (handle duplicate topic names)
+	addedTopics := make(map[string]bool)
+
+	for _, mapping := range serviceMappings {
+		if addedTopics[mapping.Topic] {
+			continue // Skip duplicate topic names
+		}
+		addedTopics[mapping.Topic] = true
+
+		topic := KafkaSyncTopic{
+			Name: mapping.Topic,
+		}
+
+		// Check if we have specific config for this service type
+		if serviceConfig, exists := config.Topics[mapping.ServiceType]; exists {
+			if serviceConfig.PartitionCount != nil {
+				topic.PartitionCount = *serviceConfig.PartitionCount
+			}
+			if serviceConfig.ReplicationFactor != nil {
+				topic.ReplicationFactor = *serviceConfig.ReplicationFactor
+			}
+			if serviceConfig.Options != nil && len(serviceConfig.Options) > 0 {
+				topic.TopicConfig = make(map[string]interface{})
+				for k, v := range serviceConfig.Options {
+					topic.TopicConfig[k] = v
+				}
+			}
+		}
+
+		topics = append(topics, topic)
+	}
+
+	return KafkaSyncConfig{
+		Defaults: defaults,
+		Topics:   topics,
+	}
+}
