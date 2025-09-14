@@ -128,8 +128,9 @@ func convertToKafkaSyncConfig(syncConfig config.KafkaSyncConfig) *kafkasync.Conf
 			ReplicationFactor: syncConfig.Defaults.ReplicationFactor,
 			TopicConfig:       topicConfig,
 		},
-		Topics:           make([]kafkasync.Topic, len(syncConfig.Topics)),
-		OperationTimeout: 60 * time.Second, // Set a 60-second timeout for Kafka operations
+		Topics:                    make([]kafkasync.Topic, len(syncConfig.Topics)),
+		OperationTimeout:          60 * time.Second, // Set a 60-second timeout for Kafka operations
+		RebalanceOperationTimeout: 60 * time.Second, // Set a 60-second timeout for rebalancing operations
 	}
 
 	for i, topic := range syncConfig.Topics {

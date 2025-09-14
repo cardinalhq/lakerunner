@@ -20,7 +20,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.37.0
 	github.com/aws/smithy-go v1.22.5
 	github.com/axiomhq/hyperloglog v0.2.5
-	github.com/cardinalhq/kafka-sync v0.1.0
+	github.com/cardinalhq/kafka-sync v0.1.1
 	github.com/cardinalhq/oteltools v0.31.0
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/deckarep/golang-set/v2 v2.8.0
