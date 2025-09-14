@@ -83,6 +83,7 @@ func newLogIngestProcessor(
 		cmgr:              cmgr,
 		kafkaProducer:     kafkaProducer,
 		exemplarProcessor: exemplarProcessor,
+		config:            cfg,
 	}
 }
 

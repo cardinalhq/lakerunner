@@ -40,7 +40,6 @@ type TraceCompactionProcessor struct {
 	store           TraceCompactionStore
 	storageProvider storageprofile.StorageProfileProvider
 	cmgr            cloudstorage.ClientProvider
-	cfg             *config.Config
 	config          *config.Config
 }
 
@@ -55,7 +54,7 @@ func NewTraceCompactionProcessor(
 		store:           store,
 		storageProvider: storageProvider,
 		cmgr:            cmgr,
-		cfg:             cfg,
+		config:          cfg,
 	}
 }
 

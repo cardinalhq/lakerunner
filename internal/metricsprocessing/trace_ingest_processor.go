@@ -200,6 +200,7 @@ func newTraceIngestProcessor(
 		cmgr:              cmgr,
 		kafkaProducer:     kafkaProducer,
 		exemplarProcessor: exemplarProcessor,
+		config:            cfg,
 	}
 }
 

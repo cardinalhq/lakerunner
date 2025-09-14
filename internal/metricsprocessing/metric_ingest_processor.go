@@ -85,6 +85,7 @@ func newMetricIngestProcessor(
 		cmgr:              cmgr,
 		kafkaProducer:     kafkaProducer,
 		exemplarProcessor: exemplarProcessor,
+		config:            cfg,
 	}
 }
 
