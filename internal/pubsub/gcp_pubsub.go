@@ -17,6 +17,7 @@ package pubsub
 import (
 	"context"
 	"fmt"
+	"github.com/cardinalhq/lakerunner/config"
 	"log/slog"
 	"os"
 
@@ -42,7 +43,7 @@ type GCPPubSubService struct {
 // Ensure GCPPubSubService implements Backend interface
 var _ Backend = (*GCPPubSubService)(nil)
 
-func NewGCPPubSubService(kafkaFactory *fly.Factory) (*GCPPubSubService, error) {
+func NewGCPPubSubService(ctx context.Context, cfg *config.Config, kafkaFactory *fly.Factory) (*GCPPubSubService, error) {
 	projectID := os.Getenv("GCP_PROJECT_ID")
 	if projectID == "" {
 		return nil, fmt.Errorf("GCP_PROJECT_ID environment variable is required")
@@ -58,7 +59,6 @@ func NewGCPPubSubService(kafkaFactory *fly.Factory) (*GCPPubSubService, error) {
 	if keyFile := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"); keyFile != "" {
 		opts = append(opts, option.WithCredentialsFile(keyFile))
 	}
-	ctx := context.Background()
 	client, err := pubsub.NewClient(ctx, projectID, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create pubsub client: %w", err)
@@ -66,14 +66,14 @@ func NewGCPPubSubService(kafkaFactory *fly.Factory) (*GCPPubSubService, error) {
 
 	sub := client.Subscription(subscriptionID)
 
-	cdb, err := dbopen.ConfigDBStore(context.Background())
+	cdb, err := dbopen.ConfigDBStore(ctx)
 	if err != nil {
 		slog.Error("Failed to connect to configdb", slog.Any("error", err))
 		return nil, fmt.Errorf("failed to connect to configdb: %w", err)
 	}
 	sp := storageprofile.NewStorageProfileProvider(cdb)
 
-	kafkaHandler, err := NewKafkaHandler(kafkaFactory, "gcp", sp)
+	kafkaHandler, err := NewKafkaHandler(ctx, cfg, kafkaFactory, "gcp", sp)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka handler: %w", err)
 	}

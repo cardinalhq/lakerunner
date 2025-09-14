@@ -31,13 +31,18 @@ import (
 type TraceCompactionBoxerProcessor struct {
 	kafkaProducer fly.Producer
 	store         BoxerStore
+	config        *config.Config
 }
 
 // newTraceCompactionBoxerProcessor creates a new trace compaction boxer processor instance
-func newTraceCompactionBoxerProcessor(kafkaProducer fly.Producer, store BoxerStore) *TraceCompactionBoxerProcessor {
+func newTraceCompactionBoxerProcessor(
+	ctx context.Context,
+	cfg *config.Config,
+	kafkaProducer fly.Producer, store BoxerStore) *TraceCompactionBoxerProcessor {
 	return &TraceCompactionBoxerProcessor{
 		kafkaProducer: kafkaProducer,
 		store:         store,
+		config:        cfg,
 	}
 }
 
@@ -78,7 +83,7 @@ func (b *TraceCompactionBoxerProcessor) Process(ctx context.Context, group *accu
 	}
 
 	// Send to compaction topic
-	compactionTopic := config.DefaultTopicRegistry().GetTopic(config.TopicSegmentsTracesCompact)
+	compactionTopic := b.config.TopicRegistry.GetTopic(config.TopicSegmentsTracesCompact)
 	if err := b.kafkaProducer.Send(ctx, compactionTopic, bundleMessage); err != nil {
 		return fmt.Errorf("failed to send compaction bundle to compaction topic: %w", err)
 	}

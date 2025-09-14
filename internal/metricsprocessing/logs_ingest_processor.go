@@ -61,10 +61,14 @@ type LogIngestProcessor struct {
 	cmgr              cloudstorage.ClientProvider
 	kafkaProducer     fly.Producer
 	exemplarProcessor *exemplars.Processor
+	config            *config.Config
 }
 
 // newLogIngestProcessor creates a new log ingest processor instance
-func newLogIngestProcessor(store LogIngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *LogIngestProcessor {
+func newLogIngestProcessor(
+	ctx context.Context,
+	cfg *config.Config,
+	store LogIngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *LogIngestProcessor {
 	var exemplarProcessor *exemplars.Processor
 	if os.Getenv("DISABLE_EXEMPLARS") != "true" {
 		exemplarProcessor = exemplars.NewProcessor(exemplars.DefaultConfig())
@@ -280,7 +284,7 @@ func (p *LogIngestProcessor) Process(ctx context.Context, group *accumulationGro
 
 	// Send compaction notifications to Kafka topic
 	if p.kafkaProducer != nil {
-		compactionTopic := config.DefaultTopicRegistry().GetTopic(config.TopicBoxerLogsCompact)
+		compactionTopic := p.config.TopicRegistry.GetTopic(config.TopicBoxerLogsCompact)
 
 		for _, segParams := range segmentParams {
 			// Create log compaction message

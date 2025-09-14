@@ -17,7 +17,6 @@ package adminconfig
 import (
 	"context"
 	"errors"
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -49,10 +48,7 @@ func TestDBProviderValidateAPIKeyInitialAdmin(t *testing.T) {
 		},
 	}
 
-	_ = os.Setenv("LAKERUNNER_INITITAL_ADMIN_API_KEY", "bootkey")
-	defer func() { _ = os.Unsetenv("LAKERUNNER_INITITAL_ADMIN_API_KEY") }()
-
-	provider := NewDBProvider(store)
+	provider := NewDBProvider(store, "bootkey")
 
 	valid, err := provider.ValidateAPIKey(ctx, "bootkey")
 	assert.NoError(t, err)
@@ -74,10 +70,7 @@ func TestDBProviderValidateAPIKeyNonEmptyTable(t *testing.T) {
 		},
 	}
 
-	_ = os.Setenv("LAKERUNNER_INITITAL_ADMIN_API_KEY", "bootkey")
-	defer func() { _ = os.Unsetenv("LAKERUNNER_INITITAL_ADMIN_API_KEY") }()
-
-	provider := NewDBProvider(store)
+	provider := NewDBProvider(store, "bootkey")
 
 	valid, err := provider.ValidateAPIKey(ctx, "bootkey")
 	assert.NoError(t, err)
@@ -95,7 +88,7 @@ func TestDBProviderValidateAPIKeyFromDB(t *testing.T) {
 		},
 	}
 
-	provider := NewDBProvider(store)
+	provider := NewDBProvider(store, "")
 
 	valid, err := provider.ValidateAPIKey(ctx, "fromdb")
 	assert.NoError(t, err)

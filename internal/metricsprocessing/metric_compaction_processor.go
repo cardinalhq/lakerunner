@@ -40,7 +40,7 @@ type MetricCompactionProcessor struct {
 	store           MetricCompactionStore
 	storageProvider storageprofile.StorageProfileProvider
 	cmgr            cloudstorage.ClientProvider
-	cfg             *config.Config
+	config          *config.Config
 }
 
 // NewMetricCompactionProcessor creates a new metric compaction processor
@@ -54,7 +54,7 @@ func NewMetricCompactionProcessor(
 		store:           store,
 		storageProvider: storageProvider,
 		cmgr:            cmgr,
-		cfg:             cfg,
+		config:          cfg,
 	}
 }
 
@@ -409,8 +409,8 @@ func (p *MetricCompactionProcessor) ProcessBundle(ctx context.Context, key messa
 
 	// Create KafkaCommitData for offset tracking
 	kafkaCommitData := &KafkaCommitData{
-		Topic:         config.DefaultTopicRegistry().GetTopic(config.TopicSegmentsMetricsCompact),
-		ConsumerGroup: config.DefaultTopicRegistry().GetConsumerGroup(config.TopicSegmentsMetricsCompact),
+		Topic:         p.config.TopicRegistry.GetTopic(config.TopicSegmentsMetricsCompact),
+		ConsumerGroup: p.config.TopicRegistry.GetConsumerGroup(config.TopicSegmentsMetricsCompact),
 		Offsets: map[int32]int64{
 			partition: offset + 1,
 		},

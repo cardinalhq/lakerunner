@@ -31,13 +31,18 @@ import (
 type MetricRollupBoxerProcessor struct {
 	kafkaProducer fly.Producer
 	store         BoxerStore
+	config        *config.Config
 }
 
 // newMetricBoxerProcessor creates a new metric boxer processor instance
-func newMetricBoxerProcessor(kafkaProducer fly.Producer, store BoxerStore) *MetricRollupBoxerProcessor {
+func newMetricBoxerProcessor(
+	ctx context.Context,
+	cfg *config.Config,
+	kafkaProducer fly.Producer, store BoxerStore) *MetricRollupBoxerProcessor {
 	return &MetricRollupBoxerProcessor{
 		kafkaProducer: kafkaProducer,
 		store:         store,
+		config:        cfg,
 	}
 }
 
@@ -81,7 +86,7 @@ func (b *MetricRollupBoxerProcessor) Process(ctx context.Context, group *accumul
 	}
 
 	// Send to rollup topic
-	rollupTopic := config.DefaultTopicRegistry().GetTopic(config.TopicSegmentsMetricsRollup)
+	rollupTopic := b.config.TopicRegistry.GetTopic(config.TopicSegmentsMetricsRollup)
 	if err := b.kafkaProducer.Send(ctx, rollupTopic, bundleMessage); err != nil {
 		return fmt.Errorf("failed to send rollup bundle to rollup topic: %w", err)
 	}

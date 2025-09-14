@@ -63,10 +63,14 @@ type MetricIngestProcessor struct {
 	cmgr              cloudstorage.ClientProvider
 	kafkaProducer     fly.Producer
 	exemplarProcessor *exemplars.Processor
+	config            *config.Config
 }
 
 // newMetricIngestProcessor creates a new metric ingest processor instance
-func newMetricIngestProcessor(store MetricIngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *MetricIngestProcessor {
+func newMetricIngestProcessor(
+	ctx context.Context,
+	cfg *config.Config,
+	store MetricIngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *MetricIngestProcessor {
 	var exemplarProcessor *exemplars.Processor
 	if os.Getenv("DISABLE_EXEMPLARS") != "true" {
 		exemplarProcessor = exemplars.NewProcessor(exemplars.DefaultConfig())
@@ -296,8 +300,8 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 
 	// Send notifications to Kafka topics
 	if p.kafkaProducer != nil {
-		compactionTopic := config.DefaultTopicRegistry().GetTopic(config.TopicBoxerMetricsCompact)
-		rollupTopic := config.DefaultTopicRegistry().GetTopic(config.TopicBoxerMetricsRollup)
+		compactionTopic := p.config.TopicRegistry.GetTopic(config.TopicBoxerMetricsCompact)
+		rollupTopic := p.config.TopicRegistry.GetTopic(config.TopicBoxerMetricsRollup)
 
 		for _, segParams := range segmentParams {
 			// Calculate rollup interval start time for consistent key generation

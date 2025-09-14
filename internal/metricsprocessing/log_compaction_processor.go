@@ -40,7 +40,7 @@ type LogCompactionProcessor struct {
 	store           LogCompactionStore
 	storageProvider storageprofile.StorageProfileProvider
 	cmgr            cloudstorage.ClientProvider
-	cfg             *config.Config
+	config          *config.Config
 }
 
 // NewLogCompactionProcessor creates a new log compaction processor
@@ -54,7 +54,7 @@ func NewLogCompactionProcessor(
 		store:           store,
 		storageProvider: storageProvider,
 		cmgr:            cmgr,
-		cfg:             cfg,
+		config:          cfg,
 	}
 }
 
@@ -181,8 +181,8 @@ func (p *LogCompactionProcessor) ProcessBundle(ctx context.Context, key messages
 
 	// Create KafkaCommitData for offset tracking
 	kafkaCommitData := &KafkaCommitData{
-		Topic:         config.DefaultTopicRegistry().GetTopic(config.TopicSegmentsLogsCompact),
-		ConsumerGroup: config.DefaultTopicRegistry().GetConsumerGroup(config.TopicSegmentsLogsCompact),
+		Topic:         p.config.TopicRegistry.GetTopic(config.TopicSegmentsLogsCompact),
+		ConsumerGroup: p.config.TopicRegistry.GetConsumerGroup(config.TopicSegmentsLogsCompact),
 		Offsets: map[int32]int64{
 			partition: offset + 1,
 		},

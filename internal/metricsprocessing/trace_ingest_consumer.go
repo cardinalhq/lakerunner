@@ -48,13 +48,13 @@ func NewTraceIngestConsumer(
 	}
 
 	// Create TraceIngestProcessor (reusing existing)
-	processor := newTraceIngestProcessor(store, storageProvider, cmgr, kafkaProducer)
+	processor := newTraceIngestProcessor(ctx, cfg, store, storageProvider, cmgr, kafkaProducer)
 
 	// Configure the consumer
 	consumerConfig := CommonConsumerConfig{
 		ConsumerName:  "lakerunner-trace-ingest-v2",
-		Topic:         config.DefaultTopicRegistry().GetTopic(config.TopicObjstoreIngestTraces),
-		ConsumerGroup: config.DefaultTopicRegistry().GetConsumerGroup(config.TopicObjstoreIngestTraces),
+		Topic:         cfg.TopicRegistry.GetTopic(config.TopicObjstoreIngestTraces),
+		ConsumerGroup: cfg.TopicRegistry.GetConsumerGroup(config.TopicObjstoreIngestTraces),
 		FlushInterval: 10 * time.Second,
 		StaleAge:      20 * time.Second,
 		MaxAge:        20 * time.Second,

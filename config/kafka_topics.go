@@ -16,7 +16,6 @@ package config
 
 import (
 	"fmt"
-	"os"
 	"strings"
 )
 
@@ -181,24 +180,6 @@ func (tr *TopicRegistry) GetObjstoreIngestTopic(signal string) string {
 		return fmt.Sprintf("%s.objstore.ingest.%s", tr.prefix, signal)
 	}
 }
-
-// Global registry instance
-var defaultTopicRegistry *TopicRegistry
-
-// DefaultTopicRegistry returns the default global topic registry
-func DefaultTopicRegistry() *TopicRegistry {
-	if defaultTopicRegistry == nil {
-		prefix := os.Getenv("LAKERUNNER_KAFKA_TOPIC_PREFIX")
-		if prefix == "" {
-			prefix = "lakerunner"
-		}
-		defaultTopicRegistry = NewTopicRegistry(prefix)
-	}
-	return defaultTopicRegistry
-}
-
-// Backward compatibility - keep original KafkaTopics var for existing code
-var KafkaTopics = DefaultTopicRegistry().GetAllTopics()
 
 // KafkaSyncConfig represents the format expected by kafka-sync tool
 type KafkaSyncConfig struct {
