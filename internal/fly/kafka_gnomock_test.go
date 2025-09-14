@@ -28,7 +28,6 @@ import (
 	"github.com/orlangure/gnomock"
 	kafkapreset "github.com/orlangure/gnomock/preset/kafka"
 	"github.com/segmentio/kafka-go"
-	"github.com/stretchr/testify/require"
 )
 
 // Global shared container for all tests
@@ -141,11 +140,13 @@ func (k *KafkaTestContainer) Broker() string {
 }
 
 // CreateTopics creates topics on the shared container and waits for them to be ready
-func (k *KafkaTestContainer) CreateTopics(t *testing.T, topics ...string) {
+func (k *KafkaTestContainer) CreateTopics(t testing.TB, topics ...string) {
 	t.Helper()
 
 	conn, err := kafka.Dial("tcp", k.broker)
-	require.NoError(t, err, "Failed to connect to Kafka for topic creation")
+	if err != nil {
+		t.Fatalf("Failed to connect to Kafka for topic creation: %v", err)
+	}
 	defer conn.Close()
 
 	// Create all topics
@@ -158,7 +159,7 @@ func (k *KafkaTestContainer) CreateTopics(t *testing.T, topics ...string) {
 		if err != nil {
 			// Ignore "Topic already exists" errors
 			if !strings.Contains(err.Error(), "Topic already exists") {
-				require.NoError(t, err, "Failed to create topic %s", topic)
+				t.Fatalf("Failed to create topic %s: %v", topic, err)
 			}
 		}
 	}
@@ -168,7 +169,7 @@ func (k *KafkaTestContainer) CreateTopics(t *testing.T, topics ...string) {
 }
 
 // CleanupAfterTest removes topics and consumer groups created during the test
-func (k *KafkaTestContainer) CleanupAfterTest(t *testing.T, topics []string, consumerGroups []string) {
+func (k *KafkaTestContainer) CleanupAfterTest(t testing.TB, topics []string, consumerGroups []string) {
 	t.Helper()
 
 	// Delete consumer groups first
@@ -183,7 +184,7 @@ func (k *KafkaTestContainer) CleanupAfterTest(t *testing.T, topics []string, con
 }
 
 // deleteTopic removes a topic from Kafka
-func (k *KafkaTestContainer) deleteTopic(t *testing.T, topic string) {
+func (k *KafkaTestContainer) deleteTopic(t testing.TB, topic string) {
 	t.Helper()
 
 	conn, err := kafka.Dial("tcp", k.broker)
@@ -200,7 +201,7 @@ func (k *KafkaTestContainer) deleteTopic(t *testing.T, topic string) {
 }
 
 // deleteConsumerGroup removes a consumer group
-func (k *KafkaTestContainer) deleteConsumerGroup(t *testing.T, groupID string) {
+func (k *KafkaTestContainer) deleteConsumerGroup(t testing.TB, groupID string) {
 	t.Helper()
 
 	// Create a temporary consumer to trigger group coordinator metadata, then close it
@@ -218,7 +219,7 @@ func (k *KafkaTestContainer) deleteConsumerGroup(t *testing.T, groupID string) {
 }
 
 // Stop is now a no-op since we use a shared container
-func (k *KafkaTestContainer) Stop(t *testing.T) {
+func (k *KafkaTestContainer) Stop(t testing.TB) {
 	// No-op - shared container is managed by TestMain
 }
 
@@ -251,7 +252,7 @@ func (k *KafkaTestContainer) CreateConsumerConfig(topic, groupID string) Consume
 }
 
 // WaitForTopicsReady waits for topics to be available and ready
-func (k *KafkaTestContainer) WaitForTopicsReady(t *testing.T, topics ...string) {
+func (k *KafkaTestContainer) WaitForTopicsReady(t testing.TB, topics ...string) {
 	t.Helper()
 
 	maxWaitTime := 10 * time.Second
@@ -262,7 +263,9 @@ func (k *KafkaTestContainer) WaitForTopicsReady(t *testing.T, topics ...string) 
 		Brokers: []string{k.broker},
 	}
 	adminClient, err := NewAdminClient(config)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("Failed to create admin client: %v", err)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), maxWaitTime)
 	defer cancel()
@@ -281,7 +284,9 @@ func (k *KafkaTestContainer) WaitForTopicsReady(t *testing.T, topics ...string) 
 			}
 			time.Sleep(checkInterval)
 		}
-		require.True(t, topicReady, "Topic %s was not ready within %v", topic, maxWaitTime)
+		if !topicReady {
+			t.Fatalf("Topic %s was not ready within %v", topic, maxWaitTime)
+		}
 	}
 }
 
