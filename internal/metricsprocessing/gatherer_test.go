@@ -268,33 +268,33 @@ func TestGatherer_PreventsMixedTopics(t *testing.T) {
 	orgID := uuid.New()
 
 	// Create a gatherer for compaction topic
-	gatherer := newGatherer[*messages.MetricCompactionMessage]("lakerunner.segments.metrics.compact", "lakerunner.compact.metrics", compactor, offsetCallbacks)
+	gatherer := newGatherer[*messages.MetricCompactionMessage]("test.segments.metrics.compact", "test.compact.metrics", compactor, offsetCallbacks)
 
 	msg := createTestMessage(orgID, 1, 20250909, 60000, 5000)
 
 	// Should accept compaction messages
-	compactMetadata := createTestMetadata("lakerunner.segments.metrics.compact", 0, "lakerunner.compact.metrics", 100)
+	compactMetadata := createTestMetadata("test.segments.metrics.compact", 0, "test.compact.metrics", 100)
 	err := gatherer.processMessage(context.Background(), msg, compactMetadata)
 	assert.NoError(t, err, "Should accept messages from expected compaction topic")
 
 	// Should reject rollup messages (different topic)
-	rollupMetadata := createTestMetadata("lakerunner.segments.metrics.rollup", 0, "lakerunner.compact.metrics", 101)
+	rollupMetadata := createTestMetadata("test.segments.metrics.rollup", 0, "test.compact.metrics", 101)
 	err = gatherer.processMessage(context.Background(), msg, rollupMetadata)
 	assert.Error(t, err, "Should reject messages from rollup topic")
 
 	var configErr *ConfigMismatchError
 	assert.ErrorAs(t, err, &configErr)
 	assert.Equal(t, "topic", configErr.Field)
-	assert.Equal(t, "lakerunner.segments.metrics.compact", configErr.Expected)
-	assert.Equal(t, "lakerunner.segments.metrics.rollup", configErr.Got)
+	assert.Equal(t, "test.segments.metrics.compact", configErr.Expected)
+	assert.Equal(t, "test.segments.metrics.rollup", configErr.Got)
 
 	// Verify only the compaction message was processed
 	assert.Len(t, compactor.groups, 0, "No groups should be processed yet (below threshold)")
 	assert.Len(t, gatherer.hunter.groups, 1, "Should have one accumulation group from valid message")
 
 	t.Logf("Successfully prevented mixed topics: expected=%s, rejected=%s",
-		"lakerunner.segments.metrics.compact",
-		"lakerunner.segments.metrics.rollup")
+		"test.segments.metrics.compact",
+		"test.segments.metrics.rollup")
 }
 
 // Helper functions for testing

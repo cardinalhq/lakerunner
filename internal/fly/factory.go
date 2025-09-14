@@ -17,6 +17,7 @@ package fly
 import (
 	"crypto/tls"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -36,6 +37,32 @@ func NewFactory(config *Config) *Factory {
 	return &Factory{
 		config: config,
 	}
+}
+
+// NewFactoryFromKafkaConfig creates a new factory from a config.KafkaConfig
+// This avoids import cycles while allowing the main config package to use this factory
+func NewFactoryFromKafkaConfig(kafkaConfig interface{}) *Factory {
+	// Use reflection to convert config.KafkaConfig to fly.Config
+	// This is safe because both structs have identical fields
+	cfg := &Config{
+		Brokers:              getStringSlice(kafkaConfig, "Brokers"),
+		SASLEnabled:          getBool(kafkaConfig, "SASLEnabled"),
+		SASLMechanism:        getString(kafkaConfig, "SASLMechanism"),
+		SASLUsername:         getString(kafkaConfig, "SASLUsername"),
+		SASLPassword:         getString(kafkaConfig, "SASLPassword"),
+		TLSEnabled:           getBool(kafkaConfig, "TLSEnabled"),
+		TLSSkipVerify:        getBool(kafkaConfig, "TLSSkipVerify"),
+		ProducerBatchSize:    getInt(kafkaConfig, "ProducerBatchSize"),
+		ProducerBatchTimeout: getDuration(kafkaConfig, "ProducerBatchTimeout"),
+		ProducerCompression:  getString(kafkaConfig, "ProducerCompression"),
+		ConsumerGroupPrefix:  getString(kafkaConfig, "ConsumerGroupPrefix"),
+		ConsumerBatchSize:    getInt(kafkaConfig, "ConsumerBatchSize"),
+		ConsumerMaxWait:      getDuration(kafkaConfig, "ConsumerMaxWait"),
+		ConsumerMinBytes:     getInt(kafkaConfig, "ConsumerMinBytes"),
+		ConsumerMaxBytes:     getInt(kafkaConfig, "ConsumerMaxBytes"),
+		ConnectionTimeout:    getDuration(kafkaConfig, "ConnectionTimeout"),
+	}
+	return &Factory{config: cfg}
 }
 
 // CreateProducer creates a new Kafka producer
@@ -287,4 +314,54 @@ func (m *Manager) Close() error {
 	}
 
 	return firstErr
+}
+
+// Reflection helper functions for NewFactoryFromKafkaConfig
+func getString(obj interface{}, field string) string {
+	v := reflect.ValueOf(obj)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	f := v.FieldByName(field)
+	return f.String()
+}
+
+func getBool(obj interface{}, field string) bool {
+	v := reflect.ValueOf(obj)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	f := v.FieldByName(field)
+	return f.Bool()
+}
+
+func getInt(obj interface{}, field string) int {
+	v := reflect.ValueOf(obj)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	f := v.FieldByName(field)
+	return int(f.Int())
+}
+
+func getDuration(obj interface{}, field string) time.Duration {
+	v := reflect.ValueOf(obj)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	f := v.FieldByName(field)
+	return time.Duration(f.Int())
+}
+
+func getStringSlice(obj interface{}, field string) []string {
+	v := reflect.ValueOf(obj)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	f := v.FieldByName(field)
+	result := make([]string, f.Len())
+	for i := 0; i < f.Len(); i++ {
+		result[i] = f.Index(i).String()
+	}
+	return result
 }

@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 )
 
@@ -141,13 +142,14 @@ func TestQueueMetricRollup(t *testing.T) {
 			mockProducer := new(MockKafkaProducer)
 
 			if tt.expectSend {
-				mockProducer.On("Send", mock.Anything, "lakerunner.boxer.metrics.rollup", mock.Anything).Return(nil)
+				mockProducer.On("Send", mock.Anything, "test.boxer.metrics.rollup", mock.Anything).Return(nil)
 			}
 
 			ctx := context.Background()
 			segmentStartTime := time.Now() // Use current time for test
+			testRegistry := config.NewTopicRegistry("test")
 			err := queueMetricRollup(ctx, mockProducer, tt.organizationID, tt.dateint, tt.frequencyMs,
-				tt.instanceNum, tt.segmentID, tt.recordCount, tt.fileSize, segmentStartTime)
+				tt.instanceNum, tt.segmentID, tt.recordCount, tt.fileSize, segmentStartTime, testRegistry)
 
 			assert.NoError(t, err)
 			mockProducer.AssertExpectations(t)
@@ -161,13 +163,14 @@ func TestQueueMetricRollupWithMultipleSegments(t *testing.T) {
 	orgID := uuid.New()
 
 	// Expect 3 sends for the rollup-eligible frequencies
-	mockProducer.On("Send", mock.Anything, "lakerunner.boxer.metrics.rollup", mock.Anything).Return(nil).Times(3)
+	mockProducer.On("Send", mock.Anything, "test.boxer.metrics.rollup", mock.Anything).Return(nil).Times(3)
 
 	// Queue multiple segments with different frequencies
 	frequencies := []int32{10_000, 60_000, 300_000, 3_600_000} // Only first 3 should send
+	testRegistry := config.NewTopicRegistry("test")
 	segmentStartTime := time.Now()
 	for i, freq := range frequencies {
-		err := queueMetricRollup(ctx, mockProducer, orgID, 20240101, freq, 1, int64(i+100), 1000, 10000, segmentStartTime)
+		err := queueMetricRollup(ctx, mockProducer, orgID, 20240101, freq, 1, int64(i+100), 1000, 10000, segmentStartTime, testRegistry)
 		assert.NoError(t, err)
 	}
 
@@ -180,12 +183,13 @@ func TestQueueMetricRollupBatch(t *testing.T) {
 	orgID := uuid.New()
 
 	// Set up expectation for each individual send
-	mockProducer.On("Send", mock.Anything, "lakerunner.boxer.metrics.rollup", mock.Anything).Return(nil).Times(5)
+	mockProducer.On("Send", mock.Anything, "test.boxer.metrics.rollup", mock.Anything).Return(nil).Times(5)
 
 	// Queue a batch of segments with rollup-eligible frequency
+	testRegistry := config.NewTopicRegistry("test")
 	segmentStartTime := time.Now()
 	for i := range 5 {
-		err := queueMetricRollup(ctx, mockProducer, orgID, 20240101, 10_000, 1, int64(i+100), 1000, 10000, segmentStartTime)
+		err := queueMetricRollup(ctx, mockProducer, orgID, 20240101, 10_000, 1, int64(i+100), 1000, 10000, segmentStartTime, testRegistry)
 		assert.NoError(t, err)
 	}
 

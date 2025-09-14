@@ -18,17 +18,23 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestNewConsumerLagMonitor(t *testing.T) {
-	config := &Config{
+	kafkaConfig := &Config{
 		Brokers:     []string{"localhost:9092"},
 		SASLEnabled: false,
 		TLSEnabled:  false,
 	}
 
-	monitor, err := NewConsumerLagMonitor(config, time.Minute)
+	// Create test app config with test topic registry
+	testAppConfig := &config.Config{
+		TopicRegistry: config.NewTopicRegistry("test"),
+	}
+
+	monitor, err := NewConsumerLagMonitorWithAppConfig(kafkaConfig, time.Minute, testAppConfig)
 	assert.NoError(t, err)
 
 	assert.NotNil(t, monitor)
@@ -46,13 +52,13 @@ func TestNewConsumerLagMonitor(t *testing.T) {
 
 	for _, mapping := range mappings {
 		if mapping.ServiceType == "ingest-logs" {
-			assert.Equal(t, "lakerunner.objstore.ingest.logs", mapping.Topic)
-			assert.Equal(t, "lakerunner.ingest.logs", mapping.ConsumerGroup)
+			assert.Equal(t, "test.objstore.ingest.logs", mapping.Topic)
+			assert.Equal(t, "test.ingest.logs", mapping.ConsumerGroup)
 			foundIngestLogs = true
 		}
 		if mapping.ServiceType == "boxer-compact-logs" {
-			assert.Equal(t, "lakerunner.boxer.logs.compact", mapping.Topic)
-			assert.Equal(t, "lakerunner.boxer.logs.compact", mapping.ConsumerGroup)
+			assert.Equal(t, "test.boxer.logs.compact", mapping.Topic)
+			assert.Equal(t, "test.boxer.logs.compact", mapping.ConsumerGroup)
 			foundBoxerCompactLogs = true
 		}
 	}
@@ -62,13 +68,18 @@ func TestNewConsumerLagMonitor(t *testing.T) {
 }
 
 func TestConsumerLagMonitor_GetQueueDepth(t *testing.T) {
-	config := &Config{
+	kafkaConfig := &Config{
 		Brokers:     []string{"localhost:9092"},
 		SASLEnabled: false,
 		TLSEnabled:  false,
 	}
 
-	monitor, err := NewConsumerLagMonitor(config, time.Minute)
+	// Create test app config with test topic registry
+	testAppConfig := &config.Config{
+		TopicRegistry: config.NewTopicRegistry("test"),
+	}
+
+	monitor, err := NewConsumerLagMonitorWithAppConfig(kafkaConfig, time.Minute, testAppConfig)
 	assert.NoError(t, err)
 
 	// Test with no data initially - should return 0
@@ -84,13 +95,18 @@ func TestConsumerLagMonitor_GetQueueDepth(t *testing.T) {
 }
 
 func TestConsumerLagMonitor_IsHealthy(t *testing.T) {
-	config := &Config{
+	kafkaConfig := &Config{
 		Brokers:     []string{"localhost:9092"},
 		SASLEnabled: false,
 		TLSEnabled:  false,
 	}
 
-	monitor, err := NewConsumerLagMonitor(config, time.Second)
+	// Create test app config with test topic registry
+	testAppConfig := &config.Config{
+		TopicRegistry: config.NewTopicRegistry("test"),
+	}
+
+	monitor, err := NewConsumerLagMonitorWithAppConfig(kafkaConfig, time.Second, testAppConfig)
 	assert.NoError(t, err)
 
 	// Should be healthy initially (no errors, no updates expected yet)
@@ -107,13 +123,18 @@ func TestConsumerLagMonitor_IsHealthy(t *testing.T) {
 }
 
 func TestConsumerLagMonitor_ServiceMappings(t *testing.T) {
-	config := &Config{
+	kafkaConfig := &Config{
 		Brokers:     []string{"localhost:9092"},
 		SASLEnabled: false,
 		TLSEnabled:  false,
 	}
 
-	monitor, err := NewConsumerLagMonitor(config, time.Minute)
+	// Create test app config with test topic registry
+	testAppConfig := &config.Config{
+		TopicRegistry: config.NewTopicRegistry("test"),
+	}
+
+	monitor, err := NewConsumerLagMonitorWithAppConfig(kafkaConfig, time.Minute, testAppConfig)
 	assert.NoError(t, err)
 	mappings := monitor.GetServiceMappings()
 

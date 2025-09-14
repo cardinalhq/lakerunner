@@ -325,9 +325,9 @@ func (p *TraceCompactionProcessor) atomicTraceDatabaseUpdate(ctx context.Context
 	// Prepare Kafka offsets for update
 	var kafkaOffsets []lrdb.KafkaOffsetUpdate
 	kafkaOffsets = append(kafkaOffsets, lrdb.KafkaOffsetUpdate{
-		Topic:               "lakerunner.segments.traces.compact",
+		Topic:               config.DefaultTopicRegistry().GetTopic(config.TopicSegmentsTracesCompact),
 		Partition:           partition,
-		ConsumerGroup:       "lakerunner.compact.traces",
+		ConsumerGroup:       config.DefaultTopicRegistry().GetConsumerGroup(config.TopicSegmentsTracesCompact),
 		OrganizationID:      key.OrganizationID,
 		InstanceNum:         key.InstanceNum,
 		LastProcessedOffset: offset,
@@ -335,8 +335,8 @@ func (p *TraceCompactionProcessor) atomicTraceDatabaseUpdate(ctx context.Context
 
 	// Log Kafka offset update
 	ll.Debug("Updating Kafka consumer group offset",
-		slog.String("consumerGroup", "lakerunner.compact.traces"),
-		slog.String("topic", "lakerunner.segments.traces.compact"),
+		slog.String("consumerGroup", config.DefaultTopicRegistry().GetConsumerGroup(config.TopicSegmentsTracesCompact)),
+		slog.String("topic", config.DefaultTopicRegistry().GetTopic(config.TopicSegmentsTracesCompact)),
 		slog.Int("partition", int(partition)),
 		slog.Int64("newOffset", offset))
 

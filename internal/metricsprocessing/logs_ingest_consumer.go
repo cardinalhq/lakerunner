@@ -50,11 +50,12 @@ func NewLogIngestConsumer(
 	// Create LogIngestProcessor (reusing existing)
 	processor := newLogIngestProcessor(store, storageProvider, cmgr, kafkaProducer)
 
-	// Configure the consumer
+	// Configure the consumer using centralized topic registry
+	registry := config.DefaultTopicRegistry()
 	consumerConfig := CommonConsumerConfig{
 		ConsumerName:  "lakerunner-log-ingest-v2",
-		Topic:         "lakerunner.objstore.ingest.logs",
-		ConsumerGroup: "lakerunner.ingest.logs",
+		Topic:         registry.GetTopic(config.TopicObjstoreIngestLogs),
+		ConsumerGroup: registry.GetConsumerGroup(config.TopicObjstoreIngestLogs),
 		FlushInterval: 10 * time.Second,
 		StaleAge:      20 * time.Second,
 		MaxAge:        20 * time.Second,

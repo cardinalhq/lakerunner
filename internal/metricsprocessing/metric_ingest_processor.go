@@ -296,8 +296,8 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 
 	// Send notifications to Kafka topics
 	if p.kafkaProducer != nil {
-		compactionTopic := "lakerunner.boxer.metrics.compact"
-		rollupTopic := "lakerunner.boxer.metrics.rollup"
+		compactionTopic := config.DefaultTopicRegistry().GetTopic(config.TopicBoxerMetricsCompact)
+		rollupTopic := config.DefaultTopicRegistry().GetTopic(config.TopicBoxerMetricsRollup)
 
 		for _, segParams := range segmentParams {
 			// Calculate rollup interval start time for consistent key generation

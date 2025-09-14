@@ -21,22 +21,24 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
-
-	"github.com/cardinalhq/lakerunner/internal/fly"
 )
 
 // Config aggregates configuration for the application.
 // Each field is owned by its respective package.
 type Config struct {
-	Debug   bool          `mapstructure:"debug"`
-	Fly     fly.Config    `mapstructure:"fly"`
-	Metrics MetricsConfig `mapstructure:"metrics"`
-	Batch   BatchConfig   `mapstructure:"batch"`
-	DuckDB  DuckDBConfig  `mapstructure:"duckdb"`
-	Logs    LogsConfig    `mapstructure:"logs"`
-	Traces  TracesConfig  `mapstructure:"traces"`
-	Admin   AdminConfig   `mapstructure:"admin"`
-	SegLog  SegLogConfig  `mapstructure:"seglog"`
+	Debug       bool              `mapstructure:"debug"`
+	Kafka       KafkaConfig       `mapstructure:"kafka"`
+	Metrics     MetricsConfig     `mapstructure:"metrics"`
+	Batch       BatchConfig       `mapstructure:"batch"`
+	DuckDB      DuckDBConfig      `mapstructure:"duckdb"`
+	Logs        LogsConfig        `mapstructure:"logs"`
+	Traces      TracesConfig      `mapstructure:"traces"`
+	Admin       AdminConfig       `mapstructure:"admin"`
+	SegLog      SegLogConfig      `mapstructure:"seglog"`
+	KafkaTopics KafkaTopicsConfig `mapstructure:"kafka_topics"`
+
+	// Derived fields (populated during Load())
+	TopicRegistry *TopicRegistry // Kafka topic registry based on prefix
 }
 
 type MetricsConfig struct {
@@ -74,6 +76,41 @@ type SegLogConfig struct {
 	Enabled bool `mapstructure:"enabled"` // Enable segment log tracing for debugging operations
 }
 
+type KafkaTopicsConfig struct {
+	Prefix string `mapstructure:"prefix"` // Topic prefix (default: "lakerunner")
+}
+
+// KafkaConfig holds the Kafka configuration (moved from fly package to avoid import cycle)
+type KafkaConfig struct {
+	// Broker configuration
+	Brokers []string `mapstructure:"brokers"`
+
+	// SASL authentication
+	SASLEnabled   bool   `mapstructure:"sasl_enabled"`
+	SASLMechanism string `mapstructure:"sasl_mechanism"` // "PLAIN", "SCRAM-SHA-256" or "SCRAM-SHA-512"
+	SASLUsername  string `mapstructure:"sasl_username"`
+	SASLPassword  string `mapstructure:"sasl_password"`
+
+	// TLS configuration
+	TLSEnabled    bool `mapstructure:"tls_enabled"`
+	TLSSkipVerify bool `mapstructure:"tls_skip_verify"`
+
+	// Producer settings
+	ProducerBatchSize    int           `mapstructure:"producer_batch_size"`
+	ProducerBatchTimeout time.Duration `mapstructure:"producer_batch_timeout"`
+	ProducerCompression  string        `mapstructure:"producer_compression"`
+
+	// Consumer settings
+	ConsumerGroupPrefix string        `mapstructure:"consumer_group_prefix"`
+	ConsumerBatchSize   int           `mapstructure:"consumer_batch_size"`
+	ConsumerMaxWait     time.Duration `mapstructure:"consumer_max_wait"`
+	ConsumerMinBytes    int           `mapstructure:"consumer_min_bytes"`
+	ConsumerMaxBytes    int           `mapstructure:"consumer_max_bytes"`
+
+	// Connection settings
+	ConnectionTimeout time.Duration `mapstructure:"connection_timeout"`
+}
+
 type CompactionConfig struct {
 	TargetFileSizeBytes int64         `mapstructure:"target_file_size_bytes"` // Target file size in bytes for compaction (default: 1048576 = 1MB)
 	MaxAccumulationTime time.Duration `mapstructure:"max_accumulation_time"`  // Maximum time to accumulate segments before compacting
@@ -99,14 +136,41 @@ func DefaultIngestionConfig() IngestionConfig {
 	}
 }
 
+// DefaultKafkaConfig returns default settings for Kafka.
+func DefaultKafkaConfig() KafkaConfig {
+	return KafkaConfig{
+		Brokers: []string{"localhost:9092"},
+
+		SASLEnabled:   false,
+		SASLMechanism: "SCRAM-SHA-256",
+		SASLUsername:  "",
+		SASLPassword:  "",
+
+		TLSEnabled:    false,
+		TLSSkipVerify: false,
+
+		ProducerBatchSize:    100,
+		ProducerBatchTimeout: 10 * time.Millisecond,
+		ProducerCompression:  "snappy",
+
+		ConsumerGroupPrefix: "lakerunner",
+		ConsumerBatchSize:   100,
+		ConsumerMaxWait:     500 * time.Millisecond,
+		ConsumerMinBytes:    10 * 1024,        // 10KB
+		ConsumerMaxBytes:    10 * 1024 * 1024, // 10MB
+
+		ConnectionTimeout: 10 * time.Second,
+	}
+}
+
 // Load reads configuration from files and environment variables.
 // Environment variables use the prefix "LAKERUNNER" and the dot character
-// in keys is replaced by an underscore. For example, "fly.brokers" becomes
-// "LAKERUNNER_FLY_BROKERS".
+// in keys is replaced by an underscore. For example, "kafka.brokers" becomes
+// "LAKERUNNER_KAFKA_BROKERS".
 func Load() (*Config, error) {
 	cfg := &Config{
 		Debug: false,
-		Fly:   *fly.DefaultConfig(),
+		Kafka: DefaultKafkaConfig(),
 		Metrics: MetricsConfig{
 			Ingestion: DefaultIngestionConfig(),
 			Compaction: CompactionConfig{
@@ -136,6 +200,9 @@ func Load() (*Config, error) {
 		SegLog: SegLogConfig{
 			Enabled: false, // Disabled by default for production
 		},
+		KafkaTopics: KafkaTopicsConfig{
+			Prefix: "lakerunner", // Default topic prefix
+		},
 	}
 
 	v := viper.New()
@@ -150,8 +217,25 @@ func Load() (*Config, error) {
 	if err := v.Unmarshal(cfg); err != nil {
 		return nil, err
 	}
-	if b := v.GetString("fly.brokers"); b != "" {
-		cfg.Fly.Brokers = strings.Split(b, ",")
+	// Handle Kafka configuration with migration support from fly.* to kafka.*
+	if b := v.GetString("kafka.brokers"); b != "" {
+		cfg.Kafka.Brokers = strings.Split(b, ",")
+	} else if b := v.GetString("fly.brokers"); b != "" {
+		// Backward compatibility: fall back to old fly.brokers config
+		cfg.Kafka.Brokers = strings.Split(b, ",")
+	}
+
+	// Migrate other fly.* configuration with backward compatibility
+	if v.IsSet("kafka.sasl_enabled") {
+		cfg.Kafka.SASLEnabled = v.GetBool("kafka.sasl_enabled")
+	} else if v.IsSet("fly.sasl_enabled") {
+		cfg.Kafka.SASLEnabled = v.GetBool("fly.sasl_enabled")
+	}
+
+	if u := v.GetString("kafka.sasl_username"); u != "" {
+		cfg.Kafka.SASLUsername = u
+	} else if u := v.GetString("fly.sasl_username"); u != "" {
+		cfg.Kafka.SASLUsername = u
 	}
 
 	// Also check DEBUG environment variable (without prefix)
@@ -159,7 +243,23 @@ func Load() (*Config, error) {
 		cfg.Debug = true
 	}
 
+	// Initialize topic registry based on configured prefix
+	topicPrefix := cfg.KafkaTopics.Prefix
+	if topicPrefix == "" {
+		// Check environment variable for prefix
+		topicPrefix = os.Getenv("LAKERUNNER_KAFKA_TOPIC_PREFIX")
+		if topicPrefix == "" {
+			topicPrefix = "lakerunner" // default prefix
+		}
+	}
+	cfg.TopicRegistry = NewTopicRegistry(topicPrefix)
+
 	return cfg, nil
+}
+
+// GetTopicRegistry returns a TopicRegistry configured with this config's prefix
+func (c *Config) GetTopicRegistry() *TopicRegistry {
+	return NewTopicRegistry(c.KafkaTopics.Prefix)
 }
 
 // bindEnvs registers all keys within cfg so that viper will look up

@@ -81,7 +81,7 @@ func init() {
 			}
 
 			// Create Kafka factory
-			kafkaFactory := fly.NewFactory(&cfg.Fly)
+			kafkaFactory := fly.NewFactoryFromKafkaConfig(&cfg.Kafka)
 
 			// Create Kafka-based compaction boxer consumer
 			consumer, err := metricsprocessing.NewTraceCompactionBoxerConsumer(ctx, kafkaFactory, mdb, cfg)

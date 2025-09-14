@@ -436,9 +436,9 @@ func compactMessage(orgID uuid.UUID, segmentID int64, instanceNum int16, records
 // Helper function for creating Kafka metadata with varying offset
 func createKafkaMetadata(offset int64) *messageMetadata {
 	return &messageMetadata{
-		Topic:         "lakerunner.segments.metrics.compact",
+		Topic:         "test.segments.metrics.compact",
 		Partition:     0,
-		ConsumerGroup: "lakerunner.compact.metrics",
+		ConsumerGroup: "test.compact.metrics",
 		Offset:        offset,
 	}
 }
@@ -618,8 +618,8 @@ func TestHunter_RealDataFromFile(t *testing.T) {
 
 	// Create gatherer
 	gatherer := newGatherer[*messages.MetricCompactionMessage](
-		"lakerunner.segments.metrics.compact",
-		"lakerunner.compact.metrics",
+		"test.segments.metrics.compact",
+		"test.compact.metrics",
 		processor,
 		offsetCallbacks,
 	)
@@ -669,9 +669,9 @@ func TestHunter_RealDataFromFile(t *testing.T) {
 
 		// Create metadata for this message
 		metadata := &messageMetadata{
-			Topic:         "lakerunner.segments.metrics.compact",
+			Topic:         "test.segments.metrics.compact",
 			Partition:     int32(i % 4), // Distribute across 4 partitions
-			ConsumerGroup: "lakerunner.compact.metrics",
+			ConsumerGroup: "test.compact.metrics",
 			Offset:        int64(i + 1000), // Offset starts at 1000
 		}
 

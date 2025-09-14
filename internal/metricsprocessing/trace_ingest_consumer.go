@@ -53,8 +53,8 @@ func NewTraceIngestConsumer(
 	// Configure the consumer
 	consumerConfig := CommonConsumerConfig{
 		ConsumerName:  "lakerunner-trace-ingest-v2",
-		Topic:         "lakerunner.objstore.ingest.traces",
-		ConsumerGroup: "lakerunner.ingest.traces",
+		Topic:         config.DefaultTopicRegistry().GetTopic(config.TopicObjstoreIngestTraces),
+		ConsumerGroup: config.DefaultTopicRegistry().GetConsumerGroup(config.TopicObjstoreIngestTraces),
 		FlushInterval: 10 * time.Second,
 		StaleAge:      20 * time.Second,
 		MaxAge:        20 * time.Second,

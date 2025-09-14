@@ -46,7 +46,7 @@ func NewTraceCompactionConsumer(
 ) (*TraceCompactionConsumer, error) {
 	processor := NewTraceCompactionProcessor(store, storageProvider, cmgr, cfg)
 
-	consumer, err := factory.CreateConsumer("lakerunner.segments.traces.compact", "lakerunner.compact.traces")
+	consumer, err := factory.CreateConsumer(config.DefaultTopicRegistry().GetTopic(config.TopicSegmentsTracesCompact), config.DefaultTopicRegistry().GetConsumerGroup(config.TopicSegmentsTracesCompact))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka consumer: %w", err)
 	}

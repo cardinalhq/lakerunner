@@ -51,10 +51,11 @@ func NewTraceCompactionBoxerConsumer(
 	flushInterval := 30 * time.Second
 
 	// Configure the consumer - consuming from boxer compaction input topic
+	registry := config.DefaultTopicRegistry()
 	consumerConfig := CommonConsumerConfig{
 		ConsumerName:  "lakerunner-boxer-traces-compact",
-		Topic:         "lakerunner.boxer.traces.compact",
-		ConsumerGroup: "lakerunner.boxer.traces.compact",
+		Topic:         registry.GetTopic(config.TopicBoxerTracesCompact),
+		ConsumerGroup: registry.GetConsumerGroup(config.TopicBoxerTracesCompact),
 		FlushInterval: flushInterval,
 		StaleAge:      maxAccumulationTime,
 		MaxAge:        maxAccumulationTime,

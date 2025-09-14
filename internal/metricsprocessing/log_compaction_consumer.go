@@ -46,7 +46,7 @@ func NewLogCompactionConsumer(
 ) (*LogCompactionConsumer, error) {
 	processor := NewLogCompactionProcessor(store, storageProvider, cmgr, cfg)
 
-	consumer, err := factory.CreateConsumer("lakerunner.segments.logs.compact", "lakerunner.compact.logs")
+	consumer, err := factory.CreateConsumer(config.DefaultTopicRegistry().GetTopic(config.TopicSegmentsLogsCompact), config.DefaultTopicRegistry().GetConsumerGroup(config.TopicSegmentsLogsCompact))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka consumer: %w", err)
 	}
