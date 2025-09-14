@@ -218,6 +218,25 @@ func TestFactory_CreateConsumerWithService(t *testing.T) {
 	_ = consumer.Close()
 }
 
+func TestNewFactoryFromKafkaConfig_Success(t *testing.T) {
+	cfg := &Config{
+		Brokers: []string{"localhost:9092"},
+	}
+
+	factory, err := NewFactoryFromKafkaConfig(cfg)
+	require.NoError(t, err)
+	assert.Equal(t, cfg.Brokers, factory.GetConfig().Brokers)
+}
+
+func TestNewFactoryFromKafkaConfig_Invalid(t *testing.T) {
+	type BadConfig struct {
+		Brokers string
+	}
+
+	_, err := NewFactoryFromKafkaConfig(&BadConfig{Brokers: "localhost:9092"})
+	require.Error(t, err)
+}
+
 func TestManager_Lifecycle(t *testing.T) {
 	config := &Config{
 		Brokers:           []string{"localhost:9092"},

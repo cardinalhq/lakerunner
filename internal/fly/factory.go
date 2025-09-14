@@ -39,30 +39,64 @@ func NewFactory(config *Config) *Factory {
 	}
 }
 
-// NewFactoryFromKafkaConfig creates a new factory from a config.KafkaConfig
-// This avoids import cycles while allowing the main config package to use this factory
-func NewFactoryFromKafkaConfig(kafkaConfig interface{}) *Factory {
-	// Use reflection to convert config.KafkaConfig to fly.Config
-	// This is safe because both structs have identical fields
-	cfg := &Config{
-		Brokers:              getStringSlice(kafkaConfig, "Brokers"),
-		SASLEnabled:          getBool(kafkaConfig, "SASLEnabled"),
-		SASLMechanism:        getString(kafkaConfig, "SASLMechanism"),
-		SASLUsername:         getString(kafkaConfig, "SASLUsername"),
-		SASLPassword:         getString(kafkaConfig, "SASLPassword"),
-		TLSEnabled:           getBool(kafkaConfig, "TLSEnabled"),
-		TLSSkipVerify:        getBool(kafkaConfig, "TLSSkipVerify"),
-		ProducerBatchSize:    getInt(kafkaConfig, "ProducerBatchSize"),
-		ProducerBatchTimeout: getDuration(kafkaConfig, "ProducerBatchTimeout"),
-		ProducerCompression:  getString(kafkaConfig, "ProducerCompression"),
-		ConsumerGroupPrefix:  getString(kafkaConfig, "ConsumerGroupPrefix"),
-		ConsumerBatchSize:    getInt(kafkaConfig, "ConsumerBatchSize"),
-		ConsumerMaxWait:      getDuration(kafkaConfig, "ConsumerMaxWait"),
-		ConsumerMinBytes:     getInt(kafkaConfig, "ConsumerMinBytes"),
-		ConsumerMaxBytes:     getInt(kafkaConfig, "ConsumerMaxBytes"),
-		ConnectionTimeout:    getDuration(kafkaConfig, "ConnectionTimeout"),
+// NewFactoryFromKafkaConfig creates a new factory from a config.KafkaConfig.
+// Reflection is used to avoid import cycles with the main config package.
+// The function validates the presence and types of expected fields to prevent
+// runtime panics if the source struct changes.
+func NewFactoryFromKafkaConfig(kafkaConfig interface{}) (*Factory, error) {
+	cfg := &Config{}
+	var err error
+
+	if cfg.Brokers, err = getStringSlice(kafkaConfig, "Brokers"); err != nil {
+		return nil, err
 	}
-	return &Factory{config: cfg}
+	if cfg.SASLEnabled, err = getBool(kafkaConfig, "SASLEnabled"); err != nil {
+		return nil, err
+	}
+	if cfg.SASLMechanism, err = getString(kafkaConfig, "SASLMechanism"); err != nil {
+		return nil, err
+	}
+	if cfg.SASLUsername, err = getString(kafkaConfig, "SASLUsername"); err != nil {
+		return nil, err
+	}
+	if cfg.SASLPassword, err = getString(kafkaConfig, "SASLPassword"); err != nil {
+		return nil, err
+	}
+	if cfg.TLSEnabled, err = getBool(kafkaConfig, "TLSEnabled"); err != nil {
+		return nil, err
+	}
+	if cfg.TLSSkipVerify, err = getBool(kafkaConfig, "TLSSkipVerify"); err != nil {
+		return nil, err
+	}
+	if cfg.ProducerBatchSize, err = getInt(kafkaConfig, "ProducerBatchSize"); err != nil {
+		return nil, err
+	}
+	if cfg.ProducerBatchTimeout, err = getDuration(kafkaConfig, "ProducerBatchTimeout"); err != nil {
+		return nil, err
+	}
+	if cfg.ProducerCompression, err = getString(kafkaConfig, "ProducerCompression"); err != nil {
+		return nil, err
+	}
+	if cfg.ConsumerGroupPrefix, err = getString(kafkaConfig, "ConsumerGroupPrefix"); err != nil {
+		return nil, err
+	}
+	if cfg.ConsumerBatchSize, err = getInt(kafkaConfig, "ConsumerBatchSize"); err != nil {
+		return nil, err
+	}
+	if cfg.ConsumerMaxWait, err = getDuration(kafkaConfig, "ConsumerMaxWait"); err != nil {
+		return nil, err
+	}
+	if cfg.ConsumerMinBytes, err = getInt(kafkaConfig, "ConsumerMinBytes"); err != nil {
+		return nil, err
+	}
+	if cfg.ConsumerMaxBytes, err = getInt(kafkaConfig, "ConsumerMaxBytes"); err != nil {
+		return nil, err
+	}
+	if cfg.ConnectionTimeout, err = getDuration(kafkaConfig, "ConnectionTimeout"); err != nil {
+		return nil, err
+	}
+
+	return &Factory{config: cfg}, nil
 }
 
 // CreateProducer creates a new Kafka producer
@@ -317,51 +351,66 @@ func (m *Manager) Close() error {
 }
 
 // Reflection helper functions for NewFactoryFromKafkaConfig
-func getString(obj interface{}, field string) string {
+func getString(obj interface{}, field string) (string, error) {
 	v := reflect.ValueOf(obj)
 	if v.Kind() == reflect.Ptr {
 		v = v.Elem()
 	}
 	f := v.FieldByName(field)
-	return f.String()
+	if !f.IsValid() || f.Kind() != reflect.String {
+		return "", fmt.Errorf("missing or non-string field %s", field)
+	}
+	return f.String(), nil
 }
 
-func getBool(obj interface{}, field string) bool {
+func getBool(obj interface{}, field string) (bool, error) {
 	v := reflect.ValueOf(obj)
 	if v.Kind() == reflect.Ptr {
 		v = v.Elem()
 	}
 	f := v.FieldByName(field)
-	return f.Bool()
+	if !f.IsValid() || f.Kind() != reflect.Bool {
+		return false, fmt.Errorf("missing or non-bool field %s", field)
+	}
+	return f.Bool(), nil
 }
 
-func getInt(obj interface{}, field string) int {
+func getInt(obj interface{}, field string) (int, error) {
 	v := reflect.ValueOf(obj)
 	if v.Kind() == reflect.Ptr {
 		v = v.Elem()
 	}
 	f := v.FieldByName(field)
-	return int(f.Int())
+	if !f.IsValid() || f.Kind() != reflect.Int {
+		return 0, fmt.Errorf("missing or non-int field %s", field)
+	}
+	return int(f.Int()), nil
 }
 
-func getDuration(obj interface{}, field string) time.Duration {
+func getDuration(obj interface{}, field string) (time.Duration, error) {
 	v := reflect.ValueOf(obj)
 	if v.Kind() == reflect.Ptr {
 		v = v.Elem()
 	}
 	f := v.FieldByName(field)
-	return time.Duration(f.Int())
+	if !f.IsValid() || f.Type() != reflect.TypeOf(time.Duration(0)) {
+		return 0, fmt.Errorf("missing or non-duration field %s", field)
+	}
+	return time.Duration(f.Int()), nil
 }
 
-func getStringSlice(obj interface{}, field string) []string {
+func getStringSlice(obj interface{}, field string) ([]string, error) {
 	v := reflect.ValueOf(obj)
 	if v.Kind() == reflect.Ptr {
 		v = v.Elem()
 	}
 	f := v.FieldByName(field)
+	if !f.IsValid() || f.Kind() != reflect.Slice || f.Type().Elem().Kind() != reflect.String {
+		return nil, fmt.Errorf("missing or non-string slice field %s", field)
+	}
 	result := make([]string, f.Len())
 	for i := 0; i < f.Len(); i++ {
 		result[i] = f.Index(i).String()
 	}
-	return result
+	return result, nil
 }
