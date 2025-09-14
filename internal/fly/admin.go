@@ -380,6 +380,12 @@ func (a *AdminClient) processConsumerGroupLags(groupID string, offsetTopics map[
 				continue
 			}
 
+			// Skip if the group has never consumed from this topic/partition
+			// (CommittedOffset of -1 means no offset has been committed)
+			if po.CommittedOffset < 0 {
+				continue
+			}
+
 			hwm, exists := hwmMap[po.Partition]
 			if !exists {
 				continue

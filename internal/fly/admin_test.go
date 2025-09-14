@@ -463,18 +463,19 @@ func TestAdminClient_GetAllConsumerGroupLags(t *testing.T) {
 
 		// Should get results for the existing group
 		foundExisting := false
+		foundNonExistent := false
 		for _, lag := range lags {
 			if lag.GroupID == group1 {
 				foundExisting = true
 			}
-			// Non-existent group will show up but with no committed offsets
+			// Non-existent group will NOT show up in results
+			// since we skip entries with CommittedOffset < 0
 			if lag.GroupID == nonExistentGroup {
-				// This group never consumed, so it shouldn't appear in results
-				// since we skip entries with CommittedOffset < 0
-				t.Error("Should not have results for non-existent group")
+				foundNonExistent = true
 			}
 		}
 		assert.True(t, foundExisting, "Should have results for existing group")
+		assert.False(t, foundNonExistent, "Should not have results for non-existent group")
 	})
 }
 
