@@ -31,13 +31,18 @@ import (
 type MetricCompactionBoxerProcessor struct {
 	kafkaProducer fly.Producer
 	store         BoxerStore
+	config        *config.Config
 }
 
 // newMetricCompactionBoxerProcessor creates a new metric compaction boxer processor instance
-func newMetricCompactionBoxerProcessor(kafkaProducer fly.Producer, store BoxerStore) *MetricCompactionBoxerProcessor {
+func newMetricCompactionBoxerProcessor(
+	ctx context.Context,
+	cfg *config.Config,
+	kafkaProducer fly.Producer, store BoxerStore) *MetricCompactionBoxerProcessor {
 	return &MetricCompactionBoxerProcessor{
 		kafkaProducer: kafkaProducer,
 		store:         store,
+		config:        cfg,
 	}
 }
 
@@ -79,7 +84,7 @@ func (b *MetricCompactionBoxerProcessor) Process(ctx context.Context, group *acc
 	}
 
 	// Send to compaction topic
-	compactionTopic := config.DefaultTopicRegistry().GetTopic(config.TopicSegmentsMetricsCompact)
+	compactionTopic := b.config.TopicRegistry.GetTopic(config.TopicSegmentsMetricsCompact)
 	if err := b.kafkaProducer.Send(ctx, compactionTopic, bundleMessage); err != nil {
 		return fmt.Errorf("failed to send compaction bundle to compaction topic: %w", err)
 	}

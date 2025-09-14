@@ -59,7 +59,7 @@ func init() {
 			}
 
 			kafkaFactory := fly.NewFactoryFromKafkaConfig(&cfg.Kafka)
-			service, err := pubsub.NewHTTPService(kafkaFactory)
+			service, err := pubsub.NewHTTPService(doneCtx, cfg, kafkaFactory)
 			if err != nil {
 				return fmt.Errorf("failed to create HTTP pubsub service: %w", err)
 			}
@@ -94,7 +94,7 @@ func init() {
 			}
 
 			kafkaFactory := fly.NewFactoryFromKafkaConfig(&cfg.Kafka)
-			service, err := pubsub.NewSQSService(kafkaFactory)
+			service, err := pubsub.NewSQSService(doneCtx, cfg, kafkaFactory)
 			if err != nil {
 				return fmt.Errorf("failed to create SQS pubsub service: %w", err)
 			}
@@ -128,7 +128,7 @@ func init() {
 			}
 
 			kafkaFactory := fly.NewFactoryFromKafkaConfig(&cfg.Kafka)
-			backend, err := pubsub.NewBackend(doneCtx, pubsub.BackendTypeGCPPubSub, kafkaFactory)
+			backend, err := pubsub.NewBackend(doneCtx, cfg, pubsub.BackendTypeGCPPubSub, kafkaFactory)
 			if err != nil {
 				return fmt.Errorf("failed to create GCP Pub/Sub backend: %w", err)
 			}
@@ -164,7 +164,7 @@ func init() {
 
 			kafkaFactory := fly.NewFactoryFromKafkaConfig(&cfg.Kafka)
 
-			backend, err := pubsub.NewBackend(doneCtx, pubsub.BackendTypeAzure, kafkaFactory)
+			backend, err := pubsub.NewBackend(doneCtx, cfg, pubsub.BackendTypeAzure, kafkaFactory)
 			if err != nil {
 				return fmt.Errorf("failed to create Azure Queue Storage backend: %w", err)
 			}

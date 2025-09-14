@@ -17,6 +17,7 @@ package pubsub
 import (
 	"context"
 	"fmt"
+	"github.com/cardinalhq/lakerunner/config"
 	"log/slog"
 	"os"
 	"sync"
@@ -48,21 +49,21 @@ type SQSService struct {
 // Ensure SQSService implements Backend interface
 var _ Backend = (*SQSService)(nil)
 
-func NewSQSService(kafkaFactory *fly.Factory) (*SQSService, error) {
-	awsMgr, err := awsclient.NewManager(context.Background())
+func NewSQSService(ctx context.Context, cfg *config.Config, kafkaFactory *fly.Factory) (*SQSService, error) {
+	awsMgr, err := awsclient.NewManager(ctx)
 	if err != nil {
 		slog.Error("Failed to create AWS manager", slog.Any("error", err))
 		return nil, fmt.Errorf("failed to create AWS manager: %w", err)
 	}
 
-	cdb, err := dbopen.ConfigDBStore(context.Background())
+	cdb, err := dbopen.ConfigDBStore(ctx)
 	if err != nil {
 		slog.Error("Failed to connect to configdb", slog.Any("error", err))
 		return nil, fmt.Errorf("failed to connect to configdb: %w", err)
 	}
 	sp := storageprofile.NewStorageProfileProvider(cdb)
 
-	kafkaHandler, err := NewKafkaHandler(kafkaFactory, "sqs", sp)
+	kafkaHandler, err := NewKafkaHandler(ctx, cfg, kafkaFactory, "sqs", sp)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka handler: %w", err)
 	}

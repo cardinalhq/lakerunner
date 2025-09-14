@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/cardinalhq/lakerunner/config"
 	"io"
 	"log/slog"
 	"net/http"
@@ -38,15 +39,15 @@ type HTTPService struct {
 	kafkaHandler *KafkaHandler
 }
 
-func NewHTTPService(kafkaFactory *fly.Factory) (*HTTPService, error) {
-	cdb, err := dbopen.ConfigDBStore(context.Background())
+func NewHTTPService(ctx context.Context, cfg *config.Config, kafkaFactory *fly.Factory) (*HTTPService, error) {
+	cdb, err := dbopen.ConfigDBStore(ctx)
 	if err != nil {
 		slog.Error("Failed to connect to configdb", slog.Any("error", err))
 		return nil, fmt.Errorf("failed to connect to configdb: %w", err)
 	}
 	sp := storageprofile.NewStorageProfileProvider(cdb)
 
-	kafkaHandler, err := NewKafkaHandler(kafkaFactory, "http", sp)
+	kafkaHandler, err := NewKafkaHandler(ctx, cfg, kafkaFactory, "http", sp)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka handler: %w", err)
 	}

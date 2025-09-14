@@ -44,14 +44,14 @@ func NewTraceCompactionBoxerConsumer(
 	}
 
 	// Create TraceCompactionBoxer processor
-	processor := newTraceCompactionBoxerProcessor(producer, store)
+	processor := newTraceCompactionBoxerProcessor(ctx, cfg, producer, store)
 
 	// Set up timing - use shorter accumulation for compaction since it's more time-sensitive
 	maxAccumulationTime := 2 * time.Minute
 	flushInterval := 30 * time.Second
 
 	// Configure the consumer - consuming from boxer compaction input topic
-	registry := config.DefaultTopicRegistry()
+	registry := cfg.TopicRegistry
 	consumerConfig := CommonConsumerConfig{
 		ConsumerName:  "lakerunner-boxer-traces-compact",
 		Topic:         registry.GetTopic(config.TopicBoxerTracesCompact),

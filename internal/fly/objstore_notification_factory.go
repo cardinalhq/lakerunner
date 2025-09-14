@@ -28,20 +28,22 @@ import (
 
 // ObjStoreNotificationProducer manages Kafka producer for object storage notifications
 type ObjStoreNotificationProducer struct {
-	producer Producer
-	config   *Config
+	producer   Producer
+	config     *Config
+	mainConfig *config.Config
 }
 
 // NewObjStoreNotificationProducer creates a new object storage notification producer
-func NewObjStoreNotificationProducer(factory *Factory) (*ObjStoreNotificationProducer, error) {
+func NewObjStoreNotificationProducer(ctx context.Context, cfg *config.Config, factory *Factory) (*ObjStoreNotificationProducer, error) {
 	producer, err := factory.CreateProducer()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka producer: %w", err)
 	}
 
 	return &ObjStoreNotificationProducer{
-		producer: producer,
-		config:   factory.GetConfig(),
+		producer:   producer,
+		config:     factory.GetConfig(),
+		mainConfig: cfg,
 	}, nil
 }
 
@@ -50,8 +52,7 @@ func (p *ObjStoreNotificationProducer) SendBatch(ctx context.Context, signal str
 	ll := logctx.FromContext(ctx)
 
 	// Determine topic based on signal using centralized registry
-	registry := config.DefaultTopicRegistry()
-	topic := registry.GetObjstoreIngestTopic(signal)
+	topic := p.mainConfig.TopicRegistry.GetObjstoreIngestTopic(signal)
 	messages := make([]Message, 0, len(notifications))
 
 	for _, notification := range notifications {
@@ -110,12 +111,11 @@ type ObjStoreNotificationConsumer struct {
 }
 
 // NewObjStoreNotificationConsumer creates a new object storage notification consumer for a specific signal
-func NewObjStoreNotificationConsumer(ctx context.Context, factory *Factory, signal string, groupID string) (*ObjStoreNotificationConsumer, error) {
+func NewObjStoreNotificationConsumer(ctx context.Context, cfg *config.Config, factory *Factory, signal string, groupID string) (*ObjStoreNotificationConsumer, error) {
 	ll := logctx.FromContext(ctx)
 
 	// Determine topic based on signal using centralized registry
-	registry := config.DefaultTopicRegistry()
-	topic := registry.GetObjstoreIngestTopic(signal)
+	topic := cfg.TopicRegistry.GetObjstoreIngestTopic(signal)
 
 	ll.Debug("Creating Kafka consumer",
 		slog.String("topic", topic),
@@ -248,24 +248,26 @@ func (c *ObjStoreNotificationConsumer) Close() error {
 // ObjStoreNotificationManager provides high-level management for object storage notification processing
 type ObjStoreNotificationManager struct {
 	factory   *Factory
+	config    *config.Config
 	producers map[string]*ObjStoreNotificationProducer // Keyed by source (sqs, http, gcp, azure)
 }
 
 // NewObjStoreNotificationManager creates a new object storage notification manager
-func NewObjStoreNotificationManager(factory *Factory) *ObjStoreNotificationManager {
+func NewObjStoreNotificationManager(ctx context.Context, cfg *config.Config, factory *Factory) *ObjStoreNotificationManager {
 	return &ObjStoreNotificationManager{
 		factory:   factory,
+		config:    cfg,
 		producers: make(map[string]*ObjStoreNotificationProducer),
 	}
 }
 
 // GetProducer gets or creates a producer for the given source
-func (m *ObjStoreNotificationManager) GetProducer(source string) (*ObjStoreNotificationProducer, error) {
+func (m *ObjStoreNotificationManager) GetProducer(ctx context.Context, source string) (*ObjStoreNotificationProducer, error) {
 	if producer, exists := m.producers[source]; exists {
 		return producer, nil
 	}
 
-	producer, err := NewObjStoreNotificationProducer(m.factory)
+	producer, err := NewObjStoreNotificationProducer(ctx, m.config, m.factory)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create producer for source %s: %w", source, err)
 	}

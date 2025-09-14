@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"strings"
 
 	"github.com/cardinalhq/kafka-sync/kafkasync"
 	"github.com/cardinalhq/lakerunner/config"
@@ -27,11 +26,7 @@ import (
 )
 
 func ensureKafkaTopicsWithFile(ctx context.Context, flagKafkaTopicsFile string) error {
-	if err := validateKafkaConfig(); err != nil {
-		return fmt.Errorf("Kafka configuration validation failed: %w", err)
-	}
-
-	// Load Kafka connection config from existing env vars
+	// Load Kafka connection config
 	appConfig, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("failed to load app config: %w", err)
@@ -150,32 +145,4 @@ func convertToKafkaSyncConfig(syncConfig config.KafkaSyncConfig) *kafkasync.Conf
 	}
 
 	return kafkaConfig
-}
-
-// validateKafkaConfig checks required Kafka environment variables similar to database validation
-func validateKafkaConfig() error {
-	// Check for new kafka config format or old fly config format
-	if brokers := os.Getenv("LAKERUNNER_KAFKA_BROKERS"); brokers != "" {
-		return nil // We have new format brokers configured
-	}
-	if brokers := os.Getenv("LAKERUNNER_FLY_BROKERS"); brokers != "" {
-		return nil // We have old format brokers configured (backward compatibility)
-	}
-
-	// Check individual broker configuration
-	var missing []string
-
-	// For Kafka, we require at least one broker (try both formats)
-	if os.Getenv("LAKERUNNER_KAFKA_BROKERS") == "" && os.Getenv("LAKERUNNER_FLY_BROKERS") == "" {
-		missing = append(missing, "LAKERUNNER_KAFKA_BROKERS or LAKERUNNER_FLY_BROKERS")
-	}
-
-	if len(missing) > 0 {
-		return fmt.Errorf(
-			"missing required Kafka environment variable(s): %s",
-			strings.Join(missing, ", "),
-		)
-	}
-
-	return nil
 }

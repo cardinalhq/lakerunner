@@ -33,6 +33,8 @@ type Config struct {
 	Metrics     MetricsConfig     `mapstructure:"metrics"`
 	Batch       BatchConfig       `mapstructure:"batch"`
 	DuckDB      DuckDBConfig      `mapstructure:"duckdb"`
+	S3          S3Config          `mapstructure:"s3"`
+	Azure       AzureConfig       `mapstructure:"azure"`
 	Logs        LogsConfig        `mapstructure:"logs"`
 	Traces      TracesConfig      `mapstructure:"traces"`
 	Admin       AdminConfig       `mapstructure:"admin"`
@@ -58,8 +60,35 @@ type BatchConfig struct {
 }
 
 type DuckDBConfig struct {
+	// Extension paths for air-gapped mode
 	ExtensionsPath  string `mapstructure:"extensions_path"`
 	HTTPFSExtension string `mapstructure:"httpfs_extension"`
+	AzureExtension  string `mapstructure:"azure_extension"`
+	AWSExtension    string `mapstructure:"aws_extension"`
+
+	// Memory and performance settings
+	MemoryLimit          int64  `mapstructure:"memory_limit"`            // Memory limit in MB (0 = unlimited)
+	TempDirectory        string `mapstructure:"temp_directory"`          // Directory for temporary files
+	MaxTempDirectorySize string `mapstructure:"max_temp_directory_size"` // Max size for temp directory
+	S3PoolSize           int    `mapstructure:"s3_pool_size"`            // Connection pool size for S3
+	S3ConnTTLSeconds     int    `mapstructure:"s3_conn_ttl_seconds"`     // Connection TTL in seconds
+	ThreadsPerConn       int    `mapstructure:"threads_per_conn"`        // Threads per connection
+}
+
+type S3Config struct {
+	AccessKeyID     string `mapstructure:"access_key_id"`
+	SecretAccessKey string `mapstructure:"secret_access_key"`
+	SessionToken    string `mapstructure:"session_token"`
+	Region          string `mapstructure:"region"`
+	URLStyle        string `mapstructure:"url_style"` // "path" or "vhost"
+}
+
+type AzureConfig struct {
+	AuthType         string `mapstructure:"auth_type"` // "service_principal" or "connection_string"
+	ClientID         string `mapstructure:"client_id"`
+	ClientSecret     string `mapstructure:"client_secret"`
+	TenantID         string `mapstructure:"tenant_id"`
+	ConnectionString string `mapstructure:"connection_string"`
 }
 
 type LogsConfig struct {
@@ -224,8 +253,30 @@ func Load() (*Config, error) {
 			MinBatchSize:    1,
 		},
 		DuckDB: DuckDBConfig{
-			ExtensionsPath:  "",
-			HTTPFSExtension: "",
+			ExtensionsPath:       "",
+			HTTPFSExtension:      "",
+			AzureExtension:       "",
+			AWSExtension:         "",
+			MemoryLimit:          0,   // No limit by default
+			TempDirectory:        "",  // Empty means use system default
+			MaxTempDirectorySize: "",  // Empty means no limit
+			S3PoolSize:           0,   // 0 means use default calculation in s3db.go
+			S3ConnTTLSeconds:     240, // 4 minutes default
+			ThreadsPerConn:       0,   // 0 means use default calculation
+		},
+		S3: S3Config{
+			AccessKeyID:     "",
+			SecretAccessKey: "",
+			SessionToken:    "",
+			Region:          "",
+			URLStyle:        "",
+		},
+		Azure: AzureConfig{
+			AuthType:         "",
+			ClientID:         "",
+			ClientSecret:     "",
+			TenantID:         "",
+			ConnectionString: "",
 		},
 		Logs:   LogsConfig{},
 		Traces: TracesConfig{},
@@ -261,29 +312,129 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	// Handle Kafka configuration with migration support from fly.* to kafka.*
+	var usedFlyConfig bool
+
+	// Brokers
 	if b := v.GetString("kafka.brokers"); b != "" {
 		cfg.Kafka.Brokers = strings.Split(b, ",")
 	} else if b := v.GetString("fly.brokers"); b != "" {
-		// Backward compatibility: fall back to old fly.brokers config
 		cfg.Kafka.Brokers = strings.Split(b, ",")
+		usedFlyConfig = true
 	}
 
-	// Migrate other fly.* configuration with backward compatibility
+	// SASL authentication
 	if v.IsSet("kafka.sasl_enabled") {
 		cfg.Kafka.SASLEnabled = v.GetBool("kafka.sasl_enabled")
 	} else if v.IsSet("fly.sasl_enabled") {
 		cfg.Kafka.SASLEnabled = v.GetBool("fly.sasl_enabled")
+		usedFlyConfig = true
+	}
+
+	if u := v.GetString("kafka.sasl_mechanism"); u != "" {
+		cfg.Kafka.SASLMechanism = u
+	} else if u := v.GetString("fly.sasl_mechanism"); u != "" {
+		cfg.Kafka.SASLMechanism = u
+		usedFlyConfig = true
 	}
 
 	if u := v.GetString("kafka.sasl_username"); u != "" {
 		cfg.Kafka.SASLUsername = u
 	} else if u := v.GetString("fly.sasl_username"); u != "" {
 		cfg.Kafka.SASLUsername = u
+		usedFlyConfig = true
 	}
 
-	// Also check DEBUG environment variable (without prefix)
-	if os.Getenv("DEBUG") != "" {
-		cfg.Debug = true
+	if u := v.GetString("kafka.sasl_password"); u != "" {
+		cfg.Kafka.SASLPassword = u
+	} else if u := v.GetString("fly.sasl_password"); u != "" {
+		cfg.Kafka.SASLPassword = u
+		usedFlyConfig = true
+	}
+
+	// TLS configuration
+	if v.IsSet("kafka.tls_enabled") {
+		cfg.Kafka.TLSEnabled = v.GetBool("kafka.tls_enabled")
+	} else if v.IsSet("fly.tls_enabled") {
+		cfg.Kafka.TLSEnabled = v.GetBool("fly.tls_enabled")
+		usedFlyConfig = true
+	}
+
+	if v.IsSet("kafka.tls_skip_verify") {
+		cfg.Kafka.TLSSkipVerify = v.GetBool("kafka.tls_skip_verify")
+	} else if v.IsSet("fly.tls_skip_verify") {
+		cfg.Kafka.TLSSkipVerify = v.GetBool("fly.tls_skip_verify")
+		usedFlyConfig = true
+	}
+
+	// Producer settings
+	if v.IsSet("kafka.producer_batch_size") {
+		cfg.Kafka.ProducerBatchSize = v.GetInt("kafka.producer_batch_size")
+	} else if v.IsSet("fly.producer_batch_size") {
+		cfg.Kafka.ProducerBatchSize = v.GetInt("fly.producer_batch_size")
+		usedFlyConfig = true
+	}
+
+	if v.IsSet("kafka.producer_batch_timeout") {
+		cfg.Kafka.ProducerBatchTimeout = v.GetDuration("kafka.producer_batch_timeout")
+	} else if v.IsSet("fly.producer_batch_timeout") {
+		cfg.Kafka.ProducerBatchTimeout = v.GetDuration("fly.producer_batch_timeout")
+		usedFlyConfig = true
+	}
+
+	if u := v.GetString("kafka.producer_compression"); u != "" {
+		cfg.Kafka.ProducerCompression = u
+	} else if u := v.GetString("fly.producer_compression"); u != "" {
+		cfg.Kafka.ProducerCompression = u
+		usedFlyConfig = true
+	}
+
+	// Consumer settings
+	if u := v.GetString("kafka.consumer_group_prefix"); u != "" {
+		cfg.Kafka.ConsumerGroupPrefix = u
+	} else if u := v.GetString("fly.consumer_group_prefix"); u != "" {
+		cfg.Kafka.ConsumerGroupPrefix = u
+		usedFlyConfig = true
+	}
+
+	if v.IsSet("kafka.consumer_batch_size") {
+		cfg.Kafka.ConsumerBatchSize = v.GetInt("kafka.consumer_batch_size")
+	} else if v.IsSet("fly.consumer_batch_size") {
+		cfg.Kafka.ConsumerBatchSize = v.GetInt("fly.consumer_batch_size")
+		usedFlyConfig = true
+	}
+
+	if v.IsSet("kafka.consumer_max_wait") {
+		cfg.Kafka.ConsumerMaxWait = v.GetDuration("kafka.consumer_max_wait")
+	} else if v.IsSet("fly.consumer_max_wait") {
+		cfg.Kafka.ConsumerMaxWait = v.GetDuration("fly.consumer_max_wait")
+		usedFlyConfig = true
+	}
+
+	if v.IsSet("kafka.consumer_min_bytes") {
+		cfg.Kafka.ConsumerMinBytes = v.GetInt("kafka.consumer_min_bytes")
+	} else if v.IsSet("fly.consumer_min_bytes") {
+		cfg.Kafka.ConsumerMinBytes = v.GetInt("fly.consumer_min_bytes")
+		usedFlyConfig = true
+	}
+
+	if v.IsSet("kafka.consumer_max_bytes") {
+		cfg.Kafka.ConsumerMaxBytes = v.GetInt("kafka.consumer_max_bytes")
+	} else if v.IsSet("fly.consumer_max_bytes") {
+		cfg.Kafka.ConsumerMaxBytes = v.GetInt("fly.consumer_max_bytes")
+		usedFlyConfig = true
+	}
+
+	// Connection settings
+	if v.IsSet("kafka.connection_timeout") {
+		cfg.Kafka.ConnectionTimeout = v.GetDuration("kafka.connection_timeout")
+	} else if v.IsSet("fly.connection_timeout") {
+		cfg.Kafka.ConnectionTimeout = v.GetDuration("fly.connection_timeout")
+		usedFlyConfig = true
+	}
+
+	// Log deprecation warning if any fly.* config was used
+	if usedFlyConfig {
+		fmt.Fprintf(os.Stderr, "WARNING: fly.* configuration keys are deprecated. Please migrate to kafka.* keys. See documentation for migration guide.\n")
 	}
 
 	// Initialize topic registry based on configured prefix

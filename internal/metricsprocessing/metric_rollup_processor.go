@@ -51,17 +51,20 @@ type MetricRollupProcessor struct {
 	store           MetricRollupStore
 	storageProvider storageprofile.StorageProfileProvider
 	cmgr            cloudstorage.ClientProvider
-	cfg             *config.Config
 	kafkaProducer   fly.Producer
+	config          *config.Config
 }
 
 // newMetricRollupProcessor creates a new metric rollup processor instance
-func newMetricRollupProcessor(store MetricRollupStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, cfg *config.Config, kafkaProducer fly.Producer) *MetricRollupProcessor {
+func newMetricRollupProcessor(
+	ctx context.Context,
+	cfg *config.Config,
+	store MetricRollupStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *MetricRollupProcessor {
 	return &MetricRollupProcessor{
 		store:           store,
 		storageProvider: storageProvider,
 		cmgr:            cmgr,
-		cfg:             cfg,
+		config:          cfg,
 		kafkaProducer:   kafkaProducer,
 	}
 }
@@ -264,8 +267,8 @@ func (r *MetricRollupProcessor) ProcessBundle(ctx context.Context, bundle *messa
 
 	// Create simplified Kafka commit data
 	kafkaCommitData := &KafkaCommitData{
-		Topic:         config.DefaultTopicRegistry().GetTopic(config.TopicSegmentsMetricsRollup),
-		ConsumerGroup: config.DefaultTopicRegistry().GetConsumerGroup(config.TopicSegmentsMetricsRollup),
+		Topic:         r.config.TopicRegistry.GetTopic(config.TopicSegmentsMetricsRollup),
+		ConsumerGroup: r.config.TopicRegistry.GetConsumerGroup(config.TopicSegmentsMetricsRollup),
 		Offsets: map[int32]int64{
 			partition: offset + 1,
 		},
@@ -517,7 +520,7 @@ func (r *MetricRollupProcessor) queueNextLevelRollups(ctx context.Context, newSe
 		slog.Int("nextTargetFrequency", int(nextTargetFrequency)))
 
 	// Create rollup messages for each new segment (send to boxer topic)
-	rollupTopic := config.DefaultTopicRegistry().GetTopic(config.TopicBoxerMetricsRollup)
+	rollupTopic := r.config.TopicRegistry.GetTopic(config.TopicBoxerMetricsRollup)
 	var queuedCount int
 
 	for _, segment := range newSegments {
@@ -583,7 +586,7 @@ func (r *MetricRollupProcessor) queueCompactionMessages(ctx context.Context, new
 		slog.Int("targetFrequencyMs", int(key.TargetFrequencyMs)))
 
 	// Create compaction messages for each new segment
-	compactionTopic := config.DefaultTopicRegistry().GetTopic(config.TopicBoxerMetricsCompact)
+	compactionTopic := r.config.TopicRegistry.GetTopic(config.TopicBoxerMetricsCompact)
 	var queuedCount int
 
 	for _, segment := range newSegments {
