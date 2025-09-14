@@ -75,7 +75,7 @@ type CacheManager struct {
 }
 
 const (
-	MaxRowsDefault = 10000000000 // 10 billion rows (approx 10GB on disk assuming 10 bytes/row)
+	MaxRowsDefault = 1000000000 // 1 billion rows (approx 10GB on disk)
 )
 
 func NewCacheManager(dl DownloadBatchFunc, dataset string, storageProfileProvider storageprofile.StorageProfileProvider) *CacheManager {
