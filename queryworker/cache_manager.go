@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -558,10 +559,17 @@ func (w *CacheManager) maybeEvictOnce(ctx context.Context) {
 	if w.maxRows <= 0 {
 		return
 	}
+
 	over := w.sink.RowCount() - w.maxRows
-	if over <= 0 {
+	usedSizeGB, err := getUsedDiskSizeInGB()
+	if err != nil {
+		slog.Error("Failed to get used disk size", slog.Any("error", err))
 		return
 	}
+	if usedSizeGB < 8 || over <= 0 {
+		return
+	}
+	slog.Info("Cache over limit, evicting segments", slog.Int64("overRows", over), slog.Float64("usedDiskGB", usedSizeGB))
 
 	type ent struct {
 		id int64
@@ -582,9 +590,9 @@ func (w *CacheManager) maybeEvictOnce(ctx context.Context) {
 	batch := make([]int64, 0, batchSize)
 
 	for _, e := range lru {
-		if w.sink.RowCount() <= w.maxRows {
-			break
-		}
+		//if w.sink.RowCount() <= w.maxRows {
+		//	break
+		//}
 		batch = append(batch, e.id)
 		if len(batch) == batchSize {
 			w.dropSegments(ctx, batch)
@@ -606,4 +614,16 @@ func (w *CacheManager) dropSegments(ctx context.Context, segIDs []int64) {
 		delete(w.lastAccess, id)
 	}
 	w.mu.Unlock()
+}
+
+func getUsedDiskSizeInGB() (float64, error) {
+	var stat syscall.Statfs_t
+
+	err := syscall.Statfs(".", &stat)
+	if err != nil {
+		return 0, err
+	}
+	usedBytes := (stat.Blocks - stat.Bfree) * uint64(stat.Bsize)
+	usedGB := float64(usedBytes) / (1024 * 1024 * 1024)
+	return usedGB, nil
 }
