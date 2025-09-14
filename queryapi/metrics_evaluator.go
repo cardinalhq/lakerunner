@@ -298,9 +298,7 @@ func (q *QuerierService) EvaluateMetricsQuery(
 						continue
 					}
 
-					// Merge all workers for this leaf in strict time order, then
-					// we’ll do one more merge across leaves below.
-					leafChans = append(leafChans, promql.MergeSorted(pushCtx, 1024, false, 0, workerChans...))
+					leafChans = append(leafChans, workerChans...)
 				}
 
 				// If nothing survived, register a closed stream so ordering advances.
