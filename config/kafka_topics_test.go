@@ -278,3 +278,114 @@ func TestTopicRegistry_ServiceTypeLookups(t *testing.T) {
 	_, found = registry.GetServiceMapping("unknown-service")
 	assert.False(t, found, "Should not find service mapping for unknown service")
 }
+
+func TestTopicRegistry_GenerateKafkaSyncConfig(t *testing.T) {
+	registry := NewTopicRegistry("lakerunner")
+
+	// Create a config similar to our new format
+	kafkaConfig := KafkaTopicsConfig{
+		TopicPrefix: "lakerunner",
+		Defaults: TopicCreationConfig{
+			PartitionCount:    intPtr(16),
+			ReplicationFactor: intPtr(2),
+			Options: map[string]interface{}{
+				"cleanup.policy":     "delete",
+				"max.message.bytes": "10485760",
+				"retention.ms":      "604800000",
+			},
+		},
+		Topics: map[string]TopicCreationConfig{
+			"ingest-logs": {
+				PartitionCount: intPtr(32),
+			},
+			"compact-logs": {
+				PartitionCount: intPtr(4),
+				Options: map[string]interface{}{
+					"cleanup.policy": "compact,delete",
+				},
+			},
+			"boxer-compact-metrics": {
+				Options: map[string]interface{}{
+					"segment.ms": "3600000",
+				},
+			},
+		},
+	}
+
+	// Generate kafka-sync config
+	syncConfig := registry.GenerateKafkaSyncConfig(kafkaConfig)
+
+	// Verify defaults
+	assert.Equal(t, 16, syncConfig.Defaults.PartitionCount)
+	assert.Equal(t, 2, syncConfig.Defaults.ReplicationFactor)
+	assert.Equal(t, "delete", syncConfig.Defaults.TopicConfig["cleanup.policy"])
+	assert.Equal(t, "10485760", syncConfig.Defaults.TopicConfig["max.message.bytes"])
+	assert.Equal(t, "604800000", syncConfig.Defaults.TopicConfig["retention.ms"])
+
+	// Verify we have all expected topics
+	expectedTopicNames := []string{
+		"lakerunner.objstore.ingest.logs",
+		"lakerunner.objstore.ingest.metrics",
+		"lakerunner.objstore.ingest.traces",
+		"lakerunner.segments.logs.compact",
+		"lakerunner.segments.metrics.compact",
+		"lakerunner.segments.traces.compact",
+		"lakerunner.segments.metrics.rollup",
+		"lakerunner.boxer.logs.compact",
+		"lakerunner.boxer.metrics.compact",
+		"lakerunner.boxer.traces.compact",
+		"lakerunner.boxer.metrics.rollup",
+	}
+
+	assert.Len(t, syncConfig.Topics, len(expectedTopicNames), "Should have all expected topics")
+
+	// Find specific topics to verify overrides
+	topicsByName := make(map[string]KafkaSyncTopic)
+	for _, topic := range syncConfig.Topics {
+		topicsByName[topic.Name] = topic
+	}
+
+	// Check ingest-logs has custom partition count
+	ingestLogs := topicsByName["lakerunner.objstore.ingest.logs"]
+	assert.Equal(t, 32, ingestLogs.PartitionCount, "ingest-logs should have custom partition count")
+
+	// Check compact-logs has custom partition count and options
+	compactLogs := topicsByName["lakerunner.segments.logs.compact"]
+	assert.Equal(t, 4, compactLogs.PartitionCount, "compact-logs should have custom partition count")
+	assert.Equal(t, "compact,delete", compactLogs.TopicConfig["cleanup.policy"], "compact-logs should have custom cleanup policy")
+
+	// Check boxer-compact-metrics has custom options
+	boxerMetrics := topicsByName["lakerunner.boxer.metrics.compact"]
+	assert.Equal(t, "3600000", boxerMetrics.TopicConfig["segment.ms"], "boxer-compact-metrics should have custom segment.ms")
+
+	// Check topic without overrides uses defaults (no explicit values in sync config)
+	ingestMetrics := topicsByName["lakerunner.objstore.ingest.metrics"]
+	assert.Equal(t, 0, ingestMetrics.PartitionCount, "topics without overrides should have zero values (use defaults)")
+	assert.Nil(t, ingestMetrics.TopicConfig, "topics without overrides should have nil TopicConfig")
+}
+
+func TestTopicRegistry_GenerateKafkaSyncConfigFromLoadedConfig(t *testing.T) {
+	// Test with actual loaded config
+	cfg, err := Load()
+	require.NoError(t, err)
+
+	syncConfig := cfg.TopicRegistry.GenerateKafkaSyncConfig(cfg.KafkaTopics)
+
+	// Should have reasonable defaults
+	assert.Equal(t, 16, syncConfig.Defaults.PartitionCount)
+	assert.Equal(t, 3, syncConfig.Defaults.ReplicationFactor)
+	assert.Equal(t, "delete", syncConfig.Defaults.TopicConfig["cleanup.policy"])
+
+	// Should have all topics
+	assert.Greater(t, len(syncConfig.Topics), 0, "Should have topics")
+
+	// All topic names should start with the prefix
+	for _, topic := range syncConfig.Topics {
+		assert.True(t, strings.HasPrefix(topic.Name, "lakerunner."), "All topics should have lakerunner prefix: %s", topic.Name)
+	}
+}
+
+// intPtr helper function for tests
+func intPtr(i int) *int {
+	return &i
+}

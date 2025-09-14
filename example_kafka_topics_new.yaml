@@ -1,0 +1,54 @@
+# New format for Kafka topics configuration
+# Maps from the old example_kafka_topics.yaml format
+
+kafkaTopics:
+  topicPrefix: "lakerunner"  # Extracted from topic names in old format
+
+  # Global defaults for topic creation (WARNING: partition counts are for creation only)
+  defaults:
+    partitionCount: 16        # Default from old format
+    replicationFactor: 2      # From old defaults.replicationFactor
+    options:
+      "cleanup.policy": "delete"
+      "max.message.bytes": "10485760"
+      "retention.ms": "604800000"
+
+  # Per-service-type topic overrides (converted from old full topic names)
+  topics:
+    # Objstore ingest topics (all had 16 partitions in old format)
+    ingest-logs:              # was: lakerunner.objstore.ingest.logs
+      partitionCount: 16
+    ingest-metrics:           # was: lakerunner.objstore.ingest.metrics
+      partitionCount: 16
+    ingest-traces:            # was: lakerunner.objstore.ingest.traces
+      partitionCount: 16
+
+    # Segments compact topics (all had 4 partitions in old format)
+    compact-logs:             # was: lakerunner.segments.logs.compact
+      partitionCount: 4
+    compact-metrics:          # was: lakerunner.segments.metrics.compact
+      partitionCount: 4
+    compact-traces:           # was: lakerunner.segments.traces.compact
+      partitionCount: 4
+
+    # Segments rollup topics
+    rollup-metrics:           # was: lakerunner.segments.metrics.rollup
+      partitionCount: 4
+
+    # Boxer topics (all had 16 partitions in old format)
+    boxer-compact-logs:       # was: lakerunner.boxer.logs.compact
+      partitionCount: 16
+    boxer-compact-metrics:    # was: lakerunner.boxer.metrics.compact
+      partitionCount: 16
+    boxer-compact-traces:     # was: lakerunner.boxer.traces.compact
+      partitionCount: 16
+    boxer-rollup-metrics:     # was: lakerunner.boxer.metrics.rollup
+      partitionCount: 16
+
+# Example of additional options for specific topics:
+#   compact-metrics:
+#     partitionCount: 8
+#     options:
+#       "cleanup.policy": "compact,delete"
+#       "segment.ms": "3600000"
+#       "min.insync.replicas": "2"

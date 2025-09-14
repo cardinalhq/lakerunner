@@ -76,8 +76,18 @@ type SegLogConfig struct {
 	Enabled bool `mapstructure:"enabled"` // Enable segment log tracing for debugging operations
 }
 
+// TopicCreationConfig holds configuration for creating Kafka topics
+// WARNING: These settings are for topic creation only - never use partition counts in runtime code
+type TopicCreationConfig struct {
+	PartitionCount    *int                   `mapstructure:"partitionCount"`
+	ReplicationFactor *int                   `mapstructure:"replicationFactor"`
+	Options           map[string]interface{} `mapstructure:"options"`
+}
+
 type KafkaTopicsConfig struct {
-	Prefix string `mapstructure:"prefix"` // Topic prefix (default: "lakerunner")
+	TopicPrefix string                            `mapstructure:"topicPrefix"` // Topic prefix (default: "lakerunner")
+	Defaults    TopicCreationConfig               `mapstructure:"defaults"`    // Default settings for topic creation
+	Topics      map[string]TopicCreationConfig    `mapstructure:"topics"`      // Per-service-type overrides for topic creation
 }
 
 // KafkaConfig holds the Kafka configuration (moved from fly package to avoid import cycle)
@@ -201,7 +211,15 @@ func Load() (*Config, error) {
 			Enabled: false, // Disabled by default for production
 		},
 		KafkaTopics: KafkaTopicsConfig{
-			Prefix: "lakerunner", // Default topic prefix
+			TopicPrefix: "lakerunner", // Default topic prefix
+			Defaults: TopicCreationConfig{
+				PartitionCount:    intPtr(16),
+				ReplicationFactor: intPtr(3),
+				Options: map[string]interface{}{
+					"cleanup.policy": "delete",
+					"retention.ms":   "604800000", // 7 days
+				},
+			},
 		},
 	}
 
@@ -244,7 +262,7 @@ func Load() (*Config, error) {
 	}
 
 	// Initialize topic registry based on configured prefix
-	topicPrefix := cfg.KafkaTopics.Prefix
+	topicPrefix := cfg.KafkaTopics.TopicPrefix
 	if topicPrefix == "" {
 		// Check environment variable for prefix
 		topicPrefix = os.Getenv("LAKERUNNER_KAFKA_TOPIC_PREFIX")
@@ -259,7 +277,12 @@ func Load() (*Config, error) {
 
 // GetTopicRegistry returns a TopicRegistry configured with this config's prefix
 func (c *Config) GetTopicRegistry() *TopicRegistry {
-	return NewTopicRegistry(c.KafkaTopics.Prefix)
+	return NewTopicRegistry(c.KafkaTopics.TopicPrefix)
+}
+
+// intPtr returns a pointer to an int value
+func intPtr(i int) *int {
+	return &i
 }
 
 // bindEnvs registers all keys within cfg so that viper will look up
