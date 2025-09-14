@@ -20,19 +20,14 @@ import (
 	"log/slog"
 	"sync"
 	"time"
-)
 
-// ServiceMapping represents a mapping between service types and their Kafka topic/consumer group
-type ServiceMapping struct {
-	ServiceType   string
-	Topic         string
-	ConsumerGroup string
-}
+	"github.com/cardinalhq/lakerunner/config"
+)
 
 // ConsumerLagMonitor provides resilient monitoring of Kafka consumer lag
 type ConsumerLagMonitor struct {
 	adminClient     *AdminClient
-	serviceMappings []ServiceMapping
+	serviceMappings []config.ServiceMapping
 	pollInterval    time.Duration
 
 	mu          sync.RWMutex
@@ -42,23 +37,23 @@ type ConsumerLagMonitor struct {
 }
 
 // NewConsumerLagMonitor creates a new consumer lag monitor
-func NewConsumerLagMonitor(config *Config, pollInterval time.Duration) (*ConsumerLagMonitor, error) {
-	// Default service mappings from README.md
-	serviceMappings := []ServiceMapping{
-		{"boxer-compact-logs", "lakerunner.boxer.logs.compact", "lakerunner.boxer.logs.compact"},
-		{"boxer-compact-metrics", "lakerunner.boxer.metrics.compact", "lakerunner.boxer.metrics.compact"},
-		{"boxer-rollup-metrics", "lakerunner.boxer.metrics.rollup", "lakerunner.boxer.metrics.rollup"},
-		{"boxer-compact-traces", "lakerunner.boxer.traces.compact", "lakerunner.boxer.traces.compact"},
-		{"compact-logs", "lakerunner.segments.logs.compact", "lakerunner.compact.logs"},
-		{"compact-metrics", "lakerunner.segments.metrics.compact", "lakerunner.compact.metrics"},
-		{"compact-traces", "lakerunner.segments.traces.compact", "lakerunner.compact.traces"},
-		{"ingest-logs", "lakerunner.objstore.ingest.logs", "lakerunner.ingest.logs"},
-		{"ingest-metrics", "lakerunner.objstore.ingest.metrics", "lakerunner.ingest.metrics"},
-		{"ingest-traces", "lakerunner.objstore.ingest.traces", "lakerunner.ingest.traces"},
-		{"rollup-metrics", "lakerunner.segments.metrics.rollup", "lakerunner.rollup.metrics"},
+func NewConsumerLagMonitor(cfg *Config, pollInterval time.Duration) (*ConsumerLagMonitor, error) {
+	return NewConsumerLagMonitorWithAppConfig(cfg, pollInterval, nil)
+}
+
+// NewConsumerLagMonitorWithAppConfig creates a new consumer lag monitor with an app config
+func NewConsumerLagMonitorWithAppConfig(cfg *Config, pollInterval time.Duration, appConfig *config.Config) (*ConsumerLagMonitor, error) {
+	if appConfig == nil {
+		var err error
+		appConfig, err = config.Load()
+		if err != nil {
+			return nil, fmt.Errorf("failed to load config: %w", err)
+		}
 	}
 
-	adminClient, err := NewAdminClient(config)
+	serviceMappings := appConfig.TopicRegistry.GetAllServiceMappings()
+
+	adminClient, err := NewAdminClient(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create admin client: %w", err)
 	}
@@ -191,6 +186,6 @@ func (m *ConsumerLagMonitor) IsHealthy() bool {
 }
 
 // GetServiceMappings returns the current service mappings
-func (m *ConsumerLagMonitor) GetServiceMappings() []ServiceMapping {
+func (m *ConsumerLagMonitor) GetServiceMappings() []config.ServiceMapping {
 	return m.serviceMappings
 }

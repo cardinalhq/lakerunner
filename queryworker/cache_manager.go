@@ -84,7 +84,8 @@ func NewCacheManager(dl DownloadBatchFunc, dataset string, storageProfileProvide
 		slog.Error("Failed to create DuckDB sink", slog.Any("error", err))
 		return nil
 	}
-	s3DB, err := duckdbx.NewS3DB("s3")
+	// TODO: Pass config when available in queryworker
+	s3DB, err := duckdbx.NewS3DB("s3", nil)
 	if err != nil {
 		slog.Error("Failed to create S3 DuckDB database", slog.Any("error", err))
 		return nil

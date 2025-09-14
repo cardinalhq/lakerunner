@@ -55,7 +55,7 @@ func NewMetricBoxerConsumer(
 	}
 
 	// Create MetricBoxer processor
-	processor := newMetricBoxerProcessor(producer, store)
+	processor := newMetricBoxerProcessor(ctx, cfg, producer, store)
 
 	// Get the accumulation time based on rollup frequencies
 	// We'll use the longest accumulation time as a default
@@ -71,10 +71,11 @@ func NewMetricBoxerConsumer(
 	flushInterval := max(maxAccumulationTime/4, 15*time.Second)
 
 	// Configure the consumer - consuming from boxer input topic
+	registry := cfg.TopicRegistry
 	consumerConfig := CommonConsumerConfig{
 		ConsumerName:  "lakerunner-boxer-metrics-rollup",
-		Topic:         "lakerunner.boxer.metrics.rollup",
-		ConsumerGroup: "lakerunner.boxer.metrics.rollup",
+		Topic:         registry.GetTopic(config.TopicBoxerMetricsRollup),
+		ConsumerGroup: registry.GetConsumerGroup(config.TopicBoxerMetricsRollup),
 		FlushInterval: flushInterval,
 		StaleAge:      maxAccumulationTime,
 		MaxAge:        maxAccumulationTime,

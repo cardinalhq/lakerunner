@@ -15,28 +15,34 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"reflect"
 	"strings"
 	"time"
 
 	"github.com/spf13/viper"
-
-	"github.com/cardinalhq/lakerunner/internal/fly"
+	"gopkg.in/yaml.v3"
 )
 
 // Config aggregates configuration for the application.
 // Each field is owned by its respective package.
 type Config struct {
-	Debug   bool          `mapstructure:"debug"`
-	Fly     fly.Config    `mapstructure:"fly"`
-	Metrics MetricsConfig `mapstructure:"metrics"`
-	Batch   BatchConfig   `mapstructure:"batch"`
-	DuckDB  DuckDBConfig  `mapstructure:"duckdb"`
-	Logs    LogsConfig    `mapstructure:"logs"`
-	Traces  TracesConfig  `mapstructure:"traces"`
-	Admin   AdminConfig   `mapstructure:"admin"`
-	SegLog  SegLogConfig  `mapstructure:"seglog"`
+	Debug       bool              `mapstructure:"debug"`
+	Kafka       KafkaConfig       `mapstructure:"kafka"`
+	Metrics     MetricsConfig     `mapstructure:"metrics"`
+	Batch       BatchConfig       `mapstructure:"batch"`
+	DuckDB      DuckDBConfig      `mapstructure:"duckdb"`
+	S3          S3Config          `mapstructure:"s3"`
+	Azure       AzureConfig       `mapstructure:"azure"`
+	Logs        LogsConfig        `mapstructure:"logs"`
+	Traces      TracesConfig      `mapstructure:"traces"`
+	Admin       AdminConfig       `mapstructure:"admin"`
+	SegLog      SegLogConfig      `mapstructure:"seglog"`
+	KafkaTopics KafkaTopicsConfig `mapstructure:"kafka_topics"`
+
+	// Derived fields (populated during Load())
+	TopicRegistry *TopicRegistry // Kafka topic registry based on prefix
 }
 
 type MetricsConfig struct {
@@ -54,8 +60,35 @@ type BatchConfig struct {
 }
 
 type DuckDBConfig struct {
+	// Extension paths for air-gapped mode
 	ExtensionsPath  string `mapstructure:"extensions_path"`
 	HTTPFSExtension string `mapstructure:"httpfs_extension"`
+	AzureExtension  string `mapstructure:"azure_extension"`
+	AWSExtension    string `mapstructure:"aws_extension"`
+
+	// Memory and performance settings
+	MemoryLimit          int64  `mapstructure:"memory_limit"`            // Memory limit in MB (0 = unlimited)
+	TempDirectory        string `mapstructure:"temp_directory"`          // Directory for temporary files
+	MaxTempDirectorySize string `mapstructure:"max_temp_directory_size"` // Max size for temp directory
+	S3PoolSize           int    `mapstructure:"s3_pool_size"`            // Connection pool size for S3
+	S3ConnTTLSeconds     int    `mapstructure:"s3_conn_ttl_seconds"`     // Connection TTL in seconds
+	ThreadsPerConn       int    `mapstructure:"threads_per_conn"`        // Threads per connection
+}
+
+type S3Config struct {
+	AccessKeyID     string `mapstructure:"access_key_id"`
+	SecretAccessKey string `mapstructure:"secret_access_key"`
+	SessionToken    string `mapstructure:"session_token"`
+	Region          string `mapstructure:"region"`
+	URLStyle        string `mapstructure:"url_style"` // "path" or "vhost"
+}
+
+type AzureConfig struct {
+	AuthType         string `mapstructure:"auth_type"` // "service_principal" or "connection_string"
+	ClientID         string `mapstructure:"client_id"`
+	ClientSecret     string `mapstructure:"client_secret"`
+	TenantID         string `mapstructure:"tenant_id"`
+	ConnectionString string `mapstructure:"connection_string"`
 }
 
 type LogsConfig struct {
@@ -72,6 +105,74 @@ type AdminConfig struct {
 
 type SegLogConfig struct {
 	Enabled bool `mapstructure:"enabled"` // Enable segment log tracing for debugging operations
+}
+
+// TopicCreationConfig holds configuration for creating Kafka topics
+// WARNING: These settings are for topic creation only - never use partition counts in runtime code
+type TopicCreationConfig struct {
+	PartitionCount    *int                   `mapstructure:"partitionCount"`
+	ReplicationFactor *int                   `mapstructure:"replicationFactor"`
+	Options           map[string]interface{} `mapstructure:"options"`
+}
+
+type KafkaTopicsConfig struct {
+	TopicPrefix string                         `mapstructure:"topicPrefix"` // Topic prefix (default: "lakerunner")
+	Defaults    TopicCreationConfig            `mapstructure:"defaults"`    // Default settings for topic creation
+	Topics      map[string]TopicCreationConfig `mapstructure:"topics"`      // Per-service-type overrides for topic creation
+}
+
+// KafkaTopicsOverrideVersion is the current version for override files
+const KafkaTopicsOverrideVersion = 2
+
+// KafkaTopicsOverrideVersionCheck holds just the version field for initial parsing
+type KafkaTopicsOverrideVersionCheck struct {
+	Version int `yaml:"version"`
+}
+
+// TopicCreationOverrideConfig holds configuration for creating Kafka topics in override files
+// Uses yaml tags instead of mapstructure tags
+type TopicCreationOverrideConfig struct {
+	PartitionCount    *int                   `yaml:"partitionCount"`
+	ReplicationFactor *int                   `yaml:"replicationFactor"`
+	Options           map[string]interface{} `yaml:"options"`
+}
+
+// KafkaTopicsOverrideConfig is the full structure for external YAML override files
+type KafkaTopicsOverrideConfig struct {
+	Version  int                                    `yaml:"version"`
+	Defaults TopicCreationOverrideConfig            `yaml:"defaults"`
+	Workers  map[string]TopicCreationOverrideConfig `yaml:"workers"`
+}
+
+// KafkaConfig holds the Kafka configuration (moved from fly package to avoid import cycle)
+type KafkaConfig struct {
+	// Broker configuration
+	Brokers []string `mapstructure:"brokers"`
+
+	// SASL authentication
+	SASLEnabled   bool   `mapstructure:"sasl_enabled"`
+	SASLMechanism string `mapstructure:"sasl_mechanism"` // "PLAIN", "SCRAM-SHA-256" or "SCRAM-SHA-512"
+	SASLUsername  string `mapstructure:"sasl_username"`
+	SASLPassword  string `mapstructure:"sasl_password"`
+
+	// TLS configuration
+	TLSEnabled    bool `mapstructure:"tls_enabled"`
+	TLSSkipVerify bool `mapstructure:"tls_skip_verify"`
+
+	// Producer settings
+	ProducerBatchSize    int           `mapstructure:"producer_batch_size"`
+	ProducerBatchTimeout time.Duration `mapstructure:"producer_batch_timeout"`
+	ProducerCompression  string        `mapstructure:"producer_compression"`
+
+	// Consumer settings
+	ConsumerGroupPrefix string        `mapstructure:"consumer_group_prefix"`
+	ConsumerBatchSize   int           `mapstructure:"consumer_batch_size"`
+	ConsumerMaxWait     time.Duration `mapstructure:"consumer_max_wait"`
+	ConsumerMinBytes    int           `mapstructure:"consumer_min_bytes"`
+	ConsumerMaxBytes    int           `mapstructure:"consumer_max_bytes"`
+
+	// Connection settings
+	ConnectionTimeout time.Duration `mapstructure:"connection_timeout"`
 }
 
 type CompactionConfig struct {
@@ -99,14 +200,41 @@ func DefaultIngestionConfig() IngestionConfig {
 	}
 }
 
+// DefaultKafkaConfig returns default settings for Kafka.
+func DefaultKafkaConfig() KafkaConfig {
+	return KafkaConfig{
+		Brokers: []string{"localhost:9092"},
+
+		SASLEnabled:   false,
+		SASLMechanism: "SCRAM-SHA-256",
+		SASLUsername:  "",
+		SASLPassword:  "",
+
+		TLSEnabled:    false,
+		TLSSkipVerify: false,
+
+		ProducerBatchSize:    100,
+		ProducerBatchTimeout: 10 * time.Millisecond,
+		ProducerCompression:  "snappy",
+
+		ConsumerGroupPrefix: "lakerunner",
+		ConsumerBatchSize:   100,
+		ConsumerMaxWait:     500 * time.Millisecond,
+		ConsumerMinBytes:    10 * 1024,        // 10KB
+		ConsumerMaxBytes:    10 * 1024 * 1024, // 10MB
+
+		ConnectionTimeout: 10 * time.Second,
+	}
+}
+
 // Load reads configuration from files and environment variables.
 // Environment variables use the prefix "LAKERUNNER" and the dot character
-// in keys is replaced by an underscore. For example, "fly.brokers" becomes
-// "LAKERUNNER_FLY_BROKERS".
+// in keys is replaced by an underscore. For example, "kafka.brokers" becomes
+// "LAKERUNNER_KAFKA_BROKERS".
 func Load() (*Config, error) {
 	cfg := &Config{
 		Debug: false,
-		Fly:   *fly.DefaultConfig(),
+		Kafka: DefaultKafkaConfig(),
 		Metrics: MetricsConfig{
 			Ingestion: DefaultIngestionConfig(),
 			Compaction: CompactionConfig{
@@ -125,8 +253,30 @@ func Load() (*Config, error) {
 			MinBatchSize:    1,
 		},
 		DuckDB: DuckDBConfig{
-			ExtensionsPath:  "",
-			HTTPFSExtension: "",
+			ExtensionsPath:       "",
+			HTTPFSExtension:      "",
+			AzureExtension:       "",
+			AWSExtension:         "",
+			MemoryLimit:          0,   // No limit by default
+			TempDirectory:        "",  // Empty means use system default
+			MaxTempDirectorySize: "",  // Empty means no limit
+			S3PoolSize:           0,   // 0 means use default calculation in s3db.go
+			S3ConnTTLSeconds:     240, // 4 minutes default
+			ThreadsPerConn:       0,   // 0 means use default calculation
+		},
+		S3: S3Config{
+			AccessKeyID:     "",
+			SecretAccessKey: "",
+			SessionToken:    "",
+			Region:          "",
+			URLStyle:        "",
+		},
+		Azure: AzureConfig{
+			AuthType:         "",
+			ClientID:         "",
+			ClientSecret:     "",
+			TenantID:         "",
+			ConnectionString: "",
 		},
 		Logs:   LogsConfig{},
 		Traces: TracesConfig{},
@@ -135,6 +285,17 @@ func Load() (*Config, error) {
 		},
 		SegLog: SegLogConfig{
 			Enabled: false, // Disabled by default for production
+		},
+		KafkaTopics: KafkaTopicsConfig{
+			TopicPrefix: "lakerunner", // Default topic prefix
+			Defaults: TopicCreationConfig{
+				PartitionCount:    intPtr(16),
+				ReplicationFactor: intPtr(3),
+				Options: map[string]interface{}{
+					"cleanup.policy": "delete",
+					"retention.ms":   "604800000", // 7 days
+				},
+			},
 		},
 	}
 
@@ -150,16 +311,231 @@ func Load() (*Config, error) {
 	if err := v.Unmarshal(cfg); err != nil {
 		return nil, err
 	}
-	if b := v.GetString("fly.brokers"); b != "" {
-		cfg.Fly.Brokers = strings.Split(b, ",")
+	// Handle Kafka configuration with migration support from fly.* to kafka.*
+	var usedFlyConfig bool
+
+	// Brokers
+	if b := v.GetString("kafka.brokers"); b != "" {
+		cfg.Kafka.Brokers = strings.Split(b, ",")
+	} else if b := v.GetString("fly.brokers"); b != "" {
+		cfg.Kafka.Brokers = strings.Split(b, ",")
+		usedFlyConfig = true
 	}
 
-	// Also check DEBUG environment variable (without prefix)
-	if os.Getenv("DEBUG") != "" {
-		cfg.Debug = true
+	// SASL authentication
+	if v.IsSet("kafka.sasl_enabled") {
+		cfg.Kafka.SASLEnabled = v.GetBool("kafka.sasl_enabled")
+	} else if v.IsSet("fly.sasl_enabled") {
+		cfg.Kafka.SASLEnabled = v.GetBool("fly.sasl_enabled")
+		usedFlyConfig = true
 	}
+
+	if u := v.GetString("kafka.sasl_mechanism"); u != "" {
+		cfg.Kafka.SASLMechanism = u
+	} else if u := v.GetString("fly.sasl_mechanism"); u != "" {
+		cfg.Kafka.SASLMechanism = u
+		usedFlyConfig = true
+	}
+
+	if u := v.GetString("kafka.sasl_username"); u != "" {
+		cfg.Kafka.SASLUsername = u
+	} else if u := v.GetString("fly.sasl_username"); u != "" {
+		cfg.Kafka.SASLUsername = u
+		usedFlyConfig = true
+	}
+
+	if u := v.GetString("kafka.sasl_password"); u != "" {
+		cfg.Kafka.SASLPassword = u
+	} else if u := v.GetString("fly.sasl_password"); u != "" {
+		cfg.Kafka.SASLPassword = u
+		usedFlyConfig = true
+	}
+
+	// TLS configuration
+	if v.IsSet("kafka.tls_enabled") {
+		cfg.Kafka.TLSEnabled = v.GetBool("kafka.tls_enabled")
+	} else if v.IsSet("fly.tls_enabled") {
+		cfg.Kafka.TLSEnabled = v.GetBool("fly.tls_enabled")
+		usedFlyConfig = true
+	}
+
+	if v.IsSet("kafka.tls_skip_verify") {
+		cfg.Kafka.TLSSkipVerify = v.GetBool("kafka.tls_skip_verify")
+	} else if v.IsSet("fly.tls_skip_verify") {
+		cfg.Kafka.TLSSkipVerify = v.GetBool("fly.tls_skip_verify")
+		usedFlyConfig = true
+	}
+
+	// Producer settings
+	if v.IsSet("kafka.producer_batch_size") {
+		cfg.Kafka.ProducerBatchSize = v.GetInt("kafka.producer_batch_size")
+	} else if v.IsSet("fly.producer_batch_size") {
+		cfg.Kafka.ProducerBatchSize = v.GetInt("fly.producer_batch_size")
+		usedFlyConfig = true
+	}
+
+	if v.IsSet("kafka.producer_batch_timeout") {
+		cfg.Kafka.ProducerBatchTimeout = v.GetDuration("kafka.producer_batch_timeout")
+	} else if v.IsSet("fly.producer_batch_timeout") {
+		cfg.Kafka.ProducerBatchTimeout = v.GetDuration("fly.producer_batch_timeout")
+		usedFlyConfig = true
+	}
+
+	if u := v.GetString("kafka.producer_compression"); u != "" {
+		cfg.Kafka.ProducerCompression = u
+	} else if u := v.GetString("fly.producer_compression"); u != "" {
+		cfg.Kafka.ProducerCompression = u
+		usedFlyConfig = true
+	}
+
+	// Consumer settings
+	if u := v.GetString("kafka.consumer_group_prefix"); u != "" {
+		cfg.Kafka.ConsumerGroupPrefix = u
+	} else if u := v.GetString("fly.consumer_group_prefix"); u != "" {
+		cfg.Kafka.ConsumerGroupPrefix = u
+		usedFlyConfig = true
+	}
+
+	if v.IsSet("kafka.consumer_batch_size") {
+		cfg.Kafka.ConsumerBatchSize = v.GetInt("kafka.consumer_batch_size")
+	} else if v.IsSet("fly.consumer_batch_size") {
+		cfg.Kafka.ConsumerBatchSize = v.GetInt("fly.consumer_batch_size")
+		usedFlyConfig = true
+	}
+
+	if v.IsSet("kafka.consumer_max_wait") {
+		cfg.Kafka.ConsumerMaxWait = v.GetDuration("kafka.consumer_max_wait")
+	} else if v.IsSet("fly.consumer_max_wait") {
+		cfg.Kafka.ConsumerMaxWait = v.GetDuration("fly.consumer_max_wait")
+		usedFlyConfig = true
+	}
+
+	if v.IsSet("kafka.consumer_min_bytes") {
+		cfg.Kafka.ConsumerMinBytes = v.GetInt("kafka.consumer_min_bytes")
+	} else if v.IsSet("fly.consumer_min_bytes") {
+		cfg.Kafka.ConsumerMinBytes = v.GetInt("fly.consumer_min_bytes")
+		usedFlyConfig = true
+	}
+
+	if v.IsSet("kafka.consumer_max_bytes") {
+		cfg.Kafka.ConsumerMaxBytes = v.GetInt("kafka.consumer_max_bytes")
+	} else if v.IsSet("fly.consumer_max_bytes") {
+		cfg.Kafka.ConsumerMaxBytes = v.GetInt("fly.consumer_max_bytes")
+		usedFlyConfig = true
+	}
+
+	// Connection settings
+	if v.IsSet("kafka.connection_timeout") {
+		cfg.Kafka.ConnectionTimeout = v.GetDuration("kafka.connection_timeout")
+	} else if v.IsSet("fly.connection_timeout") {
+		cfg.Kafka.ConnectionTimeout = v.GetDuration("fly.connection_timeout")
+		usedFlyConfig = true
+	}
+
+	// Log deprecation warning if any fly.* config was used
+	if usedFlyConfig {
+		fmt.Fprintf(os.Stderr, "WARNING: fly.* configuration keys are deprecated. Please migrate to kafka.* keys. See documentation for migration guide.\n")
+	}
+
+	// Initialize topic registry based on configured prefix
+	topicPrefix := cfg.KafkaTopics.TopicPrefix
+	if topicPrefix == "" {
+		// Check environment variable for prefix
+		topicPrefix = os.Getenv("LAKERUNNER_KAFKA_TOPIC_PREFIX")
+		if topicPrefix == "" {
+			topicPrefix = "lakerunner" // default prefix
+		}
+	}
+	cfg.TopicRegistry = NewTopicRegistry(topicPrefix)
 
 	return cfg, nil
+}
+
+// GetTopicRegistry returns a TopicRegistry configured with this config's prefix
+func (c *Config) GetTopicRegistry() *TopicRegistry {
+	return NewTopicRegistry(c.KafkaTopics.TopicPrefix)
+}
+
+// LoadKafkaTopicsOverride loads and validates a Kafka topics override configuration from a file
+// This function is separate from the main config loading to avoid blocking service startup
+// when override files have issues - only topic configuration operations will fail
+func LoadKafkaTopicsOverride(filename string) (*KafkaTopicsOverrideConfig, error) {
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read kafka topics override file: %w", err)
+	}
+
+	// First, check version with lenient parsing
+	var versionCheck KafkaTopicsOverrideVersionCheck
+	if err := yaml.Unmarshal(data, &versionCheck); err != nil {
+		return nil, fmt.Errorf("failed to parse version from kafka topics override file: %w", err)
+	}
+
+	// Validate version
+	if versionCheck.Version != KafkaTopicsOverrideVersion {
+		return nil, fmt.Errorf("unsupported kafka topics override file version %d, expected version %d",
+			versionCheck.Version, KafkaTopicsOverrideVersion)
+	}
+
+	// Now parse the full config with strict mode
+	var config KafkaTopicsOverrideConfig
+	decoder := yaml.NewDecoder(strings.NewReader(string(data)))
+	decoder.KnownFields(true) // Enable strict mode - fail on unknown fields
+
+	if err := decoder.Decode(&config); err != nil {
+		return nil, fmt.Errorf("failed to parse kafka topics override file (strict mode): %w", err)
+	}
+
+	return &config, nil
+}
+
+// convertTopicCreationOverrideConfig converts from override config to regular config
+func convertTopicCreationOverrideConfig(override TopicCreationOverrideConfig) TopicCreationConfig {
+	return TopicCreationConfig(override)
+}
+
+// MergeKafkaTopicsOverride merges an override config into the base KafkaTopicsConfig
+func MergeKafkaTopicsOverride(base KafkaTopicsConfig, override *KafkaTopicsOverrideConfig) KafkaTopicsConfig {
+	result := KafkaTopicsConfig{
+		TopicPrefix: base.TopicPrefix,
+		Defaults:    base.Defaults,
+		Topics:      make(map[string]TopicCreationConfig),
+	}
+
+	// Copy base topics
+	for k, v := range base.Topics {
+		result.Topics[k] = v
+	}
+
+	// Note: TopicPrefix is NOT overridden - it comes from main config or environment
+
+	// Merge defaults (override takes precedence for non-nil values)
+	if override.Defaults.PartitionCount != nil {
+		result.Defaults.PartitionCount = override.Defaults.PartitionCount
+	}
+	if override.Defaults.ReplicationFactor != nil {
+		result.Defaults.ReplicationFactor = override.Defaults.ReplicationFactor
+	}
+	if len(override.Defaults.Options) > 0 {
+		if result.Defaults.Options == nil {
+			result.Defaults.Options = make(map[string]interface{})
+		}
+		for k, v := range override.Defaults.Options {
+			result.Defaults.Options[k] = v
+		}
+	}
+
+	// Merge per-topic configs (override completely replaces base for each topic)
+	for topicKey, topicConfig := range override.Workers {
+		result.Topics[topicKey] = convertTopicCreationOverrideConfig(topicConfig)
+	}
+
+	return result
+}
+
+// intPtr returns a pointer to an int value
+func intPtr(i int) *int {
+	return &i
 }
 
 // bindEnvs registers all keys within cfg so that viper will look up

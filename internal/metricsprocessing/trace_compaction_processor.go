@@ -40,7 +40,7 @@ type TraceCompactionProcessor struct {
 	store           TraceCompactionStore
 	storageProvider storageprofile.StorageProfileProvider
 	cmgr            cloudstorage.ClientProvider
-	cfg             *config.Config
+	config          *config.Config
 }
 
 // NewTraceCompactionProcessor creates a new trace compaction processor
@@ -54,7 +54,7 @@ func NewTraceCompactionProcessor(
 		store:           store,
 		storageProvider: storageProvider,
 		cmgr:            cmgr,
-		cfg:             cfg,
+		config:          cfg,
 	}
 }
 
@@ -325,9 +325,9 @@ func (p *TraceCompactionProcessor) atomicTraceDatabaseUpdate(ctx context.Context
 	// Prepare Kafka offsets for update
 	var kafkaOffsets []lrdb.KafkaOffsetUpdate
 	kafkaOffsets = append(kafkaOffsets, lrdb.KafkaOffsetUpdate{
-		Topic:               "lakerunner.segments.traces.compact",
+		Topic:               p.config.TopicRegistry.GetTopic(config.TopicSegmentsTracesCompact),
 		Partition:           partition,
-		ConsumerGroup:       "lakerunner.compact.traces",
+		ConsumerGroup:       p.config.TopicRegistry.GetConsumerGroup(config.TopicSegmentsTracesCompact),
 		OrganizationID:      key.OrganizationID,
 		InstanceNum:         key.InstanceNum,
 		LastProcessedOffset: offset,
@@ -335,8 +335,8 @@ func (p *TraceCompactionProcessor) atomicTraceDatabaseUpdate(ctx context.Context
 
 	// Log Kafka offset update
 	ll.Debug("Updating Kafka consumer group offset",
-		slog.String("consumerGroup", "lakerunner.compact.traces"),
-		slog.String("topic", "lakerunner.segments.traces.compact"),
+		slog.String("consumerGroup", p.config.TopicRegistry.GetConsumerGroup(config.TopicSegmentsTracesCompact)),
+		slog.String("topic", p.config.TopicRegistry.GetTopic(config.TopicSegmentsTracesCompact)),
 		slog.Int("partition", int(partition)),
 		slog.Int64("newOffset", offset))
 

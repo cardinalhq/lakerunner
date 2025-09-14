@@ -69,7 +69,7 @@ func setupTelemetry(servicename string, addlAttrs *attribute.Set) (context.Conte
 
 	// Configure slog level based on DEBUG environment variables
 	var opts *slog.HandlerOptions
-	if os.Getenv("DEBUG") != "" || os.Getenv("LAKERUNNER_DEBUG") != "" {
+	if os.Getenv("LAKERUNNER_DEBUG") != "" {
 		opts = &slog.HandlerOptions{Level: slog.LevelDebug}
 	}
 

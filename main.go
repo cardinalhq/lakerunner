@@ -27,7 +27,7 @@ import (
 	"github.com/cardinalhq/lakerunner/cmd"
 )
 
-var debugEnabled = os.Getenv("DEBUG") != "" || os.Getenv("LAKERUNNER_DEBUG") != ""
+var debugEnabled = os.Getenv("LAKERUNNER_DEBUG") != ""
 
 func simpleLogger(msg string, args ...any) {
 	// Only log if debug logging is enabled

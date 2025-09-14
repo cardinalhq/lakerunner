@@ -24,6 +24,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
@@ -150,11 +151,13 @@ type KafkaHandler struct {
 
 // NewKafkaHandler creates a new Kafka handler for pubsub notifications
 func NewKafkaHandler(
+	ctx context.Context,
+	cfg *config.Config,
 	factory *fly.Factory,
 	source string,
 	sp storageprofile.StorageProfileProvider,
 ) (*KafkaHandler, error) {
-	manager := fly.NewObjStoreNotificationManager(factory)
+	manager := fly.NewObjStoreNotificationManager(ctx, cfg, factory)
 
 	return &KafkaHandler{
 		manager: manager,
@@ -165,7 +168,7 @@ func NewKafkaHandler(
 
 // HandleMessage processes a message and sends it to Kafka
 func (h *KafkaHandler) HandleMessage(ctx context.Context, msg []byte) error {
-	producer, err := h.manager.GetProducer(h.source)
+	producer, err := h.manager.GetProducer(ctx, h.source)
 	if err != nil {
 		return fmt.Errorf("failed to get Kafka producer: %w", err)
 	}

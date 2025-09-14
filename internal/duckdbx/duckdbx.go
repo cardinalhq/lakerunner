@@ -35,6 +35,11 @@ type Config struct {
 	MetricsPeriod time.Duration
 	SetupFx       SetupFunction
 
+	// Extension paths for air-gapped mode
+	ExtensionsPath  string
+	HTTPFSExtension string
+	AzureExtension  string
+
 	pollerContext context.Context
 }
 
@@ -60,13 +65,22 @@ func WithMemoryLimitMB(limit int64) option {
 }
 
 // WithExtension specifies a DuckDB extension to install and load on connection setup.
-// In air-gapped mode (when LAKERUNNER_EXTENSIONS_PATH is set), extensions are loaded from
+// In air-gapped mode (when ExtensionsPath is set), extensions are loaded from
 // pre-installed files. In development mode, extensions are downloaded from the network.
 func WithExtension(ext string) option {
 	return func(c *Config) {
 		c.Extensions = append(c.Extensions, ExtensionConfig{
 			Name: ext,
 		})
+	}
+}
+
+// WithExtensionPaths sets the paths for air-gapped extension loading.
+func WithExtensionPaths(extensionsPath, httpfsPath, azurePath string) option {
+	return func(c *Config) {
+		c.ExtensionsPath = extensionsPath
+		c.HTTPFSExtension = httpfsPath
+		c.AzureExtension = azurePath
 	}
 }
 
@@ -191,11 +205,9 @@ func (d *DB) Close() error {
 // loadExtension handles air-gapped extension loading with fallback to network
 func (d *DB) loadExtension(ctx context.Context, conn *sql.Conn, extensionName string) error {
 	// Check if we're in air-gapped mode (Docker) or development mode (local)
-	extensionsBasePath := os.Getenv("LAKERUNNER_EXTENSIONS_PATH")
-
-	if extensionsBasePath != "" {
+	if d.config.ExtensionsPath != "" {
 		// Air-gapped mode: only load pre-installed extensions
-		return d.loadAirGappedExtension(ctx, conn, extensionName, extensionsBasePath)
+		return d.loadAirGappedExtension(ctx, conn, extensionName, d.config.ExtensionsPath)
 	}
 
 	// Development mode: allow network downloads
@@ -204,9 +216,14 @@ func (d *DB) loadExtension(ctx context.Context, conn *sql.Conn, extensionName st
 
 // loadAirGappedExtension loads extensions from pre-installed files only
 func (d *DB) loadAirGappedExtension(ctx context.Context, conn *sql.Conn, extensionName, basePath string) error {
-	// First check for specific environment variable for this extension
-	specificEnvVar := fmt.Sprintf("LAKERUNNER_%s_EXTENSION", strings.ToUpper(extensionName))
-	extensionPath := os.Getenv(specificEnvVar)
+	// First check for specific path from config
+	var extensionPath string
+	switch strings.ToLower(extensionName) {
+	case "httpfs":
+		extensionPath = d.config.HTTPFSExtension
+	case "azure":
+		extensionPath = d.config.AzureExtension
+	}
 
 	if extensionPath == "" {
 		// Fall back to naming convention: basePath/extensionName.duckdb_extension

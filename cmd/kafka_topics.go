@@ -19,84 +19,147 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"strings"
+	"time"
+
+	"github.com/cardinalhq/kafka-sync/kafkasync"
 
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 )
 
 func ensureKafkaTopicsWithFile(ctx context.Context, flagKafkaTopicsFile string) error {
-	if err := validateKafkaConfig(); err != nil {
-		return fmt.Errorf("Kafka configuration validation failed: %w", err)
-	}
-
-	var kafkaTopicsFile string
-
-	// Priority order: command-line flag > environment variable > default location
-	if flagKafkaTopicsFile != "" {
-		kafkaTopicsFile = flagKafkaTopicsFile
-		slog.Info("Using Kafka topics file from command-line flag", slog.String("file", kafkaTopicsFile))
-	} else if kafkaTopicsFileEnv := os.Getenv("KAFKA_TOPICS_FILE"); kafkaTopicsFileEnv != "" {
-		kafkaTopicsFile = kafkaTopicsFileEnv
-		slog.Info("Using Kafka topics file from KAFKA_TOPICS_FILE", slog.String("file", kafkaTopicsFile))
-	} else {
-		// Look for Kafka topics in the ConfigMap mount location
-		kafkaTopicsPath := "/app/config/kafka_topics.yaml"
-		if _, err := os.Stat(kafkaTopicsPath); err == nil {
-			kafkaTopicsFile = kafkaTopicsPath
-			slog.Info("Auto-detected Kafka topics file", slog.String("file", kafkaTopicsPath))
-		} else {
-			slog.Info("No Kafka topics configuration found, skipping")
-			return nil
-		}
-	}
-
-	// Load Kafka connection config from existing env vars
+	// Load Kafka connection config
 	appConfig, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("failed to load app config: %w", err)
 	}
 
 	// Create topic syncer
-	factory := fly.NewFactory(&appConfig.Fly)
+	factory, err := fly.NewFactoryFromKafkaConfig(&appConfig.Kafka)
+	if err != nil {
+		return fmt.Errorf("failed to create Kafka factory: %w", err)
+	}
 	syncer := factory.CreateTopicSyncer()
 
-	// Load topics configuration using kafka-sync
-	topicsConfig, err := fly.LoadTopicsConfig(kafkaTopicsFile)
-	if err != nil {
-		return fmt.Errorf("failed to load Kafka topics configuration: %w", err)
+	var topicsConfig *kafkasync.Config
+
+	finalKafkaTopicsConfig := appConfig.KafkaTopics
+
+	// Priority: external file override > generated from base config
+	if flagKafkaTopicsFile != "" {
+		slog.Info("Loading Kafka topics override from command-line flag", slog.String("file", flagKafkaTopicsFile))
+		override, err := config.LoadKafkaTopicsOverride(flagKafkaTopicsFile)
+		if err != nil {
+			return fmt.Errorf("failed to load Kafka topics override file: %w", err)
+		}
+		finalKafkaTopicsConfig = config.MergeKafkaTopicsOverride(appConfig.KafkaTopics, override)
+		slog.Info("Merged Kafka topics override", slog.String("prefix", finalKafkaTopicsConfig.TopicPrefix))
+	} else if kafkaTopicsFileEnv := os.Getenv("KAFKA_TOPICS_FILE"); kafkaTopicsFileEnv != "" {
+		slog.Info("Loading Kafka topics override from KAFKA_TOPICS_FILE", slog.String("file", kafkaTopicsFileEnv))
+		override, err := config.LoadKafkaTopicsOverride(kafkaTopicsFileEnv)
+		if err != nil {
+			return fmt.Errorf("failed to load Kafka topics override file: %w", err)
+		}
+		finalKafkaTopicsConfig = config.MergeKafkaTopicsOverride(appConfig.KafkaTopics, override)
+		slog.Info("Merged Kafka topics override", slog.String("prefix", finalKafkaTopicsConfig.TopicPrefix))
+	} else if kafkaTopicsPath := "/app/config/kafka_topics.yaml"; fileExists(kafkaTopicsPath) {
+		slog.Info("Loading Kafka topics override from ConfigMap", slog.String("file", kafkaTopicsPath))
+		override, err := config.LoadKafkaTopicsOverride(kafkaTopicsPath)
+		if err != nil {
+			return fmt.Errorf("failed to load Kafka topics override file: %w", err)
+		}
+		finalKafkaTopicsConfig = config.MergeKafkaTopicsOverride(appConfig.KafkaTopics, override)
+		slog.Info("Merged Kafka topics override", slog.String("prefix", finalKafkaTopicsConfig.TopicPrefix))
+	} else {
+		slog.Info("Using internal Kafka topics configuration", slog.String("prefix", finalKafkaTopicsConfig.TopicPrefix))
 	}
+
+	// Generate topics config (either base config or merged with overrides)
+	// Note: prefix cannot change via override - always use base TopicRegistry
+	topicRegistry := appConfig.TopicRegistry
+
+	syncConfig := topicRegistry.GenerateKafkaSyncConfig(finalKafkaTopicsConfig)
+	topicsConfig = convertToKafkaSyncConfig(syncConfig)
 
 	if len(topicsConfig.Topics) == 0 {
 		slog.Info("No Kafka topics configured, skipping")
 		return nil
 	}
 
+	slog.Info("Syncing Kafka topics", slog.Int("count", len(topicsConfig.Topics)))
+
+	// Create a context with timeout for the Kafka sync operation
+	// Use the connection timeout from config, or default to 60 seconds
+	timeout := 60 * time.Second
+	if appConfig.Kafka.ConnectionTimeout > 0 {
+		timeout = appConfig.Kafka.ConnectionTimeout
+	}
+	syncCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
 	// Sync topics (with fix mode enabled to create missing topics)
-	return syncer.SyncTopics(ctx, topicsConfig, true)
+	return syncer.SyncTopics(syncCtx, topicsConfig, true)
 }
 
-// validateKafkaConfig checks required Kafka environment variables similar to database validation
-func validateKafkaConfig() error {
-	// Check if Kafka is configured via environment variables or URL
-	if brokers := os.Getenv("LAKERUNNER_FLY_BROKERS"); brokers != "" {
-		return nil // We have brokers configured
+// fileExists checks if a file exists and is not a directory
+func fileExists(filename string) bool {
+	info, err := os.Stat(filename)
+	if os.IsNotExist(err) {
+		return false
+	}
+	return !info.IsDir()
+}
+
+// convertToKafkaSyncConfig converts our KafkaSyncConfig to kafkasync.Config
+func convertToKafkaSyncConfig(syncConfig config.KafkaSyncConfig) *kafkasync.Config {
+	// Convert TopicConfig from interface{} to string values for kafkasync
+	topicConfig := make(map[string]string)
+	for k, v := range syncConfig.Defaults.TopicConfig {
+		if s, ok := v.(string); ok {
+			topicConfig[k] = s
+		} else {
+			topicConfig[k] = fmt.Sprintf("%v", v)
+		}
 	}
 
-	// Check individual broker configuration
-	var missing []string
-
-	// For Kafka, we require at least one broker
-	if os.Getenv("LAKERUNNER_FLY_BROKERS") == "" {
-		missing = append(missing, "LAKERUNNER_FLY_BROKERS")
+	kafkaConfig := &kafkasync.Config{
+		Defaults: kafkasync.Defaults{
+			PartitionCount:    syncConfig.Defaults.PartitionCount,
+			ReplicationFactor: syncConfig.Defaults.ReplicationFactor,
+			TopicConfig:       topicConfig,
+		},
+		Topics:                    make([]kafkasync.Topic, len(syncConfig.Topics)),
+		OperationTimeout:          60 * time.Second, // Set a 60-second timeout for Kafka operations
+		RebalanceOperationTimeout: 60 * time.Second, // Set a 60-second timeout for rebalancing operations
 	}
 
-	if len(missing) > 0 {
-		return fmt.Errorf(
-			"missing required Kafka environment variable(s): %s",
-			strings.Join(missing, ", "),
-		)
+	for i, topic := range syncConfig.Topics {
+		kafkaTopic := kafkasync.Topic{
+			Name: topic.Name,
+		}
+
+		// Set values (kafkasync uses 0 to mean "use defaults")
+		if topic.PartitionCount > 0 {
+			kafkaTopic.PartitionCount = topic.PartitionCount
+		}
+		if topic.ReplicationFactor > 0 {
+			kafkaTopic.ReplicationFactor = topic.ReplicationFactor
+		}
+		if topic.TopicConfig != nil {
+			// Convert interface{} values to strings
+			config := make(map[string]string)
+			for k, v := range topic.TopicConfig {
+				if s, ok := v.(string); ok {
+					config[k] = s
+				} else {
+					config[k] = fmt.Sprintf("%v", v)
+				}
+			}
+			kafkaTopic.Config = config
+		}
+
+		kafkaConfig.Topics[i] = kafkaTopic
 	}
 
-	return nil
+	return kafkaConfig
 }

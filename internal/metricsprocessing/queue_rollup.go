@@ -29,7 +29,7 @@ import (
 )
 
 // queueMetricRollup sends rollup work notification to Kafka for a specific segment
-func queueMetricRollup(ctx context.Context, kafkaProducer fly.Producer, organizationID uuid.UUID, dateint int32, frequencyMs int32, instanceNum int16, segmentID int64, recordCount int64, fileSize int64, segmentStartTime time.Time) error {
+func queueMetricRollup(ctx context.Context, kafkaProducer fly.Producer, organizationID uuid.UUID, dateint int32, frequencyMs int32, instanceNum int16, segmentID int64, recordCount int64, fileSize int64, segmentStartTime time.Time, topicRegistry *config.TopicRegistry) error {
 	ll := logctx.FromContext(ctx)
 
 	// Check if this frequency needs rollup and get target frequency
@@ -61,7 +61,7 @@ func queueMetricRollup(ctx context.Context, kafkaProducer fly.Producer, organiza
 	}
 
 	// Send to Kafka boxer topic (which will bundle and forward to rollup topic)
-	rollupTopic := "lakerunner.boxer.metrics.rollup"
+	rollupTopic := topicRegistry.GetTopic(config.TopicBoxerMetricsRollup)
 	// Use dateint and target frequency for key to group rollup intervals by their target frequency
 	if err := kafkaProducer.Send(ctx, rollupTopic, fly.Message{
 		Key:   fmt.Appendf(nil, "%s-%d-%d-%d", organizationID.String(), dateint, targetFrequencyMs, instanceNum),
