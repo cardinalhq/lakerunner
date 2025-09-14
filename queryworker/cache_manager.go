@@ -566,6 +566,7 @@ func (w *CacheManager) maybeEvictOnce(ctx context.Context) {
 		slog.Error("Failed to get used disk size", slog.Any("error", err))
 		return
 	}
+	slog.Info("Cache Status", slog.Int64("rowCount", w.sink.RowCount()), slog.Int64("maxRows", w.maxRows), slog.Int64("overRows", over), slog.Float64("usedDiskGB", usedSizeGB))
 	if usedSizeGB < 8 || over <= 0 {
 		return
 	}
