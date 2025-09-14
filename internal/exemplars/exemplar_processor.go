@@ -34,8 +34,8 @@ type TelemetryType string
 
 // Tenant holds the caches for each telemetry type for a specific organization
 type Tenant struct {
-	metricCache *LRUCache[pmetric.Metrics]
-	logCache    *LRUCache[plog.Logs]
+	metricCache *LRUCache[string]
+	logCache    *LRUCache[string]
 	// traceCache will be added when traces are implemented
 
 	// TrieClusterManager for fingerprinting (one per organization)
@@ -149,8 +149,8 @@ func (p *Processor) GetTenant(ctx context.Context, organizationID string) *Tenan
 }
 
 // createLogsCallback creates a callback function for logs exemplars for a specific organization
-func (p *Processor) createLogsCallback(ctx context.Context, organizationID string) func([]*Entry[plog.Logs]) {
-	return func(entries []*Entry[plog.Logs]) {
+func (p *Processor) createLogsCallback(ctx context.Context, organizationID string) func([]*Entry[string]) {
+	return func(entries []*Entry[string]) {
 		ll := logctx.FromContext(ctx)
 		ll.Info("Processing logs exemplars",
 			slog.String("organization_id", organizationID),
@@ -158,9 +158,10 @@ func (p *Processor) createLogsCallback(ctx context.Context, organizationID strin
 
 		exemplarData := make([]*ExemplarData, 0, len(entries))
 		for _, entry := range entries {
-			data, err := p.convertLogsToMap(entry.value)
-			if err != nil {
-				ll.Error("Failed to convert logs data", slog.Any("error", err))
+			// entry.value is already a JSON string, convert to map[string]any
+			var data map[string]any
+			if err := json.Unmarshal([]byte(entry.value), &data); err != nil {
+				ll.Error("Failed to unmarshal JSON data", slog.Any("error", err))
 				continue
 			}
 
@@ -191,8 +192,8 @@ func (p *Processor) createLogsCallback(ctx context.Context, organizationID strin
 }
 
 // createMetricsCallback creates a callback function for metrics exemplars for a specific organization
-func (p *Processor) createMetricsCallback(ctx context.Context, organizationID string) func([]*Entry[pmetric.Metrics]) {
-	return func(entries []*Entry[pmetric.Metrics]) {
+func (p *Processor) createMetricsCallback(ctx context.Context, organizationID string) func([]*Entry[string]) {
+	return func(entries []*Entry[string]) {
 		ll := logctx.FromContext(ctx)
 		ll.Info("Processing metrics exemplars",
 			slog.String("organization_id", organizationID),
@@ -200,9 +201,10 @@ func (p *Processor) createMetricsCallback(ctx context.Context, organizationID st
 
 		exemplarData := make([]*ExemplarData, 0, len(entries))
 		for _, entry := range entries {
-			data, err := p.convertMetricsToMap(entry.value)
-			if err != nil {
-				ll.Error("Failed to convert metrics data", slog.Any("error", err))
+			// entry.value is already a JSON string, convert to map[string]any
+			var data map[string]any
+			if err := json.Unmarshal([]byte(entry.value), &data); err != nil {
+				ll.Error("Failed to unmarshal JSON data", slog.Any("error", err))
 				continue
 			}
 
@@ -230,39 +232,6 @@ func (p *Processor) createMetricsCallback(ctx context.Context, organizationID st
 			}
 		}
 	}
-}
-
-// pmetric.Metrics -> JSON string
-// plog.Logs -> map[string]any (avoiding JSON marshaling)
-func (p *Processor) convertLogsToMap(ld plog.Logs) (map[string]any, error) {
-	// Use JSON marshaling for now, but convert directly to map
-	marshaller := &plog.JSONMarshaler{}
-	bytes, err := marshaller.MarshalLogs(ld)
-	if err != nil {
-		return nil, err
-	}
-
-	var result map[string]any
-	if err := json.Unmarshal(bytes, &result); err != nil {
-		return nil, err
-	}
-	return result, nil
-}
-
-// pmetric.Metrics -> map[string]any (avoiding JSON marshaling)
-func (p *Processor) convertMetricsToMap(md pmetric.Metrics) (map[string]any, error) {
-	// Use JSON marshaling for now, but convert directly to map
-	marshaller := &pmetric.JSONMarshaler{}
-	bytes, err := marshaller.MarshalMetrics(md)
-	if err != nil {
-		return nil, err
-	}
-
-	var result map[string]any
-	if err := json.Unmarshal(bytes, &result); err != nil {
-		return nil, err
-	}
-	return result, nil
 }
 
 // ProcessLogs processes logs and generates exemplars for a specific organization
@@ -309,7 +278,16 @@ func (p *Processor) addLogExemplar(tenant *Tenant, rl plog.ResourceLogs, sl plog
 	}
 
 	exemplarRecord := toLogExemplar(rl, sl, lr)
-	tenant.logCache.Put(exemplarKey, keys, exemplarRecord)
+
+	// Marshal to JSON once and store the string
+	marshaller := &plog.JSONMarshaler{}
+	jsonBytes, err := marshaller.MarshalLogs(exemplarRecord)
+	if err != nil {
+		// Log error but don't fail completely
+		return
+	}
+
+	tenant.logCache.Put(exemplarKey, keys, string(jsonBytes))
 }
 
 // add a metrics exemplar to the organization's cache
@@ -325,7 +303,16 @@ func (p *Processor) addMetricsExemplar(tenant *Tenant, rm pmetric.ResourceMetric
 	}
 
 	exemplarRecord := toMetricExemplar(rm, sm, mm, metricType)
-	tenant.metricCache.Put(exemplarKey, keys, exemplarRecord)
+
+	// Marshal to JSON once and store the string
+	marshaller := &pmetric.JSONMarshaler{}
+	jsonBytes, err := marshaller.MarshalMetrics(exemplarRecord)
+	if err != nil {
+		// Log error but don't fail completely
+		return
+	}
+
+	tenant.metricCache.Put(exemplarKey, keys, string(jsonBytes))
 }
 
 func (p *Processor) Close() error {
@@ -356,4 +343,34 @@ func (p *Processor) SetMetricsCallback(callback func(ctx context.Context, organi
 // SetLogsCallback updates the sendLogsExemplars callback function
 func (p *Processor) SetLogsCallback(callback func(ctx context.Context, organizationID string, exemplars []*ExemplarData) error) {
 	p.sendLogsExemplars = callback
+}
+
+// convertLogsToMap converts plog.Logs to map[string]any (for tests)
+func (p *Processor) convertLogsToMap(ld plog.Logs) (map[string]any, error) {
+	marshaller := &plog.JSONMarshaler{}
+	bytes, err := marshaller.MarshalLogs(ld)
+	if err != nil {
+		return nil, err
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(bytes, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// convertMetricsToMap converts pmetric.Metrics to map[string]any (for tests)
+func (p *Processor) convertMetricsToMap(md pmetric.Metrics) (map[string]any, error) {
+	marshaller := &pmetric.JSONMarshaler{}
+	bytes, err := marshaller.MarshalMetrics(md)
+	if err != nil {
+		return nil, err
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(bytes, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
