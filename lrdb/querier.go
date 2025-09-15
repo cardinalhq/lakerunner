@@ -24,7 +24,6 @@ type Querier interface {
 	BatchUpsertExemplarTraces(ctx context.Context, arg []BatchUpsertExemplarTracesParams) *BatchUpsertExemplarTracesBatchResults
 	CleanupKafkaOffsets(ctx context.Context, arg CleanupKafkaOffsetsParams) (int64, error)
 	CleanupKafkaOffsetsByAge(ctx context.Context, createdBefore time.Time) (int64, error)
-	CompactLogSegments(ctx context.Context, arg CompactLogSegmentsParams) error
 	// Retrieves all pack estimates for a specific signal type
 	GetAllBySignal(ctx context.Context, signal string) ([]GetAllBySignalRow, error)
 	// Retrieves all existing pack estimates for EWMA calculations across all signals

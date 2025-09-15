@@ -20,19 +20,25 @@ import (
 
 type LogSegmentUpserter interface {
 	InsertLogSegment(ctx context.Context, params InsertLogSegmentParams) error
+	InsertLogSegmentsBatch(ctx context.Context, segments []InsertLogSegmentParams, kafkaOffsets []KafkaOffsetInfo) error
+	CompactLogSegments(ctx context.Context, params CompactLogSegsParams, kafkaOffsets []KafkaOffsetInfo) error
 	CompactLogSegsWithKafkaOffsets(ctx context.Context, params CompactLogSegsParams, kafkaOffsets []KafkaOffsetUpdate) error
 }
 
 type MetricSegmentInserter interface {
 	InsertMetricSegment(ctx context.Context, params InsertMetricSegmentParams) error
-	InsertMetricSegmentBatch(ctx context.Context, segments []InsertMetricSegmentParams, kafkaOffsets []KafkaOffsetInfo) error
+	InsertMetricSegmentsBatch(ctx context.Context, segments []InsertMetricSegmentParams, kafkaOffsets []KafkaOffsetInfo) error
 	CompactMetricSegs(ctx context.Context, args CompactMetricSegsParams) error
+	CompactMetricSegments(ctx context.Context, params CompactMetricSegsParams, kafkaOffsets []KafkaOffsetInfo) error
 	CompactMetricSegsWithKafkaOffsets(ctx context.Context, params CompactMetricSegsParams, kafkaOffsets []KafkaOffsetUpdate) error
+	RollupMetricSegments(ctx context.Context, sourceParams RollupSourceParams, targetParams RollupTargetParams, sourceSegmentIDs []int64, newRecords []RollupNewRecord, kafkaOffsets []KafkaOffsetInfo) error
 	RollupMetricSegsWithKafkaOffsets(ctx context.Context, sourceParams RollupSourceParams, targetParams RollupTargetParams, sourceSegmentIDs []int64, newRecords []RollupNewRecord, kafkaOffsets []KafkaOffsetUpdate) error
 }
 
 type TraceSegmentInserter interface {
 	InsertTraceSegment(ctx context.Context, params InsertTraceSegmentParams) error
+	InsertTraceSegmentsBatch(ctx context.Context, segments []InsertTraceSegmentParams, kafkaOffsets []KafkaOffsetInfo) error
+	CompactTraceSegments(ctx context.Context, params CompactTraceSegsParams, kafkaOffsets []KafkaOffsetInfo) error
 	CompactTraceSegsWithKafkaOffsets(ctx context.Context, params CompactTraceSegsParams, kafkaOffsets []KafkaOffsetUpdate) error
 }
 

@@ -44,7 +44,7 @@ func TestKafkaOffsetsAfter(t *testing.T) {
 		PartitionID:   partitionID,
 		BinID:         1,
 		Offsets:       []int64{100, 102, 103, 105}, // gaps at 101, 104
-		CreatedAt:     nil, // Use default (now())
+		CreatedAt:     nil,                         // Use default (now())
 	})
 	require.NoError(t, err)
 
