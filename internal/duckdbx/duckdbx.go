@@ -41,6 +41,10 @@ type Config struct {
 	AzureExtension  string
 
 	pollerContext context.Context
+
+	// InstanceName, if set, is attached to emitted metrics to identify
+	// this DuckDB instance.
+	InstanceName string
 }
 
 type ExtensionConfig struct {
@@ -115,6 +119,13 @@ func WithMetrics(period time.Duration) option {
 func WithMetricsContext(ctx context.Context) option {
 	return func(c *Config) {
 		c.pollerContext = ctx
+	}
+}
+
+// WithName sets a name used to tag metrics for this DuckDB instance.
+func WithName(name string) option {
+	return func(c *Config) {
+		c.InstanceName = name
 	}
 }
 

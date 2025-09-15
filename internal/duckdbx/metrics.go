@@ -126,6 +126,9 @@ func (d *DB) pollMemoryMetrics(ctx context.Context) {
 				attribute.String("database_name", stat.DatabaseName),
 				attribute.String("database_type", "duckdb"),
 			}
+			if d.config.InstanceName != "" {
+				attributes = append(attributes, attribute.String("instance_name", d.config.InstanceName))
+			}
 			attr := metric.WithAttributeSet(attribute.NewSet(attributes...))
 			dbSizeGauge.Record(ctx, stat.DatabaseSize, attr)
 			blockSizeGauge.Record(ctx, stat.BlockSize, attr)
