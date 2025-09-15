@@ -1,0 +1,43 @@
+---
+config:
+  look: handDrawn
+  theme: neutral
+  flowchart:
+    curve: basis
+---
+flowchart TB
+    classDef external fill:#eee,stroke:#333,color:#000,font-weight:bold,stroke-width:2px
+    classDef service fill:#ddf,stroke:#333,color:#000,font-weight:bold,stroke-width:2px
+    classDef kafka fill:#f9d,stroke:#333,color:#000,font-weight:bold,stroke-width:2px
+    classDef s3 fill:#fc9,stroke:#333,color:#000,font-weight:bold,stroke-width:2px
+
+    %% External Data Sources
+    collectors["OTLP Collectors<br/>Prometheus<br/>FluentBit"]:::external
+
+    %% S3 Raw Storage
+    raw_s3["S3: Raw Files"]:::s3
+
+    %% Event Sources
+    sqs["AWS SQS"]:::external
+    pubsub_gcp["GCP Pub/Sub"]:::external
+    eventgrid["Azure Event Grid"]:::external
+    webhook["HTTP Webhook"]:::external
+
+    %% PubSub Service
+    pubsub["PubSub Service"]:::service
+
+    %% Kafka Topics
+    kafka_ingest["Kafka Topic<br/>ingest"]:::kafka
+
+    %% Flow
+    collectors -->|"writes"| raw_s3
+    raw_s3 -.->|"S3 events"| sqs
+    raw_s3 -.->|"GCS events"| pubsub_gcp
+    raw_s3 -.->|"Blob events"| eventgrid
+    raw_s3 -.->|"notifications"| webhook
+    sqs -->|"file notification"| pubsub
+    pubsub_gcp -->|"file notification"| pubsub
+    eventgrid -->|"file notification"| pubsub
+    webhook -->|"file notification"| pubsub
+    pubsub -->|"publishes"| kafka_ingest
+

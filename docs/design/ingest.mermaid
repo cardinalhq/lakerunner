@@ -1,0 +1,36 @@
+---
+config:
+  look: handDrawn
+  theme: neutral
+  flowchart:
+    curve: basis
+---
+flowchart TB
+    classDef kafka fill:#f9d,stroke:#333,color:#000,font-weight:bold,stroke-width:2px
+    classDef service fill:#ddf,stroke:#333,color:#000,font-weight:bold,stroke-width:2px
+    classDef s3 fill:#fc9,stroke:#333,color:#000,font-weight:bold,stroke-width:2px
+    classDef db fill:#bfb,stroke:#333,color:#000,font-weight:bold,stroke-width:2px
+
+    %% Kafka Input
+    kafka_ingest["Kafka Topic<br/>ingest"]:::kafka
+
+    %% Ingest Worker
+    ingest["Ingest Worker"]:::service
+
+    %% S3 Storage
+    raw_s3["S3: Raw Files"]:::s3
+    cooked_s3["S3: Parquet Segments"]:::s3
+
+    %% Database
+    segment_index["PostgreSQL<br/>Segment Index"]:::db
+
+    %% Output Kafka Topics (to Boxer)
+    kafka_boxer["Kafka Topic<br/>boxer"]:::kafka
+
+    %% Flow
+    kafka_ingest -->|"consumes job"| ingest
+    raw_s3 -->|"reads raw data"| ingest
+    ingest -->|"writes Parquet"| cooked_s3
+    ingest -->|"registers segment"| segment_index
+    ingest -->|"notifies"| kafka_boxer
+
