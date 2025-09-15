@@ -102,25 +102,25 @@ func NewS3DB(dataSourceName string, cfg *config.Config) (*S3DB, error) {
 	var duckdbCfg *config.DuckDBConfig
 
 	if cfg != nil {
-		// Use config values
-		memoryMB = cfg.DuckDB.MemoryLimit
-		tempDir = cfg.DuckDB.TempDirectory
-		maxTempSize = cfg.DuckDB.MaxTempDirectorySize
+		// Use config values with helper methods
+		memoryMB = cfg.DuckDB.GetMemoryLimit()
+		tempDir = cfg.DuckDB.GetTempDirectory()
+		maxTempSize = cfg.DuckDB.GetMaxTempDirectorySize()
 
 		// Calculate pool size with same logic as before
 		poolDefault := min(8, max(2, runtime.GOMAXPROCS(0)/2))
-		if cfg.DuckDB.S3PoolSize > 0 {
-			poolSize = min(512, max(1, cfg.DuckDB.S3PoolSize))
+		if s3PoolSize := cfg.DuckDB.GetS3PoolSize(); s3PoolSize > 0 {
+			poolSize = min(512, max(1, s3PoolSize))
 		} else {
 			poolSize = poolDefault
 		}
 
-		ttl = time.Duration(cfg.DuckDB.S3ConnTTLSeconds) * time.Second
+		ttl = time.Duration(cfg.DuckDB.GetS3ConnTTLSeconds()) * time.Second
 
 		total := runtime.GOMAXPROCS(0)
 		perConnDefault := max(1, total/max(1, poolSize))
-		if cfg.DuckDB.ThreadsPerConn > 0 {
-			threadsPerConn = min(256, max(1, cfg.DuckDB.ThreadsPerConn))
+		if threads := cfg.DuckDB.GetThreadsPerConn(); threads > 0 {
+			threadsPerConn = min(256, max(1, threads))
 		} else {
 			threadsPerConn = perConnDefault
 		}
@@ -141,8 +141,13 @@ func NewS3DB(dataSourceName string, cfg *config.Config) (*S3DB, error) {
 		perConnDefault := max(1, total/max(1, poolSize))
 		threadsPerConn = envIntClamp("DUCKDB_THREADS_PER_CONN", perConnDefault, 1, 256)
 
-		tempDir = os.Getenv("DUCKDB_TEMP_DIRECTORY")
-		maxTempSize = os.Getenv("DUCKDB_MAX_TEMP_DIRECTORY_SIZE")
+		// Use TMPDIR or /tmp as default
+		if tmpdir := os.Getenv("TMPDIR"); tmpdir != "" {
+			tempDir = tmpdir
+		} else {
+			tempDir = "/tmp"
+		}
+		// Leave maxTempSize empty - will be calculated at runtime if needed
 	}
 
 	slog.Info("duckdbx:",
@@ -358,7 +363,7 @@ func (s *S3DB) setupConn(ctx context.Context, conn *sql.Conn) error {
 
 // Dev-mode best-effort INSTALL once. Air-gapped: only LOAD.
 func (s *S3DB) ensureInstall(ctx context.Context) error {
-	if s.duckdbConfig != nil && s.duckdbConfig.ExtensionsPath != "" {
+	if s.duckdbConfig != nil && s.duckdbConfig.GetExtensionsPath() != "" {
 		return nil
 	}
 	s.installOnce.Do(func() {
@@ -402,10 +407,10 @@ func (s *S3DB) loadExtensions(ctx context.Context, conn *sql.Conn) error {
 }
 
 func (s *S3DB) loadHTTPFS(ctx context.Context, conn *sql.Conn) error {
-	if s.duckdbConfig != nil && s.duckdbConfig.ExtensionsPath != "" {
-		path := s.duckdbConfig.HTTPFSExtension
+	if s.duckdbConfig != nil && s.duckdbConfig.GetExtensionsPath() != "" {
+		path := s.duckdbConfig.GetHTTPFSExtension()
 		if path == "" {
-			path = filepath.Join(s.duckdbConfig.ExtensionsPath, "httpfs.duckdb_extension")
+			path = filepath.Join(s.duckdbConfig.GetExtensionsPath(), "httpfs.duckdb_extension")
 		}
 		if _, err := os.Stat(path); err != nil {
 			return fmt.Errorf("httpfs extension not found at %s: %w", path, err)
@@ -422,10 +427,10 @@ func (s *S3DB) loadHTTPFS(ctx context.Context, conn *sql.Conn) error {
 }
 
 func (s *S3DB) loadAWS(ctx context.Context, conn *sql.Conn) error {
-	if s.duckdbConfig != nil && s.duckdbConfig.ExtensionsPath != "" {
-		path := s.duckdbConfig.AWSExtension
+	if s.duckdbConfig != nil && s.duckdbConfig.GetExtensionsPath() != "" {
+		path := s.duckdbConfig.GetAWSExtension()
 		if path == "" {
-			path = filepath.Join(s.duckdbConfig.ExtensionsPath, "aws.duckdb_extension")
+			path = filepath.Join(s.duckdbConfig.GetExtensionsPath(), "aws.duckdb_extension")
 		}
 		if _, err := os.Stat(path); err != nil {
 			return fmt.Errorf("aws extension not found at %s: %w", path, err)
@@ -442,10 +447,10 @@ func (s *S3DB) loadAWS(ctx context.Context, conn *sql.Conn) error {
 }
 
 func (s *S3DB) loadAzure(ctx context.Context, conn *sql.Conn) error {
-	if s.duckdbConfig != nil && s.duckdbConfig.ExtensionsPath != "" {
-		path := s.duckdbConfig.AzureExtension
+	if s.duckdbConfig != nil && s.duckdbConfig.GetExtensionsPath() != "" {
+		path := s.duckdbConfig.GetAzureExtension()
 		if path == "" {
-			path = filepath.Join(s.duckdbConfig.ExtensionsPath, "azure.duckdb_extension")
+			path = filepath.Join(s.duckdbConfig.GetExtensionsPath(), "azure.duckdb_extension")
 		}
 		if _, err := os.Stat(path); err != nil {
 			return fmt.Errorf("azure extension not found at %s: %w", path, err)
@@ -492,7 +497,7 @@ func (s *S3DB) hasAzureCredentials() bool {
 }
 
 // CREATE OR REPLACE SECRET for Azure Blob Storage (serialized).
-func (s *S3DB) seedAzureSecret(ctx context.Context, conn *sql.Conn, container, region string, endpoint string) error {
+func (s *S3DB) seedAzureSecret(ctx context.Context, conn *sql.Conn, container, _ string, endpoint string) error {
 	var authType string
 	if s.azureConfig != nil && s.azureConfig.AuthType != "" {
 		authType = s.azureConfig.AuthType

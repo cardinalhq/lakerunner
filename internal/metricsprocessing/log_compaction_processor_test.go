@@ -22,7 +22,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 
-	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/lrdb"
@@ -60,7 +59,7 @@ func (m *MockLogCompactionStore) GetLogEstimate(ctx context.Context, orgID uuid.
 
 func TestLogCompactionProcessor_New(t *testing.T) {
 	store := &MockLogCompactionStore{}
-	processor := NewLogCompactionProcessor(store, nil, nil, &config.Config{})
+	processor := NewLogCompactionProcessor(store, nil, nil, getTestConfig())
 
 	assert.NotNil(t, processor)
 	assert.Equal(t, store, processor.store)
@@ -69,7 +68,7 @@ func TestLogCompactionProcessor_New(t *testing.T) {
 
 func TestLogCompactionProcessor_GetTargetRecordCount(t *testing.T) {
 	mockStore := &MockLogCompactionStore{}
-	processor := NewLogCompactionProcessor(mockStore, nil, nil, &config.Config{})
+	processor := NewLogCompactionProcessor(mockStore, nil, nil, getTestConfig())
 
 	orgID := uuid.New()
 	expectedCount := int64(3000)
@@ -90,7 +89,7 @@ func TestLogCompactionProcessor_GetTargetRecordCount(t *testing.T) {
 
 func TestLogCompactionProcessor_markLogSegmentsAsCompacted_EmptySegments(t *testing.T) {
 	mockStore := &MockLogCompactionStore{}
-	processor := NewLogCompactionProcessor(mockStore, nil, nil, &config.Config{})
+	processor := NewLogCompactionProcessor(mockStore, nil, nil, getTestConfig())
 
 	key := messages.LogCompactionKey{
 		OrganizationID: uuid.New(),
@@ -107,7 +106,7 @@ func TestLogCompactionProcessor_markLogSegmentsAsCompacted_EmptySegments(t *test
 
 func TestLogCompactionProcessor_markLogSegmentsAsCompacted_WithSegments(t *testing.T) {
 	mockStore := &MockLogCompactionStore{}
-	processor := NewLogCompactionProcessor(mockStore, nil, nil, &config.Config{})
+	processor := NewLogCompactionProcessor(mockStore, nil, nil, getTestConfig())
 
 	key := messages.LogCompactionKey{
 		OrganizationID: uuid.New(),
@@ -136,7 +135,7 @@ func TestLogCompactionProcessor_markLogSegmentsAsCompacted_WithSegments(t *testi
 }
 
 func TestLogCompactionProcessor_getHourFromTimestamp(t *testing.T) {
-	processor := NewLogCompactionProcessor(nil, nil, nil, &config.Config{})
+	processor := NewLogCompactionProcessor(nil, nil, nil, getTestConfig())
 
 	tests := []struct {
 		name        string
@@ -170,7 +169,7 @@ func TestLogCompactionProcessor_getHourFromTimestamp(t *testing.T) {
 
 func TestLogCompactionProcessor_performLogCompactionCore_ParameterConstruction(t *testing.T) {
 	// This test verifies that the method exists with the correct signature
-	processor := NewLogCompactionProcessor(nil, nil, nil, &config.Config{})
+	processor := NewLogCompactionProcessor(nil, nil, nil, getTestConfig())
 
 	key := messages.LogCompactionKey{
 		OrganizationID: uuid.New(),

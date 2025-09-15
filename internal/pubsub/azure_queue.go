@@ -18,10 +18,11 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"github.com/cardinalhq/lakerunner/config"
 	"log/slog"
 	"os"
 	"time"
+
+	"github.com/cardinalhq/lakerunner/config"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"

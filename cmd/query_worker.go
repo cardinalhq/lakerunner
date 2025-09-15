@@ -19,7 +19,9 @@ import (
 	"log/slog"
 
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
+	"github.com/cardinalhq/lakerunner/internal/debugging"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/queryworker"
 
@@ -47,6 +49,12 @@ func init() {
 				}
 			}()
 
+			// Start disk usage monitoring
+			go diskUsageLoop(ctx)
+
+			// Start pprof server
+			go debugging.RunPprof(ctx)
+
 			// Start health check server
 			healthConfig := healthcheck.GetConfigFromEnv()
 			healthServer := healthcheck.NewServer(healthConfig)
@@ -57,6 +65,11 @@ func init() {
 				}
 			}()
 
+			// Get main config
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
 			// Mark as healthy immediately - health is not dependent on database readiness
 			healthServer.SetStatus(healthcheck.StatusHealthy)
 
@@ -76,7 +89,7 @@ func init() {
 			// Mark as ready now that database connections are established and migrations have been checked
 			healthServer.SetReady(true)
 
-			worker := queryworker.NewWorkerService(5, 5, 12, sp, cmgr)
+			worker := queryworker.NewWorkerService(ctx, cfg, 5, 5, 12, sp, cmgr)
 			return worker.Run(ctx)
 		},
 	}

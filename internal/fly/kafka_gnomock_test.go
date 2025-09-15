@@ -28,6 +28,8 @@ import (
 	"github.com/orlangure/gnomock"
 	kafkapreset "github.com/orlangure/gnomock/preset/kafka"
 	"github.com/segmentio/kafka-go"
+
+	"github.com/cardinalhq/lakerunner/config"
 )
 
 // Global shared container for all tests
@@ -237,17 +239,16 @@ func (k *KafkaTestContainer) CreateProducerConfig() ProducerConfig {
 // CreateConsumerConfig creates a ConsumerConfig using this container's broker
 func (k *KafkaTestContainer) CreateConsumerConfig(topic, groupID string) ConsumerConfig {
 	return ConsumerConfig{
-		Brokers:       []string{k.broker},
-		Topic:         topic,
-		GroupID:       groupID,
-		MinBytes:      1,
-		MaxBytes:      10e6,
-		MaxWait:       100 * time.Millisecond,
-		BatchSize:     10,
-		StartOffset:   kafka.FirstOffset,
-		AutoCommit:    false,
-		CommitBatch:   true,
-		RetryAttempts: 3,
+		Brokers:     []string{k.broker},
+		Topic:       topic,
+		GroupID:     groupID,
+		MinBytes:    1,
+		MaxBytes:    10e6,
+		MaxWait:     100 * time.Millisecond,
+		BatchSize:   10,
+		StartOffset: kafka.FirstOffset,
+		AutoCommit:  false,
+		CommitBatch: true,
 	}
 }
 
@@ -259,10 +260,10 @@ func (k *KafkaTestContainer) WaitForTopicsReady(t testing.TB, topics ...string) 
 	checkInterval := 100 * time.Millisecond
 	deadline := time.Now().Add(maxWaitTime)
 
-	config := &Config{
+	cfg := &config.KafkaConfig{
 		Brokers: []string{k.broker},
 	}
-	adminClient, err := NewAdminClient(config)
+	adminClient, err := NewAdminClient(cfg)
 	if err != nil {
 		t.Fatalf("Failed to create admin client: %v", err)
 	}

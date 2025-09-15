@@ -38,7 +38,7 @@ var (
 )
 
 func diskUsageLoop(ctx context.Context) {
-	m, err := spaceMeter.Int64Gauge("scratchspace.total_bytes",
+	m, err := spaceMeter.Int64Gauge("lakerunner.scratchspace.total_bytes",
 		metric.WithDescription("Total bytes total in the scratch space"),
 		metric.WithUnit("By"),
 	)
@@ -48,7 +48,7 @@ func diskUsageLoop(ctx context.Context) {
 	}
 	totalBytes = m
 
-	m, err = spaceMeter.Int64Gauge("scratchspace.free_bytes",
+	m, err = spaceMeter.Int64Gauge("lakerunner.scratchspace.free_bytes",
 		metric.WithDescription("Free bytes in the scratch space"),
 		metric.WithUnit("By"),
 	)
@@ -58,7 +58,7 @@ func diskUsageLoop(ctx context.Context) {
 	}
 	freeBytes = m
 
-	m, err = spaceMeter.Int64Gauge("scratchspace.used_bytes",
+	m, err = spaceMeter.Int64Gauge("lakerunner.scratchspace.used_bytes",
 		metric.WithDescription("Used bytes in the scratch space"),
 		metric.WithUnit("By"),
 	)

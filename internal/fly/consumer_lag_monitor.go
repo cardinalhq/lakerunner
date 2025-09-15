@@ -24,9 +24,14 @@ import (
 	"github.com/cardinalhq/lakerunner/config"
 )
 
+// AdminClientInterface defines the interface for Kafka admin operations
+type AdminClientInterface interface {
+	GetMultipleConsumerGroupLag(ctx context.Context, topicGroups map[string]string) ([]ConsumerGroupInfo, error)
+}
+
 // ConsumerLagMonitor provides resilient monitoring of Kafka consumer lag
 type ConsumerLagMonitor struct {
-	adminClient     *AdminClient
+	adminClient     AdminClientInterface
 	serviceMappings []config.ServiceMapping
 	pollInterval    time.Duration
 
@@ -34,36 +39,32 @@ type ConsumerLagMonitor struct {
 	lastMetrics map[string]int64 // serviceType -> total lag
 	lastUpdate  time.Time
 	lastError   error
+
+	// Detailed metrics cache for external metric exporters
+	detailedMetrics []ConsumerGroupInfo
 }
 
-// NewConsumerLagMonitor creates a new consumer lag monitor
-func NewConsumerLagMonitor(cfg *Config, pollInterval time.Duration) (*ConsumerLagMonitor, error) {
-	return NewConsumerLagMonitorWithAppConfig(cfg, pollInterval, nil)
-}
-
-// NewConsumerLagMonitorWithAppConfig creates a new consumer lag monitor with an app config
-func NewConsumerLagMonitorWithAppConfig(cfg *Config, pollInterval time.Duration, appConfig *config.Config) (*ConsumerLagMonitor, error) {
-	if appConfig == nil {
-		var err error
-		appConfig, err = config.Load()
-		if err != nil {
-			return nil, fmt.Errorf("failed to load config: %w", err)
-		}
+func NewConsumerLagMonitor(cnf *config.Config, pollInterval time.Duration) (*ConsumerLagMonitor, error) {
+	if cnf == nil {
+		return nil, fmt.Errorf("cnf cannot be nil")
 	}
 
-	serviceMappings := appConfig.TopicRegistry.GetAllServiceMappings()
+	serviceMappings := cnf.TopicRegistry.GetAllServiceMappings()
 
-	adminClient, err := NewAdminClient(cfg)
+	adminClient, err := NewAdminClient(&cnf.Kafka)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create admin client: %w", err)
 	}
 
-	return &ConsumerLagMonitor{
+	monitor := &ConsumerLagMonitor{
 		adminClient:     adminClient,
 		serviceMappings: serviceMappings,
 		pollInterval:    pollInterval,
 		lastMetrics:     make(map[string]int64),
-	}, nil
+		detailedMetrics: []ConsumerGroupInfo{},
+	}
+
+	return monitor, nil
 }
 
 // Start begins the periodic polling of consumer lag metrics
@@ -108,6 +109,9 @@ func (m *ConsumerLagMonitor) poll(ctx context.Context) {
 	m.lastError = nil
 	m.lastUpdate = time.Now()
 
+	// Store detailed metrics for OTEL callbacks
+	m.detailedMetrics = lagInfos
+
 	// Calculate total lag per service type
 	serviceLags := make(map[string]int64)
 
@@ -126,7 +130,8 @@ func (m *ConsumerLagMonitor) poll(ctx context.Context) {
 
 	slog.Debug("Updated consumer lag metrics",
 		"services", len(serviceLags),
-		"lastUpdate", m.lastUpdate)
+		"lastUpdate", m.lastUpdate,
+		"detailedMetrics", len(lagInfos))
 }
 
 // GetQueueDepth returns the total consumer lag for a service type
@@ -188,4 +193,14 @@ func (m *ConsumerLagMonitor) IsHealthy() bool {
 // GetServiceMappings returns the current service mappings
 func (m *ConsumerLagMonitor) GetServiceMappings() []config.ServiceMapping {
 	return m.serviceMappings
+}
+
+// GetDetailedMetrics returns a copy of the current detailed metrics
+func (m *ConsumerLagMonitor) GetDetailedMetrics() []ConsumerGroupInfo {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	result := make([]ConsumerGroupInfo, len(m.detailedMetrics))
+	copy(result, m.detailedMetrics)
+	return result
 }

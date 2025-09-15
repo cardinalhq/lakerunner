@@ -21,11 +21,13 @@ import (
 
 	"github.com/cardinalhq/kafka-sync/kafkasync"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/cardinalhq/lakerunner/config"
 )
 
 func TestSyncTopicsConnectionFailure(t *testing.T) {
 	// Test that SyncTopics properly handles connection failures
-	config := &Config{
+	config := &config.KafkaConfig{
 		Brokers:             []string{"192.0.2.1:9999"}, // RFC5737 TEST-NET-1 - guaranteed unreachable
 		SASLEnabled:         false,
 		TLSEnabled:          false,
@@ -61,7 +63,7 @@ func TestSyncTopicsConnectionFailure(t *testing.T) {
 
 func TestSyncTopicsEmptyTopics(t *testing.T) {
 	// Test SyncTopics with empty topics list
-	config := &Config{
+	config := &config.KafkaConfig{
 		Brokers:             []string{"localhost:9092"},
 		SASLEnabled:         false,
 		TLSEnabled:          false,
@@ -88,7 +90,7 @@ func TestSyncTopicsEmptyTopics(t *testing.T) {
 
 func TestSyncTopicsWithSASL(t *testing.T) {
 	// Test the SASL configuration path in createConnectionConfig
-	config := &Config{
+	config := &config.KafkaConfig{
 		Brokers:             []string{"localhost:9092"},
 		SASLEnabled:         true,
 		SASLMechanism:       "SCRAM-SHA-256",
@@ -128,7 +130,7 @@ func TestSyncTopicsWithSASL(t *testing.T) {
 
 func TestSyncTopicsWithTLS(t *testing.T) {
 	// Test the TLS configuration path
-	config := &Config{
+	config := &config.KafkaConfig{
 		Brokers:             []string{"localhost:9093"},
 		SASLEnabled:         false,
 		TLSEnabled:          true,

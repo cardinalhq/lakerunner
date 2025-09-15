@@ -16,65 +16,82 @@ package externalscaler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"strconv"
-	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
-)
 
-// QueriesInterface defines the methods needed for scaling queries
-type QueriesInterface interface {
-	// No methods needed - external scaler will use fixed values for now
-}
+	"github.com/cardinalhq/lakerunner/config"
+	"github.com/cardinalhq/lakerunner/internal/fly"
+)
 
 // LagMonitorInterface defines the methods needed for Kafka lag monitoring
 type LagMonitorInterface interface {
+	GetDetailedMetrics() []fly.ConsumerGroupInfo
 	GetQueueDepth(serviceType string) (int64, error)
-	GetLastUpdate() time.Time
 	IsHealthy() bool
 }
 
 type Service struct {
 	UnimplementedExternalScalerServer
-	grpcPort    int
-	healthCheck *health.Server
+	grpcPort      int
+	healthCheck   *health.Server
+	lagMonitor    LagMonitorInterface
+	kafkaExporter *KafkaMetricsExporter
+	scalingConfig *config.ScalingConfig
 }
 
 type Config struct {
-	GRPCPort int
+	GRPCPort      int
+	LagMonitor    LagMonitorInterface
+	ScalingConfig *config.ScalingConfig // Scaling configuration from main config
 }
 
-func NewService(ctx context.Context, cfg Config) (*Service, error) {
-	return &Service{
-		grpcPort:    cfg.GRPCPort,
-		healthCheck: health.NewServer(),
-	}, nil
+func NewService(_ context.Context, cfg Config) (*Service, error) {
+	if cfg.LagMonitor == nil {
+		return nil, errors.New("lag monitor is required")
+	}
+
+	// Use scaling config if provided, otherwise use defaults
+	scalingConfig := cfg.ScalingConfig
+	if scalingConfig == nil {
+		defaultScaling := config.GetDefaultScalingConfig()
+		scalingConfig = &defaultScaling
+	}
+
+	s := &Service{
+		grpcPort:      cfg.GRPCPort,
+		healthCheck:   health.NewServer(),
+		lagMonitor:    cfg.LagMonitor,
+		scalingConfig: scalingConfig,
+	}
+
+	// Initialize Kafka metrics exporter if lag monitor is provided and OTEL is enabled
+	exporter, err := NewKafkaMetricsExporter(cfg.LagMonitor)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Kafka metrics exporter: %w", err)
+	}
+	s.kafkaExporter = exporter
+
+	return s, nil
 }
 
-func (s *Service) Close() {
-}
+func (s *Service) Close() {}
 
 func (s *Service) getQueueDepth(_ context.Context, serviceType string) (int64, error) {
-	// Return fixed values for now since we're not using database connections
-	switch serviceType {
-	case "ingest-logs", "ingest-metrics", "ingest-traces":
-		return 5, nil
-	case "compact-logs", "compact-traces", "compact-metrics":
-		return 3, nil
-	case "rollup-metrics":
-		return 5, nil
-	case "boxer-compact-logs", "boxer-compact-metrics", "boxer-compact-traces", "boxer-rollup-metrics":
-		return 3, nil
-	default:
-		return 0, fmt.Errorf("unknown service type: %s", serviceType)
+	depth, err := s.lagMonitor.GetQueueDepth(serviceType)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get queue depth for %s: %w", serviceType, err)
 	}
+
+	return depth, nil
 }
 
 func (s *Service) Start(ctx context.Context) error {
@@ -121,17 +138,8 @@ func (s *Service) IsActive(ctx context.Context, req *ScaledObjectRef) (*IsActive
 		return &IsActiveResponse{Result: false}, nil
 	}
 
-	switch serviceType {
-	case "compact-logs", "compact-traces", "compact-metrics", "rollup-metrics":
-		return &IsActiveResponse{Result: true}, nil
-	case "ingest-logs", "ingest-metrics", "ingest-traces":
-		return &IsActiveResponse{Result: true}, nil
-	case "boxer-compact-logs", "boxer-compact-metrics", "boxer-compact-traces", "boxer-rollup-metrics":
-		return &IsActiveResponse{Result: true}, nil
-	default:
-		slog.Warn("unknown service type", "serviceType", serviceType)
-		return &IsActiveResponse{Result: false}, nil
-	}
+	_, err := s.lagMonitor.GetQueueDepth(serviceType)
+	return &IsActiveResponse{Result: err == nil}, nil
 }
 
 func (s *Service) StreamIsActive(req *ScaledObjectRef, stream grpc.ServerStreamingServer[IsActiveResponse]) error {
@@ -151,11 +159,23 @@ func (s *Service) GetMetricSpec(ctx context.Context, req *ScaledObjectRef) (*Get
 
 	metricName := fmt.Sprintf("%s-queue-depth", serviceType)
 
+	// Get the target queue size for this service type
+	target, err := s.scalingConfig.GetTargetQueueSize(serviceType)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "failed to get target queue size: %v", err)
+	}
+	targetSize := float64(target)
+
+	slog.Debug("Returning metric spec",
+		"serviceType", serviceType,
+		"metricName", metricName,
+		"targetSize", targetSize)
+
 	return &GetMetricSpecResponse{
 		MetricSpecs: []*MetricSpec{
 			{
 				MetricName:      metricName,
-				TargetSizeFloat: 10.0, // Target 10 items in queue for scaling
+				TargetSizeFloat: targetSize,
 			},
 		},
 	}, nil

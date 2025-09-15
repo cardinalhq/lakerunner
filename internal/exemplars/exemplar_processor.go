@@ -16,11 +16,12 @@ package exemplars
 
 import (
 	"context"
-	"go.opentelemetry.io/collector/pdata/pcommon"
 	"log/slog"
 	"strconv"
 	"sync"
 	"time"
+
+	"go.opentelemetry.io/collector/pdata/pcommon"
 
 	"github.com/cardinalhq/oteltools/pkg/fingerprinter"
 	"go.opentelemetry.io/collector/pdata/plog"

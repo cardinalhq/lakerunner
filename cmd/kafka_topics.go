@@ -35,10 +35,7 @@ func ensureKafkaTopicsWithFile(ctx context.Context, flagKafkaTopicsFile string) 
 	}
 
 	// Create topic syncer
-	factory, err := fly.NewFactoryFromKafkaConfig(&appConfig.Kafka)
-	if err != nil {
-		return fmt.Errorf("failed to create Kafka factory: %w", err)
-	}
+	factory := fly.NewFactory(&appConfig.Kafka)
 	syncer := factory.CreateTopicSyncer()
 
 	var topicsConfig *kafkasync.Config

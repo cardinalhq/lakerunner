@@ -27,6 +27,8 @@ import (
 	"github.com/segmentio/kafka-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/cardinalhq/lakerunner/config"
 )
 
 func TestAdminClient_TopicExists(t *testing.T) {
@@ -38,10 +40,10 @@ func TestAdminClient_TopicExists(t *testing.T) {
 	defer kafkaContainer.CleanupAfterTest(t, []string{existingTopic}, []string{})
 
 	// Create admin client
-	config := &Config{
+	cfg := &config.KafkaConfig{
 		Brokers: []string{kafkaContainer.Broker()},
 	}
-	adminClient, err := NewAdminClient(config)
+	adminClient, err := NewAdminClient(cfg)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -71,10 +73,10 @@ func TestAdminClient_GetTopicInfo(t *testing.T) {
 	defer kafkaContainer.CleanupAfterTest(t, []string{topic}, []string{})
 
 	// Create admin client
-	config := &Config{
+	cfg := &config.KafkaConfig{
 		Brokers: []string{kafkaContainer.Broker()},
 	}
-	adminClient, err := NewAdminClient(config)
+	adminClient, err := NewAdminClient(cfg)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -120,10 +122,10 @@ func TestAdminClient_GetConsumerGroupLag(t *testing.T) {
 	defer kafkaContainer.CleanupAfterTest(t, []string{topic}, []string{groupID})
 
 	// Create admin client
-	config := &Config{
+	cfg := &config.KafkaConfig{
 		Brokers: []string{kafkaContainer.Broker()},
 	}
-	adminClient, err := NewAdminClient(config)
+	adminClient, err := NewAdminClient(cfg)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -261,10 +263,10 @@ func TestAdminClient_GetMultipleConsumerGroupLag(t *testing.T) {
 	defer kafkaContainer.CleanupAfterTest(t, []string{topic1, topic2}, []string{group1, group2})
 
 	// Create admin client
-	config := &Config{
+	cfg := &config.KafkaConfig{
 		Brokers: []string{kafkaContainer.Broker()},
 	}
-	adminClient, err := NewAdminClient(config)
+	adminClient, err := NewAdminClient(cfg)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -338,10 +340,10 @@ func TestAdminClient_GetAllConsumerGroupLags(t *testing.T) {
 	defer kafkaContainer.CleanupAfterTest(t, []string{topic1, topic2, topic3}, []string{group1, group2, group3})
 
 	// Create admin client
-	config := &Config{
+	cfg := &config.KafkaConfig{
 		Brokers: []string{kafkaContainer.Broker()},
 	}
-	adminClient, err := NewAdminClient(config)
+	adminClient, err := NewAdminClient(cfg)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -749,13 +751,13 @@ func TestGetAllConsumerGroupLags_Refactored(t *testing.T) {
 	}
 
 	// This test requires a running Kafka instance
-	config := &Config{
+	cfg := &config.KafkaConfig{
 		Brokers:     []string{"localhost:9092"},
 		SASLEnabled: false,
 		TLSEnabled:  false,
 	}
 
-	adminClient, err := NewAdminClient(config)
+	adminClient, err := NewAdminClient(cfg)
 	require.NoError(t, err)
 	ctx := context.Background()
 

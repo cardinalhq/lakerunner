@@ -42,17 +42,16 @@ type Consumer interface {
 
 // ConsumerConfig contains configuration for the Kafka consumer
 type ConsumerConfig struct {
-	Brokers       []string
-	Topic         string
-	GroupID       string
-	MinBytes      int
-	MaxBytes      int
-	MaxWait       time.Duration
-	BatchSize     int
-	StartOffset   int64
-	AutoCommit    bool
-	CommitBatch   bool
-	RetryAttempts int
+	Brokers     []string
+	Topic       string
+	GroupID     string
+	MinBytes    int
+	MaxBytes    int
+	MaxWait     time.Duration
+	BatchSize   int
+	StartOffset int64
+	AutoCommit  bool
+	CommitBatch bool
 
 	// SASL/SCRAM authentication
 	SASLMechanism sasl.Mechanism
@@ -67,17 +66,16 @@ type ConsumerConfig struct {
 // DefaultConsumerConfig returns a default consumer configuration
 func DefaultConsumerConfig(topic, groupID string) ConsumerConfig {
 	return ConsumerConfig{
-		Brokers:       []string{"localhost:9092"},
-		Topic:         topic,
-		GroupID:       groupID,
-		MinBytes:      10e3, // 10KB
-		MaxBytes:      10e6, // 10MB
-		MaxWait:       500 * time.Millisecond,
-		BatchSize:     100,
-		StartOffset:   kafka.LastOffset,
-		AutoCommit:    false,
-		CommitBatch:   true,
-		RetryAttempts: 3,
+		Brokers:     []string{"localhost:9092"},
+		Topic:       topic,
+		GroupID:     groupID,
+		MinBytes:    10e3, // 10KB
+		MaxBytes:    10e6, // 10MB
+		MaxWait:     500 * time.Millisecond,
+		BatchSize:   100,
+		StartOffset: kafka.LastOffset,
+		AutoCommit:  false,
+		CommitBatch: true,
 
 		ConnectionTimeout: 10 * time.Second,
 	}
@@ -217,31 +215,18 @@ func (c *kafkaConsumer) Consume(ctx context.Context, handler MessageHandler) err
 }
 
 func (c *kafkaConsumer) processBatch(ctx context.Context, handler MessageHandler, messages []ConsumedMessage) error {
-	var err error
-	for attempt := 0; attempt < c.config.RetryAttempts; attempt++ {
-		if attempt > 0 {
-			// Exponential backoff for retries
-			backoff := time.Duration(1<<uint(attempt-1)) * time.Second
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(backoff):
-			}
-		}
-
-		err = handler(ctx, messages)
-		if err == nil {
-			// Success - commit messages
-			if !c.config.AutoCommit {
-				if commitErr := c.CommitMessages(ctx, messages...); commitErr != nil {
-					return fmt.Errorf("failed to commit messages: %w", commitErr)
-				}
-			}
-			return nil
-		}
+	err := handler(ctx, messages)
+	if err != nil {
+		return fmt.Errorf("handler failed: %w", err)
 	}
 
-	return fmt.Errorf("handler failed after %d attempts: %w", c.config.RetryAttempts, err)
+	// Success - commit messages
+	if !c.config.AutoCommit {
+		if commitErr := c.CommitMessages(ctx, messages...); commitErr != nil {
+			return fmt.Errorf("failed to commit messages: %w", commitErr)
+		}
+	}
+	return nil
 }
 
 func (c *kafkaConsumer) CommitMessages(ctx context.Context, messages ...ConsumedMessage) error {

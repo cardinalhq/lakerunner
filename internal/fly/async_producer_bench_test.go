@@ -24,6 +24,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/cardinalhq/lakerunner/config"
 )
 
 // BenchmarkAsyncProducerThroughput measures async producer performance
@@ -134,14 +136,14 @@ func BenchmarkSyncVsAsyncComparison(b *testing.B) {
 	b.Run("Sync", func(b *testing.B) {
 		k.CreateTopics(b, "sync-comparison-topic")
 
-		config := &Config{
+		cfg := &config.KafkaConfig{
 			Brokers:              []string{k.Broker()},
 			ProducerBatchSize:    100,
 			ProducerBatchTimeout: 100 * time.Millisecond,
 			ProducerCompression:  "snappy",
 		}
 
-		factory := NewFactory(config)
+		factory := NewFactory(cfg)
 		producer, err := factory.CreateProducer()
 		if err != nil {
 			b.Fatalf("Failed to create producer: %v", err)

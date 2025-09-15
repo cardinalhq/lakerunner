@@ -17,9 +17,10 @@ package pubsub
 import (
 	"context"
 	"fmt"
-	"github.com/cardinalhq/lakerunner/config"
 	"log/slog"
 	"os"
+
+	"github.com/cardinalhq/lakerunner/config"
 
 	"cloud.google.com/go/pubsub"
 	"go.opentelemetry.io/otel"

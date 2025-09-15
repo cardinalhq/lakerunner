@@ -16,22 +16,75 @@ package externalscaler
 
 import (
 	"context"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+
+	"github.com/cardinalhq/lakerunner/config"
+	"github.com/cardinalhq/lakerunner/internal/fly"
 )
 
-// MockQueries is a mock implementation of QueriesInterface
-type MockQueries struct {
+// MockLagMonitor is a mock implementation of fly.ConsumerLagMonitor
+type MockLagMonitor struct {
 	mock.Mock
 }
 
-// No methods needed for mock - external scaler uses fixed values
+func (m *MockLagMonitor) GetQueueDepth(serviceType string) (int64, error) {
+	args := m.Called(serviceType)
+	return args.Get(0).(int64), args.Error(1)
+}
+
+func (m *MockLagMonitor) GetLastUpdate() time.Time {
+	args := m.Called()
+	return args.Get(0).(time.Time)
+}
+
+func (m *MockLagMonitor) IsHealthy() bool {
+	args := m.Called()
+	return args.Bool(0)
+}
+
+func (m *MockLagMonitor) GetDetailedMetrics() []fly.ConsumerGroupInfo {
+	args := m.Called()
+	if result := args.Get(0); result != nil {
+		return result.([]fly.ConsumerGroupInfo)
+	}
+	return nil
+}
+
+func (m *MockLagMonitor) GetServiceMappings() []interface{} {
+	return nil
+}
+
+func (m *MockLagMonitor) GetLastError() error {
+	return nil
+}
+
+func (m *MockLagMonitor) Start(ctx context.Context) {
+	// No-op for tests
+}
 
 func TestService_IsActive(t *testing.T) {
-	service := &Service{}
+	mockMonitor := new(MockLagMonitor)
+	service := &Service{
+		lagMonitor: mockMonitor,
+	}
+
+	// Setup mock expectations for known service types
+	knownServices := []string{
+		"ingest-logs", "ingest-metrics", "ingest-traces",
+		"compact-logs", "compact-traces", "rollup-metrics",
+	}
+	for _, svc := range knownServices {
+		mockMonitor.On("GetQueueDepth", svc).Return(int64(5), nil)
+	}
+	// Unknown services return error
+	mockMonitor.On("GetQueueDepth", "unknown-service").Return(int64(0), fmt.Errorf("unknown service type"))
+	mockMonitor.On("GetQueueDepth", "").Return(int64(0), fmt.Errorf("empty service type"))
 
 	tests := []struct {
 		name           string
@@ -70,17 +123,29 @@ func TestService_IsActive(t *testing.T) {
 }
 
 func TestService_GetMetricSpec(t *testing.T) {
-	service := &Service{}
+	scalingConfig := &config.ScalingConfig{
+		DefaultTarget:      100,
+		IngestLogs:         config.ServiceScaling{TargetQueueSize: 100},
+		RollupMetrics:      config.ServiceScaling{TargetQueueSize: 100},
+		BoxerRollupMetrics: config.ServiceScaling{TargetQueueSize: 1500},
+	}
+
+	service := &Service{
+		scalingConfig: scalingConfig,
+	}
 
 	tests := []struct {
 		name               string
 		serviceType        string
 		expectedMetricName string
+		expectedTarget     float64
 		expectError        bool
 	}{
-		{"ingest-logs", "ingest-logs", "ingest-logs-queue-depth", false},
-		{"rollup-metrics", "rollup-metrics", "rollup-metrics-queue-depth", false},
-		{"missing-service-type", "", "", true},
+		{"ingest-logs", "ingest-logs", "ingest-logs-queue-depth", 100.0, false},
+		{"rollup-metrics", "rollup-metrics", "rollup-metrics-queue-depth", 100.0, false},
+		{"boxer-rollup-metrics", "boxer-rollup-metrics", "boxer-rollup-metrics-queue-depth", 1500.0, false},
+		{"missing-service-type", "", "", 0, true},
+		{"unknown-service-type", "unknown-service", "", 0, true},
 	}
 
 	for _, tt := range tests {
@@ -105,7 +170,7 @@ func TestService_GetMetricSpec(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, resp.MetricSpecs, 1)
 			assert.Equal(t, tt.expectedMetricName, resp.MetricSpecs[0].MetricName)
-			assert.Equal(t, float64(10.0), resp.MetricSpecs[0].TargetSizeFloat)
+			assert.Equal(t, tt.expectedTarget, resp.MetricSpecs[0].TargetSizeFloat)
 		})
 	}
 }
@@ -114,15 +179,15 @@ func TestService_GetMetrics(t *testing.T) {
 	tests := []struct {
 		name          string
 		serviceType   string
-		mockSetup     func(*MockQueries)
+		mockSetup     func(*MockLagMonitor)
 		expectedValue float64
 		expectError   bool
 	}{
 		{
 			name:        "ingest-logs success",
 			serviceType: "ingest-logs",
-			mockSetup: func(m *MockQueries) {
-				// No mock needed - returns constant
+			mockSetup: func(m *MockLagMonitor) {
+				m.On("GetQueueDepth", "ingest-logs").Return(int64(5), nil)
 			},
 			expectedValue: 5.0,
 			expectError:   false,
@@ -130,8 +195,8 @@ func TestService_GetMetrics(t *testing.T) {
 		{
 			name:        "ingest-metrics success",
 			serviceType: "ingest-metrics",
-			mockSetup: func(m *MockQueries) {
-				// No mock needed - returns constant
+			mockSetup: func(m *MockLagMonitor) {
+				m.On("GetQueueDepth", "ingest-metrics").Return(int64(5), nil)
 			},
 			expectedValue: 5.0,
 			expectError:   false,
@@ -139,8 +204,8 @@ func TestService_GetMetrics(t *testing.T) {
 		{
 			name:        "ingest-traces success",
 			serviceType: "ingest-traces",
-			mockSetup: func(m *MockQueries) {
-				// No mock needed - returns constant
+			mockSetup: func(m *MockLagMonitor) {
+				m.On("GetQueueDepth", "ingest-traces").Return(int64(5), nil)
 			},
 			expectedValue: 5.0,
 			expectError:   false,
@@ -148,8 +213,8 @@ func TestService_GetMetrics(t *testing.T) {
 		{
 			name:        "rollup-metrics success",
 			serviceType: "rollup-metrics",
-			mockSetup: func(m *MockQueries) {
-				// No mock needed - returns fixed value
+			mockSetup: func(m *MockLagMonitor) {
+				m.On("GetQueueDepth", "rollup-metrics").Return(int64(5), nil)
 			},
 			expectedValue: 5.0,
 			expectError:   false,
@@ -157,8 +222,8 @@ func TestService_GetMetrics(t *testing.T) {
 		{
 			name:        "compact-logs success",
 			serviceType: "compact-logs",
-			mockSetup: func(m *MockQueries) {
-				// No mock setup needed - uses fixed values
+			mockSetup: func(m *MockLagMonitor) {
+				m.On("GetQueueDepth", "compact-logs").Return(int64(3), nil)
 			},
 			expectedValue: 3.0, // Fixed value from service
 			expectError:   false,
@@ -166,27 +231,31 @@ func TestService_GetMetrics(t *testing.T) {
 		{
 			name:        "compact-traces success",
 			serviceType: "compact-traces",
-			mockSetup: func(m *MockQueries) {
-				// No mock setup needed - uses fixed values
+			mockSetup: func(m *MockLagMonitor) {
+				m.On("GetQueueDepth", "compact-traces").Return(int64(3), nil)
 			},
-			expectedValue: 3.0, // Fixed value from service
+			expectedValue: 3.0,
 			expectError:   false,
 		},
 		// Note: ingest-* services return constant values now (no database errors possible)
 		{
 			name:        "unsupported service type",
 			serviceType: "unknown-service",
-			mockSetup:   func(m *MockQueries) {},
+			mockSetup: func(m *MockLagMonitor) {
+				m.On("GetQueueDepth", "unknown-service").Return(int64(0), fmt.Errorf("unknown service type"))
+			},
 			expectError: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockQueries := &MockQueries{}
-			tt.mockSetup(mockQueries)
+			mockMonitor := new(MockLagMonitor)
+			tt.mockSetup(mockMonitor)
 
-			service := &Service{}
+			service := &Service{
+				lagMonitor: mockMonitor,
+			}
 
 			req := &GetMetricsRequest{
 				ScaledObjectRef: &ScaledObjectRef{
@@ -203,7 +272,7 @@ func TestService_GetMetrics(t *testing.T) {
 
 			if tt.expectError {
 				require.Error(t, err)
-				mockQueries.AssertExpectations(t)
+				mockMonitor.AssertExpectations(t)
 				return
 			}
 
@@ -211,7 +280,7 @@ func TestService_GetMetrics(t *testing.T) {
 			require.Len(t, resp.MetricValues, 1)
 			assert.Equal(t, req.MetricName, resp.MetricValues[0].MetricName)
 			assert.Equal(t, tt.expectedValue, resp.MetricValues[0].MetricValueFloat)
-			mockQueries.AssertExpectations(t)
+			mockMonitor.AssertExpectations(t)
 		})
 	}
 }
@@ -237,15 +306,15 @@ func TestService_getQueueDepth(t *testing.T) {
 	tests := []struct {
 		name          string
 		serviceType   string
-		mockSetup     func(*MockQueries)
+		mockSetup     func(*MockLagMonitor)
 		expectedCount int64
 		expectError   bool
 	}{
 		{
 			name:        "ingest-logs",
 			serviceType: "ingest-logs",
-			mockSetup: func(m *MockQueries) {
-				// No mock needed - returns constant
+			mockSetup: func(m *MockLagMonitor) {
+				m.On("GetQueueDepth", "ingest-logs").Return(int64(5), nil)
 			},
 			expectedCount: 5,
 			expectError:   false,
@@ -253,8 +322,8 @@ func TestService_getQueueDepth(t *testing.T) {
 		{
 			name:        "rollup-metrics",
 			serviceType: "rollup-metrics",
-			mockSetup: func(m *MockQueries) {
-				// No mock needed - returns fixed value
+			mockSetup: func(m *MockLagMonitor) {
+				m.On("GetQueueDepth", "rollup-metrics").Return(int64(5), nil)
 			},
 			expectedCount: 5,
 			expectError:   false,
@@ -262,29 +331,33 @@ func TestService_getQueueDepth(t *testing.T) {
 		{
 			name:        "unsupported service type",
 			serviceType: "invalid-service",
-			mockSetup:   func(m *MockQueries) {},
+			mockSetup: func(m *MockLagMonitor) {
+				m.On("GetQueueDepth", "invalid-service").Return(int64(0), fmt.Errorf("unknown service type"))
+			},
 			expectError: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockQueries := &MockQueries{}
-			tt.mockSetup(mockQueries)
+			mockMonitor := new(MockLagMonitor)
+			tt.mockSetup(mockMonitor)
 
-			service := &Service{}
+			service := &Service{
+				lagMonitor: mockMonitor,
+			}
 
 			count, err := service.getQueueDepth(context.Background(), tt.serviceType)
 
 			if tt.expectError {
 				require.Error(t, err)
-				mockQueries.AssertExpectations(t)
+				mockMonitor.AssertExpectations(t)
 				return
 			}
 
 			require.NoError(t, err)
 			assert.Equal(t, tt.expectedCount, count)
-			mockQueries.AssertExpectations(t)
+			mockMonitor.AssertExpectations(t)
 		})
 	}
 }

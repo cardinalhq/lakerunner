@@ -219,7 +219,7 @@ func (s *DDBSink) IngestParquetBatch(ctx context.Context, parquetPaths []string,
 INSERT INTO %s (%s)
 SELECT %s
 FROM (
-  SELECT filename, * 
+  SELECT filename, *
   FROM read_parquet(%s, union_by_name=true, filename=true)
 ) f
 JOIN %s ON f.filename = m.path;

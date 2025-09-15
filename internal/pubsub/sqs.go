@@ -17,11 +17,12 @@ package pubsub
 import (
 	"context"
 	"fmt"
-	"github.com/cardinalhq/lakerunner/config"
 	"log/slog"
 	"os"
 	"sync"
 	"time"
+
+	"github.com/cardinalhq/lakerunner/config"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
