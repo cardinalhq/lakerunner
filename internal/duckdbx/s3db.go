@@ -316,7 +316,12 @@ func (s *S3DB) ensureInstall(ctx context.Context) error {
 			s.installErr = err
 			return
 		}
-		defer db.Close()
+		defer func(db *sql.DB) {
+			err := db.Close()
+			if err != nil {
+				slog.Warn("duckdb.Close", "error", err)
+			}
+		}(db)
 		db.SetMaxOpenConns(1)
 		db.SetMaxIdleConns(1)
 		conn, err := db.Conn(ctx)
@@ -324,7 +329,12 @@ func (s *S3DB) ensureInstall(ctx context.Context) error {
 			s.installErr = err
 			return
 		}
-		defer conn.Close()
+		defer func(conn *sql.Conn) {
+			err := conn.Close()
+			if err != nil {
+				slog.Warn("duckdb.Conn.Close", "error", err)
+			}
+		}(conn)
 		if s.memoryLimitMB > 0 {
 			_, _ = conn.ExecContext(ctx, fmt.Sprintf("SET memory_limit='%dMB';", s.memoryLimitMB))
 		}
