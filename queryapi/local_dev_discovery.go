@@ -49,6 +49,25 @@ func (d *LocalDevDiscovery) GetWorkersForSegments(organizationID uuid.UUID, segm
 			},
 		}
 	}
+	//for i, segmentID := range segmentIDs {
+	//	if i%2 == 0 {
+	//		mappings[i] = SegmentWorkerMapping{
+	//			SegmentID: segmentID,
+	//			Worker: Worker{
+	//				IP:   "127.0.0.1",
+	//				Port: 8081,
+	//			},
+	//		}
+	//	} else {
+	//		mappings[i] = SegmentWorkerMapping{
+	//			SegmentID: segmentID,
+	//			Worker: Worker{
+	//				IP:   "127.0.0.1",
+	//				Port: 8082,
+	//			},
+	//		}
+	//	}
+	//}
 	return mappings, nil
 }
 
