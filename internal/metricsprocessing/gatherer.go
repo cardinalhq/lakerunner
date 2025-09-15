@@ -88,6 +88,7 @@ func (g *gatherer[M, K]) processMessage(ctx context.Context, msg M, metadata *me
 
 	if metadata.Offset <= lastProcessedOffset {
 		// Drop this message - already processed
+		reportDrop(ctx, "duplicate_message", 1)
 		return nil
 	}
 

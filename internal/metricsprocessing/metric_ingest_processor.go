@@ -194,6 +194,7 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 		}
 		if is404 {
 			ll.Warn("Object not found, skipping", slog.String("objectID", msg.ObjectID))
+			reportDrop(ctx, "object_not_found", 1)
 			continue
 		}
 
@@ -598,6 +599,7 @@ func (p *MetricIngestProcessor) uploadAndCreateSegments(ctx context.Context, sto
 	for binStartTs, bin := range timeBins {
 		if bin.Result == nil || bin.Result.RecordCount == 0 {
 			ll.Debug("Skipping empty file group", slog.Int64("fileGroupStartTs", binStartTs))
+			reportDrop(ctx, "empty_file_group", 1)
 			continue
 		}
 
