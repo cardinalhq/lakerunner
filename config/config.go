@@ -76,10 +76,12 @@ type AzureConfig struct {
 }
 
 type LogsConfig struct {
+	Ingestion IngestionConfig `mapstructure:"ingestion"`
 	// Partitions will be auto-determined from Kafka topic
 }
 
 type TracesConfig struct {
+	Ingestion IngestionConfig `mapstructure:"ingestion"`
 	// Partitions will be auto-determined from Kafka topic
 }
 
@@ -166,17 +168,19 @@ type RollupConfig struct {
 
 // IngestionConfig holds ingestion feature toggles.
 type IngestionConfig struct {
-	ProcessExemplars    bool          `mapstructure:"process_exemplars"`
-	SingleInstanceMode  bool          `mapstructure:"single_instance_mode"`
-	MaxAccumulationTime time.Duration `mapstructure:"max_accumulation_time"`
+	ProcessExemplars      bool          `mapstructure:"process_exemplars"`
+	SingleInstanceMode    bool          `mapstructure:"single_instance_mode"`
+	MaxAccumulationTime   time.Duration `mapstructure:"max_accumulation_time"`
+	WriteToLowestInstance bool          `mapstructure:"write_to_lowest_instance"`
 }
 
 // DefaultIngestionConfig returns default settings for ingestion.
 func DefaultIngestionConfig() IngestionConfig {
 	return IngestionConfig{
-		ProcessExemplars:    true,
-		SingleInstanceMode:  false,
-		MaxAccumulationTime: 10 * time.Second,
+		ProcessExemplars:      true,
+		SingleInstanceMode:    false,
+		MaxAccumulationTime:   10 * time.Second,
+		WriteToLowestInstance: false,
 	}
 }
 
@@ -253,8 +257,8 @@ func Load() (*Config, error) {
 			TenantID:         "",
 			ConnectionString: "",
 		},
-		Logs:   LogsConfig{},
-		Traces: TracesConfig{},
+		Logs:   LogsConfig{Ingestion: DefaultIngestionConfig()},
+		Traces: TracesConfig{Ingestion: DefaultIngestionConfig()},
 		Admin: AdminConfig{
 			InitialAPIKey: "",
 		},
