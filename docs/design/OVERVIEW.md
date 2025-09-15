@@ -16,106 +16,23 @@ Lakerunner is a distributed telemetry ingestion and query engine that uses S3-co
 
 ### Data Flow Pipeline
 
-```text
-┌─────────────────┐
-│ OTLP Collectors │
-│   Prometheus    │
-│   FluentBit     │
-└────────┬────────┘
-         │
-         ↓
-┌─────────────────────────────────────────────────────────────┐
-│                     S3 Raw Data Buckets                      │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
-│  │  otel-raw/   │  │  logs-raw/   │  │ metrics-raw/ │      │
-│  │ (Protobuf)   │  │ (JSON.gz)    │  │   (CSV)      │      │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘      │
-└─────────┼──────────────────┼──────────────────┼─────────────┘
-          └──────────────────┼──────────────────┘
-                            ↓
-                 ┌──────────────────┐
-                 │ Event Bus (SQS)  │
-                 │  or Webhooks     │
-                 └────────┬─────────┘
-                          │
-                          ↓
-                ┌─────────────────┐
-                │  PubSub Router  │
-                │                 │
-                └────────┬────────┘
-                         │
-                         ↓
-         ┌───────────────────────────────────┐
-         │         Kafka Topics              │
-         │  ┌─────────────────────────────┐  │
-         │  │ • ingest.logs              │  │
-         │  │ • ingest.metrics           │  │
-         │  │ • compact.logs             │  │
-         │  │ • compact.metrics          │  │
-         │  │ • rollup.metrics.1m        │  │
-         │  │ • rollup.metrics.5m        │  │
-         │  │ • rollup.metrics.1h        │  │
-         │  └─────────────────────────────┘  │
-         └────────────┬──────────────────────┘
-                      │
-        ┌─────────────┼─────────────┐
-        ↓                           ↓
-┌──────────────────┐      ┌──────────────────┐
-│  Ingest Workers  │      │  Boxer Service   │
-│  - Parse raw     │      │  - Routes work   │
-│  - Convert Arrow │      │  - Schedules     │
-│  - Write Parquet │      │    compaction    │
-│  - Queue compact │      │  - Triggers      │
-│    & rollup jobs │      │    rollups       │
-└────────┬─────────┘      └────────┬─────────┘
-         │                          │
-         │      ┌───────────────────┴───────────────────┐
-         │      ↓                                       ↓
-         │ ┌──────────────────┐          ┌──────────────────┐
-         │ │ Compact Workers  │          │ Rollup Workers   │
-         │ │  - Merge small   │          │  - Aggregate     │
-         │ │  - Deduplicate   │          │  - Time windows  │
-         │ │  - Re-optimize   │          │  - Notify next   │
-         │ │  - Queue compact │          │    granularity   │
-         │ │    for new level │          │  - Queue compact │
-         │ └──────────────────┘          └──────────────────┘
-         │           │                              │
-         └───────────┼──────────────────────────────┘
-                     ↓
-         ┌──────────────────────────────────────────────────────────────┐
-         │                    S3 Cooked Data (Parquet)                  │
-         │  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐ │
-         │  │ logs-cooked/   │  │metrics-cooked/ │  │metrics-rollup/ │ │
-         │  │  org_id=123/   │  │  org_id=123/   │  │  org_id=123/   │ │
-         │  │   dateint=*/   │  │   dateint=*/   │  │   dateint=*/   │ │
-         │  └────────────────┘  └────────────────┘  └────────────────┘ │
-         └───────────────────────────┬──────────────────────────────────┘
-                                     │
-                ┌────────────────────┼────────────────────┐
-                ↓                                         ↓
-     ┌──────────────────┐                    ┌─────────────────────┐
-     │ PostgreSQL       │                    │   Query Workers     │
-     │ Segment Index    │←───────────────────│   - DuckDB Engine   │
-     │ - File paths     │                    │   - S3 Data Reader  │
-     │ - Statistics     │                    │   - Arrow Processing│
-     │ - Time ranges    │                    └──────────┬──────────┘
-     └──────────────────┘                               │
-                ↑                                        │
-                └────────────────┬───────────────────────┘
-                                 │
-                        ┌────────┴────────┐
-                        │   Query API     │
-                        │  - SQL Parser   │
-                        │  - Auth/ACL     │
-                        │  - Result Cache │
-                        └────────┬────────┘
-                                 │
-                                 ↓
-                        ┌─────────────────┐
-                        │  API Clients    │
-                        │  Grafana/BI     │
-                        └─────────────────┘
-```
+The system is organized into distinct processing stages, each handling a specific aspect of the telemetry pipeline:
+
+#### Event Notification & Routing
+
+![PubSub Flow](images/pubsub.svg)
+
+#### Data Ingestion
+
+![Ingestion Flow](images/ingest.svg)
+
+#### Segment Compaction
+
+![Compaction Flow](images/compact.svg)
+
+#### Metrics Rollup (Metrics-specific)
+
+![Rollup Flow](images/metrics-rollup.svg)
 
 ## Processing Pipeline
 
@@ -124,27 +41,27 @@ Lakerunner is a distributed telemetry ingestion and query engine that uses S3-co
 The ingestion layer transforms raw telemetry into queryable Parquet segments:
 
 **Input Formats:**
+
 - OpenTelemetry Protocol (protobuf)
 - JSON Lines (gzipped)
 - CSV with headers
 - Raw Parquet
 
 **Processing Steps:**
-1. File notification arrives via SQS/webhook
-2. PubSub publishes to Kafka ingest topic
-3. Ingest worker consumes from Kafka
-4. Data parsed and validated according to schema
-5. Converted to Arrow columnar format
-6. Written as Parquet with:
-   - ZSTD compression
-   - 128MB row groups
-   - Column statistics for pruning
-   - Bloom filters on high-cardinality strings
-7. Segment metadata indexed in PostgreSQL
-8. Compact and rollup jobs queued to Kafka
+
+1. File notification arrives via SQS/GCP Pub/Sub/Azure Event Grid/Webhook
+2. PubSub service publishes to Kafka `ingest` topic
+3. Ingest worker consumes job from Kafka
+4. Worker reads raw data from S3
+5. Data parsed and validated according to schema
+6. Converted to columnar format
+7. Written as Parquet segments to S3
+8. Segment metadata registered in PostgreSQL index
+9. Notifications sent to `boxer` topic for downstream processing
 
 **Output Structure:**
-```
+
+```text
 s3://bucket/
 ├── logs-cooked/
 │   └── org_id=123/
@@ -161,6 +78,7 @@ s3://bucket/
 Small segments are merged into larger, optimized files:
 
 **Compaction Strategy:**
+
 - Target size: 512MB-1GB per segment
 - Triggers: File count threshold or age
 - Deduplication by unique ID columns
@@ -168,38 +86,50 @@ Small segments are merged into larger, optimized files:
 - Statistics recalculation for query optimization
 
 **Implementation:**
-1. Boxer service identifies compaction candidates
-2. Publishes work to Kafka compact topics
-3. Compact worker consumes job from Kafka
-4. Reads multiple segments from S3
-5. Merges using streaming Arrow operations
-6. Writes consolidated segment to S3
-7. Updates index, marks originals for deletion
-8. Queues new compact job for merged level
+
+1. Ingest workers send segment notifications to `boxer.compact` topic
+2. Boxer-Compact service consumes unordered segment notifications
+3. Groups segments into efficient work units based on size/time/count
+4. Publishes grouped work to `compact.work` topic
+5. Compact worker consumes work unit from Kafka
+6. Reads multiple input segments from S3
+7. Merges segments using streaming operations
+8. Writes consolidated segment back to S3
+9. Updates PostgreSQL index, marks originals for deletion
 
 ### Stage 3: Metric Rollups
 
 Pre-aggregated metrics reduce query complexity:
 
 **Rollup Granularities:**
+
 - 1-minute (raw resolution)
 - 5-minute (triggered by 1m completion)
 - 1-hour (triggered by 5m completion)
 - 1-day (triggered by 1h completion)
 
 **Aggregation Functions:**
+
 - Sum, Count, Min, Max, Avg
 - Percentiles (p50, p95, p99)
 - Cardinality estimates (HyperLogLog)
 
 **Rollup Chain:**
-1. Rollup worker processes time window
-2. Writes aggregated Parquet to S3
-3. Publishes next granularity to Kafka
-4. Queues compact job for written level
+
+1. Ingest workers send notifications to `boxer.rollup.metrics` topic
+2. Boxer-Rollup service groups by time windows into work units
+3. Publishes grouped work to `rollup.work` topic
+4. Rollup worker consumes work unit from Kafka
+5. Reads previous tier data from S3 (e.g., 10s granularity)
+6. Aggregates into next tier (e.g., 60s granularity)
+7. Writes rollup Parquet to S3
+8. Registers segment in PostgreSQL index
+9. Notifies next tier via `boxer.rollup` topic
+10. Notifies compaction via `boxer.compact` topic
 
 **Storage Layout:**
-```
+
+```text
 metrics-rollup-5m/
 └── org_id=123/
     └── dateint=20250114/
@@ -219,6 +149,7 @@ metrics-rollup-5m/
 ### Query Execution
 
 **DuckDB Integration:**
+
 - Direct Parquet reading via S3 API
 - Predicate pushdown to storage layer
 - Vectorized execution engine
@@ -226,6 +157,7 @@ metrics-rollup-5m/
 - Result streaming to client
 
 **Query Types:**
+
 - Time-series aggregations
 - Full-text search (via Parquet strings)
 - JOIN operations across data types
@@ -234,73 +166,46 @@ metrics-rollup-5m/
 ### Performance Optimizations
 
 **File-Level:**
+
 - Row group pruning via statistics
 - Column projection (only read needed columns)
 - Bloom filter evaluation for point lookups
 - Dictionary encoding for repeated values
 
 **System-Level:**
+
 - Connection pooling to S3
 - Query result caching (planned)
 - Materialized views for common queries (planned)
 - Adaptive query execution (planned)
-
-## Data Model
-
-### Logs Schema
-
-```sql
-CREATE TABLE logs (
-    timestamp        TIMESTAMP,
-    organization_id  INT64,
-    service_name     STRING,
-    severity         STRING,
-    message          STRING,
-    attributes       MAP<STRING, STRING>,
-    resource_attrs   MAP<STRING, STRING>,
-    trace_id         BYTES,
-    span_id          BYTES
-);
-```
-
-### Metrics Schema
-
-```sql
-CREATE TABLE metrics (
-    timestamp        TIMESTAMP,
-    organization_id  INT64,
-    metric_name      STRING,
-    metric_type      ENUM('gauge', 'counter', 'histogram'),
-    value            DOUBLE,
-    attributes       MAP<STRING, STRING>,
-    resource_attrs   MAP<STRING, STRING>,
-    exemplar_trace   BYTES
-);
-```
 
 ## Service Components
 
 ### Core Services
 
 **pubsub**
+
 - Receives S3 event notifications
 - Publishes to Kafka ingest topics
 - Handles webhook/SQS integration
 - Manages initial event routing
 
 **ingest-logs / ingest-metrics**
+
 - Consumes from Kafka ingest topics
 - Schema validation and conversion
 - Parquet generation with optimization
 - Publishes compact/rollup jobs to Kafka
 
 **boxer-compact-logs / boxer-compact-metrics**
+
 - Consumes from Kafka compact topics
 - Routes work to compact workers
 - Schedules compaction batches
 - Manages compaction policies
 
 **compact-logs / compact-metrics**
+
 - Segment merging logic
 - Deduplication algorithms
 - Statistics recalculation
@@ -347,25 +252,29 @@ CREATE TABLE metrics (
 ### Kafka-Based Work Distribution
 
 **Topic Structure:**
-- `ingest.logs` - Raw log files to process
-- `ingest.metrics` - Raw metric files to process
-- `compact.logs` - Log segments to compact
-- `compact.metrics` - Metric segments to compact
-- `rollup.metrics.{1m,5m,1h,1d}` - Rollup time windows
+
+- `ingest` - Raw file notifications to process
+- `boxer` - Segment notifications for downstream processing
+- `boxer.compact` - Segments ready for compaction
+- `boxer.rollup.metrics` - Metrics ready for rollup
+- `compact.work` - Grouped compaction work units
+- `rollup.work` - Grouped rollup work units
 
 **Message Flow:**
-1. **Publishing**: Services produce to topic with key for partitioning
-2. **Consumption**: Workers consume from assigned partitions
-3. **Processing**: At-least-once delivery with idempotent operations
-4. **Chaining**: Completion triggers downstream work
-5. **Failure Handling**: Kafka retry with exponential backoff
+
+1. **Event Notification**: PubSub publishes file paths to `ingest` topic
+2. **Work Generation**: Ingest workers publish to `boxer.*` topics
+3. **Work Grouping**: Boxer services batch into efficient work units
+4. **Work Distribution**: Boxer publishes grouped work to `*.work` topics
+5. **Processing**: Workers consume and process work units
+6. **Chaining**: Completion may trigger additional `boxer.*` notifications
 
 ### Service Coordination
 
-- **Boxer Services**: Route and schedule work from Kafka
-- **Worker Pools**: Consume and process from Kafka topics
-- **Singleton Services**: Use leader election for single instance
-- **S3 Consistency**: Idempotent writes with versioning
+- **Boxer Services**: Transform unordered segment notifications into grouped work units
+- **Worker Pools**: Consume work units and process in parallel
+- **Singleton Services**: Sweeper uses leader election
+- **Idempotency**: All operations are idempotent for at-least-once delivery
 
 ## Performance Characteristics
 
