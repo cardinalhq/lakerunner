@@ -268,11 +268,14 @@ func (q *QuerierService) EvaluateMetricsQuery(
 					for worker, wsegs := range workerGroups {
 						slog.Info("Pushdown to worker", "worker", worker, "numSegments", len(wsegs), "leafID", leafID)
 
+						rangeMs := promql.RangeMsFromRange(leaf.Range)
+						leftHaloMs := offMs + rangeMs
+
 						req := PushDownRequest{
 							OrganizationID: orgID,
 							BaseExpr:       &leaf,
-							StartTs:        globalStart - offMs,
-							EndTs:          globalEnd - offMs,
+							StartTs:        group.StartTs - leftHaloMs,
+							EndTs:          group.EndTs - offMs,
 							Segments:       wsegs,
 							Step:           stepDuration,
 						}
@@ -285,6 +288,8 @@ func (q *QuerierService) EvaluateMetricsQuery(
 						if offMs != 0 {
 							ch = shiftTimestamps(pushCtx, ch, offMs, 256)
 						}
+
+						ch = clipTimestamps(pushCtx, ch, group.StartTs, group.EndTs, 256)
 
 						tag := fmt.Sprintf("g=%d leaf=%s %s:%d", gi, leafID, worker.IP, worker.Port)
 						ch = tapStream(pushCtx, ch, tag)
@@ -336,6 +341,35 @@ func (q *QuerierService) EvaluateMetricsQuery(
 	}()
 
 	return out, nil
+}
+
+func clipTimestamps[T interface{ GetTimestamp() int64 }](
+	ctx context.Context, in <-chan T, lo, hi int64, outBuf int,
+) <-chan T {
+	out := make(chan T, outBuf)
+	go func() {
+		defer close(out)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case v, ok := <-in:
+				if !ok {
+					return
+				}
+				ts := v.GetTimestamp()
+				if ts < lo || ts >= hi {
+					continue // drop outside group window
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case out <- v:
+				}
+			}
+		}
+	}()
+	return out
 }
 
 // tapStream logs how many items and the timestamp span we actually consumed
