@@ -66,6 +66,8 @@ Many metrics include these standardized attributes:
 | `lakerunner.duckdb.memory.total_blocks` | DuckDB total blocks | 1 | - |
 | `lakerunner.duckdb.memory.used_blocks` | DuckDB used blocks | 1 | - |
 | `lakerunner.duckdb.memory.wal_size` | DuckDB WAL size | By | - |
+| `lakerunner.sweeper.cleanup_partitions_known` | Number of org-dateint combinations scheduled for cleanup | 1 | `signal` |
+| `lakerunner.sweeper.pack_estimate_target_records` | Target record estimates for pack tables | 1 | `signal`, `organization_id`, `frequency_ms` |
 | `lakerunner.exists` | Indicates if the service is running (1) or not (0) | - | - |
 
 ## Metric Groupings by Component

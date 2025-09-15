@@ -15,9 +15,12 @@
 package sweeper
 
 import (
+	"context"
 	"fmt"
+	"sync"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
 
@@ -28,6 +31,10 @@ var (
 	metricCleanupBytes   metric.Int64Counter
 	traceCleanupCounter  metric.Int64Counter
 	traceCleanupBytes    metric.Int64Counter
+	objectCleanupCounter metric.Int64Counter
+
+	cleanupPartitionGauge metric.Int64ObservableGauge
+	partitionGaugeValues  sync.Map // signal -> count
 )
 
 func init() {
@@ -83,5 +90,55 @@ func init() {
 	)
 	if err != nil {
 		panic(fmt.Errorf("failed to create trace_cleanup_bytes_total counter: %w", err))
+	}
+
+	objectCleanupCounter, err = meter.Int64Counter(
+		"lakerunner.sweeper.object_cleanup_total",
+		metric.WithDescription("Count of objects processed during cleanup"),
+	)
+	if err != nil {
+		panic(fmt.Errorf("failed to create object_cleanup_total counter: %w", err))
+	}
+
+	cleanupPartitionGauge, err = meter.Int64ObservableGauge(
+		"lakerunner.sweeper.cleanup_partitions_known",
+		metric.WithDescription("Number of org-dateint combinations scheduled for cleanup"),
+	)
+	if err != nil {
+		panic(fmt.Errorf("failed to create cleanup_partitions_known gauge: %w", err))
+	}
+
+	_, err = meter.RegisterCallback(func(ctx context.Context, o metric.Observer) error {
+		partitionGaugeValues.Range(func(key, value any) bool {
+			signal := key.(string)
+			count := value.(int)
+			o.ObserveInt64(cleanupPartitionGauge, int64(count), metric.WithAttributes(
+				attribute.String("signal", signal),
+			))
+			return true
+		})
+		return nil
+	}, cleanupPartitionGauge)
+	if err != nil {
+		panic(fmt.Errorf("failed to register cleanup_partitions_known callback: %w", err))
+	}
+}
+
+func recordPartitionCount(signal string, count int) {
+	partitionGaugeValues.Store(signal, count)
+}
+
+func recordObjectCleanup(ctx context.Context, signal string, deleted, failed int) {
+	if deleted > 0 {
+		objectCleanupCounter.Add(ctx, int64(deleted), metric.WithAttributes(
+			attribute.String("result", "deleted"),
+			attribute.String("signal", signal),
+		))
+	}
+	if failed > 0 {
+		objectCleanupCounter.Add(ctx, int64(failed), metric.WithAttributes(
+			attribute.String("result", "failed"),
+			attribute.String("signal", signal),
+		))
 	}
 }

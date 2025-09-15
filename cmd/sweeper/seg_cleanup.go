@@ -171,9 +171,12 @@ func (cm *CleanupManager) refreshPartitions(ctx context.Context, cdb configdb.Qu
 	// Update known dateints (this will mark deleted ones as unknown)
 	cm.knownDateints = newKnownDateints
 
+	total := len(newKnownDateints)
 	ll.Info("Refreshed partition list via discovery",
 		slog.String("signal_type", cm.signalType),
-		slog.Int("total_combinations", len(newKnownDateints)))
+		slog.Int("total_combinations", total))
+
+	recordPartitionCount(cm.signalType, total)
 
 	return nil
 }

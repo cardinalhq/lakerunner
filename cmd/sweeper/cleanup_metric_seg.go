@@ -125,6 +125,8 @@ func (w *MetricCleanupWorkItem) Perform(ctx context.Context) time.Duration {
 		}
 	}
 
+	recordObjectCleanup(ctx, "metric", s3DeletedCount, s3FailedCount)
+
 	// Execute database deletions using batch operation
 	dbDeletedCount := 0
 	if len(dbRecordsToDelete) > 0 {
