@@ -39,7 +39,7 @@ type ConsumerLagMonitor struct {
 	detailedMetrics []ConsumerGroupInfo
 }
 
-func newConsumerLagMonitor(cnf *config.Config, pollInterval time.Duration) (*ConsumerLagMonitor, error) {
+func NewConsumerLagMonitor(cnf *config.Config, pollInterval time.Duration) (*ConsumerLagMonitor, error) {
 	if cnf == nil {
 		return nil, fmt.Errorf("cnf cannot be nil")
 	}
@@ -60,17 +60,6 @@ func newConsumerLagMonitor(cnf *config.Config, pollInterval time.Duration) (*Con
 	}
 
 	return monitor, nil
-}
-
-// NewConsumerLagMonitor creates a new consumer lag monitor from app config
-// This is a convenience function that uses the Kafka config directly from app config
-func NewConsumerLagMonitor(appConfig *config.Config, pollInterval time.Duration) (*ConsumerLagMonitor, error) {
-	if appConfig == nil {
-		return nil, fmt.Errorf("appConfig cannot be nil")
-	}
-
-	// No conversion needed - just use the KafkaConfig directly
-	return newConsumerLagMonitor(appConfig, pollInterval)
 }
 
 // Start begins the periodic polling of consumer lag metrics
@@ -202,12 +191,10 @@ func (m *ConsumerLagMonitor) GetServiceMappings() []config.ServiceMapping {
 }
 
 // GetDetailedMetrics returns a copy of the current detailed metrics
-// This can be used by external systems to export metrics
 func (m *ConsumerLagMonitor) GetDetailedMetrics() []ConsumerGroupInfo {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	// Return a copy to avoid race conditions
 	result := make([]ConsumerGroupInfo, len(m.detailedMetrics))
 	copy(result, m.detailedMetrics)
 	return result

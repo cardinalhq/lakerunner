@@ -39,6 +39,7 @@ type Config struct {
 	Traces      TracesConfig      `mapstructure:"traces"`
 	Admin       AdminConfig       `mapstructure:"admin"`
 	KafkaTopics KafkaTopicsConfig `mapstructure:"kafka_topics"`
+	Scaling     ScalingConfig     `mapstructure:"scaling"`
 
 	// Derived fields (populated during Load())
 	TopicRegistry *TopicRegistry // Kafka topic registry based on prefix
@@ -236,7 +237,8 @@ func Load() (*Config, error) {
 			MaxAgeSeconds:   300,                // 5 minutes
 			MinBatchSize:    1,
 		},
-		DuckDB: DefaultDuckDBConfig(),
+		DuckDB:  DefaultDuckDBConfig(),
+		Scaling: GetDefaultScalingConfig(),
 		S3: S3Config{
 			AccessKeyID:     "",
 			SecretAccessKey: "",

@@ -211,6 +211,64 @@ Additional Azure settings (not in config file):
 | `WORKER_POD_LABEL_SELECTOR` | - | Label selector for query worker pods |
 | `QUERY_WORKER_PORT` | - | Port for query worker service |
 
+## Autoscaling Configuration
+
+The scaling configuration controls target queue depths for KEDA autoscaling. The external scaler uses these targets to determine when to scale services up or down based on Kafka consumer lag.
+
+### Default Configuration
+
+| Setting | Default | Environment Variable | Description |
+|---------|---------|---------------------|-------------|
+| scaling.default_target | `100` | `LAKERUNNER_SCALING_DEFAULT_TARGET` | Default target queue size for services not explicitly configured |
+
+### Service-Specific Configuration
+
+Each service can have its own target queue size configured. Services are first-class configuration objects with structured settings:
+
+| Service | Default Target | Environment Variable | Description |
+|---------|---------------|---------------------|-------------|
+| scaling.ingest_logs.target_queue_size | `100` | `LAKERUNNER_SCALING_INGEST_LOGS_TARGET_QUEUE_SIZE` | Target queue depth for log ingestion |
+| scaling.ingest_metrics.target_queue_size | `100` | `LAKERUNNER_SCALING_INGEST_METRICS_TARGET_QUEUE_SIZE` | Target queue depth for metrics ingestion |
+| scaling.ingest_traces.target_queue_size | `100` | `LAKERUNNER_SCALING_INGEST_TRACES_TARGET_QUEUE_SIZE` | Target queue depth for trace ingestion |
+| scaling.compact_logs.target_queue_size | `100` | `LAKERUNNER_SCALING_COMPACT_LOGS_TARGET_QUEUE_SIZE` | Target queue depth for log compaction |
+| scaling.compact_metrics.target_queue_size | `100` | `LAKERUNNER_SCALING_COMPACT_METRICS_TARGET_QUEUE_SIZE` | Target queue depth for metrics compaction |
+| scaling.compact_traces.target_queue_size | `100` | `LAKERUNNER_SCALING_COMPACT_TRACES_TARGET_QUEUE_SIZE` | Target queue depth for trace compaction |
+| scaling.rollup_metrics.target_queue_size | `100` | `LAKERUNNER_SCALING_ROLLUP_METRICS_TARGET_QUEUE_SIZE` | Target queue depth for metrics rollup |
+| scaling.boxer_compact_logs.target_queue_size | `1500` | `LAKERUNNER_SCALING_BOXER_COMPACT_LOGS_TARGET_QUEUE_SIZE` | Target queue depth for boxer log compaction |
+| scaling.boxer_compact_metrics.target_queue_size | `1500` | `LAKERUNNER_SCALING_BOXER_COMPACT_METRICS_TARGET_QUEUE_SIZE` | Target queue depth for boxer metrics compaction |
+| scaling.boxer_compact_traces.target_queue_size | `1500` | `LAKERUNNER_SCALING_BOXER_COMPACT_TRACES_TARGET_QUEUE_SIZE` | Target queue depth for boxer trace compaction |
+| scaling.boxer_rollup_metrics.target_queue_size | `1500` | `LAKERUNNER_SCALING_BOXER_ROLLUP_METRICS_TARGET_QUEUE_SIZE` | Target queue depth for boxer metrics rollup |
+
+Boxer services have higher default targets (1500) because they process data in larger batches and can handle higher queue depths efficiently.
+
+### YAML Configuration Example
+
+```yaml
+scaling:
+  default_target: 100
+
+  # Regular services with lower targets
+  ingest_logs:
+    target_queue_size: 200
+  ingest_metrics:
+    target_queue_size: 150
+  compact_logs:
+    target_queue_size: 100
+
+  # Boxer services with higher targets for batch processing
+  boxer_compact_logs:
+    target_queue_size: 2000
+  boxer_rollup_metrics:
+    target_queue_size: 1800
+```
+
+### How It Works
+
+1. The KEDA external scaler monitors Kafka consumer lag for each service
+2. When lag exceeds the target queue size, KEDA scales up the deployment
+3. When lag drops below the target, KEDA scales down (respecting cooldown periods)
+4. Each service type can have different scaling behavior based on its workload characteristics
+
 ## Configuration Files
 
 ### Main Configuration File

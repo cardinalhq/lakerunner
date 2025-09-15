@@ -90,29 +90,36 @@ func runMonitoringServe(_ context.Context) error {
 		GRPCPort: monitoringGRPCPort,
 	}
 
-	// Load app config for Kafka
+	// Load app config for Kafka and scaling
 	appConfig, err := config.Load()
 	if err != nil {
-		slog.Error("Failed to load config for Kafka monitoring", "error", err)
-	} else {
-		// Create consumer lag monitor using the convenience function
-		lagMonitor, err := fly.NewConsumerLagMonitor(
-			appConfig,
-			30*time.Second, // Poll every 30 seconds
-		)
-		if err != nil {
-			slog.Error("Failed to create Kafka lag monitor", "error", err)
-		} else {
-			// Start the lag monitor polling
-			go lagMonitor.Start(doneCtx)
-
-			// Provide the lag monitor directly to external scaler
-			scalerConfig.LagMonitor = lagMonitor
-			slog.Info("Kafka lag monitor integrated with external scaler")
-		}
+		slog.Error("Failed to load config", "error", err)
+		return err
 	}
 
-	slog.Info("Starting KEDA external scaler service", "grpc_port", monitoringGRPCPort)
+	// Pass the scaling config to external scaler
+	scalerConfig.ScalingConfig = &appConfig.Scaling
+
+	// Create consumer lag monitor using the convenience function
+	lagMonitor, err := fly.NewConsumerLagMonitor(
+		appConfig,
+		30*time.Second, // Poll every 30 seconds
+	)
+	if err != nil {
+		slog.Error("Failed to create Kafka lag monitor", "error", err)
+		return err
+	}
+
+	// Start the lag monitor polling
+	go lagMonitor.Start(doneCtx)
+
+	// Provide the lag monitor to external scaler
+	scalerConfig.LagMonitor = lagMonitor
+	slog.Info("Kafka lag monitor integrated with external scaler")
+
+	slog.Info("Starting KEDA external scaler service",
+		"grpc_port", monitoringGRPCPort,
+		"default_target", appConfig.Scaling.DefaultTarget)
 
 	service, err := externalscaler.NewService(doneCtx, scalerConfig)
 	if err != nil {

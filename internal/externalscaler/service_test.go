@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 )
 
@@ -122,17 +123,29 @@ func TestService_IsActive(t *testing.T) {
 }
 
 func TestService_GetMetricSpec(t *testing.T) {
-	service := &Service{}
+	scalingConfig := &config.ScalingConfig{
+		DefaultTarget:      100,
+		IngestLogs:         config.ServiceScaling{TargetQueueSize: 100},
+		RollupMetrics:      config.ServiceScaling{TargetQueueSize: 100},
+		BoxerRollupMetrics: config.ServiceScaling{TargetQueueSize: 1500},
+	}
+
+	service := &Service{
+		scalingConfig: scalingConfig,
+	}
 
 	tests := []struct {
 		name               string
 		serviceType        string
 		expectedMetricName string
+		expectedTarget     float64
 		expectError        bool
 	}{
-		{"ingest-logs", "ingest-logs", "ingest-logs-queue-depth", false},
-		{"rollup-metrics", "rollup-metrics", "rollup-metrics-queue-depth", false},
-		{"missing-service-type", "", "", true},
+		{"ingest-logs", "ingest-logs", "ingest-logs-queue-depth", 100.0, false},
+		{"rollup-metrics", "rollup-metrics", "rollup-metrics-queue-depth", 100.0, false},
+		{"boxer-rollup-metrics", "boxer-rollup-metrics", "boxer-rollup-metrics-queue-depth", 1500.0, false},
+		{"missing-service-type", "", "", 0, true},
+		{"unknown-service-type", "unknown-service", "", 0, true},
 	}
 
 	for _, tt := range tests {
@@ -157,7 +170,7 @@ func TestService_GetMetricSpec(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, resp.MetricSpecs, 1)
 			assert.Equal(t, tt.expectedMetricName, resp.MetricSpecs[0].MetricName)
-			assert.Equal(t, float64(10.0), resp.MetricSpecs[0].TargetSizeFloat)
+			assert.Equal(t, tt.expectedTarget, resp.MetricSpecs[0].TargetSizeFloat)
 		})
 	}
 }

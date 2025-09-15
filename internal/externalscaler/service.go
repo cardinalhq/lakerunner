@@ -28,6 +28,7 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
 
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 )
 
@@ -44,11 +45,13 @@ type Service struct {
 	healthCheck   *health.Server
 	lagMonitor    LagMonitorInterface
 	kafkaExporter *KafkaMetricsExporter
+	scalingConfig *config.ScalingConfig
 }
 
 type Config struct {
-	GRPCPort   int
-	LagMonitor LagMonitorInterface
+	GRPCPort      int
+	LagMonitor    LagMonitorInterface
+	ScalingConfig *config.ScalingConfig // Scaling configuration from main config
 }
 
 func NewService(_ context.Context, cfg Config) (*Service, error) {
@@ -56,10 +59,18 @@ func NewService(_ context.Context, cfg Config) (*Service, error) {
 		return nil, errors.New("lag monitor is required")
 	}
 
+	// Use scaling config if provided, otherwise use defaults
+	scalingConfig := cfg.ScalingConfig
+	if scalingConfig == nil {
+		defaultScaling := config.GetDefaultScalingConfig()
+		scalingConfig = &defaultScaling
+	}
+
 	s := &Service{
-		grpcPort:    cfg.GRPCPort,
-		healthCheck: health.NewServer(),
-		lagMonitor:  cfg.LagMonitor,
+		grpcPort:      cfg.GRPCPort,
+		healthCheck:   health.NewServer(),
+		lagMonitor:    cfg.LagMonitor,
+		scalingConfig: scalingConfig,
 	}
 
 	// Initialize Kafka metrics exporter if lag monitor is provided and OTEL is enabled
@@ -148,11 +159,23 @@ func (s *Service) GetMetricSpec(ctx context.Context, req *ScaledObjectRef) (*Get
 
 	metricName := fmt.Sprintf("%s-queue-depth", serviceType)
 
+	// Get the target queue size for this service type
+	target, err := s.scalingConfig.GetTargetQueueSize(serviceType)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "failed to get target queue size: %v", err)
+	}
+	targetSize := float64(target)
+
+	slog.Debug("Returning metric spec",
+		"serviceType", serviceType,
+		"metricName", metricName,
+		"targetSize", targetSize)
+
 	return &GetMetricSpecResponse{
 		MetricSpecs: []*MetricSpec{
 			{
 				MetricName:      metricName,
-				TargetSizeFloat: 10.0, // Target 10 items in queue for scaling
+				TargetSizeFloat: targetSize,
 			},
 		},
 	}, nil
