@@ -173,8 +173,9 @@ func (q *QuerierService) EvaluateMetricsQuery(
 				offMs = 0
 			}
 			baseStart := startTs
+			rangeMs := promql.RangeMsFromRange(leaf.Range)
 			if leaf.Range != "" {
-				baseStart -= promql.RangeMsFromRange(leaf.Range)
+				baseStart -= rangeMs
 			}
 			effStart := baseStart - offMs
 			effEnd := endTs - offMs
@@ -199,6 +200,8 @@ func (q *QuerierService) EvaluateMetricsQuery(
 					continue
 				}
 				for i := range segments {
+					segments[i].EffectiveStartTs = segments[i].StartTs + offMs
+					segments[i].EffectiveEndTs = segments[i].EndTs + offMs
 					segments[i].ExprID = leaf.ID
 				}
 				if len(segments) > 0 {
