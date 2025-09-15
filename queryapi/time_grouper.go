@@ -213,10 +213,21 @@ func ComputeReplayBatches(
 
 	// Debug log resulting groups.
 	for _, group := range out {
+		slog.Info("---------------------------------------------------------------------------------------------")
 		slog.Info("Segment Group",
 			slog.Int("numSegments", len(group.Segments)),
 			slog.String("startTime", time.UnixMilli(group.StartTs).UTC().Format(time.RFC3339)),
 			slog.String("endTime", time.UnixMilli(group.EndTs).UTC().Format(time.RFC3339)))
+
+		for _, seg := range group.Segments {
+			slog.Info("Segment",
+				slog.Int64("segmentID", seg.SegmentID),
+				slog.String("exprID", seg.ExprID),
+				slog.String("startTime", time.UnixMilli(effStart(seg)).UTC().Format(time.RFC3339)),
+				slog.String("endTime", time.UnixMilli(effEnd(seg)).UTC().Format(time.RFC3339)),
+				slog.Int64("frequency", seg.Frequency))
+		}
+		slog.Info("---------------------------------------------------------------------------------------------")
 	}
 
 	return out
