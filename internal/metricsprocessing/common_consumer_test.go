@@ -28,7 +28,6 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/lrdb"
@@ -83,7 +82,7 @@ func (m *MockProcessor) GetTargetRecordCount(ctx context.Context, groupingKey me
 
 func TestCommonConsumerBase_ValidateGroupConsistency(t *testing.T) {
 	base := NewCommonProcessorBase[*messages.MetricCompactionMessage, messages.CompactionKey](
-		nil, nil, &config.Config{},
+		nil, nil, getTestConfig(),
 	)
 
 	orgID := uuid.New()
@@ -175,7 +174,7 @@ func TestCommonConsumerBase_ValidateGroupConsistency(t *testing.T) {
 
 func TestCommonConsumerBase_ExtractKeyFields(t *testing.T) {
 	base := NewCommonProcessorBase[*messages.MetricCompactionMessage, messages.CompactionKey](
-		nil, nil, &config.Config{},
+		nil, nil, getTestConfig(),
 	)
 
 	orgID := uuid.New()
@@ -418,7 +417,7 @@ func TestCommonConsumer_MarkOffsetsProcessed_EmptyOffsets(t *testing.T) {
 
 func TestCompactionProcessorBase_LogCompactionStart(t *testing.T) {
 	base := NewCommonProcessorBase[*messages.MetricCompactionMessage, messages.CompactionKey](
-		nil, nil, &config.Config{},
+		nil, nil, getTestConfig(),
 	)
 
 	orgID := uuid.New()
@@ -470,7 +469,7 @@ func TestCommonConsumerConfig_Validation(t *testing.T) {
 
 func TestCompactionProcessorBase_BuildExpectedFieldsFromKey_ReflectionFieldExtraction(t *testing.T) {
 	base := NewCommonProcessorBase[*messages.MetricCompactionMessage, messages.CompactionKey](
-		nil, nil, &config.Config{},
+		nil, nil, getTestConfig(),
 	)
 
 	orgID := uuid.New()
@@ -494,7 +493,7 @@ func TestCompactionProcessorBase_BuildExpectedFieldsFromKey_ReflectionFieldExtra
 
 func TestCompactionProcessorBase_ValidateGroupConsistency_ReflectionValidation(t *testing.T) {
 	base := NewCommonProcessorBase[*messages.MetricCompactionMessage, messages.CompactionKey](
-		nil, nil, &config.Config{},
+		nil, nil, getTestConfig(),
 	)
 
 	orgID := uuid.New()
@@ -532,7 +531,7 @@ func TestCompactionProcessorBase_ValidateGroupConsistency_ReflectionValidation(t
 
 func TestCompactionProcessorBase_ValidateGroupConsistency_InvalidFieldAccess(t *testing.T) {
 	base := NewCommonProcessorBase[*messages.MetricCompactionMessage, messages.CompactionKey](
-		nil, nil, &config.Config{},
+		nil, nil, getTestConfig(),
 	)
 
 	key := messages.CompactionKey{
@@ -826,7 +825,7 @@ func TestNewMetricProcessorV2(t *testing.T) {
 	assert.NotNil(t, NewMetricCompactionProcessor)
 
 	// Test the processor creation
-	processor := NewMetricCompactionProcessor(mockStore, nil, nil, &config.Config{})
+	processor := NewMetricCompactionProcessor(mockStore, nil, nil, getTestConfig())
 	assert.NotNil(t, processor)
 	assert.Equal(t, mockStore, processor.store)
 }
@@ -840,7 +839,7 @@ func TestNewLogProcessorV2(t *testing.T) {
 	assert.NotNil(t, NewLogCompactionProcessor)
 
 	// Test the processor creation
-	processor := NewLogCompactionProcessor(mockStore, nil, nil, &config.Config{})
+	processor := NewLogCompactionProcessor(mockStore, nil, nil, getTestConfig())
 	assert.NotNil(t, processor)
 	assert.Equal(t, mockStore, processor.store)
 }
@@ -881,8 +880,8 @@ func TestCommonProcessor_InterfaceImplementation(t *testing.T) {
 	metricStore := &MockMetricCompactionStore{}
 	logStore := &MockLogCompactionStore{}
 
-	metricProcessor := NewMetricCompactionProcessor(metricStore, nil, nil, &config.Config{})
-	logProcessor := NewLogCompactionProcessor(logStore, nil, nil, &config.Config{})
+	metricProcessor := NewMetricCompactionProcessor(metricStore, nil, nil, getTestConfig())
+	logProcessor := NewLogCompactionProcessor(logStore, nil, nil, getTestConfig())
 
 	// Test that they implement the interface by calling GetTargetRecordCount
 	ctx := context.Background()
@@ -913,7 +912,7 @@ func TestCommonProcessor_InterfaceImplementation(t *testing.T) {
 func TestMetricCompactionProcessor_ProcessWorkInterface(t *testing.T) {
 	// Test that the processor implements the CompactionProcessor interface
 	// by verifying ProcessWork method exists with correct signature
-	processor := NewMetricCompactionProcessor(&MockMetricCompactionStore{}, nil, nil, &config.Config{})
+	processor := NewMetricCompactionProcessor(&MockMetricCompactionStore{}, nil, nil, getTestConfig())
 
 	// Test that we can create the group structure that ProcessWork expects
 	group := &accumulationGroup[messages.CompactionKey]{
@@ -1200,7 +1199,7 @@ func TestCommonConsumer_ProcessKafkaMessage_ReflectionHandlesPointerTypes(t *tes
 
 func TestLogCompactionProcessor_ProcessBundleInterface(t *testing.T) {
 	// Test that the processor implements the ProcessBundle interface
-	processor := NewLogCompactionProcessor(&MockLogCompactionStore{}, nil, nil, &config.Config{})
+	processor := NewLogCompactionProcessor(&MockLogCompactionStore{}, nil, nil, getTestConfig())
 
 	key := messages.LogCompactionKey{
 		OrganizationID: uuid.New(),
