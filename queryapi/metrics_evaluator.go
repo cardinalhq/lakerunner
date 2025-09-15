@@ -271,8 +271,8 @@ func (q *QuerierService) EvaluateMetricsQuery(
 						req := PushDownRequest{
 							OrganizationID: orgID,
 							BaseExpr:       &leaf,
-							StartTs:        group.StartTs - offMs,
-							EndTs:          group.EndTs - offMs,
+							StartTs:        globalStart - offMs,
+							EndTs:          globalEnd - offMs,
 							Segments:       wsegs,
 							Step:           stepDuration,
 						}
@@ -295,8 +295,9 @@ func (q *QuerierService) EvaluateMetricsQuery(
 						slog.Error("no worker pushdowns survived; skipping leaf", "leafID", leafID)
 						continue
 					}
-
-					leafChans = append(leafChans, workerChans...)
+					// Strictly order the leaf stream by time before mixing with other leaves.
+					leafMerged := promql.MergeSorted(pushCtx, 1024, false, 0, workerChans...)
+					leafChans = append(leafChans, leafMerged)
 				}
 
 				// If nothing survived, register a closed stream so ordering advances.
