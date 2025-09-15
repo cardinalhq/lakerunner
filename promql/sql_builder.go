@@ -283,28 +283,33 @@ func buildCountOnly(be *BaseExpr, projs []proj, step time.Duration) string {
 	alignedStart := fmt.Sprintf("({start} - ({start} %% %d))", stepMs)
 	alignedEndExclusive := fmt.Sprintf("(({end} - 1) - (({end} - 1) %% %d) + %d)", stepMs, stepMs)
 
-	// Buckets CTE.
-	buckets := fmt.Sprintf("buckets AS (SELECT range AS bucket_ts FROM range(%s, %s, %d))",
-		alignedStart, alignedEndExclusive, stepMs)
+	// Buckets CTE: dense time grid.
+	buckets := fmt.Sprintf(
+		"buckets AS (SELECT range AS bucket_ts FROM range(%s, %s, %d))",
+		alignedStart, alignedEndExclusive, stepMs,
+	)
 
-	// Quote group-by identifiers once; handle dotted names.
+	// Single source CTE so we only have ONE `{table}` to replace.
+	// Apply all filters (incl. time) here and reuse below.
+	source := "src AS (SELECT * FROM {table}" + where + ")"
+
 	quote := func(id string) string { return fmt.Sprintf("\"%s\"", id) }
 	var gbq []string
 	for _, g := range be.GroupBy {
 		gbq = append(gbq, quote(g))
 	}
 
-	// Optional groups grid (distinct group keys across the time span), all quoted.
+	// Optional groups/grid CTEs for densification by group keys.
 	var groupsCTE, gridCTE, gridFrom string
 	if len(gbq) > 0 {
-		groupsCTE = "groups AS (SELECT DISTINCT " + strings.Join(gbq, ", ") + " FROM {table}" + where + ")"
+		groupsCTE = "groups AS (SELECT DISTINCT " + strings.Join(gbq, ", ") + " FROM src)"
 		gridCTE = "grid AS (SELECT bucket_ts, " + strings.Join(gbq, ", ") + " FROM buckets CROSS JOIN groups)"
 		gridFrom = "grid g"
 	} else {
 		gridFrom = "buckets b"
 	}
 
-	// Step aggregates per bucket (+ group). Decide which interim columns we need.
+	// Step aggregates per (bucket + group)
 	stepCols := []string{bucketExpr + " AS bucket_ts"}
 	needSum, needCount := false, false
 	for _, p := range projs {
@@ -319,41 +324,29 @@ func buildCountOnly(be *BaseExpr, projs []proj, step time.Duration) string {
 		stepCols = append(stepCols, "SUM(rollup_sum) AS step_sum")
 	}
 	if needCount {
-		// For the COUNT fast-path we want “how many input rows (series entries) existed in the step
-		// for that group”. COUNT(rollup_count) or COUNT(*) are both acceptable; rollup_count is present
-		// in this schema and avoids counting NULL-only rows.
 		stepCols = append(stepCols, "COUNT(rollup_count) AS step_count")
 	}
 	if len(gbq) > 0 {
 		stepCols = append(stepCols, strings.Join(gbq, ", "))
 	}
 
-	// GROUP BY keys for step_aggr.
 	gb := []string{"bucket_ts"}
 	if len(gbq) > 0 {
 		gb = append(gb, gbq...)
 	}
 	stepAgg := "step_aggr AS (SELECT " + strings.Join(stepCols, ", ") +
-		" FROM {table}" + where +
-		" GROUP BY " + strings.Join(gb, ", ") + ")"
+		" FROM src GROUP BY " + strings.Join(gb, ", ") + ")"
 
-	// Final select: densified grid LEFT JOIN step_aggr; COALESCE to 0 for gaps.
+	// Final projection from the dense grid LEFT JOIN step_aggr
 	var outCols []string
-	// Always select bucket_ts from the grid/buckets side so it's dense.
-	outCols = append(outCols, "g.bucket_ts")
 	if len(gbq) == 0 {
-		// When there is no grouping, grid is actually "buckets b"; keep alias uniform.
-		outCols[0] = "b.bucket_ts"
-	}
-
-	// Include group-by columns from the grid side; they will keep their original (unaliased) column names.
-	if len(gbq) > 0 {
+		outCols = append(outCols, "b.bucket_ts")
+	} else {
+		outCols = append(outCols, "g.bucket_ts")
 		for _, c := range gbq {
-			// Selecting g."name.with.dot" preserves the column name as name.with.dot in the result set.
 			outCols = append(outCols, "g."+c)
 		}
 	}
-
 	for _, p := range projs {
 		switch p.alias {
 		case "sum":
@@ -365,14 +358,11 @@ func buildCountOnly(be *BaseExpr, projs []proj, step time.Duration) string {
 		}
 	}
 
-	// Build an explicit JOIN ... ON ... so quoted/dotted identifiers work cleanly.
 	joinOn := func() string {
 		var conds []string
 		if len(gbq) == 0 {
-			// buckets b  LEFT JOIN step_aggr sa ON b.bucket_ts = sa.bucket_ts
 			conds = []string{"b.bucket_ts = sa.bucket_ts"}
 		} else {
-			// grid g LEFT JOIN step_aggr sa ON g.bucket_ts = sa.bucket_ts AND g."a" = sa."a" AND ...
 			conds = []string{"g.bucket_ts = sa.bucket_ts"}
 			for _, c := range gbq {
 				conds = append(conds, "g."+c+" = sa."+c)
@@ -381,22 +371,22 @@ func buildCountOnly(be *BaseExpr, projs []proj, step time.Duration) string {
 		return strings.Join(conds, " AND ")
 	}()
 
-	withs := []string{buckets}
+	withs := []string{buckets, source}
 	if groupsCTE != "" {
 		withs = append(withs, groupsCTE, gridCTE)
 	}
 	withs = append(withs, stepAgg)
 
+	orderBy := "b.bucket_ts ASC"
+	if len(gbq) > 0 {
+		orderBy = "g.bucket_ts ASC"
+	}
+
 	sql := "WITH " + strings.Join(withs, ", ") +
 		" SELECT " + strings.Join(outCols, ", ") +
 		" FROM " + gridFrom +
 		" LEFT JOIN step_aggr sa ON " + joinOn +
-		" ORDER BY " + func() string {
-		if len(gbq) == 0 {
-			return "b.bucket_ts ASC"
-		}
-		return "g.bucket_ts ASC"
-	}()
+		" ORDER BY " + orderBy
 
 	return sql
 }

@@ -995,3 +995,234 @@ INSERT INTO logs("_cardinalhq.timestamp","_cardinalhq.name","resource.service.na
 		}
 	}
 }
+
+func TestProm_CountByPod_InstantVector(t *testing.T) {
+	// --- Worker 1 -------------------------------------------------------------
+	db1 := openDuckDB(t)
+	createTempTable(t, db1)
+	mustExec(t, db1, `
+INSERT INTO logs("_cardinalhq.timestamp","_cardinalhq.name","resource.service.name","resource.k8s.pod.name",instance,rollup_sum,rollup_count,rollup_min,rollup_max) VALUES
+-- bucket 0
+(10*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'a', 1, 1, 1, 1),
+(20*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'b', 1, 1, 1, 1),
+-- bucket 1
+(70*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'a', 1, 1, 1, 1),
+(80*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'b', 1, 1, 1, 1),
+(90*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'c', 1, 1, 1, 1);
+`)
+
+	// --- Worker 2 -------------------------------------------------------------
+	db2 := openDuckDB(t)
+	createTempTable(t, db2)
+	mustExec(t, db2, `
+INSERT INTO logs("_cardinalhq.timestamp","_cardinalhq.name","resource.service.name","resource.k8s.pod.name",instance,rollup_sum,rollup_count,rollup_min,rollup_max) VALUES
+-- bucket 0
+(40*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-9x', 'a', 1, 1, 1, 1),
+-- bucket 1
+(100*1000, 'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-9x', 'a', 1, 1, 1, 1);
+`)
+
+	step := time.Minute
+	q := `count by ("resource.k8s.pod.name") ({__name__="k8s.container.cpu_limit_utilization"})`
+
+	expr, err := FromPromQL(q)
+	if err != nil {
+		t.Fatalf("parse promql: %v", err)
+	}
+	plan, err := Compile(expr)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf, got %d", len(plan.Leaves))
+	}
+	leaf := plan.Leaves[0]
+
+	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000)
+	rows1 := queryAll(t, db1, workerSQL)
+	rows2 := queryAll(t, db2, workerSQL)
+	if len(rows1) == 0 && len(rows2) == 0 {
+		t.Fatalf("no rows from either worker; sql=\n%s", workerSQL)
+	}
+
+	// Build coordinator inputs: pass through the leaf's numeric COUNT.
+	type bucket = int64
+	perBucket := map[bucket][]SketchInput{}
+	addRows := func(rows []rowmap) {
+		for _, r := range rows {
+			b := i64(r["bucket_ts"])
+			pod := s(r[`resource.k8s.pod.name`])
+			if pod == "" {
+				pod = s(r[`resource_k8s_pod_name`])
+			}
+			cnt := i64(r["count"]) // leaf step_count
+			if cnt == 0 {
+				// skip densified empties
+				continue
+			}
+			perBucket[b] = append(perBucket[b], SketchInput{
+				ExprID:         leaf.ID,
+				OrganizationID: "org-test",
+				Timestamp:      b,
+				Frequency:      int64(step / time.Second),
+				SketchTags: SketchTags{
+					Tags:       map[string]any{"resource.k8s.pod.name": pod},
+					SketchType: SketchMAP,
+					Agg:        map[string]float64{"count": float64(cnt)}, // <-- key fix
+				},
+			})
+		}
+	}
+	addRows(rows1)
+	addRows(rows2)
+
+	// Deterministic order.
+	var buckets []int64
+	for b := range perBucket {
+		buckets = append(buckets, b)
+	}
+	sort.Slice(buckets, func(i, j int) bool { return buckets[i] < buckets[j] })
+
+	got := map[[2]any]float64{}
+	for _, b := range buckets {
+		out := plan.Root.Eval(SketchGroup{
+			Timestamp: b,
+			Group:     map[string][]SketchInput{leaf.ID: perBucket[b]},
+		}, step)
+		for _, er := range out {
+			pod := s(er.Tags[`resource.k8s.pod.name`])
+			got[[2]any{b, pod}] = er.Value.Num
+		}
+	}
+
+	// Expect the leaf's counts per (bucket,pod).
+	exp := map[[2]any]float64{
+		{int64(0), "api-7f"}:     2,
+		{int64(0), "api-9x"}:     1,
+		{int64(60000), "api-7f"}: 3,
+		{int64(60000), "api-9x"}: 1,
+	}
+	for k, want := range exp {
+		if int64(got[k]+0.5) != int64(want) {
+			t.Fatalf("count-by-pod mismatch at %v: got=%v want=%v\nrows1=%v\nrows2=%v\nsql=\n%s",
+				k, got[k], want, rows1, rows2, workerSQL)
+		}
+	}
+}
+
+func TestProm_CountOfPods_InstantVector(t *testing.T) {
+	// --- Worker 1 -------------------------------------------------------------
+	db1 := openDuckDB(t)
+	createTempTable(t, db1)
+	mustExec(t, db1, `
+INSERT INTO logs("_cardinalhq.timestamp","_cardinalhq.name","resource.service.name","resource.k8s.pod.name",instance,rollup_sum,rollup_count,rollup_min,rollup_max) VALUES
+-- bucket 0
+(10*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'a', 1, 1, 1, 1),
+(20*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'b', 1, 1, 1, 1),
+-- bucket 1
+(70*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'a', 1, 1, 1, 1),
+(80*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'b', 1, 1, 1, 1),
+(90*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'c', 1, 1, 1, 1);
+`)
+
+	// --- Worker 2 -------------------------------------------------------------
+	db2 := openDuckDB(t)
+	createTempTable(t, db2)
+	mustExec(t, db2, `
+INSERT INTO logs("_cardinalhq.timestamp","_cardinalhq.name","resource.service.name","resource.k8s.pod.name",instance,rollup_sum,rollup_count,rollup_min,rollup_max) VALUES
+-- bucket 0
+(40*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-9x', 'a', 1, 1, 1, 1),
+-- bucket 1
+(100*1000, 'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-9x', 'a', 1, 1, 1, 1);
+`)
+
+	step := time.Minute
+	q := `count(count by ("resource.k8s.pod.name") ({__name__="k8s.container.cpu_limit_utilization"}))`
+
+	expr, err := FromPromQL(q)
+	if err != nil {
+		t.Fatalf("parse promql: %v", err)
+	}
+	plan, err := Compile(expr)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf, got %d", len(plan.Leaves))
+	}
+	leaf := plan.Leaves[0]
+
+	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000)
+	rows1 := queryAll(t, db1, workerSQL)
+	rows2 := queryAll(t, db2, workerSQL)
+	if len(rows1) == 0 && len(rows2) == 0 {
+		t.Fatalf("no rows from either worker; sql=\n%s", workerSQL)
+	}
+
+	// Build coordinator inputs: one SketchInput per (bucket,pod) with the leaf's step_count.
+	type bucket = int64
+	perBucket := map[bucket][]SketchInput{}
+	addRows := func(rows []rowmap) {
+		for _, r := range rows {
+			b := i64(r["bucket_ts"])
+			pod := s(r[`resource.k8s.pod.name`])
+			if pod == "" {
+				pod = s(r[`resource_k8s_pod_name`])
+			}
+			cnt := int64(0)
+			if v, ok := r["count"]; ok && v != nil {
+				cnt = i64(v)
+			}
+			if cnt == 0 { // skip densified empties
+				continue
+			}
+			perBucket[b] = append(perBucket[b], SketchInput{
+				ExprID:         leaf.ID,
+				OrganizationID: "org-test",
+				Timestamp:      b,
+				Frequency:      int64(step / time.Second),
+				SketchTags: SketchTags{
+					Tags:       map[string]any{"resource.k8s.pod.name": pod},
+					SketchType: SketchMAP,
+					Agg:        map[string]float64{"count": float64(cnt)},
+				},
+			})
+		}
+	}
+	addRows(rows1)
+	addRows(rows2)
+
+	// Deterministic order of buckets.
+	var buckets []int64
+	for b := range perBucket {
+		buckets = append(buckets, b)
+	}
+	sort.Slice(buckets, func(i, j int) bool { return buckets[i] < buckets[j] })
+
+	// Evaluate the full plan per bucket.
+	got := map[int64]float64{} // single series per bucket (outer count has no "by")
+	for _, b := range buckets {
+		out := plan.Root.Eval(SketchGroup{
+			Timestamp: b,
+			Group:     map[string][]SketchInput{leaf.ID: perBucket[b]},
+		}, step)
+
+		if len(out) != 1 {
+			t.Fatalf("expected 1 series at bucket %d, got %d; out=%v\nrows1=%v\nrows2=%v\nsql=\n%s",
+				b, len(out), out, rows1, rows2, workerSQL)
+		}
+		got[b] = out["default"].Value.Num
+	}
+
+	// We expect “number of pods present” per bucket: 2 in both buckets.
+	exp := map[int64]float64{
+		0:     2,
+		60000: 2,
+	}
+	for b, want := range exp {
+		if int64(got[b]+0.5) != int64(want) {
+			t.Fatalf("count(count by pod) mismatch at bucket %d: got=%v want=%v\nrows1=%v\nrows2=%v\nsql=\n%s",
+				b, got[b], want, rows1, rows2, workerSQL)
+		}
+	}
+}

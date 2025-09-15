@@ -276,7 +276,7 @@ func (q *QuerierService) EvaluateMetricsQuery(
 							OrganizationID: orgID,
 							BaseExpr:       &leaf,
 							StartTs:        group.StartTs - offMs - rangeMs,
-							EndTs:          group.EndTs + rangeMs,
+							EndTs:          globalEnd,
 							Segments:       wsegs,
 							Step:           stepDuration,
 						}

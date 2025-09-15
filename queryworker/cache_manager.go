@@ -404,7 +404,7 @@ func streamFromS3[T promql.Timestamped](
 
 			rows, err := conn.QueryContext(ctx, sqlReplaced)
 			if err != nil {
-				slog.Error("Query failed", slog.Any("error", err))
+				slog.Error("Query failed", slog.Any("error", err), "sql", sqlReplaced)
 				return
 			}
 			defer func() {

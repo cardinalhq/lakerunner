@@ -354,3 +354,101 @@ func TestVectorAggregation_Grouping_NormalizesLabelNames_Without(t *testing.T) {
 		}
 	}
 }
+
+func TestJSON_Syntax(t *testing.T) {
+	q := `{type="track",event="Order Completed"} | json revenue="properties.revenue"`
+	ast, err := FromLogQL(q)
+	if err != nil {
+		t.Fatalf("FromLogQL() error: %v", err)
+	}
+	if ast.Kind != KindLogSelector {
+		t.Fatalf("kind = %s, want %s", ast.Kind, KindLogSelector)
+
+	}
+	if ast.LogSel == nil {
+		t.Fatalf("LogSel is nil")
+	}
+	if len(ast.LogSel.Parsers) != 1 {
+		t.Fatalf("expected 1 parser, got %d: %#v", len(ast.LogSel.Parsers), ast.LogSel.Parsers)
+	}
+	for _, p := range ast.LogSel.Parsers {
+		if p.Type != "json" {
+			t.Fatalf("expected json parser, got: %#v", p)
+		}
+	}
+}
+
+func TestParse_Unwrap_JSON_WithLabelFormat_MappedNestedField(t *testing.T) {
+	// Map .properties.revenue into a flat label "revenue", then unwrap it and take max_over_time.
+	q := `max_over_time({type="track",event="Order Completed"} | json | label_format revenue=` +
+		"`{{ .properties.revenue }}`" +
+		` | unwrap revenue [1m])`
+
+	ast, err := FromLogQL(q)
+	if err != nil {
+		t.Fatalf("FromLogQL() error: %v", err)
+	}
+
+	// Sanity: it's a range aggregation with 1m window.
+	if ast.Kind != KindRangeAgg || ast.RangeAgg == nil {
+		t.Fatalf("kind=%s rangeAgg=%#v", ast.Kind, ast.RangeAgg)
+	}
+	if ast.RangeAgg.Left.Range != "1m" {
+		t.Fatalf("range=%q, want 1m", ast.RangeAgg.Left.Range)
+	}
+
+	// Pull the first pipeline (selector + stages).
+	sel, _, ok := ast.FirstPipeline()
+	if !ok {
+		t.Fatalf("no pipeline")
+	}
+
+	// Matchers survived?
+	if !hasMatcher(sel.Matchers, "type", "track") {
+		t.Fatalf(`missing matcher type="track": %#v`, sel.Matchers)
+	}
+	if !hasMatcher(sel.Matchers, "event", "Order Completed") {
+		t.Fatalf(`missing matcher event="Order Completed": %#v`, sel.Matchers)
+	}
+
+	// Expect stages: json, label_format (with "revenue"), unwrap (field "revenue")
+	var haveJSON, haveLabelFmt, haveUnwrap bool
+	for _, p := range sel.Parsers {
+		switch p.Type {
+		case "json":
+			haveJSON = true
+		case "label_format":
+			// ensure we created an output label "revenue" from the template
+			foundOut := false
+			for _, lf := range p.LabelFormats {
+				if lf.Out == "revenue" {
+					// optional: check the template string we normalized
+					if !strings.Contains(lf.Tmpl, ".properties.revenue") {
+						t.Fatalf("label_format tmpl=%q doesn't reference .properties.revenue", lf.Tmpl)
+					}
+					foundOut = true
+					break
+				}
+			}
+			if !foundOut {
+				t.Fatalf("label_format did not define output label 'revenue': %#v", p.LabelFormats)
+			}
+			haveLabelFmt = true
+		case "unwrap":
+			if p.Params["func"] != "identity" || p.Params["field"] != "revenue" {
+				t.Fatalf("unwrap params = %#v (want func=identity, field=revenue)", p.Params)
+			}
+			haveUnwrap = true
+		}
+	}
+
+	if !haveJSON {
+		t.Fatalf("json stage not found; parsers=%#v", sel.Parsers)
+	}
+	if !haveLabelFmt {
+		t.Fatalf("label_format stage not found; parsers=%#v", sel.Parsers)
+	}
+	if !haveUnwrap {
+		t.Fatalf("unwrap stage not found; parsers=%#v", sel.Parsers)
+	}
+}
