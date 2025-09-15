@@ -40,7 +40,7 @@ func TestDDBSink_IngestParquetBatch(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err, "failed to walk ./testdata/db")
-	require.NotEmpty(t, parquetPaths, "no parquet files found under ./	")
+	require.NotEmpty(t, parquetPaths, "no parquet files found under ./testdata/db")
 
 	// Step 2: Assign dummy segment IDs
 	segmentIDs := make([]int64, len(parquetPaths))
