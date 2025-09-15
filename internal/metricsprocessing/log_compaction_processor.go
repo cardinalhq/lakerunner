@@ -155,7 +155,6 @@ func (p *LogCompactionProcessor) ProcessBundle(ctx context.Context, key messages
 	ll.Info("Found segments to compact",
 		slog.Int("activeSegments", len(activeSegments)))
 
-	// Perform the core compaction logic
 	results, err := p.performLogCompactionCore(ctx, tmpDir, storageClient, key, storageProfile, activeSegments, recordCountEstimate)
 	if err != nil {
 		ll.Error("Failed to perform log compaction core processing, skipping bundle",
@@ -167,7 +166,6 @@ func (p *LogCompactionProcessor) ProcessBundle(ctx context.Context, key messages
 		return nil
 	}
 
-	// Upload new files and create new log segments
 	newSegments, err := p.uploadAndCreateLogSegments(ctx, storageClient, storageProfile, results, key, activeSegments)
 	if err != nil {
 		ll.Error("Failed to upload and create log segments, skipping bundle",
@@ -179,12 +177,11 @@ func (p *LogCompactionProcessor) ProcessBundle(ctx context.Context, key messages
 		return nil
 	}
 
-	// Create KafkaCommitData for offset tracking
 	kafkaCommitData := &KafkaCommitData{
 		Topic:         p.config.TopicRegistry.GetTopic(config.TopicSegmentsLogsCompact),
 		ConsumerGroup: p.config.TopicRegistry.GetConsumerGroup(config.TopicSegmentsLogsCompact),
 		Offsets: map[int32]int64{
-			partition: offset + 1,
+			partition: offset,
 		},
 	}
 
@@ -241,7 +238,6 @@ func (p *LogCompactionProcessor) performLogCompactionCore(ctx context.Context, t
 func (p *LogCompactionProcessor) uploadAndCreateLogSegments(ctx context.Context, client cloudstorage.Client, profile storageprofile.StorageProfile, results []parquetwriter.Result, key messages.LogCompactionKey, inputSegments []lrdb.LogSeg) ([]lrdb.LogSeg, error) {
 	ll := logctx.FromContext(ctx)
 
-	// Calculate input metrics
 	var totalInputSize, totalInputRecords int64
 	for _, seg := range inputSegments {
 		totalInputSize += seg.FileSize
@@ -312,20 +308,16 @@ func (p *LogCompactionProcessor) uploadAndCreateLogSegments(ctx context.Context,
 func (p *LogCompactionProcessor) atomicLogDatabaseUpdate(ctx context.Context, oldSegments, newSegments []lrdb.LogSeg, kafkaCommitData *KafkaCommitData, key messages.LogCompactionKey) error {
 	ll := logctx.FromContext(ctx)
 
-	// Prepare Kafka offsets for update
-	var kafkaOffsets []lrdb.KafkaOffsetUpdate
+	var kafkaOffsets []lrdb.KafkaOffsetInfo
 	if kafkaCommitData != nil {
 		for partition, offset := range kafkaCommitData.Offsets {
-			kafkaOffsets = append(kafkaOffsets, lrdb.KafkaOffsetUpdate{
-				Topic:               kafkaCommitData.Topic,
-				Partition:           partition,
-				ConsumerGroup:       kafkaCommitData.ConsumerGroup,
-				OrganizationID:      key.OrganizationID,
-				InstanceNum:         key.InstanceNum,
-				LastProcessedOffset: offset,
+			kafkaOffsets = append(kafkaOffsets, lrdb.KafkaOffsetInfo{
+				ConsumerGroup: kafkaCommitData.ConsumerGroup,
+				Topic:         kafkaCommitData.Topic,
+				PartitionID:   partition,
+				Offsets:       []int64{offset},
 			})
 
-			// Log each Kafka offset update
 			ll.Debug("Updating Kafka consumer group offset",
 				slog.String("consumerGroup", kafkaCommitData.ConsumerGroup),
 				slog.String("topic", kafkaCommitData.Topic),
@@ -334,7 +326,6 @@ func (p *LogCompactionProcessor) atomicLogDatabaseUpdate(ctx context.Context, ol
 		}
 	}
 
-	// Convert segments to appropriate types
 	oldRecords := make([]lrdb.CompactLogSegsOld, len(oldSegments))
 	for i, seg := range oldSegments {
 		oldRecords[i] = lrdb.CompactLogSegsOld{
@@ -367,8 +358,8 @@ func (p *LogCompactionProcessor) atomicLogDatabaseUpdate(ctx context.Context, ol
 		CreatedBy:      lrdb.CreatedByCompact,
 	}
 
-	if err := p.store.CompactLogSegsWithKafkaOffsets(ctx, params, kafkaOffsets); err != nil {
-		ll.Error("Failed CompactLogSegsWithKafkaOffsets",
+	if err := p.store.CompactLogSegments(ctx, params, kafkaOffsets); err != nil {
+		ll.Error("Failed CompactLogSegments",
 			slog.Any("error", err),
 			slog.String("organization_id", key.OrganizationID.String()),
 			slog.Int("dateint", int(key.DateInt)),

@@ -44,7 +44,7 @@ import (
 type DateintBin struct {
 	Dateint int32 // The dateint for this bin
 	Writer  parquetwriter.ParquetWriter
-	Result  *parquetwriter.Result // Result after writer is closed
+	Results []parquetwriter.Result // Results after writer is closed (can be multiple files)
 }
 
 // DateintBinManager manages multiple file groups, one per dateint
@@ -66,7 +66,6 @@ type LogIngestProcessor struct {
 
 // newLogIngestProcessor creates a new log ingest processor instance
 func newLogIngestProcessor(
-	ctx context.Context,
 	cfg *config.Config,
 	store LogIngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *LogIngestProcessor {
 	var exemplarProcessor *exemplars.Processor
@@ -174,8 +173,6 @@ func (p *LogIngestProcessor) Process(ctx context.Context, group *accumulationGro
 	var readersToClose []filereader.Reader
 	var totalInputSize int64
 
-	nowDateInt := helpers.CurrentDateInt()
-
 	for _, accMsg := range group.Messages {
 		msg, ok := accMsg.Message.(*messages.ObjStoreNotificationMessage)
 		if !ok {
@@ -235,33 +232,17 @@ func (p *LogIngestProcessor) Process(ctx context.Context, group *accumulationGro
 		return nil
 	}
 
-	segmentParams, err := p.uploadAndCreateLogSegments(ctx, storageClient, nowDateInt, dateintBins, storageProfile)
+	segmentParams, err := p.uploadAndCreateLogSegments(ctx, storageClient, dateintBins, storageProfile)
 	if err != nil {
 		return fmt.Errorf("failed to upload and create segments: %w", err)
 	}
 
-	// Convert KafkaCommitData to KafkaOffsetUpdate slice
-	var kafkaOffsets []lrdb.KafkaOffsetUpdate
-	if kafkaCommitData != nil {
-		for partition, offset := range kafkaCommitData.Offsets {
-			kafkaOffsets = append(kafkaOffsets, lrdb.KafkaOffsetUpdate{
-				ConsumerGroup:       kafkaCommitData.ConsumerGroup,
-				Topic:               kafkaCommitData.Topic,
-				Partition:           partition,
-				LastProcessedOffset: offset,
-				OrganizationID:      group.Key.OrganizationID,
-				InstanceNum:         group.Key.InstanceNum,
-			})
-		}
-	}
-
-	batch := lrdb.LogSegmentBatch{
-		Segments:     segmentParams,
-		KafkaOffsets: kafkaOffsets,
-	}
+	// Collect all offsets from the group's messages for new offset tracking
+	// Collect all Kafka offsets from this group's messages
+	kafkaOffsets := collectKafkaOffsetsFromGroup(group, kafkaCommitData)
 
 	criticalCtx := context.WithoutCancel(ctx)
-	if err := p.store.InsertLogSegmentBatchWithKafkaOffsets(criticalCtx, batch); err != nil {
+	if err := p.store.InsertLogSegmentsBatch(criticalCtx, segmentParams, kafkaOffsets); err != nil {
 		// Log detailed segment information for debugging
 		segmentIDs := make([]int64, len(segmentParams))
 		var totalRecords, totalSize int64
@@ -483,8 +464,7 @@ func (p *LogIngestProcessor) processRowsWithDateintBinning(ctx context.Context, 
 		}
 
 		if len(results) > 0 {
-			// Should typically be one result per writer
-			bin.Result = &results[0]
+			bin.Results = append(bin.Results, results...)
 		}
 	}
 
@@ -513,49 +493,56 @@ func (manager *DateintBinManager) getOrCreateBin(_ context.Context, dateint int3
 }
 
 // uploadAndCreateLogSegments uploads dateint bins to S3 and creates segment parameters
-func (p *LogIngestProcessor) uploadAndCreateLogSegments(ctx context.Context, storageClient cloudstorage.Client, nowDateInt int32, dateintBins map[int32]*DateintBin, storageProfile storageprofile.StorageProfile) ([]lrdb.InsertLogSegmentParams, error) {
+func (p *LogIngestProcessor) uploadAndCreateLogSegments(ctx context.Context, storageClient cloudstorage.Client, dateintBins map[int32]*DateintBin, storageProfile storageprofile.StorageProfile) ([]lrdb.InsertLogSegmentParams, error) {
 	ll := logctx.FromContext(ctx)
 
 	var segmentParams []lrdb.InsertLogSegmentParams
 
-	// First, collect all valid bins to know how many IDs we need
-	type validBin struct {
+	// First, collect all valid results to know how many IDs we need
+	type validResult struct {
 		dateint int32
-		bin     *DateintBin
+		result  parquetwriter.Result
 		stats   factories.LogsFileStats
 	}
-	var validBins []validBin
+	var validResults []validResult
 
+	// Collect all valid results from all bins
 	for dateint, bin := range dateintBins {
-		if bin.Result == nil || bin.Result.RecordCount == 0 {
+		if len(bin.Results) == 0 {
 			ll.Debug("Skipping empty dateint bin", slog.Int("dateint", int(dateint)))
 			continue
 		}
 
-		// Extract file stats from parquetwriter result
-		stats, ok := bin.Result.Metadata.(factories.LogsFileStats)
-		if !ok {
-			return nil, fmt.Errorf("expected LogsFileStats metadata, got %T", bin.Result.Metadata)
-		}
+		// Process each result from this bin
+		for _, result := range bin.Results {
+			if result.RecordCount == 0 {
+				continue
+			}
 
-		validBins = append(validBins, validBin{
-			dateint: dateint,
-			bin:     bin,
-			stats:   stats,
-		})
+			// Extract file stats from parquetwriter result
+			stats, ok := result.Metadata.(factories.LogsFileStats)
+			if !ok {
+				return nil, fmt.Errorf("expected LogsFileStats metadata, got %T", result.Metadata)
+			}
+
+			validResults = append(validResults, validResult{
+				dateint: dateint,
+				result:  result,
+				stats:   stats,
+			})
+		}
 	}
 
-	// Generate unique batch IDs for all valid bins to avoid collisions
-	batchSegmentIDs := idgen.GenerateBatchIDs(len(validBins))
+	// Generate unique batch IDs for all valid results to avoid collisions
+	batchSegmentIDs := idgen.GenerateBatchIDs(len(validResults))
 
-	for i, validBin := range validBins {
-		dateint := validBin.dateint
-		bin := validBin.bin
-		stats := validBin.stats
+	for i, valid := range validResults {
+		dateint := valid.dateint
+		result := valid.result
+		stats := valid.stats
 
 		segmentID := batchSegmentIDs[i]
 
-		// Generate upload path using stats dateint and hour
 		uploadPath := helpers.MakeDBObjectID(
 			storageProfile.OrganizationID,
 			storageProfile.CollectorName,
@@ -565,19 +552,17 @@ func (p *LogIngestProcessor) uploadAndCreateLogSegments(ctx context.Context, sto
 			"logs",
 		)
 
-		// Upload file to S3
-		uploadErr := storageClient.UploadObject(ctx, storageProfile.Bucket, uploadPath, bin.Result.FileName)
+		uploadErr := storageClient.UploadObject(ctx, storageProfile.Bucket, uploadPath, result.FileName)
 		if uploadErr != nil {
-			return nil, fmt.Errorf("failed to upload file %s to %s: %w", bin.Result.FileName, uploadPath, uploadErr)
+			return nil, fmt.Errorf("failed to upload file %s to %s: %w", result.FileName, uploadPath, uploadErr)
 		}
 
 		ll.Debug("Uploaded log segment",
 			slog.String("uploadPath", uploadPath),
 			slog.Int64("segmentID", segmentID),
-			slog.Int64("recordCount", bin.Result.RecordCount),
-			slog.Int64("fileSize", bin.Result.FileSize))
+			slog.Int64("recordCount", result.RecordCount),
+			slog.Int64("fileSize", result.FileSize))
 
-		// Create segment parameters for database insertion using extracted stats
 		params := lrdb.InsertLogSegmentParams{
 			OrganizationID: storageProfile.OrganizationID,
 			Dateint:        dateint,
@@ -585,8 +570,8 @@ func (p *LogIngestProcessor) uploadAndCreateLogSegments(ctx context.Context, sto
 			InstanceNum:    storageProfile.InstanceNum,
 			StartTs:        stats.FirstTS,
 			EndTs:          stats.LastTS + 1, // end is exclusive
-			RecordCount:    bin.Result.RecordCount,
-			FileSize:       bin.Result.FileSize,
+			RecordCount:    result.RecordCount,
+			FileSize:       result.FileSize,
 			CreatedBy:      lrdb.CreatedByIngest,
 			Fingerprints:   stats.Fingerprints,
 			Published:      true,  // Mark ingested segments as published
@@ -632,7 +617,6 @@ func (t *LogTranslator) TranslateRow(row *filereader.Row) error {
 	// Ensure required CardinalhQ fields are set
 	(*row)[wkk.RowKeyCTelemetryType] = "logs"
 	(*row)[wkk.RowKeyCName] = "log.events"
-	(*row)[wkk.RowKeyCValue] = float64(1)
 
 	return nil
 }

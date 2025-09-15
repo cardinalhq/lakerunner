@@ -15,9 +15,6 @@
 package lrdb
 
 import (
-	"context"
-	"fmt"
-
 	"github.com/google/uuid"
 )
 
@@ -45,79 +42,4 @@ type CompactLogSegsNew struct {
 	RecordCount  int64
 	FileSize     int64
 	Fingerprints []int64
-}
-
-// CompactLogSegsWithKafkaOffsets marks old log segments as compacted, inserts new compacted segments,
-// and updates Kafka offsets in a single transaction
-func (q *Store) CompactLogSegsWithKafkaOffsets(ctx context.Context, params CompactLogSegsParams, kafkaOffsets []KafkaOffsetUpdate) error {
-	return q.execTx(ctx, func(s *Store) error {
-		if len(params.OldRecords) > 0 {
-			segIDs := make([]int64, len(params.OldRecords))
-			for i, oldRec := range params.OldRecords {
-				segIDs[i] = oldRec.SegmentID
-			}
-
-			if err := s.MarkLogSegsCompactedByKeys(ctx, MarkLogSegsCompactedByKeysParams{
-				OrganizationID: params.OrganizationID,
-				Dateint:        params.Dateint,
-				InstanceNum:    params.InstanceNum,
-				SegmentIds:     segIDs,
-			}); err != nil {
-				return fmt.Errorf("mark old log segments compacted: %w", err)
-			}
-		}
-
-		if len(params.NewRecords) > 0 {
-			newItems := make([]batchInsertLogSegsDirectParams, len(params.NewRecords))
-			for i, r := range params.NewRecords {
-				newItems[i] = batchInsertLogSegsDirectParams{
-					OrganizationID: params.OrganizationID,
-					Dateint:        params.Dateint,
-					SegmentID:      r.SegmentID,
-					InstanceNum:    params.InstanceNum,
-					StartTs:        r.StartTs,
-					EndTs:          r.EndTs,
-					RecordCount:    r.RecordCount,
-					FileSize:       r.FileSize,
-					CreatedBy:      params.CreatedBy,
-					Fingerprints:   r.Fingerprints,
-					Published:      true,
-					Compacted:      true,
-				}
-			}
-
-			res := s.batchInsertLogSegsDirect(ctx, newItems)
-			var insertErr error
-			res.Exec(func(i int, err error) {
-				if err != nil && insertErr == nil {
-					insertErr = fmt.Errorf("insert compacted log segment %d: %w", i, err)
-				}
-			})
-			if insertErr != nil {
-				return insertErr
-			}
-		}
-
-		// Update Kafka offsets with organization and instance tracking
-		if len(kafkaOffsets) > 0 {
-			// Sort offsets to prevent deadlocks
-			SortKafkaOffsets(kafkaOffsets)
-
-			// Convert to batch parameters - use KafkaJournalUpsertWithOrgInstance for individual org/instance tracking
-			for _, offset := range kafkaOffsets {
-				if err := s.KafkaJournalUpsertWithOrgInstance(ctx, KafkaJournalUpsertWithOrgInstanceParams{
-					Topic:               offset.Topic,
-					Partition:           offset.Partition,
-					ConsumerGroup:       offset.ConsumerGroup,
-					OrganizationID:      offset.OrganizationID,
-					InstanceNum:         offset.InstanceNum,
-					LastProcessedOffset: offset.LastProcessedOffset,
-				}); err != nil {
-					return fmt.Errorf("update kafka offset for org %s instance %d: %w", offset.OrganizationID, offset.InstanceNum, err)
-				}
-			}
-		}
-
-		return nil
-	})
 }

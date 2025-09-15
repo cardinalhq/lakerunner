@@ -22,8 +22,6 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
@@ -44,7 +42,8 @@ type CommonConsumerConfig struct {
 
 // CommonConsumerStore defines the minimal interface required by common consumers
 type CommonConsumerStore interface {
-	KafkaGetLastProcessed(ctx context.Context, params lrdb.KafkaGetLastProcessedParams) (int64, error)
+	// Offset tracking - only for reading
+	KafkaOffsetsAfter(ctx context.Context, params lrdb.KafkaOffsetsAfterParams) ([]int64, error)
 }
 
 // MessageGatherer defines the interface for processing messages and idle groups
@@ -107,8 +106,8 @@ func NewCommonConsumerWithComponents[M messages.CompactionMessage, K messages.Co
 		config:          consumerConfig,
 	}
 
-	// Create Gatherer using the consumer itself as offset callbacks
-	cc.gatherer = newGatherer[M](consumerConfig.Topic, consumerConfig.ConsumerGroup, processor, cc)
+	// Create gatherer with sync mode deduplication
+	cc.gatherer = newGatherer[M](consumerConfig.Topic, consumerConfig.ConsumerGroup, processor, store)
 
 	return cc
 }
@@ -206,85 +205,6 @@ func (c *CommonConsumer[M, K]) processKafkaMessage(ctx context.Context, kafkaMsg
 	}
 
 	return nil
-}
-
-// GetLastProcessedOffset returns the last processed offset for this key, or -1 if never seen
-func (c *CommonConsumer[M, K]) GetLastProcessedOffset(ctx context.Context, metadata *messageMetadata, groupingKey K) (int64, error) {
-	orgUUID := groupingKey.GetOrgID()
-	instNum := groupingKey.GetInstanceNum()
-
-	offset, err := c.store.KafkaGetLastProcessed(ctx, lrdb.KafkaGetLastProcessedParams{
-		Topic:          metadata.Topic,
-		Partition:      metadata.Partition,
-		ConsumerGroup:  metadata.ConsumerGroup,
-		OrganizationID: orgUUID,
-		InstanceNum:    instNum,
-	})
-	if err != nil {
-		// Return -1 if no row found (never seen before), but propagate other errors
-		if errors.Is(err, pgx.ErrNoRows) {
-			return -1, nil
-		}
-		return -1, fmt.Errorf("failed to get last processed offset: %w", err)
-	}
-	return offset, nil
-}
-
-// MarkOffsetsProcessed commits the consumer group offsets to Kafka
-func (c *CommonConsumer[M, K]) MarkOffsetsProcessed(ctx context.Context, key K, offsets map[int32]int64) error {
-	ll := logctx.FromContext(ctx)
-
-	if len(offsets) == 0 {
-		return nil
-	}
-
-	// Create ConsumedMessage objects for each partition/offset to commit
-	commitMessages := c.buildCommitMessages(offsets)
-
-	// Log all commit messages
-	for _, msg := range commitMessages {
-		orgID := key.GetOrgID()
-		instanceNum := key.GetInstanceNum()
-
-		ll.Info("Committing Kafka consumer group offset",
-			slog.String("consumerGroup", c.config.ConsumerGroup),
-			slog.String("topic", c.config.Topic),
-			slog.Int("partition", msg.Partition),
-			slog.Int64("offset", msg.Offset),
-			slog.String("organizationID", orgID.String()),
-			slog.Int("instanceNum", int(instanceNum)))
-	}
-
-	if err := c.consumer.CommitMessages(ctx, commitMessages...); err != nil {
-		errOrgID := key.GetOrgID()
-		errInstanceNum := key.GetInstanceNum()
-
-		ll.Error("Failed to commit Kafka consumer group offsets",
-			slog.Any("error", err),
-			slog.String("organizationID", errOrgID.String()),
-			slog.Int("instanceNum", int(errInstanceNum)))
-		return fmt.Errorf("failed to commit consumer group offsets: %w", err)
-	}
-
-	ll.Debug("Successfully committed Kafka consumer group offsets",
-		slog.Int("offsetCount", len(offsets)))
-
-	return nil
-}
-
-// buildCommitMessages creates ConsumedMessage objects for committing offsets (extracted for testability)
-func (c *CommonConsumer[M, K]) buildCommitMessages(offsets map[int32]int64) []fly.ConsumedMessage {
-	commitMessages := make([]fly.ConsumedMessage, 0, len(offsets))
-
-	for partition, offset := range offsets {
-		commitMessages = append(commitMessages, fly.ConsumedMessage{
-			Topic:     c.config.Topic,
-			Partition: int(partition),
-			Offset:    offset,
-		})
-	}
-
-	return commitMessages
 }
 
 // Close stops the consumer and cleans up resources

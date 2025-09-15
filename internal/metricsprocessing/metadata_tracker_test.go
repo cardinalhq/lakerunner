@@ -18,8 +18,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Custom test message type - completely different from messages.MetricCompactionMessage
@@ -305,4 +307,269 @@ func TestCustomTypesWorkflow(t *testing.T) {
 	t.Logf("Message: %+v", msg1)
 	t.Logf("GroupingKey: %+v", groupKey1)
 	t.Logf("OffsetKey: %+v", offsetKey1)
+}
+
+// TestCollectKafkaOffsetsFromGroup tests the collectKafkaOffsetsFromGroup helper function
+func TestCollectKafkaOffsetsFromGroup(t *testing.T) {
+	tests := []struct {
+		name             string
+		group            *accumulationGroup[messages.IngestKey]
+		kafkaCommitData  *KafkaCommitData
+		expectedPartsLen int // Since map iteration order is non-deterministic
+	}{
+		{
+			name:             "nil kafkaCommitData returns nil",
+			group:            &accumulationGroup[messages.IngestKey]{},
+			kafkaCommitData:  nil,
+			expectedPartsLen: 0,
+		},
+		{
+			name: "empty messages returns nil",
+			group: &accumulationGroup[messages.IngestKey]{
+				Messages: []*accumulatedMessage{},
+			},
+			kafkaCommitData: &KafkaCommitData{
+				Topic:         "test-topic",
+				ConsumerGroup: "test-group",
+			},
+			expectedPartsLen: 0,
+		},
+		{
+			name: "single partition with multiple offsets",
+			group: &accumulationGroup[messages.IngestKey]{
+				Key: messages.IngestKey{
+					OrganizationID: uuid.New(),
+					InstanceNum:    1,
+				},
+				Messages: []*accumulatedMessage{
+					{
+						Message: &messages.ObjStoreNotificationMessage{},
+						Metadata: &messageMetadata{
+							Topic:         "test-topic",
+							Partition:     0,
+							ConsumerGroup: "test-group",
+							Offset:        100,
+						},
+					},
+					{
+						Message: &messages.ObjStoreNotificationMessage{},
+						Metadata: &messageMetadata{
+							Topic:         "test-topic",
+							Partition:     0,
+							ConsumerGroup: "test-group",
+							Offset:        101,
+						},
+					},
+					{
+						Message: &messages.ObjStoreNotificationMessage{},
+						Metadata: &messageMetadata{
+							Topic:         "test-topic",
+							Partition:     0,
+							ConsumerGroup: "test-group",
+							Offset:        102,
+						},
+					},
+				},
+				CreatedAt: time.Now(),
+			},
+			kafkaCommitData: &KafkaCommitData{
+				Topic:         "test-topic",
+				ConsumerGroup: "test-group",
+				Offsets:       map[int32]int64{0: 102},
+			},
+			expectedPartsLen: 1,
+		},
+		{
+			name: "multiple partitions with offsets",
+			group: &accumulationGroup[messages.IngestKey]{
+				Key: messages.IngestKey{
+					OrganizationID: uuid.New(),
+					InstanceNum:    1,
+				},
+				Messages: []*accumulatedMessage{
+					{
+						Message: &messages.ObjStoreNotificationMessage{},
+						Metadata: &messageMetadata{
+							Topic:         "test-topic",
+							Partition:     0,
+							ConsumerGroup: "test-group",
+							Offset:        100,
+						},
+					},
+					{
+						Message: &messages.ObjStoreNotificationMessage{},
+						Metadata: &messageMetadata{
+							Topic:         "test-topic",
+							Partition:     1,
+							ConsumerGroup: "test-group",
+							Offset:        200,
+						},
+					},
+					{
+						Message: &messages.ObjStoreNotificationMessage{},
+						Metadata: &messageMetadata{
+							Topic:         "test-topic",
+							Partition:     0,
+							ConsumerGroup: "test-group",
+							Offset:        101,
+						},
+					},
+					{
+						Message: &messages.ObjStoreNotificationMessage{},
+						Metadata: &messageMetadata{
+							Topic:         "test-topic",
+							Partition:     1,
+							ConsumerGroup: "test-group",
+							Offset:        201,
+						},
+					},
+					{
+						Message: &messages.ObjStoreNotificationMessage{},
+						Metadata: &messageMetadata{
+							Topic:         "test-topic",
+							Partition:     2,
+							ConsumerGroup: "test-group",
+							Offset:        300,
+						},
+					},
+				},
+				CreatedAt: time.Now(),
+			},
+			kafkaCommitData: &KafkaCommitData{
+				Topic:         "test-topic",
+				ConsumerGroup: "test-group",
+				Offsets:       map[int32]int64{0: 101, 1: 201, 2: 300},
+			},
+			expectedPartsLen: 3,
+		},
+		{
+			name: "non-contiguous offsets in same partition",
+			group: &accumulationGroup[messages.IngestKey]{
+				Key: messages.IngestKey{
+					OrganizationID: uuid.New(),
+					InstanceNum:    1,
+				},
+				Messages: []*accumulatedMessage{
+					{
+						Message: &messages.ObjStoreNotificationMessage{},
+						Metadata: &messageMetadata{
+							Topic:         "test-topic",
+							Partition:     0,
+							ConsumerGroup: "test-group",
+							Offset:        100,
+						},
+					},
+					{
+						Message: &messages.ObjStoreNotificationMessage{},
+						Metadata: &messageMetadata{
+							Topic:         "test-topic",
+							Partition:     0,
+							ConsumerGroup: "test-group",
+							Offset:        105, // Gap in offsets
+						},
+					},
+					{
+						Message: &messages.ObjStoreNotificationMessage{},
+						Metadata: &messageMetadata{
+							Topic:         "test-topic",
+							Partition:     0,
+							ConsumerGroup: "test-group",
+							Offset:        110, // Another gap
+						},
+					},
+				},
+				CreatedAt: time.Now(),
+			},
+			kafkaCommitData: &KafkaCommitData{
+				Topic:         "test-topic",
+				ConsumerGroup: "test-group",
+				Offsets:       map[int32]int64{0: 110},
+			},
+			expectedPartsLen: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := collectKafkaOffsetsFromGroup(tt.group, tt.kafkaCommitData)
+
+			if tt.expectedPartsLen == 0 {
+				assert.Nil(t, result)
+				return
+			}
+
+			// Check we have the right number of partitions
+			require.Equal(t, tt.expectedPartsLen, len(result))
+
+			// For each partition in the result, verify it has the right data
+			partitionOffsets := make(map[int32][]int64)
+			for _, kafkaOffset := range result {
+				assert.Equal(t, tt.kafkaCommitData.ConsumerGroup, kafkaOffset.ConsumerGroup)
+				assert.Equal(t, tt.kafkaCommitData.Topic, kafkaOffset.Topic)
+				partitionOffsets[kafkaOffset.PartitionID] = kafkaOffset.Offsets
+			}
+
+			// Verify offsets are collected correctly for each partition
+			expectedPartitionOffsets := make(map[int32][]int64)
+			for _, msg := range tt.group.Messages {
+				expectedPartitionOffsets[msg.Metadata.Partition] = append(
+					expectedPartitionOffsets[msg.Metadata.Partition],
+					msg.Metadata.Offset,
+				)
+			}
+
+			assert.Equal(t, len(expectedPartitionOffsets), len(partitionOffsets))
+			for partition, offsets := range expectedPartitionOffsets {
+				assert.ElementsMatch(t, offsets, partitionOffsets[partition],
+					"Partition %d offsets should match", partition)
+			}
+		})
+	}
+}
+
+// TestCollectKafkaOffsetsFromGroup_CompactionKey tests with CompactionKey type to ensure generic works properly
+func TestCollectKafkaOffsetsFromGroup_CompactionKey(t *testing.T) {
+	// Test with CompactionKey type to ensure generic works properly
+	group := &accumulationGroup[messages.CompactionKey]{
+		Key: messages.CompactionKey{
+			OrganizationID: uuid.New(),
+			DateInt:        20240115,
+			InstanceNum:    1,
+		},
+		Messages: []*accumulatedMessage{
+			{
+				Message: &messages.MetricCompactionMessage{},
+				Metadata: &messageMetadata{
+					Topic:         "compaction-topic",
+					Partition:     0,
+					ConsumerGroup: "compaction-group",
+					Offset:        1000,
+				},
+			},
+			{
+				Message: &messages.MetricCompactionMessage{},
+				Metadata: &messageMetadata{
+					Topic:         "compaction-topic",
+					Partition:     0,
+					ConsumerGroup: "compaction-group",
+					Offset:        1001,
+				},
+			},
+		},
+		CreatedAt: time.Now(),
+	}
+
+	kafkaCommitData := &KafkaCommitData{
+		Topic:         "compaction-topic",
+		ConsumerGroup: "compaction-group",
+		Offsets:       map[int32]int64{0: 1001},
+	}
+
+	result := collectKafkaOffsetsFromGroup(group, kafkaCommitData)
+
+	require.Len(t, result, 1)
+	assert.Equal(t, "compaction-group", result[0].ConsumerGroup)
+	assert.Equal(t, "compaction-topic", result[0].Topic)
+	assert.Equal(t, int32(0), result[0].PartitionID)
+	assert.ElementsMatch(t, []int64{1000, 1001}, result[0].Offsets)
 }

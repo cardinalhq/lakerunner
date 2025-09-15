@@ -613,15 +613,15 @@ func TestHunter_RealDataFromFile(t *testing.T) {
 	// Create a mock processor that implements the Processor interface
 	processor := &MockProcessorWithFunc{ProcessFunc: processFunc}
 
-	// Create mock offset callbacks
-	offsetCallbacks := NewMockOffsetCallbacks()
+	// Create mock offset store
+	offsetStore := NewMockOffsetStore()
 
 	// Create gatherer
 	gatherer := newGatherer[*messages.MetricCompactionMessage](
 		"test.segments.metrics.compact",
 		"test.compact.metrics",
 		processor,
-		offsetCallbacks,
+		offsetStore,
 	)
 
 	ctx := context.Background()

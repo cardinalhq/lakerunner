@@ -94,14 +94,17 @@ func (m *mockCompactionStore) GetMetricSeg(ctx context.Context, params lrdb.GetM
 	return args.Get(0).(lrdb.MetricSeg), args.Error(1)
 }
 
-func (m *mockCompactionStore) CompactMetricSegsWithKafkaOffsets(ctx context.Context, params lrdb.CompactMetricSegsParams, kafkaOffsets []lrdb.KafkaOffsetUpdate) error {
+func (m *mockCompactionStore) CompactMetricSegments(ctx context.Context, params lrdb.CompactMetricSegsParams, kafkaOffsets []lrdb.KafkaOffsetInfo) error {
 	args := m.Called(ctx, params, kafkaOffsets)
 	return args.Error(0)
 }
 
-func (m *mockCompactionStore) KafkaGetLastProcessed(ctx context.Context, params lrdb.KafkaGetLastProcessedParams) (int64, error) {
+func (m *mockCompactionStore) KafkaOffsetsAfter(ctx context.Context, params lrdb.KafkaOffsetsAfterParams) ([]int64, error) {
 	args := m.Called(ctx, params)
-	return args.Get(0).(int64), args.Error(1)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]int64), args.Error(1)
 }
 
 func (m *mockCompactionStore) MarkMetricSegsCompactedByKeys(ctx context.Context, params lrdb.MarkMetricSegsCompactedByKeysParams) error {
@@ -332,23 +335,25 @@ func TestAtomicDatabaseUpdate(t *testing.T) {
 			CreatedBy: lrdb.CreatedByCompact,
 		}
 
-		mockStore.On("CompactMetricSegsWithKafkaOffsets", ctx, expectedParams, mock.MatchedBy(func(offsets []lrdb.KafkaOffsetUpdate) bool {
+		mockStore.On("CompactMetricSegments", ctx, expectedParams, mock.MatchedBy(func(offsets []lrdb.KafkaOffsetInfo) bool {
 			// Check that offsets contain expected data (don't care about order since sorting is tested separately)
 			if len(offsets) != 3 {
 				return false
 			}
 
-			// Check all expected offsets are present with correct org/instance info
-			offsetMap := make(map[int32]int64)
+			// Check all expected offsets are present
+			offsetMap := make(map[int32][]int64)
 			for _, offset := range offsets {
-				if offset.Topic != "test-topic" || offset.ConsumerGroup != "test-group" ||
-					offset.OrganizationID != orgID || offset.InstanceNum != 1 {
+				if offset.Topic != "test-topic" || offset.ConsumerGroup != "test-group" {
 					return false
 				}
-				offsetMap[offset.Partition] = offset.LastProcessedOffset
+				offsetMap[offset.PartitionID] = offset.Offsets
 			}
 
-			return offsetMap[0] == 100 && offsetMap[1] == 200 && offsetMap[2] == 150
+			// Each partition should have one offset (the highest one that was committed)
+			return len(offsetMap[0]) == 1 && offsetMap[0][0] == 100 &&
+				len(offsetMap[1]) == 1 && offsetMap[1][0] == 200 &&
+				len(offsetMap[2]) == 1 && offsetMap[2][0] == 150
 		})).Return(nil).Once()
 
 		err := compactor.atomicDatabaseUpdate(ctx, oldSegments, newSegments, kafkaCommitData, key)
@@ -388,7 +393,7 @@ func TestAtomicDatabaseUpdate(t *testing.T) {
 			CreatedBy: lrdb.CreatedByCompact,
 		}
 
-		mockStore.On("CompactMetricSegsWithKafkaOffsets", ctx, expectedParams, []lrdb.KafkaOffsetUpdate(nil)).Return(nil).Once()
+		mockStore.On("CompactMetricSegments", ctx, expectedParams, []lrdb.KafkaOffsetInfo(nil)).Return(nil).Once()
 
 		err := compactor.atomicDatabaseUpdate(ctx, oldSegments, newSegments, nil, key)
 
@@ -408,220 +413,13 @@ func TestAtomicDatabaseUpdate(t *testing.T) {
 	t.Run("database operation error", func(t *testing.T) {
 		expectedError := assert.AnError
 
-		mockStore.On("CompactMetricSegsWithKafkaOffsets", ctx, mock.Anything, []lrdb.KafkaOffsetUpdate(nil)).Return(expectedError).Once()
+		mockStore.On("CompactMetricSegments", ctx, mock.Anything, []lrdb.KafkaOffsetInfo(nil)).Return(expectedError).Once()
 
 		err := compactor.atomicDatabaseUpdate(ctx, oldSegments, newSegments, nil, key)
 
 		require.Error(t, err)
 		assert.ErrorIs(t, err, expectedError)
 		mockStore.AssertExpectations(t)
-	})
-}
-
-func TestSortKafkaOffsets(t *testing.T) {
-	orgID := uuid.New()
-
-	t.Run("empty slice", func(t *testing.T) {
-		var offsets []lrdb.KafkaOffsetUpdate
-		lrdb.SortKafkaOffsets(offsets)
-		assert.Empty(t, offsets)
-	})
-
-	t.Run("single offset", func(t *testing.T) {
-		offsets := []lrdb.KafkaOffsetUpdate{
-			{
-				Topic:               "topic1",
-				Partition:           0,
-				ConsumerGroup:       "group1",
-				OrganizationID:      orgID,
-				InstanceNum:         1,
-				LastProcessedOffset: 100,
-			},
-		}
-		expected := make([]lrdb.KafkaOffsetUpdate, len(offsets))
-		copy(expected, offsets)
-
-		lrdb.SortKafkaOffsets(offsets)
-		assert.Equal(t, expected, offsets)
-	})
-
-	t.Run("sort by consumer group", func(t *testing.T) {
-		offsets := []lrdb.KafkaOffsetUpdate{
-			{
-				Topic:               "topic1",
-				Partition:           0,
-				ConsumerGroup:       "zgroup",
-				OrganizationID:      orgID,
-				InstanceNum:         1,
-				LastProcessedOffset: 100,
-			},
-			{
-				Topic:               "topic1",
-				Partition:           0,
-				ConsumerGroup:       "agroup",
-				OrganizationID:      orgID,
-				InstanceNum:         1,
-				LastProcessedOffset: 200,
-			},
-			{
-				Topic:               "topic1",
-				Partition:           0,
-				ConsumerGroup:       "mgroup",
-				OrganizationID:      orgID,
-				InstanceNum:         1,
-				LastProcessedOffset: 300,
-			},
-		}
-
-		lrdb.SortKafkaOffsets(offsets)
-
-		assert.Equal(t, "agroup", offsets[0].ConsumerGroup)
-		assert.Equal(t, "mgroup", offsets[1].ConsumerGroup)
-		assert.Equal(t, "zgroup", offsets[2].ConsumerGroup)
-	})
-
-	t.Run("sort by topic when consumer groups are same", func(t *testing.T) {
-		offsets := []lrdb.KafkaOffsetUpdate{
-			{
-				Topic:               "ztopic",
-				Partition:           0,
-				ConsumerGroup:       "group1",
-				OrganizationID:      orgID,
-				InstanceNum:         1,
-				LastProcessedOffset: 100,
-			},
-			{
-				Topic:               "atopic",
-				Partition:           0,
-				ConsumerGroup:       "group1",
-				OrganizationID:      orgID,
-				InstanceNum:         1,
-				LastProcessedOffset: 200,
-			},
-			{
-				Topic:               "mtopic",
-				Partition:           0,
-				ConsumerGroup:       "group1",
-				OrganizationID:      orgID,
-				InstanceNum:         1,
-				LastProcessedOffset: 300,
-			},
-		}
-
-		lrdb.SortKafkaOffsets(offsets)
-
-		assert.Equal(t, "atopic", offsets[0].Topic)
-		assert.Equal(t, "mtopic", offsets[1].Topic)
-		assert.Equal(t, "ztopic", offsets[2].Topic)
-	})
-
-	t.Run("sort by partition when consumer groups and topics are same", func(t *testing.T) {
-		offsets := []lrdb.KafkaOffsetUpdate{
-			{
-				Topic:               "topic1",
-				Partition:           5,
-				ConsumerGroup:       "group1",
-				OrganizationID:      orgID,
-				InstanceNum:         1,
-				LastProcessedOffset: 100,
-			},
-			{
-				Topic:               "topic1",
-				Partition:           1,
-				ConsumerGroup:       "group1",
-				OrganizationID:      orgID,
-				InstanceNum:         1,
-				LastProcessedOffset: 200,
-			},
-			{
-				Topic:               "topic1",
-				Partition:           3,
-				ConsumerGroup:       "group1",
-				OrganizationID:      orgID,
-				InstanceNum:         1,
-				LastProcessedOffset: 300,
-			},
-		}
-
-		lrdb.SortKafkaOffsets(offsets)
-
-		assert.Equal(t, int32(1), offsets[0].Partition)
-		assert.Equal(t, int32(3), offsets[1].Partition)
-		assert.Equal(t, int32(5), offsets[2].Partition)
-	})
-
-	t.Run("complex mixed sort", func(t *testing.T) {
-		offsets := []lrdb.KafkaOffsetUpdate{
-			// Should be 3rd: group1, ztopic, partition 0
-			{
-				Topic:               "ztopic",
-				Partition:           0,
-				ConsumerGroup:       "group1",
-				OrganizationID:      orgID,
-				InstanceNum:         1,
-				LastProcessedOffset: 500,
-			},
-			// Should be 2nd: group1, btopic, partition 2
-			{
-				Topic:               "btopic",
-				Partition:           2,
-				ConsumerGroup:       "group1",
-				OrganizationID:      orgID,
-				InstanceNum:         1,
-				LastProcessedOffset: 400,
-			},
-			// Should be 5th: groupz, btopic, partition 0
-			{
-				Topic:               "btopic",
-				Partition:           0,
-				ConsumerGroup:       "groupz",
-				OrganizationID:      orgID,
-				InstanceNum:         1,
-				LastProcessedOffset: 200,
-			},
-			// Should be 4th: groupa, btopic, partition 0
-			{
-				Topic:               "btopic",
-				Partition:           0,
-				ConsumerGroup:       "groupa",
-				OrganizationID:      orgID,
-				InstanceNum:         1,
-				LastProcessedOffset: 100,
-			},
-			// Should be 1st: group1, btopic, partition 1
-			{
-				Topic:               "btopic",
-				Partition:           1,
-				ConsumerGroup:       "group1",
-				OrganizationID:      orgID,
-				InstanceNum:         1,
-				LastProcessedOffset: 300,
-			},
-		}
-
-		lrdb.SortKafkaOffsets(offsets)
-
-		// Verify the sorted order (ConsumerGroup → Topic → Partition)
-		expected := []struct {
-			topic         string
-			partition     int32
-			consumerGroup string
-			offset        int64
-		}{
-			{"btopic", 1, "group1", 300}, // 1st: group1, btopic, partition 1
-			{"btopic", 2, "group1", 400}, // 2nd: group1, btopic, partition 2
-			{"ztopic", 0, "group1", 500}, // 3rd: group1, ztopic, partition 0
-			{"btopic", 0, "groupa", 100}, // 4th: groupa, btopic, partition 0
-			{"btopic", 0, "groupz", 200}, // 5th: groupz, btopic, partition 0
-		}
-
-		require.Len(t, offsets, 5)
-		for i, exp := range expected {
-			assert.Equal(t, exp.topic, offsets[i].Topic, "mismatch at index %d", i)
-			assert.Equal(t, exp.partition, offsets[i].Partition, "mismatch at index %d", i)
-			assert.Equal(t, exp.consumerGroup, offsets[i].ConsumerGroup, "mismatch at index %d", i)
-			assert.Equal(t, exp.offset, offsets[i].LastProcessedOffset, "mismatch at index %d", i)
-		}
 	})
 }
 

@@ -36,7 +36,6 @@ type LogCompactionBoxerProcessor struct {
 
 // newLogCompactionBoxerProcessor creates a new log compaction boxer processor
 func newLogCompactionBoxerProcessor(
-	ctx context.Context,
 	cfg *config.Config,
 	producer fly.Producer,
 	store LogCompactionStore,

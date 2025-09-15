@@ -161,7 +161,7 @@ func (p *TraceIDTimestampSortKeyProvider) MakeKey(row filereader.Row) filereader
 type TraceDateintBin struct {
 	Dateint int32 // The dateint for this bin
 	Writer  parquetwriter.ParquetWriter
-	Results []*parquetwriter.Result // Results after writer is closed (can be multiple files)
+	Results []parquetwriter.Result // Results after writer is closed (can be multiple files)
 }
 
 // TraceDateintBinManager manages multiple file groups, one per dateint
@@ -183,7 +183,6 @@ type TraceIngestProcessor struct {
 
 // newTraceIngestProcessor creates a new trace ingest processor instance
 func newTraceIngestProcessor(
-	ctx context.Context,
 	cfg *config.Config,
 	store TraceIngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *TraceIngestProcessor {
 	var exemplarProcessor *exemplars.Processor
@@ -357,28 +356,11 @@ func (p *TraceIngestProcessor) Process(ctx context.Context, group *accumulationG
 		return fmt.Errorf("failed to upload and create segments: %w", err)
 	}
 
-	// Convert KafkaCommitData to KafkaOffsetUpdate slice
-	var kafkaOffsets []lrdb.KafkaOffsetUpdate
-	if kafkaCommitData != nil {
-		for partition, offset := range kafkaCommitData.Offsets {
-			kafkaOffsets = append(kafkaOffsets, lrdb.KafkaOffsetUpdate{
-				ConsumerGroup:       kafkaCommitData.ConsumerGroup,
-				Topic:               kafkaCommitData.Topic,
-				Partition:           partition,
-				LastProcessedOffset: offset,
-				OrganizationID:      group.Key.OrganizationID,
-				InstanceNum:         group.Key.InstanceNum,
-			})
-		}
-	}
-
-	batch := lrdb.TraceSegmentBatch{
-		Segments:     segmentParams,
-		KafkaOffsets: kafkaOffsets,
-	}
+	// Collect all offsets from the group's messages for new offset tracking
+	kafkaOffsets := collectKafkaOffsetsFromGroup(group, kafkaCommitData)
 
 	criticalCtx := context.WithoutCancel(ctx)
-	if err := p.store.InsertTraceSegmentBatchWithKafkaOffsets(criticalCtx, batch); err != nil {
+	if err := p.store.InsertTraceSegmentsBatch(criticalCtx, segmentParams, kafkaOffsets); err != nil {
 		// Log detailed segment information for debugging
 		segmentIDs := make([]int64, len(segmentParams))
 		var totalRecords, totalSize int64
@@ -600,9 +582,7 @@ func (p *TraceIngestProcessor) processRowsWithDateintBinning(ctx context.Context
 
 		if len(results) > 0 {
 			// Store all results - writer may emit multiple files when data exceeds RecordsPerFile
-			for i := range results {
-				bin.Results = append(bin.Results, &results[i])
-			}
+			bin.Results = append(bin.Results, results...)
 		}
 	}
 
@@ -639,7 +619,7 @@ func (p *TraceIngestProcessor) uploadAndCreateTraceSegments(ctx context.Context,
 	// First, collect all valid results to know how many IDs we need
 	type validBin struct {
 		dateint int32
-		result  *parquetwriter.Result
+		result  parquetwriter.Result
 		stats   factories.TracesFileStats
 	}
 	var validBins []validBin

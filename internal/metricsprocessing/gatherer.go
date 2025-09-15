@@ -16,9 +16,12 @@ package metricsprocessing
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
+	"github.com/cardinalhq/lakerunner/internal/logctx"
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 type processor[M messages.GroupableMessage, K comparable] interface {
@@ -26,41 +29,41 @@ type processor[M messages.GroupableMessage, K comparable] interface {
 	GetTargetRecordCount(ctx context.Context, groupingKey K) int64
 }
 
-// offsetCallbacks defines simple callbacks for offset storage (implemented by the message source)
-type offsetCallbacks[K comparable] interface {
-	// GetLastProcessedOffset returns the last processed offset for this key, or -1 if never seen
-	GetLastProcessedOffset(ctx context.Context, metadata *messageMetadata, groupingKey K) (int64, error)
-	// MarkOffsetsProcessed records that these offsets have been processed for this key
-	MarkOffsetsProcessed(ctx context.Context, key K, offsets map[int32]int64) error
+// offsetStore defines the interface for checking processed offsets
+type offsetStore interface {
+	KafkaOffsetsAfter(ctx context.Context, params lrdb.KafkaOffsetsAfterParams) ([]int64, error)
 }
 
-// gatherer processes a stream of GroupableMessage from Kafka
-// and feeds them into a Hunter instance for accumulation
+// gatherer processes a stream of GroupableMessage from Kafka with sync mode deduplication
 type gatherer[M messages.GroupableMessage, K comparable] struct {
 	hunter          *hunter[M, K]
 	metadataTracker *metadataTracker[K]
 	processor       processor[M, K]
-	offsetCallbacks offsetCallbacks[K]
-	topic           string // Expected topic for validation
-	consumerGroup   string // Expected consumer group for validation
+	syncTracker     *offsetTracker
+	topic           string
+	consumerGroup   string
 }
 
-// newGatherer creates a new generic Gatherer instance
-func newGatherer[M messages.GroupableMessage, K comparable](topic, consumerGroup string, processor processor[M, K], offsetCallbacks offsetCallbacks[K]) *gatherer[M, K] {
+// newGatherer creates a new gatherer with sync mode deduplication
+func newGatherer[M messages.GroupableMessage, K comparable](
+	topic, consumerGroup string,
+	processor processor[M, K],
+	store offsetStore,
+) *gatherer[M, K] {
 	return &gatherer[M, K]{
 		hunter:          newHunter[M, K](),
 		metadataTracker: newMetadataTracker[K](topic, consumerGroup),
 		processor:       processor,
-		offsetCallbacks: offsetCallbacks,
+		syncTracker:     newOffsetTracker(store, consumerGroup, topic),
 		topic:           topic,
 		consumerGroup:   consumerGroup,
 	}
 }
 
-// processMessage processes a single GroupableMessage
-// Checks offset tracking to determine if message should be processed
-// If the target record count threshold is reached, it calls the processor and tracks metadata
+// processMessage processes a single message with optional sync mode deduplication
 func (g *gatherer[M, K]) processMessage(ctx context.Context, msg M, metadata *messageMetadata) error {
+	ll := logctx.FromContext(ctx)
+
 	// Validate topic and consumer group match expectations
 	if metadata.Topic != g.topic {
 		return &ConfigMismatchError{
@@ -77,19 +80,24 @@ func (g *gatherer[M, K]) processMessage(ctx context.Context, msg M, metadata *me
 		}
 	}
 
-	// Get the grouping key from the message
-	groupingKey := msg.GroupingKey().(K)
-
-	// Check if we should process this message based on offset tracking
-	lastProcessedOffset, err := g.offsetCallbacks.GetLastProcessedOffset(ctx, metadata, groupingKey)
+	// Check if this offset has already been processed (for deduplication)
+	processed, err := g.syncTracker.isOffsetProcessed(ctx, metadata.Partition, metadata.Offset)
 	if err != nil {
-		return err
-	}
-
-	if metadata.Offset <= lastProcessedOffset {
-		// Drop this message - already processed
+		ll.Error("Failed to check if offset is processed",
+			slog.Any("error", err),
+			slog.Int("partition", int(metadata.Partition)),
+			slog.Int64("offset", metadata.Offset))
+		// Continue processing on error to avoid blocking
+	} else if processed {
+		// Skip this message - already processed
+		ll.Debug("Skipping already processed offset",
+			slog.Int("partition", int(metadata.Partition)),
+			slog.Int64("offset", metadata.Offset))
 		return nil
 	}
+
+	// Get the grouping key from the message
+	groupingKey := msg.GroupingKey().(K)
 
 	// Get dynamic estimate from the processor
 	targetRecordCount := g.processor.GetTargetRecordCount(ctx, groupingKey)
@@ -101,20 +109,14 @@ func (g *gatherer[M, K]) processMessage(ctx context.Context, msg M, metadata *me
 		// Create Kafka commit data from the actual messages in the Hunter list
 		kafkaCommitData := g.createKafkaCommitDataFromGroup(result.Group)
 
-		// Call the processor with the accumulated group, commit data, and record count estimate
+		// Call the processor with the accumulated group.  If it returns no error, it is
+		// responsible for inserting the Kafka offsets into our DB tracking table.
 		if err := g.processor.Process(ctx, result.Group, kafkaCommitData); err != nil {
 			return err
 		}
 
-		// Track the metadata for calculating safe Kafka consumer group commits
+		// Track the metadata for calculating safe Kafka consumer group commits.
 		g.metadataTracker.trackMetadata(result.Group)
-
-		// Mark offsets as processed for this key
-		if kafkaCommitData != nil {
-			if err := g.offsetCallbacks.MarkOffsetsProcessed(ctx, result.Group.Key, kafkaCommitData.Offsets); err != nil {
-				return err
-			}
-		}
 	}
 
 	return nil
@@ -147,9 +149,7 @@ func (g *gatherer[M, K]) createKafkaCommitDataFromGroup(group *accumulationGroup
 	}
 }
 
-// processIdleGroups processes all groups that haven't been updated for longer than lastUpdatedAge duration,
-// or that are older than maxAge since creation (if maxAge > 0).
-// This is used for periodic flushing to handle groups that may never reach the record count threshold.
+// processIdleGroups processes all groups that haven't been updated for longer than lastUpdatedAge duration
 func (g *gatherer[M, K]) processIdleGroups(ctx context.Context, lastUpdatedAge, maxAge time.Duration) (int, error) {
 	staleGroups := g.hunter.selectStaleGroups(lastUpdatedAge, maxAge)
 
@@ -167,12 +167,7 @@ func (g *gatherer[M, K]) processIdleGroups(ctx context.Context, lastUpdatedAge, 
 		// Track the metadata for calculating safe Kafka consumer group commits
 		g.metadataTracker.trackMetadata(group)
 
-		// Mark offsets as processed for this key
-		if kafkaCommitData != nil {
-			if err := g.offsetCallbacks.MarkOffsetsProcessed(ctx, group.Key, kafkaCommitData.Offsets); err != nil {
-				return emitted, err
-			}
-		}
+		// Note: Offset tracking happens automatically when segments are inserted/compacted
 	}
 
 	return emitted, nil

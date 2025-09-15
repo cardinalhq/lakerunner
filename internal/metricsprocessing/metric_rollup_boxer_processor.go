@@ -24,7 +24,6 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
-	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 // MetricRollupBoxerProcessor implements the Processor interface for boxing metric rollup bundles
@@ -95,10 +94,8 @@ func (b *MetricRollupBoxerProcessor) Process(ctx context.Context, group *accumul
 		slog.String("topic", rollupTopic),
 		slog.Int("bundledMessages", len(bundle.Messages)))
 
-	// Commit Kafka offsets in batch after successful message send
-	if err := b.commitKafkaOffsets(ctx, group, kafkaCommitData); err != nil {
-		return fmt.Errorf("failed to commit Kafka offsets: %w", err)
-	}
+	// Note: Offset tracking happens automatically when segments are inserted/compacted
+	// No manual offset commit needed here
 
 	return nil
 }
@@ -106,51 +103,4 @@ func (b *MetricRollupBoxerProcessor) Process(ctx context.Context, group *accumul
 // GetTargetRecordCount returns the estimated record count for the target frequency
 func (b *MetricRollupBoxerProcessor) GetTargetRecordCount(ctx context.Context, groupingKey messages.RollupKey) int64 {
 	return b.store.GetMetricEstimate(ctx, groupingKey.OrganizationID, groupingKey.TargetFrequencyMs)
-}
-
-// commitKafkaOffsets commits the Kafka offsets for all messages in the group using batch operation
-func (b *MetricRollupBoxerProcessor) commitKafkaOffsets(ctx context.Context, group *accumulationGroup[messages.RollupKey], kafkaCommitData *KafkaCommitData) error {
-	if kafkaCommitData == nil || len(kafkaCommitData.Offsets) == 0 {
-		return nil // Nothing to commit
-	}
-
-	// Convert kafkaCommitData to batch parameters, organizing by org/instance
-	batchParams := make([]lrdb.KafkaJournalBatchUpsertParams, 0)
-
-	for _, accMsg := range group.Messages {
-		msg, ok := accMsg.Message.(*messages.MetricRollupMessage)
-		if !ok {
-			continue
-		}
-
-		// Get the offset for this message's partition
-		if offset, exists := kafkaCommitData.Offsets[accMsg.Metadata.Partition]; exists {
-			batchParams = append(batchParams, lrdb.KafkaJournalBatchUpsertParams{
-				ConsumerGroup:       kafkaCommitData.ConsumerGroup,
-				Topic:               kafkaCommitData.Topic,
-				Partition:           accMsg.Metadata.Partition,
-				LastProcessedOffset: offset,
-				OrganizationID:      msg.OrganizationID,
-				InstanceNum:         msg.InstanceNum,
-			})
-		}
-	}
-
-	if len(batchParams) == 0 {
-		return nil // No valid offset updates
-	}
-
-	// Sort for consistency to prevent deadlocks
-	lrdb.SortKafkaOffsetsBatch(batchParams)
-
-	// Execute batch upsert
-	result := b.store.KafkaJournalBatchUpsert(ctx, batchParams)
-	var offsetErr error
-	result.Exec(func(i int, err error) {
-		if err != nil && offsetErr == nil {
-			offsetErr = err
-		}
-	})
-
-	return offsetErr
 }

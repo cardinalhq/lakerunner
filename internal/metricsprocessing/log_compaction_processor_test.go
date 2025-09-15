@@ -37,7 +37,7 @@ func (m *MockLogCompactionStore) GetLogSeg(ctx context.Context, params lrdb.GetL
 	return args.Get(0).(lrdb.LogSeg), args.Error(1)
 }
 
-func (m *MockLogCompactionStore) CompactLogSegsWithKafkaOffsets(ctx context.Context, params lrdb.CompactLogSegsParams, kafkaOffsets []lrdb.KafkaOffsetUpdate) error {
+func (m *MockLogCompactionStore) CompactLogSegments(ctx context.Context, params lrdb.CompactLogSegsParams, kafkaOffsets []lrdb.KafkaOffsetInfo) error {
 	args := m.Called(ctx, params, kafkaOffsets)
 	return args.Error(0)
 }
@@ -47,9 +47,12 @@ func (m *MockLogCompactionStore) MarkLogSegsCompactedByKeys(ctx context.Context,
 	return args.Error(0)
 }
 
-func (m *MockLogCompactionStore) KafkaGetLastProcessed(ctx context.Context, params lrdb.KafkaGetLastProcessedParams) (int64, error) {
+func (m *MockLogCompactionStore) KafkaOffsetsAfter(ctx context.Context, params lrdb.KafkaOffsetsAfterParams) ([]int64, error) {
 	args := m.Called(ctx, params)
-	return args.Get(0).(int64), args.Error(1)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]int64), args.Error(1)
 }
 
 func (m *MockLogCompactionStore) GetLogEstimate(ctx context.Context, orgID uuid.UUID) int64 {

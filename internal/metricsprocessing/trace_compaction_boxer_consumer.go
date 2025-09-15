@@ -44,7 +44,7 @@ func NewTraceCompactionBoxerConsumer(
 	}
 
 	// Create TraceCompactionBoxer processor
-	processor := newTraceCompactionBoxerProcessor(ctx, cfg, producer, store)
+	processor := newTraceCompactionBoxerProcessor(cfg, producer, store)
 
 	// Set up timing - use shorter accumulation for compaction since it's more time-sensitive
 	maxAccumulationTime := 2 * time.Minute

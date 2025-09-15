@@ -44,7 +44,7 @@ func NewLogCompactionBoxerConsumer(
 	}
 
 	// Create LogCompactionBoxer processor
-	processor := newLogCompactionBoxerProcessor(ctx, cfg, producer, store)
+	processor := newLogCompactionBoxerProcessor(cfg, producer, store)
 
 	// Set up timing - use shorter accumulation for compaction since it's more time-sensitive
 	maxAccumulationTime := 2 * time.Minute

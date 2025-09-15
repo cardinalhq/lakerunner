@@ -17,6 +17,8 @@ package metricsprocessing
 import (
 	"maps"
 	"sync"
+
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 // metadataTracker tracks the latest offsets seen for Kafka commits
@@ -68,6 +70,35 @@ type KafkaCommitData struct {
 	Topic         string
 	ConsumerGroup string
 	Offsets       map[int32]int64 // partition -> offset
+}
+
+// collectKafkaOffsetsFromGroup collects all Kafka offsets from a group's messages
+// and returns them as KafkaOffsetInfo structures grouped by partition.
+// This is a helper function used by ingest processors to prepare offsets for batch insertion.
+func collectKafkaOffsetsFromGroup[K comparable](group *accumulationGroup[K], kafkaCommitData *KafkaCommitData) []lrdb.KafkaOffsetInfo {
+	if kafkaCommitData == nil || len(group.Messages) == 0 {
+		return nil
+	}
+
+	// Group offsets by partition
+	partitionOffsets := make(map[int32][]int64)
+	for _, accMsg := range group.Messages {
+		metadata := accMsg.Metadata
+		partitionOffsets[metadata.Partition] = append(partitionOffsets[metadata.Partition], metadata.Offset)
+	}
+
+	// Create KafkaOffsetInfo for each partition
+	var kafkaOffsets []lrdb.KafkaOffsetInfo
+	for partition, offsets := range partitionOffsets {
+		kafkaOffsets = append(kafkaOffsets, lrdb.KafkaOffsetInfo{
+			ConsumerGroup: kafkaCommitData.ConsumerGroup,
+			Topic:         kafkaCommitData.Topic,
+			PartitionID:   partition,
+			Offsets:       offsets,
+		})
+	}
+
+	return kafkaOffsets
 }
 
 // getSafeCommitOffsets calculates the minimum offsets across all keys that can be safely committed to Kafka
