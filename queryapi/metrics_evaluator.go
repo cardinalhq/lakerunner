@@ -271,11 +271,12 @@ func (q *QuerierService) EvaluateMetricsQuery(
 					for worker, wsegs := range workerGroups {
 						slog.Info("Pushdown to worker", "worker", worker, "numSegments", len(wsegs), "leafID", leafID)
 
+						rangeMs := promql.RangeMsFromRange(leaf.Range)
 						req := PushDownRequest{
 							OrganizationID: orgID,
 							BaseExpr:       &leaf,
-							StartTs:        globalStart - offMs,
-							EndTs:          globalEnd,
+							StartTs:        group.StartTs - offMs - rangeMs,
+							EndTs:          group.EndTs,
 							Segments:       wsegs,
 							Step:           stepDuration,
 						}
