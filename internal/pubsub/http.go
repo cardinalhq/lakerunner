@@ -18,10 +18,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/cardinalhq/lakerunner/config"
 	"io"
 	"log/slog"
 	"net/http"
+
+	"github.com/cardinalhq/lakerunner/config"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"

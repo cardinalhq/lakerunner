@@ -94,10 +94,7 @@ func init() {
 			}
 
 			// Create Kafka factory
-			kafkaFactory, err := fly.NewFactoryFromKafkaConfig(&cfg.Kafka)
-			if err != nil {
-				return fmt.Errorf("failed to create Kafka factory: %w", err)
-			}
+			kafkaFactory := fly.NewFactory(&cfg.Kafka)
 
 			// Create Kafka-based rollup consumer (now consumes bundles from boxer)
 			consumer, err := metricsprocessing.NewMetricRollupConsumer(ctx, cfg, kafkaFactory, mdb, sp, cmgr)

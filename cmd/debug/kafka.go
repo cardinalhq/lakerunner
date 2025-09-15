@@ -74,15 +74,17 @@ func getConsumerLagCmd() *cobra.Command {
 				return fmt.Errorf("failed to load config: %w", err)
 			}
 
-			factory, err := fly.NewFactoryFromKafkaConfig(&cfg.Kafka)
-			if err != nil {
-				return fmt.Errorf("failed to create Kafka factory: %w", err)
-			}
+			factory := fly.NewFactory(&cfg.Kafka)
 
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 
-			lags, err := getConsumerLag(ctx, factory, groupFilter, topicFilter)
+			cnf, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("failed to load config: %w", err)
+			}
+
+			lags, err := getConsumerLag(ctx, cnf, factory, groupFilter, topicFilter)
 			if err != nil {
 				return err
 			}
@@ -110,7 +112,7 @@ func getConsumerLagCmd() *cobra.Command {
 	return cmd
 }
 
-func getConsumerLag(ctx context.Context, factory *fly.Factory, groupFilter, topicFilter string) ([]PartitionLag, error) {
+func getConsumerLag(ctx context.Context, cnf *config.Config, factory *fly.Factory, groupFilter, topicFilter string) ([]PartitionLag, error) {
 	// Create admin client using the factory's config
 	conf := factory.GetConfig()
 	adminClient, err := fly.NewAdminClient(conf)
@@ -119,7 +121,7 @@ func getConsumerLag(ctx context.Context, factory *fly.Factory, groupFilter, topi
 	}
 
 	// Use the consumer lag monitor service mappings
-	monitor, err := fly.NewConsumerLagMonitor(conf, time.Minute) // Poll interval not important here
+	monitor, err := fly.NewConsumerLagMonitor(cnf, time.Minute)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create consumer lag monitor: %w", err)
 	}
@@ -336,10 +338,7 @@ Examples:
 				return fmt.Errorf("failed to load config: %w", err)
 			}
 
-			factory, err := fly.NewFactoryFromKafkaConfig(&cfg.Kafka)
-			if err != nil {
-				return fmt.Errorf("failed to create Kafka factory: %w", err)
-			}
+			factory := fly.NewFactory(&cfg.Kafka)
 
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()

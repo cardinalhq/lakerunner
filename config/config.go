@@ -179,6 +179,11 @@ func DefaultIngestionConfig() IngestionConfig {
 	}
 }
 
+// GetConsumerGroup returns the consumer group name for the given service
+func (c *KafkaConfig) GetConsumerGroup(service string) string {
+	return c.ConsumerGroupPrefix + "." + service
+}
+
 // DefaultKafkaConfig returns default settings for Kafka.
 func DefaultKafkaConfig() KafkaConfig {
 	return KafkaConfig{

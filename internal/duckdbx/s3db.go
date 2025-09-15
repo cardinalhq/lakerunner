@@ -141,8 +141,13 @@ func NewS3DB(dataSourceName string, cfg *config.Config) (*S3DB, error) {
 		perConnDefault := max(1, total/max(1, poolSize))
 		threadsPerConn = envIntClamp("DUCKDB_THREADS_PER_CONN", perConnDefault, 1, 256)
 
-		tempDir = os.Getenv("DUCKDB_TEMP_DIRECTORY")
-		maxTempSize = os.Getenv("DUCKDB_MAX_TEMP_DIRECTORY_SIZE")
+		// Use TMPDIR or /tmp as default
+		if tmpdir := os.Getenv("TMPDIR"); tmpdir != "" {
+			tempDir = tmpdir
+		} else {
+			tempDir = "/tmp"
+		}
+		// Leave maxTempSize empty - will be calculated at runtime if needed
 	}
 
 	slog.Info("duckdbx:",

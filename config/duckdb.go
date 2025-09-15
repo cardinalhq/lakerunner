@@ -110,10 +110,6 @@ func (c *DuckDBConfig) GetTempDirectory() string {
 	if c.TempDirectory != "" {
 		return c.TempDirectory
 	}
-	// Check DUCKDB_TEMP_DIRECTORY for compatibility
-	if dir := os.Getenv("DUCKDB_TEMP_DIRECTORY"); dir != "" {
-		return dir
-	}
 	// Default to TMPDIR or /tmp
 	if tmpdir := os.Getenv("TMPDIR"); tmpdir != "" {
 		return tmpdir
@@ -126,10 +122,6 @@ func (c *DuckDBConfig) GetTempDirectory() string {
 func (c *DuckDBConfig) GetMaxTempDirectorySize() string {
 	if c.MaxTempDirectorySize != "" {
 		return c.MaxTempDirectorySize
-	}
-	// Check DUCKDB_MAX_TEMP_DIRECTORY_SIZE for compatibility
-	if size := os.Getenv("DUCKDB_MAX_TEMP_DIRECTORY_SIZE"); size != "" {
-		return size
 	}
 	// Default to 90% of temp directory's volume
 	tempDir := c.GetTempDirectory()

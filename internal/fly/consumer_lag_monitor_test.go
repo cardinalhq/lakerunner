@@ -18,12 +18,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cardinalhq/lakerunner/config"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/cardinalhq/lakerunner/config"
 )
 
 func TestNewConsumerLagMonitor(t *testing.T) {
-	kafkaConfig := &Config{
+	kafkaConfig := &config.KafkaConfig{
 		Brokers:     []string{"localhost:9092"},
 		SASLEnabled: false,
 		TLSEnabled:  false,
@@ -32,9 +33,10 @@ func TestNewConsumerLagMonitor(t *testing.T) {
 	// Create test app config with test topic registry
 	testAppConfig := &config.Config{
 		TopicRegistry: config.NewTopicRegistry("test"),
+		Kafka:         *kafkaConfig,
 	}
 
-	monitor, err := NewConsumerLagMonitorWithAppConfig(kafkaConfig, time.Minute, testAppConfig)
+	monitor, err := NewConsumerLagMonitor(testAppConfig, time.Minute)
 	assert.NoError(t, err)
 
 	assert.NotNil(t, monitor)
@@ -68,7 +70,7 @@ func TestNewConsumerLagMonitor(t *testing.T) {
 }
 
 func TestConsumerLagMonitor_GetQueueDepth(t *testing.T) {
-	kafkaConfig := &Config{
+	kafkaConfig := &config.KafkaConfig{
 		Brokers:     []string{"localhost:9092"},
 		SASLEnabled: false,
 		TLSEnabled:  false,
@@ -77,9 +79,10 @@ func TestConsumerLagMonitor_GetQueueDepth(t *testing.T) {
 	// Create test app config with test topic registry
 	testAppConfig := &config.Config{
 		TopicRegistry: config.NewTopicRegistry("test"),
+		Kafka:         *kafkaConfig,
 	}
 
-	monitor, err := NewConsumerLagMonitorWithAppConfig(kafkaConfig, time.Minute, testAppConfig)
+	monitor, err := NewConsumerLagMonitor(testAppConfig, time.Minute)
 	assert.NoError(t, err)
 
 	// Test with no data initially - should return 0
@@ -94,8 +97,8 @@ func TestConsumerLagMonitor_GetQueueDepth(t *testing.T) {
 	assert.Equal(t, int64(0), lag)
 }
 
-func TestConsumerLagMonitor_IsHealthy(t *testing.T) {
-	kafkaConfig := &Config{
+func TestConsumerLagMonitor_GetDetailedMetrics(t *testing.T) {
+	kafkaConfig := &config.KafkaConfig{
 		Brokers:     []string{"localhost:9092"},
 		SASLEnabled: false,
 		TLSEnabled:  false,
@@ -104,9 +107,63 @@ func TestConsumerLagMonitor_IsHealthy(t *testing.T) {
 	// Create test app config with test topic registry
 	testAppConfig := &config.Config{
 		TopicRegistry: config.NewTopicRegistry("test"),
+		Kafka:         *kafkaConfig,
 	}
 
-	monitor, err := NewConsumerLagMonitorWithAppConfig(kafkaConfig, time.Second, testAppConfig)
+	monitor, err := NewConsumerLagMonitor(testAppConfig, time.Minute)
+	assert.NoError(t, err)
+
+	// Test with some sample data
+	testData := []ConsumerGroupInfo{
+		{
+			GroupID:         "test-group",
+			Topic:           "test-topic",
+			Partition:       0,
+			CommittedOffset: 100,
+			HighWaterMark:   150,
+			Lag:             50,
+		},
+		{
+			GroupID:         "test-group",
+			Topic:           "test-topic",
+			Partition:       1,
+			CommittedOffset: 200,
+			HighWaterMark:   220,
+			Lag:             20,
+		},
+	}
+
+	monitor.mu.Lock()
+	monitor.detailedMetrics = testData
+	monitor.mu.Unlock()
+
+	// Test GetDetailedMetrics returns a copy
+	metrics := monitor.GetDetailedMetrics()
+	assert.Len(t, metrics, 2)
+	assert.Equal(t, testData[0].GroupID, metrics[0].GroupID)
+	assert.Equal(t, testData[0].Lag, metrics[0].Lag)
+	assert.Equal(t, testData[1].CommittedOffset, metrics[1].CommittedOffset)
+
+	// Verify it's a copy, not the same slice
+	metrics[0].Lag = 999
+	actualMetrics := monitor.GetDetailedMetrics()
+	assert.Equal(t, int64(50), actualMetrics[0].Lag) // Should still be 50, not 999
+}
+
+func TestConsumerLagMonitor_IsHealthy(t *testing.T) {
+	kafkaConfig := &config.KafkaConfig{
+		Brokers:     []string{"localhost:9092"},
+		SASLEnabled: false,
+		TLSEnabled:  false,
+	}
+
+	// Create test app config with test topic registry
+	testAppConfig := &config.Config{
+		TopicRegistry: config.NewTopicRegistry("test"),
+		Kafka:         *kafkaConfig,
+	}
+
+	monitor, err := NewConsumerLagMonitor(testAppConfig, time.Second)
 	assert.NoError(t, err)
 
 	// Should be healthy initially (no errors, no updates expected yet)
@@ -123,7 +180,7 @@ func TestConsumerLagMonitor_IsHealthy(t *testing.T) {
 }
 
 func TestConsumerLagMonitor_ServiceMappings(t *testing.T) {
-	kafkaConfig := &Config{
+	kafkaConfig := &config.KafkaConfig{
 		Brokers:     []string{"localhost:9092"},
 		SASLEnabled: false,
 		TLSEnabled:  false,
@@ -132,9 +189,10 @@ func TestConsumerLagMonitor_ServiceMappings(t *testing.T) {
 	// Create test app config with test topic registry
 	testAppConfig := &config.Config{
 		TopicRegistry: config.NewTopicRegistry("test"),
+		Kafka:         *kafkaConfig,
 	}
 
-	monitor, err := NewConsumerLagMonitorWithAppConfig(kafkaConfig, time.Minute, testAppConfig)
+	monitor, err := NewConsumerLagMonitor(testAppConfig, time.Minute)
 	assert.NoError(t, err)
 	mappings := monitor.GetServiceMappings()
 

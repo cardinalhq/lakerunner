@@ -90,8 +90,8 @@ External override file can be specified via `--kafka-topics-file` flag or `KAFKA
 | duckdb.azure_extension | `""` | `LAKERUNNER_DUCKDB_AZURE_EXTENSION` or `LAKERUNNER_AZURE_EXTENSION` | Path to Azure extension |
 | duckdb.aws_extension | `""` | `LAKERUNNER_DUCKDB_AWS_EXTENSION` or `LAKERUNNER_AWS_EXTENSION` | Path to AWS extension |
 | duckdb.memory_limit | `0` (unlimited) | `LAKERUNNER_DUCKDB_MEMORY_LIMIT` | Memory limit in MB |
-| duckdb.temp_directory | `$TMPDIR` or `/tmp` | `LAKERUNNER_DUCKDB_TEMP_DIRECTORY` or `DUCKDB_TEMP_DIRECTORY` | Directory for temporary files (defaults to TMPDIR environment variable) |
-| duckdb.max_temp_directory_size | 90% of volume size | `LAKERUNNER_DUCKDB_MAX_TEMP_DIRECTORY_SIZE` or `DUCKDB_MAX_TEMP_DIRECTORY_SIZE` | Maximum size for temp directory (defaults to 90% of temp volume size) |
+| duckdb.temp_directory | `$TMPDIR` or `/tmp` | `LAKERUNNER_DUCKDB_TEMP_DIRECTORY` | Directory for temporary files (defaults to TMPDIR environment variable) |
+| duckdb.max_temp_directory_size | 90% of volume size | `LAKERUNNER_DUCKDB_MAX_TEMP_DIRECTORY_SIZE` | Maximum size for temp directory (defaults to 90% of temp volume size) |
 | duckdb.s3_pool_size | `0` (auto) | `LAKERUNNER_DUCKDB_S3_POOL_SIZE` | S3 connection pool size |
 | duckdb.s3_conn_ttl_seconds | `240` (4 min) | `LAKERUNNER_DUCKDB_S3_CONN_TTL_SECONDS` | S3 connection TTL |
 | duckdb.threads_per_conn | `0` (auto) | `LAKERUNNER_DUCKDB_THREADS_PER_CONN` | Threads per DuckDB connection |

@@ -22,16 +22,18 @@ import (
 	"os/signal"
 	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
 
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/externalscaler"
+	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/healthcheck"
 )
 
 var (
-	monitoringPort     int
 	monitoringGRPCPort int
 )
 
@@ -50,14 +52,13 @@ func init() {
 		},
 	}
 
-	serveCmd.Flags().IntVar(&monitoringPort, "port", getEnvInt("MONITORING_PORT", 8090), "HTTP port for health checks")
 	serveCmd.Flags().IntVar(&monitoringGRPCPort, "grpc-port", getEnvInt("MONITORING_GRPC_PORT", 9090), "gRPC port for external scaler")
 
 	monitoringCmd.AddCommand(serveCmd)
 	rootCmd.AddCommand(monitoringCmd)
 }
 
-func runMonitoringServe(ctx context.Context) error {
+func runMonitoringServe(_ context.Context) error {
 	servicename := "monitoring"
 	addlAttrs := attribute.NewSet()
 	doneCtx, doneFx, err := setupTelemetry(servicename, &addlAttrs)
@@ -72,7 +73,7 @@ func runMonitoringServe(ctx context.Context) error {
 	}()
 
 	// Start health check server
-	healthConfig := healthcheck.Config{Port: monitoringPort}
+	healthConfig := healthcheck.GetConfigFromEnv()
 	healthServer := healthcheck.NewServer(healthConfig)
 
 	go func() {
@@ -84,15 +85,36 @@ func runMonitoringServe(ctx context.Context) error {
 	// Mark as healthy immediately - health is not dependent on database readiness
 	healthServer.SetStatus(healthcheck.StatusHealthy)
 
-	slog.Info("Starting KEDA external scaler service",
-		"http_port", monitoringPort,
-		"grpc_port", monitoringGRPCPort)
-
-	config := externalscaler.Config{
+	// Initialize configuration for external scaler
+	scalerConfig := externalscaler.Config{
 		GRPCPort: monitoringGRPCPort,
 	}
 
-	service, err := externalscaler.NewService(doneCtx, config)
+	// Load app config for Kafka
+	appConfig, err := config.Load()
+	if err != nil {
+		slog.Error("Failed to load config for Kafka monitoring", "error", err)
+	} else {
+		// Create consumer lag monitor using the convenience function
+		lagMonitor, err := fly.NewConsumerLagMonitor(
+			appConfig,
+			30*time.Second, // Poll every 30 seconds
+		)
+		if err != nil {
+			slog.Error("Failed to create Kafka lag monitor", "error", err)
+		} else {
+			// Start the lag monitor polling
+			go lagMonitor.Start(doneCtx)
+
+			// Provide the lag monitor directly to external scaler
+			scalerConfig.LagMonitor = lagMonitor
+			slog.Info("Kafka lag monitor integrated with external scaler")
+		}
+	}
+
+	slog.Info("Starting KEDA external scaler service", "grpc_port", monitoringGRPCPort)
+
+	service, err := externalscaler.NewService(doneCtx, scalerConfig)
 	if err != nil {
 		slog.Error("Failed to create external scaler service", "error", err)
 		// Mark as ready even if database connection fails - this prevents the pod from being killed

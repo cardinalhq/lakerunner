@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/cardinalhq/lakerunner/config"
 )
 
 func BenchmarkProducerSend(b *testing.B) {
@@ -33,14 +35,14 @@ func BenchmarkProducerSend(b *testing.B) {
 	k.CreateTopics(b, "benchmark-topic")
 
 	// Setup Kafka container and producer
-	config := &Config{
+	cfg := &config.KafkaConfig{
 		Brokers:              []string{k.Broker()},
 		ProducerBatchSize:    100,
 		ProducerBatchTimeout: 100 * time.Millisecond,
 		ProducerCompression:  "snappy",
 	}
 
-	factory := NewFactory(config)
+	factory := NewFactory(cfg)
 	producer, err := factory.CreateProducer()
 	if err != nil {
 		b.Fatalf("Failed to create producer: %v", err)
@@ -97,14 +99,14 @@ func BenchmarkProducerBatchSend(b *testing.B) {
 	k.CreateTopics(b, "benchmark-batch-topic")
 
 	// Setup Kafka container and producer
-	config := &Config{
+	cfg := &config.KafkaConfig{
 		Brokers:              []string{k.Broker()},
 		ProducerBatchSize:    1000,
 		ProducerBatchTimeout: 500 * time.Millisecond,
 		ProducerCompression:  "snappy",
 	}
 
-	factory := NewFactory(config)
+	factory := NewFactory(cfg)
 	producer, err := factory.CreateProducer()
 	if err != nil {
 		b.Fatalf("Failed to create producer: %v", err)
@@ -158,14 +160,14 @@ func BenchmarkProducerThroughput(b *testing.B) {
 	k := sharedKafkaContainer
 	k.CreateTopics(b, "benchmark-throughput-topic")
 
-	config := &Config{
+	cfg := &config.KafkaConfig{
 		Brokers:              []string{k.Broker()},
 		ProducerBatchSize:    500,
 		ProducerBatchTimeout: 100 * time.Millisecond,
 		ProducerCompression:  "snappy",
 	}
 
-	factory := NewFactory(config)
+	factory := NewFactory(cfg)
 	producer, err := factory.CreateProducer()
 	if err != nil {
 		b.Fatalf("Failed to create producer: %v", err)

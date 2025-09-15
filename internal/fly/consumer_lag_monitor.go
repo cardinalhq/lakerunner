@@ -34,36 +34,43 @@ type ConsumerLagMonitor struct {
 	lastMetrics map[string]int64 // serviceType -> total lag
 	lastUpdate  time.Time
 	lastError   error
+
+	// Detailed metrics cache for external metric exporters
+	detailedMetrics []ConsumerGroupInfo
 }
 
-// NewConsumerLagMonitor creates a new consumer lag monitor
-func NewConsumerLagMonitor(cfg *Config, pollInterval time.Duration) (*ConsumerLagMonitor, error) {
-	return NewConsumerLagMonitorWithAppConfig(cfg, pollInterval, nil)
-}
-
-// NewConsumerLagMonitorWithAppConfig creates a new consumer lag monitor with an app config
-func NewConsumerLagMonitorWithAppConfig(cfg *Config, pollInterval time.Duration, appConfig *config.Config) (*ConsumerLagMonitor, error) {
-	if appConfig == nil {
-		var err error
-		appConfig, err = config.Load()
-		if err != nil {
-			return nil, fmt.Errorf("failed to load config: %w", err)
-		}
+func newConsumerLagMonitor(cnf *config.Config, pollInterval time.Duration) (*ConsumerLagMonitor, error) {
+	if cnf == nil {
+		return nil, fmt.Errorf("cnf cannot be nil")
 	}
 
-	serviceMappings := appConfig.TopicRegistry.GetAllServiceMappings()
+	serviceMappings := cnf.TopicRegistry.GetAllServiceMappings()
 
-	adminClient, err := NewAdminClient(cfg)
+	adminClient, err := NewAdminClient(&cnf.Kafka)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create admin client: %w", err)
 	}
 
-	return &ConsumerLagMonitor{
+	monitor := &ConsumerLagMonitor{
 		adminClient:     adminClient,
 		serviceMappings: serviceMappings,
 		pollInterval:    pollInterval,
 		lastMetrics:     make(map[string]int64),
-	}, nil
+		detailedMetrics: []ConsumerGroupInfo{},
+	}
+
+	return monitor, nil
+}
+
+// NewConsumerLagMonitor creates a new consumer lag monitor from app config
+// This is a convenience function that uses the Kafka config directly from app config
+func NewConsumerLagMonitor(appConfig *config.Config, pollInterval time.Duration) (*ConsumerLagMonitor, error) {
+	if appConfig == nil {
+		return nil, fmt.Errorf("appConfig cannot be nil")
+	}
+
+	// No conversion needed - just use the KafkaConfig directly
+	return newConsumerLagMonitor(appConfig, pollInterval)
 }
 
 // Start begins the periodic polling of consumer lag metrics
@@ -108,6 +115,9 @@ func (m *ConsumerLagMonitor) poll(ctx context.Context) {
 	m.lastError = nil
 	m.lastUpdate = time.Now()
 
+	// Store detailed metrics for OTEL callbacks
+	m.detailedMetrics = lagInfos
+
 	// Calculate total lag per service type
 	serviceLags := make(map[string]int64)
 
@@ -126,7 +136,8 @@ func (m *ConsumerLagMonitor) poll(ctx context.Context) {
 
 	slog.Debug("Updated consumer lag metrics",
 		"services", len(serviceLags),
-		"lastUpdate", m.lastUpdate)
+		"lastUpdate", m.lastUpdate,
+		"detailedMetrics", len(lagInfos))
 }
 
 // GetQueueDepth returns the total consumer lag for a service type
@@ -188,4 +199,16 @@ func (m *ConsumerLagMonitor) IsHealthy() bool {
 // GetServiceMappings returns the current service mappings
 func (m *ConsumerLagMonitor) GetServiceMappings() []config.ServiceMapping {
 	return m.serviceMappings
+}
+
+// GetDetailedMetrics returns a copy of the current detailed metrics
+// This can be used by external systems to export metrics
+func (m *ConsumerLagMonitor) GetDetailedMetrics() []ConsumerGroupInfo {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// Return a copy to avoid race conditions
+	result := make([]ConsumerGroupInfo, len(m.detailedMetrics))
+	copy(result, m.detailedMetrics)
+	return result
 }

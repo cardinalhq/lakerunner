@@ -23,11 +23,13 @@ import (
 	"github.com/cardinalhq/kafka-sync/kafkasync"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/cardinalhq/lakerunner/config"
 )
 
 func TestTopicSyncerConstruction(t *testing.T) {
 	// Test that we can create a TopicSyncer correctly
-	config := &Config{
+	config := &config.KafkaConfig{
 		Brokers:             []string{"localhost:9092"},
 		SASLEnabled:         false,
 		TLSEnabled:          false,
@@ -44,14 +46,14 @@ func TestTopicSyncerConstruction(t *testing.T) {
 func TestTopicSyncerConnectionConfig(t *testing.T) {
 	tests := []struct {
 		name          string
-		config        *Config
+		config        *config.KafkaConfig
 		expectSASL    bool
 		expectTLS     bool
 		expectBrokers []string
 	}{
 		{
 			name: "no auth",
-			config: &Config{
+			config: &config.KafkaConfig{
 				Brokers:     []string{"broker1:9092", "broker2:9092"},
 				SASLEnabled: false,
 				TLSEnabled:  false,
@@ -62,7 +64,7 @@ func TestTopicSyncerConnectionConfig(t *testing.T) {
 		},
 		{
 			name: "with SASL",
-			config: &Config{
+			config: &config.KafkaConfig{
 				Brokers:       []string{"secure-broker:9092"},
 				SASLEnabled:   true,
 				SASLMechanism: "SCRAM-SHA-256",
@@ -76,7 +78,7 @@ func TestTopicSyncerConnectionConfig(t *testing.T) {
 		},
 		{
 			name: "with TLS",
-			config: &Config{
+			config: &config.KafkaConfig{
 				Brokers:       []string{"tls-broker:9092"},
 				SASLEnabled:   false,
 				TLSEnabled:    true,
@@ -88,7 +90,7 @@ func TestTopicSyncerConnectionConfig(t *testing.T) {
 		},
 		{
 			name: "with SASL and TLS",
-			config: &Config{
+			config: &config.KafkaConfig{
 				Brokers:       []string{"secure-tls-broker:9092"},
 				SASLEnabled:   true,
 				SASLMechanism: "PLAIN",

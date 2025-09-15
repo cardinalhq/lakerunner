@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"github.com/segmentio/kafka-go"
+
+	"github.com/cardinalhq/lakerunner/config"
 )
 
 // TopicInfo contains information about a Kafka topic
@@ -51,8 +53,8 @@ type AdminClient struct {
 }
 
 // NewAdminClient creates a new Kafka admin client
-func NewAdminClient(config *Config) (*AdminClient, error) {
-	factory := NewFactory(config)
+func NewAdminClient(cfg *config.KafkaConfig) (*AdminClient, error) {
+	factory := NewFactory(cfg)
 	client, err := factory.CreateKafkaClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka client: %w", err)

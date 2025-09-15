@@ -27,6 +27,8 @@ import (
 	"github.com/segmentio/kafka-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/cardinalhq/lakerunner/config"
 )
 
 func TestTopicSyncerCreateTopics(t *testing.T) {
@@ -35,13 +37,13 @@ func TestTopicSyncerCreateTopics(t *testing.T) {
 	defer kafkaContainer.CleanupAfterTest(t, []string{"test-topic-create", "test-topic-update"}, []string{})
 
 	// Create Factory with test configuration
-	config := &Config{
+	cfg := &config.KafkaConfig{
 		Brokers:             []string{kafkaContainer.Broker()},
 		SASLEnabled:         false,
 		TLSEnabled:          false,
 		ConsumerGroupPrefix: "lakerunner",
 	}
-	factory := NewFactory(config)
+	factory := NewFactory(cfg)
 	syncer := factory.CreateTopicSyncer()
 
 	// Define test topics configuration
@@ -114,13 +116,13 @@ func TestTopicSyncerInfoMode(t *testing.T) {
 	defer kafkaContainer.CleanupAfterTest(t, []string{"info-mode-test"}, []string{})
 
 	// Create Factory with test configuration
-	config := &Config{
+	cfg := &config.KafkaConfig{
 		Brokers:             []string{kafkaContainer.Broker()},
 		SASLEnabled:         false,
 		TLSEnabled:          false,
 		ConsumerGroupPrefix: "lakerunner",
 	}
-	factory := NewFactory(config)
+	factory := NewFactory(cfg)
 	syncer := factory.CreateTopicSyncer()
 
 	// Define topics configuration
@@ -218,13 +220,13 @@ topics:
 	require.NoError(t, err, "Failed to write config file")
 
 	// Create Factory with test configuration
-	config := &Config{
+	cfg := &config.KafkaConfig{
 		Brokers:             []string{kafkaContainer.Broker()},
 		SASLEnabled:         false,
 		TLSEnabled:          false,
 		ConsumerGroupPrefix: "lakerunner",
 	}
-	factory := NewFactory(config)
+	factory := NewFactory(cfg)
 	syncer := factory.CreateTopicSyncer()
 
 	// Load topics configuration from file
@@ -271,13 +273,13 @@ func TestTopicSyncerIdempotent(t *testing.T) {
 	defer kafkaContainer.CleanupAfterTest(t, []string{"idempotent-test"}, []string{})
 
 	// Create Factory with test configuration
-	config := &Config{
+	cfg := &config.KafkaConfig{
 		Brokers:             []string{kafkaContainer.Broker()},
 		SASLEnabled:         false,
 		TLSEnabled:          false,
 		ConsumerGroupPrefix: "lakerunner",
 	}
-	factory := NewFactory(config)
+	factory := NewFactory(cfg)
 	syncer := factory.CreateTopicSyncer()
 
 	// Define topics configuration

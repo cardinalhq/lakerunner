@@ -29,7 +29,7 @@ import (
 // ObjStoreNotificationProducer manages Kafka producer for object storage notifications
 type ObjStoreNotificationProducer struct {
 	producer   Producer
-	config     *Config
+	config     *config.KafkaConfig
 	mainConfig *config.Config
 }
 

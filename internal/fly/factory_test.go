@@ -21,10 +21,12 @@ import (
 	"github.com/segmentio/kafka-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/cardinalhq/lakerunner/config"
 )
 
 func TestNewFactory(t *testing.T) {
-	config := &Config{
+	config := &config.KafkaConfig{
 		Brokers: []string{"broker1:9092", "broker2:9092"},
 	}
 
@@ -36,12 +38,12 @@ func TestNewFactory(t *testing.T) {
 func TestFactory_CreateProducer(t *testing.T) {
 	tests := []struct {
 		name    string
-		config  *Config
+		config  *config.KafkaConfig
 		wantErr bool
 	}{
 		{
 			name: "basic producer",
-			config: &Config{
+			config: &config.KafkaConfig{
 				Brokers:              []string{"localhost:9092"},
 				ProducerBatchSize:    100,
 				ProducerBatchTimeout: 1000000000, // 1 second in nanoseconds
@@ -53,7 +55,7 @@ func TestFactory_CreateProducer(t *testing.T) {
 		},
 		{
 			name: "producer with unsupported compression",
-			config: &Config{
+			config: &config.KafkaConfig{
 				Brokers:             []string{"localhost:9092"},
 				ProducerCompression: "invalid",
 			},
@@ -61,7 +63,7 @@ func TestFactory_CreateProducer(t *testing.T) {
 		},
 		{
 			name: "producer with SASL SCRAM-SHA-256",
-			config: &Config{
+			config: &config.KafkaConfig{
 				Brokers:              []string{"localhost:9092"},
 				ProducerBatchSize:    50,
 				ProducerBatchTimeout: 500000000, // 500ms
@@ -74,7 +76,7 @@ func TestFactory_CreateProducer(t *testing.T) {
 		},
 		{
 			name: "producer with SASL SCRAM-SHA-512",
-			config: &Config{
+			config: &config.KafkaConfig{
 				Brokers:       []string{"localhost:9092"},
 				SASLEnabled:   true,
 				SASLMechanism: "SCRAM-SHA-512",
@@ -85,7 +87,7 @@ func TestFactory_CreateProducer(t *testing.T) {
 		},
 		{
 			name: "producer with TLS",
-			config: &Config{
+			config: &config.KafkaConfig{
 				Brokers:       []string{"localhost:9092"},
 				TLSEnabled:    true,
 				TLSSkipVerify: true,
@@ -93,11 +95,11 @@ func TestFactory_CreateProducer(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "producer with unsupported SASL mechanism",
-			config: &Config{
+			name: "producer with PLAIN SASL mechanism",
+			config: &config.KafkaConfig{
 				Brokers:       []string{"localhost:9092"},
 				SASLEnabled:   true,
-				SASLMechanism: "PLAIN", // Not supported
+				SASLMechanism: "PLAIN", // Now supported
 				SASLUsername:  "user",
 				SASLPassword:  "pass",
 			},
@@ -131,14 +133,14 @@ func TestFactory_CreateProducer(t *testing.T) {
 func TestFactory_CreateConsumer(t *testing.T) {
 	tests := []struct {
 		name    string
-		config  *Config
+		config  *config.KafkaConfig
 		topic   string
 		groupID string
 		wantErr bool
 	}{
 		{
 			name: "basic consumer",
-			config: &Config{
+			config: &config.KafkaConfig{
 				Brokers:           []string{"localhost:9092"},
 				ConsumerBatchSize: 100,
 				ConsumerMaxWait:   500000000, // 500ms
@@ -152,7 +154,7 @@ func TestFactory_CreateConsumer(t *testing.T) {
 		},
 		{
 			name: "consumer with SASL",
-			config: &Config{
+			config: &config.KafkaConfig{
 				Brokers:           []string{"localhost:9092"},
 				SASLEnabled:       true,
 				SASLMechanism:     "SCRAM-SHA-256",
@@ -166,7 +168,7 @@ func TestFactory_CreateConsumer(t *testing.T) {
 		},
 		{
 			name: "consumer with invalid SASL",
-			config: &Config{
+			config: &config.KafkaConfig{
 				Brokers:           []string{"localhost:9092"},
 				SASLEnabled:       true,
 				SASLMechanism:     "INVALID",
@@ -198,7 +200,7 @@ func TestFactory_CreateConsumer(t *testing.T) {
 }
 
 func TestFactory_CreateConsumerWithService(t *testing.T) {
-	config := &Config{
+	config := &config.KafkaConfig{
 		Brokers:             []string{"localhost:9092"},
 		ConsumerGroupPrefix: "lakerunner",
 		ConnectionTimeout:   100 * time.Millisecond, // Fast timeout for tests
@@ -218,27 +220,8 @@ func TestFactory_CreateConsumerWithService(t *testing.T) {
 	_ = consumer.Close()
 }
 
-func TestNewFactoryFromKafkaConfig_Success(t *testing.T) {
-	cfg := &Config{
-		Brokers: []string{"localhost:9092"},
-	}
-
-	factory, err := NewFactoryFromKafkaConfig(cfg)
-	require.NoError(t, err)
-	assert.Equal(t, cfg.Brokers, factory.GetConfig().Brokers)
-}
-
-func TestNewFactoryFromKafkaConfig_Invalid(t *testing.T) {
-	type BadConfig struct {
-		Brokers string
-	}
-
-	_, err := NewFactoryFromKafkaConfig(&BadConfig{Brokers: "localhost:9092"})
-	require.Error(t, err)
-}
-
 func TestManager_Lifecycle(t *testing.T) {
-	config := &Config{
+	config := &config.KafkaConfig{
 		Brokers:           []string{"localhost:9092"},
 		ConnectionTimeout: 100 * time.Millisecond, // Fast timeout for tests
 	}
@@ -269,7 +252,7 @@ func TestManager_Lifecycle(t *testing.T) {
 }
 
 func TestManager_CloseWithErrors(t *testing.T) {
-	config := &Config{
+	config := &config.KafkaConfig{
 		Brokers:           []string{"localhost:9092"},
 		ConnectionTimeout: 100 * time.Millisecond, // Fast timeout for tests
 	}
@@ -303,14 +286,15 @@ func TestFactory_SASLMechanismCreation(t *testing.T) {
 	}{
 		{"SCRAM-SHA-256", "SCRAM-SHA-256", false},
 		{"SCRAM-SHA-512", "SCRAM-SHA-512", false},
-		{"unsupported", "PLAIN", false},
+		{"PLAIN", "PLAIN", false},
+		{"unsupported", "INVALID", true},
 		{"empty", "", true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			factory := &Factory{
-				config: &Config{
+				config: &config.KafkaConfig{
 					SASLMechanism: tt.mechanism,
 					SASLUsername:  "user",
 					SASLPassword:  "pass",
@@ -336,7 +320,7 @@ func TestFactoryIntegration(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	config := &Config{
+	config := &config.KafkaConfig{
 		Brokers:              []string{"localhost:9092"},
 		ProducerBatchSize:    10,
 		ProducerBatchTimeout: 100000000, // 100ms
