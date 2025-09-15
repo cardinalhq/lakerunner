@@ -117,10 +117,10 @@ type KafkaOffsetJournal struct {
 }
 
 type KafkaOffsetTracker struct {
+	ID            int64     `json:"id"`
 	ConsumerGroup string    `json:"consumer_group"`
 	Topic         string    `json:"topic"`
 	PartitionID   int32     `json:"partition_id"`
-	BinID         int64     `json:"bin_id"`
 	MinOffset     int64     `json:"min_offset"`
 	MaxOffset     int64     `json:"max_offset"`
 	Offsets       []int64   `json:"offsets"`

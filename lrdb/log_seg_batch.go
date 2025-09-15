@@ -64,7 +64,6 @@ func (q *Store) InsertLogSegmentsBatch(
 				ConsumerGroup: offset.ConsumerGroup,
 				Topic:         offset.Topic,
 				PartitionID:   offset.PartitionID,
-				BinID:         offset.BinID,
 				Offsets:       offset.Offsets,
 				CreatedAt:     nil, // Use default (now())
 			})
@@ -151,7 +150,6 @@ func (q *Store) CompactLogSegments(
 				ConsumerGroup: offset.ConsumerGroup,
 				Topic:         offset.Topic,
 				PartitionID:   offset.PartitionID,
-				BinID:         offset.BinID,
 				Offsets:       offset.Offsets,
 				CreatedAt:     nil, // Use default (now())
 			})

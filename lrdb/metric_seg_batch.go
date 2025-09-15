@@ -24,7 +24,6 @@ type KafkaOffsetInfo struct {
 	ConsumerGroup string
 	Topic         string
 	PartitionID   int32
-	BinID         int64
 	Offsets       []int64
 }
 
@@ -94,7 +93,6 @@ func (q *Store) InsertMetricSegmentsBatch(
 				ConsumerGroup: offset.ConsumerGroup,
 				Topic:         offset.Topic,
 				PartitionID:   offset.PartitionID,
-				BinID:         offset.BinID,
 				Offsets:       offset.Offsets,
 				CreatedAt:     nil, // Use default (now())
 			})
@@ -186,7 +184,6 @@ func (q *Store) CompactMetricSegments(
 				ConsumerGroup: offset.ConsumerGroup,
 				Topic:         offset.Topic,
 				PartitionID:   offset.PartitionID,
-				BinID:         offset.BinID,
 				Offsets:       offset.Offsets,
 				CreatedAt:     nil, // Use default (now())
 			})
@@ -275,7 +272,6 @@ func (q *Store) RollupMetricSegments(
 				ConsumerGroup: offset.ConsumerGroup,
 				Topic:         offset.Topic,
 				PartitionID:   offset.PartitionID,
-				BinID:         offset.BinID,
 				Offsets:       offset.Offsets,
 				CreatedAt:     nil, // Use default (now())
 			})

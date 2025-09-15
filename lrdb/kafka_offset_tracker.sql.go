@@ -56,7 +56,6 @@ INSERT INTO kafka_offset_tracker (
   consumer_group,
   topic,
   partition_id,
-  bin_id,
   min_offset,
   max_offset,
   offsets,
@@ -65,11 +64,10 @@ INSERT INTO kafka_offset_tracker (
   $1,
   $2,
   $3,
+  (SELECT MIN(o) FROM unnest($4::bigint[]) AS o),
+  (SELECT MAX(o) FROM unnest($4::bigint[]) AS o),
   $4,
-  (SELECT MIN(o) FROM unnest($5::bigint[]) AS o),
-  (SELECT MAX(o) FROM unnest($5::bigint[]) AS o),
-  $5,
-  COALESCE($6::timestamptz, now())
+  COALESCE($5::timestamptz, now())
 )
 `
 
@@ -77,7 +75,6 @@ type InsertKafkaOffsetsParams struct {
 	ConsumerGroup string     `json:"consumer_group"`
 	Topic         string     `json:"topic"`
 	PartitionID   int32      `json:"partition_id"`
-	BinID         int64      `json:"bin_id"`
 	Offsets       []int64    `json:"offsets"`
 	CreatedAt     *time.Time `json:"created_at"`
 }
@@ -87,7 +84,6 @@ func (q *Queries) InsertKafkaOffsets(ctx context.Context, arg InsertKafkaOffsets
 		arg.ConsumerGroup,
 		arg.Topic,
 		arg.PartitionID,
-		arg.BinID,
 		arg.Offsets,
 		arg.CreatedAt,
 	)

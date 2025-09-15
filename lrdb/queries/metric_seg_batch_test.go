@@ -81,14 +81,12 @@ func TestInsertMetricSegmentsBatch(t *testing.T) {
 			ConsumerGroup: "metrics-consumer",
 			Topic:         "metrics-topic",
 			PartitionID:   0,
-			BinID:         1,
 			Offsets:       []int64{1000, 1003, 1005, 1007, 1012}, // gaps in sequence
 		},
 		{
 			ConsumerGroup: "metrics-consumer",
 			Topic:         "metrics-topic",
 			PartitionID:   1,
-			BinID:         2,
 			Offsets:       []int64{2000, 2010, 2015}, // larger gaps
 		},
 	}
@@ -177,7 +175,6 @@ func TestInsertMetricSegmentsBatch_EmptyOffsets(t *testing.T) {
 			ConsumerGroup: "metrics-consumer",
 			Topic:         "metrics-topic",
 			PartitionID:   0,
-			BinID:         1,
 			Offsets:       []int64{}, // Empty offsets
 		},
 	}
@@ -289,7 +286,6 @@ func TestCompactMetricSegments(t *testing.T) {
 			ConsumerGroup: "compact-consumer",
 			Topic:         "metrics-topic",
 			PartitionID:   0,
-			BinID:         10,
 			Offsets:       []int64{5000, 5005, 5010, 5020},
 		},
 	}
@@ -425,7 +421,6 @@ func TestRollupMetricSegments(t *testing.T) {
 			ConsumerGroup: "rollup-consumer",
 			Topic:         "metrics-topic",
 			PartitionID:   2,
-			BinID:         20,
 			Offsets:       []int64{7000, 7100, 7200, 7500},
 		},
 	}

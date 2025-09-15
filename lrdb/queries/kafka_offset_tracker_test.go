@@ -42,7 +42,6 @@ func TestKafkaOffsetsAfter(t *testing.T) {
 		ConsumerGroup: consumerGroup,
 		Topic:         topic,
 		PartitionID:   partitionID,
-		BinID:         1,
 		Offsets:       []int64{100, 102, 103, 105}, // gaps at 101, 104
 		CreatedAt:     nil,                         // Use default (now())
 	})
@@ -53,7 +52,6 @@ func TestKafkaOffsetsAfter(t *testing.T) {
 		ConsumerGroup: consumerGroup,
 		Topic:         topic,
 		PartitionID:   partitionID,
-		BinID:         2,
 		Offsets:       []int64{110, 112, 113, 115}, // gaps at 111, 114
 		CreatedAt:     nil,
 	})
@@ -64,7 +62,6 @@ func TestKafkaOffsetsAfter(t *testing.T) {
 		ConsumerGroup: consumerGroup,
 		Topic:         topic,
 		PartitionID:   partitionID,
-		BinID:         3,
 		Offsets:       []int64{120, 125, 130}, // larger gaps
 		CreatedAt:     nil,
 	})
@@ -133,6 +130,123 @@ func TestKafkaOffsetsAfter(t *testing.T) {
 	assert.Empty(t, result)
 }
 
+func TestKafkaOffsetsAfter_MultipleRows(t *testing.T) {
+	ctx := context.Background()
+	db := testhelpers.NewTestLRDBStore(t)
+
+	consumerGroup := "test-consumer"
+	topic := "test-topic"
+	partitionID := int32(0)
+
+	// Insert first batch with offsets 100-105 (with gaps)
+	err := db.InsertKafkaOffsets(ctx, lrdb.InsertKafkaOffsetsParams{
+		ConsumerGroup: consumerGroup,
+		Topic:         topic,
+		PartitionID:   partitionID,
+		Offsets:       []int64{100, 102, 104, 105},
+		CreatedAt:     nil,
+	})
+	require.NoError(t, err)
+
+	// Insert second batch with overlapping offsets (102, 105) and new ones (106, 108)
+	err = db.InsertKafkaOffsets(ctx, lrdb.InsertKafkaOffsetsParams{
+		ConsumerGroup: consumerGroup,
+		Topic:         topic,
+		PartitionID:   partitionID,
+		Offsets:       []int64{102, 105, 106, 108},
+		CreatedAt:     nil,
+	})
+	require.NoError(t, err)
+
+	// Insert third batch with more offsets including duplicates
+	err = db.InsertKafkaOffsets(ctx, lrdb.InsertKafkaOffsetsParams{
+		ConsumerGroup: consumerGroup,
+		Topic:         topic,
+		PartitionID:   partitionID,
+		Offsets:       []int64{104, 107, 109, 110},
+		CreatedAt:     nil,
+	})
+	require.NoError(t, err)
+
+	// Test 1: Get all offsets >= 103
+	// Should return unique offsets sorted: 104, 105, 106, 107, 108, 109, 110
+	// Note: 102 is excluded because it's < 103
+	result, err := db.KafkaOffsetsAfter(ctx, lrdb.KafkaOffsetsAfterParams{
+		ConsumerGroup: consumerGroup,
+		Topic:         topic,
+		PartitionID:   partitionID,
+		MinOffset:     103,
+	})
+	require.NoError(t, err)
+
+	// The query returns duplicates from different rows, but they should be sorted
+	// We need to deduplicate them for comparison
+	uniqueOffsets := deduplicateAndSort(result)
+	expected := []int64{104, 105, 106, 107, 108, 109, 110}
+	assert.Equal(t, expected, uniqueOffsets)
+
+	// Test 2: Get all offsets >= 107
+	result, err = db.KafkaOffsetsAfter(ctx, lrdb.KafkaOffsetsAfterParams{
+		ConsumerGroup: consumerGroup,
+		Topic:         topic,
+		PartitionID:   partitionID,
+		MinOffset:     107,
+	})
+	require.NoError(t, err)
+	uniqueOffsets = deduplicateAndSort(result)
+	expected = []int64{107, 108, 109, 110}
+	assert.Equal(t, expected, uniqueOffsets)
+
+	// Test 3: Get all offsets >= 0 (should return all unique offsets)
+	result, err = db.KafkaOffsetsAfter(ctx, lrdb.KafkaOffsetsAfterParams{
+		ConsumerGroup: consumerGroup,
+		Topic:         topic,
+		PartitionID:   partitionID,
+		MinOffset:     0,
+	})
+	require.NoError(t, err)
+	uniqueOffsets = deduplicateAndSort(result)
+	expected = []int64{100, 102, 104, 105, 106, 107, 108, 109, 110}
+	assert.Equal(t, expected, uniqueOffsets)
+
+	// Test 4: Different partition should return empty
+	result, err = db.KafkaOffsetsAfter(ctx, lrdb.KafkaOffsetsAfterParams{
+		ConsumerGroup: consumerGroup,
+		Topic:         topic,
+		PartitionID:   1,
+		MinOffset:     0,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, result)
+}
+
+// deduplicateAndSort removes duplicates and sorts the offsets
+func deduplicateAndSort(offsets []int64) []int64 {
+	if len(offsets) == 0 {
+		return offsets
+	}
+
+	seen := make(map[int64]bool)
+	unique := []int64{}
+	for _, offset := range offsets {
+		if !seen[offset] {
+			seen[offset] = true
+			unique = append(unique, offset)
+		}
+	}
+
+	// Sort the unique offsets
+	for i := 0; i < len(unique); i++ {
+		for j := i + 1; j < len(unique); j++ {
+			if unique[i] > unique[j] {
+				unique[i], unique[j] = unique[j], unique[i]
+			}
+		}
+	}
+
+	return unique
+}
+
 func TestCleanupKafkaOffsets(t *testing.T) {
 	ctx := context.Background()
 	db := testhelpers.NewTestLRDBStore(t)
@@ -147,7 +261,6 @@ func TestCleanupKafkaOffsets(t *testing.T) {
 		ConsumerGroup: consumerGroup,
 		Topic:         topic,
 		PartitionID:   partitionID,
-		BinID:         1,
 		Offsets:       []int64{100, 101, 102, 103, 104, 105},
 		CreatedAt:     nil,
 	})
@@ -157,7 +270,6 @@ func TestCleanupKafkaOffsets(t *testing.T) {
 		ConsumerGroup: consumerGroup,
 		Topic:         topic,
 		PartitionID:   partitionID,
-		BinID:         2,
 		Offsets:       []int64{110, 111, 112, 113, 114, 115},
 		CreatedAt:     nil,
 	})
@@ -167,7 +279,6 @@ func TestCleanupKafkaOffsets(t *testing.T) {
 		ConsumerGroup: consumerGroup,
 		Topic:         topic,
 		PartitionID:   partitionID,
-		BinID:         3,
 		Offsets:       []int64{120, 121, 122, 123, 124, 125},
 		CreatedAt:     nil,
 	})
@@ -254,7 +365,6 @@ func TestCleanupKafkaOffsetsByAge(t *testing.T) {
 		ConsumerGroup: consumerGroup,
 		Topic:         topic,
 		PartitionID:   partitionID,
-		BinID:         1,
 		Offsets:       []int64{100, 101, 102, 103, 104, 105},
 		CreatedAt:     &oldTime,
 	})
@@ -265,7 +375,6 @@ func TestCleanupKafkaOffsetsByAge(t *testing.T) {
 		ConsumerGroup: consumerGroup,
 		Topic:         topic,
 		PartitionID:   partitionID,
-		BinID:         2,
 		Offsets:       []int64{110, 111, 112, 113, 114, 115},
 		CreatedAt:     &oldTime,
 	})
@@ -276,7 +385,6 @@ func TestCleanupKafkaOffsetsByAge(t *testing.T) {
 		ConsumerGroup: consumerGroup,
 		Topic:         topic,
 		PartitionID:   partitionID,
-		BinID:         3,
 		Offsets:       []int64{120, 121, 122, 123, 124, 125},
 		CreatedAt:     &recentTime,
 	})

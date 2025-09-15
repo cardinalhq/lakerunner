@@ -1,13 +1,12 @@
 CREATE TABLE IF NOT EXISTS kafka_offset_tracker (
+  id              bigserial   PRIMARY KEY,
   consumer_group  text        NOT NULL,
   topic           text        NOT NULL,
   partition_id    integer     NOT NULL,
-  bin_id          bigint      NOT NULL,
   min_offset      bigint      NOT NULL,
   max_offset      bigint      NOT NULL,
   offsets         bigint[]    NOT NULL,
   created_at      timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (consumer_group, topic, partition_id, bin_id),
   CHECK (min_offset <= max_offset),
   CHECK (array_length(offsets, 1) > 0)
 );

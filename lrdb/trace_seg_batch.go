@@ -64,7 +64,6 @@ func (q *Store) InsertTraceSegmentsBatch(
 				ConsumerGroup: offset.ConsumerGroup,
 				Topic:         offset.Topic,
 				PartitionID:   offset.PartitionID,
-				BinID:         offset.BinID,
 				Offsets:       offset.Offsets,
 				CreatedAt:     nil, // Use default (now())
 			})
@@ -151,7 +150,6 @@ func (q *Store) CompactTraceSegments(
 				ConsumerGroup: offset.ConsumerGroup,
 				Topic:         offset.Topic,
 				PartitionID:   offset.PartitionID,
-				BinID:         offset.BinID,
 				Offsets:       offset.Offsets,
 				CreatedAt:     nil, // Use default (now())
 			})
