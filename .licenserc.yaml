@@ -18,6 +18,7 @@ header:
     - '**/*.yml'
     - '**/*.json'
     - '**/*.mermaid'
+    - '**/*.svg'
     - go.sum
     - go.mod
     - go.work
