@@ -6,6 +6,7 @@ package lrdb
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -21,6 +22,8 @@ type Querier interface {
 	BatchUpsertExemplarLogs(ctx context.Context, arg []BatchUpsertExemplarLogsParams) *BatchUpsertExemplarLogsBatchResults
 	BatchUpsertExemplarMetrics(ctx context.Context, arg []BatchUpsertExemplarMetricsParams) *BatchUpsertExemplarMetricsBatchResults
 	BatchUpsertExemplarTraces(ctx context.Context, arg []BatchUpsertExemplarTracesParams) *BatchUpsertExemplarTracesBatchResults
+	CleanupKafkaOffsets(ctx context.Context, arg CleanupKafkaOffsetsParams) (int64, error)
+	CleanupKafkaOffsetsByAge(ctx context.Context, createdBefore time.Time) (int64, error)
 	CompactLogSegments(ctx context.Context, arg CompactLogSegmentsParams) error
 	// Retrieves all pack estimates for a specific signal type
 	GetAllBySignal(ctx context.Context, signal string) ([]GetAllBySignalRow, error)
@@ -33,6 +36,7 @@ type Querier interface {
 	GetMetricSegsByIds(ctx context.Context, arg GetMetricSegsByIdsParams) ([]MetricSeg, error)
 	GetMetricType(ctx context.Context, arg GetMetricTypeParams) (string, error)
 	GetTraceSeg(ctx context.Context, arg GetTraceSegParams) (TraceSeg, error)
+	InsertKafkaOffsets(ctx context.Context, arg InsertKafkaOffsetsParams) error
 	// Get the last processed offset for a specific consumer group, topic, partition, organization, and instance
 	KafkaGetLastProcessed(ctx context.Context, arg KafkaGetLastProcessedParams) (int64, error)
 	// Insert or update multiple Kafka journal entries in a single batch operation
@@ -46,6 +50,7 @@ type Querier interface {
 	// Insert or update the last processed offset for a consumer group, topic, partition, organization, and instance
 	// Only updates if the new offset is greater than the existing one
 	KafkaJournalUpsertWithOrgInstance(ctx context.Context, arg KafkaJournalUpsertWithOrgInstanceParams) error
+	KafkaOffsetsAfter(ctx context.Context, arg KafkaOffsetsAfterParams) ([]int64, error)
 	ListLogQLTags(ctx context.Context, organizationID uuid.UUID) ([]interface{}, error)
 	ListLogSegmentsForQuery(ctx context.Context, arg ListLogSegmentsForQueryParams) ([]ListLogSegmentsForQueryRow, error)
 	ListMetricSegmentsForQuery(ctx context.Context, arg ListMetricSegmentsForQueryParams) ([]ListMetricSegmentsForQueryRow, error)

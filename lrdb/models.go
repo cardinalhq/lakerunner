@@ -116,6 +116,17 @@ type KafkaOffsetJournal struct {
 	InstanceNum int16 `json:"instance_num"`
 }
 
+type KafkaOffsetTracker struct {
+	ConsumerGroup string    `json:"consumer_group"`
+	Topic         string    `json:"topic"`
+	PartitionID   int32     `json:"partition_id"`
+	BinID         int64     `json:"bin_id"`
+	MinOffset     int64     `json:"min_offset"`
+	MaxOffset     int64     `json:"max_offset"`
+	Offsets       []int64   `json:"offsets"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
 type LogSeg struct {
 	OrganizationID uuid.UUID                 `json:"organization_id"`
 	Dateint        int32                     `json:"dateint"`
