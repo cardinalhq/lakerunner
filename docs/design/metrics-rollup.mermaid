@@ -1,0 +1,46 @@
+---
+config:
+  look: handDrawn
+  theme: neutral
+  flowchart:
+    curve: basis
+---
+flowchart TB
+    classDef kafka fill:#f9d,stroke:#333,color:#000,font-weight:bold,stroke-width:2px
+    classDef service fill:#ddf,stroke:#333,color:#000,font-weight:bold,stroke-width:2px
+    classDef s3 fill:#fc9,stroke:#333,color:#000,font-weight:bold,stroke-width:2px
+    classDef db fill:#bfb,stroke:#333,color:#000,font-weight:bold,stroke-width:2px
+
+    %% Kafka Topics
+    kafka_boxer["Kafka Topic<br/>boxer.rollup.metrics"]:::kafka
+    kafka_work["Kafka Topic<br/>rollup.work"]:::kafka
+    kafka_boxer_out["Kafka Topic<br/>boxer.rollup (60s)"]:::kafka
+    kafka_boxer_compact["Kafka Topic<br/>boxer.compact (60s)"]:::kafka
+
+    %% Boxer Service
+    boxer["Boxer-Rollup-Metrics"]:::service
+
+    %% Rollup Worker
+    rollup["Rollup-Metrics Worker"]:::service
+
+    %% S3 Storage
+    rollup_prev["S3: Previous Tier (10s)"]:::s3
+    rollup_next["S3: Next Tier (60s)"]:::s3
+
+    %% Database
+    segment_index["PostgreSQL<br/>Segment Index"]:::db
+
+    %% Flow - Router
+    kafka_boxer -->|"unordered segments"| boxer
+    boxer -->|"grouped work"| kafka_work
+    kafka_work -->|"work unit"| rollup
+
+    %% Flow - Rollup processing
+    rollup_prev -->|"reads"| rollup
+    rollup -->|"writes"| rollup_next
+    rollup -->|"notifies next tier"| kafka_boxer_out
+    rollup -->|"notifies"| kafka_boxer_compact
+
+    %% Common outputs
+    rollup -->|"registers segments"| segment_index
+

@@ -1,0 +1,38 @@
+---
+config:
+  look: handDrawn
+  theme: neutral
+  flowchart:
+    curve: basis
+---
+flowchart TB
+    classDef kafka fill:#f9d,stroke:#333,color:#000,font-weight:bold,stroke-width:2px
+    classDef service fill:#ddf,stroke:#333,color:#000,font-weight:bold,stroke-width:2px
+    classDef s3 fill:#fc9,stroke:#333,color:#000,font-weight:bold,stroke-width:2px
+    classDef db fill:#bfb,stroke:#333,color:#000,font-weight:bold,stroke-width:2px
+
+    %% Kafka Topics
+    kafka_boxer["Kafka Topic<br/>boxer.compact"]:::kafka
+    kafka_work["Kafka Topic<br/>compact.work"]:::kafka
+
+    %% Boxer Service
+    boxer["Boxer-Compact"]:::service
+
+    %% Compact Worker
+    compact["Compact Worker"]:::service
+
+    %% S3 Storage
+    cooked_s3_in["S3: Input Segments"]:::s3
+    cooked_s3_out["S3: Merged Segments"]:::s3
+
+    %% Database
+    segment_index["PostgreSQL<br/>Segment Index"]:::db
+
+    %% Flow
+    kafka_boxer -->|"unordered segments"| boxer
+    boxer -->|"grouped work"| kafka_work
+    kafka_work -->|"work unit"| compact
+    cooked_s3_in -->|"reads segments"| compact
+    compact -->|"writes merged"| cooked_s3_out
+    compact -->|"updates index"| segment_index
+
