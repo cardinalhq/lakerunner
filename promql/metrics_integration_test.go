@@ -17,7 +17,9 @@ package promql
 import (
 	"database/sql"
 	"fmt"
+	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1224,5 +1226,263 @@ INSERT INTO logs("_cardinalhq.timestamp","_cardinalhq.name","resource.service.na
 			t.Fatalf("count(count by pod) mismatch at bucket %d: got=%v want=%v\nrows1=%v\nrows2=%v\nsql=\n%s",
 				b, got[b], want, rows1, rows2, workerSQL)
 		}
+	}
+}
+
+func TestProm_Max_GT_Scalar_Integration(t *testing.T) {
+	// --- Worker 1 -------------------------------------------------------------
+	db1 := openDuckDB(t)
+	createTempTable(t, db1)
+	mustExec(t, db1, `
+INSERT INTO logs("_cardinalhq.timestamp","_cardinalhq.name","resource.service.name","resource.k8s.pod.name",instance,rollup_sum,rollup_count,rollup_min,rollup_max) VALUES
+-- bucket 0 (all <= 0.9)
+(10*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'a', 0.80, 1, 0.80, 0.80),
+(20*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'b', 0.70, 1, 0.70, 0.70),
+-- bucket 1 (includes > 0.9)
+(70*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'a', 0.95, 1, 0.95, 0.95),
+(80*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'b', 0.65, 1, 0.65, 0.65);
+`)
+
+	// --- Worker 2 -------------------------------------------------------------
+	db2 := openDuckDB(t)
+	createTempTable(t, db2)
+	mustExec(t, db2, `
+INSERT INTO logs("_cardinalhq.timestamp","_cardinalhq.name","resource.service.name","resource.k8s.pod.name",instance,rollup_sum,rollup_count,rollup_min,rollup_max) VALUES
+-- bucket 0 (still <= 0.9 globally)
+(40*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-9x', 'a', 0.85, 1, 0.85, 0.85),
+-- bucket 1 (also > 0.9)
+(100*1000, 'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-9x', 'a', 0.91, 1, 0.91, 0.91);
+`)
+
+	step := time.Minute
+	q := `max({__name__="k8s.container.cpu_limit_utilization"}) > bool 0.9`
+
+	expr, err := FromPromQL(q)
+	if err != nil {
+		t.Fatalf("parse promql: %v", err)
+	}
+	plan, err := Compile(expr)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf, got %d", len(plan.Leaves))
+	}
+	leaf := plan.Leaves[0]
+
+	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000)
+	rows1 := queryAll(t, db1, workerSQL)
+	rows2 := queryAll(t, db2, workerSQL)
+	if len(rows1) == 0 && len(rows2) == 0 {
+		t.Fatalf("no rows from either worker; sql=\n%s", workerSQL)
+	}
+
+	// Build coordinator inputs: we need the per-bucket "max" from each worker.
+	type bucket = int64
+	perBucket := map[bucket][]SketchInput{}
+	addRows := func(rows []rowmap) {
+		for _, r := range rows {
+			b := i64(r["bucket_ts"])
+
+			// leaf SQL (instant, no group-by) returns one row per bucket with columns:
+			// sum, count, min, max. We care about "max" here.
+			mv := f64(r["max"])
+
+			perBucket[b] = append(perBucket[b], SketchInput{
+				ExprID:         leaf.ID,
+				OrganizationID: "org-test",
+				Timestamp:      b,
+				Frequency:      int64(step / time.Second),
+				SketchTags: SketchTags{
+					Tags:       map[string]any{}, // no grouping for this query
+					SketchType: SketchMAP,
+					Agg:        map[string]float64{"max": mv},
+				},
+			})
+		}
+	}
+	addRows(rows1)
+	addRows(rows2)
+
+	// Deterministic bucket order.
+	var buckets []int64
+	for b := range perBucket {
+		buckets = append(buckets, b)
+	}
+	sort.Slice(buckets, func(i, j int) bool { return buckets[i] < buckets[j] })
+
+	// Evaluate the full plan per bucket.
+	got := map[int64]float64{} // single series per bucket (comparison yields scalar series)
+	for _, b := range buckets {
+		out := plan.Root.Eval(SketchGroup{
+			Timestamp: b,
+			Group:     map[string][]SketchInput{leaf.ID: perBucket[b]},
+		}, step)
+
+		if len(out) != 1 {
+			t.Fatalf("expected 1 series at bucket %d, got %d; out=%v\nrows1=%v\nrows2=%v\nsql=\n%s",
+				b, len(out), out, rows1, rows2, workerSQL)
+		}
+		// Convention: scalar/no-label series in tests is keyed by "default".
+		got[b] = out["default"].Value.Num
+	}
+
+	// Expect false (0) for bucket 0 (all <= 0.9) and true (1) for bucket 1 (some > 0.9).
+	exp := map[int64]float64{
+		0:     0,
+		60000: 1,
+	}
+	for b, want := range exp {
+		if int64(got[b]+0.5) != int64(want) {
+			t.Fatalf("max(...) > 0.9 mismatch at bucket %d: got=%v want=%v\nrows1=%v\nrows2=%v\nsql=\n%s",
+				b, got[b], want, rows1, rows2, workerSQL)
+		}
+	}
+}
+
+func TestProm_Max_GT_Scalar_Filter_Integration(t *testing.T) {
+	// --- Worker 1 -------------------------------------------------------------
+	db1 := openDuckDB(t)
+	createTempTable(t, db1)
+	mustExec(t, db1, `
+INSERT INTO logs("_cardinalhq.timestamp","_cardinalhq.name","resource.service.name","resource.k8s.pod.name",instance,rollup_sum,rollup_count,rollup_min,rollup_max) VALUES
+-- bucket 0 (all <= 0.9)
+(10*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'a', 0.80, 1, 0.80, 0.80),
+(20*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'b', 0.70, 1, 0.70, 0.70),
+-- bucket 1 (includes > 0.9)
+(70*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'a', 0.95, 1, 0.95, 0.95),
+(80*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-7f', 'b', 0.65, 1, 0.65, 0.65);
+`)
+
+	// --- Worker 2 -------------------------------------------------------------
+	db2 := openDuckDB(t)
+	createTempTable(t, db2)
+	mustExec(t, db2, `
+INSERT INTO logs("_cardinalhq.timestamp","_cardinalhq.name","resource.service.name","resource.k8s.pod.name",instance,rollup_sum,rollup_count,rollup_min,rollup_max) VALUES
+-- bucket 0 (still <= 0.9 globally)
+(40*1000,  'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-9x', 'a', 0.85, 1, 0.85, 0.85),
+-- bucket 1 (also > 0.9)
+(100*1000, 'k8s.container.cpu_limit_utilization', 'api-gateway', 'api-9x', 'a', 0.91, 1, 0.91, 0.91);
+`)
+
+	step := time.Minute
+	q := `max({__name__="k8s.container.cpu_limit_utilization"}) > 0.9` // no 'bool' → filtering semantics
+
+	expr, err := FromPromQL(q)
+	if err != nil {
+		t.Fatalf("parse promql: %v", err)
+	}
+	plan, err := Compile(expr)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf, got %d", len(plan.Leaves))
+	}
+	leaf := plan.Leaves[0]
+
+	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000)
+	rows1 := queryAll(t, db1, workerSQL)
+	rows2 := queryAll(t, db2, workerSQL)
+	if len(rows1) == 0 && len(rows2) == 0 {
+		t.Fatalf("no rows from either worker; sql=\n%s", workerSQL)
+	}
+
+	// Build coordinator inputs: use the per-bucket "max" from each worker.
+	type bucket = int64
+	perBucket := map[bucket][]SketchInput{}
+	addRows := func(rows []rowmap) {
+		for _, r := range rows {
+			b := i64(r["bucket_ts"])
+			mv := f64(r["max"]) // we only care about max for this test
+
+			perBucket[b] = append(perBucket[b], SketchInput{
+				ExprID:         leaf.ID,
+				OrganizationID: "org-test",
+				Timestamp:      b,
+				Frequency:      int64(step / time.Second),
+				SketchTags: SketchTags{
+					Tags:       map[string]any{}, // no grouping
+					SketchType: SketchMAP,
+					Agg:        map[string]float64{"max": mv},
+				},
+			})
+		}
+	}
+	addRows(rows1)
+	addRows(rows2)
+
+	// Deterministic order of buckets.
+	var buckets []int64
+	for b := range perBucket {
+		buckets = append(buckets, b)
+	}
+	sort.Slice(buckets, func(i, j int) bool { return buckets[i] < buckets[j] })
+
+	// Evaluate per bucket.
+	got := map[int64]float64{}
+	for _, b := range buckets {
+		out := plan.Root.Eval(SketchGroup{
+			Timestamp: b,
+			Group:     map[string][]SketchInput{leaf.ID: perBucket[b]},
+		}, step)
+
+		switch b {
+		case 0:
+			// Filtering semantics: condition false → series dropped
+			if len(out) != 0 {
+				t.Fatalf("expected 0 series at bucket %d (filter), got %d; out=%v\nrows1=%v\nrows2=%v\nsql=\n%s",
+					b, len(out), out, rows1, rows2, workerSQL)
+			}
+		case 60000:
+			// Condition true → keep original LHS value (global max = 0.95)
+			if len(out) != 1 {
+				t.Fatalf("expected 1 series at bucket %d, got %d; out=%v\nrows1=%v\nrows2=%v\nsql=\n%s",
+					b, len(out), out, rows1, rows2, workerSQL)
+			}
+			got[b] = out["default"].Value.Num
+		}
+	}
+
+	// Validate kept value equals the LHS max (0.95).
+	if v := got[60000]; math.Abs(v-0.95) > 1e-9 {
+		t.Fatalf("value at bucket 60000 mismatch: got=%v want=0.95\n", v)
+	}
+}
+
+func f64(v any) float64 {
+	switch x := v.(type) {
+	case float64:
+		return x
+	case float32:
+		return float64(x)
+	case int64:
+		return float64(x)
+	case int32:
+		return float64(x)
+	case int16:
+		return float64(x)
+	case int8:
+		return float64(x)
+	case int:
+		return float64(x)
+	case uint64:
+		return float64(x)
+	case uint32:
+		return float64(x)
+	case uint16:
+		return float64(x)
+	case uint8:
+		return float64(x)
+	case []byte:
+		if n, err := strconv.ParseFloat(string(x), 64); err == nil {
+			return n
+		}
+		return 0
+	default:
+		if n, err := strconv.ParseFloat(fmt.Sprintf("%v", x), 64); err == nil {
+			return n
+		}
+		return 0
 	}
 }
