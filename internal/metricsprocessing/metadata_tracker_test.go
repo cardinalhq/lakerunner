@@ -70,8 +70,8 @@ func groupingKeyToOffsetKey(gk TestGroupingKey, env string) TestOffsetKey {
 
 // testMessage implements messages.GroupableMessage for testing
 type testMessage struct {
-	key    TestGroupingKey
-	count  int64
+	key   TestGroupingKey
+	count int64
 }
 
 func (tm *testMessage) GroupingKey() any {

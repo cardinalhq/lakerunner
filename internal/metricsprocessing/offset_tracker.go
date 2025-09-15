@@ -39,9 +39,9 @@ type offsetTracker struct {
 
 // partitionState tracks state for a single partition
 type partitionState struct {
-	lastSeenOffset   int64           // Last offset we read from Kafka
-	lastCommitOffset int64           // Last offset we committed to Kafka consumer group
-	dedupeCache      map[int64]bool  // Future offsets to filter out (self-cleaning)
+	lastSeenOffset   int64          // Last offset we read from Kafka
+	lastCommitOffset int64          // Last offset we committed to Kafka consumer group
+	dedupeCache      map[int64]bool // Future offsets to filter out (self-cleaning)
 }
 
 // newOffsetTracker creates a new sync mode offset tracker
@@ -70,8 +70,8 @@ func (s *offsetTracker) isOffsetProcessed(ctx context.Context, partition int32, 
 		s.partitions[partition] = state
 	}
 
-	// Check if this is first message or there's a gap
-	needsQuery := state.lastSeenOffset == 0 || offset > state.lastSeenOffset+1
+	// Check if this is first message, there's a gap, or offset moved backward
+	needsQuery := state.lastSeenOffset == 0 || offset > state.lastSeenOffset+1 || offset < state.lastSeenOffset
 
 	if needsQuery {
 		// Gap detected - query database for future offsets

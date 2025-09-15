@@ -25,9 +25,9 @@ import (
 
 // mockOffsetStore implements OffsetTrackerStore for testing
 type mockOffsetStore struct {
-	offsets      map[int32][]int64
-	queryCount   int
-	queriedRanges []struct{
+	offsets       map[int32][]int64
+	queryCount    int
+	queriedRanges []struct {
 		partition int32
 		minOffset int64
 	}
@@ -41,7 +41,7 @@ func newMockOffsetStore() *mockOffsetStore {
 
 func (m *mockOffsetStore) KafkaOffsetsAfter(ctx context.Context, params lrdb.KafkaOffsetsAfterParams) ([]int64, error) {
 	m.queryCount++
-	m.queriedRanges = append(m.queriedRanges, struct{
+	m.queriedRanges = append(m.queriedRanges, struct {
 		partition int32
 		minOffset int64
 	}{params.PartitionID, params.MinOffset})
