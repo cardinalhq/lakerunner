@@ -24,9 +24,14 @@ import (
 	"github.com/cardinalhq/lakerunner/config"
 )
 
+// AdminClientInterface defines the interface for Kafka admin operations
+type AdminClientInterface interface {
+	GetMultipleConsumerGroupLag(ctx context.Context, topicGroups map[string]string) ([]ConsumerGroupInfo, error)
+}
+
 // ConsumerLagMonitor provides resilient monitoring of Kafka consumer lag
 type ConsumerLagMonitor struct {
-	adminClient     *AdminClient
+	adminClient     AdminClientInterface
 	serviceMappings []config.ServiceMapping
 	pollInterval    time.Duration
 
