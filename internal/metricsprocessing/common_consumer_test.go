@@ -52,14 +52,14 @@ type MockProcessor struct {
 }
 
 type processedItem struct {
-	key             messages.CompactionKey
-	messageCount    int
-	recordCount     int64
-	kafkaCommitData *KafkaCommitData
+	key          messages.CompactionKey
+	messageCount int
+	recordCount  int64
+	kafkaOffsets []lrdb.KafkaOffsetInfo
 }
 
-func (m *MockProcessor) Process(ctx context.Context, group *accumulationGroup[messages.CompactionKey], kafkaCommitData *KafkaCommitData) error {
-	args := m.Called(ctx, group, kafkaCommitData)
+func (m *MockProcessor) Process(ctx context.Context, group *accumulationGroup[messages.CompactionKey], kafkaOffsets []lrdb.KafkaOffsetInfo) error {
+	args := m.Called(ctx, group, kafkaOffsets)
 
 	// Record what was processed for verification
 	var totalRecords int64
@@ -68,10 +68,10 @@ func (m *MockProcessor) Process(ctx context.Context, group *accumulationGroup[me
 	}
 
 	m.processed = append(m.processed, processedItem{
-		key:             group.Key,
-		messageCount:    len(group.Messages),
-		recordCount:     totalRecords,
-		kafkaCommitData: kafkaCommitData,
+		key:          group.Key,
+		messageCount: len(group.Messages),
+		recordCount:  totalRecords,
+		kafkaOffsets: kafkaOffsets,
 	})
 
 	return args.Error(0)

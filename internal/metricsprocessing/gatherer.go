@@ -25,7 +25,7 @@ import (
 )
 
 type processor[M messages.GroupableMessage, K comparable] interface {
-	Process(ctx context.Context, group *accumulationGroup[K], kafkaCommitData *KafkaCommitData) error
+	Process(ctx context.Context, group *accumulationGroup[K], kafkaOffsets []lrdb.KafkaOffsetInfo) error
 	GetTargetRecordCount(ctx context.Context, groupingKey K) int64
 }
 
@@ -37,7 +37,7 @@ type offsetStore interface {
 // gatherer processes a stream of GroupableMessage from Kafka with sync mode deduplication
 type gatherer[M messages.GroupableMessage, K comparable] struct {
 	hunter          *hunter[M, K]
-	metadataTracker *metadataTracker[K]
+	metadataTracker *metadataTracker[M, K]
 	processor       processor[M, K]
 	syncTracker     *offsetTracker
 	topic           string
@@ -50,9 +50,10 @@ func newGatherer[M messages.GroupableMessage, K comparable](
 	processor processor[M, K],
 	store offsetStore,
 ) *gatherer[M, K] {
+	hunter := newHunter[M, K]()
 	return &gatherer[M, K]{
-		hunter:          newHunter[M, K](),
-		metadataTracker: newMetadataTracker[K](topic, consumerGroup),
+		hunter:          hunter,
+		metadataTracker: newMetadataTracker[M, K](topic, consumerGroup, hunter),
 		processor:       processor,
 		syncTracker:     newOffsetTracker(store, consumerGroup, topic),
 		topic:           topic,
@@ -106,12 +107,12 @@ func (g *gatherer[M, K]) processMessage(ctx context.Context, msg M, metadata *me
 	result := g.hunter.addMessage(msg, metadata, targetRecordCount)
 
 	if result != nil {
-		// Create Kafka commit data from the actual messages in the Hunter list
-		kafkaCommitData := g.createKafkaCommitDataFromGroup(result.Group)
+		// Collect Kafka offsets from the group's messages
+		kafkaOffsets := g.collectKafkaOffsetsFromGroup(result.Group)
 
 		// Call the processor with the accumulated group.  If it returns no error, it is
 		// responsible for inserting the Kafka offsets into our DB tracking table.
-		if err := g.processor.Process(ctx, result.Group, kafkaCommitData); err != nil {
+		if err := g.processor.Process(ctx, result.Group, kafkaOffsets); err != nil {
 			return err
 		}
 
@@ -122,31 +123,29 @@ func (g *gatherer[M, K]) processMessage(ctx context.Context, msg M, metadata *me
 	return nil
 }
 
-// createKafkaCommitDataFromGroup creates KafkaCommitData from the actual messages in a Hunter group
-func (g *gatherer[M, K]) createKafkaCommitDataFromGroup(group *accumulationGroup[K]) *KafkaCommitData {
+// collectKafkaOffsetsFromGroup collects all Kafka offsets from the group's messages
+func (g *gatherer[M, K]) collectKafkaOffsetsFromGroup(group *accumulationGroup[K]) []lrdb.KafkaOffsetInfo {
 	if len(group.Messages) == 0 {
 		return nil
 	}
 
-	// Use the first message to get topic and consumer group
-	firstMsg := group.Messages[0]
-	topic := firstMsg.Metadata.Topic
-	consumerGroup := firstMsg.Metadata.ConsumerGroup
-
-	// Build map of highest offset per partition from this group's messages
-	offsets := make(map[int32]int64)
+	partitionOffsets := make(map[int32][]int64)
 	for _, accMsg := range group.Messages {
 		metadata := accMsg.Metadata
-		if currentOffset, exists := offsets[metadata.Partition]; !exists || metadata.Offset > currentOffset {
-			offsets[metadata.Partition] = metadata.Offset
-		}
+		partitionOffsets[metadata.Partition] = append(partitionOffsets[metadata.Partition], metadata.Offset)
 	}
 
-	return &KafkaCommitData{
-		Topic:         topic,
-		ConsumerGroup: consumerGroup,
-		Offsets:       offsets,
+	var kafkaOffsets []lrdb.KafkaOffsetInfo
+	for partition, offsets := range partitionOffsets {
+		kafkaOffsets = append(kafkaOffsets, lrdb.KafkaOffsetInfo{
+			ConsumerGroup: g.consumerGroup,
+			Topic:         g.topic,
+			PartitionID:   partition,
+			Offsets:       offsets,
+		})
 	}
+
+	return kafkaOffsets
 }
 
 // processIdleGroups processes all groups that haven't been updated for longer than lastUpdatedAge duration
@@ -156,18 +155,14 @@ func (g *gatherer[M, K]) processIdleGroups(ctx context.Context, lastUpdatedAge, 
 	emitted := 0
 
 	for _, group := range staleGroups {
-		// Create Kafka commit data from the actual messages in the group
-		kafkaCommitData := g.createKafkaCommitDataFromGroup(group)
+		kafkaOffsets := g.collectKafkaOffsetsFromGroup(group)
 
-		if err := g.processor.Process(ctx, group, kafkaCommitData); err != nil {
+		if err := g.processor.Process(ctx, group, kafkaOffsets); err != nil {
 			return emitted, err
 		}
 		emitted++
 
-		// Track the metadata for calculating safe Kafka consumer group commits
 		g.metadataTracker.trackMetadata(group)
-
-		// Note: Offset tracking happens automatically when segments are inserted/compacted
 	}
 
 	return emitted, nil

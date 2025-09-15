@@ -24,6 +24,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 // MetricCompactionBoxerProcessor implements the Processor interface for boxing metric compaction bundles
@@ -46,7 +47,7 @@ func newMetricCompactionBoxerProcessor(
 }
 
 // Process implements the Processor interface and sends the bundle to the compaction topic
-func (b *MetricCompactionBoxerProcessor) Process(ctx context.Context, group *accumulationGroup[messages.CompactionKey], kafkaCommitData *KafkaCommitData) error {
+func (b *MetricCompactionBoxerProcessor) Process(ctx context.Context, group *accumulationGroup[messages.CompactionKey], kafkaOffsets []lrdb.KafkaOffsetInfo) error {
 	ll := logctx.FromContext(ctx)
 
 	// Create a MetricCompactionBundle to send to the compaction topic

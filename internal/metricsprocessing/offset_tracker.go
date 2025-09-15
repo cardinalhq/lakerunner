@@ -16,7 +16,6 @@ package metricsprocessing
 
 import (
 	"context"
-	"slices"
 	"sync"
 
 	"github.com/cardinalhq/lakerunner/lrdb"
@@ -33,40 +32,49 @@ type offsetTracker struct {
 	consumerGroup string
 	topic         string
 
-	// Cache of processed offsets per partition, updated as we process messages
-	// Map key is partition ID, value is array of processed offsets
-	processedOffsets map[int32][]int64
-	mu               sync.RWMutex
+	// Per-partition tracking state
+	partitions map[int32]*partitionState
+	mu         sync.RWMutex
+}
 
-	// Track the minimum offset we've queried for each partition
-	// to avoid redundant database queries
-	minQueriedOffset map[int32]int64
+// partitionState tracks state for a single partition
+type partitionState struct {
+	lastSeenOffset   int64           // Last offset we read from Kafka
+	lastCommitOffset int64           // Last offset we committed to Kafka consumer group
+	dedupeCache      map[int64]bool  // Future offsets to filter out (self-cleaning)
 }
 
 // newOffsetTracker creates a new sync mode offset tracker
 func newOffsetTracker(store OffsetTrackerStore, consumerGroup, topic string) *offsetTracker {
 	return &offsetTracker{
-		store:            store,
-		consumerGroup:    consumerGroup,
-		topic:            topic,
-		processedOffsets: make(map[int32][]int64),
-		minQueriedOffset: make(map[int32]int64),
+		store:         store,
+		consumerGroup: consumerGroup,
+		topic:         topic,
+		partitions:    make(map[int32]*partitionState),
 	}
 }
 
 // isOffsetProcessed checks if an offset has already been processed for a partition
 func (s *offsetTracker) isOffsetProcessed(ctx context.Context, partition int32, offset int64) (bool, error) {
-	s.mu.RLock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-	// Check if we need to query the database for this partition
-	minQueried, hasQueried := s.minQueriedOffset[partition]
-	cachedOffsets := s.processedOffsets[partition]
-	s.mu.RUnlock()
+	// Get or create partition state
+	state, exists := s.partitions[partition]
+	if !exists {
+		state = &partitionState{
+			lastSeenOffset:   0,
+			lastCommitOffset: -1,
+			dedupeCache:      make(map[int64]bool),
+		}
+		s.partitions[partition] = state
+	}
 
-	// If we haven't queried yet, or the offset is before our minimum queried offset,
-	// we need to fetch from the database
-	if !hasQueried || offset < minQueried {
-		// Fetch offsets from database that are >= this offset
+	// Check if this is first message or there's a gap
+	needsQuery := state.lastSeenOffset == 0 || offset > state.lastSeenOffset+1
+
+	if needsQuery {
+		// Gap detected - query database for future offsets
 		dbOffsets, err := s.store.KafkaOffsetsAfter(ctx, lrdb.KafkaOffsetsAfterParams{
 			ConsumerGroup: s.consumerGroup,
 			Topic:         s.topic,
@@ -77,52 +85,20 @@ func (s *offsetTracker) isOffsetProcessed(ctx context.Context, partition int32, 
 			return false, err
 		}
 
-		// Update our cache with the fetched offsets
-		s.mu.Lock()
-		if len(dbOffsets) > 0 {
-			// Merge database offsets with cached offsets
-			offsetSet := make(map[int64]bool)
-			for _, o := range cachedOffsets {
-				offsetSet[o] = true
-			}
-			for _, o := range dbOffsets {
-				offsetSet[o] = true
-			}
-
-			// Convert back to sorted slice
-			merged := make([]int64, 0, len(offsetSet))
-			for o := range offsetSet {
-				merged = append(merged, o)
-			}
-
-			// Sort the merged offsets
-			for i := 0; i < len(merged); i++ {
-				for j := i + 1; j < len(merged); j++ {
-					if merged[i] > merged[j] {
-						merged[i], merged[j] = merged[j], merged[i]
-					}
-				}
-			}
-
-			s.processedOffsets[partition] = merged
+		// Clear and rebuild dedupe cache with future offsets
+		state.dedupeCache = make(map[int64]bool)
+		for _, o := range dbOffsets {
+			state.dedupeCache[o] = true
 		}
-
-		// Update minimum queried offset
-		if !hasQueried || offset < minQueried {
-			s.minQueriedOffset[partition] = offset
-		}
-		s.mu.Unlock()
-
-		// Check if offset is in the fetched data
-		if slices.Contains(dbOffsets, offset) {
-			return true, nil
-		}
-
-		return false, nil
 	}
 
-	// Check in our cached offsets
-	if slices.Contains(cachedOffsets, offset) {
+	// Update last seen offset
+	state.lastSeenOffset = offset
+
+	// Check if this offset was already processed
+	if state.dedupeCache[offset] {
+		// Remove from cache (self-cleaning)
+		delete(state.dedupeCache, offset)
 		return true, nil
 	}
 

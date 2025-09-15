@@ -24,6 +24,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 // MetricRollupBoxerProcessor implements the Processor interface for boxing metric rollup bundles
@@ -46,7 +47,7 @@ func newMetricBoxerProcessor(
 }
 
 // Process implements the Processor interface and sends the bundle to the rollup topic
-func (b *MetricRollupBoxerProcessor) Process(ctx context.Context, group *accumulationGroup[messages.RollupKey], kafkaCommitData *KafkaCommitData) error {
+func (b *MetricRollupBoxerProcessor) Process(ctx context.Context, group *accumulationGroup[messages.RollupKey], kafkaOffsets []lrdb.KafkaOffsetInfo) error {
 	ll := logctx.FromContext(ctx)
 
 	// Create a MetricRollupBundle to send to the rollup topic

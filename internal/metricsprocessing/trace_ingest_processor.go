@@ -249,7 +249,7 @@ func validateTraceIngestGroupConsistency(group *accumulationGroup[messages.Inges
 }
 
 // Process implements the Processor interface and performs raw trace ingestion
-func (p *TraceIngestProcessor) Process(ctx context.Context, group *accumulationGroup[messages.IngestKey], kafkaCommitData *KafkaCommitData) error {
+func (p *TraceIngestProcessor) Process(ctx context.Context, group *accumulationGroup[messages.IngestKey], kafkaOffsets []lrdb.KafkaOffsetInfo) error {
 	ll := logctx.FromContext(ctx)
 
 	defer runtime.GC() // TODO find a way to not need this
@@ -355,9 +355,6 @@ func (p *TraceIngestProcessor) Process(ctx context.Context, group *accumulationG
 	if err != nil {
 		return fmt.Errorf("failed to upload and create segments: %w", err)
 	}
-
-	// Collect all offsets from the group's messages for new offset tracking
-	kafkaOffsets := collectKafkaOffsetsFromGroup(group, kafkaCommitData)
 
 	criticalCtx := context.WithoutCancel(ctx)
 	if err := p.store.InsertTraceSegmentsBatch(criticalCtx, segmentParams, kafkaOffsets); err != nil {

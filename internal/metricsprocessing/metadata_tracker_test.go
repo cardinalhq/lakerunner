@@ -68,8 +68,31 @@ func groupingKeyToOffsetKey(gk TestGroupingKey, env string) TestOffsetKey {
 	}
 }
 
+// testMessage implements messages.GroupableMessage for testing
+type testMessage struct {
+	key    TestGroupingKey
+	count  int64
+}
+
+func (tm *testMessage) GroupingKey() any {
+	return tm.key
+}
+
+func (tm *testMessage) RecordCount() int64 {
+	return tm.count
+}
+
+func (tm *testMessage) Unmarshal(data []byte) error {
+	return nil
+}
+
+func (tm *testMessage) Marshal() ([]byte, error) {
+	return nil, nil
+}
+
 func TestMetadataTracker_SafeCommitOffsets(t *testing.T) {
-	tracker := newMetadataTracker[TestGroupingKey]("test-topic", "test-group")
+	hunter := newHunter[*testMessage, TestGroupingKey]()
+	tracker := newMetadataTracker[*testMessage, TestGroupingKey]("test-topic", "test-group", hunter)
 
 	customerA := uuid.New()
 	customerB := uuid.New()
@@ -97,14 +120,15 @@ func TestMetadataTracker_SafeCommitOffsets(t *testing.T) {
 	assert.Equal(t, "test-group", commitData.ConsumerGroup)
 	assert.Len(t, commitData.Offsets, 2)
 
-	// Partition 0: min(10, 15, 54) = 10
-	assert.Equal(t, int64(10), commitData.Offsets[0])
-	// Partition 1: min(20, 25) = 20
-	assert.Equal(t, int64(20), commitData.Offsets[1])
+	// Partition 0: max(10, 15, 54) = 54 (no pending groups)
+	assert.Equal(t, int64(54), commitData.Offsets[0])
+	// Partition 1: max(20, 25) = 25 (no pending groups)
+	assert.Equal(t, int64(25), commitData.Offsets[1])
 }
 
 func TestMetadataTracker_OnlyAdvancingOffsets(t *testing.T) {
-	tracker := newMetadataTracker[TestGroupingKey]("test-topic", "test-group")
+	hunter := newHunter[*testMessage, TestGroupingKey]()
+	tracker := newMetadataTracker[*testMessage, TestGroupingKey]("test-topic", "test-group", hunter)
 
 	orgA := uuid.New()
 	orgB := uuid.New()
@@ -125,14 +149,15 @@ func TestMetadataTracker_OnlyAdvancingOffsets(t *testing.T) {
 
 	commitData := tracker.getSafeCommitOffsets()
 
-	// Should only return partition 1 since partition 0 can't advance (min=10 < committed=15)
+	// Should only return partition 1 since partition 0 can't advance (max=12 < committed=15)
 	assert.NotNil(t, commitData)
 	assert.Len(t, commitData.Offsets, 1)
-	assert.Equal(t, int64(35), commitData.Offsets[1]) // min(35, 40) = 35
+	assert.Equal(t, int64(40), commitData.Offsets[1]) // max(35, 40) = 40
 }
 
 func TestMetadataTracker_NoAdvancement(t *testing.T) {
-	tracker := newMetadataTracker[TestGroupingKey]("test-topic", "test-group")
+	hunter := newHunter[*testMessage, TestGroupingKey]()
+	tracker := newMetadataTracker[*testMessage, TestGroupingKey]("test-topic", "test-group", hunter)
 
 	orgA := uuid.New()
 
@@ -149,7 +174,8 @@ func TestMetadataTracker_NoAdvancement(t *testing.T) {
 }
 
 func TestMetadataTracker_MarkOffsetsCommitted(t *testing.T) {
-	tracker := newMetadataTracker[TestGroupingKey]("test-topic", "test-group")
+	hunter := newHunter[*testMessage, TestGroupingKey]()
+	tracker := newMetadataTracker[*testMessage, TestGroupingKey]("test-topic", "test-group", hunter)
 
 	// Set some initial committed offsets
 	tracker.lastCommittedOffsets[0] = 10
@@ -171,7 +197,8 @@ func TestMetadataTracker_MarkOffsetsCommitted(t *testing.T) {
 }
 
 func TestMetadataTracker_TrackMetadata(t *testing.T) {
-	tracker := newMetadataTracker[TestGroupingKey]("test-topic", "test-group")
+	hunter := newHunter[*testMessage, TestGroupingKey]()
+	tracker := newMetadataTracker[*testMessage, TestGroupingKey]("test-topic", "test-group", hunter)
 
 	customerA := uuid.New()
 	customerB := uuid.New()
@@ -309,7 +336,7 @@ func TestCustomTypesWorkflow(t *testing.T) {
 	t.Logf("OffsetKey: %+v", offsetKey1)
 }
 
-// TestCollectKafkaOffsetsFromGroup tests the collectKafkaOffsetsFromGroup helper function
+// TestCollectKafkaOffsetsFromGroup tests the collectKafkaOffsetsFromGroup helper function in gatherer
 func TestCollectKafkaOffsetsFromGroup(t *testing.T) {
 	tests := []struct {
 		name             string
@@ -491,7 +518,16 @@ func TestCollectKafkaOffsetsFromGroup(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := collectKafkaOffsetsFromGroup(tt.group, tt.kafkaCommitData)
+			// Test the gatherer's collectKafkaOffsetsFromGroup method
+			g := &gatherer[*messages.ObjStoreNotificationMessage, messages.IngestKey]{
+				topic:         "test-topic",
+				consumerGroup: "test-group",
+			}
+			if tt.kafkaCommitData != nil {
+				g.topic = tt.kafkaCommitData.Topic
+				g.consumerGroup = tt.kafkaCommitData.ConsumerGroup
+			}
+			result := g.collectKafkaOffsetsFromGroup(tt.group)
 
 			if tt.expectedPartsLen == 0 {
 				assert.Nil(t, result)
@@ -565,7 +601,12 @@ func TestCollectKafkaOffsetsFromGroup_CompactionKey(t *testing.T) {
 		Offsets:       map[int32]int64{0: 1001},
 	}
 
-	result := collectKafkaOffsetsFromGroup(group, kafkaCommitData)
+	// Test the gatherer's collectKafkaOffsetsFromGroup method
+	g := &gatherer[*messages.MetricCompactionMessage, messages.CompactionKey]{
+		topic:         kafkaCommitData.Topic,
+		consumerGroup: kafkaCommitData.ConsumerGroup,
+	}
+	result := g.collectKafkaOffsetsFromGroup(group)
 
 	require.Len(t, result, 1)
 	assert.Equal(t, "compaction-group", result[0].ConsumerGroup)

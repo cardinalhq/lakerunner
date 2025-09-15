@@ -133,7 +133,7 @@ func validateIngestGroupConsistency(group *accumulationGroup[messages.IngestKey]
 }
 
 // Process implements the Processor interface and performs raw metric ingestion
-func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulationGroup[messages.IngestKey], kafkaCommitData *KafkaCommitData) error {
+func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulationGroup[messages.IngestKey], kafkaOffsets []lrdb.KafkaOffsetInfo) error {
 	ll := logctx.FromContext(ctx)
 
 	defer runtime.GC() // TODO find a way to not need this
@@ -242,9 +242,6 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 	if err != nil {
 		return fmt.Errorf("failed to upload and create segments: %w", err)
 	}
-
-	// Collect all offsets from the group's messages for new offset tracking
-	kafkaOffsets := collectKafkaOffsetsFromGroup(group, kafkaCommitData)
 
 	criticalCtx := context.WithoutCancel(ctx)
 	if err := p.store.InsertMetricSegmentsBatch(criticalCtx, segmentParams, kafkaOffsets); err != nil {

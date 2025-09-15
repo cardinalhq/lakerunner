@@ -24,6 +24,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 // TraceCompactionBoxerProcessor implements the Processor interface for boxing trace compaction bundles
@@ -45,7 +46,7 @@ func newTraceCompactionBoxerProcessor(
 }
 
 // Process implements the Processor interface and sends the bundle to the compaction topic
-func (b *TraceCompactionBoxerProcessor) Process(ctx context.Context, group *accumulationGroup[messages.TraceCompactionKey], kafkaCommitData *KafkaCommitData) error {
+func (b *TraceCompactionBoxerProcessor) Process(ctx context.Context, group *accumulationGroup[messages.TraceCompactionKey], kafkaOffsets []lrdb.KafkaOffsetInfo) error {
 	ll := logctx.FromContext(ctx)
 
 	bundle := &messages.TraceCompactionBundle{

@@ -132,7 +132,7 @@ func validateLogIngestGroupConsistency(group *accumulationGroup[messages.IngestK
 }
 
 // Process implements the Processor interface and performs raw log ingestion
-func (p *LogIngestProcessor) Process(ctx context.Context, group *accumulationGroup[messages.IngestKey], kafkaCommitData *KafkaCommitData) error {
+func (p *LogIngestProcessor) Process(ctx context.Context, group *accumulationGroup[messages.IngestKey], kafkaOffsets []lrdb.KafkaOffsetInfo) error {
 	ll := logctx.FromContext(ctx)
 
 	// Calculate group age from Hunter timestamp
@@ -236,10 +236,6 @@ func (p *LogIngestProcessor) Process(ctx context.Context, group *accumulationGro
 	if err != nil {
 		return fmt.Errorf("failed to upload and create segments: %w", err)
 	}
-
-	// Collect all offsets from the group's messages for new offset tracking
-	// Collect all Kafka offsets from this group's messages
-	kafkaOffsets := collectKafkaOffsetsFromGroup(group, kafkaCommitData)
 
 	criticalCtx := context.WithoutCancel(ctx)
 	if err := p.store.InsertLogSegmentsBatch(criticalCtx, segmentParams, kafkaOffsets); err != nil {

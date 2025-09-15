@@ -18,11 +18,11 @@ import (
 	"maps"
 	"sync"
 
-	"github.com/cardinalhq/lakerunner/lrdb"
+	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 )
 
 // metadataTracker tracks the latest offsets seen for Kafka commits
-type metadataTracker[K comparable] struct {
+type metadataTracker[M messages.GroupableMessage, K comparable] struct {
 	mu sync.RWMutex
 
 	// Track offsets per partition and key: partition -> key -> offset
@@ -32,20 +32,23 @@ type metadataTracker[K comparable] struct {
 	// Remember the topic and consumer group we're working with
 	topic         string
 	consumerGroup string
+	// Reference to hunter to check pending groups
+	hunter *hunter[M, K]
 }
 
 // newMetadataTracker creates a new MetadataTracker instance
-func newMetadataTracker[K comparable](topic, consumerGroup string) *metadataTracker[K] {
-	return &metadataTracker[K]{
+func newMetadataTracker[M messages.GroupableMessage, K comparable](topic, consumerGroup string, hunter *hunter[M, K]) *metadataTracker[M, K] {
+	return &metadataTracker[M, K]{
 		partitionOffsets:     make(map[int32]map[K]int64),
 		lastCommittedOffsets: make(map[int32]int64),
 		topic:                topic,
 		consumerGroup:        consumerGroup,
+		hunter:               hunter,
 	}
 }
 
 // trackMetadata tracks the metadata from all accumulated messages to determine commit points
-func (mt *metadataTracker[K]) trackMetadata(group *accumulationGroup[K]) {
+func (mt *metadataTracker[M, K]) trackMetadata(group *accumulationGroup[K]) {
 	mt.mu.Lock()
 	defer mt.mu.Unlock()
 
@@ -66,60 +69,65 @@ func (mt *metadataTracker[K]) trackMetadata(group *accumulationGroup[K]) {
 }
 
 // KafkaCommitData represents Kafka offset data to be committed atomically with SQL operations
+// This is now only used internally by metadataTracker for safe commit offset calculations
 type KafkaCommitData struct {
 	Topic         string
 	ConsumerGroup string
-	Offsets       map[int32]int64 // partition -> offset
-}
-
-// collectKafkaOffsetsFromGroup collects all Kafka offsets from a group's messages
-// and returns them as KafkaOffsetInfo structures grouped by partition.
-// This is a helper function used by ingest processors to prepare offsets for batch insertion.
-func collectKafkaOffsetsFromGroup[K comparable](group *accumulationGroup[K], kafkaCommitData *KafkaCommitData) []lrdb.KafkaOffsetInfo {
-	if kafkaCommitData == nil || len(group.Messages) == 0 {
-		return nil
-	}
-
-	// Group offsets by partition
-	partitionOffsets := make(map[int32][]int64)
-	for _, accMsg := range group.Messages {
-		metadata := accMsg.Metadata
-		partitionOffsets[metadata.Partition] = append(partitionOffsets[metadata.Partition], metadata.Offset)
-	}
-
-	// Create KafkaOffsetInfo for each partition
-	var kafkaOffsets []lrdb.KafkaOffsetInfo
-	for partition, offsets := range partitionOffsets {
-		kafkaOffsets = append(kafkaOffsets, lrdb.KafkaOffsetInfo{
-			ConsumerGroup: kafkaCommitData.ConsumerGroup,
-			Topic:         kafkaCommitData.Topic,
-			PartitionID:   partition,
-			Offsets:       offsets,
-		})
-	}
-
-	return kafkaOffsets
+	Offsets       map[int32]int64 // partition -> highest offset
 }
 
 // getSafeCommitOffsets calculates the minimum offsets across all keys that can be safely committed to Kafka
 // Returns a single struct with all partition offsets that can be advanced
-func (mt *metadataTracker[K]) getSafeCommitOffsets() *KafkaCommitData {
+func (mt *metadataTracker[M, K]) getSafeCommitOffsets() *KafkaCommitData {
 	offsets := make(map[int32]int64)
 
 	mt.mu.Lock()
 	defer mt.mu.Unlock()
 
+	// First, find minimum pending offset per partition from hunter's groups
+	minPendingPerPartition := make(map[int32]int64)
+
+	// Check all pending groups in the hunter
+	if mt.hunter != nil {
+		mt.hunter.mu.Lock()
+		for _, group := range mt.hunter.groups {
+			for _, accMsg := range group.Messages {
+				partition := accMsg.Metadata.Partition
+				offset := accMsg.Metadata.Offset
+
+				if currentMin, exists := minPendingPerPartition[partition]; !exists || offset < currentMin {
+					minPendingPerPartition[partition] = offset
+				}
+			}
+		}
+		mt.hunter.mu.Unlock()
+	}
+
+	// Now calculate safe commit offset per partition
 	for partition, keyOffsets := range mt.partitionOffsets {
 		if len(keyOffsets) == 0 {
 			continue
 		}
 
-		// Find the minimum offset across all keys for this partition
-		var minOffset int64 = -1
+		// Find the maximum processed offset for this partition
+		var maxProcessed int64 = -1
 		for _, offset := range keyOffsets {
-			if minOffset == -1 || offset < minOffset {
-				minOffset = offset
+			if offset > maxProcessed {
+				maxProcessed = offset
 			}
+		}
+
+		// Get the minimum pending offset for this partition
+		minPending, hasPending := minPendingPerPartition[partition]
+
+		// Safe commit offset is either:
+		// 1. minPending - 1 (if there are pending messages)
+		// 2. maxProcessed (if no pending messages)
+		var safeOffset int64
+		if hasPending && minPending > 0 {
+			safeOffset = minPending - 1
+		} else {
+			safeOffset = maxProcessed
 		}
 
 		// Get the last committed offset for this partition
@@ -129,8 +137,8 @@ func (mt *metadataTracker[K]) getSafeCommitOffsets() *KafkaCommitData {
 		}
 
 		// Only include if we can advance
-		if minOffset > lastCommitted {
-			offsets[partition] = minOffset
+		if safeOffset > lastCommitted {
+			offsets[partition] = safeOffset
 		}
 	}
 
@@ -147,7 +155,7 @@ func (mt *metadataTracker[K]) getSafeCommitOffsets() *KafkaCommitData {
 }
 
 // markOffsetsCommitted records that offsets have been successfully committed to Kafka
-func (mt *metadataTracker[K]) markOffsetsCommitted(offsets map[int32]int64) {
+func (mt *metadataTracker[M, K]) markOffsetsCommitted(offsets map[int32]int64) {
 	mt.mu.Lock()
 	defer mt.mu.Unlock()
 

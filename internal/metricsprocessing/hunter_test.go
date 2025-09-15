@@ -28,6 +28,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 func TestHunter_AddMessage_BelowThreshold(t *testing.T) {
@@ -598,14 +599,23 @@ func TestHunter_RealDataFromFile(t *testing.T) {
 
 	var processedGroups []ProcessedGroup
 	mockProcessor := &struct {
-		groups  []*accumulationGroup[messages.CompactionKey]
-		commits []*KafkaCommitData
+		groups       []*accumulationGroup[messages.CompactionKey]
+		kafkaOffsets [][]lrdb.KafkaOffsetInfo
 	}{}
 
 	// Create a processor function that captures the groups
-	processFunc := func(ctx context.Context, group *accumulationGroup[messages.CompactionKey], kafkaCommitData *KafkaCommitData) error {
+	processFunc := func(ctx context.Context, group *accumulationGroup[messages.CompactionKey], kafkaOffsets []lrdb.KafkaOffsetInfo) error {
 		mockProcessor.groups = append(mockProcessor.groups, group)
-		mockProcessor.commits = append(mockProcessor.commits, kafkaCommitData)
+		mockProcessor.kafkaOffsets = append(mockProcessor.kafkaOffsets, kafkaOffsets)
+		// Convert to old format for test compatibility
+		var kafkaCommitData *KafkaCommitData
+		if len(kafkaOffsets) > 0 {
+			kafkaCommitData = &KafkaCommitData{
+				Topic:         kafkaOffsets[0].Topic,
+				ConsumerGroup: kafkaOffsets[0].ConsumerGroup,
+				Offsets:       make(map[int32]int64),
+			}
+		}
 		processedGroups = append(processedGroups, ProcessedGroup{Group: group, KafkaCommitData: kafkaCommitData})
 		return nil
 	}
@@ -727,11 +737,11 @@ func TestHunter_RealDataFromFile(t *testing.T) {
 
 // MockProcessorWithFunc is a processor that uses a function for processing
 type MockProcessorWithFunc struct {
-	ProcessFunc func(ctx context.Context, group *accumulationGroup[messages.CompactionKey], kafkaCommitData *KafkaCommitData) error
+	ProcessFunc func(ctx context.Context, group *accumulationGroup[messages.CompactionKey], kafkaOffsets []lrdb.KafkaOffsetInfo) error
 }
 
-func (m *MockProcessorWithFunc) Process(ctx context.Context, group *accumulationGroup[messages.CompactionKey], kafkaCommitData *KafkaCommitData) error {
-	return m.ProcessFunc(ctx, group, kafkaCommitData)
+func (m *MockProcessorWithFunc) Process(ctx context.Context, group *accumulationGroup[messages.CompactionKey], kafkaOffsets []lrdb.KafkaOffsetInfo) error {
+	return m.ProcessFunc(ctx, group, kafkaOffsets)
 }
 
 func (m *MockProcessorWithFunc) GetTargetRecordCount(ctx context.Context, groupingKey messages.CompactionKey) int64 {
