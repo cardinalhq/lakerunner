@@ -148,7 +148,9 @@ func (p *kafkaProducer) getWriter(topic string) *kafka.Writer {
 func (p *kafkaProducer) Send(ctx context.Context, topic string, message Message) error {
 	w := p.getWriter(topic)
 	km := message.ToKafkaMessage()
-	return w.WriteMessages(ctx, km)
+	err := w.WriteMessages(ctx, km)
+	recordSentMetrics(ctx, topic, []Message{message}, err)
+	return err
 }
 
 func (p *kafkaProducer) SendToPartition(ctx context.Context, topic string, partition int, message Message) error {
@@ -170,7 +172,9 @@ func (p *kafkaProducer) SendToPartition(ctx context.Context, topic string, parti
 	defer func() { _ = w.Close() }()
 
 	km := message.ToKafkaMessage()
-	return w.WriteMessages(ctx, km)
+	err := w.WriteMessages(ctx, km)
+	recordSentMetrics(ctx, topic, []Message{message}, err)
+	return err
 }
 
 func (p *kafkaProducer) GetPartitionCount(topic string) (int, error) {
@@ -213,7 +217,9 @@ func (p *kafkaProducer) BatchSend(ctx context.Context, topic string, messages []
 		km := msg.ToKafkaMessage()
 		kmsgs[i] = km
 	}
-	return w.WriteMessages(ctx, kmsgs...)
+	err := w.WriteMessages(ctx, kmsgs...)
+	recordSentMetrics(ctx, topic, messages, err)
+	return err
 }
 
 func (p *kafkaProducer) Close() error {

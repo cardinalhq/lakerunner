@@ -159,6 +159,7 @@ func (p *asyncKafkaProducer) SendAsync(ctx context.Context, topic string, messag
 		return ctx.Err()
 	case p.sendChan <- msg:
 		p.pending.Add(1)
+		recordPendingDelta(ctx, topic, 1)
 		p.updateStats(func(s *ProducerStats) {
 			s.MessagesQueued++
 		})
@@ -234,10 +235,12 @@ func (p *asyncKafkaProducer) sendBatch(batch []*asyncMessage) {
 	}
 
 	for topic, msgs := range byTopic {
-		// Convert to kafka messages
+		// Convert to kafka messages and collect for metrics
 		kafkaMsgs := make([]kafka.Message, len(msgs))
+		plainMsgs := make([]Message, len(msgs))
 		for i, m := range msgs {
 			kafkaMsgs[i] = m.message.ToKafkaMessage()
+			plainMsgs[i] = m.message
 		}
 
 		// Get writer and send
@@ -246,6 +249,8 @@ func (p *asyncKafkaProducer) sendBatch(batch []*asyncMessage) {
 		// Use a context that won't be cancelled for the actual send
 		sendCtx := context.Background()
 		err := writer.WriteMessages(sendCtx, kafkaMsgs...)
+
+		recordSentMetrics(sendCtx, topic, plainMsgs, err)
 
 		// Update stats
 		p.updateStats(func(s *ProducerStats) {
@@ -263,6 +268,7 @@ func (p *asyncKafkaProducer) sendBatch(batch []*asyncMessage) {
 		// Invoke callbacks
 		for _, m := range msgs {
 			p.pending.Add(-1)
+			recordPendingDelta(context.Background(), topic, -1)
 
 			if m.callback != nil {
 				// Extract partition and offset from response if available
