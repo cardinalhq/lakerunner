@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
@@ -139,21 +140,58 @@ func NewWorkerService(
 	}
 }
 
-func sketchInputMapper(request queryapi.PushDownRequest, cols []string, row *sql.Rows) (promql.Timestamped, error) {
-	vals := make([]interface{}, len(cols))
-	ptrs := make([]interface{}, len(cols))
-	for i := range vals {
-		ptrs[i] = &vals[i]
-	}
+// rowBuffer holds scratch space for scanning rows without per-call allocations.
+type rowBuffer struct {
+	vals []any
+	ptrs []any
+}
 
-	if err := row.Scan(ptrs...); err != nil {
+var rowBufPool = sync.Pool{New: func() any { return &rowBuffer{} }}
+
+func getRowBuffer(n int) *rowBuffer {
+	rb := rowBufPool.Get().(*rowBuffer)
+	if cap(rb.vals) < n {
+		rb.vals = make([]any, n)
+		rb.ptrs = make([]any, n)
+	} else {
+		rb.vals = rb.vals[:n]
+		rb.ptrs = rb.ptrs[:n]
+	}
+	for i := range rb.vals {
+		rb.ptrs[i] = &rb.vals[i]
+	}
+	return rb
+}
+
+func putRowBuffer(rb *rowBuffer) {
+	for i := range rb.vals {
+		rb.vals[i] = nil
+		rb.ptrs[i] = nil
+	}
+	rowBufPool.Put(rb)
+}
+
+type sseEnvelope struct {
+	Type string `json:"type"`
+	Data any    `json:"data,omitempty"`
+}
+
+var sseEnvelopePool = sync.Pool{New: func() any { return &sseEnvelope{} }}
+
+func sketchInputMapper(request queryapi.PushDownRequest, cols []string, row *sql.Rows) (promql.Timestamped, error) {
+	rb := getRowBuffer(len(cols))
+	defer putRowBuffer(rb)
+
+	if err := row.Scan(rb.ptrs...); err != nil {
 		slog.Error("failed to scan row", "err", err)
 		return promql.SketchInput{}, fmt.Errorf("failed to scan row: %w", err)
 	}
 
+	vals := rb.vals
+
 	var ts int64
-	agg := map[string]float64{}
-	tags := map[string]any{}
+	agg := make(map[string]float64, 4)
+	tags := make(map[string]any, len(cols))
 
 	tags["name"] = request.BaseExpr.Metric
 	for _, matcher := range request.BaseExpr.Matchers {
@@ -204,15 +242,12 @@ func sketchInputMapper(request queryapi.PushDownRequest, cols []string, row *sql
 }
 
 func exemplarMapper(request queryapi.PushDownRequest, cols []string, row *sql.Rows) (promql.Timestamped, error) {
-	vals := make([]interface{}, len(cols))
-	ptrs := make([]interface{}, len(cols))
-	for i := range vals {
-		ptrs[i] = &vals[i]
-	}
+	rb := getRowBuffer(len(cols))
+	defer putRowBuffer(rb)
 
-	tags := map[string]any{}
+	tags := make(map[string]any, len(cols))
 
-	if err := row.Scan(ptrs...); err != nil {
+	if err := row.Scan(rb.ptrs...); err != nil {
 		slog.Error("failed to scan row", "err", err)
 		return promql.Exemplar{}, fmt.Errorf("failed to scan row: %w", err)
 	}
@@ -221,6 +256,7 @@ func exemplarMapper(request queryapi.PushDownRequest, cols []string, row *sql.Ro
 
 	exemplar := promql.Exemplar{}
 
+	vals := rb.vals
 	for i, col := range cols {
 		switch col {
 		case "_cardinalhq.timestamp":
@@ -237,41 +273,17 @@ func exemplarMapper(request queryapi.PushDownRequest, cols []string, row *sql.Ro
 }
 
 func tagValuesMapper(request queryapi.PushDownRequest, cols []string, row *sql.Rows) (promql.Timestamped, error) {
-	vals := make([]interface{}, len(cols))
-	ptrs := make([]interface{}, len(cols))
-	for i := range vals {
-		ptrs[i] = &vals[i]
-	}
-
-	if err := row.Scan(ptrs...); err != nil {
+	var val sql.NullString
+	if err := row.Scan(&val); err != nil {
 		slog.Error("failed to scan row", "err", err)
 		return promql.TagValue{}, fmt.Errorf("failed to scan row: %w", err)
 	}
 
 	tagValue := promql.TagValue{}
-	for i, col := range cols {
-		switch col {
-		case "tag_value":
-			if vals[i] != nil {
-				tagValue.Value = asString(vals[i])
-			}
-		}
+	if val.Valid {
+		tagValue.Value = val.String
 	}
-
 	return tagValue, nil
-}
-
-func asString(v any) string {
-	switch x := v.(type) {
-	case nil:
-		return ""
-	case string:
-		return x
-	case []byte:
-		return string(x)
-	default:
-		return fmt.Sprintf("%v", x)
-	}
 }
 
 // ServeHttp serves SSE with merged, sorted points from cache+S3.
@@ -417,27 +429,30 @@ func (ws *WorkerService) processResponse(w http.ResponseWriter, responseChannel 
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	writeSSE := func(event string, v any) error {
-		type envelope struct {
-			Type string `json:"type"`
-			Data any    `json:"data,omitempty"`
-		}
-		env := envelope{Type: event, Data: v}
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
 
-		data, err := json.Marshal(env)
-		if err != nil {
-			return err
-		}
+	writeSSE := func(event string, v any) error {
+		env := sseEnvelopePool.Get().(*sseEnvelope)
+		env.Type = event
+		env.Data = v
+
 		if _, err := w.Write([]byte("data: ")); err != nil {
+			sseEnvelopePool.Put(env)
 			return err
 		}
-		if _, err := w.Write(data); err != nil {
+		if err := enc.Encode(env); err != nil {
+			sseEnvelopePool.Put(env)
 			return err
 		}
-		if _, err := w.Write([]byte("\n\n")); err != nil {
+		if _, err := w.Write([]byte("\n")); err != nil {
+			sseEnvelopePool.Put(env)
 			return err
 		}
 		flusher.Flush()
+		env.Type = ""
+		env.Data = nil
+		sseEnvelopePool.Put(env)
 		return nil
 	}
 
