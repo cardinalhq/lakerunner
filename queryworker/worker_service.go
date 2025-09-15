@@ -31,7 +31,6 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/promql"
@@ -48,8 +47,6 @@ type WorkerService struct {
 }
 
 func NewWorkerService(
-	ctx context.Context,
-	cfg *config.Config,
 	metricsGlobSize int,
 	logsGlobSize int,
 	maxConcurrency int,
@@ -134,8 +131,8 @@ func NewWorkerService(
 	}
 
 	return &WorkerService{
-		MetricsCM:            NewCacheManager(ctx, cfg, downloader, "metrics", sp),
-		LogsCM:               NewCacheManager(ctx, cfg, downloader, "logs", sp),
+		MetricsCM:            NewCacheManager(downloader, "metrics", sp),
+		LogsCM:               NewCacheManager(downloader, "logs", sp),
 		StorageProfilePoller: sp,
 		MetricsGlobSize:      metricsGlobSize,
 		LogsGlobSize:         logsGlobSize,

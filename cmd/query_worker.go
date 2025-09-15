@@ -15,13 +15,12 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
-	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
-	"github.com/cardinalhq/lakerunner/internal/debugging"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/queryworker"
 
@@ -38,7 +37,7 @@ func init() {
 		RunE: func(_ *cobra.Command, _ []string) error {
 			servicename := "query-worker"
 			addlAttrs := attribute.NewSet()
-			ctx, doneFx, err := setupTelemetry(servicename, &addlAttrs)
+			doneCtx, doneFx, err := setupTelemetry(servicename, &addlAttrs)
 			if err != nil {
 				return fmt.Errorf("failed to setup telemetry: %w", err)
 			}
@@ -49,31 +48,17 @@ func init() {
 				}
 			}()
 
-			// Start disk usage monitoring
-			go diskUsageLoop(ctx)
-
-			// Start pprof server
-			go debugging.RunPprof(ctx)
-
 			// Start health check server
 			healthConfig := healthcheck.GetConfigFromEnv()
 			healthServer := healthcheck.NewServer(healthConfig)
 
 			go func() {
-				if err := healthServer.Start(ctx); err != nil {
+				if err := healthServer.Start(doneCtx); err != nil {
 					slog.Error("Health check server stopped", slog.Any("error", err))
 				}
 			}()
 
-			// Get main config
-			cfg, err := config.Load()
-			if err != nil {
-				return fmt.Errorf("failed to load config: %w", err)
-			}
-			// Mark as healthy immediately - health is not dependent on database readiness
-			healthServer.SetStatus(healthcheck.StatusHealthy)
-
-			cdb, err := dbopen.ConfigDBStore(ctx)
+			cdb, err := dbopen.ConfigDBStore(context.Background())
 			sp := storageprofile.NewStorageProfileProvider(cdb)
 
 			if err != nil {
@@ -81,16 +66,15 @@ func init() {
 				return fmt.Errorf("failed to create query-worker service: %w", err)
 			}
 
-			cmgr, err := cloudstorage.NewCloudManagers(ctx)
+			cloudManagers, err := cloudstorage.NewCloudManagers(context.Background())
 			if err != nil {
 				return fmt.Errorf("failed to create cloud managers: %w", err)
 			}
 
-			// Mark as ready now that database connections are established and migrations have been checked
-			healthServer.SetReady(true)
+			healthServer.SetStatus(healthcheck.StatusHealthy)
 
-			worker := queryworker.NewWorkerService(ctx, cfg, 5, 5, 12, sp, cmgr)
-			return worker.Run(ctx)
+			worker := queryworker.NewWorkerService(5, 5, 12, sp, cloudManagers)
+			return worker.Run(doneCtx)
 		},
 	}
 
