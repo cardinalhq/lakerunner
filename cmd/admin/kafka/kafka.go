@@ -15,13 +15,13 @@
 package kafka
 
 import (
-        "context"
-        "encoding/json"
-        "fmt"
-        "os"
-        "sort"
-        "text/tabwriter"
-        "time"
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"sort"
+	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
@@ -127,7 +127,7 @@ func getConsumerLagCmd() *cobra.Command {
 }
 
 func createAdminClient() (adminproto.AdminServiceClient, func(), error) {
-	conn, err := grpc.Dial(adminAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(adminAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to connect to admin service: %w", err)
 	}
@@ -173,10 +173,14 @@ func printLagSummary(lags []PartitionLag) error {
 		return sorted[i].ConsumerGroup < sorted[j].ConsumerGroup
 	})
 
-        w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "TOPIC\tGROUP\tLAG\tPARTITIONS")
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	if _, err := fmt.Fprintln(w, "TOPIC\tGROUP\tLAG\tPARTITIONS"); err != nil {
+		return err
+	}
 	for _, s := range sorted {
-		fmt.Fprintf(w, "%s\t%s\t%d\t%d\n", s.Topic, s.ConsumerGroup, s.TotalLag, s.PartitionCount)
+		if _, err := fmt.Fprintf(w, "%s\t%s\t%d\t%d\n", s.Topic, s.ConsumerGroup, s.TotalLag, s.PartitionCount); err != nil {
+			return err
+		}
 	}
 	return w.Flush()
 }
@@ -192,16 +196,20 @@ func printLagTableDetailed(lags []PartitionLag) error {
 		return lags[i].Partition < lags[j].Partition
 	})
 
-        w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "TOPIC\tGROUP\tPARTITION\tCURRENT\tHWM\tLAG")
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	if _, err := fmt.Fprintln(w, "TOPIC\tGROUP\tPARTITION\tCURRENT\tHWM\tLAG"); err != nil {
+		return err
+	}
 	for _, l := range lags {
-		fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%d\t%d\n", l.Topic, l.ConsumerGroup, l.Partition, l.CurrentOffset, l.HighWaterMark, l.Lag)
+		if _, err := fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%d\t%d\n", l.Topic, l.ConsumerGroup, l.Partition, l.CurrentOffset, l.HighWaterMark, l.Lag); err != nil {
+			return err
+		}
 	}
 	return w.Flush()
 }
 
 func printLagJSON(lags []PartitionLag) error {
-        enc := json.NewEncoder(os.Stdout)
+	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(lags)
 }

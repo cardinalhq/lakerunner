@@ -64,11 +64,16 @@ func getPingCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
-			conn, err := grpc.Dial(adminAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+			conn, err := grpc.NewClient(adminAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 			if err != nil {
 				return fmt.Errorf("failed to connect to admin service: %w", err)
 			}
-			defer conn.Close()
+			defer func() {
+				if err := conn.Close(); err != nil {
+					// Log the error if needed, but don't fail the command
+					_ = err
+				}
+			}()
 
 			client := adminproto.NewAdminServiceClient(conn)
 			ctx = attachAPIKey(ctx)

@@ -36,10 +36,10 @@ import (
 )
 
 var (
-        loadConfig = config.Load
-        newAdminClient = func(cfg *config.KafkaConfig) (fly.AdminClientInterface, error) {
-                return fly.NewAdminClient(cfg)
-        }
+	loadConfig     = config.Load
+	newAdminClient = func(cfg *config.KafkaConfig) (fly.AdminClientInterface, error) {
+		return fly.NewAdminClient(cfg)
+	}
 )
 
 type Service struct {
