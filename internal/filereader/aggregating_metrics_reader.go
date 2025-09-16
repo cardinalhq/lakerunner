@@ -425,6 +425,12 @@ func (ar *AggregatingMetricsReader) readNextBatchFromUnderlying(ctx context.Cont
 			truncatedTimestamp := (timestamp / ar.aggregationPeriod) * ar.aggregationPeriod
 			row[wkk.RowKeyCTimestamp] = truncatedTimestamp
 		}
+		// Also truncate nanosecond timestamp to same period (in nanoseconds)
+		if tsns, ok := row[wkk.RowKeyCTsns].(int64); ok {
+			aggregationPeriodNs := ar.aggregationPeriod * 1_000_000
+			truncatedTsns := (tsns / aggregationPeriodNs) * aggregationPeriodNs
+			row[wkk.RowKeyCTsns] = truncatedTsns
+		}
 	}
 
 	return batch, nil

@@ -423,8 +423,10 @@ func (r *IngestProtoMetricsReader) addNumberDatapointFields(ctx context.Context,
 
 	if dp.Timestamp() != 0 {
 		ret[wkk.RowKeyCTimestamp] = dp.Timestamp().AsTime().UnixMilli()
+		ret[wkk.RowKeyCTsns] = int64(dp.Timestamp())
 	} else {
 		ret[wkk.RowKeyCTimestamp] = dp.StartTimestamp().AsTime().UnixMilli()
+		ret[wkk.RowKeyCTsns] = int64(dp.StartTimestamp())
 	}
 
 	var value float64
@@ -495,8 +497,10 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ctx context.Conte
 
 	if dp.Timestamp() != 0 {
 		ret[wkk.RowKeyCTimestamp] = dp.Timestamp().AsTime().UnixMilli()
+		ret[wkk.RowKeyCTsns] = int64(dp.Timestamp())
 	} else {
 		ret[wkk.RowKeyCTimestamp] = dp.StartTimestamp().AsTime().UnixMilli()
+		ret[wkk.RowKeyCTsns] = int64(dp.StartTimestamp())
 	}
 
 	const alpha = 0.01
@@ -665,8 +669,10 @@ func (r *IngestProtoMetricsReader) addExponentialHistogramDatapointFields(ctx co
 
 	if dp.Timestamp() != 0 {
 		ret[wkk.RowKeyCTimestamp] = dp.Timestamp().AsTime().UnixMilli()
+		ret[wkk.RowKeyCTsns] = int64(dp.Timestamp())
 	} else {
 		ret[wkk.RowKeyCTimestamp] = dp.StartTimestamp().AsTime().UnixMilli()
+		ret[wkk.RowKeyCTsns] = int64(dp.StartTimestamp())
 	}
 
 	var positiveBuckets, negativeBuckets []uint64
@@ -772,8 +778,10 @@ func (r *IngestProtoMetricsReader) addSummaryDatapointFields(ctx context.Context
 	// Set timestamp
 	if dp.Timestamp() != 0 {
 		ret[wkk.RowKeyCTimestamp] = dp.Timestamp().AsTime().UnixMilli()
+		ret[wkk.RowKeyCTsns] = int64(dp.Timestamp())
 	} else {
 		ret[wkk.RowKeyCTimestamp] = dp.StartTimestamp().AsTime().UnixMilli()
+		ret[wkk.RowKeyCTsns] = int64(dp.StartTimestamp())
 	}
 
 	// Check if we got any data in the sketch (no quantiles)
