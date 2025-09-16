@@ -67,7 +67,7 @@ dockers:
     goarch: amd64
     dockerfile: Dockerfile
     use: buildx
-    builds:
+    ids:
       - lakerunner
       - lakectl
     image_templates:
@@ -87,7 +87,7 @@ dockers:
     goarch: arm64
     dockerfile: Dockerfile
     use: buildx
-    builds:
+    ids:
       - lakerunner
       - lakectl
     image_templates:
