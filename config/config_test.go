@@ -25,9 +25,6 @@ func TestLoadEnvOverride(t *testing.T) {
 	t.Setenv("LAKERUNNER_FLY_SASL_ENABLED", "true")
 	t.Setenv("LAKERUNNER_FLY_SASL_USERNAME", "alice")
 	t.Setenv("LAKERUNNER_METRICS_INGESTION_PROCESS_EXEMPLARS", "false")
-	t.Setenv("LAKERUNNER_METRICS_INGESTION_WRITE_TO_LOWEST_INSTANCE", "true")
-	t.Setenv("LAKERUNNER_LOGS_INGESTION_WRITE_TO_LOWEST_INSTANCE", "true")
-	t.Setenv("LAKERUNNER_TRACES_INGESTION_WRITE_TO_LOWEST_INSTANCE", "true")
 
 	cfg, err := Load()
 	require.NoError(t, err)
@@ -36,18 +33,6 @@ func TestLoadEnvOverride(t *testing.T) {
 	require.True(t, cfg.Kafka.SASLEnabled)
 	require.Equal(t, "alice", cfg.Kafka.SASLUsername)
 	require.False(t, cfg.Metrics.Ingestion.ProcessExemplars)
-	require.True(t, cfg.Metrics.Ingestion.WriteToLowestInstance)
-	require.True(t, cfg.Logs.Ingestion.WriteToLowestInstance)
-	require.True(t, cfg.Traces.Ingestion.WriteToLowestInstance)
-}
-
-func TestDefaultWriteToLowestInstance(t *testing.T) {
-	cfg, err := Load()
-	require.NoError(t, err)
-
-	require.False(t, cfg.Metrics.Ingestion.WriteToLowestInstance)
-	require.False(t, cfg.Logs.Ingestion.WriteToLowestInstance)
-	require.False(t, cfg.Traces.Ingestion.WriteToLowestInstance)
 }
 
 func TestKafkaEnvarsOverFlyEnvars(t *testing.T) {

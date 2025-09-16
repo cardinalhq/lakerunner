@@ -186,7 +186,7 @@ func newTraceIngestProcessor(
 	cfg *config.Config,
 	store TraceIngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *TraceIngestProcessor {
 	var exemplarProcessor *exemplars.Processor
-	// if os.Getenv("DISABLE_EXEMPLARS") != "true" {
+	// if cfg.Traces.Ingestion.ProcessExemplars {
 	// 	exemplarProcessor = exemplars.NewProcessor(exemplars.DefaultConfig())
 	// 	exemplarProcessor.SetMetricsCallback(func(ctx context.Context, organizationID string, exemplars []*exemplars.ExemplarData) error {
 	// 		return processTracesExemplarsDirect(ctx, organizationID, exemplars, store)
@@ -289,7 +289,7 @@ func (p *TraceIngestProcessor) Process(ctx context.Context, group *accumulationG
 	}
 
 	dstProfile := srcProfile
-	if p.config.Traces.Ingestion.WriteToLowestInstance {
+	if p.config.Traces.Ingestion.SingleInstanceMode {
 		dstProfile, err = p.storageProvider.GetLowestInstanceStorageProfile(ctx, srcProfile.OrganizationID, srcProfile.Bucket)
 		if err != nil {
 			return fmt.Errorf("get lowest instance storage profile: %w", err)
