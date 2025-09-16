@@ -29,10 +29,12 @@ import (
 
 // TraceCompactionConsumer consumes TraceCompactionBundle messages from boxer
 type TraceCompactionConsumer struct {
-	consumer  fly.Consumer
-	store     TraceCompactionStore
-	processor *TraceCompactionProcessor
-	cfg       *config.Config
+	consumer      fly.Consumer
+	store         TraceCompactionStore
+	processor     *TraceCompactionProcessor
+	cfg           *config.Config
+	topic         string
+	consumerGroup string
 }
 
 // NewTraceCompactionConsumer creates a consumer that processes TraceCompactionBundle messages from boxer
@@ -46,16 +48,20 @@ func NewTraceCompactionConsumer(
 ) (*TraceCompactionConsumer, error) {
 	processor := NewTraceCompactionProcessor(store, storageProvider, cmgr, cfg)
 
-	consumer, err := factory.CreateConsumer(cfg.TopicRegistry.GetTopic(config.TopicSegmentsTracesCompact), cfg.TopicRegistry.GetConsumerGroup(config.TopicSegmentsTracesCompact))
+	topic := cfg.TopicRegistry.GetTopic(config.TopicSegmentsTracesCompact)
+	consumerGroup := cfg.TopicRegistry.GetConsumerGroup(config.TopicSegmentsTracesCompact)
+	consumer, err := factory.CreateConsumer(topic, consumerGroup)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka consumer: %w", err)
 	}
 
 	return &TraceCompactionConsumer{
-		consumer:  consumer,
-		store:     store,
-		processor: processor,
-		cfg:       cfg,
+		consumer:      consumer,
+		store:         store,
+		processor:     processor,
+		cfg:           cfg,
+		topic:         topic,
+		consumerGroup: consumerGroup,
 	}, nil
 }
 
@@ -70,6 +76,10 @@ func (c *TraceCompactionConsumer) Run(ctx context.Context) error {
 				return err // Return error to prevent committing bad batch
 			}
 		}
+
+		// After successful processing, cleanup old offset tracking records
+		CleanupCommittedOffsets(handlerCtx, c.store, c.topic, c.consumerGroup, msgs)
+
 		return nil
 	}
 

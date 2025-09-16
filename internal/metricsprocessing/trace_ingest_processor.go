@@ -161,7 +161,7 @@ func (p *TraceIDTimestampSortKeyProvider) MakeKey(row filereader.Row) filereader
 type TraceDateintBin struct {
 	Dateint int32 // The dateint for this bin
 	Writer  parquetwriter.ParquetWriter
-	Results []*parquetwriter.Result // Results after writer is closed (can be multiple files)
+	Results []parquetwriter.Result // Results after writer is closed (can be multiple files)
 }
 
 // TraceDateintBinManager manages multiple file groups, one per dateint
@@ -183,11 +183,10 @@ type TraceIngestProcessor struct {
 
 // newTraceIngestProcessor creates a new trace ingest processor instance
 func newTraceIngestProcessor(
-	ctx context.Context,
 	cfg *config.Config,
 	store TraceIngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *TraceIngestProcessor {
 	var exemplarProcessor *exemplars.Processor
-	// if os.Getenv("DISABLE_EXEMPLARS") != "true" {
+	// if cfg.Traces.Ingestion.ProcessExemplars {
 	// 	exemplarProcessor = exemplars.NewProcessor(exemplars.DefaultConfig())
 	// 	exemplarProcessor.SetMetricsCallback(func(ctx context.Context, organizationID string, exemplars []*exemplars.ExemplarData) error {
 	// 		return processTracesExemplarsDirect(ctx, organizationID, exemplars, store)
@@ -250,7 +249,7 @@ func validateTraceIngestGroupConsistency(group *accumulationGroup[messages.Inges
 }
 
 // Process implements the Processor interface and performs raw trace ingestion
-func (p *TraceIngestProcessor) Process(ctx context.Context, group *accumulationGroup[messages.IngestKey], kafkaCommitData *KafkaCommitData) error {
+func (p *TraceIngestProcessor) Process(ctx context.Context, group *accumulationGroup[messages.IngestKey], kafkaOffsets []lrdb.KafkaOffsetInfo) error {
 	ll := logctx.FromContext(ctx)
 
 	defer runtime.GC() // TODO find a way to not need this
@@ -279,12 +278,25 @@ func (p *TraceIngestProcessor) Process(ctx context.Context, group *accumulationG
 		}
 	}()
 
-	storageProfile, err := p.storageProvider.GetStorageProfileForOrganizationAndInstance(ctx, group.Key.OrganizationID, group.Key.InstanceNum)
+	srcProfile, err := p.storageProvider.GetStorageProfileForOrganizationAndInstance(ctx, group.Key.OrganizationID, group.Key.InstanceNum)
 	if err != nil {
 		return fmt.Errorf("get storage profile: %w", err)
 	}
 
-	storageClient, err := cloudstorage.NewClient(ctx, p.cmgr, storageProfile)
+	inputClient, err := cloudstorage.NewClient(ctx, p.cmgr, srcProfile)
+	if err != nil {
+		return fmt.Errorf("create storage client: %w", err)
+	}
+
+	dstProfile := srcProfile
+	if p.config.Traces.Ingestion.SingleInstanceMode {
+		dstProfile, err = p.storageProvider.GetLowestInstanceStorageProfile(ctx, srcProfile.OrganizationID, srcProfile.Bucket)
+		if err != nil {
+			return fmt.Errorf("get lowest instance storage profile: %w", err)
+		}
+	}
+
+	outputClient, err := cloudstorage.NewClient(ctx, p.cmgr, dstProfile)
 	if err != nil {
 		return fmt.Errorf("create storage client: %w", err)
 	}
@@ -303,7 +315,7 @@ func (p *TraceIngestProcessor) Process(ctx context.Context, group *accumulationG
 			slog.String("objectID", msg.ObjectID),
 			slog.Int64("fileSize", msg.FileSize))
 
-		tmpFilename, _, is404, err := storageClient.DownloadObject(ctx, tmpDir, msg.Bucket, msg.ObjectID)
+		tmpFilename, _, is404, err := inputClient.DownloadObject(ctx, tmpDir, msg.Bucket, msg.ObjectID)
 		if err != nil {
 			ll.Error("Failed to download file", slog.String("objectID", msg.ObjectID), slog.Any("error", err))
 			continue // Skip this file but continue with others
@@ -342,7 +354,7 @@ func (p *TraceIngestProcessor) Process(ctx context.Context, group *accumulationG
 		return fmt.Errorf("failed to create unified reader: %w", err)
 	}
 
-	dateintBins, err := p.processRowsWithDateintBinning(ctx, finalReader, tmpDir, storageProfile)
+	dateintBins, err := p.processRowsWithDateintBinning(ctx, finalReader, tmpDir, srcProfile)
 	if err != nil {
 		return fmt.Errorf("failed to process rows: %w", err)
 	}
@@ -352,33 +364,13 @@ func (p *TraceIngestProcessor) Process(ctx context.Context, group *accumulationG
 		return nil
 	}
 
-	segmentParams, err := p.uploadAndCreateTraceSegments(ctx, storageClient, dateintBins, storageProfile)
+	segmentParams, err := p.uploadAndCreateTraceSegments(ctx, outputClient, dateintBins, dstProfile)
 	if err != nil {
 		return fmt.Errorf("failed to upload and create segments: %w", err)
 	}
 
-	// Convert KafkaCommitData to KafkaOffsetUpdate slice
-	var kafkaOffsets []lrdb.KafkaOffsetUpdate
-	if kafkaCommitData != nil {
-		for partition, offset := range kafkaCommitData.Offsets {
-			kafkaOffsets = append(kafkaOffsets, lrdb.KafkaOffsetUpdate{
-				ConsumerGroup:       kafkaCommitData.ConsumerGroup,
-				Topic:               kafkaCommitData.Topic,
-				Partition:           partition,
-				LastProcessedOffset: offset,
-				OrganizationID:      group.Key.OrganizationID,
-				InstanceNum:         group.Key.InstanceNum,
-			})
-		}
-	}
-
-	batch := lrdb.TraceSegmentBatch{
-		Segments:     segmentParams,
-		KafkaOffsets: kafkaOffsets,
-	}
-
 	criticalCtx := context.WithoutCancel(ctx)
-	if err := p.store.InsertTraceSegmentBatchWithKafkaOffsets(criticalCtx, batch); err != nil {
+	if err := p.store.InsertTraceSegmentsBatch(criticalCtx, segmentParams, kafkaOffsets); err != nil {
 		// Log detailed segment information for debugging
 		segmentIDs := make([]int64, len(segmentParams))
 		var totalRecords, totalSize int64
@@ -600,9 +592,7 @@ func (p *TraceIngestProcessor) processRowsWithDateintBinning(ctx context.Context
 
 		if len(results) > 0 {
 			// Store all results - writer may emit multiple files when data exceeds RecordsPerFile
-			for i := range results {
-				bin.Results = append(bin.Results, &results[i])
-			}
+			bin.Results = append(bin.Results, results...)
 		}
 	}
 
@@ -639,7 +629,7 @@ func (p *TraceIngestProcessor) uploadAndCreateTraceSegments(ctx context.Context,
 	// First, collect all valid results to know how many IDs we need
 	type validBin struct {
 		dateint int32
-		result  *parquetwriter.Result
+		result  parquetwriter.Result
 		stats   factories.TracesFileStats
 	}
 	var validBins []validBin

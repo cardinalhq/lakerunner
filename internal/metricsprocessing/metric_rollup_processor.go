@@ -41,8 +41,9 @@ import (
 // MetricRollupStore defines database operations needed for rollups
 type MetricRollupStore interface {
 	GetMetricSeg(ctx context.Context, params lrdb.GetMetricSegParams) (lrdb.MetricSeg, error)
-	RollupMetricSegsWithKafkaOffsets(ctx context.Context, sourceParams lrdb.RollupSourceParams, targetParams lrdb.RollupTargetParams, sourceSegmentIDs []int64, newRecords []lrdb.RollupNewRecord, kafkaOffsets []lrdb.KafkaOffsetUpdate) error
-	KafkaGetLastProcessed(ctx context.Context, params lrdb.KafkaGetLastProcessedParams) (int64, error)
+	RollupMetricSegments(ctx context.Context, sourceParams lrdb.RollupSourceParams, targetParams lrdb.RollupTargetParams, sourceSegmentIDs []int64, newRecords []lrdb.RollupNewRecord, kafkaOffsets []lrdb.KafkaOffsetInfo) error
+	KafkaOffsetsAfter(ctx context.Context, params lrdb.KafkaOffsetsAfterParams) ([]int64, error)
+	CleanupKafkaOffsets(ctx context.Context, params lrdb.CleanupKafkaOffsetsParams) (int64, error)
 	GetMetricEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32) int64
 }
 
@@ -57,7 +58,6 @@ type MetricRollupProcessor struct {
 
 // newMetricRollupProcessor creates a new metric rollup processor instance
 func newMetricRollupProcessor(
-	ctx context.Context,
 	cfg *config.Config,
 	store MetricRollupStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *MetricRollupProcessor {
 	return &MetricRollupProcessor{
@@ -270,7 +270,7 @@ func (r *MetricRollupProcessor) ProcessBundle(ctx context.Context, bundle *messa
 		Topic:         r.config.TopicRegistry.GetTopic(config.TopicSegmentsMetricsRollup),
 		ConsumerGroup: r.config.TopicRegistry.GetConsumerGroup(config.TopicSegmentsMetricsRollup),
 		Offsets: map[int32]int64{
-			partition: offset + 1,
+			partition: offset,
 		},
 	}
 
@@ -293,15 +293,11 @@ func (r *MetricRollupProcessor) ProcessBundle(ctx context.Context, bundle *messa
 		totalSize += result.FileSize
 	}
 
-	// Generate next-level rollup messages if the target frequency can be rolled up further
 	if err := r.queueNextLevelRollups(ctx, newSegments, key); err != nil {
-		// Don't fail the rollup if next-level rollup queueing fails - log and continue
 		ll.Warn("Failed to queue next-level rollup messages", slog.Any("error", err))
 	}
 
-	// Queue compaction messages for the target frequency segments
 	if err := r.queueCompactionMessages(ctx, newSegments, key); err != nil {
-		// Don't fail the rollup if compaction queueing fails - log and continue
 		ll.Warn("Failed to queue compaction messages", slog.Any("error", err))
 	}
 
@@ -318,7 +314,6 @@ func (r *MetricRollupProcessor) ProcessBundle(ctx context.Context, bundle *messa
 func (r *MetricRollupProcessor) uploadAndCreateRollupSegments(ctx context.Context, client cloudstorage.Client, profile storageprofile.StorageProfile, results []parquetwriter.Result, key messages.RollupKey, inputSegments []lrdb.MetricSeg) ([]lrdb.MetricSeg, error) {
 	ll := logctx.FromContext(ctx)
 
-	// Calculate input metrics
 	var totalInputSize, totalInputRecords int64
 	for _, seg := range inputSegments {
 		totalInputSize += seg.FileSize
@@ -340,14 +335,10 @@ func (r *MetricRollupProcessor) uploadAndCreateRollupSegments(ctx context.Contex
 			return nil, fmt.Errorf("unexpected metadata type: %T", result.Metadata)
 		}
 
-		// Upload the file
 		objectPath := helpers.MakeDBObjectID(key.OrganizationID, profile.CollectorName, key.DateInt, r.getHourFromTimestamp(stats.FirstTS), segmentID, "metrics")
 		if err := client.UploadObject(ctx, profile.Bucket, objectPath, result.FileName); err != nil {
 			return nil, fmt.Errorf("upload file %s: %w", result.FileName, err)
 		}
-
-		// Clean up local file
-		_ = os.Remove(result.FileName)
 
 		// Create new segment record at TARGET frequency
 		segment := lrdb.MetricSeg{
@@ -379,10 +370,8 @@ func (r *MetricRollupProcessor) uploadAndCreateRollupSegments(ctx context.Contex
 		segmentIDs = append(segmentIDs, segmentID)
 	}
 
-	// Report telemetry
 	reportTelemetry(ctx, "rollup", int64(len(inputSegments)), int64(len(segments)), totalInputRecords, totalOutputRecords, totalInputSize, totalOutputSize)
 
-	// Log upload summary
 	ll.Info("Rollup segment upload completed",
 		slog.Int("inputFiles", len(inputSegments)),
 		slog.Int64("totalInputSize", totalInputSize),
@@ -397,13 +386,11 @@ func (r *MetricRollupProcessor) uploadAndCreateRollupSegments(ctx context.Contex
 func (r *MetricRollupProcessor) atomicDatabaseUpdate(ctx context.Context, oldSegments, newSegments []lrdb.MetricSeg, kafkaCommitData *KafkaCommitData, key messages.RollupKey) error {
 	ll := logctx.FromContext(ctx)
 
-	// Extract segment IDs from old segments
 	sourceSegmentIDs := make([]int64, len(oldSegments))
 	for i, seg := range oldSegments {
 		sourceSegmentIDs[i] = seg.SegmentID
 	}
 
-	// Convert new segments to RollupNewRecord format
 	newRecords := make([]lrdb.RollupNewRecord, len(newSegments))
 	for i, seg := range newSegments {
 		newRecords[i] = lrdb.RollupNewRecord{
@@ -431,20 +418,16 @@ func (r *MetricRollupProcessor) atomicDatabaseUpdate(ctx context.Context, oldSeg
 		SortVersion:    lrdb.CurrentMetricSortVersion,
 	}
 
-	// Prepare Kafka offsets for atomic update
-	var kafkaOffsets []lrdb.KafkaOffsetUpdate
+	var kafkaOffsets []lrdb.KafkaOffsetInfo
 	if kafkaCommitData != nil {
 		for partition, offset := range kafkaCommitData.Offsets {
-			kafkaOffsets = append(kafkaOffsets, lrdb.KafkaOffsetUpdate{
-				Topic:               kafkaCommitData.Topic,
-				Partition:           partition,
-				ConsumerGroup:       kafkaCommitData.ConsumerGroup,
-				OrganizationID:      key.OrganizationID,
-				InstanceNum:         key.InstanceNum,
-				LastProcessedOffset: offset,
+			kafkaOffsets = append(kafkaOffsets, lrdb.KafkaOffsetInfo{
+				Topic:         kafkaCommitData.Topic,
+				PartitionID:   partition,
+				ConsumerGroup: kafkaCommitData.ConsumerGroup,
+				Offsets:       []int64{offset},
 			})
 
-			// Log each Kafka offset update
 			ll.Info("Updating Kafka consumer group offset for rollup",
 				slog.String("consumerGroup", kafkaCommitData.ConsumerGroup),
 				slog.String("topic", kafkaCommitData.Topic),
@@ -453,12 +436,11 @@ func (r *MetricRollupProcessor) atomicDatabaseUpdate(ctx context.Context, oldSeg
 		}
 	}
 
-	// Use the atomic rollup function that handles everything in one transaction
-	if err := r.store.RollupMetricSegsWithKafkaOffsets(ctx, sourceParams, targetParams, sourceSegmentIDs, newRecords, kafkaOffsets); err != nil {
+	if err := r.store.RollupMetricSegments(ctx, sourceParams, targetParams, sourceSegmentIDs, newRecords, kafkaOffsets); err != nil {
 		ll := logctx.FromContext(ctx)
 
 		// Log unique keys for debugging database failures
-		ll.Error("Failed RollupMetricSegsWithKafkaOffsetsWithOrg",
+		ll.Error("Failed RollupMetricSegments",
 			slog.Any("error", err),
 			slog.String("organization_id", key.OrganizationID.String()),
 			slog.Int("dateint", int(key.DateInt)),
@@ -468,7 +450,6 @@ func (r *MetricRollupProcessor) atomicDatabaseUpdate(ctx context.Context, oldSeg
 			slog.Int("source_segments_count", len(sourceSegmentIDs)),
 			slog.Int("new_segments_count", len(newRecords)))
 
-		// Log segment IDs for additional context
 		if len(sourceSegmentIDs) > 0 {
 			ll.Error("RollupMetricSegs source segment IDs",
 				slog.Any("source_segment_ids", sourceSegmentIDs))
@@ -489,15 +470,12 @@ func (r *MetricRollupProcessor) atomicDatabaseUpdate(ctx context.Context, oldSeg
 	return nil
 }
 
-// Helper functions
-
 func (r *MetricRollupProcessor) getHourFromTimestamp(timestampMs int64) int16 {
 	return int16((timestampMs / (1000 * 60 * 60)) % 24)
 }
 
 // GetTargetRecordCount returns the target record count for a rollup grouping key
 func (r *MetricRollupProcessor) GetTargetRecordCount(ctx context.Context, groupingKey messages.RollupKey) int64 {
-	// Use target frequency for the estimate since that's what we're creating
 	return r.store.GetMetricEstimate(ctx, groupingKey.OrganizationID, groupingKey.TargetFrequencyMs)
 }
 
@@ -508,7 +486,6 @@ func (r *MetricRollupProcessor) queueNextLevelRollups(ctx context.Context, newSe
 	// Check if the target frequency can be rolled up to the next level
 	nextTargetFrequency := r.getNextRollupFrequency(key.TargetFrequencyMs)
 	if nextTargetFrequency == 0 {
-		// No further rollup possible for this frequency
 		ll.Debug("No further rollup needed",
 			slog.Int("targetFrequencyMs", int(key.TargetFrequencyMs)))
 		return nil
@@ -519,15 +496,12 @@ func (r *MetricRollupProcessor) queueNextLevelRollups(ctx context.Context, newSe
 		slog.Int("sourceFrequency", int(key.TargetFrequencyMs)),
 		slog.Int("nextTargetFrequency", int(nextTargetFrequency)))
 
-	// Create rollup messages for each new segment (send to boxer topic)
 	rollupTopic := r.config.TopicRegistry.GetTopic(config.TopicBoxerMetricsRollup)
 	var queuedCount int
 
 	for _, segment := range newSegments {
-		// Extract segment start time from the timestamp range
 		segmentStartTime := time.Unix(segment.TsRange.Lower.Int64/1000, 0)
 
-		// Create rollup notification for the next level
 		notification := messages.MetricRollupMessage{
 			Version:           1,
 			OrganizationID:    segment.OrganizationID,
@@ -542,19 +516,16 @@ func (r *MetricRollupProcessor) queueNextLevelRollups(ctx context.Context, newSe
 			QueuedAt:          time.Now(),
 		}
 
-		// Marshal the message
 		msgBytes, err := notification.Marshal()
 		if err != nil {
 			return fmt.Errorf("failed to marshal next-level rollup notification: %w", err)
 		}
 
-		// Create Kafka message with target frequency in the key (as corrected earlier)
 		rollupMessage := fly.Message{
 			Key:   []byte(fmt.Sprintf("%s-%d-%d-%d", segment.OrganizationID.String(), segment.Dateint, nextTargetFrequency, segment.InstanceNum)),
 			Value: msgBytes,
 		}
 
-		// Send to Kafka rollup topic
 		if err := r.kafkaProducer.Send(ctx, rollupTopic, rollupMessage); err != nil {
 			return fmt.Errorf("failed to send next-level rollup notification to Kafka: %w", err)
 		}
@@ -585,12 +556,10 @@ func (r *MetricRollupProcessor) queueCompactionMessages(ctx context.Context, new
 		slog.Int("segmentCount", len(newSegments)),
 		slog.Int("targetFrequencyMs", int(key.TargetFrequencyMs)))
 
-	// Create compaction messages for each new segment
 	compactionTopic := r.config.TopicRegistry.GetTopic(config.TopicBoxerMetricsCompact)
 	var queuedCount int
 
 	for _, segment := range newSegments {
-		// Create compaction notification
 		compactionNotification := messages.MetricCompactionMessage{
 			Version:        1,
 			OrganizationID: segment.OrganizationID,
@@ -603,19 +572,16 @@ func (r *MetricRollupProcessor) queueCompactionMessages(ctx context.Context, new
 			QueuedAt:       time.Now(),
 		}
 
-		// Marshal compaction message
 		compactionMsgBytes, err := compactionNotification.Marshal()
 		if err != nil {
 			return fmt.Errorf("failed to marshal compaction notification: %w", err)
 		}
 
-		// Create Kafka message key for proper partitioning
 		compactionMessage := fly.Message{
 			Key:   []byte(fmt.Sprintf("%s-%d-%d-%d", segment.OrganizationID.String(), segment.Dateint, key.TargetFrequencyMs, segment.InstanceNum)),
 			Value: compactionMsgBytes,
 		}
 
-		// Send to compaction topic
 		if err := r.kafkaProducer.Send(ctx, compactionTopic, compactionMessage); err != nil {
 			return fmt.Errorf("failed to send compaction notification to Kafka: %w", err)
 		}

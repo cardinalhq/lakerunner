@@ -114,13 +114,15 @@ func (cmd *sweeper) Run(doneCtx context.Context) error {
 		return err
 	}
 
+	// Always initialize cdb as it's needed for cleanup loops
 	var cdb configdb.QuerierFull
+	cdb, err = dbopen.ConfigDBStore(ctx)
+	if err != nil {
+		return err
+	}
+
 	var cdbPool *pgxpool.Pool
 	if cmd.syncLegacyTables {
-		cdb, err = dbopen.ConfigDBStore(ctx)
-		if err != nil {
-			return err
-		}
 		cdbPool, err = dbopen.ConnectToConfigDB(ctx)
 		if err != nil {
 			return err

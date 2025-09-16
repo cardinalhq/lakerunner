@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -38,7 +37,15 @@ type MockCommonConsumerStore struct {
 	mock.Mock
 }
 
-func (m *MockCommonConsumerStore) KafkaGetLastProcessed(ctx context.Context, params lrdb.KafkaGetLastProcessedParams) (int64, error) {
+func (m *MockCommonConsumerStore) KafkaOffsetsAfter(ctx context.Context, params lrdb.KafkaOffsetsAfterParams) ([]int64, error) {
+	args := m.Called(ctx, params)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]int64), args.Error(1)
+}
+
+func (m *MockCommonConsumerStore) CleanupKafkaOffsets(ctx context.Context, params lrdb.CleanupKafkaOffsetsParams) (int64, error) {
 	args := m.Called(ctx, params)
 	return args.Get(0).(int64), args.Error(1)
 }
@@ -50,14 +57,14 @@ type MockProcessor struct {
 }
 
 type processedItem struct {
-	key             messages.CompactionKey
-	messageCount    int
-	recordCount     int64
-	kafkaCommitData *KafkaCommitData
+	key          messages.CompactionKey
+	messageCount int
+	recordCount  int64
+	kafkaOffsets []lrdb.KafkaOffsetInfo
 }
 
-func (m *MockProcessor) Process(ctx context.Context, group *accumulationGroup[messages.CompactionKey], kafkaCommitData *KafkaCommitData) error {
-	args := m.Called(ctx, group, kafkaCommitData)
+func (m *MockProcessor) Process(ctx context.Context, group *accumulationGroup[messages.CompactionKey], kafkaOffsets []lrdb.KafkaOffsetInfo) error {
+	args := m.Called(ctx, group, kafkaOffsets)
 
 	// Record what was processed for verification
 	var totalRecords int64
@@ -66,10 +73,10 @@ func (m *MockProcessor) Process(ctx context.Context, group *accumulationGroup[me
 	}
 
 	m.processed = append(m.processed, processedItem{
-		key:             group.Key,
-		messageCount:    len(group.Messages),
-		recordCount:     totalRecords,
-		kafkaCommitData: kafkaCommitData,
+		key:          group.Key,
+		messageCount: len(group.Messages),
+		recordCount:  totalRecords,
+		kafkaOffsets: kafkaOffsets,
 	})
 
 	return args.Error(0)
@@ -193,161 +200,6 @@ func TestCommonConsumerBase_ExtractKeyFields(t *testing.T) {
 	assert.Equal(t, int32(10000), fields["FrequencyMs"])
 }
 
-func TestCommonConsumer_OffsetCallbacks(t *testing.T) {
-	ctx := context.Background()
-
-	// Create mock store
-	mockStore := &MockCommonConsumerStore{}
-
-	// Set up expectations
-	orgID := uuid.New()
-	instanceNum := int16(1)
-	topic := "test-topic"
-	partition := int32(0)
-	consumerGroup := "test-group"
-
-	mockStore.On("KafkaGetLastProcessed", ctx, lrdb.KafkaGetLastProcessedParams{
-		Topic:          topic,
-		Partition:      partition,
-		ConsumerGroup:  consumerGroup,
-		OrganizationID: orgID,
-		InstanceNum:    instanceNum,
-	}).Return(int64(100), nil)
-
-	// Create consumer config
-	consumerConfig := CommonConsumerConfig{
-		ConsumerName:  "test-consumer",
-		Topic:         topic,
-		ConsumerGroup: consumerGroup,
-		FlushInterval: 1 * time.Minute,
-		StaleAge:      1 * time.Minute,
-		MaxAge:        0,
-	}
-
-	// Create consumer (we can't test the full consumer without Kafka, but we can test the callback logic)
-	consumer := &CommonConsumer[*messages.MetricCompactionMessage, messages.CompactionKey]{
-		store:  mockStore,
-		config: consumerConfig,
-	}
-
-	// Test GetLastProcessedOffset
-	metadata := &messageMetadata{
-		Topic:         topic,
-		Partition:     partition,
-		ConsumerGroup: consumerGroup,
-		Offset:        150,
-	}
-
-	key := messages.CompactionKey{
-		OrganizationID: orgID,
-		InstanceNum:    instanceNum,
-		DateInt:        20250115,
-		FrequencyMs:    10000,
-	}
-
-	offset, err := consumer.GetLastProcessedOffset(ctx, metadata, key)
-	assert.NoError(t, err)
-	assert.Equal(t, int64(100), offset)
-
-	mockStore.AssertExpectations(t)
-}
-
-func TestCommonConsumer_GetLastProcessedOffset_DatabaseError(t *testing.T) {
-	ctx := context.Background()
-
-	// Create mock store that returns a database error (not pgx.ErrNoRows)
-	mockStore := &MockCommonConsumerStore{}
-
-	orgID := uuid.New()
-	instanceNum := int16(1)
-	topic := "test-topic"
-	partition := int32(0)
-	consumerGroup := "test-group"
-
-	// Mock a real database error (not "no rows found")
-	mockStore.On("KafkaGetLastProcessed", ctx, lrdb.KafkaGetLastProcessedParams{
-		Topic:          topic,
-		Partition:      partition,
-		ConsumerGroup:  consumerGroup,
-		OrganizationID: orgID,
-		InstanceNum:    instanceNum,
-	}).Return(int64(0), fmt.Errorf("database connection failed"))
-
-	consumer := &CommonConsumer[*messages.MetricCompactionMessage, messages.CompactionKey]{
-		store: mockStore,
-	}
-
-	metadata := &messageMetadata{
-		Topic:         topic,
-		Partition:     partition,
-		ConsumerGroup: consumerGroup,
-		Offset:        150,
-	}
-
-	key := messages.CompactionKey{
-		OrganizationID: orgID,
-		InstanceNum:    instanceNum,
-		DateInt:        20250115,
-		FrequencyMs:    10000,
-	}
-
-	// This should return an error (not silently return -1)
-	offset, err := consumer.GetLastProcessedOffset(ctx, metadata, key)
-	assert.Error(t, err)
-	assert.Equal(t, int64(-1), offset)
-	assert.Contains(t, err.Error(), "failed to get last processed offset")
-	assert.Contains(t, err.Error(), "database connection failed")
-
-	mockStore.AssertExpectations(t)
-}
-
-func TestCommonConsumer_GetLastProcessedOffset_NoRowsFound(t *testing.T) {
-	ctx := context.Background()
-
-	// Create mock store that returns pgx.ErrNoRows (expected case)
-	mockStore := &MockCommonConsumerStore{}
-
-	orgID := uuid.New()
-	instanceNum := int16(1)
-	topic := "test-topic"
-	partition := int32(0)
-	consumerGroup := "test-group"
-
-	// Mock pgx.ErrNoRows (this is expected and should return -1, nil)
-	mockStore.On("KafkaGetLastProcessed", ctx, lrdb.KafkaGetLastProcessedParams{
-		Topic:          topic,
-		Partition:      partition,
-		ConsumerGroup:  consumerGroup,
-		OrganizationID: orgID,
-		InstanceNum:    instanceNum,
-	}).Return(int64(0), pgx.ErrNoRows)
-
-	consumer := &CommonConsumer[*messages.MetricCompactionMessage, messages.CompactionKey]{
-		store: mockStore,
-	}
-
-	metadata := &messageMetadata{
-		Topic:         topic,
-		Partition:     partition,
-		ConsumerGroup: consumerGroup,
-		Offset:        150,
-	}
-
-	key := messages.CompactionKey{
-		OrganizationID: orgID,
-		InstanceNum:    instanceNum,
-		DateInt:        20250115,
-		FrequencyMs:    10000,
-	}
-
-	// This should return -1 with no error (expected "not found" case)
-	offset, err := consumer.GetLastProcessedOffset(ctx, metadata, key)
-	assert.NoError(t, err)
-	assert.Equal(t, int64(-1), offset)
-
-	mockStore.AssertExpectations(t)
-}
-
 // MockMetricCompactionStore for specific testing
 type MockMetricCompactionStore struct {
 	mock.Mock
@@ -364,7 +216,7 @@ func (m *MockMetricCompactionStore) GetMetricSeg(ctx context.Context, params lrd
 	return args.Get(0).(lrdb.MetricSeg), args.Error(1)
 }
 
-func (m *MockMetricCompactionStore) CompactMetricSegsWithKafkaOffsets(ctx context.Context, params lrdb.CompactMetricSegsParams, kafkaOffsets []lrdb.KafkaOffsetUpdate) error {
+func (m *MockMetricCompactionStore) CompactMetricSegments(ctx context.Context, params lrdb.CompactMetricSegsParams, kafkaOffsets []lrdb.KafkaOffsetInfo) error {
 	args := m.Called(ctx, params, kafkaOffsets)
 	return args.Error(0)
 }
@@ -403,16 +255,6 @@ func TestCommonConsumer_Close(t *testing.T) {
 	default:
 		t.Error("done channel should be closed")
 	}
-}
-
-func TestCommonConsumer_MarkOffsetsProcessed_EmptyOffsets(t *testing.T) {
-	consumer := &CommonConsumer[*messages.MetricCompactionMessage, messages.CompactionKey]{}
-
-	key := messages.CompactionKey{}
-	offsets := map[int32]int64{}
-
-	err := consumer.MarkOffsetsProcessed(context.Background(), key, offsets)
-	assert.NoError(t, err) // Should not error on empty offsets
 }
 
 func TestCompactionProcessorBase_LogCompactionStart(t *testing.T) {
@@ -1001,88 +843,6 @@ func TestNewCommonConsumerWithComponents(t *testing.T) {
 	assert.NotNil(t, consumer.idleCheckTicker)
 
 	_ = consumer.Close()
-	mockConsumer.AssertExpectations(t)
-}
-
-func TestCommonConsumer_BuildCommitMessages(t *testing.T) {
-	consumerConfig := CommonConsumerConfig{
-		Topic:         "test.topic",
-		ConsumerGroup: "test-group",
-	}
-
-	consumer := &CommonConsumer[*messages.MetricCompactionMessage, messages.CompactionKey]{
-		config: consumerConfig,
-	}
-
-	offsets := map[int32]int64{
-		0: 100,
-		2: 300,
-		1: 200,
-	}
-
-	commitMessages := consumer.buildCommitMessages(offsets)
-
-	assert.Len(t, commitMessages, 3)
-
-	for _, msg := range commitMessages {
-		assert.Equal(t, "test.topic", msg.Topic)
-	}
-
-	for partition, expectedOffset := range offsets {
-		found := false
-		for _, msg := range commitMessages {
-			if msg.Partition == int(partition) && msg.Offset == expectedOffset {
-				found = true
-				break
-			}
-		}
-		assert.True(t, found, "Expected to find partition %d with offset %d", partition, expectedOffset)
-	}
-}
-
-func TestCommonConsumer_MarkOffsetsProcessed_WithOffsets(t *testing.T) {
-	ctx := context.Background()
-	mockConsumer := &MockFlyConsumer{}
-
-	consumer := &CommonConsumer[*messages.MetricCompactionMessage, messages.CompactionKey]{
-		consumer: mockConsumer,
-		config: CommonConsumerConfig{
-			Topic:         "test.topic",
-			ConsumerGroup: "test-group",
-		},
-	}
-
-	key := messages.CompactionKey{
-		OrganizationID: uuid.New(),
-		InstanceNum:    1,
-		DateInt:        20250115,
-		FrequencyMs:    10000,
-	}
-
-	offsets := map[int32]int64{
-		0: 100,
-		1: 200,
-	}
-
-	mockConsumer.On("CommitMessages", ctx, mock.MatchedBy(func(msgs []fly.ConsumedMessage) bool {
-		if len(msgs) != 2 {
-			return false
-		}
-		for _, msg := range msgs {
-			if msg.Topic != "test.topic" {
-				return false
-			}
-			expectedOffset, exists := offsets[int32(msg.Partition)]
-			if !exists || msg.Offset != expectedOffset {
-				return false
-			}
-		}
-		return true
-	})).Return(nil)
-
-	err := consumer.MarkOffsetsProcessed(ctx, key, offsets)
-	assert.NoError(t, err)
-
 	mockConsumer.AssertExpectations(t)
 }
 

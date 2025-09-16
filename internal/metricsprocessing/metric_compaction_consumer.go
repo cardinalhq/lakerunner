@@ -29,10 +29,12 @@ import (
 
 // MetricCompactionConsumer consumes MetricCompactionBundle messages from boxer
 type MetricCompactionConsumer struct {
-	consumer  fly.Consumer
-	store     MetricCompactionStore
-	processor *MetricCompactionProcessor
-	cfg       *config.Config
+	consumer      fly.Consumer
+	store         MetricCompactionStore
+	processor     *MetricCompactionProcessor
+	cfg           *config.Config
+	topic         string
+	consumerGroup string
 }
 
 // NewMetricCompactionConsumer creates a consumer that processes MetricCompactionBundle messages from boxer
@@ -46,16 +48,20 @@ func NewMetricCompactionConsumer(
 ) (*MetricCompactionConsumer, error) {
 	processor := NewMetricCompactionProcessor(store, storageProvider, cmgr, cfg)
 
-	consumer, err := factory.CreateConsumer(cfg.TopicRegistry.GetTopic(config.TopicSegmentsMetricsCompact), cfg.TopicRegistry.GetConsumerGroup(config.TopicSegmentsMetricsCompact))
+	topic := cfg.TopicRegistry.GetTopic(config.TopicSegmentsMetricsCompact)
+	consumerGroup := cfg.TopicRegistry.GetConsumerGroup(config.TopicSegmentsMetricsCompact)
+	consumer, err := factory.CreateConsumer(topic, consumerGroup)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka consumer: %w", err)
 	}
 
 	return &MetricCompactionConsumer{
-		consumer:  consumer,
-		store:     store,
-		processor: processor,
-		cfg:       cfg,
+		consumer:      consumer,
+		store:         store,
+		processor:     processor,
+		cfg:           cfg,
+		topic:         topic,
+		consumerGroup: consumerGroup,
 	}, nil
 }
 
@@ -70,6 +76,10 @@ func (c *MetricCompactionConsumer) Run(ctx context.Context) error {
 				return err // Return error to prevent committing bad batch
 			}
 		}
+
+		// After successful processing, cleanup old offset tracking records
+		CleanupCommittedOffsets(handlerCtx, c.store, c.topic, c.consumerGroup, msgs)
+
 		return nil
 	}
 

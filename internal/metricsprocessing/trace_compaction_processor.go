@@ -64,7 +64,6 @@ func (p *TraceCompactionProcessor) ProcessBundle(ctx context.Context, key messag
 
 	ll := logctx.FromContext(ctx)
 
-	// Log compaction start
 	ll.Info("Starting trace compaction bundle processing",
 		slog.String("organizationID", key.OrganizationID.String()),
 		slog.Int("dateint", int(key.DateInt)),
@@ -82,7 +81,6 @@ func (p *TraceCompactionProcessor) ProcessBundle(ctx context.Context, key messag
 		}
 	}()
 
-	// Get storage profile and client
 	storageProfile, err := p.storageProvider.GetStorageProfileForOrganizationAndInstance(ctx, key.OrganizationID, key.InstanceNum)
 	if err != nil {
 		return fmt.Errorf("get storage profile: %w", err)
@@ -93,7 +91,6 @@ func (p *TraceCompactionProcessor) ProcessBundle(ctx context.Context, key messag
 		return fmt.Errorf("create storage client: %w", err)
 	}
 
-	// Process the compaction work
 	if err := p.ProcessWork(ctx, tmpDir, storageClient, storageProfile, key, msgs, partition, offset); err != nil {
 		ll.Error("Failed to process trace compaction work, skipping bundle",
 			slog.String("organizationID", key.OrganizationID.String()),
@@ -122,13 +119,11 @@ func (p *TraceCompactionProcessor) ProcessWork(
 
 	recordCountEstimate := p.store.GetTraceEstimate(ctx, key.OrganizationID)
 
-	// Process segments
 	var activeSegments []lrdb.TraceSeg
 	var segmentsToMarkCompacted []lrdb.TraceSeg
 	targetSizeThreshold := config.TargetFileSize * 80 / 100 // 80% of target file size
 
 	for _, msg := range msgs {
-
 		segment, err := p.store.GetTraceSeg(ctx, lrdb.GetTraceSegParams{
 			OrganizationID: msg.OrganizationID,
 			Dateint:        msg.DateInt,
@@ -269,13 +264,11 @@ func (p *TraceCompactionProcessor) uploadAndCreateTraceSegments(ctx context.Cont
 	for i, result := range results {
 		segmentID := batchSegmentIDs[i]
 
-		// Get metadata from result
 		stats, ok := result.Metadata.(factories.TracesFileStats)
 		if !ok {
 			return nil, fmt.Errorf("unexpected metadata type: %T", result.Metadata)
 		}
 
-		// Upload the file
 		objectPath := helpers.MakeDBObjectID(key.OrganizationID, profile.CollectorName, key.DateInt, p.getHourFromTimestamp(stats.FirstTS), segmentID, "traces")
 		if err := client.UploadObject(ctx, profile.Bucket, objectPath, result.FileName); err != nil {
 			return nil, fmt.Errorf("upload file %s: %w", result.FileName, err)
@@ -322,25 +315,20 @@ func (p *TraceCompactionProcessor) uploadAndCreateTraceSegments(ctx context.Cont
 func (p *TraceCompactionProcessor) atomicTraceDatabaseUpdate(ctx context.Context, oldSegments, newSegments []lrdb.TraceSeg, key messages.TraceCompactionKey, partition int32, offset int64) error {
 	ll := logctx.FromContext(ctx)
 
-	// Prepare Kafka offsets for update
-	var kafkaOffsets []lrdb.KafkaOffsetUpdate
-	kafkaOffsets = append(kafkaOffsets, lrdb.KafkaOffsetUpdate{
-		Topic:               p.config.TopicRegistry.GetTopic(config.TopicSegmentsTracesCompact),
-		Partition:           partition,
-		ConsumerGroup:       p.config.TopicRegistry.GetConsumerGroup(config.TopicSegmentsTracesCompact),
-		OrganizationID:      key.OrganizationID,
-		InstanceNum:         key.InstanceNum,
-		LastProcessedOffset: offset,
+	var kafkaOffsets []lrdb.KafkaOffsetInfo
+	kafkaOffsets = append(kafkaOffsets, lrdb.KafkaOffsetInfo{
+		ConsumerGroup: p.config.TopicRegistry.GetConsumerGroup(config.TopicSegmentsTracesCompact),
+		Topic:         p.config.TopicRegistry.GetTopic(config.TopicSegmentsTracesCompact),
+		PartitionID:   partition,
+		Offsets:       []int64{offset},
 	})
 
-	// Log Kafka offset update
 	ll.Debug("Updating Kafka consumer group offset",
 		slog.String("consumerGroup", p.config.TopicRegistry.GetConsumerGroup(config.TopicSegmentsTracesCompact)),
 		slog.String("topic", p.config.TopicRegistry.GetTopic(config.TopicSegmentsTracesCompact)),
 		slog.Int("partition", int(partition)),
 		slog.Int64("newOffset", offset))
 
-	// Convert segments to appropriate types
 	oldRecords := make([]lrdb.CompactTraceSegsOld, len(oldSegments))
 	for i, seg := range oldSegments {
 		oldRecords[i] = lrdb.CompactTraceSegsOld{
@@ -364,7 +352,6 @@ func (p *TraceCompactionProcessor) atomicTraceDatabaseUpdate(ctx context.Context
 		return fmt.Errorf("no new segments to insert")
 	}
 
-	// Perform atomic operation
 	params := lrdb.CompactTraceSegsParams{
 		OrganizationID: key.OrganizationID,
 		Dateint:        key.DateInt,
@@ -374,9 +361,8 @@ func (p *TraceCompactionProcessor) atomicTraceDatabaseUpdate(ctx context.Context
 		CreatedBy:      lrdb.CreatedByCompact,
 	}
 
-	// Perform atomic operation with Kafka offsets
-	if err := p.store.CompactTraceSegsWithKafkaOffsets(ctx, params, kafkaOffsets); err != nil {
-		ll.Error("Failed CompactTraceSegsWithKafkaOffsets",
+	if err := p.store.CompactTraceSegments(ctx, params, kafkaOffsets); err != nil {
+		ll.Error("Failed CompactTraceSegments",
 			slog.Any("error", err),
 			slog.String("organization_id", key.OrganizationID.String()),
 			slog.Int("dateint", int(key.DateInt)),
@@ -384,7 +370,6 @@ func (p *TraceCompactionProcessor) atomicTraceDatabaseUpdate(ctx context.Context
 			slog.Int("old_segments_count", len(oldSegments)),
 			slog.Int("new_segments_count", len(newSegments)))
 
-		// Log segment IDs for additional context
 		if len(oldSegments) > 0 {
 			oldSegmentIDs := make([]int64, len(oldSegments))
 			for i, seg := range oldSegments {

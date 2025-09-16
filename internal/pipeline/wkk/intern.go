@@ -118,6 +118,7 @@ var (
 	RowKeyCTelemetryType = NewRowKey("_cardinalhq.telemetry_type")
 	RowKeyCTID           = NewRowKey("_cardinalhq.tid")
 	RowKeyCTimestamp     = NewRowKey("_cardinalhq.timestamp")
+	RowKeyCTsns          = NewRowKey("_cardinalhq.tsns")
 	RowKeyCValue         = NewRowKey("_cardinalhq.value") // Deprecated
 
 	// histogram handling (TODO: just make histograms)

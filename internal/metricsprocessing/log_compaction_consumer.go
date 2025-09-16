@@ -29,10 +29,12 @@ import (
 
 // LogCompactionConsumer consumes LogCompactionBundle messages from boxer
 type LogCompactionConsumer struct {
-	consumer  fly.Consumer
-	store     LogCompactionStore
-	processor *LogCompactionProcessor
-	cfg       *config.Config
+	consumer      fly.Consumer
+	store         LogCompactionStore
+	processor     *LogCompactionProcessor
+	cfg           *config.Config
+	topic         string
+	consumerGroup string
 }
 
 // NewLogCompactionConsumer creates a consumer that processes LogCompactionBundle messages from boxer
@@ -46,16 +48,20 @@ func NewLogCompactionConsumer(
 ) (*LogCompactionConsumer, error) {
 	processor := NewLogCompactionProcessor(store, storageProvider, cmgr, cfg)
 
-	consumer, err := factory.CreateConsumer(cfg.TopicRegistry.GetTopic(config.TopicSegmentsLogsCompact), cfg.TopicRegistry.GetConsumerGroup(config.TopicSegmentsLogsCompact))
+	topic := cfg.TopicRegistry.GetTopic(config.TopicSegmentsLogsCompact)
+	consumerGroup := cfg.TopicRegistry.GetConsumerGroup(config.TopicSegmentsLogsCompact)
+	consumer, err := factory.CreateConsumer(topic, consumerGroup)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka consumer: %w", err)
 	}
 
 	return &LogCompactionConsumer{
-		consumer:  consumer,
-		store:     store,
-		processor: processor,
-		cfg:       cfg,
+		consumer:      consumer,
+		store:         store,
+		processor:     processor,
+		cfg:           cfg,
+		topic:         topic,
+		consumerGroup: consumerGroup,
 	}, nil
 }
 
@@ -70,6 +76,10 @@ func (c *LogCompactionConsumer) Run(ctx context.Context) error {
 				return err // Return error to prevent committing bad batch
 			}
 		}
+
+		// After successful processing, cleanup old offset tracking records
+		CleanupCommittedOffsets(handlerCtx, c.store, c.topic, c.consumerGroup, msgs)
+
 		return nil
 	}
 

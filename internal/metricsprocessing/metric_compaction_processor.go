@@ -103,20 +103,15 @@ func (p *MetricCompactionProcessor) uploadAndCreateSegments(ctx context.Context,
 	for i, result := range results {
 		segmentID := batchSegmentIDs[i]
 
-		// Get metadata from result
 		stats, ok := result.Metadata.(factories.MetricsFileStats)
 		if !ok {
 			return nil, fmt.Errorf("unexpected metadata type: %T", result.Metadata)
 		}
 
-		// Upload the file
 		objectPath := helpers.MakeDBObjectID(key.OrganizationID, profile.CollectorName, key.DateInt, p.getHourFromTimestamp(stats.FirstTS), segmentID, "metrics")
 		if err := client.UploadObject(ctx, profile.Bucket, objectPath, result.FileName); err != nil {
 			return nil, fmt.Errorf("upload file %s: %w", result.FileName, err)
 		}
-
-		// Clean up local file
-		_ = os.Remove(result.FileName)
 
 		// Create new segment record
 		segment := lrdb.MetricSeg{
@@ -162,20 +157,16 @@ func (p *MetricCompactionProcessor) uploadAndCreateSegments(ctx context.Context,
 func (p *MetricCompactionProcessor) atomicDatabaseUpdate(ctx context.Context, oldSegments, newSegments []lrdb.MetricSeg, kafkaCommitData *KafkaCommitData, key messages.CompactionKey) error {
 	ll := logctx.FromContext(ctx)
 
-	// Prepare Kafka offsets for update
-	var kafkaOffsets []lrdb.KafkaOffsetUpdate
+	var kafkaOffsets []lrdb.KafkaOffsetInfo
 	if kafkaCommitData != nil {
 		for partition, offset := range kafkaCommitData.Offsets {
-			kafkaOffsets = append(kafkaOffsets, lrdb.KafkaOffsetUpdate{
-				Topic:               kafkaCommitData.Topic,
-				Partition:           partition,
-				ConsumerGroup:       kafkaCommitData.ConsumerGroup,
-				OrganizationID:      key.OrganizationID,
-				InstanceNum:         key.InstanceNum,
-				LastProcessedOffset: offset,
+			kafkaOffsets = append(kafkaOffsets, lrdb.KafkaOffsetInfo{
+				ConsumerGroup: kafkaCommitData.ConsumerGroup,
+				Topic:         kafkaCommitData.Topic,
+				PartitionID:   partition,
+				Offsets:       []int64{offset},
 			})
 
-			// Log each Kafka offset update
 			ll.Debug("Updating Kafka consumer group offset",
 				slog.String("consumerGroup", kafkaCommitData.ConsumerGroup),
 				slog.String("topic", kafkaCommitData.Topic),
@@ -184,7 +175,6 @@ func (p *MetricCompactionProcessor) atomicDatabaseUpdate(ctx context.Context, ol
 		}
 	}
 
-	// Convert segments to appropriate types
 	oldRecords := make([]lrdb.CompactMetricSegsOld, len(oldSegments))
 	for i, seg := range oldSegments {
 		oldRecords[i] = lrdb.CompactMetricSegsOld{
@@ -208,7 +198,6 @@ func (p *MetricCompactionProcessor) atomicDatabaseUpdate(ctx context.Context, ol
 		return fmt.Errorf("no new segments to insert")
 	}
 
-	// Perform atomic operation
 	params := lrdb.CompactMetricSegsParams{
 		OrganizationID: key.OrganizationID,
 		Dateint:        key.DateInt,
@@ -219,12 +208,11 @@ func (p *MetricCompactionProcessor) atomicDatabaseUpdate(ctx context.Context, ol
 		CreatedBy:      lrdb.CreatedByCompact,
 	}
 
-	// Perform atomic operation
-	if err := p.store.CompactMetricSegsWithKafkaOffsets(ctx, params, kafkaOffsets); err != nil {
+	if err := p.store.CompactMetricSegments(ctx, params, kafkaOffsets); err != nil {
 		ll := logctx.FromContext(ctx)
 
 		// Log unique keys for debugging database failures
-		ll.Error("Failed CompactMetricSegsWithKafkaOffsetsWithOrg",
+		ll.Error("Failed CompactMetricSegments",
 			slog.Any("error", err),
 			slog.String("organization_id", key.OrganizationID.String()),
 			slog.Int("dateint", int(key.DateInt)),
@@ -233,7 +221,6 @@ func (p *MetricCompactionProcessor) atomicDatabaseUpdate(ctx context.Context, ol
 			slog.Int("old_segments_count", len(oldSegments)),
 			slog.Int("new_segments_count", len(newSegments)))
 
-		// Log segment IDs for additional context
 		if len(oldSegments) > 0 {
 			oldSegmentIDs := make([]int64, len(oldSegments))
 			for i, seg := range oldSegments {
@@ -321,7 +308,6 @@ func (p *MetricCompactionProcessor) ProcessBundle(ctx context.Context, key messa
 		return fmt.Errorf("create storage client: %w", err)
 	}
 
-	// Process segments
 	var activeSegments []lrdb.MetricSeg
 	var segmentsToMarkCompacted []lrdb.MetricSeg
 	targetSizeThreshold := config.TargetFileSize * 80 / 100 // 80% of target file size
@@ -381,7 +367,6 @@ func (p *MetricCompactionProcessor) ProcessBundle(ctx context.Context, key messa
 	ll.Info("Found segments to compact",
 		slog.Int("activeSegments", len(activeSegments)))
 
-	// Perform the core compaction logic
 	results, err := p.performCompaction(ctx, tmpDir, storageClient, key, storageProfile, activeSegments, recordCountEstimate)
 	if err != nil {
 		ll.Error("Failed to perform metric compaction core processing, skipping bundle",
@@ -394,7 +379,6 @@ func (p *MetricCompactionProcessor) ProcessBundle(ctx context.Context, key messa
 		return nil
 	}
 
-	// Upload new files and create new metric segments
 	newSegments, err := p.uploadAndCreateSegments(ctx, storageClient, storageProfile, results, key, activeSegments)
 	if err != nil {
 		ll.Error("Failed to upload and create metric segments, skipping bundle",
@@ -407,12 +391,11 @@ func (p *MetricCompactionProcessor) ProcessBundle(ctx context.Context, key messa
 		return nil
 	}
 
-	// Create KafkaCommitData for offset tracking
 	kafkaCommitData := &KafkaCommitData{
 		Topic:         p.config.TopicRegistry.GetTopic(config.TopicSegmentsMetricsCompact),
 		ConsumerGroup: p.config.TopicRegistry.GetConsumerGroup(config.TopicSegmentsMetricsCompact),
 		Offsets: map[int32]int64{
-			partition: offset + 1,
+			partition: offset,
 		},
 	}
 

@@ -46,7 +46,7 @@ type TimeBin struct {
 	StartTs int64 // Start timestamp of the file group (inclusive)
 	EndTs   int64 // End timestamp of the file group (exclusive)
 	Writer  parquetwriter.ParquetWriter
-	Result  *parquetwriter.Result // Result after writer is closed
+	Results []parquetwriter.Result // Results after writer is closed (can be multiple files)
 }
 
 // TimeBinManager manages multiple file groups (60s-aligned files containing 10s data)
@@ -68,11 +68,10 @@ type MetricIngestProcessor struct {
 
 // newMetricIngestProcessor creates a new metric ingest processor instance
 func newMetricIngestProcessor(
-	ctx context.Context,
 	cfg *config.Config,
 	store MetricIngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *MetricIngestProcessor {
 	var exemplarProcessor *exemplars.Processor
-	if os.Getenv("DISABLE_EXEMPLARS") != "true" {
+	if cfg.Metrics.Ingestion.ProcessExemplars {
 		exemplarProcessor = exemplars.NewProcessor(exemplars.DefaultConfig())
 		exemplarProcessor.SetMetricsCallback(func(ctx context.Context, organizationID string, exemplars []*exemplars.ExemplarData) error {
 			return processMetricsExemplarsDirect(ctx, organizationID, exemplars, store)
@@ -134,7 +133,7 @@ func validateIngestGroupConsistency(group *accumulationGroup[messages.IngestKey]
 }
 
 // Process implements the Processor interface and performs raw metric ingestion
-func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulationGroup[messages.IngestKey], kafkaCommitData *KafkaCommitData) error {
+func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulationGroup[messages.IngestKey], kafkaOffsets []lrdb.KafkaOffsetInfo) error {
 	ll := logctx.FromContext(ctx)
 
 	defer runtime.GC() // TODO find a way to not need this
@@ -163,12 +162,25 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 		}
 	}()
 
-	storageProfile, err := p.storageProvider.GetStorageProfileForOrganizationAndInstance(ctx, group.Key.OrganizationID, group.Key.InstanceNum)
+	srcProfile, err := p.storageProvider.GetStorageProfileForOrganizationAndInstance(ctx, group.Key.OrganizationID, group.Key.InstanceNum)
 	if err != nil {
 		return fmt.Errorf("get storage profile: %w", err)
 	}
 
-	storageClient, err := cloudstorage.NewClient(ctx, p.cmgr, storageProfile)
+	inputClient, err := cloudstorage.NewClient(ctx, p.cmgr, srcProfile)
+	if err != nil {
+		return fmt.Errorf("create storage client: %w", err)
+	}
+
+	dstProfile := srcProfile
+	if p.config.Metrics.Ingestion.SingleInstanceMode {
+		dstProfile, err = p.storageProvider.GetLowestInstanceStorageProfile(ctx, srcProfile.OrganizationID, srcProfile.Bucket)
+		if err != nil {
+			return fmt.Errorf("get lowest instance storage profile: %w", err)
+		}
+	}
+
+	outputClient, err := cloudstorage.NewClient(ctx, p.cmgr, dstProfile)
 	if err != nil {
 		return fmt.Errorf("create storage client: %w", err)
 	}
@@ -187,7 +199,7 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 			slog.String("objectID", msg.ObjectID),
 			slog.Int64("fileSize", msg.FileSize))
 
-		tmpFilename, _, is404, err := storageClient.DownloadObject(ctx, tmpDir, msg.Bucket, msg.ObjectID)
+		tmpFilename, _, is404, err := inputClient.DownloadObject(ctx, tmpDir, msg.Bucket, msg.ObjectID)
 		if err != nil {
 			ll.Error("Failed to download file", slog.String("objectID", msg.ObjectID), slog.Any("error", err))
 			continue // Skip this file but continue with others
@@ -229,7 +241,7 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 	}
 
 	// Step 5-8: Process rows with time-based binning
-	timeBins, err := p.processRowsWithTimeBinning(ctx, finalReader, tmpDir, storageProfile)
+	timeBins, err := p.processRowsWithTimeBinning(ctx, finalReader, tmpDir, srcProfile)
 	if err != nil {
 		return fmt.Errorf("failed to process rows: %w", err)
 	}
@@ -239,33 +251,13 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 		return nil
 	}
 
-	segmentParams, err := p.uploadAndCreateSegments(ctx, storageClient, timeBins, storageProfile)
+	segmentParams, err := p.uploadAndCreateSegments(ctx, outputClient, timeBins, dstProfile)
 	if err != nil {
 		return fmt.Errorf("failed to upload and create segments: %w", err)
 	}
 
-	// Convert KafkaCommitData to KafkaOffsetUpdate slice
-	var kafkaOffsets []lrdb.KafkaOffsetUpdate
-	if kafkaCommitData != nil {
-		for partition, offset := range kafkaCommitData.Offsets {
-			kafkaOffsets = append(kafkaOffsets, lrdb.KafkaOffsetUpdate{
-				ConsumerGroup:       kafkaCommitData.ConsumerGroup,
-				Topic:               kafkaCommitData.Topic,
-				Partition:           partition,
-				LastProcessedOffset: offset,
-				OrganizationID:      group.Key.OrganizationID,
-				InstanceNum:         group.Key.InstanceNum,
-			})
-		}
-	}
-
-	batch := lrdb.MetricSegmentBatch{
-		Segments:     segmentParams,
-		KafkaOffsets: kafkaOffsets,
-	}
-
 	criticalCtx := context.WithoutCancel(ctx)
-	if err := p.store.InsertMetricSegmentBatchWithKafkaOffsets(criticalCtx, batch); err != nil {
+	if err := p.store.InsertMetricSegmentsBatch(criticalCtx, segmentParams, kafkaOffsets); err != nil {
 		// Log detailed segment information for debugging
 		segmentIDs := make([]int64, len(segmentParams))
 		var totalRecords, totalSize int64
@@ -550,8 +542,7 @@ func (p *MetricIngestProcessor) processRowsWithTimeBinning(ctx context.Context, 
 		}
 
 		if len(results) > 0 {
-			// Should typically be one result per writer
-			bin.Result = &results[0]
+			bin.Results = append(bin.Results, results...)
 		}
 	}
 
@@ -564,7 +555,6 @@ func (manager *TimeBinManager) getOrCreateBin(_ context.Context, binStartTs int6
 		return bin, nil
 	}
 
-	// Create new writer for this time bin
 	writer, err := factories.NewMetricsWriter(manager.tmpDir, manager.rpfEstimate)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create writer for time bin: %w", err)
@@ -587,43 +577,48 @@ func (p *MetricIngestProcessor) uploadAndCreateSegments(ctx context.Context, sto
 	var segmentParams []lrdb.InsertMetricSegmentParams
 	var totalOutputRecords, totalOutputSize int64
 
-	// First, collect all valid bins to know how many IDs we need
-	type validBin struct {
+	type validResult struct {
 		binStartTs int64
-		bin        *TimeBin
+		result     parquetwriter.Result
 		metadata   *fileMetadata
 	}
-	var validBins []validBin
+	var validResults []validResult
 
+	// Collect all valid results from all bins
 	for binStartTs, bin := range timeBins {
-		if bin.Result == nil || bin.Result.RecordCount == 0 {
+		if len(bin.Results) == 0 {
 			ll.Debug("Skipping empty file group", slog.Int64("fileGroupStartTs", binStartTs))
 			continue
 		}
 
-		// Extract file metadata using ExtractFileMetadata
-		metadata, err := extractFileMetadata(ctx, *bin.Result)
-		if err != nil {
-			return nil, fmt.Errorf("failed to extract file metadata for bin %d: %w", binStartTs, err)
-		}
+		// Process each result from this bin
+		for _, result := range bin.Results {
+			if result.RecordCount == 0 {
+				continue
+			}
 
-		validBins = append(validBins, validBin{
-			binStartTs: binStartTs,
-			bin:        bin,
-			metadata:   metadata,
-		})
+			metadata, err := extractFileMetadata(ctx, result)
+			if err != nil {
+				return nil, fmt.Errorf("failed to extract file metadata for bin %d: %w", binStartTs, err)
+			}
+
+			validResults = append(validResults, validResult{
+				binStartTs: binStartTs,
+				result:     result,
+				metadata:   metadata,
+			})
+		}
 	}
 
-	// Generate unique batch IDs for all valid bins to avoid collisions
-	batchSegmentIDs := idgen.GenerateBatchIDs(len(validBins))
+	// Generate unique batch IDs for all valid results to avoid collisions
+	batchSegmentIDs := idgen.GenerateBatchIDs(len(validResults))
 
-	for i, validBin := range validBins {
-		bin := validBin.bin
-		metadata := validBin.metadata
+	for i, valid := range validResults {
+		result := valid.result
+		metadata := valid.metadata
 
 		segmentID := batchSegmentIDs[i]
 
-		// Generate upload path using metadata dateint and hour
 		uploadPath := helpers.MakeDBObjectID(
 			storageProfile.OrganizationID,
 			storageProfile.CollectorName,
@@ -634,16 +629,16 @@ func (p *MetricIngestProcessor) uploadAndCreateSegments(ctx context.Context, sto
 		)
 
 		// Upload file to S3
-		uploadErr := storageClient.UploadObject(ctx, storageProfile.Bucket, uploadPath, bin.Result.FileName)
+		uploadErr := storageClient.UploadObject(ctx, storageProfile.Bucket, uploadPath, result.FileName)
 		if uploadErr != nil {
-			return nil, fmt.Errorf("failed to upload file %s to %s: %w", bin.Result.FileName, uploadPath, uploadErr)
+			return nil, fmt.Errorf("failed to upload file %s to %s: %w", result.FileName, uploadPath, uploadErr)
 		}
 
 		ll.Debug("Uploaded segment",
 			slog.String("uploadPath", uploadPath),
 			slog.Int64("segmentID", segmentID),
-			slog.Int64("recordCount", bin.Result.RecordCount),
-			slog.Int64("fileSize", bin.Result.FileSize))
+			slog.Int64("recordCount", result.RecordCount),
+			slog.Int64("fileSize", result.FileSize))
 
 		// Create segment parameters for database insertion using extracted metadata
 		params := lrdb.InsertMetricSegmentParams{
@@ -654,8 +649,8 @@ func (p *MetricIngestProcessor) uploadAndCreateSegments(ctx context.Context, sto
 			InstanceNum:    storageProfile.InstanceNum,
 			StartTs:        metadata.StartTs,
 			EndTs:          metadata.EndTs,
-			RecordCount:    bin.Result.RecordCount,
-			FileSize:       bin.Result.FileSize,
+			RecordCount:    result.RecordCount,
+			FileSize:       result.FileSize,
 			CreatedBy:      lrdb.CreatedByIngest,
 			Published:      true,
 			Compacted:      false,
@@ -664,8 +659,8 @@ func (p *MetricIngestProcessor) uploadAndCreateSegments(ctx context.Context, sto
 		}
 
 		segmentParams = append(segmentParams, params)
-		totalOutputRecords += bin.Result.RecordCount
-		totalOutputSize += bin.Result.FileSize
+		totalOutputRecords += result.RecordCount
+		totalOutputSize += result.FileSize
 	}
 
 	ll.Info("Segment upload completed",
