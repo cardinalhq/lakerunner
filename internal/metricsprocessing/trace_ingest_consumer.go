@@ -40,17 +40,13 @@ func NewTraceIngestConsumer(
 	storageProvider storageprofile.StorageProfileProvider,
 	cmgr cloudstorage.ClientProvider,
 ) (*TraceIngestConsumer, error) {
-
-	// Create Kafka producer for segment notifications
 	kafkaProducer, err := factory.CreateProducer()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka producer: %w", err)
 	}
 
-	// Create TraceIngestProcessor (reusing existing)
-	processor := newTraceIngestProcessor(ctx, cfg, store, storageProvider, cmgr, kafkaProducer)
+	processor := newTraceIngestProcessor(cfg, store, storageProvider, cmgr, kafkaProducer)
 
-	// Configure the consumer
 	consumerConfig := CommonConsumerConfig{
 		ConsumerName:  "lakerunner-trace-ingest-v2",
 		Topic:         cfg.TopicRegistry.GetTopic(config.TopicObjstoreIngestTraces),
@@ -60,7 +56,6 @@ func NewTraceIngestConsumer(
 		MaxAge:        20 * time.Second,
 	}
 
-	// Create common consumer
 	commonConsumer, err := NewCommonConsumer[*messages.ObjStoreNotificationMessage](
 		ctx,
 		factory,

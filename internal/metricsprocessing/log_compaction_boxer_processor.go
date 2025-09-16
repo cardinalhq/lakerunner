@@ -25,6 +25,7 @@ import (
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/cardinalhq/lakerunner/internal/logctx"
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 // LogCompactionBoxerProcessor implements boxing for log compaction messages
@@ -36,7 +37,6 @@ type LogCompactionBoxerProcessor struct {
 
 // newLogCompactionBoxerProcessor creates a new log compaction boxer processor
 func newLogCompactionBoxerProcessor(
-	ctx context.Context,
 	cfg *config.Config,
 	producer fly.Producer,
 	store LogCompactionStore,
@@ -49,7 +49,7 @@ func newLogCompactionBoxerProcessor(
 }
 
 // Process implements the processor interface for log compaction boxing
-func (p *LogCompactionBoxerProcessor) Process(ctx context.Context, group *accumulationGroup[messages.LogCompactionKey], kafkaCommitData *KafkaCommitData) error {
+func (p *LogCompactionBoxerProcessor) Process(ctx context.Context, group *accumulationGroup[messages.LogCompactionKey], kafkaOffsets []lrdb.KafkaOffsetInfo) error {
 	defer runtime.GC() // TODO find a way to not need this
 
 	ll := logctx.FromContext(ctx)

@@ -48,7 +48,7 @@ func NewMetricIngestConsumer(
 	}
 
 	// Create MetricIngestProcessor
-	processor := newMetricIngestProcessor(ctx, cfg, store, storageProvider, cmgr, kafkaProducer)
+	processor := newMetricIngestProcessor(cfg, store, storageProvider, cmgr, kafkaProducer)
 
 	// Configure the consumer
 	consumerConfig := CommonConsumerConfig{

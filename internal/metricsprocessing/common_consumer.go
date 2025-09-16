@@ -22,8 +22,6 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/fly"
 	"github.com/cardinalhq/lakerunner/internal/fly/messages"
@@ -44,7 +42,10 @@ type CommonConsumerConfig struct {
 
 // CommonConsumerStore defines the minimal interface required by common consumers
 type CommonConsumerStore interface {
-	KafkaGetLastProcessed(ctx context.Context, params lrdb.KafkaGetLastProcessedParams) (int64, error)
+	// Offset tracking - only for reading
+	KafkaOffsetsAfter(ctx context.Context, params lrdb.KafkaOffsetsAfterParams) ([]int64, error)
+	// Cleanup old offset tracking records
+	CleanupKafkaOffsets(ctx context.Context, params lrdb.CleanupKafkaOffsetsParams) (int64, error)
 }
 
 // MessageGatherer defines the interface for processing messages and idle groups
@@ -107,8 +108,8 @@ func NewCommonConsumerWithComponents[M messages.CompactionMessage, K messages.Co
 		config:          consumerConfig,
 	}
 
-	// Create Gatherer using the consumer itself as offset callbacks
-	cc.gatherer = newGatherer[M](consumerConfig.Topic, consumerConfig.ConsumerGroup, processor, cc)
+	// Create gatherer with sync mode deduplication
+	cc.gatherer = newGatherer[M](consumerConfig.Topic, consumerConfig.ConsumerGroup, processor, store)
 
 	return cc
 }
@@ -160,7 +161,14 @@ func (c *CommonConsumer[M, K]) processKafkaMessageBatch(ctx context.Context, kaf
 	}
 
 	// Commit the messages after successful processing
-	return c.consumer.CommitMessages(ctx, kafkaMessages...)
+	if err := c.consumer.CommitMessages(ctx, kafkaMessages...); err != nil {
+		return err
+	}
+
+	// After successful Kafka commit, cleanup old offset tracking records
+	c.cleanupCommittedOffsets(ctx, kafkaMessages, ll)
+
+	return nil
 }
 
 // processKafkaMessage handles a single Kafka message (extracted for testability)
@@ -208,85 +216,6 @@ func (c *CommonConsumer[M, K]) processKafkaMessage(ctx context.Context, kafkaMsg
 	return nil
 }
 
-// GetLastProcessedOffset returns the last processed offset for this key, or -1 if never seen
-func (c *CommonConsumer[M, K]) GetLastProcessedOffset(ctx context.Context, metadata *messageMetadata, groupingKey K) (int64, error) {
-	orgUUID := groupingKey.GetOrgID()
-	instNum := groupingKey.GetInstanceNum()
-
-	offset, err := c.store.KafkaGetLastProcessed(ctx, lrdb.KafkaGetLastProcessedParams{
-		Topic:          metadata.Topic,
-		Partition:      metadata.Partition,
-		ConsumerGroup:  metadata.ConsumerGroup,
-		OrganizationID: orgUUID,
-		InstanceNum:    instNum,
-	})
-	if err != nil {
-		// Return -1 if no row found (never seen before), but propagate other errors
-		if errors.Is(err, pgx.ErrNoRows) {
-			return -1, nil
-		}
-		return -1, fmt.Errorf("failed to get last processed offset: %w", err)
-	}
-	return offset, nil
-}
-
-// MarkOffsetsProcessed commits the consumer group offsets to Kafka
-func (c *CommonConsumer[M, K]) MarkOffsetsProcessed(ctx context.Context, key K, offsets map[int32]int64) error {
-	ll := logctx.FromContext(ctx)
-
-	if len(offsets) == 0 {
-		return nil
-	}
-
-	// Create ConsumedMessage objects for each partition/offset to commit
-	commitMessages := c.buildCommitMessages(offsets)
-
-	// Log all commit messages
-	for _, msg := range commitMessages {
-		orgID := key.GetOrgID()
-		instanceNum := key.GetInstanceNum()
-
-		ll.Info("Committing Kafka consumer group offset",
-			slog.String("consumerGroup", c.config.ConsumerGroup),
-			slog.String("topic", c.config.Topic),
-			slog.Int("partition", msg.Partition),
-			slog.Int64("offset", msg.Offset),
-			slog.String("organizationID", orgID.String()),
-			slog.Int("instanceNum", int(instanceNum)))
-	}
-
-	if err := c.consumer.CommitMessages(ctx, commitMessages...); err != nil {
-		errOrgID := key.GetOrgID()
-		errInstanceNum := key.GetInstanceNum()
-
-		ll.Error("Failed to commit Kafka consumer group offsets",
-			slog.Any("error", err),
-			slog.String("organizationID", errOrgID.String()),
-			slog.Int("instanceNum", int(errInstanceNum)))
-		return fmt.Errorf("failed to commit consumer group offsets: %w", err)
-	}
-
-	ll.Debug("Successfully committed Kafka consumer group offsets",
-		slog.Int("offsetCount", len(offsets)))
-
-	return nil
-}
-
-// buildCommitMessages creates ConsumedMessage objects for committing offsets (extracted for testability)
-func (c *CommonConsumer[M, K]) buildCommitMessages(offsets map[int32]int64) []fly.ConsumedMessage {
-	commitMessages := make([]fly.ConsumedMessage, 0, len(offsets))
-
-	for partition, offset := range offsets {
-		commitMessages = append(commitMessages, fly.ConsumedMessage{
-			Topic:     c.config.Topic,
-			Partition: int(partition),
-			Offset:    offset,
-		})
-	}
-
-	return commitMessages
-}
-
 // Close stops the consumer and cleans up resources
 func (c *CommonConsumer[M, K]) Close() error {
 	close(c.done)
@@ -296,6 +225,50 @@ func (c *CommonConsumer[M, K]) Close() error {
 		return c.consumer.Close()
 	}
 	return nil
+}
+
+// cleanupCommittedOffsets removes old offset tracking records after successful Kafka commit
+func (c *CommonConsumer[M, K]) cleanupCommittedOffsets(ctx context.Context, kafkaMessages []fly.ConsumedMessage, ll *slog.Logger) {
+	// Group messages by partition to find max offset per partition
+	maxOffsetPerPartition := make(map[int32]int64)
+	for _, msg := range kafkaMessages {
+		partition := int32(msg.Partition)
+		if currentMax, exists := maxOffsetPerPartition[partition]; !exists || msg.Offset > currentMax {
+			maxOffsetPerPartition[partition] = msg.Offset
+		}
+	}
+
+	// Cleanup old offset tracking records for each partition
+	for partition, maxOffset := range maxOffsetPerPartition {
+		// Apply safety buffer to handle potential replays during rebalancing
+		// We keep offsetCleanupBuffer offsets behind to ensure deduplication works
+		// even if messages are replayed after a partition moves to another consumer
+		safeCleanupOffset := maxOffset - offsetCleanupBuffer
+		if safeCleanupOffset < 0 {
+			// Don't cleanup anything if we haven't processed enough messages yet
+			continue
+		}
+
+		params := lrdb.CleanupKafkaOffsetsParams{
+			ConsumerGroup: c.config.ConsumerGroup,
+			Topic:         c.config.Topic,
+			PartitionID:   partition,
+			MaxOffset:     safeCleanupOffset,
+		}
+
+		if rowsDeleted, err := c.store.CleanupKafkaOffsets(ctx, params); err != nil {
+			ll.Error("Failed to cleanup old Kafka offset tracking records",
+				slog.Any("error", err),
+				slog.Int("partition", int(partition)),
+				slog.Int64("maxOffset", maxOffset))
+		} else if rowsDeleted > 0 {
+			ll.Debug("Cleaned up old Kafka offset tracking records",
+				slog.Int("partition", int(partition)),
+				slog.Int64("committedOffset", maxOffset),
+				slog.Int64("cleanupOffset", safeCleanupOffset),
+				slog.Int64("rowsDeleted", rowsDeleted))
+		}
+	}
 }
 
 // idleCheck runs at the configured interval and flushes idle groups

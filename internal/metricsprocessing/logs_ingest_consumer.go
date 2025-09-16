@@ -48,7 +48,7 @@ func NewLogIngestConsumer(
 	}
 
 	// Create LogIngestProcessor (reusing existing)
-	processor := newLogIngestProcessor(ctx, cfg, store, storageProvider, cmgr, kafkaProducer)
+	processor := newLogIngestProcessor(cfg, store, storageProvider, cmgr, kafkaProducer)
 
 	// Configure the consumer using centralized topic registry
 	registry := cfg.TopicRegistry
