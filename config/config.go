@@ -16,6 +16,7 @@ package config
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"reflect"
 	"strings"
@@ -30,15 +31,14 @@ import (
 type Config struct {
 	Debug       bool              `mapstructure:"debug"`
 	Kafka       KafkaConfig       `mapstructure:"kafka"`
+	KafkaTopics KafkaTopicsConfig `mapstructure:"kafka_topics"`
 	Metrics     MetricsConfig     `mapstructure:"metrics"`
-	Batch       BatchConfig       `mapstructure:"batch"`
+	Logs        LogsConfig        `mapstructure:"logs"`
+	Traces      TracesConfig      `mapstructure:"traces"`
 	DuckDB      DuckDBConfig      `mapstructure:"duckdb"`
 	S3          S3Config          `mapstructure:"s3"`
 	Azure       AzureConfig       `mapstructure:"azure"`
-	Logs        LogsConfig        `mapstructure:"logs"`
-	Traces      TracesConfig      `mapstructure:"traces"`
 	Admin       AdminConfig       `mapstructure:"admin"`
-	KafkaTopics KafkaTopicsConfig `mapstructure:"kafka_topics"`
 	Scaling     ScalingConfig     `mapstructure:"scaling"`
 
 	// Derived fields (populated during Load())
@@ -46,17 +46,15 @@ type Config struct {
 }
 
 type MetricsConfig struct {
-	Ingestion  IngestionConfig  `mapstructure:"ingestion"`
-	Compaction CompactionConfig `mapstructure:"compaction"`
-	Rollup     RollupConfig     `mapstructure:"rollup"`
+	Ingestion IngestionConfig `mapstructure:"ingestion"`
 }
 
-type BatchConfig struct {
-	TargetSizeBytes int64 `mapstructure:"target_size_bytes"`
-	MaxBatchSize    int   `mapstructure:"max_batch_size"`
-	MaxTotalSize    int64 `mapstructure:"max_total_size"`
-	MaxAgeSeconds   int   `mapstructure:"max_age_seconds"`
-	MinBatchSize    int   `mapstructure:"min_batch_size"`
+type LogsConfig struct {
+	Ingestion IngestionConfig `mapstructure:"ingestion"`
+}
+
+type TracesConfig struct {
+	Ingestion IngestionConfig `mapstructure:"ingestion"`
 }
 
 type S3Config struct {
@@ -75,14 +73,6 @@ type AzureConfig struct {
 	ConnectionString string `mapstructure:"connection_string"`
 }
 
-type LogsConfig struct {
-	// Partitions will be auto-determined from Kafka topic
-}
-
-type TracesConfig struct {
-	// Partitions will be auto-determined from Kafka topic
-}
-
 type AdminConfig struct {
 	InitialAPIKey string `mapstructure:"initial_api_key"`
 }
@@ -90,9 +80,9 @@ type AdminConfig struct {
 // TopicCreationConfig holds configuration for creating Kafka topics
 // WARNING: These settings are for topic creation only - never use partition counts in runtime code
 type TopicCreationConfig struct {
-	PartitionCount    *int                   `mapstructure:"partitionCount"`
-	ReplicationFactor *int                   `mapstructure:"replicationFactor"`
-	Options           map[string]interface{} `mapstructure:"options"`
+	PartitionCount    *int           `mapstructure:"partitionCount"`
+	ReplicationFactor *int           `mapstructure:"replicationFactor"`
+	Options           map[string]any `mapstructure:"options"`
 }
 
 type KafkaTopicsConfig struct {
@@ -112,9 +102,9 @@ type KafkaTopicsOverrideVersionCheck struct {
 // TopicCreationOverrideConfig holds configuration for creating Kafka topics in override files
 // Uses yaml tags instead of mapstructure tags
 type TopicCreationOverrideConfig struct {
-	PartitionCount    *int                   `yaml:"partitionCount"`
-	ReplicationFactor *int                   `yaml:"replicationFactor"`
-	Options           map[string]interface{} `yaml:"options"`
+	PartitionCount    *int           `yaml:"partitionCount"`
+	ReplicationFactor *int           `yaml:"replicationFactor"`
+	Options           map[string]any `yaml:"options"`
 }
 
 // KafkaTopicsOverrideConfig is the full structure for external YAML override files
@@ -156,28 +146,13 @@ type KafkaConfig struct {
 }
 
 type CompactionConfig struct {
-	TargetFileSizeBytes int64         `mapstructure:"target_file_size_bytes"` // Target file size in bytes for compaction (default: 1048576 = 1MB)
-	MaxAccumulationTime time.Duration `mapstructure:"max_accumulation_time"`  // Maximum time to accumulate segments before compacting
-}
-
-type RollupConfig struct {
-	BatchLimit int `mapstructure:"batch_limit"`
+	TargetFileSizeBytes int64 `mapstructure:"target_file_size_bytes"` // Target file size in bytes for compaction (default: 1048576 = 1MB)
 }
 
 // IngestionConfig holds ingestion feature toggles.
 type IngestionConfig struct {
-	ProcessExemplars    bool          `mapstructure:"process_exemplars"`
-	SingleInstanceMode  bool          `mapstructure:"single_instance_mode"`
-	MaxAccumulationTime time.Duration `mapstructure:"max_accumulation_time"`
-}
-
-// DefaultIngestionConfig returns default settings for ingestion.
-func DefaultIngestionConfig() IngestionConfig {
-	return IngestionConfig{
-		ProcessExemplars:    true,
-		SingleInstanceMode:  false,
-		MaxAccumulationTime: 10 * time.Second,
-	}
+	ProcessExemplars   bool `mapstructure:"process_exemplars"`
+	SingleInstanceMode bool `mapstructure:"single_instance_mode"`
 }
 
 // GetConsumerGroup returns the consumer group name for the given service
@@ -221,21 +196,10 @@ func Load() (*Config, error) {
 		Debug: false,
 		Kafka: DefaultKafkaConfig(),
 		Metrics: MetricsConfig{
-			Ingestion: DefaultIngestionConfig(),
-			Compaction: CompactionConfig{
-				TargetFileSizeBytes: TargetFileSize,   // Default target file size
-				MaxAccumulationTime: 30 * time.Second, // Default 30 seconds for compaction
+			Ingestion: IngestionConfig{
+				ProcessExemplars:   true,
+				SingleInstanceMode: false,
 			},
-			Rollup: RollupConfig{
-				BatchLimit: 100,
-			},
-		},
-		Batch: BatchConfig{
-			TargetSizeBytes: 100 * 1024 * 1024, // 100MB
-			MaxBatchSize:    100,
-			MaxTotalSize:    1024 * 1024 * 1024, // 1GB
-			MaxAgeSeconds:   300,                // 5 minutes
-			MinBatchSize:    1,
 		},
 		DuckDB:  DefaultDuckDBConfig(),
 		Scaling: GetDefaultScalingConfig(),
@@ -253,8 +217,18 @@ func Load() (*Config, error) {
 			TenantID:         "",
 			ConnectionString: "",
 		},
-		Logs:   LogsConfig{},
-		Traces: TracesConfig{},
+		Logs: LogsConfig{
+			Ingestion: IngestionConfig{
+				ProcessExemplars:   true,
+				SingleInstanceMode: false,
+			},
+		},
+		Traces: TracesConfig{
+			Ingestion: IngestionConfig{
+				ProcessExemplars:   true,
+				SingleInstanceMode: false,
+			},
+		},
 		Admin: AdminConfig{
 			InitialAPIKey: "",
 		},
@@ -474,12 +448,7 @@ func MergeKafkaTopicsOverride(base KafkaTopicsConfig, override *KafkaTopicsOverr
 		Topics:      make(map[string]TopicCreationConfig),
 	}
 
-	// Copy base topics
-	for k, v := range base.Topics {
-		result.Topics[k] = v
-	}
-
-	// Note: TopicPrefix is NOT overridden - it comes from main config or environment
+	maps.Copy(result.Topics, base.Topics)
 
 	// Merge defaults (override takes precedence for non-nil values)
 	if override.Defaults.PartitionCount != nil {
@@ -492,9 +461,7 @@ func MergeKafkaTopicsOverride(base KafkaTopicsConfig, override *KafkaTopicsOverr
 		if result.Defaults.Options == nil {
 			result.Defaults.Options = make(map[string]interface{})
 		}
-		for k, v := range override.Defaults.Options {
-			result.Defaults.Options[k] = v
-		}
+		maps.Copy(result.Defaults.Options, override.Defaults.Options)
 	}
 
 	// Merge per-topic configs (override completely replaces base for each topic)

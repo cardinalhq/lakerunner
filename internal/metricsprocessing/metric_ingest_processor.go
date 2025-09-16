@@ -71,7 +71,7 @@ func newMetricIngestProcessor(
 	cfg *config.Config,
 	store MetricIngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *MetricIngestProcessor {
 	var exemplarProcessor *exemplars.Processor
-	if os.Getenv("DISABLE_EXEMPLARS") != "true" {
+	if cfg.Metrics.Ingestion.ProcessExemplars {
 		exemplarProcessor = exemplars.NewProcessor(exemplars.DefaultConfig())
 		exemplarProcessor.SetMetricsCallback(func(ctx context.Context, organizationID string, exemplars []*exemplars.ExemplarData) error {
 			return processMetricsExemplarsDirect(ctx, organizationID, exemplars, store)
@@ -162,12 +162,25 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 		}
 	}()
 
-	storageProfile, err := p.storageProvider.GetStorageProfileForOrganizationAndInstance(ctx, group.Key.OrganizationID, group.Key.InstanceNum)
+	srcProfile, err := p.storageProvider.GetStorageProfileForOrganizationAndInstance(ctx, group.Key.OrganizationID, group.Key.InstanceNum)
 	if err != nil {
 		return fmt.Errorf("get storage profile: %w", err)
 	}
 
-	storageClient, err := cloudstorage.NewClient(ctx, p.cmgr, storageProfile)
+	inputClient, err := cloudstorage.NewClient(ctx, p.cmgr, srcProfile)
+	if err != nil {
+		return fmt.Errorf("create storage client: %w", err)
+	}
+
+	dstProfile := srcProfile
+	if p.config.Metrics.Ingestion.SingleInstanceMode {
+		dstProfile, err = p.storageProvider.GetLowestInstanceStorageProfile(ctx, srcProfile.OrganizationID, srcProfile.Bucket)
+		if err != nil {
+			return fmt.Errorf("get lowest instance storage profile: %w", err)
+		}
+	}
+
+	outputClient, err := cloudstorage.NewClient(ctx, p.cmgr, dstProfile)
 	if err != nil {
 		return fmt.Errorf("create storage client: %w", err)
 	}
@@ -186,7 +199,7 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 			slog.String("objectID", msg.ObjectID),
 			slog.Int64("fileSize", msg.FileSize))
 
-		tmpFilename, _, is404, err := storageClient.DownloadObject(ctx, tmpDir, msg.Bucket, msg.ObjectID)
+		tmpFilename, _, is404, err := inputClient.DownloadObject(ctx, tmpDir, msg.Bucket, msg.ObjectID)
 		if err != nil {
 			ll.Error("Failed to download file", slog.String("objectID", msg.ObjectID), slog.Any("error", err))
 			continue // Skip this file but continue with others
@@ -228,7 +241,7 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 	}
 
 	// Step 5-8: Process rows with time-based binning
-	timeBins, err := p.processRowsWithTimeBinning(ctx, finalReader, tmpDir, storageProfile)
+	timeBins, err := p.processRowsWithTimeBinning(ctx, finalReader, tmpDir, srcProfile)
 	if err != nil {
 		return fmt.Errorf("failed to process rows: %w", err)
 	}
@@ -238,7 +251,7 @@ func (p *MetricIngestProcessor) Process(ctx context.Context, group *accumulation
 		return nil
 	}
 
-	segmentParams, err := p.uploadAndCreateSegments(ctx, storageClient, timeBins, storageProfile)
+	segmentParams, err := p.uploadAndCreateSegments(ctx, outputClient, timeBins, dstProfile)
 	if err != nil {
 		return fmt.Errorf("failed to upload and create segments: %w", err)
 	}

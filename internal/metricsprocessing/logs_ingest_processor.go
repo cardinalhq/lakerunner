@@ -69,7 +69,7 @@ func newLogIngestProcessor(
 	cfg *config.Config,
 	store LogIngestStore, storageProvider storageprofile.StorageProfileProvider, cmgr cloudstorage.ClientProvider, kafkaProducer fly.Producer) *LogIngestProcessor {
 	var exemplarProcessor *exemplars.Processor
-	if os.Getenv("DISABLE_EXEMPLARS") != "true" {
+	if cfg.Metrics.Ingestion.ProcessExemplars {
 		exemplarProcessor = exemplars.NewProcessor(exemplars.DefaultConfig())
 		exemplarProcessor.SetMetricsCallback(func(ctx context.Context, organizationID string, exemplars []*exemplars.ExemplarData) error {
 			return processLogsExemplarsDirect(ctx, organizationID, exemplars, store)
@@ -159,12 +159,25 @@ func (p *LogIngestProcessor) Process(ctx context.Context, group *accumulationGro
 		}
 	}()
 
-	storageProfile, err := p.storageProvider.GetStorageProfileForOrganizationAndInstance(ctx, group.Key.OrganizationID, group.Key.InstanceNum)
+	srcProfile, err := p.storageProvider.GetStorageProfileForOrganizationAndInstance(ctx, group.Key.OrganizationID, group.Key.InstanceNum)
 	if err != nil {
 		return fmt.Errorf("get storage profile: %w", err)
 	}
 
-	storageClient, err := cloudstorage.NewClient(ctx, p.cmgr, storageProfile)
+	inputClient, err := cloudstorage.NewClient(ctx, p.cmgr, srcProfile)
+	if err != nil {
+		return fmt.Errorf("create storage client: %w", err)
+	}
+
+	dstProfile := srcProfile
+	if p.config.Logs.Ingestion.SingleInstanceMode {
+		dstProfile, err = p.storageProvider.GetLowestInstanceStorageProfile(ctx, srcProfile.OrganizationID, srcProfile.Bucket)
+		if err != nil {
+			return fmt.Errorf("get lowest instance storage profile: %w", err)
+		}
+	}
+
+	outputClient, err := cloudstorage.NewClient(ctx, p.cmgr, dstProfile)
 	if err != nil {
 		return fmt.Errorf("create storage client: %w", err)
 	}
@@ -183,7 +196,7 @@ func (p *LogIngestProcessor) Process(ctx context.Context, group *accumulationGro
 			slog.String("objectID", msg.ObjectID),
 			slog.Int64("fileSize", msg.FileSize))
 
-		tmpFilename, _, is404, err := storageClient.DownloadObject(ctx, tmpDir, msg.Bucket, msg.ObjectID)
+		tmpFilename, _, is404, err := inputClient.DownloadObject(ctx, tmpDir, msg.Bucket, msg.ObjectID)
 		if err != nil {
 			ll.Error("Failed to download file", slog.String("objectID", msg.ObjectID), slog.Any("error", err))
 			continue // Skip this file but continue with others
@@ -222,7 +235,7 @@ func (p *LogIngestProcessor) Process(ctx context.Context, group *accumulationGro
 		return fmt.Errorf("failed to create unified reader: %w", err)
 	}
 
-	dateintBins, err := p.processRowsWithDateintBinning(ctx, finalReader, tmpDir, storageProfile)
+	dateintBins, err := p.processRowsWithDateintBinning(ctx, finalReader, tmpDir, srcProfile)
 	if err != nil {
 		return fmt.Errorf("failed to process rows: %w", err)
 	}
@@ -232,7 +245,7 @@ func (p *LogIngestProcessor) Process(ctx context.Context, group *accumulationGro
 		return nil
 	}
 
-	segmentParams, err := p.uploadAndCreateLogSegments(ctx, storageClient, dateintBins, storageProfile)
+	segmentParams, err := p.uploadAndCreateLogSegments(ctx, outputClient, dateintBins, dstProfile)
 	if err != nil {
 		return fmt.Errorf("failed to upload and create segments: %w", err)
 	}
