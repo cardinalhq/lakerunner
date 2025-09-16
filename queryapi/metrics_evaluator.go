@@ -121,18 +121,17 @@ func (q *QuerierService) EvaluateMetricsQuery(
 	go func() {
 		defer close(out)
 
-		// ---------- Stage 0: coordinator & EvalFlow ----------
+		// ---------- Stage 0: start coordinator & EvalFlow upfront ----------
 		regs := make(chan groupReg, 256)
 		coordinated := runOrderedCoordinator(ctx, regs)
 
-		// Give the aggregator a bit more slack; this also smooths seams.
 		flow := NewEvalFlow(queryPlan.Root, queryPlan.Leaves, stepDuration, EvalFlowOptions{
-			NumBuffers: 8,
+			NumBuffers: 2,
 			OutBuffer:  1024,
 		})
 		results := flow.Run(ctx, coordinated)
 
-		// Fan-out EvalFlow results
+		// fan-out EvalFlow results immediately
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
@@ -153,11 +152,6 @@ func (q *QuerierService) EvaluateMetricsQuery(
 			}
 		}()
 
-		// IMPORTANT: a single pushdown context that lives for the WHOLE query.
-		// We cancel this ONLY after EvalFlow completes (see <-done below).
-		pushCtx, cancelAllPush := context.WithCancel(ctx)
-		defer cancelAllPush()
-
 		// ---------- Stage 1: build segment universe ----------
 		segmentUniverse := make([]SegmentInfo, 0)
 		globalStart := startTs
@@ -173,9 +167,8 @@ func (q *QuerierService) EvaluateMetricsQuery(
 				offMs = 0
 			}
 			baseStart := startTs
-			rangeMs := promql.RangeMsFromRange(leaf.Range)
 			if leaf.Range != "" {
-				baseStart -= rangeMs
+				baseStart -= promql.RangeMsFromRange(leaf.Range)
 			}
 			effStart := baseStart - offMs
 			effEnd := endTs - offMs
@@ -190,9 +183,11 @@ func (q *QuerierService) EvaluateMetricsQuery(
 			for _, dih := range dateIntHoursRange(effStart, effEnd, time.UTC, false) {
 				var segments []SegmentInfo
 				if leaf.LogLeaf != nil {
+					// logs query
 					segments, err = q.lookupLogsSegments(ctx, dih, *leaf.LogLeaf, effStart, effEnd, orgID, q.mdb.ListLogSegmentsForQuery)
 					slog.Info("Logs Metadata Query for segments", "numSegments", len(segments))
 				} else {
+					// metrics query
 					segments, err = q.lookupMetricsSegments(ctx, dih, leaf, effStart, effEnd, stepDuration, orgID)
 				}
 				if err != nil {
@@ -200,8 +195,6 @@ func (q *QuerierService) EvaluateMetricsQuery(
 					continue
 				}
 				for i := range segments {
-					segments[i].EffectiveStartTs = segments[i].StartTs + offMs
-					segments[i].EffectiveEndTs = segments[i].EndTs + offMs
 					segments[i].ExprID = leaf.ID
 				}
 				if len(segments) > 0 {
@@ -223,7 +216,7 @@ func (q *QuerierService) EvaluateMetricsQuery(
 		for gi, group := range groups {
 			regWG.Add(1)
 			sem <- struct{}{}
-			go func(gi int, group SegmentGroup) {
+			go func() {
 				defer func() { <-sem }()
 				defer regWG.Done()
 
@@ -233,6 +226,7 @@ func (q *QuerierService) EvaluateMetricsQuery(
 					segmentsByLeaf[s.ExprID] = append(segmentsByLeaf[s.ExprID], s)
 				}
 
+				// per-leaf: per-worker pushdowns → merge (per leaf)
 				leafChans := make([]<-chan promql.SketchInput, 0, len(segmentsByLeaf))
 				for leafID, segmentsForLeaf := range segmentsByLeaf {
 					leaf := leavesByID[leafID]
@@ -242,7 +236,7 @@ func (q *QuerierService) EvaluateMetricsQuery(
 						offMs = 0
 					}
 
-					// worker mapping just for this leaf’s segments
+					// build worker mapping for only this leaf’s segments
 					segmentIDs := make([]int64, 0, len(segmentsForLeaf))
 					segmentMap := make(map[int64]SegmentInfo, len(segmentsForLeaf))
 					for _, s := range segmentsForLeaf {
@@ -269,72 +263,32 @@ func (q *QuerierService) EvaluateMetricsQuery(
 
 					workerChans := make([]<-chan promql.SketchInput, 0, len(workerGroups))
 					for worker, wsegs := range workerGroups {
-						slog.Info("Pushdown to worker", "worker", worker, "numSegments", len(wsegs), "leafID", leafID)
-
-						//rangeMs := promql.RangeMsFromRange(leaf.Range)
-						minSegStart := int64(1<<63 - 1)
-						maxSegEnd := int64(-1)
-						for _, s := range wsegs {
-							if s.StartTs < minSegStart {
-								minSegStart = s.StartTs
-							}
-							if s.EndTs > maxSegEnd {
-								maxSegEnd = s.EndTs
-							}
-						}
-
-						// clamp to this group's window
-						clampedStart := max64(group.StartTs, minSegStart)
-						clampedEnd := min64(group.EndTs, maxSegEnd)
-
-						// snap to step boundaries: [start, end)
-						stepMs := stepDuration.Milliseconds()
-						snapDown := func(ms int64) int64 { return (ms / stepMs) * stepMs }
-						snapUp := func(ms int64) int64 {
-							if ms%stepMs == 0 {
-								return ms
-							}
-							return ((ms / stepMs) + 1) * stepMs
-						}
-
-						reqStart := snapDown(clampedStart)
-						reqEnd := snapUp(clampedEnd)
-						if reqEnd > group.EndTs {
-							reqEnd = group.EndTs
-						} // never run past group
-
 						req := PushDownRequest{
 							OrganizationID: orgID,
 							BaseExpr:       &leaf,
-							StartTs:        reqStart,
-							EndTs:          reqEnd,
+							StartTs:        group.StartTs,
+							EndTs:          group.EndTs,
 							Segments:       wsegs,
 							Step:           stepDuration,
 						}
-
-						ch, err := q.metricsPushDown(pushCtx, worker, req)
+						ch, err := q.metricsPushDown(ctx, worker, req)
 						if err != nil {
 							slog.Error("pushdown failed", "worker", worker, "err", err)
 							continue
 						}
 						if offMs != 0 {
-							ch = shiftTimestamps(pushCtx, ch, offMs, 256)
+							ch = shiftTimestamps(ctx, ch, offMs, 256)
 						}
-
-						tag := fmt.Sprintf("g=%d leaf=%s %s:%d", gi, leafID, worker.IP, worker.Port)
-						ch = tapStream(pushCtx, ch, tag)
-
 						workerChans = append(workerChans, ch)
 					}
 					if len(workerChans) == 0 {
 						slog.Error("no worker pushdowns survived; skipping leaf", "leafID", leafID)
 						continue
 					}
-
-					leafChans = append(leafChans, workerChans...)
+					leafChans = append(leafChans, promql.MergeSorted(ctx, 1024, false, 0, workerChans...))
 				}
 
-				// If nothing survived, register a closed stream so ordering advances.
+				// if nothing survived, register a closed stream to keep ordering happy
 				if len(leafChans) == 0 {
 					empty := make(chan promql.SketchInput)
 					close(empty)
@@ -345,12 +299,13 @@ func (q *QuerierService) EvaluateMetricsQuery(
 					return
 				}
 
-				// Merge across leaves within this group and register immediately.
-				groupChan := promql.MergeSorted(pushCtx, 1024, false, 0, leafChans...)
+				// merge across leaves within this group and register immediately
+				groupChan := promql.MergeSorted(ctx, 1024, false, 0, leafChans...)
 				slog.Info("Registering group stream", "idx", gi, "groupStart", group.StartTs, "groupEnd", group.EndTs)
 				select {
 				case regs <- groupReg{idx: gi, startTs: group.StartTs, endTs: group.EndTs, ch: groupChan}:
 				case <-ctx.Done():
+					// if cancelled, still register a closed stream so coordinator advances
 					empty := make(chan promql.SketchInput)
 					close(empty)
 					select {
@@ -358,74 +313,17 @@ func (q *QuerierService) EvaluateMetricsQuery(
 					case <-ctx.Done():
 					}
 				}
-			}(gi, group)
+			}()
 		}
 
 		// close registry when all groups have registered
 		go func() { regWG.Wait(); close(regs) }()
 
-		// wait for EvalFlow to finish, then stop all pushdowns
+		// wait for EvalFlow to finish, then return
 		<-done
-		cancelAllPush()
 	}()
 
 	return out, nil
-}
-
-// tapStream logs how many items and the timestamp span we actually consumed
-// from a worker stream. Helps diagnose early disconnects or zero-delivery shards.
-func tapStream(ctx context.Context, in <-chan promql.SketchInput, tag string) <-chan promql.SketchInput {
-	out := make(chan promql.SketchInput, 256)
-	go func() {
-		defer close(out)
-		var n int
-		var tmin, tmax int64
-		first := true
-		for {
-			select {
-			case <-ctx.Done():
-				slog.Info("pushdown stream closed (ctx)", "tag", tag, "count", n, "tmin", tmin, "tmax", tmax)
-				return
-			case v, ok := <-in:
-				if !ok {
-					slog.Info("pushdown stream closed (eof)", "tag", tag, "count", n, "tmin", tmin, "tmax", tmax)
-					return
-				}
-				if first {
-					tmin, tmax = v.GetTimestamp(), v.GetTimestamp()
-					first = false
-				} else {
-					if ts := v.GetTimestamp(); ts < tmin {
-						tmin = ts
-					} else if ts > tmax {
-						tmax = ts
-					}
-				}
-				n++
-				select {
-				case out <- v:
-				case <-ctx.Done():
-					slog.Info("pushdown stream closed (ctx while forward)", "tag", tag, "count", n, "tmin", tmin, "tmax", tmax)
-					return
-				}
-			}
-		}
-	}()
-	return out
-}
-
-func max64(a, b int64) int64 {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func min64(a, b int64) int64 {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 // metricsPushDown should POST req to the worker’s /pushdown and return a channel that yields SketchInput
@@ -519,7 +417,6 @@ func (q *QuerierService) lookupMetricsSegments(ctx context.Context,
 		"frequencyMs", stepDuration.Milliseconds(),
 		"orgUUID", orgUUID,
 		"fingerprint", fingerprint,
-		"metric", be.Metric,
 		"numSegments", len(rows))
 	for _, row := range rows {
 		startHour := zeroFilledHour(time.UnixMilli(row.StartTs).UTC().Hour())
