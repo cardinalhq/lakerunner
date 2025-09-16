@@ -263,13 +263,6 @@ func (q *QuerierService) EvaluateMetricsQuery(
 						continue
 					}
 
-					//rangeMs := promql.RangeMsFromRange(leaf.Range)
-					//baseStart := group.StartTs - offMs - rangeMs
-					//baseEnd := group.EndTs
-					//
-					//snappedStart := alignDown(baseStart, stepDuration.Milliseconds())
-					//snappedEnd := alignUp(baseEnd, stepDuration.Milliseconds())
-
 					loc := time.Local
 					slog.Info("Pushing down segments (aggregates)",
 						"groupIndex", gi, "leafID", leafID, "leafSegments", len(segmentsForLeaf),
