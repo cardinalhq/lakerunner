@@ -528,3 +528,73 @@ func TestParse_Filter_JSON_Map_Unwrap_NestedField_AssertsMapping(t *testing.T) {
 		t.Fatalf("unwrap(lat_ms) stage not found; parsers=%#v", sel.Parsers)
 	}
 }
+
+func TestParse_JSON_Map_Unwrap_NestedField_SumOffset(t *testing.T) {
+	q := `sum_over_time({resource_service_name="segment"} | json revenue="properties.revenue" | unwrap revenue [5m] offset 1h)`
+
+	ast, err := FromLogQL(q)
+	if err != nil {
+		t.Fatalf("FromLogQL error: %v", err)
+	}
+
+	// range_agg with op=sum_over_time, 5m window, offset 1h
+	if ast.Kind != KindRangeAgg || ast.RangeAgg == nil {
+		t.Fatalf("kind=%s rangeAgg=%#v (want KindRangeAgg with RangeAgg set)", ast.Kind, ast.RangeAgg)
+	}
+	if ast.RangeAgg.Op != "sum_over_time" {
+		t.Fatalf("op = %q, want sum_over_time", ast.RangeAgg.Op)
+	}
+	if ast.RangeAgg.Left.Range != "5m" {
+		t.Fatalf("range = %q, want 5m", ast.RangeAgg.Left.Range)
+	}
+	if ast.RangeAgg.Left.Offset != "1h" {
+		t.Fatalf("offset = %q, want 1h", ast.RangeAgg.Left.Offset)
+	}
+
+	// Pull selector + pipeline (from the first/only pipeline under the expr).
+	sel, _, ok := ast.FirstPipeline()
+	if !ok {
+		t.Fatalf("no pipeline returned by FirstPipeline()")
+	}
+
+	// Matcher normalized: resource_service_name -> resource.service.name
+	if !hasMatcher(sel.Matchers, "resource.service.name", "segment") {
+		t.Fatalf(`missing/unnormalized matcher resource.service.name="segment": %#v`, sel.Matchers)
+	}
+
+	// Stages: json (with mapping), then unwrap(revenue).
+	var (
+		haveJSON, haveUnwrap bool
+		checkedJSONMapping   bool
+	)
+	for _, p := range sel.Parsers {
+		switch p.Type {
+		case "json":
+			haveJSON = true
+			if p.Params == nil {
+				t.Fatalf("json parser has nil Params (expected revenue -> properties.revenue); parser=%#v", p)
+			}
+			if got := p.Params["revenue"]; got != "properties.revenue" {
+				t.Fatalf(`json mapping not captured: want Params["revenue"]="properties.revenue", got %q (parser=%#v)`, got, p)
+			}
+			checkedJSONMapping = true
+
+		case "unwrap":
+			// unwrap revenue  => func=identity, field=revenue
+			if p.Params["func"] != "identity" || p.Params["field"] != "revenue" {
+				t.Fatalf("unwrap params = %#v (want func=identity, field=revenue)", p.Params)
+			}
+			haveUnwrap = true
+		}
+	}
+
+	if !haveJSON {
+		t.Fatalf("json stage not found; parsers=%#v", sel.Parsers)
+	}
+	if !checkedJSONMapping {
+		t.Fatalf("json mapping assertion did not run (stage found but Params didn’t include mapping?) parsers=%#v", sel.Parsers)
+	}
+	if !haveUnwrap {
+		t.Fatalf("unwrap(revenue) stage not found; parsers=%#v", sel.Parsers)
+	}
+}

@@ -89,7 +89,8 @@ func RewriteToPromQL(root logql.LExecNode) (RewriteResult, error) {
 					off = " offset " + leaf.Offset
 				}
 
-				return fmt.Sprintf(`%s(%s[%s])%s`, promOp, selector, rng, off), nil
+				// put offset on the range selector itself
+				return fmt.Sprintf(`%s(%s[%s]%s)`, promOp, selector, rng, off), nil
 
 			default:
 				return "", fmt.Errorf("range agg child not a leaf: %T", t.Child)
