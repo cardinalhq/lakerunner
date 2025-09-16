@@ -273,17 +273,37 @@ func exemplarMapper(request queryapi.PushDownRequest, cols []string, row *sql.Ro
 }
 
 func tagValuesMapper(request queryapi.PushDownRequest, cols []string, row *sql.Rows) (promql.Timestamped, error) {
-	var val sql.NullString
-	if err := row.Scan(&val); err != nil {
+	rb := getRowBuffer(len(cols))
+	defer putRowBuffer(rb)
+
+	if err := row.Scan(rb.ptrs...); err != nil {
 		slog.Error("failed to scan row", "err", err)
 		return promql.TagValue{}, fmt.Errorf("failed to scan row: %w", err)
 	}
 
 	tagValue := promql.TagValue{}
-	if val.Valid {
-		tagValue.Value = val.String
+	for i, col := range cols {
+		if col == "tag_value" && rb.vals[i] != nil {
+			tagValue.Value = asString(rb.vals[i])
+			break
+		}
 	}
 	return tagValue, nil
+}
+
+func asString(v any) string {
+	switch x := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return x
+	case []byte:
+		return string(x)
+	case fmt.Stringer:
+		return x.String()
+	default:
+		return fmt.Sprint(x)
+	}
 }
 
 // ServeHttp serves SSE with merged, sorted points from cache+S3.
