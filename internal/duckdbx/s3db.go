@@ -47,10 +47,8 @@ type S3DB struct {
 	threads       int // total threads for the shared database instance
 
 	// one-time setup
-	setupOnce   sync.Once
-	setupErr    error
-	installOnce sync.Once
-	installErr  error
+	setupOnce sync.Once
+	setupErr  error
 
 	// Single global pool
 	pool *connectionPool
@@ -318,7 +316,7 @@ func (s *S3DB) ensureSetup(ctx context.Context) error {
 			return
 		}
 
-		// LOAD extensions (serialize LOAD across engines)
+		// LOAD extensions from local files (serialize LOAD across engines)
 		duckdbDDLMu.Lock()
 		err = s.loadExtensions(ctx, conn)
 		duckdbDDLMu.Unlock()
@@ -326,59 +324,25 @@ func (s *S3DB) ensureSetup(ctx context.Context) error {
 			s.setupErr = err
 			return
 		}
-
-		// Install extensions if in dev mode
-		if err := s.ensureInstall(ctx); err != nil {
-			s.setupErr = err
-			return
-		}
 	})
 	return s.setupErr
 }
 
-// Dev-mode best-effort INSTALL once. Air-gapped: only LOAD.
-func (s *S3DB) ensureInstall(ctx context.Context) error {
-	if os.Getenv("LAKERUNNER_EXTENSIONS_PATH") != "" {
-		return nil
-	}
-	s.installOnce.Do(func() {
-		db, err := sql.Open("duckdb", s.dbPath)
-		if err != nil {
-			s.installErr = err
-			return
-		}
-		defer func(db *sql.DB) {
-			err := db.Close()
-			if err != nil {
-				slog.Warn("duckdb.Close", "error", err)
-			}
-		}(db)
-		db.SetMaxOpenConns(1)
-		db.SetMaxIdleConns(1)
-		conn, err := db.Conn(ctx)
-		if err != nil {
-			s.installErr = err
-			return
-		}
-		defer func(conn *sql.Conn) {
-			err := conn.Close()
-			if err != nil {
-				slog.Warn("duckdb.Conn.Close", "error", err)
-			}
-		}(conn)
-		if s.memoryLimitMB > 0 {
-			_, _ = conn.ExecContext(ctx, fmt.Sprintf("SET memory_limit='%dMB';", s.memoryLimitMB))
-		}
-		duckdbDDLMu.Lock()
-		_, _ = conn.ExecContext(ctx, "INSTALL httpfs;")
-		_, _ = conn.ExecContext(ctx, "INSTALL azure;")
-		duckdbDDLMu.Unlock()
-	})
-	return s.installErr
-}
 
 func (s *S3DB) loadExtensions(ctx context.Context, conn *sql.Conn) error {
+	// Disable automatic extension loading/downloading
+	if _, err := conn.ExecContext(ctx, "SET autoinstall_known_extensions = false;"); err != nil {
+		slog.Warn("Failed to disable automatic extension installation", "error", err)
+	}
+	if _, err := conn.ExecContext(ctx, "SET autoload_known_extensions = false;"); err != nil {
+		slog.Warn("Failed to disable automatic extension loading", "error", err)
+	}
+
+	// Load extensions from local files only
 	if err := s.loadHTTPFS(ctx, conn); err != nil {
+		return err
+	}
+	if err := s.loadAWS(ctx, conn); err != nil {
 		return err
 	}
 	if err := s.loadAzure(ctx, conn); err != nil {
@@ -388,50 +352,61 @@ func (s *S3DB) loadExtensions(ctx context.Context, conn *sql.Conn) error {
 }
 
 func (s *S3DB) loadHTTPFS(ctx context.Context, conn *sql.Conn) error {
-	if base := os.Getenv("LAKERUNNER_EXTENSIONS_PATH"); base != "" {
-		path := os.Getenv("LAKERUNNER_HTTPFS_EXTENSION")
-		if path == "" {
-			path = filepath.Join(base, "httpfs.duckdb_extension")
-		}
-		if _, err := os.Stat(path); err != nil {
-			return fmt.Errorf("httpfs extension not found at %s: %w", path, err)
-		}
-		if _, err := conn.ExecContext(ctx, fmt.Sprintf("LOAD '%s';", escapeSingle(path))); err != nil {
-			return fmt.Errorf("LOAD httpfs (air-gapped): %w", err)
-		}
+	base := os.Getenv("LAKERUNNER_EXTENSIONS_PATH")
+	if base == "" {
+		slog.Warn("LAKERUNNER_EXTENSIONS_PATH not set, skipping httpfs extension")
 		return nil
 	}
-	if _, err := conn.ExecContext(ctx, "LOAD httpfs;"); err != nil {
+
+	path := filepath.Join(base, "httpfs.duckdb_extension")
+	if _, err := os.Stat(path); err != nil {
+		slog.Warn("httpfs extension not found", "path", path, "error", err)
+		return nil // Non-fatal, continue without extension
+	}
+	if _, err := conn.ExecContext(ctx, fmt.Sprintf("LOAD '%s';", escapeSingle(path))); err != nil {
 		return fmt.Errorf("LOAD httpfs: %w", err)
 	}
+	slog.Info("Loaded httpfs extension", "path", path)
+	return nil
+}
+
+func (s *S3DB) loadAWS(ctx context.Context, conn *sql.Conn) error {
+	base := os.Getenv("LAKERUNNER_EXTENSIONS_PATH")
+	if base == "" {
+		return nil // No extensions path configured
+	}
+
+	path := filepath.Join(base, "aws.duckdb_extension")
+	if _, err := os.Stat(path); err != nil {
+		slog.Warn("aws extension not found", "path", path, "error", err)
+		return nil // Non-fatal, continue without extension
+	}
+	if _, err := conn.ExecContext(ctx, fmt.Sprintf("LOAD '%s';", escapeSingle(path))); err != nil {
+		return fmt.Errorf("LOAD aws: %w", err)
+	}
+	slog.Info("Loaded aws extension", "path", path)
 	return nil
 }
 
 func (s *S3DB) loadAzure(ctx context.Context, conn *sql.Conn) error {
-	if base := os.Getenv("LAKERUNNER_EXTENSIONS_PATH"); base != "" {
-		path := os.Getenv("LAKERUNNER_AZURE_EXTENSION")
-		if path == "" {
-			path = filepath.Join(base, "azure.duckdb_extension")
-		}
-		if _, err := os.Stat(path); err != nil {
-			return fmt.Errorf("azure extension not found at %s: %w", path, err)
-		}
-		if _, err := conn.ExecContext(ctx, fmt.Sprintf("LOAD '%s';", escapeSingle(path))); err != nil {
-			return fmt.Errorf("LOAD azure (air-gapped): %w", err)
-		}
-		// Configure Azure transport to use curl for better compatibility
-		if _, err := conn.ExecContext(ctx, "SET azure_transport_option_type = 'curl';"); err != nil {
-			return fmt.Errorf("set azure transport option: %w", err)
-		}
-		return nil
+	base := os.Getenv("LAKERUNNER_EXTENSIONS_PATH")
+	if base == "" {
+		return nil // No extensions path configured
 	}
-	if _, err := conn.ExecContext(ctx, "LOAD azure;"); err != nil {
+
+	path := filepath.Join(base, "azure.duckdb_extension")
+	if _, err := os.Stat(path); err != nil {
+		slog.Warn("azure extension not found", "path", path, "error", err)
+		return nil // Non-fatal, continue without extension
+	}
+	if _, err := conn.ExecContext(ctx, fmt.Sprintf("LOAD '%s';", escapeSingle(path))); err != nil {
 		return fmt.Errorf("LOAD azure: %w", err)
 	}
 	// Configure Azure transport to use curl for better compatibility
 	if _, err := conn.ExecContext(ctx, "SET azure_transport_option_type = 'curl';"); err != nil {
-		return fmt.Errorf("set azure transport option: %w", err)
+		slog.Warn("Failed to set azure transport option", "error", err)
 	}
+	slog.Info("Loaded azure extension", "path", path)
 	return nil
 }
 
