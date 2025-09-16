@@ -239,6 +239,15 @@ func (p *connectionPool) newConn(ctx context.Context, bucket, region, endpoint s
 		return nil, err
 	}
 
+	// Disable automatic extension loading/downloading for this connection
+	// These are connection-level settings that need to be set on each connection
+	if _, err := conn.ExecContext(ctx, "SET autoinstall_known_extensions = false;"); err != nil {
+		slog.Warn("Failed to disable automatic extension installation", "error", err)
+	}
+	if _, err := conn.ExecContext(ctx, "SET autoload_known_extensions = false;"); err != nil {
+		slog.Warn("Failed to disable automatic extension loading", "error", err)
+	}
+
 	// create cloud storage secret for this bucket (serialize DDL)
 	// Skip for local file operations
 	if bucket != "local" {
@@ -286,6 +295,23 @@ func (s *S3DB) ensureSetup(ctx context.Context) error {
 		defer func() { _ = conn.Close() }()
 
 		// Configure database-wide settings (these affect the shared instance)
+
+		// Set extension_directory to prevent loading from ~/.duckdb/extensions
+		// Use the same directory as our database file or the configured extensions path
+		extensionDir := os.Getenv("LAKERUNNER_EXTENSIONS_PATH")
+		if extensionDir == "" {
+			// Use a subdirectory next to the database file
+			extensionDir = filepath.Join(filepath.Dir(s.dbPath), "extensions")
+		}
+		if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET extension_directory='%s';", escapeSingle(extensionDir))); err != nil {
+			slog.Warn("Failed to set extension_directory", "error", err)
+		}
+
+		// Set home_directory to prevent using ~/.duckdb
+		if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET home_directory='%s';", escapeSingle(filepath.Dir(s.dbPath)))); err != nil {
+			slog.Warn("Failed to set home_directory", "error", err)
+		}
+
 		if s.memoryLimitMB > 0 {
 			slog.Info("Setting memory limit for shared DuckDB instance", "memoryLimitMB", s.memoryLimitMB)
 			if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET memory_limit='%dMB';", s.memoryLimitMB)); err != nil {
@@ -328,16 +354,7 @@ func (s *S3DB) ensureSetup(ctx context.Context) error {
 	return s.setupErr
 }
 
-
 func (s *S3DB) loadExtensions(ctx context.Context, conn *sql.Conn) error {
-	// Disable automatic extension loading/downloading
-	if _, err := conn.ExecContext(ctx, "SET autoinstall_known_extensions = false;"); err != nil {
-		slog.Warn("Failed to disable automatic extension installation", "error", err)
-	}
-	if _, err := conn.ExecContext(ctx, "SET autoload_known_extensions = false;"); err != nil {
-		slog.Warn("Failed to disable automatic extension loading", "error", err)
-	}
-
 	// Load extensions from local files only
 	if err := s.loadHTTPFS(ctx, conn); err != nil {
 		return err
@@ -352,25 +369,61 @@ func (s *S3DB) loadExtensions(ctx context.Context, conn *sql.Conn) error {
 }
 
 func (s *S3DB) loadHTTPFS(ctx context.Context, conn *sql.Conn) error {
+	// Check if httpfs is already available (built-in or installed)
+	var loaded, installed bool
+	row := conn.QueryRowContext(ctx, `SELECT loaded, installed FROM duckdb_extensions() WHERE extension_name = 'httpfs'`)
+	if err := row.Scan(&loaded, &installed); err == nil && (loaded || installed) {
+		if !loaded && installed {
+			// Extension is installed but not loaded, load it
+			if _, err := conn.ExecContext(ctx, "LOAD httpfs"); err != nil {
+				slog.Warn("Failed to load installed httpfs extension", "error", err)
+			} else {
+				slog.Info("Loaded installed httpfs extension")
+			}
+		} else {
+			slog.Debug("httpfs extension already available", "loaded", loaded, "installed", installed)
+		}
+		return nil
+	}
+
+	// Extension not available, try to load from disk
 	base := os.Getenv("LAKERUNNER_EXTENSIONS_PATH")
 	if base == "" {
-		slog.Warn("LAKERUNNER_EXTENSIONS_PATH not set, skipping httpfs extension")
+		slog.Debug("LAKERUNNER_EXTENSIONS_PATH not set, httpfs extension not loaded")
 		return nil
 	}
 
 	path := filepath.Join(base, "httpfs.duckdb_extension")
 	if _, err := os.Stat(path); err != nil {
-		slog.Warn("httpfs extension not found", "path", path, "error", err)
+		slog.Debug("httpfs extension file not found", "path", path)
 		return nil // Non-fatal, continue without extension
 	}
 	if _, err := conn.ExecContext(ctx, fmt.Sprintf("LOAD '%s';", escapeSingle(path))); err != nil {
 		return fmt.Errorf("LOAD httpfs: %w", err)
 	}
-	slog.Info("Loaded httpfs extension", "path", path)
+	slog.Info("Loaded httpfs extension from disk", "path", path)
 	return nil
 }
 
 func (s *S3DB) loadAWS(ctx context.Context, conn *sql.Conn) error {
+	// Check if aws is already available (built-in or installed)
+	var loaded, installed bool
+	row := conn.QueryRowContext(ctx, `SELECT loaded, installed FROM duckdb_extensions() WHERE extension_name = 'aws'`)
+	if err := row.Scan(&loaded, &installed); err == nil && (loaded || installed) {
+		if !loaded && installed {
+			// Extension is installed but not loaded, load it
+			if _, err := conn.ExecContext(ctx, "LOAD aws"); err != nil {
+				slog.Warn("Failed to load installed aws extension", "error", err)
+			} else {
+				slog.Info("Loaded installed aws extension")
+			}
+		} else {
+			slog.Debug("aws extension already available", "loaded", loaded, "installed", installed)
+		}
+		return nil
+	}
+
+	// Extension not available, try to load from disk
 	base := os.Getenv("LAKERUNNER_EXTENSIONS_PATH")
 	if base == "" {
 		return nil // No extensions path configured
@@ -378,17 +431,39 @@ func (s *S3DB) loadAWS(ctx context.Context, conn *sql.Conn) error {
 
 	path := filepath.Join(base, "aws.duckdb_extension")
 	if _, err := os.Stat(path); err != nil {
-		slog.Warn("aws extension not found", "path", path, "error", err)
+		slog.Debug("aws extension file not found", "path", path)
 		return nil // Non-fatal, continue without extension
 	}
 	if _, err := conn.ExecContext(ctx, fmt.Sprintf("LOAD '%s';", escapeSingle(path))); err != nil {
 		return fmt.Errorf("LOAD aws: %w", err)
 	}
-	slog.Info("Loaded aws extension", "path", path)
+	slog.Info("Loaded aws extension from disk", "path", path)
 	return nil
 }
 
 func (s *S3DB) loadAzure(ctx context.Context, conn *sql.Conn) error {
+	// Check if azure is already available (built-in or installed)
+	var loaded, installed bool
+	row := conn.QueryRowContext(ctx, `SELECT loaded, installed FROM duckdb_extensions() WHERE extension_name = 'azure'`)
+	if err := row.Scan(&loaded, &installed); err == nil && (loaded || installed) {
+		if !loaded && installed {
+			// Extension is installed but not loaded, load it
+			if _, err := conn.ExecContext(ctx, "LOAD azure"); err != nil {
+				slog.Warn("Failed to load installed azure extension", "error", err)
+			} else {
+				slog.Info("Loaded installed azure extension")
+			}
+		} else {
+			slog.Debug("azure extension already available", "loaded", loaded, "installed", installed)
+		}
+		// Configure Azure transport to use curl for better compatibility
+		if _, err := conn.ExecContext(ctx, "SET azure_transport_option_type = 'curl';"); err != nil {
+			slog.Warn("Failed to set azure transport option", "error", err)
+		}
+		return nil
+	}
+
+	// Extension not available, try to load from disk
 	base := os.Getenv("LAKERUNNER_EXTENSIONS_PATH")
 	if base == "" {
 		return nil // No extensions path configured
@@ -396,7 +471,7 @@ func (s *S3DB) loadAzure(ctx context.Context, conn *sql.Conn) error {
 
 	path := filepath.Join(base, "azure.duckdb_extension")
 	if _, err := os.Stat(path); err != nil {
-		slog.Warn("azure extension not found", "path", path, "error", err)
+		slog.Debug("azure extension file not found", "path", path)
 		return nil // Non-fatal, continue without extension
 	}
 	if _, err := conn.ExecContext(ctx, fmt.Sprintf("LOAD '%s';", escapeSingle(path))); err != nil {
@@ -406,7 +481,7 @@ func (s *S3DB) loadAzure(ctx context.Context, conn *sql.Conn) error {
 	if _, err := conn.ExecContext(ctx, "SET azure_transport_option_type = 'curl';"); err != nil {
 		slog.Warn("Failed to set azure transport option", "error", err)
 	}
-	slog.Info("Loaded azure extension", "path", path)
+	slog.Info("Loaded azure extension from disk", "path", path)
 	return nil
 }
 

@@ -218,6 +218,7 @@ test: generate test-only
 
 .PHONY: test-only
 test-only:
+	LAKERUNNER_EXTENSIONS_PATH=$(PWD)/docker/duckdb-extensions/$(shell uname -s | tr A-Z a-z | sed 's/darwin/osx/')_$(shell uname -m | sed 's/x86_64/amd64/') \
 	go test -race ./...
 
 .PHONY: test-integration
