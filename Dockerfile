@@ -31,6 +31,10 @@ RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/* && 
         fi; \
     done
 
+# Decompress DuckDB extensions
+COPY docker/duckdb-extensions/linux_${TARGETARCH}/*.duckdb_extension.gz /tmp/extensions/
+RUN mkdir -p /app/extensions && for i in /tmp/extensions/*.gz; do gunzip < "$i" > /app/extensions/"$(basename "$i" .gz)"; done
+
 # ========= Runtime Image =========
 FROM gcr.io/distroless/cc-debian12:nonroot
 
@@ -40,13 +44,8 @@ ARG TARGETARCH
 COPY --chmod=755 lakerunner /app/bin/lakerunner
 COPY --chmod=755 lakectl /app/bin/lakectl
 
-# Copy and decompress DuckDB extensions
-# Copy the compressed files (which are in git) and decompress them
-COPY docker/duckdb-extensions/linux_${TARGETARCH}/*.duckdb_extension.gz /tmp/extensions/
-RUN gunzip /tmp/extensions/*.gz && \
-    mkdir -p /app/extensions && \
-    mv /tmp/extensions/*.duckdb_extension /app/extensions/ && \
-    rm -rf /tmp/extensions
+# Copy decompressed DuckDB extensions from staging layer
+COPY --from=extensions /app/extensions/ /app/extensions/
 
 # Copy curl binary and its runtime dependencies
 COPY --from=extensions /usr/bin/curl /usr/bin/curl
