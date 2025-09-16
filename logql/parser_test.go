@@ -598,3 +598,65 @@ func TestParse_JSON_Map_Unwrap_NestedField_SumOffset(t *testing.T) {
 		t.Fatalf("unwrap(revenue) stage not found; parsers=%#v", sel.Parsers)
 	}
 }
+
+func TestRangeAgg_AvgOverTime_RegexpUnwrapBytes(t *testing.T) {
+	q := `avg_over_time({resource_service_name="kafka"} | regexp "\\[([^\\]]*)\\] ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z0-9-_.:]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) (?P<bytes>[0-9]+) ([A-Za-z0-9-_.:]+)" | unwrap bytes[5m])`
+
+	ast, err := FromLogQL(q)
+	if err != nil {
+		t.Fatalf("FromLogQL() error: %v", err)
+	}
+	if ast.Kind != KindRangeAgg || ast.RangeAgg == nil {
+		t.Fatalf("want KindRangeAgg, got: %#v", ast)
+	}
+	if ast.RangeAgg.Op != "avg_over_time" {
+		t.Fatalf("op = %q, want %q", ast.RangeAgg.Op, "avg_over_time")
+	}
+	if ast.RangeAgg.Left.Range != "5m" {
+		t.Fatalf("left.range = %q, want %q", ast.RangeAgg.Left.Range, "5m")
+	}
+
+	// Matcher label is normalized by normalizeLabelName: resource_service_name -> resource.service.name
+	if !hasMatcher(ast.RangeAgg.Left.Selector.Matchers, "resource.service.name", "kafka") {
+		t.Fatalf(`missing normalized matcher resource.service.name="kafka"; got: %#v`, ast.RangeAgg.Left.Selector.Matchers)
+	}
+	// Ensure the non-normalized label didn't slip through.
+	for _, m := range ast.RangeAgg.Left.Selector.Matchers {
+		if m.Label == "resource_service_name" {
+			t.Fatalf("unexpected non-normalized label in selector: %#v", m)
+		}
+	}
+
+	// Inspect pipeline: expect a regexp parser and an unwrap(bytes) stage.
+	sel, _, ok := ast.FirstPipeline()
+	if !ok || sel == nil {
+		t.Fatalf("no pipeline or nil selector")
+	}
+
+	var sawRegexp, sawUnwrap bool
+	for _, p := range sel.Parsers {
+		switch p.Type {
+		case "regexp":
+			sawRegexp = true
+			if p.Params == nil || p.Params["pattern"] == "" {
+				t.Fatalf("regexp parser missing pattern: %#v", p.Params)
+			}
+			// sanity: ensure it captured 'bytes'
+			if !strings.Contains(p.Params["pattern"], `(?P<bytes>[0-9]+)`) {
+				t.Fatalf("regexp pattern does not capture 'bytes': %q", p.Params["pattern"])
+			}
+		case "unwrap":
+			sawUnwrap = true
+			if p.Params == nil || p.Params["field"] != "bytes" {
+				t.Fatalf("unwrap field = %q, want %q; params=%#v", p.Params["field"], "bytes", p.Params)
+			}
+			// unwrap defaults to identity when bare field is used
+			if p.Params["func"] != "identity" {
+				t.Fatalf("unwrap func = %q, want %q", p.Params["func"], "identity")
+			}
+		}
+	}
+	if !sawRegexp || !sawUnwrap {
+		t.Fatalf("missing expected parsers; sawRegexp=%v sawUnwrap=%v; parsers=%#v", sawRegexp, sawUnwrap, sel.Parsers)
+	}
+}

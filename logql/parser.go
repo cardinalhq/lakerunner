@@ -203,13 +203,31 @@ func fromSyntax(e logql.Expr) (LogAST, error) {
 			return LogAST{}, err
 		}
 
-		// Capture unwrap from the AST node and append as a parser stage
-		if v.Unwrap != nil {
+		addedUnwrap := false
+		alreadyHasUnwrap := func() bool {
+			for _, p := range ls.Parsers {
+				if p.Type == "unwrap" {
+					return true
+				}
+			}
+			return false
+		}
+
+		// Prefer AST node when present.
+		if v.Unwrap != nil && !alreadyHasUnwrap() {
 			uw := cleanStage(v.Unwrap.String())
 			if p, ok := parseUnwrapParams(uw); ok {
 				ls.Parsers = append(ls.Parsers, ParserStage{Type: "unwrap", Params: p})
+				addedUnwrap = true
 			} else if p, ok := parseUnwrapInner(uw); ok {
 				ls.Parsers = append(ls.Parsers, ParserStage{Type: "unwrap", Params: p})
+				addedUnwrap = true
+			}
+		} else if !alreadyHasUnwrap() {
+			// Fallback: older Loki versions don't populate v.Unwrap for bare forms.
+			if p, ok := extractUnwrapFromString(v.String()); ok {
+				ls.Parsers = append(ls.Parsers, ParserStage{Type: "unwrap", Params: p})
+				addedUnwrap = true
 			}
 		}
 
@@ -217,7 +235,7 @@ func fromSyntax(e logql.Expr) (LogAST, error) {
 			Selector: ls,
 			Range:    promDur(v.Interval),
 			Offset:   promDur(v.Offset),
-			Unwrap:   v.Unwrap != nil,
+			Unwrap:   addedUnwrap,
 		}
 		return LogAST{Kind: KindLogRange, LogRange: &lr, Raw: e.String()}, nil
 
@@ -363,7 +381,6 @@ func addLineFilterFromSyntax(ls *LogSelector, lineFilterList []logql.LineFilterE
 }
 
 // Adds parser stages and label filters based on the *string* form of the selector pipeline.
-// We still need this because some stages (json/logfmt/regexp/label_format) are only present there.
 func addParsersAndLabelFiltersFromString(s string, ls *LogSelector) error {
 	lastParser := -1
 
@@ -555,11 +572,10 @@ func looksLikeParser(stage string) (string, map[string]string, bool) {
 
 // parseUnwrapParams parses pipeline chunks like:
 //
-//	"unwrap payload_size"
-//	"unwrap bytes(payload_size)"
-//	"unwrap duration(\"latency_ms\")"   (quotes/backticks allowed)
-//
-// Returns {"func":"bytes|duration", "field":"..."} or {"func":"bytes","field":"payload_size"} for bare.
+//	"unwrap payload_size"             → {"func":"identity","field":"payload_size"}
+//	"unwrap bytes(payload_size)"      → {"func":"bytes","field":"payload_size"}
+//	"unwrap duration(\"latency_ms\")" → {"func":"duration","field":"latency_ms"}
+//	"unwrap bytes[5m]"                → {"func":"identity","field":"bytes"} (trims trailing window)
 func parseUnwrapParams(stage string) (map[string]string, bool) {
 	s := cleanStage(stage)
 	if !strings.HasPrefix(s, "unwrap") {
@@ -570,10 +586,14 @@ func parseUnwrapParams(stage string) (map[string]string, bool) {
 		return nil, false
 	}
 
-	// function form: unwrap <fn>(<arg>)
-	if strings.HasPrefix(rest, "duration") || strings.HasPrefix(rest, "bytes") {
+	isDur := strings.HasPrefix(rest, "duration")
+	isBytes := strings.HasPrefix(rest, "bytes")
+	hasParen := strings.Contains(rest, "(")
+
+	// function form: unwrap duration(field) / unwrap bytes(field)
+	if isDur || (isBytes && hasParen) {
 		var fn string
-		if strings.HasPrefix(rest, "duration") {
+		if isDur {
 			fn = "duration"
 			rest = strings.TrimSpace(rest[len("duration"):])
 		} else {
@@ -584,35 +604,41 @@ func parseUnwrapParams(stage string) (map[string]string, bool) {
 			return nil, false
 		}
 		arg := strings.TrimSpace(rest[1 : len(rest)-1])
-		arg = normalizeLabelFormatLiteral(arg) // strips outer quotes/backticks if any
+		arg = normalizeLabelFormatLiteral(arg)
 		if arg == "" {
 			return nil, false
 		}
 		return map[string]string{"func": fn, "field": arg}, true
 	}
 
-	// bare form: unwrap <identifier>   → default to bytes
-	tok := rest
-	if i := strings.IndexAny(rest, " \t"); i >= 0 {
-		tok = rest[:i]
+	// bare form: unwrap <identifier> (can appear as "unwrap bytes[5m]")
+	tok := strings.TrimSpace(rest)
+	// cut at first of '[', space, or ')'
+	if i := strings.IndexAny(tok, "[ )"); i >= 0 {
+		tok = tok[:i]
 	}
-	tok = strings.TrimSpace(tok)
+	tok = normalizeLabelFormatLiteral(tok)
 	if tok == "" {
 		return nil, false
 	}
-	tok = normalizeLabelFormatLiteral(tok)
 	return map[string]string{"func": "identity", "field": tok}, true
 }
 
 // parseUnwrapInner parses what Loki returns from v.Unwrap.String():
 //
-//	"payload_size"
-//	"bytes(payload_size)"
-//	"duration(latency_ms)"
+//	"payload_size"         → {"func":"identity","field":"payload_size"}
+//	"bytes(payload_size)"  → {"func":"bytes","field":"payload_size"}
+//	"duration(latency_ms)" → {"func":"duration","field":"latency_ms"}
+//	"unwrap bytes[5m]"     → {"func":"identity","field":"bytes"} (tolerant)
 func parseUnwrapInner(s string) (map[string]string, bool) {
 	s = cleanStage(s)
 	if s == "" {
 		return nil, false
+	}
+
+	// Tolerate an "unwrap" prefix
+	if strings.HasPrefix(s, "unwrap") {
+		s = strings.TrimSpace(s[len("unwrap"):])
 	}
 
 	// function form without "unwrap" prefix
@@ -626,23 +652,57 @@ func parseUnwrapInner(s string) (map[string]string, bool) {
 			fn = "bytes"
 			rest = strings.TrimSpace(s[len("bytes"):])
 		}
-		if len(rest) < 2 || rest[0] != '(' || rest[len(rest)-1] != ')' {
-			return nil, false
+		if len(rest) >= 2 && rest[0] == '(' && rest[len(rest)-1] == ')' {
+			arg := strings.TrimSpace(rest[1 : len(rest)-1])
+			arg = normalizeLabelFormatLiteral(arg)
+			if arg == "" {
+				return nil, false
+			}
+			return map[string]string{"func": fn, "field": arg}, true
 		}
-		arg := strings.TrimSpace(rest[1 : len(rest)-1])
-		arg = normalizeLabelFormatLiteral(arg)
-		if arg == "" {
-			return nil, false
-		}
-		return map[string]string{"func": fn, "field": arg}, true
+		// If no parens (e.g., "bytes[5m]"), fall through to bare handling below.
 	}
 
-	// bare identifier → default to bytes
+	// bare identifier → default to identity; trim trailing range/paren/space
 	field := normalizeLabelFormatLiteral(s)
+	if i := strings.IndexAny(field, "[ )"); i >= 0 {
+		field = strings.TrimSpace(field[:i])
+	}
 	if field == "" {
 		return nil, false
 	}
 	return map[string]string{"func": "identity", "field": field}, true
+}
+
+// Robust fallback: slice the "| unwrap ..." chunk right out of the string.
+func extractUnwrapFromString(s string) (map[string]string, bool) {
+	// Prefer a pipeline head "| unwrap"
+	if i := strings.Index(s, "| unwrap"); i >= 0 {
+		chunk := strings.TrimSpace(s[i+1:]) // keep "unwrap ..."
+		if j := strings.Index(chunk, "|"); j >= 0 {
+			chunk = chunk[:j]
+		}
+		if p, ok := parseUnwrapParams(chunk); ok {
+			return p, true
+		}
+		if p, ok := parseUnwrapInner(chunk); ok {
+			return p, true
+		}
+	}
+	// Fallback: search for " unwrap " even without a preceding pipe
+	if i := strings.Index(s, " unwrap "); i >= 0 {
+		chunk := strings.TrimSpace(s[i+1:])
+		if j := strings.Index(chunk, "|"); j >= 0 {
+			chunk = chunk[:j]
+		}
+		if p, ok := parseUnwrapParams(chunk); ok {
+			return p, true
+		}
+		if p, ok := parseUnwrapInner(chunk); ok {
+			return p, true
+		}
+	}
+	return nil, false
 }
 
 // parseLabelFormatParams parses: label_format a=`tmpl` b="str" c=unquoted

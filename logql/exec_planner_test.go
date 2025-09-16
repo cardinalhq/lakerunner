@@ -470,6 +470,90 @@ func TestPlanner_MaxOverTime_WithLineFilter_JSONMap_Unwrap(t *testing.T) {
 	}
 }
 
+func TestPlanner_AvgOverTime_Regexp_UnwrapBytes(t *testing.T) {
+	q := `avg_over_time({resource_service_name="kafka"} | regexp "\\[([^\\]]*)\\] ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z0-9-_.:]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) (?P<bytes>[0-9]+) ([A-Za-z0-9-_.:]+)" | unwrap bytes[5m])`
+
+	ast, err := FromLogQL(q)
+	if err != nil {
+		t.Fatalf("FromLogQL() error: %v", err)
+	}
+
+	plan, err := CompileLog(ast)
+	if err != nil {
+		t.Fatalf("CompileLog() error: %v", err)
+	}
+
+	// Exactly one leaf is expected.
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf, got %d; plan=%#v", len(plan.Leaves), plan)
+	}
+	leaf := plan.Leaves[0]
+
+	// Root should be a range-agg node with avg_over_time.
+	rn, ok := plan.Root.(*LRangeAggNode)
+	if !ok {
+		t.Fatalf("root is not *LRangeAggNode, got %T", plan.Root)
+	}
+	if rn.Op != "avg_over_time" {
+		t.Fatalf("range agg op = %q, want avg_over_time", rn.Op)
+	}
+
+	// Child of range-agg must be our leaf.
+	childLeaf, ok := rn.Child.(*LLeafNode)
+	if !ok {
+		t.Fatalf("range-agg child not *LLeafNode, got %T", rn.Child)
+	}
+	if childLeaf.Leaf.ID != leaf.ID {
+		t.Fatalf("child leaf ID mismatch: got %s, want %s", childLeaf.Leaf.ID, leaf.ID)
+	}
+
+	// Window should be [5m].
+	if childLeaf.Leaf.Range != "5m" {
+		t.Fatalf("leaf range = %q, want %q", childLeaf.Leaf.Range, "5m")
+	}
+
+	// Matcher normalization: resource_service_name → resource.service.name
+	if !(hasMatcher(leaf.Matchers, "resource.service.name", "kafka") ||
+		hasMatcher(leaf.Matchers, "resource_service_name", "kafka")) {
+		t.Fatalf("missing matcher resource.service.name=kafka; matchers=%#v", leaf.Matchers)
+	}
+
+	// Must have both regexp and unwrap stages, in that order.
+	reIdx := findParserIndexByType(leaf.Parsers, "regexp")
+	uwIdx := findParserIndexByType(leaf.Parsers, "unwrap")
+	if reIdx < 0 {
+		t.Fatalf("missing regexp parser stage; parsers=%#v", leaf.Parsers)
+	}
+	if uwIdx < 0 {
+		t.Fatalf("missing unwrap parser stage; parsers=%#v", leaf.Parsers)
+	}
+	if !(reIdx < uwIdx) {
+		t.Fatalf("expected regexp before unwrap; got reIdx=%d, uwIdx=%d", reIdx, uwIdx)
+	}
+
+	// Regexp should include the named capture (?P<bytes>...).
+	reStage := leaf.Parsers[reIdx]
+	if pat := reStage.Params["pattern"]; pat == "" || !strings.Contains(pat, "(?P<bytes>") {
+		t.Fatalf("regexp pattern missing (?P<bytes>...): %q", pat)
+	}
+
+	// Unwrap should target field "bytes" and (func "" or "identity") is acceptable.
+	uwStage := leaf.Parsers[uwIdx]
+	if uwStage.Params["field"] != "bytes" {
+		t.Fatalf("unwrap field = %q, want %q; params=%#v", uwStage.Params["field"], "bytes", uwStage.Params)
+	}
+	if fn := uwStage.Params["func"]; fn != "" && fn != "identity" {
+		t.Fatalf("unwrap func = %q, want identity/empty", fn)
+	}
+
+	// Sanity: no grouping on the leaf for this query.
+	if len(leaf.OutBy) != 0 || len(leaf.OutWithout) != 0 {
+		t.Fatalf("unexpected grouping on leaf: by=%v wo=%v", leaf.OutBy, leaf.OutWithout)
+	}
+}
+
+// Helper functions for tests.
+
 func findParserIndexByType(ps []ParserStage, typ string) int {
 	for i, p := range ps {
 		if p.Type == typ {

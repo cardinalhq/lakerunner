@@ -499,34 +499,40 @@ func TestRewrite_Unwrap_Avg_JSON(t *testing.T) {
 	be := plan.Leaves[0]
 
 	step := time.Minute
-	replacedSql := replaceWorkerPlaceholders(be.ToWorkerSQL(step), 0, 120*1000)
+	sql := replaceWorkerPlaceholders(be.ToWorkerSQL(step), 0, 120*1000)
 
-	rows := queryAll(t, db, replacedSql)
+	rows := queryAll(t, db, sql)
 	if len(rows) == 0 {
-		t.Fatalf("no rows returned; sql=\n%s", replacedSql)
+		t.Fatalf("no rows returned; sql=\n%s", sql)
 	}
 
 	type agg struct {
 		bucket int64
 		avg    float64
 	}
-
-	// The aggregation column should be "avg" (consistent with other tests using "sum").
-	// If your compiler names it differently, adjust the key here.
 	var got []agg
 	for _, r := range rows {
-		avg := r["avg"]
-		if avg == nil {
-			// try a couple of common fallbacks just in case
-			if v, ok := r["avg_over_time"]; ok {
-				avg = v
-			} else if v, ok := r["mean"]; ok {
-				avg = v
+		// Prefer 'avg' if present; otherwise compute from sum/count (new behavior).
+		var avgV any
+		if v, ok := r["avg"]; ok && v != nil {
+			avgV = v
+		} else {
+			sumV, okSum := r["sum"]
+			cntV, okCnt := r["count"]
+			if !okSum || !okCnt {
+				t.Fatalf("expected sum/count columns for avg_over_time; row=%v\nsql=\n%s", r, sql)
+			}
+			sum := f64(sumV)
+			cnt := f64(cntV)
+			if cnt == 0 {
+				avgV = float64(0)
+			} else {
+				avgV = sum / cnt
 			}
 		}
 		got = append(got, agg{
 			bucket: i64(r["bucket_ts"]),
-			avg:    f64(avg),
+			avg:    f64(avgV),
 		})
 	}
 
@@ -541,17 +547,15 @@ func TestRewrite_Unwrap_Avg_JSON(t *testing.T) {
 	}
 
 	if b0Avg == 0 && b1Avg == 0 {
-		t.Fatalf("unexpected zero avgs; rows=%v\nsql=\n%s", rows, replacedSql)
+		t.Fatalf("unexpected zero avgs; rows=%v\nsql=\n%s", rows, sql)
 	}
 
-	// Allow a tiny float slop
 	const eps = 1e-9
 	if !(b0Avg > 150.0-eps && b0Avg < 150.0+eps) || !(b1Avg > 300.0-eps && b1Avg < 300.0+eps) {
-		t.Fatalf("unexpected avgs: bucket0=%v bucket1=%v; rows=%v", b0Avg, b1Avg, rows)
+		t.Fatalf("unexpected avgs: bucket0=%v bucket1=%v; rows=%v\nsql=\n%s", b0Avg, b1Avg, rows, sql)
 	}
 }
 
-// avg_over_time on an unwrapped numeric field extracted via logfmt
 func TestRewrite_Unwrap_Avg_Logfmt(t *testing.T) {
 	db := openDuckDB(t)
 	mustExec(t, db, `CREATE TABLE logs(
@@ -593,15 +597,26 @@ func TestRewrite_Unwrap_Avg_Logfmt(t *testing.T) {
 	}
 	var got []agg
 	for _, r := range rows {
-		v := r["avg"]
-		if v == nil {
-			if x, ok := r["avg_over_time"]; ok {
-				v = x
+		var avgV any
+		if v, ok := r["avg"]; ok && v != nil {
+			avgV = v
+		} else {
+			sumV, okSum := r["sum"]
+			cntV, okCnt := r["count"]
+			if !okSum || !okCnt {
+				t.Fatalf("expected sum/count columns for avg_over_time; row=%v\nsql=\n%s", r, sql)
+			}
+			sum := f64(sumV)
+			cnt := f64(cntV)
+			if cnt == 0 {
+				avgV = float64(0)
+			} else {
+				avgV = sum / cnt
 			}
 		}
 		got = append(got, agg{
 			bucket: i64(r["bucket_ts"]),
-			avg:    f64(v),
+			avg:    f64(avgV),
 		})
 	}
 
@@ -619,7 +634,7 @@ func TestRewrite_Unwrap_Avg_Logfmt(t *testing.T) {
 	}
 	const eps = 1e-9
 	if !(b0 > 150.0-eps && b0 < 150.0+eps) || !(b1 > 300.0-eps && b1 < 300.0+eps) {
-		t.Fatalf("unexpected avgs: bucket0=%v bucket1=%v; rows=%v", b0, b1, rows)
+		t.Fatalf("unexpected avgs: bucket0=%v bucket1=%v; rows=%v\nsql=\n%s", b0, b1, rows, sql)
 	}
 }
 
@@ -2019,5 +2034,146 @@ func TestRewrite_FilterThenJSON_UnwrapNested_Max(t *testing.T) {
 	const eps = 1e-9
 	if !(math.Abs(b0-120.0) < eps && math.Abs(b1-350.0) < eps) {
 		t.Fatalf("unexpected maxes: bucket0=%v bucket1=%v; rows=%v\nsql=\n%s", b0, b1, rows, sql)
+	}
+}
+
+func TestLog_AvgOverTime_Regexp_UnwrapBytes_TwoWorkers_Eval(t *testing.T) {
+	// ---------------- Worker 1 ----------------
+	db1 := openDuckDB(t)
+	mustExec(t, db1, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.fingerprint" TEXT,
+		"_cardinalhq.message"     TEXT,
+		"resource.service.name"   TEXT
+	);`)
+	// bucket 0 (0..60s): 100, 200  -> sum=300 count=2
+	// bucket 1 (60..120s): 300     -> sum=300 count=1
+	mustExec(t, db1, `
+	INSERT INTO logs("_cardinalhq.timestamp","_cardinalhq.message","resource.service.name") VALUES
+	(10*1000,  'processed bytes=100', 'kafka'),
+	(40*1000,  'processed bytes=200', 'kafka'),
+	(70*1000,  'processed bytes=300', 'kafka');
+	`)
+
+	// ---------------- Worker 2 ----------------
+	db2 := openDuckDB(t)
+	mustExec(t, db2, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.fingerprint" TEXT,
+		"_cardinalhq.message"     TEXT,
+		"resource.service.name"   TEXT
+	);`)
+	// bucket 0: 50   -> sum=50  count=1
+	// bucket 1: 400  -> sum=400 count=1
+	mustExec(t, db2, `
+	INSERT INTO logs("_cardinalhq.timestamp","_cardinalhq.message","resource.service.name") VALUES
+	(20*1000,  'processed bytes=50',  'kafka'),
+	(100*1000, 'processed bytes=400', 'kafka');
+	`)
+
+	// Coordinator expression: avg_over_time on the captured "bytes" number.
+	q := `avg_over_time({resource_service_name="kafka"} | regexp "bytes=(?P<bytes>[0-9]+)" | unwrap bytes [1m])`
+
+	plan, _ := compileMetricPlanFromLogQL(t, q)
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf, got %d", len(plan.Leaves))
+	}
+	leaf := plan.Leaves[0]
+
+	step := time.Minute
+	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000)
+
+	// Sanity: with the refactor, avg_over_time worker SQL must project sum+count of __unwrap_value.
+	if !strings.Contains(workerSQL, "AS __unwrap_value") {
+		t.Fatalf("expected unwrap projection in SQL, got:\n%s", workerSQL)
+	}
+	if !strings.Contains(workerSQL, "SUM(__unwrap_value) AS sum") || !strings.Contains(workerSQL, "COUNT(__unwrap_value) AS count") {
+		t.Fatalf("expected SUM(__unwrap_value) AS sum, COUNT(*) AS count in SQL, got:\n%s", workerSQL)
+	}
+
+	// Run the leaf SQL on both workers.
+	rows1 := queryAll(t, db1, workerSQL)
+	rows2 := queryAll(t, db2, workerSQL)
+	if len(rows1) == 0 && len(rows2) == 0 {
+		t.Fatalf("no rows from both workers; sql=\n%s", workerSQL)
+	}
+
+	// Build coordinator inputs per bucket for the leaf.
+	// avg_over_time expects per-window sum and count so it can compute sum/count.
+	type bucket = int64
+	perBucket := map[bucket][]promql.SketchInput{}
+
+	addRows := func(rows []rowmap) {
+		for _, r := range rows {
+			b := i64(r["bucket_ts"])
+			sumV, ok := r["sum"]
+			if !ok {
+				t.Fatalf("missing sum column in row: %v", r)
+			}
+			cntV, ok := r["count"]
+			if !ok {
+				t.Fatalf("missing count column in row: %v", r)
+			}
+			perBucket[b] = append(perBucket[b], promql.SketchInput{
+				ExprID:         leaf.ID,
+				OrganizationID: "org-test",
+				Timestamp:      b,
+				Frequency:      int64(step / time.Second),
+				SketchTags: promql.SketchTags{
+					Tags:       map[string]any{}, // global
+					SketchType: promql.SketchMAP,
+					Agg: map[string]float64{
+						"sum":   f64(sumV),
+						"count": f64(cntV),
+					},
+				},
+			})
+		}
+	}
+	addRows(rows1)
+	addRows(rows2)
+
+	// Deterministic bucket order.
+	var buckets []int64
+	for b := range perBucket {
+		buckets = append(buckets, b)
+	}
+	sort.Slice(buckets, func(i, j int) bool { return buckets[i] < buckets[j] })
+
+	// Evaluate per bucket; outer avg_over_time over merged worker inputs.
+	got := map[bucket]float64{}
+	for _, b := range buckets {
+		out := plan.Root.Eval(promql.SketchGroup{
+			Timestamp: b,
+			Group:     map[string][]promql.SketchInput{leaf.ID: perBucket[b]},
+		}, step)
+
+		if len(out) != 1 {
+			t.Fatalf("expected 1 output series at bucket %d, got %d: %v", b, len(out), out)
+		}
+		got[b] = out["default"].Value.Num
+	}
+
+	const (
+		b0  = int64(0)
+		b1  = int64(60000)
+		eps = 1e-9
+	)
+	// Expected: bucket0: (100+200+50)/3 = 350/3
+	//           bucket1: (300+400)/2 = 350
+	exp := map[bucket]float64{
+		b0: 350.0 / 3.0,
+		b1: 350.0,
+	}
+
+	for b, want := range exp {
+		if math.Abs(got[b]-want) > eps {
+			t.Fatalf("unexpected avg_over_time at bucket %d: got=%v want=%v\nrows1=%v\nrows2=%v\nsql=\n%s",
+				b, got[b], want, rows1, rows2, workerSQL)
+		}
 	}
 }

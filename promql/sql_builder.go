@@ -104,6 +104,7 @@ func buildFromLogLeaf(be *BaseExpr, step time.Duration) string {
 		for _, g := range be.GroupBy {
 			qbys = append(qbys, fmt.Sprintf("\"%s\"", g))
 		}
+		// keep as one joined fragment so downstream code that expects a single element still works
 		cols = append(cols, strings.Join(qbys, ", "))
 	}
 
@@ -121,22 +122,23 @@ func buildFromLogLeaf(be *BaseExpr, step time.Duration) string {
 
 	switch be.Metric {
 	case SynthLogUnwrap:
-		var aggFn, alias string
 		switch strings.ToLower(be.FuncName) {
 		case "min_over_time":
-			aggFn, alias = "MIN", "min"
+			cols = append(cols, "MIN(__unwrap_value) AS min")
 		case "max_over_time":
-			aggFn, alias = "MAX", "max"
-		case "avg_over_time":
-			aggFn, alias = "AVG", "avg"
+			cols = append(cols, "MAX(__unwrap_value) AS max")
 		case "sum_over_time":
-			aggFn, alias = "SUM", "sum"
-		case "rate":
-			aggFn, alias = "SUM", "sum"
+			cols = append(cols, "SUM(__unwrap_value) AS sum")
+		case "count_over_time":
+			cols = append(cols, "COUNT(__unwrap_value) AS count")
+		case "avg_over_time":
+			cols = append(cols, "SUM(__unwrap_value) AS sum", "COUNT(__unwrap_value) AS count")
+		case "rate", "irate", "increase":
+			cols = append(cols, "SUM(__unwrap_value) AS sum")
 		default:
-			aggFn, alias = "AVG", "avg"
+			// Safe default: provide both so callers can derive avg, etc.
+			cols = append(cols, "SUM(__unwrap_value) AS sum", "COUNT(__unwrap_value) AS count")
 		}
-		cols = append(cols, fmt.Sprintf("%s(__unwrap_value) AS %s", aggFn, alias))
 
 		sql := "WITH _leaf AS (" + pipelineSQL + ")" +
 			" SELECT " + strings.Join(cols, ", ") +
