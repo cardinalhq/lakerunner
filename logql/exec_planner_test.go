@@ -416,3 +416,206 @@ func indexOfLabel(lfs []LabelFilter, label string) (int, bool) {
 	}
 	return -1, false
 }
+func TestPlanner_AvgOverTime_Regexp_UnwrapBytes(t *testing.T) {
+	q := `avg_over_time({resource_service_name="kafka"} | regexp "\\[([^\\]]*)\\] ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z0-9-_.:]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) (?P<bytes>[0-9]+) ([A-Za-z0-9-_.:]+)" | unwrap bytes[5m])`
+
+	ast, err := FromLogQL(q)
+	if err != nil {
+		t.Fatalf("FromLogQL() error: %v", err)
+	}
+
+	plan, err := CompileLog(ast)
+	if err != nil {
+		t.Fatalf("CompileLog() error: %v", err)
+	}
+
+	// Exactly one leaf is expected.
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf, got %d; plan=%#v", len(plan.Leaves), plan)
+	}
+	leaf := plan.Leaves[0]
+
+	// Root should be a range-agg node with avg_over_time.
+	rn, ok := plan.Root.(*LRangeAggNode)
+	if !ok {
+		t.Fatalf("root is not *LRangeAggNode, got %T", plan.Root)
+	}
+	if rn.Op != "avg_over_time" {
+		t.Fatalf("range agg op = %q, want avg_over_time", rn.Op)
+	}
+
+	// Child of range-agg must be our leaf.
+	childLeaf, ok := rn.Child.(*LLeafNode)
+	if !ok {
+		t.Fatalf("range-agg child not *LLeafNode, got %T", rn.Child)
+	}
+	if childLeaf.Leaf.ID != leaf.ID {
+		t.Fatalf("child leaf ID mismatch: got %s, want %s", childLeaf.Leaf.ID, leaf.ID)
+	}
+
+	// Window should be [5m].
+	if childLeaf.Leaf.Range != "5m" {
+		t.Fatalf("leaf range = %q, want %q", childLeaf.Leaf.Range, "5m")
+	}
+
+	// Matcher normalization: resource_service_name → resource.service.name
+	if !(hasMatcher(leaf.Matchers, "resource.service.name", "kafka") ||
+		hasMatcher(leaf.Matchers, "resource_service_name", "kafka")) {
+		t.Fatalf("missing matcher resource.service.name=kafka; matchers=%#v", leaf.Matchers)
+	}
+
+	// Must have both regexp and unwrap stages, in that order.
+	reIdx := findParserIndexByType(leaf.Parsers, "regexp")
+	uwIdx := findParserIndexByType(leaf.Parsers, "unwrap")
+	if reIdx < 0 {
+		t.Fatalf("missing regexp parser stage; parsers=%#v", leaf.Parsers)
+	}
+	if uwIdx < 0 {
+		t.Fatalf("missing unwrap parser stage; parsers=%#v", leaf.Parsers)
+	}
+	if !(reIdx < uwIdx) {
+		t.Fatalf("expected regexp before unwrap; got reIdx=%d, uwIdx=%d", reIdx, uwIdx)
+	}
+
+	// Regexp should include the named capture (?P<bytes>...).
+	reStage := leaf.Parsers[reIdx]
+	if pat := reStage.Params["pattern"]; pat == "" || !strings.Contains(pat, "(?P<bytes>") {
+		t.Fatalf("regexp pattern missing (?P<bytes>...): %q", pat)
+	}
+
+	// Unwrap should target field "bytes" and (func "" or "identity") is acceptable.
+	uwStage := leaf.Parsers[uwIdx]
+	if uwStage.Params["field"] != "bytes" {
+		t.Fatalf("unwrap field = %q, want %q; params=%#v", uwStage.Params["field"], "bytes", uwStage.Params)
+	}
+	if fn := uwStage.Params["func"]; fn != "" && fn != "identity" {
+		t.Fatalf("unwrap func = %q, want identity/empty", fn)
+	}
+
+	// Sanity: no grouping on the leaf for this query.
+	if len(leaf.OutBy) != 0 || len(leaf.OutWithout) != 0 {
+		t.Fatalf("unexpected grouping on leaf: by=%v wo=%v", leaf.OutBy, leaf.OutWithout)
+	}
+}
+
+func TestPlanner_JSONPipelineLeaf_WithDropLabels_UserID(t *testing.T) {
+	q := `{job="my-app"} | json | drop userId`
+
+	ast, err := FromLogQL(q)
+	if err != nil {
+		t.Fatalf("FromLogQL() error: %v", err)
+	}
+	plan, err := CompileLog(ast)
+	if err != nil {
+		t.Fatalf("CompileLog() error: %v", err)
+	}
+
+	// One leaf, and root is that leaf.
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf, got %d; plan=%#v", len(plan.Leaves), plan)
+	}
+	leaf := plan.Leaves[0]
+	rootLeaf, ok := plan.Root.(*LLeafNode)
+	if !ok {
+		t.Fatalf("root is not *LLeafNode, got %T", plan.Root)
+	}
+	if rootLeaf.Leaf.ID != leaf.ID {
+		t.Fatalf("root leaf ID mismatch: got %s, want %s", rootLeaf.Leaf.ID, leaf.ID)
+	}
+
+	// Matcher job="my-app"
+	if !hasMatcher(leaf.Matchers, "job", "my-app") {
+		t.Fatalf("missing matcher job=my-app; got %#v", leaf.Matchers)
+	}
+
+	// Must have json, then drop_labels that includes userId.
+	jsonIdx := findParserIndexByType(leaf.Parsers, "json")
+	if jsonIdx < 0 {
+		t.Fatalf("expected a json parser stage; parsers=%#v", leaf.Parsers)
+	}
+
+	dropIdx := findParserIndexByType(leaf.Parsers, "drop_labels")
+	if dropIdx < 0 {
+		t.Fatalf("expected a drop_labels parser stage; parsers=%#v", leaf.Parsers)
+	}
+	if !(jsonIdx < dropIdx) {
+		t.Fatalf("expected json before drop_labels; got jsonIdx=%d, dropIdx=%d", jsonIdx, dropIdx)
+	}
+
+	dropStage := leaf.Parsers[dropIdx]
+	labelsCSV := dropStage.Params["labels"]
+	if labelsCSV == "" {
+		t.Fatalf(`drop_labels["labels"] empty; params=%#v`, dropStage.Params)
+	}
+	found := labelsCSV == "userId" || strings.Contains(","+labelsCSV+",", ",userId,")
+	if !found {
+		t.Fatalf(`drop_labels does not target "userId"; labels=%q`, labelsCSV)
+	}
+
+	// No unexpected aggregation/grouping on the leaf.
+	if leaf.RangeAggOp != "" || len(leaf.OutBy) != 0 || len(leaf.OutWithout) != 0 {
+		t.Fatalf("unexpected agg/grouping on leaf: op=%q by=%v wo=%v",
+			leaf.RangeAggOp, leaf.OutBy, leaf.OutWithout)
+	}
+}
+
+func TestPlanner_JSONPipelineLeaf_WithKeepLabels_UserID(t *testing.T) {
+	q := `{job="my-app"} | json | keep userId`
+
+	ast, err := FromLogQL(q)
+	if err != nil {
+		t.Fatalf("FromLogQL() error: %v", err)
+	}
+	plan, err := CompileLog(ast)
+	if err != nil {
+		t.Fatalf("CompileLog() error: %v", err)
+	}
+
+	// One leaf, and root is that leaf.
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf, got %d; plan=%#v", len(plan.Leaves), plan)
+	}
+	leaf := plan.Leaves[0]
+	rootLeaf, ok := plan.Root.(*LLeafNode)
+	if !ok {
+		t.Fatalf("root is not *LLeafNode, got %T", plan.Root)
+	}
+	if rootLeaf.Leaf.ID != leaf.ID {
+		t.Fatalf("root leaf ID mismatch: got %s, want %s", rootLeaf.Leaf.ID, leaf.ID)
+	}
+
+	// Matcher job="my-app"
+	if !hasMatcher(leaf.Matchers, "job", "my-app") {
+		t.Fatalf("missing matcher job=my-app; got %#v", leaf.Matchers)
+	}
+
+	// Must have json, then keep_labels that includes userId.
+	jsonIdx := findParserIndexByType(leaf.Parsers, "json")
+	if jsonIdx < 0 {
+		t.Fatalf("expected a json parser stage; parsers=%#v", leaf.Parsers)
+	}
+
+	keepIdx := findParserIndexByType(leaf.Parsers, "keep_labels")
+	if keepIdx < 0 {
+		t.Fatalf("expected a keep_labels parser stage; parsers=%#v", leaf.Parsers)
+	}
+	if !(jsonIdx < keepIdx) {
+		t.Fatalf("expected json before keep_labels; got jsonIdx=%d, keepIdx=%d", jsonIdx, keepIdx)
+	}
+
+	keepStage := leaf.Parsers[keepIdx]
+	labelsCSV := keepStage.Params["labels"]
+	if labelsCSV == "" {
+		t.Fatalf(`keep_labels["labels"] empty; params=%#v`, keepStage.Params)
+	}
+	found := labelsCSV == "userId" || strings.Contains(","+labelsCSV+",", ",userId,")
+	if !found {
+		t.Fatalf(`keep_labels does not include "userId"; labels=%q`, labelsCSV)
+	}
+
+	// No unexpected aggregation/grouping on the leaf.
+	if leaf.RangeAggOp != "" || len(leaf.OutBy) != 0 || len(leaf.OutWithout) != 0 {
+		t.Fatalf("unexpected agg/grouping on leaf: op=%q by=%v wo=%v",
+			leaf.RangeAggOp, leaf.OutBy, leaf.OutWithout)
+	}
+}

@@ -354,3 +354,153 @@ func TestVectorAggregation_Grouping_NormalizesLabelNames_Without(t *testing.T) {
 		}
 	}
 }
+
+func TestRangeAgg_AvgOverTime_RegexpUnwrapBytes(t *testing.T) {
+	q := `avg_over_time({resource_service_name="kafka"} | regexp "\\[([^\\]]*)\\] ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z0-9-_.:]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) (?P<bytes>[0-9]+) ([A-Za-z0-9-_.:]+)" | unwrap bytes[5m])`
+
+	ast, err := FromLogQL(q)
+	if err != nil {
+		t.Fatalf("FromLogQL() error: %v", err)
+	}
+	if ast.Kind != KindRangeAgg || ast.RangeAgg == nil {
+		t.Fatalf("want KindRangeAgg, got: %#v", ast)
+	}
+	if ast.RangeAgg.Op != "avg_over_time" {
+		t.Fatalf("op = %q, want %q", ast.RangeAgg.Op, "avg_over_time")
+	}
+	if ast.RangeAgg.Left.Range != "5m" {
+		t.Fatalf("left.range = %q, want %q", ast.RangeAgg.Left.Range, "5m")
+	}
+
+	// Matcher label is normalized by normalizeLabelName: resource_service_name -> resource.service.name
+	if !hasMatcher(ast.RangeAgg.Left.Selector.Matchers, "resource.service.name", "kafka") {
+		t.Fatalf(`missing normalized matcher resource.service.name="kafka"; got: %#v`, ast.RangeAgg.Left.Selector.Matchers)
+	}
+	// Ensure the non-normalized label didn't slip through.
+	for _, m := range ast.RangeAgg.Left.Selector.Matchers {
+		if m.Label == "resource_service_name" {
+			t.Fatalf("unexpected non-normalized label in selector: %#v", m)
+		}
+	}
+
+	// Inspect pipeline: expect a regexp parser and an unwrap(bytes) stage.
+	sel, _, ok := ast.FirstPipeline()
+	if !ok || sel == nil {
+		t.Fatalf("no pipeline or nil selector")
+	}
+
+	var sawRegexp, sawUnwrap bool
+	for _, p := range sel.Parsers {
+		switch p.Type {
+		case "regexp":
+			sawRegexp = true
+			if p.Params == nil || p.Params["pattern"] == "" {
+				t.Fatalf("regexp parser missing pattern: %#v", p.Params)
+			}
+			// sanity: ensure it captured 'bytes'
+			if !strings.Contains(p.Params["pattern"], `(?P<bytes>[0-9]+)`) {
+				t.Fatalf("regexp pattern does not capture 'bytes': %q", p.Params["pattern"])
+			}
+		case "unwrap":
+			sawUnwrap = true
+			if p.Params == nil || p.Params["field"] != "bytes" {
+				t.Fatalf("unwrap field = %q, want %q; params=%#v", p.Params["field"], "bytes", p.Params)
+			}
+			// unwrap defaults to identity when bare field is used
+			if p.Params["func"] != "identity" {
+				t.Fatalf("unwrap func = %q, want %q", p.Params["func"], "identity")
+			}
+		}
+	}
+	if !sawRegexp || !sawUnwrap {
+		t.Fatalf("missing expected parsers; sawRegexp=%v sawUnwrap=%v; parsers=%#v", sawRegexp, sawUnwrap, sel.Parsers)
+	}
+}
+
+func TestPipeline_JSON_Then_Drop_UserID(t *testing.T) {
+	q := `{resource_service_name="segment"} | json | drop userId`
+
+	ast, err := FromLogQL(q)
+	if err != nil {
+		t.Fatalf("FromLogQL() error: %v", err)
+	}
+	if ast.Kind != KindLogSelector {
+		t.Fatalf("kind = %s, want %s", ast.Kind, KindLogSelector)
+	}
+
+	sel, _, ok := ast.FirstPipeline()
+	if !ok || sel == nil {
+		t.Fatalf("no pipeline or nil selector")
+	}
+
+	if len(sel.Parsers) != 2 {
+		t.Fatalf("expected 2 parsers (json, drop_labels); got %d: %#v", len(sel.Parsers), sel.Parsers)
+	}
+
+	// 1) json must be first
+	if sel.Parsers[0].Type != "json" {
+		t.Fatalf("first parser type = %q, want %q; parsers=%#v", sel.Parsers[0].Type, "json", sel.Parsers)
+	}
+
+	// 2) drop_labels must be second and include userId
+	pDrop := sel.Parsers[1]
+	if pDrop.Type != "drop_labels" {
+		t.Fatalf("second parser type = %q, want %q; parsers=%#v", pDrop.Type, "drop_labels", sel.Parsers)
+	}
+	if pDrop.Params == nil {
+		t.Fatalf("drop_labels params missing; got nil")
+	}
+	labelsCSV := pDrop.Params["labels"]
+	if labelsCSV == "" {
+		t.Fatalf(`drop_labels["labels"] empty; params=%#v`, pDrop.Params)
+	}
+	// quick membership check
+	found := labelsCSV == "userId" || strings.Contains(","+labelsCSV+",", ",userId,")
+	if !found {
+		t.Fatalf(`drop_labels does not target "userId"; labels=%q`, labelsCSV)
+	}
+}
+
+func TestPipeline_JSON_Then_Keep_UserID(t *testing.T) {
+	q := `{resource_service_name="segment"} | json | keep userId`
+
+	ast, err := FromLogQL(q)
+	if err != nil {
+		t.Fatalf("FromLogQL() error: %v", err)
+	}
+	if ast.Kind != KindLogSelector {
+		t.Fatalf("kind = %s, want %s", ast.Kind, KindLogSelector)
+	}
+
+	sel, _, ok := ast.FirstPipeline()
+	if !ok || sel == nil {
+		t.Fatalf("no pipeline or nil selector")
+	}
+
+	if len(sel.Parsers) != 2 {
+		t.Fatalf("expected 2 parsers (json, keep_labels); got %d: %#v", len(sel.Parsers), sel.Parsers)
+	}
+
+	// 1) json must be first
+	if sel.Parsers[0].Type != "json" {
+		t.Fatalf("first parser type = %q, want %q; parsers=%#v", sel.Parsers[0].Type, "json", sel.Parsers)
+	}
+
+	// 2) keep_labels must be second and include userId
+	pKeep := sel.Parsers[1]
+	if pKeep.Type != "keep_labels" {
+		t.Fatalf("second parser type = %q, want %q; parsers=%#v", pKeep.Type, "keep_labels", sel.Parsers)
+	}
+	if pKeep.Params == nil {
+		t.Fatalf("keep_labels params missing; got nil")
+	}
+	labelsCSV := pKeep.Params["labels"]
+	if labelsCSV == "" {
+		t.Fatalf(`keep_labels["labels"] empty; params=%#v`, pKeep.Params)
+	}
+	// quick membership check (handles single or comma/space-separated)
+	found := labelsCSV == "userId" || strings.Contains(","+labelsCSV+",", ",userId,")
+	if !found {
+		t.Fatalf(`keep_labels does not include "userId"; labels=%q`, labelsCSV)
+	}
+}

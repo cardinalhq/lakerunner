@@ -1952,3 +1952,80 @@ func TestLog_SumRateCounter_Unwrap_TwoWorkers_Eval(t *testing.T) {
 		}
 	}
 }
+func TestRewrite_AvgOverTime_Regexp_UnwrapBytes_FromLogQL(t *testing.T) {
+	db := openDuckDB(t)
+	mustExec(t, db, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.fingerprint" TEXT,
+		"_cardinalhq.message"     TEXT,
+		"resource.service.name"   TEXT
+	);`)
+
+	// Two 1m buckets: [0..60s) and [60..120s)
+	// IMPORTANT: The builder’s regexp below expects *13* tokens before (?P<bytes>...).
+	// So we intentionally omit "Omega" here (Alpha..Nu = 13), then the number, then a trailing token.
+	mustExec(t, db, `
+	INSERT INTO logs("_cardinalhq.timestamp","_cardinalhq.message","resource.service.name") VALUES
+	(10*1000,  '[meta] Alpha Beta Gamma Delta Epsilon Zeta Eta Theta Iota Kappa Lambda Mu Nu 100 token-1', 'kafka'),
+	(40*1000,  '[meta] Alpha Beta Gamma Delta Epsilon Zeta Eta Theta Iota Kappa Lambda Mu Nu 200 token-2', 'kafka'),
+	(70*1000,  '[meta] Alpha Beta Gamma Delta Epsilon Zeta Eta Theta Iota Kappa Lambda Mu Nu 300 token-3', 'kafka');
+	`)
+
+	q := `avg_over_time(
+		{resource_service_name="kafka"}
+		| regexp "\\[([^\\]]*)\\] ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z0-9-_.:]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) (?P<bytes>[0-9]+) ([A-Za-z0-9-_.:]+)"
+		| unwrap bytes
+		[1m]
+	)`
+
+	plan, _ := compileMetricPlanFromLogQL(t, q)
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf in compiled plan, got %d", len(plan.Leaves))
+	}
+	leaf := plan.Leaves[0]
+
+	step := time.Minute
+	sql := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000)
+
+	rows := queryAll(t, db, sql)
+	if len(rows) == 0 {
+		t.Fatalf("no rows; sql=\n%s", sql)
+	}
+
+	type agg struct {
+		bucket int64
+		avg    float64
+	}
+	var got []agg
+	for _, r := range rows {
+		v := r["avg"]
+		if v == nil {
+			if x, ok := r["avg_over_time"]; ok {
+				v = x
+			} else if x, ok := r["mean"]; ok {
+				v = x
+			}
+		}
+		got = append(got, agg{
+			bucket: i64(r["bucket_ts"]),
+			avg:    f64(v),
+		})
+	}
+
+	var b0Avg, b1Avg float64
+	for _, a := range got {
+		switch a.bucket {
+		case 0:
+			b0Avg = a.avg // (100 + 200) / 2 = 150
+		case 60000:
+			b1Avg = a.avg // 300
+		}
+	}
+
+	const eps = 1e-9
+	if !(b0Avg > 150.0-eps && b0Avg < 150.0+eps) || !(b1Avg > 300.0-eps && b1Avg < 300.0+eps) {
+		t.Fatalf("unexpected avgs: bucket0=%v bucket1=%v; rows=%v\nsql=\n%s", b0Avg, b1Avg, rows, sql)
+	}
+}

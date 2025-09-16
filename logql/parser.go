@@ -203,13 +203,31 @@ func fromSyntax(e logql.Expr) (LogAST, error) {
 			return LogAST{}, err
 		}
 
-		// Capture unwrap from the AST node and append as a parser stage
-		if v.Unwrap != nil {
+		addedUnwrap := false
+		alreadyHasUnwrap := func() bool {
+			for _, p := range ls.Parsers {
+				if p.Type == "unwrap" {
+					return true
+				}
+			}
+			return false
+		}
+
+		// Prefer AST node when present.
+		if v.Unwrap != nil && !alreadyHasUnwrap() {
 			uw := cleanStage(v.Unwrap.String())
 			if p, ok := parseUnwrapParams(uw); ok {
 				ls.Parsers = append(ls.Parsers, ParserStage{Type: "unwrap", Params: p})
+				addedUnwrap = true
 			} else if p, ok := parseUnwrapInner(uw); ok {
 				ls.Parsers = append(ls.Parsers, ParserStage{Type: "unwrap", Params: p})
+				addedUnwrap = true
+			}
+		} else if !alreadyHasUnwrap() {
+			// Fallback: older Loki versions don't populate v.Unwrap for bare forms.
+			if p, ok := extractUnwrapFromString(v.String()); ok {
+				ls.Parsers = append(ls.Parsers, ParserStage{Type: "unwrap", Params: p})
+				addedUnwrap = true
 			}
 		}
 
@@ -217,7 +235,7 @@ func fromSyntax(e logql.Expr) (LogAST, error) {
 			Selector: ls,
 			Range:    promDur(v.Interval),
 			Offset:   promDur(v.Offset),
-			Unwrap:   v.Unwrap != nil,
+			Unwrap:   addedUnwrap,
 		}
 		return LogAST{Kind: KindLogRange, LogRange: &lr, Raw: e.String()}, nil
 
@@ -363,7 +381,6 @@ func addLineFilterFromSyntax(ls *LogSelector, lineFilterList []logql.LineFilterE
 }
 
 // Adds parser stages and label filters based on the *string* form of the selector pipeline.
-// We still need this because some stages (json/logfmt/regexp/label_format) are only present there.
 func addParsersAndLabelFiltersFromString(s string, ls *LogSelector) error {
 	lastParser := -1
 
@@ -500,15 +517,98 @@ func splitPipelineStages(selStr string) []string {
 	return out
 }
 
+// --- add this helper near other small parsers (e.g., below parseLabelFormatParams) ---
+
+// parseLabelList parses things like:
+//
+//	"drop userId", "drop userId, foo", `drop "user id", bar`
+//
+// It returns a comma-separated list suitable for Params["labels"].
+func parseLabelList(stage, head string) (string, bool) {
+	s := cleanStage(stage)
+	if !strings.HasPrefix(s, head) {
+		return "", false
+	}
+	rest := strings.TrimSpace(s[len(head):])
+	if rest == "" {
+		return "", false
+	}
+
+	var out []string
+	var buf []rune
+	inDQ, inBT, esc := false, false, false
+
+	flush := func() {
+		tok := strings.TrimSpace(string(buf))
+		if tok != "" {
+			tok = normalizeLabelFormatLiteral(tok) // strips quotes/backticks
+			if tok != "" {
+				out = append(out, tok)
+			}
+		}
+		buf = buf[:0]
+	}
+
+	for _, r := range rest {
+		if inDQ {
+			buf = append(buf, r)
+			if esc {
+				esc = false
+			} else if r == '\\' {
+				esc = true
+			} else if r == '"' {
+				inDQ = false
+			}
+			continue
+		}
+		if inBT {
+			buf = append(buf, r)
+			if esc {
+				esc = false
+			} else if r == '\\' {
+				esc = true
+			} else if r == '`' {
+				inBT = false
+			}
+			continue
+		}
+
+		switch r {
+		case '"':
+			inDQ = true
+			buf = append(buf, r)
+		case '`':
+			inBT = true
+			buf = append(buf, r)
+		case ',':
+			flush()
+		case ' ', '\t':
+			// treat whitespace as a separator between tokens
+			if len(buf) > 0 {
+				flush()
+			}
+		default:
+			buf = append(buf, r)
+		}
+	}
+	flush()
+
+	if len(out) == 0 {
+		return "", false
+	}
+	return strings.Join(out, ","), true
+}
+
 // looksLikeParser returns (type, params, ok) for known parser heads.
 func looksLikeParser(stage string) (string, map[string]string, bool) {
 	head := strings.Fields(stage)
 	if len(head) == 0 {
 		return "", nil, false
 	}
-	switch head[0] {
-	case "json", "logfmt", "line_format", "label_replace", "keep_labels", "drop_labels", "decolorize":
-		return head[0], map[string]string{}, true
+	head0 := head[0]
+	switch head0 {
+	case "json", "logfmt", "line_format", "label_replace", "decolorize":
+		return head0, map[string]string{}, true
 
 	case "regexp":
 		params := map[string]string{}
@@ -530,6 +630,20 @@ func looksLikeParser(stage string) (string, map[string]string, bool) {
 		}
 		return "", nil, false
 
+	// --- NEW: labels keep/drop synonyms ---
+	case "drop", "label_drop", "labels_drop", "drop_labels":
+		if csv, ok := parseLabelList(stage, head0); ok {
+			return "drop_labels", map[string]string{"labels": csv}, true
+		}
+		// allow an empty drop_labels stage if someone writes just "drop_labels"
+		return "drop_labels", map[string]string{}, true
+
+	case "keep", "label_keep", "labels_keep", "keep_labels":
+		if csv, ok := parseLabelList(stage, head0); ok {
+			return "keep_labels", map[string]string{"labels": csv}, true
+		}
+		return "keep_labels", map[string]string{}, true
+
 	default:
 		return "", nil, false
 	}
@@ -537,11 +651,10 @@ func looksLikeParser(stage string) (string, map[string]string, bool) {
 
 // parseUnwrapParams parses pipeline chunks like:
 //
-//	"unwrap payload_size"
-//	"unwrap bytes(payload_size)"
-//	"unwrap duration(\"latency_ms\")"   (quotes/backticks allowed)
-//
-// Returns {"func":"bytes|duration", "field":"..."} or {"func":"bytes","field":"payload_size"} for bare.
+//	"unwrap payload_size"             → {"func":"identity","field":"payload_size"}
+//	"unwrap bytes(payload_size)"      → {"func":"bytes","field":"payload_size"}
+//	"unwrap duration(\"latency_ms\")" → {"func":"duration","field":"latency_ms"}
+//	"unwrap bytes[5m]"                → {"func":"identity","field":"bytes"} (trims trailing window)
 func parseUnwrapParams(stage string) (map[string]string, bool) {
 	s := cleanStage(stage)
 	if !strings.HasPrefix(s, "unwrap") {
@@ -552,10 +665,14 @@ func parseUnwrapParams(stage string) (map[string]string, bool) {
 		return nil, false
 	}
 
-	// function form: unwrap <fn>(<arg>)
-	if strings.HasPrefix(rest, "duration") || strings.HasPrefix(rest, "bytes") {
+	isDur := strings.HasPrefix(rest, "duration")
+	isBytes := strings.HasPrefix(rest, "bytes")
+	hasParen := strings.Contains(rest, "(")
+
+	// function form: unwrap duration(field) / unwrap bytes(field)
+	if isDur || (isBytes && hasParen) {
 		var fn string
-		if strings.HasPrefix(rest, "duration") {
+		if isDur {
 			fn = "duration"
 			rest = strings.TrimSpace(rest[len("duration"):])
 		} else {
@@ -566,35 +683,41 @@ func parseUnwrapParams(stage string) (map[string]string, bool) {
 			return nil, false
 		}
 		arg := strings.TrimSpace(rest[1 : len(rest)-1])
-		arg = normalizeLabelFormatLiteral(arg) // strips outer quotes/backticks if any
+		arg = normalizeLabelFormatLiteral(arg)
 		if arg == "" {
 			return nil, false
 		}
 		return map[string]string{"func": fn, "field": arg}, true
 	}
 
-	// bare form: unwrap <identifier>   → default to bytes
-	tok := rest
-	if i := strings.IndexAny(rest, " \t"); i >= 0 {
-		tok = rest[:i]
+	// bare form: unwrap <identifier> (can appear as "unwrap bytes[5m]")
+	tok := strings.TrimSpace(rest)
+	// cut at first of '[', space, or ')'
+	if i := strings.IndexAny(tok, "[ )"); i >= 0 {
+		tok = tok[:i]
 	}
-	tok = strings.TrimSpace(tok)
+	tok = normalizeLabelFormatLiteral(tok)
 	if tok == "" {
 		return nil, false
 	}
-	tok = normalizeLabelFormatLiteral(tok)
 	return map[string]string{"func": "identity", "field": tok}, true
 }
 
 // parseUnwrapInner parses what Loki returns from v.Unwrap.String():
 //
-//	"payload_size"
-//	"bytes(payload_size)"
-//	"duration(latency_ms)"
+//	"payload_size"         → {"func":"identity","field":"payload_size"}
+//	"bytes(payload_size)"  → {"func":"bytes","field":"payload_size"}
+//	"duration(latency_ms)" → {"func":"duration","field":"latency_ms"}
+//	"unwrap bytes[5m]"     → {"func":"identity","field":"bytes"} (tolerant)
 func parseUnwrapInner(s string) (map[string]string, bool) {
 	s = cleanStage(s)
 	if s == "" {
 		return nil, false
+	}
+
+	// Tolerate an "unwrap" prefix
+	if strings.HasPrefix(s, "unwrap") {
+		s = strings.TrimSpace(s[len("unwrap"):])
 	}
 
 	// function form without "unwrap" prefix
@@ -608,28 +731,60 @@ func parseUnwrapInner(s string) (map[string]string, bool) {
 			fn = "bytes"
 			rest = strings.TrimSpace(s[len("bytes"):])
 		}
-		if len(rest) < 2 || rest[0] != '(' || rest[len(rest)-1] != ')' {
-			return nil, false
+		if len(rest) >= 2 && rest[0] == '(' && rest[len(rest)-1] == ')' {
+			arg := strings.TrimSpace(rest[1 : len(rest)-1])
+			arg = normalizeLabelFormatLiteral(arg)
+			if arg == "" {
+				return nil, false
+			}
+			return map[string]string{"func": fn, "field": arg}, true
 		}
-		arg := strings.TrimSpace(rest[1 : len(rest)-1])
-		arg = normalizeLabelFormatLiteral(arg)
-		if arg == "" {
-			return nil, false
-		}
-		return map[string]string{"func": fn, "field": arg}, true
+		// If no parens (e.g., "bytes[5m]"), fall through to bare handling below.
 	}
 
-	// bare identifier → default to bytes
+	// bare identifier → default to identity; trim trailing range/paren/space
 	field := normalizeLabelFormatLiteral(s)
+	if i := strings.IndexAny(field, "[ )"); i >= 0 {
+		field = strings.TrimSpace(field[:i])
+	}
 	if field == "" {
 		return nil, false
 	}
 	return map[string]string{"func": "identity", "field": field}, true
 }
 
+// Robust fallback: slice the "| unwrap ..." chunk right out of the string.
+func extractUnwrapFromString(s string) (map[string]string, bool) {
+	// Prefer a pipeline head "| unwrap"
+	if i := strings.Index(s, "| unwrap"); i >= 0 {
+		chunk := strings.TrimSpace(s[i+1:]) // keep "unwrap ..."
+		if j := strings.Index(chunk, "|"); j >= 0 {
+			chunk = chunk[:j]
+		}
+		if p, ok := parseUnwrapParams(chunk); ok {
+			return p, true
+		}
+		if p, ok := parseUnwrapInner(chunk); ok {
+			return p, true
+		}
+	}
+	// Fallback: search for " unwrap " even without a preceding pipe
+	if i := strings.Index(s, " unwrap "); i >= 0 {
+		chunk := strings.TrimSpace(s[i+1:])
+		if j := strings.Index(chunk, "|"); j >= 0 {
+			chunk = chunk[:j]
+		}
+		if p, ok := parseUnwrapParams(chunk); ok {
+			return p, true
+		}
+		if p, ok := parseUnwrapInner(chunk); ok {
+			return p, true
+		}
+	}
+	return nil, false
+}
+
 // parseLabelFormatParams parses: label_format a=`tmpl` b="str" c=unquoted
-// Supports multiple assignments separated by spaces and/or commas.
-// Values may be backtick-quoted templates or double-quoted strings.
 func parseLabelFormatParams(stage string) map[string]string {
 	params := make(map[string]string)
 	s := strings.TrimSpace(stage)
@@ -911,19 +1066,6 @@ func normalizeLabelFormatLiteral(s string) string {
 	}
 	return s
 }
-
-//// --- unwrap pre-normalization ----------------------------------------------
-//func preNormalizeUnwrap(in string) string {
-//	// unwrap <fn>("field")
-//	reDQ := regexp.MustCompile(`(?i)\bunwrap\s+(duration|bytes)\s*$begin:math:text$\\s*"([^"]+)"\\s*$end:math:text$`)
-//	in = reDQ.ReplaceAllString(in, "unwrap $1($2)")
-//
-//	// unwrap <fn>(`field`)
-//	reBT := regexp.MustCompile("(?i)\\bunwrap\\s+(duration|bytes)\\s*\\(\\s*`([^`]*)`\\s*\\)")
-//	in = reBT.ReplaceAllString(in, "unwrap $1($2)")
-//
-//	return in
-//}
 
 // cleanStage trims a leading pipe and surrounding spaces: "| foo" -> "foo".
 func cleanStage(s string) string {

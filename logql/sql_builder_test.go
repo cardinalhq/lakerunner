@@ -1166,3 +1166,58 @@ func TestToWorkerSQLWithLimit_Fields_WithLimit(t *testing.T) {
 		}
 	}
 }
+
+func TestToWorkerSQL_AvgOverTime_Regexp_UnwrapBytes_SQLShape_FromLogQL(t *testing.T) {
+	db := openDuckDB(t)
+
+	mustExec(t, db, `CREATE TABLE logs("_cardinalhq.message" TEXT, "resource.service.name" TEXT);`)
+
+	mustExec(t, db, `INSERT INTO logs VALUES
+('[meta] Alpha Beta Gamma Delta Epsilon Zeta Eta Theta Iota Kappa Lambda Mu Nu Omega 100 token-1', 'kafka'),
+('[meta] Foo Bar Baz Qux Quux Corge Grault Garply Waldo Fred Plugh Xyzzy Thud Zing 250 token-2', 'kafka'),
+('[meta] One Two Three Four Five Six Seven Eight Nine Ten Eleven Twelve Thirteen Fourteen 350 token-3', 'kafka');`)
+
+	q := `avg_over_time({resource_service_name="kafka"} | regexp "\\[([^\\]]*)\\] ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z0-9-_.:]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) ([A-Za-z]+) (?P<bytes>[0-9]+) ([A-Za-z0-9-_.:]+)" | unwrap bytes[5m])`
+
+	ast, err := FromLogQL(q)
+	if err != nil {
+		t.Fatalf("FromLogQL error: %v", err)
+	}
+	plan, err := CompileLog(ast)
+	if err != nil {
+		t.Fatalf("CompileLog error: %v", err)
+	}
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf, got %d; plan=%#v", len(plan.Leaves), plan)
+	}
+	leaf := plan.Leaves[0]
+
+	sql := replaceStartEnd(replaceTable(leaf.ToWorkerSQLWithLimit(0, "desc", nil)), 0, 5000)
+
+	// Sentinel is required for later segment-splicing.
+	if !strings.Contains(sql, "AND true") {
+		t.Fatalf("expected sentinel AND true in generated SQL:\n%s", sql)
+	}
+
+	// Sanity: the selector should appear in WHERE (resource.service.name='kafka').
+	if !strings.Contains(sql, `"resource.service.name" = 'kafka'`) &&
+		!strings.Contains(sql, `resource.service.name = 'kafka'`) {
+		t.Fatalf("generated SQL missing selector WHERE for service=kafka:\n%s", sql)
+	}
+
+	rows := queryAll(t, db, sql)
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 rows after selector, got %d\nsql:\n%s", len(rows), sql)
+	}
+
+	// Ensure the shape has both 'bytes' (from regexp) and '__unwrap_value' (from unwrap).
+	for i, r := range rows {
+		if _, ok := r["bytes"]; !ok {
+			t.Fatalf("row %d missing 'bytes' column; row=%v\nsql:\n%s", i, r, sql)
+		}
+		if _, ok := r["__unwrap_value"]; !ok {
+			t.Fatalf("row %d missing '__unwrap_value' column; row=%v\nsql:\n%s", i, r, sql)
+		}
+
+	}
+}
