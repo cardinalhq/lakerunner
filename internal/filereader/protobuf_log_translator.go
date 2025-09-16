@@ -15,8 +15,12 @@
 package filereader
 
 import (
+	"context"
 	"fmt"
 	"time"
+
+	"go.opentelemetry.io/otel/attribute"
+	otelmetric "go.opentelemetry.io/otel/metric"
 
 	"github.com/cardinalhq/lakerunner/internal/helpers"
 	"github.com/cardinalhq/lakerunner/internal/pipeline/wkk"
@@ -40,6 +44,13 @@ func NewProtoBinLogTranslator(opts ReaderOptions) *ProtoBinLogTranslator {
 
 // TranslateRow handles protobuf-specific field translation
 func (t *ProtoBinLogTranslator) TranslateRow(row *Row) error {
+	// Use background context for metrics - we'll add proper context passing later if needed
+	ctx := context.Background()
+	return t.translateRowWithContext(ctx, row)
+}
+
+// translateRowWithContext handles protobuf-specific field translation with context
+func (t *ProtoBinLogTranslator) translateRowWithContext(ctx context.Context, row *Row) error {
 	if row == nil {
 		return fmt.Errorf("row cannot be nil")
 	}
@@ -58,6 +69,10 @@ func (t *ProtoBinLogTranslator) TranslateRow(row *Row) error {
 				obsTimestamp := ensureInt64(obsTs)
 				if obsTimestamp > 0 {
 					timestamp = obsTimestamp
+					timestampFallbackCounter.Add(ctx, 1, otelmetric.WithAttributes(
+						attribute.String("signal_type", "logs"),
+						attribute.String("reason", "observed_timestamp"),
+					))
 				}
 			}
 		}
@@ -70,6 +85,10 @@ func (t *ProtoBinLogTranslator) TranslateRow(row *Row) error {
 		} else {
 			// Use current time as last resort to avoid 1970-01-01 dates
 			(*row)[wkk.RowKeyCTimestamp] = time.Now().UnixMilli()
+			timestampFallbackCounter.Add(ctx, 1, otelmetric.WithAttributes(
+				attribute.String("signal_type", "logs"),
+				attribute.String("reason", "current_fallback"),
+			))
 		}
 	}
 

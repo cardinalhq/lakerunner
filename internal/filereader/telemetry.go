@@ -22,9 +22,10 @@ import (
 )
 
 var (
-	rowsInCounter      otelmetric.Int64Counter
-	rowsOutCounter     otelmetric.Int64Counter
-	rowsDroppedCounter otelmetric.Int64Counter
+	rowsInCounter            otelmetric.Int64Counter
+	rowsOutCounter           otelmetric.Int64Counter
+	rowsDroppedCounter       otelmetric.Int64Counter
+	timestampFallbackCounter otelmetric.Int64Counter
 )
 
 func init() {
@@ -53,5 +54,13 @@ func init() {
 	)
 	if err != nil {
 		panic(fmt.Errorf("failed to create rows.dropped counter: %w", err))
+	}
+
+	timestampFallbackCounter, err = meter.Int64Counter(
+		"lakerunner.reader.timestamp.fallback",
+		otelmetric.WithDescription("Number of times timestamp fallback logic was used when processing OTEL data"),
+	)
+	if err != nil {
+		panic(fmt.Errorf("failed to create timestamp.fallback counter: %w", err))
 	}
 }

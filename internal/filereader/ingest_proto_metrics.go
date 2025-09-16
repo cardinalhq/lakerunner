@@ -22,6 +22,7 @@ import (
 	"maps"
 	"math"
 	"sort"
+	"time"
 
 	"github.com/cardinalhq/lakerunner/internal/exemplars"
 
@@ -424,9 +425,22 @@ func (r *IngestProtoMetricsReader) addNumberDatapointFields(ctx context.Context,
 	if dp.Timestamp() != 0 {
 		ret[wkk.RowKeyCTimestamp] = dp.Timestamp().AsTime().UnixMilli()
 		ret[wkk.RowKeyCTsns] = int64(dp.Timestamp())
-	} else {
+	} else if dp.StartTimestamp() != 0 {
 		ret[wkk.RowKeyCTimestamp] = dp.StartTimestamp().AsTime().UnixMilli()
 		ret[wkk.RowKeyCTsns] = int64(dp.StartTimestamp())
+		timestampFallbackCounter.Add(ctx, 1, otelmetric.WithAttributes(
+			attribute.String("signal_type", "metrics"),
+			attribute.String("reason", "start_timestamp"),
+		))
+	} else {
+		// Fallback to current time when both timestamps are zero
+		currentTime := time.Now()
+		ret[wkk.RowKeyCTimestamp] = currentTime.UnixMilli()
+		ret[wkk.RowKeyCTsns] = currentTime.UnixNano()
+		timestampFallbackCounter.Add(ctx, 1, otelmetric.WithAttributes(
+			attribute.String("signal_type", "metrics"),
+			attribute.String("reason", "current_fallback"),
+		))
 	}
 
 	var value float64
@@ -498,9 +512,22 @@ func (r *IngestProtoMetricsReader) addHistogramDatapointFields(ctx context.Conte
 	if dp.Timestamp() != 0 {
 		ret[wkk.RowKeyCTimestamp] = dp.Timestamp().AsTime().UnixMilli()
 		ret[wkk.RowKeyCTsns] = int64(dp.Timestamp())
-	} else {
+	} else if dp.StartTimestamp() != 0 {
 		ret[wkk.RowKeyCTimestamp] = dp.StartTimestamp().AsTime().UnixMilli()
 		ret[wkk.RowKeyCTsns] = int64(dp.StartTimestamp())
+		timestampFallbackCounter.Add(ctx, 1, otelmetric.WithAttributes(
+			attribute.String("signal_type", "metrics"),
+			attribute.String("reason", "start_timestamp"),
+		))
+	} else {
+		// Fallback to current time when both timestamps are zero
+		currentTime := time.Now()
+		ret[wkk.RowKeyCTimestamp] = currentTime.UnixMilli()
+		ret[wkk.RowKeyCTsns] = currentTime.UnixNano()
+		timestampFallbackCounter.Add(ctx, 1, otelmetric.WithAttributes(
+			attribute.String("signal_type", "metrics"),
+			attribute.String("reason", "current_fallback"),
+		))
 	}
 
 	const alpha = 0.01
@@ -670,9 +697,22 @@ func (r *IngestProtoMetricsReader) addExponentialHistogramDatapointFields(ctx co
 	if dp.Timestamp() != 0 {
 		ret[wkk.RowKeyCTimestamp] = dp.Timestamp().AsTime().UnixMilli()
 		ret[wkk.RowKeyCTsns] = int64(dp.Timestamp())
-	} else {
+	} else if dp.StartTimestamp() != 0 {
 		ret[wkk.RowKeyCTimestamp] = dp.StartTimestamp().AsTime().UnixMilli()
 		ret[wkk.RowKeyCTsns] = int64(dp.StartTimestamp())
+		timestampFallbackCounter.Add(ctx, 1, otelmetric.WithAttributes(
+			attribute.String("signal_type", "metrics"),
+			attribute.String("reason", "start_timestamp"),
+		))
+	} else {
+		// Fallback to current time when both timestamps are zero
+		currentTime := time.Now()
+		ret[wkk.RowKeyCTimestamp] = currentTime.UnixMilli()
+		ret[wkk.RowKeyCTsns] = currentTime.UnixNano()
+		timestampFallbackCounter.Add(ctx, 1, otelmetric.WithAttributes(
+			attribute.String("signal_type", "metrics"),
+			attribute.String("reason", "current_fallback"),
+		))
 	}
 
 	var positiveBuckets, negativeBuckets []uint64
@@ -779,9 +819,22 @@ func (r *IngestProtoMetricsReader) addSummaryDatapointFields(ctx context.Context
 	if dp.Timestamp() != 0 {
 		ret[wkk.RowKeyCTimestamp] = dp.Timestamp().AsTime().UnixMilli()
 		ret[wkk.RowKeyCTsns] = int64(dp.Timestamp())
-	} else {
+	} else if dp.StartTimestamp() != 0 {
 		ret[wkk.RowKeyCTimestamp] = dp.StartTimestamp().AsTime().UnixMilli()
 		ret[wkk.RowKeyCTsns] = int64(dp.StartTimestamp())
+		timestampFallbackCounter.Add(ctx, 1, otelmetric.WithAttributes(
+			attribute.String("signal_type", "metrics"),
+			attribute.String("reason", "start_timestamp"),
+		))
+	} else {
+		// Fallback to current time when both timestamps are zero
+		currentTime := time.Now()
+		ret[wkk.RowKeyCTimestamp] = currentTime.UnixMilli()
+		ret[wkk.RowKeyCTsns] = currentTime.UnixNano()
+		timestampFallbackCounter.Add(ctx, 1, otelmetric.WithAttributes(
+			attribute.String("signal_type", "metrics"),
+			attribute.String("reason", "current_fallback"),
+		))
 	}
 
 	// Check if we got any data in the sketch (no quantiles)
