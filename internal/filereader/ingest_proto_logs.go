@@ -181,6 +181,7 @@ func (r *IngestProtoLogsReader) buildLogRow(ctx context.Context, rl plog.Resourc
 	message := logRecord.Body().AsString()
 	ret[translate.CardinalFieldMessage] = message
 	ret[translate.CardinalFieldTimestamp] = logRecord.Timestamp().AsTime().UnixMilli()
+	ret["_cardinalhq.tsns"] = int64(logRecord.Timestamp())
 	ret["observed_timestamp"] = logRecord.ObservedTimestamp().AsTime().UnixMilli()
 	ret["_cardinalhq.level"] = logRecord.SeverityText()
 	ret["severity_number"] = int64(logRecord.SeverityNumber())
