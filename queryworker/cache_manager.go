@@ -307,7 +307,7 @@ func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
 				cacheSQL = strings.Replace(cacheSQL, "AND true", "AND segment_id IN ("+inList+")", 1)
 			}
 
-			//slog.Info("Querying cached segments", slog.Int("numSegments", len(ids)), slog.String("sql", cacheSQL))
+			slog.Info("Querying cached segments", slog.Int("numSegments", len(ids)), slog.String("sql", cacheSQL))
 			rows, conn, err := w.sink.db.QueryContext(ctx, cacheSQL)
 			if err != nil {
 				return
@@ -389,6 +389,8 @@ func streamFromS3[T promql.Timestamped](
 			src := fmt.Sprintf(`read_parquet(%s, union_by_name=true)`, array)
 
 			sqlReplaced := strings.Replace(userSQL, "{table}", src, 1)
+			slog.Info("Querying S3 segments", slog.Int("numSegments", len(array)), slog.String("sql", sqlReplaced))
+
 			// Lease a per-bucket connection (creates/refreshes S3 secret under the hood)
 			start := time.Now()
 			conn, release, err := w.s3Db.GetConnection(ctx, bucket, region, endpoint)
