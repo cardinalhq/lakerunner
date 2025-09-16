@@ -40,11 +40,13 @@ ARG TARGETARCH
 COPY --chmod=755 lakerunner /app/bin/lakerunner
 COPY --chmod=755 lakectl /app/bin/lakectl
 
-# Copy pre-downloaded DuckDB extensions (already decompressed by make)
-# These are platform-specific and decompressed at build time
-COPY docker/duckdb-extensions/linux_${TARGETARCH}/httpfs.duckdb_extension /app/extensions/httpfs.duckdb_extension
-COPY docker/duckdb-extensions/linux_${TARGETARCH}/aws.duckdb_extension /app/extensions/aws.duckdb_extension
-COPY docker/duckdb-extensions/linux_${TARGETARCH}/azure.duckdb_extension /app/extensions/azure.duckdb_extension
+# Copy and decompress DuckDB extensions
+# Copy the compressed files (which are in git) and decompress them
+COPY docker/duckdb-extensions/linux_${TARGETARCH}/*.duckdb_extension.gz /tmp/extensions/
+RUN gunzip /tmp/extensions/*.gz && \
+    mkdir -p /app/extensions && \
+    mv /tmp/extensions/*.duckdb_extension /app/extensions/ && \
+    rm -rf /tmp/extensions
 
 # Copy curl binary and its runtime dependencies
 COPY --from=extensions /usr/bin/curl /usr/bin/curl

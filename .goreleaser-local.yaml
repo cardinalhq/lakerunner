@@ -5,7 +5,6 @@ project_name: lakerunner
 before:
   hooks:
     - go mod tidy
-    - make duckdb-extensions-decompress
 
 checksum:
   name_template: "checksums.txt"
