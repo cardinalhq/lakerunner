@@ -28,3 +28,5 @@ vendor
 **/*.ddb
 **/*.prof
 .vscode
+# Ignore decompressed extensions
+**/*.duckdb_extension
