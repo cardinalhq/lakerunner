@@ -25,8 +25,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cespare/xxhash/v2"
-	"github.com/google/uuid"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	informers "k8s.io/client-go/informers"
@@ -51,6 +49,8 @@ type SegmentWorkerMapping struct {
 }
 
 type KubernetesWorkerDiscovery struct {
+	BaseWorkerDiscovery
+
 	// config
 	namespace           string
 	workerLabelSelector string
@@ -65,9 +65,6 @@ type KubernetesWorkerDiscovery struct {
 	esList    disclisters.EndpointSliceLister
 
 	// state
-	mu         sync.RWMutex
-	workers    []Worker
-	running    bool
 	cancelFunc context.CancelFunc
 
 	// debounce rebuilds
@@ -140,13 +137,10 @@ func NewKubernetesWorkerDiscovery(cfg KubernetesWorkerDiscoveryConfig) (*Kuberne
 }
 
 func (k *KubernetesWorkerDiscovery) Start(ctx context.Context) error {
-	k.mu.Lock()
-	if k.running {
-		k.mu.Unlock()
+	if k.IsRunning() {
 		return fmt.Errorf("worker discovery is already running")
 	}
-	k.running = true
-	k.mu.Unlock()
+	k.SetRunning(true)
 
 	slog.Info("Starting worker discovery",
 		"namespace", k.namespace,
@@ -192,12 +186,10 @@ func (k *KubernetesWorkerDiscovery) Start(ctx context.Context) error {
 }
 
 func (k *KubernetesWorkerDiscovery) Stop() error {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	if !k.running {
+	if !k.IsRunning() {
 		return nil
 	}
-	k.running = false
+	k.SetRunning(false)
 	if k.cancelFunc != nil {
 		k.cancelFunc()
 		k.cancelFunc = nil
@@ -298,54 +290,8 @@ func (k *KubernetesWorkerDiscovery) rebuildWorkers(ctx context.Context) error {
 		return out[i].IP < out[j].IP
 	})
 
-	k.mu.Lock()
-	k.workers = out
-	k.mu.Unlock()
+	k.SetWorkers(out)
 
 	slog.Info("Worker snapshot updated", "namespace", k.namespace, "totalWorkers", len(out))
 	return nil
-}
-
-func (k *KubernetesWorkerDiscovery) GetWorkersForSegments(organizationID uuid.UUID, segmentIDs []int64) ([]SegmentWorkerMapping, error) {
-	k.mu.RLock()
-	ws := make([]Worker, len(k.workers))
-	copy(ws, k.workers)
-	k.mu.RUnlock()
-
-	if len(ws) == 0 {
-		return nil, fmt.Errorf("no workers available")
-	}
-
-	mappings := make([]SegmentWorkerMapping, 0, len(segmentIDs))
-	for _, seg := range segmentIDs {
-		w := k.assignSegmentToWorker(organizationID, seg, ws)
-		mappings = append(mappings, SegmentWorkerMapping{SegmentID: seg, Worker: w})
-	}
-	return mappings, nil
-}
-
-func (k *KubernetesWorkerDiscovery) GetAllWorkers() ([]Worker, error) {
-	k.mu.RLock()
-	defer k.mu.RUnlock()
-	ws := make([]Worker, len(k.workers))
-	copy(ws, k.workers)
-	return ws, nil
-}
-
-func (k *KubernetesWorkerDiscovery) assignSegmentToWorker(org uuid.UUID, seg int64, ws []Worker) Worker {
-	if len(ws) == 0 {
-		return Worker{}
-	}
-	segKey := fmt.Sprintf("%d:%s", seg, org.String())
-
-	var best Worker
-	var bestHash uint64
-	for i, w := range ws {
-		wk := w.IP + ":" + strconv.Itoa(w.Port)
-		hv := xxhash.Sum64String(segKey + wk)
-		if i == 0 || hv > bestHash {
-			best, bestHash = w, hv
-		}
-	}
-	return best
 }
