@@ -17,5 +17,3 @@ CREATE INDEX IF NOT EXISTS kafka_offset_tracker_lookup_idx
 
 CREATE INDEX IF NOT EXISTS kafka_offset_tracker_created_at_idx
   ON kafka_offset_tracker (created_at);
-
-DROP TABLE IF EXISTS kafka_offset_journal;
