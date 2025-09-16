@@ -32,6 +32,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/cardinalhq/lakerunner/internal/cloudstorage"
+	"github.com/cardinalhq/lakerunner/internal/duckdbx"
 	"github.com/cardinalhq/lakerunner/internal/storageprofile"
 	"github.com/cardinalhq/lakerunner/promql"
 	"github.com/cardinalhq/lakerunner/queryapi"
@@ -46,6 +47,7 @@ type WorkerService struct {
 	MetricsGlobSize      int
 	LogsGlobSize         int
 	TracesGlobSize       int
+	s3Pool               *duckdbx.S3DB // shared pool for all queries
 }
 
 func NewWorkerService(
@@ -133,14 +135,22 @@ func NewWorkerService(
 		return nil
 	}
 
+	// Create a single shared S3DB pool for all queries
+	s3Pool, err := duckdbx.NewS3DB()
+	if err != nil {
+		slog.Error("Failed to create shared S3DB pool", slog.Any("error", err))
+		return nil
+	}
+
 	return &WorkerService{
-		MetricsCM:            NewCacheManager(downloader, "metrics", sp),
-		LogsCM:               NewCacheManager(downloader, "logs", sp),
-		TracesCM:             NewCacheManager(downloader, "traces", sp),
+		MetricsCM:            NewCacheManager(downloader, "metrics", sp, s3Pool),
+		LogsCM:               NewCacheManager(downloader, "logs", sp, s3Pool),
+		TracesCM:             NewCacheManager(downloader, "traces", sp, s3Pool),
 		StorageProfilePoller: sp,
 		MetricsGlobSize:      metricsGlobSize,
 		LogsGlobSize:         logsGlobSize,
 		TracesGlobSize:       tracesGlobSize,
+		s3Pool:               s3Pool,
 	}
 }
 
@@ -529,5 +539,20 @@ func (ws *WorkerService) Run(doneCtx context.Context) error {
 		return fmt.Errorf("failed to shutdown HTTP server: %w", err)
 	}
 
+	// Clean up resources
+	ws.Close()
+
 	return nil
+}
+
+func (ws *WorkerService) Close() {
+	if ws.MetricsCM != nil {
+		ws.MetricsCM.Close()
+	}
+	if ws.LogsCM != nil {
+		ws.LogsCM.Close()
+	}
+	if ws.s3Pool != nil {
+		_ = ws.s3Pool.Close()
+	}
 }

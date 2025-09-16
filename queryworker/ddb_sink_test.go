@@ -22,6 +22,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cardinalhq/lakerunner/internal/duckdbx"
 	"github.com/stretchr/testify/require"
 )
 
@@ -48,26 +49,33 @@ func TestDDBSink_IngestParquetBatch(t *testing.T) {
 		segmentIDs[i] = int64(1000 + i) // dummy segment IDs
 	}
 
-	// Step 3: Create fresh DDBSink (in-memory or file-backed)
-	sink, err := NewDDBSink("metrics", ctx)
+	// Step 3: Create a shared S3DB pool for testing
+	s3Pool, err := duckdbx.NewS3DB()
+	require.NoError(t, err, "failed to create S3DB pool")
+	defer func() { _ = s3Pool.Close() }()
+
+	// Step 4: Create fresh DDBSink (in-memory or file-backed)
+	sink, err := NewDDBSink("metrics", ctx, s3Pool)
 	require.NoError(t, err, "failed to create DDBSink")
 	defer func() { _ = sink.Close() }()
 
-	// Step 4: Ingest parquet files
+	// Step 5: Ingest parquet files
 	err = sink.IngestParquetBatch(ctx, parquetPaths, segmentIDs)
 	require.NoError(t, err, "failed to ingest parquet batch")
 
-	// Step 5: Validate row count
+	// Step 6: Validate row count
 	rowCount := sink.RowCount()
 	t.Logf("Ingested %d rows", rowCount)
 	require.Greater(t, rowCount, int64(0), "no rows ingested")
 
 	// Step 6: Optionally query segment_id column to check distinct values
-	db := sink.db
-	rows, conn, err := db.QueryContext(ctx, `SELECT DISTINCT segment_id FROM metrics_cached`)
+	conn, release, err := s3Pool.GetConnection(ctx, "local", "", "")
+	require.NoError(t, err, "get connection failed")
+	defer release()
+
+	rows, err := conn.QueryContext(ctx, `SELECT DISTINCT segment_id FROM metrics_cached`)
 	require.NoError(t, err, "query segment_id failed")
 	defer func() { _ = rows.Close() }()
-	defer func() { _ = conn.Close() }()
 
 	var seenIDs []int64
 	for rows.Next() {
