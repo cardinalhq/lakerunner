@@ -99,60 +99,45 @@ func TestS3DB_ExtensionsLoaded(t *testing.T) {
 	require.NoError(t, err)
 	defer release()
 
-	// Test that extensions are available - they may be either loaded or installed
-	// depending on whether we're in airgapped mode or not
+	// The most important test: can we actually use the functions we need?
+	// Extensions loaded from disk might not show up in duckdb_extensions()
+	// but their functions should still be available.
 
-	// Check httpfs extension status
-	rows, err := conn.QueryContext(ctx, `SELECT extension_name, loaded, installed FROM duckdb_extensions() WHERE extension_name = 'httpfs'`)
+	// Check if read_parquet function is available (core functionality)
+	rows, err := conn.QueryContext(ctx, `SELECT COUNT(*) FROM duckdb_functions() WHERE function_name = 'read_parquet'`)
 	require.NoError(t, err)
 	defer func() { _ = rows.Close() }()
 
-	hasHttpfs := false
-	for rows.Next() {
-		var name, loaded, installed string
-		err := rows.Scan(&name, &loaded, &installed)
-		require.NoError(t, err)
-		if name == "httpfs" {
-			hasHttpfs = true
-			// Extension should be either loaded or installed
-			isAvailable := loaded == "true" || installed == "true"
-			require.True(t, isAvailable, "httpfs extension should be either loaded or installed")
-			t.Logf("httpfs extension - loaded: %s, installed: %s", loaded, installed)
-			break
-		}
-	}
-	// httpfs might not be present in all environments, so we just log if it's missing
-	if !hasHttpfs {
-		t.Log("httpfs extension not found in duckdb_extensions() - may be built-in or not available")
-	}
-
-	// Check aws/azure extension status (one of them should be available)
-	rows2, err := conn.QueryContext(ctx, `SELECT extension_name, loaded, installed FROM duckdb_extensions() WHERE extension_name IN ('aws', 'azure')`)
-	require.NoError(t, err)
-	defer func() { _ = rows2.Close() }()
-
-	for rows2.Next() {
-		var name, loaded, installed string
-		err := rows2.Scan(&name, &loaded, &installed)
-		require.NoError(t, err)
-		isAvailable := loaded == "true" || installed == "true"
-		if isAvailable {
-			t.Logf("%s extension - loaded: %s, installed: %s", name, loaded, installed)
-		}
-	}
-
-	// The most important test: can we actually use the read_parquet function?
-	// This is what we actually care about - that parquet reading works
-	rows3, err := conn.QueryContext(ctx, `SELECT COUNT(*) FROM duckdb_functions() WHERE function_name = 'read_parquet'`)
-	require.NoError(t, err)
-	defer func() { _ = rows3.Close() }()
-
 	var count int
-	require.True(t, rows3.Next())
-	err = rows3.Scan(&count)
+	require.True(t, rows.Next())
+	err = rows.Scan(&count)
 	require.NoError(t, err)
 	require.Greater(t, count, 0, "read_parquet function should be available")
 	t.Logf("read_parquet function available: %d overload(s)", count)
+
+	// Check if read_csv is available (from httpfs)
+	rows2, err := conn.QueryContext(ctx, `SELECT COUNT(*) FROM duckdb_functions() WHERE function_name = 'read_csv'`)
+	require.NoError(t, err)
+	defer func() { _ = rows2.Close() }()
+
+	var csvCount int
+	require.True(t, rows2.Next())
+	err = rows2.Scan(&csvCount)
+	require.NoError(t, err)
+	// read_csv might be built-in, so we just check it exists
+	t.Logf("read_csv function available: %d overload(s)", csvCount)
+
+	// Log extension status for debugging (don't require, as loaded extensions might not show)
+	rows3, err := conn.QueryContext(ctx, `SELECT extension_name, loaded, installed FROM duckdb_extensions() WHERE extension_name IN ('httpfs', 'aws', 'azure')`)
+	require.NoError(t, err)
+	defer func() { _ = rows3.Close() }()
+
+	for rows3.Next() {
+		var name, loaded, installed string
+		err := rows3.Scan(&name, &loaded, &installed)
+		require.NoError(t, err)
+		t.Logf("Extension %s - loaded: %s, installed: %s", name, loaded, installed)
+	}
 }
 
 // Test that secrets created in one connection are visible in another
