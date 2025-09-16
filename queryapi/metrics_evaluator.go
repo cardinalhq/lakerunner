@@ -272,16 +272,37 @@ func (q *QuerierService) EvaluateMetricsQuery(
 						slog.Info("Pushdown to worker", "worker", worker, "numSegments", len(wsegs), "leafID", leafID)
 
 						//rangeMs := promql.RangeMsFromRange(leaf.Range)
-						reqStart := globalEnd
-						reqEnd := globalStart
+						minSegStart := int64(1<<63 - 1)
+						maxSegEnd := int64(-1)
 						for _, s := range wsegs {
-							if s.StartTs < reqStart {
-								reqStart = s.StartTs
+							if s.StartTs < minSegStart {
+								minSegStart = s.StartTs
 							}
-							if s.EndTs > reqEnd {
-								reqEnd = s.EndTs
+							if s.EndTs > maxSegEnd {
+								maxSegEnd = s.EndTs
 							}
 						}
+
+						// clamp to this group's window
+						clampedStart := max64(group.StartTs, minSegStart)
+						clampedEnd := min64(group.EndTs, maxSegEnd)
+
+						// snap to step boundaries: [start, end)
+						stepMs := stepDuration.Milliseconds()
+						snapDown := func(ms int64) int64 { return (ms / stepMs) * stepMs }
+						snapUp := func(ms int64) int64 {
+							if ms%stepMs == 0 {
+								return ms
+							}
+							return ((ms / stepMs) + 1) * stepMs
+						}
+
+						reqStart := snapDown(clampedStart)
+						reqEnd := snapUp(clampedEnd)
+						if reqEnd > group.EndTs {
+							reqEnd = group.EndTs
+						} // never run past group
+
 						req := PushDownRequest{
 							OrganizationID: orgID,
 							BaseExpr:       &leaf,
@@ -391,6 +412,20 @@ func tapStream(ctx context.Context, in <-chan promql.SketchInput, tag string) <-
 		}
 	}()
 	return out
+}
+
+func max64(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func min64(a, b int64) int64 {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // metricsPushDown should POST req to the worker’s /pushdown and return a channel that yields SketchInput
