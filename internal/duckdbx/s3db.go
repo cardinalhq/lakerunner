@@ -25,7 +25,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	_ "github.com/marcboeker/go-duckdb/v2"
 )
@@ -34,98 +33,100 @@ import (
 // DuckDB extension loading & DDL may crash when done concurrently in many engines.
 var duckdbDDLMu sync.Mutex
 
-// S3DB manages per-bucket pools of DuckDB *instances* (one DB+Conn per item).
+// S3DB manages a pool of DuckDB connections to a single shared on-disk database.
+// All connections open the same file and thus share the same in-process database instance.
+// Credentials are set per-bucket on each connection acquisition to support multiple buckets.
 type S3DB struct {
-	dsn string
+	dbPath string // single on-disk database file for all connections
 
-	// config
+	// config (applied once to the shared database instance)
 	memoryLimitMB int64
 	tempDir       string
 	maxTempSize   string
+	poolSize      int
+	threads       int // total threads for the shared database instance
 
-	poolSize       int
-	ttl            time.Duration
-	totalCores     int
-	threadsPerConn int
-
+	// one-time setup
+	setupOnce   sync.Once
+	setupErr    error
 	installOnce sync.Once
 	installErr  error
 
-	poolsMu sync.Mutex
-	pools   map[string]*bucketPool
+	// Single global pool
+	pool *connectionPool
 }
 
-type bucketPool struct {
-	parent   *S3DB
-	bucket   string
-	region   string
-	endpoint string
-	size     int
-	ttl      time.Duration
+type connectionPool struct {
+	parent *S3DB
+	size   int
 
 	mu  sync.Mutex
 	cur int
 
-	ch   chan *pooledConn
-	init sync.Once
+	ch chan *pooledConn
 }
 
 type pooledConn struct {
-	db      *sql.DB
-	conn    *sql.Conn
-	expires time.Time
+	db   *sql.DB
+	conn *sql.Conn
 }
 
-func NewS3DB(dataSourceName string) (*S3DB, error) {
-	// Prefer in-memory DB unless the caller really wants a file;
-	// treat legacy "s3" as a hint for in-memory.
-	if dataSourceName == "s3" {
-		dataSourceName = ""
+func NewS3DB() (*S3DB, error) {
+	// Always use a single on-disk database to reduce memory footprint
+	// Create a temp directory and single database file
+	dbDir, err := os.MkdirTemp("", "duckdb-global-*")
+	if err != nil {
+		return nil, fmt.Errorf("create temp dir for S3DB: %w", err)
 	}
+
+	dbPath := filepath.Join(dbDir, "global.ddb")
 
 	memoryMB := envInt64("DUCKDB_MEMORY_LIMIT", 0)
 
 	// Default pool: half the cores, capped at 8, min 2.
-	// (Avoid oversubscription when each connection has multiple threads.)
 	poolDefault := min(8, max(2, runtime.GOMAXPROCS(0)/2))
 	poolSize := envIntClamp("DUCKDB_S3_POOL_SIZE", poolDefault, 1, 512)
 
-	ttl := envDurationSeconds("DUCKDB_S3_CONN_TTL_SECONDS", 240)
-
 	total := runtime.GOMAXPROCS(0)
-	// Split cores across connections by default; allow explicit override.
-	perConnDefault := max(1, total/max(1, poolSize))
-	threadsPerConn := envIntClamp("DUCKDB_THREADS_PER_CONN", perConnDefault, 1, 256)
-	slog.Info("duckdbx:",
-		"dsn", dataSourceName,
+	// All connections share the same database, so threads setting applies to the shared instance
+	threads := envIntClamp("DUCKDB_THREADS", total, 1, 256)
+	slog.Info("duckdbx: single shared database",
+		"dbPath", dbPath,
 		"memoryLimitMB", memoryMB,
 		"tempDir", os.Getenv("DUCKDB_TEMP_DIRECTORY"),
 		"maxTempSize", os.Getenv("DUCKDB_MAX_TEMP_DIRECTORY_SIZE"),
 		"poolSize", poolSize,
-		"ttl", ttl.String(),
-		"totalCores", total,
-		"threadsPerConn", threadsPerConn)
+		"threads", threads)
 
-	return &S3DB{
-		dsn:            dataSourceName,
-		memoryLimitMB:  memoryMB,
-		tempDir:        os.Getenv("DUCKDB_TEMP_DIRECTORY"),
-		maxTempSize:    os.Getenv("DUCKDB_MAX_TEMP_DIRECTORY_SIZE"),
-		poolSize:       poolSize,
-		ttl:            ttl,
-		totalCores:     total,
-		threadsPerConn: threadsPerConn,
-		pools:          make(map[string]*bucketPool, 32),
-	}, nil
+	s3db := &S3DB{
+		dbPath:        dbPath,
+		memoryLimitMB: memoryMB,
+		tempDir:       os.Getenv("DUCKDB_TEMP_DIRECTORY"),
+		maxTempSize:   os.Getenv("DUCKDB_MAX_TEMP_DIRECTORY_SIZE"),
+		poolSize:      poolSize,
+		threads:       threads,
+	}
+
+	// Initialize the global pool
+	s3db.pool = &connectionPool{
+		parent: s3db,
+		size:   poolSize,
+		ch:     make(chan *pooledConn, poolSize),
+	}
+
+	return s3db, nil
 }
 
 func (s *S3DB) Close() error {
-	s.poolsMu.Lock()
-	for _, p := range s.pools {
-		p.closeAll()
+	if s.pool != nil {
+		s.pool.closeAll()
 	}
-	s.pools = map[string]*bucketPool{}
-	s.poolsMu.Unlock()
+
+	// Clean up the database file and its directory
+	if s.dbPath != "" {
+		dbDir := filepath.Dir(s.dbPath)
+		_ = os.RemoveAll(dbDir)
+	}
 	return nil
 }
 
@@ -133,40 +134,35 @@ func (s *S3DB) GetConnection(ctx context.Context, bucket, region string, endpoin
 	if bucket == "" {
 		return nil, nil, fmt.Errorf("bucket is required")
 	}
-	s.poolsMu.Lock()
-	p := s.pools[bucket]
-	if p == nil {
-		p = &bucketPool{
-			parent:   s,
-			bucket:   bucket,
-			region:   region,
-			endpoint: endpoint,
-			size:     s.poolSize,
-			ttl:      s.ttl,
-			ch:       make(chan *pooledConn, s.poolSize),
-		}
-		s.pools[bucket] = p
-	}
-	s.poolsMu.Unlock()
-	return p.acquire(ctx)
+	return s.pool.acquire(ctx, bucket, region, endpoint)
 }
 
-func (p *bucketPool) acquire(ctx context.Context) (*sql.Conn, func(), error) {
-	p.init.Do(func() {})
-	now := time.Now()
+func (p *connectionPool) acquire(ctx context.Context, bucket, region, endpoint string) (*sql.Conn, func(), error) {
+	// Helper function to ensure credentials are set for the bucket
+	ensureCredentials := func(conn *sql.Conn) error {
+		// Skip for local file operations
+		if bucket == "local" {
+			return nil
+		}
+		// Create/replace the secret for this bucket
+		// This is idempotent - CREATE OR REPLACE will update if needed
+		return seedCloudSecretFromEnv(ctx, conn, bucket, region, endpoint)
+	}
 
-	// try pooled
+	// try to get a pooled connection
 	select {
 	case pc := <-p.ch:
-		if now.After(pc.expires) {
+		// Ensure credentials are configured for this specific bucket
+		if err := ensureCredentials(pc.conn); err != nil {
+			// If we can't set credentials, close this connection and try to create a new one
 			_ = pc.conn.Close()
 			_ = pc.db.Close()
 			p.mu.Lock()
 			p.cur--
 			p.mu.Unlock()
-		} else {
-			return pc.conn, func() { p.release(pc) }, nil
+			return nil, nil, err
 		}
+		return pc.conn, func() { p.release(pc) }, nil
 	default:
 	}
 
@@ -179,7 +175,7 @@ func (p *bucketPool) acquire(ctx context.Context) (*sql.Conn, func(), error) {
 	p.mu.Unlock()
 
 	if canCreate {
-		pc, err := p.newConn(ctx)
+		pc, err := p.newConn(ctx, bucket, region, endpoint)
 		if err != nil {
 			p.mu.Lock()
 			p.cur--
@@ -189,47 +185,53 @@ func (p *bucketPool) acquire(ctx context.Context) (*sql.Conn, func(), error) {
 		return pc.conn, func() { p.release(pc) }, nil
 	}
 
-	// wait for one
+	// wait for one to become available
 	select {
 	case <-ctx.Done():
 		return nil, nil, ctx.Err()
 	case pc := <-p.ch:
-		if time.Now().After(pc.expires) {
+		// Ensure credentials are configured for this specific bucket
+		if err := ensureCredentials(pc.conn); err != nil {
+			// If we can't set credentials, close this connection and try again
 			_ = pc.conn.Close()
 			_ = pc.db.Close()
 			p.mu.Lock()
 			p.cur--
 			p.mu.Unlock()
-			return p.acquire(ctx)
+			return nil, nil, err
 		}
 		return pc.conn, func() { p.release(pc) }, nil
 	}
 }
 
-func (p *bucketPool) release(pc *pooledConn) {
-	if time.Now().After(pc.expires) {
+func (p *connectionPool) release(pc *pooledConn) {
+	// Simply return to pool - no expiration checks needed
+	select {
+	case p.ch <- pc:
+		// returned to pool
+	default:
+		// pool is full (shouldn't happen), close this connection
 		_ = pc.conn.Close()
 		_ = pc.db.Close()
 		p.mu.Lock()
 		p.cur--
 		p.mu.Unlock()
-		return
 	}
-	p.ch <- pc
 }
 
-func (p *bucketPool) newConn(ctx context.Context) (*pooledConn, error) {
-	// best-effort global INSTALL for dev mode
-	if err := p.parent.ensureInstall(ctx); err != nil {
+func (p *connectionPool) newConn(ctx context.Context, bucket, region, endpoint string) (*pooledConn, error) {
+	// Ensure extensions are installed and database-wide settings are applied (once)
+	if err := p.parent.ensureSetup(ctx); err != nil {
 		return nil, err
 	}
 
-	// brand-new DB instance for this pooled item
-	db, err := sql.Open("duckdb", p.parent.dsn)
+	// Open a connection to the shared database file
+	// All connections opening the same file share the same in-process database instance
+	db, err := sql.Open("duckdb", p.parent.dbPath)
 	if err != nil {
 		return nil, err
 	}
-	// one physical connection per DB instance
+	// one physical connection per DB handle
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 
@@ -239,28 +241,23 @@ func (p *bucketPool) newConn(ctx context.Context) (*pooledConn, error) {
 		return nil, err
 	}
 
-	// per-connection setup
-	if err := p.parent.setupConn(ctx, conn); err != nil {
-		_ = conn.Close()
-		_ = db.Close()
-		return nil, err
-	}
-
 	// create cloud storage secret for this bucket (serialize DDL)
-	if err := seedCloudSecretFromEnv(ctx, conn, p.bucket, p.region, p.endpoint); err != nil {
-		_ = conn.Close()
-		_ = db.Close()
-		return nil, err
+	// Skip for local file operations
+	if bucket != "local" {
+		if err := seedCloudSecretFromEnv(ctx, conn, bucket, region, endpoint); err != nil {
+			_ = conn.Close()
+			_ = db.Close()
+			return nil, err
+		}
 	}
 
 	return &pooledConn{
-		db:      db,
-		conn:    conn,
-		expires: time.Now().Add(p.ttl),
+		db:   db,
+		conn: conn,
 	}, nil
 }
 
-func (p *bucketPool) closeAll() {
+func (p *connectionPool) closeAll() {
 	for {
 		select {
 		case pc := <-p.ch:
@@ -272,37 +269,71 @@ func (p *bucketPool) closeAll() {
 	}
 }
 
-func (s *S3DB) setupConn(ctx context.Context, conn *sql.Conn) error {
-	if s.memoryLimitMB > 0 {
-		slog.Info("Setting memory limit for DuckDB", "memoryLimitMB", s.memoryLimitMB)
-		if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET memory_limit='%dMB';", s.memoryLimitMB)); err != nil {
-			return fmt.Errorf("set memory_limit: %w", err)
+// ensureSetup runs once to configure the shared database instance and load extensions
+func (s *S3DB) ensureSetup(ctx context.Context) error {
+	s.setupOnce.Do(func() {
+		// Open a temporary connection to configure the database
+		db, err := sql.Open("duckdb", s.dbPath)
+		if err != nil {
+			s.setupErr = fmt.Errorf("open db for setup: %w", err)
+			return
 		}
-	}
-	if s.tempDir != "" {
-		if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET temp_directory = '%s';", escapeSingle(s.tempDir))); err != nil {
-			return fmt.Errorf("set temp_directory: %w", err)
-		}
-	}
-	if s.maxTempSize != "" {
-		if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET max_temp_directory_size = '%s';", escapeSingle(s.maxTempSize))); err != nil {
-			return fmt.Errorf("set max_temp_directory_size: %w", err)
-		}
-	}
+		defer func() { _ = db.Close() }()
 
-	if _, err := conn.ExecContext(ctx, fmt.Sprintf("PRAGMA threads=%d;", s.threadsPerConn)); err != nil {
-		return fmt.Errorf("set threads: %w", err)
-	}
-	// Keep DuckDB's object cache on to reduce repeated S3 GETs for metadata/manifest.
-	if _, err := conn.ExecContext(ctx, "PRAGMA enable_object_cache;"); err != nil {
-		return fmt.Errorf("enable_object_cache: %w", err)
-	}
+		conn, err := db.Conn(ctx)
+		if err != nil {
+			s.setupErr = fmt.Errorf("get conn for setup: %w", err)
+			return
+		}
+		defer func() { _ = conn.Close() }()
 
-	// LOAD extensions (serialize LOAD across engines)
-	duckdbDDLMu.Lock()
-	err := s.loadExtensions(ctx, conn)
-	duckdbDDLMu.Unlock()
-	return err
+		// Configure database-wide settings (these affect the shared instance)
+		if s.memoryLimitMB > 0 {
+			slog.Info("Setting memory limit for shared DuckDB instance", "memoryLimitMB", s.memoryLimitMB)
+			if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET memory_limit='%dMB';", s.memoryLimitMB)); err != nil {
+				s.setupErr = fmt.Errorf("set memory_limit: %w", err)
+				return
+			}
+		}
+		if s.tempDir != "" {
+			if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET temp_directory = '%s';", escapeSingle(s.tempDir))); err != nil {
+				s.setupErr = fmt.Errorf("set temp_directory: %w", err)
+				return
+			}
+		}
+		if s.maxTempSize != "" {
+			if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET max_temp_directory_size = '%s';", escapeSingle(s.maxTempSize))); err != nil {
+				s.setupErr = fmt.Errorf("set max_temp_directory_size: %w", err)
+				return
+			}
+		}
+
+		if _, err := conn.ExecContext(ctx, fmt.Sprintf("PRAGMA threads=%d;", s.threads)); err != nil {
+			s.setupErr = fmt.Errorf("set threads: %w", err)
+			return
+		}
+		// Enable object cache for S3 operations
+		if _, err := conn.ExecContext(ctx, "PRAGMA enable_object_cache;"); err != nil {
+			s.setupErr = fmt.Errorf("enable_object_cache: %w", err)
+			return
+		}
+
+		// LOAD extensions (serialize LOAD across engines)
+		duckdbDDLMu.Lock()
+		err = s.loadExtensions(ctx, conn)
+		duckdbDDLMu.Unlock()
+		if err != nil {
+			s.setupErr = err
+			return
+		}
+
+		// Install extensions if in dev mode
+		if err := s.ensureInstall(ctx); err != nil {
+			s.setupErr = err
+			return
+		}
+	})
+	return s.setupErr
 }
 
 // Dev-mode best-effort INSTALL once. Air-gapped: only LOAD.
@@ -311,7 +342,7 @@ func (s *S3DB) ensureInstall(ctx context.Context) error {
 		return nil
 	}
 	s.installOnce.Do(func() {
-		db, err := sql.Open("duckdb", s.dsn)
+		db, err := sql.Open("duckdb", s.dbPath)
 		if err != nil {
 			s.installErr = err
 			return
@@ -423,7 +454,7 @@ func hasAzureCredentials() bool {
 }
 
 // CREATE OR REPLACE SECRET for Azure Blob Storage (serialized).
-func seedAzureSecretFromEnv(ctx context.Context, conn *sql.Conn, container, region string, endpoint string) error {
+func seedAzureSecretFromEnv(ctx context.Context, conn *sql.Conn, container, _ string, endpoint string) error {
 	authType := os.Getenv("AZURE_AUTH_TYPE")
 	if authType == "" {
 		authType = "credential_chain" // Default to credential chain
@@ -579,17 +610,6 @@ func envIntClamp(name string, def, minv, maxv int) int {
 		}
 	}
 	return def
-}
-func envDurationSeconds(name string, defSec int) time.Duration {
-	if v := os.Getenv(name); v != "" {
-		if iv, err := strconv.Atoi(v); err == nil && iv >= 0 {
-			return time.Duration(iv) * time.Second
-		}
-		if d, err := time.ParseDuration(v); err == nil {
-			return d
-		}
-	}
-	return time.Duration(defSec) * time.Second
 }
 
 // small helpers (int)
