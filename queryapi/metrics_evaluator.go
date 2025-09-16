@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"math"
 	"sync"
 	"time"
 
@@ -237,6 +236,11 @@ func (q *QuerierService) EvaluateMetricsQuery(
 				leafChans := make([]<-chan promql.SketchInput, 0, len(segmentsByLeaf))
 				for leafID, segmentsForLeaf := range segmentsByLeaf {
 					leaf := leavesByID[leafID]
+					offMs, err := parseOffsetMs(leaf.Offset)
+					if err != nil {
+						slog.Error("invalid offset on leaf; ignoring offset", "offset", leaf.Offset, "err", err)
+						offMs = 0
+					}
 
 					// worker mapping just for this leaf’s segments
 					segmentIDs := make([]int64, 0, len(segmentsForLeaf))
@@ -268,50 +272,21 @@ func (q *QuerierService) EvaluateMetricsQuery(
 						slog.Info("Pushdown to worker", "worker", worker, "numSegments", len(wsegs), "leafID", leafID)
 
 						//rangeMs := promql.RangeMsFromRange(leaf.Range)
-						offMs, _ := parseOffsetMs(leaf.Offset)
-						rangeMs := promql.RangeMsFromRange(leaf.Range) // 0 if no range
-
-						// 1) storage envelope of the worker’s segments
-						storMin, storMax := int64(math.MaxInt64), int64(math.MinInt64)
+						reqStart := globalEnd
+						reqEnd := globalStart
 						for _, s := range wsegs {
-							if s.StartTs < storMin {
-								storMin = s.StartTs
+							if s.StartTs < reqStart {
+								reqStart = s.StartTs
 							}
-							if s.EndTs > storMax {
-								storMax = s.EndTs
+							if s.EndTs > reqEnd {
+								reqEnd = s.EndTs
 							}
 						}
-						if storMin == math.MaxInt64 { /* no segments */
-							continue
-						}
-
-						// 2) group window mapped to storage time, with look-back
-						storGStart := group.StartTs - offMs - rangeMs // left edge needs look-back
-						storGEnd := group.EndTs - offMs               // right edge does not
-
-						// 3) intersect
-						reqStart := storMin
-						if storGStart > reqStart {
-							reqStart = storGStart
-						}
-						reqEnd := storMax
-						if storGEnd < reqEnd {
-							reqEnd = storGEnd
-						}
-
-						// guard
-						if reqStart >= reqEnd {
-							slog.Info("nothing to push after intersection",
-								"gi", gi, "leaf", leafID, "worker", worker, "reqStart", reqStart, "reqEnd", reqEnd)
-							continue
-						}
-
-						// 4) push down
 						req := PushDownRequest{
 							OrganizationID: orgID,
 							BaseExpr:       &leaf,
-							StartTs:        reqStart, // STORAGE time
-							EndTs:          reqEnd,   // STORAGE time
+							StartTs:        reqStart,
+							EndTs:          reqEnd,
 							Segments:       wsegs,
 							Step:           stepDuration,
 						}
