@@ -38,16 +38,6 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-type Worker struct {
-	IP   string
-	Port int
-}
-
-type SegmentWorkerMapping struct {
-	SegmentID int64
-	Worker    Worker
-}
-
 type KubernetesWorkerDiscovery struct {
 	BaseWorkerDiscovery
 

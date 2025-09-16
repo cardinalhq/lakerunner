@@ -23,6 +23,18 @@ import (
 	"github.com/google/uuid"
 )
 
+// Worker represents a discovered worker instance
+type Worker struct {
+	IP   string
+	Port int
+}
+
+// SegmentWorkerMapping represents the assignment of a segment to a worker
+type SegmentWorkerMapping struct {
+	SegmentID int64
+	Worker    Worker
+}
+
 // BaseWorkerDiscovery provides common functionality for worker discovery implementations
 type BaseWorkerDiscovery struct {
 	mu      sync.RWMutex

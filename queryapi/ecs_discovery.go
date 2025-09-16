@@ -27,6 +27,12 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ecs/types"
 )
 
+// EcsClientInterface defines the ECS client methods needed for worker discovery
+type EcsClientInterface interface {
+	ListTasks(ctx context.Context, params *ecs.ListTasksInput, optFns ...func(*ecs.Options)) (*ecs.ListTasksOutput, error)
+	DescribeTasks(ctx context.Context, params *ecs.DescribeTasksInput, optFns ...func(*ecs.Options)) (*ecs.DescribeTasksOutput, error)
+}
+
 type EcsWorkerDiscovery struct {
 	BaseWorkerDiscovery
 
@@ -37,7 +43,7 @@ type EcsWorkerDiscovery struct {
 	interval    time.Duration
 
 	// clients
-	ecsClient *ecs.Client
+	ecsClient EcsClientInterface
 
 	// state
 	cancelFunc context.CancelFunc
@@ -53,6 +59,17 @@ type EcsWorkerDiscoveryConfig struct {
 }
 
 func NewEcsWorkerDiscovery(cfg EcsWorkerDiscoveryConfig) (*EcsWorkerDiscovery, error) {
+	// Load AWS config
+	awsCfg, err := config.LoadDefaultConfig(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("failed to load AWS config: %w", err)
+	}
+
+	ecsClient := ecs.NewFromConfig(awsCfg)
+	return NewEcsWorkerDiscoveryWithClient(cfg, ecsClient)
+}
+
+func NewEcsWorkerDiscoveryWithClient(cfg EcsWorkerDiscoveryConfig, ecsClient EcsClientInterface) (*EcsWorkerDiscovery, error) {
 	if cfg.ServiceName == "" {
 		return nil, fmt.Errorf("ServiceName is required")
 	}
@@ -65,14 +82,6 @@ func NewEcsWorkerDiscovery(cfg EcsWorkerDiscoveryConfig) (*EcsWorkerDiscovery, e
 	if cfg.Interval == 0 {
 		cfg.Interval = 10 * time.Second
 	}
-
-	// Load AWS config
-	awsCfg, err := config.LoadDefaultConfig(context.Background())
-	if err != nil {
-		return nil, fmt.Errorf("failed to load AWS config: %w", err)
-	}
-
-	ecsClient := ecs.NewFromConfig(awsCfg)
 
 	return &EcsWorkerDiscovery{
 		serviceName: cfg.ServiceName,
@@ -135,30 +144,56 @@ func (e *EcsWorkerDiscovery) Stop() error {
 }
 
 func (e *EcsWorkerDiscovery) discoverWorkers(ctx context.Context) error {
-	// List tasks for the worker service
-	listResp, err := e.ecsClient.ListTasks(ctx, &ecs.ListTasksInput{
-		Cluster:     aws.String(e.clusterName),
-		ServiceName: aws.String(e.serviceName),
-	})
-	if err != nil {
-		return fmt.Errorf("failed to list ECS tasks: %w", err)
+	// Collect all task ARNs across paginated ListTasks calls
+	var allTaskArns []string
+	var nextToken *string
+
+	for {
+		listInput := &ecs.ListTasksInput{
+			Cluster:     aws.String(e.clusterName),
+			ServiceName: aws.String(e.serviceName),
+			NextToken:   nextToken,
+		}
+
+		listResp, err := e.ecsClient.ListTasks(ctx, listInput)
+		if err != nil {
+			return fmt.Errorf("failed to list ECS tasks: %w", err)
+		}
+
+		allTaskArns = append(allTaskArns, listResp.TaskArns...)
+
+		// Check if there are more pages
+		if listResp.NextToken == nil {
+			break
+		}
+		nextToken = listResp.NextToken
 	}
 
-	if len(listResp.TaskArns) == 0 {
+	if len(allTaskArns) == 0 {
 		e.updateWorkers(nil)
 		return nil
 	}
 
-	// Describe tasks to get network details
-	descResp, err := e.ecsClient.DescribeTasks(ctx, &ecs.DescribeTasksInput{
-		Cluster: aws.String(e.clusterName),
-		Tasks:   listResp.TaskArns,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to describe ECS tasks: %w", err)
+	// DescribeTasks has a limit of 100 tasks per call, so batch the requests
+	var allTasks []types.Task
+	batchSize := 100
+
+	for i := 0; i < len(allTaskArns); i += batchSize {
+		end := min(i+batchSize, len(allTaskArns))
+
+		batch := allTaskArns[i:end]
+		descResp, err := e.ecsClient.DescribeTasks(ctx, &ecs.DescribeTasksInput{
+			Cluster: aws.String(e.clusterName),
+			Tasks:   batch,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to describe ECS tasks batch %d-%d: %w", i, end-1, err)
+		}
+
+		allTasks = append(allTasks, descResp.Tasks...)
 	}
 
-	workers := e.extractWorkers(descResp.Tasks)
+	workers := e.extractWorkers(allTasks)
 	e.updateWorkers(workers)
 
 	return nil
