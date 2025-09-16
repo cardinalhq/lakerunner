@@ -612,6 +612,186 @@ func (x *UpdateOrganizationResponse) GetOrganization() *Organization {
 	return nil
 }
 
+type GetConsumerLagRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	GroupFilter   string                 `protobuf:"bytes,1,opt,name=group_filter,json=groupFilter,proto3" json:"group_filter,omitempty"`
+	TopicFilter   string                 `protobuf:"bytes,2,opt,name=topic_filter,json=topicFilter,proto3" json:"topic_filter,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetConsumerLagRequest) Reset() {
+	*x = GetConsumerLagRequest{}
+	mi := &file_admin_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetConsumerLagRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetConsumerLagRequest) ProtoMessage() {}
+
+func (x *GetConsumerLagRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetConsumerLagRequest.ProtoReflect.Descriptor instead.
+func (*GetConsumerLagRequest) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *GetConsumerLagRequest) GetGroupFilter() string {
+	if x != nil {
+		return x.GroupFilter
+	}
+	return ""
+}
+
+func (x *GetConsumerLagRequest) GetTopicFilter() string {
+	if x != nil {
+		return x.TopicFilter
+	}
+	return ""
+}
+
+type GetConsumerLagResponse struct {
+	state         protoimpl.MessageState  `protogen:"open.v1"`
+	Lags          []*ConsumerPartitionLag `protobuf:"bytes,1,rep,name=lags,proto3" json:"lags,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetConsumerLagResponse) Reset() {
+	*x = GetConsumerLagResponse{}
+	mi := &file_admin_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetConsumerLagResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetConsumerLagResponse) ProtoMessage() {}
+
+func (x *GetConsumerLagResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetConsumerLagResponse.ProtoReflect.Descriptor instead.
+func (*GetConsumerLagResponse) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *GetConsumerLagResponse) GetLags() []*ConsumerPartitionLag {
+	if x != nil {
+		return x.Lags
+	}
+	return nil
+}
+
+type ConsumerPartitionLag struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Topic         string                 `protobuf:"bytes,1,opt,name=topic,proto3" json:"topic,omitempty"`
+	Partition     int32                  `protobuf:"varint,2,opt,name=partition,proto3" json:"partition,omitempty"`
+	CurrentOffset int64                  `protobuf:"varint,3,opt,name=current_offset,json=currentOffset,proto3" json:"current_offset,omitempty"`
+	HighWaterMark int64                  `protobuf:"varint,4,opt,name=high_water_mark,json=highWaterMark,proto3" json:"high_water_mark,omitempty"`
+	Lag           int64                  `protobuf:"varint,5,opt,name=lag,proto3" json:"lag,omitempty"`
+	ConsumerGroup string                 `protobuf:"bytes,6,opt,name=consumer_group,json=consumerGroup,proto3" json:"consumer_group,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ConsumerPartitionLag) Reset() {
+	*x = ConsumerPartitionLag{}
+	mi := &file_admin_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ConsumerPartitionLag) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ConsumerPartitionLag) ProtoMessage() {}
+
+func (x *ConsumerPartitionLag) ProtoReflect() protoreflect.Message {
+	mi := &file_admin_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ConsumerPartitionLag.ProtoReflect.Descriptor instead.
+func (*ConsumerPartitionLag) Descriptor() ([]byte, []int) {
+	return file_admin_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *ConsumerPartitionLag) GetTopic() string {
+	if x != nil {
+		return x.Topic
+	}
+	return ""
+}
+
+func (x *ConsumerPartitionLag) GetPartition() int32 {
+	if x != nil {
+		return x.Partition
+	}
+	return 0
+}
+
+func (x *ConsumerPartitionLag) GetCurrentOffset() int64 {
+	if x != nil {
+		return x.CurrentOffset
+	}
+	return 0
+}
+
+func (x *ConsumerPartitionLag) GetHighWaterMark() int64 {
+	if x != nil {
+		return x.HighWaterMark
+	}
+	return 0
+}
+
+func (x *ConsumerPartitionLag) GetLag() int64 {
+	if x != nil {
+		return x.Lag
+	}
+	return 0
+}
+
+func (x *ConsumerPartitionLag) GetConsumerGroup() string {
+	if x != nil {
+		return x.ConsumerGroup
+	}
+	return ""
+}
+
 var File_admin_proto protoreflect.FileDescriptor
 
 const file_admin_proto_rawDesc = "" +
@@ -647,13 +827,26 @@ const file_admin_proto_rawDesc = "" +
 	"\x04name\x18\x02 \x01(\v2\x1c.google.protobuf.StringValueR\x04name\x124\n" +
 	"\aenabled\x18\x03 \x01(\v2\x1a.google.protobuf.BoolValueR\aenabled\"Z\n" +
 	"\x1aUpdateOrganizationResponse\x12<\n" +
-	"\forganization\x18\x01 \x01(\v2\x18.adminproto.OrganizationR\forganization2\xcb\x03\n" +
+	"\forganization\x18\x01 \x01(\v2\x18.adminproto.OrganizationR\forganization\"]\n" +
+	"\x15GetConsumerLagRequest\x12!\n" +
+	"\fgroup_filter\x18\x01 \x01(\tR\vgroupFilter\x12!\n" +
+	"\ftopic_filter\x18\x02 \x01(\tR\vtopicFilter\"N\n" +
+	"\x16GetConsumerLagResponse\x124\n" +
+	"\x04lags\x18\x01 \x03(\v2 .adminproto.ConsumerPartitionLagR\x04lags\"\xd2\x01\n" +
+	"\x14ConsumerPartitionLag\x12\x14\n" +
+	"\x05topic\x18\x01 \x01(\tR\x05topic\x12\x1c\n" +
+	"\tpartition\x18\x02 \x01(\x05R\tpartition\x12%\n" +
+	"\x0ecurrent_offset\x18\x03 \x01(\x03R\rcurrentOffset\x12&\n" +
+	"\x0fhigh_water_mark\x18\x04 \x01(\x03R\rhighWaterMark\x12\x10\n" +
+	"\x03lag\x18\x05 \x01(\x03R\x03lag\x12%\n" +
+	"\x0econsumer_group\x18\x06 \x01(\tR\rconsumerGroup2\xa4\x04\n" +
 	"\fAdminService\x129\n" +
 	"\x04Ping\x12\x17.adminproto.PingRequest\x1a\x18.adminproto.PingResponse\x12T\n" +
 	"\rInQueueStatus\x12 .adminproto.InQueueStatusRequest\x1a!.adminproto.InQueueStatusResponse\x12`\n" +
 	"\x11ListOrganizations\x12$.adminproto.ListOrganizationsRequest\x1a%.adminproto.ListOrganizationsResponse\x12c\n" +
 	"\x12CreateOrganization\x12%.adminproto.CreateOrganizationRequest\x1a&.adminproto.CreateOrganizationResponse\x12c\n" +
-	"\x12UpdateOrganization\x12%.adminproto.UpdateOrganizationRequest\x1a&.adminproto.UpdateOrganizationResponseB-Z+github.com/cardinalhq/lakerunner/adminprotob\x06proto3"
+	"\x12UpdateOrganization\x12%.adminproto.UpdateOrganizationRequest\x1a&.adminproto.UpdateOrganizationResponse\x12W\n" +
+	"\x0eGetConsumerLag\x12!.adminproto.GetConsumerLagRequest\x1a\".adminproto.GetConsumerLagResponseB-Z+github.com/cardinalhq/lakerunner/adminprotob\x06proto3"
 
 var (
 	file_admin_proto_rawDescOnce sync.Once
@@ -667,7 +860,7 @@ func file_admin_proto_rawDescGZIP() []byte {
 	return file_admin_proto_rawDescData
 }
 
-var file_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
 var file_admin_proto_goTypes = []any{
 	(*PingRequest)(nil),                // 0: adminproto.PingRequest
 	(*PingResponse)(nil),               // 1: adminproto.PingResponse
@@ -681,31 +874,37 @@ var file_admin_proto_goTypes = []any{
 	(*CreateOrganizationResponse)(nil), // 9: adminproto.CreateOrganizationResponse
 	(*UpdateOrganizationRequest)(nil),  // 10: adminproto.UpdateOrganizationRequest
 	(*UpdateOrganizationResponse)(nil), // 11: adminproto.UpdateOrganizationResponse
-	(*wrapperspb.StringValue)(nil),     // 12: google.protobuf.StringValue
-	(*wrapperspb.BoolValue)(nil),       // 13: google.protobuf.BoolValue
+	(*GetConsumerLagRequest)(nil),      // 12: adminproto.GetConsumerLagRequest
+	(*GetConsumerLagResponse)(nil),     // 13: adminproto.GetConsumerLagResponse
+	(*ConsumerPartitionLag)(nil),       // 14: adminproto.ConsumerPartitionLag
+	(*wrapperspb.StringValue)(nil),     // 15: google.protobuf.StringValue
+	(*wrapperspb.BoolValue)(nil),       // 16: google.protobuf.BoolValue
 }
 var file_admin_proto_depIdxs = []int32{
 	4,  // 0: adminproto.InQueueStatusResponse.items:type_name -> adminproto.InQueueItem
 	5,  // 1: adminproto.ListOrganizationsResponse.organizations:type_name -> adminproto.Organization
 	5,  // 2: adminproto.CreateOrganizationResponse.organization:type_name -> adminproto.Organization
-	12, // 3: adminproto.UpdateOrganizationRequest.name:type_name -> google.protobuf.StringValue
-	13, // 4: adminproto.UpdateOrganizationRequest.enabled:type_name -> google.protobuf.BoolValue
+	15, // 3: adminproto.UpdateOrganizationRequest.name:type_name -> google.protobuf.StringValue
+	16, // 4: adminproto.UpdateOrganizationRequest.enabled:type_name -> google.protobuf.BoolValue
 	5,  // 5: adminproto.UpdateOrganizationResponse.organization:type_name -> adminproto.Organization
-	0,  // 6: adminproto.AdminService.Ping:input_type -> adminproto.PingRequest
-	2,  // 7: adminproto.AdminService.InQueueStatus:input_type -> adminproto.InQueueStatusRequest
-	6,  // 8: adminproto.AdminService.ListOrganizations:input_type -> adminproto.ListOrganizationsRequest
-	8,  // 9: adminproto.AdminService.CreateOrganization:input_type -> adminproto.CreateOrganizationRequest
-	10, // 10: adminproto.AdminService.UpdateOrganization:input_type -> adminproto.UpdateOrganizationRequest
-	1,  // 11: adminproto.AdminService.Ping:output_type -> adminproto.PingResponse
-	3,  // 12: adminproto.AdminService.InQueueStatus:output_type -> adminproto.InQueueStatusResponse
-	7,  // 13: adminproto.AdminService.ListOrganizations:output_type -> adminproto.ListOrganizationsResponse
-	9,  // 14: adminproto.AdminService.CreateOrganization:output_type -> adminproto.CreateOrganizationResponse
-	11, // 15: adminproto.AdminService.UpdateOrganization:output_type -> adminproto.UpdateOrganizationResponse
-	11, // [11:16] is the sub-list for method output_type
-	6,  // [6:11] is the sub-list for method input_type
-	6,  // [6:6] is the sub-list for extension type_name
-	6,  // [6:6] is the sub-list for extension extendee
-	0,  // [0:6] is the sub-list for field type_name
+	14, // 6: adminproto.GetConsumerLagResponse.lags:type_name -> adminproto.ConsumerPartitionLag
+	0,  // 7: adminproto.AdminService.Ping:input_type -> adminproto.PingRequest
+	2,  // 8: adminproto.AdminService.InQueueStatus:input_type -> adminproto.InQueueStatusRequest
+	6,  // 9: adminproto.AdminService.ListOrganizations:input_type -> adminproto.ListOrganizationsRequest
+	8,  // 10: adminproto.AdminService.CreateOrganization:input_type -> adminproto.CreateOrganizationRequest
+	10, // 11: adminproto.AdminService.UpdateOrganization:input_type -> adminproto.UpdateOrganizationRequest
+	12, // 12: adminproto.AdminService.GetConsumerLag:input_type -> adminproto.GetConsumerLagRequest
+	1,  // 13: adminproto.AdminService.Ping:output_type -> adminproto.PingResponse
+	3,  // 14: adminproto.AdminService.InQueueStatus:output_type -> adminproto.InQueueStatusResponse
+	7,  // 15: adminproto.AdminService.ListOrganizations:output_type -> adminproto.ListOrganizationsResponse
+	9,  // 16: adminproto.AdminService.CreateOrganization:output_type -> adminproto.CreateOrganizationResponse
+	11, // 17: adminproto.AdminService.UpdateOrganization:output_type -> adminproto.UpdateOrganizationResponse
+	13, // 18: adminproto.AdminService.GetConsumerLag:output_type -> adminproto.GetConsumerLagResponse
+	13, // [13:19] is the sub-list for method output_type
+	7,  // [7:13] is the sub-list for method input_type
+	7,  // [7:7] is the sub-list for extension type_name
+	7,  // [7:7] is the sub-list for extension extendee
+	0,  // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_admin_proto_init() }
@@ -719,7 +918,7 @@ func file_admin_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_admin_proto_rawDesc), len(file_admin_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   12,
+			NumMessages:   15,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

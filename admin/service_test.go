@@ -25,7 +25,9 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/cardinalhq/lakerunner/adminproto"
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/internal/adminconfig"
+	"github.com/cardinalhq/lakerunner/internal/fly"
 )
 
 const bufSize = 1024 * 1024
@@ -200,6 +202,55 @@ func TestListOrganizationsWithoutDB(t *testing.T) {
 
 	if err != nil && err.Error() == "" {
 		t.Error("Expected non-empty error message")
+	}
+}
+
+type stubAdminClient struct {
+	lags []fly.ConsumerGroupInfo
+}
+
+func (s *stubAdminClient) GetMultipleConsumerGroupLag(ctx context.Context, topicGroups map[string]string) ([]fly.ConsumerGroupInfo, error) {
+	return s.lags, nil
+}
+
+func TestGetConsumerLag(t *testing.T) {
+	originalLoadConfig := loadConfig
+	originalNewAdminClient := newAdminClient
+	defer func() {
+		loadConfig = originalLoadConfig
+		newAdminClient = originalNewAdminClient
+	}()
+
+	loadConfig = func() (*config.Config, error) {
+		cfg := &config.Config{Kafka: config.DefaultKafkaConfig(), TopicRegistry: config.NewTopicRegistry("test")}
+		return cfg, nil
+	}
+
+	stub := &stubAdminClient{lags: []fly.ConsumerGroupInfo{{
+		Topic:           "test.topic",
+		Partition:       0,
+		CommittedOffset: 5,
+		HighWaterMark:   10,
+		Lag:             5,
+		GroupID:         "test-group",
+	}}}
+
+	newAdminClient = func(conf *config.KafkaConfig) (fly.AdminClientInterface, error) {
+		return stub, nil
+	}
+
+	svc := &Service{serverID: "test"}
+
+	resp, err := svc.GetConsumerLag(context.Background(), &adminproto.GetConsumerLagRequest{})
+	if err != nil {
+		t.Fatalf("GetConsumerLag failed: %v", err)
+	}
+	if len(resp.Lags) != 1 {
+		t.Fatalf("expected 1 lag entry, got %d", len(resp.Lags))
+	}
+	lag := resp.Lags[0]
+	if lag.Topic != "test.topic" || lag.Partition != 0 || lag.ConsumerGroup != "test-group" || lag.Lag != 5 {
+		t.Fatalf("unexpected lag response: %+v", lag)
 	}
 }
 

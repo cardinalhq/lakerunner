@@ -23,7 +23,7 @@ IMAGE_TAG=dev-$(shell date +%Y%m%d-%H%M%S)-$(shell git rev-parse --short HEAD)
 #
 
 # These are targets for "make local"
-BINARIES = lakerunner
+BINARIES = lakerunner lakectl
 
 # These are the targets for Docker images, used both for the multi-arch and
 # single (local) Docker builds.
@@ -151,6 +151,10 @@ local: $(addprefix bin/,$(BINARIES))
 bin/lakerunner: ${all_deps}
 	@[ -d bin ] || mkdir bin
 	go build -o $@ main.go
+
+bin/lakectl: ${all_deps}
+	@[ -d bin ] || mkdir bin
+	go build -o $@ ./lakectl
 
 #
 # Test targets

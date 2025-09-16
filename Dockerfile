@@ -47,6 +47,7 @@ FROM gcr.io/distroless/cc-debian12:nonroot
 
 # Copy the pre-built binary from goreleaser
 COPY --chmod=755 lakerunner /app/bin/lakerunner
+COPY --chmod=755 lakectl /app/bin/lakectl
 
 # Copy httpfs, aws, and azure extensions
 COPY --from=extensions /app/extensions/httpfs.duckdb_extension /app/extensions/httpfs.duckdb_extension
