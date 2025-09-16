@@ -98,6 +98,24 @@ func (ns NullSignalEnum) Value() (driver.Value, error) {
 	return string(ns.SignalEnum), nil
 }
 
+// Tracks the last successfully processed Kafka message offset per consumer group/topic/partition to enable exactly-once processing semantics
+type KafkaOffsetJournal struct {
+	// Kafka consumer group name (e.g., lakerunner.ingest.metrics)
+	ConsumerGroup string `json:"consumer_group"`
+	// Kafka topic name (e.g., lakerunner.objstore.ingest.metrics)
+	Topic string `json:"topic"`
+	// Kafka partition number within the topic
+	Partition int32 `json:"partition"`
+	// Last Kafka message offset that was successfully processed and committed to storage
+	LastProcessedOffset int64 `json:"last_processed_offset"`
+	// Timestamp when this offset was last updated
+	UpdatedAt time.Time `json:"updated_at"`
+	// Organization UUID for multi-tenant offset tracking
+	OrganizationID uuid.UUID `json:"organization_id"`
+	// Instance number for distributed processing offset tracking
+	InstanceNum int16 `json:"instance_num"`
+}
+
 type KafkaOffsetTracker struct {
 	ID            int64     `json:"id"`
 	ConsumerGroup string    `json:"consumer_group"`
