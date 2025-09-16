@@ -55,6 +55,11 @@ func (m *MockLogCompactionStore) KafkaOffsetsAfter(ctx context.Context, params l
 	return args.Get(0).([]int64), args.Error(1)
 }
 
+func (m *MockLogCompactionStore) CleanupKafkaOffsets(ctx context.Context, params lrdb.CleanupKafkaOffsetsParams) (int64, error) {
+	args := m.Called(ctx, params)
+	return args.Get(0).(int64), args.Error(1)
+}
+
 func (m *MockLogCompactionStore) GetLogEstimate(ctx context.Context, orgID uuid.UUID) int64 {
 	args := m.Called(ctx, orgID)
 	return args.Get(0).(int64)

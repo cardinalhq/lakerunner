@@ -30,6 +30,7 @@ import (
 // BoxerStore defines the interface required by the metric boxer
 type BoxerStore interface {
 	KafkaOffsetsAfter(ctx context.Context, params lrdb.KafkaOffsetsAfterParams) ([]int64, error)
+	CleanupKafkaOffsets(ctx context.Context, params lrdb.CleanupKafkaOffsetsParams) (int64, error)
 	GetMetricEstimate(ctx context.Context, orgID uuid.UUID, frequencyMs int32) int64
 	GetTraceEstimate(ctx context.Context, orgID uuid.UUID) int64
 }

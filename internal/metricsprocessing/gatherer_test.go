@@ -79,6 +79,27 @@ func (m *MockOffsetStore) SetProcessedOffsets(consumerGroup, topic string, parti
 	m.processedOffsets[key] = offsets
 }
 
+func (m *MockOffsetStore) CleanupKafkaOffsets(ctx context.Context, params lrdb.CleanupKafkaOffsetsParams) (int64, error) {
+	key := params.ConsumerGroup + ":" + params.Topic + ":" + string(rune(params.PartitionID))
+	offsets, exists := m.processedOffsets[key]
+	if !exists {
+		return 0, nil
+	}
+
+	// Remove offsets <= MaxOffset
+	var remaining []int64
+	var deleted int64
+	for _, offset := range offsets {
+		if offset <= params.MaxOffset {
+			deleted++
+		} else {
+			remaining = append(remaining, offset)
+		}
+	}
+	m.processedOffsets[key] = remaining
+	return deleted, nil
+}
+
 func TestGatherer_CreateKafkaCommitDataFromGroup(t *testing.T) {
 	t.Skip("Test needs rewrite after refactoring to use []KafkaOffsetInfo")
 	/*

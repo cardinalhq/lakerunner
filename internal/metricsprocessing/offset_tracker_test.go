@@ -27,9 +27,14 @@ import (
 type mockOffsetStore struct {
 	offsets       map[int32][]int64
 	queryCount    int
+	cleanupCount  int
 	queriedRanges []struct {
 		partition int32
 		minOffset int64
+	}
+	cleanedRanges []struct {
+		partition int32
+		maxOffset int64
 	}
 }
 
@@ -59,6 +64,29 @@ func (m *mockOffsetStore) KafkaOffsetsAfter(ctx context.Context, params lrdb.Kaf
 
 func (m *mockOffsetStore) setProcessedOffsets(partition int32, offsets []int64) {
 	m.offsets[partition] = offsets
+}
+
+func (m *mockOffsetStore) CleanupKafkaOffsets(ctx context.Context, params lrdb.CleanupKafkaOffsetsParams) (int64, error) {
+	m.cleanupCount++
+	m.cleanedRanges = append(m.cleanedRanges, struct {
+		partition int32
+		maxOffset int64
+	}{params.PartitionID, params.MaxOffset})
+
+	// Simulate cleanup by removing offsets <= maxOffset
+	var deleted int64
+	if offsets, ok := m.offsets[params.PartitionID]; ok {
+		var remaining []int64
+		for _, offset := range offsets {
+			if offset <= params.MaxOffset {
+				deleted++
+			} else {
+				remaining = append(remaining, offset)
+			}
+		}
+		m.offsets[params.PartitionID] = remaining
+	}
+	return deleted, nil
 }
 
 func TestOffsetTracker_FirstMessage(t *testing.T) {
@@ -262,4 +290,38 @@ func TestOffsetTracker_PartitionRebalance(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, processed)
 	assert.Equal(t, 1, store.queryCount, "No additional query for sequential offset")
+}
+
+func TestOffsetStore_Cleanup(t *testing.T) {
+	ctx := context.Background()
+	store := newMockOffsetStore()
+
+	// Set up offsets: 100-200
+	var offsets []int64
+	for i := int64(100); i <= 200; i++ {
+		offsets = append(offsets, i)
+	}
+	store.setProcessedOffsets(0, offsets)
+
+	// Cleanup offsets <= 150
+	deleted, err := store.CleanupKafkaOffsets(ctx, lrdb.CleanupKafkaOffsetsParams{
+		ConsumerGroup: "test-group",
+		Topic:         "test-topic",
+		PartitionID:   0,
+		MaxOffset:     150,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(51), deleted) // 100-150 inclusive = 51 offsets
+
+	// Verify cleanup was called
+	assert.Equal(t, 1, store.cleanupCount)
+	assert.Len(t, store.cleanedRanges, 1)
+	assert.Equal(t, int32(0), store.cleanedRanges[0].partition)
+	assert.Equal(t, int64(150), store.cleanedRanges[0].maxOffset)
+
+	// Verify remaining offsets are 151-200
+	remaining := store.offsets[0]
+	assert.Len(t, remaining, 50)
+	assert.Equal(t, int64(151), remaining[0])
+	assert.Equal(t, int64(200), remaining[len(remaining)-1])
 }

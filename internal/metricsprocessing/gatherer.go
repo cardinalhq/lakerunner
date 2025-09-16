@@ -32,6 +32,7 @@ type processor[M messages.GroupableMessage, K comparable] interface {
 // offsetStore defines the interface for checking processed offsets
 type offsetStore interface {
 	KafkaOffsetsAfter(ctx context.Context, params lrdb.KafkaOffsetsAfterParams) ([]int64, error)
+	CleanupKafkaOffsets(ctx context.Context, params lrdb.CleanupKafkaOffsetsParams) (int64, error)
 }
 
 // gatherer processes a stream of GroupableMessage from Kafka with sync mode deduplication

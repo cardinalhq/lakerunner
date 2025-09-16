@@ -45,6 +45,11 @@ func (m *MockCommonConsumerStore) KafkaOffsetsAfter(ctx context.Context, params 
 	return args.Get(0).([]int64), args.Error(1)
 }
 
+func (m *MockCommonConsumerStore) CleanupKafkaOffsets(ctx context.Context, params lrdb.CleanupKafkaOffsetsParams) (int64, error) {
+	args := m.Called(ctx, params)
+	return args.Get(0).(int64), args.Error(1)
+}
+
 // MockProcessor for testing
 type MockProcessor struct {
 	mock.Mock

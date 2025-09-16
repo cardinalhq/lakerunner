@@ -44,6 +44,8 @@ type CommonConsumerConfig struct {
 type CommonConsumerStore interface {
 	// Offset tracking - only for reading
 	KafkaOffsetsAfter(ctx context.Context, params lrdb.KafkaOffsetsAfterParams) ([]int64, error)
+	// Cleanup old offset tracking records
+	CleanupKafkaOffsets(ctx context.Context, params lrdb.CleanupKafkaOffsetsParams) (int64, error)
 }
 
 // MessageGatherer defines the interface for processing messages and idle groups
@@ -159,7 +161,14 @@ func (c *CommonConsumer[M, K]) processKafkaMessageBatch(ctx context.Context, kaf
 	}
 
 	// Commit the messages after successful processing
-	return c.consumer.CommitMessages(ctx, kafkaMessages...)
+	if err := c.consumer.CommitMessages(ctx, kafkaMessages...); err != nil {
+		return err
+	}
+
+	// After successful Kafka commit, cleanup old offset tracking records
+	c.cleanupCommittedOffsets(ctx, kafkaMessages, ll)
+
+	return nil
 }
 
 // processKafkaMessage handles a single Kafka message (extracted for testability)
@@ -216,6 +225,40 @@ func (c *CommonConsumer[M, K]) Close() error {
 		return c.consumer.Close()
 	}
 	return nil
+}
+
+// cleanupCommittedOffsets removes old offset tracking records after successful Kafka commit
+func (c *CommonConsumer[M, K]) cleanupCommittedOffsets(ctx context.Context, kafkaMessages []fly.ConsumedMessage, ll *slog.Logger) {
+	// Group messages by partition to find max offset per partition
+	maxOffsetPerPartition := make(map[int32]int64)
+	for _, msg := range kafkaMessages {
+		partition := int32(msg.Partition)
+		if currentMax, exists := maxOffsetPerPartition[partition]; !exists || msg.Offset > currentMax {
+			maxOffsetPerPartition[partition] = msg.Offset
+		}
+	}
+
+	// Cleanup old offset tracking records for each partition
+	for partition, maxOffset := range maxOffsetPerPartition {
+		params := lrdb.CleanupKafkaOffsetsParams{
+			ConsumerGroup: c.config.ConsumerGroup,
+			Topic:         c.config.Topic,
+			PartitionID:   partition,
+			MaxOffset:     maxOffset,
+		}
+
+		if rowsDeleted, err := c.store.CleanupKafkaOffsets(ctx, params); err != nil {
+			ll.Error("Failed to cleanup old Kafka offset tracking records",
+				slog.Any("error", err),
+				slog.Int("partition", int(partition)),
+				slog.Int64("maxOffset", maxOffset))
+		} else if rowsDeleted > 0 {
+			ll.Debug("Cleaned up old Kafka offset tracking records",
+				slog.Int("partition", int(partition)),
+				slog.Int64("maxOffset", maxOffset),
+				slog.Int64("rowsDeleted", rowsDeleted))
+		}
+	}
 }
 
 // idleCheck runs at the configured interval and flushes idle groups

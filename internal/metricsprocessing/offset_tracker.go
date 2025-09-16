@@ -24,6 +24,7 @@ import (
 // OffsetTrackerStore defines the interface for sync mode offset tracking
 type OffsetTrackerStore interface {
 	KafkaOffsetsAfter(ctx context.Context, params lrdb.KafkaOffsetsAfterParams) ([]int64, error)
+	CleanupKafkaOffsets(ctx context.Context, params lrdb.CleanupKafkaOffsetsParams) (int64, error)
 }
 
 // offsetTracker tracks processed offsets using arrays for deduplication
