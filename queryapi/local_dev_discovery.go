@@ -72,11 +72,10 @@ func (d *LocalDevDiscovery) GetWorkersForSegments(organizationID uuid.UUID, segm
 }
 
 func (d *LocalDevDiscovery) GetAllWorkers() ([]Worker, error) {
-
 	return []Worker{
 		{
 			IP:   "127.0.0.1",
-			Port: 8080,
+			Port: 8081,
 		},
 	}, nil
 }

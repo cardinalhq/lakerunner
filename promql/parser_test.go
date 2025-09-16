@@ -15,6 +15,7 @@
 package promql
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -22,11 +23,13 @@ import (
 
 func mustJSON(t *testing.T, v any) string {
 	t.Helper()
-	b, err := json.Marshal(v)
-	if err != nil {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false) // <-- keep > < & as-is
+	if err := enc.Encode(v); err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	return string(b)
+	return strings.TrimRight(buf.String(), "\n")
 }
 
 func containsAll(t *testing.T, s string, subs ...string) {
@@ -184,4 +187,39 @@ func TestBottomKOnSelector(t *testing.T) {
 		`"kind":"selector"`,
 		`"metric":"http_requests_inflight"`,
 	)
+}
+
+func TestCompare_MaxSelector_GT_Scalar(t *testing.T) {
+	q := `max({__name__="k8s.container.cpu_limit_utilization"}) > 0.9`
+	expr, err := FromPromQL(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := mustJSON(t, expr)
+
+	containsAll(t, js,
+		`"kind":"binary"`,
+		`"op":">"`,
+
+		// LHS: vector aggregation max(...) over a selector
+		`"kind":"agg"`,
+		`"op":"max"`,
+		`"kind":"selector"`,
+		`"metric":"k8s.container.cpu_limit_utilization"`,
+
+		// RHS: scalar literal 0.9 (our AST encodes literals as scalar(...) with q)
+		`"kind":"func"`,
+		`"name":"scalar"`,
+		`"q":0.9`,
+	)
+}
+
+func TestParser_ReturnBool(t *testing.T) {
+	e, err := FromPromQL(`max(foo) > bool 0.9`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.Kind != KindBinary || e.BinOp == nil || !e.BinOp.ReturnBool {
+		t.Fatalf("ReturnBool not set: %#v", e)
+	}
 }

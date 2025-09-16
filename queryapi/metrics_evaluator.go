@@ -263,19 +263,21 @@ func (q *QuerierService) EvaluateMetricsQuery(
 						continue
 					}
 
-					slog.Info("Pushing down segments",
+					loc := time.Local
+					slog.Info("Pushing down segments (aggregates)",
 						"groupIndex", gi, "leafID", leafID, "leafSegments", len(segmentsForLeaf),
-						"groupStart", group.StartTs, "groupEnd", group.EndTs)
+						"groupStart", time.UnixMilli(group.StartTs).In(loc).Format("15:04:05"),
+						"groupEnd", time.UnixMilli(group.EndTs).In(loc).Format("15:04:05"),
+					)
 
 					workerChans := make([]<-chan promql.SketchInput, 0, len(workerGroups))
 					for worker, wsegs := range workerGroups {
-						slog.Info("Pushdown to worker", "worker", worker, "numSegments", len(wsegs), "leafID", leafID)
+						//slog.Info("Pushdown to worker", "worker", worker, "numSegments", len(wsegs), "leafID", leafID)
 
-						rangeMs := promql.RangeMsFromRange(leaf.Range)
 						req := PushDownRequest{
 							OrganizationID: orgID,
 							BaseExpr:       &leaf,
-							StartTs:        group.StartTs - offMs - rangeMs,
+							StartTs:        group.StartTs,
 							EndTs:          group.EndTs,
 							Segments:       wsegs,
 							Step:           stepDuration,

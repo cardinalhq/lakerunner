@@ -875,3 +875,121 @@ func TestCompile_CountByInstance_Grouped(t *testing.T) {
 		t.Fatalf("want 1 leaf, got %d", len(res.Leaves))
 	}
 }
+
+func TestCompile_Compare_Max_GT_Scalar(t *testing.T) {
+	q := `max({__name__="k8s.container.cpu_limit_utilization"}) > 0.9`
+	root := mustParse(t, q)
+
+	plan, err := Compile(root)
+	if err != nil {
+		t.Fatalf("Compile error: %v", err)
+	}
+
+	// Root must be a BinaryNode with '>' op.
+	bin, ok := plan.Root.(*BinaryNode)
+	if !ok {
+		t.Fatalf("root not BinaryNode, got %T", plan.Root)
+	}
+	if bin.Op != OpGT {
+		t.Fatalf("bin op=%v, want >", bin.Op)
+	}
+
+	// RHS must be a scalar literal 0.9.
+	sc, ok := bin.RHS.(*ScalarNode)
+	if !ok {
+		t.Fatalf("RHS not ScalarNode, got %T", bin.RHS)
+	}
+	if diff := sc.Value - 0.9; diff > 1e-9 || diff < -1e-9 {
+		t.Fatalf("scalar RHS=%v, want 0.9", sc.Value)
+	}
+
+	// LHS must be Agg(max(...)) over a selector leaf of the metric.
+	agg, ok := bin.LHS.(*AggNode)
+	if !ok {
+		t.Fatalf("LHS not AggNode, got %T", bin.LHS)
+	}
+	if agg.Op != AggMax {
+		t.Fatalf("agg op=%v, want max", agg.Op)
+	}
+	leaf, ok := agg.Child.(*LeafNode)
+	if !ok {
+		t.Fatalf("agg child not LeafNode, got %T", agg.Child)
+	}
+	be := leaf.BE
+	if be.Metric != "k8s.container.cpu_limit_utilization" {
+		t.Fatalf("leaf metric=%q, want k8s.container.cpu_limit_utilization", be.Metric)
+	}
+	// Instant selector (no range/func) and no special hints.
+	if be.Range != "" || be.FuncName != "" {
+		t.Fatalf("unexpected range/func on leaf: %+v", be)
+	}
+	if be.WantCount || be.WantTopK || be.WantBottomK || be.WantDDS {
+		t.Fatalf("unexpected hints on leaf: %+v", be)
+	}
+
+	// Exactly one unique leaf.
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("want 1 leaf, got %d: %+v", len(plan.Leaves), plan.Leaves)
+	}
+}
+
+func TestCompile_Compare_Max_GT_Scalar_Return_Bool(t *testing.T) {
+	q := `max({__name__="k8s.container.cpu_limit_utilization"}) > bool 0.9`
+	root := mustParse(t, q)
+
+	plan, err := Compile(root)
+	if err != nil {
+		t.Fatalf("Compile error: %v", err)
+	}
+
+	// Root must be a BinaryNode with '>' op.
+	bin, ok := plan.Root.(*BinaryNode)
+	if !ok {
+		t.Fatalf("root not BinaryNode, got %T", plan.Root)
+	}
+	if bin.Op != OpGT {
+		t.Fatalf("bin op=%v, want >", bin.Op)
+	}
+
+	if !bin.ReturnBool {
+		t.Fatalf("bin.ReturnBool = false, want true")
+	}
+
+	// RHS must be a scalar literal 0.9.
+	sc, ok := bin.RHS.(*ScalarNode)
+	if !ok {
+		t.Fatalf("RHS not ScalarNode, got %T", bin.RHS)
+	}
+	if diff := sc.Value - 0.9; diff > 1e-9 || diff < -1e-9 {
+		t.Fatalf("scalar RHS=%v, want 0.9", sc.Value)
+	}
+
+	// LHS must be Agg(max(...)) over a selector leaf of the metric.
+	agg, ok := bin.LHS.(*AggNode)
+	if !ok {
+		t.Fatalf("LHS not AggNode, got %T", bin.LHS)
+	}
+	if agg.Op != AggMax {
+		t.Fatalf("agg op=%v, want max", agg.Op)
+	}
+	leaf, ok := agg.Child.(*LeafNode)
+	if !ok {
+		t.Fatalf("agg child not LeafNode, got %T", agg.Child)
+	}
+	be := leaf.BE
+	if be.Metric != "k8s.container.cpu_limit_utilization" {
+		t.Fatalf("leaf metric=%q, want k8s.container.cpu_limit_utilization", be.Metric)
+	}
+	// Instant selector (no range/func) and no special hints.
+	if be.Range != "" || be.FuncName != "" {
+		t.Fatalf("unexpected range/func on leaf: %+v", be)
+	}
+	if be.WantCount || be.WantTopK || be.WantBottomK || be.WantDDS {
+		t.Fatalf("unexpected hints on leaf: %+v", be)
+	}
+
+	// Exactly one unique leaf.
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("want 1 leaf, got %d: %+v", len(plan.Leaves), plan.Leaves)
+	}
+}

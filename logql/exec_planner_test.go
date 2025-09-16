@@ -381,6 +381,95 @@ func TestPlanner_JSONPipelineLeaf_WithLabelFilters_AttachedToParser(t *testing.T
 	}
 }
 
+func TestPlanner_MaxOverTime_WithLineFilter_JSONMap_Unwrap(t *testing.T) {
+	q := `max_over_time({job="svc"} |= "/foo" | json lat_ms="req.lat_ms" | unwrap lat_ms [1m])`
+
+	ast, err := FromLogQL(q)
+	if err != nil {
+		t.Fatalf("FromLogQL() error: %v", err)
+	}
+
+	plan, err := CompileLog(ast)
+	if err != nil {
+		t.Fatalf("CompileLog() error: %v", err)
+	}
+
+	// One pushdown leaf expected.
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf, got %d; plan=%#v", len(plan.Leaves), plan)
+	}
+	leaf := plan.Leaves[0]
+
+	// Root should be a range-agg node (max_over_time) with a leaf child.
+	rn, ok := plan.Root.(*LRangeAggNode)
+	if !ok {
+		t.Fatalf("root not *LRangeAggNode, got %T", plan.Root)
+	}
+	if rn.Op != "max_over_time" {
+		t.Fatalf("range agg op = %q, want max_over_time", rn.Op)
+	}
+	childLeaf, ok := rn.Child.(*LLeafNode)
+	if !ok {
+		t.Fatalf("range-agg child not *LLeafNode, got %T", rn.Child)
+	}
+	if childLeaf.Leaf.ID != leaf.ID {
+		t.Fatalf("child leaf ID mismatch: got %s, want %s", childLeaf.Leaf.ID, leaf.ID)
+	}
+	if childLeaf.Leaf.Range != "1m" {
+		t.Fatalf("leaf range = %q, want %q", childLeaf.Leaf.Range, "1m")
+	}
+
+	// Matchers include job="svc".
+	if !hasMatcher(leaf.Matchers, "job", "svc") {
+		t.Fatalf("missing matcher job=svc; got %#v", leaf.Matchers)
+	}
+
+	// Line filter |= "/foo" is present.
+	foundContainsFoo := false
+	for _, lf := range leaf.LineFilters {
+		if lf.Op == LineContains && lf.Match == "/foo" {
+			foundContainsFoo = true
+			break
+		}
+	}
+	if !foundContainsFoo {
+		t.Fatalf("line filter |= \"/foo\" not found; line filters = %#v", leaf.LineFilters)
+	}
+
+	// JSON stage with mapping lat_ms="req.lat_ms".
+	jsonIdx := findParserIndexByType(leaf.Parsers, "json")
+	if jsonIdx < 0 {
+		t.Fatalf("expected a json parser stage; parsers=%#v", leaf.Parsers)
+	}
+	jsonStage := leaf.Parsers[jsonIdx]
+	if got := jsonStage.Params["lat_ms"]; got != "req.lat_ms" {
+		t.Fatalf(`json mapping not captured: want Params["lat_ms"]="req.lat_ms", got %q (parser=%#v)`, got, jsonStage)
+	}
+
+	// Unwrap stage for lat_ms (identity) appears after json.
+	unwrapIdx := findParserIndexByType(leaf.Parsers, "unwrap")
+	if unwrapIdx < 0 {
+		t.Fatalf("expected an unwrap parser stage; parsers=%#v", leaf.Parsers)
+	}
+	if !(unwrapIdx > jsonIdx) {
+		t.Fatalf("unwrap stage should come after json: jsonIdx=%d unwrapIdx=%d", jsonIdx, unwrapIdx)
+	}
+	unwrapStage := leaf.Parsers[unwrapIdx]
+	if unwrapStage.Params["func"] != "identity" || unwrapStage.Params["field"] != "lat_ms" {
+		t.Fatalf("unwrap params = %#v (want func=identity, field=lat_ms)", unwrapStage.Params)
+	}
+
+	// No label filters introduced by this pipeline.
+	if len(leaf.LabelFilters) != 0 {
+		t.Fatalf("unexpected label filters: %#v", leaf.LabelFilters)
+	}
+
+	// No by/without on the leaf for this query.
+	if len(leaf.OutBy) != 0 || len(leaf.OutWithout) != 0 {
+		t.Fatalf("unexpected OutBy/OutWithout on leaf: by=%v wo=%v", leaf.OutBy, leaf.OutWithout)
+	}
+}
+
 func findParserIndexByType(ps []ParserStage, typ string) int {
 	for i, p := range ps {
 		if p.Type == typ {

@@ -17,6 +17,7 @@ package promql
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"slices"
 	"strings"
@@ -293,6 +294,7 @@ func (a *TimeGroupedSketchAggregator) AddBatch(in []SketchInput) (out []SketchGr
 		t := si.Timestamp
 		if t <= a.cutoff {
 			// Drop late data; metrics omitted for brevity
+			slog.Info("dropping late datapoint", slog.Int64("timestamp", t), slog.Int64("cutoff", a.cutoff), slog.String("leaf_id", si.ExprID))
 			continue
 		}
 

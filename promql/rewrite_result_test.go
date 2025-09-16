@@ -163,10 +163,15 @@ func TestRewrite_Offset_Propagation(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	wantProm := `rate(__logql_logs_total{__leaf="off1"}[2m]) offset 30s`
+	// offset sticks to the range selector
+	wantProm := `rate(` + SynthLogCount + `{` + LeafMatcher + `="off1"}[2m] offset 30s)`
 	if got.PromQL != wantProm {
 		t.Fatalf("promql mismatch:\nwant: %s\ngot : %s", wantProm, got.PromQL)
 	}
+
+	assertLeavesExactly(t, got, map[string]logql.LogLeaf{
+		"off1": {ID: "off1", Range: "2m", Offset: "30s"},
+	})
 }
 
 func TestRewrite_BinaryOp_TwoLeaves_DedupAndOrder(t *testing.T) {
@@ -328,7 +333,8 @@ func TestRewrite_MinOverTime_Unwrap_WithOffset(t *testing.T) {
 		t.Fatalf("RewriteToPromQL error: %v", err)
 	}
 
-	wantProm := `min_over_time(` + SynthLogUnwrap + `{` + LeafMatcher + `="uwOff"}[2m]) offset 15s`
+	// offset sticks to the range selector inside the function call
+	wantProm := `min_over_time(` + SynthLogUnwrap + `{` + LeafMatcher + `="uwOff"}[2m] offset 15s)`
 	if rr.PromQL != wantProm {
 		t.Fatalf("promql mismatch:\n  want: %s\n  got : %s", wantProm, rr.PromQL)
 	}
@@ -485,4 +491,106 @@ func TestRewrite_BottomK(t *testing.T) {
 	assertLeavesExactly(t, rr, map[string]logql.LogLeaf{
 		"bottomkNoGroup": leaf,
 	})
+}
+
+func TestRewrite_Offset_Propagation_1(t *testing.T) {
+	leaf := mkLeaf("off1", "2m", "30s")
+	root := &logql.LRangeAggNode{
+		Op:    "rate",
+		Child: &logql.LLeafNode{Leaf: leaf},
+	}
+
+	got, err := RewriteToPromQL(root)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// offset belongs on the range selector
+	wantProm := `rate(` + SynthLogCount + `{` + LeafMatcher + `="off1"}[2m] offset 30s)`
+	if got.PromQL != wantProm {
+		t.Fatalf("promql mismatch:\nwant: %s\ngot : %s", wantProm, got.PromQL)
+	}
+
+	assertLeavesExactly(t, got, map[string]logql.LogLeaf{
+		"off1": {
+			ID:     "off1",
+			Range:  "2m",
+			Offset: "30s",
+		},
+	})
+}
+
+func TestRewrite_Offset_Propagation_WithGrouping(t *testing.T) {
+	leaf := mkLeaf("off2", "5m", "1m")
+	root := &logql.LAggNode{
+		Op: "sum",
+		By: []string{"level"},
+		Child: &logql.LRangeAggNode{
+			Op:    "count_over_time",
+			Child: &logql.LLeafNode{Leaf: leaf},
+		},
+	}
+
+	got, err := RewriteToPromQL(root)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// note the closing )) and offset on the selector
+	wantProm := `sum by (level) (count_over_time(` + SynthLogCount + `{` + LeafMatcher + `="off2"}[5m] offset 1m))`
+	if got.PromQL != wantProm {
+		t.Fatalf("promql mismatch:\nwant: %s\ngot : %s", wantProm, got.PromQL)
+	}
+
+	assertLeavesExactly(t, got, map[string]logql.LogLeaf{
+		"off2": {
+			ID:     "off2",
+			Range:  "5m",
+			Offset: "1m",
+		},
+	})
+}
+
+func TestRewrite_RatioVsOffsetPctDrop_Alert(t *testing.T) {
+	// (
+	//   sum_over_time(unwrap[5m])
+	//   /
+	//   sum_over_time(unwrap[5m] offset 1h),
+	//   - 1
+	// )
+	// * 100 < -5
+	num := &logql.LRangeAggNode{
+		Op:    "sum_over_time",
+		Child: &logql.LLeafNode{Leaf: mkLeaf("segRev", "5m", "")}, // current
+	}
+	den := &logql.LRangeAggNode{
+		Op:    "sum_over_time",
+		Child: &logql.LLeafNode{Leaf: mkLeaf("segRev", "5m", "1h")}, // baseline offset 1h
+	}
+	ratio := &logql.LBinOpNode{Op: "/", LHS: num, RHS: den}
+	minusOne := &logql.LBinOpNode{Op: "-", LHS: ratio, RHS: &logql.LScalarNode{Value: 1}}
+	times100 := &logql.LBinOpNode{Op: "*", LHS: minusOne, RHS: &logql.LScalarNode{Value: 100}}
+	root := &logql.LBinOpNode{Op: "<", LHS: times100, RHS: &logql.LScalarNode{Value: -5}}
+
+	rr, err := RewriteToPromQL(root)
+	if err != nil {
+		t.Fatalf("RewriteToPromQL error: %v", err)
+	}
+
+	// Expect strict parenthesization and the offset on the denominator's selector.
+	want := `((((sum_over_time(` + SynthLogUnwrap + `{` + LeafMatcher + `="segRev"}[5m])) / ` +
+		`(sum_over_time(` + SynthLogUnwrap + `{` + LeafMatcher + `="segRev"}[5m] offset 1h))) - (1)) * (100)) < (-5)`
+
+	if rr.PromQL != want {
+		t.Fatalf("promql mismatch:\n  want: %s\n  got : %s", want, rr.PromQL)
+	}
+
+	// Dedup by leaf ID; we only assert the ID/range are present.
+	if len(rr.Leaves) != 1 {
+		t.Fatalf("expected 1 unique leaf, got %d: %+v", len(rr.Leaves), rr.Leaves)
+	}
+	l, ok := rr.Leaves["segRev"]
+	if !ok || l.ID != "segRev" || l.Range != "5m" {
+		t.Fatalf("leaf mismatch: got %#v", l)
+	}
 }

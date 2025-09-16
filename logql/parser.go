@@ -507,7 +507,25 @@ func looksLikeParser(stage string) (string, map[string]string, bool) {
 		return "", nil, false
 	}
 	switch head[0] {
-	case "json", "logfmt", "line_format", "label_replace", "keep_labels", "drop_labels", "decolorize":
+	case "json":
+		// support mappings: json a="x.y" b=`m.n` c=plain
+		raw := parseLabelFormatParams(stage)
+		params := make(map[string]string, len(raw))
+		for k, v := range raw {
+			params[k] = normalizeLabelFormatLiteral(v)
+		}
+		return "json", params, true
+
+	case "logfmt":
+		// support optional mappings after logfmt as well
+		raw := parseLabelFormatParams(stage)
+		params := make(map[string]string, len(raw))
+		for k, v := range raw {
+			params[k] = normalizeLabelFormatLiteral(v)
+		}
+		return "logfmt", params, true
+
+	case "line_format", "label_replace", "keep_labels", "drop_labels", "decolorize":
 		return head[0], map[string]string{}, true
 
 	case "regexp":
@@ -911,19 +929,6 @@ func normalizeLabelFormatLiteral(s string) string {
 	}
 	return s
 }
-
-//// --- unwrap pre-normalization ----------------------------------------------
-//func preNormalizeUnwrap(in string) string {
-//	// unwrap <fn>("field")
-//	reDQ := regexp.MustCompile(`(?i)\bunwrap\s+(duration|bytes)\s*$begin:math:text$\\s*"([^"]+)"\\s*$end:math:text$`)
-//	in = reDQ.ReplaceAllString(in, "unwrap $1($2)")
-//
-//	// unwrap <fn>(`field`)
-//	reBT := regexp.MustCompile("(?i)\\bunwrap\\s+(duration|bytes)\\s*\\(\\s*`([^`]*)`\\s*\\)")
-//	in = reBT.ReplaceAllString(in, "unwrap $1($2)")
-//
-//	return in
-//}
 
 // cleanStage trims a leading pipe and surrounding spaces: "| foo" -> "foo".
 func cleanStage(s string) string {

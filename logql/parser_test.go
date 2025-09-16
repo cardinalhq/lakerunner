@@ -354,3 +354,247 @@ func TestVectorAggregation_Grouping_NormalizesLabelNames_Without(t *testing.T) {
 		}
 	}
 }
+
+func TestJSON_Syntax(t *testing.T) {
+	q := `{type="track",event="Order Completed"} | json revenue="properties.revenue"`
+	ast, err := FromLogQL(q)
+	if err != nil {
+		t.Fatalf("FromLogQL() error: %v", err)
+	}
+	if ast.Kind != KindLogSelector {
+		t.Fatalf("kind = %s, want %s", ast.Kind, KindLogSelector)
+
+	}
+	if ast.LogSel == nil {
+		t.Fatalf("LogSel is nil")
+	}
+	if len(ast.LogSel.Parsers) != 1 {
+		t.Fatalf("expected 1 parser, got %d: %#v", len(ast.LogSel.Parsers), ast.LogSel.Parsers)
+	}
+	for _, p := range ast.LogSel.Parsers {
+		if p.Type != "json" {
+			t.Fatalf("expected json parser, got: %#v", p)
+		}
+	}
+}
+
+func TestParse_Unwrap_JSON_WithLabelFormat_MappedNestedField(t *testing.T) {
+	// Map .properties.revenue into a flat label "revenue", then unwrap it and take max_over_time.
+	q := `max_over_time({type="track",event="Order Completed"} | json | label_format revenue=` +
+		"`{{ .properties.revenue }}`" +
+		` | unwrap revenue [1m])`
+
+	ast, err := FromLogQL(q)
+	if err != nil {
+		t.Fatalf("FromLogQL() error: %v", err)
+	}
+
+	// Sanity: it's a range aggregation with 1m window.
+	if ast.Kind != KindRangeAgg || ast.RangeAgg == nil {
+		t.Fatalf("kind=%s rangeAgg=%#v", ast.Kind, ast.RangeAgg)
+	}
+	if ast.RangeAgg.Left.Range != "1m" {
+		t.Fatalf("range=%q, want 1m", ast.RangeAgg.Left.Range)
+	}
+
+	// Pull the first pipeline (selector + stages).
+	sel, _, ok := ast.FirstPipeline()
+	if !ok {
+		t.Fatalf("no pipeline")
+	}
+
+	// Matchers survived?
+	if !hasMatcher(sel.Matchers, "type", "track") {
+		t.Fatalf(`missing matcher type="track": %#v`, sel.Matchers)
+	}
+	if !hasMatcher(sel.Matchers, "event", "Order Completed") {
+		t.Fatalf(`missing matcher event="Order Completed": %#v`, sel.Matchers)
+	}
+
+	// Expect stages: json, label_format (with "revenue"), unwrap (field "revenue")
+	var haveJSON, haveLabelFmt, haveUnwrap bool
+	for _, p := range sel.Parsers {
+		switch p.Type {
+		case "json":
+			haveJSON = true
+		case "label_format":
+			// ensure we created an output label "revenue" from the template
+			foundOut := false
+			for _, lf := range p.LabelFormats {
+				if lf.Out == "revenue" {
+					// optional: check the template string we normalized
+					if !strings.Contains(lf.Tmpl, ".properties.revenue") {
+						t.Fatalf("label_format tmpl=%q doesn't reference .properties.revenue", lf.Tmpl)
+					}
+					foundOut = true
+					break
+				}
+			}
+			if !foundOut {
+				t.Fatalf("label_format did not define output label 'revenue': %#v", p.LabelFormats)
+			}
+			haveLabelFmt = true
+		case "unwrap":
+			if p.Params["func"] != "identity" || p.Params["field"] != "revenue" {
+				t.Fatalf("unwrap params = %#v (want func=identity, field=revenue)", p.Params)
+			}
+			haveUnwrap = true
+		}
+	}
+
+	if !haveJSON {
+		t.Fatalf("json stage not found; parsers=%#v", sel.Parsers)
+	}
+	if !haveLabelFmt {
+		t.Fatalf("label_format stage not found; parsers=%#v", sel.Parsers)
+	}
+	if !haveUnwrap {
+		t.Fatalf("unwrap stage not found; parsers=%#v", sel.Parsers)
+	}
+}
+
+func TestParse_Filter_JSON_Map_Unwrap_NestedField_AssertsMapping(t *testing.T) {
+	q := `max_over_time({job="svc"} |= "/foo" | json lat_ms="req.lat_ms" | unwrap lat_ms [1m])`
+
+	ast, err := FromLogQL(q)
+	if err != nil {
+		t.Fatalf("FromLogQL error: %v", err)
+	}
+
+	// Range agg with 1m window
+	if ast.Kind != KindRangeAgg || ast.RangeAgg == nil {
+		t.Fatalf("kind=%s rangeAgg=%#v (want KindRangeAgg with RangeAgg set)", ast.Kind, ast.RangeAgg)
+	}
+	if ast.RangeAgg.Left.Range != "1m" {
+		t.Fatalf("range = %q, want 1m", ast.RangeAgg.Left.Range)
+	}
+
+	// Pull selector + pipeline.
+	sel, _, ok := ast.FirstPipeline()
+	if !ok {
+		t.Fatalf("no pipeline returned by FirstPipeline()")
+	}
+
+	// Selector matcher survived?
+	if !hasMatcher(sel.Matchers, "job", "svc") {
+		t.Fatalf(`missing matcher job="svc": %#v`, sel.Matchers)
+	}
+
+	// Line filter |= "/foo" is present?
+	foundContains := false
+	for _, lf := range sel.LineFilters {
+		if lf.Op == LineContains && lf.Match == "/foo" {
+			foundContains = true
+			break
+		}
+	}
+	if !foundContains {
+		t.Fatalf("line filter |= \"/foo\" not found; line filters = %#v", sel.LineFilters)
+	}
+
+	// Stages: json (with mapping), then unwrap(lat_ms).
+	var (
+		haveJSON, haveUnwrap bool
+		checkedJSONMapping   bool
+	)
+	for _, p := range sel.Parsers {
+		switch p.Type {
+		case "json":
+			haveJSON = true
+
+			if p.Params == nil {
+				t.Fatalf("json parser has nil Params (expected lat_ms -> req.lat_ms); parser=%#v", p)
+			}
+			if got := p.Params["lat_ms"]; got != "req.lat_ms" {
+				t.Fatalf(`json mapping not captured: want Params["lat_ms"]="req.lat_ms", got %q (parser=%#v)`, got, p)
+			}
+			checkedJSONMapping = true
+
+		case "unwrap":
+			if p.Params["func"] != "identity" || p.Params["field"] != "lat_ms" {
+				t.Fatalf("unwrap params = %#v (want func=identity, field=lat_ms)", p.Params)
+			}
+			haveUnwrap = true
+		}
+	}
+
+	if !haveJSON {
+		t.Fatalf("json stage not found; parsers=%#v", sel.Parsers)
+	}
+	if !checkedJSONMapping {
+		t.Fatalf("json mapping assertion did not run (stage found but Params didn’t include mapping?) parsers=%#v", sel.Parsers)
+	}
+	if !haveUnwrap {
+		t.Fatalf("unwrap(lat_ms) stage not found; parsers=%#v", sel.Parsers)
+	}
+}
+
+func TestParse_JSON_Map_Unwrap_NestedField_SumOffset(t *testing.T) {
+	q := `sum_over_time({resource_service_name="segment"} | json revenue="properties.revenue" | unwrap revenue [5m] offset 1h)`
+
+	ast, err := FromLogQL(q)
+	if err != nil {
+		t.Fatalf("FromLogQL error: %v", err)
+	}
+
+	// range_agg with op=sum_over_time, 5m window, offset 1h
+	if ast.Kind != KindRangeAgg || ast.RangeAgg == nil {
+		t.Fatalf("kind=%s rangeAgg=%#v (want KindRangeAgg with RangeAgg set)", ast.Kind, ast.RangeAgg)
+	}
+	if ast.RangeAgg.Op != "sum_over_time" {
+		t.Fatalf("op = %q, want sum_over_time", ast.RangeAgg.Op)
+	}
+	if ast.RangeAgg.Left.Range != "5m" {
+		t.Fatalf("range = %q, want 5m", ast.RangeAgg.Left.Range)
+	}
+	if ast.RangeAgg.Left.Offset != "1h" {
+		t.Fatalf("offset = %q, want 1h", ast.RangeAgg.Left.Offset)
+	}
+
+	// Pull selector + pipeline (from the first/only pipeline under the expr).
+	sel, _, ok := ast.FirstPipeline()
+	if !ok {
+		t.Fatalf("no pipeline returned by FirstPipeline()")
+	}
+
+	// Matcher normalized: resource_service_name -> resource.service.name
+	if !hasMatcher(sel.Matchers, "resource.service.name", "segment") {
+		t.Fatalf(`missing/unnormalized matcher resource.service.name="segment": %#v`, sel.Matchers)
+	}
+
+	// Stages: json (with mapping), then unwrap(revenue).
+	var (
+		haveJSON, haveUnwrap bool
+		checkedJSONMapping   bool
+	)
+	for _, p := range sel.Parsers {
+		switch p.Type {
+		case "json":
+			haveJSON = true
+			if p.Params == nil {
+				t.Fatalf("json parser has nil Params (expected revenue -> properties.revenue); parser=%#v", p)
+			}
+			if got := p.Params["revenue"]; got != "properties.revenue" {
+				t.Fatalf(`json mapping not captured: want Params["revenue"]="properties.revenue", got %q (parser=%#v)`, got, p)
+			}
+			checkedJSONMapping = true
+
+		case "unwrap":
+			// unwrap revenue  => func=identity, field=revenue
+			if p.Params["func"] != "identity" || p.Params["field"] != "revenue" {
+				t.Fatalf("unwrap params = %#v (want func=identity, field=revenue)", p.Params)
+			}
+			haveUnwrap = true
+		}
+	}
+
+	if !haveJSON {
+		t.Fatalf("json stage not found; parsers=%#v", sel.Parsers)
+	}
+	if !checkedJSONMapping {
+		t.Fatalf("json mapping assertion did not run (stage found but Params didn’t include mapping?) parsers=%#v", sel.Parsers)
+	}
+	if !haveUnwrap {
+		t.Fatalf("unwrap(revenue) stage not found; parsers=%#v", sel.Parsers)
+	}
+}

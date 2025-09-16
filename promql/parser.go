@@ -25,7 +25,7 @@ import (
 
 //
 // ------------------------- AST TYPES -------------------------
-//`
+//
 
 type Expr struct {
 	Kind      ExprKind           `json:"kind"`
@@ -38,7 +38,7 @@ type Expr struct {
 	BinOp     *BinaryExpr        `json:"binop,omitempty"`
 	HistQuant *HistogramQuantile `json:"histogramQuantile,omitempty"`
 	ClampMin  *ClampMinExpr      `json:"clampMin,omitempty"`
-	ClampMax  *ClampMaxExpr      `json:"clampMax,omitempty"` // NEW
+	ClampMax  *ClampMaxExpr      `json:"clampMax,omitempty"`
 }
 
 type ExprKind string
@@ -53,7 +53,7 @@ const (
 	KindBinary            ExprKind = "binary"
 	KindHistogramQuantile ExprKind = "histogram_quantile"
 	KindClampMin          ExprKind = "clamp_min"
-	KindClampMax          ExprKind = "clamp_max" // NEW
+	KindClampMax          ExprKind = "clamp_max"
 )
 
 // Selector Leaf: metric selector
@@ -118,21 +118,31 @@ type TopKExpr struct {
 	Expr Expr `json:"expr"`
 }
 
-// BinaryExpr Arithmetic (MVP: + - * /)
+// BinaryExpr Arithmetic & comparison
 type BinaryExpr struct {
-	Op    BinOp        `json:"op"`
-	LHS   Expr         `json:"lhs"`
-	RHS   Expr         `json:"rhs"`
-	Match *VectorMatch `json:"match,omitempty"` // optional: on()/ignoring(), group_left/right
+	Op         BinOp        `json:"op"`
+	LHS        Expr         `json:"lhs"`
+	RHS        Expr         `json:"rhs"`
+	Match      *VectorMatch `json:"match,omitempty"` // optional: on()/ignoring(), group_left/right
+	ReturnBool bool         `json:"bool,omitempty"`  // PromQL `bool` modifier for comparisons
 }
 
 type BinOp string
 
 const (
+	// arithmetic
 	OpAdd BinOp = "+"
 	OpSub BinOp = "-"
 	OpMul BinOp = "*"
 	OpDiv BinOp = "/"
+
+	// comparisons
+	OpGT BinOp = ">"
+	OpGE BinOp = ">="
+	OpLT BinOp = "<"
+	OpLE BinOp = "<="
+	OpEQ BinOp = "=="
+	OpNE BinOp = "!="
 )
 
 type VectorMatch struct {
@@ -154,7 +164,7 @@ type ClampMinExpr struct {
 	Expr Expr    `json:"expr"`
 }
 
-// ClampMaxExpr ClampMax (NEW)
+// ClampMaxExpr ClampMax
 type ClampMaxExpr struct {
 	Max  float64 `json:"max"`
 	Expr Expr    `json:"expr"`
@@ -286,7 +296,7 @@ func fromNode(n promparser.Node) (Expr, error) {
 			}, nil
 		}
 
-		// clamp_max(expr, max)  (NEW)
+		// clamp_max(expr, max)
 		if fn == "clamp_max" {
 			if len(v.Args) != 2 {
 				return Expr{}, errUnsupported("clamp_max arity", "")
@@ -427,8 +437,10 @@ func fromNode(n promparser.Node) (Expr, error) {
 			return Expr{}, err
 		}
 		be := BinaryExpr{
-			Op:  toBinOp(v.Op),
-			LHS: lhs, RHS: rhs,
+			Op:         toBinOp(v.Op),
+			LHS:        lhs,
+			RHS:        rhs,
+			ReturnBool: v.ReturnBool,
 		}
 		if v.VectorMatching != nil {
 			m := &VectorMatch{}
@@ -540,6 +552,7 @@ func toAggOp(op promparser.ItemType) AggOp {
 
 func toBinOp(op promparser.ItemType) BinOp {
 	switch op {
+	// arithmetic
 	case promparser.ADD:
 		return OpAdd
 	case promparser.SUB:
@@ -548,7 +561,23 @@ func toBinOp(op promparser.ItemType) BinOp {
 		return OpMul
 	case promparser.DIV:
 		return OpDiv
+
+	// comparisons
+	case promparser.GTR:
+		return OpGT
+	case promparser.GTE:
+		return OpGE
+	case promparser.LSS:
+		return OpLT
+	case promparser.LTE:
+		return OpLE
+	case promparser.EQL:
+		return OpEQ
+	case promparser.NEQ:
+		return OpNE
+
 	default:
+		// fallback keeps behavior stable; consider surfacing an explicit error instead
 		return OpAdd
 	}
 }

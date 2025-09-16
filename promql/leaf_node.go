@@ -230,7 +230,34 @@ func (n *LeafNode) Eval(sg SketchGroup, step time.Duration) map[string]EvalResul
 				num := n.evalRangeAwareScalar(k, si, stepMs, rangeMs)
 				v = Value{Kind: ValScalar, Num: num}
 			} else {
-				v = Value{Kind: ValMap, AggMap: si.SketchTags.Agg}
+				// Instant selector: MERGE Agg maps across workers (sum,sum; min=min; max=max).
+				// Start from any existing aggregate in out[k].
+				merged := map[string]float64{}
+				if prev, ok := out[k]; ok && prev.Value.Kind == ValMap && prev.Value.AggMap != nil {
+					for name, val := range prev.Value.AggMap {
+						merged[name] = val
+					}
+				}
+
+				// Pull current row’s agg fields.
+				if v, ok := si.SketchTags.Agg["sum"]; ok {
+					merged["sum"] += v
+				}
+				if v, ok := si.SketchTags.Agg["count"]; ok {
+					merged["count"] += v
+				}
+				if v, ok := si.SketchTags.Agg["min"]; ok {
+					if cur, ok2 := merged["min"]; !ok2 || v < cur {
+						merged["min"] = v
+					}
+				}
+				if v, ok := si.SketchTags.Agg["max"]; ok {
+					if cur, ok2 := merged["max"]; !ok2 || v > cur {
+						merged["max"] = v
+					}
+				}
+
+				v = Value{Kind: ValMap, AggMap: merged}
 			}
 
 		default:

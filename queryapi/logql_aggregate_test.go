@@ -1952,3 +1952,72 @@ func TestLog_SumRateCounter_Unwrap_TwoWorkers_Eval(t *testing.T) {
 		}
 	}
 }
+
+func TestRewrite_FilterThenJSON_UnwrapNested_Max(t *testing.T) {
+	db := openDuckDB(t)
+	// Include the default columns s0 always projects.
+	mustExec(t, db, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.fingerprint" TEXT,
+		job TEXT,
+		"_cardinalhq.message"     TEXT
+	);`)
+
+	// Two 1m buckets: [0..60s), [60..120s)
+	mustExec(t, db, `
+	INSERT INTO logs("_cardinalhq.timestamp","_cardinalhq.id","_cardinalhq.level","_cardinalhq.fingerprint",job,"_cardinalhq.message") VALUES
+	(10*1000, 'id-a', '', '-4446492996171837732', 'svc', '{"req":{"url":"/foo","lat_ms":"120"},"meta":{"trace":"t1"}}'),
+	(30*1000, 'id-b', '', '-4446492996171837732', 'svc', '{"req":{"url":"/bar","lat_ms":"200"},"meta":{"trace":"t2"}}'),
+	(70*1000, 'id-c', '', '-4446492996171837732', 'svc', '{"req":{"url":"/foo","lat_ms":"350"},"meta":{"trace":"t3"}}');
+	`)
+
+	// Filter first, then | json mapping, then unwrap nested field, then max_over_time
+	q := `max_over_time({job="svc"} |= "/foo" | json lat_ms="req.lat_ms" | unwrap lat_ms [1m])`
+
+	plan, _ := compileMetricPlanFromLogQL(t, q)
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf in compiled plan, got %d", len(plan.Leaves))
+	}
+	be := plan.Leaves[0]
+
+	step := time.Minute
+	sql := replaceWorkerPlaceholders(be.ToWorkerSQL(step), 0, 120*1000)
+	rows := queryAll(t, db, sql)
+	if len(rows) == 0 {
+		t.Fatalf("no rows returned; sql=\n%s", sql)
+	}
+
+	type agg struct {
+		bucket int64
+		maxv   float64
+	}
+	var got []agg
+	for _, r := range rows {
+		v := r["max"]
+		if v == nil {
+			if x, ok := r["max_over_time"]; ok {
+				v = x
+			}
+		}
+		got = append(got, agg{
+			bucket: i64(r["bucket_ts"]),
+			maxv:   f64(v),
+		})
+	}
+
+	var b0, b1 float64
+	for _, a := range got {
+		switch a.bucket {
+		case 0:
+			b0 = a.maxv
+		case 60000:
+			b1 = a.maxv
+		}
+	}
+	const eps = 1e-9
+	if !(math.Abs(b0-120.0) < eps && math.Abs(b1-350.0) < eps) {
+		t.Fatalf("unexpected maxes: bucket0=%v bucket1=%v; rows=%v\nsql=\n%s", b0, b1, rows, sql)
+	}
+}

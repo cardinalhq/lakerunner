@@ -17,6 +17,8 @@ package promql
 import (
 	"container/heap"
 	"context"
+	"log/slog"
+	"math"
 )
 
 // Timestamped is the constraint for mergeable items.
@@ -31,7 +33,7 @@ func MergeSorted[T Timestamped](
 	ctx context.Context,
 	outBuf int,
 	reverse bool,
-	limit int, // <-- new
+	limit int,
 	chans ...<-chan T,
 ) <-chan T {
 	out := make(chan T, outBuf)
@@ -61,6 +63,7 @@ func MergeSorted[T Timestamped](
 			for {
 				select {
 				case <-ctx.Done():
+					slog.Warn("MergeSorted: ctx canceled in fetcher; dropping unread tail", "src", i)
 					return
 				case _, ok := <-req[i]:
 					if !ok {
@@ -68,14 +71,17 @@ func MergeSorted[T Timestamped](
 					}
 					v, ok := <-ch
 					if !ok {
+						// Source closed. Not a drop by itself; coordinator may still have a head in heap.
 						select {
 						case <-ctx.Done():
+							slog.Warn("MergeSorted: ctx canceled while reporting close", "src", i)
 						case rsp[i] <- headMsg{src: i, ok: false}:
 						}
 						return
 					}
 					select {
 					case <-ctx.Done():
+						slog.Warn("MergeSorted: ctx canceled after fetch; dropping fetched head", "src", i)
 						return
 					case rsp[i] <- headMsg{src: i, val: v, ok: true}:
 					}
@@ -103,7 +109,14 @@ func MergeSorted[T Timestamped](
 		openCount := len(chans)
 		initPending := len(chans)
 		haveHeads := 0
-		emitted := 0 // <-- new
+		emitted := 0
+
+		var lastTs int64
+		if !reverse {
+			lastTs = math.MinInt64
+		} else {
+			lastTs = math.MaxInt64
+		}
 
 		// Request the first head from every source.
 		for i := range chans {
@@ -111,6 +124,7 @@ func MergeSorted[T Timestamped](
 			awaiting[i] = true
 			select {
 			case <-ctx.Done():
+				slog.Warn("MergeSorted: ctx canceled before init; dropping everything")
 				return
 			case req[i] <- struct{}{}:
 			}
@@ -124,6 +138,7 @@ func MergeSorted[T Timestamped](
 				}
 			}
 			if !ok || !m.ok {
+				// Source finished. If it still has an element in-heap, mark closedPending.
 				if inHeap[i] {
 					closedPending[i] = true
 				} else if open[i] {
@@ -146,6 +161,7 @@ func MergeSorted[T Timestamped](
 				}
 				select {
 				case <-ctx.Done():
+					slog.Warn("MergeSorted: ctx canceled while polling; heap", "len", h.Len(), "open", openCount)
 					return
 				case m, ok := <-rsp[i]:
 					handleRsp(i, m, ok)
@@ -167,6 +183,7 @@ func MergeSorted[T Timestamped](
 			}
 			select {
 			case <-ctx.Done():
+				slog.Warn("MergeSorted: ctx canceled while waiting; heap", "len", h.Len(), "open", openCount)
 				return false
 			case m, ok := <-rsp[idx]:
 				handleRsp(idx, m, ok)
@@ -183,6 +200,7 @@ func MergeSorted[T Timestamped](
 				inHeap[src] = false
 				haveHeads--
 
+				// If the source already closed after producing this head, finalize its closure now.
 				if closedPending[src] {
 					closedPending[src] = false
 					if open[src] {
@@ -193,30 +211,52 @@ func MergeSorted[T Timestamped](
 					awaiting[src] = true
 					select {
 					case <-ctx.Done():
+						slog.Warn("MergeSorted: ctx canceled before re-fetch; dropping remainder",
+							"emitted", emitted, "heap", h.Len(), "open", openCount)
 						return
 					case req[src] <- struct{}{}:
 					}
 				}
 
-				// Emit the chosen item.
+				// Emit chosen item.
+				ts := best.val.GetTimestamp()
+				// Optional: monotonicity check (helps catch upstream bugs)
+				if !reverse && ts < lastTs {
+					slog.Warn("MergeSorted: non-monotonic ascending timestamp", "prev", lastTs, "now", ts, "src", src)
+				}
+				if reverse && ts > lastTs {
+					slog.Warn("MergeSorted: non-monotonic descending timestamp", "prev", lastTs, "now", ts, "src", src)
+				}
+				lastTs = ts
+
 				select {
 				case <-ctx.Done():
+					slog.Warn("MergeSorted: ctx canceled while emitting; dropping remainder",
+						"emitted", emitted, "heap", h.Len(), "open", openCount)
 					return
 				case out <- best.val:
 				}
-				emitted++ // <-- count it
+				emitted++
 				if limit > 0 && emitted >= limit {
-					return // graceful stop: defers close(out) and close(req[*])
+					// Intentional drop: we stop early by contract.
+					// Log how many were still pending.
+					pending := h.Len()
+					slog.Warn("MergeSorted: limit reached; truncating stream",
+						"limit", limit, "emitted", emitted, "heapPending", pending, "openSources", openCount)
+					return
 				}
 				continue
 			}
 
 			if openCount == 0 && h.Len() == 0 {
+				// Normal completion: nothing to drop.
 				return
 			}
 			if !waitOne() {
 				select {
 				case <-ctx.Done():
+					slog.Warn("MergeSorted: ctx canceled idle; dropping remainder",
+						"emitted", emitted, "heap", h.Len(), "open", openCount)
 					return
 				default:
 				}

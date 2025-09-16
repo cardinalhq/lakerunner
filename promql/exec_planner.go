@@ -369,7 +369,8 @@ func Compile(root Expr) (QueryPlan, error) {
 			if err != nil {
 				return nil, err
 			}
-			return &BinaryNode{Op: e.BinOp.Op, LHS: lhs, RHS: rhs, Match: e.BinOp.Match}, nil
+			return &BinaryNode{Op: e.BinOp.Op, LHS: lhs, RHS: rhs, Match: e.BinOp.Match,
+				ReturnBool: e.BinOp.ReturnBool}, nil
 		}
 		return nil, fmt.Errorf("exec compile: unknown kind %q", e.Kind)
 	}
