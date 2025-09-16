@@ -38,10 +38,12 @@ var rollupAccumulationTimes = map[int32]time.Duration{
 
 // MetricRollupConsumer consumes MetricRollupBundle messages from boxer
 type MetricRollupConsumer struct {
-	consumer  fly.Consumer
-	store     MetricRollupStore
-	processor *MetricRollupProcessor
-	cfg       *config.Config
+	consumer      fly.Consumer
+	store         MetricRollupStore
+	processor     *MetricRollupProcessor
+	cfg           *config.Config
+	topic         string
+	consumerGroup string
 }
 
 // NewMetricRollupConsumer creates a consumer that processes MetricRollupBundle messages from boxer
@@ -60,16 +62,20 @@ func NewMetricRollupConsumer(
 
 	processor := newMetricRollupProcessor(cfg, store, storageProvider, cmgr, producer)
 
-	consumer, err := factory.CreateConsumer(cfg.TopicRegistry.GetTopic(config.TopicSegmentsMetricsRollup), cfg.TopicRegistry.GetConsumerGroup(config.TopicSegmentsMetricsRollup))
+	topic := cfg.TopicRegistry.GetTopic(config.TopicSegmentsMetricsRollup)
+	consumerGroup := cfg.TopicRegistry.GetConsumerGroup(config.TopicSegmentsMetricsRollup)
+	consumer, err := factory.CreateConsumer(topic, consumerGroup)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka consumer: %w", err)
 	}
 
 	return &MetricRollupConsumer{
-		consumer:  consumer,
-		store:     store,
-		processor: processor,
-		cfg:       cfg,
+		consumer:      consumer,
+		store:         store,
+		processor:     processor,
+		cfg:           cfg,
+		topic:         topic,
+		consumerGroup: consumerGroup,
 	}, nil
 }
 
@@ -84,6 +90,10 @@ func (c *MetricRollupConsumer) Run(ctx context.Context) error {
 				return err // Return error to prevent committing bad batch
 			}
 		}
+
+		// After successful processing, cleanup old offset tracking records
+		CleanupCommittedOffsets(handlerCtx, c.store, c.topic, c.consumerGroup, msgs)
+
 		return nil
 	}
 
