@@ -358,35 +358,60 @@ func emitParsers(
 			}
 			needKeys = dedupeStrings(excludeFuture(needKeys))
 
-			// s*: project needed keys from JSON
+			// s*: project keys from JSON.
+			// Priority:
+			//   1) Explicit mappings provided in p.Params (e.g., json lat_ms="req.lat_ms")
+			//   2) Any remaining needed keys not covered by mappings (fallback to "$.<key>")
 			sel := []string{pb.top() + ".*"}
-			for _, k := range needKeys {
-				path := jsonPathForKey(k)
-				sel = append(sel, fmt.Sprintf("json_extract_string(%s, %s) AS %s",
-					bodyCol, sqlQuote(path), quoteIdent(k)))
+			created := make(map[string]struct{})
+
+			// 1) explicit mappings
+			if len(p.Params) > 0 {
+				keys := sortedKeys(p.Params) // stable output order
+				for _, out := range keys {
+					rawPath := strings.TrimSpace(p.Params[out])
+					if rawPath == "" {
+						continue
+					}
+					path := jsonPathFromMapping(rawPath)
+					sel = append(sel, fmt.Sprintf(
+						"json_extract_string(%s, %s) AS %s",
+						bodyCol, sqlQuote(path), quoteIdent(out),
+					))
+					created[out] = struct{}{}
+				}
 			}
-			if len(needKeys) == 0 {
+
+			// 2) additional needs not already covered by mappings
+			for _, k := range needKeys {
+				if _, ok := created[k]; ok {
+					continue
+				}
+				path := jsonPathForKey(k) // existing behavior: treat label as a single key
+				sel = append(sel, fmt.Sprintf(
+					"json_extract_string(%s, %s) AS %s",
+					bodyCol, sqlQuote(path), quoteIdent(k),
+				))
+				created[k] = struct{}{}
+			}
+
+			// If nothing was requested, still expose a __json column for debugging/compat
+			if len(created) == 0 {
 				sel = append(sel, fmt.Sprintf("to_json(%s) AS __json", bodyCol))
 			}
+
 			pb.push(sel, pb.top(), nil)
 
-			// Apply any filters whose columns now exist
-			if len(needKeys) > 0 {
-				created := mkSet(needKeys)
-				allFilters := append(append([]LabelFilter{}, *remainingLF...), p.Filters...)
-				now, later := partitionByNames(allFilters, created)
-
-				if len(now) > 0 {
-					where := buildLabelFilterWhere(now, nil)
-					if len(where) > 0 {
-						pb.push([]string{pb.top() + ".*"}, pb.top(), where)
-					}
+			// Apply any filters whose columns now exist (global remaining + stage filters)
+			allFilters := append(append([]LabelFilter{}, *remainingLF...), p.Filters...)
+			now, later := partitionByNames(allFilters, created)
+			if len(now) > 0 {
+				where := buildLabelFilterWhere(now, nil)
+				if len(where) > 0 {
+					pb.push([]string{pb.top() + ".*"}, pb.top(), where)
 				}
-				*remainingLF = later
-			} else if len(p.Filters) > 0 {
-				*remainingLF = append(*remainingLF, p.Filters...)
 			}
-
+			*remainingLF = later
 		case "logfmt":
 			// Same logic as JSON: include both global remaining filters and this stage's filters.
 			baseFilters := append(append([]LabelFilter{}, *remainingLF...), p.Filters...)
@@ -515,6 +540,40 @@ func dedupeStrings(ss []string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// --- add near other helpers (keep simpleIdentRe where it already exists) ---
+
+// jsonPathFromMapping converts a user-supplied mapping like "a.b.c" into "$.a.b.c".
+// - If the string already starts with "$", it's assumed to be a JSONPath and returned as-is.
+// - Dotted segments are treated as nested members; non-simple segments are quoted as members.
+func jsonPathFromMapping(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "$"
+	}
+	if strings.HasPrefix(s, "$") {
+		return s
+	}
+	parts := strings.Split(s, ".")
+	var b strings.Builder
+	b.WriteString("$")
+	for _, seg := range parts {
+		if seg == "" {
+			continue
+		}
+		if simpleIdentRe.MatchString(seg) {
+			b.WriteString(".")
+			b.WriteString(seg)
+			continue
+		}
+		// quote non-simple segments as members: $."weird.seg"
+		esc := strings.ReplaceAll(seg, `"`, `\"`)
+		b.WriteString(`."`)
+		b.WriteString(esc)
+		b.WriteString(`"`)
+	}
+	return b.String()
 }
 
 func isBaseCol(q string) bool {

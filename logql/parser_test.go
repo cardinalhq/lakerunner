@@ -452,3 +452,79 @@ func TestParse_Unwrap_JSON_WithLabelFormat_MappedNestedField(t *testing.T) {
 		t.Fatalf("unwrap stage not found; parsers=%#v", sel.Parsers)
 	}
 }
+
+func TestParse_Filter_JSON_Map_Unwrap_NestedField_AssertsMapping(t *testing.T) {
+	q := `max_over_time({job="svc"} |= "/foo" | json lat_ms="req.lat_ms" | unwrap lat_ms [1m])`
+
+	ast, err := FromLogQL(q)
+	if err != nil {
+		t.Fatalf("FromLogQL error: %v", err)
+	}
+
+	// Range agg with 1m window
+	if ast.Kind != KindRangeAgg || ast.RangeAgg == nil {
+		t.Fatalf("kind=%s rangeAgg=%#v (want KindRangeAgg with RangeAgg set)", ast.Kind, ast.RangeAgg)
+	}
+	if ast.RangeAgg.Left.Range != "1m" {
+		t.Fatalf("range = %q, want 1m", ast.RangeAgg.Left.Range)
+	}
+
+	// Pull selector + pipeline.
+	sel, _, ok := ast.FirstPipeline()
+	if !ok {
+		t.Fatalf("no pipeline returned by FirstPipeline()")
+	}
+
+	// Selector matcher survived?
+	if !hasMatcher(sel.Matchers, "job", "svc") {
+		t.Fatalf(`missing matcher job="svc": %#v`, sel.Matchers)
+	}
+
+	// Line filter |= "/foo" is present?
+	foundContains := false
+	for _, lf := range sel.LineFilters {
+		if lf.Op == LineContains && lf.Match == "/foo" {
+			foundContains = true
+			break
+		}
+	}
+	if !foundContains {
+		t.Fatalf("line filter |= \"/foo\" not found; line filters = %#v", sel.LineFilters)
+	}
+
+	// Stages: json (with mapping), then unwrap(lat_ms).
+	var (
+		haveJSON, haveUnwrap bool
+		checkedJSONMapping   bool
+	)
+	for _, p := range sel.Parsers {
+		switch p.Type {
+		case "json":
+			haveJSON = true
+
+			if p.Params == nil {
+				t.Fatalf("json parser has nil Params (expected lat_ms -> req.lat_ms); parser=%#v", p)
+			}
+			if got := p.Params["lat_ms"]; got != "req.lat_ms" {
+				t.Fatalf(`json mapping not captured: want Params["lat_ms"]="req.lat_ms", got %q (parser=%#v)`, got, p)
+			}
+			checkedJSONMapping = true
+
+		case "unwrap":
+			if p.Params["func"] != "identity" || p.Params["field"] != "lat_ms" {
+				t.Fatalf("unwrap params = %#v (want func=identity, field=lat_ms)", p.Params)
+			}
+			haveUnwrap = true
+		}
+	}
+
+	if !haveJSON {
+		t.Fatalf("json stage not found; parsers=%#v", sel.Parsers)
+	}
+	if !checkedJSONMapping {
+		t.Fatalf("json mapping assertion did not run (stage found but Params didn’t include mapping?) parsers=%#v", sel.Parsers)
+	}
+	if !haveUnwrap {
+		t.Fatalf("unwrap(lat_ms) stage not found; parsers=%#v", sel.Parsers)
+	}
+}
