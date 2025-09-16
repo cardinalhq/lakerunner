@@ -275,3 +275,84 @@ func TestComputeReplayBatches_SplitsOnGap_NoInternalHoles(t *testing.T) {
 	assertNoInternalGaps(t, batches[0], step)
 	assertNoInternalGaps(t, batches[1], step)
 }
+
+func TestComputeReplayBatches_SeamDuplication_ByCountSplit(t *testing.T) {
+	base := time.Unix(0, 0).UTC()
+	step := 10 * time.Second
+
+	qStart := ts(base, 0)
+	qEnd := ts(base, 120*time.Second)
+
+	// Overlapping aligned segments:
+	// segA: [0s, 60s)
+	// segB: [50s, 110s)
+	segA := mkSeg(1, ts(base, 0), ts(base, 60*time.Second))
+	segB := mkSeg(2, ts(base, 50*time.Second), ts(base, 110*time.Second))
+	segs := []SegmentInfo{segA, segB}
+
+	// Force count-based split inside the contiguous band:
+	// total=2, workers=3 -> TargetSize = ceil(2/3) = 1
+	batches := ComputeReplayBatchesWithWorkers(segs, step, qStart, qEnd, 3, false)
+
+	if len(batches) != 2 {
+		t.Fatalf("expected 2 batches, got %d; batches=%+v", len(batches), batches)
+	}
+
+	// Batch 0 should be [0s, 60s)
+	if got, want := batches[0].StartTs, ts(base, 0); got != want {
+		t.Fatalf("batch0 start: got %d want %d", got, want)
+	}
+	if got, want := batches[0].EndTs, ts(base, 60*time.Second); got != want {
+		t.Fatalf("batch0 end: got %d want %d", got, want)
+	}
+
+	// Batch 1 should be [60s, 110s) (tiled, no overlap)
+	if got, want := batches[1].StartTs, ts(base, 60*time.Second); got != want {
+		t.Fatalf("batch1 start: got %d want %d", got, want)
+	}
+	if got, want := batches[1].EndTs, ts(base, 110*time.Second); got != want {
+		t.Fatalf("batch1 end: got %d want %d", got, want)
+	}
+
+	// Helpers to find segments by ID inside a batch
+	find := func(b SegmentGroup, id int64) (SegmentInfo, bool) {
+		for _, s := range b.Segments {
+			if s.SegmentID == id {
+				return s, true
+			}
+		}
+		return SegmentInfo{}, false
+	}
+
+	// Batch 0 must contain BOTH segments due to seam duplication,
+	// with segB clipped to [50s,60s)
+	if _, ok := find(batches[0], 1); !ok {
+		t.Fatalf("batch0 missing segA (id=1); segments=%+v", batches[0].Segments)
+	}
+	if s, ok := find(batches[0], 2); !ok {
+		t.Fatalf("batch0 missing segB (id=2); segments=%+v", batches[0].Segments)
+	} else {
+		if got, want := s.EffectiveStartTs, ts(base, 50*time.Second); got != want {
+			t.Fatalf("batch0 segB EffectiveStartTs: got %d want %d", got, want)
+		}
+		if got, want := s.EffectiveEndTs, ts(base, 60*time.Second); got != want {
+			t.Fatalf("batch0 segB EffectiveEndTs: got %d want %d", got, want)
+		}
+	}
+
+	// Batch 1 should contain ONLY segB, starting at 60s (tiled),
+	// and segA should not reappear.
+	if _, ok := find(batches[1], 1); ok {
+		t.Fatalf("batch1 should NOT contain segA (id=1); segments=%+v", batches[1].Segments)
+	}
+	if s, ok := find(batches[1], 2); !ok {
+		t.Fatalf("batch1 missing segB (id=2); segments=%+v", batches[1].Segments)
+	} else {
+		if got, want := s.EffectiveStartTs, ts(base, 60*time.Second); got != want {
+			t.Fatalf("batch1 segB EffectiveStartTs: got %d want %d", got, want)
+		}
+		if got, want := s.EffectiveEndTs, ts(base, 110*time.Second); got != want {
+			t.Fatalf("batch1 segB EffectiveEndTs: got %d want %d", got, want)
+		}
+	}
+}
