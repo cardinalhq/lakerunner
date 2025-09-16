@@ -210,24 +210,29 @@ JOIN %s ON f.filename = m.path;
 		if err != nil {
 			return fmt.Errorf("get connection (chunk [%d:%d]): %w", start, end, err)
 		}
-		defer release()
 
 		tx, err := conn.BeginTx(ctx, &sql.TxOptions{})
 		if err != nil {
+			release() // Release connection before returning error
 			return fmt.Errorf("begin tx (chunk [%d:%d]): %w", start, end, err)
 		}
 		res, execErr := tx.ExecContext(ctx, insSQL)
 		if execErr != nil {
 			_ = tx.Rollback()
+			release() // Release connection before returning error
 			return fmt.Errorf("insert chunk [%d:%d]: %w", start, end, execErr)
 		}
 		if err := tx.Commit(); err != nil {
+			release() // Release connection before returning error
 			return fmt.Errorf("commit (chunk [%d:%d]): %w", start, end, err)
 		}
 
 		if affected, err := res.RowsAffected(); err == nil && affected > 0 {
 			s.totalRows.Add(affected)
 		}
+
+		// Release connection immediately after processing chunk
+		release()
 	}
 
 	return nil
