@@ -342,6 +342,7 @@ func streamCached[T promql.Timestamped](ctx context.Context, w *CacheManager,
 				if mErr != nil {
 					return
 				}
+				//ts := v.GetTimestamp()
 				out <- v
 			}
 			_ = rows.Err()
