@@ -18,10 +18,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/cardinalhq/lakerunner/internal/fly/messages"
 )
 
 // Custom test message type - completely different from messages.MetricCompactionMessage
