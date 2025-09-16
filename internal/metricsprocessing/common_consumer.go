@@ -240,11 +240,20 @@ func (c *CommonConsumer[M, K]) cleanupCommittedOffsets(ctx context.Context, kafk
 
 	// Cleanup old offset tracking records for each partition
 	for partition, maxOffset := range maxOffsetPerPartition {
+		// Apply safety buffer to handle potential replays during rebalancing
+		// We keep offsetCleanupBuffer offsets behind to ensure deduplication works
+		// even if messages are replayed after a partition moves to another consumer
+		safeCleanupOffset := maxOffset - offsetCleanupBuffer
+		if safeCleanupOffset < 0 {
+			// Don't cleanup anything if we haven't processed enough messages yet
+			continue
+		}
+
 		params := lrdb.CleanupKafkaOffsetsParams{
 			ConsumerGroup: c.config.ConsumerGroup,
 			Topic:         c.config.Topic,
 			PartitionID:   partition,
-			MaxOffset:     maxOffset,
+			MaxOffset:     safeCleanupOffset,
 		}
 
 		if rowsDeleted, err := c.store.CleanupKafkaOffsets(ctx, params); err != nil {
@@ -255,7 +264,8 @@ func (c *CommonConsumer[M, K]) cleanupCommittedOffsets(ctx context.Context, kafk
 		} else if rowsDeleted > 0 {
 			ll.Debug("Cleaned up old Kafka offset tracking records",
 				slog.Int("partition", int(partition)),
-				slog.Int64("maxOffset", maxOffset),
+				slog.Int64("committedOffset", maxOffset),
+				slog.Int64("cleanupOffset", safeCleanupOffset),
 				slog.Int64("rowsDeleted", rowsDeleted))
 		}
 	}

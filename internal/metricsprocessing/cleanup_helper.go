@@ -28,6 +28,10 @@ type CleanupStore interface {
 	CleanupKafkaOffsets(ctx context.Context, params lrdb.CleanupKafkaOffsetsParams) (int64, error)
 }
 
+// offsetCleanupBuffer is the number of offsets to keep behind the committed offset
+// to handle potential replays during partition rebalancing
+const offsetCleanupBuffer = 10000
+
 // CleanupCommittedOffsets removes old offset tracking records after successful Kafka commit.
 // This is a helper function for consumers that don't use CommonConsumer.
 func CleanupCommittedOffsets(ctx context.Context, store CleanupStore, topic, consumerGroup string, messages []fly.ConsumedMessage) {
@@ -44,11 +48,20 @@ func CleanupCommittedOffsets(ctx context.Context, store CleanupStore, topic, con
 
 	// Cleanup old offset tracking records for each partition
 	for partition, maxOffset := range maxOffsetPerPartition {
+		// Apply safety buffer to handle potential replays during rebalancing
+		// We keep offsetCleanupBuffer offsets behind to ensure deduplication works
+		// even if messages are replayed after a partition moves to another consumer
+		safeCleanupOffset := maxOffset - offsetCleanupBuffer
+		if safeCleanupOffset < 0 {
+			// Don't cleanup anything if we haven't processed enough messages yet
+			continue
+		}
+
 		params := lrdb.CleanupKafkaOffsetsParams{
 			ConsumerGroup: consumerGroup,
 			Topic:         topic,
 			PartitionID:   partition,
-			MaxOffset:     maxOffset,
+			MaxOffset:     safeCleanupOffset,
 		}
 
 		if rowsDeleted, err := store.CleanupKafkaOffsets(ctx, params); err != nil {
@@ -63,7 +76,8 @@ func CleanupCommittedOffsets(ctx context.Context, store CleanupStore, topic, con
 				slog.String("topic", topic),
 				slog.String("consumerGroup", consumerGroup),
 				slog.Int("partition", int(partition)),
-				slog.Int64("maxOffset", maxOffset),
+				slog.Int64("committedOffset", maxOffset),
+				slog.Int64("cleanupOffset", safeCleanupOffset),
 				slog.Int64("rowsDeleted", rowsDeleted))
 		}
 	}
