@@ -183,7 +183,6 @@ func (r *ProtoTracesReader) buildSpanRow(rs ptrace.ResourceSpans, ss ptrace.Scop
 	ret["_cardinalhq.status_code"] = span.Status().Code().String()
 	ret["_cardinalhq.status_message"] = span.Status().Message()
 	ret["_cardinalhq.timestamp"] = span.StartTimestamp().AsTime().UnixMilli()
-	ret["_cardinalhq.tsns"] = int64(span.StartTimestamp())
 	ret["_cardinalhq.end_timestamp"] = span.EndTimestamp().AsTime().UnixMilli()
 	ret["_cardinalhq.span_duration"] = span.EndTimestamp().AsTime().Sub(span.StartTimestamp().AsTime()).Milliseconds()
 

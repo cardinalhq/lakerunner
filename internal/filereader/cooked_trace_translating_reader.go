@@ -137,20 +137,6 @@ func (r *CookedTraceTranslatingReader) transformRow(row pipeline.Row) {
 			row[wkk.NewRowKey("_cardinalhq.span_id")] = string(spanIDBytes)
 		}
 	}
-
-	// Add tsns field if not present, derived from timestamp
-	if _, exists := row[wkk.RowKeyCTsns]; !exists {
-		if tsValue, exists := row[wkk.RowKeyCTimestamp]; exists {
-			switch v := tsValue.(type) {
-			case int64:
-				// Timestamp is in milliseconds, convert to nanoseconds
-				row[wkk.RowKeyCTsns] = v * 1_000_000
-			case float64:
-				// Timestamp is in milliseconds, convert to nanoseconds
-				row[wkk.RowKeyCTsns] = int64(v * 1_000_000)
-			}
-		}
-	}
 }
 
 // Close closes the reader and its wrapped reader.
