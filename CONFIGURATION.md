@@ -56,30 +56,24 @@ External override file can be specified via `--kafka-topics-file` flag or `KAFKA
 |---------|---------|---------------------|-------------|
 | metrics.ingestion.process_exemplars | `true` | `LAKERUNNER_METRICS_INGESTION_PROCESS_EXEMPLARS` | Process exemplar data |
 | metrics.ingestion.single_instance_mode | `false` | `LAKERUNNER_METRICS_INGESTION_SINGLE_INSTANCE_MODE` | Single instance processing mode |
-| metrics.ingestion.max_accumulation_time | `10s` | `LAKERUNNER_METRICS_INGESTION_MAX_ACCUMULATION_TIME` | Maximum accumulation time before processing |
 
-### Compaction Settings
+## Logs Configuration
 
-| Setting | Default | Environment Variable | Description |
-|---------|---------|---------------------|-------------|
-| metrics.compaction.target_file_size_bytes | `1048576` (1MB) | `LAKERUNNER_METRICS_COMPACTION_TARGET_FILE_SIZE_BYTES` | Target file size for compaction |
-| metrics.compaction.max_accumulation_time | `30s` | `LAKERUNNER_METRICS_COMPACTION_MAX_ACCUMULATION_TIME` | Maximum time to accumulate segments |
-
-### Rollup Settings
+### Ingestion Settings
 
 | Setting | Default | Environment Variable | Description |
 |---------|---------|---------------------|-------------|
-| metrics.rollup.batch_limit | `100` | `LAKERUNNER_METRICS_ROLLUP_BATCH_LIMIT` | Batch size limit for rollups |
+| logs.ingestion.process_exemplars | `true` | `LAKERUNNER_LOGS_INGESTION_PROCESS_EXEMPLARS` | Process exemplar data |
+| logs.ingestion.single_instance_mode | `false` | `LAKERUNNER_LOGS_INGESTION_SINGLE_INSTANCE_MODE` | Single instance processing mode |
 
-## Batch Processing Configuration
+## Traces Configuration
+
+### Ingestion Settings
 
 | Setting | Default | Environment Variable | Description |
 |---------|---------|---------------------|-------------|
-| batch.target_size_bytes | `104857600` (100MB) | `LAKERUNNER_BATCH_TARGET_SIZE_BYTES` | Target batch size in bytes |
-| batch.max_batch_size | `100` | `LAKERUNNER_BATCH_MAX_BATCH_SIZE` | Maximum number of items in batch |
-| batch.max_total_size | `1073741824` (1GB) | `LAKERUNNER_BATCH_MAX_TOTAL_SIZE` | Maximum total batch size |
-| batch.max_age_seconds | `300` (5 min) | `LAKERUNNER_BATCH_MAX_AGE_SECONDS` | Maximum batch age before processing |
-| batch.min_batch_size | `1` | `LAKERUNNER_BATCH_MIN_BATCH_SIZE` | Minimum batch size |
+| traces.ingestion.process_exemplars | `true` | `LAKERUNNER_TRACES_INGESTION_PROCESS_EXEMPLARS` | Process exemplar data |
+| traces.ingestion.single_instance_mode | `false` | `LAKERUNNER_TRACES_INGESTION_SINGLE_INSTANCE_MODE` | Single instance processing mode |
 
 ## DuckDB Configuration
 
@@ -286,14 +280,17 @@ kafka:
 metrics:
   ingestion:
     process_exemplars: true
-  compaction:
-    target_file_size_bytes: 1048576
-  rollup:
-    batch_limit: 100
+    single_instance_mode: false
 
-batch:
-  target_size_bytes: 104857600
-  max_batch_size: 100
+logs:
+  ingestion:
+    process_exemplars: true
+    single_instance_mode: false
+
+traces:
+  ingestion:
+    process_exemplars: true
+    single_instance_mode: false
 
 duckdb:
   memory_limit: 0
@@ -318,10 +315,12 @@ defaults:
   options:
     retention.ms: "604800000"
 workers:
-  logs:
+  ingest-logs:
     partitionCount: 32
-  metrics:
+  ingest-metrics:
     partitionCount: 24
+  compact-logs:
+    partitionCount: 16
 ```
 
 ## Configuration Precedence
