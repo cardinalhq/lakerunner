@@ -99,6 +99,7 @@ func runMonitoringServe(_ context.Context) error {
 
 	// Pass the scaling config to external scaler
 	scalerConfig.ScalingConfig = &appConfig.Scaling
+	scalerConfig.TopicRegistry = appConfig.TopicRegistry
 
 	// Create consumer lag monitor using the convenience function
 	lagMonitor, err := fly.NewConsumerLagMonitor(
