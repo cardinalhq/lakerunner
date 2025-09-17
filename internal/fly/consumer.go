@@ -101,14 +101,15 @@ func NewConsumer(config ConsumerConfig) Consumer {
 	}
 
 	readerConfig := kafka.ReaderConfig{
-		Brokers:     config.Brokers,
-		Topic:       config.Topic,
-		GroupID:     config.GroupID,
-		MinBytes:    config.MinBytes,
-		MaxBytes:    config.MaxBytes,
-		MaxWait:     config.MaxWait,
-		StartOffset: config.StartOffset,
-		Dialer:      dialer,
+		Brokers:        config.Brokers,
+		Topic:          config.Topic,
+		GroupID:        config.GroupID,
+		MinBytes:       config.MinBytes,
+		MaxBytes:       config.MaxBytes,
+		MaxWait:        config.MaxWait,
+		StartOffset:    config.StartOffset,
+		Dialer:         dialer,
+		CommitInterval: 0, // Synchronous commits only when explicitly called
 	}
 
 	return &kafkaConsumer{
@@ -220,8 +221,8 @@ func (c *kafkaConsumer) processBatch(ctx context.Context, handler MessageHandler
 		return fmt.Errorf("handler failed: %w", err)
 	}
 
-	// Success - commit messages
-	if !c.config.AutoCommit {
+	// Success - commit messages if AutoCommit is enabled
+	if c.config.AutoCommit {
 		if commitErr := c.CommitMessages(ctx, messages...); commitErr != nil {
 			return fmt.Errorf("failed to commit messages: %w", commitErr)
 		}
