@@ -552,6 +552,78 @@ func TestPlanner_AvgOverTime_Regexp_UnwrapBytes(t *testing.T) {
 	}
 }
 
+func TestPlanner_CountOverTime_WithRegexLineFilter(t *testing.T) {
+	q := `count_over_time({resource_service_name="kafka"} |~ "deleted"[1m])`
+
+	ast, err := FromLogQL(q)
+	if err != nil {
+		t.Fatalf("FromLogQL() error: %v", err)
+	}
+
+	plan, err := CompileLog(ast)
+	if err != nil {
+		t.Fatalf("CompileLog() error: %v", err)
+	}
+
+	// Exactly one pushdown leaf.
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf, got %d; plan=%#v", len(plan.Leaves), plan)
+	}
+	leaf := plan.Leaves[0]
+
+	// Root must be a range-agg node with count_over_time
+	rn, ok := plan.Root.(*LRangeAggNode)
+	if !ok {
+		t.Fatalf("root not *LRangeAggNode, got %T", plan.Root)
+	}
+	if rn.Op != "count_over_time" {
+		t.Fatalf("range agg op = %q, want count_over_time", rn.Op)
+	}
+
+	// Child must be our leaf, with 1m range window.
+	childLeaf, ok := rn.Child.(*LLeafNode)
+	if !ok {
+		t.Fatalf("range-agg child not *LLeafNode, got %T", rn.Child)
+	}
+	if childLeaf.Leaf.ID != leaf.ID {
+		t.Fatalf("child leaf ID mismatch: got %s, want %s", childLeaf.Leaf.ID, leaf.ID)
+	}
+	if childLeaf.Leaf.Range != "1m" {
+		t.Fatalf("leaf range = %q, want %q", childLeaf.Leaf.Range, "1m")
+	}
+
+	// Matcher normalization: resource_service_name → resource.service.name
+	if !(hasMatcher(leaf.Matchers, "resource.service.name", "kafka") ||
+		hasMatcher(leaf.Matchers, "resource_service_name", "kafka")) {
+		t.Fatalf("missing matcher resource.service.name=\"kafka\"; matchers=%#v", leaf.Matchers)
+	}
+
+	// Regex line filter |~ "deleted" must be present.
+	foundRegex := false
+	for _, lf := range leaf.LineFilters {
+		if lf.Op == LineRegex && lf.Match == "deleted" {
+			foundRegex = true
+			break
+		}
+	}
+	if !foundRegex {
+		t.Fatalf("regex line filter |~ \"deleted\" not found; line filters = %#v", leaf.LineFilters)
+	}
+
+	// No parser stages and no attached label filters for this query.
+	if len(leaf.Parsers) != 0 {
+		t.Fatalf("unexpected parser stages: %#v", leaf.Parsers)
+	}
+	if len(leaf.LabelFilters) != 0 {
+		t.Fatalf("unexpected label filters: %#v", leaf.LabelFilters)
+	}
+
+	// No grouping on the leaf.
+	if len(leaf.OutBy) != 0 || len(leaf.OutWithout) != 0 {
+		t.Fatalf("unexpected OutBy/OutWithout on leaf: by=%v wo=%v", leaf.OutBy, leaf.OutWithout)
+	}
+}
+
 // Helper functions for tests.
 
 func findParserIndexByType(ps []ParserStage, typ string) int {

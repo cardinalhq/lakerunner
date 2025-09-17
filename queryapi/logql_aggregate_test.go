@@ -2177,3 +2177,139 @@ func TestLog_AvgOverTime_Regexp_UnwrapBytes_TwoWorkers_Eval(t *testing.T) {
 		}
 	}
 }
+
+func TestLog_CountOverTime_LineRegex_TwoWorkers_Eval(t *testing.T) {
+	// ---------------- Worker 1 ----------------
+	db1 := openDuckDB(t)
+	mustExec(t, db1, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.fingerprint" TEXT,
+		"_cardinalhq.message"     TEXT,
+		"resource.service.name"   TEXT
+	);`)
+	// bucket 0 (0..60s): 2 matches
+	// bucket 1 (60..120s): 1 match
+	mustExec(t, db1, `
+	INSERT INTO logs("_cardinalhq.timestamp","_cardinalhq.message","resource.service.name") VALUES
+	(10*1000,  'topic deleted by user=alice', 'kafka'),
+	(25*1000,  'partition deleted id=12',     'kafka'),
+	(70*1000,  'log deleted file=0001',       'kafka');
+	`)
+
+	// ---------------- Worker 2 ----------------
+	db2 := openDuckDB(t)
+	mustExec(t, db2, `CREATE TABLE logs(
+		"_cardinalhq.timestamp"   BIGINT,
+		"_cardinalhq.id"          TEXT,
+		"_cardinalhq.level"       TEXT,
+		"_cardinalhq.fingerprint" TEXT,
+		"_cardinalhq.message"     TEXT,
+		"resource.service.name"   TEXT
+	);`)
+	// bucket 0: 3 matches
+	// bucket 1: 0 matches
+	mustExec(t, db2, `
+	INSERT INTO logs("_cardinalhq.timestamp","_cardinalhq.message","resource.service.name") VALUES
+	(20*1000,  'deleted key=1',     'kafka'),
+	(40*1000,  'deleted key=2',     'kafka'),
+	(55*1000,  'deleted key=3',     'kafka'),
+	(100*1000, 'processed key=9',   'kafka');
+	`)
+
+	// Coordinator expression: count_over_time on a regex line filter.
+	q := `count_over_time({resource_service_name="kafka"} |~ "deleted" [1m])`
+
+	plan, _ := compileMetricPlanFromLogQL(t, q)
+	if len(plan.Leaves) != 1 {
+		t.Fatalf("expected 1 leaf, got %d", len(plan.Leaves))
+	}
+	leaf := plan.Leaves[0]
+
+	step := time.Minute
+	workerSQL := replaceWorkerPlaceholders(leaf.ToWorkerSQL(step), 0, 120*1000)
+
+	// Sanity: worker SQL should count rows per bucket.
+	if !strings.Contains(workerSQL, "COUNT(*) AS count") && !strings.Contains(workerSQL, "COUNT(*) AS COUNT") {
+		t.Fatalf("expected COUNT(*) AS count in SQL, got:\n%s", workerSQL)
+	}
+
+	// Run the leaf SQL on both workers (per-bucket counts from the 1m window).
+	rows1 := queryAll(t, db1, workerSQL)
+	rows2 := queryAll(t, db2, workerSQL)
+	if len(rows1) == 0 && len(rows2) == 0 {
+		t.Fatalf("no rows from both workers; sql=\n%s", workerSQL)
+	}
+
+	// Build coordinator inputs per bucket for the leaf.
+	// count_over_time expects per-window counts so it can sum across workers.
+	type bucket = int64
+	perBucket := map[bucket][]promql.SketchInput{}
+
+	addRows := func(rows []rowmap) {
+		for _, r := range rows {
+			b := i64(r["bucket_ts"])
+			cv, ok := r["count"]
+			if !ok {
+				t.Fatalf("missing count column in row: %v", r)
+			}
+			perBucket[b] = append(perBucket[b], promql.SketchInput{
+				ExprID:         leaf.ID,
+				OrganizationID: "org-test",
+				Timestamp:      b,
+				Frequency:      int64(step / time.Second),
+				SketchTags: promql.SketchTags{
+					Tags:       map[string]any{}, // global (no extra grouping)
+					SketchType: promql.SketchMAP,
+					Agg: map[string]float64{
+						"count": f64(cv),
+					},
+				},
+			})
+		}
+	}
+	addRows(rows1)
+	addRows(rows2)
+
+	// Deterministic bucket order.
+	var buckets []int64
+	for b := range perBucket {
+		buckets = append(buckets, b)
+	}
+	sort.Slice(buckets, func(i, j int) bool { return buckets[i] < buckets[j] })
+
+	// Evaluate per bucket; coordinator should sum the counts from both workers.
+	got := map[bucket]float64{}
+	for _, b := range buckets {
+		out := plan.Root.Eval(promql.SketchGroup{
+			Timestamp: b,
+			Group:     map[string][]promql.SketchInput{leaf.ID: perBucket[b]},
+		}, step)
+
+		if len(out) != 1 {
+			t.Fatalf("expected 1 output series at bucket %d, got %d: %v", b, len(out), out)
+		}
+		got[b] = out["default"].Value.Num
+	}
+
+	const (
+		b0  = int64(0)
+		b1  = int64(60000)
+		eps = 1e-9
+	)
+	// Expected totals across workers:
+	//   bucket0: 2 (db1) + 3 (db2) = 5
+	//   bucket1: 1 (db1) + 0 (db2) = 1
+	exp := map[bucket]float64{
+		b0: 5.0,
+		b1: 1.0,
+	}
+
+	for b, want := range exp {
+		if math.Abs(got[b]-want) > eps {
+			t.Fatalf("unexpected count_over_time at bucket %d: got=%v want=%v\nrows1=%v\nrows2=%v\nsql=\n%s",
+				b, got[b], want, rows1, rows2, workerSQL)
+		}
+	}
+}

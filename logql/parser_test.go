@@ -47,6 +47,57 @@ func TestLogRange(t *testing.T) {
 	}
 }
 
+func TestParse_CountOverTime_RegexLineFilter(t *testing.T) {
+	q := `count_over_time({resource_service_name="kafka"} |~ "deleted"[1m])`
+
+	ast, err := FromLogQL(q)
+	if err != nil {
+		t.Fatalf("FromLogQL() error: %v", err)
+	}
+
+	// Expect a range aggregation node
+	if ast.Kind != KindRangeAgg || ast.RangeAgg == nil {
+		t.Fatalf("kind=%s rangeAgg=%#v (want KindRangeAgg with RangeAgg set)", ast.Kind, ast.RangeAgg)
+	}
+	if ast.RangeAgg.Op != "count_over_time" {
+		t.Fatalf("op=%q (want count_over_time)", ast.RangeAgg.Op)
+	}
+
+	// The inner log range should be 1m and no offset
+	if ast.RangeAgg.Left.Range != "1m" || ast.RangeAgg.Left.Offset != "" {
+		t.Fatalf("bad range/offset: %+v", ast.RangeAgg.Left)
+	}
+
+	// Pull selector + pipeline
+	sel, _, ok := ast.FirstPipeline()
+	if !ok {
+		t.Fatalf("no pipeline returned by FirstPipeline()")
+	}
+
+	// Matcher: resource_service_name="kafka" (note: parser normalizes to "resource.service.name")
+	if !(hasMatcher(sel.Matchers, "resource_service_name", "kafka") ||
+		hasMatcher(sel.Matchers, "resource.service.name", "kafka")) {
+		t.Fatalf(`missing matcher resource_service_name="kafka": %#v`, sel.Matchers)
+	}
+
+	// Line filter: |~ "deleted"
+	foundRegex := false
+	for _, lf := range sel.LineFilters {
+		if lf.Op == LineRegex && lf.Match == "deleted" {
+			foundRegex = true
+			break
+		}
+	}
+	if !foundRegex {
+		t.Fatalf("regex line filter |~ \"deleted\" not found; line filters = %#v", sel.LineFilters)
+	}
+
+	// No parser stages expected for this pipeline
+	if len(sel.Parsers) != 0 {
+		t.Fatalf("unexpected parser stages present: %#v", sel.Parsers)
+	}
+}
+
 func TestNumericComparisonsOnParserFilters(t *testing.T) {
 	expressions := []string{
 		`{resource_service_name="kafka"} | regexp "(?P<dur>[0-9]+(?:\\.[0-9]+)?)\\s*(?:ns|us|µs|ms|s|m|h)" | dur > 0`,

@@ -594,3 +594,34 @@ func TestRewrite_RatioVsOffsetPctDrop_Alert(t *testing.T) {
 		t.Fatalf("leaf mismatch: got %#v", l)
 	}
 }
+
+func TestRewrite_SumByCardType_SumOverTime_Unwrap_WithOffset(t *testing.T) {
+	// Leaf stands for: ({resource_service_name="segment"} | json revenue=..., card_type=... | unwrap revenue [1m] offset 1h)
+	leaf := logql.LogLeaf{ID: "segLeaf", Range: "1m", Offset: "1h"}
+
+	// sum by (card_type) (sum_over_time(<unwrap>[1m] offset 1h))
+	root := &logql.LAggNode{
+		Op: "sum",
+		By: []string{"card_type"},
+		Child: &logql.LRangeAggNode{
+			Op:    "sum_over_time",
+			Child: &logql.LLeafNode{Leaf: leaf},
+		},
+	}
+
+	rr, err := RewriteToPromQL(root)
+	if err != nil {
+		t.Fatalf("RewriteToPromQL error: %v", err)
+	}
+
+	// Expect: sum by (card_type) (sum_over_time(__logql_unwrap{__leaf="segLeaf"}[1m] offset 1h))
+	wantProm := `sum by (card_type) (sum_over_time(` + SynthLogUnwrap + `{` + LeafMatcher + `="segLeaf"}[1m] offset 1h))`
+	if rr.PromQL != wantProm {
+		t.Fatalf("promql mismatch:\n  want: %s\n  got : %s", wantProm, rr.PromQL)
+	}
+
+	// Leaves must include the single referenced leaf with offset preserved.
+	assertLeavesExactly(t, rr, map[string]logql.LogLeaf{
+		"segLeaf": {ID: "segLeaf", Range: "1m", Offset: "1h"},
+	})
+}
