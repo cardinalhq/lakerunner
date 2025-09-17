@@ -138,7 +138,7 @@ func createAdminClient() (adminproto.AdminServiceClient, func(), error) {
 
 func createAuthContext(ctx context.Context) context.Context {
 	if apiKey != "" {
-		md := metadata.New(map[string]string{"authorization": apiKey})
+		md := metadata.New(map[string]string{"authorization": "Bearer " + apiKey})
 		ctx = metadata.NewOutgoingContext(ctx, md)
 	}
 	return ctx
