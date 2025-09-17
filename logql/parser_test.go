@@ -711,3 +711,132 @@ func TestRangeAgg_AvgOverTime_RegexpUnwrapBytes(t *testing.T) {
 		t.Fatalf("missing expected parsers; sawRegexp=%v sawUnwrap=%v; parsers=%#v", sawRegexp, sawUnwrap, sel.Parsers)
 	}
 }
+
+func TestParse_AnomalyExpr_WithAND_NoClampMin(t *testing.T) {
+	q := `(
+  sum(count_over_time({resource_service_name="license-service"} |= "Received license validation request"[1h])) >= 500
+and
+  sum(count_over_time({resource_service_name="license-service"} |= "Received license validation request"[1h] offset 1h)) >= 500
+)
+and
+(
+  (
+    sum(count_over_time({resource_service_name="license-service"} |= "errored"[1h]))
+    / (sum(count_over_time({resource_service_name="license-service"} |= "Received license validation request"[1h])) + 1)
+  )
+  /
+  (
+    (sum(count_over_time({resource_service_name="license-service"} |= "errored"[1h] offset 1h))
+      / (sum(count_over_time({resource_service_name="license-service"} |= "Received license validation request"[1h] offset 1h)) + 1)
+    ) + 1e-9
+  )
+  >= 2
+)`
+
+	ast, err := FromLogQL(q)
+	if err != nil {
+		t.Fatalf("FromLogQL() error: %v", err)
+	}
+
+	// Top-level must be a binary AND.
+	if ast.Kind != KindBinOp || ast.BinOp == nil || ast.BinOp.Op != "and" {
+		t.Fatalf("top: want KindBinOp AND, got kind=%s op=%v", ast.Kind, func() any {
+			if ast.BinOp != nil {
+				return ast.BinOp.Op
+			}
+			return nil
+		}())
+	}
+
+	// ----- Left side: AND of two ">= 500" checks with [1h] and [1h] offset 1h.
+	left := ast.BinOp.LHS
+	if left.Kind != KindBinOp || left.BinOp == nil || left.BinOp.Op != "and" {
+		t.Fatalf("left: want AND, got kind=%s op=%v", left.Kind, func() any {
+			if left.BinOp != nil {
+				return left.BinOp.Op
+			}
+			return nil
+		}())
+	}
+
+	assertCountGte := func(node LogAST, wantOffset string) {
+		t.Helper()
+		if node.Kind != KindBinOp || node.BinOp == nil || node.BinOp.Op != ">=" {
+			t.Fatalf("cmp: want \">=\", got kind=%s op=%v", node.Kind, func() any {
+				if node.BinOp != nil {
+					return node.BinOp.Op
+				}
+				return nil
+			}())
+		}
+		// LHS is sum(count_over_time(...[1h]{offset?}))
+		lhs := node.BinOp.LHS
+		if lhs.Kind != KindVectorAgg || lhs.VectorAgg == nil || lhs.VectorAgg.Op != "sum" {
+			t.Fatalf("lhs: want sum(...), got kind=%s agg=%#v", lhs.Kind, lhs.VectorAgg)
+		}
+		if lhs.VectorAgg.Left.Kind != KindRangeAgg || lhs.VectorAgg.Left.RangeAgg == nil {
+			t.Fatalf("lhs child: want RangeAgg, got %#v", lhs.VectorAgg.Left)
+		}
+		ra := lhs.VectorAgg.Left.RangeAgg
+		if ra.Op != "count_over_time" {
+			t.Fatalf("range op=%q, want count_over_time", ra.Op)
+		}
+		if ra.Left.Range != "1h" {
+			t.Fatalf("range=%q, want 1h", ra.Left.Range)
+		}
+		if ra.Left.Offset != wantOffset {
+			t.Fatalf("offset=%q, want %q", ra.Left.Offset, wantOffset)
+		}
+		// matcher normalization: resource_service_name → resource.service.name
+		if !hasMatcher(ra.Left.Selector.Matchers, "resource.service.name", "license-service") &&
+			!hasMatcher(ra.Left.Selector.Matchers, "resource_service_name", "license-service") {
+			t.Fatalf("missing matcher resource.service.name=\"license-service\": %#v", ra.Left.Selector.Matchers)
+		}
+		if node.BinOp.RHS.Kind != KindVector || node.BinOp.RHS.Vector == nil ||
+			node.BinOp.RHS.Vector.Literal == nil || *node.BinOp.RHS.Vector.Literal != 500 {
+			t.Fatalf("rhs: want scalar 500, got %#v", node.BinOp.RHS)
+		}
+	}
+	assertCountGte(left.BinOp.LHS, "")
+	assertCountGte(left.BinOp.RHS, "1h")
+
+	// ----- Right side: (...) >= 2 (don’t over-assert internals; just sanity-check structure + presence of an offset subtree).
+	right := ast.BinOp.RHS
+	if right.Kind != KindBinOp || right.BinOp == nil || right.BinOp.Op != ">=" {
+		t.Fatalf("right: want \">=\", got kind=%s op=%v", right.Kind, func() any {
+			if right.BinOp != nil {
+				return right.BinOp.Op
+			}
+			return nil
+		}())
+	}
+	if right.BinOp.RHS.Kind != KindVector || right.BinOp.RHS.Vector == nil ||
+		right.BinOp.RHS.Vector.Literal == nil || *right.BinOp.RHS.Vector.Literal != 2 {
+		t.Fatalf("right rhs: want scalar 2, got %#v", right.BinOp.RHS)
+	}
+
+	// Ensure somewhere inside the right LHS we have a RangeAgg with offset 1h.
+	var sawOffset bool
+	var walk func(n LogAST)
+	walk = func(n LogAST) {
+		switch n.Kind {
+		case KindRangeAgg:
+			if n.RangeAgg != nil && n.RangeAgg.Left.Offset == "1h" {
+				sawOffset = true
+			}
+		case KindVectorAgg:
+			if n.VectorAgg != nil {
+				walk(n.VectorAgg.Left)
+			}
+		case KindBinOp:
+			if n.BinOp != nil {
+				walk(n.BinOp.LHS)
+				walk(n.BinOp.RHS)
+			}
+		}
+	}
+	walk(right.BinOp.LHS)
+	if !sawOffset {
+		t.Fatalf("expected at least one RangeAgg with offset 1h in right-side LHS")
+	}
+}
