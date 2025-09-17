@@ -19,6 +19,7 @@ package metricsprocessing
 import (
 	"context"
 	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -127,8 +128,23 @@ func (p *integrationTestProcessor) GetTargetRecordCount(ctx context.Context, gro
 func setupIntegrationTest(t *testing.T) (*lrdb.Store, func()) {
 	ctx := context.Background()
 
+	// Get connection details from environment
+	host := getEnvOrDefault("LRDB_HOST", "localhost")
+	port := getEnvOrDefault("LRDB_PORT", "5432")
+	user := getEnvOrDefault("LRDB_USER", os.Getenv("USER"))
+	dbname := getEnvOrDefault("LRDB_DBNAME", "testing_lrdb")
+	password := os.Getenv("LRDB_PASSWORD")
+
+	// Build connection string
+	var connStr string
+	if password != "" {
+		connStr = fmt.Sprintf("postgresql://%s:%s@%s:%s/%s?sslmode=disable", user, password, host, port, dbname)
+	} else {
+		connStr = fmt.Sprintf("postgresql://%s@%s:%s/%s?sslmode=disable", user, host, port, dbname)
+	}
+
 	// Create test database connection using pgxpool
-	config, err := pgxpool.ParseConfig("host=localhost dbname=testing_lrdb sslmode=disable")
+	config, err := pgxpool.ParseConfig(connStr)
 	require.NoError(t, err)
 
 	pool, err := pgxpool.NewWithConfig(ctx, config)
@@ -581,4 +597,11 @@ func insertTestSegments(ctx context.Context, store *lrdb.Store, orgID uuid.UUID,
 		}
 	}
 	return nil
+}
+
+func getEnvOrDefault(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
 }
