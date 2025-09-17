@@ -298,10 +298,9 @@ func TestGatherer_DatabaseIntegration_FailureAndRecovery(t *testing.T) {
 	cfg := getTestConfig()
 	processor := newIntegrationTestProcessor(store, cfg)
 
-	// Create messages and insert corresponding segments
+	// Create messages but DON'T insert all segments yet
 	var testMsgs []*messages.LogCompactionMessage
 	var testMetadata []*messageMetadata
-	segmentIDs := make([]int64, 0, 150)
 
 	for i := 0; i < 150; i++ {
 		segmentID := int64(2000000 + i) // Use different range from other test
@@ -317,20 +316,23 @@ func TestGatherer_DatabaseIntegration_FailureAndRecovery(t *testing.T) {
 		md := createTestMetadata("test-topic", 0, "test-group", int64(i))
 		testMsgs = append(testMsgs, msg)
 		testMetadata = append(testMetadata, md)
-		segmentIDs = append(segmentIDs, segmentID)
 	}
 
-	// Insert segments into database so they can be marked as compacted
-	err := insertTestSegments(ctx, store, orgID, 20250115, 1, segmentIDs, false, false)
-	require.NoError(t, err, "Failed to insert test segments")
-
-	// Phase 1: Process messages until "crash"
+	// Phase 1: Process messages until "crash" and insert ONLY those segments
 	gatherer1 := newGatherer[*messages.LogCompactionMessage, messages.LogCompactionKey](
 		"test-topic", "test-group", processor, store)
 
+	// Track which messages were processed before crash
 	crashAt := -1
+	var phase1SegmentIDs []int64
+
 	for i := 0; i < len(testMsgs); i++ {
-		err := gatherer1.processMessage(ctx, testMsgs[i], testMetadata[i])
+		// Insert segment for this message (simulating ingest created it)
+		phase1SegmentIDs = append(phase1SegmentIDs, testMsgs[i].SegmentID)
+		err := insertTestSegments(ctx, store, orgID, 20250115, 1, []int64{testMsgs[i].SegmentID}, false, false)
+		require.NoError(t, err)
+
+		err = gatherer1.processMessage(ctx, testMsgs[i], testMetadata[i])
 		require.NoError(t, err)
 
 		// Check for boxes emitted (need to flush to force emission)
@@ -347,6 +349,7 @@ func TestGatherer_DatabaseIntegration_FailureAndRecovery(t *testing.T) {
 
 	require.Greater(t, crashAt, 0, "Should have crashed after processing some messages")
 	boxesBeforeCrash := len(processor.processedGroups)
+	t.Logf("Crashed at message %d, emitted %d boxes", crashAt, boxesBeforeCrash)
 
 	// Get last committed offset from database
 	offsets, err := store.KafkaOffsetsAfter(ctx, lrdb.KafkaOffsetsAfterParams{
@@ -363,25 +366,45 @@ func TestGatherer_DatabaseIntegration_FailureAndRecovery(t *testing.T) {
 			lastCommittedOffset = offset
 		}
 	}
+	t.Logf("Last committed offset: %d", lastCommittedOffset)
 
 	// Phase 2: Recovery - replay from last committed offset
+	// IMPORTANT: Only create segments for messages AFTER what was committed
 	processor2 := newIntegrationTestProcessor(store, cfg)
 	gatherer2 := newGatherer[*messages.LogCompactionMessage, messages.LogCompactionKey](
 		"test-topic", "test-group", processor2, store)
 
-	replayStart := int(lastCommittedOffset + 1)
+	replayStart := int(lastCommittedOffset - 50) // Replay some overlap
 	if replayStart < 0 {
 		replayStart = 0
 	}
 
+	// Insert segments ONLY for messages after the crash point
+	// This simulates that messages <= crashAt were already ingested before crash
+	// and messages > crashAt are new messages coming in after recovery
+	var phase2SegmentIDs []int64
+	for i := crashAt + 1; i < len(testMsgs); i++ {
+		phase2SegmentIDs = append(phase2SegmentIDs, testMsgs[i].SegmentID)
+		err := insertTestSegments(ctx, store, orgID, 20250115, 1, []int64{testMsgs[i].SegmentID}, false, false)
+		require.NoError(t, err)
+	}
+	t.Logf("Created %d new segments for messages after crash", len(phase2SegmentIDs))
+
+	// Now replay from last committed offset, which will include:
+	// - Messages that were in-flight but not committed (replay)
+	// - New messages after the crash point
+	messagesReplayed := 0
 	for i := replayStart; i < len(testMsgs); i++ {
 		err := gatherer2.processMessage(ctx, testMsgs[i], testMetadata[i])
 		require.NoError(t, err)
+		messagesReplayed++
 	}
+	t.Logf("Replayed %d messages starting from offset %d", messagesReplayed, replayStart)
 
-	// Flush remaining
-	_, err = gatherer2.processIdleGroups(ctx, 0, 0)
+	// Flush remaining to ensure all accumulated messages are emitted
+	flushed, err := gatherer2.processIdleGroups(ctx, 0, 0)
 	require.NoError(t, err)
+	t.Logf("Flushed %d groups after recovery", flushed)
 
 	// Verify all messages were processed exactly once
 	allOffsets, err := store.KafkaOffsetsAfter(ctx, lrdb.KafkaOffsetsAfterParams{
@@ -403,8 +426,29 @@ func TestGatherer_DatabaseIntegration_FailureAndRecovery(t *testing.T) {
 		assert.Equal(t, 1, count, "Message at offset %d should appear exactly once, got %d", i, count)
 	}
 
+	// Verify that segments created before crash were marked as compacted
+	query := `SELECT COUNT(*) FROM log_seg WHERE organization_id = $1 AND dateint = $2 AND segment_id <= $3 AND compacted = true`
+	var compactedBeforeCrash int
+	err = store.Pool().QueryRow(ctx, query, orgID, int32(20250115), testMsgs[crashAt].SegmentID).Scan(&compactedBeforeCrash)
+	require.NoError(t, err)
+
+	// Verify total boxes emitted accounts for all messages
+	totalMessagesInBoxes := int64(0)
+	for _, group := range processor.processedGroups {
+		totalMessagesInBoxes += int64(len(group.Messages))
+	}
+	for _, group := range processor2.processedGroups {
+		totalMessagesInBoxes += int64(len(group.Messages))
+	}
+
 	t.Logf("Failure/recovery test: %d boxes before crash, %d boxes after recovery, %d total messages",
 		boxesBeforeCrash, len(processor2.processedGroups), len(testMsgs))
+	t.Logf("Total messages in all boxes: %d, compacted segments before crash: %d",
+		totalMessagesInBoxes, compactedBeforeCrash)
+
+	// The key assertion: all messages should eventually be in a box
+	assert.Equal(t, int64(len(testMsgs)), totalMessagesInBoxes,
+		"All messages should be included in boxes after recovery")
 }
 
 func TestGatherer_DatabaseIntegration_MultiPartition(t *testing.T) {
