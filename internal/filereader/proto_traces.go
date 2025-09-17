@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"time"
 
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
@@ -71,7 +72,7 @@ func (r *ProtoTracesReader) Next(ctx context.Context) (*Batch, error) {
 	batch := pipeline.GetBatch()
 
 	for batch.Len() < r.batchSize {
-		sourceRow, err := r.getTraceRow()
+		sourceRow, err := r.getTraceRow(ctx)
 		if err != nil {
 			if err == io.EOF {
 				if batch.Len() == 0 {
@@ -111,7 +112,7 @@ func (r *ProtoTracesReader) Next(ctx context.Context) (*Batch, error) {
 }
 
 // getTraceRow handles reading the next trace row.
-func (r *ProtoTracesReader) getTraceRow() (Row, error) {
+func (r *ProtoTracesReader) getTraceRow(ctx context.Context) (Row, error) {
 	if r.traces == nil {
 		return nil, io.EOF
 	}
@@ -127,7 +128,7 @@ func (r *ProtoTracesReader) getTraceRow() (Row, error) {
 				span := ss.Spans().At(r.spanIndex)
 
 				// Build row for this span
-				row := r.buildSpanRow(rs, ss, span)
+				row := r.buildSpanRow(ctx, rs, ss, span)
 
 				// Advance to next span
 				r.spanIndex++
@@ -150,7 +151,7 @@ func (r *ProtoTracesReader) getTraceRow() (Row, error) {
 }
 
 // buildSpanRow creates a row from a single span and its context.
-func (r *ProtoTracesReader) buildSpanRow(rs ptrace.ResourceSpans, ss ptrace.ScopeSpans, span ptrace.Span) map[string]any {
+func (r *ProtoTracesReader) buildSpanRow(ctx context.Context, rs ptrace.ResourceSpans, ss ptrace.ScopeSpans, span ptrace.Span) map[string]any {
 	ret := map[string]any{}
 
 	// Add resource attributes with prefix
@@ -182,10 +183,47 @@ func (r *ProtoTracesReader) buildSpanRow(rs ptrace.ResourceSpans, ss ptrace.Scop
 	ret["_cardinalhq.kind"] = span.Kind().String()
 	ret["_cardinalhq.status_code"] = span.Status().Code().String()
 	ret["_cardinalhq.status_message"] = span.Status().Message()
-	ret["_cardinalhq.timestamp"] = span.StartTimestamp().AsTime().UnixMilli()
-	ret["_cardinalhq.tsns"] = int64(span.StartTimestamp())
-	ret["_cardinalhq.end_timestamp"] = span.EndTimestamp().AsTime().UnixMilli()
-	ret["_cardinalhq.span_duration"] = span.EndTimestamp().AsTime().Sub(span.StartTimestamp().AsTime()).Milliseconds()
+
+	// Handle start timestamp with fallback
+	if span.StartTimestamp() != 0 {
+		ret["_cardinalhq.timestamp"] = span.StartTimestamp().AsTime().UnixMilli()
+		ret["_cardinalhq.tsns"] = int64(span.StartTimestamp())
+	} else {
+		// Fallback to current time when start timestamp is zero
+		currentTime := time.Now()
+		ret["_cardinalhq.timestamp"] = currentTime.UnixMilli()
+		ret["_cardinalhq.tsns"] = currentTime.UnixNano()
+		timestampFallbackCounter.Add(ctx, 1, otelmetric.WithAttributes(
+			attribute.String("signal_type", "traces"),
+			attribute.String("reason", "current_fallback"),
+		))
+	}
+
+	// Handle end timestamp with fallback
+	if span.EndTimestamp() != 0 {
+		ret["_cardinalhq.end_timestamp"] = span.EndTimestamp().AsTime().UnixMilli()
+		// Calculate duration using actual timestamps
+		if span.StartTimestamp() != 0 {
+			ret["_cardinalhq.span_duration"] = span.EndTimestamp().AsTime().Sub(span.StartTimestamp().AsTime()).Milliseconds()
+		} else {
+			// If start timestamp was fallback, use 0 duration
+			ret["_cardinalhq.span_duration"] = int64(0)
+		}
+	} else {
+		// Fallback to current time for end timestamp
+		currentTime := time.Now()
+		ret["_cardinalhq.end_timestamp"] = currentTime.UnixMilli()
+		timestampFallbackCounter.Add(ctx, 1, otelmetric.WithAttributes(
+			attribute.String("signal_type", "traces"),
+			attribute.String("reason", "current_fallback"),
+		))
+		// Calculate duration if we have a valid start timestamp
+		if span.StartTimestamp() != 0 {
+			ret["_cardinalhq.span_duration"] = currentTime.Sub(span.StartTimestamp().AsTime()).Milliseconds()
+		} else {
+			ret["_cardinalhq.span_duration"] = int64(0)
+		}
+	}
 
 	return ret
 }
