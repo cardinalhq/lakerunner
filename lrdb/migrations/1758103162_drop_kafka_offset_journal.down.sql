@@ -1,0 +1,2 @@
+-- This is a one-way migration. The kafka_offset_journal table is obsolete and replaced by kafka_offset_tracker.
+-- No rollback needed as this table has been unused in deployments.
