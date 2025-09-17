@@ -654,7 +654,7 @@ func TestGatherer_ExactlyOnceSemantics(t *testing.T) {
 	// Check for duplicates
 	duplicates := 0
 	missing := 0
-	for i := 0; i < 500; i++ {
+	for i := range 500 {
 		count := messageCount[int64(i)]
 		if count > 1 {
 			duplicates++
