@@ -234,6 +234,7 @@ func TestConsumer_CommitMessages(t *testing.T) {
 	produceTestMessagesWithContainer(t, kafkaContainer, topic, testMessages)
 
 	config := kafkaContainer.CreateConsumerConfig(topic, groupID)
+	config.AutoCommit = false // Test manual commits
 	config.CommitBatch = false // Test individual commits
 	config.BatchSize = 10
 
@@ -303,4 +304,222 @@ func TestNewConsumerWithOptions(t *testing.T) {
 
 	assert.Equal(t, 25, kc.config.BatchSize)
 	assert.Equal(t, []string{"localhost:9092"}, kc.config.Brokers)
+}
+
+func TestConsumer_NoAutoCommit(t *testing.T) {
+	topic := fmt.Sprintf("test-no-autocommit-%s", uuid.New().String())
+	groupID := fmt.Sprintf("test-no-autocommit-group-%s", uuid.New().String())
+
+	// Use shared Kafka container with topic
+	kafkaContainer := NewKafkaTestContainer(t, topic)
+	defer kafkaContainer.CleanupAfterTest(t, []string{topic}, []string{groupID})
+
+	// Produce test messages
+	testMessages := []Message{
+		{Key: []byte("key1"), Value: []byte("value1")},
+		{Key: []byte("key2"), Value: []byte("value2")},
+		{Key: []byte("key3"), Value: []byte("value3")},
+	}
+	produceTestMessagesWithContainer(t, kafkaContainer, topic, testMessages)
+
+	// First consumer - consume messages but DO NOT commit
+	config := kafkaContainer.CreateConsumerConfig(topic, groupID)
+	config.AutoCommit = false // Explicitly disable auto-commit for this test
+	config.CommitBatch = false
+	config.BatchSize = 10
+	config.MaxWait = 500 * time.Millisecond
+
+	firstConsumer := NewConsumer(config)
+
+	firstConsumerMessages := make([]ConsumedMessage, 0)
+	var mu sync.Mutex
+
+	handler := func(ctx context.Context, messages []ConsumedMessage) error {
+		mu.Lock()
+		firstConsumerMessages = append(firstConsumerMessages, messages...)
+		mu.Unlock()
+		// Intentionally NOT committing messages
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	// Start consuming in background
+	go func() {
+		_ = firstConsumer.Consume(ctx, handler)
+	}()
+
+	// Wait for messages to be consumed
+	time.Sleep(2 * time.Second)
+	cancel()
+
+	// Close first consumer without committing
+	firstConsumer.Close()
+
+	// Verify we received messages
+	mu.Lock()
+	receivedCount := len(firstConsumerMessages)
+	mu.Unlock()
+	assert.Equal(t, 3, receivedCount, "First consumer should have received 3 messages")
+
+	// Second consumer - should receive the SAME messages since they weren't committed
+	secondConsumer := NewConsumer(config)
+	defer secondConsumer.Close()
+
+	secondConsumerMessages := make([]ConsumedMessage, 0)
+
+	handler2 := func(ctx context.Context, messages []ConsumedMessage) error {
+		mu.Lock()
+		secondConsumerMessages = append(secondConsumerMessages, messages...)
+		mu.Unlock()
+		return nil
+	}
+
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel2()
+
+	// Start consuming in background
+	go func() {
+		_ = secondConsumer.Consume(ctx2, handler2)
+	}()
+
+	// Wait for messages to be consumed
+	time.Sleep(2 * time.Second)
+	cancel2()
+
+	// Verify second consumer received the same messages
+	mu.Lock()
+	secondReceivedCount := len(secondConsumerMessages)
+	mu.Unlock()
+
+	assert.Equal(t, 3, secondReceivedCount,
+		"Second consumer should receive all 3 messages since first consumer didn't commit")
+
+	// Verify the message contents are the same
+	messageMap1 := make(map[string]string)
+	messageMap2 := make(map[string]string)
+
+	mu.Lock()
+	for _, msg := range firstConsumerMessages {
+		messageMap1[string(msg.Key)] = string(msg.Value)
+	}
+	for _, msg := range secondConsumerMessages {
+		messageMap2[string(msg.Key)] = string(msg.Value)
+	}
+	mu.Unlock()
+
+	assert.Equal(t, messageMap1, messageMap2,
+		"Both consumers should have received the same messages")
+}
+
+func TestConsumer_ExplicitCommitPersists(t *testing.T) {
+	topic := fmt.Sprintf("test-explicit-commit-%s", uuid.New().String())
+	groupID := fmt.Sprintf("test-explicit-commit-group-%s", uuid.New().String())
+
+	// Use shared Kafka container with topic
+	kafkaContainer := NewKafkaTestContainer(t, topic)
+	defer kafkaContainer.CleanupAfterTest(t, []string{topic}, []string{groupID})
+
+	// Produce test messages
+	testMessages := []Message{
+		{Key: []byte("key1"), Value: []byte("value1")},
+		{Key: []byte("key2"), Value: []byte("value2")},
+		{Key: []byte("key3"), Value: []byte("value3")},
+	}
+	produceTestMessagesWithContainer(t, kafkaContainer, topic, testMessages)
+
+	// First consumer - consume and COMMIT messages
+	config := kafkaContainer.CreateConsumerConfig(topic, groupID)
+	config.AutoCommit = false // Test explicit commits
+	config.CommitBatch = false
+	config.BatchSize = 10
+	config.MaxWait = 500 * time.Millisecond
+
+	firstConsumer := NewConsumer(config)
+
+	firstConsumerMessages := make([]ConsumedMessage, 0)
+	var mu sync.Mutex
+
+	handler := func(ctx context.Context, messages []ConsumedMessage) error {
+		mu.Lock()
+		firstConsumerMessages = append(firstConsumerMessages, messages...)
+		mu.Unlock()
+
+		// Explicitly commit each message
+		for _, msg := range messages {
+			if err := firstConsumer.CommitMessages(ctx, msg); err != nil {
+				return fmt.Errorf("failed to commit message: %w", err)
+			}
+		}
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	// Start consuming in background
+	go func() {
+		_ = firstConsumer.Consume(ctx, handler)
+	}()
+
+	// Wait for messages to be consumed and committed
+	time.Sleep(2 * time.Second)
+	cancel()
+	firstConsumer.Close()
+
+	// Verify we received and committed messages
+	mu.Lock()
+	receivedCount := len(firstConsumerMessages)
+	mu.Unlock()
+	assert.Equal(t, 3, receivedCount, "First consumer should have received 3 messages")
+
+	// Produce more messages to the same topic
+	newMessages := []Message{
+		{Key: []byte("key4"), Value: []byte("value4")},
+		{Key: []byte("key5"), Value: []byte("value5")},
+	}
+	produceTestMessagesWithContainer(t, kafkaContainer, topic, newMessages)
+
+	// Second consumer - should only receive NEW messages since old ones were committed
+	secondConsumer := NewConsumer(config)
+	defer secondConsumer.Close()
+
+	secondConsumerMessages := make([]ConsumedMessage, 0)
+
+	handler2 := func(ctx context.Context, messages []ConsumedMessage) error {
+		mu.Lock()
+		secondConsumerMessages = append(secondConsumerMessages, messages...)
+		mu.Unlock()
+		return nil
+	}
+
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel2()
+
+	// Start consuming in background
+	go func() {
+		_ = secondConsumer.Consume(ctx2, handler2)
+	}()
+
+	// Wait for messages to be consumed
+	time.Sleep(2 * time.Second)
+	cancel2()
+
+	// Verify second consumer only received the new messages
+	mu.Lock()
+	secondReceivedCount := len(secondConsumerMessages)
+	mu.Unlock()
+
+	assert.Equal(t, 2, secondReceivedCount,
+		"Second consumer should only receive 2 new messages since first consumer committed the first 3")
+
+	// Verify the second consumer got only the new messages
+	mu.Lock()
+	for _, msg := range secondConsumerMessages {
+		key := string(msg.Key)
+		assert.Contains(t, []string{"key4", "key5"}, key,
+			"Second consumer should only have received new messages (key4, key5)")
+	}
+	mu.Unlock()
 }
