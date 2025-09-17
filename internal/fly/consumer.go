@@ -74,7 +74,7 @@ func DefaultConsumerConfig(topic, groupID string) ConsumerConfig {
 		MaxWait:     500 * time.Millisecond,
 		BatchSize:   100,
 		StartOffset: kafka.LastOffset,
-		AutoCommit:  false,
+		AutoCommit:  true, // Default to true for backward compatibility
 		CommitBatch: true,
 
 		ConnectionTimeout: 10 * time.Second,
