@@ -34,6 +34,13 @@ type KafkaMetricsExporter struct {
 
 // NewKafkaMetricsExporter creates a new Kafka metrics exporter
 func NewKafkaMetricsExporter(monitor LagMonitorInterface, topicRegistry *config.TopicRegistry) (*KafkaMetricsExporter, error) {
+	if monitor == nil {
+		return nil, fmt.Errorf("monitor cannot be nil")
+	}
+	if topicRegistry == nil {
+		return nil, fmt.Errorf("topicRegistry cannot be nil")
+	}
+
 	exporter := &KafkaMetricsExporter{
 		monitor:       monitor,
 		topicRegistry: topicRegistry,
@@ -70,8 +77,10 @@ func (e *KafkaMetricsExporter) observeConsumerLag(ctx context.Context, observer 
 	metrics := e.monitor.GetDetailedMetrics()
 
 	for _, info := range metrics {
-		// Get service name from consumer group
-		serviceName := e.topicRegistry.GetServiceNameByConsumerGroup(info.GroupID)
+		serviceName := "unknown"
+		if e.topicRegistry != nil {
+			serviceName = e.topicRegistry.GetServiceNameByConsumerGroup(info.GroupID)
+		}
 
 		observer.Observe(info.Lag,
 			metric.WithAttributes(
