@@ -87,7 +87,7 @@ func (e *KafkaMetricsExporter) observeConsumerLag(ctx context.Context, observer 
 				attribute.String("topic", info.Topic),
 				attribute.String("consumer_group", info.GroupID),
 				attribute.Int("partition", info.Partition),
-				attribute.String("service.name", serviceName),
+				attribute.String("service", serviceName),
 			),
 		)
 	}
