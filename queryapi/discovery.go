@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -36,6 +37,7 @@ type WorkerDiscovery interface {
 // Supported values:
 //   - "local": Creates LocalDevDiscovery for local development
 //   - "kubernetes": Creates KubernetesWorkerDiscovery for Kubernetes environments
+//   - "ecs": Creates EcsWorkerDiscovery for ECS environments
 //   - unset or other values: Returns an error
 func CreateWorkerDiscovery() (WorkerDiscovery, error) {
 	execEnv := os.Getenv("EXECUTION_ENVIRONMENT")
@@ -47,11 +49,14 @@ func CreateWorkerDiscovery() (WorkerDiscovery, error) {
 	case "kubernetes":
 		return createKubernetesWorkerDiscovery()
 
+	case "ecs":
+		return createEcsWorkerDiscovery()
+
 	case "":
-		return nil, fmt.Errorf("EXECUTION_ENVIRONMENT environment variable is required (must be 'local' or 'kubernetes')")
+		return nil, fmt.Errorf("EXECUTION_ENVIRONMENT environment variable is required (must be 'local', 'kubernetes', or 'ecs')")
 
 	default:
-		return nil, fmt.Errorf("unsupported EXECUTION_ENVIRONMENT: %s (must be 'local' or 'kubernetes')", execEnv)
+		return nil, fmt.Errorf("unsupported EXECUTION_ENVIRONMENT: %s (must be 'local', 'kubernetes', or 'ecs')", execEnv)
 	}
 }
 
@@ -86,6 +91,54 @@ func createKubernetesWorkerDiscovery() (WorkerDiscovery, error) {
 	return NewKubernetesWorkerDiscovery(config)
 }
 
-func IsLocalDev() bool {
-	return os.Getenv("EXECUTION_ENVIRONMENT") == "local"
+// createEcsWorkerDiscovery creates an EcsWorkerDiscovery with required configuration
+func createEcsWorkerDiscovery() (WorkerDiscovery, error) {
+	serviceName := getFirstEnv([]string{"QUERY_WORKER_SERVICE_NAME", "ECS_WORKER_SERVICE_NAME"})
+	if serviceName == "" {
+		return nil, fmt.Errorf("QUERY_WORKER_SERVICE_NAME or ECS_WORKER_SERVICE_NAME environment variable is required for ECS execution environment")
+	}
+
+	clusterName := getFirstEnv([]string{"QUERY_WORKER_CLUSTER_NAME", "ECS_WORKER_CLUSTER_NAME"})
+	if clusterName == "" {
+		return nil, fmt.Errorf("QUERY_WORKER_CLUSTER_NAME or ECS_WORKER_CLUSTER_NAME environment variable is required for ECS execution environment")
+	}
+
+	workerPortStr := os.Getenv("QUERY_WORKER_PORT")
+	if workerPortStr == "" {
+		workerPortStr = "8081" // default for workers
+	}
+
+	workerPort, err := strconv.Atoi(workerPortStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid QUERY_WORKER_PORT: %w", err)
+	}
+
+	intervalSecsStr := os.Getenv("WORKER_POLL_INTERVAL_SECONDS")
+	if intervalSecsStr == "" {
+		intervalSecsStr = "10" // default
+	}
+
+	intervalSecs, err := strconv.Atoi(intervalSecsStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid WORKER_POLL_INTERVAL_SECONDS: %w", err)
+	}
+
+	config := EcsWorkerDiscoveryConfig{
+		ServiceName: serviceName,
+		ClusterName: clusterName,
+		WorkerPort:  workerPort,
+		Interval:    time.Duration(intervalSecs) * time.Second,
+	}
+
+	return NewEcsWorkerDiscovery(config)
+}
+
+// getFirstEnv returns the value of the first environment variable that is set
+func getFirstEnv(keys []string) string {
+	for _, key := range keys {
+		if val := os.Getenv(key); val != "" {
+			return val
+		}
+	}
+	return ""
 }
