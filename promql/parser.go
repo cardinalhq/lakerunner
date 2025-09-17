@@ -357,7 +357,7 @@ func fromNode(n promparser.Node) (Expr, error) {
 		// rate/irate/increase and *_over_time
 		switch fn {
 		case "rate", "irate", "increase",
-			"sum_over_time", "avg_over_time", "min_over_time", "max_over_time", "quantile_over_time", "count_over_time":
+			"sum_over_time", "avg_over_time", "min_over_time", "max_over_time", "quantile_over_time", "count_over_time", "last_over_time":
 			var qptr *float64
 			var argExpr Expr
 			if fn == "quantile_over_time" {

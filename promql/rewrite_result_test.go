@@ -625,3 +625,26 @@ func TestRewrite_SumByCardType_SumOverTime_Unwrap_WithOffset(t *testing.T) {
 		"segLeaf": {ID: "segLeaf", Range: "1m", Offset: "1h"},
 	})
 }
+
+func TestRewrite_LastOverTime_Unwrap_24h(t *testing.T) {
+	leaf := mkLeaf("hwLeaf", "24h", "")
+
+	root := &logql.LRangeAggNode{
+		Op:    "last_over_time",
+		Child: &logql.LLeafNode{Leaf: leaf},
+	}
+
+	rr, err := RewriteToPromQL(root)
+	if err != nil {
+		t.Fatalf("RewriteToPromQL error: %v", err)
+	}
+
+	wantProm := `last_over_time(` + SynthLogUnwrap + `{` + LeafMatcher + `="hwLeaf"}[24h])`
+	if rr.PromQL != wantProm {
+		t.Fatalf("promql mismatch:\n  want: %s\n  got : %s", wantProm, rr.PromQL)
+	}
+
+	assertLeavesExactly(t, rr, map[string]logql.LogLeaf{
+		"hwLeaf": leaf,
+	})
+}

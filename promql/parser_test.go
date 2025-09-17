@@ -223,3 +223,20 @@ func TestParser_ReturnBool(t *testing.T) {
 		t.Fatalf("ReturnBool not set: %#v", e)
 	}
 }
+
+func TestLastOverTime_RangeAndOffset(t *testing.T) {
+	q := `last_over_time(http_request_duration_seconds_sum{job="api"}[24h] offset 1h)`
+	expr, err := FromPromQL(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := mustJSON(t, expr)
+	containsAll(t, js,
+		`"kind":"func"`, `"name":"last_over_time"`,
+		`"kind":"range"`, `"range":"1d"`,
+		`"offset":"1h"`,
+		`"kind":"selector"`,
+		`"metric":"http_request_duration_seconds_sum"`,
+		`"label":"job"`, `"op":"="`, `"value":"api"`,
+	)
+}

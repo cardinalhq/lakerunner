@@ -34,6 +34,7 @@ var supportedFuncs = map[string]bool{
 	"quantile_over_time": false, // needs DDS
 	"histogram_quantile": false, // needs DDS
 	"count_over_time":    true,
+	"last_over_time":     true,
 	"":                   true, // raw/instant (we still bucket for step)
 }
 

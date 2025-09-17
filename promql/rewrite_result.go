@@ -64,6 +64,8 @@ func RewriteToPromQL(root logql.LExecNode) (RewriteResult, error) {
 					fam, promOp = SynthLogBytes, "rate"
 				case "min_over_time":
 					fam, promOp = SynthLogUnwrap, "min_over_time"
+				case "last_over_time":
+					fam, promOp = SynthLogUnwrap, "last_over_time"
 				case "max_over_time":
 					fam, promOp = SynthLogUnwrap, "max_over_time"
 				case "avg_over_time":

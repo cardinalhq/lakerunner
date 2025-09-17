@@ -284,7 +284,7 @@ func (n *LeafNode) evalRangeAwareScalar(key string, in SketchInput, stepMs, rang
 	ts := in.Timestamp
 
 	switch n.BE.FuncName {
-	case "sum_over_time", "increase", "rate", "avg_over_time", "count_over_time":
+	case "sum_over_time", "increase", "rate", "avg_over_time", "count_over_time", "last_over_time":
 		bktSum := in.SketchTags.getAggValue(SUM)
 		bktCnt := in.SketchTags.getAggValue(COUNT)
 
@@ -297,11 +297,19 @@ func (n *LeafNode) evalRangeAwareScalar(key string, in SketchInput, stepMs, rang
 			w = &winSumCount{rangeMs: rangeMs}
 			n.windows[key] = w
 		}
-		// Left-open / right-closed: keep (ts-range, ts]  => evict ts < ts-range+step
 		w.add(ts, bktSum, bktCnt)
 		w.evict(ts - rangeMs + stepMs)
 		covered := w.coveredMs(ts, stepMs)
 		sum, cnt := w.sum, w.count
+		lastVal := math.NaN()
+		if nBE := len(w.entries); nBE > 0 {
+			lastSum := w.entries[nBE-1].sum
+			lastCount := w.entries[nBE-1].count
+			if lastCount == 0 {
+				lastCount = 1
+			}
+			lastVal = lastSum / lastCount // <-- the "last" value in window (using SUM as the bucket value)
+		}
 		n.mu.Unlock()
 
 		if covered < rangeMs {
@@ -319,6 +327,8 @@ func (n *LeafNode) evalRangeAwareScalar(key string, in SketchInput, stepMs, rang
 				return math.NaN()
 			}
 			return sum / cnt
+		case "last_over_time":
+			return lastVal
 		}
 
 	case "min_over_time", "max_over_time":
@@ -353,7 +363,6 @@ func (n *LeafNode) evalRangeAwareScalar(key string, in SketchInput, stepMs, rang
 	return evalLeafValuePerBucket(n.BE, in, float64(stepMs)/1000.0)
 }
 
-// Per-bucket (no-range) evaluation for all supported funcs.
 func evalLeafValuePerBucket(be BaseExpr, in SketchInput, stepSecs float64) float64 {
 	if in.SketchTags.SketchType != SketchMAP {
 		return math.NaN()
@@ -383,8 +392,10 @@ func evalLeafValuePerBucket(be BaseExpr, in SketchInput, stepSecs float64) float
 		return in.SketchTags.getAggValue(MAX)
 	case "count_over_time":
 		return in.SketchTags.getAggValue(COUNT)
+	case "last_over_time":
+		// No window -> just use the bucket’s value (we store it under SUM)
+		return in.SketchTags.getAggValue(SUM)
 	default:
-		// default to SUM
 		return in.SketchTags.getAggValue(SUM)
 	}
 }
