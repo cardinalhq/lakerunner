@@ -295,6 +295,11 @@ func (q *QuerierService) Run(doneCtx context.Context) error {
 	mux.HandleFunc("/api/v1/promql/validate", q.handlePromQLValidate)
 	mux.HandleFunc("/api/v1/logql/validate", q.handleLogQLValidate)
 
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+
 	srv := &http.Server{
 		Addr:    ":8080",
 		Handler: mux,
