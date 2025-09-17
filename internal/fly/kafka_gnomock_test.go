@@ -247,7 +247,7 @@ func (k *KafkaTestContainer) CreateConsumerConfig(topic, groupID string) Consume
 		MaxWait:     100 * time.Millisecond,
 		BatchSize:   10,
 		StartOffset: kafka.FirstOffset,
-		AutoCommit:  false,
+		AutoCommit:  true, // Default to true for backward compatibility
 		CommitBatch: true,
 	}
 }

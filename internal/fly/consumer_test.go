@@ -234,6 +234,7 @@ func TestConsumer_CommitMessages(t *testing.T) {
 	produceTestMessagesWithContainer(t, kafkaContainer, topic, testMessages)
 
 	config := kafkaContainer.CreateConsumerConfig(topic, groupID)
+	config.AutoCommit = false // Test manual commits
 	config.CommitBatch = false // Test individual commits
 	config.BatchSize = 10
 
@@ -323,7 +324,7 @@ func TestConsumer_NoAutoCommit(t *testing.T) {
 
 	// First consumer - consume messages but DO NOT commit
 	config := kafkaContainer.CreateConsumerConfig(topic, groupID)
-	config.AutoCommit = false
+	config.AutoCommit = false // Explicitly disable auto-commit for this test
 	config.CommitBatch = false
 	config.BatchSize = 10
 	config.MaxWait = 500 * time.Millisecond
@@ -430,7 +431,7 @@ func TestConsumer_ExplicitCommitPersists(t *testing.T) {
 
 	// First consumer - consume and COMMIT messages
 	config := kafkaContainer.CreateConsumerConfig(topic, groupID)
-	config.AutoCommit = false
+	config.AutoCommit = false // Test explicit commits
 	config.CommitBatch = false
 	config.BatchSize = 10
 	config.MaxWait = 500 * time.Millisecond
