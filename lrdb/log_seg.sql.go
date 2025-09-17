@@ -122,7 +122,7 @@ func (q *Queries) ListLogSegmentsForQuery(ctx context.Context, arg ListLogSegmen
 
 const markLogSegsCompactedByKeys = `-- name: MarkLogSegsCompactedByKeys :exec
 UPDATE log_seg
-SET compacted = true, published = false
+SET compacted = true
 WHERE organization_id = $1
   AND dateint         = $2
   AND instance_num    = $3
@@ -205,6 +205,33 @@ func (q *Queries) insertLogSegmentDirect(ctx context.Context, arg InsertLogSegme
 		arg.Fingerprints,
 		arg.Published,
 		arg.Compacted,
+	)
+	return err
+}
+
+const markLogSegsCompactedUnpublishedByKeys = `-- name: markLogSegsCompactedUnpublishedByKeys :exec
+UPDATE log_seg
+SET compacted = true, published = false
+WHERE organization_id = $1
+  AND dateint         = $2
+  AND instance_num    = $3
+  AND segment_id      = ANY($4::bigint[])
+  AND compacted       = false
+`
+
+type markLogSegsCompactedUnpublishedByKeysParams struct {
+	OrganizationID uuid.UUID `json:"organization_id"`
+	Dateint        int32     `json:"dateint"`
+	InstanceNum    int16     `json:"instance_num"`
+	SegmentIds     []int64   `json:"segment_ids"`
+}
+
+func (q *Queries) markLogSegsCompactedUnpublishedByKeys(ctx context.Context, arg markLogSegsCompactedUnpublishedByKeysParams) error {
+	_, err := q.db.Exec(ctx, markLogSegsCompactedUnpublishedByKeys,
+		arg.OrganizationID,
+		arg.Dateint,
+		arg.InstanceNum,
+		arg.SegmentIds,
 	)
 	return err
 }

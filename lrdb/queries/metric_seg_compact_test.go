@@ -80,7 +80,7 @@ func TestMarkMetricSegsCompactedByKeys_SingleSegment(t *testing.T) {
 	segment := segments[0]
 	assert.Equal(t, segmentID, segment.SegmentID)
 	assert.True(t, segment.Compacted, "Segment should be marked as compacted")
-	assert.False(t, segment.Published, "Segment should be marked as unpublished")
+	assert.True(t, segment.Published, "Segment should remain published")
 }
 
 func TestMarkMetricSegsCompactedByKeys_MultipleSegments(t *testing.T) {
@@ -139,13 +139,13 @@ func TestMarkMetricSegsCompactedByKeys_MultipleSegments(t *testing.T) {
 		segmentMap[segment.SegmentID] = segment
 	}
 
-	// Verify each segment is compacted and unpublished
+	// Verify each segment is compacted and published
 	for _, segmentID := range segmentIDs {
 		segment, exists := segmentMap[segmentID]
 		require.True(t, exists, "Segment should exist")
 		assert.Equal(t, segmentID, segment.SegmentID)
 		assert.True(t, segment.Compacted, "Segment should be marked as compacted")
-		assert.False(t, segment.Published, "Segment should be marked as unpublished")
+		assert.True(t, segment.Published, "Segment should remain published")
 	}
 }
 
@@ -217,7 +217,7 @@ func TestMarkMetricSegsCompactedByKeys_OnlyMatchingKeys(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, segments5k, 1)
 	assert.True(t, segments5k[0].Compacted, "5000ms segment should be compacted")
-	assert.False(t, segments5k[0].Published, "5000ms segment should be unpublished")
+	assert.True(t, segments5k[0].Published, "5000ms segment should remain published")
 
 	segments10k, err := db.GetMetricSegsByIds(ctx, lrdb.GetMetricSegsByIdsParams{
 		OrganizationID: orgID,

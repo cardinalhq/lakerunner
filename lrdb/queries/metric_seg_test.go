@@ -520,7 +520,7 @@ func TestCompactMetricSegs_CrossFrequencyIsolation(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, seg5000Data, 1)
 	assert.True(t, seg5000Data[0].Compacted)
-	assert.False(t, seg5000Data[0].Published)
+	assert.True(t, seg5000Data[0].Published)
 
 	// Verify 10000ms segment was NOT affected
 	seg10000Data, err := db.GetMetricSegsByIds(ctx, lrdb.GetMetricSegsByIdsParams{

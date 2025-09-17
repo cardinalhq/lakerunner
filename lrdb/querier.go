@@ -73,6 +73,9 @@ type Querier interface {
 	insertMetricSegDirect(ctx context.Context, arg InsertMetricSegmentParams) error
 	insertMetricSegsDirect(ctx context.Context, arg []InsertMetricSegsParams) *insertMetricSegsDirectBatchResults
 	insertTraceSegmentDirect(ctx context.Context, arg InsertTraceSegmentParams) error
+	markLogSegsCompactedUnpublishedByKeys(ctx context.Context, arg markLogSegsCompactedUnpublishedByKeysParams) error
+	markMetricSegsCompactedUnpublishedByKeys(ctx context.Context, arg markMetricSegsCompactedUnpublishedByKeysParams) error
+	markTraceSegsCompactedUnpublishedByKeys(ctx context.Context, arg markTraceSegsCompactedUnpublishedByKeysParams) error
 }
 
 var _ Querier = (*Queries)(nil)
