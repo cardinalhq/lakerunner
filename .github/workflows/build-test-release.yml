@@ -108,13 +108,16 @@ jobs:
           git status --short
           echo "Host .git directory:"
           ls -la .git/
-          echo "Running container debug:"
+          echo "Testing GoReleaser dry run:"
           docker run --rm \
             -v $PWD:/workspace \
             -v $PWD/.git:/workspace/.git \
             -w /workspace \
+            --user 1001:1001 \
+            -e GORELEASER_KEY="${{ secrets.GORELEASER_KEY }}" \
+            -e GORELEASER_CURRENT_TAG="${GORELEASER_CURRENT_TAG}" \
             lakerunner-build \
-            bash -c "echo 'Container .git check:' && ls -la .git/ && echo 'Container git status:' && git status && echo 'Container ownership:' && ls -la | grep .git"
+            check --config .goreleaser.test-release.yaml
 
       - name: Run GoReleaser Pro in custom container
         run: |
