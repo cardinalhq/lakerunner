@@ -102,6 +102,20 @@ jobs:
       - name: Build custom build environment
         run: docker build -f Dockerfile.build -t lakerunner-build .
 
+      - name: Debug container setup
+        run: |
+          echo "Host git status:"
+          git status --short
+          echo "Host .git directory:"
+          ls -la .git/
+          echo "Running container debug:"
+          docker run --rm \
+            -v $PWD:/workspace \
+            -v $PWD/.git:/workspace/.git \
+            -w /workspace \
+            lakerunner-build \
+            bash -c "echo 'Container .git check:' && ls -la .git/ && echo 'Container git status:' && git status && echo 'Container ownership:' && ls -la | grep .git"
+
       - name: Run GoReleaser Pro in custom container
         run: |
           docker run --rm \
