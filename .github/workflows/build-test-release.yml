@@ -106,6 +106,7 @@ jobs:
         run: |
           docker run --rm \
             -v $PWD:/workspace \
+            -v $PWD/.git:/workspace/.git \
             -w /workspace \
             -e GORELEASER_KEY="${{ secrets.GORELEASER_KEY }}" \
             -e GORELEASER_CURRENT_TAG="${GORELEASER_CURRENT_TAG}" \
@@ -179,6 +180,7 @@ jobs:
         run: |
           docker run --rm \
             -v $PWD:/workspace \
+            -v $PWD/.git:/workspace/.git \
             -w /workspace \
             -e GORELEASER_KEY="${{ secrets.GORELEASER_KEY }}" \
             -e GORELEASER_CURRENT_TAG="${GORELEASER_CURRENT_TAG}" \
