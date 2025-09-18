@@ -38,10 +38,10 @@ var (
 	processingSegmentDownloadMisses metric.Int64Counter
 )
 
-func reportTelemetry(ctx context.Context, action string, segmentsIn, segmentsOut, recordsIn, recordsOut, bytesIn, bytesOut int64) {
+func reportTelemetry(ctx context.Context, signal, action string, segmentsIn, segmentsOut, recordsIn, recordsOut, bytesIn, bytesOut int64) {
 	attrset := attribute.NewSet(
 		attribute.String("action", action),
-		attribute.String("signal", "metrics"),
+		attribute.String("signal", signal),
 	)
 	processingSegmentsIn.Add(ctx, segmentsIn, metric.WithAttributeSet(attrset))
 	processingSegmentsOut.Add(ctx, segmentsOut, metric.WithAttributeSet(attrset))
@@ -104,25 +104,12 @@ func recordSegmentDownload404(
 		attribute.String("bucket", bucket),
 		attribute.String("organization_id", organizationID.String()),
 		attribute.Int("instance_num", int(instanceNum)),
-		attribute.String("created_by", createdByToString(createdBy)),
+		attribute.String("created_by", createdBy.String()),
 	}
 	attrs = append(attrs, extraAttrs...)
 
 	attrset := attribute.NewSet(attrs...)
 	processingSegmentDownloadMisses.Add(ctx, 1, metric.WithAttributeSet(attrset))
-}
-
-func createdByToString(createdBy lrdb.CreatedBy) string {
-	switch createdBy {
-	case lrdb.CreatedByIngest:
-		return "ingest"
-	case lrdb.CreatedByCompact:
-		return "compact"
-	case lrdb.CreateByRollup:
-		return "rollup"
-	default:
-		return "unknown"
-	}
 }
 
 func init() {

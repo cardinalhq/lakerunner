@@ -300,7 +300,7 @@ func (p *TraceCompactionProcessor) uploadAndCreateTraceSegments(ctx context.Cont
 		segmentIDs = append(segmentIDs, segmentID)
 	}
 
-	reportTelemetry(ctx, "compaction", int64(len(inputSegments)), int64(len(segments)), totalInputRecords, totalOutputRecords, totalInputSize, totalOutputSize)
+	reportTelemetry(ctx, "traces", "compaction", int64(len(inputSegments)), int64(len(segments)), totalInputRecords, totalOutputRecords, totalInputSize, totalOutputSize)
 
 	ll.Info("Trace segment upload completed",
 		slog.Int("inputFiles", len(inputSegments)),

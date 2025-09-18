@@ -370,7 +370,7 @@ func (r *MetricRollupProcessor) uploadAndCreateRollupSegments(ctx context.Contex
 		segmentIDs = append(segmentIDs, segmentID)
 	}
 
-	reportTelemetry(ctx, "rollup", int64(len(inputSegments)), int64(len(segments)), totalInputRecords, totalOutputRecords, totalInputSize, totalOutputSize)
+	reportTelemetry(ctx, "metrics", "rollup", int64(len(inputSegments)), int64(len(segments)), totalInputRecords, totalOutputRecords, totalInputSize, totalOutputSize)
 
 	ll.Info("Rollup segment upload completed",
 		slog.Int("inputFiles", len(inputSegments)),
