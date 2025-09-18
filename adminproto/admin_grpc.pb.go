@@ -38,6 +38,7 @@ const (
 	AdminService_ListOrganizations_FullMethodName  = "/adminproto.AdminService/ListOrganizations"
 	AdminService_CreateOrganization_FullMethodName = "/adminproto.AdminService/CreateOrganization"
 	AdminService_UpdateOrganization_FullMethodName = "/adminproto.AdminService/UpdateOrganization"
+	AdminService_GetConsumerLag_FullMethodName     = "/adminproto.AdminService/GetConsumerLag"
 )
 
 // AdminServiceClient is the client API for AdminService service.
@@ -54,6 +55,8 @@ type AdminServiceClient interface {
 	CreateOrganization(ctx context.Context, in *CreateOrganizationRequest, opts ...grpc.CallOption) (*CreateOrganizationResponse, error)
 	// Update fields on an existing organization
 	UpdateOrganization(ctx context.Context, in *UpdateOrganizationRequest, opts ...grpc.CallOption) (*UpdateOrganizationResponse, error)
+	// Get Kafka consumer group lag information
+	GetConsumerLag(ctx context.Context, in *GetConsumerLagRequest, opts ...grpc.CallOption) (*GetConsumerLagResponse, error)
 }
 
 type adminServiceClient struct {
@@ -114,6 +117,16 @@ func (c *adminServiceClient) UpdateOrganization(ctx context.Context, in *UpdateO
 	return out, nil
 }
 
+func (c *adminServiceClient) GetConsumerLag(ctx context.Context, in *GetConsumerLagRequest, opts ...grpc.CallOption) (*GetConsumerLagResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetConsumerLagResponse)
+	err := c.cc.Invoke(ctx, AdminService_GetConsumerLag_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AdminServiceServer is the server API for AdminService service.
 // All implementations must embed UnimplementedAdminServiceServer
 // for forward compatibility.
@@ -128,6 +141,8 @@ type AdminServiceServer interface {
 	CreateOrganization(context.Context, *CreateOrganizationRequest) (*CreateOrganizationResponse, error)
 	// Update fields on an existing organization
 	UpdateOrganization(context.Context, *UpdateOrganizationRequest) (*UpdateOrganizationResponse, error)
+	// Get Kafka consumer group lag information
+	GetConsumerLag(context.Context, *GetConsumerLagRequest) (*GetConsumerLagResponse, error)
 	mustEmbedUnimplementedAdminServiceServer()
 }
 
@@ -152,6 +167,9 @@ func (UnimplementedAdminServiceServer) CreateOrganization(context.Context, *Crea
 }
 func (UnimplementedAdminServiceServer) UpdateOrganization(context.Context, *UpdateOrganizationRequest) (*UpdateOrganizationResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method UpdateOrganization not implemented")
+}
+func (UnimplementedAdminServiceServer) GetConsumerLag(context.Context, *GetConsumerLagRequest) (*GetConsumerLagResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetConsumerLag not implemented")
 }
 func (UnimplementedAdminServiceServer) mustEmbedUnimplementedAdminServiceServer() {}
 func (UnimplementedAdminServiceServer) testEmbeddedByValue()                      {}
@@ -264,6 +282,24 @@ func _AdminService_UpdateOrganization_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AdminService_GetConsumerLag_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetConsumerLagRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).GetConsumerLag(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_GetConsumerLag_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).GetConsumerLag(ctx, req.(*GetConsumerLagRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AdminService_ServiceDesc is the grpc.ServiceDesc for AdminService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -290,6 +326,10 @@ var AdminService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UpdateOrganization",
 			Handler:    _AdminService_UpdateOrganization_Handler,
+		},
+		{
+			MethodName: "GetConsumerLag",
+			Handler:    _AdminService_GetConsumerLag_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

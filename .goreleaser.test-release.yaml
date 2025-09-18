@@ -42,6 +42,23 @@ builds:
       - -X github.com/cardinalhq/lakerunner/cmd.Version={{.Version}}
       - -X github.com/cardinalhq/lakerunner/cmd.Commit={{.Commit}}
       - -X github.com/cardinalhq/lakerunner/cmd.Date={{.Date}}
+  - id: lakectl
+    main: ./lakectl/main.go
+    binary: lakectl
+    env:
+      - CGO_ENABLED=1
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/cardinalhq/lakerunner/lakectl/cmd.Version={{.Version}}
+      - -X github.com/cardinalhq/lakerunner/lakectl/cmd.Commit={{.Commit}}
+      - -X github.com/cardinalhq/lakerunner/lakectl/cmd.Date={{.Date}}
 
 # Define how to build/push Docker images.
 # Only creates the exact tag provided - no additional tags
@@ -50,6 +67,9 @@ dockers:
     goarch: amd64
     dockerfile: Dockerfile
     use: buildx
+    ids:
+      - lakerunner
+      - lakectl
     image_templates:
       - "public.ecr.aws/cardinalhq.io/lakerunner:{{ .Tag }}-amd64"
     build_flag_templates:
@@ -67,6 +87,9 @@ dockers:
     goarch: arm64
     dockerfile: Dockerfile
     use: buildx
+    ids:
+      - lakerunner
+      - lakectl
     image_templates:
       - "public.ecr.aws/cardinalhq.io/lakerunner:{{ .Tag }}-arm64"
     build_flag_templates:

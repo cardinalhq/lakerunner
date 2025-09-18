@@ -36,6 +36,9 @@ service AdminService {
 
   // Update fields on an existing organization
   rpc UpdateOrganization(UpdateOrganizationRequest) returns (UpdateOrganizationResponse);
+
+  // Get Kafka consumer group lag information
+  rpc GetConsumerLag(GetConsumerLagRequest) returns (GetConsumerLagResponse);
 }
 
 message PingRequest {
@@ -91,4 +94,22 @@ message UpdateOrganizationRequest {
 
 message UpdateOrganizationResponse {
   Organization organization = 1;
+}
+
+message GetConsumerLagRequest {
+  string group_filter = 1;
+  string topic_filter = 2;
+}
+
+message GetConsumerLagResponse {
+  repeated ConsumerPartitionLag lags = 1;
+}
+
+message ConsumerPartitionLag {
+  string topic = 1;
+  int32 partition = 2;
+  int64 current_offset = 3;
+  int64 high_water_mark = 4;
+  int64 lag = 5;
+  string consumer_group = 6;
 }

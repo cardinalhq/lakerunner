@@ -18,9 +18,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/cardinalhq/lakerunner/lrdb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/cardinalhq/lakerunner/lrdb"
 )
 
 // mockOffsetStore implements OffsetTrackerStore for testing

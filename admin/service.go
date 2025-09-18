@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"strings"
 	"time"
 
 	"google.golang.org/grpc"
@@ -28,8 +29,17 @@ import (
 
 	"github.com/cardinalhq/lakerunner/adminproto"
 	"github.com/cardinalhq/lakerunner/cmd/dbopen"
+	"github.com/cardinalhq/lakerunner/config"
 	"github.com/cardinalhq/lakerunner/configdb"
 	"github.com/cardinalhq/lakerunner/internal/adminconfig"
+	"github.com/cardinalhq/lakerunner/internal/fly"
+)
+
+var (
+	loadConfig     = config.Load
+	newAdminClient = func(cfg *config.KafkaConfig) (fly.AdminClientInterface, error) {
+		return fly.NewAdminClient(cfg)
+	}
 )
 
 type Service struct {
@@ -194,4 +204,50 @@ func (s *Service) UpdateOrganization(ctx context.Context, req *adminproto.Update
 	}
 
 	return &adminproto.UpdateOrganizationResponse{Organization: &adminproto.Organization{Id: updated.ID.String(), Name: updated.Name, Enabled: updated.Enabled}}, nil
+}
+
+func (s *Service) GetConsumerLag(ctx context.Context, req *adminproto.GetConsumerLagRequest) (*adminproto.GetConsumerLagResponse, error) {
+	slog.Debug("Received get consumer lag request", slog.String("group_filter", req.GroupFilter), slog.String("topic_filter", req.TopicFilter))
+
+	cfg, err := loadConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load config: %w", err)
+	}
+
+	factory := fly.NewFactory(&cfg.Kafka)
+
+	topicGroups := make(map[string]string)
+	for _, mapping := range cfg.TopicRegistry.GetAllServiceMappings() {
+		if req.GroupFilter != "" && !strings.Contains(mapping.ConsumerGroup, req.GroupFilter) {
+			continue
+		}
+		if req.TopicFilter != "" && !strings.Contains(mapping.Topic, req.TopicFilter) {
+			continue
+		}
+		topicGroups[mapping.Topic] = mapping.ConsumerGroup
+	}
+
+	adminClient, err := newAdminClient(factory.GetConfig())
+	if err != nil {
+		return nil, fmt.Errorf("failed to create admin client: %w", err)
+	}
+
+	lagInfos, err := adminClient.GetMultipleConsumerGroupLag(ctx, topicGroups)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get consumer group lags: %w", err)
+	}
+
+	resp := &adminproto.GetConsumerLagResponse{}
+	for _, info := range lagInfos {
+		resp.Lags = append(resp.Lags, &adminproto.ConsumerPartitionLag{
+			Topic:         info.Topic,
+			Partition:     int32(info.Partition),
+			CurrentOffset: info.CommittedOffset,
+			HighWaterMark: info.HighWaterMark,
+			Lag:           info.Lag,
+			ConsumerGroup: info.GroupID,
+		})
+	}
+
+	return resp, nil
 }
