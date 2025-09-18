@@ -112,6 +112,7 @@ jobs:
           docker run --rm \
             -v $PWD:/workspace \
             -v $PWD/.git:/workspace/.git \
+            -v /var/run/docker.sock:/var/run/docker.sock \
             -w /workspace \
             --user 1001:1001 \
             -e GORELEASER_KEY="${{ secrets.GORELEASER_KEY }}" \
@@ -124,6 +125,7 @@ jobs:
           docker run --rm \
             -v $PWD:/workspace \
             -v $PWD/.git:/workspace/.git \
+            -v /var/run/docker.sock:/var/run/docker.sock \
             -w /workspace \
             --user 1001:1001 \
             -e GORELEASER_KEY="${{ secrets.GORELEASER_KEY }}" \
@@ -199,6 +201,7 @@ jobs:
           docker run --rm \
             -v $PWD:/workspace \
             -v $PWD/.git:/workspace/.git \
+            -v /var/run/docker.sock:/var/run/docker.sock \
             -w /workspace \
             --user 1001:1001 \
             -e GORELEASER_KEY="${{ secrets.GORELEASER_KEY }}" \
